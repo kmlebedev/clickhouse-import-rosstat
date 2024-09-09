@@ -37,6 +37,7 @@ func (s *IpcWeeksStat) export() (table *[][]string, err error) {
 	if xlsx, err = GetXlsx(ipcWeeksXlsDataUrl); err != nil {
 		return nil, err
 	}
+	table = new([][]string)
 	for _, sheet := range xlsx.GetSheetList() {
 		var year int
 		if year, err = strconv.Atoi(sheet); err != nil || year < 1997 {
@@ -47,7 +48,6 @@ func (s *IpcWeeksStat) export() (table *[][]string, err error) {
 			return nil, err
 		}
 		fieldFound := false
-		table = new([][]string)
 		for _, row := range rows {
 			if fieldFound {
 				if len(row) < 2 {

@@ -38,6 +38,7 @@ func (s *IpcMesStat) export() (table *[][]string, err error) {
 	if xlsx, err = GetXlsx(ipcMesXlsDataUrl); err != nil {
 		return nil, err
 	}
+	table = new([][]string)
 	for _, sheet := range xlsx.GetSheetList() {
 		var rows [][]string
 		if _, err = strconv.Atoi(sheet); err != nil {
@@ -47,7 +48,6 @@ func (s *IpcMesStat) export() (table *[][]string, err error) {
 			return nil, err
 		}
 		fieldFound := false
-		table = new([][]string)
 		mes := 0
 		for _, row := range rows {
 			if fieldFound {
