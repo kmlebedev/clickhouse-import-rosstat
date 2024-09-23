@@ -12,7 +12,7 @@ import (
 
 const (
 	// Потребительские цены https://rosstat.gov.ru/statistics/price
-	ipcMesXlsDataUrl = rosstatUrl + "/Ipc_mes_07-2024.xlsx"
+	ipcMesXlsDataUrl = rosstatUrl + "/Ipc_mes_08-2024.xlsx"
 	ipcMesTable      = "ipc_mes"
 	ipcMesDdl        = `CREATE TABLE IF NOT EXISTS ` + ipcMesTable + ` (
 			  name LowCardinality(String)
