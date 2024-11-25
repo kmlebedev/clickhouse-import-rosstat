@@ -4,10 +4,12 @@ import (
 	"context"
 	"github.com/ClickHouse/clickhouse-go/v2"
 	clickhouse_tests_std "github.com/ClickHouse/clickhouse-go/v2/tests/std"
+	_ "github.com/kmlebedev/clickhouse-import-rosstat/cbr"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/fao"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/rosstat"
 	log "github.com/sirupsen/logrus"
+	"os"
 )
 
 func main() {
@@ -16,8 +18,9 @@ func main() {
 		log.Fatal(err)
 	}
 	ctx := clickhouse.Context(context.Background(), clickhouse.WithStdAsync(false))
+	envStat := os.Getenv("CLICKHOUSE_IMPORT_STAT")
 	for _, stat := range chimport.Stats {
-		if stat.Name() != "ipc_mes" {
+		if envStat != "" && stat.Name() != envStat {
 			continue
 		}
 		var rows int64
