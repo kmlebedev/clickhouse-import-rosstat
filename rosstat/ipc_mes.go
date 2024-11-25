@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
+	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
 	"strconv"
 	"time"
@@ -12,13 +13,14 @@ import (
 
 const (
 	// Потребительские цены https://rosstat.gov.ru/statistics/price
-	ipcMesXlsDataUrl = rosstatUrl + "/Ipc_mes_08-2024.xlsx"
+	// https://rosstat.gov.ru/storage/mediabank/ipc_mes_10-2024.xlsx
+	ipcMesXlsDataUrl = rosstatUrl + "/ipc_mes_10-2024.xlsx"
 	ipcMesTable      = "ipc_mes"
 	ipcMesDdl        = `CREATE TABLE IF NOT EXISTS ` + ipcMesTable + ` (
 			  name LowCardinality(String)
 			, date Date
 			, percent Float32
-		) ENGINE = Memory
+		) ENGINE = ReplacingMergeTree ORDER BY (name, date);
 	`
 	ipcMesInsert     = "INSERT INTO " + ipcMesTable + " VALUES (?, ?, ?)"
 	ipcMesField      = "к концу предыдущего месяца"
@@ -35,7 +37,7 @@ func (s *IpcMesStat) Name() string {
 
 func (s *IpcMesStat) export() (table *[][]string, err error) {
 	var xlsx *excelize.File
-	if xlsx, err = GetXlsx(ipcMesXlsDataUrl); err != nil {
+	if xlsx, err = util.GetXlsx(ipcMesXlsDataUrl); err != nil {
 		return nil, err
 	}
 	table = new([][]string)

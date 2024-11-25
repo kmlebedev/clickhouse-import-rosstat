@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
+	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
 	"strconv"
 	"strings"
@@ -36,7 +37,7 @@ func (s *HouseholdsBMesStat) Name() string {
 
 func (s *HouseholdsBMesStat) export() (table *[][]string, err error) {
 	var xlsx *excelize.File
-	if xlsx, err = GetXlsx(householdsBMesXlsDataUrl); err != nil {
+	if xlsx, err = util.GetXlsx(householdsBMesXlsDataUrl); err != nil {
 		return nil, err
 	}
 	defer xlsx.Close()

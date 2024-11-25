@@ -2,6 +2,7 @@ package rosstat
 
 import (
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
+	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
 	"strconv"
 )
@@ -12,14 +13,15 @@ import (
 )
 
 const (
-	// Потребительские цены https://rosstat.gov.ru/statistics/price
-	ipcWeeksXlsDataUrl = rosstatUrl + "/nedel_ipc.xlsx"
+	// Потребительские цены https://rosstat.gov.ru/statistics/price https://rosstat.gov.ru/storage/mediabank/nedel_ipc.xlsx
+	// ipcWeeksXlsDataUrl = rosstatUrl + "/nedel_ipc.xlsx"
+	ipcWeeksXlsDataUrl = rosstatUrl + "/Nedel_ipc.xlsx"
 	ipcWeeksTable      = "ipc_weeks"
 	ipcWeeksDdl        = `CREATE TABLE IF NOT EXISTS ` + ipcWeeksTable + ` (
 			  name LowCardinality(String)
 			, date Date
 			, percent Float32
-		) ENGINE = Memory
+		) ENGINE = ReplacingMergeTree ORDER BY (name, date);
 	`
 	ipcWeeksInsert = "INSERT INTO " + ipcWeeksTable + " VALUES (?, ?, ?)"
 	ipcWeeksField  = "Наименование"
@@ -34,7 +36,7 @@ func (s *IpcWeeksStat) Name() string {
 
 func (s *IpcWeeksStat) export() (table *[][]string, err error) {
 	var xlsx *excelize.File
-	if xlsx, err = GetXlsx(ipcWeeksXlsDataUrl); err != nil {
+	if xlsx, err = util.GetXlsx(ipcWeeksXlsDataUrl); err != nil {
 		return nil, err
 	}
 	table = new([][]string)
