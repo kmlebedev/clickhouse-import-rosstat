@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
+	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
 	"strconv"
 	"strings"
@@ -13,7 +14,7 @@ import (
 
 const (
 	// Рынок труда, занятость и заработная плата https://rosstat.gov.ru/labor_market_employment_salaries
-	salariesMesXlsDataUrl = rosstatUrl + "/tab1-zpl_07-2024.xlsx"
+	salariesMesXlsDataUrl = rosstatUrl + "/tab1-zpl_08-2024.xlsx"
 	salariesMesTable      = "salaries_mes"
 	salariesMesDdl        = `CREATE TABLE IF NOT EXISTS ` + salariesMesTable + ` (
 			  name LowCardinality(String)
@@ -36,7 +37,7 @@ func (s *SalariesMesStat) Name() string {
 
 func (s *SalariesMesStat) export() (table *[][]string, err error) {
 	var xlsx *excelize.File
-	if xlsx, err = GetXlsx(salariesMesXlsDataUrl); err != nil {
+	if xlsx, err = util.GetXlsx(salariesMesXlsDataUrl); err != nil {
 		return nil, err
 	}
 	table = new([][]string)

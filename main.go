@@ -5,6 +5,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 	clickhouse_tests_std "github.com/ClickHouse/clickhouse-go/v2/tests/std"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
+	_ "github.com/kmlebedev/clickhouse-import-rosstat/fao"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/rosstat"
 	log "github.com/sirupsen/logrus"
 )
@@ -16,6 +17,9 @@ func main() {
 	}
 	ctx := clickhouse.Context(context.Background(), clickhouse.WithStdAsync(false))
 	for _, stat := range chimport.Stats {
+		if stat.Name() != "ipc_mes" {
+			continue
+		}
 		var rows int64
 		if rows, err = stat.Import(ctx, conn); err != nil {
 			log.Errorf("%s: %+v", stat.Name(), err)
