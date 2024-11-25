@@ -14,13 +14,13 @@ import (
 
 const (
 	// Рынок труда, занятость и заработная плата https://rosstat.gov.ru/labor_market_employment_salaries
-	salariesMesXlsDataUrl = rosstatUrl + "/tab1-zpl_08-2024.xlsx"
+	salariesMesXlsDataUrl = rosstatUrl + "/tab1-zpl_09-2024.xlsx"
 	salariesMesTable      = "salaries_mes"
 	salariesMesDdl        = `CREATE TABLE IF NOT EXISTS ` + salariesMesTable + ` (
 			  name LowCardinality(String)
 			, date Date
 			, salary Float32
-		) ENGINE = Memory
+		) ENGINE = ReplacingMergeTree ORDER BY (name, date);
 	`
 	salariesMesInsert     = "INSERT INTO " + salariesMesTable + " VALUES (?, ?, ?)"
 	salariesMesField      = "1991"
@@ -68,7 +68,7 @@ func (s *SalariesMesStat) export() (table *[][]string, err error) {
 				if cell == "" {
 					continue
 				}
-				fmt.Printf("year %d mes %02d cell %s\n", salariesMesYearStart+i-fieldFound, mes, cell)
+				// fmt.Printf("year %d mes %02d cell %s\n", salariesMesYearStart+i-fieldFound, mes, cell)
 				salary := strings.Split(cell, "(")[0]
 				if _, err = strconv.ParseFloat(salary, 32); err != nil {
 					return nil, err

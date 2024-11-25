@@ -1,4 +1,4 @@
-package rosstat
+package cbr
 
 import (
 	"context"
@@ -14,6 +14,7 @@ import (
 const (
 
 	// Показатель сбережений сектора «Домашние хозяйства» https://www.cbr.ru/statistics/macro_itm/households/
+	// https://www.cbr.ru/vfs/statistics/households/households_b.xlsx
 	cbrStatsUrl              = "https://www.cbr.ru/vfs/statistics"
 	householdsBMesXlsDataUrl = cbrStatsUrl + "/households/households_bm.xlsx"
 	householdsBMesTable      = "households_b_mes"
@@ -21,7 +22,7 @@ const (
 			  name LowCardinality(String)
 			, date Date
 			, balance Float32
-		) ENGINE = Memory
+		) ENGINE = ReplacingMergeTree ORDER BY (name, date);
 	`
 	householdsBMesInsert     = "INSERT INTO " + householdsBMesTable + " VALUES (?, ?, ?)"
 	householdsBMesField      = "АКТИВЫ"
@@ -52,8 +53,10 @@ func (s *HouseholdsBMesStat) export() (table *[][]string, err error) {
 		if len(row) == 0 {
 			continue
 		}
-		if row[0] == householdsBMesField {
+		//fmt.Printf("name '%s'\n", row[0])
+		if strings.TrimSpace(row[0]) == householdsBMesField {
 			fieldFound = i - 1
+			continue
 		}
 		if fieldFound == 0 {
 			continue
@@ -61,12 +64,18 @@ func (s *HouseholdsBMesStat) export() (table *[][]string, err error) {
 		if len(row) < 1 {
 			break
 		}
+		if strings.TrimSpace(row[1]) == "" || strings.TrimSpace(row[1]) == "0" {
+			continue
+		}
 		// Колонки с месяцами и пропуском кварталов
 		for j, cell := range row[1:] {
 			if cell == "" {
 				continue
 			}
-			// fmt.Printf("name %s date %v cell %s\n", row[0], rows[fieldFound][j+1], cell)
+			if j+1 >= len(rows[fieldFound]) {
+				break
+			}
+			//fmt.Printf("name %s date %v cell %s\n", row[0], rows[fieldFound][j+1], cell)
 			balance := strings.ReplaceAll(strings.TrimSpace(cell), ",", "")
 			if _, err = strconv.ParseFloat(balance, 32); err != nil {
 				return nil, err
