@@ -24,6 +24,9 @@ var (
 
 func GetXlsx(url string) (xlsx *excelize.File, err error) {
 	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
 	req.Header.Set("User-Agent", randomUA)
 	resp, err := httpClient.Do(req)
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/fao"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/rosstat"
+	_ "github.com/kmlebedev/clickhouse-import-rosstat/sber"
 	log "github.com/sirupsen/logrus"
 	"os"
 )
