@@ -3,6 +3,7 @@ package cbr
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
@@ -14,18 +15,19 @@ import (
 const (
 
 	// Сведения о размещенных и привлеченных средствах https://www.cbr.ru/statistics/bank_sector/sors
-	// https://www.cbr.ru/vfs/statistics/households/households_b.xlsx
+	// Объем кредитов, предоставленных юридическим лицам
+	// https://www.cbr.ru/vfs/statistics/BankSector/Loans_to_corporations/01_01_A_New_loans_corp_by_activity.xlsx
 	loansToCorporationsXlsDataUrl = cbrStatsUrl + "/BankSector/Loans_to_corporations/01_01_A_New_loans_corp_by_activity.xlsx"
-	loansToCorporationsTable      = "loans_to_corporations"
-	loansToCorporationsDdl        = `CREATE TABLE IF NOT EXISTS ` + householdsBMesTable + ` (
+	loansToCorporationsTable      = "cbr_loans_to_corporations"
+	loansToCorporationsDdl        = `CREATE TABLE IF NOT EXISTS ` + loansToCorporationsTable + ` (
 			  name LowCardinality(String)
 			, date Date
 			, balance Float32
 		) ENGINE = ReplacingMergeTree ORDER BY (name, date);
 	`
-	loansToCorporationsInsert     = "INSERT INTO " + householdsBMesTable + " VALUES (?, ?, ?)"
-	loansToCorporationsField      = "АКТИВЫ"
-	loansToCorporationsTimeLayout = "01-02-06"
+	loansToCorporationsInsert     = "INSERT INTO " + loansToCorporationsTable + " VALUES (?, ?, ?)"
+	loansToCorporationsField      = "ВСЕГО"
+	loansToCorporationsTimeLayout = "2006-01"
 )
 
 type LoansToCorporationsStat struct {
@@ -37,13 +39,13 @@ func (s *LoansToCorporationsStat) Name() string {
 
 func (s *LoansToCorporationsStat) export() (table *[][]string, err error) {
 	var xlsx *excelize.File
-	if xlsx, err = util.GetXlsx(householdsBMesXlsDataUrl); err != nil {
+	if xlsx, err = util.GetXlsx(loansToCorporationsXlsDataUrl); err != nil {
 		return nil, err
 	}
 	defer xlsx.Close()
 	table = new([][]string)
 	var rows [][]string
-	if rows, err = xlsx.GetRows("Балансы"); err != nil {
+	if rows, err = xlsx.GetRows("итого"); err != nil {
 		return nil, err
 	}
 	fieldFound := 0
@@ -52,10 +54,8 @@ func (s *LoansToCorporationsStat) export() (table *[][]string, err error) {
 		if len(row) == 0 {
 			continue
 		}
-		//fmt.Printf("name '%s'\n", row[0])
-		if strings.TrimSpace(row[0]) == householdsBMesField {
+		if strings.TrimSpace(row[0]) == loansToCorporationsField {
 			fieldFound = i - 1
-			continue
 		}
 		if fieldFound == 0 {
 			continue
@@ -74,13 +74,15 @@ func (s *LoansToCorporationsStat) export() (table *[][]string, err error) {
 			if j+1 >= len(rows[fieldFound]) {
 				break
 			}
-			//fmt.Printf("name %s date %v cell %s\n", row[0], rows[fieldFound][j+1], cell)
+			name := strings.TrimSpace(row[0])
+			date := rows[fieldFound][j+1]
 			balance := strings.ReplaceAll(strings.TrimSpace(cell), ",", "")
+			// fmt.Printf("name %s date %v cell %s\n", name, date, balance)
+
 			if _, err = strconv.ParseFloat(balance, 32); err != nil {
 				return nil, err
 			}
-			//                                name           year
-			*table = append(*table, []string{row[0], rows[fieldFound][j+1], balance})
+			*table = append(*table, []string{name, date, balance})
 		}
 	}
 
@@ -88,7 +90,7 @@ func (s *LoansToCorporationsStat) export() (table *[][]string, err error) {
 }
 
 func (s *LoansToCorporationsStat) Import(ctx context.Context, conn *sql.DB) (count int64, err error) {
-	if _, err := conn.Exec(householdsBMesDdl); err != nil {
+	if _, err := conn.Exec(loansToCorporationsDdl); err != nil {
 		return count, err
 	}
 	var table *[][]string
@@ -97,11 +99,12 @@ func (s *LoansToCorporationsStat) Import(ctx context.Context, conn *sql.DB) (cou
 	}
 	for _, row := range *table {
 		// Calling Parse() method with its parameters
-		date, err := time.Parse(householdsBMesTimeLayout, row[1])
+		dateArr := strings.Split(row[1], " ")
+		date, err := time.Parse(loansToCorporationsTimeLayout, fmt.Sprintf("%s-%02d", dateArr[1], util.MonthsToNum[strings.ToLower(dateArr[0])]))
 		if err != nil {
 			return count, err
 		}
-		if res, err := conn.ExecContext(ctx, householdsBMesInsert, row[0], date, row[2]); err != nil {
+		if res, err := conn.ExecContext(ctx, loansToCorporationsInsert, row[0], date, row[2]); err != nil {
 			return count, err
 		} else {
 			rows, _ := res.RowsAffected()
