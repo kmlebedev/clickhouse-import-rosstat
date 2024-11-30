@@ -4,11 +4,11 @@ import (
 	"context"
 	"github.com/ClickHouse/clickhouse-go/v2"
 	clickhouse_tests_std "github.com/ClickHouse/clickhouse-go/v2/tests/std"
+	_ "github.com/kmlebedev/clickhouse-import-rosstat/bank"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/cbr"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/fao"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/rosstat"
-	_ "github.com/kmlebedev/clickhouse-import-rosstat/sber"
 	log "github.com/sirupsen/logrus"
 	"os"
 )

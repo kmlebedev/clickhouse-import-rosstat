@@ -1,4 +1,4 @@
-package sber
+package bank
 
 import (
 	"context"

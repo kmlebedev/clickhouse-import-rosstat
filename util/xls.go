@@ -59,10 +59,12 @@ func GetXlsx(url string) (xlsx *excelize.File, err error) {
 		return nil, err
 	}
 	// Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
-	//fmt.Printf("Header %+v\n", resp.Header)
+	// fmt.Printf("Header %+v\n", resp.Header)
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
-	//fmt.Printf("Body %+v", string(body))
+	if len(body) == 0 {
+		return nil, fmt.Errorf(("Body size is empty"))
+	}
 	reader := bytes.NewReader(body)
 	if xlsx, err = excelize.OpenReader(reader); err != nil {
 		return nil, fmt.Errorf("excelize %v", err)
