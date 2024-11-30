@@ -3,7 +3,6 @@ package cbr
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
@@ -78,7 +77,6 @@ func (s *LoansToCorporationsStat) export() (table *[][]string, err error) {
 			date := rows[fieldFound][j+1]
 			balance := strings.ReplaceAll(strings.TrimSpace(cell), ",", "")
 			// fmt.Printf("name %s date %v cell %s\n", name, date, balance)
-
 			if _, err = strconv.ParseFloat(balance, 32); err != nil {
 				return nil, err
 			}
@@ -100,11 +98,9 @@ func (s *LoansToCorporationsStat) Import(ctx context.Context, conn *sql.DB) (cou
 	for _, row := range *table {
 		// Calling Parse() method with its parameters
 		dateArr := strings.Split(row[1], " ")
-		date, err := time.Parse(loansToCorporationsTimeLayout, fmt.Sprintf("%s-%02d", dateArr[1], util.MonthsToNum[strings.ToLower(dateArr[0])]))
-		if err != nil {
-			return count, err
-		}
-		if res, err := conn.ExecContext(ctx, loansToCorporationsInsert, row[0], date, row[2]); err != nil {
+		year, _ := strconv.Atoi(dateArr[1])
+		date := time.Date(year, util.MonthsToNum[strings.ToLower(dateArr[0])], 1, 0, 0, 0, 0, time.UTC)
+		if res, err := conn.ExecContext(ctx, loansToCorporationsInsert, row[0], date.AddDate(0, 1, 0), row[2]); err != nil {
 			return count, err
 		} else {
 			rows, _ := res.RowsAffected()
