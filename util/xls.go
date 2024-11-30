@@ -8,9 +8,35 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"time"
 )
 
 var (
+	MonthsToNum = map[string]time.Month{
+		"январь":   time.January,
+		"февраль":  time.February,
+		"март":     time.March,
+		"апрель":   time.April,
+		"май":      time.May,
+		"июнь":     time.June,
+		"июль":     time.July,
+		"август":   time.August,
+		"сентябрь": time.September,
+		"октябрь":  time.October,
+		"ноябрь":   time.November,
+		"декабрь":  time.December,
+		"янв":      time.January,
+		"фев":      time.February,
+		"мар":      time.March,
+		"апр":      time.April,
+		"июн":      time.June,
+		"июл":      time.July,
+		"авг":      time.August,
+		"сен":      time.September,
+		"окт":      time.October,
+		"ноя":      time.November,
+		"дек":      time.December,
+	}
 	httpTransport = http.Transport{}
 	httpClient    = &http.Client{Transport: &httpTransport}
 	userAgents    = []string{
