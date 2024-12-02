@@ -3,6 +3,7 @@ package cbr
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
@@ -12,33 +13,31 @@ import (
 )
 
 const (
-
-	// Сведения о размещенных и привлеченных средствах https://www.cbr.ru/statistics/bank_sector/sors
-	// Объем кредитов, предоставленных юридическим лицам
-	// https://www.cbr.ru/vfs/statistics/BankSector/Loans_to_corporations/01_01_A_New_loans_corp_by_activity.xlsx
-	loansToCorporationsXlsDataUrl = cbrStatsUrl + "/BankSector/Loans_to_corporations/01_01_A_New_loans_corp_by_activity.xlsx"
-	loansToCorporationsTable      = "cbr_loans_to_corporations"
-	loansToCorporationsDdl        = `CREATE TABLE IF NOT EXISTS ` + loansToCorporationsTable + ` (
+	// Сведения о размещенных и привлеченных средствах https://www.cbr.ru/statistics/bank_sector/sors/
+	// Общий объем кредитов, предоставленных физическим лицам-резидентам
+	// https://www.cbr.ru/vfs/statistics/BankSector/Mortgage/02_04_New_loans_ind.xlsx
+	loansToIndXlsDataUrl = cbrStatsUrl + "/BankSector/Mortgage/02_04_New_loans_ind.xlsx"
+	loansToIndTable      = "cbr_loans_to_individuals"
+	loansToIndDdl        = `CREATE TABLE IF NOT EXISTS ` + loansToIndTable + ` (
 			  name LowCardinality(String)
 			, date Date
 			, balance Float32
 		) ENGINE = ReplacingMergeTree ORDER BY (name, date);
 	`
-	loansToCorporationsInsert     = "INSERT INTO " + loansToCorporationsTable + " VALUES (?, ?, ?)"
-	loansToCorporationsField      = "ВСЕГО"
-	loansToCorporationsTimeLayout = "2006-01"
+	loansToIndInsert = "INSERT INTO " + loansToIndTable + " VALUES (?, ?, ?)"
+	loansToIndField  = "РОССИЙСКАЯ ФЕДЕРАЦИЯ"
 )
 
-type LoansToCorporationsStat struct {
+type LoansToindividualsStat struct {
 }
 
-func (s *LoansToCorporationsStat) Name() string {
-	return loansToCorporationsTable
+func (s *LoansToindividualsStat) Name() string {
+	return loansToIndTable
 }
 
-func (s *LoansToCorporationsStat) export() (table *[][]string, err error) {
+func (s *LoansToindividualsStat) export() (table *[][]string, err error) {
 	var xlsx *excelize.File
-	if xlsx, err = util.GetXlsx(loansToCorporationsXlsDataUrl); err != nil {
+	if xlsx, err = util.GetXlsx(loansToIndXlsDataUrl); err != nil {
 		return nil, err
 	}
 	defer xlsx.Close()
@@ -53,7 +52,7 @@ func (s *LoansToCorporationsStat) export() (table *[][]string, err error) {
 		if len(row) == 0 {
 			continue
 		}
-		if strings.TrimSpace(row[0]) == loansToCorporationsField {
+		if strings.TrimSpace(row[0]) == loansToIndField {
 			fieldFound = i - 1
 		}
 		if fieldFound == 0 {
@@ -76,7 +75,7 @@ func (s *LoansToCorporationsStat) export() (table *[][]string, err error) {
 			name := strings.TrimSpace(row[0])
 			date := rows[fieldFound][j+1]
 			balance := strings.ReplaceAll(strings.TrimSpace(cell), ",", "")
-			// fmt.Printf("name %s date %v cell %s\n", name, date, balance)
+			fmt.Printf("name %s date %v cell %s\n", name, date, balance)
 			if _, err = strconv.ParseFloat(balance, 32); err != nil {
 				return nil, err
 			}
@@ -87,8 +86,8 @@ func (s *LoansToCorporationsStat) export() (table *[][]string, err error) {
 	return table, nil
 }
 
-func (s *LoansToCorporationsStat) Import(ctx context.Context, conn *sql.DB) (count int64, err error) {
-	if _, err := conn.Exec(loansToCorporationsDdl); err != nil {
+func (s *LoansToindividualsStat) Import(ctx context.Context, conn *sql.DB) (count int64, err error) {
+	if _, err := conn.Exec(loansToIndDdl); err != nil {
 		return count, err
 	}
 	var table *[][]string
@@ -100,7 +99,7 @@ func (s *LoansToCorporationsStat) Import(ctx context.Context, conn *sql.DB) (cou
 		dateArr := strings.Split(row[1], " ")
 		year, _ := strconv.Atoi(dateArr[1])
 		date := time.Date(year, util.MonthsToNum[strings.ToLower(dateArr[0])], 1, 0, 0, 0, 0, time.UTC)
-		if res, err := conn.ExecContext(ctx, loansToCorporationsInsert, row[0], date.AddDate(0, 1, 0), row[2]); err != nil {
+		if res, err := conn.ExecContext(ctx, loansToIndInsert, row[0], date.AddDate(0, 1, 0), row[2]); err != nil {
 			return count, err
 		} else {
 			rows, _ := res.RowsAffected()
@@ -111,5 +110,5 @@ func (s *LoansToCorporationsStat) Import(ctx context.Context, conn *sql.DB) (cou
 }
 
 func init() {
-	chimport.Stats = append(chimport.Stats, &LoansToCorporationsStat{})
+	chimport.Stats = append(chimport.Stats, &LoansToindividualsStat{})
 }
