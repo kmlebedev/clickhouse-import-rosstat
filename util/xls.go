@@ -8,6 +8,7 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -90,6 +91,9 @@ func GetXls(url string) (xlsx *excelize.File, err error) {
 
 func GetCSV(url string) (records [][]string, err error) {
 	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
 	req.Header.Set("User-Agent", randomUA)
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -97,7 +101,9 @@ func GetCSV(url string) (records [][]string, err error) {
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
-	reader := bytes.NewReader(body)
-	csvReader := csv.NewReader(reader)
-	return csvReader.ReadAll()
+	if err != nil {
+		return nil, err
+	}
+	reader := bytes.NewBufferString(strings.ReplaceAll(string(body), "\r", "\n"))
+	return csv.NewReader(reader).ReadAll()
 }
