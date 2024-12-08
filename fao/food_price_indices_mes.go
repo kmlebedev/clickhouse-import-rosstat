@@ -12,9 +12,12 @@ import (
 )
 
 const (
+	// Даты публикации ежемесячных сводок в 2024 году:
+	// 5 января, 2 февраля, 8 марта, 5 апреля, 3 мая, 7 июня, 5 июля, 2 августа, 6 сентября, 4 октября, 8 ноября, 6 декабря.
+	// https://www.fao.org/worldfoodsituation/foodpricesindex/ru/
 	// Индекса продовольственных цен ФАО https://www.fao.org/docs/worldfoodsituationlibraries/default-document-library/food_price_indices_data_nov24.xls
 	faoUrl                 = "https://www.fao.org/docs/worldfoodsituationlibraries/default-document-library"
-	faoFoodPriceCSVDataUrl = faoUrl + "/food_price_indices_data_nov.csv"
+	faoFoodPriceCSVDataUrl = faoUrl + "/food_price_indices_data_d.csv"
 	faoFoodPriceTable      = "fao_food_price"
 	faoFoodPriceDdl        = `CREATE TABLE IF NOT EXISTS ` + faoFoodPriceTable + `_%s` + ` (
 			  name LowCardinality(String)
