@@ -2,8 +2,8 @@ package cbr
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
@@ -86,8 +86,8 @@ func (s *LoansToindividualsStat) export() (table *[][]string, err error) {
 	return table, nil
 }
 
-func (s *LoansToindividualsStat) Import(ctx context.Context, conn *sql.DB) (count int64, err error) {
-	if _, err := conn.Exec(loansToIndDdl); err != nil {
+func (s *LoansToindividualsStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+	if err = conn.Exec(ctx, loansToIndDdl); err != nil {
 		return count, err
 	}
 	var table *[][]string
@@ -99,12 +99,10 @@ func (s *LoansToindividualsStat) Import(ctx context.Context, conn *sql.DB) (coun
 		dateArr := strings.Split(row[1], " ")
 		year, _ := strconv.Atoi(dateArr[1])
 		date := time.Date(year, util.MonthsToNum[strings.ToLower(dateArr[0])], 1, 0, 0, 0, 0, time.UTC)
-		if res, err := conn.ExecContext(ctx, loansToIndInsert, row[0], date.AddDate(0, 1, 0), row[2]); err != nil {
+		if err = conn.Exec(ctx, loansToIndInsert, row[0], date.AddDate(0, 1, 0), row[2]); err != nil {
 			return count, err
-		} else {
-			rows, _ := res.RowsAffected()
-			count += rows
 		}
+		count++
 	}
 	return count, nil
 }

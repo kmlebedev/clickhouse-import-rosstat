@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/csv"
 	"fmt"
+	log "github.com/sirupsen/logrus"
 	"github.com/xuri/excelize/v2"
 	"io"
 	"math/rand"
@@ -70,6 +71,7 @@ func GetXlsx(url string) (xlsx *excelize.File, err error) {
 	if xlsx, err = excelize.OpenReader(reader); err != nil {
 		return nil, fmt.Errorf("excelize %v", err)
 	}
+	log.Infof("Get xlsx file %+v", xlsx.Path)
 	return xlsx, nil
 }
 

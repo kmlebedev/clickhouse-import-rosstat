@@ -2,7 +2,7 @@ package bank
 
 import (
 	"context"
-	"database/sql"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
@@ -85,8 +85,8 @@ func (s *LoansToCorporationsStat) export() (table *[][]string, err error) {
 	return table, nil
 }
 
-func (s *LoansToCorporationsStat) Import(ctx context.Context, conn *sql.DB) (count int64, err error) {
-	if _, err := conn.Exec(sberRpbuDataUrlDdl); err != nil {
+func (s *LoansToCorporationsStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+	if err = conn.Exec(ctx, sberRpbuDataUrlDdl); err != nil {
 		return count, err
 	}
 	var table *[][]string
@@ -99,12 +99,10 @@ func (s *LoansToCorporationsStat) Import(ctx context.Context, conn *sql.DB) (cou
 		if err != nil {
 			return count, err
 		}
-		if res, err := conn.ExecContext(ctx, sberRpbuDataInsert, row[0], date, row[2]); err != nil {
+		if err = conn.Exec(ctx, sberRpbuDataInsert, row[0], date, row[2]); err != nil {
 			return count, err
-		} else {
-			rows, _ := res.RowsAffected()
-			count += rows
 		}
+		count++
 	}
 	return count, nil
 }
