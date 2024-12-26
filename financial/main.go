@@ -3,8 +3,8 @@ package main
 import (
 	"database/sql"
 	"fmt"
-	"github.com/kmlebedev/txmlconnector/examples/clickhouse-exporter/financial/exporter"
-	_ "github.com/kmlebedev/txmlconnector/examples/clickhouse-exporter/financial/exporter"
+	"github.com/kmlebedev/clickhouse-import-rosstat/financial/exporter"
+	_ "github.com/kmlebedev/clickhouse-import-rosstat/financial/exporter"
 	"github.com/shakinm/xlsReader/xls"
 	"github.com/shakinm/xlsReader/xls/structure"
 	log "github.com/sirupsen/logrus"
