@@ -1,21 +1,22 @@
 package rosstat
 
 import (
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+	log "github.com/sirupsen/logrus"
 	"github.com/xuri/excelize/v2"
 	"strconv"
 )
 
 import (
 	"context"
-	"database/sql"
 )
 
 const (
 	// Потребительские цены https://rosstat.gov.ru/statistics/price https://rosstat.gov.ru/storage/mediabank/nedel_ipc.xlsx
 	// ipcWeeksXlsDataUrl = rosstatUrl + "/nedel_ipc.xlsx"
-	ipcWeeksXlsDataUrl = rosstatUrl + "/Nedel_ipc.xlsx"
+	ipcWeeksXlsDataUrl = rosstatUrl + "/nedel_ipc.xlsx"
 	ipcWeeksTable      = "ipc_weeks"
 	ipcWeeksDdl        = `CREATE TABLE IF NOT EXISTS ` + ipcWeeksTable + ` (
 			  name LowCardinality(String)
@@ -23,7 +24,7 @@ const (
 			, percent Float32
 		) ENGINE = ReplacingMergeTree ORDER BY (name, date);
 	`
-	ipcWeeksInsert = "INSERT INTO " + ipcWeeksTable + " VALUES (?, ?, ?)"
+	ipcWeeksInsert = "INSERT INTO " + ipcWeeksTable
 	ipcWeeksField  = "Наименование"
 )
 
@@ -66,24 +67,32 @@ func (s *IpcWeeksStat) export() (table *[][]string, err error) {
 			}
 		}
 	}
+
 	return table, nil
 }
 
-func (s *IpcWeeksStat) Import(ctx context.Context, conn *sql.DB) (count int64, err error) {
-	if _, err := conn.Exec(ipcWeeksDdl); err != nil {
+func (s *IpcWeeksStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+	if err = conn.Exec(ctx, ipcWeeksDdl); err != nil {
 		return count, err
 	}
 	var table *[][]string
 	if table, err = s.export(); err != nil {
 		return count, err
 	}
+	log.Infof("Export %d rows of %s", len(*table), s.Name())
+	batch, err := conn.PrepareBatch(ctx, ipcWeeksInsert)
+	if err != nil {
+		return count, err
+	}
 	for _, row := range *table {
-		if res, err := conn.ExecContext(ctx, ipcWeeksInsert, row[0], weekStart(row[1], row[2]), row[3]); err != nil {
+		percent, _ := strconv.ParseFloat(row[3], 32)
+		if err = batch.Append(row[0], weekStart(row[1], row[2]), float32(percent)); err != nil {
 			return count, err
-		} else {
-			rows, _ := res.RowsAffected()
-			count += rows
 		}
+		count++
+	}
+	if err = batch.Send(); err != nil {
+		return count, err
 	}
 	return count, nil
 }

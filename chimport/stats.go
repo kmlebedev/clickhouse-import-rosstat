@@ -2,12 +2,12 @@ package chimport
 
 import (
 	"context"
-	"database/sql"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
 type ImportStat interface {
 	Name() string
-	Import(ctx context.Context, conn *sql.DB) (count int64, err error)
+	Import(ctx context.Context, conn driver.Conn) (count int64, err error)
 }
 
 var (

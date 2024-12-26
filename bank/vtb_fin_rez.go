@@ -2,8 +2,8 @@ package bank
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
@@ -114,8 +114,8 @@ func (s *VtbIfrs) export() (table *[][]string, err error) {
 	return table, nil
 }
 
-func (s *VtbIfrs) Import(ctx context.Context, conn *sql.DB) (count int64, err error) {
-	if _, err := conn.Exec(vtbIfrsTableDdl); err != nil {
+func (s *VtbIfrs) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+	if err = conn.Exec(ctx, vtbIfrsTableDdl); err != nil {
 		return count, err
 	}
 	var table *[][]string
@@ -128,12 +128,10 @@ func (s *VtbIfrs) Import(ctx context.Context, conn *sql.DB) (count int64, err er
 		if err != nil {
 			return count, err
 		}
-		if res, err := conn.ExecContext(ctx, vtbIfrsDataInsert, row[0], date, row[2]); err != nil {
+		if err = conn.Exec(ctx, vtbIfrsDataInsert, row[0], date, row[2]); err != nil {
 			return count, err
-		} else {
-			rows, _ := res.RowsAffected()
-			count += rows
 		}
+		count++
 	}
 	return count, nil
 }
