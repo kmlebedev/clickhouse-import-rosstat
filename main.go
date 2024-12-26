@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"github.com/ClickHouse/clickhouse-go/v2"
-	clickhouse_tests_std "github.com/ClickHouse/clickhouse-go/v2/tests/std"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/bank"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/cbr"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
@@ -13,12 +12,20 @@ import (
 	"os"
 )
 
+var (
+	ctx = context.Background()
+)
+
 func main() {
-	conn, err := clickhouse_tests_std.GetOpenDBConnection("rosstat", clickhouse.Native, nil, nil, nil)
+	clickhouseOptions, _ := clickhouse.ParseDSN(os.Getenv("CLICKHOUSE_URL"))
+	conn, err := clickhouse.Open(clickhouseOptions)
 	if err != nil {
 		log.Fatal(err)
 	}
-	ctx := clickhouse.Context(context.Background(), clickhouse.WithStdAsync(false))
+	if err = conn.Ping(ctx); err != nil {
+		log.Fatal(err)
+	}
+	log.Infof("Connected to clickhouse")
 	envStat := os.Getenv("CLICKHOUSE_IMPORT_STAT")
 	for _, stat := range chimport.Stats {
 		if envStat != "" && stat.Name() != envStat {

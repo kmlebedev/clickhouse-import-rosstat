@@ -2,7 +2,7 @@ package cbr
 
 import (
 	"context"
-	"database/sql"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
@@ -88,8 +88,8 @@ func (s *HouseholdsBMesStat) export() (table *[][]string, err error) {
 	return table, nil
 }
 
-func (s *HouseholdsBMesStat) Import(ctx context.Context, conn *sql.DB) (count int64, err error) {
-	if _, err := conn.Exec(householdsBMesDdl); err != nil {
+func (s *HouseholdsBMesStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+	if err = conn.Exec(ctx, householdsBMesDdl); err != nil {
 		return count, err
 	}
 	var table *[][]string
@@ -102,12 +102,10 @@ func (s *HouseholdsBMesStat) Import(ctx context.Context, conn *sql.DB) (count in
 		if err != nil {
 			return count, err
 		}
-		if res, err := conn.ExecContext(ctx, householdsBMesInsert, row[0], date, row[2]); err != nil {
+		if err = conn.Exec(ctx, householdsBMesInsert, row[0], date, row[2]); err != nil {
 			return count, err
-		} else {
-			rows, _ := res.RowsAffected()
-			count += rows
 		}
+		count++
 	}
 	return count, nil
 }

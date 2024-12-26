@@ -2,8 +2,8 @@ package rosstat
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
@@ -75,8 +75,8 @@ func (s *IpcMesStat) export() (table *[][]string, err error) {
 	return table, nil
 }
 
-func (s *IpcMesStat) Import(ctx context.Context, conn *sql.DB) (count int64, err error) {
-	if _, err := conn.Exec(ipcMesDdl); err != nil {
+func (s *IpcMesStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+	if err = conn.Exec(ctx, ipcMesDdl); err != nil {
 		return count, err
 	}
 	var table *[][]string
@@ -89,12 +89,10 @@ func (s *IpcMesStat) Import(ctx context.Context, conn *sql.DB) (count int64, err
 		if err != nil {
 			return count, err
 		}
-		if res, err := conn.ExecContext(ctx, ipcMesInsert, row[0], mes, row[3]); err != nil {
+		if err = conn.Exec(ctx, ipcMesInsert, row[0], mes, row[3]); err != nil {
 			return count, err
-		} else {
-			rows, _ := res.RowsAffected()
-			count += rows
 		}
+		count++
 	}
 	return count, nil
 }

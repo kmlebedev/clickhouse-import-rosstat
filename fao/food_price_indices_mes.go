@@ -2,8 +2,8 @@ package rosstat
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
@@ -75,10 +75,10 @@ func (s *FaoFoodPriceStat) export() (table *[][]string, err error) {
 	return table, nil
 }
 
-func (s *FaoFoodPriceStat) Import(ctx context.Context, conn *sql.DB) (count int64, err error) {
+func (s *FaoFoodPriceStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
 
 	for _, sheet := range faoFoodPriceSheet {
-		if _, err := conn.Exec(fmt.Sprintf(faoFoodPriceDdl, sheet)); err != nil {
+		if err = conn.Exec(ctx, fmt.Sprintf(faoFoodPriceDdl, sheet)); err != nil {
 			return count, err
 		}
 	}
@@ -87,18 +87,14 @@ func (s *FaoFoodPriceStat) Import(ctx context.Context, conn *sql.DB) (count int6
 		return count, err
 	}
 	for _, row := range *table {
-		// Calling Parse() method with its parameters
-
 		mes, err := time.Parse(faoFoodPriceTimeLayout, row[2])
 		if err != nil {
 			return count, err
 		}
-		if res, err := conn.ExecContext(ctx, fmt.Sprintf(faoFoodPriceInsert, row[0]), row[1], mes, row[3]); err != nil {
+		if err = conn.Exec(ctx, fmt.Sprintf(faoFoodPriceInsert, row[0]), row[1], mes, row[3]); err != nil {
 			return count, err
-		} else {
-			rows, _ := res.RowsAffected()
-			count += rows
 		}
+		count++
 	}
 	return count, nil
 }
