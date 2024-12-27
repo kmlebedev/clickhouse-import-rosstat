@@ -3,9 +3,9 @@ package main
 import (
 	"bytes"
 	"database/sql"
-	"github.com/360EntSecGroup-Skylar/excelize/v2"
 	"github.com/gocolly/colly/v2"
 	log "github.com/sirupsen/logrus"
+	"github.com/xuri/excelize/v2"
 	"io"
 	"net/http"
 	"strconv"

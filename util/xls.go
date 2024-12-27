@@ -50,7 +50,7 @@ var (
 	randomUA    = userAgents[randomIndex]
 )
 
-func GetXlsx(url string) (xlsx *excelize.File, err error) {
+func GetFile(url string) (io.ReadCloser, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -67,7 +67,14 @@ func GetXlsx(url string) (xlsx *excelize.File, err error) {
 	if len(body) == 0 {
 		return nil, fmt.Errorf(("Body size is empty"))
 	}
-	reader := bytes.NewReader(body)
+	return io.NopCloser(bytes.NewReader(body)), nil
+}
+
+func GetXlsx(url string) (xlsx *excelize.File, err error) {
+	reader, err := GetFile(url)
+	if err != nil {
+		return nil, err
+	}
 	if xlsx, err = excelize.OpenReader(reader); err != nil {
 		return nil, fmt.Errorf("excelize %v", err)
 	}
@@ -76,15 +83,10 @@ func GetXlsx(url string) (xlsx *excelize.File, err error) {
 }
 
 func GetXls(url string) (xlsx *excelize.File, err error) {
-	req, err := http.NewRequest("GET", url, nil)
-	req.Header.Set("User-Agent", randomUA)
-	resp, err := httpClient.Do(req)
+	reader, err := GetFile(url)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	reader := bytes.NewReader(body)
 	if xlsx, err = excelize.OpenReader(reader); err != nil {
 		return nil, fmt.Errorf("excelize %v", err)
 	}
