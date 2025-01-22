@@ -59,7 +59,7 @@ func (s *LoansToCorporationsStat) export() (table *[][]string, err error) {
 		if fieldFound == 0 {
 			continue
 		}
-		if len(row) < 2 {
+		if len(row) < 3 {
 			break
 		}
 		if strings.TrimSpace(row[2]) == "" || strings.TrimSpace(row[2]) == "0" {

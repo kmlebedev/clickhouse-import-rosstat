@@ -42,6 +42,7 @@ var (
 		"financial-results/ifrs-financial-results/RUS-vtb-group-ifrs-as-of-31-July-2024.xlsx",
 		"financial-results/ifrs-financial-results/RUS-vtb-group-ifrs-as-of-31-August-2024.xlsx",
 		"statements/results/rus-vtb-group-ifrs-as-of-31-october-2024.xlsx",
+		"statements/results/rus-vtb-group-ifrs-as-of-30-november-2024.xlsx",
 		// "Financial_data_supplement_3Q2024_RUS.xls",
 		// "Financial_data_supplement_2Q2024_RUS_30072024.xls",
 	}
