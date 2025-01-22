@@ -17,7 +17,7 @@ const (
 	// Ипотека Динамика ставок предложения топ-20 ипотечных банков https://xn--d1aqf.xn--p1ai/analytics/mortgage/
 	// https://дом.рф/upload/iblock/696/wahb4njnwdekf02vrz6eq34d2zfrcsq0.xlsx
 	domrfAnalyticsUrl       = "https://xn--d1aqf.xn--p1ai/upload/iblock"
-	domrfMortgageXlsDataUrl = domrfAnalyticsUrl + "/696/wahb4njnwdekf02vrz6eq34d2zfrcsq0.xlsx"
+	domrfMortgageXlsDataUrl = domrfAnalyticsUrl + "/08d/2jy54gufk5qz2ulh02w9r318jrnniod2.xlsx"
 	domrfMortgageTable      = "domrf_mortgage"
 	domrfMortgageDdl        = `CREATE TABLE IF NOT EXISTS ` + domrfMortgageTable + ` (
 			  name LowCardinality(String)

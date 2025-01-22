@@ -14,7 +14,8 @@ import (
 )
 
 const (
-	// Потребительские цены https://rosstat.gov.ru/statistics/price https://rosstat.gov.ru/storage/mediabank/nedel_ipc.xlsx
+	// Потребительские цены https://rosstat.gov.ru/statistics/price
+	// https://rosstat.gov.ru/storage/mediabank/nedel_ipc.xlsx
 	// ipcWeeksXlsDataUrl = rosstatUrl + "/nedel_ipc.xlsx"
 	ipcWeeksXlsDataUrl = rosstatUrl + "/nedel_ipc.xlsx"
 	ipcWeeksTable      = "ipc_weeks"
