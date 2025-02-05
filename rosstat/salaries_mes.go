@@ -14,7 +14,7 @@ import (
 
 const (
 	// Рынок труда, занятость и заработная плата https://rosstat.gov.ru/labor_market_employment_salaries
-	salariesMesXlsDataUrl = rosstatUrl + "/tab1-zpl_09-2024.xlsx"
+	salariesMesXlsDataUrl = rosstatUrl + "/tab1-zpl_10-2024.xlsx"
 	salariesMesTable      = "salaries_mes"
 	salariesMesDdl        = `CREATE TABLE IF NOT EXISTS ` + salariesMesTable + ` (
 			  name LowCardinality(String)
