@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	// Даты публикации ежемесячных сводок в 2024 году:
-	// 5 января, 2 февраля, 8 марта, 5 апреля, 3 мая, 7 июня, 5 июля, 2 августа, 6 сентября, 4 октября, 8 ноября, 6 декабря.
+	// Даты публикации ежемесячных сводок в 2025 году:
+	// 3 января, 7 февраля, 7 марта, 4 апреля, 2 мая, 6 июня, 4 июля, 8 августа, 5 сентября, 3 октября, 7 ноября, 5 декабря.
 	// https://www.fao.org/worldfoodsituation/foodpricesindex/ru/
 	// Индекса продовольственных цен ФАО https://www.fao.org/docs/worldfoodsituationlibraries/default-document-library/food_price_indices_data_nov24.xls
 	faoUrl                 = "https://www.fao.org/docs/worldfoodsituationlibraries/default-document-library"
