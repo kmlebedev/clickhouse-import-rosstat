@@ -109,5 +109,7 @@ func GetCSV(url string) (records [][]string, err error) {
 		return nil, err
 	}
 	reader := bytes.NewBufferString(strings.ReplaceAll(string(body), "\r", "\n"))
-	return csv.NewReader(reader).ReadAll()
+	csvReader := csv.NewReader(reader)
+	csvReader.Comma = ';'
+	return csvReader.ReadAll()
 }
