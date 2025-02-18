@@ -12,10 +12,8 @@ import (
 )
 
 const (
-	// Даты публикации ежемесячных сводок в 2025 году:
-	// 3 января, 7 февраля, 7 марта, 4 апреля, 2 мая, 6 июня, 4 июля, 8 августа, 5 сентября, 3 октября, 7 ноября, 5 декабря.
-	// https://www.fao.org/worldfoodsituation/foodpricesindex/ru/
-	// Индекса продовольственных цен ФАО https://www.fao.org/docs/worldfoodsituationlibraries/default-document-library/food_price_indices_data_nov24.xls
+	// https://sberindex.ru/ru/dashboards/consumper-spending-index-sa
+	// https://sberindex.ru/proxy/services/node-services/v1/source/ru/csv/consumper-spending-index-sa?representation=1&timeDivision=2
 	sberCSIUrl     = "https://sberindex.ru/proxy/services/node-services/v1"
 	sberCSIDataUrl = sberCSIUrl + "/source/ru/csv/consumper-spending-index-sa?representation=1&timeDivision=2"
 	sberCSITable   = "sber_consumper_spending_index"
@@ -55,6 +53,7 @@ func (s *SberCSI) Import(ctx context.Context, conn driver.Conn) (count int64, er
 		return count, fmt.Errorf("export %v", err)
 	}
 	rows := *table
+	batch, err := conn.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s", sberCSITable))
 	for _, row := range rows[1:] {
 		day, err := time.Parse(sberCSITimeLayout, row[0])
 		if err != nil {
@@ -70,10 +69,13 @@ func (s *SberCSI) Import(ctx context.Context, conn driver.Conn) (count int64, er
 			return count, err
 		}
 		fmt.Printf("name %s, date %v, idx: %v\n", name, day, index)
-		if err = conn.Exec(ctx, sberCSIInsert, name, day, index); err != nil {
+		if err = batch.Append(name, day, index); err != nil {
 			return count, err
 		}
 		count++
+	}
+	if err = batch.Send(); err != nil {
+		return count, err
 	}
 	return count, nil
 }

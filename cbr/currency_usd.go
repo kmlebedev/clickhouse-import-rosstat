@@ -46,7 +46,7 @@ func (s *cbrCurrencyUSD) export() (table *[][]string, err error) {
 		fmt.Printf("date %s price %s\n", date, price)
 		*table = append(*table, []string{date, price})
 	})
-	if err = c.Visit(fmt.Sprintf(cbrCurrencyUSDUrl, time.Now().Format("01-02-2006"))); err != nil {
+	if err = c.Visit(fmt.Sprintf(cbrCurrencyUSDUrl, time.Now().AddDate(0, 0, 1).Format("01-02-2006"))); err != nil {
 		return nil, err
 	}
 	return table, nil
