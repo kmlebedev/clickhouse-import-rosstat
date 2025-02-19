@@ -39,8 +39,9 @@ func ruoniaImport(xlsx *excelize.File, batch driver.Batch) error {
 
 func init() {
 	ruania := hdBase{
-		name:    "cbr_ruania",
-		dataUrl: "https://www.cbr.ru/Queries/UniDbQuery/DownloadExcel/14315?Posted=True&FromDate=01/01/2019&ToDate=%s",
+		name:              "cbr_ruania",
+		dataUrl:           "https://www.cbr.ru/Queries/UniDbQuery/DownloadExcel/14315?Posted=True&FromDate=01/01/2019&ToDate=%s",
+		dataUrlTimeFormat: true,
 		createTable: `CREATE TABLE IF NOT EXISTS %s (
 			  date Date
 			, ruo Float32
