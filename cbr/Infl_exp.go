@@ -10,7 +10,10 @@ import (
 	"time"
 )
 
-// https://www.cbr.ru/analytics/dkp/inflationary_expectations/
+// Todo update data source https://www.cbr.ru/analytics/dkp/inflationary_expectations/
+// Статистические данные
+const inflExpDataUrl = "https://www.cbr.ru/Collection/Collection/File/57095/Infl_exp_25-07.xlsx"
+
 func inflExpImport(xlsx *excelize.File, batch driver.Batch) error {
 	rows, err := xlsx.GetRows("Данные для графиков")
 	if err != nil {
@@ -42,7 +45,7 @@ func inflExpImport(xlsx *excelize.File, batch driver.Batch) error {
 				if err != nil {
 					return err
 				}
-				if err = batch.Append(row[0], date.AddDate(0, 0, 24), value); err != nil {
+				if err = batch.Append(row[0], date.AddDate(0, 0, 13), value); err != nil {
 					return err
 				}
 			}
@@ -53,10 +56,11 @@ func inflExpImport(xlsx *excelize.File, batch driver.Batch) error {
 	return nil
 }
 
+// https://www.cbr.ru/Collection/Collection/File/55275/Infl_exp_25-03.xlsx
 func init() {
 	inflExp := hdBase{
 		name:    "cbr_infl_exp",
-		dataUrl: "https://www.cbr.ru/Collection/Collection/File/55069/Infl_exp_25-01.xlsx",
+		dataUrl: inflExpDataUrl,
 		createTable: `CREATE TABLE IF NOT EXISTS %s (
               name LowCardinality(String)
 			, date Date

@@ -6,13 +6,18 @@ import (
 	"github.com/xuri/excelize/v2"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 )
+
+// Todo update data source https://www.cbr.ru/statistics/ddkp/aipd/
+// Показатели сезонно сглаженной динамики потребительских цен
+const indicatorsCpdDataUrl = "https://www.cbr.ru/Content/Document/File/108632/indicators_cpd.xlsx"
 
 func init() {
 	indicatorsCpd := hdBase{
 		name:    "cbr_indicators_cpd",
-		dataUrl: "https://www.cbr.ru/Content/Document/File/108632/indicators_cpd.xlsx",
+		dataUrl: indicatorsCpdDataUrl,
 		createTable: `CREATE TABLE IF NOT EXISTS %s (
               name LowCardinality(String)
 			, date Date
@@ -31,7 +36,7 @@ func indicatorsCpdImport(xlsx *excelize.File, batch driver.Batch) error {
 	}
 	fileds := []string{"Все товары и услуги", "Базовый ИПЦ"}
 	for i, row := range rows {
-		if len(row) == 0 || !slices.Contains(fileds, row[1]) {
+		if len(row) < 1 || !slices.Contains(fileds, strings.TrimSpace(row[0])) {
 			continue
 		}
 		for j, rowCol := range rows[i][2:] {
@@ -44,7 +49,7 @@ func indicatorsCpdImport(xlsx *excelize.File, batch driver.Batch) error {
 			if err != nil {
 				return err
 			}
-			if err = batch.Append(row[1], date.AddDate(0, 0, 24), value); err != nil {
+			if err = batch.Append(row[0], date.AddDate(0, 0, -1), value); err != nil {
 				return err
 			}
 		}

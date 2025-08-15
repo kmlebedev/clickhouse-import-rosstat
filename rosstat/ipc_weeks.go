@@ -14,10 +14,10 @@ import (
 )
 
 const (
-	// Потребительские цены https://rosstat.gov.ru/statistics/price
-	// https://rosstat.gov.ru/storage/mediabank/nedel_ipc.xlsx
+	// ToDo update data source https://rosstat.gov.ru/statistics/price
+	// Еженедельные индексы потребительских цен (тарифов) на отдельные товары и услуги по Российской
 	// ipcWeeksXlsDataUrl = rosstatUrl + "/nedel_ipc.xlsx"
-	ipcWeeksXlsDataUrl = rosstatUrl + "/nedel_Ipc.xlsx"
+	ipcWeeksXlsDataUrl = rosstatUrl + "/Nedel_ipc.xlsx"
 	ipcWeeksTable      = "ipc_weeks"
 	ipcWeeksDdl        = `CREATE TABLE IF NOT EXISTS ` + ipcWeeksTable + ` (
 			  name LowCardinality(String)
