@@ -1,4 +1,4 @@
-package main
+package financial
 
 import (
 	"database/sql"
@@ -151,13 +151,8 @@ func loadAllInvestingData(conn *sql.DB) {
 	isLoadedInvestingData = true
 }
 
-func main() {
-	if lvl, err := log.ParseLevel(os.Getenv("LOG_LEVEL")); err == nil {
-		log.SetLevel(lvl)
-	}
+func loadAllData(conn *sql.DB) {
 	ticker := os.Getenv("TICKER")
-	conn := initDB()
-	log.Debugf("connected %+v", conn.Stats())
 	if ticker == "MOEX" || ticker == "ALL" {
 		var m moexDataBook
 		var t tradingVolumes

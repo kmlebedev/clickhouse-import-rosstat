@@ -1,8 +1,7 @@
-package main
+package financial
 
 import (
 	"database/sql"
-	"github.com/ClickHouse/clickhouse-go"
 	log "github.com/sirupsen/logrus"
 	"os"
 	"time"
@@ -277,9 +276,9 @@ func initDB() *sql.DB {
 			log.Fatal(err)
 		}
 		if err := connect.Ping(); err != nil {
-			if exception, ok := err.(*clickhouse.Exception); ok {
-				log.Infof("[%d] %s \n%s\n", exception.Code, exception.Message, exception.StackTrace)
-			}
+			//if exception, ok := err.(*clickhouse.Exception); ok {
+			//	log.Infof("[%d] %s \n%s\n", exception.Code, exception.Message, exception.StackTrace)
+			//}
 			log.Warn(err)
 		} else {
 			break

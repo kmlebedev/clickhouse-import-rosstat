@@ -8,16 +8,17 @@ import (
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
 	"slices"
+	"strings"
 	"time"
 )
 
 const (
-	// Даты публикации ежемесячных сводок в 2024 году:
-	// 5 января, 2 февраля, 8 марта, 5 апреля, 3 мая, 7 июня, 5 июля, 2 августа, 6 сентября, 4 октября, 8 ноября, 6 декабря.
-	// https://www.fao.org/worldfoodsituation/foodpricesindex/ru/
-	// Индекса продовольственных цен ФАО https://www.fao.org/docs/worldfoodsituationlibraries/default-document-library/food_price_indices_data_nov24.xls
+	// Даты публикации ежемесячных сводок в 2025 году:
+	// 3 января, 7 февраля, 7 марта, 4 апреля, 2 мая, 6 июня, 4 июля, 8 августа, 5 сентября, 3 октября, 7 ноября, 5 декабря.
+	// ToDo update data source https://www.fao.org/worldfoodsituation/foodpricesindex/ru/
+	// Индекса продовольственных цен ФАО https://www.fao.org/docs/worldfoodsituationlibraries/default-document-library/food_price_indices_data_f.csv
 	faoUrl                 = "https://www.fao.org/docs/worldfoodsituationlibraries/default-document-library"
-	faoFoodPriceCSVDataUrl = faoUrl + "/food_price_indices_data_d.csv"
+	faoFoodPriceCSVDataUrl = faoUrl + "/food_price_indices_data_aug25.csv"
 	faoFoodPriceTable      = "fao_food_price"
 	faoFoodPriceDdl        = `CREATE TABLE IF NOT EXISTS ` + faoFoodPriceTable + `_%s` + ` (
 			  name LowCardinality(String)
@@ -67,9 +68,15 @@ func (s *FaoFoodPriceStat) export() (table *[][]string, err error) {
 		return nil, err
 	}
 	table = new([][]string)
+	fileds := strings.Split(records[2][0], ",")
 	for _, row := range records[4:] {
-		for i, cell := range row[1:6] {
-			*table = append(*table, []string{"Indices_monthly", records[2][i+1], row[0], cell})
+		cols := strings.Split(row[0], ",")
+		if len(cols) == 1 {
+			continue
+		}
+		for i, cell := range cols[1:6] {
+			//fmt.Printf("row field %v coll %v cell %v\n", fileds[i+1], cols[0], cell)
+			*table = append(*table, []string{"Indices_monthly", fileds[i+1], cols[0], cell})
 		}
 	}
 	return table, nil

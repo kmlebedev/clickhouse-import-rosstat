@@ -16,9 +16,10 @@ import (
 
 const (
 	// Денежно-кредитная и финансовая статистика https://www.cbr.ru/statistics/macro_itm/dkfs/
-	// Сезонно скорректированный ряд денежной массы (M2)
+	// Сезонно скорректированные ряды денежных агрегатов
+	// https://www.cbr.ru/vfs/statistics/credit_statistics/monetary_agg_SA.xlsx
 	// https://www.cbr.ru/vfs/statistics/credit_statistics/M2-M2_SA.xlsx
-	cbrM2XlsDataUrl = cbrStatsUrl + "/credit_statistics/M2-M2_SA.xlsx"
+	cbrM2XlsDataUrl = cbrStatsUrl + "/credit_statistics/monetary_agg_SA.xlsx"
 	cbrM2Table      = "cbr_m2"
 	cbrM2Ddl        = `CREATE TABLE IF NOT EXISTS ` + cbrM2Table + ` (
 			  name LowCardinality(String)
@@ -27,8 +28,8 @@ const (
 		) ENGINE = ReplacingMergeTree ORDER BY (name, date);
 	`
 	cbrM2Insert     = "INSERT INTO " + cbrM2Table + " VALUES (?, ?, ?)"
-	cbrM2Field      = "Date"
-	cbrM2TimeLayout = "01-02-06"
+	cbrM2Field      = "Денежные агрегаты"
+	cbrM2TimeLayout = "02/01/06"
 )
 
 type cbrM2Stat struct {
@@ -46,45 +47,27 @@ func (s *cbrM2Stat) export() (table *[][]string, err error) {
 	defer xlsx.Close()
 	table = new([][]string)
 	var rows [][]string
-	if rows, err = xlsx.GetRows("M2 data"); err != nil {
+	if rows, err = xlsx.GetRows("Денежные агрегаты"); err != nil {
 		return nil, err
 	}
-	fieldFound := 0
 	// Строки с годами
-	for i, row := range rows {
+	for _, row := range rows[2:] {
 		if len(row) == 0 {
 			continue
 		}
-		if strings.TrimSpace(row[0]) == cbrM2Field {
-			fieldFound = i
-			continue
-		}
-		if fieldFound == 0 {
-			continue
-		}
-		if len(row) < 1 {
+		if len(row) < 22 {
 			break
 		}
-		if strings.TrimSpace(row[1]) == "" || strings.TrimSpace(row[1]) == "0" {
+		if strings.TrimSpace(row[22]) == "" || strings.TrimSpace(row[22]) == "0" {
 			continue
 		}
-		// Колонки с месяцами и пропуском кварталов
-		for j, cell := range row[1:] {
-			if cell == "" {
-				continue
-			}
-			if j+1 >= len(rows[fieldFound]) {
-				break
-			}
-			name := strings.TrimSpace(rows[fieldFound][j+1])
-			date := strings.TrimSpace(row[0])
-			balance := strings.ReplaceAll(strings.TrimSpace(cell), ",", "")
-			fmt.Printf("name %s date %v cell %s\n", name, date, balance)
-			if _, err = strconv.ParseFloat(balance, 32); err != nil {
-				return nil, err
-			}
-			*table = append(*table, []string{name, date, balance})
+		date := strings.TrimSpace(row[0])
+		balance := strings.ReplaceAll(strings.TrimSpace(row[22]), ",", "")
+		fmt.Printf("name %s date %v cell %s\n", rows[0][22], date, balance)
+		if _, err = strconv.ParseFloat(balance, 32); err != nil {
+			return nil, err
 		}
+		*table = append(*table, []string{rows[0][22], date, balance})
 	}
 
 	return table, nil

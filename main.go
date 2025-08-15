@@ -7,9 +7,12 @@ import (
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/cbr"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/fao"
+	_ "github.com/kmlebedev/clickhouse-import-rosstat/financial"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/rosstat"
 	log "github.com/sirupsen/logrus"
 	"os"
+	"slices"
+	"strings"
 )
 
 var (
@@ -17,6 +20,9 @@ var (
 )
 
 func main() {
+	if lvl, err := log.ParseLevel(os.Getenv("LOG_LEVEL")); err == nil {
+		log.SetLevel(lvl)
+	}
 	clickhouseOptions, _ := clickhouse.ParseDSN(os.Getenv("CLICKHOUSE_URL"))
 	conn, err := clickhouse.Open(clickhouseOptions)
 	if err != nil {
@@ -26,9 +32,9 @@ func main() {
 		log.Fatal(err)
 	}
 	log.Infof("Connected to clickhouse")
-	envStat := os.Getenv("CLICKHOUSE_IMPORT_STAT")
+	envStats := strings.Split(os.Getenv("CLICKHOUSE_IMPORT_STAT"), ",")
 	for _, stat := range chimport.Stats {
-		if envStat != "" && stat.Name() != envStat {
+		if len(envStats) > 0 && !slices.Contains(envStats, stat.Name()) {
 			continue
 		}
 		var rows int64

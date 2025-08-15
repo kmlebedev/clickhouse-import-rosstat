@@ -1,4 +1,4 @@
-package main
+package financial
 
 import (
 	"database/sql"
@@ -60,6 +60,7 @@ func init() {
 		"Current assets": "financial_ratios",
 	}
 }
+
 func getOPQuarters(rows *[][]string, quarterRowsName string) (map[int]string, []int) {
 	quarters := map[int]string{}
 	quarterIdxs := []int{}
