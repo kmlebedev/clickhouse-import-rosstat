@@ -12,9 +12,9 @@ import (
 )
 
 const (
-	// Потребительские цены https://rosstat.gov.ru/statistics/price
-	// https://rosstat.gov.ru/storage/mediabank/ipc_mes_10-2024.xlsx
-	ipcMesXlsDataUrl = rosstatUrl + "/ipc_mes_12-2024.xlsx"
+	// ToDo update data source Потребительские цены https://rosstat.gov.ru/statistics/price
+	// Индексы потребительских цен на товары и услуги по Российской Федерации, месяцы (с 1991 г.)
+	ipcMesXlsDataUrl = rosstatUrl + "/ipc_mes_07-2025.xlsx"
 	ipcMesTable      = "ipc_mes"
 	ipcMesDdl        = `CREATE TABLE IF NOT EXISTS ` + ipcMesTable + ` (
 			  name LowCardinality(String)
@@ -89,7 +89,7 @@ func (s *IpcMesStat) Import(ctx context.Context, conn driver.Conn) (count int64,
 		if err != nil {
 			return count, err
 		}
-		if err = conn.Exec(ctx, ipcMesInsert, row[0], mes, row[3]); err != nil {
+		if err = conn.Exec(ctx, ipcMesInsert, row[0], mes.AddDate(0, 1, 0), row[3]); err != nil {
 			return count, err
 		}
 		count++

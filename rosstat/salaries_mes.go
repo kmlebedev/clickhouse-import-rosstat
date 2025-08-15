@@ -13,8 +13,9 @@ import (
 )
 
 const (
-	// Рынок труда, занятость и заработная плата https://rosstat.gov.ru/labor_market_employment_salaries
-	salariesMesXlsDataUrl = rosstatUrl + "/tab1-zpl_10-2024.xlsx"
+	// ToDo update data source https://rosstat.gov.ru/labor_market_employment_salaries Рынок труда, занятость и заработная плата
+	// Среднемесячная номинальная начисленная заработная плата работников в целом по экономике Российской Федерации в 1991-2025 гг.
+	salariesMesXlsDataUrl = rosstatUrl + "/tab1-zpl_05-2025.xlsx"
 	salariesMesTable      = "salaries_mes"
 	salariesMesDdl        = `CREATE TABLE IF NOT EXISTS ` + salariesMesTable + ` (
 			  name LowCardinality(String)
@@ -95,7 +96,7 @@ func (s *SalariesMesStat) Import(ctx context.Context, conn driver.Conn) (count i
 		if err != nil {
 			return count, err
 		}
-		if err = conn.Exec(ctx, salariesMesInsert, row[0], mes, row[3]); err != nil {
+		if err = conn.Exec(ctx, salariesMesInsert, row[0], mes.AddDate(0, 1, 0), row[3]); err != nil {
 			return count, err
 		}
 		count++

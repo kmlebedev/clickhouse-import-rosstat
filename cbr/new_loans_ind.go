@@ -14,6 +14,7 @@ import (
 
 const (
 	// Сведения о размещенных и привлеченных средствах https://www.cbr.ru/statistics/bank_sector/sors/
+	// Кредиты, предоставленные физическим лицам - резидентам (региональный разрез)
 	// Общий объем кредитов, предоставленных физическим лицам-резидентам
 	// https://www.cbr.ru/vfs/statistics/BankSector/Mortgage/02_04_New_loans_ind.xlsx
 	loansToIndXlsDataUrl = cbrStatsUrl + "/BankSector/Mortgage/02_04_New_loans_ind.xlsx"
