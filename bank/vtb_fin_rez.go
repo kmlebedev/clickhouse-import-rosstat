@@ -47,6 +47,7 @@ var (
 		//"financial-results/ifrs-financial-results/financial_data_supplement_0325_rus.xls",
 		"statements/results/rus-vtb-group-ifrs-as-of-30-april-2025_.xlsx",
 		"statements/results/rus-vtb-group-ifrs-as-of-31-may-2025.xlsx",
+		"statements/results/rus-vtb-group-ifrs-as-of-31-jule-2025.xlsx",
 		//"statements/results/financial_data_supplement_0625_rus.xls",
 		// "Financial_data_supplement_3Q2024_RUS.xls",
 		// "Financial_data_supplement_2Q2024_RUS_30072024.xls",
