@@ -41,7 +41,7 @@ const (
 			, vvp Float32
 		) ENGINE = ReplacingMergeTree ORDER BY (name, date);
 	`
-	vvpKvartalDdlInsert = "INSERT INTO " + salariesMesTable + " VALUES (?, ?, ?)"
+	vvpKvartalDdlInsert = "INSERT INTO " + vvpKvartalTable + " VALUES (?, ?, ?)"
 )
 
 type vvpKvartalDdlStat struct {
