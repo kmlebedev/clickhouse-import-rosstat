@@ -12,6 +12,7 @@ type ClickHouseImport struct {
 	CreateTable string
 	DataUrl     string
 	TimeLayout  string
+	CrawFunnc   func(crawUrl string, conn driver.Conn) error
 	ImportFunc  func(xlsx *excelize.File, conn driver.Batch) error
 }
 
@@ -23,21 +24,28 @@ func (s *ClickHouseImport) Import(ctx context.Context, conn driver.Conn) (count 
 	if err = conn.Exec(ctx, fmt.Sprintf(s.CreateTable, s.TableName)); err != nil {
 		return 0, err
 	}
+	switch {
+	case s.ImportFunc != nil:
+		xlsx, err := GetXlsx(s.DataUrl)
+		if err != nil {
+			return 0, err
+		}
+		defer xlsx.Close()
+		batch, err := conn.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s", s.TableName))
+		if err != nil {
+			return count, err
+		}
+		if err = s.ImportFunc(xlsx, batch); err != nil {
+			return count, err
+		}
+		if err = batch.Send(); err != nil {
+			return count, err
+		}
+	case s.CrawFunnc != nil:
+		if err = s.CrawFunnc(s.DataUrl, conn); err != nil {
+			return count, err
+		}
+	}
 
-	xlsx, err := GetXlsx(s.DataUrl)
-	if err != nil {
-		return 0, err
-	}
-	defer xlsx.Close()
-	batch, err := conn.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s", s.TableName))
-	if err != nil {
-		return count, err
-	}
-	if err = s.ImportFunc(xlsx, batch); err != nil {
-		return count, err
-	}
-	if err = batch.Send(); err != nil {
-		return count, err
-	}
 	return count, nil
 }

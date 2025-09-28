@@ -6,6 +6,7 @@ import (
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/bank"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/cbr"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
+	_ "github.com/kmlebedev/clickhouse-import-rosstat/craw"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/fao"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/financial"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/minfin"

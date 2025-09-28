@@ -33,7 +33,7 @@ const (
 	// Национальные счета https://rosstat.gov.ru/statistics/accounts
 	// ВВП кварталы (с 1995 г.) https://rosstat.gov.ru/storage/mediabank/VVP_kvartal_s1995-2025.xlsx
 	// Валовой внутренний продукт 1) (в ценах 2021 г., млрд руб., с исключением сезонного фактора)
-	vvpKvartalXlsDataUrl = rosstatUrl + "/VVP_kvartal_s1995-2025.xlsx"
+	vvpKvartalXlsDataUrl = rosstatUrl + "/VVP_kvartal_s_1995-2025.xlsx"
 	vvpKvartalTable      = "vvp_kvartal"
 	vvpKvartalDdl        = `CREATE TABLE IF NOT EXISTS ` + vvpKvartalTable + ` (
 			  name LowCardinality(String)
@@ -65,11 +65,11 @@ func (s *vvpKvartalDdlStat) export() (table *[]vvpKvartal, err error) {
 	table = &[]vvpKvartal{}
 	var rows [][]string
 	// ВВП (в ценах 2021 г., млрд руб., с исключением сезонного фактора)
-	for _, sheet := range []string{"2", "12", "14"} {
+	for _, sheet := range []string{"2", "9", "10", "12", "14"} {
 		if rows, err = xlsx.GetRows(sheet); err != nil {
 			return nil, err
 		}
-		tableName := strings.Trim(strings.Split(rows[1][1], ")")[0], " 1")
+		tableName := fmt.Sprintf("%s %s", sheet, strings.Trim(strings.Split(rows[1][1], ")")[0], " 1"))
 		fmt.Printf("table name %s\n", tableName)
 		// Строки с годами(2011) 2 и кварталами(I квартал) 3
 		// Колонки со ВВП
@@ -88,7 +88,7 @@ func (s *vvpKvartalDdlStat) export() (table *[]vvpKvartal, err error) {
 			if vvp, err = strconv.ParseFloat(vvpStr, 32); err != nil {
 				return nil, err
 			}
-			//fmt.Printf("%s kvartal %v+ cell %v\n", strings.Split(rows[3][i+1], " ")[0], getQuarterDate(int(year), strings.Split(rows[3][i+1], " ")[0]), vvp)
+			fmt.Printf("%s kvartal %v+ cell %v\n", strings.Split(rows[3][i+1], " ")[0], getQuarterDate(int(year), strings.Split(rows[3][i+1], " ")[0]), vvp)
 			*table = append(*table, vvpKvartal{
 				tableName,
 				getQuarterDate(int(year), strings.Split(rows[3][i+1], " ")[0]),
