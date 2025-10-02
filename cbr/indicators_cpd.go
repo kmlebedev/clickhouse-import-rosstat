@@ -1,8 +1,10 @@
 package cbr
 
 import (
+	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
+	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
 	"slices"
 	"strconv"
@@ -15,15 +17,15 @@ import (
 const indicatorsCpdDataUrl = "https://www.cbr.ru/Content/Document/File/108632/indicators_cpd.xlsx"
 
 func init() {
-	indicatorsCpd := hdBase{
-		name:    "cbr_indicators_cpd",
-		dataUrl: indicatorsCpdDataUrl,
-		createTable: `CREATE TABLE IF NOT EXISTS %s (
+	indicatorsCpd := util.HdBase{
+		TableName: "cbr_indicators_cpd",
+		DataUrl:   indicatorsCpdDataUrl,
+		CreateTable: `CREATE TABLE IF NOT EXISTS %s (
               name LowCardinality(String)
 			, date Date
 			, value Float32
 		) ENGINE = ReplacingMergeTree ORDER BY (name, date);`,
-		importFunc: indicatorsCpdImport,
+		ImportFunc: indicatorsCpdImport,
 	}
 	chimport.Stats = append(chimport.Stats, &indicatorsCpd)
 }
@@ -40,7 +42,7 @@ func indicatorsCpdImport(xlsx *excelize.File, batch driver.Batch) error {
 			continue
 		}
 		for j, rowCol := range rows[i][2:] {
-			//fmt.Printf("name: %s rowCol: %+v, date: %s\n", row[1], rowCol, rows[0][j+2])
+			fmt.Printf("name: %s rowCol: %+v, date: %s\n", row[0], rowCol, rows[0][j+2])
 			date, err := time.Parse("01/06", rows[0][j+2])
 			if err != nil {
 				return err

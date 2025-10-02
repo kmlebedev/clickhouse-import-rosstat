@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
+	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
 	"strconv"
 	"time"
@@ -38,11 +39,11 @@ func ruoniaImport(xlsx *excelize.File, batch driver.Batch) error {
 }
 
 func init() {
-	ruania := hdBase{
-		name:              "cbr_ruania",
-		dataUrl:           "https://www.cbr.ru/Queries/UniDbQuery/DownloadExcel/14315?Posted=True&FromDate=01/01/2019&ToDate=%s",
-		dataUrlTimeFormat: true,
-		createTable: `CREATE TABLE IF NOT EXISTS %s (
+	ruania := util.HdBase{
+		TableName:         "cbr_ruania",
+		DataUrl:           "https://www.cbr.ru/Queries/UniDbQuery/DownloadExcel/14315?Posted=True&FromDate=01/01/2019&ToDate=%s",
+		DataUrlTimeFormat: true,
+		CreateTable: `CREATE TABLE IF NOT EXISTS %s (
 			  date Date
 			, ruo Float32
             , vol Float32
@@ -52,7 +53,7 @@ func init() {
             , percentile25 Float32
             , Percentile75 Float32
 		) ENGINE = ReplacingMergeTree ORDER BY (date);`,
-		importFunc: ruoniaImport,
+		ImportFunc: ruoniaImport,
 	}
 	chimport.Stats = append(chimport.Stats, &ruania)
 }

@@ -18,7 +18,7 @@ const (
 	// ToDo update data source https://www.fao.org/worldfoodsituation/foodpricesindex/ru/
 	// Индекса продовольственных цен ФАО https://www.fao.org/docs/worldfoodsituationlibraries/default-document-library/food_price_indices_data_f.csv
 	faoUrl                 = "https://www.fao.org/docs/worldfoodsituationlibraries/default-document-library"
-	faoFoodPriceCSVDataUrl = faoUrl + "/food_price_indices_data_aug25.csv"
+	faoFoodPriceCSVDataUrl = faoUrl + "/food_price_indices_data_sep25.csv"
 	faoFoodPriceTable      = "fao_food_price"
 	faoFoodPriceDdl        = `CREATE TABLE IF NOT EXISTS ` + faoFoodPriceTable + `_%s` + ` (
 			  name LowCardinality(String)
@@ -98,7 +98,7 @@ func (s *FaoFoodPriceStat) Import(ctx context.Context, conn driver.Conn) (count 
 		if err != nil {
 			return count, err
 		}
-		if err = conn.Exec(ctx, fmt.Sprintf(faoFoodPriceInsert, row[0]), row[1], mes, row[3]); err != nil {
+		if err = conn.Exec(ctx, fmt.Sprintf(faoFoodPriceInsert, row[0]), row[1], mes.AddDate(0, 1, 0), row[3]); err != nil {
 			return count, err
 		}
 		count++

@@ -18,7 +18,7 @@ const (
 	// ToDo update data source https://xn--d1aqf.xn--p1ai/analytics/mortgage/
 	// Скачать Динамику ставок в разрезе месяцев, xlsx
 	domrfAnalyticsUrl       = "https://xn--d1aqf.xn--p1ai/upload/iblock"
-	domrfMortgageXlsDataUrl = domrfAnalyticsUrl + "/098/xfjdzfswexl56n0bbwh6s22gklnqu3a5.xlsx"
+	domrfMortgageXlsDataUrl = domrfAnalyticsUrl + "/fc6/i2q93e3khd2e7r7wpar6rl3bqjsprq15.xlsx"
 	domrfMortgageTable      = "domrf_mortgage"
 	domrfMortgageDdl        = `CREATE TABLE IF NOT EXISTS ` + domrfMortgageTable + ` (
 			  name LowCardinality(String)

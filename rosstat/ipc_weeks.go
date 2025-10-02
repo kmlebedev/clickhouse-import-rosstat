@@ -1,7 +1,9 @@
 package rosstat
 
 import (
+	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/gocolly/colly/v2"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	log "github.com/sirupsen/logrus"
@@ -16,10 +18,8 @@ import (
 const (
 	// ToDo update data source https://rosstat.gov.ru/statistics/price
 	// Еженедельные индексы потребительских цен (тарифов) на отдельные товары и услуги по Российской
-	// ipcWeeksXlsDataUrl = rosstatUrl + "/nedel_ipc.xlsx"
-	ipcWeeksXlsDataUrl = rosstatUrl + "/Nedel_ipc.xlsx"
-	ipcWeeksTable      = "ipc_weeks"
-	ipcWeeksDdl        = `CREATE TABLE IF NOT EXISTS ` + ipcWeeksTable + ` (
+	ipcWeeksTable = "ipc_weeks"
+	ipcWeeksDdl   = `CREATE TABLE IF NOT EXISTS ` + ipcWeeksTable + ` (
 			  name LowCardinality(String)
 			, date Date
 			, percent Float32
@@ -36,9 +36,29 @@ func (s *IpcWeeksStat) Name() string {
 	return ipcWeeksTable
 }
 
+func (s *IpcWeeksStat) getXlsDataUrl() (url string, err error) {
+	c := colly.NewCollector()
+	c.SetClient(util.HttpClient)
+	// body > main > section:nth-child(2) > div > div > div > div > div > div > div.col-lg-8.order-1.order-lg-1 > div > div:nth-child(3) > div > div.toggle-section__content.toggle-section__content--open > div > div > div > div:nth-child(1) > div > div.toggle-card__main > div > div > div > div:nth-child(1) > div.document-list__item-link > a
+	c.OnHTML(".row > div:nth-child(3) div.toggle-section__content.toggle-section__content--open > div > div > div > div:nth-child(1) > div > div.toggle-card__main > div > div > div > div:nth-child(1) > div.document-list__item-link > a", func(e *colly.HTMLElement) {
+		url = fmt.Sprintf("https://rosstat.gov.ru%s", e.Attr("href"))
+		log.Infof("href url %s", url)
+	})
+	if err = c.Visit("https://rosstat.gov.ru/statistics/price"); err != nil {
+		log.Errorf("Visit %v+", err)
+	}
+	c.Wait()
+	return url, nil
+}
+
 func (s *IpcWeeksStat) export() (table *[][]string, err error) {
+	var xlsDataUrl string
+	if xlsDataUrl, err = s.getXlsDataUrl(); err != nil {
+		log.Errorf("getXlsDataUrl  %v+", err)
+		return nil, err
+	}
 	var xlsx *excelize.File
-	if xlsx, err = util.GetXlsx(ipcWeeksXlsDataUrl); err != nil {
+	if xlsx, err = util.GetXlsx(xlsDataUrl); err != nil {
 		return nil, err
 	}
 	table = new([][]string)
