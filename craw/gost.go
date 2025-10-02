@@ -39,7 +39,7 @@ var gostVehicleSafetyCertificate = util.ClickHouseImport{
 		) ENGINE = ReplacingMergeTree ORDER BY (mark, type, date, certificate_number);
 	`,
 	//DataUrl: "https://www.gost.ru/portal/gost/home/activity/compliance/evaluationcompliance/AcknowledgementCorrespondence/safetycertificate018?portal:componentId=ff119059-8bd4-47fc-95f6-a70de17a4b3e&portal:isSecure=false&portal:portletMode=view&navigationalstate=JBPNS_rO0ABXdSAAdvcmRlckJ5AAAAAQAYZGF0ZW9maXNzdWVvZmNlcnRpZmljYXRlAARmcm9tAAAAAQAFMjk4MjAABW9yZGVyAAAAAQAEREVTQwAHX19FT0ZfXw**",
-	DataUrl: "https://www.gost.ru/portal/gost/home/activity/compliance/evaluationcompliance/AcknowledgementCorrespondence/safetycertificate018?portal:componentId=ff119059-8bd4-47fc-95f6-a70de17a4b3e&portal:isSecure=false&portal:portletMode=view&navigationalstate=JBPNS_rO0ABXdTAAdvcmRlckJ5AAAAAQAYZGF0ZW9maXNzdWVvZmNlcnRpZmljYXRlAARmcm9tAAAAAQAGMzIyMDQwAAVvcmRlcgAAAAEABERFU0MAB19fRU9GX18* ",
+	DataUrl: "https://www.gost.ru/portal/gost/home/activity/compliance/evaluationcompliance/AcknowledgementCorrespondence/safetycertificate018?portal:componentId=ff119059-8bd4-47fc-95f6-a70de17a4b3e&portal:isSecure=false&portal:portletMode=view&navigationalstate=JBPNS_rO0ABXdTAAdvcmRlckJ5AAAAAQAYZGF0ZW9maXNzdWVvZmNlcnRpZmljYXRlAARmcm9tAAAAAQAGMzM0ODIwAAVvcmRlcgAAAAEABERFU0MAB19fRU9GX18*",
 	CrawFunnc: func(crawUrl string, conn driver.Conn) (err error) {
 		c := colly.NewCollector(
 			colly.UserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"),

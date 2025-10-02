@@ -1,6 +1,7 @@
 package minfin
 
 import (
+	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
@@ -14,11 +15,11 @@ import (
 // Краткая ежемесячная информация об исполнении консолидированного бюджета Российской Федерации и государственных внебюджетных фондов (млрд. руб., накоплено с начала года)
 // https://minfin.gov.ru/ru/document?id_4=93447-kratkaya_ezhemesyachnaya_informatsiya_ob_ispolnenii_konsolidirovannogo_byudzheta_rossiiskoi_federatsii_i_gosudarstvennykh_vnebyudzhetnykh_fondov_mlrd._rub._nakopleno_s_nachala_goda
 // https://minfin.gov.ru/common/upload/library/2025/08/main/Prilozhenie_8_dannye_115-117_%E2%80%94_mesyats.xlsx
-
+// https://minfin.gov.ru/common/upload/library/2025/10/main/Prilozhenie_8_dannye_115-117_%E2%80%94_mesyats.xlsx
 func init() {
 	FedbudMesyats := util.HdBase{
 		TableName: "minfin_fed_bud_mesyats",
-		DataUrl:   "https://minfin.gov.ru/common/upload/library/2025/08/main/Prilozhenie_8_dannye_115-117_%E2%80%94_mesyats.xlsx",
+		DataUrl:   "https://minfin.gov.ru/common/upload/library/2025/10/main/Prilozhenie_8_dannye_115-117_%E2%80%94_mesyats.xlsx",
 		CreateTable: `CREATE TABLE IF NOT EXISTS %s (
               name LowCardinality(String)
 			, date Date
@@ -53,7 +54,7 @@ func fedbudMesyatsImport(xlsx *excelize.File, batch driver.Batch) error {
 			for j, rowCol := range row[2:] {
 				var date time.Time
 				dateStr := rows[tableIsFoundRowNum][j+2]
-				//fmt.Printf("rowCol: %+v, date: %s\n", rowCol, dateStr)
+				fmt.Printf("rowCol: %+v, date: %s\n", rowCol, dateStr)
 				dateArr := strings.Split(dateStr, " ")
 				if len(dateArr) > 1 {
 					dateStr = dateReplacer.Replace(dateArr[0])

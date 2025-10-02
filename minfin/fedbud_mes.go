@@ -14,7 +14,7 @@ import (
 // https://minfin.gov.ru/ru/statistics/fedbud/execute?id_57=80042-kratkaya_ezhemesyachnaya_informatsiya_ob_ispolnenii_federalnogo_byudzheta_mlrd._rub._nakopleno_s_nachala_goda
 // Краткая ежемесячная информация об исполнении федерального бюджета (млрд. руб., накоплено с начала года)
 // Table https://minfin.gov.ru/common/upload/library/2025/08/main/Prilozhenie_3_dannye_109-111_%E2%80%94_mes.xlsx
-const fedbudDataUrl = "https://minfin.gov.ru/common/upload/library/2025/08/main/Prilozhenie_3_dannye_109-111_%E2%80%94_mes.xlsx"
+const fedbudDataUrl = "https://minfin.gov.ru/common/upload/library/2025/10/main/Prilozhenie_3_dannye_109-111_%E2%80%94_mes.xlsx"
 
 func init() {
 	Fedbud := util.HdBase{
@@ -30,7 +30,7 @@ func init() {
 	chimport.Stats = append(chimport.Stats, &Fedbud)
 }
 
-var dateReplacer = strings.NewReplacer(".", "-", "янв", "Jan", "фев", "Feb", "апр", "Apr", "июн", "Jun", "июл", "Jul", "сен", "Sep", "ноя", "Nov")
+var dateReplacer = strings.NewReplacer(".", "-", "янв", "Jan", "фев", "Feb", "апр", "Apr", "июн", "Jun", "июл", "Jul", "сен", "Sep", "ноя", "Nov", "авг", "Aug")
 
 func fedBudImport(xlsx *excelize.File, batch driver.Batch) error {
 	rows, err := xlsx.GetRows("месяц")
