@@ -20,7 +20,7 @@ import (
 )
 
 var (
-	httpClient  *http.Client
+	HttpClient  *http.Client
 	MonthsToNum = map[string]time.Month{
 		"январь":   time.January,
 		"февраль":  time.February,
@@ -91,7 +91,7 @@ func init() {
 		SameSite: http.SameSiteStrictMode,
 	}
 	jar.SetCookies(&url.URL{Scheme: "https", Path: "/", Host: "rosstat.gov.ru"}, []*http.Cookie{httpCookie})
-	httpClient = &http.Client{Transport: tr, Jar: jar}
+	HttpClient = &http.Client{Transport: tr, Jar: jar}
 }
 
 func GetFile(url string) (io.ReadCloser, error) {
@@ -100,7 +100,7 @@ func GetFile(url string) (io.ReadCloser, error) {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", randomUA)
-	resp, err := httpClient.Do(req)
+	resp, err := HttpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -145,7 +145,7 @@ func GetCSV(url string) (records [][]string, err error) {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", randomUA)
-	resp, err := httpClient.Do(req)
+	resp, err := HttpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

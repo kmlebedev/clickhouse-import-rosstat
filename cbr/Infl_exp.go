@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
+	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
 	"slices"
 	"strconv"
@@ -12,7 +13,7 @@ import (
 
 // Todo update data source https://www.cbr.ru/analytics/dkp/inflationary_expectations/
 // Статистические данные
-const inflExpDataUrl = "https://www.cbr.ru/Collection/Collection/File/57095/Infl_exp_25-07.xlsx"
+const inflExpDataUrl = "https://www.cbr.ru/Collection/Collection/File/57180/Infl_exp_25-08.xlsx"
 
 func inflExpImport(xlsx *excelize.File, batch driver.Batch) error {
 	rows, err := xlsx.GetRows("Данные для графиков")
@@ -58,15 +59,15 @@ func inflExpImport(xlsx *excelize.File, batch driver.Batch) error {
 
 // https://www.cbr.ru/Collection/Collection/File/55275/Infl_exp_25-03.xlsx
 func init() {
-	inflExp := hdBase{
-		name:    "cbr_infl_exp",
-		dataUrl: inflExpDataUrl,
-		createTable: `CREATE TABLE IF NOT EXISTS %s (
+	inflExp := util.HdBase{
+		TableName: "cbr_infl_exp",
+		DataUrl:   inflExpDataUrl,
+		CreateTable: `CREATE TABLE IF NOT EXISTS %s (
               name LowCardinality(String)
 			, date Date
 			, value Float32
 		) ENGINE = ReplacingMergeTree ORDER BY (name, date);`,
-		importFunc: inflExpImport,
+		ImportFunc: inflExpImport,
 	}
 	chimport.Stats = append(chimport.Stats, &inflExp)
 }
