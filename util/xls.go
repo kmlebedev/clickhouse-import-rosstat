@@ -30,6 +30,7 @@ var (
 		"июнь":     time.June,
 		"июль":     time.July,
 		"август":   time.August,
+		"авугст":   time.August,
 		"сентябрь": time.September,
 		"октябрь":  time.October,
 		"ноябрь":   time.November,
