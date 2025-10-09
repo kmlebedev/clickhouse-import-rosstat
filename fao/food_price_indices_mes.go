@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/gocolly/colly/v2"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+	log "github.com/sirupsen/logrus"
 	"github.com/xuri/excelize/v2"
 	"slices"
 	"strings"
@@ -17,7 +19,7 @@ const (
 	// 3 января, 7 февраля, 7 марта, 4 апреля, 2 мая, 6 июня, 4 июля, 8 августа, 5 сентября, 3 октября, 7 ноября, 5 декабря.
 	// ToDo update data source https://www.fao.org/worldfoodsituation/foodpricesindex/ru/
 	// Индекса продовольственных цен ФАО https://www.fao.org/docs/worldfoodsituationlibraries/default-document-library/food_price_indices_data_f.csv
-	faoUrl                 = "https://www.fao.org/docs/worldfoodsituationlibraries/default-document-library"
+	faoUrl                 = "https://www.fao.org/worldfoodsituation/foodpricesindex/ru/"
 	faoFoodPriceCSVDataUrl = faoUrl + "/food_price_indices_data_sep25.csv"
 	faoFoodPriceTable      = "fao_food_price"
 	faoFoodPriceDdl        = `CREATE TABLE IF NOT EXISTS ` + faoFoodPriceTable + `_%s` + ` (
@@ -41,9 +43,23 @@ func (s *FaoFoodPriceStat) Name() string {
 	return faoFoodPriceTable
 }
 
+func (s *FaoFoodPriceStat) getDataUrl() (dataUrl string) {
+	c := colly.NewCollector(colly.UserAgent(util.HttpUA))
+	c.SetRequestTimeout(5 * time.Second)
+	c.OnHTML("#Contentplaceholder1_C004_Col00 > div:nth-child(2) > div > table > tbody > tr:nth-child(2) > td:nth-child(2) > p > a", func(e *colly.HTMLElement) {
+		dataUrl = e.Attr("href")
+		log.Infof("getDataUrl %s", dataUrl)
+	})
+	if err := c.Visit(faoUrl); err != nil {
+		log.Errorf("First visit err: %v+", err)
+	}
+	c.Wait()
+	return dataUrl
+}
+
 func (s *FaoFoodPriceStat) exportXls() (table *[][]string, err error) {
 	var xlsx *excelize.File
-	if xlsx, err = util.GetXlsx(faoFoodPriceCSVDataUrl); err != nil {
+	if xlsx, err = util.GetXlsx(s.getDataUrl()); err != nil {
 		return nil, err
 	}
 	table = new([][]string)
@@ -64,7 +80,7 @@ func (s *FaoFoodPriceStat) exportXls() (table *[][]string, err error) {
 
 func (s *FaoFoodPriceStat) export() (table *[][]string, err error) {
 	var records [][]string
-	if records, err = util.GetCSV(faoFoodPriceCSVDataUrl); err != nil {
+	if records, err = util.GetCSV(s.getDataUrl()); err != nil {
 		return nil, err
 	}
 	table = new([][]string)
