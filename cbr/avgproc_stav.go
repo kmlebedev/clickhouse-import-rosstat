@@ -12,7 +12,6 @@ import (
 )
 
 // https://www.cbr.ru/statistics/avgprocstav/?UniDbQuery.Posted=True&UniDbQuery.From=1.04.2020&UniDbQuery.To=2.02.2025
-// Todo Добавть ставки от https://www.cbr.ru/statistics/bank_sector/int_rat/
 
 type cbrProcStav struct {
 }
