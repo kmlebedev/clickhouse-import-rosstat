@@ -3,8 +3,10 @@ package cbr
 import (
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/gocolly/colly/v2"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+	log "github.com/sirupsen/logrus"
 	"github.com/xuri/excelize/v2"
 	"slices"
 	"strconv"
@@ -14,9 +16,14 @@ import (
 
 // Todo update data source https://www.cbr.ru/statistics/ddkp/aipd/
 // Показатели сезонно сглаженной динамики потребительских цен
-const indicatorsCpdDataUrl = "https://www.cbr.ru/Content/Document/File/108632/indicators_cpd.xlsx"
+// const indicatorsCpdDataUrl = "https://www.cbr.ru/Content/Document/File/108632/indicators_cpd.xlsx"
 
 func init() {
+	indicatorsCpdDataUrl, err := getIndicatorsCpdXlsDataUrl()
+	if err != nil {
+		log.Errorf("Error getting indicators cpd data url: %s", err)
+		return
+	}
 	indicatorsCpd := util.HdBase{
 		TableName: "cbr_indicators_cpd",
 		DataUrl:   indicatorsCpdDataUrl,
@@ -28,6 +35,20 @@ func init() {
 		ImportFunc: indicatorsCpdImport,
 	}
 	chimport.Stats = append(chimport.Stats, &indicatorsCpd)
+}
+
+func getIndicatorsCpdXlsDataUrl() (url string, err error) {
+	c := colly.NewCollector()
+	c.SetClient(util.HttpClient)
+	c.OnHTML(".container-fluid > div > div:nth-child(6) > div > div.body-2.document-regular_main > div > div > a.referenceable", func(e *colly.HTMLElement) {
+		url = fmt.Sprintf("%s%s", "https://www.cbr.ru", e.Attr("href"))
+		log.Infof("href url %s", url)
+	})
+	if err = c.Visit("https://www.cbr.ru/statistics/ddkp/aipd/"); err != nil {
+		log.Errorf("Visit %v+", err)
+	}
+	c.Wait()
+	return url, nil
 }
 
 // https://www.cbr.ru/analytics/dkp/dinamic/
@@ -42,7 +63,7 @@ func indicatorsCpdImport(xlsx *excelize.File, batch driver.Batch) error {
 			continue
 		}
 		for j, rowCol := range rows[i][2:] {
-			fmt.Printf("name: %s rowCol: %+v, date: %s\n", row[0], rowCol, rows[0][j+2])
+			//fmt.Printf("name: %s rowCol: %+v, date: %s\n", row[0], rowCol, rows[0][j+2])
 			date, err := time.Parse("01/06", rows[0][j+2])
 			if err != nil {
 				return err
@@ -51,7 +72,7 @@ func indicatorsCpdImport(xlsx *excelize.File, batch driver.Batch) error {
 			if err != nil {
 				return err
 			}
-			if err = batch.Append(row[0], date.AddDate(0, 0, -1), value); err != nil {
+			if err = batch.Append(row[0], date.AddDate(0, 1, -1), value); err != nil {
 				return err
 			}
 		}

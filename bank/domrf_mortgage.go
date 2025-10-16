@@ -15,10 +15,11 @@ import (
 const (
 
 	// Ипотека Динамика ставок предложения топ-20 ипотечных банков
-	// ToDo update data source https://xn--d1aqf.xn--p1ai/analytics/mortgage/
+	// ToDo craw update data source https://xn--d1aqf.xn--p1ai/analytics/mortgage/
 	// Скачать Динамику ставок в разрезе месяцев, xlsx
+	// https://дом.рф/upload/iblock/51c/gkqcn9ne07391bguj1typu9jne53zlfw.xlsx
 	domrfAnalyticsUrl       = "https://xn--d1aqf.xn--p1ai/upload/iblock"
-	domrfMortgageXlsDataUrl = domrfAnalyticsUrl + "/fc6/i2q93e3khd2e7r7wpar6rl3bqjsprq15.xlsx"
+	domrfMortgageXlsDataUrl = domrfAnalyticsUrl + "/51c/gkqcn9ne07391bguj1typu9jne53zlfw.xlsx"
 	domrfMortgageTable      = "domrf_mortgage"
 	domrfMortgageDdl        = `CREATE TABLE IF NOT EXISTS ` + domrfMortgageTable + ` (
 			  name LowCardinality(String)
