@@ -21,15 +21,61 @@ type DataBook interface {
 //		Import(ctx context.Context, conn driver.Conn) (count int64, err error)
 //	}
 type FinDataBook struct {
-	name         string
-	createTable  string
-	insertRow    string
-	dataBookPath string
-	tables       map[string][]string
+	name            string
+	createTable     string
+	insertRow       string
+	dataBookPath    string
+	tables          map[string][]string
+	tableColNum     int
+	tableImportFunc func(f *FinDataBook, xlsx *excelize.File, batch driver.Batch) (count int64, err error)
 }
 
-func (s *FinDataBook) Name() string {
-	return s.name
+func (f *FinDataBook) Name() string {
+	return f.name
+}
+
+func finDataBookTableImport(f *FinDataBook, xlsx *excelize.File, batch driver.Batch) (count int64, err error) {
+	for sheet, tables := range f.tables {
+		fmt.Printf("Import sheet %s\n", sheet)
+		rows, err := xlsx.GetRows(sheet)
+		if err != nil {
+			return 0, err
+		}
+		var table string
+		var dateRowIdx int
+		for i, row := range rows {
+			if len(row) == 0 || row[0] == "" {
+				table = ""
+				continue
+			}
+			if slices.Contains(tables, row[f.tableColNum]) {
+				table = row[f.tableColNum]
+				dateRowIdx = i
+				fmt.Printf("Found table %s\n", table)
+				continue
+			}
+			if table == "" {
+				continue
+			}
+			tableStartNum := f.tableColNum + 1
+			for j, colCell := range row[tableStartNum:] {
+				value, err := strconv.ParseFloat(strings.Trim(strings.ReplaceAll(colCell, " ", ""), "()"), 32)
+				if err != nil {
+					return count, err
+				}
+				if strings.HasPrefix(colCell, "(") && strings.HasSuffix(colCell, ")") {
+					value = value * -1
+				}
+				fmt.Printf("sheet %s, table %s, name %s , date %s, value %f\n",
+					sheet, table, row[f.tableColNum], rows[dateRowIdx][j+tableStartNum], value)
+				if err = batch.Append(sheet, table, row[f.tableColNum], fmt.Sprintf("%s-01-01", rows[dateRowIdx][j+tableStartNum]), value); err != nil {
+					return count, err
+				}
+				count++
+			}
+		}
+	}
+	return 0, err
 }
 
 func (f *FinDataBook) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
@@ -44,45 +90,11 @@ func (f *FinDataBook) Import(ctx context.Context, conn driver.Conn) (count int64
 	if err != nil {
 		return 0, err
 	}
-	for sheet, tables := range f.tables {
-		fmt.Printf("Import sheet %s\n", sheet)
-		rows, err := xlsx.GetRows(sheet)
-		if err != nil {
-			return 0, err
-		}
-		var table string
-		var dateRowIdx int
-		for i, row := range rows {
-			if len(row) == 0 || row[0] == "" {
-				table = ""
-				continue
-			}
-			if slices.Contains(tables, row[0]) {
-				table = row[0]
-				dateRowIdx = i
-				fmt.Printf("Found table %s\n", table)
-				continue
-			}
-			if table == "" {
-				continue
-			}
-			for j, colCell := range row[1:] {
-
-				value, err := strconv.ParseFloat(strings.Trim(strings.ReplaceAll(colCell, " ", ""), "()"), 32)
-				if err != nil {
-					return count, err
-				}
-				if strings.HasPrefix(colCell, "(") && strings.HasSuffix(colCell, ")") {
-					value = value * -1
-				}
-				fmt.Printf("sheet %s, table %s, name %s , date %s, value %f\n",
-					sheet, table, row[0], rows[dateRowIdx][j+1], value)
-				if err = batch.Append(sheet, table, row[0], fmt.Sprintf("%s-01-01", rows[dateRowIdx][j+1]), value); err != nil {
-					return count, err
-				}
-				count++
-			}
-		}
+	if f.tableImportFunc == nil {
+		f.tableImportFunc = finDataBookTableImport
+	}
+	if count, err = f.tableImportFunc(f, xlsx, batch); err != nil {
+		return count, err
 	}
 	if err = batch.Send(); err != nil {
 		return count, err
