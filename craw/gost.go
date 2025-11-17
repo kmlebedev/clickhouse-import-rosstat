@@ -56,13 +56,14 @@ var gostVehicleSafetyCertificate = util.ClickHouseImport{
 		ctx := context.TODO()
 		batch, err := conn.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO gost_vehicle_safety_certificate"))
 		c.SetRequestTimeout(10 * time.Second)
+		var certMark, certMtype, certNum, certDate string
 		// #libraryPaging > div:nth-child(2) > a:nth-child(2)
 		c.OnHTML("#standartsList > tbody > tr", func(e *colly.HTMLElement) {
 			td := e.DOM.Children()
-			certMark := td.Eq(0).Text()
-			certMtype := td.Eq(1).Text()
-			certNum := td.Eq(2).Text()
-			certDate := td.Eq(3).Text()
+			certMark = td.Eq(0).Text()
+			certMtype = td.Eq(1).Text()
+			certNum = td.Eq(2).Text()
+			certDate = td.Eq(3).Text()
 			log.Debugf("mark: %s type: %s, date: %s, num: %s", certMark, certMtype, certDate, certNum)
 			certDateTime, err := time.Parse("02.01.2006", certDate)
 			if err != nil {
@@ -75,6 +76,11 @@ var gostVehicleSafetyCertificate = util.ClickHouseImport{
 			}
 		})
 		c.OnHTML("#libraryPaging > div:nth-child(2) > a:nth-child(2)", func(e *colly.HTMLElement) {
+			if rows, err := conn.Query(ctx, fmt.Sprintf("SELECT certificate_number FROM gost_vehicle_safety_certificate FINAL WHERE certificate_number = %s", certNum)); err != nil {
+				if rows != nil {
+					log.Fatalf("Craw stop certificate number %s is exist", certNum)
+				}
+			}
 			link := e.Attr("href")
 			log.Infof("Rows %d Link found: %q -> %s\n", batch.Rows(), e.Text, link)
 			if err = batch.Send(); err != nil {
@@ -87,6 +93,7 @@ var gostVehicleSafetyCertificate = util.ClickHouseImport{
 					log.Error(err)
 				}
 			}
+			log.Infof("mark: %s type: %s, date: %s, num: %s", certMark, certMtype, certDate, certNum)
 			operation := func() (string, error) {
 				if err = e.Request.Visit(link); err != nil {
 					log.Errorf("visit err: %v+", err)
