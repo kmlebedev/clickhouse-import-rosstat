@@ -38,6 +38,9 @@ var cbrСreditM2x = util.ClickHouseImport{
 				break
 			}
 			for j, cell := range row[1:] {
+				if j+1 >= len(rows[0]) {
+					break
+				}
 				date, err := time.Parse("01-02-06", strings.TrimSpace(rows[0][j+1]))
 				if err != nil {
 					return err

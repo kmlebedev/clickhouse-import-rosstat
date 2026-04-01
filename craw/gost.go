@@ -53,6 +53,7 @@ var gostVehicleSafetyCertificate = util.ClickHouseImport{
 			Multiplier:          2,
 			MaxInterval:         30 * time.Minute,
 		}
+		certificateNumberFoundsCount := 0
 		ctx := context.TODO()
 		batch, err := conn.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO gost_vehicle_safety_certificate"))
 		c.SetRequestTimeout(10 * time.Second)
@@ -76,13 +77,20 @@ var gostVehicleSafetyCertificate = util.ClickHouseImport{
 			}
 		})
 		c.OnHTML("#libraryPaging > div:nth-child(2) > a:nth-child(2)", func(e *colly.HTMLElement) {
-			if rows, err := conn.Query(ctx, fmt.Sprintf("SELECT certificate_number FROM gost_vehicle_safety_certificate FINAL WHERE certificate_number = %s", certNum)); err != nil {
-				if rows != nil {
-					log.Fatalf("Craw stop certificate number %s is exist", certNum)
-				}
-			}
 			link := e.Attr("href")
 			log.Infof("Rows %d Link found: %q -> %s\n", batch.Rows(), e.Text, link)
+			if rows, err := conn.Query(ctx, fmt.Sprintf("SELECT certificate_number FROM gost_vehicle_safety_certificate FINAL WHERE certificate_number = '%s'", certNum)); err != nil {
+				log.Fatalf("Craw stop certificate number (%s) is exist err %+v", certNum, err)
+			} else if rows != nil {
+				if certificateNumberFoundsCount > 5 {
+					log.Fatalf("Craw stop certificate number: %s is exist", certNum)
+				} else {
+					certificateNumberFoundsCount += 1
+				}
+			} else {
+				log.Infof("Craw skip certificate number: %s is exist, rows %+v, found %d", certNum, rows, certificateNumberFoundsCount)
+				certificateNumberFoundsCount = 0
+			}
 			if err = batch.Send(); err != nil {
 				log.Error(err)
 				return

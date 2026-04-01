@@ -9,6 +9,8 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/xuri/excelize/v2"
 	"strconv"
+	"strings"
+	"time"
 )
 
 import (
@@ -63,16 +65,19 @@ func (s *IpcWeeksStat) export() (table *[][]string, err error) {
 	}
 	table = new([][]string)
 	for _, sheet := range xlsx.GetSheetList() {
-		var year int
+		var year, fieldIdx int
 		if year, err = strconv.Atoi(sheet); err != nil || year < 1997 {
 			continue
 		}
+		//if year != 2026 {
+		//	continue
+		//}
 		var rows [][]string
 		if rows, err = xlsx.GetRows(sheet); err != nil {
 			return nil, err
 		}
 		fieldFound := false
-		for _, row := range rows {
+		for i, row := range rows {
 			if fieldFound {
 				if len(row) < 2 {
 					break
@@ -80,11 +85,14 @@ func (s *IpcWeeksStat) export() (table *[][]string, err error) {
 				if _, err = strconv.ParseFloat(row[1], 32); err != nil {
 					break
 				}
-				for i, cell := range row[1:] {
-					*table = append(*table, []string{row[0], sheet, strconv.Itoa(i + 2), cell})
+				for j, cell := range row[1:] {
+					dataArr := strings.Split(strings.ReplaceAll(strings.ReplaceAll(rows[fieldIdx][j+1], "*", ""), "на ", ""), " ")
+					fmt.Printf("dataArr %+v, string: %s, cell %s\n", dataArr, fmt.Sprintf("%s-%d-%s", sheet, int(util.MonthsToNum[dataArr[1]]), dataArr[0]), cell)
+					*table = append(*table, []string{row[0], fmt.Sprintf("%s-%d-%s", sheet, int(util.MonthsToNum[dataArr[1]]), dataArr[0]), cell})
 				}
 			} else if row[0] == ipcWeeksField {
 				fieldFound = true
+				fieldIdx = i
 			}
 		}
 	}
@@ -106,8 +114,12 @@ func (s *IpcWeeksStat) Import(ctx context.Context, conn driver.Conn) (count int6
 		return count, err
 	}
 	for _, row := range *table {
-		percent, _ := strconv.ParseFloat(row[3], 32)
-		if err = batch.Append(row[0], weekStart(row[1], row[2]), float32(percent)); err != nil {
+		percent, _ := strconv.ParseFloat(row[2], 32)
+		date, err := time.Parse("2006-1-2", row[1])
+		if err != nil {
+			return count, fmt.Errorf("parse %s, err: %v", row[1], err)
+		}
+		if err = batch.Append(row[0], date, float32(percent)); err != nil {
 			return count, err
 		}
 		count++

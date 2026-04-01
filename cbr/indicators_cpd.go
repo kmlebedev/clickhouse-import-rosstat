@@ -19,14 +19,9 @@ import (
 // const indicatorsCpdDataUrl = "https://www.cbr.ru/Content/Document/File/108632/indicators_cpd.xlsx"
 
 func init() {
-	indicatorsCpdDataUrl, err := getIndicatorsCpdXlsDataUrl()
-	if err != nil {
-		log.Errorf("Error getting indicators cpd data url: %s", err)
-		return
-	}
 	indicatorsCpd := util.HdBase{
 		TableName: "cbr_indicators_cpd",
-		DataUrl:   indicatorsCpdDataUrl,
+		DataUrl:   getIndicatorsCpdXlsDataUrl(),
 		CreateTable: `CREATE TABLE IF NOT EXISTS %s (
               name LowCardinality(String)
 			, date Date
@@ -37,18 +32,18 @@ func init() {
 	chimport.Stats = append(chimport.Stats, &indicatorsCpd)
 }
 
-func getIndicatorsCpdXlsDataUrl() (url string, err error) {
+func getIndicatorsCpdXlsDataUrl() (url string) {
 	c := colly.NewCollector()
 	c.SetClient(util.HttpClient)
 	c.OnHTML(".container-fluid > div > div:nth-child(6) > div > div.body-2.document-regular_main > div > div > a.referenceable", func(e *colly.HTMLElement) {
 		url = fmt.Sprintf("%s%s", "https://www.cbr.ru", e.Attr("href"))
 		log.Infof("href url %s", url)
 	})
-	if err = c.Visit("https://www.cbr.ru/statistics/ddkp/aipd/"); err != nil {
+	if err := c.Visit("https://www.cbr.ru/statistics/ddkp/aipd/"); err != nil {
 		log.Errorf("Visit %v+", err)
 	}
 	c.Wait()
-	return url, nil
+	return url
 }
 
 // https://www.cbr.ru/analytics/dkp/dinamic/

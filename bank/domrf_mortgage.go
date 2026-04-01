@@ -18,8 +18,9 @@ const (
 	// ToDo craw update data source https://xn--d1aqf.xn--p1ai/analytics/mortgage/
 	// Скачать Динамику ставок в разрезе месяцев, xlsx
 	// https://дом.рф/upload/iblock/51c/gkqcn9ne07391bguj1typu9jne53zlfw.xlsx
+	// https://дом.рф/upload/iblock/aba/i34cz49h4zukhzduo11wi2d361dbwgb4.xlsx
 	domrfAnalyticsUrl       = "https://xn--d1aqf.xn--p1ai/upload/iblock"
-	domrfMortgageXlsDataUrl = domrfAnalyticsUrl + "/51c/gkqcn9ne07391bguj1typu9jne53zlfw.xlsx"
+	domrfMortgageXlsDataUrl = domrfAnalyticsUrl + "/aba/i34cz49h4zukhzduo11wi2d361dbwgb4.xlsx"
 	domrfMortgageTable      = "domrf_mortgage"
 	domrfMortgageDdl        = `CREATE TABLE IF NOT EXISTS ` + domrfMortgageTable + ` (
 			  name LowCardinality(String)
