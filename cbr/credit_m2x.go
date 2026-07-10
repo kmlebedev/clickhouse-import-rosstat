@@ -16,12 +16,12 @@ import (
 // https://www.cbr.ru/Content/Document/File/177307/credit_m2x.xlsx
 var cbrСreditM2x = util.ClickHouseImport{
 	TableName: "cbr_credit_m2x",
-	CreateTable: `CREATE TABLE IF NOT EXISTS %s (
+	CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (
 			  name LowCardinality(String)
 			, date Date
 			, value Float32
 		) ENGINE = ReplacingMergeTree ORDER BY (name, date);
-	`,
+	`},
 	DataUrl: "https://www.cbr.ru/Content/Document/File/177307/credit_m2x.xlsx",
 	ImportFunc: func(xlsx *excelize.File, batch driver.Batch) (err error) {
 		var rows [][]string
@@ -38,6 +38,9 @@ var cbrСreditM2x = util.ClickHouseImport{
 				break
 			}
 			for j, cell := range row[1:] {
+				if j+1 >= len(rows[0]) {
+					break
+				}
 				date, err := time.Parse("01-02-06", strings.TrimSpace(rows[0][j+1]))
 				if err != nil {
 					return err
