@@ -82,7 +82,7 @@ func (s *cbrQueriesDataset) export() (table *[][]string, err error) {
 		if value == "" {
 			continue
 		}
-		fmt.Printf("name %s date %v cell %s\n", row[0], value)
+		fmt.Printf("name date %v cell %s\n", row[0], value)
 		if _, err = strconv.ParseFloat(value, 32); err != nil {
 			return nil, err
 		}

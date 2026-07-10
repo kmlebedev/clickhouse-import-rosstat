@@ -78,7 +78,7 @@ func login() {
 func getDataRealValue(s *goquery.Selection) float32 {
 	priceStr, ok := s.Attr("data-real-value")
 	if !ok {
-		log.Error("not attr data-real-value %+v", s)
+		log.Error("not attr data-real-value", s)
 		return 0
 	}
 	if strings.Contains(priceStr, ",") {

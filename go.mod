@@ -1,10 +1,11 @@
 module github.com/kmlebedev/clickhouse-import-rosstat
 
-go 1.23.3
+go 1.26.0
 
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.30.0
 	github.com/PuerkitoBio/goquery v1.10.2
+	github.com/cenkalti/backoff/v5 v5.0.3
 	github.com/gocolly/colly/v2 v2.2.0
 	github.com/golang/glog v1.2.2
 	github.com/shakinm/xlsReader v0.9.12
@@ -23,8 +24,6 @@ require (
 	github.com/antchfx/xmlquery v1.4.4 // indirect
 	github.com/antchfx/xpath v1.3.3 // indirect
 	github.com/bits-and-blooms/bitset v1.22.0 // indirect
-	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
-	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.3 // indirect
 	github.com/go-faster/city v1.0.1 // indirect

@@ -33,7 +33,7 @@ const (
 	// Национальные счета https://rosstat.gov.ru/statistics/accounts
 	// ВВП кварталы (с 1995 г.) https://rosstat.gov.ru/storage/mediabank/VVP_kvartal_s1995-2025.xlsx
 	// Валовой внутренний продукт 1) (в ценах 2021 г., млрд руб., с исключением сезонного фактора)
-	vvpKvartalXlsDataUrl = rosstatUrl + "/VVP_kvartal_s_1995-2025.xlsx"
+	vvpKvartalXlsDataUrl = rosstatMediaBankUrl + "/VVP_kvartal_s_1995-2025.xlsx"
 	vvpKvartalTable      = "vvp_kvartal"
 	vvpKvartalDdl        = `CREATE TABLE IF NOT EXISTS ` + vvpKvartalTable + ` (
 			  name LowCardinality(String)

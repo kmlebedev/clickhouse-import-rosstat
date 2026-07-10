@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/gocolly/colly/v2"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+	log "github.com/sirupsen/logrus"
 	"github.com/xuri/excelize/v2"
 	"strconv"
 	"time"
@@ -14,9 +16,8 @@ import (
 const (
 	// ToDo update data source Потребительские цены https://rosstat.gov.ru/statistics/price
 	// Индексы потребительских цен на товары и услуги по Российской Федерации, месяцы (с 1991 г.)
-	ipcMesXlsDataUrl = rosstatUrl + "/ipc_mes_08-2025.xlsx"
-	ipcMesTable      = "ipc_mes"
-	ipcMesDdl        = `CREATE TABLE IF NOT EXISTS ` + ipcMesTable + ` (
+	ipcMesTable = "ipc_mes"
+	ipcMesDdl   = `CREATE TABLE IF NOT EXISTS ` + ipcMesTable + ` (
 			  name LowCardinality(String)
 			, date Date
 			, percent Float32
@@ -31,13 +32,31 @@ const (
 type IpcMesStat struct {
 }
 
+func (s *IpcMesStat) getXlsDataUrl() (url string, err error) {
+	c := colly.NewCollector()
+	c.SetClient(util.HttpClient)
+	c.OnHTML(".row > div:nth-child(3) div.toggle-section__content.toggle-section__content--open > div > div > div > div:nth-child(1) > div > div.toggle-card__main > div > div > div > div:nth-child(3) > div.document-list__item-link > a", func(e *colly.HTMLElement) {
+		url = fmt.Sprintf("%s%s", rosstatUrl, e.Attr("href"))
+		log.Infof("href url %s", url)
+	})
+	if err = c.Visit(fmt.Sprintf("%s/statistics/price", rosstatUrl)); err != nil {
+		log.Errorf("Visit %v+", err)
+	}
+	c.Wait()
+	return url, nil
+}
+
 func (s *IpcMesStat) Name() string {
 	return ipcMesTable
 }
 
 func (s *IpcMesStat) export() (table *[][]string, err error) {
 	var xlsx *excelize.File
-	if xlsx, err = util.GetXlsx(ipcMesXlsDataUrl); err != nil {
+	var xlsDataUrl string
+	if xlsDataUrl, err = s.getXlsDataUrl(); err != nil {
+		return nil, err
+	}
+	if xlsx, err = util.GetXlsx(xlsDataUrl); err != nil {
 		return nil, err
 	}
 	table = new([][]string)
@@ -89,7 +108,7 @@ func (s *IpcMesStat) Import(ctx context.Context, conn driver.Conn) (count int64,
 		if err != nil {
 			return count, err
 		}
-		if err = conn.Exec(ctx, ipcMesInsert, row[0], mes.AddDate(0, 1, 0), row[3]); err != nil {
+		if err = conn.Exec(ctx, ipcMesInsert, row[0], mes.AddDate(0, 1, -1), row[3]); err != nil {
 			return count, err
 		}
 		count++

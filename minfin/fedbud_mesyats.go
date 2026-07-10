@@ -3,8 +3,10 @@ package minfin
 import (
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/gocolly/colly/v2"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+	log "github.com/sirupsen/logrus"
 	"github.com/xuri/excelize/v2"
 	"slices"
 	"strconv"
@@ -16,10 +18,16 @@ import (
 // https://minfin.gov.ru/ru/document?id_4=93447-kratkaya_ezhemesyachnaya_informatsiya_ob_ispolnenii_konsolidirovannogo_byudzheta_rossiiskoi_federatsii_i_gosudarstvennykh_vnebyudzhetnykh_fondov_mlrd._rub._nakopleno_s_nachala_goda
 // https://minfin.gov.ru/common/upload/library/2025/08/main/Prilozhenie_8_dannye_115-117_%E2%80%94_mesyats.xlsx
 // https://minfin.gov.ru/common/upload/library/2025/10/main/Prilozhenie_8_dannye_115-117_%E2%80%94_mesyats.xlsx
+// https://minfin.gov.ru/common/upload/library/2026/02/main/Prilozhenie_8_dannye_115-117_%E2%80%94_mesyats.xlsx
+const (
+	minfinUrl         = "https://minfin.gov.ru"
+	conbudExecutePath = "/ru/statistics/conbud/execute"
+)
+
 func init() {
 	FedbudMesyats := util.HdBase{
 		TableName: "minfin_fed_bud_mesyats",
-		DataUrl:   "https://minfin.gov.ru/common/upload/library/2025/10/main/Prilozhenie_8_dannye_115-117_%E2%80%94_mesyats.xlsx",
+		DataUrl:   getFedbudMesyatDataUrl(),
 		CreateTable: `CREATE TABLE IF NOT EXISTS %s (
               name LowCardinality(String)
 			, date Date
@@ -28,6 +36,20 @@ func init() {
 		ImportFunc: fedbudMesyatsImport,
 	}
 	chimport.Stats = append(chimport.Stats, &FedbudMesyats)
+}
+
+func getFedbudMesyatDataUrl() (url string) {
+	c := colly.NewCollector()
+	c.SetClient(util.HttpClient)
+	c.OnHTML(".document_list > div:nth-child(1) > div.document_footer > div.files_info.t_mn2 > div > a", func(e *colly.HTMLElement) {
+		url = fmt.Sprintf("%s%s", minfinUrl, e.Attr("href"))
+		log.Infof("href url %s", url)
+	})
+	if err := c.Visit(fmt.Sprintf("%s%s", minfinUrl, conbudExecutePath)); err != nil {
+		log.Errorf("Visit %v+", err)
+	}
+	c.Wait()
+	return url
 }
 
 func fedbudMesyatsImport(xlsx *excelize.File, batch driver.Batch) error {

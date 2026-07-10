@@ -118,7 +118,7 @@ func (s *TbIfrs) exportPdf() (table *[][]string, err error) {
 		textLines := strings.Split(text, "\n")
 		for j, line := range textLines {
 			if line == "Баланс Т-Банка по РСБУ," {
-				fmt.Printf(textLines[j+1])
+				fmt.Printf("%s", textLines[j+1])
 			}
 		}
 		{

@@ -1,9 +1,12 @@
 package minfin
 
 import (
+	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/gocolly/colly/v2"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+	log "github.com/sirupsen/logrus"
 	"github.com/xuri/excelize/v2"
 	"slices"
 	"strconv"
@@ -14,12 +17,26 @@ import (
 // https://minfin.gov.ru/ru/statistics/fedbud/execute?id_57=80042-kratkaya_ezhemesyachnaya_informatsiya_ob_ispolnenii_federalnogo_byudzheta_mlrd._rub._nakopleno_s_nachala_goda
 // Краткая ежемесячная информация об исполнении федерального бюджета (млрд. руб., накоплено с начала года)
 // Table https://minfin.gov.ru/common/upload/library/2025/08/main/Prilozhenie_3_dannye_109-111_%E2%80%94_mes.xlsx
-const fedbudDataUrl = "https://minfin.gov.ru/common/upload/library/2025/10/main/Prilozhenie_3_dannye_109-111_%E2%80%94_mes.xlsx"
+const fedbudDataPath = "/ru/statistics/fedbud/execute"
+
+func getFedbudMestDataUrl() (url string) {
+	c := colly.NewCollector()
+	c.SetClient(util.HttpClient)
+	c.OnHTML(".document_list > div:nth-child(3) > div.document_footer > div.files_info.t_mn2 > div > a", func(e *colly.HTMLElement) {
+		url = fmt.Sprintf("%s%s", minfinUrl, e.Attr("href"))
+		log.Infof("href url %s", url)
+	})
+	if err := c.Visit(fmt.Sprintf("%s%s", minfinUrl, fedbudDataPath)); err != nil {
+		log.Errorf("Visit %v+", err)
+	}
+	c.Wait()
+	return url
+}
 
 func init() {
 	Fedbud := util.HdBase{
 		TableName: "minfin_fed_bud_mes",
-		DataUrl:   fedbudDataUrl,
+		DataUrl:   getFedbudMestDataUrl(),
 		CreateTable: `CREATE TABLE IF NOT EXISTS %s (
               name LowCardinality(String)
 			, date Date
@@ -30,7 +47,7 @@ func init() {
 	chimport.Stats = append(chimport.Stats, &Fedbud)
 }
 
-var dateReplacer = strings.NewReplacer(".", "-", "янв", "Jan", "фев", "Feb", "апр", "Apr", "июн", "Jun", "июл", "Jul", "сен", "Sep", "ноя", "Nov", "авг", "Aug")
+var dateReplacer = strings.NewReplacer(".", "-", "янв", "Jan", "фев", "Feb", "апр", "Apr", "июн", "Jun", "июл", "Jul", "сен", "Sep", "ноя", "Nov", "авг", "Aug", "дек", "Dec")
 
 func fedBudImport(xlsx *excelize.File, batch driver.Batch) error {
 	rows, err := xlsx.GetRows("месяц")
@@ -63,7 +80,7 @@ func fedBudImport(xlsx *excelize.File, batch driver.Batch) error {
 				}
 				date, err = time.Parse("Jan-06", dateStr)
 				if err != nil {
-					return err
+					return fmt.Errorf("parse %s, err: %v", dateStr, err)
 				}
 				valueNew, err := strconv.ParseFloat(strings.ReplaceAll(rowCol, ",", ""), 16)
 				if dateStr[0:3] == "Jan" {
