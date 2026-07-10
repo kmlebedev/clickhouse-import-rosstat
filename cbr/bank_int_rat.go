@@ -19,12 +19,12 @@ const (
 
 var cbrBankIntRate = util.ClickHouseImport{
 	TableName: cbrBankIntRateTable,
-	CreateTable: `CREATE TABLE IF NOT EXISTS %s (
+	CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (
     		  name LowCardinality(String)
 			, date Date
     		, rate Float32
 		) ENGINE = ReplacingMergeTree ORDER BY (name, date);
-	`,
+	`},
 	DataUrl: "https://www.cbr.ru/vfs/statistics/pdko/int_rat/regulatory_rates.xlsx",
 	ImportFunc: func(xlsx *excelize.File, batch driver.Batch) error {
 		rows, err := xlsx.GetRows("в рублях")

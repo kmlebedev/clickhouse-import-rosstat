@@ -26,12 +26,12 @@ type CustomsVneshnTorg struct {
 
 var customsVneshnTorg = util.ClickHouseImport{
 	TableName: customsVneshnTorgName,
-	CreateTable: `CREATE TABLE IF NOT EXISTS %s (
+	CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (
     		  name LowCardinality(String)
 			, date Date
     		, value Float32
 		) ENGINE = ReplacingMergeTree ORDER BY (name, date);
-	`,
+	`},
 	DataUrl:  fmt.Sprintf("%s/statistic/vneshn-torg/vneshn-torg-countries", customsVneshnTorgUrl),
 	CrawFunc: CustomsVneshnTorgCraw,
 }

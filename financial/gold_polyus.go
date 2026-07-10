@@ -91,7 +91,7 @@ func polyusTableImport(f *FinDataBook, xlsx *excelize.File, batch driver.Batch) 
 func init() {
 	FinDataBookPolyus := FinDataBook{
 		name:         "databook_polyus",
-		dataBookPath: "financial/data/polyus_datapack_1h25.xlsx",
+		dataBookPath: "financial/data/polyus_datapack_fy2025.xlsx",
 		tables:       map[string][]string{},
 		insertRow:    "INSERT INTO %s VALUES (?, ?, ?, ?, ?)",
 		createTable: `CREATE TABLE IF NOT EXISTS %s (

@@ -11,7 +11,7 @@ const HttpUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KH
 
 type ClickHouseImport struct {
 	TableName   string
-	CreateTable string
+	CreateTable []string
 	DataUrl     string
 	TimeLayout  string
 	CrawFunc    func(crawUrl string, conn driver.Conn) error
@@ -42,8 +42,10 @@ func (s *ClickHouseImport) ImportXls(ctx context.Context, dataUrl string, conn d
 }
 
 func (s *ClickHouseImport) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	if err = conn.Exec(ctx, fmt.Sprintf(s.CreateTable, s.TableName)); err != nil {
-		return 0, err
+	for _, sql := range s.CreateTable {
+		if err = conn.Exec(ctx, fmt.Sprintf(sql, s.TableName)); err != nil {
+			return 0, err
+		}
 	}
 	switch {
 	case s.CrawFunc != nil:

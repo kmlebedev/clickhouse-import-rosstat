@@ -2,7 +2,6 @@ package craw
 
 import (
 	"context"
-	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/cenkalti/backoff/v5"
 	"github.com/gocolly/colly/v2"
@@ -32,13 +31,18 @@ func getDataUrl() string {
 
 var gostVehicleSafetyCertificate = util.ClickHouseImport{
 	TableName: "gost_vehicle_safety_certificate",
-	CreateTable: `CREATE TABLE IF NOT EXISTS %s (
+	CreateTable: []string{
+		`CREATE TABLE IF NOT EXISTS %s (
 			  mark LowCardinality(String)
     		, type LowCardinality(String)
 			, date Date
     		, certificate_number String
-		) ENGINE = ReplacingMergeTree ORDER BY (mark, type, date, certificate_number);
-	`,
+		) ENGINE = ReplacingMergeTree ORDER BY (mark, type, date, certificate_number);`,
+		`CREATE TABLE IF NOT EXISTS %s_type (
+    		type String
+			, name String
+		) ENGINE = ReplacingMergeTree ORDER BY (type);`,
+	},
 	//DataUrl: "https://www.gost.ru/portal/gost/home/activity/compliance/evaluationcompliance/AcknowledgementCorrespondence/safetycertificate018?portal:componentId=ff119059-8bd4-47fc-95f6-a70de17a4b3e&portal:isSecure=false&portal:portletMode=view&navigationalstate=JBPNS_rO0ABXdSAAdvcmRlckJ5AAAAAQAYZGF0ZW9maXNzdWVvZmNlcnRpZmljYXRlAARmcm9tAAAAAQAFMjk4MjAABW9yZGVyAAAAAQAEREVTQwAHX19FT0ZfXw**",
 	// Starship
 	DataUrl: getDataUrl(),
@@ -53,55 +57,38 @@ var gostVehicleSafetyCertificate = util.ClickHouseImport{
 			Multiplier:          2,
 			MaxInterval:         30 * time.Minute,
 		}
-		certificateNumberFoundsCount := 0
 		ctx := context.TODO()
-		batch, err := conn.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO gost_vehicle_safety_certificate"))
 		c.SetRequestTimeout(10 * time.Second)
-		var certMark, certMtype, certNum, certDate string
 		// #libraryPaging > div:nth-child(2) > a:nth-child(2)
 		c.OnHTML("#standartsList > tbody > tr", func(e *colly.HTMLElement) {
+			var certMark, certMtype, certNum, certDate string
 			td := e.DOM.Children()
 			certMark = td.Eq(0).Text()
 			certMtype = td.Eq(1).Text()
 			certNum = td.Eq(2).Text()
 			certDate = td.Eq(3).Text()
-			log.Debugf("mark: %s type: %s, date: %s, num: %s", certMark, certMtype, certDate, certNum)
+			log.Infof("mark: %s type: %s, date: %s, num: %s", certMark, certMtype, certDate, certNum)
 			certDateTime, err := time.Parse("02.01.2006", certDate)
 			if err != nil {
 				log.Error(err)
 				return
 			}
-			if err = batch.Append(certMark, certMtype, certDateTime, certNum); err != nil {
+			err = conn.Exec(
+				ctx,
+				"INSERT INTO gost_vehicle_safety_certificate (mark, type, date, certificate_number) VALUES (?, ?, ?, ?)",
+				certMark,
+				certMtype,
+				certDateTime,
+				certNum,
+			)
+			if err != nil {
 				log.Error(err)
 				return
 			}
 		})
 		c.OnHTML("#libraryPaging > div:nth-child(2) > a:nth-child(2)", func(e *colly.HTMLElement) {
 			link := e.Attr("href")
-			log.Infof("Rows %d Link found: %q -> %s\n", batch.Rows(), e.Text, link)
-			if rows, err := conn.Query(ctx, fmt.Sprintf("SELECT certificate_number FROM gost_vehicle_safety_certificate FINAL WHERE certificate_number = '%s'", certNum)); err != nil {
-				log.Fatalf("Craw stop certificate number (%s) is exist err %+v", certNum, err)
-			} else if rows != nil {
-				if certificateNumberFoundsCount > 5 {
-					log.Fatalf("Craw stop certificate number: %s is exist", certNum)
-				} else {
-					certificateNumberFoundsCount += 1
-				}
-			} else {
-				log.Infof("Craw skip certificate number: %s is exist, rows %+v, found %d", certNum, rows, certificateNumberFoundsCount)
-				certificateNumberFoundsCount = 0
-			}
-			if err = batch.Send(); err != nil {
-				log.Error(err)
-				return
-			}
-			if batch.IsSent() {
-				batch, err = conn.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO gost_vehicle_safety_certificate"))
-				if err != nil {
-					log.Error(err)
-				}
-			}
-			log.Infof("mark: %s type: %s, date: %s, num: %s", certMark, certMtype, certDate, certNum)
+			log.Infof("Rows Link found: %q -> %s\n", e.Text, link)
 			operation := func() (string, error) {
 				if err = e.Request.Visit(link); err != nil {
 					log.Errorf("visit err: %v+", err)
@@ -122,12 +109,9 @@ var gostVehicleSafetyCertificate = util.ClickHouseImport{
 				return
 			}
 		})
+
 		if err := c.Visit(crawUrl); err != nil {
 			log.Errorf("First visit err: %v+", err)
-			return err
-		}
-		if err = batch.Send(); err != nil {
-			log.Errorf("batch send err: %v+", err)
 			return err
 		}
 		return nil

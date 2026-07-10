@@ -1,6 +1,6 @@
 module github.com/kmlebedev/clickhouse-import-rosstat
 
-go 1.25.6
+go 1.26.0
 
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.30.0
