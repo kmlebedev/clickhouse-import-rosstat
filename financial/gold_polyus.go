@@ -75,8 +75,8 @@ func polyusTableImport(f *FinDataBook, xlsx *excelize.File, batch driver.Batch) 
 					if strings.HasPrefix(colCell, "(") && strings.HasSuffix(colCell, ")") {
 						value = value * -1
 					}
-					fmt.Printf("sheet %s, table %s, name %s , date %v, value %f\n",
-						sheet, table, row[f.tableColNum], date, value)
+					// fmt.Printf("sheet %s, table %s, name %s , date %v, value %f\n",
+					//	sheet, table, row[f.tableColNum], date, value)
 					if err = batch.Append(table, row[f.tableColNum], data, date.AddDate(0, 1, 0), value); err != nil {
 						return count, err
 					}
@@ -89,9 +89,9 @@ func polyusTableImport(f *FinDataBook, xlsx *excelize.File, batch driver.Batch) 
 }
 
 func init() {
-	FinDataBookPolyus := FinDataBook{
+	OperDataBookPolyus := FinDataBook{
 		name:         "databook_polyus",
-		dataBookPath: "financial/data/polyus_datapack_fy2025.xlsx",
+		dataBookPath: "financial/data/polyus_datapack_fy2025_new.xlsx",
 		tables:       map[string][]string{},
 		insertRow:    "INSERT INTO %s VALUES (?, ?, ?, ?, ?)",
 		createTable: `CREATE TABLE IF NOT EXISTS %s (
@@ -106,12 +106,12 @@ func init() {
 		tableImportFunc: polyusTableImport,
 	}
 
-	FinDataBookPolyus.tables["Sheet1"] = []string{
+	OperDataBookPolyus.tables["Sheet1"] = []string{
 		"CONSOLIDATED OPERATING RESULTS",
 		"OLIMPIADA",
 		"BLAGODATNOYE",
 		"TITIMUKHTA",
-		"VERNINSKOYE**",
+		"VERNINSKOYE2",
 		"ALLUVIALS",
 		"KURANAKH",
 		"ZAPADNOYE",
@@ -119,5 +119,5 @@ func init() {
 		"Sukhoi Log",
 	}
 
-	chimport.Stats = append(chimport.Stats, &FinDataBookPolyus)
+	chimport.Stats = append(chimport.Stats, &OperDataBookPolyus)
 }
