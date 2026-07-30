@@ -15,7 +15,7 @@ type cbrCurrencyUSD struct {
 }
 
 const (
-	cbrCurrencyUSDUrl   = "https://www.cbr.ru/currency_base/dynamics/?UniDbQuery.Posted=True&UniDbQuery.so=1&UniDbQuery.mode=1&UniDbQuery.VAL_NM_RQ=R01235&UniDbQuery.From=01.01.2022&UniDbQuery.To=%s"
+	cbrCurrencyUSDUrl   = "https://www.cbr.ru/currency_base/dynamics/?UniDbQuery.Posted=True&UniDbQuery.so=1&UniDbQuery.mode=1&UniDbQuery.VAL_NM_RQ=R01235&UniDbQuery.From=01.01.2013&UniDbQuery.To=%s"
 	cbrCurrencyUSDTable = "cbr_currency_usd"
 	cbrCurrencyUSDDdl   = `CREATE TABLE IF NOT EXISTS ` + cbrCurrencyUSDTable + ` (
 			  date Date

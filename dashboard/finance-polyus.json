@@ -1,0 +1,4238 @@
+{
+  "apiVersion": "dashboard.grafana.app/v2",
+  "kind": "Dashboard",
+  "metadata": {
+    "name": "polyusfinance",
+    "namespace": "default",
+    "uid": "06de7839-2255-4636-9a79-545f135da3ec",
+    "resourceVersion": "1785330444317995",
+    "generation": 5,
+    "creationTimestamp": "2026-07-29T06:42:05Z",
+    "labels": {
+      "grafana.app/deprecatedInternalID": "6"
+    },
+    "annotations": {
+      "grafana.app/createdBy": "user:dfgvw5atkwm4gc",
+      "grafana.app/folder": "",
+      "grafana.app/message": "ok",
+      "grafana.app/saved-from-ui": "Grafana v13.1.1 (a9cee6e172)",
+      "grafana.app/updatedBy": "user:dfgvw5atkwm4gc",
+      "grafana.app/updatedTimestamp": "2026-07-29T13:07:24Z"
+    }
+  },
+  "spec": {
+    "annotations": [
+      {
+        "kind": "AnnotationQuery",
+        "spec": {
+          "query": {
+            "kind": "DataQuery",
+            "group": "grafana",
+            "version": "v0",
+            "datasource": {
+              "name": "-- Grafana --"
+            },
+            "spec": {}
+          },
+          "enable": true,
+          "hide": true,
+          "iconColor": "rgba(0, 211, 255, 1)",
+          "name": "Annotations & Alerts",
+          "builtIn": true
+        }
+      }
+    ],
+    "cursorSync": "Off",
+    "description": "ok",
+    "editable": true,
+    "elements": {
+      "panel-1": {
+        "kind": "Panel",
+        "spec": {
+          "id": 1,
+          "title": "Общее количество добытого золота поквартально",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "grafana-clickhouse-datasource",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "bdx7lxrdelxq8b"
+                      },
+                      "spec": {
+                        "builderOptions": {
+                          "aggregates": [],
+                          "columns": [
+                            {
+                              "alias": "value",
+                              "custom": false,
+                              "name": "value",
+                              "type": "Float32"
+                            },
+                            {
+                              "hint": "time",
+                              "name": "date",
+                              "type": "Date"
+                            }
+                          ],
+                          "database": "default",
+                          "filters": [
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "hint": "time",
+                              "key": "",
+                              "operator": "WITH IN DASHBOARD TIME RANGE",
+                              "type": "datetime"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "table",
+                              "label": "table",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "CONSOLIDATED OPERATING RESULTS"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "data",
+                              "label": "data",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "QUARTERLY"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "name",
+                              "label": "name",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "Total gold produced2"
+                            }
+                          ],
+                          "groupBy": [],
+                          "limit": 1000,
+                          "meta": {},
+                          "mode": "aggregate",
+                          "orderBy": [
+                            {
+                              "default": true,
+                              "dir": "ASC",
+                              "hint": "time",
+                              "name": ""
+                            }
+                          ],
+                          "queryType": "timeseries",
+                          "table": "databook_polyus"
+                        },
+                        "editorType": "sql",
+                        "format": 0,
+                        "meta": {
+                          "builderOptions": {
+                            "aggregates": [],
+                            "columns": [
+                              {
+                                "alias": "value",
+                                "custom": false,
+                                "name": "value",
+                                "type": "Float32"
+                              },
+                              {
+                                "hint": "time",
+                                "name": "date",
+                                "type": "Date"
+                              }
+                            ],
+                            "database": "default",
+                            "filters": [
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "hint": "time",
+                                "key": "",
+                                "operator": "WITH IN DASHBOARD TIME RANGE",
+                                "type": "datetime"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "table",
+                                "label": "table",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "CONSOLIDATED OPERATING RESULTS"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "data",
+                                "label": "data",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "QUARTERLY"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "name",
+                                "label": "name",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "Total gold produced2"
+                              }
+                            ],
+                            "groupBy": [],
+                            "limit": 1000,
+                            "meta": {},
+                            "mode": "aggregate",
+                            "orderBy": [
+                              {
+                                "default": true,
+                                "dir": "ASC",
+                                "hint": "time",
+                                "name": ""
+                              }
+                            ],
+                            "queryType": "timeseries",
+                            "table": "databook_polyus"
+                          }
+                        },
+                        "pluginVersion": "4.3.2",
+                        "queryType": "timeseries",
+                        "rawSql": "SELECT date as \"time\", value \nFROM \"default\".\"databook_polyus\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( table = 'CONSOLIDATED OPERATING RESULTS' ) AND ( data = 'QUARTERLY' ) AND ( name = 'Total refined gold output' )\nUNION ALL\nSELECT date as \"time\", value/2\nFROM \"default\".\"databook_polyus\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( table = 'CONSOLIDATED OPERATING RESULTS' ) AND ( data = 'SEMI-ANNUAL' ) AND ( name = 'Total gold produced' )\nORDER BY time ASC LIMIT 1000"
+                      }
+                    },
+                    "refId": "Q",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "grafana-clickhouse-datasource",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "bdx7lxrdelxq8b"
+                      },
+                      "spec": {
+                        "builderOptions": {
+                          "aggregates": [],
+                          "columns": [
+                            {
+                              "alias": "value",
+                              "custom": false,
+                              "name": "value",
+                              "type": "Float32"
+                            },
+                            {
+                              "hint": "time",
+                              "name": "date",
+                              "type": "Date"
+                            }
+                          ],
+                          "database": "default",
+                          "filters": [
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "hint": "time",
+                              "key": "",
+                              "operator": "WITH IN DASHBOARD TIME RANGE",
+                              "type": "datetime"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "table",
+                              "label": "table",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "CONSOLIDATED OPERATING RESULTS"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "data",
+                              "label": "data",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "QUARTERLY"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "name",
+                              "label": "name",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "Total gold produced2"
+                            }
+                          ],
+                          "groupBy": [],
+                          "limit": 1000,
+                          "meta": {},
+                          "mode": "aggregate",
+                          "orderBy": [
+                            {
+                              "default": true,
+                              "dir": "ASC",
+                              "hint": "time",
+                              "name": ""
+                            }
+                          ],
+                          "queryType": "timeseries",
+                          "table": "databook_polyus"
+                        },
+                        "editorType": "sql",
+                        "format": 0,
+                        "meta": {
+                          "builderOptions": {
+                            "aggregates": [],
+                            "columns": [
+                              {
+                                "alias": "value",
+                                "custom": false,
+                                "name": "value",
+                                "type": "Float32"
+                              },
+                              {
+                                "hint": "time",
+                                "name": "date",
+                                "type": "Date"
+                              }
+                            ],
+                            "database": "default",
+                            "filters": [
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "hint": "time",
+                                "key": "",
+                                "operator": "WITH IN DASHBOARD TIME RANGE",
+                                "type": "datetime"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "table",
+                                "label": "table",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "CONSOLIDATED OPERATING RESULTS"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "data",
+                                "label": "data",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "QUARTERLY"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "name",
+                                "label": "name",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "Total gold produced2"
+                              }
+                            ],
+                            "groupBy": [],
+                            "limit": 1000,
+                            "meta": {},
+                            "mode": "aggregate",
+                            "orderBy": [
+                              {
+                                "default": true,
+                                "dir": "ASC",
+                                "hint": "time",
+                                "name": ""
+                              }
+                            ],
+                            "queryType": "timeseries",
+                            "table": "databook_polyus"
+                          }
+                        },
+                        "pluginVersion": "4.3.2",
+                        "queryType": "timeseries",
+                        "rawSql": "SELECT date as \"time\", value \nFROM \"default\".\"databook_polyus\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( table = 'CONSOLIDATED OPERATING RESULTS' ) AND ( data = 'ANNUAL' ) AND ( name = 'Total gold produced' )"
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": true
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "13.1.1",
+            "spec": {
+              "options": {
+                "annotations": {
+                  "clustering": -1,
+                  "multiLane": false
+                },
+                "legend": {
+                  "calcs": [
+                    "min",
+                    "mean",
+                    "max",
+                    "last"
+                  ],
+                  "displayMode": "list",
+                  "enableFacetedFilter": false,
+                  "overflow": "ellipsis",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "hideZeros": false,
+                  "mode": "single",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "koz",
+                  "min": 0,
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "value": 0,
+                        "color": "green"
+                      },
+                      {
+                        "value": 80,
+                        "color": "red"
+                      }
+                    ]
+                  },
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "barWidthFactor": 0.6,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "smooth",
+                    "lineWidth": 1,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "auto",
+                    "showValues": false,
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    }
+                  }
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "A value"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "sishort"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "panel-10": {
+        "kind": "Panel",
+        "spec": {
+          "id": 10,
+          "title": "Учетные цены на Золото от ЦБ, руб./гр. ",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "grafana-clickhouse-datasource",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "bdx7lxrdelxq8b"
+                      },
+                      "spec": {
+                        "editorType": "sql",
+                        "format": 1,
+                        "meta": {
+                          "builderOptions": {
+                            "columns": [],
+                            "database": "",
+                            "limit": 1000,
+                            "mode": "list",
+                            "queryType": "table",
+                            "table": ""
+                          }
+                        },
+                        "pluginVersion": "4.3.2",
+                        "queryType": "table",
+                        "rawSql": "SELECT\n    concat(\n        toString(toYear(date)),\n        'H',\n        toString(intDiv(toMonth(date) - 1, 6) + 1)\n    ) AS half,\n    avg(price)\nFROM default.cbr_gold\nWHERE\n    date >= $__fromTime\n    AND date <= $__toTime\nGROUP BY half\nORDER BY min(date);"
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "barchart",
+            "version": "13.1.1",
+            "spec": {
+              "options": {
+                "barRadius": 0,
+                "barWidth": 0.69,
+                "fullHighlight": false,
+                "groupWidth": 0.7,
+                "legend": {
+                  "calcs": [],
+                  "displayMode": "list",
+                  "overflow": "ellipsis",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "orientation": "auto",
+                "showValue": "auto",
+                "stacking": "none",
+                "tooltip": {
+                  "hideZeros": false,
+                  "mode": "single",
+                  "sort": "none"
+                },
+                "xTickLabelRotation": 0,
+                "xTickLabelSpacing": 100
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "руб",
+                  "min": 0,
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "value": 0,
+                        "color": "green"
+                      },
+                      {
+                        "value": 80,
+                        "color": "red"
+                      }
+                    ]
+                  },
+                  "color": {
+                    "mode": "thresholds"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "fillOpacity": 80,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "lineWidth": 1,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    }
+                  }
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-11": {
+        "kind": "Panel",
+        "spec": {
+          "id": 11,
+          "title": "Курс рубля",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "grafana-clickhouse-datasource",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "bdx7lxrdelxq8b"
+                      },
+                      "spec": {
+                        "editorType": "sql",
+                        "format": 1,
+                        "meta": {
+                          "builderOptions": {
+                            "columns": [],
+                            "database": "",
+                            "limit": 1000,
+                            "mode": "list",
+                            "queryType": "table",
+                            "table": ""
+                          }
+                        },
+                        "pluginVersion": "4.3.2",
+                        "queryType": "table",
+                        "rawSql": "SELECT\n    concat(\n        toString(toYear(date)),\n        'H',\n        toString(intDiv(toMonth(date) - 1, 6) + 1)\n    ) AS half,\n    avg(price)\nFROM default.cbr_currency_usd\nWHERE\n    date >= $__fromTime\n    AND date <= $__toTime\nGROUP BY half\nORDER BY min(date);"
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "barchart",
+            "version": "13.1.1",
+            "spec": {
+              "options": {
+                "barRadius": 0,
+                "barWidth": 0.69,
+                "fullHighlight": false,
+                "groupWidth": 0.7,
+                "legend": {
+                  "calcs": [
+                    "min",
+                    "mean",
+                    "max",
+                    "lastNotNull"
+                  ],
+                  "displayMode": "list",
+                  "overflow": "ellipsis",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "orientation": "auto",
+                "showValue": "always",
+                "stacking": "none",
+                "text": {
+                  "valueSize": 20
+                },
+                "tooltip": {
+                  "hideZeros": false,
+                  "mode": "single",
+                  "sort": "none"
+                },
+                "xTickLabelRotation": 0,
+                "xTickLabelSpacing": 100
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "р",
+                  "min": 0,
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "value": 0,
+                        "color": "green"
+                      },
+                      {
+                        "value": 80,
+                        "color": "red"
+                      }
+                    ]
+                  },
+                  "color": {
+                    "mode": "thresholds"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "fillOpacity": 80,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "lineWidth": 1,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    }
+                  }
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-12": {
+        "kind": "Panel",
+        "spec": {
+          "id": 12,
+          "title": "Учетные цены на Золото от ЦБ, $./ унция ",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "grafana-clickhouse-datasource",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "bdx7lxrdelxq8b"
+                      },
+                      "spec": {
+                        "editorType": "sql",
+                        "format": 1,
+                        "meta": {
+                          "builderOptions": {
+                            "columns": [],
+                            "database": "",
+                            "limit": 1000,
+                            "mode": "list",
+                            "queryType": "table",
+                            "table": ""
+                          }
+                        },
+                        "pluginVersion": "4.3.2",
+                        "queryType": "table",
+                        "rawSql": "SELECT\n    concat(\n        toString(toYear(date)),\n        'H',\n        toString(intDiv(toMonth(date) - 1, 6) + 1)\n    ) AS half,\n    avg(g.price / usd.price * 31.1034768) AS gold_usd_per_ounce\nFROM default.cbr_gold AS g\nINNER JOIN default.cbr_currency_usd AS usd\n    ON g.date = usd.date\nWHERE\n    g.date >= $__fromTime\n    AND g.date <= $__toTime\nGROUP BY half\nORDER BY min(date);"
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "barchart",
+            "version": "13.1.1",
+            "spec": {
+              "options": {
+                "barRadius": 0,
+                "barWidth": 0.69,
+                "fullHighlight": false,
+                "groupWidth": 0.7,
+                "legend": {
+                  "calcs": [
+                    "min",
+                    "mean",
+                    "max",
+                    "lastNotNull"
+                  ],
+                  "displayMode": "list",
+                  "overflow": "ellipsis",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "orientation": "auto",
+                "showValue": "auto",
+                "stacking": "none",
+                "text": {
+                  "valueSize": 24
+                },
+                "tooltip": {
+                  "hideZeros": false,
+                  "mode": "single",
+                  "sort": "none"
+                },
+                "xTickLabelRotation": 0,
+                "xTickLabelSpacing": 100
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "currencyUSD",
+                  "min": 0,
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "value": 0,
+                        "color": "green"
+                      },
+                      {
+                        "value": 80,
+                        "color": "red"
+                      }
+                    ]
+                  },
+                  "color": {
+                    "mode": "thresholds"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "fillOpacity": 80,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "lineWidth": 1,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    }
+                  }
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-13": {
+        "kind": "Panel",
+        "spec": {
+          "id": 13,
+          "title": "Capex, USD million",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "grafana-clickhouse-datasource",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "efgvwiwtduwaoc"
+                      },
+                      "spec": {
+                        "builderOptions": {
+                          "aggregates": [],
+                          "columns": [
+                            {
+                              "alias": "period",
+                              "custom": false,
+                              "name": "period",
+                              "type": "String"
+                            },
+                            {
+                              "alias": "value",
+                              "custom": false,
+                              "name": "value",
+                              "type": "Nullable(Float64)"
+                            }
+                          ],
+                          "database": "default",
+                          "filters": [
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "metric",
+                              "label": "metric",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "capex"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "period_type",
+                              "label": "period_type",
+                              "operator": "=",
+                              "type": "Enum8('Q' = 1, 'H' = 2, 'FY' = 3, 'LTM' = 4)",
+                              "value": "H"
+                            }
+                          ],
+                          "groupBy": [],
+                          "limit": 1000,
+                          "meta": {},
+                          "mode": "list",
+                          "orderBy": [],
+                          "queryType": "table",
+                          "table": "polyus_financial_metrics"
+                        },
+                        "editorType": "sql",
+                        "format": 1,
+                        "meta": {
+                          "builderOptions": {
+                            "aggregates": [],
+                            "columns": [
+                              {
+                                "alias": "period",
+                                "custom": false,
+                                "name": "period",
+                                "type": "String"
+                              },
+                              {
+                                "alias": "value",
+                                "custom": false,
+                                "name": "value",
+                                "type": "Nullable(Float64)"
+                              }
+                            ],
+                            "database": "default",
+                            "filters": [
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "metric",
+                                "label": "metric",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "capex"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "period_type",
+                                "label": "period_type",
+                                "operator": "=",
+                                "type": "Enum8('Q' = 1, 'H' = 2, 'FY' = 3, 'LTM' = 4)",
+                                "value": "H"
+                              }
+                            ],
+                            "groupBy": [],
+                            "limit": 1000,
+                            "meta": {},
+                            "mode": "list",
+                            "orderBy": [],
+                            "queryType": "table",
+                            "table": "polyus_financial_metrics"
+                          }
+                        },
+                        "pluginVersion": "4.14.0",
+                        "queryType": "table",
+                        "rawSql": "SELECT parseDateTimeBestEffort(\n        replace(replace(period, 'H1', '-01-01'), 'H2', '-07-01')\n    ) AS dt, value\nFROM \"default\".\"polyus_financial_metrics\" WHERE ( metric = 'capex' ) AND ( period_type = 'H' ) LIMIT 1000"
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": true
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "grafana-clickhouse-datasource",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "efgvwiwtduwaoc"
+                      },
+                      "spec": {
+                        "builderOptions": {
+                          "aggregates": [],
+                          "columns": [
+                            {
+                              "alias": "period",
+                              "custom": false,
+                              "name": "period",
+                              "type": "String"
+                            },
+                            {
+                              "alias": "value",
+                              "custom": false,
+                              "name": "value",
+                              "type": "Nullable(Float64)"
+                            }
+                          ],
+                          "database": "default",
+                          "filters": [
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "metric",
+                              "label": "metric",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "capex"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "period_type",
+                              "label": "period_type",
+                              "operator": "=",
+                              "type": "Enum8('Q' = 1, 'H' = 2, 'FY' = 3, 'LTM' = 4)",
+                              "value": "H"
+                            }
+                          ],
+                          "groupBy": [],
+                          "limit": 1000,
+                          "meta": {},
+                          "mode": "list",
+                          "orderBy": [],
+                          "queryType": "table",
+                          "table": "polyus_financial_metrics"
+                        },
+                        "editorType": "sql",
+                        "format": 1,
+                        "meta": {
+                          "builderOptions": {
+                            "aggregates": [],
+                            "columns": [
+                              {
+                                "alias": "period",
+                                "custom": false,
+                                "name": "period",
+                                "type": "String"
+                              },
+                              {
+                                "alias": "value",
+                                "custom": false,
+                                "name": "value",
+                                "type": "Nullable(Float64)"
+                              }
+                            ],
+                            "database": "default",
+                            "filters": [
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "metric",
+                                "label": "metric",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "capex"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "period_type",
+                                "label": "period_type",
+                                "operator": "=",
+                                "type": "Enum8('Q' = 1, 'H' = 2, 'FY' = 3, 'LTM' = 4)",
+                                "value": "H"
+                              }
+                            ],
+                            "groupBy": [],
+                            "limit": 1000,
+                            "meta": {},
+                            "mode": "list",
+                            "orderBy": [],
+                            "queryType": "table",
+                            "table": "polyus_financial_metrics"
+                          }
+                        },
+                        "pluginVersion": "4.14.0",
+                        "queryType": "table",
+                        "rawSql": "SELECT parseDateTimeBestEffort(replace(period, 'FY', '-12-30')\n    ) AS dt, value as CAPEX\nFROM \"default\".\"polyus_financial_metrics\" FINAL WHERE ( metric = 'capex' ) AND ( period_type = 'FY' )\nUNION ALL\nSELECT\n    toDateTime('2026-12-30') AS dt,\n    2500 AS CAPEX\nUNION ALL\nSELECT\n    toDateTime('2027-12-30') AS dt,\n    2500 AS CAPEX\nORDER BY dt;"
+                      }
+                    },
+                    "refId": "B",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "grafana-clickhouse-datasource",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "efgvwiwtduwaoc"
+                      },
+                      "spec": {
+                        "editorType": "sql",
+                        "format": 1,
+                        "meta": {
+                          "builderOptions": {
+                            "columns": [],
+                            "database": "",
+                            "limit": 1000,
+                            "mode": "list",
+                            "queryType": "table",
+                            "table": ""
+                          }
+                        },
+                        "pluginVersion": "4.14.0",
+                        "queryType": "table",
+                        "rawSql": "SELECT parseDateTimeBestEffort(replace(period, 'FY', '-01-01')\n    ) AS dt, value as \"Gold sold (koz)\"\nFROM \"default\".\"polyus_financial_metrics\" FINAL WHERE ( metric = 'gold_sold' ) AND ( period_type = 'FY' )\nUNION ALL\nSELECT\n    toDateTime('2026-01-01') AS dt,\n    2500 AS \"Gold sold (koz)\"\nUNION ALL\nSELECT\n    toDateTime('2027-01-01') AS dt,\n    2500 AS \"Gold sold (koz)\"\nUNION ALL\nSELECT\n    toDateTime('2028-01-01') AS dt,\n    3500 AS \"Gold sold (koz)\"\nUNION ALL\nSELECT\n    toDateTime('2029-01-01') AS dt,\n    4500 AS \"Gold sold (koz)\"\n    UNION ALL\nSELECT\n    toDateTime('2030-01-01') AS dt,\n    5500 AS \"Gold sold (koz)\"\nORDER BY dt;"
+                      }
+                    },
+                    "refId": "C",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "13.1.1",
+            "spec": {
+              "options": {
+                "annotations": {
+                  "clustering": -1,
+                  "multiLane": false
+                },
+                "legend": {
+                  "calcs": [
+                    "min",
+                    "max",
+                    "mean",
+                    "last"
+                  ],
+                  "displayMode": "list",
+                  "enableFacetedFilter": false,
+                  "overflow": "ellipsis",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "hideZeros": false,
+                  "mode": "single",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "currencyUSD",
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "value": 0,
+                        "color": "green"
+                      },
+                      {
+                        "value": 80,
+                        "color": "red"
+                      }
+                    ]
+                  },
+                  "color": {
+                    "mode": "continuous-GrYlRd",
+                    "seriesBy": "last"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "barWidthFactor": 0.6,
+                    "drawStyle": "bars",
+                    "fillOpacity": 68,
+                    "gradientMode": "scheme",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineStyle": {
+                      "fill": "solid"
+                    },
+                    "lineWidth": 1,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "auto",
+                    "showValues": true,
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    }
+                  },
+                  "fieldMinMax": false
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "scope": "series",
+                      "options": "C Gold sold (koz)"
+                    },
+                    "properties": [
+                      {
+                        "id": "custom.drawStyle",
+                        "value": "line"
+                      },
+                      {
+                        "id": "unit",
+                        "value": "koz"
+                      },
+                      {
+                        "id": "color",
+                        "value": {
+                          "fixedColor": "dark-yellow",
+                          "mode": "fixed"
+                        }
+                      },
+                      {
+                        "id": "custom.fillOpacity",
+                        "value": 0
+                      },
+                      {
+                        "id": "custom.lineWidth",
+                        "value": 3
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "panel-2": {
+        "kind": "Panel",
+        "spec": {
+          "id": 2,
+          "title": "Среднее содержание золота в добытой руде, Коэффициент извлечения и Коэффициент вскрыши",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "grafana-clickhouse-datasource",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "bdx7lxrdelxq8b"
+                      },
+                      "spec": {
+                        "builderOptions": {
+                          "aggregates": [],
+                          "columns": [
+                            {
+                              "alias": "value",
+                              "custom": false,
+                              "name": "value",
+                              "type": "Float32"
+                            },
+                            {
+                              "hint": "time",
+                              "name": "date",
+                              "type": "Date"
+                            }
+                          ],
+                          "database": "default",
+                          "filters": [
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "hint": "time",
+                              "key": "",
+                              "operator": "WITH IN DASHBOARD TIME RANGE",
+                              "type": "datetime"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "table",
+                              "label": "table",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "CONSOLIDATED OPERATING RESULTS"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "data",
+                              "label": "data",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "QUARTERLY"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "name",
+                              "label": "name",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "Total gold produced2"
+                            }
+                          ],
+                          "groupBy": [],
+                          "limit": 1000,
+                          "meta": {},
+                          "mode": "aggregate",
+                          "orderBy": [
+                            {
+                              "default": true,
+                              "dir": "ASC",
+                              "hint": "time",
+                              "name": ""
+                            }
+                          ],
+                          "queryType": "timeseries",
+                          "table": "databook_polyus"
+                        },
+                        "editorType": "sql",
+                        "format": 0,
+                        "meta": {
+                          "builderOptions": {
+                            "aggregates": [],
+                            "columns": [
+                              {
+                                "alias": "value",
+                                "custom": false,
+                                "name": "value",
+                                "type": "Float32"
+                              },
+                              {
+                                "hint": "time",
+                                "name": "date",
+                                "type": "Date"
+                              }
+                            ],
+                            "database": "default",
+                            "filters": [
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "hint": "time",
+                                "key": "",
+                                "operator": "WITH IN DASHBOARD TIME RANGE",
+                                "type": "datetime"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "table",
+                                "label": "table",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "CONSOLIDATED OPERATING RESULTS"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "data",
+                                "label": "data",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "QUARTERLY"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "name",
+                                "label": "name",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "Total gold produced2"
+                              }
+                            ],
+                            "groupBy": [],
+                            "limit": 1000,
+                            "meta": {},
+                            "mode": "aggregate",
+                            "orderBy": [
+                              {
+                                "default": true,
+                                "dir": "ASC",
+                                "hint": "time",
+                                "name": ""
+                              }
+                            ],
+                            "queryType": "timeseries",
+                            "table": "databook_polyus"
+                          }
+                        },
+                        "pluginVersion": "4.3.2",
+                        "queryType": "timeseries",
+                        "rawSql": "select * from (SELECT date as \"time\", value as \"g/t\" \nFROM \"default\".\"databook_polyus\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( table = 'CONSOLIDATED OPERATING RESULTS' ) AND ( data = 'QUARTERLY' ) AND ( name = 'Average grade in ore mined' )\nUNION ALL\nSELECT date as \"time\", value\nFROM \"default\".\"databook_polyus\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( table = 'CONSOLIDATED OPERATING RESULTS' ) AND ( data = 'SEMI-ANNUAL' ) AND ( name = 'Average grade in ore mined' )\n) ORDER BY time ASC LIMIT 1000"
+                      }
+                    },
+                    "refId": "Average grade in ore mined",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "grafana-clickhouse-datasource",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "bdx7lxrdelxq8b"
+                      },
+                      "spec": {
+                        "builderOptions": {
+                          "aggregates": [],
+                          "columns": [
+                            {
+                              "alias": "value",
+                              "custom": false,
+                              "name": "value",
+                              "type": "Float32"
+                            },
+                            {
+                              "hint": "time",
+                              "name": "date",
+                              "type": "Date"
+                            }
+                          ],
+                          "database": "default",
+                          "filters": [
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "hint": "time",
+                              "key": "",
+                              "operator": "WITH IN DASHBOARD TIME RANGE",
+                              "type": "datetime"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "table",
+                              "label": "table",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "CONSOLIDATED OPERATING RESULTS"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "data",
+                              "label": "data",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "QUARTERLY"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "name",
+                              "label": "name",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "Total gold produced2"
+                            }
+                          ],
+                          "groupBy": [],
+                          "limit": 1000,
+                          "meta": {},
+                          "mode": "aggregate",
+                          "orderBy": [
+                            {
+                              "default": true,
+                              "dir": "ASC",
+                              "hint": "time",
+                              "name": ""
+                            }
+                          ],
+                          "queryType": "timeseries",
+                          "table": "databook_polyus"
+                        },
+                        "editorType": "sql",
+                        "format": 0,
+                        "meta": {
+                          "builderOptions": {
+                            "aggregates": [],
+                            "columns": [
+                              {
+                                "alias": "value",
+                                "custom": false,
+                                "name": "value",
+                                "type": "Float32"
+                              },
+                              {
+                                "hint": "time",
+                                "name": "date",
+                                "type": "Date"
+                              }
+                            ],
+                            "database": "default",
+                            "filters": [
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "hint": "time",
+                                "key": "",
+                                "operator": "WITH IN DASHBOARD TIME RANGE",
+                                "type": "datetime"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "table",
+                                "label": "table",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "CONSOLIDATED OPERATING RESULTS"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "data",
+                                "label": "data",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "QUARTERLY"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "name",
+                                "label": "name",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "Total gold produced2"
+                              }
+                            ],
+                            "groupBy": [],
+                            "limit": 1000,
+                            "meta": {},
+                            "mode": "aggregate",
+                            "orderBy": [
+                              {
+                                "default": true,
+                                "dir": "ASC",
+                                "hint": "time",
+                                "name": ""
+                              }
+                            ],
+                            "queryType": "timeseries",
+                            "table": "databook_polyus"
+                          }
+                        },
+                        "pluginVersion": "4.3.2",
+                        "queryType": "timeseries",
+                        "rawSql": "select * from (SELECT date as \"time\", value as \"%\"\nFROM \"default\".\"databook_polyus\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( table = 'CONSOLIDATED OPERATING RESULTS' ) AND ( data = 'QUARTERLY' ) AND ( name = 'Recovery' )\nUNION ALL\nSELECT date as \"time\", value\nFROM \"default\".\"databook_polyus\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( table = 'CONSOLIDATED OPERATING RESULTS' ) AND ( data = 'SEMI-ANNUAL' ) AND ( name = 'Recovery' )\n) ORDER BY time ASC LIMIT 1000"
+                      }
+                    },
+                    "refId": "Recovery",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "grafana-clickhouse-datasource",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "bdx7lxrdelxq8b"
+                      },
+                      "spec": {
+                        "builderOptions": {
+                          "aggregates": [],
+                          "columns": [
+                            {
+                              "alias": "value",
+                              "custom": false,
+                              "name": "value",
+                              "type": "Float32"
+                            },
+                            {
+                              "hint": "time",
+                              "name": "date",
+                              "type": "Date"
+                            }
+                          ],
+                          "database": "default",
+                          "filters": [
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "hint": "time",
+                              "key": "",
+                              "operator": "WITH IN DASHBOARD TIME RANGE",
+                              "type": "datetime"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "table",
+                              "label": "table",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "CONSOLIDATED OPERATING RESULTS"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "data",
+                              "label": "data",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "QUARTERLY"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "name",
+                              "label": "name",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "Total gold produced2"
+                            }
+                          ],
+                          "groupBy": [],
+                          "limit": 1000,
+                          "meta": {},
+                          "mode": "aggregate",
+                          "orderBy": [
+                            {
+                              "default": true,
+                              "dir": "ASC",
+                              "hint": "time",
+                              "name": ""
+                            }
+                          ],
+                          "queryType": "timeseries",
+                          "table": "databook_polyus"
+                        },
+                        "editorType": "sql",
+                        "format": 0,
+                        "meta": {
+                          "builderOptions": {
+                            "aggregates": [],
+                            "columns": [
+                              {
+                                "alias": "value",
+                                "custom": false,
+                                "name": "value",
+                                "type": "Float32"
+                              },
+                              {
+                                "hint": "time",
+                                "name": "date",
+                                "type": "Date"
+                              }
+                            ],
+                            "database": "default",
+                            "filters": [
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "hint": "time",
+                                "key": "",
+                                "operator": "WITH IN DASHBOARD TIME RANGE",
+                                "type": "datetime"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "table",
+                                "label": "table",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "CONSOLIDATED OPERATING RESULTS"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "data",
+                                "label": "data",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "QUARTERLY"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "name",
+                                "label": "name",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "Total gold produced2"
+                              }
+                            ],
+                            "groupBy": [],
+                            "limit": 1000,
+                            "meta": {},
+                            "mode": "aggregate",
+                            "orderBy": [
+                              {
+                                "default": true,
+                                "dir": "ASC",
+                                "hint": "time",
+                                "name": ""
+                              }
+                            ],
+                            "queryType": "timeseries",
+                            "table": "databook_polyus"
+                          }
+                        },
+                        "pluginVersion": "4.3.2",
+                        "queryType": "timeseries",
+                        "rawSql": "select * from (SELECT date as \"time\", value as \"m3/t\"\nFROM \"default\".\"databook_polyus\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( table = 'CONSOLIDATED OPERATING RESULTS' ) AND ( data = 'QUARTERLY' ) AND ( name = 'Stripping ratio' )\nUNION ALL\nSELECT date as \"time\", value\nFROM \"default\".\"databook_polyus\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( table = 'CONSOLIDATED OPERATING RESULTS' ) AND ( data = 'SEMI-ANNUAL' ) AND ( name = 'Stripping ratio' )\n) ORDER BY time ASC LIMIT 1000"
+                      }
+                    },
+                    "refId": "Stripping ratio",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "13.1.1",
+            "spec": {
+              "options": {
+                "annotations": {
+                  "clustering": -1,
+                  "multiLane": false
+                },
+                "legend": {
+                  "calcs": [
+                    "min",
+                    "mean",
+                    "max",
+                    "last"
+                  ],
+                  "displayMode": "list",
+                  "enableFacetedFilter": false,
+                  "overflow": "ellipsis",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "hideZeros": false,
+                  "mode": "single",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "g/t",
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "value": 0,
+                        "color": "green"
+                      },
+                      {
+                        "value": 80,
+                        "color": "red"
+                      }
+                    ]
+                  },
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "barWidthFactor": 0.6,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "smooth",
+                    "lineWidth": 1,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "auto",
+                    "showValues": false,
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    }
+                  }
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "Recovery %"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "percent"
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "Stripping ratio m3/t"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "m3/t"
+                      }
+                    ]
+                  },
+                  {
+                    "__systemRef": "hideSeriesFrom",
+                    "matcher": {
+                      "id": "byNames",
+                      "options": {
+                        "mode": "exclude",
+                        "names": [
+                          "Average grade in ore mined g/t",
+                          "Stripping ratio m3/t"
+                        ],
+                        "prefix": "All except:",
+                        "readOnly": true
+                      }
+                    },
+                    "properties": [
+                      {
+                        "id": "custom.hideFrom",
+                        "value": {
+                          "legend": false,
+                          "tooltip": true,
+                          "viz": true
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "panel-3": {
+        "kind": "Panel",
+        "spec": {
+          "id": 3,
+          "title": "Общее количество добытой руды поквартально, объем горной массы и вскрыши",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "grafana-clickhouse-datasource",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "bdx7lxrdelxq8b"
+                      },
+                      "spec": {
+                        "builderOptions": {
+                          "aggregates": [],
+                          "columns": [
+                            {
+                              "alias": "value",
+                              "custom": false,
+                              "name": "value",
+                              "type": "Float32"
+                            },
+                            {
+                              "hint": "time",
+                              "name": "date",
+                              "type": "Date"
+                            }
+                          ],
+                          "database": "default",
+                          "filters": [
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "hint": "time",
+                              "key": "",
+                              "operator": "WITH IN DASHBOARD TIME RANGE",
+                              "type": "datetime"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "table",
+                              "label": "table",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "CONSOLIDATED OPERATING RESULTS"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "data",
+                              "label": "data",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "QUARTERLY"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "name",
+                              "label": "name",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "Total gold produced2"
+                            }
+                          ],
+                          "groupBy": [],
+                          "limit": 1000,
+                          "meta": {},
+                          "mode": "aggregate",
+                          "orderBy": [
+                            {
+                              "default": true,
+                              "dir": "ASC",
+                              "hint": "time",
+                              "name": ""
+                            }
+                          ],
+                          "queryType": "timeseries",
+                          "table": "databook_polyus"
+                        },
+                        "editorType": "sql",
+                        "format": 0,
+                        "meta": {
+                          "builderOptions": {
+                            "aggregates": [],
+                            "columns": [
+                              {
+                                "alias": "value",
+                                "custom": false,
+                                "name": "value",
+                                "type": "Float32"
+                              },
+                              {
+                                "hint": "time",
+                                "name": "date",
+                                "type": "Date"
+                              }
+                            ],
+                            "database": "default",
+                            "filters": [
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "hint": "time",
+                                "key": "",
+                                "operator": "WITH IN DASHBOARD TIME RANGE",
+                                "type": "datetime"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "table",
+                                "label": "table",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "CONSOLIDATED OPERATING RESULTS"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "data",
+                                "label": "data",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "QUARTERLY"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "name",
+                                "label": "name",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "Total gold produced2"
+                              }
+                            ],
+                            "groupBy": [],
+                            "limit": 1000,
+                            "meta": {},
+                            "mode": "aggregate",
+                            "orderBy": [
+                              {
+                                "default": true,
+                                "dir": "ASC",
+                                "hint": "time",
+                                "name": ""
+                              }
+                            ],
+                            "queryType": "timeseries",
+                            "table": "databook_polyus"
+                          }
+                        },
+                        "pluginVersion": "4.3.2",
+                        "queryType": "timeseries",
+                        "rawSql": "SELECT date as \"time\", value \nFROM \"default\".\"databook_polyus\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( table = 'CONSOLIDATED OPERATING RESULTS' ) AND ( data = 'QUARTERLY' ) AND ( name = 'Ore mined' )\nUNION ALL\nSELECT date as \"time\", value/2\nFROM \"default\".\"databook_polyus\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( table = 'CONSOLIDATED OPERATING RESULTS' ) AND ( data = 'SEMI-ANNUAL' ) AND ( name = 'Ore mined' )\nORDER BY time ASC LIMIT 1000"
+                      }
+                    },
+                    "refId": "mined",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "grafana-clickhouse-datasource",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "bdx7lxrdelxq8b"
+                      },
+                      "spec": {
+                        "builderOptions": {
+                          "aggregates": [],
+                          "columns": [
+                            {
+                              "alias": "value",
+                              "custom": false,
+                              "name": "value",
+                              "type": "Float32"
+                            },
+                            {
+                              "hint": "time",
+                              "name": "date",
+                              "type": "Date"
+                            }
+                          ],
+                          "database": "default",
+                          "filters": [
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "hint": "time",
+                              "key": "",
+                              "operator": "WITH IN DASHBOARD TIME RANGE",
+                              "type": "datetime"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "table",
+                              "label": "table",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "CONSOLIDATED OPERATING RESULTS"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "data",
+                              "label": "data",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "QUARTERLY"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "name",
+                              "label": "name",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "Total gold produced2"
+                            }
+                          ],
+                          "groupBy": [],
+                          "limit": 1000,
+                          "meta": {},
+                          "mode": "aggregate",
+                          "orderBy": [
+                            {
+                              "default": true,
+                              "dir": "ASC",
+                              "hint": "time",
+                              "name": ""
+                            }
+                          ],
+                          "queryType": "timeseries",
+                          "table": "databook_polyus"
+                        },
+                        "editorType": "sql",
+                        "format": 0,
+                        "meta": {
+                          "builderOptions": {
+                            "aggregates": [],
+                            "columns": [
+                              {
+                                "alias": "value",
+                                "custom": false,
+                                "name": "value",
+                                "type": "Float32"
+                              },
+                              {
+                                "hint": "time",
+                                "name": "date",
+                                "type": "Date"
+                              }
+                            ],
+                            "database": "default",
+                            "filters": [
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "hint": "time",
+                                "key": "",
+                                "operator": "WITH IN DASHBOARD TIME RANGE",
+                                "type": "datetime"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "table",
+                                "label": "table",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "CONSOLIDATED OPERATING RESULTS"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "data",
+                                "label": "data",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "QUARTERLY"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "name",
+                                "label": "name",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "Total gold produced2"
+                              }
+                            ],
+                            "groupBy": [],
+                            "limit": 1000,
+                            "meta": {},
+                            "mode": "aggregate",
+                            "orderBy": [
+                              {
+                                "default": true,
+                                "dir": "ASC",
+                                "hint": "time",
+                                "name": ""
+                              }
+                            ],
+                            "queryType": "timeseries",
+                            "table": "databook_polyus"
+                          }
+                        },
+                        "pluginVersion": "4.3.2",
+                        "queryType": "timeseries",
+                        "rawSql": "SELECT date as \"time\", value \nFROM \"default\".\"databook_polyus\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( table = 'CONSOLIDATED OPERATING RESULTS' ) AND ( data = 'QUARTERLY' ) AND ( name = 'Total rock moved' )\nUNION ALL\nSELECT date as \"time\", value/2\nFROM \"default\".\"databook_polyus\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( table = 'CONSOLIDATED OPERATING RESULTS' ) AND ( data = 'SEMI-ANNUAL' ) AND ( name = 'Total rock moved' )\nORDER BY time ASC LIMIT 1000"
+                      }
+                    },
+                    "refId": "moved",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "grafana-clickhouse-datasource",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "bdx7lxrdelxq8b"
+                      },
+                      "spec": {
+                        "builderOptions": {
+                          "aggregates": [],
+                          "columns": [
+                            {
+                              "alias": "value",
+                              "custom": false,
+                              "name": "value",
+                              "type": "Float32"
+                            },
+                            {
+                              "hint": "time",
+                              "name": "date",
+                              "type": "Date"
+                            }
+                          ],
+                          "database": "default",
+                          "filters": [
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "hint": "time",
+                              "key": "",
+                              "operator": "WITH IN DASHBOARD TIME RANGE",
+                              "type": "datetime"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "table",
+                              "label": "table",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "CONSOLIDATED OPERATING RESULTS"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "data",
+                              "label": "data",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "QUARTERLY"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "name",
+                              "label": "name",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "Total gold produced2"
+                            }
+                          ],
+                          "groupBy": [],
+                          "limit": 1000,
+                          "meta": {},
+                          "mode": "aggregate",
+                          "orderBy": [
+                            {
+                              "default": true,
+                              "dir": "ASC",
+                              "hint": "time",
+                              "name": ""
+                            }
+                          ],
+                          "queryType": "timeseries",
+                          "table": "databook_polyus"
+                        },
+                        "editorType": "sql",
+                        "format": 0,
+                        "meta": {
+                          "builderOptions": {
+                            "aggregates": [],
+                            "columns": [
+                              {
+                                "alias": "value",
+                                "custom": false,
+                                "name": "value",
+                                "type": "Float32"
+                              },
+                              {
+                                "hint": "time",
+                                "name": "date",
+                                "type": "Date"
+                              }
+                            ],
+                            "database": "default",
+                            "filters": [
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "hint": "time",
+                                "key": "",
+                                "operator": "WITH IN DASHBOARD TIME RANGE",
+                                "type": "datetime"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "table",
+                                "label": "table",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "CONSOLIDATED OPERATING RESULTS"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "data",
+                                "label": "data",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "QUARTERLY"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "name",
+                                "label": "name",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "Total gold produced2"
+                              }
+                            ],
+                            "groupBy": [],
+                            "limit": 1000,
+                            "meta": {},
+                            "mode": "aggregate",
+                            "orderBy": [
+                              {
+                                "default": true,
+                                "dir": "ASC",
+                                "hint": "time",
+                                "name": ""
+                              }
+                            ],
+                            "queryType": "timeseries",
+                            "table": "databook_polyus"
+                          }
+                        },
+                        "pluginVersion": "4.3.2",
+                        "queryType": "timeseries",
+                        "rawSql": "SELECT date as \"time\", value \nFROM \"default\".\"databook_polyus\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( table = 'CONSOLIDATED OPERATING RESULTS' ) AND ( data = 'QUARTERLY' ) AND ( name = 'Stripping' )\nUNION ALL\nSELECT date as \"time\", value/2\nFROM \"default\".\"databook_polyus\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( table = 'CONSOLIDATED OPERATING RESULTS' ) AND ( data = 'SEMI-ANNUAL' ) AND ( name = 'Stripping' )\nORDER BY time ASC LIMIT 1000"
+                      }
+                    },
+                    "refId": "stripping",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "13.1.1",
+            "spec": {
+              "options": {
+                "annotations": {
+                  "clustering": -1,
+                  "multiLane": false
+                },
+                "legend": {
+                  "calcs": [
+                    "min",
+                    "mean",
+                    "max",
+                    "last"
+                  ],
+                  "displayMode": "list",
+                  "enableFacetedFilter": false,
+                  "overflow": "ellipsis",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "hideZeros": false,
+                  "mode": "single",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "masst",
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "value": 0,
+                        "color": "green"
+                      },
+                      {
+                        "value": 80,
+                        "color": "red"
+                      }
+                    ]
+                  },
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "barWidthFactor": 0.6,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "smooth",
+                    "lineWidth": 1,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "auto",
+                    "showValues": false,
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    }
+                  }
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "moved value"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "m3"
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "stripping value"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "m3"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "panel-4": {
+        "kind": "Panel",
+        "spec": {
+          "id": 4,
+          "title": "Общее количество добытого золота поквартально",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "grafana-clickhouse-datasource",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "bdx7lxrdelxq8b"
+                      },
+                      "spec": {
+                        "builderOptions": {
+                          "aggregates": [],
+                          "columns": [
+                            {
+                              "alias": "value",
+                              "custom": false,
+                              "name": "value",
+                              "type": "Float32"
+                            },
+                            {
+                              "hint": "time",
+                              "name": "date",
+                              "type": "Date"
+                            }
+                          ],
+                          "database": "default",
+                          "filters": [
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "hint": "time",
+                              "key": "",
+                              "operator": "WITH IN DASHBOARD TIME RANGE",
+                              "type": "datetime"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "table",
+                              "label": "table",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "CONSOLIDATED OPERATING RESULTS"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "data",
+                              "label": "data",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "QUARTERLY"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "name",
+                              "label": "name",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "Total gold produced2"
+                            }
+                          ],
+                          "groupBy": [],
+                          "limit": 1000,
+                          "meta": {},
+                          "mode": "aggregate",
+                          "orderBy": [
+                            {
+                              "default": true,
+                              "dir": "ASC",
+                              "hint": "time",
+                              "name": ""
+                            }
+                          ],
+                          "queryType": "timeseries",
+                          "table": "databook_polyus"
+                        },
+                        "editorType": "sql",
+                        "format": 0,
+                        "meta": {
+                          "builderOptions": {
+                            "aggregates": [],
+                            "columns": [
+                              {
+                                "alias": "value",
+                                "custom": false,
+                                "name": "value",
+                                "type": "Float32"
+                              },
+                              {
+                                "hint": "time",
+                                "name": "date",
+                                "type": "Date"
+                              }
+                            ],
+                            "database": "default",
+                            "filters": [
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "hint": "time",
+                                "key": "",
+                                "operator": "WITH IN DASHBOARD TIME RANGE",
+                                "type": "datetime"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "table",
+                                "label": "table",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "CONSOLIDATED OPERATING RESULTS"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "data",
+                                "label": "data",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "QUARTERLY"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "name",
+                                "label": "name",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "Total gold produced2"
+                              }
+                            ],
+                            "groupBy": [],
+                            "limit": 1000,
+                            "meta": {},
+                            "mode": "aggregate",
+                            "orderBy": [
+                              {
+                                "default": true,
+                                "dir": "ASC",
+                                "hint": "time",
+                                "name": ""
+                              }
+                            ],
+                            "queryType": "timeseries",
+                            "table": "databook_polyus"
+                          }
+                        },
+                        "pluginVersion": "4.3.2",
+                        "queryType": "timeseries",
+                        "rawSql": "select * from (SELECT table, date as \"time\", value \nFROM \"default\".\"databook_polyus\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( table != 'CONSOLIDATED OPERATING RESULTS' ) AND ( data = 'QUARTERLY' ) AND ( name like 'Total refined gold output%' )\nUNION ALL\nSELECT table, date as \"time\", value/2\nFROM \"default\".\"databook_polyus\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( table != 'CONSOLIDATED OPERATING RESULTS' ) AND ( data = 'SEMI-ANNUAL' ) AND ( name like 'Total refined gold output%' )\n) ORDER BY time ASC LIMIT 1000"
+                      }
+                    },
+                    "refId": "Q",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "grafana-clickhouse-datasource",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "bdx7lxrdelxq8b"
+                      },
+                      "spec": {
+                        "builderOptions": {
+                          "aggregates": [],
+                          "columns": [
+                            {
+                              "alias": "value",
+                              "custom": false,
+                              "name": "value",
+                              "type": "Float32"
+                            },
+                            {
+                              "hint": "time",
+                              "name": "date",
+                              "type": "Date"
+                            }
+                          ],
+                          "database": "default",
+                          "filters": [
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "hint": "time",
+                              "key": "",
+                              "operator": "WITH IN DASHBOARD TIME RANGE",
+                              "type": "datetime"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "table",
+                              "label": "table",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "CONSOLIDATED OPERATING RESULTS"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "data",
+                              "label": "data",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "QUARTERLY"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "name",
+                              "label": "name",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "Total gold produced2"
+                            }
+                          ],
+                          "groupBy": [],
+                          "limit": 1000,
+                          "meta": {},
+                          "mode": "aggregate",
+                          "orderBy": [
+                            {
+                              "default": true,
+                              "dir": "ASC",
+                              "hint": "time",
+                              "name": ""
+                            }
+                          ],
+                          "queryType": "timeseries",
+                          "table": "databook_polyus"
+                        },
+                        "editorType": "sql",
+                        "format": 0,
+                        "meta": {
+                          "builderOptions": {
+                            "aggregates": [],
+                            "columns": [
+                              {
+                                "alias": "value",
+                                "custom": false,
+                                "name": "value",
+                                "type": "Float32"
+                              },
+                              {
+                                "hint": "time",
+                                "name": "date",
+                                "type": "Date"
+                              }
+                            ],
+                            "database": "default",
+                            "filters": [
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "hint": "time",
+                                "key": "",
+                                "operator": "WITH IN DASHBOARD TIME RANGE",
+                                "type": "datetime"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "table",
+                                "label": "table",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "CONSOLIDATED OPERATING RESULTS"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "data",
+                                "label": "data",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "QUARTERLY"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "name",
+                                "label": "name",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "Total gold produced2"
+                              }
+                            ],
+                            "groupBy": [],
+                            "limit": 1000,
+                            "meta": {},
+                            "mode": "aggregate",
+                            "orderBy": [
+                              {
+                                "default": true,
+                                "dir": "ASC",
+                                "hint": "time",
+                                "name": ""
+                              }
+                            ],
+                            "queryType": "timeseries",
+                            "table": "databook_polyus"
+                          }
+                        },
+                        "pluginVersion": "4.3.2",
+                        "queryType": "timeseries",
+                        "rawSql": "SELECT table, date as \"time\", value \nFROM \"default\".\"databook_polyus\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( table != 'CONSOLIDATED OPERATING RESULTS' ) AND ( data = 'ANNUAL' ) AND ( name like 'Total refined gold output%' )\nORDER BY time ASC LIMIT 1000"
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": true
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "13.1.1",
+            "spec": {
+              "options": {
+                "annotations": {
+                  "clustering": -1,
+                  "multiLane": false
+                },
+                "legend": {
+                  "calcs": [
+                    "min",
+                    "mean",
+                    "max",
+                    "last"
+                  ],
+                  "displayMode": "table",
+                  "enableFacetedFilter": false,
+                  "overflow": "ellipsis",
+                  "placement": "bottom",
+                  "showLegend": true,
+                  "sortBy": "Mean",
+                  "sortDesc": true
+                },
+                "tooltip": {
+                  "hideZeros": false,
+                  "mode": "single",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "koz",
+                  "min": 0,
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "value": 0,
+                        "color": "green"
+                      },
+                      {
+                        "value": 80,
+                        "color": "red"
+                      }
+                    ]
+                  },
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "barWidthFactor": 0.6,
+                    "drawStyle": "line",
+                    "fillOpacity": 25,
+                    "gradientMode": "opacity",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "smooth",
+                    "lineWidth": 1,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "auto",
+                    "showValues": false,
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "normal"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    }
+                  }
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "A value"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "sishort"
+                      }
+                    ]
+                  },
+                  {
+                    "__systemRef": "hideSeriesFrom",
+                    "matcher": {
+                      "id": "byNames",
+                      "options": {
+                        "mode": "exclude",
+                        "names": [
+                          "value OLIMPIADA"
+                        ],
+                        "prefix": "All except:",
+                        "readOnly": true
+                      }
+                    },
+                    "properties": [
+                      {
+                        "id": "custom.hideFrom",
+                        "value": {
+                          "legend": false,
+                          "tooltip": true,
+                          "viz": true
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "panel-5": {
+        "kind": "Panel",
+        "spec": {
+          "id": 5,
+          "title": "Общее количество добытой руды поквартально",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "grafana-clickhouse-datasource",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "bdx7lxrdelxq8b"
+                      },
+                      "spec": {
+                        "builderOptions": {
+                          "aggregates": [],
+                          "columns": [
+                            {
+                              "alias": "value",
+                              "custom": false,
+                              "name": "value",
+                              "type": "Float32"
+                            },
+                            {
+                              "hint": "time",
+                              "name": "date",
+                              "type": "Date"
+                            }
+                          ],
+                          "database": "default",
+                          "filters": [
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "hint": "time",
+                              "key": "",
+                              "operator": "WITH IN DASHBOARD TIME RANGE",
+                              "type": "datetime"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "table",
+                              "label": "table",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "CONSOLIDATED OPERATING RESULTS"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "data",
+                              "label": "data",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "QUARTERLY"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "name",
+                              "label": "name",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "Total gold produced2"
+                            }
+                          ],
+                          "groupBy": [],
+                          "limit": 1000,
+                          "meta": {},
+                          "mode": "aggregate",
+                          "orderBy": [
+                            {
+                              "default": true,
+                              "dir": "ASC",
+                              "hint": "time",
+                              "name": ""
+                            }
+                          ],
+                          "queryType": "timeseries",
+                          "table": "databook_polyus"
+                        },
+                        "editorType": "sql",
+                        "format": 0,
+                        "meta": {
+                          "builderOptions": {
+                            "aggregates": [],
+                            "columns": [
+                              {
+                                "alias": "value",
+                                "custom": false,
+                                "name": "value",
+                                "type": "Float32"
+                              },
+                              {
+                                "hint": "time",
+                                "name": "date",
+                                "type": "Date"
+                              }
+                            ],
+                            "database": "default",
+                            "filters": [
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "hint": "time",
+                                "key": "",
+                                "operator": "WITH IN DASHBOARD TIME RANGE",
+                                "type": "datetime"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "table",
+                                "label": "table",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "CONSOLIDATED OPERATING RESULTS"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "data",
+                                "label": "data",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "QUARTERLY"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "name",
+                                "label": "name",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "Total gold produced2"
+                              }
+                            ],
+                            "groupBy": [],
+                            "limit": 1000,
+                            "meta": {},
+                            "mode": "aggregate",
+                            "orderBy": [
+                              {
+                                "default": true,
+                                "dir": "ASC",
+                                "hint": "time",
+                                "name": ""
+                              }
+                            ],
+                            "queryType": "timeseries",
+                            "table": "databook_polyus"
+                          }
+                        },
+                        "pluginVersion": "4.3.2",
+                        "queryType": "timeseries",
+                        "rawSql": "select * from (SELECT table, date as \"time\", value \nFROM \"default\".\"databook_polyus\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( table != 'CONSOLIDATED OPERATING RESULTS' ) AND ( data = 'QUARTERLY' ) AND ( name = 'Ore mined' )\nUNION ALL\nSELECT table, date as \"time\", value/2\nFROM \"default\".\"databook_polyus\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( table != 'CONSOLIDATED OPERATING RESULTS' ) AND ( data = 'SEMI-ANNUAL' ) AND ( name = 'Ore mined' ))\nORDER BY time ASC LIMIT 1000"
+                      }
+                    },
+                    "refId": "mined",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "grafana-clickhouse-datasource",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "bdx7lxrdelxq8b"
+                      },
+                      "spec": {
+                        "builderOptions": {
+                          "aggregates": [],
+                          "columns": [
+                            {
+                              "alias": "value",
+                              "custom": false,
+                              "name": "value",
+                              "type": "Float32"
+                            },
+                            {
+                              "hint": "time",
+                              "name": "date",
+                              "type": "Date"
+                            }
+                          ],
+                          "database": "default",
+                          "filters": [
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "hint": "time",
+                              "key": "",
+                              "operator": "WITH IN DASHBOARD TIME RANGE",
+                              "type": "datetime"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "table",
+                              "label": "table",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "CONSOLIDATED OPERATING RESULTS"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "data",
+                              "label": "data",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "QUARTERLY"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "name",
+                              "label": "name",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "Total gold produced2"
+                            }
+                          ],
+                          "groupBy": [],
+                          "limit": 1000,
+                          "meta": {},
+                          "mode": "aggregate",
+                          "orderBy": [
+                            {
+                              "default": true,
+                              "dir": "ASC",
+                              "hint": "time",
+                              "name": ""
+                            }
+                          ],
+                          "queryType": "timeseries",
+                          "table": "databook_polyus"
+                        },
+                        "editorType": "sql",
+                        "format": 0,
+                        "meta": {
+                          "builderOptions": {
+                            "aggregates": [],
+                            "columns": [
+                              {
+                                "alias": "value",
+                                "custom": false,
+                                "name": "value",
+                                "type": "Float32"
+                              },
+                              {
+                                "hint": "time",
+                                "name": "date",
+                                "type": "Date"
+                              }
+                            ],
+                            "database": "default",
+                            "filters": [
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "hint": "time",
+                                "key": "",
+                                "operator": "WITH IN DASHBOARD TIME RANGE",
+                                "type": "datetime"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "table",
+                                "label": "table",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "CONSOLIDATED OPERATING RESULTS"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "data",
+                                "label": "data",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "QUARTERLY"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "name",
+                                "label": "name",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "Total gold produced2"
+                              }
+                            ],
+                            "groupBy": [],
+                            "limit": 1000,
+                            "meta": {},
+                            "mode": "aggregate",
+                            "orderBy": [
+                              {
+                                "default": true,
+                                "dir": "ASC",
+                                "hint": "time",
+                                "name": ""
+                              }
+                            ],
+                            "queryType": "timeseries",
+                            "table": "databook_polyus"
+                          }
+                        },
+                        "pluginVersion": "4.3.2",
+                        "queryType": "timeseries",
+                        "rawSql": "SELECT date as \"time\", value \nFROM \"default\".\"databook_polyus\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( table = 'CONSOLIDATED OPERATING RESULTS' ) AND ( data = 'QUARTERLY' ) AND ( name = 'Total rock moved' )\nUNION ALL\nSELECT date as \"time\", value/2\nFROM \"default\".\"databook_polyus\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( table = 'CONSOLIDATED OPERATING RESULTS' ) AND ( data = 'SEMI-ANNUAL' ) AND ( name = 'Total rock moved' )\nORDER BY time ASC LIMIT 1000"
+                      }
+                    },
+                    "refId": "moved",
+                    "hidden": true
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "13.1.1",
+            "spec": {
+              "options": {
+                "annotations": {
+                  "clustering": -1,
+                  "multiLane": false
+                },
+                "legend": {
+                  "calcs": [
+                    "min",
+                    "mean",
+                    "max",
+                    "last"
+                  ],
+                  "displayMode": "table",
+                  "enableFacetedFilter": false,
+                  "overflow": "ellipsis",
+                  "placement": "bottom",
+                  "showLegend": true,
+                  "sortBy": "Mean",
+                  "sortDesc": true
+                },
+                "tooltip": {
+                  "hideZeros": false,
+                  "mode": "single",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "masst",
+                  "min": 0,
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "value": 0,
+                        "color": "green"
+                      },
+                      {
+                        "value": 80,
+                        "color": "red"
+                      }
+                    ]
+                  },
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "barWidthFactor": 0.6,
+                    "drawStyle": "line",
+                    "fillOpacity": 25,
+                    "gradientMode": "opacity",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "smooth",
+                    "lineWidth": 1,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "auto",
+                    "showValues": false,
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "normal"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    }
+                  }
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "moved value"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "m3"
+                      }
+                    ]
+                  },
+                  {
+                    "__systemRef": "hideSeriesFrom",
+                    "matcher": {
+                      "id": "byNames",
+                      "options": {
+                        "mode": "exclude",
+                        "names": [
+                          "value OLIMPIADA"
+                        ],
+                        "prefix": "All except:",
+                        "readOnly": true
+                      }
+                    },
+                    "properties": [
+                      {
+                        "id": "custom.hideFrom",
+                        "value": {
+                          "legend": false,
+                          "tooltip": true,
+                          "viz": true
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "panel-6": {
+        "kind": "Panel",
+        "spec": {
+          "id": 6,
+          "title": "Общее количество перемещенных камней",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "grafana-clickhouse-datasource",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "bdx7lxrdelxq8b"
+                      },
+                      "spec": {
+                        "builderOptions": {
+                          "aggregates": [],
+                          "columns": [
+                            {
+                              "alias": "value",
+                              "custom": false,
+                              "name": "value",
+                              "type": "Float32"
+                            },
+                            {
+                              "hint": "time",
+                              "name": "date",
+                              "type": "Date"
+                            }
+                          ],
+                          "database": "default",
+                          "filters": [
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "hint": "time",
+                              "key": "",
+                              "operator": "WITH IN DASHBOARD TIME RANGE",
+                              "type": "datetime"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "table",
+                              "label": "table",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "CONSOLIDATED OPERATING RESULTS"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "data",
+                              "label": "data",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "QUARTERLY"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "name",
+                              "label": "name",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "Total gold produced2"
+                            }
+                          ],
+                          "groupBy": [],
+                          "limit": 1000,
+                          "meta": {},
+                          "mode": "aggregate",
+                          "orderBy": [
+                            {
+                              "default": true,
+                              "dir": "ASC",
+                              "hint": "time",
+                              "name": ""
+                            }
+                          ],
+                          "queryType": "timeseries",
+                          "table": "databook_polyus"
+                        },
+                        "editorType": "sql",
+                        "format": 0,
+                        "meta": {
+                          "builderOptions": {
+                            "aggregates": [],
+                            "columns": [
+                              {
+                                "alias": "value",
+                                "custom": false,
+                                "name": "value",
+                                "type": "Float32"
+                              },
+                              {
+                                "hint": "time",
+                                "name": "date",
+                                "type": "Date"
+                              }
+                            ],
+                            "database": "default",
+                            "filters": [
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "hint": "time",
+                                "key": "",
+                                "operator": "WITH IN DASHBOARD TIME RANGE",
+                                "type": "datetime"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "table",
+                                "label": "table",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "CONSOLIDATED OPERATING RESULTS"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "data",
+                                "label": "data",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "QUARTERLY"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "name",
+                                "label": "name",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "Total gold produced2"
+                              }
+                            ],
+                            "groupBy": [],
+                            "limit": 1000,
+                            "meta": {},
+                            "mode": "aggregate",
+                            "orderBy": [
+                              {
+                                "default": true,
+                                "dir": "ASC",
+                                "hint": "time",
+                                "name": ""
+                              }
+                            ],
+                            "queryType": "timeseries",
+                            "table": "databook_polyus"
+                          }
+                        },
+                        "pluginVersion": "4.3.2",
+                        "queryType": "timeseries",
+                        "rawSql": "select * from (SELECT table, date as \"time\", value \nFROM \"default\".\"databook_polyus\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( table != 'CONSOLIDATED OPERATING RESULTS' ) AND ( data = 'QUARTERLY' ) AND ( name = 'Total rock moved' )\nUNION ALL\nSELECT table, date as \"time\", value/2\nFROM \"default\".\"databook_polyus\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( table != 'CONSOLIDATED OPERATING RESULTS' ) AND ( data = 'SEMI-ANNUAL' ) AND ( name = 'Total rock moved' ))\nORDER BY time ASC LIMIT 1000"
+                      }
+                    },
+                    "refId": "mined",
+                    "hidden": false
+                  }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "grafana-clickhouse-datasource",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "bdx7lxrdelxq8b"
+                      },
+                      "spec": {
+                        "builderOptions": {
+                          "aggregates": [],
+                          "columns": [
+                            {
+                              "alias": "value",
+                              "custom": false,
+                              "name": "value",
+                              "type": "Float32"
+                            },
+                            {
+                              "hint": "time",
+                              "name": "date",
+                              "type": "Date"
+                            }
+                          ],
+                          "database": "default",
+                          "filters": [
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "hint": "time",
+                              "key": "",
+                              "operator": "WITH IN DASHBOARD TIME RANGE",
+                              "type": "datetime"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "table",
+                              "label": "table",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "CONSOLIDATED OPERATING RESULTS"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "data",
+                              "label": "data",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "QUARTERLY"
+                            },
+                            {
+                              "condition": "AND",
+                              "filterType": "custom",
+                              "key": "name",
+                              "label": "name",
+                              "operator": "=",
+                              "type": "LowCardinality(String)",
+                              "value": "Total gold produced2"
+                            }
+                          ],
+                          "groupBy": [],
+                          "limit": 1000,
+                          "meta": {},
+                          "mode": "aggregate",
+                          "orderBy": [
+                            {
+                              "default": true,
+                              "dir": "ASC",
+                              "hint": "time",
+                              "name": ""
+                            }
+                          ],
+                          "queryType": "timeseries",
+                          "table": "databook_polyus"
+                        },
+                        "editorType": "sql",
+                        "format": 0,
+                        "meta": {
+                          "builderOptions": {
+                            "aggregates": [],
+                            "columns": [
+                              {
+                                "alias": "value",
+                                "custom": false,
+                                "name": "value",
+                                "type": "Float32"
+                              },
+                              {
+                                "hint": "time",
+                                "name": "date",
+                                "type": "Date"
+                              }
+                            ],
+                            "database": "default",
+                            "filters": [
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "hint": "time",
+                                "key": "",
+                                "operator": "WITH IN DASHBOARD TIME RANGE",
+                                "type": "datetime"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "table",
+                                "label": "table",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "CONSOLIDATED OPERATING RESULTS"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "data",
+                                "label": "data",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "QUARTERLY"
+                              },
+                              {
+                                "condition": "AND",
+                                "filterType": "custom",
+                                "key": "name",
+                                "label": "name",
+                                "operator": "=",
+                                "type": "LowCardinality(String)",
+                                "value": "Total gold produced2"
+                              }
+                            ],
+                            "groupBy": [],
+                            "limit": 1000,
+                            "meta": {},
+                            "mode": "aggregate",
+                            "orderBy": [
+                              {
+                                "default": true,
+                                "dir": "ASC",
+                                "hint": "time",
+                                "name": ""
+                              }
+                            ],
+                            "queryType": "timeseries",
+                            "table": "databook_polyus"
+                          }
+                        },
+                        "pluginVersion": "4.3.2",
+                        "queryType": "timeseries",
+                        "rawSql": "SELECT date as \"time\", value \nFROM \"default\".\"databook_polyus\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( table = 'CONSOLIDATED OPERATING RESULTS' ) AND ( data = 'QUARTERLY' ) AND ( name = 'Total rock moved' )\nUNION ALL\nSELECT date as \"time\", value/2\nFROM \"default\".\"databook_polyus\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( table = 'CONSOLIDATED OPERATING RESULTS' ) AND ( data = 'SEMI-ANNUAL' ) AND ( name = 'Total rock moved' )\nORDER BY time ASC LIMIT 1000"
+                      }
+                    },
+                    "refId": "moved",
+                    "hidden": true
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "13.1.1",
+            "spec": {
+              "options": {
+                "annotations": {
+                  "clustering": -1,
+                  "multiLane": false
+                },
+                "legend": {
+                  "calcs": [
+                    "min",
+                    "mean",
+                    "max",
+                    "last"
+                  ],
+                  "displayMode": "table",
+                  "enableFacetedFilter": false,
+                  "overflow": "ellipsis",
+                  "placement": "bottom",
+                  "showLegend": true,
+                  "sortBy": "Mean",
+                  "sortDesc": true
+                },
+                "tooltip": {
+                  "hideZeros": false,
+                  "mode": "single",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "m3",
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "value": 0,
+                        "color": "green"
+                      },
+                      {
+                        "value": 80,
+                        "color": "red"
+                      }
+                    ]
+                  },
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "barWidthFactor": 0.6,
+                    "drawStyle": "line",
+                    "fillOpacity": 25,
+                    "gradientMode": "opacity",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "smooth",
+                    "lineWidth": 1,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "auto",
+                    "showValues": false,
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    }
+                  }
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-9": {
+        "kind": "Panel",
+        "spec": {
+          "id": 9,
+          "title": "Учетные цены на Золото от ЦБ, руб./гр. ",
+          "description": "",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "grafana-clickhouse-datasource",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "efgvwiwtduwaoc"
+                      },
+                      "spec": {
+                        "editorType": "sql",
+                        "format": 1,
+                        "meta": {
+                          "builderOptions": {
+                            "columns": [],
+                            "database": "",
+                            "limit": 1000,
+                            "mode": "list",
+                            "queryType": "table",
+                            "table": ""
+                          }
+                        },
+                        "pluginVersion": "4.3.2",
+                        "queryType": "table",
+                        "rawSql": "SELECT\n    toStartOfQuarter(date) AS time,\n    avg(price) AS \"средняя цена\"\nFROM default.cbr_gold\nWHERE $__timeFilter(date)\nGROUP BY time\nORDER BY time ASC"
+                      }
+                    },
+                    "refId": "A",
+                    "hidden": false
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "13.1.1",
+            "spec": {
+              "options": {
+                "annotations": {
+                  "clustering": -1,
+                  "multiLane": false
+                },
+                "legend": {
+                  "calcs": [
+                    "min",
+                    "mean",
+                    "max",
+                    "last"
+                  ],
+                  "displayMode": "list",
+                  "enableFacetedFilter": false,
+                  "overflow": "ellipsis",
+                  "placement": "bottom",
+                  "showLegend": true
+                },
+                "tooltip": {
+                  "hideZeros": false,
+                  "mode": "single",
+                  "sort": "none"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "руб",
+                  "min": 0,
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "value": 0,
+                        "color": "green"
+                      },
+                      {
+                        "value": 80,
+                        "color": "red"
+                      }
+                    ]
+                  },
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "axisBorderShow": false,
+                    "axisCenteredZero": false,
+                    "axisColorMode": "text",
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "barAlignment": 0,
+                    "barWidthFactor": 0.6,
+                    "drawStyle": "line",
+                    "fillOpacity": 0,
+                    "gradientMode": "none",
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    },
+                    "insertNulls": false,
+                    "lineInterpolation": "linear",
+                    "lineWidth": 1,
+                    "pointSize": 5,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "showPoints": "auto",
+                    "showValues": false,
+                    "spanNulls": false,
+                    "stacking": {
+                      "group": "A",
+                      "mode": "none"
+                    },
+                    "thresholdsStyle": {
+                      "mode": "off"
+                    }
+                  }
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      }
+    },
+    "layout": {
+      "kind": "RowsLayout",
+      "spec": {
+        "rows": [
+          {
+            "kind": "RowsLayoutRow",
+            "spec": {
+              "title": "Макро",
+              "collapse": true,
+              "layout": {
+                "kind": "GridLayout",
+                "spec": {
+                  "items": [
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "x": 0,
+                        "y": 0,
+                        "width": 12,
+                        "height": 8,
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-9"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "x": 12,
+                        "y": 0,
+                        "width": 12,
+                        "height": 8,
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-10"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "x": 0,
+                        "y": 8,
+                        "width": 12,
+                        "height": 8,
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-12"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "x": 12,
+                        "y": 8,
+                        "width": 12,
+                        "height": 8,
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-11"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "kind": "RowsLayoutRow",
+            "spec": {
+              "title": "Операционые показатели",
+              "collapse": true,
+              "layout": {
+                "kind": "GridLayout",
+                "spec": {
+                  "items": [
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "x": 0,
+                        "y": 0,
+                        "width": 12,
+                        "height": 9,
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-1"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "x": 12,
+                        "y": 0,
+                        "width": 12,
+                        "height": 9,
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-4"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "x": 0,
+                        "y": 9,
+                        "width": 12,
+                        "height": 8,
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-3"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "x": 12,
+                        "y": 9,
+                        "width": 12,
+                        "height": 8,
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-5"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "x": 0,
+                        "y": 17,
+                        "width": 12,
+                        "height": 9,
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-2"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "x": 12,
+                        "y": 17,
+                        "width": 12,
+                        "height": 8,
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-6"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "kind": "RowsLayoutRow",
+            "spec": {
+              "title": "Финансовые показатели",
+              "collapse": false,
+              "layout": {
+                "kind": "AutoGridLayout",
+                "spec": {
+                  "maxColumnCount": 3,
+                  "columnWidthMode": "standard",
+                  "rowHeightMode": "standard",
+                  "items": [
+                    {
+                      "kind": "AutoGridLayoutItem",
+                      "spec": {
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-13"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "links": [],
+    "liveNow": false,
+    "preload": false,
+    "tags": [],
+    "timeSettings": {
+      "timezone": "Europe/Moscow",
+      "from": "now-6h",
+      "to": "now",
+      "autoRefresh": "",
+      "autoRefreshIntervals": [
+        "5s",
+        "10s",
+        "30s",
+        "1m",
+        "5m",
+        "15m",
+        "30m",
+        "1h",
+        "2h",
+        "1d"
+      ],
+      "hideTimepicker": false,
+      "fiscalYearStartMonth": 0
+    },
+    "title": "Finance Polyus",
+    "variables": []
+  }
+}
