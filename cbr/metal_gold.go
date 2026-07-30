@@ -16,7 +16,7 @@ type cbrGold struct {
 
 const (
 	//https://www.cbr.ru/hd_base/metall/metall_base_new/?UniDbQuery.Posted=True&UniDbQuery.From=01.01.2019&UniDbQuery.To=08.02.2025&UniDbQuery.Gold=true&UniDbQuery.so=1
-	cbrGoldUrl   = "https://www.cbr.ru/hd_base/metall/metall_base_new/?UniDbQuery.Posted=True&UniDbQuery.From=01.01.2019&UniDbQuery.To=%s&UniDbQuery.Gold=true&UniDbQuery.so=1"
+	cbrGoldUrl   = "https://www.cbr.ru/hd_base/metall/metall_base_new/?UniDbQuery.Posted=True&UniDbQuery.From=01.01.2013&UniDbQuery.To=%s&UniDbQuery.Gold=true&UniDbQuery.so=1"
 	cbrGoldTable = "cbr_gold"
 	cbrGoldDdl   = `CREATE TABLE IF NOT EXISTS ` + cbrGoldTable + ` (
 			  date Date
