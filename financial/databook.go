@@ -133,6 +133,7 @@ func (f *FinDataBook) Import(ctx context.Context, conn driver.Conn) (count int64
 			}
 			loadedAt := time.Now()
 			for _, record := range records {
+				//fmt.Printf("record: %+v\n", record)
 				if err = batch.Append(
 					record.Company,
 					record.Metric,
@@ -140,10 +141,8 @@ func (f *FinDataBook) Import(ctx context.Context, conn driver.Conn) (count int64
 					record.PeriodType,
 					record.Value,
 					record.Unit,
-					record.Currency,
 					record.SourceURL,
 					record.SourcePage,
-					record.SourceDocument,
 					loadedAt); err != nil {
 					return count, err
 				}
