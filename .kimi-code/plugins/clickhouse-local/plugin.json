@@ -1,0 +1,21 @@
+{
+  "name": "clickhouse-local",
+  "version": "1.0.0",
+  "description": "Локальный плагин для работы с ClickHouse через MCP",
+  "mcpServers": {
+    "clickhouse_mcp": {
+      "command": "/Users/whitefox/PycharmProjects/mcp-clickhouse/.venv/bin/python",
+      "args": ["-m", "mcp_clickhouse"],
+      "env": {
+        "CLICKHOUSE_HOST": "192.168.3.9",
+        "CLICKHOUSE_PORT": "9000",
+        "CLICKHOUSE_PASSWORD": "",
+        "CLICKHOUSE_USER":"default",
+        "CLICKHOUSE_MCP_AUTH_TOKEN": "4f5fdb23fe25eb5637b748aebb1387132e8a00ac6f4717e6b97492808c47a042"
+      }
+    }
+  },
+  "skills": [
+    "./skills/clickhouse-rules"
+  ]
+}

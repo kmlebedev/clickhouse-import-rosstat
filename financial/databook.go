@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/golang/glog"
 	"github.com/xuri/excelize/v2"
 	"io"
 	"net/http"
@@ -125,11 +126,11 @@ func (f *FinDataBook) Import(ctx context.Context, conn driver.Conn) (count int64
 			}
 			records, err := f.pageImportFunc(textPath, pdfUrl, page)
 			if err != nil {
-				exitf("parse KPI page: %v", err)
+				glog.Fatalf("parse KPI page: %v", err)
 			}
 
 			if len(records) == 0 {
-				exitf("no KPI records found on page %d", page)
+				glog.Fatalf("no KPI records found on page %d", page)
 			}
 			loadedAt := time.Now()
 			for _, record := range records {
