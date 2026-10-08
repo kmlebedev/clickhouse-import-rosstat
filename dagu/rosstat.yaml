@@ -1,0 +1,37 @@
+type: chain
+schedule: "17 12 * * 4"
+overlap_policy: skip
+
+steps:
+  - id: ipc_mes
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=ipc_mes
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  - id: ipc_weeks
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=ipc_weeks
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  - id: salaries_mes
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=salaries_mes
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  - id: vvp_kvartal
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=vvp_kvartal
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+

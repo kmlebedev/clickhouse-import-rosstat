@@ -1,0 +1,100 @@
+type: chain
+schedule: "17 9 * * *"
+overlap_policy: skip
+
+steps:
+  - id: cbr_currency_usd
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=cbr_currency_usd
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  - id: households_b_mes
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=households_b_mes
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  - id: cbr_key_rate
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=cbr_key_rate
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  - id: cbr_m2
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=cbr_m2
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  - id: cbr_gold
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=cbr_gold
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  - id: cbr_loans_to_corporations
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=cbr_loans_to_corporations
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  - id: cbr_loans_to_individuals
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=cbr_loans_to_individuals
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  - id: cbr_infl_exp
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=cbr_infl_exp
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  - id: cbr_bank_int_rate
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=cbr_bank_int_rate
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  - id: cbr_credit_m2x
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=cbr_credit_m2x
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  - id: cbr_indicators_cpd
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=cbr_indicators_cpd
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  - id: cbr_ruania
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=cbr_ruania
+    retry_policy:
+      limit: 3
+      interval_sec: 300
