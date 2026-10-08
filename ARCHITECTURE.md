@@ -25,6 +25,8 @@ cbr/               — ЦБ РФ: key_rate, currency_usd, m2, ruonia, metal_gold
 minfin/            — Минфин: fedbud_mes, fedbud_mesyats (исполнение федбюджета)
 customs/           — ФТС: внешняя торговля по странам
 fao/               — ФАО: индексы продовольственных цен
+fred/              — FRED (CSV-серии US-макро: DFII10, DGS10, FEDFUNDS, DTWEXBGS, CPIAUCSL, T5YIE) → macro_series
+gold/              — золото: MOEX GOLDFIXME (₽/г) ÷ курс ЦБ cbr_currency_usd → gold_prices (venue='moex_fix_usd')
 bank/              — банки: sber_csi(+week), sber/vtb/tbank_fin_rez, domrf_mortgage
 craw/              — многостраничные краулеры: gost (сертификаты Росстандарта)
 financial/         — ⚠️ legacy-контур: корпоративные databook'и (CHMF/MAGN/NLMK/PLZL/ЮГК),
@@ -110,9 +112,9 @@ func init() {
 
 | Импортёр | Пакет | Источник | Метод |
 |---|---|---|---|
-| `fred` | `fred/` | FRED CSV API: `https://fred.stlouisfed.org/graph/fredgraph.csv?id=DFII10` (серии: DFII10, DGS10, FEDFUNDS, DTWEXBGS, CPIAUCSL, T5YIE) | Шаблон Б/В, CSV→`macro_series` |
+| `fred` | `fred/` | FRED CSV API: `https://fred.stlouisfed.org/graph/fredgraph.csv?id=DFII10` (серии: DFII10, DGS10, FEDFUNDS, DTWEXBGS, CPIAUCSL, T5YIE) | Свой парсер `encoding/csv` (не `util.GetCSV`: разделитель `,`), `Name()` = `fred` (несколько серий, одна таблица), пропуски (пустое значение) пропускаются; UA не задаём — FRED за Imperva рвёт соединение с браузерным UA. Расписание: `dagu/fred.yaml`, ежедневно 11:41 (МСК) → `macro_series` |
 | `eia` | `eia/` | EIA Weekly Petroleum Status (запасы дистиллятов, crack ULSD) | API EIA v2 (ключ в env `EIA_API_KEY`) → `macro_series` |
-| `lbma_gold` | `gold/` | Спот XAU/USD, LBMA fix | stooq CSV / Yahoo (GC=F) → `gold_prices` |
+| `lbma_gold` | `gold/` | ⚠️ Временно вместо LBMA: MOEX `GOLDFIXME` (борд FIXI, ₽/г, с 2024-08-05) × 31,1034768 ÷ курс `cbr_currency_usd`; производная цена, не LBMA. Курс берётся последний известный не позже даты (ЦБ не публикует понедельники и новогодние праздники; окно 10 дней). Расписание: `dagu/gold.yaml`, ежедневно 18:47 (МСК); первым шагом DAG выполняется `cbr_currency_usd`. LBMA не реализован: prices.lbma.org.uk и Nasdaq Data Link `LBMA/GOLD` отвечают 403 WAF (датасетный эндпоинт блокируется с этого IP даже с валидным ключом), stooq — JS-проверкой, FRED серии LBMA удалил (404), Yahoo — 429 | → `gold_prices` |
 | `moex_iss` | `moex/` | MOEX ISS REST (PLZL OHLCV, ОФЗ/RGBI): `https://iss.moex.com/iss/engines/stock/markets/shares/securities/PLZL/candles.json?from=...` | JSON → `stock_prices`, `ofz_curve` |
 | `mmf_aum` | `funds/` | СЧА фондов ликвидности | парсинг → `mmf_aum` |
 | `news_watch` | `news/` | RSS Интерфакс/РБК/IR Полюса | → `news_events` |
@@ -123,13 +125,13 @@ func init() {
 CREATE TABLE IF NOT EXISTS macro_series (
     source LowCardinality(String),   -- 'fred','eia','wgc','cme'
     series LowCardinality(String),   -- 'DFII10','distillate_stocks',...
-    date Date,
+    date Date32,                     -- Date32, т.к. Date не покрывает даты до 1970 (CPIAUCSL с 1947, FEDFUNDS с 1954)
     value Float64
 ) ENGINE = ReplacingMergeTree ORDER BY (source, series, date);
 
 CREATE TABLE IF NOT EXISTS gold_prices (
-    venue LowCardinality(String),    -- 'lbma_am','lbma_pm','spot','comex_front'
-    date Date,
+    venue LowCardinality(String),    -- 'lbma_am','lbma_pm','spot','comex_front','moex_fix_usd' (производный, см. gold/)
+    date Date32,                     -- Date32: Date не покрывает даты до 1970 (LBMA с 1968)
     usd Float64
 ) ENGINE = ReplacingMergeTree ORDER BY (venue, date);
 
