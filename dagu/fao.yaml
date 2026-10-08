@@ -1,0 +1,13 @@
+type: chain
+schedule: "47 10 5 * *"
+overlap_policy: skip
+
+steps:
+  - id: fao_food_price
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=fao_food_price
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+

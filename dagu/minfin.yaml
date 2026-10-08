@@ -1,0 +1,21 @@
+type: chain
+schedule: "41 10 10 * *"
+overlap_policy: skip
+
+steps:
+  - id: minfin_fed_bud_mes
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=minfin_fed_bud_mes
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  - id: minfin_fed_bud_mesyats
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=minfin_fed_bud_mesyats
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+

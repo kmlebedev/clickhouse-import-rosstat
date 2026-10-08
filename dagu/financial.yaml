@@ -1,0 +1,29 @@
+type: chain
+schedule: "23 10 * * 1"
+overlap_policy: skip
+
+steps:
+  - id: databook_polyus
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=databook_polyus
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  - id: databook_ugk
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=databook_ugk
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  - id: polyus_financial_metrics
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=polyus_financial_metrics
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+

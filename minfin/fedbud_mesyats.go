@@ -39,7 +39,7 @@ func init() {
 }
 
 func getFedbudMesyatDataUrl() (url string) {
-	c := colly.NewCollector()
+	c := colly.NewCollector(colly.UserAgent(util.HttpUA))
 	c.SetClient(util.HttpClient)
 	c.OnHTML(".document_list > div:nth-child(1) > div.document_footer > div.files_info.t_mn2 > div > a", func(e *colly.HTMLElement) {
 		url = fmt.Sprintf("%s%s", minfinUrl, e.Attr("href"))

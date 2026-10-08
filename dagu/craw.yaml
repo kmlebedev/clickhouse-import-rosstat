@@ -1,0 +1,13 @@
+type: chain
+schedule: "31 11 1 * *"
+overlap_policy: skip
+
+steps:
+  - id: gost_vehicle_safety_certificate
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=gost_vehicle_safety_certificate
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+

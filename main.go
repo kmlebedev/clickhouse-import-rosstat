@@ -26,7 +26,10 @@ func main() {
 	if lvl, err := log.ParseLevel(os.Getenv("LOG_LEVEL")); err == nil {
 		log.SetLevel(lvl)
 	}
-	clickhouseOptions, _ := clickhouse.ParseDSN(os.Getenv("CLICKHOUSE_URL"))
+	clickhouseOptions, err := clickhouse.ParseDSN(os.Getenv("CLICKHOUSE_URL"))
+	if err != nil {
+		log.Fatal("invalid CLICKHOUSE_URL")
+	}
 	conn, err := clickhouse.Open(clickhouseOptions)
 	if err != nil {
 		log.Fatal(err)
@@ -35,15 +38,37 @@ func main() {
 		log.Fatal(err)
 	}
 	log.Infof("Connected to clickhouse")
-	envStats := strings.Split(os.Getenv("CLICKHOUSE_IMPORT_STAT"), ",")
+	requested := parseImportFilter(os.Getenv("CLICKHOUSE_IMPORT_STAT"))
+	matched := make(map[string]bool)
+	failed := false
 	for _, stat := range chimport.Stats {
-		if len(envStats) > 0 && !slices.Contains(envStats, stat.Name()) {
+		if len(requested) > 0 && !slices.Contains(requested, stat.Name()) {
 			continue
 		}
+		matched[stat.Name()] = true
 		var rows int64
 		if rows, err = stat.Import(ctx, conn); err != nil {
 			log.Errorf("%s: %+v", stat.Name(), err)
+			failed = true
 		}
 		log.Infof("Imported %d rows of %s", rows, stat.Name())
 	}
+	for _, name := range requested {
+		if !matched[name] {
+			log.Warnf("no importer named %q", name)
+		}
+	}
+	if failed {
+		os.Exit(1)
+	}
+}
+
+func parseImportFilter(value string) []string {
+	var names []string
+	for _, name := range strings.Split(value, ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
 }

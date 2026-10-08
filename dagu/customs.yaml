@@ -1,0 +1,13 @@
+type: chain
+schedule: "41 11 15 * *"
+overlap_policy: skip
+
+steps:
+  - id: customs_vneshn_torg
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=customs_vneshn_torg
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+

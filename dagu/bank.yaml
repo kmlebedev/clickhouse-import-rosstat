@@ -1,0 +1,53 @@
+type: chain
+schedule: "23 9 * * 1"
+overlap_policy: skip
+
+steps:
+  - id: domrf_mortgage
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=domrf_mortgage
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  - id: sber_finansovie_rezultaty
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=sber_finansovie_rezultaty
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  - id: sber_consumper_spending_index
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=sber_consumper_spending_index
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  - id: sber_izmenenie_trat
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=sber_izmenenie_trat
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  - id: tbank_group_ifrs
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=tbank_group_ifrs
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  - id: rus_vtb_group_ifrs
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=rus_vtb_group_ifrs
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
