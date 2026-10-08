@@ -219,6 +219,44 @@ CREATE TABLE IF NOT EXISTS tax_events (
     fcf_impact_pct Nullable(Float64),
     status LowCardinality(String)    -- 'draft','adopted','active'
 ) ENGINE = ReplacingMergeTree ORDER BY (published, topic);
+
+-- Ресурсная база и peers (P/NAV-сверка сектора: PLZL / ЮГК / SELG)
+CREATE TABLE IF NOT EXISTS reserves_assets (
+    company LowCardinality(String),  -- 'PLZL','UGK','SELG'
+    asset LowCardinality(String),    -- 'Olimpiada','Blagodatnoye','Sukhoi Log','Tominskiy','Kochkarskoye','Hvoynoye'
+    category LowCardinality(String), -- 'PP','MI','Inferred'
+    standard LowCardinality(String), -- 'JORC','NAEN' (SELG по РФ-классификации — пересчитывать!)
+    date Date,
+    koz Float64,
+    grade_gpt Nullable(Float64)
+) ENGINE = ReplacingMergeTree ORDER BY (company, asset, category, date);
+
+CREATE TABLE IF NOT EXISTS reserves_dynamics (
+    company LowCardinality(String),
+    year UInt16,
+    reserves_koz Float64,
+    yoy_pct Nullable(Float64),
+    conversion_koz Nullable(Float64),  -- ресурсы → запасы за год
+    grr_spend_usd_mln Nullable(Float64)
+) ENGINE = ReplacingMergeTree ORDER BY (company, year);
+
+CREATE TABLE IF NOT EXISTS license_events (
+    company LowCardinality(String),
+    asset LowCardinality(String),
+    event_type LowCardinality(String),  -- 'issue','renewal','auction'
+    date Date,
+    cost_rub Nullable(Float64)
+) ENGINE = ReplacingMergeTree ORDER BY (company, asset, date);
+
+CREATE TABLE IF NOT EXISTS peers_nav (
+    company LowCardinality(String),
+    date Date,
+    nav_per_share Nullable(Float64),   -- own-модель для PLZL; оценочная для peers
+    market_price Float64,
+    p_nav Nullable(Float64),
+    ev_per_koz Nullable(Float64),      -- EV / запасы — ценник недр
+    discount_to_leader Nullable(Float64)
+) ENGINE = ReplacingMergeTree ORDER BY (company, date);
 ```
 
 ### 6.3 Витрины (views) — semantic layer для агента
@@ -226,6 +264,7 @@ CREATE TABLE IF NOT EXISTS tax_events (
 - `v_model_inputs` — одна строка с последними входами DCF (gold spot, USDRUB, key_rate, DFII10, crack, TCC/AISC guidance)
 - `v_gold_dashboard` — дашборд верификации: crack, запасы дистиллятов, FedWatch, ETF-потоки + флаги порогов
 - `v_forecast_accuracy` — скользящая точность прогнозов из `forecast_log`
+- `v_peers_comparison` — P/NAV, EV/oz, дисконт к лидеру по PLZL/ЮГК/SELG из `peers_nav` + `reserves_dynamics`; алерт-порог — дисконт PLZL за ±1σ исторической нормы
 
 ### 6.4 DCF-модель Полюса (ключевые допущения)
 
@@ -234,8 +273,10 @@ CREATE TABLE IF NOT EXISTS tax_events (
 EBITDA_t ≈ Production × (GoldPrice − AISC_t);  AISC_t = AISC_base × эскалация(ИПЦ РФ)
 FCF_t = EBITDA − налоги − capex (Сухой Лог активная фаза) ± ΔWC
 NAV/акция = (Σ FCF/(1+WACC)^t + TV − NetDebt) / shares;  дивиденды приостановлены до 2030 → только FCF/NAV
+TV через конверсию ресурсов (reserves_replacement ≥ добыча), не фиксированный рост — иначе TV занижается
 Сценарии золота Q4-2026 (база из docs/): bull $4,600–5,000 (25%), base $4,000–4,600 (40%), bear $3,750–4,050 (35%)
 Рыночный мост: целевая цена = NAV ± корректировки (див.спред к ОФЗ, переток из фондов ликвидности, индексные потоки, sentiment)
+Peers-сверка (PLZL/ЮГК/SELG): P/NAV + EV/oz; реперные запасы — PLZL 106,8 млн унц P&P (JORC), ЮГК ~40,7 млн унц Au-eq, SELG 285 т (РФ-классификация → пересчёт!)
 ```
 
 ### 6.5 MCP-контур
