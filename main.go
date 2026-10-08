@@ -10,6 +10,8 @@ import (
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/customs"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/fao"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/financial"
+	_ "github.com/kmlebedev/clickhouse-import-rosstat/fred"
+	_ "github.com/kmlebedev/clickhouse-import-rosstat/gold"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/minfin"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/rosstat"
 	log "github.com/sirupsen/logrus"
