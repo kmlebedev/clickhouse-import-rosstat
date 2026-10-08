@@ -46,8 +46,9 @@ func (s *HdBase) Import(ctx context.Context, conn driver.Conn) (count int64, err
 	if err = s.ImportFunc(xlsx, batch); err != nil {
 		return count, err
 	}
+	rows := int64(batch.Rows())
 	if err = batch.Send(); err != nil {
 		return count, err
 	}
-	return count, nil
+	return rows, nil
 }

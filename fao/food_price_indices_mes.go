@@ -46,7 +46,7 @@ func (s *FaoFoodPriceStat) Name() string {
 func (s *FaoFoodPriceStat) getDataUrl() (dataUrl string) {
 	c := colly.NewCollector(colly.UserAgent(util.HttpUA))
 	c.SetRequestTimeout(5 * time.Second)
-	c.OnHTML("#Contentplaceholder1_C004_Col00 > div:nth-child(2) > div > table > tbody > tr:nth-child(2) > td:nth-child(2) > p > a", func(e *colly.HTMLElement) {
+	c.OnHTML(`a[href*="food_price_indices_data.csv"]`, func(e *colly.HTMLElement) {
 		dataUrl = e.Attr("href")
 		log.Infof("getDataUrl %s", dataUrl)
 	})
