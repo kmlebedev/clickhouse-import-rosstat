@@ -158,11 +158,14 @@ CREATE TABLE IF NOT EXISTS model_runs (
     trigger_ref String,
     gold_scenario JSON,        -- сценарная сетка + вероятности
     usdrub_path JSON,
+    price_deck LowCardinality(String) DEFAULT 'own_scenario',  -- 'spot_flat','consensus_lt','own_scenario'
+    discount_rate Float64,     -- 0.05 real USD база + надбавки; локальная ставка — в comment/JSON
     wacc Float64,
     nav_per_share Float64,
     nav_bull Float64, nav_base Float64, nav_bear Float64,
     market_price Float64,
     upside_pct Float64,
+    nav_beta_gold Nullable(Float64),   -- рычаг NAV к цене золота (эталон: EBITDA-бета ~14% на +10% Au)
     dividend_status LowCardinality(String) DEFAULT 'suspended',  -- до 2030
     comment String
 ) ENGINE = ReplacingMergeTree ORDER BY (run_date, run_id);
@@ -226,6 +229,7 @@ CREATE TABLE IF NOT EXISTS reserves_assets (
     asset LowCardinality(String),    -- 'Olimpiada','Blagodatnoye','Sukhoi Log','Tominskiy','Kochkarskoye','Hvoynoye'
     category LowCardinality(String), -- 'PP','MI','Inferred'
     standard LowCardinality(String), -- 'JORC','NAEN' (SELG по РФ-классификации — пересчитывать!)
+    stage LowCardinality(String),    -- 'production','construction','dfs','pfs','pea','exploration'
     date Date,
     koz Float64,
     grade_gpt Nullable(Float64)
@@ -251,32 +255,89 @@ CREATE TABLE IF NOT EXISTS license_events (
 CREATE TABLE IF NOT EXISTS peers_nav (
     company LowCardinality(String),
     date Date,
+    peer_universe LowCardinality(String), -- 'ru','global' — P/NAV считать отдельно по контурам
     nav_per_share Nullable(Float64),   -- own-модель для PLZL; оценочная для peers
     market_price Float64,
     p_nav Nullable(Float64),
     ev_per_koz Nullable(Float64),      -- EV / запасы — ценник недр
     discount_to_leader Nullable(Float64)
-) ENGINE = ReplacingMergeTree ORDER BY (company, date);
+) ENGINE = ReplacingMergeTree ORDER BY (company, peer_universe, date);
+
+-- Sum-of-parts: LOM-планы по активам (вход) и NAV по активам (выход)
+CREATE TABLE IF NOT EXISTS mine_plans (
+    company LowCardinality(String),
+    asset LowCardinality(String),
+    year UInt16,
+    production_koz Float64,
+    grade_gpt Nullable(Float64),
+    tcc Float64, aisc Float64,
+    capex_sustaining Float64, capex_project Float64,
+    closure_costs Float64              -- отрицательный хвост конца LOM (рекультивация, выходные пособия)
+) ENGINE = ReplacingMergeTree ORDER BY (company, asset, year);
+
+CREATE TABLE IF NOT EXISTS nav_by_asset (
+    run_id UUID,                       -- связка с model_runs
+    asset LowCardinality(String),
+    npv_usd_mln Float64,
+    discount_rate Float64,             -- 0.05 real USD база + страновая/стадийная надбавка
+    stage_haircut Nullable(Float64)    -- construction 0.7–0.9, DFS 0.5–0.7, PEA 0.2–0.4
+) ENGINE = ReplacingMergeTree ORDER BY (run_id, asset);
+
+-- Ценовые деки (NAV считается на всех трёх: спот / консенсус LT / собственный сценарий)
+CREATE TABLE IF NOT EXISTS price_decks (
+    deck LowCardinality(String),       -- 'spot_flat','consensus_lt','own_scenario'
+    year UInt16,
+    gold_usd Float64,
+    published Date
+) ENGINE = ReplacingMergeTree ORDER BY (deck, year, published);
+
+-- Режимная детекция золота (HMM/Markov-switching): сценарные вероятности согласуются с режимом
+CREATE TABLE IF NOT EXISTS regime_states (
+    date Date,
+    regime LowCardinality(String),     -- 'bull','bear','transition'
+    probability Float32,
+    model LowCardinality(String)       -- 'hmm_2state','expert'
+) ENGINE = ReplacingMergeTree ORDER BY (date, model);
 ```
 
 ### 6.3 Витрины (views) — semantic layer для агента
 
 - `v_model_inputs` — одна строка с последними входами DCF (gold spot, USDRUB, key_rate, DFII10, crack, TCC/AISC guidance)
 - `v_gold_dashboard` — дашборд верификации: crack, запасы дистиллятов, FedWatch, ETF-потоки + флаги порогов
-- `v_forecast_accuracy` — скользящая точность прогнозов из `forecast_log`
-- `v_peers_comparison` — P/NAV, EV/oz, дисконт к лидеру по PLZL/ЮГК/SELG из `peers_nav` + `reserves_dynamics`; алерт-порог — дисконт PLZL за ±1σ исторической нормы
+- `v_forecast_accuracy` — скользящая точность прогнозов из `forecast_log` (включая конкурентный ML-трек)
+- `v_peers_comparison` — P/NAV, EV/oz, дисконт к лидеру по контурам `ru`/`global`; алерт-порог — дисконт PLZL за ±1σ исторической нормы
+- `v_gold_attribution` — GRAM-разложение движения золота (экспансия / риск / альтернативная стоимость / импульс); ошибки прогноза атрибутируются к фактору
 
-### 6.4 DCF-модель Полюса (ключевые допущения)
+### 6.4 DCF-модель Полюса (ключевые допущения, rev.2 по мировой практике)
 
 ```
-Выручка_t = Production_t(koz) × GoldPrice_t(сценарно);  НДПИ = база + 10%×max(gold−1900,0)  ← надбавка с 2025
-EBITDA_t ≈ Production × (GoldPrice − AISC_t);  AISC_t = AISC_base × эскалация(ИПЦ РФ)
-FCF_t = EBITDA − налоги − capex (Сухой Лог активная фаза) ± ΔWC
-NAV/акция = (Σ FCF/(1+WACC)^t + TV − NetDebt) / shares;  дивиденды приостановлены до 2030 → только FCF/NAV
-TV через конверсию ресурсов (reserves_replacement ≥ добыча), не фиксированный рост — иначе TV занижается
-Сценарии золота Q4-2026 (база из docs/): bull $4,600–5,000 (25%), base $4,000–4,600 (40%), bear $3,750–4,050 (35%)
-Рыночный мост: целевая цена = NAV ± корректировки (див.спред к ОФЗ, переток из фондов ликвидности, индексные потоки, sentiment)
-Peers-сверка (PLZL/ЮГК/SELG): P/NAV + EV/oz; реперные запасы — PLZL 106,8 млн унц P&P (JORC), ЮГК ~40,7 млн унц Au-eq, SELG 285 т (РФ-классификация → пересчёт!)
+СТРУКТУРА: sum-of-parts, не корпоративный DCF
+NAV = Σ_asset NPV(LOM-план актива из mine_plans) − NetDebt − CorpCosts + Опционность ресурсов
+LOM-DCF актива: FCF_t = Production×(Gold_deck_t − AISC_t) − НДПИ − налоги − capex ± ΔWC;
+  в конце LOM — хвост closure_costs (ОТРИЦАТЕЛЬНЫЙ, perpetual TV у рудника НЕТ)
+НДПИ = база + 10%×max(gold−1900,0)  ← надбавка с 2025; AISC_t = AISC_base × эскалация(ИПЦ РФ)
+
+СТАВКА (двухконтурная):
+  1) индустриальная: 5% real USD + страновая/стадийная надбавка (CIM-сurvey: до 10% для рисковых
+     юрисдикций) — сопоставима с глобальным P/NAV; CAPM/WACC для золотодобычи НЕ использовать
+     (бета сектора ≈ 0 или отрицательная)
+  2) локальная (для RU-инвестора): ОФЗ-кривая (ofz_curve) + премии — объясняет локальный дисконт
+Оба результата пишутся в model_runs
+
+PRICE DECK (обязательно 3 контура, price_decks):
+  spot_flat / consensus_lt (LT-якорь системно ниже спота: Scotia $2,600 с 2029, BMO $3,000) /
+  own_scenario (gold_forecasts; LT-хвост обязан сходиться к обоснованной LT-оценке)
+Сценарии золота Q4-2026 (база из docs/): bull $4,600–5,000 (25%), base $4,000–4,600 (40%), bear $3,750–4,050 (35%);
+вероятности согласуются с regime_states (HMM); формат сценариев — по WGC Gold Outlook
+
+РЕСУРСЫ ВНЕ LOM: не в DCF, а опционно — EV/oz × stage_haircut (construction 0.7–0.9 / DFS 0.5–0.7 /
+PEA 0.2–0.4); Сухой Лог (43 млн унц из 106,8) — отдельная строка со стадийным дисконтом
+
+РЫНОЧНЫЙ МОСТ: дисконт к NAV декомпозируется: страновой (RU-акции ≈ −75% к EM-пирам в 2025) +
+компанейский (див.спред к ОФЗ, переток ликвидности, индексные потоки, sentiment)
+Peers-сверка (peer_universe='ru': PLZL/ЮГК/SELG) — относительная рамка; глобальные пиры — только
+для измерения странового дисконта. Выводы run'а: NAV/акция по 3 deck × 2 ставки + NAV- и EBITDA-бета
+к золоту (эталон BofA: EBITDA-бета ~14% на +10% золота)
 ```
 
 ### 6.5 MCP-контур
