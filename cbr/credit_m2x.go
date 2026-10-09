@@ -1,7 +1,6 @@
 package cbr
 
 import (
-	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
@@ -25,7 +24,7 @@ var cbrСreditM2x = util.ClickHouseImport{
 	DataUrl: "https://www.cbr.ru/Content/Document/File/177307/credit_m2x.xlsx",
 	ImportFunc: func(xlsx *excelize.File, batch driver.Batch) (err error) {
 		var rows [][]string
-		if rows, err = xlsx.GetRows("млрд рублей"); err != nil {
+		if rows, err = xlsx.GetRows("млн рублей"); err != nil {
 			return err
 		}
 		// Строки с годами
@@ -46,7 +45,9 @@ var cbrСreditM2x = util.ClickHouseImport{
 					return err
 				}
 				valueStr := strings.ReplaceAll(strings.TrimSpace(cell), ",", "")
-				fmt.Printf("name %s date %v cell %s\n", name, date, valueStr)
+				if valueStr == "" {
+					continue
+				}
 				if value, err := strconv.ParseFloat(valueStr, 32); err != nil {
 					return err
 				} else {

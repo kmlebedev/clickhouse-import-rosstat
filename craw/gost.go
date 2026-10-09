@@ -46,7 +46,7 @@ var gostVehicleSafetyCertificate = util.ClickHouseImport{
 	//DataUrl: "https://www.gost.ru/portal/gost/home/activity/compliance/evaluationcompliance/AcknowledgementCorrespondence/safetycertificate018?portal:componentId=ff119059-8bd4-47fc-95f6-a70de17a4b3e&portal:isSecure=false&portal:portletMode=view&navigationalstate=JBPNS_rO0ABXdSAAdvcmRlckJ5AAAAAQAYZGF0ZW9maXNzdWVvZmNlcnRpZmljYXRlAARmcm9tAAAAAQAFMjk4MjAABW9yZGVyAAAAAQAEREVTQwAHX19FT0ZfXw**",
 	// Starship
 	DataUrl: getDataUrl(),
-	CrawFunc: func(crawUrl string, conn driver.Conn) (err error) {
+	CrawFunc: func(crawUrl string, conn driver.Conn) (inserted int64, err error) {
 		c := colly.NewCollector(
 			colly.UserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"),
 			colly.AllowURLRevisit(),
@@ -85,6 +85,7 @@ var gostVehicleSafetyCertificate = util.ClickHouseImport{
 				log.Error(err)
 				return
 			}
+			inserted++
 		})
 		c.OnHTML("#libraryPaging > div:nth-child(2) > a:nth-child(2)", func(e *colly.HTMLElement) {
 			link := e.Attr("href")
@@ -112,9 +113,9 @@ var gostVehicleSafetyCertificate = util.ClickHouseImport{
 
 		if err := c.Visit(crawUrl); err != nil {
 			log.Errorf("First visit err: %v+", err)
-			return err
+			return inserted, err
 		}
-		return nil
+		return inserted, nil
 	},
 }
 

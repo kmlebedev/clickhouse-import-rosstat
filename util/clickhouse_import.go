@@ -14,7 +14,7 @@ type ClickHouseImport struct {
 	CreateTable []string
 	DataUrl     string
 	TimeLayout  string
-	CrawFunc    func(crawUrl string, conn driver.Conn) error
+	CrawFunc    func(crawUrl string, conn driver.Conn) (count int64, err error)
 	ImportFunc  func(xlsx *excelize.File, batch driver.Batch) error
 }
 
@@ -35,6 +35,7 @@ func (s *ClickHouseImport) ImportXls(ctx context.Context, dataUrl string, conn d
 	if err = s.ImportFunc(xlsx, batch); err != nil {
 		return count, err
 	}
+	count = int64(batch.Rows())
 	if err = batch.Send(); err != nil {
 		return count, err
 	}
@@ -49,9 +50,7 @@ func (s *ClickHouseImport) Import(ctx context.Context, conn driver.Conn) (count 
 	}
 	switch {
 	case s.CrawFunc != nil:
-		if err = s.CrawFunc(s.DataUrl, conn); err != nil {
-			return count, err
-		}
+		return s.CrawFunc(s.DataUrl, conn)
 	case s.ImportFunc != nil:
 		return s.ImportXls(ctx, s.DataUrl, conn)
 	}
