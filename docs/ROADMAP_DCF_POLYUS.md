@@ -166,9 +166,11 @@ docker run -d --name ch-mcp \
 
 ### Quick wins (можно сделать уже сегодня)
 
-1. Таблица `events_calendar` с датами Q4-2026 — чистый SQL, без кода.
-2. Витрины `v_model_inputs` + `v_gold_dashboard` — SQL `CREATE OR REPLACE VIEW` и COMMENT-документация: один SELECT отдаёт агенту все входы DCF.
-3. Плагин `gold-nav` (skill «сценарная сессия» + `/gold-nav:session`) — после него контур «прогноз золота → NAV PLZL за одну сессию» работает и в Kimi Code, и в Kimi Work.
+1. Импортёр FRED — один файл по шаблону `util.ClickHouseImport`: у FRED есть прямые CSV-эндпоинты (`https://fred.stlouisfed.org/graph/fredgraph.csv?id=DFII10`), парсинг тривиален, а покрывает сразу ставку ФРС, TIPS, DXY и инфляционные ожидания.
+2. Таблица `events_calendar` с датами Q4-2026 — чистый SQL, без кода.
+3. Поднять `mcp/clickhouse` в docker рядом с существующей БД — 30 минут, и у Kimi появляется SQL-доступ к уже накопленным рядам.
+4. Витрины `v_model_inputs` + `v_gold_dashboard` — SQL `CREATE OR REPLACE VIEW` и COMMENT-документация: один SELECT отдаёт агенту все входы DCF.
+5. Плагин `gold-nav` (skill «сценарная сессия» + `/gold-nav:session`) — после него контур «прогноз золота → NAV PLZL за одну сессию» работает и в Kimi Code, и в Kimi Work.
 
 ---
 

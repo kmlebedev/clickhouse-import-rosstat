@@ -19,7 +19,7 @@ Go-конвейер (ETL) импорта российской макроэкон
 ```
 main.go            — точка входа: подключение к CH, запуск реестра импортёров
 chimport/stats.go  — интерфейс ImportStat + глобальный реестр Stats
-util/              — общие хелперы: HTTP-клиент (xls.go), шаблоны HdBase/ClickHouseImport, батч-импорт (db.go), каталог рядов series_catalog/v_series_catalog (series_catalog.go), создание витрин v_* с комментариями (views.go)
+util/              — общие хелперы: HTTP-клиент (xls.go), шаблон импортёра ClickHouseImport (clickhouse_import.go), батч-импорт (db.go), каталог рядов series_catalog/v_series_catalog (series_catalog.go), создание витрин v_* с комментариями (views.go)
 sql/               — SQL для ручной настройки: пользователь MCP kimi_reader и гранты на витрины (mcp_kimi_reader.sql); сид календаря Q4-2026 (events_calendar_q4_2026.sql)
 scripts/           — скрипты MCP: mcp_setup_user.py (создание kimi_reader, make mcp-user), mcp_check.py (smoke-проверка, make mcp-check)
 rosstat/           — Росстат: ipc_mes, ipc_weeks, vvp_kvartal, salaries_mes → series_catalog (source='rosstat'), витрина v_rosstat_macro
@@ -69,27 +69,39 @@ var Stats []ImportStat
 
 Ограничение: страницы, закрытые JS-challenge (`domrf_mortgage` — ServicePipe; `sber_finansovie_rezultaty` — TSPD) или не имеющие листинга ссылок (`tbank_group_ifrs` — CDN с UUID), colly распарсить не может — там ссылку обновляют вручную.
 
-### Шаблон Б — `util.HdBase` (декларативный, предпочтительный для новых XLSX-источников)
+### Шаблон Б — `util.ClickHouseImport` (декларативный, предпочтительный)
+
+Единый шаблон для XLSX-источников и краулеров. Встраивается в обёртку-структуру пакета; `Import()` обёртки вычисляет `DataUrl` и при необходимости публикует ряды (`series_catalog` + витрина).
 
 ```go
-func init() {
-    s := util.HdBase{
-        TableName:   "minfin_fed_bud_mes",
-        DataUrl:     "...",                    // или getDataUrl() вычисляется в Import()
-        CreateTable: `CREATE TABLE IF NOT EXISTS %s (
-              name LowCardinality(String)
-            , date Date
-            , value Float32
-        ) ENGINE = ReplacingMergeTree ORDER BY (name, date);`,
-        ImportFunc:  myImportFunc,             // func(xlsx *excelize.File, batch driver.Batch) error
+type myStat struct {
+    util.ClickHouseImport
+}
+
+func (s *myStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+    if s.DataUrl = myGetDataUrl(); s.DataUrl == "" {           // сеть — только здесь, не в init()
+        return count, fmt.Errorf("my: не найдена ссылка на xlsx на %s", myPageUrl)
     }
-    chimport.Stats = append(chimport.Stats, &s)
+    if count, err = s.ClickHouseImport.Import(ctx, conn); err != nil {
+        return count, err
+    }
+    return count, publishMySeries(ctx, conn)                   // series_catalog + витрина
+}
+
+func init() {
+    chimport.Stats = append(chimport.Stats, &myStat{ClickHouseImport: util.ClickHouseImport{
+        TableName:   "minfin_fed_bud_mes",
+        CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (...);`},  // несколько DDL — допустимо
+        ImportFunc:  myImportFunc,   // func(xlsx *excelize.File, batch driver.Batch) error
+        // CrawFunc: func(url string, conn driver.Conn) (int64, error) — альтернатива для краулеров
+        // BeforeImport: func(ctx, conn) error — вычислить DataUrl внутри Import()
+    }})
 }
 ```
 
-### Шаблон В — `util.ClickHouseImport` (краулер или XLSX, с несколькими DDL)
+Поля: `TableName`, `CreateTable []string` (`%s` подставляется `TableName`), `DataUrl`, `ImportFunc` **или** `CrawFunc` (или `BeforeImport` + `ImportFunc`); ровно один режим обязателен — иначе `Import()` вернёт ошибку «no CrawFunc or ImportFunc configured».
 
-Эталон: `craw/gost.go`. Поля: `TableName`, `CreateTable []string`, `DataUrl`, `CrawFunc func(url string, conn driver.Conn) error` ИЛИ `ImportFunc`. Краулер — colly с постраничной навигацией + `backoff.Retry`.
+Эталон краулера с двумя DDL — `craw/gost.go`; XLSX с `DataUrl` в рантайме — `cbr/Infl_exp.go`, `cbr/indicators_cpd.go`, `minfin/fedbud_mes.go`; подстановка даты в URL — `cbr/ruonia.go`.
 
 ### Общие хелперы `util/`
 
@@ -467,7 +479,7 @@ uv run --with mcp-clickhouse --python 3.12 mcp-clickhouse
 ## 8. Правила для AI-ассистента (Kimi Code)
 
 1. **Новый источник = новый файл** в доменном пакете + `init()`-регистрация. main.go не править (пакет уже импортирован) — если пакета нет, добавить blank-import.
-2. Использовать шаблон Б (`util.HdBase`) для XLSX-источников; шаблон В для краулеров; шаблон А — только если нужна кастомная логика поиска ссылки.
+2. Использовать шаблон Б (`util.ClickHouseImport`) — и для XLSX-источников, и для краулеров (`ImportFunc` / `CrawFunc`); шаблон А — только если нужна кастомная логика поиска ссылки или источник не XLSX (API/CSV/JSON).
 3. Вставка только батчами (`PrepareBatch`/`Append`/`Send`). DDL `IF NOT EXISTS`. Значения новых таблиц — Float64.
 4. HTTP — только через `util.HttpClient` / `util.GetXlsx` / `util.GetCSV` (там нац. сертификаты и UA).
 5. **Не хардкодить секреты** (в т.ч. в комментариях и curl-примерах) — только `os.Getenv`.
