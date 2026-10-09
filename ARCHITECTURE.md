@@ -59,6 +59,10 @@ var Stats []ImportStat
 
 Эталон: `rosstat/ipc_mes.go`. Скрейпер colly ищет ссылку на актуальный XLSX на странице источника → `util.GetXlsx(url)` → якорная строка в таблице → сбор `[][]string` → DDL + INSERT.
 
+Это **предпочтительный** способ для источников, где имя файла или id в URL меняются при обновлении (`cbr_infl_exp`, `cbr_credit_m2x`, `vvp_kvartal`, `salaries_mes`, `rus_vtb_group_ifrs`). Ссылку вычислять внутри `Import()` (не в `init()`), иначе регистрация импортёра делает сетевой вызов. Если после `c.Wait()` URL пуст — вернуть понятную ошибку, а не вызывать `GetXlsx("")`.
+
+Ограничение: страницы, закрытые JS-challenge (`domrf_mortgage` — ServicePipe; `sber_finansovie_rezultaty` — TSPD) или не имеющие листинга ссылок (`tbank_group_ifrs` — CDN с UUID), colly распарсить не может — там ссылку обновляют вручную.
+
 ### Шаблон Б — `util.HdBase` (декларативный, предпочтительный для новых XLSX-источников)
 
 ```go

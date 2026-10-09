@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/gocolly/colly/v2"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+	log "github.com/sirupsen/logrus"
 	"github.com/xuri/excelize/v2"
 	"strconv"
 	"strings"
@@ -13,11 +15,12 @@ import (
 )
 
 const (
-	// ToDo update data source https://rosstat.gov.ru/labor_market_employment_salaries Рынок труда, занятость и заработная плата
-	// Среднемесячная номинальная начисленная заработная плата работников в целом по экономике Российской Федерации в 1991-2025 гг.
-	salariesMesXlsDataUrl = rosstatMediaBankUrl + "/tab1-zpl_08-2025.xlsx"
-	salariesMesTable      = "salaries_mes"
-	salariesMesDdl        = `CREATE TABLE IF NOT EXISTS ` + salariesMesTable + ` (
+	// Рынок труда, занятость и заработная плата https://rosstat.gov.ru/labor_market_employment_salaries
+	// Среднемесячная номинальная начисленная заработная плата работников в целом по экономике Российской Федерации
+	// Имя файла содержит месяц и год (tab1-zpl_ММ-ГГГГ.xlsx) и меняется при обновлении,
+	// поэтому ссылка берётся со страницы.
+	salariesMesTable = "salaries_mes"
+	salariesMesDdl   = `CREATE TABLE IF NOT EXISTS ` + salariesMesTable + ` (
 				  name LowCardinality(String)
 				, date Date
 				, salary Float32
@@ -28,6 +31,24 @@ const (
 	salariesMesYearStart  = 1991
 	salariesMesTimeLayout = "2006-01"
 )
+
+// getSalariesMesXlsDataUrl ищет ссылку на актуальный tab1-zpl_*.xlsx на странице
+// рынка труда Росстата.
+func getSalariesMesXlsDataUrl() (url string) {
+	c := colly.NewCollector()
+	c.SetClient(util.HttpClient)
+	c.OnHTML(`a[href*="tab1-zpl"]`, func(e *colly.HTMLElement) {
+		if url == "" {
+			url = fmt.Sprintf("%s%s", rosstatUrl, e.Attr("href"))
+			log.Infof("href url %s", url)
+		}
+	})
+	if err := c.Visit(fmt.Sprintf("%s/labor_market_employment_salaries", rosstatUrl)); err != nil {
+		log.Errorf("Visit %v+", err)
+	}
+	c.Wait()
+	return url
+}
 
 type SalariesMesStat struct {
 }
@@ -79,8 +100,12 @@ func parseSalariesMes(xlsx *excelize.File) (table *[][]string, err error) {
 }
 
 func (s *SalariesMesStat) export() (table *[][]string, err error) {
+	xlsDataUrl := getSalariesMesXlsDataUrl()
+	if xlsDataUrl == "" {
+		return nil, fmt.Errorf("salariesMes: не найдена ссылка на tab1-zpl_*.xlsx на %s/labor_market_employment_salaries", rosstatUrl)
+	}
 	var xlsx *excelize.File
-	if xlsx, err = util.GetXlsx(salariesMesXlsDataUrl); err != nil {
+	if xlsx, err = util.GetXlsx(xlsDataUrl); err != nil {
 		return nil, err
 	}
 	return parseSalariesMes(xlsx)
