@@ -1,16 +1,11 @@
 package bank
 
 import (
-	"bytes"
 	"context"
-	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
-	"github.com/unidoc/unipdf/v3/extractor"
-	"github.com/unidoc/unipdf/v3/model"
 	"github.com/xuri/excelize/v2"
-	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -35,7 +30,7 @@ func (s *TbIfrs) export() (table *[][]string, err error) {
 	if xlsx, err = util.GetXlsx(tbIfrsUrl); err != nil {
 		return nil, err
 	}
-	defer xlsx.Close()
+	defer func() { _ = xlsx.Close() }()
 	table = new([][]string)
 	var rows [][]string
 	if rows, err = xlsx.GetRows("Interest"); err != nil {
@@ -77,58 +72,6 @@ func (s *TbIfrs) export() (table *[][]string, err error) {
 		}
 	}
 
-	return table, nil
-}
-
-func (s *TbIfrs) exportPdf() (table *[][]string, err error) {
-	reader, err := util.GetFile(tbIfrsUrl)
-	if err != nil {
-		return nil, err
-	}
-	defer reader.Close()
-	data, _ := io.ReadAll(reader)
-	pdfReader, err := model.NewPdfReader(io.NewSectionReader(bytes.NewReader(data), 0, int64(len(data))))
-	if err != nil {
-		return nil, err
-	}
-	numPages, err := pdfReader.GetNumPages()
-	if err != nil {
-		return nil, err
-	}
-	fmt.Printf("--------------------\n")
-	fmt.Printf("PDF to text extraction:\n")
-	fmt.Printf("--------------------\n")
-	for i := 0; i < numPages; i++ {
-		pageNum := i + 1
-
-		page, err := pdfReader.GetPage(pageNum)
-		if err != nil {
-			return nil, err
-		}
-
-		ex, err := extractor.New(page)
-		if err != nil {
-			return nil, err
-		}
-
-		text, err := ex.ExtractText()
-		if err != nil {
-			return nil, err
-		}
-		textLines := strings.Split(text, "\n")
-		for j, line := range textLines {
-			if line == "Баланс Т-Банка по РСБУ," {
-				fmt.Printf("%s", textLines[j+1])
-			}
-		}
-		{
-		}
-		fmt.Println("------------------------------")
-		fmt.Printf("Page %d:\n", pageNum)
-		fmt.Printf("\"%s\"\n", text)
-		fmt.Println("------------------------------")
-	}
-	table = new([][]string)
 	return table, nil
 }
 

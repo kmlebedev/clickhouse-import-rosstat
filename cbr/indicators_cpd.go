@@ -63,7 +63,7 @@ func indicatorsCpdImport(xlsx *excelize.File, batch driver.Batch) error {
 			if err != nil {
 				return err
 			}
-			value, err := strconv.ParseFloat(rowCol, 16)
+			value, err := strconv.ParseFloat(rowCol, 64)
 			if err != nil {
 				return err
 			}

@@ -37,7 +37,7 @@ func (s *cbrKeyRate) export() (table *[][]string, err error) {
 		if date == "Дата" {
 			return
 		}
-		rate := strings.Replace(e.DOM.Children().Next().Text(), ",", ".", -1)
+		rate := strings.ReplaceAll(e.DOM.Children().Next().Text(), ",", ".")
 		fmt.Printf("date %s rate %s\n", date, rate)
 		*table = append(*table, []string{date, rate})
 	})

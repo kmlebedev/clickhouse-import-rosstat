@@ -45,7 +45,7 @@ func (s *DomrfMortgageStat) export() (table *[][]string, err error) {
 	if xlsx, err = util.GetXlsx(domrfMortgageXlsDataUrl); err != nil {
 		return nil, err
 	}
-	defer xlsx.Close()
+	defer func() { _ = xlsx.Close() }()
 	table = new([][]string)
 	var rows [][]string
 	if rows, err = xlsx.GetRows(xlsx.GetSheetList()[0]); err != nil {

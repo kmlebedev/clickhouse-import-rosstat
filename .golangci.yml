@@ -1,0 +1,11 @@
+# Проверено с golangci-lint v2.13.2 (эту версию фиксирует CI). Набор линтеров —
+# стандартный. Исключение одно: legacy-пакет financial (database/sql, свой main,
+# неиспользуемый код после миграции на clickhouse-go/v2). Новый код туда не
+# добавляется (AGENTS.md, правило 7), поэтому его замечания не блокируют CI.
+version: "2"
+
+linters:
+  default: standard
+  exclusions:
+    paths:
+      - financial
