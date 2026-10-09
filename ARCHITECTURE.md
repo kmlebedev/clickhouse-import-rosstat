@@ -30,6 +30,7 @@ fred/              — FRED (CSV-серии US-макро: DFII10, DGS10, FEDFUN
 bls/               — BLS API v2 (CPI, безработица, NFP, зарплата, PPI, JOLTS) → macro_series (source = 'bls')
 bea/               — BEA API (NIPA T20804: индексы PCE) → macro_series (source = 'bea')
 gold/              — золото: MOEX GOLDFIXME (₽/г) ÷ курс ЦБ cbr_currency_usd → gold_prices (venue='moex_fix_usd'); series_catalog (source='gold'), витрина v_gold_prices
+moex/              — МосБиржа ISS (анонимный REST, без ключа): свечи PLZL → stock_prices (существующая legacy-схема, Float32 не меняем), RGBI + G-curve → ofz_curve; series_catalog (source='moex'), витрины v_stock_prices, v_ofz_curve
 bank/              — банки: sber_csi(+week), sber/vtb/tbank_fin_rez, domrf_mortgage
 craw/              — многостраничные краулеры: gost (сертификаты Росстандарта)
 financial/         — ⚠️ legacy-контур: корпоративные databook'и (CHMF/MAGN/NLMK/PLZL/ЮГК),
@@ -126,7 +127,8 @@ func init() {
 | `bea` | `bea/` | BEA API: `GET https://apps.bea.gov/api/data?method=GetData&datasetname=NIPA&TableName=T20804&Frequency=M` (ключ `BEA_API_KEY` → параметр `UserID`, без него импорт падает с ошибкой). Строки T20804: 1 — PCE_PI (headline), 25 — PCE_PI_CORE (excluding food and energy). Ключ маскируется в текстах ошибок (`url.Error` содержит URL). Тесты: `bea/bea_test.go`. Расписание: `dagu/bea.yaml`, ежедневно 12:37 (МСК) → `macro_series`; описания рядов → `series_catalog`; витрина `v_bea_pce` (с комментариями, грант `kimi_reader`) |
 | `eia` | `eia/` | EIA Weekly Petroleum Status (запасы дистиллятов, crack ULSD) | API EIA v2 (ключ в env `EIA_API_KEY`) → `macro_series` |
 | `lbma_gold` | `gold/` | ⚠️ Временно вместо LBMA: MOEX `GOLDFIXME` (борд FIXI, ₽/г, с 2024-08-05) × 31,1034768 ÷ курс `cbr_currency_usd`; производная цена, не LBMA. Курс берётся последний известный не позже даты (ЦБ не публикует понедельники и новогодние праздники; окно 10 дней). Расписание: `dagu/gold.yaml`, ежедневно 18:47 (МСК); первым шагом DAG выполняется `cbr_currency_usd`. LBMA не реализован: prices.lbma.org.uk и Nasdaq Data Link `LBMA/GOLD` отвечают 403 WAF (датасетный эндпоинт блокируется с этого IP даже с валидным ключом), stooq — JS-проверкой, FRED серии LBMA удалил (404), Yahoo — 429 | → `gold_prices` |
-| `moex_iss` | `moex/` | MOEX ISS REST (PLZL OHLCV, ОФЗ/RGBI): `https://iss.moex.com/iss/engines/stock/markets/shares/securities/PLZL/candles.json?from=...` | JSON → `stock_prices`, `ofz_curve` |
+| `moex_iss` | `moex/` | MOEX ISS REST (анонимный): дневные свечи PLZL `/iss/engines/stock/markets/shares/securities/PLZL/candles.json?interval=24` (пагинация `start` шагом 100 при явном `limit=100` — без limit страницы по 500 и дубли). Инкремент от max(date) по `code='PLZL'`; пустая таблица → с 2010-01-01. Пишет в существующую legacy-таблицу `stock_prices` (схема Float32 не меняется). Тесты: `moex/moex_test.go`. Расписание: `dagu/moex.yaml`, ежедневно 19:13 (МСК) → `stock_prices`; series_catalog (source='moex'); витрина `v_stock_prices` (с комментариями, грант `kimi_reader`) |
+| `ofz_curve` | `moex/` | MOEX ISS: индекс RGBI (свечи `engines/stock/markets/index/securities/RGBI/candles.json`, полная история с 2010-01-01, тенор `RGBI` — уровень индекса, не доходность) + годовые доходности G-curve `/iss/engines/stock/zcyc.json`, блок `yearyields` (period 1/3/5/10 → теноры `1y`/`3y`/`5y`/`10y`, % годовых). ⚠️ zcyc — только снимок текущего дня: история доходностей накапливается с первого запуска. Инкремент от max(date); даты из БД нормализуются в UTC (clickhouse-go отдаёт Date с таймзоной сессии). Расписание: `dagu/moex.yaml`, ежедневно 19:13 (МСК) → `ofz_curve`; series_catalog (source='moex'); витрина `v_ofz_curve` (с комментариями, грант `kimi_reader`) |
 | `mmf_aum` | `funds/` | СЧА фондов ликвидности | парсинг → `mmf_aum` |
 | `news_watch` | `news/` | RSS Интерфакс/РБК/IR Полюса | → `news_events` |
 
@@ -339,6 +341,8 @@ CREATE TABLE IF NOT EXISTS regime_states (
 - `v_rosstat_macro` — ряды Росстата в той же форме: `ipc_mes`, `ipc_weeks`, `vvp_kvartal`, `salaries_mes`
 - `v_minfin_budget` — исполнение бюджета: `minfin_fed_bud_mes` (source='minfin') и `minfin_fed_bud_mesyats` (source='minfin_mesyats', консолидированный бюджет; source различается, т.к. имена рядов совпадают)
 - `v_gold_prices` — `gold_prices FINAL` в форме `(source, series, date, value)`: source='gold', series=venue (`moex_fix_usd` — производная цена, не LBMA)
+- `v_stock_prices` — `stock_prices FINAL WHERE code='PLZL'`: дневные OHLCV акции Полюса (руб./акция); max/min — high/low дня
+- `v_ofz_curve` — `ofz_curve FINAL`: доходности G-curve МосБиржи (теноры 1y/3y/5y/10y, % годовых) + уровень индекса RGBI (тенор RGBI — не доходность)
 
 Правила витрин:
 - создаются через `CREATE OR REPLACE VIEW ... DEFINER = default SQL SECURITY DEFINER AS ...` — определение может меняться, и агент читает сырые таблицы через definer, без прав на `macro_series`;
