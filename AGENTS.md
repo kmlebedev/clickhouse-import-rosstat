@@ -26,6 +26,13 @@
 8. Новые таблицы — строго по каноническим DDL из ARCHITECTURE.md §6.2; изменение схемы = сначала обновить ARCHITECTURE.md.
 9. После кода: `make all` (gofmt, golangci-lint, `go vet`, `go test -race`, сборка) должен проходить — те же проверки запускает CI.
 10. Изменил архитектуру, схему таблицы или конвенцию — в том же PR обнови `ARCHITECTURE.md` и `README.md` (порядок проверки — skill `sync-readme-architecture` в `.kimi-code/skills/`); изменил план — обнови `docs/ROADMAP_DCF_POLYUS.md`.
+11. MCP-агент должен понимать каждый новый источник и ряд. При добавлении источника или ряда в том же PR:
+    - (а) описать каждый ряд в `series_catalog`: `util.UpsertSeriesCatalog` с полями `title`, `unit`, `frequency`, `origin` (таблица/серия/строка API), `description` (что измеряет, как читать значение и считать темпы); тест в духе `TestSeriesMetaCoversAllLines` (`bea/bea_test.go`), что все ряды импортёра описаны;
+    - (б) если нужна витрина `v_<источник>_*`: `CREATE OR REPLACE VIEW ... DEFINER = default SQL SECURITY DEFINER`, комментарии таблицы и каждой колонки через `ALTER TABLE ... MODIFY COMMENT` и `ALTER TABLE ... COMMENT COLUMN` (`COMMENT ON` в ClickHouse 26.10 не работает);
+    - (в) добавить `GRANT SELECT` пользователю `kimi_reader` на новую витрину в `sql/mcp_kimi_reader.sql`; `macro_series` и другие сырые таблицы агенту не выдавать;
+    - (г) проверить через MCP (`list_tables`, `run_query` на витрину), что агент видит ряд и комментарии;
+    - (д) обновить `ARCHITECTURE.md` (§6.2/§6.3) и `README.md`.
+    Долг на сейчас: `bls` и `fred` без `series_catalog` и витрин — заводить отдельной задачей.
 
 ## Стиль коммитов и PR
 
