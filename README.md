@@ -107,7 +107,8 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 - `golangci-lint` v2 (`brew install golangci-lint`), конфиг — `.golangci.yml`;
 - `uv` (`brew install uv`): запускает `mcp-clickhouse` без установки в систему, Python `3.12` подтягивается `uv`;
 - ClickHouse локально: бинарник из `PATH` или `~/.clickhouse/versions/*/clickhouse` (или `CH_BIN=...`);
-- `curl` — для проверки статуса сервера.
+- `curl` — для проверки статуса сервера;
+- GoLand 2025.2+ (опционально) — MCP-сервер IDE для Kimi Code, см. «MCP GoLand (опционально)» ниже.
 
 Порядок проверки окружения и работы:
 
@@ -182,6 +183,30 @@ MCP для Kimi (агент читает витрины `v_*`, без запис
 
 - проверить в Kimi командой `/mcp-config` в новой сессии: сервер `clickhouse` должен быть подключён;
 - новые ряды и витрины: см. AGENTS.md, правило 11. Legacy-таблицы `cbr_*`, `rosstat`, `minfin`, `gold_prices` агенту доступны через групповые витрины `v_cbr_macro`, `v_rosstat_macro`, `v_minfin_budget`, `v_gold_prices` (создаются, когда все таблицы группы импортированы), описания рядов — в `v_series_catalog`.
+
+MCP GoLand (опционально, ускоряет работу Kimi Code с кодом):
+
+- зачем: агент получает инструменты IDE — ошибки и инспекции файла по индексу GoLand (`get_file_problems`), сигнатуры символов (`get_symbol_info`), семантический поиск и иерархию вызовов (`search_symbol`, `analyze_calls`), безопасный rename (`rename_refactoring`); как и когда ими пользоваться — в AGENTS.md, раздел «Инструменты GoLand (MCP `jetbrains`)». Без них агент работает обычными `Grep`/`Read`/`Edit`, настройка не обязательна;
+- требование: GoLand 2025.2 или новее — MCP-сервер встроен (плагин MCP Server включён по умолчанию); npm-пакет `@jetbrains/mcp-proxy` deprecated и не нужен;
+- настройка:
+  1. открыть этот репозиторий в GoLand;
+  2. Settings | Tools | MCP Server → включить **Enable MCP Server**;
+  3. там же: **Copy HTTP Stream Config** — в буфере окажется URL вида `http://127.0.0.1:<port>/stream`;
+  4. добавить запись в `~/.kimi-code/mcp.json` (URL из шага 3, порт подставить свой):
+
+  ```json
+  {
+    "mcpServers": {
+      "jetbrains": {
+        "url": "http://127.0.0.1:<port>/stream"
+      }
+    }
+  }
+  ```
+
+  5. начать новую сессию Kimi Code (`/new`) и проверить `/mcp-config`: сервер `jetbrains` подключён;
+- порт выдаётся динамически и может смениться после перезапуска GoLand: если инструменты `jetbrains` пропали, повторите шаги 3–4;
+- инструменты видны только пока GoLand запущен с открытым проектом.
 
 Правила кода (подробно — в [AGENTS.md](AGENTS.md) и [ARCHITECTURE.md](ARCHITECTURE.md)):
 
