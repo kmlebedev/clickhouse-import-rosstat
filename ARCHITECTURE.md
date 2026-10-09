@@ -10,7 +10,7 @@
 Go-конвейер (ETL) импорта российской макроэкономической статистики и финансовых данных в **ClickHouse** для дашбордов **Grafana** и аналитических моделей (сценарный прогноз золота → DCF → NAV акции PLZL). Монолитный репозиторий, один бинарник, конфигурация только через env.
 
 - Репозиторий: `github.com/kmlebedev/clickhouse-import-rosstat`
-- Go 1.26, сборка: `make build` → статический linux/amd64 бинарник (CGO_ENABLED=0, ldflags `-s -w`)
+- Go 1.27, сборка: `make build` → статический linux/amd64 бинарник (CGO_ENABLED=0, ldflags `-s -w`)
 - Драйвер БД: `github.com/ClickHouse/clickhouse-go/v2` (native protocol)
 - Ключевые библиотеки: `excelize/v2` (XLSX), `xlsReader` (legacy XLS), `colly/v2` + `goquery` (скрейпинг), `unipdf/v3` (PDF), `cenkalti/backoff/v5` (ретраи), `logrus` (логи, `log.Infof/Errorf/Fatal`)
 
