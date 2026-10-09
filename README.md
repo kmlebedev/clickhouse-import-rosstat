@@ -2,7 +2,7 @@
 
 Go-конвейер импорта российской макроэкономической и финансовой статистики в ClickHouse. Данные используются дашбордами Grafana и аналитическими моделями (сценарный прогноз золота, DCF и NAV акций ПАО «Полюс»). Один бинарник, конфигурация только через переменные окружения.
 
-Подробная архитектура, схемы таблиц и конвенции — в [ARCHITECTURE.md](ARCHITECTURE.md). План развития — в [docs/ROADMAP_DCF_POLYUS.md](docs/ROADMAP_DCF_POLYUS.md). Правила для AI-ассистентов — в [AGENTS.md](AGENTS.md).
+Подробная архитектура, схемы таблиц и конвенции — в [ARCHITECTURE.md](ARCHITECTURE.md). План развития — в [docs/ROADMAP_DCF_POLYUS.md](docs/ROADMAP_DCF_POLYUS.md). Правила для AI-ассистентов — в [AGENTS.md](AGENTS.md). Контур прогноза золота (витрины, календарь, ingest-endpoint, плагин `gold-nav`) — в разделе «Контур прогноза золота» и в [спецификации](docs/superpowers/specs/2026-10-10-gold-nav-plugin-design.md).
 
 ## Что импортируется
 
@@ -21,6 +21,9 @@ Go-конвейер импорта российской макроэкономи
 | `bls` | BLS API v2: CPI (CUUR0000SA0, CUSR0000SA0), безработица, NFP, средняя зарплата, PPI, JOLTS | `macro_series` (`source = 'bls'`), каталог `series_catalog`, витрина `v_bls_macro` | ежедневно 12:23 |
 | `bea` | BEA API: индексы PCE (headline, excluding food and energy), таблица NIPA T20804 | `macro_series` (`source = 'bea'`) | ежедневно 12:37 |
 | `gold` | Золото: фиксинг MOEX GOLDFIXME (₽/г) пересчитан в USD/oz по курсу ЦБ | `gold_prices` (`venue = 'moex_fix_usd'`); каталог `series_catalog`, витрина `v_gold_prices` | ежедневно 18:47 |
+| `moex` | МосБиржа ISS: свечи PLZL (OHLCV), индекс RGBI, доходности G-curve ОФЗ (1y/3y/5y/10y) | `stock_prices` (`code = 'PLZL'`), `ofz_curve`; каталог `series_catalog`, витрины `v_stock_prices`, `v_ofz_curve` | ежедневно 19:13 |
+| `calendar` | Календарь событий-триггеров прогноза золота/NAV (Q4-2026; сид — `sql/events_calendar_q4_2026.sql`) | `events_calendar`; витрина `v_events_calendar` | вручную (`make import STAT=events_calendar`) |
+| `views` | Витрины контура прогноза: `v_model_inputs`, `v_gold_dashboard`, `v_forecast_accuracy` (импортёр `gold_views`) | витрины; гранты `kimi_reader` — в `sql/mcp_kimi_reader.sql` | вручную, после первого запуска ingest: `make import STAT=gold_views` |
 | `financial` | Legacy: корпоративные databook'и (ЧМФ, ММК, НЛМК, Полюс, ЮГК), investing.com, РЖД | `databook_*`, `polyus_financial_metrics` и др. | понедельник 10:23 |
 
 Импортёр `gold` — временный: производная цена, не LBMA. Официальный LBMA AM/PM пока не подключён, см. «Ограничения».
@@ -33,11 +36,18 @@ chimport/                интерфейс ImportStat и глобальный �
 util/                    HTTP-клиент (национальные TLS-сертификаты РФ, ротация User-Agent), шаблон импортёра ClickHouseImport, батч-вставка
 bank/ cbr/ craw/ customs/ fao/ minfin/ rosstat/   доменные импортёры (см. таблицу выше)
 fred/                    FRED CSV → macro_series
+calendar/                календарь событий-триггеров → events_calendar
+views/                   витрины контура прогноза (v_model_inputs, v_gold_dashboard, v_forecast_accuracy)
+ingest/                  ingest-endpoint контура прогноза: model_runs, forecast_log, macro_series (source='manual')
+cmd/ingest/              бинарник ingest (отдельный от основного импорта)
 bls/                     BLS API v2 → macro_series
 bea/                     BEA API (NIPA T20804) → macro_series
 gold/                    MOEX GOLDFIXME + cbr_currency_usd → gold_prices
+moex/                    MOEX ISS: свечи PLZL → stock_prices, RGBI + G-curve → ofz_curve
 financial/               legacy-контур (database/sql, свой main), новый код туда не добавляется
 dagu/                    расписания: один DAG-файл на домен, имя файла = имя DAG
+sql/                     DDL и гранты вручную: пользователь kimi_reader, сид календаря Q4-2026
+scripts/                 проверки MCP (mcp_setup_user.py, mcp_check.py)
 docs/                    аналитические статьи и дорожная карта
 .github/workflows/       CI (go.yml) и релиз по тегу v* (release.yml)
 ```
@@ -71,6 +81,9 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 | `CERT_FILES` | PEM-сертификаты через запятую (нац. УЦ РФ для gos-сайтов) |
 | `BLS_API_KEY` | Регистрационный ключ BLS (необязателен; без него работает, но лимиты строже). Не выводится в логах |
 | `BEA_API_KEY` | UserID BEA API (обязателен для `bea`; без него импортёр завершается ошибкой). Не выводится в логах |
+| `INGEST_TOKEN` | Bearer-токен ingest-endpoint, обязателен для `cmd/ingest` (без него процесс не стартует). Не выводится в логах |
+| `INGEST_ADDR` | Адрес HTTP-сервера `cmd/ingest`, по умолчанию `:8081` |
+| `INGEST_RATE_PER_MIN` | Лимит запросов `cmd/ingest` в минуту (token bucket, burst 10), по умолчанию 60; превышение — `429` |
 
 Поведение при запуске: неизвестное имя в `CLICKHOUSE_IMPORT_STAT` даёт предупреждение; ошибка любого импортёра даёт код выхода `1`, остальные импортёры при этом выполняются.
 
@@ -82,20 +95,54 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 
 Запуск одного DAG вручную: `dagu start dagu/gold.yaml` (dev-окружение Dagu должно видеть `ROSSTAT_IMPORT_BIN` и `CLICKHOUSE_URL` через `base.yaml`).
 
+## Контур прогноза золота
+
+Составные части контура (подробно — ARCHITECTURE.md §6.3 и §6.5):
+
+- витрины `v_model_inputs`, `v_gold_dashboard`, `v_forecast_accuracy` и календарь `v_events_calendar` — читаются агентом через MCP (пользователь `kimi_reader`, только `v_*`);
+- ingest-endpoint (`cmd/ingest`) — единственный путь записи прогонов модели и ручных рядов;
+- плагин Kimi `gold-nav` — отдельный репозиторий, сценарная сессия прогноза и DCF NAV PLZL.
+
+### Ingest-endpoint
+
+Запуск: `make run-ingest` (нужны `CLICKHOUSE_URL` и `INGEST_TOKEN` в `~/.config/rosstat/env`; `INGEST_ADDR` по умолчанию `:8081`). При старте создаются `model_runs`, `forecast_log`, `macro_series`, если их ещё нет. Витрины `views/` создаются отдельно: `make import STAT=gold_views` после первого запуска ingest.
+
+| Метод и путь | Тело | Ответ |
+|---|---|---|
+| `POST /v1/model_run` | JSON прогона: клиентский `run_id` (UUID), `trigger_type`, `price_deck`, `probabilities`, `gold_scenario` с `horizon`, значения NAV | `200 {"inserted": 1}`; `400` при ошибке валидации |
+| `POST /v1/manual_series` | JSON-массив `{"series", "date": "YYYY-MM-DD", "value"}` → `macro_series`, `source = 'manual'` | `200 {"inserted": N}`; `400` при ошибке любой точки |
+
+Все запросы — с заголовком `Authorization: Bearer <INGEST_TOKEN>`; без него или с неверным токеном — `401`. Сверх `INGEST_RATE_PER_MIN` (по умолчанию 60 в минуту) — `429`; тело больше 1 MiB — `413`; неизвестное поле в JSON — `400`. Повторный `POST /v1/model_run` с тем же `run_id` ничего не записывает. Формат тела — в `ingest/model_run.go` (структура `ModelRun`).
+
+### Плагин gold-nav
+
+Плагин — отдельный репозиторий (не входит в этот проект). Локальная копия рядом: `../gold-nav`. Спецификация: [docs/superpowers/specs/2026-10-10-gold-nav-plugin-design.md](docs/superpowers/specs/2026-10-10-gold-nav-plugin-design.md).
+
+- Kimi Code: `/plugins install <github-url>` (ссылка на репозиторий — после публикации);
+- Kimi Work: зарегистрировать каталог плагина в персональном маркете (`kimi-daimon kimi-plugin register-personal <путь к gold-nav>`) и включить в «Плагины → Персональный».
+
+Переменные окружения пользователя плагина (только имена, значения выдаёт автор): `GOLD_NAV_MCP_TOKEN` — read-only токен MCP; `GOLD_NAV_INGEST_URL` и `GOLD_NAV_INGEST_TOKEN` — только у автора. Команды плагина: `/gold-nav:session` (сценарная сессия) и `/gold-nav:verify` (сверка прогнозов с фактом).
+
+Живая приёмка плагина в Kimi Code и Kimi Work не выполнена; см. раздел «Результат проверки» в README плагина.
+
 ## Разработка
 
 | Команда | Что делает |
 |---|---|
 | `make lint` | `gofmt -l` (падает, если есть неотформатированный код) и `golangci-lint run ./...` |
-| `make test` | `go vet` и `go test -race ./...` (тесты есть у `bls`, `bea`, `cbr`, `rosstat`, `minfin`, `gold`) |
+| `make test` | `go vet` и `go test -race ./...` (тесты есть у `bls`, `bea`, `cbr`, `rosstat`, `minfin`, `gold`, `moex`) |
 | `make build` | статический бинарник `linux/amd64` в `build/` |
 | `make run` | сборка и запуск (нужен `CLICKHOUSE_URL`) |
+| `make import STAT=<имя>` | локальный прогон одного импортёра по `Name()` (собирает `build/clickhouse-import-rosstat-native`) |
+| `make build-ingest` | сборка ingest-endpoint (`cmd/ingest`) в `build/ingest` |
+| `make run-ingest` | сборка и запуск ingest-endpoint (нужны `CLICKHOUSE_URL` и `INGEST_TOKEN`) |
 | `make fmt` | `gofmt -w .` |
 | `make deps` | `go mod download` и `go mod tidy` |
 | `make clean` | удалить `build/` |
 | `make ch-up` | запустить локальный ClickHouse (порты 8123/9000), если он ещё не отвечает |
 | `make ch-down` | остановить сервер, поднятый через `make ch-up` (по PID-файлу) |
 | `make ch-status` | проверить, отвечает ли сервер на `localhost:8123` |
+| `make ch-sql FILE=...` | прогнать SQL-файл репозитория в локальный ClickHouse (`--multiquery`; пользователь `CH_USER`, по умолчанию `default` без пароля) |
 | `make dev-check` | проверить наличие `go`, `gofmt`, `golangci-lint`, `uv`, `curl`, `clickhouse` |
 | `make mcp-run` | запустить MCP-сервер `mcp-clickhouse` в stdio вручную (нужен `CLICKHOUSE_PASSWORD`) |
 | `make mcp-user` | создать пользователя `kimi_reader` и выдать `GRANT SELECT` на витрины из `sql/mcp_kimi_reader.sql` (нужен `CLICKHOUSE_PASSWORD`, запущенный ClickHouse) |
@@ -107,7 +154,8 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 - `golangci-lint` v2 (`brew install golangci-lint`), конфиг — `.golangci.yml`;
 - `uv` (`brew install uv`): запускает `mcp-clickhouse` без установки в систему, Python `3.12` подтягивается `uv`;
 - ClickHouse локально: бинарник из `PATH` или `~/.clickhouse/versions/*/clickhouse` (или `CH_BIN=...`);
-- `curl` — для проверки статуса сервера.
+- `curl` — для проверки статуса сервера;
+- GoLand 2025.2+ (опционально) — MCP-сервер IDE для Kimi Code, см. «MCP GoLand (опционально)» ниже.
 
 Порядок проверки окружения и работы:
 
@@ -144,6 +192,8 @@ export BEA_API_KEY=<your-key>
 export CLICKHOUSE_URL=clickhouse://localhost:9000/default
 export CLICKHOUSE_PASSWORD=<kimi_reader-password>
 # export BLS_API_KEY=<your-key>
+# export INGEST_TOKEN=<ingest-token>
+# export INGEST_RATE_PER_MIN=60
 ```
 
 - Makefile подключает файл сам (`-include`), поэтому любая `make`-цель видит ключи без `export` в shell; путь можно переопределить: `make ROSSTAT_ENV=/путь/к/файлу ...`;
@@ -183,6 +233,30 @@ MCP для Kimi (агент читает витрины `v_*`, без запис
 - проверить в Kimi командой `/mcp-config` в новой сессии: сервер `clickhouse` должен быть подключён;
 - новые ряды и витрины: см. AGENTS.md, правило 11. Legacy-таблицы `cbr_*`, `rosstat`, `minfin`, `gold_prices` агенту доступны через групповые витрины `v_cbr_macro`, `v_rosstat_macro`, `v_minfin_budget`, `v_gold_prices` (создаются, когда все таблицы группы импортированы), описания рядов — в `v_series_catalog`.
 
+MCP GoLand (опционально, ускоряет работу Kimi Code с кодом):
+
+- зачем: агент получает инструменты IDE — ошибки и инспекции файла по индексу GoLand (`get_file_problems`), сигнатуры символов (`get_symbol_info`), семантический поиск и иерархию вызовов (`search_symbol`, `analyze_calls`), безопасный rename (`rename_refactoring`); как и когда ими пользоваться — в AGENTS.md, раздел «Инструменты GoLand (MCP `jetbrains`)». Без них агент работает обычными `Grep`/`Read`/`Edit`, настройка не обязательна;
+- требование: GoLand 2025.2 или новее — MCP-сервер встроен (плагин MCP Server включён по умолчанию); npm-пакет `@jetbrains/mcp-proxy` deprecated и не нужен;
+- настройка:
+  1. открыть этот репозиторий в GoLand;
+  2. Settings | Tools | MCP Server → включить **Enable MCP Server**;
+  3. там же: **Copy HTTP Stream Config** — в буфере окажется URL вида `http://127.0.0.1:<port>/stream`;
+  4. добавить запись в `~/.kimi-code/mcp.json` (URL из шага 3, порт подставить свой):
+
+  ```json
+  {
+    "mcpServers": {
+      "jetbrains": {
+        "url": "http://127.0.0.1:<port>/stream"
+      }
+    }
+  }
+  ```
+
+  5. начать новую сессию Kimi Code (`/new`) и проверить `/mcp-config`: сервер `jetbrains` подключён;
+- порт выдаётся динамически и может смениться после перезапуска GoLand: если инструменты `jetbrains` пропали, повторите шаги 3–4;
+- инструменты видны только пока GoLand запущен с открытым проектом.
+
 Правила кода (подробно — в [AGENTS.md](AGENTS.md) и [ARCHITECTURE.md](ARCHITECTURE.md)):
 
 - вставка в ClickHouse только батчами: `PrepareBatch` → `Append` → `Send`; построчный `Exec` в цикле запрещён;
@@ -202,7 +276,7 @@ MCP для Kimi (агент читает витрины `v_*`, без запис
 
 Все задания используют Go `1.27.x`: `govulncheck` проверяет стандартную библиотеку тулчейном, которым запущен, и на go1.27.1 находил уязвимости `net/http` и `crypto/tls`, исправленные в go1.27.2.
 
-`.github/workflows/release.yml` на тег `v*` запускает тесты и `goreleaser` (архив `linux/amd64`, `SHA256SUMS`, файлы `README.md` и `dagu/*.yaml`). Конфиг — `.goreleaser.yaml`; проверка: `goreleaser check`.
+`.github/workflows/release.yml` на тег `v*` запускает тесты и `goreleaser` (архив `linux/amd64`, `SHA256SUMS`, файлы `README.md` и `dagu/*.yaml`). Конфиг — `.goreleaser.yaml`; проверка: `goreleaser check`. В релиз входит только основной бинарник импорта; `cmd/ingest` собирается локально через `make build-ingest`.
 
 ## Ограничения и известные проблемы
 
@@ -212,8 +286,15 @@ MCP для Kimi (агент читает витрины `v_*`, без запис
 - **`domrf_mortgage`, `sber_finansovie_rezultaty`, `tbank_group_ifrs` — ссылка задана статически.** Страницы источников закрыты JS-challenge (ServicePipe у ДОМ.РФ, TSPD у Сбера) либо не имеют листинга (CDN с UUID у Т-Банка), colly их не парсит: ссылку обновляют вручную при каждом релизе. У `tbank_group_ifrs` текущая ссылка ведёт на PDF, а не XLSX, — импорт падает.
 - **Росстат может отдавать HTTP 426.** Домен `rosstat.gov.ru` периодически отклоняет запросы из-за технических работ (`Upgrade Required`), включая уже работавшие `ipc_mes`/`ipc_weeks`; это ограничение источника/сети, а не кода. Импортёры падают с диагностикой «не найдена ссылка на …».
 - **`financial/`.** Legacy-контур (database/sql, свой main). Новые импортёры туда не добавляются.
+- **Ingest-endpoint: TLS — снаружи.** Лимит частоты (`INGEST_RATE_PER_MIN`, `429`) и предел тела 1 MiB (`413`) реализованы в процессе; TLS предполагается на reverse proxy, в репозитории он не описан. Повторный `POST /v1/model_run` с тем же `run_id` отвечает `200 {"inserted": 1}`, хотя строк не пишет: ответ не отличает дубль от новой записи.
+- **HTTP-режим mcp-clickhouse для плагина не развёрнут в репозитории.** Локальная конфигурация Kimi — stdio (блок «MCP для Kimi» в разделе «Ключи и окружение»). Для плагина `gold-nav` сервер автора по HTTPS с токеном нужно поднять отдельно.
+- **Индикаторы `v_gold_dashboard` вводятся вручную.** `crack_ulsd_proxy`, `distillate_stocks`, `fedwatch_dec_hike`, `etf_flows_month`, `dxy` имеют только `manual_series`; импортёров нет. Без ввода они показываются как `stale`.
+- **Сверка прогнозов не автоматизирована.** `actual` и `error_pct` в `forecast_log` не заполняются кодом; `v_forecast_accuracy` покажет `is_resolved = 0` до ручного ввода.
+- **ИПЦ в `v_model_inputs` может быть пустым.** Витрина требует, чтобы существовали таблицы `ipc_mes` и `ipc_weeks`, но не проверяет их заполненность. Таблицы создаются до загрузки Росстата, поэтому при его ошибке (см. выше) витрина создаётся, а `ipc_mes_last` и `ipc_week_ytd` остаются NULL или устаревают; ориентироваться по `*_date`.
+- **`nav_beta_gold` не заполняется** (поля нет во входе `ModelRun`), в таблицу пишется NULL.
 - **Имена импортёров.** `Name()` у `fred` — `fred` (несколько серий, одна таблица `macro_series`), у `cbr` часть импортёров делит таблицу (`cbr_currency_usd`, `households_b_mes`).
 - **Таблица `gold_prices` использует `Date32`.** Так как LBMA-ряд начинается в 1968 году.
+- **Доходности G-curve (`ofz_curve`, теноры 1y/3y/5y/10y) — без ретроспективы.** Эндпоинт MOEX ISS `/iss/engines/stock/zcyc.json` отдаёт только снимок текущего дня; история накапливается с даты первого запуска импортёра. Индекс RGBI (тот же zcyc + свечи) имеет полную историю с 2010 года.
 
 ## Grafana
 
