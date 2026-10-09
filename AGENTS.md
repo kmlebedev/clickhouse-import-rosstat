@@ -41,7 +41,7 @@
 4. HTTP — только через `util.HttpClient`, `util.GetXlsx`, `util.GetCSV` (там национальные TLS-сертификаты РФ и ротация User-Agent).
 5. DDL всегда `CREATE TABLE IF NOT EXISTS`, движок `ReplacingMergeTree`, измерения `LowCardinality(String)`, новые денежные/ценовые значения — `Float64`.
 6. Ошибки не проглатывать: каждый `strconv.Parse*` и `batch.Append` — с проверкой `err`.
-7. Новые импортёры — по шаблонам из ARCHITECTURE.md §3 (предпочтительно `util.HdBase`). Пакет `financial/` — legacy, новый код туда не добавлять.
+7. Новые импортёры — по шаблонам из ARCHITECTURE.md §3 (предпочтительно `util.ClickHouseImport`). Пакет `financial/` — legacy, новый код туда не добавлять.
 8. Новые таблицы — строго по каноническим DDL из ARCHITECTURE.md §6.2; изменение схемы = сначала обновить ARCHITECTURE.md.
 9. После кода: `make all` (gofmt, golangci-lint, `go vet`, `go test -race`, сборка) должен проходить — те же проверки запускает CI.
 10. Изменил архитектуру, схему таблицы или конвенцию — в том же PR обнови `ARCHITECTURE.md` и `README.md` (порядок проверки — skill `sync-readme-architecture` в `.kimi-code/skills/`); изменил план — обнови `docs/ROADMAP_DCF_POLYUS.md`.

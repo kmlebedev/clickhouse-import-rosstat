@@ -16,6 +16,9 @@ type ClickHouseImport struct {
 	TimeLayout  string
 	CrawFunc    func(crawUrl string, conn driver.Conn) (count int64, err error)
 	ImportFunc  func(xlsx *excelize.File, batch driver.Batch) error
+	// BeforeImport вычисляет DataUrl во время Import(), а не в init():
+	// сетевые вызовы в init() запрещены (ARCHITECTURE.md §8.6).
+	BeforeImport func(ctx context.Context, conn driver.Conn) error
 }
 
 func (s *ClickHouseImport) Name() string {
@@ -48,6 +51,11 @@ func (s *ClickHouseImport) Import(ctx context.Context, conn driver.Conn) (count 
 			return 0, err
 		}
 	}
+	if s.BeforeImport != nil {
+		if err = s.BeforeImport(ctx, conn); err != nil {
+			return 0, err
+		}
+	}
 	switch {
 	case s.CrawFunc != nil:
 		return s.CrawFunc(s.DataUrl, conn)
@@ -55,5 +63,5 @@ func (s *ClickHouseImport) Import(ctx context.Context, conn driver.Conn) (count 
 		return s.ImportXls(ctx, s.DataUrl, conn)
 	}
 
-	return count, nil
+	return count, fmt.Errorf("%s: no CrawFunc or ImportFunc configured", s.TableName)
 }

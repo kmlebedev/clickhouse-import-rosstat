@@ -1,6 +1,7 @@
 package cbr
 
 import (
+	"context"
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/gocolly/colly/v2"
@@ -18,20 +19,9 @@ import (
 // Показатели сезонно сглаженной динамики потребительских цен
 // const indicatorsCpdDataUrl = "https://www.cbr.ru/Content/Document/File/108632/indicators_cpd.xlsx"
 
-func init() {
-	indicatorsCpd := util.HdBase{
-		TableName: "cbr_indicators_cpd",
-		DataUrl:   getIndicatorsCpdXlsDataUrl(),
-		CreateTable: `CREATE TABLE IF NOT EXISTS %s (
-              name LowCardinality(String)
-			, date Date
-			, value Float32
-		) ENGINE = ReplacingMergeTree ORDER BY (name, date);`,
-		ImportFunc: indicatorsCpdImport,
-	}
-	chimport.Stats = append(chimport.Stats, &publishedStat{ImportStat: &indicatorsCpd, meta: cbrIndicatorsCpdSeriesMeta})
-}
-
+// getIndicatorsCpdXlsDataUrl ищет ссылку на актуальный XLSX на странице
+// показателей сезонно сглаженной динамики потребительских цен. Вызывается
+// из Import(): сетевые вызовы в init() запрещены (ARCHITECTURE.md §8.6).
 func getIndicatorsCpdXlsDataUrl() (url string) {
 	c := colly.NewCollector()
 	c.SetClient(util.HttpClient)
@@ -44,6 +34,32 @@ func getIndicatorsCpdXlsDataUrl() (url string) {
 	}
 	c.Wait()
 	return url
+}
+
+const indicatorsCpdUrl = "https://www.cbr.ru/statistics/ddkp/aipd/"
+
+type indicatorsCpdStat struct {
+	util.ClickHouseImport
+}
+
+func (s *indicatorsCpdStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+	if s.DataUrl = getIndicatorsCpdXlsDataUrl(); s.DataUrl == "" {
+		return count, fmt.Errorf("indicatorsCpd: не найдена ссылка на xlsx на %s", indicatorsCpdUrl)
+	}
+	return s.ClickHouseImport.Import(ctx, conn)
+}
+
+func init() {
+	indicatorsCpd := indicatorsCpdStat{ClickHouseImport: util.ClickHouseImport{
+		TableName: "cbr_indicators_cpd",
+		CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (
+              name LowCardinality(String)
+			, date Date
+			, value Float32
+		) ENGINE = ReplacingMergeTree ORDER BY (name, date);`},
+		ImportFunc: indicatorsCpdImport,
+	}}
+	chimport.Stats = append(chimport.Stats, &publishedStat{ImportStat: &indicatorsCpd, meta: cbrIndicatorsCpdSeriesMeta})
 }
 
 // https://www.cbr.ru/analytics/dkp/dinamic/
