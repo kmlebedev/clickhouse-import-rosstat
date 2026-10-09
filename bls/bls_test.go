@@ -12,6 +12,21 @@ import (
 	"time"
 )
 
+func TestSeriesMetaCoversAllSeries(t *testing.T) {
+	described := make(map[string]bool, len(blsSeriesMeta))
+	for _, m := range blsSeriesMeta {
+		if m.Source != blsSource || m.Title == "" || m.Unit == "" || m.Frequency == "" || m.Origin == "" || m.Description == "" {
+			t.Fatalf("incomplete catalog entry: %+v", m)
+		}
+		described[m.Series] = true
+	}
+	for _, series := range blsSeries {
+		if !described[series] {
+			t.Errorf("series %s has no series_catalog entry", series)
+		}
+	}
+}
+
 func TestParseResponse(t *testing.T) {
 	const succeeded = `{"status":"REQUEST_SUCCEEDED","message":[],"Results":{"series":[
 		{"seriesID":"CUUR0000SA0","data":[

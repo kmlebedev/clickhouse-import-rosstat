@@ -1,6 +1,7 @@
 import asyncio
 import os
 import sys
+import tempfile
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -37,7 +38,19 @@ async def main():
         env={**os.environ, **env},
     )
     failed = 0
-    async with stdio_client(params) as (read, write):
+    with tempfile.TemporaryFile(mode="w+") as server_log:
+        failed = await check(params, server_log)
+        if failed:
+            server_log.seek(0)
+            print("--- лог сервера mcp-clickhouse ---", file=sys.stderr)
+            print(server_log.read(), file=sys.stderr)
+    print("ПРОВЕРКА ПРОЙДЕНА" if not failed else f"ПРОВАЛЕНО: {failed}")
+    return 1 if failed else 0
+
+
+async def check(params, server_log):
+    failed = 0
+    async with stdio_client(params, errlog=server_log) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
             tools = sorted(t.name for t in (await session.list_tools()).tools)
@@ -52,11 +65,23 @@ async def main():
             pce = text(await session.call_tool("run_query", {"query": "SELECT date, value FROM v_bea_pce WHERE series = 'PCE_PI' ORDER BY date DESC LIMIT 3"}))
             failed += not expect("значения PCE_PI", "rows" in pce and "Query execution failed" not in pce, pce[:200])
 
-            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM macro_series"}))
-            failed += not expect("сырая таблица закрыта", "ACCESS_DENIED" in raw or "Not enough privileges" in raw, raw[:200])
+            fred_bls = text(await session.call_tool("run_query", {"query": "SELECT series FROM v_series_catalog WHERE source IN ('fred', 'bls')"}))
+            expected = ["DFII10", "DGS10", "FEDFUNDS", "DTWEXBGS", "CPIAUCSL", "T5YIE",
+                        "CUUR0000SA0", "CUSR0000SA0", "LNS14000000", "CES0000000001", "CES0500000003", "WPSFD4", "JTS000000000000000JOL"]
+            missing = [s for s in expected if s not in fred_bls]
+            failed += not expect("каталог FRED и BLS", not missing, f"нет рядов: {missing}" if missing else f"{len(expected)} рядов")
 
-    print("ПРОВЕРКА ПРОЙДЕНА" if not failed else f"ПРОВАЛЕНО: {failed}")
-    return 1 if failed else 0
+            fred = text(await session.call_tool("run_query", {"query": "SELECT date, value FROM v_fred_macro WHERE series = 'DGS10' ORDER BY date DESC LIMIT 3"}))
+            failed += not expect("значения FRED DGS10", "rows" in fred and "Query execution failed" not in fred, fred[:200])
+
+            bls = text(await session.call_tool("run_query", {"query": "SELECT date, value FROM v_bls_macro WHERE series = 'LNS14000000' ORDER BY date DESC LIMIT 3"}))
+            failed += not expect("значения BLS LNS14000000", "rows" in bls and "Query execution failed" not in bls, bls[:200])
+
+            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM macro_series"}))
+            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+            failed += not expect("сырая таблица закрыта", denied, "отказ ClickHouse 497 на macro_series (ожидаемо)" if denied else raw[:200])
+
+    return failed
 
 
 if __name__ == "__main__":

@@ -52,6 +52,81 @@ var (
 	}
 )
 
+var blsViews = []string{
+	`CREATE OR REPLACE VIEW v_bls_macro DEFINER = default SQL SECURITY DEFINER AS
+		SELECT date, series, value FROM macro_series FINAL WHERE source = 'bls'`,
+	`ALTER TABLE v_bls_macro MODIFY COMMENT 'Макро-ряды США из BLS: индексы CPI (NSA и SA), безработица, занятость вне сельского хозяйства (NFP), средняя почасовая зарплата, PPI final demand, вакансии JOLTS. Единицы и база каждого ряда — в v_series_catalog'`,
+	`ALTER TABLE v_bls_macro COMMENT COLUMN date 'Месяц наблюдения (первый день месяца)'`,
+	`ALTER TABLE v_bls_macro COMMENT COLUMN series 'Код ряда BLS: CUUR0000SA0, CUSR0000SA0, LNS14000000, CES0000000001, CES0500000003, WPSFD4, JTS000000000000000JOL'`,
+	`ALTER TABLE v_bls_macro COMMENT COLUMN value 'Значение ряда в единицах из v_series_catalog (индекс, проценты, тысячи человек, доллары)'`,
+}
+
+var blsSeriesMeta = []util.SeriesMeta{
+	{
+		Source:      blsSource,
+		Series:      "CUUR0000SA0",
+		Title:       "CPI-U: All items in U.S. city average, not seasonally adjusted, monthly",
+		Unit:        "index, 1982-84 = 100",
+		Frequency:   "M",
+		Origin:      "BLS API v2 seriesid CUUR0000SA0 (CPI-U, NSA)",
+		Description: "Индекс потребительских цен CPI-U без сезонной корректировки. Уровень индекса, не темп: годовой темп инфляции = value / value 12 месяцев назад − 1. В октябре 2025 значение отсутствует из-за лапса финансирования BLS — в выборке пропуск, не ноль",
+	},
+	{
+		Source:      blsSource,
+		Series:      "CUSR0000SA0",
+		Title:       "CPI-U: All items in U.S. city average, seasonally adjusted, monthly",
+		Unit:        "index, 1982-84 = 100",
+		Frequency:   "M",
+		Origin:      "BLS API v2 seriesid CUSR0000SA0 (CPI-U, SA)",
+		Description: "Индекс потребительских цен CPI-U с сезонной корректировкой — для анализа помесячной динамики. Уровень индекса, не темп: месячный темп = value / value предыдущего месяца − 1; годовой — к значению 12 месяцев назад",
+	},
+	{
+		Source:      blsSource,
+		Series:      "LNS14000000",
+		Title:       "Unemployment rate, seasonally adjusted, monthly",
+		Unit:        "percent",
+		Frequency:   "M",
+		Origin:      "BLS API v2 seriesid LNS14000000 (CPS, таблица A-1)",
+		Description: "Уровень безработицы среди гражданского населения в возрасте 16+, сезонно скорректированный. Значение — проценты (не доли); изменение считать в п.п. разностью уровней",
+	},
+	{
+		Source:      blsSource,
+		Series:      "CES0000000001",
+		Title:       "All employees, total nonfarm, seasonally adjusted, monthly",
+		Unit:        "thousands of persons",
+		Frequency:   "M",
+		Origin:      "BLS API v2 seriesid CES0000000001 (CES, nonfarm payrolls)",
+		Description: "Занятость вне сельского хозяйства (NFP), сезонно скорректированная, тысячи человек. Месячное изменение = разность уровней; публикуемые значения ревизуются BLS в последующие месяцы",
+	},
+	{
+		Source:      blsSource,
+		Series:      "CES0500000003",
+		Title:       "Average hourly earnings of all employees, total private, seasonally adjusted, monthly",
+		Unit:        "USD per hour",
+		Frequency:   "M",
+		Origin:      "BLS API v2 seriesid CES0500000003 (CES, average hourly earnings)",
+		Description: "Средняя почасовая зарплата всех работников частного сектора в долларах США, сезонно скорректированная. Уровень, не темп: годовой рост = value / value 12 месяцев назад − 1",
+	},
+	{
+		Source:      blsSource,
+		Series:      "WPSFD4",
+		Title:       "PPI commodity data for final demand, seasonally adjusted, monthly",
+		Unit:        "index, base 2009-11 = 100",
+		Frequency:   "M",
+		Origin:      "BLS API v2 seriesid WPSFD4 (PPI final demand, SA)",
+		Description: "Индекс цен производителей по конечному спросу (PPI final demand), сезонно скорректированный. База — Base Date 200911 (ноябрь 2009). Уровень индекса, не темп: годовой темп = value / value 12 месяцев назад − 1",
+	},
+	{
+		Source:      blsSource,
+		Series:      "JTS000000000000000JOL",
+		Title:       "Job openings, total nonfarm, seasonally adjusted, monthly (JOLTS)",
+		Unit:        "thousands of job openings",
+		Frequency:   "M",
+		Origin:      "BLS API v2 seriesid JTS000000000000000JOL (JOLTS, job openings level)",
+		Description: "Число вакансий в экономике вне сельского хозяйства (JOLTS), сезонно скорректированное, тысячи. Последнее значение публикуется с лагом и ревизуется; сравнивать с безработицей (LNS14000000) для оценки напряжённости рынка труда",
+	},
+}
+
 type blsRequest struct {
 	SeriesIds       []string `json:"seriesid"`
 	StartYear       string   `json:"startyear"`
@@ -88,6 +163,11 @@ func (s *blsImport) Import(ctx context.Context, conn driver.Conn) (count int64, 
 	if err = conn.Exec(ctx, blsDdl); err != nil {
 		return count, err
 	}
+	for _, stmt := range blsViews {
+		if err = conn.Exec(ctx, stmt); err != nil {
+			return count, err
+		}
+	}
 	batch, err := conn.PrepareBatch(ctx, blsInsert)
 	if err != nil {
 		return count, err
@@ -107,6 +187,9 @@ func (s *blsImport) Import(ctx context.Context, conn driver.Conn) (count int64, 
 		log.Infof("Fetched %d observations of %d series for %d-%d", len(observations), len(blsSeries), window[0], window[1])
 	}
 	if err = batch.Send(); err != nil {
+		return count, err
+	}
+	if err = util.UpsertSeriesCatalog(ctx, conn, blsSeriesMeta); err != nil {
 		return count, err
 	}
 	return count, nil

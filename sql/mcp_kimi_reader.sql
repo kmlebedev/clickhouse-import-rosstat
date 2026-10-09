@@ -5,3 +5,5 @@ CREATE USER IF NOT EXISTS kimi_reader IDENTIFIED BY '<your-password>' DEFAULT DA
 
 GRANT SELECT ON default.v_bea_pce TO kimi_reader;
 GRANT SELECT ON default.v_series_catalog TO kimi_reader;
+GRANT SELECT ON default.v_fred_macro TO kimi_reader;
+GRANT SELECT ON default.v_bls_macro TO kimi_reader;
