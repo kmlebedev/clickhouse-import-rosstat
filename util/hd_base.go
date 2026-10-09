@@ -38,7 +38,7 @@ func (s *HdBase) Import(ctx context.Context, conn driver.Conn) (count int64, err
 	if err != nil {
 		return 0, err
 	}
-	defer xlsx.Close()
+	defer func() { _ = xlsx.Close() }()
 	batch, err := conn.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s", s.TableName))
 	if err != nil {
 		return count, err

@@ -54,6 +54,9 @@ func (s *SberCSI) Import(ctx context.Context, conn driver.Conn) (count int64, er
 	}
 	rows := *table
 	batch, err := conn.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s", sberCSITable))
+	if err != nil {
+		return count, err
+	}
 	for _, row := range rows[1:] {
 		day, err := time.Parse(sberCSITimeLayout, row[0])
 		if err != nil {

@@ -41,7 +41,7 @@ func (s *LoansToCorporationsStat) export() (table *[][]string, err error) {
 	if xlsx, err = util.GetXlsx(sberRpbuXlsDataUrl); err != nil {
 		return nil, err
 	}
-	defer xlsx.Close()
+	defer func() { _ = xlsx.Close() }()
 	table = new([][]string)
 	var rows [][]string
 	if rows, err = xlsx.GetRows("Баланс"); err != nil {

@@ -96,7 +96,7 @@ func loadUsdRates(ctx context.Context, conn driver.Conn) ([]usdRate, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cbr_currency_usd (сначала запустите импорт cbr_currency_usd): %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var rates []usdRate
 	for rows.Next() {
 		var date time.Time
@@ -150,7 +150,7 @@ func fetchFixPage(ctx context.Context, start int) (fixes []fixPoint, rows int, e
 	if err != nil {
 		return nil, 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, 0, fmt.Errorf("moex gold fix: http status %d", resp.StatusCode)
 	}

@@ -66,13 +66,13 @@ func (s *VtbIfrs) export() (table *[][]string, err error) {
 	table = new([][]string)
 	for _, xlsName := range vtbIfrsXlsData {
 		if xlsx, err = util.GetXlsx(vtbIfrsUrl + xlsName); err != nil {
-			return nil, fmt.Errorf("Get xlsx %s failed: %v", xlsName, err)
+			return nil, fmt.Errorf("get xlsx %s failed: %v", xlsName, err)
 		}
 		var rows [][]string
 		if rows, err = xlsx.GetRows("Ключевые балансовые показатели"); err != nil {
 			return nil, err
 		}
-		xlsx.Close()
+		_ = xlsx.Close()
 		fieldFound := 0
 		// Строки с годами
 		for i, row := range rows {

@@ -1,0 +1,68 @@
+name: Go
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          # Последний патч 1.27: go1.26.0 из go.mod содержит уязвимости stdlib,
+          # которые govulncheck найдёт при запуске под этим тулчейном.
+          go-version: '1.27.x'
+          # setup-go кэширует модули и сборку; ключ берётся из go.sum.
+          cache: true
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "$unformatted" >&2
+            echo "run: make fmt" >&2
+            exit 1
+          fi
+      - run: go vet ./...
+      - name: test
+        run: go test -race ./...
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.x'
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          # v2.14.0 читает export data stdlib go1.27.2; v2.13.2 на нём падает
+          # с typecheck-ошибкой "export data version 5".
+          version: v2.14.0
+
+  vulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.x'
+      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.x'
+      - name: build
+        run: make build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clickhouse-import-rosstat-linux-amd64
+          path: build/

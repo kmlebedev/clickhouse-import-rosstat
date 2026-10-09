@@ -4,10 +4,8 @@ import (
 	"context"
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/gocolly/colly/v2"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
-	log "github.com/sirupsen/logrus"
 	"github.com/xuri/excelize/v2"
 	"strconv"
 	"strings"
@@ -32,20 +30,6 @@ const (
 )
 
 type SalariesMesStat struct {
-}
-
-func getIndicatorsCpdXlsDataUrl() (url string, err error) {
-	c := colly.NewCollector()
-	c.SetClient(util.HttpClient)
-	c.OnHTML(".main > section:nth-child(2) > div > div > div > div > div > div > div.col-lg-8.order-1.order-lg-1 > div > div:nth-child(2) > div > div.toggle-section__content.toggle-section__content--open > div > div > div > div:nth-child(1) > div > div.toggle-card__main > div > div > div > div:nth-child(1) > div.document-list__item-link > a", func(e *colly.HTMLElement) {
-		url = fmt.Sprintf("%s%s", rosstatUrl, e.Attr("href"))
-		log.Infof("href url %s", url)
-	})
-	if err = c.Visit(fmt.Sprintf("%s/labor_market_employment_salaries", rosstatUrl)); err != nil {
-		log.Errorf("Visit %v+", err)
-	}
-	c.Wait()
-	return url, nil
 }
 
 func (s *SalariesMesStat) Name() string {

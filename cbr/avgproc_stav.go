@@ -16,19 +16,6 @@ import (
 type cbrProcStav struct {
 }
 
-const (
-	// Динамика максимальной процентной ставки https://www.cbr.ru/statistics/avgprocstav/
-	cbrProcStavUrl   = "https://www.cbr.ru/statistics/avgprocstav/?UniDbQuery.Posted=True&UniDbQuery.From=1.01.2022&UniDbQuery.To=3.07.2025%s"
-	cbrProcStavTable = "cbr_proc_stav"
-	cbrProcStavDdl   = `CREATE TABLE IF NOT EXISTS ` + cbrCurrencyUSDTable + ` (
-			  date Date
-			, price Float32
-		) ENGINE = ReplacingMergeTree ORDER BY (date);
-	`
-	cbrProcStavInsert     = "INSERT INTO " + cbrCurrencyUSDTable + " VALUES (?, ?)"
-	cbrProcStavTimeLayout = "02.01.2006"
-)
-
 func (s *cbrProcStav) Name() string {
 	return cbrCurrencyUSDTable
 }
@@ -42,7 +29,7 @@ func (s *cbrProcStav) export() (table *[][]string, err error) {
 		if date == "Дата" {
 			return
 		}
-		price := strings.Replace(e.DOM.Children().Last().Text(), ",", ".", -1)
+		price := strings.ReplaceAll(e.DOM.Children().Last().Text(), ",", ".")
 		if _, err := strconv.ParseFloat(price, 32); err != nil {
 			return
 		}

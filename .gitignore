@@ -1,0 +1,4 @@
+/build/
+/.idea/
+coverage.out
+/dist/

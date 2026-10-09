@@ -119,10 +119,13 @@ func GetFile(url string) (io.ReadCloser, error) {
 	}
 	// Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
 	// fmt.Printf("Header %+v\n", resp.Header)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
 	if len(body) == 0 {
-		return nil, fmt.Errorf(("Body size is empty"))
+		return nil, fmt.Errorf("body size is empty")
 	}
 	//fmt.Printf("body %+s\n", string(body))
 	return io.NopCloser(bytes.NewReader(body)), nil
@@ -162,7 +165,7 @@ func GetCSV(url string) (records [][]string, err error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err

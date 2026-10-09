@@ -82,7 +82,7 @@ func fedBudImport(xlsx *excelize.File, batch driver.Batch) error {
 				if err != nil {
 					return fmt.Errorf("parse %s, err: %v", dateStr, err)
 				}
-				valueNew, err := strconv.ParseFloat(strings.ReplaceAll(rowCol, ",", ""), 16)
+				valueNew, err := strconv.ParseFloat(strings.ReplaceAll(rowCol, ",", ""), 64)
 				if dateStr[0:3] == "Jan" {
 					value = valueNew
 				} else {
