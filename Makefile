@@ -20,7 +20,7 @@ MCP_CMD      := uv run --with mcp-clickhouse --python $(MCP_PY) mcp-clickhouse
 
 .PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mcp-run mcp-user mcp-check build-ingest run-ingest
 
-all: lint test build
+all: lint test build build-ingest
 
 # lint падает, если что-то не отформатировано, затем запускает golangci-lint,
 # если он установлен. CI выполняет те же проверки.

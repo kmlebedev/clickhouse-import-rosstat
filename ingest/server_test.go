@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 const testToken = "unit-test-token"
@@ -33,7 +35,25 @@ func (m *mockBatchWriter) InsertManualSeries(_ context.Context, points []ManualS
 }
 
 func newTestServer(writer BatchWriter) *httptest.Server {
-	return httptest.NewServer(NewServer(writer, testToken))
+	return httptest.NewServer(NewServer(writer, testToken, DefaultRatePerMin))
+}
+
+// manualClock — часы для теста ограничителя: время меняется только через Advance.
+type manualClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (c *manualClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *manualClock) Advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
 }
 
 func post(t *testing.T, url, token, body string) (int, []byte) {
@@ -203,5 +223,71 @@ func TestManualSeriesUnauthorized(t *testing.T) {
 	status, _ := post(t, server.URL+"/v1/manual_series", "", `[]`)
 	if status != http.StatusUnauthorized {
 		t.Fatalf("status %d, want 401", status)
+	}
+}
+
+func TestModelRunUnknownFieldIsRejected(t *testing.T) {
+	writer := &mockBatchWriter{}
+	server := newTestServer(writer)
+	defer server.Close()
+
+	body := strings.Replace(validRunBody, `"comment": "unit test",`, `"comment": "unit test", "nav_pershare": 1,`, 1)
+	status, payload := post(t, server.URL+"/v1/model_run", testToken, body)
+	if status != http.StatusBadRequest {
+		t.Fatalf("status %d, want 400: %s", status, payload)
+	}
+	if !strings.Contains(string(payload), "nav_pershare") {
+		t.Fatalf("expected unknown field name in error, got %s", payload)
+	}
+	if len(writer.runs) != 0 {
+		t.Fatal("writer must not be called with unknown field")
+	}
+}
+
+func TestManualSeriesUnknownFieldIsRejected(t *testing.T) {
+	writer := &mockBatchWriter{}
+	server := newTestServer(writer)
+	defer server.Close()
+
+	const body = `[{"series": "CPIAUCSL", "date": "2026-01-01", "value": 1, "source": "fred"}]`
+	status, payload := post(t, server.URL+"/v1/manual_series", testToken, body)
+	if status != http.StatusBadRequest {
+		t.Fatalf("status %d, want 400: %s", status, payload)
+	}
+	if len(writer.series) != 0 {
+		t.Fatal("writer must not be called with unknown field")
+	}
+}
+
+// Лимит: burst 2 при 60/мин (1 токен в секунду). Неавторизованные запросы токены не тратят.
+func TestRateLimitReturns429AfterBurst(t *testing.T) {
+	clock := &manualClock{now: time.Unix(1800000000, 0)}
+	writer := &mockBatchWriter{}
+	server := httptest.NewServer(newServer(writer, testToken, newTokenBucket(60, 2, clock.Now)))
+	defer server.Close()
+
+	for i := 0; i < 5; i++ {
+		if status, _ := post(t, server.URL+"/v1/manual_series", "wrong-token", `[]`); status != http.StatusUnauthorized {
+			t.Fatalf("unauthorized request %d: status %d, want 401", i+1, status)
+		}
+	}
+	for i := 0; i < 2; i++ {
+		if status, payload := post(t, server.URL+"/v1/manual_series", testToken, `[]`); status != http.StatusOK {
+			t.Fatalf("request %d within burst: status %d, want 200: %s", i+1, status, payload)
+		}
+	}
+	if status, _ := post(t, server.URL+"/v1/manual_series", testToken, `[]`); status != http.StatusTooManyRequests {
+		t.Fatalf("request over burst: status %d, want 429", status)
+	}
+	if len(writer.series) != 2 {
+		t.Fatalf("writer called %d times, want 2 (429 must not reach the writer)", len(writer.series))
+	}
+
+	clock.Advance(time.Second)
+	if status, _ := post(t, server.URL+"/v1/manual_series", testToken, `[]`); status != http.StatusOK {
+		t.Fatalf("request after 1s refill: status %d, want 200", status)
+	}
+	if status, _ := post(t, server.URL+"/v1/manual_series", testToken, `[]`); status != http.StatusTooManyRequests {
+		t.Fatalf("second request after 1s refill: status %d, want 429", status)
 	}
 }

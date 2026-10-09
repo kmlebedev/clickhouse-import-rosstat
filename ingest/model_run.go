@@ -3,6 +3,7 @@ package ingest
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -20,6 +21,13 @@ var validTriggerTypes = map[string]bool{
 	"calendar": true,
 	"news":     true,
 	"manual":   true,
+}
+
+// validProbabilityKeys — сценарии золота, которым назначается вероятность (spec, ARCHITECTURE §6.4).
+var validProbabilityKeys = map[string]bool{
+	"bull": true,
+	"base": true,
+	"bear": true,
 }
 
 var validPriceDecks = map[string]bool{
@@ -66,6 +74,9 @@ func ValidateModelRun(r ModelRun) error {
 	if !validPriceDecks[r.PriceDeck] {
 		return fmt.Errorf("price_deck %q must be one of: spot_flat, consensus_lt, own_scenario", r.PriceDeck)
 	}
+	if err := validateProbabilities(r.Probabilities); err != nil {
+		return err
+	}
 	var sum float64
 	for _, probability := range r.Probabilities {
 		sum += probability
@@ -81,6 +92,25 @@ func ValidateModelRun(r ModelRun) error {
 	}
 	if _, err := weightedGoldPoint(r.GoldScenario, r.Probabilities); err != nil {
 		return err
+	}
+	return nil
+}
+
+// validateProbabilities проверяет ключи (только bull/base/bear) и веса (0 ≤ p ≤ 100).
+// Ключи обходятся по возрастанию, чтобы текст ошибки был детерминированным.
+func validateProbabilities(probabilities map[string]float64) error {
+	keys := make([]string, 0, len(probabilities))
+	for key := range probabilities {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if !validProbabilityKeys[key] {
+			return fmt.Errorf("probability key %q must be one of: bull, base, bear", key)
+		}
+		if p := probabilities[key]; p < 0 || p > 100 {
+			return fmt.Errorf("probability %q = %v must be within 0..100", key, p)
+		}
 	}
 	return nil
 }

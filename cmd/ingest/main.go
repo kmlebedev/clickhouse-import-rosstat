@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -41,10 +42,14 @@ func main() {
 	if addr == "" {
 		addr = defaultAddr
 	}
-	log.Infof("ingest listening on %s", addr)
+	ratePerMin, err := strconv.Atoi(os.Getenv("INGEST_RATE_PER_MIN"))
+	if err != nil || ratePerMin <= 0 {
+		ratePerMin = ingest.DefaultRatePerMin
+	}
+	log.Infof("ingest listening on %s, rate limit %d req/min", addr, ratePerMin)
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           ingest.NewServer(writer, token),
+		Handler:           ingest.NewServer(writer, token, ratePerMin),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	log.Fatal(server.ListenAndServe())

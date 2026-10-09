@@ -50,6 +50,18 @@ func TestValidateModelRunInputErrors(t *testing.T) {
 			r.Probabilities = map[string]float64{"bull": 25, "base": 40, "tail": 35}
 		}, "tail"},
 		{"block has no point and no range", func(r *ModelRun) { r.GoldScenario["bear"] = map[string]any{"comment": "x"} }, "bear"},
+		{"point is present but not numeric", func(r *ModelRun) {
+			r.GoldScenario["bull"] = map[string]any{"low": 4600.0, "high": 5000.0, "point": "4800"}
+		}, "point"},
+		{"probability is negative", func(r *ModelRun) {
+			r.Probabilities = map[string]float64{"bull": -5, "base": 40, "bear": 65}
+		}, "within 0..100"},
+		{"probability is above 100", func(r *ModelRun) {
+			r.Probabilities = map[string]float64{"bull": 150, "base": 40, "bear": 35}
+		}, "within 0..100"},
+		{"probability key is unknown", func(r *ModelRun) {
+			r.Probabilities = map[string]float64{"bull": 25, "base": 40, "bear": 25, "tail": 10}
+		}, "probability key"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -60,6 +72,15 @@ func TestValidateModelRunInputErrors(t *testing.T) {
 				t.Fatalf("expected error containing %q, got %v", tt.wantSubstr, err)
 			}
 		})
+	}
+}
+
+// Граничные веса 0 и 100 допустимы; сумма всё так же должна быть 100.
+func TestValidateModelRunProbabilityBoundsValid(t *testing.T) {
+	run := validModelRun()
+	run.Probabilities = map[string]float64{"bull": 0, "base": 100, "bear": 0}
+	if err := ValidateModelRun(run); err != nil {
+		t.Fatalf("boundary weights 0 and 100 must be valid: %v", err)
 	}
 }
 

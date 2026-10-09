@@ -26,10 +26,12 @@ type chStore interface {
 	prepareBatch(ctx context.Context, query string) (chBatch, error)
 }
 
-// chBatch — батч вставки: достаточно Append и Send из driver.Batch.
+// chBatch — батч вставки: Append, Send и Abort из driver.Batch.
+// Abort вызывается, если ошибка случилась после PrepareBatch и до Send.
 type chBatch interface {
 	Append(v ...any) error
 	Send() error
+	Abort() error
 }
 
 // connStore — реализация chStore поверх driver.Conn.
@@ -124,6 +126,7 @@ func (w *ClickHouseWriter) InsertModelRun(ctx context.Context, r ModelRun) error
 		{"xau_q_avg", xauAvg},
 	} {
 		if err = forecastBatch.Append(forecastDate, targetDate, row.metric, row.predicted, nil, nil); err != nil {
+			_ = forecastBatch.Abort()
 			return err
 		}
 	}
@@ -140,6 +143,7 @@ func (w *ClickHouseWriter) InsertModelRun(ctx context.Context, r ModelRun) error
 		r.PriceDeck, r.DiscountRate, r.Wacc, r.NavPerShare, r.NavBull, r.NavBase, r.NavBear,
 		r.MarketPrice, r.UpsidePct, nil, r.Comment,
 	); err != nil {
+		_ = batch.Abort()
 		return err
 	}
 	return batch.Send()
@@ -157,9 +161,11 @@ func (w *ClickHouseWriter) InsertManualSeries(ctx context.Context, points []Manu
 	for _, point := range points {
 		date, err := time.Parse(manualSeriesDateLayout, point.Date)
 		if err != nil {
+			_ = batch.Abort()
 			return fmt.Errorf("date %q: %w", point.Date, err)
 		}
 		if err = batch.Append(manualSeriesSource, point.Series, date, point.Value); err != nil {
+			_ = batch.Abort()
 			return err
 		}
 	}
@@ -235,7 +241,11 @@ func scenarioPoint(scenario map[string]any, name string) (float64, error) {
 	if !ok {
 		return 0, fmt.Errorf("gold_scenario.%s must be an object, got %v", name, raw)
 	}
-	if point, ok := toFloat(block["point"]); ok {
+	if rawPoint, present := block["point"]; present {
+		point, ok := toFloat(rawPoint)
+		if !ok {
+			return 0, fmt.Errorf("gold_scenario.%s.point must be a number, got %v", name, rawPoint)
+		}
 		return point, nil
 	}
 	low, lowOk := toFloat(block["low"])

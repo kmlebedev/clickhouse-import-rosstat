@@ -23,14 +23,28 @@ type sentBatch struct {
 
 // fakeStore — фейк chStore: помнит закоммиченные run_id и отправленные батчи.
 type fakeStore struct {
-	mu        sync.Mutex
-	committed map[uuid.UUID]bool
-	sent      []sentBatch
-	failSend  map[string]error // ошибка Send по тексту запроса
+	mu         sync.Mutex
+	committed  map[uuid.UUID]bool
+	sent       []sentBatch
+	failSend   map[string]error // ошибка Send по тексту запроса
+	failAppend map[string]error // ошибка Append по тексту запроса
+	aborted    map[string]int   // сколько раз Abort вызван по тексту запроса
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{committed: map[uuid.UUID]bool{}, failSend: map[string]error{}}
+	return &fakeStore{
+		committed:  map[uuid.UUID]bool{},
+		failSend:   map[string]error{},
+		failAppend: map[string]error{},
+		aborted:    map[string]int{},
+	}
+}
+
+// abortedFor — сколько раз батч с этим запросом был прерван через Abort.
+func (f *fakeStore) abortedFor(query string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.aborted[query]
 }
 
 func (f *fakeStore) runExists(_ context.Context, runID uuid.UUID) (bool, error) {
@@ -66,7 +80,20 @@ type fakeBatch struct {
 }
 
 func (b *fakeBatch) Append(v ...any) error {
+	b.store.mu.Lock()
+	err := b.store.failAppend[b.query]
+	b.store.mu.Unlock()
+	if err != nil {
+		return err
+	}
 	b.rows = append(b.rows, v)
+	return nil
+}
+
+func (b *fakeBatch) Abort() error {
+	b.store.mu.Lock()
+	defer b.store.mu.Unlock()
+	b.store.aborted[b.query]++
 	return nil
 }
 
@@ -195,6 +222,12 @@ func TestWeightedGoldPoint(t *testing.T) {
 			wantErr:       true,
 		},
 		{
+			name:          "point is not numeric even when low/high present",
+			scenario:      map[string]any{"base": map[string]any{"point": "4300", "low": 4000.0, "high": 4600.0}},
+			probabilities: map[string]float64{"base": 100},
+			wantErr:       true,
+		},
+		{
 			name:          "probabilities empty",
 			scenario:      map[string]any{"base": map[string]any{"point": 4300.0}},
 			probabilities: nil,
@@ -272,6 +305,38 @@ func TestInsertModelRunWritesForecastLogBeforeModelRuns(t *testing.T) {
 		if s := target.Format(manualSeriesDateLayout); s != "2026-12-31" {
 			t.Fatalf("forecast row %d: target_date %s, want 2026-12-31", i, s)
 		}
+	}
+}
+
+// Ошибка Append после PrepareBatch должна прерывать батч через Abort и не доходить до Send.
+func TestInsertModelRunAppendErrorAbortsBatch(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"forecast_log append fails", forecastLogInsert},
+		{"model_runs append fails", modelRunsInsert},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newFakeStore()
+			store.failAppend[tt.query] = errors.New("append rejected")
+			run := validModelRun()
+			run.NavPerShare = 12500
+
+			if err := newTestWriter(store).InsertModelRun(context.Background(), run); err == nil {
+				t.Fatal("expected error from failed append")
+			}
+			if n := store.abortedFor(tt.query); n != 1 {
+				t.Fatalf("Abort calls for %s: %d, want 1", tt.query, n)
+			}
+			if n := store.batchesFor(tt.query); n != 0 {
+				t.Fatalf("%s sent %d times after append failure, want 0", tt.query, n)
+			}
+			if store.committed[uuid.MustParse(testRunID)] {
+				t.Fatal("run must not be committed after append failure")
+			}
+		})
 	}
 }
 
