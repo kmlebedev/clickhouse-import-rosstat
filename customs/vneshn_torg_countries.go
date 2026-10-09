@@ -38,21 +38,21 @@ var customsVneshnTorg = util.ClickHouseImport{
 
 var ctx = context.TODO()
 
-func CustomsVneshnTorgImport(dataUrl string, conn driver.Conn) error {
+func CustomsVneshnTorgImport(dataUrl string, conn driver.Conn) (count int64, err error) {
 	xlsx, err := util.GetXlsx(dataUrl)
 	if err != nil {
-		return err
+		return count, err
 	}
 	defer func() { _ = xlsx.Close() }()
 	batch, err := conn.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s", customsVneshnTorgName))
 	if err != nil {
-		return err
+		return count, err
 	}
 	sheetName := xlsx.GetSheetList()[0]
 	rows, err := xlsx.GetRows(sheetName)
 	if err != nil {
 		log.Error(err)
-		return err
+		return count, err
 	}
 	log.Infof("sheetName %s %d rows affected with %d", sheetName, len(rows), len(rows[3]))
 	tableRowNum := 0
@@ -100,17 +100,18 @@ func CustomsVneshnTorgImport(dataUrl string, conn driver.Conn) error {
 			//log.Infof("name: %s date: %v, value: %f", name, date, value)
 			if err = batch.Append(name, date, value); err != nil {
 				log.Error(err)
-				return err
+				return count, err
 			}
 		}
 	}
+	count = int64(batch.Rows())
 	if err = batch.Send(); err != nil {
-		return err
+		return count, err
 	}
-	return nil
+	return count, nil
 }
 
-func CustomsVneshnTorgCraw(crawUrl string, conn driver.Conn) (err error) {
+func CustomsVneshnTorgCraw(crawUrl string, conn driver.Conn) (total int64, err error) {
 	c := colly.NewCollector(colly.UserAgent(util.HttpUA))
 	c.SetRequestTimeout(5 * time.Second)
 	var dataUrl string
@@ -118,9 +119,11 @@ func CustomsVneshnTorgCraw(crawUrl string, conn driver.Conn) (err error) {
 		dataUrl = fmt.Sprintf("%s%s", customsVneshnTorgUrl, e.Attr("href"))
 		log.Infof("Customs VneshnTorg: dataUrl: %s", dataUrl)
 		if strings.Contains(dataUrl, "структура") {
-			if err = CustomsVneshnTorgImport(dataUrl, conn); err != nil {
+			var n int64
+			if n, err = CustomsVneshnTorgImport(dataUrl, conn); err != nil {
 				log.Errorf("Import err: %v+", err)
 			}
+			total += n
 		}
 	})
 	c.OnHTML(".pagination__links .pagination__link:not(.active) > a", func(e *colly.HTMLElement) {
@@ -133,10 +136,10 @@ func CustomsVneshnTorgCraw(crawUrl string, conn driver.Conn) (err error) {
 	log.Infof("Customs visit: dataUrl: %s", dataUrl)
 	if err = c.Visit(crawUrl); err != nil {
 		log.Errorf("First visit err: %v+", err)
-		return err
+		return total, err
 	}
 	c.Wait()
-	return nil
+	return total, nil
 }
 
 func init() {
