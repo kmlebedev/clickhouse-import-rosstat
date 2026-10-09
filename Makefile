@@ -18,7 +18,7 @@ MCP_USER     ?= kimi_reader
 MCP_PY       ?= 3.12
 MCP_CMD      := uv run --with mcp-clickhouse --python $(MCP_PY) mcp-clickhouse
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status dev-check env-check import mcp-run mcp-check
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status dev-check env-check import mcp-run mcp-user mcp-check
 
 all: lint test build
 
@@ -107,6 +107,14 @@ mcp-run:
 	CLICKHOUSE_HOST=localhost CLICKHOUSE_PORT=$(CH_HTTP_PORT) CLICKHOUSE_SECURE=false CLICKHOUSE_VERIFY=false \
 	CLICKHOUSE_USER=$(MCP_USER) CLICKHOUSE_DATABASE=default CLICKHOUSE_MCP_SERVER_TRANSPORT=stdio \
 	$(MCP_CMD)
+
+# Создание пользователя MCP и грантов из sql/mcp_kimi_reader.sql на локальном ClickHouse.
+# Пароль берётся из CLICKHOUSE_PASSWORD и подставляется в памяти, в файлы не пишется.
+# Запускать после импорта витрин (make import STAT=...): GRANT на несуществующую витрину падает.
+mcp-user:
+	@test -n "$$CLICKHOUSE_PASSWORD" || { echo "задайте CLICKHOUSE_PASSWORD (пароль пользователя $(MCP_USER))"; exit 1; }
+	@curl -sf -m 2 http://localhost:$(CH_HTTP_PORT)/ping >/dev/null 2>&1 || { echo "ClickHouse не отвечает: make ch-up"; exit 1; }
+	python3 scripts/mcp_setup_user.py
 
 # Smoke-проверка MCP end-to-end: поднимает сервер, вызывает list_tables и run_query по витринам,
 # проверяет, что сырая таблица закрыта. Нужен запущенный ClickHouse (make ch-up) и CLICKHOUSE_PASSWORD.
