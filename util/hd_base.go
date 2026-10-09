@@ -12,6 +12,7 @@ type HdBase struct {
 	TableName         string
 	CreateTable       string
 	DataUrl           string
+	DataUrlFunc       func() string
 	DataUrlTimeFormat bool
 	ImportFunc        func(xlsx *excelize.File, conn driver.Batch) error
 }
@@ -21,6 +22,9 @@ func (s *HdBase) Name() string {
 }
 
 func (s *HdBase) GetDataUrl() string {
+	if s.DataUrlFunc != nil {
+		return s.DataUrlFunc()
+	}
 	if s.DataUrlTimeFormat {
 		return fmt.Sprintf(s.DataUrl, time.Now().Format("01/02/2006"))
 	} else {

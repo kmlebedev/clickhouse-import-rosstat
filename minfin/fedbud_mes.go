@@ -35,8 +35,8 @@ func getFedbudMestDataUrl() (url string) {
 
 func init() {
 	Fedbud := util.HdBase{
-		TableName: "minfin_fed_bud_mes",
-		DataUrl:   getFedbudMestDataUrl(),
+		TableName:   "minfin_fed_bud_mes",
+		DataUrlFunc: getFedbudMestDataUrl,
 		CreateTable: `CREATE TABLE IF NOT EXISTS %s (
               name LowCardinality(String)
 			, date Date

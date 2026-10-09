@@ -62,7 +62,7 @@ var Stats []ImportStat
 func init() {
     s := util.HdBase{
         TableName:   "minfin_fed_bud_mes",
-        DataUrl:     "...",                    // или getDataUrl() вычисляется в Import()
+        DataUrl:     "...",                    // константа; либо DataUrlFunc: getDataUrl — функция вызывается в Import()
         CreateTable: `CREATE TABLE IF NOT EXISTS %s (
               name LowCardinality(String)
             , date Date
@@ -365,7 +365,7 @@ Peers-сверка (peer_universe='ru': PLZL/ЮГК/SELG) — относител
 3. Вставка только батчами (`PrepareBatch`/`Append`/`Send`). DDL `IF NOT EXISTS`. Значения новых таблиц — Float64.
 4. HTTP — только через `util.HttpClient` / `util.GetXlsx` / `util.GetCSV` (там нац. сертификаты и UA).
 5. **Не хардкодить секреты** (в т.ч. в комментариях и curl-примерах) — только `os.Getenv`.
-6. **Не делать сетевых вызовов в `init()`** — URL вычислять внутри `Import()` (legacy-баг в `minfin/fedbud_mes.go`, не повторять).
+6. **Не делать сетевых вызовов в `init()`** — URL вычисляются внутри `Import()`: для URL, который нужно найти на сайте, передавай функцию в `util.HdBase.DataUrlFunc` (так сделано в `cbr/indicators_cpd.go`, `minfin/fedbud_mes.go`, `minfin/fedbud_mesyats.go`).
 7. Русские даты/месяцы — через `util.MonthsToNum`; форматы времени — константы рядом с импортёром.
 8. Накопленные значения «с начала года» конвертировать в потоки разностями (паттерн `fedBudImport`).
 9. Ошибки не проглатывать: парсинг чисел — с проверкой `err`; в `Import()` ошибка → `return count, err`.

@@ -26,8 +26,8 @@ const (
 
 func init() {
 	FedbudMesyats := util.HdBase{
-		TableName: "minfin_fed_bud_mesyats",
-		DataUrl:   getFedbudMesyatDataUrl(),
+		TableName:   "minfin_fed_bud_mesyats",
+		DataUrlFunc: getFedbudMesyatDataUrl,
 		CreateTable: `CREATE TABLE IF NOT EXISTS %s (
               name LowCardinality(String)
 			, date Date
