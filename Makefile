@@ -18,7 +18,7 @@ MCP_USER     ?= kimi_reader
 MCP_PY       ?= 3.12
 MCP_CMD      := uv run --with mcp-clickhouse --python $(MCP_PY) mcp-clickhouse
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mcp-run mcp-user mcp-check
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mcp-run mcp-user mcp-check build-ingest run-ingest
 
 all: lint test build
 
@@ -113,6 +113,15 @@ import:
 	@mkdir -p $(BUILD_DIR)
 	go build -o $(BUILD_DIR)/$(BINARY)-native .
 	CLICKHOUSE_IMPORT_STAT=$(STAT) ./$(BUILD_DIR)/$(BINARY)-native
+
+# Ingest-сервис контура прогноза (единственный путь записи в model_runs/forecast_log/macro_series).
+# Нужны CLICKHOUSE_URL и INGEST_TOKEN из $(ROSSTAT_ENV); INGEST_ADDR по умолчанию :8081.
+build-ingest:
+	@mkdir -p $(BUILD_DIR)
+	go build -o $(BUILD_DIR)/ingest ./cmd/ingest
+
+run-ingest: build-ingest
+	./$(BUILD_DIR)/ingest
 
 # MCP-сервер mcp-clickhouse в режиме stdio (обычно его запускает Kimi сам; здесь — для ручной отладки).
 # Пароль берётся из CLICKHOUSE_PASSWORD окружения, в Makefile не хранится.
