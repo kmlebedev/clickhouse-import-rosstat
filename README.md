@@ -103,7 +103,7 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 
 ### Зависимости для разработки
 
-- Go — версия из `go.mod` (сейчас `1.26`); в CI используется Go `1.27.x`;
+- Go — версия из `go.mod` (сейчас `1.27`); в CI используется Go `1.27.x`;
 - `golangci-lint` v2 (`brew install golangci-lint`), конфиг — `.golangci.yml`;
 - `uv` (`brew install uv`): запускает `mcp-clickhouse` без установки в систему, Python `3.12` подтягивается `uv`;
 - ClickHouse локально: бинарник из `PATH` или `~/.clickhouse/versions/*/clickhouse` (или `CH_BIN=...`);
@@ -200,7 +200,7 @@ MCP для Kimi (агент читает витрины `v_*`, без запис
 - `vulncheck`: `govulncheck ./...` (падает при уязвимостях, которые затрагивают код);
 - `build`: `make build`, артефакт `build/`.
 
-Все задания используют Go `1.27.x`, а не версию из `go.mod` (`go 1.26.0`): `govulncheck` проверяет стандартную библиотеку тулчейном, которым запущен, и на go1.27.1 находил уязвимости `net/http` и `crypto/tls`, исправленные в go1.27.2.
+Все задания используют Go `1.27.x`: `govulncheck` проверяет стандартную библиотеку тулчейном, которым запущен, и на go1.27.1 находил уязвимости `net/http` и `crypto/tls`, исправленные в go1.27.2.
 
 `.github/workflows/release.yml` на тег `v*` запускает тесты и `goreleaser` (архив `linux/amd64`, `SHA256SUMS`, файлы `README.md` и `dagu/*.yaml`). Конфиг — `.goreleaser.yaml`; проверка: `goreleaser check`.
 

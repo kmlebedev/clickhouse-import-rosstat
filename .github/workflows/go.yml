@@ -14,7 +14,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          # Последний патч 1.27: go1.26.0 из go.mod содержит уязвимости stdlib,
           # которые govulncheck найдёт при запуске под этим тулчейном.
           go-version: '1.27.x'
           # setup-go кэширует модули и сборку; ключ берётся из go.sum.
