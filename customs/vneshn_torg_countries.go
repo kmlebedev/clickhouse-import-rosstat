@@ -43,7 +43,7 @@ func CustomsVneshnTorgImport(dataUrl string, conn driver.Conn) error {
 	if err != nil {
 		return err
 	}
-	defer xlsx.Close()
+	defer func() { _ = xlsx.Close() }()
 	batch, err := conn.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s", customsVneshnTorgName))
 	if err != nil {
 		return err
@@ -67,7 +67,7 @@ func CustomsVneshnTorgImport(dataUrl string, conn driver.Conn) error {
 			if strings.TrimSpace(cell) == "" {
 				continue
 			}
-			value, err := strconv.ParseFloat(strings.TrimSpace(cell), 16)
+			value, err := strconv.ParseFloat(strings.TrimSpace(cell), 64)
 			if err != nil {
 				log.Error(err)
 				continue

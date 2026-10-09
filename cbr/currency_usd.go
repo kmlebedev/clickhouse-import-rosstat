@@ -39,7 +39,7 @@ func (s *cbrCurrencyUSD) export() (table *[][]string, err error) {
 		if date == "Дата" {
 			return
 		}
-		price := strings.Replace(e.DOM.Children().Last().Text(), ",", ".", -1)
+		price := strings.ReplaceAll(e.DOM.Children().Last().Text(), ",", ".")
 		if _, err := strconv.ParseFloat(price, 32); err != nil {
 			return
 		}

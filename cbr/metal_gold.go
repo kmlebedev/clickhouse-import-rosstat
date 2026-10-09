@@ -41,7 +41,7 @@ func (s *cbrGold) export() (table *[][]string, err error) {
 		if date == "Дата" {
 			return
 		}
-		price := strings.Replace(strings.Replace(e.DOM.Children().Last().Text(), ",", ".", -1), " ", "", -1)
+		price := strings.ReplaceAll(strings.ReplaceAll(e.DOM.Children().Last().Text(), ",", "."), " ", "")
 		// fmt.Printf("date %s price %s\n", date, price)
 		if _, err := strconv.ParseFloat(price, 32); err != nil {
 			return

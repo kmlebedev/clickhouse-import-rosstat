@@ -8,8 +8,6 @@ import (
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	log "github.com/sirupsen/logrus"
-	"github.com/xuri/excelize/v2"
-	"slices"
 	"strings"
 	"time"
 )
@@ -55,27 +53,6 @@ func (s *FaoFoodPriceStat) getDataUrl() (dataUrl string) {
 	}
 	c.Wait()
 	return dataUrl
-}
-
-func (s *FaoFoodPriceStat) exportXls() (table *[][]string, err error) {
-	var xlsx *excelize.File
-	if xlsx, err = util.GetXlsx(s.getDataUrl()); err != nil {
-		return nil, err
-	}
-	table = new([][]string)
-	for _, sheet := range xlsx.GetSheetList() {
-		if !slices.Contains(faoFoodPriceSheet, sheet) {
-			continue
-		}
-		var rows [][]string
-		if rows, err = xlsx.GetRows(sheet); err != nil {
-			return nil, err
-		}
-		for _, row := range rows[4:] {
-			*table = append(*table, []string{sheet, rows[4][1], row[0], row[1]})
-		}
-	}
-	return table, nil
 }
 
 func (s *FaoFoodPriceStat) export() (table *[][]string, err error) {

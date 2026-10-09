@@ -45,6 +45,9 @@ func (s *SberCSIWeek) Import(ctx context.Context, conn driver.Conn) (count int64
 		return 0, err
 	}
 	batch, err := conn.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s", sberCSIWeekTable))
+	if err != nil {
+		return 0, err
+	}
 	for _, row := range records[1:] {
 		if len(row) == 0 || len(row[2]) == 0 {
 			continue
@@ -53,7 +56,7 @@ func (s *SberCSIWeek) Import(ctx context.Context, conn driver.Conn) (count int64
 		if err != nil {
 			return count, err
 		}
-		index, err := strconv.ParseFloat(strings.TrimSpace(row[2]), 16)
+		index, err := strconv.ParseFloat(strings.TrimSpace(row[2]), 64)
 		if err != nil {
 			fmt.Printf("row: %+v", row)
 			return count, err
