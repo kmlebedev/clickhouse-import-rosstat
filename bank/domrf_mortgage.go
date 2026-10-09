@@ -15,7 +15,10 @@ import (
 const (
 
 	// Ипотека Динамика ставок предложения топ-20 ипотечных банков
-	// ToDo craw update data source https://xn--d1aqf.xn--p1ai/analytics/mortgage/
+	// ToDo update data source https://xn--d1aqf.xn--p1ai/analytics/mortgage/
+	// Страница источника отдаётся через JS-challenge (ServicePipe) и статичных ссылок
+	// не содержит, colly её распарсить не может — ссылку меняем вручную при обновлении,
+	// либо нужен headless-браузер.
 	// Скачать Динамику ставок в разрезе месяцев, xlsx
 	// https://дом.рф/upload/iblock/51c/gkqcn9ne07391bguj1typu9jne53zlfw.xlsx
 	// https://дом.рф/upload/iblock/aba/i34cz49h4zukhzduo11wi2d361dbwgb4.xlsx

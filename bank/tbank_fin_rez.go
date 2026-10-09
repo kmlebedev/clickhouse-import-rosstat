@@ -12,6 +12,9 @@ import (
 )
 
 const (
+	// Отчётность по МСФО лежит на CDN со случайным UUID в имени файла, который меняется
+	// с каждым релизом; листинга со ссылками у CDN нет, страницу источника colly не
+	// распарсит — ссылку меняем вручную при обновлении. Текущая ссылка ведёт на PDF.
 	// https://cdn.tbank.ru/static/documents/c4ade295-d683-431f-a7ac-4f88c685d548.xlsx
 	tbIfrsUrl       = "https://cdn.tbank.ru/static/documents/a27e2a89-0871-4d87-9847-46bce3a0ad3f.pdf"
 	tbIfrsTable     = "tbank_group_ifrs"

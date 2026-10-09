@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/gocolly/colly/v2"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+	log "github.com/sirupsen/logrus"
 	"github.com/xuri/excelize/v2"
 	"strconv"
 	"strings"
@@ -15,10 +17,11 @@ import (
 const (
 
 	// https://www.vtb.ru/ir/statements/results/
-	// https://www.vtb.ru/media-files/vtb.ru/sitepages/ir/statements/results/rus-vtb-group-ifrs-as-of-31-october-2024.xlsx
-	vtbIfrsUrl      = "https://www.vtb.ru/media-files/vtb.ru/sitepages/ir/"
-	vtbIfrsTable    = "rus_vtb_group_ifrs"
-	vtbIfrsTableDdl = `CREATE TABLE IF NOT EXISTS ` + vtbIfrsTable + ` (
+	// Имена файлов содержат дату отчётности (rus-vtb-group-ifrs-as-of-31-october-2024.xlsx)
+	// и меняются каждый отчётный период, поэтому список берётся со страницы результатов.
+	vtbIfrsResultsUrl = "https://www.vtb.ru/ir/statements/results/"
+	vtbIfrsTable      = "rus_vtb_group_ifrs"
+	vtbIfrsTableDdl   = `CREATE TABLE IF NOT EXISTS ` + vtbIfrsTable + ` (
 			  name LowCardinality(String)
 			, date Date
 			, balance Float32
@@ -29,30 +32,32 @@ const (
 	vtbIfrsTimeLayout = "01-02-06"
 )
 
-var (
-	vtbIfrsXlsData = []string{
-		//"statements/results/RUS-vtb-group-ifrs-as-of-31-May-2023.xlsx",
-		//"statements/results/RUS-vtb-group-ifrs-as-of-31-July-2023.xlsx",
-		//"statements/results/RUS-vtb-group-ifrs-as-of-31-August-2023.xlsx",
-		//"statements/results/RUS-vtb-group-ifrs-as-of-31-October-2023.xlsx",
-		//"statements/results/RUS-vtb-group-ifrs-as-of-30-November-2023.xlsx",
-		//"statements/results/RUS-vtb-group-ifrs-as-of-29-Feb-2024_fin.xlsx",
-		//"financial-results/ifrs-financial-results/RUS-vtb-group-ifrs-as-of-30-Apr-2024.xlsx",
-		//"financial-results/ifrs-financial-results/RUS-vtb-group-ifrs-as-of-31-May-2024.xlsx",
-		//"financial-results/ifrs-financial-results/RUS-vtb-group-ifrs-as-of-31-July-2024.xlsx",
-		//"financial-results/ifrs-financial-results/RUS-vtb-group-ifrs-as-of-31-August-2024.xlsx",
-		//"statements/results/rus-vtb-group-ifrs-as-of-31-october-2024.xlsx",
-		//"statements/results/rus-vtb-group-ifrs-as-of-30-november-2024.xlsx",
-		"statements/results/RUS-vtb-group-ifrs-as-of-28-February-2025.xlsx",
-		//"financial-results/ifrs-financial-results/financial_data_supplement_0325_rus.xls",
-		"statements/results/rus-vtb-group-ifrs-as-of-30-april-2025_.xlsx",
-		"statements/results/rus-vtb-group-ifrs-as-of-31-may-2025.xlsx",
-		"statements/results/rus-vtb-group-ifrs-as-of-31-jule-2025.xlsx",
-		//"statements/results/financial_data_supplement_0625_rus.xls",
-		// "Financial_data_supplement_3Q2024_RUS.xls",
-		// "Financial_data_supplement_2Q2024_RUS_30072024.xls",
+// getVtbIfrsXlsDataUrl собирает ссылки на отчётные XLSX-файлы МСФО со страницы
+// результатов ВТБ. Отбираются только основные отчёты (rus-vtb-group-ifrs-as-of-*.xlsx);
+// вспомогательные файлы (financial_data_supplement_*) и legacy .xls отбрасываются.
+func getVtbIfrsXlsDataUrl() (urls []string) {
+	seen := make(map[string]bool)
+	c := colly.NewCollector(colly.UserAgent(util.HttpUA))
+	c.SetClient(util.HttpClient)
+	c.OnHTML(`a[href*="rus-vtb-group-ifrs-as-of"]`, func(e *colly.HTMLElement) {
+		href := e.Attr("href")
+		if !strings.HasSuffix(strings.ToLower(href), ".xlsx") {
+			return
+		}
+		if seen[href] {
+			return
+		}
+		seen[href] = true
+		urls = append(urls, href)
+	})
+	if err := c.Visit(vtbIfrsResultsUrl); err != nil {
+		log.Errorf("Visit %v+", err)
 	}
-)
+	c.Wait()
+	return urls
+}
+
+const vtbIfrsXlsDataPrefix = "https://www.vtb.ru"
 
 type VtbIfrs struct {
 }
@@ -62,10 +67,14 @@ func (s *VtbIfrs) Name() string {
 }
 
 func (s *VtbIfrs) export() (table *[][]string, err error) {
+	vtbIfrsXlsData := getVtbIfrsXlsDataUrl()
+	if len(vtbIfrsXlsData) == 0 {
+		return nil, fmt.Errorf("vtbIfrs: не найдены ссылки на rus-vtb-group-ifrs-as-of-*.xlsx на %s", vtbIfrsResultsUrl)
+	}
 	var xlsx *excelize.File
 	table = new([][]string)
 	for _, xlsName := range vtbIfrsXlsData {
-		if xlsx, err = util.GetXlsx(vtbIfrsUrl + xlsName); err != nil {
+		if xlsx, err = util.GetXlsx(vtbIfrsXlsDataPrefix + xlsName); err != nil {
 			return nil, fmt.Errorf("get xlsx %s failed: %v", xlsName, err)
 		}
 		var rows [][]string

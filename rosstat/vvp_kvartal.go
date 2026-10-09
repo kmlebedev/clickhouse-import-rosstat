@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/gocolly/colly/v2"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+	log "github.com/sirupsen/logrus"
 	"github.com/xuri/excelize/v2"
 	"strconv"
 	"strings"
@@ -31,11 +33,11 @@ func getQuarterDate(year int, quarter string) time.Time {
 
 const (
 	// Национальные счета https://rosstat.gov.ru/statistics/accounts
-	// ВВП кварталы (с 1995 г.) https://rosstat.gov.ru/storage/mediabank/VVP_kvartal_s1995-2025.xlsx
+	// ВВП кварталы (с 1995 г.) — имя файла содержит диапазон лет (VVP_kvartal_s_1995-2025.xlsx)
+	// и меняется при обновлении, поэтому ссылка берётся со страницы.
 	// Валовой внутренний продукт 1) (в ценах 2021 г., млрд руб., с исключением сезонного фактора)
-	vvpKvartalXlsDataUrl = rosstatMediaBankUrl + "/VVP_kvartal_s_1995-2025.xlsx"
-	vvpKvartalTable      = "vvp_kvartal"
-	vvpKvartalDdl        = `CREATE TABLE IF NOT EXISTS ` + vvpKvartalTable + ` (
+	vvpKvartalTable = "vvp_kvartal"
+	vvpKvartalDdl   = `CREATE TABLE IF NOT EXISTS ` + vvpKvartalTable + ` (
 				  name LowCardinality(String)
 				, date Date
 				, vvp Float32
@@ -43,6 +45,24 @@ const (
 		`
 	vvpKvartalDdlInsert = "INSERT INTO " + vvpKvartalTable
 )
+
+// getVvpKvartalXlsDataUrl ищет ссылку на актуальный VVP_kvartal_*.xlsx на странице
+// национальных счетов Росстата.
+func getVvpKvartalXlsDataUrl() (url string) {
+	c := colly.NewCollector()
+	c.SetClient(util.HttpClient)
+	c.OnHTML(`a[href*="VVP_kvartal"]`, func(e *colly.HTMLElement) {
+		if url == "" {
+			url = fmt.Sprintf("%s%s", rosstatUrl, e.Attr("href"))
+			log.Infof("href url %s", url)
+		}
+	})
+	if err := c.Visit(fmt.Sprintf("%s/statistics/accounts", rosstatUrl)); err != nil {
+		log.Errorf("Visit %v+", err)
+	}
+	c.Wait()
+	return url
+}
 
 type vvpKvartalDdlStat struct {
 }
@@ -96,8 +116,12 @@ func parseVvpKvartal(xlsx *excelize.File) (table *[]vvpKvartal, err error) {
 }
 
 func (s *vvpKvartalDdlStat) export() (table *[]vvpKvartal, err error) {
+	xlsDataUrl := getVvpKvartalXlsDataUrl()
+	if xlsDataUrl == "" {
+		return nil, fmt.Errorf("vvpKvartal: не найдена ссылка на VVP_kvartal_*.xlsx на %s/statistics/accounts", rosstatUrl)
+	}
 	var xlsx *excelize.File
-	if xlsx, err = util.GetXlsx(vvpKvartalXlsDataUrl); err != nil {
+	if xlsx, err = util.GetXlsx(xlsDataUrl); err != nil {
 		return nil, err
 	}
 	return parseVvpKvartal(xlsx)

@@ -15,6 +15,7 @@ const (
 
 	// Показатель сбережений сектора «Домашние хозяйства» https://www.cbr.ru/statistics/macro_itm/households/
 	// https://www.cbr.ru/vfs/statistics/households/households_b.xlsx
+	cbrUrl                   = "https://www.cbr.ru"
 	cbrStatsUrl              = "https://www.cbr.ru/vfs/statistics"
 	householdsBMesXlsDataUrl = cbrStatsUrl + "/households/households_bm.xlsx"
 	householdsBMesTable      = "households_b_mes"
