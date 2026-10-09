@@ -18,12 +18,12 @@ const (
 	salariesMesXlsDataUrl = rosstatMediaBankUrl + "/tab1-zpl_08-2025.xlsx"
 	salariesMesTable      = "salaries_mes"
 	salariesMesDdl        = `CREATE TABLE IF NOT EXISTS ` + salariesMesTable + ` (
-			  name LowCardinality(String)
-			, date Date
-			, salary Float32
-		) ENGINE = ReplacingMergeTree ORDER BY (name, date);
-	`
-	salariesMesInsert     = "INSERT INTO " + salariesMesTable + " VALUES (?, ?, ?)"
+				  name LowCardinality(String)
+				, date Date
+				, salary Float32
+			) ENGINE = ReplacingMergeTree ORDER BY (name, date);
+		`
+	salariesMesInsert     = "INSERT INTO " + salariesMesTable
 	salariesMesField      = "1991"
 	salariesMesYearStart  = 1991
 	salariesMesTimeLayout = "2006-01"
@@ -36,11 +36,7 @@ func (s *SalariesMesStat) Name() string {
 	return salariesMesTable
 }
 
-func (s *SalariesMesStat) export() (table *[][]string, err error) {
-	var xlsx *excelize.File
-	if xlsx, err = util.GetXlsx(salariesMesXlsDataUrl); err != nil {
-		return nil, err
-	}
+func parseSalariesMes(xlsx *excelize.File) (table *[][]string, err error) {
 	table = new([][]string)
 	for _, sheet := range xlsx.GetSheetList() {
 		var rows [][]string
@@ -82,6 +78,14 @@ func (s *SalariesMesStat) export() (table *[][]string, err error) {
 	return table, nil
 }
 
+func (s *SalariesMesStat) export() (table *[][]string, err error) {
+	var xlsx *excelize.File
+	if xlsx, err = util.GetXlsx(salariesMesXlsDataUrl); err != nil {
+		return nil, err
+	}
+	return parseSalariesMes(xlsx)
+}
+
 func (s *SalariesMesStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
 	if err = conn.Exec(ctx, salariesMesDdl); err != nil {
 		return count, err
@@ -90,16 +94,33 @@ func (s *SalariesMesStat) Import(ctx context.Context, conn driver.Conn) (count i
 	if table, err = s.export(); err != nil {
 		return count, err
 	}
+	batch, err := conn.PrepareBatch(ctx, salariesMesInsert)
+	if err != nil {
+		return count, err
+	}
 	for _, row := range *table {
 		// Calling Parse() method with its parameters
 		mes, err := time.Parse(salariesMesTimeLayout, fmt.Sprintf("%s-%s", row[1], row[2]))
 		if err != nil {
 			return count, err
 		}
-		if err = conn.Exec(ctx, salariesMesInsert, row[0], mes.AddDate(0, 1, 0), row[3]); err != nil {
+		salary, err := strconv.ParseFloat(row[3], 32)
+		if err != nil {
+			return count, err
+		}
+		if err = batch.Append(row[0], mes.AddDate(0, 1, 0), float32(salary)); err != nil {
 			return count, err
 		}
 		count++
+	}
+	if err = batch.Send(); err != nil {
+		return count, err
+	}
+	if err = util.UpsertSeriesCatalog(ctx, conn, salariesMesSeriesMeta); err != nil {
+		return count, err
+	}
+	if _, err = util.CreateView(ctx, conn, rosstatMacroView); err != nil {
+		return count, err
 	}
 	return count, nil
 }
