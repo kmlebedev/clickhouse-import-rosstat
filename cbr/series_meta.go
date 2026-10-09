@@ -143,7 +143,7 @@ var cbrCreditM2xNames = []string{
 	"кредиты индивидуальным предпринимателям",
 }
 
-var cbrCreditM2xSeriesMeta = namedSeriesMeta(cbrCreditM2xNames, seriesTemplate{Unit: "млн руб.", Frequency: "M", Origin: "cbr.ru/Content/Document/File/177307/credit_m2x.xlsx, лист «млн рублей»", Description: "Денежные агрегаты и кредит экономике (ЦБ РФ, приложение к материалу «Кредит экономике и денежная масса»): уровень показателя на отчётную дату, млн руб. Дата — первое число месяца. Названия «в рублях» и «в иностранной валюте» встречаются в файле у разных показателей (по 13 раз): значения этих двух рядов в таблице смешаны, их не использовать. Темп г/г = value / value за 12 месяцев назад − 1.", Label: "колонка показателя"})
+var cbrCreditM2xSeriesMeta = namedSeriesMeta(cbrCreditM2xNames, seriesTemplate{Unit: "млн руб.", Frequency: "M", Origin: "cbr.ru/statistics/macro_itm/dkfs, файл credit_m2x.xlsx (ссылка со страницы), лист «млн рублей»", Description: "Денежные агрегаты и кредит экономике (ЦБ РФ, приложение к материалу «Кредит экономике и денежная масса»): уровень показателя на отчётную дату, млн руб. Дата — первое число месяца. Названия «в рублях» и «в иностранной валюте» встречаются в файле у разных показателей (по 13 раз): значения этих двух рядов в таблице смешаны, их не использовать. Темп г/г = value / value за 12 месяцев назад − 1.", Label: "колонка показателя"})
 
 var cbrBankIntRateNames = []string{
 	"\"до востребования\"",
@@ -163,7 +163,7 @@ var cbrIndicatorsCpdSeriesMeta = namedSeriesMeta(cbrIndicatorsCpdNames, seriesTe
 
 var cbrInflExpNames = []string{"наблюдаемая инфляция", "ожидаемая инфляция"}
 
-var cbrInflExpSeriesMeta = namedSeriesMeta(cbrInflExpNames, seriesTemplate{Unit: "% годовых", Frequency: "M", Origin: "cbr.ru/Collection/Collection/File/57180/Infl_exp_25-08.xlsx, лист «Данные для графиков», таблица «Прямые оценки годовой инфляции: медианные значения»", Description: "Медианные прямые оценки годовой инфляции по опросу населения, % годовых. «наблюдаемая инфляция» — оценка роста цен за последние 12 месяцев; «ожидаемая инфляция» — ожидание на следующие 12 месяцев. Дата — 14-е число месяца опроса (в таблице 1-е число + 13 дней).", Label: "строка"})
+var cbrInflExpSeriesMeta = namedSeriesMeta(cbrInflExpNames, seriesTemplate{Unit: "% годовых", Frequency: "M", Origin: "cbr.ru/analytics/dkp/inflationary_expectations, файл Infl_exp_ГГ-ММ.xlsx (ссылка со страницы), лист «Данные для графиков», таблица «Прямые оценки годовой инфляции: медианные значения»", Description: "Медианные прямые оценки годовой инфляции по опросу населения, % годовых. «наблюдаемая инфляция» — оценка роста цен за последние 12 месяцев; «ожидаемая инфляция» — ожидание на следующие 12 месяцев. Дата — 14-е число месяца опроса (в таблице 1-е число + 13 дней).", Label: "строка"})
 
 var cbrLoansToIndNames = []string{
 	"РОССИЙСКАЯ ФЕДЕРАЦИЯ",
