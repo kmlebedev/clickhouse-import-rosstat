@@ -31,6 +31,7 @@ bls/               — BLS API v2 (CPI, безработица, NFP, зарпл�
 bea/               — BEA API (NIPA T20804: индексы PCE) → macro_series (source = 'bea')
 gold/              — золото: MOEX GOLDFIXME (₽/г) ÷ курс ЦБ cbr_currency_usd → gold_prices (venue='moex_fix_usd'); series_catalog (source='gold'), витрина v_gold_prices
 moex/              — МосБиржа ISS (анонимный REST, без ключа): свечи PLZL → stock_prices (существующая legacy-схема, Float32 не меняем), RGBI + G-curve → ofz_curve; series_catalog (source='moex'), витрины v_stock_prices, v_ofz_curve
+calendar/          — календарь событий-триггеров прогноза золота/NAV: events_calendar, витрина v_events_calendar; сид Q4-2026 — sql/events_calendar_q4_2026.sql
 bank/              — банки: sber_csi(+week), sber/vtb/tbank_fin_rez, domrf_mortgage
 craw/              — многостраничные краулеры: gost (сертификаты Росстандарта)
 financial/         — ⚠️ legacy-контур: корпоративные databook'и (CHMF/MAGN/NLMK/PLZL/ЮГК),
@@ -343,6 +344,7 @@ CREATE TABLE IF NOT EXISTS regime_states (
 - `v_gold_prices` — `gold_prices FINAL` в форме `(source, series, date, value)`: source='gold', series=venue (`moex_fix_usd` — производная цена, не LBMA)
 - `v_stock_prices` — `stock_prices FINAL WHERE code='PLZL'`: дневные OHLCV акции Полюса (руб./акция); max/min — high/low дня
 - `v_ofz_curve` — `ofz_curve FINAL`: доходности G-curve МосБиржи (теноры 1y/3y/5y/10y, % годовых) + уровень индекса RGBI (тенор RGBI — не доходность)
+- `v_events_calendar` — `events_calendar FINAL`: календарь событий-триггеров прогноза золота/NAV (дата, категория, заголовок, пороги-триггеры в JSON, статус pending|done|verified); сид Q4-2026 — `sql/events_calendar_q4_2026.sql`
 
 Правила витрин:
 - создаются через `CREATE OR REPLACE VIEW ... DEFINER = default SQL SECURITY DEFINER AS ...` — определение может меняться, и агент читает сырые таблицы через definer, без прав на `macro_series`;

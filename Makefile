@@ -18,7 +18,7 @@ MCP_USER     ?= kimi_reader
 MCP_PY       ?= 3.12
 MCP_CMD      := uv run --with mcp-clickhouse --python $(MCP_PY) mcp-clickhouse
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status dev-check env-check import mcp-run mcp-user mcp-check
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mcp-run mcp-user mcp-check
 
 all: lint test build
 
@@ -77,6 +77,20 @@ ch-down:
 
 ch-status:
 	@curl -sf -m 2 http://localhost:$(CH_HTTP_PORT)/ping >/dev/null 2>&1 && echo "ClickHouse отвечает на порту $(CH_HTTP_PORT)" || echo "ClickHouse не отвечает на порту $(CH_HTTP_PORT)"
+
+# Прогон SQL-файла в локальный ClickHouse: make ch-sql FILE=sql/events_calendar_q4_2026.sql
+# Файл должен лежать в репозитории (путь относительный). Многострочные скрипты — через --multiquery.
+# Подключается пользователем CH_USER (по умолчанию default, локальный dev-сервер без пароля);
+# CH_USER_PASSWORD задавайте, только если пользователю нужен пароль.
+FILE ?=
+CH_USER ?= default
+CH_USER_PASSWORD ?=
+ch-sql:
+	@test -n "$(FILE)" || { echo "укажите файл: make ch-sql FILE=sql/events_calendar_q4_2026.sql"; exit 1; }
+	@test -f "$(FILE)" || { echo "файл не найден: $(FILE)"; exit 1; }
+	@test -n "$(CH_BIN)" || { echo "clickhouse не найден: задайте CH_BIN=/путь/к/clickhouse"; exit 1; }
+	@curl -sf -m 2 http://localhost:$(CH_HTTP_PORT)/ping >/dev/null 2>&1 || { echo "ClickHouse не отвечает: make ch-up"; exit 1; }
+	"$(CH_BIN)" client --user "$(CH_USER)" --password "$(CH_USER_PASSWORD)" --multiquery < "$(FILE)"
 
 # Проверка окружения разработчика: наличие инструментов и версий.
 dev-check:

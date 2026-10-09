@@ -1,0 +1,25 @@
+-- Сид календаря событий-триггеров прогноза золота/NAV на Q4-2026 (ARCHITECTURE.md §7).
+-- Источник канонического DDL — ARCHITECTURE.md §6.2. Запуск: make ch-sql FILE=sql/events_calendar_q4_2026.sql
+-- Вставка идемпотентна: ReplacingMergeTree ORDER BY (event_date, category, title) сворачивает дубли.
+
+CREATE TABLE IF NOT EXISTS events_calendar (
+    event_date Date,
+    event_time Nullable(String),
+    category LowCardinality(String), -- 'fomc','cpi','nfp','eia','wgc','cbr','polyus_ir','moex_rebalance','gov_rf'
+    title String,
+    threshold String,                -- JSON, напр. '{"crack":">50"}'
+    status LowCardinality(String) DEFAULT 'pending'  -- pending|done|verified
+) ENGINE = ReplacingMergeTree ORDER BY (event_date, category, title);
+
+INSERT INTO events_calendar (event_date, event_time, category, title, threshold, status) VALUES
+    ('2026-10-14', NULL, 'eia',  'EIA дистилляты: недельный запас (ср еженед.; порог crack >$50 — медведь / <$30 — снято)',        '{"crack":">50","crack_bull":"<30"}', 'pending'),
+    ('2026-10-14', '15:30', 'cpi', 'CPI США за сентябрь 2026',                                                                        '{"hot_yoy":">3.5"}',                 'pending'),
+    ('2026-10-23', NULL, 'cbr',  'СД ЦБ РФ: ставка (14%) — снижение → флаг перетока ликвидности',                                     '{"cut_bp":">=25"}',                  'pending'),
+    ('2026-10-30', NULL, 'wgc',  'WGC GDT: спрос на золото, ETF-потоки + покупки ЦБ (~конец октября; норма 40–60 т/мес)',              '{"cb_purchase_t":">=40"}',           'pending'),
+    ('2026-11-01', NULL, 'gov_rf','Истечение запрета РФ на экспорт дизеля: продление → bear; отмена → bull',                            '{"extended":"bear","lifted":"bull"}', 'pending'),
+    ('2026-11-06', '15:30', 'nfp', 'NFP США за октябрь 2026',                                                                          '{"nfp_k":">100"}',                   'pending'),
+    ('2026-11-10', '15:30', 'cpi', 'CPI США за октябрь 2026: горячий → FOMC-hike 85–90%',                                              '{"hot_yoy":">3.5"}',                 'pending'),
+    ('2026-12-04', '15:30', 'nfp', 'NFP США за ноябрь 2026 (перенос: релиз 2026-12-04)',                                               '{"nfp_k":">100"}',                   'pending'),
+    ('2026-12-09', '21:00', 'fomc','FOMC + dot plot: 2-е повышение → пробой $4,000 → $3,750–3,800',                                    '{"hike_count":">=2"}',               'pending'),
+    ('2026-12-10', '15:30', 'cpi', 'CPI США за ноябрь 2026',                                                                            '{"hot_yoy":">3.5"}',                 'pending'),
+    ('2026-12-18', NULL, 'cbr',  'СД ЦБ РФ: база — −25 б.п. до 13,75% + ребалансировка индекса MOEX (один день)',                      '{"cut_bp":">=25"}',                  'pending');
