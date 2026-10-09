@@ -7,11 +7,22 @@ import (
 
 const testRunID = "11111111-2222-3333-4444-555555555555"
 
+// validGoldScenario — сценарная сетка Q4-2026: точки 4800/4300/3900, low/high заданы.
+func validGoldScenario() map[string]any {
+	return map[string]any{
+		"horizon": "Q4-2026",
+		"bull":    map[string]any{"low": 4600.0, "high": 5000.0, "point": 4800.0},
+		"base":    map[string]any{"low": 4000.0, "high": 4600.0, "point": 4300.0},
+		"bear":    map[string]any{"low": 3750.0, "high": 4050.0, "point": 3900.0},
+	}
+}
+
 func validModelRun() ModelRun {
 	return ModelRun{
 		RunID:         testRunID,
 		TriggerType:   "manual",
 		TriggerRef:    "unit test",
+		GoldScenario:  validGoldScenario(),
 		PriceDeck:     "own_scenario",
 		Probabilities: map[string]float64{"bull": 25, "base": 40, "bear": 35},
 	}
@@ -20,6 +31,35 @@ func validModelRun() ModelRun {
 func TestValidateModelRunValid(t *testing.T) {
 	if err := ValidateModelRun(validModelRun()); err != nil {
 		t.Fatalf("valid run rejected: %v", err)
+	}
+}
+
+// Все эти входы должны давать ошибку валидации (HTTP 400), а не падать внутри записи (500).
+func TestValidateModelRunInputErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		mutate     func(*ModelRun)
+		wantSubstr string
+	}{
+		{"run_id is not a UUID", func(r *ModelRun) { r.RunID = "not-a-uuid" }, "UUID"},
+		{"gold_scenario is nil", func(r *ModelRun) { r.GoldScenario = nil }, "gold_scenario is required"},
+		{"horizon is missing", func(r *ModelRun) { delete(r.GoldScenario, "horizon") }, "horizon"},
+		{"horizon is not a string", func(r *ModelRun) { r.GoldScenario["horizon"] = 2026.0 }, "must be a string"},
+		{"horizon is unparsable", func(r *ModelRun) { r.GoldScenario["horizon"] = "Q5-2026" }, "unsupported gold_scenario.horizon"},
+		{"probability key has no gold block", func(r *ModelRun) {
+			r.Probabilities = map[string]float64{"bull": 25, "base": 40, "tail": 35}
+		}, "tail"},
+		{"block has no point and no range", func(r *ModelRun) { r.GoldScenario["bear"] = map[string]any{"comment": "x"} }, "bear"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			run := validModelRun()
+			tt.mutate(&run)
+			err := ValidateModelRun(run)
+			if err == nil || !strings.Contains(err.Error(), tt.wantSubstr) {
+				t.Fatalf("expected error containing %q, got %v", tt.wantSubstr, err)
+			}
+		})
 	}
 }
 

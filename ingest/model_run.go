@@ -5,6 +5,8 @@ import (
 	"math"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -46,12 +48,17 @@ type ModelRun struct {
 	Probabilities map[string]float64 `json:"probabilities"`
 }
 
-// ValidateModelRun проверяет вход модели до вставки в ClickHouse.
-// run_id клиентский и обязателен: повторный POST с тем же run_id идемпотентен
-// (ReplacingMergeTree схлопывает по ORDER BY).
+// ValidateModelRun проверяет вход модели до вставки в ClickHouse; все ошибки входа — 400.
+// run_id клиентский, обязателен и должен быть UUID: повторный POST с тем же run_id идемпотентен
+// (см. InsertModelRun). Горизонт и вероятности сверяются с gold_scenario теми же функциями,
+// которыми InsertModelRun считает target_date и взвешенную точку, — чтобы вход, который не
+// запишется, отсекался здесь, а не падал внутри записи.
 func ValidateModelRun(r ModelRun) error {
 	if strings.TrimSpace(r.RunID) == "" {
 		return fmt.Errorf("run_id is required")
+	}
+	if _, err := uuid.Parse(r.RunID); err != nil {
+		return fmt.Errorf("run_id %q must be a UUID: %w", r.RunID, err)
 	}
 	if !validTriggerTypes[r.TriggerType] {
 		return fmt.Errorf("trigger_type %q must be one of: calendar, news, manual", r.TriggerType)
@@ -65,6 +72,15 @@ func ValidateModelRun(r ModelRun) error {
 	}
 	if math.Abs(sum-probabilitiesSumExpected) > probabilitiesSumTolerance {
 		return fmt.Errorf("probabilities sum %.4f must be within %.1f of %.0f", sum, probabilitiesSumTolerance, probabilitiesSumExpected)
+	}
+	if r.GoldScenario == nil {
+		return fmt.Errorf("gold_scenario is required")
+	}
+	if _, err := scenarioTargetDate(r.GoldScenario); err != nil {
+		return err
+	}
+	if _, err := weightedGoldPoint(r.GoldScenario, r.Probabilities); err != nil {
+		return err
 	}
 	return nil
 }

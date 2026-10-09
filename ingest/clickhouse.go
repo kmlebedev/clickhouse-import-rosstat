@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
-	"strings"
+	"sync"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -20,13 +20,44 @@ const (
 	macroSeriesInsert = "INSERT INTO macro_series (source, series, date, value)"
 )
 
-// ClickHouseWriter — BatchWriter поверх clickhouse-go: только батчи PrepareBatch/Append/Send.
-type ClickHouseWriter struct {
+// chStore — узкий срез ClickHouse, который нужен InsertModelRun; в тестах подменяется фейком.
+type chStore interface {
+	runExists(ctx context.Context, runID uuid.UUID) (bool, error)
+	prepareBatch(ctx context.Context, query string) (chBatch, error)
+}
+
+// chBatch — батч вставки: достаточно Append и Send из driver.Batch.
+type chBatch interface {
+	Append(v ...any) error
+	Send() error
+}
+
+// connStore — реализация chStore поверх driver.Conn.
+type connStore struct {
 	conn driver.Conn
 }
 
+func (s connStore) runExists(ctx context.Context, runID uuid.UUID) (bool, error) {
+	var count uint64
+	if err := s.conn.QueryRow(ctx, "SELECT count() FROM model_runs FINAL WHERE run_id = ?", runID).Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func (s connStore) prepareBatch(ctx context.Context, query string) (chBatch, error) {
+	return s.conn.PrepareBatch(ctx, query)
+}
+
+// ClickHouseWriter — BatchWriter поверх clickhouse-go: только батчи PrepareBatch/Append/Send.
+type ClickHouseWriter struct {
+	conn  driver.Conn
+	store chStore
+	mu    sync.Mutex // сериализует InsertModelRun, см. комментарий у метода
+}
+
 func NewClickHouseWriter(conn driver.Conn) *ClickHouseWriter {
-	return &ClickHouseWriter{conn: conn}
+	return &ClickHouseWriter{conn: conn, store: connStore{conn: conn}}
 }
 
 func (w *ClickHouseWriter) EnsureTables(ctx context.Context) error {
@@ -36,18 +67,29 @@ func (w *ClickHouseWriter) EnsureTables(ctx context.Context) error {
 // InsertModelRun пишет прогон модели и производные строки forecast_log:
 // metric='nav' (predicted = nav_per_share) и metric='xau_q_avg' (вероятностно-взвешенная
 // точка сценариев золота), target_date — конец горизонта сценария, actual/error_pct = NULL.
-// Идемпотентность по клиентскому run_id: повторный POST пропускается — ORDER BY
-// (run_date, run_id) в ReplacingMergeTree не схлопывает строки с разным run_date.
+//
+// Идемпотентность по клиентскому run_id: повторный POST с уже записанным run_id пропускается.
+// ORDER BY (run_date, run_id) в ReplacingMergeTree не схлопывает строки с разным run_date,
+// поэтому дубли из-за повторного POST этим движком не убираются — защищает только проверка ниже.
+// Поэтому вызовы сериализованы мьютексом (ingest — один инстанс): иначе два параллельных
+// повтора оба пройдут проверку и оба вставят строки.
+// Порядок записи: сначала forecast_log, последней — model_runs. Строка в model_runs — маркер
+// фиксации прогона: если forecast_log записан, а model_runs упал, повтор не увидит run и
+// допишет обе таблицы (forecast_log при повторе схлопывается по (metric, forecast_date) в пределах дня).
+// Обратный порядок привёл бы к тому, что упавший forecast_log навсегда отсутствует при существующем run.
 func (w *ClickHouseWriter) InsertModelRun(ctx context.Context, r ModelRun) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
 	runID, err := uuid.Parse(r.RunID)
 	if err != nil {
 		return fmt.Errorf("run_id %q is not a UUID: %w", r.RunID, err)
 	}
-	var existing uint64
-	if err = w.conn.QueryRow(ctx, "SELECT count() FROM model_runs FINAL WHERE run_id = ?", runID).Scan(&existing); err != nil {
+	exists, err := w.store.runExists(ctx, runID)
+	if err != nil {
 		return err
 	}
-	if existing > 0 {
+	if exists {
 		log.Infof("ingest: model_run %s already exists, skipping", r.RunID)
 		return nil
 	}
@@ -68,22 +110,9 @@ func (w *ClickHouseWriter) InsertModelRun(ctx context.Context, r ModelRun) error
 		return err
 	}
 	now := time.Now()
-	batch, err := w.conn.PrepareBatch(ctx, modelRunsInsert)
-	if err != nil {
-		return err
-	}
-	if err = batch.Append(
-		runID, now, r.TriggerType, r.TriggerRef, string(goldScenario), string(usdrubPath),
-		r.PriceDeck, r.DiscountRate, r.Wacc, r.NavPerShare, r.NavBull, r.NavBase, r.NavBear,
-		r.MarketPrice, r.UpsidePct, nil, r.Comment,
-	); err != nil {
-		return err
-	}
-	if err = batch.Send(); err != nil {
-		return err
-	}
+
 	forecastDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	forecastBatch, err := w.conn.PrepareBatch(ctx, forecastLogInsert)
+	forecastBatch, err := w.store.prepareBatch(ctx, forecastLogInsert)
 	if err != nil {
 		return err
 	}
@@ -98,7 +127,22 @@ func (w *ClickHouseWriter) InsertModelRun(ctx context.Context, r ModelRun) error
 			return err
 		}
 	}
-	return forecastBatch.Send()
+	if err = forecastBatch.Send(); err != nil {
+		return err
+	}
+
+	batch, err := w.store.prepareBatch(ctx, modelRunsInsert)
+	if err != nil {
+		return err
+	}
+	if err = batch.Append(
+		runID, now, r.TriggerType, r.TriggerRef, string(goldScenario), string(usdrubPath),
+		r.PriceDeck, r.DiscountRate, r.Wacc, r.NavPerShare, r.NavBull, r.NavBase, r.NavBear,
+		r.MarketPrice, r.UpsidePct, nil, r.Comment,
+	); err != nil {
+		return err
+	}
+	return batch.Send()
 }
 
 // InsertManualSeries пишет вручную введённые точки в macro_series с фиксированным source='manual'.
@@ -122,10 +166,14 @@ func (w *ClickHouseWriter) InsertManualSeries(ctx context.Context, points []Manu
 	return batch.Send()
 }
 
-var quarterHorizonRe = regexp.MustCompile(`^Q([1-4])-(\d{4})$`)
+var (
+	quarterHorizonRe = regexp.MustCompile(`^Q([1-4])-(\d{4})$`)
+	yearHorizonRe    = regexp.MustCompile(`^(?:YE-)?(\d{4})$`)
+)
 
 // scenarioTargetDate — конец горизонта сценария: "Q4-2026" → конец квартала,
 // "YE-2026"/"2026" → 31 декабря, "2026-12-31" — как есть.
+// Используется и в ValidateModelRun (входные ошибки → 400), и в InsertModelRun.
 func scenarioTargetDate(scenario map[string]any) (time.Time, error) {
 	raw, ok := scenario["horizon"]
 	if !ok {
@@ -149,15 +197,18 @@ func scenarioTargetDate(scenario map[string]any) (time.Time, error) {
 		}
 		return time.Date(year, time.Month(quarter*3)+1, 0, 0, 0, 0, 0, time.UTC), nil
 	}
-	yearStr := strings.TrimPrefix(horizon, "YE-")
-	if year, err := strconv.Atoi(yearStr); err == nil && len(yearStr) == 4 {
+	if m := yearHorizonRe.FindStringSubmatch(horizon); m != nil {
+		year, err := strconv.Atoi(m[1])
+		if err != nil {
+			return time.Time{}, fmt.Errorf("gold_scenario.horizon %q: %w", horizon, err)
+		}
 		return time.Date(year, time.December, 31, 0, 0, 0, 0, time.UTC), nil
 	}
 	return time.Time{}, fmt.Errorf("unsupported gold_scenario.horizon %q (want Q<n>-YYYY, YE-YYYY, YYYY or YYYY-MM-DD)", horizon)
 }
 
 // weightedGoldPoint — вероятностно-взвешенная точка золота: Σ prob×point / Σ prob.
-// Точка сценария — "point", при её отсутствии — середина "low"/"high".
+// Используется и в ValidateModelRun (нет блока под вероятность → 400), и в InsertModelRun.
 func weightedGoldPoint(scenario map[string]any, probabilities map[string]float64) (float64, error) {
 	var weighted, sum float64
 	for name, probability := range probabilities {
@@ -174,6 +225,7 @@ func weightedGoldPoint(scenario map[string]any, probabilities map[string]float64
 	return weighted / sum, nil
 }
 
+// scenarioPoint — точка сценария: "point", при её отсутствии — середина "low"/"high".
 func scenarioPoint(scenario map[string]any, name string) (float64, error) {
 	raw, ok := scenario[name]
 	if !ok {
