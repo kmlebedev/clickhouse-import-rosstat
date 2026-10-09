@@ -26,7 +26,7 @@ const (
 var fedbudMesFields = []string{"Доходы, всего", "Расходы, всего", "Акцизы", "Национальная оборона", "привлечение"}
 
 type fedbudMesStat struct {
-	util.HdBase
+	util.ClickHouseImport
 }
 
 func getFedbudMestDataUrl() (url string) {
@@ -45,20 +45,20 @@ func getFedbudMestDataUrl() (url string) {
 
 func (s *fedbudMesStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
 	s.DataUrl = getFedbudMestDataUrl()
-	if count, err = s.HdBase.Import(ctx, conn); err != nil {
+	if count, err = s.ClickHouseImport.Import(ctx, conn); err != nil {
 		return count, err
 	}
 	return count, publishFedbud(ctx, conn, fedbudMesSeriesMeta)
 }
 
 func init() {
-	chimport.Stats = append(chimport.Stats, &fedbudMesStat{HdBase: util.HdBase{
+	chimport.Stats = append(chimport.Stats, &fedbudMesStat{ClickHouseImport: util.ClickHouseImport{
 		TableName: fedbudMesTable,
-		CreateTable: `CREATE TABLE IF NOT EXISTS %s (
+		CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (
               name LowCardinality(String)
 			, date Date
 			, value Float32
-		) ENGINE = ReplacingMergeTree ORDER BY (name, date);`,
+		) ENGINE = ReplacingMergeTree ORDER BY (name, date);`},
 		ImportFunc: fedBudImport,
 	}})
 }

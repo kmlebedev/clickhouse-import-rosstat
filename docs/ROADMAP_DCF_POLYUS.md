@@ -164,7 +164,7 @@ docker run -d --name ch-mcp \
 
 ### Quick wins (можно сделать уже сегодня)
 
-1. Импортёр FRED — один файл по шаблону `util.HdBase`: у FRED есть прямые CSV-эндпоинты (`https://fred.stlouisfed.org/graph/fredgraph.csv?id=DFII10`), парсинг тривиален, а покрывает сразу ставку ФРС, TIPS, DXY и инфляционные ожидания.
+1. Импортёр FRED — один файл по шаблону `util.ClickHouseImport`: у FRED есть прямые CSV-эндпоинты (`https://fred.stlouisfed.org/graph/fredgraph.csv?id=DFII10`), парсинг тривиален, а покрывает сразу ставку ФРС, TIPS, DXY и инфляционные ожидания.
 2. Таблица `events_calendar` с датами Q4-2026 — чистый SQL, без кода.
 3. Поднять `mcp/clickhouse` в docker рядом с существующей БД — 30 минут, и у Kimi появляется SQL-доступ к уже накопленным рядам.
 

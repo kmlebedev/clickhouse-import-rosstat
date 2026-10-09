@@ -94,24 +94,24 @@ func getInflExpXlsDataUrl() (url string) {
 }
 
 type inflExpStat struct {
-	util.HdBase
+	util.ClickHouseImport
 }
 
 func (s *inflExpStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
 	if s.DataUrl = getInflExpXlsDataUrl(); s.DataUrl == "" {
 		return count, fmt.Errorf("inflExp: не найдена ссылка на xlsx на %s", inflExpUrl)
 	}
-	return s.HdBase.Import(ctx, conn)
+	return s.ClickHouseImport.Import(ctx, conn)
 }
 
 func init() {
-	inflExp := inflExpStat{HdBase: util.HdBase{
+	inflExp := inflExpStat{ClickHouseImport: util.ClickHouseImport{
 		TableName: "cbr_infl_exp",
-		CreateTable: `CREATE TABLE IF NOT EXISTS %s (
+		CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (
               name LowCardinality(String)
 			, date Date
 			, value Float32
-		) ENGINE = ReplacingMergeTree ORDER BY (name, date);`,
+		) ENGINE = ReplacingMergeTree ORDER BY (name, date);`},
 		ImportFunc: inflExpImport,
 	}}
 	chimport.Stats = append(chimport.Stats, &publishedStat{ImportStat: &inflExp, meta: cbrInflExpSeriesMeta})

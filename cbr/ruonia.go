@@ -1,6 +1,7 @@
 package cbr
 
 import (
+	"context"
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
@@ -38,12 +39,26 @@ func ruoniaImport(xlsx *excelize.File, batch driver.Batch) error {
 	return nil
 }
 
+const (
+	cbrRuoniaTable = "cbr_ruania"
+	cbrRuoniaUrl   = "https://www.cbr.ru/Queries/UniDbQuery/DownloadExcel/14315?Posted=True&FromDate=01/01/2019&ToDate=%s"
+)
+
+type ruoniaStat struct {
+	util.ClickHouseImport
+}
+
+// Import вычисляет DataUrl в рантайме: в шаблон %s подставляется текущая
+// дата в формате 01/02/2006 (layout совпадает с прежним DataUrlTimeFormat).
+func (s *ruoniaStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+	s.DataUrl = fmt.Sprintf(cbrRuoniaUrl, time.Now().Format("01/02/2006"))
+	return s.ClickHouseImport.Import(ctx, conn)
+}
+
 func init() {
-	ruania := util.HdBase{
-		TableName:         "cbr_ruania",
-		DataUrl:           "https://www.cbr.ru/Queries/UniDbQuery/DownloadExcel/14315?Posted=True&FromDate=01/01/2019&ToDate=%s",
-		DataUrlTimeFormat: true,
-		CreateTable: `CREATE TABLE IF NOT EXISTS %s (
+	ruania := ruoniaStat{ClickHouseImport: util.ClickHouseImport{
+		TableName: cbrRuoniaTable,
+		CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (
 			  date Date
 			, ruo Float32
             , vol Float32
@@ -52,8 +67,8 @@ func init() {
             , maxRate Float32
             , percentile25 Float32
             , Percentile75 Float32
-		) ENGINE = ReplacingMergeTree ORDER BY (date);`,
+		) ENGINE = ReplacingMergeTree ORDER BY (date);`},
 		ImportFunc: ruoniaImport,
-	}
+	}}
 	chimport.Stats = append(chimport.Stats, &publishedStat{ImportStat: &ruania, meta: cbrRuaniaSeriesMeta})
 }

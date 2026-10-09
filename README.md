@@ -30,7 +30,7 @@ Go-конвейер импорта российской макроэкономи
 ```text
 main.go                  точка входа: подключение к ClickHouse, фильтр импортёров, код выхода
 chimport/                интерфейс ImportStat и глобальный реестр Stats
-util/                    HTTP-клиент (национальные TLS-сертификаты РФ, ротация User-Agent), шаблоны HdBase и ClickHouseImport, батч-вставка
+util/                    HTTP-клиент (национальные TLS-сертификаты РФ, ротация User-Agent), шаблон импортёра ClickHouseImport, батч-вставка
 bank/ cbr/ craw/ customs/ fao/ minfin/ rosstat/   доменные импортёры (см. таблицу выше)
 fred/                    FRED CSV → macro_series
 bls/                     BLS API v2 → macro_series
