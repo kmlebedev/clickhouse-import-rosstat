@@ -1,5 +1,6 @@
 // Package views создаёт витрины для LLM-агента прогноза золота и NAV PLZL:
-// v_model_inputs (входы DCF) и v_gold_dashboard (дашборд верификации).
+// v_model_inputs (входы DCF), v_gold_dashboard (дашборд верификации) и
+// v_forecast_accuracy (точность прогнозов из forecast_log).
 //
 // Импортёр gold_views запускается после ingest-первого-прогона: util.CreateView
 // пропускает витрину, пока не существуют все её таблицы (model_runs создаёт ingest),
@@ -23,7 +24,7 @@ func (s *goldViews) Name() string {
 }
 
 func (s *goldViews) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	for _, v := range []util.View{modelInputsView, goldDashboardView} {
+	for _, v := range []util.View{modelInputsView, goldDashboardView, forecastAccuracyView} {
 		var created bool
 		if created, err = util.CreateView(ctx, conn, v); err != nil {
 			return count, err

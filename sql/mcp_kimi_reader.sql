@@ -16,3 +16,4 @@ GRANT SELECT ON default.v_ofz_curve TO kimi_reader;
 GRANT SELECT ON default.v_events_calendar TO kimi_reader;
 GRANT SELECT ON default.v_model_inputs TO kimi_reader;
 GRANT SELECT ON default.v_gold_dashboard TO kimi_reader;
+GRANT SELECT ON default.v_forecast_accuracy TO kimi_reader;
