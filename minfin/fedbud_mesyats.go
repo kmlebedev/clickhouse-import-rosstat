@@ -1,6 +1,7 @@
 package minfin
 
 import (
+	"context"
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/gocolly/colly/v2"
@@ -20,22 +21,27 @@ import (
 // https://minfin.gov.ru/common/upload/library/2025/10/main/Prilozhenie_8_dannye_115-117_%E2%80%94_mesyats.xlsx
 // https://minfin.gov.ru/common/upload/library/2026/02/main/Prilozhenie_8_dannye_115-117_%E2%80%94_mesyats.xlsx
 const (
-	minfinUrl         = "https://minfin.gov.ru"
-	conbudExecutePath = "/ru/statistics/conbud/execute"
+	minfinUrl          = "https://minfin.gov.ru"
+	conbudExecutePath  = "/ru/statistics/conbud/execute"
+	fedbudMesyatsTable = "minfin_fed_bud_mesyats"
 )
 
+var fedbudMesyatsFields = []string{"Доходы, всего", "Расходы, всего", "Акцизы", "Национальная оборона", "Дефицит (-)/Профицит (+)"}
+
+type fedbudMesyatsStat struct {
+	util.HdBase
+}
+
 func init() {
-	FedbudMesyats := util.HdBase{
-		TableName: "minfin_fed_bud_mesyats",
-		DataUrl:   getFedbudMesyatDataUrl(),
+	chimport.Stats = append(chimport.Stats, &fedbudMesyatsStat{HdBase: util.HdBase{
+		TableName: fedbudMesyatsTable,
 		CreateTable: `CREATE TABLE IF NOT EXISTS %s (
               name LowCardinality(String)
 			, date Date
 			, value Float32
 		) ENGINE = ReplacingMergeTree ORDER BY (name, date);`,
 		ImportFunc: fedbudMesyatsImport,
-	}
-	chimport.Stats = append(chimport.Stats, &FedbudMesyats)
+	}})
 }
 
 func getFedbudMesyatDataUrl() (url string) {
@@ -52,6 +58,14 @@ func getFedbudMesyatDataUrl() (url string) {
 	return url
 }
 
+func (s *fedbudMesyatsStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+	s.DataUrl = getFedbudMesyatDataUrl()
+	if count, err = s.HdBase.Import(ctx, conn); err != nil {
+		return count, err
+	}
+	return count, publishFedbud(ctx, conn, fedbudMesyatsSeriesMeta)
+}
+
 func fedbudMesyatsImport(xlsx *excelize.File, batch driver.Batch) error {
 	rows, err := xlsx.GetRows("месяц")
 	if err != nil {
@@ -59,7 +73,6 @@ func fedbudMesyatsImport(xlsx *excelize.File, batch driver.Batch) error {
 	}
 	tableIsFoundRowNum := -1
 	var valuePrev, value float64
-	fields := []string{"Доходы, всего", "Расходы, всего", "Акцизы", "Национальная оборона", "Дефицит (-)/Профицит (+)"}
 	for i, row := range rows {
 		if len(row) < 3 || row[1] == "" {
 			continue
@@ -72,7 +85,7 @@ func fedbudMesyatsImport(xlsx *excelize.File, batch driver.Batch) error {
 			continue
 		}
 		//fmt.Printf("rowdate : %+v\n", rows[tableIsFoundRowNum])
-		if slices.Contains(fields, row[1]) {
+		if slices.Contains(fedbudMesyatsFields, row[1]) {
 			for j, rowCol := range row[2:] {
 				var date time.Time
 				dateStr := rows[tableIsFoundRowNum][j+2]

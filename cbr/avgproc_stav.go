@@ -60,6 +60,9 @@ func (s *cbrProcStav) Import(ctx context.Context, conn driver.Conn) (count int64
 		}
 		count++
 	}
+	if err = publishSeries(ctx, conn, cbrCurrencyUSDSeriesMeta); err != nil {
+		return count, err
+	}
 	return count, nil
 }
 

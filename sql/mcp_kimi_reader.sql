@@ -7,3 +7,7 @@ GRANT SELECT ON default.v_bea_pce TO kimi_reader;
 GRANT SELECT ON default.v_series_catalog TO kimi_reader;
 GRANT SELECT ON default.v_fred_macro TO kimi_reader;
 GRANT SELECT ON default.v_bls_macro TO kimi_reader;
+GRANT SELECT ON default.v_cbr_macro TO kimi_reader;
+GRANT SELECT ON default.v_rosstat_macro TO kimi_reader;
+GRANT SELECT ON default.v_minfin_budget TO kimi_reader;
+GRANT SELECT ON default.v_gold_prices TO kimi_reader;

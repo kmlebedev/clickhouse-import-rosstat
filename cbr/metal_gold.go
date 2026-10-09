@@ -73,6 +73,9 @@ func (s *cbrGold) Import(ctx context.Context, conn driver.Conn) (count int64, er
 		}
 		count++
 	}
+	if err = publishSeries(ctx, conn, cbrGoldSeriesMeta); err != nil {
+		return count, err
+	}
 	return count, nil
 }
 

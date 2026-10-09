@@ -88,7 +88,11 @@ func (s *goldPrices) Import(ctx context.Context, conn driver.Conn) (count int64,
 		return count, err
 	}
 	log.Infof("Fetched %d GOLDFIXME fixes from MOEX, %d skipped: no USD/RUB rate within %d days", len(fixes), skipped, int(goldMaxRateAge.Hours()/24))
-	return count, nil
+	if err = util.UpsertSeriesCatalog(ctx, conn, goldSeriesMeta); err != nil {
+		return count, err
+	}
+	_, err = util.CreateView(ctx, conn, goldPricesView)
+	return count, err
 }
 
 func loadUsdRates(ctx context.Context, conn driver.Conn) ([]usdRate, error) {

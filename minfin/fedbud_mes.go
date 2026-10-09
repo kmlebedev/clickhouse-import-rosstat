@@ -1,6 +1,7 @@
 package minfin
 
 import (
+	"context"
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/gocolly/colly/v2"
@@ -17,7 +18,16 @@ import (
 // https://minfin.gov.ru/ru/statistics/fedbud/execute?id_57=80042-kratkaya_ezhemesyachnaya_informatsiya_ob_ispolnenii_federalnogo_byudzheta_mlrd._rub._nakopleno_s_nachala_goda
 // Краткая ежемесячная информация об исполнении федерального бюджета (млрд. руб., накоплено с начала года)
 // Table https://minfin.gov.ru/common/upload/library/2025/08/main/Prilozhenie_3_dannye_109-111_%E2%80%94_mes.xlsx
-const fedbudDataPath = "/ru/statistics/fedbud/execute"
+const (
+	fedbudDataPath = "/ru/statistics/fedbud/execute"
+	fedbudMesTable = "minfin_fed_bud_mes"
+)
+
+var fedbudMesFields = []string{"Доходы, всего", "Расходы, всего", "Акцизы", "Национальная оборона", "привлечение"}
+
+type fedbudMesStat struct {
+	util.HdBase
+}
 
 func getFedbudMestDataUrl() (url string) {
 	c := colly.NewCollector(colly.UserAgent(util.HttpUA))
@@ -33,18 +43,24 @@ func getFedbudMestDataUrl() (url string) {
 	return url
 }
 
+func (s *fedbudMesStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+	s.DataUrl = getFedbudMestDataUrl()
+	if count, err = s.HdBase.Import(ctx, conn); err != nil {
+		return count, err
+	}
+	return count, publishFedbud(ctx, conn, fedbudMesSeriesMeta)
+}
+
 func init() {
-	Fedbud := util.HdBase{
-		TableName: "minfin_fed_bud_mes",
-		DataUrl:   getFedbudMestDataUrl(),
+	chimport.Stats = append(chimport.Stats, &fedbudMesStat{HdBase: util.HdBase{
+		TableName: fedbudMesTable,
 		CreateTable: `CREATE TABLE IF NOT EXISTS %s (
               name LowCardinality(String)
 			, date Date
 			, value Float32
 		) ENGINE = ReplacingMergeTree ORDER BY (name, date);`,
 		ImportFunc: fedBudImport,
-	}
-	chimport.Stats = append(chimport.Stats, &Fedbud)
+	}})
 }
 
 var dateReplacer = strings.NewReplacer(".", "-", "янв", "Jan", "фев", "Feb", "апр", "Apr", "июн", "Jun", "июл", "Jul", "сен", "Sep", "ноя", "Nov", "авг", "Aug", "дек", "Dec")
@@ -56,7 +72,6 @@ func fedBudImport(xlsx *excelize.File, batch driver.Batch) error {
 	}
 	tableIsFoundRowNum := -1
 	var valuePrev, value float64
-	fields := []string{"Доходы, всего", "Расходы, всего", "Акцизы", "Национальная оборона", "привлечение"}
 	for i, row := range rows {
 		if len(row) < 3 || row[1] == "" {
 			continue
@@ -69,7 +84,7 @@ func fedBudImport(xlsx *excelize.File, batch driver.Batch) error {
 			continue
 		}
 		//fmt.Printf("rowdate : %+v\n", rows[tableIsFoundRowNum])
-		if slices.Contains(fields, row[1]) {
+		if slices.Contains(fedbudMesFields, row[1]) {
 			for j, rowCol := range row[2:] {
 				var date time.Time
 				dateStr := rows[tableIsFoundRowNum][j+2]

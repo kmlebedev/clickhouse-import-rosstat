@@ -104,6 +104,9 @@ func (s *LoansToCorporationsStat) Import(ctx context.Context, conn driver.Conn) 
 		}
 		count++
 	}
+	if err = publishSeries(ctx, conn, cbrLoansToCorpSeriesMeta); err != nil {
+		return count, err
+	}
 	return count, nil
 }
 

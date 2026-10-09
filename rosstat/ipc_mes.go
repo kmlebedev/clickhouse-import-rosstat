@@ -18,12 +18,12 @@ const (
 	// Индексы потребительских цен на товары и услуги по Российской Федерации, месяцы (с 1991 г.)
 	ipcMesTable = "ipc_mes"
 	ipcMesDdl   = `CREATE TABLE IF NOT EXISTS ` + ipcMesTable + ` (
-			  name LowCardinality(String)
-			, date Date
-			, percent Float32
-		) ENGINE = ReplacingMergeTree ORDER BY (name, date);
-	`
-	ipcMesInsert     = "INSERT INTO " + ipcMesTable + " VALUES (?, ?, ?)"
+				  name LowCardinality(String)
+				, date Date
+				, percent Float32
+			) ENGINE = ReplacingMergeTree ORDER BY (name, date);
+		`
+	ipcMesInsert     = "INSERT INTO " + ipcMesTable
 	ipcMesField      = "к концу предыдущего месяца"
 	ipcMesYearStart  = 1991
 	ipcMesTimeLayout = "2006-01"
@@ -50,15 +50,7 @@ func (s *IpcMesStat) Name() string {
 	return ipcMesTable
 }
 
-func (s *IpcMesStat) export() (table *[][]string, err error) {
-	var xlsx *excelize.File
-	var xlsDataUrl string
-	if xlsDataUrl, err = s.getXlsDataUrl(); err != nil {
-		return nil, err
-	}
-	if xlsx, err = util.GetXlsx(xlsDataUrl); err != nil {
-		return nil, err
-	}
+func parseIpcMes(xlsx *excelize.File) (table *[][]string, err error) {
 	table = new([][]string)
 	for _, sheet := range xlsx.GetSheetList() {
 		var rows [][]string
@@ -94,6 +86,18 @@ func (s *IpcMesStat) export() (table *[][]string, err error) {
 	return table, nil
 }
 
+func (s *IpcMesStat) export() (table *[][]string, err error) {
+	var xlsx *excelize.File
+	var xlsDataUrl string
+	if xlsDataUrl, err = s.getXlsDataUrl(); err != nil {
+		return nil, err
+	}
+	if xlsx, err = util.GetXlsx(xlsDataUrl); err != nil {
+		return nil, err
+	}
+	return parseIpcMes(xlsx)
+}
+
 func (s *IpcMesStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
 	if err = conn.Exec(ctx, ipcMesDdl); err != nil {
 		return count, err
@@ -102,16 +106,33 @@ func (s *IpcMesStat) Import(ctx context.Context, conn driver.Conn) (count int64,
 	if table, err = s.export(); err != nil {
 		return count, err
 	}
+	batch, err := conn.PrepareBatch(ctx, ipcMesInsert)
+	if err != nil {
+		return count, err
+	}
 	for _, row := range *table {
 		// Calling Parse() method with its parameters
 		mes, err := time.Parse(ipcMesTimeLayout, fmt.Sprintf("%s-%s", row[1], row[2]))
 		if err != nil {
 			return count, err
 		}
-		if err = conn.Exec(ctx, ipcMesInsert, row[0], mes.AddDate(0, 1, -1), row[3]); err != nil {
+		percent, err := strconv.ParseFloat(row[3], 32)
+		if err != nil {
+			return count, err
+		}
+		if err = batch.Append(row[0], mes.AddDate(0, 1, -1), float32(percent)); err != nil {
 			return count, err
 		}
 		count++
+	}
+	if err = batch.Send(); err != nil {
+		return count, err
+	}
+	if err = util.UpsertSeriesCatalog(ctx, conn, ipcMesSeriesMeta); err != nil {
+		return count, err
+	}
+	if _, err = util.CreateView(ctx, conn, rosstatMacroView); err != nil {
+		return count, err
 	}
 	return count, nil
 }
