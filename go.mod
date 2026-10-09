@@ -8,6 +8,7 @@ require (
 	github.com/cenkalti/backoff/v5 v5.0.3
 	github.com/gocolly/colly/v2 v2.2.0
 	github.com/golang/glog v1.2.4
+	github.com/google/uuid v1.6.0
 	github.com/shakinm/xlsReader v0.9.12
 	github.com/sirupsen/logrus v1.9.3
 	github.com/xuri/excelize/v2 v2.11.0
@@ -28,7 +29,6 @@ require (
 	github.com/gobwas/glob v0.2.3 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/kennygrant/sanitize v1.2.4 // indirect
 	github.com/klauspost/compress v1.17.11 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
