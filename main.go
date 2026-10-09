@@ -4,6 +4,8 @@ import (
 	"context"
 	"github.com/ClickHouse/clickhouse-go/v2"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/bank"
+	_ "github.com/kmlebedev/clickhouse-import-rosstat/bea"
+	_ "github.com/kmlebedev/clickhouse-import-rosstat/bls"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/cbr"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/craw"

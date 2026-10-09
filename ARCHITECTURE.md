@@ -1,7 +1,7 @@
 # ARCHITECTURE.md — clickhouse-import-rosstat
 
 > Контекстный документ для AI-ассистентов (Kimi Code и др.). Содержит всё необходимое для написания нового кода без полного чтения репозитория: паттерны, конвенции, схемы БД, целевую архитектуру. Обновлять при каждом изменении архитектуры.
-> Последнее обновление: 2026-10-08. Базовый коммит: `c96fc1f`.
+> Последнее обновление: 2026-10-09. Базовый коммит: `c96fc1f`.
 
 ---
 
@@ -19,13 +19,16 @@ Go-конвейер (ETL) импорта российской макроэкон
 ```
 main.go            — точка входа: подключение к CH, запуск реестра импортёров
 chimport/stats.go  — интерфейс ImportStat + глобальный реестр Stats
-util/              — общие хелперы: HTTP-клиент (xls.go), шаблоны HdBase/ClickHouseImport, батч-импорт (db.go)
+util/              — общие хелперы: HTTP-клиент (xls.go), шаблоны HdBase/ClickHouseImport, батч-импорт (db.go), каталог рядов series_catalog/v_series_catalog (series_catalog.go)
+sql/               — SQL для ручной настройки: пользователь MCP kimi_reader и гранты на витрины (mcp_kimi_reader.sql)
 rosstat/           — Росстат: ipc_mes, ipc_weeks, vvp_kvartal, salaries_mes
 cbr/               — ЦБ РФ: key_rate, currency_usd, m2, ruonia, metal_gold, households, avgproc_stav, ...
 minfin/            — Минфин: fedbud_mes, fedbud_mesyats (исполнение федбюджета)
 customs/           — ФТС: внешняя торговля по странам
 fao/               — ФАО: индексы продовольственных цен
 fred/              — FRED (CSV-серии US-макро: DFII10, DGS10, FEDFUNDS, DTWEXBGS, CPIAUCSL, T5YIE) → macro_series
+bls/               — BLS API v2 (CPI, безработица, NFP, зарплата, PPI, JOLTS) → macro_series (source = 'bls')
+bea/               — BEA API (NIPA T20804: индексы PCE) → macro_series (source = 'bea')
 gold/              — золото: MOEX GOLDFIXME (₽/г) ÷ курс ЦБ cbr_currency_usd → gold_prices (venue='moex_fix_usd')
 bank/              — банки: sber_csi(+week), sber/vtb/tbank_fin_rez, domrf_mortgage
 craw/              — многостраничные краулеры: gost (сертификаты Росстандарта)
@@ -103,6 +106,8 @@ func init() {
 | `CERT_FILES` | Пути к PEM-сертификатам через запятую |
 | `TICKER` | Маршрутизация legacy-контура financial (MOEX/VTBR/CHMF/MAGN/NLMK/Exports/ALL) |
 | `INVESTING_EMAIL`, `INVESTING_PASSWORD` | ⚠️ deprecated, переезжаем на MOEX ISS / stooq |
+| `BLS_API_KEY` | Регистрационный ключ BLS (необязательно, для `bls`) |
+| `BEA_API_KEY` | UserID BEA API (обязательно, для `bea`) |
 
 ## 6. Целевая архитектура (дорожная карта 2026-Q4)
 
@@ -113,6 +118,8 @@ func init() {
 | Импортёр | Пакет | Источник | Метод |
 |---|---|---|---|
 | `fred` | `fred/` | FRED CSV API: `https://fred.stlouisfed.org/graph/fredgraph.csv?id=DFII10` (серии: DFII10, DGS10, FEDFUNDS, DTWEXBGS, CPIAUCSL, T5YIE) | Свой парсер `encoding/csv` (не `util.GetCSV`: разделитель `,`), `Name()` = `fred` (несколько серий, одна таблица), пропуски (пустое значение) пропускаются; UA не задаём — FRED за Imperva рвёт соединение с браузерным UA. Расписание: `dagu/fred.yaml`, ежедневно 11:41 (МСК) → `macro_series` |
+| `bls` | `bls/` | BLS Public Data API v2: `POST https://api.bls.gov/publicAPI/v2/timeseries/data/` (JSON: `seriesid`, `startyear`, `endyear`, опц. `registrationkey` из `BLS_API_KEY`). Серии: CUUR0000SA0, CUSR0000SA0 (CPI), LNS14000000 (безработица), CES0000000001 (NFP), CES0500000003 (средняя зарплата), WPSFD4 (PPI final demand), JTS000000000000000JOL (JOLTS, вакансии). Окна лет по ≤10 лет с 2006 года; все серии одним запросом. Статус ≠ `REQUEST_SUCCEEDED` — ошибка; `message` при успехе (каталог, «no data») — не ошибка; периоды M13 и не-месячные пропускаются. Тесты: `bls/bls_test.go`. Расписание: `dagu/bls.yaml`, ежедневно 12:23 (МСК) → `macro_series`. Каталог `series_catalog` и витрина для агента пока не заведены (долг, см. AGENTS.md правило 11) |
+| `bea` | `bea/` | BEA API: `GET https://apps.bea.gov/api/data?method=GetData&datasetname=NIPA&TableName=T20804&Frequency=M` (ключ `BEA_API_KEY` → параметр `UserID`, без него импорт падает с ошибкой). Строки T20804: 1 — PCE_PI (headline), 25 — PCE_PI_CORE (excluding food and energy). Ключ маскируется в текстах ошибок (`url.Error` содержит URL). Тесты: `bea/bea_test.go`. Расписание: `dagu/bea.yaml`, ежедневно 12:37 (МСК) → `macro_series`; описания рядов → `series_catalog`; витрина `v_bea_pce` (с комментариями, грант `kimi_reader`) |
 | `eia` | `eia/` | EIA Weekly Petroleum Status (запасы дистиллятов, crack ULSD) | API EIA v2 (ключ в env `EIA_API_KEY`) → `macro_series` |
 | `lbma_gold` | `gold/` | ⚠️ Временно вместо LBMA: MOEX `GOLDFIXME` (борд FIXI, ₽/г, с 2024-08-05) × 31,1034768 ÷ курс `cbr_currency_usd`; производная цена, не LBMA. Курс берётся последний известный не позже даты (ЦБ не публикует понедельники и новогодние праздники; окно 10 дней). Расписание: `dagu/gold.yaml`, ежедневно 18:47 (МСК); первым шагом DAG выполняется `cbr_currency_usd`. LBMA не реализован: prices.lbma.org.uk и Nasdaq Data Link `LBMA/GOLD` отвечают 403 WAF (датасетный эндпоинт блокируется с этого IP даже с валидным ключом), stooq — JS-проверкой, FRED серии LBMA удалил (404), Yahoo — 429 | → `gold_prices` |
 | `moex_iss` | `moex/` | MOEX ISS REST (PLZL OHLCV, ОФЗ/RGBI): `https://iss.moex.com/iss/engines/stock/markets/shares/securities/PLZL/candles.json?from=...` | JSON → `stock_prices`, `ofz_curve` |
@@ -128,6 +135,17 @@ CREATE TABLE IF NOT EXISTS macro_series (
     date Date32,                     -- Date32, т.к. Date не покрывает даты до 1970 (CPIAUCSL с 1947, FEDFUNDS с 1954)
     value Float64
 ) ENGINE = ReplacingMergeTree ORDER BY (source, series, date);
+
+-- Каталог рядов macro_series: заполняет util.UpsertSeriesCatalog при каждом импорте источника
+CREATE TABLE IF NOT EXISTS series_catalog (
+    source LowCardinality(String),
+    series LowCardinality(String),
+    title String,
+    unit String,
+    frequency LowCardinality(String),   -- 'M','Q','D','W'
+    origin String,                      -- таблица/серия/строка API
+    description String
+) ENGINE = ReplacingMergeTree ORDER BY (source, series);
 
 CREATE TABLE IF NOT EXISTS gold_prices (
     venue LowCardinality(String),    -- 'lbma_am','lbma_pm','spot','comex_front','moex_fix_usd' (производный, см. gold/)
@@ -309,6 +327,14 @@ CREATE TABLE IF NOT EXISTS regime_states (
 - `v_forecast_accuracy` — скользящая точность прогнозов из `forecast_log` (включая конкурентный ML-трек)
 - `v_peers_comparison` — P/NAV, EV/oz, дисконт к лидеру по контурам `ru`/`global`; алерт-порог — дисконт PLZL за ±1σ исторической нормы
 - `v_gold_attribution` — GRAM-разложение движения золота (экспансия / риск / альтернативная стоимость / импульс); ошибки прогноза атрибутируются к фактору
+- `v_series_catalog` — `series_catalog FINAL`: название, единицы, частота, происхождение и описание каждого ряда `macro_series` (ведётся импортёрами через `util.UpsertSeriesCatalog`)
+- `v_bea_pce` — `macro_series FINAL WHERE source = 'bea'`: индексы PCE из BEA (`PCE_PI`, `PCE_PI_CORE`), уровни 2017=100
+
+Правила витрин:
+- создаются через `CREATE OR REPLACE VIEW ... DEFINER = default SQL SECURITY DEFINER AS ...` — определение может меняться, и агент читает сырые таблицы через definer, без прав на `macro_series`;
+- комментарии ставятся через `ALTER TABLE v_x MODIFY COMMENT '...'` и `ALTER TABLE v_x COMMENT COLUMN col '...'`: синтаксис `COMMENT ON TABLE/COLUMN` в текущей версии ClickHouse (26.10) не поддерживается;
+- `CREATE OR REPLACE` для витрин — отступление от правила «DDL всегда `IF NOT EXISTS`» (то правило относится к таблицам);
+- для каждой новой витрины — `GRANT SELECT` пользователю `kimi_reader` в `sql/mcp_kimi_reader.sql`.
 
 ### 6.4 DCF-модель Полюса (ключевые допущения, rev.2 по мировой практике)
 
@@ -344,7 +370,19 @@ Peers-сверка (peer_universe='ru': PLZL/ЮГК/SELG) — относител
 
 ### 6.5 MCP-контур
 
-Сервер: `mcp/clickhouse` (Docker, HTTP-транспорт, `CLICKHOUSE_MCP_AUTH_TOKEN`). Пользователь БД `kimi_reader`: **только SELECT, только витрины `v_*`**. Запись прогнозов — не через MCP, а отдельным ingest-скриптом. Все витрины документируются `COMMENT ON TABLE/COLUMN`.
+Сервер: официальный [ClickHouse/mcp-clickhouse](https://github.com/ClickHouse/mcp-clickhouse) (PyPI `mcp-clickhouse`), stdio-транспорт. Локально запускается через `uv` (Docker не требуется):
+
+```
+uv run --with mcp-clickhouse --python 3.12 mcp-clickhouse
+```
+
+Конфигурация Kimi — пользовательский `~/.kimi-code/mcp.json` (права 600), блок `mcpServers.clickhouse`: `command: uv`, `args` как выше, `env`: `CLICKHOUSE_HOST`, `CLICKHOUSE_PORT=8123`, `CLICKHOUSE_SECURE=false`, `CLICKHOUSE_USER=kimi_reader`, `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_DATABASE=default`, `CLICKHOUSE_MCP_SERVER_TRANSPORT=stdio`. Пароль в репозиторий не попадает.
+
+Инструменты сервера: `list_databases`, `list_tables` (читает `system.tables`/`system.columns`, видит только то, на что есть гранты; комментарии колонок попадают в `create_table_query`), `run_query`.
+
+Пользователь БД `kimi_reader`: **только SELECT, только витрины `v_*`**, `readonly = 1`, `DEFAULT DATABASE default`. Сырые таблицы (`macro_series`, `gold_prices`, ...) агенту недоступны: проверено `497 ACCESS_DENIED`. Создание и гранты — `sql/mcp_kimi_reader.sql` (пароль подставляется вручную). Запись прогнозов — не через MCP, а отдельным ingest-скриптом.
+
+Правило для новых источников и рядов (см. AGENTS.md, правило 11): каждый ряд описан в `series_catalog`, каждая витрина имеет комментарии таблицы и колонок и грант `kimi_reader`.
 
 ## 7. Календарь триггеров (актуальный Q4-2026)
 
@@ -370,5 +408,5 @@ Peers-сверка (peer_universe='ru': PLZL/ЮГК/SELG) — относител
 8. Накопленные значения «с начала года» конвертировать в потоки разностями (паттерн `fedBudImport`).
 9. Ошибки не проглатывать: парсинг чисел — с проверкой `err`; в `Import()` ошибка → `return count, err`.
 10. Пакет `financial/` — legacy (database/sql, свой main): новый код туда не добавлять, новые корпоративные импортёры делать на clickhouse-go/v2 в новых пакетах.
-11. Сборка-проверка: `go build ./... && go vet ./...` (тестов в репо пока нет).
+11. Сборка-проверка: `make all` (gofmt, golangci-lint, `go vet`, `go test -race`, сборка). Тесты есть в `bls/` и `bea/`; для новых импортёров тесты парсера и HTTP-слоя обязательны (`httptest.Server` + подмена base URL-переменной пакета).
 12. После изменения архитектуры — обновить этот файл.
