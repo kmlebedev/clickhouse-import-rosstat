@@ -29,7 +29,7 @@ func init() {
 		) ENGINE = ReplacingMergeTree ORDER BY (name, date);`,
 		ImportFunc: indicatorsCpdImport,
 	}
-	chimport.Stats = append(chimport.Stats, &indicatorsCpd)
+	chimport.Stats = append(chimport.Stats, &publishedStat{ImportStat: &indicatorsCpd, meta: cbrIndicatorsCpdSeriesMeta})
 }
 
 func getIndicatorsCpdXlsDataUrl() (url string) {

@@ -26,7 +26,7 @@ var seriesCatalogViews = []string{
 	`CREATE OR REPLACE VIEW v_series_catalog DEFINER = default SQL SECURITY DEFINER AS
 		SELECT source, series, title, unit, frequency, origin, description FROM series_catalog FINAL`,
 	`ALTER TABLE v_series_catalog MODIFY COMMENT 'Каталог рядов macro_series: для каждого (source, series) — название, единицы, частота, происхождение и как читать значение. Читать перед написанием запроса к ряду'`,
-	`ALTER TABLE v_series_catalog COMMENT COLUMN source 'Импортёр-источник: bea, bls, fred, ...'`,
+	`ALTER TABLE v_series_catalog COMMENT COLUMN source 'Импортёр-источник: fred, bls, bea, cbr, rosstat, minfin, minfin_mesyats, gold, ...'`,
 	`ALTER TABLE v_series_catalog COMMENT COLUMN series 'Код ряда; совпадает с series в macro_series'`,
 	`ALTER TABLE v_series_catalog COMMENT COLUMN title 'Название ряда'`,
 	`ALTER TABLE v_series_catalog COMMENT COLUMN unit 'Единицы измерения значения'`,

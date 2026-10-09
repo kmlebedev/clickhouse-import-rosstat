@@ -107,6 +107,9 @@ func (s *HouseholdsBMesStat) Import(ctx context.Context, conn driver.Conn) (coun
 		}
 		count++
 	}
+	if err = publishSeries(ctx, conn, householdsBMesSeriesMeta); err != nil {
+		return count, err
+	}
 	return count, nil
 }
 

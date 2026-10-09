@@ -36,12 +36,12 @@ const (
 	vvpKvartalXlsDataUrl = rosstatMediaBankUrl + "/VVP_kvartal_s_1995-2025.xlsx"
 	vvpKvartalTable      = "vvp_kvartal"
 	vvpKvartalDdl        = `CREATE TABLE IF NOT EXISTS ` + vvpKvartalTable + ` (
-			  name LowCardinality(String)
-			, date Date
-			, vvp Float32
-		) ENGINE = ReplacingMergeTree ORDER BY (name, date);
-	`
-	vvpKvartalDdlInsert = "INSERT INTO " + vvpKvartalTable + " VALUES (?, ?, ?)"
+				  name LowCardinality(String)
+				, date Date
+				, vvp Float32
+			) ENGINE = ReplacingMergeTree ORDER BY (name, date);
+		`
+	vvpKvartalDdlInsert = "INSERT INTO " + vvpKvartalTable
 )
 
 type vvpKvartalDdlStat struct {
@@ -57,11 +57,7 @@ func (s *vvpKvartalDdlStat) Name() string {
 	return vvpKvartalTable
 }
 
-func (s *vvpKvartalDdlStat) export() (table *[]vvpKvartal, err error) {
-	var xlsx *excelize.File
-	if xlsx, err = util.GetXlsx(vvpKvartalXlsDataUrl); err != nil {
-		return nil, err
-	}
+func parseVvpKvartal(xlsx *excelize.File) (table *[]vvpKvartal, err error) {
 	table = &[]vvpKvartal{}
 	var rows [][]string
 	// ВВП (в ценах 2021 г., млрд руб., с исключением сезонного фактора)
@@ -99,6 +95,14 @@ func (s *vvpKvartalDdlStat) export() (table *[]vvpKvartal, err error) {
 	return table, nil
 }
 
+func (s *vvpKvartalDdlStat) export() (table *[]vvpKvartal, err error) {
+	var xlsx *excelize.File
+	if xlsx, err = util.GetXlsx(vvpKvartalXlsDataUrl); err != nil {
+		return nil, err
+	}
+	return parseVvpKvartal(xlsx)
+}
+
 func (s *vvpKvartalDdlStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
 	if err = conn.Exec(ctx, vvpKvartalDdl); err != nil {
 		return count, err
@@ -107,11 +111,24 @@ func (s *vvpKvartalDdlStat) Import(ctx context.Context, conn driver.Conn) (count
 	if table, err = s.export(); err != nil {
 		return count, err
 	}
+	batch, err := conn.PrepareBatch(ctx, vvpKvartalDdlInsert)
+	if err != nil {
+		return count, err
+	}
 	for _, r := range *table {
-		if err = conn.Exec(ctx, vvpKvartalDdlInsert, r.name, r.date, r.vvp); err != nil {
+		if err = batch.Append(r.name, r.date, float32(r.vvp)); err != nil {
 			return count, err
 		}
 		count++
+	}
+	if err = batch.Send(); err != nil {
+		return count, err
+	}
+	if err = util.UpsertSeriesCatalog(ctx, conn, vvpKvartalSeriesMeta); err != nil {
+		return count, err
+	}
+	if _, err = util.CreateView(ctx, conn, rosstatMacroView); err != nil {
+		return count, err
 	}
 	return count, nil
 }

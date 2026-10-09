@@ -70,6 +70,9 @@ func (s *cbrCurrencyUSD) Import(ctx context.Context, conn driver.Conn) (count in
 		}
 		count++
 	}
+	if err = publishSeries(ctx, conn, cbrCurrencyUSDSeriesMeta); err != nil {
+		return count, err
+	}
 	return count, nil
 }
 

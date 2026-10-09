@@ -61,5 +61,5 @@ var cbrСreditM2x = util.ClickHouseImport{
 }
 
 func init() {
-	chimport.Stats = append(chimport.Stats, &cbrСreditM2x)
+	chimport.Stats = append(chimport.Stats, &publishedStat{ImportStat: &cbrСreditM2x, meta: cbrCreditM2xSeriesMeta})
 }

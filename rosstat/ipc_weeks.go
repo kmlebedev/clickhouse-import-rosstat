@@ -22,11 +22,11 @@ const (
 	// Еженедельные индексы потребительских цен (тарифов) на отдельные товары и услуги по Российской
 	ipcWeeksTable = "ipc_weeks"
 	ipcWeeksDdl   = `CREATE TABLE IF NOT EXISTS ` + ipcWeeksTable + ` (
-			  name LowCardinality(String)
-			, date Date
-			, percent Float32
-		) ENGINE = ReplacingMergeTree ORDER BY (name, date);
-	`
+				  name LowCardinality(String)
+				, date Date
+				, percent Float32
+			) ENGINE = ReplacingMergeTree ORDER BY (name, date);
+		`
 	ipcWeeksInsert = "INSERT INTO " + ipcWeeksTable
 	ipcWeeksField  = "Наименование"
 )
@@ -53,16 +53,7 @@ func (s *IpcWeeksStat) getXlsDataUrl() (url string, err error) {
 	return url, nil
 }
 
-func (s *IpcWeeksStat) export() (table *[][]string, err error) {
-	var xlsDataUrl string
-	if xlsDataUrl, err = s.getXlsDataUrl(); err != nil {
-		log.Errorf("getXlsDataUrl  %v+", err)
-		return nil, err
-	}
-	var xlsx *excelize.File
-	if xlsx, err = util.GetXlsx(xlsDataUrl); err != nil {
-		return nil, err
-	}
+func parseIpcWeeks(xlsx *excelize.File) (table *[][]string, err error) {
 	table = new([][]string)
 	for _, sheet := range xlsx.GetSheetList() {
 		var year, fieldIdx int
@@ -100,6 +91,19 @@ func (s *IpcWeeksStat) export() (table *[][]string, err error) {
 	return table, nil
 }
 
+func (s *IpcWeeksStat) export() (table *[][]string, err error) {
+	var xlsDataUrl string
+	if xlsDataUrl, err = s.getXlsDataUrl(); err != nil {
+		log.Errorf("getXlsDataUrl  %v+", err)
+		return nil, err
+	}
+	var xlsx *excelize.File
+	if xlsx, err = util.GetXlsx(xlsDataUrl); err != nil {
+		return nil, err
+	}
+	return parseIpcWeeks(xlsx)
+}
+
 func (s *IpcWeeksStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
 	if err = conn.Exec(ctx, ipcWeeksDdl); err != nil {
 		return count, err
@@ -125,6 +129,12 @@ func (s *IpcWeeksStat) Import(ctx context.Context, conn driver.Conn) (count int6
 		count++
 	}
 	if err = batch.Send(); err != nil {
+		return count, err
+	}
+	if err = util.UpsertSeriesCatalog(ctx, conn, ipcWeeksSeriesMeta()); err != nil {
+		return count, err
+	}
+	if _, err = util.CreateView(ctx, conn, rosstatMacroView); err != nil {
 		return count, err
 	}
 	return count, nil

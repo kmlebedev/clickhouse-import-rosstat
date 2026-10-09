@@ -55,5 +55,5 @@ func init() {
 		) ENGINE = ReplacingMergeTree ORDER BY (date);`,
 		ImportFunc: ruoniaImport,
 	}
-	chimport.Stats = append(chimport.Stats, &ruania)
+	chimport.Stats = append(chimport.Stats, &publishedStat{ImportStat: &ruania, meta: cbrRuaniaSeriesMeta})
 }

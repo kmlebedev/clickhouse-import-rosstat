@@ -69,5 +69,5 @@ func init() {
 		) ENGINE = ReplacingMergeTree ORDER BY (name, date);`,
 		ImportFunc: inflExpImport,
 	}
-	chimport.Stats = append(chimport.Stats, &inflExp)
+	chimport.Stats = append(chimport.Stats, &publishedStat{ImportStat: &inflExp, meta: cbrInflExpSeriesMeta})
 }

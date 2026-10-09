@@ -62,5 +62,5 @@ var cbrBankIntRate = util.ClickHouseImport{
 }
 
 func init() {
-	chimport.Stats = append(chimport.Stats, &cbrBankIntRate)
+	chimport.Stats = append(chimport.Stats, &publishedStat{ImportStat: &cbrBankIntRate, meta: cbrBankIntRateSeriesMeta})
 }
