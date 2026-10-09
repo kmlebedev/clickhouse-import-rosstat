@@ -22,6 +22,17 @@
 - Типовые цели: `make env-check`, `make ch-status`, `make import STAT=<имя>`, `make mcp-user` (создание `kimi_reader` и грантов; после импорта витрин), `make mcp-check` (MCP end-to-end).
 - Пароль `kimi_reader` не печатать: `make mcp-user` и `make mcp-check` его маскируют и не выводят.
 
+## Инструменты GoLand (MCP `jetbrains`)
+
+Если в сессии доступны инструменты `mcp__jetbrains__*` (GoLand запущен с этим проектом и MCP-сервер включён), используй их там, где они точнее и дешевле по токенам, чем чтение файлов и grep:
+
+- Проверка правок: `get_file_problems` / `lint_files` вместо чтения файла целиком и лишнего `go build` — IDE отдаёт ошибки и инспекции по своему индексу.
+- Сигнатуры и типы: `get_symbol_info` вместо чтения файла ради одной функции.
+- Навигация: `search_symbol` и `analyze_calls` (иерархия вызовов) вместо серии `Grep`.
+- Переименование символов: только `rename_refactoring`, никогда sed по репозиторию.
+
+Если инструментов `mcp__jetbrains__*` в сессии нет — работай обычными `Grep`/`Read`/`Edit`, это не блокер. Терминал IDE (`execute_terminal_command`), run-конфигурации и `build_project` не использовать: все команды идут через `make` (см. «Окружение разработки»). SQL к ClickHouse — только через MCP `clickhouse` (пользователь `kimi_reader`), database-инструменты IDE для этого не использовать. Если инструменты пропали после перезапуска GoLand — порт мог смениться: актуальный URL смотри в GoLand Settings | Tools | MCP Server (Copy HTTP Stream Config) и обнови запись `jetbrains` в `~/.kimi-code/mcp.json`.
+
 ## Жёсткие правила (нарушение = переделка)
 
 1. **Секреты только через `os.Getenv`**. Никогда — ни в коде, ни в комментариях, ни в curl-примерах — не писать пароли, токены, email. В истории репозитория уже была утечка; pre-commit с gitleaks рекомендован.

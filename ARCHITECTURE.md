@@ -395,6 +395,8 @@ uv run --with mcp-clickhouse --python 3.12 mcp-clickhouse
 
 Правило для новых источников и рядов (см. AGENTS.md, правило 11): каждый ряд описан в `series_catalog`, каждая витрина имеет комментарии таблицы и колонок и грант `kimi_reader`.
 
+Отдельно от data-контура: опциональный dev-MCP `jetbrains` — встроенный MCP-сервер GoLand (2025.2+, HTTP-stream `http://127.0.0.1:<динамический порт>/stream`, запись в `~/.kimi-code/mcp.json`). Даёт агенту инструменты IDE для работы с кодом (`get_file_problems`, `get_symbol_info`, `search_symbol`, `analyze_calls`, `rename_refactoring`); правила использования и запреты — в AGENTS.md, раздел «Инструменты GoLand (MCP `jetbrains`)», настройка — в README, «MCP GoLand (опционально)». К данным ClickHouse отношения не имеет.
+
 ## 7. Календарь триггеров (актуальный Q4-2026)
 
 | Дата | Событие | Действие модели |
