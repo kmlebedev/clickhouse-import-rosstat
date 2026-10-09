@@ -1,0 +1,14 @@
+version: 2
+updates:
+  # Настройка обновлений для Go (go.mod / go.sum)
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly" # Как часто проверять: daily (ежедневно), weekly (еженедельно), monthly (ежемесячно)
+    open-pull-requests-limit: 5 # Максимум 5 одновременно открытых PR от Dependabot
+
+  # Рекомендуется также обновлять сами GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

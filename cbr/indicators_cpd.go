@@ -20,8 +20,8 @@ import (
 
 func init() {
 	indicatorsCpd := util.HdBase{
-		TableName: "cbr_indicators_cpd",
-		DataUrl:   getIndicatorsCpdXlsDataUrl(),
+		TableName:   "cbr_indicators_cpd",
+		DataUrlFunc: getIndicatorsCpdXlsDataUrl,
 		CreateTable: `CREATE TABLE IF NOT EXISTS %s (
               name LowCardinality(String)
 			, date Date
