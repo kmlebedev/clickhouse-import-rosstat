@@ -21,6 +21,7 @@ Go-конвейер импорта российской макроэкономи
 | `bls` | BLS API v2: CPI (CUUR0000SA0, CUSR0000SA0), безработица, NFP, средняя зарплата, PPI, JOLTS | `macro_series` (`source = 'bls'`), каталог `series_catalog`, витрина `v_bls_macro` | ежедневно 12:23 |
 | `bea` | BEA API: индексы PCE (headline, excluding food and energy), таблица NIPA T20804 | `macro_series` (`source = 'bea'`) | ежедневно 12:37 |
 | `gold` | Золото: фиксинг MOEX GOLDFIXME (₽/г) пересчитан в USD/oz по курсу ЦБ | `gold_prices` (`venue = 'moex_fix_usd'`); каталог `series_catalog`, витрина `v_gold_prices` | ежедневно 18:47 |
+| `moex` | МосБиржа ISS: свечи PLZL (OHLCV), индекс RGBI, доходности G-curve ОФЗ (1y/3y/5y/10y) | `stock_prices` (`code = 'PLZL'`), `ofz_curve`; каталог `series_catalog`, витрины `v_stock_prices`, `v_ofz_curve` | ежедневно 19:13 |
 | `financial` | Legacy: корпоративные databook'и (ЧМФ, ММК, НЛМК, Полюс, ЮГК), investing.com, РЖД | `databook_*`, `polyus_financial_metrics` и др. | понедельник 10:23 |
 
 Импортёр `gold` — временный: производная цена, не LBMA. Официальный LBMA AM/PM пока не подключён, см. «Ограничения».
@@ -36,6 +37,7 @@ fred/                    FRED CSV → macro_series
 bls/                     BLS API v2 → macro_series
 bea/                     BEA API (NIPA T20804) → macro_series
 gold/                    MOEX GOLDFIXME + cbr_currency_usd → gold_prices
+moex/                    MOEX ISS: свечи PLZL → stock_prices, RGBI + G-curve → ofz_curve
 financial/               legacy-контур (database/sql, свой main), новый код туда не добавляется
 dagu/                    расписания: один DAG-файл на домен, имя файла = имя DAG
 docs/                    аналитические статьи и дорожная карта
@@ -87,7 +89,7 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 | Команда | Что делает |
 |---|---|
 | `make lint` | `gofmt -l` (падает, если есть неотформатированный код) и `golangci-lint run ./...` |
-| `make test` | `go vet` и `go test -race ./...` (тесты есть у `bls`, `bea`, `cbr`, `rosstat`, `minfin`, `gold`) |
+| `make test` | `go vet` и `go test -race ./...` (тесты есть у `bls`, `bea`, `cbr`, `rosstat`, `minfin`, `gold`, `moex`) |
 | `make build` | статический бинарник `linux/amd64` в `build/` |
 | `make run` | сборка и запуск (нужен `CLICKHOUSE_URL`) |
 | `make fmt` | `gofmt -w .` |
@@ -239,6 +241,7 @@ MCP GoLand (опционально, ускоряет работу Kimi Code с �
 - **`financial/`.** Legacy-контур (database/sql, свой main). Новые импортёры туда не добавляются.
 - **Имена импортёров.** `Name()` у `fred` — `fred` (несколько серий, одна таблица `macro_series`), у `cbr` часть импортёров делит таблицу (`cbr_currency_usd`, `households_b_mes`).
 - **Таблица `gold_prices` использует `Date32`.** Так как LBMA-ряд начинается в 1968 году.
+- **Доходности G-curve (`ofz_curve`, теноры 1y/3y/5y/10y) — без ретроспективы.** Эндпоинт MOEX ISS `/iss/engines/stock/zcyc.json` отдаёт только снимок текущего дня; история накапливается с даты первого запуска импортёра. Индекс RGBI (тот же zcyc + свечи) имеет полную историю с 2010 года.
 
 ## Grafana
 

@@ -1,0 +1,20 @@
+type: chain
+schedule: "13 19 * * *"
+overlap_policy: skip
+
+steps:
+  - id: stock_prices
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=stock_prices
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  - id: ofz_curve
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=ofz_curve
+    retry_policy:
+      limit: 3
+      interval_sec: 300
