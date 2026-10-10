@@ -1,188 +1,173 @@
 package polyus
 
-import "testing"
+import (
+	"testing"
 
-// TestGuardKPIChangeColumns держит защиту от подмены периодов в KPI-шапке.
-//
-// В русских пресс-релизах (например, за 1 п/г 2026) шапка содержит шесть колонок
-// — «1 п/г 2026», «1 п/г 2025», «Изм. за год», «2 п/г 2025», «Изм. за п/г», — а
-// parseKPIPage различает только три: слова «Изм. …» периодом не становятся, и
-// процент изменения за год встаёт в слот 2025H2. На фикстуре
-// testdata/press_reliz_1h26_p1.txt это даёт gold_output 2025H2 = -2 (это «(2%)»
-// из колонки «Изм. за год»), gold_sold 2025H2 = -20 («(20%)») и ещё семь таких
-// же записей: значения, которых в отчёте за 2 п/г 2025 нет вовсе.
-//
-// Юнит-тест на сам разбор такую подмену не поймает: parseKPIPage ведёт себя
-// ровно так, как написано, и «правильное» поведение здесь — вопрос того, какие
-// записи попадают в витрину. Поэтому проверяется именно фильтр, который стоит
-// между разбором и batch.Append, и проверяется на том, что первым элементом
-// рушит защиту: если фильтра нет, тест падает на gold_output 2025H2 = -2.
-//
-// Легитимные периоды (2026H1, 2025H1) обязаны выжить: их токены стоят на своих
-// местах, и отбрасываются они только вместе с метрикой, чей период подменён.
-// Что фильтр не выкидывает целый отчёт с другим типом периода — отдельный тест
-// TestGuardKeepsAnnualPeriods.
-func TestGuardKPIChangeColumns(t *testing.T) {
-	const path = "testdata/press_reliz_1h26_p1.txt"
+	log "github.com/sirupsen/logrus"
+)
 
-	records, err := parseKPIPage(path, "u", 1)
-	if err != nil {
-		t.Fatalf("parseKPIPage: %v", err)
+// TestGuardDropsUnassignedValues держит два свойства резервного guard'а на
+// синтетической строке: значение, не накрытое ни одной колонкой-периодом, не
+// становится записью, а сама запись с пустым периодом до витрины не доходит.
+//
+// Строка собрана вручную: на живых фикстурах гарантия другая и более сильная —
+// разбор раскладывает всё, и пустого периода не появляется вовсе (см.
+// TestGuardIsInertOnRealFixtures). Здесь проверяется именно поведение самого
+// guard'а, поэтому вход подан заведомо испорченный.
+func TestGuardDropsUnassignedValues(t *testing.T) {
+	records := []MetricRecord{
+		{Metric: "revenue", Period: "2026H1", Value: 4674},
+		// Пустой период — ошибка разбора: такая запись дала бы в витрине ключ
+		// (metric, "") и столкнулась бы со всеми записями той же метрики.
+		{Metric: "revenue", Period: "", Value: 999},
+		{Metric: "gold_output", Period: "2026H1", Value: 1287},
 	}
 
-	periods := headerPeriods(path)
-	kept, dropped := guardKPIRecords(records, periods)
+	kept, dropped := guardRecords(records)
 
-	// Подменённый период — последняя колонка шапки: она и есть та, чьи значения
-	// parseKPIPage берёт из следующей колонки таблицы через неопознанное
-	// «Изм. за год».
-	if got := untrustworthyPeriod(periods); got != "2025H2" {
-		t.Fatalf("untrustworthyPeriod = %q, want 2025H2", got)
+	if dropped != 1 {
+		t.Errorf("dropped = %d, want 1 (the record with an empty period)", dropped)
 	}
 
-	// Ни один подменённый период не попал в batch.
+	if len(kept) != 2 {
+		t.Fatalf("kept = %d records, want 2: %+v", len(kept), kept)
+	}
+
 	for _, r := range kept {
-		if r.Period == untrustworthyPeriod(periods) {
+		if r.Period == "" {
+			t.Errorf("record with an empty period survived the guard: %+v", r)
+		}
+		if r.Value == 999 {
+			t.Errorf("the empty-period record's value reached the batch: %+v", r)
+		}
+	}
+}
+
+// TestGuardKeepsUnassignedCount держит связь guard'а со счётчиком
+// нераспределённых значений: guard его не считает сам, а получает от парсера и
+// возвращает нетронутым — счётчик описывает разбор, а не отброс.
+//
+// Число взято живое: на строке «Производство золота» русского релиза 1 п/г 2026
+// нераспределённых ровно два значения — (2%) и 6% из колонок изменения
+// (TestUnassignedCountsChangeColumnValuesOnRUGoldRow). Guard обязан донести эту
+// двойку до итоговой строки импортёра, а не занулить её.
+func TestGuardKeepsUnassignedCount(t *testing.T) {
+	const unassigned = 2
+
+	kept, _ := guardRecords([]MetricRecord{
+		{Metric: "gold_output", Period: "2026H1", Value: 1287},
+		{Metric: "gold_output", Period: "2025H1", Value: 1311},
+		{Metric: "gold_output", Period: "2025H2", Value: 1218},
+	})
+
+	if kept == nil {
+		t.Fatal("guard returned nil records for a clean input")
+	}
+
+	if got := countUnassigned([]int{unassigned, 0}); got != unassigned {
+		t.Errorf("unassigned counter = %d, want %d", got, unassigned)
+	}
+}
+
+// TestGuardIsInertOnRealFixtures держит главное свойство нового guard'а: он
+// резервный и по умолчанию НЕ отбрасывает ничего.
+//
+// Старый guard отбрасывал последнюю колонку шапки: позиционный разбор относил
+// значение колонки изменения («Изм. за год») на период соседней колонки, и
+// вместе с ним выбрасывались настоящие значения. Колоночная модель устранила
+// причину — значение кладётся по своей X, — поэтому легитимный период теперь
+// неотличим от «неправильного» и отбрасывать нечего. Тест держит, что ни одна
+// распознанная запись не потеряна на всех включённых отчётах.
+func TestGuardIsInertOnRealFixtures(t *testing.T) {
+	fixtures := []struct {
+		path string
+		page int
+	}{
+		{"testdata/press_reliz_1h26_p1.tsv", 1},
+		{"testdata/press_release_hist_p1.tsv", 4},
+		{"testdata/press_release_fy2024_p4.tsv", 4},
+	}
+
+	for _, fixture := range fixtures {
+		records, err := parseKPIPage(fixture.path, "https://example.invalid/x.pdf", fixture.page)
+		if err != nil {
+			t.Fatalf("parseKPIPage %s: %v", fixture.path, err)
+		}
+		if len(records) == 0 {
+			t.Fatalf("%s parsed to zero records: the test lost its subject", fixture.path)
+		}
+
+		kept, dropped := guardRecords(records)
+
+		if dropped != 0 {
 			t.Errorf(
-				"period %s of metric %s reached the batch but its values came from a change column",
-				r.Period,
-				r.Metric,
+				"%s: guard dropped %d records, want 0: the column model places values by X, so there is nothing to drop",
+				fixture.path,
+				dropped,
 			)
 		}
-	}
-
-	// Каждая отброшенная запись принадлежит подменённому периоду: легитимные
-	// периоды обязаны дойти до batch.
-	if dropped == 0 {
-		t.Fatal("no records dropped: the change-column guard is not wired in")
-	}
-	bad := untrustworthyPeriod(periods)
-	for _, r := range records {
-		if r.Period != bad {
-			continue
-		}
-		found := false
-		for _, keptRecord := range kept {
-			if keptRecord == r {
-				found = true
-			}
-		}
-		if found {
-			t.Errorf("metric %s period %s survived the guard", r.Metric, r.Period)
-		}
-	}
-
-	// Точные значения: gold_output 2025H2 = -2 — это «(2%)» из колонки
-	// «Изм. за год», и оно обязано быть отброшено вместе с остальными записями
-	// этой метрики за 2025H2.
-	var sawChangeColumnValue bool
-	for _, r := range records {
-		if r.Metric == "gold_output" && r.Period == "2025H2" && r.Value == -2 {
-			sawChangeColumnValue = true
-		}
-	}
-	if !sawChangeColumnValue {
-		t.Fatal("fixture no longer produces gold_output 2025H2 = -2: the test lost its subject")
-	}
-	for _, r := range kept {
-		if r.Metric == "gold_output" && r.Period == "2025H2" {
-			t.Errorf("gold_output 2025H2 = %v reached the batch, want dropped", r.Value)
-		}
-	}
-
-	// Легитимные периоды выживают и несут верные значения.
-	want := map[string]float64{
-		"gold_output/2026H1":       1287,
-		"gold_output/2025H1":       1311,
-		"gold_sold/2026H1":         950,
-		"tcc_per_ounce/2026H1":     1069,
-		"revenue/2026H1":           4674,
-		"profit_for_period/2026H1": 829,
-	}
-	got := make(map[string]float64)
-	for _, r := range kept {
-		got[r.Metric+"/"+r.Period] = r.Value
-	}
-	for key, value := range want {
-		if got[key] != value {
-			t.Errorf("%s = %v, want %v (legitimate period was dropped or mangled)", key, got[key], value)
+		if len(kept) != len(records) {
+			t.Errorf("%s: kept %d records, want all %d", fixture.path, len(kept), len(records))
 		}
 	}
 }
 
-// TestBatchKeysAreUnique держит слияние дублей, которое ClickHouse делает молча.
+// TestWarnUnassignedCounts держит громкость резерва: счётчик нераспределённых
+// значений, отличный от нуля, обязан попасть в лог на уровне Warn. Молча
+// потерянное значение выглядит как чисто разобранная строка.
 //
-// Записи разных отчётов за один и тот же период дают один и тот же ключ
-// ORDER BY (company, metric, period): KPI-релиз 1 п/г 2026 и МСФО-отчёт за тот же
-// 2026H1 оба печатают eps_basic и eps_diluted за 2026H1. Сливать их нельзя — в
-// релизе это 0,87 (прибыль на акцию по «1 п/г»), в МСФО 0,87 (за полугодие по
-// МСБУ 33), и это разные величины с одной меткой. В живом прогоне такой батч из
-// 28 записей ClickHouse записал как 25 строк («Wrote block with 25 rows ... rows/cols
-// 28/9» в clickhouse.log), то есть три записи исчезли, а лог импортёра о них
-// отчитался.
-//
-// Поэтому batch.Append вызывается только для ключа, которого в батче ещё не было:
-// дубли считаются и логируются, а счётчик импортированных строк совпадает с
-// числом сохранённых строк.
-func TestBatchKeysAreUnique(t *testing.T) {
-	dedup := batchDedup{seen: make(map[batchKey]bool)}
+// Заодно проверяется обратная сторона: при нулевом счётчике в лог ничего не
+// пишется, иначе предупреждение перестало бы что-либо значить.
+func TestWarnUnassignedCounts(t *testing.T) {
+	// Уровень Warn снимается на время теста, поэтому hook получает записи и
+	// тогда, когда logrus настроен иначе.
+	logger := log.StandardLogger()
 
-	records := []MetricRecord{
-		{Metric: "eps_basic", Period: "2026H1", Value: 0.87},
-		{Metric: "eps_diluted", Period: "2026H1", Value: 0.87},
-		{Metric: "eps_basic", Period: "2026H1", Value: 0.87},
-		{Metric: "gold_output", Period: "2026H1", Value: 1287},
-	}
+	previous := logger.GetLevel()
+	logger.SetLevel(log.WarnLevel)
 
-	var added []string
-	for _, record := range records {
-		if dedup.add(record) {
-			added = append(added, record.Metric)
-		}
+	defer func() { logger.SetLevel(previous) }()
+
+	hook := &warnCapture{}
+	logger.AddHook(hook)
+
+	defer logger.ReplaceHooks(make(log.LevelHooks))
+
+	warnUnassignedCounts([]int{0, 0, 0}, 3)
+
+	if len(hook.entries) != 0 {
+		t.Errorf("warned on zero unassigned values: %v", hook.entries)
 	}
 
-	want := []string{"eps_basic", "eps_diluted", "gold_output"}
-	if len(added) != len(want) {
-		t.Fatalf("batchDedup.add accepted %d records, want %d: %v", len(added), len(want), added)
+	warnUnassignedCounts([]int{2, 1}, 2)
+
+	if len(hook.entries) != 1 {
+		t.Fatalf("warnings = %d, want 1: %v", len(hook.entries), hook.entries)
 	}
-	for i := range want {
-		if added[i] != want[i] {
-			t.Errorf("added[%d] = %q, want %q", i, added[i], want[i])
-		}
+
+	entry := hook.entries[0]
+	if got := entry.Data["unassigned"]; got != 3 {
+		t.Errorf("unassigned in the warning = %v, want 3 (2+1)", got)
 	}
-	if dedup.duplicates != 1 {
-		t.Errorf("duplicates = %d, want 1", dedup.duplicates)
+	if got := entry.Data["reports"]; got != 2 {
+		t.Errorf("reports in the warning = %v, want 2", got)
+	}
+	if entry.Level != log.WarnLevel {
+		t.Errorf("level = %v, want warn", entry.Level)
 	}
 }
 
-// TestBatchKeysCountRows держит счётчик строк импортёра: он равен числу вызовов
-// batch.Append, то есть совпадает с batch.Rows(). Без слияния ключей импортёр
-// отчитывался бы о 28 строках, записав 25.
-func TestBatchKeysCountRows(t *testing.T) {
-	// Ровно тот случай из живого прогона: две метрики, приходящие и из релиза, и
-	// из МСФО за один период.
-	records := []MetricRecord{
-		{Metric: "eps_basic", Period: "2026H1", Value: 0.87},
-		{Metric: "eps_diluted", Period: "2026H1", Value: 0.87},
-		{Metric: "gold_output", Period: "2026H1", Value: 1287},
-		{Metric: "eps_basic", Period: "2026H1", Value: 0.87},
-	}
+// warnCapture собирает записи лога для проверки.
+type warnCapture struct {
+	entries []*log.Entry
+}
 
-	// Тот же путь, что у Import: счётчик инкрементируется на каждом принятом
-	// batch.Append, а не на каждой разобранной записи.
-	dedup := batchDedup{seen: make(map[batchKey]bool)}
-	count := 0
-	for _, record := range records {
-		if !dedup.add(record) {
-			continue
-		}
-		count++
-	}
+func (h *warnCapture) Levels() []log.Level {
+	return log.AllLevels
+}
 
-	if count != 3 {
-		t.Errorf("appended %d rows, want 3: appended rows must match rows stored by ClickHouse", count)
-	}
-	if count != len(records)-dedup.duplicates {
-		t.Errorf("count = %d, but records(%d) - duplicates(%d) = %d", count, len(records), dedup.duplicates, len(records)-dedup.duplicates)
-	}
+func (h *warnCapture) Fire(entry *log.Entry) error {
+	h.entries = append(h.entries, entry)
+
+	return nil
 }

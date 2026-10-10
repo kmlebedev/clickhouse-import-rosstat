@@ -35,8 +35,14 @@ func isTSVHeaderRow(firstField string) bool {
 	return firstField == tsvHeaderField
 }
 
-// Word — слово со страницы PDF: текст и его рамка в точках, с началом
-// координат в левом верхнем углу страницы.
+// Word — слово со страницы PDF: текст, номер страницы и рамка в точках, с
+// началом координат в левом верхнем углу страницы.
+//
+// Page — колонка page_num снимка. Координаты страниц pdftotext начинает заново
+// на каждой странице, поэтому без номера нельзя отличить строку седьмой страницы
+// от строки шестой: Top у них совпадают. Номер нужен и для провенанса витрины
+// (source_page), и для того, чтобы строки разных страниц склеенного файла не
+// слились в одну при группировке по Top.
 //
 // Block и Line — структурные номера из TSV (block_num, line_num). Tesseract
 // кладёт в них собственное членение на блоки и строки, которое не совпадает
@@ -44,6 +50,7 @@ func isTSVHeaderRow(firstField string) bool {
 // по Top, а не группировка по Line.
 type Word struct {
 	Text   string
+	Page   int
 	Left   float64
 	Top    float64
 	Width  float64
@@ -52,8 +59,12 @@ type Word struct {
 	Line   int
 }
 
-// Line — визуальная строка: слова с одинаковым (в пределах deltaTop) Top,
-// упорядоченные по Left.
+// Line — визуальная строка: слова с одной страницы и одинаковым (в пределах
+// deltaTop) Top, упорядоченные по Left.
+//
+// Номер страницы в Line не дублируется: он один у всех её слов, и берётся из
+// первого слова (pageOfLine). Отдельным полем он был бы третьим источником того
+// же факта — рядом с номером, переданным разбору параметром.
 type Line struct {
 	Top   float64
 	Words []Word
@@ -97,6 +108,11 @@ func parseTSV(r io.Reader) ([]Word, error) {
 			continue
 		}
 
+		page, err := parseTSVInt(fields[1], lineNum, "page_num")
+		if err != nil {
+			return nil, err
+		}
+
 		left, err := parseTSVFloat(fields[6], lineNum, "left")
 		if err != nil {
 			return nil, err
@@ -129,6 +145,7 @@ func parseTSV(r io.Reader) ([]Word, error) {
 
 		words = append(words, Word{
 			Text:   fields[11],
+			Page:   page,
 			Left:   left,
 			Top:    top,
 			Width:  width,
@@ -167,16 +184,24 @@ func parseTSVInt(raw string, lineNum int, column string) (int, error) {
 	return value, nil
 }
 
-// groupByLine собирает визуальные строки: сортирует слова по Top, затем по
-// Left, и накапливает группу, пока Top слова отличается от Top первого слова
-// группы не более чем на deltaTop.
+// groupByLine собирает визуальные строки: сортирует слова по номеру страницы и
+// Top, внутри строки — по Left, и накапливает группу, пока страница и Top слова
+// не отличаются от начала группы (страница — точно, Top — не более чем на
+// deltaTop).
+//
+// Номер страницы входит в ключ группы, потому что координаты pdftotext начинает
+// заново на каждой странице: у строки шестой страницы и строки седьмой Top
+// совпадают, и склеенный файл joinFiles слил бы их в одну строку. На снимке
+// одной страницы номер у всех слов один, и группировка идёт ровно так же, как
+// если бы его не было.
 //
 // deltaTop == 0 — штатный режим: у слов одной визуальной строки Top совпадает
 // точно, и группировка идёт по точному значению. Ненулевой допуск нужен только
 // как защита от дрейфа базовой линии у слов с другим размером шрифта; дрожание
 // координат округлением не лечится — округление Top сломало бы группировку.
 //
-// Возвращаются группы в порядке возрастания Top, слова внутри — по Left.
+// Возвращаются группы в порядке страниц и возрастания Top, слова внутри — по
+// Left.
 func groupByLine(words []Word, deltaTop float64) []Line {
 	if len(words) == 0 {
 		return nil
@@ -185,6 +210,10 @@ func groupByLine(words []Word, deltaTop float64) []Line {
 	sorted := make([]Word, len(words))
 	copy(sorted, words)
 	sort.SliceStable(sorted, func(i, j int) bool {
+		if sorted[i].Page != sorted[j].Page {
+			return sorted[i].Page < sorted[j].Page
+		}
+
 		if sorted[i].Top != sorted[j].Top {
 			return sorted[i].Top < sorted[j].Top
 		}
@@ -196,7 +225,9 @@ func groupByLine(words []Word, deltaTop float64) []Line {
 
 	start := 0
 	for i := 1; i <= len(sorted); i++ {
-		if i < len(sorted) && sorted[i].Top-sorted[start].Top <= deltaTop {
+		if i < len(sorted) &&
+			sorted[i].Page == sorted[start].Page &&
+			sorted[i].Top-sorted[start].Top <= deltaTop {
 			continue
 		}
 

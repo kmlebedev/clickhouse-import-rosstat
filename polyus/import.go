@@ -64,6 +64,12 @@ func (s *financialMetricsImport) Import(ctx context.Context, conn driver.Conn) (
 
 	var failed, skipped, dropped int
 
+	// unassigned собирает по отчёту счётчики значений, не ставших ни одной
+	// записью (см. guard.go). Guard их не отбрасывает — они и должны остаться за
+	// бортом, — но сумма уходит в итоговую строку: по ней видно, что шапка и
+	// разбор разошлись.
+	var unassigned []int
+
 	// Одно время загрузки на весь батч: loaded_at объявлен с DEFAULT now(), но
 	// batch-вставка ClickHouse всё равно требует значение на каждую из девяти
 	// колонок. Одинаковая метка времени и делает строки одной загрузки одной
@@ -84,7 +90,7 @@ func (s *financialMetricsImport) Import(ctx context.Context, conn driver.Conn) (
 			continue
 		}
 
-		records, header, parseErr := parseReport(ctx, report)
+		records, pageUnassigned, parseErr := parseReport(ctx, report)
 		if parseErr != nil {
 			// Один недоступный или нечитаемый отчёт не роняет импорт целиком:
 			// остальные отчёты по-прежнему попадают в витрину.
@@ -94,11 +100,15 @@ func (s *financialMetricsImport) Import(ctx context.Context, conn driver.Conn) (
 			continue
 		}
 
-		// Записи, чьи значения пришли из колонки-изменения, отбрасываются здесь:
-		// в витрину попадают только периоды, объявленные шапкой этого отчёта.
+		// Guard оставлен резервом: он больше не отбрасывает записи по периоду
+		// (значение кладётся по своей X), а не пропускает в витрину запись без
+		// периода. Нераспределённые значения он получает от разбора и не теряет
+		// молча — см. warnUnassignedCounts ниже.
 		if report.Kind == "kpi" {
+			unassigned = append(unassigned, pageUnassigned)
+
 			var guardDropped int
-			records, guardDropped = guardKPIRecords(records, header)
+			records, guardDropped = guardRecords(records)
 			dropped += guardDropped
 		}
 
@@ -136,14 +146,17 @@ func (s *financialMetricsImport) Import(ctx context.Context, conn driver.Conn) (
 		return 0, err
 	}
 
+	warnUnassignedCounts(unassigned, len(unassigned))
+
 	log.Infof(
-		"Imported %d rows of %s (%d reports skipped as disabled, %d failed, %d change-column records dropped, %d duplicate keys skipped)",
+		"Imported %d rows of %s (%d reports skipped as disabled, %d failed, %d periodless records dropped, %d duplicate keys skipped, %d values outside period columns)",
 		count,
 		financialMetricsTable,
 		skipped,
 		failed,
 		dropped,
 		dedup.duplicates,
+		countUnassigned(unassigned),
 	)
 
 	return count, nil
@@ -197,18 +210,19 @@ type batchDedup struct {
 // parseReport скачивает PDF отчёта во временный каталог, извлекает из него
 // указанные страницы и разбирает их парсером соответствующего типа.
 //
-// Возвращает также периоды, объявленные шапкой страницы: для KPI-отчёта по ним
-// решается, какие записи достоверны (см. guardKPIRecords). У МСФО-страницы шапки
-// с периодами нет вовсе — период приходит из метаданных отчёта, — поэтому там
-// возвращается пустой слайс.
+// Возвращает также число значений, не ставших ни одной записью, — сигнал для
+// guard'а (см. guardRecords) и импортёра. У МСФО-страницы такого счётчика нет:
+// её разбор берёт из строки только первое значение, а сравнительный столбец
+// отчётного периода — не нераспределённое значение, а другая величина того же
+// показателя, и в счётчик она не попадает. Поэтому МСФО-ветка возвращает ноль.
 //
 // Каталог удаляется целиком при выходе: textPath передаётся в extractPDF с
 // компонентом каталога (filepath.Join(dir, ...)), потому что extractPDF кладёт
 // промежуточные файлы страниц рядом с ним через filepath.Dir.
-func parseReport(ctx context.Context, report Report) ([]MetricRecord, []PeriodColumn, error) {
+func parseReport(ctx context.Context, report Report) ([]MetricRecord, int, error) {
 	dir, err := os.MkdirTemp("", "polyus-report-*")
 	if err != nil {
-		return nil, nil, fmt.Errorf("create temp dir: %w", err)
+		return nil, 0, fmt.Errorf("create temp dir: %w", err)
 	}
 	defer func() {
 		if removeErr := os.RemoveAll(dir); removeErr != nil {
@@ -218,23 +232,23 @@ func parseReport(ctx context.Context, report Report) ([]MetricRecord, []PeriodCo
 
 	pdfPath := filepath.Join(dir, "report.pdf")
 	if err = downloadPDF(ctx, report.URL, pdfPath); err != nil {
-		return nil, nil, fmt.Errorf("download %s: %w", report.URL, err)
+		return nil, 0, fmt.Errorf("download %s: %w", report.URL, err)
 	}
 
 	textPath := filepath.Join(dir, "report.txt")
 	if err = extractPDF(ctx, pdfPath, textPath, report.Pages); err != nil {
-		return nil, nil, fmt.Errorf("extract %s: %w", report.URL, err)
+		return nil, 0, fmt.Errorf("extract %s: %w", report.URL, err)
 	}
 
 	switch report.Kind {
 	case "kpi":
 		// KPI-парсер берёт период из шапки страницы, а не из метаданных отчёта.
-		records, err := parseKPIPage(textPath, report.URL, report.Pages[0])
+		records, unassigned, err := parseReportKPIPage(textPath, report.URL)
 		if err != nil {
-			return nil, nil, err
+			return nil, 0, err
 		}
 
-		return records, headerPeriods(textPath), nil
+		return records, unassigned, nil
 	case "ifrs":
 		records, err := parseIFRSPage(
 			textPath,
@@ -243,13 +257,32 @@ func parseReport(ctx context.Context, report Report) ([]MetricRecord, []PeriodCo
 			report.Period,
 		)
 		if err != nil {
-			return nil, nil, err
+			return nil, 0, err
 		}
 
-		return records, nil, nil
+		return records, 0, nil
 	default:
-		return nil, nil, fmt.Errorf("unknown report Kind %q", report.Kind)
+		return nil, 0, fmt.Errorf("unknown report Kind %q", report.Kind)
 	}
+}
+
+// parseReportKPIPage разбирает склеенный снимок KPI-отчёта и возвращает записи
+// вместе со счётчиком нераспределённых значений.
+//
+// Период каждой записи берётся из шапки страницы, а номер страницы — из самой
+// строки снимка (linePage): extractPDF склеивает все Report.Pages в один файл, и
+// номер, переданный параметром, верен только для первой страницы. Для отчётов
+// этого списка Pages содержит одну страницу, поэтому запасной номер совпадает с
+// настоящим; параметр остаётся как защита для будущих многостраничных KPI-снимков.
+func parseReportKPIPage(textPath, sourceURL string) ([]MetricRecord, int, error) {
+	lines, err := readTSVLines(textPath)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	records, unassigned := parseKPILines(lines, sourceURL, 0)
+
+	return records, unassigned, nil
 }
 
 func init() {

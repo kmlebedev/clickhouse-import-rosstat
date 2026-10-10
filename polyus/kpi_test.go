@@ -594,7 +594,7 @@ func TestSameMetricFromTwoHeadersBothSurvive(t *testing.T) {
 		both = append(both, shifted)
 	}
 
-	records := parseKPILines(both, "https://example.invalid/joined.pdf", 1)
+	records, _ := parseKPILines(both, "https://example.invalid/joined.pdf", 1)
 
 	byMetric := map[string]int{}
 	byKey := map[string]float64{}

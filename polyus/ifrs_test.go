@@ -260,6 +260,108 @@ func TestParseIFRSJoinedPages(t *testing.T) {
 			)
 		}
 	}
+
+	// Провенанс берётся из данных, а не из параметра: у склеенного файла номер
+	// страницы, переданный вызовом (6), верен только для первой страницы, и
+	// total_assets — строка седьмой — обязан нести 7.
+	for _, r := range records {
+		wantPage := 6
+		if r.Metric == "total_assets" {
+			wantPage = 7
+		}
+
+		if r.SourcePage != wantPage {
+			t.Errorf(
+				"%s: source_page = %d, want %d (the page the row is printed on, not the page passed to the parser)",
+				r.Metric,
+				r.SourcePage,
+				wantPage,
+			)
+		}
+	}
+}
+
+// TestSourcePageComesFromRow держит провенанс записи: source_page — номер
+// страницы строки, а не номер, переданный разбору параметром.
+//
+// На входе именно тот случай, который ломал провенанс: extractPDF склеивает в
+// один файл все Report.Pages отчёта (для английского МСФО 1 п/г 2026 — страницы
+// 6 и 7), а разбор получает номер первой из них (report.Pages[0] == 6).
+//
+// Склейка берётся производственная — joinIFRSFixtures повторяет joinFiles
+// побайтово, — поэтому проверяется реальный путь, а не собранная руками строка.
+func TestSourcePageComesFromRow(t *testing.T) {
+	joined := joinIFRSFixtures(t, "testdata/en_msfo_p6.tsv", "testdata/en_msfo_p7.tsv")
+
+	// параметр — 6, как report.Pages[0] в import.go; page-7 строки обязаны
+	// получить 7 из данных, а не унаследовать параметр.
+	records, err := parseIFRSPage(joined, "https://example.invalid/6m2026.pdf", 6, "2026H1")
+	if err != nil {
+		t.Fatalf("parseIFRSPage: %v", err)
+	}
+	if len(records) == 0 {
+		t.Fatal("joined snapshots parsed to zero records")
+	}
+
+	pages := map[int]int{}
+	for _, record := range records {
+		if record.SourcePage != 6 && record.SourcePage != 7 {
+			t.Errorf("%s: source_page = %d, want 6 or 7", record.Metric, record.SourcePage)
+		}
+		pages[record.SourcePage]++
+	}
+	// обе страницы должны быть представлены: иначе тест не доказывает, что
+	// провенанс берётся из данных, а не из параметра
+	if pages[6] == 0 || pages[7] == 0 {
+		t.Errorf("source_page spread = %v, want records from both page 6 and page 7", pages)
+	}
+}
+
+// TestGroupByLineSeparatesPages держит ключ группировки строк: слова склеенного
+// снимка группируются по (страница, Top), а не по одному Top.
+//
+// Координаты pdftotext начинает заново на каждой странице, поэтому слово шестой
+// страницы с Top 6.00 и слово седьмой с тем же Top — разные строки. Ключ без
+// номера страницы слил бы их в одну: в разборе это дало бы строку с метками
+// обеих страниц, то есть потерянные или подменённые значения.
+func TestGroupByLineSeparatesPages(t *testing.T) {
+	words := []Word{
+		{Text: "Total", Page: 6, Left: 70.94, Top: 6.00},
+		{Text: "revenue", Page: 6, Left: 106.0, Top: 6.00},
+		{Text: "Total", Page: 7, Left: 70.94, Top: 6.00},
+		{Text: "assets", Page: 7, Left: 117.0, Top: 6.00},
+	}
+
+	lines := groupByLine(words, 0)
+
+	if len(lines) != 2 {
+		t.Fatalf("got %d lines, want 2: words of different pages must not share a line", len(lines))
+	}
+
+	for i, line := range lines {
+		for _, word := range line.Words {
+			if word.Page != line.Words[0].Page {
+				t.Errorf("line %d mixes pages %d and %d", i, line.Words[0].Page, word.Page)
+			}
+		}
+	}
+}
+
+// TestLinePageFallsBackToParameter держит запасной номер страницы: у строки,
+// собранной из слов без номера (синтетический вход тестов), source_page берётся
+// из параметра разбора.
+func TestLinePageFallsBackToParameter(t *testing.T) {
+	line := Line{Top: 1, Words: []Word{{Text: "a", Left: 0, Top: 1}}}
+
+	if got := linePage(line, 4); got != 4 {
+		t.Errorf("linePage of a page-less line = %d, want the fallback 4", got)
+	}
+
+	line.Words[0].Page = 7
+
+	if got := linePage(line, 4); got != 7 {
+		t.Errorf("linePage = %d, want 7 from the row itself", got)
+	}
 }
 
 // joinIFRSFixtures склеивает TSV-снимки страниц в один файл так же, как это

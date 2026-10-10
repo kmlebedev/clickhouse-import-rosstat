@@ -59,14 +59,26 @@ func parseKPIPage(
 		return nil, err
 	}
 
-	return parseKPILines(lines, sourceURL, page), nil
+	records, _ := parseKPILines(lines, sourceURL, page)
+
+	return records, nil
 }
 
 // parseKPILines разбирает уже собранные визуальные строки снимка: та же работа,
 // что делает parseKPIPage, но над строками, а не над файлом. Нужна тестам,
 // которые подают синтезированные последовательности строк — например, две
-// таблицы со своими шапками подряд, как в склеенном многостраничном снимке.
-func parseKPILines(lines []Line, sourceURL string, page int) []MetricRecord {
+// таблицы со своими шапками подряд, как в склеенном многостраничном снимке, — и
+// импортёру, который читает счётчик нераспределённых значений (см. guard.go).
+//
+// page — запасной номер страницы: он попадает в записи только тех строк, номер
+// страницы которых не дошёл из TSV (синтезированные строки тестов). У строк из
+// снимка номер берётся из самой строки: extractPDF склеивает все Report.Pages в
+// один файл, и номер, переданный параметром, верен лишь для первой страницы.
+//
+// Второй результат — число значений, не ставших ни одной записью: числа в
+// непериодных колонках и токены, которые не разобрались в число. Число читается
+// как сигнал о расхождении шапки и разбора и уходит в итоговую строку импортёра.
+func parseKPILines(lines []Line, sourceURL string, page int) ([]MetricRecord, int) {
 	// На одной странице может быть несколько финансовых таблиц, и в склеенном
 	// многостраничном снимке они идут подряд без разделителя страниц
 	// (pdftotext -nopgbrk). Строку обслуживает ближайшая шапка СВЕРХУ, поэтому
@@ -125,7 +137,13 @@ func parseKPILines(lines []Line, sourceURL string, page int) []MetricRecord {
 			continue
 		}
 
-		lineRecords, lineUnassigned := recordsFromLine(lines[i], columns, "PJSC Polyus", sourceURL, page)
+		lineRecords, lineUnassigned := recordsFromLine(
+			lines[i],
+			columns,
+			"PJSC Polyus",
+			sourceURL,
+			linePage(lines[i], page),
+		)
 		if len(lineRecords) == 0 {
 			skipped++
 
@@ -147,7 +165,35 @@ func parseKPILines(lines []Line, sourceURL string, page int) []MetricRecord {
 		unassigned,
 	)
 
-	return records
+	return records, unassigned
+}
+
+// linePage возвращает номер страницы визуальной строки: номер её первого слова,
+// а если его не донесла сборка строки (синтетический вход тестов) — запасной.
+// Номер страницы нужен записи как провенанс (source_page витрины): у склеенного
+// многостраничного снимка строки разных страниц идут в одном списке, и номер,
+// переданный в разбор параметром, верен только для первой страницы. Запасной
+// номер оставлен ради синтезированных строк: у них колонка page_num не задана.
+func linePage(line Line, fallback int) int {
+	// Номер страницы одинаков у всех слов строки: groupByLine собирает строку
+	// только из слов одной страницы.
+	if page := pageOfLine(line); page != 0 {
+		return page
+	}
+
+	return fallback
+}
+
+// pageOfLine возвращает номер страницы строки: первое слово с известным номером.
+// Ноль означает, что номер не донесён сборкой — синтетический вход.
+func pageOfLine(line Line) int {
+	for _, word := range line.Words {
+		if word.Page != 0 {
+			return word.Page
+		}
+	}
+
+	return 0
 }
 
 // readTSVLines читает TSV-снимок страницы и собирает его слова в визуальные
