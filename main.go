@@ -11,6 +11,7 @@ import (
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/craw"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/customs"
+	_ "github.com/kmlebedev/clickhouse-import-rosstat/dcf"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/fao"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/financial"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/fred"

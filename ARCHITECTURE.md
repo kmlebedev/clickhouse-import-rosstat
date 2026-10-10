@@ -251,7 +251,9 @@ ENGINE = ReplacingMergeTree(loaded_at)
 ORDER BY (company, metric, period)
 ```
 
-Не реализованы (в коде нет): `gold_forecasts`, `news_events`, `index_weights`, `dividend_events`, `mmf_aum`, `tax_events`, `reserves_assets`, `reserves_dynamics`, `license_events`, `peers_nav`, `mine_plans`, `nav_by_asset`, `price_decks`, `regime_states`.
+Не реализованы (в коде нет): `gold_forecasts`, `news_events`, `index_weights`, `dividend_events`, `mmf_aum`, `tax_events`, `reserves_assets`, `reserves_dynamics`, `license_events`, `peers_nav`, `regime_states`.
+
+`mine_plans`, `price_decks` и `nav_by_asset` заведены в коде пакетом `dcf/` (импортёр `dcf_engine`, DDL — копии из блока выше в `dcf/schema.go`); на момент Task 1 они создаются без наполнения — логика расчёта приходит в следующих задачах фазы.
 
 Значения `source`, используемые в коде `macro_series`: `fred`, `bls`, `bea`, `manual` (ingest). Комментарий в DDL про `eia`, `wgc`, `cme` — план, не текущее состояние.
 
@@ -422,13 +424,18 @@ CREATE TABLE IF NOT EXISTS mine_plans (
     closure_costs Float64              -- отрицательный хвост конца LOM (рекультивация, выходные пособия)
 ) ENGINE = ReplacingMergeTree ORDER BY (company, asset, year);
 
+-- Ключ обязан включать deck и contour: без них ReplacingMergeTree схлопывал бы
+-- три ценовых дека и два контура ставки в одну строку — тихая потеря, тот же
+-- класс дефекта, что и ключ company_financials без source_url (§8.1, дефект 3).
 CREATE TABLE IF NOT EXISTS nav_by_asset (
     run_id UUID,                       -- связка с model_runs
+    deck LowCardinality(String),       -- 'spot_flat','consensus_lt','own_scenario'
     asset LowCardinality(String),
+    contour LowCardinality(String),    -- 'industrial','local' — контур ставки (spec §3.2)
     npv_usd_mln Float64,
     discount_rate Float64,             -- 0.05 real USD база + страновая/стадийная надбавка
     stage_haircut Nullable(Float64)    -- construction 0.7–0.9, DFS 0.5–0.7, PEA 0.2–0.4
-) ENGINE = ReplacingMergeTree ORDER BY (run_id, asset);
+) ENGINE = ReplacingMergeTree ORDER BY (run_id, deck, asset, contour);
 
 -- Ценовые деки (NAV считается на всех трёх: спот / консенсус LT / собственный сценарий)
 CREATE TABLE IF NOT EXISTS price_decks (
