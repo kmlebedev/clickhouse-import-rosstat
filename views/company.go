@@ -159,7 +159,7 @@ var companyMetricSourcesView = util.View{
     source_page,
     loaded_at
 FROM ` + companyFinancialsTable + ` FINAL
-ORDER BY company, metric, period, source_kind`,
+ORDER BY company, metric, period, source_kind, source_url`,
 	Comment: "Аудит расхождений company_financials: все версии метрики за период, включая проигравшую в v_company_financials, — сравнение документов. Правило приоритета не применяется: витрина нужна затем, чтобы расхождение документов (сравнительная база одного релиза против другого) оставалось видимым. source_kind и source_url идентифицируют документ каждой строки",
 	Columns: map[string]string{
 		"company":     "Компания-эмитент: 'PLZL' — Полюс. Пока заполняется только она; схема заводилась общей для сектора",
