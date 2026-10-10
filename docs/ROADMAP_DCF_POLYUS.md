@@ -160,9 +160,67 @@ docker run -d --name ch-mcp \
 | **0. Гигиена** | неделя 1 | Ротация утёкших паролей, лицензия, docker-compose (ClickHouse + Grafana + importer + mcp-clickhouse), `kimi_reader` read-only | Безопасная воспроизводимая инфраструктура |
 | **1. Данные для золота** | недели 1–3 | Исторический базлайн: `fred` (FEDFUNDS, DFII10, DGS10, DTWEXBGS, CPI/PPI через FRED) — ✅ готов 2026-10-08 (35 092 строки, 6 серий); `bls` (CPI, безработица, NFP, зарплата, PPI, JOLTS) и `bea` (PCE, NIPA T20804) — ✅ код и тесты 2026-10-09, `bea` ждёт `BEA_API_KEY` для живого прогона; `moex_iss` (PLZL OHLCV) — ✅ готов 2026-10-09 (4330 торговых дней с 2010-01-11; DAG `dagu/moex.yaml`); `gold` (MOEX GOLDFIXME ÷ курс ЦБ, производная цена) — ✅ готов 2026-10-08 (553 дня; DAG `dagu/gold.yaml`); `ofz_curve` (RGBI история с 2010 + G-curve 1y/3y/5y/10y снимком текущего дня) — ✅ готов 2026-10-09; `dividend_events`, `mmf_aum`. **Статус `fred`/`bls`/`bea`/`gold` — исторический базлайн + Grafana + верификация; первичный источник мировых данных для прогнозной сессии — datasource (Kimi Code: `kimi-datasource`; Kimi Work: Global Finance Data/IMF).** Go-импортёры `eia` (crack закрыт datasource `HO=F`, запасы — ручной ввод), нативный `lbma_gold` (закрыт `GC=F`), `wgc`, `fedwatch` — **вычеркнуты из плана** (ручной ввод / WebBridge, фаза 5) | `macro_series`, `gold_prices`, котировки PLZL, кривая ОФЗ; все «мировые» пороги — в БД |
 | **2. Семантика + MCP** | неделя 3 | ✅ `events_calendar` Q4-2026 (сид `sql/events_calendar_q4_2026.sql`); ✅ View `v_model_inputs` (один SELECT = входы DCF); ✅ `v_gold_dashboard` (дашборд верификации с флагами); ✅ `v_events_calendar`; ✅ COMMENT-документация витрин; ✅ общая витрина метрик компаний `company_financials` + `v_company_financials` / `v_company_metric_sources` / `v_company_operating` с комментариями и грантом `kimi_reader` (импортёр `company_views`, §8.1 дефекты 3 и 4 закрыты); ✅ каталог рядов Полюса в `series_catalog` (37 строк, source `polyus`/`polyus_datapack`); ✅ плагин `gold-nav` (skill «сценарная сессия» + `/gold-nav:session`; код в отдельном репозитории, живая приёмка не выполнена); ❌ mcp-clickhouse в HTTP-режиме с токеном (read-only `kimi_reader`) — ✅ **сделано 2026-10-10**: сервис `deploy/staging/mcp-clickhouse.service` слушает `127.0.0.1:8000`, Bearer-токен обязателен, читает витрины от `kimi_reader`; наружу не опубликован, TLS/Caddy — отдельная фаза; ✅ ingest-endpoint с Bearer-токеном для записи `model_runs` (`cmd/ingest`); ❌ тестовая сессия «дай срез входов DCF» — не проведена | Kimi читает БД через MCP; контур «прогноз за одну сессию» установлен одной командой |
-| **3. DCF-движок** | недели 4–6 | Таблицы модели + `reserves_*`, `mine_plans`, `nav_by_asset`, `price_decks`; sum-of-parts LOM-NAV с хвостом закрытия; двухконтурная ставка; НДПИ-функция; обнуление дивидендов до 2030; стадийные haircut'ы ресурсов; мост NAV → цена; NAV-матрица в Grafana | Первый версионированный NAV с сценариями |
+| **3. DCF-движок** | недели 4–6 | ✅ **шаг 1 (таблицы + ядро LOM-NAV + `v_dcf_assumptions`) выполнен 2026-10-10** — приёмка ниже; ❌ остаток: сид `mine_plans` из отчётности Полюса (без него движок считает 0 строк); `reserves_*` + peers + стадийные haircut'ы ресурсов вне LOM; эскалация AISC/TCC по ИПЦ РФ; рублёвый NAV (`usdrub_path`); обнуление дивидендов до 2030; мост NAV → цена акции; NAV-матрица в Grafana | Первый версионированный NAV с сценариями |
 | **4. Цикл прогноза** | недели 6–8 | Календарные cron-сессии; `regime_states` (HMM) и согласование вероятностей с режимом; годовой отчёт о запасах (март) как триггер пересчёта; автоверификация прогнозов | Прогноз обновляется регулярно и по событиям |
 | **5. Автономность** | квартал | `news_watch` + `sentiment_index`; парсинг FedWatch и WGC ETF-потоков; алерты Grafana (crack >$50, FedWatch >80%, закрытие недели <$3,950); алерты на смену веса PLZL в IMOEX, налоговые законопроекты, разворот ставки ЦБ; `v_peers_comparison` + алерт «дислокация P/NAV»; `v_gold_attribution`; ML-ансамбль как конкурентный трек прогноза (DM-тест против экспертного) | Система сама сигнализирует о необходимости пересчёта |
+
+### 7.1 Фаза 3, шаг 1 — расчётное ядро LOM-NAV — ✅ выполнен 2026-10-10
+
+**Спека:** [docs/superpowers/specs/2026-10-10-dcf-engine-core-design.md](superpowers/specs/2026-10-10-dcf-engine-core-design.md). **План:** [docs/superpowers/plans/2026-10-10-dcf-engine-core.md](superpowers/plans/2026-10-10-dcf-engine-core.md).
+
+Первый законченный срез фазы 3: новый пакет `dcf/` заводит таблицы `mine_plans`, `price_decks`, `nav_by_asset` (DDL §6.2 ARCHITECTURE.md, копии в `dcf/schema.go`), считает sum-of-parts LOM-NAV по активам и пишет `nav_by_asset`; агент видит результат через витрину `v_dcf_assumptions`. Подробности реализации — [ARCHITECTURE.md](../ARCHITECTURE.md) §6.1 (импортёр `dcf_engine`), §6.3 (витрина), §6.4 (конвенция и что из неё не реализовано).
+
+**Два дефекта плана, найденные при исполнении и исправленные (код под неверный эталон не подгонялся):** (1) эталон LOM-NPV в плане 795.95 млн USD посчитан с двумя ошибками (capex 50 трактован как 50 тыс. вместо 50 млн; НДПИ в году 2 вычтен дважды) — корректный эталон 767.0 млн USD (229+279+259); без правки NPV систематически завышался бы на capex-член и НДПИ. (2) Условный тест «на одногодичном плане `local < industrial`» был бы вечно красным: ставка дисконтирует по НОМЕРУ года плана, на единственном году множитель `1/(1+rate)^0 = 1`, и контуры неразличимы — проверка контуров вынесена в отдельный многолетний тест.
+
+**Живая приёмка 2026-10-10** (локальная dev-БД, ClickHouse 26.10.1.1853, `:8123`; до прогона `mine_plans`/`price_decks`/`nav_by_asset` пусты, `gold_prices` — 554 строки).
+
+1. `make all` — зелёный: `0 issues.` (gofmt + golangci-lint), `go vet ./...` без замечаний, `go test -race ./...` — все пакеты `ok` (в том числе `dcf`), сборки `build/clickhouse-import-rosstat` (linux/amd64) и `build/ingest` прошли.
+
+2. Пустой `mine_plans`, без `DCF_RUN_ID`:
+
+```
+level=warning msg="mine_plans пуст: сид LOM-планов — отдельный пункт роадмапа (docs/ROADMAP_DCF_POLYUS.md, фаза 3); расчёт пропущен, записано 0 строк"
+level=info  msg="Imported 0 rows of dcf_engine"
+```
+
+3. Фикстура — 3 актива × 3 года (2026–2028) в `mine_plans`, вставленные SQL-ом под пользователем `default` (`make ch-sql`); `price_decks` оставлена пустой, её сеет движок:
+
+```sql
+INSERT INTO mine_plans (company, asset, year, production_koz, grade_gpt, tcc, aisc, capex_sustaining, capex_project, closure_costs) VALUES
+('PLZL','OLIMPIADA',2026,1400,1.0,450,950,120,60,0), ('PLZL','OLIMPIADA',2027,1350,1.0,460,960,120,0,0), ('PLZL','OLIMPIADA',2028,1300,1.0,470,970,100,0,-60),
+('PLZL','BLAGODATNOYE',2026,600,0.9,500,1000,60,40,0), ('PLZL','BLAGODATNOYE',2027,580,0.9,510,1010,60,0,0), ('PLZL','BLAGODATNOYE',2028,560,0.9,520,1020,50,0,-30),
+('PLZL','KURANAKH',2026,450,1.0,700,1200,40,20,0), ('PLZL','KURANAKH',2027,420,1.0,710,1210,40,0,0), ('PLZL','KURANAKH',2028,400,1.0,720,1220,35,0,-20);
+```
+
+4. `DCF_RUN_ID=$(uuidgen | tr A-Z a-z) make import STAT=dcf_engine` → `Imported 18 rows of dcf_engine` = 3 актива × 3 дека × 2 контура. Сид деков (строки сида печатаются только на прогоне, где `price_decks` пуста) снят из БД: `spot_flat = 4126.34 USD/oz` (последняя `gold_prices.venue='moex_fix_usd'`), `consensus_lt = 3000.00`, `own_scenario = 4600.00`, год — **2026** (текущий).
+
+5. SQL-проверки (под `default`): `SELECT deck, contour, count() FROM nav_by_asset FINAL GROUP BY deck, contour ORDER BY deck, contour` — ровно **6 групп** (`consensus_lt`/`own_scenario`/`spot_flat` × `industrial`/`local`), каждая по 9 строк: 3 прогона этой приёмки × 3 актива; ни одна комбинация «дека × контур» не схлопнута ключом. `SELECT asset, deck, contour, npv_usd_mln, discount_rate, nav_total_usd_mln FROM v_dcf_assumptions ... ORDER BY deck, contour, asset` — значения соразмерны и сходятся с суммой по группе, `discount_rate` = 0.05 у `industrial` и 0.16 у `local`. Контрольные числа самого свежего прогона:
+
+| deck | contour | OLIMPIADA | BLAGODATNOYE | KURANAKH | `nav_total_usd_mln` |
+|---|---|---|---|---|---|
+| `consensus_lt` | `industrial` | 2 536.00 | 1 034.00 | 700.50 | 4 270.50 |
+| `consensus_lt` | `local` | 2 536.00 | 1 034.00 | 700.50 | 4 270.50 |
+| `own_scenario` | `industrial` | 4 552.00 | 1 898.00 | 1 348.50 | 7 798.50 |
+| `own_scenario` | `local` | 4 552.00 | 1 898.00 | 1 348.50 | 7 798.50 |
+| `spot_flat` | `industrial` | 3 955.19 | 1 642.23 | 1 156.67 | 6 754.09 |
+| `spot_flat` | `local` | 3 955.19 | 1 642.23 | 1 156.67 | 6 754.09 |
+
+Числа сами сверены независимо: план OLIMPIADA 2026 — `1400×(4033.79−950) = 4 317.31` тыс. USD при бездефицитной ставке, доналоговый поток после capex 180 тыс. → 4.137 млн USD, и при `ndpiPerOz = 0.10×max(4126.34−1900,0) = 222.63` USD/унц (`defaultParams`: база 0, налог 0, ΔWC 0) NPV = **4 137 → 3 955.19** (разница — НДПИ 311.7 тыс. USD). Два контура совпали, потому что в фикстуре цена дека и план — это ОДИН год (2026): ставка в `npvLOM` дисконтирует по НОМЕРУ года плана, `1/(1+rate)^0 = 1`, и годы 2027–2028 пропущены (дек 2026 года — второй дефект плана, исправленный в тестах многолетним планом). **Контуры в витрине различимы только когда годы плана пересекаются с годами дека; на фикстуре пересечение одно, поэтому их равенство — верный результат формулы, а не дефект витрины.** Этим закрыт отложенный minor шага витрины: оконный итог сходится с суммой `npv_usd_mln` по группе.
+
+6. `make mcp-check` → **ПРОВЕРКА ПРОЙДЕНА**: витрина `v_dcf_assumptions` видна агенту и читается через `run_query`, `SELECT count() FROM nav_by_asset` под `kimi_reader` → `ACCESS_DENIED (497)` — сырая таблица закрыта.
+
+7. Фикстура после прогона удалена (`ALTER TABLE ... DELETE` в `mine_plans`/`price_decks`/`nav_by_asset`), dev-БД возвращена в исходное состояние по данным: все три таблицы снова пусты (`gold_prices` не трогалась — 554 строки). Сами таблицы и витрина остаются: прогон их создаёт, и это нормальное состояние dev-БД после первого запуска движка.
+
+**Остаток фазы 3** (этим шагом не делалось):
+
+- **сид `mine_plans` из отчётности Полюса** — следующий пункт: пока таблица пуста, движок считает 0 строк и NAV нулевой при любом деке;
+- `reserves_assets` / `reserves_dynamics` / `license_events`, `peers_nav` / `v_peers_comparison` (ЮГК, Селигдар — ручной ввод) и **стадийные haircut'ы** ресурсов вне LOM (`stage_haircut` в `nav_by_asset` всегда NULL) — [ROADMAP_DCF_METALS.md](ROADMAP_DCF_METALS.md) и отдельный пункт;
+- эскалация AISC/TCC по ИПЦ РФ (`Params.Ipc` пуст) и рублёвый NAV (`usdrub_path` пуст — все деньги USD);
+- обнуление дивидендов до 2030 и NAV-бета к золоту (в контракт `model_runs` числа не заведены);
+- **мост NAV → цена акции** (net debt, корпоративные затраты, опционность ресурсов) и **NAV-матрица в Grafana** — визуализация поверх готовых выходов.
+
+**Следующий пункт:** сид `mine_plans` — LOM-планы активов из отчётности Полюса (датапак `databook_polyus` + операционные результаты; период каждой строки проверять — §8.1). При сиде помнить: годы плана обязаны пересечься с годами `price_decks`, а сид деков ставит цену на ТЕКУЩИЙ год — LOM-план, начинающийся позже, даст NPV = 0 (`npvLOM` пропустит годы без цены).
+
 
 ### Quick wins (можно сделать уже сегодня)
 
