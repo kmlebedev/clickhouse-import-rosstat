@@ -13,6 +13,13 @@ import (
 // может быть три или больше, но цена года важна сама по себе — модель берёт её из
 // конкретного дека лишь на этапе начисления.
 //
+// Мусорные годы (вне окна [minPlanYear, maxPlanYear), seed.go) считаются непокрытыми ПО
+// ОПРЕДЕЛЕНИЮ, даже если дек случайно стоял на такой год: такой год не план, а
+// дефект данных, и цена на него не делает его законным. Без этого правила сид
+// записал бы дек на год 1969/2100, гард увидел бы пересечение и пропустил
+// расчёт — Finding 1. Текст предупреждения при этом называет пару честно, а не
+// молчит: «в логе не видно» и «года не было» — разные состояния.
+//
 // Почему это отдельная проверка, а не «и так видно по логу»: npvLOM (model.go:137-142)
 // при отсутствии цены на год плана печатает Warnf и ПРОПУСКАЕТ год, но индекс года
 // продолжает расти (эскалация ИПЦ и дисконт идут по календарю) и navRows всё равно
@@ -31,6 +38,12 @@ func uncoveredPlanYears(plans []MinePlanRecord, decks map[string][]DeckYear) []s
 	uncovered := make([]string, 0)
 	for _, plan := range plans {
 		for _, y := range plan.Years {
+			if !plausiblePlanYear(y.Year) {
+				uncovered = append(uncovered, plan.Asset+":"+strconv.Itoa(int(y.Year)))
+
+				continue
+			}
+
 			if _, ok := covered[y.Year]; !ok {
 				uncovered = append(uncovered, plan.Asset+":"+strconv.Itoa(int(y.Year)))
 			}
@@ -63,6 +76,14 @@ func uncoveredPlanYears(plans []MinePlanRecord, decks map[string][]DeckYear) []s
 //
 // Пустой план — не ошибка: Import отсекает его раньше отдельной веткой, а функция
 // остаётся самостоятельным контрактом (как и checkInputs).
+//
+// Год плана вне окна [minPlanYear, maxPlanYear) (seed.go) считается непокрытым
+// ВСЕГДА (см. uncoveredPlanYears): план из одного «2100» без валидных лет попадёт
+// в ветку coveredYears == 0 и упадёт ошибкой (на пустой price_decks до этого
+// сработает seedPriceDecks с пустым горизонтом — та же ошибка до расчёта), а не
+// пройдёт успешным прогоном с мусорным NAV. Это третья, последняя линия защиты
+// Finding 1: planYears не сеет дек на мусор, planYearSet не считает мусор планом,
+// а этот счётчик делает вывод явным для оператора.
 func checkYearCoverage(plans []MinePlanRecord, decks map[string][]DeckYear) error {
 	if len(plans) == 0 {
 		return nil
@@ -108,11 +129,21 @@ func checkYearCoverage(plans []MinePlanRecord, decks map[string][]DeckYear) erro
 
 // planYearSet, deckYearSet — множества годов планов и деков: пересечение и разность
 // наборов решаются по ним, а не по длинам срезов, где годы активов дублируются.
+//
+// planYearSet включает ТОЛЬКО правдоподобные годы (окно [minPlanYear, maxPlanYear),
+// seed.go): мусорный год не должен ни считаться покрытым, ни участвовать в
+// решении «есть ли хоть одно пересечение». Это вторая половина защиты Finding 1 —
+// planYears (seed.go) не сеет дек на мусорный год, а этот набор делает год
+// непокрытым, чтобы checkYearCoverage увёл план из одних мусорных лет в ошибку,
+// а не в успешный прогон с бессмысленным NAV. Год в план-наборе без нормализации
+// позволил бы сиду записать дек ровно на него и закрыть дыру молча.
 func planYearSet(plans []MinePlanRecord) map[uint16]struct{} {
 	out := make(map[uint16]struct{})
 	for _, plan := range plans {
 		for _, y := range plan.Years {
-			out[y.Year] = struct{}{}
+			if plausiblePlanYear(y.Year) {
+				out[y.Year] = struct{}{}
+			}
 		}
 	}
 

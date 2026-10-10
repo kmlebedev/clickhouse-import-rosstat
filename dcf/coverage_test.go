@@ -20,6 +20,28 @@ func TestUncoveredPlanYears(t *testing.T) {
 	}
 }
 
+// TestUncoveredPlanYearsJunkYear — Finding 1 (вторая половина): мусорный год
+// непокрыт ПО ОПРЕДЕЛЕНИЮ, даже когда дек стоит ровно на него.
+//
+// Это то состояние, которое в реальном прогоне даёт успешный сид на 2100 и
+// «покрытый» год: год-в-год гард не должен считать его планом. Тест закрепляет
+// именно эту границу — цена на мусорный год не делает его законным.
+func TestUncoveredPlanYearsJunkYear(t *testing.T) {
+	plans := []MinePlanRecord{
+		{Company: "PLZL", Asset: "A", Years: []MinePlanYear{{Year: 2100}}},
+	}
+	decks := map[string][]DeckYear{"spot_flat": {{Year: 2100, GoldUSD: 4000}}}
+
+	got := uncoveredPlanYears(plans, decks)
+	if len(got) != 1 || got[0] != "A:2100" {
+		t.Fatalf("uncoveredPlanYears = %v, want [A:2100] — дек на 2100 не покрывает мусорный год", got)
+	}
+
+	if err := checkYearCoverage(plans, decks); err == nil {
+		t.Fatal("план только из мусорного года обязан быть ошибкой, а не успешным прогоном")
+	}
+}
+
 // TestCheckYearCoverage — полное отсутствие пересечения это ошибка, частичное — warn.
 func TestCheckYearCoverage(t *testing.T) {
 	plans := []MinePlanRecord{{Company: "PLZL", Asset: "A", Years: []MinePlanYear{{Year: 2030}}}}
