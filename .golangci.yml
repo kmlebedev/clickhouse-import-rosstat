@@ -9,7 +9,3 @@ linters:
   exclusions:
     paths:
       - financial
-    rules:
-      - path: polyus
-        linters:
-          - unused

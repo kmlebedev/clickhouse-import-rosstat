@@ -172,6 +172,9 @@ func joinFiles(paths []string, dst string) error {
 
 // extractPDF извлекает указанные страницы PDF и склеивает их в один текст.
 func extractPDF(ctx context.Context, pdfPath, textPath string, pages []int) error {
+	if len(pages) == 0 {
+		return errors.New("no pages to extract")
+	}
 	dir := filepath.Dir(textPath)
 	var extracted []string
 	for _, page := range pages {
