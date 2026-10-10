@@ -44,7 +44,7 @@ func TestCompanyFinancialsResolutionPrefersIFRS(t *testing.T) {
 func TestCompanyFinancialsResolutionOrder(t *testing.T) {
 	selectText := collapseSpaces(companyFinancialsView.Select)
 
-	if !strings.Contains(selectText, "argMax(value, (source_kind = 'ifrs', loaded_at, source_url))") {
+	if !strings.Contains(selectText, "argMax(value, (source_kind = 'ifrs', loaded_at, source_url)) AS r_value") {
 		t.Fatalf(
 			"v_company_financials must resolve on (source_kind = 'ifrs', loaded_at, source_url), got: %s",
 			selectText,
@@ -67,6 +67,82 @@ func TestCompanyFinancialsResolutionOrder(t *testing.T) {
 	if !strings.Contains(selectText, "GROUP BY company, metric, period") {
 		t.Error("v_company_financials must collapse to one row per (company, metric, period)")
 	}
+}
+
+// Регрессия на ILLEGAL_AGGREGATION: агрегат нельзя проецировать под именем своей
+// же исходной колонки. ClickHouse привязывает такое имя внутри кортежа-ключа к
+// алиасу агрегата, а не к колонке таблицы, и отказывается создавать витрину
+// («Code: 184 ... is found inside another aggregate function»). Проверка
+// текстуальная: имя колонки во внутреннем SELECT обязано отличаться от имени её
+// агрегата.
+func TestCompanyFinancialsAggregatesDoNotShadowColumnNames(t *testing.T) {
+	inner := innerSelect(companyFinancialsView.Select)
+	if inner == "" {
+		t.Fatal("v_company_financials has no inner SELECT")
+	}
+
+	shadowed := 0
+
+	for _, line := range strings.Split(inner, "\n") {
+		line = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(line), ","))
+		if !strings.HasPrefix(line, "argMax(") {
+			continue
+		}
+
+		idx := strings.LastIndex(line, " AS ")
+		if idx < 0 {
+			// Компания, metric и period идут во внутренний SELECT без агрегата —
+			// это и есть случай, когда совпадение имён безвредно.
+			continue
+		}
+
+		column := strings.TrimSpace(line[strings.Index(line, "(")+1 : strings.Index(line, ",")])
+		alias := strings.TrimSpace(line[idx+4:])
+		if alias != column {
+			continue
+		}
+
+		shadowed++
+		t.Errorf(
+			"aggregate %s is aliased to its own column name (ILLEGAL_AGGREGATION): project it under an r_* alias and rename it in the outer SELECT",
+			column,
+		)
+	}
+
+	if shadowed == 0 && !strings.Contains(inner, " AS r_") {
+		t.Error("no r_* alias found: the inner aggregates must not carry the view's column names")
+	}
+
+	// Наружу колонки обязаны вернуться под своими настоящими именами.
+	for _, alias := range []string{
+		"r_period_type AS period_type",
+		"r_source_kind AS source_kind",
+		"r_value AS value",
+		"r_unit AS unit",
+		"r_source_url AS source_url",
+		"r_source_page AS source_page",
+		"r_loaded_at AS loaded_at",
+	} {
+		if !strings.Contains(collapseSpaces(companyFinancialsView.Select), alias) {
+			t.Errorf("outer SELECT must map %q", alias)
+		}
+	}
+}
+
+// innerSelect возвращает текст первого подзапроса в скобках, то есть внутренний
+// SELECT витрины: агрегаты и их псевдонимы живут именно там.
+func innerSelect(selectText string) string {
+	start := strings.Index(selectText, "FROM (")
+	if start < 0 {
+		return ""
+	}
+
+	end := strings.LastIndex(selectText, "\n)")
+	if end < start {
+		return ""
+	}
+
+	return selectText[start+len("FROM (") : end]
 }
 
 // Витрины читают сырые таблицы, поэтому гейт util.CreateView (он пропускает

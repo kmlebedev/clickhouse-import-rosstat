@@ -9,8 +9,10 @@ const companyFinancialsTable = "company_financials"
 
 // companyFinancialsCreateTable — DDL таблицы с ПОДСТАВЛЕННЫМ именем: витрины
 // создаёт импортёр company_views, который исполняет companyViewsDDL() сырым
-// conn.Exec, без fmt.Sprintf. Поэтому же имени здесь литерал, а не %s, — в
-// отличие от шаблона в polyus/import.go, где подстановку делает вызывающий.
+// conn.Exec, без fmt.Sprintf. Поэтому имени здесь нет ни в форме %s, ни
+// напечатанным руками: оно приходит в текст через конкатенацию с константой
+// companyFinancialsTable (см. строку ниже), и искать в этом литерале плейсхолдер
+// или отдельно записанное имя не нужно — его там нет.
 //
 // Список колонок, движок и ORDER BY обязаны совпадать с шаблоном из
 // polyus/import.go: таблица одна на два импортёра, и разошедшаяся копия DDL
@@ -43,10 +45,22 @@ ORDER BY (company, metric, period, source_kind)`
 // правило: сначала аудированная отчётность (ifrs = 1) перебивает пресс-релиз
 // (kpi = 0), затем побеждает более поздняя загрузка, а source_url стоит третьим
 // только затем, чтобы выдача не «плавала» между прогонами при равных первых двух
-// ключах. Выражение if() в ключе обязательно: clickhouse-go сравнивает
-// LowCardinality(String) с константой вставленной строки — там типы совпадают, а
-// в запросе from String против литерала-константы ClickHouse отвечает ошибкой
-// NO_COMMON_TYPE, и витрина не создалась бы вовсе.
+// ключах.
+//
+// Внутренние агрегаты проецируются под именами r_* (r_value, r_source_kind, ...)
+// и получают настоящие имена колонок только во внешнем SELECT. Это не
+// косметика, а обход ловушки: если агрегат назвать так же, как его исходную
+// колонку (argMax(value, ...) AS value), ClickHouse привязывает имя внутри
+// кортежа-ключа к АЛИАСУ агрегата, а не к колонке таблицы, и падает на создании
+// витрины:
+//
+//	Code: 184. DB::Exception: Aggregate function argMax(source_kind,
+//	(source_kind = 'ifrs', loaded_at, source_url)) AS source_kind is found inside
+//	another aggregate function in query. (ILLEGAL_AGGREGATION)
+//
+// Сравнение source_kind = 'ifrs' при этом совершенно ни при чём: clickhouse-go
+// вставляет LowCardinality(String), в запросе колонка сравнивается со строковым
+// литералом, и это работает как есть — никакого if() для этого не нужно.
 //
 // Отвергнутая альтернатива — row_number() OVER (PARTITION BY company, metric,
 // period ORDER BY ...). Оконные функции над FINAL считаются одним потоком:
@@ -59,25 +73,25 @@ var companyFinancialsView = util.View{
     company,
     metric,
     period,
-    period_type,
-    source_kind,
-    value,
-    unit,
-    source_url,
-    source_page,
-    loaded_at
+    r_period_type AS period_type,
+    r_source_kind AS source_kind,
+    r_value AS value,
+    r_unit AS unit,
+    r_source_url AS source_url,
+    r_source_page AS source_page,
+    r_loaded_at AS loaded_at
 FROM (
     SELECT
         company,
         metric,
         period,
-        argMax(period_type, (source_kind = 'ifrs', loaded_at, source_url)) AS period_type,
-        argMax(source_kind, (source_kind = 'ifrs', loaded_at, source_url)) AS source_kind,
-        argMax(value, (source_kind = 'ifrs', loaded_at, source_url)) AS value,
-        argMax(unit, (source_kind = 'ifrs', loaded_at, source_url)) AS unit,
-        argMax(source_url, (source_kind = 'ifrs', loaded_at, source_url)) AS source_url,
-        argMax(source_page, (source_kind = 'ifrs', loaded_at, source_url)) AS source_page,
-        argMax(loaded_at, (source_kind = 'ifrs', loaded_at, source_url)) AS loaded_at
+        argMax(period_type, (source_kind = 'ifrs', loaded_at, source_url)) AS r_period_type,
+        argMax(source_kind, (source_kind = 'ifrs', loaded_at, source_url)) AS r_source_kind,
+        argMax(value, (source_kind = 'ifrs', loaded_at, source_url)) AS r_value,
+        argMax(unit, (source_kind = 'ifrs', loaded_at, source_url)) AS r_unit,
+        argMax(source_url, (source_kind = 'ifrs', loaded_at, source_url)) AS r_source_url,
+        argMax(source_page, (source_kind = 'ifrs', loaded_at, source_url)) AS r_source_page,
+        argMax(loaded_at, (source_kind = 'ifrs', loaded_at, source_url)) AS r_loaded_at
     FROM ` + companyFinancialsTable + ` FINAL
     GROUP BY company, metric, period
 )`,
