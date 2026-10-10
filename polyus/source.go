@@ -110,7 +110,11 @@ func validatePDFHeader(path string) error {
 	return nil
 }
 
-// extractPage извлекает одну страницу PDF в текстовый файл через pdftotext.
+// extractPage извлекает одну страницу PDF в TSV через pdftotext: каждая строка
+// файла — слово с координатами left/top/width/height и структурным level.
+// Координаты нужны разбору, чтобы отличать колонки периодов от колонок-изменений
+// («Изм. за год»): по размеченному тексту те и другие стояли рядом и сдвигали
+// значения влево.
 func extractPage(
 	ctx context.Context,
 	pdfPath string,
@@ -126,7 +130,7 @@ func extractPage(
 		"pdftotext",
 		"-f", strconv.Itoa(page),
 		"-l", strconv.Itoa(page),
-		"-layout",
+		"-tsv",
 		"-nopgbrk",
 		"-enc", "UTF-8",
 		pdfPath,
