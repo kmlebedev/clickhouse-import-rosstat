@@ -76,11 +76,31 @@ func buildProfileYears(seed assetPlanSeed) []MinePlanYear {
 	n := len(seed.ProductionProfile)
 	aisc := seed.TCC + sustainingWedgeUSDPerOz
 
+	// ProjectCapex — ИТОГ по проекту, а не годовая ставка: $6 млрд — полный
+	// объём инвестиций в Сухой Лог (презентация, стр. 22). Публикация не даёт
+	// по-годичного графика, поэтому итог размазывается РАВНОМЕРНО по годам
+	// профиля: сумма строк равна итогу, и это единственное свойство, которое
+	// можно утверждать без графика. Раскладывать итог в КАЖДЫЙ год нельзя —
+	// горизонт в 10 лет дал бы 60 млрд, то есть завышение инвестиций в 10 раз.
+	//
+	// Это приближение по ТАЙМИНГУ (какой год несёт какую долю), а не по сумме.
+	// Настоящая годовая кривая capex из ТЭО заменит его; пробел помечен в
+	// docs/DCF_DATA_COVERAGE.md (Task 7).
+	perYear := seed.ProjectCapex / float64(n)
+
 	years := make([]MinePlanYear, 0, n)
 	for i, production := range seed.ProductionProfile {
 		// Годы до ProfileStartYear не пишутся вовсе: актив ещё не производит, и
 		// год-заглушка с нулём растянул бы горизонт дисконтирования впустую.
 		year := seed.ProfileStartYear + uint16(i)
+
+		// Последний год забирает ОСТАТОК итога: сумма n одинаковых долей в
+		// float64 не равна исходному числу в общем случае, и без этого сумма
+		// строк разошлась бы с опубликованными 6 000 на ошибку округления.
+		projectCapex := perYear
+		if i == n-1 {
+			projectCapex = seed.ProjectCapex - perYear*float64(n-1)
+		}
 
 		years = append(years, MinePlanYear{
 			Year:            year,
@@ -88,10 +108,7 @@ func buildProfileYears(seed assetPlanSeed) []MinePlanYear {
 			TCC:             seed.TCC,
 			AISC:            aisc,
 			CapexSustaining: seed.CapexSustaining,
-			// Единовременные инвестиции проекта лежат в каждом году: публикация
-			// не даёт разбивки по годам, а годовой профиль capex Сухого Лога
-			// модель не получает. Это огрубление, помеченное в карте покрытия.
-			CapexProject: seed.ProjectCapex,
+			CapexProject:    projectCapex,
 		})
 	}
 

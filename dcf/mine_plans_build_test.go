@@ -57,3 +57,36 @@ func TestBuildPlanYearsNoFact(t *testing.T) {
 		t.Fatalf("нулевой факт: got %v, want nil (строки не пишем)", got)
 	}
 }
+
+// TestBuildProfileYearsProjectCapexTotal — ProjectCapex сида это ИТОГ проекта,
+// а не годовая ставка: сумма по строкам обязана равняться 6 000 млн USD, а не
+// len(profile)*6000. Старое поведение (итог в каждом году) давало 60 млрд —
+// десятикратное завышение инвестиций, которое ломает NPV Сухого Лога.
+func TestBuildProfileYearsProjectCapexTotal(t *testing.T) {
+	var seed assetPlanSeed
+	for _, s := range polyusAssetPlans {
+		if s.Asset == "Sukhoi Log" {
+			seed = s
+		}
+	}
+	if seed.ProjectCapex != 6000 {
+		t.Fatalf("ProjectCapex сида = %v, want 6000", seed.ProjectCapex)
+	}
+
+	years := buildPlanYears(seed, 0)
+	if len(years) != len(seed.ProductionProfile) {
+		t.Fatalf("len = %d, want %d (длина профиля)", len(years), len(seed.ProductionProfile))
+	}
+
+	var sum float64
+	for _, y := range years {
+		if y.CapexProject > seed.ProjectCapex {
+			t.Errorf("год %d: CapexProject = %v, больше итога проекта %v", y.Year, y.CapexProject, seed.ProjectCapex)
+		}
+		sum += y.CapexProject
+	}
+	if sum != seed.ProjectCapex {
+		t.Fatalf("сумма CapexProject = %v, want %v (итог проекта, а не %d×итог)",
+			sum, seed.ProjectCapex, len(years))
+	}
+}
