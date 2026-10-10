@@ -27,9 +27,13 @@ var (
 	reH  = regexp.MustCompile(`^([12])H(\d{4})$`)  // 2H2025
 	reQ  = regexp.MustCompile(`^([1-4])Q(\d{4})$`) // 4Q2022
 	// reRuHalf и rePeriod видят пробелы между номером, единицей и годом,
-	// поэтому используют расширенный класс nonBreakingSpace.
-	reRuHalf = regexp.MustCompile(`([12])` + nonBreakingSpace + `*п/г` + nonBreakingSpace + `+(\d{4})`)     // 1 п/г 2026
-	rePeriod = regexp.MustCompile(`([1-4])` + nonBreakingSpace + `*([HQ])` + nonBreakingSpace + `+(\d{4})`) // 1H 2026
+	// поэтому используют расширенный класс nonBreakingSpace. Год русской формы
+	// допускается и двузначным («1 п/г 26»): так печатают шапки в релизах,
+	// где таблиц несколько и место экономится. Квантификатор `{2,4}` жаден,
+	// поэтому четырёхзначный год по-прежнему разбирается целиком.
+	reRuHalf      = regexp.MustCompile(`([12])` + nonBreakingSpace + `*п/г` + nonBreakingSpace + `+(\d{2,4})`)   // 1 п/г 2026, 1 п/г 26
+	reRuShortYear = regexp.MustCompile(`^(\d{2})$`)                                                              // 26
+	rePeriod      = regexp.MustCompile(`([1-4])` + nonBreakingSpace + `*([HQ])` + nonBreakingSpace + `+(\d{4})`) // 1H 2026
 )
 
 // parsePeriod разбирает период из трёх форм: английской пресс-релизной
@@ -42,19 +46,14 @@ var (
 // строгий валидатор: она ищет совпадение внутри окружающего текста, поэтому
 // вызывающий код не должен рассчитывать на отклонение некорректного ввода.
 //
-// Русская форма проверяется до общей rePeriod, иначе `п/г` не совпадёт.
+// Порядок проверок — от самой узкой формы к самой широкой: русская форма
+// проверяется до голого года, а компактные формы — до разнесённых. Иначе
+// «1 п/г 2026» разобралось бы как два независимых токена («1 п/г» отброшен,
+// «2026» прочитан как полный год FY), и полугодие превратилось бы в год.
 func parsePeriod(input string) (PeriodInfo, error) {
 	input = strings.TrimSpace(input)
 
-	// 1. Проверяем формат полного года (например, "2024")
-	if reFY.MatchString(input) {
-		return PeriodInfo{
-			Period: input + "FY",
-			Type:   "FY",
-		}, nil
-	}
-
-	// 2. Проверяем компактный формат полугодия (например, "2H2025")
+	// 1. Компактный формат полугодия (например, "2H2025")
 	if matches := reH.FindStringSubmatch(input); matches != nil {
 		half := matches[1] // "1" или "2"
 		year := matches[2] // например, "2025"
@@ -65,7 +64,7 @@ func parsePeriod(input string) (PeriodInfo, error) {
 		}, nil
 	}
 
-	// 3. Проверяем компактный формат квартала (например, "4Q2022")
+	// 2. Компактный формат квартала (например, "4Q2022")
 	if matches := reQ.FindStringSubmatch(input); matches != nil {
 		quart := matches[1] // от "1" до "4"
 		year := matches[2]  // например, "2022"
@@ -76,11 +75,11 @@ func parsePeriod(input string) (PeriodInfo, error) {
 		}, nil
 	}
 
-	// 4. Проверяем русский формат полугодия (например, "1 п/г 2026"),
-	// обязательно до общей rePeriod — иначе `п/г` не совпадёт.
+	// 3. Русский формат полугодия (например, "1 п/г 2026", "1 п/г 26") —
+	// обязательно до голого года и до общей rePeriod, иначе `п/г` не совпадёт.
 	if matches := reRuHalf.FindStringSubmatch(input); matches != nil {
 		half := matches[1]
-		year := matches[2]
+		year := expandShortYear(matches[2])
 
 		return PeriodInfo{
 			Period: fmt.Sprintf("%sH%s", year, half),
@@ -88,7 +87,7 @@ func parsePeriod(input string) (PeriodInfo, error) {
 		}, nil
 	}
 
-	// 5. Проверяем разнесённый формат полугодия/квартала ("1H 2026", "4Q 2022")
+	// 4. Разнесённый формат полугодия/квартала ("1H 2026", "4Q 2022").
 	if matches := rePeriod.FindStringSubmatch(input); matches != nil {
 		num := matches[1]  // "1".."4"
 		kind := matches[2] // "H" или "Q"
@@ -107,5 +106,23 @@ func parsePeriod(input string) (PeriodInfo, error) {
 		}, nil
 	}
 
+	// 5. Полный год (например, "2024").
+	if reFY.MatchString(input) {
+		return PeriodInfo{
+			Period: input + "FY",
+			Type:   "FY",
+		}, nil
+	}
+
 	return PeriodInfo{}, fmt.Errorf("unknown period format: %s", input)
+}
+
+// expandShortYear дополняет двузначный год до четырёхзначного, относя его к
+// 2000-м: «26» → «2026». Четырёхзначный год возвращается как есть.
+func expandShortYear(year string) string {
+	if reRuShortYear.MatchString(year) {
+		return "20" + year
+	}
+
+	return year
 }
