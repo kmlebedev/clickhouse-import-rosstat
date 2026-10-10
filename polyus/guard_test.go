@@ -1,6 +1,7 @@
 package polyus
 
 import (
+	"strings"
 	"testing"
 
 	log "github.com/sirupsen/logrus"
@@ -220,10 +221,10 @@ func TestGuardAppliesToIFRSRecords(t *testing.T) {
 // включённый отчёт, разобравшийся в ноль записей, — отказ (`failed++`), а не
 // молчаливый успех.
 //
-// Шов взят из самого Import(): успех отчёта решает reportParsed, а не пустой
-// список записей. Это то же место, где сходятся обе причины нуля записей —
-// нераспознанная шапка и пустая страница, — и разбирать их по отдельности
-// незачем: у обоих один правильный ответ, «данных нет, отчёт не разобран».
+// Шов взят из самого Import(): разобран ли отчёт, решает reportParsed, и правило
+// у него простое — ноль записей значит «не разобран». Непустой список — успех,
+// пустой — отказ, независимо от headerless: счётчик лишь объясняет причину
+// (шапка не распознана против шапки без отнесённых строк), а не решает исход.
 // Через Import() это не проверить без ClickHouse (нужны conn и PDF), а шов на
 // уровне решения не требует ни того, ни другого и не оставляет Import()
 // единственным непокрытым звеном.
@@ -245,15 +246,35 @@ func TestReportParsedTurnsHeaderlessPageIntoFailure(t *testing.T) {
 		)
 	}
 
-	// Обратные случаи: разобранный отчёт — успех независимо от того, были ли выше
-	// шапки строки с меткой (на повреждённой фикстуре такие строки есть, и отказ
-	// обязан остаться про ноль записей, а не про непустой счётчик); страница без
-	// единой строки метрики выше шапки — тоже успех, потому что пустой отчёт от
-	// нераспознанного этим швом не отличается и отличать его здесь нечем.
+	// Обратный случай: разобранный отчёт — успех независимо от того, были ли выше
+	// шапки строки с меткой. На повреждённой фикстуре такие строки есть (их 10), и
+	// отказ обязан остаться про ноль записей, а не про непустой счётчик.
 	if !reportParsed([]MetricRecord{{Metric: "revenue", Period: "2026H1"}}, 10) {
 		t.Error("reportParsed = false for a non-empty parse: a parsed report is a success whatever the headerless counter says")
 	}
-	if !reportParsed(nil, 0) {
-		t.Error("reportParsed = false for an empty parse with no metric line above the header: nothing points at a lost page here")
+
+	// Контрпример к слабому правилу: шапка найдена, но ни одна строка к ней не
+	// отнесена — headerless == 0, записей нет. Это тоже отказ. Слабый предикат
+	// (len(records) > 0 || headerless == 0) пропускал такой отчёт как успешный,
+	// потому что ноль записей без строк выше шапки он считал пустой страницей —
+	// а пустой страницы среди включённых отчётов не бывает: все они указывают на
+	// страницы с данными.
+	if reportParsed(nil, 0) {
+		t.Error("reportParsed = true for an enabled report with zero records and a recognised header (headerless == 0): zero records is a failure whatever the headerless counter says")
+	}
+
+	// Две причины нуля записей обязаны читаться в логе по-разному: «шапка не
+	// распознана» против «шапка распознана, но строк не отнесено». Обе — отказ.
+	headerlessReason := zeroRecordReason(10)
+	emptyReason := zeroRecordReason(0)
+
+	if headerlessReason == emptyReason {
+		t.Errorf("the two zero-record reasons read the same (%q): the log cannot tell an unrecognised header from a header with no attributed rows", headerlessReason)
+	}
+	if !strings.Contains(headerlessReason, "header was not recognised") {
+		t.Errorf("headerless > 0 reason = %q, want it to name the unrecognised header", headerlessReason)
+	}
+	if !strings.Contains(emptyReason, "header was recognised but no metric rows were attributed") {
+		t.Errorf("headerless == 0 reason = %q, want it to name the recognised header with no attributed rows", emptyReason)
 	}
 }
