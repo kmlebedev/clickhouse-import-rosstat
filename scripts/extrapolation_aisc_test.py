@@ -1775,6 +1775,12 @@ def _valid_row(asset: str = "OLIMPIADA", year: int = 2025, **overrides) -> dict:
     Значения совпадают с брифа: `tcc=773`, `aisc=1300` (клин 0.68 при r̄ 0.68 —
     база 2025 не эскалирована). Тесты портят по одному полю через `overrides`,
     поэтому причина проблемы всегда одна и её видно в тексте.
+
+    `capex_sustaining` = 0 — НЕ «нулевое значение для примера», а КОНТРАКТ
+    валидной строки: клин поддержания уже внутри `aisc`, и ненулевой отток
+    списал бы его дважды (`validate` это и проверяет). Пример валидной строки,
+    несущий ненулевой capex, документировал бы будущему читателю ровно тот
+    дефект, который здесь исправлен.
     """
     row = {
         "asset": asset,
@@ -1782,7 +1788,7 @@ def _valid_row(asset: str = "OLIMPIADA", year: int = 2025, **overrides) -> dict:
         "production_koz": 900.0,
         "tcc": 773.0,
         "aisc": 1300.0,
-        "capex_sustaining": 474.0,
+        "capex_sustaining": 0.0,
     }
     row.update(overrides)
     return row
@@ -1815,8 +1821,13 @@ class TestValidate(unittest.TestCase):
     """
 
     def test_accepts_consistent_rows(self):
+        # Значение `capex_sustaining` приведено к 0.0 против брифа: строка с
+        # 474.0 «согласованной» больше не является — клин поддержания уже внутри
+        # `aisc`, и ненулевой отток списал бы его дважды (это и проверяет
+        # `validate`). НАМЕРЕНИЕ теста сохранено: согласованный набор строк
+        # по-прежнему даёт пустой список проблем.
         rows = [{"asset": "OLIMPIADA", "year": 2025, "production_koz": 900.0,
-                 "tcc": 773.0, "aisc": 1300.0, "capex_sustaining": 474.0}]
+                 "tcc": 773.0, "aisc": 1300.0, "capex_sustaining": 0.0}]
         problems = ex.validate(rows, {"OLIMPIADA": {"r_bar": 0.68}}, {"residual": 0.0})
         self.assertEqual(problems, [])
 
@@ -1841,6 +1852,39 @@ class TestValidate(unittest.TestCase):
         # согласованных клиньях даёт ПУСТОЙ список — иначе тесты выше проходили
         # бы на функции, которая ругается всегда.
         self.assertEqual(ex.validate(_valid_rows(), _FULL_CAL, {"residual": 0.0}), [])
+
+    def test_flags_nonzero_sustaining_capex(self):
+        # РАНТАЙМ-ЗАЩИТА ОТ ДВОЙНОГО СЧЁТА. Ненулевой `capex_sustaining` — это
+        # ровно тот дефект, из-за которого был занижен каждый NAV (клин уже
+        # внутри `aisc`, а dcf/model.go вычитает и его, и capex_sustaining).
+        # Юнит-тесты эмиттера ловят регрессию в CI, но `main()` обязан поймать
+        # её и на прогоне — поэтому проверка живёт в `validate`, а этот тест
+        # падал на коде ДО правки (тогда 999.0 проходило молча).
+        problems = ex.validate(
+            _valid_rows(capex_sustaining=999.0), _FULL_CAL, {"residual": 0.0}
+        )
+        self.assertTrue(problems, "ненулевой capex_sustaining не помечен")
+        self.assertTrue(any("capex_sustaining" in p for p in problems), problems)
+        self.assertTrue(any("999" in p for p in problems), problems)
+
+    def test_flags_nonzero_project_capex(self):
+        # Проектный capex у пяти рудников LOM тоже контрактный ноль: проекта
+        # развития нет, и отдельный отток по нему так же занизил бы NPV.
+        problems = ex.validate(
+            _valid_rows(capex_project=500.0), _FULL_CAL, {"residual": 0.0}
+        )
+        self.assertTrue(any("capex_project" in p for p in problems), problems)
+
+    def test_accepts_zero_capex_and_zero_project_capex_explicitly(self):
+        # Граница обратной стороны: ЯВНЫЕ нули (как их пишет build_plan_rows)
+        # проходят. Тест нужен, чтобы проверка `!= 0` не превратилась в
+        # «ругаться на отсутствие ключа»: строки без ключей тоже валидны.
+        rows = _valid_rows(capex_sustaining=0.0, capex_project=0)
+        self.assertEqual(ex.validate(rows, _FULL_CAL, {"residual": 0.0}), [])
+        stripped = _valid_rows()
+        for row in stripped:
+            row.pop("capex_sustaining", None)
+        self.assertEqual(ex.validate(stripped, _FULL_CAL, {"residual": 0.0}), [])
 
     def test_flags_negative_production(self):
         rows = _valid_rows(production_koz=-1.0)
