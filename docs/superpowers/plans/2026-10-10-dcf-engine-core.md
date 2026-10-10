@@ -306,13 +306,17 @@ git commit -m "dcf: add NDPI function and IPC escalation"
 Тестовые числа посчитаны вручную и закрепляются в тесте (TDD: эталон до реализации). Возьмём план без ИПЦ (`ipc` пуст), `p.ProfitTaxPct = 0`, `p.NdpiBaseUSDPerOz = 0`, золото $4 000 (НДПИ = 0.10×(4000−1900) = 210):
 
 ```
-Год 1: Prod 100 koz, AISC 1000 → FCF = 100×(4000−1000) − 100×210 − 0 − 50 capex = 300000 − 21000 − 50 = 278950 (тыс. USD) = 278.95 млн
-Год 2: то же, capex 0 → 279000 − 21000 = 258000 тыс. = 258.0 млн
-Год 3: то же + closure −20 млн → 279.0 − 20 = 259.0 млн
-NPV(rate=0): 278.95 + 258.0 + 259.0 = 795.95 млн
+Выручка = 100 koz × (4000 − 1000) = 300 000 тыс. USD = 300.0 млн
+НДПИ    = 100 koz × 210      =  21 000 тыс. USD =  21.0 млн
+Год 1: 300.0 − 21.0 − 50 capex              = 229.0 млн
+Год 2: 300.0 − 21.0                          = 279.0 млн
+Год 3: 300.0 − 21.0 − 20 closure (−20 млн)   = 259.0 млн
+NPV(rate=0): 229.0 + 279.0 + 259.0 = 767.0 млн
 ```
 
-Модуль (`ndp`/`capex` — млн, `production` — koz, AISC — USD/унц; пересчёт в млн — `/1000`):
+> **Исправлено 2026-10-10 (находка имплементера Task 3, подтверждена контроллером).** В первой редакции плана здесь стояло `795.95`. Это число неверно по двум причинам: capex 50 был вычтен как 50 тыс. вместо 50 млн (спека §3.3 задаёт `capex`/`closure` в USD млн), и в году 2 НДПИ вычтен дважды. Корректный эталон — **767.0 млн**.
+
+Модуль (`ndpi`/`capex`/`closure` — млн, `production` — koz, AISC — USD/унц; пересчёт в млн — `/1000`):
 
 ```go
 func TestNpvLOMFixedPlan(t *testing.T) {
@@ -325,8 +329,8 @@ func TestNpvLOMFixedPlan(t *testing.T) {
     p := defaultParams
     p.ProfitTaxPct, p.NdpiBaseUSDPerOz = 0, 0
 
-    if got := npvLOM(plan, deck, 0, nil, p); math.Abs(got-795.95) > 0.01 {
-        t.Fatalf("npvLOM = %v, want 795.95", got)
+    if got := npvLOM(plan, deck, 0, nil, p); math.Abs(got-767.0) > 0.01 {
+        t.Fatalf("npvLOM = %v, want 767.0", got)
     }
 }
 ```
@@ -349,17 +353,19 @@ Expected: PASS.
 
 ```go
 func TestNpvLOMClosureTailReducesValue(t *testing.T) {
-    plan := []MinePlanYear{{Year: 2027, ProductionKoz: 100, AISC: 1000, ClosureCosts: 0}}
-    withTail := plan
-    withTail[0].ClosureCosts = -20
+    // Два НЕЗАВИСИМЫХ плана, а не `withTail := plan`: тот вариант делит один
+    // backing array, и `withTail[0].ClosureCosts = -20` меняет и `plan` —
+    // обе ветки получают хвост, и проверка `with < without` становится вакуумной.
+    without := []MinePlanYear{{Year: 2027, ProductionKoz: 100, AISC: 1000}}
+    with := []MinePlanYear{{Year: 2027, ProductionKoz: 100, AISC: 1000, ClosureCosts: -20}}
     deck := []DeckYear{{2027, 4000}}
     p := defaultParams
     p.ProfitTaxPct, p.NdpiBaseUSDPerOz = 0, 0
 
-    without := npvLOM(plan, deck, 0, nil, p)
-    with := npvLOM(withTail, deck, 0, nil, p)
-    if !(with < without) {
-        t.Fatalf("хвост закрытия обязан уменьшать NPV: got %v, want < %v", with, without)
+    withoutNPV := npvLOM(without, deck, 0, nil, p)
+    withNPV := npvLOM(with, deck, 0, nil, p)
+    if !(withNPV < withoutNPV) {
+        t.Fatalf("хвост закрытия обязан уменьшать NPV: got %v, want < %v", withNPV, withoutNPV)
     }
 }
 
@@ -567,11 +573,40 @@ func TestNavRowsKeepsAllDecksAndContours(t *testing.T) {
     if !(byKey["consensus_lt|Olimpiada|industrial"] < byKey["spot_flat|Olimpiada|industrial"]) {
         t.Fatal("NPV на consensus_lt обязан быть ниже, чем на spot_flat")
     }
-    if !(byKey["spot_flat|Olimpiada|local"] < byKey["spot_flat|Olimpiada|industrial"]) {
-        t.Fatal("локальный контур (ставка выше) обязан давать NPV ниже индустриального")
-    }
 }
 ```
+
+> **Исправлено 2026-10-10 (находка имплементера Task 5).** Первая редакция плана проверяла в этом же тесте ещё и `spot_flat|Olimpiada|local < spot_flat|Olimpiada|industrial`, но план там одногодичный: `npvLOM` дисконтирует по индексу года плана, и `(1+rate)^0 = 1` при любой ставке — оба контура дают **одинаковый** NPV, утверждение невыполнимо. Проверка контуров вынесена в отдельный тест на плане из ≥2 лет.
+
+**И отдельный тест на контуры (план минимум 2 года — иначе неразличимо):**
+
+```go
+func TestNavRowsLocalContourLowersMultiYearNpv(t *testing.T) {
+    plans := []MinePlanRecord{{Company: "PLZL", Asset: "Olimpiada", Years: []MinePlanYear{
+        {Year: 2027, ProductionKoz: 100, AISC: 1000},
+        {Year: 2028, ProductionKoz: 100, AISC: 1000},
+    }}}
+    decks := map[string][]DeckYear{"spot_flat": {{2027, 4000}, {2028, 4000}}}
+    rates := DiscountRates{Industrial: 0.05, Local: 0.16}
+    p := defaultParams
+    p.ProfitTaxPct, p.NdpiBaseUSDPerOz = 0, 0
+
+    rows, err := navRows(uuid.New(), plans, decks, rates, p)
+    if err != nil {
+        t.Fatal(err)
+    }
+    if len(rows) != 2 {
+        t.Fatalf("rows = %d, want 2 (один актив × один deck × два контура)", len(rows))
+    }
+    byContour := map[string]float64{}
+    for _, r := range rows {
+        byContour[r.Contour] = r.NPVUSDmln
+    }
+    if !(byContour["local"] < byContour["industrial"]) {
+        t.Fatalf("на плане из двух лет локальная ставка обязана дать NPV ниже: local %v, industrial %v",
+            byContour["local"], byContour["industrial"])
+    }
+}
 
 - [ ] **Step 2: Запустить — тест должен не собраться**
 
