@@ -21,6 +21,19 @@ steps:
       limit: 3
       interval_sec: 300
 
+  # Сид поактивного AISC: перезаписывает план dcf_mine_plans уточнённой
+  # структурой затрат по тому же ключу (company, asset, year). Стоит МЕЖДУ
+  # dcf_mine_plans и dcf_engine намеренно и в том же chain: без него ядро
+  # посчитало бы по старому плоскому клину «tcc + 698», а лог остался бы
+  # успешным — тот же молчаливый провал, от которого защищает chain.
+  # Файл сида — коммитируемый артефакт sql/dcf_mine_plans_seed.sql
+  # (пересобирается `make dcf-aisc`).
+  - id: dcf_mine_plans_seed
+    run: "make ch-sql FILE=sql/dcf_mine_plans_seed.sql"
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
   # DCF_RUN_ID здесь НЕ задаётся намеренно: это переменная РАЗОВОГО прогона
   # (UUID связывает nav_by_asset с model_runs ingest-endpoint'а), и выдумывать
   # её в расписании значило бы плодить несвязанные с model_runs строки. Без
