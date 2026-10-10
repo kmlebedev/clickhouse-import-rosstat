@@ -594,7 +594,7 @@ func TestSameMetricFromTwoHeadersBothSurvive(t *testing.T) {
 		both = append(both, shifted)
 	}
 
-	records, _ := parseKPILines(both, "https://example.invalid/joined.pdf", 1)
+	records, _, _ := parseKPILines(both, "https://example.invalid/joined.pdf", 1)
 
 	byMetric := map[string]int{}
 	byKey := map[string]float64{}
@@ -657,7 +657,7 @@ func TestParseKPILinesCountsUnassigned(t *testing.T) {
 		t.Run(c.path, func(t *testing.T) {
 			lines := tsvLines(t, c.path)
 
-			records, unassigned := parseKPILines(lines, "https://example.invalid/x.pdf", c.page)
+			records, unassigned, _ := parseKPILines(lines, "https://example.invalid/x.pdf", c.page)
 
 			if unassigned != c.unassigned {
 				t.Errorf(
@@ -677,4 +677,86 @@ func TestParseKPILinesCountsUnassigned(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestParseKPILinesHeaderlessCount держит третий результат parseKPILines —
+// число строк, совпавших с непериодной метрикой до первой распознанной шапки.
+//
+// Это единственный сигнал отказа «шапка не распознана»: страница без шапки
+// разбирается в ноль записей, и оба прежних выхода при этом молчат. unassigned
+// равен нулю ИМЕННО здесь (колонок нет — ни одно значение не может быть
+// отнесено к непериодной колонке), а число записей равно нулю ровно так же,
+// как у страницы без метрик. Без третьего результата эти два случая неразличимы,
+// и импортёр считает нераспознанную страницу успешно разобранной.
+//
+// Фикстура строится так же, как это делал контролёр: из русского релиза 1 п/г
+// 2026 удаляется единственная строка с меткой единиц «$ млн». Именно она —
+// признак шапки (isTableHeader), поэтому без неё ни одна шапка не распознаётся,
+// и все строки метрик остаются без колонок: счётчик растёт с 0 до 10.
+//
+// Ноль на целой странице существен не меньше десяти на повреждённой: счётчик
+// считает строки строго ВЫШЕ первой шапки, а не «не ставшие записями строки
+// метрик вообще». Иначе отказ срабатывал бы на здоровой английской МСФО-странице,
+// где шапки финансовой таблицы нет вовсе: её девять строк метрик стоят с самого
+// начала файла, то есть выше всего, и дали бы ровно тот же счётчик, что и
+// нераспознанная страница. Отказ обязан остаться про ноль записей, а не про
+// непустой счётчик.
+func TestParseKPILinesHeaderlessCount(t *testing.T) {
+	intact := tsvLines(t, "testdata/press_reliz_1h26_p1.tsv")
+
+	records, _, headerless := parseKPILines(intact, "https://example.invalid/1h26.pdf", 1)
+
+	if len(records) == 0 {
+		t.Fatal("intact fixture parsed to zero records: the test lost its subject")
+	}
+	if headerless != 0 {
+		t.Errorf(
+			"headerless = %d on the intact fixture, want 0: the counter counts only lines ABOVE the first header, and no metric line precedes it on a healthy page",
+			headerless,
+		)
+	}
+
+	damaged := dropUnitsMarkerLine(t, intact)
+
+	records, unassigned, headerless := parseKPILines(damaged, "https://example.invalid/1h26.pdf", 1)
+
+	if len(records) != 0 {
+		t.Errorf("records = %d on a page without a header, want 0", len(records))
+	}
+	if unassigned != 0 {
+		t.Errorf("unassigned = %d, want 0: this failure is exactly when the unassigned counter is silent", unassigned)
+	}
+	if headerless != 10 {
+		t.Errorf(
+			"headerless = %d on a page whose header was not recognised, want 10 (the fixture's metric rows): the only signal of the failure is not wired to the rows that were lost",
+			headerless,
+		)
+	}
+}
+
+// dropUnitsMarkerLine возвращает строки фикстуры без строки-метки единиц: без
+// неё ни одна шапка не распознаётся (isTableHeader требует обе метки — единицы и
+// периоды).
+func dropUnitsMarkerLine(t *testing.T, lines []Line) []Line {
+	t.Helper()
+
+	kept := make([]Line, 0, len(lines))
+
+	dropped := false
+
+	for _, line := range lines {
+		if unitsMarker(line) {
+			dropped = true
+
+			continue
+		}
+
+		kept = append(kept, line)
+	}
+
+	if !dropped {
+		t.Fatal("the fixture carries no units-marker line: nothing to damage")
+	}
+
+	return kept
 }

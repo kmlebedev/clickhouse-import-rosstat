@@ -171,3 +171,89 @@ func (h *warnCapture) Fire(entry *log.Entry) error {
 
 	return nil
 }
+
+// TestGuardAppliesToIFRSRecords держит область действия guard'а: инвариант «в
+// витрину не попадает запись без периода» обязан выполняться для отчёта ЛЮБОГО
+// типа, а не только для KPI.
+//
+// МСФО-страница даёт ровно тот вход, на котором ошибка была не видна: её период
+// приходит параметром (parseIFRSPage), и разбор НЕ отбрасывает записи с пустым
+// периодом — при period == "" все девять метрик страницы доходят до guard'а с
+// Period: "". batchDedup их не спасает: ключ витрины — (metric, period), а
+// метрики у этих девяти разные, поэтому уникальный ключ (metric, "") у каждой
+// своей метрики, и ReplacingMergeTree схлопнула бы их только между запусками.
+//
+// Записи те же, что отдаёт реальная страница 6 английского МСФО за 1 п/г 2026
+// (parseIFRSPage("testdata/en_msfo_p6.tsv", ..., "")): девять метрик с пустым
+// периодом. Проверяется общий шаг — applyGuard, — и это не косметика: через него
+// проходит отчёт любого типа, а kind передаётся в него ровно затем, чтобы
+// сужение «guard только для kpi» было видно в сигнатуре. Тест зовёт applyGuard
+// с "ifrs", поэтому вызов guardRecords, возвращённый внутрь ветки kpi, ловится
+// здесь, а не только при живой приёмке.
+func TestGuardAppliesToIFRSRecords(t *testing.T) {
+	records, err := parseIFRSPage("testdata/en_msfo_p6.tsv", "https://example.invalid/6m2026.pdf", 6, "")
+	if err != nil {
+		t.Fatalf("parseIFRSPage: %v", err)
+	}
+
+	if len(records) == 0 {
+		t.Fatal("the IFRS page parsed to zero records: the test lost its subject")
+	}
+
+	for _, r := range records {
+		if r.Period != "" {
+			t.Fatalf("record %s carries period %q: the test no longer builds the empty-period input it is about", r.Metric, r.Period)
+		}
+	}
+
+	kept, dropped := applyGuard("ifrs", records)
+
+	if dropped != len(records) {
+		t.Errorf("guard dropped %d of %d IFRS records, want all of them: a record without a period must not reach batch.Append", dropped, len(records))
+	}
+	if len(kept) != 0 {
+		t.Errorf("guard kept %d IFRS records with an empty period, want 0", len(kept))
+	}
+}
+
+// TestReportParsedTurnsHeaderlessPageIntoFailure держит B1 на уровне импортёра:
+// включённый отчёт, разобравшийся в ноль записей, — отказ (`failed++`), а не
+// молчаливый успех.
+//
+// Шов взят из самого Import(): успех отчёта решает reportParsed, а не пустой
+// список записей. Это то же место, где сходятся обе причины нуля записей —
+// нераспознанная шапка и пустая страница, — и разбирать их по отдельности
+// незачем: у обоих один правильный ответ, «данных нет, отчёт не разобран».
+// Через Import() это не проверить без ClickHouse (нужны conn и PDF), а шов на
+// уровне решения не требует ни того, ни другого и не оставляет Import()
+// единственным непокрытым звеном.
+//
+// Число строк выше шапки здесь берётся не из прозы, а из разбора той же
+// повреждённой фикстуры, что и в TestParseKPILinesHeaderlessCount: 10 строк
+// метрик остались без колонок, и именно это число импортёр печатает в Warn.
+func TestReportParsedTurnsHeaderlessPageIntoFailure(t *testing.T) {
+	intact := tsvLines(t, "testdata/press_reliz_1h26_p1.tsv")
+	damaged := dropUnitsMarkerLine(t, intact)
+
+	records, _, headerless := parseKPILines(damaged, "https://example.invalid/1h26.pdf", 1)
+
+	if parsed := reportParsed(records, headerless); parsed {
+		t.Errorf(
+			"reportParsed = true for a page whose header was not recognised (%d records, %d metric lines above the header): the importer would count it as a successful report and lose those lines silently",
+			len(records),
+			headerless,
+		)
+	}
+
+	// Обратные случаи: разобранный отчёт — успех независимо от того, были ли выше
+	// шапки строки с меткой (на повреждённой фикстуре такие строки есть, и отказ
+	// обязан остаться про ноль записей, а не про непустой счётчик); страница без
+	// единой строки метрики выше шапки — тоже успех, потому что пустой отчёт от
+	// нераспознанного этим швом не отличается и отличать его здесь нечем.
+	if !reportParsed([]MetricRecord{{Metric: "revenue", Period: "2026H1"}}, 10) {
+		t.Error("reportParsed = false for a non-empty parse: a parsed report is a success whatever the headerless counter says")
+	}
+	if !reportParsed(nil, 0) {
+		t.Error("reportParsed = false for an empty parse with no metric line above the header: nothing points at a lost page here")
+	}
+}

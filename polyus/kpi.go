@@ -59,7 +59,7 @@ func parseKPIPage(
 		return nil, err
 	}
 
-	records, _ := parseKPILines(lines, sourceURL, page)
+	records, _, _ := parseKPILines(lines, sourceURL, page)
 
 	return records, nil
 }
@@ -78,7 +78,14 @@ func parseKPIPage(
 // Второй результат — число значений, не ставших ни одной записью: числа в
 // непериодных колонках и токены, которые не разобрались в число. Число читается
 // как сигнал о расхождении шапки и разбора и уходит в итоговую строку импортёра.
-func parseKPILines(lines []Line, sourceURL string, page int) ([]MetricRecord, int) {
+//
+// Третий результат — число строк, совпавших с непериодной метрикой ДО того, как
+// на странице нашлась хоть одна шапка. Это тот же отказ, что и у ограничения 1
+// (§6.6): шапка не распознана, колонок нет, поэтому разбор отдаёт ноль записей
+// без ошибки. Считать его вместе с нераспределёнными нельзя — unassigned равен
+// нулю ИМЕННО при этом отказе, — поэтому у него свой результат: по нему импортёр
+// отличает «страница пуста» от «страница не разобрана» (см. reportParsed).
+func parseKPILines(lines []Line, sourceURL string, page int) ([]MetricRecord, int, int) {
 	// На одной странице может быть несколько финансовых таблиц, и в склеенном
 	// многостраничном снимке они идут подряд без разделителя страниц
 	// (pdftotext -nopgbrk). Строку обслуживает ближайшая шапка СВЕРХУ, поэтому
@@ -111,6 +118,14 @@ func parseKPILines(lines []Line, sourceURL string, page int) ([]MetricRecord, in
 	skipped := 0
 	unassigned := 0
 
+	// headerlessMetrics считает строки, которые совпали с непериодной метрикой
+	// (matchMetric), но пришли ДО первой распознанной шапки. Пока columns == nil,
+	// значения такой строки разложить не по чему, и она молча уходит в skipped.
+	// На здоровой включённой фикстуре таких строк ноль, а на той же русской
+	// странице 1 п/г 2026 с удалённой шапкой («$ млн») — все десять строк метрик:
+	// именно эта разница и отличает неразобранную страницу от пустой.
+	headerlessMetrics := 0
+
 	for i := 0; i < len(lines); i++ {
 		if isTableHeader(lines[i]) {
 			band := headerBand(lines, i)
@@ -123,6 +138,11 @@ func parseKPILines(lines []Line, sourceURL string, page int) ([]MetricRecord, in
 		}
 
 		if columns == nil {
+			if definition, _, isMetric := matchMetric(lineText(lines[i])); isMetric &&
+				definition.Name != "period" {
+				headerlessMetrics++
+			}
+
 			skipped++
 
 			continue
@@ -157,15 +177,16 @@ func parseKPILines(lines []Line, sourceURL string, page int) ([]MetricRecord, in
 	}
 
 	log.Infof(
-		"polyus KPI %s p.%d: %d records, %d non-metric lines skipped, %d values outside period columns",
+		"polyus KPI %s p.%d: %d records, %d non-metric lines skipped, %d values outside period columns, %d metric lines before any recognised header",
 		sourceURL,
 		page,
 		len(records),
 		skipped,
 		unassigned,
+		headerlessMetrics,
 	)
 
-	return records, unassigned
+	return records, unassigned, headerlessMetrics
 }
 
 // linePage возвращает номер страницы визуальной строки: номер её первого слова,

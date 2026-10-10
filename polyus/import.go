@@ -90,7 +90,7 @@ func (s *financialMetricsImport) Import(ctx context.Context, conn driver.Conn) (
 			continue
 		}
 
-		records, pageUnassigned, parseErr := parseReport(ctx, report)
+		records, pageUnassigned, headerless, parseErr := parseReport(ctx, report)
 		if parseErr != nil {
 			// Один недоступный или нечитаемый отчёт не роняет импорт целиком:
 			// остальные отчёты по-прежнему попадают в витрину.
@@ -100,16 +100,40 @@ func (s *financialMetricsImport) Import(ctx context.Context, conn driver.Conn) (
 			continue
 		}
 
-		// Guard оставлен резервом: он больше не отбрасывает записи по периоду
-		// (значение кладётся по своей X), а не пропускает в витрину запись без
-		// периода. Нераспределённые значения он получает от разбора и не теряет
-		// молча — см. warnUnassignedCounts ниже.
-		if report.Kind == "kpi" {
-			unassigned = append(unassigned, pageUnassigned)
+		// Пустой разбор включённого отчёта — ошибка, а не отсутствие данных: у
+		// этого класса отчётов (пресс-релиз или форма МСФО с метриками) пустая
+		// страница означает, что шапка не распознана, а не что метрик нет.
+		// Нераспознанная шапка даёт ровно тот же результат, что и пустой отчёт, —
+		// ноль записей и nil вместо ошибки, — поэтому отказ нужно объявлять здесь.
+		// Сигнал о нём несёт счётчик строк до первой шапки: unassigned при этом
+		// отказе нулевой и о нем молчит (см. parseKPILines).
+		if !reportParsed(records, headerless) {
+			failed++
+			log.Warnf(
+				"report %s (%s) parsed to zero records with no error (%d metric line(s) before the first recognised header): the header was not recognised, so the page shape is the problem, not the absence of data",
+				report.URL,
+				report.Period,
+				headerless,
+			)
 
-			var guardDropped int
-			records, guardDropped = guardRecords(records)
-			dropped += guardDropped
+			continue
+		}
+
+		// Guard применяется к отчёту ЛЮБОГО типа: инвариант «в витрину не
+		// попадает запись без периода» не зависит от того, откуда период взялся —
+		// из шапки страницы (KPI) или из параметра отчёта (МСФО). Оставленный
+		// только для KPI, он пропускал бы МСФО-записи с пустым периодом прямо в
+		// batch.Append, а batchDedup их не ловит: ключ (metric, "") у них разный.
+		applied, guardDropped := applyGuard(report.Kind, records)
+		records = applied
+		dropped += guardDropped
+
+		if report.Kind == "kpi" {
+			// Нераспределённые значения считает только KPI-разбор: у МСФО-страницы
+			// такого понятия нет — период приходит параметром, а сравнительный
+			// столбец не нераспределённое значение, а другая величина (см.
+			// parseReport).
+			unassigned = append(unassigned, pageUnassigned)
 		}
 
 		for _, record := range records {
@@ -211,18 +235,20 @@ type batchDedup struct {
 // указанные страницы и разбирает их парсером соответствующего типа.
 //
 // Возвращает также число значений, не ставших ни одной записью, — сигнал для
-// guard'а (см. guardRecords) и импортёра. У МСФО-страницы такого счётчика нет:
-// её разбор берёт из строки только первое значение, а сравнительный столбец
-// отчётного периода — не нераспределённое значение, а другая величина того же
-// показателя, и в счётчик она не попадает. Поэтому МСФО-ветка возвращает ноль.
+// guard'а (см. guardRecords) и импортёра, — и число строк до первой распознанной
+// шапки, по которому видно нераспознанную страницу (см. reportParsed). У
+// МСФО-страницы нет ни того, ни другого: её разбор берёт из строки только первое
+// значение, а сравнительный столбец отчётного периода — не нераспределённое
+// значение, а другая величина того же показателя, и в счётчик она не попадает.
+// Поэтому МСФО-ветка возвращает оба нуля.
 //
 // Каталог удаляется целиком при выходе: textPath передаётся в extractPDF с
 // компонентом каталога (filepath.Join(dir, ...)), потому что extractPDF кладёт
 // промежуточные файлы страниц рядом с ним через filepath.Dir.
-func parseReport(ctx context.Context, report Report) ([]MetricRecord, int, error) {
+func parseReport(ctx context.Context, report Report) ([]MetricRecord, int, int, error) {
 	dir, err := os.MkdirTemp("", "polyus-report-*")
 	if err != nil {
-		return nil, 0, fmt.Errorf("create temp dir: %w", err)
+		return nil, 0, 0, fmt.Errorf("create temp dir: %w", err)
 	}
 	defer func() {
 		if removeErr := os.RemoveAll(dir); removeErr != nil {
@@ -232,23 +258,29 @@ func parseReport(ctx context.Context, report Report) ([]MetricRecord, int, error
 
 	pdfPath := filepath.Join(dir, "report.pdf")
 	if err = downloadPDF(ctx, report.URL, pdfPath); err != nil {
-		return nil, 0, fmt.Errorf("download %s: %w", report.URL, err)
+		return nil, 0, 0, fmt.Errorf("download %s: %w", report.URL, err)
 	}
 
 	textPath := filepath.Join(dir, "report.txt")
 	if err = extractPDF(ctx, pdfPath, textPath, report.Pages); err != nil {
-		return nil, 0, fmt.Errorf("extract %s: %w", report.URL, err)
+		return nil, 0, 0, fmt.Errorf("extract %s: %w", report.URL, err)
 	}
 
 	switch report.Kind {
 	case "kpi":
 		// KPI-парсер берёт период из шапки страницы, а не из метаданных отчёта.
-		records, unassigned, err := parseReportKPIPage(textPath, report.URL)
+		// Запасной номер страницы — первая из запрошенных: снимок склеен из
+		// report.Pages подряд, и он верен ровно для неё (см. parseReportKPIPage).
+		records, unassigned, headerless, err := parseReportKPIPage(
+			textPath,
+			report.URL,
+			report.Pages[0],
+		)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, 0, err
 		}
 
-		return records, unassigned, nil
+		return records, unassigned, headerless, nil
 	case "ifrs":
 		records, err := parseIFRSPage(
 			textPath,
@@ -257,32 +289,76 @@ func parseReport(ctx context.Context, report Report) ([]MetricRecord, int, error
 			report.Period,
 		)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, 0, err
 		}
 
-		return records, 0, nil
+		return records, 0, 0, nil
 	default:
-		return nil, 0, fmt.Errorf("unknown report Kind %q", report.Kind)
+		return nil, 0, 0, fmt.Errorf("unknown report Kind %q", report.Kind)
 	}
 }
 
+// reportParsed сообщает, дал ли разбор отчёта хоть одну запись. Пустой разбор —
+// отказ, и вот почему.
+//
+// Нераспознанная шапка неотличима от успеха по возврату: страница, у которой не
+// нашлась шапка финансовой таблицы, разбирается в ноль записей с err == nil.
+// Счётчик нераспределённых значений этот отказ не ловит: колонок нет, поэтому
+// ни одно значение не может быть отнесено к непериодной колонке, и unassigned
+// равен нулю именно тогда, когда сигнал нужен. Направление счётчика поэтому
+// обратное — см. parseKPILines: строки до первой шапки считает headerless, и
+// ненулевое значение подтверждает, что страница несла строки метрик, которым не
+// досталось ни одной колонки.
+//
+// Строка с метрикой выше первой шапки бывает и на здоровой странице: на трёх
+// включённых фикстурах с шапкой таких ноль, но английская МСФО-страница 6 без
+// шапки финансовой таблицы даёт три («Total revenue», «Profit for the period»,
+// «Profit for the period attributable to:»). Поэтому наличие headerless само по
+// себе отказом не делает; отказ — ноль записей, потому что включённый отчёт без
+// единой строки означает нераспознанную шапку, а не отсутствие данных.
+func reportParsed(records []MetricRecord, headerless int) bool {
+	return len(records) > 0 || headerless == 0
+}
+
+// applyGuard применяет guard к записям отчёта и возвращает оставшиеся вместе с
+// числом отброшенных.
+//
+// Вынесено отдельной функцией, потому что от неё требуется свойство, которое
+// вызовом в одной ветке не выражается: guard обязан выполняться для отчёта ЛЮБОГО
+// типа. У KPI и МСФО различается только источник периода (шапка страницы против
+// параметра отчёта, см. kind), а инвариант «в витрину не попадает запись без
+// периода» общий. У МСФО период приходит параметром, но при period == "" все
+// девять метрик страницы дошли бы до batch.Append, а batchDedup их не ловит:
+// ключ витрины — (metric, period), и у разных метрик с пустым периодом он разный.
+// Поэтому вызов, оставленный внутри ветки `if report.Kind == "kpi"`, терял бы
+// эту гарантию молча, и kind передаётся сюда только затем, чтобы такое сужение
+// было видно в сигнатуре и не проходило тест.
+func applyGuard(kind string, records []MetricRecord) ([]MetricRecord, int) {
+	return guardRecords(records)
+}
+
 // parseReportKPIPage разбирает склеенный снимок KPI-отчёта и возвращает записи
-// вместе со счётчиком нераспределённых значений.
+// вместе со счётчиком нераспределённых значений и числом строк до первой
+// распознанной шапки (см. parseKPILines).
 //
 // Период каждой записи берётся из шапки страницы, а номер страницы — из самой
 // строки снимка (linePage): extractPDF склеивает все Report.Pages в один файл, и
-// номер, переданный параметром, верен только для первой страницы. Для отчётов
-// этого списка Pages содержит одну страницу, поэтому запасной номер совпадает с
-// настоящим; параметр остаётся как защита для будущих многостраничных KPI-снимков.
-func parseReportKPIPage(textPath, sourceURL string) ([]MetricRecord, int, error) {
+// номер, переданный параметром, верен только для первой страницы. Именно первая
+// страница и передаётся из parseReport: номер попадает в записи лишь на
+// синтетическом входе, у которого колонки page_num нет.
+func parseReportKPIPage(
+	textPath string,
+	sourceURL string,
+	page int,
+) ([]MetricRecord, int, int, error) {
 	lines, err := readTSVLines(textPath)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 
-	records, unassigned := parseKPILines(lines, sourceURL, 0)
+	records, unassigned, headerless := parseKPILines(lines, sourceURL, page)
 
-	return records, unassigned, nil
+	return records, unassigned, headerless, nil
 }
 
 func init() {
