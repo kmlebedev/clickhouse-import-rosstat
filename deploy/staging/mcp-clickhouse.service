@@ -1,0 +1,23 @@
+[Unit]
+Description=mcp-clickhouse (HTTP, Bearer) — read-only MCP для агентов
+After=network-online.target clickhouse-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/root/.local/bin/uv run --with mcp-clickhouse==0.7.0 --python 3.12 mcp-clickhouse
+EnvironmentFile=/etc/clickhouse-import-rosstat.env
+Environment="CLICKHOUSE_HOST=localhost"
+Environment="CLICKHOUSE_PORT=8123"
+Environment="CLICKHOUSE_USER=kimi_reader"
+Environment="CLICKHOUSE_DATABASE=default"
+Environment="CLICKHOUSE_MCP_SERVER_TRANSPORT=http"
+Environment="CLICKHOUSE_MCP_BIND_HOST=127.0.0.1"
+Environment="CLICKHOUSE_MCP_BIND_PORT=8000"
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,23 @@
+[Unit]
+Description=dagu — планировщик импортёров clickhouse-import-rosstat
+After=network-online.target clickhouse-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/dagu
+# start-all: веб-сервер + планировщик в одном процессе.
+# Координатор выключен: развёртывание на одной машине, распределённых воркеров нет.
+ExecStart=/root/.local/bin/dagu start-all --dags /root/dagu --host 127.0.0.1 --port 8080
+EnvironmentFile=/etc/clickhouse-import-rosstat.env
+Environment="ROSSTAT_IMPORT_BIN=/root/.local/bin/clickhouse-import-rosstat"
+Environment="DAGU_COORDINATOR_ENABLED=false"
+Restart=always
+RestartSec=10
+LimitNOFILE=65536
+PrivateTmp=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
