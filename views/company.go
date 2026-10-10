@@ -1,6 +1,13 @@
 package views
 
-import "github.com/kmlebedev/clickhouse-import-rosstat/util"
+import (
+	"context"
+
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
+	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+	log "github.com/sirupsen/logrus"
+)
 
 // companyFinancialsTable — общая для сектора таблица метрик компаний. Числа в неё
 // кладёт импортёр polyus/ (KPI-релизы и МСФО-отчёты), а читает их агент через
@@ -189,4 +196,57 @@ FROM databook_polyus FINAL`,
 // раньше незачем.
 func companyViewsDDL() []string {
 	return []string{companyFinancialsCreateTable}
+}
+
+// companyViews создаёт таблицу метрик компаний, три витрины над ней и их
+// комментарии, а описания рядов кладёт в общий series_catalog.
+//
+// Порядок внутри Import не переставлять:
+//
+//  1. DDL таблицы. Витрины создаются через util.CreateView, а он сначала считает,
+//     сколько таблиц-источников уже есть в system.tables, и МОЛЧА пропускает
+//     витрину, если хоть одна отсутствует (created=false, err=nil). На пустой БД
+//     это ровно то, что нужно мета-витринам, но не company_financials: её таблицу
+//     создаёт этот же импортёр, и без первого шага пропустились бы и она, и
+//     v_company_metric_sources.
+//  2. Витрины. companyOperatingView гейтится по databook_polyus, которого на
+//     пустой БД ещё нет, и на первом прогоне будет пропущена — это правильное
+//     поведение, а не повод создавать её в обход гейта: до импорта датапака
+//     витрина всё равно нечитаема.
+//  3. Каталог рядов. Он идемпотентен (ReplacingMergeTree по ключу (source,
+//     series)), поэтому повторный прогон освежает описания, а не плодит строки.
+//
+// Гранты на витрины импортёр не выдаёт: это делает владелец БД через
+// make mcp-user (sql/mcp_kimi_reader.sql).
+type companyViews struct{}
+
+func (s *companyViews) Name() string {
+	return "company_views"
+}
+
+func (s *companyViews) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+	for _, stmt := range companyViewsDDL() {
+		if err = conn.Exec(ctx, stmt); err != nil {
+			return count, err
+		}
+	}
+
+	for _, v := range []util.View{companyFinancialsView, companyMetricSourcesView, companyOperatingView} {
+		var created bool
+		if created, err = util.CreateView(ctx, conn, v); err != nil {
+			return count, err
+		}
+
+		log.Infof("View %s created: %t", v.Name, created)
+	}
+
+	if err = util.UpsertSeriesCatalog(ctx, conn, polyusSeriesMeta()); err != nil {
+		return count, err
+	}
+
+	return count, nil
+}
+
+func init() {
+	chimport.Stats = append(chimport.Stats, &companyViews{})
 }

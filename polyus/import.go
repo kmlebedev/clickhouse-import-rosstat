@@ -62,11 +62,21 @@ func (s *financialMetricsImport) Name() string {
 	return financialMetricsTable
 }
 
+// EnsureMetricsTable создаёт company_financials, если её ещё нет. Отдельная
+// экспортируемая функция — потому что таблицу читают не только импортёр метрик:
+// витрина v_company_financials из пакета views строится поверх неё, а агент
+// читает именно витрину. Импортёры запускаются независимо, и «витрины раньше
+// метрик» — обычный порядок dagu, а не ошибка; без этого вызова витрина молча
+// пропустилась бы, потому что util.CreateView не создаёт таблицу-источник.
+//
+// DDL — тот же шаблон, что и в Import: две копии списка колонок развели бы
+// таблицу в двух формах.
+func EnsureMetricsTable(ctx context.Context, conn driver.Conn) error {
+	return conn.Exec(ctx, fmt.Sprintf(financialMetricsCreateTable, financialMetricsTable))
+}
+
 func (s *financialMetricsImport) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	if err = conn.Exec(
-		ctx,
-		fmt.Sprintf(financialMetricsCreateTable, financialMetricsTable),
-	); err != nil {
+	if err = EnsureMetricsTable(ctx, conn); err != nil {
 		return 0, err
 	}
 

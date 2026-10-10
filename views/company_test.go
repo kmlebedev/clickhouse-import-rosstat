@@ -4,8 +4,79 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
+	"github.com/kmlebedev/clickhouse-import-rosstat/polyus"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 )
+
+// Импортёр company_views — вход всей группы витрин: он и создаёт таблицу, и
+// регистрируется под именем, которым его включает Makefile/dagu.
+func TestCompanyViewsImporterName(t *testing.T) {
+	if got := (&companyViews{}).Name(); got != "company_views" {
+		t.Fatalf("Name() = %q, want company_views", got)
+	}
+}
+
+// Импортёр обязан быть зарегистрирован: без записи в chimport.Stats его не
+// выберет ни CLICKHOUSE_IMPORT_STAT, ни расписание — витрины не появятся.
+func TestCompanyViewsImporterIsRegistered(t *testing.T) {
+	for _, s := range chimport.Stats {
+		if s.Name() == "company_views" {
+			return
+		}
+	}
+
+	var names []string
+	for _, s := range chimport.Stats {
+		names = append(names, s.Name())
+	}
+
+	t.Fatalf("company_views is not registered in chimport.Stats; registered: %v", names)
+}
+
+// Таблицу надо создать до того, как её прочитает хоть одна витрина: витрины
+// идут через util.CreateView, а его гейт молча пропускает витрину, пока нет
+// таблицы-источника. Порядок проверяется ещё и тестом ниже — на паре «таблица,
+// затем мета-витрина».
+func TestCompanyViewsDDLOrder(t *testing.T) {
+	stmts := companyViewsDDL()
+	if len(stmts) == 0 {
+		t.Fatal("no DDL statements")
+	}
+	if !strings.Contains(stmts[0], "company_financials") {
+		t.Fatalf("first statement must create the table, got %q", stmts[0])
+	}
+}
+
+// Таблица метрик обязана быть создана до витрин, которые её читают. Проверка
+// идёт по ОБЪЕДИНЕНИЮ двух списков DDL — companyViewsDDL() и таблицы из
+// polyus.EnsureMetricsTable: создание таблицы обязано быть в первом списке, иначе
+// витрины company_financials построятся в обход него.
+func TestCompanyViewsDDLCreatesTableBeforeViews(t *testing.T) {
+	stmts := companyViewsDDL()
+	financials := indexOfStatement(stmts, "CREATE TABLE IF NOT EXISTS "+companyFinancialsTable)
+	if financials < 0 {
+		t.Fatalf("companyViewsDDL must create %s before its views; got %v", companyFinancialsTable, stmts)
+	}
+
+	for _, v := range []util.View{companyFinancialsView, companyMetricSourcesView} {
+		if indexOfStatement(stmts, "CREATE OR REPLACE VIEW "+v.Name) >= 0 {
+			t.Errorf("%s must be created by util.CreateView, not by a DDL statement: CreateView is what attaches its comments", v.Name)
+		}
+	}
+}
+
+// indexOfStatement возвращает индекс первого оператора, содержащего подстроку,
+// или -1: DDL витрин исполняется как есть, поэтому опознаётся по тексту.
+func indexOfStatement(stmts []string, contains string) int {
+	for i, stmt := range stmts {
+		if strings.Contains(stmt, contains) {
+			return i
+		}
+	}
+
+	return -1
+}
 
 // Each view must name all three of its sources in the ORDER BY / resolution
 // key, and the comments must reach the agent: a view without comments is
@@ -318,4 +389,87 @@ func contains(list []string, want string) bool {
 // форматирование, а не содержание.
 func collapseSpaces(s string) string {
 	return strings.Join(strings.Fields(s), " ")
+}
+
+// Каталог рядов обязан покрывать все метрики, которые умеет выдать разбор PDF:
+// агент не увидит ряд, которого нет в v_series_catalog, а метрика, забытая в
+// каталоге, — это не «недоописанный ряд», а непрочитанное число. Список берётся
+// из polyus.MetricNames(), а не дублируется здесь, ровно затем, чтобы словарь
+// парсера и каталог не разошлись молча.
+func TestPolyusSeriesMetaCoversEveryMetric(t *testing.T) {
+	described := make(map[string]util.SeriesMeta)
+	for _, m := range polyusSeriesMeta() {
+		if m.Source == "polyus" {
+			described[m.Series] = m
+		}
+	}
+
+	for _, name := range polyus.MetricNames() {
+		meta, ok := described[name]
+		if !ok {
+			t.Errorf("metric %q has no series_catalog entry with source polyus", name)
+
+			continue
+		}
+
+		for _, field := range []struct {
+			name  string
+			value string
+		}{
+			{"Title", meta.Title},
+			{"Unit", meta.Unit},
+			{"Frequency", meta.Frequency},
+			{"Origin", meta.Origin},
+			{"Description", meta.Description},
+		} {
+			if field.value == "" {
+				t.Errorf("polyus/%s: %s is empty", name, field.name)
+			}
+		}
+	}
+}
+
+// Ряды датапака описываются отдельным источником (polyus_datapack), и origin
+// обязан назвать гранулярность активом: в датапаке gold_output — добыча
+// месторождения, в релизе — всего Полюса, и одинаковое имя не должно читаться
+// как одно и то же.
+func TestPolyusDatapackSeriesMetaNamesAssetGranularity(t *testing.T) {
+	rows := 0
+
+	for _, m := range polyusSeriesMeta() {
+		if m.Source != "polyus_datapack" {
+			continue
+		}
+
+		rows++
+		if !strings.Contains(m.Origin, "asset") {
+			t.Errorf("polyus_datapack/%s: Origin must state the asset granularity, got %q", m.Series, m.Origin)
+		}
+		if m.Description == "" {
+			t.Errorf("polyus_datapack/%s: Description is empty", m.Series)
+		}
+	}
+
+	if rows == 0 {
+		t.Fatal("no polyus_datapack rows in the series catalog")
+	}
+}
+
+// Описания датапака не должны повторять имена релизных рядов источника: ключ
+// каталога — (source, series), и пересечение имён внутри одного источника
+// оставило бы от одной из строк молчаливый дубль после ReplacingMergeTree.
+func TestPolyusSeriesMetaKeysAreUnique(t *testing.T) {
+	seen := make(map[string]bool)
+	for _, m := range polyusSeriesMeta() {
+		key := m.Source + "/" + m.Series
+		if seen[key] {
+			t.Errorf("duplicate series_catalog key %s", key)
+		}
+
+		seen[key] = true
+
+		if m.Source == "" || m.Series == "" {
+			t.Errorf("row with empty source or series: %+v", m)
+		}
+	}
 }

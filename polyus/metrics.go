@@ -156,3 +156,17 @@ func MetricNames() []string {
 
 	return names
 }
+
+// MetricDefinitions возвращает словарь релизных метрик вместе с их единицами.
+// Нужен там, где по имени метрики требуется взять единицу: каталог рядов
+// (views/series_meta.go) пишет в series_catalog ту же единицу, что несёт колонка
+// unit витрины, и брать её из второго списка значило бы завести копию словаря.
+//
+// Срез копируется: это словарь, а не состояние — правка вызывающим не должна
+// менять разбор.
+func MetricDefinitions() []MetricDefinition {
+	defs := make([]MetricDefinition, len(metrics))
+	copy(defs, metrics)
+
+	return defs
+}
