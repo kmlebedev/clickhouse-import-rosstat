@@ -26,7 +26,7 @@ func (s *goldViews) Name() string {
 }
 
 func (s *goldViews) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	for _, v := range []util.View{modelInputsView, goldDashboardView, forecastAccuracyView} {
+	for _, v := range []util.View{modelInputsView, goldDashboardView, forecastAccuracyView, dcfAssumptionsView} {
 		var created bool
 		if created, err = util.CreateView(ctx, conn, v); err != nil {
 			return count, err
