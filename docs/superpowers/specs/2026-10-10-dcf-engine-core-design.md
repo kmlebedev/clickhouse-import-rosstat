@@ -32,13 +32,16 @@
 ## 2. Что уже есть и переиспользуется
 
 - `model_runs`, `forecast_log`, `macro_series` — DDL в `ingest/schema.go`; запись только через `cmd/ingest` (Bearer).
-- Витрины `v_model_inputs`, `v_gold_dashboard`, `v_forecast_accuracy`, `v_company_*` — `views/`.
+- Витрины `v_model_inputs`, `v_gold_dashboard`, `v_forecast_accuracy`, `v_company_*` — `views/`; витрина
+  `v_dcf_assumptions` — выход этого среза (`views/dcf_assumptions.go`, создаётся импортёром `gold_views`).
 - Входы в БД, которые нужно читать: `mine_plans` (заводится этим срезом), `price_decks` (заводится этим срезом), `gold_prices`, `cbr_currency_usd`, `ipc_mes`, `ofz_curve`.
 - Конвенция DCF — `ARCHITECTURE.md` §6.4 (rev.2): sum-of-parts, `НДПИ = база + 10% × max(gold − 1900, 0)`,
   двухконтурная ставка (5% real USD индустриальная / ОФЗ локальная), отрицательный хвост `closure_costs`,
   три price deck (`spot_flat`/`consensus_lt`/`own_scenario`), perpetual TV нет.
-- Канонические DDL `mine_plans`, `nav_by_asset`, `price_decks` **уже написаны** в §6.2 и помечены как
-  «не реализованы (в коде нет)».
+- Канонические DDL `mine_plans`, `nav_by_asset`, `price_decks` **уже написаны** в §6.2 — в редакции,
+  которую этот срез и реализует: `nav_by_asset` с колонками `deck` и `contour` и ключом
+  `ORDER BY (run_id, deck, asset, contour)` (см. §3.1); таблицы создаются импортёром `dcf_engine`
+  (`dcf/schema.go`, копии этих DDL).
 - Шаблон импортёра: `chimport.ImportStat` (`Name()` + `Import(ctx, conn)`), регистрация в `chimport.Stats`,
   `ensureTables` по образцу `polyus/`.
 
