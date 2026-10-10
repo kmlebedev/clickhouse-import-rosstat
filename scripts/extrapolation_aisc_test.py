@@ -1179,7 +1179,15 @@ class TestPlanRows(unittest.TestCase):
                 ex.sustaining_capex_mn(row["aisc"], row["tcc"], row["production_koz"]),
                 places=9,
             )
-            self.assertGreater(row["wedge_mn_usd"], 0.0, row)
+            # Клин в МЛН USD — это (aisc − tcc)·koz/1000, поэтому в год
+            # КОНСЕРВАЦИИ (production_koz = 0, см. HALT_WINDOWS/`halted_years`)
+            # он ЗАКОННО равен нулю: клин на унцию есть, умножать его не на что.
+            # Зубы против двойного счёта сохранены отдельным требованием: в
+            # любой ПРОИЗВОДЯЩИЙ год клин строго положителен, то есть величина
+            # не «обнулилась вообще».
+            self.assertGreaterEqual(row["wedge_mn_usd"], 0.0, row)
+            if row["production_koz"] > 0.0:
+                self.assertGreater(row["wedge_mn_usd"], 0.0, row)
             self.assertEqual(row["capex_sustaining"], 0.0, row)
 
     def test_year_never_exceeds_asset_mine_life(self):
@@ -1355,6 +1363,131 @@ class TestPlanRows(unittest.TestCase):
             production={"OLIMPIADA": {2025: 900.0}}, group_aisc=1437.0,
         )
         self.assertEqual([r["production_koz"] for r in rows], [900.0] * 10)
+
+    def test_halt_window_zeroes_production_but_keeps_rows(self):
+        # КОНСЕРВАЦИЯ — это НОЛЬ ДОБЫЧИ, А НЕ ОТСУТСТВИЕ СТРОКИ. Пропуск годов
+        # сдвинул бы нумерацию лет плана и дисконтирование (см. комментарий к
+        # HaltFrom/HaltTo в dcf/mine_plans_seed.go). Поэтому окно Вернинского
+        # 2025–2028 (2024–2028 из Go-сида, пересечённое с планом) даёт четыре
+        # строки с production_koz == 0, а всего строк по-прежнему 77.
+        rows = ex.build_plan_rows(
+            tcc_2025={a: 700.0 for a in ex.ASSETS},
+            r_bar={a: 0.6 for a in ex.ASSETS},
+            production=self._full_production(),
+            group_aisc=ex.GROUP_AISC_2025_USD_PER_OZ,
+        )
+        self.assertEqual(len(rows), 77)
+        by_asset_year = {(r["asset"], r["year"]): r for r in rows}
+        for year in (2025, 2026, 2027, 2028):
+            row = by_asset_year[("VERNINSKOYE2", year)]
+            self.assertEqual(row["production_koz"], 0.0, row)
+        # Ровно четыре нулевых года Вернинского — окно ПРИЦЕЛЬНОЕ, а не «весь
+        # горизонт»: строки существуют (проверено выше), но годы 2029+ дают
+        # добычу.
+        v_twelve = [
+            r["year"] for r in rows
+            if r["asset"] == "VERNINSKOYE2" and r["production_koz"] == 0.0
+        ]
+        self.assertEqual(sorted(v_twelve), [2025, 2026, 2027, 2028])
+
+    def test_halt_window_is_precise_not_whole_horizon(self):
+        # Год ПОСЛЕ окна у того же актива обязан иметь ненулевую добычу:
+        # иначе «окно» на деле обнулило бы весь горизонт и тест выше прошёл бы
+        # на сломанной реализации.
+        rows = ex.build_plan_rows(
+            tcc_2025={a: 700.0 for a in ex.ASSETS},
+            r_bar={a: 0.6 for a in ex.ASSETS},
+            production=self._full_production(),
+            group_aisc=ex.GROUP_AISC_2025_USD_PER_OZ,
+        )
+        by_asset_year = {(r["asset"], r["year"]): r for r in rows}
+        self.assertEqual(by_asset_year[("VERNINSKOYE2", 2029)]["production_koz"], 100.0)
+        self.assertEqual(by_asset_year[("VERNINSKOYE2", 2039)]["production_koz"], 100.0)
+        # И граница ПЕРЕД окном проверяется на другом активе: окно не должно
+        # задевать чужие годы.
+        self.assertEqual(by_asset_year[("KURANAKH", 2025)]["production_koz"], 100.0)
+        self.assertEqual(by_asset_year[("KURANAKH", 2028)]["production_koz"], 100.0)
+
+    def test_halt_year_rows_are_real_rows(self):
+        # Строка консервации — настоящая строка, а не заглушка: tcc
+        # эскалирован, aisc увязан (aisc >= tcc), capex_project/closure нулевые
+        # по контракту. Нулевая ТОЛЬКО добыча.
+        rows = ex.build_plan_rows(
+            tcc_2025={a: 700.0 for a in ex.ASSETS},
+            r_bar={a: 0.6 for a in ex.ASSETS},
+            production=self._full_production(),
+            group_aisc=ex.GROUP_AISC_2025_USD_PER_OZ,
+        )
+        by_asset_year = {(r["asset"], r["year"]): r for r in rows}
+        for year in (2025, 2026, 2027, 2028):
+            row = by_asset_year[("VERNINSKOYE2", year)]
+            self.assertGreater(row["tcc"], 0.0, row)
+            self.assertGreater(row["aisc"], 0.0, row)
+            self.assertGreaterEqual(row["aisc"], row["tcc"], row)
+            self.assertEqual(row["capex_sustaining"], 0.0, row)
+            # tcc эскалирован как в обычный год: 700 × множитель 2025→year.
+            self.assertAlmostEqual(
+                row["tcc"],
+                700.0 * ex.escalation_factor(2025, year),
+                places=6,
+            )
+
+    def test_halt_removes_only_that_asset_from_the_year_weights(self):
+        # Взвешивание года: у консервируемого актива вес 0, поэтому он не
+        # участвует в среднем, а остальные активы продолжают давать веса. Это
+        # прямое следствие нулевой добычи — отдельная ветка весов не нужна.
+        rows = ex.build_plan_rows(
+            tcc_2025={a: 700.0 for a in ex.ASSETS},
+            r_bar={a: 0.6 for a in ex.ASSETS},
+            production=self._full_production(),
+            group_aisc=ex.GROUP_AISC_2025_USD_PER_OZ,
+        )
+        year_2026 = [r for r in rows if r["year"] == 2026]
+        self.assertEqual(
+            [r["asset"] for r in year_2026], sorted(
+                [r["asset"] for r in year_2026], key=ex.ASSETS.index
+            ),
+        )
+        producers = [r for r in year_2026 if r["production_koz"] > 0.0]
+        halted = [r for r in year_2026 if r["production_koz"] == 0.0]
+        self.assertEqual([r["asset"] for r in halted], ["VERNINSKOYE2"])
+        self.assertEqual(len(producers), 4)
+        # Увязка 2026 сходится к цели года ровно по производящим активам.
+        total = sum(r["production_koz"] for r in producers)
+        weighted = sum(r["aisc"] * r["production_koz"] for r in producers) / total
+        self.assertAlmostEqual(
+            weighted, ex.group_aisc_for_year(2026), places=6
+        )
+
+    def test_all_assets_halted_in_a_year_is_a_named_error_not_a_crash(self):
+        # Случай «в году консервируют ВСЕ активы» не должен делить на ноль:
+        # вырожденные веса ловятся ДО деления и поднимают ValueError с номером
+        # года. Здесь окно временно расширено на все пять активов через
+        # подмену HALT_WINDOWS — штатные данные этого не содержат, но защита
+        # проверяема.
+        single_year = {2025: 100.0}
+        production = {a: dict(single_year) for a in ex.ASSETS}
+        original = ex.HALT_WINDOWS
+        try:
+            ex.HALT_WINDOWS = {a: (2025, 2025) for a in ex.ASSETS}
+            with self.assertRaises(ValueError) as ctx:
+                ex.build_plan_rows(
+                    tcc_2025={a: 700.0 for a in ex.ASSETS},
+                    r_bar={a: 0.6 for a in ex.ASSETS},
+                    production=production,
+                    group_aisc=ex.GROUP_AISC_2025_USD_PER_OZ,
+                )
+            self.assertIn("2025", str(ctx.exception))
+        finally:
+            ex.HALT_WINDOWS = original
+
+    def test_halted_years_helper_clips_to_horizon(self):
+        # Окно Go-сида у Вернинского — 2024–2028, но план начинается в 2025-м,
+        # поэтому helper отдаёт РОВНО пересечение с горизонтом: 2025–2028 без
+        # 2024. У остальных активов окон нет.
+        self.assertEqual(ex.halted_years("VERNINSKOYE2"), frozenset({2025, 2026, 2027, 2028}))
+        for asset in ("OLIMPIADA", "BLAGODATNOYE", "NATALKA", "KURANAKH"):
+            self.assertEqual(ex.halted_years(asset), frozenset(), asset)
 
     def test_base_year_without_production_is_an_error(self):
         # Молчаливая обрезка базового года сдвинула бы весь горизонт.
@@ -2161,7 +2294,11 @@ class TestMainRun(unittest.TestCase):
                 float(entry["aisc"]) - float(entry["tcc"]),
                 places=9,
             )
-            self.assertGreater(float(entry["wedge_mn_usd"]), 0.0)
+            # В год консервации (production_koz = 0) клин в МЛН USD законно
+            # ноль; зубы против двойного счёта — на производящих годах.
+            self.assertGreaterEqual(float(entry["wedge_mn_usd"]), 0.0)
+            if float(entry["production_koz"]) > 0.0:
+                self.assertGreater(float(entry["wedge_mn_usd"]), 0.0, entry)
             self.assertAlmostEqual(
                 float(entry["wedge_mn_usd"]),
                 (float(entry["aisc"]) - float(entry["tcc"]))
