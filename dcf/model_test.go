@@ -49,3 +49,63 @@ func TestEscalateAccumulatesIPC(t *testing.T) {
 		})
 	}
 }
+
+func TestNpvLOMFixedPlan(t *testing.T) {
+	plan := []MinePlanYear{
+		{Year: 2027, ProductionKoz: 100, AISC: 1000, CapexSustaining: 50},
+		{Year: 2028, ProductionKoz: 100, AISC: 1000},
+		{Year: 2029, ProductionKoz: 100, AISC: 1000, ClosureCosts: -20},
+	}
+	deck := []DeckYear{{2027, 4000}, {2028, 4000}, {2029, 4000}}
+	p := defaultParams
+	p.ProfitTaxPct, p.NdpiBaseUSDPerOz = 0, 0
+
+	if got := npvLOM(plan, deck, 0, nil, p); math.Abs(got-795.95) > 0.01 {
+		t.Fatalf("npvLOM = %v, want 795.95", got)
+	}
+}
+
+func TestNpvLOMClosureTailReducesValue(t *testing.T) {
+	plan := []MinePlanYear{{Year: 2027, ProductionKoz: 100, AISC: 1000, ClosureCosts: 0}}
+	withTail := plan
+	withTail[0].ClosureCosts = -20
+	deck := []DeckYear{{2027, 4000}}
+	p := defaultParams
+	p.ProfitTaxPct, p.NdpiBaseUSDPerOz = 0, 0
+
+	without := npvLOM(plan, deck, 0, nil, p)
+	with := npvLOM(withTail, deck, 0, nil, p)
+	if !(with < without) {
+		t.Fatalf("хвост закрытия обязан уменьшать NPV: got %v, want < %v", with, without)
+	}
+}
+
+func TestNpvLOMHigherRateLowersValue(t *testing.T) {
+	plan := []MinePlanYear{{Year: 2027, ProductionKoz: 100, AISC: 1000},
+		{Year: 2028, ProductionKoz: 100, AISC: 1000}}
+	deck := []DeckYear{{2027, 4000}, {2028, 4000}}
+	p := defaultParams
+	p.ProfitTaxPct, p.NdpiBaseUSDPerOz = 0, 0
+
+	low := npvLOM(plan, deck, 0.05, nil, p)
+	high := npvLOM(plan, deck, 0.20, nil, p)
+	if !(high < low) {
+		t.Fatalf("npvLOM не убывает по ставке: 20%% = %v, 5%% = %v", high, low)
+	}
+}
+
+func TestTwoContoursGiveDifferentNPV(t *testing.T) {
+	plan := []MinePlanYear{{Year: 2027, ProductionKoz: 100, AISC: 1000},
+		{Year: 2028, ProductionKoz: 100, AISC: 1000}}
+	deck := []DeckYear{{2027, 4000}, {2028, 4000}}
+	p := defaultParams
+	p.ProfitTaxPct, p.NdpiBaseUSDPerOz = 0, 0
+
+	rates := DiscountRates{Industrial: 0.05, Local: 0.16} // локальный контур — ОФЗ + премии
+	industrial := npvLOM(plan, deck, rates.Industrial, nil, p)
+	local := npvLOM(plan, deck, rates.Local, nil, p)
+	if !(local < industrial) {
+		t.Fatalf("локальная ставка выше индустриальной — её NPV обязан быть ниже: local %v, industrial %v",
+			local, industrial)
+	}
+}
