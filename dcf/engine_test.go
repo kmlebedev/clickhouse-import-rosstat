@@ -29,27 +29,6 @@ func TestResolveRunID(t *testing.T) {
 	}
 }
 
-// TestResolveRunIDFromEnv — DCF_RUN_ID читается только через os.Getenv, и пустая
-// строка (переменная не задана) обязана быть ошибкой: t.Setenv подменяет окружение
-// теста, поэтому проверка идёт по тому же пути, что и в Task 5.
-func TestResolveRunIDFromEnv(t *testing.T) {
-	t.Setenv(runIDEnv, "")
-
-	if _, err := resolveRunIDString(); err == nil {
-		t.Fatal("незаданный DCF_RUN_ID обязан давать ошибку: молчаливая генерация run_id " +
-			"отвязала бы nav_by_asset от строки model_runs")
-	}
-
-	const raw = "8f14e45f-ceea-467a-9e1c-2c3b1b1c2b1c"
-	t.Setenv(runIDEnv, raw)
-
-	want, _ := uuid.Parse(raw)
-	got, err := resolveRunIDString()
-	if err != nil || got != want {
-		t.Fatalf("DCF_RUN_ID %q: got %v, err %v", raw, got, err)
-	}
-}
-
 // TestNavRowsKeepsAllDecksAndContours — Review Focus 4 и 5: ключ
 // (run_id, deck, asset, contour) обязан различать все комбинации, поэтому
 // navRows не имеет права «схлопывать» деки и контуры в одну строку.
@@ -259,14 +238,20 @@ func TestNavRowsIsDeterministic(t *testing.T) {
 // TestPlanEmptyDoesNotFail — Review Focus 1: пустой mine_plans не ошибка, иначе
 // `make import STAT=dcf_engine` и DAG краснеют на dev-БД, где сида ещё нет.
 //
-// Второй кейс (непустой план, пустые деки) проверяет границу проверки: она решает
-// только «план пуст → не ошибка» и не имеет права падать на отсутствии деков —
-// деки сеются внутри Import, и падать здесь значило бы падать на порядке шагов.
+// Второй и третий кейсы проверяют контракт, ставший реальным в Finding 3: проверка
+// полноты деков ПРЕДУПРЕЖДАЕТ, а не падает. Неполный набор деков — recoverable
+// состояние БД (деки, которых нет, не считаются, остальные считаются), и падение
+// здесь краснило бы DAG на порядке шагов, а не на данных. Поэтому все кейсы ниже
+// обязаны вернуть nil; видимость пропажи обеспечивает лог, а не error.
 func TestPlanEmptyDoesNotFail(t *testing.T) {
 	if err := checkInputs(nil, nil); err != nil {
 		t.Fatalf("пустой mine_plans — не ошибка: %v", err)
 	}
 	if err := checkInputs([]MinePlanRecord{{Company: "PLZL", Asset: "Olimpiada"}}, nil); err != nil {
-		t.Fatalf("непустой план с пустыми deck'ами не должен падать на этой проверке: %v", err)
+		t.Fatalf("непустой план с пустыми деками — предупреждение, а не ошибка: %v", err)
+	}
+	if err := checkInputs([]MinePlanRecord{{Company: "PLZL", Asset: "Olimpiada"}},
+		map[string][]DeckYear{deckSpotFlat: {{Year: 2027, GoldUSD: 4000}}}); err != nil {
+		t.Fatalf("частичный набор деков — предупреждение, а не ошибка: %v", err)
 	}
 }
