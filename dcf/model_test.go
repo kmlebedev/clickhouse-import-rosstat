@@ -115,3 +115,64 @@ func TestTwoContoursGiveDifferentNPV(t *testing.T) {
 			local, industrial)
 	}
 }
+
+// TestNpvLOMClosureTailOnlyInFinalYear страхует от регрессии, при которой хвост
+// закрытия применяется в КАЖДОМ году плана, а не только в последнем. В fixed-plan
+// тесте ранние годы несут ClosureCosts == 0, поэтому такой мутант там незаметен:
+// NPV всё равно 767.0. Здесь ранний год получает −100 млн и обязан быть проигнорирован,
+// значит NPV должен совпасть с вариантом без раннего хвоста.
+func TestNpvLOMClosureTailOnlyInFinalYear(t *testing.T) {
+	withEarly := []MinePlanYear{
+		{Year: 2027, ProductionKoz: 100, AISC: 1000, ClosureCosts: -100}, // должен игнорироваться
+		{Year: 2028, ProductionKoz: 100, AISC: 1000},
+		{Year: 2029, ProductionKoz: 100, AISC: 1000, ClosureCosts: -20},
+	}
+	noEarly := []MinePlanYear{
+		{Year: 2027, ProductionKoz: 100, AISC: 1000}, // тот же план, ранний хвост = 0
+		{Year: 2028, ProductionKoz: 100, AISC: 1000},
+		{Year: 2029, ProductionKoz: 100, AISC: 1000, ClosureCosts: -20},
+	}
+	deck := []DeckYear{{2027, 4000}, {2028, 4000}, {2029, 4000}}
+	p := defaultParams
+	p.ProfitTaxPct, p.NdpiBaseUSDPerOz = 0, 0
+
+	got := npvLOM(withEarly, deck, 0, nil, p)
+	want := npvLOM(noEarly, deck, 0, nil, p)
+	if math.Abs(got-want) > 1e-9 {
+		t.Fatalf("хвост закрытия учтён не только в последнем году: с ранним хвостом %v, без %v", got, want)
+	}
+}
+
+// TestNpvLOMWorkingCapitalReducesValue страхует ветку ΔWC: при WorkingCapitalDays > 0
+// поток обязан уменьшаться, причём ровно на загрузку оборотного капитала. Считаем
+// вручную (год один, rate=0, налог=0; НДПИ не ноль — надбавка 0.10 с цены выше
+// порога 1900 действует даже при нулевой базе, отсюда 21 000 тыс.):
+//
+//	R    = 100 koz × (4000 − 1000)           = 300000 тыс. USD
+//	НДПИ = 100 koz × 0.10×(4000−1900)         =  21000 тыс. USD
+//	база = (R − НДПИ)/1000                    = 279.0 млн
+//	ΔWC  = R × 60/365                         = 49315.0684931... тыс. USD
+//	NPV  = 279.0 − 49315.0684931/1000         = 229.6849315... млн
+func TestNpvLOMWorkingCapitalReducesValue(t *testing.T) {
+	plan := []MinePlanYear{{Year: 2027, ProductionKoz: 100, AISC: 1000}}
+	deck := []DeckYear{{2027, 4000}}
+
+	noWC := defaultParams
+	noWC.ProfitTaxPct, noWC.NdpiBaseUSDPerOz = 0, 0
+
+	withWC := noWC
+	withWC.WorkingCapitalDays = 60
+
+	base := npvLOM(plan, deck, 0, nil, noWC)
+	got := npvLOM(plan, deck, 0, nil, withWC)
+	if !(got < base) {
+		t.Fatalf("ΔWC обязан уменьшать NPV: с ΔWC %v, без %v", got, base)
+	}
+
+	// Ветка ΔWC изолирована: вычитаем ровно R×days/365/1000 млн из базы без ΔWC.
+	const revenueThousand = 300000.0 // R, тыс. USD
+	want := base - revenueThousand*60/365/1000
+	if math.Abs(got-want) > 0.01 {
+		t.Fatalf("npvLOM с ΔWC = %v, want %v (база %v)", got, want, base)
+	}
+}
