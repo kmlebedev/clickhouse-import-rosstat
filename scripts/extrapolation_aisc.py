@@ -108,6 +108,11 @@ COST_AMOUNT = re.compile(r"\$\s*([\d,]+)\s*(?:per ounce|/oz)")
 # Начало годового абзаца: «In 2019, AISC at» / «In 2019, TCC at».
 ANNUAL_ANCHOR = "In {year}, {cost} at"
 
+# Годовой префикс предложения: «In 2019, …». Квартальные предложения начинаются
+# иначе («In the fourth quarter, …», «At Kuranakh, …»), поэтому явный год
+# встречается только у предложений с настоящим годовым наблюдением.
+SENTENCE_YEAR = re.compile(r"^\s*In\s+(\d{4})\s*,")
+
 
 class AssetNameError(Exception):
     """Неизвестное имя актива в годовой прозе AISC/TCC.
@@ -191,23 +196,75 @@ def _annual_block(text: str, year: int, cost: str) -> str:
     return text[start:end] if end > start else text[start:]
 
 
+def _sentence_year(sentence: str):
+    """Год, названный в самом предложении, или None.
+
+    «In 2019, TCC at …» → 2019. Предложения без префикса («AISC at Blagodatnoye
+    …», «At Verninskoye AISC …») возвращают None и наследуют год абзаца.
+    """
+    match = SENTENCE_YEAR.match(sentence)
+    return int(match.group(1)) if match else None
+
+
+def _mention_amount(sentence: str, mention, amounts: list, limit: int):
+    """Выбирает сумму, относящуюся к данному упоминанию.
+
+    Кандидаты — суммы после упоминания и до следующего упоминания в предложении
+    (это отсекает суммы, принадлежащие соседнему активу в многоактивном
+    предложении: «AISC at Natalka … $529, while AISC at Verninskoye … $560»).
+
+    Из кандидатов берётся ПЕРВАЯ — в норме наблюдение названо раньше сравнения:
+    «In 2019, TCC at Natalka declined to $396 per ounce, compared to $747 per
+    ounce in 2018» → 396 (747 — прошлый год).
+
+    ОГРАНИЧЕНИЕ (известное, см. отчёт): если сравнение стоит ПЕРЕД наблюдением
+    («AISC at Olimpiada, compared to $111 per ounce in 2018, was $222 per
+    ounce»), первая сумма — это сравнение, и вернётся 111, а не 222. В реальных
+    фикстурах такой конструкции нет: во всех шести годовых абзацах наблюдение
+    идёт первым. Разбирать клаузу «was $N per ounce» как наблюдение — сшивать
+    предложение заново, и это добавочная хрупкость без подтверждённого случая.
+    """
+    candidates = [a for a in amounts if mention.end() <= a.start() < limit]
+    return candidates[0] if candidates else None
+
+
 def _block_values(block: str, cost: str, year: int) -> dict[str, float]:
     """Извлекает значения `cost` по активам из вырезанного годового абзаца.
 
-    Разбор идёт по предложениям. В предложении допускается несколько упоминаний
-    («AISC at Natalka decreased to $529 per ounce, while AISC at Verninskoye
-    decreased to $560 per ounce»), поэтому у каждого упоминания берётся ПЕРВАЯ
-    сумма, идущая после него и до следующего упоминания.
+    Разбор идёт по предложениям, и КАЖДОЕ предложение сначала проверяется на
+    год:
 
-    «Первую» — принципиально: в предложении «In 2019, TCC at Natalka declined to
-    $396 per ounce, compared to $747 per ounce in 2018» вторая сумма — это
-    сравнение с прошлым годом, а не наблюдение. Взятие последней суммы вернуло бы
-    747 вместо 396.
+    * предложение с явным префиксом «In <YYYY>,» даёт значение только если
+      `<YYYY> == year`; иначе оно пропускается целиком (чужой год в блоке —
+      например, сравнительное «In 2020, …», попавшее в абзац 2019);
+    * предложение без префикса наследует год абзаца (это и есть форма
+      «AISC at Blagodatnoye increased to $566 per ounce»).
+
+    Внутри предложения допускается несколько упоминаний («AISC at Natalka …
+    $529, while AISC at Verninskoye … $560»), поэтому у каждого упоминания
+    берётся своя первая сумма — см. `_mention_amount`.
+
+    ПРИОРИТЕТ ГОДА УБИРАЕТ ЗАВИСИМОСТЬ ОТ ПОРЯДКА. Для актива может найтись и
+    годовая, и безымянно-наследованная (квартальная) величина: в FY2019 TCC
+    квартальные предложения «At Blagodatnoye, TCC amounted to $373» и
+    «At Natalka, TCC amounted to $376» соседствуют с годовыми «In 2019, TCC at
+    Blagodatnoye were $398» и «In 2019, TCC at Natalka declined to $396». Какая
+    из пар побеждает, НЕ должно зависеть от порядка предложений: величина из
+    предложения с собственным годовым префиксом приоритетнее величины из
+    предложения без префикса. Без этого правила переписанный (но не изменённый
+    по содержанию) абзац возвращал бы квартальные 373/376 вместо годовых
+    398/396.
     """
-    values: dict[str, float] = {}
+    # (значение, приоритет): приоритет 1 — предложение с явным годом, 0 — без.
+    selected: dict[str, tuple] = {}
     # Точка — граница предложения. «per ounce»/«$/oz» точку не содержат, так что
     # дробление по «точка + пробел» безопасно и не рвёт суммы.
     for sentence in re.split(r"(?<=\.)\s+", block):
+        sentence_year = _sentence_year(sentence)
+        if sentence_year is not None and sentence_year != year:
+            # Чужой год: предложение не относится к разбираемому году.
+            continue
+        priority = 1 if sentence_year == year else 0
         mentions = list(COST_MENTION.finditer(sentence))
         amounts = list(COST_AMOUNT.finditer(sentence))
         for index, mention in enumerate(mentions):
@@ -219,17 +276,17 @@ def _block_values(block: str, cost: str, year: int) -> dict[str, float]:
                 raise AssetNameError(
                     f"неизвестный актив {name!r} в годовом абзаце {cost} за {year}"
                 )
-            # Сумма ищется только ПОСЛЕ упоминания и до следующего упоминания.
             limit = mentions[index + 1].start() if index + 1 < len(mentions) else len(sentence)
-            amount = next(
-                (a for a in amounts if mention.end() <= a.start() < limit), None
-            )
+            amount = _mention_amount(sentence, mention, amounts, limit)
             if amount is None:
                 # Упоминание без величины — это прочая проза (например,
                 # «The Company anticipates AISC at Natalka to normalize…»).
                 continue
-            values[ASSET_CANON[name]] = parse_amount(amount.group(1))
-    return values
+            asset = ASSET_CANON[name]
+            current = selected.get(asset)
+            if current is None or priority >= current[0]:
+                selected[asset] = (priority, parse_amount(amount.group(1)))
+    return {asset: value for asset, (_, value) in selected.items()}
 
 
 def extract_year(text: str, year: int) -> dict[str, dict[str, float]]:

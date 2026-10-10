@@ -160,10 +160,11 @@ class TestExtract(unittest.TestCase):
         self.assertEqual({a: got[a]["aisc"] for a in self.ANNUAL_AISC_2018},
                          self.ANNUAL_AISC_2018)
 
-    def test_2018_tcc_vector_is_complete(self):
+    def test_2018_tcc_vector_without_verninskoye(self):
         # В FY2018 годовой TCC раскрыт по четырём рудникам, которые целиком
         # представлены и по AISC. Вернинского здесь нет: его годовой AISC в
         # FY2018 не раскрыт, и неполная пара (AISC, TCC) в результат не попадает.
+        # (Тест НЕ про TCC Вернинского — ради явности имя не «is_complete».)
         got = ex.extract_year(self.texts[2018], 2018)
         self.assertEqual({a: got[a]["tcc"] for a in self.ANNUAL_AISC_2018},
                          {"OLIMPIADA": 267.0, "BLAGODATNOYE": 360.0, "NATALKA": 747.0,
@@ -193,6 +194,67 @@ class TestExtract(unittest.TestCase):
         for asset, q4_value in q4.items():
             self.assertNotEqual(got[asset]["aisc"], q4_value, asset)
 
+    def test_annual_tcc_values_differ_from_q4_values(self):
+        # В блоке TCC годовые и квартальные предложения ИДУТ ВПЕРЕМЕЖКУ
+        # (FY2019: «At Blagodatnoye, TCC amounted to $373» рядом с «In 2019, TCC
+        # at Blagodatnoye were $398»). Проверяем именно TCC-блок, где живёт
+        # перемежение.
+        got = ex.extract_year(self.texts[2019], 2019)
+        q4_tcc = {"OLIMPIADA": 221.0, "BLAGODATNOYE": 373.0, "NATALKA": 376.0,
+                  "VERNINSKOYE2": 372.0, "KURANAKH": 535.0}
+        for asset, q4_value in q4_tcc.items():
+            self.assertNotEqual(got[asset]["tcc"], q4_value, asset)
+        self.assertEqual(got["BLAGODATNOYE"]["tcc"], 398.0)
+        self.assertEqual(got["NATALKA"]["tcc"], 396.0)
+
+    def test_block_parsing_is_independent_of_sentence_order(self):
+        # КРИТИЧНО: результат не должен зависеть от порядка предложений в блоке.
+        # Берём настоящий годовой TCC-блок FY2019 и переносим все предложения без
+        # собственного префикса «In 2019,» (это квартальные) в КОНЕЦ — то же
+        # содержание, другой порядок. Годовые величины обязаны сохраниться:
+        # 396/398, а не квартальные 376/373.
+        import re as _re
+        block = ex._annual_block(self.texts[2019], 2019, "TCC")
+        sentences = [s for s in _re.split(r"(?<=\.)\s+", block) if s.strip()]
+        prefixed = [s for s in sentences if s.strip().startswith("In 2019,")]
+        bare = [s for s in sentences if not s.strip().startswith("In 2019,")]
+        self.assertGreater(len(prefixed), 0)
+        self.assertGreater(len(bare), 0)
+        reordered = " ".join(prefixed + bare)
+
+        values = ex._block_values(reordered, "TCC", 2019)
+        self.assertEqual(values["NATALKA"], 396.0)
+        self.assertEqual(values["BLAGODATNOYE"], 398.0)
+        self.assertEqual(values["KURANAKH"], 523.0)
+        self.assertEqual(values["VERNINSKOYE2"], 363.0)
+
+    def test_foreign_year_sentence_is_ignored(self):
+        # Предложение с ЧУЖИМ годовым префиксом внутри блока не относится к
+        # разбираемому году и должно быть пропущено.
+        block = ex._annual_block(self.texts[2019], 2019, "TCC")
+        injected = block + " In 2020, TCC at Kuranakh were $999 per ounce."
+        values = ex._block_values(injected, "TCC", 2019)
+        self.assertEqual(values["KURANAKH"], 523.0)
+
+    def test_year_prefixed_beats_bare_regardless_of_order(self):
+        # Годовая величина приоритетнее унаследованной (квартальной) независимо
+        # от того, какое предложение идёт первым.
+        bare_first = ("At Natalka, TCC amounted to $376 per ounce. "
+                      "In 2019, TCC at Natalka declined to $396 per ounce.")
+        prefixed_first = ("In 2019, TCC at Natalka declined to $396 per ounce. "
+                          "At Natalka, TCC amounted to $376 per ounce.")
+        self.assertEqual(ex._block_values(bare_first, "TCC", 2019)["NATALKA"], 396.0)
+        self.assertEqual(ex._block_values(prefixed_first, "TCC", 2019)["NATALKA"], 396.0)
+
+    def test_comparison_before_observation_is_known_limitation(self):
+        # ЗАДОКУМЕНТИРОВАННОЕ ОГРАНИЧЕНИЕ (I1): если сравнение стоит ПЕРЕД
+        # наблюдением, берётся первая сумма — сравнение. В реальных фикстурах
+        # такой конструкции нет, поэтому поведение не менялось; тест фиксирует
+        # текущую границу, чтобы регресс был заметен.
+        text = ("In 2019, AISC at Olimpiada, compared to $111 per ounce in 2018, "
+                "was $222 per ounce. Capex")
+        self.assertEqual(ex._block_values(text, "AISC", 2019)["OLIMPIADA"], 111.0)
+
     def test_alluvial_is_skipped_not_an_error(self):
         # «AISC at Alluvial increased to $1,277 per ounce» — не рудник пятёрки.
         got = ex.extract_year(self.texts[2021], 2021)
@@ -207,7 +269,11 @@ class TestExtract(unittest.TestCase):
         self.assertIn("2030", str(ctx.exception))
 
     def test_no_annual_anchor_returns_empty(self):
-        self.assertEqual(ex.extract_year("Capex something else entirely", 1999), {})
+        # Проза затрат ЕСТЬ (есть AISC/TCC при активе), но годового якоря
+        # «In 1999, AISC at» нет — разбирать нечего, результат пуст.
+        text = ("In 1998, AISC at Olimpiada decreased to $400 per ounce. "
+                "In 1998, TCC at Olimpiada were $200 per ounce. Capex")
+        self.assertEqual(ex.extract_year(text, 1999), {})
 
     def test_quarterly_only_document_returns_empty(self):
         # Документ с одним квартальным абзацем и без годового якоря.
