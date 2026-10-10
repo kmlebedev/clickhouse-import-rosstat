@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -196,8 +197,8 @@ func matchPeriodAt(tokens []string, start, maxPeriodTokens int) (PeriodInfo, int
 // приклеена к последней скобке: «...(тыс. унций)2   1 287»), поэтому после
 // точного сравнения делается вторая, «мягкая» попытка с отброшенной сноской.
 //
-// Префиксы перебираются от длинных к коротким, иначе, например, "CAPEX"
-// перехватывал бы "Stripping CAPEX".
+// Префиксы перебираются от самого длинного к самому короткому, иначе, например,
+// "CAPEX" перехватывал бы "Stripping CAPEX".
 func matchMetric(line string) (MetricDefinition, string, bool) {
 	for _, definition := range metricsSortedByPrefixLength() {
 		for _, prefix := range definition.Prefix {
@@ -259,18 +260,40 @@ func isASCIIDigit(b byte) bool {
 	return b >= '0' && b <= '9'
 }
 
+// metricsSortedByPrefixLength возвращает словарь, упорядоченный по убыванию
+// длины самого длинного префикса каждой метрики.
+//
+// Порядок нужен matchMetric: он берёт первое совпадение, поэтому метрика с
+// более длинной меткой обязана проверяться раньше. Иначе короткая метка
+// перехватывает строки длинной — «Капитальные затраты» (capex) забирает строку
+// «Капитальные затраты по вскрышным работам» (stripping_capex), и вторая
+// метрика не попадает в результат вообще.
+//
+// Сортировка устойчивая, поэтому метрики с одинаковой длиной самого длинного
+// префикса сохраняют порядок объявления в metrics.go — он и служит
+// разрешением ничьих.
 func metricsSortedByPrefixLength() []MetricDefinition {
 	result := append([]MetricDefinition(nil), metrics...)
 
-	for i := 0; i < len(result); i++ {
-		for j := i + 1; j < len(result); j++ {
-			if len(result[j].Prefix) > len(result[i].Prefix) {
-				result[i], result[j] = result[j], result[i]
-			}
+	sort.SliceStable(result, func(i, j int) bool {
+		return longestPrefixLen(result[i]) > longestPrefixLen(result[j])
+	})
+
+	return result
+}
+
+// longestPrefixLen возвращает длину самого длинного префикса метрики в байтах.
+// Префиксы сравниваются по длине в байтах так же, как их сравнивает
+// strings.HasPrefix в matchMetric, поэтому единица измерения совпадает.
+func longestPrefixLen(definition MetricDefinition) int {
+	longest := 0
+	for _, prefix := range definition.Prefix {
+		if len(prefix) > longest {
+			longest = len(prefix)
 		}
 	}
 
-	return result
+	return longest
 }
 
 // normalizeLine приводит строку PDF к виду, пригодному для сопоставления:

@@ -34,6 +34,103 @@ func TestParseKPIReportEN(t *testing.T) {
 	}
 }
 
+// TestParseKPIStrippingCapexDistinctFromCapex держит порядок префиксов в
+// matchMetric. Русский релиз печатает две строки capex, и метка обычной строки —
+// префикс метки вскрышной:
+//
+//	Капитальные затраты3                    946
+//	Капитальные затраты по вскрышным работам 397
+//
+// Если метрики упорядочены по числу префиксов, а не по их длине, capex
+// проверяется первым, забирает вторую строку себе, а stripping_capex не
+// попадает в результат вообще — и 397 теряется.
+func TestParseKPIStrippingCapexDistinctFromCapex(t *testing.T) {
+	records, err := parseKPIPage("testdata/press_reliz_1h26_p1.txt", "https://example.invalid/1h26.pdf", 1)
+	if err != nil {
+		t.Fatalf("parseKPIPage: %v", err)
+	}
+
+	byMetric := map[string]float64{}
+	counts := map[string]int{}
+	for _, r := range records {
+		if r.Period != "2026H1" {
+			continue
+		}
+		byMetric[r.Metric] = r.Value
+		counts[r.Metric]++
+	}
+
+	got, ok := byMetric["stripping_capex"]
+	if !ok {
+		t.Fatalf("stripping_capex for 2026H1 missing entirely; 2026H1 metrics: %v", counts)
+	}
+	if got != 397 {
+		t.Errorf("stripping_capex for 2026H1 = %v, want 397", got)
+	}
+
+	if got, ok := byMetric["capex"]; !ok || got != 946 {
+		t.Errorf("capex for 2026H1 = %v (present=%v), want 946", got, ok)
+	}
+
+	// Обе метрики — отдельные записи: вскрышная строка не должна ни исчезнуть,
+	// ни раствориться в обычной.
+	if byMetric["capex"] == byMetric["stripping_capex"] {
+		t.Errorf("capex and stripping_capex share the value %v, want distinct", byMetric["capex"])
+	}
+}
+
+// TestMetricsSortedByPrefixLengthOrdersByLongestPrefix держит контракт, который
+// обещает имя функции: сортировка по длине самого длинного префикса, а не по их
+// количеству. Вспомогательные метрики подаются вне словаря metrics, поэтому
+// тест не зависит от текущего состава словаря.
+func TestMetricsSortedByPrefixLengthOrdersByLongestPrefix(t *testing.T) {
+	saved := metrics
+	defer func() { metrics = saved }()
+
+	metrics = []MetricDefinition{
+		// 10 символов, две записи в Prefix — при сортировке по количеству
+		// префиксов эта метрика оказалась бы первой.
+		{Name: "ten", Prefix: []string{"0123456789", "abcdefghij"}},
+		// 40 символов, один префикс.
+		{Name: "forty", Prefix: []string{"0123456789012345678901234567890123456789"}},
+	}
+
+	ordered := metricsSortedByPrefixLength()
+	if len(ordered) != 2 {
+		t.Fatalf("got %d definitions, want 2", len(ordered))
+	}
+	if ordered[0].Name != "forty" {
+		t.Errorf("first = %s (longest prefix %d), want forty (%d)",
+			ordered[0].Name, longestPrefixLen(ordered[0]), longestPrefixLen(ordered[1]))
+	}
+	if ordered[1].Name != "ten" {
+		t.Errorf("second = %s, want ten", ordered[1].Name)
+	}
+
+	// Устойчивость: равные длины сохраняют порядок объявления, поэтому словарь
+	// в metrics.go остаётся разрешением ничьих.
+	metrics = []MetricDefinition{
+		{Name: "first", Prefix: []string{"0123456789"}},
+		{Name: "second", Prefix: []string{"abcdefghij"}},
+	}
+	ordered = metricsSortedByPrefixLength()
+	if ordered[0].Name != "first" || ordered[1].Name != "second" {
+		t.Errorf("equal-length prefixes reordered to %s, %s; want declaration order first, second",
+			ordered[0].Name, ordered[1].Name)
+	}
+
+	// Длинный префикс не обязательно первый в списке метрики: берётся самый
+	// длинный из них.
+	metrics = []MetricDefinition{
+		{Name: "shortest-of-mine", Prefix: []string{"0123456789"}},
+		{Name: "has-long-one", Prefix: []string{"ab", "012345678901234567890123456789"}},
+	}
+	ordered = metricsSortedByPrefixLength()
+	if ordered[0].Name != "has-long-one" {
+		t.Errorf("first = %s, want has-long-one (its second prefix is the longest)", ordered[0].Name)
+	}
+}
+
 // TestExtractValueTokensRussianNumbers держит русские разделители: пробел
 // между группами тысяч, запятая как десятичный разделитель и скобки как знак
 // минус. Английский разбор без этих правил вернул бы 1, 287, 674 и 59.
