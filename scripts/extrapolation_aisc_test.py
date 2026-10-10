@@ -292,5 +292,187 @@ class TestVerniskoyeSpelling(unittest.TestCase):
             self.assertEqual(got["VERNINSKOYE2"], {"aisc": 100.0, "tcc": 50.0})
 
 
+def fixture_path(name: str) -> Path:
+    return ex.FIXTURE_DIR / name
+
+
+class TestPriorYearCitations(unittest.TestCase):
+    """Цитата прошлогоднего годового TCC внутри годового абзаца.
+
+    Полюс не пересчитывает в отчёте полную таблицу прошлого года — цитируется
+    ровно один прошлогодний TCC (Наталки). И именно эта цитата даёт единственную
+    проверяемую перекрёстную сверку между двумя документами.
+    """
+
+    def setUp(self):
+        self.texts = {y: normalized_fixture(y) for y in (2018, 2019, 2020, 2021)}
+
+    def test_all_three_citations_match_previous_annual_value(self):
+        # 747 — годовой TCC Наталки за 2018 в FY2018;
+        # 396 — годовой TCC Наталки за 2019 в FY2019;
+        # 355 — годовой TCC Наталки за 2020 в FY2020.
+        expected = {
+            2019: {"NATALKA": {2018: 747.0}},
+            2020: {"NATALKA": {2019: 396.0}},
+            2021: {"NATALKA": {2020: 355.0}},
+        }
+        for year, want in expected.items():
+            got = ex.extract_prior_year_citations(self.texts[year], year)
+            self.assertEqual(got, want, year)
+
+    def test_cited_value_equals_previous_report_annual_value(self):
+        # Цитата в отчёте года Y+1 совпадает с собственным годовым значением
+        # отчёта года Y — это и есть проверяемое пересечение.
+        for citing_year in (2019, 2020, 2021):
+            cited = ex.extract_prior_year_citations(
+                self.texts[citing_year], citing_year
+            )["NATALKA"][citing_year - 1]
+            annual = ex.extract_year(
+                self.texts[citing_year - 1], citing_year - 1
+            )["NATALKA"]["tcc"]
+            self.assertEqual(cited, annual, citing_year)
+
+    def test_fy2018_has_no_citation(self):
+        # У FY2018 нет предшественника среди фикстур — цитат нет вовсе.
+        self.assertEqual(ex.extract_prior_year_citations(self.texts[2018], 2018), {})
+
+
+class TestBuildSeries(unittest.TestCase):
+    """Серия AISC/TCC по трём калибровочным релизам."""
+
+    FIXTURES = {
+        2019: "polyus_pr_4q_fy2019.pdf",
+        2020: "polyus_pr_4q_fy2020.pdf",
+        2021: "polyus_pr_4q_fy2021.pdf",
+    }
+
+    def series(self):
+        return ex.build_series({
+            year: fixture_path(name) for year, name in self.FIXTURES.items()
+        })
+
+    def test_known_annual_values(self):
+        series = self.series()
+        for year, aisc, tcc in (
+            (2019, 455.0, 293.0), (2020, 515.0, 312.0), (2021, 618.0, 369.0),
+        ):
+            self.assertEqual(series["OLIMPIADA"][year]["aisc"], aisc, year)
+            self.assertEqual(series["OLIMPIADA"][year]["tcc"], tcc, year)
+
+    def test_full_series_matches_annual_vectors(self):
+        series = self.series()
+        for asset in ex.ASSETS:
+            for year in (2019, 2020, 2021):
+                text = normalized_fixture(year)
+                annual = ex.extract_year(text, year)[asset]
+                self.assertEqual(series[asset][year]["aisc"], annual["aisc"],
+                                 (asset, year))
+                self.assertEqual(series[asset][year]["tcc"], annual["tcc"],
+                                 (asset, year))
+
+    def test_missing_asset_year_is_none_not_error(self):
+        # FY2018 раскрывает только четыре актива (без Вернинского). Серия из
+        # одного FY2018 не должна ни падать, ни выдумывать строку Вернинского.
+        series = ex.build_series({2018: fixture_path("polyus_pr_4q_fy2018.pdf")})
+        self.assertEqual(
+            sorted(series),
+            ["BLAGODATNOYE", "KURANAKH", "NATALKA", "OLIMPIADA"],
+        )
+        self.assertNotIn("VERNINSKOYE2", series)
+
+    def test_fy2018_yields_four_assets(self):
+        got = ex.extract_year(normalized_fixture(2018), 2018)
+        self.assertEqual(len(got), 4)
+        self.assertNotIn("VERNINSKOYE2", got)
+
+    def test_citation_adds_prior_year_without_aisc(self):
+        # Цитата FY2019 добавляет 2018-й год Наталки в серию: TCC есть, AISC
+        # отсутствует (FY2019 не раскрывает прошлогодний AISC Наталки).
+        series = ex.build_series({
+            2019: fixture_path("polyus_pr_4q_fy2019.pdf"),
+        })
+        self.assertEqual(series["NATALKA"][2018], {"aisc": None, "tcc": 747.0})
+
+
+class TestCrossCheck(unittest.TestCase):
+    """Перекрёстная сверка: цитата против собственного годового значения."""
+
+    CLEAN_PAIR = {
+        2020: "polyus_pr_4q_fy2020.pdf",
+        2021: "polyus_pr_4q_fy2021.pdf",
+    }
+    CORRUPT_PAIR = {
+        2020: "polyus_pr_4q_fy2020.pdf",
+        2021: "polyus_pr_4q_fy2021_corrupt.pdf",
+    }
+
+    def test_clean_pair_does_not_raise(self):
+        # Норма: цитата FY2021 ($355 за 2020) совпадает с годовым FY2020 (355).
+        ex.build_series({y: fixture_path(n) for y, n in self.CLEAN_PAIR.items()})
+
+    def test_all_four_clean_fixtures_do_not_raise(self):
+        ex.build_series({
+            y: fixture_path(f"polyus_pr_4q_fy{y}.pdf")
+            for y in (2018, 2019, 2020, 2021)
+        })
+
+    def test_corrupt_fixture_is_detected(self):
+        # Испорченная фикстура правит цитату TCC Наталки за 2020: $365 вместо
+        # $355. Она расходится с собственным годовым значением FY2020 (355).
+        with self.assertRaises(ex.CrossCheckError) as ctx:
+            ex.build_series({
+                y: fixture_path(n) for y, n in self.CORRUPT_PAIR.items()
+            })
+        message = str(ctx.exception)
+        self.assertIn("NATALKA", message)
+        self.assertIn("2020", message)
+        self.assertIn("355", message)
+        self.assertIn("365", message)
+        self.assertIn("polyus_pr_4q_fy2020.pdf", message)
+        self.assertIn("polyus_pr_4q_fy2021_corrupt.pdf", message)
+
+    def test_corrupt_fixture_is_ignored_on_discovery(self):
+        # Автообнаружение (fixtures=None) не подхватывает испорченную фикстуру.
+        series = ex.build_series()
+        self.assertEqual(series["NATALKA"][2020], {"aisc": 529.0, "tcc": 355.0})
+        self.assertEqual(series["NATALKA"][2021], {"aisc": 626.0, "tcc": 368.0})
+
+    def test_missing_year_is_not_a_conflict(self):
+        # FY2018 не цитирует ничего, и в наборе из одного FY2018 сверять нечего:
+        # отсутствие цитируемого года — норма, а не конфликт.
+        ex.build_series({2018: fixture_path("polyus_pr_4q_fy2018.pdf")})
+
+    def test_tcc_tolerance_is_exact(self):
+        # TCC сверяется точно: расхождение на 1 USD/oz — уже ошибка.
+        with self.assertRaises(ex.CrossCheckError):
+            ex.cross_check_overlap(
+                2020,
+                {"NATALKA": {"tcc": 355.0}},
+                {"NATALKA": {"tcc": 356.0}},
+                Path("a.pdf"), Path("b.pdf"),
+            )
+
+    def test_aisc_within_tolerance_passes(self):
+        ex.cross_check_overlap(
+            2020,
+            {"NATALKA": {"aisc": 529.0}},
+            {"NATALKA": {"aisc": 529.4}},
+            Path("a.pdf"), Path("b.pdf"),
+        )
+
+    def test_aisc_beyond_tolerance_raises(self):
+        with self.assertRaises(ex.CrossCheckError) as ctx:
+            ex.cross_check_overlap(
+                2020,
+                {"NATALKA": {"aisc": 529.0}},
+                {"NATALKA": {"aisc": 530.0}},
+                Path("a.pdf"), Path("b.pdf"),
+            )
+        self.assertIn("AISC", str(ctx.exception))
+
+    def test_2018_is_excluded_from_calibration(self):
+        self.assertNotIn(2018, ex.CALIBRATION_YEARS)
+
+
 if __name__ == "__main__":
     unittest.main()
