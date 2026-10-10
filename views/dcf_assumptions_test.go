@@ -3,8 +3,6 @@ package views
 import (
 	"strings"
 	"testing"
-
-	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 )
 
 // Витрина — выход DCF-модели для агента, и наполняет её другой импортёр
@@ -90,18 +88,20 @@ func TestDcfAssumptionsViewReadsThroughDefiner(t *testing.T) {
 
 // Витрина обязана быть зарегистрирована в импортёре gold_views: без этого её
 // никто не создаст, и грант в sql/mcp_kimi_reader.sql упадёт на несуществующей
-// витрине. Проверка идёт по самому срезу импортёра, а не по списку в тесте.
+// витрине. Проверка идёт по САМОМУ списку импортёра (goldViewsList), а не по
+// списку, написанному здесь: свой список в тесте проверял бы сам себя — витрина,
+// выпавшая из goldViewsList, оставляла бы такой тест зелёным.
 func TestDcfAssumptionsViewIsBuiltByGoldViews(t *testing.T) {
 	var found bool
 
-	for _, v := range []util.View{modelInputsView, goldDashboardView, forecastAccuracyView, dcfAssumptionsView} {
+	for _, v := range goldViewsList {
 		if v.Name == dcfAssumptionsView.Name {
 			found = true
 		}
 	}
 
 	if !found {
-		t.Fatalf("%s must be created by the gold_views importer", dcfAssumptionsView.Name)
+		t.Fatalf("%s must be created by the gold_views importer: it is missing from goldViewsList", dcfAssumptionsView.Name)
 	}
 
 	if dcfAssumptionsView.Comment == "" {
