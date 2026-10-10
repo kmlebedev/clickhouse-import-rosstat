@@ -70,6 +70,53 @@ WHITESPACE_RUN = re.compile(r"\s+", re.UNICODE)
 # Разделители разрядов в суммах: запятая и пробел (в т.ч. неразрывный).
 AMOUNT_SEPARATORS = re.compile(r"[,\s\u00a0\u202f]")
 
+# --- Разбор годовой прозы поактивного AISC/TCC -------------------------------
+
+# Канонизация имён рудников. В пресс-релизах Вернинское встречается с опечаткой
+# «Verniskoye» (подтверждено в FY2018 и FY2020–2021), поэтому обе формы ведут к
+# `VERNINSKOYE2`, как он назван в `databook_polyus.table`.
+ASSET_CANON = {
+    "Olimpiada": "OLIMPIADA",
+    "Blagodatnoye": "BLAGODATNOYE",
+    "Natalka": "NATALKA",
+    "Verninskoye": "VERNINSKOYE2",
+    "Verniskoye": "VERNINSKOYE2",
+    "Kuranakh": "KURANAKH",
+}
+
+# Непроизводственные объекты, встречающиеся в той же прозе. Это не рудники
+# пятёрки, поэтому предложения с ними пропускаются молча, а не считаются ошибкой.
+SKIP_NAMES = {"Alluvial", "Alluvials", "Irkutsk business unit"}
+
+# Имя актива в прозе — одно слово с заглавной буквы. Многословный
+# «Irkutsk business unit» из `SKIP_NAMES` называется буквально: шаблон имени не
+# должен жадно тянуть идущие следом строчные слова («Olimpiada decreased to» —
+# это не имя, а имя плюс начало предиката).
+_ENTITY_NAME = r"(?:Irkutsk business unit|[A-Z][A-Za-z]+)"
+
+# Упоминание затраты при активе. Две реальные формы предложения:
+#   «AISC at Olimpiada …»  (имя ПОСЛЕ затраты)
+#   «At Kuranakh, AISC …»  (имя ПЕРЕД затратой)
+COST_MENTION = re.compile(
+    rf"\b(AISC|TCC)\s+at\s+({_ENTITY_NAME})"
+    rf"|\bAt\s+({_ENTITY_NAME}),?\s+(AISC|TCC)\b"
+)
+
+# Величина затраты: «$455 per ounce» и эквивалент «$836/oz».
+COST_AMOUNT = re.compile(r"\$\s*([\d,]+)\s*(?:per ounce|/oz)")
+
+# Начало годового абзаца: «In 2019, AISC at» / «In 2019, TCC at».
+ANNUAL_ANCHOR = "In {year}, {cost} at"
+
+
+class AssetNameError(Exception):
+    """Неизвестное имя актива в годовой прозе AISC/TCC.
+
+    Сигнализирует о новом объекте, которого нет ни в `ASSET_CANON`, ни в
+    `SKIP_NAMES`: молча его пропустить нельзя, иначе поактивная структура
+    затрат потеряет строку незаметно.
+    """
+
 
 def pdf_to_text(path: Path) -> str:
     """Извлекает текст PDF через `pdftotext -layout`.
@@ -113,6 +160,106 @@ def parse_amount(raw: str) -> float:
     ('$1 277', в том числе неразрывным), поэтому удаляются оба.
     """
     return float(AMOUNT_SEPARATORS.sub("", raw))
+
+
+def _annual_block(text: str, year: int, cost: str) -> str:
+    """Вырезает годовой абзац затраты `cost` из нормализованного текста.
+
+    Годовой абзац начинается буквально с «In {year}, {cost} at» и тянется до
+    следующего раздела. Для AISC это заголовок «Capex», для TCC — заголовок
+    раздела AISC («All-in sustaining costs (AISC)»). Если якоря нет, возвращается
+    пустая строка: отсутствие абзаца — не ошибка (в FY2018 нет годового AISC по
+    Вернинскому, а сам год может быть неполным).
+
+    Возврат именно ОТ якоря — не «всё, что найдётся» — главная защита от ловушки
+    квартального абзаца: предложение «In the fourth quarter, AISC at Olimpiada
+    decreased to $352 per ounce» лежит ДО якоря и в вырезанный блок не попадает.
+
+    Якорь ищется как первое вхождение. Годовой абзац всегда открывается
+    Олимпиадой, поэтому её же фраза «In {year}, {cost} at Olimpiada» и есть
+    начало: остальные активы (Blagodatnoye, Natalka, …) идут ПОСЛЕ неё уже без
+    префикса года либо со своим «In {year},» внутри блока. Проверено на всех
+    четырёх фикстурах.
+    """
+    anchor = ANNUAL_ANCHOR.format(year=year, cost=cost)
+    start = text.find(anchor)
+    if start < 0:
+        return ""
+    end = text.find("Capex", start) if cost == "AISC" else text.find(
+        "All-in sustaining costs (AISC)", start
+    )
+    return text[start:end] if end > start else text[start:]
+
+
+def _block_values(block: str, cost: str, year: int) -> dict[str, float]:
+    """Извлекает значения `cost` по активам из вырезанного годового абзаца.
+
+    Разбор идёт по предложениям. В предложении допускается несколько упоминаний
+    («AISC at Natalka decreased to $529 per ounce, while AISC at Verninskoye
+    decreased to $560 per ounce»), поэтому у каждого упоминания берётся ПЕРВАЯ
+    сумма, идущая после него и до следующего упоминания.
+
+    «Первую» — принципиально: в предложении «In 2019, TCC at Natalka declined to
+    $396 per ounce, compared to $747 per ounce in 2018» вторая сумма — это
+    сравнение с прошлым годом, а не наблюдение. Взятие последней суммы вернуло бы
+    747 вместо 396.
+    """
+    values: dict[str, float] = {}
+    # Точка — граница предложения. «per ounce»/«$/oz» точку не содержат, так что
+    # дробление по «точка + пробел» безопасно и не рвёт суммы.
+    for sentence in re.split(r"(?<=\.)\s+", block):
+        mentions = list(COST_MENTION.finditer(sentence))
+        amounts = list(COST_AMOUNT.finditer(sentence))
+        for index, mention in enumerate(mentions):
+            mention_cost = mention.group(1) or mention.group(4)
+            name = mention.group(2) or mention.group(3)
+            if mention_cost != cost or name in SKIP_NAMES:
+                continue
+            if name not in ASSET_CANON:
+                raise AssetNameError(
+                    f"неизвестный актив {name!r} в годовом абзаце {cost} за {year}"
+                )
+            # Сумма ищется только ПОСЛЕ упоминания и до следующего упоминания.
+            limit = mentions[index + 1].start() if index + 1 < len(mentions) else len(sentence)
+            amount = next(
+                (a for a in amounts if mention.end() <= a.start() < limit), None
+            )
+            if amount is None:
+                # Упоминание без величины — это прочая проза (например,
+                # «The Company anticipates AISC at Natalka to normalize…»).
+                continue
+            values[ASSET_CANON[name]] = parse_amount(amount.group(1))
+    return values
+
+
+def extract_year(text: str, year: int) -> dict[str, dict[str, float]]:
+    """Возвращает поактивный AISC и TCC за `year` из годовой прозы пресс-релиза.
+
+    Формат результата: `{ASSET_NAME: {"aisc": float, "tcc": float}}` по
+    каноническим именам (см. `ASSET_CANON`).
+
+    Ключ присутствует, только если в годовой прозе найдены ОБА значения —
+    AISC и TCC. Так устроен год, где Полюс раскрывает TCC, но умалчивает
+    годовой AISC: в FY2018 нет годового AISC по Вернинскому, поэтому
+    `VERNINSKOYE2` в результате не появится (хотя TCC по нему в абзаце есть).
+    Смешанный словарь с одним только `tcc` был бы непригоден для вызывающей
+    стороны: перекрёстная сверка годов сравнивает пары (AISC, TCC), и клин
+    `(AISC−TCC)/TCC` из неполной пары не считается.
+
+    Полнота набора (все пять активов) — забота вызывающей стороны: отсутствие
+    актива здесь не ошибка.
+
+    Разбор строго привязан к годовому абзацу (`In {year}, …`), поэтому
+    квартальные значения того же года в результат не попадают.
+    """
+    by_asset: dict[str, dict[str, float]] = {}
+    for cost, field in (("AISC", "aisc"), ("TCC", "tcc")):
+        block = _annual_block(text, year, cost)
+        if not block:
+            continue
+        for asset, value in _block_values(block, cost, year).items():
+            by_asset.setdefault(asset, {})[field] = value
+    return {asset: fields for asset, fields in by_asset.items() if len(fields) == 2}
 
 
 def ch_config() -> dict:
