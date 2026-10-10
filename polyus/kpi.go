@@ -316,6 +316,7 @@ func recordsFromLine(
 			Metric:     definition.Name,
 			Period:     column.Period,
 			PeriodType: column.Type,
+			SourceKind: "kpi",
 			Value:      *number,
 			Unit:       definition.Unit,
 			SourceURL:  sourceURL,

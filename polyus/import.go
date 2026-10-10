@@ -12,45 +12,92 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// financialMetricsTable — витрина с метриками Polyus. Схема перенесена без
-// изменений из legacy-импортёра financial/gold_polyus_finance.go (коммит
-// 108f4ca): таблица уже наполнена в ClickHouse.
-const financialMetricsTable = "polyus_financial_metrics"
+// financialMetricsTable — общая для сектора таблица метрик компаний. Схема взята
+// из legacy-таблицы polyus_financial_metrics и расширена измерением источника
+// (source_kind), которое входит в ORDER BY — см. financialMetricsCreateTable.
+//
+// Legacy-таблица polyus_financial_metrics остаётся на месте и больше этим
+// импортёром не наполняется: её читает Grafana-дашборд dashboard/finance-polyus.json,
+// поэтому ни переименовать её, ни пересоздать нельзя, не сломав дашборд.
+const financialMetricsTable = "company_financials"
+
+// financialMetricsStatName — имя импортёра в реестре chimport.Stats, то есть
+// значение CLICKHOUSE_IMPORT_STAT и имя шага в dagu/financial.yaml. Это
+// отдельная константа, и склеивать её с financialMetricsTable нельзя.
+//
+// Имя в реестре — стабильный контракт, на который ссылаются расписания
+// (dagu/financial.yaml, шаг polyus_financial_metrics) и операторы, набирающие
+// make import STAT=polyus_financial_metrics. Имя таблицы — не контракт: оно уже
+// менялось (polyus_financial_metrics → company_financials, когда таблица стала
+// общей для сектора) и может измениться снова.
+//
+// Пока обе величины были одной константой, смена имени таблицы молча
+// переименовывала и импортёр: make import STAT=polyus_financial_metrics отвечал
+// "no importer named ...", а недельный DAG-шаг перестал совпадать с импортёром.
+// Поэтому Name() возвращает эту константу, а не имя таблицы.
+const financialMetricsStatName = "polyus_financial_metrics"
 
 // financialMetricsCompany — тикер компании в записях витрины.
 const financialMetricsCompany = "PLZL"
 
-// financialMetricsCreateTable — DDL витрины, дословно из legacy-импортёра.
+// financialMetricsCreateTable — DDL витрины, канонический (ARCHITECTURE.md §6.2).
 // Формат с %s сохранён ради совместимости с util.ClickHouseImport: подстановка
 // имени таблицы идёт через fmt.Sprintf.
+//
+// Отличие от legacy-схемы — два поля ключа: source_kind (вид документа) и
+// source_url (сам документ). Первого мало: два пресс-релиза подряд несут один и
+// тот же "kpi", и на ключе из четырёх полей они по-прежнему схлопывались бы в
+// одну строку (проверено живым прогоном: gold_output за 2023FY терял 2 799 из
+// релиза FY2024, оставляя 2 902 из релиза FY2023). Именно это и делает таблицу
+// пригодной для нескольких документов: один и тот же
+// показатель за один и тот же период печатают и KPI-релиз, и МСФО-отчёт, и без
+// измерения источника в ключе ReplacingMergeTree оставил бы из двух значений одно,
+// молча потеряв второе (у Полюса так расходятся 17 из 79 общих ключей). Значения
+// source_kind: "kpi" (пресс-релиз), "ifrs" (аудированная форма); "legacy"
+// (строки, перенесённые из polyus_financial_metrics) зарезервировано — код его
+// пока не пишет.
+//
+// Порядок колонок не произвольный: source_kind стоит между period_type и value —
+// ровно там, где его передаёт batch.Append.
 const financialMetricsCreateTable = `CREATE TABLE IF NOT EXISTS %s
 (
-    company LowCardinality(String),
-    metric LowCardinality(String),
-    period String,
+    company     LowCardinality(String),
+    metric      LowCardinality(String),
+    period      String,
     period_type Enum8('Q' = 1, 'H' = 2, 'FY' = 3, 'LTM' = 4),
-    value Nullable(Float64),
-    unit LowCardinality(String),
-    source_url LowCardinality(String),
+    source_kind LowCardinality(String),
+    value       Nullable(Float64),
+    unit        LowCardinality(String),
+    source_url  LowCardinality(String),
     source_page UInt16,
-    loaded_at DateTime DEFAULT now()
+    loaded_at   DateTime DEFAULT now()
 )
 ENGINE = ReplacingMergeTree(loaded_at)
-ORDER BY (company, metric, period)`
+ORDER BY (company, metric, period, source_kind, source_url)`
 
 // financialMetricsImport импортирует метрики Polyus из PDF-отчётов в
-// polyus_financial_metrics.
+// company_financials.
 type financialMetricsImport struct{}
 
+// Name возвращает имя импортёра в реестре — контракт CLI и расписания, а не имя
+// таблицы. Расходиться с financialMetricsTable оно обязано: см.
+// financialMetricsStatName.
 func (s *financialMetricsImport) Name() string {
-	return financialMetricsTable
+	return financialMetricsStatName
+}
+
+// MetricsTableDDL возвращает DDL таблицы метрик с ПОДСТАВЛЕННЫМ именем — ровно
+// тот оператор, который исполняет Import. Нужен витринам: их собственная копия
+// DDL (views/company.go) обязана совпадать с этой колонка в колонку, иначе
+// PrepareBatch и схема разойдутся молча — ошибку поймает только вставка в живую
+// БД. Экспортируется ради теста на расхождение: скопировать текст в тест значило
+// бы завести третью копию, которая разойдётся так же.
+func MetricsTableDDL() string {
+	return fmt.Sprintf(financialMetricsCreateTable, financialMetricsTable)
 }
 
 func (s *financialMetricsImport) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	if err = conn.Exec(
-		ctx,
-		fmt.Sprintf(financialMetricsCreateTable, financialMetricsTable),
-	); err != nil {
+	if err = conn.Exec(ctx, MetricsTableDDL()); err != nil {
 		return 0, err
 	}
 
@@ -71,7 +118,7 @@ func (s *financialMetricsImport) Import(ctx context.Context, conn driver.Conn) (
 	var unassigned []int
 
 	// Одно время загрузки на весь батч: loaded_at объявлен с DEFAULT now(), но
-	// batch-вставка ClickHouse всё равно требует значение на каждую из девяти
+	// batch-вставка ClickHouse всё равно требует значение на каждую из десяти
 	// колонок. Одинаковая метка времени и делает строки одной загрузки одной
 	// версией в ReplacingMergeTree(loaded_at).
 	loadedAt := time.Now()
@@ -147,6 +194,7 @@ func (s *financialMetricsImport) Import(ctx context.Context, conn driver.Conn) (
 				record.Metric,
 				record.Period,
 				record.PeriodType,
+				record.SourceKind,
 				record.Value,
 				record.Unit,
 				record.SourceURL,
@@ -184,12 +232,31 @@ func (s *financialMetricsImport) Import(ctx context.Context, conn driver.Conn) (
 // строки, поэтому две записи с одним ключом в одном батче неразличимы после
 // вставки.
 //
-// Оба поля обязаны быть непустыми: пустой период дал бы один и тот же ключ
-// (metric, "") для всех записей отчёта, который не удалось бы разобрать, и
+// Ключ обязан опознавать ДОКУМЕНТ, а не только его вид. SourceKind различает
+// пресс-релиз и аудированную отчётность — ось приоритета в v_company_financials,
+// но не документ: два KPI-релиза, FY2023 и FY2024, несут один и тот же
+// source_kind = "kpi", и на ключе из четырёх полей они по-прежнему сталкивались.
+// Тогда ровно тот случай, ради которого витрина и заводилась, оставался
+// невидимым: FY2023 печатает за 2023FY золото 2902, FY2024 за тот же период —
+// 2799, и второе молча пропадало (79 повторов в батче вместо единиц). SourceURL
+// и есть признак документа — он приходит в каждой записи (см. MetricRecord) и
+// различает два релиза, у которых совпали все остальные поля.
+//
+// Порядок полей — порядок ORDER BY витрины: (company, metric, period, source_kind,
+// source_url). Расходиться эти два места не имеют права: ключ, оставшийся уже
+// ORDER BY, пропускает в batch строки, которые ClickHouse потом схлопнет, — и
+// счётчик импортированных строк перестаёт совпадать с числом сохранённых (ровно
+// та ошибка, от которой этот ключ и защищает).
+//
+// Metric и Period обязаны быть непустыми: пустой период дал бы один и тот же
+// ключ (metric, "") для всех записей отчёта, который не удалось бы разобрать, и
 // ClickHouse оставил бы ровно одну строку вместо всего отчёта.
 type batchKey struct {
-	Metric string
-	Period string
+	Company    string
+	Metric     string
+	Period     string
+	SourceKind string
+	SourceURL  string
 }
 
 // batchDedup решает, попадает ли запись в batch, и ведёт учёт повторных ключей.
@@ -201,13 +268,18 @@ type batchKey struct {
 // 2026H1 печатают и KPI-релиз, и МСФО), так что проверка нужна до batch.Append —
 // тогда счётчик импортированных строк совпадает с числом сохранённых.
 //
+// Ключ здесь совпадает с ORDER BY витрины (см. batchKey): пропустить через
+// проверку всё, что ClickHouse не схлопнет, — единственный способ довести обе
+// версии до вставки, а ключ уже ORDER BY оставил бы в батче строки, которые
+// ReplacingMergeTree потом схлопывает молча.
+//
 // Возвращает false, если ключ уже встречался; каждый повтор считает сам.
 func (d *batchDedup) add(record MetricRecord) bool {
 	if d.seen == nil {
 		d.seen = make(map[batchKey]bool)
 	}
 
-	key := batchKey{record.Metric, record.Period}
+	key := batchKey{record.Company, record.Metric, record.Period, record.SourceKind, record.SourceURL}
 	if d.seen[key] {
 		d.duplicates++
 

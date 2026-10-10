@@ -123,6 +123,7 @@ func parseIFRSPage(
 			Metric:     definition.Name,
 			Period:     period,
 			PeriodType: periodType(period),
+			SourceKind: "ifrs",
 			Value:      *value,
 			Unit:       definition.Unit,
 			SourceURL:  sourceURL,

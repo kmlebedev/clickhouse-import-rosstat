@@ -11,10 +11,17 @@ type MetricDefinition struct {
 
 // MetricRecord — одно значение метрики за один период.
 type MetricRecord struct {
-	Company    string  `json:"company"`
-	Metric     string  `json:"metric"`
-	Period     string  `json:"period"`
-	PeriodType string  `json:"period_type"`
+	Company    string `json:"company"`
+	Metric     string `json:"metric"`
+	Period     string `json:"period"`
+	PeriodType string `json:"period_type"`
+	// SourceKind — вид документа, из которого пришло значение: "kpi" у
+	// пресс-релиза (период берётся из шапки страницы) и "ifrs" у аудированной
+	// отчётности (период приходит параметром отчёта). Значения совпадают с
+	// Report.Kind. Вид документа входит в ключ витрины: одна и та же метрика за
+	// один и тот же период печатается обоими документами, и без этого поля
+	// второе значение молча перетирало бы первое (см. batchKey).
+	SourceKind string  `json:"source_kind"`
 	Value      float64 `json:"value"`
 	Unit       string  `json:"unit"`
 	SourceURL  string  `json:"source_url"`
@@ -132,4 +139,34 @@ var metrics = []MetricDefinition{
 		Unit:   "ratio",
 		Prefix: []string{"Net debt (incl. derivatives) / adjusted EBITDA, x", "Net debt/adjusted EBITDA (x)"},
 	},
+}
+
+// MetricNames возвращает имена метрик, которые может выдать разбор PDF, кроме
+// псевдометрики "period" (она маркер единиц измерения, а не значение). Каталог
+// рядов и его тест на полноту сверяются с этим списком, а не дублируют его.
+func MetricNames() []string {
+	names := make([]string, 0, len(metrics))
+	for _, m := range metrics {
+		if m.Name == "period" {
+			continue
+		}
+
+		names = append(names, m.Name)
+	}
+
+	return names
+}
+
+// MetricDefinitions возвращает словарь релизных метрик вместе с их единицами.
+// Нужен там, где по имени метрики требуется взять единицу: каталог рядов
+// (views/series_meta.go) пишет в series_catalog ту же единицу, что несёт колонка
+// unit витрины, и брать её из второго списка значило бы завести копию словаря.
+//
+// Срез копируется: это словарь, а не состояние — правка вызывающим не должна
+// менять разбор.
+func MetricDefinitions() []MetricDefinition {
+	defs := make([]MetricDefinition, len(metrics))
+	copy(defs, metrics)
+
+	return defs
 }
