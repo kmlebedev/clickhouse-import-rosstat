@@ -1075,6 +1075,14 @@ class TestPlanRows(unittest.TestCase):
     def _full_production(self, koz: float = 100.0) -> dict:
         return {a: {y: koz for y in range(2025, 2049)} for a in ex.ASSETS}
 
+    def _rows_with_full_production(self, group_aisc: float = 1400.0):
+        return ex.build_plan_rows(
+            tcc_2025={a: 700.0 for a in ex.ASSETS},
+            r_bar={a: 0.6 for a in ex.ASSETS},
+            production=self._full_production(),
+            group_aisc=group_aisc,
+        )
+
     def test_capex_units_are_million_usd(self):
         # (aisc - tcc) * koz / 1000 = USD million
         got = ex.sustaining_capex_mn(aisc=950.0, tcc=450.0, production_koz=1400.0)
@@ -1205,9 +1213,10 @@ class TestPlanRows(unittest.TestCase):
         )
         by_asset_year = {(r["asset"], r["year"]): r for r in rows}
         row_2034 = by_asset_year[("NATALKA", 2034)]
-        self.assertAlmostEqual(
-            row_2034["tcc"], 700.0 * ex.escalation_factor(2025, 2034), places=6
-        )
+        # Сравнение ОТНОСИТЕЛЬНОЕ: `places=6` на величине ~1055 читалось бы как
+        # послабление, хотя фактически это 1e-9. Явный допуск 1e-6 от значения.
+        expected = 700.0 * ex.escalation_factor(2025, 2034)
+        self.assertAlmostEqual(row_2034["tcc"], expected, delta=1e-6 * expected)
 
     def test_group_aisc_for_year_uses_published_anchor(self):
         self.assertAlmostEqual(
@@ -1336,6 +1345,96 @@ class TestPlanRows(unittest.TestCase):
                 production=self._full_production(),
                 group_aisc=1400.0,
             )
+
+    def test_raising_call_does_not_leak_skip_list(self):
+        # F1. Успешный вызов наполняет LAST_SKIPPED_ASSETS, а следующий за ним
+        # ПАДАЮЩИЙ обязан оставить его пустым, а не унаследованным: иначе
+        # вызывающий в `try/except` отнёс бы чужой пропуск к упавшему вызову.
+        ex.build_plan_rows(
+            tcc_2025={"OLIMPIADA": 773.0}, r_bar={"OLIMPIADA": 0.6},
+            production={"OLIMPIADA": {2025: 900.0}}, group_aisc=1437.0,
+        )
+        self.assertTrue(ex.LAST_SKIPPED_ASSETS)  # состояние для проверки утечки
+
+        # Наталка есть в добыче, но якоря TCC у неё нет — валидация падает
+        # ПОСЛЕ отбора активов, то есть на том самом месте, где раньше
+        # стояла запись глобала.
+        production = self._full_production()
+        with self.assertRaises(ValueError):
+            ex.build_plan_rows(
+                tcc_2025={a: 700.0 for a in ex.ASSETS if a != "NATALKA"},
+                r_bar={a: 0.6 for a in ex.ASSETS},
+                production=production,
+                group_aisc=1400.0,
+            )
+        self.assertEqual(ex.LAST_SKIPPED_ASSETS, [])
+        self.assertEqual(ex.LAST_YEAR_RECONCILIATION, {})
+
+    def test_missing_r_bar_for_an_active_asset_is_an_error(self):
+        # Тот же класс падения, что и выше, но по второй ветке валидации.
+        with self.assertRaises(ValueError):
+            ex.build_plan_rows(
+                tcc_2025={a: 700.0 for a in ex.ASSETS},
+                r_bar={a: 0.6 for a in ex.ASSETS if a != "NATALKA"},
+                production=self._full_production(),
+                group_aisc=1400.0,
+            )
+
+    def test_reconciliation_is_reported_per_year(self):
+        # F2. `build_plan_rows` возвращает только строки, поэтому невязка и m
+        # наблюдаемы через LAST_YEAR_RECONCILIATION — иначе прижатый к нулю m
+        # (недостижимая цель) прошёл бы молча.
+        self._rows_with_full_production(group_aisc=ex.GROUP_AISC_2025_USD_PER_OZ)
+        reported = ex.LAST_YEAR_RECONCILIATION
+        self.assertEqual(sorted(reported), list(range(2025, 2049)))
+        for year, (target, residual, m) in reported.items():
+            self.assertAlmostEqual(target, ex.group_aisc_for_year(year), places=9)
+            self.assertAlmostEqual(residual, 0.0, places=6)  # цель достижима
+            self.assertGreater(m, 0.0)  # прижим не сработал
+
+    def test_unreachable_group_target_surfaces_a_clamped_m(self):
+        # F2. Цель вчетверо ниже пола взвешенного TCC: `reconcile` прижимает m
+        # к нулю, и строки при этом структурно безупречны (aisc == tcc).
+        # Единственный сигнал — ненулевой остаток и m == 0.
+        rows = self._rows_with_full_production(group_aisc=100.0)
+        reported = ex.LAST_YEAR_RECONCILIATION
+        self.assertEqual(sorted(reported), list(range(2025, 2049)))
+        for year, (target, residual, m) in reported.items():
+            self.assertEqual(m, 0.0, f"год {year}: m не прижат")
+            self.assertGreater(residual, 0.0, f"год {year}")
+        # Строки при этом проходят структурную проверку — вот почему нужен
+        # отдельный сигнал.
+        for row in rows:
+            self.assertAlmostEqual(row["aisc"], row["tcc"], places=9)
+            self.assertGreaterEqual(row["aisc"], row["tcc"], row)
+        # Невязка положительна и равна отрыву пола TCC от цели: пол взвешенного
+        # TCC в 2025-м — это 700 USD/oz, цель — 100.
+        target_2025, residual_2025, _ = reported[2025]
+        self.assertAlmostEqual(target_2025, 100.0, places=9)
+        self.assertAlmostEqual(residual_2025, 600.0, places=6)
+
+    def test_residual_exposes_the_overshoot_side_too(self):
+        # Та же наблюдаемость с другой стороны: недостижимо ВЫСОКАЯ цель даёт
+        # положительный m (он не ограничен сверху) и отрицательную невязку
+        # только если увязка не сошлась; здесь цель достижима ровно, поэтому
+        # остаток ~0 — тест фиксирует, что ветка не «залипает» на прижим.
+        self._rows_with_full_production(group_aisc=5000.0)
+        for year, (_target, residual, m) in ex.LAST_YEAR_RECONCILIATION.items():
+            self.assertAlmostEqual(residual, 0.0, places=6, msg=f"год {year}")
+            self.assertGreater(m, 1.0, f"год {year}")
+
+    def test_reconciliation_report_is_reset_between_calls(self):
+        # Наблюдаемость не должна «залипать», как и список пропусков: у вызова,
+        # в котором нет ни одного активного года, словарь невязок пуст, а
+        # список пропусков перезаписан целиком (а не дополнен).
+        self._rows_with_full_production()
+        self.assertTrue(ex.LAST_YEAR_RECONCILIATION)
+        ex.build_plan_rows(
+            tcc_2025={}, r_bar={}, production={},
+            group_aisc=1400.0,
+        )
+        self.assertEqual(ex.LAST_YEAR_RECONCILIATION, {})
+        self.assertEqual(len(ex.LAST_SKIPPED_ASSETS), len(ex.ASSETS))
 
     def test_rows_are_sorted_by_asset_then_year(self):
         rows = ex.build_plan_rows(
