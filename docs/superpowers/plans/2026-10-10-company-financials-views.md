@@ -27,7 +27,7 @@
 ## Review Focus
 
 - **`source_kind` in the ordering key.** The whole point of the change is that two documents printing the same metric for the same period stop overwriting each other. If `source_kind` is absent from `ORDER BY`, or `batchDedup` still keys on `(metric, period)` only, the importer will silently drop the second document exactly as before and every test still passes.
-- **Row count must not move.** Widening the key can change how many rows are inserted. The spec pins 265 rows; a different number is a finding to explain, not to accept.
+- **Row count changes by design.** Widening the key means the ~82 records the importer previously skipped as duplicate keys now insert as real rows: the ROADMAP baseline is `Imported 265 rows ... 82 duplicate keys skipped`, and 265 + 82 ≈ 347. The invariant that must hold is the count of distinct `(company, metric, period)` triples — 265 — not the raw inserted count. Verify with `SELECT count(), uniqExact((company, metric, period)) FROM company_financials FINAL` (expect ≈347 / 265). A raw `count()` of 265 would mean the source-kind widening did not take effect.
 - **Existing metric values must survive untouched.** `TestKPIValuesHistoryReports` and `TestExistingReportsUnchanged` pin read values. If those fail after this change, the change has broken parsing, not the schema.
 - **Raw tables stay closed to the agent.** A view that is created but not granted looks identical to a working one from the repo's side. `list_tables` visibility and the `ACCESS_DENIED` on raw tables are both required.
 - **Datapack rows must not silently join the release metrics.** `v_company_operating` and `v_company_financials` are separate; a metric name present in both (`gold_output`) must never be answered from the wrong one.
@@ -578,7 +578,7 @@ make import STAT=company_views
 make import STAT=polyus_financial_metrics
 ```
 
-Record in the spec: the exact `Imported N rows ...` line, the per-period row counts, and whether `N` is 265. **If `N` differs from 265, record the discrepancy and explain it — do not adjust the number in the spec to match.**
+Record in the spec: the exact `Imported N rows ...` line, the per-period row counts, and the `count() / uniqExact((company, metric, period))` pair from `company_financials FINAL`. Expected: `≈347 / 265`. **265 distinct triples is the invariant; ≈347 inserted rows is the expected effect of the source-kind widening.** If the distinct-triple count moves off 265, record the discrepancy and explain it — do not adjust the number in the spec to match.
 
 - [ ] **Step 4: Query both views through MCP and record the output**
 
