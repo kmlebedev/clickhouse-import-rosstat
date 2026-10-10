@@ -1,15 +1,15 @@
 package polyus
 
 import (
-	"bufio"
 	"fmt"
-	"log"
 	"os"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	log "github.com/sirupsen/logrus"
 )
 
 // Числа в таблице могут выглядеть так:
@@ -29,9 +29,23 @@ var valueTokenRegexp = regexp.MustCompile(
 	`^\(?-?(?:\d{1,3}(?:(?:,|\s)\d{3})+|\d+)(?:[.,]\d+)?%?\)?$|^-$`,
 )
 
-// parseKPIPage разбирает извлечённый pdftotext текст одной страницы отчёта:
-// находит строку-шапку с периодами (метрика "period"), затем каждую строку
-// метрики и раскладывает её числовые токены по колонкам-периодам.
+// valueGroupGap — максимальный разрыв по X между словами одного числа, которое
+// pdftotext разбил по пробелу-разделителю тысяч: «1 287» — это два слова с
+// разрывом 1.80pt. Замерено по фикстурам: внутри числа разрыв не превышает
+// 1.86pt, а наименьший промежуток между значениями соседних колонок — 14.26pt
+// (FY2024, «3,002» → «2,799»). Порог 4.0pt лежит между ними с запасом в обе
+// стороны и потому склеивает только группы одного числа.
+const valueGroupGap = 4.0
+
+// parseKPIPage разбирает извлечённый pdftotext снимок страницы отчёта: строит по
+// координатам шапки колоночную модель таблицы и раскладывает значения строк-
+// метрик по её колонкам.
+//
+// Разбор идёт по координатам, а не по порядку токенов: колонки-изменения
+// («Изм. за год», «Y-o-Y») стоят в шапке между периодами, и позиционный разбор
+// относил каждое следующее значение на одну колонку левее — значение колонки
+// изменения выдавалось за значение периода, а настоящие значения уезжали в
+// соседние периоды. Колонка значения определяется его Left через Column.covers.
 //
 // page — номер страницы PDF, к которой относится textPath; он не вычисляется,
 // а попадает в записи как есть.
@@ -39,96 +53,369 @@ func parseKPIPage(
 	textPath string,
 	sourceURL string,
 	page int,
-) (records []MetricRecord, err error) {
+) ([]MetricRecord, error) {
+	lines, err := readTSVLines(textPath)
+	if err != nil {
+		return nil, err
+	}
+
+	records, _, _ := parseKPILines(lines, sourceURL, page)
+
+	return records, nil
+}
+
+// parseKPILines разбирает уже собранные визуальные строки снимка: та же работа,
+// что делает parseKPIPage, но над строками, а не над файлом. Нужна тестам,
+// которые подают синтезированные последовательности строк — например, две
+// таблицы со своими шапками подряд, как в склеенном многостраничном снимке, — и
+// импортёру, который читает счётчик нераспределённых значений (см. guard.go).
+//
+// page — запасной номер страницы: он попадает в записи только тех строк, номер
+// страницы которых не дошёл из TSV (синтезированные строки тестов). У строк из
+// снимка номер берётся из самой строки: extractPDF склеивает все Report.Pages в
+// один файл, и номер, переданный параметром, верен лишь для первой страницы.
+//
+// Второй результат — число значений, не ставших ни одной записью: числа в
+// непериодных колонках и токены, которые не разобрались в число. Число читается
+// как сигнал о расхождении шапки и разбора и уходит в итоговую строку импортёра.
+//
+// Третий результат — число строк, совпавших с непериодной метрикой ДО того, как
+// на странице нашлась хоть одна шапка. Это тот же отказ, что и у ограничения 1
+// (§6.6): шапка не распознана, колонок нет, поэтому разбор отдаёт ноль записей
+// без ошибки. Считать его вместе с нераспределёнными нельзя — unassigned равен
+// нулю ИМЕННО при этом отказе, — поэтому у него свой результат: по нему импортёр
+// отличает «страница пуста» от «страница не разобрана» (см. reportParsed).
+func parseKPILines(lines []Line, sourceURL string, page int) ([]MetricRecord, int, int) {
+	// На одной странице может быть несколько финансовых таблиц, и в склеенном
+	// многостраничном снимке они идут подряд без разделителя страниц
+	// (pdftotext -nopgbrk). Строку обслуживает ближайшая шапка СВЕРХУ, поэтому
+	// колонки запоминаются и живут до следующей шапки.
+	var columns []Column
+
+	// Метрика попадает в результат один раз на ШАПКУ: её метка может встретиться
+	// и в сносках той же таблицы, а строка сноски с числами дала бы вторую запись
+	// того же ключа (metric, period) — ReplacingMergeTree схлопнула бы их молча
+	// и оставила ту, что загружена позже. Проверка стоит на СТРОКЕ, а не на
+	// записи: одна строка метрики законно даёт по записи на период.
+	//
+	// Счётчик сбрасывается на каждой шапке: две таблицы — это два независимых
+	// набора строк, и метрика второй таблицы не дубль первой. Общий на всю
+	// страницу счётчик терял бы записи второй таблицы (обе таблицы склеенного
+	// снимка несут gold_output, но за разные периоды), тогда как повтор внутри
+	// одной таблицы — по-прежнему дубль.
+	//
+	// Записи одного ключа (metric, period), пришедшие из РАЗНЫХ таблиц, здесь не
+	// сливаются: их слияние — дело import.go (batchDedup), который знает, что
+	// попадает в один батч.
+	foundMetrics := make(map[string]bool)
+
+	var records []MetricRecord
+
+	// Строки, не опознанные ни как шапка, ни как метрика с числами, и строки
+	// выше первой шапки пропускаются: в шапку, подписи и сноски попадает
+	// большинство строк страницы. Счётчики ведутся, чтобы пропуски не были
+	// молчаливыми.
+	skipped := 0
+	unassigned := 0
+
+	// headerlessMetrics считает строки, которые совпали с непериодной метрикой
+	// (matchMetric), но пришли ДО первой распознанной шапки. Пока columns == nil,
+	// значения такой строки разложить не по чему, и она молча уходит в skipped.
+	// На здоровой включённой фикстуре таких строк ноль, а на той же русской
+	// странице 1 п/г 2026 с удалённой шапкой («$ млн») — все десять строк метрик:
+	// именно эта разница и отличает неразобранную страницу от пустой.
+	headerlessMetrics := 0
+
+	for i := 0; i < len(lines); i++ {
+		if isTableHeader(lines[i]) {
+			band := headerBand(lines, i)
+			columns = columnsFromHeader(band)
+			foundMetrics = make(map[string]bool)
+
+			i += len(band) - 1
+
+			continue
+		}
+
+		if columns == nil {
+			if definition, _, isMetric := matchMetric(lineText(lines[i])); isMetric &&
+				definition.Name != "period" {
+				headerlessMetrics++
+			}
+
+			skipped++
+
+			continue
+		}
+
+		// Метрика строки определяется до разбора её чисел: по ней решается,
+		// обрабатывать ли строку вообще (см. foundMetrics).
+		definition, _, isMetric := matchMetric(lineText(lines[i]))
+		if isMetric && foundMetrics[definition.Name] {
+			skipped++
+
+			continue
+		}
+
+		lineRecords, lineUnassigned := recordsFromLine(
+			lines[i],
+			columns,
+			"PJSC Polyus",
+			sourceURL,
+			linePage(lines[i], page),
+		)
+		if len(lineRecords) == 0 {
+			skipped++
+
+			continue
+		}
+
+		foundMetrics[definition.Name] = true
+
+		records = append(records, lineRecords...)
+		unassigned += lineUnassigned
+	}
+
+	log.Infof(
+		"polyus KPI %s p.%d: %d records, %d non-metric lines skipped, %d values outside period columns, %d metric lines before any recognised header",
+		sourceURL,
+		page,
+		len(records),
+		skipped,
+		unassigned,
+		headerlessMetrics,
+	)
+
+	return records, unassigned, headerlessMetrics
+}
+
+// linePage возвращает номер страницы визуальной строки: номер её первого слова,
+// а если его не донесла сборка строки (синтетический вход тестов) — запасной.
+// Номер страницы нужен записи как провенанс (source_page витрины): у склеенного
+// многостраничного снимка строки разных страниц идут в одном списке, и номер,
+// переданный в разбор параметром, верен только для первой страницы. Запасной
+// номер оставлен ради синтезированных строк: у них колонка page_num не задана.
+func linePage(line Line, fallback int) int {
+	// Номер страницы одинаков у всех слов строки: groupByLine собирает строку
+	// только из слов одной страницы.
+	if page := pageOfLine(line); page != 0 {
+		return page
+	}
+
+	return fallback
+}
+
+// pageOfLine возвращает номер страницы строки: первое слово с известным номером.
+// Ноль означает, что номер не донесён сборкой — синтетический вход.
+func pageOfLine(line Line) int {
+	for _, word := range line.Words {
+		if word.Page != 0 {
+			return word.Page
+		}
+	}
+
+	return 0
+}
+
+// readTSVLines читает TSV-снимок страницы и собирает его слова в визуальные
+// строки.
+//
+// deltaTop == 0 — штатный режим groupByLine: слова одной напечатанной строки
+// несут один и тот же Top. Шапка, разнесённая по нескольким строкам, склеивается
+// отдельно (headerBand), и это НЕ тот же допуск: 2pt слили бы 11–18 настоящих
+// строк содержимого.
+func readTSVLines(textPath string) ([]Line, error) {
 	file, err := os.Open(textPath)
 	if err != nil {
 		return nil, fmt.Errorf("open extracted page: %w", err)
 	}
 	defer func() {
 		if closeErr := file.Close(); closeErr != nil {
-			log.Printf("close extracted page %s: %v", textPath, closeErr)
+			log.Warnf("close extracted page %s: %v", textPath, closeErr)
 		}
 	}()
 
-	foundMetrics := make(map[string]bool)
+	words, err := parseTSV(file)
+	if err != nil {
+		return nil, fmt.Errorf("parse %s: %w", textPath, err)
+	}
 
-	scanner := bufio.NewScanner(file)
+	return groupByLine(words, 0), nil
+}
 
-	// Некоторые PDF-строки могут быть длиннее стандартных 64 KiB.
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
-	var periodColumns []PeriodColumn
+// recordsFromLine раскладывает одну строку таблицы по колонкам её шапки и
+// возвращает записи строки вместе с числом значений, не ставших периодами.
+//
+// Метрика ищется по склеенному тексту строки, начиная с самого левого слова:
+// метка занимает начало строки, а числа идут после неё. Граница метки берётся из
+// самого сопоставления — matchMetric возвращает остаток строки, — а не из
+// координат: метка из нескольких слов разделена теми же узкими промежутками,
+// что и группы одного числа, и по координатам их не различить.
+//
+// Число может быть разбито на несколько слов («1 287»), поэтому соседние слова
+// склеиваются обратно по малому разрыву по X (valueGroupGap). За значение
+// отвечает Left его ПЕРВОГО слова: так число и выровнено под подписью колонки.
+//
+// Колонка находится через Column.covers. Границы колонок покрывают строку без
+// дыр, поэтому колонка есть у каждого числа; значение, накрытое НЕПЕРИОДНОЙ
+// колонкой (колонкой изменения или подписью метки единиц измерения), периода не
+// даёт и считается нераспределённым. Возвращённое число нераспределённых
+// значений — сигнал для guard (Task 7): именно по нему видно, что строка
+// принесла значения колонки изменения.
+func recordsFromLine(
+	line Line,
+	columns []Column,
+	company string,
+	sourceURL string,
+	page int,
+) ([]MetricRecord, int) {
+	text := lineText(line)
 
-	// Строки, не опознанные ни как шапка периодов, ни как метрика с числами,
-	// пропускаются: в шапку, подписи и сноски попадает большинство строк
-	// страницы. Счётчик ведётся, чтобы пропуски не были молчаливыми.
-	skipped := 0
+	definition, remainder, found := matchMetric(text)
+	if !found || definition.Name == "period" {
+		return nil, 0
+	}
 
-	for scanner.Scan() {
-		line := normalizeLine(scanner.Text())
+	labelEnd := len(text) - len(remainder)
 
-		if line == "" {
+	var records []MetricRecord
+
+	unassigned := 0
+
+	for _, value := range valuesFromWords(line.Words, labelEnd) {
+		column := columnAt(columns, value.left)
+		if column.Period == "" {
+			unassigned++
+
 			continue
 		}
 
-		definition, remainder, found := matchMetric(line)
-		if !found {
-			skipped++
+		number, err := parseNumericToken(value.text)
+		if err != nil {
+			// Ошибка разбора значения не роняет страницу целиком: запись
+			// теряется, но о ней сообщается.
+			log.Warnf(
+				"polyus KPI %s p.%d: metric %s, period %s, value %q: %v",
+				sourceURL,
+				page,
+				definition.Name,
+				column.Period,
+				value.text,
+				err,
+			)
+
+			continue
+		}
+		if number == nil {
+			// Токен распознан, но значения нет ("-", "n/a").
 			continue
 		}
 
-		if foundMetrics[definition.Name] {
-			// Защита от повторного совпадения в сносках.
+		records = append(records, MetricRecord{
+			Company:    company,
+			Metric:     definition.Name,
+			Period:     column.Period,
+			PeriodType: column.Type,
+			Value:      *number,
+			Unit:       definition.Unit,
+			SourceURL:  sourceURL,
+			SourcePage: page,
+		})
+	}
+
+	return records, unassigned
+}
+
+// rowValue — число строки: текст и Left его первого слова.
+type rowValue struct {
+	text string
+	left float64
+}
+
+// valuesFromWords собирает числа строки, пропуская слова метки.
+//
+// labelEnd — байтовое смещение в склеенном тексте строки, с которого начинаются
+// числа; слова, начинающиеся левее, — часть метки и числами не считаются.
+//
+// Слово становится числом, если его текст — числовой токен. Группы одного числа,
+// разбитые пробелом-разделителем тысяч («1» и «287»), склеиваются обратно по
+// разрыву по X: узкий разрыв — пробел внутри числа, широкий — промежуток между
+// колонками. Склейка проверяется раньше одиночного токена: «1» само по себе тоже
+// валидный токен, и если проверять его первым, «1 287» распалось бы на «1» и
+// «287», то есть на значение 1 и нераспределённое 287.
+func valuesFromWords(words []Word, labelEnd int) []rowValue {
+	var values []rowValue
+
+	position := 0
+
+	for i := 0; i < len(words); {
+		wordStart := position
+		position += len(words[i].Text) + 1
+
+		if wordStart < labelEnd {
+			// Слово метки — не число.
+			i++
+
 			continue
 		}
 
-		if definition.Name == "period" {
-			periodColumns = scanPeriodColumns(remainder)
-			continue
-		}
+		joined := normalizeLine(words[i].Text)
+		last := words[i]
+		width := 0
 
-		tokens := extractValueTokens(remainder)
-
-		foundMetrics[definition.Name] = true
-		for _, column := range periodColumns {
-			if column.TokenIndex >= len(tokens) {
-				continue
+		for i+width+1 < len(words) {
+			next := words[i+width+1]
+			if !isThousandsGroup(normalizeLine(next.Text)) {
+				break
+			}
+			if next.Left-(last.Left+last.Width) > valueGroupGap {
+				break
 			}
 
-			value, err := parseNumericToken(tokens[column.TokenIndex])
-			if err != nil {
-				return nil, fmt.Errorf(
-					"metric %s, period %s, token %q: %w",
-					definition.Name,
-					column.Period,
-					tokens[column.TokenIndex],
-					err,
-				)
-			}
-			if value == nil {
-				// Токен распознан, но значения нет ("-", "n/a").
-				continue
-			}
+			joined += normalizeLine(next.Text)
+			last = next
+			width++
+		}
 
-			records = append(records, MetricRecord{
-				Company:    "PJSC Polyus",
-				Metric:     definition.Name,
-				Period:     column.Period,
-				PeriodType: column.PeriodType,
-				Value:      *value,
-				Unit:       definition.Unit,
-				SourceURL:  sourceURL,
-				SourcePage: page,
-			})
+		switch {
+		case width > 0 && valueTokenRegexp.MatchString(joined):
+			values = append(values, rowValue{text: joined, left: words[i].Left})
+			i += width + 1
+
+			continue
+		case valueTokenRegexp.MatchString(joined):
+			values = append(values, rowValue{text: joined, left: words[i].Left})
+		}
+
+		i++
+	}
+
+	return values
+}
+
+// columnAt возвращает колонку, накрывающую X.
+//
+// Расширенные границы колонок делят строку на промежутки без дыр (крайние
+// колонки уходят в ±infiniteX, см. widenColumns), поэтому колонка есть всегда и
+// ровно одна — колонки берутся из уже найденной шапки, то есть непустые.
+// Ноль совпадений означал бы, что границы перестали покрывать строку, несколько —
+// что они перекрылись; оба случая — ошибка в widenColumns, и о них сообщается в
+// лог. Возвращается всё равно первое совпадение: молча терять значение нельзя, а
+// обрыв разбора страницы хуже испорченной записи.
+func columnAt(columns []Column, x float64) Column {
+	var covering []Column
+
+	for _, column := range columns {
+		if column.covers(x) {
+			covering = append(covering, column)
 		}
 	}
 
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scan page: %w", err)
+	if len(covering) != 1 {
+		log.Warnf("polyus KPI: x=%v covered by %d columns, taking the first", x, len(covering))
 	}
 
-	log.Printf("polyus KPI %s p.%d: %d records, %d non-metric lines skipped", sourceURL, page, len(records), skipped)
-
-	return records, nil
+	return covering[0]
 }
 
 // scanPeriodColumns разбирает шапку таблицы в список колонок-периодов.
@@ -163,19 +450,38 @@ func scanPeriodColumns(header string) []PeriodColumn {
 	return columns
 }
 
-// matchPeriodAt ищет самый длинный префикс токенов, начинающийся с tokens[start],
-// который parsePeriod разбирает целиком: от tokens[start:start+n] для n от
-// maxPeriodTokens до 1. Возвращает ширину окна в токенах.
+// matchPeriodAt ищет самый короткий префикс токенов, начинающийся с tokens[start],
+// который parsePeriod разбирает целиком: от tokens[start:start+1] до
+// tokens[start:start+n], n не больше maxPeriodTokens. Возвращает ширину окна в
+// токенах.
 //
-// Длинное окно проверяется первым, иначе «1 п/г 2026» распалось бы на «1»
-// (ошибка разбора) и «2026» (голый год FY), и полугодие превратилось бы в год.
+// Окно проверяется от короткого к длинному, потому что parsePeriod — матчер, а не
+// валидатор: он ищет форму периода ВНУТРИ строки и не сообщает, какую её часть
+// разобрал. Длинное окно поэтому забирает себе лишние слова — «2H 2024 1H»
+// разбирается как «2H 2024» с шириной 3, — и следующая подпись периода теряется
+// вместе с вычеркнутыми ею колонками. Короткое окно закрывается там, где форма
+// периода кончается на самом деле.
+//
+// Формы-префиксы при этом не распознаются раньше целых форм: «1» и «1 п/г»
+// parsePeriod не разбирает, поэтому «1 п/г 2026» закрывается только на третьем
+// слове, а не распадается на «1» и «2026» (голый год FY).
+//
+// Окно, содержащее слово подписи колонки изменения, периодом не считается:
+// документ объявляет этим словом непериодную колонку, и она обязана остаться
+// отдельной колонкой — иначе её числа («3%» на x=416.11 в MD&A за 2014) достаются
+// соседнему периоду.
 func matchPeriodAt(tokens []string, start, maxPeriodTokens int) (PeriodInfo, int, error) {
-	for width := maxPeriodTokens; width > 0; width-- {
+	for width := 1; width <= maxPeriodTokens; width++ {
 		if start+width > len(tokens) {
+			break
+		}
+
+		window := tokens[start : start+width]
+		if windowHasChangeLabel(window) {
 			continue
 		}
 
-		info, err := parsePeriod(strings.Join(tokens[start:start+width], " "))
+		info, err := parsePeriod(strings.Join(window, " "))
 		if err != nil {
 			continue
 		}
