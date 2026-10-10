@@ -1062,5 +1062,293 @@ class TestQueryTransport(unittest.TestCase):
         self.assertIn("***", message)
 
 
+class TestPlanRows(unittest.TestCase):
+    """Плановые строки 2025–LOM: эскалация, увязка по годам, аллокация capex.
+
+    Тесты брифа — авторитетны и приведены дословно. Добавлены проверки на
+    единицы, полноту горизонта, неотрицательность клина, пропуск актива и
+    наблюдаемость причины пропуска.
+    """
+
+    # Все пять активов с положительной добычей на весь горизонт Наталки
+    # (2025–2048), чтобы у каждого актива были все его годы.
+    def _full_production(self, koz: float = 100.0) -> dict:
+        return {a: {y: koz for y in range(2025, 2049)} for a in ex.ASSETS}
+
+    def test_capex_units_are_million_usd(self):
+        # (aisc - tcc) * koz / 1000 = USD million
+        got = ex.sustaining_capex_mn(aisc=950.0, tcc=450.0, production_koz=1400.0)
+        self.assertAlmostEqual(got, 700.0, places=6)
+
+    def test_row_count_is_77(self):
+        rows = ex.build_plan_rows(
+            tcc_2025={a: 700.0 for a in ex.ASSETS},
+            r_bar={a: 0.6 for a in ex.ASSETS},
+            production={a: {y: 100.0 for y in range(2021, 2031)} for a in ex.ASSETS},
+            group_aisc=1400.0,
+        )
+        self.assertEqual(len(rows), 77)
+
+    def test_years_start_at_plan_base(self):
+        rows = ex.build_plan_rows(
+            tcc_2025={"OLIMPIADA": 773.0}, r_bar={"OLIMPIADA": 0.6},
+            production={"OLIMPIADA": {2025: 900.0}}, group_aisc=1437.0,
+        )
+        self.assertEqual(rows[0]["year"], 2025)
+        self.assertEqual(rows[-1]["year"], 2034)
+
+    def test_escalation_compounds(self):
+        self.assertAlmostEqual(ex.escalation_factor(2025, 2025), 1.0, places=9)
+        self.assertGreater(ex.escalation_factor(2025, 2030), 1.0)
+
+    def test_row_count_per_asset(self):
+        rows = ex.build_plan_rows(
+            tcc_2025={a: 700.0 for a in ex.ASSETS},
+            r_bar={a: 0.6 for a in ex.ASSETS},
+            production=self._full_production(),
+            group_aisc=1400.0,
+        )
+        self.assertEqual(len(rows), 77)
+        counts = {}
+        for row in rows:
+            counts[row["asset"]] = counts.get(row["asset"], 0) + 1
+        self.assertEqual(counts, {
+            "OLIMPIADA": 10,
+            "BLAGODATNOYE": 13,
+            "NATALKA": 24,
+            "VERNINSKOYE2": 15,
+            "KURANAKH": 15,
+        })
+
+    def test_every_row_has_non_negative_wedge(self):
+        rows = ex.build_plan_rows(
+            tcc_2025={a: 700.0 for a in ex.ASSETS},
+            r_bar={a: 0.6 for a in ex.ASSETS},
+            production=self._full_production(),
+            group_aisc=1400.0,
+        )
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertGreaterEqual(row["aisc"], row["tcc"], row)
+
+    def test_capex_matches_definition(self):
+        rows = ex.build_plan_rows(
+            tcc_2025={a: 700.0 for a in ex.ASSETS},
+            r_bar={a: 0.6 for a in ex.ASSETS},
+            production=self._full_production(),
+            group_aisc=1400.0,
+        )
+        for row in rows:
+            self.assertAlmostEqual(
+                row["capex_sustaining"],
+                (row["aisc"] - row["tcc"]) * row["production_koz"] / 1000.0,
+                places=9,
+            )
+
+    def test_year_never_exceeds_asset_mine_life(self):
+        rows = ex.build_plan_rows(
+            tcc_2025={a: 700.0 for a in ex.ASSETS},
+            r_bar={a: 0.6 for a in ex.ASSETS},
+            production=self._full_production(),
+            group_aisc=1400.0,
+        )
+        for row in rows:
+            last = ex.PLAN_BASE_YEAR + ex.MINE_LIFE_YEARS[row["asset"]] - 1
+            self.assertLessEqual(row["year"], last, row)
+            self.assertGreaterEqual(row["year"], ex.PLAN_BASE_YEAR, row)
+
+    def test_escalation_pins_compound_product(self):
+        # 2025–2027 по 6 %, 2028–2033 по 4 %: 1.06³ · 1.04⁶ (год 2034 —
+        # множитель за 2033-й, поэтому шесть четвёрок, а не семь).
+        self.assertAlmostEqual(
+            ex.escalation_factor(2025, 2034),
+            ex.ESCALATION_2025_TO_2034,
+            places=9,
+        )
+        self.assertAlmostEqual(
+            ex.ESCALATION_2025_TO_2034, 1.06**3 * 1.04**6, places=12
+        )
+
+    def test_escalation_rejects_unknown_year_and_reverse_order(self):
+        with self.assertRaises(ValueError):
+            ex.escalation_factor(2025, 2050)
+        with self.assertRaises(ValueError):
+            ex.escalation_factor(2030, 2025)
+
+    def test_tcc_and_group_target_escalate_together(self):
+        # Решение контроллера: цель увязки года растёт тем же множителем,
+        # что и TCC, поэтому ОТНОСИТЕЛЬНЫЙ клин не меняется, хотя абсолютные
+        # USD/oz растут.
+        rows = ex.build_plan_rows(
+            tcc_2025={a: 700.0 for a in ex.ASSETS},
+            r_bar={a: 0.6 for a in ex.ASSETS},
+            production=self._full_production(),
+            group_aisc=1400.0,
+        )
+        by_asset_year = {(r["asset"], r["year"]): r for r in rows}
+        row_2025 = by_asset_year[("OLIMPIADA", 2025)]
+        row_2034 = by_asset_year[("OLIMPIADA", 2034)]
+        factor_2034 = ex.escalation_factor(2025, 2034)
+        self.assertAlmostEqual(row_2025["tcc"] * factor_2034, row_2034["tcc"], places=6)
+        self.assertAlmostEqual(
+            (row_2025["aisc"] - row_2025["tcc"]) / row_2025["tcc"],
+            (row_2034["aisc"] - row_2034["tcc"]) / row_2034["tcc"],
+            places=9,
+        )
+
+    def test_row_tcc_is_the_2025_anchor_escalated(self):
+        rows = ex.build_plan_rows(
+            tcc_2025={a: 700.0 for a in ex.ASSETS},
+            r_bar={a: 0.6 for a in ex.ASSETS},
+            production=self._full_production(),
+            group_aisc=1400.0,
+        )
+        by_asset_year = {(r["asset"], r["year"]): r for r in rows}
+        row_2034 = by_asset_year[("NATALKA", 2034)]
+        self.assertAlmostEqual(
+            row_2034["tcc"], 700.0 * ex.escalation_factor(2025, 2034), places=6
+        )
+
+    def test_group_aisc_for_year_uses_published_anchor(self):
+        self.assertAlmostEqual(
+            ex.group_aisc_for_year(2025), ex.GROUP_AISC_2025_USD_PER_OZ, places=9
+        )
+        self.assertAlmostEqual(
+            ex.group_aisc_for_year(2034),
+            ex.GROUP_AISC_2025_USD_PER_OZ * ex.escalation_factor(2025, 2034),
+            places=9,
+        )
+        self.assertAlmostEqual(
+            ex.group_aisc_for_year(2034), 1437.0 * 1.06**3 * 1.04**6, places=9
+        )
+        with self.assertRaises(ValueError):
+            ex.group_aisc_for_year(2024)
+
+    def test_absent_production_asset_is_skipped_and_reported(self):
+        # Вернинского во входе нет вовсе, у Куранача — ключ есть, но добычи
+        # нет ни в одном году горизонта. Оба не должны дать ни строки, и оба
+        # должны быть названы в LAST_SKIPPED_ASSETS с непустой причиной.
+        production = {
+            "OLIMPIADA": {y: 100.0 for y in range(2025, 2035)},
+            "BLAGODATNOYE": {y: 100.0 for y in range(2025, 2038)},
+            "NATALKA": {y: 100.0 for y in range(2025, 2049)},
+            "KURANAKH": {y: 0.0 for y in range(2025, 2040)},
+        }
+        rows = ex.build_plan_rows(
+            tcc_2025={a: 700.0 for a in ex.ASSETS if a != "KURANAKH"},
+            r_bar={a: 0.6 for a in ex.ASSETS if a != "KURANAKH"},
+            production=production,
+            group_aisc=1400.0,
+        )
+        emitted = {r["asset"] for r in rows}
+        self.assertNotIn("VERNINSKOYE2", emitted)
+        self.assertNotIn("KURANAKH", emitted)
+        self.assertEqual(len(rows), 10 + 13 + 24)  # 47
+        skipped = dict(ex.LAST_SKIPPED_ASSETS)
+        self.assertIn("VERNINSKOYE2", skipped)
+        self.assertIn("KURANAKH", skipped)
+        for asset, reason in skipped.items():
+            self.assertTrue(reason, asset)
+        # Причина называет именно актив, а не год: у Вернинского пропала
+        # добыча целиком, а не один год.
+        self.assertIn("добыча", skipped["VERNINSKOYE2"])
+        self.assertIn("2025", skipped["KURANAKH"])
+
+    def test_skip_list_is_reset_between_calls(self):
+        # Наблюдаемость не должна «залипать»: после полноценного вызова
+        # список пропущенных пуст.
+        ex.build_plan_rows(
+            tcc_2025={"OLIMPIADA": 773.0}, r_bar={"OLIMPIADA": 0.6},
+            production={"OLIMPIADA": {2025: 900.0}}, group_aisc=1437.0,
+        )
+        self.assertTrue(ex.LAST_SKIPPED_ASSETS)
+        ex.build_plan_rows(
+            tcc_2025={a: 700.0 for a in ex.ASSETS},
+            r_bar={a: 0.6 for a in ex.ASSETS},
+            production=self._full_production(),
+            group_aisc=1400.0,
+        )
+        self.assertEqual(ex.LAST_SKIPPED_ASSETS, [])
+
+    def test_reconciliation_weights_are_within_year(self):
+        # Каждый год увязывается отдельно: взвешенный по добыче AISC года
+        # лежит ровно на цели этого года (невязка ≈ 0), а не на цели 2025-го.
+        # Веса — внутри года, поэтому активы, у которых этот год уже вне
+        # срока службы, в среднее не входят.
+        rows = ex.build_plan_rows(
+            tcc_2025={a: 700.0 for a in ex.ASSETS},
+            r_bar={a: 0.6 for a in ex.ASSETS},
+            production=self._full_production(),
+            group_aisc=ex.GROUP_AISC_2025_USD_PER_OZ,
+        )
+        by_year = {}
+        for row in rows:
+            by_year.setdefault(row["year"], []).append(row)
+        self.assertEqual(len(by_year), 24)  # 2025–2048
+        for year, year_rows in by_year.items():
+            total = sum(r["production_koz"] for r in year_rows)
+            weighted = sum(r["aisc"] * r["production_koz"] for r in year_rows) / total
+            self.assertAlmostEqual(
+                weighted, ex.group_aisc_for_year(year), places=6, msg=f"год {year}"
+            )
+        # В 2048-м остаётся только Наталка — год не «унаследовал» активы
+        # с закончившимся сроком службы.
+        self.assertEqual({r["asset"] for r in by_year[2048]}, {"NATALKA"})
+
+    def test_reconciliation_target_tracks_the_passed_anchor(self):
+        # Параметр group_aisc — точка подмены якоря, а не жёстко зашитая
+        # константа: с якорем 1000 и AISC ровно на нём невязка нулевая.
+        rows = ex.build_plan_rows(
+            tcc_2025={a: 400.0 for a in ex.ASSETS},
+            r_bar={a: 0.6 for a in ex.ASSETS},
+            production=self._full_production(),
+            group_aisc=1000.0,
+        )
+        for row in rows:
+            self.assertAlmostEqual(
+                row["aisc"], 1000.0 * ex.escalation_factor(2025, row["year"]), places=6
+            )
+
+    def test_plateau_holds_last_known_production(self):
+        # У Олимпиады известен только 2025-й: остальные годы горизонта
+        # держат его уровень, а не ноль.
+        rows = ex.build_plan_rows(
+            tcc_2025={"OLIMPIADA": 773.0}, r_bar={"OLIMPIADA": 0.6},
+            production={"OLIMPIADA": {2025: 900.0}}, group_aisc=1437.0,
+        )
+        self.assertEqual([r["production_koz"] for r in rows], [900.0] * 10)
+
+    def test_base_year_without_production_is_an_error(self):
+        # Молчаливая обрезка базового года сдвинула бы весь горизонт.
+        with self.assertRaises(ValueError):
+            ex.build_plan_rows(
+                tcc_2025={a: 700.0 for a in ex.ASSETS},
+                r_bar={a: 0.6 for a in ex.ASSETS},
+                production={a: {2026: 100.0} for a in ex.ASSETS},
+                group_aisc=1400.0,
+            )
+
+    def test_missing_tcc_anchor_is_an_error(self):
+        with self.assertRaises(ValueError):
+            ex.build_plan_rows(
+                tcc_2025={"OLIMPIADA": 773.0},
+                r_bar={a: 0.6 for a in ex.ASSETS},
+                production=self._full_production(),
+                group_aisc=1400.0,
+            )
+
+    def test_rows_are_sorted_by_asset_then_year(self):
+        rows = ex.build_plan_rows(
+            tcc_2025={a: 700.0 for a in ex.ASSETS},
+            r_bar={a: 0.6 for a in ex.ASSETS},
+            production=self._full_production(),
+            group_aisc=1400.0,
+        )
+        keys = [(ex.ASSETS.index(r["asset"]), r["year"]) for r in rows]
+        self.assertEqual(keys, sorted(keys))
+        self.assertEqual(rows[0]["asset"], "OLIMPIADA")
+        self.assertEqual(rows[0]["year"], 2025)
+
+
 if __name__ == "__main__":
     unittest.main()
