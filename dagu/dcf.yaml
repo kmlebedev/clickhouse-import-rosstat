@@ -1,0 +1,36 @@
+type: chain
+schedule: "29 11 * * 1"
+overlap_policy: skip
+
+# Порядок шагов — ГАРАНТИЯ, а не пожелание (Finding 3 финального ревью).
+# `type: chain` исполняет шаги строго по порядку, поэтому dcf_mine_plans
+# обязательно засеет mine_plans до того, как dcf_engine прочтёт его как вход.
+# Без этого файла порядок жил только в README и §6.1 ARCHITECTURE.md — прогон
+# ядра раньше сида посчитал бы по пустому (или прошлогоднему) плану с успешным
+# логом, то есть тот же молчаливый провал, от которого срез и защищается.
+#
+# Расписание — понедельник после financial.yaml (10:23): план сида строится по
+# датапаку Полюса (шаг databook_polyus того же DAG-а), а спот для price_decks —
+# по gold_prices (dagu/gold.yaml, ежедневно 18:47).
+steps:
+  - id: dcf_mine_plans
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=dcf_mine_plans
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  # DCF_RUN_ID здесь НЕ задаётся намеренно: это переменная РАЗОВОГО прогона
+  # (UUID связывает nav_by_asset с model_runs ingest-endpoint'а), и выдумывать
+  # её в расписании значило бы плодить несвязанные с model_runs строки. Без
+  # DCF_RUN_ID шаг считает и печатает готовое тело POST /v1/model_run (штатное
+  # поведение dcf_engine, README §«Что импортируется»), а связанный прогон с
+  # записью делается вручную: DCF_RUN_ID=<uuid> make import STAT=dcf_engine.
+  - id: dcf_engine
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=dcf_engine
+    retry_policy:
+      limit: 3
+      interval_sec: 300

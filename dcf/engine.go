@@ -355,13 +355,22 @@ func (s *dcfEngine) Import(ctx context.Context, conn driver.Conn) (count int64, 
 	// лежит ВЫБРАННЫЙ аналитиком сценарий (и его published — метка версии).
 	// Перезаписать его сидом значило бы молча подменить вход расчёта.
 	if len(decks) == 0 {
-		if err = seedPriceDecks(ctx, conn); err != nil {
+		if err = seedPriceDecks(ctx, conn, planYears(plans)); err != nil {
 			return 0, err
 		}
 
 		if decks, err = readDecks(ctx, conn); err != nil {
 			return 0, err
 		}
+	}
+
+	// Гард пересечения годов — ДО checkInputs и после сида: сид мог ничего не
+	// записать (пустая gold_prices), а в БД с частично заполненной price_decks он
+	// вообще не вызывается, поэтому полнота деков ничего не говорит о том, что цены
+	// есть на ГОДЫ ПЛАНА. Без этой проверки такой вход дал бы нулевой NPV с
+	// успешным логом.
+	if err = checkYearCoverage(plans, decks); err != nil {
+		return 0, err
 	}
 
 	if err = checkInputs(plans, decks); err != nil {
