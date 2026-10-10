@@ -26,12 +26,35 @@ const (
 	// третий дек не несёт информации.
 	ownScenarioAnchorUSD = 4600.0
 
-	// priceDeckSeedHorizonYears — сид ставить не на текущий год, а на его конец:
-	// горизонт LOM-плана начинается со следующего года, и цена, поставленная на
-	// текущий, была бы за пределами любого плана. Берём конец текущего года —
-	// ближайшая дата, начиная с которой цена актуальна для планов вперёд.
-	priceDeckSeedHorizonYears = 0
+	// priceDeckSeedYearOffset — смещение года сида от текущего. НОЛЬ, и это
+	// осознанный выбор, а не заготовка под горизонт: сид ставится на ТЕКУЩИЙ год.
+	// Горизонт >0 (скажем, +10 лет) положил бы цену на годы вне консервативного
+	// LOM-плана, npvLOM пропустил бы все годы с предупреждением «нет цены дека»,
+	// и NPV вышел бы нулевым при непустых данных. Плоская цена без кривой — одно
+	// число, и оно честно живёт в текущем году.
+	priceDeckSeedYearOffset = 0
 )
+
+// assertSpotPrice — чистая проверка цены спота перед сидом. Вынесена отдельно,
+// чтобы её можно было покрыть офлайн-тестом: живой ClickHouse на пустой
+// gold_prices не падает, а ВОЗВРАЩАЕТ 0, и именно эту границу надо закрепить.
+//
+// Почему ноль — ошибка, а не «дек на нуле»: argMax по ПУСТОМУ множеству даёт
+// нулевое значение типа (для Float64 — 0), а не NULL, и не бросает исключение
+// (проверено: SELECT argMax(number, number+1) FROM numbers(0) → 0). gold_prices
+// наполняется ОТДЕЛЬНЫМ шагом DAG, поэтому прогон сида до него превратил бы
+// spot_flat в дек с ценой $0/oz — тихо заниженный вход всего расчёта, который в
+// логе выглядел бы успешным сидом. Отрицательная цена — тот же класс мусора.
+func assertSpotPrice(spot float64) error {
+	if !(spot > 0) {
+		return fmt.Errorf("сид price_decks: последняя цена spot_flat (gold_prices, venue='moex_fix_usd') = %v, "+
+			"а не положительное число: пустая или ненаполненная gold_prices даёт argMax = 0, "+
+			"и spot_flat записался бы с ценой $0/oz; сначала наполните gold_prices "+
+			"(make import STAT=gold), затем повторите сид", spot)
+	}
+
+	return nil
+}
 
 // spotFlatSelect — последняя цена MOEX-фикса из gold_prices. argMax(usd, date) —
 // одна строка без сортировки всего ряда; FINAL обязателен (ReplacingMergeTree).
@@ -43,13 +66,10 @@ const spotFlatSelect = `SELECT argMax(usd, date) FROM gold_prices FINAL WHERE ve
 // Вызывается только на пустой таблице (решение в Import): непустой дек — это
 // выбранный аналитиком вход, и перезапись сидом молча подменила бы расчёт.
 //
-// Год: текущий год (time.Now().UTC().Year()) — но плюс нулевой горизонт, то есть
-// именно текущий. Если вернуть горизонт >0 (скажем, +10 лет), цена дека легла бы
-// на годы ВНЕ консервативного LOM-плана, и npvLOM пропустил бы все годы с
-// предупреждением «нет цены дека» — NPV вышел бы нулевым при непустых данных.
-// Плоская цена без кривой — это одно число, и оно честно живёт в текущем году.
-// (priceDeckSeedHorizonYears оставлен рядом как именованный ноль: менять год сида
-// — осознанное решение, а не случайная правка литерала.)
+// Год: ТЕКУЩИЙ (time.Now().UTC().Year() + priceDeckSeedYearOffset, где смещение
+// нулевое — см. комментарий у константы). Плоская цена без кривой — это одно
+// число, и оно честно живёт в текущем году; год за пределами LOM-плана дал бы
+// нулевой NPV (npvLOM пропустил бы все годы).
 //
 // published — сегодня: цена прочитана из gold_prices или взята из LT-якорей
 // сегодня, и published = дата ЭТОЙ версии дека. Он входит в ключ
@@ -58,13 +78,19 @@ const spotFlatSelect = `SELECT argMax(usd, date) FROM gold_prices FINAL WHERE ve
 func seedPriceDecks(ctx context.Context, conn driver.Conn) error {
 	spot := 0.0
 	if err := conn.QueryRow(ctx, spotFlatSelect).Scan(&spot); err != nil {
-		// gold_prices может отсутствовать или быть пустой (импорт ёлки — отдельный
-		// шаг DAG). Не глушим: без цены спота сид неполон, и молчаливый ноль дал бы
-		// спот-дек с нулевым золотом.
+		// Ошибка чтения (нет таблицы gold_prices) — отдельный случай от «таблица
+		// есть, но пуста»: пустую ловит assertSpotPrice ниже, потому что Scan по
+		// ней проходит успешно и кладёт 0.
 		return fmt.Errorf("сид price_decks: прочитать последнюю цену gold_prices (venue='moex_fix_usd'): %w", err)
 	}
 
-	year := uint16(time.Now().UTC().Year()) + priceDeckSeedHorizonYears
+	// Явная защита от нулевого спота: argMax по пустому множеству = 0, и без
+	// этой проверки spot_flat записался бы с ценой $0/oz (см. assertSpotPrice).
+	if err := assertSpotPrice(spot); err != nil {
+		return err
+	}
+
+	year := uint16(time.Now().UTC().Year()) + priceDeckSeedYearOffset
 	published := time.Now().UTC()
 
 	batch, err := conn.PrepareBatch(ctx, "INSERT INTO price_decks")
@@ -90,6 +116,11 @@ func seedPriceDecks(ctx context.Context, conn driver.Conn) error {
 		log.Infof("price_decks сид: %s = %.2f USD/oz на %d (%s)", deck.name, deck.gold, year, deck.label)
 	}
 
+	// Abort на ошибке Send НЕ вызываем — так же, как все остальные батч-писатели
+	// репозитория (polyus/import.go, ingest/clickhouse.go, util/series_catalog.go):
+	// Send() завершает и закрывает батч даже при ошибке сервера, повторный Abort
+	// после него смысла не имеет. Асимметрия с веткой Append намеренная: там батч
+	// ещё открыт, и без Abort соединение осталось бы с незакрытым батчем.
 	if err = batch.Send(); err != nil {
 		return fmt.Errorf("сид price_decks: %w", err)
 	}
