@@ -1035,7 +1035,7 @@ def group_aisc_for_year(year: int) -> float:
 
 
 def sustaining_capex_mn(aisc: float, tcc: float, production_koz: float) -> float:
-    """Поддержание производства в МЛН USD: `(aisc − tcc) · production_koz / 1000`.
+    """Клин поддержания в МЛН USD: `(aisc − tcc) · production_koz / 1000`.
 
     Единицы — здесь и только здесь, потому что ошибка в них даёт NPV, неверный
     в тысячи раз:
@@ -1044,9 +1044,19 @@ def sustaining_capex_mn(aisc: float, tcc: float, production_koz: float) -> float
 
     Проверка из брифа: `(950 − 450) · 1400 / 1000 = 700.0` млн USD.
 
-    ВСЁ поддержание идёт в capex с этой одной формулой: публичного разбиения
-    «поддержание / SG&A» по активам не существует, поэтому доля `r̄_i`
-    покрывает всю дельту `AISC − TCC` (спека §3.3, план §3.6 п. 2).
+    ⚠ ЭТУ ВЕЛИЧИНУ НЕЛЬЗЯ КЛАСТЬ В `capex_sustaining` СТРОКИ ПЛАНА. Полюс
+    определяет AISC как «TCC plus … sustaining capital expenditures …», то есть
+    клин УЖЕ ВНУТРИ `aisc`, а движок (`dcf/model.go`) вычитает и `aisc` (в
+    выручке), и `capex_sustaining` (в `opCash`) — положить сюда клин значит
+    списать поддержание дважды. Подробный разбор и числа — в докстроке
+    `build_plan_rows` (раздел «CAPEX_SUSTAINING = 0 ПО КОНТРАКТУ»).
+
+    Функция оставлена — арифметика и единицы верны, и величина нужна: она
+    попадает в строку плана ключом `wedge_mn_usd` и выводится в CSV как справка
+    (`wedge_usd_per_oz`, `wedge_mn_usd`). Единая доля `r̄_i` покрывает всю
+    дельту `AISC − TCC` — публичного разбиения «поддержание / SG&A» по активам
+    не существует (спека §3.3, план §3.6 п. 2), поэтому это весь клин целиком,
+    а не его capex-часть.
     """
     return (aisc - tcc) * production_koz / 1000.0
 
@@ -1077,7 +1087,7 @@ def _plateau_production(observed, asset: str, year: int) -> float:
     Почему не «просто 0.0 за неизвестный год»: `read_actual_production`
     отдаёт `0.0` и для отсутствующей строки, и для честного нуля, а
     публикации не покрывают все годы LOM. Ноль вместо плато обнулил бы вес
-    актива в увязке и его `capex_sustaining` на всех годах без раскрытия.
+    актива в увязке (и, вместе с ним, весь отток года по этому активу).
 
     Ищем только НАЗАД, а не «ближайший в любую сторону»: план не должен
     знать будущую добычу раньше её года. Для первых известных лет это даёт
@@ -1102,9 +1112,32 @@ def build_plan_rows(
     """Собирает плановые строки 2025–LOM по всем активам.
 
     Строка — словарь с ключами `asset`, `year`, `production_koz`, `tcc`,
-    `aisc`, `capex_sustaining`. Единицы: `production_koz` — тыс. тройских
-    унций, `tcc`/`aisc` — USD/oz, `capex_sustaining` — МЛН USD (см.
-    `sustaining_capex_mn`).
+    `aisc`, `capex_sustaining`, `wedge_mn_usd`. Единицы: `production_koz` —
+    тыс. тройских унций, `tcc`/`aisc` — USD/oz, `capex_sustaining` и
+    `wedge_mn_usd` — МЛН USD.
+
+    CAPEX_SUSTAINING = 0 ПО КОНТРАКТУ — ДВОЙНОГО СЧЁТА БЫТЬ НЕ ДОЛЖНО.
+    Полюс определяет AISC прямо, дословно (пресс-релиз 4Q/FY2021,
+    `scripts/testdata/polyus_pr_4q_fy2021.pdf`): «AISC is defined by the group
+    as TCC plus selling, general and administrative expenses, stripping activity
+    asset additions, **sustaining capital expenditures**, unwinding of discounts
+    on decommissioning liabilities…». То есть затраты поддержания УЖЕ ВНУТРИ
+    `aisc`. Движок же (`dcf/model.go`) читает обе величины РАЗДЕЛЬНО:
+
+        aisc := escalate(y.AISC, ipc, yearIndex)
+        revenue := y.ProductionKoz * (gold - aisc)
+        opCash := revenue - ndpi - (y.CapexSustaining+y.CapexProject)*thousand
+
+    Клин `(aisc − tcc)` вычитается в `revenue`, и он же вычитался бы второй раз
+    в `opCash`, если положить его в `capex_sustaining`. Проверено на живом сиде:
+    для Олимпиады 2025 это 1053.3 млн USD против опубликованных Go-сидом 450 —
+    завышение оттока примерно на 603 млн USD в год по одному руднику, и все NAV
+    из этого сида систематически занижены. Поэтому `capex_sustaining` — НОЛЬ, а
+    клин живёт отдельным ключом `wedge_mn_usd` и выводится в CSV для глазной
+    сверки (колонки `wedge_usd_per_oz`/`wedge_mn_usd`), но НЕ в отток модели.
+    `capex_project` тоже ноль: ни у одного из пяти рудников LOM нет проекта
+    развития. Тест `TestPlanRows.test_every_row_has_zero_sustaining_capex`
+    пинует инвариант, чтобы правка не вернула двойной счёт.
 
     Горизонт актива — `PLAN_BASE_YEAR … PLAN_BASE_YEAR + MINE_LIFE_YEARS[asset] − 1`:
     Олимпиада 10 лет → 2025–2034, Благодатное 13, Наталка 24, Вернинское 15,
@@ -1131,8 +1164,8 @@ def build_plan_rows(
     приходит из `read_actual_production`, который отдаёт `0.0` там, где строки
     нет (отсутствие строки в `databook_polyus` — норма, а не ноль, см. её
     докстроку). Взять такие нули за добычу значило бы поставить вес 0 активу,
-    который на самом деле работает, и уронить его `capex_sustaining` в 0 на
-    всём горизонте. Поэтому актив ведёт годовое плато: добыча года — это
+    который на самом деле работает, и уронить вес актива в увязке, а вместе с
+    ним и выручку года. Поэтому актив ведёт годовое плато: добыча года — это
     значение года, а если его нет, то ближайшее известное ПРЕДЫДУЩЕЕ; иными
     словами, при отсутствии годового профиля рудник держит последний факт
     (то же поведение, что у Go-сида, где плато задаётся последним фактом,
@@ -1295,7 +1328,15 @@ def build_plan_rows(
                 "production_koz": production_koz,
                 "tcc": tcc,
                 "aisc": aisc,
-                "capex_sustaining": sustaining_capex_mn(aisc, tcc, production_koz),
+                # НОЛЬ ПО КОНТРАКТУ, А НЕ ПО РАСЧЁТУ — см. «CAPEX_SUSTAINING = 0»
+                # ниже. Клин поддержания уже сидит внутри `aisc`; класть его же
+                # ещё раз в `capex_sustaining` означало бы списать его дважды.
+                "capex_sustaining": 0.0,
+                # Клин ДЛЯ ГЛАЗ: та самая величина, которую нельзя класть в
+                # `capex_sustaining`. Держится в строке, чтобы CSV мог её
+                # показать, и чтобы правка `capex_sustaining` обратно на неё
+                # ломала тест, а не уезжала молча.
+                "wedge_mn_usd": sustaining_capex_mn(aisc, tcc, production_koz),
             })
 
     # Порядок строк — по активу, затем по году: CSV и SQL Task 9 выводят их
@@ -1479,7 +1520,13 @@ SQL_HEADER_TEMPLATE = """\
 --   * grade_gpt = NULL — содержания в модели нет (dcf/model.go), ноль означал
 --     бы измеренное «0 г/т»;
 --   * capex_project = 0 — ни у одного из пяти рудников LOM нет проекта
---     развития, весь capex идёт в capex_sustaining;
+--     развития;
+--   * capex_sustaining = 0 — «ПОДДЕРЖАНИЕ УЖЕ ВНУТРИ AISC, ВТОРОЙ РАЗ НЕ
+--     СПИСЫВАЕТСЯ». Полюс определяет AISC как «TCC plus … sustaining capital
+--     expenditures …» (пресс-релиз 4Q/FY2021), а dcf/model.go вычитает и
+--     `aisc` (в выручке), и `capex_sustaining` (в opCash) — ненулевое
+--     значение здесь удвоило бы отток по руднику. Клин для глазной сверки
+--     лежит в CSV (wedge_usd_per_oz, wedge_mn_usd), НЕ здесь;
 --   * closure_costs = 0 означает «НЕ ОПУБЛИКОВАНО ПО АКТИВУ / НЕ ЗАДАНО»,
 --     и НИКОГДА — «закрытие бесплатно»: per-asset провижен Полюс не
 --     публикует, распределение групповой суммы не утверждено.
@@ -1538,10 +1585,19 @@ def write_sql(path: Path, rows: list, meta: dict) -> None:
 # с SQL без перевода глазами; дальше — СПРАВОЧНЫЕ величины для глазной сверки.
 # Они НЕ идут в модель (как и рублёвая колонка, спека §3.6 п. 3) и помечены
 # именами с суффиксом `_check`, чтобы не выглядеть входом.
+#
+# `wedge_usd_per_oz` / `wedge_mn_usd` — клин поддержания `(aisc − tcc)` в
+# USD/oz и млн USD. Это ИМЕННО ТА величина, которую модель НЕ списывает
+# отдельно: она уже внутри `aisc` (см. докстроку `build_plan_rows`). Колонка
+# нужна человеку для глазной сверки, поэтому и названа `wedge_*`, а не
+# `capex_sustaining`: одинаковые имена заставляли бы читателя думать, что CSV и
+# SQL расходятся, тогда как расходятся они ровно так, как и должны.
 CSV_COLUMNS = MINE_PLANS_COLUMNS + (
     "r_bar",
     "escalation_factor",
     "aisc_per_oz_rub",
+    "wedge_usd_per_oz",
+    "wedge_mn_usd",
 )
 
 # Курс для СПРАВОЧНОЙ рублёвой колонки CSV, RUB/USD. В модель не идёт и на NPV
@@ -1563,6 +1619,12 @@ def write_csv(path: Path, rows: list) -> None:
     `grade_gpt` — пустая ячейка: `NULL` выражается ОТСУТСТВИЕМ значения, а не
     строкой `NULL` (это справка для человека, а не SQL) и не измеренным нулём.
 
+    `capex_sustaining` пишется ИЗ СТРОКИ, то есть НУЛЁМ — ровно тем, что
+    списывает модель (см. докстроку `build_plan_rows`). Клин поддержания
+    НЕ кладётся сюда даже как «справка»: колонка обязана совпадать с SQL, а
+    иначе CSV и сид разойдутся в том, что модель реально вычитает. Клин выведен
+    отдельными колонками `wedge_usd_per_oz` / `wedge_mn_usd` (см. ниже).
+
     Справочные колонки:
 
     * `r_bar` — калиброванная доля клина актива. Берётся из строки, если
@@ -1571,7 +1633,16 @@ def write_csv(path: Path, rows: list) -> None:
     * `escalation_factor` — множитель затрат 2025 → год строки. Считается
       `escalation_factor`, то есть тем же единственным источником эскалации
       (спека §3.4), а не второй копией ряда;
-    * `aisc_per_oz_rub` — AISC в рублях по справке `USD_RUB_REFERENCE`.
+    * `aisc_per_oz_rub` — AISC в рублях по справке `USD_RUB_REFERENCE`;
+    * `wedge_usd_per_oz` — `aisc − tcc`, клин поддержания в USD/oz. Он УЖЕ
+      внутри `aisc`, и отдельно моделью НЕ списывается — колонка существует,
+      чтобы человек видел состав затрат, а не чтобы задавать отток;
+    * `wedge_mn_usd` — тот же клин в млн USD (`sustaining_capex_mn`). Берётся
+      из строки, если вызывающий положил ключ `wedge_mn_usd`; иначе считается
+      из `aisc`/`tcc`/`production_koz` — арифметика здесь та же, что и в
+      `sustaining_capex_mn`, и повторена только потому, что форма `write_csv`
+      (`(path, rows)`, Task 9) не получает `tcc_2025`. Пустая ячейка здесь
+      означала бы «клина нет», а не «не посчитали».
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as handle:
@@ -1579,6 +1650,11 @@ def write_csv(path: Path, rows: list) -> None:
         writer.writerow(CSV_COLUMNS)
         for row in rows:
             factor = escalation_factor(PLAN_BASE_YEAR, row["year"])
+            wedge_mn = row.get("wedge_mn_usd")
+            if wedge_mn is None:
+                wedge_mn = sustaining_capex_mn(
+                    row["aisc"], row["tcc"], row["production_koz"]
+                )
             writer.writerow((
                 COMPANY,
                 row["asset"],
@@ -1593,6 +1669,8 @@ def write_csv(path: Path, rows: list) -> None:
                 "" if row.get("r_bar") is None else repr(row["r_bar"]),
                 repr(factor),
                 repr(row["aisc"] * USD_RUB_REFERENCE),
+                repr(row["aisc"] - row["tcc"]),
+                repr(wedge_mn),
             ))
 
 
