@@ -29,8 +29,21 @@
 --
 -- Строки писались под тем же ключом (company, asset, year), что и сид
 -- dcf_mine_plans, поэтому ReplacingMergeTree перезапишет его плато
--- уточнённой структурой затрат. Порядок применения — dcf_mine_plans →
--- dcf_mine_plans_seed → dcf_engine; иначе расчёт пройдёт на старом клине.
+-- уточнённой структурой затрат.
+--
+-- ПРИМЕНЯЕТСЯ ВРУЧНУЮ, ОТДЕЛЬНЫМ ШАГОМ — и это намеренно. В `dagu/dcf.yaml`
+-- этого шага НЕТ: цепочка там остаётся dcf_mine_plans → dcf_engine. Причина в
+-- том, что запланированный шаг сида на staging всё равно не заработал бы
+-- (там нет ни make, ни Makefile, ни этого файла — релиз кладёт только
+-- README.md и dagu/*.yaml), и, что хуже, провал был бы БЕСШУМНЫМ:
+-- dcf_mine_plans в той же цепочке пересеял бы все ключи из Go-снимка, расчёт
+-- прошёл бы на старом клине, а лог прогона остался бы зелёным.
+--
+-- Поэтому ручной порядок — сначала сид, потом расчёт:
+--   make ch-sql FILE=sql/dcf_mine_plans_seed.sql
+--   DCF_RUN_ID=<uuid> make import STAT=dcf_engine
+-- Если запустить один dcf_engine, он посчитает на плато Go-сида, а не на
+-- этой структуре затрат.
 INSERT INTO mine_plans (company, asset, year, production_koz, grade_gpt, tcc, aisc, capex_sustaining, capex_project, closure_costs) VALUES
 ('PLZL','OLIMPIADA',2025,1441.3,NULL,773.0,1516.4246669140573,0.0,0,0),
 ('PLZL','OLIMPIADA',2026,1441.3,NULL,819.38,1607.4101469289008,0.0,0,0),
