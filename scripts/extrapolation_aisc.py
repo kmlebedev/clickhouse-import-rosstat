@@ -23,6 +23,7 @@
 
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -57,6 +58,61 @@ GROUP_TCC_2025_USD_PER_OZ = 739.0
 FIXTURE_DIR = ROOT / "scripts/testdata"
 OUTPUT_SQL = ROOT / "sql/dcf_mine_plans_seed.sql"
 OUTPUT_CSV = ROOT / "polyus_lom_reconciled_long.csv"
+
+
+# Строка, состоящая только из пробелов и цифр, — это номер страницы,
+# попавший в поток текста (иногда прямо в середину предложения).
+PAGE_NUMBER_LINE = re.compile(r"^[\s\d]+$")
+
+# Любая последовательность пробельных символов, включая неразрывный пробел.
+WHITESPACE_RUN = re.compile(r"\s+", re.UNICODE)
+
+# Разделители разрядов в суммах: запятая и пробел (в т.ч. неразрывный).
+AMOUNT_SEPARATORS = re.compile(r"[,\s\u00a0\u202f]")
+
+
+def pdf_to_text(path: Path) -> str:
+    """Извлекает текст PDF через `pdftotext -layout`.
+
+    `-layout` сохраняет табличную раскладку пресс-релиза, по которой дальше
+    восстанавливаются колонки по активу и году. Если `pdftotext` не
+    установлен, это отсутствующая системная предпосылка, а не повод
+    подставлять пустой текст: падаем с внятным сообщением.
+    """
+    try:
+        result = subprocess.run(
+            ["pdftotext", "-layout", str(path), "-"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "не найден pdftotext: установите poppler (предпосылка для разбора PDF)"
+        ) from exc
+    return result.stdout
+
+
+def normalize(text: str) -> str:
+    """Приводит сырой вывод `pdftotext` к однострочному виду.
+
+    Полюс переносит предложения по строкам и вставляет номера страниц внутрь
+    фразы ('AISC at\\n\\n6\\n\\nBlagodatnoye increased'), поэтому строки-номера
+    страниц удаляются, оставшиеся строки склеиваются одним пробелом, а затем
+    схлопываются любые пробельные серии — включая неразрывный пробел в суммах
+    вида '$1 277'.
+    """
+    kept = [line for line in text.splitlines() if not PAGE_NUMBER_LINE.match(line)]
+    return WHITESPACE_RUN.sub(" ", " ".join(kept)).strip()
+
+
+def parse_amount(raw: str) -> float:
+    """Преобразует сумму из текста пресс-релиза в число.
+
+    Разделитель разрядов встречается и запятой ('$1,277'), и пробелом
+    ('$1 277', в том числе неразрывным), поэтому удаляются оба.
+    """
+    return float(AMOUNT_SEPARATORS.sub("", raw))
 
 
 def ch_config() -> dict:

@@ -48,5 +48,27 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(ex.mask("secret", "pw=secret"), "pw=***")
 
 
+class TestNormalize(unittest.TestCase):
+    def test_joins_wrapped_sentence(self):
+        raw = "AISC at Natalka increased\n to $626 per ounce"
+        self.assertIn("increased to $626 per ounce", ex.normalize(raw))
+
+    def test_strips_page_number_inside_sentence(self):
+        raw = "AISC at\n\n6\n\nBlagodatnoye increased to $658 per ounce"
+        self.assertIn("AISC at Blagodatnoye increased", ex.normalize(raw))
+
+    def test_collapses_runs_of_spaces(self):
+        self.assertEqual(ex.normalize("a   b \n c"), "a b c")
+
+    def test_amount_handles_comma_and_space(self):
+        self.assertEqual(ex.parse_amount("1,277"), 1277.0)
+        self.assertEqual(ex.parse_amount("1 277"), 1277.0)
+        self.assertEqual(ex.parse_amount("618"), 618.0)
+
+    def test_fy2021_fixture_yields_known_sentence(self):
+        text = ex.normalize(ex.pdf_to_text(ex.FIXTURE_DIR / "polyus_pr_4q_fy2021.pdf"))
+        self.assertIn("AISC at Natalka increased to $626 per ounce", text)
+
+
 if __name__ == "__main__":
     unittest.main()
