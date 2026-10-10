@@ -10,6 +10,9 @@ WorkingDirectory=/root/dagu
 # Координатор выключен: развёртывание на одной машине, распределённых воркеров нет.
 ExecStart=/root/.local/bin/dagu start-all --dags /root/dagu --host 127.0.0.1 --port 8080
 EnvironmentFile=/etc/clickhouse-import-rosstat.env
+# HOME обязателен: systemd не задаёт его, а dagu определяет по нему домашний каталог
+# и падает на старте с "could not determine home directory: $HOME is not defined".
+Environment="HOME=/root"
 Environment="ROSSTAT_IMPORT_BIN=/root/.local/bin/clickhouse-import-rosstat"
 Environment="DAGU_COORDINATOR_ENABLED=false"
 Restart=always
