@@ -573,11 +573,40 @@ func TestNavRowsKeepsAllDecksAndContours(t *testing.T) {
     if !(byKey["consensus_lt|Olimpiada|industrial"] < byKey["spot_flat|Olimpiada|industrial"]) {
         t.Fatal("NPV на consensus_lt обязан быть ниже, чем на spot_flat")
     }
-    if !(byKey["spot_flat|Olimpiada|local"] < byKey["spot_flat|Olimpiada|industrial"]) {
-        t.Fatal("локальный контур (ставка выше) обязан давать NPV ниже индустриального")
-    }
 }
 ```
+
+> **Исправлено 2026-10-10 (находка имплементера Task 5).** Первая редакция плана проверяла в этом же тесте ещё и `spot_flat|Olimpiada|local < spot_flat|Olimpiada|industrial`, но план там одногодичный: `npvLOM` дисконтирует по индексу года плана, и `(1+rate)^0 = 1` при любой ставке — оба контура дают **одинаковый** NPV, утверждение невыполнимо. Проверка контуров вынесена в отдельный тест на плане из ≥2 лет.
+
+**И отдельный тест на контуры (план минимум 2 года — иначе неразличимо):**
+
+```go
+func TestNavRowsLocalContourLowersMultiYearNpv(t *testing.T) {
+    plans := []MinePlanRecord{{Company: "PLZL", Asset: "Olimpiada", Years: []MinePlanYear{
+        {Year: 2027, ProductionKoz: 100, AISC: 1000},
+        {Year: 2028, ProductionKoz: 100, AISC: 1000},
+    }}}
+    decks := map[string][]DeckYear{"spot_flat": {{2027, 4000}, {2028, 4000}}}
+    rates := DiscountRates{Industrial: 0.05, Local: 0.16}
+    p := defaultParams
+    p.ProfitTaxPct, p.NdpiBaseUSDPerOz = 0, 0
+
+    rows, err := navRows(uuid.New(), plans, decks, rates, p)
+    if err != nil {
+        t.Fatal(err)
+    }
+    if len(rows) != 2 {
+        t.Fatalf("rows = %d, want 2 (один актив × один deck × два контура)", len(rows))
+    }
+    byContour := map[string]float64{}
+    for _, r := range rows {
+        byContour[r.Contour] = r.NPVUSDmln
+    }
+    if !(byContour["local"] < byContour["industrial"]) {
+        t.Fatalf("на плане из двух лет локальная ставка обязана дать NPV ниже: local %v, industrial %v",
+            byContour["local"], byContour["industrial"])
+    }
+}
 
 - [ ] **Step 2: Запустить — тест должен не собраться**
 
