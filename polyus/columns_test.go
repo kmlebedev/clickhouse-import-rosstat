@@ -360,3 +360,30 @@ func columnsWithoutLeadingLabel(cols []Column) []Column {
 
 	return nil
 }
+
+func TestColumnsFromBrokenHeader2019(t *testing.T) {
+	// «4Q» стоит на top=306.99, а год «2019» — на top=317.31. Период
+	// «4Q 2019» обязан собраться из двух разных строк по X-координате.
+	lines, err := readTSVLines("testdata/press_release_fy2019_p3.tsv")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cols := columnsFromHeader(headerBand(lines, firstHeaderLine(lines)))
+
+	var periods []string
+	for _, c := range cols {
+		if c.Period != "" {
+			periods = append(periods, c.Period)
+		}
+	}
+	for _, want := range []string{"2019Q4", "2019Q3", "2019FY", "2018FY"} {
+		if !slices.Contains(periods, want) {
+			t.Errorf("период %s не распознан; получено %v", want, periods)
+		}
+	}
+	// колонка-изменение Q-o-Q не должна стать периодом
+	if slices.Contains(periods, "Q-o-Q") {
+		t.Error("Q-o-Q стал периодом")
+	}
+}
