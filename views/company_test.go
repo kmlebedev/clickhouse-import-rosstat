@@ -49,9 +49,9 @@ func TestCompanyViewsDDLOrder(t *testing.T) {
 }
 
 // Таблица метрик обязана быть создана до витрин, которые её читают. Проверка
-// идёт по ОБЪЕДИНЕНИЮ двух списков DDL — companyViewsDDL() и таблицы из
-// polyus.EnsureMetricsTable: создание таблицы обязано быть в первом списке, иначе
-// витрины company_financials построятся в обход него.
+// идёт по companyViewsDDL(): создание таблицы обязано быть в нём, иначе витрины
+// company_financials построятся в обход него, а util.CreateView молча пропустит
+// их все, не найдя таблицу-источник.
 func TestCompanyViewsDDLCreatesTableBeforeViews(t *testing.T) {
 	stmts := companyViewsDDL()
 	financials := indexOfStatement(stmts, "CREATE TABLE IF NOT EXISTS "+companyFinancialsTable)
