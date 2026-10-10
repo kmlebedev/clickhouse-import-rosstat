@@ -46,34 +46,95 @@ var reports = []Report{
 		Enabled: true,
 	},
 
+	// -- Включённые релизы 4Q/FY за 2019–2024 ------------------------------
+	// Шесть релизов 4Q/FY, у которых на выверенной странице лежит таблица
+	// «Comparative financial results» со строкой «Gold production (koz)».
+	// Шапка у них шире, чем у FY2014: 2019–2021 печатают подписи периодов
+	// разорванными по двум строкам («4Q» на одной, «2019» на другой), а у всех
+	// шести между периодами стоят колонки-изменения (Y-o-Y/H-o-H) без года в
+	// метке. Оба случая разбирает колоночная модель: полоса шапки собирается по
+	// ролям строк, а разорванные подписи склеиваются по X (columns.go).
+	// Значения закреплены тестом TestKPIValuesHistoryReports (kpi_test.go).
+	{
+		// Проверено pdftotext: страница 3 содержит "Gold production (koz)".
+		URL:     "https://polyus.com/upload/iblock/d91/press_release_4q-fy2019_final-_1_.pdf",
+		Period:  "2019FY",
+		Kind:    "kpi",
+		Lang:    "en",
+		Pages:   []int{3},
+		Enabled: true,
+	},
+	{
+		// Проверено pdftotext: страница 4 содержит "Gold production (koz)".
+		URL:     "https://polyus.com/upload/iblock/f1f/press_release_4q_fy2020.pdf",
+		Period:  "2020FY",
+		Kind:    "kpi",
+		Lang:    "en",
+		Pages:   []int{4},
+		Enabled: true,
+	},
+	{
+		// Проверено pdftotext: страница 4 содержит "Gold production (koz)".
+		URL:     "https://polyus.com/upload/iblock/f4c/2022_03_01_press_release_4qfy2021-eng.pdf",
+		Period:  "2021FY",
+		Kind:    "kpi",
+		Lang:    "en",
+		Pages:   []int{4},
+		Enabled: true,
+	},
+	{
+		// Проверено pdftotext: страница 4 содержит "Gold production (koz)".
+		URL:     "https://polyus.com/upload/iblock/737/2023_03_15_fy2022-financial-results_eng.pdf",
+		Period:  "2022FY",
+		Kind:    "kpi",
+		Lang:    "en",
+		Pages:   []int{4},
+		Enabled: true,
+	},
+	{
+		// Проверено pdftotext: страница 4 содержит "Gold production (koz)".
+		URL:     "https://polyus.com/upload/iblock/cb5/2024_02_29_plzl_financial-results_fy2023_eng.pdf",
+		Period:  "2023FY",
+		Kind:    "kpi",
+		Lang:    "en",
+		Pages:   []int{4},
+		Enabled: true,
+	},
+	{
+		// Проверено pdftotext: страница 4 содержит "Gold production (koz)".
+		URL:     "https://polyus.com/upload/iblock/bbb/2025_03_05_fr-12m-2024_eng.pdf",
+		Period:  "2024FY",
+		Kind:    "kpi",
+		Lang:    "en",
+		Pages:   []int{4},
+		Enabled: true,
+	},
+
 	// -- Отключённые отчёты из legacy-списка -------------------------------
 	// Разбор этих файлов не выверен. В legacy они лежат закомментированными,
 	// потому что колонки периодов в их таблицах пришлось бы задавать вручную
 	// (там есть PeriodColumnMap по URL), а автоматический разбор шапки для них
 	// не проверялся.
 	//
-	// Причины отключения три, и выверки одних номеров страниц мало:
+	// После включения шести релизов 4Q/FY за 2019–2024 набор отключённых сузился
+	// до 2015–2018 и 2025H2, и причина у них одна: это документы другого типа, а
+	// не невыверенная страница.
 	//
-	//  1. Номера страниц не выверены. Правило «одна страница на отчёт» для этого
-	//     набора не действует: у 2024FY операционная таблица напечатана не на
-	//     первых страницах, а на странице 4 внутри «Comparative financial
-	//     results» (страницы 9–10 несут другие таблицы), поэтому каждый файл
-	//     требует отдельного прогона pdftotext и ручной выверки.
-	//  2. Шапка шире, чем различает разбор. Пример — 2024FY, страница 4:
-	//     «2024 | 2023 | Y-o-Y | 2H 2024 | 1H 2024 | H-o-H | 2H 2023 | Y-o-Y» —
-	//     восемь колонок, из них три колонки-изменения, и метки Y-o-Y/H-o-H не
-	//     содержат года вовсе. Колоночная модель различает такие колонки
-	//     (columns.go), но именно её готовность к этим шапкам и нужно проверить
-	//     на каждом файле перед включением.
-	//  3. Часть набора — не KPI-релизы. Например 2018FY
+	//  1. Часть набора — не KPI-релизы. 2018FY
 	//     (polyus-group-ifrs-cons-fs-18_e_signed.pdf) — консолидированная
-	//     МСФО-форма без колоночной периодики, то есть Kind: "ifrs", а не "kpi";
-	//     часть — двухшапочные релизы 4Q/FY. Kind, Lang и Pages для каждого
-	//     файла определяются отдельно.
+	//     МСФО-форма без колоночной периодики, то есть Kind: "ifrs", а не "kpi".
+	//  2. 2015–2017 — MD&A с консолидированной отчётностью, тоже не релизы
+	//     «Comparative financial results»: у них нет той шапки, из которой KPI-
+	//     разбор берёт периоды, и Kind, Lang и Pages для каждого файла
+	//     определяются отдельно. У 2017FY к тому же расходятся номера страниц:
+	//     в legacy-списке 5, в PeriodColumnMap — 4.
+	//  3. 2025H2 (2026_03_16_2h25-_-tu-mda-eng.pdf) — англоязычный 2H25-релиз с
+	//     двухшапочной таблицей, которого в legacy-списке не было вовсе.
 	//
 	// Включать их без прогона pdftotext нельзя: включение вынесено в следующий
-	// пункт работ (docs/superpowers/specs/2026-10-10-polyus-column-model-design.md,
-	// §3.1 «11 отключённых отчётов: почему не в этой итерации»).
+	// пункт работ — отчёты 2015–2018
+	// (docs/superpowers/specs/2026-10-10-polyus-history-reports-design.md,
+	// §4 «Границы»).
 	{
 		URL:     "https://polyus.com/upload/iblock/9dd/mda_financial_statements_fy2015.pdf",
 		Period:  "2015FY",
@@ -100,48 +161,6 @@ var reports = []Report{
 	{
 		URL:     "https://polyus.com/upload/iblock/9bc/polyus-group-ifrs-cons-fs-18_e_signed.pdf",
 		Period:  "2018FY",
-		Kind:    "kpi",
-		Lang:    "en",
-		Enabled: false,
-	},
-	{
-		URL:     "https://polyus.com/upload/iblock/d91/press_release_4q-fy2019_final-_1_.pdf",
-		Period:  "2019FY",
-		Kind:    "kpi",
-		Lang:    "en",
-		Enabled: false,
-	},
-	{
-		URL:     "https://polyus.com/upload/iblock/f1f/press_release_4q_fy2020.pdf",
-		Period:  "2020FY",
-		Kind:    "kpi",
-		Lang:    "en",
-		Enabled: false,
-	},
-	{
-		URL:     "https://polyus.com/upload/iblock/f4c/2022_03_01_press_release_4qfy2021-eng.pdf",
-		Period:  "2021FY",
-		Kind:    "kpi",
-		Lang:    "en",
-		Enabled: false,
-	},
-	{
-		URL:     "https://polyus.com/upload/iblock/737/2023_03_15_fy2022-financial-results_eng.pdf",
-		Period:  "2022FY",
-		Kind:    "kpi",
-		Lang:    "en",
-		Enabled: false,
-	},
-	{
-		URL:     "https://polyus.com/upload/iblock/cb5/2024_02_29_plzl_financial-results_fy2023_eng.pdf",
-		Period:  "2023FY",
-		Kind:    "kpi",
-		Lang:    "en",
-		Enabled: false,
-	},
-	{
-		URL:     "https://polyus.com/upload/iblock/bbb/2025_03_05_fr-12m-2024_eng.pdf",
-		Period:  "2024FY",
 		Kind:    "kpi",
 		Lang:    "en",
 		Enabled: false,
