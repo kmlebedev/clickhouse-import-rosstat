@@ -185,6 +185,26 @@ deps:
 clean:
 	rm -rf $(BUILD_DIR)
 
+DAGU_URL := https://github.com/dagu-org/dagu/releases/download/$(DAGU_VERSION)/dagu_$(DAGU_VERSION:v%=%)_linux_amd64.tar.gz
+
+# dagu: скачать релизный tarball, подменить бинарник, поставить юнит. Идемпотентно по версии.
+# Старый бинарник сохраняется в .bak — им пользуется откат (см. deploy/staging/README.md).
+deploy-staging-dagu: staging-precheck
+	@set -e; \
+	want=$$(echo $(DAGU_VERSION) | sed 's/^v//'); \
+	have=$$(ssh $(STAGING_HOST) '$(STAGING_BIN_DIR)/dagu version 2>/dev/null' | head -1 || true); \
+	if [ "$$have" = "$$want" ]; then \
+		echo "dagu $$have уже установлен"; \
+	else \
+		curl -fsSL -o /tmp/dagu_$(DAGU_VERSION).tar.gz '$(DAGU_URL)'; \
+		tar xzf /tmp/dagu_$(DAGU_VERSION).tar.gz -C /tmp dagu; \
+		scp /tmp/dagu $(STAGING_HOST):$(STAGING_BIN_DIR)/dagu.new; \
+		ssh $(STAGING_HOST) 'test -f $(STAGING_BIN_DIR)/dagu && cp $(STAGING_BIN_DIR)/dagu $(STAGING_BIN_DIR)/dagu.bak || true; mv $(STAGING_BIN_DIR)/dagu.new $(STAGING_BIN_DIR)/dagu; chmod 755 $(STAGING_BIN_DIR)/dagu'; \
+		echo "dagu обновлён до $(DAGU_VERSION)"; \
+	fi
+	scp deploy/staging/dagu.service $(STAGING_HOST):/etc/systemd/system/dagu.service
+	ssh $(STAGING_HOST) 'systemctl daemon-reload'
+
 info:
 	@echo "BINARY    = $(TARGET)"
 	@echo "GOOS      = linux"
