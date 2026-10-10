@@ -62,7 +62,7 @@ func (s *financialMetricsImport) Import(ctx context.Context, conn driver.Conn) (
 		return 0, err
 	}
 
-	var failed, skipped, dropped, duplicates int
+	var failed, skipped, dropped int
 
 	// Одно время загрузки на весь батч: loaded_at объявлен с DEFAULT now(), но
 	// batch-вставка ClickHouse всё равно требует значение на каждую из девяти
@@ -70,12 +70,9 @@ func (s *financialMetricsImport) Import(ctx context.Context, conn driver.Conn) (
 	// версией в ReplacingMergeTree(loaded_at).
 	loadedAt := time.Now()
 
-	// Ключи уже добавленных записей. Таблица с ORDER BY (company, metric, period)
-	// молча схлопывает строки с одинаковым ключом: батч из 28 записей ClickHouse
-	// записал как 25 строк, а лог импортёра отчитался о 28. Ключ тут считается
-	// повторно, потому что ORDER BY таблицы — часть её DDL, и связь между ними
-	// должна быть видна там же, где ведётся вставка.
-	seen := make(map[batchKey]bool)
+	// Записи с ключом, который уже был добавлен в этот же батч, до вставки не
+	// доходят: см. batchDedup.add.
+	var dedup batchDedup
 
 	for _, report := range reports {
 		if !report.Enabled {
@@ -87,7 +84,7 @@ func (s *financialMetricsImport) Import(ctx context.Context, conn driver.Conn) (
 			continue
 		}
 
-		records, parseErr := parseReport(ctx, report)
+		records, header, parseErr := parseReport(ctx, report)
 		if parseErr != nil {
 			// Один недоступный или нечитаемый отчёт не роняет импорт целиком:
 			// остальные отчёты по-прежнему попадают в витрину.
@@ -97,18 +94,16 @@ func (s *financialMetricsImport) Import(ctx context.Context, conn driver.Conn) (
 			continue
 		}
 
-		// Записи, чей период parseKPIPage не отличает от колонки-изменения,
-		// отбрасываются здесь: в витрину попадают только выверенные периоды.
+		// Записи, чьи значения пришли из колонки-изменения, отбрасываются здесь:
+		// в витрину попадают только периоды, объявленные шапкой этого отчёта.
 		if report.Kind == "kpi" {
 			var guardDropped int
-			records, guardDropped = guardKPIRecords(records)
+			records, guardDropped = guardKPIRecords(records, header)
 			dropped += guardDropped
 		}
 
 		for _, record := range records {
-			key := batchKey{record.Metric, record.Period}
-			if seen[key] {
-				duplicates++
+			if !dedup.add(record) {
 				log.Warnf(
 					"duplicate %s %s from %s: already in batch, skipping to keep the batch key unique",
 					record.Metric,
@@ -118,7 +113,6 @@ func (s *financialMetricsImport) Import(ctx context.Context, conn driver.Conn) (
 
 				continue
 			}
-			seen[key] = true
 
 			if err = batch.Append(
 				financialMetricsCompany,
@@ -149,7 +143,7 @@ func (s *financialMetricsImport) Import(ctx context.Context, conn driver.Conn) (
 		skipped,
 		failed,
 		dropped,
-		duplicates,
+		dedup.duplicates,
 	)
 
 	return count, nil
@@ -167,41 +161,54 @@ type batchKey struct {
 	Period string
 }
 
-// uniqueBatchKeys оставляет по одному ключу на каждую пару (метрика, период),
-// сохраняя порядок появления, и возвращает число отброшенных повторов.
+// batchDedup решает, попадает ли запись в batch, и ведёт учёт повторных ключей.
 //
-// Функция служит спецификацией слияния ключей для Import: сам он ведёт seen
-// потоком по отчётам, чтобы не держать в памяти список из одних ключей. Здесь
-// же проверяется само правило — без него дубли дошли бы до batch.Append и
-// ClickHouse схлопнул бы их уже после вставки, оставив лог импортёра с
-// завышенным счётчиком строк.
-func uniqueBatchKeys(keys [][2]string) (kept [][2]string, duplicates int) {
-	seen := make(map[[2]string]bool, len(keys))
-
-	for _, key := range keys {
-		if seen[key] {
-			duplicates++
-
-			continue
-		}
-
-		seen[key] = true
-		kept = append(kept, key)
+// Таблица с ключом ORDER BY (company, metric, period) и движком
+// ReplacingMergeTree молча схлопывает строки с одинаковым ключом внутри одной
+// вставки: батч из 28 записей ClickHouse записал как 25 строк, а лог импортёра
+// отчитался о 28. Записи с одним ключом приходят из разных отчётов (eps_basic за
+// 2026H1 печатают и KPI-релиз, и МСФО), так что проверка нужна до batch.Append —
+// тогда счётчик импортированных строк совпадает с числом сохранённых.
+//
+// Возвращает false, если ключ уже встречался; каждый повтор считает сам.
+func (d *batchDedup) add(record MetricRecord) bool {
+	if d.seen == nil {
+		d.seen = make(map[batchKey]bool)
 	}
 
-	return kept, duplicates
+	key := batchKey{record.Metric, record.Period}
+	if d.seen[key] {
+		d.duplicates++
+
+		return false
+	}
+
+	d.seen[key] = true
+
+	return true
+}
+
+// batchDedup ведёт ключи, уже добавленные в batch, и считает повторы.
+type batchDedup struct {
+	seen       map[batchKey]bool
+	duplicates int
 }
 
 // parseReport скачивает PDF отчёта во временный каталог, извлекает из него
 // указанные страницы и разбирает их парсером соответствующего типа.
 //
+// Возвращает также периоды, объявленные шапкой страницы: для KPI-отчёта по ним
+// решается, какие записи достоверны (см. guardKPIRecords). У МСФО-страницы шапки
+// с периодами нет вовсе — период приходит из метаданных отчёта, — поэтому там
+// возвращается пустой слайс.
+//
 // Каталог удаляется целиком при выходе: textPath передаётся в extractPDF с
 // компонентом каталога (filepath.Join(dir, ...)), потому что extractPDF кладёт
 // промежуточные файлы страниц рядом с ним через filepath.Dir.
-func parseReport(ctx context.Context, report Report) ([]MetricRecord, error) {
+func parseReport(ctx context.Context, report Report) ([]MetricRecord, []PeriodColumn, error) {
 	dir, err := os.MkdirTemp("", "polyus-report-*")
 	if err != nil {
-		return nil, fmt.Errorf("create temp dir: %w", err)
+		return nil, nil, fmt.Errorf("create temp dir: %w", err)
 	}
 	defer func() {
 		if removeErr := os.RemoveAll(dir); removeErr != nil {
@@ -211,27 +218,37 @@ func parseReport(ctx context.Context, report Report) ([]MetricRecord, error) {
 
 	pdfPath := filepath.Join(dir, "report.pdf")
 	if err = downloadPDF(ctx, report.URL, pdfPath); err != nil {
-		return nil, fmt.Errorf("download %s: %w", report.URL, err)
+		return nil, nil, fmt.Errorf("download %s: %w", report.URL, err)
 	}
 
 	textPath := filepath.Join(dir, "report.txt")
 	if err = extractPDF(ctx, pdfPath, textPath, report.Pages); err != nil {
-		return nil, fmt.Errorf("extract %s: %w", report.URL, err)
+		return nil, nil, fmt.Errorf("extract %s: %w", report.URL, err)
 	}
 
 	switch report.Kind {
 	case "kpi":
 		// KPI-парсер берёт период из шапки страницы, а не из метаданных отчёта.
-		return parseKPIPage(textPath, report.URL, report.Pages[0])
+		records, err := parseKPIPage(textPath, report.URL, report.Pages[0])
+		if err != nil {
+			return nil, nil, err
+		}
+
+		return records, headerPeriods(textPath), nil
 	case "ifrs":
-		return parseIFRSPage(
+		records, err := parseIFRSPage(
 			textPath,
 			report.URL,
 			report.Pages[0],
 			report.Period,
 		)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		return records, nil, nil
 	default:
-		return nil, fmt.Errorf("unknown report Kind %q", report.Kind)
+		return nil, nil, fmt.Errorf("unknown report Kind %q", report.Kind)
 	}
 }
 

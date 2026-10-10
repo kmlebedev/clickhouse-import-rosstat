@@ -20,31 +20,45 @@ import "testing"
 //
 // Легитимные периоды (2026H1, 2025H1) обязаны выжить: их токены стоят на своих
 // местах, и отбрасываются они только вместе с метрикой, чей период подменён.
+// Что фильтр не выкидывает целый отчёт с другим типом периода — отдельный тест
+// TestGuardKeepsAnnualPeriods.
 func TestGuardKPIChangeColumns(t *testing.T) {
-	records, err := parseKPIPage("testdata/press_reliz_1h26_p1.txt", "u", 1)
+	const path = "testdata/press_reliz_1h26_p1.txt"
+
+	records, err := parseKPIPage(path, "u", 1)
 	if err != nil {
 		t.Fatalf("parseKPIPage: %v", err)
 	}
 
-	kept, dropped := guardKPIRecords(records)
+	periods := headerPeriods(path)
+	kept, dropped := guardKPIRecords(records, periods)
 
-	// Ни один отброшенный период не попал в batch.
+	// Подменённый период — последняя колонка шапки: она и есть та, чьи значения
+	// parseKPIPage берёт из следующей колонки таблицы через неопознанное
+	// «Изм. за год».
+	if got := untrustworthyPeriod(periods); got != "2025H2" {
+		t.Fatalf("untrustworthyPeriod = %q, want 2025H2", got)
+	}
+
+	// Ни один подменённый период не попал в batch.
 	for _, r := range kept {
-		if !knownKPIPeriods[r.Period] {
+		if r.Period == untrustworthyPeriod(periods) {
 			t.Errorf(
-				"period %s of metric %s reached the batch but parseKPIPage cannot distinguish it from a change column",
+				"period %s of metric %s reached the batch but its values came from a change column",
 				r.Period,
 				r.Metric,
 			)
 		}
 	}
 
-	// Каждое отброшенное значение принадлежит подменённому периоду.
+	// Каждая отброшенная запись принадлежит подменённому периоду: легитимные
+	// периоды обязаны дойти до batch.
 	if dropped == 0 {
 		t.Fatal("no records dropped: the change-column guard is not wired in")
 	}
+	bad := untrustworthyPeriod(periods)
 	for _, r := range records {
-		if knownKPIPeriods[r.Period] {
+		if r.Period != bad {
 			continue
 		}
 		found := false
@@ -108,32 +122,36 @@ func TestGuardKPIChangeColumns(t *testing.T) {
 // отчитался.
 //
 // Поэтому batch.Append вызывается только для ключа, которого в батче ещё не было:
-// дубли считаются и логируются, а счётчик импортированных строк (batch.Rows())
-// совпадает с числом сохранённых строк.
+// дубли считаются и логируются, а счётчик импортированных строк совпадает с
+// числом сохранённых строк.
 func TestBatchKeysAreUnique(t *testing.T) {
-	pairs := [][2]string{
-		{"eps_basic", "2026H1"},
-		{"eps_diluted", "2026H1"},
-		{"eps_basic", "2026H1"},
-		{"gold_output", "2026H1"},
-	}
-	kept, duplicates := uniqueBatchKeys(pairs)
+	dedup := batchDedup{seen: make(map[batchKey]bool)}
 
-	want := [][2]string{
-		{"eps_basic", "2026H1"},
-		{"eps_diluted", "2026H1"},
-		{"gold_output", "2026H1"},
+	records := []MetricRecord{
+		{Metric: "eps_basic", Period: "2026H1", Value: 0.87},
+		{Metric: "eps_diluted", Period: "2026H1", Value: 0.87},
+		{Metric: "eps_basic", Period: "2026H1", Value: 0.87},
+		{Metric: "gold_output", Period: "2026H1", Value: 1287},
 	}
-	if len(kept) != len(want) {
-		t.Fatalf("uniqueBatchKeys kept %d keys, want %d: %v", len(kept), len(want), kept)
-	}
-	for i := range want {
-		if kept[i] != want[i] {
-			t.Errorf("kept[%d] = %v, want %v", i, kept[i], want[i])
+
+	var added []string
+	for _, record := range records {
+		if dedup.add(record) {
+			added = append(added, record.Metric)
 		}
 	}
-	if duplicates != 1 {
-		t.Errorf("duplicates = %d, want 1", duplicates)
+
+	want := []string{"eps_basic", "eps_diluted", "gold_output"}
+	if len(added) != len(want) {
+		t.Fatalf("batchDedup.add accepted %d records, want %d: %v", len(added), len(want), added)
+	}
+	for i := range want {
+		if added[i] != want[i] {
+			t.Errorf("added[%d] = %q, want %q", i, added[i], want[i])
+		}
+	}
+	if dedup.duplicates != 1 {
+		t.Errorf("duplicates = %d, want 1", dedup.duplicates)
 	}
 }
 
@@ -150,18 +168,21 @@ func TestBatchKeysCountRows(t *testing.T) {
 		{Metric: "eps_basic", Period: "2026H1", Value: 0.87},
 	}
 
-	var appended [][2]string
-	seen := map[[2]string]bool{}
+	// Тот же путь, что у Import: счётчик инкрементируется на каждом принятом
+	// batch.Append, а не на каждой разобранной записи.
+	dedup := batchDedup{seen: make(map[batchKey]bool)}
+	count := 0
 	for _, record := range records {
-		key := [2]string{record.Metric, record.Period}
-		if seen[key] {
+		if !dedup.add(record) {
 			continue
 		}
-		seen[key] = true
-		appended = append(appended, key)
+		count++
 	}
 
-	if len(appended) != 3 {
-		t.Errorf("appended %d rows, want 3: appended rows must match rows stored by ClickHouse", len(appended))
+	if count != 3 {
+		t.Errorf("appended %d rows, want 3: appended rows must match rows stored by ClickHouse", count)
+	}
+	if count != len(records)-dedup.duplicates {
+		t.Errorf("count = %d, but records(%d) - duplicates(%d) = %d", count, len(records), dedup.duplicates, len(records)-dedup.duplicates)
 	}
 }
