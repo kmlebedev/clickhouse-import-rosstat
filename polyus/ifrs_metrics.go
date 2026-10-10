@@ -5,13 +5,14 @@ package polyus
 // в долларах США — та же система единиц, что и у датапака, тогда как русская
 // версия печатает рубли. Поэтому разбирается английская.
 //
-// Метки статей в этой таблице стоят в КОНЦЕ строки («значения, затем метка»), а
-// не в начале, как на KPI-страницах. Поэтому Prefix здесь — хвостовой фрагмент
-// строки, а не её начало: сопоставление идёт через strings.HasSuffix и общий
-// разбор по самому длинному совпавшему префиксу.
+// Метки статей стоят в НАЧАЛЕ строки (слева), а числа — правее них, поэтому
+// Prefix — начало строки, склеенной из слов визуальной строки (lineText):
+// сопоставление идёт через strings.HasPrefix, и самый длинный совпавший префикс
+// выигрывает.
 //
 // Метки сверены с живой фикстурой посимвольно. В частности:
-//   - у маркеров списка ровно четыре пробела после дефиса («-    basic»);
+//   - маркер списка и его слово разделены четырьмя пробелами, но при склейке
+//     слов строки через пробел («-» + «basic») выходит ровно «- basic»;
 //   - операционные расходы печатаются как «Operating expenses and other income
 //     / (expenses)», поэтому префикс обрезан до «Operating expenses and other
 //     income» — он уникален и не задевает другие статьи;
@@ -24,7 +25,7 @@ var ifrsMetrics = []MetricDefinition{
 	{Name: "profit_before_tax", Unit: "USD million", Prefix: []string{"Profit before income tax"}},
 	{Name: "income_tax_expense", Unit: "USD million", Prefix: []string{"Income tax expense"}},
 	{Name: "profit_for_period", Unit: "USD million", Prefix: []string{"Profit for the period"}},
-	{Name: "eps_basic", Unit: "USD/share", Prefix: []string{"-    basic"}},
-	{Name: "eps_diluted", Unit: "USD/share", Prefix: []string{"-    diluted"}},
+	{Name: "eps_basic", Unit: "USD/share", Prefix: []string{"- basic"}},
+	{Name: "eps_diluted", Unit: "USD/share", Prefix: []string{"- diluted"}},
 	{Name: "total_assets", Unit: "USD million", Prefix: []string{"Total assets"}},
 }

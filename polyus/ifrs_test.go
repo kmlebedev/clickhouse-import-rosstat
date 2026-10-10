@@ -3,7 +3,7 @@ package polyus
 import "testing"
 
 func TestParseIFRSReport(t *testing.T) {
-	records, err := parseIFRSPage("testdata/en_msfo_p6.txt", "https://example.invalid/6m2026.pdf", 6, "2026H1")
+	records, err := parseIFRSPage("testdata/en_msfo_p6.tsv", "https://example.invalid/6m2026.pdf", 6, "2026H1")
 	if err != nil {
 		t.Fatalf("parseIFRSPage: %v", err)
 	}
@@ -27,7 +27,7 @@ func TestParseIFRSReport(t *testing.T) {
 // три проверяемые выше: сокращённая метка не должна перехватывать строку
 // длинной, а скобки — превращаться в положительное значение.
 func TestParseIFRSReportFullPage(t *testing.T) {
-	records, err := parseIFRSPage("testdata/en_msfo_p6.txt", "https://example.invalid/6m2026.pdf", 6, "2026H1")
+	records, err := parseIFRSPage("testdata/en_msfo_p6.tsv", "https://example.invalid/6m2026.pdf", 6, "2026H1")
 	if err != nil {
 		t.Fatalf("parseIFRSPage: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestParseIFRSReportFullPage(t *testing.T) {
 // «Profit for the period attributable to:» подменила бы собой настоящий
 // profit_for_period (или добавила бы дубль без значения).
 func TestParseIFRSProfitForPeriodNotAttributable(t *testing.T) {
-	records, err := parseIFRSPage("testdata/en_msfo_p6.txt", "https://example.invalid/6m2026.pdf", 6, "2026H1")
+	records, err := parseIFRSPage("testdata/en_msfo_p6.tsv", "https://example.invalid/6m2026.pdf", 6, "2026H1")
 	if err != nil {
 		t.Fatalf("parseIFRSPage: %v", err)
 	}
@@ -122,11 +122,34 @@ func TestPeriodTypeCanonical(t *testing.T) {
 
 func TestParseIFRSOnKPIPage(t *testing.T) {
 	// перекрёстный случай: KPI-страница, поданная МСФО-парсеру
-	records, err := parseIFRSPage("testdata/press_reliz_1h26_p1.txt", "https://example.invalid/x.pdf", 1, "2026H1")
+	records, err := parseIFRSPage("testdata/press_reliz_1h26_p1.tsv", "https://example.invalid/x.pdf", 1, "2026H1")
 	if err != nil {
 		t.Fatalf("parseIFRSPage must not fail on a KPI page: %v", err)
 	}
 	if len(records) != 0 {
 		t.Errorf("expected no IFRS metrics on a KPI page, got %d", len(records))
+	}
+}
+
+// TestIFRSValuesByColumn держит раскладку МСФО-страницы: метка слева, два
+// числовых столбца справа (отчётный и прошлый). Отчётный — первый по X после
+// метки, прошлый — следующий за ним.
+func TestIFRSValuesByColumn(t *testing.T) {
+	recs, err := parseIFRSPage("testdata/en_msfo_p6.tsv", "https://example.invalid/6m2026.pdf", 6, "2026H1")
+	if err != nil {
+		t.Fatalf("parseIFRSPage: %v", err)
+	}
+	got := map[string]float64{}
+	for _, r := range recs {
+		got[r.Metric] = r.Value
+	}
+	if got["gold_sales"] != 4569 {
+		t.Errorf("gold_sales = %v, want 4569", got["gold_sales"])
+	}
+	if got["total_revenue"] != 4674 {
+		t.Errorf("total_revenue = %v, want 4674", got["total_revenue"])
+	}
+	if got["operating_expenses"] != -3405 {
+		t.Errorf("operating_expenses = %v, want -3405 (parenthesised negative)", got["operating_expenses"])
 	}
 }
