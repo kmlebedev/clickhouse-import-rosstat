@@ -51,3 +51,24 @@ func TestAssertSpotPriceRejectsNonPositive(t *testing.T) {
 		}
 	}
 }
+
+// TestPlanYears — горизонт сида берётся из планов, а не из часов.
+func TestPlanYears(t *testing.T) {
+	plans := []MinePlanRecord{
+		{Company: "PLZL", Asset: "A", Years: []MinePlanYear{{Year: 2030}, {Year: 2028}}},
+		{Company: "PLZL", Asset: "B", Years: []MinePlanYear{{Year: 2029}, {Year: 2028}}},
+	}
+	got := planYears(plans)
+	want := []uint16{2028, 2029, 2030}
+	if len(got) != len(want) {
+		t.Fatalf("planYears = %v, want %v (уникальные годы, отсортированы)", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("planYears[%d] = %d, want %d", i, got[i], want[i])
+		}
+	}
+	if got := planYears(nil); len(got) != 0 {
+		t.Fatalf("пустой план: planYears = %v, want пусто", got)
+	}
+}

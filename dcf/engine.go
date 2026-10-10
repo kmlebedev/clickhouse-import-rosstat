@@ -355,7 +355,7 @@ func (s *dcfEngine) Import(ctx context.Context, conn driver.Conn) (count int64, 
 	// лежит ВЫБРАННЫЙ аналитиком сценарий (и его published — метка версии).
 	// Перезаписать его сидом значило бы молча подменить вход расчёта.
 	if len(decks) == 0 {
-		if err = seedPriceDecks(ctx, conn); err != nil {
+		if err = seedPriceDecks(ctx, conn, planYears(plans)); err != nil {
 			return 0, err
 		}
 
