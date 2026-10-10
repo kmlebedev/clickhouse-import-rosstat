@@ -219,8 +219,11 @@ func (s *minePlansSeeder) Import(ctx context.Context, conn driver.Conn) (count i
 	// читает контракт из series_catalog ПЕРЕД запросом к ряду, и потерянное
 	// описание (неполный батч, упавший сабзапрос) видно только здесь — молчаливое
 	// продолжение с успешным логом оставило бы ряд без объяснения единиц и допущений.
+	// Счётчик записанных ранее строк в тексте ошибки: прогон может упасть уже после
+	// Send, и оператору нужно отличить «не легло ничего» от «легло count строк, а
+	// описание потеряно» — по одной ошибке это не видно, по числу видно.
 	if err = upsertMinePlansSeriesMeta(ctx, conn); err != nil {
-		return count, fmt.Errorf("сид mine_plans: каталог рядов: %w", err)
+		return count, fmt.Errorf("сид mine_plans: каталог рядов (строк записано ранее: %d): %w", count, err)
 	}
 
 	log.Infof("Imported %d rows of dcf_mine_plans", count)

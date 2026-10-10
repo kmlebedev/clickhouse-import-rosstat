@@ -29,6 +29,10 @@ func TestMinePlansSeriesMetaCoversAllAssets(t *testing.T) {
 				t.Errorf("%s: пустое поле %s", m.Series, name)
 			}
 		}
+		if got[m.Series] {
+			t.Errorf("актив %s описан в minePlansSeriesMeta дважды — каталог получил бы две одинаковые строки", m.Series)
+		}
+
 		got[m.Series] = true
 	}
 	for _, p := range polyusAssetPlans {
@@ -69,10 +73,23 @@ func TestMinePlansSeriesMetaNoUnknownAssets(t *testing.T) {
 //
 // Проверяются ключевые содержательные требования брифа: происхождение
 // (dcf_mine_plans, Годовой обзор 2025, URL), три названные единицы, годовая
-// частота «A» (конвенция каталога — M/Q/D/W/A, не слово «annual»), и три
+// частота «A» (конвенция каталога — M/Q/D/W/A, не слово «annual»), и
 // содержательные оговорки: AISC derived как tcc + 698, 0 в closure_costs —
-// «не задано», снимок пересматривается отдельным пунктом роадмапа.
+// «не задано», снимок пересматривается отдельным пунктом роадмапа, capex_project
+// как ИТОГ проекта развития, и отсутствие ряда в mine_plans как ОТБРОШЕННЫЙ сидом
+// актив (нет пригодного факта), а не отсутствие LOM-плана.
 func TestMinePlansSeriesMetaDescribesAssumption(t *testing.T) {
+	// Пустой (или неполный) срез каталога уронил бы цикл ниже молча: ноль итераций —
+	// и контракт-тест зелёный, хотя описывать нечего. Поэтому размер сверяется ДО
+	// цикла, с polyusAssetPlans как эталоном: у каждого актива сида есть ровно одна
+	// запись каталога, и это тот же инвариант, что проверяет
+	// TestMinePlansSeriesMetaCoversAllAssets, но здесь он — предусловие проверки
+	// содержания, а не её результат.
+	if len(minePlansSeriesMeta) != len(polyusAssetPlans) {
+		t.Fatalf("minePlansSeriesMeta: %d записей, а активов в polyusAssetPlans %d — контракт-тест "+
+			"проверял бы не тот срез", len(minePlansSeriesMeta), len(polyusAssetPlans))
+	}
+
 	for _, m := range minePlansSeriesMeta {
 		if m.Frequency != "A" {
 			t.Errorf("%s: Frequency = %q, want A (годовой ряд)", m.Series, m.Frequency)
@@ -90,12 +107,14 @@ func TestMinePlansSeriesMetaDescribesAssumption(t *testing.T) {
 			"godovoy_obzor",  // URL Годового обзора 2025
 			"koz",            // production_koz — тыс. унций
 			"USD/oz",         // tcc/aisc — доллары за унцию
-			"млн USD",        // capex и closure — млн USD
+			"USD million",    // capex и closure — USD million (единый словарь каталога)
 			"ДОПУЩЕНИЕ",      // значения — допущение, не наблюдение
 			"tcc + 698",      // aisc derived от группового клина
 			"не задано",      // closure_costs = 0 значит «не задано»
 			"роадмапа",       // снимок пересматривается новым пунктом роадмапа
 			"плато",          // годы за последним фактом — плато, не измерение
+			"ИТОГ проекта",   // capex_project — итог проекта, не годовое измерение
+			"ОТБРОСИЛ актив", // отсутствие ряда = пропуск сида, а не отсутствие плана
 		} {
 			if !strings.Contains(contract, want) {
 				t.Errorf("%s: каталог не содержит %q", m.Series, want)
