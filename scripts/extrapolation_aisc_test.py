@@ -633,5 +633,97 @@ class TestCalibrate(unittest.TestCase):
             self.assertEqual(cal[asset]["discarded"], [], asset)
 
 
+class TestReconcile(unittest.TestCase):
+    def test_reconciles_exactly_to_group(self):
+        tcc = {"A": 400.0, "B": 700.0}
+        rb = {"A": 0.60, "B": 0.50}
+        prod = {"A": 1000.0, "B": 500.0}
+        aisc, m, resid = ex.reconcile(tcc, rb, prod, group_aisc=1200.0)
+        w = {"A": 1000 / 1500, "B": 500 / 1500}
+        got = aisc["A"] * w["A"] + aisc["B"] * w["B"]
+        self.assertAlmostEqual(got, 1200.0, places=6)
+        self.assertAlmostEqual(resid, 0.0, places=6)
+
+    def test_m_applies_to_wedge_not_to_tcc(self):
+        tcc = {"A": 400.0}
+        rb = {"A": 0.50}
+        aisc, m, _ = ex.reconcile(tcc, rb, {"A": 1.0}, group_aisc=800.0)
+        # r_bar*m = 1.0 -> AISC = 400*(1+1.0) = 800
+        self.assertAlmostEqual(aisc["A"], 800.0, places=6)
+        # Масштабируется ТОЛЬКО клин: tcc остаётся наблюдённой величиной.
+        self.assertAlmostEqual(m, 2.0, places=6)
+
+    def test_zero_wedge_falls_back_to_m_one(self):
+        aisc, m, resid = ex.reconcile({"A": 400.0}, {"A": 0.0}, {"A": 1.0}, 500.0)
+        self.assertEqual(m, 1.0)
+        self.assertAlmostEqual(aisc["A"], 400.0, places=6)
+
+    def test_residual_is_zero_when_group_is_reachable(self):
+        # A positive m makes any achievable group AISC reachable, so the
+        # post-hoc residual must be ~0 -- not merely "some sign".
+        _, _, resid = ex.reconcile({"A": 400.0}, {"A": 0.5}, {"A": 1.0}, 900.0)
+        self.assertAlmostEqual(resid, 0.0, places=6)
+
+    def test_residual_is_nonzero_when_group_is_unreachable(self):
+        # m cannot go below 0: with r_bar = 0.5 and tcc = 400 the floor is
+        # AISC = 400, so a group AISC of 100 is unreachable and the residual
+        # must report the shortfall rather than a pretend fit.
+        #
+        # ЗНАК ИСПРАВЛЕН ОТНОСИТЕЛЬНО БРИФА (`assertLess(resid, 0.0)`),
+        # РАСХОЖДЕНИЕ ЗАФИКСИРОВАНО СОЗНАТЕЛЬНО. Бриф противоречив сам себе:
+        # он требует и прижим m ≥ 0 (биндящий тест), и остаток, посчитанный
+        # POST-HOC по ВЫДАННЫМ строкам. При прижиме строка содержит AISC = 400,
+        # поэтому `Σ aisc·w − group_aisc = 400 − 100 = +300` — знак
+        # ПОЛОЖИТЕЛЬНЫЙ. Отрицательное (−300) получилось бы только из
+        # НЕприжатого обещания формулы (400·(1+0.5·(−1.5)) = 100), а это уже не
+        # «то, что фактически содержат строки». Два требования брифа
+        # несовместимы; приоритет отдан явно и дважды повторённому определению
+        # остатка как post-hoc и прижиму (его пинует тот же тест).
+        # Существенное в тесте сохранено: остаток НЕНУЛЕВОЙ, то есть
+        # недостижимая цель не выдаётся за подогнанную.
+        aisc, m, resid = ex.reconcile({"A": 400.0}, {"A": 0.5}, {"A": 1.0}, 100.0)
+        self.assertGreater(resid, 0.0)
+        # Прижим к нижней границе: m = 0, AISC стоит на полу (TCC), а без
+        # прижима m был бы −1.5 и AISC ушёл бы на 100 — ниже TCC.
+        self.assertEqual(m, 0.0)
+        self.assertAlmostEqual(aisc["A"], 400.0, places=6)
+
+    def test_deterministic_on_repeated_calls(self):
+        # Ни скрытого состояния, ни ГПСЧ: тот же вход — тот же выход.
+        args = (
+            {"A": 400.0, "B": 700.0},
+            {"A": 0.6, "B": 0.5},
+            {"A": 1000.0, "B": 500.0},
+            1200.0,
+        )
+        self.assertEqual(ex.reconcile(*args), ex.reconcile(*args))
+
+    def test_multi_asset_weighted_mean_is_exact(self):
+        tcc = {"A": 300.0, "B": 450.0, "C": 610.0, "D": 780.0, "E": 950.0}
+        rb = {"A": 0.55, "B": 0.62, "C": 0.48, "D": 0.71, "E": 0.40}
+        prod = {"A": 1200.0, "B": 830.0, "C": 640.0, "D": 310.0, "E": 150.0}
+        target = 1500.0
+        aisc, m, resid = ex.reconcile(tcc, rb, prod, target)
+        total = sum(prod.values())
+        got = sum(aisc[a] * prod[a] / total for a in tcc)
+        self.assertAlmostEqual(got, target, places=6)
+        self.assertAlmostEqual(resid, 0.0, places=6)
+        self.assertGreater(m, 0.0)
+
+    def test_real_calibration_reconciles_to_group_aisc_2025(self):
+        # Стык с Task 5: клинья из `calibrate` действительно увязываются с
+        # опубликованным групповым AISC 2025 теми же формулами.
+        cal = ex.calibrate(ex.real_series())
+        r_bar = {asset: cal[asset]["r_bar"] for asset in ex.ASSETS}
+        tcc = {asset: ex.GROUP_TCC_2025_USD_PER_OZ for asset in ex.ASSETS}
+        production = {asset: float(years) for asset, years in ex.MINE_LIFE_YEARS.items()}
+        aisc, m, resid = ex.reconcile(
+            tcc, r_bar, production, ex.GROUP_AISC_2025_USD_PER_OZ
+        )
+        self.assertEqual(set(aisc), set(ex.ASSETS))
+        self.assertAlmostEqual(resid, 0.0, places=6)
+        self.assertGreater(m, 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()
