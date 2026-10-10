@@ -1,7 +1,7 @@
 # Дизайн: DCF-движок Полюса — шаг 1: таблицы и ядро LOM-NAV
 
 **Дата:** 2026-10-10
-**Статус:** дизайн, ожидает ревью
+**Статус:** реализовано 2026-10-10 (шаг 1 фазы 3; приёмка — живой прогон на dev-БД, см. [docs/ROADMAP_DCF_POLYUS.md](../../ROADMAP_DCF_POLYUS.md) §7.1)
 **Пункт роадмапа:** [docs/ROADMAP_DCF_POLYUS.md](../../ROADMAP_DCF_POLYUS.md) §7, фаза 3 «DCF-движок» — первый законченный срез
 **Связанные документы:** [ARCHITECTURE.md](../../../ARCHITECTURE.md) §6.2 (DDL), §6.3 (витрины), §6.4 (конвенция DCF), §6.5 (MCP-контур); [AGENTS.md](../../../AGENTS.md) правила 2, 5, 7, 8, 9, 11
 
@@ -32,13 +32,16 @@
 ## 2. Что уже есть и переиспользуется
 
 - `model_runs`, `forecast_log`, `macro_series` — DDL в `ingest/schema.go`; запись только через `cmd/ingest` (Bearer).
-- Витрины `v_model_inputs`, `v_gold_dashboard`, `v_forecast_accuracy`, `v_company_*` — `views/`.
+- Витрины `v_model_inputs`, `v_gold_dashboard`, `v_forecast_accuracy`, `v_company_*` — `views/`; витрина
+  `v_dcf_assumptions` — выход этого среза (`views/dcf_assumptions.go`, создаётся импортёром `gold_views`).
 - Входы в БД, которые нужно читать: `mine_plans` (заводится этим срезом), `price_decks` (заводится этим срезом), `gold_prices`, `cbr_currency_usd`, `ipc_mes`, `ofz_curve`.
 - Конвенция DCF — `ARCHITECTURE.md` §6.4 (rev.2): sum-of-parts, `НДПИ = база + 10% × max(gold − 1900, 0)`,
   двухконтурная ставка (5% real USD индустриальная / ОФЗ локальная), отрицательный хвост `closure_costs`,
   три price deck (`spot_flat`/`consensus_lt`/`own_scenario`), perpetual TV нет.
-- Канонические DDL `mine_plans`, `nav_by_asset`, `price_decks` **уже написаны** в §6.2 и помечены как
-  «не реализованы (в коде нет)».
+- Канонические DDL `mine_plans`, `nav_by_asset`, `price_decks` **уже написаны** в §6.2 — в редакции,
+  которую этот срез и реализует: `nav_by_asset` с колонками `deck` и `contour` и ключом
+  `ORDER BY (run_id, deck, asset, contour)` (см. §3.1); таблицы создаются импортёром `dcf_engine`
+  (`dcf/schema.go`, копии этих DDL).
 - Шаблон импортёра: `chimport.ImportStat` (`Name()` + `Import(ctx, conn)`), регистрация в `chimport.Stats`,
   `ensureTables` по образцу `polyus/`.
 

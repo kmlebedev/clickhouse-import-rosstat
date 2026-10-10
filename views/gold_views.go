@@ -1,6 +1,7 @@
 // Package views создаёт витрины для LLM-агента прогноза золота и NAV PLZL:
-// v_model_inputs (входы DCF), v_gold_dashboard (дашборд верификации) и
-// v_forecast_accuracy (точность прогнозов из forecast_log).
+// v_model_inputs (входы DCF), v_gold_dashboard (дашборд верификации),
+// v_forecast_accuracy (точность прогнозов из forecast_log) и
+// v_dcf_assumptions (NPV активов по трём ценовым дека'м и двум контурам ставки).
 //
 // Импортёр gold_views запускается после ingest-первого-прогона: util.CreateView
 // пропускает витрину, пока не существуют все её таблицы (model_runs создаёт ingest),
@@ -21,12 +22,20 @@ import (
 type goldViews struct {
 }
 
+// goldViewsList — витрины импортёра gold_views в том порядке, в каком он их
+// создаёт. Отдельная переменная уровня пакета, а не литерал на месте цикла:
+// список нужен в двух местах — сам цикл создания и тест регистрации, который
+// обязан видеть ИМЕННО то, что создаёт импортёр. Литерал внутри Import тест
+// повторить не может, и написанный в тесте свой список проверял бы сам себя:
+// витрина, выпавшая из импортёра, оставляла бы тест зелёным.
+var goldViewsList = []util.View{modelInputsView, goldDashboardView, forecastAccuracyView, dcfAssumptionsView}
+
 func (s *goldViews) Name() string {
 	return "gold_views"
 }
 
 func (s *goldViews) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	for _, v := range []util.View{modelInputsView, goldDashboardView, forecastAccuracyView} {
+	for _, v := range goldViewsList {
 		var created bool
 		if created, err = util.CreateView(ctx, conn, v); err != nil {
 			return count, err
