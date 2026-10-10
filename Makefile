@@ -16,9 +16,16 @@ CH_TCP_PORT  ?= 9000
 
 MCP_USER     ?= kimi_reader
 MCP_PY       ?= 3.12
-MCP_CMD      := uv run --with mcp-clickhouse --python $(MCP_PY) mcp-clickhouse
+MCP_VERSION  ?= 0.7.0
+MCP_CMD      := uv run --with mcp-clickhouse==$(MCP_VERSION) --python $(MCP_PY) mcp-clickhouse
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mcp-run mcp-user mcp-check build-ingest run-ingest
+# Деплой на staging (см. deploy/staging/README.md). Хост задаётся без правок Makefile.
+STAGING_HOST     ?= palmshell
+STAGING_BIN_DIR  ?= /root/.local/bin
+STAGING_ENV_FILE ?= /etc/clickhouse-import-rosstat.env
+DAGU_VERSION     ?= v2.18.2
+
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck
 
 all: lint test build build-ingest
 
@@ -146,7 +153,30 @@ mcp-check:
 	@curl -sf -m 2 http://localhost:$(CH_HTTP_PORT)/ping >/dev/null 2>&1 || { echo "ClickHouse не отвечает: make ch-up"; exit 1; }
 	CLICKHOUSE_HOST=localhost CLICKHOUSE_PORT=$(CH_HTTP_PORT) CLICKHOUSE_SECURE=false CLICKHOUSE_VERIFY=false \
 	CLICKHOUSE_USER=$(MCP_USER) CLICKHOUSE_DATABASE=default \
-	uv run --with mcp-clickhouse --with mcp --python $(MCP_PY) python scripts/mcp_check.py
+	uv run --with mcp-clickhouse==$(MCP_VERSION) --with mcp --python $(MCP_PY) python scripts/mcp_check.py
+
+# Проверки перед деплоем: env-файл на хосте существует, ClickHouse отвечает.
+# Секреты не читаются и не печатаются: проверяется только наличие файла.
+staging-precheck:
+	@ssh $(STAGING_HOST) 'test -f $(STAGING_ENV_FILE)' || { \
+		echo "на $(STAGING_HOST) нет $(STAGING_ENV_FILE)"; \
+		echo "создайте его из deploy/staging/clickhouse-import-rosstat.env.example (права 600)"; exit 1; }
+	@ssh $(STAGING_HOST) 'curl -sf -m 3 http://localhost:8123/ping >/dev/null' || { \
+		echo "ClickHouse на $(STAGING_HOST) не отвечает на :8123"; exit 1; }
+
+# Бинарник импортёра: сборка, атомарная подмена, пропуск копирования при совпадении sha256.
+# Подмена через .new + mv: scp поверх работающего файла даёт Text file busy.
+deploy-staging-binary: staging-precheck build
+	@set -e; \
+	local_sum=$$(shasum -a 256 $(TARGET) | cut -d' ' -f1); \
+	remote_sum=$$(ssh $(STAGING_HOST) 'sha256sum $(STAGING_BIN_DIR)/clickhouse-import-rosstat 2>/dev/null | cut -d" " -f1' || true); \
+	if [ "$$local_sum" = "$$remote_sum" ]; then \
+		echo "бинарь не изменился ($$local_sum) — копирование пропущено"; \
+	else \
+		scp $(TARGET) $(STAGING_HOST):$(STAGING_BIN_DIR)/clickhouse-import-rosstat.new; \
+		ssh $(STAGING_HOST) 'mv $(STAGING_BIN_DIR)/clickhouse-import-rosstat.new $(STAGING_BIN_DIR)/clickhouse-import-rosstat && chmod 755 $(STAGING_BIN_DIR)/clickhouse-import-rosstat'; \
+		echo "бинарь обновлён"; \
+	fi
 
 deps:
 	go mod download
