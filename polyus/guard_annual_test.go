@@ -2,38 +2,32 @@ package polyus
 
 import "testing"
 
-// TestGuardKeepsAnnualPeriods держит критерий фильтра: он обязан оценивать
-// периоды по шапке самого отчёта, а не по глобальному списку полугодий.
+// TestGuardKeepsAnnualPeriods держит годовые периоды: 2014FY и 2013FY обязаны
+// доходить до витрины.
 //
-// Годовой MD&A за 2014 включён в reports как обычный KPI-отчёт. Старый фильтр по
-// глобальному списку полугодий (2026H1, 2025H1) отбрасывал ВСЕ 21 запись отчёта
-// (kept=0): годовой период в список полугодий попасть не может в принципе, и
-// отчёт целиком исчезал из витрины, а отброс шёл на уровне Debug. Этот тест
-// падает на старом фильтре и проходит на новом.
+// Это та регрессия, ради которой старый фильтр и был переписан: фильтр по
+// глобальному списку полугодий (2026H1, 2025H1) отбрасывал ВСЕ записи годового
+// MD&A за 2014 — годовой период в список полугодий не попадает в принципе, и
+// отчёт целиком исчезал из витрины.
 //
-// Что именно легитимно в этом отчёте — проверено по шапке и строке данных
-// фикстуры:
+// Новый guard не отбрасывает по периоду вовсе: колоночная модель кладёт значение
+// по его X, поэтому годовой период не может оказаться «не тем» периодом.
+// Проверяется это на разборе, а не через список периодов: раньше тест брал шапку
+// страницы (headerPeriods) и решал по ней; теперь такого решения нет.
+//
+// Замерено по фикстуре testdata/press_release_hist_p1.tsv (страница 4 отчёта
+// FY2014) — колонки шапки и строки «Total revenue»:
 //
 //	шапка:      FY 2014   FY 2013   [y-o-y change]   2H 2014   1H 2014
 //	данные:       2 239     2 329          (4%)        1 232      1 007
-//	токен:           0         1            2            3          4
 //
-// parseKPIPage находит только три колонки и нумерует их подряд (0, 1, 2),
-// поэтому третий токен — «Изм. за год» — достаётся третьей колонке, и период
-// этой колонки недостоверен. Годовой период отчёта (2014FY, токен 0) стоит на
-// своём месте и обязан выжить: именно его существование ломало глобальный
-// список.
-//
-// Второй найденный период (2014H2) несёт значение 2 329, то есть данные колонки
-// «FY 2013»: это тоже подмена, но устранить её одним индексным сдвигом нельзя —
-// период 2013FY был потерян ещё при разборе шапки. Он остаётся в витрине и
-// вынесен в отчёт как известное ограничение; тест его не закрепляет.
+// Все три периода с числами — 2014FY, 2013FY и 2014H2 — настоящие колонки
+// отчёта, и каждая обязана дойти до batch. Колонка изменения (4%) периода не
+// даёт и потому в разборе не появляется как период.
 func TestGuardKeepsAnnualPeriods(t *testing.T) {
-	// Страница 1 фикстуры FY2014 — та же, что у включённого отчёта
-	// testdata/press_release_hist_p1.txt в pages.go.
-	const path = "testdata/press_release_hist_p1.txt"
+	const path = "testdata/press_release_hist_p1.tsv"
 
-	records, err := parseKPIPage(path, "u", 1)
+	records, err := parseKPIPage(path, "https://example.invalid/fy2014.pdf", 4)
 	if err != nil {
 		t.Fatalf("parseKPIPage: %v", err)
 	}
@@ -41,59 +35,55 @@ func TestGuardKeepsAnnualPeriods(t *testing.T) {
 		t.Fatal("fixture parsed to zero records: the test lost its subject")
 	}
 
-	periods := headerPeriods(path)
-	if len(periods) == 0 {
-		t.Fatal("fixture header yielded no periods: the test lost its subject")
-	}
-	kept, dropped := guardKPIRecords(records, periods)
+	kept, dropped := guardRecords(records)
 
-	// Отчёт, чьи периоды легитимны, не может быть выброшен целиком — это и был
-	// основной дефект: молчаливая потеря всего отчёта.
-	if len(kept) == 0 {
-		t.Fatalf(
-			"guard dropped every record of the FY2014 report (kept=0, dropped=%d): a whole enabled report vanished",
-			dropped,
-		)
+	if dropped != 0 {
+		t.Errorf("guard dropped %d records, want 0: nothing may be dropped by period", dropped)
+	}
+	if len(kept) != len(records) {
+		t.Fatalf("kept %d records, want all %d", len(kept), len(records))
 	}
 
-	// Годовой период легитимен и обязан выжить: он стоит на нулевом токене,
-	// который ни один сдвиг не задевает.
 	annual := 0
 	for _, r := range kept {
-		if r.Period == "2014FY" {
+		if r.Period == "2014FY" || r.Period == "2013FY" {
 			annual++
 		}
 	}
 	if annual == 0 {
-		t.Error("no 2014FY record survived: the annual period is legitimate and must be kept")
+		t.Fatal("annual periods were dropped — guard regressed to whitelist behaviour")
 	}
 
-	// Значение годового периода не подменено: у Total revenue год 2014 равен
-	// 2 239, тогда как «(4%)» — это колонка изменения.
+	// Годовое значение не подменено колонкой изменения: у «Total revenue» год
+	// 2014 равен 2 239, тогда как (4%) — это колонка изменения.
 	revenueAnnual := 0
 	for _, r := range kept {
-		if r.Metric == "revenue" && r.Period == "2014FY" {
-			revenueAnnual++
-			if r.Value != 2239 {
-				t.Errorf("revenue 2014FY = %v, want 2239", r.Value)
-			}
+		if r.Period != "2014FY" || (r.Metric != "revenue" && r.Metric != "total_revenue") {
+			continue
+		}
+
+		revenueAnnual++
+
+		if r.Value != 2239 {
+			t.Errorf("%s 2014FY = %v, want 2239", r.Metric, r.Value)
 		}
 	}
 	if revenueAnnual != 1 {
 		t.Errorf("revenue 2014FY records = %d, want 1", revenueAnnual)
 	}
 
-	// Подменённая колонка отброшена — та самая, чей токен 2 держит «(4%)».
-	bad := untrustworthyPeriod(periods)
-	if bad == "" {
-		t.Fatal("untrustworthyPeriod returned empty: the guard has nothing to drop")
-	}
+	// Годовой период не один: в отчёте за FY2014 есть и сравнительный FY2013.
+	revenuePrior := 0
 	for _, r := range kept {
-		if r.Period == bad {
-			t.Errorf("metric %s period %s = %v survived, want dropped", r.Metric, r.Period, r.Value)
+		if r.Period == "2013FY" && (r.Metric == "revenue" || r.Metric == "total_revenue") {
+			revenuePrior++
+
+			if r.Value != 2329 {
+				t.Errorf("%s 2013FY = %v, want 2329", r.Metric, r.Value)
+			}
 		}
 	}
-	if dropped != 7 {
-		t.Errorf("dropped = %d, want 7 (one record per metric from the change column)", dropped)
+	if revenuePrior != 1 {
+		t.Errorf("revenue 2013FY records = %d, want 1", revenuePrior)
 	}
 }

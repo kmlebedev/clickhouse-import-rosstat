@@ -45,7 +45,7 @@ var metrics = []MetricDefinition{
 	{
 		Name:   "gold_output",
 		Unit:   "koz",
-		Prefix: []string{"Gold output, koz", "Gold production (koz)", "Производство золота (тыс. унций)"},
+		Prefix: []string{"Gold output, koz", "Total gold production (koz)", "Gold production (koz)", "Производство золота (тыс. унций)"},
 	},
 	{
 		Name:   "gold_sold",
