@@ -658,6 +658,55 @@ class TestReconcile(unittest.TestCase):
         self.assertEqual(m, 1.0)
         self.assertAlmostEqual(aisc["A"], 400.0, places=6)
 
+    def test_all_zero_wedges_take_degenerate_branch(self):
+        # Вырожденная ветвь целиком: den = 0, поэтому формула множителя
+        # неприменима и берётся нейтральное m = 1.0 (AISC == TCC + клин).
+        # Порог назван явно, чтобы связь «ветвь ↔ RECONCILE_WEDGE_EPSILON»
+        # была видна в тесте, а не только в коде.
+        tcc = {"A": 400.0, "B": 700.0}
+        rb = {"A": 0.0, "B": 0.0}
+        prod = {"A": 1.0, "B": 3.0}
+        aisc, m, resid = ex.reconcile(tcc, rb, prod, 500.0)
+        self.assertEqual(ex.RECONCILE_WEDGE_EPSILON, 1e-12)
+        # den == 0 <= RECONCILE_WEDGE_EPSILON — ветвь обязана сработать.
+        den = sum(tcc[a] * rb[a] * prod[a] / sum(prod.values()) for a in tcc)
+        self.assertLessEqual(den, ex.RECONCILE_WEDGE_EPSILON)
+        self.assertEqual(m, 1.0)
+        self.assertAlmostEqual(aisc["A"], 400.0, places=6)
+        self.assertAlmostEqual(aisc["B"], 700.0, places=6)
+        # Остаток и здесь POST-HOC: веса (0.25, 0.75) дают 0.25·400 + 0.75·700 =
+        # 625, то есть +125 к цели 500. Клиньев нет — увязать нечем.
+        self.assertAlmostEqual(resid, 625.0 - 500.0, places=6)
+
+    def test_negative_weighted_wedge_is_treated_as_degenerate(self):
+        # ЛАТЕНТНЫЙ СЛУЧАЙ, ЗАКРЕПЛЁН ЯВНО. Отрицательный клин по A перевешивает
+        # положительный по B: den < 0, то есть условие `den <= eps` истинно, и
+        # срабатывает ВЫРОЖДЕННАЯ ветвь (m = 1.0), а не путь прижима. При m = 0
+        # увязка 500 достигалась бы точно, но код намеренно оставлен как есть —
+        # такова предписанная спецификация (`den <= eps`); докстрока теперь
+        # описывает это буквально, без обещания «только нулевые клинья».
+        # Смысл теста — сделать разницу ГРОМКОЙ, а не молчаливой.
+        tcc = {"A": 500.0, "B": 500.0}
+        rb = {"A": -0.8, "B": 0.5}
+        prod = {"A": 900.0, "B": 100.0}
+        aisc, m, resid = ex.reconcile(tcc, rb, prod, 500.0)
+        den = sum(tcc[a] * rb[a] * prod[a] / sum(prod.values()) for a in tcc)
+        self.assertLess(den, 0.0)
+        self.assertEqual(m, 1.0)
+        self.assertAlmostEqual(aisc["A"], 100.0, places=6)   # 500·(1 − 0.8)
+        self.assertAlmostEqual(aisc["B"], 750.0, places=6)   # 500·(1 + 0.5)
+        self.assertAlmostEqual(resid, 0.9 * 100.0 + 0.1 * 750.0 - 500.0, places=6)
+        self.assertAlmostEqual(resid, -335.0, places=6)
+
+    def test_zero_total_production_raises_value_error(self):
+        # Нулевая Σ production — не «неопределённый остаток», а отсутствие
+        # весов: должна подниматься внятная ValueError, а не голый
+        # ZeroDivisionError из деления веса.
+        with self.assertRaises(ValueError) as ctx:
+            ex.reconcile({"A": 400.0, "B": 700.0}, {"A": 0.5, "B": 0.5},
+                         {"A": 0.0, "B": 0.0}, 100.0)
+        self.assertIn("добыча", str(ctx.exception))
+
     def test_residual_is_zero_when_group_is_reachable(self):
         # A positive m makes any achievable group AISC reachable, so the
         # post-hoc residual must be ~0 -- not merely "some sign".
