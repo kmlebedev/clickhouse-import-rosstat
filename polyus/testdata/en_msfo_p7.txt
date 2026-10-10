@@ -1,0 +1,38 @@
+PJSC “POLYUS”
+
+PUBLISHED INTERIM CONDENSED CONSOLIDATED STATEMENT OF FINANCIAL POSITION
+AS AT 30 JUNE 2026 (UNAUDITED)
+(in millions of US Dollars)
+
+                                                               30 Jun.   31 Dec.
+                                                                 2026      2025
+Assets
+Non-current assets
+Property, plant and equipment                                   9,590      8,821
+Inventories                                                     1,928      1,699
+Other non-current assets                                          343        281
+                                                               11,861    10,801
+Current assets
+Inventories and other current assets                            5,957      5,183
+                                                                5,957      5,183
+Total assets                                                   17,818    15,984
+Equity and liabilities
+Capital and reserves
+Equity attributable to shareholders of the Company              3,240      3,473
+Non-controlling interests                                           -          1
+                                                                3,240      3,474
+Non-current liabilities
+Borrowings                                                     11,624      9,959
+Other non-current liabilities                                   1,364      1,383
+                                                               12,988    11,342
+Current liabilities
+Borrowings                                                        117        118
+Other current liabilities                                       1,473      1,050
+                                                                1,590      1,168
+Total liabilities                                              14,578    12,510
+Total equity and liabilities                                   17,818    15,984
+
+
+
+
+                                                     7
