@@ -27,3 +27,11 @@ steps:
       limit: 3
       interval_sec: 300
 
+  - id: company_views
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=company_views
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+

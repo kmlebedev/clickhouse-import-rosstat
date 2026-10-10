@@ -27,7 +27,7 @@
 ## Review Focus
 
 - **`source_kind` in the ordering key.** The whole point of the change is that two documents printing the same metric for the same period stop overwriting each other. If `source_kind` is absent from `ORDER BY`, or `batchDedup` still keys on `(metric, period)` only, the importer will silently drop the second document exactly as before and every test still passes.
-- **Row count must not move.** Widening the key can change how many rows are inserted. The spec pins 265 rows; a different number is a finding to explain, not to accept.
+- **Row count changes by design.** Widening the key means the ~82 records the importer previously skipped as duplicate keys now insert as real rows: the ROADMAP baseline is `Imported 265 rows ... 82 duplicate keys skipped`, and 265 + 82 ≈ 347. The invariant that must hold is the count of distinct `(company, metric, period)` triples — 265 — not the raw inserted count. Verify with `SELECT count(), uniqExact((company, metric, period)) FROM company_financials FINAL` (expect ≈347 / 265). A raw `count()` of 265 would mean the source-kind widening did not take effect.
 - **Existing metric values must survive untouched.** `TestKPIValuesHistoryReports` and `TestExistingReportsUnchanged` pin read values. If those fail after this change, the change has broken parsing, not the schema.
 - **Raw tables stay closed to the agent.** A view that is created but not granted looks identical to a working one from the repo's side. `list_tables` visibility and the `ACCESS_DENIED` on raw tables are both required.
 - **Datapack rows must not silently join the release metrics.** `v_company_operating` and `v_company_financials` are separate; a metric name present in both (`gold_output`) must never be answered from the wrong one.
@@ -38,14 +38,14 @@
 ### Task 1: Add `SourceKind` to the metric record and the batch key
 
 **Files:**
-- Modify: `polyus/metrics.go` (add field to `MetricRecord`)
+- Modify: `polyus/metrics.go` (add field to `MetricRecord`; add `MetricNames()`)
 - Modify: `polyus/import.go` (`batchKey`, `batchDedup.add`, `batch.Append` call)
 - Modify: `polyus/kpi.go:314` (set the field), `polyus/ifrs.go:121` (set the field)
 - Test: `polyus/source_kind_test.go` (create)
 
 **Interfaces:**
 - Consumes: nothing from earlier tasks.
-- Produces: `MetricRecord.SourceKind string`; `batchKey{Company, Metric, Period, SourceKind string}`; `func (d *batchDedup) add(record MetricRecord) bool` (signature unchanged, key widened).
+- Produces: `MetricRecord.SourceKind string`; `batchKey{Company, Metric, Period, SourceKind string}`; `func (d *batchDedup) add(record MetricRecord) bool` (signature unchanged, key widened); `func MetricNames() []string` (metric names the PDF parser can produce, excluding the `period` pseudo-metric) — Task 4's series catalog and Task 5's coverage test both need it.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -100,12 +100,33 @@ In `polyus/import.go` extend `batchKey` with `SourceKind string` and build it in
 `polyus/kpi.go` `recordsFromLine`: add `SourceKind: "kpi",`.
 `polyus/ifrs.go` `parseIFRSPage`: add `SourceKind: "ifrs",`.
 
-- [ ] **Step 5: Run the package tests**
+- [ ] **Step 5: Add the exported metric-name accessor**
+
+In `polyus/metrics.go` add, next to the `metrics` slice:
+
+```go
+// MetricNames returns the metric names the PDF parser can produce, excluding
+// the "period" pseudo-metric (it is a units marker, not a value). The series
+// catalog and its coverage test both check against this list rather than
+// duplicating it.
+func MetricNames() []string {
+	names := make([]string, 0, len(metrics))
+	for _, m := range metrics {
+		if m.Name == "period" {
+			continue
+		}
+		names = append(names, m.Name)
+	}
+	return names
+}
+```
+
+- [ ] **Step 6: Run the package tests**
 
 Run: `go test ./polyus/ -v`
 Expected: PASS, including `TestBatchDedupKeepsBothSourceKinds`.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add polyus/metrics.go polyus/import.go polyus/kpi.go polyus/ifrs.go polyus/source_kind_test.go
@@ -363,30 +384,12 @@ git commit -m "views: add company_views importer with series catalog"
 - Modify: `views/company.go` (fill gaps the test finds)
 
 **Interfaces:**
-- Consumes: `polyusSeriesMeta()` from Task 4; the `metrics` slice in `polyus/metrics.go`.
+- Consumes: `polyusSeriesMeta()` from Task 4; `polyus.MetricNames()` from Task 1.
 - Produces: nothing later tasks consume.
 
 - [ ] **Step 1: Write the failing test**
 
-The test lives in `views/` and needs the metric names, which are unexported in `polyus/`. Add an exported accessor in `polyus/metrics.go`:
-
-```go
-// MetricNames returns the metric names the PDF parser can produce, so the
-// series catalog can be checked for coverage without exporting the whole
-// definition table.
-func MetricNames() []string {
-	names := make([]string, 0, len(metrics))
-	for _, m := range metrics {
-		if m.Name == "period" {
-			continue
-		}
-		names = append(names, m.Name)
-	}
-	return names
-}
-```
-
-Then the coverage test:
+The test lives in `views/` and needs the metric names, exported from `polyus/` as `MetricNames()` in Task 1:
 
 ```go
 func TestSeriesCatalogCoversEveryPolyusMetric(t *testing.T) {
@@ -575,7 +578,7 @@ make import STAT=company_views
 make import STAT=polyus_financial_metrics
 ```
 
-Record in the spec: the exact `Imported N rows ...` line, the per-period row counts, and whether `N` is 265. **If `N` differs from 265, record the discrepancy and explain it — do not adjust the number in the spec to match.**
+Record in the spec: the exact `Imported N rows ...` line, the per-period row counts, and the `count() / uniqExact((company, metric, period))` pair from `company_financials FINAL`. Expected: `≈347 / 265`. **265 distinct triples is the invariant; ≈347 inserted rows is the expected effect of the source-kind widening.** If the distinct-triple count moves off 265, record the discrepancy and explain it — do not adjust the number in the spec to match.
 
 - [ ] **Step 4: Query both views through MCP and record the output**
 

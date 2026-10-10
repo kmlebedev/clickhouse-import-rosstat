@@ -17,3 +17,6 @@ GRANT SELECT ON default.v_events_calendar TO kimi_reader;
 GRANT SELECT ON default.v_model_inputs TO kimi_reader;
 GRANT SELECT ON default.v_gold_dashboard TO kimi_reader;
 GRANT SELECT ON default.v_forecast_accuracy TO kimi_reader;
+GRANT SELECT ON default.v_company_financials TO kimi_reader;
+GRANT SELECT ON default.v_company_metric_sources TO kimi_reader;
+GRANT SELECT ON default.v_company_operating TO kimi_reader;

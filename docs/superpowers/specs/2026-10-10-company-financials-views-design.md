@@ -96,14 +96,15 @@ CREATE TABLE IF NOT EXISTS company_financials
     loaded_at   DateTime DEFAULT now()
 )
 ENGINE = ReplacingMergeTree(loaded_at)
-ORDER BY (company, metric, period, source_kind)
+ORDER BY (company, metric, period, source_kind, source_url)
 ```
 
-Три отличия от текущей `polyus_financial_metrics`:
+Четыре отличия от текущей `polyus_financial_metrics`:
 
 1. **`source_kind` в `ORDER BY`.** Это закрывает дефект (3): две записи из разных документов с одним `(company, metric, period)` перестают конкурировать за одну строку.
-2. **`source_kind LowCardinality(String)`, а не `Enum8` в ключе.** Значения: `kpi` (пресс-релиз), `ifrs` (аудированная форма), `datapack` (xlsx-датапак), `legacy` (перенесённые строки). `LowCardinality(String)` в ключе дешевле и не требует ALTER при добавлении нового типа документа; перечисление фиксируется комментарием колонки и `series_catalog`.
-3. **`company` остаётся первой колонкой ключа** — под неё уже есть значение `PLZL`, поэтому переход семантически бесплатный.
+2. **`source_url` — пятое поле ключа.** `source_kind` различает **вид** документа (`kpi` — пресс-релиз, `ifrs` — аудированная форма), но не сам документ: два пресс-релиза (например FY2023 и FY2024) имеют один и тот же `source_kind` и всё равно сталкивались бы. Проверено живым прогоном 2026-10-10: с ключом из четырёх полей `gold_output 2023FY` оставался одной строкой (2 902), а 2 799 из релиза FY2024 терялось — ровно тот случай, ради которого затевалась вся правка. С `source_url` в ключе оба документа видны: импорт даёт 347 строк при 265 уникальных `(company, metric, period)`.
+3. **`source_kind LowCardinality(String)`, а не `Enum8` в ключе.** Значения: `kpi` (пресс-релиз), `ifrs` (аудированная форма), `datapack` (xlsx-датапак), `legacy` (перенесённые строки, зарезервировано — код их пока не пишет). `LowCardinality(String)` в ключе дешевле и не требует ALTER при добавлении нового типа документа; перечисление фиксируется комментарием колонки и `series_catalog`.
+4. **`company` остаётся первой колонкой ключа** — под неё уже есть значение `PLZL`, поэтому переход семантически бесплатный.
 
 ### 3.2 Почему новая таблица, а не миграция старой
 
@@ -136,6 +137,10 @@ ORDER BY (company, metric, period, source_kind)
 3. затем по `source_url` — детерминированный тай-брейк, чтобы выдача не «плавала» между прогонами.
 
 `v_company_metric_sources` правила не применяет: она отдаёт всё, и спор виден.
+
+Уточнение по п.3 (2026-10-10, живой прогон): внутри одного прогона импортёра все строки получают **одну** `loaded_at` (`loadedAt` берётся один раз на батч), поэтому для двух релизов за один период второй шаг тай-брейком не различает — расхождение решает `source_url` (сравнение кортежей по возрастанию, то есть побеждает лексикографически меньший URL). Правило остаётся детерминированным, но это не «побеждает более новый документ»: при равной `loaded_at` выбор между двумя пресс-релизами произволен по смыслу и виден только по `source_url`. Кто именно победил, всегда видно в `v_company_financials`, а спор — в `v_company_metric_sources`.
+
+**Проверено живым прогоном 2026-10-10:** `gold_output 2023FY` → в `v_company_metric_sources` две строки (2 799 из `.../2025_03_05_fr-12m-2024_eng.pdf` и 2 902 из `.../2024_02_29_plzl_financial-results_fy2023_eng.pdf`), в `v_company_financials` — одна (2 902). Импорт: 347 строк, 265 уникальных `(company, metric, period)`, `0 duplicate keys skipped`.
 
 ---
 
@@ -200,8 +205,8 @@ FROM databook_polyus FINAL
 
 1. `make all` зелёный на слитом результате (gofmt, golangci-lint, `go vet`, `go test -race`, сборка).
 2. `make import STAT=company_views` → таблица и три витрины созданы, комментарии на месте.
-3. `make import STAT=polyus_financial_metrics` → **265 строк** (число не должно измениться от смены ключа: ключ стал шире, число записей — нет), `0 failed`. Если число изменилось — это сигнал, что дедуп ведёт себя иначе, и его нужно объяснить, а не принять.
-4. **Спор виден:** `SELECT metric, period, source_kind, value, source_url FROM v_company_metric_sources WHERE metric='gold_output' AND period='2023FY'` → **две строки**, 2 902 и 2 799, с разными `source_url`.
+3. `make import STAT=polyus_financial_metrics` → **импорт даёт 347 строк при 265 уникальных `(company, metric, period)`, `0 duplicate keys skipped`** (проверено 2026-10-10). ROADMAP §8.3 фиксирует базовую строку: `Imported 265 rows ... 82 duplicate keys skipped`. Эти 82 были **отброшены** до вставки, то есть в 265 не входят; после расширения ключа до документа они становятся настоящими строками. Проверять надо не сырой счётчик, а пару: `SELECT count(), uniqExact((company, metric, period)) FROM v_company_metric_sources` → **347 / 265**. Сырой `count() == 265` был бы доказательством, что расширение ключа НЕ сработало, — то есть провалом. **Ключевое предусловие:** `ORDER BY` — часть идентичности таблицы, поэтому `CREATE TABLE IF NOT EXISTS` НЕ поменяет уже созданную `company_financials`; перед приёмкой её надо удалить (`DROP TABLE company_financials`) и создать заново через `make import STAT=company_views`, иначе прогон покажет старое схлопывание.
+4. **Спор виден:** `SELECT metric, period, source_kind, value, source_url FROM v_company_metric_sources WHERE metric='gold_output' AND period='2023FY'` → **две строки**, 2 902 (релиз FY2023) и 2 799 (релиз FY2024), с разными `source_url`. Проверено 2026-10-10.
 5. **Разрешение работает:** тот же запрос к `v_company_financials` → **одна строка** с `source_kind` и `source_url`, указывающими, какой документ победил.
 6. `make mcp-user` → `make mcp-check` расширен проверками: три витрины видны в `list_tables`; `run_query` к `v_company_financials` читается; `polyus_financial_metrics` и `databook_polyus` по-прежнему `ACCESS_DENIED`.
 7. Комментарии видны агенту: `create_table_query` из `list_tables` несёт комментарий таблицы и каждой колонки.
