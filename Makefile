@@ -152,6 +152,13 @@ mcp-user:
 	@curl -sf -m 2 http://localhost:$(CH_HTTP_PORT)/ping >/dev/null 2>&1 || { echo "ClickHouse не отвечает: make ch-up"; exit 1; }
 	python3 scripts/mcp_setup_user.py
 
+# Сид поактивного AISC Полюса, экстраполированный на LOM: калибровка по пресс-релизам
+# 4Q/FY 2018-2021 (фикстуры в scripts/testdata), факт добычи из databook_polyus.
+# Пишет sql/dcf_mine_plans_seed.sql и polyus_lom_reconciled_long.csv, в ClickHouse НЕ пишет —
+# вставка отдельно: make ch-sql FILE=sql/dcf_mine_plans_seed.sql.
+dcf-aisc:
+	python3 scripts/extrapolation_aisc.py
+
 # Smoke-проверка MCP end-to-end: поднимает сервер, вызывает list_tables и run_query по витринам,
 # проверяет, что сырая таблица закрыта. Нужен запущенный ClickHouse (make ch-up) и CLICKHOUSE_PASSWORD.
 mcp-check:

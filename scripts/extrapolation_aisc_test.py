@@ -1736,5 +1736,329 @@ class TestEmit(unittest.TestCase):
             self.assertNotIn("Basic ", text)
 
 
+# Полная калибровка (все пять активов) — база для тестов валидации: `validate`
+# обязан ругаться на ОТСУТСТВУЮЩИЙ актив, поэтому неполный `cal` в тестах про
+# строки дал бы шум из пяти проблем вместо одной проверяемой.
+_FULL_CAL = {asset: {"r_bar": 0.6} for asset in ex.ASSETS}
+
+
+def _valid_row(asset: str = "OLIMPIADA", year: int = 2025, **overrides) -> dict:
+    """Строка плана, которая ЗАВЕДОМО проходит `validate`.
+
+    Значения совпадают с брифа: `tcc=773`, `aisc=1300` (клин 0.68 при r̄ 0.68 —
+    база 2025 не эскалирована). Тесты портят по одному полю через `overrides`,
+    поэтому причина проблемы всегда одна и её видно в тексте.
+    """
+    row = {
+        "asset": asset,
+        "year": year,
+        "production_koz": 900.0,
+        "tcc": 773.0,
+        "aisc": 1300.0,
+        "capex_sustaining": 474.0,
+    }
+    row.update(overrides)
+    return row
+
+
+def _valid_rows(asset: str = "OLIMPIADA", **overrides) -> list:
+    """ПОЛНЫЙ набор строк (по одной на каждый из пяти `ASSETS`).
+
+    База для проверок, которые НЕ про пропущенный актив: `validate` обязан
+    называть отсутствующие рудники, поэтому набор из одной строки давал бы в
+    каждой такой проверке ещё четыре проблемы и прятал бы проверяемую. Порча
+    (`overrides`) применяется только к строке названного актива — у остальных
+    строк значения заведомо валидны.
+    """
+    return [
+        _valid_row(a, **overrides) if a == asset else _valid_row(a)
+        for a in ex.ASSETS
+    ]
+
+
+class TestValidate(unittest.TestCase):
+    """Guard'ы итоговой таблицы плана.
+
+    Тесты брифа (`test_accepts_consistent_rows`, `test_flags_aisc_below_tcc`,
+    `test_flags_year_outside_window`, `test_flags_missing_asset`) приведены
+    дословно. Добавлены проверки остатка ПО ВЕЛИЧИНЕ (правило контроллера:
+    `residual = факт − цель`, поэтому недостижимо НИЗКАЯ цель даёт
+    положительный остаток и проверка по знаку промахнулась бы), отрицательной
+    добычи, диапазона `r_bar` и границы `2100` включительно.
+    """
+
+    def test_accepts_consistent_rows(self):
+        rows = [{"asset": "OLIMPIADA", "year": 2025, "production_koz": 900.0,
+                 "tcc": 773.0, "aisc": 1300.0, "capex_sustaining": 474.0}]
+        problems = ex.validate(rows, {"OLIMPIADA": {"r_bar": 0.68}}, {"residual": 0.0})
+        self.assertEqual(problems, [])
+
+    def test_flags_aisc_below_tcc(self):
+        rows = [{"asset": "OLIMPIADA", "year": 2025, "production_koz": 900.0,
+                 "tcc": 773.0, "aisc": 700.0, "capex_sustaining": 0.0}]
+        problems = ex.validate(rows, {"OLIMPIADA": {"r_bar": 0.68}}, {"residual": 0.0})
+        self.assertTrue(any("aisc" in p for p in problems))
+
+    def test_flags_year_outside_window(self):
+        rows = [{"asset": "OLIMPIADA", "year": 2100, "production_koz": 1.0,
+                 "tcc": 1.0, "aisc": 2.0, "capex_sustaining": 0.0}]
+        problems = ex.validate(rows, {"OLIMPIADA": {"r_bar": 0.68}}, {"residual": 0.0})
+        self.assertTrue(any("2100" in p for p in problems))
+
+    def test_flags_missing_asset(self):
+        problems = ex.validate([], {a: {"r_bar": 0.6} for a in ex.ASSETS}, {"residual": 0.0})
+        self.assertTrue(any("OLIMPIADA" in p for p in problems))
+
+    def test_full_row_set_from_all_assets_passes(self):
+        # Контроль обратного: полный набор строк по всем пяти активам при
+        # согласованных клиньях даёт ПУСТОЙ список — иначе тесты выше проходили
+        # бы на функции, которая ругается всегда.
+        self.assertEqual(ex.validate(_valid_rows(), _FULL_CAL, {"residual": 0.0}), [])
+
+    def test_flags_negative_production(self):
+        rows = _valid_rows(production_koz=-1.0)
+        problems = ex.validate(rows, _FULL_CAL, {"residual": 0.0})
+        self.assertTrue(any("добыч" in p for p in problems), problems)
+
+    def test_flags_missing_asset_named_in_problems(self):
+        # Отсутствие КАЖДОГО канонического актива называется поимённо: пропуск
+        # Веринского не должен выглядеть как пропуск Олимпиады.
+        problems = ex.validate([_valid_row("OLIMPIADA")], _FULL_CAL, {"residual": 0.0})
+        for asset in ex.ASSETS:
+            if asset == "OLIMPIADA":
+                continue
+            self.assertTrue(any(asset in p for p in problems), (asset, problems))
+
+    def test_flags_r_bar_outside_range(self):
+        for bad in (0.29, 1.01):
+            with self.subTest(r_bar=bad):
+                cal = dict(_FULL_CAL)
+                cal["OLIMPIADA"] = {"r_bar": bad}
+                problems = ex.validate(_valid_rows(), cal, {"residual": 0.0})
+                self.assertTrue(any("OLIMPIADA" in p for p in problems), problems)
+
+    def test_accepts_r_bar_at_range_bounds(self):
+        # Границы 0.3 и 1.0 ВКЛЮЧИТЕЛЬНЫ: диапазон назван закрытым «0.3–1.0», и
+        # расширить отказ на границу значило бы ругаться на законное значение.
+        for bound in (0.3, 1.0):
+            with self.subTest(r_bar=bound):
+                cal = dict(_FULL_CAL)
+                cal["OLIMPIADA"] = {"r_bar": bound}
+                self.assertEqual(
+                    ex.validate(_valid_rows(), cal, {"residual": 0.0}), []
+                )
+
+    def test_residual_below_one_percent_of_group_aisc_passes(self):
+        # 1 % от 1437 = 14.37 USD/oz. Остаток заведомо ниже порога.
+        rows = _valid_rows()
+        self.assertEqual(
+            ex.validate(
+                rows, _FULL_CAL,
+                {"residual": 1.0, "group_aisc": ex.GROUP_AISC_2025_USD_PER_OZ},
+            ),
+            [],
+        )
+
+    def test_residual_at_or_above_one_percent_is_flagged(self):
+        rows = _valid_rows()
+        problems = ex.validate(
+            rows, _FULL_CAL,
+            {"residual": 0.01 * ex.GROUP_AISC_2025_USD_PER_OZ},
+        )
+        self.assertTrue(any("остаток" in p.lower() or "невяз" in p.lower()
+                            for p in problems), problems)
+
+    def test_positive_residual_is_flagged_by_magnitude(self):
+        # ПРАВИЛО КОНТРОЛЛЕРА 1. `residual = взвешенный(факт) − цель` (Task 6),
+        # поэтому ЦЕЛЬ СЛИШКОМ НИЗКАЯ (недостижимая, `m` прижат к нулю) даёт
+        # ПОЛОЖИТЕЛЬНЫЙ остаток — это ровно ветвь `test_unreachable_group_target_…`
+        # из Task 8. Проверка по направлению («отрицательный остаток — плохо»)
+        # пропустила бы её целиком; проверка по |·| обязана поймать.
+        self.assertGreater(600.0, 0.01 * ex.GROUP_AISC_2025_USD_PER_OZ)
+        problems = ex.validate(_valid_rows(), _FULL_CAL, {"residual": 600.0})
+        self.assertTrue(problems, "недостижимо низкая цель не помечена")
+        self.assertTrue(any("600" in p for p in problems), problems)
+
+    def test_negative_residual_is_flagged_too(self):
+        # Симметрия: недостижимо ВЫСОКАЯ цель даёт отрицательный остаток, и он
+        # тоже обязан быть помечен — иначе правило оказалось бы односторонним.
+        problems = ex.validate(_valid_rows(), _FULL_CAL, {"residual": -600.0})
+        self.assertTrue(any("600" in p for p in problems), problems)
+
+    def test_missing_residual_key_is_not_a_crash(self):
+        # `meta` может не нести остатка вовсе (например, план не строился).
+        # Отсутствие ключа — не ошибка валидатора: он проверяет то, что ему дали.
+        self.assertEqual(ex.validate(_valid_rows(), _FULL_CAL, {}), [])
+
+    def test_problems_are_russian_and_many_rows_are_all_reported(self):
+        # Проблема не останавливает обход: каждая битая строка обязана попасть в
+        # список, иначе таблицу пришлось бы чинить итеративно по одной строке.
+        rows = (
+            _valid_rows(year=2100)
+            + _valid_rows(aisc=1.0)
+            + _valid_rows(production_koz=-5.0)
+        )
+        problems = ex.validate(rows, _FULL_CAL, {"residual": 0.0})
+        self.assertGreaterEqual(len(problems), 3)
+        for problem in problems:
+            self.assertRegex(problem, r"[А-Яа-яЁё]")
+
+
+class TestMainGuards(unittest.TestCase):
+    """Границы `main()` и запрет испорченной фикстуры в конвейере.
+
+    Живой ClickHouse тестам не нужен: `main()` здесь не вызывается целиком,
+    проверяется только то, что можно проверить офлайн — состав набора фикстур и
+    явный отказ от `*_corrupt.pdf`.
+    """
+
+    def test_corrupt_fixture_exists(self):
+        # Предпосылка проверки ниже: испорченная фикстура действительно лежит в
+        # каталоге, и «её нет в наборе» означает фильтр, а не отсутствие файла.
+        corrupt = ex.FIXTURE_DIR / "polyus_pr_4q_fy2021_corrupt.pdf"
+        self.assertTrue(corrupt.exists(), corrupt)
+
+    def test_main_discovery_excludes_corrupt_fixture(self):
+        # ПРАВИЛО КОНТРОЛЛЕРА 2. `main()` собирает набор через
+        # `discover_fixtures()` — тот же путь, что `build_series()` по умолчанию,
+        # и испорченный файл в него попасть не может. Проверяется НАБОР, а не
+        # намерение: правка фильтра обязана уронить этот тест.
+        fixtures = ex.discover_fixtures()
+        names = {path.name for path in fixtures.values()}
+        self.assertNotIn("polyus_pr_4q_fy2021_corrupt.pdf", names)
+        self.assertEqual(sorted(fixtures), [2018, 2019, 2020, 2021])
+
+    def test_main_refuses_explicitly_passed_corrupt_fixture(self):
+        # Второй слой защиты: даже если испорченный путь подсунут явно,
+        # `main()` обязан отказаться, а не тихо скормить его калибровке.
+        corrupt = {
+            2020: ex.FIXTURE_DIR / "polyus_pr_4q_fy2020.pdf",
+            2021: ex.FIXTURE_DIR / "polyus_pr_4q_fy2021_corrupt.pdf",
+        }
+        with self.assertRaises(ex.CorruptFixtureError) as ctx:
+            ex.assert_no_corrupt_fixtures(corrupt)
+        self.assertIn("corrupt", str(ctx.exception))
+
+    def test_assert_no_corrupt_fixtures_accepts_clean_set(self):
+        ex.assert_no_corrupt_fixtures(ex.discover_fixtures())
+
+    def test_calibration_years_are_the_discovered_reporting_years(self):
+        # Годы калибровки не шире набора релизов: `build_series` читает именно
+        # эти четыре файла, и 2019–2021 — подмножество их отчётных лет.
+        available = set(ex.discover_fixtures())
+        for year in ex.CALIBRATION_YEARS:
+            self.assertIn(year, available)
+
+    def test_tcc_2025_anchors_match_go_seed(self):
+        # ДОСЛОВНОЕ СООТВЕТСТВИЕ `dcf/mine_plans_seed.go` (polyusAssetPlans.TCC).
+        # SQL-сид ложится ПОВЕРХ Go-сида тем же ключом (company, asset, year), и
+        # расхождение в TCC переписало бы затраты плана при неизменном AISC-клоне
+        # — относительный клин разъехался бы с откалиброванным МОЛЧА.
+        self.assertEqual(ex.TCC_2025_USD_PER_OZ, {
+            "OLIMPIADA": 773.0,
+            "BLAGODATNOYE": 691.0,
+            "NATALKA": 671.0,
+            "VERNINSKOYE2": 735.0,
+            "KURANAKH": 925.0,
+        })
+        self.assertEqual(sorted(ex.TCC_2025_USD_PER_OZ), sorted(ex.ASSETS))
+
+    def test_residual_tolerance_is_one_percent_share(self):
+        self.assertEqual(ex.RESIDUAL_TOLERANCE_SHARE, 0.01)
+
+    def test_plan_year_window_is_half_open(self):
+        self.assertEqual((ex.PLAN_YEAR_MIN, ex.PLAN_YEAR_MAX_EXCLUSIVE), (2000, 2100))
+
+
+class TestMainRun(unittest.TestCase):
+    """`main()` целиком, но БЕЗ сети: транспорт ClickHouse подменён.
+
+    Фикстуры PDF читаются по-настоящему (это offline и дёшево), а единственный
+    внешний вызов — `read_actual_production` — заменяется словарём. Артефакты
+    идут во временный каталог, чтобы прогон теста не перезаписывал коммитируемые
+    `sql/dcf_mine_plans_seed.sql` и `polyus_lom_reconciled_long.csv`.
+    """
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.dir = Path(temp.name)
+        for name, value in (
+            ("OUTPUT_SQL", self.dir / "seed.sql"),
+            ("OUTPUT_CSV", self.dir / "reconciled.csv"),
+        ):
+            patcher = unittest.mock.patch.object(ex, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _production(self, koz: float = 1000.0) -> dict:
+        return {
+            asset: {year: koz for year in range(2021, 2026)}
+            for asset in ex.ASSETS
+        }
+
+    def _run(self, production=None, group_aisc=None):
+        with unittest.mock.patch.object(
+            ex, "read_actual_production",
+            lambda assets, years: production or self._production(),
+        ):
+            if group_aisc is None:
+                return ex.main()
+            with unittest.mock.patch.object(ex, "GROUP_AISC_2025_USD_PER_OZ", group_aisc):
+                return ex.main()
+
+    def test_shipped_anchor_returns_zero_and_writes_artifacts(self):
+        # Пометка «валидация пройдена» на штатных якорях — предмет приёмки
+        # Task 11; здесь проверяется КОД ВОЗВРАТА, потому что именно он решает,
+        # строит ли `make ch-sql` следующий шаг цепочки.
+        with unittest.mock.patch("sys.stdout", new=io.StringIO()) as out:
+            code = self._run()
+        self.assertEqual(code, 0)
+        self.assertIn("валидация пройдена", out.getvalue())
+        self.assertTrue((self.dir / "seed.sql").exists())
+        self.assertTrue((self.dir / "reconciled.csv").exists())
+        # 77 строк — сумма сроков службы пяти активов.
+        with (self.dir / "reconciled.csv").open(newline="", encoding="utf-8") as handle:
+            self.assertEqual(len(list(csv.DictReader(handle))), 77)
+        # Справочная колонка r̄ заполнена ИЗ КАЛИБРОВКИ, а не константой: пустая
+        # ячейка здесь означала бы, что `main()` не связал калибровку со строками.
+        with (self.dir / "reconciled.csv").open(newline="", encoding="utf-8") as handle:
+            first = next(csv.DictReader(handle))
+        self.assertAlmostEqual(float(first["r_bar"]), 0.6261129324997634, places=9)
+
+    def test_unreachable_low_target_returns_nonzero(self):
+        # ПРАВИЛО КОНТРОЛЛЕРА 1, сквозная проверка: недостижимо низкая цель
+        # прижимает m к нулю и даёт ПОЛОЖИТЕЛЬНЫЙ остаток, и `main()` обязан
+        # выйти НЕНУЛЕВЫМ кодом. Проверка по знаку остатка здесь пропустила бы
+        # ветвь целиком, и дефектный сид уехал бы как успешный.
+        with unittest.mock.patch("sys.stdout", new=io.StringIO()) as out:
+            code = self._run(group_aisc=100.0)
+        self.assertEqual(code, 1)
+        text = out.getvalue()
+        self.assertIn("ВАЛИДАЦИЯ НЕ ПРОЙДЕНА", text)
+        self.assertIn("остаток", text.lower())
+
+    def test_missing_production_for_an_asset_is_flagged(self):
+        # Актив без добычи не даёт строк → в плане его нет, и `validate` обязан
+        # это назвать (проверка сквозная, через реальный `build_plan_rows`).
+        production = self._production()
+        production["KURANAKH"] = {year: 0.0 for year in range(2021, 2026)}
+        with unittest.mock.patch("sys.stdout", new=io.StringIO()) as out:
+            code = self._run(production=production)
+        self.assertEqual(code, 1)
+        self.assertIn("KURANAKH", out.getvalue())
+
+    def test_run_reads_no_network(self):
+        # Если бы `main()` ходил в ClickHouse мимо `read_actual_production`,
+        # транспорт поднял бы исключение — тест обязан остаться offline.
+        with unittest.mock.patch.object(
+            ex, "ch_query",
+            side_effect=AssertionError("main() не должен обращаться к сети"),
+        ):
+            with unittest.mock.patch("sys.stdout", new=io.StringIO()):
+                code = self._run()
+        self.assertEqual(code, 0)
+
+
 if __name__ == "__main__":
     unittest.main()
