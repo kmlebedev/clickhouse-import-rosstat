@@ -1391,22 +1391,59 @@ class TestPlanRows(unittest.TestCase):
         self.assertEqual(sorted(v_twelve), [2025, 2026, 2027, 2028])
 
     def test_halt_window_is_precise_not_whole_horizon(self):
-        # Год ПОСЛЕ окна у того же актива обязан иметь ненулевую добычу:
-        # иначе «окно» на деле обнулило бы весь горизонт и тест выше прошёл бы
-        # на сломанной реализации.
+        # Год ПОСЛЕ окна у того же актива обязан нести РОВНО плато последнего
+        # факта, а не просто «что-то ненулевое»: проверка `> 0` пропустила бы и
+        # расширенное окно (обрезало бы часть производящих лет), и изменившееся
+        # плато. Здесь у Вернинского известен единственный факт 2025-го = 230.8
+        # (как в databook_polyus), поэтому 2029–2039 обязаны быть ровно 230.8:
+        # 2025-й консервируется (ноль), а дальше плато тянет факт 2025-го.
+        fact_koz = 230.8
+        production = {a: {2025: 100.0} for a in ex.ASSETS}
+        production["VERNINSKOYE2"] = {2025: fact_koz}
         rows = ex.build_plan_rows(
             tcc_2025={a: 700.0 for a in ex.ASSETS},
             r_bar={a: 0.6 for a in ex.ASSETS},
-            production=self._full_production(),
+            production=production,
             group_aisc=ex.GROUP_AISC_2025_USD_PER_OZ,
         )
         by_asset_year = {(r["asset"], r["year"]): r for r in rows}
-        self.assertEqual(by_asset_year[("VERNINSKOYE2", 2029)]["production_koz"], 100.0)
-        self.assertEqual(by_asset_year[("VERNINSKOYE2", 2039)]["production_koz"], 100.0)
+        # Первый год плана (2025) в окне — ноль; последний год окна (2028) — ноль.
+        for year in (2025, 2028):
+            self.assertEqual(
+                by_asset_year[("VERNINSKOYE2", year)]["production_koz"], 0.0, year
+            )
+        # Год сразу ЗА окном и последний год горизонта — РОВНО плато, побитово.
+        for year in (2029, 2030, 2039):
+            self.assertEqual(
+                by_asset_year[("VERNINSKOYE2", year)]["production_koz"], fact_koz, year
+            )
         # И граница ПЕРЕД окном проверяется на другом активе: окно не должно
         # задевать чужие годы.
         self.assertEqual(by_asset_year[("KURANAKH", 2025)]["production_koz"], 100.0)
         self.assertEqual(by_asset_year[("KURANAKH", 2028)]["production_koz"], 100.0)
+
+    def test_halt_window_intersects_the_horizon(self):
+        """Окно обязано РЕАЛЬНО резать горизонт, а не быть молча инертным.
+
+        Если окно уедет за пределы плана (например, сдвинется на 2040-е),
+        `halted_years` вернёт пустое множество, и все прочие проверки консервации
+        станут вакуумными: ноль нулевых строк — и тесты «нулевой добычи» пройдут
+        на пустом множестве. Здесь проверяется САМ ФАКТ непустого пересечения и
+        что объявленное окно содержит хотя бы один год плана.
+        """
+        window = ex.HALT_WINDOWS["VERNINSKOYE2"]
+        first, last = window
+        horizon_first = ex.PLAN_BASE_YEAR
+        horizon_last = ex.PLAN_BASE_YEAR + ex.MINE_LIFE_YEARS["VERNINSKOYE2"] - 1
+        self.assertLessEqual(first, horizon_last, ex.HALT_WINDOWS)
+        self.assertGreaterEqual(last, horizon_first, ex.HALT_WINDOWS)
+        intersection = ex.halted_years("VERNINSKOYE2")
+        self.assertTrue(
+            intersection,
+            "окно консервации Вернинского не пересекает горизонт — сторож "
+            "нулевой добычи стал бы вакуумным",
+        )
+        self.assertEqual(intersection, frozenset({2025, 2026, 2027, 2028}))
 
     def test_halt_year_rows_are_real_rows(self):
         # Строка консервации — настоящая строка, а не заглушка: tcc
@@ -2305,6 +2342,122 @@ class TestMainRun(unittest.TestCase):
                 * float(entry["production_koz"]) / 1000.0,
                 places=6,
             )
+
+
+class TestCommittedSeedIsFresh(unittest.TestCase):
+    """СТОРОЖ УСТАРЕВАНИЯ коммитируемого сида `sql/dcf_mine_plans_seed.sql`.
+
+    Коммитируемый артефакт ценен ровно настолько, насколько он совпадает с тем,
+    что порождает генератор. Без этой проверки ручная правка файла или сид,
+    отставший от правки скрипта, уехали бы в репозиторий незамеченными: `make
+    dcf-aisc` перезаписал бы файл только при СЛЕДУЮЩЕМ запуске, а между ними
+    `make ch-sql` применял бы уже неверный сид.
+
+    ТЕЛО ФАЙЛА — ПРЕДМЕТ ПРОВЕРКИ, А НЕ ШАПКА. Шапка несёт `-- Дата генерации:
+    {date.today()}` (см. `write_sql`), поэтому побайтовое сравнение ВСЕГО файла
+    падало бы на любой день, кроме дня генерации, — сторож, краснеющий по
+    календарю, бесполезен. Тело (операторы `INSERT … VALUES`) от даты не
+    зависит и является ровно тем, что применяется к ClickHouse, поэтому
+    сравнивается ОНО. Устойчивые поля шапки (команда, годы калибровки, m,
+    остаток, число строк) проверяются отдельно — дата из сравнения исключена
+    явно, чтобы это исключение было видимым, а не подразумеваемым.
+
+    ЖИВОЙ CLICKHOUSE НУЖЕН, НО НЕ ОБЯЗАТЕЛЕН. Факт добычи приходит из
+    `databook_polyus`, поэтому точное воспроизведение тела требует живой базы.
+    Если база недоступна (`ClickHouseError`/`OSError`/сбой конфигурации), тест
+    ПРОПУСКАЕТСЯ с явной причиной: офлайновый набор обязан оставаться зелёным,
+    а сторож — не превращаться в источник ложных падений. Пропуск печатается
+    как `skipped`, и это ВИДНО в выводе, а не тонет.
+    """
+
+    def _generate_into(self, directory: Path) -> Path:
+        """Прогоняет конвейер в temp-каталог, возвращает путь к SQL-сиду."""
+        sql_path = directory / "seed.sql"
+        csv_path = directory / "reconciled.csv"
+        with unittest.mock.patch.object(ex, "OUTPUT_SQL", sql_path), \
+                unittest.mock.patch.object(ex, "OUTPUT_CSV", csv_path), \
+                unittest.mock.patch("sys.stdout", new=io.StringIO()):
+            code = ex.main()
+        self.assertEqual(code, 0, "генератор вернул ненулевой код на штатных якорях")
+        return sql_path
+
+    @staticmethod
+    def _body(text: str) -> str:
+        """Тело сида: от первого `INSERT` до конца файла."""
+        marker = "INSERT INTO "
+        index = text.find(marker)
+        if index < 0:
+            return ""
+        return text[index:]
+
+    def test_committed_seed_body_matches_a_fresh_generation(self):
+        committed = ex.ROOT / "sql" / "dcf_mine_plans_seed.sql"
+        self.assertTrue(
+            committed.exists(),
+            f"коммитируемый сид отсутствует: {committed}",
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            try:
+                generated_path = self._generate_into(Path(temp))
+            except (ex.ClickHouseError, OSError) as exc:
+                self.skipTest(
+                    "ClickHouse недоступен — воспроизведение тела сида "
+                    f"проверить нельзя: {exc}"
+                )
+            generated = generated_path.read_text(encoding="utf-8")
+        committed_text = committed.read_text(encoding="utf-8")
+        self.assertEqual(
+            self._body(committed_text),
+            self._body(generated),
+            "тело sql/dcf_mine_plans_seed.sql не совпадает со свежей генерацией: "
+            "файл правили руками или он устарел относительно скрипта — "
+            "пересоберите `make dcf-aisc`",
+        )
+
+    def test_committed_seed_header_fields_match_a_fresh_generation(self):
+        committed = ex.ROOT / "sql" / "dcf_mine_plans_seed.sql"
+        committed_text = committed.read_text(encoding="utf-8")
+        with tempfile.TemporaryDirectory() as temp:
+            try:
+                generated_path = self._generate_into(Path(temp))
+            except (ex.ClickHouseError, OSError) as exc:
+                self.skipTest(
+                    f"ClickHouse недоступен — поля шапки сверить нельзя: {exc}"
+                )
+            generated = generated_path.read_text(encoding="utf-8")
+
+        def stable_header(text: str) -> list:
+            # Дата генерации исключена ЯВНО и названа здесь, чтобы исключение
+            # было видимым: строка «Дата генерации» меняется каждые сутки и
+            # сторожем не является.
+            return [
+                line for line in text.splitlines()
+                if line.startswith("--") and "Дата генерации" not in line
+            ]
+
+        self.assertEqual(
+            stable_header(committed_text),
+            stable_header(generated),
+            "устойчивые поля шапки сида (команда, годы калибровки, m, остаток, "
+            "число строк) разошлись со свежей генерацией",
+        )
+
+    def test_clickhouse_unreachable_skips_instead_of_failing(self):
+        # Пропуск — именно ПРОПУСК, а не падение: подменяем транспорт так, будто
+        # ClickHouse лёг. Сторож обязан назвать причину, а набор — остаться
+        # зелёным (проверка офлайновости контракта I2).
+        with unittest.mock.patch.object(
+            ex, "read_actual_production",
+            side_effect=ex.ClickHouseError("нет соединения (подмена тестом)"),
+        ):
+            with tempfile.TemporaryDirectory() as temp:
+                sql_path = Path(temp) / "seed.sql"
+                csv_path = Path(temp) / "reconciled.csv"
+                with unittest.mock.patch.object(ex, "OUTPUT_SQL", sql_path), \
+                        unittest.mock.patch.object(ex, "OUTPUT_CSV", csv_path), \
+                        unittest.mock.patch("sys.stdout", new=io.StringIO()):
+                    with self.assertRaises(ex.ClickHouseError):
+                        ex.main()
 
 
 if __name__ == "__main__":
