@@ -11,13 +11,12 @@ import (
 // таблицы: строку с меткой единиц измерения вместе со строками, которые от неё
 // неотличимо близки по вертикали и потому принадлежат той же строке PDF.
 //
-// Полоса, а не одна строка, потому что одна строка PDF может быть набрана
-// разными кеглями и после groupByLine по точному Top распадается на несколько
-// визуальных строк. В FY2024 так и есть: расшифровка «(if not mentioned
-// otherwise)» набрана мельче и уехала на 0.77pt ниже подписей колонок — метка
-// «$ million ( )» и ВСЕ пять периодов на 60.83, расшифровка на 61.60.
+// Само правило полосы (порог headerContinuationGap, подписи колонок изменений,
+// признак метки единиц) живёт в production — columns.go, — и вызывается здесь
+// как есть: разбор шапки и его проверка обязаны читать один и тот же код, иначе
+// тест закреплял бы копию правила, а не правило.
 //
-// Замерено на фикстуре, что именно даёт вторая строка:
+// Замерено на фикстуре FY2024, что именно даёт вторая строка полосы:
 //
 //	полоса 60.83            — 9 колонок, периоды [2024FY 2023FY 2024H2 2024H1 2023H2]
 //	полоса 60.83 + 61.60    — 13 колонок, периоды [2024FY 2023FY 2024H2 2024H1 2023H2]
@@ -26,31 +25,27 @@ import (
 // То есть вторая строка НЕ нужна, чтобы увидеть периоды, — она уточняет геометрию
 // непериодных колонок перед первым периодом (4 колонки вместо 8): слова
 // «if not mentioned otherwise» попадают между «(» и «)» и разрезают промежуток
-// 111.31→247.31 на отдельные колонки с границами 115.12 / 119.55 / 131.07 /
-// 165.69 / 196.58. Подпись длинной метки вроде «Выручка» ложится в самый левый
-// промежуток, и от того, разрезан ли он, зависит, останется она в первой колонке
-// или уедет в колонку изменений. Тест TestColumnsPeriodsInvariantUnderBandWidth
-// закрепляет обе половины этого факта: периоды от ширины полосы не зависят, а
-// число колонок — зависит.
-//
-// Порог близости берётся отдельной константой и применяется здесь, а не в
-// groupByLine: 2.0pt взято с запасом над единственным наблюдаемым разрывом
-// шапки (0.77pt) и с большим отступлением от ближайшей настоящей строки
-// содержимого. В русском релизе ближайшая строка ниже шапки — «Операционные
-// показатели» на 383.42, то есть на 14.16pt ниже шапки (369.26), и это на
-// порядок больше порога.
-//
-// const ниже — знаменатель той же оценки; менять его значение без нового замера
-// по фикстурам не стоит.
+// 111.31→247.31 на отдельные колонки. Подпись длинной метки вроде «Выручка»
+// ложится в самый левый промежуток, и от того, разрезан ли он, зависит,
+// останется она в первой колонке или уедет в колонку изменений. Тест
+// TestColumnsPeriodsInvariantUnderBandWidth закрепляет обе половины этого факта:
+// периоды от ширины полосы не зависят, а число колонок — зависит.
 func headerBandFrom(t *testing.T, path string) []Line {
 	t.Helper()
 
-	// headerContinuationGap — максимальный разрыв по вертикали, при котором
-	// строка считается продолжением той же строки PDF. Единственный известный
-	// разрыв внутри шапки — 0.77pt (FY2024); ближайшая строка содержимого —
-	// на 14.16pt ниже (RU 1H2026), поэтому 2.0pt лежит между ними с запасом в
-	// обе стороны.
-	const headerContinuationGap = 2.0
+	lines := tsvLines(t, path)
+
+	start := firstHeaderLine(lines)
+	if start < 0 {
+		t.Fatalf("no header line with '$ млн'/'$ mln' in %s", path)
+	}
+
+	return headerBand(lines, start)
+}
+
+// tsvLines открывает TSV-снимок и возвращает его визуальные строки.
+func tsvLines(t *testing.T, path string) []Line {
+	t.Helper()
 
 	f, err := os.Open(path)
 	if err != nil {
@@ -63,53 +58,7 @@ func headerBandFrom(t *testing.T, path string) []Line {
 		t.Fatal(err)
 	}
 
-	lines := groupByLine(words, 0)
-
-	start := -1
-	for i, l := range lines {
-		if unitsMarker(l) {
-			start = i
-			break
-		}
-	}
-	if start < 0 {
-		t.Fatalf("no header line with '$ млн'/'$ mln' in %s", path)
-	}
-
-	band := []Line{lines[start]}
-	for i := start + 1; i < len(lines); i++ {
-		if lines[i].Top-lines[start].Top > headerContinuationGap {
-			break
-		}
-
-		band = append(band, lines[i])
-	}
-
-	return band
-}
-
-// unitsMarker сообщает, что строка несёт метку единиц измерения таблицы. Слова
-// склеиваются без пробела: в TSV маркер разбит на отдельные слова
-// («$» + «млн»), а в остальном тексте страницы словосочетание не встречается.
-func unitsMarker(l Line) bool {
-	var glued strings.Builder
-	for _, w := range l.Words {
-		glued.WriteString(w.Text)
-	}
-
-	text := glued.String()
-
-	return strings.Contains(text, "$млн") || strings.Contains(text, "$million")
-}
-
-// lineText склеивает слова строки в текст через пробел.
-func lineText(l Line) string {
-	parts := make([]string, 0, len(l.Words))
-	for _, w := range l.Words {
-		parts = append(parts, w.Text)
-	}
-
-	return strings.Join(parts, " ")
+	return groupByLine(words, 0)
 }
 
 // findLineContaining ищет строку, в тексте которой есть подстрока.
@@ -125,55 +74,6 @@ func findLineContaining(t *testing.T, lines []Line, want string) Line {
 	t.Fatalf("no line containing %q", want)
 
 	return Line{}
-}
-
-// isPeriodHeaderLine сообщает, что строка — строка шапки таблицы: она несёт не
-// меньше двух непересекающихся меток колонок-периодов либо подписи колонок
-// изменений.
-//
-// Порог в две метки отсекает строки данных: «Объем горной массы, тыс. м³
-// 118 967 108 064 10%» походит на набор периодов («108 064»), но непересекающихся
-// меток в ней меньше двух. Шапка же всегда несёт минимум два периода — сравнивать
-// больше нечего, если колонка одна.
-//
-// Метки периодов ищутся тем же разбором, что и в columnsFromHeader, и окно
-// сдвигается на его ширину: иначе «1 п/г 2026» засчиталось бы трижды — как «1»,
-// «1 п/г» и «1 п/г 2026».
-func isPeriodHeaderLine(l Line) bool {
-	text := lineText(l)
-	for _, label := range []string{"Изм. за", "Y-o-Y", "H-o-H"} {
-		if strings.Contains(text, label) {
-			return true
-		}
-	}
-
-	texts := make([]string, 0, len(l.Words))
-	for _, w := range l.Words {
-		texts = append(texts, w.Text)
-	}
-
-	for _, marker := range []string{"$млн", "$million"} {
-		if strings.Contains(strings.Join(texts, ""), marker) {
-			return true
-		}
-	}
-
-	found := 0
-
-	for i := 0; i < len(texts); {
-		_, width, err := matchPeriodAt(texts, i, maxPeriodTokens)
-		if err != nil {
-			i++
-
-			continue
-		}
-
-		found++
-
-		i += width
-	}
-
-	return found >= 2
 }
 
 func TestColumnsFromHeaderRu(t *testing.T) {
@@ -274,25 +174,20 @@ func TestColumnsFromHeaderWide(t *testing.T) {
 //
 // Периоды от ширины полосы не зависят: обе полосы дают один и тот же список
 // с теми же типами и теми же границами. Зависит геометрия непериодных колонок
-// перед первым периодом: одна строка даёт 9 колонок, две — 13, потому что слова
+// перед первым периодом: одна строка даёт 12 колонок, две — 16, потому что слова
 // расшифровки докалывают промежуток 111.31→247.31 и разрезают его на отдельные
 // колонки. Тест утверждает обе половины сразу: если сигнатуру columnsFromHeader
 // когда-нибудь сведут обратно к одной Line, сломается вторая половина — и
 // наоборот, если полосу начнут собирать шире, чем нужно, упадут обе.
+//
+// Прежний замер давал 9 и 13 колонок. Числа выросли на подписи колонок изменений
+// («Y-o-Y», «H-o-H», и «Y-o-Y» в конце полосы): matchPeriodAt перестал захватывать
+// их в окно периода (см. его комментарий), и каждая подпись стала отдельной
+// непериодной колонкой — той самой, которой требовала задача о KPI-парсере:
+// иначе значение «5 ppts» колонки изменения попадало в колонку соседнего периода.
 func TestColumnsPeriodsInvariantUnderBandWidth(t *testing.T) {
-	f, err := os.Open("testdata/press_release_fy2024_p4.tsv")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = f.Close() }()
-
-	words, err := parseTSV(f)
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	var oneLine, twoLines []Line
-	for _, l := range groupByLine(words, 0) {
+	for _, l := range tsvLines(t, "testdata/press_release_fy2024_p4.tsv") {
 		switch l.Top {
 		case 60.83:
 			oneLine = append(oneLine, l)
@@ -310,8 +205,8 @@ func TestColumnsPeriodsInvariantUnderBandWidth(t *testing.T) {
 
 	// Ширина полосы меняет число колонок: расшифровка докалывает промежуток
 	// перед первым периодом.
-	if len(narrow) != 9 || len(wide) != 13 {
-		t.Errorf("column counts = %d (one line) / %d (two lines), want 9 / 13", len(narrow), len(wide))
+	if len(narrow) != 12 || len(wide) != 16 {
+		t.Errorf("column counts = %d (one line) / %d (two lines), want 12 / 16", len(narrow), len(wide))
 	}
 
 	wideNonPeriod := countNonPeriodColumns(wide)
@@ -373,18 +268,7 @@ func TestHeaderAppliesToRowsBelow(t *testing.T) {
 	// На странице русского релиза ДВЕ шапки: производственная (y=206.51)
 	// и финансовая с «$ млн» (y=369.26). Финансовые строки (y>369.26)
 	// обязаны раскладываться по колонкам финансовой шапки, а не первой.
-	f, err := os.Open("testdata/press_reliz_1h26_p1.tsv")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = f.Close() }()
-
-	words, err := parseTSV(f)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	lines := groupByLine(words, 0)
+	lines := tsvLines(t, "testdata/press_reliz_1h26_p1.tsv")
 
 	// шапки — строки, в которых есть подписи колонок: производственная
 	// (y=206.51, «1 п/г 26 …») и финансовая (y=369.26, «$ млн … 1 п/г 2026 …»)

@@ -43,6 +43,44 @@ func TestParseTSVReadsWordsOnly(t *testing.T) {
 	}
 }
 
+// TestParseTSVSkipsRepeatedHeaderRow держит пропуск строки заголовка в середине
+// склеенного файла.
+//
+// extractPDF извлекает страницы по отдельности, а joinFiles склеивает их, и в
+// многостраничном отчёте (например, МСФО 1H2026 — страницы 6 и 7) заголовок TSV
+// повторяется посередине файла. Заголовок печатает столько же колонок, сколько
+// формат (12), поэтому отбрасывается он по имени первой колонки, а не по числу
+// полей; иначе его поля уехали бы в разбор и Atoi("level") молча пропустил бы
+// строку — то есть правило держалось бы на ошибке разбора, а не на формате.
+func TestParseTSVSkipsRepeatedHeaderRow(t *testing.T) {
+	const row = "5\t6\t0\t3\t0\t0\t70.94\t149.17\t16.93\t7.44\t100\tGold\n"
+
+	words, err := parseTSV(strings.NewReader(tsvHeaderRow() + row + tsvHeaderRow() + row))
+	if err != nil {
+		t.Fatalf("parseTSV: %v", err)
+	}
+	if len(words) != 2 {
+		t.Fatalf("got %d words, want 2: the repeated header row leaked into the parse", len(words))
+	}
+	for _, w := range words {
+		if w.Text != "Gold" {
+			t.Errorf("word text = %q, want Gold", w.Text)
+		}
+	}
+}
+
+// tsvHeaderRow возвращает строку заголовка TSV-снимка — ровно те 12 колонок,
+// которые печатает pdftotext -tsv.
+func tsvHeaderRow() string {
+	return strings.Join(
+		[]string{
+			"level", "page_num", "par_num", "block_num", "line_num", "word_num",
+			"left", "top", "width", "height", "conf", "text",
+		},
+		"\t",
+	) + "\n"
+}
+
 func TestGroupByLineOrdersWordsByLeft(t *testing.T) {
 	// три слова на одном Top, поданные в обратном порядке
 	words := []Word{

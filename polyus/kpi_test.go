@@ -3,7 +3,7 @@ package polyus
 import "testing"
 
 func TestParseKPIReportRU(t *testing.T) {
-	records, err := parseKPIPage("testdata/press_reliz_1h26_p1.txt", "https://example.invalid/1h26.pdf", 1)
+	records, err := parseKPIPage("testdata/press_reliz_1h26_p1.tsv", "https://example.invalid/1h26.pdf", 1)
 	if err != nil {
 		t.Fatalf("parseKPIPage: %v", err)
 	}
@@ -25,7 +25,7 @@ func TestParseKPIReportRU(t *testing.T) {
 }
 
 func TestParseKPIReportEN(t *testing.T) {
-	records, err := parseKPIPage("testdata/press_release_hist_p1.txt", "https://example.invalid/hist.pdf", 4)
+	records, err := parseKPIPage("testdata/press_release_hist_p1.tsv", "https://example.invalid/hist.pdf", 4)
 	if err != nil {
 		t.Fatalf("parseKPIPage: %v", err)
 	}
@@ -45,7 +45,7 @@ func TestParseKPIReportEN(t *testing.T) {
 // проверяется первым, забирает вторую строку себе, а stripping_capex не
 // попадает в результат вообще — и 397 теряется.
 func TestParseKPIStrippingCapexDistinctFromCapex(t *testing.T) {
-	records, err := parseKPIPage("testdata/press_reliz_1h26_p1.txt", "https://example.invalid/1h26.pdf", 1)
+	records, err := parseKPIPage("testdata/press_reliz_1h26_p1.tsv", "https://example.invalid/1h26.pdf", 1)
 	if err != nil {
 		t.Fatalf("parseKPIPage: %v", err)
 	}
@@ -321,5 +321,140 @@ func TestMatchMetricTrimsIndentAndFootnote(t *testing.T) {
 func TestMatchMetricNoSeparatorSkipsLine(t *testing.T) {
 	if _, _, found := matchMetric("Выручка"); found {
 		t.Fatal("matchMetric(«Выручка») found a metric, want skip")
+	}
+}
+
+func TestKPIValuesByColumnRuAllPeriods(t *testing.T) {
+	recs, err := parseKPIPage("testdata/press_reliz_1h26_p1.tsv", "https://example.invalid/1h26.pdf", 1)
+	if err != nil {
+		t.Fatalf("parseKPIPage: %v", err)
+	}
+	byMetric := map[string]map[string]float64{}
+	for _, r := range recs {
+		if byMetric[r.Metric] == nil {
+			byMetric[r.Metric] = map[string]float64{}
+		}
+		byMetric[r.Metric][r.Period] = r.Value
+	}
+	// TCC: все три периода прочитаны, включая слот 2 п/г 2025
+	tcc := byMetric["tcc_per_ounce"]
+	if tcc["2026H1"] != 1069 || tcc["2025H1"] != 653 || tcc["2025H2"] != 814 {
+		t.Errorf("tcc_per_ounce = %v, want 2026H1=1069 2025H1=653 2025H2=814", tcc)
+	}
+	// производство золота по всем периодам
+	gold := byMetric["gold_output"]
+	if gold["2026H1"] != 1287 || gold["2025H1"] != 1311 || gold["2025H2"] != 1218 {
+		t.Errorf("gold_output = %v, want 2026H1=1287 2025H1=1311 2025H2=1218", gold)
+	}
+	// колонка «Изм. за год» не породила значение: -2 больше не существует
+	for _, r := range recs {
+		if r.Metric == "gold_output" && r.Value == -2 {
+			t.Errorf("change column value leaked as a period value: %+v", r)
+		}
+	}
+}
+
+func TestKPIValuesByColumnFY2014(t *testing.T) {
+	recs, err := parseKPIPage("testdata/press_release_hist_p1.tsv", "https://example.invalid/fy2014.pdf", 4)
+	if err != nil {
+		t.Fatalf("parseKPIPage: %v", err)
+	}
+	byPeriod := map[string]float64{}
+	for _, r := range recs {
+		if r.Metric == "gold_output" {
+			byPeriod[r.Period] = r.Value
+		}
+	}
+	// 1,696 (FY2014) 1,652 (FY2013) 3% (change) 950 (2H2014) 746 (1H2014)
+	want := map[string]float64{"2014FY": 1696, "2013FY": 1652, "2014H2": 950, "2014H1": 746}
+	for period, v := range want {
+		if byPeriod[period] != v {
+			t.Errorf("gold_output %s = %v, want %v", period, byPeriod[period], v)
+		}
+	}
+	if v, ok := byPeriod["2014H2"]; ok && v == 1652 {
+		t.Error("2014H2 carries FY2013's value — column shift not fixed")
+	}
+
+	// «3%» из колонки изменения («y-o-y change» на 132.45, x=416.11) не стало
+	// значением ни одного периода: подпись изменения объявляет непериодную
+	// колонку, и её число не должно достаться соседнему периоду (2014H2).
+	if len(byPeriod) != len(want) {
+		t.Errorf("gold_output spans %v, want exactly %v", byPeriod, want)
+	}
+	for _, r := range recs {
+		if r.Metric != "gold_output" {
+			continue
+		}
+		if r.Period != "2014FY" && r.Period != "2013FY" && r.Period != "2014H2" && r.Period != "2014H1" {
+			t.Errorf("gold_output %s = %v came from the change column", r.Period, r.Value)
+		}
+	}
+}
+
+func TestKPIFootnoteNotAValue(t *testing.T) {
+	// метка «Производство золота (тыс. унций)2»: сноска 2 не должна стать значением
+	recs, err := parseKPIPage("testdata/press_reliz_1h26_p1.tsv", "https://example.invalid/1h26.pdf", 1)
+	if err != nil {
+		t.Fatalf("parseKPIPage: %v", err)
+	}
+	for _, r := range recs {
+		if r.Metric == "gold_output" && r.Period == "2026H1" && r.Value != 1287 {
+			t.Errorf("gold_output 2026H1 = %v, want 1287 (footnote likely parsed as value)", r.Value)
+		}
+	}
+}
+
+// TestChangeColumnIsItsOwnColumn держит колонку изменения в колонкочной модели
+// на самой строке данных: строка «Total gold production (koz)» MD&A за 2014
+// раскладывается по колонкам полосы шапки, и «3%» (x=416.11) обязано попасть в
+// непериодную колонку, а четыре числа — в четыре периода.
+//
+// Без этого «3%» уезжает в колонку 2014H2: подпись изменения стоит в шапке на
+// 6.96pt ниже периодов, и если не включить её строку в полосу шапки, промежуток
+// между «FY 2013» и «2H 2014» (383.51→441.10) остаётся целым, а 416.11 лежит
+// внутри него.
+func TestChangeColumnIsItsOwnColumn(t *testing.T) {
+	lines := tsvLines(t, "testdata/press_release_hist_p1.tsv")
+
+	start := firstHeaderLine(lines)
+	if start < 0 {
+		t.Fatal("no financial header found in fy2014 fixture")
+	}
+
+	cols := columnsFromHeader(headerBand(lines, start))
+
+	// Подпись изменения — отдельная непериодная колонка на своём X.
+	var changeCols int
+	for _, c := range cols {
+		if c.Period == "" && c.covers(416.11) {
+			changeCols++
+		}
+	}
+	if changeCols != 1 {
+		t.Fatalf("x=416.11 (change value «3%%») covered by %d columns, want exactly 1 non-period column", changeCols)
+	}
+
+	row := findLineContaining(t, lines, "Total gold production")
+	recs, unassigned := recordsFromLine(row, cols, "PJSC Polyus", "u", 4)
+
+	got := map[string]float64{}
+	for _, r := range recs {
+		got[r.Period] = r.Value
+	}
+
+	want := map[string]float64{"2014FY": 1696, "2013FY": 1652, "2014H2": 950, "2014H1": 746}
+	if len(got) != len(want) {
+		t.Errorf("row parsed to %v, want %v", got, want)
+	}
+	for period, value := range want {
+		if got[period] != value {
+			t.Errorf("%s = %v, want %v", period, got[period], value)
+		}
+	}
+
+	// «3%» — единственное значение строки, не ставшее периодом.
+	if unassigned != 1 {
+		t.Errorf("unassigned values = %d, want 1 (the change column «3%%»)", unassigned)
 	}
 }
