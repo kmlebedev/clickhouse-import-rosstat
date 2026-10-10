@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 )
 
 // ingestModelRunBody — теневая копия ingest.ModelRun: те же json-теги и типы
@@ -159,12 +161,80 @@ func TestPlural(t *testing.T) {
 	}
 }
 
-// TestCheckInputsEmptyPlanIsNotAnError — вторая половина Review Focus 1: Import
-// вызывает checkInputs ТОЛЬКО при непустом плане, но и сам вызов на пустом входе
-// обязан возвращать nil — иначе кто-то, переставив вызов, снова сделал бы пустой
-// план фатальным.
+// TestCheckInputsEmptyPlanIsNotAnError — вторая половина Review Focus 1, обновлена
+// под Finding 3: Import вызывает checkInputs ТОЛЬКО при непустом плане, и сам вызов
+// на пустом плане обязан вернуть nil (иначе перестановка вызова сделала бы пустой
+// план фатальным). Карта с ОДНИМ каноническим деком — это одновременно проверка
+// нового контракта: неполный набор деков предупреждает, но не падает.
 func TestCheckInputsEmptyPlanIsNotAnError(t *testing.T) {
-	if err := checkInputs(nil, map[string][]DeckYear{"spot_flat": {{Year: 2027, GoldUSD: 4000}}}); err != nil {
+	if err := checkInputs(nil, map[string][]DeckYear{deckSpotFlat: {{Year: 2027, GoldUSD: 4000}}}); err != nil {
 		t.Fatalf("checkInputs(nil, decks) = %v, want nil", err)
+	}
+}
+
+// TestCheckInputsMissingCanonicalDecksWarnButDoNotFail — Finding 3 финального
+// ревью: молчаливая потеря канонического дека превращала гарантию «активы × 3 деки
+// × 2 контура» в «× 2 × 2», и пропавший дек в nav_by_asset был неотличим от «не
+// считали». Проверяем наблюдаемый контракт: функция называет пропавшие деки в логе
+// (перехватываем logrus) и при этом возвращает nil — warning, а не error.
+//
+// Именно лог здесь — носитель инварианта: сигнатура error намеренно не меняется
+// (частичный набор деков recoverable), поэтому тест ловит регрессию, только если
+// предупреждения нет.
+func TestCheckInputsMissingCanonicalDecksWarnButDoNotFail(t *testing.T) {
+	plans := []MinePlanRecord{{Company: "PLZL", Asset: "Olimpiada"}}
+
+	cases := []struct {
+		name      string
+		decks     map[string][]DeckYear
+		wantInLog []string // имена деков, которые обязаны быть названы
+	}{
+		{
+			name:      "нет двух канонических деков",
+			decks:     map[string][]DeckYear{deckSpotFlat: {{Year: 2027, GoldUSD: 4000}}},
+			wantInLog: []string{deckConsensusLT, deckOwnScenario},
+		},
+		{
+			name:      "пустая карта деков после сида",
+			decks:     map[string][]DeckYear{},
+			wantInLog: nil, // пустая карта — отдельная, более сильная формулировка
+		},
+		{
+			name: "все три канонических дека — предупреждения нет",
+			decks: map[string][]DeckYear{
+				deckSpotFlat:    {{Year: 2027, GoldUSD: 4000}},
+				deckConsensusLT: {{Year: 2027, GoldUSD: 3000}},
+				deckOwnScenario: {{Year: 2027, GoldUSD: 4600}},
+			},
+			wantInLog: nil,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var buf strings.Builder
+			prevOut := log.StandardLogger().Out
+			log.SetOutput(&buf)
+			t.Cleanup(func() { log.SetOutput(prevOut) })
+
+			if err := checkInputs(plans, c.decks); err != nil {
+				t.Fatalf("неполный набор деков — предупреждение, а не ошибка: %v", err)
+			}
+
+			if len(c.wantInLog) == 0 {
+				if strings.Contains(buf.String(), "нет канонических деков") {
+					t.Fatalf("полный/пустой набор деков не должен давать предупреждение о пропаже: %q", buf.String())
+				}
+
+				return
+			}
+
+			got := buf.String()
+			for _, name := range c.wantInLog {
+				if !strings.Contains(got, name) {
+					t.Errorf("предупреждение не называет пропавший дек %q: %q", name, got)
+				}
+			}
+		})
 	}
 }
