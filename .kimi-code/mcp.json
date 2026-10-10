@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "clickhouse": {
+      "command": "bash",
+      "args": [
+        "-c",
+        "set -a; . \"$HOME/.config/rosstat/env\"; set +a; exec uv run --with mcp-clickhouse --python 3.12 mcp-clickhouse"
+      ],
+      "env": {
+        "CLICKHOUSE_HOST": "localhost",
+        "CLICKHOUSE_PORT": "8123",
+        "CLICKHOUSE_SECURE": "false",
+        "CLICKHOUSE_VERIFY": "false",
+        "CLICKHOUSE_USER": "kimi_reader",
+        "CLICKHOUSE_DATABASE": "default",
+        "CLICKHOUSE_MCP_SERVER_TRANSPORT": "stdio"
+      }
+    }
+  }
+}
