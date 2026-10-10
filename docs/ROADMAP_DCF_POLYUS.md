@@ -1,7 +1,7 @@
 # Дорожная карта: от конвейера статистики к живой DCF-модели Полюса с NAV-прогнозом
 
 **База:** проект [clickhouse-import-rosstat](https://github.com/kmlebedev/clickhouse-import-rosstat), аналитическая практика — [«Золото Q3-2026: итоги и прогноз Q4-2026»](Золото_Q3-2026_итоги_и_прогноз_Q4-2026.md)
-**Дата:** 8 октября 2026 г. (обновлено 10 октября 2026 г.: §8.2 — колоночная модель разбора PDF, §8.3 — включены релизы 4Q/FY 2019–2024; заведена общая витрина `company_financials` — спека [2026-10-10-company-financials-views-design.md](superpowers/specs/2026-10-10-company-financials-views-design.md), §8.1 дефекты (3) и (4) закрыты, фаза 2 обновлена)
+**Дата:** 8 октября 2026 г. (обновлено 11 октября 2026 г.: §7.1 — фаза 3, шаг 2: сид `mine_plans` из отчётности Полюса импортёром `dcf_mine_plans` выполнен, приёмка добавлена; ранее 10 октября — §8.2 колоночная модель разбора PDF, §8.3 включены релизы 4Q/FY 2019–2024, заведена общая витрина `company_financials` — спека [2026-10-10-company-financials-views-design.md](superpowers/specs/2026-10-10-company-financials-views-design.md), §8.1 дефекты (3) и (4) закрыты, фаза 2 обновлена)
 **Сопутствующие документы:** [ARCHITECTURE.md](../ARCHITECTURE.md) (паттерны и схемы БД), [AGENTS.md](../AGENTS.md) (инструкции для AI-ассистентов), [ROADMAP_DCF_METALS.md](ROADMAP_DCF_METALS.md) (металлурги CHMF/MAGN/NLMK в общей витрине)
 
 ---
@@ -164,7 +164,9 @@ docker run -d --name ch-mcp \
 | **4. Цикл прогноза** | недели 6–8 | Календарные cron-сессии; `regime_states` (HMM) и согласование вероятностей с режимом; годовой отчёт о запасах (март) как триггер пересчёта; автоверификация прогнозов | Прогноз обновляется регулярно и по событиям |
 | **5. Автономность** | квартал | `news_watch` + `sentiment_index`; парсинг FedWatch и WGC ETF-потоков; алерты Grafana (crack >$50, FedWatch >80%, закрытие недели <$3,950); алерты на смену веса PLZL в IMOEX, налоговые законопроекты, разворот ставки ЦБ; `v_peers_comparison` + алерт «дислокация P/NAV»; `v_gold_attribution`; ML-ансамбль как конкурентный трек прогноза (DM-тест против экспертного) | Система сама сигнализирует о необходимости пересчёта |
 
-### 7.1 Фаза 3, шаг 1 — расчётное ядро LOM-NAV — ✅ выполнен 2026-10-10
+### 7.1 Фаза 3, шаги 1–2 — расчётное ядро LOM-NAV + сид `mine_plans` — ✅ выполнены 2026-10-10 / 2026-10-11
+
+Два законченных среза фазы 3: (шаг 1) новое расчётное ядро LOM-NAV и (шаг 2) сид входов `mine_plans` из отчётности Полюса. Приёмка шага 1 — ниже; приёмка шага 2 — сразу за ней.
 
 **Спека:** [docs/superpowers/specs/2026-10-10-dcf-engine-core-design.md](superpowers/specs/2026-10-10-dcf-engine-core-design.md). **План:** [docs/superpowers/plans/2026-10-10-dcf-engine-core.md](superpowers/plans/2026-10-10-dcf-engine-core.md).
 
@@ -222,9 +224,21 @@ NPV       = FCF / 1000 / (1 + rate)^0              = 3955.1917 млн USD
 
 7. Фикстура после прогона удалена (`ALTER TABLE ... DELETE` в `mine_plans`/`price_decks`/`nav_by_asset`), dev-БД возвращена в исходное состояние по данным: все три таблицы снова пусты (`gold_prices` не трогалась — 554 строки). Сами таблицы и витрина остаются: прогон их создаёт, и это нормальное состояние dev-БД после первого запуска движка.
 
+**Живая приёмка 2026-10-11 — Фаза 3, шаг 2: сид `mine_plans` из отчётности Полюса — ✅ выполнен** (импортёр `dcf_mine_plans`; [ARCHITECTURE.md](../ARCHITECTURE.md) §6.1, план [docs/superpowers/plans/2026-10-11-mine-plans-seed.md](superpowers/plans/2026-10-11-mine-plans-seed.md)). Сид заводит LOM-планы 6 активов из 8 и расширяет сид `price_decks` движка на ВСЕ годы планов, а не на текущий год.
+
+1. `make import STAT=dcf_mine_plans` → **`Imported 87 rows`**. Состав: Olimpiada 10, Blagodatnoye 13, Natalka 24, Verninskoye 15, Kuranakh 15, Sukhoi Log 10 лет (24 — самый длинный горизонт, Наталка). `TITIMUKHTA` и `ZAPADNOYE` **пропущены с warn**: их `Total Dore gold output` в датапаке равен нулю (россыпная добыча учтена отдельной таблицей `ALLUVIALS`), и ноль на месте факта занизил бы NPV — правило «нет пригодного факта — не пишем строку» даёт 6 активов из 8.
+
+2. `DCF_RUN_ID=<uuid> make import STAT=dcf_engine` → **`Imported 36 rows`** = 6 активов × 3 дека × 2 контура. Сид `price_decks` теперь ставит цену на **все** годы планов: деки покрывают **2025…2048 (24 года)** для всех трёх деков — горизонт самого длинного плана (Наталка). Это и перекрывает годы Сухого Лога (план в будущем, профиль с 2028).
+
+3. **На `own_scenario`/`industrial`** NAV (млн USD): Sukhoi Log **54 887.4** (45.5 % от суммы), Olimpiada 29 761.2, Natalka 16 608.2, Blagodatnoye 10 848.7, Kuranakh 5 197.6, Verninskoye 3 435.3.
+
+4. **`local`-контур строго НИЖЕ `industrial` в каждом деке** (например, `own_scenario`: `industrial` 120 738.4 против `local` 77 653.7 млн USD — суммарный NAV рудников) — расхождение контуров ставки видно, потому что деки многолетние. Одногодичный дек его бы спрятал: на единственном году `1/(1+rate)^0 = 1`, и контуры совпали бы (дефект, найденный на шаге 1).
+
+5. `make mcp-check` → **ПРОВЕРКА ПРОЙДЕНА**: агент читает 36 строк через `v_dcf_assumptions`; сырые `mine_plans`/`nav_by_asset` остаются закрытыми (`ACCESS_DENIED`). Каталог рядов сида (8 записей, source `dcf_mine_plans`, частота `A`) виден агенту в `v_series_catalog`.
+
 **Остаток фазы 3** (этим шагом не делалось):
 
-- **сид `mine_plans` из отчётности Полюса** — ✅ **сделан 2026-10-11** (импортёр `dcf_mine_plans`; точные команды и числа прогона добавит шаг приёмки — [docs/superpowers/plans/2026-10-11-mine-plans-seed.md](superpowers/plans/2026-10-11-mine-plans-seed.md));
+- **сид `mine_plans` из отчётности Полюса** — ✅ **сделан 2026-10-11** (импортёр `dcf_mine_plans`; команды и числа — в приёмке шага 2 выше);
 - `reserves_assets` / `reserves_dynamics` / `license_events`, `peers_nav` / `v_peers_comparison` (ЮГК, Селигдар — ручной ввод) и **стадийные haircut'ы** ресурсов вне LOM (`stage_haircut` в `nav_by_asset` всегда NULL) — [ROADMAP_DCF_METALS.md](ROADMAP_DCF_METALS.md) и отдельный пункт;
 - эскалация AISC/TCC по ИПЦ РФ (`Params.Ipc` пуст) и рублёвый NAV (`usdrub_path` пуст — все деньги USD);
 - обнуление дивидендов до 2030 и NAV-бета к золоту (в контракт `model_runs` числа не заведены);

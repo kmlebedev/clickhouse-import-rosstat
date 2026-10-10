@@ -25,20 +25,24 @@ Go-конвейер импорта российской макроэкономи
 | `calendar` | Календарь событий-триггеров прогноза золота/NAV (Q4-2026; сид — `sql/events_calendar_q4_2026.sql`) | `events_calendar`; витрина `v_events_calendar` | вручную (`make import STAT=events_calendar`) |
 | `views` | Витрины контура прогноза: `v_model_inputs`, `v_gold_dashboard`, `v_forecast_accuracy` (импортёр `gold_views`) | витрины; гранты `kimi_reader` — в `sql/mcp_kimi_reader.sql` | вручную, после первого запуска ingest: `make import STAT=gold_views` |
 | `views` | Метрики компаний сектора: таблица `company_financials` + витрины `v_company_financials` (разрешённое значение, одна строка на компанию/метрику/период), `v_company_metric_sources` (все версии, включая проигравшую), `v_company_operating` (операционка по активам); каталог рядов Полюса в `series_catalog` (импортёр `company_views`) | таблица `company_financials`, витрины; гранты `kimi_reader` — в `sql/mcp_kimi_reader.sql` | `dagu/financial.yaml`, понедельник 10:23 (МСК), после `polyus_financial_metrics`; вручную — `make import STAT=company_views` |
-| `dcf` | Расчётное ядро sum-of-parts LOM-NAV Полюса (импортёр `dcf_engine`): НДПИ-функция, LOM-NPV с хвостом закрытия, эскалация по ИПЦ, два контура ставки. Читает `mine_plans` и `price_decks`, пишет `nav_by_asset` (активы × 3 дека × 2 контура) | `mine_plans`, `price_decks`, `nav_by_asset`; витрина `v_dcf_assumptions` (грант `kimi_reader`) | вручную: `DCF_RUN_ID=<uuid> make import STAT=dcf_engine`; DAG-файл появится вместе с сидом `mine_plans` |
+| `dcf` | Сид LOM-планов Полюса из публичной отчётности (импортёр `dcf_mine_plans`): факт добычи последнего отчётного года из `databook_polyus` + версионные константы сида. **Идёт ДО расчётного ядра** | `mine_plans`; каталог `series_catalog` (source `dcf_mine_plans`, 8 рядов) | вручную: `make import STAT=dcf_mine_plans` |
+| `dcf` | Расчётное ядро sum-of-parts LOM-NAV Полюса (импортёр `dcf_engine`): НДПИ-функция, LOM-NPV с хвостом закрытия, эскалация по ИПЦ, два контура ставки. Читает `mine_plans` и `price_decks`, пишет `nav_by_asset` (активы × 3 дека × 2 контура). **Идёт ПОСЛЕ `dcf_mine_plans`** | `mine_plans`, `price_decks`, `nav_by_asset`; витрина `v_dcf_assumptions` (грант `kimi_reader`) | вручную: `make import STAT=dcf_mine_plans`, затем `DCF_RUN_ID=<uuid> make import STAT=dcf_engine` |
 | `polyus` | Отчётность ПАО «Полюс»: xlsx-датапак (операционные результаты по активам с 2007) и PDF-отчёты (KPI-пресс-релизы EN/RU + МСФО-формы EN). Разбор PDF — колоночная модель: `pdftotext -tsv`, полоса шапки по ролям строк, колонки из неё по X | `databook_polyus`; PDF-отчёты → `company_financials` (общая таблица сектора) | понедельник 10:23 |
 | `financial` | Legacy: корпоративные databook'и (ЮГК), investing.com, РЖД | `databook_ugk` и др. | понедельник 10:23 |
 
 Импортёр `gold` — временный: производная цена, не LBMA. Официальный LBMA AM/PM пока не подключён, см. «Ограничения».
 
-Импортёр `dcf_engine` (пакет `dcf/`) считает sum-of-parts LOM-NAV по активам: читает LOM-планы из `mine_plans` и цены из `price_decks` (на пустой таблице деков сеет её сама — спот из `gold_prices` плюс два задокументированных LT-якоря), считает NPV каждого актива по трём декам и двум контурам ставки и пишет `nav_by_asset` **одним батчем**. Агенту виден только результат — витрина `v_dcf_assumptions` (ARCHITECTURE.md §6.3); сырые `mine_plans`, `price_decks` и `nav_by_asset` не выданы. Запуск:
+Импортёр `dcf_mine_plans` (пакет `dcf/`) **сеет** `mine_plans` — LOM-планы активов Полюса: факт добычи последнего отчётного года он читает из `databook_polyus` (метрика `Total Dore gold output`, год берётся из колонки `date`), остальные числа (TCC, capex, срок службы, профиль проекта развития) берёт из версионных констант сида `dcf/mine_plans_seed.go` — снимка публичной отчётности Полюса. Актива с нулевой/отсутствующей добычей в датапаке пропускаются с предупреждением: сегодня так выпадают `TITIMUKHTA` и `ZAPADNOYE` (их россыпная добыча лежит в таблице `ALLUVIALS`), поэтому сид покрывает **6 активов из 8**. Ряды сида описаны в `series_catalog` (source `dcf_mine_plans`, 8 записей, частота `A`). Полная карта пробелов — [docs/DCF_DATA_COVERAGE.md](docs/DCF_DATA_COVERAGE.md).
+
+Импортёр `dcf_engine` (пакет `dcf/`) считает sum-of-parts LOM-NAV по активам: читает LOM-планы из `mine_plans` и цены из `price_decks` (на пустой таблице деков сеет её сама — спот из `gold_prices` плюс два задокументированных LT-якоря), считает NPV каждого актива по трём декам и двум контурам ставки и пишет `nav_by_asset` **одним батчем**. Агенту виден только результат — витрина `v_dcf_assumptions` (ARCHITECTURE.md §6.3); сырые `mine_plans`, `price_decks` и `nav_by_asset` не выданы. **Порядок запуска: сначала `dcf_mine_plans`, затем `dcf_engine`** — движок читает `mine_plans` как вход, и прогон ядра раньше сида посчитал бы по пустому или прошлогоднему плану. Запуск:
 
 ```bash
+make import STAT=dcf_mine_plans                                  # сид mine_plans (до движка)
 DCF_RUN_ID=$(uuidgen | tr A-Z a-z) make import STAT=dcf_engine   # пишет nav_by_asset
 make import STAT=dcf_engine                                      # без DCF_RUN_ID ничего не пишет
 ```
 
-`run_id` — клиентский и обязателен: строки `nav_by_asset` ссылаются на `model_runs`, а туда пишет только ingest-endpoint. Без `DCF_RUN_ID` движок считает, печатает в лог готовое тело `POST /v1/model_run` (его дописывает человек и отправляет в ingest) и **не пишет ничего** — `0` строк и запись в лог. Пока `mine_plans` пуста, прогон тоже успешен: предупреждение и `Imported 0 rows` (сид LOM-планов из отчётности Полюса — отдельный пункт `docs/ROADMAP_DCF_POLYUS.md` §7, фаза 3). Строк на прогон — `активы × 3 дека × 2 контура`.
+`run_id` — клиентский и обязателен: строки `nav_by_asset` ссылаются на `model_runs`, а туда пишет только ingest-endpoint. Без `DCF_RUN_ID` движок считает, печатает в лог готовое тело `POST /v1/model_run` (его дописывает человек и отправляет в ingest) и **не пишет ничего** — `0` строк и запись в лог. Пока `mine_plans` пуста, прогон тоже успешен: предупреждение и `Imported 0 rows`. Строк на прогон — `активы × 3 дека × 2 контура`.
 
 Отчётность Полюса даёт два импортёра в пакете `polyus/`: `databook_polyus` (xlsx-датапак) и `polyus_financial_metrics` (PDF-отчёты, пишет в общую таблицу `company_financials`). Текст извлекается `pdftotext -tsv`; полоса шапки финансовой таблицы собирается по ролям строк (маркер единиц, подписи периодов, подписи изменений), а подписи периодов, разбитые переносом строки («4Q» на одной строке шапки, «2019» на другой), склеиваются по X; значения раскладываются по колонкам, выведенным из шапки по X-координатам. Запуск: `make import STAT=polyus_financial_metrics` или `make import STAT=databook_polyus`; витрины над `company_financials` — `make import STAT=company_views` (в расписании — шаг после импорта метрик, см. `dagu/financial.yaml`). Ограничения этих данных — в разделе «Ограничения»; из 14 отчётов списка включены 9 (2014FY, 2019FY…2024FY, 1H2026), отключены 5 — 2015FY…2018FY (другой тип документа: MD&A и консолидированная МСФО) и 2025H2.
 
@@ -59,7 +63,7 @@ bea/                     BEA API (NIPA T20804) → macro_series
 gold/                    MOEX GOLDFIXME + cbr_currency_usd → gold_prices
 moex/                    MOEX ISS: свечи PLZL → stock_prices, RGBI + G-curve → ofz_curve
 polyus/                  отчётность Полюса: xlsx-датапак → databook_polyus; PDF-отчёты (KPI EN/RU, МСФО EN) → company_financials (общая таблица сектора; читается витринами v_company_*, разбор — колоночная модель: pdftotext -tsv + полоса шапки по ролям строк + колонки по X)
-dcf/                     расчётное ядро DCF: sum-of-parts LOM-NAV по активам, таблицы mine_plans, price_decks, nav_by_asset (DDL — копии канонических из ARCHITECTURE.md §6.2), чистое ядро без БД (НДПИ на унцию, LOM-NPV с хвостом закрытия, эскалация по ИПЦ, две ставки контуров); импортёр dcf_engine, витрина views/dcf_assumptions.go. model_runs не пишет
+dcf/                     расчётное ядро DCF: sum-of-parts LOM-NAV по активам, таблицы mine_plans, price_decks, nav_by_asset (DDL — копии канонических из ARCHITECTURE.md §6.2), чистое ядро без БД (НДПИ на унцию, LOM-NPV с хвостом закрытия, эскалация по ИПЦ, две ставки контуров). Два импортёра: dcf_mine_plans (сид mine_plans из отчётности Полюса + каталог рядов dcf/series_meta.go; идёт ДО движка) и dcf_engine (расчёт; витрина views/dcf_assumptions.go). model_runs не пишет
 financial/               legacy-контур (database/sql, свой main), новый код туда не добавляется; остался databook_ugk (ЮГК)
 dagu/                    расписания: один DAG-файл на домен, имя файла = имя DAG
 sql/                     DDL и гранты вручную: пользователь kimi_reader, сид календаря Q4-2026
@@ -106,7 +110,7 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 
 Импортёр `financial` читает `TICKER`, `FINANCIAL_DATA_DIR`, `INVESTING_EMAIL`, `INVESTING_PASSWORD`; эти переменные устаревают вместе с legacy-контуром.
 
-`DCF_RUN_ID` — переменная окружения **разового прогона** `dcf_engine`, а не строка конфигурации источника: UUID прогона, который уходит в `nav_by_asset.run_id` и связывает строки с записью `model_runs` (её создаёт ingest-endpoint). Передавайте её прямо в команде — `DCF_RUN_ID=$(uuidgen | tr A-Z a-z) make import STAT=dcf_engine`; в `~/.config/rosstat/env` её хранить не нужно. Без `DCF_RUN_ID` движок считает и печатает тело `POST /v1/model_run`, но не пишет ни строки (см. «Что импортируется»).
+`DCF_RUN_ID` — переменная окружения **разового прогона** `dcf_engine`, а не строка конфигурации источника: UUID прогона, который уходит в `nav_by_asset.run_id` и связывает строки с записью `model_runs` (её создаёт ingest-endpoint). Передавайте её прямо в команде — `DCF_RUN_ID=$(uuidgen | tr A-Z a-z) make import STAT=dcf_engine`; в `~/.config/rosstat/env` её хранить не нужно. Без `DCF_RUN_ID` движок считает и печатает тело `POST /v1/model_run`, но не пишет ни строки (см. «Что импортируется»). Импортёр `dcf_mine_plans` переменных окружения не имеет (только `CLICKHOUSE_URL`).
 
 ## Оркестрация (Dagu)
 
@@ -214,7 +218,8 @@ make all                             # lint, test, build
 make env-check                       # ключи из ~/.config/rosstat/env на месте
 make ch-up                           # локальный ClickHouse на 8123/9000
 make import STAT=bea                 # импорт bea (ключ BEA_API_KEY из файла окружения)
-DCF_RUN_ID=$(uuidgen | tr A-Z a-z) make import STAT=dcf_engine   # расчёт NAV (пока mine_plans пуста — 0 строк; в шелле без uuidgen — любой UUID)
+make import STAT=dcf_mine_plans      # сид mine_plans из отчётности Полюса (идёт до движка)
+DCF_RUN_ID=$(uuidgen | tr A-Z a-z) make import STAT=dcf_engine   # расчёт NAV по засеянным планам (в шелле без uuidgen — любой UUID)
 make mcp-check                       # MCP end-to-end (CLICKHOUSE_PASSWORD из файла окружения)
 make ch-down                         # остановить сервер
 ```
