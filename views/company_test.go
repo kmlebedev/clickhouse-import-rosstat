@@ -475,3 +475,35 @@ func TestPolyusSeriesMetaKeysAreUnique(t *testing.T) {
 		}
 	}
 }
+
+// Две копии DDL — в polyus/import.go (шаблон с %s) и в views/company.go
+// (подставленное имя) — обязаны совпадать колонка в колонку. Иначе PrepareBatch
+// шлёт десять значений в таблицу, заведённую по другой схеме, и ошибку поймает
+// только живая вставка. Сравнение идёт по разрешённому тексту polyus: копия в
+// views/ и есть разрешённая, так что обе стороны приводятся к одной форме.
+func TestCompanyFinancialsDDLMatchesPolyusTemplate(t *testing.T) {
+	template := polyus.MetricsTableDDL()
+	resolved := companyFinancialsCreateTable
+
+	normalize := func(s string) string {
+		return strings.Join(strings.Fields(s), " ")
+	}
+	if normalize(template) != normalize(resolved) {
+		t.Errorf("the two copies of the company_financials DDL have drifted:\n"+
+			"polyus.MetricsTableDDL():        %s\n"+
+			"companyFinancialsCreateTable(): %s", normalize(template), normalize(resolved))
+	}
+}
+
+// Ключ таблицы и ключ батча обязаны быть одним и тем же списком полей в одном и
+// том же порядке: разойдясь, они оставят в батче строки, которые ClickHouse
+// потом схлопнет, — а счётчик импортёра отчитается о лишних строках.
+func TestCompanyFinancialsKeyHasFiveFieldsInOrder(t *testing.T) {
+	key := "ORDER BY (company, metric, period, source_kind, source_url)"
+	if !strings.Contains(companyFinancialsCreateTable, key) {
+		t.Errorf("companyFinancialsCreateTable must key on the document: want %q", key)
+	}
+	if !strings.Contains(polyus.MetricsTableDDL(), key) {
+		t.Errorf("polyus MetricsTableDDL must key on the document: want %q", key)
+	}
+}

@@ -52,3 +52,49 @@ func TestImportersAreReachableByStatName(t *testing.T) {
 		}
 	}
 }
+
+// Разбор обязан проставлять SourceKind в КАЖДОЙ записи. Тест на ключ батча этого
+// не ловит: он строит записи сам, поэтому пропущенное поле в конструкторе
+// (recordsFromLine, parseIFRSPage) не заметит — а запись с пустым SourceKind
+// снова столкнётся с любой другой за тот же период, то есть вернёт ровно тот
+// дефект, ради которого измерение и заводилось.
+func TestParsedRecordsCarrySourceKind(t *testing.T) {
+	for _, tc := range []struct {
+		fixture string
+		kind    string
+		page    int
+	}{
+		{"testdata/press_reliz_1h26_p1.tsv", "kpi", 1},
+		{"testdata/press_release_fy2024_p4.tsv", "kpi", 4},
+		{"testdata/en_msfo_p6.tsv", "ifrs", 6},
+	} {
+		lines, err := readTSVLines(tc.fixture)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.fixture, err)
+		}
+
+		if tc.kind == "ifrs" {
+			records, err := parseIFRSPage(tc.fixture, tc.fixture, tc.page, "2026H1")
+			if err != nil {
+				t.Fatalf("%s: %v", tc.fixture, err)
+			}
+			for _, r := range records {
+				if r.SourceKind != tc.kind {
+					t.Errorf("%s: %s carries SourceKind %q, want %q", tc.fixture, r.Metric, r.SourceKind, tc.kind)
+				}
+			}
+
+			continue
+		}
+
+		records, _, _ := parseKPILines(lines, tc.fixture, tc.page)
+		if len(records) == 0 {
+			t.Fatalf("%s: no records to check", tc.fixture)
+		}
+		for _, r := range records {
+			if r.SourceKind != tc.kind {
+				t.Errorf("%s: %s carries SourceKind %q, want %q", tc.fixture, r.Metric, r.SourceKind, tc.kind)
+			}
+		}
+	}
+}

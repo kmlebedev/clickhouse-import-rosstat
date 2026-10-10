@@ -44,13 +44,18 @@ const financialMetricsCompany = "PLZL"
 // Формат с %s сохранён ради совместимости с util.ClickHouseImport: подстановка
 // имени таблицы идёт через fmt.Sprintf.
 //
-// Отличие от legacy-схемы одно — source_kind в списке колонок и в ORDER BY.
-// Именно оно и делает таблицу пригодной для нескольких документов: один и тот же
+// Отличие от legacy-схемы — два поля ключа: source_kind (вид документа) и
+// source_url (сам документ). Первого мало: два пресс-релиза подряд несут один и
+// тот же "kpi", и на ключе из четырёх полей они по-прежнему схлопывались бы в
+// одну строку (проверено живым прогоном: gold_output за 2023FY терял 2 799 из
+// релиза FY2024, оставляя 2 902 из релиза FY2023). Именно это и делает таблицу
+// пригодной для нескольких документов: один и тот же
 // показатель за один и тот же период печатают и KPI-релиз, и МСФО-отчёт, и без
 // измерения источника в ключе ReplacingMergeTree оставил бы из двух значений одно,
 // молча потеряв второе (у Полюса так расходятся 17 из 79 общих ключей). Значения
-// source_kind: "kpi" (пресс-релиз), "ifrs" (аудированная форма), "legacy"
-// (строки, перенесённые из polyus_financial_metrics).
+// source_kind: "kpi" (пресс-релиз), "ifrs" (аудированная форма); "legacy"
+// (строки, перенесённые из polyus_financial_metrics) зарезервировано — код его
+// пока не пишет.
 //
 // Порядок колонок не произвольный: source_kind стоит между period_type и value —
 // ровно там, где его передаёт batch.Append.
@@ -81,11 +86,18 @@ func (s *financialMetricsImport) Name() string {
 	return financialMetricsStatName
 }
 
+// MetricsTableDDL возвращает DDL таблицы метрик с ПОДСТАВЛЕННЫМ именем — ровно
+// тот оператор, который исполняет Import. Нужен витринам: их собственная копия
+// DDL (views/company.go) обязана совпадать с этой колонка в колонку, иначе
+// PrepareBatch и схема разойдутся молча — ошибку поймает только вставка в живую
+// БД. Экспортируется ради теста на расхождение: скопировать текст в тест значило
+// бы завести третью копию, которая разойдётся так же.
+func MetricsTableDDL() string {
+	return fmt.Sprintf(financialMetricsCreateTable, financialMetricsTable)
+}
+
 func (s *financialMetricsImport) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	if err = conn.Exec(
-		ctx,
-		fmt.Sprintf(financialMetricsCreateTable, financialMetricsTable),
-	); err != nil {
+	if err = conn.Exec(ctx, MetricsTableDDL()); err != nil {
 		return 0, err
 	}
 
@@ -106,7 +118,7 @@ func (s *financialMetricsImport) Import(ctx context.Context, conn driver.Conn) (
 	var unassigned []int
 
 	// Одно время загрузки на весь батч: loaded_at объявлен с DEFAULT now(), но
-	// batch-вставка ClickHouse всё равно требует значение на каждую из девяти
+	// batch-вставка ClickHouse всё равно требует значение на каждую из десяти
 	// колонок. Одинаковая метка времени и делает строки одной загрузки одной
 	// версией в ReplacingMergeTree(loaded_at).
 	loadedAt := time.Now()
