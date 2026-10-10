@@ -458,3 +458,166 @@ func TestChangeColumnIsItsOwnColumn(t *testing.T) {
 		t.Errorf("unassigned values = %d, want 1 (the change column «3%%»)", unassigned)
 	}
 }
+
+// TestChangeValueNeverBecomesAPeriodValue держит исключение значения колонки
+// изменения отдельной проверкой, которая может упасть независимо от геометрии
+// колонок.
+//
+// Строка «Total gold production (koz)» MD&A за 2014 несёт «3%» (x=416.11) —
+// значение колонки «y-o-y change». Оно обязано исчезнуть из разбора: если
+// колонка изменения не станет отдельной непериодной колонкой (окно периода
+// захватит подпись изменения), «3%» накроется колонкой периода 2014H2 и даст
+// запись gold_output со значением 3 или -3.
+//
+// Проверка идёт по всему разбору страницы, а не по одной строке: так она ловит
+// и захват подписи изменения в шапке, и любую другую подстановку, при которой
+// процент изменения выдаёт себя за значение периода.
+func TestChangeValueNeverBecomesAPeriodValue(t *testing.T) {
+	recs, err := parseKPIPage("testdata/press_release_hist_p1.tsv", "https://example.invalid/fy2014.pdf", 4)
+	if err != nil {
+		t.Fatalf("parseKPIPage: %v", err)
+	}
+
+	gold := 0
+	for _, r := range recs {
+		if r.Metric != "gold_output" {
+			continue
+		}
+
+		gold++
+
+		if r.Value == 3 || r.Value == -3 {
+			t.Errorf(
+				"gold_output %s = %v: «3%%» from the change column became a period value",
+				r.Period,
+				r.Value,
+			)
+		}
+	}
+
+	if gold != 4 {
+		t.Errorf("gold_output records = %d, want 4 (FY2014/FY2013/2H2014/1H2014)", gold)
+	}
+}
+
+// TestUnassignedCountsChangeColumnValuesOnRUGoldRow держит число
+// нераспределённых значений на строке русского релиза — единственной, где
+// колонки изменения стоят между периодами.
+//
+// Строка (top=396.40): «Производство золота (тыс. унций) 1 287 1 311 (2%) 1 218 6%».
+// Значения и их колонки, замерено по фикстуре:
+//
+//	1287  x=290.33 → 2026H1   (период)
+//	1311  x=348.19 → 2025H1   (период)
+//	(2%)  x=407.83 → колонка «Изм. за год»   (непериодная)
+//	1218  x=464.14 → 2025H2   (период)
+//	6%    x=526.18 → колонка «Изм. за п/г»   (непериодная)
+//
+// То есть периодами не стали РОВНО два числа — (2%) и 6%, обе колонки изменения.
+// До перехода на колоночную модель (2%) стояло в слоте 2025H2 и запись
+// gold_output 2025H2 = -2 попадала в витрину.
+func TestUnassignedCountsChangeColumnValuesOnRUGoldRow(t *testing.T) {
+	const wantUnassigned = 2
+
+	lines := tsvLines(t, "testdata/press_reliz_1h26_p1.tsv")
+
+	start := firstHeaderLine(lines)
+	if start < 0 {
+		t.Fatal("no financial header found in 1h26 fixture")
+	}
+
+	cols := columnsFromHeader(headerBand(lines, start))
+
+	row := findLineContaining(t, lines, "Производство золота")
+
+	recs, unassigned := recordsFromLine(row, cols, "PJSC Polyus", "u", 1)
+
+	got := map[string]float64{}
+	for _, r := range recs {
+		got[r.Period] = r.Value
+	}
+
+	want := map[string]float64{"2026H1": 1287, "2025H1": 1311, "2025H2": 1218}
+	if len(got) != len(want) {
+		t.Errorf("row parsed to %v, want %v", got, want)
+	}
+	for period, value := range want {
+		if got[period] != value {
+			t.Errorf("%s = %v, want %v", period, got[period], value)
+		}
+	}
+
+	if unassigned != wantUnassigned {
+		t.Errorf(
+			"unassigned values = %d, want %d: the row carries exactly the two change-column values (2%%) and 6%%",
+			unassigned,
+			wantUnassigned,
+		)
+	}
+}
+
+// TestSameMetricFromTwoHeadersBothSurvive держит счётчик найденных метрик,
+// сбрасываемый на каждой шапке.
+//
+// Склеенный снимок многостраничного отчёта (pdftotext -nopgbrk, затем joinFiles)
+// содержит несколько таблиц подряд, без разделителя страниц: у каждой своя шапка,
+// и одна и та же метрика встречается в каждой (gold_output есть и в MD&A за 2014,
+// и в FY2024). Счётчик, общий на всю страницу, оставлял бы записи только первой
+// таблицы — 35 записей второй терялись молча.
+//
+// Семантика выбрана «обе таблицы выживают», а не «побеждает последняя»: таблицы
+// независимы, их метрики относятся к разным периодам, и терять одну из них
+// нельзя. Совпадение ключа (metric, period) при этом не исключено — но его
+// слияние делает import.go (batchDedup), который один знает, что попадает в один
+// батч, и считает такие повторы.
+//
+// Вторая копия сдвинута по Top на 1000pt (shiftedTops): координаты pdftotext
+// начинаются заново на каждой странице, поэтому у двух настоящих страниц Top
+// совпадают, и groupByLine слил бы строки двух таблиц в одну. Фикстура из двух
+// копий одной и той же страницы на этом и рассыпается (0 записей), поэтому
+// таблицы берутся из разных отчётов.
+func TestSameMetricFromTwoHeadersBothSurvive(t *testing.T) {
+	first := tsvLines(t, "testdata/press_release_hist_p1.tsv")
+	second := tsvLines(t, "testdata/press_release_fy2024_p4.tsv")
+
+	const shift = 1000.0
+
+	both := make([]Line, 0, len(first)+len(second))
+	both = append(both, first...)
+	for _, line := range second {
+		shifted := Line{Top: line.Top + shift}
+		for _, w := range line.Words {
+			w.Top += shift
+			shifted.Words = append(shifted.Words, w)
+		}
+
+		both = append(both, shifted)
+	}
+
+	records := parseKPILines(both, "https://example.invalid/joined.pdf", 1)
+
+	byMetric := map[string]int{}
+	byKey := map[string]float64{}
+	for _, r := range records {
+		byMetric[r.Metric]++
+		byKey[r.Metric+"/"+r.Period] = r.Value
+	}
+
+	// 4 периода у MD&A за 2014 + 5 у FY2024: обе таблицы дали по периоду.
+	if byMetric["gold_output"] != 9 {
+		t.Errorf("gold_output records = %d, want 9 (4 from FY2014 + 5 from FY2024)", byMetric["gold_output"])
+	}
+
+	// Значения обеих таблиц на месте, и они разные — вторая не «победила» первую.
+	want := map[string]float64{
+		"gold_output/2014FY": 1696,
+		"gold_output/2014H2": 950,
+		"gold_output/2024FY": 3002,
+		"gold_output/2024H2": 1529,
+	}
+	for key, value := range want {
+		if byKey[key] != value {
+			t.Errorf("%s = %v, want %v", key, byKey[key], value)
+		}
+	}
+}
