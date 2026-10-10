@@ -81,6 +81,27 @@ func tsvHeaderRow() string {
 	) + "\n"
 }
 
+func TestUnitsMarkerSurvivesGlue(t *testing.T) {
+	// шапка 2019 разорвана: «$ million (if not mentioned» в одной строке,
+	// «otherwise)» — в следующей. Маркер ищется по склейке слов строки,
+	// поэтому «$million» обязан найтись в первой из них.
+	lines, err := readTSVLines("testdata/press_release_fy2019_p3.tsv")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var found bool
+	for _, l := range lines {
+		if unitsMarker(l) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("unitsMarker не находит разорванный маркер «$ million (if not mentioned»")
+	}
+}
+
 func TestGroupByLineOrdersWordsByLeft(t *testing.T) {
 	// три слова на одном Top, поданные в обратном порядке
 	words := []Word{
