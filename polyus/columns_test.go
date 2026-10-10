@@ -13,22 +13,43 @@ import (
 //
 // Полоса, а не одна строка, потому что одна строка PDF может быть набрана
 // разными кеглями и после groupByLine по точному Top распадается на несколько
-// визуальных строк: в FY2024 расшифровка «(if not mentioned otherwise)» набрана
-// мельче и уехала на 0.77pt ниже подписей колонок — подписи периодов остались на
-// 60.83, а расшифровка на 61.60. Обе строки — шапка, и columnsFromHeader должен
-// получить их вместе: слова внутри скобки «(if not mentioned otherwise)» делят
-// одну строку с подписями периодов, и по X они стоят до первого периода.
+// визуальных строк. В FY2024 так и есть: расшифровка «(if not mentioned
+// otherwise)» набрана мельче и уехала на 0.77pt ниже подписей колонок — метка
+// «$ million ( )» и ВСЕ пять периодов на 60.83, расшифровка на 61.60.
+//
+// Замерено на фикстуре, что именно даёт вторая строка:
+//
+//	полоса 60.83            — 9 колонок, периоды [2024FY 2023FY 2024H2 2024H1 2023H2]
+//	полоса 60.83 + 61.60    — 13 колонок, периоды [2024FY 2023FY 2024H2 2024H1 2023H2]
+//	границы периодов        — совпадают до последнего знака: 247.315/321.365/355.035/427.035/497.04
+//
+// То есть вторая строка НЕ нужна, чтобы увидеть периоды, — она уточняет геометрию
+// непериодных колонок перед первым периодом (4 колонки вместо 8): слова
+// «if not mentioned otherwise» попадают между «(» и «)» и разрезают промежуток
+// 111.31→247.31 на отдельные колонки с границами 115.12 / 119.55 / 131.07 /
+// 165.69 / 196.58. Подпись длинной метки вроде «Выручка» ложится в самый левый
+// промежуток, и от того, разрезан ли он, зависит, останется она в первой колонке
+// или уедет в колонку изменений. Тест TestColumnsPeriodsInvariantUnderBandWidth
+// закрепляет обе половины этого факта: периоды от ширины полосы не зависят, а
+// число колонок — зависит.
 //
 // Порог близости берётся отдельной константой и применяется здесь, а не в
-// groupByLine: у настоящих соседних строк таблицы разрыв на порядок больше
-// (в русском релизе ближайшая строка ниже шапки — «Операционные показатели» на
-// 383.42, то есть на 14pt ниже), и расширение общего допуска склеило бы строки
-// таблицы по всей странице.
+// groupByLine: 2.0pt взято с запасом над единственным наблюдаемым разрывом
+// шапки (0.77pt) и с большим отступлением от ближайшей настоящей строки
+// содержимого. В русском релизе ближайшая строка ниже шапки — «Операционные
+// показатели» на 383.42, то есть на 14.16pt ниже шапки (369.26), и это на
+// порядок больше порога.
+//
+// const ниже — знаменатель той же оценки; менять его значение без нового замера
+// по фикстурам не стоит.
 func headerBandFrom(t *testing.T, path string) []Line {
 	t.Helper()
 
 	// headerContinuationGap — максимальный разрыв по вертикали, при котором
-	// строка считается продолжением той же строки PDF.
+	// строка считается продолжением той же строки PDF. Единственный известный
+	// разрыв внутри шапки — 0.77pt (FY2024); ближайшая строка содержимого —
+	// на 14.16pt ниже (RU 1H2026), поэтому 2.0pt лежит между ними с запасом в
+	// обе стороны.
 	const headerContinuationGap = 2.0
 
 	f, err := os.Open(path)
@@ -235,18 +256,104 @@ func TestColumnsFromHeaderWide(t *testing.T) {
 		}
 	}
 
-	for _, want := range []string{"2024FY", "2023FY", "2024H2", "2024H1", "2023H2"} {
-		if !slices.Contains(periods, want) {
-			t.Errorf("period %s missing from %v", want, periods)
+	// ровно пять периодов в ожидаемом порядке: лишний распознанный период
+	// (например, «Y-o-Y» или «H-o-H», разобранные как год) сдвинул бы список
+	// и упал бы здесь, тогда как проверка «содержит» его бы пропустила.
+	want := []string{"2024FY", "2023FY", "2024H2", "2024H1", "2023H2"}
+	if !slices.Equal(periods, want) {
+		t.Errorf("periods = %v, want %v", periods, want)
+	}
+}
+
+// TestColumnsPeriodsInvariantUnderBandWidth закрепляет, что даёт вторая строка
+// шапки FY2024 и что она НЕ даёт.
+//
+// Разрыв шапки на две визуальные строки (60.83 и 61.60) — следствие разного
+// кегля: все пять подписей периодов лежат на 60.83 вместе с «$ million ( )»,
+// а на 61.60 ушла только расшифровка «if not mentioned otherwise».
+//
+// Периоды от ширины полосы не зависят: обе полосы дают один и тот же список
+// с теми же типами и теми же границами. Зависит геометрия непериодных колонок
+// перед первым периодом: одна строка даёт 9 колонок, две — 13, потому что слова
+// расшифровки докалывают промежуток 111.31→247.31 и разрезают его на отдельные
+// колонки. Тест утверждает обе половины сразу: если сигнатуру columnsFromHeader
+// когда-нибудь сведут обратно к одной Line, сломается вторая половина — и
+// наоборот, если полосу начнут собирать шире, чем нужно, упадут обе.
+func TestColumnsPeriodsInvariantUnderBandWidth(t *testing.T) {
+	f, err := os.Open("testdata/press_release_fy2024_p4.tsv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+
+	words, err := parseTSV(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var oneLine, twoLines []Line
+	for _, l := range groupByLine(words, 0) {
+		switch l.Top {
+		case 60.83:
+			oneLine = append(oneLine, l)
+			twoLines = append(twoLines, l)
+		case 61.60:
+			twoLines = append(twoLines, l)
+		}
+	}
+	if len(oneLine) != 1 || len(twoLines) != 2 {
+		t.Fatalf("fixture layout changed: one-line band=%d, two-line band=%d", len(oneLine), len(twoLines))
+	}
+
+	narrow := columnsFromHeader(oneLine)
+	wide := columnsFromHeader(twoLines)
+
+	// Ширина полосы меняет число колонок: расшифровка докалывает промежуток
+	// перед первым периодом.
+	if len(narrow) != 9 || len(wide) != 13 {
+		t.Errorf("column counts = %d (one line) / %d (two lines), want 9 / 13", len(narrow), len(wide))
+	}
+
+	wideNonPeriod := countNonPeriodColumns(wide)
+	narrowNonPeriod := countNonPeriodColumns(narrow)
+	if wideNonPeriod <= narrowNonPeriod {
+		t.Errorf("non-period columns = %d (two lines) vs %d (one line), want the wide band to add some",
+			wideNonPeriod, narrowNonPeriod)
+	}
+
+	// …но не меняет периоды: тот же список, те же типы, те же границы.
+	narrowPeriods := periodColumns(narrow)
+	widePeriods := periodColumns(wide)
+	if !slices.Equal(narrowPeriods, widePeriods) {
+		t.Errorf("periods depend on band width:\n one-line = %v\n two-line = %v", narrowPeriods, widePeriods)
+	}
+}
+
+// periodColumns отбирает колонки-периоды: Period, Type, Left, Right. Сравнение
+// целых структур включало бы расширенные границы непериодных колонок, поэтому
+// берутся только периоды — они и должны совпадать при любой ширине полосы.
+func periodColumns(cols []Column) []Column {
+	periods := make([]Column, 0, len(cols))
+	for _, c := range cols {
+		if c.Period != "" {
+			periods = append(periods, c)
 		}
 	}
 
-	// метки Y-o-Y и H-o-H не стали периодами
+	return periods
+}
+
+// countNonPeriodColumns считает непериодные колонки — те, что держат место по X
+// для колонок изменений и метки единиц измерения.
+func countNonPeriodColumns(cols []Column) int {
+	count := 0
 	for _, c := range cols {
-		if c.Period == "Y-o-Y" || c.Period == "H-o-H" {
-			t.Errorf("change label became a period: %q", c.Period)
+		if c.Period == "" {
+			count++
 		}
 	}
+
+	return count
 }
 
 func TestColumnCoversValueX(t *testing.T) {
@@ -313,7 +420,10 @@ func TestHeaderAppliesToRowsBelow(t *testing.T) {
 func TestHeaderColumnsCoverValueRow(t *testing.T) {
 	cols := columnsFromHeader(headerBandFrom(t, "testdata/press_reliz_1h26_p1.tsv"))
 
-	// строка TCC (y=515.92): Left значения строки, Left подписи периода и сам период
+	// строка TCC (y=515.92): все пять значений, Left значения и колонка, в
+	// которую оно обязано попасть. Период — колонка периода, пустая строка —
+	// непериодная колонка изменений («64%» под «Изм. за год», «31%» под
+	// «Изм. за п/г»).
 	cases := []struct {
 		valueX  float64
 		periodX float64
@@ -321,7 +431,9 @@ func TestHeaderColumnsCoverValueRow(t *testing.T) {
 	}{
 		{290.33, 282.05, "2026H1"},
 		{351.07, 339.91, "2025H1"},
+		{408.19, 395.47, ""},
 		{467.02, 455.83, "2025H2"},
+		{524.14, 512.02, ""},
 	}
 
 	for _, c := range cases {
@@ -332,13 +444,8 @@ func TestHeaderColumnsCoverValueRow(t *testing.T) {
 
 		got := columnCovering(t, cols, c.valueX)
 		if got != want {
-			t.Errorf("value at x=%v lands in %v, want the column of %s (%v)", c.valueX, got, c.period, want)
+			t.Errorf("value at x=%v lands in %v, want the column at x=%v (%v)", c.valueX, got, c.periodX, want)
 		}
-	}
-
-	// значение «64%» стоит под колонкой изменения, а не под периодом
-	if change := columnCovering(t, cols, 408.19); change.Period != "" {
-		t.Errorf("value at x=408.19 landed in period column %q, want the change column", change.Period)
 	}
 }
 
