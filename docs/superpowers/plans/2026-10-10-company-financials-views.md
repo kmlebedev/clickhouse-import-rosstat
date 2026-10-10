@@ -38,14 +38,14 @@
 ### Task 1: Add `SourceKind` to the metric record and the batch key
 
 **Files:**
-- Modify: `polyus/metrics.go` (add field to `MetricRecord`)
+- Modify: `polyus/metrics.go` (add field to `MetricRecord`; add `MetricNames()`)
 - Modify: `polyus/import.go` (`batchKey`, `batchDedup.add`, `batch.Append` call)
 - Modify: `polyus/kpi.go:314` (set the field), `polyus/ifrs.go:121` (set the field)
 - Test: `polyus/source_kind_test.go` (create)
 
 **Interfaces:**
 - Consumes: nothing from earlier tasks.
-- Produces: `MetricRecord.SourceKind string`; `batchKey{Company, Metric, Period, SourceKind string}`; `func (d *batchDedup) add(record MetricRecord) bool` (signature unchanged, key widened).
+- Produces: `MetricRecord.SourceKind string`; `batchKey{Company, Metric, Period, SourceKind string}`; `func (d *batchDedup) add(record MetricRecord) bool` (signature unchanged, key widened); `func MetricNames() []string` (metric names the PDF parser can produce, excluding the `period` pseudo-metric) — Task 4's series catalog and Task 5's coverage test both need it.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -100,12 +100,33 @@ In `polyus/import.go` extend `batchKey` with `SourceKind string` and build it in
 `polyus/kpi.go` `recordsFromLine`: add `SourceKind: "kpi",`.
 `polyus/ifrs.go` `parseIFRSPage`: add `SourceKind: "ifrs",`.
 
-- [ ] **Step 5: Run the package tests**
+- [ ] **Step 5: Add the exported metric-name accessor**
+
+In `polyus/metrics.go` add, next to the `metrics` slice:
+
+```go
+// MetricNames returns the metric names the PDF parser can produce, excluding
+// the "period" pseudo-metric (it is a units marker, not a value). The series
+// catalog and its coverage test both check against this list rather than
+// duplicating it.
+func MetricNames() []string {
+	names := make([]string, 0, len(metrics))
+	for _, m := range metrics {
+		if m.Name == "period" {
+			continue
+		}
+		names = append(names, m.Name)
+	}
+	return names
+}
+```
+
+- [ ] **Step 6: Run the package tests**
 
 Run: `go test ./polyus/ -v`
 Expected: PASS, including `TestBatchDedupKeepsBothSourceKinds`.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add polyus/metrics.go polyus/import.go polyus/kpi.go polyus/ifrs.go polyus/source_kind_test.go
@@ -363,30 +384,12 @@ git commit -m "views: add company_views importer with series catalog"
 - Modify: `views/company.go` (fill gaps the test finds)
 
 **Interfaces:**
-- Consumes: `polyusSeriesMeta()` from Task 4; the `metrics` slice in `polyus/metrics.go`.
+- Consumes: `polyusSeriesMeta()` from Task 4; `polyus.MetricNames()` from Task 1.
 - Produces: nothing later tasks consume.
 
 - [ ] **Step 1: Write the failing test**
 
-The test lives in `views/` and needs the metric names, which are unexported in `polyus/`. Add an exported accessor in `polyus/metrics.go`:
-
-```go
-// MetricNames returns the metric names the PDF parser can produce, so the
-// series catalog can be checked for coverage without exporting the whole
-// definition table.
-func MetricNames() []string {
-	names := make([]string, 0, len(metrics))
-	for _, m := range metrics {
-		if m.Name == "period" {
-			continue
-		}
-		names = append(names, m.Name)
-	}
-	return names
-}
-```
-
-Then the coverage test:
+The test lives in `views/` and needs the metric names, exported from `polyus/` as `MetricNames()` in Task 1:
 
 ```go
 func TestSeriesCatalogCoversEveryPolyusMetric(t *testing.T) {
