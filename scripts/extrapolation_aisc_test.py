@@ -1141,7 +1141,32 @@ class TestPlanRows(unittest.TestCase):
         for row in rows:
             self.assertGreaterEqual(row["aisc"], row["tcc"], row)
 
-    def test_capex_matches_definition(self):
+    def test_every_row_has_zero_sustaining_capex(self):
+        # ИНВАРИАНТ ДВОЙНОГО СЧЁТА. Полюс определяет AISC как «TCC plus … sustaining
+        # capital expenditures …» — клин УЖЕ ВНУТРИ `aisc`. Движок
+        # (dcf/model.go) вычитает и `aisc` (в выручке), и `capex_sustaining`
+        # (в opCash), поэтому ненулевое значение здесь списало бы поддержание
+        # дважды. Проверка идёт по ВСЕМ строкам и по всем трём наборам входа,
+        # которые накрывают разные ветви увязки (штатная цель, недостижимо
+        # низкая с прижатым m, недостижимо высокая).
+        for group_aisc in (1400.0, 100.0, 5000.0):
+            with self.subTest(group_aisc=group_aisc):
+                rows = ex.build_plan_rows(
+                    tcc_2025={a: 700.0 for a in ex.ASSETS},
+                    r_bar={a: 0.6 for a in ex.ASSETS},
+                    production=self._full_production(),
+                    group_aisc=group_aisc,
+                )
+                self.assertTrue(rows)
+                for row in rows:
+                    self.assertEqual(row["capex_sustaining"], 0.0, row)
+
+    def test_wedge_is_exposed_for_inspection_but_not_charged(self):
+        # Клин поддержания доступен для глазной сверки в ключе `wedge_mn_usd`
+        # (CSV выводит его как `wedge_mn_usd`), но в отток не идёт: он равен
+        # `sustaining_capex_mn`, а `capex_sustaining` при этом ноль. Обе
+        # величины проверяются вместе — так правка, вернувшая клин в отток,
+        # ломает тест, а не уезжает молча.
         rows = ex.build_plan_rows(
             tcc_2025={a: 700.0 for a in ex.ASSETS},
             r_bar={a: 0.6 for a in ex.ASSETS},
@@ -1150,10 +1175,12 @@ class TestPlanRows(unittest.TestCase):
         )
         for row in rows:
             self.assertAlmostEqual(
-                row["capex_sustaining"],
-                (row["aisc"] - row["tcc"]) * row["production_koz"] / 1000.0,
+                row["wedge_mn_usd"],
+                ex.sustaining_capex_mn(row["aisc"], row["tcc"], row["production_koz"]),
                 places=9,
             )
+            self.assertGreater(row["wedge_mn_usd"], 0.0, row)
+            self.assertEqual(row["capex_sustaining"], 0.0, row)
 
     def test_year_never_exceeds_asset_mine_life(self):
         rows = ex.build_plan_rows(
@@ -2058,6 +2085,45 @@ class TestMainRun(unittest.TestCase):
             with unittest.mock.patch("sys.stdout", new=io.StringIO()):
                 code = self._run()
         self.assertEqual(code, 0)
+
+    def test_generated_seed_charges_zero_sustaining_capex_in_every_row(self):
+        # СКВОЗНОЙ ИНВАРИАНТ ДВОЙНОГО СЧЁТА, по ОБОИМ артефактам. Клин
+        # поддержания уже внутри `aisc`, поэтому модель не должна списывать его
+        # ещё раз через `capex_sustaining`; SQL и CSV обязаны говорить об этом
+        # одно и то же. Проверяются: (а) каждый VALUES-кортеж SQL несёт 0 в
+        # позиции capex_sustaining; (б) колонка CSV `capex_sustaining` нулевая во
+        # всех 77 строках; (в) клин всё же виден человеку в `wedge_*` и равен
+        # `(aisc − tcc)`.
+        with unittest.mock.patch("sys.stdout", new=io.StringIO()):
+            self.assertEqual(self._run(), 0)
+        sql_text = (self.dir / "seed.sql").read_text(encoding="utf-8")
+        # Тело — строки, начинающиеся с '('; каждая и есть VALUES-кортеж.
+        tuple_lines = [line for line in sql_text.splitlines() if line.startswith("(")]
+        self.assertEqual(len(tuple_lines), 77)
+        for line in tuple_lines:
+            row = line.rstrip(",").rstrip(";").strip("()")
+            fields = row.split(",")
+            self.assertEqual(len(fields), 10, row)
+            self.assertEqual(fields[7], "0.0", row)  # capex_sustaining
+            self.assertEqual(fields[8], "0", row)  # capex_project
+            self.assertEqual(fields[9], "0", row)  # closure_costs
+        with (self.dir / "reconciled.csv").open(newline="", encoding="utf-8") as handle:
+            parsed = list(csv.DictReader(handle))
+        self.assertEqual(len(parsed), 77)
+        for entry in parsed:
+            self.assertEqual(float(entry["capex_sustaining"]), 0.0, entry)
+            self.assertAlmostEqual(
+                float(entry["wedge_usd_per_oz"]),
+                float(entry["aisc"]) - float(entry["tcc"]),
+                places=9,
+            )
+            self.assertGreater(float(entry["wedge_mn_usd"]), 0.0)
+            self.assertAlmostEqual(
+                float(entry["wedge_mn_usd"]),
+                (float(entry["aisc"]) - float(entry["tcc"]))
+                * float(entry["production_koz"]) / 1000.0,
+                places=6,
+            )
 
 
 if __name__ == "__main__":
