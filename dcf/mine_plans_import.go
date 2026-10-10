@@ -101,6 +101,18 @@ func readActualProduction(ctx context.Context, conn driver.Conn, asset string, y
 // Import пишет LOM-планы Полюса в mine_plans: факт последнего отчётного года из
 // databook_polyus плюс константы сида (polyusAssetPlans).
 func (s *minePlansSeeder) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+	// Пустой список активов — ошибка, а не «успех с нулём строк»: polyusAssetPlans —
+	// package-level var с восемью записями, и пустым он становится только от
+	// дефекта сборки/правки (потерянная инициализация, обрезанный при мерже срез),
+	// а не от состояния данных. Молчаливый Send пустого батча записал бы ноль строк
+	// с успешным логом, и следующий шаг DAG-а (dcf_engine) посчитал бы по
+	// несуществующему сиду. Пустой факт у ОТДЕЛЬНОГО актива — другое дело: это
+	// состояние источника, и он остаётся warn+пропуском ниже.
+	if len(polyusAssetPlans) == 0 {
+		return 0, errors.New("сид mine_plans: список активов polyusAssetPlans пуст — " +
+			"нечего импортировать (дефект сборки, а не состояние данных)")
+	}
+
 	if err = conn.Exec(ctx, minePlansCreateTable); err != nil {
 		return 0, fmt.Errorf("создать mine_plans: %w", err)
 	}
@@ -124,7 +136,7 @@ func (s *minePlansSeeder) Import(ctx context.Context, conn driver.Conn) (count i
 
 		if len(seed.ProductionProfile) == 0 {
 			if baseProductionKoz, err = readActualProduction(ctx, conn, seed.Asset, seed.BaseYear); err != nil {
-				_ = batch.Abort()
+				abortBatch(batch, "сид mine_plans")
 
 				return 0, err
 			}
@@ -136,10 +148,22 @@ func (s *minePlansSeeder) Import(ctx context.Context, conn driver.Conn) (count i
 		// проверка на nil пропустила бы такой актив дальше — в батч без строк, но
 		// с успешным «импортировали».
 		if len(years) == 0 {
-			// Год с нулевой добычей на месте пропущенного факта не пишем: он тихо
-			// занизил бы NPV, тогда как пропуск актива виден и в логе, и в счётчике.
-			log.Warnf("mine_plans: нет факта добычи %s за %d в databook_polyus (и нет ProductionProfile) — "+
-				"актив пропущен, строк не записано", seed.Asset, seed.BaseYear)
+			// Почему ноль на месте факта — это «факта нет», а не «год с нулевой
+			// добычей»: два состояния неразличимы на входе (readActualProduction
+			// возвращает 0.0 и когда строки нет вовсе, и когда строка есть со
+			// значением 0.0 — argMax одинаков), но последствия разные. Строка с
+			// нулевой добычей в базовом году молча занизила бы NPV всего актива;
+			// пропуск же оставляет актив вне mine_plans и пишет этот warn, то есть
+			// пробел виден и в логе, и в счётчике записанных строк.
+			//
+			// Оба случая названы прямо: строки в датапаке может не быть (Сухой Лог)
+			// или она может быть нулевой. Ноль у действующего актива — это не
+			// измеренный «нулевой год», а непригодный факт: 2025-й неполный, а у
+			// Титимухты и Западного россыпная добыча учтена в датапаке ОТДЕЛЬНОЙ
+			// таблицей ALLUVIALS, так что их Total Dore gold output и равен нулю.
+			// Сегодня этот warn штатно горит именно на TITIMUKHTA и ZAPADNOYE —
+			// оператору это ожидаемое предупреждение, а не сбой импорта.
+			log.Warn(minePlansSkipWarn(seed.Asset, seed.BaseYear))
 
 			continue
 		}
@@ -168,9 +192,7 @@ func (s *minePlansSeeder) Import(ctx context.Context, conn driver.Conn) (count i
 				seed.Company, seed.Asset, year.Year, year.ProductionKoz, nil,
 				year.TCC, year.AISC, year.CapexSustaining, year.CapexProject, year.ClosureCosts,
 			); err != nil {
-				// Abort — не украшение: без него соединение остаётся с открытым
-				// батчем, и следующий шаг DAG-а получит «уже есть незакрытый батч».
-				_ = batch.Abort()
+				abortBatch(batch, "сид mine_plans")
 
 				return 0, fmt.Errorf("сид mine_plans %s/%d: %w", seed.Asset, year.Year, err)
 			}
@@ -198,6 +220,33 @@ func (s *minePlansSeeder) Import(ctx context.Context, conn driver.Conn) (count i
 	log.Infof("Imported %d rows of dcf_mine_plans", count)
 
 	return count, nil
+}
+
+// minePlansSkipWarn — текст warn о пропуске актива (без записи строк).
+//
+// Вынесен в отдельную функцию, чтобы формат сообщения проверялся без живого
+// ClickHouse (см. TestMinePlansSkipWarnText): сам по себе warn — единственный
+// след пропуска, и его текст обязан называть оба случая (строки нет / строка
+// равна нулю), иначе оператор читает «нет факта» там, где факт есть и равен нулю
+// (TITIMUKHTA, ZAPADNOYE — их россыпная добыча лежит в таблице ALLUVIALS).
+func minePlansSkipWarn(asset string, year uint16) string {
+	return fmt.Sprintf("mine_plans: %s — добычи за %d нет (строка в датапаке отсутствует или равна нулю), "+
+		"план не построен, строк не записано; у TITIMUKHTA и ZAPADNOYE россыпная добыча учтена "+
+		"в датапаке отдельной таблицей ALLUVIALS, и их ноль здесь ожидаем", asset, year)
+}
+
+// abortBatch закрывает батч на ошибке и не даёт потерять сбой закрытия.
+//
+// Abort — не украшение: без него соединение остаётся с открытым батчем, и
+// следующий шаг DAG-а получит «уже есть незакрытый батч». Но и проглотить ошибку
+// Abort нельзя (`_ =`): тогда причина, по которой батч всё же остался открытым,
+// не попадёт в лог, а следующий шаг упадёт с сообщением, не называющим источник.
+// Возвращаемой ошибкой остаётся ПЕРВОПРИЧИНА (Append или чтение факта) — она
+// точнее, чем сбой Abort, случившийся уже после неё.
+func abortBatch(batch driver.Batch, what string) {
+	if aerr := batch.Abort(); aerr != nil {
+		log.Warnf("%s: не удалось закрыть батч после ошибки: %v", what, aerr)
+	}
 }
 
 func init() {

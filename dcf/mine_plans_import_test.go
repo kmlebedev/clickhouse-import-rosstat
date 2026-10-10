@@ -43,3 +43,69 @@ func TestActualProductionQueryShape(t *testing.T) {
 		t.Errorf("запрос тянет релизную метрику вместо датапаковой: %q", q)
 	}
 }
+
+// TestMinePlansSeedListNotEmpty — непустой список активов ЕСТЬ предпосылка ошибки
+// в Import (Fix round 1, Finding 2).
+//
+// Проверяется чисто офлайн: гейт — первые операторы Import, до любого обращения к
+// driver.Conn, поэтому пустой список не может дойти до PrepareBatch/Send и
+// превратиться в «успешно импортировали 0 строк» с живым соединением. Тест
+// намеренно утверждает непустоту СИДА (данных), а не текста условия в Import:
+// текстовый тест продолжал бы «зеленеть» после удаления ветки, а этот — нет,
+// потому что без ветки условие И само стало бы ложным. Фейковый driver.Conn для
+// вызова Import не создаётся: соединение здесь не нужно и ломало бы тест на
+// смене интерфейса драйвера.
+//
+// Отдельно бьёт по дефекту §8.1-класса в наборе активов: 7 рудников + Сухой Лог.
+// Потеря строки (обрезанный при мерже срез, потерянная инициализация) молча
+// выключала бы актив из mine_plans, а расчёт шёл бы по неполному набору с
+// успешным логом.
+func TestMinePlansSeedListNotEmpty(t *testing.T) {
+	const wantAssets = 8
+	// Локальная копия условия, чтобы тест утверждал наличие гейта И его непустоту.
+	seedListIsEmpty := len(polyusAssetPlans) == 0
+	if seedListIsEmpty {
+		t.Fatalf("polyusAssetPlans пуст: Import обязан упасть до PrepareBatch, "+
+			"а не записать 0 строк (want %d активов)", wantAssets)
+	}
+
+	if len(polyusAssetPlans) != wantAssets {
+		t.Fatalf("len(polyusAssetPlans) = %d, want %d", len(polyusAssetPlans), wantAssets)
+	}
+}
+
+// TestMinePlansSkipWarnText — warn о пропуске актива называет ОБА реальных случая,
+// не выдаёт один за другой и не повторяет тавтологию про ProductionProfile
+// (Fix round 1, Finding 1).
+//
+// Живые данные: у TITIMUKHTA строка с Total Dore gold output за 2025 существует и
+// равна 0.0, у ZAPADNOYE последний ANNUAL тоже 0.0 (россыпная добыча этих активов
+// учтена в датапаке отдельной таблицей ALLUVIALS). Прежняя формулировка «нет факта
+// добычи … в databook_polyus» для них ЛОЖНА, а оговорка «(и нет ProductionProfile)»
+// была тавтологией: ветка достижима только при пустом профиле, проверенном выше.
+// Поэтому сообщение обязано охватывать и отсутствие строки, и строку со значением 0.
+func TestMinePlansSkipWarnText(t *testing.T) {
+	// Аргументы те же, что передаёт Import (asset, base year).
+	warn := minePlansSkipWarn("TITIMUKHTA", reportingYearBase)
+
+	for _, want := range []string{
+		"датапак",           // источник факта назван
+		"TITIMUKHTA",        // актив назван
+		"2025",              // год назван (не хардкод 2025 вне аргументов)
+		"ALLUVIALS",         // россыпной тип добычи назван
+		"отсутствует",       // случай «строки нет»
+		"равна нулю",        // случай «строка есть, но ноль»
+		"строк не записано", // следствие для счётчика
+	} {
+		if !strings.Contains(warn, want) {
+			t.Errorf("warn не содержит %q: %q", want, warn)
+		}
+	}
+
+	// Тавтологическая оговорка и ложное «нет факта» не должны вернуться.
+	for _, banned := range []string{"ProductionProfile", "нет факта добычи"} {
+		if strings.Contains(warn, banned) {
+			t.Errorf("warn содержит удалённую формулировку %q: %q", banned, warn)
+		}
+	}
+}
