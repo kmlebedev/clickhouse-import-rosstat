@@ -21,11 +21,15 @@
 этого года дало бы неполный вектор наблюдений.
 """
 
+import base64
+import json
 import os
 import re
 import statistics
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Optional
 
@@ -864,6 +868,246 @@ def mask(secret: str, text: str) -> str:
     if not secret:
         return text
     return re.sub(rf"(?<![0-9A-Za-z]){re.escape(secret)}(?![0-9A-Za-z])", "***", text)
+
+
+# --- Факт добычи из ClickHouse ------------------------------------------------
+
+# Имя метрики факта добычи в датапаке Polyus. Дословно совпадает с
+# `actualProductionMetric` из `dcf/mine_plans_import.go`: это колонка
+# `databook_polyus.name`. Метрика привязана к АКТИВУ (OLIMPIADA, NATALKA, …).
+#
+# Брать вместо неё релизную `company_financials.gold_output` нельзя: та —
+# сводка по Группе, и «факт добычи актива» оказался бы равен добыче всей
+# Группы, причём без единой ошибки или предупреждения.
+ACTUAL_PRODUCTION_METRIC = "Total Dore gold output"
+
+# Метка периода в колонке `data`. Год берётся из колонки `date` через
+# `toYear(date)`, а метка служит ТОЛЬКО фильтром: у ANNUAL `date` — это
+# 1 декабря отчётного года, и извлекать год из подписи периода значило бы
+# повторить дефект «период взят из label, а не из datum».
+ACTUAL_PRODUCTION_PERIOD = "ANNUAL"
+
+# Порт HTTP-интерфейса ClickHouse. `ch_config()` отдаёт ДВА порта, и это не
+# взаимозаменяемые значения: `port` (9000) — нативный протокол, `http_port`
+# (8123) — HTTP. `urllib.request` говорит по HTTP, поэтому на нативном порту
+# он бы завис или упал. Для чтения используется ТОЛЬКО `http_port`.
+DEFAULT_CH_HTTP_PORT = "8123"
+
+# Форма имени актива для подстановки в литерал SQL: заглавные латинские буквы,
+# цифры и подчёркивания. Проверка ФОРМЫ, а не членства в `ASSETS`: датапак
+# содержит больше таблиц, чем пять рудников LOM (ZAPADNOYE, TITIMUKHTA, …).
+ASSET_LITERAL = re.compile(r"^[A-Z][A-Z0-9_]*$")
+
+# Псевдоним: HTTP-ошибка нужна вызывающему коду (и тестам) для подмены
+# транспорта без импорта `urllib.error`.
+HTTPError = urllib.error.HTTPError
+
+# Псевдоним колонки в SELECT. Имя фиксировано: разбор строк идёт по ключу `v`,
+# и без явного `AS v` ClickHouse вернул бы ключ-выражение
+# (`argMax(value, date)`), который пришлось бы угадывать.
+ACTUAL_PRODUCTION_COLUMN = "v"
+
+# Формат ответа HTTP-интерфейса. По умолчанию ClickHouse отдаёт
+# `TabSeparated`, а НЕ JSON: без явного `FORMAT JSON` разбор ответа падал бы на
+# первом же запросе. Формат задаётся в тексте запроса, а не заголовком
+# `X-ClickHouse-Format`, чтобы запрос оставался самодостаточным.
+ACTUAL_PRODUCTION_FORMAT = "JSON"
+
+# Таймаут HTTP-запроса, секунды. Значение конечно намеренно: без него
+# недоступный сервер подвесил бы весь расчёт.
+CH_QUERY_TIMEOUT_SECONDS = 30
+
+
+class ClickHouseError(Exception):
+    """Сбой чтения из ClickHouse (транспорт, статус ответа, разбор JSON).
+
+    Текст ошибки ВСЕГДА проходит через `mask()`: сервер отражает текст запроса
+    и заголовки в теле ответа, и без маскирования пароль из basic auth мог бы
+    попасть в лог или в отчёт вместе с диагностикой.
+    """
+
+
+def production_sql(asset: str, year: int) -> str:
+    """SQL для факта годовой добычи актива, тыс. унц (koz).
+
+    Предикат дословно повторяет `actualProductionSelect` из
+    `dcf/mine_plans_import.go` — один и тот же факт не должен читаться двумя
+    источниками двумя разными способами:
+
+        SELECT argMax(value, date) AS v
+        FROM databook_polyus FINAL
+        WHERE table = '<ASSET>'
+          AND name = 'Total Dore gold output'
+          AND data = 'ANNUAL'
+          AND toYear(date) = <YEAR>
+        FORMAT JSON
+
+    ДВА ДОБАВЛЕНИЯ К ПРЕДИКАТУ ИМПОРТЁРА, и оба обязательны именно для HTTP:
+
+    * `AS v` — имя колонки фиксировано, иначе ClickHouse вернул бы ключом
+      само выражение `argMax(value, date)`, которое пришлось бы угадывать при
+      разборе;
+    * `FORMAT JSON` — HTTP-интерфейс по умолчанию отвечает `TabSeparated`, а не
+      JSON. Без явного формата разбор падал бы на первом же запросе (проверено
+      на живом сервере: `argMax` вернул `1229.3` строкой, а не объектом JSON).
+
+    ПОЧЕМУ `FINAL`. `databook_polyus` — `ReplacingMergeTree` по
+    `(table, name, data, date)`: без FINAL один год мог бы прийти несколько раз
+    с разными версиями значения, и агрегат взял бы не тот слой. Ограничение
+    `table` сужает чтение всем партициям (в ключе сортировки `table` идёт
+    первым); предикат `toYear(date)` индексом не покрыт.
+
+    ПОДСТАНОВКА ЗНАЧЕНИЙ. Имена активов приходят из датапака поимённо, и
+    списком `ASSETS` (пять рудников LOM) он НЕ исчерпывается: в нём есть и
+    другие таблицы (ZAPADNOYE, TITIMUKHTA, …), законно нулевые по этой метрике.
+    Поэтому проверяется не членство в `ASSETS`, а ФОРМА имени: заглавные буквы,
+    цифры и подчёркивания. Так произвольная строка — включая `'; DROP TABLE …`
+    или перевод строки — в литерал запроса попасть не может даже случайно, а не
+    только «по недосмотру» вызывающей стороны. Год проверяется на разумный
+    диапазон из тех же соображений: отрицательный или нецелый год — ошибка
+    вызывающей стороны, а не запрос.
+    """
+    if not isinstance(asset, str) or not ASSET_LITERAL.match(asset):
+        raise ValueError(
+            f"недопустимое имя актива {asset!r}: ожидаются заглавные буквы, "
+            f"цифры и подчёркивания (например, OLIMPIADA или NATALKA)"
+        )
+    if not isinstance(year, int) or isinstance(year, bool):
+        raise ValueError(f"год должен быть целым числом, получено {year!r}")
+    if not 1900 <= year <= 2100:
+        raise ValueError(f"год вне разумного диапазона 1900..2100: {year}")
+    literal = asset.replace("'", "''")
+    return (
+        f"SELECT argMax(value, date) AS {ACTUAL_PRODUCTION_COLUMN}\n"
+        "FROM databook_polyus FINAL\n"
+        f"WHERE table = '{literal}'\n"
+        f"  AND name = '{ACTUAL_PRODUCTION_METRIC}'\n"
+        f"  AND data = '{ACTUAL_PRODUCTION_PERIOD}'\n"
+        f"  AND toYear(date) = {year}\n"
+        f"FORMAT {ACTUAL_PRODUCTION_FORMAT}"
+    )
+
+
+def parse_ch_json(payload: str) -> list:
+    """Разбирает JSON-ответ ClickHouse в список строк-словарей.
+
+    Формат ответа — `{"data":[{...}, ...]}` (плюс служебные секции, которые
+    здесь не нужны). Отсутствие секции `data` равнозначно отсутствию строк:
+    так выглядит пустой агрегат и ответ на служебные запросы, и это НЕ ошибка.
+
+    Голый `json.JSONDecodeError` не годится как диагностика: он не называет
+    источник (кто именно прислал мусор) и уносит в текст сырой payload,
+    который при HTML-странице логина содержит не пароль, а форму входа —
+    бесполезную для разбора и опасную для лога. Поэтому поднимается
+    `ClickHouseError` с позицией сбоя и длиной ответа, но БЕЗ самого тела.
+    """
+    try:
+        parsed = json.loads(payload)
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise ClickHouseError(
+            f"ответ ClickHouse не разобран как JSON: {exc.msg} "
+            f"(строка {exc.lineno}, колонка {exc.colno}; длина ответа {len(payload)} байт)"
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise ClickHouseError(
+            f"ответ ClickHouse — не объект JSON, а {type(parsed).__name__}"
+        )
+    rows = parsed.get("data", [])
+    if not isinstance(rows, list):
+        raise ClickHouseError(
+            f'секция "data" ответа ClickHouse — не массив, а {type(rows).__name__}'
+        )
+    return rows
+
+
+def _error_body(exc) -> str:
+    """Тело HTTP-ошибки в виде текста, если оно вообще есть.
+
+    `urllib.error.HTTPError` — и файлоподобный объект (`read()`), и исключение
+    с атрибутом `fp`. Реальный ответ приходит байтами, но подменённый в тесте
+    транспорт может положить готовую строку. Оба варианта разбираются, чтобы
+    диагностика не терялась из-за формы носителя, а ЛЮБОЙ другой сбой чтения
+    тела не заменял исходную ошибку новой.
+    """
+    fp = getattr(exc, "fp", None)
+    try:
+        raw = exc.read() if fp is not None else ""
+    except Exception:  # noqa: BLE001 — тело необязательно, исходная ошибка важнее
+        return ""
+    if raw is None:
+        return ""
+    if isinstance(raw, bytes):
+        return raw.decode("utf-8", errors="replace")
+    return str(raw)
+
+
+def ch_query(sql: str) -> list:
+    """Выполняет SQL через HTTP-интерфейс ClickHouse и возвращает строки.
+
+    POST на `http://{host}:{http_port}/` с basic auth. Берётся именно
+    HTTP-порт из `ch_config()["http_port"]` (по умолчанию 8123), а НЕ
+    `port` (нативный протокол, 9000): `urllib.request` говорит по HTTP, и на
+    нативном порту соединение повисло бы.
+
+    Basic auth — требование HTTP-интерфейса; пароль уходит в заголовке
+    `Authorization`, а не в URL, поэтому он не попадает в текст ошибок
+    `urllib` (те печатают URL, но не заголовки). Дополнительно КАЖДЫЙ текст
+    ошибки проходит через `mask()` — на случай, когда сервер отражает запрос
+    или заголовки в теле ответа.
+
+    Любой не-200 статус и любой сбой транспорта поднимают `ClickHouseError`.
+    """
+    config = ch_config()
+    password = config["password"]
+    url = f"http://{config['host']}:{config['http_port']}/"
+    request = urllib.request.Request(url, data=sql.encode("utf-8"), method="POST")
+    request.add_header("Content-Type", "text/plain; charset=utf-8")
+    token = base64.b64encode(
+        f"{config['user']}:{password}".encode("utf-8")
+    ).decode("ascii")
+    request.add_header("Authorization", f"Basic {token}")
+    try:
+        with urllib.request.urlopen(request, timeout=CH_QUERY_TIMEOUT_SECONDS) as response:
+            body = response.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        # Тело ответа — главный источник диагностики (ClickHouse кладёт туда
+        # код и текст ошибки), но именно оно может содержать пароль: сначала
+        # маскируем, потом кладём в сообщение.
+        detail = _error_body(exc).strip() or str(exc.reason or "")
+        raise ClickHouseError(
+            "ClickHouse ответил статусом "
+            + mask(password, f"{exc.code} на запрос к {url}: {detail}")
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise ClickHouseError(
+            mask(password, f"ClickHouse недоступен по {url}: {exc.reason}")
+        ) from exc
+    return parse_ch_json(mask(password, body))
+
+
+def read_actual_production(assets: list, years: tuple) -> dict:
+    """Факт годовой добычи по активам и годам, тыс. унц (koz).
+
+    Результат: `{ASSET: {year: float}}` — присутствуют ВСЕ пары из
+    декартова произведения `assets × years`, даже если строки нет.
+
+    ОТСУТСТВИЕ СТРОКИ — НОРМАЛЬНЫЙ РЕЗУЛЬТАТ `0.0`, А НЕ ОШИБКА. Так же
+    ведёт себя `argMax` по пустому множеству (ноль/NULL), и так же поступает
+    Go-импортёр (`readActualProduction` в `dcf/mine_plans_import.go`): в
+    датапаке есть активы законно нулевые (TITIMUKHTA, ZAPADNOYE), и краснить
+    чтение на отсутствии строки значило бы считать характеристику источника
+    за сбой. Ноль и NULL здесь неразличимы НАМЕРЕННО — ровно как в импортёре;
+    условие «есть ли факт» применяет вызывающий.
+    """
+    production: dict = {}
+    for asset in assets:
+        per_year: dict = {}
+        for year in years:
+            rows = ch_query(production_sql(asset, year))
+            value = rows[0].get("v") if rows else None
+            per_year[year] = float(value) if value is not None else 0.0
+        production[asset] = per_year
+    return production
 
 
 def main() -> int:
