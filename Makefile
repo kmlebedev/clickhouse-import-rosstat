@@ -223,7 +223,7 @@ deploy-staging-mcp: staging-precheck
 	scp deploy/staging/mcp-clickhouse.service $(STAGING_HOST):/etc/systemd/system/mcp-clickhouse.service
 	ssh $(STAGING_HOST) 'systemctl daemon-reload'
 	@echo "прогрев кэша uv (скачивание mcp-clickhouse==$(MCP_VERSION))..."
-	@ssh $(STAGING_HOST) '$(STAGING_BIN_DIR)/uv tool run --from mcp-clickhouse==$(MCP_VERSION) mcp-clickhouse --help >/dev/null 2>&1 || true'
+	@ssh $(STAGING_HOST) '$(STAGING_BIN_DIR)/uv tool run --from mcp-clickhouse==$(MCP_VERSION) python -c "pass" >/dev/null 2>&1 || true'
 
 # Полный деплой: бинарь → dagu → mcp → DAG'и → проверка ДО включения → включение → smoke.
 #
