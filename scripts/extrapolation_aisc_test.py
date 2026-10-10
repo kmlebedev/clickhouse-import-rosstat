@@ -5,10 +5,12 @@
     python3 scripts/extrapolation_aisc_test.py -v
 """
 
+import csv
 import http.client
 import io
 import os
 import sys
+import tempfile
 import unittest
 import unittest.mock
 import urllib.error
@@ -1447,6 +1449,291 @@ class TestPlanRows(unittest.TestCase):
         self.assertEqual(keys, sorted(keys))
         self.assertEqual(rows[0]["asset"], "OLIMPIADA")
         self.assertEqual(rows[0]["year"], 2025)
+
+
+def _sample_rows(count: int = 1) -> list:
+    """Минимальные плановые строки для тестов эмиттеров.
+
+    Значения намеренно «кривые» (не целые доли), чтобы `repr`-формат чисел
+    был заметен: округление до копеек прошло бы незамеченным на ровных 900.0.
+
+    Год циклится по ПЛАНОВОМУ горизонту `PLAN_BASE_YEAR … 2048`, а не растёт
+    безгранично: `write_csv` считает множитель эскалации, и год вне словаря
+    `ESCALATION` законно поднимает `ValueError` (см. `escalation_factor`) —
+    тестовые данные не должны упираться в эту защиту, когда проверяется
+    формат записи, а не она сама.
+    """
+    first_year = ex.PLAN_BASE_YEAR
+    last_year = max(ex.ESCALATION)
+    span = last_year - first_year + 1
+    return [
+        {
+            "asset": "OLIMPIADA",
+            "year": first_year + index % span,
+            "production_koz": 1441.3,
+            "tcc": 773.0,
+            "aisc": 1300.5,
+            "capex_sustaining": 474.25,
+        }
+        for index in range(count)
+    ]
+
+
+class TestEmit(unittest.TestCase):
+    """Сериализация плановых строк: SQL-сид и CSV.
+
+    Тесты брифа — авторитетны и приведены дословно. Добавлены краевые проверки:
+    отклонение не-конечных чисел, размер батча по умолчанию, побайтовый
+    круг-трип строки VALUES (ловит перестановку колонок), шапка с датой и
+    множителями, отсутствие локализованных разделителей в CSV.
+    """
+
+    # Имя таблицы и ПОЛНЫЙ список колонок — из DDL `dcf/schema.go`. Порядок
+    # здесь не косметика: ClickHouse примет перестановку однотипных Float64 и
+    # молча запишет tcc в aisc, поэтому колонки и значения пинуются вместе.
+    COLUMNS = (
+        "company", "asset", "year", "production_koz", "grade_gpt",
+        "tcc", "aisc", "capex_sustaining", "capex_project", "closure_costs",
+    )
+
+    def test_null_grade_and_zero_project_capex(self):
+        rows = [{"asset": "OLIMPIADA", "year": 2025, "production_koz": 900.0,
+                 "tcc": 773.0, "aisc": 1300.0, "capex_sustaining": 474.0}]
+        sql = "\n".join(ex.sql_batches(rows))
+        self.assertIn("NULL", sql)
+        self.assertIn("'OLIMPIADA'", sql)
+        self.assertIn(",0,0)", sql)  # capex_project, closure_costs
+
+    def test_all_ten_columns_present(self):
+        sql = "\n".join(ex.sql_batches([{
+            "asset": "OLIMPIADA", "year": 2025, "production_koz": 900.0,
+            "tcc": 773.0, "aisc": 1300.0, "capex_sustaining": 474.0}]))
+        for col in self.COLUMNS:
+            self.assertIn(col, sql)
+
+    def test_column_list_order_is_exact(self):
+        # ПОЛНЫЙ список колонок в INSERT, дословно и в порядке DDL. Именно
+        # подстрока с пробелами и скобками: подстрочного вхождения имени мало,
+        # перестановку `tcc`/`aisc` оно не поймает.
+        self.assertEqual(
+            ex.MINE_PLANS_COLUMNS,
+            self.COLUMNS,
+        )
+        self.assertIn("INSERT INTO mine_plans (" + ", ".join(self.COLUMNS) + ")", ex.sql_batches([{
+            "asset": "A", "year": 2025, "production_koz": 1.0,
+            "tcc": 1.0, "aisc": 2.0, "capex_sustaining": 0.0}])[0])
+
+    def test_batching_respects_size(self):
+        rows = [{"asset": "A", "year": 2025, "production_koz": 1.0,
+                 "tcc": 1.0, "aisc": 2.0, "capex_sustaining": 0.0}] * 1200
+        self.assertEqual(len(ex.sql_batches(rows, batch_size=500)), 3)
+
+    def test_default_batch_size_yields_one_statement_for_77_rows(self):
+        # 77 — реальный размер плана (10+13+24+15+15), он же модульный инвариант
+        # `sum(MINE_LIFE_YEARS.values())`. Батч по умолчанию (500) обязан
+        # уложить его в ОДИН INSERT: иначе `make ch-sql` писал бы лишние
+        # запросы, а поведение по умолчанию не было бы проверено вовсе.
+        self.assertEqual(sum(ex.MINE_LIFE_YEARS.values()), 77)
+        self.assertEqual(len(ex.sql_batches(_sample_rows(77))), 1)
+
+    def test_every_batch_is_a_complete_insert_statement(self):
+        # Каждый батч самодостаточен: заголовок INSERT, хотя бы одна строка,
+        # завершающая точка с запятой. Склейка батчей без разделителя — самая
+        # частая поломка при правке эмиттера.
+        for batch in ex.sql_batches(_sample_rows(7), batch_size=3):
+            self.assertTrue(batch.startswith(
+                "INSERT INTO mine_plans (" + ", ".join(self.COLUMNS) + ") VALUES"))
+            self.assertTrue(batch.endswith(";"), batch[-40:])
+            self.assertTrue(batch.rstrip().endswith(");"))
+
+    def test_nan_is_rejected(self):
+        with self.assertRaises(ValueError):
+            ex.sql_literal(float("nan"))
+
+    def test_inf_is_rejected(self):
+        # Бесконечность ClickHouse принял бы как Float64, и NPV уехал бы в inf
+        # без единой ошибки. Отклоняются ОБА знака.
+        for bad in (float("inf"), float("-inf")):
+            with self.subTest(value=bad):
+                with self.assertRaises(ValueError):
+                    ex.sql_literal(bad)
+
+    def test_nan_in_a_row_is_rejected(self):
+        # Отклонение должно срабатывать и на пути через `sql_batches`, а не
+        # только на прямом вызове: строка с NaN не должна попасть в сид.
+        rows = _sample_rows(1)
+        rows[0]["aisc"] = float("nan")
+        with self.assertRaises(ValueError):
+            ex.sql_batches(rows)
+
+    def test_value_tuple_is_exact(self):
+        # КРУГ-ТРИП: точный текст кортежа VALUES. Тест существует ради
+        # перестановки колонок в будущем — порядок ЗНАЧЕНИЙ закреплён здесь
+        # побайтово, а не только список имён.
+        #
+        # company='PLZL', asset='OLIMPIADA', year=2025, production_koz=1441.3,
+        # grade_gpt=NULL, tcc=773.0, aisc=1300.5, capex_sustaining=474.25,
+        # capex_project=0, closure_costs=0.
+        expected = "('PLZL','OLIMPIADA',2025,1441.3,NULL,773.0,1300.5,474.25,0,0)"
+        self.assertIn(expected, ex.sql_batches(_sample_rows(1))[0])
+
+    def test_sql_literal_forms(self):
+        self.assertEqual(ex.sql_literal(1), "1")
+        self.assertEqual(ex.sql_literal(1.5), "1.5")
+        self.assertEqual(ex.sql_literal("TI"), "'TI'")
+        self.assertEqual(ex.sql_literal(None), "NULL")
+        # Тик в имени экранируется удвоением: литерал не должен разрывать
+        # строку запроса.
+        self.assertEqual(ex.sql_literal("O'HARA"), "'O''HARA'")
+        self.assertEqual(ex.sql_literal(True), "1")
+        self.assertEqual(ex.sql_literal(False), "0")
+
+    def test_sql_literal_keeps_full_float_precision(self):
+        # Полная точность `repr`, а не усечение форматом: 0.1 + 0.2 — это
+        # 0.30000000000000004, и округление «до красивых» внесло бы ошибку,
+        # которую потом не отличить от ошибки модели.
+        self.assertEqual(ex.sql_literal(0.1 + 0.2), repr(0.1 + 0.2))
+        self.assertEqual(ex.sql_literal(1.0 / 3.0), repr(1.0 / 3.0))
+
+    def test_sql_batches_rejects_nonpositive_batch_size(self):
+        # batch_size = 0 — это бесконечный цикл (range(0, n, 0) бросает
+        # ValueError, но тогда сообщение указывало бы внутрь реализации);
+        # отрицательный — тоже ошибка вызывающей стороны.
+        for bad in (0, -1):
+            with self.subTest(batch_size=bad):
+                with self.assertRaises(ValueError):
+                    ex.sql_batches(_sample_rows(3), batch_size=bad)
+
+    def test_empty_rows_give_no_statements(self):
+        # Пустой план — это НЕ пустой INSERT со синтаксически неверным
+        # «VALUES;». Ни одного оператора: файл останется с одной шапкой.
+        self.assertEqual(ex.sql_batches([]), [])
+        self.assertEqual(ex.sql_batches([], batch_size=1), [])
+
+    # --- Запись файлов -------------------------------------------------------
+
+    META = {
+        "command": "make dcf-aisc",
+        "calibration_years": (2019, 2020, 2021),
+        "m": 1.5099204817590248,
+        "residual": -2.2737367544323206e-13,
+    }
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.dir = Path(self._tmp.name)
+
+    def test_write_sql_prepends_a_header_then_all_batches(self):
+        path = self.dir / "seed.sql"
+        rows = _sample_rows(1200)
+        ex.write_sql(path, rows, self.META)
+        text = path.read_text(encoding="utf-8")
+
+        # Шапка — КОММЕНТАРИЙ и стоит ПЕРВОЙ: ClickHouse не должен выполнить
+        # прозу как SQL.
+        self.assertTrue(text.startswith("--"), text[:40])
+        self.assertIn("make dcf-aisc", text)
+        for year in (2019, 2020, 2021):
+            self.assertIn(str(year), text)
+        self.assertIn(repr(self.META["m"]), text)
+        self.assertIn(repr(self.META["residual"]), text)
+        # Дата генерации — ISO-форма (YYYY-MM-DD), а не локальная проза.
+        from datetime import date as _date
+        self.assertIn(_date.today().isoformat(), text)
+
+        # Данные — ровно те же операторы, что у `sql_batches`, и все строки на
+        # месте: 1200 / 500 = 3 оператора.
+        data = text[text.index("INSERT INTO"):]
+        self.assertEqual(data, "\n".join(ex.sql_batches(rows)))
+        self.assertEqual(len(ex.sql_batches(rows)), 3)
+
+    def test_write_sql_names_all_five_assets(self):
+        rows = [
+            {"asset": asset, "year": 2025, "production_koz": 1.0,
+             "tcc": 1.0, "aisc": 2.0, "capex_sustaining": 0.0}
+            for asset in ex.ASSETS
+        ]
+        path = self.dir / "seed.sql"
+        ex.write_sql(path, rows, self.META)
+        text = path.read_text(encoding="utf-8")
+        for asset in ex.ASSETS:
+            self.assertIn(f"'{asset}'", text)
+
+    def test_write_csv_has_header_then_one_row_per_plan_row(self):
+        path = self.dir / "reconciled.csv"
+        rows = _sample_rows(77)
+        ex.write_csv(path, rows)
+        with path.open(newline="", encoding="utf-8") as handle:
+            parsed = list(csv.DictReader(handle))
+        self.assertEqual(len(parsed), 77)
+        with path.open(newline="", encoding="utf-8") as handle:
+            header = next(csv.reader(handle))
+        # Те же десять колонок, что и в SQL.
+        self.assertEqual(header[:len(self.COLUMNS)], list(self.COLUMNS))
+        # Плюс справочные колонки для глазной сверки: клин r̄, множитель
+        # эскалации и рублёвая справка (в модель не идут).
+        for extra in ("r_bar", "escalation_factor", "aisc_per_oz_rub"):
+            self.assertIn(extra, header)
+
+    def test_write_csv_numbers_are_plain_not_locale_formatted(self):
+        # Ни запятых-разделителей, ни пробелов внутри чисел: файл обязан
+        # открываться `csv.DictReader` и парситься в float без правок.
+        path = self.dir / "reconciled.csv"
+        ex.write_csv(path, _sample_rows(1))
+        with path.open(newline="", encoding="utf-8") as handle:
+            parsed = list(csv.DictReader(handle))
+        self.assertEqual(float(parsed[0]["production_koz"]), 1441.3)
+        self.assertEqual(float(parsed[0]["tcc"]), 773.0)
+        self.assertEqual(float(parsed[0]["aisc"]), 1300.5)
+        self.assertEqual(float(parsed[0]["capex_sustaining"]), 474.25)
+        self.assertEqual(float(parsed[0]["year"]), 2025)
+        # grade — пустая ячейка: NULL выражается отсутствием значения, а не
+        # строкой "nan" и не измеренным нулём.
+        self.assertEqual(parsed[0]["grade_gpt"], "")
+        self.assertEqual(parsed[0]["company"], "PLZL")
+
+    def test_write_csv_keeps_r_bar_and_escalation_values(self):
+        # Справочные колонки несут РЕАЛЬНЫЕ значения, а не константы: r_bar
+        # приходит из калибровки, множитель — из `escalation_factor`.
+        rows = _sample_rows(2)
+        for row in rows:
+            row["r_bar"] = 0.626
+        path = self.dir / "reconciled.csv"
+        ex.write_csv(path, rows)
+        with path.open(newline="", encoding="utf-8") as handle:
+            parsed = list(csv.DictReader(handle))
+        self.assertAlmostEqual(float(parsed[0]["r_bar"]), 0.626, places=9)
+        self.assertAlmostEqual(
+            float(parsed[1]["escalation_factor"]),
+            ex.escalation_factor(2025, 2026),
+            places=9,
+        )
+        self.assertGreater(float(parsed[1]["aisc_per_oz_rub"]), 0.0)
+
+    def test_writers_create_missing_parent_directories(self):
+        # Каталог `sql/` может отсутствовать в свежем клоне; эмиттер обязан его
+        # создать, а не падать с FileNotFoundError на середине записи.
+        path = self.dir / "nested" / "deeper" / "seed.sql"
+        ex.write_sql(path, _sample_rows(1), self.META)
+        self.assertTrue(path.exists())
+        csv_path = self.dir / "nested" / "deep2" / "reconciled.csv"
+        ex.write_csv(csv_path, _sample_rows(1))
+        self.assertTrue(csv_path.exists())
+
+    def test_no_secrets_in_generated_artifacts(self):
+        # Артефакты — публикуемые файлы: ни пароля, ни строки подключения с
+        # basic auth в них попасть не должно, даже если окружение задано.
+        self.addCleanup(os.environ.pop, "CLICKHOUSE_PASSWORD", None)
+        os.environ["CLICKHOUSE_PASSWORD"] = "sup3r-s3cret-pw"
+        sql_path = self.dir / "seed.sql"
+        csv_path = self.dir / "reconciled.csv"
+        ex.write_sql(sql_path, _sample_rows(3), self.META)
+        ex.write_csv(csv_path, _sample_rows(3))
+        for path in (sql_path, csv_path):
+            text = path.read_text(encoding="utf-8")
+            self.assertNotIn("sup3r-s3cret-pw", text)
+            self.assertNotIn("Basic ", text)
 
 
 if __name__ == "__main__":

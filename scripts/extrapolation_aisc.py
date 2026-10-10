@@ -22,6 +22,7 @@
 """
 
 import base64
+import csv
 import json
 import os
 import re
@@ -30,6 +31,7 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+from datetime import date
 from pathlib import Path
 from typing import Optional
 
@@ -1251,6 +1253,311 @@ def build_plan_rows(
     return rows
 
 
+# --- Сериализация плана: SQL-сид `mine_plans` и CSV для глазной сверки -------
+
+# Компания-эмитент в каждой строке. Дословно совпадает с `assetPlanSeed.Company`
+# и `seed.Company` в `dcf/mine_plans_seed.go`: тот же ключ сортировки
+# `ReplacingMergeTree (company, asset, year)`, поэтому расхождение в написании
+# дало бы ДВЕ строки на один год вместо перезаписи.
+COMPANY = "PLZL"
+
+# ПОЛНЫЙ список колонок INSERT — дословно порядок DDL из `dcf/schema.go`
+# (`minePlansCreateTable`). Десять колонок, включая ключевые.
+#
+# ПОРЯДОК ЗДЕСЬ — КОНТРАКТ, А НЕ ОФОРМЛЕНИЕ. ClickHouse принимает перестановку
+# однотипных Float64 молча и записал бы `tcc` в `aisc`; именно об этом
+# предупреждает комментарий в `dcf/mine_plans_import.go` («Сверять глазами
+# обязательно»). Здесь перестановку ловит тест, а не глаз.
+MINE_PLANS_TABLE = "mine_plans"
+MINE_PLANS_COLUMNS = (
+    "company", "asset", "year", "production_koz", "grade_gpt",
+    "tcc", "aisc", "capex_sustaining", "capex_project", "closure_costs",
+)
+
+# Размер батча INSERT по умолчанию. 500 — из плана §3.2 (`emit_sql`); весь план
+# (77 строк) укладывается в ОДИН оператор, поэтому значение проверено тестом.
+DEFAULT_BATCH_SIZE = 500
+
+# Значения колонок, которые НЕ берутся из строки, а заданы политикой. Каждое
+# — семантическое, а не заглушка:
+#
+# * `grade_gpt = None` → `NULL`. Содержания в `MinePlanYear` нет
+#   (`dcf/model.go`), `npvLOM` его не читает, и Go-сид пишет `nil` безусловно
+#   (`dcf/mine_plans_import.go`). Ноль здесь означал бы ИЗМЕРЕННОЕ «0 г/т».
+# * `capex_project = 0`. Ни у одного из пяти рудников LOM нет проекта
+#   развития: весь их capex — поддержание (`dcf/mine_plans_build.go`,
+#   `ProjectCapex: 0`). Ноль — измеренное отсутствие проекта, а не «не задано».
+#   Записан ЦЕЛЫМ (`int`), чтобы литерал был `0`, а не `0.0`: ClickHouse
+#   приводит к Float64 сам, а в CSV и в глазах читателя «0» и «0.0» — одно и
+#   то же отсутствие величины. Полная точность (`repr`) для ЭТИХ колонок
+#   смысла не имеет по построению.
+# * `closure_costs = 0` → «НЕ ОПУБЛИКОВАНО ПО АКТИВУ / НЕ ЗАДАНО», и НИКОГДА
+#   «закрытие бесплатно». Дословно контракт `assetPlanSeed.ClosureCosts`
+#   (`dcf/mine_plans_seed.go`): per-asset провижен Полюс не публикует, а
+#   распределение групповой суммы не утверждено. Go-сид кладёт хвост в
+#   последний год LOM ПУСТЫМ (0), и здесь колонка остаётся нулевой ВО ВСЕХ
+#   годах, а не в одном: иначе форма «хвост в последнем году» была бы заявлена
+#   там, где величина неизвестна.
+GRADE_GPT = None
+CAPEX_PROJECT = 0
+CLOSURE_COSTS = 0
+
+
+def sql_literal(value) -> str:
+    """Литерал ClickHouse для одного значения строки плана.
+
+    * `None` → `NULL` (отличает «не раскрыто» от измеренного нуля);
+    * `str` → в одинарных кавычках с удвоением тика (`O'HARA` → `'O''HARA'`):
+      литерал не должен разрывать текст запроса;
+    * `bool` → `1`/`0`: в Python `True` — это `int`, и без явной ветви он
+      попал бы в `repr(True)` = `'True'`, что ClickHouse не разберёт;
+    * `int` → `repr`;
+    * `float` → `repr`, то есть ПОЛНАЯ точность двоичного представления
+      (`0.1 + 0.2` → `'0.30000000000000004'`). Формат вроде `%.6f` внёс бы
+      ошибку округления, неотличимую потом от ошибки модели; а `str()` для
+      float в Python 3 — это и есть `repr`, но явный `repr` фиксирует
+      намерение, а не совпадение поведения.
+
+    Не-конечные float НЕ допускаются: `NaN` и `±inf` поднимают `ValueError`.
+    ClickHouse взял бы их как Float64 и записал бы строку, а `NaN`/`inf`
+    разъехались бы по всему NPV (сравнения с `NaN` всегда ложны, поэтому
+    `aisc < tcc` их даже не пометил бы). Молчаливая запись — недопустимый
+    исход, поэтому отказ здесь, а не в валидации после.
+
+    Важно про `assert`: проверка `NaN` в тесте (`assertNotEqual(nan, nan)`)
+    ложна по определению, поэтому конечность проверяется явно
+    (`math.isfinite`-эквивалент через сравнения), а не отрицанием равенства.
+    """
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        # Ветвь ОБЯЗАНА стоять до `isinstance(value, int)`: bool — подкласс int.
+        return "1" if value else "0"
+    if isinstance(value, str):
+        return "'" + value.replace("'", "''") + "'"
+    if isinstance(value, int):
+        return repr(value)
+    if isinstance(value, float):
+        if value != value:  # NaN: единственное значение, не равное себе
+            raise ValueError("NaN недопустим в литерале SQL: значение не записано")
+        if value == float("inf") or value == float("-inf"):
+            raise ValueError(f"бесконечность недопустима в литерале SQL: {value!r}")
+        return repr(value)
+    raise ValueError(
+        f"тип {type(value).__name__} не поддержан в литерале SQL: {value!r}"
+    )
+
+
+def _value_tuple(row: dict) -> str:
+    """Кортеж VALUES одной строки плана — ровно 10 позиций в порядке колонок.
+
+    Постоянные колонки подставляются здесь, а не приходят из строки: эмиттер не
+    доверяет вызывающему значения, которые заданы политикой (`company`,
+    `grade_gpt`, `capex_project`, `closure_costs`).
+    """
+    return (
+        "("
+        + ",".join((
+            sql_literal(COMPANY),
+            sql_literal(row["asset"]),
+            sql_literal(row["year"]),
+            sql_literal(row["production_koz"]),
+            sql_literal(GRADE_GPT),
+            sql_literal(row["tcc"]),
+            sql_literal(row["aisc"]),
+            sql_literal(row["capex_sustaining"]),
+            sql_literal(CAPEX_PROJECT),
+            sql_literal(CLOSURE_COSTS),
+        ))
+        + ")"
+    )
+
+
+def sql_batches(rows: list, batch_size: int = DEFAULT_BATCH_SIZE) -> list:
+    """Операторы `INSERT INTO mine_plans (…) VALUES …;` батчами по `batch_size`.
+
+    Возвращается СПИСОК готовых операторов: по одному на батч, каждый — с
+    полным списком колонок и завершающей точкой с запятой, поэтому батчи можно
+    склеивать и подавать `clickhouse client --multiquery` без правок.
+
+    Пустой список строк даёт ПУСТОЙ список операторов, а не `INSERT … VALUES;`
+    (это синтаксически неверный SQL). Шапка файла при этом пишется — план
+    нулевой длины остаётся видимым, а не превращается в невалидный запрос.
+
+    Порядок строк сохраняется как есть: сортировка — ответственность
+    `build_plan_rows` (по активу, затем по году), и повторять её здесь значило
+    бы иметь два места, где порядок задаётся.
+    """
+    if batch_size <= 0:
+        raise ValueError(f"размер батча должен быть положительным, получено {batch_size}")
+    header = (
+        f"INSERT INTO {MINE_PLANS_TABLE} ({', '.join(MINE_PLANS_COLUMNS)}) VALUES"
+    )
+    statements: list = []
+    for start in range(0, len(rows), batch_size):
+        chunk = rows[start:start + batch_size]
+        body = ",\n".join(_value_tuple(row) for row in chunk)
+        statements.append(f"{header}\n{body};")
+    return statements
+
+
+# Название команды генерации сида для шапки. Пишется в файл как есть, чтобы
+# строку из шапки можно было скопировать в терминал.
+GENERATE_COMMAND = "make dcf-aisc"
+
+# Шаблон шапки SQL-сида. Текст русский, как и вся документация репозитория.
+# Две ПУСТЫЕ строки после `--` оставлены намеренно: шапка отделена от данных,
+# и `grep -c '^INSERT'` по файлу считает только операторы.
+SQL_HEADER_TEMPLATE = """\
+-- Сид таблицы mine_plans: поактивный AISC Полюса, экстраполированный на LOM.
+--
+-- СГЕНЕРИРОВАН АВТОМАТИЧЕСКИ, ПРАВИТЬ РУКАМИ НЕЛЬЗЯ: правка будет затёрта
+-- следующим прогоном. Источник чисел — калибровка по пресс-релизам Полюса
+-- и факт добычи из databook_polyus; всё это делает scripts/extrapolation_aisc.py.
+--
+-- Команда генерации: {command}
+-- Дата генерации: {generated}
+-- Калибровочные годы клина: {calibration_years}
+-- Множитель клина m (увязка к групповому AISC, последний год плана): {m}
+-- Остаток увязки, USD/oz (факт минус цель, последний год плана): {residual}
+-- Строк в сиде: {row_count}
+--
+-- Замечания к семантике строк (повторяют контракт dcf/mine_plans_seed.go):
+--   * company = 'PLZL' у всех строк;
+--   * grade_gpt = NULL — содержания в модели нет (dcf/model.go), ноль означал
+--     бы измеренное «0 г/т»;
+--   * capex_project = 0 — ни у одного из пяти рудников LOM нет проекта
+--     развития, весь capex идёт в capex_sustaining;
+--   * closure_costs = 0 означает «НЕ ОПУБЛИКОВАНО ПО АКТИВУ / НЕ ЗАДАНО»,
+--     и НИКОГДА — «закрытие бесплатно»: per-asset провижен Полюс не
+--     публикует, распределение групповой суммы не утверждено.
+--
+-- Строки писались под тем же ключом (company, asset, year), что и сид
+-- dcf_mine_plans, поэтому ReplacingMergeTree перезапишет его плато
+-- уточнённой структурой затрат. Порядок применения — dcf_mine_plans →
+-- dcf_mine_plans_seed → dcf_engine; иначе расчёт пройдёт на старом клине.
+{statements}"""
+
+
+def write_sql(path: Path, rows: list, meta: dict) -> None:
+    """Пишет SQL-сид `mine_plans`: шапка-комментарий плюс батчи INSERT.
+
+    `meta` — словарь генерации. Обязательные ключи: `command` (команда),
+    `calibration_years` (годы калибровки, iterable), `m` (множитель клина),
+    `residual` (остаток увязки, USD/oz). Если ключа нет или значение `None`,
+    в шапке печатается «не задано»: шапка обязана оставаться честной, а не
+    подставлять ноль вместо неизвестного — ноль рядом с «остатком» читался бы
+    как безупречная увязка.
+
+    Дата берётся системная на момент записи (`date.today()`), а НЕ из `meta`:
+    шапка описывает ИМЕННО этот файл, и подсунутая вызывающим дата — это ровно
+    тот «ручной» вход, от которого файл и защищает.
+
+    Каталог пути создаётся, если его нет: `sql/` может отсутствовать в свежем
+    клоне, а падение на середине записи оставило бы усечённый файл, который
+    `make ch-sql` потом применил бы как настоящий сид.
+    """
+    calibration_years = meta.get("calibration_years")
+    if calibration_years is None:
+        years_text = "не заданы"
+    else:
+        years_text = ", ".join(str(year) for year in calibration_years)
+
+    def _shown(key):
+        value = meta.get(key)
+        return "не задано" if value is None else repr(value)
+
+    header = SQL_HEADER_TEMPLATE.format(
+        command=meta.get("command") or "не задана",
+        generated=date.today().isoformat(),
+        calibration_years=years_text,
+        m=_shown("m"),
+        residual=_shown("residual"),
+        row_count=len(rows),
+        # Операторы разделяются переводом строки: склейка без разделителя дала
+        # бы `…,0,0);INSERT INTO …`, что клиент отверг бы как синтаксис.
+        statements="\n".join(sql_batches(rows)),
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(header, encoding="utf-8")
+
+
+# Колонки CSV. Первые десять — дословно колонки сида, чтобы файл читался рядом
+# с SQL без перевода глазами; дальше — СПРАВОЧНЫЕ величины для глазной сверки.
+# Они НЕ идут в модель (как и рублёвая колонка, спека §3.6 п. 3) и помечены
+# именами с суффиксом `_check`, чтобы не выглядеть входом.
+CSV_COLUMNS = MINE_PLANS_COLUMNS + (
+    "r_bar",
+    "escalation_factor",
+    "aisc_per_oz_rub",
+)
+
+# Курс для СПРАВОЧНОЙ рублёвой колонки CSV, RUB/USD. В модель не идёт и на NPV
+# не влияет (спека §3.6 п. 3) — нужен только человеку, чтобы «1300 USD/oz»
+# читалось привычнее. Это допущение, названное здесь одним числом, а не ряд:
+# ряда `usdrub_path` в расчёте нет, и второй источник курса заводить запрещено.
+USD_RUB_REFERENCE = 78.0
+
+
+def write_csv(path: Path, rows: list) -> None:
+    """Пишет long-формат CSV: те же 10 колонок плюс справка для сверки.
+
+    Числа пишутся `repr`-формой (`float → str`), БЕЗ разделителей разрядов и
+    без запятой как десятичного знака: запятая внутри ячейки сломала бы
+    `csv.DictReader`, а локализованное «1 441,3» — ещё и `float()`. Тест
+    проверяет не только наличие заголовка и число строк, но и то, что каждое
+    число читается обратно.
+
+    `grade_gpt` — пустая ячейка: `NULL` выражается ОТСУТСТВИЕМ значения, а не
+    строкой `NULL` (это справка для человека, а не SQL) и не измеренным нулём.
+
+    Справочные колонки:
+
+    * `r_bar` — калиброванная доля клина актива. Берётся из строки, если
+      вызывающий её положил (Task 10 кладёт из `calibrate`); иначе — пустая
+      ячейка, потому что выдуманное среднее выглядело бы калибровкой;
+    * `escalation_factor` — множитель затрат 2025 → год строки. Считается
+      `escalation_factor`, то есть тем же единственным источником эскалации
+      (спека §3.4), а не второй копией ряда;
+    * `aisc_per_oz_rub` — AISC в рублях по справке `USD_RUB_REFERENCE`.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(CSV_COLUMNS)
+        for row in rows:
+            factor = escalation_factor(PLAN_BASE_YEAR, row["year"])
+            writer.writerow((
+                COMPANY,
+                row["asset"],
+                row["year"],
+                repr(row["production_koz"]),
+                "" if GRADE_GPT is None else repr(GRADE_GPT),
+                repr(row["tcc"]),
+                repr(row["aisc"]),
+                repr(row["capex_sustaining"]),
+                repr(CAPEX_PROJECT),
+                repr(CLOSURE_COSTS),
+                "" if row.get("r_bar") is None else repr(row["r_bar"]),
+                repr(factor),
+                repr(row["aisc"] * USD_RUB_REFERENCE),
+            ))
+
+
+def mask(secret: str, text: str) -> str:
+    """Убирает секрет из текста сообщения.
+
+    Слепой replace портит слова, содержащие короткий пароль ('x' ломает
+    'Exception'), поэтому заменяются только вхождения, не окружённые
+    буквами и цифрами.
+    """
+    if not secret:
+        return text
+    return re.sub(rf"(?<![0-9A-Za-z]){re.escape(secret)}(?![0-9A-Za-z])", "***", text)
+
+
+# --- Факт добычи из ClickHouse ------------------------------------------------
+
 def ch_config() -> dict:
     """Параметры подключения к ClickHouse из переменных окружения.
 
@@ -1267,20 +1574,6 @@ def ch_config() -> dict:
         "http_port": os.environ.get("CH_HTTP_PORT", "8123"),
     }
 
-
-def mask(secret: str, text: str) -> str:
-    """Убирает секрет из текста сообщения.
-
-    Слепой replace портит слова, содержащие короткий пароль ('x' ломает
-    'Exception'), поэтому заменяются только вхождения, не окружённые
-    буквами и цифрами.
-    """
-    if not secret:
-        return text
-    return re.sub(rf"(?<![0-9A-Za-z]){re.escape(secret)}(?![0-9A-Za-z])", "***", text)
-
-
-# --- Факт добычи из ClickHouse ------------------------------------------------
 
 # Имя метрики факта добычи в датапаке Polyus. Дословно совпадает с
 # `actualProductionMetric` из `dcf/mine_plans_import.go`: это колонка
