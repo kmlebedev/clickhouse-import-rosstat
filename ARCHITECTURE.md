@@ -513,15 +513,24 @@ Peers-сверка (peer_universe='ru': PLZL/ЮГК/SELG) — относител
 
 ### 6.5 MCP-контур
 
-Сервер: официальный [ClickHouse/mcp-clickhouse](https://github.com/ClickHouse/mcp-clickhouse) (PyPI `mcp-clickhouse`), stdio-транспорт. Локально запускается через `uv` (Docker не требуется):
+Сервер: официальный [ClickHouse/mcp-clickhouse](https://github.com/ClickHouse/mcp-clickhouse) (PyPI `mcp-clickhouse`), версия закреплена переменной `MCP_VERSION` (сейчас `0.7.0`). Локально запускается через `uv` (Docker не требуется):
 
 ```
-uv run --with mcp-clickhouse --python 3.12 mcp-clickhouse
+uv run --with mcp-clickhouse==0.7.0 --python 3.12 mcp-clickhouse
 ```
 
-Конфигурация Kimi — пользовательский `~/.kimi-code/mcp.json` (права 600), блок `mcpServers.clickhouse`: `command: bash`, `args`: `-c` с подгрузкой `~/.config/rosstat/env` и затем `exec uv run --with mcp-clickhouse --python 3.12 mcp-clickhouse`; `env`: `CLICKHOUSE_HOST`, `CLICKHOUSE_PORT=8123`, `CLICKHOUSE_SECURE=false`, `CLICKHOUSE_USER=kimi_reader`, `CLICKHOUSE_DATABASE=default`, `CLICKHOUSE_MCP_SERVER_TRANSPORT=stdio`. Пароль `CLICKHOUSE_PASSWORD` приходит из файла окружения и в `mcp.json` не хранится.
+Конфигурация Kimi — пользовательский `~/.kimi-code/mcp.json` (права 600), блок `mcpServers.clickhouse`: `command: bash`, `args`: `-c` с подгрузкой `~/.config/rosstat/env` и затем `exec uv run --with mcp-clickhouse==0.7.0 --python 3.12 mcp-clickhouse`; `env`: `CLICKHOUSE_HOST`, `CLICKHOUSE_PORT=8123`, `CLICKHOUSE_SECURE=false`, `CLICKHOUSE_USER=kimi_reader`, `CLICKHOUSE_DATABASE=default`, `CLICKHOUSE_MCP_SERVER_TRANSPORT=stdio`. Пароль `CLICKHOUSE_PASSWORD` приходит из файла окружения и в `mcp.json` не хранится.
 
-Режим HTTP (для плагина gold-nav): плагин подключает mcp-clickhouse по URL (`mcpServers.clickhouse.url`, Bearer-токен на чтение `GOLD_NAV_MCP_TOKEN`). **Развёртывание HTTP-сервера на стороне автора в репозитории не описано и не проверено: конфигурации reverse proxy, TLS и выдачи токенов в коде нет — не реализовано.** Локальная конфигурация Kimi в этом разделе остаётся stdio.
+**HTTP-режим развёрнут на staging (реализовано 2026-10-10).** Сервис — `deploy/staging/mcp-clickhouse.service` (systemd), раскладка и порядок деплоя — `deploy/staging/README.md`. Параметры:
+
+| Переменная | Значение | Смысл |
+|---|---|---|
+| `CLICKHOUSE_MCP_SERVER_TRANSPORT` | `http` | HTTP-транспорт вместо stdio |
+| `CLICKHOUSE_MCP_BIND_HOST` / `_PORT` | `127.0.0.1` / `8000` | слушает только loopback; наружу не публикуется |
+| `CLICKHOUSE_MCP_AUTH_TOKEN` | из `/etc/clickhouse-import-rosstat.env` | **обязателен**: без него сервер падает на старте |
+| `CLICKHOUSE_USER` | `kimi_reader` | read-only, только витрины `v_*` |
+
+`GET /health` намеренно **без** аутентификации (для проб); проверка авторизации — запросом к `POST /mcp`, который без заголовка `Authorization` обязан вернуть `401`. TLS и reverse proxy (Caddy) пока не развёрнуты: эндпоинт доступен только через SSH-туннель. Плагин `gold-nav` подключается по URL (`mcpServers.clickhouse.url`, Bearer-токен на чтение).
 
 Инструменты сервера: `list_databases`, `list_tables` (читает `system.tables`/`system.columns`, видит только то, на что есть гранты; комментарии колонок попадают в `create_table_query`), `run_query`.
 

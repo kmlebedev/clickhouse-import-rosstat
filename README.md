@@ -52,7 +52,8 @@ polyus/                  отчётность Полюса: xlsx-датапак 
 financial/               legacy-контур (database/sql, свой main), новый код туда не добавляется; остался databook_ugk (ЮГК)
 dagu/                    расписания: один DAG-файл на домен, имя файла = имя DAG
 sql/                     DDL и гранты вручную: пользователь kimi_reader, сид календаря Q4-2026
-scripts/                 проверки MCP (mcp_setup_user.py, mcp_check.py)
+scripts/                 проверки MCP (mcp_setup_user.py, mcp_check.py) и тесты скриптов
+deploy/staging/           артефакты деплоя на staging: юниты dagu и mcp-clickhouse, образец env
 docs/                    аналитические статьи и дорожная карта
 .github/workflows/       CI (go.yml) и релиз по тегу v* (release.yml)
 ```
@@ -152,7 +153,35 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 | `make dev-check` | проверить наличие `go`, `gofmt`, `golangci-lint`, `uv`, `curl`, `clickhouse` |
 | `make mcp-run` | запустить MCP-сервер `mcp-clickhouse` в stdio вручную (нужен `CLICKHOUSE_PASSWORD`) |
 | `make mcp-user` | создать пользователя `kimi_reader` и выдать `GRANT SELECT` на витрины из `sql/mcp_kimi_reader.sql` (нужен `CLICKHOUSE_PASSWORD`, запущенный ClickHouse) |
-| `make mcp-check` | smoke-проверка MCP: инструменты, витрины, отказ на сырые таблицы (нужен `CLICKHOUSE_PASSWORD`, запущенный ClickHouse) |
+| `make mcp-check` | smoke-проверка MCP: инструменты, витрины, отказ на сырые таблицы (нужен `CLICKHOUSE_PASSWORD`, запущенный ClickHouse). Адрес переопределяется: `MCP_CHECK_HOST`/`MCP_CHECK_PORT` — для проверки staging через туннель |
+| `make deploy-staging` | развернуть на staging бинарник, `dagu` и `mcp-clickhouse` (см. «Деплой на staging») |
+| `make deploy-staging-binary` / `-dagu` / `-mcp` | точечно: только бинарник, только dagu, только MCP |
+| `make upgrade-staging` | обновить **только** dagu и mcp-clickhouse до версий из репозитория (без `apt upgrade`) |
+| `make mcp-user-staging` | создать `kimi_reader` на staging (нужны `CLICKHOUSE_PASSWORD` и `CH_SETUP_PASSWORD`) |
+
+### Деплой на staging
+
+Разворачивает три компонента на хост `palmshell`: бинарник `clickhouse-import-rosstat`, планировщик `dagu` v2.18.2 и MCP-сервер `mcp-clickhouse` 0.7.0 (HTTP, read-only). ClickHouse и Grafana на хосте не трогаются. Артефакты — `deploy/staging/`, порядок и отладка — `deploy/staging/README.md`.
+
+```bash
+# 1. Файл секретов на хосте (один раз; значения задаёт владелец). Токен: openssl rand -hex 32
+ssh palmshell 'install -m 600 /dev/null /etc/clickhouse-import-rosstat.env'
+#    вписать по образцу deploy/staging/clickhouse-import-rosstat.env.example
+
+# 2. Развернуть и создать пользователя MCP
+make deploy-staging
+CH_SETUP_PASSWORD=<пароль default> make mcp-user-staging
+
+# 3. Проверить end-to-end через туннель
+ssh -N -L 8123:127.0.0.1:8123 palmshell &
+CLICKHOUSE_PASSWORD=<пароль kimi_reader> make mcp-check MCP_CHECK_HOST=127.0.0.1 MCP_CHECK_PORT=8123
+```
+
+Переменные: `STAGING_HOST` (по умолчанию `palmshell`), `MCP_VERSION`, `DAGU_VERSION`. `deploy-staging` **падает**, если файла секретов нет, и никогда его не создаёт.
+
+**Внимание:** после `make deploy-staging` `dagu` включается и **начинает выполнять DAG-и по расписанию** — это реальные запросы к внешним источникам. Порядок внутри цели защищает от запуска DAG-ов на неисправном бинарнике: сначала проверяются бинарь и DAG-файлы, потом сервисы включаются, потом идёт smoke.
+
+Сервисы слушают только `127.0.0.1` (`dagu` :8080, MCP :8000): наружу ничего не публикуется, TLS/Caddy и публичный MCP-эндпоинт — следующая фаза.
 
 ### Зависимости для разработки
 
@@ -300,7 +329,7 @@ MCP GoLand (опционально, ускоряет работу Kimi Code с �
 - **Отчётность Полюса: legacy-таблица `polyus_financial_metrics` заморожена.** Импортёр `polyus_financial_metrics` пишет в `company_financials` (двойной записи нет), а одноимённая таблица остаётся как есть — её нельзя переименовать или пересоздать, не сломав дашборд `dashboard/finance-polyus.json`; новых строк в ней не появляется. Поэтому цифры дашборда со временем отстают от витрин. Агент MCP эту таблицу не видит (сырая таблица, гранта нет) — и это правильно.
 - **Отчётность Полюса доступна агенту MCP — ограничение снято 2026-10-10.** Витрины `v_company_financials`, `v_company_metric_sources`, `v_company_operating` созданы с комментариями и грантом `kimi_reader` (`sql/mcp_kimi_reader.sql`), ряды Полюса описаны в `series_catalog` (source `polyus`, 18 рядов; `polyus_datapack`, 19 рядов), поэтому агент читает производство, TCC, AISC, capex, выручку и операционку по активам через MCP. Сырые `databook_polyus`, `company_financials` и legacy `polyus_financial_metrics` агенту по-прежнему не выданы. Проверено живым `make mcp-check` 2026-10-10 (ПРОВЕРКА ПРОЙДЕНА). Витрины заведены общими для сектора, а не набором `v_polyus_*`.
 - **Ingest-endpoint: TLS — снаружи.** Лимит частоты (`INGEST_RATE_PER_MIN`, `429`) и предел тела 1 MiB (`413`) реализованы в процессе; TLS предполагается на reverse proxy, в репозитории он не описан. Повторный `POST /v1/model_run` с тем же `run_id` отвечает `200 {"inserted": 1}`, хотя строк не пишет: ответ не отличает дубль от новой записи.
-- **HTTP-режим mcp-clickhouse для плагина не развёрнут в репозитории.** Локальная конфигурация Kimi — stdio (блок «MCP для Kimi» в разделе «Ключи и окружение»). Для плагина `gold-nav` сервер автора по HTTPS с токеном нужно поднять отдельно.
+- **HTTP-режим mcp-clickhouse развёрнут на staging (2026-10-10).** Сервис `deploy/staging/mcp-clickhouse.service` слушает `127.0.0.1:8000`, требует Bearer-токен (`CLICKHOUSE_MCP_AUTH_TOKEN`, обязателен), читает витрины от пользователя `kimi_reader`. Локальная конфигурация Kimi остаётся stdio (блок «MCP для Kimi»). Наружу эндпоинт не опубликован и TLS не настроен — доступ через SSH-туннель; публикация для плагина `gold-nav` требует reverse proxy и отдельного шага.
 - **Индикаторы `v_gold_dashboard` вводятся вручную.** `crack_ulsd_proxy`, `distillate_stocks`, `fedwatch_dec_hike`, `etf_flows_month`, `dxy` имеют только `manual_series`; импортёров нет. Без ввода они показываются как `stale`.
 - **Сверка прогнозов не автоматизирована.** `actual` и `error_pct` в `forecast_log` не заполняются кодом; `v_forecast_accuracy` покажет `is_resolved = 0` до ручного ввода.
 - **ИПЦ в `v_model_inputs` может быть пустым.** Витрина требует, чтобы существовали таблицы `ipc_mes` и `ipc_weeks`, но не проверяет их заполненность. Таблицы создаются до загрузки Росстата, поэтому при его ошибке (см. выше) витрина создаётся, а `ipc_mes_last` и `ipc_week_ytd` остаются NULL или устаревают; ориентироваться по `*_date`.
