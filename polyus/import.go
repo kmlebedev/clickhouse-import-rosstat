@@ -12,34 +12,50 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// financialMetricsTable — витрина с метриками Polyus. Схема перенесена без
-// изменений из legacy-импортёра financial/gold_polyus_finance.go (коммит
-// 108f4ca): таблица уже наполнена в ClickHouse.
-const financialMetricsTable = "polyus_financial_metrics"
+// financialMetricsTable — общая для сектора таблица метрик компаний. Схема взята
+// из legacy-таблицы polyus_financial_metrics и расширена измерением источника
+// (source_kind), которое входит в ORDER BY — см. financialMetricsCreateTable.
+//
+// Legacy-таблица polyus_financial_metrics остаётся на месте и больше этим
+// импортёром не наполняется: её читает Grafana-дашборд dashboard/finance-polyus.json,
+// поэтому ни переименовать её, ни пересоздать нельзя, не сломав дашборд.
+const financialMetricsTable = "company_financials"
 
 // financialMetricsCompany — тикер компании в записях витрины.
 const financialMetricsCompany = "PLZL"
 
-// financialMetricsCreateTable — DDL витрины, дословно из legacy-импортёра.
+// financialMetricsCreateTable — DDL витрины, канонический (ARCHITECTURE.md §6.2).
 // Формат с %s сохранён ради совместимости с util.ClickHouseImport: подстановка
 // имени таблицы идёт через fmt.Sprintf.
+//
+// Отличие от legacy-схемы одно — source_kind в списке колонок и в ORDER BY.
+// Именно оно и делает таблицу пригодной для нескольких документов: один и тот же
+// показатель за один и тот же период печатают и KPI-релиз, и МСФО-отчёт, и без
+// измерения источника в ключе ReplacingMergeTree оставил бы из двух значений одно,
+// молча потеряв второе (у Полюса так расходятся 17 из 79 общих ключей). Значения
+// source_kind: "kpi" (пресс-релиз), "ifrs" (аудированная форма), "legacy"
+// (строки, перенесённые из polyus_financial_metrics).
+//
+// Порядок колонок не произвольный: source_kind стоит между period_type и value —
+// ровно там, где его передаёт batch.Append.
 const financialMetricsCreateTable = `CREATE TABLE IF NOT EXISTS %s
 (
-    company LowCardinality(String),
-    metric LowCardinality(String),
-    period String,
+    company     LowCardinality(String),
+    metric      LowCardinality(String),
+    period      String,
     period_type Enum8('Q' = 1, 'H' = 2, 'FY' = 3, 'LTM' = 4),
-    value Nullable(Float64),
-    unit LowCardinality(String),
-    source_url LowCardinality(String),
+    source_kind LowCardinality(String),
+    value       Nullable(Float64),
+    unit        LowCardinality(String),
+    source_url  LowCardinality(String),
     source_page UInt16,
-    loaded_at DateTime DEFAULT now()
+    loaded_at   DateTime DEFAULT now()
 )
 ENGINE = ReplacingMergeTree(loaded_at)
-ORDER BY (company, metric, period)`
+ORDER BY (company, metric, period, source_kind)`
 
 // financialMetricsImport импортирует метрики Polyus из PDF-отчётов в
-// polyus_financial_metrics.
+// company_financials.
 type financialMetricsImport struct{}
 
 func (s *financialMetricsImport) Name() string {
@@ -147,6 +163,7 @@ func (s *financialMetricsImport) Import(ctx context.Context, conn driver.Conn) (
 				record.Metric,
 				record.Period,
 				record.PeriodType,
+				record.SourceKind,
 				record.Value,
 				record.Unit,
 				record.SourceURL,
