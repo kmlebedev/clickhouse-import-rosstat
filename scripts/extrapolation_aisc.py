@@ -26,6 +26,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -58,6 +59,12 @@ GROUP_TCC_2025_USD_PER_OZ = 739.0
 FIXTURE_DIR = ROOT / "scripts/testdata"
 OUTPUT_SQL = ROOT / "sql/dcf_mine_plans_seed.sql"
 OUTPUT_CSV = ROOT / "polyus_lom_reconciled_long.csv"
+
+# Допуск перекрёстной сверки AISC между двумя документами, USD/oz. TCC
+# сверяется точно; AISC — с малым допуском, потому что сравнительная колонка
+# иногда пересчитана при реклассификации затрат. Расширять его молча нельзя:
+# реальная реклассификация должна быть записана в отчёте, а не заглушена.
+AISC_CROSSCHECK_TOLERANCE_USD_PER_OZ = 0.5
 
 
 # Строка, состоящая только из пробелов и цифр, — это номер страницы,
@@ -113,6 +120,24 @@ ANNUAL_ANCHOR = "In {year}, {cost} at"
 # встречается только у предложений с настоящим годовым наблюдением.
 SENTENCE_YEAR = re.compile(r"^\s*In\s+(\d{4})\s*,")
 
+# --- Цитата прошлогоднего годового TCC внутри годового абзаца ----------------
+
+# В годовом абзаце TCC Полюс называет прошлогодний TCC актива как сравнение:
+#   «In 2021, TCC at Natalka increased to $368 per ounce, up 4% compared to $355
+#    per ounce in 2020»
+# Прошлый год здесь — это НЕ отдельный периодический блок (FY2021 не
+# пересчитывает таблицу 2020 года целиком), а ровно одна цифра, которую можно
+# сверить с собственным годовым значением предыдущего отчёта.
+#
+# Синтаксис строго узкий и потому надёжный: сумма «$N per ounce», сразу за
+# которой идёт «in <YYYY>». Имя актива берётся из УПОМИНАНИЯ той же формы, что
+# и в наблюдении («TCC at Natalka», «At Natalka, TCC»), — оно должно стоять в
+# предложении ДО суммы. Имя не вытаскивается шаблоном «любое слово с заглавной
+# буквы»: так в имя попало бы «In» из оборота «per ounce in 2020».
+PRIOR_YEAR_CITATION_AMOUNT = re.compile(
+    r"\$\s*([\d,]+)\s*(?:per ounce|/oz)\s+in\s+(\d{4})"
+)
+
 
 class AssetNameError(Exception):
     """Неизвестное имя актива в годовой прозе AISC/TCC.
@@ -120,6 +145,20 @@ class AssetNameError(Exception):
     Сигнализирует о новом объекте, которого нет ни в `ASSET_CANON`, ни в
     `SKIP_NAMES`: молча его пропустить нельзя, иначе поактивная структура
     затрат потеряет строку незаметно.
+    """
+
+
+class CrossCheckError(Exception):
+    """Расхождение значения между двумя документами об одном и том же годе.
+
+    Один год приходит от двух источников: как ОТЧЁТНЫЙ в своём релизе и как
+    ЦИТИРУЕМЫЙ сравнительный в релизе следующего года. Если числа не совпадают,
+    испорчен как минимум один из документов, и молча продолжать нельзя: AISC
+    серии калибруются именно по этим числам.
+
+    Обратное НЕ верно: отсутствие цитаты за какой-то год — норма, а не ошибка
+    (FY2019–FY2021 цитируют TCC только по Наталке, полной сравнительной таблицы
+    прошлого года в релизах нет).
     """
 
 
@@ -317,6 +356,207 @@ def extract_year(text: str, year: int) -> dict[str, dict[str, float]]:
         for asset, value in _block_values(block, cost, year).items():
             by_asset.setdefault(asset, {})[field] = value
     return {asset: fields for asset, fields in by_asset.items() if len(fields) == 2}
+
+
+def extract_prior_year_citations(text: str, year: int) -> dict[str, dict[str, float]]:
+    """Прошлогодние годовые TCC, ПРОЦИТИРОВАННЫЕ в отчёте за `year`.
+
+    Формат: `{ASSET_NAME: {cited_year: tcc}}`. Для всех четырёх фикстур
+    2018–2021 это ровно одна запись — TCC Наталки за год, предшествующий
+    отчётному:
+
+    * FY2019 → `{"NATALKA": {2018: 747.0}}`
+    * FY2020 → `{"NATALKA": {2019: 396.0}}`
+    * FY2021 → `{"NATALKA": {2020: 355.0}}`
+
+    Почему только TCC и только Наталка. Полюс НЕ публикует в отчёте полную
+    сравнительную таблицу прошлого года: поактивный AISC/TCC прошлого года по
+    остальным рудникам в тексте отсутствует (`extract_year(text, year - 1)`
+    для каждого из четырёх релизов возвращает пустой словарь). Единственная
+    цифра прошлого года, повторённая словами, — это TCC Наталки, названный как
+    сравнение в её собственном годовом предложении. Молчаливое расширение
+    шаблона «на всякий случай» дало бы ложные совпадения в посторонней прозе
+    («$21 per ounce in 2018»), поэтому шаблон узкий: `$N per ounce in YYYY`
+    внутри предложения с явным годовым префиксом `In {year},`.
+
+    Возвращаются только пары «цитируемый год < отчётного»: цитата того же года
+    или будущего года — не проверяемое пересечение, а шум.
+
+    Значения сопоставляются с собственным годовым наблюдением предыдущего
+    отчёта в `build_series` — расхождение поднимает `CrossCheckError`.
+    """
+    cited: dict[str, dict[str, float]] = {}
+    block = _annual_block(text, year, "TCC")
+    if not block:
+        return cited
+    for sentence in re.split(r"(?<=\.)\s+", block):
+        if _sentence_year(sentence) != year:
+            # Квартальные и прочие предложения без годового префикса не могут
+            # нести проверяемую цитату: год сравнения в них не привязан к году
+            # отчёта, и «per ounce in 2018» в них — про что угодно.
+            continue
+        mentions = list(COST_MENTION.finditer(sentence))
+        for index, mention in enumerate(mentions):
+            if (mention.group(1) or mention.group(4)) != "TCC":
+                continue
+            name = mention.group(2) or mention.group(3)
+            if name in SKIP_NAMES:
+                continue
+            if name not in ASSET_CANON:
+                raise AssetNameError(
+                    f"неизвестный актив {name!r} в цитате TCC за {year}"
+                )
+            limit = (
+                mentions[index + 1].start()
+                if index + 1 < len(mentions)
+                else len(sentence)
+            )
+            for amount in PRIOR_YEAR_CITATION_AMOUNT.finditer(sentence):
+                if not (mention.end() <= amount.start() < limit):
+                    continue
+                cited_year = int(amount.group(2))
+                if cited_year >= year:
+                    continue
+                asset = ASSET_CANON[name]
+                cited.setdefault(asset, {})[cited_year] = parse_amount(amount.group(1))
+    return cited
+
+
+def cross_check_overlap(
+    year: int,
+    a: dict[str, dict[str, float]],
+    b: dict[str, dict[str, float]],
+    src_a: Path,
+    src_b: Path,
+) -> None:
+    """Сверяет значения одного года из двух источников `a` и `b`.
+
+    Каждый источник — результат `extract_year(text, year)`, то есть
+    `{ASSET: {"aisc": float, "tcc": float}}`. Сравниваются ТОЛЬКО те пары
+    (актив, поле), которые присутствуют в ОБОИХ источниках; всё остальное —
+    норма (у FY2018 нет Вернинского, и это не конфликт).
+
+    Допуски. TCC сверяется точно: TCC не пересчитывается при реклассификации
+    затрат. AISC — с абсолютным допуском `AISC_CROSSCHECK_TOLERANCE_USD_PER_OZ`
+    (0.5 USD/oz): сравнительная колонка иногда пересчитана, и это допустимо.
+    Допуск сознательно НЕ расширяется «на месте» под конкретный случай —
+    настоящая реклассификация должна быть записана в отчёте, а не заглушена
+    правкой константы.
+
+    При расхождении поднимается `CrossCheckError` с активом, годом, обоими
+    значениями и обоими путями к файлам.
+    """
+    for asset in ASSETS:
+        for field in ("aisc", "tcc"):
+            left = a.get(asset, {}).get(field)
+            right = b.get(asset, {}).get(field)
+            if left is None or right is None:
+                continue
+            if field == "tcc":
+                agree = left == right
+                tolerance = 0.0
+            else:
+                tolerance = AISC_CROSSCHECK_TOLERANCE_USD_PER_OZ
+                agree = abs(left - right) <= tolerance
+            if agree:
+                continue
+            label = field.upper()
+            raise CrossCheckError(
+                f"расхождение {label} по активу {asset} за {year}: "
+                f"{left} USD/oz (источник {src_a.name}) против "
+                f"{right} USD/oz (источник {src_b.name})"
+                + ("" if tolerance == 0.0 else f", допуск {tolerance} USD/oz")
+            )
+
+
+def _is_corrupt_fixture(path: Path) -> bool:
+    """True для намеренно испорченных фикстур (`*_corrupt.pdf`).
+
+    Такие файлы существуют только для регрессионного теста перекрёстной сверки
+    и НИКОГДА не участвуют в калибровке: если их подхватить по маске каталога,
+    испорченное число незаметно попадёт в наблюдения.
+    """
+    return path.stem.endswith("_corrupt")
+
+
+def build_series(
+    fixtures: Optional[dict] = None,
+) -> dict[str, dict[int, dict[str, float]]]:
+    """Собирает поактивную серию AISC/TCC по нескольким релизам.
+
+    Формат: `{ASSET: {year: {"aisc": float | None, "tcc": float | None}}}`.
+    Каждый релиз даёт свой ОТЧЁТНЫЙ год (`extract_year`) плюс процитированные
+    в нём прошлогодние TCC (`extract_prior_year_citations`). Значения разных
+    документов об одном годе сводятся воедино и сверяются: пересечение есть
+    там, где год присутствует и как отчётный, и как цитируемый.
+
+    Отсутствие цитируемого года — ШТАТНЫЙ случай, а не ошибка: у FY2018 нет
+    предшественника среди фикстур, и ни один релиз не пересчитывает полную
+    таблицу прошлого года. Проверка срабатывает только на НАЛИЧИИ двух чисел.
+
+    Неполный набор активов (FY2018 без Вернинского) не мешает: актив просто
+    присутствует в серии за те годы, за которые он раскрыт.
+
+    Порядок обхода словаря фиксирован (по возрастанию года), чтобы сообщение
+    об ошибке было детерминированным: сначала идёт более ранний документ.
+
+    `*_corrupt.pdf` (см. `_is_corrupt_fixture`) отбрасываются молча при
+    АВТООБНАРУЖЕНИИ фикстур (`fixtures is None`). Если файл передан явно в
+    словаре, он участвует: именно так строится регрессионный тест на
+    испорченную пару. Явный словарь — всегда намерение вызывающей стороны,
+    и подменять его догадкой «наверное, это случайная порча» нельзя.
+    """
+    if fixtures is None:
+        fixtures = {
+            int(match.group(1)): path
+            for path in sorted(FIXTURE_DIR.glob("polyus_pr_4q_fy*.pdf"))
+            if not _is_corrupt_fixture(path)
+            and (match := re.search(r"fy(\d{4})", path.stem))
+        }
+
+    series: dict[str, dict[int, dict[str, float]]] = {}
+    # Год -> {актив: {"aisc": ..., "tcc": ...}}, накопленное по всем документам.
+    observed: dict[int, dict[str, dict[str, float]]] = {}
+    # Год -> (путь, значения): первый документ, назвавший год отчётным.
+    reporting_source: dict[int, tuple[Path, dict[str, dict[str, float]]]] = {}
+
+    for year in sorted(fixtures):
+        path = fixtures[year]
+        text = normalize(pdf_to_text(path))
+        annual = extract_year(text, year)
+        citations = extract_prior_year_citations(text, year)
+
+        # Прошлогодние цитаты могут пересечься с уже накопленным годовым
+        # наблюдением (из более раннего документа) либо добавить новый год.
+        for asset, per_year in citations.items():
+            for cited_year, value in per_year.items():
+                prior = observed.get(cited_year, {}).get(asset)
+                if prior is not None and prior.get("tcc") is not None:
+                    source = reporting_source[cited_year]
+                    cross_check_overlap(
+                        cited_year,
+                        {asset: {"tcc": prior["tcc"]}},
+                        {asset: {"tcc": value}},
+                        source[0],
+                        path,
+                    )
+                else:
+                    observed.setdefault(cited_year, {}).setdefault(
+                        asset, {"aisc": None, "tcc": None}
+                    )["tcc"] = value
+
+        observed.setdefault(year, {})
+        for asset, fields in annual.items():
+            observed[year][asset] = dict(fields)
+        reporting_source[year] = (path, annual)
+
+    for year, per_asset in observed.items():
+        for asset, fields in per_asset.items():
+            series.setdefault(asset, {})[year] = {
+                "aisc": fields.get("aisc"),
+                "tcc": fields.get("tcc"),
+            }
+    return series
 
 
 def ch_config() -> dict:
