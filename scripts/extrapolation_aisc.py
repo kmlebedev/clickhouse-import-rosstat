@@ -1055,10 +1055,27 @@ def ch_query(sql: str) -> list:
     ошибки проходит через `mask()` — на случай, когда сервер отражает запрос
     или заголовки в теле ответа.
 
-    Любой не-200 статус и любой сбой транспорта поднимают `ClickHouseError`.
+    Любой не-200 статус и ЛЮБОЙ сбой транспорта поднимают `ClickHouseError`.
+    Обработчиков ровно два, и порядок обязателен:
+
+    1. `HTTPError` — ПЕРВЫМ, потому что только у него есть читаемое тело с
+       кодом и текстом ошибки; широкая ветка ниже его тела не увидит;
+    2. `OSError` — вторым, и им покрывается весь остальной транспорт.
+       `URLError` (обёртка `urllib` вокруг сбоя соединения) — уже подкласс
+       `OSError`, так что отдельная ветка для него избыточна. Важнее другое:
+       НЕ всякий сбой транспорта приходит обёрнутым в `URLError`.
+       `http.client.RemoteDisconnected` наследуется через
+       `ConnectionResetError → ConnectionError → OSError`, а `BadStatusLine` —
+       через `HTTPException`, и обработчики `HTTPError`/`URLError` пропускали
+       бы их сырыми. Проверено на живом сервере: запрос к недостижимому хосту
+       поднимал голый `RemoteDisconnected` в обход обоих `except`.
     """
     config = ch_config()
     password = config["password"]
+    # ВАЖНО: HTTP-порт (`http_port`, 8123), а не нативный (`port`, 9000).
+    # Этот инвариант пинуется тестом, который перехватывает URL запроса
+    # (`test_query_targets_http_port_not_native_port`): подмена на `port`
+    # обязана ломать набор тестов.
     url = f"http://{config['host']}:{config['http_port']}/"
     request = urllib.request.Request(url, data=sql.encode("utf-8"), method="POST")
     request.add_header("Content-Type", "text/plain; charset=utf-8")
@@ -1072,15 +1089,24 @@ def ch_query(sql: str) -> list:
     except urllib.error.HTTPError as exc:
         # Тело ответа — главный источник диагностики (ClickHouse кладёт туда
         # код и текст ошибки), но именно оно может содержать пароль: сначала
-        # маскируем, потом кладём в сообщение.
+        # маскируем, потом кладём в сообщение. Ветка стоит ПЕРВОЙ: широкий
+        # `OSError` ниже — её подкласс, и тела у него уже нет.
         detail = _error_body(exc).strip() or str(exc.reason or "")
         raise ClickHouseError(
             "ClickHouse ответил статусом "
             + mask(password, f"{exc.code} на запрос к {url}: {detail}")
         ) from exc
-    except urllib.error.URLError as exc:
+    except OSError as exc:
+        # Весь остальной транспорт: URLError (обёртка urllib), обрывы
+        # соединения (ConnectionError/RemoteDisconnected), таймауты
+        # (TimeoutError), ошибки DNS и «сброс пира» — все они OSError.
+        # Сообщение всё равно проходит через mask(): пароля в этих путях нет
+        # (проверено на живом сервере — он в заголовке, не в URL и не в
+        # reason), но гарантия должна пережить будущие правки, а не держаться
+        # на сегодняшнем знании.
+        reason = getattr(exc, "reason", None) or str(exc)
         raise ClickHouseError(
-            mask(password, f"ClickHouse недоступен по {url}: {exc.reason}")
+            mask(password, f"ClickHouse недоступен по {url}: {reason}")
         ) from exc
     return parse_ch_json(mask(password, body))
 
