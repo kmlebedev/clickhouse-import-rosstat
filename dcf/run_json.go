@@ -3,7 +3,6 @@ package dcf
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -36,17 +35,16 @@ var scenarioProbabilitiesPct = map[string]float64{
 }
 
 // ingestModelRun — зеркало ingest.ModelRun (ingest/model_run.go): те же json-теги и
-// те же типы. Отдельная структура, а не импорт ingest, потому что dcf/ не имеет
-// права зависеть от ingest-контура: движок обязан собираться без серверного кода,
-// а совпадение контракта достаточно проверять тестом на JSON. Поля результата
-// (nav_*, market_price, upside_pct) в теле есть, но нулевые: их заполняет тот, кто
-// считает NAV/акцию, — движок в model_runs не пишет.
+// те же типы, ни одним полем больше. Отдельная структура, а не импорт ingest, потому
+// что dcf/ не имеет права зависеть от ingest-контура: движок обязан собираться без
+// серверного кода, а совпадение контракта проверяется тестом на строгий декодер.
+//
+// Лишних полей здесь быть не может: ingest декодирует тело с DisallowUnknownFields
+// (ingest/server.go, ARCHITECTURE §6.5), то есть неизвестный ключ — 400 ещё до
+// валидации. Всё, что движок хочет сообщить сверх контракта (число активов и деков,
+// локальная ставка), уходит в comment — поле, которое в контракте есть.
 type ingestModelRun struct {
-	RunID string `json:"run_id"`
-	// Inputs — не поле ingest.ModelRun: это фактический вход прогона (планы и деки),
-	// вложенный в тело, чтобы напечатанный JSON не был неотличим от прогона вслепую.
-	// ValidateModelRun читает только известные ему поля и лишний ключ игнорирует.
-	Inputs        inputsJSON         `json:"inputs"`
+	RunID         string             `json:"run_id"`
 	TriggerType   string             `json:"trigger_type"`
 	TriggerRef    string             `json:"trigger_ref"`
 	GoldScenario  map[string]any     `json:"gold_scenario"`
@@ -64,29 +62,20 @@ type ingestModelRun struct {
 	Probabilities map[string]float64 `json:"probabilities"`
 }
 
-// inputsJSON — фактический вход расчёта: сколько активов и по скольким годам, какие
-// деки прочитаны. Годы и имена активов нужны, чтобы человек по одному взгляду на
-// напечатанное тело видел, что план не пуст и LOM-горизонт тот, который он засеял.
-type inputsJSON struct {
-	Assets []assetPlanJSON `json:"assets"`
-	Decks  []string        `json:"decks"`
-}
-
-// assetPlanJSON — один актив во входе: компания, имя и годы LOM-плана.
-type assetPlanJSON struct {
-	Company string   `json:"company"`
-	Asset   string   `json:"asset"`
-	Years   []uint16 `json:"years"`
-}
-
 // modelRunJSON собирает тело POST /v1/model_run по контракту ingest.ModelRun
 // (ingest/model_run.go) — то, что движок печатает, когда DCF_RUN_ID не задан.
 //
 // Это НЕ запись: движок в model_runs не пишет (спека §3.4, Review Focus 2). Смысл
 // функции в том, чтобы прогон без run_id не потерялся: человек берёт напечатанный
 // JSON, дописывает результат расчёта (nav_*) и отправляет в ingest-endpoint, получая
-// версию модели в журнале. Поэтому доменные поля (входы, допущения, горизонт,
-// вероятности) уже заполнены фактическими значениями, а поля результата нулевые.
+// версию модели в журнале. Поэтому доменные поля (допущения, горизонт, вероятности)
+// уже заполнены фактическими значениями, а поля результата нулевые.
+//
+// Функция детерминирована с точностью до года горизонта: он берётся из текущего года.
+//
+// Тело обязано состоять РОВНО из полей контракта — ingest декодирует с
+// DisallowUnknownFields (ARCHITECTURE §6.5), и любой лишний ключ превращает
+// напечатанное тело в 400. Всё сверх контракта — только через comment.
 //
 // run_id пуст намеренно: без DCF_RUN_ID строки nav_by_asset не пишутся, и выдуманный
 // здесь UUID привязал бы их к несуществующему прогону. Пустое поле — метка «впиши id
@@ -99,7 +88,6 @@ func modelRunJSON(plans []MinePlanRecord, decks map[string][]DeckYear, rates Dis
 
 	body := ingestModelRun{
 		RunID:        "",
-		Inputs:       inputsFrom(plans, decks),
 		TriggerType:  "manual",
 		TriggerRef:   "make import STAT=dcf_engine",
 		GoldScenario: goldScenarioJSON(horizon),
@@ -111,14 +99,12 @@ func modelRunJSON(plans []MinePlanRecord, decks map[string][]DeckYear, rates Dis
 		// в поле контракта, которое принимает одно значение, честнее указать тот дек,
 		// который модель считает основным, чем произвольно брать первый из мапы.
 		PriceDeck: "own_scenario",
-		// Контуры: два числа — два контура, каждый в своём поле. discount_rate —
-		// индустриальный (5% real USD + надбавки, поле называется «ставка
-		// дисконтирования» и в ARCHITECTURE §6.2 описано именно как 0.05 real USD база);
-		// wacc — локальный (ОФЗ + премии). Так оба числа, которые §13.1 требует
-		// записывать, попадают в тело; какой контур где — читается по этой паре,
-		// потому что отдельного поля контура в контракте ingest нет.
+		// discount_rate — индустриальный контур (в ARCHITECTURE §6.2 поле описано как
+		// «0.05 real USD база + надбавки»). wacc остаётся нулём: CAPM/WACC для
+		// золотодобычи применять запрещено (§6.4), поэтому локальный контур в comment,
+		// а не в этом поле.
 		DiscountRate: rates.Industrial,
-		Wacc:         rates.Local,
+		Wacc:         0,
 		// nav_* и market_price — нули: их проставляет вызывающий после расчёта NAV/акции.
 		NavPerShare: 0,
 		NavBull:     0,
@@ -126,10 +112,14 @@ func modelRunJSON(plans []MinePlanRecord, decks map[string][]DeckYear, rates Dis
 		NavBear:     0,
 		MarketPrice: 0,
 		UpsidePct:   0,
+		// Счётчики входа и локальная ставка — только в comment: отдельного поля под
+		// них контракт ingest не имеет, а лишний ключ он отвергает (DisallowUnknownFields).
 		Comment: fmt.Sprintf(
-			"dcf_engine: LOM-NAV по %d активам; контуры industrial %.4f / local %.4f; "+
+			"dcf_engine: LOM-NAV; вход: %d %s, %d %s; контуры industrial %.4f / локальная %.4f; "+
 				"допущения: НДПИ база %.2f USD/oz + %.1f%% выше %.0f USD/oz, налог на прибыль %.1f%%, ΔWC %.0f дней",
-			len(plans), rates.Industrial, rates.Local,
+			len(plans), plural(len(plans), "актив", "актива", "активов"),
+			len(decks), plural(len(decks), "дек", "дека", "деков"),
+			rates.Industrial, rates.Local,
 			p.NdpiBaseUSDPerOz, p.NdpiSurchargePct*100, p.NdpiThresholdUSD,
 			p.ProfitTaxPct*100, p.WorkingCapitalDays,
 		),
@@ -152,6 +142,23 @@ func modelRunJSON(plans []MinePlanRecord, decks map[string][]DeckYear, rates Dis
 	return string(encoded)
 }
 
+// plural выбирает русское окончание по числу: без него в comment появляется
+// «2 активтива» или «1 декека» — мелочь, но comment читает человек, и он же
+// единственное место, где видны счётчики входа: лишних ключей контракт ingest не
+// принимает (DisallowUnknownFields).
+func plural(n int, one, few, many string) string {
+	switch {
+	case n%100 >= 11 && n%100 <= 14:
+		return many
+	case n%10 == 1:
+		return one
+	case n%10 >= 2 && n%10 <= 4:
+		return few
+	default:
+		return many
+	}
+}
+
 // goldScenarioJSON собирает gold_scenario в формате ingest: horizon плюс по блоку на
 // каждый сценарий с point (его берёт weightedGoldPoint) и коридором low/high.
 // Сценарии в формате WGC Gold Outlook (§13.5): сценарий — не одно число, а коридор
@@ -172,28 +179,4 @@ func goldScenarioJSON(horizon string) map[string]any {
 // scenarioBlock — блок одного сценария: point и коридор low/high.
 func scenarioBlock(point, low, high float64) map[string]any {
 	return map[string]any{"point": point, "low": low, "high": high}
-}
-
-// inputsFrom переносит фактический вход в тело: активы с годами LOM (годы — в порядке
-// плана, то есть хронологическом, потому что readMinePlans читает ORDER BY year) и
-// отсортированные имена деков. Сортировка — ради воспроизводимости печати: у map'а
-// порядок обхода случаен, и одинаковый прогон печатал бы разные тела.
-func inputsFrom(plans []MinePlanRecord, decks map[string][]DeckYear) inputsJSON {
-	assets := make([]assetPlanJSON, 0, len(plans))
-	for _, plan := range plans {
-		years := make([]uint16, 0, len(plan.Years))
-		for _, year := range plan.Years {
-			years = append(years, year.Year)
-		}
-
-		assets = append(assets, assetPlanJSON{Company: plan.Company, Asset: plan.Asset, Years: years})
-	}
-
-	names := make([]string, 0, len(decks))
-	for name := range decks {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	return inputsJSON{Assets: assets, Decks: names}
 }
