@@ -4,7 +4,7 @@
       "command": "bash",
       "args": [
         "-c",
-        "set -a; . \"$HOME/.config/rosstat/env\"; set +a; exec uv run --with mcp-clickhouse --python 3.12 mcp-clickhouse"
+        "set -a; . \"$HOME/.config/rosstat/env\"; set +a; exec uv run --with mcp-clickhouse==0.7.0 --python 3.12 mcp-clickhouse"
       ],
       "env": {
         "CLICKHOUSE_HOST": "localhost",

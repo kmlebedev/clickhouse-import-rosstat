@@ -158,7 +158,7 @@ mcp-check:
 	@test -n "$$CLICKHOUSE_PASSWORD" || { echo "задайте CLICKHOUSE_PASSWORD (пароль пользователя $(MCP_USER))"; exit 1; }
 	@curl -sf -m 2 http://$(MCP_CHECK_HOST):$(MCP_CHECK_PORT)/ping >/dev/null 2>&1 || { echo "ClickHouse на $(MCP_CHECK_HOST):$(MCP_CHECK_PORT) не отвечает: make ch-up (или поднимите туннель)"; exit 1; }
 	CLICKHOUSE_HOST=$(MCP_CHECK_HOST) CLICKHOUSE_PORT=$(MCP_CHECK_PORT) CLICKHOUSE_SECURE=false CLICKHOUSE_VERIFY=false \
-	CLICKHOUSE_USER=$(MCP_USER) CLICKHOUSE_DATABASE=default \
+	CLICKHOUSE_USER=$(MCP_USER) CLICKHOUSE_DATABASE=default MCP_VERSION=$(MCP_VERSION) \
 	uv run --with mcp-clickhouse==$(MCP_VERSION) --with mcp --python $(MCP_PY) python scripts/mcp_check.py
 
 # Проверки перед деплоем: env-файл на хосте существует, ClickHouse отвечает.
@@ -199,6 +199,7 @@ deploy-staging-dagu: staging-precheck
 	@set -e; \
 	want=$$(echo $(DAGU_VERSION) | sed 's/^v//'); \
 	have=$$(ssh $(STAGING_HOST) '$(STAGING_BIN_DIR)/dagu version 2>/dev/null' | head -1 || true); \
+	restart=0; \
 	if [ "$$have" = "$$want" ]; then \
 		echo "dagu $$have уже установлен"; \
 	else \
@@ -207,6 +208,11 @@ deploy-staging-dagu: staging-precheck
 		scp /tmp/dagu $(STAGING_HOST):$(STAGING_BIN_DIR)/dagu.new; \
 		ssh $(STAGING_HOST) 'test -f $(STAGING_BIN_DIR)/dagu && cp $(STAGING_BIN_DIR)/dagu $(STAGING_BIN_DIR)/dagu.bak || true; mv $(STAGING_BIN_DIR)/dagu.new $(STAGING_BIN_DIR)/dagu; chmod 755 $(STAGING_BIN_DIR)/dagu'; \
 		echo "dagu обновлён до $(DAGU_VERSION)"; \
+		restart=1; \
+	fi; \
+	if [ "$$restart" = "1" ] && ssh $(STAGING_HOST) 'systemctl is-active --quiet dagu'; then \
+		ssh $(STAGING_HOST) 'systemctl restart dagu'; \
+		echo "dagu перезапущен на новой версии"; \
 	fi
 	scp deploy/staging/dagu.service $(STAGING_HOST):/etc/systemd/system/dagu.service
 	ssh $(STAGING_HOST) 'systemctl daemon-reload'
@@ -229,7 +235,11 @@ deploy-staging: deploy-staging-binary deploy-staging-dagu deploy-staging-mcp
 	scp dagu/*.yaml $(STAGING_HOST):/root/dagu/
 	@$(MAKE) deploy-staging-preflight --no-print-directory
 	ssh $(STAGING_HOST) 'systemctl enable --now dagu mcp-clickhouse'
-	@$(MAKE) deploy-staging-smoke --no-print-directory
+	@$(MAKE) deploy-staging-smoke --no-print-directory || { \
+		echo ""; \
+		echo "Сервисы оставлены ВКЛЮЧЁННЫМИ, а dagu выполняет DAG-и по расписанию."; \
+		echo "Чтобы остановить: ssh $(STAGING_HOST) 'systemctl disable --now dagu mcp-clickhouse'"; \
+		echo "После исправления повторите: make deploy-staging"; exit 1; }
 	@echo "Готово. Далее: make mcp-user-staging (если kimi_reader ещё не создан)."
 
 # Проверки ДО включения сервисов: бинарь исполняем, DAG-файлы на месте, токен непуст.
@@ -247,7 +257,11 @@ deploy-staging-smoke:
 	@echo "--- smoke: dagu ---"
 	@ssh $(STAGING_HOST) 'systemctl is-active --quiet dagu && curl -sf -m 5 -o /dev/null http://127.0.0.1:8080/ && echo "OK   dagu отвечает"' || { echo "FAIL dagu: journalctl -u dagu -n 50"; exit 1; }
 	@echo "--- smoke: mcp-clickhouse /health ---"
-	@ssh $(STAGING_HOST) 'systemctl is-active --quiet mcp-clickhouse && curl -sf -m 5 -o /dev/null http://127.0.0.1:8000/health && echo "OK   MCP /health = 200"' || { echo "FAIL mcp-clickhouse: journalctl -u mcp-clickhouse -n 50"; exit 1; }
+	@ssh $(STAGING_HOST) 'systemctl is-active --quiet mcp-clickhouse && curl -sf -m 5 -o /dev/null http://127.0.0.1:8000/health && echo "OK   MCP /health = 200"' || { \
+		echo "FAIL mcp-clickhouse /health — сервис не отвечает или не видит ClickHouse."; \
+		echo "  Частая причина на первом развёртывании: пользователь kimi_reader ещё не создан."; \
+		echo "  Проверьте: systemctl status mcp-clickhouse; journalctl -u mcp-clickhouse -n 50"; \
+		echo "  Создать пользователя: make mcp-user-staging"; exit 1; }
 	@echo "--- smoke: MCP требует токен ---"
 	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; \
 		code=$$(curl -s -o /dev/null -w "%{http_code}" -X POST http://127.0.0.1:8000/mcp -H "Content-Type: application/json" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}"); \
