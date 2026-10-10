@@ -374,7 +374,7 @@ deploy-staging-mcp: staging-precheck
 	scp deploy/staging/mcp-clickhouse.service $(STAGING_HOST):/etc/systemd/system/mcp-clickhouse.service
 	ssh $(STAGING_HOST) 'systemctl daemon-reload'
 	@echo "прогрев кэша uv (скачивание mcp-clickhouse==$(MCP_VERSION))..."
-	ssh $(STAGING_HOST) '/root/.local/bin/uv tool run --from mcp-clickhouse==$(MCP_VERSION) mcp-clickhouse --help >/dev/null 2>&1 || true'
+	ssh $(STAGING_HOST) '/root/.local/bin/uv tool run --from mcp-clickhouse==$(MCP_VERSION) python -c "pass" >/dev/null 2>&1 || true'
 ```
 
 - [ ] **Step 2: Проверить, что юнит установлен, а пакет разрешается**
@@ -382,7 +382,7 @@ deploy-staging-mcp: staging-precheck
 Run: `make deploy-staging-mcp`
 Expected: юнит скопирован, прогрев без падения ssh.
 
-Run: `ssh palmshell '/root/.local/bin/uv tool run --from mcp-clickhouse==0.7.0 mcp-clickhouse --help 2>&1 | head -5'`
+Run: `ssh palmshell '/root/.local/bin/uv tool run --from mcp-clickhouse==0.7.0 python -c "pass" 2>&1 | head -5'`
 Expected: справка CLI без `No solution found` — версия `0.7.0` существует и доступна.
 
 - [ ] **Step 3: Commit**

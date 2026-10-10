@@ -26,6 +26,9 @@ def expect(label, ok, detail):
     return ok
 
 
+MCP_VERSION = os.environ.get("MCP_VERSION", "0.7.0")
+
+
 async def main():
     env = {k: os.environ[k] for k in ENV_KEYS if k in os.environ}
     env["CLICKHOUSE_MCP_SERVER_TRANSPORT"] = "stdio"
@@ -34,7 +37,7 @@ async def main():
         return 2
     params = StdioServerParameters(
         command="uv",
-        args=["run", "--with", "mcp-clickhouse", "--python", "3.12", "mcp-clickhouse"],
+        args=["run", "--with", f"mcp-clickhouse=={MCP_VERSION}", "--python", "3.12", "mcp-clickhouse"],
         env={**os.environ, **env},
     )
     failed = 0

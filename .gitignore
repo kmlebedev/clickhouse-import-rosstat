@@ -2,3 +2,7 @@
 /.idea/
 coverage.out
 /dist/
+
+# Секреты деплоя: реальные env-файлы не коммитим, образцы (*.env.example) — коммитим.
+*.env
+!*.env.example
