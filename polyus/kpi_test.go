@@ -621,3 +621,60 @@ func TestSameMetricFromTwoHeadersBothSurvive(t *testing.T) {
 		}
 	}
 }
+
+// TestParseKPILinesCountsUnassigned держит направление «разбор → счётчик»: число
+// нераспределённых значений, которое parseKPILines отдаёт вторым результатом,
+// обязано быть настоящим счётом строк фикстуры, а не нулём.
+//
+// Без этого теста счётчик ничем не закреплён: строка `unassigned += lineUnassigned`
+// в parseKPILines удаляется, весь набор тестов остаётся зелёным, и импортёр
+// печатает в итоговой строке ноль. Между тем счётчик — единственный выход
+// резервного guard'а: он и есть сигнал, что шапка и разбор разошлись.
+//
+// Числа замерены по фикстурам и совпадают с живым прогоном импортёра (в его
+// итоговой строке 26 значений вне колонок-периодов на трёх включённых отчётах,
+// из них 18 у релиза 1 п/г 2026, 8 у MD&A за 2014 и 30 у релиза FY2024 — всего
+// 56; в живой прогон FY2024-отчёт не входит, отсюда 26 = 18 + 8).
+//
+// Записи проверяются рядом: счётчик без них закреплял бы только «строка
+// пропущена», тогда как сломанный разбор роняет и то, и другое. Значения
+// нераспределённых — это проценты колонок изменения ((2%), 6%) и числа в
+// непериодных колонках; они не должны ни превращаться в записи, ни теряться
+// бесследно.
+func TestParseKPILinesCountsUnassigned(t *testing.T) {
+	cases := []struct {
+		path       string
+		page       int
+		records    int
+		unassigned int
+	}{
+		{path: "testdata/press_reliz_1h26_p1.tsv", page: 1, records: 27, unassigned: 18},
+		{path: "testdata/press_release_hist_p1.tsv", page: 4, records: 32, unassigned: 8},
+		{path: "testdata/press_release_fy2024_p4.tsv", page: 4, records: 53, unassigned: 30},
+	}
+
+	for _, c := range cases {
+		t.Run(c.path, func(t *testing.T) {
+			lines := tsvLines(t, c.path)
+
+			records, unassigned := parseKPILines(lines, "https://example.invalid/x.pdf", c.page)
+
+			if unassigned != c.unassigned {
+				t.Errorf(
+					"unassigned = %d, want %d: the parser's counter is not wired to the rows it drops",
+					unassigned,
+					c.unassigned,
+				)
+			}
+			if len(records) != c.records {
+				t.Errorf("records = %d, want %d", len(records), c.records)
+			}
+
+			// Записи и счётчик не пересекаются: значение, попавшее в запись, не
+			// может быть посчитано нераспределённым.
+			if len(records)+unassigned == 0 {
+				t.Error("fixture parsed to nothing at all: the test lost its subject")
+			}
+		})
+	}
+}
