@@ -17,6 +17,7 @@ import (
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/gold"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/minfin"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/moex"
+	_ "github.com/kmlebedev/clickhouse-import-rosstat/polyus"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/rosstat"
 	_ "github.com/kmlebedev/clickhouse-import-rosstat/views"
 	log "github.com/sirupsen/logrus"
