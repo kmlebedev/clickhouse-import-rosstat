@@ -24,9 +24,12 @@ Go-конвейер импорта российской макроэкономи
 | `moex` | МосБиржа ISS: свечи PLZL (OHLCV), индекс RGBI, доходности G-curve ОФЗ (1y/3y/5y/10y) | `stock_prices` (`code = 'PLZL'`), `ofz_curve`; каталог `series_catalog`, витрины `v_stock_prices`, `v_ofz_curve` | ежедневно 19:13 |
 | `calendar` | Календарь событий-триггеров прогноза золота/NAV (Q4-2026; сид — `sql/events_calendar_q4_2026.sql`) | `events_calendar`; витрина `v_events_calendar` | вручную (`make import STAT=events_calendar`) |
 | `views` | Витрины контура прогноза: `v_model_inputs`, `v_gold_dashboard`, `v_forecast_accuracy` (импортёр `gold_views`) | витрины; гранты `kimi_reader` — в `sql/mcp_kimi_reader.sql` | вручную, после первого запуска ingest: `make import STAT=gold_views` |
-| `financial` | Legacy: корпоративные databook'и (ЧМФ, ММК, НЛМК, Полюс, ЮГК), investing.com, РЖД | `databook_*`, `polyus_financial_metrics` и др. | понедельник 10:23 |
+| `polyus` | Отчётность ПАО «Полюс»: xlsx-датапак (операционные результаты по активам с 2007) и PDF-отчёты (KPI-пресс-релизы EN/RU + МСФО-формы EN) | `databook_polyus`, `polyus_financial_metrics` | понедельник 10:23 |
+| `financial` | Legacy: корпоративные databook'и (ЮГК), investing.com, РЖД | `databook_ugk` и др. | понедельник 10:23 |
 
 Импортёр `gold` — временный: производная цена, не LBMA. Официальный LBMA AM/PM пока не подключён, см. «Ограничения».
+
+Отчётность Полюса даёт два импортёра в пакете `polyus/`: `databook_polyus` (xlsx-датапак) и `polyus_financial_metrics` (PDF-отчёты). Запуск: `make import STAT=polyus_financial_metrics` или `make import STAT=databook_polyus`. Ограничения этих данных (неполное выравнивание колонок, отсутствие витрины для MCP) — в разделе «Ограничения».
 
 ## Структура репозитория
 
@@ -44,7 +47,8 @@ bls/                     BLS API v2 → macro_series
 bea/                     BEA API (NIPA T20804) → macro_series
 gold/                    MOEX GOLDFIXME + cbr_currency_usd → gold_prices
 moex/                    MOEX ISS: свечи PLZL → stock_prices, RGBI + G-curve → ofz_curve
-financial/               legacy-контур (database/sql, свой main), новый код туда не добавляется
+polyus/                  отчётность Полюса: xlsx-датапак → databook_polyus; PDF-отчёты (KPI EN/RU, МСФО EN) → polyus_financial_metrics
+financial/               legacy-контур (database/sql, свой main), новый код туда не добавляется; остался databook_ugk (ЮГК)
 dagu/                    расписания: один DAG-файл на домен, имя файла = имя DAG
 sql/                     DDL и гранты вручную: пользователь kimi_reader, сид календаря Q4-2026
 scripts/                 проверки MCP (mcp_setup_user.py, mcp_check.py)
@@ -130,7 +134,7 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 | Команда | Что делает |
 |---|---|
 | `make lint` | `gofmt -l` (падает, если есть неотформатированный код) и `golangci-lint run ./...` |
-| `make test` | `go vet` и `go test -race ./...` (тесты есть у `bls`, `bea`, `cbr`, `rosstat`, `minfin`, `gold`, `moex`) |
+| `make test` | `go vet` и `go test -race ./...` (тесты есть у `bls`, `bea`, `cbr`, `rosstat`, `minfin`, `gold`, `moex`, `polyus`) |
 | `make build` | статический бинарник `linux/amd64` в `build/` |
 | `make run` | сборка и запуск (нужен `CLICKHOUSE_URL`) |
 | `make import STAT=<имя>` | локальный прогон одного импортёра по `Name()` (собирает `build/clickhouse-import-rosstat-native`) |
@@ -285,7 +289,11 @@ MCP GoLand (опционально, ускоряет работу Kimi Code с �
 - **Импортёры ЦБ/Росстата/ВТБ берут ссылку со страницы источника.** `cbr_infl_exp`, `cbr_credit_m2x`, `vvp_kvartal`, `salaries_mes`, `rus_vtb_group_ifrs` не хардкодят URL XLSX, а скрейпят актуальную ссылку (colly). Остальные источники ЦБ используют стабильные пути `vfs/statistics/...`.
 - **`domrf_mortgage`, `sber_finansovie_rezultaty`, `tbank_group_ifrs` — ссылка задана статически.** Страницы источников закрыты JS-challenge (ServicePipe у ДОМ.РФ, TSPD у Сбера) либо не имеют листинга (CDN с UUID у Т-Банка), colly их не парсит: ссылку обновляют вручную при каждом релизе. У `tbank_group_ifrs` текущая ссылка ведёт на PDF, а не XLSX, — импорт падает.
 - **Росстат может отдавать HTTP 426.** Домен `rosstat.gov.ru` периодически отклоняет запросы из-за технических работ (`Upgrade Required`), включая уже работавшие `ipc_mes`/`ipc_weeks`; это ограничение источника/сети, а не кода. Импортёры падают с диагностикой «не найдена ссылка на …».
-- **`financial/`.** Legacy-контур (database/sql, свой main). Новые импортёры туда не добавляются.
+- **`financial/`.** Legacy-контур (database/sql, свой main). Новые импортёры туда не добавляются; отчётность Полюса вынесена в `polyus/`, в `financial/` остался `databook_ugk` (ЮГК) и мёртвый код металлургов.
+- **Отчётность Полюса: guard отбрасывает последнюю колонку KPI-таблицы.** Шапки пресс-релизов содержат колонки-изменения («Изм. за год», «y-o-y change») между периодами; они не распознаются как периоды, поэтому парсер выводит меньше колонок, чем в шапке, и значения сдвигаются влево. Guard (`polyus/guard.go`) отбрасывает последнюю выведенную колонку — вместе с ней теряется слот `2025H2` русского релиза 1H2026 (9 записей, в них процент «Изм. за год»). Это осознанное решение: принять сдвинутое значение хуже, чем потерять строку.
+- **Отчётность Полюса: `2014H2` несёт значения FY2013** (`revenue` 2 329, `capex` 1 440) — тот же дефект выравнивания колонок, 7 живых строк с неверной подписью периода. Настоящий период (FY2013) потерян при разборе шапки; исправление — отдельная задача.
+- **Отчётность Полюса: ключ таблицы не содержит источника.** `(company, metric, period)` — ключ `polyus_financial_metrics`, поэтому `revenue` и `total_revenue` — один и тот же показатель под двумя именами (оба 4 674), а `eps_basic`/`eps_diluted`/`profit_for_period` за 1H2026 приходят и из русского пресс-релиза, и из МСФО — в витрине остаётся значение русского релиза (он обрабатывается первым). Сегодня значения совпадают, поэтому данные не испорчены; при расхождении источников более полный проиграет молча (в логе — `duplicate ... already in batch`).
+- **Отчётность Полюса недоступна агенту MCP.** Витрины `v_polyus_*` и гранта `kimi_reader` нет, а сырые `databook_polyus` и `polyus_financial_metrics` агенту не выдаются (AGENTS.md, правило 11). Пока витрина не создана, данные Полюса читаются только напрямую из ClickHouse.
 - **Ingest-endpoint: TLS — снаружи.** Лимит частоты (`INGEST_RATE_PER_MIN`, `429`) и предел тела 1 MiB (`413`) реализованы в процессе; TLS предполагается на reverse proxy, в репозитории он не описан. Повторный `POST /v1/model_run` с тем же `run_id` отвечает `200 {"inserted": 1}`, хотя строк не пишет: ответ не отличает дубль от новой записи.
 - **HTTP-режим mcp-clickhouse для плагина не развёрнут в репозитории.** Локальная конфигурация Kimi — stdio (блок «MCP для Kimi» в разделе «Ключи и окружение»). Для плагина `gold-nav` сервер автора по HTTPS с токеном нужно поднять отдельно.
 - **Индикаторы `v_gold_dashboard` вводятся вручную.** `crack_ulsd_proxy`, `distillate_stocks`, `fedwatch_dec_hike`, `etf_flows_month`, `dxy` имеют только `manual_series`; импортёров нет. Без ввода они показываются как `stale`.

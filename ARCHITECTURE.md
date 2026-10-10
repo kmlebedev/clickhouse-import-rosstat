@@ -1,7 +1,7 @@
 # ARCHITECTURE.md — clickhouse-import-rosstat
 
 > Контекстный документ для AI-ассистентов (Kimi Code и др.). Содержит всё необходимое для написания нового кода без полного чтения репозитория: паттерны, конвенции, схемы БД, целевую архитектуру. Обновлять при каждом изменении архитектуры.
-> Последнее обновление: 2026-10-10. Базовый коммит: `4d5923f` (разделы сверены с кодом на этом коммите).
+> Последнее обновление: 2026-10-10 (добавлен пакет `polyus/`). Базовый коммит: `a43af65` (разделы сверены с кодом на этом коммите).
 
 ---
 
@@ -38,9 +38,15 @@ ingest/            — ingest-endpoint контура прогноза: POST /v1
 cmd/ingest/        — main-пакет бинарника ingest (make build-ingest / make run-ingest)
 bank/              — банки: sber_csi(+week), sber/vtb/tbank_fin_rez, domrf_mortgage
 craw/              — многостраничные краулеры: gost (сертификаты Росстандарта)
-financial/         — ⚠️ legacy-контур: корпоративные databook'и (CHMF/MAGN/NLMK/PLZL/ЮГК),
-                     investing.com exporter, РЖД. Свой main.go, своё подключение database/sql
-financial/data/    — локальные XLSX/XLS источники (databook'и компаний)
+polyus/            — отчётность ПАО «Полюс»: xlsx-датапак → databook_polyus; PDF-отчёты (KPI-пресс-релизы EN/RU
+                     и МСФО-формы EN) → polyus_financial_metrics. Два импортёра: databook_polyus,
+                     polyus_financial_metrics. Спека: docs/superpowers/specs/2026-10-10-polyus-parsers-design.md
+polyus/data/       — локальная копия датапака (polyus_datapack_fy2025_new.xlsx, читается из CWD)
+polyus/testdata/   — фикстуры тестов: слепки pdftotext (EN/RU) и xlsx-датапак с битой ячейкой
+financial/         — ⚠️ legacy-контур: корпоративные databook'и (ЧМФ/MAGN/NLMK/ЮГК — только ЮГК
+                     зарегистрирована как databook_ugk, остальные не в Stats), investing.com exporter,
+                     РЖД. Свой main.go, своё подключение database/sql. Импортёров Полюса здесь нет
+financial/data/    — локальные XLSX/XLS источники (databook'и компаний; датапак Полюса переехал в polyus/data/)
 dashboard/         — экспортированные JSON-дашборды Grafana (плагин grafana-clickhouse-datasource)
 docs/              — аналитические статьи (прогнозы золота)
 *.crt              — национальные TLS CA РФ (для ГОСТ-шифрования gos-сайтов)
@@ -147,6 +153,9 @@ func init() {
 | `fred` | `fred/` | реализован; `Name()` = `fred`. Исторический базлайн; первичный источник мировых рядов для прогнозной сессии — datasource (см. gold-nav) | FRED CSV API: `https://fred.stlouisfed.org/graph/fredgraph.csv?id=DFII10` (серии: DFII10, DGS10, FEDFUNDS, DTWEXBGS, CPIAUCSL, T5YIE) | Свой парсер `encoding/csv` (не `util.GetCSV`: разделитель `,`), `Name()` = `fred` (несколько серий, одна таблица), пропуски (пустое значение) пропускаются; UA не задаём — FRED за Imperva рвёт соединение с браузерным UA. Расписание: `dagu/fred.yaml`, ежедневно 11:41 (МСК) → `macro_series`; описания рядов → `series_catalog`; витрина `v_fred_macro` (с комментариями, грант `kimi_reader`) |
 | `bls` | `bls/` | реализован; `Name()` = `bls` | BLS Public Data API v2: `POST https://api.bls.gov/publicAPI/v2/timeseries/data/` (JSON: `seriesid`, `startyear`, `endyear`, опц. `registrationkey` из `BLS_API_KEY`). Серии: CUUR0000SA0, CUSR0000SA0 (CPI), LNS14000000 (безработица), CES0000000001 (NFP), CES0500000003 (средняя зарплата), WPSFD4 (PPI final demand), JTS000000000000000JOL (JOLTS, вакансии). | Окна лет по ≤10 лет с 2006 года; все серии одним запросом. Статус ≠ `REQUEST_SUCCEEDED` — ошибка; `message` при успехе (каталог, «no data») — не ошибка; периоды M13 и не-месячные пропускаются. Тесты: `bls/bls_test.go`. Расписание: `dagu/bls.yaml`, ежедневно 12:23 (МСК) → `macro_series`; описания рядов → `series_catalog`; витрина `v_bls_macro` (с комментариями, грант `kimi_reader`) |
 | `bea` | `bea/` | реализован; `Name()` = `bea` | BEA API: `GET https://apps.bea.gov/api/data?method=GetData&datasetname=NIPA&TableName=T20804&Frequency=M` (ключ `BEA_API_KEY` → параметр `UserID`, без него импорт падает с ошибкой). Строки T20804: 1 — PCE_PI (headline), 25 — PCE_PI_CORE (excluding food and energy). | Ключ маскируется в текстах ошибок (`url.Error` содержит URL). Тесты: `bea/bea_test.go`. Расписание: `dagu/bea.yaml`, ежедневно 12:37 (МСК) → `macro_series`; описания рядов → `series_catalog`; витрина `v_bea_pce` (с комментариями, грант `kimi_reader`) |
+| `databook_polyus` | `polyus/` | реализован; `Name()` = `databook_polyus` | Локальный xlsx-датапак Polyus `polyus/data/polyus_datapack_fy2025_new.xlsx` (лист `Sheet1`): операционные результаты по активам с 2007 (CONSOLIDATED OPERATING RESULTS, OLIMPIADA, BLAGODATNOYE, TITIMUKHTA, VERNINSKOYE2, ALLUVIALS, KURANAKH, ZAPADNOYE, NATALKA, Sukhoi Log) | Разбор через `excelize/v2`; битая ячейка (`N/A`, текст) — пропуск строки с `log.Warnf`, импорт не падает. Тесты: `polyus/datapack_test.go`. Расписание: `dagu/financial.yaml`, понедельник 10:23 (МСК) → `databook_polyus`. Витрины `v_polyus_*` и гранта `kimi_reader` нет (см. §6.3 и «Известные ограничения») |
+| `polyus_financial_metrics` | `polyus/` | реализован; `Name()` = `polyus_financial_metrics`. Отчётность Полюса — прямые входы DCF (производство, TCC, выручка, прибыль, capex) | PDF-отчёты ПАО «Полюс»: KPI-пресс-релизы (RU 1H2026, EN MD&A FY2014) и МСФО-формы (EN 1H2026, стр. 6–7) | Два режима разбора: `Kind: "kpi"` (таблица «метрика + строки периодов») и `Kind: "ifrs"` (статья + два столбца периодов). Список отчётов — данные (`polyus/pages.go`, `[]Report`): 3 включённых, 11 с `Enabled: false` и причиной в комментарии. Номера страниц выверены `pdftotext` (`polyus/source.go`). Guard `polyus/guard.go` отбрасывает trailing-колонку KPI-шапки (см. «Известные ограничения»). Тесты: `polyus/kpi_test.go`, `ifrs_test.go`, `periods_test.go`, `guard_test.go`. Расписание: `dagu/financial.yaml`, понедельник 10:23 (МСК) → `polyus_financial_metrics` |
+| `databook_ugk` | `financial/` | реализован (legacy) | xlsx-датапак ЮГК | Остаётся в `financial/`; перенос — отдельный пункт, когда ЮГК понадобится для `peers_nav` |
 | `eia` | `eia/` | не реализован; вычеркнут из Go-плана (crack — `HO=F` в сессии, запасы дистиллятов — `manual_series`), спека gold-nav §4 | EIA Weekly Petroleum Status (запасы дистиллятов, crack ULSD) | API EIA v2 (ключ в env `EIA_API_KEY`) → `macro_series` |
 | `lbma_gold` | `gold/` | не реализован (LBMA недоступен с этой сети); вместо него реализован `gold`, `Name()` = `gold_prices` | ⚠️ Временно вместо LBMA: MOEX `GOLDFIXME` (борд FIXI, ₽/г, с 2024-08-05) × 31,1034768 ÷ курс `cbr_currency_usd`; производная цена, не LBMA. Курс берётся последний известный не позже даты (ЦБ не публикует понедельники и новогодние праздники; окно 10 дней). Расписание: `dagu/gold.yaml`, ежедневно 18:47 (МСК); первым шагом DAG выполняется `cbr_currency_usd`. LBMA не реализован: prices.lbma.org.uk и Nasdaq Data Link `LBMA/GOLD` отвечают 403 WAF (датасетный эндпоинт блокируется с этого IP даже с валидным ключом), stooq — JS-проверкой, FRED серии LBMA удалил (404), Yahoo — 429 | → `gold_prices` |
 | `moex_iss` | `moex/` | реализован; `Name()` = `stock_prices` | MOEX ISS REST (анонимный): дневные свечи PLZL `/iss/engines/stock/markets/shares/securities/PLZL/candles.json?interval=24` (пагинация `start` шагом 100 при явном `limit=100` — без limit страницы по 500 и дубли). | Инкремент от max(date) по `code='PLZL'`; пустая таблица → с 2010-01-01. Пишет в существующую legacy-таблицу `stock_prices` (схема Float32 не меняется). Тесты: `moex/moex_test.go`. Расписание: `dagu/moex.yaml`, ежедневно 19:13 (МСК) → `stock_prices`; series_catalog (source='moex'); витрина `v_stock_prices` (с комментариями, грант `kimi_reader`) |
@@ -154,13 +163,45 @@ func init() {
 | `mmf_aum` | `funds/` | не реализован | СЧА фондов ликвидности | парсинг → `mmf_aum` |
 | `news_watch` | `news/` | не реализован | RSS Интерфакс/РБК/IR Полюса | → `news_events` |
 
-`Name()` импортёров — то, что передаётся в `CLICKHOUSE_IMPORT_STAT`: `fred`, `bls`, `bea`, `gold_prices`, `stock_prices`, `ofz_curve`, `events_calendar`, `gold_views`. Пакет `gold/` выполняет `Name()` = `gold_prices`, поэтому в README и командах используется имя таблицы.
+`Name()` импортёров — то, что передаётся в `CLICKHOUSE_IMPORT_STAT`: `fred`, `bls`, `bea`, `gold_prices`, `stock_prices`, `ofz_curve`, `events_calendar`, `gold_views`, `databook_polyus`, `polyus_financial_metrics`, `databook_ugk`. Пакет `gold/` выполняет `Name()` = `gold_prices`, поэтому в README и командах используется имя таблицы. Пакет `polyus/` регистрирует два импортёра, у каждого `Name()` равно имени его таблицы (`polyus/` не существует как имя импортёра).
 
 Ряды WGC (ETF-потоки), CME FedWatch и запасы дистиллятов EIA импортёров не имеют. В контуре прогноза они вводятся вручную через `POST /v1/manual_series` (`source = 'manual'`) и читаются витриной `v_gold_dashboard` (§6.3).
 
 ### 6.2 Новые таблицы (DDL — канонические, использовать как есть)
 
 Реализованы в коде (DDL в блоке ниже совпадает с кодом): `macro_series`, `model_runs`, `forecast_log` (создаются `ingest.EnsureTables` при старте `cmd/ingest`), `events_calendar` (`calendar/`, сид `sql/events_calendar_q4_2026.sql`), `series_catalog` (`util/`), `gold_prices` (`gold/`), `ofz_curve` (`moex/`). Таблица `stock_prices` (legacy Float32) создаётся в `moex/moex_iss.go` и в этот блок не входит.
+
+Отдельно — таблицы отчётности Полюса (`polyus/`). Схемы перенесены из legacy **дословно** и не меняются: в них уже накоплены ряды, а `databook_polyus` читает Grafana-дашборд `dashboard/finance-polyus.json`. Канонические DDL — в коде (`polyus/datapack.go`, `polyus/import.go`), здесь приведены для справки:
+
+```sql
+-- polyus/datapack.go — xlsx-датапак, операционные результаты по активам
+CREATE TABLE IF NOT EXISTS databook_polyus (
+   table LowCardinality(String),
+   name LowCardinality(String),
+   data LowCardinality(String),   -- ANNUAL | QUARTERLY | SEMI-ANNUAL
+   date Date,
+   value Float32                  -- legacy-тип, не меняем
+) ENGINE = ReplacingMergeTree()
+ORDER BY (table, name, data, date);
+
+-- polyus/import.go — метрики из PDF-отчётов (KPI-пресс-релизы и МСФО-формы)
+-- ⚠️ В ключе нет источника: строки из разных отчётов с одним (metric, period)
+-- схлопываются ReplacingMergeTree, а в одном батче — дедуплицируются кодом.
+CREATE TABLE IF NOT EXISTS polyus_financial_metrics
+(
+    company LowCardinality(String),           -- 'PLZL'
+    metric LowCardinality(String),
+    period String,                            -- '2026H1', '2014FY', ...
+    period_type Enum8('Q' = 1, 'H' = 2, 'FY' = 3, 'LTM' = 4),
+    value Nullable(Float64),
+    unit LowCardinality(String),
+    source_url LowCardinality(String),
+    source_page UInt16,
+    loaded_at DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(loaded_at)
+ORDER BY (company, metric, period)
+```
 
 Не реализованы (в коде нет): `gold_forecasts`, `news_events`, `index_weights`, `dividend_events`, `mmf_aum`, `tax_events`, `reserves_assets`, `reserves_dynamics`, `license_events`, `peers_nav`, `mine_plans`, `nav_by_asset`, `price_decks`, `regime_states`.
 
@@ -364,6 +405,7 @@ CREATE TABLE IF NOT EXISTS regime_states (
 - `v_gold_dashboard` — **реализован** (`views/gold_dashboard.go`): одна строка на индикатор `crack_ulsd_proxy`, `distillate_stocks`, `fedwatch_dec_hike`, `etf_flows_month`, `dxy`; значения из `macro_series` (`source IN ('manual','webbridge')`, spec §5.2). `flag = 1` — порог пробит (crack >50, FedWatch >65 — сценарное переключение; >80 — уровень алерта в тексте порога; DXY >102); `stale = 1` — значения нет или последнее наблюдение старше 14 дней. Импортёров для этих индикаторов нет: значения только ручные, поэтому без ввода через `manual_series` они остаются `stale`
 - `v_forecast_accuracy` — **реализован** (`views/forecast_accuracy.go`): строка на прогноз из `forecast_log` (`metric`, `forecast_date`, `target_date`, `error_pct`, `is_resolved`). Отдельного конкурентного ML-трека в витрине нет (различается только `metric`). `actual` и `error_pct` в коде не заполняются: сверка с фактом после `target_date` не автоматизирована
 - `v_peers_comparison` — **не реализован** (в коде нет). План: P/NAV, EV/oz, дисконт к лидеру по контурам `ru`/`global`; алерт-порог — дисконт PLZL за ±1σ исторической нормы
+- `v_polyus_*` — **не реализован** (в коде нет). Отчётность Полюса лежит в сырых таблицах `databook_polyus` и `polyus_financial_metrics`, витрины над ними нет и `GRANT SELECT` пользователю `kimi_reader` не выдан (`sql/mcp_kimi_reader.sql`), поэтому MCP-агент данные Полюса не видит. Это следующий пункт (§6.4 требует входов DCF: производство, TCC, capex, net debt)
 - `v_gold_attribution` — **не реализован** (в коде нет). План: GRAM-разложение движения золота (экспансия / риск / альтернативная стоимость / импульс); ошибки прогноза атрибутируются к фактору
 - `v_series_catalog` — **реализован** (`util/series_catalog.go`): `series_catalog FINAL`: название, единицы, частота, происхождение и описание каждого ряда `macro_series` (ведётся импортёрами через `util.UpsertSeriesCatalog`)
 - `v_bea_pce` — `macro_series FINAL WHERE source = 'bea'`: индексы PCE из BEA (`PCE_PI`, `PCE_PI_CORE`), уровни 2017=100
@@ -435,6 +477,8 @@ uv run --with mcp-clickhouse --python 3.12 mcp-clickhouse
 
 Правило для новых источников и рядов (см. AGENTS.md, правило 11): каждый ряд описан в `series_catalog`, каждая витрина имеет комментарии таблицы и колонок и грант `kimi_reader`.
 
+Отчётность Полюса (`polyus/`) правилу пока не удовлетворяет: рядов в `series_catalog` нет (импортёры не публикуют каталог), витрины `v_polyus_*` нет, гранта нет. Пользователь `kimi_reader` таблицы `databook_polyus` и `polyus_financial_metrics` не видит и видеть не должен — это сырые таблицы; доступ агенту даст только будущая витрина.
+
 Отдельно от data-контура: опциональный dev-MCP `jetbrains` — встроенный MCP-сервер GoLand (2025.2+, HTTP-stream `http://127.0.0.1:<динамический порт>/stream`, запись в `~/.kimi-code/mcp.json`). Даёт агенту инструменты IDE для работы с кодом (`get_file_problems`, `get_symbol_info`, `search_symbol`, `analyze_calls`, `rename_refactoring`); правила использования и запреты — в AGENTS.md, раздел «Инструменты GoLand (MCP `jetbrains`)», настройка — в README, «MCP GoLand (опционально)». К данным ClickHouse отношения не имеет.
 
 #### Ingest-endpoint (пакет `ingest/`, бинарник `cmd/ingest`)
@@ -462,6 +506,17 @@ uv run --with mcp-clickhouse --python 3.12 mcp-clickhouse
 - Переменные окружения плагина (имена): `GOLD_NAV_MCP_TOKEN` (выдаёт автор, read-only), `GOLD_NAV_INGEST_URL` и `GOLD_NAV_INGEST_TOKEN` (только у автора). Значения в репозиторий не кладутся.
 - Не проверено: установка и живой сценарий в Kimi Code и Kimi Work, подстановка `${GOLD_NAV_MCP_TOKEN}` в манифесте (раздел «Результат проверки» в README плагина пока не заполнен). Спека: [docs/superpowers/specs/2026-10-10-gold-nav-plugin-design.md](docs/superpowers/specs/2026-10-10-gold-nav-plugin-design.md).
 
+### 6.6 Отчётность Полюса: известные ограничения (пакет `polyus/`)
+
+Все четыре пункта — **проверенные дефекты, не гипотезы**; они осознанно оставлены как есть до отдельной задачи (выравнивание колонок, витрина), а не скрыты в коде. Спека: [docs/superpowers/specs/2026-10-10-polyus-parsers-design.md](docs/superpowers/specs/2026-10-10-polyus-parsers-design.md).
+
+1. **Guard отбрасывает trailing-колонку каждой KPI-страницы (`polyus/guard.go`).** `scanPeriodColumns` выводит меньше колонок, чем шапка физически содержит: неопознанные колонки-изменения («Изм. за год», «y-o-y change») съедают токены шапки, значения сдвигаются влево, и последняя выведенная колонка несёт чужое значение. Guard её отбрасывает — критерий позиционный, а не «период не объявлен шапкой» (шапка этот период как раз объявляет; фильтр по объявленным периодам сохранил бы ровно ту испорченную запись). Следствие: слот `2025H2` русского релиза 1H2026 (в нём «Изм. за год») в витрину не попадает, 9 записей теряется — намеренно.
+2. **`2014H2` несёт значения FY2013** (`revenue` 2 329, `capex` 1 440) — тот же дефект выравнивания, не исправлен; это 7 живых строк с неверной подписью периода. Настоящий период (FY2013) потерян при разборе шапки и индексным сдвигом не восстанавливается. Код не отличает такую запись от достоверной — дефект виден только глазами.
+3. **Ключ `(company, metric, period)` не содержит источника.** Следствия: (а) `revenue` и `total_revenue` — один и тот же показатель под двумя именами (оба 4 674); (б) для `eps_basic`/`eps_diluted`/`profit_for_period` русский пресс-релиз и МСФО-отчёт дают одно и то же значение, и в витрине остаётся значение русского релиза — он обрабатывается первым. Значения совпадают, поэтому сегодня данные не испорчены, но если источники разойдутся, более полный источник проиграет молча (импортёр логирует пропуск на уровне Warn: `duplicate ... already in batch`). Лечится либо ключом с источником, либо явным правилом приоритета — отдельная задача.
+4. **Агент MCP не видит данные Полюса.** Витрины `v_polyus_*` и гранта `kimi_reader` в `sql/mcp_kimi_reader.sql` нет; выдавать агенту сырые `databook_polyus` и `polyus_financial_metrics` запрещено (AGENTS.md, правило 11). Пока витрины нет, производительность и TCC Полюса читаются только через ClickHouse-клиент, а не через MCP.
+
+Живая приёмка (2026-10-10, чистый прогон `make import STAT=polyus_financial_metrics`): 39 строк — `2014FY` 7, `2014H2` 7, `2025H1` 9, `2026H1` 16; для `2026H1` значения `gold_output` 1 287, `tcc_per_ounce` 1 069, `total_revenue` 4 674, `profit_for_period` 829, `stripping_capex` 397. Записей `2025H2`: 0 (ограничение 1).
+
 ## 7. Календарь триггеров (актуальный Q4-2026)
 
 | Дата | Событие | Действие модели |
@@ -487,6 +542,6 @@ uv run --with mcp-clickhouse --python 3.12 mcp-clickhouse
 7. Русские даты/месяцы — через `util.MonthsToNum`; форматы времени — константы рядом с импортёром.
 8. Накопленные значения «с начала года» конвертировать в потоки разностями (паттерн `fedBudImport`).
 9. Ошибки не проглатывать: парсинг чисел — с проверкой `err`; в `Import()` ошибка → `return count, err`.
-10. Пакет `financial/` — legacy (database/sql, свой main): новый код туда не добавлять, новые корпоративные импортёры делать на clickhouse-go/v2 в новых пакетах.
-11. Сборка-проверка: `make all` (gofmt, golangci-lint, `go vet`, `go test -race`, сборка). Тесты есть в `bls/` и `bea/`; для новых импортёров тесты парсера и HTTP-слоя обязательны (`httptest.Server` + подмена base URL-переменной пакета).
+10. Пакет `financial/` — legacy (database/sql, свой main): новый код туда не добавлять, новые корпоративные импортёры делать на clickhouse-go/v2 в новых пакетах. Парсеры Полюса уже вынесены в `polyus/` (см. §6.6); в `financial/` остаётся `databook_ugk` и мёртвый код металлургов.
+11. Сборка-проверка: `make all` (gofmt, golangci-lint, `go vet`, `go test -race`, сборка). Тесты есть в `bls/`, `bea/` и `polyus/` (фикстуры, без сети); для новых импортёров тесты парсера и HTTP-слоя обязательны (`httptest.Server` + подмена base URL-переменной пакета).
 12. После изменения архитектуры — обновить этот файл.
