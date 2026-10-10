@@ -1,5 +1,7 @@
 package dcf
 
+import "github.com/google/uuid"
+
 // Канонические DDL из ARCHITECTURE.md §6.2 — копировать как есть, не менять.
 
 const minePlansCreateTable = `CREATE TABLE IF NOT EXISTS mine_plans (
@@ -33,3 +35,22 @@ const navByAssetCreateTable = `CREATE TABLE IF NOT EXISTS nav_by_asset (
     discount_rate Float64,
     stage_haircut Nullable(Float64)
 ) ENGINE = ReplacingMergeTree ORDER BY (run_id, deck, asset, contour);`
+
+// NavRow — строка nav_by_asset, один-в-один с колонками DDL выше. Отдельная
+// структура нужна, чтобы порядок Append в Import читался против колонок одной
+// страницей: перепутать deck и asset визуально почти невозможно, а ClickHouse
+// примет оба как LowCardinality(String) и молча запишет перепутанное.
+type NavRow struct {
+	RunID uuid.UUID
+	Deck  string
+	Asset string
+	// Contour — контур ставки: ContourIndustrial или ContourLocal.
+	Contour string
+	// NPVUSDmln — NPV актива в млн USD, ровно как вернул npvLOM.
+	NPVUSDmln float64
+	// DiscountRate — ставка этого контура, не «общая» на строку: иначе два
+	// контура различимы только именем, а число в nav_by_asset врёт.
+	DiscountRate float64
+	// StageHaircut — nil: стадийные haircut'ы (construction/DFS/PEA) вне среза.
+	StageHaircut *float64
+}

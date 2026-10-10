@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/google/uuid"
@@ -202,11 +203,78 @@ func readDecks(ctx context.Context, conn driver.Conn) (map[string][]DeckYear, er
 	return decks, nil
 }
 
-// Import — обвязка расчётного ядра. На этом шаге (Task 4) он проверяет входы и
-// останавливается: расчёт и запись nav_by_asset делает Task 5. Порядок шагов
-// важен — сначала mine_plans, и только потом price_decks: пустой план означает
-// «считать нечего» и завершается предупреждением с нулём строк, а не ошибкой, и
-// чтение деков в этом случае было бы лишним запросом в пустую таблицу.
+// Контуры ставки: два результата на каждый ценовой дек (§6.4, §13.1). Строковые
+// константы, а не захардкоженные литералы в navRows: те же строки стоят в DDL
+// nav_by_asset (schema.go) и в ARCHITECTURE §6.2, и разойтись они не должны.
+const (
+	ContourIndustrial = "industrial"
+	ContourLocal      = "local"
+)
+
+// navRows — чистое ядро записи: входы (планы, деки, ставки, допущения) → строки
+// nav_by_asset. Без БД, без часов, без чтения окружения: всё это в Import, чтобы
+// комбинаторику «три дека × два контура» можно было проверить юнит-тестом, а не
+// живым прогоном. Ошибки у функции нет по замыслу — расчёт не может не сойтись
+// (проверки входов — в checkInputs), но сигнатура оставлена с error: это контракт
+// шага, и добавлять сюда доменные проверки (например, отрицательную добычу) будут
+// без смены сигнатуры.
+//
+// Итерация по декам детерминирована: имена сортируются, потому что порядок map в
+// Go случаен, а порядок вставки в nav_by_asset обязан быть воспроизводимым между
+// прогонами. Активы идут в порядке планов (readMinePlans уже отсортировал их по
+// company, asset), контуры — промышленный, затем локальный: фиксированный
+// порядок делает diff двух прогонов осмысленным.
+//
+// Пустой список годов дека — не паника и не ошибка: npvLOM пропустит годы плана
+// без цены, и NPV выйдет нулевым. Строку при этом пишем: «актив посчитан, но
+// дековской цены на его годы нет» — это данные, которые нужно увидеть в
+// nav_by_asset, а не тихо отсутствующая комбинация, неотличимая от «не считали».
+func navRows(runID uuid.UUID, plans []MinePlanRecord, decks map[string][]DeckYear, rates DiscountRates, p Params) ([]NavRow, error) {
+	deckNames := make([]string, 0, len(decks))
+	for name := range decks {
+		deckNames = append(deckNames, name)
+	}
+	sort.Strings(deckNames)
+
+	contours := []struct {
+		name string
+		rate float64
+	}{
+		{ContourIndustrial, rates.Industrial},
+		{ContourLocal, rates.Local},
+	}
+
+	rows := make([]NavRow, 0, len(plans)*len(deckNames)*len(contours))
+	for _, plan := range plans {
+		for _, deck := range deckNames {
+			for _, contour := range contours {
+				rows = append(rows, NavRow{
+					RunID:        runID,
+					Deck:         deck,
+					Asset:        plan.Asset,
+					Contour:      contour.name,
+					DiscountRate: contour.rate,
+					// npvLOM возвращает млн USD — та же единица, что npv_usd_mln,
+					// поэтому результат идёт как есть: пересчёт здесь был бы
+					// дефектом в 1000 раз (model.go, npvLOM).
+					NPVUSDmln: npvLOM(plan.Years, decks[deck], contour.rate, p.Ipc, p),
+					// Стадийные haircut'ы — вне среза: строка рудника считается
+					// полным NPV, а дисконт за стадию (construction/DFS/PEA)
+					// придёт отдельным шагом (ARCHITECTURE §6.4, ресурсы вне LOM).
+					StageHaircut: nil,
+				})
+			}
+		}
+	}
+
+	return rows, nil
+}
+
+// Import — обвязка расчётного ядра: проверить входы, посчитать navRows и записать
+// их в nav_by_asset ОДНИМ батчем. Порядок шагов важен — сначала mine_plans, и
+// только потом price_decks: пустой план означает «считать нечего» и завершается
+// предупреждением с нулём строк, а не ошибкой, и чтение деков в этом случае было
+// бы лишним запросом в пустую таблицу.
 func (s *dcfEngine) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
 	for _, ddl := range []string{minePlansCreateTable, priceDecksCreateTable, navByAssetCreateTable} {
 		if err = conn.Exec(ctx, ddl); err != nil {
@@ -231,15 +299,69 @@ func (s *dcfEngine) Import(ctx context.Context, conn driver.Conn) (count int64, 
 		return 0, err
 	}
 
+	// Сид деков только на пустой таблице: непустую не трогаем, потому что там
+	// лежит ВЫБРАННЫЙ аналитиком сценарий (и его published — метка версии).
+	// Перезаписать его сидом значило бы молча подменить вход расчёта.
+	if len(decks) == 0 {
+		if err = seedPriceDecks(ctx, conn); err != nil {
+			return 0, err
+		}
+
+		if decks, err = readDecks(ctx, conn); err != nil {
+			return 0, err
+		}
+	}
+
 	if err = checkInputs(plans, decks); err != nil {
 		return 0, err
 	}
 
-	// Расчёт и запись nav_by_asset — Task 5: до появления navRows писать нечего, и
-	// пустой батч в nav_by_asset создал бы видимость прогона, которого не было.
-	log.Infof("dcf inputs read: %d активов, %d деков; запись nav_by_asset — следующий шаг", len(plans), len(decks))
+	// Без DCF_RUN_ID расчёт не пишется: run_id клиентский, и связка с model_runs
+	// держится только на нём (resolveRunID, Review Focus 2). Вместо молчаливого
+	// нуля печатаем тело POST /v1/model_run — человек дописывает результат и
+	// отправляет его в ingest, получая версию модели в журнале.
+	rawRunID := os.Getenv(runIDEnv)
+	if rawRunID == "" {
+		log.Info(modelRunJSON(plans, decks, rates, defaultParams))
+		log.Warn("DCF_RUN_ID не задан: nav_by_asset не записан; " +
+			"запись model_runs — только через ingest-endpoint (POST /v1/model_run)")
 
-	return 0, nil
+		return 0, nil
+	}
+
+	runID, err := resolveRunIDString()
+	if err != nil {
+		return 0, err
+	}
+
+	rows, err := navRows(runID, plans, decks, rates, defaultParams)
+	if err != nil {
+		return 0, err
+	}
+
+	// Один батч на все строки: построчный Exec в цикле запрещён (правило 2
+	// AGENTS.md), а частично записанный батч оставил бы в nav_by_asset половину
+	// комбинаций «дека × контур», неотличимую от полного прогона.
+	batch, err := conn.PrepareBatch(ctx, "INSERT INTO nav_by_asset")
+	if err != nil {
+		return 0, err
+	}
+
+	for _, r := range rows {
+		if err = batch.Append(r.RunID, r.Deck, r.Asset, r.Contour, r.NPVUSDmln, r.DiscountRate, r.StageHaircut); err != nil {
+			// Abort — не украшение: без него соединение остаётся с открытым
+			// батчем, и следующий шаг DAG-а получит «уже есть незакрытый батч».
+			_ = batch.Abort()
+
+			return 0, err
+		}
+	}
+
+	if err = batch.Send(); err != nil {
+		return 0, err
+	}
+
+	return int64(len(rows)), nil
 }
 
 func init() {
