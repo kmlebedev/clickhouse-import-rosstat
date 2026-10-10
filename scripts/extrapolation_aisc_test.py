@@ -5,9 +5,11 @@
     python3 scripts/extrapolation_aisc_test.py -v
 """
 
+import io
 import os
 import sys
 import unittest
+import unittest.mock
 from pathlib import Path
 
 # Скрипт и тест лежат рядом, запуск прямой (`python3 scripts/...`),
@@ -772,6 +774,143 @@ class TestReconcile(unittest.TestCase):
         self.assertEqual(set(aisc), set(ex.ASSETS))
         self.assertAlmostEqual(resid, 0.0, places=6)
         self.assertGreater(m, 0.0)
+
+
+class TestProductionQuery(unittest.TestCase):
+    """Проверка чтения факта добычи из `databook_polyus`.
+
+    НИ ОДИН тест здесь не ходит в сеть: проверяются чистые функции —
+    построитель SQL, разбор ответа и маскирование секрета. Сетевой вызов
+    `ch_query` подменяется на уровне `urllib.request.urlopen`, поэтому тесты
+    проходят и при остановленном ClickHouse.
+    """
+
+    def test_sql_uses_datapack_metric(self):
+        sql = ex.production_sql("OLIMPIADA", 2021)
+        self.assertIn("databook_polyus", sql)
+        self.assertIn("Total Dore gold output", sql)
+        self.assertIn("ANNUAL", sql)
+        # FINAL обязателен: без него ReplacingMergeTree отдал бы год несколько
+        # раз с разными версиями значения.
+        self.assertIn("FINAL", sql)
+
+    def test_sql_scopes_asset_and_year_from_date_column(self):
+        sql = ex.production_sql("NATALKA", 2020)
+        # Имя актива — в кавычках, год — через toYear(date), а НЕ из подписи
+        # периода метрики.
+        self.assertIn("table = 'NATALKA'", sql)
+        self.assertIn("toYear(date) = 2020", sql)
+        self.assertNotIn("OLIMPIADA", sql)
+
+    def test_sql_requests_json_format_and_names_the_column(self):
+        # HTTP-интерфейс по умолчанию отвечает TabSeparated, а разбор идёт по
+        # ключу "v": оба требования к тексту запроса пинуются явно.
+        sql = ex.production_sql("OLIMPIADA", 2021)
+        self.assertIn("FORMAT JSON", sql)
+        self.assertIn("AS v", sql)
+        self.assertEqual(ex.ACTUAL_PRODUCTION_COLUMN, "v")
+
+    def test_sql_rejects_unknown_asset(self):
+        # Произвольная строка в литерал SQL попасть не должна — проверяется
+        # ФОРМА имени, а не только вхождение в ASSETS (датапак шире пятёрки).
+        for bad in ("OLIMPIADA'; DROP TABLE databook_polyus; --", "olympiada",
+                    "OLIMPIADA\nOR 1=1", "", "OLIMPIADA 2"):
+            with self.assertRaises(ValueError, msg=bad) as ctx:
+                ex.production_sql(bad, 2021)
+            self.assertIn("актив", str(ctx.exception))
+
+    def test_sql_allows_datapack_only_asset(self):
+        # ZAPADNOYE есть в датапаке, но не в пятёрке LOM; форма имени верна,
+        # поэтому запрос строится (и вернёт 0.0, если строк нет).
+        self.assertIn("table = 'ZAPADNOYE'", ex.production_sql("ZAPADNOYE", 2021))
+
+    def test_sql_rejects_absurd_year(self):
+        for bad in (-1, 0, 1800, 10**9, "2021", 2021.0):
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                ex.production_sql("OLIMPIADA", bad)
+
+    def test_parses_clickhouse_json_rows(self):
+        # Реальный ответ ClickHouse всегда содержит секцию "data".
+        payload = '{"data":[{"asset":"OLIMPIADA","y":2021,"v":1112.8}]}'
+        rows = ex.parse_ch_json(payload)
+        self.assertEqual(rows[0]["v"], 1112.8)
+
+    def test_zero_production_is_not_an_error(self):
+        # TITIMUKHTA/ZAPADNOYE законно нулевые в датапаке: ноль — факт, а не сбой.
+        self.assertEqual(ex.parse_ch_json('{"data":[{"v":0}]}')[0]["v"], 0.0)
+
+    def test_empty_data_array_gives_no_rows(self):
+        self.assertEqual(ex.parse_ch_json('{"data":[]}'), [])
+
+    def test_missing_data_key_gives_no_rows(self):
+        # Пустой ответ сервера без секции "data" равнозначен отсутствию строк.
+        self.assertEqual(ex.parse_ch_json("{}"), [])
+
+    def test_malformed_json_raises_contextful_error(self):
+        # Голый JSONDecodeError не отличим от сбоя в другом месте; ошибка
+        # должна называть источник и не тащить в текст сырой payload (в нём
+        # может оказаться пароль, если сервер вернул HTML-страницу логина).
+        with self.assertRaises(ex.ClickHouseError) as ctx:
+            ex.parse_ch_json("not json at all")
+        message = str(ctx.exception)
+        self.assertIn("JSON", message)
+        self.assertIn("ClickHouse", message)
+        self.assertNotIn("not json at all", message)
+
+    def test_password_never_leaks_into_error(self):
+        # Секрет не должен попасть ни в текст ошибки, ни в её args. Сетевой
+        # вызов подменяется, поэтому тест офлайновый.
+        secret = "sup3r-s3cret-pw"
+        os.environ["CLICKHOUSE_PASSWORD"] = secret
+        self.addCleanup(os.environ.pop, "CLICKHOUSE_PASSWORD", None)
+        # Тело ответа сервера намеренно содержит пароль (так бывает, когда
+        # ClickHouse отражает запрос в сообщении об ошибке). Тело передаётся
+        # файлоподобным объектом, как это делает настоящий urllib.
+        body = f"Code: 62. Syntax error near '{secret}'"
+        request = ex.urllib.request.Request("http://localhost:8123/")
+
+        with unittest.mock.patch(
+            "extrapolation_aisc.urllib.request.urlopen",
+            lambda req, timeout=None: (_ for _ in ()).throw(
+                ex.HTTPError(
+                    "http://localhost:8123/", 500, "Server Error",
+                    {"Content-Type": "text/plain"}, io.StringIO(body),
+                )
+            ),
+        ):
+            with self.assertRaises(ex.ClickHouseError) as ctx:
+                ex.ch_query("SELECT 1")
+        self.assertIsInstance(request, ex.urllib.request.Request)
+        message = str(ctx.exception)
+        self.assertNotIn(secret, message)
+        # Маскирование не просто «убрало» тело: диагностика на месте, а секрет
+        # заменён на ***.
+        self.assertIn("***", message)
+        self.assertIn("Syntax error", message)
+        self.assertNotIn(secret, repr(ctx.exception.args))
+
+    def test_read_actual_production_maps_asset_year_to_float(self):
+        # Сквозная проверка формы результата без сети: ответ подменяется.
+        def fake_query(sql):
+            if "OLIMPIADA" in sql:
+                return [{"v": 1112.8}]
+            return []
+
+        with unittest.mock.patch.object(ex, "ch_query", fake_query):
+            got = ex.read_actual_production(["OLIMPIADA", "NATALKA"], (2021,))
+        self.assertEqual(got, {"OLIMPIADA": {2021: 1112.8}, "NATALKA": {2021: 0.0}})
+
+    def test_missing_row_is_zero_not_error(self):
+        with unittest.mock.patch.object(ex, "ch_query", lambda sql: []):
+            got = ex.read_actual_production(["ZAPADNOYE"], (2021,))
+        self.assertEqual(got["ZAPADNOYE"][2021], 0.0)
+
+    def test_null_value_from_argmax_is_zero(self):
+        # argMax по пустому множеству даёт NULL (а не отсутствие строк) —
+        # это тот же «факта нет», а не сбой разбора.
+        with unittest.mock.patch.object(ex, "ch_query", lambda sql: [{"v": None}]):
+            got = ex.read_actual_production(["OLIMPIADA"], (2021,))
+        self.assertEqual(got["OLIMPIADA"][2021], 0.0)
 
 
 if __name__ == "__main__":
