@@ -60,23 +60,29 @@ func TestNpvLOMFixedPlan(t *testing.T) {
 	p := defaultParams
 	p.ProfitTaxPct, p.NdpiBaseUSDPerOz = 0, 0
 
-	if got := npvLOM(plan, deck, 0, nil, p); math.Abs(got-795.95) > 0.01 {
-		t.Fatalf("npvLOM = %v, want 795.95", got)
+	// 767.0 млн = 229 + 279 + 259: capex/closure заданы в млн USD (спек §3.3),
+	// выручка и НДПИ — в тыс. USD (koz × USD/oz), к млн приводится итог.
+	// Прежний эталон брифа (795.95) дважды ошибался: capex 50 вычитался как
+	// 50 тыс. вместо 50 млн, а год 2 вычитал НДПИ второй раз.
+	if got := npvLOM(plan, deck, 0, nil, p); math.Abs(got-767.0) > 0.01 {
+		t.Fatalf("npvLOM = %v, want 767.0", got)
 	}
 }
 
 func TestNpvLOMClosureTailReducesValue(t *testing.T) {
-	plan := []MinePlanYear{{Year: 2027, ProductionKoz: 100, AISC: 1000, ClosureCosts: 0}}
-	withTail := plan
-	withTail[0].ClosureCosts = -20
+	// Два НЕЗАВИСИМЫХ литерала: общий слайс (withTail := plan) делит массив,
+	// и мутация withTail[0] меняла бы и plan — тогда оба вызова получали бы
+	// хвост, и проверка была бы пустой (with == without).
+	without := []MinePlanYear{{Year: 2027, ProductionKoz: 100, AISC: 1000}}
+	with := []MinePlanYear{{Year: 2027, ProductionKoz: 100, AISC: 1000, ClosureCosts: -20}}
 	deck := []DeckYear{{2027, 4000}}
 	p := defaultParams
 	p.ProfitTaxPct, p.NdpiBaseUSDPerOz = 0, 0
 
-	without := npvLOM(plan, deck, 0, nil, p)
-	with := npvLOM(withTail, deck, 0, nil, p)
-	if !(with < without) {
-		t.Fatalf("хвост закрытия обязан уменьшать NPV: got %v, want < %v", with, without)
+	withoutNPV := npvLOM(without, deck, 0, nil, p)
+	withNPV := npvLOM(with, deck, 0, nil, p)
+	if !(withNPV < withoutNPV) {
+		t.Fatalf("хвост закрытия обязан уменьшать NPV: got %v, want < %v", withNPV, withoutNPV)
 	}
 }
 
