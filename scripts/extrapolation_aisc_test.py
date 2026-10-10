@@ -474,5 +474,164 @@ class TestCrossCheck(unittest.TestCase):
         self.assertNotIn(2018, ex.CALIBRATION_YEARS)
 
 
+# Проверенные поактивные пары (AISC, TCC) за 2019–2021, USD/oz, живут в модуле
+# (`ex.real_series`), чтобы калибровочные тесты не зависели от разбора PDF и не
+# дублировали числа. Имя намеренно отличается от модульного `ex.build_series`
+# (тот строит серию из фикстур и участвует в перекрёстной сверке).
+real_series = ex.real_series
+
+
+class TestCalibrate(unittest.TestCase):
+    """Клин «затраты поддержания» как доля TCC, с отбраковкой выбросов по MAD."""
+
+    def test_wedge_share(self):
+        self.assertAlmostEqual(ex.wedge_share(618.0, 369.0), 0.6748, places=3)
+        self.assertAlmostEqual(ex.wedge_share(865.0, 569.0), 0.5202, places=3)
+
+    def test_wedge_share_rejects_nonpositive_tcc(self):
+        with self.assertRaises(ValueError):
+            ex.wedge_share(500.0, 0.0)
+        with self.assertRaises(ValueError):
+            ex.wedge_share(500.0, -1.0)
+
+    def test_calibration_uses_2019_to_2021(self):
+        cal = ex.calibrate(ex.real_series())
+        self.assertEqual(sorted(cal["OLIMPIADA"]["years"]), [2019, 2020, 2021])
+
+    def test_known_r_bar_values(self):
+        cal = ex.calibrate(ex.real_series())
+        self.assertAlmostEqual(cal["OLIMPIADA"]["r_bar"], 0.626, places=3)
+        self.assertAlmostEqual(cal["NATALKA"]["r_bar"], 0.573, places=3)
+        self.assertAlmostEqual(cal["KURANAKH"]["r_bar"], 0.488, places=3)
+
+    def test_no_outliers_in_clean_data(self):
+        cal = ex.calibrate(ex.real_series())
+        for asset in ex.ASSETS:
+            self.assertEqual(cal[asset]["discarded"], [])
+
+    def test_outlier_is_discarded_and_reported(self):
+        series = ex.real_series()
+        series["KURANAKH"][2020] = {"aisc": 5000.0, "tcc": 518.0}
+        cal = ex.calibrate(series)
+        self.assertIn(2020, [y for y, _ in cal["KURANAKH"]["discarded"]])
+        self.assertAlmostEqual(cal["KURANAKH"]["r_bar"], 0.503, places=2)
+
+    def test_discarded_records_year_and_value(self):
+        # `discarded` — список пар (год, значение клина), и значение относится
+        # именно к отброшенному году.
+        series = ex.real_series()
+        series["KURANAKH"][2020] = {"aisc": 5000.0, "tcc": 518.0}
+        cal = ex.calibrate(series)
+        discarded = cal["KURANAKH"]["discarded"]
+        self.assertEqual([y for y, _ in discarded], [2020])
+        self.assertAlmostEqual(discarded[0][1], (5000.0 - 518.0) / 518.0, places=6)
+        # Убранный год не попадает в годы, по которым усреднено.
+        self.assertEqual(sorted(cal["KURANAKH"]["years"]), [2019, 2021])
+
+    def test_mad_rule_beats_mean_sigma_on_gross_outlier(self):
+        """Документирует ПРИЧИНУ выбора MAD: при n=3 mean/σ не ловит выброс.
+
+        На испорченной серии Куранах (клинья 0.486, 8.653, 0.520) правило
+        «mean ± 2σ» НЕ отбрасывает 8.653 — выброс сам раздувает σ и проходит
+        собственный порог, давая мусорное среднее. Правило MAD отбрасывает его.
+        Тест — регресс-страж: возврат к mean/σ его сломает.
+        """
+        import statistics as _st
+
+        series = ex.real_series()
+        series["KURANAKH"][2020] = {"aisc": 5000.0, "tcc": 518.0}
+        values = [
+            (series["KURANAKH"][y]["aisc"] - series["KURANAKH"][y]["tcc"]) / series["KURANAKH"][y]["tcc"]
+            for y in ex.CALIBRATION_YEARS
+        ]
+        self.assertAlmostEqual(values[1], 8.653, places=3)
+
+        # Наивное правило mean ± 2σ оставляет выброс: он выживает свою же полосу.
+        mean = _st.mean(values)
+        sigma = _st.pstdev(values)
+        kept_by_mean_sigma = [v for v in values if abs(v - mean) <= 2 * sigma]
+        self.assertEqual(len(kept_by_mean_sigma), 3)
+        self.assertGreater(_st.mean(kept_by_mean_sigma), 3.0)
+
+        # MAD-правило выброс отбрасывает.
+        cal = ex.calibrate(series)
+        self.assertIn(2020, [y for y, _ in cal["KURANAKH"]["discarded"]])
+        self.assertAlmostEqual(cal["KURANAKH"]["r_bar"], 0.503, places=3)
+
+    def test_zero_mad_discards_nothing(self):
+        # Медиана абсолютных отклонений равна нулю (два одинаковых клина),
+        # делить на неё нельзя: все точки сохраняются.
+        series = ex.real_series()
+        series["KURANAKH"] = {
+            2019: {"aisc": 300.0, "tcc": 200.0},   # r = 0.5
+            2020: {"aisc": 200.0, "tcc": 100.0},   # r = 1.0
+            2021: {"aisc": 400.0, "tcc": 200.0},   # r = 1.0
+        }
+        cal = ex.calibrate(series)
+        self.assertEqual(sorted(cal["KURANAKH"]["years"]), [2019, 2020, 2021])
+        self.assertEqual(cal["KURANAKH"]["discarded"], [])
+        self.assertAlmostEqual(cal["KURANAKH"]["r_bar"], (0.5 + 1.0 + 1.0) / 3, places=6)
+
+    def test_fewer_than_two_observations_raises(self):
+        # Защита срабатывает на вырожденном входе: у актива меньше двух полных
+        # пар (AISC, TCC). Одна точка не поддерживает ни проверку на выброс, ни
+        # оценку разброса — молча вернуть её среднее значило бы выдать шум за
+        # калибровку.
+        #
+        # Почему не «MAD отбросил всё, кроме одной точки»: при n = 3 медиана
+        # абсолютных отклонений — это СРЕДНЕЕ из трёх отклонений, поэтому две
+        # наименьшие точки всегда лежат внутри своей же полосы, и MAD-правило
+        # физически не может оставить меньше двух точек на полном векторе. Тест
+        # добирается до ветки через неполный вектор — единственный достижимый
+        # для неё вход.
+        series = ex.real_series()
+        series["KURANAKH"] = {
+            2020: {"aisc": 756.0, "tcc": 518.0},   # полная пара
+            2019: {"aisc": 777.0, "tcc": None},    # неполная — не клин
+            2021: {"aisc": None, "tcc": 569.0},    # неполная — не клин
+        }
+        with self.assertRaises(ex.CalibrationError) as ctx:
+            ex.calibrate(series)
+        self.assertIn("KURANAKH", str(ctx.exception))
+
+    def test_asset_absent_from_series_raises(self):
+        # Актив из ASSETS, по которому в серии нет ни одного калибровочного
+        # года, — тоже вырожденный вход, а не «актив без клина».
+        series = ex.real_series()
+        del series["NATALKA"]
+        with self.assertRaises(ex.CalibrationError) as ctx:
+            ex.calibrate(series)
+        self.assertIn("NATALKA", str(ctx.exception))
+
+    def test_outlier_band_admits_clean_data_but_rejects_gross_outlier(self):
+        # Защита от регресса в ЛЮБУЮ сторону: полоса должна быть достаточно
+        # широкой, чтобы чистые данные проходили целиком, и достаточно узкой,
+        # чтобы грубый выброс отбрасывался. Обе половины проверяются вместе,
+        # потому что порог — один параметр и расширять его «на глаз» нельзя.
+        clean = ex.calibrate(ex.real_series())
+        for asset in ex.ASSETS:
+            self.assertEqual(clean[asset]["discarded"], [], asset)
+
+        series = ex.real_series()
+        series["KURANAKH"][2020] = {"aisc": 5000.0, "tcc": 518.0}
+        self.assertEqual(
+            [y for y, _ in ex.calibrate(series)["KURANAKH"]["discarded"]], [2020]
+        )
+
+    def test_years_carry_only_surviving_years(self):
+        cal = ex.calibrate(ex.real_series())
+        for asset in ex.ASSETS:
+            self.assertEqual(sorted(cal[asset]["years"]), [2019, 2020, 2021])
+
+    def test_r_bar_is_mean_of_all_three_verified_years(self):
+        # Прибивает ожидаемые значения к таблице брифа: r_bar — В ТОЧНОСТИ
+        # среднее трёх клиньев, то есть ни один год не отброшен.
+        cal = ex.calibrate(ex.real_series())
+        for asset, pairs in ex._REAL_AISC_TCC.items():
+            r = [(a - t) / t for a, t in pairs.values()]
+            self.assertAlmostEqual(cal[asset]["r_bar"], sum(r) / 3, places=9, msg=asset)
+            self.assertEqual(cal[asset]["discarded"], [], asset)
+
+
 if __name__ == "__main__":
     unittest.main()
