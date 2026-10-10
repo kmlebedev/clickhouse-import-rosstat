@@ -21,6 +21,22 @@ import (
 // поэтому ни переименовать её, ни пересоздать нельзя, не сломав дашборд.
 const financialMetricsTable = "company_financials"
 
+// financialMetricsStatName — имя импортёра в реестре chimport.Stats, то есть
+// значение CLICKHOUSE_IMPORT_STAT и имя шага в dagu/financial.yaml. Это
+// отдельная константа, и склеивать её с financialMetricsTable нельзя.
+//
+// Имя в реестре — стабильный контракт, на который ссылаются расписания
+// (dagu/financial.yaml, шаг polyus_financial_metrics) и операторы, набирающие
+// make import STAT=polyus_financial_metrics. Имя таблицы — не контракт: оно уже
+// менялось (polyus_financial_metrics → company_financials, когда таблица стала
+// общей для сектора) и может измениться снова.
+//
+// Пока обе величины были одной константой, смена имени таблицы молча
+// переименовывала и импортёр: make import STAT=polyus_financial_metrics отвечал
+// "no importer named ...", а недельный DAG-шаг перестал совпадать с импортёром.
+// Поэтому Name() возвращает эту константу, а не имя таблицы.
+const financialMetricsStatName = "polyus_financial_metrics"
+
 // financialMetricsCompany — тикер компании в записях витрины.
 const financialMetricsCompany = "PLZL"
 
@@ -58,8 +74,11 @@ ORDER BY (company, metric, period, source_kind)`
 // company_financials.
 type financialMetricsImport struct{}
 
+// Name возвращает имя импортёра в реестре — контракт CLI и расписания, а не имя
+// таблицы. Расходиться с financialMetricsTable оно обязано: см.
+// financialMetricsStatName.
 func (s *financialMetricsImport) Name() string {
-	return financialMetricsTable
+	return financialMetricsStatName
 }
 
 func (s *financialMetricsImport) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {

@@ -198,6 +198,15 @@ func companyViewsDDL() []string {
 	return []string{companyFinancialsCreateTable}
 }
 
+// companyViewsDDLViews — витрины импортёра в том порядке, в каком он их создаёт.
+// Отдельный список, а не литерал на месте цикла, потому что витрины нужны в двух
+// местах: сам цикл создания и итоговая строка лога, которая называет, сколько
+// витрин создано из скольких. Разошедшись, эти два места дали бы лог, считающий
+// не то, что импортёр создаёт.
+func companyViewsDDLViews() []util.View {
+	return []util.View{companyFinancialsView, companyMetricSourcesView, companyOperatingView}
+}
+
 // companyViews создаёт таблицу метрик компаний, три витрины над ней и их
 // комментарии, а описания рядов кладёт в общий series_catalog.
 //
@@ -231,18 +240,47 @@ func (s *companyViews) Import(ctx context.Context, conn driver.Conn) (count int6
 		}
 	}
 
-	for _, v := range []util.View{companyFinancialsView, companyMetricSourcesView, companyOperatingView} {
-		var created bool
-		if created, err = util.CreateView(ctx, conn, v); err != nil {
+	var created int
+	for _, v := range companyViewsDDLViews() {
+		var ok bool
+		if ok, err = util.CreateView(ctx, conn, v); err != nil {
 			return count, err
 		}
 
-		log.Infof("View %s created: %t", v.Name, created)
+		log.Infof("View %s created: %t", v.Name, ok)
+
+		if ok {
+			created++
+		}
 	}
 
-	if err = util.UpsertSeriesCatalog(ctx, conn, polyusSeriesMeta()); err != nil {
+	catalog := polyusSeriesMeta()
+	if err = util.UpsertSeriesCatalog(ctx, conn, catalog); err != nil {
 		return count, err
 	}
+
+	// Возврат и строка лога считают ряды каталога, а не строки витрин, и это не
+	// произвольный выбор: импортёр не пишет метрики компаний вообще, он создаёт
+	// таблицу, витрины и описания рядов. Раньше он возвращал голый ноль, и вывод
+	// "Imported 0 rows of company_views" читался как «ничего не сделано» — хотя
+	// прогон создал таблицу, три витрины и записал строки каталога.
+	//
+	// Счётчик намеренно не разложен на «созданные» и «перезаписанные» витрины:
+	// CreateView идемпотентен и на повторном прогоне пересоздаёт все витрины, а
+	// ReplacingMergeTree по ключу (source, series) обновляет строки каталога
+	// на месте, поэтому отличить первый прогон от повторного по одним этим числам
+	// нельзя. Число созданных витрин в выводе поэтому и названо числом созданных:
+	// пропущенная витрина (нет таблицы-источника) даёт created = false, и её видно
+	// отдельной строкой выше.
+	count = int64(len(catalog))
+
+	log.Infof(
+		"Imported %d catalog rows of %s to series_catalog (%d views created of %d)",
+		count,
+		s.Name(),
+		created,
+		len(companyViewsDDLViews()),
+	)
 
 	return count, nil
 }
