@@ -116,12 +116,12 @@ func modelRunJSON(plans []MinePlanRecord, decks map[string][]DeckYear, rates Dis
 		// них контракт ingest не имеет, а лишний ключ он отвергает (DisallowUnknownFields).
 		Comment: fmt.Sprintf(
 			"dcf_engine: LOM-NAV; вход: %d %s, %d %s; контуры industrial %.4f / локальная %.4f; "+
-				"допущения: НДПИ база %.2f USD/oz + %.1f%% выше %.0f USD/oz, налог на прибыль %.1f%%, ΔWC %.0f дней",
+				"допущения: НДПИ база %.2f USD/oz + %.1f%% выше %.0f USD/oz, налог на прибыль %.1f%%, ΔWC %.0f дней, ИПЦ %d лет",
 			len(plans), plural(len(plans), "актив", "актива", "активов"),
 			len(decks), plural(len(decks), "дек", "дека", "деков"),
 			rates.Industrial, rates.Local,
 			p.NdpiBaseUSDPerOz, p.NdpiSurchargePct*100, p.NdpiThresholdUSD,
-			p.ProfitTaxPct*100, p.WorkingCapitalDays,
+			p.ProfitTaxPct*100, p.WorkingCapitalDays, len(p.Ipc),
 		),
 		Probabilities: map[string]float64{
 			"bull": scenarioProbabilitiesPct["bull"],
