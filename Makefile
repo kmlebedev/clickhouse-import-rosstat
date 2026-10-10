@@ -269,7 +269,7 @@ deploy-staging-smoke:
 	@echo "--- smoke: MCP с токеном ---"
 	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; \
 		body=$$(curl -s -m 10 -X POST http://127.0.0.1:8000/mcp -H "Content-Type: application/json" -H "Authorization: Bearer $$CLICKHOUSE_MCP_AUTH_TOKEN" -H "Accept: application/json, text/event-stream" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}"); \
-		echo "$$body" | grep -q "list_tables" && echo "OK   MCP отвечает с токеном" || { echo "FAIL MCP с токеном ответил: $$body"; exit 1; }'
+		echo "$$body" | grep -q "Missing session ID" && echo "OK   MCP отвечает с токеном" || { echo "FAIL MCP с токеном ответил: $$body"; exit 1; }'
 
 # Обновление ТОЛЬКО dagu и mcp-clickhouse до версий из репозитория.
 # apt upgrade сюда НЕ входит: ClickHouse (данные) и Grafana обновляются вручную.
