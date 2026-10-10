@@ -35,3 +35,36 @@ func TestCheckYearCoverage(t *testing.T) {
 		t.Fatalf("пустой план — не ошибка (обрабатывается раньше в Import): %v", err)
 	}
 }
+
+// TestCheckYearCoverageSharedYear — два актива на общем году (штатная раскладка
+// mine_plans: engine_test — два актива на 2027, seed_test — на 2028) не должны
+// путать решение гарда: непокрытых ПАР больше, чем годов плана, поэтому гард
+// обязан решать по пересечению множеств годов, а не по длинам срезов.
+func TestCheckYearCoverageSharedYear(t *testing.T) {
+	// Оба актива на 2027, деков на 2027 нет: непокрыто НИЧЕГО, значит ошибка
+	// (иначе расчёт молча запишет нулевой NPV).
+	noneCovered := []MinePlanRecord{
+		{Company: "PLZL", Asset: "Olimpiada", Years: []MinePlanYear{{Year: 2027}}},
+		{Company: "PLZL", Asset: "Blagodatnoye", Years: []MinePlanYear{{Year: 2027}}},
+	}
+	if err := checkYearCoverage(noneCovered, map[string][]DeckYear{"spot_flat": {{Year: 2026}}}); err == nil {
+		t.Fatal("два актива на одном непокрытом году: обязана быть ошибка — " +
+			"иначе guard пропустит расчёт с нулевым NAV")
+	}
+
+	// A{2026,2027}, B{2027}, дек только на 2026: 2026 покрыт корректно, значит это
+	// частичное покрытие — warn-and-continue, а не падение на recoverable-состоянии БД.
+	partial := []MinePlanRecord{
+		{Company: "PLZL", Asset: "A", Years: []MinePlanYear{{Year: 2026}, {Year: 2027}}},
+		{Company: "PLZL", Asset: "B", Years: []MinePlanYear{{Year: 2027}}},
+	}
+	if err := checkYearCoverage(partial, map[string][]DeckYear{"spot_flat": {{Year: 2026}}}); err != nil {
+		t.Fatalf("частичное покрытие (2026 покрыт) — только warn, расчёт продолжается: %v", err)
+	}
+
+	// Один общий год покрыт у двух активов — тоже не ошибка.
+	sharedCovered := noneCovered
+	if err := checkYearCoverage(sharedCovered, map[string][]DeckYear{"spot_flat": {{Year: 2027}}}); err != nil {
+		t.Fatalf("общий год обоих активов покрыт: %v", err)
+	}
+}

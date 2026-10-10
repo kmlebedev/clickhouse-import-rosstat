@@ -26,12 +26,7 @@ import (
 // порядок обхода map в Go случаен, а лог должен читаться одинаково между прогонами
 // (иначе дежурный сравнивает шум).
 func uncoveredPlanYears(plans []MinePlanRecord, decks map[string][]DeckYear) []string {
-	covered := make(map[uint16]struct{})
-	for _, years := range decks {
-		for _, d := range years {
-			covered[d.Year] = struct{}{}
-		}
-	}
+	covered := deckYearSet(decks)
 
 	uncovered := make([]string, 0)
 	for _, plan := range plans {
@@ -78,43 +73,65 @@ func checkYearCoverage(plans []MinePlanRecord, decks map[string][]DeckYear) erro
 		return nil
 	}
 
-	planYearsSet := make(map[uint16]struct{})
-	for _, plan := range plans {
-		for _, y := range plan.Years {
-			planYearsSet[y.Year] = struct{}{}
+	planYearsSet := planYearSet(plans)
+	deckYearsSet := deckYearSet(decks)
+
+	// Решение — по числу ПЕРЕСЕЧЁННЫХ годов, а не по числу непокрытых пар: пар
+	// больше, чем годов, как только два актива делят один год, и сравнение счётчиков
+	// на такой раскладке (обычной для этого репо — engine_test, seed_test) ломается в
+	// обе стороны: полное отсутствие покрытия ушло бы в Warnf и дало нулевой NAV, а
+	// частичное — в ошибку и покраснило бы DAG на recoverable-состоянии БД.
+	coveredYears := 0
+	for y := range planYearsSet {
+		if _, ok := deckYearsSet[y]; ok {
+			coveredYears++
 		}
 	}
 
-	deckYearsSet := make(map[uint16]struct{})
-	for _, years := range decks {
-		for _, d := range years {
-			deckYearsSet[d.Year] = struct{}{}
-		}
-	}
+	planYears := formatYears(sortedYearSet(planYearsSet))
+	deckYears := formatYears(sortedYearSet(deckYearsSet))
 
-	// Непересекающиеся множества — единственный случай, когда расчёт заведомо пуст:
-	// непокрытых пар ровно столько же, сколько календарных годов плана.
-	if len(uncovered) == len(planYearsSet) {
+	if coveredYears == 0 {
 		return fmt.Errorf("price_decks не покрывает НИ ОДНОГО года плана: годы планов %s, годы деков %s — "+
 			"npvLOM пропустит все годы, и nav_by_asset получит нулевой NPV при непустых mine_plans; "+
 			"проверьте сид price_decks (gold_prices) и его календарь",
-			formatYears(sortedPlanYears(planYearsSet)), formatYears(sortedYearSet(deckYearsSet)))
+			planYears, deckYears)
 	}
 
 	log.Warnf("price_decks не покрывает годы плана: %v (годы планов %s, годы деков %s) — "+
 		"эти годы npvLOM пропустит (model.go:137-142), а nav_by_asset запишет строку с заниженным NPV; "+
 		"заполните price_decks на них и повторите расчёт",
-		uncovered, formatYears(sortedPlanYears(planYearsSet)), formatYears(sortedYearSet(deckYearsSet)))
+		uncovered, planYears, deckYears)
 
 	return nil
 }
 
-// sortedPlanYears и sortedYearSet — отсортированные годы для читаемого и
-// воспроизводимого текста сообщения: множество map'а само порядка не даёт.
-func sortedPlanYears(years map[uint16]struct{}) []uint16 {
-	return sortedYearSet(years)
+// planYearSet, deckYearSet — множества годов планов и деков: пересечение и разность
+// наборов решаются по ним, а не по длинам срезов, где годы активов дублируются.
+func planYearSet(plans []MinePlanRecord) map[uint16]struct{} {
+	out := make(map[uint16]struct{})
+	for _, plan := range plans {
+		for _, y := range plan.Years {
+			out[y.Year] = struct{}{}
+		}
+	}
+
+	return out
 }
 
+func deckYearSet(decks map[string][]DeckYear) map[uint16]struct{} {
+	out := make(map[uint16]struct{})
+	for _, years := range decks {
+		for _, d := range years {
+			out[d.Year] = struct{}{}
+		}
+	}
+
+	return out
+}
+
+// sortedYearSet — отсортированные годы для читаемого и воспроизводимого текста
+// сообщения: множество map'а само порядка не даёт.
 func sortedYearSet(years map[uint16]struct{}) []uint16 {
 	out := make([]uint16, 0, len(years))
 	for y := range years {
@@ -126,8 +143,8 @@ func sortedYearSet(years map[uint16]struct{}) []uint16 {
 	return out
 }
 
-// formatYears печатает годы через запятую — компактнее и читаемее, чем срез
-// uint16 в %v (лог читает человек, а не парсер).
+// formatYears — компактнее и читаемее, чем срез uint16 в %v: лог читает человек,
+// а не парсер.
 func formatYears(years []uint16) string {
 	out := ""
 	for i, y := range years {
