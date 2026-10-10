@@ -19,6 +19,12 @@ MCP_PY       ?= 3.12
 MCP_VERSION  ?= 0.7.0
 MCP_CMD      := uv run --with mcp-clickhouse==$(MCP_VERSION) --python $(MCP_PY) mcp-clickhouse
 
+# Адрес MCP-проверки. Для staging поднимите туннель и переопределите:
+#   ssh -N -L 8123:127.0.0.1:8123 palmshell &
+#   make mcp-check MCP_CHECK_HOST=127.0.0.1 MCP_CHECK_PORT=8123
+MCP_CHECK_HOST ?= localhost
+MCP_CHECK_PORT ?= $(CH_HTTP_PORT)
+
 # Деплой на staging (см. deploy/staging/README.md). Хост задаётся без правок Makefile.
 STAGING_HOST     ?= palmshell
 STAGING_BIN_DIR  ?= /root/.local/bin
@@ -150,8 +156,8 @@ mcp-user:
 # проверяет, что сырая таблица закрыта. Нужен запущенный ClickHouse (make ch-up) и CLICKHOUSE_PASSWORD.
 mcp-check:
 	@test -n "$$CLICKHOUSE_PASSWORD" || { echo "задайте CLICKHOUSE_PASSWORD (пароль пользователя $(MCP_USER))"; exit 1; }
-	@curl -sf -m 2 http://localhost:$(CH_HTTP_PORT)/ping >/dev/null 2>&1 || { echo "ClickHouse не отвечает: make ch-up"; exit 1; }
-	CLICKHOUSE_HOST=localhost CLICKHOUSE_PORT=$(CH_HTTP_PORT) CLICKHOUSE_SECURE=false CLICKHOUSE_VERIFY=false \
+	@curl -sf -m 2 http://$(MCP_CHECK_HOST):$(MCP_CHECK_PORT)/ping >/dev/null 2>&1 || { echo "ClickHouse на $(MCP_CHECK_HOST):$(MCP_CHECK_PORT) не отвечает: make ch-up (или поднимите туннель)"; exit 1; }
+	CLICKHOUSE_HOST=$(MCP_CHECK_HOST) CLICKHOUSE_PORT=$(MCP_CHECK_PORT) CLICKHOUSE_SECURE=false CLICKHOUSE_VERIFY=false \
 	CLICKHOUSE_USER=$(MCP_USER) CLICKHOUSE_DATABASE=default \
 	uv run --with mcp-clickhouse==$(MCP_VERSION) --with mcp --python $(MCP_PY) python scripts/mcp_check.py
 
