@@ -93,6 +93,12 @@ MAD_TO_SIGMA = 1.4826
 # невозможен — см. отчёт Task 5.
 OUTLIER_SIGMA_LIMIT = 6.0
 
+# Порог, ниже которого знаменатель увязки `den = Σ tcc·r̄·w` считается нулевым.
+# Клинья — доли от TCC, поэтому положительные значения дают `den` порядка
+# десятков-сотен; 1e-12 отделяет настоящую вырожденность (все клинья нулевые)
+# от просто малого знаменателя и не даёт делить на ноль.
+RECONCILE_WEDGE_EPSILON = 1e-12
+
 # Проверенные поактивные пары (AISC, TCC) за калибровочные годы, USD/oz.
 # Вычитаны из годовой прозы релизов и перекрёстно сверены (Task 3–4); тесты
 # `TestBuildSeries` подтверждают, что та же выборка получается из фикстур.
@@ -705,6 +711,78 @@ def calibrate(series: dict) -> dict[str, dict]:
             "discarded": discarded,
         }
     return calibrated
+
+
+def reconcile(
+    tcc: dict[str, float],
+    r_bar: dict[str, float],
+    production: dict[str, float],
+    group_aisc: float,
+) -> tuple[dict[str, float], float, float]:
+    """Увязывает поактивные AISC с опубликованным групповым значением.
+
+    Задача — одна скалярная величина, а не подгонка: множитель `m` масштабирует
+    калиброванные клинья так, чтобы средневзвешенный по добыче групповой AISC
+    лёг РОВНО на `group_aisc`. Замкнутая форма, без итераций и оптимизатора.
+
+    Веса — доли добычи: `w_i = production_i / Σ_j production_j`. Множитель
+    выводится из требования `Σ_j tcc_j·(1 + r̄_j·m)·w_j = group_aisc`:
+
+        den = Σ_j tcc_j·r̄_j·w_j
+        m   = 1 + (group_aisc − Σ_j tcc_j·(1+r̄_j)·w_j) / den
+        aisc_i = tcc_i·(1 + r̄_i·m)
+
+    ДВА ПРАВИЛА, ОПРЕДЕЛЯЮЩИХ КОРРЕКТНОСТЬ.
+
+    1. `m` правит КЛИН, а не AISC. `tcc_i` — наблюдённая величина, её
+       масштабировать нельзя; оцениваемым является только `r̄_i`. Поэтому
+       `aisc_i = tcc_i·(1 + r̄_i·m)`, а НЕ `tcc_i·(1 + r̄_i)·m`: последнее
+       исказило бы наблюдённые затраты и разошлось бы с формулой множителя.
+
+    2. `m` прижат снизу нулём. Отрицательный `m` увёл бы AISC ниже TCC —
+       отрицательные затраты поддержания, что экономически бессмысленно.
+       Прижим срабатывает ровно тогда, когда `group_aisc` ниже взвешенного пола
+       TCC, то есть цель ДОСТИЖИМО недостижима. В этом случае остаток ненулевой:
+       это честный отчёт о недостижимой цели, а не отказ от подгонки.
+
+    Вырожденный случай: `den <= 0` (все клинья нулевые — это законное
+    состояние, мир Go-сида, где AISC == TCC) — делить нельзя. Тогда `m = 1.0`
+    (нейтральный множитель, клин переносится как откалиброван), и
+    `aisc_i = tcc_i·(1 + r̄_i)`.
+
+    Остаток считается POST-HOC по фактически выданным строкам, а не по тому,
+    что обещала формула: `Σ_i aisc_i·w_i − group_aisc`. При достижимой цели он
+    ~0; при прижиме — отрицательный (промах вниз от цели выше пола). Нулевой
+    вес Σ production не оставляет остатка неопределённым: Σ aisc·w при всех
+    нулевых весах равен 0, и поднятая ValueError на делении весов честнее
+    молчаливой выдачи бессмысленных строк.
+    """
+    aisc: dict[str, float] = {}
+    target = float(group_aisc)
+
+    total_production = sum(production[asset] for asset in tcc)
+    den = 0.0
+    base = 0.0
+    for asset in tcc:
+        weight = production[asset] / total_production
+        den += tcc[asset] * r_bar[asset] * weight
+        base += tcc[asset] * (1.0 + r_bar[asset]) * weight
+
+    if den <= RECONCILE_WEDGE_EPSILON:
+        m = 1.0
+        for asset in tcc:
+            aisc[asset] = tcc[asset] * (1.0 + r_bar[asset])
+    else:
+        # Прижим к нулю: см. правило 2 выше.
+        m = max(0.0, 1.0 + (target - base) / den)
+        for asset in tcc:
+            aisc[asset] = tcc[asset] * (1.0 + r_bar[asset] * m)
+
+    residual = 0.0
+    for asset in tcc:
+        residual += aisc[asset] * (production[asset] / total_production)
+    residual -= target
+    return aisc, m, residual
 
 
 def real_series() -> dict:
