@@ -213,6 +213,63 @@ deploy-staging-mcp: staging-precheck
 	@echo "прогрев кэша uv (скачивание mcp-clickhouse==$(MCP_VERSION))..."
 	@ssh $(STAGING_HOST) '$(STAGING_BIN_DIR)/uv tool run --from mcp-clickhouse==$(MCP_VERSION) mcp-clickhouse --help >/dev/null 2>&1 || true'
 
+# Полный деплой: бинарь → dagu → mcp → DAG'и → проверка ДО включения → включение → smoke.
+#
+# Порядок критичен. Сервисы включаются последними: dagu после `enable --now` немедленно
+# начинает выполнять DAG'и по расписанию, поэтому сначала проверяется, что бинарь и
+# DAG-файлы на месте (deploy-staging-preflight), и только потом сервисы запускаются.
+deploy-staging: deploy-staging-binary deploy-staging-dagu deploy-staging-mcp
+	ssh $(STAGING_HOST) 'install -d -m 755 /root/dagu'
+	scp dagu/*.yaml $(STAGING_HOST):/root/dagu/
+	@$(MAKE) deploy-staging-preflight --no-print-directory
+	ssh $(STAGING_HOST) 'systemctl enable --now dagu mcp-clickhouse'
+	@$(MAKE) deploy-staging-smoke --no-print-directory
+	@echo "Готово. Далее: make mcp-user-staging (если kimi_reader ещё не создан)."
+
+# Проверки ДО включения сервисов: бинарь исполняем, DAG-файлы на месте, токен непуст.
+# Сервисы ещё не запущены, поэтому их проверяет deploy-staging-smoke.
+# Токен проверяется на непустоту; значение не печатается.
+deploy-staging-preflight:
+	@ssh $(STAGING_HOST) 'test -x $(STAGING_BIN_DIR)/clickhouse-import-rosstat && echo "OK   бинарь импортёра исполняем"' || { echo "FAIL бинарь отсутствует или не исполняем"; exit 1; }
+	@ssh $(STAGING_HOST) 'test -x $(STAGING_BIN_DIR)/dagu && echo "OK   dagu исполняем"' || { echo "FAIL dagu отсутствует или не исполняем"; exit 1; }
+	@ssh $(STAGING_HOST) 'test -f /root/dagu/cbr.yaml && echo "OK   DAG-файлы на месте"' || { echo "FAIL /root/dagu/cbr.yaml отсутствует"; exit 1; }
+	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; \
+		test -n "$$CLICKHOUSE_MCP_AUTH_TOKEN" && echo "OK   CLICKHOUSE_MCP_AUTH_TOKEN задан" || { echo "FAIL CLICKHOUSE_MCP_AUTH_TOKEN пуст — mcp-clickhouse не стартует в HTTP-режиме"; exit 1; }'
+
+# Smoke после включения сервисов. Токен читается на хосте и не выводится.
+deploy-staging-smoke:
+	@echo "--- smoke: dagu ---"
+	@ssh $(STAGING_HOST) 'systemctl is-active --quiet dagu && curl -sf -m 5 -o /dev/null http://127.0.0.1:8080/ && echo "OK   dagu отвечает"' || { echo "FAIL dagu: journalctl -u dagu -n 50"; exit 1; }
+	@echo "--- smoke: mcp-clickhouse /health ---"
+	@ssh $(STAGING_HOST) 'systemctl is-active --quiet mcp-clickhouse && curl -sf -m 5 -o /dev/null http://127.0.0.1:8000/health && echo "OK   MCP /health = 200"' || { echo "FAIL mcp-clickhouse: journalctl -u mcp-clickhouse -n 50"; exit 1; }
+	@echo "--- smoke: MCP требует токен ---"
+	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; \
+		code=$$(curl -s -o /dev/null -w "%{http_code}" -X POST http://127.0.0.1:8000/mcp -H "Content-Type: application/json" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}"); \
+		[ "$$code" = "401" ] && echo "OK   без токена → 401" || { echo "FAIL без токена получен $$code, ожидался 401"; exit 1; }'
+	@echo "--- smoke: MCP с токеном ---"
+	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; \
+		body=$$(curl -s -m 10 -X POST http://127.0.0.1:8000/mcp -H "Content-Type: application/json" -H "Authorization: Bearer $$CLICKHOUSE_MCP_AUTH_TOKEN" -H "Accept: application/json, text/event-stream" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}"); \
+		echo "$$body" | grep -q "list_tables" && echo "OK   MCP отвечает с токеном" || { echo "FAIL MCP с токеном ответил: $$body"; exit 1; }'
+
+# Обновление ТОЛЬКО dagu и mcp-clickhouse до версий из репозитория.
+# apt upgrade сюда НЕ входит: ClickHouse (данные) и Grafana обновляются вручную.
+upgrade-staging: deploy-staging-dagu deploy-staging-mcp
+	ssh $(STAGING_HOST) 'systemctl restart dagu mcp-clickhouse'
+	@echo "сервисы перезапущены на версиях: dagu $(DAGU_VERSION), mcp-clickhouse $(MCP_VERSION)"
+	@$(MAKE) deploy-staging-smoke --no-print-directory
+
+# Создание kimi_reader на staging. Пароль исполнителя (default) и пароль создаваемого
+# пользователя (kimi_reader) — разные сущности, поэтому две переменные.
+# Секреты идут через stdin ssh (не через argv): аргументы видны в ps на обеих машинах.
+mcp-user-staging:
+	@test -n "$$CLICKHOUSE_PASSWORD" || { echo "задайте CLICKHOUSE_PASSWORD (пароль kimi_reader)"; exit 1; }
+	@test -n "$$CH_SETUP_PASSWORD" || { echo "задайте CH_SETUP_PASSWORD (пароль пользователя default на $(STAGING_HOST))"; exit 1; }
+	scp scripts/mcp_setup_user.py $(STAGING_HOST):/tmp/mcp_setup_user.py
+	scp sql/mcp_kimi_reader.sql $(STAGING_HOST):/tmp/mcp_kimi_reader.sql
+	printf '%s\n%s\n' "$$CLICKHOUSE_PASSWORD" "$$CH_SETUP_PASSWORD" | ssh $(STAGING_HOST) 'read -r kimi_pass; read -r setup_pass; \
+		CH_SETUP_SQL=/tmp/mcp_kimi_reader.sql CH_SETUP_URL=http://localhost:8123/ CH_SETUP_USER=default \
+		CLICKHOUSE_PASSWORD="$$kimi_pass" CH_SETUP_PASSWORD="$$setup_pass" python3 /tmp/mcp_setup_user.py'
+
 info:
 	@echo "BINARY    = $(TARGET)"
 	@echo "GOOS      = linux"
