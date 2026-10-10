@@ -185,8 +185,11 @@ CREATE TABLE IF NOT EXISTS databook_polyus (
 ORDER BY (table, name, data, date);
 
 -- polyus/import.go — метрики из PDF-отчётов (KPI-пресс-релизы и МСФО-формы)
--- ⚠️ В ключе нет источника: строки из разных отчётов с одним (metric, period)
--- схлопываются ReplacingMergeTree, а в одном батче — дедуплицируются кодом.
+-- ⚠️ В ключе нет источника: строки разных отчётов с одним (metric, period)
+-- конкурируют за один ключ. Внутри батча повтор ключа отбрасывает сам импортёр
+-- (dedup.add, лог `duplicate ... already in batch`), поэтому выживает значение
+-- первого отчёта в порядке списка `reports` (`polyus/pages.go`) — порядок
+-- отчётов значим; при расхождении источников проигравший не виден.
 CREATE TABLE IF NOT EXISTS polyus_financial_metrics
 (
     company LowCardinality(String),           -- 'PLZL'
