@@ -31,13 +31,14 @@ func TestBatchDedupKeepsBothSourceKinds(t *testing.T) {
 	}
 }
 
-// The importer writes the shared table, and the DDL carries the document
-// kind in ORDER BY — without it the two documents collapse again.
+// The importer writes the shared table, and the DDL carries the document identity
+// in ORDER BY — source_kind is not enough: two press releases of different years
+// share it and would collapse back into one row.
 func TestFinancialMetricsTargetsCompanyFinancials(t *testing.T) {
 	if financialMetricsTable != "company_financials" {
 		t.Fatalf("table = %q, want company_financials", financialMetricsTable)
 	}
-	for _, want := range []string{"source_kind", "ORDER BY (company, metric, period, source_kind)"} {
+	for _, want := range []string{"source_kind", "ORDER BY (company, metric, period, source_kind, source_url)"} {
 		if !strings.Contains(financialMetricsCreateTable, want) {
 			t.Fatalf("DDL missing %q:\n%s", want, financialMetricsCreateTable)
 		}

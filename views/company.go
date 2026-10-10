@@ -24,6 +24,11 @@ const companyFinancialsTable = "company_financials"
 // Список колонок, движок и ORDER BY обязаны совпадать с шаблоном из
 // polyus/import.go: таблица одна на два импортёра, и разошедшаяся копия DDL
 // завела бы её в двух формах.
+//
+// ORDER BY заканчивается на source_url — это признак ДОКУМЕНТА, а не его вида:
+// source_kind различает пресс-релиз и аудит, но два KPI-релиза (FY2023 и FY2024)
+// несут один и тот же 'kpi', и на ключе без source_url они схлопывались, теряя
+// второе значение за период (см. batchKey в polyus/import.go).
 const companyFinancialsCreateTable = `CREATE TABLE IF NOT EXISTS ` + companyFinancialsTable + `
 (
     company     LowCardinality(String),
@@ -38,7 +43,7 @@ const companyFinancialsCreateTable = `CREATE TABLE IF NOT EXISTS ` + companyFina
     loaded_at   DateTime DEFAULT now()
 )
 ENGINE = ReplacingMergeTree(loaded_at)
-ORDER BY (company, metric, period, source_kind)`
+ORDER BY (company, metric, period, source_kind, source_url)`
 
 // companyFinancialsView — основной вход DCF: метрика компании за период, когда
 // значений несколько — одно, разрешённое по правилу spec §3.4.
@@ -53,6 +58,20 @@ ORDER BY (company, metric, period, source_kind)`
 // (kpi = 0), затем побеждает более поздняя загрузка, а source_url стоит третьим
 // только затем, чтобы выдача не «плавала» между прогонами при равных первых двух
 // ключах.
+//
+// Убывающий source_url — тай-брейк, а не предпочтение документа: сортировка идёт
+// по сырым строкам URL, и «больше» здесь не значит «достовернее». Выбор между
+// двумя KPI-релизами за один период (FY2023 и FY2024) витрина не делает и делать
+// не должна — какое из значений брать, решает читатель, а оба лежат в
+// v_company_metric_sources. Стоит третьим источник перебирает разные релизы,
+// получившие ОДИН loaded_at: они попадают в батч вместе, время загрузки у них
+// совпадает (одно на батч), и без третьего поля порядок между ними был бы
+// произвольным.
+//
+// GROUP BY company, metric, period схлопывает в одну строку ВСЕ документы за
+// период — с расширением ключа таблицы (см. companyFinancialsCreateTable) их
+// стало больше, а не меньше, и это ровно то, ради чего витрина существует:
+// на ключе без source_url второй пресс-релиз до таблицы не доходил вовсе.
 //
 // Внутренние агрегаты проецируются под именами r_* (r_value, r_source_kind, ...)
 // и получают настоящие имена колонок только во внешнем SELECT. Это не

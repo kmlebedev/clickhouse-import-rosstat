@@ -68,7 +68,7 @@ const financialMetricsCreateTable = `CREATE TABLE IF NOT EXISTS %s
     loaded_at   DateTime DEFAULT now()
 )
 ENGINE = ReplacingMergeTree(loaded_at)
-ORDER BY (company, metric, period, source_kind)`
+ORDER BY (company, metric, period, source_kind, source_url)`
 
 // financialMetricsImport импортирует метрики Polyus из PDF-отчётов в
 // company_financials.
@@ -220,11 +220,21 @@ func (s *financialMetricsImport) Import(ctx context.Context, conn driver.Conn) (
 // строки, поэтому две записи с одним ключом в одном батче неразличимы после
 // вставки.
 //
-// Ключ несёт вид документа (SourceKind). Один и тот же показатель за один и тот
-// же период печатают оба документа — KPI-релиз и МСФО-отчёт, — и без вида
-// документа в ключе это одна запись, а не две: значения у них различаются, и то,
-// которое вставилось позже, молча перетирало бы предыдущее. Разные SourceKind
-// дают разные ключи, поэтому оба значения доживают до витрины.
+// Ключ обязан опознавать ДОКУМЕНТ, а не только его вид. SourceKind различает
+// пресс-релиз и аудированную отчётность — ось приоритета в v_company_financials,
+// но не документ: два KPI-релиза, FY2023 и FY2024, несут один и тот же
+// source_kind = "kpi", и на ключе из четырёх полей они по-прежнему сталкивались.
+// Тогда ровно тот случай, ради которого витрина и заводилась, оставался
+// невидимым: FY2023 печатает за 2023FY золото 2902, FY2024 за тот же период —
+// 2799, и второе молча пропадало (79 повторов в батче вместо единиц). SourceURL
+// и есть признак документа — он приходит в каждой записи (см. MetricRecord) и
+// различает два релиза, у которых совпали все остальные поля.
+//
+// Порядок полей — порядок ORDER BY витрины: (company, metric, period, source_kind,
+// source_url). Расходиться эти два места не имеют права: ключ, оставшийся уже
+// ORDER BY, пропускает в batch строки, которые ClickHouse потом схлопнет, — и
+// счётчик импортированных строк перестаёт совпадать с числом сохранённых (ровно
+// та ошибка, от которой этот ключ и защищает).
 //
 // Metric и Period обязаны быть непустыми: пустой период дал бы один и тот же
 // ключ (metric, "") для всех записей отчёта, который не удалось бы разобрать, и
@@ -234,6 +244,7 @@ type batchKey struct {
 	Metric     string
 	Period     string
 	SourceKind string
+	SourceURL  string
 }
 
 // batchDedup решает, попадает ли запись в batch, и ведёт учёт повторных ключей.
@@ -245,11 +256,10 @@ type batchKey struct {
 // 2026H1 печатают и KPI-релиз, и МСФО), так что проверка нужна до batch.Append —
 // тогда счётчик импортированных строк совпадает с числом сохранённых.
 //
-// Ключ здесь шире ORDER BY витрины: в него входит вид документа (см. batchKey).
-// Пока таблица ключуется тройкой (company, metric, period), две записи с разными
-// SourceKind всё равно схлопнулись бы в ClickHouse, но пропустить их через
-// проверку — единственный способ довести обе до вставки; схлопывание уже не
-// забота дедупликации, а свойство старой схемы витрины.
+// Ключ здесь совпадает с ORDER BY витрины (см. batchKey): пропустить через
+// проверку всё, что ClickHouse не схлопнет, — единственный способ довести обе
+// версии до вставки, а ключ уже ORDER BY оставил бы в батче строки, которые
+// ReplacingMergeTree потом схлопывает молча.
 //
 // Возвращает false, если ключ уже встречался; каждый повтор считает сам.
 func (d *batchDedup) add(record MetricRecord) bool {
@@ -257,7 +267,7 @@ func (d *batchDedup) add(record MetricRecord) bool {
 		d.seen = make(map[batchKey]bool)
 	}
 
-	key := batchKey{record.Company, record.Metric, record.Period, record.SourceKind}
+	key := batchKey{record.Company, record.Metric, record.Period, record.SourceKind, record.SourceURL}
 	if d.seen[key] {
 		d.duplicates++
 

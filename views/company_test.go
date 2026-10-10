@@ -290,8 +290,10 @@ func TestCompanyViewsDDL(t *testing.T) {
 	if strings.Contains(table, "%s") {
 		t.Errorf("the table statement must carry the resolved name, not a %s placeholder", "%s")
 	}
-	if !strings.Contains(table, "ORDER BY (company, metric, period, source_kind)") {
-		t.Error("table statement must key on (company, metric, period, source_kind)")
+	if !strings.Contains(table, "ORDER BY (company, metric, period, source_kind, source_url)") {
+		t.Error("table statement must key on (company, metric, period, source_kind, source_url): " +
+			"source_url is what tells two press releases of different years apart, and without it " +
+			"the second value for a period is collapsed away")
 	}
 	if !strings.Contains(table, "ENGINE = ReplacingMergeTree(loaded_at)") {
 		t.Error("table statement must use ReplacingMergeTree(loaded_at)")
