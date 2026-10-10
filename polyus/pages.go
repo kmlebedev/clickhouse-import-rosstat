@@ -134,7 +134,7 @@ var reports = []Report{
 	// Включать их без прогона pdftotext нельзя: включение вынесено в следующий
 	// пункт работ — отчёты 2015–2018
 	// (docs/superpowers/specs/2026-10-10-polyus-history-reports-design.md,
-	// §«Что осталось за границей итерации»).
+	// §4 «Границы»).
 	{
 		URL:     "https://polyus.com/upload/iblock/9dd/mda_financial_statements_fy2015.pdf",
 		Period:  "2015FY",
