@@ -5,11 +5,13 @@
     python3 scripts/extrapolation_aisc_test.py -v
 """
 
+import http.client
 import io
 import os
 import sys
 import unittest
 import unittest.mock
+import urllib.error
 from pathlib import Path
 
 # Скрипт и тест лежат рядом, запуск прямой (`python3 scripts/...`),
@@ -911,6 +913,153 @@ class TestProductionQuery(unittest.TestCase):
         with unittest.mock.patch.object(ex, "ch_query", lambda sql: [{"v": None}]):
             got = ex.read_actual_production(["OLIMPIADA"], (2021,))
         self.assertEqual(got["OLIMPIADA"][2021], 0.0)
+
+
+class _FakeResponse:
+    """Минимальный ответ HTTP: контекстный менеджер и `read()`.
+
+    Настоящий `urlopen` возвращает объект с обоими методами, а `ch_query`
+    пользуется им как `with ... as response: response.read()`. Заглушка
+    повторяет ровно этот контракт и ничего больше.
+    """
+
+    def __init__(self, body: str):
+        self._body = body.encode("utf-8")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+    def read(self):
+        return self._body
+
+
+class TestQueryTransport(unittest.TestCase):
+    """Инварианты HTTP-вызова: порт, обёртка сбоев, маскирование.
+
+    Все тесты офлайновые: `urlopen` подменяется, поэтому ни сети, ни
+    запущенного ClickHouse не требуется.
+    """
+
+    def _capture_request(self, body='{"data":[]}'):
+        """Прогоняет `ch_query` и возвращает перехваченный `Request`."""
+        captured = {}
+
+        def fake_urlopen(request, timeout=None):
+            captured["request"] = request
+            captured["timeout"] = timeout
+            return _FakeResponse(body)
+
+        with unittest.mock.patch(
+            "extrapolation_aisc.urllib.request.urlopen", fake_urlopen
+        ):
+            ex.ch_query("SELECT 1")
+        return captured["request"]
+
+    def test_query_targets_http_port_not_native_port(self):
+        # ГЛАВНЫЙ инвариант задачи: HTTP-интерфейс живёт на `http_port` (8123),
+        # а `port` (9000) — нативный протокол. Запрос обязан идти на 8123:
+        # на 9000 `urllib.request` либо повис, либо упал бы, поэтому подмена
+        # `http_port` на `port` НЕ должна проходить незамеченной.
+        # Порт из окружения не подставляется: проверяется именно default.
+        self.addCleanup(os.environ.pop, "CH_HTTP_PORT", None)
+        os.environ.pop("CH_HTTP_PORT", None)
+
+        request = self._capture_request()
+
+        self.assertIn(":8123/", request.full_url)
+        self.assertNotIn(":9000/", request.full_url)
+        self.assertEqual(ex.ch_config()["http_port"], "8123")
+        self.assertNotEqual(ex.ch_config()["port"], "8123")
+
+    def test_query_consults_ch_http_port_env(self):
+        # Порт НЕ захардкожен: значение из `CH_HTTP_PORT` обязано попадать в
+        # URL. Отдельное «непохожее» значение (18999) отличает чтение конфига
+        # от случайного совпадения с 8123.
+        self.addCleanup(os.environ.pop, "CH_HTTP_PORT", None)
+        os.environ["CH_HTTP_PORT"] = "18999"
+
+        request = self._capture_request()
+
+        self.assertIn(":18999/", request.full_url)
+        self.assertNotIn(":8123/", request.full_url)
+        self.assertNotIn(":9000/", request.full_url)
+
+    def test_query_uses_host_from_config(self):
+        self.addCleanup(os.environ.pop, "CLICKHOUSE_HOST", None)
+        os.environ["CLICKHOUSE_HOST"] = "ch.example.invalid"
+
+        request = self._capture_request()
+
+        self.assertIn("ch.example.invalid", request.full_url)
+
+    def test_successful_response_returns_parsed_rows(self):
+        # Успешный путь не сломан широкой веткой `OSError`: строки доходят.
+        request = self._capture_request('{"data":[{"v":1112.8}]}')
+        self.assertEqual(request.method, "POST")
+
+        def fake_urlopen(req, timeout=None):
+            return _FakeResponse('{"data":[{"v":1112.8}]}')
+
+        with unittest.mock.patch(
+            "extrapolation_aisc.urllib.request.urlopen", fake_urlopen
+        ):
+            self.assertEqual(ex.ch_query("SELECT 1"), [{"v": 1112.8}])
+
+    def test_remote_disconnect_raises_clickhouse_error(self):
+        # `http.client.RemoteDisconnected` НЕ является `URLError` (его MRO идёт
+        # через ConnectionResetError → ConnectionError → OSError), поэтому
+        # обработчика `URLError` ему мало: он обязан быть пойман широкой
+        # веткой `OSError` и обёрнут в ClickHouseError, а не вылететь сырым.
+        self.assertTrue(issubclass(http.client.RemoteDisconnected, OSError))
+        self.assertFalse(issubclass(http.client.RemoteDisconnected, urllib.error.URLError))
+
+        def fake_urlopen(request, timeout=None):
+            raise http.client.RemoteDisconnected("Remote end closed connection")
+
+        with unittest.mock.patch(
+            "extrapolation_aisc.urllib.request.urlopen", fake_urlopen
+        ):
+            with self.assertRaises(ex.ClickHouseError) as ctx:
+                ex.ch_query("SELECT 1")
+        self.assertIn("ClickHouse недоступен", str(ctx.exception))
+
+    def test_bare_oserror_raises_clickhouse_error(self):
+        # Любой другой транспортный сбой (таймаут, DNS, сброс) — тоже
+        # ClickHouseError, а не сырое исключение.
+        for boom in (TimeoutError("timed out"), ConnectionResetError("reset"),
+                     OSError("boom")):
+            with self.subTest(boom=type(boom).__name__):
+                def fake_urlopen(request, timeout=None, _boom=boom):
+                    raise _boom
+
+                with unittest.mock.patch(
+                    "extrapolation_aisc.urllib.request.urlopen", fake_urlopen
+                ):
+                    with self.assertRaises(ex.ClickHouseError):
+                        ex.ch_query("SELECT 1")
+
+    def test_url_error_reason_is_preserved_and_masked(self):
+        # `URLError` — подкласс `OSError`, поэтому его ловит широкая ветка;
+        # диагностика (`reason`) при этом не теряется, а пароль маскируется.
+        secret = "url-error-secret"
+        self.addCleanup(os.environ.pop, "CLICKHOUSE_PASSWORD", None)
+        os.environ["CLICKHOUSE_PASSWORD"] = secret
+
+        def fake_urlopen(request, timeout=None):
+            raise urllib.error.URLError(f"connection refused for {secret}")
+
+        with unittest.mock.patch(
+            "extrapolation_aisc.urllib.request.urlopen", fake_urlopen
+        ):
+            with self.assertRaises(ex.ClickHouseError) as ctx:
+                ex.ch_query("SELECT 1")
+        message = str(ctx.exception)
+        self.assertIn("connection refused", message)
+        self.assertNotIn(secret, message)
+        self.assertIn("***", message)
 
 
 if __name__ == "__main__":
