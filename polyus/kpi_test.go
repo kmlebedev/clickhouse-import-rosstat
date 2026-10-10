@@ -1,6 +1,7 @@
 package polyus
 
 import (
+	"path"
 	"slices"
 	"testing"
 )
@@ -938,5 +939,109 @@ func TestHeaderBandDoesNotLiftForeignTableHeader(t *testing.T) {
 	want := []string{"2024FY", "2023FY"}
 	if !slices.Equal(periods, want) {
 		t.Errorf("periods = %v, want %v: the foreign 2H/1H row was read as column labels", periods, want)
+	}
+}
+
+// TestKPIValuesHistoryReports закрепляет сквозные значения строки
+// «Gold production (koz)» шести релизов 4Q/FY — от разорванных шапок 2019–2021 до
+// целых шапок 2022–2024. Значения сверены с живыми PDF контролёром и перепроверены
+// по фикстурам; у каждого есть координата значения и подпись колонки той же x.
+//
+// Каждый квартал/полугодие здесь — проверка, что колонка НЕ слилась с соседней:
+// у 2019–2021 кварталы лежат на строке, разорванной по вертикали (в 2019 строка
+// кварталов ВЫШЕ года), и без переноса подписей на полосу «4Q 2020» и «3Q 2020»
+// разобрались бы как два годовых «2020FY», а три числа — 710, 771, 2766 — встали
+// бы под один ключ. Периоды берутся все найденные (len(byPeriod) == len(want)):
+// пропущенный период — это потерянная колонка, а не «нет в фикстуре».
+func TestKPIValuesHistoryReports(t *testing.T) {
+	cases := []struct {
+		file    string
+		periods map[string]int // период -> gold_output
+	}{
+		{"testdata/press_release_fy2019_p3.tsv", map[string]int{
+			"2019Q4": 804, "2019Q3": 753, "2018Q4": 640, "2019FY": 2841, "2018FY": 2440,
+		}},
+		{"testdata/press_release_fy2020_p4.tsv", map[string]int{
+			"2020Q4": 710, "2020Q3": 771, "2019Q4": 804, "2020FY": 2766, "2019FY": 2841,
+		}},
+		{"testdata/press_release_fy2021_p4.tsv", map[string]int{
+			"2021Q4": 684, "2021Q3": 770, "2020Q4": 710, "2021FY": 2717, "2020FY": 2766,
+		}},
+		{"testdata/press_release_fy2022_p4.tsv", map[string]int{
+			"2022FY": 2541, "2021FY": 2717, "2022H2": 1473, "2022H1": 1068, "2021H2": 1454,
+		}},
+		{"testdata/press_release_fy2023_p4.tsv", map[string]int{
+			"2023FY": 2902, "2022FY": 2541, "2023H2": 1454, "2023H1": 1448, "2022H2": 1474,
+		}},
+		{"testdata/press_release_fy2024_p4.tsv", map[string]int{
+			"2024FY": 3002, "2023FY": 2799, "2024H2": 1529, "2024H1": 1473, "2023H2": 1363,
+		}},
+	}
+
+	for _, c := range cases {
+		t.Run(path.Base(c.file), func(t *testing.T) {
+			records, err := parseKPIPage(c.file, "https://example.invalid/report.pdf", 1)
+			if err != nil {
+				t.Fatalf("parseKPIPage: %v", err)
+			}
+
+			got := map[string]float64{}
+			for _, r := range records {
+				if r.Metric == "gold_output" {
+					got[r.Period] = r.Value
+				}
+			}
+
+			for period, want := range c.periods {
+				if got[period] != float64(want) {
+					t.Errorf("gold_output %s = %v, want %d", period, got[period], want)
+				}
+			}
+
+			if len(got) != len(c.periods) {
+				t.Errorf("gold_output spans %v, want exactly %v", got, c.periods)
+			}
+		})
+	}
+}
+
+// TestExistingReportsUnchanged — контроль того, что новая граница шапки не
+// тронула уже работающие отчёты: русский релиз 1 п/г 2026 и английский MD&A за
+// 2014 разбираются тем же путём, и их значения обязаны остаться прежними.
+//
+// У FY2014 реальная страница — 4, но параметр страницы здесь лишь запасной:
+// SourcePage берётся из page_num самой строки, и на значения он не влияет.
+func TestExistingReportsUnchanged(t *testing.T) {
+	cases := []struct {
+		file   string
+		metric string
+		period string
+		value  float64
+	}{
+		{"testdata/press_reliz_1h26_p1.tsv", "gold_output", "2026H1", 1287},
+		{"testdata/press_reliz_1h26_p1.tsv", "tcc_per_ounce", "2026H1", 1069},
+		{"testdata/press_reliz_1h26_p1.tsv", "gold_output", "2025H2", 1218},
+		{"testdata/press_release_hist_p1.tsv", "gold_output", "2014FY", 1696},
+		{"testdata/press_release_hist_p1.tsv", "gold_output", "2014H2", 950},
+	}
+	for _, c := range cases {
+		records, err := parseKPIPage(c.file, "u", 1)
+		if err != nil {
+			t.Fatalf("parseKPIPage(%s): %v", c.file, err)
+		}
+
+		var found bool
+		for _, r := range records {
+			if r.Metric == c.metric && r.Period == c.period {
+				found = true
+				if r.Value != c.value {
+					t.Errorf("%s %s %s = %v, want %v", c.file, c.metric, c.period, r.Value, c.value)
+				}
+			}
+		}
+
+		if !found {
+			t.Errorf("%s: %s %s не найдено", c.file, c.metric, c.period)
+		}
 	}
 }
