@@ -14,7 +14,6 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
-	"github.com/kmlebedev/clickhouse-import-rosstat/polyus"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	log "github.com/sirupsen/logrus"
 )
@@ -27,9 +26,6 @@ func (s *goldViews) Name() string {
 }
 
 func (s *goldViews) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	if err = polyus.EnsureMetricsTable(ctx, conn); err != nil {
-		return count, err
-	}
 	for _, v := range []util.View{modelInputsView, goldDashboardView, forecastAccuracyView} {
 		var created bool
 		if created, err = util.CreateView(ctx, conn, v); err != nil {
