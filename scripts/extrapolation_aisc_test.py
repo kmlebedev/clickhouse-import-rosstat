@@ -495,9 +495,12 @@ class TestCalibrate(unittest.TestCase):
         self.assertAlmostEqual(ex.wedge_share(865.0, 569.0), 0.5202, places=3)
 
     def test_wedge_share_rejects_nonpositive_tcc(self):
-        with self.assertRaises(ValueError):
+        # Непригодное наблюдение поднимает CalibrationError — задокументированный
+        # класс «серия непригодна», а не голый ValueError: `calibrate` пропускает
+        # его наружу без обёртки, и голый ValueError дошёл бы анонимно.
+        with self.assertRaises(ex.CalibrationError):
             ex.wedge_share(500.0, 0.0)
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ex.CalibrationError):
             ex.wedge_share(500.0, -1.0)
 
     def test_calibration_uses_2019_to_2021(self):
