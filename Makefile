@@ -205,6 +205,14 @@ deploy-staging-dagu: staging-precheck
 	scp deploy/staging/dagu.service $(STAGING_HOST):/etc/systemd/system/dagu.service
 	ssh $(STAGING_HOST) 'systemctl daemon-reload'
 
+# mcp-clickhouse: юнит + прогрев кэша uv (пакет разрешается при старте сервиса).
+# Отдельного «скачивания» нет: uv разрешает пакет по пину MCP_VERSION.
+deploy-staging-mcp: staging-precheck
+	scp deploy/staging/mcp-clickhouse.service $(STAGING_HOST):/etc/systemd/system/mcp-clickhouse.service
+	ssh $(STAGING_HOST) 'systemctl daemon-reload'
+	@echo "прогрев кэша uv (скачивание mcp-clickhouse==$(MCP_VERSION))..."
+	@ssh $(STAGING_HOST) '$(STAGING_BIN_DIR)/uv tool run --from mcp-clickhouse==$(MCP_VERSION) mcp-clickhouse --help >/dev/null 2>&1 || true'
+
 info:
 	@echo "BINARY    = $(TARGET)"
 	@echo "GOOS      = linux"
