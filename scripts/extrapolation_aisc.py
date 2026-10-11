@@ -30,6 +30,7 @@ import statistics
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import date
 from pathlib import Path
@@ -1788,21 +1789,81 @@ def mask(secret: str, text: str) -> str:
 
 # --- Факт добычи из ClickHouse ------------------------------------------------
 
+def parse_clickhouse_url(url: str) -> dict:
+    """Разбирает DSN `clickhouse://[user[:password]@]host[:port]/database`.
+
+    Это ТОТ ЖЕ формат, что разбирает `clickhouse.ParseDSN` в Go-коде проекта
+    (`cmd/ingest/main.go`, `financial/db.go`), потому что `CLICKHOUSE_URL` —
+    основной способ задать подключение в этом репозитории, и env-файл
+    `~/.config/rosstat/env` содержит именно его, а не дискретные
+    `CLICKHOUSE_HOST`/`CLICKHOUSE_USER`/`CLICKHOUSE_DATABASE`.
+
+    Незаданные части не подставляются: возвращаются только реально
+    присутствующие в DSN ключи, чтобы вызывающий мог отличить «в DSN указано»
+    от «не указано вовсе» и применить свой default. Порт здесь — НАТИВНЫЙ
+    (обычно 9000); HTTP-порт к нему отношения не имеет и задаётся отдельно.
+    """
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("clickhouse", "http", "https"):
+        raise ValueError(
+            f"CLICKHOUSE_URL со схемой {parsed.scheme!r}: ожидается "
+            f"clickhouse://[user[:password]@]host[:port]/database — {url!r}"
+        )
+    out: dict = {"scheme": parsed.scheme}
+    if parsed.hostname:
+        out["host"] = parsed.hostname
+    if parsed.port:
+        out["port"] = str(parsed.port)
+    if parsed.username:
+        out["user"] = urllib.parse.unquote(parsed.username)
+    if parsed.password:
+        out["password"] = urllib.parse.unquote(parsed.password)
+    if parsed.path and parsed.path != "/":
+        out["database"] = parsed.path.lstrip("/")
+    return out
+
+
 def ch_config() -> dict:
     """Параметры подключения к ClickHouse из переменных окружения.
 
     Секреты приходят только из env: скрипт не читает `~/.config/rosstat/env`
-    сам, это делает Makefile. `CH_HTTP_PORT` — локальный default для
-    HTTP-интерфейса.
+    сам, это делает Makefile.
+
+    Источник адреса — `CLICKHOUSE_URL` (DSN), как во всём остальном проекте.
+    Дискретные `CLICKHOUSE_HOST`/`CLICKHOUSE_PORT`/`CLICKHOUSE_USER`/
+    `CLICKHOUSE_DATABASE` работают как ПЕРЕОПРЕДЕЛЕНИЕ поверх DSN: так можно
+    прогнать скрипт против другого сервера, не собирая DSN.
+
+    Пароль берётся из `CH_IMPORT_PASSWORD` либо из DSN — и НИКОГДА из
+    `CLICKHOUSE_PASSWORD`. Это не придирка: `CLICKHOUSE_PASSWORD` в этом
+    репозитории — пароль `kimi_reader`, read-only пользователя ВИТРИН,
+    которого Makefile задаёт для `mcp-check` (`MCP_USER ?= kimi_reader`).
+    Скрипту же нужно читать СЫРУЮ таблицу `databook_polyus`, закрытую для
+    `kimi_reader` (`ACCESS_DENIED`), то есть ходить под другим пользователем.
+    Прогон 2026-10-11 показал, чем обходится путаница: `CLICKHOUSE_URL`
+    объявляет пользователя `default` БЕЗ пароля (у локального dev-сервера его
+    нет), подстановка `CLICKHOUSE_PASSWORD` «на всякий случай» давала 401 —
+    чужой пароль к чужому пользователю.
     """
-    return {
-        "host": os.environ.get("CLICKHOUSE_HOST", "localhost"),
-        "port": os.environ.get("CLICKHOUSE_PORT", "9000"),
-        "user": os.environ.get("CLICKHOUSE_USER", ""),
-        "password": os.environ.get("CLICKHOUSE_PASSWORD", ""),
-        "database": os.environ.get("CLICKHOUSE_DATABASE", "default"),
-        "http_port": os.environ.get("CH_HTTP_PORT", "8123"),
-    }
+    cfg = {"host": "localhost", "port": "9000", "user": "", "password": "",
+           "database": "default", "http_port": "8123"}
+
+    url = os.environ.get("CLICKHOUSE_URL", "")
+    if url:
+        from_url = parse_clickhouse_url(url)
+        for key in ("host", "port", "user", "password", "database"):
+            if key in from_url:
+                cfg[key] = from_url[key]
+
+    for key, env in (("host", "CLICKHOUSE_HOST"), ("port", "CLICKHOUSE_PORT"),
+                     ("user", "CLICKHOUSE_USER"), ("database", "CLICKHOUSE_DATABASE")):
+        value = os.environ.get(env)
+        if value:
+            cfg[key] = value
+
+    cfg["password"] = os.environ.get("CH_IMPORT_PASSWORD") or cfg["password"]
+    cfg["http_port"] = os.environ.get("CH_HTTP_PORT", "8123")
+    return cfg
 
 
 # Имя метрики факта добычи в датапаке Polyus. Дословно совпадает с

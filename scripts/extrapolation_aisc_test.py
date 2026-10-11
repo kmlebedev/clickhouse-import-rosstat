@@ -23,6 +23,46 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import extrapolation_aisc as ex
 
 
+# Переменные, которые `ch_config()` читает. Тесты, трогающие конфигурацию,
+# обязаны изолировать ВСЕ их: иначе значение утекает в соседний тест (первая
+# версия `test_ch_config_reads_env` оставляла за собой `CLICKHOUSE_PASSWORD`, и
+# следующий тест смотрел бы на чужой пароль).
+_CONFIG_ENV_VARS = (
+    "CLICKHOUSE_URL", "CLICKHOUSE_HOST", "CLICKHOUSE_PORT", "CLICKHOUSE_USER",
+    "CLICKHOUSE_DATABASE", "CLICKHOUSE_PASSWORD", "CH_IMPORT_PASSWORD",
+    "CH_HTTP_PORT",
+)
+
+
+class _isolated_env:
+    """Контекст: выставляет указанные переменные и возвращает прежние.
+
+    Отсутствие переменной восстанавливается как отсутствие (`os.environ.pop`),
+    а не как пустая строка: `ch_config()` различает «не задано» и «задано
+    пустым», и тест не должен стирать это различие.
+    """
+
+    def __init__(self, **values):
+        self._values = values
+        self._saved: dict = {}
+
+    def __enter__(self):
+        for name in _CONFIG_ENV_VARS:
+            self._saved[name] = os.environ.get(name)
+            os.environ.pop(name, None)
+        for name, value in self._values.items():
+            os.environ[name] = value
+        return self
+
+    def __exit__(self, *_exc):
+        for name, previous in self._saved.items():
+            if previous is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = previous
+        return False
+
+
 class TestConfig(unittest.TestCase):
     def test_assets_match_mine_plans_names(self):
         self.assertEqual(
@@ -45,10 +85,76 @@ class TestConfig(unittest.TestCase):
             self.assertTrue(path.exists(), path)
 
     def test_ch_config_reads_env(self):
-        os.environ["CLICKHOUSE_HOST"] = "example.invalid"
-        os.environ["CLICKHOUSE_USER"] = "u"
-        os.environ["CLICKHOUSE_PASSWORD"] = "secret"
-        self.assertEqual(ex.ch_config()["host"], "example.invalid")
+        with _isolated_env(CLICKHOUSE_HOST="example.invalid",
+                           CLICKHOUSE_USER="u", CLICKHOUSE_PASSWORD="secret"):
+            self.assertEqual(ex.ch_config()["host"], "example.invalid")
+
+    # --- CLICKHOUSE_URL: основной способ задать подключение в проекте --------
+    #
+    # Env-файл `~/.config/rosstat/env` задаёт именно DSN (`CLICKHOUSE_URL`), а
+    # дискретных `CLICKHOUSE_HOST`/`CLICKHOUSE_USER` не содержит вовсе. Пока
+    # скрипт читал только их, он подключался пустым пользователем и падал на
+    # 401 при `make dcf-aisc` — эти тесты держат DSN-путь рабочим.
+
+    def test_parses_dsn_without_credentials(self):
+        got = ex.parse_clickhouse_url("clickhouse://localhost:9000/default")
+        self.assertEqual(got["host"], "localhost")
+        self.assertEqual(got["port"], "9000")
+        self.assertEqual(got["database"], "default")
+        self.assertNotIn("user", got)
+        self.assertNotIn("password", got)
+
+    def test_parses_dsn_with_credentials_and_unquotes(self):
+        got = ex.parse_clickhouse_url("clickhouse://u%40corp:p%40ss@h:8123/db")
+        self.assertEqual(got["user"], "u@corp")
+        self.assertEqual(got["password"], "p@ss")
+
+    def test_dsn_rejects_missing_scheme(self):
+        with self.assertRaises(ValueError):
+            ex.parse_clickhouse_url("localhost:9000")
+
+    def test_config_takes_user_and_host_from_url(self):
+        with _isolated_env(CLICKHOUSE_URL="clickhouse://someuser@some.host:9000/mydb"):
+            cfg = ex.ch_config()
+        self.assertEqual(cfg["host"], "some.host")
+        self.assertEqual(cfg["user"], "someuser")
+        self.assertEqual(cfg["database"], "mydb")
+
+    def test_config_never_borrows_kimi_reader_password(self):
+        """`CLICKHOUSE_PASSWORD` — пароль kimi_reader, а не того, кто читает
+        сырую таблицу. Подставлять его нельзя: у пользователя из DSN пароля
+        может не быть вовсе, и тогда чужой пароль даёт 401 (реальный сбой
+        2026-10-11 при `make dcf-aisc`)."""
+        with _isolated_env(CLICKHOUSE_URL="clickhouse://localhost:9000/default",
+                           CLICKHOUSE_PASSWORD="kimi-reader-secret"):
+            cfg = ex.ch_config()
+        self.assertEqual(cfg["password"], "")
+
+    def test_config_uses_dedicated_import_password(self):
+        with _isolated_env(CLICKHOUSE_URL="clickhouse://localhost:9000/default",
+                           CLICKHOUSE_PASSWORD="kimi-reader-secret",
+                           CH_IMPORT_PASSWORD="importer-secret"):
+            self.assertEqual(ex.ch_config()["password"], "importer-secret")
+
+    def test_config_explicit_env_password_beats_url_password(self):
+        """Явный `CH_IMPORT_PASSWORD` — намеренное переопределение, поэтому он
+        сильнее пароля из DSN: так можно уйти с указанного в URL пользователя
+        на другого, не переписывая DSN."""
+        with _isolated_env(CLICKHOUSE_URL="clickhouse://u:pw@h:9000/db",
+                           CH_IMPORT_PASSWORD="other"):
+            self.assertEqual(ex.ch_config()["password"], "other")
+
+    def test_config_password_from_url_used_when_no_override(self):
+        with _isolated_env(CLICKHOUSE_URL="clickhouse://u:pw@h:9000/db"):
+            self.assertEqual(ex.ch_config()["password"], "pw")
+
+    def test_discrete_vars_override_url(self):
+        with _isolated_env(CLICKHOUSE_URL="clickhouse://from-url:9000/urldb",
+                           CLICKHOUSE_HOST="from-env",
+                           CLICKHOUSE_DATABASE="envdb"):
+            cfg = ex.ch_config()
+        self.assertEqual(cfg["host"], "from-env")
+        self.assertEqual(cfg["database"], "envdb")
 
     def test_mask_hides_secret(self):
         self.assertEqual(ex.mask("secret", "pw=secret"), "pw=***")
@@ -868,8 +974,8 @@ class TestProductionQuery(unittest.TestCase):
         # Секрет не должен попасть ни в текст ошибки, ни в её args. Сетевой
         # вызов подменяется, поэтому тест офлайновый.
         secret = "sup3r-s3cret-pw"
-        os.environ["CLICKHOUSE_PASSWORD"] = secret
-        self.addCleanup(os.environ.pop, "CLICKHOUSE_PASSWORD", None)
+        os.environ["CH_IMPORT_PASSWORD"] = secret
+        self.addCleanup(os.environ.pop, "CH_IMPORT_PASSWORD", None)
         # Тело ответа сервера намеренно содержит пароль (так бывает, когда
         # ClickHouse отражает запрос в сообщении об ошибке). Тело передаётся
         # файлоподобным объектом, как это делает настоящий urllib.
@@ -1050,8 +1156,8 @@ class TestQueryTransport(unittest.TestCase):
         # `URLError` — подкласс `OSError`, поэтому его ловит широкая ветка;
         # диагностика (`reason`) при этом не теряется, а пароль маскируется.
         secret = "url-error-secret"
-        self.addCleanup(os.environ.pop, "CLICKHOUSE_PASSWORD", None)
-        os.environ["CLICKHOUSE_PASSWORD"] = secret
+        self.addCleanup(os.environ.pop, "CH_IMPORT_PASSWORD", None)
+        os.environ["CH_IMPORT_PASSWORD"] = secret
 
         def fake_urlopen(request, timeout=None):
             raise urllib.error.URLError(f"connection refused for {secret}")
