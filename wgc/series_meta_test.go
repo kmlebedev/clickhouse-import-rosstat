@@ -8,6 +8,12 @@ import (
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 )
 
+// etfFallbackFile — имя файла ручной выгрузки, которым origin называет вторую дорогу ряда.
+// Копия литерала из etfOrigin* сделана намеренно: тест пинит контракт (агент по origin обязан
+// видеть и файл, и лист), а не строку реализации, — переименование файла потребует осознанной
+// правки обеих сторон.
+const etfFallbackFile = "ETF_Flows_*.xlsx"
+
 // Каталог — единственный контракт ряда для MCP-агента (правило 11): по нему агент
 // узнаёт единицы, знак потока, связь с etf_flows_month и приоритет источников
 // витрины. Проверки идут по самому wgcEtfCatalog(), а не по копии списка в тесте:
@@ -64,31 +70,46 @@ func TestEtfCatalogDescribesEverySeries(t *testing.T) {
 		}
 	}
 
-	// origin обязан называть эндпоинт API своей метрики: копипаста с чужим
-	// эндпоинтом отправила бы агента читать чужую метрику — flows-chart2 несёт
-	// потоки, holdings-chart2 — запасы и AUM.
-	endpoints := map[string]string{
-		etfMetricFlowUsdMln:     etfAPIFlowsPath,
-		etfMetricFlowTonnes:     etfAPIFlowsPath,
-		etfMetricHoldingsTonnes: etfAPIHoldingsPath,
-		etfMetricAumUsdBn:       etfAPIHoldingsPath,
+	// origin обязан называть эндпоинт API своей метрики и — как вторую дорогу ряда — файл и
+	// лист ручной выгрузки: копипаста с чужим эндпоинтом или листом отправила бы агента
+	// читать чужую метрику или не тот блок файла (flows-chart2 несёт потоки, holdings-chart2 —
+	// запасы и AUM; Fund flows by month, Demand by month, Holdings by month и блок Charts Data
+	// файла — разные блоки с разными числами).
+	type etfOriginWant struct {
+		endpoint string
+		sheet    string
+	}
+	origins := map[string]etfOriginWant{
+		etfMetricFlowUsdMln:     {etfAPIFlowsPath, etfFlowsSheet},
+		etfMetricFlowTonnes:     {etfAPIFlowsPath, etfDemandSheet},
+		etfMetricHoldingsTonnes: {etfAPIHoldingsPath, etfHoldingsSheet},
+		etfMetricAumUsdBn:       {etfAPIHoldingsPath, etfChartsSheet},
 	}
 
-	wantEndpoint := make(map[string]string, want)
+	wantOrigin := make(map[string]etfOriginWant, want)
 	for _, metric := range wgcEtfMetrics {
-		endpoint, ok := endpoints[metric]
+		origin, ok := origins[metric]
 		if !ok {
-			t.Errorf("метрика %s: тест не знает эндпоинта источника — дополни endpoints", metric)
+			t.Errorf("метрика %s: тест не знает происхождения ряда — дополни origins", metric)
 			continue
 		}
 		for _, region := range wgcEtfRegions {
-			wantEndpoint[wgcEtfSeriesName(metric, region)] = endpoint
+			wantOrigin[wgcEtfSeriesName(metric, region)] = origin
 		}
 	}
 
 	for _, meta := range catalog {
-		if endpoint := wantEndpoint[meta.Series]; !strings.Contains(meta.Origin, endpoint) {
-			t.Errorf("ряд %s: origin %q не называет эндпоинт %q", meta.Series, meta.Origin, endpoint)
+		origin, ok := wantOrigin[meta.Series]
+		if !ok {
+			// Без этого гварда ряд, которого нет в карте, проверялся бы пустыми ожиданиями:
+			// strings.Contains(x, "") всегда истинно, и утверждение стало бы вакуумным.
+			t.Errorf("ряд %s: тест не знает ожидаемого origin — дополни origins", meta.Series)
+			continue
+		}
+		for _, wantText := range []string{origin.endpoint, origin.sheet, etfFallbackFile} {
+			if !strings.Contains(meta.Origin, wantText) {
+				t.Errorf("ряд %s: origin %q не называет %q", meta.Series, meta.Origin, wantText)
+			}
 		}
 	}
 
