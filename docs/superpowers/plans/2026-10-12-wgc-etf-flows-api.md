@@ -144,12 +144,12 @@ func TestEtfPointsFromAPIEmptyDataFails(t *testing.T)
 |---|---|---|
 | `etf_flow_usd_mln_asia` | 2026-09-30 | `2255.40929756` |
 | `etf_flow_tonnes_asia` | 2026-09-30 | `16.18610771` |
-| `etf_holdings_tonnes_asia` | 2026-09-30 | `541.88460453` |
+| `etf_holdings_tonnes_asia` | 2026-09-30 | `541.88` — **источник округляет тоннажные стоки до 0,01 т**, поэтому это НЕ `541.88460453` из xlsx; см. спеку §3 |
 | `etf_aum_usd_bn_asia` | 2026-09-30 | `75.594060865` |
 | `etf_flow_tonnes_world` | 2026-09-30 | `67.28075855` |
 | `etf_flow_tonnes_world` | 2003-02-28 | `0` (явные нули всех четырёх регионов дают точку) |
 
-Также: ни один ряд не содержит `gold price` (регистр не важен); за `2003-02-28` у `etf_holdings_tonnes_asia`, `etf_aum_usd_bn_asia` и `etf_holdings_tonnes_world` точек **нет**, а `etf_holdings_tonnes_north_america` — есть; за `2026-09-30` `etf_flow_tonnes_world` = сумме четырёх регионов; все точки лежат **на концах месяцев** (`2026-09-30`, `2026-08-31`, `2003-02-28`) — проверка идёт и по дате, поэтому ловит и сдвиг от сырого ms-таймстемпа. `TestEtfPointsFromAPIRejectsUnknownSeries` подсовывает тело с именем ряда `Antarctica` и ждёт ошибку. `TestEtfPointsFromAPINonOKStatusFails` отдаёт 403 и ждёт ошибку с `403`. `TestEtfPointsFromAPIEmptyDataFails` отдаёт валидный конверт с пустыми `series`/`set` и ждёт ошибку.
+Также: ни один ряд не содержит `gold price` (регистр не важен); за `2003-02-28` у `etf_holdings_tonnes_asia`, `etf_aum_usd_bn_asia` и `etf_holdings_tonnes_world` точек **нет**, а `etf_holdings_tonnes_north_america` — есть; за `2026-09-30` `etf_flow_tonnes_world` = сумме четырёх регионов; все точки лежат **на концах месяцев** (`2026-09-30`, `2026-08-31`, `2003-02-28`) — проверка идёт и по дате, поэтому ловит и сдвиг от сырого ms-таймстемпа. Отдельно закрепи тестом полноту набора: если для метрики потоков распознано **не четыре** региона (или в ответе нет ключа `usd`/`tonnes`) — это **ошибка**, а не частичный импорт: молча половина метрики потерялась бы. `TestEtfPointsFromAPIRejectsUnknownSeries` подсовывает тело с именем ряда `Antarctica` и ждёт ошибку. `TestEtfPointsFromAPINonOKStatusFails` отдаёт 403 и ждёт ошибку с `403`. `TestEtfPointsFromAPIEmptyDataFails` отдаёт валидный конверт с пустыми `series`/`set` и ждёт ошибку.
 
 - [ ] **Step 3: Run tests to verify they fail**
 
@@ -256,6 +256,7 @@ git commit -m "wgc etf flows: use json api with xlsx fallback"
 - `etfOrigin*`: происхождение — API: `fscdn.gold.org`, эндпоинт `flows-chart2` (поток USD и поток тонн) или `holdings-chart2` (запасы и AUM) с указанием метрики; фолбэк — файл `ETF_Flows_*.xlsx` (лист `Fund flows by month` / `Demand by month` / `Holdings by month` / `Charts Data`), чтобы агент понимал обе дороги.
 - `etfCatalogImportNote`: канонический канал — автоматический (API, расписание `dagu/wgc.yaml` ежедневно), ручная выгрузка в `wgc/data` — фолбэк, если API недоступно; приоритет источников витрины сохранить (`wgc > webbridge > manual`).
 - `etfCatalogWorldSince` → **две константы**: для потоков — «ряд начинается с 2003-02-28; до 2007-03 мировая сумма не содержит Азии — азиатских фондов ещё не было, их запасы в данных отсутствуют (`null`), а поток приходит нулём»; для запасов/AUM — прежняя формулировка про 2007-03 (Азии нет в данных).
+- **Округление источника** (иначе агент прочитает разницу с прежней историей как поломку импорта): описания рядов `holdings_tonnes` (все пять регионов) обязаны нести оговорку, что тоннажные стоки источник отдаёт округлёнными **до 0,01 т** (в отличие от потоков и AUM — полной точности), и что ручная выгрузка в фолбэке даёт полную точность, поэтому расхождение ≤ 0,01 т — не дефект.
 
 - [ ] **Step 2: Обновить ожидания `wgc/series_meta_test.go`**
 
@@ -311,8 +312,9 @@ SELECT region, toString(min(date)) AS min_d, countIf(flow_tonnes IS NOT NULL) AS
 FROM v_gold_etf_flows GROUP BY region ORDER BY region;
 ```
 
-Expected: значения за 2026-08/09 совпадают со спекой (`asia 2255.40929756 / 16.18610771 / 541.88460453 / 75.594060865`,
-`world` holdings 2026-09-30 `4255.66981354`); глубины: `asia/europe/other/north_america` потоков 284 (с 2003-02-28),
+Expected: потоки и AUM за 2026-08/09 совпадают со спекой до 1e-9 (`asia 2255.40929756 / 16.18610771 / 75.594060865`),
+а `holdings_tonnes` — до 0,01 т (`asia` `541.88`, `world` 2026-09-30 `4255.66`: округление источника, не дефект);
+глубины: `asia/europe/other/north_america` потоков 284 (с 2003-02-28),
 `world` потоков 284 (с 2003-02-28), `world` стоков 235 (с 2007-03-31).
 
 - [ ] **Step 3: Синхронизировать документы**
