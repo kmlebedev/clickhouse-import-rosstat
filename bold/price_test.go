@@ -290,11 +290,13 @@ func TestBoldPriceImportModeIsZoneAgnostic(t *testing.T) {
 }
 
 // TestBoldPriceImportNoopWhenUpToDate: дата источника не новее сохранённого максимума — 0 строк,
-// ни одной ошибки, ни одного батча и ни одной DDL: соединение трогается только чтением максимума
-// площадки, а источник — одним запросом price-latest. Здесь же живёт проверка «точка новее
-// сохранённого максимума»: саботаж «снять условие latestDate.After(stored)» валит именно этот
-// тест (прогон переписал бы точку 09.10 поверх уже сохранённой), а не инкрементный: там максимум
-// 08.10, и точка дня пишется при любом варианте условия.
+// ни одной ошибки, и данных не касаемся: ни DDL таблицы цены, ни батча INSERT в неё. Соединение
+// трогается чтением максимума площадки и публикацией каталога — на no-op он перепубликовывается
+// (Ruling 19), чтобы исправленный текст описания доезжал до агента без новой точки. Источник
+// опрашивается одним запросом price-latest. Здесь же живёт проверка «точка новее сохранённого
+// максимума»: саботаж «снять условие latestDate.After(stored)» валит именно этот тест (прогон
+// переписал бы точку 09.10 поверх уже сохранённой), а не инкрементный: там максимум 08.10, и
+// точка дня пишется при любом варианте условия.
 func TestBoldPriceImportNoopWhenUpToDate(t *testing.T) {
 	server := boldNewTestServer(t, map[string][]byte{boldPathPriceLatest: testFixture(t, "bold_price_latest.json")})
 	conn := newBoldFakeConn(boldFakeDate(t, boldPinDate))
@@ -309,17 +311,28 @@ func TestBoldPriceImportNoopWhenUpToDate(t *testing.T) {
 	}
 
 	calls := conn.callList()
-	if len(calls) != 1 || calls[0] != "queryrow: "+boldPriceStoredMaxQuery {
-		t.Errorf("обращения к соединению: %v, ожидалось одно чтение максимума площадки", calls)
+	if boldTestCallIndex(calls, "queryrow: "+boldPriceStoredMaxQuery) < 0 {
+		t.Errorf("no-op прогон обязан прочитать максимум площадки: %v", calls)
 	}
-	for _, call := range calls {
-		if strings.HasPrefix(call, "preparebatch: ") {
-			t.Errorf("батч открывался на прогоне-нечего-обновлять: %v", calls)
-		}
-		if strings.HasPrefix(call, "exec: ") {
-			t.Errorf("DDL выполнялась на прогоне-нечего-обновлять: %v", calls)
+	for _, fragment := range []string{
+		"exec: CREATE TABLE IF NOT EXISTS " + boldPriceTable,
+		"preparebatch: " + boldGoldPricesInsert,
+	} {
+		if boldTestCallIndex(calls, fragment) >= 0 {
+			t.Errorf("no-op прогон тронул данные (%q): %v", fragment, calls)
 		}
 	}
+
+	// Каталог перепубликован: батч series_catalog (текст INSERT задаёт util.UpsertSeriesCatalog)
+	// открыт, содержит одну запись — ряд gold/bold — и отправлен.
+	catalog := conn.batchFor(t, "INSERT INTO series_catalog")
+	if !catalog.sent {
+		t.Error("батч каталога на no-op прогоне не отправлен")
+	}
+	if len(catalog.rows) != 1 {
+		t.Errorf("строк каталога на no-op прогоне: %d, ожидалась 1 (ряд gold/bold)", len(catalog.rows))
+	}
+
 	if got := server.requested(); len(got) != 1 || got[0] != boldPathPriceLatest {
 		t.Errorf("запросы прогона: %v, ожидался один %q", got, boldPathPriceLatest)
 	}

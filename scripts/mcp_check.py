@@ -286,10 +286,10 @@ async def check(params, server_log):
                 failed += not expect(f"витрина {view} существует и читается ({label})",
                                      bool(bold_view_rows), bold_view_detail)
 
-            # Каталог source='bold' — 7 рядов ETF-контура: каталог пишет импортёр только
-            # после успешного Send, поэтому «меньше 7» значит неприменённый импорт (числа
-            # агент прочитает, а что измеряет ряд и в каких единицах — нет), «больше 7» —
-            # ряд, которого витрина не знает.
+            # Каталог source='bold' — 7 рядов ETF-контура: импортёр перепубликовывает каталог
+            # на каждом прогоне (после успешного Send или в ветке no-op), поэтому «меньше 7»
+            # значит ни разу не отработавший импорт (числа агент прочитает, а что измеряет
+            # ряд и в каких единицах — нет), «больше 7» — ряд, которого витрина не знает.
             catalog_bold_raw = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'bold'"}))
             catalog_bold = result_rows(catalog_bold_raw)
             catalog_bold_n = catalog_bold[0].get("n") if catalog_bold else None
@@ -299,7 +299,7 @@ async def check(params, server_log):
                 catalog_bold_detail = "рядов bold: 7"
             else:
                 catalog_bold_detail = (f"рядов bold: {catalog_bold_n}, want 7 — прогнать "
-                                       "make import STAT=bold_etf_flows (каталог пишется после успешной записи)")
+                                       "make import STAT=bold_etf_flows (каталог перепубликовывается прогоном импортёра)")
             failed += not expect("каталог bold полон", catalog_bold_n == 7, catalog_bold_detail)
 
             raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM bold_fund_snapshot"}))
