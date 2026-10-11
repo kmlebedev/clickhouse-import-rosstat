@@ -1,12 +1,15 @@
 package wgc
 
 import (
+	"bytes"
 	"context"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -24,10 +27,24 @@ func TestCbReservesStatName(t *testing.T) {
 	}
 }
 
+// silenceCbLogs глушит ожидаемые warn-и теста (пустая папка, holdings без стран словаря в
+// топ-100): logrus пишет в stderr, и без перехвата вывод засорялся бы сообщениями, которые
+// тест не проверяет.
+func silenceCbLogs(t *testing.T) {
+	t.Helper()
+
+	var buffered bytes.Buffer
+	prevOut := log.StandardLogger().Out
+	log.SetOutput(&buffered)
+	t.Cleanup(func() { log.SetOutput(prevOut) })
+}
+
 // Пустая папка данных — не ошибка (warn + 0 строк): dagu не должен краснеть до
 // первого скачивания выгрузок. conn при этом не трогается вовсе — тест зовёт
 // Import с nil и упал бы паникой уже на первом обращении к соединению.
 func TestCbImportEmptyDirIsNoop(t *testing.T) {
+	silenceCbLogs(t)
+
 	stat := cbReservesStat{dir: t.TempDir()}
 	count, err := stat.Import(context.Background(), nil)
 	if err != nil {
@@ -124,6 +141,8 @@ func writeCbHoldingsWithoutTargets(t *testing.T, dir string) {
 // записать пустоту. Тест зовёт Import с nil conn: guard срабатывает раньше соединения,
 // обращение к conn упало бы паникой.
 func TestCbImportWorkbooksWithoutPointsFail(t *testing.T) {
+	silenceCbLogs(t)
+
 	for _, tc := range []struct {
 		name     string
 		changes  bool

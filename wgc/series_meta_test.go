@@ -3,6 +3,7 @@ package wgc
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 )
@@ -95,14 +96,14 @@ func TestEtfCatalogDescribesEverySeries(t *testing.T) {
 
 // Каталог ЦБ — единственный контракт рядов для MCP-агента: единицы, направление дельты,
 // оговорки стран и «не путать с v_imf_macro» (там USD и только Китай). Проверки идут по
-// самому wgcCbCatalog(), а не по копии списка в тесте: копия пропустила бы ряд, забытый
-// в каталоге.
+// самому каталогу на полном наборе точек, а не по копии списка в тесте: копия пропустила
+// бы ряд, забытый в каталоге.
 func TestCbCatalogDescribesEverySeries(t *testing.T) {
 	names := CbSeriesNames()
 
-	catalog := wgcCbCatalog()
+	catalog := cbCatalogForPoints(cbAllSeriesPoints())
 	if len(catalog) != len(names) {
-		t.Fatalf("wgcCbCatalog(): %d записей, ожидалось %d", len(catalog), len(names))
+		t.Fatalf("каталог: %d записей, ожидалось %d", len(catalog), len(names))
 	}
 
 	bySeries := make(map[string]util.SeriesMeta, len(catalog))
@@ -202,5 +203,72 @@ func TestCbCatalogDescribesEverySeries(t *testing.T) {
 	// available in January 2018» данным не соответствует и в каталоге не тиражируется.
 	if meta := bySeries[wgcCbSeriesName(cbMetricChangeTonnes, "UZB")]; strings.Contains(meta.Description, "2018") {
 		t.Errorf("ряд %s: описание тиражирует противоречащий данным комментарий файла «Data first available in January 2018»", meta.Series)
+	}
+}
+
+// cbAllSeriesPoints — по точке на каждый ряд набора: так выглядит полный прогон с обеими
+// выгрузками (каталогу важны имена рядов, значения не читаются).
+func cbAllSeriesPoints() []seriesPoint {
+	points := make([]seriesPoint, 0, len(cbCountries)*len(cbMetrics))
+	for _, name := range CbSeriesNames() {
+		points = append(points, seriesPoint{Series: name, Date: cbDate(2026, time.August, 31), Value: 1})
+	}
+	return points
+}
+
+// Каталог публикует только метрики, у которых в прогоне есть точки: выгрузки ЦБ
+// появляются в wgc/data по отдельности, и описания рядов метрики без данных обещали бы
+// агенту ряды, которых в macro_series нет. Гранулярность — метрика: одна точка метрики
+// описывает все её ряды (страна на месяц выпадает из топ-100 holdings, и удалять её
+// описание из каталога было бы потерей карты данных).
+func TestCbCatalogForPointsFiltersByMetrics(t *testing.T) {
+	point := func(series string) seriesPoint {
+		return seriesPoint{Series: series, Date: cbDate(2026, time.August, 31), Value: 1}
+	}
+
+	for _, tc := range []struct {
+		name   string
+		points []seriesPoint
+		want   map[string]int // метрика → записей в каталоге
+	}{
+		{"только дельты", []seriesPoint{point(wgcCbSeriesName(cbMetricChangeTonnes, "POL"))},
+			map[string]int{cbMetricChangeTonnes: len(cbCountries), cbMetricHoldingsTonnes: 0}},
+		{"только уровни", []seriesPoint{point(wgcCbSeriesName(cbMetricHoldingsTonnes, "POL"))},
+			map[string]int{cbMetricChangeTonnes: 0, cbMetricHoldingsTonnes: len(cbCountries)}},
+		{"обе метрики", cbAllSeriesPoints(),
+			map[string]int{cbMetricChangeTonnes: len(cbCountries), cbMetricHoldingsTonnes: len(cbCountries)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			catalog := cbCatalogForPoints(tc.points)
+
+			wantLen := 0
+			for _, n := range tc.want {
+				wantLen += n
+			}
+			if len(catalog) != wantLen {
+				t.Fatalf("cbCatalogForPoints: %d записей, ожидалось %d", len(catalog), wantLen)
+			}
+
+			got := make(map[string]int, len(cbMetrics))
+			for _, meta := range catalog {
+				metric := ""
+				for _, m := range cbMetrics {
+					if strings.HasPrefix(meta.Series, wgcCbSeriesName(m, "")) {
+						metric = m
+						break
+					}
+				}
+				if metric == "" {
+					t.Fatalf("ряд %s не принадлежит ни одной метрике набора", meta.Series)
+				}
+				got[metric]++
+			}
+
+			for _, metric := range cbMetrics {
+				if got[metric] != tc.want[metric] {
+					t.Errorf("метрика %s: %d записей, ожидалось %d", metric, got[metric], tc.want[metric])
+				}
+			}
+		})
 	}
 }

@@ -142,9 +142,10 @@ func (s *cbReservesStat) Import(ctx context.Context, conn driver.Conn) (count in
 		return 0, fmt.Errorf("%s: %w", s.Name(), err)
 	}
 
-	// Каталог — после успешного Send: описание ряда, которого в таблице нет, —
-	// обещание данных, которых агент не найдёт (прецедент dcf_mine_plans).
-	if err = util.UpsertSeriesCatalog(ctx, conn, wgcCbCatalog()); err != nil {
+	// Каталог — после успешного Send и только по метрикам с точками: описание ряда,
+	// которого в таблице нет, — обещание данных, которых агент не найдёт (прецедент
+	// dcf_mine_plans). На первом запуске выгрузки могут прийти по отдельности.
+	if err = util.UpsertSeriesCatalog(ctx, conn, cbCatalogForPoints(points)); err != nil {
 		return count, fmt.Errorf("%s: каталог рядов: %w", s.Name(), err)
 	}
 

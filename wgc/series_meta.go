@@ -320,15 +320,32 @@ func cbDescription(parts ...string) string {
 	return strings.Join(nonEmpty, " ")
 }
 
-// wgcCbCatalog — каталог 14 рядов набора (2 метрики × 7 стран) для series_catalog с
-// source='wgc'. Порядок — как в CbSeriesNames(): по странам словаря, внутри страны
-// сначала дельты, затем уровни. Смыслы — из спеки §3.2/§3.3: дельты — месячное изменение
-// в тоннах со знаком, уровни — сток из отдельной выгрузки с собственной датой.
-func wgcCbCatalog() []util.SeriesMeta {
+// cbCatalogForPoints — каталог ровно по тем метрикам, у которых в прогоне есть точки:
+// выгрузки ЦБ появляются в wgc/data по отдельности, и на первом запуске может быть только
+// одна из них — описания рядов второй метрики обещали бы данные, которых в macro_series
+// нет. Полный набор (обе выгрузки) даёт все 14 записей. Порядок — как в CbSeriesNames():
+// по странам словаря, внутри страны сначала дельты, затем уровни. Гранулярность — метрика,
+// а не отдельный ряд: страна на месяц выпадает из топ-100 holdings (это warn парсера), и
+// пропажа её описания из каталога теряла бы карту данных. Смыслы — из спеки §3.2/§3.3.
+func cbCatalogForPoints(points []seriesPoint) []util.SeriesMeta {
+	metricsWithData := make(map[string]bool, len(cbMetrics))
+	for _, metric := range cbMetrics {
+		// Префикс имён рядов метрики: cb_<метрика>_.
+		prefix := wgcCbSeriesName(metric, "")
+		for _, p := range points {
+			if strings.HasPrefix(p.Series, prefix) {
+				metricsWithData[metric] = true
+				break
+			}
+		}
+	}
+
 	catalog := make([]util.SeriesMeta, 0, len(cbCountries)*len(cbMetrics))
 	for _, c := range cbCountries {
 		for _, metric := range cbMetrics {
-			catalog = append(catalog, cbSeriesMeta(c, metric))
+			if metricsWithData[metric] {
+				catalog = append(catalog, cbSeriesMeta(c, metric))
+			}
 		}
 	}
 	return catalog
