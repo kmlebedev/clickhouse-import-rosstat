@@ -24,9 +24,11 @@ import polyus_output_model as om
 
 
 class TestReadRefined(unittest.TestCase):
-    def test_opr_years_are_exactly_the_first_three(self):
-        # Окно ОПР в этом срезе — 2025–2027 (спека §3): 2028+ принадлежит Go-сиду.
-        self.assertEqual(om.OPR_YEARS, (2025, 2026, 2027))
+    def test_opr_years_cover_the_window_until_the_mill_starts(self):
+        # Первая линия ЗИФ Сухого Лога — 2030 (базовый график: консенсус
+        # аналитиков), поэтому окно ОПР идёт 2025–2029 и кончается ПЕРЕД
+        # профилем. Годы 2028–2029 принадлежат ОПР, а не проекту.
+        self.assertEqual(om.OPR_YEARS, (2025, 2026, 2027, 2028, 2029))
 
     def test_asset_name_keeps_its_space(self):
         # Каноническое имя Полюса — «Sukhoi Log», с пробелом. Проверка формы
@@ -114,6 +116,21 @@ class TestBuildRows(unittest.TestCase):
         rows = om.build_rows({2025: 242.2, 2026: 271.7})
         self.assertEqual([r["year"] for r in rows], [2025, 2026, 2027])
         self.assertTrue(all(r["asset"] == om.ASSET for r in rows))
+
+    def test_rows_are_five_and_before_the_profile(self):
+        # Пять лет окна ОПР и ни одного года из горизонта Go-сида: пересечение
+        # означало бы перезапись проектного профиля целиком.
+        rows = om.build_rows({2025: 242.2, 2026: 271.7})
+        self.assertEqual([r["year"] for r in rows], [2025, 2026, 2027, 2028, 2029])
+        self.assertFalse(set(r["year"] for r in rows) & om.GO_SEED_SUKHOI_LOG_YEARS)
+
+    def test_all_estimated_years_share_one_rule(self):
+        # Факт есть только за 2025–2026; 2027–2029 оценены ОДНИМ правилом:
+        # тренда, который стоило бы продлевать, у ряда ОПР нет.
+        rows = {r["year"]: r["production_koz"] for r in om.build_rows({2025: 242.2, 2026: 271.7})}
+        self.assertEqual(len({rows[y] for y in (2027, 2028, 2029)}), 1)
+        self.assertAlmostEqual(rows[2027], 257.0, places=1)
+        self.assertAlmostEqual(rows[2029], 257.0, places=1)
 
 
 class TestOverlap(unittest.TestCase):
