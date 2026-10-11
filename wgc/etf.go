@@ -133,7 +133,8 @@ func ensureMacroSeriesTable(ctx context.Context, conn driver.Conn) error {
 // source называет источник в логе («возможен устаревший ответ CDN», «локальная выгрузка
 // <путь>»): без имени файла устаревшая выгрузка в wgc/data неотличима от свежей. Это не
 // отказ импорта: перезапись тех же значений идемпотентна, а ложный отказ оставил бы ряды без
-// обновления — guard одинаков для обоих транспортов и информационный.
+// обновления — guard одинаков для обоих транспортов и информационный, поэтому и ошибка самого
+// диагностического запроса (не прочитали максимум) — warn, а не отказ.
 func etfWarnIfStale(ctx context.Context, conn driver.Conn, source string, maxDate time.Time) {
 	stored, gerr := etfStoredMaxDate(ctx, conn)
 	if gerr != nil {
