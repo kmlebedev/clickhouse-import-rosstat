@@ -39,5 +39,45 @@ class TestReadRefined(unittest.TestCase):
                 om.read_refined_output("VERNINSKOYE2", 2100)
 
 
+class TestBuildRows(unittest.TestCase):
+    def test_2027_is_mean_of_2025_and_2026(self):
+        rows = om.build_rows({2025: 242.2, 2026: 271.7})
+        by_year = {r["year"]: r for r in rows}
+        self.assertAlmostEqual(by_year[2027]["production_koz"], 257.0, places=1)
+
+    def test_measured_years_are_not_averaged(self):
+        rows = om.build_rows({2025: 242.2, 2026: 271.7})
+        by_year = {r["year"]: r for r in rows}
+        self.assertAlmostEqual(by_year[2025]["production_koz"], 242.2, places=1)
+        self.assertAlmostEqual(by_year[2026]["production_koz"], 271.7, places=1)
+
+    def test_grade_is_none_and_capex_zero(self):
+        rows = om.build_rows({2025: 242.2, 2026: 271.7})
+        for row in rows:
+            self.assertIsNone(row["grade_gpt"])
+            self.assertEqual(row["capex_project"], 0)
+            self.assertEqual(row["capex_sustaining"], 0.0)
+            self.assertEqual(row["closure_costs"], 0)
+
+    def test_aisc_never_below_tcc(self):
+        for row in om.build_rows({2025: 242.2, 2026: 271.7}):
+            self.assertGreaterEqual(row["aisc"], row["tcc"])
+
+    def test_missing_measured_year_raises(self):
+        with self.assertRaises(om.OutputDataError):
+            om.build_rows({2025: 242.2})  # 2026 не прочитан
+
+    def test_zero_output_raises(self):
+        # Измеренный ноль неотличим от отсутствия факта, и строка с ним
+        # занизила бы NPV. Отказ, а не строка.
+        with self.assertRaises(om.OutputDataError):
+            om.build_rows({2025: 0.0, 2026: 271.7})
+
+    def test_rows_are_three_and_in_year_order(self):
+        rows = om.build_rows({2025: 242.2, 2026: 271.7})
+        self.assertEqual([r["year"] for r in rows], [2025, 2026, 2027])
+        self.assertTrue(all(r["asset"] == om.ASSET for r in rows))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
