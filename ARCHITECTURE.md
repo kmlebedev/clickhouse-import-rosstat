@@ -20,7 +20,7 @@ Go-конвейер (ETL) импорта российской макроэкон
 main.go            — точка входа: подключение к CH, запуск реестра импортёров
 chimport/stats.go  — интерфейс ImportStat + глобальный реестр Stats
 util/              — общие хелперы: HTTP-клиент (xls.go), шаблон импортёра ClickHouseImport (clickhouse_import.go), батч-импорт (db.go), каталог рядов series_catalog/v_series_catalog (series_catalog.go), создание витрин v_* с комментариями (views.go)
-sql/               — SQL для ручной настройки: пользователь MCP kimi_reader и гранты на витрины (mcp_kimi_reader.sql); сид календаря Q4-2026 (events_calendar_q4_2026.sql)
+sql/               — SQL для ручной настройки: пользователь MCP kimi_reader и гранты на витрины (mcp_kimi_reader.sql); сид календаря Q4-2026 (events_calendar_q4_2026.sql); сид каталога ручных рядов дашборда золота (gold_dashboard_manual_series_catalog.sql)
 scripts/           — скрипты MCP: mcp_setup_user.py (создание kimi_reader, make mcp-user), mcp_check.py (smoke-проверка, make mcp-check)
 rosstat/           — Росстат: ipc_mes, ipc_weeks, vvp_kvartal, salaries_mes → series_catalog (source='rosstat'), витрина v_rosstat_macro
 cbr/               — ЦБ РФ: key_rate, currency_usd, m2, ruonia (таблица cbr_ruania), metal_gold (cbr_gold), households, avgproc_stav, ... → series_catalog (source='cbr'), витрина v_cbr_macro
