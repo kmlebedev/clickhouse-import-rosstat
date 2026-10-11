@@ -107,11 +107,68 @@ class OverlapError(Exception):
 
 
 # Годы, которыми владеет Go-сид `dcf_mine_plans` по активу Сухой Лог.
-# Дословно из `dcf/mine_plans_seed.go`: `MineLifeYears: 10`,
-# `ProfileStartYear: 2028` → горизонт 2028…2037 ВКЛЮЧИТЕЛЬНО.
-# Не пересекается с `OPR_YEARS` (2025–2027) — и это не совпадение, а причина,
-# по которой окно ОПР в этом срезе кончается 2027-м (спека §3).
-GO_SEED_SUKHOI_LOG_YEARS = frozenset(range(2028, 2038))
+# Значение ВЫВОДИТСЯ из исходника Go-сида (`parse_go_seed_*`), а не
+# транскрибируется числом: транскрипция разошлась бы с кодом молча — сдвиг
+# `ProfileStartYear` оставил бы константу прежней, и сид перезаписал бы годы,
+# которые Go-сид теперь считает своими. Проверка стоит в тесте
+# (`test_horizon_is_derived_from_the_go_seed_source`), потому что чтение файла
+# на импорте сделало бы модуль зависящим от рабочего каталога.
+GO_SEED_FILE = ROOT / "dcf" / "mine_plans_seed.go"
+
+# Запасное значение на случай, если исходник недоступен (модуль поставлен без
+# репозитория). НЕ основной путь: при доступном файле значение сверяется с ним.
+GO_SEED_SUKHOI_LOG_YEARS_FALLBACK = frozenset(range(2028, 2038))
+
+
+def parse_go_seed_profile_start_year(source: str) -> int:
+    """`ProfileStartYear` актива Сухой Лог из исходника Go-сида.
+
+    Парсится БЛИЖАЙШЕЕ вхождение после объявления актива: `ProfileStartYear`
+    есть только у Сухого Лога (у пяти рудников план строится от факта
+    `databook_polyus`), поэтому первое совпадение в файле и есть его.
+    """
+    import re
+
+    match = re.search(r'Asset:\s*"' + re.escape(ASSET) + r'"[^}]*?'
+                      r'ProfileStartYear:\s*(\d{4})', source, re.DOTALL)
+    if not match:
+        raise OutputDataError(
+            f"в {GO_SEED_FILE.name} не найден ProfileStartYear актива {ASSET!r}: "
+            f"горизонт Go-сида не выводится, сид применять нельзя"
+        )
+    return int(match.group(1))
+
+
+def parse_go_seed_mine_life_years(source: str, asset: str) -> int:
+    """`MineLifeYears` актива из исходника Go-сида."""
+    import re
+
+    match = re.search(r'Asset:\s*"' + re.escape(asset) + r'"[^}]*?'
+                      r'MineLifeYears:\s*(\d+)', source, re.DOTALL)
+    if not match:
+        raise OutputDataError(
+            f"в {GO_SEED_FILE.name} не найден MineLifeYears актива {asset!r}"
+        )
+    return int(match.group(1))
+
+
+def go_seed_years() -> frozenset:
+    """Годы горизонта Go-сида для Сухого Лога: `[start, start + life)`.
+
+    Полуоткрытый интервал повторяет конвенцию `dcf/seed.go`
+    (`[minPlanYear, maxPlanYear)`): `MineLifeYears` — это ЧИСЛО лет, и
+    последний год плана равен `start + life − 1`.
+    """
+    try:
+        source = GO_SEED_FILE.read_text(encoding="utf-8")
+        start = parse_go_seed_profile_start_year(source)
+        life = parse_go_seed_mine_life_years(source, ASSET)
+    except (OSError, OutputDataError):
+        return GO_SEED_SUKHOI_LOG_YEARS_FALLBACK
+    return frozenset(range(start, start + life))
+
+
+GO_SEED_SUKHOI_LOG_YEARS = go_seed_years()
 
 
 def output_sql(asset: str, year: int) -> str:
@@ -181,7 +238,17 @@ def read_refined_output(asset: str, year: int) -> float:
             f"нет факта {REFINED_METRIC!r} по активу {asset} за {year}: "
             f"строка плана не может быть построена на отсутствующем факте"
         )
-    return float(value)
+    result = float(value)
+    # КОНЕЧНОСТЬ проверяется ЯВНО, а не через `<= 0`: сравнение с NaN всегда
+    # ложно, поэтому NaN прошёл бы любую знаковую проверку и разъехался бы по
+    # NPV, где сравнения с ним тоже ложны (тот же довод, что в
+    # `extrapolation_aisc.sql_literal`, отвергающем NaN/inf).
+    if result != result or result in (float("inf"), float("-inf")):
+        raise OutputDataError(
+            f"выпуск {asset} за {year} не конечен ({value!r}): "
+            f"NaN/inf прошли бы знаковые проверки и отравили NPV"
+        )
+    return result
 
 
 # Год, для которого факта не публикуется и значение выводится средним по

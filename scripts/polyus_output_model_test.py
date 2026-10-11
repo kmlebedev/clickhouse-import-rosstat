@@ -42,7 +42,13 @@ class TestReadRefined(unittest.TestCase):
         # 2025: refined 242.2 против dore 230.8. Метрика обязана быть refined.
         with unittest.mock.patch.object(om, "ch_query", return_value=[{"v": 242.2}]):
             self.assertEqual(om.read_refined_output("VERNINSKOYE2", 2025), 242.2)
-        self.assertIn(om.REFINED_METRIC, om.output_sql("VERNINSKOYE2", 2025))
+        # ЛИТЕРАЛ, а не `om.REFINED_METRIC`: подстановка константы в проверку её
+        # же значения — тавтология, и подмена метрики на `dore` прошла бы зелёной
+        # (проверено мутацией). Тихо неверные числа от смены метрики — ровно тот
+        # дефект, который этот тест обязан ловить.
+        self.assertIn("name = 'Total refined gold output'", om.output_sql("VERNINSKOYE2", 2025))
+        self.assertNotIn("Total Dore", om.output_sql("VERNINSKOYE2", 2025))
+        self.assertEqual(om.REFINED_METRIC, "Total refined gold output")
 
     def test_absent_year_raises_instead_of_zero(self):
         # Пустой ответ: ноль на месте факта занизил бы NAV.
@@ -53,6 +59,21 @@ class TestReadRefined(unittest.TestCase):
     def test_implausible_year_raises(self):
         with self.assertRaises(om.OutputDataError):
             om.output_sql("OLIMPIADA", 1800)
+
+    def test_nan_value_raises_instead_of_building_a_row(self):
+        # NaN проходит проверку `value <= 0` (сравнение с NaN всегда ложно) и
+        # разъехался бы по всему NPV, где сравнения с ним тоже ложны. В
+        # репозитории уже есть эта конвенция — `aisc.sql_literal` отвергает
+        # NaN/inf по той же причине.
+        with unittest.mock.patch.object(om, "ch_query", return_value=[{"v": "nan"}]):
+            with self.assertRaises(om.OutputDataError):
+                om.read_refined_output("VERNINSKOYE2", 2025)
+
+    def test_infinity_value_raises(self):
+        for raw in ("inf", "-inf"):
+            with unittest.mock.patch.object(om, "ch_query", return_value=[{"v": raw}]):
+                with self.assertRaises(om.OutputDataError):
+                    om.read_refined_output("VERNINSKOYE2", 2025)
 
 
 class TestBuildRows(unittest.TestCase):
@@ -122,6 +143,22 @@ class TestOverlap(unittest.TestCase):
     def test_default_horizon_matches_go_seed(self):
         # MineLifeYears: 10, ProfileStartYear: 2028 -> 2028..2037 включительно.
         self.assertEqual(om.GO_SEED_SUKHOI_LOG_YEARS, frozenset(range(2028, 2038)))
+
+    def test_horizon_is_derived_from_the_go_seed_source(self):
+        """Горизонт обязан читаться из Go-сида, а не быть транскрибированным.
+
+        Если кто-то сдвинет `ProfileStartYear` (или `MineLifeYears`) в
+        `dcf/mine_plans_seed.go`, транскрибированная константа осталась бы
+        прежней — и сид молча перезаписал бы годы, которые Go-сид теперь
+        считает своими. Проверка сверяет константу с ИСХОДНИКОМ.
+        """
+        seed = (om.ROOT / "dcf" / "mine_plans_seed.go").read_text(encoding="utf-8")
+        start = om.parse_go_seed_profile_start_year(seed)
+        life = om.parse_go_seed_mine_life_years(seed, om.ASSET)
+        self.assertEqual(start, 2028)
+        self.assertEqual(life, 10)
+        self.assertEqual(om.GO_SEED_SUKHOI_LOG_YEARS,
+                         frozenset(range(start, start + life)))
 
     def test_opr_years_do_not_touch_default_horizon(self):
         rows = om.build_rows({2025: 242.2, 2026: 271.7})
