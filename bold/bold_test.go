@@ -354,6 +354,36 @@ func TestBoldNeedsFullFetch(t *testing.T) {
 	}
 }
 
+// TestBoldIsPreviousTradingDay (Ruling 22): гейт инкремента ETF — сохранённый максимум обязан быть
+// непосредственно предыдущим ТОРГОВЫМ днём даты источника. Сравниваются календарные даты, выходные
+// шаг назад перепрыгивает (источник их не публикует), а пропущенный торговый день не перепрыгивает —
+// именно это делает многодневный Δ невозможным. Саботаж «убрать скип выходных» валит кейс
+// «пятница → понедельник»: без скипа предыдущим днём понедельника считается воскресенье.
+func TestBoldIsPreviousTradingDay(t *testing.T) {
+	cases := []struct {
+		name   string
+		latest string
+		stored time.Time
+		want   bool
+	}{
+		{"четверг → пятница (соседние торговые дни)", boldPinDate, testDate(t, boldPinPrior), true},
+		{"пятница → понедельник (выходные перепрыгнуты)", "2026-10-12", testDate(t, boldPinDate), true},
+		{"понедельник → вторник", "2026-10-13", testDate(t, "2026-10-12"), true},
+		{"пропущен один торговый день (07.10 → 09.10)", boldPinDate, testDate(t, "2026-10-07"), false},
+		{"пропущены два торговых дня (06.10 → 09.10)", boldPinDate, testDate(t, "2026-10-06"), false},
+		{"ряды пусты (нулевой максимум)", boldPinDate, time.Time{}, false},
+		{"дата источника совпала с максимумом", boldPinDate, testDate(t, boldPinDate), false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := boldIsPreviousTradingDay(testDate(t, c.latest), c.stored); got != c.want {
+				t.Errorf("boldIsPreviousTradingDay(%s, %s) = %t, ожидалось %t",
+					c.latest, boldFormatDate(c.stored), got, c.want)
+			}
+		})
+	}
+}
+
 // boldTestNow — фиксированный «день прогона» тестов: сутки после даты фикстур (2026-10-09) и
 // меньше порога застоя. Часы прогона — шов `now`, и тесты обязаны давать импортёру
 // детерминированный вход: с реальными часами лог (а в перспективе и поведение warn-а) зависел бы
@@ -948,6 +978,65 @@ func TestBoldEtfImportFullFetchWhenSeriesAndFundsDiverge(t *testing.T) {
 		if counts[path] != 1 {
 			t.Errorf("путь %q запрошен %d раз (все запросы: %v), ожидался один запрос последнего дня", path, counts[path], requested)
 		}
+	}
+}
+
+// TestBoldEtfImportFullFetchWhenPreviousDayMissing (Ruling 22): сохранённый максимум обеих половин
+// равен 07.10, а источник отдаёт 09.10 — соседний торговый день максимума (08.10) пропущен, поэтому
+// инкремент запрещён: он посчитал бы Δ за два торговых дня и выдал бы её за дневной поток, а день
+// 08.10 не попал бы ни в один из семи рядов (до случайного полного прогона). Прогон обязан пойти
+// ПОЛНЫМ путём и записать промежуточный день из файлов истории. Саботаж «вернуть в гейт
+// boldNeedsFullFetch» (разрыв 09.10 − 07.10 = 48 ч < порога 96 ч) валит именно этот тест.
+func TestBoldEtfImportFullFetchWhenPreviousDayMissing(t *testing.T) {
+	server := boldNewTestServer(t, boldAllBodies(t))
+	// Оба максимума — 07.10, расхождения половин нет: сработать обязан именно гейт соседнего дня.
+	// Третий ответ (сток за 07.10) в норме НЕ читается — он здесь затем, чтобы саботаж «вернуть в гейт
+	// пороговую boldNeedsFullFetch» упал на арифметике (инкремент записал бы 7 строк с многодневной Δ
+	// вместо 12 строк полного пути), а не на «нет запасов»: так тест ловит именно подмену потока.
+	conn := newBoldFakeConn(
+		boldFakeDate(t, "2026-10-07"),
+		boldFakeDate(t, "2026-10-07"),
+		boldFakeValue(ozToTonnes(boldPinAPrior)),
+	)
+	stat := boldTestStat(server)
+
+	count, err := stat.Import(context.Background(), conn)
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if count != 12 {
+		t.Errorf("Import вернул %d строк, ожидалось 12 — полный путь пишет и промежуточный день 08.10", count)
+	}
+	// На полном пути инкрементная ветка не исполняется, поэтому сток за 07.10 не читается.
+	if boldTestCallIndex(conn.callList(), boldSeriesHoldingsTonnes) >= 0 {
+		t.Errorf("полный путь читал сток за 07.10: %v", conn.callList())
+	}
+
+	// Главное утверждение теста: пропущенный день обязан появиться в батче, а не потеряться.
+	macro := conn.batchFor(t, boldMacroSeriesInsert)
+	days := map[string]int{}
+	for _, row := range macro.rows {
+		days[row[2].(time.Time).Format(boldDateLayout)]++
+	}
+	if days[boldPinPrior] == 0 {
+		t.Errorf("промежуточного дня %s в батче нет (дни: %v) — пропущенный торговый день потерян", boldPinPrior, days)
+	}
+	if days[boldPinDate] == 0 {
+		t.Errorf("дня источника %s в батче нет (дни: %v)", boldPinDate, days)
+	}
+	if len(days) != 2 {
+		t.Errorf("дней в батче: %v, ожидались ровно два — 08.10 и 09.10", days)
+	}
+
+	// Полный путь: четыре ответа «последнего дня» плюс четыре файла истории (summary запрашивается
+	// и там, и там — он несёт срез фондов).
+	want := []string{
+		boldPathUnitsLatest, boldPathAumLatest, boldPathFlowsLatest, boldPathSummary,
+		boldPathUnits, boldPathAum, boldPathFlows, boldPathSummary,
+	}
+	sort.Strings(want)
+	if got := server.requestedSorted(); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("пути полного прогона: %v, ожидались %v", got, want)
 	}
 }
 
