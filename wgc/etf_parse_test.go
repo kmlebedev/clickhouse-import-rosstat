@@ -346,6 +346,65 @@ func TestEtfUnknownRegionFails(t *testing.T) {
 	}
 }
 
+func TestEtfUndatedFundRowFails(t *testing.T) {
+	f := newEtfSheet(t, etfFlowsSheet)
+	setEtfCell(t, f, etfFlowsSheet, "F4", "North America")
+	setEtfCell(t, f, etfFlowsSheet, "F6", "Fund A")
+	setEtfDate(t, f, etfFlowsSheet, "A7", etfDate(2026, time.January, 31))
+	setEtfCell(t, f, etfFlowsSheet, "F7", 1)
+	// Значение фонда в строке без даты (колонка A пуста): значение потерялось бы молча.
+	setEtfCell(t, f, etfFlowsSheet, "F8", 5)
+
+	_, err := parseFundSheet(f, etfFlowsSheet, etfMetricFlowUsdMln)
+	if err == nil {
+		t.Fatal("строка без даты со значением фонда должна давать ошибку")
+	}
+	if !strings.Contains(err.Error(), "F8") {
+		t.Errorf("ошибка не называет адрес ячейки: %v", err)
+	}
+}
+
+func TestEtfRegionlessFundColumnFails(t *testing.T) {
+	f := newEtfSheet(t, etfFlowsSheet)
+	setEtfCell(t, f, etfFlowsSheet, "F4", "North America")
+	setEtfCell(t, f, etfFlowsSheet, "F6", "Fund A")
+	setEtfCell(t, f, etfFlowsSheet, "G6", "Fund B")
+	setEtfDate(t, f, etfFlowsSheet, "A7", etfDate(2026, time.January, 31))
+	setEtfCell(t, f, etfFlowsSheet, "F7", 1)
+	// Регион колонки G в строке 4 не заполнен, но значения в колонке есть: фонд выпал бы молча.
+	setEtfCell(t, f, etfFlowsSheet, "G7", 2)
+
+	_, err := parseFundSheet(f, etfFlowsSheet, etfMetricFlowUsdMln)
+	if err == nil {
+		t.Fatal("колонка со значением фонда без региона должна давать ошибку")
+	}
+	if !strings.Contains(err.Error(), "G7") {
+		t.Errorf("ошибка не называет адрес ячейки: %v", err)
+	}
+}
+
+func TestEtfUndatedChartsRowFails(t *testing.T) {
+	f := newEtfSheet(t, etfChartsSheet)
+	setEtfCell(t, f, etfChartsSheet, "A1", "Bar chart - monthly flows in US$")
+	for ref, value := range map[string]string{
+		"A2": "Date", "B2": "North America", "C2": "Europe", "D2": "Asia", "E2": "Other",
+	} {
+		setEtfCell(t, f, etfChartsSheet, ref, value)
+	}
+	setEtfDate(t, f, etfChartsSheet, "A3", etfDate(2026, time.January, 31))
+	setEtfCell(t, f, etfChartsSheet, "B3", 1)
+	// Значение региона в строке блока без даты: значение потерялось бы молча.
+	setEtfCell(t, f, etfChartsSheet, "B4", 2)
+
+	_, err := parseChartsBlock(f, "Bar chart - monthly flows in US$", etfMetricFlowUsdMln)
+	if err == nil {
+		t.Fatal("строка блока без даты со значением региона должна давать ошибку")
+	}
+	if !strings.Contains(err.Error(), "B4") {
+		t.Errorf("ошибка не называет адрес ячейки: %v", err)
+	}
+}
+
 func TestEtfHoldingsTotalMismatchWarns(t *testing.T) {
 	f := newEtfSheet(t, etfHoldingsSheet)
 	for ref, value := range map[string]string{

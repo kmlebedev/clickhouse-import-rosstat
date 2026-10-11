@@ -116,7 +116,7 @@ func parseFundSheet(f *excelize.File, sheet, metric string) ([]seriesPoint, erro
 	if maxCol < etfFundsFirstCol || maxRow < etfFirstDataRow {
 		return nil, fmt.Errorf("лист %s: нет колонок фондов (с %d) или строк данных (с %d)", sheet, etfFundsFirstCol, etfFirstDataRow)
 	}
-	cols, err := fundRegionColumns(f, sheet, maxCol)
+	cols, err := fundRegionColumns(f, sheet, maxCol, maxRow)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +128,12 @@ func parseFundSheet(f *excelize.File, sheet, metric string) ([]seriesPoint, erro
 			return nil, err
 		}
 		if !ok {
-			continue // хвост листа: пустые строки и подписи вроде «Column : fund_flow»
+			// Хвост листа: пустые строки и подписи вроде «Column : fund_flow»; строка без даты
+			// допустима только пока значения фондов в ней не появились.
+			if err := checkSkippedRowStaysEmpty(f, sheet, 1, row, cols); err != nil {
+				return nil, err
+			}
+			continue
 		}
 		sums := make(map[string]float64, len(wgcEtfRegions))
 		total := 0.0
@@ -158,8 +163,9 @@ func parseFundSheet(f *excelize.File, sheet, metric string) ([]seriesPoint, erro
 }
 
 // fundRegionColumns размечает колонки фондов по строке 4: F.. до последней колонки листа.
-// Непустой регион вне словаря — ошибка: молча выбросить фонд нельзя (fail-fast).
-func fundRegionColumns(f *excelize.File, sheet string, maxCol int) ([]regionColumn, error) {
+// Непустой регион вне словаря — ошибка, а колонка без региона допустима только пока в ней нет
+// данных: молча выбросить фонд нельзя (fail-fast).
+func fundRegionColumns(f *excelize.File, sheet string, maxCol, maxRow int) ([]regionColumn, error) {
 	cols := make([]regionColumn, 0, maxCol-etfFundsFirstCol+1)
 	for col := etfFundsFirstCol; col <= maxCol; col++ {
 		raw, err := cellRaw(f, sheet, col, etfRegionRow)
@@ -168,6 +174,9 @@ func fundRegionColumns(f *excelize.File, sheet string, maxCol int) ([]regionColu
 		}
 		name := strings.TrimSpace(raw)
 		if name == "" {
+			if err := checkColumnStaysEmpty(f, sheet, col, maxRow); err != nil {
+				return nil, err
+			}
 			continue
 		}
 		region, ok := etfRegionsByName[name]
@@ -207,6 +216,11 @@ func parseChartsBlock(f *excelize.File, header, metric string) ([]seriesPoint, e
 			return nil, err
 		}
 		if !ok {
+			// Блоки «Charts Data» стоят рядом и разной длины: строка без даты допустима только
+			// пока в колонках регионов этого блока нет значений.
+			if err := checkSkippedRowStaysEmpty(f, etfChartsSheet, dateCol, row, cols); err != nil {
+				return nil, err
+			}
 			continue
 		}
 		sums := make(map[string]float64, len(wgcEtfRegions))
@@ -288,6 +302,50 @@ func rowMonth(f *excelize.File, sheet string, col, row int) (date time.Time, ok 
 		return time.Time{}, false, fmt.Errorf("лист %s: дата строки %d: %w", sheet, row, err)
 	}
 	return monthEnd(date), true, nil
+}
+
+// checkSkippedRowStaysEmpty — страховка от тихой потери значений: строка без даты пропускается
+// только когда в колонках данных пусто (в хвосте листов есть пустые строки и подписи). Если
+// значение есть, а даты нет — это дефект выгрузки, и терять его молча нельзя.
+func checkSkippedRowStaysEmpty(f *excelize.File, sheet string, dateCol, row int, cols []regionColumn) error {
+	for _, c := range cols {
+		raw, err := cellRaw(f, sheet, c.col, row)
+		if err != nil {
+			return fmt.Errorf("лист %s: колонка %d строка %d: %w", sheet, c.col, row, err)
+		}
+		if raw == "" {
+			continue
+		}
+		ref, err := excelize.CoordinatesToCellName(c.col, row)
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("лист %s: строка %d без даты (колонка %d пуста), но ячейка %s = %q: значение потерялось бы",
+			sheet, row, dateCol, ref, raw)
+	}
+	return nil
+}
+
+// checkColumnStaysEmpty — страховка от тихой потери колонки: заголовок региона в строке 4 может
+// дрейфовать от релиза к релизу, и колонка без региона допустима только пока в ней нет данных,
+// иначе фонд выпал бы из сумм молча.
+func checkColumnStaysEmpty(f *excelize.File, sheet string, col, maxRow int) error {
+	for row := etfFirstDataRow; row <= maxRow; row++ {
+		raw, err := cellRaw(f, sheet, col, row)
+		if err != nil {
+			return fmt.Errorf("лист %s: колонка %d строка %d: %w", sheet, col, row, err)
+		}
+		if raw == "" {
+			continue
+		}
+		ref, err := excelize.CoordinatesToCellName(col, row)
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("лист %s: колонка %d без региона в строке %d, но ячейка %s = %q: регион фонда не распознан",
+			sheet, col, etfRegionRow, ref, raw)
+	}
+	return nil
 }
 
 // appendRegionPoints добавляет точки регионов и world. world пишется только когда за месяц есть
