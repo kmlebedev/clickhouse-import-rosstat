@@ -63,13 +63,17 @@ func TestGoldEtfFlowsViewColumnsAreCommented(t *testing.T) {
 	}
 }
 
-// Приоритет источников — смысл витрины: webbridge пишет сессионный сбор WGC,
-// manual — ручной фолбэк. Порядок подстановок в coalesce И ЕСТЬ приоритет;
-// переставленные ветки молча подменили бы канонический ряд ручным вводом.
-// maxIf при отсутствии совпадений возвращает 0, и coalesce не провалился бы на
-// следующий источник: выбранное значение подменялось бы нулём на «потока не было»
-// — только maxIfOrNull возвращает NULL. Внутренний GROUP BY date, series нужен,
-// чтобы свести версии ReplacingMergeTree по источнику ДО выбора приоритета.
+// Приоритет источников — смысл витрины: wgc пишет импортёр выгрузки WGC
+// (wgc_etf_flows), webbridge — сессионный сбор WGC, manual — ручной фолбэк.
+// Порядок подстановок в coalesce И ЕСТЬ приоритет; переставленные или
+// потерянные ветки молча подменили бы канонический ряд фолбэком — или, хуже,
+// спрятали бы ряд, которого нет в главном источнике. maxIf при отсутствии
+// совпадений возвращает 0, и coalesce не провалился бы на следующий источник:
+// выбранное значение подменялось бы нулём на «потока не было» — только
+// maxIfOrNull возвращает NULL. WHERE source IN (...) обязан перечислять все три
+// источника: ветка coalesce без своего source в фильтре всегда NULL. Внутренний
+// GROUP BY date, series нужен, чтобы свести версии ReplacingMergeTree по
+// источнику ДО выбора приоритета.
 func TestGoldEtfFlowsViewSourcePriority(t *testing.T) {
 	v := goldEtfFlowsView
 	selectText := collapseSpaces(v.Select)
@@ -82,25 +86,31 @@ func TestGoldEtfFlowsViewSourcePriority(t *testing.T) {
 		t.Fatalf("%s: maxIf returns 0 when nothing matches and coalesce would not fall through to the next source", v.Name)
 	}
 
+	if !strings.Contains(selectText, "source IN ('wgc', 'webbridge', 'manual')") {
+		t.Fatalf("%s: SELECT must read all three sources (wgc, webbridge, manual), got: %s", v.Name, selectText)
+	}
+
 	var complete int
 
 	for _, block := range strings.Split(selectText, "coalesce(")[1:] {
+		wgc := strings.Index(block, "source = 'wgc'")
 		webbridge := strings.Index(block, "source = 'webbridge'")
 		manual := strings.Index(block, "source = 'manual'")
 
-		if webbridge < 0 || manual < 0 {
+		if wgc < 0 || webbridge < 0 || manual < 0 {
+			t.Errorf("%s: coalesce block must pick wgc, webbridge and manual, got: %s", v.Name, block)
 			continue
 		}
 
 		complete++
 
-		if webbridge > manual {
-			t.Errorf("%s: source webbridge must come before manual in coalesce block: приоритет webbridge > manual, got: %s", v.Name, block)
+		if wgc > webbridge || webbridge > manual {
+			t.Errorf("%s: приоритет wgc > webbridge > manual задаётся порядком веток coalesce, got: %s", v.Name, block)
 		}
 	}
 
 	if complete == 0 {
-		t.Fatalf("%s: no coalesce block picks webbridge and manual (приоритет webbridge > manual), got: %s", v.Name, selectText)
+		t.Fatalf("%s: no coalesce block picks wgc, webbridge and manual (приоритет wgc > webbridge > manual), got: %s", v.Name, selectText)
 	}
 
 	if !strings.Contains(selectText, "GROUP BY date, series") {
