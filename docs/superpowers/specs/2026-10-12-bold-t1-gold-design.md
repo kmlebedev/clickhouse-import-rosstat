@@ -102,8 +102,12 @@ CREATE TABLE IF NOT EXISTS bold_fund_snapshot (
     , price_change_usd Float64
     , shares Float64
     , shares_change Float64
-) ENGINE = ReplacingMergeTree ORDER BY (date, ticker);
+) ENGINE = ReplacingMergeTree ORDER BY (date, ticker, name);
 ```
+
+Ключ обязан включать `name`: тикер у источника **не уникален** — в живом срезе 73 строки при 71 уникальном тикере
+(`GLD` встречается трижды: разные фонды на разных площадках, имена различаются), поэтому `(date, ticker)` схлопнул бы
+два реальных фонда.
 
 73 строки за прогон (все фонды источника), история накапливается с первого прогона — у источника пер-фондовой истории
 нет, только последний день. Дата — из `*-latest` (§2), с fail-fast при расхождении дат.
@@ -114,7 +118,7 @@ CREATE TABLE IF NOT EXISTS bold_fund_snapshot (
   `flow_7d_tonnes`, `flow_30d_tonnes`, `flow_90d_tonnes`, `holdings_tonnes`, `aum_usd_bn` — одна строка на дату,
   порядок `date DESC`.
 - `v_gold_etf_funds_daily` (над `bold_fund_snapshot`): `date`, `ticker`, `name`, `units_oz`, `aum_usd`, `price_usd`,
-  `units_change_oz`, `aum_change_usd`, `shares`, `shares_change` — одна строка на (дата, фонд), порядок `date DESC, ticker`.
+  `units_change_oz`, `aum_change_usd`, `shares`, `shares_change` — одна строка на (дата, фонд), порядок `date DESC, ticker, name`.
 
 Тексты обязаны называть: агрегат по 73 фондам ≈ 83 % мировой величины WGC, «не складывать и не сравнивать напрямую
 с `etf_holdings_tonnes_world`/`etf_flow_tonnes_world` (там все фонды мира и месячная частота)», окна — календарные
