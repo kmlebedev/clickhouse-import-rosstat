@@ -21,3 +21,4 @@ GRANT SELECT ON default.v_company_financials TO kimi_reader;
 GRANT SELECT ON default.v_company_metric_sources TO kimi_reader;
 GRANT SELECT ON default.v_company_operating TO kimi_reader;
 GRANT SELECT ON default.v_dcf_assumptions TO kimi_reader;
+GRANT SELECT ON default.v_imf_macro TO kimi_reader;
