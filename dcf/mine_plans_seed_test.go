@@ -34,7 +34,7 @@ var wantAssetPlanSeed = map[string]assetPlanSeedWant{
 	"ZAPADNOYE":    {life: 15, tcc: 671, capexSustaining: 0, projectCapex: 0},
 	"Sukhoi Log": {
 		life: 10, tcc: 735, capexSustaining: 0, projectCapex: 6000,
-		profileStartYear: 2028,
+		profileStartYear: 2030,
 		productionProfile: []float64{
 			2300, 2800, 2300, 2800, 2300, 2800, 2300, 2800, 2300, 2800,
 		},
