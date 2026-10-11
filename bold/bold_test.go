@@ -354,8 +354,23 @@ func TestBoldNeedsFullFetch(t *testing.T) {
 	}
 }
 
+// boldTestNow — фиксированный «день прогона» тестов: сутки после даты фикстур (2026-10-09) и
+// меньше порога застоя. Часы прогона — шов `now`, и тесты обязаны давать импортёру
+// детерминированный вход: с реальными часами лог (а в перспективе и поведение warn-а) зависел бы
+// от дня запуска тестов, а «2026-10-16» в таблице ниже однажды наступил бы.
+var boldTestNow = time.Date(2026, time.October, 10, 9, 0, 0, 0, time.UTC)
+
+// boldTestClock — часы для `boldEtfFlows{now: …}`: всегда boldTestNow.
+func boldTestClock() func() time.Time { return func() time.Time { return boldTestNow } }
+
+// boldTestStat — импортёр прогона: httptest-сервер и фиксированные часы (см. boldTestNow).
+func boldTestStat(server *boldTestServer) boldEtfFlows {
+	return boldEtfFlows{apiBase: server.base(), now: boldTestClock()}
+}
+
 // TestBoldSourceLooksStaleAndClock — warn о застое источника (чистое решение) и шов часов
-// прогона: nil-поле значит time.Now, подставленное время возвращается как есть.
+// прогона. Оба входа фиксированы: реальные часы здесь не читаются вовсе, поэтому тест не зависит
+// от дня запуска.
 func TestBoldSourceLooksStaleAndClock(t *testing.T) {
 	latest := testDate(t, boldPinDate)
 	cases := []struct {
@@ -365,6 +380,7 @@ func TestBoldSourceLooksStaleAndClock(t *testing.T) {
 	}{
 		{"T+1 — норма", testDate(t, "2026-10-10"), false},
 		{"понедельник после пятницы", testDate(t, "2026-10-12"), false},
+		{"ровно порог (4 дня)", testDate(t, "2026-10-13"), false},
 		{"неделя застоя", testDate(t, "2026-10-16"), true},
 		{"часы не заданы", time.Time{}, false},
 	}
@@ -377,12 +393,11 @@ func TestBoldSourceLooksStaleAndClock(t *testing.T) {
 		})
 	}
 
-	if got := (&boldEtfFlows{}).clock(); got.IsZero() {
-		t.Error("clock() без подставленных часов вернул нулевое время, ожидалось time.Now")
-	}
-	fixed := testDate(t, boldPinDate)
-	if got := (&boldEtfFlows{now: func() time.Time { return fixed }}).clock(); !got.Equal(fixed) {
-		t.Errorf("clock() с подставленными часами = %s, ожидалось %s", got, fixed)
+	// Шов обязан отдавать подставленное время как есть. Ветка «now == nil → time.Now» здесь не
+	// проверяется: её проверка читала бы реальные часы и зависела бы от них (а покрыта она всеми
+	// тестами Import выше, которые ходят через тот же шов с фиксированным временем).
+	if got := (&boldEtfFlows{now: boldTestClock()}).clock(); !got.Equal(boldTestNow) {
+		t.Errorf("clock() с подставленными часами = %s, ожидалось %s", got, boldTestNow)
 	}
 }
 
@@ -707,7 +722,7 @@ func TestBoldStoredUnitsPinsQueryAndConverts(t *testing.T) {
 func TestBoldEtfImportFullWritesAllSeries(t *testing.T) {
 	server := boldNewTestServer(t, boldAllBodies(t))
 	conn := newBoldFakeConn() // пустая очередь — оба максимума NULL
-	stat := boldEtfFlows{apiBase: server.base()}
+	stat := boldTestStat(server)
 
 	count, err := stat.Import(context.Background(), conn)
 	if err != nil {
@@ -806,20 +821,22 @@ func TestBoldEtfImportFullWritesAllSeries(t *testing.T) {
 	}
 }
 
-// TestBoldEtfImportIncrementalWritesOneDay: соединение знает максимум 08.10 и сток за 08.10 —
-// пишутся только точки 09.10, а поток считается от стока из ClickHouse (+4.233 т и 573.75 млн $).
-// Саботаж «взять предыдущие унции из ответа источника» валит именно этот тест: в ответе
-// units-latest есть только units дня, и Δ стала бы нулём.
+// TestBoldEtfImportIncrementalWritesOneDay: соединение знает максимум 08.10 в обеих таблицах
+// (S = F = 08.10 — инкремент разрешён) и сток за 08.10 — пишутся только точки 09.10, а поток
+// считается от стока из ClickHouse (+4.233 т и 573.75 млн $). Саботаж «взять предыдущие унции из
+// ответа источника» валит именно этот тест: в ответе units-latest есть только units дня, и Δ
+// стала бы нулём. Саботаж «снять условие seriesMax != fundMax» валит соседний
+// TestBoldEtfImportFullFetchWhenSeriesAndFundsDiverge: здесь расхождения нет по построению.
 func TestBoldEtfImportIncrementalWritesOneDay(t *testing.T) {
 	server := boldNewTestServer(t, boldLatestBodies(t))
 	// В базе ряд etf_bold_holdings_tonnes в тоннах: 113 044 763 oz (= boldPinAPrior) — это
 	// 3516,0815 т, и запрос возвращает именно тонны.
 	conn := newBoldFakeConn(
 		boldFakeDate(t, boldPinPrior), // максимум рядов
-		boldFakeDate(t, boldPinPrior), // максимум среза (минимум — 08.10)
+		boldFakeDate(t, boldPinPrior), // столько же в срезе: stored = 08.10, расхождения нет
 		boldFakeValue(ozToTonnes(boldPinAPrior)),
 	)
-	stat := boldEtfFlows{apiBase: server.base()}
+	stat := boldTestStat(server)
 
 	count, err := stat.Import(context.Background(), conn)
 	if err != nil {
@@ -857,13 +874,90 @@ func TestBoldEtfImportIncrementalWritesOneDay(t *testing.T) {
 	}
 }
 
+// TestBoldEtfImportFullFetchWhenSeriesAndFundsDiverge (Ruling 8): сохранённые максимумы ряда и
+// среза разошлись (ряды за 09.10, срез за 08.10 — частичный сбой прошлого прогона) — прогон
+// обязан пойти ПОЛНЫМ путём, а не инкрементом. Инкремент посчитал бы Δ от ряда, отставшего на
+// торговый день (09.10 против 08.10), и молча выдал бы многодневный поток за дневной; полный путь
+// пишет и ряды, и срез за дату источника, выравнивая S = F = L.
+func TestBoldEtfImportFullFetchWhenSeriesAndFundsDiverge(t *testing.T) {
+	server := boldNewTestServer(t, boldAllBodies(t))
+	// Два максимума читаются всегда (Ruling 7); третьего ответа (за стоком) быть не должно:
+	// инкремент не исполняется, и фейковое соединение отдало бы NULL, что уронило бы импорт.
+	conn := newBoldFakeConn(
+		boldFakeDate(t, boldPinDate),  // ряды: 09.10
+		boldFakeDate(t, boldPinPrior), // срез: 08.10 — расхождение
+	)
+	stat := boldTestStat(server)
+
+	count, err := stat.Import(context.Background(), conn)
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if count != 12 {
+		t.Errorf("Import вернул %d строк, ожидалось 12 — полный путь пишет оба дня истории, а не один", count)
+	}
+
+	macro := conn.batchFor(t, boldMacroSeriesInsert)
+	if len(macro.rows) != 12 {
+		t.Fatalf("строк в macro_series: %d, ожидалось 12 (полный путь: 08.10 + 09.10)", len(macro.rows))
+	}
+	// Срез переписан за дату источника — после прогона S = F = 09.10, и инкремент снова возможен.
+	funds := conn.batchFor(t, boldFundInsert)
+	if len(funds.rows) != 73 {
+		t.Fatalf("строк в bold_fund_snapshot: %d, ожидалось 73", len(funds.rows))
+	}
+	if !funds.rows[0][0].(time.Time).Equal(testDate(t, boldPinDate)) {
+		t.Errorf("дата среза = %v, ожидалась дата источника %s (полный путь выравнивает S и F)", funds.rows[0][0], boldPinDate)
+	}
+
+	// Оба максимума прочитаны, DDL выполнены, оба батча открыты — и ни одного запроса за стоком:
+	// расхождение уводит на полный путь до инкрементной ветки.
+	calls := conn.callList()
+	for _, fragment := range []string{"queryrow: " + boldStoredSeriesMaxQuery, "queryrow: " + boldStoredFundMaxQuery} {
+		if boldTestCallIndex(calls, fragment) < 0 {
+			t.Errorf("не прочитан максимум %q: %v", fragment, calls)
+		}
+	}
+	if boldTestCallIndex(calls, boldSeriesHoldingsTonnes) >= 0 {
+		t.Errorf("запрос за предыдущим стоком на полном пути: %v", calls)
+	}
+	for _, fragment := range []string{
+		"exec: CREATE TABLE IF NOT EXISTS " + boldFundTable,
+		"exec: CREATE TABLE IF NOT EXISTS " + macroSeriesTable,
+		"preparebatch: " + boldMacroSeriesInsert,
+		"preparebatch: " + boldFundInsert,
+	} {
+		if boldTestCallIndex(calls, fragment) < 0 {
+			t.Errorf("полный путь обязан сделать %q: %v", fragment, calls)
+		}
+	}
+
+	// Полный прогон начался с четырёх запросов «последнего дня» и ушёл на файлы истории: все
+	// четыре пути истории запрошены ровно по разу.
+	requested := server.requested()
+	counts := map[string]int{}
+	for _, path := range requested {
+		counts[path]++
+	}
+	for _, path := range []string{boldPathUnits, boldPathAum, boldPathFlows} {
+		if counts[path] != 1 {
+			t.Errorf("путь %q запрошен %d раз (все запросы: %v), ожидался один запрос истории", path, counts[path], requested)
+		}
+	}
+	for _, path := range []string{boldPathUnitsLatest, boldPathAumLatest, boldPathFlowsLatest} {
+		if counts[path] != 1 {
+			t.Errorf("путь %q запрошен %d раз (все запросы: %v), ожидался один запрос последнего дня", path, counts[path], requested)
+		}
+	}
+}
+
 // TestBoldEtfImportNoopWhenUpToDate: дата источника не новее сохранённого максимума — 0 строк,
-// ни одной ошибки и ни одного открытого батча. DDL здесь тоже не выполняется: соединение
-// трогается только чтениями.
+// ни одной ошибки, ни одного открытого батча и ни одного Exec: DDL здесь тоже не выполняется,
+// соединение трогается только двумя чтениями максимумов.
 func TestBoldEtfImportNoopWhenUpToDate(t *testing.T) {
 	server := boldNewTestServer(t, boldLatestBodies(t))
 	conn := newBoldFakeConn(boldFakeDate(t, boldPinDate), boldFakeDate(t, boldPinDate))
-	stat := boldEtfFlows{apiBase: server.base()}
+	stat := boldTestStat(server)
 
 	count, err := stat.Import(context.Background(), conn)
 	if err != nil {
@@ -872,9 +966,16 @@ func TestBoldEtfImportNoopWhenUpToDate(t *testing.T) {
 	if count != 0 {
 		t.Errorf("Import вернул %d строк, ожидалось 0", count)
 	}
-	for _, call := range conn.callList() {
+	calls := conn.callList()
+	if len(calls) != 2 {
+		t.Errorf("обращений к соединению: %v, ожидались два чтения максимумов", calls)
+	}
+	for _, call := range calls {
 		if strings.HasPrefix(call, "preparebatch: ") {
-			t.Errorf("батч открывался на no-op прогоне: %v", conn.callList())
+			t.Errorf("батч открывался на no-op прогоне: %v", calls)
+		}
+		if strings.HasPrefix(call, "exec: ") {
+			t.Errorf("DDL выполнялась на no-op прогоне: %v", calls)
 		}
 	}
 	if got := server.requested(); len(got) != 4 {
@@ -892,7 +993,7 @@ func TestBoldEtfImportMissingUnitsAtMaxFails(t *testing.T) {
 		boldFakeDate(t, boldPinPrior),
 		boldFakeNull(), // точки etf_bold_holdings_tonnes за 08.10 нет
 	)
-	stat := boldEtfFlows{apiBase: server.base()}
+	stat := boldTestStat(server)
 
 	_, err := stat.Import(context.Background(), conn)
 	if err == nil {
@@ -917,7 +1018,7 @@ func TestBoldEtfImportEmptyResponseFails(t *testing.T) {
 	bodies := boldLatestBodies(t)
 	bodies[boldPathUnitsLatest] = nil // пустое тело
 	server := boldNewTestServer(t, bodies)
-	stat := boldEtfFlows{apiBase: server.base()}
+	stat := boldTestStat(server)
 
 	_, err := stat.Import(context.Background(), newBoldFakeConn())
 	if err == nil {
@@ -925,6 +1026,51 @@ func TestBoldEtfImportEmptyResponseFails(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), boldPathUnitsLatest) || !strings.Contains(err.Error(), "пустое тело") {
 		t.Errorf("ошибка не называет эндпоинт и причину: %v", err)
+	}
+}
+
+// TestBoldWriteKeepsInputOrder: батчи пишутся в отсортированном порядке, но срез вызывающего
+// сортировка не меняет — побочный эффект на аргументе ищут потом в чужом вызове, а не здесь
+// (саботаж «сортировать на месте», то есть без slices.Clone, валит этот тест).
+func TestBoldWriteKeepsInputOrder(t *testing.T) {
+	points := []point{
+		{Series: boldSeriesHoldingsTonnes, Date: testDate(t, boldPinDate), Value: 3520.318},
+		{Series: boldSeriesAumUsdBn, Date: testDate(t, boldPinPrior), Value: 469.508},
+		{Series: boldSeriesAumUsdBn, Date: testDate(t, boldPinDate), Value: 476.678},
+	}
+	conn := newBoldFakeConn()
+	if _, err := boldWritePoints(context.Background(), conn, points); err != nil {
+		t.Fatalf("boldWritePoints: %v", err)
+	}
+	wantPoints := []string{boldSeriesHoldingsTonnes, boldSeriesAumUsdBn, boldSeriesAumUsdBn}
+	for i, p := range points {
+		if p.Series != wantPoints[i] {
+			t.Fatalf("срез точек переставлен: %v (позиция %d = %s)", points, i, p.Series)
+		}
+	}
+	macro := conn.batchFor(t, boldMacroSeriesInsert)
+	if got := macro.rows[0][1]; got != boldSeriesAumUsdBn {
+		t.Errorf("первая строка батча — %v, ожидался ряд %s (батч обязан быть отсортирован)", got, boldSeriesAumUsdBn)
+	}
+
+	funds := []boldFundPoint{
+		{Ticker: "SPDR", Name: "SPDR Gold Shares"},
+		{Ticker: "GLD", Name: "KTAM Gold ETF Tracker Class GLD (Bangkok)"},
+		{Ticker: "GLD", Name: "NewGold Issuer Ltd"},
+	}
+	conn = newBoldFakeConn()
+	if err := boldWriteFunds(context.Background(), conn, funds); err != nil {
+		t.Fatalf("boldWriteFunds: %v", err)
+	}
+	wantFunds := []string{"SPDR", "GLD", "GLD"}
+	for i, f := range funds {
+		if f.Ticker != wantFunds[i] {
+			t.Fatalf("срез фондов переставлен: %v (позиция %d = %s)", funds, i, f.Ticker)
+		}
+	}
+	batch := conn.batchFor(t, boldFundInsert)
+	if got := batch.rows[0][1]; got != "GLD" {
+		t.Errorf("первая строка батча фондов — %v, ожидался тикер GLD (батч обязан быть отсортирован)", got)
 	}
 }
 

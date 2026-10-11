@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -131,18 +132,21 @@ func (s *boldEtfFlows) clock() time.Time {
 // обновление); (2) четыре запроса «последнего дня» — они нужны и на полном пути: их дата
 // решает no-op и датирует пер-фондовый срез; (3) решение no-op — дата источника не новее
 // сохранённого максимума значит, что писать нечего, и батч не открывается вовсе; (4) выбор
-// режима — полная история, если инкремент не может исключить пропуск дней; (5) точки фондов
+// режима — полная история, если инкремент не может исключить пропуск дней (boldNeedsFullFetch)
+// или если сохранённые максимумы ряда и среза разошлись (Ruling 8: инкремент посчитал бы
+// многодневный поток за дневной); (5) точки фондов
 // считаются до батчей (ошибка здесь — смена формы ответа summary.json); (6) обе DDL; (7) два
 // батча; (8) каталог — только после успешных Send (описание ряда, которого в таблице нет, —
 // обещание данных, которых агент не найдёт; прецедент dcf_mine_plans).
 func (s *boldEtfFlows) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
 	base := s.base()
 
-	stored, serr := boldStoredMaxDate(ctx, conn)
+	seriesMax, fundMax, serr := boldStoredBounds(ctx, conn)
 	if serr != nil {
 		log.Warnf("%s: сохранённый максимум дат не прочитан (%v) — считаю ряды пустыми и беру полную историю", boldEtfName, serr)
-		stored = time.Time{}
+		seriesMax, fundMax = time.Time{}, time.Time{}
 	}
+	stored := boldMinDate(seriesMax, fundMax)
 
 	latest, funds, err := boldEtfFetchLatest(base)
 	if err != nil {
@@ -160,14 +164,29 @@ func (s *boldEtfFlows) Import(ctx context.Context, conn driver.Conn) (count int6
 
 	// Идемпотентный no-op: дата источника не новее сохранённого максимума (или равна ему) —
 	// писать те же точки незачем, и соединение дальше чтения максимума не трогается.
+	// Расхождение половин (seriesMax != fundMax) no-op-ом не закрывается: это разбирает шаг ниже.
+	diverged := !seriesMax.Equal(fundMax)
 	if !stored.IsZero() && !latestDate.After(stored) {
+		if diverged {
+			log.Warnf("%s: ряд и срез разошлись (%s против %s), но дата источника %s не новее обоих — догонять нечего",
+				boldEtfName, boldFormatDate(seriesMax), boldFormatDate(fundMax), latestDate.Format(boldDateLayout))
+		}
 		log.Infof("%s: дата источника %s не новее сохранённого максимума %s — нечего обновлять (0 строк)",
 			boldEtfName, latestDate.Format(boldDateLayout), stored.Format(boldDateLayout))
 		return 0, nil
 	}
 
 	var points []point
-	if boldNeedsFullFetch(latestDate, stored) {
+	// Полный путь — не только «пропуск дней» (boldNeedsFullFetch), но и расхождение половин
+	// сохранённого максимума (Ruling 8): частичный сбой прошлого прогона (батч рядов прошёл, батч
+	// среза упал) оставил срез за 08.10 при рядах за 09.10. Инкремент в такой день посчитал бы Δ
+	// от ряда, отставшего на торговый день, — то есть многодневный поток, выданный за дневной, и
+	// молча: база `stored` выглядит «предыдущим торговым днём». Полный путь пишет и ряды, и срез за
+	// дату источника; при обычном совпадении максимума истории с датой источника это выравнивает
+	// S = F = L, и предусловие инкремента снова выполнено (если файл истории отстал от ответа
+	// *-latest, срез уйдёт вперёд и следующий прогон снова пойдёт полным путём — это лишние
+	// запросы, но не потеря данных: полный путь идемпотентен).
+	if boldNeedsFullFetch(latestDate, stored) || diverged {
 		rows, fullFunds, ferr := boldEtfFullFetch(base)
 		if ferr != nil {
 			return 0, ferr
@@ -176,8 +195,13 @@ func (s *boldEtfFlows) Import(ctx context.Context, conn driver.Conn) (count int6
 		if points, err = boldETFSets(rows, nil, time.Time{}); err != nil {
 			return 0, err
 		}
-		log.Infof("%s: полный режим: сохранённый максимум %s, дата источника %s, дней истории %d",
-			boldEtfName, boldFormatDate(stored), latestDate.Format(boldDateLayout), len(rows))
+		if diverged {
+			log.Infof("%s: полный режим: ряд и срез разошлись (%s против %s) — выравниваю по дате источника %s, дней истории %d",
+				boldEtfName, boldFormatDate(seriesMax), boldFormatDate(fundMax), latestDate.Format(boldDateLayout), len(rows))
+		} else {
+			log.Infof("%s: полный режим: сохранённый максимум %s, дата источника %s, дней истории %d",
+				boldEtfName, boldFormatDate(stored), latestDate.Format(boldDateLayout), len(rows))
+		}
 	} else {
 		// Инкремент: база для Δ — сток предыдущего торгового дня из ClickHouse. Ошибка чтения
 		// останавливает импорт: без предыдущего стока поток молча стал бы нулём (Review Focus 4).
@@ -504,6 +528,23 @@ func boldMergeHistory(units, aum, flows []boldRow) ([]boldRow, error) {
 	return rows, nil
 }
 
+// boldStoredBounds читает обе половины сохранённого максимума: максимум дат рядов source='bold'
+// в macro_series и максимум дат bold_fund_snapshot. Обе нужны вызывающему: минимум выбирает
+// режим (Ruling 7), а само расхождение половин — признак частичного сбоя прошлого прогона
+// (Ruling 8). Нулевое время половины означает «данных нет» (в том числе таблицы ещё нет);
+// ошибки не проглатываются, решение «warn и полный путь» принимает Import.
+func boldStoredBounds(ctx context.Context, conn driver.Conn) (seriesMax, fundMax time.Time, err error) {
+	seriesMax, err = boldScanMaxDate(ctx, conn, boldStoredSeriesMaxQuery)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	fundMax, err = boldScanMaxDate(ctx, conn, boldStoredFundMaxQuery)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	return seriesMax, fundMax, nil
+}
+
 // boldStoredMaxDate — «сохранённый максимум» для выбора режима: минимум из максимума дат рядов
 // source='bold' в macro_series и максимума дат bold_fund_snapshot (Ruling 7). Минимум, а не
 // максимум: ряды и срез фондов пишутся двумя батчами, и частичный сбой (батч рядов прошёл, батч
@@ -512,11 +553,7 @@ func boldMergeHistory(units, aum, flows []boldRow) ([]boldRow, error) {
 // догнать день. Нулевое время любой из половин («данных нет», в том числе таблицы ещё нет)
 // означает полный путь.
 func boldStoredMaxDate(ctx context.Context, conn driver.Conn) (time.Time, error) {
-	seriesMax, err := boldScanMaxDate(ctx, conn, boldStoredSeriesMaxQuery)
-	if err != nil {
-		return time.Time{}, err
-	}
-	fundMax, err := boldScanMaxDate(ctx, conn, boldStoredFundMaxQuery)
+	seriesMax, fundMax, err := boldStoredBounds(ctx, conn)
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -590,10 +627,13 @@ func boldStoredUnits(ctx context.Context, conn driver.Conn, date time.Time) (flo
 
 // boldWritePoints пишет точки семи рядов одним батчем. Порядок батча детерминирован (сортировка
 // по series, date): повторный импорт воспроизводим независимо от порядка обхода источника.
+// Сортируется копия: у вызывающего срез должен остаться в том порядке, в котором он его собрал
+// (побочный эффект на аргументе — тот класс ошибок, который потом ищут в чужом вызове).
 // Abort после ошибки Append не даёт соединению остаться с открытым батчем (следующий шаг DAG-а
 // получил бы «уже есть незакрытый батч»); сбой Abort логируем, а возвращаемой ошибкой остаётся
 // первопричина Append (прецедент wgc/etf.go).
 func boldWritePoints(ctx context.Context, conn driver.Conn, points []point) (int64, error) {
+	points = slices.Clone(points)
 	sort.Slice(points, func(i, j int) bool {
 		if points[i].Series != points[j].Series {
 			return points[i].Series < points[j].Series
@@ -624,8 +664,10 @@ func boldWritePoints(ctx context.Context, conn driver.Conn, points []point) (int
 }
 
 // boldWriteFunds пишет пер-фондовый срез одним батчем (73 строки за прогон). Порядок — по
-// (ticker, name): он совпадает с ключом таблицы, и повторный импорт воспроизводим.
+// (ticker, name): он совпадает с ключом таблицы, и повторный импорт воспроизводим. Как и у точек,
+// сортируется копия — аргумент вызывающего не меняется.
 func boldWriteFunds(ctx context.Context, conn driver.Conn, funds []boldFundPoint) error {
+	funds = slices.Clone(funds)
 	sort.Slice(funds, func(i, j int) bool {
 		if funds[i].Ticker != funds[j].Ticker {
 			return funds[i].Ticker < funds[j].Ticker
