@@ -310,3 +310,102 @@ func TestEtfPointsFromAPIIncompleteRegionSetFails(t *testing.T) {
 		t.Errorf("ошибка %v не объясняет неполноту набора регионов метрики usd", err)
 	}
 }
+
+// TestEtfPointsFromAPINullFlowValueGivesNoPoint: null в значении потока — отсутствие данных,
+// а не нулевой поток: точки у региона нет вовсе, world за этот месяц не появляется (для него
+// нужны все четыре региона), а явный 0 в том же месяце точкой остаётся.
+func TestEtfPointsFromAPINullFlowValueGivesNoPoint(t *testing.T) {
+	flows := []byte(`{"system":{"cached":false},"chartData":{"asOfDate":"2026-09-30",` +
+		`"data":{"Monthly":{"series":{` +
+		`"usd":[{"name":"North America","data":[[1790726400000,1]]},` +
+		`{"name":"Europe","data":[[1790726400000,1]]},` +
+		`{"name":"Asia","data":[[1790726400000,1]]},` +
+		`{"name":"Other","data":[[1790726400000,1]]},` +
+		`{"name":"Gold Price (rhs)","data":[[1790726400000,1]]}],` +
+		`"tonnes":[{"name":"North America","data":[[1790726400000,1]]},` +
+		`{"name":"Europe","data":[[1790726400000,1]]},` +
+		`{"name":"Asia","data":[[1790726400000,null]]},` +
+		`{"name":"Other","data":[[1790726400000,0]]},` +
+		`{"name":"Gold Price (rhs)","data":[[1790726400000,1]]}]}}}}}`)
+	srv := etfAPITestServer(t, flows, nil)
+
+	points, err := etfPointsFromAPI(srv.URL+"/", etfAPITestNow)
+	if err != nil {
+		t.Fatalf("etfPointsFromAPI: %v", err)
+	}
+	date := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
+
+	if _, ok := etfPoint(points, "etf_flow_tonnes_asia", date); ok {
+		t.Error("null в значении потока не должен давать точку etf_flow_tonnes_asia")
+	}
+	if _, ok := etfPoint(points, "etf_flow_tonnes_world", date); ok {
+		t.Error("без Азии world за месяц неполон и точки быть не должно")
+	}
+	for _, series := range []string{"etf_flow_tonnes_north_america", "etf_flow_tonnes_europe"} {
+		if value := etfRequirePoint(t, points, series, date); value != 1 {
+			t.Errorf("%s = %v, ожидалось 1", series, value)
+		}
+	}
+	// Явный 0 строкой выше — значение, а не пропуск: точка есть.
+	if value := etfRequirePoint(t, points, "etf_flow_tonnes_other", date); value != 0 {
+		t.Errorf("etf_flow_tonnes_other = %v, ожидался явный ноль точкой", value)
+	}
+	// Пропуск null не задевает вторую метрику: у неё набор полон, world на месте.
+	if _, ok := etfPoint(points, "etf_flow_usd_mln_world", date); !ok {
+		t.Error("пропуск null в tonnes не должен задевать usd: у полной метрики world обязан быть")
+	}
+}
+
+// TestEtfPointsFromAPINullFlowDateFails: значение есть, а дата null — ошибка, а не точка
+// 1970-01-31 из monthEnd(UnixMilli(0)): такая точка легла бы в ряд как настоящий месяц.
+func TestEtfPointsFromAPINullFlowDateFails(t *testing.T) {
+	flows := []byte(`{"system":{"cached":false},"chartData":{"asOfDate":"2026-09-30",` +
+		`"data":{"Monthly":{"series":{` +
+		`"usd":[{"name":"North America","data":[[null,1]]},` +
+		`{"name":"Europe","data":[[1790726400000,1]]},` +
+		`{"name":"Asia","data":[[1790726400000,1]]},` +
+		`{"name":"Other","data":[[1790726400000,1]]},` +
+		`{"name":"Gold Price (rhs)","data":[[1790726400000,1]]}],` +
+		`"tonnes":[{"name":"North America","data":[[1790726400000,1]]},` +
+		`{"name":"Europe","data":[[1790726400000,1]]},` +
+		`{"name":"Asia","data":[[1790726400000,1]]},` +
+		`{"name":"Other","data":[[1790726400000,1]]},` +
+		`{"name":"Gold Price (rhs)","data":[[1790726400000,1]]}]}}}}}`)
+	srv := etfAPITestServer(t, flows, nil)
+
+	_, err := etfPointsFromAPI(srv.URL+"/", etfAPITestNow)
+	if err == nil {
+		t.Fatal("значение без даты (null вместо ms) должно давать ошибку")
+	}
+	if !strings.Contains(err.Error(), "без даты") {
+		t.Errorf("ошибка %v не объясняет, что у точки нет даты", err)
+	}
+}
+
+// TestEtfPointsFromAPIDuplicateRegionFails: два ряда одного региона в одной метрике —
+// противоречивый набор: без ошибки второй ряд молча перезаписал бы значение первого
+// (набор при этом выглядит полным, потому что регионов по-прежнему четыре).
+func TestEtfPointsFromAPIDuplicateRegionFails(t *testing.T) {
+	flows := []byte(`{"system":{"cached":false},"chartData":{"asOfDate":"2026-09-30",` +
+		`"data":{"Monthly":{"series":{` +
+		`"usd":[{"name":"North America","data":[[1790726400000,1]]},` +
+		`{"name":"Europe","data":[[1790726400000,1]]},` +
+		`{"name":"Asia","data":[[1790726400000,1]]},` +
+		`{"name":"Other","data":[[1790726400000,1]]},` +
+		`{"name":"Asia","data":[[1790726400000,2]]},` +
+		`{"name":"Gold Price (rhs)","data":[[1790726400000,1]]}],` +
+		`"tonnes":[{"name":"North America","data":[[1790726400000,1]]},` +
+		`{"name":"Europe","data":[[1790726400000,1]]},` +
+		`{"name":"Asia","data":[[1790726400000,1]]},` +
+		`{"name":"Other","data":[[1790726400000,1]]},` +
+		`{"name":"Gold Price (rhs)","data":[[1790726400000,1]]}]}}}}}`)
+	srv := etfAPITestServer(t, flows, nil)
+
+	_, err := etfPointsFromAPI(srv.URL+"/", etfAPITestNow)
+	if err == nil {
+		t.Fatal("дубликат ряда региона должен давать ошибку, а не перезапись значения")
+	}
+	if !strings.Contains(err.Error(), "встречается дважды") || !strings.Contains(err.Error(), "Asia") {
+		t.Errorf("ошибка %v не объясняет дубликат региона Asia", err)
+	}
+}
