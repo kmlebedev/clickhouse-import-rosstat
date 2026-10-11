@@ -104,8 +104,8 @@ func TestEtfPointsFromAPIRecentMonth(t *testing.T) {
 	}{
 		{"etf_flow_usd_mln_asia", 2255.40929756},
 		{"etf_flow_tonnes_asia", 16.18610771},
-		// Стоки API отдаёт округлёнными до 0,01 т: 541.88 против 541.88460453, которые даёт
-		// сумма фондов в xlsx. Расхождение — свойство источника, зафиксировано в task-2-report.
+		// Источник отдаёт тоннажные стоки округлёнными до 0,01 т, поэтому здесь 541.88, а не
+		// 541.88460453 из xlsx-суммы фондов: ожидание не «чинить» обратно (спека §3).
 		{"etf_holdings_tonnes_asia", 541.88},
 		{"etf_aum_usd_bn_asia", 75.594060865},
 		{"etf_flow_tonnes_world", 67.28075855},
@@ -199,9 +199,16 @@ func TestEtfPointsFromAPINullHoldingsGivesNoPoint(t *testing.T) {
 
 // TestEtfPointsFromAPIRejectsUnknownSeries: имя вне словаря регионов — ошибка, а не ряд
 // вида etf_flow_tonnes_antarctica и не молчаливый пропуск (симметрия с xlsx-парсером).
+// Метрика usd здесь полна, чтобы ошибку дал именно неизвестный ряд, а не guard полноты.
 func TestEtfPointsFromAPIRejectsUnknownSeries(t *testing.T) {
 	flows := []byte(`{"system":{"cached":false},"chartData":{"asOfDate":"2026-09-30",` +
-		`"data":{"Monthly":{"series":{"tonnes":[{"name":"Antarctica","data":[[1790726400000,1]]}]}}}}}`)
+		`"data":{"Monthly":{"series":{` +
+		`"usd":[{"name":"North America","data":[[1790726400000,1]]},` +
+		`{"name":"Europe","data":[[1790726400000,1]]},` +
+		`{"name":"Asia","data":[[1790726400000,1]]},` +
+		`{"name":"Other","data":[[1790726400000,1]]},` +
+		`{"name":"Gold Price (rhs)","data":[[1790726400000,1]]}],` +
+		`"tonnes":[{"name":"Antarctica","data":[[1790726400000,1]]}]}}}}}`)
 	srv := etfAPITestServer(t, flows, nil)
 
 	_, err := etfPointsFromAPI(srv.URL+"/", etfAPITestNow)
@@ -232,17 +239,74 @@ func TestEtfPointsFromAPINonOKStatusFails(t *testing.T) {
 }
 
 // TestEtfPointsFromAPIEmptyDataFails: валидный конверт без данных — ошибка (fail-fast):
-// тихий «0 точек» оставил бы dagu зелёным, а ряды — без обновления.
+// тихий «0 точек» оставил бы dagu зелёным, а ряды — без обновления. Набор метрик и регионов
+// здесь полон (обе метрики, по четыре региона, без точек), поэтому тест доходит именно
+// до финальной проверки пустого разбора, а не до guard'а полноты.
 func TestEtfPointsFromAPIEmptyDataFails(t *testing.T) {
 	flows := []byte(`{"system":{"cached":false},"chartData":{"asOfDate":"2026-09-30",` +
-		`"data":{"Monthly":{"series":{}}}}}`)
+		`"data":{"Monthly":{"series":{` +
+		`"usd":[{"name":"North America"},{"name":"Europe"},{"name":"Asia"},{"name":"Other"},{"name":"Gold Price (rhs)"}],` +
+		`"tonnes":[{"name":"North America"},{"name":"Europe"},{"name":"Asia"},{"name":"Other"},{"name":"Gold Price (rhs)"}]}}}}}`)
 	holdings := []byte(`{"system":{"cached":false},"chartData":{"asOfDate":"2026-09-30",` +
 		`"data":{"Monthly":{` +
 		`"tonnes":{"columns":["Date","North America","Europe","Asia","Other","Gold, US$/oz"],"set":[]},` +
 		`"usd":{"columns":["Date","North America","Europe","Asia","Other","Gold, US$/oz"],"set":[]}}}}}`)
 	srv := etfAPITestServer(t, flows, holdings)
 
-	if _, err := etfPointsFromAPI(srv.URL+"/", etfAPITestNow); err == nil {
+	_, err := etfPointsFromAPI(srv.URL+"/", etfAPITestNow)
+	if err == nil {
 		t.Fatal("выгрузка без точек должна давать ошибку")
+	}
+	if !strings.Contains(err.Error(), "без точек") {
+		t.Errorf("ошибка %v не говорит о пустом разборе", err)
+	}
+}
+
+// TestEtfPointsFromAPIMissingMetricFails: ответ без ключа usd — ошибка, а не частичный импорт:
+// иначе все долларовые потоки молча остались бы без обновления, а dagu — зелёным.
+func TestEtfPointsFromAPIMissingMetricFails(t *testing.T) {
+	flows := []byte(`{"system":{"cached":false},"chartData":{"asOfDate":"2026-09-30",` +
+		`"data":{"Monthly":{"series":{"tonnes":[` +
+		`{"name":"North America","data":[[1790726400000,1]]},` +
+		`{"name":"Europe","data":[[1790726400000,1]]},` +
+		`{"name":"Asia","data":[[1790726400000,1]]},` +
+		`{"name":"Other","data":[[1790726400000,1]]},` +
+		`{"name":"Gold Price (rhs)","data":[[1790726400000,1]]}]}}}}}`)
+	srv := etfAPITestServer(t, flows, nil)
+
+	_, err := etfPointsFromAPI(srv.URL+"/", etfAPITestNow)
+	if err == nil {
+		t.Fatal("ответ без ключа usd должен давать ошибку, а не импорт одной метрики")
+	}
+	// Текст пинит именно проверку наличия ключа: полнота регионов у nil-метрики тоже дала бы
+	// ошибку, но менее внятную («распознано 0 из 4 регионов» вместо «нет метрики usd»).
+	if !strings.Contains(err.Error(), "нет метрики usd") {
+		t.Errorf("ошибка %v не называет пропавшую метрику usd", err)
+	}
+}
+
+// TestEtfPointsFromAPIIncompleteRegionSetFails: три региона из четырёх у метрики — ошибка,
+// а не частичный импорт: пропавший регион молча перестал бы обновляться (пятый, ценовой
+// ряд Gold Price (rhs), регионом не считается и полноту не восполняет).
+func TestEtfPointsFromAPIIncompleteRegionSetFails(t *testing.T) {
+	flows := []byte(`{"system":{"cached":false},"chartData":{"asOfDate":"2026-09-30",` +
+		`"data":{"Monthly":{"series":{` +
+		`"usd":[{"name":"North America","data":[[1790726400000,1]]},` +
+		`{"name":"Europe","data":[[1790726400000,1]]},` +
+		`{"name":"Other","data":[[1790726400000,1]]},` +
+		`{"name":"Gold Price (rhs)","data":[[1790726400000,1]]}],` +
+		`"tonnes":[{"name":"North America","data":[[1790726400000,1]]},` +
+		`{"name":"Europe","data":[[1790726400000,1]]},` +
+		`{"name":"Asia","data":[[1790726400000,1]]},` +
+		`{"name":"Other","data":[[1790726400000,1]]},` +
+		`{"name":"Gold Price (rhs)","data":[[1790726400000,1]]}]}}}}}`)
+	srv := etfAPITestServer(t, flows, nil)
+
+	_, err := etfPointsFromAPI(srv.URL+"/", etfAPITestNow)
+	if err == nil {
+		t.Fatal("метрика с тремя регионами должна давать ошибку, а не частичный импорт")
+	}
+	if !strings.Contains(err.Error(), "usd") || !strings.Contains(err.Error(), "3 из 4 регионов") {
+		t.Errorf("ошибка %v не объясняет неполноту набора регионов метрики usd", err)
 	}
 }
