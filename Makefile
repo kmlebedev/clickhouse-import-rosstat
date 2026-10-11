@@ -115,7 +115,7 @@ dev-check:
 # Показывает, какие ключи заданы в окружении (файл $(ROSSTAT_ENV)); значения не выводятся.
 env-check:
 	@echo "файл окружения: $(ROSSTAT_ENV) $$(test -f $(ROSSTAT_ENV) && echo найден || echo НЕ НАЙДЕН)"
-	@for v in BEA_API_KEY BLS_API_KEY CLICKHOUSE_URL CLICKHOUSE_PASSWORD; do \
+	@for v in BEA_API_KEY BLS_API_KEY EIA_API_KEY CLICKHOUSE_URL CLICKHOUSE_PASSWORD; do \
 		if [ -n "$$(printenv $$v)" ]; then echo "OK   $$v задан"; else echo "НЕТ  $$v не задан (см. README, раздел «Ключи и окружение»)"; fi; \
 	done
 

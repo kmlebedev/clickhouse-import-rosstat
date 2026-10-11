@@ -20,6 +20,7 @@ Go-конвейер импорта российской макроэкономи
 | `fred` | FRED (CSV): DFII10, DGS10, FEDFUNDS, DTWEXBGS, CPIAUCSL, T5YIE | `macro_series` (`source = 'fred'`), каталог `series_catalog`, витрина `v_fred_macro` | ежедневно 11:41 |
 | `bls` | BLS API v2: CPI (CUUR0000SA0, CUSR0000SA0), безработица, NFP, средняя зарплата, PPI, JOLTS | `macro_series` (`source = 'bls'`), каталог `series_catalog`, витрина `v_bls_macro` | ежедневно 12:23 |
 | `bea` | BEA API: индексы PCE (headline, excluding food and energy), таблица NIPA T20804 | `macro_series` (`source = 'bea'`) | ежедневно 12:37 |
+| `eia` | EIA API v2 (Weekly Petroleum Status): запасы дистиллятного топлива в США (WDISTUS1) и загрузка мощностей НПЗ (WPULEUS3) | `macro_series` (`source = 'eia'`), каталог `series_catalog`, витрина `v_eia_petroleum` | среда 19:43 |
 | `gold` | Золото: фиксинг MOEX GOLDFIXME (₽/г) пересчитан в USD/oz по курсу ЦБ | `gold_prices` (`venue = 'moex_fix_usd'`); каталог `series_catalog`, витрина `v_gold_prices` | ежедневно 18:47 |
 | `moex` | МосБиржа ISS: свечи PLZL (OHLCV), индекс RGBI, доходности G-curve ОФЗ (1y/3y/5y/10y) | `stock_prices` (`code = 'PLZL'`), `ofz_curve`; каталог `series_catalog`, витрины `v_stock_prices`, `v_ofz_curve` | ежедневно 19:13 |
 | `calendar` | Календарь событий-триггеров прогноза золота/NAV (Q4-2026; сид — `sql/events_calendar_q4_2026.sql`) | `events_calendar`; витрина `v_events_calendar` | вручную (`make import STAT=events_calendar`) |
@@ -71,6 +72,7 @@ ingest/                  ingest-endpoint контура прогноза: model_
 cmd/ingest/              бинарник ingest (отдельный от основного импорта)
 bls/                     BLS API v2 → macro_series
 bea/                     BEA API (NIPA T20804) → macro_series
+eia/                     EIA API v2: недельные запасы дистиллятов и загрузка НПЗ США → macro_series
 gold/                    MOEX GOLDFIXME + cbr_currency_usd → gold_prices
 moex/                    MOEX ISS: свечи PLZL → stock_prices, RGBI + G-curve → ofz_curve
 polyus/                  отчётность Полюса: xlsx-датапак → databook_polyus; PDF-отчёты (KPI EN/RU, МСФО EN) → company_financials (общая таблица сектора; читается витринами v_company_*, разбор — колоночная модель: pdftotext -tsv + полоса шапки по ролям строк + колонки по X)
@@ -113,6 +115,7 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 | `CERT_FILES` | PEM-сертификаты через запятую (нац. УЦ РФ для gos-сайтов) |
 | `BLS_API_KEY` | Регистрационный ключ BLS (необязателен; без него работает, но лимиты строже). Не выводится в логах |
 | `BEA_API_KEY` | UserID BEA API (обязателен для `bea`; без него импортёр завершается ошибкой). Не выводится в логах |
+| `EIA_API_KEY` | Ключ EIA API v2 (обязателен для `eia`; без него импортёр завершается ошибкой, ключ маскируется в текстах ошибок). Не выводится в логах |
 | `INGEST_TOKEN` | Bearer-токен ingest-endpoint, обязателен для `cmd/ingest` (без него процесс не стартует). Не выводится в логах |
 | `INGEST_ADDR` | Адрес HTTP-сервера `cmd/ingest`, по умолчанию `:8081` |
 | `INGEST_RATE_PER_MIN` | Лимит запросов `cmd/ingest` в минуту (token bucket, burst 10), по умолчанию 60; превышение — `429` |
@@ -133,7 +136,7 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 
 Составные части контура (подробно — ARCHITECTURE.md §6.3 и §6.5):
 
-- витрины `v_model_inputs`, `v_gold_dashboard`, `v_forecast_accuracy`, `v_imf_macro` и календарь `v_events_calendar` — читаются агентом через MCP (пользователь `kimi_reader`, только `v_*`);
+- витрины `v_model_inputs`, `v_gold_dashboard`, `v_forecast_accuracy`, `v_imf_macro`, `v_eia_petroleum` и календарь `v_events_calendar` — читаются агентом через MCP (пользователь `kimi_reader`, только `v_*`);
 - витрины метрик компаний сектора `v_company_financials`, `v_company_metric_sources`, `v_company_operating` (импортёр `company_views`) — читаются агентом через MCP; сейчас наполнены данными Полюса (ARCHITECTURE.md §6.3);
 - витрина `v_dcf_assumptions` — NPV рудников Полюса по каждому (deck, контур ставки, актив) плюс суммарный NAV рудников; пишет её импортёр `dcf_engine` (пакет `dcf/`, `DCF_RUN_ID=<uuid> make import STAT=dcf_engine`), сырая `nav_by_asset` агенту не выдана;
 - ingest-endpoint (`cmd/ingest`) — единственный путь записи прогонов модели и ручных рядов;
@@ -167,7 +170,7 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 | Команда | Что делает |
 |---|---|
 | `make lint` | `gofmt -l` (падает, если есть неотформатированный код) и `golangci-lint run ./...` |
-| `make test` | `go vet` и `go test -race ./...` (тесты есть у `bls`, `bea`, `cbr`, `rosstat`, `minfin`, `gold`, `moex`, `polyus`) |
+| `make test` | `go vet` и `go test -race ./...` (тесты есть у `bls`, `bea`, `eia`, `cbr`, `rosstat`, `minfin`, `gold`, `moex`, `polyus`) |
 | `make build` | статический бинарник `linux/amd64` в `build/` |
 | `make run` | сборка и запуск (нужен `CLICKHOUSE_URL`) |
 | `make import STAT=<имя>` | локальный прогон одного импортёра по `Name()` (собирает `build/clickhouse-import-rosstat-native`). Для расчёта NAV: `DCF_RUN_ID=$(uuidgen \| tr A-Z a-z) make import STAT=dcf_engine` |
@@ -231,6 +234,7 @@ make all                             # lint, test, build
 make env-check                       # ключи из ~/.config/rosstat/env на месте
 make ch-up                           # локальный ClickHouse на 8123/9000
 make import STAT=bea                 # импорт bea (ключ BEA_API_KEY из файла окружения)
+make import STAT=eia                 # импорт eia (ключ EIA_API_KEY из файла окружения)
 make import STAT=dcf_mine_plans      # сид mine_plans из отчётности Полюса (идёт до движка)
 make dcf-aisc                        # (опционально) уточнённый поактивный AISC → sql/dcf_mine_plans_seed.sql
 make ch-sql FILE=sql/dcf_mine_plans_seed.sql   # (опционально) применить сид AISC поверх Go-сида
@@ -259,6 +263,7 @@ make ch-down                         # остановить сервер
 
 ```bash
 export BEA_API_KEY=<your-key>
+export EIA_API_KEY=<your-key>
 export CLICKHOUSE_URL=clickhouse://localhost:9000/default
 export CLICKHOUSE_PASSWORD=<kimi_reader-password>
 # export CH_IMPORT_PASSWORD=<пароль пользователя, читающего сырые таблицы>
@@ -275,7 +280,7 @@ export CLICKHOUSE_PASSWORD=<kimi_reader-password>
 - проверка без вывода значений: `make env-check`;
 - локальный импорт одного источника: `make import STAT=bea` (собирает бинарник под macOS в `build/clickhouse-import-rosstat-native`);
 - Kimi Code: ключи для MCP задаются в `~/.kimi-code/mcp.json` (блок `env`), для остальных команд Kimi вызывает `make`, поэтому файл окружения подхватывается автоматически;
-- Dagu (расписания): секреты описаны в `~/dagu-dev/base.yaml` через provider `file`, каждый ключ — отдельный файл `~/dagu-dev/secrets/<name>` (`600`). Для BEA: `bea_api_key`; при добавлении ключа нового импортёра — новый файл и строка в `secrets:`;
+- Dagu (расписания): секреты описаны в `~/dagu-dev/base.yaml` через provider `file`, каждый ключ — отдельный файл `~/dagu-dev/secrets/<name>` (`600`). Для BEA: `bea_api_key`; для EIA: `eia_api_key`; при добавлении ключа нового импортёра — новый файл и строка в `secrets:`;
 - файлы `*.env`, `secrets/` и ключи в коде не коммитить; `CLICKHOUSE_PASSWORD` только в файле окружения (`~/.config/rosstat/env`), в `mcp.json` его нет.
 
 MCP для Kimi (агент читает витрины `v_*`, без записи):
@@ -372,7 +377,7 @@ MCP GoLand (опционально, ускоряет работу Kimi Code с �
 - **Отчётность Полюса доступна агенту MCP — ограничение снято 2026-10-10.** Витрины `v_company_financials`, `v_company_metric_sources`, `v_company_operating` созданы с комментариями и грантом `kimi_reader` (`sql/mcp_kimi_reader.sql`), ряды Полюса описаны в `series_catalog` (source `polyus`, 18 рядов; `polyus_datapack`, 19 рядов), поэтому агент читает производство, TCC, AISC, capex, выручку и операционку по активам через MCP. Сырые `databook_polyus`, `company_financials` и legacy `polyus_financial_metrics` агенту по-прежнему не выданы. Проверено живым `make mcp-check` 2026-10-10 (ПРОВЕРКА ПРОЙДЕНА). Витрины заведены общими для сектора, а не набором `v_polyus_*`.
 - **Ingest-endpoint: TLS — снаружи.** Лимит частоты (`INGEST_RATE_PER_MIN`, `429`) и предел тела 1 MiB (`413`) реализованы в процессе; TLS предполагается на reverse proxy, в репозитории он не описан. Повторный `POST /v1/model_run` с тем же `run_id` отвечает `200 {"inserted": 1}`, хотя строк не пишет: ответ не отличает дубль от новой записи.
 - **HTTP-режим mcp-clickhouse развёрнут на staging (2026-10-10).** Сервис `deploy/staging/mcp-clickhouse.service` слушает `127.0.0.1:8000`, требует Bearer-токен (`CLICKHOUSE_MCP_AUTH_TOKEN`, обязателен), читает витрины от пользователя `kimi_reader`. Локальная конфигурация Kimi остаётся stdio (блок «MCP для Kimi»). Наружу эндпоинт не опубликован и TLS не настроен — доступ через SSH-туннель; публикация для плагина `gold-nav` требует reverse proxy и отдельного шага.
-- **Индикаторы `v_gold_dashboard` вводятся вручную.** `crack_ulsd_proxy`, `distillate_stocks`, `fedwatch_dec_hike`, `etf_flows_month`, `dxy` имеют только `manual_series`; импортёров нет. Без ввода они показываются как `stale`. Цена COMEX (`gold_prices.venue = 'comex_front'`, `POST /v1/gold_prices`) и резервы ЦБ (`source = 'imf'`, витрина `v_imf_macro`) — тоже сессионные ряды без импортёра: без сессии они не пополняются (исторический хвост — разовый backfill).
+- **Индикаторы `v_gold_dashboard`: `distillate_stocks` автоматизирован, остальные — вручную.** `distillate_stocks` пополняет импортёр `eia` (EIA API v2, расписание — среда 19:43 МСК); `crack_ulsd_proxy`, `fedwatch_dec_hike`, `etf_flows_month`, `dxy` импортёров не имеют — только `manual_series`, без ввода показываются как `stale`. Витрина берёт значение индикатора по приоритету источников `eia > webbridge > manual` (автоматический источник канонический, ручной ввод — фолбэк). Цена COMEX (`gold_prices.venue = 'comex_front'`, `POST /v1/gold_prices`) и резервы ЦБ (`source = 'imf'`, витрина `v_imf_macro`) — тоже сессионные ряды без импортёра: без сессии они не пополняются (исторический хвост — разовый backfill).
 - **Сверка прогнозов не автоматизирована.** `actual` и `error_pct` в `forecast_log` не заполняются кодом; `v_forecast_accuracy` покажет `is_resolved = 0` до ручного ввода.
 - **ИПЦ в `v_model_inputs` может быть пустым.** Витрина требует, чтобы существовали таблицы `ipc_mes` и `ipc_weeks`, но не проверяет их заполненность. Таблицы создаются до загрузки Росстата, поэтому при его ошибке (см. выше) витрина создаётся, а `ipc_mes_last` и `ipc_week_ytd` остаются NULL или устаревают; ориентироваться по `*_date`.
 - **`nav_beta_gold` не заполняется** (поля нет во входе `ModelRun`), в таблицу пишется NULL.

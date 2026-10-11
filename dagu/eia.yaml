@@ -1,0 +1,12 @@
+type: chain
+schedule: "43 19 * * 3"
+overlap_policy: skip
+
+steps:
+  - id: macro_series
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=eia
+    retry_policy:
+      limit: 3
+      interval_sec: 300
