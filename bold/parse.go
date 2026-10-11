@@ -14,18 +14,25 @@ import (
 
 // Эндпоинты источника. Формат истории — {version, updated, data:[…]}, формат «последнего
 // дня» — объект верхнего уровня {version, updated, date, …поля}.
+//
+// Суффикс `.json` в пути ОБЯЗАТЕЛЕН: источник — статика на S3 за CloudFront, объекта без
+// расширения там просто нет, а CDN без права ListBucket маскирует отсутствующий ключ
+// отказом в доступе (не 404, а 403 AccessDenied). Проверено живым curl 2026-10-12:
+// `gold/price-latest` → 403 AccessDenied, `gold/price-latest.json` → 200. Офлайн-тесты
+// (httptest) этого не видят — они отвечают на любой путь, поэтому суффикс пришпилен
+// отдельной проверкой в TestBoldEndpointsPinPaths: путь без `.json` — ошибка теста.
 const (
 	boldBaseURL = "https://bold.report/api/v1/"
 
-	boldPathPrice       = "gold/price"
-	boldPathPriceLatest = "gold/price-latest"
-	boldPathUnits       = "gold/funds/units"
-	boldPathUnitsLatest = "gold/funds/units-latest"
-	boldPathAum         = "gold/funds/aum"
-	boldPathAumLatest   = "gold/funds/aum-latest"
-	boldPathFlows       = "gold/flows/all"
-	boldPathFlowsLatest = "gold/flows/all-latest"
-	boldPathSummary     = "gold/summary"
+	boldPathPrice       = "gold/price.json"
+	boldPathPriceLatest = "gold/price-latest.json"
+	boldPathUnits       = "gold/funds/units.json"
+	boldPathUnitsLatest = "gold/funds/units-latest.json"
+	boldPathAum         = "gold/funds/aum.json"
+	boldPathAumLatest   = "gold/funds/aum-latest.json"
+	boldPathFlows       = "gold/flows/all.json"
+	boldPathFlowsLatest = "gold/flows/all-latest.json"
+	boldPathSummary     = "gold/summary.json"
 )
 
 // Имена семи рядов ETF-контура (source='bold' в macro_series).

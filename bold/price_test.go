@@ -351,7 +351,7 @@ func TestBoldPriceCatalogEntry(t *testing.T) {
 			t.Errorf("описание не называет %q: %s", fragment, m.Description)
 		}
 	}
-	if !strings.Contains(m.Origin, boldPathPrice+".json") {
-		t.Errorf("origin = %q, ожидался эндпоинт %s.json", m.Origin, boldPathPrice)
+	if !strings.Contains(m.Origin, boldPathPrice) {
+		t.Errorf("origin = %q, ожидался эндпоинт %s", m.Origin, boldPathPrice)
 	}
 }

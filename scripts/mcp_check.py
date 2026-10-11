@@ -257,19 +257,34 @@ async def check(params, server_log):
             failed += not expect("сырая таблица закрыта", denied, "отказ ClickHouse 497 на macro_series (ожидаемо)" if denied else raw[:200])
 
             # Контур bold.report (спека §4.4): витрины дневного агрегата и пер-фондового
-            # среза видны агенту, каталог source='bold' описывает ровно 7 рядов, а сырая
+            # среза читаются агентом, каталог source='bold' описывает ровно 7 рядов, а сырая
             # bold_fund_snapshot — источник пер-фондовой витрины — агенту закрыта (как
             # macro_series: читать её агент обязан только через витрину).
-            for view in ("v_gold_etf_flows_daily", "v_gold_etf_funds_daily"):
-                failed += not expect(f"витрина {view} видна", view in tables, "list_tables default")
-
+            #
+            # Существование витрины проверяется ЗАПРОСОМ К НЕЙ, а не поиском имени в ответе
+            # list_tables: в том тексте лежат create_table_query с комментариями таблиц и
+            # колонок, поэтому имя отсутствующей витрины попадало туда из COMMENT соседки —
+            # проверка «имя в тексте» давала ложное OK, когда v_gold_etf_funds_daily не
+            # существовала вовсе (её имя названо в комментарии v_gold_etf_flows_daily).
+            # Разобранный ответ run_query доказывает и существование, и право чтения; «нет
+            # витрины» и «нет прав» приходят ошибкой (UNKNOWN_TABLE / ACCESS_DENIED) и в
+            # result_rows не разбираются.
+            #
             # Пустая витрина — не отказ: до первого прогона bold_etf_flows (или при
-            # выходном дне источника) строк нет и вовсе, поэтому проверяется РАЗРЕШЕНИЕ
-            # чтения, как у v_dcf_assumptions и v_gold_etf_flows.
-            for view, label in (("v_gold_etf_flows_daily", "дневной агрегат bold читается"),
-                                ("v_gold_etf_funds_daily", "пер-фондовый срез bold читается")):
+            # выходном дне источника) строк нет и вовсе, поэтому значение count не
+            # проверяется — только разрешение чтения, как у v_dcf_assumptions.
+            for view, label in (("v_gold_etf_flows_daily", "дневной агрегат bold"),
+                                ("v_gold_etf_funds_daily", "пер-фондовый срез bold")):
                 bold_view = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {view}"}))
-                failed += not expect(label, "rows" in bold_view and "Query execution failed" not in bold_view and "ACCESS_DENIED" not in bold_view, bold_view[:200])
+                bold_view_rows = result_rows(bold_view)
+                if bold_view_rows is None:
+                    bold_view_detail = f"витрина не читается: {bold_view[:200]}"
+                elif bold_view_rows:
+                    bold_view_detail = f"строк: {bold_view_rows[0].get('count()')}"
+                else:
+                    bold_view_detail = "в ответе нет строк"
+                failed += not expect(f"витрина {view} существует и читается ({label})",
+                                     bool(bold_view_rows), bold_view_detail)
 
             # Каталог source='bold' — 7 рядов ETF-контура: каталог пишет импортёр только
             # после успешного Send, поэтому «меньше 7» значит неприменённый импорт (числа

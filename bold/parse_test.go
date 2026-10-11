@@ -548,7 +548,10 @@ func TestParseHistoryRejectsDuplicateDates(t *testing.T) {
 }
 
 // TestBoldEndpointsPinPaths финит эндпоинты, объявленные для импортёров (Task 2/3): молчаливая
-// правка пути сломала бы и счётчики запросов, и расхождение дат «последнего дня».
+// правка пути сломала бы и счётчики запросов, и расхождение дат «последнего дня». Здесь же
+// пришпилен обязательный суффикс `.json`: без расширения объекта в источнике нет и живой
+// запрос получает 403 AccessDenied, а httptest отвечает на любой путь и молчит об этом —
+// именно так дефект и дожил до живой приёмки (fix round 1, Ruling 14).
 func TestBoldEndpointsPinPaths(t *testing.T) {
 	base, err := url.Parse(boldBaseURL)
 	if err != nil {
@@ -560,17 +563,20 @@ func TestBoldEndpointsPinPaths(t *testing.T) {
 	paths := []struct {
 		name, got, want string
 	}{
-		{"boldPathPrice", boldPathPrice, "gold/price"},
-		{"boldPathPriceLatest", boldPathPriceLatest, "gold/price-latest"},
-		{"boldPathUnits", boldPathUnits, "gold/funds/units"},
-		{"boldPathUnitsLatest", boldPathUnitsLatest, "gold/funds/units-latest"},
-		{"boldPathAum", boldPathAum, "gold/funds/aum"},
-		{"boldPathAumLatest", boldPathAumLatest, "gold/funds/aum-latest"},
-		{"boldPathFlows", boldPathFlows, "gold/flows/all"},
-		{"boldPathFlowsLatest", boldPathFlowsLatest, "gold/flows/all-latest"},
-		{"boldPathSummary", boldPathSummary, "gold/summary"},
+		{"boldPathPrice", boldPathPrice, "gold/price.json"},
+		{"boldPathPriceLatest", boldPathPriceLatest, "gold/price-latest.json"},
+		{"boldPathUnits", boldPathUnits, "gold/funds/units.json"},
+		{"boldPathUnitsLatest", boldPathUnitsLatest, "gold/funds/units-latest.json"},
+		{"boldPathAum", boldPathAum, "gold/funds/aum.json"},
+		{"boldPathAumLatest", boldPathAumLatest, "gold/funds/aum-latest.json"},
+		{"boldPathFlows", boldPathFlows, "gold/flows/all.json"},
+		{"boldPathFlowsLatest", boldPathFlowsLatest, "gold/flows/all-latest.json"},
+		{"boldPathSummary", boldPathSummary, "gold/summary.json"},
 	}
 	for _, p := range paths {
+		if !strings.HasSuffix(p.got, ".json") {
+			t.Fatalf("%s = %q: путь обязан оканчиваться на .json — без расширения объект в источнике не существует и CDN отвечает 403 AccessDenied, а httptest отвечает на любой путь и этого не ловит", p.name, p.got)
+		}
 		if p.got != p.want {
 			t.Fatalf("%s = %q, ожидалось %q", p.name, p.got, p.want)
 		}
