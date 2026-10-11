@@ -1,7 +1,8 @@
 // Package views создаёт витрины для LLM-агента прогноза золота и NAV PLZL:
 // v_model_inputs (входы DCF), v_gold_dashboard (дашборд верификации),
-// v_forecast_accuracy (точность прогнозов из forecast_log) и
-// v_dcf_assumptions (NPV активов по трём ценовым дека'м и двум контурам ставки).
+// v_forecast_accuracy (точность прогнозов из forecast_log),
+// v_dcf_assumptions (NPV активов по трём ценовым дека'м и двум контурам ставки)
+// и v_imf_macro (золотые резервы ЦБ из IMF IRFCL, source='imf').
 //
 // Импортёр gold_views запускается после ingest-первого-прогона: util.CreateView
 // пропускает витрину, пока не существуют все её таблицы (model_runs создаёт ingest),
@@ -28,7 +29,7 @@ type goldViews struct {
 // обязан видеть ИМЕННО то, что создаёт импортёр. Литерал внутри Import тест
 // повторить не может, и написанный в тесте свой список проверял бы сам себя:
 // витрина, выпавшая из импортёра, оставляла бы тест зелёным.
-var goldViewsList = []util.View{modelInputsView, goldDashboardView, forecastAccuracyView, dcfAssumptionsView}
+var goldViewsList = []util.View{modelInputsView, goldDashboardView, forecastAccuracyView, dcfAssumptionsView, imfMacroView}
 
 func (s *goldViews) Name() string {
 	return "gold_views"

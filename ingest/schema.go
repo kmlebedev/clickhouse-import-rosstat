@@ -36,15 +36,26 @@ const forecastLogDdl = `CREATE TABLE IF NOT EXISTS forecast_log (
 ) ENGINE = ReplacingMergeTree ORDER BY (metric, forecast_date);`
 
 const macroSeriesDdl = `CREATE TABLE IF NOT EXISTS macro_series (
-    source LowCardinality(String),   -- 'fred','eia','wgc','cme'
+    source LowCardinality(String),   -- 'fred','bls','bea','manual','webbridge','imf'
     series LowCardinality(String),   -- 'DFII10','distillate_stocks',...
     date Date32,                     -- Date32, т.к. Date не покрывает даты до 1970 (CPIAUCSL с 1947, FEDFUNDS с 1954)
     value Float64
 ) ENGINE = ReplacingMergeTree ORDER BY (source, series, date);`
 
-// ensureTables создаёт три таблицы контура прогноза (идемпотентно).
+// goldPricesDdl — копия DDL из gold/gold.go; копии обязаны совпадать (прецедент
+// company_financials): ingest пишет в gold_prices и должен быть самодостаточен —
+// POST /v1/gold_prices не должен зависеть от того, отработал ли уже импортёр gold.
+const goldPricesDdl = `CREATE TABLE IF NOT EXISTS gold_prices (
+			  venue LowCardinality(String)
+			, date Date32
+			, usd Float64
+		) ENGINE = ReplacingMergeTree ORDER BY (venue, date);
+	`
+
+// ensureTables создаёт таблицы контура прогноза (идемпотентно):
+// три канонические из ARCHITECTURE.md §6.2 и gold_prices (копия из gold/gold.go).
 func ensureTables(ctx context.Context, conn driver.Conn) error {
-	for _, ddl := range []string{modelRunsDdl, forecastLogDdl, macroSeriesDdl} {
+	for _, ddl := range []string{modelRunsDdl, forecastLogDdl, macroSeriesDdl, goldPricesDdl} {
 		if err := conn.Exec(ctx, ddl); err != nil {
 			return err
 		}

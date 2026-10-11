@@ -18,6 +18,7 @@ const (
 	modelRunsInsert   = "INSERT INTO model_runs (run_id, run_date, trigger_type, trigger_ref, gold_scenario, usdrub_path, price_deck, discount_rate, wacc, nav_per_share, nav_bull, nav_base, nav_bear, market_price, upside_pct, nav_beta_gold, comment)"
 	forecastLogInsert = "INSERT INTO forecast_log (forecast_date, target_date, metric, predicted, actual, error_pct)"
 	macroSeriesInsert = "INSERT INTO macro_series (source, series, date, value)"
+	goldPricesInsert  = "INSERT INTO gold_prices (venue, date, usd)"
 )
 
 // chStore — узкий срез ClickHouse, который нужен InsertModelRun; в тестах подменяется фейком.
@@ -149,12 +150,13 @@ func (w *ClickHouseWriter) InsertModelRun(ctx context.Context, r ModelRun) error
 	return batch.Send()
 }
 
-// InsertManualSeries пишет вручную введённые точки в macro_series с фиксированным source='manual'.
+// InsertManualSeries пишет точки в macro_series: source точки, а при пустом —
+// 'manual' (дефолт регламента ручного ввода).
 func (w *ClickHouseWriter) InsertManualSeries(ctx context.Context, points []ManualSeriesPoint) error {
 	if len(points) == 0 {
 		return nil
 	}
-	batch, err := w.conn.PrepareBatch(ctx, macroSeriesInsert)
+	batch, err := w.store.prepareBatch(ctx, macroSeriesInsert)
 	if err != nil {
 		return err
 	}
@@ -164,7 +166,36 @@ func (w *ClickHouseWriter) InsertManualSeries(ctx context.Context, points []Manu
 			_ = batch.Abort()
 			return fmt.Errorf("date %q: %w", point.Date, err)
 		}
-		if err = batch.Append(manualSeriesSource, point.Series, date, point.Value); err != nil {
+		source := point.Source
+		if source == "" {
+			source = manualSeriesSource
+		}
+		if err = batch.Append(source, point.Series, date, point.Value); err != nil {
+			_ = batch.Abort()
+			return err
+		}
+	}
+	return batch.Send()
+}
+
+// InsertGoldPrices пишет точки цен золота по площадкам (venue) в gold_prices.
+// Ключ таблицы (venue, date): повторная запись точки — норма (ReplacingMergeTree
+// перекрывает прежнее значение при merge, витрины читают FINAL).
+func (w *ClickHouseWriter) InsertGoldPrices(ctx context.Context, points []GoldPricePoint) error {
+	if len(points) == 0 {
+		return nil
+	}
+	batch, err := w.store.prepareBatch(ctx, goldPricesInsert)
+	if err != nil {
+		return err
+	}
+	for _, point := range points {
+		date, err := time.Parse(manualSeriesDateLayout, point.Date)
+		if err != nil {
+			_ = batch.Abort()
+			return fmt.Errorf("date %q: %w", point.Date, err)
+		}
+		if err = batch.Append(point.Venue, date, point.Usd); err != nil {
 			_ = batch.Abort()
 			return err
 		}
