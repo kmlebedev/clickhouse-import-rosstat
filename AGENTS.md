@@ -64,7 +64,7 @@
 1. **Секреты только через `os.Getenv`**. Никогда — ни в коде, ни в комментариях, ни в curl-примерах — не писать пароли, токены, email. В истории репозитория уже была утечка; pre-commit с gitleaks рекомендован.
 2. **Вставка в ClickHouse только батчами**: `PrepareBatch` → `Append` → `Send`. Построчный `conn.Exec` в цикле запрещён.
 3. **Никаких сетевых вызовов в `init()`** — URL и соединения вычисляются внутри `Import()`.
-4. HTTP — только через `util.HttpClient`, `util.GetXlsx`, `util.GetCSV` (там национальные TLS-сертификаты РФ и ротация User-Agent).
+4. HTTP — только через `util.HttpClient`, `util.GetXlsx`, `util.GetCSV`, `util.GetJSON` (там национальные TLS-сертификаты РФ и ротация User-Agent; `GetJSON` — для JSON-источников, проверяет HTTP-статус и держит собственный дедлайн запроса).
 5. DDL всегда `CREATE TABLE IF NOT EXISTS`, движок `ReplacingMergeTree`, измерения `LowCardinality(String)`, новые денежные/ценовые значения — `Float64`.
 6. Ошибки не проглатывать: каждый `strconv.Parse*` и `batch.Append` — с проверкой `err`.
 7. Новые импортёры — по шаблонам из ARCHITECTURE.md §3 (предпочтительно `util.ClickHouseImport`). Пакет `financial/` — legacy, новый код туда не добавлять.

@@ -97,9 +97,10 @@ INNER JOIN (
 GROUP BY date, region
 ORDER BY date DESC, region`,
 	Comment: "Месячные потоки и запасы физически обеспеченных золотых ETF (WGC Gold ETF Flows, gold.org/goldhub): одна строка на (дата, регион). " +
-		"Ряды набора etf_<метрика>_<регион> лежат в macro_series: source='wgc' — импортёр wgc_etf_flows (месячная выгрузка ETF_Flows_*.xlsx из wgc/data), source='webbridge' — сессионный сбор после месячного отчёта WGC (~10-е число), запись одним POST /v1/manual_series всеми 20 рядами, source='manual' — ручной ввод; " +
+		"Ряды набора etf_<метрика>_<регион> лежат в macro_series: source='wgc' — импортёр wgc_etf_flows (ежедневно; канонический транспорт — JSON API fscdn.gold.org, а если API недоступно — ручная выгрузка ETF_Flows_*.xlsx в wgc/data), source='webbridge' — сессионный сбор после месячного отчёта WGC (~10-е число), запись одним POST /v1/manual_series всеми 20 рядами, source='manual' — ручной ввод; " +
 		"приоритет источников wgc > webbridge > manual — канонический ряд пишет импортёр, сессионный сбор и ручной ввод остаются фолбэками, если импорт не отработал. " +
 		"Потоки (flow_usd_mln, flow_tonnes) — за месяц, со знаком направления (плюс приток, минус отток); запасы (holdings_tonnes, aum_usd_bn) — сток на конец месяца. " +
+		"Глубина: потоки (регионы и world) — с 2003-02-28, причём в потоковых рядах нули явные, поэтому точка есть и у месяца без потока; запасы и AUM region='world' — с 2007-03-31, первого месяца со значениями всех четырёх регионов. Разная глубина потоков и запасов — свойство источника, а не дефект импорта. " +
 		"Мировой поток в USD (region='world', flow_usd_mln) — тот же показатель, что ручной etf_flows_month (source='manual', млрд USD — индикатор v_gold_dashboard), только в млн USD: не путать и не складывать. " +
 		"NULL в колонке — метрика за этот месяц не введена (не 0: ноль в macro_series означал бы «потока не было»). Порядок строк — date DESC, region (детерминированная выдача). Описания рядов, единицы и связь с etf_flows_month — в v_series_catalog (source='wgc' — записи импортёра, source='webbridge' — записи сида-фолбэка)",
 	Columns: map[string]string{
