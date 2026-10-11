@@ -56,7 +56,7 @@ const etfCatalogHoldingsRounding = "Источник отдаёт тоннажн
 // etfCatalogImportNote — общий хвост описания: кто наполняет ряд и как витрина
 // выбирает источник. Повторяется в каждой записи намеренно — агент читает
 // description по одному ряду и соседние записи не видит.
-const etfCatalogImportNote = "Импортёр wgc_etf_flows (расписание dagu/wgc.yaml, ежедневно 20:17 МСК) берёт ряд с source='wgc' из JSON API fscdn.gold.org; ручная выгрузка ETF_Flows*.xlsx в wgc/data (скачивается с gold.org/goldhub) — фолбэк на случай недоступности API. Приоритет источников в v_gold_etf_flows — wgc > webbridge > manual (webbridge — сессионный сбор, manual — ручной фолбэк)."
+const etfCatalogImportNote = "Импортёр wgc_etf_flows (расписание dagu/wgc.yaml, ежедневно 20:17 МСК) берёт ряд с source='wgc' из JSON API fscdn.gold.org; ручная выгрузка ETF_Flows_*.xlsx в wgc/data (скачивается с gold.org/goldhub) — фолбэк на случай недоступности API. Приоритет источников в v_gold_etf_flows — wgc > webbridge > manual (webbridge — сессионный сбор, manual — ручной фолбэк)."
 
 // etfDescription склеивает части описания ряда в один абзац.
 func etfDescription(parts ...string) string {

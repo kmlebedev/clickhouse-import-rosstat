@@ -24,7 +24,7 @@ const (
 
 	// etfFileMask — маска выгрузки ETF в папке данных: WGC публикует её как
 	// ETF_Flows_<YYYY-MM-DD>_<HHMM>.xlsx.
-	etfFileMask = "ETF_Flows*.xlsx"
+	etfFileMask = "ETF_Flows_*.xlsx"
 
 	// macroSeriesTable — таблица длинных рядов пакета (общая с wgc_cb_reserves,
 	// Task 4). Схема — как у остальных импортёров macro_series, поэтому CREATE
@@ -40,7 +40,7 @@ const (
 	macroSeriesInsert = "INSERT INTO " + macroSeriesTable + " (source, series, date, value)"
 )
 
-// errNoEtfFile — в каталоге нет ни одной выгрузки ETF_Flows*.xlsx. Это не ошибка импорта:
+// errNoEtfFile — в каталоге нет ни одной выгрузки ETF_Flows_*.xlsx. Это не ошибка импорта:
 // до первого скачивания выгрузки (страницы goldhub защищены Cloudflare, файлы скачиваются
 // вручную) пустой каталог нормален (урок dcf_engine), поэтому решение «warn + 0 строк»
 // принимает вызывающий. Отдельный sentinel, а не пустая строка пути: findLatestFile уже

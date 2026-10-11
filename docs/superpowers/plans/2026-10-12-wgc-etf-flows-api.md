@@ -188,7 +188,7 @@ git commit -m "add wgc etf flows json api parser"
 
 **Interfaces:**
 - Consumes: `etfPointsFromAPI`, `etfAPIBaseURL` (Task 2); `findLatestFile`, `parseEtfWorkbook`, `defaultDataDir` (существующие).
-- Produces: `etfFlowsStat.dir` (было) + **`etfFlowsStat.apiBase`** (пусто → `etfAPIBaseURL`); `var errNoEtfFile error`; `func etfLoadPoints(dir, apiBase string, now time.Time) (points []seriesPoint, fromAPI bool, err error)`; `func etfPointsFromFile(dir string) ([]seriesPoint, error)`; `func writeEtfPoints(ctx context.Context, conn driver.Conn, points []seriesPoint) (int64, error)`; `func etfStoredMaxDate(ctx context.Context, conn driver.Conn) (time.Time, bool, error)`.
+- Produces: `etfFlowsStat.dir` (было) + **`etfFlowsStat.apiBase`** (пусто → `etfAPIBaseURL`); `var errNoEtfFile error`; `func etfLoadPoints(dir, apiBase string, now time.Time) (points []seriesPoint, fromAPI bool, file string, err error)`; `func etfPointsFromFile(dir string) ([]seriesPoint, error)`; `func writeEtfPoints(ctx context.Context, conn driver.Conn, points []seriesPoint) (int64, error)`; `func etfStoredMaxDate(ctx context.Context, conn driver.Conn) (time.Time, bool, error)`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -222,10 +222,10 @@ Expected: FAIL — `undefined: etfLoadPoints`, `unknown field apiBase`
 - [ ] **Step 3: Implement the refactor in `wgc/etf.go`**
 
 - `etfPointsFromFile(dir string) ([]seriesPoint, error)`: существующая логика `Import` (findLatestFile → OpenFile → parseEtfWorkbook); файла нет → `errNoEtfFile`; битый файл / пустой разбор → ошибки с именем файла (как сейчас).
-- `etfLoadPoints(dir, apiBase string, now time.Time) (points []seriesPoint, fromAPI bool, err error)`: `apiBase == ""` → `etfAPIBaseURL`; `etfPointsFromAPI`; успех → `(points, true, nil)`; ошибка → `log.Warnf("%s: API WGC недоступно (%v) — пробую локальную выгрузку", ...)` и `etfPointsFromFile`; `errNoEtfFile` → warn + `(nil, false, nil)`; прочая ошибка файла → `(nil, false, err)`.
+- `etfLoadPoints(dir, apiBase string, now time.Time) (points []seriesPoint, fromAPI bool, file string, err error)`: `apiBase == ""` → `etfAPIBaseURL`; `etfPointsFromAPI`; успех API → `(points, true, "", nil)`; ошибка API → `log.Warnf("%s: API WGC недоступно (%v) — пробую локальную выгрузку", ...)` и `etfPointsFromFile`; фолбэк на файл → `(points, false, file, nil)`, где `file` — путь выбранной выгрузки (им вызывающий инструментирует лог и называет источник в guard-е устаревания); `errNoEtfFile` → warn + `(nil, false, "", nil)`; прочая ошибка файла → `(nil, false, "", err)`.
 - `writeEtfPoints(ctx, conn, points) (int64, error)`: текущий код записи как есть (сортировка `(series, date)`, `conn.Exec(macroSeriesDdl)`, `PrepareBatch`, `Append` с `batch.Abort()` при ошибке, `Send`, `util.UpsertSeriesCatalog(ctx, conn, wgcEtfCatalog())` после успешного `Send`, `log.Infof("Imported %d rows of %s (wgc ETF flows, %d series)", ...)`).
 - `etfStoredMaxDate(ctx, conn) (time.Time, bool, error)`: `SELECT max(date) FROM macro_series FINAL WHERE source = 'wgc' AND series LIKE 'etf\_%'`; пустая таблица (`max` → нулевая дата) → `(time.Time{}, false, nil)`.
-- `Import`: `points, fromAPI, err := etfLoadPoints(dir, s.apiBase, time.Now())`; `err` → вернуть; `len(points) == 0` → `log.Warnf` + `0, nil` (соединение не трогается); если `fromAPI` — guard кэша: `etfStoredMaxDate` и при меньшем максимуме API `log.Warnf("... возможен устаревший ответ CDN: API %s < сохранённый %s")` (**не ошибка**); затем `writeEtfPoints`.
+- `Import`: `points, fromAPI, file, err := etfLoadPoints(dir, s.apiBase, time.Now())` — ветки возврата: успех API → `(points, true, "", nil)`, фолбэк на файл → `(points, false, file, nil)` с путём выбранной выгрузки в `file`, `errNoEtfFile` → `(nil, false, "", nil)`, прочая ошибка файла → `(nil, false, "", err)`; `err` → вернуть; `len(points) == 0` → `log.Warnf` + `0, nil` (соединение не трогается); если `fromAPI` — guard кэша: `etfStoredMaxDate` и при меньшем максимуме API `log.Warnf("... возможен устаревший ответ CDN: API %s < сохранённый %s")` (**не ошибка**); иначе (файловый транспорт) — `log.Infof` с путём `file` и guard с источником `"локальная выгрузка "+file`; затем `writeEtfPoints`.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -270,7 +270,7 @@ git commit -m "wgc etf flows: use json api with xlsx fallback"
 
 - [ ] **Step 4: Расписание `dagu/wgc.yaml`**
 
-`schedule: "17 20 * * 1"` → `schedule: "17 20 * * *"`; в комментарии шапки: ETF-шаг автоматический (сеть, без ручного шага) и поэтому ежедневный — публикация ловится в день выхода; `wgc/data` — только фолбэк; выгрузки ЦБ по-прежнему попадают в `wgc/data` вручную (для них ежедневный прогон — no-op «warn + 0 строк»).
+`schedule: "17 20 * * 1"` → `schedule: "17 20 * * *"`; в комментарии шапки: ETF-шаг автоматический (сеть, без ручного шага) и поэтому ежедневный — публикация ловится в день выхода; `wgc/data` — только фолбэк; выгрузки ЦБ по-прежнему попадают в `wgc/data` вручную, поэтому при наличии файлов ежедневный прогон идемпотентен — перезаписываются те же ключи и значения (в логе каждый раз `Imported N rows of wgc_cb_reserves`), а новые месяцы появляются только после очередного ручного скачивания выгрузки; `warn + 0 строк` бывает только когда файлов нет вовсе.
 
 - [ ] **Step 5: Run tests**
 
