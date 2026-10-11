@@ -58,7 +58,7 @@
 
 **Runbook (проверено 11.10.2026):**
 
-1. Поднять ingest-сервис: `INGEST_TOKEN=<токен> make run-ingest` (localhost:8081). ⚠️ На 11.10.2026 `INGEST_TOKEN` в `~/.config/rosstat/env` **не задан** — прогон выполнен разовым dev-токеном; для регулярного использования токен добавить в env-файл (в репозиторий значение не кладётся).
+1. Поднять ingest-сервис: `make run-ingest` (localhost:8081) — `INGEST_TOKEN` берётся из `~/.config/rosstat/env` (`make` подключает файл сам), в репозитории значение не хранится. Проверено end-to-end 11.10.2026: без токена — `401`, с токеном — `200 {"inserted":N}`.
 2. Снять значения: crack — datasource `HO=F` и `CL=F`; dxy — `DX-Y.NYB`; distillate_stocks — EIA WPSR; fedwatch_dec_hike — CME FedWatch; etf_flows_month — WGC Gold ETF Flows.
 3. Записать одним POST: `curl -X POST $INGEST_URL/v1/manual_series -H "Authorization: Bearer $INGEST_TOKEN" -H "Content-Type: application/json" -d '[{"series":"...","date":"YYYY-MM-DD","value":N}, ...]'` — ответ `{"inserted": N}`.
 4. Проверить через MCP: `SELECT * FROM v_gold_dashboard` — у всех рядов `stale=0`, флаги считаются.
