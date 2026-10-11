@@ -8,8 +8,11 @@ import "github.com/kmlebedev/clickhouse-import-rosstat/util"
 const goldDashboardIndicators = `'crack_ulsd_proxy', 'distillate_stocks', 'fedwatch_dec_hike', 'etf_flows_month', 'dxy'`
 
 // goldDashboardView — дашборд верификации сценария золота: одна строка на индикатор.
-// Значения живут в macro_series (source 'manual' — ручной ввод через ingest, 'webbridge' — WebBridge-сбор, фаза 5; spec §5.2).
-// stale = 1, если значения нет или последнее наблюдение старше 14 дней.
+// Значения живут в macro_series: 'eia' — автоматический импорт EIA API v2 (distillate_stocks,
+// refinery_utilization), 'webbridge' — WebBridge-сбор (фаза 5), 'manual' — ручной ввод через ingest
+// (spec §5.2). Приоритет источников eia > webbridge > manual: автоматический ряд канонический,
+// а ручной ввод нужен фолбэком, если импортёр EIA временно не отработал (для distillate_stocks).
+// stale = 1, если значения нет ни в одном источнике или последнее наблюдение старше 14 дней.
 var goldDashboardView = util.View{
 	Name:   "v_gold_dashboard",
 	Tables: []string{"macro_series"},
@@ -42,22 +45,44 @@ FROM (
     LEFT JOIN (
         SELECT
             series AS series_name,
-            count() AS n,
-            argMax(value, date) AS value,
-            argMax(date, date) AS as_of
-        FROM macro_series FINAL
-        WHERE source IN ('manual', 'webbridge')
-          AND series IN (` + goldDashboardIndicators + `)
+            coalesce(
+                maxIfOrNull(n, source = 'eia'),
+                maxIfOrNull(n, source = 'webbridge'),
+                maxIfOrNull(n, source = 'manual'),
+                toUInt64(0)
+            ) AS n,
+            coalesce(
+                maxIfOrNull(value, source = 'eia'),
+                maxIfOrNull(value, source = 'webbridge'),
+                maxIfOrNull(value, source = 'manual')
+            ) AS value,
+            coalesce(
+                maxIfOrNull(as_of, source = 'eia'),
+                maxIfOrNull(as_of, source = 'webbridge'),
+                maxIfOrNull(as_of, source = 'manual')
+            ) AS as_of
+        FROM (
+            SELECT
+                series,
+                source,
+                count() AS n,
+                argMax(value, date) AS value,
+                argMax(date, date) AS as_of
+            FROM macro_series FINAL
+            WHERE source IN ('eia', 'webbridge', 'manual')
+              AND series IN (` + goldDashboardIndicators + `)
+            GROUP BY series, source
+        )
         GROUP BY series
     ) AS v ON ind.indicator = v.series_name
 )`,
-	Comment: "Дашборд верификации сценария золота (статья §6): одна строка на индикатор. flag = 1 — пробит порог; stale = 1 — значения нет или последнее наблюдение старше 14 дней. Пороги: crack ULSD >50 USD (медвежий сигнал), FedWatch на декабрьское повышение: flag = 1 при >65% (сценарное переключение), >80% — уровень алерта (текст порога); DXY >102. Значения FedWatch — в процентах (65 = 65%)",
+	Comment: "Дашборд верификации сценария золота (статья §6): одна строка на индикатор. Значения берутся из macro_series с приоритетом источников eia > webbridge > manual: автоматический импорт EIA API v2 канонический (distillate_stocks — запасы дистиллятов, тыс. барр.), ручной ввод — фолбэк. flag = 1 — пробит порог; stale = 1 — значения нет ни в одном источнике или последнее наблюдение старше 14 дней. Пороги: crack ULSD >50 USD (медвежий сигнал), FedWatch на декабрьское повышение: flag = 1 при >65% (сценарное переключение), >80% — уровень алерта (текст порога); DXY >102. Значения FedWatch — в процентах (65 = 65%)",
 	Columns: map[string]string{
 		"indicator": "Код индикатора: crack_ulsd_proxy, distillate_stocks, fedwatch_dec_hike, etf_flows_month, dxy",
-		"value":     "Последнее значение индикатора; NULL — значение ни разу не вводили",
+		"value":     "Последнее значение индикатора из приоритетного источника (eia > webbridge > manual): для distillate_stocks — автоматический ряд EIA (тыс. барр.) с фолбэком на ручной ввод; NULL — значения нет ни в одном источнике",
 		"threshold": "Пороги из статьи §6 текстом; для индикаторов без порога — 'порога в статье §6 нет'",
 		"flag":      "1 — последнее значение пересекло порог из статьи §6 (crack >50, FedWatch >65 — сценарное переключение, DXY >102); 0 — не пересекло или порога нет",
-		"as_of":     "Дата последнего наблюдения (Date32); NULL — значения нет",
-		"stale":     "1 — значения нет или последнее наблюдение старше 14 дней; 0 — свежее",
+		"as_of":     "Дата последнего наблюдения (Date32) в приоритетном источнике (eia > webbridge > manual); NULL — значения нет",
+		"stale":     "1 — значения нет ни в одном источнике или последнее наблюдение старше 14 дней; 0 — свежее",
 	},
 }
