@@ -60,8 +60,11 @@ func TestGoldForecastsViewColumnsAreCommented(t *testing.T) {
 // строки — probability = 0); агент не должен читать эти нули как цены и вероятности.
 //
 // midpoint (Review Focus 5) — единая точка сравнения: point, если он задан, иначе
-// середина диапазона; формула проверяется текстом SELECT, потому что иначе её
-// семантику видно только на живом прогоне. ORDER BY фиксирует порядок выдачи.
+// середина (low + high) / 2 при ДВУХ границах, иначе единственная заданная граница
+// (витрина не имеет права делить односторонний диапазон пополам: для {low: 0,
+// high: 5200} агент увидел бы 2600 — половину единственной границы), иначе NULL;
+// формула проверяется текстом SELECT, потому что иначе её семантику видно только на
+// живом прогоне. ORDER BY фиксирует порядок выдачи.
 func TestGoldForecastsViewSelectShape(t *testing.T) {
 	v := goldForecastsView
 	selectText := collapseSpaces(v.Select)
@@ -74,8 +77,9 @@ func TestGoldForecastsViewSelectShape(t *testing.T) {
 		t.Fatalf("%s: SELECT must turn zero («поле не задано» в DDL) into NULL via nullIf, got: %s", v.Name, selectText)
 	}
 
-	if !strings.Contains(selectText, "if(point > 0, point, nullIf((low + high) / 2, 0)) AS midpoint") {
-		t.Fatalf("%s: midpoint must be point when it is set, else (low + high) / 2, got: %s", v.Name, selectText)
+	if !strings.Contains(selectText, "if(point > 0, point, if(low > 0 AND high > 0, (low + high) / 2, nullIf(low + high, 0))) AS midpoint") {
+		t.Fatalf("%s: midpoint must be point when set, else (low + high) / 2 only when BOTH bounds are set, "+
+			"else the single set bound, else NULL, got: %s", v.Name, selectText)
 	}
 
 	if !strings.Contains(selectText, "ORDER BY published DESC, author, horizon, scenario") {

@@ -173,3 +173,15 @@ func TestGoldEtfFlowsCatalogSeedDescribesEverySeries(t *testing.T) {
 		t.Errorf("%s: %d записей source='webbridge', ожидалось ровно %d — по одному описанию на ряд", seedPath, got, len(names))
 	}
 }
+
+// Порядок выдачи детерминирован — паритет с v_gold_forecasts (у неё ORDER BY
+// published DESC, ...): агент читает витрину без ORDER BY в своём запросе, и
+// «плавающий» порядок строк делал бы выдачу невоспроизводимой между прогонами.
+func TestGoldEtfFlowsViewOrderIsDeterministic(t *testing.T) {
+	v := goldEtfFlowsView
+	selectText := collapseSpaces(v.Select)
+
+	if !strings.Contains(selectText, "ORDER BY date DESC, region") {
+		t.Fatalf("%s: SELECT must order rows by date DESC, region, got: %s", v.Name, selectText)
+	}
+}

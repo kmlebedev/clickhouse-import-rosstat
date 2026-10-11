@@ -178,8 +178,10 @@ async def check(params, server_log):
             etf = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_gold_etf_flows"}))
             failed += not expect("ETF-потоки WGC читаются", "rows" in etf and "Query execution failed" not in etf and "ACCESS_DENIED" not in etf, etf[:200])
 
-            # Каталог webbridge — 20 рядов из сида; их отсутствие ломает дашборд etf_flows_month,
-            # поэтому detail подсказывает, что именно применить.
+            # Каталог webbridge — 20 рядов из сида; их отсутствие ломает семантику
+            # v_gold_etf_flows для агента: числа он прочитает, а что измеряет ряд и в каких
+            # единицах — нет (etf_flows_month — отдельный ручной ряд v_gold_dashboard,
+            # каталог webbridge на него не влияет). detail подсказывает, что применить.
             catalog_wgc = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'webbridge'"}))
             webbridge = result_rows(catalog_wgc)
             webbridge_n = webbridge[0].get("n") if webbridge else None

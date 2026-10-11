@@ -53,7 +53,8 @@ const goldPricesDdl = `CREATE TABLE IF NOT EXISTS gold_prices (
 	`
 
 // goldForecastsDdl — копия DDL из ARCHITECTURE.md §6.2: консенсус-прогнозы
-// по золоту (банковские и собственные), из них собирается price_deck own_scenario.
+// по золоту (банковские и собственные).
+// источник собственного сценарного веера (price_deck 'own_scenario' собирается из него; сейчас читает витрина v_gold_forecasts)
 const goldForecastsDdl = `CREATE TABLE IF NOT EXISTS gold_forecasts (
     author LowCardinality(String),   -- 'goldman','jpm','hsbc','ubs','citi','own',...
     published Date,

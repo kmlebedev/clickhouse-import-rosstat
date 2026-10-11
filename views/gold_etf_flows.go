@@ -92,13 +92,14 @@ INNER JOIN (
     WHERE source IN ('webbridge', 'manual') AND series IN (` + wgcEtfSeriesNamesSQL() + `)
     GROUP BY date, series
 ) AS v ON v.series = m.series
-GROUP BY date, region`,
+GROUP BY date, region
+ORDER BY date DESC, region`,
 	Comment: "Месячные потоки и запасы физически обеспеченных золотых ETF (WGC Gold ETF Flows, gold.org/goldhub): одна строка на (дата, регион). " +
 		"Ряды набора etf_<метрика>_<регион> лежат в macro_series с source='webbridge' — сессионный сбор после месячного отчёта WGC (~10-е число), запись одним POST /v1/manual_series всеми 20 рядами; " +
 		"приоритет источников webbridge > manual, ручной ввод остаётся фолбэком, если сбор не отработал. " +
 		"Потоки (flow_usd_mln, flow_tonnes) — за месяц, со знаком направления (плюс приток, минус отток); запасы (holdings_tonnes, aum_usd_bn) — сток на конец месяца. " +
 		"Мировой поток в USD (region='world', flow_usd_mln) — тот же показатель, что ручной etf_flows_month (source='manual', млрд USD — индикатор v_gold_dashboard), только в млн USD: не путать и не складывать. " +
-		"NULL в колонке — метрика за этот месяц не введена (не 0: ноль в macro_series означал бы «потока не было»). Описания рядов, единицы и связь с etf_flows_month — в v_series_catalog, source='webbridge'",
+		"NULL в колонке — метрика за этот месяц не введена (не 0: ноль в macro_series означал бы «потока не было»). Порядок строк — date DESC, region (детерминированная выдача). Описания рядов, единицы и связь с etf_flows_month — в v_series_catalog, source='webbridge'",
 	Columns: map[string]string{
 		"date":            "Последний день отчётного месяца (Date32) — дата точки ряда, как у etf_flows_month",
 		"region":          "Регион разбивки WGC: world (мировой итог), north_america, europe, asia, other",

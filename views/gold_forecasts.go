@@ -19,14 +19,14 @@ var goldForecastsView = util.View{
     nullIf(low, 0) AS low,
     nullIf(high, 0) AS high,
     nullIf(point, 0) AS point,
-    if(point > 0, point, nullIf((low + high) / 2, 0)) AS midpoint,
+    if(point > 0, point, if(low > 0 AND high > 0, (low + high) / 2, nullIf(low + high, 0))) AS midpoint,
     nullIf(toFloat64(probability), 0) AS probability
 FROM gold_forecasts FINAL
 ORDER BY published DESC, author, horizon, scenario`,
 	Comment: "Консенсус аналитиков по цене золота и собственная сценарная сетка (таблица gold_forecasts, сид sql/gold_forecasts_q4_2026_seed.sql, запись — POST /v1/gold_forecasts). " +
 		"Одна строка на (author, published, horizon, scenario): банковские цели ('goldman','hsbc','jpm','ubs','citi') и own-сетка ('own': bull/base/bear). " +
 		"Сценарий 'point' — точечная цель, 'range' — диапазон банка (low/high, point пуст), 'bull'/'base'/'bear' — вероятностные сценарии own. " +
-		"Нули в колонках DDL означают «поле не задано» и здесь показаны как NULL. midpoint — единая точка сравнения: point, если он задан, иначе середина диапазона; " +
+		"Нули в колонках DDL означают «поле не задано» и здесь показаны как NULL. midpoint — единая точка сравнения: point, если он задан, иначе середина (low + high) / 2 при обеих границах, иначе единственная заданная граница (low или high); " +
 		"probability заполнена только у own-сценариев (у банков вероятности не публикуются). Порядок строк — published DESC, author, horizon, scenario. " +
 		"Вероятностно-взвешенная цена = Σ(probability / 100 × midpoint) по own-сценариям Q4-2026 (25/40/35 → 4285) сверяется с xau_q_avg в v_forecast_accuracy",
 	Columns: map[string]string{
@@ -37,7 +37,7 @@ ORDER BY published DESC, author, horizon, scenario`,
 		"low":         "Нижняя граница диапазона, USD/oz; NULL — диапазон не задан (у point-строк low = 0 в DDL)",
 		"high":        "Верхняя граница диапазона, USD/oz; NULL — диапазон не задан",
 		"point":       "Точечная цель, USD/oz; NULL — задан только диапазон (у 'range' point = 0 в DDL)",
-		"midpoint":    "Единая точка сравнения, USD/oz: point, если он задан, иначе середина (low + high) / 2; NULL — не задано ни то, ни другое",
+		"midpoint":    "Единая точка сравнения, USD/oz: point, если он задан, иначе середина (low + high) / 2 при обеих границах, иначе единственная заданная граница (low или high); NULL — ни point, ни границ",
 		"probability": "Вероятность сценария, % (25 = 25%); заполнена только у own-сценариев, у банковских строк NULL — вероятности не публикуются",
 	},
 }

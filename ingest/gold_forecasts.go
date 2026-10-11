@@ -30,7 +30,9 @@ type GoldForecast struct {
 }
 
 // ValidateGoldForecast проверяет строку прогноза до вставки; ошибки входа — 400.
-// published — строго YYYY-MM-DD в диапазоне Date32 (тот же parsePointDate, что у точек рядов).
+// published — строго YYYY-MM-DD: формат разбирает общий с parsePointDate, но
+// диапазон уже Date32 — колонка gold_forecasts.published объявлена Date
+// [1970-01-01, 2149-06-06], и дата 1950 молча завернулась бы драйвером.
 // Все три цены неотрицательны и хотя бы одна положительна: строка из нулей — это
 // незаполненный прогноз, а не цена. high сверяется с low только когда заданы оба —
 // у точечного прогноза и одностороннего диапазона второй границы нет.
@@ -38,8 +40,12 @@ func ValidateGoldForecast(f GoldForecast) error {
 	if strings.TrimSpace(f.Author) == "" {
 		return fmt.Errorf("author is required")
 	}
-	if _, err := parsePointDate(f.Published); err != nil {
+	published, err := parsePointDate(f.Published)
+	if err != nil {
 		return err
+	}
+	if published.Before(dateMinTime) || published.After(dateMaxTime) {
+		return fmt.Errorf("published %q out of Date range [%s, %s]", f.Published, dateMin, dateMax)
 	}
 	if strings.TrimSpace(f.Horizon) == "" {
 		return fmt.Errorf("horizon is required")

@@ -95,7 +95,7 @@ CREATE TABLE IF NOT EXISTS gold_forecasts (
 
 own-точки — середины диапазонов статьи; взвешенная 0.25·4800 + 0.4·4300 + 0.35·3900 = 4 285 совпадает с `xau_q_avg` прогона 10.10.2026. «—» в таблице = `0` в столбцах.
 
-**Витрина `v_gold_forecasts`** (`views/gold_forecasts.go`, импортёр `gold_views`): `author`, `published`, `horizon`, `scenario`, `low`, `high`, `point` (нули → NULL через `nullIf`), `midpoint` (= `point`, иначе середина `low`/`high`), `probability` (0 → NULL); `ORDER BY published DESC, author, horizon, scenario`. Комментарии таблицы и колонок; грант `kimi_reader`.
+**Витрина `v_gold_forecasts`** (`views/gold_forecasts.go`, импортёр `gold_views`): `author`, `published`, `horizon`, `scenario`, `low`, `high`, `point` (нули → NULL через `nullIf`), `midpoint` (= `point`, иначе середина `(low + high) / 2` при обеих границах, иначе единственная заданная граница, иначе NULL), `probability` (0 → NULL); `ORDER BY published DESC, author, horizon, scenario`. Комментарии таблицы и колонок; грант `kimi_reader`.
 
 ## 3. `forecast_resolve` — автозаполнение `forecast_log.actual`
 

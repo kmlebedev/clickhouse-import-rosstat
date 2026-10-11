@@ -5,6 +5,7 @@
 -- иначе гейт util.CreateView пропустит витрину (таблицы gold_forecasts ещё не будет).
 -- DDL ниже — дословная копия goldForecastsDdl из ingest/schema.go (канонический ARCHITECTURE.md §6.2):
 -- сид самодостаточен, прецедент — sql/events_calendar_q4_2026.sql.
+-- источник собственного сценарного веера (price_deck 'own_scenario' собирается из него; сейчас читает витрина v_gold_forecasts)
 -- Идемпотентность: ReplacingMergeTree ORDER BY (author, published, horizon, scenario) — повторный
 -- прогон перезапишет строки, но версии в таблице накопятся: сид применять один раз.
 --

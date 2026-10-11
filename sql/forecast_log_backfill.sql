@@ -18,6 +18,10 @@
 -- cmd/ingest); импортёр forecast_resolve её НЕ создаёт, он только читает и дописывает.
 -- Вставка идемпотентна: ReplacingMergeTree ORDER BY (metric, forecast_date) сворачивает
 -- повтор при merge, а резолвер перезаписывает строку только при изменившемся факте.
+-- Оговорка про повторное применение ПОСЛЕ прогона forecast_resolve: INSERT вставляет
+-- более новую версию строки с actual = NULL, и is_resolved временно вернётся в 0 —
+-- до следующего прогона forecast_resolve, который снова проставит факт (самолечение:
+-- FINAL-семантика ReplacingMergeTree оставляет самую свежую версию строки).
 
 INSERT INTO forecast_log (forecast_date, target_date, metric, predicted, actual, error_pct) VALUES
 ('2026-07-31', '2026-09-30', 'xau_q_avg', 4450, NULL, NULL);
