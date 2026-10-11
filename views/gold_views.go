@@ -3,8 +3,9 @@
 // v_forecast_accuracy (точность прогнозов из forecast_log),
 // v_dcf_assumptions (NPV активов по трём ценовым дека'м и двум контурам ставки),
 // v_imf_macro (золотые резервы ЦБ из IMF IRFCL, source='imf'),
-// v_gold_forecasts (консенсус аналитиков и own-сетка из gold_forecasts)
-// и v_gold_etf_flows (пивот месячных потоков и запасов золотых ETF WGC по регионам).
+// v_gold_forecasts (консенсус аналитиков и own-сетка из gold_forecasts),
+// v_gold_etf_flows (пивот месячных потоков и запасов золотых ETF WGC по регионам)
+// и v_cb_gold_dynamics (динамика резервов семи ЦБ WGC: MoM/YTD и уровень по стране).
 //
 // Импортёр gold_views запускается после ingest-первого-прогона: util.CreateView
 // пропускает витрину, пока не существуют все её таблицы (model_runs создаёт ingest),
@@ -31,7 +32,7 @@ type goldViews struct {
 // обязан видеть ИМЕННО то, что создаёт импортёр. Литерал внутри Import тест
 // повторить не может, и написанный в тесте свой список проверял бы сам себя:
 // витрина, выпавшая из импортёра, оставляла бы тест зелёным.
-var goldViewsList = []util.View{modelInputsView, goldDashboardView, forecastAccuracyView, dcfAssumptionsView, imfMacroView, goldForecastsView, goldEtfFlowsView}
+var goldViewsList = []util.View{modelInputsView, goldDashboardView, forecastAccuracyView, dcfAssumptionsView, imfMacroView, goldForecastsView, goldEtfFlowsView, cbGoldDynamicsView}
 
 func (s *goldViews) Name() string {
 	return "gold_views"

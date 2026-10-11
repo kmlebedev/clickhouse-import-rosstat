@@ -68,9 +68,11 @@ func wgcEtfSeriesMapSQL() string {
 // с четырьмя метриками-колонками. macro_series хранит длинный формат (одно значение
 // на ряд), поэтому витрина сама раскладывает 20 рядов набора по (region, metric)
 // через mapping-массив и агрегирует значения в колонки. Приоритет источников
-// webbridge > manual — та же конвенция, что в v_gold_dashboard: агрегат по
+// wgc > webbridge > manual: выгрузку WGC из wgc/data пишет импортёр wgc_etf_flows,
+// webbridge — сессионный сбор, manual — ручной фолбэк (та же конвенция, что в
+// v_gold_dashboard, где канонический источник — импортёр eia). Агрегат по
 // (date, series, source) внутри, выбор источника снаружи через maxIfOrNull
-// (maxIf вернул бы 0 и подменил бы отсутствующий ручной ряд нулём).
+// (maxIf вернул бы 0 и подменил бы отсутствующий ряд нулём).
 var goldEtfFlowsView = util.View{
 	Name:   "v_gold_etf_flows",
 	Tables: []string{"macro_series"},
@@ -87,19 +89,19 @@ FROM (
 ) AS m
 INNER JOIN (
     SELECT date, series,
-        coalesce(maxIfOrNull(value, source = 'webbridge'), maxIfOrNull(value, source = 'manual')) AS value
+        coalesce(maxIfOrNull(value, source = 'wgc'), maxIfOrNull(value, source = 'webbridge'), maxIfOrNull(value, source = 'manual')) AS value
     FROM macro_series FINAL
-    WHERE source IN ('webbridge', 'manual') AND series IN (` + wgcEtfSeriesNamesSQL() + `)
+    WHERE source IN ('wgc', 'webbridge', 'manual') AND series IN (` + wgcEtfSeriesNamesSQL() + `)
     GROUP BY date, series
 ) AS v ON v.series = m.series
 GROUP BY date, region
 ORDER BY date DESC, region`,
 	Comment: "Месячные потоки и запасы физически обеспеченных золотых ETF (WGC Gold ETF Flows, gold.org/goldhub): одна строка на (дата, регион). " +
-		"Ряды набора etf_<метрика>_<регион> лежат в macro_series с source='webbridge' — сессионный сбор после месячного отчёта WGC (~10-е число), запись одним POST /v1/manual_series всеми 20 рядами; " +
-		"приоритет источников webbridge > manual, ручной ввод остаётся фолбэком, если сбор не отработал. " +
+		"Ряды набора etf_<метрика>_<регион> лежат в macro_series: source='wgc' — импортёр wgc_etf_flows (месячная выгрузка ETF_Flows_*.xlsx из wgc/data), source='webbridge' — сессионный сбор после месячного отчёта WGC (~10-е число), запись одним POST /v1/manual_series всеми 20 рядами, source='manual' — ручной ввод; " +
+		"приоритет источников wgc > webbridge > manual — канонический ряд пишет импортёр, сессионный сбор и ручной ввод остаются фолбэками, если импорт не отработал. " +
 		"Потоки (flow_usd_mln, flow_tonnes) — за месяц, со знаком направления (плюс приток, минус отток); запасы (holdings_tonnes, aum_usd_bn) — сток на конец месяца. " +
 		"Мировой поток в USD (region='world', flow_usd_mln) — тот же показатель, что ручной etf_flows_month (source='manual', млрд USD — индикатор v_gold_dashboard), только в млн USD: не путать и не складывать. " +
-		"NULL в колонке — метрика за этот месяц не введена (не 0: ноль в macro_series означал бы «потока не было»). Порядок строк — date DESC, region (детерминированная выдача). Описания рядов, единицы и связь с etf_flows_month — в v_series_catalog, source='webbridge'",
+		"NULL в колонке — метрика за этот месяц не введена (не 0: ноль в macro_series означал бы «потока не было»). Порядок строк — date DESC, region (детерминированная выдача). Описания рядов, единицы и связь с etf_flows_month — в v_series_catalog (source='wgc' — записи импортёра, source='webbridge' — записи сида-фолбэка)",
 	Columns: map[string]string{
 		"date":            "Последний день отчётного месяца (Date32) — дата точки ряда, как у etf_flows_month",
 		"region":          "Регион разбивки WGC: world (мировой итог), north_america, europe, asia, other",
