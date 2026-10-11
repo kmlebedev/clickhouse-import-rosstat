@@ -184,11 +184,18 @@ git commit -m "add wgc etf flows json api parser"
 
 **Files:**
 - Modify: `wgc/etf.go` (целиком: текущий `Import` разложить на три функции)
-- Modify: `wgc/etf_test.go` (существующие три теста + два новых)
+- Modify: `wgc/etf_test.go` (существующие три теста + пять новых — см. Step 1)
 
 **Interfaces:**
-- Consumes: `etfPointsFromAPI`, `etfAPIBaseURL` (Task 2); `findLatestFile`, `parseEtfWorkbook`, `defaultDataDir` (существующие).
-- Produces: `etfFlowsStat.dir` (было) + **`etfFlowsStat.apiBase`** (пусто → `etfAPIBaseURL`); `var errNoEtfFile error`; `func etfLoadPoints(dir, apiBase string, now time.Time) (points []seriesPoint, fromAPI bool, file string, err error)`; `func etfPointsFromFile(dir string) ([]seriesPoint, error)`; `func writeEtfPoints(ctx context.Context, conn driver.Conn, points []seriesPoint) (int64, error)`; `func etfStoredMaxDate(ctx context.Context, conn driver.Conn) (time.Time, bool, error)`.
+- Consumes: `etfPointsFromAPI`, `etfAPIBaseURL` (Task 2); `seriesPoint` (`wgc/parse.go`), `findLatestFile`, `parseEtfWorkbook`, `defaultDataDir` (существующие); из этого же пакета — `etfFileMask`, `etfStatName`, `macroSeriesTable`/`macroSeriesDdl`/`macroSeriesInsert`, `wgcEtfMetrics`/`wgcEtfRegions`; `util.UpsertSeriesCatalog`, `wgcEtfCatalog`, тип `driver.Conn` (clickhouse-go v2).
+- Produces (сигнатуры — дословно как в ветке):
+  - `etfFlowsStat.dir` (было) + **`etfFlowsStat.apiBase`** (пусто → `etfAPIBaseURL`);
+  - `var errNoEtfFile = errors.New("в каталоге нет выгрузки ETF")` — sentinel, а не пустая строка пути: `findLatestFile` уже отдаёт `("", nil)`, и «файла нет» не должно смешиваться с «каталог не прочитался»;
+  - `func etfLoadPoints(dir, apiBase string, now time.Time) (points []seriesPoint, fromAPI bool, file string, err error)`;
+  - `func etfPointsFromFile(dir string) (points []seriesPoint, path string, err error)` — `path` возвращается наружу: им вызывающий инструментирует лог фолбэка и называет источник в guard-е устаревшей выгрузки (на ветках ошибок — пуст);
+  - `func writeEtfPoints(ctx context.Context, conn driver.Conn, points []seriesPoint) (count int64, err error)`;
+  - `func etfStoredMaxDate(ctx context.Context, conn driver.Conn) (time.Time, error)` — **без третьего результата `bool`** (флаг убран решением контроллера; не ищите его в коде). Причина: пустая таблица нормализуется в нулевое время — `maxOrNull` по пустой выборке отдаёт NULL, и «данных для сравнения нет» — это факт ответа, а не отдельный результат; решение «сравнивать не с чем» принимает `etfCacheLooksStale` по `IsZero()`;
+  - guard-хелперы: `func ensureMacroSeriesTable(ctx context.Context, conn driver.Conn) error`, `func etfWarnIfStale(ctx context.Context, conn driver.Conn, source string, maxDate time.Time)`, `func etfPointsMaxDate(points []seriesPoint) time.Time`, `func etfCacheLooksStale(apiMax, storedMax time.Time) bool`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -214,6 +221,20 @@ func TestEtfLoadPointsPrefersAPIOverFile(t *testing.T)
 
 Оба зовут `etfLoadPoints` напрямую (conn не нужен): в первом ожидание `fromAPI == false` и `len(points) > 0`; во втором `fromAPI == true` и `err == nil`. Реальная выгрузка копируется из `wgc/testdata/ETF_Flows_2026-10-02_1401.xlsx` в `t.TempDir()`; битый файл — `os.WriteFile` с мусором под маской `ETF_Flows_broken.xlsx` (в том же каталоге, но проверяется победа API).
 
+Три теста guard-а и чтения максимума (добавлены вместе с инструментированием фолбэка и переносом DDL — коммит `baa5773`; в плане их не было, а в ветке они есть):
+
+```go
+// табличный: решение «источник устарел» без соединения (пустая таблица → false,
+// равные даты → false, строго меньший максимум API → true)
+func TestEtfCacheLooksStale(t *testing.T)
+// фейковое соединение: maxOrNull по пустой таблице отдаёт NULL → нулевая дата,
+// ровно один запрос к соединению, эвристика «год <= 1970» не вернулась
+func TestEtfStoredMaxDateEmptyTableIsZero(t *testing.T)
+// фейковое соединение: порядок обращений DDL → guard → батч (на чистой базе
+// macro_series ещё нет, и прежний порядок давал ложный warn на первом прогоне)
+func TestEtfImportCreatesTableBeforeStaleGuard(t *testing.T)
+```
+
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `go test ./wgc/... -run 'TestEtfLoadPoints|TestEtfImport' -v`
@@ -221,16 +242,18 @@ Expected: FAIL — `undefined: etfLoadPoints`, `unknown field apiBase`
 
 - [ ] **Step 3: Implement the refactor in `wgc/etf.go`**
 
-- `etfPointsFromFile(dir string) ([]seriesPoint, error)`: существующая логика `Import` (findLatestFile → OpenFile → parseEtfWorkbook); файла нет → `errNoEtfFile`; битый файл / пустой разбор → ошибки с именем файла (как сейчас).
-- `etfLoadPoints(dir, apiBase string, now time.Time) (points []seriesPoint, fromAPI bool, file string, err error)`: `apiBase == ""` → `etfAPIBaseURL`; `etfPointsFromAPI`; успех API → `(points, true, "", nil)`; ошибка API → `log.Warnf("%s: API WGC недоступно (%v) — пробую локальную выгрузку", ...)` и `etfPointsFromFile`; фолбэк на файл → `(points, false, file, nil)`, где `file` — путь выбранной выгрузки (им вызывающий инструментирует лог и называет источник в guard-е устаревания); `errNoEtfFile` → warn + `(nil, false, "", nil)`; прочая ошибка файла → `(nil, false, "", err)`.
-- `writeEtfPoints(ctx, conn, points) (int64, error)`: текущий код записи как есть (сортировка `(series, date)`, `conn.Exec(macroSeriesDdl)`, `PrepareBatch`, `Append` с `batch.Abort()` при ошибке, `Send`, `util.UpsertSeriesCatalog(ctx, conn, wgcEtfCatalog())` после успешного `Send`, `log.Infof("Imported %d rows of %s (wgc ETF flows, %d series)", ...)`).
-- `etfStoredMaxDate(ctx, conn) (time.Time, bool, error)`: `SELECT max(date) FROM macro_series FINAL WHERE source = 'wgc' AND series LIKE 'etf\_%'`; пустая таблица (`max` → нулевая дата) → `(time.Time{}, false, nil)`.
-- `Import`: `points, fromAPI, file, err := etfLoadPoints(dir, s.apiBase, time.Now())` — ветки возврата: успех API → `(points, true, "", nil)`, фолбэк на файл → `(points, false, file, nil)` с путём выбранной выгрузки в `file`, `errNoEtfFile` → `(nil, false, "", nil)`, прочая ошибка файла → `(nil, false, "", err)`; `err` → вернуть; `len(points) == 0` → `log.Warnf` + `0, nil` (соединение не трогается); если `fromAPI` — guard кэша: `etfStoredMaxDate` и при меньшем максимуме API `log.Warnf("... возможен устаревший ответ CDN: API %s < сохранённый %s")` (**не ошибка**); иначе (файловый транспорт) — `log.Infof` с путём `file` и guard с источником `"локальная выгрузка "+file`; затем `writeEtfPoints`.
+- `etfPointsFromFile(dir string) (points []seriesPoint, path string, err error)`: существующая логика `Import` (findLatestFile → OpenFile → parseEtfWorkbook); файла нет → `errNoEtfFile`; битый файл / пустой разбор → ошибки с именем файла (как сейчас). Кроме точек возвращается `path` выбранной выгрузки; на ветках ошибок он пуст, на ветке успеха — это тот путь, которым `Import` инструментирует лог фолбэка и называет источник в guard-е устаревания.
+- `etfLoadPoints(dir, apiBase string, now time.Time) (points []seriesPoint, fromAPI bool, file string, err error)`: `apiBase == ""` → `etfAPIBaseURL`; `etfPointsFromAPI`; успех API → `(points, true, "", nil)`; ошибка API → `log.Warnf("%s: API WGC недоступно (%v) — пробую локальную выгрузку", ...)` и `etfPointsFromFile`; фолбэк на файл → `(points, false, file, nil)`, где `file` — путь выбранной выгрузки (им вызывающий инструментирует лог и называет источник в guard-е устаревания); `errNoEtfFile` → warn + `(nil, false, "", nil)`; прочая ошибка файла → `(nil, false, "", err)`. Возвращаются ровно **четыре** значения, а не три: `file` пуст только у API-транспорта.
+- `writeEtfPoints(ctx context.Context, conn driver.Conn, points []seriesPoint) (count int64, err error)`: код записи как есть (сортировка `(series, date)`, `PrepareBatch` по `macroSeriesInsert`, `Append` с `batch.Abort()` при ошибке, `Send`, `util.UpsertSeriesCatalog(ctx, conn, wgcEtfCatalog())` после успешного `Send`, `log.Infof("Imported %d rows of %s (wgc ETF flows, %d series)", ...)`). DDL здесь нет намеренно: он вынесен в `ensureMacroSeriesTable` и выполняется **до** guard-а устаревания (см. `Import`) — иначе первый прогон на чистой базе получал бы ложный warn «сохранённый максимум дат не прочитан».
+- `etfStoredMaxDate(ctx context.Context, conn driver.Conn) (time.Time, error)`: `SELECT maxOrNull(date) FROM macro_series FINAL WHERE source = 'wgc' AND series LIKE 'etf\_%'`; NULL (пустая таблица) → нулевое время `time.Time{}`, иначе дата, приведённая к UTC-полуночи. Третьего результата `bool` нет — см. Interfaces.
+- `ensureMacroSeriesTable(ctx, conn) error`: `conn.Exec(ctx, macroSeriesDdl)` с обёрткой ошибки именем импортёра и таблицы; зовётся из `Import` до guard-а.
+- `etfPointsMaxDate(points []seriesPoint) time.Time` — максимум дат точек источника; `etfCacheLooksStale(apiMax, storedMax time.Time) bool` — чистое решение guard-а (`storedMax.IsZero()` → `false`, иначе `apiMax.Before(storedMax)`); `etfWarnIfStale(ctx, conn, source string, maxDate time.Time)` — читает сохранённый максимум через `etfStoredMaxDate`, при ошибке чтения пишет warn «guard устаревания пропущен» (импорт не отменяется), при устаревании — warn с `source` в тексте.
+- `Import`: `points, fromAPI, file, err := etfLoadPoints(dir, s.apiBase, time.Now())`; `err` → вернуть; `len(points) == 0` → `log.Warnf` + `0, nil` (соединение не трогается); `ensureMacroSeriesTable`; `maxDate := etfPointsMaxDate(points)`; если `fromAPI` — `etfWarnIfStale(ctx, conn, "возможен устаревший ответ CDN (flows-chart2 + holdings-chart2)", maxDate)` (**не ошибка**); иначе — `log.Infof` с путём `file` и `etfWarnIfStale` с источником `"локальная выгрузка "+file`; затем `writeEtfPoints`. Ветки возврата `etfLoadPoints` здесь не повторяются — они расписаны выше, у самой функции.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `go test ./wgc/... -v`
-Expected: PASS — новые 2 + существующие (обновлённые) тесты `wgc`, включая xlsx-разбор `etf_parse_test.go`
+Expected: PASS — новые 5 + существующие (обновлённые) тесты `wgc`, включая xlsx-разбор `etf_parse_test.go`
 
 - [ ] **Step 5: Commit**
 
