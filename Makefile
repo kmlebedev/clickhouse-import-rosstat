@@ -159,6 +159,14 @@ mcp-user:
 dcf-aisc:
 	python3 scripts/extrapolation_aisc.py
 
+# ОПР-выпуск Сухого Лога 2025-2027: руда перерабатывается на Вернинской ЗИФ, и Полюс
+# показывает результат в производственных результатах Вернинского (сноска 13 пресс-релиза 1П2026),
+# но в модели эти годы не входили в NAV ни одного актива. Пишет sql/polyus_output_seed.sql и
+# polyus_output_attribution_long.csv, в ClickHouse НЕ пишет — вставка отдельно:
+# make ch-sql FILE=sql/polyus_output_seed.sql
+polyus-output:
+	python3 scripts/polyus_output_model.py
+
 # Smoke-проверка MCP end-to-end: поднимает сервер, вызывает list_tables и run_query по витринам,
 # проверяет, что сырая таблица закрыта. Нужен запущенный ClickHouse (make ch-up) и CLICKHOUSE_PASSWORD.
 mcp-check:
