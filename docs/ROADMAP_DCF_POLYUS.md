@@ -2,7 +2,7 @@
 
 **База:** проект [clickhouse-import-rosstat](https://github.com/kmlebedev/clickhouse-import-rosstat), аналитическая практика — [«Золото Q3-2026: итоги и прогноз Q4-2026»](Золото_Q3-2026_итоги_и_прогноз_Q4-2026.md)
 **Дата:** 8 октября 2026 г. (обновлено 11 октября 2026 г.: §7.1 — фаза 3, шаг 3: поактивный AISC Полюса калибруется скриптом `scripts/extrapolation_aisc.py` (цель `make dcf-aisc`) и увязывается к групповому AISC, приёмка добавлена; тем же днём — шаг 2: сид `mine_plans` из отчётности Полюса импортёром `dcf_mine_plans` выполнен, `dagu/dcf.yaml` (порядок сид → расчёт стал гарантией расписания) и окно правдоподобных годов плана в сиде; ранее 10 октября — §8.2 колоночная модель разбора PDF, §8.3 включены релизы 4Q/FY 2019–2024, заведена общая витрина `company_financials` — спека [2026-10-10-company-financials-views-design.md](superpowers/specs/2026-10-10-company-financials-views-design.md), §8.1 дефекты (3) и (4) закрыты, фаза 2 обновлена)
-**Сопутствующие документы:** [ARCHITECTURE.md](../ARCHITECTURE.md) (паттерны и схемы БД), [AGENTS.md](../AGENTS.md) (инструкции для AI-ассистентов), [ROADMAP_DCF_METALS.md](ROADMAP_DCF_METALS.md) (металлурги CHMF/MAGN/NLMK в общей витрине)
+**Сопутствующие документы:** [ARCHITECTURE.md](../ARCHITECTURE.md) (паттерны и схемы БД), [AGENTS.md](../AGENTS.md) (инструкции для AI-ассистентов), [ROADMAP_DCF_METALS.md](ROADMAP_DCF_METALS.md) (металлурги CHMF/MAGN/NLMK в общей витрине), [GOLD_THESIS_DATA_ROADMAP.md](GOLD_THESIS_DATA_ROADMAP.md) (данные и аналитические витрины для обновления тезисов по золоту: оценка полезности проекта, пробелы WGC/FedWatch/EIA, токен-экономия прогнозных сессий)
 
 ---
 
