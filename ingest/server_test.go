@@ -15,9 +15,10 @@ import (
 const testToken = "unit-test-token"
 
 type mockBatchWriter struct {
-	runs   []ModelRun
-	series [][]ManualSeriesPoint
-	err    error
+	runs       []ModelRun
+	series     [][]ManualSeriesPoint
+	goldPrices [][]GoldPricePoint
+	err        error
 }
 
 func (m *mockBatchWriter) EnsureTables(_ context.Context) error {
@@ -31,6 +32,11 @@ func (m *mockBatchWriter) InsertModelRun(_ context.Context, r ModelRun) error {
 
 func (m *mockBatchWriter) InsertManualSeries(_ context.Context, points []ManualSeriesPoint) error {
 	m.series = append(m.series, points)
+	return m.err
+}
+
+func (m *mockBatchWriter) InsertGoldPrices(_ context.Context, points []GoldPricePoint) error {
+	m.goldPrices = append(m.goldPrices, points)
 	return m.err
 }
 
@@ -226,6 +232,87 @@ func TestManualSeriesUnauthorized(t *testing.T) {
 	}
 }
 
+func TestGoldPricesOK(t *testing.T) {
+	writer := &mockBatchWriter{}
+	server := newTestServer(writer)
+	defer server.Close()
+
+	const body = `[
+		{"venue": "comex_front", "date": "2026-10-09", "usd": 4216.3},
+		{"venue": "comex_front", "date": "2026-10-08", "usd": 4157.0}
+	]`
+	status, payload := post(t, server.URL+"/v1/gold_prices", testToken, body)
+	if status != http.StatusOK {
+		t.Fatalf("status %d, want 200: %s", status, payload)
+	}
+	var response struct {
+		Inserted int `json:"inserted"`
+	}
+	if err := json.Unmarshal(payload, &response); err != nil {
+		t.Fatalf("response is not JSON: %s", payload)
+	}
+	if response.Inserted != 2 {
+		t.Fatalf("inserted = %d, want 2", response.Inserted)
+	}
+	if len(writer.goldPrices) != 1 || len(writer.goldPrices[0]) != 2 {
+		t.Fatalf("writer got %+v", writer.goldPrices)
+	}
+	first := writer.goldPrices[0][0]
+	if first.Venue != "comex_front" || first.Date != "2026-10-09" || first.Usd != 4216.3 {
+		t.Fatalf("first point = %+v", first)
+	}
+}
+
+func TestGoldPricesValidationErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"venue case mismatch", `[{"venue": "Comex_Front", "date": "2026-10-09", "usd": 4216.3}]`},
+		{"venue not in whitelist", `[{"venue": "spot", "date": "2026-10-09", "usd": 4216.3}]`},
+		{"date not zero padded", `[{"venue": "comex_front", "date": "2026-1-1", "usd": 4216.3}]`},
+		{"impossible date", `[{"venue": "comex_front", "date": "2026-13-01", "usd": 4216.3}]`},
+		{"usd missing", `[{"venue": "comex_front", "date": "2026-10-09"}]`},
+		{"zero usd", `[{"venue": "comex_front", "date": "2026-10-09", "usd": 0}]`},
+		{"negative usd", `[{"venue": "comex_front", "date": "2026-10-09", "usd": -1}]`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			writer := &mockBatchWriter{}
+			server := newTestServer(writer)
+			defer server.Close()
+
+			status, payload := post(t, server.URL+"/v1/gold_prices", testToken, tt.body)
+			if status != http.StatusBadRequest {
+				t.Fatalf("status %d, want 400: %s", status, payload)
+			}
+			if len(writer.goldPrices) != 0 {
+				t.Fatal("writer must not be called on validation error")
+			}
+		})
+	}
+}
+
+func TestGoldPricesEmptyArray(t *testing.T) {
+	writer := &mockBatchWriter{}
+	server := newTestServer(writer)
+	defer server.Close()
+
+	status, payload := post(t, server.URL+"/v1/gold_prices", testToken, `[]`)
+	if status != http.StatusOK {
+		t.Fatalf("status %d, want 200: %s", status, payload)
+	}
+	var response struct {
+		Inserted int `json:"inserted"`
+	}
+	if err := json.Unmarshal(payload, &response); err != nil {
+		t.Fatalf("response is not JSON: %s", payload)
+	}
+	if response.Inserted != 0 {
+		t.Fatalf("inserted = %d, want 0", response.Inserted)
+	}
+}
+
 func TestModelRunUnknownFieldIsRejected(t *testing.T) {
 	writer := &mockBatchWriter{}
 	server := newTestServer(writer)
@@ -249,13 +336,63 @@ func TestManualSeriesUnknownFieldIsRejected(t *testing.T) {
 	server := newTestServer(writer)
 	defer server.Close()
 
-	const body = `[{"series": "CPIAUCSL", "date": "2026-01-01", "value": 1, "source": "fred"}]`
+	const body = `[{"series": "CPIAUCSL", "date": "2026-01-01", "value": 1, "units": "pct"}]`
 	status, payload := post(t, server.URL+"/v1/manual_series", testToken, body)
 	if status != http.StatusBadRequest {
 		t.Fatalf("status %d, want 400: %s", status, payload)
 	}
 	if len(writer.series) != 0 {
 		t.Fatal("writer must not be called with unknown field")
+	}
+}
+
+func TestManualSeriesSourceAccepted(t *testing.T) {
+	writer := &mockBatchWriter{}
+	server := newTestServer(writer)
+	defer server.Close()
+
+	const body = `[{"series": "ra_gold_pol", "date": "2026-08-01", "value": 45600, "source": "imf"}]`
+	status, payload := post(t, server.URL+"/v1/manual_series", testToken, body)
+	if status != http.StatusOK {
+		t.Fatalf("status %d, want 200: %s", status, payload)
+	}
+	if len(writer.series) != 1 || writer.series[0][0].Source != "imf" {
+		t.Fatalf("writer got %+v", writer.series)
+	}
+}
+
+func TestManualSeriesSourceRejected(t *testing.T) {
+	writer := &mockBatchWriter{}
+	server := newTestServer(writer)
+	defer server.Close()
+
+	const body = `[{"series": "CPIAUCSL", "date": "2026-01-01", "value": 1, "source": "fred"}]`
+	status, payload := post(t, server.URL+"/v1/manual_series", testToken, body)
+	if status != http.StatusBadRequest {
+		t.Fatalf("status %d, want 400: %s", status, payload)
+	}
+	if !strings.Contains(string(payload), "source") {
+		t.Fatalf("expected source in error text, got %s", payload)
+	}
+	if len(writer.series) != 0 {
+		t.Fatal("writer must not be called on validation error")
+	}
+}
+
+func TestManualSeriesSourceDefault(t *testing.T) {
+	writer := &mockBatchWriter{}
+	server := newTestServer(writer)
+	defer server.Close()
+
+	const body = `[{"series": "dxy", "date": "2026-10-09", "value": 102.21}]`
+	status, payload := post(t, server.URL+"/v1/manual_series", testToken, body)
+	if status != http.StatusOK {
+		t.Fatalf("status %d, want 200: %s", status, payload)
+	}
+	// Дефолт 'manual' применяет writer (source пустой) — здесь только проверяем,
+	// что отсутствие поля валидно и точка доходит до writer'а без подстановки в handler.
+	if len(writer.series) != 1 || writer.series[0][0].Source != "" {
+		t.Fatalf("writer got %+v", writer.series)
 	}
 }
 

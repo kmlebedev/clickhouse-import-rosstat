@@ -19,6 +19,7 @@ type BatchWriter interface {
 	EnsureTables(ctx context.Context) error
 	InsertModelRun(ctx context.Context, r ModelRun) error
 	InsertManualSeries(ctx context.Context, points []ManualSeriesPoint) error
+	InsertGoldPrices(ctx context.Context, points []GoldPricePoint) error
 }
 
 // Server — HTTP-сервер ingest-контура: единственный путь записи в model_runs/forecast_log/macro_series.
@@ -38,6 +39,7 @@ func newServer(writer BatchWriter, token string, limiter *tokenBucket) *Server {
 	s := &Server{writer: writer, token: token, mux: http.NewServeMux(), limiter: limiter}
 	s.mux.HandleFunc("POST /v1/model_run", s.handleModelRun)
 	s.mux.HandleFunc("POST /v1/manual_series", s.handleManualSeries)
+	s.mux.HandleFunc("POST /v1/gold_prices", s.handleGoldPrices)
 	return s
 }
 
@@ -103,6 +105,26 @@ func (s *Server) handleManualSeries(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.writer.InsertManualSeries(r.Context(), points); err != nil {
 		log.Errorf("ingest: insert manual_series: %v", err)
+		http.Error(w, "insert failed", http.StatusInternalServerError)
+		return
+	}
+	writeInserted(w, len(points))
+}
+
+func (s *Server) handleGoldPrices(w http.ResponseWriter, r *http.Request) {
+	var points []GoldPricePoint
+	if status, err := decodeBody(w, r, &points); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), status)
+		return
+	}
+	for _, point := range points {
+		if err := ValidateGoldPricePoint(point); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	if err := s.writer.InsertGoldPrices(r.Context(), points); err != nil {
+		log.Errorf("ingest: insert gold_prices: %v", err)
 		http.Error(w, "insert failed", http.StatusInternalServerError)
 		return
 	}

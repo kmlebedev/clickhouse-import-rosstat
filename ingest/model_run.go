@@ -115,15 +115,35 @@ func validateProbabilities(probabilities map[string]float64) error {
 	return nil
 }
 
-// ManualSeriesPoint — вручную введённая точка ряда macro_series (source='manual').
+// sortedKeys — ключи булева словаря в детерминированном порядке для текстов ошибок.
+func sortedKeys(m map[string]bool) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// ManualSeriesPoint — вручную введённая точка ряда macro_series.
+// source по умолчанию 'manual' (пустое значение); допустимы 'manual', 'webbridge', 'imf'.
 type ManualSeriesPoint struct {
 	Series string  `json:"series"`
 	Date   string  `json:"date"`
 	Value  float64 `json:"value"`
+	Source string  `json:"source"`
+}
+
+// validManualSources — допустимые источники записи через /v1/manual_series.
+var validManualSources = map[string]bool{
+	"manual":    true,
+	"webbridge": true,
+	"imf":       true,
 }
 
 // ValidateManualSeriesPoint проверяет точку ряда. date — строго YYYY-MM-DD;
 // macro_series.date имеет тип Date32, поэтому даты до 1970 валидны.
+// Пустой source допустим — дефолт 'manual' применяет writer.
 func ValidateManualSeriesPoint(p ManualSeriesPoint) error {
 	if strings.TrimSpace(p.Series) == "" {
 		return fmt.Errorf("series is required")
@@ -131,6 +151,39 @@ func ValidateManualSeriesPoint(p ManualSeriesPoint) error {
 	date, err := time.Parse(manualSeriesDateLayout, p.Date)
 	if err != nil || date.Format(manualSeriesDateLayout) != p.Date {
 		return fmt.Errorf("date %q must be in YYYY-MM-DD format", p.Date)
+	}
+	if p.Source != "" && !validManualSources[p.Source] {
+		return fmt.Errorf("source %q must be one of: %s", p.Source, strings.Join(sortedKeys(validManualSources), ", "))
+	}
+	return nil
+}
+
+// GoldPricePoint — точка цены золота по площадке (таблица gold_prices, ключ (venue, date)).
+type GoldPricePoint struct {
+	Venue string  `json:"venue"`
+	Date  string  `json:"date"`
+	Usd   float64 `json:"usd"`
+}
+
+// validGoldVenues — допустимые площадки записи через ingest. Словарь расширяемый:
+// новая venue добавляется здесь вместе с описанием ряда в series_catalog.
+var validGoldVenues = map[string]bool{
+	"comex_front": true,
+}
+
+// ValidateGoldPricePoint проверяет точку цены до вставки; ошибки входа — 400.
+// venue сверяется точно по whitelist (регистр значим), date — строго YYYY-MM-DD,
+// цена золота обязана быть положительной (отсутствующее поле usd даёт 0 → ошибка).
+func ValidateGoldPricePoint(p GoldPricePoint) error {
+	if !validGoldVenues[p.Venue] {
+		return fmt.Errorf("venue %q must be one of: %s", p.Venue, strings.Join(sortedKeys(validGoldVenues), ", "))
+	}
+	date, err := time.Parse(manualSeriesDateLayout, p.Date)
+	if err != nil || date.Format(manualSeriesDateLayout) != p.Date {
+		return fmt.Errorf("date %q must be in YYYY-MM-DD format", p.Date)
+	}
+	if p.Usd <= 0 {
+		return fmt.Errorf("usd %v must be positive", p.Usd)
 	}
 	return nil
 }

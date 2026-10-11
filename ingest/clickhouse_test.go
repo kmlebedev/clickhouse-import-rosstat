@@ -396,3 +396,78 @@ func TestInsertModelRunConcurrentRetriesWriteOnce(t *testing.T) {
 		t.Fatalf("forecast_log batches %d, want 1", n)
 	}
 }
+
+func TestInsertGoldPricesAppendsRows(t *testing.T) {
+	store := newFakeStore()
+	writer := newTestWriter(store)
+	points := []GoldPricePoint{
+		{Venue: "comex_front", Date: "2026-10-09", Usd: 4216.3},
+		{Venue: "comex_front", Date: "2026-10-08", Usd: 4157.0},
+	}
+
+	if err := writer.InsertGoldPrices(context.Background(), points); err != nil {
+		t.Fatalf("InsertGoldPrices: %v", err)
+	}
+	if n := store.batchesFor(goldPricesInsert); n != 1 {
+		t.Fatalf("gold_prices batches: %d, want 1", n)
+	}
+	if len(store.sent) != 1 || len(store.sent[0].rows) != 2 {
+		t.Fatalf("sent %+v, want one batch with two rows", store.sent)
+	}
+	row := store.sent[0].rows[0]
+	venue, _ := row[0].(string)
+	date, _ := row[1].(time.Time)
+	usd, _ := row[2].(float64)
+	if venue != "comex_front" || date.Format(manualSeriesDateLayout) != "2026-10-09" || math.Abs(usd-4216.3) > 1e-9 {
+		t.Fatalf("row = %v", row)
+	}
+}
+
+func TestInsertGoldPricesAppendErrorAborts(t *testing.T) {
+	store := newFakeStore()
+	store.failAppend[goldPricesInsert] = errors.New("append rejected")
+
+	err := newTestWriter(store).InsertGoldPrices(context.Background(), []GoldPricePoint{{Venue: "comex_front", Date: "2026-10-09", Usd: 4216.3}})
+	if err == nil {
+		t.Fatal("expected error from failed append")
+	}
+	if n := store.abortedFor(goldPricesInsert); n != 1 {
+		t.Fatalf("Abort calls for %s: %d, want 1", goldPricesInsert, n)
+	}
+	if n := store.batchesFor(goldPricesInsert); n != 0 {
+		t.Fatalf("%s sent %d times after append failure, want 0", goldPricesInsert, n)
+	}
+}
+
+func TestInsertGoldPricesEmptySkipsBatch(t *testing.T) {
+	store := newFakeStore()
+	if err := newTestWriter(store).InsertGoldPrices(context.Background(), nil); err != nil {
+		t.Fatalf("empty slice must succeed: %v", err)
+	}
+	if len(store.sent) != 0 {
+		t.Fatalf("empty slice must not trigger a batch, got %d", len(store.sent))
+	}
+}
+
+func TestInsertManualSeriesSourcePassedThrough(t *testing.T) {
+	store := newFakeStore()
+	points := []ManualSeriesPoint{
+		{Source: "imf", Series: "ra_gold_pol", Date: "2026-08-01", Value: 45600},
+		{Series: "dxy", Date: "2026-10-09", Value: 102.21},
+	}
+
+	if err := newTestWriter(store).InsertManualSeries(context.Background(), points); err != nil {
+		t.Fatalf("InsertManualSeries: %v", err)
+	}
+	if len(store.sent) != 1 || len(store.sent[0].rows) != 2 {
+		t.Fatalf("sent %+v, want one batch with two rows", store.sent)
+	}
+	first, _ := store.sent[0].rows[0][0].(string)
+	second, _ := store.sent[0].rows[1][0].(string)
+	if first != "imf" {
+		t.Fatalf("explicit source = %q, want imf", first)
+	}
+	if second != "manual" {
+		t.Fatalf("default source = %q, want manual", second)
+	}
+}
