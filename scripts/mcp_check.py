@@ -256,6 +256,42 @@ async def check(params, server_log):
             denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
             failed += not expect("сырая таблица закрыта", denied, "отказ ClickHouse 497 на macro_series (ожидаемо)" if denied else raw[:200])
 
+            # Контур bold.report (спека §4.4): витрины дневного агрегата и пер-фондового
+            # среза видны агенту, каталог source='bold' описывает ровно 7 рядов, а сырая
+            # bold_fund_snapshot — источник пер-фондовой витрины — агенту закрыта (как
+            # macro_series: читать её агент обязан только через витрину).
+            for view in ("v_gold_etf_flows_daily", "v_gold_etf_funds_daily"):
+                failed += not expect(f"витрина {view} видна", view in tables, "list_tables default")
+
+            # Пустая витрина — не отказ: до первого прогона bold_etf_flows (или при
+            # выходном дне источника) строк нет и вовсе, поэтому проверяется РАЗРЕШЕНИЕ
+            # чтения, как у v_dcf_assumptions и v_gold_etf_flows.
+            for view, label in (("v_gold_etf_flows_daily", "дневной агрегат bold читается"),
+                                ("v_gold_etf_funds_daily", "пер-фондовый срез bold читается")):
+                bold_view = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {view}"}))
+                failed += not expect(label, "rows" in bold_view and "Query execution failed" not in bold_view and "ACCESS_DENIED" not in bold_view, bold_view[:200])
+
+            # Каталог source='bold' — 7 рядов ETF-контура: каталог пишет импортёр только
+            # после успешного Send, поэтому «меньше 7» значит неприменённый импорт (числа
+            # агент прочитает, а что измеряет ряд и в каких единицах — нет), «больше 7» —
+            # ряд, которого витрина не знает.
+            catalog_bold_raw = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'bold'"}))
+            catalog_bold = result_rows(catalog_bold_raw)
+            catalog_bold_n = catalog_bold[0].get("n") if catalog_bold else None
+            if catalog_bold is None:
+                catalog_bold_detail = f"ответ не распознан: {catalog_bold_raw[:200]}"
+            elif catalog_bold_n == 7:
+                catalog_bold_detail = "рядов bold: 7"
+            else:
+                catalog_bold_detail = (f"рядов bold: {catalog_bold_n}, want 7 — прогнать "
+                                       "make import STAT=bold_etf_flows (каталог пишется после успешной записи)")
+            failed += not expect("каталог bold полон", catalog_bold_n == 7, catalog_bold_detail)
+
+            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM bold_fund_snapshot"}))
+            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+            failed += not expect("сырой пер-фондовый срез закрыт", denied,
+                                 "отказ ClickHouse 497 на bold_fund_snapshot (ожидаемо)" if denied else raw[:200])
+
     return failed
 
 
