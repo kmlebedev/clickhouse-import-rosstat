@@ -1,11 +1,13 @@
 package util
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 const (
@@ -17,15 +19,26 @@ const (
 	emptyBodySnippet = "(пустое тело)"
 )
 
+// jsonTimeout — дедлайн одного запроса GetJSON. Переменная (а не константа),
+// чтобы тест мог подставить короткий дедлайн вместо минутного. Прецедент —
+// gold/gold.go (goldTimeout = 60 * time.Second). Дедлайн тут нужен именно ради
+// фолбэка импортёра: фолбэк уходит на локальную выгрузку по ошибке, а зависший
+// ответ без дедлайна ошибки не даёт — `make import STAT=wgc_etf_flows` повис бы
+// вместо фолбэка.
+var jsonTimeout = 60 * time.Second
+
 // GetJSON скачивает url общим HttpClient (тот же User-Agent, что у GetFile/GetCSV)
 // и разбирает ответ как JSON в out. Отличие от GetFile — статус проверяется явно:
 // тело не-200 (HTML WAF, JSON ошибки) не является JSON, и ошибка разбора скрыла бы
 // настоящую причину. В текст ошибки попадают код и начало тела, но не URL: у
 // вызывающих в query бывает ключ, а ошибка уезжает в лог (урок eia) — URL-контекст
 // добавляет сам вызывающий. Пустое тело — тоже ошибка: пустой ответ неотличим от
-// «данных нет» и не должен выглядеть успешным импортом.
+// «данных нет» и не должен выглядеть успешным импортом. Запрос ограничен
+// jsonTimeout: зависший ответ иначе не дал бы ошибки, а фолбэк ждёт именно ошибку.
 func GetJSON(url string, out any) error {
-	req, err := http.NewRequest("GET", url, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), jsonTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return err
 	}
