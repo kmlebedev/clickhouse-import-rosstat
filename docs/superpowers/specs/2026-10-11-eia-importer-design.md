@@ -25,14 +25,20 @@ EIA API v2, ключ `EIA_API_KEY` из env (секрет только чере�
 
 | Ряд в `macro_series` | Код EIA | Маршрут | Единица | Частота |
 |---|---|---|---|---|
-| `distillate_stocks` | WDISTUS1 | `/v2/petroleum/stoc/wstk/data/` | thousand barrels | W |
-| `refinery_utilization` | WUPRUUS2 | `/v2/petroleum/pnp/wiup/data/` | percent | W |
+| `distillate_stocks` | WDISTUS1 | `/v2/petroleum/stoc/wstk/data/` | thousand barrels (`units: MBBL`) | W |
+| `refinery_utilization` | WPULEUS3 | `/v2/petroleum/pnp/wiup/data/` | percent (`units: %`) | W |
+
+Коды подтверждены фасетами и данными API 11.10.2026: `WDISTUS1` — «U.S. Ending Stocks of
+Distillate Fuel Oil (Thousand Barrels)», последнее 2026-10-02 = 105 138; `WPULEUS3` — «U.S.
+Percent Utilization of Refinery Operable Capacity», последнее 2026-10-02 = 92,7. Ожидавшийся
+`WUPRUUS2` в фасетах отсутствует — используется фактический `WPULEUS3`.
 
 Запрос: `api_key`, `frequency=weekly`, `data[0]=value`, `facets[series][]=<code>`,
 `start=2019-01-01`, `sort[0][column]=period`, `sort[0][direction]=asc`, `length=5000`, `offset`
-(пагинация по `response.total`). Ответ: `response.data[]` с `period` (`YYYY-MM-DD`), `value`
-(строка), `unit`. Записи без значения пропускаются; ошибки парсинга даты/значения — с
-контекстом серии, импорт падает.
+(пагинация по `response.total`). Ответ: `response.data[]` с `period` (`YYYY-MM-DD`), `value` (строка), `units` (`MBBL` / `%`),
+`series-description`. Ряд из 405 точек (с 2019-01-01) укладывается в лимит 5000 строк — пагинация
+реализуется превентивно по `response.total`. Записи без значения пропускаются; ошибки парсинга
+даты/значения — с контекстом серии, импорт падает.
 
 Имя ряда `distillate_stocks` совпадает с индикатором `v_gold_dashboard` намеренно (единая
 линия значений по источникам); нативный код WDISTUS1 фиксируется в `series_catalog.origin`.
