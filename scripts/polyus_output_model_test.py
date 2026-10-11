@@ -141,8 +141,10 @@ class TestOverlap(unittest.TestCase):
         om.assert_no_overlap(other, go_seed_years={2028, 2029, 2030})
 
     def test_default_horizon_matches_go_seed(self):
-        # MineLifeYears: 10, ProfileStartYear: 2028 -> 2028..2037 включительно.
-        self.assertEqual(om.GO_SEED_SUKHOI_LOG_YEARS, frozenset(range(2028, 2038)))
+        # MineLifeYears: 10, ProfileStartYear: 2030 -> 2030..2039 включительно.
+        # Профиль начинается ПОСЛЕ окна ОПР (2025-2029): первая линия ЗИФ
+        # Сухого Лога — 2030 по базовому графику (консенсус аналитиков).
+        self.assertEqual(om.GO_SEED_SUKHOI_LOG_YEARS, frozenset(range(2030, 2040)))
 
     def test_horizon_is_derived_from_the_go_seed_source(self):
         """Горизонт обязан читаться из Go-сида, а не быть транскрибированным.
@@ -155,7 +157,7 @@ class TestOverlap(unittest.TestCase):
         seed = (om.ROOT / "dcf" / "mine_plans_seed.go").read_text(encoding="utf-8")
         start = om.parse_go_seed_profile_start_year(seed)
         life = om.parse_go_seed_mine_life_years(seed, om.ASSET)
-        self.assertEqual(start, 2028)
+        self.assertEqual(start, 2030)
         self.assertEqual(life, 10)
         self.assertEqual(om.GO_SEED_SUKHOI_LOG_YEARS,
                          frozenset(range(start, start + life)))
