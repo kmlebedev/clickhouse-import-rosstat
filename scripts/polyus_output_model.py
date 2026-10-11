@@ -28,6 +28,7 @@
 скрипт из `~/.config/rosstat/env`).
 """
 
+import csv
 import sys
 from pathlib import Path
 
@@ -288,3 +289,120 @@ def assert_no_overlap(rows: list, go_seed_years=frozenset(GO_SEED_SUKHOI_LOG_YEA
             f"({min(go_seed_years)}…{max(go_seed_years)}): сид затёр бы его строки "
             f"целиком, вместе с проектным профилем и capex"
         )
+
+
+# Артефакты прогона. SQL — то, что применяется вручную; CSV — то, что человек
+# читает глазами, сверяя строки с публикацией. Ровно так же устроен AISC-сид
+# (`sql/dcf_mine_plans_seed.sql` + `polyus_lom_reconciled_long.csv`).
+OUTPUT_SQL = ROOT / "sql" / "polyus_output_seed.sql"
+OUTPUT_CSV = ROOT / "polyus_output_attribution_long.csv"
+
+# Команда применения сида — печатается в шапке, чтобы её можно было скопировать
+# из файла в терминал, не заглядывая в документацию.
+APPLY_COMMAND = "make ch-sql FILE=sql/polyus_output_seed.sql"
+
+SQL_HEADER_TEMPLATE = """\
+-- Сид mine_plans: ОПР-выпуск Сухого Лога 2025–2027 (атрибуция руды Вернинской ЗИФ).
+--
+-- СГЕНЕРИРОВАН АВТОМАТИЧЕСКИ, ПРАВИТЬ РУКАМИ НЕЛЬЗЯ: правка будет затёрта
+-- следующим прогоном (scripts/polyus_output_model.py, цель `make polyus-output`).
+--
+-- Команда генерации: {command}
+-- Дата генерации: {generated}
+-- Строк в сиде: {row_count}
+--
+-- ЧТО ЭТО. Полюс с 2024 года ведёт опытно-промышленную разработку (ОПР) Сухого
+-- Лога с переработкой руды на Вернинской ЗИФ, и результаты этой переработки
+-- показывает В ПРОИЗВОДСТВЕННЫХ РЕЗУЛЬТАТАХ ВЕРНИНСКОГО (сноска 13 пресс-релиза
+-- за 1 полугодие 2026). Экономически выпуск принадлежит источнику руды: затраты
+-- привязаны к карьеру.
+--
+-- ПОЧЕМУ ЭТИ ГОДЫ БЫЛИ ПОТЕРЯНЫ. AISC-сид обнуляет production_koz Вернинского в
+-- окне консервации (2025–2028), а план Сухого Лога в Go-сиде начинается с 2028
+-- (ProfileStartYear). Поэтому выпуск 2025–2027 не входил в NAV НИ ОДНОГО актива.
+--
+-- ПОЧЕМУ ТОЛЬКО 2025–2027. Год 2028+ принадлежит Go-сиду (горизонт 2028–2037,
+-- профиль 2 300–2 800 koz, capex 600 млн/год). `ReplacingMergeTree` сворачивает
+-- строку по (company, asset, year) ЦЕЛИКОМ, поэтому пересечение ключей затёрло бы
+-- проектный профиль. Множества годов не пересекаются по построению, и это
+-- проверяет `assert_no_overlap` (OverlapError), а не комментарий.
+--
+-- ЗНАЧЕНИЯ. 2025 (242.2) и 2026 (271.7) — измеренный `Total refined gold output`
+-- Вернинской ЗИФ, koz. 2027 (257.0) — ОЦЕНКА: среднее двух наблюдённых лет,
+-- округлённое до целого. TCC = AISC = 735 USD/унц — прокси Иркутской БЕ,
+-- дословно как у Сухого Лога в Go-сиде; при равенстве клин поддержания нулевой,
+-- потому что AISC-клин для ОПР не калибровался.
+--
+-- ПРИМЕНЯЕТСЯ ВРУЧНУЮ, ОТДЕЛЬНЫМ ШАГОМ — и это намеренно, как у AISC-сида:
+--   {apply}
+-- В `dagu/dcf.yaml` шага НЕТ: на staging не заработали бы ни make, ни сам
+-- SQL-файл, а провал был бы бесшумным (цепочка пересеяла бы строки из Go-снимка).
+{statements}"""
+
+
+def write_sql(path: Path, rows: list) -> None:
+    """Пишет SQL-сид: шапка-комментарий плюс один `INSERT` со всеми строками.
+
+    Эмиссия делегирована `aisc.sql_batches` — тому же эмиттеру, что печатает
+    AISC-сид. Второй эмиттер разошёлся бы с первым в порядке колонок, а
+    ClickHouse принимает перестановку однотипных `Float64` МОЛЧА и записал бы
+    `tcc` в `aisc`: порядок колонок здесь — контракт, а не оформление.
+
+    Шапка печатается даже при нулевом числе строк: пустой план должен быть
+    виден как пустой, а не превращаться в файл без объяснения.
+    """
+    from datetime import date
+
+    statements = "\n".join(aisc.sql_batches(rows))
+    header = SQL_HEADER_TEMPLATE.format(
+        command="make polyus-output",
+        generated=date.today().isoformat(),
+        row_count=len(rows),
+        apply=APPLY_COMMAND,
+        statements=statements,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(header, encoding="utf-8")
+
+
+# Колонки CSV: десять колонок сида плюс справка для глаз. `source_metric`
+# отвечает на вопрос, который иначе пришлось бы держать в голове: 242.2 — это
+# измерение, а 257.0 — оценка средним. Без неё вторая строка выглядела бы как
+# факт.
+CSV_COLUMNS = tuple(aisc.MINE_PLANS_COLUMNS) + ("source_metric",)
+
+# Метки источника выпуска. Строки, а не enum: CSV читает человек.
+SOURCE_MEASURED = "refined_measured"
+SOURCE_ESTIMATED = "mean_2025_2026"
+
+
+def write_csv(path: Path, rows: list) -> None:
+    """Пишет long-формат CSV для глазной сверки.
+
+    `grade_gpt = None` выражается ПУСТОЙ ячейкой, а не строкой `NULL`: это файл
+    для человека, и «NULL» в нём читался бы как значение, тогда как пустота
+    означает «не раскрыто». Ноль здесь означал бы измеренное «0 г/т».
+
+    Оценка помечается в `source_metric`: у 2027 выпуск выведен средним, и без
+    пометки строка неотличима от наблюдения — ровно тот дефект, от которого
+    защищает `ESTIMATED_YEARS`.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(CSV_COLUMNS)
+        for row in rows:
+            source = SOURCE_ESTIMATED if row["year"] in ESTIMATED_YEARS else SOURCE_MEASURED
+            writer.writerow((
+                "PLZL",
+                row["asset"],
+                row["year"],
+                repr(row["production_koz"]),
+                "" if row["grade_gpt"] is None else repr(row["grade_gpt"]),
+                repr(row["tcc"]),
+                repr(row["aisc"]),
+                repr(row["capex_sustaining"]),
+                repr(row["capex_project"]),
+                repr(row["closure_costs"]),
+                source,
+            ))

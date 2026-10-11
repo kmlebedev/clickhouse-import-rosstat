@@ -9,7 +9,9 @@
 шаг `make polyus-output` + SQL-проверки (план, Task 5).
 """
 
+import csv
 import sys
+import tempfile
 import unittest
 import unittest.mock
 from pathlib import Path
@@ -111,6 +113,62 @@ class TestOverlap(unittest.TestCase):
         rows = om.build_rows({2025: 242.2, 2026: 271.7})
         # Вызов без аргумента обязан пройти: окно ОПР по построению до 2028.
         om.assert_no_overlap(rows)
+
+
+class TestEmit(unittest.TestCase):
+    def setUp(self):
+        self.rows = om.build_rows({2025: 242.2, 2026: 271.7})
+
+    def test_sql_has_single_insert_with_three_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "seed.sql"
+            om.write_sql(path, self.rows)
+            text = path.read_text(encoding="utf-8")
+        self.assertEqual(text.count("INSERT INTO mine_plans"), 1)
+        self.assertEqual(text.count("('PLZL','Sukhoi Log',"), 3)
+
+    def test_sql_header_names_manual_apply(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "seed.sql"
+            om.write_sql(path, self.rows)
+            text = path.read_text(encoding="utf-8")
+        self.assertIn("make ch-sql FILE=sql/polyus_output_seed.sql", text)
+        self.assertIn("ПРАВИТЬ РУКАМИ НЕЛЬЗЯ", text)
+
+    def test_sql_rows_carry_expected_values(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "seed.sql"
+            om.write_sql(path, self.rows)
+            text = path.read_text(encoding="utf-8")
+        # 2025: 242.2, 2026: 271.7, 2027: 257.0; tcc=aisc=735; capex 0; closure 0.
+        self.assertIn("('PLZL','Sukhoi Log',2025,242.2,NULL,735.0,735.0,0.0,0,0)", text)
+        self.assertIn("('PLZL','Sukhoi Log',2027,257.0,NULL,735.0,735.0,0.0,0,0)", text)
+
+    def test_csv_column_count_matches_header(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "out.csv"
+            om.write_csv(path, self.rows)
+            with path.open(encoding="utf-8") as handle:
+                table = list(csv.reader(handle))
+        self.assertEqual(len(table), 4)
+        self.assertTrue(all(len(row) == len(table[0]) for row in table))
+
+    def test_csv_grade_cell_is_empty_not_null_literal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "out.csv"
+            om.write_csv(path, self.rows)
+            with path.open(encoding="utf-8") as handle:
+                rows = list(csv.DictReader(handle))
+        self.assertEqual(rows[0]["grade_gpt"], "")
+
+    def test_csv_marks_estimated_year_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "out.csv"
+            om.write_csv(path, self.rows)
+            with path.open(encoding="utf-8") as handle:
+                rows = {r["year"]: r for r in csv.DictReader(handle)}
+        self.assertEqual(rows["2025"]["source_metric"], "refined_measured")
+        self.assertEqual(rows["2027"]["source_metric"], "mean_2025_2026")
 
 
 if __name__ == "__main__":
