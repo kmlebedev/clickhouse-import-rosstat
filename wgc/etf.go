@@ -94,7 +94,7 @@ func (s *etfFlowsStat) Import(ctx context.Context, conn driver.Conn) (count int6
 		// Решение — в etfCacheLooksStale: пустая таблица нормализована etfStoredMaxDate в
 		// нулевую дату, поэтому отдельной ветки «а есть ли вообще строки» здесь нет — иначе
 		// условие «сравнивать не с чем» дублировалось бы в двух местах.
-		stored, _, gerr := etfStoredMaxDate(ctx, conn)
+		stored, gerr := etfStoredMaxDate(ctx, conn)
 		if gerr != nil {
 			log.Warnf("%s: сохранённый максимум дат не прочитан (%v) — guard устаревшего ответа CDN пропущен", etfStatName, gerr)
 		} else if apiMax := etfPointsMaxDate(points); etfCacheLooksStale(apiMax, stored) {
@@ -225,22 +225,23 @@ func writeEtfPoints(ctx context.Context, conn driver.Conn, points []seriesPoint)
 }
 
 // etfStoredMaxDate — максимальная дата рядов ETF в macro_series (source='wgc'): с ней
-// сравнивается максимум ответа API. ok=false — таких точек ещё нет вовсе: max по пустой
-// выборке отдаёт «нулевую» дату (1970-01-01), сравнивать не с чем, и guard молчит. FINAL —
+// etfCacheLooksStale сравнивает максимум ответа API. Пустой таблице соответствует нулевое
+// время: max по пустой выборке отдаёт «нулевую» дату (1970-01-01), и она нормализуется здесь,
+// чтобы решение «данных для сравнения нет» жило в одном месте — в etfCacheLooksStale. FINAL —
 // по определению ReplacingMergeTree: без него запрос читал бы физический хвост таблицы, а
 // не её состояние после дедупликации.
-func etfStoredMaxDate(ctx context.Context, conn driver.Conn) (time.Time, bool, error) {
+func etfStoredMaxDate(ctx context.Context, conn driver.Conn) (time.Time, error) {
 	row := conn.QueryRow(ctx, "SELECT max(date) FROM "+macroSeriesTable+" FINAL WHERE source = '"+wgcSource+"' AND series LIKE 'etf\\_%'")
 	var maxDate time.Time
 	if err := row.Scan(&maxDate); err != nil {
-		return time.Time{}, false, err
+		return time.Time{}, err
 	}
 	if maxDate.Year() <= 1970 {
-		return time.Time{}, false, nil
+		return time.Time{}, nil
 	}
 	// Дата приводится к UTC: clickhouse-go отдаёт Date с таймзоной сессии, а даты точек — UTC,
 	// и сравнение с максимумом API иначе зависело бы от настроек соединения.
-	return time.Date(maxDate.Year(), maxDate.Month(), maxDate.Day(), 0, 0, 0, 0, time.UTC), true, nil
+	return time.Date(maxDate.Year(), maxDate.Month(), maxDate.Day(), 0, 0, 0, 0, time.UTC), nil
 }
 
 // etfPointsMaxDate — максимальная дата точек: с ней guard сравнивает сохранённый максимум,
