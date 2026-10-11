@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -28,9 +29,18 @@ func etfAPITestdata(t *testing.T, name string) []byte {
 	return body
 }
 
+// etfBreakCachePattern — форма параметра break-cache: «02Jan06» (две цифры дня с ведущим
+// нулём, трёхбуквенный месяц с большой буквы, две цифры года). Проверяется именно форма, а не
+// конкретная дата: Import зовёт etfPointsFromAPI с time.Now(), поэтому значение зависит от
+// таймзоны раннера (в UTC 11 октября MSK уже 12-е) — точная дата пинится там, где «сейчас»
+// задано тестом, в TestEtfPointsFromAPIUsesFixedBreakCache.
+var etfBreakCachePattern = regexp.MustCompile(`^\d{2}[A-Z][a-z]{2}\d{2}$`)
+
 // etfAPITestServer поднимает httptest-сервер с фикстурами: /flows-chart2 и /holdings-chart2
 // отдают переданные тела (nil — файл из testdata), остальные пути — 404. Заодно пин break-cache:
-// без него CDN после публикации ещё отдаёт прошлый месяц, и обновление молча теряется.
+// без него CDN после публикации ещё отдаёт прошлый месяц, и обновление молча теряется. Пин
+// здесь — наличие и форма параметра: сервер обслуживает и Import (там now = time.Now()), а
+// сравнение с фиксированной датой краснело бы на любом раннере, где сегодня не 2026-10-12.
 func etfAPITestServer(t *testing.T, flows, holdings []byte) *httptest.Server {
 	t.Helper()
 	if flows == nil {
@@ -39,25 +49,72 @@ func etfAPITestServer(t *testing.T, flows, holdings []byte) *httptest.Server {
 	if holdings == nil {
 		holdings = etfAPITestdata(t, "etf_holdings_api.json")
 	}
-	wantBreakCache := etfAPITestNow.Format(etfAPIBreakCacheFormat)
+
+	checkBreakCache := func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("break-cache"); !etfBreakCachePattern.MatchString(got) {
+			t.Errorf("break-cache = %q, ожидалось значение формата %s (например, %s)",
+				got, etfAPIBreakCacheFormat, etfAPITestNow.Format(etfAPIBreakCacheFormat))
+		}
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/"+etfAPIFlowsPath, func(w http.ResponseWriter, r *http.Request) {
-		if got := r.URL.Query().Get("break-cache"); got != wantBreakCache {
-			t.Errorf("break-cache = %q, ожидалось %q", got, wantBreakCache)
-		}
+		checkBreakCache(w, r)
 		_, _ = w.Write(flows)
 	})
 	mux.HandleFunc("/"+etfAPIHoldingsPath, func(w http.ResponseWriter, r *http.Request) {
-		if got := r.URL.Query().Get("break-cache"); got != wantBreakCache {
-			t.Errorf("break-cache = %q, ожидалось %q", got, wantBreakCache)
-		}
+		checkBreakCache(w, r)
 		_, _ = w.Write(holdings)
 	})
 
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+// TestEtfPointsFromAPIUsesFixedBreakCache — точная дата и формат break-cache там, где «сейчас»
+// задано тестом, а не часами машины: etfPointsFromAPI принимает now параметром, поэтому и
+// значение, и ведущий ноль дня проверяемы детерминированно в любой таймзоне. В общий хелпер это
+// утверждение не годится — через него ходит и Import с time.Now() (см. etfAPITestServer).
+func TestEtfPointsFromAPIUsesFixedBreakCache(t *testing.T) {
+	// День — однозначный: «02Oct26» ловит потерянный ведущий ноль, который «12Oct26» не поймал бы.
+	now := time.Date(2026, time.October, 2, 23, 30, 0, 0, time.UTC)
+	want := "02Oct26"
+	if formatted := now.Format(etfAPIBreakCacheFormat); want != formatted {
+		t.Fatalf("тест устарел: ожидание %q не совпадает с форматом %s (%q)", want, etfAPIBreakCacheFormat, formatted)
+	}
+
+	var seen []string
+	handler := func(body []byte) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			seen = append(seen, r.URL.Query().Get("break-cache"))
+			_, _ = w.Write(body)
+		}
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/"+etfAPIFlowsPath, handler(etfAPITestdata(t, "etf_flows_api.json")))
+	mux.HandleFunc("/"+etfAPIHoldingsPath, handler(etfAPITestdata(t, "etf_holdings_api.json")))
+
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	points, err := etfPointsFromAPI(srv.URL+"/", now)
+	if err != nil {
+		t.Fatalf("etfPointsFromAPI: %v", err)
+	}
+	if len(points) == 0 {
+		t.Error("фикстуры разобраны в 0 точек")
+	}
+
+	if len(seen) != 2 {
+		t.Fatalf("запросов к эндпоинтам: %d (%v), ожидалось два — потоки и стоки", len(seen), seen)
+	}
+	for i, got := range seen {
+		if got != want {
+			t.Errorf("запрос %d: break-cache = %q, ожидалось %q (фиксированное now в формате %s)",
+				i, got, want, etfAPIBreakCacheFormat)
+		}
+	}
 }
 
 // etfAPITestPoints разбирает фикстуры (nil — файлы testdata) через etfPointsFromAPI.
