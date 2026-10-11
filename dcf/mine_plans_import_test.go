@@ -27,10 +27,20 @@ func TestMinePlansSeederName(t *testing.T) {
 func TestActualProductionQueryShape(t *testing.T) {
 	q := actualProductionSelect
 
-	for _, want := range []string{"databook_polyus", "Total Dore gold output", "ANNUAL"} {
+	for _, want := range []string{"databook_polyus", "Total refined gold output", "ANNUAL"} {
 		if !strings.Contains(q, want) {
 			t.Errorf("запрос не содержит %q: %q", want, q)
 		}
+	}
+
+	// Прежняя метрика `Total Dore gold output` читалась бы тем же запросом без
+	// единой ошибки, но на групповом уровне НЕ сходится с публикацией: за 2025
+	// сумма по пяти рудникам даёт 2779.2 против `CONSOLIDATED` 2790.6, а разницу
+	// 11.4 koz создаёт ОПР-выпуск Вернинской ЗИФ. Остаться на ней — сохранить
+	// расхождение 5.61 % в сумме плана и молча занизить выпуск Вернинского,
+	// Куранача и Наталки.
+	if strings.Contains(q, "Total Dore gold output") {
+		t.Errorf("запрос читает прежнюю метрику dore вместо refined: %q", q)
 	}
 
 	// Тот же класс дефекта, что и §8.1: месяц/квартал берутся из подписи периода
