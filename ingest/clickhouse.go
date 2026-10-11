@@ -15,10 +15,11 @@ import (
 )
 
 const (
-	modelRunsInsert   = "INSERT INTO model_runs (run_id, run_date, trigger_type, trigger_ref, gold_scenario, usdrub_path, price_deck, discount_rate, wacc, nav_per_share, nav_bull, nav_base, nav_bear, market_price, upside_pct, nav_beta_gold, comment)"
-	forecastLogInsert = "INSERT INTO forecast_log (forecast_date, target_date, metric, predicted, actual, error_pct)"
-	macroSeriesInsert = "INSERT INTO macro_series (source, series, date, value)"
-	goldPricesInsert  = "INSERT INTO gold_prices (venue, date, usd)"
+	modelRunsInsert     = "INSERT INTO model_runs (run_id, run_date, trigger_type, trigger_ref, gold_scenario, usdrub_path, price_deck, discount_rate, wacc, nav_per_share, nav_bull, nav_base, nav_bear, market_price, upside_pct, nav_beta_gold, comment)"
+	forecastLogInsert   = "INSERT INTO forecast_log (forecast_date, target_date, metric, predicted, actual, error_pct)"
+	macroSeriesInsert   = "INSERT INTO macro_series (source, series, date, value)"
+	goldPricesInsert    = "INSERT INTO gold_prices (venue, date, usd)"
+	goldForecastsInsert = "INSERT INTO gold_forecasts (author, published, horizon, scenario, low, high, point, probability)"
 )
 
 // chStore — узкий срез ClickHouse, который нужен методам записи writer'а
@@ -197,6 +198,34 @@ func (w *ClickHouseWriter) InsertGoldPrices(ctx context.Context, points []GoldPr
 			return fmt.Errorf("date %q: %w", point.Date, err)
 		}
 		if err = batch.Append(point.Venue, date, point.Usd); err != nil {
+			_ = batch.Abort()
+			return err
+		}
+	}
+	return batch.Send()
+}
+
+// InsertGoldForecasts пишет строки консенсус-прогноза в gold_forecasts.
+// Ключ таблицы (author, published, horizon, scenario): повторная запись строки — норма
+// (ReplacingMergeTree перекрывает прежнюю версию при merge, витрины читают FINAL).
+func (w *ClickHouseWriter) InsertGoldForecasts(ctx context.Context, forecasts []GoldForecast) error {
+	if len(forecasts) == 0 {
+		return nil
+	}
+	batch, err := w.store.prepareBatch(ctx, goldForecastsInsert)
+	if err != nil {
+		return err
+	}
+	for _, forecast := range forecasts {
+		published, err := time.Parse(manualSeriesDateLayout, forecast.Published)
+		if err != nil {
+			_ = batch.Abort()
+			return fmt.Errorf("published %q: %w", forecast.Published, err)
+		}
+		if err = batch.Append(
+			forecast.Author, published, forecast.Horizon, forecast.Scenario,
+			forecast.Low, forecast.High, forecast.Point, forecast.Probability,
+		); err != nil {
 			_ = batch.Abort()
 			return err
 		}

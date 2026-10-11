@@ -52,10 +52,21 @@ const goldPricesDdl = `CREATE TABLE IF NOT EXISTS gold_prices (
 		) ENGINE = ReplacingMergeTree ORDER BY (venue, date);
 	`
 
+// goldForecastsDdl — копия DDL из ARCHITECTURE.md §6.2: консенсус-прогнозы
+// по золоту (банковские и собственные), из них собирается price_deck own_scenario.
+const goldForecastsDdl = `CREATE TABLE IF NOT EXISTS gold_forecasts (
+    author LowCardinality(String),   -- 'goldman','jpm','hsbc','ubs','citi','own',...
+    published Date,
+    horizon LowCardinality(String),  -- 'Q4-2026','YE-2026','2027','12M','short'
+    scenario LowCardinality(String), -- 'point','range','bull','base','bear'
+    low Float64, high Float64, point Float64,
+    probability Float32
+) ENGINE = ReplacingMergeTree ORDER BY (author, published, horizon, scenario);`
+
 // ensureTables создаёт таблицы контура прогноза (идемпотентно):
-// три канонические из ARCHITECTURE.md §6.2 и gold_prices (копия из gold/gold.go).
+// четыре канонические из ARCHITECTURE.md §6.2 и gold_prices (копия из gold/gold.go).
 func ensureTables(ctx context.Context, conn driver.Conn) error {
-	for _, ddl := range []string{modelRunsDdl, forecastLogDdl, macroSeriesDdl, goldPricesDdl} {
+	for _, ddl := range []string{modelRunsDdl, forecastLogDdl, macroSeriesDdl, goldPricesDdl, goldForecastsDdl} {
 		if err := conn.Exec(ctx, ddl); err != nil {
 			return err
 		}
