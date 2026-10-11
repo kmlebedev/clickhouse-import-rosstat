@@ -10,8 +10,9 @@ var imfMacroView = util.View{
 	Select: `SELECT date, series, value FROM macro_series FINAL WHERE source = 'imf'`,
 	Comment: "Ряды IMF (source='imf'): золотые резервы (monetary gold) центробанков из IRFCL. " +
 		"Сейчас заполнен только Китай (ra_gold_chn) — IRFCL через datasource отдаёт нули/пропуски по остальным " +
-		"наблюдаемым странам (POL/CZE/TUR — нули, RUS/KAZ — без индикатора, UZB — без данных); покупки ЦБ по ним — " +
-		"отдельный канал WGC/WebBridge (фаза 3 GOLD_THESIS_DATA_ROADMAP). Единица — как отдаёт IRFCLDT1_IRFCL40_USD " +
+		"наблюдаемым странам (POL/CZE/TUR — нули, RUS/KAZ — без индикатора, UZB — без данных); покупки ЦБ по ним закрыты " +
+		"импортёром wgc_cb_reserves (source='wgc', тонны, витрина v_cb_gold_dynamics; follow-up фазы 3 GOLD_THESIS_DATA_ROADMAP). " +
+		"Единица — как отдаёт IRFCLDT1_IRFCL40_USD " +
 		"(USD, рыночная стоимость; не тонны). Описание ряда — в v_series_catalog",
 	Columns: map[string]string{
 		"date":   "Первый день месяца наблюдения (Date32)",

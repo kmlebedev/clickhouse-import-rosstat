@@ -292,7 +292,7 @@ const (
 
 // cbCatalogNotImf — общая оговорка каталога: рядом живёт imf-ряд в USD и только по
 // Китаю; агент не должен их складывать или считать одним источником.
-const cbCatalogNotImf = "Не путать с v_imf_macro (IMF IRCFL, source='imf'): там денежное золото в USD и через datasource заполнен только Китай; здесь — тонны по семи странам (POL, CZE, TUR, RUS, KAZ, UZB, CHN) из выгрузки WGC."
+const cbCatalogNotImf = "Не путать с v_imf_macro (IMF IRFCL, source='imf'): там денежное золото в USD и через datasource заполнен только Китай; здесь — тонны по семи странам (POL, CZE, TUR, RUS, KAZ, UZB, CHN) из выгрузки WGC."
 
 // cbCatalogImportNote — общий хвост описания: откуда берутся файлы и кто пишет ряды.
 // Повторяется в каждой записи намеренно — агент читает description по одному ряду и

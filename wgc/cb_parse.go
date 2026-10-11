@@ -31,6 +31,11 @@ const (
 
 	// cbHoldingsTonnesHeader — заголовок блока таблицы топ-100: по нему находятся блоки.
 	cbHoldingsTonnesHeader = "Tonnes"
+	// cbHoldingsReservesHeaderPrefix — начало подписи колонки справа от Tonnes («% of reserves**»
+	// в выгрузке; номер сноски меняется, префикс — нет).
+	cbHoldingsReservesHeaderPrefix = "% of reserves"
+	// cbHoldingsAsofHeader — подпись колонки даты уровня (Tonnes+2; в файле — с хвостовым пробелом).
+	cbHoldingsAsofHeader = "Holdings as of"
 
 	// cbMetricChangeTonnes — метрика месячных изменений резервов (знак — направление).
 	cbMetricChangeTonnes = "gold_change_tonnes"
@@ -323,7 +328,8 @@ func parseCbHoldings(f *excelize.File) ([]seriesPoint, error) {
 // cbHoldingsBlocks ищет блоки таблицы топ-100: ячейка-заголовок сравнивается строго (после
 // TrimSpace), поэтому подписи вроде «WORLD OFFICIAL GOLD HOLDINGS» за заголовок не считаются.
 // В блоке: Tonnes-2 — ранг (не читаем), Tonnes-1 — имя страны, +1 — «% of reserves» (не
-// импортируем), +2 — «Holdings as of».
+// импортируем), +2 — «Holdings as of». Соседние заголовки проверяются при привязке блока
+// (cbVerifyHoldingsHeaders): раскладка, найденная по одному якорю, на веру не принимается.
 func cbHoldingsBlocks(f *excelize.File, maxCol, maxRow int) ([]cbHoldingsBlock, error) {
 	var blocks []cbHoldingsBlock
 	for row := 1; row <= maxRow; row++ {
@@ -339,6 +345,9 @@ func cbHoldingsBlocks(f *excelize.File, maxCol, maxRow int) ([]cbHoldingsBlock, 
 				return nil, fmt.Errorf("лист %s: заголовок %q в %s: нет места под колонки блока (имя, %% of reserves, Holdings as of)",
 					cbHoldingsSheet, cbHoldingsTonnesHeader, cbCellRef(col, row))
 			}
+			if err := cbVerifyHoldingsHeaders(f, row, col); err != nil {
+				return nil, err
+			}
 			blocks = append(blocks, cbHoldingsBlock{
 				headerRow: row,
 				nameCol:   col - 1,
@@ -351,6 +360,48 @@ func cbHoldingsBlocks(f *excelize.File, maxCol, maxRow int) ([]cbHoldingsBlock, 
 		return nil, fmt.Errorf("лист %s: не найден заголовок %q: раскладка выгрузки изменилась", cbHoldingsSheet, cbHoldingsTonnesHeader)
 	}
 	return blocks, nil
+}
+
+// cbVerifyHoldingsHeaders проверяет соседние заголовки блока при его привязке — якорь Tonnes
+// один раскладку не подтверждает. Tonnes+1 должен начинаться с «% of reserves» («% of
+// reserves**» в выгрузке), Tonnes+2 — равняться «Holdings as of» (в файле — с хвостовым
+// пробелом, сравнение после TrimSpace). Колонка имени (Tonnes-1) в выгрузке октября 2026
+// подписи не несёт (клетки B6/G6 пусты; хвостовой блок стран вне топ-100 подписан «Other»),
+// поэтому для неё проверяется только «не число»: число слева от Tonnes означало бы, что якорь
+// встал над колонкой данных, и страны молча выпали бы из импорта. Несовпадение — ошибка с
+// адресом ячейки: у дрейфа раскладки должен быть видимый след, а не молча испорченная
+// «Holdings as of» (число из колонки резервов превратилось бы в дату 1900-01-31).
+func cbVerifyHoldingsHeaders(f *excelize.File, headerRow, tonnesCol int) error {
+	nameRef := cbCellRef(tonnesCol-1, headerRow)
+	nameRaw, err := cellRaw(f, cbHoldingsSheet, tonnesCol-1, headerRow)
+	if err != nil {
+		return fmt.Errorf("лист %s: заголовок колонки имени %s: %w", cbHoldingsSheet, nameRef, err)
+	}
+	if _, ok, numErr := cellFloat(nameRaw); numErr == nil && ok {
+		return fmt.Errorf("лист %s: %s = %q: слева от %q ожидалась колонка имени, а не число — раскладка выгрузки изменилась",
+			cbHoldingsSheet, nameRef, nameRaw, cbHoldingsTonnesHeader)
+	}
+
+	reservesRef := cbCellRef(tonnesCol+1, headerRow)
+	reservesRaw, err := cellRaw(f, cbHoldingsSheet, tonnesCol+1, headerRow)
+	if err != nil {
+		return fmt.Errorf("лист %s: заголовок колонки резервов %s: %w", cbHoldingsSheet, reservesRef, err)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(reservesRaw), cbHoldingsReservesHeaderPrefix) {
+		return fmt.Errorf("лист %s: %s = %q: ожидалась подпись, начинающаяся с %q — раскладка выгрузки изменилась",
+			cbHoldingsSheet, reservesRef, reservesRaw, cbHoldingsReservesHeaderPrefix)
+	}
+
+	asofRef := cbCellRef(tonnesCol+2, headerRow)
+	asofRaw, err := cellRaw(f, cbHoldingsSheet, tonnesCol+2, headerRow)
+	if err != nil {
+		return fmt.Errorf("лист %s: заголовок колонки %q %s: %w", cbHoldingsSheet, cbHoldingsAsofHeader, asofRef, err)
+	}
+	if strings.TrimSpace(asofRaw) != cbHoldingsAsofHeader {
+		return fmt.Errorf("лист %s: %s = %q: ожидался заголовок %q — раскладка выгрузки изменилась",
+			cbHoldingsSheet, asofRef, asofRaw, cbHoldingsAsofHeader)
+	}
+	return nil
 }
 
 // cbStripFootnote убирает сноску в конце имени страны («Turkey5)» → «Turkey») и обрезает

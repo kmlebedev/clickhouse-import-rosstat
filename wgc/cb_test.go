@@ -126,6 +126,7 @@ func writeCbHoldingsWithoutTargets(t *testing.T, dir string) {
 
 	f := newEtfSheet(t, cbHoldingsSheet)
 	setEtfCell(t, f, cbHoldingsSheet, "C6", cbHoldingsTonnesHeader)
+	setEtfCell(t, f, cbHoldingsSheet, "D6", "% of reserves**")
 	setEtfCell(t, f, cbHoldingsSheet, "E6", "Holdings as of")
 	setEtfCell(t, f, cbHoldingsSheet, "B7", "Germany")
 	setEtfCell(t, f, cbHoldingsSheet, "C7", 3349.29)

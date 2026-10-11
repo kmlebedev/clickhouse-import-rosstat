@@ -546,6 +546,11 @@ func TestCbHoldingsDuplicateCountryFails(t *testing.T) {
 		setEtfCell(t, f, cbHoldingsSheet, block.value, 647.98)
 		setEtfDate(t, f, cbHoldingsSheet, block.asof, cbDate(2026, time.August, 5))
 	}
+	// Соседние заголовки блоков — как в выгрузке: без них guard шапки падает раньше дубля.
+	setEtfCell(t, f, cbHoldingsSheet, "D6", "% of reserves**")
+	setEtfCell(t, f, cbHoldingsSheet, "E6", "Holdings as of ")
+	setEtfCell(t, f, cbHoldingsSheet, "I6", "% of reserves**")
+	setEtfCell(t, f, cbHoldingsSheet, "J6", "Holdings as of ")
 
 	if _, err := parseCbHoldings(f); err == nil {
 		t.Fatal("дубль страны словаря должен давать ошибку")
@@ -569,6 +574,8 @@ func TestCbHoldingsWithoutTonnesHeaderFails(t *testing.T) {
 func TestCbHoldingsTextAsOfFails(t *testing.T) {
 	f := newEtfSheet(t, cbHoldingsSheet)
 	setEtfCell(t, f, cbHoldingsSheet, "C6", "Tonnes")
+	setEtfCell(t, f, cbHoldingsSheet, "D6", "% of reserves**")
+	setEtfCell(t, f, cbHoldingsSheet, "E6", "Holdings as of ")
 	setEtfCell(t, f, cbHoldingsSheet, "B7", "Poland, Rep. of")
 	setEtfCell(t, f, cbHoldingsSheet, "C7", 647.98)
 	// У страны словаря дата текстом («Mar 2025» бывает у стран со старыми данными): серийной
@@ -585,6 +592,8 @@ func TestCbHoldingsTextAsOfFails(t *testing.T) {
 func TestCbHoldingsEmptyTonnesFails(t *testing.T) {
 	f := newEtfSheet(t, cbHoldingsSheet)
 	setEtfCell(t, f, cbHoldingsSheet, "C6", "Tonnes")
+	setEtfCell(t, f, cbHoldingsSheet, "D6", "% of reserves**")
+	setEtfCell(t, f, cbHoldingsSheet, "E6", "Holdings as of ")
 	setEtfCell(t, f, cbHoldingsSheet, "B7", "Poland, Rep. of")
 	setEtfDate(t, f, cbHoldingsSheet, "E7", cbDate(2026, time.August, 5))
 
@@ -592,5 +601,89 @@ func TestCbHoldingsEmptyTonnesFails(t *testing.T) {
 		t.Fatal("пустая колонка Tonnes у страны словаря должна давать ошибку")
 	} else if !strings.Contains(err.Error(), "C7") {
 		t.Errorf("ошибка не называет адрес ячейки: %v", err)
+	}
+}
+
+// TestCbHoldingsHeaderDriftFails — привязка колонок блока не принимается на веру (асимметрия с
+// ETF-парсером): подмена/сдвиг соседних заголовков — ошибка с адресом ячейки. Число в колонке
+// «% of reserves» на месте даты дало бы молчаливую 1900-01-31 в holdings_date витрины.
+func TestCbHoldingsHeaderDriftFails(t *testing.T) {
+	cases := []struct {
+		name     string
+		nameCell any // B6: Tonnes-1 (колонка имени); nil — ячейка не заполняется
+		reserves any // D6: Tonnes+1; nil — не заполняется
+		asof     any // E6: Tonnes+2; nil — не заполняется
+		wantRef  string
+	}{
+		{
+			name:     "число в колонке имени",
+			nameCell: 12.3,
+			reserves: "% of reserves**",
+			asof:     "Holdings as of",
+			wantRef:  "B6",
+		},
+		{
+			name:     "число вместо % of reserves",
+			reserves: 12.3,
+			asof:     "Holdings as of",
+			wantRef:  "D6",
+		},
+		{
+			name:     "дата указывает на % of reserves",
+			reserves: "% of reserves**",
+			asof:     "% of reserves**",
+			wantRef:  "E6",
+		},
+		{
+			name:     "подпись Holdings as of пропала",
+			reserves: "% of reserves**",
+			wantRef:  "E6",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newEtfSheet(t, cbHoldingsSheet)
+			setEtfCell(t, f, cbHoldingsSheet, "C6", "Tonnes")
+			if tc.nameCell != nil {
+				setEtfCell(t, f, cbHoldingsSheet, "B6", tc.nameCell)
+			}
+			if tc.reserves != nil {
+				setEtfCell(t, f, cbHoldingsSheet, "D6", tc.reserves)
+			}
+			if tc.asof != nil {
+				setEtfCell(t, f, cbHoldingsSheet, "E6", tc.asof)
+			}
+			setEtfCell(t, f, cbHoldingsSheet, "B7", "Poland, Rep. of")
+			setEtfCell(t, f, cbHoldingsSheet, "C7", 647.98)
+			setEtfDate(t, f, cbHoldingsSheet, "E7", cbDate(2026, time.August, 5))
+
+			if _, err := parseCbHoldings(f); err == nil {
+				t.Fatal("подменённая шапка блока должна давать ошибку")
+			} else if !strings.Contains(err.Error(), tc.wantRef) {
+				t.Errorf("ошибка не называет адрес ячейки %s: %v", tc.wantRef, err)
+			}
+		})
+	}
+}
+
+// TestCbHoldingsHeadersTrimmedOK — соседние заголовки сравниваются после TrimSpace, а подпись
+// колонки имени может отсутствовать (в выгрузке 10.2026 клетки B6/G6 пусты) — блок парсится.
+func TestCbHoldingsHeadersTrimmedOK(t *testing.T) {
+	f := newEtfSheet(t, cbHoldingsSheet)
+	setEtfCell(t, f, cbHoldingsSheet, "B6", " Country ")
+	setEtfCell(t, f, cbHoldingsSheet, "C6", "Tonnes")
+	setEtfCell(t, f, cbHoldingsSheet, "D6", " % of reserves** ")
+	setEtfCell(t, f, cbHoldingsSheet, "E6", " Holdings as of ")
+	setEtfCell(t, f, cbHoldingsSheet, "B7", "Poland, Rep. of")
+	setEtfCell(t, f, cbHoldingsSheet, "C7", 647.98)
+	setEtfDate(t, f, cbHoldingsSheet, "E7", cbDate(2026, time.August, 5))
+
+	points, err := parseCbHoldings(f)
+	if err != nil {
+		t.Fatalf("шапка с окружающими пробелами должна парситься: %v", err)
+	}
+	pol := wgcCbSeriesName(cbMetricHoldingsTonnes, "POL")
+	if got := cbValue(t, points, pol, cbDate(2026, time.August, 31)); math.Abs(got-647.98) > cbTolerance {
+		t.Errorf("ряд %s = %v, ожидалось 647.98", pol, got)
 	}
 }
