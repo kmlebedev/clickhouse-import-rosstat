@@ -185,7 +185,8 @@ func etfFlowPoints(monthly etfAPIMonthlyFlows) ([]seriesPoint, error) {
 	return points, nil
 }
 
-// etfFlowSums собирает значения потоков метрики apiKey по месяцам: map[конец месяца][регион],
+// etfFlowSums собирает значения потоков метрики metricKey (ключ в chartData.data.Monthly.series:
+// "usd" или "tonnes") по месяцам: map[конец месяца][регион],
 // и проверяет полноту набора (fail-fast): ключ метрики обязан быть в ответе, а в её списке
 // должны распознаться ровно четыре региона словаря (ценовой etfAPIPriceSeries не считается).
 // Без этого проверки пропавшая метрика или регион молча дали бы частичный импорт: половина
@@ -193,10 +194,10 @@ func etfFlowPoints(monthly etfAPIMonthlyFlows) ([]seriesPoint, error) {
 // любое другое имя вне словаря — ошибка: иначе в macro_series появился бы ряд вида
 // etf_flow_tonnes_antarctica. null в значении — отсутствие данных за месяц (точки у региона
 // нет, и world за этот месяц не появится), а не нулевой поток: 0 в JSON — это значение.
-func etfFlowSums(monthly etfAPIMonthlyFlows, apiKey string, scale float64) (map[time.Time]map[string]float64, error) {
-	series, ok := monthly.Series[apiKey]
+func etfFlowSums(monthly etfAPIMonthlyFlows, metricKey string, scale float64) (map[time.Time]map[string]float64, error) {
+	series, ok := monthly.Series[metricKey]
 	if !ok {
-		return nil, fmt.Errorf("в ответе нет метрики %s: набор метрик потоков неполон", apiKey)
+		return nil, fmt.Errorf("в ответе нет метрики %s: набор метрик потоков неполон", metricKey)
 	}
 	sums := make(map[time.Time]map[string]float64, len(series))
 	regions := make(map[string]bool, len(etfRegionsByName))
@@ -207,18 +208,18 @@ func etfFlowSums(monthly etfAPIMonthlyFlows, apiKey string, scale float64) (map[
 		region, ok := etfRegionsByName[s.Name]
 		if !ok {
 			return nil, fmt.Errorf("метрика %s: ряд %q вне словаря регионов (известны: %s)",
-				apiKey, s.Name, strings.Join(etfAPIKnownRegions(), ", "))
+				metricKey, s.Name, strings.Join(etfAPIKnownRegions(), ", "))
 		}
 		// Два ряда одного региона противоречивы: без ошибки второй молча перезаписал бы первый.
 		if regions[region] {
 			return nil, fmt.Errorf("метрика %s: регион %q встречается дважды — набор регионов противоречив",
-				apiKey, s.Name)
+				metricKey, s.Name)
 		}
 		regions[region] = true
 		for _, p := range s.Data {
 			if len(p) < 2 {
 				return nil, fmt.Errorf("метрика %s: ряд %q: точка без пары [ms, value] (%d элементов)",
-					apiKey, s.Name, len(p))
+					metricKey, s.Name, len(p))
 			}
 			if p[1] == nil {
 				continue // null — данных за месяц нет: точки нет вовсе (не путать с явным нулём)
@@ -227,7 +228,7 @@ func etfFlowSums(monthly etfAPIMonthlyFlows, apiKey string, scale float64) (map[
 				// Дата null при живом значении — дефект выгрузки: без ошибки точка ушла бы
 				// в 1970-01-31 и легла бы в ряд как настоящий месяц.
 				return nil, fmt.Errorf("метрика %s: ряд %q: значение %v без даты (null вместо ms)",
-					apiKey, s.Name, *p[1])
+					metricKey, s.Name, *p[1])
 			}
 			date := etfAPIMonthEnd(*p[0])
 			if sums[date] == nil {
@@ -238,7 +239,7 @@ func etfFlowSums(monthly etfAPIMonthlyFlows, apiKey string, scale float64) (map[
 	}
 	if len(regions) != len(etfRegionsByName) {
 		return nil, fmt.Errorf("метрика %s: распознано %d из %d регионов — набор регионов неполон",
-			apiKey, len(regions), len(etfRegionsByName))
+			metricKey, len(regions), len(etfRegionsByName))
 	}
 	return sums, nil
 }
