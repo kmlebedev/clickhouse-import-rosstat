@@ -91,14 +91,15 @@ func (s *etfFlowsStat) Import(ctx context.Context, conn driver.Conn) (count int6
 		// перезапись тех же значений идемпотентна, а ложный отказ оставил бы ряды без
 		// обновления. Ошибка самого диагностического запроса — тоже warn (не отказ импорта):
 		// ценность задачи — батч, а вспомогательная выборка не повод терять обновление.
-		stored, ok, gerr := etfStoredMaxDate(ctx, conn)
+		// Решение — в etfCacheLooksStale: пустая таблица нормализована etfStoredMaxDate в
+		// нулевую дату, поэтому отдельной ветки «а есть ли вообще строки» здесь нет — иначе
+		// условие «сравнивать не с чем» дублировалось бы в двух местах.
+		stored, _, gerr := etfStoredMaxDate(ctx, conn)
 		if gerr != nil {
 			log.Warnf("%s: сохранённый максимум дат не прочитан (%v) — guard устаревшего ответа CDN пропущен", etfStatName, gerr)
-		} else if ok {
-			if apiMax := etfPointsMaxDate(points); apiMax.Before(stored) {
-				log.Warnf("%s: возможен устаревший ответ CDN: API %s < сохранённый %s", etfStatName,
-					apiMax.Format("2006-01-02"), stored.Format("2006-01-02"))
-			}
+		} else if apiMax := etfPointsMaxDate(points); etfCacheLooksStale(apiMax, stored) {
+			log.Warnf("%s: возможен устаревший ответ CDN: API %s < сохранённый %s", etfStatName,
+				apiMax.Format("2006-01-02"), stored.Format("2006-01-02"))
 		}
 	}
 
@@ -252,6 +253,19 @@ func etfPointsMaxDate(points []seriesPoint) time.Time {
 		}
 	}
 	return maxDate
+}
+
+// etfCacheLooksStale — решение guard-а: ответ API отстаёт от того, что уже лежит в таблице.
+// Пустой storedMax (ряда ещё нет — etfStoredMaxDate нормализует пустую таблицу в нулевую дату)
+// и равенство дат — false: сравнивать не с чем, а повторный ответ того же месяца «устареванием»
+// не является, и warn на каждом прогоне обесценил бы сигнал. Вынесено из Import чистой функцией,
+// чтобы решение проверялось табличным тестом без соединения: сама выборка max(date) тестом не
+// покрывается (соединения в тестах нет), а «устарел или нет» — покрывается.
+func etfCacheLooksStale(apiMax, storedMax time.Time) bool {
+	if storedMax.IsZero() {
+		return false
+	}
+	return apiMax.Before(storedMax)
 }
 
 func init() {

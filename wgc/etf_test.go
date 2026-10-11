@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xuri/excelize/v2"
 )
@@ -179,5 +180,38 @@ func TestEtfLoadPointsPrefersAPIOverFile(t *testing.T) {
 	}
 	if len(points) == 0 {
 		t.Error("фикстуры API разобраны в 0 точек")
+	}
+}
+
+// TestEtfCacheLooksStale — табличный: решение guard-а устаревшего ответа CDN проверяется без
+// соединения (сама выборка max(date) тестом не покрывается — соединения в тестах нет, а
+// сравнение дат покрывается). Пустая таблица приходит сюда нулевой датой (etfStoredMaxDate так
+// её нормализует) — сравнивать не с чем, значит false; равные даты — false: ответ того же месяца
+// не «устаревание», и warn на каждом прогоне обесценил бы сигнал; true — только строго меньший
+// максимум API, но не наоборот.
+func TestEtfCacheLooksStale(t *testing.T) {
+	aug := time.Date(2026, time.August, 31, 0, 0, 0, 0, time.UTC)
+	sep := time.Date(2026, time.September, 30, 0, 0, 0, 0, time.UTC)
+	oct := time.Date(2026, time.October, 31, 0, 0, 0, 0, time.UTC)
+
+	cases := []struct {
+		name      string
+		apiMax    time.Time
+		storedMax time.Time
+		want      bool
+	}{
+		{"пустая таблица", sep, time.Time{}, false},
+		{"пустая таблица и пустой ответ API", time.Time{}, time.Time{}, false},
+		{"даты равны", sep, sep, false},
+		{"API отстаёт на месяц", aug, sep, true},
+		{"API свежее сохранённого", oct, sep, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := etfCacheLooksStale(c.apiMax, c.storedMax); got != c.want {
+				t.Errorf("etfCacheLooksStale(%s, %s) = %t, ожидалось %t",
+					c.apiMax.Format("2006-01-02"), c.storedMax.Format("2006-01-02"), got, c.want)
+			}
+		})
 	}
 }
