@@ -193,6 +193,35 @@ async def check(params, server_log):
                 webbridge_detail = f"рядов webbridge: {webbridge_n}, применить сид sql/wgc_etf_flows_catalog.sql"
             failed += not expect("каталог webbridge полон", webbridge_n == 20, webbridge_detail)
 
+            # Контур золотых резервов ЦБ (правило 11): витрина v_cb_gold_dynamics видна
+            # агенту и отдаёт ровно 7 строк — по стране словаря (POL/CZE/TUR/RUS/KAZ/UZB/CHN);
+            # меньше строк означает, что витрина потеряла страну (LEFT JOIN от словаря обязан
+            # держать строку даже без рядов), больше — что разбор iso3 из имени ряда дал мусор.
+            # Каталог source='wgc' объединяет оба импортёра WGC: 20 рядов ETF (wgc_etf_flows)
+            # + 14 рядов ЦБ (wgc_cb_reserves) = 34; ошибка запроса/несовпадение — провал
+            # с подсказкой, какой импортёр прогнать или какой сид применить.
+            failed += not expect("витрина v_cb_gold_dynamics видна", "v_cb_gold_dynamics" in tables, "list_tables default")
+
+            dynamics_raw = text(await session.call_tool("run_query", {"query": "SELECT iso3, country FROM v_cb_gold_dynamics"}))
+            dynamics = result_rows(dynamics_raw)
+            if dynamics is None:
+                dynamics_detail = f"ответ не распознан: {dynamics_raw[:200]}"
+            else:
+                dynamics_detail = f"стран: {len(dynamics)}"
+            failed += not expect("динамика резервов ЦБ: 7 стран", bool(dynamics) and len(dynamics) == 7, dynamics_detail)
+
+            catalog_wgc_source = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'wgc'"}))
+            catalog_wgc_rows = result_rows(catalog_wgc_source)
+            catalog_wgc_n = catalog_wgc_rows[0].get("n") if catalog_wgc_rows else None
+            if catalog_wgc_rows is None:
+                catalog_wgc_detail = f"ответ не распознан: {catalog_wgc_source[:200]}"
+            elif catalog_wgc_n == 34:
+                catalog_wgc_detail = "рядов wgc: 34 (20 ETF + 14 ЦБ)"
+            else:
+                catalog_wgc_detail = (f"рядов wgc: {catalog_wgc_n}, want 34 — прогнать "
+                                      "make import STAT=wgc_etf_flows и STAT=wgc_cb_reserves")
+            failed += not expect("каталог wgc полон", catalog_wgc_n == 34, catalog_wgc_detail)
+
             # Консенсус аналитиков — 11 строк сида. Пустой v_gold_forecasts означает
             # неприменённый сид, ошибка запроса даёт detail сырым текстом.
             forecasts_raw = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_gold_forecasts"}))
