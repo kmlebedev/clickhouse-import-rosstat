@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import sys
 import tempfile
@@ -24,6 +25,24 @@ def text(result):
 def expect(label, ok, detail):
     print(f"{'OK  ' if ok else 'FAIL'} {label}: {detail}")
     return ok
+
+
+def result_rows(result_text):
+    """Строки run_query как словари по столбцам ответа MCP ({"columns": [...], "rows": [...]}).
+
+    None — ответ не распознан (ошибка запроса или неожиданный формат); пустой список — запрос
+    прошёл, но строк нет.
+    """
+    try:
+        payload = json.loads(result_text)
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    columns, rows = payload.get("columns"), payload.get("rows")
+    if not isinstance(columns, list) or not isinstance(rows, list):
+        return None
+    return [dict(zip(columns, row)) for row in rows]
 
 
 MCP_VERSION = os.environ.get("MCP_VERSION", "0.7.0")
@@ -103,6 +122,29 @@ async def check(params, server_log):
 
             bls = text(await session.call_tool("run_query", {"query": "SELECT date, value FROM v_bls_macro WHERE series = 'LNS14000000' ORDER BY date DESC LIMIT 3"}))
             failed += not expect("значения BLS LNS14000000", "rows" in bls and "Query execution failed" not in bls, bls[:200])
+
+            # EIA-контур нефтяного канала: витрина v_eia_petroleum, каталог обоих рядов
+            # (distillate_stocks, refinery_utilization) и обновление distillate_stocks в дашборде.
+            failed += not expect("витрина v_eia_petroleum видна", "v_eia_petroleum" in tables, "list_tables default")
+
+            eia_catalog = text(await session.call_tool("run_query", {"query": "SELECT series, unit FROM v_series_catalog WHERE source = 'eia' ORDER BY series"}))
+            failed += not expect("каталог EIA", "distillate_stocks" in eia_catalog and "refinery_utilization" in eia_catalog, eia_catalog[:200])
+
+            eia = text(await session.call_tool("run_query", {"query": "SELECT date, value FROM v_eia_petroleum WHERE series = 'distillate_stocks' ORDER BY date DESC LIMIT 3"}))
+            failed += not expect("значения EIA distillate_stocks", "rows" in eia and "Query execution failed" not in eia, eia[:200])
+
+            # Дашборд должен отдавать distillate_stocks из автоматического импорта EIA, а не из
+            # ручного фолбэка: stale = 0 означает свежее наблюдение. Пустой ответ — провал
+            # (импортёр ещё не прогонялся: make import STAT=eia), ошибка запроса даёт detail сырым текстом.
+            dashboard = text(await session.call_tool("run_query", {"query": "SELECT indicator, value, as_of, stale FROM v_gold_dashboard WHERE indicator = 'distillate_stocks'"}))
+            dashboard_rows = result_rows(dashboard)
+            if dashboard_rows is None:
+                dashboard_detail = dashboard[:200]
+            elif not dashboard_rows:
+                dashboard_detail = "строк нет: импортёр ещё не прогонялся (make import STAT=eia)"
+            else:
+                dashboard_detail = f"stale={dashboard_rows[0].get('stale')}, as_of={dashboard_rows[0].get('as_of')}"
+            failed += not expect("дашборд distillate_stocks свежий", bool(dashboard_rows) and dashboard_rows[0].get("stale") in (0, "0"), dashboard_detail)
 
             raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM macro_series"}))
             denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
