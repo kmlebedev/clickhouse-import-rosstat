@@ -151,14 +151,15 @@ async def check(params, server_log):
             # Значение дашборда обязано совпасть с последним значением EIA-витрины (105138):
             # это и есть проверка, что v_gold_dashboard берёт distillate_stocks из eia, а не
             # из ручного фолбэка. Пустой ответ/ошибка запроса — провал, detail сырым текстом.
-            priority = result_rows(text(await session.call_tool("run_query", {"query":
+            priority_raw = text(await session.call_tool("run_query", {"query":
                 "SELECT d.value = e.value AS same, d.value AS dashboard_value, e.value AS eia_value "
                 "FROM v_gold_dashboard d "
                 "CROSS JOIN (SELECT argMax(value, date) AS value FROM v_eia_petroleum "
                 "WHERE series = 'distillate_stocks') e "
-                "WHERE d.indicator = 'distillate_stocks'"})))
+                "WHERE d.indicator = 'distillate_stocks'"}))
+            priority = result_rows(priority_raw)
             if priority is None:
-                priority_detail = "ответ не распознан"
+                priority_detail = f"ответ не распознан: {priority_raw[:200]}"
             elif not priority:
                 priority_detail = "строк нет: импортёр ещё не прогонялся (make import STAT=eia)"
             else:
