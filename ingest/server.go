@@ -22,7 +22,7 @@ type BatchWriter interface {
 	InsertGoldPrices(ctx context.Context, points []GoldPricePoint) error
 }
 
-// Server — HTTP-сервер ingest-контура: единственный путь записи в model_runs/forecast_log/macro_series.
+// Server — HTTP-сервер ingest-контура: единственный путь записи в model_runs/forecast_log/macro_series/gold_prices.
 type Server struct {
 	writer  BatchWriter
 	token   string

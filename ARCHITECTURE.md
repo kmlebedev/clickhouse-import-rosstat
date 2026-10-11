@@ -1,7 +1,7 @@
 # ARCHITECTURE.md — clickhouse-import-rosstat
 
 > Контекстный документ для AI-ассистентов (Kimi Code и др.). Содержит всё необходимое для написания нового кода без полного чтения репозитория: паттерны, конвенции, схемы БД, целевую архитектуру. Обновлять при каждом изменении архитектуры.
-> Последнее обновление: 2026-10-11 (§6.5 — endpoint `POST /v1/gold_prices` (venue `comex_front`) и поле `source` в `POST /v1/manual_series` (`manual`/`webbridge`/`imf`); §6.3 — витрина `v_imf_macro` (золотые резервы ЦБ, IMF IRFCL); §6.2 — копия DDL `gold_prices` в `ingest/schema.go` и комментарий source; ранее того же дня — §6.4 — поактивный AISC Полюса теперь калибруется скриптом `scripts/extrapolation_aisc.py` (цель `make dcf-aisc`) как доля клина по пресс-релизам 2019–2021 с увязкой к групповому AISC и `capex_sustaining = 0`; сид применяется вручную и в `dagu/dcf.yaml` не входит — цепочка остаётся двухшаговой; ранее 2026-10-11 — §6.1/§6.2 сид `mine_plans` в расписании `dagu/dcf.yaml` и окно правдоподобных годов плана в `dcf/seed.go`; 2026-10-10 — в `polyus/` включены шесть пресс-релизов 4Q/FY за 2019–2024). Базовый коммит: `a43af65` (разделы сверены с кодом на этом коммите).
+> Последнее обновление: 2026-10-11 (§6.2 — комментарий `source` в DDL `macro_series` приведён к код-копии `ingest/schema.go`; §6.5 — «единственный путь записи» называет и `gold_prices`; валидация ingest отсекает даты вне диапазона Date32 [1900-01-01, 2299-12-31] → 400; ранее того же дня — §6.5 — endpoint `POST /v1/gold_prices` (venue `comex_front`) и поле `source` в `POST /v1/manual_series` (`manual`/`webbridge`/`imf`); §6.3 — витрина `v_imf_macro` (золотые резервы ЦБ, IMF IRFCL); §6.2 — копия DDL `gold_prices` в `ingest/schema.go` и комментарий source; ранее того же дня — §6.4 — поактивный AISC Полюса теперь калибруется скриптом `scripts/extrapolation_aisc.py` (цель `make dcf-aisc`) как доля клина по пресс-релизам 2019–2021 с увязкой к групповому AISC и `capex_sustaining = 0`; сид применяется вручную и в `dagu/dcf.yaml` не входит — цепочка остаётся двухшаговой; ранее 2026-10-11 — §6.1/§6.2 сид `mine_plans` в расписании `dagu/dcf.yaml` и окно правдоподобных годов плана в `dcf/seed.go`; 2026-10-10 — в `polyus/` включены шесть пресс-релизов 4Q/FY за 2019–2024). Базовый коммит: `a43af65` (разделы сверены с кодом на этом коммите).
 
 ---
 
@@ -266,11 +266,11 @@ ORDER BY (company, metric, period)
 
 `mine_plans`, `price_decks` и `nav_by_asset` заведены в коде пакетом `dcf/` (DDL — копии блока выше в `dcf/schema.go`) и создаются импортёрами идемпотентно. Наполнение: `mine_plans` **сеет импортёр `dcf_mine_plans`** из публичной отчётности Полюса (§6.1) — факт последнего отчётного года из `databook_polyus` и версионные константы сида `dcf/mine_plans_seed.go`; `nav_by_asset` пишет `dcf_engine` (при заданном `DCF_RUN_ID`), `price_decks` он же сеет на пустой таблице. Оба шага и их порядок (сид → расчёт) задаёт `dagu/dcf.yaml`. Год плана вне окна `[minPlanYear, maxPlanYear)` (`dcf/seed.go`) не сеется и не считается покрытым (§6.1): мусорный год — дефект данных, и план из одних мусорных лет даёт ошибку до расчёта (на пустой `price_decks` — `seedPriceDecks`, на непустой — `checkYearCoverage`), а не успешный прогон с бессмысленным NAV. Сид `mine_plans` **не покрывает все 8 моделируемых активов**: он заводит **6 из 8** — `TITIMUKHTA` и `ZAPADNOYE` пропускаются с `log.Warn`, потому что их добыча в датапаке равна нулю (россыпное золото учтено отдельной таблицей `ALLUVIALS`), а ноль на месте факта молча занизил бы NPV актива. `closure_costs` у всех засеянных активов равен `0` — это означает **«не задано»** (per-asset провижен на рекультивацию Полюс не публикует), а не «закрытие бесплатно». Полная карта пробелов — [docs/DCF_DATA_COVERAGE.md](docs/DCF_DATA_COVERAGE.md). На пустых `mine_plans` движок по-прежнему прогоняется вхолостую: `log.Warn` и `Imported 0 rows`.
 
-Значения `source`, используемые в коде `macro_series`: `fred`, `bls`, `bea`, `manual` (ingest), `webbridge` (зарезервирован под WebBridge-сбор, читается `v_gold_dashboard`), `imf` (золотые резервы ЦБ, витрина `v_imf_macro`). Комментарий в DDL про `eia`, `wgc`, `cme` — план, не текущее состояние.
+Значения `source`, используемые в коде `macro_series`: `fred`, `bls`, `bea`, `manual` (ingest), `webbridge` (зарезервирован под WebBridge-сбор, читается `v_gold_dashboard`), `imf` (золотые резервы ЦБ, витрина `v_imf_macro`) — они же перечислены в комментарии DDL блока ниже. Планируемые источники `eia`, `wgc`, `cme` в DDL не входят.
 
 ```sql
 CREATE TABLE IF NOT EXISTS macro_series (
-    source LowCardinality(String),   -- 'fred','eia','wgc','cme'
+    source LowCardinality(String),   -- 'fred','bls','bea','manual','webbridge','imf'
     series LowCardinality(String),   -- 'DFII10','distillate_stocks',...
     date Date32,                     -- Date32, т.к. Date не покрывает даты до 1970 (CPIAUCSL с 1947, FEDFUNDS с 1954)
     value Float64
@@ -592,7 +592,7 @@ uv run --with mcp-clickhouse==0.7.0 --python 3.12 mcp-clickhouse
 
 #### Ingest-endpoint (пакет `ingest/`, бинарник `cmd/ingest`)
 
-**Реализован.** Единственный путь записи в `model_runs`, `forecast_log` и `macro_series` со стороны контура прогноза.
+**Реализован.** Единственный путь записи в `model_runs`, `forecast_log`, `macro_series` и `gold_prices` со стороны контура прогноза.
 
 - Сборка и запуск: `make build-ingest` → `build/ingest`; `make run-ingest`. Нужны `CLICKHOUSE_URL` и `INGEST_TOKEN` (см. §5); `INGEST_ADDR` по умолчанию `:8081`; `INGEST_RATE_PER_MIN` по умолчанию 60.
 - Старт: ping ClickHouse, затем `EnsureTables` — идемпотентное создание `model_runs`, `forecast_log`, `macro_series`, `gold_prices` по DDL §6.2 (копии в `ingest/schema.go`).
@@ -602,8 +602,8 @@ uv run --with mcp-clickhouse==0.7.0 --python 3.12 mcp-clickhouse
 - `POST /v1/model_run` — JSON `ModelRun`: клиентский `run_id` (UUID, обязателен), `trigger_type` ∈ {`calendar`,`news`,`manual`}, `price_deck` ∈ {`spot_flat`,`consensus_lt`,`own_scenario`}, `probabilities` (ключи только `bull`/`base`/`bear`, каждый вес 0–100, сумма 100 ±0.1), `gold_scenario` (с `horizon`: `Q<n>-YYYY`, `YE-YYYY`, `YYYY` или `YYYY-MM-DD`; блоки сценариев с `point` (число, если задан) или `low`/`high`), `nav_per_share`, `nav_bull/base/bear`, `market_price`, `upside_pct`, `discount_rate`, `wacc`, `usdrub_path`, `comment`. Ответ `200 {"inserted": 1}`; `400` — ошибка валидации или JSON.
 - Запись: сначала `forecast_log` (две строки: `metric = 'nav'`, `predicted = nav_per_share`; `metric = 'xau_q_avg'`, `predicted` = Σ p×point / Σ p; `forecast_date` — дата сервера, `target_date` — конец горизонта, `actual` и `error_pct` = NULL), последней — `model_runs` (`run_date` = время сервера, `nav_beta_gold` = NULL, поля в входе нет). Строка в `model_runs` — маркер фиксации прогона.
 - Идемпотентность: повторный POST с тем же `run_id` ничего не пишет (проверка `count() ... FINAL` + мьютекс, один инстанс). `ReplacingMergeTree` по `(run_date, run_id)` дубли сам не схлопывает. Ответ при дубле такой же, как при записи: `200 {"inserted": 1}`.
-- `POST /v1/manual_series` — JSON-массив `{"series", "date" (YYYY-MM-DD), "value", "source"?}`; пишется в `macro_series` с `source` точки, при пустом — `manual` (допустимы `manual`, `webbridge`, `imf`). Ответ `200 {"inserted": N}`; пустой массив — `N = 0`; `400` — ошибка валидации любой точки (запись не выполняется).
-- `POST /v1/gold_prices` — JSON-массив `{"venue", "date" (YYYY-MM-DD), "usd"}`; пишется в `gold_prices` (venue по whitelist `comex_front`, `usd > 0`). Ответ `200 {"inserted": N}`; пустой массив — `N = 0`; `400` — ошибка валидации любой точки (запись не выполняется).
+- `POST /v1/manual_series` — JSON-массив `{"series", "date" (YYYY-MM-DD, диапазон Date32 [1900-01-01, 2299-12-31]), "value", "source"?}`; пишется в `macro_series` с `source` точки, при пустом — `manual` (допустимы `manual`, `webbridge`, `imf`). Ответ `200 {"inserted": N}`; пустой массив — `N = 0`; `400` — ошибка валидации любой точки (запись не выполняется).
+- `POST /v1/gold_prices` — JSON-массив `{"venue", "date" (YYYY-MM-DD, диапазон Date32), "usd"}`; пишется в `gold_prices` (venue по whitelist `comex_front`, `usd > 0`). Ответ `200 {"inserted": N}`; пустой массив — `N = 0`; `400` — ошибка валидации любой точки (запись не выполняется).
 - Ошибка записи в ClickHouse — `500 insert failed`, детали в логе.
 - Реализовано: ограничение частоты (`429`), предел тела 1 MiB (`413`). Не реализовано: TLS в самом процессе — предполагается reverse proxy с TLS (в репозитории не описан).
 

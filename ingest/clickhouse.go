@@ -21,7 +21,8 @@ const (
 	goldPricesInsert  = "INSERT INTO gold_prices (venue, date, usd)"
 )
 
-// chStore — узкий срез ClickHouse, который нужен InsertModelRun; в тестах подменяется фейком.
+// chStore — узкий срез ClickHouse, который нужен методам записи writer'а
+// (InsertModelRun, InsertManualSeries, InsertGoldPrices); в тестах подменяется фейком.
 type chStore interface {
 	runExists(ctx context.Context, runID uuid.UUID) (bool, error)
 	prepareBatch(ctx context.Context, query string) (chBatch, error)
