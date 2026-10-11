@@ -448,3 +448,26 @@ func TestInsertGoldPricesEmptySkipsBatch(t *testing.T) {
 		t.Fatalf("empty slice must not trigger a batch, got %d", len(store.sent))
 	}
 }
+
+func TestInsertManualSeriesSourcePassedThrough(t *testing.T) {
+	store := newFakeStore()
+	points := []ManualSeriesPoint{
+		{Source: "imf", Series: "ra_gold_pol", Date: "2026-08-01", Value: 45600},
+		{Series: "dxy", Date: "2026-10-09", Value: 102.21},
+	}
+
+	if err := newTestWriter(store).InsertManualSeries(context.Background(), points); err != nil {
+		t.Fatalf("InsertManualSeries: %v", err)
+	}
+	if len(store.sent) != 1 || len(store.sent[0].rows) != 2 {
+		t.Fatalf("sent %+v, want one batch with two rows", store.sent)
+	}
+	first, _ := store.sent[0].rows[0][0].(string)
+	second, _ := store.sent[0].rows[1][0].(string)
+	if first != "imf" {
+		t.Fatalf("explicit source = %q, want imf", first)
+	}
+	if second != "manual" {
+		t.Fatalf("default source = %q, want manual", second)
+	}
+}

@@ -336,13 +336,63 @@ func TestManualSeriesUnknownFieldIsRejected(t *testing.T) {
 	server := newTestServer(writer)
 	defer server.Close()
 
-	const body = `[{"series": "CPIAUCSL", "date": "2026-01-01", "value": 1, "source": "fred"}]`
+	const body = `[{"series": "CPIAUCSL", "date": "2026-01-01", "value": 1, "units": "pct"}]`
 	status, payload := post(t, server.URL+"/v1/manual_series", testToken, body)
 	if status != http.StatusBadRequest {
 		t.Fatalf("status %d, want 400: %s", status, payload)
 	}
 	if len(writer.series) != 0 {
 		t.Fatal("writer must not be called with unknown field")
+	}
+}
+
+func TestManualSeriesSourceAccepted(t *testing.T) {
+	writer := &mockBatchWriter{}
+	server := newTestServer(writer)
+	defer server.Close()
+
+	const body = `[{"series": "ra_gold_pol", "date": "2026-08-01", "value": 45600, "source": "imf"}]`
+	status, payload := post(t, server.URL+"/v1/manual_series", testToken, body)
+	if status != http.StatusOK {
+		t.Fatalf("status %d, want 200: %s", status, payload)
+	}
+	if len(writer.series) != 1 || writer.series[0][0].Source != "imf" {
+		t.Fatalf("writer got %+v", writer.series)
+	}
+}
+
+func TestManualSeriesSourceRejected(t *testing.T) {
+	writer := &mockBatchWriter{}
+	server := newTestServer(writer)
+	defer server.Close()
+
+	const body = `[{"series": "CPIAUCSL", "date": "2026-01-01", "value": 1, "source": "fred"}]`
+	status, payload := post(t, server.URL+"/v1/manual_series", testToken, body)
+	if status != http.StatusBadRequest {
+		t.Fatalf("status %d, want 400: %s", status, payload)
+	}
+	if !strings.Contains(string(payload), "source") {
+		t.Fatalf("expected source in error text, got %s", payload)
+	}
+	if len(writer.series) != 0 {
+		t.Fatal("writer must not be called on validation error")
+	}
+}
+
+func TestManualSeriesSourceDefault(t *testing.T) {
+	writer := &mockBatchWriter{}
+	server := newTestServer(writer)
+	defer server.Close()
+
+	const body = `[{"series": "dxy", "date": "2026-10-09", "value": 102.21}]`
+	status, payload := post(t, server.URL+"/v1/manual_series", testToken, body)
+	if status != http.StatusOK {
+		t.Fatalf("status %d, want 200: %s", status, payload)
+	}
+	// Дефолт 'manual' применяет writer (source пустой) — здесь только проверяем,
+	// что отсутствие поля валидно и точка доходит до writer'а без подстановки в handler.
+	if len(writer.series) != 1 || writer.series[0][0].Source != "" {
+		t.Fatalf("writer got %+v", writer.series)
 	}
 }
 

@@ -150,7 +150,8 @@ func (w *ClickHouseWriter) InsertModelRun(ctx context.Context, r ModelRun) error
 	return batch.Send()
 }
 
-// InsertManualSeries пишет вручную введённые точки в macro_series с фиксированным source='manual'.
+// InsertManualSeries пишет точки в macro_series: source точки, а при пустом —
+// 'manual' (дефолт регламента ручного ввода).
 func (w *ClickHouseWriter) InsertManualSeries(ctx context.Context, points []ManualSeriesPoint) error {
 	if len(points) == 0 {
 		return nil
@@ -165,7 +166,11 @@ func (w *ClickHouseWriter) InsertManualSeries(ctx context.Context, points []Manu
 			_ = batch.Abort()
 			return fmt.Errorf("date %q: %w", point.Date, err)
 		}
-		if err = batch.Append(manualSeriesSource, point.Series, date, point.Value); err != nil {
+		source := point.Source
+		if source == "" {
+			source = manualSeriesSource
+		}
+		if err = batch.Append(source, point.Series, date, point.Value); err != nil {
 			_ = batch.Abort()
 			return err
 		}
