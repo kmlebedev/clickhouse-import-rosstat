@@ -3,16 +3,24 @@ schedule: "17 20 * * 1"
 overlap_policy: skip
 
 # Еженедельный прогон (понедельник 20:17 МСК, не пересекается с forecast.yaml
-# 20:23): выгрузки WGC месячные, но файл попадает в wgc/data вручную
-# (скачивание из goldhub — только браузером), и недельная джоба подхватывает его
-# в пределах недели. Импортёр без файла — no-op (warn + 0 строк), поэтому до
-# первого скачивания DAG остаётся зелёным. Второй шаг (wgc_cb_reserves) добавит
-# Task 4.
+# 20:23): выгрузки WGC месячные, но файлы попадают в wgc/data вручную
+# (скачивание из goldhub — только браузером), и недельная джоба подхватывает их
+# в пределах недели. Импортёр без файлов — no-op (warn + 0 строк), поэтому до
+# первого скачивания DAG остаётся зелёным. Шаги — цепочкой: ETF-потоки, затем
+# резервы ЦБ (свои выгрузки Changes_*.xlsx и World_official_gold_holdings_*.xlsx).
 steps:
   - id: wgc_etf_flows
     run: "$ROSSTAT_IMPORT_BIN"
     env:
       - CLICKHOUSE_IMPORT_STAT=wgc_etf_flows
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  - id: wgc_cb_reserves
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=wgc_cb_reserves
     retry_policy:
       limit: 3
       interval_sec: 300

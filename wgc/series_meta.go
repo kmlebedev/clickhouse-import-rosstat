@@ -13,6 +13,10 @@ const (
 	etfUnitUsdMln = "млн USD"
 	etfUnitTonnes = "тонны"
 	etfUnitUsdBn  = "млрд USD"
+
+	// cbUnitTonnes — единицы рядов ЦБ: та же строка, что у ETF-тонн (агент сравнивает
+	// unit посимвольно, и «т» против «тонны» — уже разные единицы).
+	cbUnitTonnes = etfUnitTonnes
 )
 
 // origin называет лист выгрузки своей метрики: без него агент не отличит поток
@@ -275,5 +279,90 @@ func wgcEtfCatalog() []util.SeriesMeta {
 				"Активы под управлением (AUM) физически обеспеченных золотых ETF на конец месяца, млрд USD, регион «прочие регионы» (other): сток, а не поток; включает переоценку запасов по рыночной цене золота, поэтому меняется и в месяцы без потока. Дата — последний день отчётного месяца. Не путать с потоком etf_flow_usd_mln_other (приток/отток за месяц, млн USD): AUM — это размер фондов, а не движение денег. Региональная часть мирового etf_aum_usd_bn_world.",
 				etfCatalogImportNote),
 		},
+	}
+}
+
+// Единицы рядов ЦБ и происхождение каждого ряда. origin называет источник, файл и лист:
+// без листа агент не отличил бы дельты (Changes/Monthly) от уровней (holdings/PDF) —
+// это разные файлы с разными датами и числами.
+const (
+	cbOriginChanges  = "WGC Gold Reserves by Country (IMF IFS + правки WGC), файл " + cbChangesMask + ", лист " + cbChangesSheet
+	cbOriginHoldings = "WGC Gold Reserves by Country (IMF IFS + правки WGC), файл " + cbHoldingsMask + ", лист " + cbHoldingsSheet
+)
+
+// cbCatalogNotImf — общая оговорка каталога: рядом живёт imf-ряд в USD и только по
+// Китаю; агент не должен их складывать или считать одним источником.
+const cbCatalogNotImf = "Не путать с v_imf_macro (IMF IRCFL, source='imf'): там денежное золото в USD и через datasource заполнен только Китай; здесь — тонны по семи странам (POL, CZE, TUR, RUS, KAZ, UZB, CHN) из выгрузки WGC."
+
+// cbCatalogImportNote — общий хвост описания: откуда берутся файлы и кто пишет ряды.
+// Повторяется в каждой записи намеренно — агент читает description по одному ряду и
+// соседние записи не видит.
+const cbCatalogImportNote = "Источник — WGC Gold Reserves by Country (IMF IFS + правки WGC); импортёр wgc_cb_reserves (расписание dagu/wgc.yaml, пн 20:17) читает в wgc/data свежайшие по mtime выгрузки " + cbChangesMask + " и " + cbHoldingsMask + " (скачивание с gold.org/goldhub — только браузером) и пишет ряды с source='wgc'."
+
+// cbCountryNotes — оговорки стран набора: особенность данных, о которой агент обязан
+// узнать из каталога, а не из пропусков в ряду. Пустая строка — особенностей нет.
+// Оговорка входит в описания обеих метрик страны намеренно (см. cbCatalogImportNote).
+var cbCountryNotes = map[string]string{
+	"TUR": "У Турции в выгрузке две строки: Turkey — net-ряд официального сектора (импортируется), Turkey* — gross, включая банки (не импортируется): ряд показывает изменение официальных резервов, а не валовые покупки сектора.",
+	"RUS": "У России в выгрузке пропущены месяцы 2025-12, 2026-01, 2026-02 и 2026-03 (пустая ячейка — нет данных за месяц, а не нулевое изменение): точек за них нет.",
+	"UZB": "У Узбекистана значения начинаются с 2013-02 (фактическое покрытие выгрузки): точек за более ранние месяцы нет, и это не нули.",
+}
+
+// cbDescription склеивает непустые части описания ряда в один абзац: у стран без
+// оговорок часть пуста и в текст не попадает.
+func cbDescription(parts ...string) string {
+	nonEmpty := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part != "" {
+			nonEmpty = append(nonEmpty, part)
+		}
+	}
+	return strings.Join(nonEmpty, " ")
+}
+
+// wgcCbCatalog — каталог 14 рядов набора (2 метрики × 7 стран) для series_catalog с
+// source='wgc'. Порядок — как в CbSeriesNames(): по странам словаря, внутри страны
+// сначала дельты, затем уровни. Смыслы — из спеки §3.2/§3.3: дельты — месячное изменение
+// в тоннах со знаком, уровни — сток из отдельной выгрузки с собственной датой.
+func wgcCbCatalog() []util.SeriesMeta {
+	catalog := make([]util.SeriesMeta, 0, len(cbCountries)*len(cbMetrics))
+	for _, c := range cbCountries {
+		for _, metric := range cbMetrics {
+			catalog = append(catalog, cbSeriesMeta(c, metric))
+		}
+	}
+	return catalog
+}
+
+// cbSeriesMeta — описание одной метрики страны: различаются только название, происхождение
+// и тело, оговорки источника и страны у всех записей общие.
+func cbSeriesMeta(c CbCountry, metric string) util.SeriesMeta {
+	var title, origin, body string
+
+	switch metric {
+	case cbMetricChangeTonnes:
+		title = "Золотые резервы ЦБ: изменение за месяц — " + c.Country
+		origin = cbOriginChanges
+		body = "Месячное изменение официальных золотых резервов ЦБ, тонны, " + c.Country +
+			": знак — направление (плюс — покупка, минус — продажа). Дата — последний день отчётного месяца. " +
+			"Пустая ячейка выгрузки — нет данных за месяц (точки нет), а не нулевое изменение; явный 0 — значение. " +
+			"Уровень резервов — отдельный ряд " + wgcCbSeriesName(cbMetricHoldingsTonnes, c.ISO) + "."
+	case cbMetricHoldingsTonnes:
+		title = "Золотые резервы ЦБ: уровень — " + c.Country
+		origin = cbOriginHoldings
+		body = "Официальные золотые резервы ЦБ, тонны, " + c.Country +
+			": сток на дату «Holdings as of» страны, приведённую к концу отчётного месяца. " +
+			"Дата уровня может отставать от последней дельты ряда " + wgcCbSeriesName(cbMetricChangeTonnes, c.ISO) +
+			": уровни и дельты приходят из разных выгрузок, и их даты не обязаны совпадать."
+	}
+
+	return util.SeriesMeta{
+		Source:      wgcSource,
+		Series:      wgcCbSeriesName(metric, c.ISO),
+		Title:       title,
+		Unit:        cbUnitTonnes,
+		Frequency:   "M",
+		Origin:      origin,
+		Description: cbDescription(body, cbCountryNotes[c.ISO], cbCatalogNotImf, cbCatalogImportNote),
 	}
 }
