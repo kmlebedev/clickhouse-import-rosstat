@@ -2,15 +2,19 @@ package gold
 
 import "testing"
 
-// TestSeriesMetaWellFormed: у ряда gold заполнены все поля и он совпадает с venue импортёра.
+// TestSeriesMetaWellFormed: у ряда gold (venue импортёра) заполнены все поля.
+// Полнота набора рядов (moex_fix_usd импортёра + comex_front ingest) — в series_meta_test.go.
 func TestSeriesMetaWellFormed(t *testing.T) {
-	if len(goldSeriesMeta) != 1 {
-		t.Fatalf("ожидается один ряд gold, есть %d", len(goldSeriesMeta))
+	idx := -1
+	for i := range goldSeriesMeta {
+		if goldSeriesMeta[i].Series == goldVenue {
+			idx = i
+		}
 	}
-	m := goldSeriesMeta[0]
-	if m.Series != goldVenue {
-		t.Errorf("series %q != venue импортёра %q", m.Series, goldVenue)
+	if idx < 0 {
+		t.Fatalf("ряд %q не описан в series_meta", goldVenue)
 	}
+	m := goldSeriesMeta[idx]
 	if m.Source != goldSource {
 		t.Errorf("source %q != %q", m.Source, goldSource)
 	}
