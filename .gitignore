@@ -15,3 +15,8 @@ coverage.out
 # в воспроизводимости ничего не добавляет к sql/dcf_mine_plans_seed.sql,
 # поэтому в репозитории не хранится.
 /polyus_lom_reconciled_long.csv
+
+# То же правило для артефакта атрибуции ОПР-выпуска Сухого Лога: CSV
+# пересобирается детерминированно из `make polyus-output`, поэтому в
+# репозитории хранится только применяемый артефакт — sql/polyus_output_seed.sql.
+/polyus_output_attribution_long.csv

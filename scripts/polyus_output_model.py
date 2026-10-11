@@ -43,10 +43,20 @@ import extrapolation_aisc as aisc
 
 ch_query = aisc.ch_query
 
-# Каноническое имя актива: дословно совпадает с `databook_polyus.table` и
-# `dcf/mine_plans_seed.go` (`Asset: "Sukhoi Log"`). Расхождение в написании
-# создало бы ВТОРОЙ актив в плане вместо уточнения существующего.
+# Каноническое имя актива, КОТОРОМУ ПРИПИСЫВАЕТСЯ выпуск: дословно совпадает с
+# `databook_polyus.table` и `dcf/mine_plans_seed.go` (`Asset: "Sukhoi Log"`).
+# Имя содержит пробел и смешанный регистр — это канон Полюса, а не опечатка.
 ASSET = "Sukhoi Log"
+
+# Актив, У КОТОРОГО читается факт. Это не тот же актив, что `ASSET`, и в этом
+# суть задачи: у Сухого Лога в датапаке НЕТ ни одной метрики выпуска (только
+# `Ore mined`, `Stripping`, `Average grade in ore mined` — горные работы), а
+# выплавка ОПР числится за Вернинским, потому что руду перерабатывает его ЗИФ.
+# Полюс закрепляет это публично: сноска 13 пресс-релиза за 1 полугодие 2026 —
+# «Результаты переработки руды включены в производственные результаты
+# Вернинского». Модель переносит выпуск источнику руды, потому что затраты
+# (TCC) привязаны к карьеру, а не к ЗИФ.
+SOURCE_ASSET = "VERNINSKOYE2"
 
 # Окно ОПР в этом срезе — 2025–2027. Год 2028+ НЕ ВХОДИТ по построению: там
 # начинается горизонт Go-сида (`ProfileStartYear: 2028`, `MineLifeYears: 10`),
@@ -123,27 +133,38 @@ def output_sql(asset: str, year: int) -> str:
     первого ключом ответа стало бы само выражение `argMax(value, date)`, без
     второго ответ пришёл бы `TabSeparated`.
 
-    Имя актива проверяется не на членство в списке активов плана, а НА ФОРМУ
-    (`aisc.ASSET_LITERAL`): в датапаке есть таблицы, которые в план не входят,
-    и произвольная строка не должна попасть в литерал запроса даже случайно.
+    Имя актива подставляется в литерал, а не параметром (HTTP-интерфейс требует
+    текст запроса целиком), поэтому одинарная кавычка в имени ЭКРАНИРУЕТСЯ
+    удвоением — так же, как в `extrapolation_aisc.sql_literal`. ПРОВЕРКА ФОРМЫ
+    ИМЕНИ ЗДЕСЬ НЕУМЕСТНА: каноническое имя актива у Полюса — «Sukhoi Log», с
+    пробелом и смешанным регистром (`dcf/mine_plans_seed.go` документирует это
+    прямо), и шаблон вида `^[A-Z][A-Z0-9_]*$` отверг бы законные данные. Go-сид
+    той же задачи подставляет имя параметром `{asset:String}`, где экранирование
+    делает сервер; здесь его делает `_quote`, и это единственное отличие.
     """
-    if not aisc.ASSET_LITERAL.match(asset):
-        raise OutputDataError(
-            f"имя актива {asset!r} не похоже на имя таблицы датапака: "
-            f"ожидаются заглавные латинские буквы, цифры и подчёркивания"
-        )
     year = int(year)
     if not 1900 <= year <= 2200:
         raise OutputDataError(f"год {year} вне правдоподобного диапазона")
     return (
         "SELECT argMax(value, date) AS v\n"
         "FROM databook_polyus FINAL\n"
-        f"WHERE table = '{asset}'\n"
-        f"  AND name = '{REFINED_METRIC}'\n"
+        f"WHERE table = {_quote(asset)}\n"
+        f"  AND name = {_quote(REFINED_METRIC)}\n"
         "  AND data = 'ANNUAL'\n"
         f"  AND toYear(date) = {year}\n"
         "FORMAT JSON"
     )
+
+
+def _quote(value: str) -> str:
+    """Литерал ClickHouse для строки: одинарные кавычки с удвоением тика.
+
+    `O'HARA` → `'O''HARA'`. Тот же приём, что в `extrapolation_aisc.sql_literal`,
+    и по той же причине: литерал не должен разрывать текст запроса. Перевода
+    строки в имени актива не бывает, а кавычка — единственный символ, способный
+    выйти за пределы литерала, поэтому удвоения достаточно.
+    """
+    return "'" + str(value).replace("'", "''") + "'"
 
 
 def read_refined_output(asset: str, year: int) -> float:
@@ -406,3 +427,56 @@ def write_csv(path: Path, rows: list) -> None:
                 repr(row["closure_costs"]),
                 source,
             ))
+
+
+def read_measured() -> dict:
+    """Измеренный выпуск ОПР по годам, которые публикация даёт фактом.
+
+    Читается актив `SOURCE_ASSET` (Вернинское), а не `ASSET` (Сухой Лог): у
+    Сухого Лога метрики выпуска в датапаке нет вовсе, выплавка числится за
+    Вернинским. Записывается результат при этом Сухому Логу — в этом и состоит
+    атрибуция.
+
+    Читаются `OPR_YEARS` без `ESTIMATED_YEARS`: у оценённого года факта нет по
+    построению, и запрос к нему был бы попыткой прочитать то, чего не публикуют.
+    """
+    years = [year for year in OPR_YEARS if year not in ESTIMATED_YEARS]
+    return {year: read_refined_output(SOURCE_ASSET, year) for year in years}
+
+
+def main() -> int:
+    """Полный прогон: чтение факта → сборка строк → запись SQL и CSV.
+
+    Возвращает НОЛЬ только при успехе. `OutputDataError` и `OverlapError`
+    печатаются как читаемое сообщение, а не как трейсбек: причина отказа
+    (какой год не прочитан, какой ключ пересекается) — это и есть результат
+    прогона, и она не должна тонуть в стеке вызовов.
+
+    В ClickHouse скрипт НЕ ПИШЕТ: печатает файлы, вставка — `make ch-sql`.
+    Поэтому прогон без БД на запись безопасен и пароль не нужен.
+    """
+    try:
+        rows = build_rows(read_measured())
+        assert_no_overlap(rows)
+    except (OutputDataError, OverlapError) as exc:
+        print(f"ОПР-выпуск не засеян: {exc}", file=sys.stderr)
+        return 1
+
+    write_sql(OUTPUT_SQL, rows)
+    write_csv(OUTPUT_CSV, rows)
+
+    for row in rows:
+        source = "оценка (среднее 2025–2026)" if row["year"] in ESTIMATED_YEARS else "факт refined"
+        print(f"{row['asset']} {row['year']}: {row['production_koz']} koz — {source}")
+    # Путь печатается через `aisc._display_path`: `relative_to(ROOT)` поднимает
+    # ValueError для каталога ВНЕ корня (тесты направляют вывод в tmp), а падать
+    # на последней строке сводки — после записи файлов — значит ронять успешный
+    # прогон без причины. Та же защита и по той же причине, что в AISC-скрипте.
+    print(f"Сид: {aisc._display_path(OUTPUT_SQL)} ({len(rows)} строк)")
+    print(f"Сверка: {aisc._display_path(OUTPUT_CSV)}")
+    print(f"Применить: {APPLY_COMMAND}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

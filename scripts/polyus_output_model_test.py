@@ -28,6 +28,16 @@ class TestReadRefined(unittest.TestCase):
         # Окно ОПР в этом срезе — 2025–2027 (спека §3): 2028+ принадлежит Go-сиду.
         self.assertEqual(om.OPR_YEARS, (2025, 2026, 2027))
 
+    def test_asset_name_keeps_its_space(self):
+        # Каноническое имя Полюса — «Sukhoi Log», с пробелом. Проверка формы
+        # имени вида ^[A-Z][A-Z0-9_]*$ отвергла бы законные данные.
+        self.assertEqual(om.ASSET, "Sukhoi Log")
+        self.assertIn("'Sukhoi Log'", om.output_sql(om.ASSET, 2025))
+
+    def test_single_quote_in_asset_is_escaped(self):
+        # Литерал не должен разрываться кавычкой из значения.
+        self.assertIn("'O''HARA'", om.output_sql("O'HARA", 2025))
+
     def test_metric_is_refined_not_dore(self):
         # 2025: refined 242.2 против dore 230.8. Метрика обязана быть refined.
         with unittest.mock.patch.object(om, "ch_query", return_value=[{"v": 242.2}]):
@@ -39,6 +49,10 @@ class TestReadRefined(unittest.TestCase):
         with unittest.mock.patch.object(om, "ch_query", return_value=[]):
             with self.assertRaises(om.OutputDataError):
                 om.read_refined_output("VERNINSKOYE2", 2100)
+
+    def test_implausible_year_raises(self):
+        with self.assertRaises(om.OutputDataError):
+            om.output_sql("OLIMPIADA", 1800)
 
 
 class TestBuildRows(unittest.TestCase):
@@ -169,6 +183,72 @@ class TestEmit(unittest.TestCase):
                 rows = {r["year"]: r for r in csv.DictReader(handle)}
         self.assertEqual(rows["2025"]["source_metric"], "refined_measured")
         self.assertEqual(rows["2027"]["source_metric"], "mean_2025_2026")
+
+
+class TestMain(unittest.TestCase):
+    def _run(self, side_effect):
+        """Прогон `main()` во временном каталоге.
+
+        Проверки расположены ВНУТРИ контекста `TemporaryDirectory`, а не после
+        него: каталог удаляется на выходе из `with`, и вынесенный наружу
+        `exists()` был бы ложен ВСЕГДА — то есть проверял бы удаление каталога,
+        а не запись файлов. Проверяющая функция получает пути и код возврата и
+        вызывается до удаления.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            sql_path, csv_path = Path(tmp) / "s.sql", Path(tmp) / "s.csv"
+            with unittest.mock.patch.object(om, "read_refined_output", side_effect=side_effect), \
+                 unittest.mock.patch.object(om, "OUTPUT_SQL", sql_path), \
+                 unittest.mock.patch.object(om, "OUTPUT_CSV", csv_path):
+                code = om.main()
+            return self.check(code, sql_path, csv_path)
+
+    def check(self, code, sql_path, csv_path):
+        self.sql_exists = sql_path.exists()
+        self.csv_exists = csv_path.exists()
+        self.sql_text = sql_path.read_text(encoding="utf-8") if self.sql_exists else ""
+        return code
+
+    def test_writes_both_artifacts_and_returns_zero(self):
+        measured = {2025: 242.2, 2026: 271.7}
+        code = self._run(lambda asset, year: measured[year])
+        self.assertEqual(code, 0)
+        self.assertTrue(self.sql_exists, "сид не записан")
+        self.assertTrue(self.csv_exists, "CSV не записан")
+
+    def test_returns_nonzero_when_fact_missing(self):
+        code = self._run(om.OutputDataError("нет факта за 2026"))
+        self.assertNotEqual(code, 0)
+        self.assertFalse(self.sql_exists, "сид записан, хотя факта нет")
+        self.assertEqual(self.sql_text, "")
+
+    def test_reads_source_asset_but_writes_target_asset(self):
+        # Суть атрибуции: факт читается у Вернинского (его ЗИФ перерабатывает
+        # руду), а строка плана пишется Сухому Логу (руда его).
+        seen = []
+        measured = {2025: 242.2, 2026: 271.7}
+
+        def record(asset, year):
+            seen.append((asset, year))
+            return measured[year]
+
+        self._run(record)
+        self.assertEqual(seen, [(om.SOURCE_ASSET, 2025), (om.SOURCE_ASSET, 2026)])
+        self.assertIn("'Sukhoi Log',2025", self.sql_text)
+        self.assertNotIn("'VERNINSKOYE2',2025", self.sql_text)
+
+    def test_stdout_names_the_estimated_year(self):
+        # Оценка обязана быть видна в сводке прогона, а не только в CSV:
+        # иначе глазная сверка лога приняла бы её за факт.
+        import io
+        import contextlib
+        measured = {2025: 242.2, 2026: 271.7}
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self._run(lambda asset, year: measured[year])
+        text = buf.getvalue()
+        self.assertIn("257.0", text)
+        self.assertIn("оценка", text)
 
 
 if __name__ == "__main__":
