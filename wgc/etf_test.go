@@ -2,6 +2,7 @@ package wgc
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/xuri/excelize/v2"
 )
 
@@ -140,7 +142,9 @@ func TestEtfImportWorkbookWithoutDataFails(t *testing.T) {
 // обязаны обновиться из выгрузки, а не остаться без обновления под зелёным dagu.
 // Выгрузка берётся настоящая (testdata/ETF_Flows_2026-10-02_1401.xlsx — та же
 // фикстура, что у xlsx-парсера), а не синтетический воркбук: фолбэк должен работать
-// на боевом формате файла.
+// на боевом формате файла. Путь выбранного файла возвращается наружу — им Import
+// инструментирует лог и называет источник в guard-е устаревшей выгрузки, поэтому тест
+// пинит и его: без пути предупреждение об устаревшей выгрузке не назвало бы файл.
 func TestEtfLoadPointsFallsBackToFile(t *testing.T) {
 	dir := t.TempDir()
 	name := "ETF_Flows_2026-10-02_1401.xlsx"
@@ -148,7 +152,7 @@ func TestEtfLoadPointsFallsBackToFile(t *testing.T) {
 		t.Fatalf("WriteFile(%s): %v", name, err)
 	}
 
-	points, fromAPI, err := etfLoadPoints(dir, apiDown(t), etfAPITestNow)
+	points, fromAPI, file, err := etfLoadPoints(dir, apiDown(t), etfAPITestNow)
 	if err != nil {
 		t.Fatalf("etfLoadPoints: %v", err)
 	}
@@ -158,12 +162,16 @@ func TestEtfLoadPointsFallsBackToFile(t *testing.T) {
 	if len(points) == 0 {
 		t.Error("выгрузка разобрана в 0 точек — фолбэк не сработал")
 	}
+	if want := filepath.Join(dir, name); file != want {
+		t.Errorf("etfLoadPoints вернул путь %q, ожидался %q", file, want)
+	}
 }
 
 // TestEtfLoadPointsPrefersAPIOverFile: API отвечает фикстурами, а в каталоге лежит битый
 // файл, на котором разбор обязан упасть. Успешный результат доказывает, что источником
 // стал именно API: победи файл — тест упал бы на его разборе. Смешивать транспорты нельзя
-// (двойные точки и разный состав рядов на одном месяце), поэтому источник ровно один.
+// (двойные точки и разный состав рядов на одном месяце), поэтому источник ровно один,
+// и путь файла при API-транспорте пуст — иначе Import назвал бы в логе не тот источник.
 func TestEtfLoadPointsPrefersAPIOverFile(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "ETF_Flows_broken.xlsx"), []byte("не xlsx"), 0o644); err != nil {
@@ -171,12 +179,15 @@ func TestEtfLoadPointsPrefersAPIOverFile(t *testing.T) {
 	}
 	srv := etfAPITestServer(t, nil, nil)
 
-	points, fromAPI, err := etfLoadPoints(dir, srv.URL+"/", etfAPITestNow)
+	points, fromAPI, file, err := etfLoadPoints(dir, srv.URL+"/", etfAPITestNow)
 	if err != nil {
 		t.Fatalf("etfLoadPoints: %v", err)
 	}
 	if !fromAPI {
 		t.Error("API ответил фикстурами — источником обязан стать API (fromAPI = false)")
+	}
+	if file != "" {
+		t.Errorf("etfLoadPoints вернул путь файла %q при API-транспорте — источником стал не API", file)
 	}
 	if len(points) == 0 {
 		t.Error("фикстуры API разобраны в 0 точек")
@@ -213,5 +224,98 @@ func TestEtfCacheLooksStale(t *testing.T) {
 					c.apiMax.Format("2006-01-02"), c.storedMax.Format("2006-01-02"), got, c.want)
 			}
 		})
+	}
+}
+
+// etfFakeConn — фейковое соединение для проверок порядка обращений и разбора NULL: достаточно
+// встроить driver.Conn и переопределить три используемых метода. Остальные остаются nil и
+// паникуют при вызове — поэтому тесты обязаны останавливать Import на PrepareBatch, что и
+// делает фейк (возвращает ошибку).
+type etfFakeConn struct {
+	driver.Conn
+	calls []string
+}
+
+func (c *etfFakeConn) Exec(_ context.Context, query string, _ ...any) error {
+	c.calls = append(c.calls, "exec: "+query)
+	return nil
+}
+
+func (c *etfFakeConn) QueryRow(_ context.Context, query string, _ ...any) driver.Row {
+	c.calls = append(c.calls, "queryrow: "+query)
+	return etfFakeRow{}
+}
+
+func (c *etfFakeConn) PrepareBatch(_ context.Context, query string, _ ...driver.PrepareBatchOption) (driver.Batch, error) {
+	c.calls = append(c.calls, "preparebatch: "+query)
+	return nil, errors.New("фейковое соединение: батч не поддержан")
+}
+
+// etfFakeRow — ответ maxOrNull(date) по пустой таблице: NULL. Scan проверяет тип приёмника —
+// NULL приходит в **time.Time (указатель), поэтому возврат к var maxDate time.Time вместе с
+// прежней эвристикой «пустая таблица — год 1970» роняет тест, а не тихо отдаёт 1970-01-01.
+type etfFakeRow struct{}
+
+func (etfFakeRow) Err() error { return nil }
+
+func (etfFakeRow) ScanStruct(any) error {
+	return errors.New("фейковая строка: ScanStruct не используется")
+}
+
+func (etfFakeRow) Scan(dest ...any) error {
+	if len(dest) != 1 {
+		return errors.New("фейковая строка: ожидался один приёмник")
+	}
+	maxDate, ok := dest[0].(**time.Time)
+	if !ok {
+		return errors.New("фейковая строка: NULL сканируется только в **time.Time")
+	}
+	*maxDate = nil
+	return nil
+}
+
+// TestEtfStoredMaxDateEmptyTableIsZero: «сохранённых точек нет» — факт ответа maxOrNull (NULL),
+// а не вывод из года. Живого ClickHouse в тестах нет, поэтому используется фейковое соединение
+// (прецедент — текстовые проверки запросов в dcf), и именно здесь лежала ошибка: эвристика
+// max(date).Year() <= 1970 объявляла пустой и таблицу с настоящими точками 1970-01.
+func TestEtfStoredMaxDateEmptyTableIsZero(t *testing.T) {
+	conn := &etfFakeConn{}
+
+	got, err := etfStoredMaxDate(context.Background(), conn)
+	if err != nil {
+		t.Fatalf("etfStoredMaxDate по пустой таблице: %v", err)
+	}
+	if !got.IsZero() {
+		t.Errorf("etfStoredMaxDate по пустой таблице = %s, ожидалась нулевая дата (данных для сравнения нет)", got)
+	}
+	if len(conn.calls) != 1 || !strings.Contains(conn.calls[0], "maxOrNull") {
+		t.Errorf("обращения к соединению = %v, ожидался один запрос maxOrNull(date)", conn.calls)
+	}
+}
+
+// TestEtfImportCreatesTableBeforeStaleGuard: DDL идёт до guard-а устаревания. На чистой базе
+// macro_series ещё нет, и прежний порядок (guard, затем DDL внутри записи) давал на первом
+// прогоне ложный warn «сохранённый максимум дат не прочитан» при полностью здоровом источнике.
+// Фейковое соединение записывает порядок обращений: DDL, затем запрос guard-а, затем батч.
+func TestEtfImportCreatesTableBeforeStaleGuard(t *testing.T) {
+	srv := etfAPITestServer(t, nil, nil)
+	conn := &etfFakeConn{}
+	stat := etfFlowsStat{dir: t.TempDir(), apiBase: srv.URL + "/"}
+
+	if _, err := stat.Import(context.Background(), conn); err == nil {
+		t.Fatal("Import обязан вернуть ошибку фейкового PrepareBatch")
+	}
+
+	if len(conn.calls) != 3 {
+		t.Fatalf("обращения к соединению = %v, ожидались три: DDL, guard, батч", conn.calls)
+	}
+	if !strings.Contains(conn.calls[0], "CREATE TABLE IF NOT EXISTS "+macroSeriesTable) {
+		t.Errorf("первым обращением к соединению было %q, ожидался DDL macro_series до guard-а", conn.calls[0])
+	}
+	if !strings.Contains(conn.calls[1], "maxOrNull") {
+		t.Errorf("вторым обращением к соединению было %q, ожидался запрос guard-а maxOrNull(date)", conn.calls[1])
+	}
+	if !strings.HasPrefix(conn.calls[2], "preparebatch: ") {
+		t.Errorf("третьим обращением к соединению было %q, ожидался батч вставки", conn.calls[2])
 	}
 }
