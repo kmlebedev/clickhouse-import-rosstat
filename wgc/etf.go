@@ -76,6 +76,13 @@ func (s *etfFlowsStat) Import(ctx context.Context, conn driver.Conn) (count int6
 		return 0, fmt.Errorf("%s: %s: %w", s.Name(), path, err)
 	}
 
+	// Пустой разбор — не «нулевой месяц», а сломанная выгрузка: пустой батч ушёл
+	// бы в Send, а каталог описал бы ряды, которых в таблице нет (fail-fast, урок
+	// eia). Проверка стоит до PrepareBatch и до любого обращения к соединению.
+	if len(points) == 0 {
+		return 0, fmt.Errorf("%s: %s: выгрузка без точек — форма листов изменилась", s.Name(), path)
+	}
+
 	// Порядок батча детерминирован: сортировка (series, date) делает повторный
 	// импорт воспроизводимым независимо от порядка обхода листов парсером.
 	sort.Slice(points, func(i, j int) bool {
@@ -98,6 +105,14 @@ func (s *etfFlowsStat) Import(ctx context.Context, conn driver.Conn) (count int6
 
 	for _, p := range points {
 		if err = batch.Append(wgcSource, p.Series, p.Date, p.Value); err != nil {
+			// Abort не даёт соединению остаться с открытым батчем (следующий шаг
+			// DAG-а получил бы «уже есть незакрытый батч»); сбой Abort логируем,
+			// а не глотаем, — возвращаемой ошибкой остаётся первопричина Append
+			// (прецедент dcf/mine_plans_import.go).
+			if aerr := batch.Abort(); aerr != nil {
+				log.Warnf("%s: не удалось закрыть батч после ошибки append: %v", s.Name(), aerr)
+			}
+
 			return 0, fmt.Errorf("%s: append %s %s: %w", s.Name(), p.Series, p.Date.Format("2006-01-02"), err)
 		}
 
