@@ -36,6 +36,26 @@ func testFixture(t *testing.T, name string) []byte {
 	return body
 }
 
+// testMutateJSON отдаёт фикстуру с правкой data — так проверки «форма ответа сломалась»
+// собираются из живых данных, а не из рукописного минимального JSON.
+func testMutateJSON(t *testing.T, name string, fn func(data []map[string]any)) []byte {
+	t.Helper()
+	var doc struct {
+		Version string           `json:"version"`
+		Updated string           `json:"updated"`
+		Data    []map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(testFixture(t, name), &doc); err != nil {
+		t.Fatalf("разбор фикстуры %s: %v", name, err)
+	}
+	fn(doc.Data)
+	body, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("сборка тела из %s: %v", name, err)
+	}
+	return body
+}
+
 func testDate(t *testing.T, s string) time.Time {
 	t.Helper()
 	d, err := parseBoldDate(s)
@@ -201,18 +221,18 @@ func TestParseLatestPinsFacts(t *testing.T) {
 }
 
 // TestParseLatestRequiresMetricFields: отсутствие обязательного поля метрики — ошибка,
-// называющая метрику, а не строка с нулём.
+// называющая именно поле, а не строка с нулём.
 func TestParseLatestRequiresMetricFields(t *testing.T) {
 	if _, err := parseLatest([]byte(`{"version":"1","updated":"2026-10-11T04:32:05.131Z","date":"2026-10-09","price":4216.3}`), boldMetricUnits); err == nil {
 		t.Fatal("units-latest без units обязан быть ошибкой")
-	} else if !strings.Contains(err.Error(), "units") {
-		t.Fatalf("ошибка обязана называть метрику units: %v", err)
+	} else if !strings.Contains(err.Error(), "метрики units за 2026-10-09 нет обязательного поля units") {
+		t.Fatalf("ошибка обязана называть метрику, дату и поле units: %v", err)
 	}
 
 	body := `{"version":"1","updated":"2026-10-11T04:32:05.028Z","date":"2026-10-09","culm7day":43740,"culm90day":5376055,"price":4216.3}`
 	if _, err := parseLatest([]byte(body), boldMetricFlows); err == nil {
 		t.Fatal("flows-latest без culm30day обязан быть ошибкой")
-	} else if !strings.Contains(err.Error(), "culm30day") {
+	} else if !strings.Contains(err.Error(), "нет обязательного поля culm30day") {
 		t.Fatalf("ошибка обязана называть поле culm30day: %v", err)
 	}
 }
@@ -263,8 +283,8 @@ func TestParseHistorySkipsNullUnits(t *testing.T) {
 	body := `{"version":"1","updated":"2026-10-11T04:32:19.813Z","data":[{"date":"2015-01-01","price":1199.25}]}`
 	if _, err := parseHistory([]byte(body), boldMetricUnits); err == nil {
 		t.Fatal("история units без единой строки с units обязана быть ошибкой")
-	} else if !strings.Contains(err.Error(), "units") {
-		t.Fatalf("ошибка обязана называть метрику units: %v", err)
+	} else if !strings.Contains(err.Error(), "в истории метрики units нет ни одной строки с её полями") {
+		t.Fatalf("ошибка обязана говорить про метрику units и отсутствие строк с её полями: %v", err)
 	}
 }
 
@@ -335,16 +355,46 @@ func TestBoldETFSetsUsesPrevUnitsFromDB(t *testing.T) {
 	testNear(t, "flow usd", testPoint(t, points, "etf_bold_flow_usd_mln", boldPinDate).Value, 573.75, 1e-2)
 }
 
-// TestBoldETFSetsErrorsOnDateMismatch: предыдущий день (10-09) не старше строки (10-08) —
-// дельта посчиталась бы с будущим стоком, поэтому это ошибка, а не тихий поток.
-func TestBoldETFSetsErrorsOnDateMismatch(t *testing.T) {
+// TestBoldETFSetsRejectsPrevDateNotOlder: prevDate (10-09, сток из ClickHouse) не старше первой
+// строки среза (10-08) — дельта посчиталась бы с будущим стоком, поэтому это ошибка, а не тихий
+// поток. Межэндпоинтная сверка дат (price за 10-09 при units за 10-08) живёт в Task 2
+// (boldEtfFetchLatest): у строки boldETFSets одна общая Date на все метрики.
+func TestBoldETFSetsRejectsPrevDateNotOlder(t *testing.T) {
 	_, err := boldETFSets(testDayRows(t, boldPinPrior), testPtr(boldPinUnits), testDate(t, boldPinDate))
 	if err == nil {
 		t.Fatal("prevDate 10-09 при строке 10-08 обязан быть ошибкой")
 	}
-	for _, want := range []string{boldPinDate, boldPinPrior} {
+	for _, want := range []string{"предыдущий сток за " + boldPinDate, "не старше строки " + boldPinPrior} {
 		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("ошибка обязана называть обе даты (%s): %v", want, err)
+			t.Fatalf("ошибка обязана содержать %q: %v", want, err)
+		}
+	}
+}
+
+// TestBoldETFSetsRejectsDuplicateDates: две строки одной даты в срезе — дубли точек, ошибка.
+func TestBoldETFSetsRejectsDuplicateDates(t *testing.T) {
+	day := testDayRows(t, boldPinDate)
+	_, err := boldETFSets(append(append([]boldRow{}, day...), day...), nil, time.Time{})
+	if err == nil {
+		t.Fatal("повтор даты в срезе обязан быть ошибкой")
+	}
+	if !strings.Contains(err.Error(), "дата "+boldPinDate+" повторяется") {
+		t.Fatalf("ошибка обязана называть повторяющуюся дату: %v", err)
+	}
+}
+
+// TestBoldETFSetsRejectsPartialWindows: правило «все три окна или ни одного» действует и здесь —
+// функция сама решает, какие точки строить, и не должна принимать строку с частью окон.
+func TestBoldETFSetsRejectsPartialWindows(t *testing.T) {
+	day := testDayRows(t, boldPinDate)
+	day[0].Culm30 = nil
+	_, err := boldETFSets(day, nil, time.Time{})
+	if err == nil {
+		t.Fatal("строка с частично заполненными окнами обязана быть ошибкой")
+	}
+	for _, want := range []string{"есть culm7day, culm90day", "нет culm30day"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("ошибка обязана содержать %q: %v", want, err)
 		}
 	}
 }
@@ -375,7 +425,10 @@ func TestParseFundSnapshotPinsFacts(t *testing.T) {
 		t.Fatalf("строк с тикером GLD: %d, ожидалось 3", gld)
 	}
 
-	points := boldFundPoints(rows, testDate(t, boldPinDate))
+	points, err := boldFundPoints(rows, testDate(t, boldPinDate))
+	if err != nil {
+		t.Fatalf("boldFundPoints: %v", err)
+	}
 	if len(points) != 73 {
 		t.Fatalf("точек фондов: %d, ожидалось 73", len(points))
 	}
@@ -404,26 +457,53 @@ func TestParseFundSnapshotPinsFacts(t *testing.T) {
 // TestParseFundSnapshotRejectsMissingFields: срез — полный снимок; отсутствие любого поля
 // (или пустой срез) — ошибка, сигнал смены формы ответа, а не ноль в точке.
 func TestParseFundSnapshotRejectsMissingFields(t *testing.T) {
-	var doc struct {
-		Version string           `json:"version"`
-		Updated string           `json:"updated"`
-		Data    []map[string]any `json:"data"`
-	}
-	if err := json.Unmarshal(testFixture(t, boldPinSummary), &doc); err != nil {
-		t.Fatalf("разбор фикстуры %s: %v", boldPinSummary, err)
-	}
-	delete(doc.Data[0], "aum")
-	body, err := json.Marshal(doc)
-	if err != nil {
-		t.Fatalf("сборка тела: %v", err)
-	}
+	body := testMutateJSON(t, boldPinSummary, func(data []map[string]any) {
+		delete(data[0], "aum")
+	})
 	if _, err := parseFundSnapshot(body); err == nil {
 		t.Fatal("строка среза без aum обязана быть ошибкой")
-	} else if !strings.Contains(err.Error(), "aum") {
+	} else if !strings.Contains(err.Error(), "нет обязательного поля aum") {
 		t.Fatalf("ошибка обязана называть поле aum: %v", err)
 	}
 	if _, err := parseFundSnapshot([]byte(`{"version":"1","updated":"","data":[]}`)); err == nil {
 		t.Fatal("пустой срез фондов обязан быть ошибкой")
+	}
+}
+
+// TestBoldFundPointsRejectsNilFields: второй уровень защиты — прямой вызов boldFundPoints без
+// разбора обязан падать на любом nil, а не подставлять ноль (Review Focus 1: «null — это
+// отсутствие данных, а не ноль»).
+func TestBoldFundPointsRejectsNilFields(t *testing.T) {
+	full := testFunds(t)[0]
+	full.Ticker, full.Name = "TEST", "Test Gold ETF"
+	fields := []struct {
+		name string
+		drop func(f *boldFundRow)
+	}{
+		{"units", func(f *boldFundRow) { f.Units = nil }},
+		{"unitsChange", func(f *boldFundRow) { f.UnitsChange = nil }},
+		{"aum", func(f *boldFundRow) { f.Aum = nil }},
+		{"aumChange", func(f *boldFundRow) { f.AumChange = nil }},
+		{"price", func(f *boldFundRow) { f.Price = nil }},
+		{"priceChange", func(f *boldFundRow) { f.PriceChange = nil }},
+		{"shares", func(f *boldFundRow) { f.Shares = nil }},
+		{"sharesChange", func(f *boldFundRow) { f.SharesChange = nil }},
+	}
+	if _, err := boldFundPoints([]boldFundRow{full}, testDate(t, boldPinDate)); err != nil {
+		t.Fatalf("полная строка не должна падать: %v", err)
+	}
+	for _, field := range fields {
+		fund := full
+		field.drop(&fund)
+		_, err := boldFundPoints([]boldFundRow{fund}, testDate(t, boldPinDate))
+		if err == nil {
+			t.Fatalf("nil в поле %s обязан быть ошибкой, а не нулём", field.name)
+		}
+		for _, want := range []string{"TEST", "нет обязательного поля " + field.name} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("ошибка обязана содержать %q для поля %s: %v", want, field.name, err)
+			}
+		}
 	}
 }
 
@@ -432,6 +512,39 @@ func TestOzToTonnes(t *testing.T) {
 	testNear(t, "113180843 oz", ozToTonnes(boldPinUnits), 3520.318, 1e-3)
 	testNear(t, "32150.74656862 oz", ozToTonnes(boldPinOunces), 1, 1e-9)
 	testNear(t, "0 oz", ozToTonnes(0), 0, 1e-12)
+}
+
+// TestParseHistoryRejectsPartialWindows: правило источника «все три окна или ни одного» —
+// частично заполненная строка ломает ряд окон и обязана падать (в живом flows/all 3138 строк:
+// до 2015-04-01 ни одного culm*, с 2015-04-01 все три).
+func TestParseHistoryRejectsPartialWindows(t *testing.T) {
+	body := testMutateJSON(t, "bold_flows_history.json", func(data []map[string]any) {
+		delete(data[len(data)-1], "culm30day")
+	})
+	_, err := parseHistory(body, boldMetricFlows)
+	if err == nil {
+		t.Fatal("строка с частью окон culm* обязана быть ошибкой")
+	}
+	for _, want := range []string{"окна заполнены частично", "есть culm7day, culm90day", "нет culm30day"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("ошибка обязана содержать %q: %v", want, err)
+		}
+	}
+}
+
+// TestParseHistoryRejectsDuplicateDates: одна дата дважды в одном файле истории — дубли точек.
+// Без проверки строки только с aum дали бы две точки на дату молча.
+func TestParseHistoryRejectsDuplicateDates(t *testing.T) {
+	body := testMutateJSON(t, "bold_aum_history.json", func(data []map[string]any) {
+		data[len(data)-1] = data[len(data)-2] // 09.10 подменена копией 08.10
+	})
+	_, err := parseHistory(body, boldMetricAum)
+	if err == nil {
+		t.Fatal("повтор даты в файле истории обязан быть ошибкой")
+	}
+	if !strings.Contains(err.Error(), "дата "+boldPinPrior+" повторяется (строки 2 и 3)") {
+		t.Fatalf("ошибка обязана называть дату и номера строк: %v", err)
+	}
 }
 
 // TestBoldEndpointsPinPaths финит эндпоинты, объявленные для импортёров (Task 2/3): молчаливая

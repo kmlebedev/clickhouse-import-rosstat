@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -218,7 +219,8 @@ func parseLatest(body []byte, metric boldMetric) (boldRow, error) {
 
 // parseHistory разбирает файл истории. Строки без полей метрики остаются в срезе с nil —
 // решение о точке принимает boldETFSets (нулевой сток не должен попасть в ряды как факт);
-// ошибка только тогда, когда метрики нет ни в одной строке (не тот эндпоинт).
+// ошибка тогда, когда метрики нет ни в одной строке (не тот эндпоинт), когда дата повторяется
+// (дубли точек молча) и когда окна culm* заполнены частично (правило «все три или ни одного»).
 func parseHistory(body []byte, metric boldMetric) ([]boldRow, error) {
 	var envelope boldEnvelope
 	if err := json.Unmarshal(body, &envelope); err != nil {
@@ -228,8 +230,17 @@ func parseHistory(body []byte, metric boldMetric) ([]boldRow, error) {
 		return nil, fmt.Errorf("bold: история метрики %s пуста", metric.name())
 	}
 	full := 0
+	seen := make(map[string]int, len(envelope.Data))
 	for i, row := range envelope.Data {
 		if _, err := parseBoldDate(row.Date); err != nil {
+			return nil, fmt.Errorf("bold: история метрики %s, строка %d: %w", metric.name(), i+1, err)
+		}
+		if prev, ok := seen[row.Date]; ok {
+			return nil, fmt.Errorf("bold: история метрики %s: дата %s повторяется (строки %d и %d) — это дало бы дубли точек",
+				metric.name(), row.Date, prev, i+1)
+		}
+		seen[row.Date] = i + 1
+		if err := requireCulmWindows(row); err != nil {
 			return nil, fmt.Errorf("bold: история метрики %s, строка %d: %w", metric.name(), i+1, err)
 		}
 		if metric.present(row) {
@@ -260,9 +271,9 @@ func parseFundSnapshot(body []byte) ([]boldFundRow, error) {
 	return snapshot.Data, nil
 }
 
-// requireFundRow проверяет полноту строки среза. Проверка живёт здесь, а не в boldFundPoints:
-// перевод в точки отдаёт []boldFundPoint без ошибки, поэтому «nil — это смена формы ответа»
-// ловится на разборе.
+// requireFundRow проверяет полноту строки среза. Два уровня проверки: здесь (parseFundSnapshot)
+// смена формы ответа ловится раньше и с номером строки, а boldFundPoints вызывает ту же функцию
+// сам — прямой вызов без разбора тоже не должен молча получить нули.
 func requireFundRow(f boldFundRow) error {
 	if f.Ticker == "" {
 		return errors.New("пустой ticker")
@@ -289,6 +300,35 @@ func requireFundRow(f boldFundRow) error {
 		}
 	}
 	return nil
+}
+
+// requireCulmWindows проверяет правило источника «все три окна или ни одного»: строки истории
+// до 2015-04-01 не несут ни одного culm*, с 2015-04-01 — все три (проверено на живом файле
+// flows/all, 3138 строк). Частично заполненная строка — смена формы ответа, и без ошибки ряд
+// окон молча получил бы дыру: одну точку с частью семантики.
+func requireCulmWindows(r boldRow) error {
+	windows := []struct {
+		name  string
+		value *float64
+	}{
+		{"culm7day", r.Culm7},
+		{"culm30day", r.Culm30},
+		{"culm90day", r.Culm90},
+	}
+	present := make([]string, 0, len(windows))
+	absent := make([]string, 0, len(windows))
+	for _, w := range windows {
+		if w.value != nil {
+			present = append(present, w.name)
+		} else {
+			absent = append(absent, w.name)
+		}
+	}
+	if len(present) == 0 || len(present) == len(windows) {
+		return nil
+	}
+	return fmt.Errorf("окна заполнены частично: есть %s; нет %s — в источнике либо все три, либо ни одного",
+		strings.Join(present, ", "), strings.Join(absent, ", "))
 }
 
 // ozToTonnes переводит тройские унции в тонны (1 т = 1e6/31.1034768 = 32150.74656862… унции).
@@ -320,6 +360,12 @@ func boldETFSets(rows []boldRow, prevUnits *float64, prevDate time.Time) ([]poin
 	var baseDate time.Time
 	for i, item := range dated {
 		row, date := item.row, item.date
+		if i > 0 && dated[i-1].date.Equal(date) {
+			return nil, fmt.Errorf("bold: дата %s повторяется в срезе — это дало бы дубли точек", date.Format(boldDateLayout))
+		}
+		if err := requireCulmWindows(row); err != nil {
+			return nil, fmt.Errorf("bold: строка %s: %w", date.Format(boldDateLayout), err)
+		}
 		if row.Units != nil {
 			points = append(points, point{boldSeriesHoldingsTonnes, date, ozToTonnes(*row.Units)})
 		}
@@ -362,32 +408,29 @@ func boldETFSets(rows []boldRow, prevUnits *float64, prevDate time.Time) ([]poin
 }
 
 // boldFundPoints переводит пер-фондовый срез в точки за date (у среза своего поля даты нет —
-// дата приходит из ответа «последнего дня»). Полноту строк проверил parseFundSnapshot.
-func boldFundPoints(snapshot []boldFundRow, date time.Time) []boldFundPoint {
+// дата приходит из ответа «последнего дня»). nil в любом числовом поле — ошибка с тикером,
+// именем и полем: срез обязан быть полным, а ноль вместо отсутствия данных — та самая
+// молчаливая подмена, которую пункт исключает. parseFundSnapshot проверяет то же раньше
+// (и с номером строки), здесь функция защищается при прямом вызове.
+func boldFundPoints(snapshot []boldFundRow, date time.Time) ([]boldFundPoint, error) {
 	points := make([]boldFundPoint, 0, len(snapshot))
 	for _, fund := range snapshot {
+		if err := requireFundRow(fund); err != nil {
+			return nil, fmt.Errorf("bold: фонд %s (%s): %w", fund.Ticker, fund.Name, err)
+		}
 		points = append(points, boldFundPoint{
 			Date:         date,
 			Ticker:       fund.Ticker,
 			Name:         fund.Name,
-			Units:        fundValue(fund.Units),
-			UnitsChange:  fundValue(fund.UnitsChange),
-			Aum:          fundValue(fund.Aum),
-			AumChange:    fundValue(fund.AumChange),
-			Price:        fundValue(fund.Price),
-			PriceChange:  fundValue(fund.PriceChange),
-			Shares:       fundValue(fund.Shares),
-			SharesChange: fundValue(fund.SharesChange),
+			Units:        *fund.Units,
+			UnitsChange:  *fund.UnitsChange,
+			Aum:          *fund.Aum,
+			AumChange:    *fund.AumChange,
+			Price:        *fund.Price,
+			PriceChange:  *fund.PriceChange,
+			Shares:       *fund.Shares,
+			SharesChange: *fund.SharesChange,
 		})
 	}
-	return points
-}
-
-// fundValue раскрывает необязательное поле среза. nil сюда не доходит: полноту строк
-// проверяет parseFundSnapshot (отсутствие поля — смена формы ответа, а не ноль).
-func fundValue(v *float64) float64 {
-	if v == nil {
-		return 0
-	}
-	return *v
+	return points, nil
 }
