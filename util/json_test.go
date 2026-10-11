@@ -13,14 +13,15 @@ import (
 )
 
 // Happy path: 200 + валидный JSON → поля заполнены, ошибки нет. Заодно пиним
-// User-Agent: fscdn.gold.org (как и rosstat) отвечает 403 ботовым запросам без
-// заголовка, поэтому хелпер обязан слать randomUA так же, как GetFile/GetCSV.
-// Проверка живёт в хендлере: он выполняет запрос, а t.Errorf безопасен из чужой
-// горутины (t.Fatal там же уронил бы не тот фрейм).
+// User-Agent: хелпер обязан слать randomUA, как GetFile/GetCSV (конвенция проекта,
+// правило 4 AGENTS.md). Обратного утверждения («источник без заголовка отдаёт 403»)
+// здесь быть не должно: проверено 2026-10-12 — fscdn.gold.org отвечает 200 и без
+// User-Agent, и с дефолтным curl/8. Проверка живёт в хендлере: он выполняет запрос,
+// а t.Errorf безопасен из чужой горутины (t.Fatal там же уронил бы не тот фрейм).
 func TestGetJSONDecodesBody(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("User-Agent") == "" {
-			t.Error("запрос ушёл без User-Agent — WGC отвечает на такое 403")
+			t.Error("запрос ушёл без User-Agent — хелпер обязан слать randomUA, как GetFile/GetCSV")
 		}
 		_, _ = io.WriteString(w, `{"value":42}`)
 	}))
