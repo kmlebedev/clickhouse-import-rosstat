@@ -952,8 +952,10 @@ func TestBoldEtfImportFullFetchWhenSeriesAndFundsDiverge(t *testing.T) {
 }
 
 // TestBoldEtfImportNoopWhenUpToDate: дата источника не новее сохранённого максимума — 0 строк,
-// ни одной ошибки, ни одного открытого батча и ни одного Exec: DDL здесь тоже не выполняется,
-// соединение трогается только двумя чтениями максимумов.
+// ни одной ошибки, и данные не трогаются: ни DDL обеих таблиц, ни батчей INSERT в них, ни запроса
+// за предыдущим стоком. Каталог рядов при этом публикуется — предусловие ветки непустой
+// сохранённый максимум, то есть ряды в таблице уже есть, и их описания обязаны быть актуальны без
+// новых данных (иначе правка текста каталога доезжала бы до агента только вместе с новыми точками).
 func TestBoldEtfImportNoopWhenUpToDate(t *testing.T) {
 	server := boldNewTestServer(t, boldLatestBodies(t))
 	conn := newBoldFakeConn(boldFakeDate(t, boldPinDate), boldFakeDate(t, boldPinDate))
@@ -967,17 +969,35 @@ func TestBoldEtfImportNoopWhenUpToDate(t *testing.T) {
 		t.Errorf("Import вернул %d строк, ожидалось 0", count)
 	}
 	calls := conn.callList()
-	if len(calls) != 2 {
-		t.Errorf("обращений к соединению: %v, ожидались два чтения максимумов", calls)
-	}
-	for _, call := range calls {
-		if strings.HasPrefix(call, "preparebatch: ") {
-			t.Errorf("батч открывался на no-op прогоне: %v", calls)
+	for _, fragment := range []string{
+		"exec: CREATE TABLE IF NOT EXISTS " + boldFundTable,
+		"exec: CREATE TABLE IF NOT EXISTS " + macroSeriesTable,
+		"preparebatch: " + boldMacroSeriesInsert,
+		"preparebatch: " + boldFundInsert,
+	} {
+		if boldTestCallIndex(calls, fragment) >= 0 {
+			t.Errorf("no-op прогон тронул данные (%q): %v", fragment, calls)
 		}
-		if strings.HasPrefix(call, "exec: ") {
-			t.Errorf("DDL выполнялась на no-op прогоне: %v", calls)
+	}
+	if boldTestCallIndex(calls, boldSeriesHoldingsTonnes) >= 0 {
+		t.Errorf("no-op прогон читал предыдущий сток: %v", calls)
+	}
+	for _, fragment := range []string{"queryrow: " + boldStoredSeriesMaxQuery, "queryrow: " + boldStoredFundMaxQuery} {
+		if boldTestCallIndex(calls, fragment) < 0 {
+			t.Errorf("no-op прогон обязан прочитать максимум %q: %v", fragment, calls)
 		}
 	}
+
+	// Каталог опубликован целиком: батч series_catalog (текст INSERT задаёт util.UpsertSeriesCatalog)
+	// открыт, заполнен семью рядами и отправлен — иначе исправленный origin не доехал бы до агента.
+	catalog := conn.batchFor(t, "INSERT INTO series_catalog")
+	if !catalog.sent {
+		t.Error("батч каталога на no-op прогоне не отправлен")
+	}
+	if len(catalog.rows) != 7 {
+		t.Errorf("строк каталога на no-op прогоне: %d, ожидалось 7", len(catalog.rows))
+	}
+
 	if got := server.requested(); len(got) != 4 {
 		t.Errorf("запросов на no-op прогоне: %d (%v)", len(got), got)
 	}
@@ -1076,7 +1096,8 @@ func TestBoldWriteKeepsInputOrder(t *testing.T) {
 
 // TestBoldEtfCatalogDescribesEverySeries: семь записей каталога, все поля заполнены, имена
 // совпадают с рядами контура, а описания несут оговорки спеки §4.4 — иначе агент прочитает ряд
-// без «не складывать с WGC» и «окна календарные».
+// без «не складывать с WGC» и «окна календарные». Здесь же origin сверяется с общим boldETFOrigin:
+// пути в нём обязаны быть боевыми (с суффиксом .json), а не «как в статье».
 func TestBoldEtfCatalogDescribesEverySeries(t *testing.T) {
 	want := []string{
 		boldSeriesAumUsdBn, boldSeriesFlow30dTonnes, boldSeriesFlow7dTonnes, boldSeriesFlow90dTonnes,
@@ -1099,6 +1120,17 @@ func TestBoldEtfCatalogDescribesEverySeries(t *testing.T) {
 		for _, fragment := range []string{"bold.report", "83 %", "не складывать", "календарные"} {
 			if !strings.Contains(entry.Description, fragment) {
 				t.Errorf("%s: описание не содержит %q", entry.Series, fragment)
+			}
+		}
+		// Origin собирается из констант boldPath* и обязан называть все боевые эндпоинты — они
+		// оканчиваются на .json (TestBoldEndpointsPinPaths), а путь без суффикса источник отдаёт
+		// 403: агент, читающий каталог, получил бы нерабочее происхождение (fix round 2, Ruling 16).
+		if entry.Origin != boldETFOrigin {
+			t.Errorf("%s: origin = %q, ожидалась общая строка boldETFOrigin", entry.Series, entry.Origin)
+		}
+		for _, path := range []string{boldPathUnits, boldPathAum, boldPathFlows, boldPathSummary, boldPathPrice} {
+			if !strings.Contains(entry.Origin, path) {
+				t.Errorf("%s: origin %q не называет эндпоинт %q", entry.Series, entry.Origin, path)
 			}
 		}
 	}
