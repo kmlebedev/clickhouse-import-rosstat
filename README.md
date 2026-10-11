@@ -146,8 +146,8 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 | Метод и путь | Тело | Ответ |
 |---|---|---|
 | `POST /v1/model_run` | JSON прогона: клиентский `run_id` (UUID), `trigger_type`, `price_deck`, `probabilities`, `gold_scenario` с `horizon`, значения NAV | `200 {"inserted": 1}`; `400` при ошибке валидации |
-| `POST /v1/manual_series` | JSON-массив `{"series", "date": "YYYY-MM-DD", "value", "source"?}` → `macro_series`; `source` необязателен (по умолчанию `manual`), допустимы `manual`, `webbridge`, `imf` | `200 {"inserted": N}`; `400` при ошибке любой точки |
-| `POST /v1/gold_prices` | JSON-массив `{"venue", "date": "YYYY-MM-DD", "usd"}` → `gold_prices`; допустимая venue — `comex_front` (словарь расширяемый), `usd` > 0 | `200 {"inserted": N}`; `400` при ошибке любой точки |
+| `POST /v1/manual_series` | JSON-массив `{"series", "date": "YYYY-MM-DD" (диапазон Date32 [1900-01-01, 2299-12-31]), "value", "source"?}` → `macro_series`; `source` необязателен (по умолчанию `manual`), допустимы `manual`, `webbridge`, `imf` | `200 {"inserted": N}`; `400` при ошибке любой точки |
+| `POST /v1/gold_prices` | JSON-массив `{"venue", "date": "YYYY-MM-DD" (диапазон Date32), "usd"}` → `gold_prices`; допустимая venue — `comex_front` (словарь расширяемый), `usd` > 0 | `200 {"inserted": N}`; `400` при ошибке любой точки |
 
 Все запросы — с заголовком `Authorization: Bearer <INGEST_TOKEN>`; без него или с неверным токеном — `401`. Сверх `INGEST_RATE_PER_MIN` (по умолчанию 60 в минуту) — `429`; тело больше 1 MiB — `413`; неизвестное поле в JSON — `400`. Повторный `POST /v1/model_run` с тем же `run_id` ничего не записывает. Формат тела — в `ingest/model_run.go` (структура `ModelRun`).
 

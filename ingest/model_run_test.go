@@ -135,6 +135,38 @@ func TestValidateManualSeriesPointPre1970(t *testing.T) {
 	}
 }
 
+func TestValidatePointDateDate32Range(t *testing.T) {
+	tests := []struct {
+		name  string
+		point ManualSeriesPoint
+	}{
+		{"before Date32 min", ManualSeriesPoint{Series: "DFII10", Date: "1899-12-31", Value: 1}},
+		{"after Date32 max", ManualSeriesPoint{Series: "DFII10", Date: "2300-01-01", Value: 1}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := ValidateManualSeriesPoint(tt.point); err == nil {
+				t.Fatalf("expected Date32 range error for %+v", tt.point)
+			}
+			price := GoldPricePoint{Venue: "comex_front", Date: tt.point.Date, Usd: 4200}
+			if err := ValidateGoldPricePoint(price); err == nil {
+				t.Fatalf("expected Date32 range error for %+v", price)
+			}
+		})
+	}
+}
+
+func TestValidatePointDateDate32Boundaries(t *testing.T) {
+	for _, date := range []string{"1900-01-01", "2299-12-31"} {
+		if err := ValidateManualSeriesPoint(ManualSeriesPoint{Series: "DFII10", Date: date, Value: 1}); err != nil {
+			t.Fatalf("boundary date %s must be valid: %v", date, err)
+		}
+		if err := ValidateGoldPricePoint(GoldPricePoint{Venue: "comex_front", Date: date, Usd: 4200}); err != nil {
+			t.Fatalf("boundary date %s must be valid: %v", date, err)
+		}
+	}
+}
+
 func TestValidateManualSeriesPointErrors(t *testing.T) {
 	tests := []struct {
 		name  string

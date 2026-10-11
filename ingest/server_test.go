@@ -396,6 +396,23 @@ func TestManualSeriesSourceDefault(t *testing.T) {
 	}
 }
 
+// Явная пустая строка source в JSON эквивалентна отсутствию поля: валидация пропускает,
+// дефолт 'manual' применяет writer при вставке.
+func TestManualSeriesExplicitEmptySourceDefaults(t *testing.T) {
+	writer := &mockBatchWriter{}
+	server := newTestServer(writer)
+	defer server.Close()
+
+	const body = `[{"series": "crack_ulsd_proxy", "date": "2026-10-09", "value": 107.16, "source": ""}]`
+	status, payload := post(t, server.URL+"/v1/manual_series", testToken, body)
+	if status != http.StatusOK {
+		t.Fatalf("status %d, want 200: %s", status, payload)
+	}
+	if len(writer.series) != 1 || writer.series[0][0].Source != "" {
+		t.Fatalf("writer got %+v", writer.series)
+	}
+}
+
 // Лимит: burst 2 при 60/мин (1 токен в секунду). Неавторизованные запросы токены не тратят.
 func TestRateLimitReturns429AfterBurst(t *testing.T) {
 	clock := &manualClock{now: time.Unix(1800000000, 0)}

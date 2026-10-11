@@ -15,6 +15,16 @@ const (
 	probabilitiesSumTolerance = 0.1
 	manualSeriesDateLayout    = "2006-01-02"
 	manualSeriesSource        = "manual"
+	// Диапазон Date32 в ClickHouse: [1900-01-01, 2299-12-31]. Даты вне диапазона
+	// должны отсекаться валидацией (400), а не падать вставкой батча (500).
+	date32Min = "1900-01-01"
+	date32Max = "2299-12-31"
+)
+
+// date32MinTime/date32MaxTime — границы диапазона Date32 (см. date32Min/date32Max).
+var (
+	date32MinTime = time.Date(1900, 1, 1, 0, 0, 0, 0, time.UTC)
+	date32MaxTime = time.Date(2299, 12, 31, 0, 0, 0, 0, time.UTC)
 )
 
 var validTriggerTypes = map[string]bool{
@@ -141,21 +151,32 @@ var validManualSources = map[string]bool{
 	"imf":       true,
 }
 
-// ValidateManualSeriesPoint проверяет точку ряда. date — строго YYYY-MM-DD;
-// macro_series.date имеет тип Date32, поэтому даты до 1970 валидны.
+// ValidateManualSeriesPoint проверяет точку ряда. date — строго YYYY-MM-DD
+// в диапазоне Date32 [1900-01-01, 2299-12-31] (даты до 1970 валидны: CPIAUCSL с 1947).
 // Пустой source допустим — дефолт 'manual' применяет writer.
 func ValidateManualSeriesPoint(p ManualSeriesPoint) error {
 	if strings.TrimSpace(p.Series) == "" {
 		return fmt.Errorf("series is required")
 	}
-	date, err := time.Parse(manualSeriesDateLayout, p.Date)
-	if err != nil || date.Format(manualSeriesDateLayout) != p.Date {
-		return fmt.Errorf("date %q must be in YYYY-MM-DD format", p.Date)
+	if _, err := parsePointDate(p.Date); err != nil {
+		return err
 	}
 	if p.Source != "" && !validManualSources[p.Source] {
 		return fmt.Errorf("source %q must be one of: %s", p.Source, strings.Join(sortedKeys(validManualSources), ", "))
 	}
 	return nil
+}
+
+// parsePointDate разбирает дату точки: строго YYYY-MM-DD и в диапазоне Date32.
+func parsePointDate(raw string) (time.Time, error) {
+	date, err := time.Parse(manualSeriesDateLayout, raw)
+	if err != nil || date.Format(manualSeriesDateLayout) != raw {
+		return time.Time{}, fmt.Errorf("date %q must be in YYYY-MM-DD format", raw)
+	}
+	if date.Before(date32MinTime) || date.After(date32MaxTime) {
+		return time.Time{}, fmt.Errorf("date %q out of Date32 range [%s, %s]", raw, date32Min, date32Max)
+	}
+	return date, nil
 }
 
 // GoldPricePoint — точка цены золота по площадке (таблица gold_prices, ключ (venue, date)).
@@ -172,15 +193,15 @@ var validGoldVenues = map[string]bool{
 }
 
 // ValidateGoldPricePoint проверяет точку цены до вставки; ошибки входа — 400.
-// venue сверяется точно по whitelist (регистр значим), date — строго YYYY-MM-DD,
-// цена золота обязана быть положительной (отсутствующее поле usd даёт 0 → ошибка).
+// venue сверяется точно по whitelist (регистр значим), date — строго YYYY-MM-DD
+// в диапазоне Date32, цена золота обязана быть положительной
+// (отсутствующее поле usd даёт 0 → ошибка).
 func ValidateGoldPricePoint(p GoldPricePoint) error {
 	if !validGoldVenues[p.Venue] {
 		return fmt.Errorf("venue %q must be one of: %s", p.Venue, strings.Join(sortedKeys(validGoldVenues), ", "))
 	}
-	date, err := time.Parse(manualSeriesDateLayout, p.Date)
-	if err != nil || date.Format(manualSeriesDateLayout) != p.Date {
-		return fmt.Errorf("date %q must be in YYYY-MM-DD format", p.Date)
+	if _, err := parsePointDate(p.Date); err != nil {
+		return err
 	}
 	if p.Usd <= 0 {
 		return fmt.Errorf("usd %v must be positive", p.Usd)
