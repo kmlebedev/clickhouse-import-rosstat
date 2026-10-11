@@ -19,12 +19,25 @@ const (
 	// должны отсекаться валидацией (400), а не падать вставкой батча (500).
 	date32Min = "1900-01-01"
 	date32Max = "2299-12-31"
+	// Диапазон типа Date в ClickHouse: [1970-01-01, 2149-06-06] — УЖЕ диапазона
+	// Date32. Нужен там, где колонка объявлена Date (gold_forecasts.published,
+	// §6.2): дата 1950 прошла бы Date32-проверку parsePointDate и молча завернулась
+	// бы драйвером при вставке.
+	dateMin = "1970-01-01"
+	dateMax = "2149-06-06"
 )
 
 // date32MinTime/date32MaxTime — границы диапазона Date32 (см. date32Min/date32Max).
 var (
 	date32MinTime = time.Date(1900, 1, 1, 0, 0, 0, 0, time.UTC)
 	date32MaxTime = time.Date(2299, 12, 31, 0, 0, 0, 0, time.UTC)
+)
+
+// dateMinTime/dateMaxTime — границы типа Date (см. dateMin/dateMax); проверяются
+// поверх parsePointDate там, где колонка объявлена Date.
+var (
+	dateMinTime = time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
+	dateMaxTime = time.Date(2149, 6, 6, 0, 0, 0, 0, time.UTC)
 )
 
 var validTriggerTypes = map[string]bool{
