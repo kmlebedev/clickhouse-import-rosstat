@@ -787,6 +787,11 @@ func (s *boldGoldPrice) clock() time.Time {
 // сохранённый максимум старше порога значит, что источник мог опубликовать несколько дней,
 // которых у нас нет, и инкремент их не доберёт. Пустая площадка уводит на полный путь тем же
 // вызовом (нулевой максимум — это всегда полный путь).
+//
+// Часы приводятся к UTC до сравнения: сохранённый максимум — дата UTC-календаря (boldScanMaxDate
+// собирает её как 00:00 UTC), и порог обязан считаться по одной шкале с ней. Локальное время
+// процесса (+05:00 у машины разработчика, −07:00 у сборки в другом поясе) дало бы другое число
+// часов у того же момента, а решение о режиме не должно зависеть от таймзоны прогона (Ruling 13).
 func (s *boldGoldPrice) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
 	stored, serr := boldPriceStoredMaxDate(ctx, conn)
 	if serr != nil {
@@ -796,7 +801,7 @@ func (s *boldGoldPrice) Import(ctx context.Context, conn driver.Conn) (count int
 	}
 
 	var points []point
-	if boldNeedsFullFetch(s.clock(), stored) {
+	if boldNeedsFullFetch(s.clock().UTC(), stored) {
 		rows, ferr := boldFetchHistory(s.base(), boldPathPrice, boldMetricPrice)
 		if ferr != nil {
 			return 0, ferr

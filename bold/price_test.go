@@ -231,9 +231,70 @@ func TestBoldPriceImportFullWhenStoredIsStale(t *testing.T) {
 	}
 }
 
+// TestBoldPriceImportModeIsZoneAgnostic (Ruling 13): порог 96 ч считается по моментам времени в
+// UTC, а не по календарным полям зоны процесса. Сохранённый максимум — дата UTC-календаря
+// (00:00 UTC), поэтому «та же граница, выраженная в другом поясе» обязана дать то же решение:
+// иначе машина разработчика в +05:00 и сервер в −07:00 выбирали бы разные режимы в один и тот же
+// момент. Сервер отдаёт оба набора фикстур, а режим читается по единственному запрошенному пути:
+// инкремент стоит одного price-latest, полный путь — одного price.json.
+func TestBoldPriceImportModeIsZoneAgnostic(t *testing.T) {
+	const stored = "2026-10-06" // 00:00 UTC — от него и отсчитывается порог
+	cases := []struct {
+		name     string
+		now      time.Time
+		wantPath string
+		wantRows int64
+	}{
+		{
+			name:     "ровно порог 96 ч — инкремент",
+			now:      time.Date(2026, time.October, 10, 0, 0, 0, 0, time.UTC),
+			wantPath: boldPathPriceLatest,
+			wantRows: 1,
+		},
+		{
+			name:     "минута сверх порога — полный путь",
+			now:      time.Date(2026, time.October, 10, 0, 1, 0, 0, time.UTC),
+			wantPath: boldPathPrice,
+			wantRows: 2,
+		},
+		{
+			// Тот же момент, что и в первом случае, но в поясе −07:00: локальные сутки у него
+			// 2026-10-09. Сравнение по календарю зоны дало бы другую ветку — по моментам её нет.
+			name:     "та же граница в поясе −07:00 (локальные сутки другого дня)",
+			now:      time.Date(2026, time.October, 9, 17, 0, 0, 0, time.FixedZone("PDT", -7*60*60)),
+			wantPath: boldPathPriceLatest,
+			wantRows: 1,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			server := boldNewTestServer(t, map[string][]byte{
+				boldPathPrice:       boldPriceHistoryBody(t),
+				boldPathPriceLatest: testFixture(t, "bold_price_latest.json"),
+			})
+			conn := newBoldFakeConn(boldFakeDate(t, stored))
+			stat := boldGoldPrice{apiBase: server.base(), now: func() time.Time { return c.now }}
+
+			count, err := stat.Import(context.Background(), conn)
+			if err != nil {
+				t.Fatalf("Import: %v", err)
+			}
+			if count != c.wantRows {
+				t.Errorf("Import вернул %d строк, ожидалось %d", count, c.wantRows)
+			}
+			if got := server.requested(); len(got) != 1 || got[0] != c.wantPath {
+				t.Errorf("запросы прогона: %v, ожидался один %q (режим зависит от момента, а не от пояса)", got, c.wantPath)
+			}
+		})
+	}
+}
+
 // TestBoldPriceImportNoopWhenUpToDate: дата источника не новее сохранённого максимума — 0 строк,
 // ни одной ошибки, ни одного батча и ни одной DDL: соединение трогается только чтением максимума
-// площадки, а источник — одним запросом price-latest.
+// площадки, а источник — одним запросом price-latest. Здесь же живёт проверка «точка новее
+// сохранённого максимума»: саботаж «снять условие latestDate.After(stored)» валит именно этот
+// тест (прогон переписал бы точку 09.10 поверх уже сохранённой), а не инкрементный: там максимум
+// 08.10, и точка дня пишется при любом варианте условия.
 func TestBoldPriceImportNoopWhenUpToDate(t *testing.T) {
 	server := boldNewTestServer(t, map[string][]byte{boldPathPriceLatest: testFixture(t, "bold_price_latest.json")})
 	conn := newBoldFakeConn(boldFakeDate(t, boldPinDate))
