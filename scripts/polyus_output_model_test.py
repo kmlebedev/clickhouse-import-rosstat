@@ -79,5 +79,39 @@ class TestBuildRows(unittest.TestCase):
         self.assertTrue(all(r["asset"] == om.ASSET for r in rows))
 
 
+class TestOverlap(unittest.TestCase):
+    def test_rejects_year_owned_by_go_seed(self):
+        # Строка 2028 принадлежит Go-сиду: отказ обязан сработать.
+        colliding = [{"asset": om.ASSET, "year": 2028}]
+        with self.assertRaises(om.OverlapError):
+            om.assert_no_overlap(colliding, go_seed_years={2028, 2029, 2030})
+
+    def test_rejects_even_when_only_one_of_many_collides(self):
+        # Одна пересекающаяся строка из трёх — уже перезапись чужого года.
+        rows = om.build_rows({2025: 242.2, 2026: 271.7})
+        rows.append({"asset": om.ASSET, "year": 2030})
+        with self.assertRaises(om.OverlapError):
+            om.assert_no_overlap(rows, go_seed_years={2030})
+
+    def test_accepts_years_before_go_seed_horizon(self):
+        rows = om.build_rows({2025: 242.2, 2026: 271.7})
+        om.assert_no_overlap(rows, go_seed_years={2028, 2029})
+        self.assertEqual([r["year"] for r in rows], [2025, 2026, 2027])
+
+    def test_ignores_other_assets(self):
+        # Проверка про Сухой Лог: чужой актив в списке не должен её задевать.
+        other = [{"asset": "OLIMPIADA", "year": 2029}]
+        om.assert_no_overlap(other, go_seed_years={2028, 2029, 2030})
+
+    def test_default_horizon_matches_go_seed(self):
+        # MineLifeYears: 10, ProfileStartYear: 2028 -> 2028..2037 включительно.
+        self.assertEqual(om.GO_SEED_SUKHOI_LOG_YEARS, frozenset(range(2028, 2038)))
+
+    def test_opr_years_do_not_touch_default_horizon(self):
+        rows = om.build_rows({2025: 242.2, 2026: 271.7})
+        # Вызов без аргумента обязан пройти: окно ОПР по построению до 2028.
+        om.assert_no_overlap(rows)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
