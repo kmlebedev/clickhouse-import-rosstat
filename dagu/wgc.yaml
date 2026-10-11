@@ -1,0 +1,18 @@
+type: chain
+schedule: "17 20 * * 1"
+overlap_policy: skip
+
+# Еженедельный прогон (понедельник 20:17 МСК, не пересекается с forecast.yaml
+# 20:23): выгрузки WGC месячные, но файл попадает в wgc/data вручную
+# (скачивание из goldhub — только браузером), и недельная джоба подхватывает его
+# в пределах недели. Импортёр без файла — no-op (warn + 0 строк), поэтому до
+# первого скачивания DAG остаётся зелёным. Второй шаг (wgc_cb_reserves) добавит
+# Task 4.
+steps:
+  - id: wgc_etf_flows
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=wgc_etf_flows
+    retry_policy:
+      limit: 3
+      interval_sec: 300
