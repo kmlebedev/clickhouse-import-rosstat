@@ -146,6 +146,26 @@ async def check(params, server_log):
                 dashboard_detail = f"stale={dashboard_rows[0].get('stale')}, as_of={dashboard_rows[0].get('as_of')}"
             failed += not expect("дашборд distillate_stocks свежий", bool(dashboard_rows) and dashboard_rows[0].get("stale") in (0, "0"), dashboard_detail)
 
+            # Одного stale = 0 мало: в macro_series лежит свежая ручная строка того же ряда
+            # (105100 за 02.10), поэтому сломанный приоритет источников остался бы зелёным.
+            # Значение дашборда обязано совпасть с последним значением EIA-витрины (105138):
+            # это и есть проверка, что v_gold_dashboard берёт distillate_stocks из eia, а не
+            # из ручного фолбэка. Пустой ответ/ошибка запроса — провал, detail сырым текстом.
+            priority = result_rows(text(await session.call_tool("run_query", {"query":
+                "SELECT d.value = e.value AS same, d.value AS dashboard_value, e.value AS eia_value "
+                "FROM v_gold_dashboard d "
+                "CROSS JOIN (SELECT argMax(value, date) AS value FROM v_eia_petroleum "
+                "WHERE series = 'distillate_stocks') e "
+                "WHERE d.indicator = 'distillate_stocks'"})))
+            if priority is None:
+                priority_detail = "ответ не распознан"
+            elif not priority:
+                priority_detail = "строк нет: импортёр ещё не прогонялся (make import STAT=eia)"
+            else:
+                priority_detail = f"дашборд={priority[0].get('dashboard_value')}, eia={priority[0].get('eia_value')}"
+            failed += not expect("дашборд distillate_stocks из EIA, а не из ручного фолбэка",
+                                 bool(priority) and priority[0].get("same") in (1, "1"), priority_detail)
+
             raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM macro_series"}))
             denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
             failed += not expect("сырая таблица закрыта", denied, "отказ ClickHouse 497 на macro_series (ожидаемо)" if denied else raw[:200])

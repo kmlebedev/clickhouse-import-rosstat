@@ -144,6 +144,12 @@ func (s *eiaImport) Import(ctx context.Context, conn driver.Conn) (count int64, 
 		if err != nil {
 			return count, fmt.Errorf("eia %s: %w", series.series, err)
 		}
+		if len(observations) == 0 {
+			// HTTP 200 с total=0 или переставшим совпадать полем series — не «зелёный
+			// ноль», а сломанный источник: тихий успех оставил бы DAG зелёным, а ряд —
+			// без обновления. Ошибка даёт красный прогон и ретраи.
+			return count, fmt.Errorf("eia %s: no observations returned (series code %s)", series.series, series.code)
+		}
 		for _, o := range observations {
 			if err = batch.Append(eiaSource, o.series, o.date, o.value); err != nil {
 				return count, err
@@ -180,14 +186,21 @@ func fetchSeries(ctx context.Context, key string, series eiaSeriesDef) ([]observ
 		query.Set("offset", strconv.Itoa(offset))
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, series.url+"?"+query.Encode(), nil)
 		if err != nil {
-			return nil, err
+			// *url.Error печатает полный URL вместе с api_key — как и транспортная ошибка.
+			return nil, maskKey(err, key)
 		}
 		resp, err := util.HttpClient.Do(req)
 		if err != nil {
 			return nil, maskKey(err, key)
 		}
 		if resp.StatusCode != http.StatusOK {
+			// Тело не-200 объясняет отказ: 403 API_KEY_MISSING (ключ) отличим от
+			// WAF/геоблока только по нему. Читаем ограниченный хвост и маскируем ключ.
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 			_ = resp.Body.Close()
+			if detail := strings.TrimSpace(string(body)); detail != "" {
+				return nil, maskKey(fmt.Errorf("http status %d: %s", resp.StatusCode, detail), key)
+			}
 			return nil, fmt.Errorf("http status %d", resp.StatusCode)
 		}
 		page, err := parseResponse(resp.Body)

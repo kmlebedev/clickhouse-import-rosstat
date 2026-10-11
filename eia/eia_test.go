@@ -192,10 +192,10 @@ func TestFetchSeriesSendsQuery(t *testing.T) {
 	}))
 	defer server.Close()
 
-	defer func(prev string) { eiaSeries[0].url = prev }(eiaSeries[0].url)
-	eiaSeries[0].url = server.URL
+	series := eiaSeries[0]
+	series.url = server.URL
 
-	observations, err := fetchSeries(context.Background(), fakeKey, eiaSeries[0])
+	observations, err := fetchSeries(context.Background(), fakeKey, series)
 	if err != nil {
 		t.Fatalf("fetchSeries: %v", err)
 	}
@@ -233,10 +233,10 @@ func TestFetchSeriesPaginates(t *testing.T) {
 	}))
 	defer server.Close()
 
-	defer func(prev string) { eiaSeries[0].url = prev }(eiaSeries[0].url)
-	eiaSeries[0].url = server.URL
+	series := eiaSeries[0]
+	series.url = server.URL
 
-	observations, err := fetchSeries(context.Background(), fakeKey, eiaSeries[0])
+	observations, err := fetchSeries(context.Background(), fakeKey, series)
 	if err != nil {
 		t.Fatalf("fetchSeries: %v", err)
 	}
@@ -262,16 +262,72 @@ func eiaResponseBody(rows int, series, period, value, total string) string {
 	return b.String()
 }
 
+// Локальная копия дескриптора: подмена eiaSeries[0].url мутировала бы
+// package-level срез и текла бы в параллельные тесты.
 func TestFetchSeriesMasksKeyInTransportError(t *testing.T) {
-	defer func(prev string) { eiaSeries[0].url = prev }(eiaSeries[0].url)
-	eiaSeries[0].url = "http://127.0.0.1:1"
+	series := eiaSeries[0]
+	series.url = "http://127.0.0.1:1"
 
-	_, err := fetchSeries(context.Background(), fakeKey, eiaSeries[0])
+	_, err := fetchSeries(context.Background(), fakeKey, series)
 	if err == nil {
 		t.Fatal("expected transport error")
 	}
 	if strings.Contains(err.Error(), fakeKey) {
 		t.Fatalf("error leaks api key: %v", err)
+	}
+}
+
+// Тело не-200 обязано попасть в ошибку: 403 API_KEY_MISSING от EIA неотличим от
+// WAF/геоблока по одному коду статуса, а ключ в теле (если он там окажется) — не
+// утечь. Пустое тело оставляет прежний короткий текст без висящего двоеточия.
+func TestFetchSeriesIncludesErrorBody(t *testing.T) {
+	tests := []struct {
+		name        string
+		status      int
+		body        string
+		wantErr     string
+		wantSubstrs []string
+	}{
+		{
+			name:        "тело 403 объясняет отказ",
+			status:      http.StatusForbidden,
+			body:        `{"error":{"code":"API_KEY_MISSING","message":"key ` + fakeKey + ` is missing"}}`,
+			wantSubstrs: []string{"403", "API_KEY_MISSING"},
+		},
+		{
+			name:    "пустое тело — прежний текст ошибки",
+			status:  http.StatusInternalServerError,
+			body:    "",
+			wantErr: "http status 500",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tt.status)
+				_, _ = io.WriteString(w, tt.body)
+			}))
+			defer server.Close()
+
+			series := eiaSeries[0]
+			series.url = server.URL
+
+			_, err := fetchSeries(context.Background(), fakeKey, series)
+			if err == nil {
+				t.Fatal("expected http status error")
+			}
+			if tt.wantErr != "" && err.Error() != tt.wantErr {
+				t.Errorf("error = %q, want %q", err, tt.wantErr)
+			}
+			for _, substr := range tt.wantSubstrs {
+				if !strings.Contains(err.Error(), substr) {
+					t.Errorf("error %q does not contain %q", err, substr)
+				}
+			}
+			if strings.Contains(err.Error(), fakeKey) {
+				t.Fatalf("error leaks api key: %v", err)
+			}
+		})
 	}
 }
 
