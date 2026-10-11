@@ -322,7 +322,7 @@ const cbCatalogNotImf = "Не путать с v_imf_macro (IMF IRFCL, source='im
 // cbCatalogImportNote — общий хвост описания: откуда берутся файлы и кто пишет ряды.
 // Повторяется в каждой записи намеренно — агент читает description по одному ряду и
 // соседние записи не видит.
-const cbCatalogImportNote = "Источник — WGC Gold Reserves by Country (IMF IFS + правки WGC); импортёр wgc_cb_reserves (расписание dagu/wgc.yaml, пн 20:17) читает в wgc/data свежайшие по mtime выгрузки " + cbChangesMask + " и " + cbHoldingsMask + " (скачивание с gold.org/goldhub — только браузером) и пишет ряды с source='wgc'."
+const cbCatalogImportNote = "Источник — WGC Gold Reserves by Country (IMF IFS + правки WGC); импортёр wgc_cb_reserves (расписание dagu/wgc.yaml, ежедневно 20:17 МСК) читает в wgc/data свежайшие по mtime выгрузки " + cbChangesMask + " и " + cbHoldingsMask + " (скачивание с gold.org/goldhub — только браузером, вручную: машинного эквивалента у резервов ЦБ нет) и пишет ряды с source='wgc'. Ряды ЦБ обновляются после очередного ручного скачивания, а не по расписанию: ежедневный прогон при том же файле — штатный no-op (warn + 0 строк, dagu остаётся зелёным), и точки за новый отчётный месяц появляются в macro_series только тогда, когда выгрузка положена в wgc/data."
 
 // cbCountryNotes — оговорки стран набора: особенность данных, о которой агент обязан
 // узнать из каталога, а не из пропусков в ряду. Пустая строка — особенностей нет.
