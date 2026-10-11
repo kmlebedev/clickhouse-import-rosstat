@@ -97,8 +97,11 @@ type etfAPIHoldingsTable struct {
 
 // etfPointsFromAPI скачивает и разбирает оба JSON-эндпоинта WGC (потоки и стоки/AUM) в точки
 // того же вида, что даёт xlsx-парсер: etf_<метрика>_<регион>, дата — конец месяца UTC. Ряда
-// world в JSON нет — его добавляют существующие хелперы регионов. Пустой разбор — ошибка
+// world в JSON нет — его добавляют существующие хелперы регионов. Пустая метрика — ошибка
 // (fail-fast, урок eia): тихий «0 точек» оставил бы dagu зелёным, а ряды — без обновления.
+// Проверка идёт по каждой из четырёх метрик, а не по сумме точек: конверт с корректными
+// именами регионов, но пустыми data даёт точки стоков, и импорт «успешно» записал бы свои
+// ряды, оставив десять потоковых без обновления (зеркально — пустой set стоков).
 func etfPointsFromAPI(baseURL string, now time.Time) ([]seriesPoint, error) {
 	var flows etfAPIFlowsChart
 	if err := util.GetJSON(etfAPIURL(baseURL, etfAPIFlowsPath, now), &flows); err != nil {
@@ -119,8 +122,9 @@ func etfPointsFromAPI(baseURL string, now time.Time) ([]seriesPoint, error) {
 	}
 
 	points := append(flowsPoints, holdingsPoints...)
-	if len(points) == 0 {
-		return nil, errors.New("выгрузка без точек")
+	if empty := etfEmptyMetrics(points); len(empty) > 0 {
+		return nil, fmt.Errorf("выгрузка без точек: метрики %s не дали ни одной точки — их ряды остались бы без обновления",
+			strings.Join(empty, ", "))
 	}
 
 	log.Infof("wgc etf api: потоки asOfDate=%s (cached=%t) + стоки asOfDate=%s (cached=%t), точек %d",
@@ -128,6 +132,28 @@ func etfPointsFromAPI(baseURL string, now time.Time) ([]seriesPoint, error) {
 		holdings.ChartData.AsOfDate, holdings.System.Cached, len(points))
 
 	return points, nil
+}
+
+// etfEmptyMetrics — метрики набора, у которых в разборе нет ни одной точки, в порядке
+// wgcEtfMetrics (текст ошибки детерминирован). Считается по префиксу имени ряда, а не по
+// сумме точек: «ноль точек всего» не ловит случай, когда одна пара эндпоинтов ответила
+// пустым телом — импорт записал бы вторую половину рядов и остался зелёным.
+func etfEmptyMetrics(points []seriesPoint) []string {
+	empty := make([]string, 0, len(wgcEtfMetrics))
+	for _, metric := range wgcEtfMetrics {
+		prefix := wgcEtfSeriesName(metric, "")
+		metricHasPoints := false
+		for _, p := range points {
+			if strings.HasPrefix(p.Series, prefix) {
+				metricHasPoints = true
+				break
+			}
+		}
+		if !metricHasPoints {
+			empty = append(empty, metric)
+		}
+	}
+	return empty
 }
 
 // etfAPIURL — адрес эндпоинта с break-cache: свежий ответ CDN нужен, потому что кэш может
@@ -268,17 +294,36 @@ func etfHoldingsTablePoints(table etfAPIHoldingsTable, metric string) ([]seriesP
 }
 
 // etfAPIHoldingsColumns размечает колонки таблицы стоков по шапке columns: нулевая — дата
-// (её значение и есть ms строки), дальше регионы словарём etfRegionsByName, замыкающая —
-// цена etfAPIHoldingsPriceColumn. Все четыре региона обязаны быть в шапке: пропавшая
-// колонка молча остановила бы обновление ряда, а имя вне словаря — дрейф выгрузки.
+// etfDateHeader (её значение и есть ms строки), дальше регионы словарём etfRegionsByName,
+// замыкающая — цена etfAPIHoldingsPriceColumn. Все четыре региона обязаны быть в шапке и ни
+// один не повторяется, а нулевая колонка обязана быть колонкой дат: пропавшая колонка молча
+// остановила бы обновление ряда, имя вне словаря — дрейф выгрузки, а дубликат региона (шапка
+// ["Date","North America","Europe","Asia","Asia","Gold, US$/oz"]) перезаписал бы значения
+// первой колонки и выбросил бы Other, оставив набор «полным» из тех же четырёх регионов: ряды
+// holdings_tonnes_other/world и aum_usd_bn_other/world молча перестали бы писаться.
 func etfAPIHoldingsColumns(columns []string) ([]regionColumn, error) {
+	if len(columns) == 0 {
+		return nil, errors.New("шапка таблицы стоков пуста: колонок нет вовсе")
+	}
+	if date := strings.TrimSpace(columns[0]); !strings.EqualFold(date, etfDateHeader) {
+		return nil, fmt.Errorf("нулевая колонка шапки %q — не %s: колонка дат пропала или сдвинулась",
+			columns[0], etfDateHeader)
+	}
+
 	cols := make([]regionColumn, 0, len(etfRegionsByName))
+	seen := make(map[string]bool, len(etfRegionsByName))
 	for i, name := range columns {
 		name = strings.TrimSpace(name)
 		if i == 0 {
 			continue
 		}
 		if region, ok := etfRegionsByName[name]; ok {
+			// Два столбца одного региона противоречивы: без ошибки второй молча перезаписал бы
+			// значения первого, а регион, чьего столбца в шапке нет, выпал бы из сумм.
+			if seen[region] {
+				return nil, fmt.Errorf("колонка %d %q: регион встречается дважды — шапка противоречива", i, name)
+			}
+			seen[region] = true
 			cols = append(cols, regionColumn{col: i, region: region})
 			continue
 		}

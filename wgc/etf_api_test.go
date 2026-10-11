@@ -239,26 +239,134 @@ func TestEtfPointsFromAPINonOKStatusFails(t *testing.T) {
 }
 
 // TestEtfPointsFromAPIEmptyDataFails: валидный конверт без данных — ошибка (fail-fast):
-// тихий «0 точек» оставил бы dagu зелёным, а ряды — без обновления. Набор метрик и регионов
-// здесь полон (обе метрики, по четыре региона, без точек), поэтому тест доходит именно
-// до финальной проверки пустого разбора, а не до guard'а полноты.
+// тихий «0 точек» оставил бы dagu зелёным, а ряды — без обновления. Проверка идёт по каждой
+// из четырёх метрик, а не по сумме точек, поэтому кейсов три: пусто всё, пусты только потоки
+// (конверт с четырьмя корректно названными регионами, но без data) и пуст только set стоков.
+// Наборы метрик и регионов во всех кейсах полны, так что тест доходит именно до проверки
+// пустоты, а не до guard'а полноты набора; вторая половина кейса — метрика с точками в текст
+// ошибки попасть не должна, иначе проверка «по каждой метрике» выродилась бы в «где-то пусто».
 func TestEtfPointsFromAPIEmptyDataFails(t *testing.T) {
-	flows := []byte(`{"system":{"cached":false},"chartData":{"asOfDate":"2026-09-30",` +
+	emptyFlowData := []byte(`{"system":{"cached":false},"chartData":{"asOfDate":"2026-09-30",` +
 		`"data":{"Monthly":{"series":{` +
 		`"usd":[{"name":"North America"},{"name":"Europe"},{"name":"Asia"},{"name":"Other"},{"name":"Gold Price (rhs)"}],` +
 		`"tonnes":[{"name":"North America"},{"name":"Europe"},{"name":"Asia"},{"name":"Other"},{"name":"Gold Price (rhs)"}]}}}}}`)
-	holdings := []byte(`{"system":{"cached":false},"chartData":{"asOfDate":"2026-09-30",` +
+	emptyHoldingsSet := []byte(`{"system":{"cached":false},"chartData":{"asOfDate":"2026-09-30",` +
 		`"data":{"Monthly":{` +
 		`"tonnes":{"columns":["Date","North America","Europe","Asia","Other","Gold, US$/oz"],"set":[]},` +
 		`"usd":{"columns":["Date","North America","Europe","Asia","Other","Gold, US$/oz"],"set":[]}}}}}`)
-	srv := etfAPITestServer(t, flows, holdings)
+
+	cases := []struct {
+		name     string
+		flows    []byte // nil — фикстура etf_flows_api.json
+		holdings []byte // nil — фикстура etf_holdings_api.json
+		want     []string
+		notWant  []string
+	}{
+		{"пусто всё", emptyFlowData, emptyHoldingsSet,
+			[]string{etfMetricFlowUsdMln, etfMetricFlowTonnes, etfMetricHoldingsTonnes, etfMetricAumUsdBn}, nil},
+		{"пусты только потоки", emptyFlowData, nil,
+			[]string{etfMetricFlowUsdMln, etfMetricFlowTonnes}, []string{etfMetricHoldingsTonnes, etfMetricAumUsdBn}},
+		{"пуст только set стоков", nil, emptyHoldingsSet,
+			[]string{etfMetricHoldingsTonnes, etfMetricAumUsdBn}, []string{etfMetricFlowUsdMln, etfMetricFlowTonnes}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			srv := etfAPITestServer(t, c.flows, c.holdings)
+
+			_, err := etfPointsFromAPI(srv.URL+"/", etfAPITestNow)
+			if err == nil {
+				t.Fatal("выгрузка без точек должна давать ошибку")
+			}
+			if !strings.Contains(err.Error(), "без точек") {
+				t.Errorf("ошибка %v не говорит о пустом разборе", err)
+			}
+			for _, want := range c.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("ошибка %v не называет пустую метрику %s", err, want)
+				}
+			}
+			for _, notWant := range c.notWant {
+				if strings.Contains(err.Error(), notWant) {
+					t.Errorf("ошибка %v называет метрику %s пустой, хотя у неё есть точки", err, notWant)
+				}
+			}
+		})
+	}
+}
+
+// TestEtfPointsFromAPIHoldingsDuplicateRegionFails: шапка с двумя колонками одного региона —
+// противоречивая: без ошибки второй столбец молча перезаписал бы значения первого, а регион,
+// чьей колонки в шапке нет (здесь Other), выпал бы из сумм — ряды этого региона и world у
+// стоков и AUM (четыре ряда) перестали бы писаться, а набор выглядел бы полным из тех же
+// четырёх регионов.
+func TestEtfPointsFromAPIHoldingsDuplicateRegionFails(t *testing.T) {
+	holdings := []byte(`{"system":{"cached":false},"chartData":{"asOfDate":"2026-09-30",` +
+		`"data":{"Monthly":{` +
+		`"tonnes":{"columns":["Date","North America","Europe","Asia","Asia","Gold, US$/oz"],` +
+		`"set":[[1790726400000,1,2,3,4,5]]},` +
+		`"usd":{"columns":["Date","North America","Europe","Asia","Other","Gold, US$/oz"],` +
+		`"set":[[1790726400000,1,2,3,4,5]]}}}}}`)
+	srv := etfAPITestServer(t, nil, holdings)
 
 	_, err := etfPointsFromAPI(srv.URL+"/", etfAPITestNow)
 	if err == nil {
-		t.Fatal("выгрузка без точек должна давать ошибку")
+		t.Fatal("дубликат колонки региона должен давать ошибку, а не тихую потерю Other")
 	}
-	if !strings.Contains(err.Error(), "без точек") {
-		t.Errorf("ошибка %v не говорит о пустом разборе", err)
+	if !strings.Contains(err.Error(), "дважды") || !strings.Contains(err.Error(), "Asia") {
+		t.Errorf("ошибка %v не объясняет дубликат колонки Asia", err)
+	}
+}
+
+// TestEtfPointsFromAPIHoldingsDateColumnFails: нулевая колонка шапки обязана быть колонкой дат
+// (etfDateHeader): значения строк — ms-таймстемпы, поэтому без колонки дат первый регион был бы
+// прочитан как дата, а даты точек поехали бы. Сдвиг шапки ловится до чтения строк — тест это и
+// пинит (прежняя проверка пропускала колонку 0 по индексу и такой шапке радовалась).
+func TestEtfPointsFromAPIHoldingsDateColumnFails(t *testing.T) {
+	cases := []struct {
+		name    string
+		columns string
+	}{
+		{"колонка дат пропала", `["North America","Europe","Asia","Other","Gold, US$/oz"]`},
+		{"первая колонка — не дата", `["Month","North America","Europe","Asia","Other","Gold, US$/oz"]`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			holdings := []byte(`{"system":{"cached":false},"chartData":{"asOfDate":"2026-09-30",` +
+				`"data":{"Monthly":{` +
+				`"tonnes":{"columns":` + c.columns + `,"set":[[1790726400000,1,2,3,4,5]]},` +
+				`"usd":{"columns":` + c.columns + `,"set":[[1790726400000,1,2,3,4,5]]}}}}}`)
+			srv := etfAPITestServer(t, nil, holdings)
+
+			_, err := etfPointsFromAPI(srv.URL+"/", etfAPITestNow)
+			if err == nil {
+				t.Fatal("шапка без колонки дат должна давать ошибку, а не читать первый регион как дату")
+			}
+			if !strings.Contains(err.Error(), etfDateHeader) {
+				t.Errorf("ошибка %v не называет ожидаемую колонку %s", err, etfDateHeader)
+			}
+		})
+	}
+}
+
+// TestEtfPointsFromAPIHoldingsDateColumnCaseInsensitive: имя колонки дат в шапке сверяется без
+// учёта регистра — WGC вправе отдать «date» вместо «Date», и отказ на регистре остановил бы
+// импорт по признаку, который к данным отношения не имеет.
+func TestEtfPointsFromAPIHoldingsDateColumnCaseInsensitive(t *testing.T) {
+	holdings := []byte(`{"system":{"cached":false},"chartData":{"asOfDate":"2026-09-30",` +
+		`"data":{"Monthly":{` +
+		`"tonnes":{"columns":["date","North America","Europe","Asia","Other","Gold, US$/oz"],` +
+		`"set":[[1790726400000,1,2,3,4,5]]},` +
+		`"usd":{"columns":[" date ","North America","Europe","Asia","Other","Gold, US$/oz"],` +
+		`"set":[[1790726400000,1,2,3,4,5]]}}}}}`)
+	srv := etfAPITestServer(t, nil, holdings)
+
+	points, err := etfPointsFromAPI(srv.URL+"/", etfAPITestNow)
+	if err != nil {
+		t.Fatalf("шапка с колонкой дат в другом регистре должна разбираться: %v", err)
+	}
+	date := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
+	if _, ok := etfPoint(points, "etf_holdings_tonnes_north_america", date); !ok {
+		t.Error("разбор шапки с колонкой дат в другом регистре не дал точек стоков")
 	}
 }
 
