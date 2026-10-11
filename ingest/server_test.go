@@ -15,10 +15,11 @@ import (
 const testToken = "unit-test-token"
 
 type mockBatchWriter struct {
-	runs       []ModelRun
-	series     [][]ManualSeriesPoint
-	goldPrices [][]GoldPricePoint
-	err        error
+	runs          []ModelRun
+	series        [][]ManualSeriesPoint
+	goldPrices    [][]GoldPricePoint
+	goldForecasts [][]GoldForecast
+	err           error
 }
 
 func (m *mockBatchWriter) EnsureTables(_ context.Context) error {
@@ -37,6 +38,11 @@ func (m *mockBatchWriter) InsertManualSeries(_ context.Context, points []ManualS
 
 func (m *mockBatchWriter) InsertGoldPrices(_ context.Context, points []GoldPricePoint) error {
 	m.goldPrices = append(m.goldPrices, points)
+	return m.err
+}
+
+func (m *mockBatchWriter) InsertGoldForecasts(_ context.Context, forecasts []GoldForecast) error {
+	m.goldForecasts = append(m.goldForecasts, forecasts)
 	return m.err
 }
 
@@ -443,5 +449,100 @@ func TestRateLimitReturns429AfterBurst(t *testing.T) {
 	}
 	if status, _ := post(t, server.URL+"/v1/manual_series", testToken, `[]`); status != http.StatusTooManyRequests {
 		t.Fatalf("second request after 1s refill: status %d, want 429", status)
+	}
+}
+
+func TestGoldForecastsOK(t *testing.T) {
+	writer := &mockBatchWriter{}
+	server := newTestServer(writer)
+	defer server.Close()
+
+	const body = `[
+		{"author": "goldman", "published": "2026-10-07", "horizon": "2027", "scenario": "range", "low": 5400, "high": 5600},
+		{"author": "own", "published": "2026-10-11", "horizon": "Q4-2026", "scenario": "bull", "point": 4800, "probability": 25}
+	]`
+	status, payload := post(t, server.URL+"/v1/gold_forecasts", testToken, body)
+	if status != http.StatusOK {
+		t.Fatalf("status %d, want 200: %s", status, payload)
+	}
+	var response struct {
+		Inserted int `json:"inserted"`
+	}
+	if err := json.Unmarshal(payload, &response); err != nil {
+		t.Fatalf("response is not JSON: %s", payload)
+	}
+	if response.Inserted != 2 {
+		t.Fatalf("inserted = %d, want 2", response.Inserted)
+	}
+	if len(writer.goldForecasts) != 1 || len(writer.goldForecasts[0]) != 2 {
+		t.Fatalf("writer got %+v", writer.goldForecasts)
+	}
+	first := writer.goldForecasts[0][0]
+	want := GoldForecast{Author: "goldman", Published: "2026-10-07", Horizon: "2027", Scenario: "range", Low: 5400, High: 5600}
+	if first != want {
+		t.Fatalf("first forecast = %+v, want %+v", first, want)
+	}
+}
+
+// Review Focus 1: валидация всего массива до записи — одна невалидная строка
+// в середине массива отменяет запись целиком.
+func TestGoldForecastsValidationError(t *testing.T) {
+	writer := &mockBatchWriter{}
+	server := newTestServer(writer)
+	defer server.Close()
+
+	const body = `[
+		{"author": "goldman", "published": "2026-10-07", "horizon": "2027", "scenario": "range", "low": 5400, "high": 5600},
+		{"author": "own", "published": "2026-10-11", "horizon": "Q4-2026", "scenario": "bull", "point": 4800},
+		{"author": "", "published": "2026-10-11", "horizon": "Q4-2026", "scenario": "bear", "point": 3900}
+	]`
+	status, payload := post(t, server.URL+"/v1/gold_forecasts", testToken, body)
+	if status != http.StatusBadRequest {
+		t.Fatalf("status %d, want 400: %s", status, payload)
+	}
+	if !strings.Contains(string(payload), "author") {
+		t.Fatalf("expected author in error text, got %s", payload)
+	}
+	if len(writer.goldForecasts) != 0 {
+		t.Fatalf("writer must not be called when any row is invalid, got %+v", writer.goldForecasts)
+	}
+}
+
+func TestGoldForecastsEmptyArray(t *testing.T) {
+	writer := &mockBatchWriter{}
+	server := newTestServer(writer)
+	defer server.Close()
+
+	status, payload := post(t, server.URL+"/v1/gold_forecasts", testToken, `[]`)
+	if status != http.StatusOK {
+		t.Fatalf("status %d, want 200: %s", status, payload)
+	}
+	var response struct {
+		Inserted int `json:"inserted"`
+	}
+	if err := json.Unmarshal(payload, &response); err != nil {
+		t.Fatalf("response is not JSON: %s", payload)
+	}
+	if response.Inserted != 0 {
+		t.Fatalf("inserted = %d, want 0", response.Inserted)
+	}
+}
+
+func TestGoldForecastsUnknownFieldIsRejected(t *testing.T) {
+	writer := &mockBatchWriter{}
+	server := newTestServer(writer)
+	defer server.Close()
+
+	const body = `[{"author": "own", "published": "2026-10-11", "horizon": "Q4-2026",
+		"scenario": "bull", "point": 4800, "probability_pct": 25}]`
+	status, payload := post(t, server.URL+"/v1/gold_forecasts", testToken, body)
+	if status != http.StatusBadRequest {
+		t.Fatalf("status %d, want 400: %s", status, payload)
+	}
+	if !strings.Contains(string(payload), "probability_pct") {
+		t.Fatalf("expected unknown field name in error, got %s", payload)
+	}
+	if len(writer.goldForecasts) != 0 {
+		t.Fatal("writer must not be called with unknown field")
 	}
 }

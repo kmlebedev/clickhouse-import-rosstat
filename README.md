@@ -24,7 +24,8 @@ Go-конвейер импорта российской макроэкономи
 | `gold` | Золото: фиксинг MOEX GOLDFIXME (₽/г) пересчитан в USD/oz по курсу ЦБ | `gold_prices` (`venue = 'moex_fix_usd'`); каталог `series_catalog`, витрина `v_gold_prices` | ежедневно 18:47 |
 | `moex` | МосБиржа ISS: свечи PLZL (OHLCV), индекс RGBI, доходности G-curve ОФЗ (1y/3y/5y/10y) | `stock_prices` (`code = 'PLZL'`), `ofz_curve`; каталог `series_catalog`, витрины `v_stock_prices`, `v_ofz_curve` | ежедневно 19:13 |
 | `calendar` | Календарь событий-триггеров прогноза золота/NAV (Q4-2026; сид — `sql/events_calendar_q4_2026.sql`) | `events_calendar`; витрина `v_events_calendar` | вручную (`make import STAT=events_calendar`) |
-| `views` | Витрины контура прогноза: `v_model_inputs`, `v_gold_dashboard`, `v_forecast_accuracy`, `v_imf_macro` (импортёр `gold_views`) | витрины; гранты `kimi_reader` — в `sql/mcp_kimi_reader.sql` | вручную, после первого запуска ingest: `make import STAT=gold_views` |
+| `forecast` | Резолвер журнала прогнозов: сверяет прогнозы `xau_q_avg` из `forecast_log` со средним `gold_prices` за квартал `target_date` (приоритет `comex_front > moex_fix_usd`), пишет `actual`/`error_pct`; `nav` не резолвится — факта нет | `forecast_log` (`actual`/`error_pct`; таблицу не создаёт — её создаёт ingest); витрина `v_forecast_accuracy` | ежедневно 20:23 |
+| `views` | Витрины контура прогноза: `v_model_inputs`, `v_gold_dashboard`, `v_forecast_accuracy`, `v_imf_macro`, `v_gold_forecasts`, `v_gold_etf_flows` (импортёр `gold_views`) | витрины; гранты `kimi_reader` — в `sql/mcp_kimi_reader.sql` | вручную, после первого запуска ingest: `make import STAT=gold_views` |
 | `views` | Метрики компаний сектора: таблица `company_financials` + витрины `v_company_financials` (разрешённое значение, одна строка на компанию/метрику/период), `v_company_metric_sources` (все версии, включая проигравшую), `v_company_operating` (операционка по активам); каталог рядов Полюса в `series_catalog` (импортёр `company_views`) | таблица `company_financials`, витрины; гранты `kimi_reader` — в `sql/mcp_kimi_reader.sql` | `dagu/financial.yaml`, понедельник 10:23 (МСК), после `polyus_financial_metrics`; вручную — `make import STAT=company_views` |
 | `dcf` | Сид LOM-планов Полюса из публичной отчётности (импортёр `dcf_mine_plans`): факт добычи последнего отчётного года из `databook_polyus` + версионные константы сида. **Идёт ДО расчётного ядра** | `mine_plans`; каталог `series_catalog` (source `dcf_mine_plans`, 8 рядов) | `dagu/dcf.yaml`, понедельник 11:29 (МСК), шаг 1 из 2 (до `dcf_engine`); вручную: `make import STAT=dcf_mine_plans` |
 | `dcf` | Уточнённый поактивный AISC поверх Go-сида (скрипт `scripts/extrapolation_aisc.py`, цель `make dcf-aisc`): калибрует клин поддержания как долю от TCC по пресс-релизам 4Q/FY 2018–2021, экстраполирует на 2025–LOM и увязывает к групповому AISC. **В расписание НЕ входит — применяется вручную** | пишет `sql/dcf_mine_plans_seed.sql` (77 строк) — те же 5 активов × та же сетка годов, что у Go-сида, ключ `(company, asset, year)` → `ReplacingMergeTree` перезапишет 77 строк из 87 | вручную, после `dcf_mine_plans`: `make dcf-aisc` → `make ch-sql FILE=sql/dcf_mine_plans_seed.sql` → `DCF_RUN_ID=<uuid> make import STAT=dcf_engine` |
@@ -33,6 +34,8 @@ Go-конвейер импорта российской макроэкономи
 | `financial` | Legacy: корпоративные databook'и (ЮГК), investing.com, РЖД | `databook_ugk` и др. | понедельник 10:23 |
 
 Импортёр `gold` — временный: производная цена, не LBMA. Официальный LBMA AM/PM пока не подключён, см. «Ограничения».
+
+Импортёр `forecast_resolve` (пакет `forecast/`) закрывает обратную связь журнала прогнозов. Он читает `forecast_log FINAL` по `metric = 'xau_q_avg'` с наступившей `target_date`, берёт окно сверки — квартал, содержащий `target_date` (`[начало квартала, target_date]`), считает `actual` средним `gold_prices` в окне по приоритету `comex_front > moex_fix_usd` (площадка выбирается по количеству точек: среднее пустого окна — NaN, поэтому гейт по счётчику) и `error_pct = (predicted − actual) / actual × 100`. Записывает **одним батчем и только изменившиеся строки** — прогон ежедневный, перезапись того же значения не делается. `nav` и прочие метрики не резолвятся: факта для NAV нет, строка остаётся `is_resolved = 0`. Окно без точек цены — пропуск с предупреждением в логе; таблицу `forecast_log` резолвер не создаёт (её создаёт ingest при старте). Расписание — `dagu/forecast.yaml`, ежедневно 20:23 МСК (после `gold.yaml` и `moex.yaml`); разовый бэкфилл прогноза Q3-2026 — `sql/forecast_log_backfill.sql`. Результат виден в витрине `v_forecast_accuracy`.
 
 Импортёр `dcf_mine_plans` (пакет `dcf/`) **сеет** `mine_plans` — LOM-планы активов Полюса: факт добычи последнего отчётного года он читает из `databook_polyus` (метрика `Total Dore gold output`, год берётся из колонки `date`), остальные числа (TCC, capex, срок службы, профиль проекта развития) берёт из версионных констант сида `dcf/mine_plans_seed.go` — снимка публичной отчётности Полюса. Актива с нулевой/отсутствующей добычей в датапаке пропускаются с предупреждением: сегодня так выпадают `TITIMUKHTA` и `ZAPADNOYE` (их россыпная добыча лежит в таблице `ALLUVIALS`), поэтому сид покрывает **6 активов из 8**. Ряды сида описаны в `series_catalog` (source `dcf_mine_plans`, 8 записей, частота `A`). Полная карта пробелов — [docs/DCF_DATA_COVERAGE.md](docs/DCF_DATA_COVERAGE.md).
 
@@ -67,8 +70,9 @@ util/                    HTTP-клиент (национальные TLS-сер�
 bank/ cbr/ craw/ customs/ fao/ minfin/ rosstat/   доменные импортёры (см. таблицу выше)
 fred/                    FRED CSV → macro_series
 calendar/                календарь событий-триггеров → events_calendar
-views/                   витрины контура прогноза (v_model_inputs, v_gold_dashboard, v_forecast_accuracy, v_imf_macro; импортёр gold_views) и витрины метрик компаний сектора (company_financials → v_company_financials, v_company_metric_sources, v_company_operating; импортёр company_views + описания рядов Полюса в series_catalog, views/series_meta.go)
-ingest/                  ingest-endpoint контура прогноза: model_runs, forecast_log, macro_series (source = 'manual' | 'webbridge' | 'imf'), gold_prices (venue comex_front)
+forecast/                резолвер журнала прогнозов forecast_resolve: forecast_log + gold_prices → actual/error_pct (своих таблиц не создаёт)
+views/                   витрины контура прогноза (v_model_inputs, v_gold_dashboard, v_forecast_accuracy, v_imf_macro, v_gold_forecasts, v_gold_etf_flows; импортёр gold_views) и витрины метрик компаний сектора (company_financials → v_company_financials, v_company_metric_sources, v_company_operating; импортёр company_views + описания рядов Полюса в series_catalog, views/series_meta.go)
+ingest/                  ingest-endpoint контура прогноза: model_runs, forecast_log, macro_series (source = 'manual' | 'webbridge' | 'imf'), gold_prices (venue comex_front), gold_forecasts
 cmd/ingest/              бинарник ingest (отдельный от основного импорта)
 bls/                     BLS API v2 → macro_series
 bea/                     BEA API (NIPA T20804) → macro_series
@@ -79,7 +83,7 @@ polyus/                  отчётность Полюса: xlsx-датапак 
 dcf/                     расчётное ядро DCF: sum-of-parts LOM-NAV по активам, таблицы mine_plans, price_decks, nav_by_asset (DDL — копии канонических из ARCHITECTURE.md §6.2), чистое ядро без БД (НДПИ на унцию, LOM-NPV с хвостом закрытия, эскалация по ИПЦ, две ставки контуров). Два импортёра: dcf_mine_plans (сид mine_plans из отчётности Полюса + каталог рядов dcf/series_meta.go; идёт ДО движка) и dcf_engine (расчёт; витрина views/dcf_assumptions.go). Порядок гарантирует dagu/dcf.yaml. model_runs не пишет
 financial/               legacy-контур (database/sql, свой main), новый код туда не добавляется; остался databook_ugk (ЮГК)
 dagu/                    расписания: один DAG-файл на домен, имя файла = имя DAG
-sql/                     DDL и гранты вручную: пользователь kimi_reader, сид календаря Q4-2026
+sql/                     DDL и гранты вручную: пользователь kimi_reader и гранты на витрины, сид календаря Q4-2026, сид консенсуса gold_forecasts (gold_forecasts_q4_2026_seed.sql), каталог 20 рядов WGC ETF Flows (wgc_etf_flows_catalog.sql), бэкфилл журнала прогнозов (forecast_log_backfill.sql)
 scripts/                 проверки MCP (mcp_setup_user.py, mcp_check.py), экстраполяция поактивного AISC Полюса (extrapolation_aisc.py + тест и генератор испорченной PDF-фикстуры) и тесты скриптов
 deploy/staging/           артефакты деплоя на staging: юниты dagu и mcp-clickhouse, образец env
 docs/                    аналитические статьи и дорожная карта
@@ -136,21 +140,23 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 
 Составные части контура (подробно — ARCHITECTURE.md §6.3 и §6.5):
 
-- витрины `v_model_inputs`, `v_gold_dashboard`, `v_forecast_accuracy`, `v_imf_macro`, `v_eia_petroleum` и календарь `v_events_calendar` — читаются агентом через MCP (пользователь `kimi_reader`, только `v_*`);
+- витрины `v_model_inputs`, `v_gold_dashboard`, `v_forecast_accuracy`, `v_imf_macro`, `v_eia_petroleum`, `v_gold_forecasts`, `v_gold_etf_flows` и календарь `v_events_calendar` — читаются агентом через MCP (пользователь `kimi_reader`, только `v_*`); гранты — в `sql/mcp_kimi_reader.sql`;
 - витрины метрик компаний сектора `v_company_financials`, `v_company_metric_sources`, `v_company_operating` (импортёр `company_views`) — читаются агентом через MCP; сейчас наполнены данными Полюса (ARCHITECTURE.md §6.3);
 - витрина `v_dcf_assumptions` — NPV рудников Полюса по каждому (deck, контур ставки, актив) плюс суммарный NAV рудников; пишет её импортёр `dcf_engine` (пакет `dcf/`, `DCF_RUN_ID=<uuid> make import STAT=dcf_engine`), сырая `nav_by_asset` агенту не выдана;
-- ingest-endpoint (`cmd/ingest`) — единственный путь записи прогонов модели и ручных рядов;
+- импортёр `forecast_resolve` (пакет `forecast/`, `dagu/forecast.yaml`, 20:23 МСК) — обратная связь журнала прогнозов: заполняет `actual`/`error_pct` в `forecast_log` сверкой `xau_q_avg` со средним `gold_prices` за квартал `target_date` (ARCHITECTURE.md §6.1);
+- ingest-endpoint (`cmd/ingest`) — единственный путь записи прогонов модели, ручных рядов, цен COMEX и консенсус-прогнозов;
 - плагин Kimi `gold-nav` — отдельный репозиторий, сценарная сессия прогноза и DCF NAV PLZL.
 
 ### Ingest-endpoint
 
-Запуск: `make run-ingest` (нужны `CLICKHOUSE_URL` и `INGEST_TOKEN` в `~/.config/rosstat/env`; `INGEST_ADDR` по умолчанию `:8081`). При старте создаются `model_runs`, `forecast_log`, `macro_series`, `gold_prices`, если их ещё нет. Витрины `views/` создаются отдельно: `make import STAT=gold_views` после первого запуска ingest.
+Запуск: `make run-ingest` (нужны `CLICKHOUSE_URL` и `INGEST_TOKEN` в `~/.config/rosstat/env`; `INGEST_ADDR` по умолчанию `:8081`). При старте создаются `model_runs`, `forecast_log`, `macro_series`, `gold_prices`, `gold_forecasts`, если их ещё нет. Витрины `views/` создаются отдельно: `make import STAT=gold_views` после первого запуска ingest.
 
 | Метод и путь | Тело | Ответ |
 |---|---|---|
 | `POST /v1/model_run` | JSON прогона: клиентский `run_id` (UUID), `trigger_type`, `price_deck`, `probabilities`, `gold_scenario` с `horizon`, значения NAV | `200 {"inserted": 1}`; `400` при ошибке валидации |
 | `POST /v1/manual_series` | JSON-массив `{"series", "date": "YYYY-MM-DD" (диапазон Date32 [1900-01-01, 2299-12-31]), "value", "source"?}` → `macro_series`; `source` необязателен (по умолчанию `manual`), допустимы `manual`, `webbridge`, `imf` | `200 {"inserted": N}`; `400` при ошибке любой точки |
 | `POST /v1/gold_prices` | JSON-массив `{"venue", "date": "YYYY-MM-DD" (диапазон Date32), "usd"}` → `gold_prices`; допустимая venue — `comex_front` (словарь расширяемый), `usd` > 0 | `200 {"inserted": N}`; `400` при ошибке любой точки |
+| `POST /v1/gold_forecasts` | JSON-массив `{"author", "published": "YYYY-MM-DD" (диапазон Date32), "horizon", "scenario", "low", "high", "point", "probability"}` → `gold_forecasts`; `author`/`horizon` непусты, `scenario` ∈ {`point`,`range`,`bull`,`base`,`bear`}, `low`/`high`/`point` ≥ 0 и хотя бы одно > 0, `high ≥ low` (когда заданы оба), `probability` 0–100 (0 — «не задана») | `200 {"inserted": N}`; `400` при ошибке любой строки |
 
 Все запросы — с заголовком `Authorization: Bearer <INGEST_TOKEN>`; без него или с неверным токеном — `401`. Сверх `INGEST_RATE_PER_MIN` (по умолчанию 60 в минуту) — `429`; тело больше 1 MiB — `413`; неизвестное поле в JSON — `400`. Повторный `POST /v1/model_run` с тем же `run_id` ничего не записывает. Формат тела — в `ingest/model_run.go` (структура `ModelRun`).
 
@@ -187,7 +193,7 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 | `make dev-check` | проверить наличие `go`, `gofmt`, `golangci-lint`, `uv`, `curl`, `clickhouse` |
 | `make mcp-run` | запустить MCP-сервер `mcp-clickhouse` в stdio вручную (нужен `CLICKHOUSE_PASSWORD`) |
 | `make mcp-user` | создать пользователя `kimi_reader` и выдать `GRANT SELECT` на витрины из `sql/mcp_kimi_reader.sql` (нужен `CLICKHOUSE_PASSWORD`, запущенный ClickHouse) |
-| `make mcp-check` | smoke-проверка MCP: инструменты, витрины, отказ на сырые таблицы (нужен `CLICKHOUSE_PASSWORD`, запущенный ClickHouse). Адрес переопределяется: `MCP_CHECK_HOST`/`MCP_CHECK_PORT` — для проверки staging через туннель |
+| `make mcp-check` | smoke-проверка MCP: инструменты, витрины, отказ на сырые таблицы; отдельно — артефакты фазы 3: витрины `v_gold_forecasts` и `v_gold_etf_flows`, каталог `webbridge` (20 рядов), резолв `v_forecast_accuracy` и запрет сырой `gold_forecasts` (нужен `CLICKHOUSE_PASSWORD`, запущенный ClickHouse). Адрес переопределяется: `MCP_CHECK_HOST`/`MCP_CHECK_PORT` — для проверки staging через туннель |
 | `make deploy-staging` | развернуть на staging бинарник, `dagu` и `mcp-clickhouse` (см. «Деплой на staging») |
 | `make deploy-staging-binary` / `-dagu` / `-mcp` | точечно: только бинарник, только dagu, только MCP |
 | `make upgrade-staging` | обновить **только** dagu и mcp-clickhouse до версий из репозитория (без `apt upgrade`) |
@@ -239,6 +245,9 @@ make import STAT=dcf_mine_plans      # сид mine_plans из отчётност
 make dcf-aisc                        # (опционально) уточнённый поактивный AISC → sql/dcf_mine_plans_seed.sql
 make ch-sql FILE=sql/dcf_mine_plans_seed.sql   # (опционально) применить сид AISC поверх Go-сида
 DCF_RUN_ID=$(uuidgen | tr A-Z a-z) make import STAT=dcf_engine   # расчёт NAV по засеянным планам (в шелле без uuidgen — любой UUID)
+make import STAT=forecast_resolve    # сверка прогнозов журнала с фактом (нужны строки forecast_log: ingest-прогон или бэкфилл sql/forecast_log_backfill.sql)
+make ch-sql FILE=sql/gold_forecasts_q4_2026_seed.sql   # (опционально) сид консенсуса банков → v_gold_forecasts (до make import STAT=gold_views)
+make ch-sql FILE=sql/wgc_etf_flows_catalog.sql         # (опционально) каталог 20 рядов WGC ETF Flows (source='webbridge')
 make mcp-check                       # MCP end-to-end (CLICKHOUSE_PASSWORD из файла окружения)
 make ch-down                         # остановить сервер
 ```
@@ -310,7 +319,7 @@ MCP для Kimi (агент читает витрины `v_*`, без запис
 ```
 
 - проверить в Kimi командой `/mcp-config` в новой сессии: сервер `clickhouse` должен быть подключён;
-- новые ряды и витрины: см. AGENTS.md, правило 11. Legacy-таблицы `cbr_*`, `rosstat`, `minfin`, `gold_prices` агенту доступны через групповые витрины `v_cbr_macro`, `v_rosstat_macro`, `v_minfin_budget`, `v_gold_prices` (создаются, когда все таблицы группы импортированы), описания рядов — в `v_series_catalog`.
+- новые ряды и витрины: см. AGENTS.md, правило 11. Legacy-таблицы `cbr_*`, `rosstat`, `minfin`, `gold_prices` агенту доступны через групповые витрины `v_cbr_macro`, `v_rosstat_macro`, `v_minfin_budget`, `v_gold_prices` (создаются, когда все таблицы группы импортированы), описания рядов — в `v_series_catalog`. Витрины фазы 3 (`v_gold_forecasts`, `v_gold_etf_flows`) выданы тем же грантом в `sql/mcp_kimi_reader.sql`; их чтение, каталог `webbridge` (20 рядов) и запрет сырой `gold_forecasts` проверяет `make mcp-check`.
 
 MCP GoLand (опционально, ускоряет работу Kimi Code с кодом):
 
@@ -377,8 +386,8 @@ MCP GoLand (опционально, ускоряет работу Kimi Code с �
 - **Отчётность Полюса доступна агенту MCP — ограничение снято 2026-10-10.** Витрины `v_company_financials`, `v_company_metric_sources`, `v_company_operating` созданы с комментариями и грантом `kimi_reader` (`sql/mcp_kimi_reader.sql`), ряды Полюса описаны в `series_catalog` (source `polyus`, 18 рядов; `polyus_datapack`, 19 рядов), поэтому агент читает производство, TCC, AISC, capex, выручку и операционку по активам через MCP. Сырые `databook_polyus`, `company_financials` и legacy `polyus_financial_metrics` агенту по-прежнему не выданы. Проверено живым `make mcp-check` 2026-10-10 (ПРОВЕРКА ПРОЙДЕНА). Витрины заведены общими для сектора, а не набором `v_polyus_*`.
 - **Ingest-endpoint: TLS — снаружи.** Лимит частоты (`INGEST_RATE_PER_MIN`, `429`) и предел тела 1 MiB (`413`) реализованы в процессе; TLS предполагается на reverse proxy, в репозитории он не описан. Повторный `POST /v1/model_run` с тем же `run_id` отвечает `200 {"inserted": 1}`, хотя строк не пишет: ответ не отличает дубль от новой записи.
 - **HTTP-режим mcp-clickhouse развёрнут на staging (2026-10-10).** Сервис `deploy/staging/mcp-clickhouse.service` слушает `127.0.0.1:8000`, требует Bearer-токен (`CLICKHOUSE_MCP_AUTH_TOKEN`, обязателен), читает витрины от пользователя `kimi_reader`. Локальная конфигурация Kimi остаётся stdio (блок «MCP для Kimi»). Наружу эндпоинт не опубликован и TLS не настроен — доступ через SSH-туннель; публикация для плагина `gold-nav` требует reverse proxy и отдельного шага.
-- **Индикаторы `v_gold_dashboard`: `distillate_stocks` автоматизирован, остальные — вручную.** `distillate_stocks` пополняет импортёр `eia` (EIA API v2, расписание — среда 19:43 МСК); `crack_ulsd_proxy`, `fedwatch_dec_hike`, `etf_flows_month`, `dxy` импортёров не имеют — только `manual_series`, без ввода показываются как `stale`. Витрина берёт значение индикатора по приоритету источников `eia > webbridge > manual` (автоматический источник канонический, ручной ввод — фолбэк). Цена COMEX (`gold_prices.venue = 'comex_front'`, `POST /v1/gold_prices`) и резервы ЦБ (`source = 'imf'`, витрина `v_imf_macro`) — тоже сессионные ряды без импортёра: без сессии они не пополняются (исторический хвост — разовый backfill).
-- **Сверка прогнозов не автоматизирована.** `actual` и `error_pct` в `forecast_log` не заполняются кодом; `v_forecast_accuracy` покажет `is_resolved = 0` до ручного ввода.
+- **Индикаторы `v_gold_dashboard`: `distillate_stocks` автоматизирован, остальные — вручную.** `distillate_stocks` пополняет импортёр `eia` (EIA API v2, расписание — среда 19:43 МСК); `crack_ulsd_proxy`, `fedwatch_dec_hike`, `etf_flows_month`, `dxy` импортёров не имеют — только `manual_series`, без ввода показываются как `stale`. Витрина берёт значение индикатора по приоритету источников `eia > webbridge > manual` (автоматический источник канонический, ручной ввод — фолбэк). Цена COMEX (`gold_prices.venue = 'comex_front'`, `POST /v1/gold_prices`) и резервы ЦБ (`source = 'imf'`, витрина `v_imf_macro`) — тоже сессионные ряды без импортёра: без сессии они не пополняются (исторический хвост — разовый backfill). Структурные ряды WGC ETF Flows (`etf_<метрика>_<регион>`, `source = 'webbridge'`, 20 рядов) — отдельный набор: читается витриной `v_gold_etf_flows`, а не `v_gold_dashboard`, и записывается тем же `POST /v1/manual_series` одним набором; мировой `etf_flow_usd_mln_world` (млн USD) — не путать и не складывать с ручным `etf_flows_month` (млрд USD).
+- **Сверка прогнозов автоматизирована, кроме `nav`.** `actual` и `error_pct` в `forecast_log` заполняет импортёр `forecast_resolve` (пакет `forecast/`, `dagu/forecast.yaml`, ежедневно 20:23 МСК): окно сверки — квартал, содержащий `target_date`, факт — среднее `gold_prices` по venue `comex_front` (фолбэк `moex_fix_usd`). Строка остаётся `is_resolved = 0`, пока `target_date` в будущем или в окне нет точек цены (так Q4-прогноз с `target_date = 2026-12-31` резолвится только после этой даты), а `metric = 'nav'` не резолвится вовсе — факта (NAV на дату) нет, `actual` остаётся NULL.
 - **ИПЦ в `v_model_inputs` может быть пустым.** Витрина требует, чтобы существовали таблицы `ipc_mes` и `ipc_weeks`, но не проверяет их заполненность. Таблицы создаются до загрузки Росстата, поэтому при его ошибке (см. выше) витрина создаётся, а `ipc_mes_last` и `ipc_week_ytd` остаются NULL или устаревают; ориентироваться по `*_date`.
 - **`nav_beta_gold` не заполняется** (поля нет во входе `ModelRun`), в таблицу пишется NULL.
 - **Имена импортёров.** `Name()` у `fred` — `fred` (несколько серий, одна таблица `macro_series`), у `cbr` часть импортёров делит таблицу (`cbr_currency_usd`, `households_b_mes`).

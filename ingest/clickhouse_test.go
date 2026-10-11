@@ -471,3 +471,69 @@ func TestInsertManualSeriesSourcePassedThrough(t *testing.T) {
 		t.Fatalf("default source = %q, want manual", second)
 	}
 }
+
+func TestInsertGoldForecastsAppendsRows(t *testing.T) {
+	store := newFakeStore()
+	forecasts := []GoldForecast{
+		{Author: "goldman", Published: "2026-10-07", Horizon: "2027", Scenario: "range", Low: 5400, High: 5600},
+		{Author: "own", Published: "2026-10-11", Horizon: "Q4-2026", Scenario: "bull", Point: 4800, Probability: 25},
+	}
+
+	if err := newTestWriter(store).InsertGoldForecasts(context.Background(), forecasts); err != nil {
+		t.Fatalf("InsertGoldForecasts: %v", err)
+	}
+	if n := store.batchesFor(goldForecastsInsert); n != 1 {
+		t.Fatalf("gold_forecasts batches: %d, want 1", n)
+	}
+	if len(store.sent) != 1 || len(store.sent[0].rows) != 2 {
+		t.Fatalf("sent %+v, want one batch with two rows", store.sent)
+	}
+	if store.sent[0].query != goldForecastsInsert {
+		t.Fatalf("query %q, want %q", store.sent[0].query, goldForecastsInsert)
+	}
+	row := store.sent[0].rows[0]
+	author, _ := row[0].(string)
+	published, _ := row[1].(time.Time)
+	horizon, _ := row[2].(string)
+	scenario, _ := row[3].(string)
+	low, _ := row[4].(float64)
+	high, _ := row[5].(float64)
+	point, _ := row[6].(float64)
+	probability, _ := row[7].(float32)
+	if author != "goldman" || published.Format(manualSeriesDateLayout) != "2026-10-07" ||
+		horizon != "2027" || scenario != "range" || low != 5400 || high != 5600 || point != 0 || probability != 0 {
+		t.Fatalf("row = %v (published %T, probability %T)", row, row[1], row[7])
+	}
+	secondProbability, _ := store.sent[0].rows[1][7].(float32)
+	if secondProbability != 25 {
+		t.Fatalf("second row probability = %v, want 25", secondProbability)
+	}
+}
+
+func TestInsertGoldForecastsAppendErrorAborts(t *testing.T) {
+	store := newFakeStore()
+	store.failAppend[goldForecastsInsert] = errors.New("append rejected")
+
+	err := newTestWriter(store).InsertGoldForecasts(context.Background(), []GoldForecast{
+		{Author: "goldman", Published: "2026-10-07", Horizon: "2027", Scenario: "range", Low: 5400, High: 5600},
+	})
+	if err == nil {
+		t.Fatal("expected error from failed append")
+	}
+	if n := store.abortedFor(goldForecastsInsert); n != 1 {
+		t.Fatalf("Abort calls for %s: %d, want 1", goldForecastsInsert, n)
+	}
+	if n := store.batchesFor(goldForecastsInsert); n != 0 {
+		t.Fatalf("%s sent %d times after append failure, want 0", goldForecastsInsert, n)
+	}
+}
+
+func TestInsertGoldForecastsEmptySkipsBatch(t *testing.T) {
+	store := newFakeStore()
+	if err := newTestWriter(store).InsertGoldForecasts(context.Background(), nil); err != nil {
+		t.Fatalf("empty slice must succeed: %v", err)
+	}
+	if len(store.sent) != 0 {
+		t.Fatalf("empty slice must not trigger a batch, got %d", len(store.sent))
+	}
+}

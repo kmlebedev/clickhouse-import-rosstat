@@ -167,6 +167,62 @@ async def check(params, server_log):
             failed += not expect("дашборд distillate_stocks из EIA, а не из ручного фолбэка",
                                  bool(priority) and priority[0].get("same") in (1, "1"), priority_detail)
 
+            # Контур прогнозов спроса: витрина консенсуса v_gold_forecasts и витрина
+            # ETF-потоков WGC v_gold_etf_flows видны агенту, каталог webbridge засеян,
+            # прогнозы внесены и Q3-прогноз резолвлен в v_forecast_accuracy.
+            for view in ("v_gold_forecasts", "v_gold_etf_flows"):
+                failed += not expect(f"витрина {view} видна", view in tables, "list_tables default")
+
+            # Потоки WGC вносятся сессионно на приёмке, поэтому count может быть 0 —
+            # проверяется РАЗРЕШЕНИЕ чтения витрины, как у v_dcf_assumptions.
+            etf = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_gold_etf_flows"}))
+            failed += not expect("ETF-потоки WGC читаются", "rows" in etf and "Query execution failed" not in etf and "ACCESS_DENIED" not in etf, etf[:200])
+
+            # Каталог webbridge — 20 рядов из сида; их отсутствие ломает семантику
+            # v_gold_etf_flows для агента: числа он прочитает, а что измеряет ряд и в каких
+            # единицах — нет (etf_flows_month — отдельный ручной ряд v_gold_dashboard,
+            # каталог webbridge на него не влияет). detail подсказывает, что применить.
+            catalog_wgc = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'webbridge'"}))
+            webbridge = result_rows(catalog_wgc)
+            webbridge_n = webbridge[0].get("n") if webbridge else None
+            if webbridge is None:
+                webbridge_detail = f"ответ не распознан: {catalog_wgc[:200]}"
+            elif webbridge_n == 20:
+                webbridge_detail = "рядов webbridge: 20"
+            else:
+                webbridge_detail = f"рядов webbridge: {webbridge_n}, применить сид sql/wgc_etf_flows_catalog.sql"
+            failed += not expect("каталог webbridge полон", webbridge_n == 20, webbridge_detail)
+
+            # Консенсус аналитиков — 11 строк сида. Пустой v_gold_forecasts означает
+            # неприменённый сид, ошибка запроса даёт detail сырым текстом.
+            forecasts_raw = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_gold_forecasts"}))
+            forecasts = result_rows(forecasts_raw)
+            forecasts_n = forecasts[0].get("n") if forecasts else None
+            if forecasts is None:
+                forecasts_detail = f"ответ не распознан: {forecasts_raw[:200]}"
+            elif (forecasts_n or 0) > 0:
+                forecasts_detail = f"прогнозов: {forecasts_n}"
+            else:
+                forecasts_detail = "прогнозов нет: применить сид sql/gold_forecasts_q4_2026_seed.sql"
+            failed += not expect("прогнозы консенсуса читаются", bool(forecasts) and (forecasts_n or 0) > 0, forecasts_detail)
+
+            # Резолв прогнозов относительно факта: countIf(is_resolved = 1) >= 1 доказывает,
+            # что forecast_log заполнен бэкфиллом, а импортёр forecast_resolve прогонялся.
+            accuracy_raw = text(await session.call_tool("run_query", {"query": "SELECT countIf(is_resolved = 1) AS resolved FROM v_forecast_accuracy"}))
+            accuracy = result_rows(accuracy_raw)
+            resolved_n = accuracy[0].get("resolved") if accuracy else None
+            if accuracy is None:
+                accuracy_detail = f"ответ не распознан: {accuracy_raw[:200]}"
+            elif (resolved_n or 0) >= 1:
+                accuracy_detail = f"resolved={resolved_n}"
+            else:
+                accuracy_detail = "резолвнутых прогнозов нет: бэкфилл sql/forecast_log_backfill.sql + make import STAT=forecast_resolve"
+            failed += not expect("прогнозы резолвятся по факту", bool(accuracy) and (resolved_n or 0) >= 1, accuracy_detail)
+
+            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM gold_forecasts"}))
+            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+            failed += not expect("сырая gold_forecasts закрыта", denied, "отказ ClickHouse 497 на gold_forecasts (ожидаемо)" if denied else raw[:200])
+
             raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM macro_series"}))
             denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
             failed += not expect("сырая таблица закрыта", denied, "отказ ClickHouse 497 на macro_series (ожидаемо)" if denied else raw[:200])
