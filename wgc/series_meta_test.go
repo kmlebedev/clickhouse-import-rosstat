@@ -8,6 +8,12 @@ import (
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 )
 
+// etfFallbackFile — имя файла ручной выгрузки, которым origin называет вторую дорогу ряда.
+// Копия литерала из etfOrigin* сделана намеренно: тест пинит контракт (агент по origin обязан
+// видеть и файл, и лист), а не строку реализации, — переименование файла потребует осознанной
+// правки обеих сторон.
+const etfFallbackFile = "ETF_Flows_*.xlsx"
+
 // Каталог — единственный контракт ряда для MCP-агента (правило 11): по нему агент
 // узнаёт единицы, знак потока, связь с etf_flows_month и приоритет источников
 // витрины. Проверки идут по самому wgcEtfCatalog(), а не по копии списка в тесте:
@@ -21,6 +27,7 @@ func TestEtfCatalogDescribesEverySeries(t *testing.T) {
 	}
 
 	described := make(map[string]bool, want)
+	bySeries := make(map[string]util.SeriesMeta, want)
 
 	for _, meta := range catalog {
 		if meta.Source != wgcSource {
@@ -45,6 +52,7 @@ func TestEtfCatalogDescribesEverySeries(t *testing.T) {
 			t.Errorf("ряд %s описан дважды", meta.Series)
 		}
 		described[meta.Series] = true
+		bySeries[meta.Series] = meta
 
 		if !strings.Contains(meta.Description, "wgc_etf_flows") {
 			t.Errorf("ряд %s: описание не называет импортёр wgc_etf_flows", meta.Series)
@@ -62,34 +70,85 @@ func TestEtfCatalogDescribesEverySeries(t *testing.T) {
 		}
 	}
 
-	// origin обязан называть лист выгрузки своей метрики: копипаста с чужим листом
-	// отправила бы агента читать не тот блок файла.
-	sheets := map[string]string{
-		etfMetricFlowUsdMln:     etfFlowsSheet,
-		etfMetricFlowTonnes:     etfDemandSheet,
-		etfMetricHoldingsTonnes: etfHoldingsSheet,
-		etfMetricAumUsdBn:       etfChartsSheet,
+	// origin обязан называть эндпоинт API своей метрики и — как вторую дорогу ряда — файл и
+	// лист ручной выгрузки: копипаста с чужим эндпоинтом или листом отправила бы агента
+	// читать чужую метрику или не тот блок файла (flows-chart2 несёт потоки, holdings-chart2 —
+	// запасы и AUM; Fund flows by month, Demand by month, Holdings by month и блок Charts Data
+	// файла — разные блоки с разными числами).
+	type etfOriginWant struct {
+		endpoint string
+		sheet    string
 	}
-	wantSheet := make(map[string]string, want)
+	origins := map[string]etfOriginWant{
+		etfMetricFlowUsdMln:     {etfAPIFlowsPath, etfFlowsSheet},
+		etfMetricFlowTonnes:     {etfAPIFlowsPath, etfDemandSheet},
+		etfMetricHoldingsTonnes: {etfAPIHoldingsPath, etfHoldingsSheet},
+		etfMetricAumUsdBn:       {etfAPIHoldingsPath, etfChartsSheet},
+	}
 
-	for metric, sheet := range sheets {
+	wantOrigin := make(map[string]etfOriginWant, want)
+	for _, metric := range wgcEtfMetrics {
+		origin, ok := origins[metric]
+		if !ok {
+			t.Errorf("метрика %s: тест не знает происхождения ряда — дополни origins", metric)
+			continue
+		}
 		for _, region := range wgcEtfRegions {
-			wantSheet[wgcEtfSeriesName(metric, region)] = sheet
+			wantOrigin[wgcEtfSeriesName(metric, region)] = origin
 		}
 	}
 
 	for _, meta := range catalog {
-		if sheet, ok := wantSheet[meta.Series]; !ok || !strings.Contains(meta.Origin, sheet) {
-			t.Errorf("ряд %s: origin %q не называет лист %q", meta.Series, meta.Origin, sheet)
+		origin, ok := wantOrigin[meta.Series]
+		if !ok {
+			// Без этого гварда ряд, которого нет в карте, проверялся бы пустыми ожиданиями:
+			// strings.Contains(x, "") всегда истинно, и утверждение стало бы вакуумным.
+			t.Errorf("ряд %s: тест не знает ожидаемого origin — дополни origins", meta.Series)
+			continue
+		}
+		for _, wantText := range []string{origin.endpoint, origin.sheet, etfFallbackFile} {
+			if !strings.Contains(meta.Origin, wantText) {
+				t.Errorf("ряд %s: origin %q не называет %q", meta.Series, meta.Origin, wantText)
+			}
 		}
 	}
 
-	// До 2007-03 у world нет значений всех четырёх регионов (Азия появляется
-	// только в 2007-03), поэтому мировой ряд начинается с 2007-03; агент обязан
-	// узнать это из каталога, а не из пропусков в данных.
-	for _, meta := range catalog {
-		if strings.HasSuffix(meta.Series, "_"+etfWorldRegion) && !strings.Contains(meta.Description, "2007-03") {
-			t.Errorf("ряд %s: описание world не фиксирует начало ряда с 2007-03", meta.Series)
+	// Начало мировых рядов разное по метрикам: потоки API отдаёт с 2003-02 (там
+	// нули явные, и до 2007-03 world = NA + EU + Other — азиатских фондов ещё
+	// нет), а запасы и AUM — с 2007-03, первого месяца со всеми четырьмя
+	// регионами. Агент обязан узнать это из каталога, а не из пропусков в данных.
+	worldSince := map[string]string{
+		etfMetricFlowUsdMln:     "2003-02",
+		etfMetricFlowTonnes:     "2003-02",
+		etfMetricHoldingsTonnes: "2007-03",
+		etfMetricAumUsdBn:       "2007-03",
+	}
+
+	for _, metric := range wgcEtfMetrics {
+		since, ok := worldSince[metric]
+		if !ok {
+			t.Errorf("метрика %s: тест не знает начала мирового ряда — дополни worldSince", metric)
+			continue
+		}
+
+		series := wgcEtfSeriesName(metric, etfWorldRegion)
+		if !strings.Contains(bySeries[series].Description, since) {
+			t.Errorf("ряд %s: описание world не фиксирует начало ряда с %s", series, since)
+		}
+	}
+
+	// Оговорка об округлении обязательна для всех пяти рядов запасов: тоннажные стоки
+	// API приходят округлёнными до 0,01 т, а ручная выгрузка в фолбэке даёт полную
+	// точность. Без неё агент прочитал бы расхождение ≤ 0,01 т между источниками за
+	// дефект импорта. Пин — по коротким подстрокам, а не по целой фразе: текст оговорки
+	// редактируется, требование к нему — нет.
+	for _, region := range wgcEtfRegions {
+		series := wgcEtfSeriesName(etfMetricHoldingsTonnes, region)
+
+		for _, want := range []string{"0,01", "округл"} {
+			if !strings.Contains(bySeries[series].Description, want) {
+				t.Errorf("ряд %s: описание запасов не несёт оговорки об округлении источника (%q)", series, want)
+			}
 		}
 	}
 }
