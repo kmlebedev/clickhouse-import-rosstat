@@ -85,8 +85,8 @@
 1. `make run-ingest` (токен из env-файла).
 2. GC=F через datasource (`yahoo_finance`, period `2y`) → JSON `[{"venue","date","usd"}]` → `POST /v1/gold_prices` одним батчем.
 3. Резервы: `imf_irfcl_data` (RA_GOLD, `frequency=M`) → `POST /v1/manual_series` с `source='imf'`, дата — первый день месяца.
-4. `make ch-sql FILE=sql/imf_ra_gold_catalog.sql`; `make import STAT=gold_views`; `make mcp-user`.
-5. Проверка: `SELECT count(), min(date), max(date) FROM v_gold_prices WHERE series='comex_front'`; `SELECT * FROM v_imf_macro ORDER BY date DESC`; `make mcp-check`.
+4. `make import STAT=gold_prices` — без него на чистой БД витрины `v_gold_prices` нет: её создаёт импортёр (`util.CreateView`), `EnsureTables` ingest'а витрину не создаёт. Затем `make ch-sql FILE=sql/imf_ra_gold_catalog.sql`; `make import STAT=gold_views`; `make mcp-user`.
+5. Проверка: `SELECT count(), min(date), max(date) FROM v_gold_prices WHERE series='comex_front'` (витрина появляется только после шага 4; на уже наполненной dev-БД она существует и раньше); `SELECT * FROM v_imf_macro ORDER BY date DESC`; `make mcp-check`.
 
 **Результат — приёмка 11.10.2026:**
 
