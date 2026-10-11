@@ -260,10 +260,14 @@ make ch-down                         # остановить сервер
 export BEA_API_KEY=<your-key>
 export CLICKHOUSE_URL=clickhouse://localhost:9000/default
 export CLICKHOUSE_PASSWORD=<kimi_reader-password>
+# export CH_IMPORT_PASSWORD=<пароль пользователя, читающего сырые таблицы>
 # export BLS_API_KEY=<your-key>
 # export INGEST_TOKEN=<ingest-token>
 # export INGEST_RATE_PER_MIN=60
 ```
+
+- `CLICKHOUSE_URL` — **основной** способ задать адрес: это DSN, из которого Go-код (`clickhouse.ParseDSN`) и `scripts/extrapolation_aisc.py` берут хост, порт, пользователя и базу. Дискретные `CLICKHOUSE_HOST`/`CLICKHOUSE_PORT`/`CLICKHOUSE_USER`/`CLICKHOUSE_DATABASE` в файле обычно **не задаются**; скрипт читает их как переопределение поверх DSN;
+- `CLICKHOUSE_PASSWORD` — пароль **`kimi_reader`**, read-only пользователя витрин (`make mcp-check`). Сырые таблицы ему закрыты: чтение `databook_polyus` и подобных идёт под другим пользователем, поэтому у скриптов есть **`CH_IMPORT_PASSWORD`**. Если пользователь из DSN пароля не имеет (локальный `default`), переменную задавать не нужно — подставлять вместо неё `CLICKHOUSE_PASSWORD` нельзя, это чужой пароль и он даёт 401.
 
 - Makefile подключает файл сам (`-include`), поэтому любая `make`-цель видит ключи без `export` в shell; путь можно переопределить: `make ROSSTAT_ENV=/путь/к/файлу ...`;
 - в терминале: `set -a; . ~/.config/rosstat/env; set +a`;
