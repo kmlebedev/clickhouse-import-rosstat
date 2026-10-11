@@ -134,3 +134,43 @@ func ValidateManualSeriesPoint(p ManualSeriesPoint) error {
 	}
 	return nil
 }
+
+// GoldPricePoint — точка цены золота по площадке (таблица gold_prices, ключ (venue, date)).
+type GoldPricePoint struct {
+	Venue string  `json:"venue"`
+	Date  string  `json:"date"`
+	Usd   float64 `json:"usd"`
+}
+
+// validGoldVenues — допустимые площадки записи через ingest. Словарь расширяемый:
+// новая venue добавляется здесь вместе с описанием ряда в series_catalog.
+var validGoldVenues = map[string]bool{
+	"comex_front": true,
+}
+
+// ValidateGoldPricePoint проверяет точку цены до вставки; ошибки входа — 400.
+// venue сверяется точно по whitelist (регистр значим), date — строго YYYY-MM-DD,
+// цена золота обязана быть положительной (отсутствующее поле usd даёт 0 → ошибка).
+func ValidateGoldPricePoint(p GoldPricePoint) error {
+	if !validGoldVenues[p.Venue] {
+		return fmt.Errorf("venue %q must be one of: %s", p.Venue, strings.Join(sortedGoldVenues(), ", "))
+	}
+	date, err := time.Parse(manualSeriesDateLayout, p.Date)
+	if err != nil || date.Format(manualSeriesDateLayout) != p.Date {
+		return fmt.Errorf("date %q must be in YYYY-MM-DD format", p.Date)
+	}
+	if p.Usd <= 0 {
+		return fmt.Errorf("usd %v must be positive", p.Usd)
+	}
+	return nil
+}
+
+// sortedGoldVenues — допустимые venue в детерминированном порядке для текста ошибки.
+func sortedGoldVenues() []string {
+	names := make([]string, 0, len(validGoldVenues))
+	for name := range validGoldVenues {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}

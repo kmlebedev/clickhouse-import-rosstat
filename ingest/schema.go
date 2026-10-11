@@ -42,9 +42,20 @@ const macroSeriesDdl = `CREATE TABLE IF NOT EXISTS macro_series (
     value Float64
 ) ENGINE = ReplacingMergeTree ORDER BY (source, series, date);`
 
-// ensureTables создаёт три таблицы контура прогноза (идемпотентно).
+// goldPricesDdl — копия DDL из gold/gold.go; копии обязаны совпадать (прецедент
+// company_financials): ingest пишет в gold_prices и должен быть самодостаточен —
+// POST /v1/gold_prices не должен зависеть от того, отработал ли уже импортёр gold.
+const goldPricesDdl = `CREATE TABLE IF NOT EXISTS gold_prices (
+			  venue LowCardinality(String)
+			, date Date32
+			, usd Float64
+		) ENGINE = ReplacingMergeTree ORDER BY (venue, date);
+	`
+
+// ensureTables создаёт таблицы контура прогноза (идемпотентно):
+// три канонические из ARCHITECTURE.md §6.2 и gold_prices (копия из gold/gold.go).
 func ensureTables(ctx context.Context, conn driver.Conn) error {
-	for _, ddl := range []string{modelRunsDdl, forecastLogDdl, macroSeriesDdl} {
+	for _, ddl := range []string{modelRunsDdl, forecastLogDdl, macroSeriesDdl, goldPricesDdl} {
 		if err := conn.Exec(ctx, ddl); err != nil {
 			return err
 		}
