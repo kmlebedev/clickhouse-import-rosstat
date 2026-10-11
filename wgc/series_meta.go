@@ -19,25 +19,44 @@ const (
 	cbUnitTonnes = etfUnitTonnes
 )
 
-// origin называет лист выгрузки своей метрики: без него агент не отличит поток
-// из «Fund flows by month» от запасов из «Holdings by month» — соседние листы
-// несут разные метрики в одних и тех же единицах.
+// origin называет эндпоинт API своей метрики: без него агент не отличит поток из
+// flows-chart2 (series.usd / series.tonnes) от запасов и AUM из holdings-chart2
+// (Monthly.tonnes / Monthly.usd) — соседние эндпоинты несут разные метрики в одних
+// и тех же единицах. Рядом назван лист ручной выгрузки — вторая дорога ряда,
+// которой импортёр пользуется, только когда API недоступно.
 const (
-	etfOriginFlowUsdMln     = "WGC Gold ETF Flows, файл ETF_Flows_*.xlsx, лист Fund flows by month"
-	etfOriginFlowTonnes     = "WGC Gold ETF Flows, файл ETF_Flows_*.xlsx, лист Demand by month"
-	etfOriginHoldingsTonnes = "WGC Gold ETF Flows, файл ETF_Flows_*.xlsx, лист Holdings by month"
-	etfOriginAum            = "WGC Gold ETF Flows, файл ETF_Flows_*.xlsx, лист Charts Data (блок Area chart - monthly holdings in US$)"
+	etfOriginFlowUsdMln = "WGC Gold ETF Flows: API fscdn.gold.org, эндпоинт " + etfAPIFlowsPath +
+		" (блок Monthly.series.usd, доллары, приведён к млн USD); фолбэк без API — файл ETF_Flows_*.xlsx, лист " + etfFlowsSheet
+	etfOriginFlowTonnes = "WGC Gold ETF Flows: API fscdn.gold.org, эндпоинт " + etfAPIFlowsPath +
+		" (блок Monthly.series.tonnes, тонны); фолбэк без API — файл ETF_Flows_*.xlsx, лист " + etfDemandSheet
+	etfOriginHoldingsTonnes = "WGC Gold ETF Flows: API fscdn.gold.org, эндпоинт " + etfAPIHoldingsPath +
+		" (блок Monthly.tonnes, тонны, источник округляет до 0,01 т); фолбэк без API — файл ETF_Flows_*.xlsx, лист " + etfHoldingsSheet
+	etfOriginAum = "WGC Gold ETF Flows: API fscdn.gold.org, эндпоинт " + etfAPIHoldingsPath +
+		" (блок Monthly.usd, доллары, приведён к млрд USD); фолбэк без API — файл ETF_Flows_*.xlsx, лист " + etfChartsSheet + " (блок Area chart - monthly holdings in US$)"
 )
 
-// etfCatalogWorldSince — оговорка мировых рядов: world пишется только за месяцы,
-// где есть значения всех четырёх регионов, а Азия появляется с 2007-03. Без неё
-// агент принял бы отсутствие точек до 2007-03 за нулевой поток.
-const etfCatalogWorldSince = "Ряд начинается с 2007-03 — первого месяца, когда в выгрузке есть значения у всех четырёх регионов (Азия — с 2007-03): более ранние месяцы у world отсутствуют, а не нулевые."
+// etfCatalogFlowsSince — оговорка мировых рядов потоков: API отдаёт поток с 2003-02
+// (нули явные), но до 2007-03 мировая сумма не содержит Азии — азиатских фондов ещё
+// не было, их запасы в данных отсутствуют (null), а поток приходит нулём. Без неё
+// агент прочитал бы начало ряда с 2003-02 как полный мировой ряд.
+const etfCatalogFlowsSince = "Ряд начинается с 2003-02-28 — первого месяца, за который API отдаёт поток (в потоках нули явные, поэтому точка есть и у месяца без потока). До 2007-03 мировая сумма не содержит Азии: азиатских фондов ещё не было, их запасы в данных отсутствуют (null), а поток приходит нулём — месяцы до 2007-03 у world это NA + EU + Other, а не полный мир."
+
+// etfCatalogHoldingsSince — оговорка мировых рядов запасов и AUM: world пишется
+// только за месяцы, где есть значения всех четырёх регионов, а Азия появляется с
+// 2007-03, поэтому ряд на четыре года короче потоков. Без неё агент принял бы
+// отсутствие точек до 2007-03 за нулевые запасы.
+const etfCatalogHoldingsSince = "Ряд начинается с 2007-03 — первого месяца, когда в источнике есть значения у всех четырёх регионов (Азия — с 2007-03): более ранние месяцы у world отсутствуют, а не нулевые. Потоки того же региона начинаются с 2003-02, так что расхождение глубины потоков и запасов — свойство источника, а не дефект импорта."
+
+// etfCatalogHoldingsRounding — оговорка рядов запасов: тоннажные стоки API отдаёт
+// округлёнными до 0,01 т (потоки и AUM — полной точности), а ручная выгрузка в
+// фолбэке — полной точности. Без неё агент прочитал бы колебание ≤ 0,01 т при смене
+// транспорта за дефект импорта.
+const etfCatalogHoldingsRounding = "Источник отдаёт тоннажные стоки округлёнными до 0,01 т (потоки и AUM — полной точности), а ручная выгрузка ETF_Flows_*.xlsx в фолбэке даёт полную точность: расхождение одного и того же месяца между источниками ≤ 0,01 т — округление WGC, а не дефект импорта."
 
 // etfCatalogImportNote — общий хвост описания: кто наполняет ряд и как витрина
 // выбирает источник. Повторяется в каждой записи намеренно — агент читает
 // description по одному ряду и соседние записи не видит.
-const etfCatalogImportNote = "Импортёр wgc_etf_flows (расписание dagu/wgc.yaml, пн 20:17) читает свежайший по mtime файл ETF_Flows*.xlsx из wgc/data (скачивается с gold.org/goldhub вручную) и пишет ряд с source='wgc'; приоритет источников в v_gold_etf_flows — wgc > webbridge > manual (webbridge — сессионный сбор, manual — ручной фолбэк)."
+const etfCatalogImportNote = "Импортёр wgc_etf_flows (расписание dagu/wgc.yaml, ежедневно 20:17 МСК) берёт ряд с source='wgc' из JSON API fscdn.gold.org; ручная выгрузка ETF_Flows*.xlsx в wgc/data (скачивается с gold.org/goldhub) — фолбэк на случай недоступности API. Приоритет источников в v_gold_etf_flows — wgc > webbridge > manual (webbridge — сессионный сбор, manual — ручной фолбэк)."
 
 // etfDescription склеивает части описания ряда в один абзац.
 func etfDescription(parts ...string) string {
@@ -48,8 +67,9 @@ func etfDescription(parts ...string) string {
 // series_catalog с source='wgc'. Смыслы — как в сиде webbridge-фолбэка
 // sql/wgc_etf_flows_catalog.sql (знак потока, сток vs поток, «не путать с
 // etf_flows_month»), но происхождение и обновление другие: ряд пишет импортёр
-// из выгрузки WGC, а не сессия через POST /v1/manual_series. Порядок — по
-// регионам, как в сиде: строки каталога читаются блоками «мир, затем регионы».
+// из API WGC (ручная выгрузка — фолбэк), а не сессия через POST
+// /v1/manual_series. Порядок — по регионам, как в сиде: строки каталога читаются
+// блоками «мир, затем регионы».
 func wgcEtfCatalog() []util.SeriesMeta {
 	return []util.SeriesMeta{
 		{
@@ -61,7 +81,7 @@ func wgcEtfCatalog() []util.SeriesMeta {
 			Origin:    etfOriginFlowUsdMln,
 			Description: etfDescription(
 				"Чистый месячный поток физически обеспеченных золотых ETF, млн USD, мир: знак — направление (плюс приток, минус отток). Дата — последний день отчётного месяца. Мировой итог — сумма четырёх регионов (north_america + europe + asia + other).",
-				etfCatalogWorldSince,
+				etfCatalogFlowsSince,
 				"Не путать с etf_flows_month (source='manual', млрд USD — индикатор v_gold_dashboard): это тот же мировой поток, но другой ряд и другие единицы — не складывать.",
 				etfCatalogImportNote),
 		},
@@ -74,7 +94,7 @@ func wgcEtfCatalog() []util.SeriesMeta {
 			Origin:    etfOriginFlowTonnes,
 			Description: etfDescription(
 				"Чистый месячный поток физически обеспеченных золотых ETF в тоннах, мир: знак — направление (плюс приток, минус отток). Дата — последний день отчётного месяца. Тот же поток, что etf_flow_usd_mln_world, только в тоннах: знаки мировых рядов обязаны совпадать. Мировой итог — сумма четырёх регионов.",
-				etfCatalogWorldSince,
+				etfCatalogFlowsSince,
 				"Изменение запасов etf_holdings_tonnes_world месяц к месяцу соответствует этому потоку.",
 				etfCatalogImportNote),
 		},
@@ -87,7 +107,8 @@ func wgcEtfCatalog() []util.SeriesMeta {
 			Origin:    etfOriginHoldingsTonnes,
 			Description: etfDescription(
 				"Запасы (holdings) физически обеспеченных золотых ETF на конец месяца, тонны, мир: сток, а не поток — значение неотрицательно и направления не несёт. Дата — последний день отчётного месяца. Мировой итог — сумма запасов четырёх регионов (north_america + europe + asia + other).",
-				etfCatalogWorldSince,
+				etfCatalogHoldingsSince,
+				etfCatalogHoldingsRounding,
 				etfCatalogImportNote),
 		},
 		{
@@ -99,7 +120,7 @@ func wgcEtfCatalog() []util.SeriesMeta {
 			Origin:    etfOriginAum,
 			Description: etfDescription(
 				"Активы под управлением (AUM) физически обеспеченных золотых ETF на конец месяца, млрд USD, мир: сток, а не поток; включает переоценку запасов по рыночной цене золота, поэтому меняется и в месяцы без потока. Дата — последний день отчётного месяца. Мировой итог — сумма четырёх регионов.",
-				etfCatalogWorldSince,
+				etfCatalogHoldingsSince,
 				"Не путать с потоком etf_flow_usd_mln_world (приток/отток за месяц, млн USD) и с etf_flows_month (source='manual', млрд USD — поток, индикатор v_gold_dashboard).",
 				etfCatalogImportNote),
 		},
@@ -134,6 +155,7 @@ func wgcEtfCatalog() []util.SeriesMeta {
 			Origin:    etfOriginHoldingsTonnes,
 			Description: etfDescription(
 				"Запасы (holdings) физически обеспеченных золотых ETF на конец месяца, тонны, регион «Северная Америка»: сток, а не поток — значение неотрицательно и направления не несёт. Дата — последний день отчётного месяца. Изменение запасов месяц к месяцу соответствует потоку etf_flow_tonnes_north_america. Региональная часть мирового etf_holdings_tonnes_world.",
+				etfCatalogHoldingsRounding,
 				etfCatalogImportNote),
 		},
 		{
@@ -178,6 +200,7 @@ func wgcEtfCatalog() []util.SeriesMeta {
 			Origin:    etfOriginHoldingsTonnes,
 			Description: etfDescription(
 				"Запасы (holdings) физически обеспеченных золотых ETF на конец месяца, тонны, регион «Европа»: сток, а не поток — значение неотрицательно и направления не несёт. Дата — последний день отчётного месяца. Изменение запасов месяц к месяцу соответствует потоку etf_flow_tonnes_europe. Региональная часть мирового etf_holdings_tonnes_world.",
+				etfCatalogHoldingsRounding,
 				etfCatalogImportNote),
 		},
 		{
@@ -222,6 +245,7 @@ func wgcEtfCatalog() []util.SeriesMeta {
 			Origin:    etfOriginHoldingsTonnes,
 			Description: etfDescription(
 				"Запасы (holdings) физически обеспеченных золотых ETF на конец месяца, тонны, регион «Азия»: сток, а не поток — значение неотрицательно и направления не несёт. Дата — последний день отчётного месяца. Изменение запасов месяц к месяцу соответствует потоку etf_flow_tonnes_asia. Региональная часть мирового etf_holdings_tonnes_world.",
+				etfCatalogHoldingsRounding,
 				etfCatalogImportNote),
 		},
 		{
@@ -266,6 +290,7 @@ func wgcEtfCatalog() []util.SeriesMeta {
 			Origin:    etfOriginHoldingsTonnes,
 			Description: etfDescription(
 				"Запасы (holdings) физически обеспеченных золотых ETF на конец месяца, тонны, регион «прочие регионы» (other): сток, а не поток — значение неотрицательно и направления не несёт. Дата — последний день отчётного месяца. Изменение запасов месяц к месяцу соответствует потоку etf_flow_tonnes_other. Региональная часть мирового etf_holdings_tonnes_world.",
+				etfCatalogHoldingsRounding,
 				etfCatalogImportNote),
 		},
 		{

@@ -21,6 +21,7 @@ func TestEtfCatalogDescribesEverySeries(t *testing.T) {
 	}
 
 	described := make(map[string]bool, want)
+	bySeries := make(map[string]util.SeriesMeta, want)
 
 	for _, meta := range catalog {
 		if meta.Source != wgcSource {
@@ -45,6 +46,7 @@ func TestEtfCatalogDescribesEverySeries(t *testing.T) {
 			t.Errorf("ряд %s описан дважды", meta.Series)
 		}
 		described[meta.Series] = true
+		bySeries[meta.Series] = meta
 
 		if !strings.Contains(meta.Description, "wgc_etf_flows") {
 			t.Errorf("ряд %s: описание не называет импортёр wgc_etf_flows", meta.Series)
@@ -62,34 +64,55 @@ func TestEtfCatalogDescribesEverySeries(t *testing.T) {
 		}
 	}
 
-	// origin обязан называть лист выгрузки своей метрики: копипаста с чужим листом
-	// отправила бы агента читать не тот блок файла.
-	sheets := map[string]string{
-		etfMetricFlowUsdMln:     etfFlowsSheet,
-		etfMetricFlowTonnes:     etfDemandSheet,
-		etfMetricHoldingsTonnes: etfHoldingsSheet,
-		etfMetricAumUsdBn:       etfChartsSheet,
+	// origin обязан называть эндпоинт API своей метрики: копипаста с чужим
+	// эндпоинтом отправила бы агента читать чужую метрику — flows-chart2 несёт
+	// потоки, holdings-chart2 — запасы и AUM.
+	endpoints := map[string]string{
+		etfMetricFlowUsdMln:     etfAPIFlowsPath,
+		etfMetricFlowTonnes:     etfAPIFlowsPath,
+		etfMetricHoldingsTonnes: etfAPIHoldingsPath,
+		etfMetricAumUsdBn:       etfAPIHoldingsPath,
 	}
-	wantSheet := make(map[string]string, want)
 
-	for metric, sheet := range sheets {
+	wantEndpoint := make(map[string]string, want)
+	for _, metric := range wgcEtfMetrics {
+		endpoint, ok := endpoints[metric]
+		if !ok {
+			t.Errorf("метрика %s: тест не знает эндпоинта источника — дополни endpoints", metric)
+			continue
+		}
 		for _, region := range wgcEtfRegions {
-			wantSheet[wgcEtfSeriesName(metric, region)] = sheet
+			wantEndpoint[wgcEtfSeriesName(metric, region)] = endpoint
 		}
 	}
 
 	for _, meta := range catalog {
-		if sheet, ok := wantSheet[meta.Series]; !ok || !strings.Contains(meta.Origin, sheet) {
-			t.Errorf("ряд %s: origin %q не называет лист %q", meta.Series, meta.Origin, sheet)
+		if endpoint := wantEndpoint[meta.Series]; !strings.Contains(meta.Origin, endpoint) {
+			t.Errorf("ряд %s: origin %q не называет эндпоинт %q", meta.Series, meta.Origin, endpoint)
 		}
 	}
 
-	// До 2007-03 у world нет значений всех четырёх регионов (Азия появляется
-	// только в 2007-03), поэтому мировой ряд начинается с 2007-03; агент обязан
-	// узнать это из каталога, а не из пропусков в данных.
-	for _, meta := range catalog {
-		if strings.HasSuffix(meta.Series, "_"+etfWorldRegion) && !strings.Contains(meta.Description, "2007-03") {
-			t.Errorf("ряд %s: описание world не фиксирует начало ряда с 2007-03", meta.Series)
+	// Начало мировых рядов разное по метрикам: потоки API отдаёт с 2003-02 (там
+	// нули явные, и до 2007-03 world = NA + EU + Other — азиатских фондов ещё
+	// нет), а запасы и AUM — с 2007-03, первого месяца со всеми четырьмя
+	// регионами. Агент обязан узнать это из каталога, а не из пропусков в данных.
+	worldSince := map[string]string{
+		etfMetricFlowUsdMln:     "2003-02",
+		etfMetricFlowTonnes:     "2003-02",
+		etfMetricHoldingsTonnes: "2007-03",
+		etfMetricAumUsdBn:       "2007-03",
+	}
+
+	for _, metric := range wgcEtfMetrics {
+		since, ok := worldSince[metric]
+		if !ok {
+			t.Errorf("метрика %s: тест не знает начала мирового ряда — дополни worldSince", metric)
+			continue
+		}
+
+		series := wgcEtfSeriesName(metric, etfWorldRegion)
+		if !strings.Contains(bySeries[series].Description, since) {
+			t.Errorf("ряд %s: описание world не фиксирует начало ряда с %s", series, since)
 		}
 	}
 }
