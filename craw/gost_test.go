@@ -1,0 +1,1040 @@
+package craw
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"regexp"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	log "github.com/sirupsen/logrus"
+)
+
+// Тесты импортёра СБКТС офлайн: соединение — фейковое (gostFakeConn), источник — httptest
+// (общая обвязка gostNewTestAPI из gost_api_test.go). Ни сети, ни ClickHouse, ни токена:
+// appid подставной. Пинятся контракты обвязки: разбор окружения (до сети), форма схемы,
+// включительность дневного окна, якорь since (включая пустую таблицу), дневной батч,
+// агрегация ошибок дней и различие «дыра» / «текстовый шум» в check.
+
+// gostIssueMS — миллисекунды даты выдачи документов тестов: 2026-10-08 21:00 UTC = 09.10.2026 МСК.
+// Дата выдачи в срез дня не входит (день среза даёт дата публикации), важен только непустой
+// указатель: у документа без даты выдачи строки нет вовсе.
+const gostIssueMS int64 = 1791493200000
+
+// gostForeignPublication — дата публикации «чужого» документа: ручка ищет текстом и отдаёт
+// документы соседних окон, а клиентский фильтр дня их отбрасывает.
+const gostForeignPublication = "01.01.2020 00:00:00 ZE3"
+
+// gostTestNow — подменённые часы прогона: 12.10.2026 12:00 UTC, то есть «вчера МСК» = 11.10.2026
+// (МСК = UTC+3, дата прогона 12.10.2026).
+var gostTestNow = time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
+
+// gostEnv выставляет окружение конфига: сначала все переменные прогона пустые (тест не должен
+// зависеть от окружения машины), затем — переданные значения.
+func gostEnv(t *testing.T, values map[string]string) {
+	t.Helper()
+	for _, name := range []string{gostModeEnv, gostFromEnv, gostToEnv, gostSettleEnv, gostAppIDEnv} {
+		t.Setenv(name, "")
+	}
+	for name, value := range values {
+		t.Setenv(name, value)
+	}
+}
+
+// gostPinClock фиксирует «сейчас» прогона: от него зависят окно since и дефолт GOST_TO
+// (вчера МСК), а с реальными часами тест зависел бы от дня запуска.
+func gostPinClock(t *testing.T, now time.Time) {
+	t.Helper()
+	prev := gostClock
+	gostClock = func() time.Time { return now }
+	t.Cleanup(func() { gostClock = prev })
+}
+
+// gostCaptureLog подменяет вывод logrus буфером: строки отчёта check и предупреждения
+// (в том числе «шум: N → M» и «история не загружена») — часть контракта режимов, и проверяются
+// они по тексту.
+func gostCaptureLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	logger := log.StandardLogger()
+	prevOut, prevFormatter := logger.Out, logger.Formatter
+	log.SetOutput(&buf)
+	log.SetFormatter(&log.TextFormatter{DisableColors: true, DisableTimestamp: true})
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFormatter(prevFormatter)
+	})
+	return &buf
+}
+
+// gostTime разбирает день теста в той же шкале, что и прогон: UTC-полночь.
+func gostTime(t *testing.T, day string) time.Time {
+	t.Helper()
+	parsed, err := time.Parse(gostDateLayout, day)
+	if err != nil {
+		t.Fatalf("разбор дня %q: %v", day, err)
+	}
+	return parsed
+}
+
+func TestGostConfigDefaults(t *testing.T) {
+	gostPinClock(t, gostTestNow)
+
+	t.Run("since: режим и хвост по умолчанию", func(t *testing.T) {
+		gostEnv(t, map[string]string{gostAppIDEnv: gostTestAppID})
+		cfg, err := gostConfigFromEnv()
+		if err != nil {
+			t.Fatalf("конфиг пустого окружения: %v", err)
+		}
+		if cfg.Mode != gostModeSince {
+			t.Errorf("Mode = %q, ожидался %q", cfg.Mode, gostModeSince)
+		}
+		if cfg.SettleDays != gostDefaultSettleDays {
+			t.Errorf("SettleDays = %d, ожидалось %d", cfg.SettleDays, gostDefaultSettleDays)
+		}
+		if cfg.AppID != gostTestAppID {
+			t.Errorf("AppID = %q, ожидался %q", cfg.AppID, gostTestAppID)
+		}
+		// В since границы не задаются: окно считает якорь таблицы. Дефолт диапазона здесь
+		// выглядел бы настройкой, которая ничего не делает.
+		if !cfg.From.IsZero() || !cfg.To.IsZero() {
+			t.Errorf("в since границы не нужны: From=%s To=%s", cfg.From, cfg.To)
+		}
+	})
+
+	t.Run("full: вся история по умолчанию", func(t *testing.T) {
+		gostEnv(t, map[string]string{gostModeEnv: gostModeFull, gostAppIDEnv: gostTestAppID})
+		cfg, err := gostConfigFromEnv()
+		if err != nil {
+			t.Fatalf("конфиг full: %v", err)
+		}
+		wantFrom, wantTo := gostTime(t, "2016-01-01"), gostTime(t, "2026-10-11")
+		if !cfg.From.Equal(wantFrom) {
+			t.Errorf("From = %s, ожидалось %s", cfg.From.Format(gostDateLayout), wantFrom.Format(gostDateLayout))
+		}
+		if !cfg.To.Equal(wantTo) {
+			t.Errorf("To = %s, ожидалось %s (вчера МСК при часах %s)",
+				cfg.To.Format(gostDateLayout), wantTo.Format(gostDateLayout), gostTestNow.Format(time.RFC3339))
+		}
+	})
+}
+
+func TestGostConfigRejectsUnknownMode(t *testing.T) {
+	gostEnv(t, map[string]string{gostModeEnv: "fullscan", gostAppIDEnv: gostTestAppID})
+	_, err := gostConfigFromEnv()
+	if err == nil {
+		t.Fatal("неизвестный режим принят без ошибки")
+	}
+	if !strings.Contains(err.Error(), "неизвестный режим (since|full|check)") {
+		t.Errorf("ошибка %q не перечисляет режимы", err)
+	}
+}
+
+func TestGostConfigRejectsBadDate(t *testing.T) {
+	cases := []struct {
+		name  string
+		env   string
+		value string
+	}{
+		{"FROM", gostFromEnv, "01.01.2016"},
+		{"TO", gostToEnv, "2026/10/09"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			gostEnv(t, map[string]string{
+				gostModeEnv:  gostModeFull,
+				gostAppIDEnv: gostTestAppID,
+				c.env:        c.value,
+			})
+			_, err := gostConfigFromEnv()
+			if err == nil {
+				t.Fatalf("битая дата %s=%q принята", c.env, c.value)
+			}
+			if !strings.Contains(err.Error(), c.env) || !strings.Contains(err.Error(), gostDateLayout) {
+				t.Errorf("ошибка %q не называет переменную %s и формат %s", err, c.env, gostDateLayout)
+			}
+		})
+	}
+}
+
+func TestGostConfigRejectsBadSettle(t *testing.T) {
+	for _, value := range []string{"-1", "три"} {
+		t.Run(value, func(t *testing.T) {
+			gostEnv(t, map[string]string{gostSettleEnv: value, gostAppIDEnv: gostTestAppID})
+			_, err := gostConfigFromEnv()
+			if err == nil {
+				t.Fatalf("хвост %q принят", value)
+			}
+			if !strings.Contains(err.Error(), gostSettleEnv) {
+				t.Errorf("ошибка %q не называет переменную %s", err, gostSettleEnv)
+			}
+		})
+	}
+}
+
+func TestGostConfigRequiresAppID(t *testing.T) {
+	// Пробелы — то же «пусто»: значение из env приходит с хвостом перевода строки.
+	gostEnv(t, map[string]string{gostAppIDEnv: "   "})
+	_, err := gostConfigFromEnv()
+	if err == nil {
+		t.Fatal("пустой GOST_APP_ID принят")
+	}
+	if !strings.Contains(err.Error(), gostAppIDEnv) {
+		t.Errorf("ошибка %q не называет переменную %s", err, gostAppIDEnv)
+	}
+	if !strings.Contains(err.Error(), "standarts.adminsHeaders") {
+		t.Errorf("ошибка %q не подсказывает, где взять токен", err)
+	}
+}
+
+func TestGostConfigRejectsEmptyRange(t *testing.T) {
+	gostEnv(t, map[string]string{
+		gostModeEnv:  gostModeFull,
+		gostFromEnv:  "2026-06-03",
+		gostToEnv:    "2026-06-01",
+		gostAppIDEnv: gostTestAppID,
+	})
+	_, err := gostConfigFromEnv()
+	if err == nil {
+		t.Fatal("перевёрнутый диапазон принят")
+	}
+	if !strings.Contains(err.Error(), "пустой диапазон") {
+		t.Errorf("ошибка %q не сообщает о пустом диапазоне", err)
+	}
+}
+
+func TestGostSchemaStatementsShape(t *testing.T) {
+	columns := []string{
+		"mark", "type", "date", "certificate_number", "ecoclass", "enginetrademark",
+		"yearofmanufacturing", "nameofmanufacturer", "uid", "publication_date",
+	}
+	stmts := gostSchemaStatements()
+	if len(stmts) != 1+len(columns)-4 {
+		t.Fatalf("стейтментов %d, ожидалось %d (CREATE + ALTER на шесть новых колонок)", len(stmts), 1+len(columns)-4)
+	}
+
+	create := stmts[0]
+	if !strings.Contains(create, "CREATE TABLE IF NOT EXISTS "+gostTable) {
+		t.Errorf("стейтмент 0 не создаёт таблицу %s: %q", gostTable, create)
+	}
+	if !strings.Contains(create, "ENGINE = ReplacingMergeTree") {
+		t.Errorf("стейтмент 0 без движка ReplacingMergeTree: %q", create)
+	}
+	if !strings.Contains(create, "ORDER BY (mark, type, date, certificate_number)") {
+		t.Errorf("стейтмент 0 с другим ключом: %q", create)
+	}
+	for _, column := range columns {
+		// Колонка встречается ровно один раз: определение без суффикса (вроде publication_date
+		// вместо date) обязано валить тест, а не создавать таблицу с чужим ключом.
+		def := regexp.MustCompile(`(?m)^\s*,?\s*` + column + `\s+[A-Za-z]`)
+		if n := len(def.FindAllString(create, -1)); n != 1 {
+			t.Errorf("колонка %s: определений %d, ожидалось 1 (CREATE: %q)", column, n, create)
+		}
+	}
+
+	for i, column := range columns[4:] {
+		stmt := stmts[i+1]
+		prefix := "ALTER TABLE " + gostTable + " ADD COLUMN IF NOT EXISTS " + column + " "
+		if !strings.HasPrefix(stmt, prefix) {
+			t.Errorf("стейтмент %d = %q, ожидался префикс %q", i+1, stmt, prefix)
+		}
+		if !strings.HasSuffix(stmt, " AFTER "+columns[i+3]) {
+			t.Errorf("стейтмент %d = %q: ожидалась позиция AFTER %s", i+1, stmt, columns[i+3])
+		}
+	}
+}
+
+func TestGostDaysBetween(t *testing.T) {
+	assertDays := func(t *testing.T, days []time.Time, want ...string) {
+		t.Helper()
+		if len(days) != len(want) {
+			t.Fatalf("дней %d, ожидалось %d (%v)", len(days), len(want), want)
+		}
+		for i, day := range want {
+			if got := days[i].Format(gostDateLayout); got != day {
+				t.Errorf("день %d = %s, ожидался %s", i, got, day)
+			}
+			if days[i].Location() != time.UTC || days[i].Hour() != 0 {
+				t.Errorf("день %d = %s: ожидалась UTC-полночь", i, days[i])
+			}
+		}
+	}
+
+	t.Run("включительно", func(t *testing.T) {
+		days, err := gostDaysBetween(gostTime(t, "2026-06-01"), gostTime(t, "2026-06-03"))
+		if err != nil {
+			t.Fatalf("диапазон трёх дней: %v", err)
+		}
+		assertDays(t, days, "2026-06-01", "2026-06-02", "2026-06-03")
+	})
+
+	t.Run("один день", func(t *testing.T) {
+		days, err := gostDaysBetween(gostTime(t, "2026-06-01"), gostTime(t, "2026-06-01"))
+		if err != nil {
+			t.Fatalf("диапазон одного дня: %v", err)
+		}
+		assertDays(t, days, "2026-06-01")
+	})
+
+	t.Run("пустой диапазон", func(t *testing.T) {
+		if _, err := gostDaysBetween(gostTime(t, "2026-06-03"), gostTime(t, "2026-06-01")); err == nil {
+			t.Error("начало позже конца принято без ошибки")
+		}
+	})
+
+	t.Run("предел длины", func(t *testing.T) {
+		from := gostTime(t, "2016-01-01")
+		days, err := gostDaysBetween(from, from.AddDate(0, 0, gostMaxRangeDays-1))
+		if err != nil {
+			t.Fatalf("ровно %d дней: %v", gostMaxRangeDays, err)
+		}
+		if len(days) != gostMaxRangeDays {
+			t.Errorf("дней %d, ожидалось %d", len(days), gostMaxRangeDays)
+		}
+		if _, err = gostDaysBetween(from, from.AddDate(0, 0, gostMaxRangeDays)); err == nil {
+			t.Errorf("диапазон из %d дней принят без ошибки", gostMaxRangeDays+1)
+		}
+	})
+}
+
+func TestGostSinceDaysAnchors(t *testing.T) {
+	ctx := context.Background()
+
+	cases := []struct {
+		name       string
+		maxDate    string // пусто — NULL
+		maxPub     string // пусто — NULL
+		settle     int
+		wantEmpty  bool
+		wantDays   []string
+		wantAnchor string // ожидаемая подстрока записанного вызова якоря
+	}{
+		{
+			// Якорь — дата выдачи: хвост перекрывает лаг публикации, а сама выдача новее дня среза.
+			name: "якорь по дате выдачи", maxDate: "2026-10-09", maxPub: "2026-10-05",
+			settle: 3, wantDays: []string{"2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10", "2026-10-11"},
+			wantAnchor: "maxOrNull(date)",
+		},
+		{
+			// Даты выдачи нет (все строки пришли без неё) — якорем становится дата публикации.
+			name: "якорь по дате публикации", maxPub: "2026-10-08",
+			settle: 1, wantDays: []string{"2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10", "2026-10-11"},
+			wantAnchor: "maxOrNull(date)",
+		},
+		{
+			// Пустая таблица: не обход всей истории, а окно последних семи дней и флаг для warn.
+			name: "пустая таблица — последняя неделя", settle: 3, wantEmpty: true,
+			wantDays:   []string{"2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10", "2026-10-11"},
+			wantAnchor: "maxOrNull(date)",
+		},
+		{
+			// Якорь из будущего (часы источника вперёд) прижимается к вчера: «завтра» читать нечего.
+			name: "якорь из будущего", maxPub: "2026-12-01",
+			settle: 3, wantDays: []string{"2026-10-08", "2026-10-09", "2026-10-10", "2026-10-11"},
+			wantAnchor: "maxOrNull(date)",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			conn := &gostFakeConn{}
+			if c.maxDate != "" {
+				day := gostTime(t, c.maxDate)
+				conn.maxDate = &day
+			}
+			if c.maxPub != "" {
+				day := gostTime(t, c.maxPub)
+				conn.maxPub = &day
+			}
+
+			days, empty, err := gostSinceDays(ctx, conn, c.settle, gostTestNow)
+			if err != nil {
+				t.Fatalf("окно since: %v", err)
+			}
+			if empty != c.wantEmpty {
+				t.Errorf("tableEmpty = %v, ожидалось %v", empty, c.wantEmpty)
+			}
+			if len(days) != len(c.wantDays) {
+				t.Fatalf("дней %d (%v), ожидалось %d", len(days), gostDayStrings(days), len(c.wantDays))
+			}
+			for i, want := range c.wantDays {
+				if got := days[i].Format(gostDateLayout); got != want {
+					t.Errorf("день %d = %s, ожидался %s", i, got, want)
+				}
+			}
+			calls := conn.callList()
+			if len(calls) != 1 || !strings.Contains(calls[0], c.wantAnchor) {
+				t.Errorf("якорь читается одним запросом maxOrNull(date): вызовы %v", calls)
+			}
+		})
+	}
+}
+
+func TestGostWriteDayOneBatch(t *testing.T) {
+	rows := []gostRow{
+		{
+			Mark: "Toyota", Type: "ZGE25", Date: gostTime(t, "2026-10-09"),
+			CertificateNumber: "ТС RU А-JP.ОМ80.00001", EcoClass: "4", EngineTrademark: "2ZR-FE",
+			YearOfManufacturing: 2016, NameOfManufacturer: "TOYOTA", UID: "uid-1",
+			PublicationDate: gostTime(t, "2026-10-11"),
+		},
+		{
+			Mark: "Haval", Type: "Jolion", Date: gostTime(t, "2026-10-09"),
+			CertificateNumber: "ТС RU А-CN.ОМ80.00002", EcoClass: "-", EngineTrademark: "",
+			YearOfManufacturing: 0, NameOfManufacturer: "GREAT WALL MOTOR", UID: "uid-2",
+			PublicationDate: gostTime(t, "2026-10-11"),
+		},
+	}
+
+	conn := &gostFakeConn{}
+	count, err := gostWriteDay(context.Background(), conn, rows)
+	if err != nil {
+		t.Fatalf("запись дня: %v", err)
+	}
+	if count != int64(len(rows)) {
+		t.Errorf("count = %d, ожидалось %d", count, len(rows))
+	}
+
+	batches := conn.batchList()
+	if len(batches) != 1 {
+		t.Fatalf("батчей %d, ожидался один на день: %v", len(batches), conn.callList())
+	}
+	batch := batches[0]
+	if batch.query != gostInsert {
+		t.Errorf("батч открыт запросом %q, ожидался %q", batch.query, gostInsert)
+	}
+	if !batch.sent {
+		t.Error("батч не отправлен: Send не вызван")
+	}
+	inserted := batch.inserted(t)
+	if len(inserted) != len(rows) {
+		t.Fatalf("строк в батче %d, ожидалось %d", len(inserted), len(rows))
+	}
+	for i := range rows {
+		if inserted[i] != rows[i] {
+			t.Errorf("строка %d = %+v, ожидалась %+v", i, inserted[i], rows[i])
+		}
+	}
+}
+
+func TestGostRunDaysSkipsEmptyAndAggregatesErrors(t *testing.T) {
+	days := []time.Time{
+		gostTime(t, "2026-10-05"),
+		gostTime(t, "2026-10-06"),
+		gostTime(t, "2026-10-07"),
+	}
+	ta := gostNewTestAPI(t, gostDayServer(t, map[string]gostDaySpec{
+		"05.10.2026": {Count: 0},
+		"06.10.2026": {Status: http.StatusInternalServerError},
+		"07.10.2026": {Count: 1},
+	}))
+	conn := &gostFakeConn{}
+	logs := gostCaptureLog(t)
+
+	count, err := gostRunDays(context.Background(), conn, ta.api, days)
+	if err == nil {
+		t.Fatal("сбойный день не попал в ошибку прогона")
+	}
+	if !strings.Contains(err.Error(), "2026-10-06") || !strings.Contains(err.Error(), "не прочитаны дни (1)") {
+		t.Errorf("ошибка %q не перечисляет упавший день", err)
+	}
+	if count != 1 {
+		t.Errorf("записано строк %d, ожидалась 1 (день с данными)", count)
+	}
+	batches := conn.batchList()
+	if len(batches) != 1 {
+		t.Fatalf("батчей %d, ожидался один (пустой день и сбойный день без записи): %v", len(batches), conn.callList())
+	}
+	inserted := batches[0].inserted(t)
+	if len(inserted) != 1 || !inserted[0].PublicationDate.Equal(gostTime(t, "2026-10-07")) {
+		t.Errorf("в батче %+v, ожидалась одна строка дня 2026-10-07", inserted)
+	}
+	if !strings.Contains(logs.String(), "публикаций нет") {
+		t.Errorf("пустой день не отмечен в логе: %s", logs.String())
+	}
+}
+
+func TestGostCheckDaysMatchNoError(t *testing.T) {
+	days := []time.Time{gostTime(t, "2026-10-09")}
+	ta := gostNewTestAPI(t, gostDayServer(t, map[string]gostDaySpec{"09.10.2026": {Count: 5}}))
+	conn := &gostFakeConn{counters: map[string]uint64{"2026-10-09": 5}}
+
+	checked, err := gostCheckDays(context.Background(), conn, ta.api, days)
+	if err != nil {
+		t.Fatalf("совпавший день дал ошибку: %v", err)
+	}
+	if checked != 1 {
+		t.Errorf("проверено дней %d, ожидался 1", checked)
+	}
+	// Сверка совпавших дней — только count: полный день не выкачивается, иначе check по
+	// диапазону тянул бы гигабайты вместо одного запроса на день.
+	requests := ta.requests()
+	if len(requests) != 1 || requests[0].Query.Get("size") != "1" {
+		t.Errorf("запросы дня %d (%v), ожидался один с size=1", len(requests), requests)
+	}
+	if calls := conn.callList(); len(calls) != 1 || !strings.Contains(calls[0], "uniqExact(certificate_number)") {
+		t.Errorf("счётчики таблицы читаются одним запросом: вызовы %v", calls)
+	}
+}
+
+func TestGostCheckDaysReportsGap(t *testing.T) {
+	days := []time.Time{gostTime(t, "2026-10-09")}
+	ta := gostNewTestAPI(t, gostDayServer(t, map[string]gostDaySpec{"09.10.2026": {Count: 5}}))
+	conn := &gostFakeConn{counters: map[string]uint64{"2026-10-09": 3}}
+	logs := gostCaptureLog(t)
+
+	checked, err := gostCheckDays(context.Background(), conn, ta.api, days)
+	if err == nil {
+		t.Fatal("расхождение счётчиков не стало ошибкой check")
+	}
+	if !strings.Contains(err.Error(), "2026-10-09") || !strings.Contains(err.Error(), "3 против 5") {
+		t.Errorf("ошибка %q не называет день и расхождение «3 против 5»", err)
+	}
+	if checked != 1 {
+		t.Errorf("проверено дней %d, ожидался 1", checked)
+	}
+	if !strings.Contains(logs.String(), "дыр 1") {
+		t.Errorf("сводка не сообщает о дыре: %s", logs.String())
+	}
+}
+
+func TestGostCheckDaysTextNoiseNotGap(t *testing.T) {
+	days := []time.Time{gostTime(t, "2026-10-09")}
+	// count=7: два документа — текстовые совпадения чужой даты публикации, и клиентский
+	// фильтр дня оставляет ровно те же пять строк, что в таблице.
+	ta := gostNewTestAPI(t, gostDayServer(t, map[string]gostDaySpec{"09.10.2026": {Count: 7, Noise: 2}}))
+	conn := &gostFakeConn{counters: map[string]uint64{"2026-10-09": 5}}
+	logs := gostCaptureLog(t)
+
+	checked, err := gostCheckDays(context.Background(), conn, ta.api, days)
+	if err != nil {
+		t.Fatalf("текстовый шум объявлен дырой: %v", err)
+	}
+	if checked != 1 {
+		t.Errorf("проверено дней %d, ожидался 1", checked)
+	}
+	if !strings.Contains(logs.String(), "шум: 7 → 5") {
+		t.Errorf("отчёт не различает текстовый шум: %s", logs.String())
+	}
+	if !strings.Contains(logs.String(), "дыр 0") {
+		t.Errorf("сводка не сообщает об отсутствии дыр: %s", logs.String())
+	}
+}
+
+func TestGostCheckDaysSkippedDayFails(t *testing.T) {
+	days := []time.Time{gostTime(t, "2026-10-08"), gostTime(t, "2026-10-09")}
+	ta := gostNewTestAPI(t, gostDayServer(t, map[string]gostDaySpec{
+		"08.10.2026": {Count: 5},
+		"09.10.2026": {Status: http.StatusInternalServerError},
+	}))
+	conn := &gostFakeConn{counters: map[string]uint64{"2026-10-08": 5}}
+	logs := gostCaptureLog(t)
+
+	checked, err := gostCheckDays(context.Background(), conn, ta.api, days)
+	if err == nil {
+		t.Fatal("недоступный день не попал в ошибку check")
+	}
+	if !strings.Contains(err.Error(), "2026-10-09") {
+		t.Errorf("ошибка %q не называет недоступный день", err)
+	}
+	// Остальные дни сверены: отказ ручки на одном дне не отменяет отчёт по другим.
+	if checked != 1 {
+		t.Errorf("проверено дней %d, ожидался 1", checked)
+	}
+	if !strings.Contains(logs.String(), "проверено 1 дней, дыр 0") {
+		t.Errorf("сводка не названа: %s", logs.String())
+	}
+}
+
+func TestGostCheckDaysLegacyWarnOnly(t *testing.T) {
+	gostPinClock(t, gostTestNow)
+	gostEnv(t, map[string]string{
+		gostModeEnv:  gostModeCheck,
+		gostFromEnv:  "2026-10-09",
+		gostToEnv:    "2026-10-09",
+		gostAppIDEnv: gostTestAppID,
+	})
+	// Легаси-строки в таблице есть (42), но в окно сверки они не попадают: у них
+	// publication_date = 1970-01-01. Предупреждение — единственный их след в прогоне.
+	gostNewTestAPI(t, gostDayServer(t, map[string]gostDaySpec{"09.10.2026": {Count: 5}}))
+	conn := &gostFakeConn{legacy: 42, counters: map[string]uint64{"2026-10-09": 5}}
+	logs := gostCaptureLog(t)
+
+	count, err := (&gostImporter{}).Import(context.Background(), conn)
+	if err != nil {
+		t.Fatalf("легаси-строки стали ошибкой прогона: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("проверено дней %d, ожидался 1", count)
+	}
+	for _, want := range []string{"1970-01-01", "GOST_MODE=full"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("предупреждение о строках до бэкфилла без %q: %s", want, logs.String())
+		}
+	}
+}
+
+func TestGostImportCheckDoesNotWrite(t *testing.T) {
+	gostEnv(t, map[string]string{
+		gostModeEnv:  gostModeCheck,
+		gostFromEnv:  "2026-10-09",
+		gostToEnv:    "2026-10-09",
+		gostAppIDEnv: gostTestAppID,
+	})
+	gostNewTestAPI(t, gostDayServer(t, map[string]gostDaySpec{"09.10.2026": {Count: 0}}))
+	conn := &gostFakeConn{counters: map[string]uint64{}}
+
+	count, err := (&gostImporter{}).Import(context.Background(), conn)
+	if err != nil {
+		t.Fatalf("check по пустому дню: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("проверено дней %d, ожидался 1", count)
+	}
+
+	calls := conn.callList()
+	var execs []string
+	for _, call := range calls {
+		switch {
+		case strings.HasPrefix(call, "preparebatch:"):
+			t.Errorf("check открыл батч: %s", call)
+		case strings.Contains(call, "VIEW"):
+			t.Errorf("check публикует витрину: %s", call)
+		case strings.HasPrefix(call, "exec: "):
+			execs = append(execs, strings.TrimPrefix(call, "exec: "))
+		}
+	}
+	// Exec в check — только DDL таблицы: схема обязана существовать до сверки (на чистой базе
+	// прогон check иначе упал бы на неизвестной таблице).
+	want := gostSchemaStatements()
+	if len(execs) != len(want) {
+		t.Fatalf("Exec-вызовов %d, ожидалось %d (DDL таблицы)", len(execs), len(want))
+	}
+	for i := range want {
+		if execs[i] != want[i] {
+			t.Errorf("Exec %d = %q, ожидался %q", i, execs[i], want[i])
+		}
+	}
+}
+
+func TestGostImportSinceEmptyTableWarns(t *testing.T) {
+	gostPinClock(t, gostTestNow)
+	gostEnv(t, map[string]string{gostModeEnv: gostModeSince, gostAppIDEnv: gostTestAppID})
+	gostNewTestAPI(t, gostEveryDayServer(t, gostDaySpec{Count: 1}))
+	conn := &gostFakeConn{} // пустая таблица: якорь NULL, якорь публикаций NULL
+	logs := gostCaptureLog(t)
+
+	count, err := (&gostImporter{}).Import(context.Background(), conn)
+	if err != nil {
+		t.Fatalf("since по пустой таблице: %v", err)
+	}
+	if count != gostEmptyTableDays {
+		t.Errorf("записано строк %d, ожидалось %d (окно последней недели)", count, gostEmptyTableDays)
+	}
+	batches := conn.batchList()
+	if len(batches) != gostEmptyTableDays {
+		t.Fatalf("батчей %d, ожидалось %d (день — батч)", len(batches), gostEmptyTableDays)
+	}
+	for _, want := range []string{"история не загружена", "GOST_MODE=full"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("предупреждение пустой таблицы без %q: %s", want, logs.String())
+		}
+	}
+}
+
+func TestGostImportUnknownModeFailsBeforeDB(t *testing.T) {
+	gostEnv(t, map[string]string{gostModeEnv: "bogus", gostAppIDEnv: gostTestAppID})
+	conn := &gostFakeConn{}
+
+	count, err := (&gostImporter{}).Import(context.Background(), conn)
+	if err == nil {
+		t.Fatal("неизвестный режим принят")
+	}
+	if count != 0 {
+		t.Errorf("count = %d, ожидался 0", count)
+	}
+	// Опечатка в режиме обязана стоить нуля обращений к БД: ни DDL, ни запросов.
+	if calls := conn.callList(); len(calls) != 0 {
+		t.Errorf("до ошибки конфига соединение уже использовано: %v", calls)
+	}
+}
+
+func TestGostImportLegacyQueryFails(t *testing.T) {
+	gostEnv(t, map[string]string{gostModeEnv: gostModeSince, gostAppIDEnv: gostTestAppID})
+	conn := &gostFakeConn{queryErr: errors.New("соединение потеряно")}
+
+	_, err := (&gostImporter{}).Import(context.Background(), conn)
+	if err == nil {
+		t.Fatal("ошибка чтения легаси-строк проглочена")
+	}
+	if !strings.Contains(err.Error(), "легаси-строки не посчитаны") || !strings.Contains(err.Error(), "соединение потеряно") {
+		t.Errorf("ошибка %q не описывает сбой счёта легаси-строк", err)
+	}
+	if batches := conn.batchList(); len(batches) != 0 {
+		t.Errorf("до счёта легаси-строк открыт батч: %d", len(batches))
+	}
+}
+
+// gostDayStrings — дни для сообщений об ошибках: список в формате прогона.
+func gostDayStrings(days []time.Time) []string {
+	out := make([]string, 0, len(days))
+	for _, day := range days {
+		out = append(out, day.Format(gostDateLayout))
+	}
+	return out
+}
+
+// gostFakeBatch — батч в память: тест проверяет число и состав записанных строк.
+type gostFakeBatch struct {
+	driver.Batch
+	query string
+	rows  [][]any
+	sent  bool
+	abort bool
+}
+
+func (b *gostFakeBatch) Append(v ...any) error {
+	b.rows = append(b.rows, append([]any(nil), v...))
+	return nil
+}
+
+func (b *gostFakeBatch) Send() error { b.sent = true; return nil }
+
+func (b *gostFakeBatch) Abort() error { b.abort = true; return nil }
+
+func (b *gostFakeBatch) Rows() int { return len(b.rows) }
+
+// inserted разбирает записанные строки по колонкам DDL: порядок аргументов Append — контракт
+// (он же порядок колонок), и перепутанные поля обязаны валить тест, а не уезжать в базу.
+func (b *gostFakeBatch) inserted(t *testing.T) []gostRow {
+	t.Helper()
+	rows := make([]gostRow, 0, len(b.rows))
+	for i, v := range b.rows {
+		if len(v) != 10 {
+			t.Fatalf("строка батча %d: значений %d, want 10 (mark, type, date, certificate_number, ecoclass, enginetrademark, yearofmanufacturing, nameofmanufacturer, uid, publication_date)", i, len(v))
+		}
+		mark, ok := v[0].(string)
+		if !ok {
+			t.Fatalf("строка батча %d: mark = %T (want string)", i, v[0])
+		}
+		typ, ok := v[1].(string)
+		if !ok {
+			t.Fatalf("строка батча %d: type = %T (want string)", i, v[1])
+		}
+		date, ok := v[2].(time.Time)
+		if !ok {
+			t.Fatalf("строка батча %d: date = %T (want time.Time)", i, v[2])
+		}
+		number, ok := v[3].(string)
+		if !ok {
+			t.Fatalf("строка батча %d: certificate_number = %T (want string)", i, v[3])
+		}
+		ecoclass, ok := v[4].(string)
+		if !ok {
+			t.Fatalf("строка батча %d: ecoclass = %T (want string)", i, v[4])
+		}
+		engine, ok := v[5].(string)
+		if !ok {
+			t.Fatalf("строка батча %d: enginetrademark = %T (want string)", i, v[5])
+		}
+		year, ok := v[6].(uint16)
+		if !ok {
+			t.Fatalf("строка батча %d: yearofmanufacturing = %T (want uint16)", i, v[6])
+		}
+		manufacturer, ok := v[7].(string)
+		if !ok {
+			t.Fatalf("строка батча %d: nameofmanufacturer = %T (want string)", i, v[7])
+		}
+		uid, ok := v[8].(string)
+		if !ok {
+			t.Fatalf("строка батча %d: uid = %T (want string)", i, v[8])
+		}
+		pub, ok := v[9].(time.Time)
+		if !ok {
+			t.Fatalf("строка батча %d: publication_date = %T (want time.Time)", i, v[9])
+		}
+		rows = append(rows, gostRow{
+			Mark: mark, Type: typ, Date: date, CertificateNumber: number, EcoClass: ecoclass,
+			EngineTrademark: engine, YearOfManufacturing: year, NameOfManufacturer: manufacturer, UID: uid,
+			PublicationDate: pub,
+		})
+	}
+	return rows
+}
+
+// gostFakeRows — строки ответа фейкового соединения: очередь «установщиков» приёмников.
+// Пустой список — пустой ответ (таблицы нет или в окне нет строк).
+type gostFakeRows struct {
+	driver.Rows
+	setters []func(dest ...any) error
+	idx     int
+	err     error // её отдаёт Err() — обрыв обхода после Next
+}
+
+func (r *gostFakeRows) Next() bool {
+	if r.idx >= len(r.setters) {
+		return false
+	}
+	r.idx++
+	return true
+}
+
+func (r *gostFakeRows) Scan(dest ...any) error {
+	if r.err != nil {
+		return r.err
+	}
+	return r.setters[r.idx-1](dest...)
+}
+
+func (r *gostFakeRows) Err() error { return r.err }
+
+func (r *gostFakeRows) Close() error { return nil }
+
+// gostFakeRow — одна строка (QueryRow): Scan — тот же установщик приёмников, а заданная ошибка
+// возвращается из Scan (как у живого драйвера: QueryRow об ошибке сообщает именно её).
+type gostFakeRow struct {
+	driver.Row
+	scan func(dest ...any) error
+	err  error
+}
+
+func (r *gostFakeRow) Scan(dest ...any) error {
+	if r.err != nil {
+		return r.err
+	}
+	return r.scan(dest...)
+}
+
+func (r *gostFakeRow) Err() error { return r.err }
+
+// gostFakeConn — фейковое соединение импортёра: встраивание driver.Conn оставляет
+// неиспользуемые методы nil (паника, если тест зайдёт дальше сценария), а переопределены ровно
+// четыре метода прогона: Exec (DDL), QueryRow (якорь since и легаси-строки), Query (счётчики
+// check) и PrepareBatch (запись дня). Ответы выбираются по виду запроса, а не по номеру вызова.
+type gostFakeConn struct {
+	driver.Conn
+	mu       sync.Mutex
+	calls    []string
+	maxDate  *time.Time // NULL — пустая таблица: строк с настоящей датой выдачи нет
+	maxPub   *time.Time // NULL — настоящих publication_date нет (только дефолт 1970-01-01)
+	legacy   uint64
+	counters map[string]uint64 // счётчики uniqExact(certificate_number) по дню publication_date
+	queryErr error             // Query/QueryRow вернут её вместо строк
+	rowsErr  error             // её отдаст rows.Err()
+	batches  []*gostFakeBatch
+}
+
+func (c *gostFakeConn) record(call string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.calls = append(c.calls, call)
+}
+
+func (c *gostFakeConn) callList() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.calls...)
+}
+
+func (c *gostFakeConn) batchList() []*gostFakeBatch {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]*gostFakeBatch(nil), c.batches...)
+}
+
+func (c *gostFakeConn) Exec(_ context.Context, query string, _ ...any) error {
+	c.record("exec: " + query)
+	return nil
+}
+
+func (c *gostFakeConn) PrepareBatch(_ context.Context, query string, _ ...driver.PrepareBatchOption) (driver.Batch, error) {
+	c.record("preparebatch: " + query)
+	batch := &gostFakeBatch{query: query}
+	c.mu.Lock()
+	c.batches = append(c.batches, batch)
+	c.mu.Unlock()
+	return batch, nil
+}
+
+func (c *gostFakeConn) Query(_ context.Context, query string, args ...any) (driver.Rows, error) {
+	c.record("query: " + query)
+	if c.queryErr != nil {
+		return nil, c.queryErr
+	}
+	if strings.Contains(query, "uniqExact(certificate_number)") {
+		var from, to time.Time
+		if len(args) == 2 {
+			from, _ = args[0].(time.Time)
+			to, _ = args[1].(time.Time)
+		}
+		return &gostFakeRows{setters: gostCounterSetters(c.counters, from, to), err: c.rowsErr}, nil
+	}
+	return nil, fmt.Errorf("gostFakeConn: неожиданный запрос %q", query)
+}
+
+func (c *gostFakeConn) QueryRow(_ context.Context, query string, _ ...any) driver.Row {
+	c.record("queryrow: " + query)
+	switch {
+	case strings.Contains(query, "maxOrNull(date)"):
+		return &gostFakeRow{err: c.queryErr, scan: func(dest ...any) error {
+			if len(dest) != 2 {
+				return fmt.Errorf("фейковый якорь: приёмников %d (want 2)", len(dest))
+			}
+			issue, ok := dest[0].(**time.Time)
+			if !ok {
+				return fmt.Errorf("фейковый якорь: приёмник max(date) %T (want **time.Time)", dest[0])
+			}
+			pub, ok := dest[1].(**time.Time)
+			if !ok {
+				return fmt.Errorf("фейковый якорь: приёмник publication_date %T (want **time.Time)", dest[1])
+			}
+			*issue, *pub = c.maxDate, c.maxPub
+			return nil
+		}}
+	case strings.Contains(query, "1970-01-01"):
+		return &gostFakeRow{err: c.queryErr, scan: func(dest ...any) error {
+			if len(dest) != 1 {
+				return fmt.Errorf("фейковые легаси-строки: приёмников %d (want 1)", len(dest))
+			}
+			count, ok := dest[0].(*uint64)
+			if !ok {
+				return fmt.Errorf("фейковые легаси-строки: приёмник count() %T (want *uint64)", dest[0])
+			}
+			*count = c.legacy
+			return nil
+		}}
+	}
+	return &gostFakeRow{err: c.queryErr, scan: func(...any) error {
+		return fmt.Errorf("gostFakeConn: неожиданный QueryRow %q", query)
+	}}
+}
+
+// gostCounterSetters — строки ответа запроса счётчиков: только дни окна [from, to], у которых
+// в таблице есть строки (GROUP BY по дню не отдаёт пустых дней).
+func gostCounterSetters(counters map[string]uint64, from, to time.Time) []func(dest ...any) error {
+	setters := make([]func(dest ...any) error, 0, len(counters))
+	for day := from; !day.After(to); day = day.AddDate(0, 0, 1) {
+		count, ok := counters[day.Format(gostDateLayout)]
+		if !ok {
+			continue
+		}
+		// Переменные цикла в Go ≥1.22 у каждой итерации свои: замыкание захватывает их
+		// безопасно, копия не нужна.
+		setters = append(setters, func(dest ...any) error {
+			if len(dest) != 2 {
+				return fmt.Errorf("фейковые счётчики: приёмников %d (want 2)", len(dest))
+			}
+			d, ok := dest[0].(*time.Time)
+			if !ok {
+				return fmt.Errorf("фейковые счётчики: приёмник publication_date %T (want *time.Time)", dest[0])
+			}
+			n, ok := dest[1].(*uint64)
+			if !ok {
+				return fmt.Errorf("фейковые счётчики: приёмник uniqExact %T (want *uint64)", dest[1])
+			}
+			*d, *n = day, count
+			return nil
+		})
+	}
+	return setters
+}
+
+// gostDaySpec — форма ответа ручки на день: Count — сколько совпадений ручка называет (count
+// ответа), Noise — сколько документов из них пришли с чужой датой публикации (в count они
+// входят, клиентский фильтр дня их отбрасывает), Status — статус вместо ответа.
+type gostDaySpec struct {
+	Count  int
+	Noise  int
+	Status int
+}
+
+// gostDayServer отдаёт заданные формы дней; неизвестный день — 404, чтобы «прочитал лишний
+// день» падало ошибкой прогона, а не тихим успехом.
+func gostDayServer(t *testing.T, days map[string]gostDaySpec) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
+		day := r.URL.Query().Get("query")
+		spec, ok := days[day]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		gostDayResponse(t, w, r, day, spec)
+	}
+}
+
+// gostEveryDayServer отдаёт одну форму на любой день: нужна тестам, где день запроса
+// вычисляет импортёр (окно since по пустой таблице).
+func gostEveryDayServer(t *testing.T, spec gostDaySpec) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
+		gostDayResponse(t, w, r, r.URL.Query().Get("query"), spec)
+	}
+}
+
+// gostDayResponse собирает ответ ручки: документы дня среза плюс, если он задан, текстовый шум.
+// count ответа — полное число совпадений (Count), а не размер страницы: так ведёт себя ручка.
+func gostDayResponse(t *testing.T, w http.ResponseWriter, r *http.Request, day string, spec gostDaySpec) {
+	t.Helper()
+	if spec.Status != 0 {
+		w.WriteHeader(spec.Status)
+		return
+	}
+	size, err := strconv.Atoi(r.URL.Query().Get("size"))
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	n := spec.Count
+	if n > size {
+		n = size
+	}
+	docs := make([]gostDoc, 0, n)
+	for i := 0; i < n; i++ {
+		if i < spec.Noise {
+			docs = append(docs, gostForeignDoc(day, i+1))
+			continue
+		}
+		docs = append(docs, gostDayDoc(day, i+1))
+	}
+	// Тело собирается без t: хендлер живёт в горутине сервера, и t.Fatalf оттуда недопустим.
+	body, err := json.Marshal(gostSearchResponse{Count: spec.Count, Data: docs})
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	_, _ = w.Write(body)
+}
+
+// gostDayDoc — документ, попадающий в срез дня: дата публикации равна дню запроса.
+func gostDayDoc(day string, id int) gostDoc {
+	issue := gostIssueMS
+	return gostDoc{ID: int64(id), Fields: gostFields{
+		Product:                  "Toyota",
+		Type:                     "ZGE25",
+		NumberOfCertificate:      fmt.Sprintf("ТС RU А-JP.ОМ80.%05d", id),
+		DateOfIssueOfCertificate: &issue,
+		EcoClass:                 "4",
+		EngineTrademark:          "2ZR-FE",
+		YearOfManufacturing:      "2016",
+		NameOfManufacturer:       "TOYOTA",
+		UniqueIdentifier:         fmt.Sprintf("uid-%05d", id),
+		DateOfPublication:        day + " 00:00:00 ZE3",
+	}}
+}
+
+// gostForeignDoc — документ того же ответа, но чужого дня публикации: ручка ищет текстом и
+// отдаёт соседние окна, а в срез дня такой документ не входит.
+func gostForeignDoc(day string, id int) gostDoc {
+	doc := gostDayDoc(day, id)
+	doc.Fields.DateOfPublication = gostForeignPublication
+	return doc
+}
