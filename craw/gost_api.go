@@ -97,8 +97,11 @@ func newGostAPI(client *http.Client, appID string) *gostAPI {
 }
 
 // gostSearchResponse — ответ ручки: count — всего совпадений в окне поиска, Data — страница.
+// Count — указатель ради строгости разбора: валидный JSON без ключа (в том числе {} и
+// {"data":[]}) дал бы неотличимый от «дня без публикаций» ноль, поэтому отсутствие ключа
+// проверяется в fetchPage и считается сбоем ответа (retryable), а не пустым днём.
 type gostSearchResponse struct {
-	Count int       `json:"count"`
+	Count *int      `json:"count"`
 	Data  []gostDoc `json:"data"`
 }
 
@@ -211,18 +214,37 @@ func (a *gostAPI) fetchPage(ctx context.Context, day time.Time, page, size int) 
 		if err := json.Unmarshal(body, &out); err != nil {
 			return gostSearchResponse{}, fmt.Errorf("разбор JSON: %w", err)
 		}
+		// Валидный JSON без ключа count — тот же сбой ответа: {} и {"data":[]} прошли бы разбор
+		// как Count: 0 и выглядели бы днём без публикаций, хотя это неполный ответ ручки.
+		if out.Count == nil {
+			return gostSearchResponse{}, fmt.Errorf("ответ без count: неполный ответ ручки")
+		}
 		return out, nil
 	}
 	return backoff.Retry(ctx, op, backoff.WithBackOff(&b), backoff.WithMaxTries(gostMaxTries))
 }
 
+// gostAuthError — отказ доступа (401/403): токен gtn.access.appid не принят. Отдельный тип нужен
+// вызывающему (gostRunDays): такой отказ систематический — повтором не лечится (в gostStatusError
+// он обёрнут permanent), — и обход тысяч дней при нём обязан прерываться, а не копить агрегат.
+// Ошибка оборачивается, а не подменяется: подсказка про GOST_APP_ID остаётся и в тексте, и в
+// %w-цепи. backoff.Retry разворачивает permanent-ошибку, поэтому errors.As достаёт тип и из
+// ошибки дня.
+type gostAuthError struct {
+	err error
+}
+
+func (e *gostAuthError) Error() string { return e.err.Error() }
+
+func (e *gostAuthError) Unwrap() error { return e.err }
+
 // gostStatusError раскладывает статус по классам повторов.
 func gostStatusError(status int) error {
 	switch {
 	case status == http.StatusUnauthorized || status == http.StatusForbidden:
-		return backoff.Permanent(fmt.Errorf(
+		return backoff.Permanent(&gostAuthError{err: fmt.Errorf(
 			"http status %d — проверьте GOST_APP_ID (токен gtn.access.appid из JS-конфига страницы реестра, standarts.adminsHeaders)",
-			status))
+			status)})
 	case status == http.StatusTooManyRequests || status >= 500:
 		// 429/5xx — предел портала: ждём и повторяем. Причина идёт в текст вместе с
 		// паузой: сам RetryAfterError её не несёт, и «retry after 1m0s» без статуса
@@ -270,14 +292,16 @@ func (a *gostAPI) day(ctx context.Context, day time.Time) (gostDaySlice, error) 
 	if err != nil {
 		return gostDaySlice{}, err
 	}
-	if first.Count > gostMaxDayCount {
+	// Count не nil: fetchPage считает ответ без ключа сбоем разбора.
+	count := *first.Count
+	if count > gostMaxDayCount {
 		return gostDaySlice{}, fmt.Errorf(
 			"в дне %s %d документов — больше окна поиска ручки (%d): такой день постранично не читается",
-			day.Format(gostQueryDayLayout), first.Count, gostMaxDayCount)
+			day.Format(gostQueryDayLayout), count, gostMaxDayCount)
 	}
 
 	docs := first.Data
-	for page := 2; page <= gostPageCount(first.Count); page++ {
+	for page := 2; page <= gostPageCount(count); page++ {
 		time.Sleep(gostRequestGap)
 		next, err := a.fetchPage(ctx, day, page, gostPageSize)
 		if err != nil {
@@ -291,13 +315,13 @@ func (a *gostAPI) day(ctx context.Context, day time.Time) (gostDaySlice, error) 
 	// пагинации). Без неё такой день выглядел бы полным (len(docs) == count) при настоящей
 	// недостаче — и check объявил бы ложную дыру либо, наоборот, скрыл реальную.
 	unique, dropped := gostUniqueDocs(docs)
-	if len(unique) < first.Count {
+	if len(unique) < count {
 		return gostDaySlice{}, fmt.Errorf("получено %d документов из %d (дубликатов страниц: %d)",
-			len(unique), first.Count, dropped)
+			len(unique), count, dropped)
 	}
 
 	rows, skipped, invalid := gostRowsFromDocs(day, unique)
-	return gostDaySlice{Rows: rows, Count: first.Count, Skipped: skipped, Invalid: invalid}, nil
+	return gostDaySlice{Rows: rows, Count: count, Skipped: skipped, Invalid: invalid}, nil
 }
 
 // gostUniqueDocs оставляет по одному документу на id, сохраняя порядок появления, и считает
@@ -325,7 +349,8 @@ func (a *gostAPI) dayCount(ctx context.Context, day time.Time) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	return resp.Count, nil
+	// Count не nil: fetchPage считает ответ без ключа сбоем разбора.
+	return *resp.Count, nil
 }
 
 // gostPageCount — сколько страниц нужно, чтобы забрать count документов.

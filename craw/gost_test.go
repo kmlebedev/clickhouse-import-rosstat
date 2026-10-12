@@ -36,8 +36,9 @@ const gostIssueMS int64 = 1791493200000
 // эту форму через весь путь от разбора до решения по дню.
 const gostForeignPublication = "01.01.2020"
 
-// gostTestNow — подменённые часы прогона: 12.10.2026 12:00 UTC, то есть «вчера МСК» = 11.10.2026
-// (МСК = UTC+3, дата прогона 12.10.2026).
+// gostTestNow — подменённые часы прогона: 12.10.2026 12:00 UTC, то есть «сегодня МСК» = 12.10.2026,
+// «вчера МСК» = 11.10.2026 (МСК = UTC+3, дата прогона 12.10.2026). Обе границы тестируются
+// явно: окно since кончается сегодняшним днём, дефолт full/check — вчерашним.
 var gostTestNow = time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
 
 // gostEnv выставляет окружение конфига: сначала все переменные прогона пустые (тест не должен
@@ -322,26 +323,28 @@ func TestGostSinceDaysAnchors(t *testing.T) {
 	}{
 		{
 			// Якорь — дата выдачи: хвост перекрывает лаг публикации, а сама выдача новее дня среза.
+			// Верхняя граница — сегодня МСК (12.10): часовой прогон обязан ловить и дневной батч
+			// текущего дня, поэтому окно шире, чем «до вчера».
 			name: "якорь по дате выдачи", maxDate: "2026-10-09", maxPub: "2026-10-05",
-			settle: 3, wantDays: []string{"2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10", "2026-10-11"},
+			settle: 3, wantDays: []string{"2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10", "2026-10-11", "2026-10-12"},
 			wantAnchor: "maxOrNull(date)",
 		},
 		{
 			// Даты выдачи нет (все строки пришли без неё) — якорем становится дата публикации.
 			name: "якорь по дате публикации", maxPub: "2026-10-08",
-			settle: 1, wantDays: []string{"2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10", "2026-10-11"},
+			settle: 1, wantDays: []string{"2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10", "2026-10-11", "2026-10-12"},
 			wantAnchor: "maxOrNull(date)",
 		},
 		{
 			// Пустая таблица: не обход всей истории, а окно последних семи дней и флаг для warn.
 			name: "пустая таблица — последняя неделя", settle: 3, wantEmpty: true,
-			wantDays:   []string{"2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10", "2026-10-11"},
+			wantDays:   []string{"2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10", "2026-10-11", "2026-10-12"},
 			wantAnchor: "maxOrNull(date)",
 		},
 		{
-			// Якорь из будущего (часы источника вперёд) прижимается к вчера: «завтра» читать нечего.
+			// Якорь из будущего (часы источника вперёд) прижимается к сегодня: «завтра» читать нечего.
 			name: "якорь из будущего", maxPub: "2026-12-01",
-			settle: 3, wantDays: []string{"2026-10-08", "2026-10-09", "2026-10-10", "2026-10-11"},
+			settle: 3, wantDays: []string{"2026-10-09", "2026-10-10", "2026-10-11", "2026-10-12"},
 			wantAnchor: "maxOrNull(date)",
 		},
 	}
@@ -382,7 +385,7 @@ func TestGostSinceDaysAnchors(t *testing.T) {
 }
 
 func TestGostSinceDaysCapsStaleAnchor(t *testing.T) {
-	t.Run("свежий якорь — обычное окно", func(t *testing.T) {
+	t.Run("свежий якорь — обычное окно до сегодня", func(t *testing.T) {
 		fresh := gostTime(t, "2026-10-09")
 		conn := &gostFakeConn{maxDate: &fresh}
 
@@ -390,8 +393,10 @@ func TestGostSinceDaysCapsStaleAnchor(t *testing.T) {
 		if err != nil {
 			t.Fatalf("окно since: %v", err)
 		}
-		if len(days) != 6 || !days[0].Equal(gostTime(t, "2026-10-06")) || !days[5].Equal(gostTime(t, "2026-10-11")) {
-			t.Errorf("дни %v, ожидалось 2026-10-06…2026-10-11 (6 дней)", gostDayStrings(days))
+		// Верхняя граница — сегодняшний день МСК (12.10.2026), а не вчерашний: часовой прогон
+		// обязан ловить и дневной батч текущего дня.
+		if len(days) != 7 || !days[0].Equal(gostTime(t, "2026-10-06")) || !days[6].Equal(gostTime(t, "2026-10-12")) {
+			t.Errorf("дни %v, ожидалось 2026-10-06…2026-10-12 (7 дней)", gostDayStrings(days))
 		}
 	})
 
@@ -410,8 +415,8 @@ func TestGostSinceDaysCapsStaleAnchor(t *testing.T) {
 		if len(days) != gostMaxSinceDays {
 			t.Fatalf("дней %d, ожидалось ровно %d", len(days), gostMaxSinceDays)
 		}
-		if !days[0].Equal(gostTime(t, "2026-09-12")) || !days[len(days)-1].Equal(gostTime(t, "2026-10-11")) {
-			t.Errorf("окно %v, ожидалось 2026-09-12…2026-10-11", gostDayStrings(days))
+		if !days[0].Equal(gostTime(t, "2026-09-13")) || !days[len(days)-1].Equal(gostTime(t, "2026-10-12")) {
+			t.Errorf("окно %v, ожидалось 2026-09-13…2026-10-12", gostDayStrings(days))
 		}
 		for _, want := range []string{"таблица отстала", "2026-01-01", "GOST_MODE=full"} {
 			if !strings.Contains(logs.String(), want) {
@@ -502,6 +507,91 @@ func TestGostRunDaysSkipsEmptyAndAggregatesErrors(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "публикаций нет") {
 		t.Errorf("пустой день не отмечен в логе: %s", logs.String())
+	}
+}
+
+// TestGostRunDaysAbortsOnAuthError — систематический отказ доступа (401) прерывает обход на
+// первом же дне, а не копит агрегат: при отозванном или неверном GOST_APP_ID каждый следующий
+// из тысяч дней ждала бы та же ошибка, а подсказка про токен тонула бы в мегабайтном тексте.
+func TestGostRunDaysAbortsOnAuthError(t *testing.T) {
+	days := []time.Time{
+		gostTime(t, "2026-10-05"),
+		gostTime(t, "2026-10-06"),
+		gostTime(t, "2026-10-07"),
+	}
+	ta := gostNewTestAPI(t, gostDayServer(t, map[string]gostDaySpec{
+		"05.10.2026": {Status: http.StatusUnauthorized},
+		"06.10.2026": {Count: 1},
+		"07.10.2026": {Count: 1},
+	}))
+	conn := &gostFakeConn{}
+	logs := gostCaptureLog(t)
+
+	count, err := gostRunDays(context.Background(), conn, ta.api, days)
+	if err == nil {
+		t.Fatal("отказ авторизации не прервал прогон")
+	}
+	for _, want := range []string{
+		"авторизация отклонена (проверьте GOST_APP_ID)",
+		"прервано на дне 2026-10-05",
+		"дней не прочитано 3",
+		"http status 401",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("ошибка %q не содержит %q", err, want)
+		}
+	}
+	if count != 0 {
+		t.Errorf("записано строк %d, ожидалось 0", count)
+	}
+	// Обход прерван на первом дне: остальные дни не запрашивались вовсе.
+	if got := ta.requestCount(); got != 1 {
+		t.Errorf("запросов %d, ожидался 1: авторизация обходом не чинится", got)
+	}
+	if batches := conn.batchList(); len(batches) != 0 {
+		t.Errorf("батчей %d, ожидалось 0: прерывание до первой записи", len(batches))
+	}
+	if !strings.Contains(logs.String(), "авторизация отклонена") {
+		t.Errorf("прерывание не попало в лог: %s", logs.String())
+	}
+}
+
+// TestGostRunDaysCapsFailedDayList — список неудачных дней в агрегате усечён первыми десятью:
+// на полном прогоне упавших дней бывают сотни, и полный перечень утопил бы первопричину,
+// которая у них, как правило, одна на всех. Здесь же пин того, что 500-е дни обход не прерывают:
+// запрошены все дни и агрегат собран целиком.
+func TestGostRunDaysCapsFailedDayList(t *testing.T) {
+	var days []time.Time
+	specs := make(map[string]gostDaySpec)
+	for i := 1; i <= 12; i++ {
+		day := gostTime(t, fmt.Sprintf("2026-10-%02d", i))
+		days = append(days, day)
+		specs[day.Format(gostQueryDayLayout)] = gostDaySpec{Status: http.StatusInternalServerError}
+	}
+	ta := gostNewTestAPI(t, gostDayServer(t, specs))
+	conn := &gostFakeConn{}
+
+	count, err := gostRunDays(context.Background(), conn, ta.api, days)
+	if err == nil {
+		t.Fatal("дни со сбоем не попали в ошибку прогона")
+	}
+	if !strings.Contains(err.Error(), "не прочитаны дни (12)") {
+		t.Errorf("ошибка %q не называет число сбойных дней", err)
+	}
+	if !strings.Contains(err.Error(), "и ещё 2") {
+		t.Errorf("ошибка %q не усекает список дней", err)
+	}
+	if !strings.Contains(err.Error(), "2026-10-10") {
+		t.Errorf("ошибка %q не перечисляет первые десять дней", err)
+	}
+	if strings.Contains(err.Error(), "2026-10-11") || strings.Contains(err.Error(), "2026-10-12") {
+		t.Errorf("ошибка %q перечисляет дни сверх первых десяти", err)
+	}
+	if got := ta.requestCount(); got != len(days)*gostMaxTries {
+		t.Errorf("запросов %d, ожидалось %d: 500-е дни обход не прерывают", got, len(days)*gostMaxTries)
+	}
+	if count != 0 {
+		t.Errorf("записано строк %d, ожидалось 0", count)
 	}
 }
 
@@ -1362,7 +1452,8 @@ func gostDayResponse(t *testing.T, w http.ResponseWriter, r *http.Request, day s
 		}
 	}
 	// Тело собирается без t: хендлер живёт в горутине сервера, и t.Fatalf оттуда недопустим.
-	body, err := json.Marshal(gostSearchResponse{Count: spec.Count, Data: docs})
+	count := spec.Count
+	body, err := json.Marshal(gostSearchResponse{Count: &count, Data: docs})
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return

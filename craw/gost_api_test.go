@@ -89,7 +89,7 @@ func gostRepeatDocFrom(doc gostDoc, n, startID int) []gostDoc {
 // gostTestBody собирает тело ответа ручки: count — «всего совпадений», data — страница.
 func gostTestBody(t *testing.T, count int, docs []gostDoc) []byte {
 	t.Helper()
-	body, err := json.Marshal(gostSearchResponse{Count: count, Data: docs})
+	body, err := json.Marshal(gostSearchResponse{Count: &count, Data: docs})
 	if err != nil {
 		t.Fatalf("сборка тела ответа: %v", err)
 	}
@@ -297,8 +297,11 @@ func TestGostYear(t *testing.T) {
 
 func TestGostRowsFromDocsFilters(t *testing.T) {
 	resp := gostDayFixture(t)
-	if resp.Count != 4 || len(resp.Data) != 4 {
-		t.Fatalf("фикстура: count=%d, документов=%d, ожидалось 4 и 4", resp.Count, len(resp.Data))
+	if resp.Count == nil {
+		t.Fatal("фикстура без ключа count")
+	}
+	if *resp.Count != 4 || len(resp.Data) != 4 {
+		t.Fatalf("фикстура: count=%d, документов=%d, ожидалось 4 и 4", *resp.Count, len(resp.Data))
 	}
 	// День фикстуры совпадает с gostTestDay: на этом держатся все проверки дня.
 	if got := resp.Data[0].Fields.DateOfPublication; got != gostTestPublication {
@@ -555,6 +558,12 @@ func TestGostDayPermanentStatusFails(t *testing.T) {
 			if !strings.Contains(err.Error(), "GOST_APP_ID") {
 				t.Errorf("ошибка = %q: текст должен подсказывать про GOST_APP_ID", err)
 			}
+			// Тип-сентинел обязан дожить до ошибки дня: именно по нему gostRunDays отличает
+			// систематический отказ доступа и прерывает обход.
+			var authErr *gostAuthError
+			if !errors.As(err, &authErr) {
+				t.Errorf("ошибка = %q не обёрнута в gostAuthError: gostRunDays не отличит систематический отказ", err)
+			}
 			if got := ta.requestCount(); got != 1 {
 				t.Errorf("запросов %d, ожидался 1: permanent-ошибка не повторяется", got)
 			}
@@ -606,7 +615,8 @@ func TestGostDayRetriesServerError(t *testing.T) {
 
 func TestGostDayEmptyBodyFails(t *testing.T) {
 	// И пустое тело, и пробелы, и литерал null (разбирается без ошибки в нулевой count),
-	// и битый JSON — не «день без документов», а сбой ответа: повторяем.
+	// и валидный JSON без ключа count ({} и {"data":[]} — тоже не «день без документов»,
+	// а неполный ответ), и битый JSON — сбой ответа: повторяем.
 	cases := []struct {
 		name string
 		body string
@@ -615,6 +625,8 @@ func TestGostDayEmptyBodyFails(t *testing.T) {
 		{"пустое тело", "", "пустое тело"},
 		{"одни пробелы", " \n\t ", "пустое тело"},
 		{"литерал null", "null", "пустое тело"},
+		{"нет ключа count", "{}", "ответ без count"},
+		{"нет ключа count, есть data", `{"data":[]}`, "ответ без count"},
 		{"битый JSON", "{", "разбор JSON"},
 	}
 	for _, c := range cases {
@@ -635,6 +647,31 @@ func TestGostDayEmptyBodyFails(t *testing.T) {
 				t.Errorf("попыток %d, ожидалось %d: пустой ответ повторяем", got, gostMaxTries)
 			}
 		})
+	}
+}
+
+// TestGostDayZeroCountIsValid — легальный пустой день: {"count":0,"data":[]} — полноценный
+// ответ ручки, и он не повторяется и не считается ошибкой (в отличие от ответа без ключа count).
+func TestGostDayZeroCountIsValid(t *testing.T) {
+	ta := gostNewTestAPI(t, gostPagesHandler(map[int][]byte{1: []byte(`{"count":0,"data":[]}`)}))
+
+	slice, err := ta.api.day(context.Background(), gostTestDay)
+	if err != nil {
+		t.Fatalf("пустой день отдан ошибкой: %v", err)
+	}
+	if slice.Count != 0 || len(slice.Rows) != 0 {
+		t.Errorf("срез пустого дня = %+v, ожидались нулевые Count и Rows", slice)
+	}
+	if got := ta.requestCount(); got != 1 {
+		t.Errorf("запросов %d, ожидался 1: легальный пустой день не повторяется", got)
+	}
+
+	count, err := ta.api.dayCount(context.Background(), gostTestDay)
+	if err != nil {
+		t.Fatalf("dayCount пустого дня: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("dayCount = %d, ожидался 0", count)
 	}
 }
 
