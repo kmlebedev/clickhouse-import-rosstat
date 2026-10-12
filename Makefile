@@ -14,6 +14,22 @@ CH_LOG       := $(CH_DIR)/clickhouse.log
 CH_HTTP_PORT ?= 8123
 CH_TCP_PORT  ?= 9000
 
+# Локальный стенд Grafana (make grafana-up/down): данные, логи и плагины лежат вне
+# репозитория в $(GF_DIR), в репозитории — только провижининг датасорса.
+GF_BIN       ?= $(shell command -v grafana 2>/dev/null)
+GF_PREFIX    := $(realpath $(dir $(realpath $(GF_BIN)))/..)
+# И CLI, и серверу нужен homepath: без него они не находят conf/defaults.ini
+# («Could not find config defaults»). У brew-раскладки homepath — share/grafana рядом
+# с bin/grafana, у tarball — сам префикс.
+GF_HOMEPATH  ?= $(or $(wildcard $(GF_PREFIX)/share/grafana),$(GF_PREFIX))
+GF_DIR       ?= $(HOME)/grafana-dev
+GF_PORT      ?= 3000
+# Версия плагина: формат запроса дашборда подтверждён живым экспортом 4.3.2 (grafana/clickhouse.go).
+GRAFANA_PLUGIN_VERSION ?= 4.3.2
+GF_PID       := $(GF_DIR)/grafana.pid
+GF_LOG       := $(GF_DIR)/grafana.log
+GF_PLUGINS   := $(GF_DIR)/plugins
+
 MCP_USER     ?= kimi_reader
 MCP_PY       ?= 3.12
 MCP_VERSION  ?= 0.7.0
@@ -31,7 +47,7 @@ STAGING_BIN_DIR  ?= /root/.local/bin
 STAGING_ENV_FILE ?= /etc/clickhouse-import-rosstat.env
 DAGU_VERSION     ?= v2.18.2
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-up grafana-down
 
 all: lint test build build-ingest
 
@@ -310,6 +326,43 @@ mcp-user-staging:
 # повторный прогон не должен менять файл (иначе CI-проверка diff вечно красная).
 grafana-build:
 	cd grafana && go run . -out ../dashboard/gold-thesis.json
+
+# Локальный стенд Grafana для проверки дашборда: тот же провижининг, что уедет в деплой.
+# Плагин ставится CLI Grafana в $(GF_PLUGINS) (флаг --pluginsDir), сервер читает его
+# оттуда же через GF_PATHS_PLUGINS. Установка идемпотентна по наличию каталога плагина.
+# И CLI, и серверу нужен --homepath: у brew-бинаря не найти conf/defaults.ini ни из
+# рабочего каталога репозитория, ни по GF_PATHS_HOME (проверено на 13.2.3).
+grafana-up:
+	@if curl -sf -m 2 http://localhost:$(GF_PORT)/api/health >/dev/null 2>&1; then \
+		echo "Grafana уже отвечает на порту $(GF_PORT)"; \
+	else \
+		test -n "$(GF_BIN)" || { echo "grafana не найден: задайте GF_BIN=/путь/к/grafana"; exit 1; }; \
+		if [ ! -d "$(GF_PLUGINS)/grafana-clickhouse-datasource" ]; then \
+			"$(GF_BIN)" cli --homepath "$(GF_HOMEPATH)" --pluginsDir "$(GF_PLUGINS)" \
+				plugins install grafana-clickhouse-datasource $(GRAFANA_PLUGIN_VERSION) || exit 1; \
+		fi; \
+		mkdir -p "$(GF_DIR)/data" "$(GF_DIR)/logs"; \
+		nohup env GF_PATHS_DATA="$(GF_DIR)/data" GF_PATHS_LOGS="$(GF_DIR)/logs" GF_PATHS_PLUGINS="$(GF_PLUGINS)" \
+			GF_PATHS_PROVISIONING="$(CURDIR)/grafana/provisioning" GF_SERVER_HTTP_PORT=$(GF_PORT) \
+			GF_ANALYTICS_REPORTING_ENABLED=false GF_ANALYTICS_CHECK_FOR_UPDATES=false \
+			"$(GF_BIN)" server --homepath "$(GF_HOMEPATH)" >"$(GF_LOG)" 2>&1 & \
+		echo $$! > "$(GF_PID)"; \
+		for i in $$(seq 1 60); do curl -sf -m 1 http://localhost:$(GF_PORT)/api/health >/dev/null 2>&1 && break; sleep 1; done; \
+		if curl -sf -m 2 http://localhost:$(GF_PORT)/api/health >/dev/null 2>&1; then \
+			echo "Grafana запущена, PID $$(cat "$(GF_PID)"), лог $(GF_LOG)"; \
+		else \
+			echo "Grafana не поднялась, хвост $(GF_LOG):"; tail -20 "$(GF_LOG)"; exit 1; \
+		fi; \
+	fi
+
+grafana-down:
+	@if [ -f "$(GF_PID)" ] && kill -0 $$(cat "$(GF_PID)") 2>/dev/null; then \
+		kill $$(cat "$(GF_PID)"); \
+		for i in $$(seq 1 60); do kill -0 $$(cat "$(GF_PID)") 2>/dev/null || break; sleep 1; done; \
+		rm -f "$(GF_PID)"; echo "Grafana остановлена"; \
+	else \
+		echo "PID-файл $(GF_PID) не найден или процесс не запущен (сервер, поднятый вне make, не останавливается)"; \
+	fi
 
 info:
 	@echo "BINARY    = $(TARGET)"
