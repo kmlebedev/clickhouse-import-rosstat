@@ -326,6 +326,36 @@ async def check(params, server_log):
             failed += not expect("сырая news_events закрыта", denied,
                                  "отказ ClickHouse 497 на news_events (ожидаемо)" if denied else raw[:200])
 
+            # Контур СБКТС Росстандарта (правило 11): обе витрины читаются агентом, а сырая
+            # gost_vehicle_safety_certificate — источник витрин — агенту закрыта (как macro_series
+            # и news_events: читать реестр агент обязан только через витрины). Существование
+            # витрины подтверждается ЗАПРОСОМ К НЕЙ, а не поиском имени в ответе list_tables:
+            # в том тексте лежат create_table_query с комментариями таблиц и колонок, и имя
+            # отсутствующей витрины попадало туда из COMMENT соседки (урок bold). Разобранный
+            # ответ run_query доказывает и существование, и право чтения; «нет витрины» и «нет
+            # прав» приходят ошибкой (UNKNOWN_TABLE / ACCESS_DENIED) и в result_rows не разбираются.
+            #
+            # Пустая витрина — не отказ: до первого прогона импортёра (или в день без публикаций)
+            # строк нет и вовсе, поэтому значение count не проверяется — только разрешение
+            # чтения, как у v_dcf_assumptions.
+            for view, label in (("v_gost_vehicle_safety_certificate", "реестр СБКТС"),
+                                ("v_gost_vehicle_safety_daily", "дневной поток выдачи СБКТС")):
+                gost_view = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {view}"}))
+                gost_view_rows = result_rows(gost_view)
+                if gost_view_rows is None:
+                    gost_view_detail = f"витрина не читается: {gost_view[:200]}"
+                elif gost_view_rows:
+                    gost_view_detail = f"строк: {gost_view_rows[0].get('count()')}"
+                else:
+                    gost_view_detail = "в ответе нет строк"
+                failed += not expect(f"витрина {view} существует и читается ({label})",
+                                     bool(gost_view_rows), gost_view_detail)
+
+            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM gost_vehicle_safety_certificate"}))
+            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+            failed += not expect("сырая gost_vehicle_safety_certificate закрыта", denied,
+                                 "отказ ClickHouse 497 на gost_vehicle_safety_certificate (ожидаемо)" if denied else raw[:200])
+
     return failed
 
 

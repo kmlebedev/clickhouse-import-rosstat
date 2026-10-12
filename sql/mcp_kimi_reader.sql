@@ -29,3 +29,5 @@ GRANT SELECT ON default.v_cb_gold_dynamics TO kimi_reader;
 GRANT SELECT ON default.v_gold_etf_flows_daily TO kimi_reader;
 GRANT SELECT ON default.v_gold_etf_funds_daily TO kimi_reader;
 GRANT SELECT ON default.v_news_events TO kimi_reader;
+GRANT SELECT ON default.v_gost_vehicle_safety_certificate TO kimi_reader;
+GRANT SELECT ON default.v_gost_vehicle_safety_daily TO kimi_reader;
