@@ -669,7 +669,7 @@
         "targets": [
           {
             "refId": "A",
-            "rawSql": "SELECT\n    metric, forecast_date, target_date, predicted, actual, error_pct\nFROM v_forecast_accuracy\nWHERE is_resolved = 1\nORDER BY target_date\n",
+            "rawSql": "SELECT\n    metric, forecast_date, target_date, predicted, actual,\n    error_pct AS \"Ошибка, % (+ = прогноз выше факта)\"\nFROM v_forecast_accuracy\nWHERE is_resolved = 1\nORDER BY target_date\n",
             "editorType": "sql",
             "format": 1,
             "queryType": "table",
@@ -677,6 +677,7 @@
           }
         ],
         "title": "Точность прошлых прогнозов (table)",
+        "description": "Ошибка прогноза знаковая: error_pct = (predicted − actual) / actual × 100, «+» — прогноз выше факта. Источник — витрина v_forecast_accuracy, только resolved-прогнозы (is_resolved = 1: факт уже записан forecast_resolve).",
         "transparent": false,
         "datasource": {
           "type": "grafana-clickhouse-datasource",
@@ -702,6 +703,7 @@
         },
         "fieldConfig": {
           "defaults": {
+            "unit": "percent",
             "custom": {
               "align": "auto",
               "inspect": false

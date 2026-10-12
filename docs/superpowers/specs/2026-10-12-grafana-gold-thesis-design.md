@@ -51,7 +51,7 @@
 
 ```
 grafana/ (отдельный Go-модуль, grafana-foundation-sdk)
-   └─ make grafana-build → dashboard/gold-thesis.json   (ресурс dashboard.grafana.app/v1, коммитится)
+   └─ make grafana-build → dashboard/gold-thesis.json   (ресурс dashboard.grafana.app/v1beta1, коммитится)
          │
          ├─ CI «dashboards» (PR): go vet/test + build + diff-проверка артефакта + gcx resources validate   (без секретов)
          │
@@ -65,7 +65,7 @@ grafana/ (отдельный Go-модуль, grafana-foundation-sdk)
 Отдельный Go-модуль (`github.com/kmlebedev/clickhouse-import-rosstat/grafana`, свой `go.mod`) —
 SDK не попадает в зависимости основного ETL-бинаря и его CI. `main.go` собирает дашборд типизированным кодом
 (`dashboard.NewDashboardBuilder`, панели `timeseries/barchart/table`) и пишет **`dashboard/gold-thesis.json`** —
-ресурс в Kubernetes-стиле (`apiVersion: dashboard.grafana.app/v1`, `kind: Dashboard`, `metadata.name = uid = gold-thesis`,
+ресурс в Kubernetes-стиле (`apiVersion: dashboard.grafana.app/v1beta1`, `kind: Dashboard`, `metadata.name = uid = gold-thesis`,
 `spec` — сам дашборд), формат из официального примера Foundation SDK, пригодный для `gcx resources push`
 (шаблон — https://grafana.com/docs/grafana/latest/as-code/observability-as-code/foundation-sdk/dashboard-automation/).
 Чистый dashboard JSON при необходимости извлекается `jq .spec`.
@@ -108,7 +108,8 @@ Grafana применяет provisioning-каталог «на старте и н
   (2) идемпотентный провижининг датасорса (scp шаблона + подстановка пароля на хосте из env-файла, `root:grafana 640`) —
   только если файл изменился; (3) `gcx resources push`; (4) smoke.
 - Smoke `scripts/grafana_check.py` (стиль `scripts/mcp_check.py`, `urllib`, токен из env): `GET /api/dashboards/uid/gold-thesis` = 200;
-  `POST /api/ds/query` по 2–3 ключевым панелям — непустые series; короткий отчёт, ненулевой exit при провале.
+  `POST /api/ds/query` по 2–3 ключевым панелям — непустые series; короткий отчёт; exit-коды: `0` — все проверки прошли,
+  `1` — хотя бы одна упала, `2` — ошибка конфигурации (не заданы `GRAFANA_URL`/`GRAFANA_TOKEN`).
 - Фолбэк, если `gcx resources push` под self-hosted поведёт себя иначе: `gcx api /api/dashboards/db -d @<plain>.json`,
   где чистый dashboard JSON извлекается из артефакта через `jq .spec` — тот же токен и туннель.
 
@@ -151,7 +152,7 @@ Grafana применяет provisioning-каталог «на старте и н
 | 6 | ETF-потоки по месяцам (bar) | `v_gold_etf_flows` (`region='world'`, `flow_usd_mln`) | — |
 | 7 | Покупки ЦБ по странам (YTD-дельты, bar) | `v_cb_gold_dynamics` (`ytd_change_tonnes` по `country`) | — |
 | 8 | Сценарный веер Q4 + факт | `v_gold_forecasts` (`own` и банки, `horizon`/`scenario`) + `v_gold_prices` | — |
-| 9 | Ошибки прогнозов (predicted vs actual) | `v_forecast_accuracy` (`abs_error_pct` по `forecast_date`, `is_resolved=1`) | `v_forecast_accuracy_live` (§3) |
+| 9 | Ошибки прогнозов (predicted vs actual) | `v_forecast_accuracy` (знаковая `error_pct` = (predicted − actual) / actual × 100, плюс — прогноз выше факта; `is_resolved=1`) | `v_forecast_accuracy_live` (§3) |
 
 Все панели — только на витринах `v_*` (сырые таблицы — прямое нарушение политики §4 роадмапа).
 

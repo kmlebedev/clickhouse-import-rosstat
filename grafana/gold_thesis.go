@@ -139,8 +139,11 @@ ORDER BY midpoint
 `
 
 // forecastAccuracySQL — разрешённые прогнозы прошлого: таблица «обещали / вышло».
+// error_pct в витрине знаковая — (predicted − actual) / actual × 100 (views/forecast_accuracy.go),
+// поэтому знак подписан прямо в алиасе колонки: без подписи «+3,47 %» читается как модуль ошибки.
 const forecastAccuracySQL = `SELECT
-    metric, forecast_date, target_date, predicted, actual, error_pct
+    metric, forecast_date, target_date, predicted, actual,
+    error_pct AS "Ошибка, % (+ = прогноз выше факта)"
 FROM v_forecast_accuracy
 WHERE is_resolved = 1
 ORDER BY target_date
@@ -355,13 +358,18 @@ func forecastConsensusPanel() *barchart.PanelBuilder {
 }
 
 // forecastAccuracyPanel — панель 9: таблица «обещали / вышло» по разрешённым прогнозам.
+// Знак ошибки и единица подписаны явно: колонка знаковая (плюс — прогноз выше факта),
+// без подписи и percent её читают как модуль ошибки без размерности.
 func forecastAccuracyPanel() *table.PanelBuilder {
 	return table.NewPanelBuilder().
 		Id(9).
 		Title("Точность прошлых прогнозов (table)").
+		Description("Ошибка прогноза знаковая: error_pct = (predicted − actual) / actual × 100, «+» — прогноз выше факта. " +
+			"Источник — витрина v_forecast_accuracy, только resolved-прогнозы (is_resolved = 1: факт уже записан forecast_resolve).").
 		Span(spanHalf).
 		Datasource(datasourceRef()).
-		WithTarget(tableQuery("A", forecastAccuracySQL))
+		WithTarget(tableQuery("A", forecastAccuracySQL)).
+		Unit(units.Percent)
 }
 
 // Manifest оборачивает дашборд в K8s-стиль ресурс, который принимает gcx resources push.
