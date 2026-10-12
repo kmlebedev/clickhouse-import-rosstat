@@ -13,9 +13,13 @@ overlap_policy: skip
 # документы обязаны догоняться, а не теряться. Прогон щадящий: 4–12 запросов в час
 # (день с count > 10000 отвергается — окно поиска ручки). GOST_MODE=full (вся
 # история с 2016, часы работы) и GOST_MODE=check (сверка полноты без записи) —
-# ручные, в расписании их нет. GOST_APP_ID приходит из env-файла хоста
-# (~/.config/rosstat/env) и в DAG не прописывается: значения токена в репозитории
-# нет (правило 1).
+# ручные, в расписании их нет. GOST_APP_ID приходит из env-файла хоста — dev:
+# ~/.config/rosstat/env, staging: /etc/clickhouse-import-rosstat.env (тот же файл,
+# что читает deploy/staging/dagu.service; образец —
+# deploy/staging/clickhouse-import-rosstat.env.example) — и в DAG не прописывается:
+# значения токена в репозитории нет (правило 1). В env-файле держат только токен:
+# режимные переменные (GOST_MODE/GOST_FROM/GOST_TO/GOST_SETTLE_DAYS) задаёт сам DAG
+# (env шага), иначе значение из файла перекрыло бы префикс команды ручного запуска.
 steps:
   - id: gost_vehicle_safety_certificate
     run: "$ROSSTAT_IMPORT_BIN"
