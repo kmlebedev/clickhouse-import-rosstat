@@ -1,0 +1,33 @@
+{
+  "count": 4,
+  "data": [
+    {"id": 3717458, "libraryId": 29, "fields": {
+      "product": "Toyota", "type": "ZGE25", "numberofcertificate": "ТС RU А-JP.ОМ80.51298",
+      "dateofissueofcertificate": 1791493200000, "ecoclass": "4",
+      "enginetrademark": "Toyota, 2ZR,четырехтактный, бензиновый", "yearofmanufacturing": "2016",
+      "nameofmanufacturer": "TOYOTA MOTOR CORPORATION",
+      "uniqueidentifierofdocument": "0AFECC5373427BDA43258E8A00457597",
+      "dateofpublication": "11.10.2026 00:00:00 ZE3"}},
+    {"id": 3713507, "libraryId": 29, "fields": {
+      "product": "VOLKSWAGEN", "type": "7N", "numberofcertificate": "ТС RU А-DE.РА15.36210",
+      "dateofissueofcertificate": 1791406800000, "ecoclass": "4",
+      "enginetrademark": "VOLKSWAGEN, CTH,четырехтактный бензиновый", "yearofmanufacturing": "2015",
+      "nameofmanufacturer": "VOLKSWAGEN AG",
+      "uniqueidentifierofdocument": "1B6DF825B5513DC543258E8A00458BEF",
+      "dateofpublication": "09.10.2026 00:00:00 ZE3"}},
+    {"id": 3713615, "libraryId": 29, "fields": {
+      "product": "Opel", "type": "Z16", "numberofcertificate": "",
+      "dateofissueofcertificate": null, "ecoclass": "-",
+      "enginetrademark": "", "yearofmanufacturing": "16",
+      "nameofmanufacturer": "Opel Automobile GmbH",
+      "uniqueidentifierofdocument": "1EC8257C1C6AFFEC43258E8A00456EFA",
+      "dateofpublication": "11.10.2026 00:00:00 ZE3"}},
+    {"id": 3713508, "libraryId": 29, "fields": {
+      "product": "HONDA", "type": "GB3", "numberofcertificate": "",
+      "dateofissueofcertificate": 1791493200000, "ecoclass": "4",
+      "enginetrademark": "HONDA, LEB, гибрид", "yearofmanufacturing": "2018",
+      "nameofmanufacturer": "HONDA MOTOR CO., LTD.",
+      "uniqueidentifierofdocument": "0AFECC5373427BDA43258E8A00457597",
+      "dateofpublication": "11.10.2026 00:00:00 ZE3"}}
+  ]
+}
