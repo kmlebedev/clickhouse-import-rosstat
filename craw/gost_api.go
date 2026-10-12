@@ -1,6 +1,7 @@
 package craw
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -159,8 +160,9 @@ func (a *gostAPI) fetchPage(ctx context.Context, day time.Time, page, size int) 
 
 		req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, urlStr, nil)
 		if err != nil {
-			// Сломанный URL повтором не лечится.
-			return gostSearchResponse{}, backoff.Permanent(err)
+			// Сломанный URL повтором не лечится. Ошибка разбора приходит из net/http
+			// обёрнутой в *url.Error с полным адресом — её снимает gostNoURL.
+			return gostSearchResponse{}, backoff.Permanent(gostNoURL(err))
 		}
 		req.Header.Set(gostAppIDHeader, a.AppID)
 		req.Header.Set("Accept", gostAcceptHeader)
@@ -179,9 +181,10 @@ func (a *gostAPI) fetchPage(ctx context.Context, day time.Time, page, size int) 
 		if resp.StatusCode != http.StatusOK {
 			return gostSearchResponse{}, gostStatusError(resp.StatusCode)
 		}
-		if len(body) == 0 {
-			// Пустой ответ неотличим от «данных нет» и не должен выглядеть успехом.
-			// Повторяем: это сбой ответа, а не день без документов.
+		// Пустое тело (в том числе из одних пробелов) и литерал null неотличимы от
+		// «данных нет»: разбор такого ответа дал бы count = 0 и выглядел бы успехом.
+		// Повторяем — это сбой ответа, а не день без документов.
+		if trimmed := bytes.TrimSpace(body); len(trimmed) == 0 || string(trimmed) == "null" {
 			return gostSearchResponse{}, fmt.Errorf("пустое тело ответа")
 		}
 		var out gostSearchResponse
@@ -221,9 +224,12 @@ func gostTransportError(err error) error {
 	return gostNoURL(err)
 }
 
-// gostRetryAfter — RetryAfter от длительности: backoff принимает целые секунды.
+// gostRetryAfter — ошибка «повторить через d». backoff.RetryAfter принимает только целые
+// секунды, а переменные пауз — длительности, поэтому длительность передаётся как есть:
+// округление вниз потеряло бы и секундную точность настройки, и короткие тестовые паузы
+// (RetryAfterError.Duration — то самое поле, по которому backoff выдерживает паузу).
 func gostRetryAfter(d time.Duration) error {
-	return backoff.RetryAfter(int(d.Seconds()))
+	return &backoff.RetryAfterError{Duration: d}
 }
 
 // gostNoURL убирает URL из ошибки транспорта: net/http заворачивает всё в *url.Error и
