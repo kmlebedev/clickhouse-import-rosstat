@@ -26,7 +26,10 @@
 ```bash
 # 1. Создать файл секретов на хосте (один раз). Значения задаёт владелец.
 ssh palmshell 'install -m 600 /dev/null /etc/clickhouse-import-rosstat.env'
-# вписать три переменные по образцу clickhouse-import-rosstat.env.example
+# вписать переменные по образцу clickhouse-import-rosstat.env.example
+# (включая GOST_APP_ID — токен gtn.access.appid портала Росстандарта: без него падает часовой шаг
+#  gost_vehicle_safety_certificate из dagu/craw.yaml; режимные GOST_MODE/GOST_FROM/GOST_TO/
+#  GOST_SETTLE_DAYS здесь не хранят — их задаёт сам DAG)
 # токен: openssl rand -hex 32 — ОБЯЗАТЕЛЕН, без него mcp-clickhouse не стартует
 
 # 2. Развернуть
