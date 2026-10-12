@@ -88,6 +88,17 @@ const (
 	// копии строк считались бы дважды.
 	gostCountersQuery = "SELECT publication_date, uniqExact(certificate_number) FROM " + gostTable + " FINAL WHERE publication_date BETWEEN ? AND ? GROUP BY publication_date"
 
+	// gostDayNumbersQuery — номера таблицы, помеченные днём публикации: ими проверяется, что
+	// каждый номер дневного среза источника лежит в таблице именно этим днём. Один запрос на день
+	// расхождения (совпавшие дни закрываются счётчиком).
+	gostDayNumbersQuery = "SELECT certificate_number FROM " + gostTable + " FINAL WHERE publication_date = ?"
+
+	// gostNumbersQuery — какие из переданных номеров есть в таблице вообще, без привязки к дню
+	// публикации: ключ ReplacingMergeTree — (mark, type, date, certificate_number) — не хранит
+	// publication_date, поэтому перепубликованный документ лежит под более поздним днём. Список
+	// приходит одним аргументом-массивом: ? разворачивает драйвер.
+	gostNumbersQuery = "SELECT certificate_number FROM " + gostTable + " FINAL WHERE certificate_number IN (?)"
+
 	// gostInsert — запись дня. Порядок колонок — контракт с порядком Append в gostWriteDay
 	// и с порядком колонок DDL.
 	gostInsert = "INSERT INTO " + gostTable + " (mark, type, date, certificate_number, ecoclass, enginetrademark, yearofmanufacturing, nameofmanufacturer, uid, publication_date)"
@@ -421,11 +432,14 @@ func gostRunDays(ctx context.Context, conn driver.Conn, api *gostAPI, days []tim
 // gostCheckDays сверяет полноту окна, не записывая ничего: по каждому дню count ручки против
 // uniqExact(certificate_number) таблицы по дню публикации.
 //
-// Совпавшие счётчики закрывают день одним запросом. Расхождение — ещё не дыра: ручка ищет
-// текстом, и в count попадают документы, чья дата публикации на самом деле другая. Поэтому при
-// расхождении день выкачивается целиком и сравнивается длина среза после клиентского фильтра:
-// сошлась — это текстовый шум (строка отчёта), не сошлась — дыра (ошибка прогона). Так
-// «день не дочитан» и «шум» перестают быть неразличимыми.
+// Совпавшие счётчики закрывают день одним запросом. Расхождение — ещё не дыра, и разбирается по
+// номерам в три шага. Сначала день выкачивается целиком: сошлась длина среза после клиентского
+// фильтра — это текстовый шум ручки, которая ищет дату в любом поле документа. Не сошлась —
+// номера среза сверяются с номерами таблицы этого дня публикации: отсутствующих нет — расхождения
+// нет. Оставшиеся проверяются по таблице вообще: ключ не хранит publication_date, поэтому
+// документ, перепубликованный позже, лежит в таблице под более поздним днём. Такой номер —
+// перепубликация (строка отчёта и счётчик, не ошибка); номера, которого в таблице нет вовсе, —
+// настоящий пропуск и ошибка прогона.
 func gostCheckDays(ctx context.Context, conn driver.Conn, api *gostAPI, days []time.Time) (checked int64, err error) {
 	if len(days) == 0 {
 		return 0, fmt.Errorf("%s: check без дней: пустое окно", gostTable)
@@ -438,6 +452,10 @@ func gostCheckDays(ctx context.Context, conn driver.Conn, api *gostAPI, days []t
 	var (
 		problems []string
 		gaps     int
+		// repub — счётчик перепубликаций в сводке: документы (номера), найденные в таблице под
+		// другой датой публикации. День с перепубликациями, но без настоящих пропусков в дыры не
+		// идёт: каждый его сертификат в таблице есть.
+		repub int
 	)
 	for i, day := range days {
 		if i > 0 {
@@ -474,11 +492,39 @@ func gostCheckDays(ctx context.Context, conn driver.Conn, api *gostAPI, days []t
 				gostTable, label, apiCount, len(slice.Rows), stored)
 			continue
 		}
+
+		dayNumbers, nerr := gostStoredDayNumbers(ctx, conn, day)
+		if nerr != nil {
+			problems = append(problems, fmt.Sprintf("%s: номера таблицы по дню публикации не прочитаны: %v", label, nerr))
+			continue
+		}
+		missing := gostMissingNumbers(slice.Rows, dayNumbers)
+		if len(missing) == 0 {
+			log.Infof("%s: check: %s: %d против %d — все номера дневного среза есть в таблице, дыр нет",
+				gostTable, label, len(slice.Rows), stored)
+			continue
+		}
+
+		known, kerr := gostKnownNumbers(ctx, conn, missing)
+		if kerr != nil {
+			problems = append(problems, fmt.Sprintf("%s: номера таблицы не прочитаны: %v", label, kerr))
+			continue
+		}
+		realMissing, drifted := gostSplitDrift(missing, known)
+		if len(drifted) > 0 {
+			repub += len(drifted)
+			log.Warnf("%s: check: день %s: %d документов перепубликованы под другой датой публикации (например, %s), реальных пропусков %d",
+				gostTable, label, len(drifted), drifted[0], len(realMissing))
+		}
+		if len(realMissing) == 0 {
+			continue
+		}
 		gaps++
-		problems = append(problems, fmt.Sprintf("%s: в таблице %d против %d в дне источника", label, stored, len(slice.Rows)))
+		problems = append(problems, fmt.Sprintf("%s: в таблице %d против %d в дне источника, реальных пропусков %d: %s",
+			label, stored, len(slice.Rows), len(realMissing), gostNumbersHint(realMissing)))
 	}
 
-	log.Infof("%s: check: проверено %d дней, дыр %d", gostTable, checked, gaps)
+	log.Infof("%s: check: проверено %d дней, дыр %d, перепубликаций %d", gostTable, checked, gaps, repub)
 	if len(problems) > 0 {
 		return checked, fmt.Errorf("%s: check: расхождения (%d): %s", gostTable, len(problems), strings.Join(problems, "; "))
 	}
@@ -512,6 +558,100 @@ func gostStoredDayCounts(ctx context.Context, conn driver.Conn, from, to time.Ti
 		return nil, fmt.Errorf("%s: счётчики таблицы не дочитаны: %w", gostTable, err)
 	}
 	return counts, nil
+}
+
+// gostStoredDayNumbers читает номера таблицы, помеченные днём публикации day: ими проверяется,
+// что каждый номер дневного среза источника лежит в таблице именно этим днём. Один запрос на
+// день расхождения (совпавшие дни закрываются счётчиком и сюда не доходят). Обрыв обхода
+// (rows.Err) обязан быть виден: неполный набор объявил бы настоящим пропуском номер, который в
+// таблице есть.
+func gostStoredDayNumbers(ctx context.Context, conn driver.Conn, day time.Time) (map[string]struct{}, error) {
+	rows, err := conn.Query(ctx, gostDayNumbersQuery, day)
+	if err != nil {
+		return nil, fmt.Errorf("%s: номера дня публикации %s не прочитаны: %w", gostTable, day.Format(gostDateLayout), err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	numbers := make(map[string]struct{})
+	for rows.Next() {
+		var number string
+		if err = rows.Scan(&number); err != nil {
+			return nil, fmt.Errorf("%s: строка номеров дня %s не прочитана: %w", gostTable, day.Format(gostDateLayout), err)
+		}
+		numbers[number] = struct{}{}
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("%s: номера дня %s не дочитаны: %w", gostTable, day.Format(gostDateLayout), err)
+	}
+	return numbers, nil
+}
+
+// gostKnownNumbers читает, какие из номеров есть в таблице вообще, без привязки к дню публикации:
+// этим перепубликованный документ отличается от настоящего пропуска. Запрос один, и список мал —
+// только номера, отсутствующие в дне публикации.
+func gostKnownNumbers(ctx context.Context, conn driver.Conn, numbers []string) (map[string]struct{}, error) {
+	rows, err := conn.Query(ctx, gostNumbersQuery, numbers)
+	if err != nil {
+		return nil, fmt.Errorf("%s: номера таблицы не прочитаны: %w", gostTable, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	known := make(map[string]struct{}, len(numbers))
+	for rows.Next() {
+		var number string
+		if err = rows.Scan(&number); err != nil {
+			return nil, fmt.Errorf("%s: строка номеров таблицы не прочитана: %w", gostTable, err)
+		}
+		known[number] = struct{}{}
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("%s: номера таблицы не дочитаны: %w", gostTable, err)
+	}
+	return known, nil
+}
+
+// gostMissingNumbers — номера дневного среза, которых нет в множестве номеров таблицы. Порядок
+// среза сохраняется, повторы схлопываются: ключ таблицы — по номеру, и звучать в отчёте он должен
+// один раз.
+func gostMissingNumbers(rows []gostRow, tableNumbers map[string]struct{}) []string {
+	seen := make(map[string]struct{}, len(rows))
+	var missing []string
+	for _, row := range rows {
+		number := row.CertificateNumber
+		if _, ok := tableNumbers[number]; ok {
+			continue
+		}
+		if _, ok := seen[number]; ok {
+			continue
+		}
+		seen[number] = struct{}{}
+		missing = append(missing, number)
+	}
+	return missing
+}
+
+// gostSplitDrift делит отсутствующие в дне публикации номера на перепубликованные (номер в таблице
+// есть — под другой датой публикации) и настоящие пропуски (номера нет нигде). Порядок номеров
+// сохраняется: перечисление в отчёте стабильно.
+func gostSplitDrift(missing []string, known map[string]struct{}) (realMissing, republished []string) {
+	for _, number := range missing {
+		if _, ok := known[number]; ok {
+			republished = append(republished, number)
+			continue
+		}
+		realMissing = append(realMissing, number)
+	}
+	return realMissing, republished
+}
+
+// gostNumbersHint — перечисление номеров для отчёта: первые пять и остаток счётчиком, чтобы
+// строка ошибки на дне с сотнями настоящих пропусков оставалась читаемой.
+func gostNumbersHint(numbers []string) string {
+	const shown = 5
+	if len(numbers) <= shown {
+		return strings.Join(numbers, ", ")
+	}
+	return fmt.Sprintf("%s и ещё %d", strings.Join(numbers[:shown], ", "), len(numbers)-shown)
 }
 
 // gostImporter — импортёр реестра СБКТС в режимах since/full/check.

@@ -699,6 +699,118 @@ func TestGostCheckDaysTextNoiseNotGap(t *testing.T) {
 	}
 }
 
+// gostCertNumber — номер i-го документа дня: тем же форматом его собирает gostDayDoc, и по нему
+// фикстуры фейковой таблицы (dayNums/numbers) стыкуются с дневным срезом источника.
+func gostCertNumber(id int) string { return fmt.Sprintf("ТС RU А-JP.ОМ80.%05d", id) }
+
+// TestGostCheckDaysRepublicationNotGap — расхождение счётчиков объясняется перепубликацией:
+// документ лежит в таблице, но под более поздней датой публикации, потому что ключ таблицы её не
+// хранит. Такой день — не дыра: он виден строкой отчёта и счётчиком перепубликаций.
+func TestGostCheckDaysRepublicationNotGap(t *testing.T) {
+	days := []time.Time{gostTime(t, "2026-10-09")}
+	ta := gostNewTestAPI(t, gostDayServer(t, map[string]gostDaySpec{"09.10.2026": {Count: 5}}))
+	conn := &gostFakeConn{
+		counters: map[string]uint64{"2026-10-09": 3},
+		dayNums: map[string][]string{"2026-10-09": {
+			gostCertNumber(1), gostCertNumber(2), gostCertNumber(3),
+		}},
+		// Номера 4 и 5 в таблице есть, но помечены другой (более поздней) датой публикации.
+		numbers: map[string]bool{gostCertNumber(4): true, gostCertNumber(5): true},
+	}
+	logs := gostCaptureLog(t)
+
+	checked, err := gostCheckDays(context.Background(), conn, ta.api, days)
+	if err != nil {
+		t.Fatalf("перепубликация объявлена дырой: %v", err)
+	}
+	if checked != 1 {
+		t.Errorf("проверено дней %d, ожидался 1", checked)
+	}
+	for _, want := range []string{
+		"2 документов перепубликованы под другой датой публикации",
+		gostCertNumber(4),
+		"реальных пропусков 0",
+		"дыр 0, перепубликаций 2",
+	} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("отчёт о перепубликации без %q: %s", want, logs.String())
+		}
+	}
+}
+
+// TestGostCheckDaysAllNumbersStoredNoGap — каждый номер дневного среза в таблице этого дня
+// публикации есть, хотя счётчик таблицы больше среза (ручка часть своих документов текстом не
+// нашла): расхождения нет, и перепубликаций в этот день тоже нет.
+func TestGostCheckDaysAllNumbersStoredNoGap(t *testing.T) {
+	days := []time.Time{gostTime(t, "2026-10-09")}
+	ta := gostNewTestAPI(t, gostDayServer(t, map[string]gostDaySpec{"09.10.2026": {Count: 5}}))
+	conn := &gostFakeConn{
+		counters: map[string]uint64{"2026-10-09": 7},
+		dayNums: map[string][]string{"2026-10-09": {
+			gostCertNumber(1), gostCertNumber(2), gostCertNumber(3), gostCertNumber(4),
+			gostCertNumber(5), gostCertNumber(6), gostCertNumber(7),
+		}},
+	}
+	logs := gostCaptureLog(t)
+
+	checked, err := gostCheckDays(context.Background(), conn, ta.api, days)
+	if err != nil {
+		t.Fatalf("полный день объявлен расхождением: %v", err)
+	}
+	if checked != 1 {
+		t.Errorf("проверено дней %d, ожидался 1", checked)
+	}
+	if !strings.Contains(logs.String(), "все номера дневного среза есть в таблице") {
+		t.Errorf("отчёт не отмечает, что все номера дня в таблице: %s", logs.String())
+	}
+	if !strings.Contains(logs.String(), "дыр 0, перепубликаций 0") {
+		t.Errorf("сводка не названа: %s", logs.String())
+	}
+}
+
+// TestGostCheckDaysRealGapAfterRepublication — часть отсутствующих номеров дня в таблице есть под
+// другой датой (перепубликация), а одного нет вовсе: день обязан попасть в ошибку, и в списке
+// пропусков должен стоять только настоящий пропуск. Счётчик перепубликаций при этом тоже растёт.
+func TestGostCheckDaysRealGapAfterRepublication(t *testing.T) {
+	days := []time.Time{gostTime(t, "2026-10-09")}
+	ta := gostNewTestAPI(t, gostDayServer(t, map[string]gostDaySpec{"09.10.2026": {Count: 5}}))
+	conn := &gostFakeConn{
+		counters: map[string]uint64{"2026-10-09": 3},
+		dayNums: map[string][]string{"2026-10-09": {
+			gostCertNumber(1), gostCertNumber(2), gostCertNumber(3),
+		}},
+		// Номер 4 — перепубликован, номера 5 в таблице нет вовсе.
+		numbers: map[string]bool{gostCertNumber(4): true},
+	}
+	logs := gostCaptureLog(t)
+
+	checked, err := gostCheckDays(context.Background(), conn, ta.api, days)
+	if err == nil {
+		t.Fatal("настоящий пропуск не стал ошибкой check")
+	}
+	if checked != 1 {
+		t.Errorf("проверено дней %d, ожидался 1", checked)
+	}
+	if !strings.Contains(err.Error(), "2026-10-09") || !strings.Contains(err.Error(), gostCertNumber(5)) {
+		t.Errorf("ошибка %q не называет день и настоящий пропуск %s", err, gostCertNumber(5))
+	}
+	if !strings.Contains(err.Error(), "реальных пропусков 1") {
+		t.Errorf("ошибка %q не называет число настоящих пропусков", err)
+	}
+	if strings.Contains(err.Error(), gostCertNumber(4)) {
+		t.Errorf("перепубликованный номер объявлен пропуском: %q", err)
+	}
+	for _, want := range []string{
+		"перепубликованы под другой датой публикации",
+		"реальных пропусков 1",
+		"дыр 1, перепубликаций 1",
+	} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("отчёт без %q: %s", want, logs.String())
+		}
+	}
+}
+
 func TestGostCheckDaysSkippedDayFails(t *testing.T) {
 	days := []time.Time{gostTime(t, "2026-10-08"), gostTime(t, "2026-10-09")}
 	ta := gostNewTestAPI(t, gostDayServer(t, map[string]gostDaySpec{
@@ -987,8 +1099,9 @@ func (r *gostFakeRow) Err() error { return r.err }
 
 // gostFakeConn — фейковое соединение импортёра: встраивание driver.Conn оставляет
 // неиспользуемые методы nil (паника, если тест зайдёт дальше сценария), а переопределены ровно
-// четыре метода прогона: Exec (DDL), QueryRow (якорь since и легаси-строки), Query (счётчики
-// check) и PrepareBatch (запись дня). Ответы выбираются по виду запроса, а не по номеру вызова.
+// четыре метода прогона: Exec (DDL), QueryRow (якорь since и легаси-строки), Query (счётчики и
+// номера check) и PrepareBatch (запись дня). Ответы выбираются по виду запроса, а не по номеру
+// вызова.
 type gostFakeConn struct {
 	driver.Conn
 	mu       sync.Mutex
@@ -996,9 +1109,11 @@ type gostFakeConn struct {
 	maxDate  *time.Time // NULL — пустая таблица: строк с настоящей датой выдачи нет
 	maxPub   *time.Time // NULL — настоящих publication_date нет (только дефолт 1970-01-01)
 	legacy   uint64
-	counters map[string]uint64 // счётчики uniqExact(certificate_number) по дню publication_date
-	queryErr error             // Query/QueryRow вернут её вместо строк
-	rowsErr  error             // её отдаст rows.Err()
+	counters map[string]uint64   // счётчики uniqExact(certificate_number) по дню publication_date
+	dayNums  map[string][]string // номера таблицы по дню publication_date (запрос номеров дня)
+	numbers  map[string]bool     // номера, встречающиеся в таблице вообще (запрос перепубликаций)
+	queryErr error               // Query/QueryRow вернут её вместо строк
+	rowsErr  error               // её отдаст rows.Err()
 	batches  []*gostFakeBatch
 }
 
@@ -1039,13 +1154,34 @@ func (c *gostFakeConn) Query(_ context.Context, query string, args ...any) (driv
 	if c.queryErr != nil {
 		return nil, c.queryErr
 	}
-	if strings.Contains(query, "uniqExact(certificate_number)") {
+	switch {
+	case strings.Contains(query, "uniqExact(certificate_number)"):
 		var from, to time.Time
 		if len(args) == 2 {
 			from, _ = args[0].(time.Time)
 			to, _ = args[1].(time.Time)
 		}
 		return &gostFakeRows{setters: gostCounterSetters(c.counters, from, to), err: c.rowsErr}, nil
+	case strings.Contains(query, "WHERE publication_date = ?"):
+		// Номера дня публикации: аргумент — сам день, набор — из dayNums.
+		if len(args) != 1 {
+			return nil, fmt.Errorf("фейковый запрос номеров дня: аргументов %d (want 1)", len(args))
+		}
+		day, ok := args[0].(time.Time)
+		if !ok {
+			return nil, fmt.Errorf("фейковый запрос номеров дня: аргумент %T (want time.Time)", args[0])
+		}
+		return &gostFakeRows{setters: gostNumberSetters(c.dayNums[day.Format(gostDateLayout)]), err: c.rowsErr}, nil
+	case strings.Contains(query, "certificate_number IN (?)"):
+		// Номера, встречающиеся в таблице вообще: список приходит одним аргументом-срезом.
+		if len(args) != 1 {
+			return nil, fmt.Errorf("фейковый запрос номеров таблицы: аргументов %d (want 1)", len(args))
+		}
+		numbers, ok := args[0].([]string)
+		if !ok {
+			return nil, fmt.Errorf("фейковый запрос номеров таблицы: аргумент %T (want []string)", args[0])
+		}
+		return &gostFakeRows{setters: gostKnownNumberSetters(c.numbers, numbers), err: c.rowsErr}, nil
 	}
 	return nil, fmt.Errorf("gostFakeConn: неожиданный запрос %q", query)
 }
@@ -1111,6 +1247,51 @@ func gostCounterSetters(counters map[string]uint64, from, to time.Time) []func(d
 				return fmt.Errorf("фейковые счётчики: приёмник uniqExact %T (want *uint64)", dest[1])
 			}
 			*d, *n = day, count
+			return nil
+		})
+	}
+	return setters
+}
+
+// gostNumberSetters — строки ответа запроса номеров дня публикации: по одному *string на номер.
+func gostNumberSetters(numbers []string) []func(dest ...any) error {
+	setters := make([]func(dest ...any) error, 0, len(numbers))
+	for _, number := range numbers {
+		// Переменные цикла в Go ≥1.22 у каждой итерации свои: замыкание захватывает их
+		// безопасно, копия не нужна.
+		setters = append(setters, func(dest ...any) error {
+			if len(dest) != 1 {
+				return fmt.Errorf("фейковые номера дня: приёмников %d (want 1)", len(dest))
+			}
+			n, ok := dest[0].(*string)
+			if !ok {
+				return fmt.Errorf("фейковые номера дня: приёмник certificate_number %T (want *string)", dest[0])
+			}
+			*n = number
+			return nil
+		})
+	}
+	return setters
+}
+
+// gostKnownNumberSetters — строки ответа запроса «какие номера есть в таблице вообще»: только те
+// из запрошенных, что лежат в множестве таблицы, в порядке запроса (порядок строк ответа в
+// ClickHouse не гарантирован, и тест не должен зависеть от него).
+func gostKnownNumberSetters(known map[string]bool, numbers []string) []func(dest ...any) error {
+	setters := make([]func(dest ...any) error, 0, len(numbers))
+	for _, number := range numbers {
+		if !known[number] {
+			continue
+		}
+		setters = append(setters, func(dest ...any) error {
+			if len(dest) != 1 {
+				return fmt.Errorf("фейковые номера таблицы: приёмников %d (want 1)", len(dest))
+			}
+			n, ok := dest[0].(*string)
+			if !ok {
+				return fmt.Errorf("фейковые номера таблицы: приёмник certificate_number %T (want *string)", dest[0])
+			}
+			*n = number
 			return nil
 		})
 	}
