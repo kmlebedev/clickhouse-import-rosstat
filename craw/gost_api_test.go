@@ -287,21 +287,34 @@ func TestGostRowsFromDocsFilters(t *testing.T) {
 		t.Fatalf("фикстура: дата публикации первого документа = %q, ожидалась %q", got, gostTestPublication)
 	}
 
-	// Причина пропуска у каждого документа фикстуры своя: чужой день публикации, нет даты
-	// выдачи, нет номера сертификата. Первый документ — единственный полный и свой.
-	want := []bool{true, false, false, false}
-	for i, ok := range want {
-		if _, got := gostRowFromDoc(gostTestDay, resp.Data[i]); got != ok {
-			t.Errorf("документ %d (%s): в срезе = %v, ожидалось %v", i, resp.Data[i].Fields.Product, got, ok)
+	// Причина пропуска у каждого документа фикстуры своя: первый — полный и свой, второй —
+	// чужой день публикации (дата разбирается), третий и четвёртый — невалидные (нет даты
+	// выдачи / пуст номер). Разделение причин — контракт: по нему gostRunDays решает, валить
+	// прогон или считать день без своих публикаций.
+	want := []gostDocReject{gostDocAccepted, gostDocForeign, gostDocInvalid, gostDocInvalid}
+	for i, reject := range want {
+		if _, got := gostRowFromDoc(gostTestDay, resp.Data[i]); got != reject {
+			t.Errorf("документ %d (%s): решение = %v, ожидалось %v", i, resp.Data[i].Fields.Product, got, reject)
 		}
 	}
 
-	rows, skipped := gostRowsFromDocs(gostTestDay, resp.Data)
+	rows, skipped, invalid := gostRowsFromDocs(gostTestDay, resp.Data)
 	if len(rows) != 1 {
 		t.Fatalf("строк %d, ожидалась 1: %+v", len(rows), rows)
 	}
 	if skipped != 3 {
 		t.Errorf("skipped = %d, ожидалось 3", skipped)
+	}
+	if invalid != 2 {
+		t.Errorf("invalid = %d, ожидалось 2 (нет даты выдачи и пуст номер): чужая дата невалидной не считается", invalid)
+	}
+
+	// Битая дата публикации — тоже «невалидный», а не «чужой»: день по такому документу не
+	// разобрать, и на штатное окно текстового поиска это не спишешь.
+	brokenPub := resp.Data[0]
+	brokenPub.Fields.DateOfPublication = "мусор"
+	if row, reject := gostRowFromDoc(gostTestDay, brokenPub); reject != gostDocInvalid {
+		t.Errorf("документ с битой датой публикации: решение = %v, ожидался gostDocInvalid (%+v)", reject, row)
 	}
 
 	// Проверка «нет даты выдачи» изолируется отдельно: у документа 2 фикстуры пусты и дата,
@@ -310,12 +323,13 @@ func TestGostRowsFromDocsFilters(t *testing.T) {
 	// пропуска именно nil-дата, и без этой проверки документ обязан попасть в срез.
 	noIssueDate := resp.Data[2]
 	noIssueDate.Fields.NumberOfCertificate = "ТС RU А-DE.РА15.99999"
-	if row, ok := gostRowFromDoc(gostTestDay, noIssueDate); ok {
-		t.Errorf("документ без даты выдачи попал в срез: %+v", row)
+	if row, reject := gostRowFromDoc(gostTestDay, noIssueDate); reject != gostDocInvalid {
+		t.Errorf("документ без даты выдачи: решение = %v, ожидался gostDocInvalid (%+v)", reject, row)
 	}
 	withNoIssueDate := append(append([]gostDoc(nil), resp.Data...), noIssueDate)
-	if rows, skipped = gostRowsFromDocs(gostTestDay, withNoIssueDate); len(rows) != 1 || skipped != 4 {
-		t.Errorf("с документом без даты выдачи: строк %d, skipped %d, ожидалось 1 и 4", len(rows), skipped)
+	if rows, skipped, invalid = gostRowsFromDocs(gostTestDay, withNoIssueDate); len(rows) != 1 || skipped != 4 || invalid != 3 {
+		t.Errorf("с документом без даты выдачи: строк %d, skipped %d, invalid %d, ожидалось 1, 4 и 3",
+			len(rows), skipped, invalid)
 	}
 
 	// Строка собирается целиком: и сдвиг даты выдачи в МСК, и год, и все поля карточки.
@@ -436,6 +450,33 @@ func TestGostDayClientFilterCountsSkipped(t *testing.T) {
 	}
 	if slice.Skipped != 2 {
 		t.Errorf("Skipped = %d, ожидалось 2", slice.Skipped)
+	}
+	// Чужие дни публикации — не поломка формата: невалидных документов в дне нет, и день с
+	// таким срезом не считается ошибкой (см. gostRunDays).
+	if slice.Invalid != 0 {
+		t.Errorf("Invalid = %d, ожидалось 0: чужая дата публикации — не невалидный документ", slice.Invalid)
+	}
+}
+
+// TestGostDayCountsInvalidDocs — день целиком: один свой документ, один чужого дня публикации и
+// два невалидных (без даты выдачи, пуст номер). Разделение Skipped/Invalid — контракт с
+// gostRunDays: по Invalid решается, валить прогон или считать день без своих публикаций.
+func TestGostDayCountsInvalidDocs(t *testing.T) {
+	docs := gostDayFixture(t).Data
+	ta := gostNewTestAPI(t, gostPagesHandler(map[int][]byte{1: gostTestBody(t, len(docs), docs)}))
+
+	slice, err := ta.api.day(context.Background(), gostTestDay)
+	if err != nil {
+		t.Fatalf("day: %v", err)
+	}
+	if len(slice.Rows) != 1 {
+		t.Errorf("строк %d, ожидалась 1", len(slice.Rows))
+	}
+	if slice.Skipped != 3 {
+		t.Errorf("Skipped = %d, ожидалось 3 (все отброшенные)", slice.Skipped)
+	}
+	if slice.Invalid != 2 {
+		t.Errorf("Invalid = %d, ожидалось 2 (нет даты выдачи, пуст номер)", slice.Invalid)
 	}
 }
 

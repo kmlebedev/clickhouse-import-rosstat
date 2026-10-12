@@ -380,14 +380,23 @@ func gostRunDays(ctx context.Context, conn driver.Conn, api *gostAPI, days []tim
 				gostTable, label, slice.Skipped, slice.Count)
 		}
 		if len(slice.Rows) == 0 {
-			// В ручке совпадения есть, а в срез дня не попало ни одного документа: так выглядит
-			// смена формата dateofpublication (ручка ищет текстом, и день среза перестал
-			// совпадать с ответом). Это ошибка прогона, а не пустой день: молча пропущенный
-			// день оставил бы dagu зелёным при потерянных данных.
-			errText := fmt.Sprintf("день %s: все %d документов отброшены фильтром публикации (Skipped %d) — проверьте формат даты публикации/ручку",
-				label, slice.Count, slice.Skipped)
-			log.Errorf("%s: %s", gostTable, errText)
-			failed = append(failed, errText)
+			// Пустой срез при непустом count — две разные причины, и путать их нельзя.
+			if slice.Invalid > 0 {
+				// Часть документов дня не разобрана вовсе (нет даты выдачи, пуст номер, битая
+				// дата публикации) — это поломка формата или данных, а не свойство источника;
+				// молча пропущенный день оставил бы dagu зелёным при потерянных данных.
+				errText := fmt.Sprintf("день %s: %d документов не разобраны (отброшено %d из %d) — проверьте поля dateofissueofcertificate/numberofcertificate/dateofpublication",
+					label, slice.Invalid, slice.Skipped, slice.Count)
+				log.Errorf("%s: %s", gostTable, errText)
+				failed = append(failed, errText)
+				continue
+			}
+			// Все отброшенные — документы чужой даты публикации: текстовый query ручки матчит
+			// дату в любом поле, поэтому у дня может не быть своих публикаций, а count при этом
+			// ненулевой. Это штатное поведение источника, а не сбой: день без публикаций не
+			// ошибка (иначе часовой DAG краснел бы на каждом таком дне, пока окно его не проедет).
+			log.Warnf("%s: день %s: публикаций нет — %d документов ручки относятся к другим датам публикации",
+				gostTable, label, slice.Count)
 			continue
 		}
 

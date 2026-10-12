@@ -136,12 +136,29 @@ type gostRow struct {
 
 // gostDaySlice — дневной срез: строки дня, всего совпадений в ручке (Count) и сколько
 // документов страниц отбросил клиентский фильтр (Skipped). Skipped нужен как датчик:
-// резкий рост доли отброшенных — сигнал, что сменился формат dateofpublication.
+// резкий рост доли отброшенных — сигнал, что сменился формат dateofpublication. Invalid — из
+// отброшенных те, что не разобраны вовсе: по нему вызывающий различает штатный «день без своих
+// публикаций» (чужие даты публикации — обычное окно текстового поиска) и поломку формата/данных.
 type gostDaySlice struct {
 	Rows    []gostRow
 	Count   int
 	Skipped int
+	Invalid int
 }
+
+// gostDocReject — почему документ не попал в срез дня.
+type gostDocReject int
+
+const (
+	// gostDocAccepted — документ дня: попал в срез.
+	gostDocAccepted gostDocReject = iota
+	// gostDocForeign — дата публикации разбирается, но указывает на другой день: штатный ответ
+	// ручки, которая ищет дату в любом поле документа.
+	gostDocForeign
+	// gostDocInvalid — документ не разобран: нет даты выдачи, пуст номер сертификата или
+	// неразбираемая (пустая) дата публикации.
+	gostDocInvalid
+)
 
 // fetchPage забирает одну страницу дня. Повторы и классификация отказов — здесь:
 // transport-сбой и неполный ответ повторяемы, отказ доступа (401/403) и прочие 4xx —
@@ -276,8 +293,8 @@ func (a *gostAPI) day(ctx context.Context, day time.Time) (gostDaySlice, error) 
 			len(unique), first.Count, dropped)
 	}
 
-	rows, skipped := gostRowsFromDocs(day, unique)
-	return gostDaySlice{Rows: rows, Count: first.Count, Skipped: skipped}, nil
+	rows, skipped, invalid := gostRowsFromDocs(day, unique)
+	return gostDaySlice{Rows: rows, Count: first.Count, Skipped: skipped, Invalid: invalid}, nil
 }
 
 // gostUniqueDocs оставляет по одному документу на id, сохраняя порядок появления, и считает
@@ -351,20 +368,24 @@ func gostYear(raw string) uint16 {
 	return uint16(year)
 }
 
-// gostRowFromDoc собирает строку витрины из документа. false — документ не относится к
-// срезу: нет даты выдачи, пуст номер сертификата или дата публикации не та (ручка ищет
-// по своему окну и отдаёт документы соседних дней).
-func gostRowFromDoc(day time.Time, d gostDoc) (gostRow, bool) {
+// gostRowFromDoc собирает строку витрины из документа. Причина отказа различается: чужой день
+// публикации — штатный ответ ручки (она ищет дату в любом поле и отдаёт документы соседних дней),
+// а невалидный документ — поломка данных или формата (нет даты выдачи, пуст номер сертификата,
+// неразбираемая дата публикации). Вызывающий решает по этим причинам по-разному (см. gostRunDays).
+func gostRowFromDoc(day time.Time, d gostDoc) (gostRow, gostDocReject) {
 	f := d.Fields
 	if f.DateOfIssueOfCertificate == nil {
-		return gostRow{}, false
+		return gostRow{}, gostDocInvalid
 	}
 	if strings.TrimSpace(f.NumberOfCertificate) == "" {
-		return gostRow{}, false
+		return gostRow{}, gostDocInvalid
 	}
 	pub, ok := gostParsePublicationDay(f.DateOfPublication)
-	if !ok || !gostSameDay(pub, day) {
-		return gostRow{}, false
+	if !ok {
+		return gostRow{}, gostDocInvalid
+	}
+	if !gostSameDay(pub, day) {
+		return gostRow{}, gostDocForeign
 	}
 	return gostRow{
 		Mark:                f.Product,
@@ -377,20 +398,27 @@ func gostRowFromDoc(day time.Time, d gostDoc) (gostRow, bool) {
 		NameOfManufacturer:  f.NameOfManufacturer,
 		UID:                 f.UniqueIdentifier,
 		PublicationDate:     pub,
-	}, true
+	}, gostDocAccepted
 }
 
-// gostRowsFromDocs — построчный фильтр дня: строки среза и число отброшенных документов.
-func gostRowsFromDocs(day time.Time, docs []gostDoc) (rows []gostRow, skipped int) {
+// gostRowsFromDocs — построчный фильтр дня: строки среза, общее число отброшенных документов и
+// из них невалидные. Чужой день публикации и неразобранный документ считаются разными вещами:
+// первый — штатное поведение текстового поиска, второй — поломка, и вызывающий решает по ним
+// по-разному (см. gostRunDays).
+func gostRowsFromDocs(day time.Time, docs []gostDoc) (rows []gostRow, skipped, invalid int) {
 	for _, d := range docs {
-		row, ok := gostRowFromDoc(day, d)
-		if !ok {
+		row, reject := gostRowFromDoc(day, d)
+		switch reject {
+		case gostDocAccepted:
+			rows = append(rows, row)
+		case gostDocInvalid:
+			invalid++
 			skipped++
-			continue
+		default:
+			skipped++
 		}
-		rows = append(rows, row)
 	}
-	return rows, skipped
+	return rows, skipped, invalid
 }
 
 // gostSameDay сравнивает календарные дни: время суток в дате публикации и в срезе не значит
