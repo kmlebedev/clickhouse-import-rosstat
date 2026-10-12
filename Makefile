@@ -58,7 +58,7 @@ STAGING_BIN_DIR  ?= /root/.local/bin
 STAGING_ENV_FILE ?= /etc/clickhouse-import-rosstat.env
 DAGU_VERSION     ?= v2.18.2
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-up grafana-down grafana-deploy-test grafana-check
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-check
 
 all: lint test build build-ingest
 
@@ -346,6 +346,20 @@ mcp-user-staging:
 # повторный прогон не должен менять файл (иначе CI-проверка diff вечно красная).
 grafana-build:
 	cd grafana && go run . -out ../dashboard/gold-thesis.json
+
+# Валидация дашборда как кода: vet + тесты модуля grafana/ (в т.ч. таблица негативных правил Validate).
+# Серверная `gcx resources validate` в цель НЕ входит: gcx 1.5.0 проверяет ресурс на живом инстансе
+# (server-side dry-run), то есть требует сервер, org-id и креды — в CI секретов нет и шаг всегда падал бы.
+# Рабочая форма проверена живьём на стенде 13.2.3 (gcx 1.5.0) и оставлена тут, а не в рецепте:
+#   GRAFANA_SERVER=$(GRAFANA_TEST_URL) GRAFANA_ORG_ID=$(GRAFANA_ORG_ID) \
+#     gcx resources validate dashboards --path dashboard/gold-thesis.json   # ✔ No errors found
+# Без конфига/кредов команда падает: «context references no stack with grafana config» (exit 1),
+# с неверными кредами — 401 (exit 3); basic auth поддержан (GRAFANA_USER/GRAFANA_PASSWORD).
+# Офлайновая альтернатива в CI (тоже gcx, без секретов) — линтер по файлу артефакта:
+#   gcx dev lint run --disable uneditable-dashboard --disable panel-title-description \
+#     dashboard/gold-thesis.json
+grafana-validate:
+	cd grafana && go vet ./... && go test ./...
 
 # Локальный стенд Grafana для проверки дашборда: тот же провижининг, что уедет в деплой.
 # Плагин ставится CLI Grafana в $(GF_PLUGINS) (флаг --pluginsDir), сервер читает его
