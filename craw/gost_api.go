@@ -40,9 +40,12 @@ const (
 
 	// gostQueryDayLayout — формат query-параметра: ручка ищет по дате публикации.
 	gostQueryDayLayout = "02.01.2006"
-	// gostPublicationLayout — префикс dateofpublication ("11.10.2026 00:00:00 ZE3"):
-	// маркер пояса в строке информации не несёт, дата берётся по календарю.
-	gostPublicationLayout = "02.01.2006 15:04:05"
+	// gostPublicationLayout — что разбирается из dateofpublication: только календарный день.
+	// Источник отдаёт две наблюдаемые формы — "11.10.2026 00:00:00 ZE3" (с временем и маркером
+	// пояса, который у всех записей одинаков и информации не несёт) и чистое "28.03.2024"; обе
+	// значат один и тот же день, поэтому время и зона не разбираются вовсе, а требуется лишь
+	// дата в начале строки.
+	gostPublicationLayout = "02.01.2006"
 	// gostAppIDHeader — заголовок с токеном из JS-конфига страницы реестра. Здесь имя
 	// заголовка, не значение: сам токен живёт только в окружении (правило 1 проекта).
 	gostAppIDHeader = "gtn.access.appid"
@@ -340,18 +343,24 @@ func gostMSKDate(ms int64) time.Time {
 	return time.UnixMilli(ms).UTC().Add(3 * time.Hour).Truncate(24 * time.Hour)
 }
 
-// gostParsePublicationDay разбирает dateofpublication ("11.10.2026 00:00:00 ZE3") до дня.
-// Строка читается только до конца даты и времени: маркер пояса у всех записей одинаков и
-// информации не несёт. Короткая или битая строка — ok=false (документ не наш).
+// gostParsePublicationDay разбирает dateofpublication до дня. Принимаются обе наблюдаемые живьём
+// формы: "11.10.2026 00:00:00 ZE3" и чистое "28.03.2024" (в июньском прогоне 2026 года такие
+// документы ручка отдавала вперемешку с обычными). Хвост после даты допускается только начиная с
+// пробела — время и маркер пояса разбирать незачем (они у всех записей одинаковы и информации не
+// несут), а мусор вида "28.03.2024xyz" остаётся невалидным. Короткая или битая строка — ok=false.
 func gostParsePublicationDay(s string) (time.Time, bool) {
+	s = strings.TrimSpace(s)
 	if len(s) < len(gostPublicationLayout) {
 		return time.Time{}, false
 	}
-	t, err := time.Parse(gostPublicationLayout, s[:len(gostPublicationLayout)])
+	day, err := time.Parse(gostPublicationLayout, s[:len(gostPublicationLayout)])
 	if err != nil {
 		return time.Time{}, false
 	}
-	return t, true
+	if rest := s[len(gostPublicationLayout):]; rest != "" && !strings.HasPrefix(rest, " ") {
+		return time.Time{}, false
+	}
+	return day, true
 }
 
 // gostYear переводит год выпуска в число. В источнике это строка, причём "16", "н/д" и ""

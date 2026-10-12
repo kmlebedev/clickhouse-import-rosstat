@@ -373,11 +373,11 @@ func gostRunDays(ctx context.Context, conn driver.Conn, api *gostAPI, days []tim
 			continue
 		}
 		if slice.Skipped > 0 {
-			// Ненулевой Skipped — датчик: клиентский фильтр по дате публикации отбросил
-			// документы, то есть ручка начала отдавать чужое окно. Резкий рост доли — смена
-			// формата dateofpublication, и день «похудеет» молча.
-			log.Warnf("%s: день %s: отброшено документов чужой даты публикации: %d из %d",
-				gostTable, label, slice.Skipped, slice.Count)
+			// Разбивка обязательна: «чужой даты» — штатное окно текстового поиска, «невалидных» —
+			// поломка формата или данных, и по одному общему Skipped их не различить (у непустого
+			// дня невалидные документы иначе видны только этим счётчиком).
+			log.Warnf("%s: день %s: отброшено %d документов из %d (чужой даты: %d, невалидных: %d)",
+				gostTable, label, slice.Skipped, slice.Count, slice.Skipped-slice.Invalid, slice.Invalid)
 		}
 		if len(slice.Rows) == 0 {
 			// Пустой срез при непустом count — две разные причины, и путать их нельзя.
@@ -385,8 +385,8 @@ func gostRunDays(ctx context.Context, conn driver.Conn, api *gostAPI, days []tim
 				// Часть документов дня не разобрана вовсе (нет даты выдачи, пуст номер, битая
 				// дата публикации) — это поломка формата или данных, а не свойство источника;
 				// молча пропущенный день оставил бы dagu зелёным при потерянных данных.
-				errText := fmt.Sprintf("день %s: %d документов не разобраны (отброшено %d из %d) — проверьте поля dateofissueofcertificate/numberofcertificate/dateofpublication",
-					label, slice.Invalid, slice.Skipped, slice.Count)
+				errText := fmt.Sprintf("день %s: %d документов не разобраны (отброшено %d из %d: чужой даты %d, невалидных %d) — проверьте поля dateofissueofcertificate/numberofcertificate/dateofpublication",
+					label, slice.Invalid, slice.Skipped, slice.Count, slice.Skipped-slice.Invalid, slice.Invalid)
 				log.Errorf("%s: %s", gostTable, errText)
 				failed = append(failed, errText)
 				continue
@@ -395,8 +395,8 @@ func gostRunDays(ctx context.Context, conn driver.Conn, api *gostAPI, days []tim
 			// дату в любом поле, поэтому у дня может не быть своих публикаций, а count при этом
 			// ненулевой. Это штатное поведение источника, а не сбой: день без публикаций не
 			// ошибка (иначе часовой DAG краснел бы на каждом таком дне, пока окно его не проедет).
-			log.Warnf("%s: день %s: публикаций нет — %d документов ручки относятся к другим датам публикации",
-				gostTable, label, slice.Count)
+			log.Warnf("%s: день %s: публикаций нет — %d документов ручки относятся к другим датам публикации (чужой даты: %d, невалидных: %d)",
+				gostTable, label, slice.Count, slice.Skipped-slice.Invalid, slice.Invalid)
 			continue
 		}
 

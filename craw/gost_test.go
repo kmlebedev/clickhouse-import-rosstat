@@ -30,8 +30,11 @@ import (
 const gostIssueMS int64 = 1791493200000
 
 // gostForeignPublication — дата публикации «чужого» документа: ручка ищет текстом и отдаёт
-// документы соседних окон, а клиентский фильтр дня их отбрасывает.
-const gostForeignPublication = "01.01.2020 00:00:00 ZE3"
+// документы соседних окон, а клиентский фильтр дня их отбрасывает. Форма — чистая дата без
+// времени и зоны: именно так выглядел документ, уронивший живой июньский прогон 2026 года
+// (одна такая дата среди 35 обычных делала день «невалидным»), поэтому тесты обвязки гоняют
+// эту форму через весь путь от разбора до решения по дню.
+const gostForeignPublication = "01.01.2020"
 
 // gostTestNow — подменённые часы прогона: 12.10.2026 12:00 UTC, то есть «вчера МСК» = 11.10.2026
 // (МСК = UTC+3, дата прогона 12.10.2026).
@@ -525,8 +528,8 @@ func TestGostRunDaysForeignDateOnlyDayWarns(t *testing.T) {
 	if batches := conn.batchList(); len(batches) != 1 {
 		t.Errorf("батчей %d, ожидался 1: день без своих публикаций не пишется", len(batches))
 	}
-	if !strings.Contains(logs.String(), "публикаций нет — 4 документов ручки относятся к другим датам публикации") {
-		t.Errorf("день без своих публикаций не отмечен warn-ом: %s", logs.String())
+	if !strings.Contains(logs.String(), "публикаций нет — 4 документов ручки относятся к другим датам публикации (чужой даты: 4, невалидных: 0)") {
+		t.Errorf("день без своих публикаций не отмечен warn-ом с разбивкой: %s", logs.String())
 	}
 	if strings.Contains(logs.String(), "не разобраны") {
 		t.Errorf("чужие даты объявлены невалидными документами: %s", logs.String())
@@ -562,6 +565,61 @@ func TestGostRunDaysInvalidDocsFail(t *testing.T) {
 	}
 	if batches := conn.batchList(); len(batches) != 1 {
 		t.Errorf("батчей %d, ожидался 1: сбойный день не пишется, следующий пишется", len(batches))
+	}
+}
+
+// TestGostRunDaysWarnsInvalidBreakdown — невалидные документы видны и у дня с непустым срезом:
+// warn печатает разбивку отброшенных, иначе поломка формата тонула бы в общем Skipped.
+func TestGostRunDaysWarnsInvalidBreakdown(t *testing.T) {
+	days := []time.Time{gostTime(t, "2026-10-05")}
+	// Один свой документ, один чужой даты и один невалидный (нет даты выдачи).
+	ta := gostNewTestAPI(t, gostDayServer(t, map[string]gostDaySpec{
+		"05.10.2026": {Count: 3, Invalid: 1, Noise: 1},
+	}))
+	conn := &gostFakeConn{}
+	logs := gostCaptureLog(t)
+
+	count, err := gostRunDays(context.Background(), conn, ta.api, days)
+	if err != nil {
+		t.Fatalf("день с одним невалидным документом уронил прогон (срез непустой): %v", err)
+	}
+	if count != 1 {
+		t.Errorf("записано строк %d, ожидалась 1", count)
+	}
+	for _, want := range []string{"чужой даты: 1, невалидных: 1", "отброшено 2 документов из 3"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("warn дня без %q: %s", want, logs.String())
+		}
+	}
+}
+
+// TestGostRunDaysEmptyDayWarnShowsBreakdown — у дня с пустым срезом warn называет обе цифры.
+// Fail-loud при этом НЕ ослаблен: невалидный документ в пустом дне — ошибка прогона (правило
+// «срез пуст и Invalid > 0»), и день остаётся в списке неудачных; чужие даты в том же warn
+// печатаются рядом как отдельная причина пропуска.
+func TestGostRunDaysEmptyDayWarnShowsBreakdown(t *testing.T) {
+	// Один документ из 36 невалиден (нет даты выдачи), остальные 35 — чужих дат публикации.
+	days := []time.Time{gostTime(t, "2026-10-05")}
+	ta := gostNewTestAPI(t, gostDayServer(t, map[string]gostDaySpec{
+		"05.10.2026": {Count: 36, Invalid: 1, Noise: 35},
+	}))
+	conn := &gostFakeConn{}
+	logs := gostCaptureLog(t)
+
+	_, err := gostRunDays(context.Background(), conn, ta.api, days)
+	if !strings.Contains(logs.String(), "чужой даты: 35, невалидных: 1") {
+		t.Errorf("warn дня без разбивки: %s", logs.String())
+	}
+	if err == nil || !strings.Contains(err.Error(), "2026-10-05") {
+		t.Fatalf("невалидный документ в пустом дне обязан валить день: %v", err)
+	}
+	for _, want := range []string{"чужой даты 35, невалидных 1", "1 документов не разобраны"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("ошибка дня без %q: %v", want, err)
+		}
+	}
+	if batches := conn.batchList(); len(batches) != 0 {
+		t.Errorf("батчей %d, ожидалось 0: писать нечего", len(batches))
 	}
 }
 
