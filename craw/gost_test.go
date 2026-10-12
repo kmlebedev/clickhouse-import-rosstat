@@ -528,7 +528,7 @@ func TestGostRunDaysForeignDateOnlyDayWarns(t *testing.T) {
 	if batches := conn.batchList(); len(batches) != 1 {
 		t.Errorf("батчей %d, ожидался 1: день без своих публикаций не пишется", len(batches))
 	}
-	if !strings.Contains(logs.String(), "публикаций нет — 4 документов ручки относятся к другим датам публикации (чужой даты: 4, невалидных: 0)") {
+	if !strings.Contains(logs.String(), "публикаций нет — отброшено 4 из 4 (чужой даты: 4, невалидных: 0)") {
 		t.Errorf("день без своих публикаций не отмечен warn-ом с разбивкой: %s", logs.String())
 	}
 	if strings.Contains(logs.String(), "не разобраны") {
@@ -536,23 +536,25 @@ func TestGostRunDaysForeignDateOnlyDayWarns(t *testing.T) {
 	}
 }
 
-func TestGostRunDaysInvalidDocsFail(t *testing.T) {
+// TestGostRunDaysAllInvalidDocsFail — невалиден КАЖДЫЙ документ дня (Invalid == Count): это
+// систематическая поломка формата или данных, и день обязан попасть в ошибку прогона. Именно
+// этот случай удерживает правило «fail loud» — частичная невалидность дня прогон не роняет.
+func TestGostRunDaysAllInvalidDocsFail(t *testing.T) {
 	days := []time.Time{gostTime(t, "2026-10-05"), gostTime(t, "2026-10-06")}
-	// Один документ дня невалиден (нет даты выдачи), остальные — чужих дат: срез пуст, и это
-	// поломка данных, а не штатное окно поиска — день обязан попасть в ошибку прогона.
+	// Ни одного документа с датой выдачи: срез пуст, Invalid == Count.
 	ta := gostNewTestAPI(t, gostDayServer(t, map[string]gostDaySpec{
-		"05.10.2026": {Count: 3, Invalid: 1, Noise: 2},
+		"05.10.2026": {Count: 3, Invalid: 3},
 		"06.10.2026": {Count: 1},
 	}))
 	conn := &gostFakeConn{}
 
 	count, err := gostRunDays(context.Background(), conn, ta.api, days)
 	if err == nil {
-		t.Fatal("день с невалидным документом не попал в ошибку прогона")
+		t.Fatal("день, не разобранный целиком, не попал в ошибку прогона")
 	}
 	for _, want := range []string{
 		"2026-10-05",
-		"1 документов не разобраны",
+		"все 3 документов дня невалидны",
 		"не прочитаны дни (1)",
 	} {
 		if !strings.Contains(err.Error(), want) {
@@ -593,11 +595,11 @@ func TestGostRunDaysWarnsInvalidBreakdown(t *testing.T) {
 	}
 }
 
-// TestGostRunDaysEmptyDayWarnShowsBreakdown — у дня с пустым срезом warn называет обе цифры.
-// Fail-loud при этом НЕ ослаблен: невалидный документ в пустом дне — ошибка прогона (правило
-// «срез пуст и Invalid > 0»), и день остаётся в списке неудачных; чужие даты в том же warn
-// печатаются рядом как отдельная причина пропуска.
-func TestGostRunDaysEmptyDayWarnShowsBreakdown(t *testing.T) {
+// TestGostRunDaysPartlyInvalidNoisyDayWarns — день с пустым срезом, где невалидны лишь отдельные
+// документы (Invalid < Count), успешен: одиночный мусорный документ в шумовом дне — сбой одной
+// записи источника, и валить на нём весь прогон не за что. Warn обязан нести обе цифры: по одной
+// невалидности не отличить систематическую поломку от чужой даты публикации.
+func TestGostRunDaysPartlyInvalidNoisyDayWarns(t *testing.T) {
 	// Один документ из 36 невалиден (нет даты выдачи), остальные 35 — чужих дат публикации.
 	days := []time.Time{gostTime(t, "2026-10-05")}
 	ta := gostNewTestAPI(t, gostDayServer(t, map[string]gostDaySpec{
@@ -606,20 +608,27 @@ func TestGostRunDaysEmptyDayWarnShowsBreakdown(t *testing.T) {
 	conn := &gostFakeConn{}
 	logs := gostCaptureLog(t)
 
-	_, err := gostRunDays(context.Background(), conn, ta.api, days)
-	if !strings.Contains(logs.String(), "чужой даты: 35, невалидных: 1") {
-		t.Errorf("warn дня без разбивки: %s", logs.String())
+	count, err := gostRunDays(context.Background(), conn, ta.api, days)
+	if err != nil {
+		t.Fatalf("невалидность части дня уронила прогон: %v", err)
 	}
-	if err == nil || !strings.Contains(err.Error(), "2026-10-05") {
-		t.Fatalf("невалидный документ в пустом дне обязан валить день: %v", err)
+	if count != 0 {
+		t.Errorf("записано строк %d, ожидалось 0: писать нечего", count)
 	}
-	for _, want := range []string{"чужой даты 35, невалидных 1", "1 документов не разобраны"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("ошибка дня без %q: %v", want, err)
-		}
+	// День не в списке неудачных: ни ошибки дня, ни агрегата.
+	if strings.Contains(logs.String(), "документов дня невалидны") {
+		t.Errorf("частично невалидный день помечен поломкой: %s", logs.String())
 	}
 	if batches := conn.batchList(); len(batches) != 0 {
 		t.Errorf("батчей %d, ожидалось 0: писать нечего", len(batches))
+	}
+	for _, want := range []string{
+		"публикаций нет — отброшено 36 из 36",
+		"чужой даты: 35, невалидных: 1",
+	} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("warn дня без %q: %s", want, logs.String())
+		}
 	}
 }
 
