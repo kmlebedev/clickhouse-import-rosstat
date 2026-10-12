@@ -1,0 +1,100 @@
+{
+  "apiVersion": "dashboard.grafana.app/v1beta1",
+  "kind": "Dashboard",
+  "metadata": {
+    "name": "gold-thesis"
+  },
+  "spec": {
+    "uid": "gold-thesis",
+    "title": "Золото — тезисы статьи",
+    "tags": [
+      "gold",
+      "article"
+    ],
+    "timezone": "browser",
+    "editable": true,
+    "graphTooltip": 0,
+    "time": {
+      "from": "now-1y",
+      "to": "now"
+    },
+    "fiscalYearStartMonth": 0,
+    "refresh": "5m",
+    "schemaVersion": 42,
+    "panels": [
+      {
+        "type": "row",
+        "collapsed": false,
+        "title": "Цена и пол",
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 0
+        },
+        "id": 0,
+        "panels": []
+      },
+      {
+        "type": "timeseries",
+        "id": 1,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT\n    date AS time,\n    value AS \"Цена, USD/oz\"\nFROM v_gold_prices\nWHERE source = 'gold'\n  AND series = 'comex_front'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Цена золота и пол $4 000",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 1
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": false,
+            "calcs": []
+          },
+          "tooltip": {
+            "mode": "",
+            "sort": ""
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "value": null,
+                  "color": "green"
+                },
+                {
+                  "value": 4000,
+                  "color": "red"
+                }
+              ]
+            },
+            "custom": {}
+          },
+          "overrides": []
+        }
+      }
+    ],
+    "templating": {},
+    "annotations": {}
+  }
+}
