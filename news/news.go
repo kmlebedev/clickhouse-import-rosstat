@@ -47,10 +47,10 @@ func feeds() []feed {
 	}
 }
 
-// Режимы прогона. modeAll — дефолт расписания dagu: окно лент конечно (25–100
-// позиций), и полное перечитывание окна идемпотентно (ключ date/source/title),
-// а пропущенный прогон из-за этого не теряет данные. modeSince — догон по
-// курсорам из news_events для ручного запуска. modeCheck — отчёт покрытия без
+// Режимы прогона. modeSince — режим расписания dagu: пишутся только позиции,
+// которых ещё нет в news_events (ключ date/source/title), поэтому 30-минутный
+// прогон не переписывает окно лент целиком. modeAll — ручной полный upsert окна
+// (пересборка): идемпотентен по тому же ключу. modeCheck — отчёт покрытия без
 // записи: дыру в окне иначе не увидеть, она уже не влезает в ленту.
 const (
 	modeAll   = "all"
@@ -60,10 +60,11 @@ const (
 )
 
 // parseMode переводит значение NEWS_WATCH_MODE в режим прогона. Пустое значение —
-// all: ручной запуск без переменной обязан работать как расписание, а не падать.
-// Всё остальное — ошибка, и вызывающий получает её до сети и до БД: «ALL» или
-// опечатка в слове, принятые за дефолт all, молча перечитали бы окно целиком там,
-// где ждали догон since. В тексте ошибки — имя переменной: по нему понятно, что править.
+// all: ручной запуск без переменной делает полный upsert окна (безопасный дефолт
+// для нечастого ручного прогона), а не падает. Всё остальное — ошибка, и
+// вызывающий получает её до сети и до БД: «ALL» или опечатка в слове, принятые
+// за дефолт all, молча перечитали бы окно целиком там, где ждали since. В тексте
+// ошибки — имя переменной: по нему понятно, что править.
 func parseMode(v string) (string, error) {
 	switch v {
 	case "", modeAll:
@@ -156,19 +157,119 @@ func feedSpans(results []feedResult) map[string]sourceSpan {
 	return spans
 }
 
-// selectSince отбирает позиции строго новее курсора своего источника. Курсор —
-// max(date) сохранённых строк источника, и позиция ровно на нём уже в news_events:
-// нестрогое сравнение писало бы её заново каждый прогон (для ReplacingMergeTree это
-// лишний батч, а для отчёта «сколько прибавилось» — враньё). Отсутствующий или
-// нулевой курсор означает первый прогон источника — тогда проходит всё окно.
-func selectSince(items []newsItem, cursors map[string]time.Time) []newsItem {
-	var out []newsItem
-	for _, it := range items {
-		if it.Date.After(cursors[it.Source]) {
-			out = append(out, it)
-		}
+// newsKey — ключ позиции news_events: момент публикации в Unix-секундах (DateTime
+// хранит секунды) и заголовок. Source в ключ не входит: существующие позиции и так
+// читаются по одному источнику (WHERE source = ?), и пара сравнивается в его
+// пределах. Пара (date, title) — это канонический ORDER BY (date, source, title) без
+// source. Сравнение идёт по Unix-секундам, а не по настенным часам: клиент отдаёт
+// DateTime со своим офсетом, а момент публикации при этом один и тот же.
+type newsKey struct {
+	date  int64
+	title string
+}
+
+// readStoredKeys читает ключи (date, title) уже сохранённых позиций источника не
+// старее since — нижней границы окна этого прогона. Пустая таблица или источник без
+// строк — пустая map без ошибки: «первый прогон» и «всё уже сохранено» различает
+// вызывающий по составу items, а не по ошибке. Порядок Scan — порядок колонок
+// storedKeysQuery: date, title. FINAL в запросе обязателен: без него ReplacingMergeTree
+// вернул бы и вытесненные копии позиций (на состав map это не влияет — ключ один, —
+// но чтение было бы нечестным).
+func readStoredKeys(ctx context.Context, conn driver.Conn, source string, since time.Time) (map[newsKey]struct{}, error) {
+	rows, err := conn.Query(ctx, storedKeysQuery, source, since)
+	if err != nil {
+		return nil, fmt.Errorf("news_watch: читать ключи %s (source=%s): %w", newsTable, source, err)
 	}
-	return out
+	defer func() { _ = rows.Close() }()
+
+	keys := make(map[newsKey]struct{})
+	for rows.Next() {
+		var (
+			date  time.Time
+			title string
+		)
+		if err = rows.Scan(&date, &title); err != nil {
+			return nil, fmt.Errorf("news_watch: читать строку ключа %s (source=%s): %w", newsTable, source, err)
+		}
+		keys[newsKey{date: date.Unix(), title: title}] = struct{}{}
+	}
+	// Ошибка обхода (обрыв соединения на середине) обязана быть видна: молча
+	// вернувшаяся половина ключей записала бы уже сохранённые позиции повторно.
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("news_watch: читать ключи %s (source=%s): %w", newsTable, source, err)
+	}
+	return keys, nil
+}
+
+// selectNewItems оставляет из окна лент только позиции, которых ещё нет в
+// news_events, — по ключу (date, source, title), а не по дате-курсору.
+//
+// Почему наличие, а не watermark (max(date) источника). RSS не обязан быть строго
+// упорядочен по времени: позиция с датой старее уже сохранённого максимума всё равно
+// может впервые появиться в окне (опоздавшая публикация, отложенный анонс) — курсор по
+// дате молча выбросил бы её, и в news_events осталась бы дыра, которую check прочитает
+// как «всё сохранено». Хуже у ЦБ: под одним source = 'cbr' лежат ДВА фида (RssNews и
+// eventrss), и их фронты независимы — пресс-релиз с датой раньше фронта новостного фида
+// не записался бы никогда. Проверка наличия по ключу таких позиций не теряет: пишутся
+// ровно строки, которых в таблице нет, независимо от их порядка по дате.
+//
+// Окно лент при этом вычитывается целиком: у RSS нет «since»-параметра, лента — это
+// всегда последние N позиций (Интерфакс 25, РБК 30, ЦБ и TASS по 100). Меняется только
+// состав записи — читаем всё окно, пишем отсутствующее.
+//
+// Группировка — по item.Source в порядке первого появления (обход map в Go случаен, а
+// порядок лент — часть контракта лога и батча). Для каждого источника since — минимум
+// дат его позиций окна: запрос существующих ключей ниже этой границы не нужен, раньше
+// неё в окне этого прогона ничего нет. Порядок результата — исходный порядок items
+// (лента за лентой, позиция за позицией), а ключ, продублированный внутри прогона,
+// пишется один раз: второй раз это та же строка ReplacingMergeTree.
+func selectNewItems(ctx context.Context, conn driver.Conn, items []newsItem) ([]newsItem, error) {
+	var order []string
+	bySource := make(map[string][]newsItem)
+	for _, it := range items {
+		if _, ok := bySource[it.Source]; !ok {
+			order = append(order, it.Source)
+		}
+		bySource[it.Source] = append(bySource[it.Source], it)
+	}
+
+	stored := make(map[string]map[newsKey]struct{}, len(order))
+	for _, src := range order {
+		since := bySource[src][0].Date
+		for _, it := range bySource[src][1:] {
+			if it.Date.Before(since) {
+				since = it.Date
+			}
+		}
+		keys, err := readStoredKeys(ctx, conn, src, since)
+		if err != nil {
+			return nil, err
+		}
+		stored[src] = keys
+	}
+
+	// Дедуп — в пределах источника: только (date, source, title) целиком образует ключ
+	// news_events, и одна и та же пара (date, title) у двух источников — две разные
+	// строки, обе законные.
+	written := make(map[string]map[newsKey]struct{}, len(order))
+	out := make([]newsItem, 0, len(items))
+	for _, it := range items {
+		key := newsKey{date: it.Date.Unix(), title: it.Title}
+		if _, ok := stored[it.Source][key]; ok {
+			continue // позиция уже в news_events — писать нечего
+		}
+		seen := written[it.Source]
+		if seen == nil {
+			seen = make(map[newsKey]struct{})
+			written[it.Source] = seen
+		}
+		if _, ok := seen[key]; ok {
+			continue // дубликат того же ключа внутри прогона
+		}
+		seen[key] = struct{}{}
+		out = append(out, it)
+	}
+	return out, nil
 }
 
 // sortedSources — ключи окон в лексикографическом порядке. Обход map в Go случаен,
@@ -260,9 +361,14 @@ const (
 	newsInsert = "INSERT INTO " + newsTable
 	// storedSpansQuery читает сохранённые окна источников. FINAL обязателен:
 	// news_events — ReplacingMergeTree, и без него повторно записанные позиции
-	// (ключ date/source/title) считались бы дважды, а курсор since и счётчик
-	// покрытия check завышались бы на каждом прогоне.
+	// (ключ date/source/title) считались бы дважды, а счётчик покрытия check
+	// завышался бы на каждом прогоне.
 	storedSpansQuery = "SELECT source, count(), min(date), max(date) FROM " + newsTable + " FINAL GROUP BY source"
+	// storedKeysQuery читает ключи (date, title) сохранённых позиций одного источника
+	// не старее нижней границы окна этого прогона — вход режима since. FINAL по той же
+	// причине, что и у storedSpansQuery. Плейсхолдеры позиционные: ? #1 — source,
+	// ? #2 — граница (time.Time); clickhouse-go биндит аргументы по порядку.
+	storedKeysQuery = "SELECT date, title FROM " + newsTable + " FINAL WHERE source = ? AND date >= ?"
 )
 
 // Import выполняет прогон контура новостей: DDL → витрина → ленты → батч.
@@ -336,24 +442,18 @@ func (s *newsImport) Import(ctx context.Context, conn driver.Conn) (count int64,
 		}
 	}
 	if mode == modeSince {
-		// Курсор источника — max(date) сохранённых строк. Пустая таблица даёт пустую
-		// map без ошибки, и это верное поведение для первого прогона: курсоров нет,
-		// проходит всё окно.
-		stored, err := readStoredSpans(ctx, conn)
+		// since — «только отсутствующие»: пишутся позиции, которых нет в news_events
+		// по ключу (date, source, title), без опоры на порядок дат (см. selectNewItems).
+		items, err = selectNewItems(ctx, conn, items)
 		if err != nil {
 			// Тот же полный диагноз, что и в check: отказ лент не должен теряться
 			// за ошибкой базы — иначе в dagu видно только её.
 			return 0, errors.Join(err, errors.Join(feedErrs...))
 		}
-		cursors := make(map[string]time.Time, len(stored))
-		for src, span := range stored {
-			cursors[src] = span.Max
-		}
-		items = selectSince(items, cursors)
 	}
 	if len(items) == 0 {
-		// Пустой список в since — норма (всё окно уже собрано, ручной повторный
-		// запуск). В all то же самое означает «упали все ленты», и там молчать
+		// Пустой список в since — норма (всё окно уже собрано, повторный прогон по
+		// расписанию). В all то же самое означает «упали все ленты», и там молчать
 		// правильно: каждая такая лента уже сказана в логе и попала в feedErrs.
 		if mode == modeSince {
 			log.Infof("news_watch: новых позиций нет — нечего обновлять (0 строк)")
@@ -372,9 +472,9 @@ func (s *newsImport) Import(ctx context.Context, conn driver.Conn) (count int64,
 }
 
 // readStoredSpans читает сохранённые окна источников: сколько строк по каждому
-// source и в каком они диапазоне дат. Это вход режимов since (курсоры) и check
-// (сверка покрытия). Пустая таблица — не ошибка, а первый прогон: вызывающий
-// различает «источник ещё не писался» по отсутствию ключа, а не по нулевому окну.
+// source и в каком они диапазоне дат. Это вход режима check (сверка покрытия).
+// Пустая таблица — не ошибка, а первый прогон: вызывающий различает «источник ещё
+// не писался» по отсутствию ключа, а не по нулевому окну.
 // FailedFeeds здесь не заполняется: сохранённые строки собраны прошлыми прогонами
 // целиком, и непрочитанных лент у них нет.
 func readStoredSpans(ctx context.Context, conn driver.Conn) (map[string]sourceSpan, error) {

@@ -90,8 +90,8 @@ func TestParseMode(t *testing.T) {
 		in   string
 		want string
 	}{
-		// Пустое значение — дефолт: расписание dagu ставит NEWS_WATCH_MODE=all,
-		// но ручной запуск без переменной обязан работать так же, а не падать.
+		// Пустое значение — дефолт all: ручной запуск без переменной делает полный
+		// upsert окна (безопасный дефолт), а не падает. Расписание dagu ставит since.
 		{"пусто — all", "", modeAll},
 		{"all", modeAll, modeAll},
 		{"since", modeSince, modeSince},
@@ -257,38 +257,50 @@ func TestFeedsHaveFixtures(t *testing.T) {
 	}
 }
 
-func TestSelectSinceFiltersStrictlyAfterCursor(t *testing.T) {
-	msk := time.FixedZone("", mskOffset) // фиксированная зона: результат не зависит от TZ хоста
-	cursor := time.Date(2026, time.October, 12, 12, 0, 0, 0, msk)
+func TestSelectNewItemsSkipsExistingWritesMissing(t *testing.T) {
+	msk := time.FixedZone("", mskOffset)
+	t0 := time.Date(2026, time.October, 12, 12, 0, 0, 0, msk)
 
+	// Ключ «уже в БД» несёт САМУЮ позднюю дату набора, а опоздавшая позиция — на два
+	// часа раньше: фильтр по дате-курсору выбросил бы именно её (дата старее сохранённого
+	// максимума), а проверка наличия по ключу — нет. Последняя позиция — дубль ключа
+	// внутри прогона: вторая копия не должна уехать отдельной строкой.
 	items := []newsItem{
-		{Date: cursor.Add(-time.Minute), Source: "interfax", Title: "11:59"},
-		{Date: cursor, Source: "interfax", Title: "12:00 — ровно на курсоре"},
-		// Тот же момент, что и курсор, но записанный в UTC: сравнение идёт по моменту,
-		// а не по настенным часам зоны записи.
-		{Date: cursor.UTC(), Source: "interfax", Title: "12:00 по МСК, записанное в UTC"},
-		{Date: cursor.Add(time.Minute), Source: "interfax", Title: "12:01"},
-		{Date: cursor.Add(-time.Hour), Source: "tass", Title: "чужой источник без курсора"},
+		{Date: t0, Source: "interfax", Title: "уже в БД"},
+		{Date: t0.Add(30 * time.Minute), Source: "interfax", Title: "новая"},
+		{Date: t0.Add(-2 * time.Hour), Source: "interfax", Title: "опоздавшая"},
+		{Date: t0.Add(30 * time.Minute), Source: "interfax", Title: "новая"},
 	}
 
-	got := selectSince(items, map[string]time.Time{"interfax": cursor})
+	conn := newNewsFakeConnWithKeys(map[string][]newsKey{
+		"interfax": {{date: t0.Unix(), title: "уже в БД"}},
+	})
+	got, err := selectNewItems(context.Background(), conn, items)
+	if err != nil {
+		t.Fatalf("selectNewItems: %v", err)
+	}
+
 	var titles []string
 	for _, it := range got {
 		titles = append(titles, it.Title)
 	}
-	// Курсор строгий: позиция ровно на нём уже сохранена (курсор — max(date) из
-	// news_events), и повторный проход по границе писал бы то же событие заново.
-	if want := "12:01,чужой источник без курсора"; strings.Join(titles, ",") != want {
-		t.Errorf("selectSince по курсору 12:00 = %q, want %q", strings.Join(titles, ","), want)
+	if want := "новая,опоздавшая"; strings.Join(titles, ",") != want {
+		t.Errorf("selectNewItems = %q, want %q (только отсутствующие, без дублей, в исходном порядке)", strings.Join(titles, ","), want)
 	}
-
-	// Нет курсора (первый прогон источника, нулевое время) — проходят все позиции.
-	if all := selectSince(items, nil); len(all) != len(items) {
-		t.Errorf("selectSince без курсоров = %d позиций, want %d (первый прогон берёт всё окно)", len(all), len(items))
+	// Один запрос ключей на источник: группа ровно одна (все позиции — interfax).
+	keyCalls := 0
+	for _, call := range conn.callList() {
+		if strings.Contains(call, storedKeysQuery) {
+			keyCalls++
+		}
 	}
-	zero := selectSince(items, map[string]time.Time{"interfax": {}, "tass": {}})
-	if len(zero) != len(items) {
-		t.Errorf("selectSince с нулевыми курсорами = %d позиций, want %d", len(zero), len(items))
+	if keyCalls != 1 {
+		t.Errorf("storedKeysQuery выполнен %d раз, want 1 (по одному на источник); вызовы: %v", keyCalls, conn.callList())
+	}
+	// Нижняя граница запроса — минимум окна источника (опоздавшая, −2ч), а не сохранённый
+	// максимум: граница — свойство этого прогона, и она не отсекает опоздавшие позиции.
+	if wantCall := "source=interfax since=" + t0.Add(-2*time.Hour).Format(time.RFC3339); !conn.anyCallHas(wantCall) {
+		t.Errorf("запрос ключей interfax не содержал %q; вызовы: %v", wantCall, conn.callList())
 	}
 }
 
@@ -655,28 +667,29 @@ func fixtureInventory(t *testing.T) (byKey map[string][]newsItem, maxBySource ma
 	return byKey, maxBySource
 }
 
-// spansFromMaxima превращает максимумы источников в строки storedSpansQuery — тот вид,
-// в каком news_events FINAL отвечает после успешного прогона. Порядок источников
-// отсортирован: обход map случаен, а детерминированный вход упрощает разбор падения.
-// Min отставлен от Max на час: курсор since берётся из Max, и такая пара делает
-// перепутанные min/max в readStoredSpans видимыми (с Min вместо Max окно курсора
-// расширилось бы, и выборка «новых позиций нет» перестала бы быть пустой).
-func spansFromMaxima(maxima map[string]time.Time) []newsStoredSpan {
-	srcs := make([]string, 0, len(maxima))
-	for src := range maxima {
-		srcs = append(srcs, src)
+// keyOf/keysOf переводят позиции в ключи наличия news_events: источник задаёт выборку
+// (WHERE source = ?), поэтому в newsKey его нет, и ключ — это пара (Unix-секунды, title).
+// Ожидания since-тестов считаются из фикстур тем же преобразованием, что и selectNewItems.
+func keyOf(it newsItem) newsKey {
+	return newsKey{date: it.Date.Unix(), title: it.Title}
+}
+
+func keysOf(items []newsItem) []newsKey {
+	keys := make([]newsKey, 0, len(items))
+	for _, it := range items {
+		keys = append(keys, keyOf(it))
 	}
-	sort.Strings(srcs)
-	spans := make([]newsStoredSpan, 0, len(srcs))
-	for _, src := range srcs {
-		spans = append(spans, newsStoredSpan{
-			Source: src,
-			Count:  1,
-			Min:    maxima[src].Add(-time.Hour),
-			Max:    maxima[src],
-		})
+	return keys
+}
+
+// totalItems — суммарное число позиций инвентаря. Тесты сверяют с ним ожидаемую
+// выборку: если она пуста или равна всему набору, проверка фильтра вакуумна.
+func totalItems(byKey map[string][]newsItem) int {
+	n := 0
+	for _, items := range byKey {
+		n += len(items)
 	}
-	return spans
+	return n
 }
 
 // newsStoredSpan — сохранённый спан источника в том виде, в каком его отдаёт
@@ -688,31 +701,77 @@ type newsStoredSpan struct {
 	Max    time.Time
 }
 
-// newsFakeRows — фейковый driver.Rows для storedSpansQuery. Реализованы только те
-// методы, которые зовёт readStoredSpans (Next/Scan/Err/Close); остальные остаются nil
-// от встраивания driver.Rows и паникуют, если сценарий пойдёт дальше него.
-// Готового фейка driver.Rows в репозитории нет (bold-фейк отдаёт driver.Row) — свой.
+// Виды строк, которые умеет отдавать newsFakeRows: покрытие источников (storedSpansQuery)
+// и ключи существующих позиций (storedKeysQuery).
+const (
+	fakeRowsSpans = "spans"
+	fakeRowsKeys  = "keys"
+)
+
+// newsFakeRows — фейковый driver.Rows контура news: вид строк выбирается в Query по
+// самому запросу, а не по числу вызовов, чтобы since-тесты держали разные наборы ключей
+// на источник. Реализованы только те методы, которые зовут readStoredSpans/readStoredKeys
+// (Next/Scan/Err/Close); остальные остаются nil от встраивания driver.Rows и паникуют,
+// если сценарий пойдёт дальше. Готового фейка driver.Rows в репозитории нет
+// (bold-фейк отдаёт driver.Row) — свой.
 type newsFakeRows struct {
 	driver.Rows
+	kind  string // fakeRowsSpans или fakeRowsKeys
 	spans []newsStoredSpan
+	keys  []newsKey
 	i     int // индекс следующей строки: Next двигает его, Scan читает i-1
 }
 
+// n — число строк выбранного вида: Next и Scan не должны перепутать наборы.
+func (r *newsFakeRows) n() int {
+	if r.kind == fakeRowsKeys {
+		return len(r.keys)
+	}
+	return len(r.spans)
+}
+
 func (r *newsFakeRows) Next() bool {
-	if r.i >= len(r.spans) {
+	if r.i >= r.n() {
 		return false
 	}
 	r.i++
 	return true
 }
 
-// Scan принимает ровно те приёмники, что и readStoredSpans: *string, *uint64 и два
-// *time.Time. Порядок колонок — часть контракта запроса, и фейк его пинит: сдвиг
-// min/max в SQL не должен остаться незамеченным.
+// Scan принимает приёмники того вида, которым создан фейк: для покрытия — *string,
+// *uint64 и два *time.Time (порядок source, count(), min(date), max(date)), для ключей —
+// *time.Time и *string (порядок date, title). Порядок колонок — часть контракта запроса,
+// и фейк его пинит: сдвиг колонок в SQL не должен остаться незамеченным.
 func (r *newsFakeRows) Scan(dest ...any) error {
-	if r.i == 0 || r.i > len(r.spans) {
-		return fmt.Errorf("фейковая строка покрытия: Scan без Next (i=%d, строк %d)", r.i, len(r.spans))
+	if r.i == 0 || r.i > r.n() {
+		return fmt.Errorf("фейковая строка (%s): Scan без Next (i=%d, строк %d)", r.kind, r.i, r.n())
 	}
+	if r.kind == fakeRowsKeys {
+		return r.scanKey(dest)
+	}
+	return r.scanSpan(dest)
+}
+
+func (r *newsFakeRows) scanKey(dest []any) error {
+	if len(dest) != 2 {
+		return fmt.Errorf("фейковый ключ позиции: приёмников %d, want 2 (date, title)", len(dest))
+	}
+	date, ok := dest[0].(*time.Time)
+	if !ok {
+		return fmt.Errorf("фейковый ключ позиции: приёмник date %T (want *time.Time)", dest[0])
+	}
+	title, ok := dest[1].(*string)
+	if !ok {
+		return fmt.Errorf("фейковый ключ позиции: приёмник title %T (want *string)", dest[1])
+	}
+	k := r.keys[r.i-1]
+	// Время собирается из Unix-секунд ключа: readStoredKeys снова берёт .Unix(), и фейк
+	// пинит круговой ход момент ↔ Unix, а не представление в конкретной зоне.
+	*date, *title = time.Unix(k.date, 0).UTC(), k.title
+	return nil
+}
+
+func (r *newsFakeRows) scanSpan(dest []any) error {
 	if len(dest) != 4 {
 		return fmt.Errorf("фейковая строка покрытия: приёмников %d, want 4 (source, count(), min(date), max(date))", len(dest))
 	}
@@ -810,18 +869,27 @@ func (b *newsFakeBatch) inserted(t *testing.T) []newsInsertedRow {
 // newsFakeConn — фейковое соединение контура news: встраивание driver.Conn оставляет
 // неиспользуемые методы nil (паника, если тест зайдёт дальше сценария), а переопределены
 // ровно три метода, которыми пользуется Import: Exec (DDL и витрина), Query
-// (storedSpansQuery — его зовёт readStoredSpans) и PrepareBatch (запись позиций).
-// stored — очередь ответов Query; пустая очередь означает «в news_events нет строк».
+// (storedSpansQuery — readStoredSpans в check; storedKeysQuery — readStoredKeys в since)
+// и PrepareBatch (запись позиций). spans — очередь ответов на запрос покрытия; keys —
+// ключи существующих позиций по источникам. Пустые наборы означают «в news_events нет строк».
 type newsFakeConn struct {
 	driver.Conn
 	mu      sync.Mutex
 	calls   []string
-	stored  []newsStoredSpan
+	spans   []newsStoredSpan
+	keys    map[string][]newsKey
 	batches []*newsFakeBatch
 }
 
+// newNewsFakeConn — соединение режима check: сохранённые окна есть, ключей нет.
 func newNewsFakeConn(stored ...newsStoredSpan) *newsFakeConn {
-	return &newsFakeConn{stored: stored}
+	return &newsFakeConn{spans: stored}
+}
+
+// newNewsFakeConnWithKeys — соединение режима since: ключи существующих позиций по
+// источникам. Источник без записи в map отдаёт пустой набор — как источник без строк.
+func newNewsFakeConnWithKeys(keys map[string][]newsKey) *newsFakeConn {
+	return &newsFakeConn{keys: keys}
 }
 
 func (c *newsFakeConn) record(call string) {
@@ -835,13 +903,32 @@ func (c *newsFakeConn) Exec(_ context.Context, query string, _ ...any) error {
 	return nil
 }
 
-func (c *newsFakeConn) Query(_ context.Context, query string, _ ...any) (driver.Rows, error) {
-	c.record("query: " + query)
+// Query отвечает по виду запроса (а не по номеру вызова): покрытие — очередью spans,
+// ключи — набором запрошенного источника. Аргументы запроса ключей (source, since)
+// попадают в записанный вызов: тесты пинят и источник, и нижнюю границу окна.
+func (c *newsFakeConn) Query(_ context.Context, query string, args ...any) (driver.Rows, error) {
+	label := "query: " + query
+	var src string
+	if len(args) == 2 {
+		if s, ok := args[0].(string); ok {
+			src = s
+			if since, ok := args[1].(time.Time); ok {
+				label += fmt.Sprintf(" [source=%s since=%s]", src, since.Format(time.RFC3339))
+			}
+		}
+	}
+	c.record(label)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	rows := c.stored
-	c.stored = nil // очередь отдаётся один раз: повторный Query вернул бы уже пустое окно
-	return &newsFakeRows{spans: rows}, nil
+	switch query {
+	case storedSpansQuery:
+		rows := c.spans
+		c.spans = nil // очередь отдаётся один раз: повторный Query вернул бы уже пустое окно
+		return &newsFakeRows{kind: fakeRowsSpans, spans: rows}, nil
+	case storedKeysQuery:
+		return &newsFakeRows{kind: fakeRowsKeys, keys: c.keys[src]}, nil
+	}
+	return nil, fmt.Errorf("newsFakeConn: неожиданный запрос %q", query)
 }
 
 func (c *newsFakeConn) PrepareBatch(_ context.Context, query string, _ ...driver.PrepareBatchOption) (driver.Batch, error) {
@@ -1022,106 +1109,199 @@ func TestImportAllModeWritesAllFeeds(t *testing.T) {
 	}
 }
 
-func TestImportSinceModeUsesCursor(t *testing.T) {
-	// since — догон по курсорам из news_events (max(date) по источнику): пишутся только
-	// позиции строго новее курсора. Тест держит обе ветки — «всё уже собрано» (0 строк,
-	// батч не открывался) и «курсор сдвинут назад» (в батч уходит ровно то, что новее).
-	// Обе ловят правку, теряющую фильтр: без него since переписывал бы окно целиком.
+func TestImportSinceModeWritesOnlyMissing(t *testing.T) {
+	// since — режим расписания: пишутся только отсутствующие в news_events позиции (ключ
+	// date/source/title), а не всё окно. Тест держит обе ветки — «часть ключей уже есть»
+	// (в батч уходит ровно остальное) и «все ключи на месте» (0 строк, PrepareBatch не
+	// вызывался). Вторая ловит правку, теряющую фильтр наличия: без него since
+	// переписывал бы окно целиком.
 	t.Setenv(modeEnv, modeSince)
 	pointFeedsAt(t, serveFixtures(t, nil))
 
-	byKey, maxima := fixtureInventory(t)
+	byKey, _ := fixtureInventory(t)
 
-	// (а) курсоры на максимумах фикстур: после успешного all новика нет (курсор строгий —
-	// позиция ровно на нём уже сохранена), поэтому выборка пуста и батч не открывается.
-	var s newsImport
-	conn := newNewsFakeConn(spansFromMaxima(maxima)...)
-	count, err := s.Import(context.Background(), conn)
-	if err != nil {
-		t.Fatalf("Import(%s) при курсорах на максимумах фикстур: %v", modeSince, err)
+	// Существующие ключи — по первой позиции tass и rbc. Остальные позиции этих лент и
+	// все позиции прочих обязаны уехать в батч.
+	present := map[string]map[newsKey]bool{
+		"tass": {keyOf(byKey["tass"][0]): true},
+		"rbc":  {keyOf(byKey["rbc"][0]): true},
 	}
-	if count != 0 {
-		t.Errorf("Import вернул %d строк, want 0 (максимумы фикстур уже собраны, выбирать нечего)", count)
-	}
-	if got := conn.batchList(); len(got) != 0 {
-		t.Errorf("since открыл %d батчей при пустой выборке, want 0", len(got))
-	}
-
-	// (б) курсор interfax отодвинут на вторую позицию фикстуры (в лентах позиции идут
-	// от свежих к старым, так что она старее первой): в батч обязаны уйти ровно позиции
-	// interfax новее курсора, остальные источники не дают ничего.
-	interfax := byKey["interfax"]
-	if len(interfax) < 2 {
-		t.Fatalf("фикстура interfax: %d позиций, want ≥2 (курсор по второй)", len(interfax))
-	}
-	cursor := interfax[1].Date
-	if !cursor.Before(interfax[0].Date) {
-		t.Fatalf("фикстура interfax не упорядочена по убыванию даты: %s … %s",
-			interfax[0].Date.Format(time.RFC3339), cursor.Format(time.RFC3339))
-	}
-	var want []newsItem
-	for _, it := range interfax {
-		if it.Date.After(cursor) {
-			want = append(want, it)
+	var want []string
+	for _, f := range feeds() {
+		for _, it := range byKey[f.Key] {
+			if present[it.Source][keyOf(it)] {
+				continue
+			}
+			want = append(want, it.Source+"|"+it.Title)
 		}
 	}
-	// Курсор обязан резать окно, а не совпадать с его границей: иначе «0 строк против всего
-	// окна» перестало бы различать работу фильтра и его потерю.
-	if len(want) == 0 || len(want) == len(interfax) {
-		t.Fatalf("курсор %s не режет окно interfax (%d позиций): ожидание теста вакуумное",
-			cursor.Format(time.RFC3339), len(interfax))
+	if len(want) == 0 || len(want) == totalItems(byKey) {
+		t.Fatalf("ожидание теста вакуумное: want %d из %d позиций", len(want), totalItems(byKey))
 	}
 
-	moved := make(map[string]time.Time, len(maxima))
-	for src, max := range maxima {
-		moved[src] = max
-	}
-	moved["interfax"] = cursor
-
-	conn = newNewsFakeConn(spansFromMaxima(moved)...)
-	count, err = s.Import(context.Background(), conn)
+	conn := newNewsFakeConnWithKeys(map[string][]newsKey{
+		"tass": keysOf(byKey["tass"][:1]),
+		"rbc":  keysOf(byKey["rbc"][:1]),
+	})
+	var s newsImport
+	count, err := s.Import(context.Background(), conn)
 	if err != nil {
-		t.Fatalf("Import(%s) с курсором interfax %s: %v", modeSince, cursor.Format(time.RFC3339), err)
+		t.Fatalf("Import(%s): %v", modeSince, err)
 	}
 	if int(count) != len(want) {
-		t.Errorf("Import вернул %d строк, want %d (позиции interfax новее курсора)", count, len(want))
+		t.Errorf("Import вернул %d строк, want %d (позиции, которых нет в news_events)", count, len(want))
 	}
 	batch := conn.onlyBatch(t, newsInsert)
 	if !batch.sent {
 		t.Error("Send не вызван: батч в таблицу не уехал")
 	}
 	rows := batch.inserted(t)
-	var wantKeys []string
-	for _, it := range want {
-		wantKeys = append(wantKeys, it.Source+"|"+it.Title)
-	}
 	got := make([]string, 0, len(rows))
-	sources := make(map[string]bool, 1)
 	for _, row := range rows {
-		if !row.Date.After(cursor) {
-			t.Errorf("since записал позицию %s (%s) не новее курсора %s — фильтр потерян",
-				row.Title, row.Date.Format(time.RFC3339), cursor.Format(time.RFC3339))
-		}
 		got = append(got, row.Source+"|"+row.Title)
-		sources[row.Source] = true
 	}
 	sort.Strings(got)
-	sort.Strings(wantKeys)
-	if len(got) != len(wantKeys) {
-		t.Fatalf("в батч аппенднуто %d строк, want %d (позиции interfax новее курсора; вызовы: %v)",
-			len(got), len(wantKeys), conn.callList())
+	sort.Strings(want)
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("состав батча расходится с ожиданием:\n got %v\nwant %v", got, want)
 	}
-	for i := range got {
-		if got[i] != wantKeys[i] {
-			t.Fatalf("состав батча расходится с ожиданием: строка %d = %q, want %q", i, got[i], wantKeys[i])
+	if !conn.anyCallHas(storedKeysQuery) {
+		t.Errorf("since не прочитал ключи запросом %q; вызовы: %v", storedKeysQuery, conn.callList())
+	}
+
+	// (б) все ключи фикстур на месте: писать нечего — 0 строк и ни одного батча.
+	allKeys := make(map[string][]newsKey, 4)
+	for _, f := range feeds() {
+		allKeys[f.Source] = append(allKeys[f.Source], keysOf(byKey[f.Key])...)
+	}
+	conn = newNewsFakeConnWithKeys(allKeys)
+	count, err = s.Import(context.Background(), conn)
+	if err != nil {
+		t.Fatalf("Import(%s) при полном покрытии: %v", modeSince, err)
+	}
+	if count != 0 {
+		t.Errorf("Import вернул %d строк, want 0 (все ключи фикстур уже в news_events)", count)
+	}
+	if got := conn.batchList(); len(got) != 0 {
+		t.Errorf("since открыл %d батчей, want 0: писать нечего", len(got))
+	}
+}
+
+func TestImportSinceModeCbrSecondFeedNoWatermark(t *testing.T) {
+	// У ЦБ два фида под одним source='cbr', и их фронты независимы. Позиция «отставшего»
+	// фида (дата между фронтами) отсутствует в БД и обязана записаться, хотя её дата
+	// старее сохранённого максимума cbr: дата-курсор её теряет, проверка наличия по ключу
+	// — нет. Позиция с ключом, который уже есть в БД (та же, что несёт и другой фид ЦБ), —
+	// пропускается.
+	t.Setenv(modeEnv, modeSince)
+
+	msk := time.FixedZone("", mskOffset)
+	storedAt := time.Date(2026, time.October, 12, 14, 0, 0, 0, msk)
+	pressAt := time.Date(2026, time.October, 12, 12, 30, 0, 0, msk)
+	freshAt := time.Date(2026, time.October, 12, 15, 0, 0, 0, msk)
+
+	newsXML := rssXML(
+		rssEntry{title: "ЦБ: уже сохранённая позиция", date: storedAt},
+		rssEntry{title: "ЦБ: свежая позиция фронта", date: freshAt},
+	)
+	pressXML := rssXML(
+		// Опоздавшая: дата раньше сохранённого максимума cbr (14:00) и раньше фронта
+		// новостного фида (15:00) — при фильтре по дате она не записалась бы.
+		rssEntry{title: "ЦБ: опоздавший пресс-релиз", date: pressAt},
+		// Тот же ключ, что уже в БД (и что несёт другой фид ЦБ), — пропускается.
+		rssEntry{title: "ЦБ: уже сохранённая позиция", date: storedAt},
+	)
+	pointFeedsAt(t, serveSyntheticCbr(t, newsXML, pressXML))
+
+	byKey, _ := fixtureInventory(t)
+	// Ключи interfax/rbc/tass — все позиции фикстур: эти источники не пишутся, и
+	// внимание теста остаётся на cbr.
+	keys := map[string][]newsKey{
+		"interfax": keysOf(byKey["interfax"]),
+		"rbc":      keysOf(byKey["rbc"]),
+		"tass":     keysOf(byKey["tass"]),
+		"cbr":      {{date: storedAt.Unix(), title: "ЦБ: уже сохранённая позиция"}},
+	}
+
+	conn := newNewsFakeConnWithKeys(keys)
+	var s newsImport
+	count, err := s.Import(context.Background(), conn)
+	if err != nil {
+		t.Fatalf("Import(%s): %v", modeSince, err)
+	}
+	if count != 2 {
+		t.Errorf("Import вернул %d строк, want 2 (опоздавший пресс-релиз + свежая позиция фронта)", count)
+	}
+	rows := conn.onlyBatch(t, newsInsert).inserted(t)
+	var got []string
+	for _, row := range rows {
+		if row.Source != "cbr" {
+			t.Errorf("записан источник %q, want cbr (позиции остальных лент уже покрыты)", row.Source)
+		}
+		got = append(got, row.Title)
+		if row.Title == "ЦБ: опоздавший пресс-релиз" && !row.Date.Before(storedAt) {
+			t.Errorf("опоздавшая позиция записана с датой %s, want раньше сохранённого максимума %s",
+				row.Date.Format(time.RFC3339), storedAt.Format(time.RFC3339))
 		}
 	}
-	srcs := make([]string, 0, len(sources))
-	for src := range sources {
-		srcs = append(srcs, src)
+	sort.Strings(got)
+	want := []string{"ЦБ: опоздавший пресс-релиз", "ЦБ: свежая позиция фронта"}
+	sort.Strings(want)
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("состав батча = %v, want %v", got, want)
 	}
-	sort.Strings(srcs)
-	if len(srcs) != 1 || srcs[0] != "interfax" {
-		t.Errorf("источники батча = %v, want только interfax (курсоры остальных источников — на максимумах)", srcs)
+	// Нижняя граница запроса ключей cbr — минимум окна источника (опоздавшая, 12:30), а не
+	// сохранённый максимум: при границе по максимуму опоздавшую не нашли бы вовсе.
+	if wantCall := "source=cbr since=" + pressAt.Format(time.RFC3339); !conn.anyCallHas(wantCall) {
+		t.Errorf("запрос ключей cbr не содержал %q; вызовы: %v", wantCall, conn.callList())
 	}
+}
+
+// rssEntry — позиция синтетической ленты: заголовок и дата публикации. Заголовки —
+// простой текст (XML-экранирование не нужно), ссылки синтетические.
+type rssEntry struct {
+	title string
+	date  time.Time
+}
+
+// rssXML собирает минимальный RSS 2.0: формат pubDate — time.RFC1123Z, тот же, что у всех
+// пяти живых лент (с числовым офсетом), поэтому синтетическая лента проходит тот же разбор
+// (readFixtureDoc + itemsFromDoc), что и фикстуры.
+func rssXML(entries ...rssEntry) string {
+	var b strings.Builder
+	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel>`)
+	for i, e := range entries {
+		fmt.Fprintf(&b, `<item><title>%s</title><link>https://example.test/%d</link><pubDate>%s</pubDate></item>`,
+			e.title, i, e.date.Format(time.RFC1123Z))
+	}
+	b.WriteString(`</channel></rss>`)
+	return b.String()
+}
+
+// serveSyntheticCbr поднимает httptest-сервер, где два фида ЦБ отдают синтетические ленты,
+// а остальные три — закоммиченные фикстуры: тест держит под контролем окно именно ЦБ, не
+// переписывая testdata.
+func serveSyntheticCbr(t *testing.T, newsXML, pressXML string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := strings.TrimPrefix(r.URL.Path, "/")
+		var body []byte
+		switch key {
+		case "cbr_news":
+			body = []byte(newsXML)
+		case "cbr_press":
+			body = []byte(pressXML)
+		default:
+			b, err := os.ReadFile(filepath.Join("testdata", key+".rss"))
+			if err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			body = b
+		}
+		w.Header().Set("Content-Type", "application/rss+xml; charset=utf-8")
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
 }
