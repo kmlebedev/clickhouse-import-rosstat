@@ -434,9 +434,14 @@ grafana-check:
 	GRAFANA_URL=$(GRAFANA_TEST_URL) python3 scripts/grafana_check.py --uid $(DASHBOARD_UID)
 
 # Провижининг датасорса на staging (идемпотентный). Шаблон с плейсхолдером копируется в /tmp хоста,
-# пароль подставляется НА ХОСТЕ из $(STAGING_ENV_FILE) — python3, а не sed: пароль может содержать
-# / & \ и прочие спецсимволы. Результат сравнивается с установленным файлом по sha256 и
-# переустанавливается только при отличии, поэтому повторный прогон ничего не пишет.
+# пароль подставляется НА ХОСТЕ из $(STAGING_ENV_FILE) — python3, а не sed (у sed сломались бы / & \ и др.).
+# Пароль стоит в YAML-скаляре в двойных кавычках, поэтому перед подстановкой экранируются \ и " —
+# без этого `a\b"c` делает YAML невалидным, а `x\\y` молча превращается в `x\y` (проверено на фикстурах).
+# Пароль с управляющим символом (перевод строки, таб, 0x7f) отвергается с понятной ошибкой, а не портит YAML.
+# После подстановки файл перечитывается: значение датасорса декодируется обратно (json.loads — те же
+# \\ и \" , что в YAML-скаляре) и сравнивается с паролем, то есть round-trip обязан сойтись.
+# Результат сравнивается с установленным файлом по sha256 и переустанавливается только при отличии,
+# поэтому повторный прогон ничего не пишет.
 # Пароль не печатается; временные копии (root, 600) удаляются по trap, в т.ч. при ошибке.
 # ВАЖНО (проверено на Grafana 13.1.1): каталог provisioning/datasources читается ТОЛЬКО при старте
 # сервера (pkg/services/provisioning: ProvisionDatasources вызывается из starting(); поллинг есть лишь
@@ -455,7 +460,8 @@ grafana-provision-staging:
 		set -a; . $(STAGING_ENV_FILE); set +a; \
 		test -n "$${CLICKHOUSE_PASSWORD:-}" || { echo "НЕТ  CLICKHOUSE_PASSWORD не задан в $(STAGING_ENV_FILE)"; exit 1; }; \
 		install -m 600 /dev/null "$(GRAFANA_DATASOURCE_TMP).rendered"; \
-		CLICKHOUSE_PASSWORD="$${CLICKHOUSE_PASSWORD:-}" python3 -c "import os, sys; src = open(sys.argv[1], encoding=\"utf-8\").read(); assert \"__CLICKHOUSE_PASSWORD__\" in src, \"в шаблоне нет плейсхолдера\"; dst = open(sys.argv[2], \"w\", encoding=\"utf-8\"); dst.write(src.replace(\"__CLICKHOUSE_PASSWORD__\", os.environ[\"CLICKHOUSE_PASSWORD\"])); dst.close()" "$(GRAFANA_DATASOURCE_TMP)" "$(GRAFANA_DATASOURCE_TMP).rendered"; \
+		CLICKHOUSE_PASSWORD="$${CLICKHOUSE_PASSWORD:-}" python3 -c "import os, sys; BS = chr(92); DQ = chr(34); pw = os.environ[\"CLICKHOUSE_PASSWORD\"]; bad = [c for c in pw if ord(c) < 32 or ord(c) == 127]; bad and sys.exit(\"пароль содержит управляющий символ 0x%02x — в YAML его подставить нельзя (перевод строки/таб?)\" % ord(bad[0])); src = open(sys.argv[1], encoding=\"utf-8\").read(); \"__CLICKHOUSE_PASSWORD__\" in src or sys.exit(\"в шаблоне нет плейсхолдера __CLICKHOUSE_PASSWORD__\"); open(sys.argv[2], \"w\", encoding=\"utf-8\").write(src.replace(\"__CLICKHOUSE_PASSWORD__\", pw.replace(BS, BS + BS).replace(DQ, BS + DQ)))" "$(GRAFANA_DATASOURCE_TMP)" "$(GRAFANA_DATASOURCE_TMP).rendered"; \
+		CLICKHOUSE_PASSWORD="$${CLICKHOUSE_PASSWORD:-}" python3 -c "import json, os, sys; DQ = chr(34); pw = os.environ[\"CLICKHOUSE_PASSWORD\"]; lines = [l for l in open(sys.argv[1], encoding=\"utf-8\").read().splitlines() if \"password:\" in l]; (len(lines) == 1 and json.loads(DQ + lines[0].split(\":\", 1)[1].strip()[1:-1] + DQ) == pw) or sys.exit(\"round-trip пароля не сошёлся: YAML-скаляр собрался бы неверно\")" "$(GRAFANA_DATASOURCE_TMP).rendered"; \
 		target="$(GRAFANA_DATASOURCE_REMOTE)"; \
 		if [ -f "$$target" ] && [ "$$(sha256sum < "$(GRAFANA_DATASOURCE_TMP).rendered" | cut -c1-64)" = "$$(sha256sum < "$$target" | cut -c1-64)" ]; then \
 			echo "OK   провижининг датасорса актуален ($$target)"; \
