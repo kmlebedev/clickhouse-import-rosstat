@@ -474,7 +474,7 @@ grafana/ (Go, grafana-foundation-sdk) --make grafana-build--> dashboard/gold-the
 | Переменная | Назначение |
 |---|---|
 | `GRAFANA_TEST_URL` | адрес тест-стенда, по умолчанию `http://localhost:3000` |
-| `GRAFANA_TEST_TOKEN` | токен сервис-аккаунта **Editor** на тест-стенде: `make grafana-deploy-test`, `make grafana-check` |
+| `GRAFANA_TEST_TOKEN` | токен сервис-аккаунта **Editor** на тест-стенде: `make grafana-deploy-test`, `make grafana-check` (в `gcx` уходит как `GRAFANA_TOKEN` — make-цели подставляют его сами; при ручных вызовах `gcx` подставляйте явно, см. «Цикл разработки и деплой») |
 | `GRAFANA_STAGING_URL` | адрес staging, по умолчанию `http://localhost:3001` — **только через ssh-туннель** |
 | `GRAFANA_STAGING_TOKEN` | токен сервис-аккаунта **Editor** на staging: `make grafana-deploy-staging` |
 | `GRAFANA_ORG_ID` | org-id инстанса для `gcx` (on-prem без него отвергается), по умолчанию `1` |
@@ -507,6 +507,8 @@ GRAFANA_SERVER="$GRAFANA_TEST_URL" GRAFANA_TOKEN="$GRAFANA_TEST_TOKEN" GRAFANA_O
   gcx resources validate dashboards --path dashboard/gold-thesis.json   # пример вывода: ✔ No errors found
 ```
 
+**Ручные вызовы `gcx`.** `gcx` читает креды только из `GRAFANA_SERVER`/`GRAFANA_TOKEN`/`GRAFANA_ORG_ID`; переменную `GRAFANA_TEST_TOKEN` он не знает — make-цели подставляют её в `GRAFANA_TOKEN` сами. Запуская `gcx` руками, подставляйте `GRAFANA_TOKEN` явно (как в примере выше), иначе push падает с `401 Unauthorized: the server has asked for the client to provide credentials` — это не признак недействительного токена.
+
 Staging — через туннель `:3001` (порт не конфликтует с локальным стендом `:3000`):
 
 ```bash
@@ -526,14 +528,15 @@ curl -u admin:<пароль> -X POST http://localhost:3001/api/admin/provisionin
 
 **Проверено на стенде/локально (пункты с пометкой «по отчёту исполнителя» приводятся со слов исполнителя задачи и при финальном ревью повторно не проверялись):**
 
-- **Grafana-smoke на локальном стенде (13.2.3).** Дашборд виден по uid, панель 1 «Цена золота и пол $4 000» вернула **250 точек** — запрос шёл через Grafana (`/api/ds/query`), но временной обёрткой с basic-auth стенда: сервис-аккаунта с токеном у владельца ещё нет.
+- **Grafana-smoke на локальном стенде (13.2.3).** Дашборд виден по uid, панель 1 «Цена золота и пол $4 000» вернула **250 точек** — на тот момент токена сервис-аккаунта у владельца ещё не было, и запрос шёл через Grafana (`/api/ds/query`) временной обёрткой с basic-auth стенда.
 - **SQL-проверка через MCP — отдельная проверка, не то же самое.** То же окно дашборда (`now-1y`) в `v_gold_prices` под `kimi_reader` через MCP даёт `SELECT count()` = **250** (250 — скользящее окно; за календарный 2025 — 252) — Grafana и агент читают одни данные, но это два разных канала (Grafana-запрос и MCP-запрос).
 - `make grafana-build` — детерминирован (повторный прогон — пустой `git diff`); `make grafana-validate`, `make all`, `make mcp-check` — зелёные **по отчёту исполнителя задачи; повторный прогон при финальном ревью ветки не выполнялся**.
 - `gcx resources push` идемпотентен (повторный push не создаёт дубль, растёт только `version`); серверная `gcx resources validate` на стенде отдала `✔ No errors found` — **по отчёту исполнителя задачи**.
 - Провижининг датасорса применён на staging и идемпотентен: повторный прогон печатает «актуален», sha256/mtime/inode не меняются; в репозитории лежит только шаблон с плейсхолдером, пароль подставляется на хосте — **по отчёту исполнителя; полный live-прогон с токеном — owner-assisted**.
+- **Живой прогон цели с Bearer-токеном (после того, как владелец задал `GRAFANA_TEST_TOKEN`).** `make grafana-deploy-test` — `✔ 1 resources pushed, 0 errors`; smoke `make grafana-check` — «ПРОВЕРКА ПРОЙДЕНА»: дашборд виден (версия 8), 9 панелей с таргетами, панель 1 «Цена золота и пол $4 000» — 250+6 точек, панель 2 «Золото vs DXY» — 250+1.
+- **CI на PR #41 — зелёный:** workflow `dashboards` (run 38229317402) и `Go` (run 38229317450); офлайн `gcx dev lint run` и diff-шаг артефакта в CI прошли.
 
-**Ещё не подтверждено (owner-assisted, ожидает владельца и PR):**
+**Ещё не подтверждено (ожидает владельца):**
 
-- `make grafana-check` с Bearer-токеном и цели `make grafana-deploy-test` / `grafana-deploy-staging` целиком — `GRAFANA_TEST_TOKEN`/`GRAFANA_STAGING_TOKEN` не заданы, поэтому «250 точек» получены обёрткой с basic-auth, а не самой целью.
-- CI `dashboards` на GitHub Actions ещё **не запускался**: шаги workflow воспроизведены локально по одному, реальный зелёный прогон подтвердится на PR.
-- Визуальный просмотр дашборда в браузере и admin-reload датасорса на staging.
+- Полный staging-прогон `make grafana-deploy-staging` (туннель `:3001` → провижининг датасорса → push → smoke): `GRAFANA_STAGING_TOKEN` задан, туннель ещё не поднимался; после первого провижининга нужен один admin-reload датасорса (см. «Ловушка staging»).
+- Визуальный просмотр дашборда в браузере (`http://localhost:3000`).
