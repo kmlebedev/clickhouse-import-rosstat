@@ -87,14 +87,16 @@ ORDER BY date
 `
 
 // yoyTemplate — YoY по ПОЛНОМУ ряду, фильтр времени снаружи: если отфильтровать окно внутри,
-// первые 12 точек считались бы по обрезанному ряду. %s — алиас и код ряда BLS.
+// первые 12 точек считались бы по обрезанному ряду. Делитель обёрнут в nullIf: в первых
+// 12 строках lagInFrame даёт 0, и без него YoY = +Inf (широкое окно ломало бы ось).
+// %s — алиас и код ряда BLS.
 const yoyTemplate = `SELECT
     time,
     yoy AS %s
 FROM (
     SELECT
         date AS time,
-        value / lagInFrame(value, 12) OVER (ORDER BY date) - 1 AS yoy
+        value / nullIf(lagInFrame(value, 12) OVER (ORDER BY date), 0) - 1 AS yoy
     FROM v_bls_macro
     WHERE series = '%s'
 )
@@ -252,7 +254,8 @@ func NewGoldThesis() *dashboard.DashboardBuilder {
 }
 
 // goldPricePanel — панель 1: цена золота и порог $4 000 (зелёный → красный).
-// Серия B — только касания пола, точками.
+// Серия B — только касания пола, точками. ThresholdsStyle обязателен: по умолчанию
+// Grafana пороги не рисует (off), и линия «пола» $4 000 пропала бы.
 // Id задан явно: Validate требует непустых уникальных id панелей.
 func goldPricePanel() *timeseries.PanelBuilder {
 	return timeseries.NewPanelBuilder().
@@ -263,6 +266,7 @@ func goldPricePanel() *timeseries.PanelBuilder {
 		WithTarget(timeseriesQuery("A", goldPriceSQL(`"Цена, USD/oz"`, ""))).
 		WithTarget(timeseriesQuery("B", goldPriceSQL(`"Касания пола $4 000"`, "  AND value < 4000\n"))).
 		Thresholds(priceFloorThresholds()).
+		ThresholdsStyle(common.NewGraphThresholdsStyleConfigBuilder().Mode(common.GraphThresholdsStyleModeLine)).
 		OverrideByQuery("B", pointsOnlyProps())
 }
 

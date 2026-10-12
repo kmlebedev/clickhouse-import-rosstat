@@ -96,7 +96,11 @@
                 }
               ]
             },
-            "custom": {}
+            "custom": {
+              "thresholdsStyle": {
+                "mode": "line"
+              }
+            }
           },
           "overrides": [
             {
@@ -390,7 +394,7 @@
         "targets": [
           {
             "refId": "A",
-            "rawSql": "SELECT\n    time,\n    yoy AS \"CPI SA, YoY\"\nFROM (\n    SELECT\n        date AS time,\n        value / lagInFrame(value, 12) OVER (ORDER BY date) - 1 AS yoy\n    FROM v_bls_macro\n    WHERE series = 'CUSR0000SA0'\n)\nWHERE $__timeFilter(time)\nORDER BY time\n",
+            "rawSql": "SELECT\n    time,\n    yoy AS \"CPI SA, YoY\"\nFROM (\n    SELECT\n        date AS time,\n        value / nullIf(lagInFrame(value, 12) OVER (ORDER BY date), 0) - 1 AS yoy\n    FROM v_bls_macro\n    WHERE series = 'CUSR0000SA0'\n)\nWHERE $__timeFilter(time)\nORDER BY time\n",
             "editorType": "sql",
             "format": 0,
             "queryType": "timeseries",
@@ -398,7 +402,7 @@
           },
           {
             "refId": "B",
-            "rawSql": "SELECT\n    time,\n    yoy AS \"PPI FD, YoY\"\nFROM (\n    SELECT\n        date AS time,\n        value / lagInFrame(value, 12) OVER (ORDER BY date) - 1 AS yoy\n    FROM v_bls_macro\n    WHERE series = 'WPSFD4'\n)\nWHERE $__timeFilter(time)\nORDER BY time\n",
+            "rawSql": "SELECT\n    time,\n    yoy AS \"PPI FD, YoY\"\nFROM (\n    SELECT\n        date AS time,\n        value / nullIf(lagInFrame(value, 12) OVER (ORDER BY date), 0) - 1 AS yoy\n    FROM v_bls_macro\n    WHERE series = 'WPSFD4'\n)\nWHERE $__timeFilter(time)\nORDER BY time\n",
             "editorType": "sql",
             "format": 0,
             "queryType": "timeseries",

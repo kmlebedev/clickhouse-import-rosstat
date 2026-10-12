@@ -120,18 +120,20 @@ func TestGoldThesisRowTitles(t *testing.T) {
 	}
 }
 
+// TestPricePanelShowsThresholdLine: без custom.thresholdsStyle Grafana не рисует линию порога
+// (по умолчанию стиль off), а линия $4 000 — часть приёмки панели 1.
+func TestPricePanelShowsThresholdLine(t *testing.T) {
+	mode := thresholdStyleMode(t, panelByID(t, builtGoldThesis(t), 1))
+	if mode != "line" {
+		t.Fatalf("у панели 1 thresholdsStyle.mode=%q, ожидался \"line\" (линия порога $4 000)", mode)
+	}
+}
+
 // TestYoYPanelsFilterOutsideWindow: YoY панели 5 считается по полному ряду, а фильтр времени
 // применяется снаружи — иначе первые 12 точек были бы посчитаны по обрезанному окну.
+// Делитель обёрнут в nullIf: в первых 12 строках lagInFrame даёт 0, и без этого YoY = +Inf.
 func TestYoYPanelsFilterOutsideWindow(t *testing.T) {
-	var panel *dashboard.Panel
-	for _, p := range panelsOf(builtGoldThesis(t)) {
-		if p.Id != nil && *p.Id == 5 {
-			panel = p
-		}
-	}
-	if panel == nil {
-		t.Fatal("панель с id 5 не найдена")
-	}
+	panel := panelByID(t, builtGoldThesis(t), 5)
 	if len(panel.Targets) != 2 {
 		t.Fatalf("у панели %q %d запросов, ожидалось 2 (CPI и PPI)", panelTitle(panel), len(panel.Targets))
 	}
@@ -146,10 +148,47 @@ func TestYoYPanelsFilterOutsideWindow(t *testing.T) {
 		if !strings.Contains(query.RawSql, "$__timeFilter(time)") {
 			t.Fatalf("панель %q: запрос %q фильтрует время не по внешнему time: %s", panelTitle(panel), query.RefId, query.RawSql)
 		}
-		if !strings.Contains(query.RawSql, "lagInFrame(value, 12) OVER (ORDER BY date)") {
-			t.Fatalf("панель %q: запрос %q не считает YoY по 12 месяцам", panelTitle(panel), query.RefId)
+		if !strings.Contains(query.RawSql, "nullIf(lagInFrame(value, 12) OVER (ORDER BY date), 0)") {
+			t.Fatalf("панель %q: запрос %q не защищён от деления на ноль в первых 12 строках (нужен nullIf)", panelTitle(panel), query.RefId)
 		}
 	}
+}
+
+// panelByID возвращает панель по id: нумерация задаётся вручную, уникальность держит Validate.
+func panelByID(t *testing.T, d dashboard.Dashboard, id uint32) *dashboard.Panel {
+	t.Helper()
+	for _, p := range panelsOf(d) {
+		if p.Id != nil && *p.Id == id {
+			return p
+		}
+	}
+	t.Fatalf("панель с id %d не найдена", id)
+	return nil
+}
+
+// thresholdStyleMode читает custom.thresholdsStyle.mode из JSON панели: тест проверяет то,
+// что реально уедет в артефакт, а не Go-структуру (поле Custom у FieldConfig — any).
+func thresholdStyleMode(t *testing.T, p *dashboard.Panel) string {
+	t.Helper()
+	raw, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed struct {
+		FieldConfig struct {
+			Defaults struct {
+				Custom struct {
+					ThresholdsStyle struct {
+						Mode string `json:"mode"`
+					} `json:"thresholdsStyle"`
+				} `json:"custom"`
+			} `json:"defaults"`
+		} `json:"fieldConfig"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	return parsed.FieldConfig.Defaults.Custom.ThresholdsStyle.Mode
 }
 
 func TestManifestWrapper(t *testing.T) {
