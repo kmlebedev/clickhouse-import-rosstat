@@ -500,7 +500,9 @@ make grafana-check                      # только smoke
 Push идемпотентен: повторный прогон обновляет тот же ресурс (`metadata.name=gold-thesis`), дубль не создаётся. Перед публикацией — серверная проверка ресурса на живом инстансе (шаг ручной, нужны креды):
 
 ```bash
-GRAFANA_SERVER=$(GRAFANA_TEST_URL) GRAFANA_ORG_ID=1 \
+set -a; . ~/.config/rosstat/env; set +a             # источник значений; ничего не печатает
+# если в env-файле нет адреса/токена — подставьте их: GRAFANA_TEST_URL=http://localhost:3000, GRAFANA_TEST_TOKEN=<токен Editor>
+GRAFANA_SERVER="$GRAFANA_TEST_URL" GRAFANA_TOKEN="$GRAFANA_TEST_TOKEN" GRAFANA_ORG_ID=1 \
   gcx resources validate dashboards --path dashboard/gold-thesis.json   # ✔ No errors found
 ```
 
@@ -521,6 +523,16 @@ curl -u admin:<пароль> -X POST http://localhost:3001/api/admin/provisionin
 
 ### Проверки и приёмка (2026-10-12)
 
-- `make grafana-check` на тест-стенде: uid дашборда виден, ключевые панели отдают точки — панель 1 «Цена золота и пол $4 000» дала **250 точек**, столько же, сколько MCP-запрос к `v_gold_prices` за тот же год.
-- `make grafana-build` (повторный прогон — пустой `git diff`), `make grafana-validate`, CI `dashboards`, `make all`, `make mcp-check` — зелёные.
+**Проверено на стенде/локально:**
+
+- **Grafana-smoke на локальном стенде (13.2.3).** Дашборд виден по uid, панель 1 «Цена золота и пол $4 000» вернула **250 точек** — запрос шёл через Grafana (`/api/ds/query`), но временной обёрткой с basic-auth стенда: сервис-аккаунта с токеном у владельца ещё нет.
+- **SQL-проверка через MCP — отдельная проверка, не то же самое.** Тот же год в `v_gold_prices` под `kimi_reader` через MCP даёт `SELECT count()` = **250** — Grafana и агент читают одни данные, но это два разных канала (Grafana-запрос и MCP-запрос).
+- `make grafana-build` — детерминирован (повторный прогон — пустой `git diff`); `make grafana-validate`, `make all`, `make mcp-check` — зелёные по отчёту исполнителя этой задачи и повторены при финальных проверках ветки.
+- `gcx resources push` идемпотентен (повторный push не создаёт дубль, растёт только `version`); серверная `gcx resources validate` на стенде отдала `✔ No errors found`.
 - Провижининг датасорса применён на staging и идемпотентен: повторный прогон печатает «актуален», sha256/mtime/inode не меняются; в репозитории лежит только шаблон с плейсхолдером, пароль подставляется на хосте.
+
+**Ещё не подтверждено (owner-assisted, ожидает владельца и PR):**
+
+- `make grafana-check` с Bearer-токеном и цели `make grafana-deploy-test` / `grafana-deploy-staging` целиком — `GRAFANA_TEST_TOKEN`/`GRAFANA_STAGING_TOKEN` не заданы, поэтому «250 точек» получены обёрткой с basic-auth, а не самой целью.
+- CI `dashboards` на GitHub Actions ещё **не запускался**: шаги workflow воспроизведены локально по одному, реальный зелёный прогон подтвердится на PR.
+- Визуальный просмотр дашборда в браузере и admin-reload датасорса на staging.
