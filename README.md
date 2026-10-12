@@ -105,10 +105,12 @@ dcf/                     расчётное ядро DCF: sum-of-parts LOM-NAV �
 financial/               legacy-контур (database/sql, свой main), новый код туда не добавляется; остался databook_ugk (ЮГК)
 dagu/                    расписания: один DAG-файл на домен, имя файла = имя DAG
 sql/                     DDL и гранты вручную: пользователь kimi_reader и гранты на витрины, сид календаря Q4-2026, сид консенсуса gold_forecasts (gold_forecasts_q4_2026_seed.sql), каталог 20 рядов WGC ETF Flows (wgc_etf_flows_catalog.sql), бэкфилл журнала прогнозов (forecast_log_backfill.sql)
-scripts/                 проверки MCP (mcp_setup_user.py, mcp_check.py), экстраполяция поактивного AISC Полюса (extrapolation_aisc.py + тест и генератор испорченной PDF-фикстуры) и тесты скриптов
+scripts/                 проверки MCP (mcp_setup_user.py, mcp_check.py), smoke дашборда Grafana (grafana_check.py), экстраполяция поактивного AISC Полюса (extrapolation_aisc.py + тест и генератор испорченной PDF-фикстуры) и тесты скриптов
+grafana/                 дашборд gold-thesis как код: отдельный Go-модуль на grafana-foundation-sdk (цель make grafana-build генерирует dashboard/gold-thesis.json), тесты состава панелей и валидации; провижининг датасорса локального стенда (grafana/provisioning/datasources/clickhouse.yaml)
+dashboard/               артефакты дашбордов Grafana: gold-thesis.json коммитится и генерируется из grafana/ (руками не правится); легаси-экспорты rosstat.json, chmf.json, finance-polyus.json остаются как есть — миграция на код отдельным пунктом
 deploy/staging/           артефакты деплоя на staging: юниты dagu и mcp-clickhouse, образец env
 docs/                    аналитические статьи и дорожная карта
-.github/workflows/       CI (go.yml) и релиз по тегу v* (release.yml)
+.github/workflows/       CI (go.yml, dashboards.yml) и релиз по тегу v* (release.yml)
 ```
 
 ## Быстрый старт
@@ -150,6 +152,8 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 Импортёр `financial` читает `TICKER`, `FINANCIAL_DATA_DIR`, `INVESTING_EMAIL`, `INVESTING_PASSWORD`; эти переменные устаревают вместе с legacy-контуром.
 
 `DCF_RUN_ID` — переменная окружения **разового прогона** `dcf_engine`, а не строка конфигурации источника: UUID прогона, который уходит в `nav_by_asset.run_id` и связывает строки с записью `model_runs` (её создаёт ingest-endpoint). Передавайте её прямо в команде — `DCF_RUN_ID=$(uuidgen | tr A-Z a-z) make import STAT=dcf_engine`; в `~/.config/rosstat/env` её хранить не нужно. Без `DCF_RUN_ID` движок считает и печатает тело `POST /v1/model_run`, но не пишет ни строки (см. «Что импортируется»). Импортёр `dcf_mine_plans` переменных окружения не имеет (только `CLICKHOUSE_URL`).
+
+Переменные стендов Grafana (`GRAFANA_TEST_URL`/`GRAFANA_TEST_TOKEN`, `GRAFANA_STAGING_URL`/`GRAFANA_STAGING_TOKEN`, `GRAFANA_ORG_ID`) к импортёрам не относятся — они нужны целям `make grafana-*` (дашборд как код, деплой и smoke). Значения живут в том же `~/.config/rosstat/env`, `make env-check` печатает только «задан/не задан»; описание — в разделе «Grafana».
 
 ## Оркестрация (Dagu)
 
@@ -219,6 +223,13 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 | `make deploy-staging-binary` / `-dagu` / `-mcp` | точечно: только бинарник, только dagu, только MCP |
 | `make upgrade-staging` | обновить **только** dagu и mcp-clickhouse до версий из репозитория (без `apt upgrade`) |
 | `make mcp-user-staging` | создать `kimi_reader` на staging (нужны `CLICKHOUSE_PASSWORD` и `CH_SETUP_PASSWORD`) |
+| `make grafana-build` | сгенерировать `dashboard/gold-thesis.json` из кода модуля `grafana/` (grafana-foundation-sdk). Детерминирована: повторный прогон не меняет артефакт |
+| `make grafana-validate` | `go vet` и тесты модуля `grafana/` (состав панелей и ряд негативных правил `Validate`). Серверная `gcx resources validate` сюда не входит — она требует живого инстанса и кредов (рабочая форма — в комментарии цели; на стенде даёт `✔ No errors found`) |
+| `make grafana-up` / `make grafana-down` | поднять/остановить локальный стенд Grafana (brew-Grafana 13.2.3; данные, логи и плагины в `$(GF_DIR)`, провижининг — `grafana/provisioning`, порт 3000). Плагин `grafana-clickhouse-datasource` 4.3.2 ставится сам; системный `brew services` не используется |
+| `make grafana-check` | smoke задеплоенного дашборда: `GET /api/dashboards/uid/gold-thesis` = 200 и первые панели отдают точки (SQL берётся из самого дашборда, снятого со стенда). Нужны `GRAFANA_TEST_URL` и `GRAFANA_TEST_TOKEN` |
+| `make grafana-deploy-test` | выгрузить дашборд на тест-стенд (`gcx resources push dashboards --path dashboard/gold-thesis.json`) и прогнать `grafana-check`. Идемпотентна: повторный push не создаёт дубль, растёт только `version` |
+| `make grafana-provision-staging` | идемпотентно разложить провижининг датасорса на staging: шаблон `deploy/staging/grafana-datasource.yaml`, пароль подставляется на хосте из env-файла, результат — `root:grafana 640`, переустановка только при отличии sha256 |
+| `make grafana-deploy-staging` | staging-деплой через туннель `:3001`: проверка токена → доступность → `grafana-provision-staging` → push дашборда → smoke. Нужен `GRAFANA_STAGING_TOKEN` |
 
 ### Деплой на staging
 
@@ -305,6 +316,9 @@ export CLICKHOUSE_PASSWORD=<kimi_reader-password>
 # export BLS_API_KEY=<your-key>
 # export INGEST_TOKEN=<ingest-token>
 # export INGEST_RATE_PER_MIN=60
+# export GRAFANA_TEST_TOKEN=<токен сервис-аккаунта Editor локального стенда :3000>
+# export GRAFANA_STAGING_TOKEN=<токен сервис-аккаунта Editor на staging, доступ через туннель :3001>
+# export GRAFANA_ORG_ID=1
 ```
 
 - `CLICKHOUSE_URL` — **основной** способ задать адрес: это DSN, из которого Go-код (`clickhouse.ParseDSN`) и `scripts/extrapolation_aisc.py` берут хост, порт, пользователя и базу. Дискретные `CLICKHOUSE_HOST`/`CLICKHOUSE_PORT`/`CLICKHOUSE_USER`/`CLICKHOUSE_DATABASE` в файле обычно **не задаются**; скрипт читает их как переопределение поверх DSN;
@@ -390,6 +404,8 @@ MCP GoLand (опционально, ускоряет работу Kimi Code с �
 
 Все задания используют Go `1.27.x`: `govulncheck` проверяет стандартную библиотеку тулчейном, которым запущен, и на go1.27.1 находил уязвимости `net/http` и `crypto/tls`, исправленные в go1.27.2.
 
+`.github/workflows/dashboards.yml` (`dashboards`) на каждый push в `main` и на pull request проверяет дашборд `gold-thesis` как код: `go vet` и `go test` модуля `grafana/`, `make grafana-build`, `git diff --exit-code -- dashboard/gold-thesis.json` (артефакт совпадает со свежей сборкой — заодно ловит недетерминированную генерацию), установка пинуемой `gcx` v1.5.0 и офлайновый `gcx dev lint run` по файлу артефакта (два idiomatic-предупреждения генератора — `editable`-дашборд и отсутствие описаний панелей — отключены по именам, иначе был бы exit 4), затем upload артефакта. Секретов и деплоя в workflow нет: на стенд дашборд уезжает только вручную (`make grafana-deploy-test` / `make grafana-deploy-staging`), серверная `gcx resources validate` остаётся ручной проверкой (нужны сервер, org-id и креды).
+
 `.github/workflows/release.yml` на тег `v*` запускает тесты и `goreleaser` (архив `linux/amd64`, `SHA256SUMS`, файлы `README.md` и `dagu/*.yaml`). Конфиг — `.goreleaser.yaml`; проверка: `goreleaser check`. В релиз входит только основной бинарник импорта; `cmd/ingest` собирается локально через `make build-ingest`.
 
 ## Ограничения и известные проблемы
@@ -421,6 +437,7 @@ MCP GoLand (опционально, ускоряет работу Kimi Code с �
 - **Имена импортёров.** `Name()` у `fred` — `fred` (несколько серий, одна таблица `macro_series`), у `cbr` часть импортёров делит таблицу (`cbr_currency_usd`, `households_b_mes`).
 - **Таблица `gold_prices` использует `Date32`.** Так как LBMA-ряд начинается в 1968 году.
 - **Доходности G-curve (`ofz_curve`, теноры 1y/3y/5y/10y) — без ретроспективы.** Эндпоинт MOEX ISS `/iss/engines/stock/zcyc.json` отдаёт только снимок текущего дня; история накапливается с даты первого запуска импортёра. Индекс RGBI (тот же zcyc + свечи) имеет полную историю с 2010 года.
+- **Дашборд `gold-thesis`: провижининг `datasources` применяется только при старте Grafana.** Проверено на staging (Grafana 13.1.1): каталог `provisioning/datasources` читается один раз при старте сервера (поллинг есть только у дашбордов), поэтому после `make grafana-provision-staging` новый датасорс `ch-rosstat` не появляется, пока владелец не сделает admin-reload (`POST /api/admin/provisioning/datasources/reload`) или не перезапустит `grafana-server`; до этого smoke упадёт с «datasource not found». Цель сама сервис не рестартует и печатает готовую команду reload. Токены стендов (`GRAFANA_TEST_TOKEN`/`GRAFANA_STAGING_TOKEN`) и полный staging-прогон — owner-assisted: сервис-аккаунты Editor и токены создаются вручную (см. «Grafana»).
 
 ## Grafana
 
@@ -432,4 +449,78 @@ wget https://dl.grafana.com/oss/release/grafana_11.2.0_arm64.deb
 sudo dpkg -i grafana_11.2.0_arm64.deb
 ```
 
-Дашборды лежат в `dashboard/` (JSON, плагин `grafana-clickhouse-datasource`).
+Дашборд статьи **`gold-thesis`** живёт как код, а не как экспорт из UI. Конвейер:
+
+```text
+grafana/ (Go, grafana-foundation-sdk) --make grafana-build--> dashboard/gold-thesis.json (коммитится)
+        |                                                              |
+   make grafana-validate                              make grafana-deploy-test / -staging (gcx resources push)
+   (go vet + тесты)                                                |
+   CI dashboards.yml: тесты, сборка,                           make grafana-check
+   diff-проверка артефакта, gcx dev lint                  (smoke: uid + точки панелей)
+```
+
+Легаси-экспорты `dashboard/rosstat.json`, `dashboard/chmf.json`, `dashboard/finance-polyus.json` остаются как есть — их миграция на код, алерты Grafana и PNG-рендер панелей для статьи вне объёма этой работы.
+
+### Дашборд как код
+
+- Источник истины — `grafana/` (отдельный Go-модуль): 9 панелей (id 1–9) в 5 рядах, все запросы — только по витринам `v_*`, датасорс каждой панели — константа uid `ch-rosstat`. Артефакт `dashboard/gold-thesis.json` (k8s-ресурс `dashboard.grafana.app/v1beta1`, uid `gold-thesis`) руками не правится: `make grafana-build` перезаписывает его детерминированно, а CI падает, если артефакт разошёлся с кодом.
+- `make grafana-validate` — `go vet` + тесты модуля (состав панелей и негативные правила `Validate`). Серверный `gcx resources validate` намеренно не входит в цель: он проверяет ресурс на живом инстансе (server-side dry-run) и требует кредов — рабочая форма записана в комментарии цели.
+- Локальный стенд: `make grafana-up` (brew-Grafana; данные, логи и плагины в `$(GF_DIR)`, провижининг датасорса — `grafana/provisioning/datasources/clickhouse.yaml`, порт 3000) и `make grafana-down`. При первом входе в UI смените пароль `admin/admin`.
+
+### Переменные окружения стендов
+
+| Переменная | Назначение |
+|---|---|
+| `GRAFANA_TEST_URL` | адрес тест-стенда, по умолчанию `http://localhost:3000` |
+| `GRAFANA_TEST_TOKEN` | токен сервис-аккаунта **Editor** на тест-стенде: `make grafana-deploy-test`, `make grafana-check` |
+| `GRAFANA_STAGING_URL` | адрес staging, по умолчанию `http://localhost:3001` — **только через ssh-туннель** |
+| `GRAFANA_STAGING_TOKEN` | токен сервис-аккаунта **Editor** на staging: `make grafana-deploy-staging` |
+| `GRAFANA_ORG_ID` | org-id инстанса для `gcx` (on-prem без него отвергается), по умолчанию `1` |
+
+Значения — только в `~/.config/rosstat/env`; `make env-check` печатает «задан/не задан» без значений. Версии: `gcx` 1.5.0 (`brew install gcx`), локальный стенд — Grafana 13.2.3 + плагин `grafana-clickhouse-datasource` 4.3.2 (ставится `make grafana-up`), staging — Grafana 13.1.1.
+
+### Одноразовая настройка (владелец)
+
+1. `brew install gcx`.
+2. Локальный стенд: `make grafana-up` → войти `admin/admin` (первый запуск) → **Administration → Users and access → Service accounts** → аккаунт с ролью **Editor** → **Add service account token** → значение в `~/.config/rosstat/env` как `GRAFANA_TEST_TOKEN`.
+3. Staging: то же в UI staging (через туннель) → токен как `GRAFANA_STAGING_TOKEN`.
+
+Токены не попадают в репозиторий, CI и логи (`gcx` получает их из окружения, а не аргументом командной строки).
+
+### Цикл разработки и деплой
+
+```bash
+make ch-up && make grafana-up           # ClickHouse + локальный стенд с провижинингом датасорса
+make grafana-build && make grafana-validate
+make grafana-deploy-test                # gcx resources push на $(GRAFANA_TEST_URL) + smoke
+make grafana-check                      # только smoke
+```
+
+Push идемпотентен: повторный прогон обновляет тот же ресурс (`metadata.name=gold-thesis`), дубль не создаётся. Перед публикацией — серверная проверка ресурса на живом инстансе (шаг ручной, нужны креды):
+
+```bash
+GRAFANA_SERVER=$(GRAFANA_TEST_URL) GRAFANA_ORG_ID=1 \
+  gcx resources validate dashboards --path dashboard/gold-thesis.json   # ✔ No errors found
+```
+
+Staging — через туннель `:3001` (порт не конфликтует с локальным стендом `:3000`):
+
+```bash
+ssh -N -L 3001:127.0.0.1:3000 palmshell &
+make grafana-deploy-staging             # провижининг датасорса → push дашборда → smoke
+```
+
+**Ловушка staging:** Grafana (проверено на 13.1.1) применяет `provisioning/datasources` **только при старте** — сразу после первого `make grafana-provision-staging` датасорса `ch-rosstat` в инстансе ещё нет, и smoke упадёт. Активировать без рестарта сервиса:
+
+```bash
+curl -u admin:<пароль> -X POST http://localhost:3001/api/admin/provisioning/datasources/reload
+```
+
+(либо один `systemctl restart grafana-server`). Цель Grafana не перезапускает и сама печатает эту команду; подробности — `deploy/staging/README.md`.
+
+### Проверки и приёмка (2026-10-12)
+
+- `make grafana-check` на тест-стенде: uid дашборда виден, ключевые панели отдают точки — панель 1 «Цена золота и пол $4 000» дала **250 точек**, столько же, сколько MCP-запрос к `v_gold_prices` за тот же год.
+- `make grafana-build` (повторный прогон — пустой `git diff`), `make grafana-validate`, CI `dashboards`, `make all`, `make mcp-check` — зелёные.
+- Провижининг датасорса применён на staging и идемпотентен: повторный прогон печатает «актуален», sha256/mtime/inode не меняются; в репозитории лежит только шаблон с плейсхолдером, пароль подставляется на хосте.
