@@ -9,15 +9,39 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
 func TestImportRejectsUnknownModeBeforeDB(t *testing.T) {
-	// Неизвестный режим обязан быть отвергнут до БД и до сети — conn=nil здесь и
-	// есть проверка порядка: начни Import с Exec или с лент, тест упал бы паникой
-	// nil-разыменования вместо ожидаемой ошибки про переменную.
+	// Порядок «режим → БД → сеть» закреплён двумя разными способами.
+	// До БД: conn=nil — Exec на nil-соединении паникует, значит первый Exec идёт
+	// после parseMode. До сети: ленты подменены httptest-сервером со счётчиком, и
+	// ни одного запроса к нему быть не должно (fetchFeeds сам conn не трогает, и
+	// без подмены тест ушёл бы в настоящую сеть, оставшись зелёным).
 	t.Setenv(modeEnv, "bogus")
+
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		http.Error(w, "ленты не должны читаться при неверном режиме", http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+
+	// Подмена пакетных URL — как в TestFetchFeedsUsesFixturesAndIsolatesFailure:
+	// feeds() читает их при каждом вызове, поэтому подменённый адрес подхватится.
+	oldInterfax, oldRBC, oldCBRNews, oldCBRPress, oldTASS :=
+		feedInterfaxURL, feedRBCURL, feedCBRNewsURL, feedCBRPressURL, feedTASSURL
+	feedInterfaxURL = srv.URL + "/interfax"
+	feedRBCURL = srv.URL + "/rbc"
+	feedCBRNewsURL = srv.URL + "/cbr_news"
+	feedCBRPressURL = srv.URL + "/cbr_press"
+	feedTASSURL = srv.URL + "/tass"
+	t.Cleanup(func() {
+		feedInterfaxURL, feedRBCURL, feedCBRNewsURL, feedCBRPressURL, feedTASSURL =
+			oldInterfax, oldRBC, oldCBRNews, oldCBRPress, oldTASS
+	})
 
 	var s newsImport
 	count, err := s.Import(context.Background(), nil)
@@ -29,6 +53,9 @@ func TestImportRejectsUnknownModeBeforeDB(t *testing.T) {
 	}
 	if count != 0 {
 		t.Errorf("Import вернул %d строк, want 0 (до записи дело не дошло)", count)
+	}
+	if got := hits.Load(); got != 0 {
+		t.Errorf("Import обратился к лентам %d раз, want 0: неверный режим обязан отвергаться до сети", got)
 	}
 }
 

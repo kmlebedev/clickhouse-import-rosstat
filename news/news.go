@@ -313,7 +313,10 @@ func (s *newsImport) Import(ctx context.Context, conn driver.Conn) (count int64,
 	if mode == modeCheck {
 		stored, err := readStoredSpans(ctx, conn)
 		if err != nil {
-			return 0, err
+			// Ошибка чтения покрытия не вытесняет ошибки лент: dagu печатает одну
+			// строку на прогон, и диагноз обязан быть полным — видно и сбой базы,
+			// и то, какие ленты не прочитались в этом прогоне.
+			return 0, errors.Join(err, errors.Join(feedErrs...))
 		}
 		for _, line := range coverageLines(spans, stored) {
 			log.Infof("news_watch check: %s", line)
@@ -338,7 +341,9 @@ func (s *newsImport) Import(ctx context.Context, conn driver.Conn) (count int64,
 		// проходит всё окно.
 		stored, err := readStoredSpans(ctx, conn)
 		if err != nil {
-			return 0, err
+			// Тот же полный диагноз, что и в check: отказ лент не должен теряться
+			// за ошибкой базы — иначе в dagu видно только её.
+			return 0, errors.Join(err, errors.Join(feedErrs...))
 		}
 		cursors := make(map[string]time.Time, len(stored))
 		for src, span := range stored {
@@ -357,7 +362,9 @@ func (s *newsImport) Import(ctx context.Context, conn driver.Conn) (count int64,
 	}
 
 	if count, err = insertItems(ctx, conn, items); err != nil {
-		return count, err
+		// К ошибке батча добавляются отказы лент: иначе прогон в dagu отчитывается
+		// только «запись упала», и сбойные ленты этого прогона из вывода выпадают.
+		return count, errors.Join(err, errors.Join(feedErrs...))
 	}
 	// Успешные ленты записаны, сбойная видна в логе и в итоговой ошибке: dagu
 	// перезапустит прогон, а повторная запись тех же позиций безвредна.
