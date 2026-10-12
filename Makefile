@@ -63,7 +63,7 @@ STAGING_BIN_DIR  ?= /root/.local/bin
 STAGING_ENV_FILE ?= /etc/clickhouse-import-rosstat.env
 DAGU_VERSION     ?= v2.18.2
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token
 
 all: lint test build build-ingest
 
@@ -432,6 +432,57 @@ grafana-deploy-test:
 grafana-check:
 	@test -n "$$GRAFANA_TOKEN" || { echo "задайте GRAFANA_TEST_TOKEN в $(ROSSTAT_ENV) (сервис-аккаунт Editor на $(GRAFANA_TEST_URL))"; exit 1; }
 	GRAFANA_URL=$(GRAFANA_TEST_URL) python3 scripts/grafana_check.py --uid $(DASHBOARD_UID)
+
+# Токен локального стенда одной командой: сервис-аккаунт создаётся идемпотентно (повторный прогон
+# переиспользует $(GRAFANA_SA_NAME) и говорит «уже есть»), а токен — всегда новый: Grafana показывает
+# ключ один раз, поэтому старый не переиспользуется (отозвать — в UI: Administration → Users and
+# access → Service accounts → $(GRAFANA_SA_NAME) → Tokens). Токен проверяется GET /api/user (Bearer)
+# ДО печати и в argv не попадает: уходит в curl конфигом на stdin (-K -), python3 читает JSON по pipe.
+# Имя токена — deploy-<UTC-метка>-<pid>, а не фиксированное `deploy`: Grafana 13.2.3 на повтор имени
+# отвечает 400 ErrTokenAlreadyExists «service account token with given name already exists in the
+# organization» (проверено живьём), поэтому фиксированное имя сломало бы второй прогон цели. Префикс
+# `deploy` — чтобы токены цели были узнаваемы в UI при отзыве, метка/pid — чтобы имя было уникальным
+# без окна гонки (два запуска в одну секунду не столкнутся).
+# Печатаются ровно две строки — готовая строка для $(ROSSTAT_ENV); остальное (id аккаунта, служебные
+# сообщения) в stdout, чтобы владелец видел только то, что копирует.
+# Админ-креды — дефолт локального одноразового стенда (admin/admin, см. README §Grafana),
+# переопределяются окружением, в т.ч. $(ROSSTAT_ENV). В рецепте стоят ссылки на переменные
+# окружения, а не их значения, поэтому `make -n` секретов не печатает.
+# Список аккаунтов — /api/serviceaccounts/search: GET /api/serviceaccounts на Grafana 13.2.3 отвечает
+# 404 «Not found» (проверено живьём), поиск и есть документированный list-эндпоинт; точное сравнение
+# имени делает python3 (query у Grafana — подстрока, совпадение по подстроке дало бы чужой id).
+GRAFANA_ADMIN_USER     ?= admin
+GRAFANA_ADMIN_PASSWORD ?= admin
+GRAFANA_SA_NAME        ?= dashboards-cd
+GRAFANA_SA_ROLE        ?= Editor
+grafana-test-token:
+	@curl -sf -m 2 $(GRAFANA_TEST_URL)/api/health >/dev/null 2>&1 || { echo "стенд не отвечает: make grafana-up"; exit 1; }
+	@sa_json=$$(curl -sf -m 5 -u "$$GRAFANA_ADMIN_USER:$$GRAFANA_ADMIN_PASSWORD" "$(GRAFANA_TEST_URL)/api/serviceaccounts/search?perpage=100") \
+		|| { echo "не удалось прочитать список сервис-аккаунтов $(GRAFANA_TEST_URL): проверьте GRAFANA_ADMIN_USER/GRAFANA_ADMIN_PASSWORD"; exit 1; }; \
+	sa_id=$$(printf '%s' "$$sa_json" | python3 -c "import json,sys; name=sys.argv[1]; accounts=json.load(sys.stdin).get('serviceAccounts') or []; found=[a for a in accounts if a.get('name') == name]; print(found[0]['id'] if found else '')" "$(GRAFANA_SA_NAME)") \
+		|| { echo "ответ $(GRAFANA_TEST_URL)/api/serviceaccounts/search не разобран (ждали JSON с serviceAccounts)"; exit 1; }; \
+	if [ -n "$$sa_id" ]; then \
+		echo "сервис-аккаунт $(GRAFANA_SA_NAME) уже есть (id $$sa_id)"; \
+	else \
+		sa_json=$$(curl -sf -m 5 -u "$$GRAFANA_ADMIN_USER:$$GRAFANA_ADMIN_PASSWORD" -X POST \
+			-H "Content-Type: application/json" -d '{"name":"$(GRAFANA_SA_NAME)","role":"$(GRAFANA_SA_ROLE)"}' \
+			"$(GRAFANA_TEST_URL)/api/serviceaccounts") \
+			|| { echo "не удалось создать сервис-аккаунт $(GRAFANA_SA_NAME) на $(GRAFANA_TEST_URL)"; exit 1; }; \
+		sa_id=$$(printf '%s' "$$sa_json" | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])") \
+			|| { echo "в ответе на создание сервис-аккаунта нет id"; exit 1; }; \
+		echo "сервис-аккаунт $(GRAFANA_SA_NAME) создан (id $$sa_id, роль $(GRAFANA_SA_ROLE))"; \
+	fi; \
+	token_name=deploy-$$(date -u +%Y%m%dT%H%M%SZ)-$$$$; \
+	token_json=$$(curl -sf -m 10 -u "$$GRAFANA_ADMIN_USER:$$GRAFANA_ADMIN_PASSWORD" -X POST \
+		-H "Content-Type: application/json" -d "$$(printf '{"name":"%s"}' "$$token_name")" \
+		"$(GRAFANA_TEST_URL)/api/serviceaccounts/$$sa_id/tokens") \
+		|| { echo "не удалось создать токен $$token_name для сервис-аккаунта $$sa_id"; exit 1; }; \
+	token=$$(printf '%s' "$$token_json" | python3 -c "import json,sys; key=json.load(sys.stdin).get('key') or ''; key.startswith('glsa_') or sys.exit('в ответе нет ключа glsa_...'); print(key)") \
+		|| { echo "в ответе на создание токена нет ключа glsa_..."; exit 1; }; \
+	code=$$(printf 'url = "%s"\nheader = "Authorization: Bearer %s"\n' "$(GRAFANA_TEST_URL)/api/user" "$$token" | curl -s -o /dev/null -w "%{http_code}" -m 10 -K -); \
+	[ "$$code" = "200" ] || { echo "токен не прошёл проверку GET /api/user (HTTP $$code) — в $(ROSSTAT_ENV) вставлять нельзя"; exit 1; }; \
+	echo "Добавьте строку в ~/.config/rosstat/env (секрет, не коммитить):"; \
+	echo "GRAFANA_TEST_TOKEN=$$token"
 
 # Провижининг датасорса на staging (идемпотентный). Шаблон с плейсхолдером копируется в /tmp хоста,
 # пароль подставляется НА ХОСТЕ из $(STAGING_ENV_FILE) — python3, а не sed (у sed сломались бы / & \ и др.).

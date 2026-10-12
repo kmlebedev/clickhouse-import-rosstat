@@ -226,6 +226,7 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 | `make grafana-build` | сгенерировать `dashboard/gold-thesis.json` из кода модуля `grafana/` (grafana-foundation-sdk). Детерминирована: повторный прогон не меняет артефакт |
 | `make grafana-validate` | `go vet` и тесты модуля `grafana/` (состав панелей и ряд негативных правил `Validate`). Серверная `gcx resources validate` сюда не входит — она требует живого инстанса и кредов (рабочая форма — в комментарии цели; на стенде даёт `✔ No errors found`) |
 | `make grafana-up` / `make grafana-down` | поднять/остановить локальный стенд Grafana (brew-Grafana 13.2.3; данные, логи и плагины в `$(GF_DIR)`, провижининг — `grafana/provisioning`, порт 3000). Плагин `grafana-clickhouse-datasource` 4.3.2 ставится сам; системный `brew services` не используется |
+| `make grafana-test-token` | сервис-аккаунт `dashboards-cd` (роль **Editor**) на локальном стенде и свежий токен к нему: аккаунт создаётся идемпотентно (повтор — «уже есть (id N)»), токен — всегда новый (имя `deploy-<UTC-метка>-<pid>`: Grafana не принимает два токена с одним именем) и проверяется `GET /api/user` **до** печати. Печатает готовую строку `GRAFANA_TEST_TOKEN=glsa_…` для `~/.config/rosstat/env` (секрет в репозиторий/логи не попадает). Нужен запущенный стенд (иначе «стенд не отвечает: make grafana-up») и админ-креды `GRAFANA_ADMIN_USER`/`GRAFANA_ADMIN_PASSWORD` (дефолт `admin`/`admin` — локальный одноразовый стенд) |
 | `make grafana-check` | smoke задеплоенного дашборда: `GET /api/dashboards/uid/gold-thesis` = 200 и первые панели отдают точки (SQL берётся из самого дашборда, снятого со стенда). Нужны `GRAFANA_TEST_URL` и `GRAFANA_TEST_TOKEN` |
 | `make grafana-deploy-test` | выгрузить дашборд на тест-стенд (`gcx resources push dashboards --path dashboard/gold-thesis.json`) и прогнать `grafana-check`. Идемпотентна: повторный push не создаёт дубль, растёт только `version` |
 | `make grafana-provision-staging` | идемпотентно разложить провижининг датасорса на staging: шаблон `deploy/staging/grafana-datasource.yaml`, пароль подставляется на хосте из env-файла, результат — `root:grafana 640`, переустановка только при отличии sha256 |
@@ -483,7 +484,7 @@ grafana/ (Go, grafana-foundation-sdk) --make grafana-build--> dashboard/gold-the
 ### Одноразовая настройка (владелец)
 
 1. `brew install gcx`.
-2. Локальный стенд: `make grafana-up` → войти `admin/admin` (первый запуск) → **Administration → Users and access → Service accounts** → аккаунт с ролью **Editor** → **Add service account token** → значение в `~/.config/rosstat/env` как `GRAFANA_TEST_TOKEN`.
+2. Локальный стенд: `make grafana-up` → войти `admin/admin` (первый запуск) → **Administration → Users and access → Service accounts** → аккаунт с ролью **Editor** → **Add service account token** → значение в `~/.config/rosstat/env` как `GRAFANA_TEST_TOKEN`; то же одной командой — `make grafana-test-token` (создаёт аккаунт `dashboards-cd` роли Editor и печатает строку для env-файла).
 3. Staging: то же в UI staging (через туннель) → токен как `GRAFANA_STAGING_TOKEN`.
 
 Токены не попадают в репозиторий, CI и логи (`gcx` получает их из окружения, а не аргументом командной строки).
