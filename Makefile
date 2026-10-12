@@ -30,6 +30,17 @@ GF_PID       := $(GF_DIR)/grafana.pid
 GF_LOG       := $(GF_DIR)/grafana.log
 GF_PLUGINS   := $(GF_DIR)/plugins
 
+# Деплой дашборда на тест-стенд и smoke (make grafana-deploy-test / grafana-check).
+# gcx работает на переменных окружения: конфиг ~/.config/gcx не нужен, контексты не сохраняются,
+# поэтому в CI достаточно GRAFANA_SERVER/GRAFANA_TOKEN. Для on-prem gcx 1.5.0 дополнительно
+# требует org-id — без него «missing stacks.default.grafana.org-id» (проверено на стенде 13.2.3).
+# Токен подставляется в GRAFANA_TOKEN на уровне make, а не префиксом команды в рецепте: тогда он
+# уходит в окружение процесса gcx (make экспортирует переменные) и не светится в командной строке.
+DASHBOARD_UID    ?= gold-thesis
+GRAFANA_TEST_URL ?= http://localhost:3000
+GRAFANA_ORG_ID   ?= 1
+GRAFANA_TOKEN    ?= $(GRAFANA_TEST_TOKEN)
+
 MCP_USER     ?= kimi_reader
 MCP_PY       ?= 3.12
 MCP_VERSION  ?= 0.7.0
@@ -47,7 +58,7 @@ STAGING_BIN_DIR  ?= /root/.local/bin
 STAGING_ENV_FILE ?= /etc/clickhouse-import-rosstat.env
 DAGU_VERSION     ?= v2.18.2
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-up grafana-down
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-up grafana-down grafana-deploy-test grafana-check
 
 all: lint test build build-ingest
 
@@ -142,6 +153,7 @@ env-check:
 	@for v in BEA_API_KEY BLS_API_KEY EIA_API_KEY CLICKHOUSE_URL CLICKHOUSE_PASSWORD; do \
 		if [ -n "$$(printenv $$v)" ]; then echo "OK   $$v задан"; else echo "НЕТ  $$v не задан (см. README, раздел «Ключи и окружение»)"; fi; \
 	done
+	@if [ -n "$$GRAFANA_TEST_TOKEN" ]; then echo "OK   GRAFANA_TEST_TOKEN задан"; else echo "НЕТ  GRAFANA_TEST_TOKEN не задан (нужен для make grafana-deploy-test: сервис-аккаунт Editor на $(GRAFANA_TEST_URL))"; fi
 
 # Локальный прогон одного импортёра: make import STAT=bea (нужны CLICKHOUSE_URL и ключ импортёра из $(ROSSTAT_ENV)).
 STAT ?=
@@ -379,6 +391,27 @@ grafana-down:
 	else \
 		echo "PID-файл $(GF_PID) не найден или процесс не запущен (сервер, поднятый вне make, не останавливается)"; \
 	fi
+
+# Выгрузка артефакта Task 1 на тест-стенд и smoke-проверка панелей.
+# Рабочая форма вызова подобрана живьём на стенде Grafana 13.2.3 (gcx 1.5.0): selector dashboards
+# + --path на файл-артефакт; push принимает apiVersion dashboard.grafana.app/v1beta1 и идемпотентен
+# (повторный прогон обновляет тот же ресурс metadata.name=gold-thesis, дубль не создаётся).
+# Фолбэки (тоже проверены живьём, в цели не нужны):
+#   gcx resources push -p dashboard/gold-thesis.json
+#   gcx api /api/dashboards/db -d @payload.json   # REST-фолбэк; payload = {"dashboard": <spec из артефакта>,
+#                                                 # "overwrite": true} — сама spec без обёртки не принимается
+# Полезно перед живым прогоном: gcx resources push dashboards --path dashboard/gold-thesis.json --dry-run
+grafana-deploy-test:
+	@test -n "$$GRAFANA_TOKEN" || { echo "задайте GRAFANA_TEST_TOKEN в $(ROSSTAT_ENV) (сервис-аккаунт Editor на $(GRAFANA_TEST_URL))"; exit 1; }
+	GRAFANA_SERVER=$(GRAFANA_TEST_URL) GRAFANA_ORG_ID=$(GRAFANA_ORG_ID) \
+		gcx resources push dashboards --path dashboard/gold-thesis.json
+	@$(MAKE) grafana-check --no-print-directory
+
+# Smoke задеплоенного дашборда: дашборд виден по uid и первые панели отдают данные.
+# Проверка читает дашборд со стенда, поэтому ловит и «артефакт не доехал», и «панель пустая».
+grafana-check:
+	@test -n "$$GRAFANA_TOKEN" || { echo "задайте GRAFANA_TEST_TOKEN в $(ROSSTAT_ENV) (сервис-аккаунт Editor на $(GRAFANA_TEST_URL))"; exit 1; }
+	GRAFANA_URL=$(GRAFANA_TEST_URL) python3 scripts/grafana_check.py --uid $(DASHBOARD_UID)
 
 info:
 	@echo "BINARY    = $(TARGET)"
