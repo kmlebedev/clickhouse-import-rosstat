@@ -41,6 +41,11 @@ GRAFANA_TEST_URL ?= http://localhost:3000
 GRAFANA_ORG_ID   ?= 1
 GRAFANA_TOKEN    ?= $(GRAFANA_TEST_TOKEN)
 
+# Staging-стенд Grafana (make grafana-deploy-staging): доступ только через ssh-туннель на :3001 —
+# порт 3001, чтобы не конфликтовать с локальным стендом на :3000; туннель поднимает владелец руками
+# (конвенция та же, что у make mcp-check).
+GRAFANA_STAGING_URL ?= http://localhost:3001
+
 MCP_USER     ?= kimi_reader
 MCP_PY       ?= 3.12
 MCP_VERSION  ?= 0.7.0
@@ -58,7 +63,7 @@ STAGING_BIN_DIR  ?= /root/.local/bin
 STAGING_ENV_FILE ?= /etc/clickhouse-import-rosstat.env
 DAGU_VERSION     ?= v2.18.2
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-check
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check
 
 all: lint test build build-ingest
 
@@ -154,6 +159,7 @@ env-check:
 		if [ -n "$$(printenv $$v)" ]; then echo "OK   $$v задан"; else echo "НЕТ  $$v не задан (см. README, раздел «Ключи и окружение»)"; fi; \
 	done
 	@if [ -n "$$GRAFANA_TEST_TOKEN" ]; then echo "OK   GRAFANA_TEST_TOKEN задан"; else echo "НЕТ  GRAFANA_TEST_TOKEN не задан (нужен для make grafana-deploy-test: сервис-аккаунт Editor на $(GRAFANA_TEST_URL))"; fi
+	@if [ -n "$$GRAFANA_STAGING_TOKEN" ]; then echo "OK   GRAFANA_STAGING_TOKEN задан"; else echo "НЕТ  GRAFANA_STAGING_TOKEN не задан (нужен для make grafana-deploy-staging: сервис-аккаунт Editor на staging, доступ через туннель $(GRAFANA_STAGING_URL))"; fi
 
 # Локальный прогон одного импортёра: make import STAT=bea (нужны CLICKHOUSE_URL и ключ импортёра из $(ROSSTAT_ENV)).
 STAT ?=
@@ -426,6 +432,53 @@ grafana-deploy-test:
 grafana-check:
 	@test -n "$$GRAFANA_TOKEN" || { echo "задайте GRAFANA_TEST_TOKEN в $(ROSSTAT_ENV) (сервис-аккаунт Editor на $(GRAFANA_TEST_URL))"; exit 1; }
 	GRAFANA_URL=$(GRAFANA_TEST_URL) python3 scripts/grafana_check.py --uid $(DASHBOARD_UID)
+
+# Провижининг датасорса на staging (идемпотентный). Шаблон с плейсхолдером копируется в /tmp хоста,
+# пароль подставляется НА ХОСТЕ из $(STAGING_ENV_FILE) — python3, а не sed: пароль может содержать
+# / & \ и прочие спецсимволы. Результат сравнивается с установленным файлом по sha256 и
+# переустанавливается только при отличии, поэтому повторный прогон ничего не пишет.
+# Пароль не печатается; временные копии (root, 600) удаляются по trap, в т.ч. при ошибке.
+# ВАЖНО (проверено на Grafana 13.1.1): каталог provisioning/datasources читается ТОЛЬКО при старте
+# сервера (pkg/services/provisioning: ProvisionDatasources вызывается из starting(); поллинг есть лишь
+# у дашбордов). Поэтому новый/изменённый файл датасорса сам по себе не активируется: нужен admin-reload
+# (POST /api/admin/provisioning/datasources/reload) или перезапуск Grafana — руками владельца; наша цель
+# Grafana не рестартует. Цель вызывается из grafana-deploy-staging, но запускается и отдельно.
+GRAFANA_DATASOURCE_TMPL   ?= deploy/staging/grafana-datasource.yaml
+GRAFANA_DATASOURCE_REMOTE ?= /etc/grafana/provisioning/datasources/clickhouse.yaml
+GRAFANA_DATASOURCE_TMP    ?= /tmp/grafana-datasource.staging.yaml
+grafana-provision-staging:
+	@test -f "$(GRAFANA_DATASOURCE_TMPL)" || { echo "нет шаблона $(GRAFANA_DATASOURCE_TMPL)"; exit 1; }
+	@scp -q "$(GRAFANA_DATASOURCE_TMPL)" "$(STAGING_HOST):$(GRAFANA_DATASOURCE_TMP)" || { echo "scp: шаблон не доехал до $(STAGING_HOST)"; exit 1; }
+	@ssh $(STAGING_HOST) 'set -eu; \
+		trap "rm -f $(GRAFANA_DATASOURCE_TMP) $(GRAFANA_DATASOURCE_TMP).rendered" EXIT; \
+		[ -f $(STAGING_ENV_FILE) ] || { echo "НЕТ  $(STAGING_ENV_FILE) не найден на $(STAGING_HOST)"; exit 1; }; \
+		set -a; . $(STAGING_ENV_FILE); set +a; \
+		test -n "$${CLICKHOUSE_PASSWORD:-}" || { echo "НЕТ  CLICKHOUSE_PASSWORD не задан в $(STAGING_ENV_FILE)"; exit 1; }; \
+		install -m 600 /dev/null "$(GRAFANA_DATASOURCE_TMP).rendered"; \
+		CLICKHOUSE_PASSWORD="$${CLICKHOUSE_PASSWORD:-}" python3 -c "import os, sys; src = open(sys.argv[1], encoding=\"utf-8\").read(); assert \"__CLICKHOUSE_PASSWORD__\" in src, \"в шаблоне нет плейсхолдера\"; dst = open(sys.argv[2], \"w\", encoding=\"utf-8\"); dst.write(src.replace(\"__CLICKHOUSE_PASSWORD__\", os.environ[\"CLICKHOUSE_PASSWORD\"])); dst.close()" "$(GRAFANA_DATASOURCE_TMP)" "$(GRAFANA_DATASOURCE_TMP).rendered"; \
+		target="$(GRAFANA_DATASOURCE_REMOTE)"; \
+		if [ -f "$$target" ] && [ "$$(sha256sum < "$(GRAFANA_DATASOURCE_TMP).rendered" | cut -c1-64)" = "$$(sha256sum < "$$target" | cut -c1-64)" ]; then \
+			echo "OK   провижининг датасорса актуален ($$target)"; \
+		else \
+			install -o root -g grafana -m 640 "$(GRAFANA_DATASOURCE_TMP).rendered" "$$target"; \
+			echo "OK   провижининг датасорса обновлён ($$target)"; \
+			echo "ВНИМАНИЕ: Grafana применяет датасорсы из provisioning только при старте. Пока владелец не сделает admin-reload"; \
+			echo "  curl -u admin:<пароль> -X POST $(GRAFANA_STAGING_URL)/api/admin/provisioning/datasources/reload"; \
+			echo "  (или не перезапустит grafana-server), датасорс ch-rosstat не активен и smoke упадёт: см. deploy/staging/README.md"; \
+		fi'
+
+# Деплой дашборда gold-thesis на staging: провижининг датасорса → push → smoke.
+# Токен (GRAFANA_STAGING_TOKEN, сервис-аккаунт Editor на staging) живёт только у владельца
+# в $(ROSSTAT_ENV); gcx общается с инстансом через туннель, а панели — с ClickHouse хоста.
+# Grafana и systemd на хосте не трогаются: нужен только поднятый туннель.
+grafana-deploy-staging:
+	@test -n "$$GRAFANA_STAGING_TOKEN" || { echo "задайте GRAFANA_STAGING_TOKEN в $(ROSSTAT_ENV) — токен сервис-аккаунта Editor на staging; создаётся одноразово вручную (runbook: docs/superpowers/specs/2026-10-12-grafana-gold-thesis-design.md §6)"; exit 1; }
+	@curl -sf -m 3 $(GRAFANA_STAGING_URL)/api/health >/dev/null 2>&1 || { echo "staging Grafana не отвечает на $(GRAFANA_STAGING_URL): поднимите туннель — ssh -N -L 3001:127.0.0.1:3000 $(STAGING_HOST)"; exit 1; }
+	@$(MAKE) grafana-provision-staging --no-print-directory
+	GRAFANA_SERVER=$(GRAFANA_STAGING_URL) GRAFANA_ORG_ID=$(GRAFANA_ORG_ID) GRAFANA_TOKEN="$$GRAFANA_STAGING_TOKEN" \
+		gcx resources push dashboards --path dashboard/gold-thesis.json
+	@GRAFANA_URL=$(GRAFANA_STAGING_URL) GRAFANA_TOKEN="$$GRAFANA_STAGING_TOKEN" \
+		python3 scripts/grafana_check.py --uid $(DASHBOARD_UID)
 
 info:
 	@echo "BINARY    = $(TARGET)"
