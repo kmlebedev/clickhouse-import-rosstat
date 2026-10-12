@@ -378,6 +378,46 @@ func TestGostSinceDaysAnchors(t *testing.T) {
 	}
 }
 
+func TestGostSinceDaysCapsStaleAnchor(t *testing.T) {
+	t.Run("свежий якорь — обычное окно", func(t *testing.T) {
+		fresh := gostTime(t, "2026-10-09")
+		conn := &gostFakeConn{maxDate: &fresh}
+
+		days, _, err := gostSinceDays(context.Background(), conn, 3, gostTestNow)
+		if err != nil {
+			t.Fatalf("окно since: %v", err)
+		}
+		if len(days) != 6 || !days[0].Equal(gostTime(t, "2026-10-06")) || !days[5].Equal(gostTime(t, "2026-10-11")) {
+			t.Errorf("дни %v, ожидалось 2026-10-06…2026-10-11 (6 дней)", gostDayStrings(days))
+		}
+	})
+
+	t.Run("старый якорь — окно обрезано", func(t *testing.T) {
+		stale := gostTime(t, "2026-01-01")
+		conn := &gostFakeConn{maxDate: &stale}
+		logs := gostCaptureLog(t)
+
+		days, empty, err := gostSinceDays(context.Background(), conn, 3, gostTestNow)
+		if err != nil {
+			t.Fatalf("окно since: %v", err)
+		}
+		if empty {
+			t.Error("tableEmpty = true, ожидалось false: строки в таблице есть")
+		}
+		if len(days) != gostMaxSinceDays {
+			t.Fatalf("дней %d, ожидалось ровно %d", len(days), gostMaxSinceDays)
+		}
+		if !days[0].Equal(gostTime(t, "2026-09-12")) || !days[len(days)-1].Equal(gostTime(t, "2026-10-11")) {
+			t.Errorf("окно %v, ожидалось 2026-09-12…2026-10-11", gostDayStrings(days))
+		}
+		for _, want := range []string{"таблица отстала", "2026-01-01", "GOST_MODE=full"} {
+			if !strings.Contains(logs.String(), want) {
+				t.Errorf("предупреждение без %q: %s", want, logs.String())
+			}
+		}
+	})
+}
+
 func TestGostWriteDayOneBatch(t *testing.T) {
 	rows := []gostRow{
 		{
@@ -459,6 +499,39 @@ func TestGostRunDaysSkipsEmptyAndAggregatesErrors(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "публикаций нет") {
 		t.Errorf("пустой день не отмечен в логе: %s", logs.String())
+	}
+}
+
+func TestGostRunDaysFilteredDayFails(t *testing.T) {
+	days := []time.Time{gostTime(t, "2026-10-05"), gostTime(t, "2026-10-06")}
+	// В ручке четыре совпадения, но все — текстовый шум чужой даты публикации: срез дня пуст.
+	// Так выглядит смена формата dateofpublication, и молча пропустить такой день нельзя —
+	// прогон отчитался бы успехом при потерянных данных.
+	ta := gostNewTestAPI(t, gostDayServer(t, map[string]gostDaySpec{
+		"05.10.2026": {Count: 4, Noise: 4},
+		"06.10.2026": {Count: 1},
+	}))
+	conn := &gostFakeConn{}
+
+	count, err := gostRunDays(context.Background(), conn, ta.api, days)
+	if err == nil {
+		t.Fatal("день, отфильтрованный целиком, не попал в ошибку прогона")
+	}
+	for _, want := range []string{
+		"2026-10-05",
+		"все 4 документов отброшены фильтром публикации",
+		"не прочитаны дни (1)",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("ошибка %q не содержит %q", err, want)
+		}
+	}
+	// Проход продолжается: следующий день записан, несмотря на сбойный.
+	if count != 1 {
+		t.Errorf("записано строк %d, ожидалась 1", count)
+	}
+	if batches := conn.batchList(); len(batches) != 1 {
+		t.Errorf("батчей %d, ожидался 1: отфильтрованный день не пишется, следующий пишется", len(batches))
 	}
 }
 

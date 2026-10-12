@@ -71,9 +71,16 @@ func gostFixtureDoc(t *testing.T, i int) gostDoc {
 // gostRepeatDoc размножает документ до n штук, меняя id: из одной строки фикстуры
 // собирается страница нужного размера (gostPageSize документов) без рукописного JSON.
 func gostRepeatDoc(doc gostDoc, n int) []gostDoc {
+	return gostRepeatDocFrom(doc, n, 1)
+}
+
+// gostRepeatDocFrom — то же, но с начальным id: страницы одного дня несут разные документы, и
+// нумерация со сдвигом не даёт разным страницам случайно совпасть id (для day() повтор id —
+// дубликат страницы, а не разные документы).
+func gostRepeatDocFrom(doc gostDoc, n, startID int) []gostDoc {
 	out := make([]gostDoc, n)
 	for i := range out {
-		doc.ID = int64(i + 1)
+		doc.ID = int64(startID + i)
 		out[i] = doc
 	}
 	return out
@@ -337,10 +344,11 @@ func TestGostRowsFromDocsFilters(t *testing.T) {
 
 func TestGostDayFetchesAllPages(t *testing.T) {
 	toyota := gostFixtureDoc(t, 0)
-	// День не влезает в одну страницу: 900 документов на первой, 100 на второй.
+	// День не влезает в одну страницу: 900 документов на первой, 100 на второй. id сквозные:
+	// это разные документы одного дня, и дедупликация страниц их схлопывать не должна.
 	pages := map[int][]byte{
 		1: gostTestBody(t, 1000, gostRepeatDoc(toyota, gostPageSize)),
-		2: gostTestBody(t, 1000, gostRepeatDoc(toyota, 100)),
+		2: gostTestBody(t, 1000, gostRepeatDocFrom(toyota, 100, gostPageSize+1)),
 	}
 	ta := gostNewTestAPI(t, gostPagesHandler(pages))
 
@@ -362,6 +370,48 @@ func TestGostDayFetchesAllPages(t *testing.T) {
 	}
 	if got := ta.queryParam("size"); !slices.Equal(got, []string{strconv.Itoa(gostPageSize), strconv.Itoa(gostPageSize)}) {
 		t.Errorf("размеры страниц = %v, ожидался %d", got, gostPageSize)
+	}
+}
+
+// TestGostDayDedupsRepeatedDocuments: страница вернула документ, уже пришедший на предыдущей
+// (сдвиг пагинации при изменении данных). Без дедупликации день выглядел бы собранным «с
+// запасом» — с настоящей недостачей внутри, и check либо соврал бы о дыре, либо скрыл её.
+func TestGostDayDedupsRepeatedDocuments(t *testing.T) {
+	toyota := gostFixtureDoc(t, 0)
+	docs := gostRepeatDoc(toyota, gostPageSize)
+	docs = append(docs, docs[0]) // одна и та же страница отдала первый документ ещё раз
+	ta := gostNewTestAPI(t, gostPagesHandler(map[int][]byte{1: gostTestBody(t, gostPageSize, docs)}))
+
+	slice, err := ta.api.day(context.Background(), gostTestDay)
+	if err != nil {
+		t.Fatalf("день с дубликатом страницы: %v", err)
+	}
+	if slice.Count != gostPageSize {
+		t.Errorf("Count = %d, ожидалось %d", slice.Count, gostPageSize)
+	}
+	if len(slice.Rows) != gostPageSize {
+		t.Errorf("строк %d, ожидалось %d: дубликат не должен попасть в срез дня", len(slice.Rows), gostPageSize)
+	}
+}
+
+// TestGostDayDuplicateShortageFails: страница вернула повторы вместо части документов —
+// уникальных меньше count, день не добран, и это ошибка, а не «день полный».
+func TestGostDayDuplicateShortageFails(t *testing.T) {
+	toyota := gostFixtureDoc(t, 0)
+	ta := gostNewTestAPI(t, gostPagesHandler(map[int][]byte{
+		1: gostTestBody(t, 1000, gostRepeatDoc(toyota, gostPageSize)),
+		2: gostTestBody(t, 1000, gostRepeatDocFrom(toyota, 100, 1)), // те же id: 100 дубликатов
+	}))
+
+	slice, err := ta.api.day(context.Background(), gostTestDay)
+	if err == nil {
+		t.Fatal("ожидалась ошибка о недостаче после дедупликации")
+	}
+	if want := "получено 900 документов из 1000 (дубликатов страниц: 100)"; !strings.Contains(err.Error(), want) {
+		t.Errorf("ошибка = %q, ожидалась подстрока %q", err, want)
+	}
+	if len(slice.Rows) != 0 {
+		t.Errorf("строк %d: неполный день писать нельзя", len(slice.Rows))
 	}
 }
 

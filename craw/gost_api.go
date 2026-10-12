@@ -243,8 +243,8 @@ func gostNoURL(err error) error {
 }
 
 // day собирает срез одного дня: все страницы окна поиска, клиентский фильтр по дню
-// публикации. Частичной записи нет: если страница дня не доехала или документов пришло
-// меньше count, возвращается ошибка — решение «день полный» принимается до батча.
+// публикации. Частичной записи нет: если страница дня не доехала или уникальных документов
+// пришло меньше count, возвращается ошибка — решение «день полный» принимается до батча.
 func (a *gostAPI) day(ctx context.Context, day time.Time) (gostDaySlice, error) {
 	first, err := a.fetchPage(ctx, day, 1, gostPageSize)
 	if err != nil {
@@ -265,12 +265,37 @@ func (a *gostAPI) day(ctx context.Context, day time.Time) (gostDaySlice, error) 
 		}
 		docs = append(docs, next.Data...)
 	}
-	if len(docs) < first.Count {
-		return gostDaySlice{}, fmt.Errorf("получено %d документов из %d", len(docs), first.Count)
+
+	// Дедупликация — до сравнения с count: окно поиска ручки не снапшот, и при изменении данных
+	// между запросами страница может вернуть документ, уже пришедший на предыдущей (сдвиг
+	// пагинации). Без неё такой день выглядел бы полным (len(docs) == count) при настоящей
+	// недостаче — и check объявил бы ложную дыру либо, наоборот, скрыл реальную.
+	unique, dropped := gostUniqueDocs(docs)
+	if len(unique) < first.Count {
+		return gostDaySlice{}, fmt.Errorf("получено %d документов из %d (дубликатов страниц: %d)",
+			len(unique), first.Count, dropped)
 	}
 
-	rows, skipped := gostRowsFromDocs(day, docs)
+	rows, skipped := gostRowsFromDocs(day, unique)
 	return gostDaySlice{Rows: rows, Count: first.Count, Skipped: skipped}, nil
+}
+
+// gostUniqueDocs оставляет по одному документу на id, сохраняя порядок появления, и считает
+// отброшенные копии: id — идентичность документа в реестре, поэтому повтор id и есть дубликат
+// страницы. Нулевой id (сменившаяся форма ответа) схлопывается так же: день не запишется и
+// прогон упадёт громко, а это безопасное направление — молчаливая потеря документов хуже.
+func gostUniqueDocs(docs []gostDoc) (unique []gostDoc, dropped int) {
+	seen := make(map[int64]struct{}, len(docs))
+	unique = make([]gostDoc, 0, len(docs))
+	for _, d := range docs {
+		if _, ok := seen[d.ID]; ok {
+			dropped++
+			continue
+		}
+		seen[d.ID] = struct{}{}
+		unique = append(unique, d)
+	}
+	return unique, dropped
 }
 
 // dayCount возвращает только число совпадений дня — одним запросом минимальной страницы.

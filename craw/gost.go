@@ -42,6 +42,11 @@ const (
 	// gostEmptyTableDays — окно пустой таблицы в since: обход десяти лет в режиме расписания
 	// недопустим, но и падать впустую dagu не должен — читаем последнюю неделю и предупреждаем.
 	gostEmptyTableDays = 7
+	// gostMaxSinceDays — предел окна since: на отставшей таблице якорь бывает старше на месяцы
+	// (первый плановый прогон на legacy-таблице без бэкфилла), и часовой DAG ушёл бы в обход
+	// тысяч дней, заняв портал и не догнав хвост за один прогон. Окно обрезается месяцем, а
+	// оператору печатается призыв к GOST_MODE=full.
+	gostMaxSinceDays = 30
 	// gostMaxRangeDays — предохранитель диапазона full/check: вся история реестра — ~4000 дней,
 	// и больший запрос означает опечатку в границах, а не диапазон.
 	gostMaxRangeDays = 4000
@@ -253,6 +258,10 @@ func gostDateOnly(t time.Time) time.Time {
 // нормализации 1970-01-01) — не обход всей истории, а окно последних семи дней: флаг tableEmpty
 // возвращается вызывающему, чтобы тот сказал оператору про GOST_MODE=full. Якорь из будущего
 // (часы источника вперёд, ручная правка) прижимается к вчера — «завтра» читать нечего.
+//
+// Окно ограничено gostMaxSinceDays: на отставшей таблице (якорь старше месяца) часовой прогон
+// иначе читал бы тысячи дней подряд, не догоняя хвост и занимая портал, — вместо этого читается
+// последний месяц, а оператор получает призыв к полному прогону.
 func gostSinceDays(ctx context.Context, conn driver.Conn, settle int, now time.Time) (days []time.Time, tableEmpty bool, err error) {
 	var maxIssue, maxPub *time.Time
 	if err = conn.QueryRow(ctx, gostAnchorQuery).Scan(&maxIssue, &maxPub); err != nil {
@@ -278,7 +287,13 @@ func gostSinceDays(ctx context.Context, conn driver.Conn, settle int, now time.T
 	if anchor.After(to) {
 		anchor = to
 	}
-	days, err = gostDaysBetween(anchor.AddDate(0, 0, -settle), to)
+	from := anchor.AddDate(0, 0, -settle)
+	if limit := to.AddDate(0, 0, -(gostMaxSinceDays - 1)); from.Before(limit) {
+		log.Warnf("%s: таблица отстала: якорь %s, окно since ограничено %d днями (с %s) — запустите GOST_MODE=full для истории",
+			gostTable, anchor.Format(gostDateLayout), gostMaxSinceDays, limit.Format(gostDateLayout))
+		from = limit
+	}
+	days, err = gostDaysBetween(from, to)
 	return days, false, err
 }
 
@@ -365,10 +380,14 @@ func gostRunDays(ctx context.Context, conn driver.Conn, api *gostAPI, days []tim
 				gostTable, label, slice.Skipped, slice.Count)
 		}
 		if len(slice.Rows) == 0 {
-			// Весь день отфильтрован (в ручке совпадения есть, в срез не попало ни одного):
-			// пустой батч не отправляем, но день нельзя считать обработанным молча.
-			log.Warnf("%s: день %s: в срез дня не попало ни одного документа (в ручке %d) — пропускаю",
-				gostTable, label, slice.Count)
+			// В ручке совпадения есть, а в срез дня не попало ни одного документа: так выглядит
+			// смена формата dateofpublication (ручка ищет текстом, и день среза перестал
+			// совпадать с ответом). Это ошибка прогона, а не пустой день: молча пропущенный
+			// день оставил бы dagu зелёным при потерянных данных.
+			errText := fmt.Sprintf("день %s: все %d документов отброшены фильтром публикации (Skipped %d) — проверьте формат даты публикации/ручку",
+				label, slice.Count, slice.Skipped)
+			log.Errorf("%s: %s", gostTable, errText)
+			failed = append(failed, errText)
 			continue
 		}
 
