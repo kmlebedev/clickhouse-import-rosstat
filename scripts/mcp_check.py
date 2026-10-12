@@ -307,6 +307,25 @@ async def check(params, server_log):
             failed += not expect("сырой пер-фондовый срез закрыт", denied,
                                  "отказ ClickHouse 497 на bold_fund_snapshot (ожидаемо)" if denied else raw[:200])
 
+            # Контур событий РФ-канала: витрина отфильтрованных событий читается агентом,
+            # а сырая news_events — источник витрины — агенту закрыта (как macro_series и
+            # bold_fund_snapshot: читать её агент обязан только через витрину). Существование
+            # витрины подтверждается запросом к ней, а не поиском имени в list_tables (урок bold).
+            news_view = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_news_events"}))
+            news_view_rows = result_rows(news_view)
+            if news_view_rows is None:
+                news_view_detail = f"витрина не читается: {news_view[:200]}"
+            elif news_view_rows:
+                news_view_detail = f"строк: {news_view_rows[0].get('count()')}"
+            else:
+                news_view_detail = "в ответе нет строк"
+            failed += not expect("витрина v_news_events существует и читается", bool(news_view_rows), news_view_detail)
+
+            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM news_events"}))
+            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+            failed += not expect("сырая news_events закрыта", denied,
+                                 "отказ ClickHouse 497 на news_events (ожидаемо)" if denied else raw[:200])
+
     return failed
 
 
