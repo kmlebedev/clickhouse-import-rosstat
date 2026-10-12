@@ -2,6 +2,7 @@ package util
 
 import (
 	"context"
+	"encoding/xml"
 	"errors"
 	"io"
 	"net/http"
@@ -147,5 +148,30 @@ func TestGetXMLHTMLEntityDecodes(t *testing.T) {
 	}
 	if out.Title != "a\u00a0b" {
 		t.Errorf("out.Title = %q, ожидалось %q", out.Title, "a\u00a0b")
+	}
+}
+
+// Пиннит контракт использования: приёмник обязан пинить корень через XMLName
+// (`xml:"rss"`), а не поведение хелпера без пина. Без пина 200 с well-formed
+// HTML-страницей WAF (та же заглушка, что и в NonOKStatusFails, но с честным 200)
+// разбирается в нулевую структуру без ошибки — encoding/xml не сверяет имя корня и
+// пропускает неизвестные элементы, и вызывающий получил бы тихий ноль с зелёным
+// прогоном. С пином чужой корень — ошибка декодирования, и в ней видно, что пришёл
+// именно html.
+func TestGetXMLRootMismatchFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?><html><body>blocked</body></html>`)
+	}))
+	defer server.Close()
+
+	var out struct {
+		XMLName xml.Name `xml:"rss"`
+	}
+	err := GetXML(server.URL, &out)
+	if err == nil {
+		t.Fatal("чужой корень при пине XMLName должен давать ошибку, а не тихий ноль с зелёным прогоном")
+	}
+	if !strings.Contains(err.Error(), "html") {
+		t.Errorf("ошибка %q не называет пришедший корень html", err)
 	}
 }
