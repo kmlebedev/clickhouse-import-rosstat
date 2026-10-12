@@ -8,7 +8,7 @@ import (
 
 func TestNewsEventsDdlPinsCanonicalKey(t *testing.T) {
 	for _, want := range []string{
-		"sentiment Nullable(Float32)",
+		"sentiment Nullable(Float32)      -- -1..1, заполняет LLM-сессия",
 		"ENGINE = ReplacingMergeTree ORDER BY (date, source, title)",
 	} {
 		if !strings.Contains(newsEventsDdl, want) {

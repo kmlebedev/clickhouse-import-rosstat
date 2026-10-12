@@ -12,7 +12,7 @@ const newsEventsDdl = `CREATE TABLE IF NOT EXISTS news_events (
 			, source LowCardinality(String)
 			, title String
 			, url String
-			, sentiment Nullable(Float32)
+			, sentiment Nullable(Float32)      -- -1..1, заполняет LLM-сессия
 		) ENGINE = ReplacingMergeTree ORDER BY (date, source, title);
 	`
 
