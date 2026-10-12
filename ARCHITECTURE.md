@@ -84,7 +84,14 @@ financial/         — ⚠️ legacy-контур: корпоративные da
                      зарегистрирована как databook_ugk, остальные не в Stats), investing.com exporter,
                      РЖД. Свой main.go, своё подключение database/sql. Импортёров Полюса здесь нет
 financial/data/    — локальные XLSX/XLS источники (databook'и компаний; датапак Полюса переехал в polyus/data/)
-dashboard/         — экспортированные JSON-дашборды Grafana (плагин grafana-clickhouse-datasource)
+grafana/           — дашборд `gold-thesis` как код: отдельный Go-модуль на grafana-foundation-sdk; цель
+                     `make grafana-build` генерирует `dashboard/gold-thesis.json` (код — источник,
+                     артефакт коммитится, генерация детерминирована). Тесты состава и валидации,
+                     провижининг датасорса локального стенда (`grafana/provisioning/datasources/clickhouse.yaml`,
+                     uid `ch-rosstat`). Детали — §6.7
+dashboard/         — артефакты дашбордов Grafana (плагин grafana-clickhouse-datasource): `gold-thesis.json`
+                     генерируется из `grafana/` и руками не правится; легаси-экспорты `rosstat.json`,
+                     `chmf.json`, `finance-polyus.json` — вне миграции на код (отдельный пункт)
 docs/              — аналитические статьи (прогнозы золота)
 *.crt              — национальные TLS CA РФ (для ГОСТ-шифрования gos-сайтов)
 ```
@@ -178,6 +185,9 @@ func init() {
 | `INGEST_TOKEN` | Bearer-токен ingest-endpoint (`cmd/ingest`); обязательна для него: пустое значение — выход с ошибкой. Значение только в окружении, в репозитории не хранится |
 | `INGEST_ADDR` | Адрес HTTP-сервера `cmd/ingest`, по умолчанию `:8081` |
 | `INGEST_RATE_PER_MIN` | Лимит запросов ingest-endpoint в минуту (token bucket, burst 10); по умолчанию 60; пустое или некорректное значение — 60. Превышение — `429` |
+| `GRAFANA_TEST_URL`, `GRAFANA_TEST_TOKEN` | Тест-стенд Grafana (`make grafana-deploy-test`, `make grafana-check`): URL по умолчанию `http://localhost:3000`, токен — сервис-аккаунт **Editor**. Токен только в окружении (`~/.config/rosstat/env`), в репозиторий и логи не попадает |
+| `GRAFANA_STAGING_URL`, `GRAFANA_STAGING_TOKEN` | Staging-стенд Grafana (`make grafana-deploy-staging`): URL по умолчанию `http://localhost:3001` (ssh-туннель на staging), токен — сервис-аккаунт **Editor** на staging |
+| `GRAFANA_ORG_ID` | org-id инстанса Grafana для `gcx` (on-prem без него отвергается: `missing stacks.default.grafana.org-id`), по умолчанию `1` |
 
 ## 6. Целевая архитектура (дорожная карта 2026-Q4)
 
@@ -732,6 +742,18 @@ uv run --with mcp-clickhouse==0.7.0 --python 3.12 mcp-clickhouse
 
 Ограничение «агент MCP не видит данные Полюса» (`v_polyus_*` и гранта `kimi_reader` не было) **снято 2026-10-10** — витрины `v_company_*` с комментариями и грантом (§6.3, §6.5).
 
+
+### 6.7 Дашборды Grafana как код (реализовано 2026-10-12)
+
+Дашборд статьи `gold-thesis` — не экспорт из UI, а артефакт сборки: источник истины — Go-код модуля `grafana/` (grafana-foundation-sdk), артефакт `dashboard/gold-thesis.json` (k8s-ресурс `dashboard.grafana.app/v1beta1`, uid `gold-thesis`) коммитится и генерируется целью `make grafana-build` (`cd grafana && go run . -out ../dashboard/gold-thesis.json`). Генерация детерминирована: повторный прогон не меняет файл — на этом стоит CI-проверка diff. Модуль отдельный, чтобы SDK не тянулся в ETL-бинарь; `go test ./...` основного модуля вложенный модуль не видит.
+
+Состав: 9 панелей (id 1–9) в 5 рядах — цена и пол $4 000; золото vs DXY; золото vs DFII10; crack ULSD и запасы дистиллятов; CPI/PPI YoY; ETF-потоки по месяцам; покупки ЦБ YTD; консенсус Q4-2026; точность прошлых прогнозов. Все запросы — `CHQuery` только по витринам `v_*` (сырая таблица в `rawSql` валит тест), формат запроса — плагин `grafana-clickhouse-datasource` 4.3.2, датасорс каждой панели — константа uid `ch-rosstat` (`grafana/clickhouse.go`, `DatasourceUID`).
+
+**Провижининг датасорса.** Локальный стенд: `grafana/provisioning/datasources/clickhouse.yaml` (`make grafana-up` передаёт `GF_PATHS_PROVISIONING=$(CURDIR)/grafana/provisioning`). Staging: шаблон `deploy/staging/grafana-datasource.yaml` (`host: localhost`, `username: kimi_reader`, uid `ch-rosstat`, пароль — плейсхолдер) раскладывается целью `make grafana-provision-staging` в `/etc/grafana/provisioning/datasources/clickhouse.yaml` (`root:grafana 640`): пароль подставляется на хосте из `/etc/clickhouse-import-rosstat.env` (python3, экранирование `\` и `"` в YAML-скаляре + проверка round-trip), файл переустанавливается только при отличии sha256 — повторный прогон печатает «актуален» и ничего не пишет. ⚠️ **Провижининг `datasources` читается только при старте Grafana** (13.1.1: поллинга, в отличие от дашбордов, нет) — после первого применения нужен admin-reload (`POST /api/admin/provisioning/datasources/reload`) или рестарт сервиса; сама цель Grafana не рестартует.
+
+**CI** `.github/workflows/dashboards.yml` (PR + push в `main`, секретов нет, деплоя нет): `go vet`/`go test` модуля, `make grafana-build`, `git diff --exit-code -- dashboard/gold-thesis.json` (артефакт синхронен коду — заодно ловит недетерминированность), офлайновый `gcx dev lint run` (два idiomatic-предупреждения генератора — `editable`-дашборд и отсутствие описаний панелей — отключены по именам, иначе exit 4) и upload артефакта. Серверный `gcx resources validate` в CI не входит: это server-side dry-run и требует сервер, org-id и креды (рабочая форма — комментарий цели `make grafana-validate`).
+
+**Деплой** — только вручную, из CI не деплоим. `make grafana-deploy-test` — `gcx resources push dashboards --path dashboard/gold-thesis.json` против `GRAFANA_TEST_URL` с Bearer-токеном (переменные gcx `GRAFANA_SERVER`/`GRAFANA_TOKEN`/`GRAFANA_ORG_ID` выставляет make, токен не светится в `ps`), затем smoke `make grafana-check` (`scripts/grafana_check.py`: uid виден, первые панели отдают точки; SQL берётся из снятого со стенда дашборда, а не из скрипта). `make grafana-deploy-staging` — то же через ssh-туннель `:3001` плюс провижининг датасорса. Push идемпотентен (внутренний id ресурса не меняется, растёт только `version`); фолбэки — `gcx resources push -p <file>` и `gcx api /api/dashboards/db` (тело обязано быть обёрнуто в `{"dashboard": <spec>}`).
 
 ## 7. Календарь триггеров (актуальный Q4-2026)
 

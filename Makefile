@@ -14,6 +14,38 @@ CH_LOG       := $(CH_DIR)/clickhouse.log
 CH_HTTP_PORT ?= 8123
 CH_TCP_PORT  ?= 9000
 
+# Локальный стенд Grafana (make grafana-up/down): данные, логи и плагины лежат вне
+# репозитория в $(GF_DIR), в репозитории — только провижининг датасорса.
+GF_BIN       ?= $(shell command -v grafana 2>/dev/null)
+GF_PREFIX    := $(realpath $(dir $(realpath $(GF_BIN)))/..)
+# И CLI, и серверу нужен homepath: без него они не находят conf/defaults.ini
+# («Could not find config defaults»). У brew-раскладки homepath — share/grafana рядом
+# с bin/grafana, у tarball — сам префикс.
+GF_HOMEPATH  ?= $(or $(wildcard $(GF_PREFIX)/share/grafana),$(GF_PREFIX))
+GF_DIR       ?= $(HOME)/grafana-dev
+GF_PORT      ?= 3000
+# Версия плагина: формат запроса дашборда подтверждён живым экспортом 4.3.2 (grafana/clickhouse.go).
+GRAFANA_PLUGIN_VERSION ?= 4.3.2
+GF_PID       := $(GF_DIR)/grafana.pid
+GF_LOG       := $(GF_DIR)/grafana.log
+GF_PLUGINS   := $(GF_DIR)/plugins
+
+# Деплой дашборда на тест-стенд и smoke (make grafana-deploy-test / grafana-check).
+# gcx работает на переменных окружения: конфиг ~/.config/gcx не нужен, контексты не сохраняются,
+# поэтому в CI достаточно GRAFANA_SERVER/GRAFANA_TOKEN. Для on-prem gcx 1.5.0 дополнительно
+# требует org-id — без него «missing stacks.default.grafana.org-id» (проверено на стенде 13.2.3).
+# Токен подставляется в GRAFANA_TOKEN на уровне make, а не префиксом команды в рецепте: тогда он
+# уходит в окружение процесса gcx (make экспортирует переменные) и не светится в командной строке.
+DASHBOARD_UID    ?= gold-thesis
+GRAFANA_TEST_URL ?= http://localhost:3000
+GRAFANA_ORG_ID   ?= 1
+GRAFANA_TOKEN    ?= $(GRAFANA_TEST_TOKEN)
+
+# Staging-стенд Grafana (make grafana-deploy-staging): доступ только через ssh-туннель на :3001 —
+# порт 3001, чтобы не конфликтовать с локальным стендом на :3000; туннель поднимает владелец руками
+# (конвенция та же, что у make mcp-check).
+GRAFANA_STAGING_URL ?= http://localhost:3001
+
 MCP_USER     ?= kimi_reader
 MCP_PY       ?= 3.12
 MCP_VERSION  ?= 0.7.0
@@ -31,7 +63,7 @@ STAGING_BIN_DIR  ?= /root/.local/bin
 STAGING_ENV_FILE ?= /etc/clickhouse-import-rosstat.env
 DAGU_VERSION     ?= v2.18.2
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token
 
 all: lint test build build-ingest
 
@@ -65,25 +97,33 @@ run: build
 ch-up:
 	@if curl -sf -m 2 http://localhost:$(CH_HTTP_PORT)/ping >/dev/null 2>&1; then \
 		echo "ClickHouse уже отвечает на порту $(CH_HTTP_PORT)"; \
+	elif [ -f "$(CH_PID)" ] && kill -0 $$(cat "$(CH_PID)") 2>/dev/null; then \
+		echo "ClickHouse уже запускается/запущен (PID $$(cat "$(CH_PID)")), второй сервер не поднимается"; \
 	else \
 		test -n "$(CH_BIN)" || { echo "clickhouse не найден: задайте CH_BIN=/путь/к/clickhouse"; exit 1; }; \
 		mkdir -p "$(CH_DATA)"; \
 		cd "$(CH_DIR)"; \
 		nohup "$(CH_BIN)" server -- --path="$(CH_DATA)/" --http_port=$(CH_HTTP_PORT) --tcp_port=$(CH_TCP_PORT) >"$(CH_LOG)" 2>&1 & \
 		echo $$! > "$(CH_PID)"; \
-		for i in $$(seq 1 60); do curl -sf -m 1 http://localhost:$(CH_HTTP_PORT)/ping >/dev/null 2>&1 && break; sleep 1; done; \
-		if curl -sf -m 2 http://localhost:$(CH_HTTP_PORT)/ping >/dev/null 2>&1; then \
+		for i in $$(seq 1 60); do kill -0 $$(cat "$(CH_PID)") 2>/dev/null || break; curl -sf -m 1 http://localhost:$(CH_HTTP_PORT)/ping >/dev/null 2>&1 && break; sleep 1; done; \
+		if kill -0 $$(cat "$(CH_PID)") 2>/dev/null && curl -sf -m 2 http://localhost:$(CH_HTTP_PORT)/ping >/dev/null 2>&1; then \
 			echo "ClickHouse запущен, PID $$(cat "$(CH_PID)"), лог $(CH_LOG)"; \
 		else \
 			echo "ClickHouse не поднялся, смотрите $(CH_LOG)"; exit 1; \
 		fi; \
 	fi
 
+# Останавливает сервер и ждёт завершения до 60 с. Если процесс пережил сигнал, pid-файл
+# НЕ удаляется: иначе следующий ch-down не найдёт процесс, а ch-up скажет «уже отвечает».
 ch-down:
 	@if [ -f "$(CH_PID)" ] && kill -0 $$(cat "$(CH_PID)") 2>/dev/null; then \
 		kill $$(cat "$(CH_PID)"); \
 		for i in $$(seq 1 60); do kill -0 $$(cat "$(CH_PID)") 2>/dev/null || break; sleep 1; done; \
-		rm -f "$(CH_PID)"; echo "ClickHouse остановлен"; \
+		if kill -0 $$(cat "$(CH_PID)") 2>/dev/null; then \
+			echo "ClickHouse не завершился за 60 с, PID-файл $(CH_PID) сохранён: повторите make ch-down"; \
+		else \
+			rm -f "$(CH_PID)"; echo "ClickHouse остановлен"; \
+		fi; \
 	else \
 		echo "PID-файл $(CH_PID) не найден или процесс не запущен (сервер, поднятый вне make, не останавливается)"; \
 	fi
@@ -118,6 +158,8 @@ env-check:
 	@for v in BEA_API_KEY BLS_API_KEY EIA_API_KEY CLICKHOUSE_URL CLICKHOUSE_PASSWORD; do \
 		if [ -n "$$(printenv $$v)" ]; then echo "OK   $$v задан"; else echo "НЕТ  $$v не задан (см. README, раздел «Ключи и окружение»)"; fi; \
 	done
+	@if [ -n "$$GRAFANA_TEST_TOKEN" ]; then echo "OK   GRAFANA_TEST_TOKEN задан"; else echo "НЕТ  GRAFANA_TEST_TOKEN не задан (нужен для make grafana-deploy-test: сервис-аккаунт Editor на $(GRAFANA_TEST_URL))"; fi
+	@if [ -n "$$GRAFANA_STAGING_TOKEN" ]; then echo "OK   GRAFANA_STAGING_TOKEN задан"; else echo "НЕТ  GRAFANA_STAGING_TOKEN не задан (нужен для make grafana-deploy-staging: сервис-аккаунт Editor на staging, доступ через туннель $(GRAFANA_STAGING_URL))"; fi
 
 # Локальный прогон одного импортёра: make import STAT=bea (нужны CLICKHOUSE_URL и ключ импортёра из $(ROSSTAT_ENV)).
 STAT ?=
@@ -304,6 +346,197 @@ mcp-user-staging:
 	printf '%s\n%s\n' "$$CLICKHOUSE_PASSWORD" "$$CH_SETUP_PASSWORD" | ssh $(STAGING_HOST) 'read -r kimi_pass; read -r setup_pass; \
 		CH_SETUP_SQL=/tmp/mcp_kimi_reader.sql CH_SETUP_URL=http://localhost:8123/ CH_SETUP_USER=default \
 		CLICKHOUSE_PASSWORD="$$kimi_pass" CH_SETUP_PASSWORD="$$setup_pass" python3 /tmp/mcp_setup_user.py'
+
+# Дашборды Grafana как код: отдельный Go-модуль grafana/ (SDK не тянется в ETL-бинарь).
+# Артефакт dashboard/gold-thesis.json коммитится; генерация детерминирована —
+# повторный прогон не должен менять файл (иначе CI-проверка diff вечно красная).
+grafana-build:
+	cd grafana && go run . -out ../dashboard/gold-thesis.json
+
+# Валидация дашборда как кода: vet + тесты модуля grafana/ (в т.ч. таблица негативных правил Validate).
+# Серверная `gcx resources validate` в цель НЕ входит: gcx 1.5.0 проверяет ресурс на живом инстансе
+# (server-side dry-run), то есть требует сервер, org-id и креды — в CI секретов нет и шаг всегда падал бы.
+# Рабочая форма проверена живьём на стенде 13.2.3 (gcx 1.5.0) и оставлена тут, а не в рецепте:
+#   GRAFANA_SERVER=$(GRAFANA_TEST_URL) GRAFANA_ORG_ID=$(GRAFANA_ORG_ID) \
+#     gcx resources validate dashboards --path dashboard/gold-thesis.json   # ✔ No errors found
+# Без конфига/кредов команда падает: «context references no stack with grafana config» (exit 1),
+# с неверными кредами — 401 (exit 3); basic auth поддержан (GRAFANA_USER/GRAFANA_PASSWORD).
+# Офлайновая альтернатива в CI (тоже gcx, без секретов) — линтер по файлу артефакта:
+#   gcx dev lint run --disable uneditable-dashboard --disable panel-title-description \
+#     dashboard/gold-thesis.json
+grafana-validate:
+	cd grafana && go vet ./... && go test ./...
+
+# Локальный стенд Grafana для проверки дашборда: тот же провижининг, что уедет в деплой.
+# Плагин ставится CLI Grafana в $(GF_PLUGINS) (флаг --pluginsDir), сервер читает его
+# оттуда же через GF_PATHS_PLUGINS. Установка идемпотентна по наличию каталога плагина.
+# И CLI, и серверу нужен --homepath: у brew-бинаря не найти conf/defaults.ini ни из
+# рабочего каталога репозитория, ни по GF_PATHS_HOME (проверено на 13.2.3).
+grafana-up:
+	@if curl -sf -m 2 http://localhost:$(GF_PORT)/api/health >/dev/null 2>&1; then \
+		echo "Grafana уже отвечает на порту $(GF_PORT)"; \
+	elif [ -f "$(GF_PID)" ] && kill -0 $$(cat "$(GF_PID)") 2>/dev/null; then \
+		echo "Grafana уже запускается/запущена (PID $$(cat "$(GF_PID)")), второй сервер не поднимается"; \
+	else \
+		test -n "$(GF_BIN)" || { echo "grafana не найден: задайте GF_BIN=/путь/к/grafana"; exit 1; }; \
+		if [ ! -d "$(GF_PLUGINS)/grafana-clickhouse-datasource" ]; then \
+			"$(GF_BIN)" cli --homepath "$(GF_HOMEPATH)" --pluginsDir "$(GF_PLUGINS)" \
+				plugins install grafana-clickhouse-datasource $(GRAFANA_PLUGIN_VERSION) || exit 1; \
+		fi; \
+		mkdir -p "$(GF_DIR)/data" "$(GF_DIR)/logs"; \
+		nohup env GF_PATHS_DATA="$(GF_DIR)/data" GF_PATHS_LOGS="$(GF_DIR)/logs" GF_PATHS_PLUGINS="$(GF_PLUGINS)" \
+			GF_PATHS_PROVISIONING="$(CURDIR)/grafana/provisioning" GF_SERVER_HTTP_PORT=$(GF_PORT) \
+			GF_ANALYTICS_REPORTING_ENABLED=false GF_ANALYTICS_CHECK_FOR_UPDATES=false \
+			"$(GF_BIN)" server --homepath "$(GF_HOMEPATH)" >"$(GF_LOG)" 2>&1 & \
+		echo $$! > "$(GF_PID)"; \
+		for i in $$(seq 1 60); do kill -0 $$(cat "$(GF_PID)") 2>/dev/null || break; curl -sf -m 1 http://localhost:$(GF_PORT)/api/health >/dev/null 2>&1 && break; sleep 1; done; \
+		if kill -0 $$(cat "$(GF_PID)") 2>/dev/null && curl -sf -m 2 http://localhost:$(GF_PORT)/api/health >/dev/null 2>&1; then \
+			echo "Grafana запущена, PID $$(cat "$(GF_PID)"), лог $(GF_LOG)"; \
+		else \
+			echo "Grafana не поднялась, хвост $(GF_LOG):"; tail -20 "$(GF_LOG)"; exit 1; \
+		fi; \
+	fi
+
+# Останавливает сервер и ждёт завершения до 60 с. Если процесс пережил сигнал, pid-файл
+# НЕ удаляется: иначе следующий grafana-down не найдёт процесс, а grafana-up скажет «уже отвечает».
+grafana-down:
+	@if [ -f "$(GF_PID)" ] && kill -0 $$(cat "$(GF_PID)") 2>/dev/null; then \
+		kill $$(cat "$(GF_PID)"); \
+		for i in $$(seq 1 60); do kill -0 $$(cat "$(GF_PID)") 2>/dev/null || break; sleep 1; done; \
+		if kill -0 $$(cat "$(GF_PID)") 2>/dev/null; then \
+			echo "Grafana не завершилась за 60 с, PID-файл $(GF_PID) сохранён: повторите make grafana-down"; \
+		else \
+			rm -f "$(GF_PID)"; echo "Grafana остановлена"; \
+		fi; \
+	else \
+		echo "PID-файл $(GF_PID) не найден или процесс не запущен (сервер, поднятый вне make, не останавливается)"; \
+	fi
+
+# Выгрузка артефакта Task 1 на тест-стенд и smoke-проверка панелей.
+# Рабочая форма вызова подобрана живьём на стенде Grafana 13.2.3 (gcx 1.5.0): selector dashboards
+# + --path на файл-артефакт; push принимает apiVersion dashboard.grafana.app/v1beta1 и идемпотентен
+# (повторный прогон обновляет тот же ресурс metadata.name=gold-thesis, дубль не создаётся).
+# Фолбэки (тоже проверены живьём, в цели не нужны):
+#   gcx resources push -p dashboard/gold-thesis.json
+#   gcx api /api/dashboards/db -d @payload.json   # REST-фолбэк; payload = {"dashboard": <spec из артефакта>,
+#                                                 # "overwrite": true} — сама spec без обёртки не принимается
+# Полезно перед живым прогоном: gcx resources push dashboards --path dashboard/gold-thesis.json --dry-run
+grafana-deploy-test:
+	@test -n "$$GRAFANA_TOKEN" || { echo "задайте GRAFANA_TEST_TOKEN в $(ROSSTAT_ENV) (сервис-аккаунт Editor на $(GRAFANA_TEST_URL))"; exit 1; }
+	GRAFANA_SERVER=$(GRAFANA_TEST_URL) GRAFANA_ORG_ID=$(GRAFANA_ORG_ID) \
+		gcx resources push dashboards --path dashboard/gold-thesis.json
+	@$(MAKE) grafana-check --no-print-directory
+
+# Smoke задеплоенного дашборда: дашборд виден по uid и первые панели отдают данные.
+# Проверка читает дашборд со стенда, поэтому ловит и «артефакт не доехал», и «панель пустая».
+grafana-check:
+	@test -n "$$GRAFANA_TOKEN" || { echo "задайте GRAFANA_TEST_TOKEN в $(ROSSTAT_ENV) (сервис-аккаунт Editor на $(GRAFANA_TEST_URL))"; exit 1; }
+	GRAFANA_URL=$(GRAFANA_TEST_URL) python3 scripts/grafana_check.py --uid $(DASHBOARD_UID)
+
+# Токен локального стенда одной командой: сервис-аккаунт создаётся идемпотентно (повторный прогон
+# переиспользует $(GRAFANA_SA_NAME) и говорит «уже есть»), а токен — всегда новый: Grafana показывает
+# ключ один раз, поэтому старый не переиспользуется (отозвать — в UI: Administration → Users and
+# access → Service accounts → $(GRAFANA_SA_NAME) → Tokens). Токен проверяется GET /api/user (Bearer)
+# ДО печати и в argv не попадает: уходит в curl конфигом на stdin (-K -), python3 читает JSON по pipe.
+# Имя токена — deploy-<UTC-метка>-<pid>, а не фиксированное `deploy`: Grafana 13.2.3 на повтор имени
+# отвечает 400 ErrTokenAlreadyExists «service account token with given name already exists in the
+# organization» (проверено живьём), поэтому фиксированное имя сломало бы второй прогон цели. Префикс
+# `deploy` — чтобы токены цели были узнаваемы в UI при отзыве, метка/pid — чтобы имя было уникальным
+# без окна гонки (два запуска в одну секунду не столкнутся).
+# Последние две строки — готовая строка для $(ROSSTAT_ENV); остальное в stdout (id аккаунта, служебные
+# сообщения, подсказка про GRAFANA_TOKEN для ручных вызовов gcx), чтобы владелец видел только то, что копирует.
+# Админ-креды — дефолт локального одноразового стенда (admin/admin, см. README §Grafana),
+# переопределяются окружением, в т.ч. $(ROSSTAT_ENV). В рецепте стоят ссылки на переменные
+# окружения, а не их значения, поэтому `make -n` секретов не печатает.
+# Список аккаунтов — /api/serviceaccounts/search: GET /api/serviceaccounts на Grafana 13.2.3 отвечает
+# 404 «Not found» (проверено живьём), поиск и есть документированный list-эндпоинт; точное сравнение
+# имени делает python3 (query у Grafana — подстрока, совпадение по подстроке дало бы чужой id).
+GRAFANA_ADMIN_USER     ?= admin
+GRAFANA_ADMIN_PASSWORD ?= admin
+GRAFANA_SA_NAME        ?= dashboards-cd
+GRAFANA_SA_ROLE        ?= Editor
+grafana-test-token:
+	@curl -sf -m 2 $(GRAFANA_TEST_URL)/api/health >/dev/null 2>&1 || { echo "стенд не отвечает: make grafana-up"; exit 1; }
+	@sa_json=$$(curl -sf -m 5 -u "$$GRAFANA_ADMIN_USER:$$GRAFANA_ADMIN_PASSWORD" "$(GRAFANA_TEST_URL)/api/serviceaccounts/search?perpage=100") \
+		|| { echo "не удалось прочитать список сервис-аккаунтов $(GRAFANA_TEST_URL): проверьте GRAFANA_ADMIN_USER/GRAFANA_ADMIN_PASSWORD"; exit 1; }; \
+	sa_id=$$(printf '%s' "$$sa_json" | python3 -c "import json,sys; name=sys.argv[1]; accounts=json.load(sys.stdin).get('serviceAccounts') or []; found=[a for a in accounts if a.get('name') == name]; print(found[0]['id'] if found else '')" "$(GRAFANA_SA_NAME)") \
+		|| { echo "ответ $(GRAFANA_TEST_URL)/api/serviceaccounts/search не разобран (ждали JSON с serviceAccounts)"; exit 1; }; \
+	if [ -n "$$sa_id" ]; then \
+		echo "сервис-аккаунт $(GRAFANA_SA_NAME) уже есть (id $$sa_id)"; \
+	else \
+		sa_json=$$(curl -sf -m 5 -u "$$GRAFANA_ADMIN_USER:$$GRAFANA_ADMIN_PASSWORD" -X POST \
+			-H "Content-Type: application/json" -d '{"name":"$(GRAFANA_SA_NAME)","role":"$(GRAFANA_SA_ROLE)"}' \
+			"$(GRAFANA_TEST_URL)/api/serviceaccounts") \
+			|| { echo "не удалось создать сервис-аккаунт $(GRAFANA_SA_NAME) на $(GRAFANA_TEST_URL)"; exit 1; }; \
+		sa_id=$$(printf '%s' "$$sa_json" | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])") \
+			|| { echo "в ответе на создание сервис-аккаунта нет id"; exit 1; }; \
+		echo "сервис-аккаунт $(GRAFANA_SA_NAME) создан (id $$sa_id, роль $(GRAFANA_SA_ROLE))"; \
+	fi; \
+	token_name=deploy-$$(date -u +%Y%m%dT%H%M%SZ)-$$$$; \
+	token_json=$$(curl -sf -m 10 -u "$$GRAFANA_ADMIN_USER:$$GRAFANA_ADMIN_PASSWORD" -X POST \
+		-H "Content-Type: application/json" -d "$$(printf '{"name":"%s"}' "$$token_name")" \
+		"$(GRAFANA_TEST_URL)/api/serviceaccounts/$$sa_id/tokens") \
+		|| { echo "не удалось создать токен $$token_name для сервис-аккаунта $$sa_id"; exit 1; }; \
+	token=$$(printf '%s' "$$token_json" | python3 -c "import json,sys; key=json.load(sys.stdin).get('key') or ''; key.startswith('glsa_') or sys.exit('в ответе нет ключа glsa_...'); print(key)") \
+		|| { echo "в ответе на создание токена нет ключа glsa_..."; exit 1; }; \
+	code=$$(printf 'url = "%s"\nheader = "Authorization: Bearer %s"\n' "$(GRAFANA_TEST_URL)/api/user" "$$token" | curl -s -o /dev/null -w "%{http_code}" -m 10 -K -); \
+	[ "$$code" = "200" ] || { echo "токен не прошёл проверку GET /api/user (HTTP $$code) — в $(ROSSTAT_ENV) вставлять нельзя"; exit 1; }; \
+	echo "Ручные вызовы gcx читают только GRAFANA_TOKEN (не GRAFANA_TEST_TOKEN); make-цели подставляют его сами."; \
+	echo "Добавьте строку в ~/.config/rosstat/env (секрет, не коммитить):"; \
+	echo "GRAFANA_TEST_TOKEN=$$token"
+
+# Провижининг датасорса на staging (идемпотентный). Шаблон с плейсхолдером копируется в /tmp хоста,
+# пароль подставляется НА ХОСТЕ из $(STAGING_ENV_FILE) — python3, а не sed (у sed сломались бы / & \ и др.).
+# Пароль стоит в YAML-скаляре в двойных кавычках, поэтому перед подстановкой экранируются \ и " —
+# без этого `a\b"c` делает YAML невалидным, а `x\\y` молча превращается в `x\y` (проверено на фикстурах).
+# Пароль с управляющим символом (перевод строки, таб, 0x7f) отвергается с понятной ошибкой, а не портит YAML.
+# После подстановки файл перечитывается: значение датасорса декодируется обратно (json.loads — те же
+# \\ и \" , что в YAML-скаляре) и сравнивается с паролем, то есть round-trip обязан сойтись.
+# Результат сравнивается с установленным файлом по sha256 и переустанавливается только при отличии,
+# поэтому повторный прогон ничего не пишет.
+# Пароль не печатается; временные копии (root, 600) удаляются по trap, в т.ч. при ошибке.
+# ВАЖНО (проверено на Grafana 13.1.1): каталог provisioning/datasources читается ТОЛЬКО при старте
+# сервера (pkg/services/provisioning: ProvisionDatasources вызывается из starting(); поллинг есть лишь
+# у дашбордов). Поэтому новый/изменённый файл датасорса сам по себе не активируется: нужен admin-reload
+# (POST /api/admin/provisioning/datasources/reload) или перезапуск Grafana — руками владельца; наша цель
+# Grafana не рестартует. Цель вызывается из grafana-deploy-staging, но запускается и отдельно.
+GRAFANA_DATASOURCE_TMPL   ?= deploy/staging/grafana-datasource.yaml
+GRAFANA_DATASOURCE_REMOTE ?= /etc/grafana/provisioning/datasources/clickhouse.yaml
+GRAFANA_DATASOURCE_TMP    ?= /tmp/grafana-datasource.staging.yaml
+grafana-provision-staging:
+	@test -f "$(GRAFANA_DATASOURCE_TMPL)" || { echo "нет шаблона $(GRAFANA_DATASOURCE_TMPL)"; exit 1; }
+	@scp -q "$(GRAFANA_DATASOURCE_TMPL)" "$(STAGING_HOST):$(GRAFANA_DATASOURCE_TMP)" || { echo "scp: шаблон не доехал до $(STAGING_HOST)"; exit 1; }
+	@ssh $(STAGING_HOST) 'set -eu; \
+		trap "rm -f $(GRAFANA_DATASOURCE_TMP) $(GRAFANA_DATASOURCE_TMP).rendered" EXIT; \
+		[ -f $(STAGING_ENV_FILE) ] || { echo "НЕТ  $(STAGING_ENV_FILE) не найден на $(STAGING_HOST)"; exit 1; }; \
+		set -a; . $(STAGING_ENV_FILE); set +a; \
+		test -n "$${CLICKHOUSE_PASSWORD:-}" || { echo "НЕТ  CLICKHOUSE_PASSWORD не задан в $(STAGING_ENV_FILE)"; exit 1; }; \
+		install -m 600 /dev/null "$(GRAFANA_DATASOURCE_TMP).rendered"; \
+		CLICKHOUSE_PASSWORD="$${CLICKHOUSE_PASSWORD:-}" python3 -c "import os, sys; BS = chr(92); DQ = chr(34); pw = os.environ[\"CLICKHOUSE_PASSWORD\"]; bad = [c for c in pw if ord(c) < 32 or ord(c) == 127]; bad and sys.exit(\"пароль содержит управляющий символ 0x%02x — в YAML его подставить нельзя (перевод строки/таб?)\" % ord(bad[0])); src = open(sys.argv[1], encoding=\"utf-8\").read(); \"__CLICKHOUSE_PASSWORD__\" in src or sys.exit(\"в шаблоне нет плейсхолдера __CLICKHOUSE_PASSWORD__\"); open(sys.argv[2], \"w\", encoding=\"utf-8\").write(src.replace(\"__CLICKHOUSE_PASSWORD__\", pw.replace(BS, BS + BS).replace(DQ, BS + DQ)))" "$(GRAFANA_DATASOURCE_TMP)" "$(GRAFANA_DATASOURCE_TMP).rendered"; \
+		CLICKHOUSE_PASSWORD="$${CLICKHOUSE_PASSWORD:-}" python3 -c "import json, os, sys; DQ = chr(34); pw = os.environ[\"CLICKHOUSE_PASSWORD\"]; lines = [l for l in open(sys.argv[1], encoding=\"utf-8\").read().splitlines() if \"password:\" in l]; (len(lines) == 1 and json.loads(DQ + lines[0].split(\":\", 1)[1].strip()[1:-1] + DQ) == pw) or sys.exit(\"round-trip пароля не сошёлся: YAML-скаляр собрался бы неверно\")" "$(GRAFANA_DATASOURCE_TMP).rendered"; \
+		target="$(GRAFANA_DATASOURCE_REMOTE)"; \
+		if [ -f "$$target" ] && [ "$$(sha256sum < "$(GRAFANA_DATASOURCE_TMP).rendered" | cut -c1-64)" = "$$(sha256sum < "$$target" | cut -c1-64)" ]; then \
+			echo "OK   провижининг датасорса актуален ($$target)"; \
+		else \
+			install -o root -g grafana -m 640 "$(GRAFANA_DATASOURCE_TMP).rendered" "$$target"; \
+			echo "OK   провижининг датасорса обновлён ($$target)"; \
+			echo "ВНИМАНИЕ: Grafana применяет датасорсы из provisioning только при старте. Пока владелец не сделает admin-reload"; \
+			echo "  curl -u admin:<пароль> -X POST $(GRAFANA_STAGING_URL)/api/admin/provisioning/datasources/reload"; \
+			echo "  (или не перезапустит grafana-server), датасорс ch-rosstat не активен и smoke упадёт: см. deploy/staging/README.md"; \
+		fi'
+
+# Деплой дашборда gold-thesis на staging: провижининг датасорса → push → smoke.
+# Токен (GRAFANA_STAGING_TOKEN, сервис-аккаунт Editor на staging) живёт только у владельца
+# в $(ROSSTAT_ENV); gcx общается с инстансом через туннель, а панели — с ClickHouse хоста.
+# Grafana и systemd на хосте не трогаются: нужен только поднятый туннель.
+grafana-deploy-staging:
+	@test -n "$$GRAFANA_STAGING_TOKEN" || { echo "задайте GRAFANA_STAGING_TOKEN в $(ROSSTAT_ENV) — токен сервис-аккаунта Editor на staging; создаётся одноразово вручную (runbook: docs/superpowers/specs/2026-10-12-grafana-gold-thesis-design.md §6)"; exit 1; }
+	@curl -sf -m 3 $(GRAFANA_STAGING_URL)/api/health >/dev/null 2>&1 || { echo "staging Grafana не отвечает на $(GRAFANA_STAGING_URL): поднимите туннель — ssh -N -L 3001:127.0.0.1:3000 $(STAGING_HOST)"; exit 1; }
+	@$(MAKE) grafana-provision-staging --no-print-directory
+	GRAFANA_SERVER=$(GRAFANA_STAGING_URL) GRAFANA_ORG_ID=$(GRAFANA_ORG_ID) GRAFANA_TOKEN="$$GRAFANA_STAGING_TOKEN" \
+		gcx resources push dashboards --path dashboard/gold-thesis.json
+	@GRAFANA_URL=$(GRAFANA_STAGING_URL) GRAFANA_TOKEN="$$GRAFANA_STAGING_TOKEN" \
+		python3 scripts/grafana_check.py --uid $(DASHBOARD_UID)
 
 info:
 	@echo "BINARY    = $(TARGET)"

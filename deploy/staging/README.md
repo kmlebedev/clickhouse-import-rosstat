@@ -2,7 +2,9 @@
 
 Артефакты деплоя на хост `palmshell` (Ubuntu 24.04, x86_64, вход `root`). Разворачивает три
 компонента: бинарник `clickhouse-import-rosstat`, планировщик `dagu`, MCP-сервер
-`mcp-clickhouse` (HTTP, read-only). ClickHouse и Grafana на хосте **не трогаются**.
+`mcp-clickhouse` (HTTP, read-only). ClickHouse на хосте **не трогается**; у Grafana — только
+файл провижининга датасорса для дашборда `gold-thesis` (раздел [«Grafana на staging»](#grafana-на-staging-датасорс-провижининг-и-деплой-дашборда)),
+сам сервис не перезапускается.
 
 Спецификация: [docs/superpowers/specs/2026-10-10-staging-deploy-phase1-design.md](../../docs/superpowers/specs/2026-10-10-staging-deploy-phase1-design.md).
 
@@ -63,6 +65,82 @@ CLICKHOUSE_PASSWORD=<пароль kimi_reader> make mcp-check MCP_CHECK_HOST=127
 Smoke-проверки внутри `deploy-staging`: наличие бинарей и DAG-файлов, непустой токен (до
 включения сервисов), затем `dagu` отвечает, MCP `/health` = 200, MCP **без токена → 401**,
 MCP с токеном отвечает.
+
+## Grafana на staging: датасорс-провижининг и деплой дашборда
+
+Дашборд `gold-thesis` едет на staging как код: артефакт `dashboard/gold-thesis.json` пушится в
+Grafana через ssh-туннель, а датасорс описывается шаблоном `grafana-datasource.yaml` в этом каталоге.
+
+```bash
+# 1. Туннель к Grafana хоста (:3001, чтобы не конфликтовать с локальным стендом на :3000)
+ssh -N -L 3001:127.0.0.1:3000 palmshell &
+
+# 2. Токен сервис-аккаунта Editor на staging — в ~/.config/rosstat/env, в репозиторий не попадает:
+#      GRAFANA_STAGING_TOKEN=<токен>
+
+# 3. Провижининг датасорса → push дашборда → smoke панелей
+make grafana-deploy-staging
+```
+
+Цель по шагам: проверяет непустой `GRAFANA_STAGING_TOKEN` → проверяет туннель
+(`curl $(GRAFANA_STAGING_URL)/api/health`, `GRAFANA_STAGING_URL ?= http://localhost:3001`) →
+идемпотентный провижининг датасорса → `gcx resources push dashboards --path dashboard/gold-thesis.json`
+против `GRAFANA_SERVER=$(GRAFANA_STAGING_URL)` → smoke `python3 scripts/grafana_check.py --uid gold-thesis`
+(дашборд виден по uid + первые панели отдают точки). Grafana и systemd на хосте цель **не трогает**:
+только `scp` файла и HTTP-запросы через туннель.
+
+### Датасорс
+
+- Шаблон: `grafana-datasource.yaml` — `host: localhost`, `port: 8123`, `protocol: http`,
+  пользователь `kimi_reader` (тот же readonly-пользователь, что у MCP), uid `ch-rosstat`
+  (совпадает с `grafana/clickhouse.go` и с таргетами панелей дашборда).
+- Пароля в репозитории нет: плейсхолдер `__CLICKHOUSE_PASSWORD__` подставляет **на хосте**
+  `make grafana-provision-staging` из `/etc/clickhouse-import-rosstat.env` (600). Подстановка —
+  через `python3`, а не `sed`: пароль может содержать `/ & \` и другие спецсимволы. Скаляр в шаблоне
+  стоит в двойных кавычках, поэтому `\` и `"` экранируются перед подстановкой (иначе `a\b"c`
+  делает YAML невалидным, а `x\\y` молча превращается в `x\y`); пароль с управляющим символом
+  (перевод строки, таб, `0x7f`) отвергается с понятной ошибкой, а собранный файл перечитывается и
+  значение датасорса декодируется обратно и сверяется с паролем (round-trip). Временные копии
+  (root, `600`) удаляются сразу, значение пароля не печатается.
+- Идемпотентность: sha256 собранного файла сравнивается с
+  `/etc/grafana/provisioning/datasources/clickhouse.yaml`; установка через
+  `install -o root -g grafana -m 640` выполняется только при отличии. Повторный прогон печатает
+  `OK   провижининг датасорса актуален` и файл не трогает.
+- Проверить, что датасорс реально авторизуется в ClickHouse, можно так (пароль не печатается):
+
+  ```bash
+  ssh palmshell 'pw=$(grep "^ *password:" /etc/grafana/provisioning/datasources/clickhouse.yaml | cut -d\" -f2); \
+    printf "header = \"X-ClickHouse-User: kimi_reader\"\nheader = \"X-ClickHouse-Key: %s\"\n" "$pw" | \
+    curl -s -K - http://localhost:8123/ --data-binary "SELECT currentUser()"'
+  # → kimi_reader
+  ```
+
+- **Ловушка (проверено на Grafana 13.1.1):** каталог `provisioning/datasources` читается
+  **только при старте** Grafana — поллинг есть лишь у файловых дашбордов
+  (`pkg/services/provisioning`: `ProvisionDatasources` вызывается из `starting()`). Поэтому после
+  первой установки/правки файла датасорс сам не появится: до тех пор, пока владелец не выполнит
+  admin-reload (без перезапуска сервиса) — или не перезапустит `grafana-server`:
+
+  ```bash
+  # через уже поднятый туннель; нужен admin-доступ к Grafana (basic auth)
+  curl -u admin:<пароль-админа> -X POST http://localhost:3001/api/admin/provisioning/datasources/reload
+  # → {"message":"Datasources config reloaded"}
+  ```
+
+  До reload датасорса `ch-rosstat` в Grafana нет, и smoke падает на `POST /api/ds/query`
+  («datasource not found») — это ожидаемо и лечится одним reload, перезапуск всей Grafana не нужен.
+
+### Что требуется от владельца (одноразово)
+
+- Сервис-аккаунт Grafana на staging (роль **Editor** — нужен push дашбордов) и его токен →
+  `GRAFANA_STAGING_TOKEN` в `~/.config/rosstat/env`. На самом хосте токен не нужен: push идёт через туннель.
+- admin-reload провижининга датасорса (см. выше) — при первом деплое и после каждой правки
+  `grafana-datasource.yaml`. Цель печатает напоминание, когда файл был переустановлен.
+- Пользователь ClickHouse `kimi_reader` уже есть на хосте (гранты readonly на витрины `v_*`).
+
+Приёмка полного прогона: `make grafana-deploy-staging` → `OK   дашборд виден` и непустые точки по
+первым панелям, затем `gcx dashboards list` показывает `gold-thesis` (первый дашборд на staging,
+существующие не затронуты).
 
 ## Отладка и откат
 
