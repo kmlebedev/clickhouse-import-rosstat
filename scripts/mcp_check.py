@@ -256,6 +256,57 @@ async def check(params, server_log):
             denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
             failed += not expect("сырая таблица закрыта", denied, "отказ ClickHouse 497 на macro_series (ожидаемо)" if denied else raw[:200])
 
+            # Контур bold.report (спека §4.4): витрины дневного агрегата и пер-фондового
+            # среза читаются агентом, каталог source='bold' описывает ровно 7 рядов, а сырая
+            # bold_fund_snapshot — источник пер-фондовой витрины — агенту закрыта (как
+            # macro_series: читать её агент обязан только через витрину).
+            #
+            # Существование витрины проверяется ЗАПРОСОМ К НЕЙ, а не поиском имени в ответе
+            # list_tables: в том тексте лежат create_table_query с комментариями таблиц и
+            # колонок, поэтому имя отсутствующей витрины попадало туда из COMMENT соседки —
+            # проверка «имя в тексте» давала ложное OK, когда v_gold_etf_funds_daily не
+            # существовала вовсе (её имя названо в комментарии v_gold_etf_flows_daily).
+            # Разобранный ответ run_query доказывает и существование, и право чтения; «нет
+            # витрины» и «нет прав» приходят ошибкой (UNKNOWN_TABLE / ACCESS_DENIED) и в
+            # result_rows не разбираются.
+            #
+            # Пустая витрина — не отказ: до первого прогона bold_etf_flows (или при
+            # выходном дне источника) строк нет и вовсе, поэтому значение count не
+            # проверяется — только разрешение чтения, как у v_dcf_assumptions.
+            for view, label in (("v_gold_etf_flows_daily", "дневной агрегат bold"),
+                                ("v_gold_etf_funds_daily", "пер-фондовый срез bold")):
+                bold_view = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {view}"}))
+                bold_view_rows = result_rows(bold_view)
+                if bold_view_rows is None:
+                    bold_view_detail = f"витрина не читается: {bold_view[:200]}"
+                elif bold_view_rows:
+                    bold_view_detail = f"строк: {bold_view_rows[0].get('count()')}"
+                else:
+                    bold_view_detail = "в ответе нет строк"
+                failed += not expect(f"витрина {view} существует и читается ({label})",
+                                     bool(bold_view_rows), bold_view_detail)
+
+            # Каталог source='bold' — 7 рядов ETF-контура: импортёр перепубликовывает каталог
+            # на каждом прогоне (после успешного Send или в ветке no-op), поэтому «меньше 7»
+            # значит ни разу не отработавший импорт (числа агент прочитает, а что измеряет
+            # ряд и в каких единицах — нет), «больше 7» — ряд, которого витрина не знает.
+            catalog_bold_raw = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'bold'"}))
+            catalog_bold = result_rows(catalog_bold_raw)
+            catalog_bold_n = catalog_bold[0].get("n") if catalog_bold else None
+            if catalog_bold is None:
+                catalog_bold_detail = f"ответ не распознан: {catalog_bold_raw[:200]}"
+            elif catalog_bold_n == 7:
+                catalog_bold_detail = "рядов bold: 7"
+            else:
+                catalog_bold_detail = (f"рядов bold: {catalog_bold_n}, want 7 — прогнать "
+                                       "make import STAT=bold_etf_flows (каталог перепубликовывается прогоном импортёра)")
+            failed += not expect("каталог bold полон", catalog_bold_n == 7, catalog_bold_detail)
+
+            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM bold_fund_snapshot"}))
+            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+            failed += not expect("сырой пер-фондовый срез закрыт", denied,
+                                 "отказ ClickHouse 497 на bold_fund_snapshot (ожидаемо)" if denied else raw[:200])
+
     return failed
 
 
