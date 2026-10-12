@@ -19,6 +19,10 @@ WHERE source = 'gold'
 ORDER BY date
 `
 
+// Id панелей дашборда — 1..9 (Task 4), рядов — 11..15: нулевой id Grafana трактует
+// как «не задан», поэтому ряды нумеруются вне диапазона панелей.
+const firstRowID = 11
+
 // NewGoldThesis собирает дашборд «Золото — тезисы статьи» (§4 золотого роадмапа).
 // Task 4 добавит остальные ряды и панели; здесь — ряд «Цена и пол» и панель 1.
 func NewGoldThesis() *dashboard.DashboardBuilder {
@@ -28,7 +32,7 @@ func NewGoldThesis() *dashboard.DashboardBuilder {
 		Refresh("5m").
 		Time("now-1y", "now").
 		Timezone(common.TimeZoneBrowser).
-		WithRow(dashboard.NewRowBuilder("Цена и пол")).
+		WithRow(dashboard.NewRowBuilder("Цена и пол").Id(firstRowID)).
 		WithPanel(goldPricePanel())
 }
 

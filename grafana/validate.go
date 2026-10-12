@@ -11,11 +11,10 @@ import (
 
 // Validate проверяет дашборд по правилам контура:
 //   - uid дашборда равен DashboardUID;
+//   - id заданы, непусты и уникальны у всех элементов верхнего уровня (панели и ряды),
+//     а также у панелей, вложенных в свёрнутые ряды;
 //   - у каждой панели датасорс — константы DatasourceType/DatasourceUID;
-//   - id панелей заданы, непусты и уникальны;
 //   - каждый запрос — CHQuery с непустым rawSql, читающим витрину v_*.
-//
-// Панели, вложенные в свёрнутый ряд, проверяются наравне с верхнеуровневыми.
 func Validate(d dashboard.Dashboard) error {
 	if d.Uid == nil {
 		return errors.New("у дашборда не задан uid")
@@ -23,13 +22,14 @@ func Validate(d dashboard.Dashboard) error {
 	if *d.Uid != DashboardUID {
 		return fmt.Errorf("uid дашборда %q, ожидался %q", *d.Uid, DashboardUID)
 	}
+	if err := validateIDs(d); err != nil {
+		return err
+	}
 
 	panels := panelsOf(d)
 	if len(panels) == 0 {
 		return errors.New("в дашборде нет панелей")
 	}
-
-	ids := make(map[uint32]struct{}, len(panels))
 	for _, p := range panels {
 		if err := validateDatasource(p); err != nil {
 			return err
@@ -37,15 +37,50 @@ func Validate(d dashboard.Dashboard) error {
 		if err := validateTargets(p); err != nil {
 			return err
 		}
-		if p.Id == nil || *p.Id == 0 {
-			return fmt.Errorf("у панели %q не задан id", panelTitle(p))
-		}
-		if _, duplicate := ids[*p.Id]; duplicate {
-			return fmt.Errorf("id панели %q (%d) повторяется", panelTitle(p), *p.Id)
-		}
-		ids[*p.Id] = struct{}{}
 	}
 
+	return nil
+}
+
+// validateIDs требует непустых уникальных id у панелей и рядов: ряд — такой же элемент
+// дашборда, и нулевой id Grafana заменит сама (артефакт разойдётся с кодом).
+func validateIDs(d dashboard.Dashboard) error {
+	ids := make(map[uint32]string, len(d.Panels))
+	for _, entry := range d.Panels {
+		if entry.Panel != nil {
+			if err := claimPanelID(ids, entry.Panel); err != nil {
+				return err
+			}
+		}
+		if entry.RowPanel != nil {
+			if err := claimID(ids, entry.RowPanel.Id, fmt.Sprintf("ряд %q", optionalString(entry.RowPanel.Title))); err != nil {
+				return err
+			}
+			for i := range entry.RowPanel.Panels {
+				if err := claimPanelID(ids, &entry.RowPanel.Panels[i]); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func claimPanelID(ids map[uint32]string, p *dashboard.Panel) error {
+	if p.Id == nil {
+		return fmt.Errorf("у панели %q не задан id", panelTitle(p))
+	}
+	return claimID(ids, *p.Id, fmt.Sprintf("панель %q", panelTitle(p)))
+}
+
+func claimID(ids map[uint32]string, id uint32, label string) error {
+	if id == 0 {
+		return fmt.Errorf("у %s нулевой id", label)
+	}
+	if owner, duplicate := ids[id]; duplicate {
+		return fmt.Errorf("id %d повторяется: %s и %s", id, owner, label)
+	}
+	ids[id] = label
 	return nil
 }
 
