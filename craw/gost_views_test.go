@@ -130,7 +130,8 @@ func TestGostViewStatementsShape(t *testing.T) {
 func TestGostViewsDocumentSemantics(t *testing.T) {
 	// Тексты комментариев — часть контракта витрин: агент читает их как описание данных.
 	// Проверяются оговорки, без которых витрина читается неверно (даты, лаг публикации,
-	// amendments, год выпуска 0, uniqExact, пустой день), а не дословные формулировки.
+	// строки до бэкфилла, amendments, год выпуска 0, uniqExact, пустой день), а не дословные
+	// формулировки.
 	var text strings.Builder
 	for _, stmt := range gostViewStatements[2:] {
 		text.WriteString(stmt)
@@ -147,6 +148,7 @@ func TestGostViewsDocumentSemantics(t *testing.T) {
 		"дата выдачи сбктс (мск)",
 		"дата публикации среза",
 		"лаг к выдаче ~2 суток",
+		"1970-01-01",
 		"изменения сертификата дают вторую строку",
 		"replacingmergetree final",
 		"фильтруйте по `date`",
@@ -169,6 +171,15 @@ func TestGostViewsDocumentSemantics(t *testing.T) {
 		if strings.Contains(stmt, "\n") {
 			t.Errorf("комментарий %d не одной строкой: %q", i, stmt)
 		}
+	}
+
+	// Оговорка о строках до бэкфилла обязана жить именно в комментарии publication_date:
+	// дефолт колонки (1970-01-01) выглядит настоящей датой публикации, и агент должен знать,
+	// что это «не бэкфилено», а не публикация 1970 года (импортёр предупреждает о таких строках
+	// в логе прогона, но лог агент не читает).
+	pubComment := gostColumnComment(t, gostViewStatements[2:], gostRowsView, "publication_date")
+	if !strings.Contains(pubComment, "1970-01-01") || !strings.Contains(pubComment, "до бэкфилла") {
+		t.Errorf("комментарий publication_date без оговорки о строках до бэкфилла: %q", pubComment)
 	}
 }
 

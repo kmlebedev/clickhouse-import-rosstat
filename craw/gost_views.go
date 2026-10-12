@@ -13,7 +13,7 @@ import (
 // «сколько машин въехало» (дневной поток) — второй считается uniqExact по номерам, а не
 // count() строк таблицы (изменения сертификата дают вторую строку при том же номере).
 //
-// Публикуются витрины импортёром в начале пишущего прогона (before first API call) — по образцу
+// Публикуются витрины импортёром в начале пишущего прогона (до первого обращения к API) — по образцу
 // news/, чтобы правка определения уезжала вместе с импортом, а не отдельным ручным шагом.
 
 // Имена витрин — контракт с sql/mcp_kimi_reader.sql (гранты), ARCHITECTURE.md §6.3
@@ -29,8 +29,8 @@ const (
 // gostViewStatements — стейтменты витрин по порядку: два определения, затем комментарии
 // таблиц и колонок (ALTER TABLE … MODIFY COMMENT / COMMENT COLUMN — DDL-стиль проекта,
 // не COMMENT ON). Комментарии — часть контракта витрины: агент читает их как описание
-// данных, и именно в них живут оговорки (лаг публикации, amendments, год выпуска 0,
-// uniqExact, пустой день).
+// данных, и именно в них живут оговорки (лаг публикации, строки до бэкфилла, amendments, год
+// выпуска 0, uniqExact, пустой день).
 //
 // В строковой витрине нет ORDER BY: 3.4 млн строк не сортируются на каждом запросе, вместо
 // этого комментарий велит фильтровать по `date`. Технический `uid` в витрину не выводится —
@@ -50,7 +50,7 @@ var gostViewStatements = []string{
 	"ALTER TABLE " + gostRowsView + " MODIFY COMMENT 'Реестр СБКТС Росстандарта (свидетельства о безопасности конструкции ТС): источник — REST API портала gost.ru, импортёр gost_vehicle_safety_certificate, режимы since (ежечасно) / full (история с 2016). `date` — дата выдачи СБКТС (МСК); `publication_date` — дата батча публикации у источника; строка может обновляться (ReplacingMergeTree FINAL); изменения сертификата дают вторую строку при том же номере; в витрине нет технического `uid`; фильтруйте по `date` — витрина не сортирована'",
 
 	"ALTER TABLE " + gostRowsView + " COMMENT COLUMN date '`date` — дата выдачи (МСК)'",
-	"ALTER TABLE " + gostRowsView + " COMMENT COLUMN publication_date '`publication_date` — дата публикации среза у источника (лаг к выдаче ~2 суток)'",
+	"ALTER TABLE " + gostRowsView + " COMMENT COLUMN publication_date '`publication_date` — дата публикации среза у источника (лаг к выдаче ~2 суток); у строк до бэкфилла — 1970-01-01'",
 	"ALTER TABLE " + gostRowsView + " COMMENT COLUMN mark '`mark` — марка ТС (`product`)'",
 	"ALTER TABLE " + gostRowsView + " COMMENT COLUMN type '`type` — тип/модель ТС (`type`)'",
 	"ALTER TABLE " + gostRowsView + " COMMENT COLUMN certificate_number '`certificate_number` — номер СБКТС («ТС RU …»)'",
