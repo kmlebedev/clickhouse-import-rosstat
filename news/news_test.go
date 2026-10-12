@@ -238,13 +238,14 @@ func TestFeedSpansMergesCbrFeeds(t *testing.T) {
 		{Feed: feed{Key: "tass", Source: "tass"}, Items: []newsItem{
 			{Date: t2, Source: "tass"},
 		}},
-		// Сбойная лента окна не даёт: пустой span выглядел бы дырой покрытия.
+		// Сбойная лента позиций не даёт, но её ключ обязан остаться в окне
+		// источника: без этого сбой выглядел бы сужением окна (см. FailedFeeds).
 		{Feed: feed{Key: "rbc", Source: "rbc"}, Err: errors.New("сбой ленты")},
 	}
 
 	spans := feedSpans(results)
-	if len(spans) != 2 {
-		t.Fatalf("feedSpans вернул %d источников, want 2 (cbr и tass; сбойный rbc окна не даёт): %v", len(spans), spans)
+	if len(spans) != 3 {
+		t.Fatalf("feedSpans вернул %d источников, want 3 (cbr, tass и rbc с одним сбойным фидом): %v", len(spans), spans)
 	}
 
 	cbr, ok := spans["cbr"]
@@ -259,6 +260,62 @@ func TestFeedSpansMergesCbrFeeds(t *testing.T) {
 	}
 	if !cbr.Max.Equal(t3) {
 		t.Errorf("cbr.Max = %v, want %v (максимум по обоим фидам)", cbr.Max, t3)
+	}
+	if len(cbr.FailedFeeds) != 0 {
+		t.Errorf("cbr.FailedFeeds = %v, want пусто (оба фида ЦБ прочитались)", cbr.FailedFeeds)
+	}
+
+	rbc, ok := spans["rbc"]
+	if !ok {
+		t.Fatalf("feedSpans не вернул источник rbc (сбой ленты обязан быть виден): %v", spans)
+	}
+	if rbc.Count != 0 || !rbc.Min.IsZero() || !rbc.Max.IsZero() {
+		t.Errorf("rbc = %+v, want пустое окно: сбойная лента позиций не даёт", rbc)
+	}
+	if want := "rbc"; strings.Join(rbc.FailedFeeds, ",") != want {
+		t.Errorf("rbc.FailedFeeds = %v, want [%s]", rbc.FailedFeeds, want)
+	}
+}
+
+func TestFeedSpansMarksFailedFeeds(t *testing.T) {
+	msk := time.FixedZone("", mskOffset)
+	t1 := time.Date(2026, time.October, 12, 16, 0, 0, 0, msk)
+
+	// Частичный сбой: окно строится по выжившей ленте, но помечено неполным —
+	// упавшая cbr_news могла покрывать промежуток до её начала.
+	partial := feedSpans([]feedResult{
+		{Feed: feed{Key: "cbr_news", Source: "cbr"}, Err: errors.New("сбой ленты")},
+		{Feed: feed{Key: "cbr_press", Source: "cbr"}, Items: []newsItem{{Date: t1, Source: "cbr"}}},
+	})
+	span, ok := partial["cbr"]
+	if !ok {
+		t.Fatalf("спан cbr не создан при сбое cbr_news: %v", partial)
+	}
+	if want := uint64(1); span.Count != want {
+		t.Errorf("cbr.Count = %d, want %d (только позиции выжившей cbr_press)", span.Count, want)
+	}
+	if !span.Min.Equal(t1) || !span.Max.Equal(t1) {
+		t.Errorf("cbr.Min/Max = %v/%v, want %v (окно выжившей ленты)", span.Min, span.Max, t1)
+	}
+	if want := "cbr_news"; strings.Join(span.FailedFeeds, ",") != want {
+		t.Errorf("cbr.FailedFeeds = %v, want [%s]", span.FailedFeeds, want)
+	}
+
+	// Полный сбой обоих фидов: спан существует (вызывающий видит ошибки лент),
+	// Count == 0, ключи — в порядке feeds().
+	full := feedSpans([]feedResult{
+		{Feed: feed{Key: "cbr_news", Source: "cbr"}, Err: errors.New("сбой ленты")},
+		{Feed: feed{Key: "cbr_press", Source: "cbr"}, Err: errors.New("сбой ленты")},
+	})
+	span, ok = full["cbr"]
+	if !ok {
+		t.Fatalf("спан cbr не создан при полном сбое обоих фидов: %v", full)
+	}
+	if span.Count != 0 {
+		t.Errorf("cbr.Count = %d, want 0", span.Count)
+	}
+	if want := "cbr_news,cbr_press"; strings.Join(span.FailedFeeds, ",") != want {
+		t.Errorf("cbr.FailedFeeds = %v, want [%s] (порядок feeds())", span.FailedFeeds, want)
 	}
 }
 
@@ -308,6 +365,33 @@ func TestDetectGapsFindsMissedWindow(t *testing.T) {
 	}
 }
 
+func TestDetectGapsSkipsIncompleteSource(t *testing.T) {
+	msk := time.FixedZone("", mskOffset)
+	storedMax := time.Date(2026, time.October, 12, 15, 0, 0, 0, msk)
+	feedMin := time.Date(2026, time.October, 12, 16, 0, 0, 0, msk)
+
+	stored := map[string]sourceSpan{"cbr": {Count: 100, Min: storedMax.Add(-2 * time.Hour), Max: storedMax}}
+	window := func(failed []string) map[string]sourceSpan {
+		return map[string]sourceSpan{"cbr": {Count: 50, Min: feedMin, Max: feedMin.Add(time.Hour), FailedFeeds: failed}}
+	}
+
+	// Упавшая cbr_news могла покрывать 15:00…16:00 — реальной пропущенной выборки
+	// нет, и объявлять дыру по неполному окну нельзя.
+	if gaps := detectGaps(window([]string{"cbr_news"}), stored); len(gaps) != 0 {
+		t.Errorf("detectGaps по неполному окну = %v, want пусто (дыру могла закрывать упавшая лента)", gaps)
+	}
+	// Контроль: те же границы без пометки о сбое дают дыру — проверка не вакуумная.
+	gaps := detectGaps(window(nil), stored)
+	if len(gaps) != 1 {
+		t.Fatalf("detectGaps по полному окну вернул %d строк, want 1: %v", len(gaps), gaps)
+	}
+	for _, want := range []string{"cbr", storedMax.Format(time.RFC3339), feedMin.Format(time.RFC3339)} {
+		if !strings.Contains(gaps[0], want) {
+			t.Errorf("строка дыры %q не содержит %q", gaps[0], want)
+		}
+	}
+}
+
 func TestDetectGapsQuietWhenOverlap(t *testing.T) {
 	msk := time.FixedZone("", mskOffset)
 	storedMax := time.Date(2026, time.October, 10, 12, 0, 0, 0, msk)
@@ -345,10 +429,10 @@ func TestDetectGapsQuietWhenOverlap(t *testing.T) {
 			stored: map[string]sourceSpan{"cbr": {Count: 0}},
 		},
 		{
-			// Лента отдала ноль позиций (сбой виден в feedResult.Err): пустое окно
-			// не повод объявлять дыру.
-			name:   "пустое окно ленты",
-			feed:   map[string]sourceSpan{"cbr": {Count: 0}},
+			// Все ленты источника упали: окна нет вовсе, только пометка о сбое (дыру
+			// видно по ошибке ленты, а не по покрытию).
+			name:   "все ленты источника упали",
+			feed:   map[string]sourceSpan{"cbr": {FailedFeeds: []string{"cbr_news", "cbr_press"}}},
 			stored: map[string]sourceSpan{"cbr": {Count: 100, Min: storedMax.Add(-time.Hour), Max: storedMax}},
 		},
 		{
@@ -393,5 +477,58 @@ func TestCoverageLinesReportStoredAndFirstRun(t *testing.T) {
 	}
 	if !strings.HasPrefix(lines[1], "tass:") || !strings.Contains(lines[1], "сохранённых строк нет") {
 		t.Errorf("строка 1 = %q, want tass с пометкой «сохранённых строк нет» (первый прогон)", lines[1])
+	}
+}
+
+func TestCoverageLinesReportsIncomplete(t *testing.T) {
+	msk := time.FixedZone("", mskOffset)
+	storedMin := time.Date(2026, time.October, 9, 7, 0, 0, 0, msk)
+	storedMax := time.Date(2026, time.October, 10, 12, 0, 0, 0, msk)
+	feedMin := time.Date(2026, time.October, 10, 12, 0, 0, 0, msk)
+	feedMax := time.Date(2026, time.October, 12, 9, 0, 0, 0, msk)
+
+	feed := map[string]sourceSpan{
+		// Частичный сбой: одна лента ЦБ из двух не прочиталась — окно выжившей
+		// неполно, и check обязан это назвать.
+		"cbr": {Count: 50, Min: feedMin, Max: feedMax, FailedFeeds: []string{"cbr_news"}},
+		// Все ленты источника упали: позиций нет вовсе, нулевые времена печатать нельзя.
+		"rbc": {FailedFeeds: []string{"rbc"}},
+		// Источник и не читался ни разу, и лента упала — обе пометки в одной строке.
+		"tass": {FailedFeeds: []string{"tass"}},
+	}
+	stored := map[string]sourceSpan{
+		"cbr": {Count: 250, Min: storedMin, Max: storedMax},
+		"rbc": {Count: 30, Min: storedMin, Max: storedMax},
+	}
+
+	lines := coverageLines(feed, stored)
+	if len(lines) != 3 {
+		t.Fatalf("coverageLines вернул %d строк, want 3 (cbr, rbc, tass): %v", len(lines), lines)
+	}
+
+	for _, want := range []string{"cbr: сохранено 250", "в ленте 50", "неполно: не прочитаны ленты cbr_news"} {
+		if !strings.Contains(lines[0], want) {
+			t.Errorf("строка cbr = %q, want фрагмент %q", lines[0], want)
+		}
+	}
+
+	// feed.Count == 0: вместо «в ленте 0 (0001-01-01T00:00:00Z…0001-01-01T00:00:00Z)» —
+	// словами, иначе нулевое окно читалось бы как настоящее.
+	for _, want := range []string{"rbc: сохранено 30", "в ленте 0 (нет прочитанных позиций)", "неполно: не прочитаны ленты rbc"} {
+		if !strings.Contains(lines[1], want) {
+			t.Errorf("строка rbc = %q, want фрагмент %q", lines[1], want)
+		}
+	}
+
+	for _, want := range []string{"tass: сохранённых строк нет (первый прогон не выполнялся)", "неполно: не прочитаны ленты tass"} {
+		if !strings.Contains(lines[2], want) {
+			t.Errorf("строка tass = %q, want фрагмент %q", lines[2], want)
+		}
+	}
+
+	for _, line := range lines {
+		if strings.Contains(line, "0001-01-01") {
+			t.Errorf("строка %q печатает нулевое время как настоящее окно", line)
+		}
 	}
 }

@@ -3,6 +3,7 @@ package news
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
@@ -69,9 +70,17 @@ func parseMode(v string) (string, error) {
 
 // sourceSpan — окно покрытия источника: сколько позиций сохранено и от какого
 // момента до какого. По нему считаются дыры (пропущенные прогоны) и отчёт check.
+//
+// FailedFeeds — ключи лент источника, не прочитанных в этом прогоне (порядок
+// feeds()). Непустой список помечает окно неполным: у источника ЦБ два фида, и по
+// одному выжившему о разрыве покрытия судить нельзя — промежуток могла закрывать
+// упавшая лента, поэтому дыра по неполному окну не объявляется. Заполняется только
+// feed-стороной (feedSpans); окно, прочитанное из БД, поле не несёт — сохранённые
+// строки уже собраны прошлыми прогонами целиком.
 type sourceSpan struct {
-	Count    uint64
-	Min, Max time.Time
+	Count       uint64
+	Min, Max    time.Time
+	FailedFeeds []string
 }
 
 // feedResult — итог чтения одной ленты. Прочитанные позиции и ошибку ленты
@@ -109,16 +118,24 @@ func fetchFeeds(feeds []feed) []feedResult {
 // feedSpans сворачивает результаты лент в окна по Source. Оба фида ЦБ дают один
 // ключ «cbr»: окно покрытия — свойство источника, а не ленты, и по отдельным
 // фидам дыра между ними выглядела бы пропущенным прогоном, которого не было.
-// Поэтому Count суммируется, а Min/Max берутся крайними. Результаты с ошибкой
-// и без позиций пропускаются: пустое окно (нулевое время) — это не «дыра от 1970 года»,
-// а отсутствие данных, и отчитывается о нём не покрытие, а ошибка ленты.
+// Поэтому Count суммируется, а Min/Max берутся крайними.
+//
+// Упавшая лента не выбрасывается из окна молча: её ключ попадает в FailedFeeds
+// (спан создаётся, даже если у источника не прочиталась ни одна лента). Иначе
+// частичный сбой ЦБ выглядел бы сужением окна: cbr_news упала, cbr_press началась
+// позже сохранённого максимума — и detectGaps объявил бы дыру, которую на деле
+// закрывала упавшая лента. Ошибка ленты так и отчитывается ошибкой (FailedFeeds),
+// а не пустым окном: результат без ошибки без позиций невозможен — itemsFromDoc
+// считает пустую ленту ошибкой.
 func feedSpans(results []feedResult) map[string]sourceSpan {
 	spans := make(map[string]sourceSpan)
 	for _, r := range results {
-		if r.Err != nil || len(r.Items) == 0 {
+		span := spans[r.Feed.Source]
+		if r.Err != nil {
+			span.FailedFeeds = append(span.FailedFeeds, r.Feed.Key)
+			spans[r.Feed.Source] = span
 			continue
 		}
-		span := spans[r.Feed.Source]
 		span.Count += uint64(len(r.Items))
 		for _, it := range r.Items {
 			if span.Min.IsZero() || it.Date.Before(span.Min) {
@@ -164,13 +181,22 @@ func sortedSources(spans map[string]sourceSpan) []string {
 // его ленты — значит, между двумя прогонами окно ленты проскочило целиком и часть
 // новостей не собрана (лента конечна и «залечить» её задним числом нечем; в
 // news_events зияет окно). Сравнение строгое (Min.After(Max)): стык встык — это
-// продолжение покрытия, а не разрыв. Источник без сохранённых строк и источник
-// с пустой лентой дырой не считаются: первого ещё не было, у второго ошибка ленты.
+// продолжение покрытия, а не разрыв.
+//
+// Неполное окно (FailedFeeds) дыры не объявляет: у ЦБ две ленты под одним
+// источником, и если одна из них упала, окно выжившей короче реального — разрыв
+// между сохранённым максимумом и её началом могла закрывать именно упавшая лента.
+// Ложная тревога в check дороже молчания: она гонит разбираться с дырой, которой
+// нет. Источник без сохранённых строк и источник с пустой лентой дырой тоже не
+// считаются: первого ещё не было, у второго ошибка ленты.
 // По каждому источнику — одна строка, отсортировано по имени источника.
 func detectGaps(feed, stored map[string]sourceSpan) []string {
 	var gaps []string
 	for _, src := range sortedSources(feed) {
 		f, s := feed[src], stored[src]
+		if len(f.FailedFeeds) > 0 {
+			continue
+		}
 		if s.Count > 0 && f.Count > 0 && f.Min.After(s.Max) {
 			gaps = append(gaps, fmt.Sprintf("%s: дыра %s … %s (окно не собрано: пропущенный прогон)",
 				src, s.Max.Format(time.RFC3339), f.Min.Format(time.RFC3339)))
@@ -182,18 +208,33 @@ func detectGaps(feed, stored map[string]sourceSpan) []string {
 // coverageLines описывает окна прогона для режима check (ручная сверка покрытия):
 // сколько строк источника уже сохранено и в каком окне, против того, что сейчас
 // в ленте. Строки читает человек, поэтому источник без сохранённых строк назван
-// словами («первый прогон не выполнялся»), а не нулевым окном 0001-01-01.
+// словами («первый прогон не выполнялся»), а не нулевым окном 0001-01-01, а окно
+// источника, у которого упали все ленты, — «нет прочитанных позиций»: нулевые
+// времена выглядели бы как настоящее окно от 0001 года.
+//
+// Неполное окно (FailedFeeds) помечается суффиксом с именами непрочитанных лент:
+// в check важно не только сколько собрано, но и по чему судить нельзя — иначе
+// выжившая лента ЦБ читалась бы как весь источник.
 func coverageLines(feed, stored map[string]sourceSpan) []string {
 	lines := make([]string, 0, len(feed))
 	for _, src := range sortedSources(feed) {
 		f, s := feed[src], stored[src]
-		if s.Count == 0 {
-			lines = append(lines, fmt.Sprintf("%s: сохранённых строк нет (первый прогон не выполнялся)", src))
-			continue
+		window := fmt.Sprintf("в ленте %d (%s…%s)",
+			f.Count, f.Min.Format(time.RFC3339), f.Max.Format(time.RFC3339))
+		if f.Count == 0 {
+			window = fmt.Sprintf("в ленте %d (нет прочитанных позиций)", f.Count)
 		}
-		lines = append(lines, fmt.Sprintf("%s: сохранено %d (%s…%s), в ленте %d (%s…%s)",
-			src, s.Count, s.Min.Format(time.RFC3339), s.Max.Format(time.RFC3339),
-			f.Count, f.Min.Format(time.RFC3339), f.Max.Format(time.RFC3339)))
+		var line string
+		if s.Count == 0 {
+			line = fmt.Sprintf("%s: сохранённых строк нет (первый прогон не выполнялся)", src)
+		} else {
+			line = fmt.Sprintf("%s: сохранено %d (%s…%s), %s",
+				src, s.Count, s.Min.Format(time.RFC3339), s.Max.Format(time.RFC3339), window)
+		}
+		if len(f.FailedFeeds) > 0 {
+			line += fmt.Sprintf("; неполно: не прочитаны ленты %s", strings.Join(f.FailedFeeds, ", "))
+		}
+		lines = append(lines, line)
 	}
 	return lines
 }
