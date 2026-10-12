@@ -81,6 +81,8 @@ run: build
 ch-up:
 	@if curl -sf -m 2 http://localhost:$(CH_HTTP_PORT)/ping >/dev/null 2>&1; then \
 		echo "ClickHouse уже отвечает на порту $(CH_HTTP_PORT)"; \
+	elif [ -f "$(CH_PID)" ] && kill -0 $$(cat "$(CH_PID)") 2>/dev/null; then \
+		echo "ClickHouse уже запускается/запущен (PID $$(cat "$(CH_PID)")), второй сервер не поднимается"; \
 	else \
 		test -n "$(CH_BIN)" || { echo "clickhouse не найден: задайте CH_BIN=/путь/к/clickhouse"; exit 1; }; \
 		mkdir -p "$(CH_DATA)"; \
@@ -341,6 +343,8 @@ grafana-build:
 grafana-up:
 	@if curl -sf -m 2 http://localhost:$(GF_PORT)/api/health >/dev/null 2>&1; then \
 		echo "Grafana уже отвечает на порту $(GF_PORT)"; \
+	elif [ -f "$(GF_PID)" ] && kill -0 $$(cat "$(GF_PID)") 2>/dev/null; then \
+		echo "Grafana уже запускается/запущена (PID $$(cat "$(GF_PID)")), второй сервер не поднимается"; \
 	else \
 		test -n "$(GF_BIN)" || { echo "grafana не найден: задайте GF_BIN=/путь/к/grafana"; exit 1; }; \
 		if [ ! -d "$(GF_PLUGINS)/grafana-clickhouse-datasource" ]; then \
