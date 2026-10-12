@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Работа — только в worktree `.worktrees/grafana-gold-thesis`, ветка `feat/grafana-gold-thesis`; ветку `feat/bold-t1-gold` не трогать, untracked `bold/` не изменять.
+- Работа — в обычном рабочем каталоге репозитория на ветке `feat/grafana-gold-thesis` (создана от `main`; параллельных задач нет — отдельный worktree не нужен). Первые коммиты ветки — спека и план; правки только в файлах этого пункта (импортёры и другие контуры репозитория не трогаем).
 - Панели читают ТОЛЬКО витрины `v_*`; сырые таблицы запрещены (staging-датасорс — `kimi_reader`, у него нет грантов на сырые таблицы).
 - Константы: UID датасорса `ch-rosstat`, тип `grafana-clickhouse-datasource`, UID дашборда `gold-thesis`.
 - Артефакт `dashboard/gold-thesis.json` — K8s-style ресурс, коммитится, генерация детерминирована (повторный `make grafana-build` не меняет файл).
