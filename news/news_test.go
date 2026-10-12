@@ -1,6 +1,7 @@
 package news
 
 import (
+	"context"
 	"encoding/xml"
 	"errors"
 	"net/http"
@@ -11,6 +12,34 @@ import (
 	"testing"
 	"time"
 )
+
+func TestImportRejectsUnknownModeBeforeDB(t *testing.T) {
+	// Неизвестный режим обязан быть отвергнут до БД и до сети — conn=nil здесь и
+	// есть проверка порядка: начни Import с Exec или с лент, тест упал бы паникой
+	// nil-разыменования вместо ожидаемой ошибки про переменную.
+	t.Setenv(modeEnv, "bogus")
+
+	var s newsImport
+	count, err := s.Import(context.Background(), nil)
+	if err == nil {
+		t.Fatalf("Import при %s=bogus вернул %d строк без ошибки, want ошибку про режим", modeEnv, count)
+	}
+	if !strings.Contains(err.Error(), modeEnv) {
+		t.Errorf("ошибка Import = %q, want упоминание %s (иначе непонятно, какую переменную править)", err, modeEnv)
+	}
+	if count != 0 {
+		t.Errorf("Import вернул %d строк, want 0 (до записи дело не дошло)", count)
+	}
+}
+
+func TestNewsImportNameMatchesSchedule(t *testing.T) {
+	// Имя — контракт с dagu: CLICKHOUSE_IMPORT_STAT=news_watch, и промах в нём
+	// даёт не ошибку, а предупреждение «no importer named» и зелёный прогон.
+	var s newsImport
+	if want := "news_watch"; s.Name() != want {
+		t.Errorf("newsImport.Name() = %q, want %q", s.Name(), want)
+	}
+}
 
 func TestParseMode(t *testing.T) {
 	for _, tc := range []struct {

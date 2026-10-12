@@ -1,12 +1,18 @@
 package news
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+	log "github.com/sirupsen/logrus"
 )
 
 // feed — одна лента конфига: Key — имя фикстуры в testdata (офлайн-прогоны),
@@ -237,4 +243,182 @@ func coverageLines(feed, stored map[string]sourceSpan) []string {
 		lines = append(lines, line)
 	}
 	return lines
+}
+
+// newsImport — импортёр контура новостей. Имя news_watch — контракт с расписанием:
+// его ставит CLICKHOUSE_IMPORT_STAT в dagu/news.yaml, по нему же main.go выбирает
+// импортёр из chimport.Stats (промах в имени — не ошибка, а предупреждение
+// «no importer named» и зелёный прогон, поэтому имя закреплено тестом).
+type newsImport struct{}
+
+func (s *newsImport) Name() string {
+	return "news_watch"
+}
+
+const (
+	newsTable  = "news_events"
+	newsInsert = "INSERT INTO " + newsTable
+	// storedSpansQuery читает сохранённые окна источников. FINAL обязателен:
+	// news_events — ReplacingMergeTree, и без него повторно записанные позиции
+	// (ключ date/source/title) считались бы дважды, а курсор since и счётчик
+	// покрытия check завышались бы на каждом прогоне.
+	storedSpansQuery = "SELECT source, count(), min(date), max(date) FROM " + newsTable + " FINAL GROUP BY source"
+)
+
+// Import выполняет прогон контура новостей: DDL → витрина → ленты → батч.
+// Порядок шагов — часть контракта, а не стиль.
+//
+// Режим разбирается первым действием, до БД и до сети: опечатка в NEWS_WATCH_MODE
+// обязана падать сразу. Прими «ALL» за дефолт all — и прогон успел бы перечитать
+// окно целиком, прежде чем выяснилось, что режим не тот; проверка до всего делает
+// ошибку дешёвой и одинаковой в любом окружении.
+//
+// Дальше — DDL и витрина до чтения лент: импортёр обязан отработать на чистой базе,
+// а витрина публикуется в начале прогона (как у eia), чтобы правка определения
+// уезжала вместе с импортом. Сбойная лента не отменяет остальные: её ошибка
+// копится в feedErrs и возвращается в конце — успешные ленты уже записаны, DAG
+// краснеет, а ретрай идемпотентен (ReplacingMergeTree по date/source/title).
+func (s *newsImport) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+	mode, err := parseMode(os.Getenv(modeEnv))
+	if err != nil {
+		return 0, err
+	}
+	if err = conn.Exec(ctx, newsEventsDdl); err != nil {
+		return 0, err
+	}
+	// check — режим чтения: он ходит только в сырую news_events и не публикует
+	// витрину, поэтому шаг пропускается, а не выполняется вхолостую.
+	if mode != modeCheck {
+		for _, stmt := range newsViewStatements {
+			if err = conn.Exec(ctx, stmt); err != nil {
+				return 0, err
+			}
+		}
+	}
+
+	results := fetchFeeds(feeds())
+	var feedErrs []error
+	for _, r := range results {
+		if r.Err != nil {
+			log.Errorf("news_watch: %s: %v", r.Feed.Key, r.Err)
+			feedErrs = append(feedErrs, fmt.Errorf("%s: %w", r.Feed.Key, r.Err))
+			continue
+		}
+		// skipped печатается не для красоты: ненулевое значение — единственный
+		// сигнал, что лента сменила форму и позиции начали теряться молча.
+		log.Infof("news_watch: %s: позиций %d, пропущено %d", r.Feed.Key, len(r.Items), r.Skipped)
+	}
+	spans := feedSpans(results)
+
+	if mode == modeCheck {
+		stored, err := readStoredSpans(ctx, conn)
+		if err != nil {
+			return 0, err
+		}
+		for _, line := range coverageLines(spans, stored) {
+			log.Infof("news_watch check: %s", line)
+		}
+		// Дыра — ошибка: режим ручной, и «зелёный» check с дырой в покрытии никто
+		// не перечитает. Отказ ленты тоже виден: оба списка съезжаются в feedErrs.
+		if gaps := detectGaps(spans, stored); len(gaps) > 0 {
+			feedErrs = append(feedErrs, fmt.Errorf("дыры покрытия: %s", strings.Join(gaps, "; ")))
+		}
+		return 0, errors.Join(feedErrs...)
+	}
+
+	var items []newsItem
+	for _, r := range results {
+		if r.Err == nil {
+			items = append(items, r.Items...)
+		}
+	}
+	if mode == modeSince {
+		// Курсор источника — max(date) сохранённых строк. Пустая таблица даёт пустую
+		// map без ошибки, и это верное поведение для первого прогона: курсоров нет,
+		// проходит всё окно.
+		stored, err := readStoredSpans(ctx, conn)
+		if err != nil {
+			return 0, err
+		}
+		cursors := make(map[string]time.Time, len(stored))
+		for src, span := range stored {
+			cursors[src] = span.Max
+		}
+		items = selectSince(items, cursors)
+	}
+	if len(items) == 0 {
+		// Пустой список в since — норма (всё окно уже собрано, ручной повторный
+		// запуск). В all то же самое означает «упали все ленты», и там молчать
+		// правильно: каждая такая лента уже сказана в логе и попала в feedErrs.
+		if mode == modeSince {
+			log.Infof("news_watch: новых позиций нет — нечего обновлять (0 строк)")
+		}
+		return 0, errors.Join(feedErrs...)
+	}
+
+	if count, err = insertItems(ctx, conn, items); err != nil {
+		return count, err
+	}
+	// Успешные ленты записаны, сбойная видна в логе и в итоговой ошибке: dagu
+	// перезапустит прогон, а повторная запись тех же позиций безвредна.
+	return count, errors.Join(feedErrs...)
+}
+
+// readStoredSpans читает сохранённые окна источников: сколько строк по каждому
+// source и в каком они диапазоне дат. Это вход режимов since (курсоры) и check
+// (сверка покрытия). Пустая таблица — не ошибка, а первый прогон: вызывающий
+// различает «источник ещё не писался» по отсутствию ключа, а не по нулевому окну.
+// FailedFeeds здесь не заполняется: сохранённые строки собраны прошлыми прогонами
+// целиком, и непрочитанных лент у них нет.
+func readStoredSpans(ctx context.Context, conn driver.Conn) (map[string]sourceSpan, error) {
+	rows, err := conn.Query(ctx, storedSpansQuery)
+	if err != nil {
+		return nil, fmt.Errorf("news_watch: читать покрытие %s: %w", newsTable, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	spans := make(map[string]sourceSpan)
+	for rows.Next() {
+		var (
+			src  string
+			span sourceSpan
+		)
+		// Порядок Scan — порядок колонок storedSpansQuery: source, count(), min(date), max(date).
+		if err = rows.Scan(&src, &span.Count, &span.Min, &span.Max); err != nil {
+			return nil, fmt.Errorf("news_watch: читать строку покрытия %s: %w", newsTable, err)
+		}
+		spans[src] = span
+	}
+	// Ошибка обхода (обрыв соединения на середине) обязана быть видна: молча
+	// вернувшаяся половина окон дала бы ложный отчёт check и неполные курсоры.
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("news_watch: читать покрытие %s: %w", newsTable, err)
+	}
+	return spans, nil
+}
+
+// insertItems пишет позиции одним батчем — построчный Exec в цикле запрещён
+// (правило 2 AGENTS.md). Sentiment передаётся явным (*float32)(nil): колонку
+// заполняет LLM-сессия (follow-up), и типизированный nil фиксирует, что поле
+// оставлено пустым осознанно. Ошибка Append прерывает батч через Abort: частично
+// собранный батч Send не отправляет, поэтому половина прогона в таблицу не уедет.
+func insertItems(ctx context.Context, conn driver.Conn, items []newsItem) (int64, error) {
+	batch, err := conn.PrepareBatch(ctx, newsInsert)
+	if err != nil {
+		return 0, err
+	}
+	var count int64
+	for _, it := range items {
+		if err = batch.Append(it.Date, it.Source, it.Title, it.URL, (*float32)(nil)); err != nil {
+			_ = batch.Abort()
+			return count, err
+		}
+		count++
+	}
+	err = batch.Send()
+	return count, err
+}
+
+func init() {
+	chimport.Stats = append(chimport.Stats, &newsImport{})
 }
