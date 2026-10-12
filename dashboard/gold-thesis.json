@@ -46,6 +46,14 @@
             "format": 0,
             "queryType": "timeseries",
             "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT\n    date AS time,\n    value AS \"Касания пола $4 000\"\nFROM v_gold_prices\nWHERE source = 'gold'\n  AND series = 'comex_front'\n  AND $__timeFilter(date)\n  AND value \u003c 4000\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
           }
         ],
         "title": "Цена золота и пол $4 000",
@@ -56,7 +64,7 @@
         },
         "gridPos": {
           "h": 9,
-          "w": 12,
+          "w": 8,
           "x": 0,
           "y": 1
         },
@@ -89,6 +97,611 @@
               ]
             },
             "custom": {}
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "B"
+              },
+              "properties": [
+                {
+                  "id": "custom.lineWidth",
+                  "value": 0
+                },
+                {
+                  "id": "custom.showPoints",
+                  "value": "always"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 2,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT\n    date AS time,\n    value AS \"Золото, USD/oz\"\nFROM v_gold_prices\nWHERE source = 'gold'\n  AND series = 'comex_front'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT\n    as_of AS time,\n    value AS \"DXY\"\nFROM v_gold_dashboard\nWHERE indicator = 'dxy'\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Золото vs DXY",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 8,
+          "x": 8,
+          "y": 1
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": false,
+            "calcs": []
+          },
+          "tooltip": {
+            "mode": "",
+            "sort": ""
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "custom": {}
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "B"
+              },
+              "properties": [
+                {
+                  "id": "custom.axisPlacement",
+                  "value": "right"
+                },
+                {
+                  "id": "custom.lineWidth",
+                  "value": 0
+                },
+                {
+                  "id": "custom.showPoints",
+                  "value": "always"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 3,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT\n    date AS time,\n    value AS \"Золото, USD/oz\"\nFROM v_gold_prices\nWHERE source = 'gold'\n  AND series = 'comex_front'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT\n    date AS time,\n    value AS \"DFII10, %\"\nFROM v_fred_macro\nWHERE series = 'DFII10'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Золото vs DFII10",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 8,
+          "x": 16,
+          "y": 1
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": false,
+            "calcs": []
+          },
+          "tooltip": {
+            "mode": "",
+            "sort": ""
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "custom": {}
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "B"
+              },
+              "properties": [
+                {
+                  "id": "custom.axisPlacement",
+                  "value": "right"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "type": "row",
+        "collapsed": false,
+        "title": "Дизельный канал",
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 10
+        },
+        "id": 12,
+        "panels": []
+      },
+      {
+        "type": "timeseries",
+        "id": 4,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT\n    date AS time,\n    value AS \"Запасы дистиллятов, тыс. барр.\"\nFROM v_eia_petroleum\nWHERE series = 'distillate_stocks'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT\n    as_of AS time,\n    value AS \"Crack ULSD, USD/барр.\"\nFROM v_gold_dashboard\nWHERE indicator = 'crack_ulsd_proxy'\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Crack ULSD и запасы дистиллятов",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 11
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": false,
+            "calcs": []
+          },
+          "tooltip": {
+            "mode": "",
+            "sort": ""
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "custom": {}
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "B"
+              },
+              "properties": [
+                {
+                  "id": "custom.axisPlacement",
+                  "value": "right"
+                },
+                {
+                  "id": "custom.lineWidth",
+                  "value": 0
+                },
+                {
+                  "id": "custom.showPoints",
+                  "value": "always"
+                },
+                {
+                  "id": "thresholds",
+                  "value": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "value": null,
+                        "color": "green"
+                      },
+                      {
+                        "value": 30,
+                        "color": "yellow"
+                      },
+                      {
+                        "value": 50,
+                        "color": "red"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "id": "custom.thresholdsStyle",
+                  "value": {
+                    "mode": "line"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "type": "row",
+        "collapsed": false,
+        "title": "Инфляция",
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 20
+        },
+        "id": 13,
+        "panels": []
+      },
+      {
+        "type": "timeseries",
+        "id": 5,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT\n    time,\n    yoy AS \"CPI SA, YoY\"\nFROM (\n    SELECT\n        date AS time,\n        value / lagInFrame(value, 12) OVER (ORDER BY date) - 1 AS yoy\n    FROM v_bls_macro\n    WHERE series = 'CUSR0000SA0'\n)\nWHERE $__timeFilter(time)\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT\n    time,\n    yoy AS \"PPI FD, YoY\"\nFROM (\n    SELECT\n        date AS time,\n        value / lagInFrame(value, 12) OVER (ORDER BY date) - 1 AS yoy\n    FROM v_bls_macro\n    WHERE series = 'WPSFD4'\n)\nWHERE $__timeFilter(time)\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "CPI/PPI отпечатки, YoY",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 21
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": false,
+            "calcs": []
+          },
+          "tooltip": {
+            "mode": "",
+            "sort": ""
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "custom": {}
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "row",
+        "collapsed": false,
+        "title": "Спрос: ETF и ЦБ",
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 30
+        },
+        "id": 14,
+        "panels": []
+      },
+      {
+        "type": "barchart",
+        "id": 6,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT\n    toStartOfMonth(date) AS time,\n    flow_usd_mln AS \"Поток ETF, млн $\"\nFROM v_gold_etf_flows\nWHERE region = 'world'\n  AND $__timeFilter(date)\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "ETF-потоки по месяцам, мир (bar)",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 31
+        },
+        "repeatDirection": "h",
+        "options": {
+          "orientation": "auto",
+          "barRadius": 0,
+          "xTickLabelRotation": 0,
+          "xTickLabelMaxLength": 0,
+          "xTickLabelSpacing": 0,
+          "stacking": "none",
+          "showValue": "auto",
+          "barWidth": 0.97,
+          "groupWidth": 0.7,
+          "legend": {
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": false,
+            "calcs": []
+          },
+          "tooltip": {
+            "mode": "",
+            "sort": ""
+          },
+          "fullHighlight": false
+        },
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "lineWidth": 1,
+              "fillOpacity": 80,
+              "gradientMode": "none"
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "barchart",
+        "id": 7,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT\n    country AS \"Страна\",\n    ytd_change_tonnes AS \"YTD, т\"\nFROM v_cb_gold_dynamics\nORDER BY ytd_change_tonnes\n",
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "ЦБ: покупки YTD, т (bar)",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 12,
+          "y": 31
+        },
+        "repeatDirection": "h",
+        "options": {
+          "xField": "Страна",
+          "orientation": "auto",
+          "barRadius": 0,
+          "xTickLabelRotation": 0,
+          "xTickLabelMaxLength": 0,
+          "xTickLabelSpacing": 0,
+          "stacking": "none",
+          "showValue": "auto",
+          "barWidth": 0.97,
+          "groupWidth": 0.7,
+          "legend": {
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": false,
+            "calcs": []
+          },
+          "tooltip": {
+            "mode": "",
+            "sort": ""
+          },
+          "fullHighlight": false
+        },
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "value": null,
+                  "color": "red"
+                },
+                {
+                  "value": 0,
+                  "color": "green"
+                }
+              ]
+            },
+            "color": {
+              "mode": "thresholds"
+            },
+            "custom": {
+              "lineWidth": 1,
+              "fillOpacity": 80,
+              "gradientMode": "none"
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "row",
+        "collapsed": false,
+        "title": "Прогноз и точность",
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 40
+        },
+        "id": 15,
+        "panels": []
+      },
+      {
+        "type": "barchart",
+        "id": 8,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT\n    concat(author, ' / ', scenario) AS \"Прогноз\",\n    midpoint AS \"Середина, USD/oz\",\n    low,\n    high\nFROM v_gold_forecasts\nWHERE horizon = 'Q4-2026'\nORDER BY midpoint\n",
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Консенсус Q4-2026 и own-сетка (bar)",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 41
+        },
+        "repeatDirection": "h",
+        "options": {
+          "xField": "Прогноз",
+          "orientation": "auto",
+          "barRadius": 0,
+          "xTickLabelRotation": 0,
+          "xTickLabelMaxLength": 0,
+          "xTickLabelSpacing": 0,
+          "stacking": "none",
+          "showValue": "auto",
+          "barWidth": 0.97,
+          "groupWidth": 0.7,
+          "legend": {
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": false,
+            "calcs": []
+          },
+          "tooltip": {
+            "mode": "",
+            "sort": ""
+          },
+          "fullHighlight": false
+        },
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "lineWidth": 1,
+              "fillOpacity": 80,
+              "gradientMode": "none"
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "table",
+        "id": 9,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT\n    metric, forecast_date, target_date, predicted, actual, error_pct\nFROM v_forecast_accuracy\nWHERE is_resolved = 1\nORDER BY target_date\n",
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Точность прошлых прогнозов (table)",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 12,
+          "y": 41
+        },
+        "repeatDirection": "h",
+        "options": {
+          "frameIndex": 0,
+          "showHeader": true,
+          "showTypeIcons": false,
+          "footer": {
+            "show": false,
+            "reducer": null,
+            "countRows": false
+          },
+          "cellHeight": "sm"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "inspect": false
+            }
           },
           "overrides": []
         }

@@ -69,8 +69,8 @@ func TestGeneratedIDsAreUniqueAndSet(t *testing.T) {
 			t.Fatal("элемент дашборда без панели и ряда")
 		}
 	}
-	if rows != 1 {
-		t.Fatalf("рядов %d, ожидался 1 (Task 4 расширит состав)", rows)
+	if rows != 5 {
+		t.Fatalf("рядов %d, ожидалось 5: %v", rows, goldThesisRowTitles)
 	}
 }
 

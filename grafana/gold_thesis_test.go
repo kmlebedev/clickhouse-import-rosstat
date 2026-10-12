@@ -3,10 +3,154 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 
+	"github.com/grafana/grafana-foundation-sdk/go/dashboard"
 	"github.com/grafana/grafana-foundation-sdk/go/resource"
 )
+
+// goldThesisPanelTitles — состав панелей Task 4 в порядке следования (он же порядок id 1..9).
+var goldThesisPanelTitles = []string{
+	"Цена золота и пол $4 000",
+	"Золото vs DXY",
+	"Золото vs DFII10",
+	"Crack ULSD и запасы дистиллятов",
+	"CPI/PPI отпечатки, YoY",
+	"ETF-потоки по месяцам, мир (bar)",
+	"ЦБ: покупки YTD, т (bar)",
+	"Консенсус Q4-2026 и own-сетка (bar)",
+	"Точность прошлых прогнозов (table)",
+}
+
+// goldThesisRowTitles — ряды дашборда в порядке следования (id 11..15).
+var goldThesisRowTitles = []string{
+	"Цена и пол",
+	"Дизельный канал",
+	"Инфляция",
+	"Спрос: ETF и ЦБ",
+	"Прогноз и точность",
+}
+
+func builtGoldThesis(t *testing.T) dashboard.Dashboard {
+	t.Helper()
+	d, err := NewGoldThesis().Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d
+}
+
+// TestGoldThesisHasNinePanels считает панели через panelsOf: ряды — такие же элементы
+// d.Panels, и len(d.Panels) вернул бы 9 панелей + 5 рядов.
+func TestGoldThesisHasNinePanels(t *testing.T) {
+	panels := panelsOf(builtGoldThesis(t))
+	if len(panels) != 9 {
+		t.Fatalf("панелей %d, ожидалось 9", len(panels))
+	}
+	for i, p := range panels {
+		if got := panelTitle(p); got != goldThesisPanelTitles[i] {
+			t.Fatalf("панель %d: заголовок %q, ожидался %q", i+1, got, goldThesisPanelTitles[i])
+		}
+	}
+}
+
+// TestPanelIDsAreUniqueAndSet фиксирует ручную нумерацию панелей: id 1..9, каждый ровно раз
+// (SDK id не присваивает, а нулевой Grafana перезапишет своими).
+func TestPanelIDsAreUniqueAndSet(t *testing.T) {
+	seen := make(map[uint32]string, 9)
+	for _, p := range panelsOf(builtGoldThesis(t)) {
+		if p.Id == nil {
+			t.Fatalf("панель %q без id", panelTitle(p))
+		}
+		id := *p.Id
+		if id < 1 || id > 9 {
+			t.Fatalf("панель %q: id %d вне диапазона 1..9", panelTitle(p), id)
+		}
+		if owner, duplicate := seen[id]; duplicate {
+			t.Fatalf("id %d повторяется: %s и %s", id, owner, panelTitle(p))
+		}
+		seen[id] = panelTitle(p)
+	}
+	for id := uint32(1); id <= 9; id++ {
+		if _, ok := seen[id]; !ok {
+			t.Fatalf("панели с id %d нет", id)
+		}
+	}
+}
+
+// TestAllTargetsUseViews: датасорс стенда не имеет грантов на сырые таблицы, поэтому
+// каждый запрос каждой панели обязан читать витрину v_*.
+func TestAllTargetsUseViews(t *testing.T) {
+	for _, p := range panelsOf(builtGoldThesis(t)) {
+		if len(p.Targets) == 0 {
+			t.Fatalf("у панели %q нет запросов", panelTitle(p))
+		}
+		for _, target := range p.Targets {
+			query, ok := chQuery(target)
+			if !ok {
+				t.Fatalf("панель %q: запрос не является запросом ClickHouse", panelTitle(p))
+			}
+			if !strings.Contains(query.RawSql, "FROM v_") {
+				t.Fatalf("панель %q: запрос %q читает не витрину: %s", panelTitle(p), query.RefId, query.RawSql)
+			}
+		}
+	}
+}
+
+// TestGoldThesisRowTitles фиксирует ряды и их id: ряды нумеруются вне диапазона панелей.
+func TestGoldThesisRowTitles(t *testing.T) {
+	var titles []string
+	for _, entry := range builtGoldThesis(t).Panels {
+		if entry.RowPanel == nil {
+			continue
+		}
+		if entry.RowPanel.Id < 10 {
+			t.Fatalf("ряд %q: id %d попадает в диапазон панелей 1..9", optionalString(entry.RowPanel.Title), entry.RowPanel.Id)
+		}
+		titles = append(titles, optionalString(entry.RowPanel.Title))
+	}
+	if len(titles) != len(goldThesisRowTitles) {
+		t.Fatalf("рядов %d, ожидалось %d: %v", len(titles), len(goldThesisRowTitles), titles)
+	}
+	for i, got := range titles {
+		if got != goldThesisRowTitles[i] {
+			t.Fatalf("ряд %d: %q, ожидался %q", i+1, got, goldThesisRowTitles[i])
+		}
+	}
+}
+
+// TestYoYPanelsFilterOutsideWindow: YoY панели 5 считается по полному ряду, а фильтр времени
+// применяется снаружи — иначе первые 12 точек были бы посчитаны по обрезанному окну.
+func TestYoYPanelsFilterOutsideWindow(t *testing.T) {
+	var panel *dashboard.Panel
+	for _, p := range panelsOf(builtGoldThesis(t)) {
+		if p.Id != nil && *p.Id == 5 {
+			panel = p
+		}
+	}
+	if panel == nil {
+		t.Fatal("панель с id 5 не найдена")
+	}
+	if len(panel.Targets) != 2 {
+		t.Fatalf("у панели %q %d запросов, ожидалось 2 (CPI и PPI)", panelTitle(panel), len(panel.Targets))
+	}
+	for _, target := range panel.Targets {
+		query, ok := chQuery(target)
+		if !ok {
+			t.Fatalf("панель %q: запрос не является запросом ClickHouse", panelTitle(panel))
+		}
+		if got := strings.Count(query.RawSql, "$__timeFilter"); got != 1 {
+			t.Fatalf("панель %q: запрос %q: $__timeFilter встречается %d раз, ожидался 1 (только снаружи)", panelTitle(panel), query.RefId, got)
+		}
+		if !strings.Contains(query.RawSql, "$__timeFilter(time)") {
+			t.Fatalf("панель %q: запрос %q фильтрует время не по внешнему time: %s", panelTitle(panel), query.RefId, query.RawSql)
+		}
+		if !strings.Contains(query.RawSql, "lagInFrame(value, 12) OVER (ORDER BY date)") {
+			t.Fatalf("панель %q: запрос %q не считает YoY по 12 месяцам", panelTitle(panel), query.RefId)
+		}
+	}
+}
 
 func TestManifestWrapper(t *testing.T) {
 	d, err := NewGoldThesis().Build()
