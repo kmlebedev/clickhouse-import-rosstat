@@ -1,0 +1,65 @@
+name: Dashboards
+
+# Дашборд «Золотая теза» живёт как код: grafana/ (Go + Foundation SDK) генерирует
+# dashboard/gold-thesis.json, артефакт коммитится. CI проверяет три вещи: модуль собирается и
+# тесты зелёные, артефакт совпадает со свежей сборкой, и gcx пинаемой версии ставится и линтит артефакт.
+# Секретов и деплоя здесь нет: на стенд дашборд уезжает только вручную (make grafana-deploy-test).
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  # Пин релиза gcx. Имя ассета — gcx_<версия-без-v>_linux_amd64.tar.gz: в релизе v1.5.0 это
+  # gcx_1.5.0_linux_amd64.tar.gz (внутри архива бинарник gcx).
+  GCX_VERSION: v1.5.0
+
+jobs:
+  dashboards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.x'
+          # grafana/ — отдельный Go-модуль: ключ кэша модулей берётся из его go.sum.
+          cache: true
+          cache-dependency-path: grafana/go.sum
+      - name: tests
+        run: cd grafana && go vet ./... && go test ./...
+      - name: build
+        run: make grafana-build
+      # Артефакт коммитится, поэтому «код и артефакт разъехались» — ошибка: тот же прогон
+      # заодно ловит недетерминированную генерацию.
+      - name: artifact is in sync
+        run: git diff --exit-code -- dashboard/gold-thesis.json
+      - name: install gcx
+        run: |
+          curl -fsSL -o /tmp/gcx.tar.gz \
+            "https://github.com/grafana/gcx/releases/download/${GCX_VERSION}/gcx_${GCX_VERSION#v}_linux_amd64.tar.gz"
+          tar -xzf /tmp/gcx.tar.gz -C /tmp gcx
+          chmod +x /tmp/gcx
+          sudo mv /tmp/gcx /usr/local/bin/gcx
+          gcx --version
+      # План предлагал здесь `gcx resources validate`: он валидирует ресурс НА ЖИВОМ инстансе
+      # (server-side dry-run) и требует сервер, org-id и креды, которых в CI нет, — шаг падал бы всегда
+      # («context references no stack with grafana config» без конфига). Офлайновая форма того же CLI —
+      # Rego-линтер по файлу артефакта; bug-правила включены, два idiomatic-предупреждения
+      # (editable-дашборд, отсутствие описаний панелей) — осознанное состояние генератора, они дают
+      # exit 4 и уронили бы CI, поэтому отключены по именам. Линтер не парсит структуру ресурса
+      # (сломанный файл он молча пропускает) — целостность артефакта закрывает шаг artifact is in sync.
+      # На инстансе с кредами та же проверка в серверной форме:
+      #   GRAFANA_SERVER=... GRAFANA_ORG_ID=... GRAFANA_TOKEN=... \
+      #     gcx resources validate dashboards --path dashboard/gold-thesis.json
+      - name: lint resources
+        run: |
+          gcx dev lint run \
+            --disable uneditable-dashboard --disable panel-title-description \
+            dashboard/gold-thesis.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gold-thesis.json
+          path: dashboard/gold-thesis.json

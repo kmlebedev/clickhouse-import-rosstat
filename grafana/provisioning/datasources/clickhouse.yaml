@@ -1,0 +1,22 @@
+# Датасорс локального стенда (make grafana-up): тот же плагин и UID, что в дашборде.
+# uid продублирован с grafana/clickhouse.go (DatasourceUID) — менять только вместе,
+# иначе панели дашборда останутся без источника данных.
+# Пароль пустой: локальный ClickHouse поднят пользователем default без пароля.
+apiVersion: 1
+
+datasources:
+  - name: ClickHouse (rosstat)
+    type: grafana-clickhouse-datasource
+    uid: ch-rosstat
+    access: proxy
+    isDefault: true
+    editable: false
+    jsonData:
+      host: 127.0.0.1
+      port: 8123
+      protocol: http
+      secure: false
+      username: default
+      defaultDatabase: default
+    secureJsonData:
+      password: ""
