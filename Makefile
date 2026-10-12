@@ -87,19 +87,25 @@ ch-up:
 		cd "$(CH_DIR)"; \
 		nohup "$(CH_BIN)" server -- --path="$(CH_DATA)/" --http_port=$(CH_HTTP_PORT) --tcp_port=$(CH_TCP_PORT) >"$(CH_LOG)" 2>&1 & \
 		echo $$! > "$(CH_PID)"; \
-		for i in $$(seq 1 60); do curl -sf -m 1 http://localhost:$(CH_HTTP_PORT)/ping >/dev/null 2>&1 && break; sleep 1; done; \
-		if curl -sf -m 2 http://localhost:$(CH_HTTP_PORT)/ping >/dev/null 2>&1; then \
+		for i in $$(seq 1 60); do kill -0 $$(cat "$(CH_PID)") 2>/dev/null || break; curl -sf -m 1 http://localhost:$(CH_HTTP_PORT)/ping >/dev/null 2>&1 && break; sleep 1; done; \
+		if kill -0 $$(cat "$(CH_PID)") 2>/dev/null && curl -sf -m 2 http://localhost:$(CH_HTTP_PORT)/ping >/dev/null 2>&1; then \
 			echo "ClickHouse запущен, PID $$(cat "$(CH_PID)"), лог $(CH_LOG)"; \
 		else \
 			echo "ClickHouse не поднялся, смотрите $(CH_LOG)"; exit 1; \
 		fi; \
 	fi
 
+# Останавливает сервер и ждёт завершения до 60 с. Если процесс пережил сигнал, pid-файл
+# НЕ удаляется: иначе следующий ch-down не найдёт процесс, а ch-up скажет «уже отвечает».
 ch-down:
 	@if [ -f "$(CH_PID)" ] && kill -0 $$(cat "$(CH_PID)") 2>/dev/null; then \
 		kill $$(cat "$(CH_PID)"); \
 		for i in $$(seq 1 60); do kill -0 $$(cat "$(CH_PID)") 2>/dev/null || break; sleep 1; done; \
-		rm -f "$(CH_PID)"; echo "ClickHouse остановлен"; \
+		if kill -0 $$(cat "$(CH_PID)") 2>/dev/null; then \
+			echo "ClickHouse не завершился за 60 с, PID-файл $(CH_PID) сохранён: повторите make ch-down"; \
+		else \
+			rm -f "$(CH_PID)"; echo "ClickHouse остановлен"; \
+		fi; \
 	else \
 		echo "PID-файл $(CH_PID) не найден или процесс не запущен (сервер, поднятый вне make, не останавливается)"; \
 	fi
@@ -347,19 +353,25 @@ grafana-up:
 			GF_ANALYTICS_REPORTING_ENABLED=false GF_ANALYTICS_CHECK_FOR_UPDATES=false \
 			"$(GF_BIN)" server --homepath "$(GF_HOMEPATH)" >"$(GF_LOG)" 2>&1 & \
 		echo $$! > "$(GF_PID)"; \
-		for i in $$(seq 1 60); do curl -sf -m 1 http://localhost:$(GF_PORT)/api/health >/dev/null 2>&1 && break; sleep 1; done; \
-		if curl -sf -m 2 http://localhost:$(GF_PORT)/api/health >/dev/null 2>&1; then \
+		for i in $$(seq 1 60); do kill -0 $$(cat "$(GF_PID)") 2>/dev/null || break; curl -sf -m 1 http://localhost:$(GF_PORT)/api/health >/dev/null 2>&1 && break; sleep 1; done; \
+		if kill -0 $$(cat "$(GF_PID)") 2>/dev/null && curl -sf -m 2 http://localhost:$(GF_PORT)/api/health >/dev/null 2>&1; then \
 			echo "Grafana запущена, PID $$(cat "$(GF_PID)"), лог $(GF_LOG)"; \
 		else \
 			echo "Grafana не поднялась, хвост $(GF_LOG):"; tail -20 "$(GF_LOG)"; exit 1; \
 		fi; \
 	fi
 
+# Останавливает сервер и ждёт завершения до 60 с. Если процесс пережил сигнал, pid-файл
+# НЕ удаляется: иначе следующий grafana-down не найдёт процесс, а grafana-up скажет «уже отвечает».
 grafana-down:
 	@if [ -f "$(GF_PID)" ] && kill -0 $$(cat "$(GF_PID)") 2>/dev/null; then \
 		kill $$(cat "$(GF_PID)"); \
 		for i in $$(seq 1 60); do kill -0 $$(cat "$(GF_PID)") 2>/dev/null || break; sleep 1; done; \
-		rm -f "$(GF_PID)"; echo "Grafana остановлена"; \
+		if kill -0 $$(cat "$(GF_PID)") 2>/dev/null; then \
+			echo "Grafana не завершилась за 60 с, PID-файл $(GF_PID) сохранён: повторите make grafana-down"; \
+		else \
+			rm -f "$(GF_PID)"; echo "Grafana остановлена"; \
+		fi; \
 	else \
 		echo "PID-файл $(GF_PID) не найден или процесс не запущен (сервер, поднятый вне make, не останавливается)"; \
 	fi
