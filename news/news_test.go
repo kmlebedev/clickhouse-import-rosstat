@@ -719,7 +719,8 @@ type newsFakeRows struct {
 	kind  string // fakeRowsSpans или fakeRowsKeys
 	spans []newsStoredSpan
 	keys  []newsKey
-	i     int // индекс следующей строки: Next двигает его, Scan читает i-1
+	err   error // отдать Err(): сценарий «обход строк упал на середине» (приходит из newsFakeConn)
+	i     int   // индекс следующей строки: Next двигает его, Scan читает i-1
 }
 
 // n — число строк выбранного вида: Next и Scan не должны перепутать наборы.
@@ -796,7 +797,7 @@ func (r *newsFakeRows) scanSpan(dest []any) error {
 	return nil
 }
 
-func (r *newsFakeRows) Err() error { return nil }
+func (r *newsFakeRows) Err() error { return r.err }
 
 func (r *newsFakeRows) Close() error { return nil }
 
@@ -872,13 +873,17 @@ func (b *newsFakeBatch) inserted(t *testing.T) []newsInsertedRow {
 // (storedSpansQuery — readStoredSpans в check; storedKeysQuery — readStoredKeys в since)
 // и PrepareBatch (запись позиций). spans — очередь ответов на запрос покрытия; keys —
 // ключи существующих позиций по источникам. Пустые наборы означают «в news_events нет строк».
+// queryErr и rowsErr включают ошибочные пути чтения: первый — сам Query, второй — обход строк
+// (rows.Err уже после Next); оба задаются полями постфактум, чтобы не плодить конструкторы.
 type newsFakeConn struct {
 	driver.Conn
-	mu      sync.Mutex
-	calls   []string
-	spans   []newsStoredSpan
-	keys    map[string][]newsKey
-	batches []*newsFakeBatch
+	mu       sync.Mutex
+	calls    []string
+	spans    []newsStoredSpan
+	keys     map[string][]newsKey
+	queryErr error // Query вернёт её вместо строк
+	rowsErr  error // её отдаст rows.Err()
+	batches  []*newsFakeBatch
 }
 
 // newNewsFakeConn — соединение режима check: сохранённые окна есть, ключей нет.
@@ -920,13 +925,16 @@ func (c *newsFakeConn) Query(_ context.Context, query string, args ...any) (driv
 	c.record(label)
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.queryErr != nil {
+		return nil, c.queryErr
+	}
 	switch query {
 	case storedSpansQuery:
 		rows := c.spans
 		c.spans = nil // очередь отдаётся один раз: повторный Query вернул бы уже пустое окно
-		return &newsFakeRows{kind: fakeRowsSpans, spans: rows}, nil
+		return &newsFakeRows{kind: fakeRowsSpans, spans: rows, err: c.rowsErr}, nil
 	case storedKeysQuery:
-		return &newsFakeRows{kind: fakeRowsKeys, keys: c.keys[src]}, nil
+		return &newsFakeRows{kind: fakeRowsKeys, keys: c.keys[src], err: c.rowsErr}, nil
 	}
 	return nil, fmt.Errorf("newsFakeConn: неожиданный запрос %q", query)
 }
@@ -1254,6 +1262,94 @@ func TestImportSinceModeCbrSecondFeedNoWatermark(t *testing.T) {
 	// сохранённый максимум: при границе по максимуму опоздавшую не нашли бы вовсе.
 	if wantCall := "source=cbr since=" + pressAt.Format(time.RFC3339); !conn.anyCallHas(wantCall) {
 		t.Errorf("запрос ключей cbr не содержал %q; вызовы: %v", wantCall, conn.callList())
+	}
+}
+
+func TestImportSinceModeKeysReadErrorJoinsFeedErrors(t *testing.T) {
+	// Ошибка чтения ключей в since не должна вытеснять отказы лент: dagu печатает одну строку
+	// на прогон, и в ней обязаны быть и сбой базы, и ключ упавшей ленты. Режим пишущий, но при
+	// ошибке выборки до батча дело не доходит — строк не пишется.
+	t.Setenv(modeEnv, modeSince)
+	// cbr_news падает (500), остальные четыре ленты — закоммиченные фикстуры.
+	pointFeedsAt(t, serveFixtures(t, map[string]int{"cbr_news": http.StatusInternalServerError}))
+
+	conn := newNewsFakeConnWithKeys(nil)
+	conn.queryErr = errors.New("чтение ключей упало")
+
+	var s newsImport
+	count, err := s.Import(context.Background(), conn)
+	if err == nil {
+		t.Fatalf("Import(%s) при ошибке чтения ключей вернул %d строк без ошибки, want ошибку", modeSince, count)
+	}
+	for _, want := range []string{"чтение ключей упало", "cbr_news"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("ошибка Import = %q, want фрагмент %q (сбой БД и ключ упавшей ленты вместе)", err, want)
+		}
+	}
+	if count != 0 {
+		t.Errorf("Import вернул %d строк при ошибке чтения ключей, want 0", count)
+	}
+	if got := conn.batchList(); len(got) != 0 {
+		t.Errorf("since открыл %d батчей при ошибке чтения ключей, want 0", len(got))
+	}
+	if !conn.anyCallHas(storedKeysQuery) {
+		t.Errorf("since не обратился к ключам запросом %q; вызовы: %v", storedKeysQuery, conn.callList())
+	}
+}
+
+func TestReadStoredKeysRowsError(t *testing.T) {
+	// Ошибка обхода строк (обрыв соединения на середине) обязана вернуться из readStoredKeys:
+	// молча вернувшаяся половина ключей записала бы уже сохранённые позиции повторно.
+	conn := newNewsFakeConnWithKeys(nil)
+	conn.rowsErr = errors.New("обрыв соединения на середине")
+
+	_, err := readStoredKeys(context.Background(), conn, "interfax", time.Now())
+	if err == nil {
+		t.Fatal("readStoredKeys при rows.Err() != nil вернул nil-ошибку, want ошибку")
+	}
+	if !strings.Contains(err.Error(), "обрыв соединения на середине") {
+		t.Errorf("ошибка readStoredKeys = %q, want упоминание причины (rows.Err)", err)
+	}
+}
+
+func TestImportSinceModeAllFeedsFailed(t *testing.T) {
+	// Все пять лент упали: items пуст, и в since до чтения ключей дело не доходит — ошибка
+	// собирается из отказов лент (ключ каждой), строк не пишется.
+	t.Setenv(modeEnv, modeSince)
+	pointFeedsAt(t, serveFixtures(t, map[string]int{
+		"interfax":  http.StatusInternalServerError,
+		"rbc":       http.StatusInternalServerError,
+		"cbr_news":  http.StatusInternalServerError,
+		"cbr_press": http.StatusInternalServerError,
+		"tass":      http.StatusInternalServerError,
+	}))
+
+	conn := newNewsFakeConn()
+	var s newsImport
+	count, err := s.Import(context.Background(), conn)
+	if err == nil {
+		t.Fatalf("Import(%s) при сбое всех лент вернул %d строк без ошибки, want ошибку", modeSince, count)
+	}
+	if count != 0 {
+		t.Errorf("Import вернул %d строк при сбое всех лент, want 0", count)
+	}
+	for _, key := range []string{"interfax", "rbc", "cbr_news", "cbr_press", "tass"} {
+		if !strings.Contains(err.Error(), key) {
+			t.Errorf("ошибка Import = %q, want ключ упавшей ленты %q", err, key)
+		}
+	}
+	if got := conn.batchList(); len(got) != 0 {
+		t.Errorf("since открыл %d батчей при сбое всех лент, want 0", len(got))
+	}
+	keyCalls := 0
+	for _, call := range conn.callList() {
+		if strings.Contains(call, storedKeysQuery) {
+			keyCalls++
+		}
+	}
+	if keyCalls != 0 {
+		t.Errorf("since обратился к ключам %d раз при пустом окне, want 0 (до selectNewItems дело не дошло); вызовы: %v",
+			keyCalls, conn.callList())
 	}
 }
 

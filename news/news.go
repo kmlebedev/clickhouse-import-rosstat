@@ -497,7 +497,8 @@ func readStoredSpans(ctx context.Context, conn driver.Conn) (map[string]sourceSp
 		spans[src] = span
 	}
 	// Ошибка обхода (обрыв соединения на середине) обязана быть видна: молча
-	// вернувшаяся половина окон дала бы ложный отчёт check и неполные курсоры.
+	// вернувшаяся половина окон дала бы ложный отчёт check — неполное окно источника
+	// читалось бы как покрытое целиком.
 	if err = rows.Err(); err != nil {
 		return nil, fmt.Errorf("news_watch: читать покрытие %s: %w", newsTable, err)
 	}
