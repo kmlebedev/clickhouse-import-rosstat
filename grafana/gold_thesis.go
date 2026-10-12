@@ -138,16 +138,20 @@ WHERE horizon = 'Q4-2026'
 ORDER BY midpoint
 `
 
+// errorColumnAlias — имя колонки ошибки панели 9: знак и «%» подписаны прямо в алиасе, чтобы
+// «+3,47 %» не читалось как модуль ошибки. Та же строка нужна override'у единицы измерения
+// (сопоставление идёт по имени поля), поэтому алиас живёт константой, а не дублируется.
+const errorColumnAlias = "Ошибка, % (+ = прогноз выше факта)"
+
 // forecastAccuracySQL — разрешённые прогнозы прошлого: таблица «обещали / вышло».
-// error_pct в витрине знаковая — (predicted − actual) / actual × 100 (views/forecast_accuracy.go),
-// поэтому знак подписан прямо в алиасе колонки: без подписи «+3,47 %» читается как модуль ошибки.
-const forecastAccuracySQL = `SELECT
+// error_pct в витрине знаковая — (predicted − actual) / actual × 100 (views/forecast_accuracy.go).
+var forecastAccuracySQL = fmt.Sprintf(`SELECT
     metric, forecast_date, target_date, predicted, actual,
-    error_pct AS "Ошибка, % (+ = прогноз выше факта)"
+    error_pct AS %q
 FROM v_forecast_accuracy
 WHERE is_resolved = 1
 ORDER BY target_date
-`
+`, errorColumnAlias)
 
 // datasourceRef — ссылка на датасорс стенда: у всех панелей только эти константы (проверяет Validate).
 func datasourceRef() common.DataSourceRef {
@@ -358,18 +362,20 @@ func forecastConsensusPanel() *barchart.PanelBuilder {
 }
 
 // forecastAccuracyPanel — панель 9: таблица «обещали / вышло» по разрешённым прогнозам.
-// Знак ошибки и единица подписаны явно: колонка знаковая (плюс — прогноз выше факта),
-// без подписи и percent её читают как модуль ошибки без размерности.
+// Знак ошибки и её единица подписаны явно: колонка знаковая (плюс — прогноз выше факта),
+// без подписи и percent её читают как модуль ошибки без размерности. Единица — override'ом
+// по имени колонки, а не панельным Unit: панельный default percent унаследовали бы и колонки
+// predicted/actual (USD/oz) из той же таблицы.
 func forecastAccuracyPanel() *table.PanelBuilder {
 	return table.NewPanelBuilder().
 		Id(9).
 		Title("Точность прошлых прогнозов (table)").
-		Description("Ошибка прогноза знаковая: error_pct = (predicted − actual) / actual × 100, «+» — прогноз выше факта. " +
+		Description("Ошибка прогноза знаковая: error_pct = (predicted − actual) / actual × 100, «+» — прогноз выше факта. "+
 			"Источник — витрина v_forecast_accuracy, только resolved-прогнозы (is_resolved = 1: факт уже записан forecast_resolve).").
 		Span(spanHalf).
 		Datasource(datasourceRef()).
 		WithTarget(tableQuery("A", forecastAccuracySQL)).
-		Unit(units.Percent)
+		OverrideByName(errorColumnAlias, []dashboard.DynamicConfigValue{{Id: "unit", Value: units.Percent}})
 }
 
 // Manifest оборачивает дашборд в K8s-стиль ресурс, который принимает gcx resources push.

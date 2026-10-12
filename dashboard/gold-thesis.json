@@ -703,13 +703,25 @@
         },
         "fieldConfig": {
           "defaults": {
-            "unit": "percent",
             "custom": {
               "align": "auto",
               "inspect": false
             }
           },
-          "overrides": []
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "Ошибка, % (+ = прогноз выше факта)"
+              },
+              "properties": [
+                {
+                  "id": "unit",
+                  "value": "percent"
+                }
+              ]
+            }
+          ]
         }
       }
     ],

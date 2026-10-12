@@ -3,11 +3,13 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/grafana/grafana-foundation-sdk/go/dashboard"
 	"github.com/grafana/grafana-foundation-sdk/go/resource"
+	"github.com/grafana/grafana-foundation-sdk/go/units"
 )
 
 // goldThesisPanelTitles — состав панелей Task 4 в порядке следования (он же порядок id 1..9).
@@ -151,6 +153,37 @@ func TestYoYPanelsFilterOutsideWindow(t *testing.T) {
 		if !strings.Contains(query.RawSql, "nullIf(lagInFrame(value, 12) OVER (ORDER BY date), 0)") {
 			t.Fatalf("панель %q: запрос %q не защищён от деления на ноль в первых 12 строках (нужен nullIf)", panelTitle(panel), query.RefId)
 		}
+	}
+}
+
+// TestForecastAccuracyUnitScopedToErrorColumn: unit percent нужен колонке ошибки, а панельный
+// default задел бы predicted/actual (USD/oz) из той же таблицы. Поэтому единица идёт override'ом
+// по имени колонки — и имя в override обязано совпадать с алиасом в SQL, иначе override молча
+// не сработает: matcher byName сопоставляется с именем поля, которое даёт алиас.
+func TestForecastAccuracyUnitScopedToErrorColumn(t *testing.T) {
+	panel := panelByID(t, builtGoldThesis(t), 9)
+	if unit := panel.FieldConfig.Defaults.Unit; unit != nil {
+		t.Fatalf("панельный unit=%q: percent унаследовали бы predicted/actual (USD/oz)", *unit)
+	}
+	overrides := panel.FieldConfig.Overrides
+	if len(overrides) != 1 {
+		t.Fatalf("override'ов %d, ожидался 1 (unit колонки ошибки)", len(overrides))
+	}
+	matcher := overrides[0].Matcher
+	name, ok := matcher.Options.(*string)
+	if matcher.Id != "byName" || !ok || name == nil || *name != errorColumnAlias {
+		t.Fatalf("override %+v: ожидался byName по %q", matcher, errorColumnAlias)
+	}
+	properties := overrides[0].Properties
+	if len(properties) != 1 || properties[0].Id != "unit" || properties[0].Value != units.Percent {
+		t.Fatalf("свойства override'а %+v, ожидалось unit=%q", properties, units.Percent)
+	}
+	query, ok := chQuery(panel.Targets[0])
+	if !ok {
+		t.Fatal("запрос панели 9 не является запросом ClickHouse")
+	}
+	if !strings.Contains(query.RawSql, "error_pct AS "+strconv.Quote(errorColumnAlias)) {
+		t.Fatalf("в SQL нет алиаса %q — override не сработает: %s", errorColumnAlias, query.RawSql)
 	}
 }
 
