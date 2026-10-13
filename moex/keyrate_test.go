@@ -10,6 +10,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
+	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 )
 
 // useMoexServer подменяет moexBaseUrl тестовым сервером (сеть в тестах — только httptest)
@@ -207,5 +210,176 @@ func TestGetBlockMissingBlock(t *testing.T) {
 	}
 	if want := `no block "marketdata" in response`; !strings.Contains(err.Error(), want) {
 		t.Fatalf("error text changed: %v", err)
+	}
+}
+
+func TestKeyrateSince(t *testing.T) {
+	contract := keyrateContract{secid: "KKV6", firstTrade: moexDay("2026-09-29")}
+	tests := []struct {
+		name   string
+		stored time.Time
+		want   time.Time
+	}{
+		{"день после сохранённого", moexDay("2026-10-08"), moexDay("2026-10-09")},
+		{"пустая таблица — с начала обращения", time.Time{}, moexDay("2026-09-29")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := keyrateSince(contract, tt.stored); !got.Equal(tt.want) {
+				t.Fatalf("keyrateSince(stored=%s) = %s, want %s",
+					tt.stored.Format(moexDate), got.Format(moexDate), tt.want.Format(moexDate))
+			}
+		})
+	}
+}
+
+func TestKeyrateSeriesMetaPerContract(t *testing.T) {
+	contracts := []keyrateContract{
+		{secid: "KKV6", seriesName: "KEYRATE-10.26", firstTrade: moexDay("2026-09-29"), lastTrade: moexDay("2026-10-23")},
+		{secid: "KKZ6", seriesName: "KEYRATE-12.26", firstTrade: moexDay("2026-09-29"), lastTrade: moexDay("2026-12-18")},
+	}
+	meta := keyrateSeriesMeta(contracts)
+	// Серии меняются каждый квартал: запись заводится на каждую обнаруженную серию, статического списка нет.
+	if len(meta) != len(contracts) {
+		t.Fatalf("got %d записей каталога, want %d (по одной на серию)", len(meta), len(contracts))
+	}
+	fields := map[string]func(util.SeriesMeta) string{
+		"Title":       func(m util.SeriesMeta) string { return m.Title },
+		"Unit":        func(m util.SeriesMeta) string { return m.Unit },
+		"Frequency":   func(m util.SeriesMeta) string { return m.Frequency },
+		"Origin":      func(m util.SeriesMeta) string { return m.Origin },
+		"Description": func(m util.SeriesMeta) string { return m.Description },
+	}
+	for i, m := range meta {
+		c := contracts[i]
+		if m.Source != moexSource || m.Series != c.secid {
+			t.Errorf("запись %d: source=%q series=%q, want %q/%q", i, m.Source, m.Series, moexSource, c.secid)
+		}
+		for name, value := range fields {
+			if value(m) == "" {
+				t.Errorf("запись %s: поле %s пусто", c.secid, name)
+			}
+		}
+		expiry := c.lastTrade.Format(moexDate)
+		if !strings.Contains(m.Origin, expiry) {
+			t.Errorf("запись %s: в Origin нет даты экспирации %s: %q", c.secid, expiry, m.Origin)
+		}
+		if !strings.Contains(m.Description, "Δ = (settle − ставка) × 100 б.п.") {
+			t.Errorf("запись %s: в Description нет мнемоники вменённого изменения к заседанию: %q", c.secid, m.Description)
+		}
+	}
+}
+
+func TestKeyrateName(t *testing.T) {
+	// Name() — то, что передаётся в CLICKHOUSE_IMPORT_STAT и id шага dagu/moex.yaml.
+	if got := (&keyrateFutures{}).Name(); got != keyrateTable {
+		t.Fatalf("Name() = %q, want %q", got, keyrateTable)
+	}
+}
+
+func TestKeyrateFuturesIsRegistered(t *testing.T) {
+	// Без записи в chimport.Stats импортёр не запустится ни из dagu/moex.yaml, ни через
+	// CLICKHOUSE_IMPORT_STAT=keyrate_futures.
+	for _, stat := range chimport.Stats {
+		if stat.Name() == keyrateTable {
+			return
+		}
+	}
+	t.Fatalf("импортёр %q не зарегистрирован в chimport.Stats", keyrateTable)
+}
+
+func TestKeyrateViewContract(t *testing.T) {
+	// Витрина читается агентом через MCP: у каждой колонки обязан быть комментарий (правило 11б),
+	// а Tables называет все источники — без cbr_key_rate витрина публиковаться не должна.
+	want := []string{"date", "secid", "series_name", "decision_date", "settle", "close",
+		"volume", "openposition", "expected_change_pp", "expected_change_bp"}
+	if len(keyrateView.Columns) != len(want) {
+		t.Fatalf("колонок в комментариях %d, want %d", len(keyrateView.Columns), len(want))
+	}
+	for _, col := range want {
+		if comment, ok := keyrateView.Columns[col]; !ok || comment == "" {
+			t.Errorf("колонка %s не описана", col)
+		}
+	}
+	if !slices.Contains(keyrateView.Tables, "cbr_key_rate") {
+		t.Error("cbr_key_rate отсутствует в Tables: витрина без ряда ставки станет неполной")
+	}
+	// Спот — скалярный подзапрос (решение контроллера): CROSS JOIN в витрине не нужен.
+	if !strings.Contains(keyrateView.Select, "(SELECT argMax(rate, date) FROM cbr_key_rate FINAL)") {
+		t.Errorf("спот берётся не скалярным подзапросом:\n%s", keyrateView.Select)
+	}
+	if strings.Contains(keyrateView.Select, "CROSS JOIN") {
+		t.Errorf("в витрине остался CROSS JOIN:\n%s", keyrateView.Select)
+	}
+	// Алиас ставится ДО FINAL: `FROM keyrate_futures FINAL f` — SYNTAX_ERROR ClickHouse 26.10
+	// (проверено живым DESCRIBE), рабочая форма — `AS f FINAL`.
+	if !strings.Contains(keyrateView.Select, "FROM "+keyrateTable+" AS f FINAL") ||
+		!strings.Contains(keyrateView.Select, "INNER JOIN "+keyrateContractTable+" AS c FINAL") {
+		t.Errorf("FINAL должен стоять после алиаса (AS f FINAL / AS c FINAL):\n%s", keyrateView.Select)
+	}
+}
+
+func TestKeyrateDdlHasNoMinStepColumns(t *testing.T) {
+	// MINSTEP/STEPPRICE (0,01 п.п. = 10 ₽ → 1 п.п. = 1 000 ₽) лежат в блоке securities движка forts,
+	// а не в блоке description бумаги (живая проба 2026-10-13), поэтому в схему они не заводятся:
+	// множитель зафиксирован в комментариях витрины и в описании ряда в series_catalog.
+	schema := strings.ToLower(keyrateDdl + keyrateContractDdl)
+	for _, column := range []string{"minstep", "stepprice"} {
+		if strings.Contains(schema, column) {
+			t.Errorf("колонка %s не должна попадать в схему", column)
+		}
+	}
+	for _, want := range []string{"CREATE TABLE IF NOT EXISTS " + keyrateTable, "CREATE TABLE IF NOT EXISTS " + keyrateContractTable, "ENGINE = ReplacingMergeTree"} {
+		if !strings.Contains(schema, strings.ToLower(want)) {
+			t.Errorf("в DDL нет %q", want)
+		}
+	}
+	if !strings.Contains(keyrateContractDdl, "last_trade Date") {
+		t.Error("в паспорте серии нет даты экспирации (last_trade): витрина считает вменённое изменение к заседанию")
+	}
+}
+
+func TestFetchKeyrateSecidsFiltersInvalid(t *testing.T) {
+	// Код серии приходит из тела ответа ISS и подставляется в URL и в SQL-условие инкремента:
+	// недопустимые коды обязаны отсекаться на выходе транспорта.
+	block := issBlock{
+		Columns: []string{"secid", "primary_boardid", "is_traded"},
+		Data: [][]any{
+			{"KKV6", "RFUD", 1.0},
+			{"KKV6; DROP TABLE keyrate_futures; --", "RFUD", 1.0},
+			{"KK V6", "RFUD", 1.0},
+			{"KKH7", "RFUD", 1.0},
+		},
+	}
+	useMoexServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeIssBlocks(t, w, map[string]issBlock{keyrateSecuritiesBlock: block})
+	})
+
+	got, err := fetchKeyrateSecids(context.Background())
+	if err != nil {
+		t.Fatalf("fetchKeyrateSecids: %v", err)
+	}
+	if want := []string{"KKV6", "KKH7"}; !slices.Equal(got, want) {
+		t.Fatalf("got %v, want %v (недопустимые коды обязаны отсеиваться)", got, want)
+	}
+}
+
+func TestKeyrateSecidValidatedBeforeRequestAndSQL(t *testing.T) {
+	// Недопустимый secid не должен доходить ни до сети, ни до SQL-условия инкремента.
+	const bad = "KKV6'; DROP TABLE keyrate_futures; --"
+	useMoexServer(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("недопустимый secid дошёл до сети: %s", r.URL.String())
+		writeIssBlocks(t, w, map[string]issBlock{})
+	})
+
+	if _, err := fetchKeyrateContract(context.Background(), bad); err == nil {
+		t.Error("fetchKeyrateContract: ожидалась ошибка на недопустимом secid")
+	}
+	if _, err := fetchKeyrateHistory(context.Background(), bad, moexDay("2026-09-29")); err == nil {
+		t.Error("fetchKeyrateHistory: ожидалась ошибка на недопустимом secid")
+	}
+	// conn не используется: код проверяется до обращения к базе, поэтому nil здесь безопасен.
+	if _, err := keyrateStoredDate(context.Background(), nil, keyrateContract{secid: bad}); err == nil {
+		t.Error("keyrateStoredDate: ожидалась ошибка на недопустимом secid")
 	}
 }
