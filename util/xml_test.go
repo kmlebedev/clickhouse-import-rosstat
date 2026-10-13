@@ -182,12 +182,16 @@ func TestGetXMLRootMismatchFails(t *testing.T) {
 // (XML_dynamic.asp…VAL_NM_RQ=R01235, курс USD) объявляют её, а без CharsetReader
 // encoding/xml падает с «encoding "windows-1251" declared but Decoder.CharsetReader
 // is nil» — тот самый живой сбой XML-импортёров курса. Фикстура повторяет живой ответ
-// ЦБ: объявление windows-1251, запись с датой 08.10.2026 и значением 85,4811; кириллица
-// в атрибуте нужна, чтобы декодирование было настоящим, а не ASCII-проходом. Байты
-// собираем энкодером charmap.Windows1251: фикстура остаётся читаемой строкой, а в теле
-// лежит валидный windows-1251 с верной декларацией.
+// ЦБ: объявление windows-1251, запись с датой 08.10.2026 и значением 85,4811; байты
+// собираем энкодером charmap.Windows1251 — фикстура остаётся читаемой строкой, а в теле
+// лежит валидный windows-1251 с верной декларацией. Проверяем именно кириллицу
+// (name="Динамика…"), а не только `Value`: «85,4811» — чистый ASCII, одинаковый в
+// windows-1251 и UTF-8, поэтому на одном Value тест прошёл бы и с неверной таблицей
+// (CP866/KOI8-R дали бы валидный, но не тот UTF-8), и поломку декодера ловил бы
+// случайно. Кириллический атрибут меняется от таблицы к таблице — на нём тест и стоит.
 func TestParseXMLWindows1251(t *testing.T) {
-	const fixture = `<?xml version="1.0" encoding="windows-1251"?>
+	const (
+		fixture = `<?xml version="1.0" encoding="windows-1251"?>
 <ValCurs ID="R01235" DateRange1="08.10.2026" DateRange2="08.10.2026" name="Динамика официального курса заданной валюты">
 	<Record Date="08.10.2026" Id="R01235">
 		<Nominal>1</Nominal>
@@ -195,6 +199,8 @@ func TestParseXMLWindows1251(t *testing.T) {
 		<VunitRate>85,4811</VunitRate>
 	</Record>
 </ValCurs>`
+		wantName = "Динамика официального курса заданной валюты"
+	)
 	body, err := charmap.Windows1251.NewEncoder().Bytes([]byte(fixture))
 	if err != nil {
 		t.Fatalf("перекодирование фикстуры в windows-1251: %v", err)
@@ -202,10 +208,14 @@ func TestParseXMLWindows1251(t *testing.T) {
 
 	var out struct {
 		XMLName xml.Name `xml:"ValCurs"`
+		Name    string   `xml:"name,attr"`
 		Value   string   `xml:"Record>Value"`
 	}
 	if err := ParseXML(body, &out); err != nil {
 		t.Fatalf("ParseXML с windows-1251: %v", err)
+	}
+	if out.Name != wantName {
+		t.Errorf("out.Name = %q, ожидалось %q — кириллица декодирована неверной таблицей", out.Name, wantName)
 	}
 	if out.Value != "85,4811" {
 		t.Errorf("out.Value = %q, ожидалось %q", out.Value, "85,4811")
