@@ -408,6 +408,31 @@ async def check(params, server_log):
             failed += not expect("каталог cbr_survey описывает 13 рядов", survey_catalog_n == 13,
                                  f"записей: {survey_catalog_n}" if survey_catalog_rows is not None else f"каталог не читается: {survey_catalog[:200]}")
 
+            # Контур макроэкономического опроса ЦБ (шаг 1.5 роадмапа, импортёр cbr_mo_br):
+            # витрина v_cbr_mo_br читается агентом, каталог source='cbr_mo_br' непуст
+            # (число рядов зависит от числа вышедших волн и их показателей, поэтому
+            # проверяется не точное число, а непустота — как у v_cbr_macro ниже).
+            # Сырая macro_series для этого контура уже проверена выше как закрытая;
+            # волны обновляются 8 раз в год, поэтому пустая витрина означает ни разу
+            # не отработавший шаг cbr_mo_br, а не отсутствие данных у источника.
+            mobr_view = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_cbr_mo_br"}))
+            mobr_view_rows = result_rows(mobr_view)
+            mobr_view_n = mobr_view_rows[0].get("count()") if mobr_view_rows else None
+            if mobr_view_rows is None:
+                mobr_view_detail = f"витрина не читается: {mobr_view[:200]}"
+            elif (mobr_view_n or 0) > 0:
+                mobr_view_detail = f"строк: {mobr_view_n}"
+            else:
+                mobr_view_detail = (f"строк: {mobr_view_n} — прогнать импортёр контура "
+                                    "(make import STAT=cbr_mo_br)")
+            failed += not expect("витрина v_cbr_mo_br существует и читается", (mobr_view_n or 0) > 0, mobr_view_detail)
+
+            mobr_catalog = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_series_catalog WHERE source = 'cbr_mo_br'"}))
+            mobr_catalog_rows = result_rows(mobr_catalog)
+            mobr_catalog_n = mobr_catalog_rows[0].get("count()") if mobr_catalog_rows else None
+            failed += not expect("каталог cbr_mo_br непуст", (mobr_catalog_n or 0) > 0,
+                                 f"записей: {mobr_catalog_n}" if mobr_catalog_rows is not None else f"каталог не читается: {mobr_catalog[:200]}")
+
             # Общая витрина контура ЦБ (правило 11, фаза 3 роадмапа): v_cbr_macro читается
             # агентом, а сырая cbr_households_b_mes — источник её рядов по домохозяйствам —
             # агенту закрыта (как macro_series и bold_fund_snapshot: читать контур агент
