@@ -93,7 +93,7 @@ AfterImport func(ctx context.Context, conn driver.Conn) error
 
 ### 3.4 Хелперы `util`
 
-- `func PublicationPreflight(ctx context.Context, conn driver.Conn, source, url, countPoints string) (fingerprint string, noop bool, points uint64, err error)` — HEAD → известна ли версия → количественный чек. Логи и деградации переносятся из `mo_br` дословно: недоступный HEAD → `warn` «полный импорт без записи версии» и пустой отпечаток; сбой SELECT версии → `warn` и полный импорт; известная версия с несовпавшим числом → `warn` и полный импорт (self-heal); совпало → `log.Infof("%s: no-op, версия %s уже импортирована, %d точек на месте", …)`.
+- `func PublicationPreflight(ctx context.Context, conn driver.Conn, source, url, countPoints string) (fingerprint string, noop bool, points uint64, err error)` — HEAD → известна ли версия → количественный чек. Логи и деградации переносятся из `mo_br` дословно: недоступный HEAD → `warn` «полный импорт без записи версии» и пустой отпечаток; сбой SELECT версии → `warn` и полный импорт; известная версия с несовпавшим числом → `warn` и полный импорт (self-heal); совпало → `log.Infof("%s: no-op, версия %s уже импортирована, %d точек на месте", …)`. **Сбой самого запроса `count()` — единственная неудача префлайта, которая останавливает прогон:** ошибка возвращается вызывающему, а не превращается в полный импорт, потому что без числа точек не сходится ни чек известной версии, ни `points` будущей записи, и молчаливый полный импорт записал бы в `source_publications` число, взятое неизвестно откуда. Это осознанно: `count()` ходит в ту же БД, что и `PublicationKnown`, поэтому его сбой — проблема БД, а не источника (недоступный HEAD и сбой `SELECT` версии, наоборот, деградируют в полный импорт). Тем же правилом закрыта запись версии в шаблоне: сбой `CountPoints` после успешного `Send` роняет прогон, версия не пишется, и следующий прогон идемпотентно повторяет полный путь.
 - `func CountPoints(ctx context.Context, conn driver.Conn, query string) (uint64, error)` — выполняет запрос импортёра; используется и чеком, и записью версии.
 - `func (s *ClickHouseImport) PublicationKey() string` — `PublicationSource`, а при пустом — `TableName`.
 
@@ -163,7 +163,7 @@ AfterImport func(ctx context.Context, conn driver.Conn) error
 | `rus_vtb_group_ifrs` | страница результатов ВТБ | на странице список xlsx по отчётным периодам (не один URL); сама страница сейчас 404 |
 | `polyus_financial_metrics`, `databook_polyus` | `polyus.com/…/*.pdf` | по PDF на отчётный период (список в `polyus/pages.go`) |
 | `customs_vneshn_torg` | листалка `customs.gov.ru` | файлы по месяцам (`структура…xlsx`), а сам артефакт на HEAD — 405 |
-| `minfin_fed_bud_mes`, `minfin_fed_bud_mesyats` | `minfin.gov.ru/common/upload/library/ГГГГ/ММ/main/Prilozhenie_*_mes(…mesyats).xlsx` | период в URL (папка `ГГГГ/ММ`): отпечаток описывает календарь публикаций, а не версию ряда — тот же случай, что `?FromDate=%s`. Вдобавок темп файла совпадает с шагом (10-го числа), а производные (`publishFedbud`) публикуются вне импортёра, поэтому порядок «точки → производные → версия» шаблоном не обеспечивается |
+| `minfin_fed_bud_mes`, `minfin_fed_bud_mesyats` | `minfin.gov.ru/common/upload/library/ГГГГ/ММ/main/Prilozhenie_*_mes(…mesyats).xlsx` | период в URL (папка `ГГГГ/ММ`): отпечаток описывает календарь публикаций, а не версию ряда — тот же случай, что `cbr_ruania` (`…/UniDbQuery/DownloadExcel/14315?Posted=True&FromDate=01/01/2019&ToDate=%s`, §2): дата окончания диапазона — сегодняшняя, и отпечаток менялся бы на каждом прогоне. Вдобавок темп файла совпадает с шагом (10-го числа), а производные (`publishFedbud`) публикуются вне импортёра, поэтому порядок «точки → производные → версия» шаблоном не обеспечивается |
 
 *Критерий 2 — обновляется в темпе шага или чаще (2):*
 
@@ -208,12 +208,13 @@ AfterImport func(ctx context.Context, conn driver.Conn) error
 
 ## 5. Документация того же PR
 
-`ARCHITECTURE.md`: §3 — поля `PublicationSource`/`PublicationCountPoints`/`AfterImport` шаблона и хелперы `util.PublicationPreflight`/`CountPoints`; §6.1 — строка каждого переведённого импортёра; §6.2 — комментарий DDL `source_publications` и перечень потребителей; §8 п. 13 — конвенция без оговорки «миграция остальных — вне объёма», с фактическим списком. `README.md` — таблица импортёров `cbr` и расписание. `docs/ROADMAP_KEY_RATE.md` — новый пункт со статусом и блоком живой приёмки. Синхронизацию проверить скилом `sync-readme-architecture`.
+`ARCHITECTURE.md`: §3 — поля `PublicationSource`/`PublicationCountPoints`/`AfterImport` шаблона и хелперы `util.PublicationPreflight`/`CountPoints` (плюс `PublicationKey()`/`Publication()`); §6.1 — перечень **всех** переведённых импортёров с их `PublicationCountPoints`: десять в `cbr/` (§3.5) и четыре вне него по факту §3.7 (`ipc_mes`, `salaries_mes`, `vvp_kvartal`, `sber_finansovie_rezultaty`), а также импортёры, оставшиеся без объявления осознанно (четыре дневных `cbr_*`, `ipc_weeks`, `tbank_group_ifrs`); §6.2 — комментарий DDL `source_publications` (**обе копии: `util/publications.go` и §6.2**) и перечень потребителей; §8 п. 13 — конвенция без оговорки «миграция остальных — вне объёма», с фактическим списком. `README.md` — таблица импортёров (`cbr`, `rosstat`, `bank`) и расписание: ежедневный прогон месячных XLSX — no-op без скачивания, расписание и состав шагов не меняются. `docs/ROADMAP_KEY_RATE.md` — новый пункт «шаг 1.7» со статусом «код готов, живая приёмка — следующим шагом» и блоком приёмки, который заполняет следующий шаг работ. Синхронизацию проверить скилом `sync-readme-architecture`.
 
 ## 6. Вне объёма
 
-- Дневные импортёры (`cbr_key_rate`, `cbr_ruania`, `cbr_currency_usd`, `cbr_gold`) — префлайт неприменим (§2).
-- Починка `tbank_group_ifrs` (ссылка ведёт на PDF вместо XLSX) и развязка общей таблицы `rus_vtb_group_ifrs`/`tbank_group_ifrs` — отдельный пункт работ; до неё импортёр исключён из перевода осознанно (§3.7).
+- Дневные импортёры (`cbr_key_rate`, `cbr_ruania`, `cbr_currency_usd`, `cbr_gold`) — префлайт неприменим (§2); `ipc_weeks` — по критерию 2 (темп файла равен шагу, §3.7).
+- Импортёры, не прошедшие критерии инвентаря (§3.7: 26 отказов и шесть импортёров без артефакта), в этом объёме не переводятся: объявлений у них нет, и появление точки контроля — отдельное решение при смене источника или расписания.
+- Починка `tbank_group_ifrs` (ссылка ведёт на PDF вместо XLSX) и развязка общей таблицы `rus_vtb_group_ifrs`/`tbank_group_ifrs` — отдельный пункт работ; до неё импортёр исключён из перевода осознанно (§3.7), а `rus_vtb_group_ifrs` не переводится потому, что на его странице список xlsx по отчётным периодам, а не один URL (критерий 1, §3.7).
 - Выдача `source_publications` агенту — решение прежнее: не выдавать.
 - Новые витрины, новый каталог, изменения `v_cbr_macro`, `sql/mcp_kimi_reader.sql`, `scripts/mcp_check.py`.
 - Point-in-time слой фазы 4, кроме наблюдаемых версий файла.

@@ -17,8 +17,9 @@ import (
 
 // PublicationsTable — общая таблица точек контроля публикаций: одна строка = одна увиденная
 // версия артефакта источника. Механизм общий для источников, чьи файлы обновляются реже
-// прогонов (первый потребитель — cbr_mo_br; спека §3.4, ARCHITECTURE §6.2). Таблица
-// внутренняя: агенту (kimi_reader) не выдаётся.
+// прогонов, и включается полями шаблона util.ClickHouseImport (PublicationCountPoints /
+// PublicationSource); фактический список потребителей — ARCHITECTURE §8 п. 13 (десять
+// импортёров cbr/ и четыре вне него). Таблица внутренняя: агенту (kimi_reader) не выдаётся.
 const PublicationsTable = "source_publications"
 
 // PublicationsDdl — канонический DDL (ARCHITECTURE §6.2, спека §3.4). Литерал, а не %s-форма
@@ -26,7 +27,7 @@ const PublicationsTable = "source_publications"
 // размывал бы «канонический» статус. Комментарии колонок — часть спекового литерала и остаются
 // в тексте SQL; ClickHouse их отбрасывает.
 const PublicationsDdl = `CREATE TABLE IF NOT EXISTS source_publications (
-    source LowCardinality(String),  -- источник-потребитель: 'cbr_mo_br'
+    source LowCardinality(String),  -- источник-потребитель: 'cbr_mo_br', 'ipc_mes', … (ключ версии: PublicationSource импортёра или его TableName)
     name LowCardinality(String),    -- имя артефакта: 'full.xlsx'
     fingerprint String,             -- md5 от (имя|ETag|Last-Modified|Content-Length) — отпечаток версии контента
     first_seen DateTime,            -- когда конвейер впервые увидел эту версию

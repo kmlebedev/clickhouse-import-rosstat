@@ -106,6 +106,7 @@
 | `macro_series` (`source='cbr_survey'`) | мониторинг предприятий ЦБ (ценовые ожидания, бизнес-климат, загрузка мощностей, обеспеченность персоналом) | ✅ фаза 1.3, этим PR |
 | `news_events` (`source='smartlab'`) | посты аналитика по каналам ставки | фаза 1.4 |
 | `macro_series` (`source='cbr_mo_br'`) | макроэкономический опрос ЦБ: медианы прогнозов и интервалы (p10/p90), min/max и число ответов по 17 показателям | ✅ фаза 1.5, этим PR |
+| `source_publications` (служебная) | версии артефактов источников: отпечаток файла по HEAD, `name`, `points` — число точек ряда этой версии; по этой строке префлайт решает «версия уже импортирована» | ✅ механизм шага 1.5, роллаут — шаг 1.7; агенту не выдана, канонический DDL — `ARCHITECTURE.md` §6.2 |
 | `forecast_log` (`metric='cbr_rate'`) | **журнал прогнозов**: `target_date` = дата заседания, `predicted` = ожидаемая ставка | уже есть (значение метрики зарезервировано в `ingest/schema.go`) |
 | `point_in_time` (имя уточняется) | снимки значений с датой **публикации**, а не периода — обязательное условие честного бэктеста | фаза 4 |
 | `v_key_rate_dashboard` | сводка: два контура, пороги, ближайшее заседание, последний прогноз и его ошибка | фаза 4 |
@@ -124,6 +125,7 @@
 | 1.4 | Лента smart-lab в `news_watch` (`source='smartlab'`) — полный текст поста уже приходит в `description`; фильтр витрины расширить стемами ставки | посты видны агенту; повторный прогон идемпотентен |
 | 1.5 | Макроэкономический опрос ЦБ (8 раз в год) → медианы и интервалы прогнозов | ✅ **сделан этим PR** — приёмка ниже |
 | **1.6** | **Публикационный контур** — тезисы и ТЗ на регулярные публикации: форматы и каденция, шаблон разбора, отдельная цель «прогноз пересмотра среднесрочного прогноза ЦБ» на опорных заседаниях, контракт данных, порядок прогона | ✅ **сделан этим PR**: документ [KEY_RATE_PUBLICATIONS.md](KEY_RATE_PUBLICATIONS.md); техническая реализация шагов прогона идёт пунктами фаз 4–5 |
+| **1.7** | **Роллаут механизма точек контроля публикаций** (follow-up `ARCHITECTURE.md` §8 п. 13, заведённого шагом 1.5): точка контроля стала свойством общего шаблона — `util.ClickHouseImport.PublicationCountPoints`/`PublicationSource`/`AfterImport`, хелперы `util.PublicationPreflight`/`CountPoints`; объявлена 14 импортёрам, чей файл обновляется реже прогонов: десять в `cbr/` и четыре вне него (`rosstat/ipc_mes`, `rosstat/salaries_mes`, `rosstat/vvp_kvartal`, `bank/sber_finansovie_rezultaty`); обёртка `publishedStat` упразднена, реестр `cbr/importers.go` получил колонку `countPoints` с тестом-энфорсером | 🟡 **код готов, живая приёмка — следующим шагом** (блок «Живая приёмка — шаг 1.7» ниже); критерии прогона — [спека](superpowers/specs/2026-10-14-publication-preflight-design.md) §4 |
 
 #### Живая приёмка 2026-10-13 — шаг 1.1 (KEYRATE) — ✅ выполнен
 
@@ -189,6 +191,14 @@
 
 4. Повтор `make import STAT=cbr_mo_br` → **`cbr_mo_br: no-op, версия 4fef4f25716d388e9048149fa296039c уже импортирована, 9348 точек на месте`** — в логе нет ни `Get xlsx file` (скачивания), ни `собрано … точек` (разбора и батча), то есть прогон ограничился страницей и HEAD; в `source_publications` по-прежнему одна строка с тем же `first_seen` (23:33:16), новых нет, счётчики витрины не изменились.
 5. MCP под `kimi_reader` (`make mcp-user` выполнен **до** MCP-проверок — без гранта витрина не читается): `SELECT count(), uniqExact(series), min(date), max(date) FROM v_cbr_mo_br` → **9348 / 642 / 2021-05-01 / 2026-09-01**; `SELECT count() FROM v_series_catalog WHERE source='cbr_mo_br'` → **642**, то есть ровно число рядов; споты сентябрьской волны совпали с ЦБ — `key_rate_avg_2026_median` = **14.5**, `cpi_dec_2026_median` = **6.6**, `neutral_rate_median` = **8.0**. `make mcp-check` → **ПРОВЕРКА ПРОЙДЕНА** (exit 0), в том числе `витрина v_cbr_mo_br существует и читается: строк: 9348` и `каталог cbr_mo_br непуст: записей: 642` (сырая `macro_series` по-прежнему закрыта — `ACCESS_DENIED 497`); `dagu validate dagu/cbr.yaml` → exit 0 (единственное предупреждение — общий для всех DAG-файлов `auth.mode`).
+
+#### Живая приёмка — шаг 1.7 (роллаут точек контроля публикаций) — ⏳ ожидает выполнения
+
+Спека — [2026-10-14-publication-preflight-design.md](superpowers/specs/2026-10-14-publication-preflight-design.md), план — [2026-10-14-publication-preflight.md](superpowers/plans/2026-10-14-publication-preflight.md). Код: `util/clickhouse_import.go` (три опциональных поля шаблона, цикл «DDL → `BeforeImport` → префлайт → точки → `AfterImport` → строка версии»), `util/publications.go` (`PublicationPreflight`, `CountPoints`, `PublicationKey`/`Publication`), объявления в десяти импортёрах `cbr/` и четырёх вне него; правки — `cbr/views.go` (`afterCbrMacro`), `rosstat/series_meta.go` (`afterRosstatMacro`), реестр `cbr/importers.go` (колонка `countPoints` с тестом-энфорсером `TestCbrImportersPrefixedAndRegistered`), `ARCHITECTURE.md`, `README.md`; `sql/mcp_kimi_reader.sql` и `scripts/mcp_check.py` не менялись — новых витрин и грантов нет.
+
+Критерии прогона — спека §4: на каждый из десяти `cbr`-импортёров первый прогон пишет строку версии в `source_publications` с `points` = числу точек ряда, повторный даёт no-op без скачивания файла и без новых строк версии; контрольные числа и отпечатки сверяются с baseline фазы 3 (блок выше) и с приёмкой 1.5; `make all` и `make mcp-check` — зелёные, `dagu validate dagu/cbr.yaml` → exit 0.
+
+**Результаты прогона дописывает следующий шаг работ** (шаг 6/6 плана): здесь намеренно нет ни отпечатков, ни чисел новых версий — только статус «код готов».
 
 ### Фаза 2 — расширение каналов
 
