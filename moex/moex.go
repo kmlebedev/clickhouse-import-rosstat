@@ -62,26 +62,37 @@ func rowFloat(row []any, idx int) (float64, error) {
 	return v, nil
 }
 
-func getBlock(ctx context.Context, path string, block string) (issBlock, error) {
+// getBlocks читает все блоки ответа ISS одним запросом. getBlock — обёртка над ним
+// для путей, которым нужен ровно один блок.
+func getBlocks(ctx context.Context, path string) (map[string]issBlock, error) {
 	ctx, cancel := context.WithTimeout(ctx, moexTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, moexBaseUrl+path, nil)
 	if err != nil {
-		return issBlock{}, err
+		return nil, err
 	}
 	resp, err := util.HttpClient.Do(req)
 	if err != nil {
-		return issBlock{}, err
+		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return issBlock{}, fmt.Errorf("%s: http status %d", path, resp.StatusCode)
+		return nil, fmt.Errorf("%s: http status %d", path, resp.StatusCode)
 	}
 	var body map[string]issBlock
 	if err = json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return issBlock{}, fmt.Errorf("%s: %w", path, err)
+		return nil, fmt.Errorf("%s: %w", path, err)
 	}
-	b, ok := body[block]
+	return body, nil
+}
+
+// getBlock — единственный блок ответа ISS по имени; тексты ошибок те же, что были до getBlocks.
+func getBlock(ctx context.Context, path string, block string) (issBlock, error) {
+	blocks, err := getBlocks(ctx, path)
+	if err != nil {
+		return issBlock{}, err
+	}
+	b, ok := blocks[block]
 	if !ok {
 		return issBlock{}, fmt.Errorf("%s: no block %q in response", path, block)
 	}

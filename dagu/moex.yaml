@@ -18,3 +18,11 @@ steps:
     retry_policy:
       limit: 3
       interval_sec: 300
+
+  - id: keyrate_futures
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=keyrate_futures
+    retry_policy:
+      limit: 3
+      interval_sec: 300
