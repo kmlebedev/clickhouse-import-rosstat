@@ -826,3 +826,100 @@ func TestClickHouseImportWithoutPublicationFields(t *testing.T) {
 		t.Errorf("импортёр без префлайта обратился к source_publications: %v / %v", conn.rowQueries, conn.batchQueries)
 	}
 }
+
+// Сбой AfterImport отменяет запись версии (спека §3.1, Review Focus #1): AfterImport вызывается
+// после Send точек, поэтому точки уже записаны, а строки версии нет — и следующий прогон повторит
+// полный путь (идемпотентный), а не уйдёт в no-op с отсутствующим у агента каталогом или витриной.
+// Проверяется именно отсутствие INSERT в source_publications, а не только возвращённая ошибка.
+func TestClickHouseImportAfterImportErrorKeepsPublicationUnwritten(t *testing.T) {
+	server := publicationHeadServer(t, publicationCbrHeaders)
+	url := server.URL + "/full.xlsx"
+
+	conn := &publicationFakeConn{rows: []driver.Row{
+		&publicationFakeRow{err: sql.ErrNoRows}, // версия не записана — полный путь
+		&publicationFakeRow{points: 7},          // остаётся невостребованной: до записи версии дело не дойдёт
+	}}
+	afterErr := fmt.Errorf("витрина v_cbr_macro не создана")
+	importer := &ClickHouseImport{
+		TableName:              "macro_series",
+		DataUrl:                url,
+		PublicationSource:      publicationTestSource,
+		PublicationCountPoints: publicationTestCountPoints,
+	}
+	importer.CrawFunc = func(string, driver.Conn) (int64, error) {
+		conn.calls = append(conn.calls, "CrawFunc")
+		return 5, nil
+	}
+	importer.AfterImport = func(context.Context, driver.Conn) error {
+		conn.calls = append(conn.calls, "AfterImport")
+		return afterErr
+	}
+
+	count, err := importer.Import(context.Background(), conn)
+	if err == nil {
+		t.Fatal("сбой AfterImport обязан вернуться вызывающему: иначе прогон счёл бы производные опубликованными")
+	}
+	if !strings.Contains(err.Error(), afterErr.Error()) {
+		t.Errorf("ошибка %v не сохранила причину сбоя AfterImport", err)
+	}
+	if count != 5 {
+		t.Errorf("count = %d, ожидалось 5: точки отправлены до AfterImport, сбой случился позже", count)
+	}
+	if len(conn.batchQueries) != 0 || len(conn.batches) != 0 {
+		t.Errorf("сбой AfterImport записал версию: батчи %v", conn.batchQueries)
+	}
+	if len(conn.rowQueries) != 1 {
+		t.Errorf("запросов QueryRow %d (%v), ожидался только SELECT версии: число точек для версии после сбоя не запрашивается", len(conn.rowQueries), conn.rowQueries)
+	}
+	wantCalls := []string{"Exec", "QueryRow", "CrawFunc", "AfterImport"}
+	if !reflect.DeepEqual(conn.calls, wantCalls) {
+		t.Errorf("порядок обращений\n получили %v\n ожидали %v", conn.calls, wantCalls)
+	}
+}
+
+// Сбой запроса числа точек на записи версии — ошибка прогона (точки уже отправлены, но строка
+// версии без points невозможна), и версия при этом тоже не пишется: незаписанная версия — это
+// повтор полного пути на следующем прогоне, а не расхождение points с содержимым таблицы.
+func TestClickHouseImportCountPointsErrorKeepsPublicationUnwritten(t *testing.T) {
+	server := publicationHeadServer(t, publicationCbrHeaders)
+	url := server.URL + "/full.xlsx"
+
+	conn := &publicationFakeConn{rows: []driver.Row{
+		&publicationFakeRow{err: sql.ErrNoRows},                    // версия не записана — полный путь
+		&publicationFakeRow{err: fmt.Errorf("нет колонки points")}, // запрос числа точек после Send
+	}}
+	importer := &ClickHouseImport{
+		TableName:              "macro_series",
+		DataUrl:                url,
+		PublicationSource:      publicationTestSource,
+		PublicationCountPoints: publicationTestCountPoints,
+	}
+	importer.CrawFunc = func(string, driver.Conn) (int64, error) {
+		conn.calls = append(conn.calls, "CrawFunc")
+		return 5, nil
+	}
+	importer.AfterImport = func(context.Context, driver.Conn) error {
+		conn.calls = append(conn.calls, "AfterImport")
+		return nil
+	}
+
+	count, err := importer.Import(context.Background(), conn)
+	if err == nil {
+		t.Fatal("сбой запроса числа точек обязан вернуться вызывающему: без points строку версии не собрать")
+	}
+	for _, want := range []string{publicationTestSource, "count точек", "нет колонки points"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("ошибка %q не содержит %q", err, want)
+		}
+	}
+	if count != 5 {
+		t.Errorf("count = %d, ожидалось 5: точки отправлены до запроса числа точек", count)
+	}
+	if len(conn.batchQueries) != 0 || len(conn.batches) != 0 {
+		t.Errorf("при сбое запроса числа точек версия не пишется, а батчи %v", conn.batchQueries)
+	}
+	wantCalls := []string{"Exec", "QueryRow", "CrawFunc", "AfterImport", "QueryRow"}
+	if !reflect.DeepEqual(conn.calls, wantCalls) {
+		t.Errorf("порядок обращений\n получили %v\n ожидали %v", conn.calls, wantCalls)
+	}
+}
