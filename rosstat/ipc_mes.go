@@ -37,18 +37,22 @@ type IpcMesStat struct {
 	util.ClickHouseImport
 }
 
-func (s *IpcMesStat) getXlsDataUrl() (url string, err error) {
+// getXlsDataUrl ищет ссылку на актуальный ipc_mes_*.xlsx на странице цен Росстата и
+// возвращает её как есть: пустой результат — признак «ссылки нет», и вызывающий обязан
+// отличить его от рабочей ссылки сам (то же устройство у соседей — salaries_mes, vvp_kvartal).
+// Ошибка обхода страницы только логируется: решение о сбое принимает вызывающий по пустому URL.
+func (s *IpcMesStat) getXlsDataUrl() (url string) {
 	c := colly.NewCollector()
 	c.SetClient(util.HttpClient)
 	c.OnHTML(".row > div:nth-child(3) div.toggle-section__content.toggle-section__content--open > div > div > div > div:nth-child(1) > div > div.toggle-card__main > div > div > div > div:nth-child(3) > div.document-list__item-link > a", func(e *colly.HTMLElement) {
 		url = fmt.Sprintf("%s%s", rosstatUrl, e.Attr("href"))
 		log.Infof("href url %s", url)
 	})
-	if err = c.Visit(fmt.Sprintf("%s/statistics/price", rosstatUrl)); err != nil {
+	if err := c.Visit(fmt.Sprintf("%s/statistics/price", rosstatUrl)); err != nil {
 		log.Errorf("Visit %v+", err)
 	}
 	c.Wait()
-	return url, nil
+	return url
 }
 
 func parseIpcMes(xlsx *excelize.File) (table *[][]string, err error) {
@@ -116,13 +120,16 @@ func ipcMesImport(xlsx *excelize.File, batch driver.Batch) error {
 
 // Import берёт адрес актуального xlsx со страницы цен Росстата: имени файла в коде нет
 // (ipc_mes_ММ-ГГГГ.xlsx меняется при каждом обновлении), а сетевое обращение в init()
-// запрещено (ARCHITECTURE.md §8.6). Дальше — полный цикл шаблона: DDL → префлайт по HEAD
-// (файл обновляется раз в месяц, шаг расписания — недельный) → точки → производные
-// (AfterImport) → строка версии.
+// запрещено (ARCHITECTURE.md §8.6). Пустой URL — сразу ошибка, как у соседей (salaries_mes,
+// vvp_kvartal): иначе прогон дошёл бы до GetXlsx("") и упал невнятно. Дальше — полный цикл
+// шаблона: DDL → префлайт по HEAD (файл обновляется раз в месяц, шаг расписания — недельный)
+// → точки → производные (AfterImport) → строка версии.
 func (s *IpcMesStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	if s.DataUrl, err = s.getXlsDataUrl(); err != nil {
-		return count, err
+	xlsDataUrl := s.getXlsDataUrl()
+	if xlsDataUrl == "" {
+		return count, fmt.Errorf("ipcMes: не найдена ссылка на ipc_mes_*.xlsx на %s/statistics/price", rosstatUrl)
 	}
+	s.DataUrl = xlsDataUrl
 	return s.ClickHouseImport.Import(ctx, conn)
 }
 
