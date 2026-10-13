@@ -17,19 +17,24 @@ const (
 	// ToDo update data source Потребительские цены https://rosstat.gov.ru/statistics/price
 	// Индексы потребительских цен на товары и услуги по Российской Федерации, месяцы (с 1991 г.)
 	ipcMesTable = "ipc_mes"
-	ipcMesDdl   = `CREATE TABLE IF NOT EXISTS ` + ipcMesTable + ` (
+	ipcMesDdl   = `CREATE TABLE IF NOT EXISTS %s (
 				  name LowCardinality(String)
 				, date Date
 				, percent Float32
 			) ENGINE = ReplacingMergeTree ORDER BY (name, date);
 		`
-	ipcMesInsert     = "INSERT INTO " + ipcMesTable
 	ipcMesField      = "к концу предыдущего месяца"
 	ipcMesYearStart  = 1991
 	ipcMesTimeLayout = "2006-01"
+	// ipcMesCountPoints — количественный чек версии (спека §3.5): число точек своего ряда.
+	// Литерал, как и таблица: запрос — часть утверждения «эти точки мои». FINAL обязателен —
+	// без него count() считает несмёрженные части и растёт после каждого повторного импорта,
+	// то есть чек сравнивал бы величину, меняющуюся от прогона к прогону.
+	ipcMesCountPoints = "SELECT count() FROM ipc_mes FINAL"
 )
 
 type IpcMesStat struct {
+	util.ClickHouseImport
 }
 
 func (s *IpcMesStat) getXlsDataUrl() (url string, err error) {
@@ -44,10 +49,6 @@ func (s *IpcMesStat) getXlsDataUrl() (url string, err error) {
 	}
 	c.Wait()
 	return url, nil
-}
-
-func (s *IpcMesStat) Name() string {
-	return ipcMesTable
 }
 
 func parseIpcMes(xlsx *excelize.File) (table *[][]string, err error) {
@@ -86,57 +87,54 @@ func parseIpcMes(xlsx *excelize.File) (table *[][]string, err error) {
 	return table, nil
 }
 
-func (s *IpcMesStat) export() (table *[][]string, err error) {
-	var xlsx *excelize.File
-	var xlsDataUrl string
-	if xlsDataUrl, err = s.getXlsDataUrl(); err != nil {
-		return nil, err
-	}
-	if xlsx, err = util.GetXlsx(xlsDataUrl); err != nil {
-		return nil, err
-	}
-	return parseIpcMes(xlsx)
-}
-
-func (s *IpcMesStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	if err = conn.Exec(ctx, ipcMesDdl); err != nil {
-		return count, err
-	}
-	var table *[][]string
-	if table, err = s.export(); err != nil {
-		return count, err
-	}
-	batch, err := conn.PrepareBatch(ctx, ipcMesInsert)
+// ipcMesImport разбирает файл и пишет точки в batch: семантика прежних export() и цикла
+// вставки Import сохранена дословно — имя ряда из первой ячейки листа, дата «год-месяц»
+// строки, значение — процент, дата сдвинута на 1-е число отчётного месяца (AddDate(0, 1, -1)).
+// Пустой разбор ошибкой не считается — так же вёл себя прежний Import: пустой батч
+// отправлялся, и прогон возвращал ноль точек (fail-fast на пустом листе — контракт cbr, не этого ряда).
+func ipcMesImport(xlsx *excelize.File, batch driver.Batch) error {
+	table, err := parseIpcMes(xlsx)
 	if err != nil {
-		return count, err
+		return err
 	}
 	for _, row := range *table {
 		// Calling Parse() method with its parameters
 		mes, err := time.Parse(ipcMesTimeLayout, fmt.Sprintf("%s-%s", row[1], row[2]))
 		if err != nil {
-			return count, err
+			return err
 		}
 		percent, err := strconv.ParseFloat(row[3], 32)
 		if err != nil {
-			return count, err
+			return err
 		}
 		if err = batch.Append(row[0], mes.AddDate(0, 1, -1), float32(percent)); err != nil {
-			return count, err
+			return err
 		}
-		count++
 	}
-	if err = batch.Send(); err != nil {
-		return count, err
-	}
-	if err = util.UpsertSeriesCatalog(ctx, conn, ipcMesSeriesMeta); err != nil {
-		return count, err
-	}
-	if _, err = util.CreateView(ctx, conn, rosstatMacroView); err != nil {
-		return count, err
-	}
-	return count, nil
+	return nil
 }
 
+// Import берёт адрес актуального xlsx со страницы цен Росстата: имени файла в коде нет
+// (ipc_mes_ММ-ГГГГ.xlsx меняется при каждом обновлении), а сетевое обращение в init()
+// запрещено (ARCHITECTURE.md §8.6). Дальше — полный цикл шаблона: DDL → префлайт по HEAD
+// (файл обновляется раз в месяц, шаг расписания — недельный) → точки → производные
+// (AfterImport) → строка версии.
+func (s *IpcMesStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+	if s.DataUrl, err = s.getXlsDataUrl(); err != nil {
+		return count, err
+	}
+	return s.ClickHouseImport.Import(ctx, conn)
+}
+
+// ipcMesImporter — помесячные ИПЦ Росстата; регистрируется init() пакета.
+var ipcMesImporter = &IpcMesStat{ClickHouseImport: util.ClickHouseImport{
+	TableName:              ipcMesTable,
+	CreateTable:            []string{ipcMesDdl},
+	ImportFunc:             ipcMesImport,
+	AfterImport:            afterRosstatMacro(ipcMesSeriesMeta),
+	PublicationCountPoints: ipcMesCountPoints,
+}}
+
 func init() {
-	chimport.Stats = append(chimport.Stats, &IpcMesStat{})
+	chimport.Stats = append(chimport.Stats, ipcMesImporter)
 }
