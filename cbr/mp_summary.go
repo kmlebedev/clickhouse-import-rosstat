@@ -89,10 +89,16 @@ const (
 // Запросы чтения. FINAL обязателен: ключи таблиц — ReplacingMergeTree, и без него
 // несмёрженные части дали бы дубли дат и повторные матчи каналов.
 const (
-	// mpSummaryKnownUrlsQuery — адреса резюме, уже лежащие в таблице. Дельта считается
-	// по индексу материалов заседаний: нет новых адресов и нет отстающих LLM-документов —
-	// прогон no-op без обращений к страницам резюме (спека §3.1).
-	mpSummaryKnownUrlsQuery = "SELECT DISTINCT url FROM " + mpSummaryTable + " FINAL"
+	// mpSummaryImportedQuery — шапки уже импортированных резюме: адрес страницы и дата
+	// заседания. Адрес нужен дельте по индексу (что в индексе ново), дата — проверке
+	// полноты документа: шапка пишется первым батчем, и по одному адресу недописанный
+	// документ (сбой батча блоков или каналов) считался бы готовым — потерянное не
+	// вернулось бы следующим прогоном (спека §3.1).
+	mpSummaryImportedQuery = "SELECT url, meeting_date FROM " + mpSummaryTable + " FINAL"
+
+	// mpSummaryBlockDatesQuery — даты заседаний, у которых в таблице блоков есть хотя бы
+	// одна строка: вместе с адресом шапки это и есть признак записанного целиком документа.
+	mpSummaryBlockDatesQuery = "SELECT DISTINCT meeting_date FROM " + mpSummaryBlockTable + " FINAL"
 
 	// mpSummaryPastQuery — прошлые решения: ставки для decision_delta_bp и адреса
 	// страниц для LLM-догона. ORDER BY meeting_date — дельта идёт по порядку заседаний.
@@ -146,7 +152,8 @@ type mpLLMDoc struct {
 // Import — полный прогон импортёра (спека §3.1, §3.8). Порядок шагов — часть контракта:
 //  1. DDL трёх таблиц;
 //  2. индекс материалов заседаний → карточки резюме;
-//  3. дельта по адресам таблицы: новые документы и отстающая LLM-разметка;
+//  3. дельта по таблицам: новые документы (адреса нет в шапке ИЛИ нет блоков по дате его
+//     заседания — недописанный документ) и отстающая LLM-разметка;
 //  4. no-op, если ни того, ни другого нет (витрины не трогаем — они созданы ранее);
 //  5. прошлые решения таблицы: ставки для дельты и адреса для LLM-догона;
 //  6. скачивание и разбор новых резюме — fail-fast: ошибка до записи, иначе
@@ -158,8 +165,9 @@ type mpLLMDoc struct {
 //  9. витрины v_cbr_mp_summary* — производные, после данных.
 //
 // Префлайта (PublicationCountPoints/PublicationSource) и AfterImport у импортёра нет
-// сознательно: дельта считается по индексу, а не по отпечатку артефакта, и
-// само-исцеление «известная версия → no-op» здесь заменено проверкой адресов (спека §3.1).
+// сознательно: дельта считается по индексу и полноте документа в таблицах, а не по
+// отпечатку артефакта, и само-исцеление «известная версия → no-op» здесь заменено
+// проверкой адресов и блоков (спека §3.1).
 func (s *mpSummaryStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
 	// 1.
 	for _, ddl := range []string{mpSummaryDdl, mpSummaryBlockDdl, mpSummaryChannelDdl} {
@@ -179,17 +187,15 @@ func (s *mpSummaryStat) Import(ctx context.Context, conn driver.Conn) (count int
 	}
 
 	// 3.
-	known, err := mpKnownUrls(ctx, conn)
+	imported, err := mpImportedSummaries(ctx, conn)
 	if err != nil {
 		return 0, err
 	}
-	missing := make([]mpSummaryRef, 0, len(refs))
-	for _, ref := range refs {
-		if known[cbrUrl+ref.Href] {
-			continue
-		}
-		missing = append(missing, ref)
+	blockDates, err := mpBlockDates(ctx, conn)
+	if err != nil {
+		return 0, err
 	}
+	missing := mpMissingRefs(refs, imported, blockDates)
 
 	baseURL, apiKey, model, llmOK := mpLLMConfigFromEnv()
 	var pending map[time.Time]bool
@@ -302,27 +308,80 @@ func (s *mpSummaryStat) Import(ctx context.Context, conn driver.Conn) (count int
 	return count, nil
 }
 
-// mpKnownUrls — адреса уже импортированных резюме. Множество, а не срез: проверка идёт
-// по каждой карточке индекса.
-func mpKnownUrls(ctx context.Context, conn driver.Conn) (map[string]bool, error) {
-	rows, err := conn.Query(ctx, mpSummaryKnownUrlsQuery)
+// mpMissingRefs — карточки индекса, которых в таблице нет целиком. Документ считается
+// известным, только если его адрес есть в шапке И по дате его заседания есть хотя бы одна
+// строка блоков: шапка пишется первым батчем, и сбой среднего или последнего батча оставил
+// бы документ без текста — по одному адресу следующий прогон ушёл бы в no-op, и потерянное
+// не вернулось бы никогда (спека §3.1 п. 2: сбой батчей слоя 1 = следующий прогон повторит).
+// Недописанный документ попадает в missing, перекачивается и перезаписывается целиком;
+// ключи ReplacingMergeTree делают повторную запись идемпотентной. Порядок индекса
+// (от новых к старым) сохраняется: он же порядок скачивания и записи.
+//
+// Чистая функция без обращений к БД: сценарий «шапка есть, блоков нет» пинится тестом
+// без драйвера и сети.
+func mpMissingRefs(refs []mpSummaryRef, imported map[string]time.Time, blockDates map[time.Time]bool) []mpSummaryRef {
+	missing := make([]mpSummaryRef, 0, len(refs))
+	for _, ref := range refs {
+		date, ok := imported[cbrUrl+ref.Href]
+		if ok && blockDates[date] {
+			continue
+		}
+		missing = append(missing, ref)
+	}
+	return missing
+}
+
+// mpImportedSummaries — шапки таблицы: адрес страницы → дата заседания (день в UTC, mpDay).
+// Дата нормализуется тем же mpDay, что и даты блоков: иначе проверка полноты документа не
+// нашла бы блоки (драйвер отдаёт Date в зоне сессии). Ключ таблицы — meeting_date, поэтому
+// один адрес встречается один раз; если адрес всё же попадёт под две даты, в карте останется
+// последняя прочитанная — документ может лишний раз попасть в missing (лишнее скачивание и
+// идемпотентная перезапись), но не потеряется: это безопасное направление ошибки.
+func mpImportedSummaries(ctx context.Context, conn driver.Conn) (map[string]time.Time, error) {
+	rows, err := conn.Query(ctx, mpSummaryImportedQuery)
 	if err != nil {
-		return nil, fmt.Errorf("%s: адреса таблицы не прочитаны: %w", mpSummaryName, err)
+		return nil, fmt.Errorf("%s: шапки таблицы не прочитаны: %w", mpSummaryName, err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	known := make(map[string]bool)
+	imported := make(map[string]time.Time)
 	for rows.Next() {
-		var url string
-		if err = rows.Scan(&url); err != nil {
-			return nil, fmt.Errorf("%s: адрес таблицы не прочитан: %w", mpSummaryName, err)
+		var (
+			url  string
+			date time.Time
+		)
+		if err = rows.Scan(&url, &date); err != nil {
+			return nil, fmt.Errorf("%s: строка шапок таблицы не прочитана: %w", mpSummaryName, err)
 		}
-		known[url] = true
+		imported[url] = mpDay(date)
 	}
 	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("%s: адреса таблицы не дочитаны: %w", mpSummaryName, err)
+		return nil, fmt.Errorf("%s: шапки таблицы не дочитаны: %w", mpSummaryName, err)
 	}
-	return known, nil
+	return imported, nil
+}
+
+// mpBlockDates — даты заседаний, у которых в таблице блоков есть хотя бы одна строка:
+// признак того, что документ записан не одной шапкой.
+func mpBlockDates(ctx context.Context, conn driver.Conn) (map[time.Time]bool, error) {
+	rows, err := conn.Query(ctx, mpSummaryBlockDatesQuery)
+	if err != nil {
+		return nil, fmt.Errorf("%s: даты блоков не прочитаны: %w", mpSummaryName, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	dated := make(map[time.Time]bool)
+	for rows.Next() {
+		var date time.Time
+		if err = rows.Scan(&date); err != nil {
+			return nil, fmt.Errorf("%s: дата блоков не прочитана: %w", mpSummaryName, err)
+		}
+		dated[mpDay(date)] = true
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("%s: даты блоков не дочитаны: %w", mpSummaryName, err)
+	}
+	return dated, nil
 }
 
 // mpPastSummaries — прошлые решения таблицы. Дата приводится к календарному дню в UTC

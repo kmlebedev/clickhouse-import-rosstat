@@ -13,8 +13,9 @@ import (
 // то есть ровно на той правке, от которой он и должен падать.
 //
 // Контур резюме обсуждений пишется в три свои таблицы и читается агентом через три
-// витрины, поэтому пины идут по всем четырём контрактам: имя импортёра (шаг расписания),
-// DDL (схема, которую ждут витрины и агент) и Select витрин (что именно увидит агент).
+// витрины, поэтому пины идут по всем контрактам контура: имя импортёра (шаг расписания),
+// DDL (схема, которую ждут витрины и агент), Select витрин (что именно увидит агент),
+// решение «известен/не известен» (что перекачивается повторным прогоном) и дельта ставки.
 
 // TestMPSummaryImporterNameAndTable — имя импортёра и таблица-шапка: первое — контракт
 // CLICKHOUSE_IMPORT_STAT и id шага dagu/cbr.yaml, второе — контракт данных (витрина
@@ -151,6 +152,49 @@ func TestMPSummaryViewPins(t *testing.T) {
 				t.Errorf("витрина %s: колонка %s без комментария", c.name, col)
 			}
 		}
+	}
+}
+
+// TestMPSummaryMissingRefs — что прогон считает новым документом. Известен только документ,
+// записанный целиком: адрес в шапке И хотя бы одна строка блоков по дате его заседания.
+// Шапка пишется первым батчем, поэтому сбой батча блоков (или каналов) оставляет документ
+// с url в шапке без текста — по одному url следующий прогон ушёл бы в no-op, и потерянное
+// не вернулось бы никогда (спека §3.1 п. 2: сбой батчей слоя 1 = следующий прогон повторит).
+// Недописанный документ обязан попадать в missing: он перекачивается и перезаписывается
+// целиком, а ключи ReplacingMergeTree делают перезапись идемпотентной. Порядок индекса
+// (от новых к старым) при этом сохраняется — он же порядок скачивания.
+func TestMPSummaryMissingRefs(t *testing.T) {
+	day := func(d int, m time.Month) time.Time { return time.Date(2026, m, d, 0, 0, 0, 0, time.UTC) }
+
+	// Три карточки индекса: полный документ, документ с одной шапкой (блоков нет) и вовсе
+	// неизвестный. Даты заседания первых двух — из шапок таблицы, они же ключи блоков.
+	full := mpSummaryRef{Published: day(23, time.September), Href: "/dkp/mp_dec/decision_key_rate/summary_key_rate_23092026/"}
+	headerOnly := mpSummaryRef{Published: day(5, time.August), Href: "/dkp/mp_dec/decision_key_rate/summary_key_rate_05082026/"}
+	unknown := mpSummaryRef{Published: day(1, time.July), Href: "/dkp/mp_dec/decision_key_rate/summary_key_rate_01072026/"}
+	refs := []mpSummaryRef{full, headerOnly, unknown}
+
+	imported := map[string]time.Time{
+		cbrUrl + full.Href:       day(11, time.September),
+		cbrUrl + headerOnly.Href: day(24, time.July), // шапка есть — блоков по этой дате нет
+	}
+	blockDates := map[time.Time]bool{day(11, time.September): true}
+
+	got := mpMissingRefs(refs, imported, blockDates)
+	want := []mpSummaryRef{headerOnly, unknown}
+	if len(got) != len(want) {
+		t.Fatalf("missing: %d карточек %v, want %d %v: шапка без блоков обязана перекачиваться",
+			len(got), got, len(want), want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("missing[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+
+	// Обратное направление: у документа с блоками повторный прогон не скачивает ничего —
+	// иначе ежедневный шаг заново разбирал бы все 22 резюме.
+	if again := mpMissingRefs(refs[:1], imported, blockDates); len(again) != 0 {
+		t.Errorf("missing полного документа = %v, want пусто: известный документ не перекачивается", again)
 	}
 }
 
