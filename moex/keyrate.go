@@ -54,7 +54,7 @@ func fetchKeyrateSecids(ctx context.Context) ([]string, error) {
 // (= дата заседания Совета директоров ЦБ, по ставке которого рассчитывается индекс).
 func fetchKeyrateContract(ctx context.Context, secid string) (keyrateContract, error) {
 	if !validSecid(secid) {
-		return keyrateContract{}, fmt.Errorf("keyrate: invalid secid %q", secid)
+		return keyrateContract{}, fmt.Errorf("keyrate: недопустимый код серии %q", secid)
 	}
 	path := fmt.Sprintf(keyrateDescPath, secid)
 	block, err := getBlock(ctx, path, keyrateDescriptionBlock)
@@ -77,7 +77,7 @@ func fetchKeyrateContract(ctx context.Context, secid string) (keyrateContract, e
 // из блока history.cursor.
 func fetchKeyrateHistory(ctx context.Context, secid string, from time.Time) ([]keyrateDay, error) {
 	if !validSecid(secid) {
-		return nil, fmt.Errorf("keyrate: invalid secid %q", secid)
+		return nil, fmt.Errorf("keyrate: недопустимый код серии %q", secid)
 	}
 	path := fmt.Sprintf(keyrateHistoryPath, secid)
 	var days []keyrateDay
@@ -109,8 +109,7 @@ func fetchKeyrateHistory(ctx context.Context, secid string, from time.Time) ([]k
 // ставки МосБиржи (MOEX KEYRATE) по всем торгуемым сериям, паспорт каждой серии
 // (дата экспирации = дата заседания Совета директоров ЦБ) и витрина вменённых ожиданий
 // рынка по ставке. Цена серии — расчётная цена дня SETTLEPRICE в пунктах, равных п.п. ставки.
-type keyrateFutures struct {
-}
+type keyrateFutures struct{}
 
 const (
 	keyrateTable          = "keyrate_futures"
@@ -147,11 +146,13 @@ var keyrateView = util.View{
 	// Спот — скалярный подзапрос, а не CROSS JOIN: на одну связь меньше и нет зависимости от
 	// семантики CROSS JOIN. Алиас обязан стоять ДО FINAL (`AS f FINAL`): форма
 	// `keyrate_futures FINAL f` — SYNTAX_ERROR ClickHouse 26.10.
+	// nullIf(…, 0) — страховка от пустой cbr_key_rate: argMax по пустой таблице отдаёт 0,
+	// а не NULL, и без обёртки вменённое изменение выродилось бы в settle × 100 б.п.
 	Select: `SELECT f.date AS date, f.secid AS secid, c.series_name AS series_name,
        c.last_trade AS decision_date, f.settle AS settle, f.close AS close,
        f.volume AS volume, f.openposition AS openposition,
-       round(f.settle - (SELECT argMax(rate, date) FROM cbr_key_rate FINAL), 4) AS expected_change_pp,
-       round((f.settle - (SELECT argMax(rate, date) FROM cbr_key_rate FINAL)) * 100, 1) AS expected_change_bp
+       round(f.settle - nullIf((SELECT argMax(rate, date) FROM cbr_key_rate FINAL), 0), 4) AS expected_change_pp,
+       round((f.settle - nullIf((SELECT argMax(rate, date) FROM cbr_key_rate FINAL), 0)) * 100, 1) AS expected_change_bp
 FROM keyrate_futures AS f FINAL
 INNER JOIN keyrate_contract AS c FINAL ON f.secid = c.secid`,
 	Comment: "Вменённый рынком уровень ключевой ставки на дату заседания Совета директоров ЦБ по " +
@@ -159,19 +160,25 @@ INNER JOIN keyrate_contract AS c FINAL ON f.secid = c.secid`,
 		"(SETTLEPRICE), в п.п. ставки, decision_date — дата экспирации серии, она же дата заседания. " +
 		"Инструмент низколиквиден (открытые позиции — десятки контрактов), поэтому значение " +
 		"индикативно: это НЕ прогноз рынка и НЕ цена обязательства. LAST не используется: в дни без " +
-		"сделок ISS отдаёт по нему ноль, ожидания читать по settle. Описания серий — в v_series_catalog " +
-		"по source='moex'",
+		"сделок ISS отдаёт по нему ноль, ожидания читать по settle. expected_change_pp/bp равны NULL, " +
+		"пока cbr_key_rate пуста (ставка ещё не загружена) — это «неизвестно», а не нулевое изменение. " +
+		"Описания серий — в v_series_catalog по source='moex'",
 	Columns: map[string]string{
-		"date":               "Торговый день (Date)",
-		"secid":              "Код серии фьючерса KEYRATE (KKV6, KKZ6, KKG7, ...): 1 п.п. ставки = 1 000 ₽ (шаг цены 0,01 п.п. = 10 ₽)",
-		"series_name":        "Короткое имя серии по ISS (SHORTNAME), например KEYRATE-10.26 — вменённая ставка на заседание 10.2026",
-		"decision_date":      "Дата экспирации серии (LSTDELDATE); она же дата заседания Совета директоров ЦБ, по объявленной на нём ставке рассчитывается индекс KEYRATE",
-		"settle":             "Расчётная цена дня (SETTLEPRICE), п.п. ставки: вменённый рынком уровень ключевой ставки на дату заседания decision_date",
-		"close":              "Цена закрытия дня (CLOSE), п.п.; при отсутствии сделок не отражает ожиданий — читать settle",
-		"volume":             "Количество контрактов в сделках за день, шт.; 0 означает, что сделок не было и settle серии за этот день — не рыночное ожидание",
-		"openposition":       "Открытые позиции на конец дня, контрактов (индикатор ликвидности серии)",
-		"expected_change_pp": "Вменённое изменение ключевой ставки к дате заседания: settle − последняя известная ставка cbr_key_rate, п.п.; плюс — рынок ждёт повышения, минус — понижения. Тип Nullable(Float64) — артефакт скалярного подзапроса, NULL в значении не появляется",
-		"expected_change_bp": "То же в базисных пунктах: (settle − последняя известная ставка cbr_key_rate) × 100. Считается к последней ИЗВЕСТНОЙ ставке, а не к ставке на дату decision_date; при нулевом объёме серии значение нерепрезентативно, а при пустой cbr_key_rate подзапрос отдаёт 0 и значение вырождается. Вменённое рынком значение, а не прогноз и не ценовое обязательство",
+		"date":          "Торговый день (Date)",
+		"secid":         "Код серии фьючерса KEYRATE (KKV6, KKZ6, KKG7, ...): 1 п.п. ставки = 1 000 ₽ (шаг цены 0,01 п.п. = 10 ₽)",
+		"series_name":   "Короткое имя серии по ISS (SHORTNAME), например KEYRATE-10.26 — вменённая ставка на заседание 10.2026",
+		"decision_date": "Дата экспирации серии (LSTDELDATE); она же дата заседания Совета директоров ЦБ, по объявленной на нём ставке рассчитывается индекс KEYRATE",
+		"settle":        "Расчётная цена дня (SETTLEPRICE), п.п. ставки: вменённый рынком уровень ключевой ставки на дату заседания decision_date",
+		"close":         "Цена закрытия дня (CLOSE), п.п.; при отсутствии сделок не отражает ожиданий — читать settle",
+		"volume":        "Количество контрактов в сделках за день, шт.; 0 означает, что сделок не было и settle серии за этот день — не рыночное ожидание",
+		"openposition":  "Открытые позиции на конец дня, контрактов (индикатор ликвидности серии)",
+		"expected_change_pp": "Вменённое изменение ключевой ставки к дате заседания: settle − последняя известная ставка cbr_key_rate, п.п.; " +
+			"плюс — рынок ждёт повышения, минус — понижения. NULL означает, что ставка ещё не загружена (cbr_key_rate пуста): " +
+			"вменённое значение неизвестно, нулём его считать нельзя",
+		"expected_change_bp": "То же в базисных пунктах: (settle − последняя известная ставка cbr_key_rate) × 100. " +
+			"Считается к последней ИЗВЕСТНОЙ ставке, а не к ставке на дату decision_date; при нулевом объёме серии значение " +
+			"нерепрезентативно, а NULL (cbr_key_rate пуста, ставка ещё не загружена) значит «неизвестно», а не нулевое изменение. " +
+			"Вменённое рынком значение, а не прогноз и не ценовое обязательство",
 	},
 }
 
@@ -233,7 +240,9 @@ func (s *keyrateFutures) Import(ctx context.Context, conn driver.Conn) (count in
 		return count, err
 	}
 	// Инкремент — по каждой серии от её max(date) + 1 день: серии появляются и истекают
-	// в разные дни, общей даты у них нет.
+	// в разные дни, общей даты у них нет. okSeries считает серии, по которым дни действительно
+	// собраны, — по нему решается, публиковать ли прогон.
+	okSeries := 0
 	for _, c := range contracts {
 		stored, err := keyrateStoredDate(ctx, conn, c)
 		if err != nil {
@@ -247,6 +256,7 @@ func (s *keyrateFutures) Import(ctx context.Context, conn driver.Conn) (count in
 			seriesErrs = append(seriesErrs, fmt.Errorf("%s: %w", c.secid, err))
 			continue
 		}
+		okSeries++
 		for _, d := range days {
 			if err = dayBatch.Append(c.secid, d.date, d.close, d.settle, d.waprice, d.volume, d.numtrades, d.openposition); err != nil {
 				return count, err
@@ -254,14 +264,23 @@ func (s *keyrateFutures) Import(ctx context.Context, conn driver.Conn) (count in
 			count++
 		}
 	}
+	if okSeries == 0 {
+		// Сбой всех серий — ошибка импорта, и она возвращается ДО публикации: пустой прогон
+		// не должен отправлять батчи, писать каталог и пересоздавать витрину.
+		return count, errors.Join(
+			fmt.Errorf("keyrate_futures: дни не собраны ни по одной из %d серий", len(contracts)),
+			errors.Join(seriesErrs...))
+	}
 	if err = contractBatch.Send(); err != nil {
 		return count, err
 	}
 	if err = dayBatch.Send(); err != nil {
 		return count, err
 	}
-	log.Infof("Собрано %d дней по %d сериям KEYRATE", count, len(contracts))
-	// Каталог — после успешного Send: описания рядов появляются только у записанных серий.
+	log.Infof("Собрано %d дней по %d сериям KEYRATE", count, okSeries)
+	// Каталог — после успешного Send и на КАЖДУЮ обнаруженную серию (её паспорт), в том числе
+	// на серию без дневных итогов: инструмент существует, его ряд должен быть виден агенту ещё
+	// до первых сделок — так требует план («одна запись на обнаруженную серию»).
 	if err = util.UpsertSeriesCatalog(ctx, conn, keyrateSeriesMeta(contracts)); err != nil {
 		return count, err
 	}
@@ -284,7 +303,7 @@ func keyrateSince(c keyrateContract, stored time.Time) time.Time {
 // поэтому проверяется validSecid: код приходит из тела ответа ISS.
 func keyrateStoredDate(ctx context.Context, conn driver.Conn, c keyrateContract) (time.Time, error) {
 	if !validSecid(c.secid) {
-		return time.Time{}, fmt.Errorf("keyrate: invalid secid %q", c.secid)
+		return time.Time{}, fmt.Errorf("keyrate: недопустимый код серии %q", c.secid)
 	}
 	return lastDate(ctx, conn, keyrateTable, "secid = '"+c.secid+"'")
 }
