@@ -14,8 +14,9 @@ type cbrImporter struct {
 }
 
 // cbrImporters — единственная точка регистрации импортёров ЦБ: персональных
-// init()-append по файлам импортёров больше нет (13 точек стали одной). Порядок
-// повторяет dagu/cbr.yaml; в chimport.Stats порядок значения не имеет.
+// init()-append по файлам импортёров больше нет (14 записей в одном месте вместо
+// 13 прежних). Порядок повторяет dagu/cbr.yaml; в chimport.Stats порядок значения
+// не имеет.
 //
 // Таблицы записаны литералами намеренно. Ссылка на константу импортёра
 // (cbrKeyRateTable) сделала бы проверку префикса тавтологичной: тест сравнивал бы
@@ -24,9 +25,10 @@ type cbrImporter struct {
 // витрину v_cbr_macro к чужим данным. Литералы сверены с константами кода при
 // переносе регистрации.
 //
-// cbr_mp_survey — единственная запись с таблицей вне cbr_: ряды мониторинга
-// предприятий лежат в общей macro_series под source='cbr_survey'. Его Name()
-// отличается от имени таблицы, поэтому в реестре они записаны раздельно.
+// cbr_mp_survey и cbr_mo_br — записи с таблицей вне cbr_: ряды мониторинга
+// предприятий (source='cbr_survey') и макроэкономического опроса (source='cbr_mo_br')
+// лежат в общей macro_series. У обоих Name() отличается от имени таблицы, поэтому в
+// реестре они записаны раздельно.
 var cbrImporters = []cbrImporter{
 	{cbrCurrencyUSDImporter, "cbr_currency_usd"},
 	{householdsBMesImporter, "cbr_households_b_mes"},
@@ -41,6 +43,7 @@ var cbrImporters = []cbrImporter{
 	{cbrIndicatorsCpdImporter, "cbr_indicators_cpd"},
 	{cbrRuoniaImporter, "cbr_ruania"},
 	{mpSurveyImporter, "macro_series"},
+	{moBrImporter, "macro_series"},
 }
 
 // init — единственная регистрация импортёров ЦБ в chimport.Stats. Порядок
