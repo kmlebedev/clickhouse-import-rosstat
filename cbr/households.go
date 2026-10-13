@@ -1,68 +1,66 @@
 package cbr
 
 import (
-	"context"
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
+
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
-	"strconv"
-	"strings"
-	"time"
 )
 
 const (
-
 	// Показатель сбережений сектора «Домашние хозяйства» https://www.cbr.ru/statistics/macro_itm/households/
 	// https://www.cbr.ru/vfs/statistics/households/households_b.xlsx
 	cbrUrl                   = "https://www.cbr.ru"
 	cbrStatsUrl              = "https://www.cbr.ru/vfs/statistics"
 	householdsBMesXlsDataUrl = cbrStatsUrl + "/households/households_bm.xlsx"
-	householdsBMesTable      = "households_b_mes"
-	householdsBMesDdl        = `CREATE TABLE IF NOT EXISTS ` + householdsBMesTable + ` (
+	householdsBMesTable      = "cbr_households_b_mes"
+	householdsBMesDdl        = `CREATE TABLE IF NOT EXISTS %s (
 			  name LowCardinality(String)
 			, date Date
 			, balance Float32
 		) ENGINE = ReplacingMergeTree ORDER BY (name, date);
 	`
-	householdsBMesInsert     = "INSERT INTO " + householdsBMesTable + " VALUES (?, ?, ?)"
+	householdsBMesSheet      = "Балансы"
 	householdsBMesField      = "АКТИВЫ"
 	householdsBMesTimeLayout = "01-02-06"
 )
 
 type HouseholdsBMesStat struct {
+	util.ClickHouseImport
 }
 
-func (s *HouseholdsBMesStat) Name() string {
-	return householdsBMesTable
-}
-
-func (s *HouseholdsBMesStat) export() (table *[][]string, err error) {
-	var xlsx *excelize.File
-	if xlsx, err = util.GetXlsx(householdsBMesXlsDataUrl); err != nil {
-		return nil, err
+// householdsBMesImport разбирает лист «Балансы» и пишет точки в batch: name — название
+// строки файла как есть, date — первое число отчётного месяца, balance — значение.
+// Семантика прежнего export() сохранена: строки до раздела «АКТИВЫ» пропускаются, строки
+// с пустой или нулевой первой ячейкой (подстроки подразделов) пропускаются целиком, пустые
+// ячейки внутри строки пропускаются по одной. Пустой лист/отсутствие раздела/ноль точек —
+// ошибка (fail-fast): молчаливый прогон сотрёт ряд нулём строк.
+func householdsBMesImport(xlsx *excelize.File, batch driver.Batch) error {
+	rows, err := xlsx.GetRows(householdsBMesSheet)
+	if err != nil {
+		return err
 	}
-	defer func() { _ = xlsx.Close() }()
-	table = new([][]string)
-	var rows [][]string
-	if rows, err = xlsx.GetRows("Балансы"); err != nil {
-		return nil, err
-	}
-	fieldFound := 0
+	headerRow, fieldFound := 0, false
+	count := 0
 	// Строки с годами
 	for i, row := range rows {
 		if len(row) == 0 {
 			continue
 		}
-		//fmt.Printf("name '%s'\n", row[0])
-		if strings.TrimSpace(row[0]) == householdsBMesField {
-			fieldFound = i - 1
+		if i > 0 && strings.TrimSpace(row[0]) == householdsBMesField {
+			headerRow, fieldFound = i-1, true
 			continue
 		}
-		if fieldFound == 0 {
+		if !fieldFound {
 			continue
 		}
-		if len(row) < 1 {
+		// строка из одной ячейки: заголовок колонок не прочитан, дальше смысла нет
+		if len(row) < 2 {
 			break
 		}
 		if strings.TrimSpace(row[1]) == "" || strings.TrimSpace(row[1]) == "0" {
@@ -73,47 +71,40 @@ func (s *HouseholdsBMesStat) export() (table *[][]string, err error) {
 			if cell == "" {
 				continue
 			}
-			if j+1 >= len(rows[fieldFound]) {
+			if j+1 >= len(rows[headerRow]) {
 				break
 			}
-			//fmt.Printf("name %s date %v cell %s\n", row[0], rows[fieldFound][j+1], cell)
-			balance := strings.ReplaceAll(strings.TrimSpace(cell), ",", "")
-			if _, err = strconv.ParseFloat(balance, 32); err != nil {
-				return nil, err
+			date, err := time.Parse(householdsBMesTimeLayout, strings.TrimSpace(rows[headerRow][j+1]))
+			if err != nil {
+				return fmt.Errorf("%s: дата колонки %q: %w", householdsBMesTable, rows[headerRow][j+1], err)
 			}
-			//                                name           year
-			*table = append(*table, []string{row[0], rows[fieldFound][j+1], balance})
+			balance := strings.ReplaceAll(strings.TrimSpace(cell), ",", "")
+			value, err := strconv.ParseFloat(balance, 32)
+			if err != nil {
+				return fmt.Errorf("%s: строка %q, дата %s: значение %q: %w",
+					householdsBMesTable, row[0], date.Format("2006-01-02"), balance, err)
+			}
+			if err = batch.Append(row[0], date, value); err != nil {
+				return err
+			}
+			count++
 		}
 	}
-
-	return table, nil
-}
-
-func (s *HouseholdsBMesStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	if err = conn.Exec(ctx, householdsBMesDdl); err != nil {
-		return count, err
+	if !fieldFound {
+		return fmt.Errorf("%s: в листе «%s» не найдена строка «%s» с датами колонок", householdsBMesTable, householdsBMesSheet, householdsBMesField)
 	}
-	var table *[][]string
-	if table, err = s.export(); err != nil {
-		return count, err
+	if count == 0 {
+		return fmt.Errorf("%s: разбор листа «%s» не дал ни одной точки", householdsBMesTable, householdsBMesSheet)
 	}
-	for _, row := range *table {
-		// Calling Parse() method with its parameters
-		date, err := time.Parse(householdsBMesTimeLayout, row[1])
-		if err != nil {
-			return count, err
-		}
-		if err = conn.Exec(ctx, householdsBMesInsert, row[0], date, row[2]); err != nil {
-			return count, err
-		}
-		count++
-	}
-	if err = publishSeries(ctx, conn, householdsBMesSeriesMeta); err != nil {
-		return count, err
-	}
-	return count, nil
+	return nil
 }
 
 func init() {
-	chimport.Stats = append(chimport.Stats, &HouseholdsBMesStat{})
+	householdsBMes := HouseholdsBMesStat{ClickHouseImport: util.ClickHouseImport{
+		TableName:   householdsBMesTable,
+		CreateTable: []string{householdsBMesDdl},
+		DataUrl:     householdsBMesXlsDataUrl,
+		ImportFunc:  householdsBMesImport,
+	}}
+	chimport.Stats = append(chimport.Stats, &publishedStat{ImportStat: &householdsBMes, meta: householdsBMesSeriesMeta})
 }

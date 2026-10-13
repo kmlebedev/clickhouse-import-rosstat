@@ -13,7 +13,7 @@ var cbrMacroView = util.View{
 	Tables: []string{
 		"cbr_key_rate", "cbr_currency_usd", "cbr_gold", "cbr_ruania", "cbr_m2", "cbr_credit_m2x",
 		"cbr_bank_int_rate", "cbr_indicators_cpd", "cbr_infl_exp", "cbr_loans_to_individuals",
-		"cbr_loans_to_corporations", "households_b_mes",
+		"cbr_loans_to_corporations", "cbr_households_b_mes",
 	},
 	Select: `SELECT 'cbr' AS source, 'cbr_key_rate' AS series, date, toFloat64(rate) AS value FROM cbr_key_rate FINAL
 UNION ALL SELECT 'cbr', 'cbr_currency_usd', date, toFloat64(price) FROM cbr_currency_usd FINAL
@@ -32,7 +32,7 @@ UNION ALL SELECT 'cbr', toString(name), date, toFloat64(value) FROM cbr_indicato
 UNION ALL SELECT 'cbr', toString(name), date, toFloat64(value) FROM cbr_infl_exp FINAL
 UNION ALL SELECT 'cbr', toString(name), date, toFloat64(balance) FROM cbr_loans_to_individuals FINAL
 UNION ALL SELECT 'cbr', toString(name), date, toFloat64(balance) FROM cbr_loans_to_corporations FINAL
-UNION ALL SELECT 'cbr', toString(name), date, toFloat64(balance) FROM households_b_mes FINAL`,
+UNION ALL SELECT 'cbr', toString(name), date, toFloat64(balance) FROM cbr_households_b_mes FINAL`,
 	Comment: "Макроряды ЦБ РФ: ключевая ставка, курс USD, учётная цена золота, RUONIA, М2 SA, кредиты физлицам и юрлицам, ставки по вкладам, ИПЦ (темпы), инфляционные ожидания, балансы домашних хозяйств. Перед расчётом читать v_series_catalog по (source, series): единицы и привязка даты различаются между рядами",
 	Columns: map[string]string{
 		"source": "Импортёр-источник: всегда cbr",
