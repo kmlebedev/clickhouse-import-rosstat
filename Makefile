@@ -290,6 +290,11 @@ deploy-staging-mcp: staging-precheck
 deploy-staging: deploy-staging-binary deploy-staging-dagu deploy-staging-mcp
 	ssh $(STAGING_HOST) 'install -d -m 755 /root/dagu'
 	scp dagu/*.yaml $(STAGING_HOST):/root/dagu/
+	# scp копирует, но не удаляет: снятый с репозитория DAG остался бы на хосте и продолжил бы
+	# выполняться по своему расписанию параллельно новой цепочке (первым удалён dagu/surveys.yaml —
+	# cbr_mp_survey переехал 13-м шагом в цепочку dagu/cbr.yaml 09:17 МСК, а старый файл запускал бы
+	# его в 09:47). Список пополнять при каждом удалении DAG из dagu/, иначе прунинг неполон.
+	ssh $(STAGING_HOST) 'rm -f /root/dagu/surveys.yaml'
 	@$(MAKE) deploy-staging-preflight --no-print-directory
 	ssh $(STAGING_HOST) 'systemctl enable --now dagu mcp-clickhouse'
 	@$(MAKE) deploy-staging-smoke --no-print-directory || { \
