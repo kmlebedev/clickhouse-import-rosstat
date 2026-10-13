@@ -181,7 +181,7 @@
 - Consumes: всё выше; `getPage`/`cbrUrl` (`cbr/links.go`, `cbr/households.go`).
 - Produces: `mpSummaryImporter` с `Name() == "cbr_mp_summary"`; витрины `v_cbr_mp_summary`, `v_cbr_mp_summary_blocks`, `v_cbr_mp_summary_channels`; шаг dagu `cbr_mp_summary`.
 
-- [ ] **Step 1: Написать тесты** (`cbr/mp_summary_test.go`): `TestMPSummaryImporterNameAndTable` (Name == "cbr_mp_summary", TableName == "cbr_mp_summary" — литералами); `TestMPSummaryDdlPins` — три DDL-литерала содержат `cbr_mp_summary`, `cbr_mp_summary_block`, `cbr_mp_summary_channel`, ReplacingMergeTree и ожидаемые ключи ORDER BY; `TestMPSummaryViewPins` — `Select` трёх витрин содержит фильтры (`source`-фильтров нет — таблицы свои; проверить `FINAL` и имена таблиц); в `cbr/importers_test.go` — реестр 15 записей и `dagu/cbr.yaml` содержит `CLICKHOUSE_IMPORT_STAT=cbr_mp_summary`.
+- [ ] **Step 1: Написать тесты** (`cbr/mp_summary_test.go`): `TestMPSummaryImporterNameAndTable` (Name == "cbr_mp_summary", TableName == "cbr_mp_summary" — литералами); `TestMPSummaryDdlPins` — три DDL-литерала содержат `cbr_mp_summary`, `cbr_mp_summary_block`, `cbr_mp_summary_channel`, ReplacingMergeTree и ожидаемые ключи ORDER BY; `TestMPSummaryViewPins` — `Select` трёх витрин содержит фильтры (`source`-фильтров нет — таблицы свои; проверить `FINAL` и имена таблиц); в `cbr/importers_test.go` — реестр 15 записей: запись `{mpSummaryImporter, "cbr_mp_summary", ""}` (третья колонка пуста — префлайта нет, дельта по индексу; тест (д) post-#55 требует пустые обе стороны) и явная обратная проверка `scheduled["cbr_mp_summary"]` по образцу владельцев `macro_series` (иначе пропавший шаг dagu не заметит ни один тест).
 
 - [ ] **Step 2: Прогнать — FAIL**.
 
@@ -194,7 +194,7 @@
   6. `log.Infof` итогов: «резюме: %d новых, блоков: %d, каналов regex: %d, LLM: %d»; `UpsertSeriesCatalog` не нужен; витрины — `util.CreateView` × 3 (в конце);
   7. `return count, nil` (count = сумма Append'ов).
 - DDL-литералы — дословно из спеки §3.3; Go-структура `mpSummaryStat{ util.ClickHouseImport }` с `Name()` override (как `mpSurveyStat`).
-- Проводка: `cbr/importers.go` — `{mpSummaryImporter, "cbr_mp_summary"}` (обновить комментарий про 15 записей и `Name()==TableName`); `dagu/cbr.yaml` — шаг-шаблон существующих; `sql/mcp_kimi_reader.sql` — `GRANT SELECT ON default.v_cbr_mp_summary TO kimi_reader;` ×3; `scripts/mcp_check.py` — по образцу `v_cbr_mo_br`: чтения `v_cbr_mp_summary` (>0), `v_cbr_mp_summary_blocks` (>0), `v_cbr_mp_summary_channels` (>0) и `ACCESS_DENIED`-проверки трёх сырых таблиц.
+- Проводка: `cbr/importers.go` — 15-я запись `{mpSummaryImporter, "cbr_mp_summary", ""}` (третья колонка — литерал `countPoints`; пусто: префлайта нет сознательно — дельта по индексу, спека §3.1; обновить комментарии реестра: «14 записей» → 15); `dagu/cbr.yaml` — шаг-шаблон существующих; `sql/mcp_kimi_reader.sql` — `GRANT SELECT ON default.v_cbr_mp_summary TO kimi_reader;` ×3; `scripts/mcp_check.py` — по образцу `v_cbr_mo_br`: чтения `v_cbr_mp_summary` (>0), `v_cbr_mp_summary_blocks` (>0), `v_cbr_mp_summary_channels` (>0) и `ACCESS_DENIED`-проверки трёх сырых таблиц.
 
 - [ ] **Step 4: Прогнать — PASS**: `go test ./cbr/ -count=1 && go build ./... && gofmt -l cbr/ && golangci-lint run ./cbr/...`; `grep -c "  - id:" dagu/cbr.yaml` → 15; `dagu validate dagu/cbr.yaml` → exit 0; `python3 -m py_compile scripts/mcp_check.py`.
 
