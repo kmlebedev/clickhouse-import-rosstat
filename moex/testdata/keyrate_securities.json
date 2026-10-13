@@ -1,0 +1,12 @@
+{
+"securities": {
+	"columns": ["secid", "shortname", "regnumber", "name", "isin", "is_traded", "emitent_id", "emitent_title", "emitent_inn", "emitent_okpo", "type", "group", "primary_boardid", "marketprice_boardid"], 
+	"data": [
+		["KEYRATE", "KEYRATE", null, "Индекс МосБиржи Ключевой ставки", null, 1, null, null, null, null, "stock_index_ot", "stock_index", "RTSI", null],
+		["KKG7", "KEYRATE-2.27", null, "Фьючерсный контракт KEYRATE-2.27", null, 1, null, null, null, null, "futures", "futures_forts", "RFUD", null],
+		["KKV6", "KEYRATE-10.26", null, "Фьючерсный контракт KEYRATE-10.26", null, 1, null, null, null, null, "futures", "futures_forts", "RFUD", null],
+		["KKV6KKZ6", "KEYRATE-10.26-12.26", null, "KEYRATE-10.26-12.26", null, 0, null, null, null, null, "futures_spread", "futures_forts", "RFUD", null],
+		["KKZ6", "KEYRATE-12.26", null, "Фьючерсный контракт KEYRATE-12.26", null, 1, null, null, null, null, "futures", "futures_forts", "RFUD", null],
+		["KKZ6KKG7", "KEYRATE-12.26-2.27", null, "KEYRATE-12.26-2.27", null, null, null, null, null, null, "futures_spread", "futures_forts", "RFUD", null]
+	]
+}}
