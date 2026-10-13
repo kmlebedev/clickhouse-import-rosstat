@@ -30,6 +30,10 @@ const (
 	// cbrM2Column — колонка «М2 SA» (0-based индекс 22) с уровнем денежной массы; имя ряда
 	// берётся из заголовка этой же колонки.
 	cbrM2Column = 22
+	// cbrM2CountPoints — количественный чек версии (спека §3.5): число точек своего
+	// ряда. Литерал, как и таблица: запрос — часть утверждения «эти точки мои».
+	// FINAL обязателен — иначе count() считал бы несмёрженные части.
+	cbrM2CountPoints = "SELECT count() FROM cbr_m2 FINAL"
 )
 
 type cbrM2Stat struct {
@@ -86,9 +90,10 @@ func cbrM2Import(xlsx *excelize.File, batch driver.Batch) error {
 // cbrM2Importer — сезонно сглаженные денежные агрегаты; регистрируется реестром
 // cbr/importers.go.
 var cbrM2Importer = &cbrM2Stat{ClickHouseImport: util.ClickHouseImport{
-	TableName:   cbrM2Table,
-	CreateTable: []string{cbrM2Ddl},
-	DataUrl:     cbrM2XlsDataUrl,
-	ImportFunc:  cbrM2Import,
-	AfterImport: afterCbrMacro(cbrM2SeriesMeta),
+	TableName:              cbrM2Table,
+	CreateTable:            []string{cbrM2Ddl},
+	DataUrl:                cbrM2XlsDataUrl,
+	ImportFunc:             cbrM2Import,
+	AfterImport:            afterCbrMacro(cbrM2SeriesMeta),
+	PublicationCountPoints: cbrM2CountPoints,
 }}

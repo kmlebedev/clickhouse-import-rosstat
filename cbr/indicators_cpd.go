@@ -22,6 +22,11 @@ const indicatorsCpdUrl = "https://www.cbr.ru/statistics/ddkp/aipd/"
 // чтобы дежурный по логу видел, чей ряд остался без обновления.
 const cbrIndicatorsCpdTable = "cbr_indicators_cpd"
 
+// cbrIndicatorsCpdCountPoints — количественный чек версии (спека §3.5): число точек
+// своего ряда. Литерал, как и таблица: запрос — часть утверждения «эти точки мои».
+// FINAL обязателен — иначе count() считал бы несмёрженные части.
+const cbrIndicatorsCpdCountPoints = "SELECT count() FROM cbr_indicators_cpd FINAL"
+
 // indicatorsCpdLinkSelector — позиционный путь к ссылке на indicators_cpd.xlsx на
 // странице aipd; сохраняем как есть, состав детей страницы не менялся.
 const indicatorsCpdLinkSelector = ".container-fluid > div > div:nth-child(6) > div > div.body-2.document-regular_main > div > div > a.referenceable"
@@ -55,8 +60,9 @@ var cbrIndicatorsCpdImporter = &indicatorsCpdStat{ClickHouseImport: util.ClickHo
 			, date Date
 			, value Float32
 		) ENGINE = ReplacingMergeTree ORDER BY (name, date);`},
-	ImportFunc:  indicatorsCpdImport,
-	AfterImport: afterCbrMacro(cbrIndicatorsCpdSeriesMeta),
+	ImportFunc:             indicatorsCpdImport,
+	AfterImport:            afterCbrMacro(cbrIndicatorsCpdSeriesMeta),
+	PublicationCountPoints: cbrIndicatorsCpdCountPoints,
 }}
 
 // https://www.cbr.ru/analytics/dkp/dinamic/

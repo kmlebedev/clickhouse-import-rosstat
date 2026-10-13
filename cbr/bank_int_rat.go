@@ -17,6 +17,10 @@ import (
 const (
 	cbrBankIntRateTable = "cbr_bank_int_rate"
 	cbrBankIntRateSheet = "в рублях"
+	// cbrBankIntRateCountPoints — количественный чек версии (спека §3.5): число
+	// точек своего ряда. Литерал, как и таблица: запрос — часть утверждения «эти
+	// точки мои». FINAL обязателен — иначе count() считал бы несмёрженные части.
+	cbrBankIntRateCountPoints = "SELECT count() FROM cbr_bank_int_rate FINAL"
 )
 
 // cbrBankIntRate — ставки по вкладам и кредитам: таблица, DDL и разбор листа «в рублях»,
@@ -75,7 +79,8 @@ var cbrBankIntRate = util.ClickHouseImport{
 		}
 		return nil
 	},
-	AfterImport: afterCbrMacro(cbrBankIntRateSeriesMeta),
+	AfterImport:            afterCbrMacro(cbrBankIntRateSeriesMeta),
+	PublicationCountPoints: cbrBankIntRateCountPoints,
 }
 
 // cbrBankIntRateImporter — ставки по вкладам и кредитам; регистрируется реестром

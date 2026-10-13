@@ -20,6 +20,10 @@ const inflExpUrl = "https://www.cbr.ru/analytics/dkp/inflationary_expectations/"
 const (
 	cbrInflExpTable = "cbr_infl_exp"
 	inflExpSheet    = "Данные для графиков"
+	// cbrInflExpCountPoints — количественный чек версии (спека §3.5): число точек
+	// своего ряда. Литерал, как и таблица: запрос — часть утверждения «эти точки
+	// мои». FINAL обязателен — иначе count() считал бы несмёрженные части.
+	cbrInflExpCountPoints = "SELECT count() FROM cbr_infl_exp FINAL"
 )
 
 // inflExpLinkSelector — ссылка на актуальный XLSX в блоке версий. Имена файлов и id
@@ -117,6 +121,9 @@ func (s *inflExpStat) Import(ctx context.Context, conn driver.Conn) (count int64
 
 // cbrInflExpImporter — инфляционные ожидания: ссылка на актуальный XLSX ищется в
 // Import() (ARCHITECTURE.md §8.6), регистрация — реестром cbr/importers.go.
+// Своего кода префлайта у импортёра нет: Import() выставляет s.DataUrl до
+// делегирования в шаблон, а HEAD и количественный чек шаблон делает по готовому URL
+// (так же устроены cbr_credit_m2x и cbr_indicators_cpd).
 var cbrInflExpImporter = &inflExpStat{ClickHouseImport: util.ClickHouseImport{
 	TableName: cbrInflExpTable,
 	CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (
@@ -124,6 +131,7 @@ var cbrInflExpImporter = &inflExpStat{ClickHouseImport: util.ClickHouseImport{
 			, date Date
 			, value Float32
 		) ENGINE = ReplacingMergeTree ORDER BY (name, date);`},
-	ImportFunc:  inflExpImport,
-	AfterImport: afterCbrMacro(cbrInflExpSeriesMeta),
+	ImportFunc:             inflExpImport,
+	AfterImport:            afterCbrMacro(cbrInflExpSeriesMeta),
+	PublicationCountPoints: cbrInflExpCountPoints,
 }}
