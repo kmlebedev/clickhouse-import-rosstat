@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	log "github.com/sirupsen/logrus"
 	"github.com/xuri/excelize/v2"
@@ -84,12 +83,14 @@ func cbrM2Import(xlsx *excelize.File, batch driver.Batch) error {
 	return nil
 }
 
-func init() {
-	cbrM2 := cbrM2Stat{ClickHouseImport: util.ClickHouseImport{
+// cbrM2Importer — сезонно сглаженные денежные агрегаты; регистрируется реестром
+// cbr/importers.go.
+var cbrM2Importer = &publishedStat{
+	ImportStat: &cbrM2Stat{ClickHouseImport: util.ClickHouseImport{
 		TableName:   cbrM2Table,
 		CreateTable: []string{cbrM2Ddl},
 		DataUrl:     cbrM2XlsDataUrl,
 		ImportFunc:  cbrM2Import,
-	}}
-	chimport.Stats = append(chimport.Stats, &publishedStat{ImportStat: &cbrM2, meta: cbrM2SeriesMeta})
+	}},
+	meta: cbrM2SeriesMeta,
 }

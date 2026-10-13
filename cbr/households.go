@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
 )
@@ -99,12 +98,14 @@ func householdsBMesImport(xlsx *excelize.File, batch driver.Batch) error {
 	return nil
 }
 
-func init() {
-	householdsBMes := HouseholdsBMesStat{ClickHouseImport: util.ClickHouseImport{
+// householdsBMesImporter — балансы сектора «Домашние хозяйства»; регистрируется
+// реестром cbr/importers.go.
+var householdsBMesImporter = &publishedStat{
+	ImportStat: &HouseholdsBMesStat{ClickHouseImport: util.ClickHouseImport{
 		TableName:   householdsBMesTable,
 		CreateTable: []string{householdsBMesDdl},
 		DataUrl:     householdsBMesXlsDataUrl,
 		ImportFunc:  householdsBMesImport,
-	}}
-	chimport.Stats = append(chimport.Stats, &publishedStat{ImportStat: &householdsBMes, meta: householdsBMesSeriesMeta})
+	}},
+	meta: householdsBMesSeriesMeta,
 }

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	log "github.com/sirupsen/logrus"
 )
@@ -114,11 +113,13 @@ func cbrGoldCraw(crawUrl string, conn driver.Conn) (count int64, err error) {
 	return count, nil
 }
 
-func init() {
-	cbrGold := cbrGold{ClickHouseImport: util.ClickHouseImport{
+// cbrGoldImporter — учётные цены золота (XML-краулер xml_metall.asp);
+// регистрируется реестром cbr/importers.go.
+var cbrGoldImporter = &publishedStat{
+	ImportStat: &cbrGold{ClickHouseImport: util.ClickHouseImport{
 		TableName:   cbrGoldTable,
 		CreateTable: []string{cbrGoldDdl},
 		CrawFunc:    cbrGoldCraw,
-	}}
-	chimport.Stats = append(chimport.Stats, &publishedStat{ImportStat: &cbrGold, meta: cbrGoldSeriesMeta})
+	}},
+	meta: cbrGoldSeriesMeta,
 }

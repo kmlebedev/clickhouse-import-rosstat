@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
 	"strconv"
@@ -87,6 +86,10 @@ func (s *cbrCreditM2xStat) Import(ctx context.Context, conn driver.Conn) (count 
 	return s.ClickHouseImport.Import(ctx, conn)
 }
 
-func init() {
-	chimport.Stats = append(chimport.Stats, &publishedStat{ImportStat: &cbrCreditM2xStat{ClickHouseImport: cbrСreditM2x}, meta: cbrCreditM2xSeriesMeta})
+// cbrCreditM2xImporter — кредит экономике и денежная масса: адрес актуального
+// credit_m2x.xlsx берётся со страницы ДКС в Import() (ARCHITECTURE.md §8.6),
+// регистрация — реестром cbr/importers.go.
+var cbrCreditM2xImporter = &publishedStat{
+	ImportStat: &cbrCreditM2xStat{ClickHouseImport: cbrСreditM2x},
+	meta:       cbrCreditM2xSeriesMeta,
 }

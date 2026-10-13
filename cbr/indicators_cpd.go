@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
 	"slices"
@@ -43,8 +42,10 @@ func (s *indicatorsCpdStat) Import(ctx context.Context, conn driver.Conn) (count
 	return s.ClickHouseImport.Import(ctx, conn)
 }
 
-func init() {
-	indicatorsCpd := indicatorsCpdStat{ClickHouseImport: util.ClickHouseImport{
+// cbrIndicatorsCpdImporter — сезонно сглаженная динамика потребительских цен;
+// регистрируется реестром cbr/importers.go.
+var cbrIndicatorsCpdImporter = &publishedStat{
+	ImportStat: &indicatorsCpdStat{ClickHouseImport: util.ClickHouseImport{
 		TableName: "cbr_indicators_cpd",
 		CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (
               name LowCardinality(String)
@@ -52,8 +53,8 @@ func init() {
 			, value Float32
 		) ENGINE = ReplacingMergeTree ORDER BY (name, date);`},
 		ImportFunc: indicatorsCpdImport,
-	}}
-	chimport.Stats = append(chimport.Stats, &publishedStat{ImportStat: &indicatorsCpd, meta: cbrIndicatorsCpdSeriesMeta})
+	}},
+	meta: cbrIndicatorsCpdSeriesMeta,
 }
 
 // https://www.cbr.ru/analytics/dkp/dinamic/

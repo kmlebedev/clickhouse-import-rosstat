@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	log "github.com/sirupsen/logrus"
 	"github.com/xuri/excelize/v2"
@@ -122,12 +121,14 @@ func cbrLoansImport(xlsx *excelize.File, batch driver.Batch, table, sheet, marke
 	return nil
 }
 
-func init() {
-	loansToCorporations := LoansToCorporationsStat{ClickHouseImport: util.ClickHouseImport{
+// loansToCorporationsImporter — объём новых кредитов юрлицам; регистрируется
+// реестром cbr/importers.go.
+var loansToCorporationsImporter = &publishedStat{
+	ImportStat: &LoansToCorporationsStat{ClickHouseImport: util.ClickHouseImport{
 		TableName:   loansToCorporationsTable,
 		CreateTable: []string{loansToCorporationsDdl},
 		DataUrl:     loansToCorporationsXlsDataUrl,
 		ImportFunc:  cbrLoansToCorpImport,
-	}}
-	chimport.Stats = append(chimport.Stats, &publishedStat{ImportStat: &loansToCorporations, meta: cbrLoansToCorpSeriesMeta})
+	}},
+	meta: cbrLoansToCorpSeriesMeta,
 }

@@ -10,7 +10,6 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/PuerkitoBio/goquery"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	log "github.com/sirupsen/logrus"
 )
@@ -121,11 +120,13 @@ func cbrKeyRateCraw(crawUrl string, conn driver.Conn) (count int64, err error) {
 	return count, nil
 }
 
-func init() {
-	cbrKeyRate := cbrKeyRate{ClickHouseImport: util.ClickHouseImport{
+// cbrKeyRateImporter — ключевая ставка; краулер HTML-таблицы. Регистрируется
+// реестром cbr/importers.go вместе с остальными импортёрами пакета.
+var cbrKeyRateImporter = &publishedStat{
+	ImportStat: &cbrKeyRate{ClickHouseImport: util.ClickHouseImport{
 		TableName:   cbrKeyRateTable,
 		CreateTable: []string{cbrKeyRateDdl},
 		CrawFunc:    cbrKeyRateCraw,
-	}}
-	chimport.Stats = append(chimport.Stats, &publishedStat{ImportStat: &cbrKeyRate, meta: cbrKeyRateSeriesMeta})
+	}},
+	meta: cbrKeyRateSeriesMeta,
 }

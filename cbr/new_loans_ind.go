@@ -2,7 +2,6 @@ package cbr
 
 import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
 )
@@ -35,12 +34,14 @@ func cbrLoansToIndImport(xlsx *excelize.File, batch driver.Batch) error {
 	return cbrLoansImport(xlsx, batch, loansToIndTable, loansToIndSheet, loansToIndField)
 }
 
-func init() {
-	loansToIndividuals := LoansToindividualsStat{ClickHouseImport: util.ClickHouseImport{
+// loansToIndividualsImporter — объём новых кредитов физлицам (региональный разрез);
+// регистрируется реестром cbr/importers.go.
+var loansToIndividualsImporter = &publishedStat{
+	ImportStat: &LoansToindividualsStat{ClickHouseImport: util.ClickHouseImport{
 		TableName:   loansToIndTable,
 		CreateTable: []string{loansToIndDdl},
 		DataUrl:     loansToIndXlsDataUrl,
 		ImportFunc:  cbrLoansToIndImport,
-	}}
-	chimport.Stats = append(chimport.Stats, &publishedStat{ImportStat: &loansToIndividuals, meta: cbrLoansToIndSeriesMeta})
+	}},
+	meta: cbrLoansToIndSeriesMeta,
 }

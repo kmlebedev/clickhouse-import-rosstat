@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	log "github.com/sirupsen/logrus"
 )
@@ -119,11 +118,13 @@ func cbrCurrencyUSDCraw(crawUrl string, conn driver.Conn) (count int64, err erro
 	return count, nil
 }
 
-func init() {
-	cbrCurrencyUSD := cbrCurrencyUSD{ClickHouseImport: util.ClickHouseImport{
+// cbrCurrencyUSDImporter — официальный курс USD; регистрируется реестром
+// cbr/importers.go.
+var cbrCurrencyUSDImporter = &publishedStat{
+	ImportStat: &cbrCurrencyUSD{ClickHouseImport: util.ClickHouseImport{
 		TableName:   cbrCurrencyUSDTable,
 		CreateTable: []string{cbrCurrencyUSDDdl},
 		CrawFunc:    cbrCurrencyUSDCraw,
-	}}
-	chimport.Stats = append(chimport.Stats, &publishedStat{ImportStat: &cbrCurrencyUSD, meta: cbrCurrencyUSDSeriesMeta})
+	}},
+	meta: cbrCurrencyUSDSeriesMeta,
 }

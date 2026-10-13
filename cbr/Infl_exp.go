@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
 	"strconv"
@@ -95,8 +94,10 @@ func (s *inflExpStat) Import(ctx context.Context, conn driver.Conn) (count int64
 	return s.ClickHouseImport.Import(ctx, conn)
 }
 
-func init() {
-	inflExp := inflExpStat{ClickHouseImport: util.ClickHouseImport{
+// cbrInflExpImporter — инфляционные ожидания: ссылка на актуальный XLSX ищется в
+// Import() (ARCHITECTURE.md §8.6), регистрация — реестром cbr/importers.go.
+var cbrInflExpImporter = &publishedStat{
+	ImportStat: &inflExpStat{ClickHouseImport: util.ClickHouseImport{
 		TableName: "cbr_infl_exp",
 		CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (
               name LowCardinality(String)
@@ -104,6 +105,6 @@ func init() {
 			, value Float32
 		) ENGINE = ReplacingMergeTree ORDER BY (name, date);`},
 		ImportFunc: inflExpImport,
-	}}
-	chimport.Stats = append(chimport.Stats, &publishedStat{ImportStat: &inflExp, meta: cbrInflExpSeriesMeta})
+	}},
+	meta: cbrInflExpSeriesMeta,
 }

@@ -2,7 +2,6 @@ package cbr
 
 import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	log "github.com/sirupsen/logrus"
 	"github.com/xuri/excelize/v2"
@@ -60,6 +59,9 @@ var cbrBankIntRate = util.ClickHouseImport{
 	},
 }
 
-func init() {
-	chimport.Stats = append(chimport.Stats, &publishedStat{ImportStat: &cbrBankIntRate, meta: cbrBankIntRateSeriesMeta})
+// cbrBankIntRateImporter — ставки по вкладам и кредитам; регистрируется реестром
+// cbr/importers.go.
+var cbrBankIntRateImporter = &publishedStat{
+	ImportStat: &cbrBankIntRate,
+	meta:       cbrBankIntRateSeriesMeta,
 }
