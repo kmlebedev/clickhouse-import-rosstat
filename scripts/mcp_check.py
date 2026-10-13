@@ -433,6 +433,15 @@ async def check(params, server_log):
             failed += not expect("каталог cbr_mo_br непуст", (mobr_catalog_n or 0) > 0,
                                  f"записей: {mobr_catalog_n}" if mobr_catalog_rows is not None else f"каталог не читается: {mobr_catalog[:200]}")
 
+            # Служебная source_publications (точки контроля публикаций, шаг 1.5) агенту
+            # не выдана — как сырые macro_series и cbr_households_b_mes: читать контур
+            # агент обязан только через витрины, а версии файлов и их отпечатки —
+            # внутренняя кухня конвейера, а не данные для прогноза.
+            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM source_publications"}))
+            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+            failed += not expect("служебная source_publications закрыта", denied,
+                                 "отказ ClickHouse 497 на source_publications (ожидаемо)" if denied else raw[:200])
+
             # Общая витрина контура ЦБ (правило 11, фаза 3 роадмапа): v_cbr_macro читается
             # агентом, а сырая cbr_households_b_mes — источник её рядов по домохозяйствам —
             # агенту закрыта (как macro_series и bold_fund_snapshot: читать контур агент

@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS source_publications (
 
 1. `findLink` → URL, `name` → `HeadFingerprint` → к `source_publications` (`SELECT … FINAL WHERE source/name/fingerprint`).
 2. **Версия известна** → количественный чек: `SELECT count() FROM macro_series FINAL WHERE source='cbr_mo_br'` = сохранённому `points`? Да → лог `no-op: версия <fingerprint> уже импортирована, N точек на месте`, импорт не делается; возвращается проверенное N. Нет → полный импорт (self-heal).
-3. **Версия неизвестна** (или HEAD недоступен — fallback: полный импорт без записи версии, документируется) → `GetXlsx` → `parseMoBr` → DDL `macro_series` → батч → **`SavePublication`** (только после успешного `Send`) → `UpsertSeriesCatalog` → `CreateView` → в лог уже реальный `Imported N rows`.
+3. **Версия неизвестна** (или HEAD недоступен — fallback: полный импорт без записи версии, документируется) → `GetXlsx` → `parseMoBr` → DDL `macro_series` → батч → `UpsertSeriesCatalog` → `CreateView` → **`SavePublication`** (последней — только после успешной записи точек и публикации каталога/витрины: сбой пост-шагов оставляет версию незаписанной, и следующий прогон самовосстанавливает её полным импортом) → в лог уже реальный `Imported N rows`.
 
 Так «точка контроля публикации» становится единой для контура: имя + md5-отпечаток + дата первого наблюдения + число точек.
 
@@ -124,7 +124,7 @@ CREATE TABLE IF NOT EXISTS source_publications (
 
 ### 3.7 Интеграция
 
-- **Пакет `cbr/`**: `cbr/mo_br.go` (импортёр: кастомный `Import()` — префлайт §3.4 → при новой версии `GetXlsx` → `parseMoBr` → DDL `macro_series` → батч → `util.SavePublication` → `util.UpsertSeriesCatalog` → `util.CreateView(v_cbr_mo_br)`; `Name()` = `cbr_mo_br`, `TableName` = `macro_series` — как `cbr_mp_survey`), `cbr/mo_br_parse.go`, `cbr/mo_br_meta.go`.
+- **Пакет `cbr/`**: `cbr/mo_br.go` (импортёр: кастомный `Import()` — префлайт §3.4 → при новой версии `GetXlsx` → `parseMoBr` → DDL `macro_series` → батч → `util.UpsertSeriesCatalog` → `util.CreateView(v_cbr_mo_br)` → `util.SavePublication`; `Name()` = `cbr_mo_br`, `TableName` = `macro_series` — как `cbr_mp_survey`), `cbr/mo_br_parse.go`, `cbr/mo_br_meta.go`.
 - **Общий механизм**: `util/publications.go` — `type Publication{Source, Name, Fingerprint, Url string; FirstSeen time.Time; Points uint64}`, `EnsurePublications(ctx, conn)`, `HeadFingerprint(url)`, `PublicationKnown(ctx, conn, source, name, fingerprint) (points uint64, known bool, err)`, `SavePublication(ctx, conn, p Publication)` (одна строка через `PrepareBatch → Append → Send`). Тесты — `util/publications_test.go` (композит отпечатка на httptest-HEAD, смена каждого компонента меняет md5, ошибки non-200/сети). Количественный чек — на стороне импортёра (у каждого источника свой способ считать свои точки).
 - **Реестр**: 14-я запись `{moBrImporter, "macro_series"}`; в `cbr/importers_test.go` allowlist `macro_series` расширяется до `{cbr_mp_survey, cbr_mo_br}`.
 - **Dagu**: шаг `cbr_mo_br` последним в `dagu/cbr.yaml` (цепочка 09:17, ежедневно; будничный прогон — лёгкий no-op по §3.4).

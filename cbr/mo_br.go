@@ -51,8 +51,9 @@ func (s *moBrStat) Name() string { return moBrName }
 // Import идёт по спеке §3.4: ссылка на полную книгу ищется на странице (имя файла
 // меняется с каждой волной), затем HEAD-префлайт отвечает, знакома ли версия. Знакома
 // и число точек в macro_series совпадает с записанным — это no-op ежедневного прогона
-// (волны выходят 8 раз в год). Незнакома или точек не столько — полный импорт; после
-// успешного Send сохраняется версия, каталог и витрина.
+// (волны выходят 8 раз в год). Незнакома или точек не столько — полный импорт;
+// версия записывается последней — после успешного Send, каталога и витрины
+// (строка версии утверждает «эти точки записаны и опубликованы»).
 func (s *moBrStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
 	page, err := getPage(moBrPageUrl)
 	if err != nil {
@@ -126,7 +127,17 @@ func (s *moBrStat) Import(ctx context.Context, conn driver.Conn) (count int64, e
 	if err != nil {
 		return count, err
 	}
-	// Только после успешного Send: строка версии утверждает «эти точки записаны».
+	// Каталог и витрина — до строки версии: версия пишется последней и утверждает
+	// «эти точки записаны и опубликованы». Сбой любого пост-шага оставляет её
+	// незаписанной, и следующий прогон повторяет полный путь (идемпотентный), а не
+	// уходит в no-op с отсутствующим у агента каталогом или витриной до следующей
+	// волны (~6 недель).
+	if err = util.UpsertSeriesCatalog(ctx, conn, meta); err != nil {
+		return count, err
+	}
+	if _, err = util.CreateView(ctx, conn, vCbrMoBrView); err != nil {
+		return count, err
+	}
 	if fp != "" {
 		if err = util.SavePublication(ctx, conn, util.Publication{
 			Source:      moBrName,
@@ -138,12 +149,6 @@ func (s *moBrStat) Import(ctx context.Context, conn driver.Conn) (count int64, e
 		}); err != nil {
 			return count, err
 		}
-	}
-	if err = util.UpsertSeriesCatalog(ctx, conn, meta); err != nil {
-		return count, err
-	}
-	if _, err = util.CreateView(ctx, conn, vCbrMoBrView); err != nil {
-		return count, err
 	}
 	log.Infof("Imported %d rows of %s", count, moBrName)
 	return count, nil
