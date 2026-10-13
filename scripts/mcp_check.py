@@ -388,6 +388,26 @@ async def check(params, server_log):
                 failed += not expect(f"сырая {table} закрыта ({label})", denied,
                                      f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
 
+            # Контур мониторинга предприятий ЦБ (правило 11, пункт 1.3 роадмапа): витрина
+            # v_cbr_survey читается агентом, сырая macro_series закрыта (проверка выше).
+            # Существование витрины подтверждается запросом к ней, а не поиском имени в
+            # list_tables (урок bold: в тексте list_tables имя попадает из COMMENT соседки).
+            survey_view = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_cbr_survey"}))
+            survey_view_rows = result_rows(survey_view)
+            if survey_view_rows is None:
+                survey_view_detail = f"витрина не читается: {survey_view[:200]}"
+            elif survey_view_rows:
+                survey_view_detail = f"строк: {survey_view_rows[0].get('count()')}"
+            else:
+                survey_view_detail = "в ответе нет строк"
+            failed += not expect("витрина v_cbr_survey существует и читается", bool(survey_view_rows), survey_view_detail)
+
+            survey_catalog = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_series_catalog WHERE source = 'cbr_survey'"}))
+            survey_catalog_rows = result_rows(survey_catalog)
+            survey_catalog_n = survey_catalog_rows[0].get("count()") if survey_catalog_rows else None
+            failed += not expect("каталог cbr_survey описывает 13 рядов", survey_catalog_n == 13,
+                                 f"записей: {survey_catalog_n}" if survey_catalog_rows is not None else f"каталог не читается: {survey_catalog[:200]}")
+
     return failed
 
 
