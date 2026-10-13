@@ -66,6 +66,25 @@ func mpHasMatchText(matches []mpChannelMatch, channel, text string) bool {
 	return false
 }
 
+// mpHasMatchKindText — есть ли матч ровно с этим (Channel, Kind, Text).
+func mpHasMatchKindText(matches []mpChannelMatch, channel, kind, text string) bool {
+	for _, m := range matches {
+		if m.Channel == channel && m.Kind == kind && m.Text == text {
+			return true
+		}
+	}
+	return false
+}
+
+// mpMatchKinds — число матчей по видам.
+func mpMatchKinds(matches []mpChannelMatch) map[string]int {
+	out := map[string]int{}
+	for _, m := range matches {
+		out[m.Kind]++
+	}
+	return out
+}
+
 // mpHasTextWith — есть ли матч канала (любого вида) с подстрокой sub (регистронезависимо).
 func mpHasTextWith(matches []mpChannelMatch, channel, sub string) bool {
 	sub = strings.ToLower(sub)
@@ -112,6 +131,9 @@ func mpCheckMatchShared(t *testing.T, blocks []mpSummaryBlock, matches []mpChann
 		}
 		if !kinds[m.Kind] {
 			t.Errorf("матч %d (%s): вид %q не из risk_pro|risk_dez|prose", i, m.Channel, m.Kind)
+		}
+		if strings.HasSuffix(m.Text, ":") {
+			t.Errorf("матч %d (%s): цитатой стал служебный ввод списка: %q", i, m.Channel, m.Text)
 		}
 		if m.Seq <= 0 {
 			t.Errorf("матч %d (%s): Seq=%d, ожидался сквозной с 1", i, m.Channel, m.Seq)
@@ -335,10 +357,7 @@ func TestMPChannelsCounts(t *testing.T) {
 		mpKindRiskPro: 19,
 		mpKindRiskDez: 6,
 	}
-	kinds := map[string]int{}
-	for _, m := range matches {
-		kinds[m.Kind]++
-	}
+	kinds := mpMatchKinds(matches)
 	for kind, n := range wantKinds {
 		if kinds[kind] != n {
 			t.Errorf("вид %s: матчей %d, ожидалось %d", kind, kinds[kind], n)
@@ -346,5 +365,75 @@ func TestMPChannelsCounts(t *testing.T) {
 	}
 	if len(kinds) != len(wantKinds) {
 		t.Errorf("виды матчей %v, ожидались только %v", kinds, wantKinds)
+	}
+}
+
+// TestMPChannelsHikeFixture — резюме 06.11.2024 (hike): дезинфляционная часть рисков изложена
+// абзацем, а не пунктами списка («Дезинфляционные риски выражены слабо…»), и до fix-round 1
+// этот абзац молча терялся — risk_dez на документе был пуст (Important-замечание ревью).
+// Теперь абзацы блока 4 размечаются по той же атрибуции, что пункты: до ввода
+// дезинфляционной части — risk_pro, ввод и всё после него — risk_dez; служебные вводы
+// списков («…включают:») цитатами не становятся.
+func TestMPChannelsHikeFixture(t *testing.T) {
+	doc, err := parseMPSummary(mpFixture(t, "mp_summary_06112024.html"))
+	if err != nil {
+		t.Fatalf("parseMPSummary: %v", err)
+	}
+	matches := tagMPChannels(doc.Blocks)
+	if len(matches) == 0 {
+		t.Fatal("tagMPChannels: ноль матчей на документе")
+	}
+	mpCheckMatchShared(t, doc.Blocks, matches)
+
+	// Пины дословных фрагментов из фикстуры: первый абзац дезинфляционной части (в списке
+	// кандидатов Task 2 §3.2 представлен абзацем «Дезинфляционные риски выражены слабо…») и
+	// первый пункт проинфляционного списка.
+	const (
+		dezPin = "Дезинфляционные риски выражены слабо и в основном связаны с возможным более быстрым замедлением внутреннего спроса под влиянием ужесточения денежно-кредитной политики."
+		proPin = "Дальнейший рост инфляционных ожиданий."
+	)
+	if !mpHasMatchKindText(matches, "output_gap", mpKindRiskDez, dezPin) {
+		t.Errorf("risk_dez: нет матча output_gap с текстом %q (risk_dez: %v, risk_block: %v)",
+			dezPin, mpMatchKinds(matches), mpMatchTexts(matches, "output_gap"))
+	}
+	if !mpHasMatchKindText(matches, "expectations", mpKindRiskPro, proPin) {
+		t.Errorf("risk_pro: нет матча expectations с текстом %q", proPin)
+	}
+
+	// Числа этого документа закреплены после fix-round 1: было 135 (prose 119 + risk_pro 16,
+	// risk_dez 0) — стало 137 (prose 119 + risk_pro 16 + risk_dez 2). Дельта — два предложения
+	// дезинфляционного абзаца.
+	wantKinds := map[string]int{
+		mpKindProse:   119,
+		mpKindRiskPro: 16,
+		mpKindRiskDez: 2,
+	}
+	kinds := mpMatchKinds(matches)
+	for kind, n := range wantKinds {
+		if kinds[kind] != n {
+			t.Errorf("вид %s: матчей %d, ожидалось %d", kind, kinds[kind], n)
+		}
+	}
+	if len(matches) != 137 {
+		t.Errorf("матчей всего %d, ожидалось 137 (135 до fix-round 1 + 2 risk_dez)", len(matches))
+	}
+	wantChannels := map[string]int{
+		"current_inflation":    7,
+		"core_inflation":       4,
+		"expectations":         16,
+		"labor_market":         9,
+		"lending_transmission": 32,
+		"output_gap":           14,
+		"budget_impulse":       15,
+		"money_supply":         0,
+		"external_fx":          25,
+		"savings_behavior":     7,
+		"autonomous_factors":   8,
+	}
+	got := mpMatchCounts(matches)
+	for slug, n := range wantChannels {
+		if got[slug] != n {
+			t.Errorf("канал %s: матчей %d, ожидалось %d", slug, got[slug], n)
+		}
 	}
 }
