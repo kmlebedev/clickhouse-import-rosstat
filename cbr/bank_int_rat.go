@@ -20,9 +20,9 @@ const (
 var cbrBankIntRate = util.ClickHouseImport{
 	TableName: cbrBankIntRateTable,
 	CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (
-    		  name LowCardinality(String)
+			  name LowCardinality(String)
 			, date Date
-    		, rate Float32
+			, rate Float32
 		) ENGINE = ReplacingMergeTree ORDER BY (name, date);
 	`},
 	DataUrl: "https://www.cbr.ru/vfs/statistics/pdko/int_rat/regulatory_rates.xlsx",
@@ -32,7 +32,6 @@ var cbrBankIntRate = util.ClickHouseImport{
 			return err
 		}
 		for _, row := range rows[3:] {
-			// log.Infof("row %+v", row)
 			if row[0] == "" {
 				continue
 			}

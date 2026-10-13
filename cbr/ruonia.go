@@ -20,7 +20,6 @@ func ruoniaImport(xlsx *excelize.File, batch driver.Batch) error {
 		if len(row) == 0 {
 			continue
 		}
-		fmt.Printf("row: %+v\n", row)
 		date, err := time.Parse("01-02-06", row[0])
 		if err != nil {
 			return err
