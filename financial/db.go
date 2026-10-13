@@ -43,13 +43,6 @@ var (
 		) ENGINE = ReplacingMergeTree()
 		ORDER BY (code, content, quarter, name)
 	`
-	createCbrRates = `
-		CREATE TABLE IF NOT EXISTS cbr_rates (
-		   date Date,
-		   rate Float32
-		) ENGINE = ReplacingMergeTree()
-		ORDER BY (date)
-	`
 	createfinanceResults = `
 		CREATE TABLE IF NOT EXISTS finance_results (
 		   code LowCardinality(String),
@@ -288,7 +281,7 @@ func initDB() *sql.DB {
 	if connect == nil {
 		log.Fatal(err)
 	}
-	for _, query := range []string{createOPdatabook, createTradingVolumes, createDataBook, createCbrRates, createfinanceResults, createExportGoodsStats, createExportRegionsStats, createTableRzd, createTableRevenue, createTableCsvClosingPrices, createTableFinancialRatios, createTableSlabStructure, createTableFobPrices, createTableStockPrices, createTablePriceProducts, createTableProductions, createTableLmeClosingPrices, createTableCostSales, createTableMaterialCostSales, createTableExportSales, createTableSales, createTablePrices, createTableOperationalHighlights, createTableFinancialHighlights} {
+	for _, query := range []string{createOPdatabook, createTradingVolumes, createDataBook, createfinanceResults, createExportGoodsStats, createExportRegionsStats, createTableRzd, createTableRevenue, createTableCsvClosingPrices, createTableFinancialRatios, createTableSlabStructure, createTableFobPrices, createTableStockPrices, createTablePriceProducts, createTableProductions, createTableLmeClosingPrices, createTableCostSales, createTableMaterialCostSales, createTableExportSales, createTableSales, createTablePrices, createTableOperationalHighlights, createTableFinancialHighlights} {
 		if _, err := connect.Exec(query); err != nil {
 			log.Fatal(err)
 		}
