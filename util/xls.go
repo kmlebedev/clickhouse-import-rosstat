@@ -2,6 +2,7 @@ package util
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/csv"
@@ -107,8 +108,27 @@ func init() {
 	HttpClient = &http.Client{Transport: tr, Jar: jar}
 }
 
+// fileTimeout — дедлайн одного запроса GetFile. Переменная (а не константа), чтобы тест
+// мог подставить короткий дедлайн вместо двухминутного. Прецеденты — xmlTimeout и
+// jsonTimeout (util/xml.go, util/json.go), у обоих минута: они обслуживают фиды и API, а
+// GetFile общий для всех пакетов и тянет многомегабайтные XLSX-выгрузки ЦБ, поэтому
+// значение взято с запасом. Дедлайн — не украшение: HttpClient создан без Timeout, и
+// зависший ответ ЦБ без дедлайна ошибки не даёт вовсе — импортёр ждал бы его вместо
+// отчёта о сбое. Регрессия, ради которой дедлайн возвращён: cbr_key_rate ходит через
+// GetFile (cbr/links.go) и при переводе с colly потерял его десятисекундный таймаут;
+// key_rate — третий шаг цепочки dagu/cbr.yaml (overlap_policy: skip), и зависание
+// остановило бы десять шагов после него.
+var fileTimeout = 2 * time.Minute
+
+// GetFile скачивает url общим HttpClient (тот же User-Agent, что у GetXML/GetJSON) и
+// отдаёт тело ридером. Статус не проверяется (в отличие от GetJSON/GetXML): HTML-заглушку
+// WAF вызывающий увидит ошибкой разбора XLSX — эта ветка у GetXlsx/GetXls уже есть.
+// Тело читается целиком до возврата, поэтому дедлайн fileTimeout действует и на чтение;
+// запрос ограничен им: зависший ответ иначе не дал бы ошибки.
 func GetFile(url string) (io.ReadCloser, error) {
-	req, err := http.NewRequest("GET", url, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), fileTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
 	}

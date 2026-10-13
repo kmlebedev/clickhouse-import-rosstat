@@ -4,10 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/gocolly/colly/v2"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
-	log "github.com/sirupsen/logrus"
 	"github.com/xuri/excelize/v2"
 	"strconv"
 	"strings"
@@ -18,25 +15,20 @@ import (
 // Приложение к материалу «Кредит экономике и денежная масса»
 const cbrCreditM2xUrl = "https://www.cbr.ru/statistics/macro_itm/dkfs/"
 
-// getCbrCreditM2xXlsDataUrl ищет ссылку на актуальный credit_m2x.xlsx на странице
-// денежно-кредитной статистики. Id файла в URL (/Content/Document/File/NNNNN/) меняется
-// при обновлении, поэтому ссылку берём со страницы, а не хардкодим.
-func getCbrCreditM2xXlsDataUrl() (url string) {
-	c := colly.NewCollector(colly.UserAgent(util.HttpUA))
-	c.SetClient(util.HttpClient)
-	c.OnHTML(`a.referenceable[href$="credit_m2x.xlsx"]`, func(e *colly.HTMLElement) {
-		url = fmt.Sprintf("%s%s", cbrUrl, e.Attr("href"))
-		log.Infof("href url %s", url)
-	})
-	if err := c.Visit(cbrCreditM2xUrl); err != nil {
-		log.Errorf("Visit %v+", err)
-	}
-	c.Wait()
-	return url
-}
+// cbrCreditM2xLinkSelector — ссылка на актуальный credit_m2x.xlsx. Id файла в URL
+// (/Content/Document/File/NNNNN/) меняется при обновлении, поэтому ссылку берём
+// со страницы, а не хардкодим.
+const cbrCreditM2xLinkSelector = `a.referenceable[href$="credit_m2x.xlsx"]`
+
+// cbrCreditM2xTable и cbrCreditM2xSheet — таблица и лист импортёра: оба попадают в текст
+// ошибки пустого разбора, чтобы дежурный по логу видел, чей ряд остался без обновления.
+const (
+	cbrCreditM2xTable = "cbr_credit_m2x"
+	cbrCreditM2xSheet = "млн рублей"
+)
 
 var cbrСreditM2x = util.ClickHouseImport{
-	TableName: "cbr_credit_m2x",
+	TableName: cbrCreditM2xTable,
 	CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (
 			  name LowCardinality(String)
 			, date Date
@@ -45,9 +37,15 @@ var cbrСreditM2x = util.ClickHouseImport{
 	`},
 	ImportFunc: func(xlsx *excelize.File, batch driver.Batch) (err error) {
 		var rows [][]string
-		if rows, err = xlsx.GetRows("млн рублей"); err != nil {
+		if rows, err = xlsx.GetRows(cbrCreditM2xSheet); err != nil {
 			return err
 		}
+		// Пустой лист — сразу ошибка: rows[1:] ниже паникует на пустом срезе, а паника в
+		// импортёре — не «0 rows», а упавший шаг DAG без понятного сообщения.
+		if len(rows) == 0 {
+			return fmt.Errorf("%s: лист «%s» пуст", cbrCreditM2xTable, cbrCreditM2xSheet)
+		}
+		count := 0
 		// Строки с годами
 		for _, row := range rows[1:] {
 			if len(row) == 0 {
@@ -75,8 +73,12 @@ var cbrСreditM2x = util.ClickHouseImport{
 					if err = batch.Append(name, date, value); err != nil {
 						return err
 					}
+					count++
 				}
 			}
+		}
+		if count == 0 {
+			return fmt.Errorf("%s: разбор листа «%s» не дал ни одной точки", cbrCreditM2xTable, cbrCreditM2xSheet)
 		}
 		return nil
 	},
@@ -86,13 +88,25 @@ type cbrCreditM2xStat struct {
 	util.ClickHouseImport
 }
 
+// Import берёт адрес актуального credit_m2x.xlsx со страницы ДКС. Ссылку ищем тем же
+// кодом, что и тест на фикстуре (util.GetFile + findLink).
 func (s *cbrCreditM2xStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	if s.DataUrl = getCbrCreditM2xXlsDataUrl(); s.DataUrl == "" {
-		return count, fmt.Errorf("cbrCreditM2x: не найдена ссылка на credit_m2x.xlsx на %s", cbrCreditM2xUrl)
+	page, err := getPage(cbrCreditM2xUrl)
+	if err != nil {
+		return count, fmt.Errorf("cbrCreditM2x: %s: %w", cbrCreditM2xUrl, err)
 	}
+	href, err := findLink(page, cbrCreditM2xLinkSelector)
+	if err != nil {
+		return count, fmt.Errorf("cbrCreditM2x: не найдена ссылка на credit_m2x.xlsx на %s: %w", cbrCreditM2xUrl, err)
+	}
+	s.DataUrl = cbrUrl + href
 	return s.ClickHouseImport.Import(ctx, conn)
 }
 
-func init() {
-	chimport.Stats = append(chimport.Stats, &publishedStat{ImportStat: &cbrCreditM2xStat{ClickHouseImport: cbrСreditM2x}, meta: cbrCreditM2xSeriesMeta})
+// cbrCreditM2xImporter — кредит экономике и денежная масса: адрес актуального
+// credit_m2x.xlsx берётся со страницы ДКС в Import() (ARCHITECTURE.md §8.6),
+// регистрация — реестром cbr/importers.go.
+var cbrCreditM2xImporter = &publishedStat{
+	ImportStat: &cbrCreditM2xStat{ClickHouseImport: cbrСreditM2x},
+	meta:       cbrCreditM2xSeriesMeta,
 }

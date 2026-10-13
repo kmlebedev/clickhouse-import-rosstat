@@ -408,6 +408,38 @@ async def check(params, server_log):
             failed += not expect("каталог cbr_survey описывает 13 рядов", survey_catalog_n == 13,
                                  f"записей: {survey_catalog_n}" if survey_catalog_rows is not None else f"каталог не читается: {survey_catalog[:200]}")
 
+            # Общая витрина контура ЦБ (правило 11, фаза 3 роадмапа): v_cbr_macro читается
+            # агентом, а сырая cbr_households_b_mes — источник её рядов по домохозяйствам —
+            # агенту закрыта (как macro_series и bold_fund_snapshot: читать контур агент
+            # обязан только через витрину). Существование витрины подтверждается ЗАПРОСОМ
+            # К НЕЙ, а не поиском имени в ответе list_tables: в том тексте лежат
+            # create_table_query с комментариями таблиц и колонок, и имя отсутствующей
+            # витрины попадало туда из COMMENT соседки (урок bold). Разобранный ответ
+            # run_query доказывает и существование, и право чтения; «нет витрины» и «нет
+            # прав» приходят ошибкой (UNKNOWN_TABLE / ACCESS_DENIED) и в result_rows не
+            # разбираются.
+            #
+            # Здесь, в отличие от v_cbr_survey, значение count проверяется: ряды витрины
+            # публикуют импортёры cbr/, поэтому пустая витрина означает ни разу не
+            # отработавший контур (агент увидит пустую таблицу и не поймёт, что данных нет
+            # из-за отсутствия прогона, а не из-за свойств ряда).
+            macro_view = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_cbr_macro"}))
+            macro_view_rows = result_rows(macro_view)
+            macro_view_n = macro_view_rows[0].get("count()") if macro_view_rows else None
+            if macro_view_rows is None:
+                macro_view_detail = f"витрина не читается: {macro_view[:200]}"
+            elif (macro_view_n or 0) > 0:
+                macro_view_detail = f"строк: {macro_view_n}"
+            else:
+                macro_view_detail = (f"строк: {macro_view_n} — прогнать импортёры контура "
+                                     "(make import STAT=cbr_key_rate и остальные из dagu/cbr.yaml)")
+            failed += not expect("витрина v_cbr_macro существует и читается", (macro_view_n or 0) > 0, macro_view_detail)
+
+            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM cbr_households_b_mes"}))
+            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+            failed += not expect("сырая cbr_households_b_mes закрыта", denied,
+                                 "отказ ClickHouse 497 на cbr_households_b_mes (ожидаемо)" if denied else raw[:200])
+
     return failed
 
 

@@ -11,10 +11,10 @@ steps:
       limit: 3
       interval_sec: 300
 
-  - id: households_b_mes
+  - id: cbr_households_b_mes
     run: "$ROSSTAT_IMPORT_BIN"
     env:
-      - CLICKHOUSE_IMPORT_STAT=households_b_mes
+      - CLICKHOUSE_IMPORT_STAT=cbr_households_b_mes
     retry_policy:
       limit: 3
       interval_sec: 300
@@ -95,6 +95,14 @@ steps:
     run: "$ROSSTAT_IMPORT_BIN"
     env:
       - CLICKHOUSE_IMPORT_STAT=cbr_ruania
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  - id: cbr_mp_survey
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=cbr_mp_survey
     retry_policy:
       limit: 3
       interval_sec: 300

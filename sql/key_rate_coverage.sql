@@ -34,7 +34,7 @@ SELECT * FROM (
     
     UNION ALL SELECT 'cbr_loans_to_individuals', name, count(), min(date), max(date) FROM cbr_loans_to_individuals FINAL GROUP BY name
     
-    UNION ALL SELECT 'households_b_mes', name, count(), min(date), max(date) FROM households_b_mes FINAL GROUP BY name
+    UNION ALL SELECT 'cbr_households_b_mes', name, count(), min(date), max(date) FROM cbr_households_b_mes FINAL GROUP BY name
     
     UNION ALL SELECT 'ipc_mes', name, count(), min(date), max(date) FROM ipc_mes FINAL GROUP BY name
     

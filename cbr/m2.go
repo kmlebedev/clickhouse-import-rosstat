@@ -1,15 +1,15 @@
 package cbr
 
 import (
-	"context"
 	"fmt"
-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
-	"github.com/kmlebedev/clickhouse-import-rosstat/util"
-	"github.com/xuri/excelize/v2"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+	log "github.com/sirupsen/logrus"
+	"github.com/xuri/excelize/v2"
 )
 
 const (
@@ -19,82 +19,78 @@ const (
 	// https://www.cbr.ru/vfs/statistics/credit_statistics/M2-M2_SA.xlsx
 	cbrM2XlsDataUrl = cbrStatsUrl + "/credit_statistics/monetary_agg_SA.xlsx"
 	cbrM2Table      = "cbr_m2"
-	cbrM2Ddl        = `CREATE TABLE IF NOT EXISTS ` + cbrM2Table + ` (
+	cbrM2Ddl        = `CREATE TABLE IF NOT EXISTS %s (
 			  name LowCardinality(String)
 			, date Date
 			, balance Float32
 		) ENGINE = ReplacingMergeTree ORDER BY (name, date);
 	`
-	cbrM2Insert     = "INSERT INTO " + cbrM2Table + " VALUES (?, ?, ?)"
-	cbrM2Field      = "Денежные агрегаты"
+	cbrM2Sheet      = "Денежные агрегаты"
 	cbrM2TimeLayout = "02/01/06"
+	// cbrM2Column — колонка «М2 SA» (0-based индекс 22) с уровнем денежной массы; имя ряда
+	// берётся из заголовка этой же колонки.
+	cbrM2Column = 22
 )
 
 type cbrM2Stat struct {
+	util.ClickHouseImport
 }
 
-func (s *cbrM2Stat) Name() string {
-	return cbrM2Table
-}
-
-func (s *cbrM2Stat) export() (table *[][]string, err error) {
-	var xlsx *excelize.File
-	if xlsx, err = util.GetXlsx(cbrM2XlsDataUrl); err != nil {
-		return nil, err
+// cbrM2Import разбирает лист «Денежные агрегаты»: одна точка на месяц, имя ряда — заголовок
+// колонки (row[0][cbrM2Column], сейчас «М2 SA»), значение — уровень в млрд руб. Семантика
+// прежнего export() сохранена: заголовок и строка единиц пропускаются, разбор идёт по
+// непустым значениям колонки. Пустой лист/нет колонки/ноль точек — ошибка (fail-fast).
+func cbrM2Import(xlsx *excelize.File, batch driver.Batch) error {
+	rows, err := xlsx.GetRows(cbrM2Sheet)
+	if err != nil {
+		return err
 	}
-	defer func() { _ = xlsx.Close() }()
-	table = new([][]string)
-	var rows [][]string
-	if rows, err = xlsx.GetRows("Денежные агрегаты"); err != nil {
-		return nil, err
+	if len(rows) < 3 || len(rows[0]) <= cbrM2Column {
+		return fmt.Errorf("%s: в листе «%s» нет строк данных или колонки с уровнем М2", cbrM2Table, cbrM2Sheet)
 	}
+	name := rows[0][cbrM2Column]
+	count := 0
 	// Строки с годами
 	for _, row := range rows[2:] {
 		if len(row) == 0 {
 			continue
 		}
-		if len(row) < 22 {
+		// 22-й индекс — уровень М2; короткая строка означает конец таблицы (примечания)
+		if len(row) <= cbrM2Column {
 			break
 		}
-		if strings.TrimSpace(row[22]) == "" || strings.TrimSpace(row[22]) == "0" {
+		if strings.TrimSpace(row[cbrM2Column]) == "" || strings.TrimSpace(row[cbrM2Column]) == "0" {
 			continue
 		}
-		date := strings.TrimSpace(row[0])
-		balance := strings.ReplaceAll(strings.TrimSpace(row[22]), ",", "")
-		fmt.Printf("name %s date %v cell %s\n", rows[0][22], date, balance)
-		if _, err = strconv.ParseFloat(balance, 32); err != nil {
-			return nil, err
-		}
-		*table = append(*table, []string{rows[0][22], date, balance})
-	}
-
-	return table, nil
-}
-
-func (s *cbrM2Stat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	if err = conn.Exec(ctx, cbrM2Ddl); err != nil {
-		return count, err
-	}
-	var table *[][]string
-	if table, err = s.export(); err != nil {
-		return count, err
-	}
-	for _, row := range *table {
-		date, err := time.Parse(cbrM2TimeLayout, row[1])
+		date, err := time.Parse(cbrM2TimeLayout, strings.TrimSpace(row[0]))
 		if err != nil {
-			return count, err
+			return fmt.Errorf("%s: дата %q: %w", cbrM2Table, row[0], err)
 		}
-		if err = conn.Exec(ctx, cbrM2Insert, row[0], date, row[2]); err != nil {
-			return count, err
+		balance := strings.ReplaceAll(strings.TrimSpace(row[cbrM2Column]), ",", "")
+		value, err := strconv.ParseFloat(balance, 32)
+		if err != nil {
+			return fmt.Errorf("%s: дата %s: значение %q: %w", cbrM2Table, date.Format("2006-01-02"), balance, err)
+		}
+		if err = batch.Append(name, date, value); err != nil {
+			return err
 		}
 		count++
 	}
-	if err = publishSeries(ctx, conn, cbrM2SeriesMeta); err != nil {
-		return count, err
+	if count == 0 {
+		return fmt.Errorf("%s: разбор листа «%s» не дал ни одной точки", cbrM2Table, cbrM2Sheet)
 	}
-	return count, nil
+	log.Infof("%s: %d точек", cbrM2Table, count)
+	return nil
 }
 
-func init() {
-	chimport.Stats = append(chimport.Stats, &cbrM2Stat{})
+// cbrM2Importer — сезонно сглаженные денежные агрегаты; регистрируется реестром
+// cbr/importers.go.
+var cbrM2Importer = &publishedStat{
+	ImportStat: &cbrM2Stat{ClickHouseImport: util.ClickHouseImport{
+		TableName:   cbrM2Table,
+		CreateTable: []string{cbrM2Ddl},
+		DataUrl:     cbrM2XlsDataUrl,
+		ImportFunc:  cbrM2Import,
+	}},
+	meta: cbrM2SeriesMeta,
 }

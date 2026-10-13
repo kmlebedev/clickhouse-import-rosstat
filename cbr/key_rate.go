@@ -1,76 +1,132 @@
 package cbr
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/gocolly/colly/v2"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
+	"strconv"
 	"strings"
 	"time"
-)
 
-type cbrKeyRate struct {
-}
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/PuerkitoBio/goquery"
+	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+	log "github.com/sirupsen/logrus"
+)
 
 const (
 	cbrKeyRateUrl   = "https://www.cbr.ru/hd_base/KeyRate/?UniDbQuery.Posted=True&UniDbQuery.From=17.09.2013&UniDbQuery.To=%s"
 	cbrKeyRateTable = "cbr_key_rate"
-	cbrKeyRateDdl   = `CREATE TABLE IF NOT EXISTS ` + cbrKeyRateTable + ` (
+	cbrKeyRateDdl   = `CREATE TABLE IF NOT EXISTS %s (
 			  date Date
 			, rate Float32
 		) ENGINE = ReplacingMergeTree ORDER BY (date);
 	`
-	cbrKeyRateInsert     = "INSERT INTO " + cbrKeyRateTable + " VALUES (?, ?)"
+	cbrKeyRateInsert = "INSERT INTO " + cbrKeyRateTable
+	// cbrKeyRateTimeLayout — формат даты в строках таблицы (13.10.2026).
 	cbrKeyRateTimeLayout = "02.01.2006"
+	// cbrKeyRateDateLayout — формат UniDbQuery.To (MM-DD-YYYY).
+	cbrKeyRateDateLayout = "01-02-2006"
+	// cbrKeyRateRowSelector — строки таблицы «Ключевая ставка».
+	cbrKeyRateRowSelector = ".table-wrapper .table .data tr"
 )
 
-func (s *cbrKeyRate) Name() string {
-	return cbrKeyRateTable
+type cbrKeyRate struct {
+	util.ClickHouseImport
 }
 
-func (s *cbrKeyRate) export() (table *[][]string, err error) {
-	c := colly.NewCollector()
-	table = new([][]string)
-	c.OnHTML(".table-wrapper .table .data tr", func(e *colly.HTMLElement) {
-		date := e.DOM.Children().First().Text()
-		if date == "Дата" {
+// Import подставляет DataUrl с сегодняшней датой окончания диапазона: UniDbQuery.To должен
+// быть актуален на момент запуска, а сетевые вызовы и обращение к времени в init() запрещены
+// (ARCHITECTURE.md §8.6). From=17.09.2013 — дата введения ключевой ставки.
+func (s *cbrKeyRate) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+	s.DataUrl = fmt.Sprintf(cbrKeyRateUrl, time.Now().Format(cbrKeyRateDateLayout))
+	return s.ClickHouseImport.Import(ctx, conn)
+}
+
+// keyRateRows разбирает HTML-таблицу «Ключевая ставка» в точки. Строка-заголовок «Дата»
+// пропускается; пустые (после TrimSpace) дата или значение — пропуск, а непустое
+// непарсящееся — ошибка: битая страница не должна выглядеть успешным прогоном.
+// Ноль строк — тоже ошибка (fail-fast): без таблицы .data ряд молча стёрся бы в пустой.
+func keyRateRows(html []byte) ([]cbrPoint, error) {
+	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(html))
+	if err != nil {
+		return nil, fmt.Errorf("%s: разбор страницы: %w", cbrKeyRateTable, err)
+	}
+	points := make([]cbrPoint, 0)
+	var parseErr error
+	doc.Find(cbrKeyRateRowSelector).Each(func(_ int, tr *goquery.Selection) {
+		if parseErr != nil {
 			return
 		}
-		rate := strings.ReplaceAll(e.DOM.Children().Next().Text(), ",", ".")
-		fmt.Printf("date %s rate %s\n", date, rate)
-		*table = append(*table, []string{date, rate})
+		cells := tr.Find("td")
+		if cells.Length() == 0 {
+			return
+		}
+		date := strings.TrimSpace(cells.Eq(0).Text())
+		if date == "" || date == "Дата" {
+			return
+		}
+		if cells.Length() < 2 {
+			return
+		}
+		value := strings.TrimSpace(cells.Eq(1).Text())
+		if value == "" {
+			return
+		}
+		d, err := time.Parse(cbrKeyRateTimeLayout, date)
+		if err != nil {
+			parseErr = fmt.Errorf("%s: %w", cbrKeyRateTable, err)
+			return
+		}
+		v, err := strconv.ParseFloat(strings.ReplaceAll(value, ",", "."), 64)
+		if err != nil {
+			parseErr = fmt.Errorf("%s: %w", cbrKeyRateTable, err)
+			return
+		}
+		points = append(points, cbrPoint{date: d, value: v})
 	})
-	if err = c.Visit(fmt.Sprintf(cbrKeyRateUrl, time.Now().Format("01-02-2006"))); err != nil {
-		return nil, err
+	if parseErr != nil {
+		return nil, parseErr
 	}
-	return table, nil
+	if len(points) == 0 {
+		return nil, fmt.Errorf("%s: в таблице нет ни одной точки", cbrKeyRateTable)
+	}
+	return points, nil
 }
 
-func (s *cbrKeyRate) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	if err = conn.Exec(ctx, cbrKeyRateDdl); err != nil {
+func cbrKeyRateCraw(crawUrl string, conn driver.Conn) (count int64, err error) {
+	page, err := getPage(crawUrl)
+	if err != nil {
+		return count, fmt.Errorf("%s: %w", cbrKeyRateTable, err)
+	}
+	points, err := keyRateRows(page)
+	if err != nil {
 		return count, err
 	}
-	var table *[][]string
-	if table, err = s.export(); err != nil {
+	batch, err := conn.PrepareBatch(ctx, cbrKeyRateInsert)
+	if err != nil {
 		return count, err
 	}
-	for _, row := range *table {
-		date, err := time.Parse(cbrKeyRateTimeLayout, row[0])
-		if err != nil {
+	for _, p := range points {
+		if err = batch.Append(p.date, p.value); err != nil {
 			return count, err
 		}
-		if err = conn.Exec(ctx, cbrKeyRateInsert, date, row[1]); err != nil {
-			return count, err
-		}
-		count++
 	}
-	if err = publishSeries(ctx, conn, cbrKeyRateSeriesMeta); err != nil {
+	count = int64(batch.Rows())
+	if err = batch.Send(); err != nil {
 		return count, err
 	}
+	log.Infof("%s: %d точек", cbrKeyRateTable, count)
 	return count, nil
 }
 
-func init() {
-	chimport.Stats = append(chimport.Stats, &cbrKeyRate{})
+// cbrKeyRateImporter — ключевая ставка; краулер HTML-таблицы. Регистрируется
+// реестром cbr/importers.go вместе с остальными импортёрами пакета.
+var cbrKeyRateImporter = &publishedStat{
+	ImportStat: &cbrKeyRate{ClickHouseImport: util.ClickHouseImport{
+		TableName:   cbrKeyRateTable,
+		CreateTable: []string{cbrKeyRateDdl},
+		CrawFunc:    cbrKeyRateCraw,
+	}},
+	meta: cbrKeyRateSeriesMeta,
 }

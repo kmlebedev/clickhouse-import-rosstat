@@ -4,10 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/gocolly/colly/v2"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
-	log "github.com/sirupsen/logrus"
 	"github.com/xuri/excelize/v2"
 	"strconv"
 	"strings"
@@ -17,6 +14,17 @@ import (
 // https://www.cbr.ru/analytics/dkp/inflationary_expectations/
 // Статистические данные
 const inflExpUrl = "https://www.cbr.ru/analytics/dkp/inflationary_expectations/"
+
+// cbrInflExpTable и inflExpSheet — таблица и лист импортёра: оба попадают в текст ошибки
+// пустого разбора, чтобы дежурный по логу видел, чей ряд остался без обновления.
+const (
+	cbrInflExpTable = "cbr_infl_exp"
+	inflExpSheet    = "Данные для графиков"
+)
+
+// inflExpLinkSelector — ссылка на актуальный XLSX в блоке версий. Имена файлов и id
+// меняются при каждом обновлении (Infl_exp_ГГ-ММ.xlsx), ссылки идут от свежей к старой.
+const inflExpLinkSelector = `a.versions_item[href$=".xlsx"]`
 
 // inflExpSeriesByRowLabel сопоставляет подписи строк файла ЦБ стабильным именам рядов
 // в ClickHouse. Подписи меняются между выпусками (например «наблюдаемая инфляция» →
@@ -31,12 +39,22 @@ var inflExpSeriesByRowLabel = map[string]string{
 
 const inflExpTableMarker = "Прямые оценки годовой инфляции: медианные  значения"
 
+// inflExpImport разбирает лист «Данные для графиков»: строки после маркера
+// inflExpTableMarker разложены по рядам из inflExpSeriesByRowLabel, даты берутся из строки
+// заголовка (маркер + 2). Пустой лист/отсутствие маркера/ноль точек — ошибка (fail-fast):
+// иначе «0 rows» выглядели бы успешным прогоном, а ряды остались бы без обновления.
 func inflExpImport(xlsx *excelize.File, batch driver.Batch) error {
-	rows, err := xlsx.GetRows("Данные для графиков")
+	rows, err := xlsx.GetRows(inflExpSheet)
 	if err != nil {
 		return err
 	}
+	// Пустой лист — сразу ошибка: rows[1:] ниже паникует на пустом срезе, а паника в
+	// импортёре — не «0 rows», а упавший шаг DAG без понятного сообщения.
+	if len(rows) == 0 {
+		return fmt.Errorf("%s: лист «%s» пуст", cbrInflExpTable, inflExpSheet)
+	}
 	tableIsFoundRowNum := -1
+	count := 0
 	for i, row := range rows[1:] {
 		if len(row) == 0 || row[0] == "" {
 			continue
@@ -68,51 +86,46 @@ func inflExpImport(xlsx *excelize.File, batch driver.Batch) error {
 			if err = batch.Append(series, date.AddDate(0, 0, 13), value); err != nil {
 				return err
 			}
+			count++
 		}
+	}
+	if count == 0 {
+		return fmt.Errorf("%s: разбор листа «%s» не дал ни одной точки", cbrInflExpTable, inflExpSheet)
 	}
 	return nil
-}
-
-// getInflExpXlsDataUrl ищет ссылку на актуальный XLSX на странице инфляционных ожиданий.
-// Имена файлов и id меняются при каждом обновлении (Infl_exp_ГГ-ММ.xlsx), поэтому
-// ссылку нужно брать со страницы, а не хардкодить.
-func getInflExpXlsDataUrl() (url string) {
-	c := colly.NewCollector(colly.UserAgent(util.HttpUA))
-	c.SetClient(util.HttpClient)
-	c.OnHTML(`a.versions_item[href$=".xlsx"]`, func(e *colly.HTMLElement) {
-		// Ссылки идут от свежей к старой — берём первую.
-		if url == "" {
-			url = fmt.Sprintf("%s%s", cbrUrl, e.Attr("href"))
-			log.Infof("href url %s", url)
-		}
-	})
-	if err := c.Visit(inflExpUrl); err != nil {
-		log.Errorf("Visit %v+", err)
-	}
-	c.Wait()
-	return url
 }
 
 type inflExpStat struct {
 	util.ClickHouseImport
 }
 
+// Import берёт адрес актуального XLSX со страницы инфляционных ожиданий: имени файла
+// в коде нет, а сетевое обращение в init() запрещено (ARCHITECTURE.md §8.6). Ссылку
+// ищем тем же кодом, что и тест на фикстуре (util.GetFile + findLink).
 func (s *inflExpStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	if s.DataUrl = getInflExpXlsDataUrl(); s.DataUrl == "" {
-		return count, fmt.Errorf("inflExp: не найдена ссылка на xlsx на %s", inflExpUrl)
+	page, err := getPage(inflExpUrl)
+	if err != nil {
+		return count, fmt.Errorf("inflExp: %s: %w", inflExpUrl, err)
 	}
+	href, err := findLink(page, inflExpLinkSelector)
+	if err != nil {
+		return count, fmt.Errorf("inflExp: не найдена ссылка на xlsx на %s: %w", inflExpUrl, err)
+	}
+	s.DataUrl = cbrUrl + href
 	return s.ClickHouseImport.Import(ctx, conn)
 }
 
-func init() {
-	inflExp := inflExpStat{ClickHouseImport: util.ClickHouseImport{
-		TableName: "cbr_infl_exp",
+// cbrInflExpImporter — инфляционные ожидания: ссылка на актуальный XLSX ищется в
+// Import() (ARCHITECTURE.md §8.6), регистрация — реестром cbr/importers.go.
+var cbrInflExpImporter = &publishedStat{
+	ImportStat: &inflExpStat{ClickHouseImport: util.ClickHouseImport{
+		TableName: cbrInflExpTable,
 		CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (
               name LowCardinality(String)
 			, date Date
 			, value Float32
 		) ENGINE = ReplacingMergeTree ORDER BY (name, date);`},
 		ImportFunc: inflExpImport,
-	}}
-	chimport.Stats = append(chimport.Stats, &publishedStat{ImportStat: &inflExp, meta: cbrInflExpSeriesMeta})
+	}},
+	meta: cbrInflExpSeriesMeta,
 }

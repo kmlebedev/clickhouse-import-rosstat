@@ -13,7 +13,7 @@ var cbrMacroView = util.View{
 	Tables: []string{
 		"cbr_key_rate", "cbr_currency_usd", "cbr_gold", "cbr_ruania", "cbr_m2", "cbr_credit_m2x",
 		"cbr_bank_int_rate", "cbr_indicators_cpd", "cbr_infl_exp", "cbr_loans_to_individuals",
-		"cbr_loans_to_corporations", "households_b_mes",
+		"cbr_loans_to_corporations", "cbr_households_b_mes",
 	},
 	Select: `SELECT 'cbr' AS source, 'cbr_key_rate' AS series, date, toFloat64(rate) AS value FROM cbr_key_rate FINAL
 UNION ALL SELECT 'cbr', 'cbr_currency_usd', date, toFloat64(price) FROM cbr_currency_usd FINAL
@@ -32,7 +32,7 @@ UNION ALL SELECT 'cbr', toString(name), date, toFloat64(value) FROM cbr_indicato
 UNION ALL SELECT 'cbr', toString(name), date, toFloat64(value) FROM cbr_infl_exp FINAL
 UNION ALL SELECT 'cbr', toString(name), date, toFloat64(balance) FROM cbr_loans_to_individuals FINAL
 UNION ALL SELECT 'cbr', toString(name), date, toFloat64(balance) FROM cbr_loans_to_corporations FINAL
-UNION ALL SELECT 'cbr', toString(name), date, toFloat64(balance) FROM households_b_mes FINAL`,
+UNION ALL SELECT 'cbr', toString(name), date, toFloat64(balance) FROM cbr_households_b_mes FINAL`,
 	Comment: "Макроряды ЦБ РФ: ключевая ставка, курс USD, учётная цена золота, RUONIA, М2 SA, кредиты физлицам и юрлицам, ставки по вкладам, ИПЦ (темпы), инфляционные ожидания, балансы домашних хозяйств. Перед расчётом читать v_series_catalog по (source, series): единицы и привязка даты различаются между рядами",
 	Columns: map[string]string{
 		"source": "Импортёр-источник: всегда cbr",
@@ -60,4 +60,19 @@ func (s *publishedStat) Import(ctx context.Context, conn driver.Conn) (count int
 		return count, err
 	}
 	return count, publishSeries(ctx, conn, s.meta)
+}
+
+// cbrSurveyView — витрина рядов мониторинга предприятий (source='cbr_survey', импортёр
+// cbr_mp_survey); общая витрина cbrMacroView её не покрывает.
+var cbrSurveyView = util.View{
+	Name:    "v_cbr_survey",
+	Tables:  []string{"macro_series"},
+	Select:  `SELECT source, series, date, value FROM macro_series FINAL WHERE source = 'cbr_survey'`,
+	Comment: "Мониторинг предприятий Банка России (опросы нефинансовых компаний): ценовые ожидания бизнеса, ИБК и условия кредитования (месячные); загрузка мощностей, обеспеченность персоналом, ожидания численности (квартальные). Дата — отчётный период: 1-е число месяца, у квартальных — 1-е число месяца, следующего за кварталом; ЦБ публикует волну в первую декаду следующего месяца и нумерует справки по месяцу волны (справка «сентябрь 2026» цитирует точку отчётного периода август 2026). Перед использованием читать v_series_catalog по (source='cbr_survey', series): единицы и знаки различаются. ЦБ в комментариях цитирует сезонно сглаженные ряды (…_sa)",
+	Columns: map[string]string{
+		"source": "Всегда cbr_survey",
+		"series": "Код ряда; 13 рядов — описания в v_series_catalog (source='cbr_survey')",
+		"date":   "Отчётный период: 1-е число месяца; у квартальных рядов — 1-е число месяца, следующего за отчётным кварталом (конвенция vvp_kvartal)",
+		"value":  "Значение в единицах ряда: пункты баланса ответов, % (загрузка мощностей), % годовых (ожидаемый прирост цен) — см. unit и description в v_series_catalog",
+	},
 }
