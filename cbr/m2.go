@@ -85,12 +85,10 @@ func cbrM2Import(xlsx *excelize.File, batch driver.Batch) error {
 
 // cbrM2Importer — сезонно сглаженные денежные агрегаты; регистрируется реестром
 // cbr/importers.go.
-var cbrM2Importer = &publishedStat{
-	ImportStat: &cbrM2Stat{ClickHouseImport: util.ClickHouseImport{
-		TableName:   cbrM2Table,
-		CreateTable: []string{cbrM2Ddl},
-		DataUrl:     cbrM2XlsDataUrl,
-		ImportFunc:  cbrM2Import,
-	}},
-	meta: cbrM2SeriesMeta,
-}
+var cbrM2Importer = &cbrM2Stat{ClickHouseImport: util.ClickHouseImport{
+	TableName:   cbrM2Table,
+	CreateTable: []string{cbrM2Ddl},
+	DataUrl:     cbrM2XlsDataUrl,
+	ImportFunc:  cbrM2Import,
+	AfterImport: afterCbrMacro(cbrM2SeriesMeta),
+}}

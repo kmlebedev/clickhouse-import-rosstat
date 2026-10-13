@@ -19,7 +19,8 @@ const (
 	cbrBankIntRateSheet = "в рублях"
 )
 
-// cbrBankIntRate — ставки по вкладам и кредитам: таблица, DDL и разбор листа «в рублях».
+// cbrBankIntRate — ставки по вкладам и кредитам: таблица, DDL и разбор листа «в рублях»,
+// производные (каталог рядов и витрина v_cbr_macro) публикует шаблон через AfterImport.
 // Пустой/короткий лист и ноль точек — ошибка (fail-fast), иначе «0 rows» выглядели бы
 // успешным прогоном, а семь рядов по срокам вклада остались бы без обновления.
 var cbrBankIntRate = util.ClickHouseImport{
@@ -74,11 +75,9 @@ var cbrBankIntRate = util.ClickHouseImport{
 		}
 		return nil
 	},
+	AfterImport: afterCbrMacro(cbrBankIntRateSeriesMeta),
 }
 
 // cbrBankIntRateImporter — ставки по вкладам и кредитам; регистрируется реестром
 // cbr/importers.go.
-var cbrBankIntRateImporter = &publishedStat{
-	ImportStat: &cbrBankIntRate,
-	meta:       cbrBankIntRateSeriesMeta,
-}
+var cbrBankIntRateImporter = &cbrBankIntRate

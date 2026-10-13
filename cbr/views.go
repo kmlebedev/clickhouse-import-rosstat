@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 )
 
@@ -50,16 +49,10 @@ func publishSeries(ctx context.Context, conn driver.Conn, meta []util.SeriesMeta
 	return err
 }
 
-type publishedStat struct {
-	chimport.ImportStat
-	meta []util.SeriesMeta
-}
-
-func (s *publishedStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	if count, err = s.ImportStat.Import(ctx, conn); err != nil {
-		return count, err
-	}
-	return count, publishSeries(ctx, conn, s.meta)
+// afterCbrMacro — производные импортёров пакета: каталог рядов и общая витрина
+// v_cbr_macro. Публикуются шаблоном после Send точек и до записи строки версии (§8 п. 13).
+func afterCbrMacro(meta []util.SeriesMeta) func(context.Context, driver.Conn) error {
+	return func(ctx context.Context, conn driver.Conn) error { return publishSeries(ctx, conn, meta) }
 }
 
 // cbrSurveyView — витрина рядов мониторинга предприятий (source='cbr_survey', импортёр

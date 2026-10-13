@@ -3,9 +3,9 @@ package cbr
 import "github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 
 // cbrImporter — запись реестра импортёров пакета: сам импортёр и таблица, в
-// которую он пишет. chimport.ImportStat встроен интерфейсом, поэтому Name() и
-// Import() делегируются обёртке (publishedStat публикует ряды и витрину,
-// mpSurveyImporter — свои), а поле table видит только тест
+// которую он пишет. Регистрируется конкретный тип пакета, а не обёртка: Name() и
+// Import() — его собственные, производные (каталог рядов, витрину) публикует
+// шаблон util.ClickHouseImport через поле AfterImport. Поле table видит только тест
 // TestCbrImportersPrefixedAndRegistered: по нему проверяется, что импортёр не занял
 // таблицу вне пространства cbr_.
 type cbrImporter struct {

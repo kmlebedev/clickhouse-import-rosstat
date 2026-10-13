@@ -48,18 +48,16 @@ func (s *indicatorsCpdStat) Import(ctx context.Context, conn driver.Conn) (count
 
 // cbrIndicatorsCpdImporter — сезонно сглаженная динамика потребительских цен;
 // регистрируется реестром cbr/importers.go.
-var cbrIndicatorsCpdImporter = &publishedStat{
-	ImportStat: &indicatorsCpdStat{ClickHouseImport: util.ClickHouseImport{
-		TableName: cbrIndicatorsCpdTable,
-		CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (
+var cbrIndicatorsCpdImporter = &indicatorsCpdStat{ClickHouseImport: util.ClickHouseImport{
+	TableName: cbrIndicatorsCpdTable,
+	CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (
               name LowCardinality(String)
 			, date Date
 			, value Float32
 		) ENGINE = ReplacingMergeTree ORDER BY (name, date);`},
-		ImportFunc: indicatorsCpdImport,
-	}},
-	meta: cbrIndicatorsCpdSeriesMeta,
-}
+	ImportFunc:  indicatorsCpdImport,
+	AfterImport: afterCbrMacro(cbrIndicatorsCpdSeriesMeta),
+}}
 
 // https://www.cbr.ru/analytics/dkp/dinamic/
 // indicatorsCpdImport разбирает лист «Лист1»: строки «Все товары и услуги» и «Базовый ИПЦ»

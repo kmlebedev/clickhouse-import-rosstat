@@ -69,10 +69,9 @@ func (s *ruoniaStat) Import(ctx context.Context, conn driver.Conn) (count int64,
 
 // cbrRuoniaImporter — RUONIA: дата подставляется в URL в Import(); регистрируется
 // реестром cbr/importers.go.
-var cbrRuoniaImporter = &publishedStat{
-	ImportStat: &ruoniaStat{ClickHouseImport: util.ClickHouseImport{
-		TableName: cbrRuoniaTable,
-		CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (
+var cbrRuoniaImporter = &ruoniaStat{ClickHouseImport: util.ClickHouseImport{
+	TableName: cbrRuoniaTable,
+	CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (
 			  date Date
 			, ruo Float32
             , vol Float32
@@ -82,7 +81,6 @@ var cbrRuoniaImporter = &publishedStat{
             , percentile25 Float32
             , Percentile75 Float32
 		) ENGINE = ReplacingMergeTree ORDER BY (date);`},
-		ImportFunc: ruoniaImport,
-	}},
-	meta: cbrRuaniaSeriesMeta,
-}
+	ImportFunc:  ruoniaImport,
+	AfterImport: afterCbrMacro(cbrRuaniaSeriesMeta),
+}}

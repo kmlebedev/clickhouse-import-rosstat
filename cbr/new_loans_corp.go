@@ -123,12 +123,10 @@ func cbrLoansImport(xlsx *excelize.File, batch driver.Batch, table, sheet, marke
 
 // loansToCorporationsImporter — объём новых кредитов юрлицам; регистрируется
 // реестром cbr/importers.go.
-var loansToCorporationsImporter = &publishedStat{
-	ImportStat: &LoansToCorporationsStat{ClickHouseImport: util.ClickHouseImport{
-		TableName:   loansToCorporationsTable,
-		CreateTable: []string{loansToCorporationsDdl},
-		DataUrl:     loansToCorporationsXlsDataUrl,
-		ImportFunc:  cbrLoansToCorpImport,
-	}},
-	meta: cbrLoansToCorpSeriesMeta,
-}
+var loansToCorporationsImporter = &LoansToCorporationsStat{ClickHouseImport: util.ClickHouseImport{
+	TableName:   loansToCorporationsTable,
+	CreateTable: []string{loansToCorporationsDdl},
+	DataUrl:     loansToCorporationsXlsDataUrl,
+	ImportFunc:  cbrLoansToCorpImport,
+	AfterImport: afterCbrMacro(cbrLoansToCorpSeriesMeta),
+}}

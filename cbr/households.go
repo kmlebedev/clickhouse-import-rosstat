@@ -100,12 +100,10 @@ func householdsBMesImport(xlsx *excelize.File, batch driver.Batch) error {
 
 // householdsBMesImporter — балансы сектора «Домашние хозяйства»; регистрируется
 // реестром cbr/importers.go.
-var householdsBMesImporter = &publishedStat{
-	ImportStat: &HouseholdsBMesStat{ClickHouseImport: util.ClickHouseImport{
-		TableName:   householdsBMesTable,
-		CreateTable: []string{householdsBMesDdl},
-		DataUrl:     householdsBMesXlsDataUrl,
-		ImportFunc:  householdsBMesImport,
-	}},
-	meta: householdsBMesSeriesMeta,
-}
+var householdsBMesImporter = &HouseholdsBMesStat{ClickHouseImport: util.ClickHouseImport{
+	TableName:   householdsBMesTable,
+	CreateTable: []string{householdsBMesDdl},
+	DataUrl:     householdsBMesXlsDataUrl,
+	ImportFunc:  householdsBMesImport,
+	AfterImport: afterCbrMacro(householdsBMesSeriesMeta),
+}}

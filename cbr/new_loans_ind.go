@@ -36,12 +36,10 @@ func cbrLoansToIndImport(xlsx *excelize.File, batch driver.Batch) error {
 
 // loansToIndividualsImporter — объём новых кредитов физлицам (региональный разрез);
 // регистрируется реестром cbr/importers.go.
-var loansToIndividualsImporter = &publishedStat{
-	ImportStat: &LoansToindividualsStat{ClickHouseImport: util.ClickHouseImport{
-		TableName:   loansToIndTable,
-		CreateTable: []string{loansToIndDdl},
-		DataUrl:     loansToIndXlsDataUrl,
-		ImportFunc:  cbrLoansToIndImport,
-	}},
-	meta: cbrLoansToIndSeriesMeta,
-}
+var loansToIndividualsImporter = &LoansToindividualsStat{ClickHouseImport: util.ClickHouseImport{
+	TableName:   loansToIndTable,
+	CreateTable: []string{loansToIndDdl},
+	DataUrl:     loansToIndXlsDataUrl,
+	ImportFunc:  cbrLoansToIndImport,
+	AfterImport: afterCbrMacro(cbrLoansToIndSeriesMeta),
+}}

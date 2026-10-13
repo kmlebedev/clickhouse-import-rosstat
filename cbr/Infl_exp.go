@@ -117,15 +117,13 @@ func (s *inflExpStat) Import(ctx context.Context, conn driver.Conn) (count int64
 
 // cbrInflExpImporter — инфляционные ожидания: ссылка на актуальный XLSX ищется в
 // Import() (ARCHITECTURE.md §8.6), регистрация — реестром cbr/importers.go.
-var cbrInflExpImporter = &publishedStat{
-	ImportStat: &inflExpStat{ClickHouseImport: util.ClickHouseImport{
-		TableName: cbrInflExpTable,
-		CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (
+var cbrInflExpImporter = &inflExpStat{ClickHouseImport: util.ClickHouseImport{
+	TableName: cbrInflExpTable,
+	CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (
               name LowCardinality(String)
 			, date Date
 			, value Float32
 		) ENGINE = ReplacingMergeTree ORDER BY (name, date);`},
-		ImportFunc: inflExpImport,
-	}},
-	meta: cbrInflExpSeriesMeta,
-}
+	ImportFunc:  inflExpImport,
+	AfterImport: afterCbrMacro(cbrInflExpSeriesMeta),
+}}

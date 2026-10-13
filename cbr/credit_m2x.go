@@ -82,6 +82,7 @@ var cbrСreditM2x = util.ClickHouseImport{
 		}
 		return nil
 	},
+	AfterImport: afterCbrMacro(cbrCreditM2xSeriesMeta),
 }
 
 type cbrCreditM2xStat struct {
@@ -106,7 +107,4 @@ func (s *cbrCreditM2xStat) Import(ctx context.Context, conn driver.Conn) (count 
 // cbrCreditM2xImporter — кредит экономике и денежная масса: адрес актуального
 // credit_m2x.xlsx берётся со страницы ДКС в Import() (ARCHITECTURE.md §8.6),
 // регистрация — реестром cbr/importers.go.
-var cbrCreditM2xImporter = &publishedStat{
-	ImportStat: &cbrCreditM2xStat{ClickHouseImport: cbrСreditM2x},
-	meta:       cbrCreditM2xSeriesMeta,
-}
+var cbrCreditM2xImporter = &cbrCreditM2xStat{ClickHouseImport: cbrСreditM2x}
