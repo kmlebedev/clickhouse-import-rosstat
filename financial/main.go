@@ -173,9 +173,6 @@ func loadAllData(conn *sql.DB) {
 		if err := crawFinanceResults(conn); err != nil {
 			log.Error(err)
 		}
-		if err := crawCbr(conn); err != nil {
-			log.Error(err)
-		}
 		if err := loadCSV(conn); err != nil {
 			log.Error(err)
 		}

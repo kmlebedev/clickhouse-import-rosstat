@@ -1,4 +1,4 @@
-package surveys
+package cbr
 
 import (
 	"strings"

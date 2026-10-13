@@ -4,23 +4,31 @@ import (
 	"context"
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
 	"strconv"
 	"time"
 )
 
+// ruoniaImport разбирает лист «RC»: одна широкая строка на торговый день (date + 7 метрик,
+// порядок колонок — как в DDL cbr_ruania). Пустой лист/ноль строк — ошибка (fail-fast):
+// молчаливый «0 rows» выглядел бы успешным прогоном, а все семь метрик остались бы без
+// обновления.
 func ruoniaImport(xlsx *excelize.File, batch driver.Batch) error {
 	rows, err := xlsx.GetRows("RC")
 	if err != nil {
 		return err
 	}
+	// Пустой лист — сразу ошибка: rows[1:] ниже паникует на пустом срезе, а паника в
+	// импортёре — не «0 rows», а упавший шаг DAG без понятного сообщения.
+	if len(rows) == 0 {
+		return fmt.Errorf("%s: лист «RC» пуст", cbrRuoniaTable)
+	}
+	count := 0
 	for _, row := range rows[1:] {
 		if len(row) == 0 {
 			continue
 		}
-		fmt.Printf("row: %+v\n", row)
 		date, err := time.Parse("01-02-06", row[0])
 		if err != nil {
 			return err
@@ -35,6 +43,10 @@ func ruoniaImport(xlsx *excelize.File, batch driver.Batch) error {
 		if err = batch.Append(date, rui, vol, trans, minRate, maxRate, p25, p75); err != nil {
 			return err
 		}
+		count++
+	}
+	if count == 0 {
+		return fmt.Errorf("%s: разбор листа «RC» не дал ни одной точки", cbrRuoniaTable)
 	}
 	return nil
 }
@@ -55,8 +67,10 @@ func (s *ruoniaStat) Import(ctx context.Context, conn driver.Conn) (count int64,
 	return s.ClickHouseImport.Import(ctx, conn)
 }
 
-func init() {
-	ruania := ruoniaStat{ClickHouseImport: util.ClickHouseImport{
+// cbrRuoniaImporter — RUONIA: дата подставляется в URL в Import(); регистрируется
+// реестром cbr/importers.go.
+var cbrRuoniaImporter = &publishedStat{
+	ImportStat: &ruoniaStat{ClickHouseImport: util.ClickHouseImport{
 		TableName: cbrRuoniaTable,
 		CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (
 			  date Date
@@ -69,6 +83,6 @@ func init() {
             , Percentile75 Float32
 		) ENGINE = ReplacingMergeTree ORDER BY (date);`},
 		ImportFunc: ruoniaImport,
-	}}
-	chimport.Stats = append(chimport.Stats, &publishedStat{ImportStat: &ruania, meta: cbrRuaniaSeriesMeta})
+	}},
+	meta: cbrRuaniaSeriesMeta,
 }

@@ -2,83 +2,124 @@ package cbr
 
 import (
 	"context"
+	"encoding/xml"
 	"fmt"
-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/gocolly/colly/v2"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+	log "github.com/sirupsen/logrus"
 )
 
-type cbrGold struct {
+// cbrMetallDoc — ответ https://www.cbr.ru/scripts/xml_metall.asp (учётные цены на
+// аффинированные драгоценные металлы). XMLName пинит корень: без пина 200 с HTML-страницей
+// заглушки разберётся в пустую структуру без ошибки (см. util.ParseXML).
+type cbrMetallDoc struct {
+	XMLName xml.Name `xml:"Metall"`
+	Records []struct {
+		Code string `xml:"Code,attr"`
+		Date string `xml:"Date,attr"`
+		Buy  string `xml:"Buy"`
+	} `xml:"Record"`
 }
 
 const (
-	//https://www.cbr.ru/hd_base/metall/metall_base_new/?UniDbQuery.Posted=True&UniDbQuery.From=01.01.2019&UniDbQuery.To=08.02.2025&UniDbQuery.Gold=true&UniDbQuery.so=1
-	cbrGoldUrl   = "https://www.cbr.ru/hd_base/metall/metall_base_new/?UniDbQuery.Posted=True&UniDbQuery.From=01.01.2013&UniDbQuery.To=%s&UniDbQuery.Gold=true&UniDbQuery.so=1"
+	cbrGoldUrl   = "https://www.cbr.ru/scripts/xml_metall.asp?date_req1=%s&date_req2=%s"
 	cbrGoldTable = "cbr_gold"
-	cbrGoldDdl   = `CREATE TABLE IF NOT EXISTS ` + cbrGoldTable + ` (
-			  date Date
-			, price Float32
-		) ENGINE = ReplacingMergeTree ORDER BY (date);
-	`
-	cbrGoldInsert     = "INSERT INTO " + cbrGoldTable + " VALUES (?, ?)"
+	cbrGoldDdl   = `CREATE TABLE IF NOT EXISTS %s (
+				  date Date
+				, price Float32
+			) ENGINE = ReplacingMergeTree ORDER BY (date);
+		`
+	cbrGoldInsert     = "INSERT INTO " + cbrGoldTable
 	cbrGoldTimeLayout = "02.01.2006"
+	// cbrGoldDateLayout — формат date_req1/date_req2 у xml_metall.asp.
+	cbrGoldDateLayout = "02/01/2006"
+	// cbrGoldCode — код золота в ленте xml_metall.asp (учётная цена в рублях за грамм).
+	cbrGoldCode = "1"
+	// cbrGoldHistoryFrom — начало истории цены (DD/MM/YYYY): 10.01.2013 — первая дата
+	// cbr_gold (baseline T1, n=3397); лента глубже не отдаёт.
+	cbrGoldHistoryFrom = "10/01/2013"
 )
 
-func (s *cbrGold) Name() string {
-	return cbrGoldTable
+type cbrGold struct {
+	util.ClickHouseImport
 }
 
-func (s *cbrGold) export() (table *[][]string, err error) {
-	url := fmt.Sprintf(cbrGoldUrl, time.Now().Format("02.01.2006"))
-	fmt.Printf("gld export %s\n", url)
-	c := colly.NewCollector()
-	table = new([][]string)
-	c.OnHTML(".table-wrapper .data tr", func(e *colly.HTMLElement) {
-		date := e.DOM.Children().First().Text()
-		if date == "Дата" {
-			return
-		}
-		price := strings.ReplaceAll(strings.ReplaceAll(e.DOM.Children().Last().Text(), ",", "."), " ", "")
-		// fmt.Printf("date %s price %s\n", date, price)
-		if _, err := strconv.ParseFloat(price, 32); err != nil {
-			return
-		}
-		*table = append(*table, []string{date, price})
-	})
-
-	if err = c.Visit(url); err != nil {
-		return nil, err
-	}
-	return table, nil
-}
-
+// Import подставляет DataUrl с сегодняшней датой окончания диапазона: date_req2 должен
+// быть актуален на момент запуска, а сетевые вызовы и обращение к времени в init()
+// запрещены (ARCHITECTURE.md §8.6).
 func (s *cbrGold) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	if err = conn.Exec(ctx, cbrGoldDdl); err != nil {
-		return count, err
-	}
-	var table *[][]string
-	if table, err = s.export(); err != nil {
-		return count, err
-	}
-	for _, row := range *table {
-		date, err := time.Parse(cbrGoldTimeLayout, row[0])
+	s.DataUrl = fmt.Sprintf(cbrGoldUrl, cbrGoldHistoryFrom, time.Now().Format(cbrGoldDateLayout))
+	return s.ClickHouseImport.Import(ctx, conn)
+}
+
+// parseMetalGold разбирает xml_metall.asp в точки по золоту (Code == 1). Пустая запись
+// (пустые после TrimSpace дата или значение) пропускается: ЦБ отдаёт пустые <Buy/> у дней
+// без цены. Непустое непарсящееся значение — ошибка, а не пропуск: битая лента не должна
+// выглядеть успешным прогоном. Ноль точек — тоже ошибка (fail-fast): пустой <Metall/> или
+// лента без золота молча стёрла бы ряд нулём строк.
+func parseMetalGold(doc *cbrMetallDoc) ([]cbrPoint, error) {
+	points := make([]cbrPoint, 0, len(doc.Records))
+	for _, r := range doc.Records {
+		if r.Code != cbrGoldCode {
+			continue
+		}
+		date, value := strings.TrimSpace(r.Date), strings.TrimSpace(r.Buy)
+		if date == "" || value == "" {
+			continue
+		}
+		d, err := time.Parse(cbrGoldTimeLayout, date)
 		if err != nil {
-			return count, err
+			return nil, err
 		}
-		if err = conn.Exec(ctx, cbrGoldInsert, date, row[1]); err != nil {
-			return count, err
+		v, err := strconv.ParseFloat(strings.ReplaceAll(value, ",", "."), 64)
+		if err != nil {
+			return nil, err
 		}
-		count++
+		points = append(points, cbrPoint{date: d, value: v})
 	}
-	if err = publishSeries(ctx, conn, cbrGoldSeriesMeta); err != nil {
+	if len(points) == 0 {
+		return nil, fmt.Errorf("%s: в ответе нет ни одной точки (золото Code=%s)", cbrGoldTable, cbrGoldCode)
+	}
+	return points, nil
+}
+
+func cbrGoldCraw(crawUrl string, conn driver.Conn) (count int64, err error) {
+	doc := new(cbrMetallDoc)
+	if err = util.GetXML(crawUrl, doc); err != nil {
+		return count, fmt.Errorf("%s: %w", cbrGoldTable, err)
+	}
+	points, err := parseMetalGold(doc)
+	if err != nil {
 		return count, err
 	}
+	batch, err := conn.PrepareBatch(ctx, cbrGoldInsert)
+	if err != nil {
+		return count, err
+	}
+	for _, p := range points {
+		if err = batch.Append(p.date, p.value); err != nil {
+			return count, err
+		}
+	}
+	count = int64(batch.Rows())
+	if err = batch.Send(); err != nil {
+		return count, err
+	}
+	log.Infof("%s: %d точек", cbrGoldTable, count)
 	return count, nil
 }
 
-func init() {
-	chimport.Stats = append(chimport.Stats, &cbrGold{})
+// cbrGoldImporter — учётные цены золота (XML-краулер xml_metall.asp);
+// регистрируется реестром cbr/importers.go.
+var cbrGoldImporter = &publishedStat{
+	ImportStat: &cbrGold{ClickHouseImport: util.ClickHouseImport{
+		TableName:   cbrGoldTable,
+		CreateTable: []string{cbrGoldDdl},
+		CrawFunc:    cbrGoldCraw,
+	}},
+	meta: cbrGoldSeriesMeta,
 }

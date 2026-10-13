@@ -1,11 +1,10 @@
-package surveys
+package cbr
 
 import (
 	"context"
 	"fmt"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	log "github.com/sirupsen/logrus"
 	"github.com/xuri/excelize/v2"
@@ -43,7 +42,9 @@ func (s *mpSurveyStat) Import(ctx context.Context, conn driver.Conn) (int64, err
 	return count, err
 }
 
-var importer = &mpSurveyStat{ClickHouseImport: util.ClickHouseImport{
+// mpSurveyImporter — мониторинг предприятий: Name() = cbr_mp_survey, а таблица —
+// общая macro_series (source='cbr_survey'). Регистрируется реестром cbr/importers.go.
+var mpSurveyImporter = &mpSurveyStat{ClickHouseImport: util.ClickHouseImport{
 	TableName:   mpSurveyTable,
 	CreateTable: []string{mpSurveyDdl},
 	DataUrl:     mpSurveyURL,
@@ -61,7 +62,3 @@ var importer = &mpSurveyStat{ClickHouseImport: util.ClickHouseImport{
 		return nil
 	},
 }}
-
-func init() {
-	chimport.Stats = append(chimport.Stats, importer)
-}

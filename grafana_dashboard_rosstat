@@ -3823,7 +3823,7 @@
               }
             ],
             "queryType": "timeseries",
-            "table": "households_b_mes"
+            "table": "cbr_households_b_mes"
           },
           "datasource": {
             "type": "grafana-clickhouse-datasource",
@@ -3877,7 +3877,7 @@
           },
           "pluginVersion": "4.3.2",
           "queryType": "timeseries",
-          "rawSql": "SELECT date as \"time\", balance FROM \"default\".\"households_b_mes\" WHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( name = 'Котируемые акции резидентов - всего' ) ORDER BY time ASC LIMIT 1000",
+          "rawSql": "SELECT date as \"time\", balance FROM \"default\".\"cbr_households_b_mes\" WHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( name = 'Котируемые акции резидентов - всего' ) ORDER BY time ASC LIMIT 1000",
           "refId": "Акции"
         },
         {
@@ -3929,7 +3929,7 @@
               }
             ],
             "queryType": "timeseries",
-            "table": "households_b_mes"
+            "table": "cbr_households_b_mes"
           },
           "datasource": {
             "type": "grafana-clickhouse-datasource",
@@ -3983,7 +3983,7 @@
           },
           "pluginVersion": "4.3.2",
           "queryType": "timeseries",
-          "rawSql": "SELECT date as \"time\", balance FROM \"default\".\"households_b_mes\" WHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( name = 'Паи и акции инвестиционных фондов - резидентов - всего' ) ORDER BY time ASC LIMIT 1000",
+          "rawSql": "SELECT date as \"time\", balance FROM \"default\".\"cbr_households_b_mes\" WHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( name = 'Паи и акции инвестиционных фондов - резидентов - всего' ) ORDER BY time ASC LIMIT 1000",
           "refId": "Паи"
         },
         {
@@ -4035,7 +4035,7 @@
               }
             ],
             "queryType": "timeseries",
-            "table": "households_b_mes"
+            "table": "cbr_households_b_mes"
           },
           "datasource": {
             "type": "grafana-clickhouse-datasource",
@@ -4089,7 +4089,7 @@
           },
           "pluginVersion": "4.3.2",
           "queryType": "timeseries",
-          "rawSql": "SELECT date as \"time\", balance FROM \"default\".\"households_b_mes\" WHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( name = 'Долговые ценные бумаги' ) ORDER BY time ASC LIMIT 1000",
+          "rawSql": "SELECT date as \"time\", balance FROM \"default\".\"cbr_households_b_mes\" WHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( name = 'Долговые ценные бумаги' ) ORDER BY time ASC LIMIT 1000",
           "refId": "Бонды"
         },
         {
@@ -4141,7 +4141,7 @@
               }
             ],
             "queryType": "timeseries",
-            "table": "households_b_mes"
+            "table": "cbr_households_b_mes"
           },
           "datasource": {
             "type": "grafana-clickhouse-datasource",
@@ -4195,7 +4195,7 @@
           },
           "pluginVersion": "4.3.2",
           "queryType": "timeseries",
-          "rawSql": "SELECT date as \"time\", balance FROM \"default\".\"households_b_mes\" WHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( name LIKE '%ИЖК, выкупленные ипотечными агентами, с учетом погашения%%' ) ORDER BY time ASC LIMIT 1000",
+          "rawSql": "SELECT date as \"time\", balance FROM \"default\".\"cbr_households_b_mes\" WHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( name LIKE '%ИЖК, выкупленные ипотечными агентами, с учетом погашения%%' ) ORDER BY time ASC LIMIT 1000",
           "refId": "ИЖК"
         }
       ],
