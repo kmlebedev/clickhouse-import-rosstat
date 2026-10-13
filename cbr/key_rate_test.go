@@ -18,16 +18,21 @@ func readCbrTestdata(t *testing.T, name string) []byte {
 	return body
 }
 
-// TestKeyRateRows: таблица «Ключевая ставка» разбирается целиком — ≥170 строк истории
-// с 17.09.2013; строки идут от свежей к старой, поэтому первая точка — сегодняшняя,
+// keyRateFixtureRows — точное число строк данных в cbr/testdata/key_rate.html
+// (13.10.2026 … 17.09.2013). Фикстура заморожена: равенство, а не нижняя граница, ловит
+// потерю части строк при деградации разбора.
+const keyRateFixtureRows = 3278
+
+// TestKeyRateRows: таблица «Ключевая ставка» разбирается целиком — все строки фикстуры
+// (keyRateFixtureRows); порядок от свежей к старой, поэтому первая точка — сегодняшняя,
 // последняя — дата введения ключевой ставки.
 func TestKeyRateRows(t *testing.T) {
 	points, err := keyRateRows(readCbrTestdata(t, "key_rate.html"))
 	if err != nil {
 		t.Fatalf("keyRateRows: %v", err)
 	}
-	if len(points) < 170 {
-		t.Fatalf("точек %d, want ≥ 170", len(points))
+	if len(points) != keyRateFixtureRows {
+		t.Fatalf("точек %d, want %d (строк в фикстуре testdata/key_rate.html)", len(points), keyRateFixtureRows)
 	}
 	first := time.Date(2026, time.October, 13, 0, 0, 0, 0, time.UTC)
 	if !points[0].date.Equal(first) {
