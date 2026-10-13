@@ -206,6 +206,18 @@ AfterImport func(ctx context.Context, conn driver.Conn) error
 6. `make mcp-check` — **ПРОВЕРКА ПРОЙДЕНА**; `dagu validate dagu/cbr.yaml` → exit 0.
 7. Временные admin-SQL — через `make ch-sql`, файлы не коммитятся (прецедент — приёмка `cbr_mo_br`).
 
+### 4.1 Результат прогона 2026-10-14 (dev-ClickHouse)
+
+Выполнено на коммите ветки `feat/publication-preflight`; полный блок с таблицей версий, отпечатками и контрольными числами — в `docs/ROADMAP_KEY_RATE.md`, «Живая приёмка 2026-10-14 — шаг 1.7». Коротко:
+
+- `make all` — зелёный; свежий (без кэша) `go test -race -count=1 ./util/ ./cbr/ ./rosstat/` — `ok`.
+- Десять `cbr`-импортёров: первый прогон — полный импорт + по строке версии (всего **10 строк** в `source_publications`), повтор — no-op без скачивания, без разбора и без новых строк; `v_cbr_macro` = **46510** до и после.
+- Контроль §3.2 пройден: у `cbr_households_b_mes` в версии **7350** при `Imported 9030 rows`; у `cbr_mo_br` отпечаток `4fef4f25716d388e9048149fa296039c` и 9348 точек не изменились.
+- Уточнение к §3.2 по факту: `points` версии — число точек ряда в таблице на момент версии (запрос импортёра), а не число строк батча: `cbr_credit_m2x` 3102 против 6486, `cbr_infl_exp` 90 против 66 (таблица накапливает выпуски). Чек сравнивает этот запрос сам с собой, поэтому сходится.
+- Вне `cbr/`: `ipc_mes` (1716) и `sber_finansovie_rezultaty` (559) прошли полный круг «полный импорт → no-op». **`salaries_mes` и `vvp_kvartal` приёмку не проходят** — их полный путь падает на pre-existing дефекте разбора (не менялся этой работой: `strconv.ParseFloat: parsing "1,017"` и `panic: index out of range` в `parseVvpKvartal`), строка версии при этом не записывается, что и требует §8 п. 13; чинит их пункт фазы 2 роадмапа, объявления у обоих оставлены.
+- `make mcp-check` → **ПРОВЕРКА ПРОЙДЕНА** (в том числе `служебная source_publications закрыта: отказ ClickHouse 497`); `dagu validate dagu/cbr.yaml` → exit 0; `make mcp-user` не требовался — новых витрин и грантов нет.
+
+
 ## 5. Документация того же PR
 
 `ARCHITECTURE.md`: §3 — поля `PublicationSource`/`PublicationCountPoints`/`AfterImport` шаблона и хелперы `util.PublicationPreflight`/`CountPoints` (плюс `PublicationKey()`/`Publication()`); §6.1 — перечень **всех** переведённых импортёров с их `PublicationCountPoints`: десять в `cbr/` (§3.5) и четыре вне него по факту §3.7 (`ipc_mes`, `salaries_mes`, `vvp_kvartal`, `sber_finansovie_rezultaty`), а также импортёры, оставшиеся без объявления осознанно (четыре дневных `cbr_*`, `ipc_weeks`, `tbank_group_ifrs`); §6.2 — комментарий DDL `source_publications` (**обе копии: `util/publications.go` и §6.2**) и перечень потребителей; §8 п. 13 — конвенция без оговорки «миграция остальных — вне объёма», с фактическим списком. `README.md` — таблица импортёров (`cbr`, `rosstat`, `bank`) и расписание: ежедневный прогон месячных XLSX — no-op без скачивания, расписание и состав шагов не меняются. `docs/ROADMAP_KEY_RATE.md` — новый пункт «шаг 1.7» со статусом «код готов, живая приёмка — следующим шагом» и блоком приёмки, который заполняет следующий шаг работ. Синхронизацию проверить скилом `sync-readme-architecture`.
