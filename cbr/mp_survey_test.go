@@ -1,4 +1,4 @@
-package surveys
+package cbr
 
 import (
 	"fmt"
@@ -11,7 +11,7 @@ import (
 // отличаться от имени таблицы macro_series, которое вернул бы встроенный
 // util.ClickHouseImport: иначе запуск импортёра попадёт в чужой шаг конвейера.
 func TestImporterName(t *testing.T) {
-	if got := importer.Name(); got != "cbr_mp_survey" {
+	if got := mpSurveyImporter.Name(); got != "cbr_mp_survey" {
 		t.Fatalf("Name() = %q, want %q", got, "cbr_mp_survey")
 	}
 }

@@ -1,4 +1,4 @@
-package surveys
+package cbr
 
 import (
 	"context"
@@ -43,7 +43,7 @@ func (s *mpSurveyStat) Import(ctx context.Context, conn driver.Conn) (int64, err
 	return count, err
 }
 
-var importer = &mpSurveyStat{ClickHouseImport: util.ClickHouseImport{
+var mpSurveyImporter = &mpSurveyStat{ClickHouseImport: util.ClickHouseImport{
 	TableName:   mpSurveyTable,
 	CreateTable: []string{mpSurveyDdl},
 	DataUrl:     mpSurveyURL,
@@ -63,5 +63,5 @@ var importer = &mpSurveyStat{ClickHouseImport: util.ClickHouseImport{
 }}
 
 func init() {
-	chimport.Stats = append(chimport.Stats, importer)
+	chimport.Stats = append(chimport.Stats, mpSurveyImporter)
 }
