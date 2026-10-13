@@ -20,7 +20,7 @@ type cbrImporter struct {
 }
 
 // cbrImporters — единственная точка регистрации импортёров ЦБ: персональных
-// init()-append по файлам импортёров больше нет (14 записей в одном месте вместо
+// init()-append по файлам импортёров больше нет (15 записей в одном месте вместо
 // 13 прежних). Порядок повторяет dagu/cbr.yaml; в chimport.Stats порядок значения
 // не имеет.
 //
@@ -43,6 +43,11 @@ type cbrImporter struct {
 // объявлением импортёра (Publication().CountPoints) — двумя независимыми записями
 // одного утверждения. Незамеченная правка запроса в объявлении оставила бы реестр
 // описывающим другой чек, а забытое объявление молча выключило бы префлайт.
+//
+// У cbr_mp_summary префлайта нет сознательно (спека §3.1): дельта считается по адресам
+// индекса материалов заседаний (SELECT DISTINCT url из своей таблицы), и HEAD-отпечаток
+// страницы резюме не ответил бы на вопрос «какие резюме уже разобраны» — у импортёра три
+// свои таблицы, а не один артефакт версии.
 var cbrImporters = []cbrImporter{
 	{cbrCurrencyUSDImporter, "cbr_currency_usd", ""},
 	{householdsBMesImporter, "cbr_households_b_mes", "SELECT count() FROM cbr_households_b_mes FINAL"},
@@ -58,6 +63,7 @@ var cbrImporters = []cbrImporter{
 	{cbrRuoniaImporter, "cbr_ruania", ""},
 	{mpSurveyImporter, "macro_series", "SELECT count() FROM macro_series FINAL WHERE source = 'cbr_survey'"},
 	{moBrImporter, "macro_series", "SELECT count() FROM macro_series FINAL WHERE source = 'cbr_mo_br'"},
+	{mpSummaryImporter, "cbr_mp_summary", ""},
 }
 
 // init — единственная регистрация импортёров ЦБ в chimport.Stats. Порядок
