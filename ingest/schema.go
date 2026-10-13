@@ -36,7 +36,7 @@ const forecastLogDdl = `CREATE TABLE IF NOT EXISTS forecast_log (
 ) ENGINE = ReplacingMergeTree ORDER BY (metric, forecast_date);`
 
 const macroSeriesDdl = `CREATE TABLE IF NOT EXISTS macro_series (
-    source LowCardinality(String),   -- 'fred','bls','bea','eia','manual','webbridge','imf','wgc','bold'
+    source LowCardinality(String),   -- 'fred','bls','bea','eia','manual','webbridge','imf','wgc','bold','cbr_survey'
     series LowCardinality(String),   -- 'DFII10','distillate_stocks',...
     date Date32,                     -- Date32, т.к. Date не покрывает даты до 1970 (CPIAUCSL с 1947, FEDFUNDS с 1954)
     value Float64
