@@ -166,37 +166,51 @@ func TestMPSummaryViewPins(t *testing.T) {
 func TestMPSummaryMissingRefs(t *testing.T) {
 	day := func(d int, m time.Month) time.Time { return time.Date(2026, m, d, 0, 0, 0, 0, time.UTC) }
 
-	// Четыре карточки индекса: полный документ; документ с одной шапкой (блоков нет);
+	// Пять карточек индекса: полный документ; документ с одной шапкой (блоков нет);
 	// документ с шапкой и блоками, но без regex-разметки (сбой третьего батча слоя 1);
-	// и вовсе неизвестный. Даты заседания первых трёх — из шапок таблицы, они же ключи
+	// документ с шапкой и regex-строками, но без блоков (сбой второго батча — случай
+	// «известность по шапке и разметке» маскировал бы пропавший текст резюме);
+	// и вовсе неизвестный. Даты заседания четырёх первых — из шапок таблицы, они же ключи
 	// блоков и каналов.
 	full := mpSummaryRef{Published: day(23, time.September), Href: "/dkp/mp_dec/decision_key_rate/summary_key_rate_23092026/"}
 	headerOnly := mpSummaryRef{Published: day(5, time.August), Href: "/dkp/mp_dec/decision_key_rate/summary_key_rate_05082026/"}
 	noRegex := mpSummaryRef{Published: day(1, time.July), Href: "/dkp/mp_dec/decision_key_rate/summary_key_rate_01072026/"}
+	regexOnly := mpSummaryRef{Published: day(7, time.May), Href: "/dkp/mp_dec/decision_key_rate/summary_key_rate_07052026/"}
 	unknown := mpSummaryRef{Published: day(1, time.April), Href: "/dkp/mp_dec/decision_key_rate/summary_key_rate_01042026/"}
-	refs := []mpSummaryRef{full, headerOnly, noRegex, unknown}
+	refs := []mpSummaryRef{full, headerOnly, noRegex, regexOnly, unknown}
 
 	imported := map[string]time.Time{
 		cbrUrl + full.Href:       day(11, time.September),
-		cbrUrl + headerOnly.Href: day(24, time.July), // шапка есть — блоков по этой дате нет
-		cbrUrl + noRegex.Href:    day(5, time.June),  // шапка и блоки есть — regex-строк нет
+		cbrUrl + headerOnly.Href: day(24, time.July),  // шапка есть — блоков и regex-строк нет
+		cbrUrl + noRegex.Href:    day(5, time.June),   // шапка и блоки есть — regex-строк нет
+		cbrUrl + regexOnly.Href:  day(24, time.April), // шапка и regex-строки есть — блоков нет
 	}
 	blockDates := map[time.Time]bool{
 		day(11, time.September): true,
 		day(5, time.June):       true,
 	}
-	regexDates := map[time.Time]bool{day(11, time.September): true}
+	regexDates := map[time.Time]bool{
+		day(11, time.September): true,
+		day(24, time.April):     true,
+	}
 
 	got := mpMissingRefs(refs, imported, blockDates, regexDates)
-	want := []mpSummaryRef{headerOnly, noRegex, unknown}
+	want := []mpSummaryRef{headerOnly, noRegex, regexOnly, unknown}
 	if len(got) != len(want) {
-		t.Fatalf("missing: %d карточек %v, want %d %v: неполный документ слоя 1 обязан перекачиваться",
+		t.Fatalf("missing: %d карточек %v, want %d %v: неполный документ слоя 1 (шапка, блоки, regex-строки — все три уровня) обязан перекачиваться",
 			len(got), got, len(want), want)
 	}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Errorf("missing[%d] = %+v, want %+v", i, got[i], want[i])
 		}
+	}
+
+	// Каждое из трёх условий проверяется отдельным кейсом, и одного «полного» документа для
+	// этого мало: без regexOnly условие по blockDates можно было бы выбросить незамеченным
+	// (документ с шапкой и разметкой, но без текста считался бы готовым).
+	if again := mpMissingRefs([]mpSummaryRef{regexOnly}, imported, blockDates, regexDates); len(again) != 1 {
+		t.Errorf("missing документа с шапкой и regex-строками, но без блоков = %v, want его же: без блоков документ неполон", again)
 	}
 
 	// Обратное направление: у документа со всеми тремя уровнями повторный прогон не скачивает
