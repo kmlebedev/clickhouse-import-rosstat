@@ -2,9 +2,103 @@ package cbr
 
 import (
 	"testing"
+	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 )
+
+// appendedRow — строка, которую разбор импортёра пишет в таблицу. У таблиц с колонкой
+// name (m2, credit_m2x, households) name — имя ряда из разбора; у однорядных таблиц
+// (cbr_currency_usd, cbr_gold, cbr_key_rate) колонки name нет, и имя ряда задаёт тест
+// через appendRecorder.series.
+type appendedRow struct {
+	name  string
+	date  time.Time
+	value float64
+}
+
+// appendRecorder — заглушка driver.Batch для офлайн-тестов: запоминает строки вместо
+// записи в ClickHouse. Колонки идут в порядке DDL импортёра: (date, value) у однорядных
+// таблиц и (name, date, value) у таблиц с колонкой name.
+type appendRecorder struct {
+	driver.Batch
+	series string // имя ряда однорядной таблицы: у неё в таблице нет колонки name
+	rows   []appendedRow
+}
+
+func (r *appendRecorder) Append(v ...any) error {
+	row := appendedRow{name: r.series}
+	if len(v) == 3 {
+		row.name = v[0].(string)
+		v = v[1:]
+	}
+	row.date = v[0].(time.Time)
+	row.value = v[1].(float64)
+	r.rows = append(r.rows, row)
+	return nil
+}
+
+// appendCbrPoints пишет точки однорядной таблицы так же, как CrawFunc: (date, value).
+// Имя ряда такой таблицы берётся из rec.series.
+func appendCbrPoints(rec *appendRecorder, points []cbrPoint) error {
+	for _, p := range points {
+		if err := rec.Append(p.date, p.value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// describeCbrSeriesMeta проверяет полноту описаний и уникальность рядов и возвращает
+// множество описанных имён.
+func describeCbrSeriesMeta(t *testing.T, source string, meta []util.SeriesMeta) map[string]bool {
+	t.Helper()
+	described := make(map[string]bool, len(meta))
+	for _, m := range meta {
+		if m.Source != source || m.Series == "" || m.Title == "" || m.Unit == "" || m.Frequency == "" || m.Origin == "" || m.Description == "" {
+			t.Errorf("описание ряда %q (%s) заполнено не полностью", m.Series, source)
+		}
+		if described[m.Series] {
+			t.Errorf("ряд %q (%s) описан дважды", m.Series, source)
+		}
+		described[m.Series] = true
+	}
+	return described
+}
+
+// checkCbrSeriesMeta проверяет двусторонний контракт каталога series_meta и разбора на
+// фикстуре: каждый ряд из разбора описан в каталоге (разбор ⊆ каталог) и каждый
+// описанный ряд встречается в разборе (каталог ⊆ разбор). writeRows пишет строки в
+// приёмник так же, как это делает импортёр. Пустое имя ряда недопустимо: у однорядных
+// таблиц его задаёт тест (appendRecorder.series).
+func checkCbrSeriesMeta(t *testing.T, source string, meta []util.SeriesMeta, writeRows func(rec *appendRecorder) error) {
+	t.Helper()
+	described := describeCbrSeriesMeta(t, source, meta)
+	rec := &appendRecorder{}
+	if err := writeRows(rec); err != nil {
+		t.Fatalf("разбор фикстуры: %v", err)
+	}
+	if len(rec.rows) == 0 {
+		t.Error("разбор не дал ни одной точки: каталог проверить нечем")
+	}
+	seen := make(map[string]bool, len(rec.rows))
+	for _, row := range rec.rows {
+		if row.name == "" {
+			t.Error("строка разбора без имени ряда: у однорядных таблиц его задаёт тест (appendRecorder.series)")
+			continue
+		}
+		if !described[row.name] {
+			t.Errorf("ряд %q из разбора не описан в каталоге (%s)", row.name, source)
+		}
+		seen[row.name] = true
+	}
+	for name := range described {
+		if !seen[name] {
+			t.Errorf("описанный ряд %q (%s) не встретился при разборе", name, source)
+		}
+	}
+}
 
 func cbrAllSeriesMeta() [][]util.SeriesMeta {
 	return [][]util.SeriesMeta{

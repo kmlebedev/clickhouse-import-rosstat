@@ -23,7 +23,7 @@ var cbrCurrencyUSDSeriesMeta = []util.SeriesMeta{
 		Title:       "Официальный курс доллара США (ЦБ РФ)",
 		Unit:        "руб. за 1 USD",
 		Frequency:   "D",
-		Origin:      "cbr.ru/currency_base/dynamics, код валюты R01235 (USD), колонка курса",
+		Origin:      "cbr.ru/scripts/XML_dynamic.asp, VAL_NM_RQ=R01235 (USD), атрибут Date и тег Value записи Record",
 		Description: "Официальный курс ЦБ РФ: рублей за 1 доллар США на дату. Строки только на рабочие дни ЦБ, на выходные и праздники строк нет. Темп — отношение к предыдущей строке, а не к предыдущему календарному дню.",
 	},
 }
@@ -35,7 +35,7 @@ var cbrGoldSeriesMeta = []util.SeriesMeta{
 		Title:       "Учётная цена золота ЦБ РФ (аффинированное золото)",
 		Unit:        "руб./грамм",
 		Frequency:   "D",
-		Origin:      "cbr.ru/hd_base/metall/metall_base_new, «Учетные цены на аффинированные драгоценные металлы», колонка «Золото»",
+		Origin:      "cbr.ru/scripts/xml_metall.asp, Code=1 (золото), атрибут Date и тег Buy записи Record",
 		Description: "Учётная цена аффинированного золота, которую ЦБ устанавливает на рабочие дни, в рублях за грамм (например, 09.10.2026 — 11 246,90 руб./грамм). Дата — день вступления цены в силу. Темп — отношение к предыдущей строке.",
 	},
 }
