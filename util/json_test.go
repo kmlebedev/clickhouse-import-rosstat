@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -146,8 +147,10 @@ func TestPostJSONDecodesBody(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Errorf("метод %s, ожидался POST: промпт едет телом, а не query", r.Method)
 		}
-		if r.Header.Get("User-Agent") == "" {
-			t.Error("запрос ушёл без User-Agent — хелпер обязан слать randomUA, как GetJSON")
+		if ua := r.Header.Get("User-Agent"); !slices.Contains(userAgents, ua) {
+			t.Errorf("User-Agent = %q — не из списка userAgents: хелпер обязан слать randomUA, как GetJSON. "+
+				"Проверка на непустоту тут вакуумна: без установки заголовка Go сам шлёт Go-http-client/1.1, "+
+				"и удаление строки req.Header.Set(\"User-Agent\", randomUA) прошло бы зелёным", ua)
 		}
 		if got := r.Header.Get("Content-Type"); got != "application/json" {
 			t.Errorf("Content-Type = %q, ожидался application/json", got)
