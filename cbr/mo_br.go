@@ -3,8 +3,6 @@ package cbr
 import (
 	"context"
 	"fmt"
-	"path"
-	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
@@ -49,11 +47,13 @@ type moBrStat struct {
 func (s *moBrStat) Name() string { return moBrName }
 
 // Import идёт по спеке §3.4: ссылка на полную книгу ищется на странице (имя файла
-// меняется с каждой волной), затем HEAD-префлайт отвечает, знакома ли версия. Знакома
-// и число точек в macro_series совпадает с записанным — это no-op ежедневного прогона
-// (волны выходят 8 раз в год). Незнакома или точек не столько — полный импорт;
-// версия записывается последней — после успешного Send, каталога и витрины
-// (строка версии утверждает «эти точки записаны и опубликованы»).
+// меняется с каждой волной), затем полный путь ведёт шаблон — HEAD-префлайт по
+// готовому URL, разбор + батч, публикация производных, строка версии последней.
+// Префлайта в самом Import больше нет: он живёт в util.ClickHouseImport.Import и
+// включается объявлением PublicationCountPoints; оставшаяся здесь копия дала бы два
+// HEAD за прогон. Знакомая версия с совпавшим числом точек — no-op ежедневного
+// прогона (волны выходят 8 раз в год): шаблон вернёт записанное число точек, не
+// скачивая файл и не делая записей в БД.
 func (s *moBrStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
 	page, err := getPage(moBrPageUrl)
 	if err != nil {
@@ -64,51 +64,24 @@ func (s *moBrStat) Import(ctx context.Context, conn driver.Conn) (count int64, e
 		return count, fmt.Errorf("%s: не найдена ссылка на xlsx на %s: %w", moBrName, moBrPageUrl, err)
 	}
 	url := cbrUrl + href
-	name := path.Base(url)
 
-	// HEAD-префлайт. Недоступный HEAD — деградация, а не сбой: источник мог не
-	// ответить на HEAD, не отдав при этом ничего нового. Тогда импорт полный, но
-	// версия не записывается (fp пуст) — иначе следующий прогон счёл бы файл уже
-	// импортированным и оставил бы данные устаревшими (спека §3.4, п. 3).
-	fp, fpErr := util.HeadFingerprint(url)
-	if fpErr != nil {
-		log.Warnf("%s: HEAD %s недоступен (%v) — полный импорт без записи версии", moBrName, url, fpErr)
-		fp = ""
-	}
-
-	if fp != "" {
-		if err = util.EnsurePublications(ctx, conn); err != nil {
-			return count, err
-		}
-		points, known, knownErr := util.PublicationKnown(ctx, conn, moBrName, name, fp)
-		if knownErr != nil {
-			// Сбой SELECT'а версии не должен ронять ежедневный прогон: падаем в
-			// полный импорт (он идемпотентен на ReplacingMergeTree), а версия потом
-			// перезаписывается. Новая волна важнее диагностики старой записи.
-			log.Warnf("%s: проверка версии %s в %s не удалась (%v) — полный импорт", moBrName, fp, util.PublicationsTable, knownErr)
-			known = false
-		}
-		if known {
-			var dbPoints uint64
-			if err = conn.QueryRow(ctx, moBrCountPoints).Scan(&dbPoints); err != nil {
-				return count, fmt.Errorf("%s: count точек в %s: %w", moBrName, moBrTable, err)
-			}
-			if dbPoints == points {
-				log.Infof("%s: no-op, версия %s уже импортирована, %d точек на месте", moBrName, fp, points)
-				return int64(points), nil
-			}
-			// Версия в source_publications есть, а точек в таблице не столько (ручная
-			// чистка, недоехавший батч) — self-heal полным импортом, а не тихий no-op.
-			log.Warnf("%s: версия %s известна, но в %s %d точек вместо %d — полный импорт", moBrName, fp, moBrTable, dbPoints, points)
-		}
-	}
-
-	// Полный путь — через локальную копию встроенной структуры: меты разбора
-	// нужны снаружи (каталог), а мутировать общую структуру импортёра нельзя —
-	// DataUrl и ImportFunc зависят от волны.
+	// Полный путь — через локальную копию встроенной структуры: DataUrl и
+	// AfterImport зависят от волны (ссылка на файл волны и меты её разбора), а
+	// мутировать общую структуру импортёра нельзя. Объявление префлайта
+	// (PublicationSource/PublicationCountPoints) копия приносит из литерала
+	// moBrImporter — там оно одно на импортёр, и его же видит тест реестра.
 	local := s.ClickHouseImport
 	local.DataUrl = url
 	var meta []util.SeriesMeta
+	// Шаблон зовёт ImportFunc до AfterImport, поэтому меты разбора к моменту
+	// публикации каталога уже собраны.
+	local.AfterImport = func(ctx context.Context, conn driver.Conn) error {
+		if e := util.UpsertSeriesCatalog(ctx, conn, meta); e != nil {
+			return e
+		}
+		_, e := util.CreateView(ctx, conn, vCbrMoBrView)
+		return e
+	}
 	local.ImportFunc = func(xlsx *excelize.File, batch driver.Batch) error {
 		points, metas, err := parseMoBr(xlsx)
 		if err != nil {
@@ -123,32 +96,13 @@ func (s *moBrStat) Import(ctx context.Context, conn driver.Conn) (count int64, e
 		}
 		return nil
 	}
-	count, err = local.Import(ctx, conn) // DDL → GetXlsx → разбор+батч → count=batch.Rows() → Send
+	// local.Import: DDL -> префлайт -> GetXlsx -> разбор+батч -> Send -> каталог и
+	// витрина -> строка версии. Недоступный HEAD — деградация, а не сбой: импорт
+	// полный, но версия не записывается (шаблон пишет её только при непустом
+	// отпечатке), иначе следующая волна считалась бы уже импортированной.
+	count, err = local.Import(ctx, conn)
 	if err != nil {
 		return count, err
-	}
-	// Каталог и витрина — до строки версии: версия пишется последней и утверждает
-	// «эти точки записаны и опубликованы». Сбой любого пост-шага оставляет её
-	// незаписанной, и следующий прогон повторяет полный путь (идемпотентный), а не
-	// уходит в no-op с отсутствующим у агента каталогом или витриной до следующей
-	// волны (~6 недель).
-	if err = util.UpsertSeriesCatalog(ctx, conn, meta); err != nil {
-		return count, err
-	}
-	if _, err = util.CreateView(ctx, conn, vCbrMoBrView); err != nil {
-		return count, err
-	}
-	if fp != "" {
-		if err = util.SavePublication(ctx, conn, util.Publication{
-			Source:      moBrName,
-			Name:        name,
-			Fingerprint: fp,
-			Url:         url,
-			FirstSeen:   time.Now(),
-			Points:      uint64(count),
-		}); err != nil {
-			return count, err
-		}
 	}
 	log.Infof("Imported %d rows of %s", count, moBrName)
 	return count, nil
@@ -174,9 +128,18 @@ var vCbrMoBrView = util.View{
 }
 
 // moBrImporter — макроэкономический опрос ЦБ: Name() = cbr_mo_br, таблица — общая
-// macro_series (source='cbr_mo_br'). DataUrl и ImportFunc вычисляются в Import()
-// (ссылка на файл волны меняется), регистрация — реестром cbr/importers.go.
+// macro_series (source='cbr_mo_br'). Объявление точки контроля публикации живёт
+// здесь, а не в Import() (как у трёх импортёров со ссылкой со страницы, где DataUrl
+// вычисляется в Import): HEAD-префлайт шаблона видит только поля структуры, а тест
+// реестра читает их у зарегистрированного импортёра. От волны зависят DataUrl,
+// ImportFunc и AfterImport — они выставляются в Import() на локальной копии, и
+// эта же копия приносит сюда объявленные ниже PublicationSource и
+// PublicationCountPoints. PublicationSource — имя импортёра, а не TableName: иначе
+// ключом версии стало бы macro_series, общее с cbr_mp_survey (как у него).
+// Регистрация — реестром cbr/importers.go.
 var moBrImporter = &moBrStat{ClickHouseImport: util.ClickHouseImport{
-	TableName:   moBrTable,
-	CreateTable: []string{moBrDdl},
+	TableName:              moBrTable,
+	CreateTable:            []string{moBrDdl},
+	PublicationSource:      moBrName,
+	PublicationCountPoints: moBrCountPoints,
 }}

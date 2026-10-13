@@ -15,6 +15,13 @@ const (
 	mpSurveyURL   = "https://www.cbr.ru/Content/Document/File/135603/mp_survey_data.xlsx"
 	mpSurveyTable = "macro_series"
 	// mpSurveySource = "cbr_survey" объявлена в series_meta.go — повторно в пакете нельзя.
+
+	// mpSurveyCountPoints — количественный чек версии (спека §3.5): число точек своего
+	// ряда в общей macro_series. Литерал, как и таблица: запрос — часть утверждения
+	// «эти точки мои», и незамеченная смена source увела бы чек к чужим рядам
+	// (fred/bls/bea). FINAL и WHERE source обязательны: без первого count() растёт с
+	// каждой несмёрженной частью, без второго чек считал бы чужие ряды.
+	mpSurveyCountPoints = "SELECT count() FROM macro_series FINAL WHERE source = 'cbr_survey'"
 )
 
 const mpSurveyDdl = `CREATE TABLE IF NOT EXISTS %s (
@@ -30,24 +37,27 @@ type mpSurveyStat struct {
 
 func (s *mpSurveyStat) Name() string { return mpSurveyName }
 
-func (s *mpSurveyStat) Import(ctx context.Context, conn driver.Conn) (int64, error) {
-	count, err := s.ClickHouseImport.Import(ctx, conn)
-	if err != nil {
-		return count, err
-	}
-	if err = util.UpsertSeriesCatalog(ctx, conn, mpSurveySeriesMeta); err != nil {
-		return count, err
-	}
-	_, err = util.CreateView(ctx, conn, cbrSurveyView)
-	return count, err
-}
-
 // mpSurveyImporter — мониторинг предприятий: Name() = cbr_mp_survey, а таблица —
-// общая macro_series (source='cbr_survey'). Регистрируется реестром cbr/importers.go.
+// общая macro_series (source='cbr_survey'). Своего Import() у импортёра нет: полный
+// путь (DDL → префлайт → точки → производные → версия) ведёт шаблон
+// util.ClickHouseImport, а каталог рядов и витрина v_cbr_survey публикуются его
+// AfterImport — после Send точек и до строки версии (§8 п. 13). PublicationSource —
+// имя импортёра, а не TableName: иначе ключом версии в source_publications стало бы
+// macro_series, общее с cbr_mo_br, и версии двух импортёров слились бы в одну строку.
+// Регистрируется реестром cbr/importers.go.
 var mpSurveyImporter = &mpSurveyStat{ClickHouseImport: util.ClickHouseImport{
-	TableName:   mpSurveyTable,
-	CreateTable: []string{mpSurveyDdl},
-	DataUrl:     mpSurveyURL,
+	TableName:              mpSurveyTable,
+	CreateTable:            []string{mpSurveyDdl},
+	DataUrl:                mpSurveyURL,
+	PublicationSource:      mpSurveyName,
+	PublicationCountPoints: mpSurveyCountPoints,
+	AfterImport: func(ctx context.Context, conn driver.Conn) error {
+		if err := util.UpsertSeriesCatalog(ctx, conn, mpSurveySeriesMeta); err != nil {
+			return err
+		}
+		_, err := util.CreateView(ctx, conn, cbrSurveyView)
+		return err
+	},
 	ImportFunc: func(xlsx *excelize.File, batch driver.Batch) error {
 		points, err := parseSurvey(xlsx, mpSurveySeries)
 		if err != nil {

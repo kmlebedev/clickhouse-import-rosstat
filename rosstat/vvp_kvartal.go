@@ -37,13 +37,16 @@ const (
 	// и меняется при обновлении, поэтому ссылка берётся со страницы.
 	// Валовой внутренний продукт 1) (в ценах 2021 г., млрд руб., с исключением сезонного фактора)
 	vvpKvartalTable = "vvp_kvartal"
-	vvpKvartalDdl   = `CREATE TABLE IF NOT EXISTS ` + vvpKvartalTable + ` (
+	vvpKvartalDdl   = `CREATE TABLE IF NOT EXISTS %s (
 				  name LowCardinality(String)
 				, date Date
 				, vvp Float32
 			) ENGINE = ReplacingMergeTree ORDER BY (name, date);
 		`
-	vvpKvartalDdlInsert = "INSERT INTO " + vvpKvartalTable
+	// vvpKvartalCountPoints — количественный чек версии (спека §3.5): число точек своего
+	// ряда. Литерал, как и таблица: запрос — часть утверждения «эти точки мои». FINAL
+	// обязателен — иначе count() считал бы несмёрженные части.
+	vvpKvartalCountPoints = "SELECT count() FROM vvp_kvartal FINAL"
 )
 
 // getVvpKvartalXlsDataUrl ищет ссылку на актуальный VVP_kvartal_*.xlsx на странице
@@ -65,16 +68,13 @@ func getVvpKvartalXlsDataUrl() (url string) {
 }
 
 type vvpKvartalDdlStat struct {
+	util.ClickHouseImport
 }
 
 type vvpKvartal struct {
 	name string
 	date time.Time
 	vvp  float64
-}
-
-func (s *vvpKvartalDdlStat) Name() string {
-	return vvpKvartalTable
 }
 
 func parseVvpKvartal(xlsx *excelize.File) (table *[]vvpKvartal, err error) {
@@ -115,48 +115,45 @@ func parseVvpKvartal(xlsx *excelize.File) (table *[]vvpKvartal, err error) {
 	return table, nil
 }
 
-func (s *vvpKvartalDdlStat) export() (table *[]vvpKvartal, err error) {
-	xlsDataUrl := getVvpKvartalXlsDataUrl()
-	if xlsDataUrl == "" {
-		return nil, fmt.Errorf("vvpKvartal: не найдена ссылка на VVP_kvartal_*.xlsx на %s/statistics/accounts", rosstatUrl)
-	}
-	var xlsx *excelize.File
-	if xlsx, err = util.GetXlsx(xlsDataUrl); err != nil {
-		return nil, err
-	}
-	return parseVvpKvartal(xlsx)
-}
-
-func (s *vvpKvartalDdlStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	if err = conn.Exec(ctx, vvpKvartalDdl); err != nil {
-		return count, err
-	}
-	var table *[]vvpKvartal
-	if table, err = s.export(); err != nil {
-		return count, err
-	}
-	batch, err := conn.PrepareBatch(ctx, vvpKvartalDdlInsert)
+// vvpKvartalImport разбирает файл и пишет точки в batch: семантика прежних export() и цикла
+// вставки Import сохранена дословно — имя ряда собирается из номеров листов, дата — 1-е число
+// месяца, следующего за отчётным кварталом (getQuarterDate).
+func vvpKvartalImport(xlsx *excelize.File, batch driver.Batch) error {
+	table, err := parseVvpKvartal(xlsx)
 	if err != nil {
-		return count, err
+		return err
 	}
 	for _, r := range *table {
 		if err = batch.Append(r.name, r.date, float32(r.vvp)); err != nil {
-			return count, err
+			return err
 		}
-		count++
 	}
-	if err = batch.Send(); err != nil {
-		return count, err
-	}
-	if err = util.UpsertSeriesCatalog(ctx, conn, vvpKvartalSeriesMeta); err != nil {
-		return count, err
-	}
-	if _, err = util.CreateView(ctx, conn, rosstatMacroView); err != nil {
-		return count, err
-	}
-	return count, nil
+	return nil
 }
 
+// Import берёт адрес актуального xlsx со страницы национальных счётов Росстата: имя файла
+// содержит диапазон лет (VVP_kvartal_s-1995-ГГГГ.xlsx) и меняется при обновлении, а сетевое
+// обращение в init() запрещено (ARCHITECTURE.md §8.6). Дальше — полный цикл шаблона: DDL →
+// префлайт по HEAD (ряд обновляется раз в квартал, шаг расписания — недельный) → точки →
+// производные (AfterImport) → строка версии.
+func (s *vvpKvartalDdlStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+	xlsDataUrl := getVvpKvartalXlsDataUrl()
+	if xlsDataUrl == "" {
+		return count, fmt.Errorf("vvpKvartal: не найдена ссылка на VVP_kvartal_*.xlsx на %s/statistics/accounts", rosstatUrl)
+	}
+	s.DataUrl = xlsDataUrl
+	return s.ClickHouseImport.Import(ctx, conn)
+}
+
+// vvpKvartalImporter — квартальный ВВП РФ; регистрируется init() пакета.
+var vvpKvartalImporter = &vvpKvartalDdlStat{ClickHouseImport: util.ClickHouseImport{
+	TableName:              vvpKvartalTable,
+	CreateTable:            []string{vvpKvartalDdl},
+	ImportFunc:             vvpKvartalImport,
+	AfterImport:            afterRosstatMacro(vvpKvartalSeriesMeta),
+	PublicationCountPoints: vvpKvartalCountPoints,
+}}
+
 func init() {
-	chimport.Stats = append(chimport.Stats, &vvpKvartalDdlStat{})
+	chimport.Stats = append(chimport.Stats, vvpKvartalImporter)
 }

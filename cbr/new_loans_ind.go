@@ -21,6 +21,10 @@ const (
 	`
 	loansToIndSheet = "итого"
 	loansToIndField = "РОССИЙСКАЯ ФЕДЕРАЦИЯ"
+	// loansToIndCountPoints — количественный чек версии (спека §3.5): число точек
+	// своего ряда. Литерал, как и таблица: запрос — часть утверждения «эти точки
+	// мои». FINAL обязателен — иначе count() считал бы несмёрженные части.
+	loansToIndCountPoints = "SELECT count() FROM cbr_loans_to_individuals FINAL"
 )
 
 type LoansToindividualsStat struct {
@@ -36,12 +40,11 @@ func cbrLoansToIndImport(xlsx *excelize.File, batch driver.Batch) error {
 
 // loansToIndividualsImporter — объём новых кредитов физлицам (региональный разрез);
 // регистрируется реестром cbr/importers.go.
-var loansToIndividualsImporter = &publishedStat{
-	ImportStat: &LoansToindividualsStat{ClickHouseImport: util.ClickHouseImport{
-		TableName:   loansToIndTable,
-		CreateTable: []string{loansToIndDdl},
-		DataUrl:     loansToIndXlsDataUrl,
-		ImportFunc:  cbrLoansToIndImport,
-	}},
-	meta: cbrLoansToIndSeriesMeta,
-}
+var loansToIndividualsImporter = &LoansToindividualsStat{ClickHouseImport: util.ClickHouseImport{
+	TableName:              loansToIndTable,
+	CreateTable:            []string{loansToIndDdl},
+	DataUrl:                loansToIndXlsDataUrl,
+	ImportFunc:             cbrLoansToIndImport,
+	AfterImport:            afterCbrMacro(cbrLoansToIndSeriesMeta),
+	PublicationCountPoints: loansToIndCountPoints,
+}}

@@ -115,11 +115,9 @@ func cbrGoldCraw(crawUrl string, conn driver.Conn) (count int64, err error) {
 
 // cbrGoldImporter — учётные цены золота (XML-краулер xml_metall.asp);
 // регистрируется реестром cbr/importers.go.
-var cbrGoldImporter = &publishedStat{
-	ImportStat: &cbrGold{ClickHouseImport: util.ClickHouseImport{
-		TableName:   cbrGoldTable,
-		CreateTable: []string{cbrGoldDdl},
-		CrawFunc:    cbrGoldCraw,
-	}},
-	meta: cbrGoldSeriesMeta,
-}
+var cbrGoldImporter = &cbrGold{ClickHouseImport: util.ClickHouseImport{
+	TableName:   cbrGoldTable,
+	CreateTable: []string{cbrGoldDdl},
+	CrawFunc:    cbrGoldCraw,
+	AfterImport: afterCbrMacro(cbrGoldSeriesMeta),
+}}

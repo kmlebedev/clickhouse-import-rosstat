@@ -21,7 +21,7 @@ const (
 	sberRpbuUrl          = "https://www.sberbank.com/common/img/uploaded/redirected/com/investor-relations/groupresults"
 	sberRpbuXlsDataUrl   = sberRpbuUrl + "/sber_finansovie_rezultaty_ras_2022-2024.xlsx"
 	sberRpbuDataUrlTable = "sber_finansovie_rezultaty"
-	sberRpbuDataUrlDdl   = `CREATE TABLE IF NOT EXISTS ` + sberRpbuDataUrlTable + ` (
+	sberRpbuDataUrlDdl   = `CREATE TABLE IF NOT EXISTS %s (
 			  name LowCardinality(String)
 			, date Date
 			, balance Float32
@@ -30,18 +30,28 @@ const (
 	sberRpbuDataInsert = "INSERT INTO " + sberRpbuDataUrlTable + " VALUES (?, ?, ?)"
 	sberRpbuDataField  = "Активы"
 	sberRpbuTimeLayout = "01-02-06"
+	// sberRpbuCountPoints — количественный чек версии (спека §3.5): число точек своего ряда.
+	// Литерал, как и таблица: запрос — часть утверждения «эти точки мои». FINAL обязателен —
+	// без него count() считает несмёрженные части и растёт после каждого повторного импорта.
+	sberRpbuCountPoints = "SELECT count() FROM sber_finansovie_rezultaty FINAL"
 )
 
+// ctx — фон для вставок: импорт не привязан к запросу пользователя, а CrawFunc получает
+// только conn (идиом cbr/currency_usd.go, customs/vneshn_torg_countries.go).
+var ctx = context.TODO()
+
+// LoansToCorporationsStat — месячные финрезультаты Сбера по РСБУ (лист «Баланс»). Ссылка на
+// файл статична и обновляется вручную (страница источника закрыта JS-challenge), а содержимое
+// меняется реже недельного расписания шага, поэтому у артефакта есть точка контроля публикации.
 type LoansToCorporationsStat struct {
+	util.ClickHouseImport
 }
 
-func (s *LoansToCorporationsStat) Name() string {
-	return sberRpbuDataUrlTable
-}
-
-func (s *LoansToCorporationsStat) export() (table *[][]string, err error) {
+// sberRpbuExport скачивает xlsx по url (адрес приходит от шаблона через CrawFunc) и разбирает
+// лист «Баланс»: семантика прежнего export() сохранена дословно.
+func sberRpbuExport(dataUrl string) (table *[][]string, err error) {
 	var xlsx *excelize.File
-	if xlsx, err = util.GetXlsx(sberRpbuXlsDataUrl); err != nil {
+	if xlsx, err = util.GetXlsx(dataUrl); err != nil {
 		return nil, err
 	}
 	defer func() { _ = xlsx.Close() }()
@@ -88,12 +98,11 @@ func (s *LoansToCorporationsStat) export() (table *[][]string, err error) {
 	return table, nil
 }
 
-func (s *LoansToCorporationsStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	if err = conn.Exec(ctx, sberRpbuDataUrlDdl); err != nil {
-		return count, err
-	}
+// sberRpbuCraw — полный путь точек: скачивание, разбор и построчные INSERT-ы (прежний цикл
+// Import не изменён; DDL и точку контроля публикации выполняет шаблон).
+func sberRpbuCraw(dataUrl string, conn driver.Conn) (count int64, err error) {
 	var table *[][]string
-	if table, err = s.export(); err != nil {
+	if table, err = sberRpbuExport(dataUrl); err != nil {
 		return count, err
 	}
 	for _, row := range *table {
@@ -110,6 +119,15 @@ func (s *LoansToCorporationsStat) Import(ctx context.Context, conn driver.Conn) 
 	return count, nil
 }
 
+// sberRpbuImporter — финрезультаты Сбера; регистрируется init() пакета.
+var sberRpbuImporter = &LoansToCorporationsStat{ClickHouseImport: util.ClickHouseImport{
+	TableName:              sberRpbuDataUrlTable,
+	CreateTable:            []string{sberRpbuDataUrlDdl},
+	DataUrl:                sberRpbuXlsDataUrl,
+	CrawFunc:               sberRpbuCraw,
+	PublicationCountPoints: sberRpbuCountPoints,
+}}
+
 func init() {
-	chimport.Stats = append(chimport.Stats, &LoansToCorporationsStat{})
+	chimport.Stats = append(chimport.Stats, sberRpbuImporter)
 }

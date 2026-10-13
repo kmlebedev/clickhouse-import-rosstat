@@ -1,12 +1,28 @@
 package rosstat
 
 import (
+	"context"
 	"fmt"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 )
 
 const rosstatSource = "rosstat"
+
+// afterRosstatMacro — производные импортёров пакета: каталог рядов и общая витрина
+// v_rosstat_macro. Публикуются шаблоном после Send точек и до записи строки версии
+// (ARCHITECTURE §8 п. 13): сбой публикации оставляет версию незаписанной, и следующий прогон
+// повторяет полный путь, а не уходит в no-op с устаревшим каталогом.
+func afterRosstatMacro(meta []util.SeriesMeta) func(context.Context, driver.Conn) error {
+	return func(ctx context.Context, conn driver.Conn) error {
+		if err := util.UpsertSeriesCatalog(ctx, conn, meta); err != nil {
+			return err
+		}
+		_, err := util.CreateView(ctx, conn, rosstatMacroView)
+		return err
+	}
+}
 
 var rosstatMacroView = util.View{
 	Name:   "v_rosstat_macro",

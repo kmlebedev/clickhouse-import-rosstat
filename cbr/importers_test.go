@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
+	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 )
 
 // Ожидаемые значения ниже — литералами, а не константами пакета. Тест, сверяющий
@@ -32,6 +33,39 @@ const (
 var sharedMacroSeriesOwners = map[string]bool{
 	"cbr_mp_survey": true, // source='cbr_survey'
 	"cbr_mo_br":     true, // source='cbr_mo_br'
+}
+
+// expectedPublicationCountPoints — запросы количественного чека (спека §3.5) для
+// импортёров, объявивших точку контроля публикации. Литералами, а не ссылкой на
+// константу импортёра: проверка «колонка countPoints реестра == объявление самого
+// импортёра» падает ровно на расхождении запросов, а сравнение константы с самой
+// собой прошло бы и после правки запроса в объявлении — то есть на том самом
+// случае, от которого проверка и защищает.
+//
+// Набор неполный по построению: у остальных импортёров префлайта нет и быть не
+// должно (у cbr_key_rate/cbr_ruania/cbr_currency_usd/cbr_gold URL содержит
+// сегодняшнюю дату, отпечаток меняется каждый прогон и no-op недостижим).
+var expectedPublicationCountPoints = map[string]string{
+	"cbr_mp_survey":             "SELECT count() FROM macro_series FINAL WHERE source = 'cbr_survey'",
+	"cbr_households_b_mes":      "SELECT count() FROM cbr_households_b_mes FINAL",
+	"cbr_m2":                    "SELECT count() FROM cbr_m2 FINAL",
+	"cbr_credit_m2x":            "SELECT count() FROM cbr_credit_m2x FINAL",
+	"cbr_loans_to_corporations": "SELECT count() FROM cbr_loans_to_corporations FINAL",
+	"cbr_loans_to_individuals":  "SELECT count() FROM cbr_loans_to_individuals FINAL",
+	"cbr_bank_int_rate":         "SELECT count() FROM cbr_bank_int_rate FINAL",
+	"cbr_indicators_cpd":        "SELECT count() FROM cbr_indicators_cpd FINAL",
+	"cbr_infl_exp":              "SELECT count() FROM cbr_infl_exp FINAL",
+	"cbr_mo_br":                 "SELECT count() FROM macro_series FINAL WHERE source = 'cbr_mo_br'",
+}
+
+// publicationDeclarer — то, как тест достаёт объявление импортёра из реестра:
+// метод Publication() промотируется из встроенного util.ClickHouseImport, поэтому
+// приведение работает и для голого *util.ClickHouseImport (cbr_bank_int_rate,
+// cbr_credit_m2x зарегистрированы так), и для обёрток со встроенным значением
+// (cbr_mo_br, cbr_mp_survey). Именованный тип, а не литерал интерфейса в теле
+// цикла: так проверка читается как контракт, а не как приём приведения.
+type publicationDeclarer interface {
+	Publication() util.PublicationDecl
 }
 
 // daguCbrYAML — расписание cbr: каждый шаг задаёт CLICKHOUSE_IMPORT_STAT. Путь от
@@ -62,7 +96,13 @@ var daguStatRef = regexp.MustCompile(`CLICKHOUSE_IMPORT_STAT=([A-Za-z0-9_]+)`)
 //   - (г) каждый шаг dagu/cbr.yaml присутствует в реестре: расписание —
 //     единственный продакшн-вызов, и его опечатка иначе не видна ничем; и
 //     обратно — шаг контура макроопроса в расписании есть (иначе пропавший шаг
-//     dagu не заметил бы ни один тест: реестр остаётся верным сам по себе).
+//     dagu не заметил бы ни один тест: реестр остаётся верным сам по себе);
+//   - (д) точка контроля публикации (префлайт) объявлена ровно у ожидаемых десяти
+//     импортёров и запросом из expectedPublicationCountPoints: колонка countPoints
+//     реестра сверяется с объявлением самого импортёра (метод Publication()
+//     встроенного util.ClickHouseImport), а у импортёров вне ожидаемого набора
+//     объявления нет вовсе — забытое объявление молча выключило бы префлайт, а
+//     лишнее у дневных рядов дало бы HEAD на каждом прогоне без шанса на no-op.
 func TestCbrImportersPrefixedAndRegistered(t *testing.T) {
 	if len(cbrImporters) == 0 {
 		t.Fatal("реестр cbrImporters пуст: ни один импортёр пакета не зарегистрирован")
@@ -107,6 +147,57 @@ func TestCbrImportersPrefixedAndRegistered(t *testing.T) {
 		// которую импортёр пишет (переименовали константу — обновили литерал).
 		if name != imp.table {
 			t.Errorf("реестр записал импортёру %q таблицу %q, а Name() (TableName импортёра) — %q", name, imp.table, name)
+		}
+	}
+
+	// (д) Точка контроля публикации: колонка countPoints реестра — литерал, как и
+	// колонка table, и сверяется с объявлением самого импортёра. Расхождение между
+	// ними и есть та правка, от которой проверка должна падать (прецедент — table):
+	// реестр описывал бы префлайт, которого у импортёра нет, или наоборот.
+	declared := make(map[string]bool, len(expectedPublicationCountPoints))
+	for _, imp := range cbrImporters {
+		name := imp.Name()
+		decl := imp.ImportStat.(publicationDeclarer).Publication()
+		want, expected := expectedPublicationCountPoints[name]
+		if !expected {
+			// Импортёр вне ожидаемого набора: префлайта нет ни в реестре, ни в
+			// объявлении. Дневные ряды (cbr_key_rate, cbr_ruania, cbr_currency_usd,
+			// cbr_gold) не должны обзавестись им «на всякий случай»: их URL содержит
+			// сегодняшнюю дату, отпечаток меняется каждый прогон, no-op недостижим —
+			// HEAD стал бы чистыми накладными расходами.
+			if imp.countPoints != "" {
+				t.Errorf("реестр записал импортёру %q запрос чека %q, хотя префлайт ему не положен", name, imp.countPoints)
+			}
+			if decl.CountPoints != "" {
+				t.Errorf("импортёр %q объявил точку контроля публикации (%q), хотя префлайт ему не положен", name, decl.CountPoints)
+			}
+			continue
+		}
+		declared[name] = true
+
+		// (а) Литерал реестра против объявления импортёра — разные источники
+		// значения: реестр правит человек, объявление живёт рядом с импортёром.
+		if decl.CountPoints != imp.countPoints {
+			t.Errorf("импортёр %q объявил запрос чека %q, а реестр записал %q", name, decl.CountPoints, imp.countPoints)
+		}
+		// (б) Оба обязаны быть дословно равны спеке §3.5: FINAL и (у владельцев
+		// общей macro_series) WHERE source — часть утверждения «эти точки мои».
+		if imp.countPoints != want {
+			t.Errorf("реестр записал импортёру %q запрос чека %q, а спека §3.5 — %q", name, imp.countPoints, want)
+		}
+		// (в) Ключ версии — Source объявления, а не TableName: у владельцев общей
+		// macro_series TableName чужой для ряда, и версии двух импортёров слились бы
+		// в одну строку source_publications (проверяется и пустое PublicationSource).
+		if decl.Source != name {
+			t.Errorf("объявление импортёра %q даёт ключ версии %q, а импортёр называется %q: `make import STAT=%s` и dagu-шаг ищут его по имени", name, decl.Source, name, name)
+		}
+	}
+	// Обратное направление: карта не должна описывать импортёра, которого в реестре
+	// нет, — иначе ожидание §3.5 осталось бы без предъявителя, а проверки (а)–(в)
+	// над ним не выполнялись бы вовсе.
+	for name := range expectedPublicationCountPoints {
+		if !declared[name] {
+			t.Errorf("в реестре cbrImporters нет импортёра %q, для которого спека §3.5 ожидает объявление префлайта", name)
 		}
 	}
 
