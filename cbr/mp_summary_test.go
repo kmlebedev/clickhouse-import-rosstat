@@ -156,33 +156,41 @@ func TestMPSummaryViewPins(t *testing.T) {
 }
 
 // TestMPSummaryMissingRefs — что прогон считает новым документом. Известен только документ,
-// записанный целиком: адрес в шапке И хотя бы одна строка блоков по дате его заседания.
-// Шапка пишется первым батчем, поэтому сбой батча блоков (или каналов) оставляет документ
-// с url в шапке без текста — по одному url следующий прогон ушёл бы в no-op, и потерянное
-// не вернулось бы никогда (спека §3.1 п. 2: сбой батчей слоя 1 = следующий прогон повторит).
-// Недописанный документ обязан попадать в missing: он перекачивается и перезаписывается
-// целиком, а ключи ReplacingMergeTree делают перезапись идемпотентной. Порядок индекса
-// (от новых к старым) при этом сохраняется — он же порядок скачивания.
+// записанный целиком: адрес в шапке, хотя бы одна строка блоков по дате его заседания и хотя
+// бы одна regex-строка каналов по той же дате (слой 1 — три батча, и сбой любого из них
+// оставляет документ неполным). По одному адресу недописанный документ ушёл бы в no-op, и
+// потерянное не вернулось бы никогда (спека §3.1 п. 2: сбой батчей слоя 1 = следующий прогон
+// повторит). Недописанный документ обязан попадать в missing: он перекачивается и
+// перезаписывается целиком, а ключи ReplacingMergeTree делают перезапись идемпотентной.
+// Порядок индекса (от новых к старым) при этом сохраняется — он же порядок скачивания.
 func TestMPSummaryMissingRefs(t *testing.T) {
 	day := func(d int, m time.Month) time.Time { return time.Date(2026, m, d, 0, 0, 0, 0, time.UTC) }
 
-	// Три карточки индекса: полный документ, документ с одной шапкой (блоков нет) и вовсе
-	// неизвестный. Даты заседания первых двух — из шапок таблицы, они же ключи блоков.
+	// Четыре карточки индекса: полный документ; документ с одной шапкой (блоков нет);
+	// документ с шапкой и блоками, но без regex-разметки (сбой третьего батча слоя 1);
+	// и вовсе неизвестный. Даты заседания первых трёх — из шапок таблицы, они же ключи
+	// блоков и каналов.
 	full := mpSummaryRef{Published: day(23, time.September), Href: "/dkp/mp_dec/decision_key_rate/summary_key_rate_23092026/"}
 	headerOnly := mpSummaryRef{Published: day(5, time.August), Href: "/dkp/mp_dec/decision_key_rate/summary_key_rate_05082026/"}
-	unknown := mpSummaryRef{Published: day(1, time.July), Href: "/dkp/mp_dec/decision_key_rate/summary_key_rate_01072026/"}
-	refs := []mpSummaryRef{full, headerOnly, unknown}
+	noRegex := mpSummaryRef{Published: day(1, time.July), Href: "/dkp/mp_dec/decision_key_rate/summary_key_rate_01072026/"}
+	unknown := mpSummaryRef{Published: day(1, time.April), Href: "/dkp/mp_dec/decision_key_rate/summary_key_rate_01042026/"}
+	refs := []mpSummaryRef{full, headerOnly, noRegex, unknown}
 
 	imported := map[string]time.Time{
 		cbrUrl + full.Href:       day(11, time.September),
 		cbrUrl + headerOnly.Href: day(24, time.July), // шапка есть — блоков по этой дате нет
+		cbrUrl + noRegex.Href:    day(5, time.June),  // шапка и блоки есть — regex-строк нет
 	}
-	blockDates := map[time.Time]bool{day(11, time.September): true}
+	blockDates := map[time.Time]bool{
+		day(11, time.September): true,
+		day(5, time.June):       true,
+	}
+	regexDates := map[time.Time]bool{day(11, time.September): true}
 
-	got := mpMissingRefs(refs, imported, blockDates)
-	want := []mpSummaryRef{headerOnly, unknown}
+	got := mpMissingRefs(refs, imported, blockDates, regexDates)
+	want := []mpSummaryRef{headerOnly, noRegex, unknown}
 	if len(got) != len(want) {
-		t.Fatalf("missing: %d карточек %v, want %d %v: шапка без блоков обязана перекачиваться",
+		t.Fatalf("missing: %d карточек %v, want %d %v: неполный документ слоя 1 обязан перекачиваться",
 			len(got), got, len(want), want)
 	}
 	for i := range want {
@@ -191,10 +199,18 @@ func TestMPSummaryMissingRefs(t *testing.T) {
 		}
 	}
 
-	// Обратное направление: у документа с блоками повторный прогон не скачивает ничего —
-	// иначе ежедневный шаг заново разбирал бы все 22 резюме.
-	if again := mpMissingRefs(refs[:1], imported, blockDates); len(again) != 0 {
+	// Обратное направление: у документа со всеми тремя уровнями повторный прогон не скачивает
+	// ничего — иначе ежедневный шаг заново разбирал бы все 22 резюме.
+	if again := mpMissingRefs(refs[:1], imported, blockDates, regexDates); len(again) != 0 {
 		t.Errorf("missing полного документа = %v, want пусто: известный документ не перекачивается", again)
+	}
+
+	// Признак третьего уровня — именно method='regex': строки LLM-разметки лежат в той же
+	// таблице и догоняются отдельно, поэтому по ним потерянный regex-слой (сбой третьего
+	// батча) выглядел бы записанным и не вернулся бы никогда.
+	const wantRegexQuery = "SELECT DISTINCT meeting_date FROM cbr_mp_summary_channel FINAL WHERE method = 'regex'"
+	if mpSummaryRegexDatesQuery != wantRegexQuery {
+		t.Errorf("запрос regex-уровня = %q, want %q", mpSummaryRegexDatesQuery, wantRegexQuery)
 	}
 }
 

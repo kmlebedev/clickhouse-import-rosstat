@@ -96,9 +96,16 @@ const (
 	// вернулось бы следующим прогоном (спека §3.1).
 	mpSummaryImportedQuery = "SELECT url, meeting_date FROM " + mpSummaryTable + " FINAL"
 
-	// mpSummaryBlockDatesQuery — даты заседаний, у которых в таблице блоков есть хотя бы
-	// одна строка: вместе с адресом шапки это и есть признак записанного целиком документа.
+	// mpSummaryBlockDatesQuery / mpSummaryRegexDatesQuery — даты заседаний, у которых есть
+	// хотя бы одна строка соответствующего уровня: блоки текста и regex-разметка каналов.
+	// Вместе с адресом шапки это и есть признак записанного целиком документа: шапка,
+	// блоки и regex-каналы — три батча слоя 1, и сбой любого из них должен возвращать
+	// документ в перекачку (спека §3.1). Отбор именно по method='regex' — иначе строки
+	// LLM-разметки (пишутся после слоя 1 и догоняются отдельно) замаскировали бы
+	// отсутствие regex-слоя, и третий батч потерялся бы навсегда.
 	mpSummaryBlockDatesQuery = "SELECT DISTINCT meeting_date FROM " + mpSummaryBlockTable + " FINAL"
+	mpSummaryRegexDatesQuery = "SELECT DISTINCT meeting_date FROM " + mpSummaryChannelTable +
+		" FINAL WHERE method = '" + mpMethodRegex + "'"
 
 	// mpSummaryPastQuery — прошлые решения: ставки для decision_delta_bp и адреса
 	// страниц для LLM-догона. ORDER BY meeting_date — дельта идёт по порядку заседаний.
@@ -153,7 +160,8 @@ type mpLLMDoc struct {
 //  1. DDL трёх таблиц;
 //  2. индекс материалов заседаний → карточки резюме;
 //  3. дельта по таблицам: новые документы (адреса нет в шапке ИЛИ нет блоков по дате его
-//     заседания — недописанный документ) и отстающая LLM-разметка;
+//     заседания ИЛИ нет regex-строк каналов — недописанный документ слоя 1) и отстающая
+//     LLM-разметка;
 //  4. no-op, если ни того, ни другого нет (витрины не трогаем — они созданы ранее);
 //  5. прошлые решения таблицы: ставки для дельты и адреса для LLM-догона;
 //  6. скачивание и разбор новых резюме — fail-fast: ошибка до записи, иначе
@@ -191,11 +199,15 @@ func (s *mpSummaryStat) Import(ctx context.Context, conn driver.Conn) (count int
 	if err != nil {
 		return 0, err
 	}
-	blockDates, err := mpBlockDates(ctx, conn)
+	blockDates, err := mpDateSet(ctx, conn, mpSummaryBlockDatesQuery, "даты блоков")
 	if err != nil {
 		return 0, err
 	}
-	missing := mpMissingRefs(refs, imported, blockDates)
+	regexDates, err := mpDateSet(ctx, conn, mpSummaryRegexDatesQuery, "даты regex-разметки")
+	if err != nil {
+		return 0, err
+	}
+	missing := mpMissingRefs(refs, imported, blockDates, regexDates)
 
 	baseURL, apiKey, model, llmOK := mpLLMConfigFromEnv()
 	var pending map[time.Time]bool
@@ -309,21 +321,22 @@ func (s *mpSummaryStat) Import(ctx context.Context, conn driver.Conn) (count int
 }
 
 // mpMissingRefs — карточки индекса, которых в таблице нет целиком. Документ считается
-// известным, только если его адрес есть в шапке И по дате его заседания есть хотя бы одна
-// строка блоков: шапка пишется первым батчем, и сбой среднего или последнего батча оставил
-// бы документ без текста — по одному адресу следующий прогон ушёл бы в no-op, и потерянное
-// не вернулось бы никогда (спека §3.1 п. 2: сбой батчей слоя 1 = следующий прогон повторит).
-// Недописанный документ попадает в missing, перекачивается и перезаписывается целиком;
-// ключи ReplacingMergeTree делают повторную запись идемпотентной. Порядок индекса
-// (от новых к старым) сохраняется: он же порядок скачивания и записи.
+// известным, только если выполнены все три условия: его адрес есть в шапке, по дате его
+// заседания есть хотя бы одна строка блоков и хотя бы одна regex-строка каналов. Слой 1 —
+// три батча (шапка, блоки, regex-каналы), и сбой любого из них оставил бы документ неполным:
+// по одному адресу следующий прогон ушёл бы в no-op, и потерянное не вернулось бы никогда
+// (спека §3.1 п. 2: сбой батчей слоя 1 = следующий прогон повторит). Недописанный документ
+// попадает в missing, перекачивается и перезаписывается целиком; ключи ReplacingMergeTree
+// делают повторную запись идемпотентной. Порядок индекса (от новых к старым) сохраняется:
+// он же порядок скачивания и записи.
 //
-// Чистая функция без обращений к БД: сценарий «шапка есть, блоков нет» пинится тестом
-// без драйвера и сети.
-func mpMissingRefs(refs []mpSummaryRef, imported map[string]time.Time, blockDates map[time.Time]bool) []mpSummaryRef {
+// Чистая функция без обращений к БД: сценарии «шапка есть, блоков нет» и «шапка и блоки есть,
+// regex-строк нет» пинятся тестом без драйвера и сети.
+func mpMissingRefs(refs []mpSummaryRef, imported map[string]time.Time, blockDates, regexDates map[time.Time]bool) []mpSummaryRef {
 	missing := make([]mpSummaryRef, 0, len(refs))
 	for _, ref := range refs {
 		date, ok := imported[cbrUrl+ref.Href]
-		if ok && blockDates[date] {
+		if ok && blockDates[date] && regexDates[date] {
 			continue
 		}
 		missing = append(missing, ref)
@@ -361,12 +374,15 @@ func mpImportedSummaries(ctx context.Context, conn driver.Conn) (map[string]time
 	return imported, nil
 }
 
-// mpBlockDates — даты заседаний, у которых в таблице блоков есть хотя бы одна строка:
-// признак того, что документ записан не одной шапкой.
-func mpBlockDates(ctx context.Context, conn driver.Conn) (map[time.Time]bool, error) {
-	rows, err := conn.Query(ctx, mpSummaryBlockDatesQuery)
+// mpDateSet — даты заседаний (день в UTC, mpDay) из запроса, возвращающего одну колонку
+// meeting_date: «есть ли по этой дате хоть одна строка уровня». Одна и та же проверка нужна
+// блокам и regex-разметке каналов, отличаются только запрос и слово в сообщении об ошибке.
+// Даты нормализуются тем же mpDay, что и даты шапок: драйвер отдаёт Date в зоне сессии, и без
+// приведения множества не совпали бы между собой — документ вечно считался бы недописанным.
+func mpDateSet(ctx context.Context, conn driver.Conn, query, what string) (map[time.Time]bool, error) {
+	rows, err := conn.Query(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("%s: даты блоков не прочитаны: %w", mpSummaryName, err)
+		return nil, fmt.Errorf("%s: %s не прочитаны: %w", mpSummaryName, what, err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -374,12 +390,12 @@ func mpBlockDates(ctx context.Context, conn driver.Conn) (map[time.Time]bool, er
 	for rows.Next() {
 		var date time.Time
 		if err = rows.Scan(&date); err != nil {
-			return nil, fmt.Errorf("%s: дата блоков не прочитана: %w", mpSummaryName, err)
+			return nil, fmt.Errorf("%s: %s: строка не прочитана: %w", mpSummaryName, what, err)
 		}
 		dated[mpDay(date)] = true
 	}
 	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("%s: даты блоков не дочитаны: %w", mpSummaryName, err)
+		return nil, fmt.Errorf("%s: %s не дочитаны: %w", mpSummaryName, what, err)
 	}
 	return dated, nil
 }
