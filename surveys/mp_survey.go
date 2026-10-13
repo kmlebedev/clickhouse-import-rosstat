@@ -18,7 +18,7 @@ const (
 	// mpSurveySource = "cbr_survey" объявлена в series_meta.go — повторно в пакете нельзя.
 )
 
-const mpSurveyDdl = `CREATE TABLE IF NOT EXISTS macro_series (
+const mpSurveyDdl = `CREATE TABLE IF NOT EXISTS %s (
     source LowCardinality(String),   -- 'fred','bls','bea','eia','manual','webbridge','imf','wgc','bold','cbr_survey'
     series LowCardinality(String),   -- 'DFII10','distillate_stocks',...
     date Date32,                     -- Date32, т.к. Date не покрывает даты до 1970 (CPIAUCSL с 1947, FEDFUNDS с 1954)

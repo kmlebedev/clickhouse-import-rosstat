@@ -1,6 +1,7 @@
 package surveys
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -45,12 +46,25 @@ func TestSurveyViewDefinition(t *testing.T) {
 	}
 }
 
-// DDL публикует перечисление источников macro_series: без 'cbr_survey' в комментарии
-// source строка этого импортёра попадает в таблицу с неописанным источником.
+// DDL исполняется как fmt.Sprintf(mpSurveyDdl, mpSurveyTable) (util.ClickHouseImport.Import),
+// поэтому пин %s-контракта здесь обязателен: литерал имени таблицы без глагола даёт
+// «%!(EXTRA string=macro_series)» и ClickHouse error 62 «Multi-statements are not allowed»
+// (живой прогон make import STAT=cbr_mp_survey). Второй ассерт — перечисление источников
+// в комментарии source: без 'cbr_survey' строка этого импортёра попадёт в таблицу с
+// неописанным источником.
 func TestSurveyDdlPinsSource(t *testing.T) {
-	for _, fragment := range []string{"CREATE TABLE IF NOT EXISTS macro_series", "'cbr_survey'"} {
+	for _, fragment := range []string{"CREATE TABLE IF NOT EXISTS %s", "'cbr_survey'"} {
 		if !strings.Contains(mpSurveyDdl, fragment) {
 			t.Errorf("в mpSurveyDdl нет %q:\n%s", fragment, mpSurveyDdl)
 		}
+	}
+	rendered := fmt.Sprintf(mpSurveyDdl, mpSurveyTable)
+	for _, fragment := range []string{"macro_series", "ENGINE = ReplacingMergeTree"} {
+		if !strings.Contains(rendered, fragment) {
+			t.Errorf("в отрендеренном DDL нет %q:\n%s", fragment, rendered)
+		}
+	}
+	if strings.Contains(rendered, "%!") {
+		t.Errorf("Sprintf дописал артефакт форматирования — DDL сломан:\n%s", rendered)
 	}
 }
