@@ -1,0 +1,21 @@
+{
+"description": {
+	"columns": ["name", "title", "value", "type", "sort_order", "is_hidden", "precision"], 
+	"data": [
+		["SECID", "Краткий код", "KKV6", "string", 1, 0, null],
+		["SHORTNAME", "Краткое наименование контракта", "KEYRATE-10.26", "string", 3, 0, null],
+		["FRSTTRADE", "Начало обращения", "2026-09-29", "date", 9, 0, null],
+		["LSTTRADE", "Последний день обращения", "2026-10-23", "date", 10, 0, null],
+		["LSTDELDATE", "Дата экспирации", "2026-10-23", "date", 11, 0, null],
+		["ASSETCODE", "Код базового актива", "KEYRATE", "string", 20, 0, null],
+		["UNIT", "Котировка", "В пунктах как значение индекса", "string", 25, 0, null],
+		["EXPIRATION_TIME", "Время экспирации", "19:00:00", "time", 29, 0, null],
+		["GROUP", "Код типа инструмента", "futures_forts", "string", 9001, 1, null]
+	]
+},
+"boards": {
+	"columns": ["secid", "boardid", "title", "board_group_id", "market_id", "market", "engine_id", "engine", "is_traded", "decimals", "history_from", "history_till", "listed_from", "listed_till", "is_primary", "currencyid", "unit"], 
+	"data": [
+		["KKV6", "RFUD", "Фьючерсы", 45, 22, "forts", 4, "futures", 1, 2, "2026-09-28", "2026-10-12", "2026-09-28", "2026-10-13", 1, null, "P"]
+	]
+}}
