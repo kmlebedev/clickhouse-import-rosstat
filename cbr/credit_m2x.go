@@ -25,6 +25,10 @@ const cbrCreditM2xLinkSelector = `a.referenceable[href$="credit_m2x.xlsx"]`
 const (
 	cbrCreditM2xTable = "cbr_credit_m2x"
 	cbrCreditM2xSheet = "млн рублей"
+	// cbrCreditM2xCountPoints — количественный чек версии (спека §3.5): число точек
+	// своего ряда. Литерал, как и таблица: запрос — часть утверждения «эти точки
+	// мои». FINAL обязателен — иначе count() считал бы несмёрженные части.
+	cbrCreditM2xCountPoints = "SELECT count() FROM cbr_credit_m2x FINAL"
 )
 
 var cbrСreditM2x = util.ClickHouseImport{
@@ -82,6 +86,8 @@ var cbrСreditM2x = util.ClickHouseImport{
 		}
 		return nil
 	},
+	AfterImport:            afterCbrMacro(cbrCreditM2xSeriesMeta),
+	PublicationCountPoints: cbrCreditM2xCountPoints,
 }
 
 type cbrCreditM2xStat struct {
@@ -106,7 +112,4 @@ func (s *cbrCreditM2xStat) Import(ctx context.Context, conn driver.Conn) (count 
 // cbrCreditM2xImporter — кредит экономике и денежная масса: адрес актуального
 // credit_m2x.xlsx берётся со страницы ДКС в Import() (ARCHITECTURE.md §8.6),
 // регистрация — реестром cbr/importers.go.
-var cbrCreditM2xImporter = &publishedStat{
-	ImportStat: &cbrCreditM2xStat{ClickHouseImport: cbrСreditM2x},
-	meta:       cbrCreditM2xSeriesMeta,
-}
+var cbrCreditM2xImporter = &cbrCreditM2xStat{ClickHouseImport: cbrСreditM2x}

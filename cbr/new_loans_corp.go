@@ -26,6 +26,10 @@ const (
 	`
 	loansToCorporationsSheet = "итого"
 	loansToCorporationsField = "ВСЕГО"
+	// loansToCorpCountPoints — количественный чек версии (спека §3.5): число точек
+	// своего ряда. Литерал, как и таблица: запрос — часть утверждения «эти точки
+	// мои». FINAL обязателен — иначе count() считал бы несмёрженные части.
+	loansToCorpCountPoints = "SELECT count() FROM cbr_loans_to_corporations FINAL"
 )
 
 type LoansToCorporationsStat struct {
@@ -123,12 +127,11 @@ func cbrLoansImport(xlsx *excelize.File, batch driver.Batch, table, sheet, marke
 
 // loansToCorporationsImporter — объём новых кредитов юрлицам; регистрируется
 // реестром cbr/importers.go.
-var loansToCorporationsImporter = &publishedStat{
-	ImportStat: &LoansToCorporationsStat{ClickHouseImport: util.ClickHouseImport{
-		TableName:   loansToCorporationsTable,
-		CreateTable: []string{loansToCorporationsDdl},
-		DataUrl:     loansToCorporationsXlsDataUrl,
-		ImportFunc:  cbrLoansToCorpImport,
-	}},
-	meta: cbrLoansToCorpSeriesMeta,
-}
+var loansToCorporationsImporter = &LoansToCorporationsStat{ClickHouseImport: util.ClickHouseImport{
+	TableName:              loansToCorporationsTable,
+	CreateTable:            []string{loansToCorporationsDdl},
+	DataUrl:                loansToCorporationsXlsDataUrl,
+	ImportFunc:             cbrLoansToCorpImport,
+	AfterImport:            afterCbrMacro(cbrLoansToCorpSeriesMeta),
+	PublicationCountPoints: loansToCorpCountPoints,
+}}

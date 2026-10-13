@@ -120,11 +120,9 @@ func cbrCurrencyUSDCraw(crawUrl string, conn driver.Conn) (count int64, err erro
 
 // cbrCurrencyUSDImporter — официальный курс USD; регистрируется реестром
 // cbr/importers.go.
-var cbrCurrencyUSDImporter = &publishedStat{
-	ImportStat: &cbrCurrencyUSD{ClickHouseImport: util.ClickHouseImport{
-		TableName:   cbrCurrencyUSDTable,
-		CreateTable: []string{cbrCurrencyUSDDdl},
-		CrawFunc:    cbrCurrencyUSDCraw,
-	}},
-	meta: cbrCurrencyUSDSeriesMeta,
-}
+var cbrCurrencyUSDImporter = &cbrCurrencyUSD{ClickHouseImport: util.ClickHouseImport{
+	TableName:   cbrCurrencyUSDTable,
+	CreateTable: []string{cbrCurrencyUSDDdl},
+	CrawFunc:    cbrCurrencyUSDCraw,
+	AfterImport: afterCbrMacro(cbrCurrencyUSDSeriesMeta),
+}}

@@ -27,6 +27,12 @@ const (
 	householdsBMesSheet      = "Балансы"
 	householdsBMesField      = "АКТИВЫ"
 	householdsBMesTimeLayout = "01-02-06"
+	// householdsBMesCountPoints — количественный чек версии (спека §3.5): число
+	// точек своего ряда в cbr_households_b_mes. Литерал, как и таблица: запрос —
+	// часть утверждения «эти точки мои». FINAL обязателен — без него count() считает
+	// несмёрженные части и растёт после каждого повторного импорта, то есть чек
+	// сравнивал бы величину, меняющуюся от прогона к прогону.
+	householdsBMesCountPoints = "SELECT count() FROM cbr_households_b_mes FINAL"
 )
 
 type HouseholdsBMesStat struct {
@@ -100,12 +106,11 @@ func householdsBMesImport(xlsx *excelize.File, batch driver.Batch) error {
 
 // householdsBMesImporter — балансы сектора «Домашние хозяйства»; регистрируется
 // реестром cbr/importers.go.
-var householdsBMesImporter = &publishedStat{
-	ImportStat: &HouseholdsBMesStat{ClickHouseImport: util.ClickHouseImport{
-		TableName:   householdsBMesTable,
-		CreateTable: []string{householdsBMesDdl},
-		DataUrl:     householdsBMesXlsDataUrl,
-		ImportFunc:  householdsBMesImport,
-	}},
-	meta: householdsBMesSeriesMeta,
-}
+var householdsBMesImporter = &HouseholdsBMesStat{ClickHouseImport: util.ClickHouseImport{
+	TableName:              householdsBMesTable,
+	CreateTable:            []string{householdsBMesDdl},
+	DataUrl:                householdsBMesXlsDataUrl,
+	ImportFunc:             householdsBMesImport,
+	AfterImport:            afterCbrMacro(householdsBMesSeriesMeta),
+	PublicationCountPoints: householdsBMesCountPoints,
+}}

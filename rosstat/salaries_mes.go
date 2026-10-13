@@ -20,16 +20,19 @@ const (
 	// Имя файла содержит месяц и год (tab1-zpl_ММ-ГГГГ.xlsx) и меняется при обновлении,
 	// поэтому ссылка берётся со страницы.
 	salariesMesTable = "salaries_mes"
-	salariesMesDdl   = `CREATE TABLE IF NOT EXISTS ` + salariesMesTable + ` (
+	salariesMesDdl   = `CREATE TABLE IF NOT EXISTS %s (
 				  name LowCardinality(String)
 				, date Date
 				, salary Float32
 			) ENGINE = ReplacingMergeTree ORDER BY (name, date);
 		`
-	salariesMesInsert     = "INSERT INTO " + salariesMesTable
 	salariesMesField      = "1991"
 	salariesMesYearStart  = 1991
 	salariesMesTimeLayout = "2006-01"
+	// salariesMesCountPoints — количественный чек версии (спека §3.5): число точек своего
+	// ряда. Литерал, как и таблица: запрос — часть утверждения «эти точки мои». FINAL
+	// обязателен — иначе count() считал бы несмёрженные части.
+	salariesMesCountPoints = "SELECT count() FROM salaries_mes FINAL"
 )
 
 // getSalariesMesXlsDataUrl ищет ссылку на актуальный tab1-zpl_*.xlsx на странице
@@ -51,10 +54,7 @@ func getSalariesMesXlsDataUrl() (url string) {
 }
 
 type SalariesMesStat struct {
-}
-
-func (s *SalariesMesStat) Name() string {
-	return salariesMesTable
+	util.ClickHouseImport
 }
 
 func parseSalariesMes(xlsx *excelize.File) (table *[][]string, err error) {
@@ -99,57 +99,55 @@ func parseSalariesMes(xlsx *excelize.File) (table *[][]string, err error) {
 	return table, nil
 }
 
-func (s *SalariesMesStat) export() (table *[][]string, err error) {
-	xlsDataUrl := getSalariesMesXlsDataUrl()
-	if xlsDataUrl == "" {
-		return nil, fmt.Errorf("salariesMes: не найдена ссылка на tab1-zpl_*.xlsx на %s/labor_market_employment_salaries", rosstatUrl)
-	}
-	var xlsx *excelize.File
-	if xlsx, err = util.GetXlsx(xlsDataUrl); err != nil {
-		return nil, err
-	}
-	return parseSalariesMes(xlsx)
-}
-
-func (s *SalariesMesStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	if err = conn.Exec(ctx, salariesMesDdl); err != nil {
-		return count, err
-	}
-	var table *[][]string
-	if table, err = s.export(); err != nil {
-		return count, err
-	}
-	batch, err := conn.PrepareBatch(ctx, salariesMesInsert)
+// salariesMesImport разбирает файл и пишет точки в batch: семантика прежних export() и цикла
+// вставки Import сохранена дословно — имя ряда из первой ячейки листа, дата «год-месяц»
+// строки, значение — зарплата, дата сдвинута на 1-е число месяца, следующего за отчётным
+// (AddDate(0, 1, 0)).
+func salariesMesImport(xlsx *excelize.File, batch driver.Batch) error {
+	table, err := parseSalariesMes(xlsx)
 	if err != nil {
-		return count, err
+		return err
 	}
 	for _, row := range *table {
 		// Calling Parse() method with its parameters
 		mes, err := time.Parse(salariesMesTimeLayout, fmt.Sprintf("%s-%s", row[1], row[2]))
 		if err != nil {
-			return count, err
+			return err
 		}
 		salary, err := strconv.ParseFloat(row[3], 32)
 		if err != nil {
-			return count, err
+			return err
 		}
 		if err = batch.Append(row[0], mes.AddDate(0, 1, 0), float32(salary)); err != nil {
-			return count, err
+			return err
 		}
-		count++
 	}
-	if err = batch.Send(); err != nil {
-		return count, err
-	}
-	if err = util.UpsertSeriesCatalog(ctx, conn, salariesMesSeriesMeta); err != nil {
-		return count, err
-	}
-	if _, err = util.CreateView(ctx, conn, rosstatMacroView); err != nil {
-		return count, err
-	}
-	return count, nil
+	return nil
 }
 
+// Import берёт адрес актуального xlsx со страницы рынка труда Росстата: имя файла содержит
+// месяц и год (tab1-zpl_ММ-ГГГГ.xlsx) и меняется при обновлении, а сетевое обращение в
+// init() запрещено (ARCHITECTURE.md §8.6). Дальше — полный цикл шаблона: DDL → префлайт по
+// HEAD (файл обновляется раз в месяц, шаг расписания — недельный) → точки → производные
+// (AfterImport) → строка версии.
+func (s *SalariesMesStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+	xlsDataUrl := getSalariesMesXlsDataUrl()
+	if xlsDataUrl == "" {
+		return count, fmt.Errorf("salariesMes: не найдена ссылка на tab1-zpl_*.xlsx на %s/labor_market_employment_salaries", rosstatUrl)
+	}
+	s.DataUrl = xlsDataUrl
+	return s.ClickHouseImport.Import(ctx, conn)
+}
+
+// salariesMesImporter — среднемесячная начисленная зарплата по РФ; регистрируется init() пакета.
+var salariesMesImporter = &SalariesMesStat{ClickHouseImport: util.ClickHouseImport{
+	TableName:              salariesMesTable,
+	CreateTable:            []string{salariesMesDdl},
+	ImportFunc:             salariesMesImport,
+	AfterImport:            afterRosstatMacro(salariesMesSeriesMeta),
+	PublicationCountPoints: salariesMesCountPoints,
+}}
+
 func init() {
-	chimport.Stats = append(chimport.Stats, &SalariesMesStat{})
+	chimport.Stats = append(chimport.Stats, salariesMesImporter)
 }

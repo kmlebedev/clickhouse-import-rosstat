@@ -122,11 +122,9 @@ func cbrKeyRateCraw(crawUrl string, conn driver.Conn) (count int64, err error) {
 
 // cbrKeyRateImporter — ключевая ставка; краулер HTML-таблицы. Регистрируется
 // реестром cbr/importers.go вместе с остальными импортёрами пакета.
-var cbrKeyRateImporter = &publishedStat{
-	ImportStat: &cbrKeyRate{ClickHouseImport: util.ClickHouseImport{
-		TableName:   cbrKeyRateTable,
-		CreateTable: []string{cbrKeyRateDdl},
-		CrawFunc:    cbrKeyRateCraw,
-	}},
-	meta: cbrKeyRateSeriesMeta,
-}
+var cbrKeyRateImporter = &cbrKeyRate{ClickHouseImport: util.ClickHouseImport{
+	TableName:   cbrKeyRateTable,
+	CreateTable: []string{cbrKeyRateDdl},
+	CrawFunc:    cbrKeyRateCraw,
+	AfterImport: afterCbrMacro(cbrKeyRateSeriesMeta),
+}}

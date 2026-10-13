@@ -22,6 +22,11 @@ const indicatorsCpdUrl = "https://www.cbr.ru/statistics/ddkp/aipd/"
 // чтобы дежурный по логу видел, чей ряд остался без обновления.
 const cbrIndicatorsCpdTable = "cbr_indicators_cpd"
 
+// cbrIndicatorsCpdCountPoints — количественный чек версии (спека §3.5): число точек
+// своего ряда. Литерал, как и таблица: запрос — часть утверждения «эти точки мои».
+// FINAL обязателен — иначе count() считал бы несмёрженные части.
+const cbrIndicatorsCpdCountPoints = "SELECT count() FROM cbr_indicators_cpd FINAL"
+
 // indicatorsCpdLinkSelector — позиционный путь к ссылке на indicators_cpd.xlsx на
 // странице aipd; сохраняем как есть, состав детей страницы не менялся.
 const indicatorsCpdLinkSelector = ".container-fluid > div > div:nth-child(6) > div > div.body-2.document-regular_main > div > div > a.referenceable"
@@ -48,18 +53,17 @@ func (s *indicatorsCpdStat) Import(ctx context.Context, conn driver.Conn) (count
 
 // cbrIndicatorsCpdImporter — сезонно сглаженная динамика потребительских цен;
 // регистрируется реестром cbr/importers.go.
-var cbrIndicatorsCpdImporter = &publishedStat{
-	ImportStat: &indicatorsCpdStat{ClickHouseImport: util.ClickHouseImport{
-		TableName: cbrIndicatorsCpdTable,
-		CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (
+var cbrIndicatorsCpdImporter = &indicatorsCpdStat{ClickHouseImport: util.ClickHouseImport{
+	TableName: cbrIndicatorsCpdTable,
+	CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (
               name LowCardinality(String)
 			, date Date
 			, value Float32
 		) ENGINE = ReplacingMergeTree ORDER BY (name, date);`},
-		ImportFunc: indicatorsCpdImport,
-	}},
-	meta: cbrIndicatorsCpdSeriesMeta,
-}
+	ImportFunc:             indicatorsCpdImport,
+	AfterImport:            afterCbrMacro(cbrIndicatorsCpdSeriesMeta),
+	PublicationCountPoints: cbrIndicatorsCpdCountPoints,
+}}
 
 // https://www.cbr.ru/analytics/dkp/dinamic/
 // indicatorsCpdImport разбирает лист «Лист1»: строки «Все товары и услуги» и «Базовый ИПЦ»
