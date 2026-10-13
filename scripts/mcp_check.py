@@ -356,6 +356,38 @@ async def check(params, server_log):
             failed += not expect("сырая gost_vehicle_safety_certificate закрыта", denied,
                                  "отказ ClickHouse 497 на gost_vehicle_safety_certificate (ожидаемо)" if denied else raw[:200])
 
+            # Рыночный контур ожиданий по ключевой ставке MOEX KEYRATE (правило 11): витрина
+            # v_keyrate_expectations читается агентом, а сырые keyrate_futures (дневные итоги
+            # серий) и keyrate_contract (паспорта серий) — источники витрины — агенту закрыты
+            # (как macro_series и bold_fund_snapshot: читать контур агент обязан только через
+            # витрину). Существование витрины подтверждается ЗАПРОСОМ К НЕЙ, а не поиском имени
+            # в ответе list_tables: в том тексте лежат create_table_query с комментариями
+            # таблиц и колонок, и имя отсутствующей витрины попадало туда из COMMENT соседки
+            # (урок bold). Разобранный ответ run_query доказывает и существование, и право
+            # чтения; «нет витрины» и «нет прав» приходят ошибкой (UNKNOWN_TABLE /
+            # ACCESS_DENIED) и в result_rows не разбираются.
+            #
+            # Витрина гейтится по трём таблицам-источникам (keyrate_futures, keyrate_contract,
+            # cbr_key_rate), поэтому до первого прогона импортёров её может не быть вовсе, а
+            # пустая cbr_key_rate даёт NULL в expected_change_pp/bp при читаемых строках, —
+            # значение count не проверяется, только разрешение чтения, как у v_dcf_assumptions.
+            keyrate_view = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_keyrate_expectations"}))
+            keyrate_view_rows = result_rows(keyrate_view)
+            if keyrate_view_rows is None:
+                keyrate_view_detail = f"витрина не читается: {keyrate_view[:200]}"
+            elif keyrate_view_rows:
+                keyrate_view_detail = f"строк: {keyrate_view_rows[0].get('count()')}"
+            else:
+                keyrate_view_detail = "в ответе нет строк"
+            failed += not expect("витрина v_keyrate_expectations существует и читается", bool(keyrate_view_rows), keyrate_view_detail)
+
+            for table, label in (("keyrate_futures", "дневные итоги серий"),
+                                 ("keyrate_contract", "паспорта серий")):
+                raw = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {table}"}))
+                denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+                failed += not expect(f"сырая {table} закрыта ({label})", denied,
+                                     f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
+
     return failed
 
 
