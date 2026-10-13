@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	log "github.com/sirupsen/logrus"
 )
 
 // PublicationsTable — общая таблица точек контроля публикаций: одна строка = одна увиденная
@@ -125,4 +126,66 @@ func SavePublication(ctx context.Context, conn driver.Conn, p Publication) error
 		return err
 	}
 	return batch.Send()
+}
+
+// CountPoints выполняет countPoints-запрос импортёра и возвращает число точек его ряда. Один и
+// тот же запрос служит и количественным чеком известной версии, и значением points записываемой
+// версии (спека §3.2): сравнивать и записывать надо одну величину. batch.Rows() для этой роли не
+// годится — он считает ячейки листа, а ReplacingMergeTree схлопывает дубли по ключу
+// (cbr_households_b_mes: 9030 ячеек против 7350 точек), и записанное число не сошлось бы с
+// count() никогда, то есть no-op не наступил бы ни разу.
+func CountPoints(ctx context.Context, conn driver.Conn, query string) (points uint64, err error) {
+	if err = conn.QueryRow(ctx, query).Scan(&points); err != nil {
+		return 0, fmt.Errorf("count точек: %w", err)
+	}
+	return points, nil
+}
+
+// PublicationPreflight — лёгкая проверка «версия артефакта уже импортирована?»: HEAD по url даёт
+// отпечаток версии (HeadFingerprint), source_publications отвечает, знакома ли она, и, если
+// знакома, countPoints-запрос импортёра подтверждает, что точки на месте. Возврат — решение для
+// вызывающего: noop = true значит «файл не скачивать и в БД не писать ничего, а points — число
+// точек прогона»; непустой отпечаток без noop — «полный импорт, после которого записать версию».
+//
+// Ни одна из неудач не является ошибкой прогона — все ведут в полный импорт:
+//   - HEAD недоступен (сеть, не-2xx): отпечатка нет, а значит и версию записывать нельзя — иначе
+//     следующая волна считалась бы уже импортированной, и данные остались бы устаревшими;
+//   - SELECT версии не удался: сбой диагностики старой записи не должен ронять ежедневный
+//     прогон — полный импорт идемпотентен на ReplacingMergeTree, версия потом перезапишется;
+//   - число точек не сошлось: версия записана, а точек в таблице не столько (ручная чистка,
+//     недоехавший батч) — self-heal полным импортом, а не тихий no-op.
+//
+// Логи перенесены из первого потребителя (cbr/mo_br) дословно, включая текст no-op.
+func PublicationPreflight(ctx context.Context, conn driver.Conn, source, url, countPoints string) (fingerprint string, noop bool, points uint64, err error) {
+	fingerprint, headErr := HeadFingerprint(url)
+	if headErr != nil {
+		log.Warnf("%s: HEAD %s недоступен (%v) — полный импорт без записи версии", source, url, headErr)
+		return "", false, 0, nil
+	}
+	if err = EnsurePublications(ctx, conn); err != nil {
+		return "", false, 0, err
+	}
+	// basename — как и у записи версии в шаблоне: имя входит в ключ версии, поэтому смена имени
+	// файла у источника — тоже новая версия (спека §3.4, риски).
+	name := path.Base(url)
+	recorded, known, knownErr := PublicationKnown(ctx, conn, source, name, fingerprint)
+	if knownErr != nil {
+		log.Warnf("%s: проверка версии %s в %s не удалась (%v) — полный импорт", source, fingerprint, PublicationsTable, knownErr)
+		return fingerprint, false, 0, nil
+	}
+	if !known {
+		return fingerprint, false, 0, nil
+	}
+	// Сбой запроса числа точек — реальная проблема БД (в отличие от недоступного SELECT версии):
+	// без него не сходится ни чек, ни points будущей записи, поэтому прогон останавливается.
+	dbPoints, countErr := CountPoints(ctx, conn, countPoints)
+	if countErr != nil {
+		return fingerprint, false, 0, fmt.Errorf("%s: %w", source, countErr)
+	}
+	if dbPoints == recorded {
+		log.Infof("%s: no-op, версия %s уже импортирована, %d точек на месте", source, fingerprint, recorded)
+		return fingerprint, true, recorded, nil
+	}
+	log.Warnf("%s: версия %s известна, но в %s %d точек вместо %d — полный импорт", source, fingerprint, countPoints, dbPoints, recorded)
+	return fingerprint, false, 0, nil
 }
