@@ -4,10 +4,8 @@ import (
 	"context"
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/gocolly/colly/v2"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
-	log "github.com/sirupsen/logrus"
 	"github.com/xuri/excelize/v2"
 	"strconv"
 	"strings"
@@ -18,22 +16,10 @@ import (
 // Приложение к материалу «Кредит экономике и денежная масса»
 const cbrCreditM2xUrl = "https://www.cbr.ru/statistics/macro_itm/dkfs/"
 
-// getCbrCreditM2xXlsDataUrl ищет ссылку на актуальный credit_m2x.xlsx на странице
-// денежно-кредитной статистики. Id файла в URL (/Content/Document/File/NNNNN/) меняется
-// при обновлении, поэтому ссылку берём со страницы, а не хардкодим.
-func getCbrCreditM2xXlsDataUrl() (url string) {
-	c := colly.NewCollector(colly.UserAgent(util.HttpUA))
-	c.SetClient(util.HttpClient)
-	c.OnHTML(`a.referenceable[href$="credit_m2x.xlsx"]`, func(e *colly.HTMLElement) {
-		url = fmt.Sprintf("%s%s", cbrUrl, e.Attr("href"))
-		log.Infof("href url %s", url)
-	})
-	if err := c.Visit(cbrCreditM2xUrl); err != nil {
-		log.Errorf("Visit %v+", err)
-	}
-	c.Wait()
-	return url
-}
+// cbrCreditM2xLinkSelector — ссылка на актуальный credit_m2x.xlsx. Id файла в URL
+// (/Content/Document/File/NNNNN/) меняется при обновлении, поэтому ссылку берём
+// со страницы, а не хардкодим.
+const cbrCreditM2xLinkSelector = `a.referenceable[href$="credit_m2x.xlsx"]`
 
 var cbrСreditM2x = util.ClickHouseImport{
 	TableName: "cbr_credit_m2x",
@@ -86,10 +72,18 @@ type cbrCreditM2xStat struct {
 	util.ClickHouseImport
 }
 
+// Import берёт адрес актуального credit_m2x.xlsx со страницы ДКС. Ссылку ищем тем же
+// кодом, что и тест на фикстуре (util.GetFile + findLink).
 func (s *cbrCreditM2xStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	if s.DataUrl = getCbrCreditM2xXlsDataUrl(); s.DataUrl == "" {
-		return count, fmt.Errorf("cbrCreditM2x: не найдена ссылка на credit_m2x.xlsx на %s", cbrCreditM2xUrl)
+	page, err := getPage(cbrCreditM2xUrl)
+	if err != nil {
+		return count, fmt.Errorf("cbrCreditM2x: %s: %w", cbrCreditM2xUrl, err)
 	}
+	href, err := findLink(page, cbrCreditM2xLinkSelector)
+	if err != nil {
+		return count, fmt.Errorf("cbrCreditM2x: не найдена ссылка на credit_m2x.xlsx на %s: %w", cbrCreditM2xUrl, err)
+	}
+	s.DataUrl = cbrUrl + href
 	return s.ClickHouseImport.Import(ctx, conn)
 }
 
