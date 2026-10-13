@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/text/encoding/charmap"
 )
 
 // Happy path: 200 + валидный XML → поля заполнены, ошибки нет. Заодно пиним
@@ -170,6 +172,80 @@ func TestGetXMLRootMismatchFails(t *testing.T) {
 	err := GetXML(server.URL, &out)
 	if err == nil {
 		t.Fatal("чужой корень при пине XMLName должен давать ошибку, а не тихий ноль с зелёным прогоном")
+	}
+	if !strings.Contains(err.Error(), "html") {
+		t.Errorf("ошибка %q не называет пришедший корень html", err)
+	}
+}
+
+// ParseXML обязан понимать объявленную кодировку windows-1251: реальные XML-фиды ЦБ
+// (XML_dynamic.asp…VAL_NM_RQ=R01235, курс USD) объявляют её, а без CharsetReader
+// encoding/xml падает с «encoding "windows-1251" declared but Decoder.CharsetReader
+// is nil» — тот самый живой сбой XML-импортёров курса. Фикстура повторяет живой ответ
+// ЦБ: объявление windows-1251, запись с датой 08.10.2026 и значением 85,4811; кириллица
+// в атрибуте нужна, чтобы декодирование было настоящим, а не ASCII-проходом. Байты
+// собираем энкодером charmap.Windows1251: фикстура остаётся читаемой строкой, а в теле
+// лежит валидный windows-1251 с верной декларацией.
+func TestParseXMLWindows1251(t *testing.T) {
+	const fixture = `<?xml version="1.0" encoding="windows-1251"?>
+<ValCurs ID="R01235" DateRange1="08.10.2026" DateRange2="08.10.2026" name="Динамика официального курса заданной валюты">
+	<Record Date="08.10.2026" Id="R01235">
+		<Nominal>1</Nominal>
+		<Value>85,4811</Value>
+		<VunitRate>85,4811</VunitRate>
+	</Record>
+</ValCurs>`
+	body, err := charmap.Windows1251.NewEncoder().Bytes([]byte(fixture))
+	if err != nil {
+		t.Fatalf("перекодирование фикстуры в windows-1251: %v", err)
+	}
+
+	var out struct {
+		XMLName xml.Name `xml:"ValCurs"`
+		Value   string   `xml:"Record>Value"`
+	}
+	if err := ParseXML(body, &out); err != nil {
+		t.Fatalf("ParseXML с windows-1251: %v", err)
+	}
+	if out.Value != "85,4811" {
+		t.Errorf("out.Value = %q, ожидалось %q", out.Value, "85,4811")
+	}
+}
+
+// Неподдерживаемую кодировку нельзя молча отдать декодеру как есть: байты koi8-r в
+// UTF-8-полях стали бы мусорными значениями в ClickHouse, и заметить это на дашборде
+// невозможно. Поэтому такая кодировка — ошибка, и в её тексте обязана быть сама
+// кодировка: без неё сбой ленты читается как «что-то пошло не так», а причина — что
+// фид ЦБ перевели на другую кодировку.
+func TestParseXMLUnknownCharset(t *testing.T) {
+	body := []byte(`<?xml version="1.0" encoding="koi8-r"?><ValCurs><Record><Value>85,4811</Value></Record></ValCurs>`)
+
+	var out struct {
+		XMLName xml.Name `xml:"ValCurs"`
+		Value   string   `xml:"Record>Value"`
+	}
+	err := ParseXML(body, &out)
+	if err == nil {
+		t.Fatal("неподдерживаемая кодировка должна давать ошибку, а не мусор в полях")
+	}
+	if !strings.Contains(err.Error(), "koi8-r") {
+		t.Errorf("ошибка %q не называет кодировку koi8-r", err)
+	}
+}
+
+// Пин корня через XMLName — контракт приёмника, и перенос разбора в ParseXML его не
+// отменяет: 200 с чужой страницей (HTML-заглушка WAF) при пине обязан давать ошибку
+// декодирования, а не тихий ноль с зелёным прогоном. Проверка живёт здесь, на уровне
+// разбора: GetXML сверху — лишь fetch, а регрессию пина ловим у самого декодера.
+func TestParseXMLWrongRoot(t *testing.T) {
+	body := []byte(`<?xml version="1.0" encoding="UTF-8"?><html><body>blocked</body></html>`)
+
+	var out struct {
+		XMLName xml.Name `xml:"ValCurs"`
+	}
+	err := ParseXML(body, &out)
+	if err == nil {
+		t.Fatal("чужой корень при пине XMLName должен давать ошибку, а не тихий ноль")
 	}
 	if !strings.Contains(err.Error(), "html") {
 		t.Errorf("ошибка %q не называет пришедший корень html", err)
