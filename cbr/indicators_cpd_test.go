@@ -29,3 +29,26 @@ func TestIndicatorsCpdSeriesMetaCoversParsedRows(t *testing.T) {
 		return indicatorsCpdImport(f, rec)
 	})
 }
+
+// TestIndicatorsCpdEmptySheetFails: пустой лист «Лист1» — ошибка, а не «0 rows» с зелёным
+// dagu: разбор без строк «Все товары и услуги»/«Базовый ИПЦ» тихо записал бы ноль точек, и
+// ряд остался бы без обновления. Имя таблицы в тексте ошибки сверяется литералом: оно —
+// часть контракта для дежурного по логу.
+func TestIndicatorsCpdEmptySheetFails(t *testing.T) {
+	f := excelize.NewFile()
+	t.Cleanup(func() { _ = f.Close() })
+	if err := f.SetSheetName("Sheet1", "Лист1"); err != nil {
+		t.Fatalf("SetSheetName: %v", err)
+	}
+	rec := newCbrRecorder()
+	err := indicatorsCpdImport(f, rec)
+	if err == nil {
+		t.Fatalf("ожидалась ошибка, разбор дал %d строк", len(rec.rows))
+	}
+	if !strings.Contains(err.Error(), "cbr_indicators_cpd") {
+		t.Errorf("ошибка %q не называет таблицу cbr_indicators_cpd", err)
+	}
+	if len(rec.raw) != 0 {
+		t.Errorf("при ошибке записано %d строк, want 0", len(rec.raw))
+	}
+}

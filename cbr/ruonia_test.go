@@ -2,6 +2,7 @@ package cbr
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -149,6 +150,29 @@ func TestCbrRuaniaMissingSheetFails(t *testing.T) {
 	rec := newCbrRecorder()
 	if err := ruoniaImport(f, ruoniaNamedBatch{rec: rec}); err == nil {
 		t.Fatalf("ожидалась ошибка, разбор дал %d строк", len(rec.rows))
+	}
+	if len(rec.raw) != 0 {
+		t.Errorf("при ошибке записано %d строк, want 0", len(rec.raw))
+	}
+}
+
+// TestCbrRuaniaEmptySheetFails: лист «RC» есть, но строк данных нет — ошибка, а не
+// «0 rows» с зелёным dagu: пустая выгрузка ЦБ не должна выглядеть успешным прогоном (в
+// таблице широких строк ни одной точки, а зелёный шаг DAG сообщил бы об обратном). Имя
+// таблицы в тексте ошибки сверяется литералом: оно — часть контракта для дежурного по логу.
+func TestCbrRuaniaEmptySheetFails(t *testing.T) {
+	f := excelize.NewFile()
+	t.Cleanup(func() { _ = f.Close() })
+	if err := f.SetSheetName("Sheet1", "RC"); err != nil {
+		t.Fatalf("SetSheetName: %v", err)
+	}
+	rec := newCbrRecorder()
+	err := ruoniaImport(f, rec)
+	if err == nil {
+		t.Fatalf("ожидалась ошибка, разбор дал %d строк", len(rec.rows))
+	}
+	if !strings.Contains(err.Error(), "cbr_ruania") {
+		t.Errorf("ошибка %q не называет таблицу cbr_ruania", err)
 	}
 	if len(rec.raw) != 0 {
 		t.Errorf("при ошибке записано %d строк, want 0", len(rec.raw))

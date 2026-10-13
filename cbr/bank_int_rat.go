@@ -1,6 +1,8 @@
 package cbr
 
 import (
+	"fmt"
+
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	log "github.com/sirupsen/logrus"
@@ -14,8 +16,12 @@ import (
 
 const (
 	cbrBankIntRateTable = "cbr_bank_int_rate"
+	cbrBankIntRateSheet = "в рублях"
 )
 
+// cbrBankIntRate — ставки по вкладам и кредитам: таблица, DDL и разбор листа «в рублях».
+// Пустой/короткий лист и ноль точек — ошибка (fail-fast), иначе «0 rows» выглядели бы
+// успешным прогоном, а семь рядов по срокам вклада остались бы без обновления.
 var cbrBankIntRate = util.ClickHouseImport{
 	TableName: cbrBankIntRateTable,
 	CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (
@@ -26,10 +32,17 @@ var cbrBankIntRate = util.ClickHouseImport{
 	`},
 	DataUrl: "https://www.cbr.ru/vfs/statistics/pdko/int_rat/regulatory_rates.xlsx",
 	ImportFunc: func(xlsx *excelize.File, batch driver.Batch) error {
-		rows, err := xlsx.GetRows("в рублях")
+		rows, err := xlsx.GetRows(cbrBankIntRateSheet)
 		if err != nil {
 			return err
 		}
+		// Короткий лист — сразу ошибка: rows[3:] ниже паникует на срезе короче трёх строк
+		// (заголовок файла), а паника в импортёре — не «0 rows», а упавший шаг DAG без
+		// понятного сообщения.
+		if len(rows) < 3 {
+			return fmt.Errorf("%s: в листе «%s» нет строк данных", cbrBankIntRateTable, cbrBankIntRateSheet)
+		}
+		count := 0
 		for _, row := range rows[3:] {
 			if row[0] == "" {
 				continue
@@ -53,7 +66,11 @@ var cbrBankIntRate = util.ClickHouseImport{
 					log.Error(err)
 					return err
 				}
+				count++
 			}
+		}
+		if count == 0 {
+			return fmt.Errorf("%s: разбор листа «%s» не дал ни одной точки", cbrBankIntRateTable, cbrBankIntRateSheet)
 		}
 		return nil
 	},

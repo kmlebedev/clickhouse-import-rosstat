@@ -18,6 +18,10 @@ import (
 
 const indicatorsCpdUrl = "https://www.cbr.ru/statistics/ddkp/aipd/"
 
+// cbrIndicatorsCpdTable — таблица импортёра: имя попадает в текст ошибки пустого разбора,
+// чтобы дежурный по логу видел, чей ряд остался без обновления.
+const cbrIndicatorsCpdTable = "cbr_indicators_cpd"
+
 // indicatorsCpdLinkSelector — позиционный путь к ссылке на indicators_cpd.xlsx на
 // странице aipd; сохраняем как есть, состав детей страницы не менялся.
 const indicatorsCpdLinkSelector = ".container-fluid > div > div:nth-child(6) > div > div.body-2.document-regular_main > div > div > a.referenceable"
@@ -46,7 +50,7 @@ func (s *indicatorsCpdStat) Import(ctx context.Context, conn driver.Conn) (count
 // регистрируется реестром cbr/importers.go.
 var cbrIndicatorsCpdImporter = &publishedStat{
 	ImportStat: &indicatorsCpdStat{ClickHouseImport: util.ClickHouseImport{
-		TableName: "cbr_indicators_cpd",
+		TableName: cbrIndicatorsCpdTable,
 		CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (
               name LowCardinality(String)
 			, date Date
@@ -58,12 +62,17 @@ var cbrIndicatorsCpdImporter = &publishedStat{
 }
 
 // https://www.cbr.ru/analytics/dkp/dinamic/
+// indicatorsCpdImport разбирает лист «Лист1»: строки «Все товары и услуги» и «Базовый ИПЦ»
+// раскладываются по месяцам из строки заголовка (date = первое число месяца − 1). Пустой
+// лист/отсутствие обеих строк/ноль точек — ошибка (fail-fast): молчаливый «0 rows» выглядел
+// бы успешным прогоном, а ряд остался бы без обновления.
 func indicatorsCpdImport(xlsx *excelize.File, batch driver.Batch) error {
 	rows, err := xlsx.GetRows("Лист1")
 	if err != nil {
 		return err
 	}
 	fileds := []string{"Все товары и услуги", "Базовый ИПЦ"}
+	count := 0
 	for i, row := range rows {
 		if len(row) < 1 || !slices.Contains(fileds, strings.TrimSpace(row[0])) {
 			continue
@@ -80,7 +89,11 @@ func indicatorsCpdImport(xlsx *excelize.File, batch driver.Batch) error {
 			if err = batch.Append(row[0], date.AddDate(0, 1, -1), value); err != nil {
 				return err
 			}
+			count++
 		}
+	}
+	if count == 0 {
+		return fmt.Errorf("%s: разбор листа «Лист1» не дал ни одной точки", cbrIndicatorsCpdTable)
 	}
 	return nil
 }

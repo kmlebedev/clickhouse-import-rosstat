@@ -10,11 +10,21 @@ import (
 	"time"
 )
 
+// ruoniaImport разбирает лист «RC»: одна широкая строка на торговый день (date + 7 метрик,
+// порядок колонок — как в DDL cbr_ruania). Пустой лист/ноль строк — ошибка (fail-fast):
+// молчаливый «0 rows» выглядел бы успешным прогоном, а все семь метрик остались бы без
+// обновления.
 func ruoniaImport(xlsx *excelize.File, batch driver.Batch) error {
 	rows, err := xlsx.GetRows("RC")
 	if err != nil {
 		return err
 	}
+	// Пустой лист — сразу ошибка: rows[1:] ниже паникует на пустом срезе, а паника в
+	// импортёре — не «0 rows», а упавший шаг DAG без понятного сообщения.
+	if len(rows) == 0 {
+		return fmt.Errorf("%s: лист «RC» пуст", cbrRuoniaTable)
+	}
+	count := 0
 	for _, row := range rows[1:] {
 		if len(row) == 0 {
 			continue
@@ -33,6 +43,10 @@ func ruoniaImport(xlsx *excelize.File, batch driver.Batch) error {
 		if err = batch.Append(date, rui, vol, trans, minRate, maxRate, p25, p75); err != nil {
 			return err
 		}
+		count++
+	}
+	if count == 0 {
+		return fmt.Errorf("%s: разбор листа «RC» не дал ни одной точки", cbrRuoniaTable)
 	}
 	return nil
 }

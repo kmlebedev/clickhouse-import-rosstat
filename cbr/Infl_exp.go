@@ -15,6 +15,13 @@ import (
 // Статистические данные
 const inflExpUrl = "https://www.cbr.ru/analytics/dkp/inflationary_expectations/"
 
+// cbrInflExpTable и inflExpSheet — таблица и лист импортёра: оба попадают в текст ошибки
+// пустого разбора, чтобы дежурный по логу видел, чей ряд остался без обновления.
+const (
+	cbrInflExpTable = "cbr_infl_exp"
+	inflExpSheet    = "Данные для графиков"
+)
+
 // inflExpLinkSelector — ссылка на актуальный XLSX в блоке версий. Имена файлов и id
 // меняются при каждом обновлении (Infl_exp_ГГ-ММ.xlsx), ссылки идут от свежей к старой.
 const inflExpLinkSelector = `a.versions_item[href$=".xlsx"]`
@@ -32,12 +39,22 @@ var inflExpSeriesByRowLabel = map[string]string{
 
 const inflExpTableMarker = "Прямые оценки годовой инфляции: медианные  значения"
 
+// inflExpImport разбирает лист «Данные для графиков»: строки после маркера
+// inflExpTableMarker разложены по рядам из inflExpSeriesByRowLabel, даты берутся из строки
+// заголовка (маркер + 2). Пустой лист/отсутствие маркера/ноль точек — ошибка (fail-fast):
+// иначе «0 rows» выглядели бы успешным прогоном, а ряды остались бы без обновления.
 func inflExpImport(xlsx *excelize.File, batch driver.Batch) error {
-	rows, err := xlsx.GetRows("Данные для графиков")
+	rows, err := xlsx.GetRows(inflExpSheet)
 	if err != nil {
 		return err
 	}
+	// Пустой лист — сразу ошибка: rows[1:] ниже паникует на пустом срезе, а паника в
+	// импортёре — не «0 rows», а упавший шаг DAG без понятного сообщения.
+	if len(rows) == 0 {
+		return fmt.Errorf("%s: лист «%s» пуст", cbrInflExpTable, inflExpSheet)
+	}
 	tableIsFoundRowNum := -1
+	count := 0
 	for i, row := range rows[1:] {
 		if len(row) == 0 || row[0] == "" {
 			continue
@@ -69,7 +86,11 @@ func inflExpImport(xlsx *excelize.File, batch driver.Batch) error {
 			if err = batch.Append(series, date.AddDate(0, 0, 13), value); err != nil {
 				return err
 			}
+			count++
 		}
+	}
+	if count == 0 {
+		return fmt.Errorf("%s: разбор листа «%s» не дал ни одной точки", cbrInflExpTable, inflExpSheet)
 	}
 	return nil
 }
@@ -98,7 +119,7 @@ func (s *inflExpStat) Import(ctx context.Context, conn driver.Conn) (count int64
 // Import() (ARCHITECTURE.md §8.6), регистрация — реестром cbr/importers.go.
 var cbrInflExpImporter = &publishedStat{
 	ImportStat: &inflExpStat{ClickHouseImport: util.ClickHouseImport{
-		TableName: "cbr_infl_exp",
+		TableName: cbrInflExpTable,
 		CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (
               name LowCardinality(String)
 			, date Date

@@ -20,8 +20,15 @@ const cbrCreditM2xUrl = "https://www.cbr.ru/statistics/macro_itm/dkfs/"
 // со страницы, а не хардкодим.
 const cbrCreditM2xLinkSelector = `a.referenceable[href$="credit_m2x.xlsx"]`
 
+// cbrCreditM2xTable и cbrCreditM2xSheet — таблица и лист импортёра: оба попадают в текст
+// ошибки пустого разбора, чтобы дежурный по логу видел, чей ряд остался без обновления.
+const (
+	cbrCreditM2xTable = "cbr_credit_m2x"
+	cbrCreditM2xSheet = "млн рублей"
+)
+
 var cbrСreditM2x = util.ClickHouseImport{
-	TableName: "cbr_credit_m2x",
+	TableName: cbrCreditM2xTable,
 	CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (
 			  name LowCardinality(String)
 			, date Date
@@ -30,9 +37,15 @@ var cbrСreditM2x = util.ClickHouseImport{
 	`},
 	ImportFunc: func(xlsx *excelize.File, batch driver.Batch) (err error) {
 		var rows [][]string
-		if rows, err = xlsx.GetRows("млн рублей"); err != nil {
+		if rows, err = xlsx.GetRows(cbrCreditM2xSheet); err != nil {
 			return err
 		}
+		// Пустой лист — сразу ошибка: rows[1:] ниже паникует на пустом срезе, а паника в
+		// импортёре — не «0 rows», а упавший шаг DAG без понятного сообщения.
+		if len(rows) == 0 {
+			return fmt.Errorf("%s: лист «%s» пуст", cbrCreditM2xTable, cbrCreditM2xSheet)
+		}
+		count := 0
 		// Строки с годами
 		for _, row := range rows[1:] {
 			if len(row) == 0 {
@@ -60,8 +73,12 @@ var cbrСreditM2x = util.ClickHouseImport{
 					if err = batch.Append(name, date, value); err != nil {
 						return err
 					}
+					count++
 				}
 			}
+		}
+		if count == 0 {
+			return fmt.Errorf("%s: разбор листа «%s» не дал ни одной точки", cbrCreditM2xTable, cbrCreditM2xSheet)
 		}
 		return nil
 	},

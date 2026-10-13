@@ -1,6 +1,7 @@
 package cbr
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -99,6 +100,29 @@ func TestCbrBankIntRateMissingSheetFails(t *testing.T) {
 	rec := newCbrRecorder()
 	if err := cbrBankIntRate.ImportFunc(f, rec); err == nil {
 		t.Fatalf("ожидалась ошибка, разбор дал %d строк", len(rec.rows))
+	}
+	if len(rec.raw) != 0 {
+		t.Errorf("при ошибке записано %d строк, want 0", len(rec.raw))
+	}
+}
+
+// TestCbrBankIntRateEmptySheetFails: лист «в рублях» есть, но строк данных нет — ошибка, а
+// не «0 rows» с зелёным dagu: разбор не нашёл ни одной пары (месяц, ставка), и семь рядов
+// остались бы без обновления при успешном шаге DAG. Имя таблицы в тексте ошибки сверяется
+// литералом: оно — часть контракта для дежурного по логу.
+func TestCbrBankIntRateEmptySheetFails(t *testing.T) {
+	f := excelize.NewFile()
+	t.Cleanup(func() { _ = f.Close() })
+	if err := f.SetSheetName("Sheet1", "в рублях"); err != nil {
+		t.Fatalf("SetSheetName: %v", err)
+	}
+	rec := newCbrRecorder()
+	err := cbrBankIntRate.ImportFunc(f, rec)
+	if err == nil {
+		t.Fatalf("ожидалась ошибка, разбор дал %d строк", len(rec.rows))
+	}
+	if !strings.Contains(err.Error(), "cbr_bank_int_rate") {
+		t.Errorf("ошибка %q не называет таблицу cbr_bank_int_rate", err)
 	}
 	if len(rec.raw) != 0 {
 		t.Errorf("при ошибке записано %d строк, want 0", len(rec.raw))
