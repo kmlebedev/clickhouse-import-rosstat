@@ -31,7 +31,7 @@ const PublicationsDdl = `CREATE TABLE IF NOT EXISTS source_publications (
     name LowCardinality(String),    -- имя артефакта: 'full.xlsx'
     fingerprint String,             -- md5 от (имя|ETag|Last-Modified|Content-Length) — отпечаток версии контента
     first_seen DateTime,            -- когда конвейер впервые увидел эту версию
-    points UInt64,                  -- число точек (строк series,date), записанных этой версией
+    points UInt64,                  -- число точек ряда в таблице на момент версии (запрос PublicationCountPoints импортёра)
     url String                      -- URL артефакта (аудит)
 ) ENGINE = ReplacingMergeTree ORDER BY (source, name, fingerprint);
 `
