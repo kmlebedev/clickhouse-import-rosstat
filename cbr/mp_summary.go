@@ -115,11 +115,13 @@ const (
 	// (прогон без новых документов обязан отчитаться, а сколько всего на месте).
 	mpSummaryCountQuery = "SELECT count() FROM " + mpSummaryTable + " FINAL"
 
-	// mpLLMPendingQuery — даты заседаний, у которых нет LLM-строк текущей пары
-	// (model, prompt_version): они доразмечаются следующим прогоном. Пара в ключе
-	// таблицы, поэтому смена модели или промпта добавляет новые строки, не затирая
-	// старые (спека §3.5), а «разметки нет вовсе» и «разметка устарела» — один запрос.
-	mpLLMPendingQuery = "SELECT DISTINCT meeting_date FROM " + mpSummaryChannelTable +
+	// mpLLMTaggedQuery — даты заседаний, у которых LLM-строки текущей пары (model,
+	// prompt_version) УЖЕ есть: размечать их повторно незачем (спека §3.5 — идемпотентность
+	// слоя 2), поэтому отстающие считаются как «известные заседания минус этот набор»
+	// (mpLLMPendingDates). Пара в ключе таблицы, поэтому смена модели или промпта добавляет
+	// строки рядом со старыми, а «разметки нет вовсе» и «разметка другой модели» — один
+	// запрос: в наборе окажутся только строки нужной пары.
+	mpLLMTaggedQuery = "SELECT DISTINCT meeting_date FROM " + mpSummaryChannelTable +
 		" FINAL WHERE method = '" + mpMethodLLM + "' AND model = ? AND prompt_version = ?"
 )
 
@@ -160,17 +162,19 @@ type mpLLMDoc struct {
 //  1. DDL трёх таблиц;
 //  2. индекс материалов заседаний → карточки резюме;
 //  3. дельта по таблицам: новые документы (адреса нет в шапке ИЛИ нет блоков по дате его
-//     заседания ИЛИ нет regex-строк каналов — недописанный документ слоя 1) и отстающая
-//     LLM-разметка;
-//  4. no-op, если ни того, ни другого нет (витрины не трогаем — они созданы ранее);
-//  5. прошлые решения таблицы: ставки для дельты и адреса для LLM-догона;
-//  6. скачивание и разбор новых резюме — fail-fast: ошибка до записи, иначе
+//     заседания ИЛИ нет regex-строк каналов — недописанный документ слоя 1);
+//  4. прошлые решения таблицы: ставки для дельты и адреса для LLM-догона;
+//  5. отстающие LLM-документы — известные заседания, у которых нет LLM-строк текущей пары
+//     (model, prompt_version);
+//  6. no-op, если ни новых, ни отстающих нет (витрины не трогаем — они созданы ранее);
+//  7. скачивание и разбор новых резюме — fail-fast: ошибка до записи, иначе
 //     decision_delta_bp посчитался бы по неполному ряду заседаний;
-//  7. батчи по таблицам (шапка, блоки, regex-каналы), Send каждого — ошибка наверх;
-//  8. LLM-догон: разметка новых документов и документов без строк текущей пары
+//  8. батчи по таблицам (шапка, блоки, regex-каналы), Send каждого — ошибка наверх;
+//  9. LLM-догон: разметка новых документов и документов без строк текущей пары
 //     (model, prompt_version): ошибка одного документа — warn и продолжение
 //     (деградация до regex-слоя), ошибка базы — наверх;
-//  9. витрины v_cbr_mp_summary* — производные, после данных.
+//
+// 10. витрины v_cbr_mp_summary* — производные, после данных.
 //
 // Префлайта (PublicationCountPoints/PublicationSource) и AfterImport у импортёра нет
 // сознательно: дельта считается по индексу и полноте документа в таблицах, а не по
@@ -209,15 +213,28 @@ func (s *mpSummaryStat) Import(ctx context.Context, conn driver.Conn) (count int
 	}
 	missing := mpMissingRefs(refs, imported, blockDates, regexDates)
 
+	// 4. Прошлые решения читаются до проверки no-op: без них не определить отстающие
+	// LLM-документы (шаг 5), а без отстающих ветка no-op неполна.
+	past, err := mpPastSummaries(ctx, conn)
+	if err != nil {
+		return 0, err
+	}
+
+	// 5. Отстающие — известные заседания, у которых нет LLM-строк текущей пары
+	// (model, prompt_version). Множество известных заседаний берётся из шапки: где строка
+	// есть, там LLM-разметка должна быть, а новых документов в прошлых решениях ещё нет
+	// (они размечаются шагом 9 как новые). Пусто → догонять нечего.
 	baseURL, apiKey, model, llmOK := mpLLMConfigFromEnv()
 	var pending map[time.Time]bool
 	if llmOK {
-		if pending, err = mpLLMPending(ctx, conn, model, mpPromptVersion); err != nil {
-			return 0, err
+		tagged, taggedErr := mpLLMTagged(ctx, conn, model, mpPromptVersion)
+		if taggedErr != nil {
+			return 0, taggedErr
 		}
+		pending = mpLLMPendingDates(past, tagged)
 	}
 
-	// 4.
+	// 6.
 	if len(missing) == 0 && len(pending) == 0 {
 		var knownCount uint64
 		if err = conn.QueryRow(ctx, mpSummaryCountQuery).Scan(&knownCount); err != nil {
@@ -227,13 +244,7 @@ func (s *mpSummaryStat) Import(ctx context.Context, conn driver.Conn) (count int
 		return 0, nil
 	}
 
-	// 5.
-	past, err := mpPastSummaries(ctx, conn)
-	if err != nil {
-		return 0, err
-	}
-
-	// 6.
+	// 7.
 	docs := make([]mpFetchedSummary, 0, len(missing))
 	for _, ref := range missing {
 		url := cbrUrl + ref.Href
@@ -248,7 +259,7 @@ func (s *mpSummaryStat) Import(ctx context.Context, conn driver.Conn) (count int
 		docs = append(docs, mpFetchedSummary{Url: url, Published: ref.Published, Doc: doc})
 	}
 
-	// 7. Дельта считается по всему ряду (прошлые решения + новые документы), поэтому
+	// 8. Дельта считается по всему ряду (прошлые решения + новые документы), поэтому
 	// ряд собирается до первых записей — иначе шаг у нового резюме не с чем было бы
 	// сравнить.
 	deltas := mpDecisionDeltas(past, docs)
@@ -283,7 +294,7 @@ func (s *mpSummaryStat) Import(ctx context.Context, conn driver.Conn) (count int
 		count += batch.rows
 	}
 
-	// 8.
+	// 9.
 	var llmCount int64
 	if !llmOK {
 		log.Warnf("%s: LLM-разметка пропущена (нет %s/%s/%s)", mpSummaryName,
@@ -308,7 +319,7 @@ func (s *mpSummaryStat) Import(ctx context.Context, conn driver.Conn) (count int
 		count += llmCount
 	}
 
-	// 9.
+	// 10.
 	for _, view := range []util.View{mpSummaryView, mpSummaryBlocksView, mpSummaryChannelsView} {
 		if _, err = util.CreateView(ctx, conn, view); err != nil {
 			return 0, err
@@ -426,26 +437,45 @@ func mpPastSummaries(ctx context.Context, conn driver.Conn) ([]mpPastSummary, er
 	return out, nil
 }
 
-// mpLLMPending — даты заседаний без строк разметки текущей пары (model, prompt_version).
-func mpLLMPending(ctx context.Context, conn driver.Conn, model string, promptVersion int) (map[time.Time]bool, error) {
-	rows, err := conn.Query(ctx, mpLLMPendingQuery, model, promptVersion)
+// mpLLMTagged — даты заседаний, у которых уже есть строки разметки текущей пары (model,
+// prompt_version). Это набор «размечено», а не «отстаёт»: отстающие считает
+// mpLLMPendingDates, и путать эти два набора — значит размечать уже размеченные документы
+// и никогда не догонять те, у которых строк нет (находка живой приёмки 2026-10-14).
+func mpLLMTagged(ctx context.Context, conn driver.Conn, model string, promptVersion int) (map[time.Time]bool, error) {
+	rows, err := conn.Query(ctx, mpLLMTaggedQuery, model, promptVersion)
 	if err != nil {
-		return nil, fmt.Errorf("%s: отстающие LLM-документы не прочитаны: %w", mpSummaryName, err)
+		return nil, fmt.Errorf("%s: размеченные LLM-документы не прочитаны: %w", mpSummaryName, err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	pending := make(map[time.Time]bool)
+	tagged := make(map[time.Time]bool)
 	for rows.Next() {
 		var date time.Time
 		if err = rows.Scan(&date); err != nil {
-			return nil, fmt.Errorf("%s: дата отстающего LLM-документа не прочитана: %w", mpSummaryName, err)
+			return nil, fmt.Errorf("%s: дата размеченного LLM-документа не прочитана: %w", mpSummaryName, err)
 		}
-		pending[mpDay(date)] = true
+		tagged[mpDay(date)] = true
 	}
 	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("%s: отстающие LLM-документы не дочитаны: %w", mpSummaryName, err)
+		return nil, fmt.Errorf("%s: размеченные LLM-документы не дочитаны: %w", mpSummaryName, err)
 	}
-	return pending, nil
+	return tagged, nil
+}
+
+// mpLLMPendingDates — известные заседания (шапка таблицы), у которых нет LLM-строк текущей
+// пары: только их и догоняет следующий прогон (спека §3.5). Чистая функция: сценарии
+// «всё размечено» (пусто → ветка no-op) и «не размечено ничего» (весь ряд) пинятся тестом
+// без драйвера и сети. Новых документов здесь нет по построению — они размечаются тем же
+// прогоном как новые, и добавлять их сюда значило бы звать LLM дважды на один документ.
+func mpLLMPendingDates(past []mpPastSummary, tagged map[time.Time]bool) map[time.Time]bool {
+	pending := make(map[time.Time]bool)
+	for _, p := range past {
+		if tagged[p.MeetingDate] {
+			continue
+		}
+		pending[p.MeetingDate] = true
+	}
+	return pending
 }
 
 // mpDay — календарный день значения в UTC: год/месяц/день берутся у значения КАК ЕСТЬ.

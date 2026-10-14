@@ -284,3 +284,63 @@ func TestMPSummaryDecisionDeltas(t *testing.T) {
 		t.Errorf("шаг 2026-04-24 после уточнения ставки = %d, want -50 (новый документ сильнее прошлого)", *got)
 	}
 }
+
+// TestMPSummaryLLMPendingDates — отстающие LLM-документы: известные заседания МИНУС уже
+// размеченные пары (model, prompt_version). Живая приёмка 2026-10-14 нашла здесь инверсию
+// (выборкой «даты СО строками» догон размечал уже размеченные документы и никогда — те, у
+// которых строк нет), поэтому оба направления пинятся явно: «размечено всё» → пусто (иначе
+// no-op недостижим и каждый прогон заново спрашивает LLM по всем 22 документам), «не
+// размечено ничего» → весь ряд (иначе догон не запускается вовсе).
+func TestMPSummaryLLMPendingDates(t *testing.T) {
+	day := func(d int, m time.Month) time.Time { return time.Date(2025, m, d, 0, 0, 0, 0, time.UTC) }
+	past := []mpPastSummary{
+		{MeetingDate: day(14, time.February), Url: "u1"},
+		{MeetingDate: day(21, time.March), Url: "u2"},
+		{MeetingDate: day(25, time.April), Url: "u3"},
+	}
+
+	t.Run("AllTagged", func(t *testing.T) {
+		tagged := map[time.Time]bool{
+			day(14, time.February): true,
+			day(21, time.March):    true,
+			day(25, time.April):    true,
+		}
+		if pending := mpLLMPendingDates(past, tagged); len(pending) != 0 {
+			t.Errorf("pending = %v, want пусто: все документы пары размечены, догонять нечего", pending)
+		}
+	})
+
+	t.Run("NoneTagged", func(t *testing.T) {
+		pending := mpLLMPendingDates(past, map[time.Time]bool{})
+		if len(pending) != len(past) {
+			t.Fatalf("pending = %v, want все %d даты: ни одна не размечена", pending, len(past))
+		}
+		for _, p := range past {
+			if !pending[p.MeetingDate] {
+				t.Errorf("pending без %s: неразмеченный документ не догоняется", p.MeetingDate.Format(mpSummaryDayLayout))
+			}
+		}
+	})
+
+	t.Run("PartlyTagged", func(t *testing.T) {
+		pending := mpLLMPendingDates(past, map[time.Time]bool{day(21, time.March): true})
+		if len(pending) != 2 {
+			t.Fatalf("pending = %v, want 2 даты (размеченная 2025-03-21 исключена)", pending)
+		}
+		if pending[day(21, time.March)] {
+			t.Errorf("pending содержит размеченную 2025-03-21: документ будет размечен повторно")
+		}
+	})
+
+	// Разметка другой пары (другая модель / версия промпта) отстающих не снимает: в наборе
+	// «размечено» — строки только нужной пары (model, prompt_version): смена модели или
+	// версии промпта добавляет строки рядом со старыми и догон не пропускает (спека §3.5).
+	// Условие пары — часть запроса набора, поэтому пинится литералом (как запрос regex-уровня).
+	const wantTaggedQuery = "SELECT DISTINCT meeting_date FROM cbr_mp_summary_channel FINAL " +
+		"WHERE method = 'llm' AND model = ? AND prompt_version = ?"
+	if mpLLMTaggedQuery != wantTaggedQuery {
+		t.Errorf("запрос набора «размечено» = %q, want %q: без пары (model, prompt_version) "+
+			"отстающие считались бы размеченными после смены модели или версии промпта",
+			mpLLMTaggedQuery, wantTaggedQuery)
+	}
+}
