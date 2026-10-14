@@ -224,7 +224,7 @@ Run: `go test -run TestGetFileBytes -count=1 ./util/` — Expected: FAIL (`undef
 
 - [ ] **Step 4: Правка `util/clickhouse_import.go`**
 
-- Выделить `importXlsBody(ctx, body []byte, conn driver.Conn) (int64, error)` (руки `PrepareBatch` → `ImportFunc` → `Send`; без изменений логики), `ImportXls` — тонкая обёртка: `GetFileBytes` + `log.Infof("Get xlsx file %+v", dataUrl)` + `importXlsBody`.
+- Выделить `importXlsBody(ctx, body []byte, conn driver.Conn) (int64, error)` (руки `PrepareBatch` → `ImportFunc` → `Send`; без изменений логики); путь `ImportFunc` шаблона переводится на `GetFileBytes` + `log.Infof("Get xlsx file %+v", dataUrl)` + `importXlsBody`. `ImportXls` при этом **удаляется** — его место и занимает приватный `importXlsBody`: потребителей вне `util` у метода нет, а непотребляемый экспорт — мёртвый код (стандарт §3.3).
 - В `Import` путь `ImportFunc` заменяется на: `GetFileBytes` → лог → `importXlsBody`; байты остаются локальной переменной.
 - После `Send`, там же в ветке `ImportFunc` (до `AfterImport`): если `activeArchive() != nil && s.PublicationCountPoints != ""` — `rt.save(…, fingerprint)`; ошибка → `log.Errorf("%s: версия %s не сохранена в архиве (%v) — строка версии не пишется, следующий прогон повторит импорт", …)` и локальный флаг `archiveFailed = true`. Ветка `CrawFunc` архива не получает (файл качает сам импортёр).
 - В ветке `noop` префлайта (после `noop == true` и `fingerprint != ""`): при `activeArchive() != nil` — `versionExists`; `false` или ошибка → `log.Warnf("%s: версия %s известна, но в архиве её нет — полный импорт", …)` (ошибка — с текстом причины) и `noop = false`.

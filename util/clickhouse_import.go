@@ -84,9 +84,8 @@ func (s *ClickHouseImport) Name() string {
 
 // importXlsBody разбирает книгу из памяти и отправляет её батчем: PrepareBatch → ImportFunc →
 // Send. Байты вместо URL — ради архива версий: тот же срез уходит и в разбор, и в архив, а
-// повторный GET по DataUrl удвоил бы трафик и время прогона (GetFileBytes). Логика отправки
-// прежняя — ImportXls был тем же путём с собственным скачиванием, и кроме Import() его никто
-// не звал.
+// повторный GET по DataUrl удвоил бы трафик и время прогона (GetFileBytes). Внутренняя рука
+// шаблона: снаружи её никто не зовёт, и публичным контрактом она не является.
 func (s *ClickHouseImport) importXlsBody(ctx context.Context, body []byte, conn driver.Conn) (count int64, err error) {
 	xlsx, err := excelize.OpenReader(bytes.NewReader(body))
 	if err != nil {

@@ -20,7 +20,9 @@ const RegistryKey = "registry.jsonl"
 // fingerprint — отпечаток HEAD (как в source_publications, чтобы архив и таблица версий называли
 // версию одинаково), sha256 — фактическое содержимое (при неизменных заголовках оно могло
 // смениться), key — объект в хранилище, first_seen — когда конвейер увидел версию, url — аудит.
-// Идентичность строки — Key. Секретов в записи нет: source/name/url/sha256 и есть весь её состав.
+// Идентичность строки — Key. Секретов в записи нет: все восемь полей (source, name, fingerprint,
+// sha256, size, url, key, first_seen) публичны — запись и есть реестр версий, он уезжает в
+// git-зеркало и служит входом будущего восстановления (§3.4).
 type Entry struct {
 	Source      string    `json:"source"`
 	Name        string    `json:"name"`

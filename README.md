@@ -137,6 +137,7 @@ make import STAT=events_calendar  # календарь заседаний из c
 ```text
 main.go                  точка входа: подключение к ClickHouse, фильтр импортёров, код выхода
 chimport/                интерфейс ImportStat и глобальный реестр Stats
+archive/                 винтажный архив версий файлов источников: объектное хранилище (LocalStore — dev/приёмка, YandexDisk — REST API) + реестр версий registry.jsonl с git-зеркалом docs/archive/registry.jsonl (цель make archive-registry); включается ARCHIVE_BACKEND, обслуживает шаблон util.ClickHouseImport
 util/                    HTTP-клиент (национальные TLS-сертификаты РФ, ротация User-Agent; скачивание XLSX/CSV/JSON), шаблон импортёра ClickHouseImport (в т. ч. точка контроля публикации: HEAD-префлайт и служебная source_publications), батч-вставка
 bank/ cbr/ craw/ customs/ fao/ minfin/ rosstat/   доменные импортёры (см. таблицу выше); в cbr/ — все источники ЦБ РФ (ключевая ставка, курс, золото, M2, кредиты, балансы домохозяйств, ставки по вкладам, RUONIA, ИПЦ, инфляционные ожидания) плюс контур мониторинга предприятий cbr_mp_survey → macro_series (source = 'cbr_survey'), макроэкономический опрос cbr_mo_br → macro_series (source = 'cbr_mo_br', консенсус аналитиков) и контур резюме обсуждения ключевой ставки cbr_mp_summary → три свои таблицы (cbr_mp_summary, cbr_mp_summary_block, cbr_mp_summary_channel) с витринами v_cbr_mp_summary, v_cbr_mp_summary_blocks, v_cbr_mp_summary_channels (разметка 11 каналов: регексы + LLM)
 fred/                    FRED CSV → macro_series
@@ -201,6 +202,7 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 | `INGEST_ADDR` | Адрес HTTP-сервера `cmd/ingest`, по умолчанию `:8081` |
 | `INGEST_RATE_PER_MIN` | Лимит запросов `cmd/ingest` в минуту (token bucket, burst 10), по умолчанию 60; превышение — `429` |
 | `NEWS_WATCH_MODE` | Режим импортёра `news_watch`: пусто или `all` — полный upsert окна всех лент (ручная пересборка), `since` — режим расписания dagu: только отсутствующие в `news_events` позиции по ключу `(date, source, title)`, `check` — проверка дыр/окон без записи. Неизвестное значение — ошибка до сети и до БД |
+| `ARCHIVE_BACKEND`, `ARCHIVE_YANDEX_TOKEN`, `ARCHIVE_YANDEX_DIR`, `ARCHIVE_LOCAL_DIR`, `ARCHIVE_ACTION`, `ARCHIVE_REGISTRY_OUT` | Винтажный архив версий файлов источников (пакет `archive/`, ARCHITECTURE §2–§3): `ARCHIVE_BACKEND` = `local` \| `yandex` \| пусто = архивация выключена; `ARCHIVE_YANDEX_DIR` — корень архива на Яндекс.Диске (по умолчанию `disk:/rosstat-archive`), `ARCHIVE_LOCAL_DIR` — корень локального бэкенда (dev-прогон, приёмка), `ARCHIVE_ACTION=registry` — режим обновления git-зеркала реестра (`make archive-registry`; путь зеркала переопределяет `ARCHIVE_REGISTRY_OUT`). Токен — секрет: только в окружении, в репозиторий и логи не попадает; как получить и куда положить — «Ключи и окружение» |
 
 Поведение при запуске: неизвестное имя в `CLICKHOUSE_IMPORT_STAT` даёт предупреждение; ошибка любого импортёра даёт код выхода `1`, остальные импортёры при этом выполняются.
 
@@ -260,6 +262,7 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 | `make build` | статический бинарник `linux/amd64` в `build/` |
 | `make run` | сборка и запуск (нужен `CLICKHOUSE_URL`) |
 | `make import STAT=<имя>` | локальный прогон одного импортёра по `Name()` (собирает `build/clickhouse-import-rosstat-native`). Для расчёта NAV: `DCF_RUN_ID=$(uuidgen \| tr A-Z a-z) make import STAT=dcf_engine` |
+| `make archive-registry` | обновить git-зеркало реестра винтажного архива: запускает бинарник в режиме `ARCHIVE_ACTION=registry`, тот скачивает `registry.jsonl` из хранилища в `docs/archive/registry.jsonl` (ClickHouse не нужен, подключения к базе нет). Бэкенд берётся из окружения: `make archive-registry ARCHIVE_BACKEND=yandex` (нужен `ARCHIVE_YANDEX_TOKEN`) или `... ARCHIVE_BACKEND=local ARCHIVE_LOCAL_DIR=build/archive-dev`; пустой `ARCHIVE_BACKEND` — ошибка, а не пустое зеркало. Коммит зеркала — ручной/периодический (на staging нет git-дерева): `docs/archive/README.md` |
 | `make build-ingest` | сборка ingest-endpoint (`cmd/ingest`) в `build/ingest` |
 | `make run-ingest` | сборка и запуск ingest-endpoint (нужны `CLICKHOUSE_URL` и `INGEST_TOKEN`) |
 | `make fmt` | `gofmt -w .` |
@@ -381,6 +384,8 @@ export CLICKHOUSE_URL=clickhouse://localhost:9000/default
 export CLICKHOUSE_PASSWORD=<kimi_reader-password>
 # export CH_IMPORT_PASSWORD=<пароль пользователя, читающего сырые таблицы>
 # export BLS_API_KEY=<your-key>
+# export ARCHIVE_YANDEX_TOKEN=<OAuth-токен Яндекс.Диска: оба scope — cloud_api:disk.write и cloud_api:disk.read>
+# ARCHIVE_BACKEND в этот файл НЕ добавлять: бэкенд выбирается аргументом make (см. «Винтажный архив»)
 # export INGEST_TOKEN=<ingest-token>
 # export INGEST_RATE_PER_MIN=60
 # export GRAFANA_TEST_TOKEN=<токен сервис-аккаунта Editor локального стенда :3000>
@@ -398,6 +403,29 @@ export CLICKHOUSE_PASSWORD=<kimi_reader-password>
 - Kimi Code: ключи для MCP задаются в `~/.kimi-code/mcp.json` (блок `env`), для остальных команд Kimi вызывает `make`, поэтому файл окружения подхватывается автоматически;
 - Dagu (расписания): секреты описаны в `~/dagu-dev/base.yaml` через provider `file`, каждый ключ — отдельный файл `~/dagu-dev/secrets/<name>` (`600`). Для BEA: `bea_api_key`; для EIA: `eia_api_key`; при добавлении ключа нового импортёра — новый файл и строка в `secrets:`;
 - файлы `*.env`, `secrets/` и ключи в коде не коммитить; `CLICKHOUSE_PASSWORD` только в файле окружения (`~/.config/rosstat/env`), в `mcp.json` его нет.
+
+#### Винтажный архив версий файлов источников (опция)
+
+Винтажный архив — сохранённые версии скачанных файлов источников в объектном хранилище плюс реестр `registry.jsonl` (ARCHITECTURE.md §2–§3, стандарт пакета импортёров §9.6). Штатно архивация **выключена**: пустой `ARCHIVE_BACKEND` = архива нет.
+
+Как получить токен Яндекса (OAuth, личная учётная запись):
+
+1. создать OAuth-приложение ([oauth.yandex.ru](https://oauth.yandex.ru/)), отметить **оба** scope: `cloud_api:disk.write` — запись версий и `cloud_api:disk.read` — проверка наличия, чтение реестра и скачивание версий;
+2. получить токен по implicit-flow: открыть `https://oauth.yandex.ru/authorize?response_type=token&client_id=<ClientID>` и подтвердить доступ — токен вернётся в адресной строке (`access_token=…`);
+3. положить строку `export ARCHIVE_YANDEX_TOKEN=…` в `~/.config/rosstat/env` (dev) или в `/etc/clickhouse-import-rosstat.env` на staging (образец — `deploy/staging/clickhouse-import-rosstat.env.example`); на staging и включается сам бэкенд (`ARCHIVE_BACKEND=yandex`);
+4. проверка без вывода значений: `make env-check` — строка `OK ARCHIVE_YANDEX_TOKEN задан`.
+
+**Ловушка:** `ARCHIVE_BACKEND` — режимная переменная, и в `~/.config/rosstat/env` её дублировать нельзя (переменные файла экспортируются и перекрывают префикс команды). Бэкенд выбирается аргументом цели — так приёмка идёт на локальном хранилище, не трогая Диск:
+
+```bash
+# приёмка на локальном бэкенде: объект версии и registry.jsonl в build/archive-dev/
+make import STAT=cbr_m2 ARCHIVE_BACKEND=local ARCHIVE_LOCAL_DIR=build/archive-dev   # повторный прогон → no-op
+# живой архив на Диске (токен берётся из окружения) и обновление git-зеркала реестра
+make import STAT=cbr_m2 ARCHIVE_BACKEND=yandex ARCHIVE_YANDEX_DIR=disk:/rosstat-archive
+make archive-registry ARCHIVE_BACKEND=yandex
+```
+
+Токен без одного из scope, отозванный или истёкший даёт `401` (`ErrAuth` — действие дежурного: обновить токен), квота Диска — `403`/`413`/`423`/`507` (`ErrQuota` — освободить место). В обоих случаях импорт данных продолжается, но версия файла в архив не сохраняется, и строка версии не пишется — следующий прогон повторит полный импорт.
 
 MCP для Kimi (агент читает витрины `v_*`, без записи):
 
@@ -511,6 +539,8 @@ MCP GoLand (опционально, ускоряет работу Kimi Code с �
 - **`news_watch`, режим `check`: дыра покрытия видна только до «залечивания» следующей успешной записью.** Пока сохранённый максимум источника старше начала окна его ленты, `check` показывает дыру (и это ошибка прогона); после следующей успешной записи окно сдвигается вперёд, и дыру `check` больше не покажет, хотя пропущенные позиции так и не собраны. Диагностика ручная: автопрогона `check` в `dagu/news.yaml` нет (там режим `since`), запускать нужно самому — `NEWS_WATCH_MODE=check make import STAT=news_watch`.
 - **Витрина `v_news_events` фильтрует по широкому списку стемов тезисов.** Фильтр (`newsFilter`, RE2, `(?i)`) намеренно широкий: ложное срабатывание дешевле ложного пропуска, но полностью исключить пропуск события тезиса он не может — заголовок без слова из списка в витрину не попадёт. Лишнее снимает запрос сессии, а сам список уточняется пересозданием витрины: полный поток лежит в сырой `news_events`, поэтому сужение фильтра историю не теряет.
 - **Резюме обсуждения: разметка каналов эвристическая, LLM-слой факультативен.** `v_cbr_mp_summary_channels` — **не позиция ЦБ**: слой 1 (`method='regex'`) — детерминированные регексы по нормализованному тексту, слой 2 (`method='llm'`) — разметка модели, цитаты которой сверяются с текстом резюме дословно (несовпавшие отбрасываются), а `kind='note'` — краткий вывод модели по каналу, а не цитата. Один фрагмент может попасть в несколько каналов, поэтому «главные каналы» выбирает читающий (агент), опираясь на цитаты; для одного `(meeting_date, channel, kind)` рядом лежат строки обоих слоёв и всех размеренных моделей. LLM-слой требует `LLM_BASE_URL`/`LLM_API_KEY`/`MP_SUMMARY_LLM_MODEL`: без них (или при отказе провайдера / невалидном JSON после ретрая) документ остаётся только с regex-слоем — это `warn`, а не ошибка прогона, и догон идёт следующим прогоном. Модель, которой размечен документ, видна в колонке `model`, версия промпта — в `prompt_version` (обе входят в ключ таблицы, поэтому смена модели или промпта не затирает старую разметку).
+
+- **Винтажный архив версий файлов источников — опция, и покрытие у него неполное.** При `ARCHIVE_BACKEND=local|yandex` шаблон `util.ClickHouseImport` сохраняет версию файла (объект в хранилище + строка в `registry.jsonl`) — но только у импортёров с объявленной точкой контроля публикации и **XLSX-путём** шаблона (`ImportFunc`): это 14 импортёров — десять в `cbr/` и четыре в `rosstat/`. **Не архивируются:** `CrawFunc`-импортёры, качающие файл внутри себя (`bank/sber_fin_rez.go`, импортёр `sber_finansovie_rezultaty`), остальные пакеты, PDF (в т.ч. отчёты Полюса), HTML-страницы и XML/JSON-фиды. **Первый прогон после включения архива — полный ре-импорт** всех 14 покрытых артефактов: текущие версии уже импортированы, но в архиве их ещё нет, поэтому no-op не наступает; дальше повторный прогон снова no-op. Сбой архива прогон не роняет — версия не сохраняется и строка версии в `source_publications` не пишется, поэтому следующий прогон повторяет полный импорт (данные при недоступном Диске не теряются). Восстановление и наполнение БД из архива — follow-up `docs/ROADMAP_INFRA.md` (шаг 1.2): реестр читается без ClickHouse, но команд получения версий пока нет; сам механизм — ARCHITECTURE.md §2–§3, §8 п. 13 и стандарт пакета §9.6.
 
 ## Grafana
 
