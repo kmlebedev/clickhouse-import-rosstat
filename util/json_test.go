@@ -200,7 +200,7 @@ func TestErrorSnippet(t *testing.T) {
 				t.Errorf("ErrorSnippet() = %q — не валидный UTF-8, обрезка разрезала руну", got)
 			}
 			if strings.ContainsAny(got, "\n\r") {
-				t.Errorf("errorSnippet() = %q — не одна строка", got)
+				t.Errorf("ErrorSnippet() = %q — не одна строка", got)
 			}
 		})
 	}
