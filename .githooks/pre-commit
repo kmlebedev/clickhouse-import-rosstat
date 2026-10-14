@@ -1,0 +1,40 @@
+#!/bin/sh
+# .githooks/pre-commit — единственный fail-closed механизм протокола параллельных
+# сессий: коммит в защищённую ветку (main, master, main_worktree) и коммит при
+# detached HEAD запрещены, потому что дерево и ветка принадлежат сессии
+# (одна сессия — одно дерево — одна ветка — один пункт роадмапа).
+#
+# Установка (идемпотентно; значение живёт в .git/config и действует сразу во всех
+# worktree): make hooks-install
+#
+# Осознанный обход: ALLOW_PROTECTED_COMMIT=1 git commit ... либо git commit --no-verify
+# (git обходит хуки сам, специально для этого ничего делать не нужно).
+#
+# Хук ничего не стейджит и не меняет рабочее дерево — только читает имя ветки,
+# поэтому пригоден для любого коммита, включая частичный (git commit -- <файлы>).
+
+if [ "${ALLOW_PROTECTED_COMMIT:-}" = 1 ]; then
+	exit 0
+fi
+
+branch=$(git symbolic-ref --quiet --short HEAD) || {
+	printf '%s\n' \
+		'pre-commit: HEAD откреплён (detached) — коммит не привязан к ветке,' \
+		'а в откреплённом состоянии легко потерять коммит после переключения.' \
+		'Работайте в своём дереве и ветке: make wt-new NAME=<slug> (список: make wt-list).' \
+		'Осознанный обход: ALLOW_PROTECTED_COMMIT=1 git commit ... или git commit --no-verify.' >&2
+	exit 1
+}
+
+case "$branch" in
+main|master|main_worktree)
+	printf '%s\n' \
+		"pre-commit: ветка $branch защищена — коммит в неё запрещён протоколом параллельных сессий" \
+		'(в этой ветке сидят другие сессии, а общий HEAD ломает их контекст).' \
+		'Создайте своё дерево и ветку: make wt-new NAME=<slug> (список: make wt-list).' \
+		'Осознанный обход: ALLOW_PROTECTED_COMMIT=1 git commit ... или git commit --no-verify.' >&2
+	exit 1
+	;;
+esac
+
+exit 0
