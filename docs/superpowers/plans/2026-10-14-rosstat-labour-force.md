@@ -143,7 +143,7 @@ grep -c "trud-1_15-s.xlsx\|trud_1_15-72.xlsx" rosstat/testdata/labour_force_page
 - `TestLabourForceIgnoresTrailingFootnoteRows` — после последней строки месяца идут строки текста сносок → разбор возвращает точки и не падает (Review Focus 4).
 - `TestLabourForceFindLink` — `util.FindLink(page, labourForceLinkSelector)` по HTML-фикстуре даёт `/storage/mediabank/trud-1_15-s.xlsx` (а не `trud_1_15-72.xlsx`); на странице без ссылки — ошибка (Review Focus 5).
 
-Для книг-мутаторов в тестах использовать существующий `newTestWorkbook` (`rosstat/series_meta_test.go:73`) — но **фикстурные** тесты обязаны открывать реальный `testdata/labour_force.xlsx`.
+Книги для fail-fast-веток («нет листа», «нет шапки», «нечисловая ячейка», «пустая ячейка» в конце) собираются **из копии реальной фикстуры**: `testdata/labour_force.xlsx` копируется в `t.TempDir()`, один элемент меняется через `excelize` (`DeleteSheet`, `SetCellValue`), копия сохраняется и открывается разбором. Синтетическая книга через `newTestWorkbook` (`rosstat/series_meta_test.go:73`) здесь не годится: она проверяла бы допущения парсера о разметке (сноски в подписях, перевод строки в шапке, «в том числе»), а не разметку источника (стандарт §11.1).
 
 - [ ] **Step 4: Прогнать тесты — падают**
 
@@ -288,31 +288,7 @@ UNION ALL SELECT 'rosstat', name, date, toFloat64(value) FROM rosstat_labour_for
 
 `rosstat/importers_test.go` — в `expectedPublicationCountPoints` (строка 41-42) добавить `"rosstat_labour_force_mes": "SELECT count() FROM rosstat_labour_force_mes FINAL",`.
 
-- [ ] **Step 6: Прогнать тесты пакета**
-
-Run: `go test -race -count=1 ./rosstat/`
-Expected: PASS, включая `TestRosstatImportersPrefixedAndRegistered` (он же требует, чтобы имя шага было в `dagu/rosstat.yaml` — это Task 4; если тест падает именно на расписании, порядок задач соблюдён неверно).
-
-- [ ] **Step 7: Коммит**
-
-```bash
-git add rosstat/labour_force.go rosstat/labour_force_test.go rosstat/series_meta.go rosstat/importers.go rosstat/importers_test.go
-git commit -m "register rosstat_labour_force_mes importer with catalog and view"
-```
-
----
-
-### Task 4: Расписание и MCP-проверки
-
-**Files:**
-- Modify: `dagu/rosstat.yaml`
-- Modify: `scripts/mcp_check.py:514-590` (блок Росстата)
-
-**Interfaces:**
-- Consumes: имя импортёра `rosstat_labour_force_mes` (Task 3), сырая таблица `rosstat_labour_force_mes`, витрина `v_rosstat_macro`, каталог `source='rosstat'`.
-- Produces: расписание и проверки приёмки.
-
-- [ ] **Step 1: Добавить шаг в расписание**
+- [ ] **Step 5b: Добавить шаг в расписание**
 
 `dagu/rosstat.yaml` — пятым и **последним** шагом цепочки (`type: chain`: падение нового шага не должно лишать данных четыре существующих ряда):
 
@@ -326,7 +302,32 @@ git commit -m "register rosstat_labour_force_mes importer with catalog and view"
       interval_sec: 300
 ```
 
-- [ ] **Step 2: Обновить проверки `scripts/mcp_check.py`**
+Шаг входит в эту задачу, а не в следующую, потому что тест-энфорсер двусторонний (§8.3(г)): запись в реестре без шага в расписании роняет `TestRosstatImportersPrefixedAndRegistered`, и без шага гейт этой задачи зелёным не станет.
+
+- [ ] **Step 6: Прогнать тесты пакета**
+
+Run: `go test -race -count=1 ./rosstat/`
+Expected: PASS, включая `TestRosstatImportersPrefixedAndRegistered` (двусторонняя сверка реестра и `dagu/rosstat.yaml`).
+
+- [ ] **Step 7: Коммит**
+
+```bash
+git add rosstat/labour_force.go rosstat/labour_force_test.go rosstat/series_meta.go rosstat/importers.go rosstat/importers_test.go dagu/rosstat.yaml
+git commit -m "register rosstat_labour_force_mes importer with catalog, view and schedule"
+```
+
+---
+
+### Task 4: MCP-проверки
+
+**Files:**
+- Modify: `scripts/mcp_check.py:514-590` (блок Росстата)
+
+**Interfaces:**
+- Consumes: имя импортёра `rosstat_labour_force_mes`, сырая таблица `rosstat_labour_force_mes`, витрина `v_rosstat_macro`, каталог `source='rosstat'` (Task 3).
+- Produces: проверки приёмки.
+
+- [ ] **Step 1: Обновить проверки `scripts/mcp_check.py`**
 
 Четыре правки в блоке Росстата:
 1. строка 546-547 — в перечень «прогнать импортёры» добавить `rosstat_labour_force_mes`;
@@ -334,7 +335,7 @@ git commit -m "register rosstat_labour_force_mes importer with catalog and view"
 3. строка 569-574 — в текст расхождения `want 141` → `want 147` и в перечень импортёров добавить пятое имя;
 4. строки 582-585 — в кортеж закрытых сырых таблиц добавить `("rosstat_labour_force_mes", "рабочая сила и безработица")`.
 
-- [ ] **Step 3: Проверить синтаксис и расписание**
+- [ ] **Step 2: Проверить синтаксис и расписание**
 
 ```bash
 python3 -m py_compile scripts/mcp_check.py && echo "py ok"
@@ -344,11 +345,11 @@ go test -race -count=1 ./rosstat/
 
 Expected: `py ok`; `dagu validate` — exit 0 (единственное сообщение — общее для всех DAG-файлов предупреждение `auth.mode`); тесты пакета зелёные.
 
-- [ ] **Step 4: Коммит**
+- [ ] **Step 3: Коммит**
 
 ```bash
-git add dagu/rosstat.yaml scripts/mcp_check.py
-git commit -m "schedule rosstat_labour_force_mes and extend mcp checks"
+git add scripts/mcp_check.py
+git commit -m "extend mcp checks for rosstat_labour_force_mes"
 ```
 
 ---
