@@ -294,6 +294,16 @@ func parseLabourForce(xlsx *excelize.File) ([]labourForcePoint, error) {
 				return nil, fmt.Errorf("%s: лист %q, строка %d: год %d идёт после года %d — годы обязаны идти по возрастанию",
 					rosstatLabourForceTable, labourForceSheet, i+1, sectionYear, year)
 			}
+			// Предыдущий год обязан быть закрыт декабрём: секция нового года, под которую
+			// предыдущий пришёл не с декабрём, значит потерянную строку месяца в середине ряда —
+			// ровно та дыра, что не видна в витрине (неполный ряд выглядит полным), а префлайт
+			// закрепляет её числом точек и уводит импортёр в вечный no-op (§6.4). Первый год
+			// проверкой не задет (year == 0), неполный последний год законен: секции следующего
+			// года за ним нет, а пропуск целой секции года — осознанное разрешение (Ruling R6).
+			if year != 0 && month != 12 {
+				return nil, fmt.Errorf("%s: лист %q, строка %d: год %d не закончен: последний месяц %q, ожидался %q",
+					rosstatLabourForceTable, labourForceSheet, i+1, year, labourForceMonthName(month), labourForceMonthName(12))
+			}
 			year, month = sectionYear, 0
 			continue
 		}

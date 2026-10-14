@@ -429,6 +429,42 @@ func TestLabourForceMismatchedYearSectionFails(t *testing.T) {
 	}
 }
 
+// TestLabourForceRemovedDecemberRowFails — источник потерял строку декабря 2025 (удалена строка
+// 123), поэтому секция 2026 года наступает, когда 2025 не закрыт декабрём. До проверки закрытия
+// года разбор отдавал 684 точки и err=nil, префлайт записывал points=684, и дыра в середине ряда
+// закреплялась навсегда (версия известна — дальше вечный no-op). Теперь разбор обязан упасть и
+// назвать незакрытый год и ожидаемый декабрь.
+func TestLabourForceRemovedDecemberRowFails(t *testing.T) {
+	xlsx := mutateLabourForceFixture(t, func(f *excelize.File) {
+		// Строка 123 — декабрь 2025; строки ниже сдвигаются, и секция 2026 оказывается строкой 123.
+		if err := f.RemoveRow(labourForceSheet, 123); err != nil {
+			t.Fatal(err)
+		}
+	})
+	points, err := parseLabourForce(xlsx)
+	if err == nil {
+		t.Fatalf("потеря строки декабря разобрана без ошибки: %d точек вместо ошибки", len(points))
+	}
+	if points != nil {
+		t.Errorf("на ошибке вернулось %d точек, ожидалось nil", len(points))
+	}
+	if !strings.Contains(err.Error(), rosstatLabourForceTable) || !strings.Contains(err.Error(), labourForceSheet) {
+		t.Errorf("ошибка %q не называет таблицу %q и лист %q", err, rosstatLabourForceTable, labourForceSheet)
+	}
+	if !strings.Contains(err.Error(), "год 2025 не закончен") {
+		t.Errorf("ошибка %q не называет незакрытый год 2025", err)
+	}
+	if !strings.Contains(err.Error(), "декабрь") {
+		t.Errorf("ошибка %q не называет ожидаемый декабрь", err)
+	}
+	if !strings.Contains(err.Error(), "строка 123") {
+		t.Errorf("ошибка %q не называет строку-секцию нового года", err)
+	}
+	if strings.Contains(err.Error(), "December") {
+		t.Errorf("ошибка %q печатает месяц по-английски: оператор должен видеть русскую подпись", err)
+	}
+}
+
 // TestLabourForceEmptyParseFails — все строки месяцев на месте, но значения в шести колонках
 // пусты: разбор обязан вернуть ошибку «0 точек» (§6.4, §11.5), а не пустой батч — пустая
 // выгрузка означает сломанный или подменённый источник, а не отсутствие показателя.
