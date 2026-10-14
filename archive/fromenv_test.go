@@ -84,10 +84,11 @@ func TestFromEnvYandexRequiresToken(t *testing.T) {
 }
 
 // Токен задан: корень архива берётся из ARCHIVE_YANDEX_DIR, а при пустом значении — из
-// DefaultYandexDir. Значение токена при этом не должно попадать в текст ошибки: лог архивации
-// читает дежурный, и секрет в логе — утечка (правило 1 AGENTS.md). Хранилища Диска на этом шаге
-// ещё нет (yandex.go — следующий), поэтому ветка отвечает ошибкой незакрытой конфигурации:
-// молчаливый nil выглядел бы как включённая архивация, а версии не сохранялись бы вовсе.
+// DefaultYandexDir. Корень проверяется у полученного хранилища, а не по тексту ошибки: конфигурация
+// закрыта, FromEnv отдаёт бэкенд Диска, и название корня важно именно в нём — по нему собирается
+// путь на Диске, то есть ошибка здесь означала бы архив не в том каталоге (или запись в чужой).
+// Значение токена при этом не попадает ни в текст ошибки, ни в лог: лог архивации читает дежурный,
+// и секрет в логе — утечка (правило 1 AGENTS.md).
 func TestFromEnvYandexRoot(t *testing.T) {
 	const token = "SECRET_TOKEN_VALUE"
 	t.Setenv(EnvBackend, "yandex")
@@ -101,14 +102,27 @@ func TestFromEnvYandexRoot(t *testing.T) {
 			t.Setenv(EnvYandexDir, c.dir)
 
 			store, err := FromEnv(&http.Client{})
-			if err == nil {
-				t.Fatalf("ожидалась ошибка, получено хранилище %v", store)
+			if err != nil {
+				t.Fatalf("FromEnv %s=yandex: %v", EnvBackend, err)
 			}
-			if !strings.Contains(err.Error(), c.wantRoot) {
-				t.Errorf("ошибка %q не называет корень %q", err, c.wantRoot)
+			if store == nil {
+				t.Fatalf("FromEnv %s=yandex вернул nil", EnvBackend)
 			}
-			if strings.Contains(err.Error(), token) {
-				t.Errorf("в тексте ошибки %q есть значение токена", err)
+			if store.Name() != "yandex" {
+				t.Errorf("Name() = %q, ожидалось %q", store.Name(), "yandex")
+			}
+			disk, ok := store.(*YandexDisk)
+			if !ok {
+				t.Fatalf("FromEnv вернул %T, ожидался *YandexDisk", store)
+			}
+			if disk.root != c.wantRoot {
+				t.Errorf("корень архива = %q, ожидался %q", disk.root, c.wantRoot)
+			}
+			// Токен доехал до хранилища: без него Диск ответил бы 401, то есть архивации не было бы
+			// вовсе. Значение здесь фиктивное — настоящий токен в тесты не попадает (правило 1
+			// AGENTS.md), и проверять его в логе или тексте ошибки всё равно нечего.
+			if disk.token != token {
+				t.Error("токен из окружения не доехал до хранилища Диска")
 			}
 		})
 	}

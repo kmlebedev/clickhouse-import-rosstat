@@ -39,15 +39,15 @@ func FromEnv(hc *http.Client) (Store, error) {
 		}
 		return NewLocal(dir), nil
 	case "yandex":
-		// Токен — секрет: его значение уйдёт только в конструктор Диска (yandex.go, отдельный шаг),
-		// вместе с hc; в текст ошибки и в лог оно не попадает — лог читает дежурный (правило 1 AGENTS.md).
-		if os.Getenv(EnvYandexToken) == "" {
+		// Токен — секрет: его значение уходит только в конструктор Диска вместе с hc, а в текст
+		// ошибки и в лог не попадает — лог читает дежурный (правило 1 AGENTS.md). Хранилище
+		// собирается и при недоступном Диске: проверка конфигурации не должна ходить в сеть
+		// (правило 3 AGENTS.md), а первый запрос всё равно случится только на архивации версии.
+		token := os.Getenv(EnvYandexToken)
+		if token == "" {
 			return nil, fmt.Errorf("%s не задан (нужен при %s=yandex)", EnvYandexToken, EnvBackend)
 		}
-		// Конструктора пока нет, поэтому ветка отвечает ошибкой незакрытой конфигурации, а не nil:
-		// молчаливый nil выглядел бы как включённая архивация, и пропажу версий заметили бы только
-		// при попытке восстановления — то есть когда файла у источника уже нет.
-		return nil, fmt.Errorf("%s=%s: бэкенд Диска не реализован (корень %s)", EnvBackend, backend, yandexRoot())
+		return NewYandex(token, yandexRoot(), "", hc), nil
 	default:
 		return nil, fmt.Errorf("неизвестный %s=%q (ожидается local или yandex)", EnvBackend, backend)
 	}
