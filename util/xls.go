@@ -152,6 +152,27 @@ func GetFile(url string) (io.ReadCloser, error) {
 	return io.NopCloser(bytes.NewReader(body)), nil
 }
 
+// GetFileBytes — тело целиком срезом: шаблону ImportFunc нужны байты дважды — на разбор
+// (excelize.OpenReader из памяти) и на винтажную архивацию той же версии файла, а второй
+// GET по DataUrl удвоил бы и трафик, и время прогона. Закрытие с проверкой обеих ошибок
+// (идиом GetPage, util/links.go): незамеченная ошибка чтения дала бы «успешные» байты
+// усечённого файла — такой файл ушёл бы и в разбор, и в архив.
+func GetFileBytes(url string) ([]byte, error) {
+	reader, err := GetFile(url)
+	if err != nil {
+		return nil, err
+	}
+	body, readErr := io.ReadAll(reader)
+	closeErr := reader.Close()
+	if readErr != nil {
+		return nil, readErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	return body, nil
+}
+
 func GetXlsx(url string) (xlsx *excelize.File, err error) {
 	reader, err := GetFile(url)
 	if err != nil {
