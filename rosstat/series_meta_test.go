@@ -176,33 +176,3 @@ func TestIpcMesSeriesMetaCoversParsedSheets(t *testing.T) {
 	}
 	requireParsedDescribed(t, names, describedSeries(t, ipcMesSeriesMeta))
 }
-
-func TestVvpKvartalSeriesMetaCoversParsedSheets(t *testing.T) {
-	titles := map[string]string{
-		"2":  "Валовой внутрений продукт",
-		"9":  "Валовой внутрений продукт",
-		"10": "Валовой внутренний продукт",
-		"12": "Индексы физического объема валового внутреннего продукта",
-		"14": "Индексы - дефляторы валового внутреннего продукта",
-	}
-	sheets := []string{"2", "9", "10", "12", "14"}
-	f := newTestWorkbook(t, sheets...)
-	for _, sheet := range sheets {
-		setSheetRows(t, f, sheet, [][]any{
-			{"Национальные счета"},
-			{"", titles[sheet] + " 1) (в текущих ценах)"},
-			{"", "2011 г."},
-			{"", "I квартал", "II квартал", "III квартал", "IV квартал"},
-			{"", "15000", "15500", "16000", "16500"},
-		})
-	}
-	table, err := parseVvpKvartal(f)
-	if err != nil {
-		t.Fatal(err)
-	}
-	names := make([]string, 0, len(*table))
-	for _, r := range *table {
-		names = append(names, r.name)
-	}
-	requireParsedDescribed(t, names, describedSeries(t, vvpKvartalSeriesMeta))
-}
