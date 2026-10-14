@@ -158,11 +158,12 @@ dcf/                     расчётное ядро DCF: sum-of-parts LOM-NAV �
 financial/               legacy-контур (database/sql, свой main), новый код туда не добавляется; остался databook_ugk (ЮГК)
 dagu/                    расписания: один DAG-файл на домен, имя файла = имя DAG
 sql/                     DDL и гранты вручную: пользователь kimi_reader и гранты на витрины, сид календаря Q4-2026, сид консенсуса gold_forecasts (gold_forecasts_q4_2026_seed.sql), каталог 20 рядов WGC ETF Flows (wgc_etf_flows_catalog.sql), бэкфилл журнала прогнозов (forecast_log_backfill.sql)
-scripts/                 проверки MCP (mcp_setup_user.py, mcp_check.py), smoke дашборда Grafana (grafana_check.py), экстраполяция поактивного AISC Полюса (extrapolation_aisc.py + тест и генератор испорченной PDF-фикстуры) и тесты скриптов
+scripts/                 проверки MCP (mcp_setup_user.py, mcp_check.py), smoke дашборда Grafana (grafana_check.py), экстраполяция поактивного AISC Полюса (extrapolation_aisc.py + тест и генератор испорченной PDF-фикстуры), хелперы параллельных сессий (lock.sh — общие ресурсы, worktree.sh — рабочие деревья, agent-guard.sh — страховка для хука Kimi, parallel_sessions_test.sh — их самотесты) и тесты скриптов
 grafana/                 дашборд gold-thesis как код: отдельный Go-модуль на grafana-foundation-sdk (цель make grafana-build генерирует dashboard/gold-thesis.json), тесты состава панелей и валидации; провижининг датасорса локального стенда (grafana/provisioning/datasources/clickhouse.yaml)
 dashboard/               артефакты дашбордов Grafana: gold-thesis.json коммитится и генерируется из grafana/ (руками не правится); легаси-экспорты rosstat.json, chmf.json, finance-polyus.json остаются как есть — миграция на код отдельным пунктом
 deploy/staging/           артефакты деплоя на staging: юниты dagu и mcp-clickhouse, образец env
-docs/                    аналитические статьи и дорожная карта
+docs/                    аналитические статьи и дорожная карта; регламент параллельных сессий (PARALLEL_SESSIONS.md)
+.githooks/               git-хуки: pre-commit — отказ в коммите на защищённую ветку (ставится make hooks-install)
 .github/workflows/       CI (go.yml, dashboards.yml) и релиз по тегу v* (release.yml)
 ```
 
@@ -258,7 +259,7 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 | `make lint` | `gofmt -l` (падает, если есть неотформатированный код) и `golangci-lint run ./...` |
 | `make test` | `go vet` и `go test -race ./...` (тесты есть у `bea`, `bls`, `bold`, `calendar`, `cbr`, `craw`, `dcf`, `eia`, `forecast`, `fred`, `gold`, `ingest`, `minfin`, `moex`, `news`, `polyus`, `rosstat`, `util`, `views`, `wgc`) |
 | `make build` | статический бинарник `linux/amd64` в `build/` |
-| `make run` | сборка и запуск (нужен `CLICKHOUSE_URL`) |
+| `make run` | сборка и запуск (нужен `CLICKHOUSE_URL`); берёт лок `db` — это тот же писатель в ClickHouse, что и `make import` |
 | `make import STAT=<имя>` | локальный прогон одного импортёра по `Name()` (собирает `build/clickhouse-import-rosstat-native`). Для расчёта NAV: `DCF_RUN_ID=$(uuidgen \| tr A-Z a-z) make import STAT=dcf_engine` |
 | `make build-ingest` | сборка ingest-endpoint (`cmd/ingest`) в `build/ingest` |
 | `make run-ingest` | сборка и запуск ingest-endpoint (нужны `CLICKHOUSE_URL` и `INGEST_TOKEN`) |
@@ -286,6 +287,21 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 | `make grafana-deploy-test` | выгрузить дашборд на тест-стенд (`gcx resources push dashboards --path dashboard/gold-thesis.json`) и прогнать `grafana-check`. Идемпотентна: повторный push не создаёт дубль, растёт только `version` |
 | `make grafana-provision-staging` | идемпотентно разложить провижининг датасорса на staging: шаблон `deploy/staging/grafana-datasource.yaml`, пароль подставляется на хосте из env-файла, результат — `root:grafana 640`, переустановка только при отличии sha256 |
 | `make grafana-deploy-staging` | staging-деплой через туннель `:3001`: проверка токена → доступность → `grafana-provision-staging` → push дашборда → smoke. Нужен `GRAFANA_STAGING_TOKEN` |
+
+### Параллельные сессии
+
+Несколько сессий Kimi Code (Desktop и CLI) работают над репозиторием одновременно и делят один каталог, один ClickHouse, один стенд Grafana и один staging-хост. Регламент: **одна сессия = одно рабочее дерево `.worktrees/<slug>` = одна ветка `<type>/<slug>`**, общие ресурсы берутся по очереди lock-хелпером. Полная схема, таблица локов и порядок работы — [docs/PARALLEL_SESSIONS.md](docs/PARALLEL_SESSIONS.md).
+
+| Команда | Что делает |
+|---|---|
+| `make wt-new NAME=<slug> [TYPE=feat] [BASE=main]` | создать рабочее дерево `.worktrees/<slug>` на новой ветке `<TYPE>/<slug>` от `BASE` |
+| `make wt-list` | список рабочих деревьев с пометкой «dirty» (есть незакоммиченные правки) |
+| `make wt-rm NAME=<slug> [FORCE=1]` | убрать рабочее дерево: отказывает при незакоммиченных правках, `FORCE=1` — снести; ветка сохраняется |
+| `make session-info` | путь дерева, ветка, dirty и активные локи с владельцами |
+| `make hooks-install` | поставить git-хук `.githooks/pre-commit` (один раз на клон: `core.hooksPath` лежит в `.git/config` и действует во всех деревьях) |
+| `make test-parallel` | самотесты хелперов параллельных сессий: лок (взаимное исключение, ожидание, перехват брошенного лока по мёртвому pid и по окну `GRACE`, reentrancy), worktree (база из `origin/$BASE`, снесённое руками дерево), `pre-commit` в корневом дереве и в linked worktree, `agent-guard` (активация по origin и по `.githooks`), сверка карты локов из Makefile со списками в `docs/PARALLEL_SESSIONS.md` и README |
+
+Лок берут только пишущие цели: `make import` / `make run` / `ch-sql` / `mcp-user` / `ch-up` / `ch-down` — ключ `db` (сервер и его данные — один ресурс, поэтому гашение не совпадёт с работающим импортом); `grafana-up` / `grafana-down` / `grafana-deploy-test` / `grafana-test-token` — ключ `stand`; `deploy-staging` / `deploy-staging-binary` / `deploy-staging-dagu` / `deploy-staging-mcp` / `upgrade-staging` / `mcp-user-staging` / `grafana-provision-staging` / `grafana-deploy-staging` — ключ `staging`. Без лока: `run-ingest` (порт `:8081` сам не даст поднять второй экземпляр, а демон живёт часами) и проверки `deploy-staging-preflight` / `deploy-staging-smoke`. Каталог локов — `$HOME/.rosstat-locks` вне репозитория (переопределяется `ROSSTAT_LOCK_DIR`); занятый лок ждёт `WAIT` секунд (по умолчанию 900, `0` — падать сразу) и печатает владельца. Перехватывается только лок с мёртвым владельцем (pid не отвечает) или оставшийся без `owner` дольше `GRACE` секунд; возраст живого лока сам по себе ничего не перехватывает.
 
 ### Деплой на staging
 
@@ -511,6 +527,8 @@ MCP GoLand (опционально, ускоряет работу Kimi Code с �
 - **`news_watch`, режим `check`: дыра покрытия видна только до «залечивания» следующей успешной записью.** Пока сохранённый максимум источника старше начала окна его ленты, `check` показывает дыру (и это ошибка прогона); после следующей успешной записи окно сдвигается вперёд, и дыру `check` больше не покажет, хотя пропущенные позиции так и не собраны. Диагностика ручная: автопрогона `check` в `dagu/news.yaml` нет (там режим `since`), запускать нужно самому — `NEWS_WATCH_MODE=check make import STAT=news_watch`.
 - **Витрина `v_news_events` фильтрует по широкому списку стемов тезисов.** Фильтр (`newsFilter`, RE2, `(?i)`) намеренно широкий: ложное срабатывание дешевле ложного пропуска, но полностью исключить пропуск события тезиса он не может — заголовок без слова из списка в витрину не попадёт. Лишнее снимает запрос сессии, а сам список уточняется пересозданием витрины: полный поток лежит в сырой `news_events`, поэтому сужение фильтра историю не теряет.
 - **Резюме обсуждения: разметка каналов эвристическая, LLM-слой факультативен.** `v_cbr_mp_summary_channels` — **не позиция ЦБ**: слой 1 (`method='regex'`) — детерминированные регексы по нормализованному тексту, слой 2 (`method='llm'`) — разметка модели, цитаты которой сверяются с текстом резюме дословно (несовпавшие отбрасываются), а `kind='note'` — краткий вывод модели по каналу, а не цитата. Один фрагмент может попасть в несколько каналов, поэтому «главные каналы» выбирает читающий (агент), опираясь на цитаты; для одного `(meeting_date, channel, kind)` рядом лежат строки обоих слоёв и всех размеренных моделей. LLM-слой требует `LLM_BASE_URL`/`LLM_API_KEY`/`MP_SUMMARY_LLM_MODEL`: без них (или при отказе провайдера / невалидном JSON после ретрая) документ остаётся только с regex-слоем — это `warn`, а не ошибка прогона, и догон идёт следующим прогоном. Модель, которой размечен документ, видна в колонке `model`, версия промпта — в `prompt_version` (обе входят в ключ таблицы, поэтому смена модели или промпта не затирает старую разметку).
+
+- **Параллельные сессии: правила закрывают шесть классов конфликтов, но жёстких барьеров ровно два.** Дерево и ветку защищают `git worktree` и `.githooks/pre-commit`, общие ресурсы — lock-хелпер (`db`/`stand`/`staging`); хуки Kimi работают только как user-level страховка и fail-open. Осознанно остаётся вне гарантий: один инстанс GoLand (порт MCP меняется при перезапуске; пока дерево не открыто/приаттачено отдельным проектом, его файлов в индексе нет вовсе и git-статус, поиск, символы и run-конфигурации отвечают про чужое дерево, а после открытия `projectPath` выдачи не сужает — инструменты отдают объединение по всем открытым проектам, и своё отбирается по префиксу пути `.worktrees/<slug>/…`), общий ClickHouse — точка сериализации (два тяжёлых импорта идут по очереди), а `dagu` на staging по своему расписанию не координируется с ручным `make import` того же стата — двойные вставки схлопнет `ReplacingMergeTree`, но лишняя нагрузка останется. Регламент, таблица локов и порядок работы — [docs/PARALLEL_SESSIONS.md](docs/PARALLEL_SESSIONS.md).
 
 ## Grafana
 
