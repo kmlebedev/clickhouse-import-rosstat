@@ -1,12 +1,14 @@
 package util
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"path"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	log "github.com/sirupsen/logrus"
 	"github.com/xuri/excelize/v2"
 )
 
@@ -80,10 +82,14 @@ func (s *ClickHouseImport) Name() string {
 	return s.TableName
 }
 
-func (s *ClickHouseImport) ImportXls(ctx context.Context, dataUrl string, conn driver.Conn) (count int64, err error) {
-	xlsx, err := GetXlsx(dataUrl)
+// importXlsBody разбирает книгу из памяти и отправляет её батчем: PrepareBatch → ImportFunc →
+// Send. Байты вместо URL — ради архива версий: тот же срез уходит и в разбор, и в архив, а
+// повторный GET по DataUrl удвоил бы трафик и время прогона (GetFileBytes). Внутренняя рука
+// шаблона: снаружи её никто не зовёт, и публичным контрактом она не является.
+func (s *ClickHouseImport) importXlsBody(ctx context.Context, body []byte, conn driver.Conn) (count int64, err error) {
+	xlsx, err := excelize.OpenReader(bytes.NewReader(body))
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("excelize %v", err)
 	}
 	defer func() { _ = xlsx.Close() }()
 	batch, err := conn.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s", s.TableName))
@@ -100,9 +106,12 @@ func (s *ClickHouseImport) ImportXls(ctx context.Context, dataUrl string, conn d
 	return count, nil
 }
 
-// Import — общий цикл импортёра: DDL -> BeforeImport -> префлайт -> точки -> AfterImport ->
-// версия. Префлайт включается объявлением PublicationCountPoints: после no-op прогон
-// возвращает число точек известной версии, не скачивая файл (CrawFunc/ImportXls не вызываются).
+// Import — общий цикл импортёра: DDL -> BeforeImport -> префлайт -> точки -> архив -> AfterImport
+// -> версия. Префлайт включается объявлением PublicationCountPoints: после no-op прогон
+// возвращает число точек известной версии, не скачивая файл (CrawFunc/ImportFunc не вызываются).
+// Архив версий файлов включается парой «хранилище настроено (ARCHIVE_BACKEND) + объявлена точка
+// контроля»: он сохраняет ту же версию, по которой префлайт принимает решения, — объектом в
+// хранилище и строкой реестра, — и его сбой закрывает только запись версии (спека §3.3).
 // Строка версии пишется последней и только при непустом отпечатке: недоступный HEAD — не сбой, а
 // деградация к полному импорту без записи версии (ARCHITECTURE §8 п. 13, спека §3.1).
 func (s *ClickHouseImport) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
@@ -126,15 +135,57 @@ func (s *ClickHouseImport) Import(ctx context.Context, conn driver.Conn) (count 
 		if err != nil {
 			return 0, err
 		}
+		if noop && fingerprint != "" {
+			// «Версия известна» и «версия в архиве» — одно утверждение механизма: no-op при
+			// отсутствующем объекте означал бы версию, которую из архива уже не восстановить
+			// (спека §3.2). Проверка стоит один Store.Exists и включается теми же условиями, что и
+			// архивация: архива нет — лишних вызовов нет.
+			//
+			// s.ImportFunc — не украшение: архив покрывает только импортёров, чей файл качает шаблон
+			// (запись архива живёт в ветке ImportFunc, CrawFunc его байтов не видит). У CrawFunc-импортёра
+			// с точкой контроля (bank/sber_fin_rez.go) объекта в архиве нет и не будет, поэтому проверка
+			// на его no-op-пути была бы вечной деградацией: no-op не наступал бы ни разу, пока
+			// ARCHIVE_BACKEND настроен, — ежедневный полный краул. CrawFunc не трогается (спека §3.3).
+			if rt := activeArchive(); rt != nil && s.ImportFunc != nil {
+				if exists, archiveErr := rt.versionExists(ctx, s.PublicationKey(), s.DataUrl, fingerprint); archiveErr != nil {
+					log.Warnf("%s: версия %s известна, но проверка архива не удалась (%v) — полный импорт", s.PublicationKey(), fingerprint, archiveErr)
+					noop = false
+				} else if !exists {
+					log.Warnf("%s: версия %s известна, но в архиве её нет — полный импорт", s.PublicationKey(), fingerprint)
+					noop = false
+				}
+			}
+		}
 		if noop {
 			return int64(points), nil
 		}
 	}
+	// archiveFailed — сбой архивации версии. Успешный импорт данных сбой архива не отменяет, но
+	// строки версии тогда нет: она утверждала бы версию, которой нет в архиве, и следующий прогон
+	// ушёл бы в no-op мимо невосстановимой версии (спека §3.3).
+	var archiveFailed bool
 	switch {
 	case s.CrawFunc != nil:
 		count, err = s.CrawFunc(s.DataUrl, conn)
 	case s.ImportFunc != nil:
-		count, err = s.ImportXls(ctx, s.DataUrl, conn)
+		// Байты качаются один раз: тот же срез идёт в разбор и в архив версии.
+		var body []byte
+		if body, err = GetFileBytes(s.DataUrl); err != nil {
+			return count, err
+		}
+		log.Infof("Get xlsx file %+v", s.DataUrl)
+		if count, err = s.importXlsBody(ctx, body, conn); err != nil {
+			return count, err
+		}
+		// Архив — сразу после успешного Send: файл разобран и точки записаны, поэтому HTML-заглушка
+		// WAF и битый файл в архив не попадают. Ветка CrawFunc архива не получает: файл качает сам
+		// импортёр, и шаблон его байтов не видит (спека §1.5, стандарт §9.6).
+		if rt := activeArchive(); rt != nil && s.PublicationCountPoints != "" {
+			if archiveErr := rt.save(ctx, s.PublicationKey(), s.DataUrl, body, fingerprint); archiveErr != nil {
+				log.Errorf("%s: версия %s не сохранена в архиве (%v) — строка версии не пишется, следующий прогон повторит импорт", s.PublicationKey(), fingerprint, archiveErr)
+				archiveFailed = true
+			}
+		}
 	default:
 		return count, fmt.Errorf("%s: no CrawFunc or ImportFunc configured", s.TableName)
 	}
@@ -149,7 +200,7 @@ func (s *ClickHouseImport) Import(ctx context.Context, conn driver.Conn) (count 
 			return count, err
 		}
 	}
-	if fingerprint != "" {
+	if fingerprint != "" && !archiveFailed {
 		var points uint64
 		// points версии — результат запроса импортёра, а не batch.Rows() (спека §3.2): только так
 		// чек известной версии сойдётся на повторном прогоне.

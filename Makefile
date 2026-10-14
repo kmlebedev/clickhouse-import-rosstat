@@ -63,7 +63,7 @@ STAGING_BIN_DIR  ?= /root/.local/bin
 STAGING_ENV_FILE ?= /etc/clickhouse-import-rosstat.env
 DAGU_VERSION     ?= v2.18.2
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import archive-registry mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token
 
 all: lint test build build-ingest
 
@@ -158,6 +158,7 @@ env-check:
 	@for v in BEA_API_KEY BLS_API_KEY EIA_API_KEY CLICKHOUSE_URL CLICKHOUSE_PASSWORD; do \
 		if [ -n "$$(printenv $$v)" ]; then echo "OK   $$v задан"; else echo "НЕТ  $$v не задан (см. README, раздел «Ключи и окружение»)"; fi; \
 	done
+	@if [ -n "$$ARCHIVE_YANDEX_TOKEN" ]; then echo "OK   ARCHIVE_YANDEX_TOKEN задан"; else echo "НЕТ  ARCHIVE_YANDEX_TOKEN не задан (нужен при ARCHIVE_BACKEND=yandex)"; fi
 	@if [ -n "$$GRAFANA_TEST_TOKEN" ]; then echo "OK   GRAFANA_TEST_TOKEN задан"; else echo "НЕТ  GRAFANA_TEST_TOKEN не задан (нужен для make grafana-deploy-test: сервис-аккаунт Editor на $(GRAFANA_TEST_URL))"; fi
 	@if [ -n "$$GRAFANA_STAGING_TOKEN" ]; then echo "OK   GRAFANA_STAGING_TOKEN задан"; else echo "НЕТ  GRAFANA_STAGING_TOKEN не задан (нужен для make grafana-deploy-staging: сервис-аккаунт Editor на staging, доступ через туннель $(GRAFANA_STAGING_URL))"; fi
 
@@ -168,6 +169,13 @@ import:
 	@mkdir -p $(BUILD_DIR)
 	go build -o $(BUILD_DIR)/$(BINARY)-native .
 	CLICKHOUSE_IMPORT_STAT=$(STAT) ./$(BUILD_DIR)/$(BINARY)-native
+
+# Git-зеркало реестра винтажного архива (make archive-registry [ARCHIVE_BACKEND=yandex]):
+# скачивает registry.jsonl из хранилища в docs/archive/; коммит — ручной/периодический.
+archive-registry:
+	@mkdir -p $(BUILD_DIR)
+	go build -o $(BUILD_DIR)/$(BINARY)-native .
+	ARCHIVE_ACTION=registry ./$(BUILD_DIR)/$(BINARY)-native
 
 # Ingest-сервис контура прогноза (единственный путь записи в model_runs/forecast_log/macro_series).
 # Нужны CLICKHOUSE_URL и INGEST_TOKEN из $(ROSSTAT_ENV); INGEST_ADDR по умолчанию :8081.
