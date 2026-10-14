@@ -344,6 +344,11 @@ make import STAT=forecast_resolve    # сверка прогнозов журн�
 make import STAT=news_watch          # ленты РФ-канала: события RSS пяти лент → news_events (all по умолчанию — полный upsert окна)
 NEWS_WATCH_MODE=since make import STAT=news_watch   # штатный режим расписания: только отсутствующие позиции (ключ date/source/title)
 NEWS_WATCH_MODE=check make import STAT=news_watch   # диагностика покрытия: окна источников и дыры, без записи
+make import STAT=rosstat_ipc_mes            # Росстат: ИПЦ помесячно, 4 ряда (файл обновляется раз в месяц, повтор — no-op без скачивания)
+make import STAT=rosstat_ipc_weeks          # Росстат: недельные индексы цен, 131 позиция (префлайта нет: файл перезаписывается в недельном темпе)
+make import STAT=rosstat_salaries_mes       # Росстат: средняя номинальная зарплата (повтор — no-op без скачивания файла)
+make import STAT=rosstat_vvp_kvartal        # Росстат: ВВП и дефлятор поквартально (повтор — no-op без скачивания файла)
+make import STAT=rosstat_labour_force_mes   # Росстат: рынок труда — рабочая сила, занятые, безработные и три уровня (участия, занятости, безработицы), помесячно с 2017 (повтор — no-op без скачивания файла)
 make ch-sql FILE=sql/gold_forecasts_q4_2026_seed.sql   # (опционально) сид консенсуса банков → v_gold_forecasts (до make import STAT=gold_views)
 make ch-sql FILE=sql/wgc_etf_flows_catalog.sql         # (опционально) каталог 20 рядов WGC ETF Flows (source='webbridge')
 make mcp-check                       # MCP end-to-end (CLICKHOUSE_PASSWORD из файла окружения)
