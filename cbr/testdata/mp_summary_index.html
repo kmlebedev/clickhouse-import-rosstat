@@ -1,0 +1,2687 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    
+
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<meta name="format-detection" content="telephone=no" />
+<meta name="zoom:lang" content="ru" />
+    <meta name="zoom:last-modified" content="Wed, 23 Sep 2026 14:00:00 GMT" />
+<title>Материалы по итогам заседаний Совета директоров Банка России по ключевой ставке | Банк России</title>
+
+
+
+    <meta property="og:image" content="/common/images/share-1.jpg" />
+
+    
+
+
+            <link rel="stylesheet" type="text/css" href="/common/libs/jquery-ui/jquery-ui.min.css?v=v478607061" media="all">
+
+            <!--[if IE 9]><link rel="stylesheet" type="text/css" href="/common/style/main-ie9.css?v=v1337212920" media="all"><![endif]-->
+
+            <!--[if gt IE 9]><!--><link rel="stylesheet" type="text/css" href="/common/style/main.min.css?v=v1337212920" media="all"><!--<![endif]-->
+
+
+        <script type="text/javascript" src="/common/libs/jquery-3.7.1.min.js?v=v735956814"></script>
+
+
+
+        <script type="text/javascript" src="/common/libs/jquery-ui/jquery-ui.min.js?v=v478607061"></script>
+
+        <script type="text/javascript" src="/common/libs/jquery.inputmask.min.js?v=v478607061"></script>
+
+
+        <script type="text/javascript" src="/common/scripts/vendor.js?v=v4270970564"></script>
+
+        <script type="text/javascript" src="/common/libs/jquery.floatThead.min.js?v=v478607061"></script>
+
+
+
+
+
+
+
+
+        <script type="text/javascript" src="/common/libs/popper.js?v=v478607061"></script>
+
+        <script type="text/javascript" src="/common/libs/tippy.js?v=v478607061"></script>
+
+        <script type="text/javascript" src="/common/scripts/main.min.js?v=v1337212920"></script>
+
+
+        <script type="text/javascript" src="/common/libs/localization-ru.js?v=v712023859"></script>
+        <script type="text/javascript" src="/js/jquery.ui.autocomplete-ru.js?v=v1043438991"></script>
+
+        <script type="text/javascript" src="/js/jquery.cookie.min.js?v=v4260771145"></script>
+
+        <script type="text/javascript" src="/js/site.js?v=v2848633841"></script>
+
+
+
+
+
+    <script type="text/javascript">
+        $(function () {
+            var $menu = $('[data-menu]'),
+                $menuItemBtn = $menu.find('[data-menu-item-btn]'),
+                $menuShow = $('[data-menu-show]'),
+                $menuClose = $('[data-menu-close]');
+            var config = $menu.data('config');
+
+            $menuShow.on('click.cms_loadwholesite mouseenter.cms_loadwholesite', function (event) {
+                loadWholeSite();
+            });
+
+            var xhr = null;
+            function loadWholeSite() {
+                if (xhr === null) {
+                    $('.menu_wrap .networks-circle').html($('.networks-circle.footer_networks').html());
+                    $('.menu_wrap .header_search').html($('.header .offsetMenu .header_search').html());
+
+                    $('[data-cms-wholesite-placeholder]').addClass('with-centered-loader').empty();
+                    xhr = $.ajax(config.url, {
+                        dataType: "html",
+                        method: "get",
+                        success: function (html) {
+                            $('[data-cms-wholesite-placeholder]').replaceWith(html);
+
+                            $menu.find('.menu_tab[data-tabs-tab]').each(function () {
+                                var tab = $(this).data('tabs-tab');
+                                $(this).toggle($menu.find('[data-tabs-content="' + tab + '"]').length != 0);
+                            });
+
+                            $menu.trigger('new-html');
+
+                            for (var i in config.catalogPath) {
+                                $menu.find('li[data-catalog-id="' + config.catalogPath[i] + '"]')
+                                    .addClass("_active");
+                                $menu.find('li[data-catalog-id="' + config.catalogPath[i] + '"]')
+                                    .closest('[data-tabs-content]')
+                                    .trigger('open-anchor');
+                            }
+
+                            $menuShow.off('click.cms_loadwholesite mouseenter.cms_loadwholesite');
+                        },
+                        error: function () {
+                            $('[data-cms-wholesite-placeholder]').removeClass('with-centered-loader')
+                                .append('<div class="menu_content offset-md-1">' +
+                                    '<span class="group-error field-validation-error">Не удалось загрузить карту сайта. <a href="#">Попробуйте еще раз.</a></span>' +
+                                    '</div>')
+                                .find('a')
+                                .on('click', function () { loadWholeSite(); });
+                        },
+                        complete: function () {
+                            xhr = null;
+                        }
+                    });
+                }
+            }
+        });
+    </script>
+
+
+<script>
+    if (window.localStorage) {
+        if (localStorage.getItem('vision-impaired'))
+            document.getElementsByTagName('html')[0].className += ' vision-impaired';
+    }
+</script>
+<script>
+    document.documentElement.style.setProperty('--scrollbar-width', '17px');
+    setTimeout(function () {
+        
+        var div = document.createElement('div');
+
+        div.style.overflowY = 'scroll';
+        div.style.width = '50px';
+        div.style.height = '50px';
+
+        
+        div.style.visibility = 'hidden';
+
+        document.body.appendChild(div);
+        var scrollWidth = Math.max(div.offsetWidth - div.clientWidth, 0.15); 
+        document.body.removeChild(div);
+        
+        document.documentElement.style.setProperty('--scrollbar-width', scrollWidth + 'px');
+    }, 0);
+</script>
+
+
+
+
+    
+</head>
+<body class="page-v3 page-v3-inside">
+
+
+<!-- Yandex.Metrika counter -->
+<script type="text/javascript" >
+    (function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
+    m[i].l=1*new Date();
+    for (var j = 0; j < document.scripts.length; j++) {if (document.scripts[j].src === r) { return; }}
+    k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)})
+    (window, document, "script", "https://mc.yandex.ru/metrika/tag.js", "ym");
+
+    ym(5774506, "init", {
+        clickmap:true,
+        trackLinks:true,
+        accurateTrackBounce:true,
+        webvisor:true
+    });
+</script>
+<noscript><div><img src="https://mc.yandex.ru/watch/5774506" style="position:absolute; left:-9999px;" alt="" /></div></noscript>    
+<!-- /Yandex.Metrika counter -->
+        
+    
+
+    <div class="header-print">
+    <div class="offsetMenu">
+        <div class="header-print_inner">
+            <img class="header-print_logo" alt="cbr" src="/common/images/logo.svg">
+            <ul class="header-print_contacts">
+<li>107016, Москва, ул. Неглинная, д.&nbsp;12, к. В, Банк России</li>
+<li><nobr class="phone">8 800 300-30-00</nobr></li>
+<li>www.cbr.ru</li>
+</ul>
+
+        </div>
+    </div>
+</div>
+
+    <header class="header" id="header">
+        <div class="top-line" data-top-line="">
+            <div class="header_burger-big"></div>
+            <div class="offsetMenu">
+                <div class="col-md-23 header_margin-left">
+                    <div class="top-line_inner header_inner">
+                        
+
+<div class="row">
+    <div class="col-xl-4 col-md-6">
+        <div class="header_left pr-0">
+                <div class="header_menu" data-menu-show=""></div>
+            <a class="header_logo" href="/"></a>
+                <a class="header_search_btn d-flex d-md-none" href="#" data-search-form-show="" aria-label="Поиск по сайту"><div class="header_search_icon"></div></a>
+            <a class="d-flex d-md-none" href="#" data-tooltip="" data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide"><div class="header_visual-impaired_item"></div></a>
+        </div>
+    </div>
+    <div class="col-xl-17 col-md-13 offset-md-1 header_block">
+        <div class="d-none d-md-block">
+            <div class="header_right">
+                <div class="networks header_link header_networks"><a class="header_appeal-link" href="/contactBR/" data-tooltip="" data-tooltip-content="Обратиться в Банк России" data-tooltip-class="mobile-hide"></a></div>
+                <div class="networks header_networks header_visual-impaired header_visual-impaired_inner"><a href="#" data-tooltip="" data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide" aria-label="Версия для слабовидящих"><div class="header_visual-impaired_item"></div></a></div>
+                <div class="header_lang header_lang_inner header_networks">
+    <a href="/Localization/SwitchLanguage?url=%2Fdkp%2Fmp_dec%2Fdecision_key_rate%2F&amp;from=ru-RU&amp;to=en-CB"><!--noindex-->EN<!--/noindex--></a>
+</div>
+                    <div class="header_networks header_search header_search_inner">
+                        <a class="header_search_btn" href="#" data-search-form-show="" aria-label="Поиск по сайту"><div class="header_search_icon"></div><span aria-hidden="true">Поиск по сайту</span></a>
+                    </div>
+            </div>
+        </div>
+    </div>
+</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="offsetMenu">
+            <div class="col-md-23 offset-md-1 header_margin-left">
+                <div class="header_inner">
+                    
+<div class="row">
+    <div class="col-xl-5 col-md-6">
+        <div class="header_left pr-0">
+            <div class="header_menu" data-menu-show=""></div>
+            <a class="header_logo" href="/"></a>
+            <a class="header_search_btn d-flex d-md-none" href="#" data-search-form-show="" aria-label="Поиск по сайту">
+                <div class="header_search_icon"></div>
+            </a>
+            <a class="d-flex d-md-none" href="#" data-tooltip data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide">
+                <div class="header_visual-impaired_item"></div>
+            </a>
+        </div>
+    </div>
+    <div class="col-xl-17 col-md-13 offset-md-1 header_block justify-content-end">
+        <div class="d-none d-md-block">
+            <div class="header_right">
+                <div class="networks header_link header_networks"><a class="header_appeal-link" href="/contactBR/" data-tooltip="" data-tooltip-content="Обратиться в Банк России" data-tooltip-class="mobile-hide"></a></div>
+                <div class="networks header_networks header_visual-impaired header_visual-impaired_inner">
+                    <a href="#" data-tooltip data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide" aria-label="Версия для слабовидящих">
+                        <div class="header_visual-impaired_item"></div>
+                    </a>
+                </div>
+                <div class="header_lang header_lang_inner header_networks">
+    <a href="/Localization/SwitchLanguage?url=%2Fdkp%2Fmp_dec%2Fdecision_key_rate%2F&amp;from=ru-RU&amp;to=en-CB"><!--noindex-->EN<!--/noindex--></a>
+</div>
+                <div class="header_networks header_search header_search_inner">
+                    <a class="header_search_btn" href="#" data-search-form-show="" aria-label="Поиск по сайту">
+                        <div class="header_search_icon"></div><span aria-hidden="true">Поиск по сайту</span>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+                </div>
+            </div>
+        </div>
+    </header>
+    <form action="/search/" method="get" class="search-form" data-search-form=""
+      data-api-url="/Content/SearchSuggest/Suggest"
+      data-api-top-url="">
+    <div class="offsetMenu">
+        <div class="col-md-23 offset-md-1">
+            <div class="search-form_inner">
+                <div class="search-form_title">Что вы хотите найти?<img class="search-form_title-close" src="/common/images/icons/menu-close-dark-grey.svg"></div>
+                <div class="search-form_content">
+                    <div class="search-form_block">
+                        <div class="search-form_icon"></div>
+                        <div class="search-form_field">
+                            <input name="text" type="text" autocomplete="off" placeholder="Начните писать" data-search-form-input="" />
+                        </div>
+                    </div>
+                    <div class="search-form_clear" data-search-form-clear-btn=""><img src="/common/images/icons/menu-close-gray.svg"></div>
+                    <div class="search-form_btn">
+                        <button class="b-btn _blue" data-search-form-btn="">Искать</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</form>
+
+
+<div class="menu_wrap" data-menu="" data-config="{&quot;catalogPath&quot;:[27054,16446,15917],&quot;url&quot;:&quot;/Catalog/SiteMap/GetWholeSiteHtml?blockId=59191&quot;}">
+    <div class="offsetMenu">
+        <div class="header_menu _close menu_close d-none d-md-block" data-menu-close=""></div>
+        <div class="header_inner top-line_inner d-block d-md-none">
+            <div class="row">
+                <div class="col-xl-5 col-md-9">
+                    <div class="header_left pr-0">
+                        <div class="header_menu _close" role="button" tabindex="0" aria-label="Закрыть меню" data-menu-close=""></div>
+                        <a class="header_logo" href="/"></a>
+                        <a class="header_search_btn" href="#" data-search-form-show="data-search-form-show" aria-label="Поиск по сайту"><div class="header_search_icon"></div></a>
+                        <a href="#" data-tooltip="data-tooltip" data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide"><div class="header_visual-impaired_item"></div></a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="menu row" data-tabs="data-tabs">
+            <div class="menu_quick col-md-7">
+                <div role="tablist" class="menu_quick_tabs">
+    <a role="tab" id="menu_tab_Activity" aria-controls="menu_content_Activity" aria-selected="true" class="menu_tab _active" href="#" data-tabs-tab="Activity">Деятельность</a>
+    <a role="tab" id="menu_tab_FinancialMarkets" aria-controls="menu_content_FinancialMarkets" aria-selected="false" class="menu_tab" href="#" data-tabs-tab="FinancialMarkets">Финансовые рынки</a>
+    <a role="tab" id="menu_tab_Documents" aria-controls="menu_content_Documents" aria-selected="false" class="menu_tab" href="#" data-tabs-tab="Documents">Документы и данные</a>
+    <a role="tab" id="menu_tab_AboutBank" aria-controls="menu_content_AboutBank" aria-selected="false" class="menu_tab" href="#" data-tabs-tab="AboutBank">О Банке России</a>
+    <a role="tab" id="menu_tab_Services" aria-controls="menu_content_Services" aria-selected="false" class="menu_tab" href="#" data-tabs-tab="Services">Сервисы</a>
+</div>
+<div class="menu_quick_links">
+    <div class="inner_links"><a href="/support_measures/" title="Меры зашиты финансового рынка" style="color:red">Меры защиты финансового рынка</a>
+  </div>
+<div class="phones"><a class="menu_phone_val" href="tel:+74993003000">
+<div class="plus">+</div>7 499 300-30-00</a><a class="menu_phone_val" href="tel:88003003000">8 800 300-30-00</a><a class="menu_phone_val" href="tel:300">300</a><span>Бесплатно для звонков с мобильных телефонов</span></div>
+<div class="inner_links">
+  <a href="/news/" title="Новости">Новости</a>
+  <a href="/rbr/" title="Решения Банка России">Решения Банка России</a>
+  <a href="/contacts/" title="Контактная информация">Контактная информация</a>
+  <a href="/sitemap" title="Карта сайта">Карта сайта</a>
+  <a href="/about/" title="О сайте">О сайте</a>
+  </div>
+<div class="networks-circle">
+  <a class="networks-circle_item _vk" href="https://vk.com/cbr_official" title="ВКонтакте"></a>
+  <a class="networks-circle_item _yt" href="https://www.youtube.com/user/BankofRussia" title="Youtube"></a>
+  <a class="networks-circle_item _tg" href="https://telegram.me/centralbank_russia" title="Telegram"></a>
+  <a class="networks-circle_item _ydzen" href="https://zen.yandex.ru/id/622372d6a565892091994ea9" title="Яндекс Дзен"></a>
+  <a class="networks-circle_item _ok" href="https://ok.ru/group/68858679787580" title="Одноклассники"></a>
+  <a class="networks-circle_item _rt" href="https://rutube.ru/channel/23873201/" title="RUTUBE"></a>
+  <a class="networks-circle_item _max" href="https://max.ru/cbr_official" title="Макс"></a>
+</div>
+</div>
+            </div>
+            <div class="d-md-none link-above">
+                <div class="header_right">
+                    <div class="header_link"><a href="/contactBR/">Обратиться в&nbsp;Банк России</a></div>
+                    <div class="header_lang">
+            <div class="header_lang_item _active"><span><!--noindex-->RU<!--/noindex--></span></div>
+            <div class="header_lang_item"><a href="/Localization/SwitchLanguage?url=%2Fdkp%2Fmp_dec%2Fdecision_key_rate%2F&amp;from=ru-RU&amp;to=en-CB"><!--noindex-->EN<!--/noindex--></a></div>
+</div>
+                </div>
+<div class="header_right"><div class="header_link"><a href="/about_br/">О Банке России</a></div></div>
+<div class="header_right"><div class="header_link"><a href="/finorg/">Проверить участника финансового рынка</a></div></div>
+<div class="header_right"><div class="header_link"><a href="/beware/">Осторожно: мошенники!</a></div></div>            </div>
+            <div class="menu_content_container col-md" data-cms-wholesite-placeholder="">
+            </div>
+        </div>
+    </div>
+</div>
+
+    <main id="content">
+        <div class="offsetMenu ">
+            <div class="container-fluid">
+                <div class="col-md-23 offset-md-1">
+                    <div class="breadcrumbs">
+    <div class="breadcrumbs_item"><a class="breadcrumbs_home" href="/"></a></div>
+        <div class="breadcrumbs_item">
+            <a href="/dkp/"><!--noindex-->Денежно-кредитная политика<!--/noindex--></a>
+        </div>
+        <div class="breadcrumbs_item">
+            <a href="/dkp/mp_dec/"><!--noindex-->Решения по&#160;денежно-кредитной политике<!--/noindex--></a>
+        </div>
+    </div>
+
+                    <!--index-->
+<h1><span class="referenceable">Материалы по&#160;итогам заседаний Совета директоров Банка России по&#160;ключевой ставке</span>
+</h1>
+                                        
+
+
+
+
+
+
+                                                                                
+
+
+
+
+<div id="tab" class="tabs_wrap " data-tabs="">
+    <div role="tablist" class="tabs">
+
+    <a role="tab" id="tab_tab_y2026" aria-controls="tab_content_y2026" aria-selected="true" 
+       class="tab _active" href="#y2026" data-text="2026"
+       
+
+  data-tabs-tab="y2026"   >
+        2026
+    </a>
+    <a role="tab" id="tab_tab_t2" aria-controls="tab_content_t2" aria-selected="false" 
+       class="tab" href="#t2" data-text="2025"
+       
+
+  data-tabs-tab="t2"   >
+        2025
+    </a>
+    <a role="tab" id="tab_tab_t1" aria-controls="tab_content_t1" aria-selected="false" 
+       class="tab" href="#t1" data-text="2024"
+       
+
+  data-tabs-tab="t1"   >
+        2024
+    </a>
+            </div>
+
+                    <div role="tabpanel" id="tab_content_y2026" aria-labelledby="tab_tab_y2026" data-tabs-content="y2026">
+                        
+
+
+<div class="dropdown">
+<a aria-controls="DropDown17_content" aria-expanded="true" class="dropdown_title _active referenceable" data-zone-code="/block198152/zone" id="a_198152" role="button" tabindex="0">Заседание Совета директоров от 11.09.2026</a>
+
+    <div id="DropDown17_content" role="region" aria-labelledby="a_198152" class="dropdown_content">
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">23.09.2026</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/dkp/mp_dec/decision_key_rate/summary_key_rate_23092026/" id="a_198154page">                        <span class="document-regular_name_visible">Резюме обсуждения ключевой ставки</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">11.09.2026</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/pr/?file=11092026_133000key.htm" id="a_198155">                        <span class="document-regular_name_visible">Банк России принял решение сохранить ключевую ставку на&#160;уровне 14,00% годовых</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">11.09.2026</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/event/?id=32832" id="a_198156">                        <span class="document-regular_name_visible">Заявление Председателя Банка России Эльвиры Набиуллиной по&#160;итогам заседания Совета директоров Банка России 11&#160;сентября&#160;2026&#160;года</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+    </div>
+</div>
+
+
+
+<div class="dropdown">
+<a aria-controls="DropDown18_content" aria-expanded="true" class="dropdown_title _active referenceable" data-zone-code="/block194257/zone" id="a_194257" role="button" tabindex="0">Заседание Совета директоров от 24.07.2026</a>
+
+    <div id="DropDown18_content" role="region" aria-labelledby="a_194257" class="dropdown_content">
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">05.08.2026</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/dkp/mp_dec/decision_key_rate/summary_key_rate_05082026/" id="a_194259page">                        <span class="document-regular_name_visible">Резюме обсуждения ключевой ставки</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_format icon-pdf"></div>
+                            <div class="document-regular_date">24.07.2026</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/File/194258/forecast_260724.pdf" id="a_194258file" target="_blank">                        <span class="document-regular_name_visible">Среднесрочный прогноз Банка России</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">05.08.2026</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/dkp/mp_dec/decision_key_rate/comment_05082026/" id="a_194262page">                        <span class="document-regular_name_visible">Комментарий к среднесрочному прогнозу Банка России</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">24.07.2026</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/pr/?file=24072026_133000key.htm" id="a_194260">                        <span class="document-regular_name_visible">Банк России принял решение снизить ключевую ставку на&#160;25&#160;б.п., до&#160;14,00% годовых</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">24.07.2026</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/event/?id=32726" id="a_194261">                        <span class="document-regular_name_visible">Заявление Председателя Банка России Эльвиры Набиуллиной по&#160;итогам заседания Совета директоров Банка России 24&#160;июля&#160;2026&#160;года</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+    </div>
+</div>
+
+
+
+<div class="dropdown">
+<a aria-controls="DropDown19_content" aria-expanded="false" class="dropdown_title referenceable" data-zone-code="/block193733/zone" id="a_193733" role="button" tabindex="0">Заседание Совета директоров от 19.06.2026</a>
+
+    <div id="DropDown19_content" role="region" aria-labelledby="a_193733" class="dropdown_content">
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">01.07.2026</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/dkp/mp_dec/decision_key_rate/summary_key_rate_01072026/" id="a_193736page">                        <span class="document-regular_name_visible">Резюме обсуждения ключевой ставки</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">19.06.2026</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/pr/?file=19062026_133000key.htm" id="a_193737">                        <span class="document-regular_name_visible">Банк России принял решение снизить ключевую ставку на&#160;25&#160;б.п., до&#160;14,25% годовых</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">19.06.2026</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/event/?id=32634" id="a_193738">                        <span class="document-regular_name_visible">Заявление Председателя Банка России Эльвиры Набиуллиной по&#160;итогам заседания Совета директоров Банка России 19&#160;июня&#160;2026&#160;года</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+    </div>
+</div>
+
+
+
+<div class="dropdown">
+<a aria-controls="DropDown20_content" aria-expanded="false" class="dropdown_title referenceable" data-zone-code="/block189800/zone" id="a_189800" role="button" tabindex="0">Заседание Совета директоров от 24.04.2026</a>
+
+    <div id="DropDown20_content" role="region" aria-labelledby="a_189800" class="dropdown_content">
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">07.05.2026</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/dkp/mp_dec/decision_key_rate/summary_key_rate_07052026/" id="a_189803page">                        <span class="document-regular_name_visible">Резюме обсуждения ключевой ставки</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_format icon-pdf"></div>
+                            <div class="document-regular_date">24.04.2026</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/File/189801/forecast_260424.pdf" id="a_189801file" target="_blank">                        <span class="document-regular_name_visible">Среднесрочный прогноз Банка России</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">07.05.2026</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/dkp/mp_dec/decision_key_rate/comment_07052026/" id="a_189908page">                        <span class="document-regular_name_visible">Комментарий к среднесрочному прогнозу Банка России</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">24.04.2026</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/pr/?file=24042026_133000key.htm" id="a_189804">                        <span class="document-regular_name_visible">Банк России принял решение снизить ключевую ставку на&#160;50&#160;б.п., до&#160;14,50% годовых</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">24.04.2026</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/event/?id=28507" id="a_189805">                        <span class="document-regular_name_visible">Заявление Председателя Банка России Эльвиры Набиуллиной по&#160;итогам заседания Совета директоров Банка России 24&#160;апреля&#160;2026&#160;года</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+    </div>
+</div>
+
+
+
+<div class="dropdown">
+<a aria-controls="DropDown21_content" aria-expanded="false" class="dropdown_title referenceable" data-zone-code="/block187852/zone" id="a_187852" role="button" tabindex="0">Заседание Совета директоров от 20.03.2026</a>
+
+    <div id="DropDown21_content" role="region" aria-labelledby="a_187852" class="dropdown_content">
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">01.04.2026</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/dkp/mp_dec/decision_key_rate/summary_key_rate_01042026/" id="a_187855page">                        <span class="document-regular_name_visible">Резюме обсуждения ключевой ставки</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">20.03.2026</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/pr/?file=20032026_133000key.htm" id="a_187856">                        <span class="document-regular_name_visible">Банк России принял решение снизить ключевую ставку на&#160;50&#160;б.п., до&#160;15,00% годовых</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">20.03.2026</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/event/?id=28410" id="a_187934">                        <span class="document-regular_name_visible">Заявление Председателя Банка России Эльвиры Набиуллиной по&#160;итогам заседания Совета директоров Банка России 20&#160;марта&#160;2026&#160;года</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+    </div>
+</div>
+
+
+
+<div class="dropdown">
+<a aria-controls="DropDown22_content" aria-expanded="false" class="dropdown_title referenceable" data-zone-code="/block187045/zone" id="a_187045" role="button" tabindex="0">Заседание Совета директоров от 13.02.2026</a>
+
+    <div id="DropDown22_content" role="region" aria-labelledby="a_187045" class="dropdown_content">
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">26.02.2026</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/dkp/mp_dec/decision_key_rate/summary_key_rate_26022026/" id="a_187048page">                        <span class="document-regular_name_visible">Резюме обсуждения ключевой ставки</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_format icon-pdf"></div>
+                            <div class="document-regular_date">26.02.2026</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/File/187047/comment_26022026.pdf" id="a_187047file" target="_blank">                        <span class="document-regular_name_visible">Комментарий к среднесрочному прогнозу Банка России</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_format icon-pdf"></div>
+                            <div class="document-regular_date">13.02.2026</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/File/187046/forecast_260213.pdf" id="a_187046file" target="_blank">                        <span class="document-regular_name_visible">Среднесрочный прогноз Банка России</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">13.02.2026</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/pr/?file=13022026_133000key.htm" id="a_187049">                        <span class="document-regular_name_visible">Банк России принял решение снизить ключевую ставку на&#160;50&#160;б.п., до&#160;15,50% годовых</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">13.02.2026</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/event/?id=28303" id="a_187050">                        <span class="document-regular_name_visible">Заявление Председателя Банка России Эльвиры Набиуллиной по&#160;итогам заседания Совета директоров Банка России 13&#160;февраля&#160;2026&#160;года</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+    </div>
+</div>
+
+                    </div>
+                    <div role="tabpanel" id="tab_content_t2" aria-labelledby="tab_tab_t2" data-tabs-content="t2" class="hide">
+                        
+
+
+<div class="dropdown">
+<a aria-controls="DropDown9_content" aria-expanded="false" class="dropdown_title referenceable" data-zone-code="/block185767/zone" id="a_185767" role="button" tabindex="0">Заседание Совета директоров от 19.12.2025</a>
+
+    <div id="DropDown9_content" role="region" aria-labelledby="a_185767" class="dropdown_content">
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">29.12.2025</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/dkp/mp_dec/decision_key_rate/summary_key_rate_29122025/" id="a_185770page">                        <span class="document-regular_name_visible">Резюме обсуждения ключевой ставки</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">19.12.2025</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/pr/?file=19122025_133000key.htm" id="a_185771">                        <span class="document-regular_name_visible">Банк России принял решение снизить ключевую ставку на&#160;50&#160;б.п., до&#160;16,00% годовых</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">19.12.2025</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/event/?id=28198" id="a_185772">                        <span class="document-regular_name_visible">Заявление Председателя Банка России Эльвиры Набиуллиной по&#160;итогам заседания Совета директоров Банка России 19&#160;декабря&#160;2025&#160;года</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+    </div>
+</div>
+
+
+
+<div class="dropdown">
+<a aria-controls="DropDown10_content" aria-expanded="false" class="dropdown_title referenceable" data-zone-code="/block184550/zone" id="a_184550" role="button" tabindex="0">Заседание Совета директоров от 24.10.2025</a>
+
+    <div id="DropDown10_content" role="region" aria-labelledby="a_184550" class="dropdown_content">
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">06.11.2025</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/dkp/mp_dec/decision_key_rate/summary_key_rate_06112025/" id="a_184553page">                        <span class="document-regular_name_visible">Резюме обсуждения ключевой ставки</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_format icon-pdf"></div>
+                            <div class="document-regular_date">06.11.2025</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/File/184552/comment_06112025.pdf" id="a_184552file" target="_blank">                        <span class="document-regular_name_visible">Комментарий к среднесрочному прогнозу Банка России</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_format icon-pdf"></div>
+                            <div class="document-regular_date">24.10.2025</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/File/184551/forecast_251024.pdf" id="a_184551file" target="_blank">                        <span class="document-regular_name_visible">Среднесрочный прогноз Банка России</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">24.10.2025</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/pr/?file=24102025_133000key.htm" id="a_184554">                        <span class="document-regular_name_visible">Банк России принял решение снизить ключевую ставку на&#160;50&#160;б.п., до&#160;16,50% годовых</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">24.10.2025</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/event/?id=28051" id="a_184555">                        <span class="document-regular_name_visible">Заявление Председателя Банка России Эльвиры Набиуллиной по&#160;итогам заседания Совета директоров Банка России 24&#160;октября&#160;2025&#160;года</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+    </div>
+</div>
+
+
+
+<div class="dropdown">
+<a aria-controls="DropDown11_content" aria-expanded="false" class="dropdown_title referenceable" data-zone-code="/block181276/zone" id="a_181276" role="button" tabindex="0">Заседание Совета директоров от 12.09.2025</a>
+
+    <div id="DropDown11_content" role="region" aria-labelledby="a_181276" class="dropdown_content">
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">24.09.2025</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/dkp/mp_dec/decision_key_rate/summary_key_rate_24092025/" id="a_181279page">                        <span class="document-regular_name_visible">Резюме обсуждения ключевой ставки</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">12.09.2025</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/pr/?file=12092025_133000key.htm" id="a_181280">                        <span class="document-regular_name_visible">Банк России принял решение снизить ключевую ставку на&#160;100&#160;б.п., до&#160;17,00% годовых</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">12.09.2025</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/event/?id=26932" id="a_181281">                        <span class="document-regular_name_visible">Заявление Председателя Банка России Эльвиры Набиуллиной по&#160;итогам заседания Совета директоров Банка России 12&#160;сентября&#160;2025&#160;года</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+    </div>
+</div>
+
+
+
+<div class="dropdown">
+<a aria-controls="DropDown12_content" aria-expanded="false" class="dropdown_title referenceable" data-zone-code="/block179981/zone" id="a_179981" role="button" tabindex="0">Заседание Совета директоров от 25.07.2025</a>
+
+    <div id="DropDown12_content" role="region" aria-labelledby="a_179981" class="dropdown_content">
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">06.08.2025</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/dkp/mp_dec/decision_key_rate/summary_key_rate_06082025/" id="a_179984page">                        <span class="document-regular_name_visible">Резюме обсуждения ключевой ставки</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_format icon-pdf"></div>
+                            <div class="document-regular_date">06.08.2025</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/File/179983/comment_06082025.pdf" id="a_179983file" target="_blank">                        <span class="document-regular_name_visible">Комментарий к среднесрочному прогнозу Банка России</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_format icon-pdf"></div>
+                            <div class="document-regular_date">25.07.2025</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/File/179982/forecast_250725.pdf" id="a_179982file" target="_blank">                        <span class="document-regular_name_visible">Среднесрочный прогноз Банка России</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">25.07.2025</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/pr/?file=25072025_133000key.htm" id="a_179985">                        <span class="document-regular_name_visible">Банк России принял решение снизить ключевую ставку на&#160;200&#160;б.п., до&#160;18,00% годовых</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">25.07.2025</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/event/?id=26808" id="a_179986">                        <span class="document-regular_name_visible">Заявление Председателя Банка России Эльвиры Набиуллиной по&#160;итогам заседания Совета директоров Банка России 25&#160;июля&#160;2025&#160;года</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+    </div>
+</div>
+
+
+
+<div class="dropdown">
+<a aria-controls="DropDown13_content" aria-expanded="false" class="dropdown_title referenceable" data-zone-code="/block177104/zone" id="a_177104" role="button" tabindex="0">Заседание Совета директоров от 06.06.2025</a>
+
+    <div id="DropDown13_content" role="region" aria-labelledby="a_177104" class="dropdown_content">
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">20.06.2025</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/dkp/mp_dec/decision_key_rate/summary_key_rate_20062025/" id="a_177105page">                        <span class="document-regular_name_visible">Резюме обсуждения ключевой ставки</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">06.06.2025</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/pr/?file=06062025_133000key.htm" id="a_177106">                        <span class="document-regular_name_visible">Банк России принял решение снизить ключевую ставку на&#160;100&#160;б.п., до&#160;20,00% годовых</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">06.06.2025</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/event/?id=24685" id="a_177107">                        <span class="document-regular_name_visible">Заявление Председателя Банка России Эльвиры Набиуллиной по&#160;итогам заседания Совета директоров Банка России 6&#160;июня&#160;2025&#160;года</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+    </div>
+</div>
+
+
+
+<div class="dropdown">
+<a aria-controls="DropDown14_content" aria-expanded="false" class="dropdown_title referenceable" data-zone-code="/block175396/zone" id="a_175396" role="button" tabindex="0">Заседание Совета директоров от 25.04.2025</a>
+
+    <div id="DropDown14_content" role="region" aria-labelledby="a_175396" class="dropdown_content">
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">12.05.2025</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/dkp/mp_dec/decision_key_rate/summary_key_rate_12052025/" id="a_175399page">                        <span class="document-regular_name_visible">Резюме обсуждения ключевой ставки</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_format icon-pdf"></div>
+                            <div class="document-regular_date">12.05.2025</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/File/175398/comment_12052025.pdf" id="a_175398file" target="_blank">                        <span class="document-regular_name_visible">Комментарий к среднесрочному прогнозу Банка России</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_format icon-pdf"></div>
+                            <div class="document-regular_date">25.04.2025</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/File/175397/forecast_250425.pdf" id="a_175397file" target="_blank">                        <span class="document-regular_name_visible">Среднесрочный прогноз Банка России</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">25.04.2025</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/pr/?file=25042025_133000key.htm" id="a_175400">                        <span class="document-regular_name_visible">Банк России принял решение сохранить ключевую ставку на&#160;уровне 21,00% годовых</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">25.04.2025</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/event/?id=23576" id="a_175401">                        <span class="document-regular_name_visible">Заявление Председателя Банка России Эльвиры Набиуллиной по&#160;итогам заседания Совета директоров Банка России 25&#160;апреля&#160;2025&#160;года</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+    </div>
+</div>
+
+
+
+<div class="dropdown">
+<a aria-controls="DropDown15_content" aria-expanded="false" class="dropdown_title referenceable" data-zone-code="/block174546/zone" id="a_174546" role="button" tabindex="0">Заседание Совета директоров от 21.03.2025</a>
+
+    <div id="DropDown15_content" role="region" aria-labelledby="a_174546" class="dropdown_content">
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">02.04.2025</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/dkp/mp_dec/decision_key_rate/summary_key_rate_02042025/" id="a_174551page">                        <span class="document-regular_name_visible">Резюме обсуждения ключевой ставки</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">21.03.2025</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/pr/?file=21032025_133000key.htm" id="a_174552">                        <span class="document-regular_name_visible">Банк России принял решение сохранить ключевую ставку на&#160;уровне 21,00% годовых</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">21.03.2025</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/event/?id=23473" id="a_174553">                        <span class="document-regular_name_visible">Заявление Председателя Банка России Эльвиры Набиуллиной по&#160;итогам заседания Совета директоров Банка России 21&#160;марта&#160;2025&#160;года</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+    </div>
+</div>
+
+
+
+<div class="dropdown">
+<a aria-controls="DropDown16_content" aria-expanded="false" class="dropdown_title referenceable" data-zone-code="/block172535/zone" id="a_172535" role="button" tabindex="0">Заседание Совета директоров от 14.02.2025</a>
+
+    <div id="DropDown16_content" role="region" aria-labelledby="a_172535" class="dropdown_content">
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">26.02.2025</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/dkp/mp_dec/decision_key_rate/summary_key_rate_26022025/" id="a_172538page">                        <span class="document-regular_name_visible">Резюме обсуждения ключевой ставки</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_format icon-pdf"></div>
+                            <div class="document-regular_date">26.02.2025</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/File/172537/comment_26022025.pdf" id="a_172537file" target="_blank">                        <span class="document-regular_name_visible">Комментарий к среднесрочному прогнозу Банка России</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_format icon-pdf"></div>
+                            <div class="document-regular_date">14.02.2025</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/File/172536/forecast_250214.pdf" id="a_172536file" target="_blank">                        <span class="document-regular_name_visible">Среднесрочный прогноз Банка России</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">14.02.2025</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/pr/?file=14022025_133000key.htm" id="a_172539">                        <span class="document-regular_name_visible">Банк России принял решение сохранить ключевую ставку на&#160;уровне 21,00% годовых</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">14.02.2025</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/event/?id=23377" id="a_172540">                        <span class="document-regular_name_visible">Заявление Председателя Банка России Эльвиры Набиуллиной по&#160;итогам заседания Совета директоров Банка России 14&#160;февраля&#160;2025&#160;года</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+    </div>
+</div>
+
+                    </div>
+                    <div role="tabpanel" id="tab_content_t1" aria-labelledby="tab_tab_t1" data-tabs-content="t1" class="hide">
+                        
+
+
+<div class="dropdown">
+<a aria-controls="DropDown_content" aria-expanded="false" class="dropdown_title referenceable" data-zone-code="/block170517/zone" id="a_170517" role="button" tabindex="0">Заседание Совета директоров от 20.12.2024</a>
+
+    <div id="DropDown_content" role="region" aria-labelledby="a_170517" class="dropdown_content">
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">28.12.2024</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/dkp/mp_dec/decision_key_rate/summary_key_rate_28122024/" id="a_170522page">                        <span class="document-regular_name_visible">Резюме обсуждения ключевой ставки</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">20.12.2024</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/pr/?file=20122024_133000key.htm" id="a_170558">                        <span class="document-regular_name_visible">Банк России принял решение сохранить ключевую ставку на&#160;уровне 21,00% годовых</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">20.12.2024</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/event/?id=23249" id="a_170559">                        <span class="document-regular_name_visible">Заявление Председателя Банка России Эльвиры Набиуллиной по&#160;итогам заседания Совета директоров Банка России 20&#160;декабря&#160;2024&#160;года</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+    </div>
+</div>
+
+
+
+<div class="dropdown">
+<a aria-controls="DropDown2_content" aria-expanded="false" class="dropdown_title referenceable" data-zone-code="/block166585/zone" id="a_166585" role="button" tabindex="0">Заседание Совета директоров от 25.10.2024</a>
+
+    <div id="DropDown2_content" role="region" aria-labelledby="a_166585" class="dropdown_content">
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">06.11.2024</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/dkp/mp_dec/decision_key_rate/summary_key_rate_06112024/" id="a_166839page">                        <span class="document-regular_name_visible">Резюме обсуждения ключевой ставки</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_format icon-pdf"></div>
+                            <div class="document-regular_date">06.11.2024</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/File/166590/comment_06112024.pdf" id="a_166590file" target="_blank">                        <span class="document-regular_name_visible">Комментарий к среднесрочному прогнозу Банка России</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_format icon-pdf"></div>
+                            <div class="document-regular_date">25.10.2024</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/File/166586/forecast_241025.pdf" id="a_166586file" target="_blank">                        <span class="document-regular_name_visible">Среднесрочный прогноз Банка России</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">25.10.2024</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/pr/?file=25102024_133000Key.htm" id="a_170556">                        <span class="document-regular_name_visible">Банк России принял решение повысить ключевую ставку на&#160;200&#160;б.п., до&#160;21,00% годовых</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">25.10.2024</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/event/?id=21111" id="a_170557">                        <span class="document-regular_name_visible">Заявление Председателя Банка России Эльвиры Набиуллиной по&#160;итогам заседания Совета директоров Банка России 25&#160;октября&#160;2024&#160;года</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+    </div>
+</div>
+
+
+
+<div class="dropdown">
+<a aria-controls="DropDown3_content" aria-expanded="false" class="dropdown_title referenceable" data-zone-code="/block165892/zone" id="a_165892" role="button" tabindex="0">Заседание Совета директоров от 13.09.2024</a>
+
+    <div id="DropDown3_content" role="region" aria-labelledby="a_165892" class="dropdown_content">
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">25.09.2024</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/dkp/mp_dec/decision_key_rate/summary_key_rate_25092024/" id="a_165987page">                        <span class="document-regular_name_visible">Резюме обсуждения ключевой ставки</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">13.09.2024</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/event/?id=20993" id="a_165945">                        <span class="document-regular_name_visible">Заявление Председателя Банка России Эльвиры Набиуллиной по&#160;итогам заседания Совета директоров Банка России 13&#160;сентября&#160;2024&#160;года</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">13.09.2024</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/pr/?file=13092024_133000Key.htm" id="a_165903">                        <span class="document-regular_name_visible">Банк России принял решение повысить ключевую ставку на&#160;100&#160;б.п., до&#160;19,00% годовых</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+    </div>
+</div>
+
+
+
+<div class="dropdown">
+<a aria-controls="DropDown4_content" aria-expanded="false" class="dropdown_title referenceable" data-zone-code="/block162283/zone" id="a_162283" role="button" tabindex="0">Заседание Совета директоров от 26.07.2024</a>
+
+    <div id="DropDown4_content" role="region" aria-labelledby="a_162283" class="dropdown_content">
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">07.08.2024</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/dkp/mp_dec/decision_key_rate/summary_key_rate_07082024/" id="a_162378page">                        <span class="document-regular_name_visible">Резюме обсуждения ключевой ставки</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_format icon-pdf"></div>
+                            <div class="document-regular_date">07.08.2024</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/File/162516/comment_07082024.pdf" id="a_162516file" target="_blank">                        <span class="document-regular_name_visible">Комментарий к среднесрочному прогнозу Банка России</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_format icon-pdf"></div>
+                            <div class="document-regular_date">26.07.2024</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/File/162284/forecast_240726.pdf" id="a_162284file" target="_blank">                        <span class="document-regular_name_visible">Среднесрочный прогноз Банка России</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">26.07.2024</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/event/?id=18869" id="a_162411">                        <span class="document-regular_name_visible">Заявление Председателя Банка России Эльвиры Набиуллиной по&#160;итогам заседания Совета директоров Банка России 26&#160;июля&#160;2024&#160;года</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">26.07.2024</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/pr/?file=26072024_133000Key.htm" id="a_162367">                        <span class="document-regular_name_visible">Банк России принял решение повысить ключевую ставку на&#160;200&#160;б.п., до&#160;18,00% годовых</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+    </div>
+</div>
+
+
+
+<div class="dropdown">
+<a aria-controls="DropDown5_content" aria-expanded="false" class="dropdown_title referenceable" data-zone-code="/block161618/zone" id="a_161618" role="button" tabindex="0">Заседание Совета директоров от 07.06.2024</a>
+
+    <div id="DropDown5_content" role="region" aria-labelledby="a_161618" class="dropdown_content">
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">20.06.2024</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/dkp/mp_dec/decision_key_rate/summary_key_rate_20062024/" id="a_161622page">                        <span class="document-regular_name_visible">Резюме обсуждения ключевой ставки</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">07.06.2024</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/pr/?file=07062024_133000Key.htm" id="a_161619">                        <span class="document-regular_name_visible">Банк России принял решение сохранить ключевую ставку на&#160;уровне 16,00% годовых</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">07.06.2024</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/press/event/?id=18753" id="a_161671">                        <span class="document-regular_name_visible">Заявление Председателя Банка России Эльвиры Набиуллиной по&#160;итогам заседания Совета директоров Банка России 7&#160;июня&#160;2024&#160;года</span>
+</a>
+                                    </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+    </div>
+</div>
+
+
+
+<div class="dropdown">
+<a aria-controls="DropDown6_content" aria-expanded="false" class="dropdown_title referenceable" data-zone-code="/block160779/zone" id="a_160779" role="button" tabindex="0">Заседание Совета директоров от 26.04.2024</a>
+
+    <div id="DropDown6_content" role="region" aria-labelledby="a_160779" class="dropdown_content">
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">13.05.2024</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/dkp/mp_dec/decision_key_rate/summary_key_rate_13052024/" id="a_160780page">                        <span class="document-regular_name_visible">Резюме обсуждения ключевой ставки</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_format icon-pdf"></div>
+                            <div class="document-regular_date">13.05.2024</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/File/160782/comment_13052024.pdf" id="a_160782file" target="_blank">                        <span class="document-regular_name_visible">Комментарий к среднесрочному прогнозу Банка России</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_format icon-pdf"></div>
+                            <div class="document-regular_date">26.04.2024</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/File/160781/forecast_240426.pdf" id="a_160781file" target="_blank">                        <span class="document-regular_name_visible">Среднесрочный прогноз Банка России</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+    <div class="document-regular">
+        <div class="document-regular_inner">
+            <div class="document-regular_top">
+                                    <div class="document-regular_left_icon"></div>
+                                    <div class="document-regular_date">26.04.2024</div>
+            </div>
+            <div class="body-2 document-regular_main">
+                <div class="document-regular_texts">
+                    <div class="document-regular_name" data-toggle="">
+<a href="/press/pr/?file=26042024_133000key.htm"><span class="document-regular_name_visible referenceable" id="a_160784">Банк России принял решение сохранить ключевую ставку на&#160;уровне 16,00% годовых</span>
+</a>
+                    </div>
+                    
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+
+    <div class="document-regular">
+        <div class="document-regular_inner">
+            <div class="document-regular_top">
+                                    <div class="document-regular_left_icon"></div>
+                                    <div class="document-regular_date">26.04.2024</div>
+            </div>
+            <div class="body-2 document-regular_main">
+                <div class="document-regular_texts">
+                    <div class="document-regular_name" data-toggle="">
+<a href="/press/event/?id=18647"><span class="document-regular_name_visible referenceable" id="a_160785">Заявление Председателя Банка России Эльвиры Набиуллиной по&#160;итогам заседания Совета директоров Банка России 26&#160;апреля&#160;2024&#160;года</span>
+</a>
+                    </div>
+                    
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    </div>
+</div>
+
+
+
+<div class="dropdown">
+<a aria-controls="DropDown7_content" aria-expanded="false" class="dropdown_title referenceable" data-zone-code="/block159952/zone" id="a_159952" role="button" tabindex="0">Заседание Совета директоров от 22.03.2024</a>
+
+    <div id="DropDown7_content" role="region" aria-labelledby="a_159952" class="dropdown_content">
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">01.04.2024</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/dkp/mp_dec/decision_key_rate/summary_key_rate_01042024/" id="a_160014page">                        <span class="document-regular_name_visible">Резюме обсуждения ключевой ставки</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+    <div class="document-regular">
+        <div class="document-regular_inner">
+            <div class="document-regular_top">
+                                    <div class="document-regular_left_icon"></div>
+                                    <div class="document-regular_date">22.03.2024</div>
+            </div>
+            <div class="body-2 document-regular_main">
+                <div class="document-regular_texts">
+                    <div class="document-regular_name" data-toggle="">
+<a href="/press/pr/?file=22032024_133000key.htm"><span class="document-regular_name_visible referenceable" id="a_159953">Банк России принял решение сохранить ключевую ставку на&#160;уровне 16,00% годовых</span>
+</a>
+                    </div>
+                    
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+
+    <div class="document-regular">
+        <div class="document-regular_inner">
+            <div class="document-regular_top">
+                                    <div class="document-regular_left_icon"></div>
+                                    <div class="document-regular_date">22.03.2024</div>
+            </div>
+            <div class="body-2 document-regular_main">
+                <div class="document-regular_texts">
+                    <div class="document-regular_name" data-toggle="">
+<a href="/press/event/?id=18536"><span class="document-regular_name_visible referenceable" id="a_159954">Заявление Председателя Банка России Эльвиры Набиуллиной по&#160;итогам заседания Совета директоров Банка России 22&#160;марта&#160;2024&#160;года</span>
+</a>
+                    </div>
+                    
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    </div>
+</div>
+
+
+
+<div class="dropdown">
+<a aria-controls="DropDown8_content" aria-expanded="false" class="dropdown_title referenceable" data-zone-code="/block158200/zone" id="a_158200" role="button" tabindex="0">Заседание Совета директоров от 16.02.2024</a>
+
+    <div id="DropDown8_content" role="region" aria-labelledby="a_158200" class="dropdown_content">
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_left_icon"></div>
+                            <div class="document-regular_date">27.02.2024</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/dkp/mp_dec/decision_key_rate/summary_key_rate_27022024/" id="a_158143page">                        <span class="document-regular_name_visible">Резюме обсуждения ключевой ставки</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_format icon-pdf"></div>
+                            <div class="document-regular_date">27.02.2024</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/File/159282/comment_27022024.pdf" id="a_159282file" target="_blank">                        <span class="document-regular_name_visible">Комментарий к среднесрочному прогнозу Банка России</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_format icon-pdf"></div>
+                            <div class="document-regular_date">16.02.2024</div>
+        </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/File/161610/forecast_240216.pdf" id="a_161610file" target="_blank">                        <span class="document-regular_name_visible">Среднесрочный прогноз Банка России</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+    <div class="document-regular">
+        <div class="document-regular_inner">
+            <div class="document-regular_top">
+                                    <div class="document-regular_left_icon"></div>
+                                    <div class="document-regular_date">16.02.2024</div>
+            </div>
+            <div class="body-2 document-regular_main">
+                <div class="document-regular_texts">
+                    <div class="document-regular_name" data-toggle="">
+<a href="/press/pr/?file=16022024_133000key.htm"><span class="document-regular_name_visible referenceable" id="a_158178">Банк России принял решение сохранить ключевую ставку на&#160;уровне 16,00% годовых</span>
+</a>
+                    </div>
+                    
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+
+    <div class="document-regular">
+        <div class="document-regular_inner">
+            <div class="document-regular_top">
+                                    <div class="document-regular_left_icon"></div>
+                                    <div class="document-regular_date">16.02.2024</div>
+            </div>
+            <div class="body-2 document-regular_main">
+                <div class="document-regular_texts">
+                    <div class="document-regular_name" data-toggle="">
+<a href="/press/event/?id=18423"><span class="document-regular_name_visible referenceable" id="a_159220">Заявление Председателя Банка России Эльвиры Набиуллиной по&#160;итогам заседания Совета директоров Банка России 16&#160;февраля&#160;2024&#160;года</span>
+</a>
+                    </div>
+                    
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    </div>
+</div>
+
+                    </div>
+</div>
+
+
+                    
+                    <!--/index-->
+
+    <div class="page-info">
+        <!--noindex-->
+        
+
+
+<div class="page-info_helpful"
+     data-page-feedback=""
+     data-feedback-url="/Content/PageInfo/RegisterFeedback">
+    <!--noindex-->
+    <div class="helpful" data-helpful="">
+        Страница была полезной?
+        <div class="helpful_btns">
+            <button class="helpful_btn _yes" data-helpful-btn="yes"><i class="helpful_icon"></i><span>Да</span></button>
+            <button class="helpful_btn _no" data-helpful-btn="no"><i class="helpful_icon"></i><span>Нет</span></button>
+        </div>
+    </div>
+    <!--/noindex-->
+</div>
+
+            <div class="page-info_last-update">Последнее обновление страницы: 23.09.2026</div>
+        <!--/noindex-->
+    </div>
+                </div>
+            </div>
+    </main>
+
+    <footer class="footer" id="footer">
+    <div class="offsetMenu footer_margin-left">
+        <div class="footer_main">
+            <div class="col-md-23 col-xl-22 offset-md-1 offset-xl-2 footer-size">
+                <div class="footer_top">
+                    <a class="footer_logo" href="/"></a>
+                    <div class="footer_up gotoUp">
+                        <div class="footer_up_title">Наверх</div>
+                        <div class="footer_up_icon"></div>
+                    </div>
+                </div>
+                
+<div class="footer_contacts">
+<div class="footer_address">107016, Москва, ул. Неглинная, д.&nbsp;12, к. В, Банк
+России</div>
+<div class="footer_phones">
+<div class="footer_phone"><a class="footer_phone_val" href="tel:300">300</a><span>(круглосуточно, бесплатно для&nbsp;звонков с&nbsp;мобильных телефонов)</span></div>
+<div class="footer_phone"><a class="footer_phone_val" href="tel:88003003000">8&nbsp;800 300-30-00</a><span>(круглосуточно, бесплатно для&nbsp;звонков из&nbsp;регионов России)</span></div>
+<div class="footer_phone"><a class="footer_phone_val" href="tel:+74993003000">+7&nbsp;499 300-30-00</a><span>(круглосуточно, в&nbsp;соответствии с&nbsp;тарифами вашего оператора)</span></div>
+
+</div>
+</div>
+<div class="footer_main_block">
+<div class="footer_left-menu">
+<div class="footer_left-menu_item"><a href="/lk_uio/">Личный кабинет участника информационного обмена</a></div>
+<div class="footer_left-menu_item"><a href="/about_br/irp/">Отношения с&nbsp;инвесторами</a></div>
+<div class="footer_left-menu_item"><a href="/rbr/list_inside/">Перечень инсайдерской информации Банка России</a></div>
+<div class="footer_left-menu_item"><a href="/analytics/na_vr/">Официальное опубликование нормативных актов Банка России</a></div>
+<div class="footer_left-menu_item"><a href="/project_na/">Проекты нормативных актов Банка России</a></div>
+<div class="footer_left-menu_item"><a href="/other/holidays/">Перечень нерабочих праздничных дней и&nbsp;перенесенных выходных дней</a></div>
+</div>
+<div class="networks-circle footer_networks">
+<a class="networks-circle_item _vk" href="https://vk.com/cbr_official"></a>
+<a class="networks-circle_item _yt" href="https://www.youtube.com/user/BankofRussia"></a>
+<a class="networks-circle_item _tg" href="https://telegram.me/centralbank_russia" title="Telegram"></a>
+<a class="networks-circle_item _ydzen" href="https://dzen.ru/cbr" title="Яндекс Дзен"></a>
+<a class="networks-circle_item _ok" href="https://ok.ru/group/68858679787580" title="Одноклассники"></a>
+<a class="networks-circle_item _rt" href="https://rutube.ru/channel/23873201/" title="RUTUBE"></a>
+<a class="networks-circle_item _max" href="https://max.ru/cbr_official" title="Макс"></a>
+</div>
+</div>
+<div class="footer_menu">
+<div class="footer_menu_items">
+<div class="footer_menu_item"><a href="/about/">О&nbsp;сайте</a></div>
+<div class="footer_menu_item"><a href="/contacts/">Контакты</a></div>
+<div class="footer_menu_item"><a href="/about_br/anticor/">Противодействие коррупции</a></div>
+<div class="footer_menu_item"><a href="/development/">Технические ресурсы</a></div>
+</div>
+<a class="footer_menu_item _visually-impaired" href="#" title="Версия для слабовидящих">
+	<div class="footer_visually-impaired-icon"></div>
+	<div><span class="visually-impaired-on">Версия для&nbsp;слабовидящих</span><span class="visually-impaired-off">Обычная версия</span></div>
+</a>
+</div>
+
+            </div>
+        </div>
+        <div class="footer_bottom">
+            <div class="col-md-23 col-xl-23 offset-md-1 offset-xl-2 row footer_bottom-container">
+                <div class="footer_bottom_text col-md-11 col-xl-11">&#169; Банк России, 2000–2026.</div>
+<div class="footer_bottom_aic col-md-12 col-xl-11">Дизайн сайта — <a href="https://aic.ru" target="_blank"><img src="/common/images/icons/aic-logo.svg" /></a></div>
+
+            </div>
+        </div>
+    </div>
+</footer>
+
+    
+    
+
+        <div class="popup-cookies" data-popup-cookies>
+            <div class="popup-cookies_title">
+                На сайте Банка России используются файлы cookie
+            </div>
+            <div class="popup-cookies_subtitle">
+                Оставаясь на <a href="/">www.cbr.ru</a>, вы принимаете
+                <a href='/user_agreement/'>пользовательское соглашение</a>
+            </div>
+            <button class="btn _medium _blue " data-popup-cookies-btn>
+                Подтвердить
+            </button>
+        </div>
+
+    
+<!--[if IE 9]><script>$('body').addClass('ie9')</script><![endif]-->
+<script src="/Modules/Content/Scripts/PageInfo.js?v=v3116962712" type="text/javascript"></script>
+    <script type="text/javascript">
+        $(function () {
+            Content_PageInfo.init($('[data-page-feedback]'));
+        });
+    </script>
+
+
+
+</body>
+</html>
