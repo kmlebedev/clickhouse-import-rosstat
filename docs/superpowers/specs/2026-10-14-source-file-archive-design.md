@@ -18,7 +18,7 @@
 
 - **Пакет `archive/`**: интерфейс `Store` (Put/Get/Exists), бэкенды `LocalStore` (dev/тесты) и `YandexDisk` (REST API), реестр `Registry`, конструктор `FromEnv`. Без новых зависимостей (stdlib).
 - **Интеграция в общий шаблон** `util.ClickHouseImport`: архивация версии после успешного импорта; проверка «версия известна, но не в архиве» на no-op-пути. Пакеты импортёров **своего кода не меняют**.
-- **Охват**: 13 импортёров с точкой контроля публикации, чей XLSX скачивает сам шаблон, — десять в `cbr/` (`cbr_mp_survey`, `cbr_mo_br`, `cbr_households_b_mes`, `cbr_m2`, `cbr_credit_m2x`, `cbr_loans_to_corporations`, `cbr_loans_to_individuals`, `cbr_bank_int_rate`, `cbr_indicators_cpd`, `cbr_infl_exp`) и три в `rosstat/` (`rosstat_ipc_mes`, `rosstat_salaries_mes`, `rosstat_vvp_kvartal`).
+- **Охват**: 14 импортёров с точкой контроля публикации, чей XLSX скачивает сам шаблон, — десять в `cbr/` (`cbr_mp_survey`, `cbr_mo_br`, `cbr_households_b_mes`, `cbr_m2`, `cbr_credit_m2x`, `cbr_loans_to_corporations`, `cbr_loans_to_individuals`, `cbr_bank_int_rate`, `cbr_indicators_cpd`, `cbr_infl_exp`) и четыре в `rosstat/` (`rosstat_ipc_mes`, `rosstat_salaries_mes`, `rosstat_vvp_kvartal`, `rosstat_labour_force_mes` — последний влит в `main` PR #61 до начала этой ветки и попадает под механизм без правок).
 - **Реестр**: `registry.jsonl` в самом хранилище (истина) + git-зеркало `docs/archive/registry.jsonl` (цель `make archive-registry`).
 - **Нормативные документы**: новый `docs/ROADMAP_INFRA.md`; требование 9.6 в `docs/IMPORTER_PACKAGE_STANDARD.md` (винтажная база — для всех будущих пакетов); ссылка в `AGENTS.md`; `ARCHITECTURE.md`, `README.md`.
 
@@ -167,7 +167,7 @@ type Store interface {
 | Токен истёк/отозван, квота, `429`/`503`/`423` | Различимые `ErrAuth`/`ErrQuota` в логе; warn + self-heal (версия не пишется, следующий прогон дописывает архив); данные не зависят от Диска |
 | Лимиты бесплатного тарифа (объём загрузок, размер одного файла) | 150–250 МБ/год и файлы ≤ нескольких МБ — запас на порядки; проверяется живой приёмкой |
 | Смена семантики префлайта («версия известна» ⇒ «версия в архиве») | Только при включённом архиве; выключение `ARCHIVE_BACKEND` возвращает прежнее поведение; названо в ARCHITECTURE §8 и стандарте §9.6 |
-| Первый прогон после включения — полный ре-импорт 13 артефактов | Ожидаемая разовая цена (так текущие версии попадают в архив); названо в README |
+| Первый прогон после включения — полный ре-импорт 14 артефактов | Ожидаемая разовая цена (так текущие версии попадают в архив); названо в README |
 | Read-modify-write `registry.jsonl` при конкурентных ручных прогонах | Штатный писатель один; строка самолечится префлайтом (см. §3.4) |
 | Заголовки не изменились, содержимое — да (слабость отпечатка) | Унаследована от `source_publications`; `sha256` в реестре фиксирует факт смены содержимого (§3.2) |
 | Утечка токена или подписанной `href` в логи | Только `os.Getenv`; логируется путь на Диске, не `href`/токен |
