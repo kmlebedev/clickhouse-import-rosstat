@@ -36,16 +36,25 @@ func importSalariesMesFixture(t *testing.T) []appendedRow {
 
 func TestSalariesMesReadsFixture(t *testing.T) {
 	rows := importSalariesMesFixture(t)
-	// 418 — число ненулевых числовых ячеек месяцев в выгрузке (июль 1991 — июнь 2026).
-	// Шесть нулей января–июня 1991 («данных не имеется») и пять пустых августа–декабря
-	// 2026 точками не становятся.
-	if len(rows) != 418 {
-		t.Fatalf("точек %d, ожидалось 418", len(rows))
+	// 421 — число ненулевых ячеек месяцев в выгрузке (июль 1991 — июль 2026): 6 точек 1991
+	// года + 408 за 1992–2025 + 7 за январь–июль 2026. Шесть нулей января–июня 1991
+	// («данных не имеется») и пять пустых августа–декабря 2026 точками не становятся.
+	if len(rows) != 421 {
+		t.Fatalf("точек %d, ожидалось 421", len(rows))
 	}
 	for _, row := range rows {
 		if row.series != salariesMesSeriesName {
 			t.Fatalf("%s: ряд %q, ожидался %q", row.date.Format("2006-01-02"), row.series, salariesMesSeriesName)
 		}
+	}
+	// Границы серии: первая точка — июль 1991 (дата сдвинута на 1 августа 1991), последняя —
+	// июль 2026 (1 августа 2026).
+	if want := time.Date(1991, 8, 1, 0, 0, 0, 0, time.UTC); !rows[0].date.Equal(want) {
+		t.Errorf("первая точка %s, ожидалась %s", rows[0].date.Format("2006-01-02"), want.Format("2006-01-02"))
+	}
+	last := rows[len(rows)-1]
+	if want := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC); !last.date.Equal(want) {
+		t.Errorf("последняя точка %s, ожидалась %s", last.date.Format("2006-01-02"), want.Format("2006-01-02"))
 	}
 }
 
@@ -77,8 +86,42 @@ func TestSalariesMesSpotValues(t *testing.T) {
 	}{
 		// Январь 1992 (A9 = 1992, G9 = 1) записан на 1 февраля 1992 — сдвиг AddDate(0, 1, 0).
 		{time.Date(1992, 2, 1, 0, 0, 0, 0, time.UTC), 1},
-		// Июнь 2026 (R43 = 114743) записан на 1 июля 2026 — последняя точка выгрузки.
+		// Июнь 2026 (R43 = 114743) записан на 1 июля 2026 (последняя точка — июль 2026).
 		{time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC), 114743},
+	}
+	for _, spot := range spots {
+		found := false
+		for _, row := range rows {
+			if !row.date.Equal(spot.date) {
+				continue
+			}
+			found = true
+			if row.value != spot.value {
+				t.Errorf("%s: значение %v, ожидалось %v", spot.date.Format("2006-01-02"), row.value, spot.value)
+			}
+		}
+		if !found {
+			t.Errorf("точка %s не найдена", spot.date.Format("2006-01-02"))
+		}
+	}
+}
+
+// TestSalariesMesReadsFootnoteCells — значения октября–декабря 2022 г. источник отдаёт
+// текстом со сноской («62 470(2)»: пробел — разделитель тысяч, «(2)» — номер сноски о
+// покрытии). Это опубликованные значения того же ряда, и они обязаны быть точками: пропуск
+// оставил бы дыру в три месяца головного ряда зарплат.
+func TestSalariesMesReadsFootnoteCells(t *testing.T) {
+	rows := importSalariesMesFixture(t)
+	spots := []struct {
+		date  time.Time
+		value float32
+	}{
+		// P39 = «62 470(2)» — октябрь 2022, точка на 1 ноября 2022.
+		{time.Date(2022, 11, 1, 0, 0, 0, 0, time.UTC), 62470},
+		// Q39 = «63 060(2)» — ноябрь 2022, точка на 1 декабря 2022.
+		{time.Date(2022, 12, 1, 0, 0, 0, 0, time.UTC), 63060},
+		// R39 = «88 468(2)» — декабрь 2022, точка на 1 января 2023.
+		{time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC), 88468},
 	}
 	for _, spot := range spots {
 		found := false

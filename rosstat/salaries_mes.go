@@ -9,7 +9,6 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
-	log "github.com/sirupsen/logrus"
 	"github.com/xuri/excelize/v2"
 )
 
@@ -81,12 +80,13 @@ type salariesMesPoint struct {
 
 // salariesMesValue разбирает ячейку месяца. point == false — ячейка точкой не является:
 // пустая ячейка и литеральный 0 в этом источнике означают «данных не имеется» (§6.7; нули
-// января–июня 1991 квартальные колонки той же строки помечают «…»). Текстовая ячейка со
-// сноской («62 470(2)» — октябрь–декабрь 2022) числом ряда не является: значение записано
-// представлением (разделитель тысяч пробелом плюс номер сноски), и превратить его в число
-// значило бы угадывать и разделитель, и смысл сноски. Такая ячейка пропускается с
-// предупреждением — пропуск виден в прогоне и объявлен в описании ряда (§6.7). Любой другой
-// текст — ошибка: «значение не число там, где ожидалось число» (§6.4).
+// января–июня 1991 квартальные колонки той же строки помечают «…»). Значение, помеченное
+// сноской источника («62 470(2)» — октябрь–декабрь 2022), читается точкой: это
+// опубликованное значение того же ряда, где пробел — разделитель тысяч, а «(2)» — номер
+// сноски о покрытии (без учёта статистической информации по ДНР, ЛНР, Запорожской и
+// Херсонской областям), а не другой показатель. Пропуск такой ячейки оставил бы дыру в три
+// месяца головного ряда. Любой другой текст — ошибка: «значение не число там, где ожидалось
+// число» (§6.4).
 func salariesMesValue(cell string) (value float64, point bool, err error) {
 	cell = strings.TrimSpace(cell)
 	if cell == "" {
@@ -96,24 +96,23 @@ func salariesMesValue(cell string) (value float64, point bool, err error) {
 	if err == nil {
 		return value, value != 0, nil
 	}
-	if salariesMesFootnoteCell(cell) {
-		log.Warnf("salariesMes: ячейка %q записана текстом со сноской — точкой не записана", cell)
-		return 0, false, nil
+	footnote, ok := salariesMesFootnoteValue(cell)
+	if !ok {
+		return 0, false, fmt.Errorf("значение ячейки %q не число: %w", cell, err)
 	}
-	return 0, false, fmt.Errorf("значение ячейки %q не число: %w", cell, err)
+	return footnote, footnote != 0, nil
 }
 
-// salariesMesFootnoteCell распознаёт ячейку, у которой значение записано текстом со сноской
+// salariesMesFootnoteValue разбирает ячейку, у которой значение записано текстом со сноской
 // источника: «62 470(2)». Разделитель тысяч — пробел (в том числе неразрывный), сноска —
 // «(N)» в конце ячейки.
-func salariesMesFootnoteCell(cell string) bool {
+func salariesMesFootnoteValue(cell string) (float64, bool) {
 	i := strings.LastIndex(cell, "(")
 	if i < 1 || !strings.HasSuffix(cell, ")") {
-		return false
+		return 0, false
 	}
-	number := strings.Join(strings.Fields(cell[:i]), "")
-	_, err := strconv.ParseFloat(number, 64)
-	return err == nil
+	value, err := strconv.ParseFloat(strings.Join(strings.Fields(cell[:i]), ""), 64)
+	return value, err == nil
 }
 
 // parseSalariesMes читает листы книги и отдаёт точки ряда. Ячейки берутся сырыми
