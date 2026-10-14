@@ -6,6 +6,11 @@ BINARY    := clickhouse-import-rosstat
 BUILD_DIR := build
 TARGET    := $(BUILD_DIR)/$(BINARY)
 
+# Параллельные сессии: хелперы рабочего дерева и локов общих ресурсов (docs/PARALLEL_SESSIONS.md).
+WT      ?= scripts/worktree.sh
+LOCK    ?= scripts/lock.sh
+RECURSE := $(MAKE) --no-print-directory
+
 CH_BIN       ?= $(or $(shell command -v clickhouse 2>/dev/null),$(lastword $(sort $(wildcard $(HOME)/.clickhouse/versions/*/clickhouse))))
 CH_DIR       ?= $(HOME)/clickhouse-dev/.clickhouse/servers/dev
 CH_DATA      := $(CH_DIR)/data
@@ -63,9 +68,9 @@ STAGING_BIN_DIR  ?= /root/.local/bin
 STAGING_ENV_FILE ?= /etc/clickhouse-import-rosstat.env
 DAGU_VERSION     ?= v2.18.2
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token wt-new wt-list wt-rm session-info hooks-install test-parallel _ch-up _ch-down _grafana-up _grafana-down _deploy-staging-binary _deploy-staging-dagu _deploy-staging-mcp _mcp-user-staging _grafana-provision-staging _grafana-deploy-staging _grafana-deploy-test _grafana-test-token _deploy-staging _upgrade-staging
 
-all: lint test build build-ingest
+all: lint test test-parallel build build-ingest
 
 # lint падает, если что-то не отформатировано, затем запускает golangci-lint,
 # если он установлен. CI выполняет те же проверки.
@@ -95,6 +100,11 @@ run: build
 
 # Локальный ClickHouse для проверок; данные вне репозитория (CH_DIR), бинарник ищется в PATH или ~/.clickhouse.
 ch-up:
+	@$(LOCK) db -- $(RECURSE) _ch-up
+
+# Тело ch-up идёт под локом db (сервер и данные — один ресурс); обёртка уходит
+# в рекурсивный make, поэтому тело не менялось.
+_ch-up:
 	@if curl -sf -m 2 http://localhost:$(CH_HTTP_PORT)/ping >/dev/null 2>&1; then \
 		echo "ClickHouse уже отвечает на порту $(CH_HTTP_PORT)"; \
 	elif [ -f "$(CH_PID)" ] && kill -0 $$(cat "$(CH_PID)") 2>/dev/null; then \
@@ -116,6 +126,11 @@ ch-up:
 # Останавливает сервер и ждёт завершения до 60 с. Если процесс пережил сигнал, pid-файл
 # НЕ удаляется: иначе следующий ch-down не найдёт процесс, а ch-up скажет «уже отвечает».
 ch-down:
+	@$(LOCK) db -- $(RECURSE) _ch-down
+
+# Гашение сервера — тот же ресурс db, что и запись: ch-down не может совпасть
+# с работающим импортом в ту же базу.
+_ch-down:
 	@if [ -f "$(CH_PID)" ] && kill -0 $$(cat "$(CH_PID)") 2>/dev/null; then \
 		kill $$(cat "$(CH_PID)"); \
 		for i in $$(seq 1 60); do kill -0 $$(cat "$(CH_PID)") 2>/dev/null || break; sleep 1; done; \
@@ -143,7 +158,7 @@ ch-sql:
 	@test -f "$(FILE)" || { echo "файл не найден: $(FILE)"; exit 1; }
 	@test -n "$(CH_BIN)" || { echo "clickhouse не найден: задайте CH_BIN=/путь/к/clickhouse"; exit 1; }
 	@curl -sf -m 2 http://localhost:$(CH_HTTP_PORT)/ping >/dev/null 2>&1 || { echo "ClickHouse не отвечает: make ch-up"; exit 1; }
-	"$(CH_BIN)" client --user "$(CH_USER)" --password "$(CH_USER_PASSWORD)" --multiquery < "$(FILE)"
+	@$(LOCK) db -- "$(CH_BIN)" client --user "$(CH_USER)" --password "$(CH_USER_PASSWORD)" --multiquery < "$(FILE)"
 
 # Проверка окружения разработчика: наличие инструментов и версий.
 dev-check:
@@ -167,7 +182,7 @@ import:
 	@test -n "$(STAT)" || { echo "укажите импортёр: make import STAT=bea"; exit 1; }
 	@mkdir -p $(BUILD_DIR)
 	go build -o $(BUILD_DIR)/$(BINARY)-native .
-	CLICKHOUSE_IMPORT_STAT=$(STAT) ./$(BUILD_DIR)/$(BINARY)-native
+	CLICKHOUSE_IMPORT_STAT=$(STAT) $(LOCK) db -- ./$(BUILD_DIR)/$(BINARY)-native
 
 # Ingest-сервис контура прогноза (единственный путь записи в model_runs/forecast_log/macro_series).
 # Нужны CLICKHOUSE_URL и INGEST_TOKEN из $(ROSSTAT_ENV); INGEST_ADDR по умолчанию :8081.
@@ -175,6 +190,8 @@ build-ingest:
 	@mkdir -p $(BUILD_DIR)
 	go build -o $(BUILD_DIR)/ingest ./cmd/ingest
 
+# Лока нет намеренно: порт :8081 сам не даст поднять второй экземпляр, а демон живёт
+# часами — держать db (или stand) всё это время нельзя (заблокировало бы все импорты).
 run-ingest: build-ingest
 	./$(BUILD_DIR)/ingest
 
@@ -192,7 +209,7 @@ mcp-run:
 mcp-user:
 	@test -n "$$CLICKHOUSE_PASSWORD" || { echo "задайте CLICKHOUSE_PASSWORD (пароль пользователя $(MCP_USER))"; exit 1; }
 	@curl -sf -m 2 http://localhost:$(CH_HTTP_PORT)/ping >/dev/null 2>&1 || { echo "ClickHouse не отвечает: make ch-up"; exit 1; }
-	python3 scripts/mcp_setup_user.py
+	@$(LOCK) db -- python3 scripts/mcp_setup_user.py
 
 # Сид поактивного AISC Полюса, экстраполированный на LOM: калибровка по пресс-релизам
 # 4Q/FY 2018-2021 (фикстуры в scripts/testdata), факт добычи из databook_polyus.
@@ -229,7 +246,12 @@ staging-precheck:
 
 # Бинарник импортёра: сборка, атомарная подмена, пропуск копирования при совпадении sha256.
 # Подмена через .new + mv: scp поверх работающего файла даёт Text file busy.
-deploy-staging-binary: staging-precheck build
+deploy-staging-binary:
+	@$(LOCK) staging -- $(RECURSE) _deploy-staging-binary
+
+# Лок staging берёт цель целиком: тело живёт под приватной целью, обёртка уходит в
+# рекурсивный make (вложенные $(MAKE) внутри тела не дедлочатся — reentrancy лока).
+_deploy-staging-binary: staging-precheck build
 	@set -e; \
 	local_sum=$$(shasum -a 256 $(TARGET) | cut -d' ' -f1); \
 	remote_sum=$$(ssh $(STAGING_HOST) 'sha256sum $(STAGING_BIN_DIR)/clickhouse-import-rosstat 2>/dev/null | cut -d" " -f1' || true); \
@@ -252,7 +274,10 @@ DAGU_URL := https://github.com/dagu-org/dagu/releases/download/$(DAGU_VERSION)/d
 
 # dagu: скачать релизный tarball, подменить бинарник, поставить юнит. Идемпотентно по версии.
 # Старый бинарник сохраняется в .bak — им пользуется откат (см. deploy/staging/README.md).
-deploy-staging-dagu: staging-precheck
+deploy-staging-dagu:
+	@$(LOCK) staging -- $(RECURSE) _deploy-staging-dagu
+
+_deploy-staging-dagu: staging-precheck
 	@set -e; \
 	want=$$(echo $(DAGU_VERSION) | sed 's/^v//'); \
 	have=$$(ssh $(STAGING_HOST) '$(STAGING_BIN_DIR)/dagu version 2>/dev/null' | head -1 || true); \
@@ -276,7 +301,10 @@ deploy-staging-dagu: staging-precheck
 
 # mcp-clickhouse: юнит + прогрев кэша uv (пакет разрешается при старте сервиса).
 # Отдельного «скачивания» нет: uv разрешает пакет по пину MCP_VERSION.
-deploy-staging-mcp: staging-precheck
+deploy-staging-mcp:
+	@$(LOCK) staging -- $(RECURSE) _deploy-staging-mcp
+
+_deploy-staging-mcp: staging-precheck
 	scp deploy/staging/mcp-clickhouse.service $(STAGING_HOST):/etc/systemd/system/mcp-clickhouse.service
 	ssh $(STAGING_HOST) 'systemctl daemon-reload'
 	@echo "прогрев кэша uv (скачивание mcp-clickhouse==$(MCP_VERSION))..."
@@ -287,7 +315,12 @@ deploy-staging-mcp: staging-precheck
 # Порядок критичен. Сервисы включаются последними: dagu после `enable --now` немедленно
 # начинает выполнять DAG'и по расписанию, поэтому сначала проверяется, что бинарь и
 # DAG-файлы на месте (deploy-staging-preflight), и только потом сервисы запускаются.
-deploy-staging: deploy-staging-binary deploy-staging-dagu deploy-staging-mcp
+deploy-staging:
+	@$(LOCK) staging -- $(RECURSE) _deploy-staging
+
+# Лок staging взят на входе агрегата, поэтому вся последовательность (бинарь → dagu → mcp →
+# DAG'и → включение → smoke) сериализована целиком; подцели под локом не дедлочатся.
+_deploy-staging: deploy-staging-binary deploy-staging-dagu deploy-staging-mcp
 	ssh $(STAGING_HOST) 'install -d -m 755 /root/dagu'
 	scp dagu/*.yaml $(STAGING_HOST):/root/dagu/
 	# scp копирует, но не удаляет: снятый с репозитория DAG остался бы на хосте и продолжил бы
@@ -335,7 +368,11 @@ deploy-staging-smoke:
 
 # Обновление ТОЛЬКО dagu и mcp-clickhouse до версий из репозитория.
 # apt upgrade сюда НЕ входит: ClickHouse (данные) и Grafana обновляются вручную.
-upgrade-staging: deploy-staging-dagu deploy-staging-mcp
+upgrade-staging:
+	@$(LOCK) staging -- $(RECURSE) _upgrade-staging
+
+# Как у deploy-staging: лок staging на входе, обновление версий и smoke — целиком под ним.
+_upgrade-staging: deploy-staging-dagu deploy-staging-mcp
 	ssh $(STAGING_HOST) 'systemctl restart dagu mcp-clickhouse'
 	@echo "сервисы перезапущены на версиях: dagu $(DAGU_VERSION), mcp-clickhouse $(MCP_VERSION)"
 	@$(MAKE) deploy-staging-smoke --no-print-directory
@@ -344,6 +381,9 @@ upgrade-staging: deploy-staging-dagu deploy-staging-mcp
 # пользователя (kimi_reader) — разные сущности, поэтому две переменные.
 # Секреты идут через stdin ssh (не через argv): аргументы видны в ps на обеих машинах.
 mcp-user-staging:
+	@$(LOCK) staging -- $(RECURSE) _mcp-user-staging
+
+_mcp-user-staging:
 	@test -n "$$CLICKHOUSE_PASSWORD" || { echo "задайте CLICKHOUSE_PASSWORD (пароль kimi_reader)"; exit 1; }
 	@test -n "$$CH_SETUP_PASSWORD" || { echo "задайте CH_SETUP_PASSWORD (пароль пользователя default на $(STAGING_HOST))"; exit 1; }
 	scp scripts/mcp_setup_user.py $(STAGING_HOST):/tmp/mcp_setup_user.py
@@ -378,6 +418,10 @@ grafana-validate:
 # И CLI, и серверу нужен --homepath: у brew-бинаря не найти conf/defaults.ini ни из
 # рабочего каталога репозитория, ни по GF_PATHS_HOME (проверено на 13.2.3).
 grafana-up:
+	@$(LOCK) stand -- $(RECURSE) _grafana-up
+
+# Как у ch-up: под локом stand идёт вся цель, поэтому тело — под приватной целью.
+_grafana-up:
 	@if curl -sf -m 2 http://localhost:$(GF_PORT)/api/health >/dev/null 2>&1; then \
 		echo "Grafana уже отвечает на порту $(GF_PORT)"; \
 	elif [ -f "$(GF_PID)" ] && kill -0 $$(cat "$(GF_PID)") 2>/dev/null; then \
@@ -405,6 +449,9 @@ grafana-up:
 # Останавливает сервер и ждёт завершения до 60 с. Если процесс пережил сигнал, pid-файл
 # НЕ удаляется: иначе следующий grafana-down не найдёт процесс, а grafana-up скажет «уже отвечает».
 grafana-down:
+	@$(LOCK) stand -- $(RECURSE) _grafana-down
+
+_grafana-down:
 	@if [ -f "$(GF_PID)" ] && kill -0 $$(cat "$(GF_PID)") 2>/dev/null; then \
 		kill $$(cat "$(GF_PID)"); \
 		for i in $$(seq 1 60); do kill -0 $$(cat "$(GF_PID)") 2>/dev/null || break; sleep 1; done; \
@@ -427,6 +474,11 @@ grafana-down:
 #                                                 # "overwrite": true} — сама spec без обёртки не принимается
 # Полезно перед живым прогоном: gcx resources push dashboards --path dashboard/gold-thesis.json --dry-run
 grafana-deploy-test:
+	@$(LOCK) stand -- $(RECURSE) _grafana-deploy-test
+
+# Тело — под приватной целью: лок stand берёт цель целиком (как у grafana-up),
+# а push на локальный стенд пишет в общий инстанс Grafana.
+_grafana-deploy-test:
 	@test -n "$$GRAFANA_TOKEN" || { echo "задайте GRAFANA_TEST_TOKEN в $(ROSSTAT_ENV) (сервис-аккаунт Editor на $(GRAFANA_TEST_URL))"; exit 1; }
 	GRAFANA_SERVER=$(GRAFANA_TEST_URL) GRAFANA_ORG_ID=$(GRAFANA_ORG_ID) \
 		gcx resources push dashboards --path dashboard/gold-thesis.json
@@ -461,6 +513,11 @@ GRAFANA_ADMIN_PASSWORD ?= admin
 GRAFANA_SA_NAME        ?= dashboards-cd
 GRAFANA_SA_ROLE        ?= Editor
 grafana-test-token:
+	@$(LOCK) stand -- $(RECURSE) _grafana-test-token
+
+# Тело — под приватной целью: токен создаётся (и сервис-аккаунт заводится) на общем
+# локальном стенде Grafana, поэтому цель берёт лок stand.
+_grafana-test-token:
 	@curl -sf -m 2 $(GRAFANA_TEST_URL)/api/health >/dev/null 2>&1 || { echo "стенд не отвечает: make grafana-up"; exit 1; }
 	@sa_json=$$(curl -sf -m 5 -u "$$GRAFANA_ADMIN_USER:$$GRAFANA_ADMIN_PASSWORD" "$(GRAFANA_TEST_URL)/api/serviceaccounts/search?perpage=100") \
 		|| { echo "не удалось прочитать список сервис-аккаунтов $(GRAFANA_TEST_URL): проверьте GRAFANA_ADMIN_USER/GRAFANA_ADMIN_PASSWORD"; exit 1; }; \
@@ -509,6 +566,11 @@ GRAFANA_DATASOURCE_TMPL   ?= deploy/staging/grafana-datasource.yaml
 GRAFANA_DATASOURCE_REMOTE ?= /etc/grafana/provisioning/datasources/clickhouse.yaml
 GRAFANA_DATASOURCE_TMP    ?= /tmp/grafana-datasource.staging.yaml
 grafana-provision-staging:
+	@$(LOCK) staging -- $(RECURSE) _grafana-provision-staging
+
+# Лок staging на входе: цель вызывается и из grafana-deploy-staging, и отдельно —
+# reentrancy лока не даёт вложенному вызову дедлочиться.
+_grafana-provision-staging:
 	@test -f "$(GRAFANA_DATASOURCE_TMPL)" || { echo "нет шаблона $(GRAFANA_DATASOURCE_TMPL)"; exit 1; }
 	@scp -q "$(GRAFANA_DATASOURCE_TMPL)" "$(STAGING_HOST):$(GRAFANA_DATASOURCE_TMP)" || { echo "scp: шаблон не доехал до $(STAGING_HOST)"; exit 1; }
 	@ssh $(STAGING_HOST) 'set -eu; \
@@ -535,6 +597,10 @@ grafana-provision-staging:
 # в $(ROSSTAT_ENV); gcx общается с инстансом через туннель, а панели — с ClickHouse хоста.
 # Grafana и systemd на хосте не трогаются: нужен только поднятый туннель.
 grafana-deploy-staging:
+	@$(LOCK) staging -- $(RECURSE) _grafana-deploy-staging
+
+# Лок staging на весь деплой: провижининг датасорса + push + smoke идут одной очередью.
+_grafana-deploy-staging:
 	@test -n "$$GRAFANA_STAGING_TOKEN" || { echo "задайте GRAFANA_STAGING_TOKEN в $(ROSSTAT_ENV) — токен сервис-аккаунта Editor на staging; создаётся одноразово вручную (runbook: docs/superpowers/specs/2026-10-12-grafana-gold-thesis-design.md §6)"; exit 1; }
 	@curl -sf -m 3 $(GRAFANA_STAGING_URL)/api/health >/dev/null 2>&1 || { echo "staging Grafana не отвечает на $(GRAFANA_STAGING_URL): поднимите туннель — ssh -N -L 3001:127.0.0.1:3000 $(STAGING_HOST)"; exit 1; }
 	@$(MAKE) grafana-provision-staging --no-print-directory
@@ -542,6 +608,43 @@ grafana-deploy-staging:
 		gcx resources push dashboards --path dashboard/gold-thesis.json
 	@GRAFANA_URL=$(GRAFANA_STAGING_URL) GRAFANA_TOKEN="$$GRAFANA_STAGING_TOKEN" \
 		python3 scripts/grafana_check.py --uid $(DASHBOARD_UID)
+
+# --- Параллельные сессии (регламент: docs/PARALLEL_SESSIONS.md) ---
+# Одна сессия = одно дерево = одна ветка; общие ресурсы (ClickHouse, стенд Grafana, staging)
+# сериализуются локом — пишущие цели берут его сами, read-only цели не берут.
+
+# Новое рабочее дерево сессии: каталог .worktrees/<slug> и ветка <TYPE>/<slug>.
+NAME ?=
+TYPE ?= feat
+BASE ?= main
+wt-new:
+	@test -n "$(NAME)" || { echo "укажите имя дерева: make wt-new NAME=<slug> [TYPE=feat] [BASE=main]"; exit 1; }
+	@$(WT) new NAME=$(NAME) TYPE=$(TYPE) BASE=$(BASE)
+
+wt-list:
+	@$(WT) list
+
+wt-rm:
+	@test -n "$(NAME)" || { echo "укажите имя дерева: make wt-rm NAME=<slug> [FORCE=1]"; exit 1; }
+	@$(WT) rm NAME=$(NAME) $(if $(FORCE),FORCE=1,)
+
+# Дерево, ветка, состояние и активные локи текущей сессии.
+session-info:
+	@$(WT) info
+
+# Хук на защищённые ветки: core.hooksPath лежит в .git/config, поэтому действует во всех
+# деревьях сразу. Путь относительный — git разрешает его от корня того дерева, где идёт коммит
+# (проверено экспериментом: в linked worktree хук срабатывает, если в этом дереве есть каталог
+# .githooks, то есть в каждом дереве, созданном от ветки с этим каталогом; дерево от `main`,
+# куда .githooks ещё не влит, хука не получит — молча, без ошибки).
+hooks-install:
+	@chmod +x .githooks/pre-commit
+	@git config core.hooksPath .githooks
+	@echo "git-хуки включены: core.hooksPath=.githooks"
+
+# Самотесты лок- и worktree-хелпера (герметичные, ~5 с).
+test-parallel:
+	@sh scripts/parallel_sessions_test.sh
 
 info:
 	@echo "BINARY    = $(TARGET)"
