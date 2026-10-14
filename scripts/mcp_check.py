@@ -541,7 +541,8 @@ async def check(params, server_log):
                 rosstat_view_detail = f"строк: {rosstat_points_n}, рядов: {rosstat_series_n}"
             else:
                 rosstat_view_detail = (f"строк: {rosstat_points_n}, рядов: {rosstat_series_n} — прогнать "
-                                       "импортёры контура (make import STAT=ipc_mes|ipc_weeks|salaries_mes|vvp_kvartal)")
+                                       "импортёры контура (make import STAT=rosstat_ipc_mes, "
+                                       "STAT=rosstat_ipc_weeks, STAT=rosstat_salaries_mes, STAT=rosstat_vvp_kvartal)")
             failed += not expect("витрина v_rosstat_macro непуста",
                                  (rosstat_points_n or 0) > 0 and (rosstat_series_n or 0) > 0, rosstat_view_detail)
 
@@ -563,8 +564,9 @@ async def check(params, server_log):
                 rosstat_catalog_detail = "рядов rosstat: 141 (4 ИПЦ + 131 недельный + 5 ВВП + 1 зарплата)"
             else:
                 rosstat_catalog_detail = (f"рядов rosstat: {rosstat_catalog_n}, want 141 — прогнать "
-                                          "make import STAT=ipc_mes, STAT=ipc_weeks, STAT=salaries_mes и "
-                                          "STAT=vvp_kvartal (каталог перепубликовывается каждым прогоном)")
+                                          "make import STAT=rosstat_ipc_mes, STAT=rosstat_ipc_weeks, "
+                                          "STAT=rosstat_salaries_mes и STAT=rosstat_vvp_kvartal "
+                                          "(каталог перепубликовывается каждым прогоном)")
             failed += not expect("каталог rosstat полон", rosstat_catalog_n == 141, rosstat_catalog_detail)
 
             # Сырые таблицы контура агенту не выданы — как macro_series и
