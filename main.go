@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/kmlebedev/clickhouse-import-rosstat/archive"
@@ -46,9 +47,10 @@ var (
 // до ParseDSN (подключения к базе в этом режиме не происходит вовсе). Путь зеркала настраивается
 // (ARCHIVE_REGISTRY_OUT), но штатно он один: цель Makefile и README называют этот же файл.
 const (
-	archiveActionRegistry = "registry"
-	envArchiveRegistryOut = "ARCHIVE_REGISTRY_OUT"
-	defaultRegistryOut    = "docs/archive/registry.jsonl"
+	archiveActionRegistry        = "registry"
+	envArchiveRegistryOut        = "ARCHIVE_REGISTRY_OUT"
+	envArchiveRegistryAllowEmpty = "ARCHIVE_REGISTRY_ALLOW_EMPTY"
+	defaultRegistryOut           = "docs/archive/registry.jsonl"
 )
 
 func main() {
@@ -108,7 +110,9 @@ func main() {
 // зеркало читают глазами и версионируют, а восстановление версий идёт по оригиналу.
 // Отсутствие файла в хранилище — не ошибка, а ответ «архив ещё не наполнялся»: пишем пустое
 // зеркало, иначе первый прогон падал бы на пустом архиве, а зеркало в git задним числом
-// врало бы «архива нет» вместо «пока ничего не сохранено».
+// врало бы «архива нет» вместо «пока ничего не сохранено». Пустой реестр поверх **непустого**
+// зеркала — наоборот, отказ: пустой файл неотличим от «все версии потеряны», и затирание
+// разрешает только явный ARCHIVE_REGISTRY_ALLOW_EMPTY=1 (с warn в логе).
 func runArchiveRegistry(ctx context.Context) error {
 	store, err := archive.FromEnv(util.HttpClient)
 	if err != nil {
@@ -135,6 +139,25 @@ func runArchiveRegistry(ctx context.Context) error {
 		}
 	} else {
 		log.Warnf("реестр архива пуст: %s", archive.RegistryKey)
+	}
+	// Пустой реестр в хранилище — законный ответ «архив ещё не наполнялся», но непустое зеркало
+	// он затрёт молча: пустой файл неотличим от «все версии потеряны», а зеркало в git — витрина
+	// реестра и вход будущего восстановления (§3.4). Поэтому запись пустого файла поверх непустого —
+	// отказ, и разрешает её только явный ARCHIVE_REGISTRY_ALLOW_EMPTY=1 с warn в логе: осознанное
+	// действие дежурного, у которого архив действительно пересоздан с нуля.
+	if len(bytes.TrimSpace(body)) == 0 {
+		mirror, readErr := os.ReadFile(out)
+		switch {
+		case readErr == nil && len(bytes.TrimSpace(mirror)) > 0:
+			if os.Getenv(envArchiveRegistryAllowEmpty) != "1" {
+				return fmt.Errorf("реестр в хранилище пуст, а %s непуст: запись затёрла бы git-зеркало (%s=1 — разрешить)", out, envArchiveRegistryAllowEmpty)
+			}
+			log.Warnf("реестр в хранилище пуст: %s затирается по %s=1", out, envArchiveRegistryAllowEmpty)
+		case readErr != nil && !errors.Is(readErr, os.ErrNotExist):
+			// Прочитать зеркало не удалось — неизвестно, непусто ли оно, а писать поверх «наугад»
+			// значит потерять его молча; та же ошибка была бы и у записи.
+			return fmt.Errorf("чтение %s: %w", out, readErr)
+		}
 	}
 	if err = os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 		return err
