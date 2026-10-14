@@ -211,7 +211,10 @@ func TestIpcMesUnknownSheetWarns(t *testing.T) {
 	if err := ipcMesImport(f, rec); err != nil {
 		t.Fatalf("лист «05» — ожидаемое изменение источника, ошибки быть не должно: %v", err)
 	}
-	if !strings.Contains(logged.String(), "05") {
+	// logrus экранирует кавычки внутри сообщения, поэтому в буфере имя листа записано как
+	// \"05\": проверяется форма с именем листа, а не голая подстрока «05» (её дал бы любой
+	// год 05 и любое число с этими цифрами).
+	if !strings.Contains(logged.String(), `лист \"05\"`) {
 		t.Errorf("в предупреждении нет имени листа «05»: %q", logged.String())
 	}
 	counts := countBySeries(rec.rows)

@@ -218,8 +218,9 @@ async def check(params, server_log):
             elif catalog_wgc_n == 34:
                 catalog_wgc_detail = "рядов wgc: 34 (20 ETF + 14 ЦБ)"
             else:
-                catalog_wgc_detail = (f"рядов wgc: {catalog_wgc_n}, want 34 — прогнать "
-                                      "make import STAT=wgc_etf_flows и STAT=wgc_cb_reserves")
+                catalog_wgc_detail = (f"рядов wgc: {catalog_wgc_n}, want 34 — прогнать по одному: "
+                                      "make import STAT=wgc_etf_flows, затем "
+                                      "make import STAT=wgc_cb_reserves")
             failed += not expect("каталог wgc полон", catalog_wgc_n == 34, catalog_wgc_detail)
 
             # Консенсус аналитиков — 11 строк сида. Пустой v_gold_forecasts означает
@@ -541,13 +542,15 @@ async def check(params, server_log):
                 rosstat_view_detail = f"строк: {rosstat_points_n}, рядов: {rosstat_series_n}"
             else:
                 rosstat_view_detail = (f"строк: {rosstat_points_n}, рядов: {rosstat_series_n} — прогнать "
-                                       "импортёры контура (make import STAT=rosstat_ipc_mes, "
-                                       "STAT=rosstat_ipc_weeks, STAT=rosstat_salaries_mes, STAT=rosstat_vvp_kvartal)")
+                                       "импортёры контура по одному: make import STAT=<имя> для "
+                                       "каждого из rosstat_ipc_mes, rosstat_ipc_weeks, "
+                                       "rosstat_salaries_mes, rosstat_vvp_kvartal")
             failed += not expect("витрина v_rosstat_macro непуста",
                                  (rosstat_points_n or 0) > 0 and (rosstat_series_n or 0) > 0, rosstat_view_detail)
 
-            # Каталог описывает все 141 ряд источника: 4 ИПЦ (ipc_mes) + 131 недельный
-            # товар (ipc_weeks) + 5 рядов ВВП (vvp_kvartal) + 1 зарплата (salaries_mes).
+            # Каталог описывает все 141 ряд источника: 4 ИПЦ (rosstat_ipc_mes) + 131 недельный
+            # товар (rosstat_ipc_weeks) + 5 рядов ВВП (rosstat_vvp_kvartal) + 1 зарплата
+            # (rosstat_salaries_mes).
             # Число сверяется точным равенством, а не «> 0»: односторонний контракт §11.4
             # стандарта требует описания каждого разобранного ряда, а меньше 141 значит
             # ни разу не отработавший импортёр (числа агент прочитает, а что измеряет ряд
@@ -564,8 +567,9 @@ async def check(params, server_log):
                 rosstat_catalog_detail = "рядов rosstat: 141 (4 ИПЦ + 131 недельный + 5 ВВП + 1 зарплата)"
             else:
                 rosstat_catalog_detail = (f"рядов rosstat: {rosstat_catalog_n}, want 141 — прогнать "
-                                          "make import STAT=rosstat_ipc_mes, STAT=rosstat_ipc_weeks, "
-                                          "STAT=rosstat_salaries_mes и STAT=rosstat_vvp_kvartal "
+                                          "импортёры по одному: make import STAT=<имя> для каждого "
+                                          "из rosstat_ipc_mes, rosstat_ipc_weeks, "
+                                          "rosstat_salaries_mes, rosstat_vvp_kvartal "
                                           "(каталог перепубликовывается каждым прогоном)")
             failed += not expect("каталог rosstat полон", rosstat_catalog_n == 141, rosstat_catalog_detail)
 

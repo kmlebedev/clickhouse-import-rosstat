@@ -139,7 +139,9 @@ func parseSalariesMes(xlsx *excelize.File) ([]salariesMesPoint, error) {
 		// совпадение: повтор «1991» в колонке A якорь не сдвигает.
 		anchor := -1
 		for i, row := range rows {
-			if len(row) > 0 && row[0] == salariesMesField {
+			// TrimSpace — как у якоря ipc_weeks.go (§6.3): сравнение сырой ячейки не нашло бы
+			// якорь, если выгрузка записала его с пробелом.
+			if len(row) > 0 && strings.TrimSpace(row[0]) == salariesMesField {
 				anchor = i
 				break
 			}
