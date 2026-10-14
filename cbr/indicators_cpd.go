@@ -39,11 +39,11 @@ type indicatorsCpdStat struct {
 // обновлении, поэтому ссылку ищем на странице, а не хардкодим. Вызывается из Import():
 // сетевые вызовы в init() запрещены (ARCHITECTURE.md §8.6).
 func (s *indicatorsCpdStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	page, err := getPage(indicatorsCpdUrl)
+	page, err := util.GetPage(indicatorsCpdUrl)
 	if err != nil {
 		return count, fmt.Errorf("indicatorsCpd: %s: %w", indicatorsCpdUrl, err)
 	}
-	href, err := findLink(page, indicatorsCpdLinkSelector)
+	href, err := util.FindLink(page, indicatorsCpdLinkSelector)
 	if err != nil {
 		return count, fmt.Errorf("indicatorsCpd: не найдена ссылка на xlsx на %s: %w", indicatorsCpdUrl, err)
 	}

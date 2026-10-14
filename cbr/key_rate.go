@@ -95,7 +95,7 @@ func keyRateRows(html []byte) ([]cbrPoint, error) {
 }
 
 func cbrKeyRateCraw(crawUrl string, conn driver.Conn) (count int64, err error) {
-	page, err := getPage(crawUrl)
+	page, err := util.GetPage(crawUrl)
 	if err != nil {
 		return count, fmt.Errorf("%s: %w", cbrKeyRateTable, err)
 	}

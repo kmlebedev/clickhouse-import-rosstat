@@ -36,13 +36,13 @@ SELECT * FROM (
     
     UNION ALL SELECT 'cbr_households_b_mes', name, count(), min(date), max(date) FROM cbr_households_b_mes FINAL GROUP BY name
     
-    UNION ALL SELECT 'ipc_mes', name, count(), min(date), max(date) FROM ipc_mes FINAL GROUP BY name
+    UNION ALL SELECT 'rosstat_ipc_mes', name, count(), min(date), max(date) FROM rosstat_ipc_mes FINAL GROUP BY name
     
-    UNION ALL SELECT 'ipc_weeks', name, count(), min(date), max(date) FROM ipc_weeks FINAL GROUP BY name
+    UNION ALL SELECT 'rosstat_ipc_weeks', name, count(), min(date), max(date) FROM rosstat_ipc_weeks FINAL GROUP BY name
     
-    UNION ALL SELECT 'vvp_kvartal', name, count(), min(date), max(date) FROM vvp_kvartal FINAL GROUP BY name
+    UNION ALL SELECT 'rosstat_vvp_kvartal', name, count(), min(date), max(date) FROM rosstat_vvp_kvartal FINAL GROUP BY name
     
-    UNION ALL SELECT 'salaries_mes', name, count(), min(date), max(date) FROM salaries_mes FINAL GROUP BY name
+    UNION ALL SELECT 'rosstat_salaries_mes', name, count(), min(date), max(date) FROM rosstat_salaries_mes FINAL GROUP BY name
     
     UNION ALL SELECT 'minfin_fed_bud_mes', name, count(), min(date), max(date) FROM minfin_fed_bud_mes FINAL GROUP BY name
     

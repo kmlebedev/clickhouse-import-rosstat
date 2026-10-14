@@ -4,14 +4,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
 )
 
 // TestCreditM2xFindLink: селектор страницы ДКС находит credit_m2x.xlsx.
 func TestCreditM2xFindLink(t *testing.T) {
-	href, err := findLink(readCbrTestdata(t, "credit_m2x_page.html"), cbrCreditM2xLinkSelector)
+	href, err := util.FindLink(readCbrTestdata(t, "credit_m2x_page.html"), cbrCreditM2xLinkSelector)
 	if err != nil {
-		t.Fatalf("findLink: %v", err)
+		t.Fatalf("FindLink: %v", err)
 	}
 	if !strings.HasSuffix(href, "credit_m2x.xlsx") {
 		t.Errorf("href %q должен указывать на credit_m2x.xlsx", href)

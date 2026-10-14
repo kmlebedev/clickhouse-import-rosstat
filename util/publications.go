@@ -27,7 +27,7 @@ const PublicationsTable = "source_publications"
 // размывал бы «канонический» статус. Комментарии колонок — часть спекового литерала и остаются
 // в тексте SQL; ClickHouse их отбрасывает.
 const PublicationsDdl = `CREATE TABLE IF NOT EXISTS source_publications (
-    source LowCardinality(String),  -- источник-потребитель: 'cbr_mo_br', 'ipc_mes', … (ключ версии: PublicationSource импортёра или его TableName)
+    source LowCardinality(String),  -- источник-потребитель: 'cbr_mo_br', 'rosstat_ipc_mes', … (ключ версии: PublicationSource импортёра или его TableName)
     name LowCardinality(String),    -- имя артефакта: 'full.xlsx'
     fingerprint String,             -- md5 от (имя|ETag|Last-Modified|Content-Length) — отпечаток версии контента
     first_seen DateTime,            -- когда конвейер впервые увидел эту версию
