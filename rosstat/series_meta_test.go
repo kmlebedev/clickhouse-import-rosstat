@@ -20,11 +20,16 @@ type appendRecorder struct {
 	appendErr error
 }
 
-// appendedRow — один вызов Append: ряд, дата и значение точки.
+// appendedRow — один вызов Append: ряд, дата и значение точки. Значение — float64 у обоих
+// поддерживаемых типов записи, поэтому рядом лежит valueType: без него тест не отличит
+// float32-запись legacy-таблицы (rosstat_salaries_mes, колонка Float32) от float64-записи новой
+// таблицы, а схема колонки иначе не проверяется ничем. Legacy-тесты, ожидавшие float32 (у
+// самой записи шаг представления float32), сравнивают значение явным float64(float32(x)).
 type appendedRow struct {
-	series string
-	date   time.Time
-	value  float32
+	series    string
+	date      time.Time
+	value     float64
+	valueType string
 }
 
 var _ driver.Batch = (*appendRecorder)(nil)
@@ -44,11 +49,19 @@ func (r *appendRecorder) Append(v ...any) error {
 	if !ok {
 		return fmt.Errorf("appendRecorder: дата %T, ожидалось time.Time", v[1])
 	}
-	value, ok := v[2].(float32)
-	if !ok {
-		return fmt.Errorf("appendRecorder: значение %T, ожидалось float32", v[2])
+	// Значение принимается в обоих типах: legacy-импортёры пакета пишут float32 (колонка
+	// Float32 их таблиц), новые — float64 (колонка Float64). Тип запомнен отдельно — по нему
+	// тест проверяет схему колонки.
+	var value float64
+	switch typed := v[2].(type) {
+	case float32:
+		value = float64(typed)
+	case float64:
+		value = typed
+	default:
+		return fmt.Errorf("appendRecorder: значение %T, ожидалось float32 или float64", v[2])
 	}
-	r.rows = append(r.rows, appendedRow{series: series, date: date, value: value})
+	r.rows = append(r.rows, appendedRow{series: series, date: date, value: value, valueType: fmt.Sprintf("%T", v[2])})
 	return nil
 }
 
