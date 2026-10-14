@@ -177,6 +177,93 @@ func archiveTestRegistryEntry(t *testing.T, rt *archiveRuntime, key string) arch
 	return found[0]
 }
 
+// archiveUntouchedStore — хранилище, которого префлайт CrawFunc-импортёра касаться не должен:
+// такой импортёр архивом не покрыт (файл качает он сам, шаблон его байтов не видит, а запись архива
+// живёт в ветке ImportFunc), поэтому любое обращение здесь — ошибка логики, а не данных. Отсюда
+// паника, а не учёт вызовов (образец — publicationUntouchedConn из publications_test.go); список
+// вызовов всё равно ведётся: зелёный прогон обязан утверждать «ноль обращений» явно, а не только
+// отсутствием паники.
+type archiveUntouchedStore struct {
+	archive.Store
+	calls []string
+}
+
+func (s *archiveUntouchedStore) Name() string {
+	s.calls = append(s.calls, "Name")
+	panic("префлайт CrawFunc-импортёра обратился к архиву: Name")
+}
+
+func (s *archiveUntouchedStore) Put(context.Context, string, []byte) error {
+	s.calls = append(s.calls, "Put")
+	panic("префлайт CrawFunc-импортёра обратился к архиву: Put")
+}
+
+func (s *archiveUntouchedStore) Get(context.Context, string) ([]byte, error) {
+	s.calls = append(s.calls, "Get")
+	panic("префлайт CrawFunc-импортёра обратился к архиву: Get")
+}
+
+func (s *archiveUntouchedStore) Exists(context.Context, string) (bool, error) {
+	s.calls = append(s.calls, "Exists")
+	panic("префлайт CrawFunc-импортёра обратился к архиву: Exists")
+}
+
+// CrawFunc-импортёр с точкой контроля (bank/sber_fin_rez.go: sber_rpbu) архивом не покрыт, и
+// проверка «версия в архиве» на его no-op-пути была бы вечной деградацией: объекта в архиве нет и
+// не будет, поэтому no-op не наступил бы ни разу, пока ARCHIVE_BACKEND настроен, — ежедневный
+// полный краул и warn в логе у импортёра, который включение архива менять не должно (спека §3.3:
+// CrawFunc не трогается). Гейт `s.ImportFunc != nil` в шаблоне держится ровно этим тестом:
+// хранилище паникует на любое обращение.
+func TestClickHouseImportArchiveSkippedForCrawFunc(t *testing.T) {
+	const recorded = uint64(42)
+	store := &archiveUntouchedStore{}
+	archiveRuntimeForTests = &archiveRuntime{store: store, registry: archive.NewRegistry(store)}
+	t.Cleanup(func() { archiveRuntimeForTests = nil })
+
+	srv := newArchiveTestServer(t)
+	conn := &publicationFakeConn{rows: []driver.Row{
+		&publicationFakeRow{points: recorded}, // source_publications: версия записала 42 точки
+		&publicationFakeRow{points: recorded}, // count() в таблице: те же 42 — совпало
+	}}
+	importer := &ClickHouseImport{
+		TableName:              "sber_rpbu",
+		CreateTable:            []string{"CREATE TABLE IF NOT EXISTS %s (source String) ENGINE = Memory"},
+		DataUrl:                srv.url,
+		PublicationCountPoints: archiveTestCountPoints,
+	}
+	importer.CrawFunc = func(string, driver.Conn) (int64, error) {
+		t.Error("CrawFunc вызван: известная версия у CrawFunc-импортёра обязана остаться no-op")
+		return 0, nil
+	}
+	importer.AfterImport = func(context.Context, driver.Conn) error {
+		t.Error("AfterImport вызван на no-op прогоне: производные опубликованы прошлым импортом")
+		return nil
+	}
+
+	count, err := importer.Import(context.Background(), conn)
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if count != int64(recorded) {
+		t.Errorf("count = %d, ожидалось %d (число точек известной версии)", count, recorded)
+	}
+	if len(store.calls) != 0 {
+		t.Errorf("обращения к архиву %v: CrawFunc-импортёр архивом не покрыт — проверки быть не должно", store.calls)
+	}
+	if srv.gets.Load() != 0 {
+		t.Errorf("GET-запросов %d, ожидалось ноль: no-op файл не скачивает", srv.gets.Load())
+	}
+	if len(conn.batchQueries) != 0 {
+		t.Errorf("no-op писал в БД: батчи %v", conn.batchQueries)
+	}
+	// DDL шаблона → DDL таблицы версий → SELECT версии → count точек. Ни одного обращения к хранилищу
+	// между ними: проверка архива у CrawFunc-импортёра отключена целиком.
+	wantCalls := []string{"Exec", "Exec", "QueryRow", "QueryRow"}
+	if !reflect.DeepEqual(conn.calls, wantCalls) {
+		t.Errorf("порядок обращений\n получили %v\n ожидали %v", conn.calls, wantCalls)
+	}
+}
+
 // archiveTestVersionBatch — батч строки версии в source_publications или nil. Батчи различаются
 // запросом, а не порядком: у пути ImportFunc батч точек идёт первым, и перепутать их нельзя.
 func archiveTestVersionBatch(conn *publicationFakeConn) *publicationFakeBatch {

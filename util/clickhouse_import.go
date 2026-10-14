@@ -139,9 +139,15 @@ func (s *ClickHouseImport) Import(ctx context.Context, conn driver.Conn) (count 
 		if noop && fingerprint != "" {
 			// «Версия известна» и «версия в архиве» — одно утверждение механизма: no-op при
 			// отсутствующем объекте означал бы версию, которую из архива уже не восстановить
-			// (спека §3.2). Проверка стоит один Store.Exists и включается тем же условием, что и
+			// (спека §3.2). Проверка стоит один Store.Exists и включается теми же условиями, что и
 			// архивация: архива нет — лишних вызовов нет.
-			if rt := activeArchive(); rt != nil {
+			//
+			// s.ImportFunc — не украшение: архив покрывает только импортёров, чей файл качает шаблон
+			// (запись архива живёт в ветке ImportFunc, CrawFunc его байтов не видит). У CrawFunc-импортёра
+			// с точкой контроля (bank/sber_fin_rez.go) объекта в архиве нет и не будет, поэтому проверка
+			// на его no-op-пути была бы вечной деградацией: no-op не наступал бы ни разу, пока
+			// ARCHIVE_BACKEND настроен, — ежедневный полный краул. CrawFunc не трогается (спека §3.3).
+			if rt := activeArchive(); rt != nil && s.ImportFunc != nil {
 				if exists, archiveErr := rt.versionExists(ctx, s.PublicationKey(), s.DataUrl, fingerprint); archiveErr != nil {
 					log.Warnf("%s: версия %s известна, но проверка архива не удалась (%v) — полный импорт", s.PublicationKey(), fingerprint, archiveErr)
 					noop = false
