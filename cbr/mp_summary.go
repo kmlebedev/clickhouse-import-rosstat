@@ -15,7 +15,7 @@ import (
 const (
 	// mpSummaryIndexUrl — индекс материалов заседаний ЦБ: карточки «Резюме обсуждения
 	// ключевой ставки» с датой публикации и относительным href. Домен навешивает
-	// импортёр (cbrUrl) — как в findLink; страница резюме = cbrUrl + href.
+	// импортёр (cbrUrl) — как в util.FindLink; страница резюме = cbrUrl + href.
 	mpSummaryIndexUrl = "https://www.cbr.ru/dkp/mp_dec/decision_key_rate/"
 
 	// mpSummaryName — имя импортёра в CLICKHOUSE_IMPORT_STAT и id шага dagu/cbr.yaml;
@@ -201,7 +201,7 @@ func (s *mpSummaryStat) Import(ctx context.Context, conn driver.Conn) (count int
 	}
 
 	// 3.
-	index, err := getPage(mpSummaryIndexUrl)
+	index, err := util.GetPage(mpSummaryIndexUrl)
 	if err != nil {
 		return 0, fmt.Errorf("%s: %s: %w", mpSummaryName, mpSummaryIndexUrl, err)
 	}
@@ -264,7 +264,7 @@ func (s *mpSummaryStat) Import(ctx context.Context, conn driver.Conn) (count int
 	docs := make([]mpFetchedSummary, 0, len(missing))
 	for _, ref := range missing {
 		url := cbrUrl + ref.Href
-		page, pageErr := getPage(url)
+		page, pageErr := util.GetPage(url)
 		if pageErr != nil {
 			return 0, fmt.Errorf("%s: %s: %w", mpSummaryName, url, pageErr)
 		}
@@ -587,7 +587,7 @@ func mpFetchPending(past []mpPastSummary, pending map[time.Time]bool) []mpLLMDoc
 		if !pending[p.MeetingDate] || p.Url == "" {
 			continue
 		}
-		page, err := getPage(p.Url)
+		page, err := util.GetPage(p.Url)
 		if err != nil {
 			log.Warnf("%s: LLM-догон %s: страница %s не скачана: %v", mpSummaryName,
 				p.MeetingDate.Format(mpSummaryDayLayout), p.Url, err)

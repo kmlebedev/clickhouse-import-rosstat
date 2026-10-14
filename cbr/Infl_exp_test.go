@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
 )
 
@@ -18,7 +19,7 @@ func TestFindLinkMissingAnchor(t *testing.T) {
 		"пустой href":     {[]byte(`<html><body><a class="versions_item" href="">x</a></body></html>`), inflExpLinkSelector},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if href, err := findLink(tc.page, tc.sel); err == nil {
+			if href, err := util.FindLink(tc.page, tc.sel); err == nil {
 				t.Errorf("ожидалась ошибка, получен href %q", href)
 			}
 		})
@@ -27,9 +28,9 @@ func TestFindLinkMissingAnchor(t *testing.T) {
 
 // TestInflExpFindLink: на странице инфляционных ожиданий первая ссылка — свежий xlsx.
 func TestInflExpFindLink(t *testing.T) {
-	href, err := findLink(readCbrTestdata(t, "infl_exp_page.html"), inflExpLinkSelector)
+	href, err := util.FindLink(readCbrTestdata(t, "infl_exp_page.html"), inflExpLinkSelector)
 	if err != nil {
-		t.Fatalf("findLink: %v", err)
+		t.Fatalf("FindLink: %v", err)
 	}
 	if !strings.HasSuffix(href, ".xlsx") || !strings.Contains(href, "Infl_exp_") {
 		t.Errorf("href %q не похож на свежий Infl_exp_*.xlsx", href)

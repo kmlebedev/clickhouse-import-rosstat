@@ -4,14 +4,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
 )
 
 // TestIndicatorsCpdFindLink: позиционный селектор страницы aipd находит indicators_cpd.xlsx.
 func TestIndicatorsCpdFindLink(t *testing.T) {
-	href, err := findLink(readCbrTestdata(t, "aipd_page.html"), indicatorsCpdLinkSelector)
+	href, err := util.FindLink(readCbrTestdata(t, "aipd_page.html"), indicatorsCpdLinkSelector)
 	if err != nil {
-		t.Fatalf("findLink: %v", err)
+		t.Fatalf("FindLink: %v", err)
 	}
 	if !strings.HasSuffix(href, "indicators_cpd.xlsx") {
 		t.Errorf("href %q должен указывать на indicators_cpd.xlsx", href)
