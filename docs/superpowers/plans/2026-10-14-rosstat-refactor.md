@@ -490,14 +490,14 @@ git commit -m "ipc_weeks: port to util.ClickHouseImport, harden parsing"
 
 ```python
 # Контур Росстата: витрина видна и НЕПУСТА (пустая витрина от неотработавшего
-# импортёра успехом не считается), каталог описывает все 138 рядов источника,
+# импортёра успехом не считается), каталог описывает все 141 ряд источника,
 # четыре сырые таблицы агенту закрыты.
 failed += not expect("витрина v_rosstat_macro видна", "v_rosstat_macro" in tables, "list_tables default")
 rosstat = text(await session.call_tool("run_query", {"query": "SELECT count() AS rows, uniqExact(series) AS series FROM v_rosstat_macro"}))
-# ожидание: строк > 0 (число меняется с каждым прогоном источника), рядов 138
+# ожидание: строк > 0 (число меняется с каждым прогоном источника), рядов 141
 # (4 ИПЦ + 128 недельных + 5 ВВП + 1 зарплата)
 rosstat_catalog = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'rosstat'"}))
-# ожидание: n == 138
+# ожидание: n == 141
 for raw in ("rosstat_ipc_mes", "rosstat_ipc_weeks", "rosstat_salaries_mes", "rosstat_vvp_kvartal"):
     denied = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {raw}"}))
     failed += not expect(f"сырая {raw} закрыта", denied_clickhouse(denied), f"отказ ClickHouse на {raw} (ожидаемо)")
@@ -574,7 +574,7 @@ Expected: `ПРОВЕРКА ПРОЙДЕНА`; exit 0 (единственное 
 
 - [ ] **Step 10: Обновить статусы роадмапа**
 
-`docs/ROADMAP_KEY_RATE.md`: §4.1 — строки `salaries_mes`/`vvp_kvartal` больше не «пусто», с числом строк и диапазоном; §6 фаза 2 — первый шаг закрыт ссылкой на блок приёмки; §8 — строка риска про технический долг `rosstat/` обновлена. Приёмочный блок — по образцу блока фазы 3 (`cbr/`): команда → результат, плюс названные расхождения (raw-точность, изменение имён рядов `ipc_mes`, рост каталога 132 → 138).
+`docs/ROADMAP_KEY_RATE.md`: §4.1 — строки `salaries_mes`/`vvp_kvartal` больше не «пусто», с числом строк и диапазоном; §6 фаза 2 — первый шаг закрыт ссылкой на блок приёмки; §8 — строка риска про технический долг `rosstat/` обновлена. Приёмочный блок — по образцу блока фазы 3 (`cbr/`): команда → результат, плюс названные расхождения (raw-точность, изменение имён рядов `ipc_mes`, рост каталога 132 → 141).
 
 - [ ] **Step 11: Коммит**
 

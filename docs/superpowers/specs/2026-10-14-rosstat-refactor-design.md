@@ -88,13 +88,13 @@
 | `views/model_inputs.go` | `ipc_mes`→`rosstat_ipc_mes`, `ipc_weeks`→`rosstat_ipc_weeks` в `Tables` и `Select` |
 | `sql/key_rate_coverage.sql` | 4 строки на новых именах |
 | `util/publications.go`, `cbr/views.go` | комментарии-примеры с именами таблиц |
-| `scripts/mcp_check.py` | проверки контура Росстата: витрина непуста, каталог 138 рядов, четыре сырые таблицы закрыты |
+| `scripts/mcp_check.py` | проверки контура Росстата: витрина непуста, каталог 141 ряд, четыре сырые таблицы закрыты |
 | `AGENTS.md`, `ARCHITECTURE.md`, `README.md`, `docs/ROADMAP_KEY_RATE.md`, `docs/ROADMAP_DCF_POLYUS.md`, `docs/KEY_RATE_PUBLICATIONS.md` | ссылки на стандарт, имена таблиц, статусы |
 | `rosstat/data/` | **удаляется** (фикстура переезжает в `testdata/`) |
 
 ### 4.3. Что не меняется
 
-Состав импортёров (4), их расписание (`четверг 12:17`, `dagu/rosstat.yaml`), имя витрины `v_rosstat_macro` и её грант в `sql/mcp_kimi_reader.sql`, `rosstatSource = "rosstat"`, число рядов каталога (138), семантика дат всех четырёх рядов, наборы товаров `ipc_weeks` и структура DDL.
+Состав импортёров (4), их расписание (`четверг 12:17`, `dagu/rosstat.yaml`), имя витрины `v_rosstat_macro` и её грант в `sql/mcp_kimi_reader.sql`, `rosstatSource = "rosstat"`, число рядов каталога (141: 4 + 131 + 5 + 1), семантика дат всех четырёх рядов, наборы товаров `ipc_weeks` и структура DDL.
 
 ## 5. Риски и митигации
 
