@@ -84,6 +84,16 @@ var (
 	// «Совет директоров Банка России <D> <месяц> <YYYY> года <глагол>» стабильно во всех
 	// трёх эпохах (hold/hike/cut).
 	mpDecisionRe = regexp.MustCompile(`Совет\s+директоров\s+Банка\s+России\s+(\d{1,2})\s+([а-яё]+)\s+(\d{4})\s+года\s+(сохранил|повысил|снизил)`)
+	// mpLevelSetRe — вторая закреплённая форма того же ядра: направления в ней нет,
+	// «принял решение установить ставку на уровне». Живая проба приёмки шага 1.2 (2026-10-14)
+	// нашла её на двух страницах 2024 года — 27022024 (16.02.2024) и 01042024 (22.03.2024);
+	// в реестре KEY_RATE_CHANNELS.md §1 оба заседания — «сохранить». Уровень объявлен «на уровне»,
+	// а не «до»: «до» ЦБ пишет только о смене («повысил … до 21,00% годовых», «снизил … до
+	// 14,50% годовых»), «на уровне» — о неизменном («сохранил … на уровне 14,00% годовых»),
+	// поэтому форма читается как hold, а «с <дата>» в ней отбрасывается тем же правилом, что у
+	// hold, — у сохранения ставки дата вступления срока не имеет. «Установить ставку до …%»
+	// намеренно не распознаётся: это была бы смена уровня, и её разбор — отдельное решение.
+	mpLevelSetRe = regexp.MustCompile(`Совет\s+директоров\s+Банка\s+России\s+(\d{1,2})\s+([а-яё]+)\s+(\d{4})\s+года\s+принял\s+решение\s+установить\s+ставку\s+на\s+уровне`)
 	// mpVerbRe — резервная форма: предложение с глаголом решения, но без узнаваемого ядра
 	// («Банк России снизил ключевую ставку…»); дату заседания тогда даёт mpMeetingFallbackRe.
 	mpVerbRe = regexp.MustCompile(`(сохранил|повысил|снизил)\s+ключевую\s+ставку`)
@@ -96,6 +106,10 @@ var (
 	// основаны на данных, доступных к 11 сентября 2026 года» (в 07052026 — «доступных на»).
 	mpMeetingFallbackRe = regexp.MustCompile(`данных,\s+доступных\s+(?:к|на)\s+(\d{1,2})\s+([а-яё]+)\s+(\d{4})\s+года`)
 )
+
+// mpLevelSetAction — действие решения формы «принял решение установить ставку на уровне»
+// (mpLevelSetRe): направления в формулировке нет, «на уровне» означат неизменный уровень.
+const mpLevelSetAction = "hold"
 
 // mpVerbAction — действие по глаголу решения.
 var mpVerbAction = map[string]string{
@@ -296,12 +310,25 @@ func mpParseDecision(blocks []mpSummaryBlock, header string) (mpSummaryDoc, erro
 	}, nil
 }
 
+// mpDecisionMatch — закреплённое ядро решения в предложении: сначала форма с глаголом
+// направления, затем форма «принял решение установить ставку на уровне». Возвращает подматчи
+// ядра (группы 1–3 — дата заседания, m[0] — якорь для ставки) и действие; nil, если ядра нет.
+func mpDecisionMatch(sent string) ([]string, string) {
+	if m := mpDecisionRe.FindStringSubmatch(sent); m != nil {
+		return m, mpVerbAction[m[4]]
+	}
+	if m := mpLevelSetRe.FindStringSubmatch(sent); m != nil {
+		return m, mpLevelSetAction
+	}
+	return nil, ""
+}
+
 // mpFindDecision ищет предложение с решением: сначала по закреплённому ядру, затем (если
 // ядро не встретилось) по глаголу — тогда дата заседания берётся из фразы-дублёра в шапке.
 func mpFindDecision(conclusion []mpSummaryBlock, header string) (time.Time, string, float64, *time.Time, error) {
 	for _, b := range conclusion {
 		for _, sent := range mpSentences(b.Text) {
-			m := mpDecisionRe.FindStringSubmatch(sent)
+			m, action := mpDecisionMatch(sent)
 			if m == nil {
 				continue
 			}
@@ -313,7 +340,6 @@ func mpFindDecision(conclusion []mpSummaryBlock, header string) (time.Time, stri
 			if err != nil {
 				return time.Time{}, "", 0, nil, err
 			}
-			action := mpVerbAction[m[4]]
 			effective, err := mpParseEffective(rest, action)
 			if err != nil {
 				return time.Time{}, "", 0, nil, err

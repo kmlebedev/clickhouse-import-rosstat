@@ -407,6 +407,45 @@ func TestParseMPSummaryDecisionFallback(t *testing.T) {
 	}
 }
 
+// TestParseMPSummaryLevelSet — резюме 01.04.2024 (заседание 22.03.2024): решение в форме
+// «принял решение установить ставку на уровне 16,00% годовых с 25 марта 2024 года» — в
+// закреплённом ядре нет глагола направления. Направление читается по обороту «на уровне»
+// (о неизменном уровне; о смене ЦБ пишет «до»), поэтому действие — hold, а «с 25 марта»
+// отбрасывается, как у любого hold. Форма найдена живой приёмкой 2026-10-14 (шаг 1.2):
+// без неё импорт падал на двух страницах 2024 года — 01042024 и 27022024.
+func TestParseMPSummaryLevelSet(t *testing.T) {
+	doc, err := parseMPSummary(mpFixture(t, "mp_summary_01042024.html"))
+	if err != nil {
+		t.Fatalf("parseMPSummary: %v", err)
+	}
+	if !doc.MeetingDate.Equal(utcDate(2024, time.March, 22)) {
+		t.Errorf("MeetingDate = %s, ожидалось 2024-03-22", doc.MeetingDate.Format("2006-01-02"))
+	}
+	if doc.Action != "hold" {
+		t.Errorf("Action = %q, ожидалось hold", doc.Action)
+	}
+	if doc.Rate != 16.0 {
+		t.Errorf("Rate = %v, ожидалось 16", doc.Rate)
+	}
+	if doc.EffectiveFrom != nil {
+		t.Errorf("EffectiveFrom = %s, ожидалось nil (у hold даты вступления нет)",
+			doc.EffectiveFrom.Format("2006-01-02"))
+	}
+	if !strings.Contains(doc.Signal, "не следует давать дополнительный направленный сигнал") {
+		t.Errorf("Signal = %q, ожидалась фраза «не следует давать дополнительный направленный сигнал»", doc.Signal)
+	}
+
+	mpCheckBlockCounts(t, doc.Blocks, map[string]mpBlockStat{
+		"Ситуация в экономике и инфляция": {paragraphs: 10},
+		"Денежно-кредитные условия":       {paragraphs: 7, bullets: 5},
+		"Внешние условия":                 {paragraphs: 5, bullets: 2},
+		"Инфляционные риски":              {paragraphs: 3, bullets: 5},
+		"Выводы для денежно-кредитной политики и решение по ключевой ставке": {paragraphs: 7, bullets: 7},
+	})
+	mpCheckSeq(t, doc.Blocks)
+	mpCheckNormalized(t, doc.Blocks)
+}
+
 // TestParseMPFailFast — разбор падает (не отдаёт частичные данные) на каждом классе
 // дефектов: пропал один из пяти h2-блоков, не распознано решение, пустой индекс, блок без
 // абзацев. Ошибка называет место дефекта — иначе подтест прошёл бы на любой другой ошибке.
@@ -432,6 +471,18 @@ func TestParseMPFailFast(t *testing.T) {
 		page := strings.ReplaceAll(string(mpFixture(t, "mp_summary_23092026.html")),
 			"сохранил", "оставил")
 		_, err := parseMPSummary([]byte(page))
+		fail(t, err, "решение")
+	})
+
+	t.Run("LevelSetWithoutLevel", func(t *testing.T) {
+		page := mpFixture(t, "mp_summary_01042024.html")
+		mutated := strings.ReplaceAll(string(page),
+			"принял решение установить ставку на&nbsp;уровне",
+			"принял решение установить ставку до&nbsp;уровня")
+		if mutated == string(page) {
+			t.Fatal("мутация не применилась: не найдена формулировка решения")
+		}
+		_, err := parseMPSummary([]byte(mutated))
 		fail(t, err, "решение")
 	})
 
