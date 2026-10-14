@@ -72,7 +72,7 @@ func requireParsedDescribed(t *testing.T, parsed []string, described map[string]
 }
 
 func TestIpcWeeksSeriesMetaCoversFixture(t *testing.T) {
-	xlsx, err := excelize.OpenFile("data/nedel_ipc_2023.xlsx")
+	xlsx, err := excelize.OpenFile("testdata/ipc_weeks.xlsx")
 	if err != nil {
 		t.Fatal(err)
 	}
