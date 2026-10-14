@@ -580,7 +580,7 @@ func TestTagMPChannelsLLMNoTextBlock(t *testing.T) {
 			t.Errorf("ошибка %v не классифицирована как ошибка формата", err)
 		}
 		if mock.calls() != 1 {
-			t.Errorf("запросов %d, ожидался 1 (ретрейт решает mpLLMAsk, а не mpLLMAskOnce)", mock.calls())
+			t.Errorf("запросов %d, ожидался 1 (ретрай решает mpLLMAsk, а не mpLLMAskOnce)", mock.calls())
 		}
 	})
 
@@ -622,10 +622,14 @@ func TestTagMPChannelsLLMFencedJSON(t *testing.T) {
 // TestTagMPChannelsLLM500 — отказ провайдера (500) возвращается ошибкой сразу, без ретрая:
 // повтором он не лечится, а импортёр по ошибке уходит в деградацию. Счётчик запросов пинит и
 // выключенные повторы SDK (WithMaxRetries(0): с дефолтными двумя их было бы три — 500 для SDK
-// ретраебелен). Ключ в текст ошибки не попадает (он едет заголовком x-api-key).
+// ретраибелен). Ключ в текст ошибки не попадает (он едет заголовком x-api-key), а тело ответа
+// обрезается до фрагмента: *anthropic.Error печатает его целиком, и сырое тело (десятки
+// килобайт JSON) уехало бы в warn-лог импортёра.
 func TestTagMPChannelsLLM500(t *testing.T) {
 	doc := mpLLMFixtureDoc(t)
-	mock := mpNewLLMMock(t, mpLLMMockResponse{Status: http.StatusInternalServerError, Body: `{"error":"internal"}`})
+	// Тело заметно больше фрагмента (512 байт) и начинается с узнаваемой метки.
+	body := `{"error":{"type":"api_error","message":"` + strings.Repeat("провайдер упал; ", 300) + `"}}`
+	mock := mpNewLLMMock(t, mpLLMMockResponse{Status: http.StatusInternalServerError, Body: body})
 
 	matches, err := tagMPChannelsLLM(doc, mock.url, "test-key", "test-model")
 	if err == nil {
@@ -634,8 +638,18 @@ func TestTagMPChannelsLLM500(t *testing.T) {
 	if !strings.Contains(err.Error(), "500") {
 		t.Errorf("ошибка %v не содержит код 500", err)
 	}
+	if !strings.Contains(err.Error(), "провайдер упал") {
+		t.Errorf("ошибка %v не содержит узнаваемого начала тела ответа", err)
+	}
+	if got := len(err.Error()); got > 1024 {
+		t.Errorf("текст ошибки %d байт — тело провайдера не обрезано: %v", got, err)
+	}
 	if strings.Contains(err.Error(), "test-key") {
 		t.Errorf("в текст ошибки утёк ключ API: %v", err)
+	}
+	// Ошибка провайдера — не формат: ретрая формата нет (иначе вызовов было бы два).
+	if mpIsFormatError(err) {
+		t.Errorf("отказ провайдера классифицирован как ошибка формата: %v", err)
 	}
 	if mock.calls() != 1 {
 		t.Errorf("запросов %d, ожидался 1 (отказ провайдера не повторяется)", mock.calls())
@@ -692,4 +706,72 @@ func TestTagMPChannelsLLMTimeout(t *testing.T) {
 	if strings.Contains(err.Error(), "test-key") {
 		t.Errorf("в текст ошибки утёк ключ API: %v", err)
 	}
+}
+
+// TestTagMPChannelsLLMBodyReadBroken — обрыв чтения тела успешного ответа (200, обещанный
+// Content-Length больше записанного, соединение закрыто) классифицируется форматом: один ретрай,
+// ровно два запроса, финальная ошибка — mpLLMFormatError, документ деградирует до regex-слоя
+// (ошибка наверх, как у любого второго подряд провала формата).
+//
+// Повтор тут осознанный: SDK приносит обрыв чтения как io.ErrUnexpectedEOF через
+// «error reading response body: %w», а обрезанный JSON — тем же io.ErrUnexpectedEOF через
+// «error parsing response json: %w». Различить их по типам нельзя, а матчинг по тексту SDK хрупок
+// (переживёт не любую версию), поэтому оба случая — формат (см. mpIsJSONDecodeError): цена одного
+// лишнего вызова меньше риска оставить документ без разметки из-за обрыва TCP.
+func TestTagMPChannelsLLMBodyReadBroken(t *testing.T) {
+	doc := mpLLMFixtureDoc(t)
+	var mu sync.Mutex
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		// Обещаем больше, чем запишем: для клиента это обрыв тела, а не конец ответа.
+		w.Header().Set("Content-Length", "4096")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"id":"msg_1","type":"message","content":[{"type":"text","text":"`)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		// http.ErrAbortHandler обрывает соединение, не дописав тело (в лог сервера не шумит).
+		panic(http.ErrAbortHandler)
+	}))
+	defer srv.Close()
+
+	t.Run("mpLLMAskOnce классифицирует обрыв как формат", func(t *testing.T) {
+		_, err := mpLLMAskOnce(doc, srv.URL, "test-key", "test-model")
+		if err == nil {
+			t.Fatal("обрыв чтения тела: ожидалась ошибка")
+		}
+		if !mpIsFormatError(err) {
+			t.Errorf("ошибка %v не классифицирована как ошибка формата", err)
+		}
+		if !errors.Is(err, io.ErrUnexpectedEOF) {
+			t.Errorf("ошибка %v не несёт io.ErrUnexpectedEOF — изменилась семантика SDK", err)
+		}
+	})
+
+	t.Run("tagMPChannelsLLM делает один ретрай и деградирует", func(t *testing.T) {
+		mu.Lock()
+		before := calls
+		mu.Unlock()
+		matches, err := tagMPChannelsLLM(doc, srv.URL, "test-key", "test-model")
+		if err == nil {
+			t.Fatalf("обрыв чтения тела: ожидалась ошибка, получены матчи %+v", matches)
+		}
+		if !mpIsFormatError(err) {
+			t.Errorf("финальная ошибка %v не является ошибкой формата (импортёр деградирует по любой ошибке, но ретрай ждём именно формата)", err)
+		}
+		mu.Lock()
+		got := calls - before
+		mu.Unlock()
+		if got != 2 {
+			t.Errorf("запросов %d, ожидалось 2 (первый + ретрай формата)", got)
+		}
+		if strings.Contains(err.Error(), "test-key") {
+			t.Errorf("в текст ошибки утёк ключ API: %v", err)
+		}
+	})
 }

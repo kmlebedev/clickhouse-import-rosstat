@@ -134,7 +134,8 @@ func TestGetJSONTimeoutFails(t *testing.T) {
 	}
 }
 
-// errorSnippet — то, что дежурный увидит в логе при отказе API, поэтому важны все
+// ErrorSnippet — то, что дежурный увидит в логе при отказе API (свой и провайдерский:
+// им же режется тело ошибки LLM-провайдера в cbr/mp_summary_llm.go), поэтому важны все
 // ветки: тело должно остаться узнаваемым, но коротким и одной строкой (многострочный
 // HTML разорвал бы запись лога), а пробельное тело — не превратиться в пустоту после
 // двоеточия.
@@ -185,18 +186,18 @@ func TestErrorSnippet(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := errorSnippet([]byte(tt.body))
+			got := ErrorSnippet([]byte(tt.body))
 			if tt.wantExact != "" && got != tt.wantExact {
-				t.Errorf("errorSnippet() = %q, ожидалось %q", got, tt.wantExact)
+				t.Errorf("ErrorSnippet() = %q, ожидалось %q", got, tt.wantExact)
 			}
 			if tt.wantHas != "" && !strings.Contains(got, tt.wantHas) {
-				t.Errorf("errorSnippet() = %q, не содержит начала тела %q", got, tt.wantHas)
+				t.Errorf("ErrorSnippet() = %q, не содержит начала тела %q", got, tt.wantHas)
 			}
 			if tt.wantMaxBytes > 0 && len(got) > tt.wantMaxBytes {
-				t.Errorf("errorSnippet() = %d байт, ожидалось не больше %d", len(got), tt.wantMaxBytes)
+				t.Errorf("ErrorSnippet() = %d байт, ожидалось не больше %d", len(got), tt.wantMaxBytes)
 			}
 			if tt.wantValidUTF8 && !utf8.ValidString(got) {
-				t.Errorf("errorSnippet() = %q — не валидный UTF-8, обрезка разрезала руну", got)
+				t.Errorf("ErrorSnippet() = %q — не валидный UTF-8, обрезка разрезала руну", got)
 			}
 			if strings.ContainsAny(got, "\n\r") {
 				t.Errorf("errorSnippet() = %q — не одна строка", got)
