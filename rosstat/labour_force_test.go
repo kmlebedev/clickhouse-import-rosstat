@@ -126,6 +126,13 @@ func TestLabourForceSpotValues(t *testing.T) {
 		{"Уровень безработицы", time.Date(2017, time.January, 31, 0, 0, 0, 0, time.UTC), 5.6},
 		// B131 = 76389.482 — последний месяц выгрузки, июль 2026.
 		{"Рабочая сила", time.Date(2026, time.July, 31, 0, 0, 0, 0, time.UTC), 76389.482},
+		// C131 = 74660.473, D131 = 1729.009 и E131 = 62.9 — занятые, безработные и уровень
+		// участия июля 2026. Рабочая сила за этот месяц пинтится строкой выше, но остальные
+		// колонки последнего месяца иначе не закреплены тестом, а урезание фикстуры или сдвиг
+		// строки-секции года меняет именно их.
+		{"Занятые", time.Date(2026, time.July, 31, 0, 0, 0, 0, time.UTC), 74660.473},
+		{"Безработные", time.Date(2026, time.July, 31, 0, 0, 0, 0, time.UTC), 1729.009},
+		{"Уровень участия в составе рабочей силы", time.Date(2026, time.July, 31, 0, 0, 0, 0, time.UTC), 62.9},
 		// F131 = 61.5 и G131 = 2.3 — уровни занятости и безработицы июля 2026.
 		{"Уровень занятости", time.Date(2026, time.July, 31, 0, 0, 0, 0, time.UTC), 61.5},
 		{"Уровень безработицы", time.Date(2026, time.July, 31, 0, 0, 0, 0, time.UTC), 2.3},
@@ -361,6 +368,67 @@ func TestLabourForceLostMonthLabelFails(t *testing.T) {
 	}
 }
 
+// TestLabourForceRemovedMonthRowFails — источник потерял строку месяца (RemoveRow удалил февраль
+// 2017), поэтому март идёт сразу за январём. До проверки последовательности разбор отдавал 684
+// точки и err=nil, префлайт записывал points=684, и месячная дыра в головном ряду канала
+// оставалась навсегда без сигнала (версия известна — дальше вечный no-op). Теперь разбор обязан
+// упасть и назвать строку, сбитый месяц и предыдущий — по-русски.
+func TestLabourForceRemovedMonthRowFails(t *testing.T) {
+	xlsx := mutateLabourForceFixture(t, func(f *excelize.File) {
+		// Строка 9 — февраль 2017; строки ниже сдвигаются, и март оказывается строкой 9.
+		if err := f.RemoveRow(labourForceSheet, 9); err != nil {
+			t.Fatal(err)
+		}
+	})
+	points, err := parseLabourForce(xlsx)
+	if err == nil {
+		t.Fatalf("потеря строки месяца разобрана без ошибки: %d точек вместо ошибки", len(points))
+	}
+	if points != nil {
+		t.Errorf("на ошибке вернулось %d точек, ожидалось nil", len(points))
+	}
+	if !strings.Contains(err.Error(), rosstatLabourForceTable) || !strings.Contains(err.Error(), labourForceSheet) {
+		t.Errorf("ошибка %q не называет таблицу %q и лист %q", err, rosstatLabourForceTable, labourForceSheet)
+	}
+	if !strings.Contains(err.Error(), "строка 9") {
+		t.Errorf("ошибка %q не называет строку со сбитой последовательностью месяцев", err)
+	}
+	if !strings.Contains(err.Error(), `месяц "март" не следует за месяцем "январь"`) {
+		t.Errorf("ошибка %q не называет сбитый март и предыдущий январь", err)
+	}
+	if strings.Contains(err.Error(), "March") || strings.Contains(err.Error(), "January") {
+		t.Errorf("ошибка %q печатает месяц по-английски: оператор должен видеть русскую подпись", err)
+	}
+}
+
+// TestLabourForceMismatchedYearSectionFails — в строке-секции года напечатано «2025» вместо
+// «2026» (A124): январь–июль 2026 записались бы датами 2025-01-31 … 2025-07-31 и по ключу
+// (name, date) затёрли бы корректные точки тех же месяцев 2025 — тихая порча, а не ошибка.
+// До проверки последовательности разбор отдавал 690 точек и err=nil.
+func TestLabourForceMismatchedYearSectionFails(t *testing.T) {
+	xlsx := mutateLabourForceFixture(t, func(f *excelize.File) {
+		if err := f.SetCellValue(labourForceSheet, "A124", "2025"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	points, err := parseLabourForce(xlsx)
+	if err == nil {
+		t.Fatalf("повтор года в строке-секции разобран без ошибки: %d точек вместо ошибки", len(points))
+	}
+	if points != nil {
+		t.Errorf("на ошибке вернулось %d точек, ожидалось nil", len(points))
+	}
+	if !strings.Contains(err.Error(), rosstatLabourForceTable) || !strings.Contains(err.Error(), labourForceSheet) {
+		t.Errorf("ошибка %q не называет таблицу %q и лист %q", err, rosstatLabourForceTable, labourForceSheet)
+	}
+	if !strings.Contains(err.Error(), "строка 124") {
+		t.Errorf("ошибка %q не называет строку-секцию года", err)
+	}
+	if !strings.Contains(err.Error(), "год 2025 идёт после года 2025") {
+		t.Errorf("ошибка %q не называет повтор года 2025", err)
+	}
+}
+
 // TestLabourForceEmptyParseFails — все строки месяцев на месте, но значения в шести колонках
 // пусты: разбор обязан вернуть ошибку «0 точек» (§6.4, §11.5), а не пустой батч — пустая
 // выгрузка означает сломанный или подменённый источник, а не отсутствие показателя.
@@ -548,10 +616,14 @@ func TestLabourForceSeriesMetaCoversParsedRows(t *testing.T) {
 // перезаписывается на месте под стабильным именем и обновляется раз в месяц при недельном шаге
 // расписания. Url объявления пуст намеренно: ссылка вычисляется внутри Import(), и отпечаток
 // префлайта шаблон строит по DataUrl, а не по этой копии (§5.4, util.PublicationDecl).
+// CountPoints сверяется с литералом, а не с константой labourForceCountPoints: объявление
+// собирается из той же константы, и сравнение с ней не могло бы упасть — настоящий литерал
+// живёт здесь и в колонке countPoints реестра (rosstat/importers.go), которую сверяет энфорсер
+// TestRosstatImportersPrefixedAndRegistered.
 func TestLabourForcePublicationDeclaration(t *testing.T) {
 	pub := labourForceImporter.Publication()
-	if pub.CountPoints != labourForceCountPoints {
-		t.Errorf("объявление импортёра даёт запрос чека %q, ожидался %q", pub.CountPoints, labourForceCountPoints)
+	if want := "SELECT count() FROM rosstat_labour_force_mes FINAL"; pub.CountPoints != want {
+		t.Errorf("объявление импортёра даёт запрос чека %q, ожидался %q", pub.CountPoints, want)
 	}
 	if pub.Source != rosstatLabourForceTable {
 		t.Errorf("объявление импортёра даёт ключ версии %q, ожидался %q (Name() == TableName)", pub.Source, rosstatLabourForceTable)

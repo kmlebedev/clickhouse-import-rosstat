@@ -187,6 +187,23 @@ func labourForceYear(row []string) (int, bool) {
 	return year, true
 }
 
+// labourForceMonthNames — русские подписи месяцев для текстов ошибок разбора (§6.4).
+// time.Month печатается своим String() по-английски («January»), и оператор увидел бы в ошибке
+// чужое имя месяца; массив даёт подпись на языке источника.
+var labourForceMonthNames = [...]string{
+	"январь", "февраль", "март", "апрель", "май", "июнь",
+	"июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь",
+}
+
+// labourForceMonthName отдаёт русскую подпись месяца. Месяц вне 1–12 (0 — до первого месяца
+// года, если строка января потеряна) печатается числом, а не пустой строкой.
+func labourForceMonthName(month time.Month) string {
+	if month < time.January || month > time.December {
+		return strconv.Itoa(int(month))
+	}
+	return labourForceMonthNames[month-1]
+}
+
 // labourForceValue разбирает ячейку значения. Ячейка приходит сырым текстом (§6.2): числовой
 // формат выгрузки — представление, а не данные. NaN и бесконечность, которые принимает
 // ParseFloat, отбрасываются, как у соседних рядов пакета: такой мусор уехал бы в витрину точкой
@@ -269,6 +286,14 @@ func parseLabourForce(xlsx *excelize.File) ([]labourForcePoint, error) {
 			continue
 		}
 		if sectionYear, ok := labourForceYear(row); ok {
+			// Год обязан быть строго больше предыдущего. Строка-секция, повторяющая или
+			// уменьшающая год, сдвинула бы подпись месяцев назад: месяцы нового года записались
+			// бы датами прошлого и по ключу (name, date) заклеили бы корректные точки тех же
+			// месяцев (§6.4). Порча неотличима от обновления источника, поэтому ошибка громкая.
+			if year != 0 && sectionYear <= year {
+				return nil, fmt.Errorf("%s: лист %q, строка %d: год %d идёт после года %d — годы обязаны идти по возрастанию",
+					rosstatLabourForceTable, labourForceSheet, i+1, sectionYear, year)
+			}
 			year, month = sectionYear, 0
 			continue
 		}
@@ -282,9 +307,13 @@ func parseLabourForce(xlsx *excelize.File) ([]labourForcePoint, error) {
 			return nil, fmt.Errorf("%s: лист %q, строка %d: месяц %q до строки-года",
 				rosstatLabourForceTable, labourForceSheet, i+1, label)
 		}
-		if sectionMonth <= month {
-			return nil, fmt.Errorf("%s: лист %q, строка %d: месяц %q идёт после месяца %q — месяцы обязаны идти по возрастанию",
-				rosstatLabourForceTable, labourForceSheet, i+1, label, month)
+		// Месяц обязан быть следующим за предыдущим. Пропущенная строка месяца иначе выпала бы
+		// из ряда молча (неполный ряд в витрине выглядит полным), а префлайт записал бы points
+		// на месяц меньше и дальше ушёл бы в вечный no-op (§6.4). Январь проходит законно:
+		// строка-секция года сбросила month в 0.
+		if sectionMonth != month+1 {
+			return nil, fmt.Errorf("%s: лист %q, строка %d: месяц %q не следует за месяцем %q — месяцы обязаны идти по возрастанию",
+				rosstatLabourForceTable, labourForceSheet, i+1, label, labourForceMonthName(month))
 		}
 		month = sectionMonth
 		for _, column := range columns {
