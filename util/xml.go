@@ -50,7 +50,7 @@ func GetXML(url string, out any) error {
 		return err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("http status %d: %s", resp.StatusCode, errorSnippet(body))
+		return fmt.Errorf("http status %d: %s", resp.StatusCode, ErrorSnippet(body))
 	}
 	if len(body) == 0 {
 		return fmt.Errorf("пустое тело")

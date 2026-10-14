@@ -34,3 +34,6 @@ GRANT SELECT ON default.v_gost_vehicle_safety_daily TO kimi_reader;
 GRANT SELECT ON default.v_keyrate_expectations TO kimi_reader;
 GRANT SELECT ON default.v_cbr_survey TO kimi_reader;
 GRANT SELECT ON default.v_cbr_mo_br TO kimi_reader;
+GRANT SELECT ON default.v_cbr_mp_summary TO kimi_reader;
+GRANT SELECT ON default.v_cbr_mp_summary_blocks TO kimi_reader;
+GRANT SELECT ON default.v_cbr_mp_summary_channels TO kimi_reader;

@@ -56,7 +56,7 @@ func GetJSON(url string, out any) error {
 		return err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("http status %d: %s", resp.StatusCode, errorSnippet(body))
+		return fmt.Errorf("http status %d: %s", resp.StatusCode, ErrorSnippet(body))
 	}
 	if len(body) == 0 {
 		return fmt.Errorf("пустое тело")
@@ -67,10 +67,13 @@ func GetJSON(url string, out any) error {
 	return nil
 }
 
-// errorSnippet сжимает тело ответа до одной строки не длиннее maxErrorSnippet
+// ErrorSnippet сжимает тело ответа до одной строки не длиннее maxErrorSnippet
 // байт: в ошибке достаточно начала, а переводы строк разорвали бы строку лога.
 // Обрезка по байтам может задеть многобайтовую руну на стыке — её срезаем.
-func errorSnippet(body []byte) string {
+// Экспортирован не только для GetJSON/GetXML: LLM-слой (cbr) режет им тело
+// ошибки провайдера, которое *anthropic.Error несёт целиком (та же конвенция
+// «код + начало тела, без URL», §3 ARCHITECTURE.md).
+func ErrorSnippet(body []byte) string {
 	if len(body) > maxErrorSnippet {
 		body = body[:maxErrorSnippet]
 	}

@@ -474,6 +474,42 @@ async def check(params, server_log):
             failed += not expect("сырая cbr_households_b_mes закрыта", denied,
                                  "отказ ClickHouse 497 на cbr_households_b_mes (ожидаемо)" if denied else raw[:200])
 
+            # Контур резюме обсуждения ключевой ставки ЦБ (шаг 1.2 роадмапа, импортёр
+            # cbr_mp_summary): все три витрины контура (шапка, полный текст, разметка каналов)
+            # читаются агентом и непусты, а три сырые таблицы — источники этих витрин — агенту
+            # закрыты (как macro_series и cbr_households_b_mes: читать контур агент обязан
+            # только через витрины, правило 11 AGENTS.md).
+            #
+            # Здесь, в отличие от v_dcf_assumptions, проверяется и значение count: строки
+            # публикует импортёр cbr/, поэтому пустая витрина означает ни разу не отработавший
+            # шаг cbr_mp_summary, а не отсутствие данных у источника. Существование витрины
+            # подтверждается ЗАПРОСОМ К НЕЙ, а не поиском имени в ответе list_tables (урок
+            # bold: в том тексте имя попадает из COMMENT соседки); «нет витрины» и «нет прав»
+            # приходят ошибкой (UNKNOWN_TABLE / ACCESS_DENIED) и в result_rows не разбираются.
+            for view, label in (("v_cbr_mp_summary", "шапка"),
+                                ("v_cbr_mp_summary_blocks", "текст резюме"),
+                                ("v_cbr_mp_summary_channels", "разметка каналов")):
+                summary_view = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {view}"}))
+                summary_view_rows = result_rows(summary_view)
+                summary_view_n = summary_view_rows[0].get("count()") if summary_view_rows else None
+                if summary_view_rows is None:
+                    summary_view_detail = f"витрина не читается: {summary_view[:200]}"
+                elif (summary_view_n or 0) > 0:
+                    summary_view_detail = f"строк: {summary_view_n}"
+                else:
+                    summary_view_detail = (f"строк: {summary_view_n} — прогнать импортёр контура "
+                                           "(make import STAT=cbr_mp_summary)")
+                failed += not expect(f"витрина {view} существует и читается ({label})",
+                                     (summary_view_n or 0) > 0, summary_view_detail)
+
+            for table, label in (("cbr_mp_summary", "шапка"),
+                                 ("cbr_mp_summary_block", "блоки"),
+                                 ("cbr_mp_summary_channel", "каналы")):
+                raw = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {table}"}))
+                denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+                failed += not expect(f"сырая {table} закрыта ({label})", denied,
+                                     f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
+
     return failed
 
 
