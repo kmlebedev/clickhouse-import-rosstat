@@ -1,6 +1,7 @@
 package rosstat
 
 import (
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -86,7 +87,7 @@ func TestSalariesMesSpotValues(t *testing.T) {
 	}{
 		// Январь 1992 (A9 = 1992, G9 = 1) записан на 1 февраля 1992 — сдвиг AddDate(0, 1, 0).
 		{time.Date(1992, 2, 1, 0, 0, 0, 0, time.UTC), 1},
-		// Июнь 2026 (R43 = 114743) записан на 1 июля 2026 (последняя точка — июль 2026).
+		// Июнь 2026 (L43 = 114743) записан на 1 июля 2026 (последняя точка — июль 2026).
 		{time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC), 114743},
 	}
 	for _, spot := range spots {
@@ -153,9 +154,11 @@ func TestSalariesMesSeriesMetaCoversParsedRows(t *testing.T) {
 	requireParsedDescribed(t, names, describedSeries(t, salariesMesSeriesMeta))
 }
 
-// TestSalariesMesMissingSheetFails — fail-fast (§6.4): книга без данных — ошибка с именем
-// таблицы, а не «0 строк» и не пустой результат.
-func TestSalariesMesMissingSheetFails(t *testing.T) {
+// TestSalariesMesEmptyWorkbookFails — fail-fast (§6.4): книга без листов с данными не даёт
+// ни одной точки, и это ошибка с именем таблицы, а не «0 строк». Проверяется ветка «разбор
+// дал 0 точек» (якорь года не найден), а не отсутствие конкретного листа: книга создаётся
+// пустой, листа «Лист1» в ней нет вовсе.
+func TestSalariesMesEmptyWorkbookFails(t *testing.T) {
 	rec := &appendRecorder{}
 	err := salariesMesImport(newTestWorkbook(t), rec)
 	if err == nil {
@@ -183,5 +186,105 @@ func TestSalariesMesFindLink(t *testing.T) {
 	}
 	if !strings.Contains(href, "tab1-zpl") {
 		t.Errorf("href %q не содержит tab1-zpl", href)
+	}
+}
+
+// TestSalariesMesValueBranches — табличный тест самих хелперов значения: ветки ошибок
+// (нечисловой текст, испорченная сноска, NaN/Inf) в фикстуре не встречаются, а без них
+// разбор молча пропустил бы мусор или записал бы его точкой (§6.4). Книга здесь не нужна —
+// хелперы работают со строкой ячейки.
+func TestSalariesMesValueBranches(t *testing.T) {
+	tests := []struct {
+		name      string
+		cell      string
+		wantValue float64
+		wantPoint bool
+		wantErr   bool
+	}{
+		{name: "пустая ячейка — не точка", cell: ""},
+		{name: "пробелы — не точка", cell: "   "},
+		{name: "литеральный нуль — не точка", cell: "0"},
+		{name: "нуль с дробью — не точка", cell: "0.0"},
+		{name: "сырое число", cell: "1074", wantValue: 1074, wantPoint: true},
+		{name: "сырое число с копейками", cell: "1017.35", wantValue: 1017.35, wantPoint: true},
+		{name: "значение со сноской", cell: "62 470(2)", wantValue: 62470, wantPoint: true},
+		{name: "значение со сноской и неразрывным пробелом", cell: "62\u00a0470(2)", wantValue: 62470, wantPoint: true},
+		{name: "текст — ошибка", cell: "abc", wantErr: true},
+		{name: "многоточие — ошибка", cell: "…", wantErr: true},
+		{name: "сноска без числа — ошибка", cell: "(2)", wantErr: true},
+		{name: "незакрытая сноска — ошибка", cell: "62 470(x", wantErr: true},
+		{name: "двойная сноска — ошибка", cell: "62 470(2)(3)", wantErr: true},
+		{name: "сноска без числа, пробелы — ошибка", cell: "  (2)  ", wantErr: true},
+		{name: "NaN — ошибка", cell: "NaN", wantErr: true},
+		{name: "Inf — ошибка", cell: "Inf", wantErr: true},
+		{name: "-Inf — ошибка", cell: "-Inf", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			value, point, err := salariesMesValue(tt.cell)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("ячейка %q: ожидалась ошибка, получено значение %v (точка=%v)", tt.cell, value, point)
+				}
+				if point {
+					t.Errorf("ячейка %q: ошибка и точка одновременно (value=%v)", tt.cell, value)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ячейка %q: неожиданная ошибка: %v", tt.cell, err)
+			}
+			if value != tt.wantValue || point != tt.wantPoint {
+				t.Errorf("ячейка %q: получено (%v, point=%v), ожидалось (%v, point=%v)",
+					tt.cell, value, point, tt.wantValue, tt.wantPoint)
+			}
+		})
+	}
+}
+
+// TestSalariesMesFootnoteValueBranches — табличный тест распознавания сноски: разделитель
+// тысяч пробелом снимается, а испорченная сноска («62 470(x», «(2)», двойная) не
+// распознаётся — иначе значение ушло бы точкой или, наоборот, пропало молча.
+func TestSalariesMesFootnoteValueBranches(t *testing.T) {
+	tests := []struct {
+		name      string
+		cell      string
+		wantValue float64
+		wantOK    bool
+	}{
+		{name: "пробел как разделитель тысяч", cell: "62 470(2)", wantValue: 62470, wantOK: true},
+		{name: "неразрывный пробел", cell: "62\u00a0470(2)", wantValue: 62470, wantOK: true},
+		{name: "сноска без разделителей", cell: "62470(2)", wantValue: 62470, wantOK: true},
+		{name: "без сноски", cell: "62 470"},
+		{name: "сноска без числа", cell: "(2)"},
+		{name: "незакрытая сноска", cell: "62 470(x"},
+		{name: "двойная сноска", cell: "62 470(2)(3)"},
+		{name: "текст со сноской", cell: "abc(2)"},
+		{name: "пустая ячейка", cell: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			value, ok := salariesMesFootnoteValue(tt.cell)
+			if ok != tt.wantOK {
+				t.Fatalf("ячейка %q: распознано=%v, ожидалось %v", tt.cell, ok, tt.wantOK)
+			}
+			if ok && value != tt.wantValue {
+				t.Errorf("ячейка %q: значение %v, ожидалось %v", tt.cell, value, tt.wantValue)
+			}
+		})
+	}
+}
+
+// TestSalariesMesAppendErrorNotSwallowed — ошибка записи доходит до вызывающего (§5.5, §11.6):
+// сбой Append в середине батча обязан вернуть ошибку, а не выглядеть успешным импортом.
+func TestSalariesMesAppendErrorNotSwallowed(t *testing.T) {
+	wantErr := errors.New("append сломан")
+	rec := &appendRecorder{appendErr: wantErr}
+	err := salariesMesImport(openSalariesMesFixture(t), rec)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("ошибка Append не вернулась: err = %v", err)
+	}
+	if len(rec.rows) != 0 {
+		t.Errorf("в батч записано %d строк, ожидалось 0 (первый Append упал)", len(rec.rows))
 	}
 }

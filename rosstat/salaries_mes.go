@@ -3,6 +3,7 @@ package rosstat
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -87,20 +88,26 @@ type salariesMesPoint struct {
 // Херсонской областям), а не другой показатель. Пропуск такой ячейки оставил бы дыру в три
 // месяца головного ряда. Любой другой текст — ошибка: «значение не число там, где ожидалось
 // число» (§6.4).
-func salariesMesValue(cell string) (value float64, point bool, err error) {
+func salariesMesValue(cell string) (float64, bool, error) {
 	cell = strings.TrimSpace(cell)
 	if cell == "" {
 		return 0, false, nil
 	}
-	value, err = strconv.ParseFloat(cell, 64)
-	if err == nil {
-		return value, value != 0, nil
+	value, err := strconv.ParseFloat(cell, 64)
+	if err != nil {
+		footnote, ok := salariesMesFootnoteValue(cell)
+		if !ok {
+			return 0, false, fmt.Errorf("значение ячейки %q не число: %w", cell, err)
+		}
+		value = footnote
 	}
-	footnote, ok := salariesMesFootnoteValue(cell)
-	if !ok {
-		return 0, false, fmt.Errorf("значение ячейки %q не число: %w", cell, err)
+	// ParseFloat принимает «NaN» и «Inf», и NaN прошёл бы проверку value != 0, став точкой
+	// ряда — мусором, который тихо уехал бы в витрину. Конечность значения — часть контракта
+	// разбора (§6.4): отказ, а не пропуск.
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0, false, fmt.Errorf("значение ячейки %q не конечное число", cell)
 	}
-	return footnote, footnote != 0, nil
+	return value, value != 0, nil
 }
 
 // salariesMesFootnoteValue разбирает ячейку, у которой значение записано текстом со сноской
@@ -128,19 +135,27 @@ func parseSalariesMes(xlsx *excelize.File) ([]salariesMesPoint, error) {
 		}
 		// Якорь — строка первого года в первой колонке; год остальных строк считается от
 		// него смещением, а не полем каждой строки (§6.3). Год у поздних лет несёт сноску
-		// («2026(2)»), поэтому строку не сверяют с годом целиком — только якорь.
+		// («2026(2)»), поэтому строку не сверяют с годом целиком — только якорь. Первое
+		// совпадение: повтор «1991» в колонке A якорь не сдвигает.
 		anchor := -1
 		for i, row := range rows {
+			if len(row) > 0 && row[0] == salariesMesField {
+				anchor = i
+				break
+			}
+		}
+		if anchor < 0 {
+			// Лист без якоря (пустые «Лист2»/«Лист3») — не ошибка: ряд собирают листы, где
+			// якорь есть, а отсутствие данных во всей книге ловит проверка внизу.
+			continue
+		}
+		// Строки данных: от якоря до строки «… данных не имеется» — она и сноски внизу
+		// листа короче колонки января, таблица на ней кончается.
+		for i := anchor; i < len(rows); i++ {
+			row := rows[i]
 			if len(row) == 0 {
 				continue
 			}
-			if row[0] == salariesMesField {
-				anchor = i
-			}
-			if anchor < 0 {
-				continue
-			}
-			// «… данных не имеется» и сноски внизу листа короче колонки января: таблица кончилась.
 			if len(row) <= salariesMesMonthColumn {
 				break
 			}
