@@ -43,7 +43,7 @@
 | `archive/registry.go` (new) | `Entry`, `Registry` (JSONL, upsert, ленивое чтение) |
 | `archive/fromenv.go` (new) | Константы имён env, `FromEnv` |
 | `util/xls.go` (modify) | `GetFileBytes` |
-| `util/archive.go` (new) | Синглтон хранилища, `save` (sha256→Exists→Put→Registry.Ensure), `versionExists`, test-hook |
+| `util/archive.go` (new) | Синглтон хранилища, `save` (sha256→Put→Registry.Ensure), `versionExists`, test-hook |
 | `util/clickhouse_import.go` (modify) | Порядок «точки → архив → производные → версия», проверка архива на no-op-пути, `importXlsBody` |
 | `main.go` (modify) | `ARCHIVE_ACTION=registry` до подключения к ClickHouse |
 | `Makefile` (modify) | Цель `archive-registry`, строка в `env-check` |
@@ -178,7 +178,7 @@ Run: `go test -run TestRegistry -count=1 ./archive/` — Expected: FAIL (`undefi
 
 - [ ] **Step 3: Реализовать `archive/registry.go`**
 
-Ленивое чтение: при первом `Ensure` — `Exists`, затем `Get`; ошибка чтения (не «нет файла») — ошибка; битая строка JSONL — ошибка (реестр — источник истины, молча терять строки нельзя). Запись — `json.Marshal` каждой строки + `\n`, один `Put` всего файла; мьютекс на процесс (штатный писатель один — последовательная цепочка dagu; конкурентный ручной прогон самолечится префлайтом, спека §3.4).
+Ленивое чтение: при первом `Ensure` — `Exists`, затем `Get`; ошибка чтения (не «нет файла») — ошибка; битая строка JSONL — ошибка (реестр — источник истины, молча терять строки нельзя). Запись — `json.Marshal` каждой строки + `\n`, один `Put` всего файла; мьютекс на процесс (штатный писатель один — последовательная цепочка dagu; потеря строки при конкурентном ручном прогоне самолечением не лечится — срабатывает оно по потере объекта, а реконсиляция «объект без строки» — шаг 1.2 роадмапа, спека §3.4).
 
 - [ ] **Step 4: Прогнать пакет**
 
@@ -219,8 +219,8 @@ Run: `go test -run TestGetFileBytes -count=1 ./util/` — Expected: FAIL (`undef
 - `type archiveRuntime struct { store archive.Store; registry *archive.Registry }`.
 - `activeArchive()`: если `archiveRuntimeForTests != nil` — вернуть его; иначе `sync.Once` → `archive.FromEnv(HttpClient)`; ошибка конфигурации → `log.Errorf` один раз + nil (данные важнее, спека §3.1).
 - `versionExists(ctx, source, url, fingerprint)` — `archive.Key(source, path.Base(url), fingerprint, [32]byte{})` → `store.Exists` (при непустом отпечатке sha не участвует; ключ совпадает с тем, что пишет `save`).
-- `save(ctx, source, url, body, fingerprint)` — `sha256.Sum256(body)` → `archive.Key` → `Exists` (есть — не перезагружать) → `Put` → `registry.Ensure(archive.Entry{Source, Name: path.Base(url), Fingerprint, SHA256: hex, Size: int64(len(body)), URL: url, Key, FirstSeen: time.Now()})`.
-- Комментарии: почему `Exists`-предпроверка, почему строка реестра дописывается и при уже лежащем объекте (самолечение реестра), почему сорсы/сайд-эффекты не идут через поля структуры.
+- `save(ctx, source, url, body, fingerprint)` — `sha256.Sum256(body)` → `archive.Key` → `Put` (объект записывается всегда: ключ выведен из отпечатка, а отпечаток содержимое не покрывает, поэтому пропущенный `Put` оставил бы строку реестра о содержимом, которого в архиве нет) → `registry.Ensure(archive.Entry{Source, Name: path.Base(url), Fingerprint, SHA256: hex, Size: int64(len(body)), URL: url, Key, FirstSeen: time.Now()})`.
+- Комментарии: почему `Put` без `Exists`-предпроверки, почему строка реестра дописывается и при уже лежащем объекте, почему потерянная строка при живом объекте не лечится самолечением (реконсиляция — шаг 1.2), почему сорсы/сайд-эффекты не идут через поля структуры.
 
 - [ ] **Step 4: Правка `util/clickhouse_import.go`**
 
@@ -261,11 +261,11 @@ git commit -m "archive source file versions in import template"
 
 **Interfaces:**
 - Consumes: `archive.FromEnv`, `archive.RegistryKey` (Task 1/3); `util.HttpClient` (существующий).
-- Produces: env-режим `ARCHIVE_ACTION=registry` (без подключения к ClickHouse); `ARCHIVE_REGISTRY_OUT` (default `docs/archive/registry.jsonl`); цель `make archive-registry`.
+- Produces: env-режим `ARCHIVE_ACTION=registry` (без подключения к ClickHouse); `ARCHIVE_REGISTRY_OUT` (default `docs/archive/registry.jsonl`), `ARCHIVE_REGISTRY_ALLOW_EMPTY` (запись пустого реестра поверх непустого зеркала — только явно); цель `make archive-registry`.
 
 - [ ] **Step 1: Реализовать режим в `main.go`**
 
-В начале `main()`, до `clickhouse.ParseDSN`: если `ARCHIVE_ACTION == "registry"` — `runArchiveRegistry(ctx)` и выход. `runArchiveRegistry`: `archive.FromEnv(util.HttpClient)`; `store == nil` → ошибка «ARCHIVE_BACKEND не задан»; `Exists(RegistryKey)` → нет файла: `log.Warnf("реестр пуст")` и запись пустого файла; есть — `Get`; `os.MkdirAll` + `os.WriteFile(out, body, 0o644)`; лог: число строк и путь. Обычный прогон импортёров — без изменений.
+В начале `main()`, до `clickhouse.ParseDSN`: если `ARCHIVE_ACTION == "registry"` — `runArchiveRegistry(ctx)` и выход. `runArchiveRegistry`: `archive.FromEnv(util.HttpClient)`; `store == nil` → ошибка «ARCHIVE_BACKEND не задан»; `Exists(RegistryKey)` → нет файла: `log.Warnf("реестр пуст")` и запись пустого файла; есть — `Get`; пустой реестр при непустом зеркале — отказ, если не задан `ARCHIVE_REGISTRY_ALLOW_EMPTY=1` (с ним — запись пустого файла + `log.Warnf`); `os.MkdirAll` + `os.WriteFile(out, body, 0o644)`; лог: число строк и путь. Обычный прогон импортёров — без изменений.
 
 - [ ] **Step 2: Makefile**
 

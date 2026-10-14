@@ -177,6 +177,20 @@ func archiveTestRegistryEntry(t *testing.T, rt *archiveRuntime, key string) arch
 	return found[0]
 }
 
+// archiveTestEntryMatchesContent — инвариант «строка реестра описывает записанные байты»: sha256 и
+// size сверяются с фактическим содержимым объекта, а не с тем, что save собирался записать (спека
+// §3.2, §3.3). Общий для тестов полного пути и перезаписи устаревшего объекта.
+func archiveTestEntryMatchesContent(t *testing.T, entry archive.Entry, body []byte) {
+	t.Helper()
+	sum := sha256.Sum256(body)
+	if want := hex.EncodeToString(sum[:]); entry.SHA256 != want {
+		t.Errorf("sha256 в реестре %q, ожидался %q (содержимое объекта)", entry.SHA256, want)
+	}
+	if entry.Size != int64(len(body)) {
+		t.Errorf("size в реестре %d, ожидался %d", entry.Size, len(body))
+	}
+}
+
 // archiveUntouchedStore — хранилище, которого префлайт CrawFunc-импортёра касаться не должен:
 // такой импортёр архивом не покрыт (файл качает он сам, шаблон его байтов не видит, а запись архива
 // живёт в ветке ImportFunc), поэтому любое обращение здесь — ошибка логики, а не данных. Отсюда
@@ -323,13 +337,7 @@ func TestClickHouseImportArchivesVersion(t *testing.T) {
 		t.Errorf("реестра %s нет в каталоге архива: %v", archive.RegistryKey, err)
 	}
 	entry := archiveTestRegistryEntry(t, rt, key)
-	sum := sha256.Sum256(srv.body)
-	if want := hex.EncodeToString(sum[:]); entry.SHA256 != want {
-		t.Errorf("sha256 в реестре %q, ожидался %q (содержимое объекта)", entry.SHA256, want)
-	}
-	if entry.Size != int64(len(srv.body)) {
-		t.Errorf("size в реестре %d, ожидался %d", entry.Size, len(srv.body))
-	}
+	archiveTestEntryMatchesContent(t, entry, srv.body)
 	if entry.Source != archiveTestSource || entry.Name != archiveTestName || entry.Fingerprint != fingerprint ||
 		entry.URL != srv.url || entry.Key != key {
 		t.Errorf("строка реестра %+v: ожидались source=%q, name=%q, fingerprint=%q, url=%q, key=%q",
@@ -345,6 +353,49 @@ func TestClickHouseImportArchivesVersion(t *testing.T) {
 	} else if len(batch.appends) != 1 || batch.appends[0][2] != fingerprint {
 		t.Errorf("строка версии %#v: ожидался fingerprint %q", batch.appends, fingerprint)
 	}
+}
+
+// Отпечаток HEAD не изменился, а содержимое файла — да (источник перезаписал выгрузку под теми же
+// заголовками), и полный импорт ушёл в self-heal по числу точек. Под ожидаемым ключом уже лежат
+// байты прежней версии: объект обязан быть перезаписан. Иначе строка реестра описывала бы
+// содержимое, которого в архиве нет («файл + реестр» перестают быть самодостаточными), а будущая
+// проверка целостности (шаг 1.2 роадмапа) сверяла бы sha256 строки с чужими байтами объекта.
+func TestClickHouseImportArchiveOverwritesStaleObject(t *testing.T) {
+	rt, _ := archiveTestRuntime(t)
+	srv := newArchiveTestServer(t)
+	fingerprint := publicationFingerprint(t, srv.url)
+	key := archiveTestKey(fingerprint)
+
+	// Состояние прошлого прогона: тот же ключ (заголовки те же), другое тело — пишет тот же save,
+	// что и у прода, поэтому предпосылка теста не расходится с кодом.
+	stale := []byte("прежняя версия того же файла: источник перезаписал выгрузку под тем же ETag")
+	if err := rt.save(context.Background(), archiveTestSource, srv.url, stale, fingerprint); err != nil {
+		t.Fatalf("подготовка объекта прежней версии: %v", err)
+	}
+
+	conn := &publicationFakeConn{rows: []driver.Row{
+		&publicationFakeRow{points: 42}, // source_publications: версия записала 42 точки
+		&publicationFakeRow{points: 7},  // count() в таблице: 7 — чек не сошёлся, полный импорт
+		&publicationFakeRow{points: 7},  // CountPoints записи новой версии
+	}}
+	importer := archiveTestImporter(t, srv.url, nil)
+
+	count, err := importer.Import(context.Background(), conn)
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("count = %d, ожидалась одна отправленная строка точек", count)
+	}
+	stored, err := rt.store.Get(context.Background(), key)
+	if err != nil {
+		t.Fatalf("объект %s в архиве: %v", key, err)
+	}
+	if !bytes.Equal(stored, srv.body) {
+		t.Errorf("объект %s (%d байт) не совпал с отданным файлом (%d байт): запись объекта пропущена", key, len(stored), len(srv.body))
+	}
+	entry := archiveTestRegistryEntry(t, rt, key)
+	archiveTestEntryMatchesContent(t, entry, srv.body)
 }
 
 // Версия известна и лежит в архиве — no-op: файл не скачивается (GET-ов ноль), в БД не пишется
