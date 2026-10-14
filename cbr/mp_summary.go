@@ -235,12 +235,16 @@ func (s *mpSummaryStat) Import(ctx context.Context, conn driver.Conn) (count int
 	// 6. Отстающие — известные заседания, у которых нет LLM-строк текущей пары
 	// (model, prompt_version). Множество известных заседаний берётся из шапки: где строка
 	// есть, там LLM-разметка должна быть, а новых документов в прошлых решениях ещё нет
-	// (они размечаются шагом 10 как новые). Пусто → догонять нечего.
+	// (они размечаются шагом 10 как новые). Пусто → догонять нечего. Набор «размечено»
+	// остаётся нужен и на шаге 10: он же вычитается при сборке списка документов для модели.
 	baseURL, apiKey, model, llmOK := mpLLMConfigFromEnv()
-	var pending map[time.Time]bool
+	var (
+		pending map[time.Time]bool
+		tagged  map[time.Time]bool
+	)
 	if llmOK {
-		tagged, taggedErr := mpLLMTagged(ctx, conn, model, mpPromptVersion)
-		if taggedErr != nil {
+		var taggedErr error
+		if tagged, taggedErr = mpLLMTagged(ctx, conn, model, mpPromptVersion); taggedErr != nil {
 			return 0, taggedErr
 		}
 		pending = mpLLMPendingDates(past, tagged)
@@ -319,18 +323,15 @@ func (s *mpSummaryStat) Import(ctx context.Context, conn driver.Conn) (count int
 		log.Warnf("%s: LLM-разметка пропущена (нет %s/%s/%s)", mpSummaryName,
 			mpLLMBaseURLEnv, mpLLMAPIKeyEnv, mpLLMModelEnv)
 	} else {
-		// Новые документы размечаются тем же прогоном, а отстающие берутся из таблицы.
-		// Документ, который попал и туда, и туда (неполный слой 1 И нет LLM-строк), не должен
-		// уйти в LLM дважды: его разобранный текст передаётся в mpFetchPending и повторно
-		// не скачивается.
-		fetched := make(map[time.Time]mpFetchedSummary, len(docs))
-		llmDocs := make([]mpLLMDoc, 0, len(docs)+len(pending))
-		for _, d := range docs {
-			date := mpDay(d.Doc.MeetingDate)
-			fetched[date] = d
-			llmDocs = append(llmDocs, mpLLMDoc{Date: date, Url: d.Url, Doc: d.Doc})
-		}
-		llmDocs = append(llmDocs, mpFetchPending(past, pending, fetched)...)
+		// Размечать надо объединение «скачанные этим прогоном + отстающие» минус уже
+		// размеченные пары (model, prompt_version): иначе документ, попавший и в docs, и в
+		// pending (неполный слой 1 без LLM-строк), ушёл бы в LLM дважды, а документ с готовыми
+		// строками пары, перекачанный из-за смены url, — лишний раз. Сборка разложения —
+		// чистая функция mpLLMDocs, отстающие дочитываются из таблицы (mpFetchPending).
+		ready, toFetch := mpLLMDocs(docs, pending, tagged)
+		llmDocs := make([]mpLLMDoc, 0, len(ready)+len(toFetch))
+		llmDocs = append(llmDocs, ready...)
+		llmDocs = append(llmDocs, mpFetchPending(past, toFetch)...)
 
 		llmRows := &mpBatch{ctx: ctx, conn: conn, table: mpSummaryChannelTable, insert: mpSummaryChannelInsert}
 		for _, d := range llmDocs {
@@ -539,24 +540,51 @@ func mpDecisionDeltas(past []mpPastSummary, docs []mpFetchedSummary) map[time.Ti
 	return deltas
 }
 
+// mpLLMDocs — разложение работы модели на два списка: документы, уже разобранные в этом
+// прогоне (можно звать модель сразу), и даты, которые надо дочитать из таблицы. Даты, у
+// которых строки пары (model, prompt_version) уже есть, не попадают никуда: повторная
+// разметка тех же данных — лишний вызов LLM, а не обновление (ключ пары в ключе таблицы).
+//
+// Списком (а не набором) результат отдаётся сознательно: контракт «один документ — один
+// вызов модели за прогон» проверяется длиной списка, и дубль даты (она и в docs, и в
+// pending) тестом виден (находка ревью фикс-волны: дата из justFetched добавлялась второй
+// раз — модель вызывалась дважды на документ).
+//
+// Чистая функция без обращений к БД и сети: оба подслучая — «дата и в docs, и в pending» и
+// «дата в docs, но пара уже размечена (документ перекачан из-за смены url)» — пинятся тестом.
+func mpLLMDocs(docs []mpFetchedSummary, pending, tagged map[time.Time]bool) (ready []mpLLMDoc, fetch map[time.Time]bool) {
+	seen := make(map[time.Time]bool, len(docs))
+	ready = make([]mpLLMDoc, 0, len(docs))
+	for _, d := range docs {
+		date := mpDay(d.Doc.MeetingDate)
+		seen[date] = true
+		if tagged[date] {
+			continue
+		}
+		ready = append(ready, mpLLMDoc{Date: date, Url: d.Url, Doc: d.Doc})
+	}
+	fetch = make(map[time.Time]bool, len(pending))
+	for date := range pending {
+		// Дату, уже отданную модели как новый документ, второй раз не берём: её текст
+		// разобран и лежит в ready (иначе один вызов LLM на документ стал бы двумя).
+		if seen[date] || tagged[date] {
+			continue
+		}
+		fetch[date] = true
+	}
+	return ready, fetch
+}
+
 // mpFetchPending — документы отстающих резюме для LLM-догона. Адрес страницы берётся из
-// таблицы: дата заседания известна, а url карточки записан шапкой при импорте. Документ,
-// уже скачанный и разобранный в этом же прогоне (он пришёл в missing — неполный слой 1),
-// повторно не качается и не размечается дважды: его разобранный текст берётся из justFetched
-// (иначе один вызов LLM на документ превратился бы в два и страница скачивалась бы второй раз).
+// таблицы: дата заседания известна, а url карточки записан шапкой при импорте. На вход идёт
+// уже вычтенный набор (mpLLMDocs): ни новых документов этого прогона, ни размеченных пар в нём
+// нет, поэтому повторного вызова модели на документ здесь быть не может.
 // Недоступная или неразобранная страница — warn и продолжение: это деградация одного документа
 // до regex-слоя (спека §3.5), а не сбой прогона; следующий прогон повторит догон.
-func mpFetchPending(past []mpPastSummary, pending map[time.Time]bool, justFetched map[time.Time]mpFetchedSummary) []mpLLMDoc {
+func mpFetchPending(past []mpPastSummary, pending map[time.Time]bool) []mpLLMDoc {
 	var out []mpLLMDoc
 	for _, p := range past {
-		if !pending[p.MeetingDate] {
-			continue
-		}
-		if d, ok := justFetched[p.MeetingDate]; ok {
-			out = append(out, mpLLMDoc{Date: p.MeetingDate, Url: d.Url, Doc: d.Doc})
-			continue
-		}
-		if p.Url == "" {
+		if !pending[p.MeetingDate] || p.Url == "" {
 			continue
 		}
 		page, err := getPage(p.Url)
@@ -631,24 +659,27 @@ func (b *mpBatch) append(vals ...any) error {
 }
 
 // send отправляет накопленное. Батч не открывался — отправлять нечего: пустой Send не
-// нужен ни базе (лишняя транзакция), ни отчёту (строк ноль). Сбой Send тоже закрывает батч:
-// отправлять его повторно нельзя, а брошенное соединение — та же утечка (см. abort).
+// нужен ни базе (лишняя транзакция), ни отчёту (строк ноль). На сбое Send батч помечается
+// использованным, но Abort у него НЕ вызывается: драйвер отвечает на это ErrBatchAlreadySent,
+// а warn «не удалось закрыть батч после ошибки» вводил бы в заблуждение — утечки нет,
+// соединение уже возвращено в пул. Закрывать (abort) нужно батчи, до которых Send не дошёл.
 func (b *mpBatch) send() error {
 	if b.batch == nil {
 		return nil
 	}
 	if err := b.batch.Send(); err != nil {
-		b.abort()
+		b.batch = nil
 		return fmt.Errorf("%s %s: send: %w", mpSummaryName, b.table, err)
 	}
 	b.batch = nil
 	return nil
 }
 
-// abort закрывает открытый батч, не отправляя его. Нужен там, где прогон уже завершается
+// abort закрывает НЕ отправлявшийся открытый батч. Нужен там, где прогон уже завершается
 // ошибкой: батчи, до которых очередь Send не дошла (сбой предыдущего Send), остались бы
-// открытыми и держали бы соединения пула до конца процесса. Идемпотентен: закрытый или
-// вовсе не открывавшийся батч — no-op.
+// открытыми и держали бы соединения пула до конца процесса. Отправлявшийся батч закрывать
+// нельзя (ErrBatchAlreadySent у драйвера) — поэтому abort вызывается только для тех, чей
+// send() не выполнялся, и идемпотентен: закрытый или неоткрывавшийся батч — no-op.
 func (b *mpBatch) abort() {
 	if b.batch == nil {
 		return
@@ -658,8 +689,8 @@ func (b *mpBatch) abort() {
 }
 
 // mpAbortBatch закрывает батч на ошибке и не теряет сбой закрытия: `_ =` скрыл бы причину,
-// по которой батч всё же остался открытым. Возвращается первопричина (Append или Send) — она
-// точнее сбоя Abort, случившегося уже после неё (прецедент — forecast/resolve.go).
+// по которой батч всё же остался открытым. Возвращается первопричина (Append предыдущего
+// батча) — она точнее сбоя Abort, случившегося уже после неё (прецедент — forecast/resolve.go).
 func mpAbortBatch(batch driver.Batch, what string) {
 	if err := batch.Abort(); err != nil {
 		log.Warnf("%s %s: не удалось закрыть батч после ошибки: %v", mpSummaryName, what, err)

@@ -344,3 +344,66 @@ func TestMPSummaryLLMPendingDates(t *testing.T) {
 			mpLLMTaggedQuery, wantTaggedQuery)
 	}
 }
+
+// TestMPSummaryLLMDocs — сборка списка документов для модели: объединение скачанных этим
+// прогоном и отстающих МИНУС уже размеченные пары (model, prompt_version). Пинятся оба
+// подслучая, которые нашло scoped-ревью фикс-волны: (а) дата есть и в docs, и в pending →
+// документ уходит в LLM ОДИН раз (прежняя реализация добавляла его ещё раз через
+// justFetched-ветку mpFetchPending, и на одну дату получалось два вызова модели); (б) дата в
+// docs, но строки пары уже есть (документ перекачан из-за смены url) → в LLM не уходит вовсе.
+// Список, а не набор, поэтому дубль виден длиной — ровно так его и ловит проба ревьюера.
+func TestMPSummaryLLMDocs(t *testing.T) {
+	day := func(d int, m time.Month) time.Time { return time.Date(2025, m, d, 0, 0, 0, 0, time.UTC) }
+	fetched := func(d int, m time.Month, url string) mpFetchedSummary {
+		return mpFetchedSummary{
+			Url: url,
+			Doc: mpSummaryDoc{MeetingDate: day(d, m), Action: "hold", Rate: 16},
+		}
+	}
+
+	docs := []mpFetchedSummary{
+		fetched(14, time.February, "u1"), // и в docs, и в pending, и не размечена
+		fetched(21, time.March, "u2"),    // только в docs
+		fetched(25, time.April, "u3"),    // в docs, но пара уже размечена (смена url)
+	}
+	pending := map[time.Time]bool{
+		day(14, time.February): true, // тот же документ, что в docs
+		day(14, time.March):    true, // отстающий: в этом прогоне не скачивался
+	}
+	tagged := map[time.Time]bool{
+		day(25, time.April): true,
+	}
+
+	ready, fetch := mpLLMDocs(docs, pending, tagged)
+
+	wantReady := []time.Time{day(14, time.February), day(21, time.March)}
+	if len(ready) != len(wantReady) {
+		t.Errorf("ready: %d документов, want %d (2025-02-14 и 2025-03-21): лишний элемент — "+
+			"либо дубль даты, попавшей и в docs, и в pending (модель вызывается дважды на документ), "+
+			"либо невычтенная размеченная пара", len(ready), len(wantReady))
+	}
+	for i, want := range wantReady {
+		if i >= len(ready) {
+			break
+		}
+		if !ready[i].Date.Equal(want) {
+			t.Errorf("ready[%d] = %s, want %s", i, ready[i].Date.Format(mpSummaryDayLayout), want.Format(mpSummaryDayLayout))
+		}
+	}
+	if len(fetch) != 1 || !fetch[day(14, time.March)] {
+		t.Errorf("fetch = %v, want только 2025-03-14: скачанный документ повторно не берётся, "+
+			"размеченная пара не догоняется", fetch)
+	}
+	for _, d := range ready {
+		if d.Date.Equal(day(25, time.April)) {
+			t.Errorf("ready содержит 2025-04-25: у документа уже есть LLM-строки пары — повторная разметка лишняя")
+		}
+	}
+
+	// Ни pending, ни docs — размечать нечего; пустой вход не должен давать ни документов,
+	// ни загрузок (иначе прогон без новых и отстающих звал бы модель на пустом списке).
+	emptyReady, emptyFetch := mpLLMDocs(nil, nil, nil)
+	if len(emptyReady) != 0 || len(emptyFetch) != 0 {
+		t.Errorf("на пустом входе ready=%v fetch=%v, want оба пустыми", emptyReady, emptyFetch)
+	}
+}
