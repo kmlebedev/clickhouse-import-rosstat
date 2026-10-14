@@ -67,10 +67,14 @@ func TestFindLinkMissingSelectorFails(t *testing.T) {
 	}
 }
 
-// Битый HTML — ошибка разбора, а не молчаливый ноль: иначе импортёр счёл бы
-// страницу без ссылки и упал бы с менее понятным сообщением.
-func TestFindLinkBadHTMLFails(t *testing.T) {
-	if _, err := FindLink([]byte("<a href="), `a`); err == nil {
-		t.Fatal("битый HTML должен давать ошибку разбора, а не тихий ноль")
+// Битая разметка («<a href=») — ошибка: goquery терпим к обрезанным тегам и разбирает
+// страницу без ошибки, поэтому падает именно ветка «ссылка не найдена», и её текст —
+// контракт: дежурный по логу должен видеть, каким селектором страница не подошла.
+func TestFindLinkHTMLWithoutLinkFails(t *testing.T) {
+	const sel = `a[href]`
+	if _, err := FindLink([]byte("<a href="), sel); err == nil {
+		t.Fatal("страница без ссылки по селектору должна давать ошибку, а не тихий ноль")
+	} else if !strings.Contains(err.Error(), sel) {
+		t.Errorf("ошибка %q не называет селектор %q", err, sel)
 	}
 }

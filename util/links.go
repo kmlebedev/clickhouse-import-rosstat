@@ -16,6 +16,9 @@ import (
 // «0 rows» по устаревшему или чужому адресу.
 func FindLink(page []byte, selector string) (string, error) {
 	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(page))
+	// Ветка защитная: на практике goquery терпим к битой разметке (обрезанные теги
+	// отбрасывает) и ошибки разбора не отдаёт, но без проверки nil-документ паниковал бы
+	// на doc.Find ниже.
 	if err != nil {
 		return "", fmt.Errorf("FindLink: разбор страницы: %w", err)
 	}
