@@ -26,11 +26,11 @@ func afterRosstatMacro(meta []util.SeriesMeta) func(context.Context, driver.Conn
 
 var rosstatMacroView = util.View{
 	Name:   "v_rosstat_macro",
-	Tables: []string{ipcMesTable, ipcWeeksTable, vvpKvartalTable, salariesMesTable},
-	Select: `SELECT 'rosstat' AS source, name AS series, date, toFloat64(percent) AS value FROM ipc_mes FINAL
-UNION ALL SELECT 'rosstat', name, date, toFloat64(percent) FROM ipc_weeks FINAL
-UNION ALL SELECT 'rosstat', name, date, toFloat64(vvp) FROM vvp_kvartal FINAL
-UNION ALL SELECT 'rosstat', name, date, toFloat64(salary) FROM salaries_mes FINAL`,
+	Tables: []string{rosstatIPCMesTable, rosstatIPCWeeksTable, rosstatVVPKvartalTable, rosstatSalariesMesTable},
+	Select: `SELECT 'rosstat' AS source, name AS series, date, toFloat64(percent) AS value FROM rosstat_ipc_mes FINAL
+UNION ALL SELECT 'rosstat', name, date, toFloat64(percent) FROM rosstat_ipc_weeks FINAL
+UNION ALL SELECT 'rosstat', name, date, toFloat64(vvp) FROM rosstat_vvp_kvartal FINAL
+UNION ALL SELECT 'rosstat', name, date, toFloat64(salary) FROM rosstat_salaries_mes FINAL`,
 	Comment: "Ряды Росстата: ИПЦ по товарам и услугам (помесячно), еженедельные цены на отдельные товары и услуги, ВВП по кварталам, средняя номинальная зарплата по месяцам. Единицы значения и привязка даты различаются между рядами: перед расчётом читать v_series_catalog по (source, series)",
 	Columns: map[string]string{
 		"source": "Источник данных: всегда rosstat",
@@ -135,7 +135,7 @@ var salariesMesSeriesMeta = []util.SeriesMeta{
 		Unit:        "руб. в месяц (до 1998 г. — тыс. руб.)",
 		Frequency:   "M",
 		Origin:      "rosstat.gov.ru/labor_market_employment_salaries, файл tab1-zpl_*.xlsx, лист «Лист1»; строка = год, колонки «Январь»…«Декабрь»",
-		Description: "Среднемесячная номинальная начисленная зарплата работников в целом по экономике РФ, рубли в месяц (до 1998 г. — тыс. руб., деноминация 1:1000). Значение — за месяц, в колонке месяца. Дата в таблице — 1-е число месяца, следующего за отчётным (зарплата за январь записана на 1 февраля). Реальный рост: номинальная зарплата / ИПЦ (ipc_mes) с поправкой на базу. Название меняется при обновлении файла Росстата.",
+		Description: "Среднемесячная номинальная начисленная зарплата работников в целом по экономике РФ, рубли в месяц (до 1998 г. — тыс. руб., деноминация 1:1000). Значение — за месяц, в колонке месяца. Дата в таблице — 1-е число месяца, следующего за отчётным (зарплата за январь записана на 1 февраля). Реальный рост: номинальная зарплата / ИПЦ (rosstat_ipc_mes) с поправкой на базу. Название меняется при обновлении файла Росстата.",
 	},
 }
 

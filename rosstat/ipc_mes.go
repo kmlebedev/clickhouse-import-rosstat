@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/gocolly/colly/v2"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	log "github.com/sirupsen/logrus"
 	"github.com/xuri/excelize/v2"
@@ -16,8 +15,8 @@ import (
 const (
 	// ToDo update data source Потребительские цены https://rosstat.gov.ru/statistics/price
 	// Индексы потребительских цен на товары и услуги по Российской Федерации, месяцы (с 1991 г.)
-	ipcMesTable = "ipc_mes"
-	ipcMesDdl   = `CREATE TABLE IF NOT EXISTS %s (
+	rosstatIPCMesTable = "rosstat_ipc_mes"
+	ipcMesDdl          = `CREATE TABLE IF NOT EXISTS %s (
 				  name LowCardinality(String)
 				, date Date
 				, percent Float32
@@ -30,7 +29,7 @@ const (
 	// Литерал, как и таблица: запрос — часть утверждения «эти точки мои». FINAL обязателен —
 	// без него count() считает несмёрженные части и растёт после каждого повторного импорта,
 	// то есть чек сравнивал бы величину, меняющуюся от прогона к прогону.
-	ipcMesCountPoints = "SELECT count() FROM ipc_mes FINAL"
+	ipcMesCountPoints = "SELECT count() FROM rosstat_ipc_mes FINAL"
 )
 
 type IpcMesStat struct {
@@ -39,7 +38,7 @@ type IpcMesStat struct {
 
 // getXlsDataUrl ищет ссылку на актуальный ipc_mes_*.xlsx на странице цен Росстата и
 // возвращает её как есть: пустой результат — признак «ссылки нет», и вызывающий обязан
-// отличить его от рабочей ссылки сам (то же устройство у соседей — salaries_mes, vvp_kvartal).
+// отличить его от рабочей ссылки сам (то же устройство у соседей — rosstat_salaries_mes, rosstat_vvp_kvartal).
 // Ошибка обхода страницы только логируется: решение о сбое принимает вызывающий по пустому URL.
 func (s *IpcMesStat) getXlsDataUrl() (url string) {
 	c := colly.NewCollector()
@@ -120,8 +119,8 @@ func ipcMesImport(xlsx *excelize.File, batch driver.Batch) error {
 
 // Import берёт адрес актуального xlsx со страницы цен Росстата: имени файла в коде нет
 // (ipc_mes_ММ-ГГГГ.xlsx меняется при каждом обновлении), а сетевое обращение в init()
-// запрещено (ARCHITECTURE.md §8.6). Пустой URL — сразу ошибка, как у соседей (salaries_mes,
-// vvp_kvartal): иначе прогон дошёл бы до GetXlsx("") и упал невнятно. Дальше — полный цикл
+// запрещено (ARCHITECTURE.md §8.6). Пустой URL — сразу ошибка, как у соседей (rosstat_salaries_mes,
+// rosstat_vvp_kvartal): иначе прогон дошёл бы до GetXlsx("") и упал невнятно. Дальше — полный цикл
 // шаблона: DDL → префлайт по HEAD (файл обновляется раз в месяц, шаг расписания — недельный)
 // → точки → производные (AfterImport) → строка версии.
 func (s *IpcMesStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
@@ -133,15 +132,11 @@ func (s *IpcMesStat) Import(ctx context.Context, conn driver.Conn) (count int64,
 	return s.ClickHouseImport.Import(ctx, conn)
 }
 
-// ipcMesImporter — помесячные ИПЦ Росстата; регистрируется init() пакета.
+// ipcMesImporter — помесячные ИПЦ Росстата; регистрируется реестром rosstat/importers.go.
 var ipcMesImporter = &IpcMesStat{ClickHouseImport: util.ClickHouseImport{
-	TableName:              ipcMesTable,
+	TableName:              rosstatIPCMesTable,
 	CreateTable:            []string{ipcMesDdl},
 	ImportFunc:             ipcMesImport,
 	AfterImport:            afterRosstatMacro(ipcMesSeriesMeta),
 	PublicationCountPoints: ipcMesCountPoints,
 }}
-
-func init() {
-	chimport.Stats = append(chimport.Stats, ipcMesImporter)
-}

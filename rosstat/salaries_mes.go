@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/gocolly/colly/v2"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	log "github.com/sirupsen/logrus"
 	"github.com/xuri/excelize/v2"
@@ -19,8 +18,8 @@ const (
 	// Среднемесячная номинальная начисленная заработная плата работников в целом по экономике Российской Федерации
 	// Имя файла содержит месяц и год (tab1-zpl_ММ-ГГГГ.xlsx) и меняется при обновлении,
 	// поэтому ссылка берётся со страницы.
-	salariesMesTable = "salaries_mes"
-	salariesMesDdl   = `CREATE TABLE IF NOT EXISTS %s (
+	rosstatSalariesMesTable = "rosstat_salaries_mes"
+	salariesMesDdl          = `CREATE TABLE IF NOT EXISTS %s (
 				  name LowCardinality(String)
 				, date Date
 				, salary Float32
@@ -32,7 +31,7 @@ const (
 	// salariesMesCountPoints — количественный чек версии (спека §3.5): число точек своего
 	// ряда. Литерал, как и таблица: запрос — часть утверждения «эти точки мои». FINAL
 	// обязателен — иначе count() считал бы несмёрженные части.
-	salariesMesCountPoints = "SELECT count() FROM salaries_mes FINAL"
+	salariesMesCountPoints = "SELECT count() FROM rosstat_salaries_mes FINAL"
 )
 
 // getSalariesMesXlsDataUrl ищет ссылку на актуальный tab1-zpl_*.xlsx на странице
@@ -139,15 +138,11 @@ func (s *SalariesMesStat) Import(ctx context.Context, conn driver.Conn) (count i
 	return s.ClickHouseImport.Import(ctx, conn)
 }
 
-// salariesMesImporter — среднемесячная начисленная зарплата по РФ; регистрируется init() пакета.
+// salariesMesImporter — среднемесячная начисленная зарплата по РФ; регистрируется реестром rosstat/importers.go.
 var salariesMesImporter = &SalariesMesStat{ClickHouseImport: util.ClickHouseImport{
-	TableName:              salariesMesTable,
+	TableName:              rosstatSalariesMesTable,
 	CreateTable:            []string{salariesMesDdl},
 	ImportFunc:             salariesMesImport,
 	AfterImport:            afterRosstatMacro(salariesMesSeriesMeta),
 	PublicationCountPoints: salariesMesCountPoints,
 }}
-
-func init() {
-	chimport.Stats = append(chimport.Stats, salariesMesImporter)
-}

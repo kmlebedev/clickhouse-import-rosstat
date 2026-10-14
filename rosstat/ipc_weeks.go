@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/gocolly/colly/v2"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	log "github.com/sirupsen/logrus"
 	"github.com/xuri/excelize/v2"
@@ -20,14 +19,14 @@ import (
 const (
 	// ToDo update data source https://rosstat.gov.ru/statistics/price
 	// Еженедельные индексы потребительских цен (тарифов) на отдельные товары и услуги по Российской
-	ipcWeeksTable = "ipc_weeks"
-	ipcWeeksDdl   = `CREATE TABLE IF NOT EXISTS ` + ipcWeeksTable + ` (
+	rosstatIPCWeeksTable = "rosstat_ipc_weeks"
+	ipcWeeksDdl          = `CREATE TABLE IF NOT EXISTS ` + rosstatIPCWeeksTable + ` (
 				  name LowCardinality(String)
 				, date Date
 				, percent Float32
 			) ENGINE = ReplacingMergeTree ORDER BY (name, date);
 		`
-	ipcWeeksInsert = "INSERT INTO " + ipcWeeksTable
+	ipcWeeksInsert = "INSERT INTO " + rosstatIPCWeeksTable
 	ipcWeeksField  = "Наименование"
 )
 
@@ -35,7 +34,7 @@ type IpcWeeksStat struct {
 }
 
 func (s *IpcWeeksStat) Name() string {
-	return ipcWeeksTable
+	return rosstatIPCWeeksTable
 }
 
 func (s *IpcWeeksStat) getXlsDataUrl() (url string, err error) {
@@ -140,6 +139,8 @@ func (s *IpcWeeksStat) Import(ctx context.Context, conn driver.Conn) (count int6
 	return count, nil
 }
 
-func init() {
-	chimport.Stats = append(chimport.Stats, &IpcWeeksStat{})
-}
+// ipcWeeksImporter — еженедельные индексы цен Росстата; регистрируется реестром
+// rosstat/importers.go. На общий шаблон util.ClickHouseImport импортёр пока не переведён:
+// DDL, вставка и производные у него свои (см. export/Import), поэтому в реестре он стоит
+// со своим Name() и своим countPoints (пустым — префлайта у недельного ряда нет).
+var ipcWeeksImporter = &IpcWeeksStat{}

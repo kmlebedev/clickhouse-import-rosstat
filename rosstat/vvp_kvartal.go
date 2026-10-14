@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/gocolly/colly/v2"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	log "github.com/sirupsen/logrus"
 	"github.com/xuri/excelize/v2"
@@ -36,8 +35,8 @@ const (
 	// ВВП кварталы (с 1995 г.) — имя файла содержит диапазон лет (VVP_kvartal_s_1995-2025.xlsx)
 	// и меняется при обновлении, поэтому ссылка берётся со страницы.
 	// Валовой внутренний продукт 1) (в ценах 2021 г., млрд руб., с исключением сезонного фактора)
-	vvpKvartalTable = "vvp_kvartal"
-	vvpKvartalDdl   = `CREATE TABLE IF NOT EXISTS %s (
+	rosstatVVPKvartalTable = "rosstat_vvp_kvartal"
+	vvpKvartalDdl          = `CREATE TABLE IF NOT EXISTS %s (
 				  name LowCardinality(String)
 				, date Date
 				, vvp Float32
@@ -46,7 +45,7 @@ const (
 	// vvpKvartalCountPoints — количественный чек версии (спека §3.5): число точек своего
 	// ряда. Литерал, как и таблица: запрос — часть утверждения «эти точки мои». FINAL
 	// обязателен — иначе count() считал бы несмёрженные части.
-	vvpKvartalCountPoints = "SELECT count() FROM vvp_kvartal FINAL"
+	vvpKvartalCountPoints = "SELECT count() FROM rosstat_vvp_kvartal FINAL"
 )
 
 // getVvpKvartalXlsDataUrl ищет ссылку на актуальный VVP_kvartal_*.xlsx на странице
@@ -145,15 +144,11 @@ func (s *vvpKvartalDdlStat) Import(ctx context.Context, conn driver.Conn) (count
 	return s.ClickHouseImport.Import(ctx, conn)
 }
 
-// vvpKvartalImporter — квартальный ВВП РФ; регистрируется init() пакета.
+// vvpKvartalImporter — квартальный ВВП РФ; регистрируется реестром rosstat/importers.go.
 var vvpKvartalImporter = &vvpKvartalDdlStat{ClickHouseImport: util.ClickHouseImport{
-	TableName:              vvpKvartalTable,
+	TableName:              rosstatVVPKvartalTable,
 	CreateTable:            []string{vvpKvartalDdl},
 	ImportFunc:             vvpKvartalImport,
 	AfterImport:            afterRosstatMacro(vvpKvartalSeriesMeta),
 	PublicationCountPoints: vvpKvartalCountPoints,
 }}
-
-func init() {
-	chimport.Stats = append(chimport.Stats, vvpKvartalImporter)
-}
