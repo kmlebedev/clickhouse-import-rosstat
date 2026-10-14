@@ -4,7 +4,7 @@ import "github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 
 // rosstatImporter — запись реестра импортёров пакета: сам импортёр, таблица, в которую
 // он пишет, и запрос количественного чека версии (префлайта). Регистрируется импортёр
-// пакета, а не отдельный тип-обёртка: все четыре импортёра объявлены структурами с
+// пакета, а не отдельный тип-обёртка: все пять импортёров объявлены структурами с
 // встроенным util.ClickHouseImport, поэтому Name(), Import() (цикл «DDL → префлайт →
 // точки → производные → версия») и публикация производных (каталог рядов и витрина
 // v_rosstat_macro — поле AfterImport шаблона) наследуются из шаблона, а не пишутся кодом
@@ -52,6 +52,7 @@ var rosstatImporters = []rosstatImporter{
 	{ipcWeeksImporter, "rosstat_ipc_weeks", ""},
 	{salariesMesImporter, "rosstat_salaries_mes", "SELECT count() FROM rosstat_salaries_mes FINAL"},
 	{vvpKvartalImporter, "rosstat_vvp_kvartal", "SELECT count() FROM rosstat_vvp_kvartal FINAL"},
+	{labourForceImporter, "rosstat_labour_force_mes", "SELECT count() FROM rosstat_labour_force_mes FINAL"},
 }
 
 // init — единственная регистрация импортёров Росстата в chimport.Stats. Порядок

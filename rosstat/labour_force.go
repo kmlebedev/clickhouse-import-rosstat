@@ -1,6 +1,7 @@
 package rosstat
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"regexp"
@@ -8,15 +9,24 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
 )
 
 const (
 	// Рынок труда Росстата: рабочая сила, занятые и безработные (тыс. чел.) и три уровня (%)
-	// https://rosstat.gov.ru/labour_force. Импортёр появится в следующей задаче; здесь — только
-	// адресация и разбор.
+	// https://rosstat.gov.ru/labour_force.
 	rosstatLabourForceTable = "rosstat_labour_force_mes"
+	// labourForceDdl — DDL в %s-форме (§5.1): имя таблицы подставляет шаблон. Значение — Float64,
+	// а не Float32 legacy-колонок соседних рядов: разница видна только по типу записи, поэтому
+	// схему пинит тест импортёра (§11.6).
+	labourForceDdl = `CREATE TABLE IF NOT EXISTS %s (
+      name LowCardinality(String)
+    , date Date
+    , value Float64
+) ENGINE = ReplacingMergeTree ORDER BY (name, date);
+`
 	// labourForceSheet — лист «5» книги «Численность и состав рабочей силы в возрасте 15 лет и
 	// старше по Российской Федерации». Лист ищется по имени (§6.3): номер листа в книге
 	// сдвинулся бы от любого добавленного листа, а имя — часть разметки выгрузки.
@@ -28,6 +38,10 @@ const (
 	// Дефис в имени файла — не опечатка разбора: у соседних выгрузок той же карточки стоит
 	// подчёркивание (trud_1_15-72.xlsx), и общая маска по «trud» вернула бы не тот файл.
 	labourForceLinkSelector = `a[href$="trud-1_15-s.xlsx"]`
+	// labourForceCountPoints — количественный чек версии (§9.1): число точек своих шести рядов.
+	// Литерал, как и таблица: запрос — часть утверждения «эти точки мои». FINAL обязателен —
+	// иначе count() считал бы несмёрженные части и менялся бы от прогона к прогону.
+	labourForceCountPoints = "SELECT count() FROM rosstat_labour_force_mes FINAL"
 
 	// Имена шести рядов — стабильные идентификаторы в каталоге (§6.8). Из заголовка листа они не
 	// читаются: заголовок несёт годы и редакцию («…в возрасте 15 лет и старше…») и меняется при
@@ -318,3 +332,62 @@ func parseLabourForce(xlsx *excelize.File) ([]labourForcePoint, error) {
 	}
 	return points, nil
 }
+
+// labourForceDataUrl берёт адрес актуальной книги со страницы рынка труда Росстата: имя файла
+// стабильное, но адрес хранения Росстат менял, поэтому ссылка не собирается в коде. Транспорт —
+// через util (§4.1), и ошибка не проглатывается (§4.4): без ссылки импорт обязан упасть до записи
+// в БД, а не писать «0 строк» по устаревшему адресу. Обе ошибки называют страницу и ожидаемый
+// файл — иначе оператор по тексту не отличит недоступный сайт от изменившейся разметки карточки.
+func labourForceDataUrl() (string, error) {
+	page, err := util.GetPage(labourForcePage)
+	if err != nil {
+		return "", fmt.Errorf("labourForce: %s: %w", labourForcePage, err)
+	}
+	href, err := util.FindLink(page, labourForceLinkSelector)
+	if err != nil {
+		return "", fmt.Errorf("labourForce: ссылка на trud-1_15-s.xlsx не найдена на %s: %w", labourForcePage, err)
+	}
+	return rosstatUrl + href, nil
+}
+
+type LabourForceStat struct {
+	util.ClickHouseImport
+}
+
+// labourForceImport разбирает книгу и пишет точки в batch. Значение — float64 (§5.3): колонка
+// value объявлена Float64, и запись float32 прошла бы в неё молча, потеряв точность.
+func labourForceImport(xlsx *excelize.File, batch driver.Batch) error {
+	points, err := parseLabourForce(xlsx)
+	if err != nil {
+		return err
+	}
+	for _, point := range points {
+		if err = batch.Append(point.series, point.date, point.value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Import берёт адрес книги со страницы рынка труда (§5.4): имя файла стабильное, но адрес
+// хранения Росстат менял, а сетевое обращение в init() запрещено (§4.3). Дальше — полный цикл
+// шаблона: DDL → префлайт по HEAD (файл обновляется ~раз в месяц, шаг расписания — недельный) →
+// точки → производные (AfterImport) → строка версии.
+func (s *LabourForceStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+	url, err := labourForceDataUrl()
+	if err != nil {
+		return count, err
+	}
+	s.DataUrl = url
+	return s.ClickHouseImport.Import(ctx, conn)
+}
+
+// labourForceImporter — рынок труда РФ: рабочая сила, занятые, безработные и три уровня;
+// регистрируется реестром rosstat/importers.go.
+var labourForceImporter = &LabourForceStat{ClickHouseImport: util.ClickHouseImport{
+	TableName:              rosstatLabourForceTable,
+	CreateTable:            []string{labourForceDdl},
+	ImportFunc:             labourForceImport,
+	AfterImport:            afterRosstatMacro(labourForceSeriesMeta),
+	PublicationCountPoints: labourForceCountPoints,
+}}

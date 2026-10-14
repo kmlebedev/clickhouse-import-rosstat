@@ -2,6 +2,7 @@ package rosstat
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -475,5 +476,87 @@ func TestLabourForceFindLink(t *testing.T) {
 	}
 	if href, err = util.FindLink(other, labourForceLinkSelector); err == nil {
 		t.Errorf("на странице без выгрузки найдена ссылка %q, ожидалась ошибка", href)
+	}
+}
+
+// TestLabourForceImportAppendsFloat64 — импортёр на реальной фикстуре пишет 690 точек шести рядов,
+// и каждая запись — float64: это пинит схему колонки Float64 новой таблицы (§5.3). Запись float32
+// прошла бы в колонку Float64 молча, потеряв точность на шаге представления, и заметен такой
+// сдвиг только по типу значения в харнессе (§11.6).
+func TestLabourForceImportAppendsFloat64(t *testing.T) {
+	rec := &appendRecorder{}
+	if err := labourForceImport(openLabourForceFixture(t), rec); err != nil {
+		t.Fatalf("labourForceImport: %v", err)
+	}
+	if len(rec.rows) != 690 {
+		t.Fatalf("точек записано %d, ожидалось 690", len(rec.rows))
+	}
+	series := make(map[string]int, 6)
+	for _, row := range rec.rows {
+		series[row.series]++
+		if row.valueType != "float64" {
+			t.Errorf("%s %s: запись типа %s, ожидался float64 (колонка value таблицы %s)",
+				row.series, row.date.Format("2006-01-02"), row.valueType, rosstatLabourForceTable)
+		}
+	}
+	if len(series) != 6 {
+		t.Errorf("записано рядов %d, ожидалось 6: %v", len(series), series)
+	}
+	for name, count := range series {
+		if count != 115 {
+			t.Errorf("ряд %q: точек %d, ожидалось 115 (2017-01 … 2026-07)", name, count)
+		}
+	}
+}
+
+// TestLabourForceAppendErrorNotSwallowed — ошибка записи доходит до вызывающего (§5.5, §11.6):
+// сбой Append в середине батча обязан вернуть ошибку, а не выглядеть успешным импортом.
+func TestLabourForceAppendErrorNotSwallowed(t *testing.T) {
+	wantErr := errors.New("append сломан")
+	rec := &appendRecorder{appendErr: wantErr}
+	err := labourForceImport(openLabourForceFixture(t), rec)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("ошибка Append не вернулась: err = %v", err)
+	}
+	if len(rec.rows) != 0 {
+		t.Errorf("в батч записано %d строк, ожидалось 0 (первый Append упал)", len(rec.rows))
+	}
+}
+
+// TestLabourForceSeriesMetaCoversParsedRows — двусторонний контракт каталога (§11.4): имена рядов
+// объявлены кодом (§6.8), поэтому проверяются оба направления — «разобрано ⊆ описано» и «описано ⊆
+// разобрано». Односторонней проверки здесь мало: имя, забытое в каталоге, оставило бы агента MCP
+// без описания ряда, а имя, забытое в разборе, — описание ряда, которого нет в данных; сверка
+// каталога с самим собой не поймала бы ни то, ни другое.
+func TestLabourForceSeriesMetaCoversParsedRows(t *testing.T) {
+	described := describedSeries(t, labourForceSeriesMeta)
+	for _, meta := range labourForceSeriesMeta {
+		// Частота — часть контракта каталога: ряд помесячный, и «M» проверяется литералом.
+		if meta.Frequency != "M" {
+			t.Errorf("ряд %q: частота %q, ожидалась %q", meta.Series, meta.Frequency, "M")
+		}
+	}
+	points := parseLabourForceFixture(t)
+	parsed := make([]string, 0, len(points))
+	for _, point := range points {
+		parsed = append(parsed, point.series)
+	}
+	requireParsedDescribed(t, parsed, described)
+}
+
+// TestLabourForcePublicationDeclaration — точка контроля публикации объявлена (§9.1): файл
+// перезаписывается на месте под стабильным именем и обновляется раз в месяц при недельном шаге
+// расписания. Url объявления пуст намеренно: ссылка вычисляется внутри Import(), и отпечаток
+// префлайта шаблон строит по DataUrl, а не по этой копии (§5.4, util.PublicationDecl).
+func TestLabourForcePublicationDeclaration(t *testing.T) {
+	pub := labourForceImporter.Publication()
+	if pub.CountPoints != labourForceCountPoints {
+		t.Errorf("объявление импортёра даёт запрос чека %q, ожидался %q", pub.CountPoints, labourForceCountPoints)
+	}
+	if pub.Source != rosstatLabourForceTable {
+		t.Errorf("объявление импортёра даёт ключ версии %q, ожидался %q (Name() == TableName)", pub.Source, rosstatLabourForceTable)
+	}
+	if pub.Url != "" {
+		t.Errorf("объявление импортёра несёт Url %q, ожидалась пустая строка: ссылка вычисляется в Import()", pub.Url)
 	}
 }
