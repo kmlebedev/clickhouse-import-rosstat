@@ -282,7 +282,7 @@ archive-registry:
 
 - [ ] **Step 3: Staging-env и README зеркала**
 
-`deploy/staging/clickhouse-import-rosstat.env.example` — блок с комментариями: `ARCHIVE_BACKEND=yandex`, `ARCHIVE_YANDEX_TOKEN=REPLACE_ME` (значение — OAuth-токен приложения, scope `cloud_api:disk.write`), `ARCHIVE_YANDEX_DIR=disk:/rosstat-archive`; пометить, что токен обязателен при включённом бэкенде и что архив отключён при пустом `ARCHIVE_BACKEND`. `docs/archive/README.md` — что это зеркало реестра `registry.jsonl` из хранилища, что истина — файл на Диске, как обновлять (`make archive-registry`), что коммит периодический/ручной (на staging нет git-дерева, автокоммит невозможен), формат строки (перечень полей).
+`deploy/staging/clickhouse-import-rosstat.env.example` — блок с комментариями: `#ARCHIVE_BACKEND=yandex` (закомментирован: архивация — опция и включается после подстановки рабочего токена), `ARCHIVE_YANDEX_TOKEN=REPLACE_ME` (значение — OAuth-токен приложения, scope `cloud_api:disk.write` **и** `cloud_api:disk.read`: токену нужны оба — запись версий и чтение реестра/скачивание версий, л. 40 и §3.5 спеки), `ARCHIVE_YANDEX_DIR=disk:/rosstat-archive`; пометить, что токен обязателен при включённом бэкенде (с нерабочим токеном 401 на проверке архива ломает no-op и импорт идёт полным каждый день) и что архив отключён при пустом `ARCHIVE_BACKEND`. `docs/archive/README.md` — что это зеркало реестра `registry.jsonl` из хранилища, что истина — файл на Диске, как обновлять (`make archive-registry`), что коммит периодический/ручной (на staging нет git-дерева, автокоммит невозможен), формат строки (перечень полей).
 
 - [ ] **Step 4: Проверки**
 

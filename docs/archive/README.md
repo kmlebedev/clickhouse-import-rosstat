@@ -52,4 +52,4 @@ make archive-registry ARCHIVE_BACKEND=local ARCHIVE_LOCAL_DIR=build/archive-dev
 {"source":"cbr_m2","name":"monetary_agg_SA.xlsx","fingerprint":"8f3c…","sha256":"b7d1…","size":583746,"url":"https://www.cbr.ru/vfs/…","key":"cbr_m2/8f3c…_monetary_agg_SA.xlsx","first_seen":"2026-10-14T09:20:11+03:00"}
 ```
 
-Секретов в реестре нет: `source`/`name`/`url`/`sha256` и есть весь его состав.
+Секретов в реестре нет: полный состав строки — в таблице полей выше (восемь полей, все публичные).
