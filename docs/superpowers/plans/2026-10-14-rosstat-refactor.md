@@ -432,7 +432,7 @@ git commit -m "ipc_mes: stable code-side series names, layout-driven parsing"
 - [ ] **Step 1: Написать падающий тест `rosstat/ipc_weeks_test.go`**
 
 ```go
-func TestIpcWeeksReadsFixture(t *testing.T)      // точек 26 611, рядов 131; живой счётчик 25 691 отличается на −28 (нули, записанные старым разбором из ячеек «…») и +948 (числовые ячейки 19 строк товаров, отрезанных обрывом листа)
+func TestIpcWeeksReadsFixture(t *testing.T)      // точек 26 611, рядов 131; живой счётчик 25 691 отличается нетто на +920: −28 (нули, записанные старым разбором из ячеек «…») + 66 (числовые ячейки двух строк «…») + 882 (числовые ячейки 19 строк товаров, отрезанных обрывом листа)
 func TestIpcWeeksMetaCoversParsedRows(t *testing.T) // односторонний контракт: каждый разобранный товар описан в ipcWeeksSeriesMeta() (стандарт §11.4)
 func TestIpcWeeksSpotValue(t *testing.T)         // лист "2026", товар "Говядина (кроме бескостного мяса), кг", 2026-01-12 → 100.65
 func TestIpcWeeksUnknownProductWarns(t *testing.T) // товар вне ipcWeeksProducts → log warn, точка всё равно пишется
