@@ -242,6 +242,23 @@ func init() {
 
 ⚠️ **В env-файле из `GOST_*` держат только `GOST_APP_ID`.** Локальный `~/.config/rosstat/env` подключается Makefile через `-include`, а его переменные объявлены с `export` — поэтому значение из файла перекрывает префикс команды, и `GOST_MODE=full make import STAT=gost_vehicle_safety_certificate` молча прочитает режим из файла. Режимные переменные (`GOST_MODE`/`GOST_FROM`/`GOST_TO`/`GOST_SETTLE_DAYS`) передавайте префиксом команды или в `env` шага DAG (как `GOST_MODE=since` в `dagu/craw.yaml`); на staging их не дублируют в `/etc/clickhouse-import-rosstat.env` — там живёт токен (`deploy/staging/clickhouse-import-rosstat.env.example`).
 
+### 5.1 Локальные стенды и общие ресурсы (параллельные сессии)
+
+Дев-окружение одно на все рабочие деревья. Над репозиторием одновременно работают несколько сессий Kimi Code (Desktop и CLI), поэтому общие ресурсы берутся по очереди через lock-хелпер `scripts/lock.sh` (атомарный `mkdir`, каталог локов — **вне репозитория**: `$HOME/.rosstat-locks`, переопределяется `ROSSTAT_LOCK_DIR`). Каталог локов внутри репозитория дал бы каждому дереву свой лок, и защита исчезла бы.
+
+| Ресурс | Где живёт | Под каким локом |
+|---|---|---|
+| ClickHouse, сервер | `:8123` (HTTP) / `:9000` (native), данные и pid — `~/clickhouse-dev/.clickhouse/servers/dev` (`CH_DIR`); остановка — `Makefile:133-144` | `db` (`ch-up`, `ch-down`) — тот же ресурс, что и запись: гашение не совпадёт с импортом |
+| ClickHouse, данные | одни таблицы и витрины на все сессии: DDL идёт внутри `Import()` (`util/clickhouse_import.go` — шаг `CreateTable`), витрины пересоздаёт `CreateView` (`util/views.go:23-50`) | `db` (`import`, `ch-sql`, `mcp-user`) |
+| Grafana | `:3000`, данные, логи и плагины — `~/grafana-dev` (`GF_DIR`) | `stand` (`grafana-up`, `grafana-down`, `grafana-deploy-test`, `grafana-test-token`) |
+| ingest-endpoint | `:8081` (`INGEST_ADDR`) | без лока: порт сам не даст поднять второй экземпляр, а демон живёт часами |
+| Staging-хост | `STAGING_HOST` (по умолчанию `palmshell`), ssh и systemd | `staging` (`deploy-staging`, `deploy-staging-binary`, `deploy-staging-dagu`, `deploy-staging-mcp`, `upgrade-staging`, `mcp-user-staging`, `grafana-provision-staging`, `grafana-deploy-staging`; проверки `deploy-staging-preflight`/`-smoke` — без лока) |
+| Рабочее дерево | `.worktrees/<slug>`, ветка `<type>/<slug>` | `git worktree`: у каждого дерева свои `HEAD`, индекс и `build/` |
+
+Правило — **одно рабочее дерево = одна сессия = одна ветка** (`make wt-new`, `make wt-list`, `make wt-rm`, `make session-info`); коммит в `main`/`master`/`main_worktree` отбивает `.githooks/pre-commit` (ставится `make hooks-install`), дерево открывается в GoLand отдельным проектом, а вызовы JetBrains MCP идут с `projectPath` своего дерева. Read-only цели (`ch-status`, `lint`, `test`, `all`, `mcp-check`, …) лок не берут, иначе параллельная работа превратилась бы в очередь. Полный регламент — [docs/PARALLEL_SESSIONS.md](docs/PARALLEL_SESSIONS.md).
+
+Ожидание занятого лока — `WAIT` (по умолчанию 900 с; `0` — падать сразу с кодом `3`), перехват лока — только по мёртвому владельцу (pid не отвечает) или по отсутствию `owner`-файла дольше `GRACE` (по умолчанию 5 с; перехват идёт под мьютексом `<lock>.takeover`), вложенный `make` внутри своего лока не блокируется (`ROSSTAT_LOCK_HELD_<key>`). Владельца показывает `make session-info` (поле `owner`: tool, session, pid, host, since, cwd). Самотесты хелперов — `make test-parallel`.
+
 ## 6. Целевая архитектура (дорожная карта 2026-Q4)
 
 Контур: **Источники → ClickHouse (сырые + витрины) → MCP (read-only) → Kimi-агент → сценарный прогноз золота → DCF → NAV PLZL → model_runs**. Полная версия: [docs/ROADMAP_DCF_POLYUS.md](docs/ROADMAP_DCF_POLYUS.md). Спека контура прогноза и плагина: [docs/superpowers/specs/2026-10-10-gold-nav-plugin-design.md](docs/superpowers/specs/2026-10-10-gold-nav-plugin-design.md).

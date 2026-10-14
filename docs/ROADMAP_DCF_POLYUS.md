@@ -290,6 +290,40 @@ NPV       = FCF / 1000 / (1 + rate)^0              = 3955.1917 млн USD
 - Сценарии запуска ЗИФ, ступенчатый профиль, окно ОПР как функция сценария, `MineLifeYears` — [docs/plans/POLYUS_OUTPUT_MODEL_PLAN.md](plans/POLYUS_OUTPUT_MODEL_PLAN.md).
 
 
+### 7.3 Инфраструктура разработки: параллельные сессии — ✅ выполнен 2026-10-14
+
+Над репозиторием одновременно работают несколько сессий Kimi Code (Desktop и CLI) при одном рабочем каталоге, одном инстансе GoLand, одном локальном ClickHouse, одном стенде Grafana и одном staging-хосте. Пункт разводит их так, чтобы ни git, ни IDE, ни БД не были точкой конфликта: одна сессия — одно рабочее дерево `.worktrees/<slug>` — одна ветка `<type>/<slug>`; общие ресурсы берутся по очереди lock-хелпером; коммит в защищённую ветку отбивает git-хук.
+
+**Спека:** [docs/superpowers/specs/2026-10-14-parallel-sessions-design.md](superpowers/specs/2026-10-14-parallel-sessions-design.md). **План:** [docs/superpowers/plans/2026-10-14-parallel-sessions.md](superpowers/plans/2026-10-14-parallel-sessions.md).
+
+**Артефакты:**
+
+- регламент — [docs/PARALLEL_SESSIONS.md](PARALLEL_SESSIONS.md): схема дерево/ветка/локи/IDE, таблица «ресурс → общий? → чем закрыт», порядок работы сессии, таблица локов, поведение при занятом локе и при конфликте, личные хуки Kimi, «чего правило не гарантирует»;
+- хелперы — `scripts/lock.sh` (ключи `db`/`stand`/`staging`, каталог `$HOME/.rosstat-locks` вне репозитория, ожидание `WAIT`, окно `GRACE` и перехват лока с мёртвым владельцем под мьютексом, reentrancy `ROSSTAT_LOCK_HELD_<key>`), `scripts/worktree.sh` (`new`/`list`/`rm`/`info`), `scripts/agent-guard.sh` (страховка для хука Kimi), самотесты `scripts/parallel_sessions_test.sh`;
+- git-хук `.githooks/pre-commit` — отказ в коммите на `main`/`master`/`main_worktree` и на detached `HEAD`; ставится `make hooks-install`;
+- цели `make wt-new NAME=<slug> [TYPE=feat] [BASE=main]`, `make wt-list`, `make wt-rm NAME=<slug> [FORCE=1]`, `make session-info`, `make hooks-install`, `make test-parallel`;
+- локи в `Makefile`: `db` → `import`, `ch-sql`, `mcp-user`, `ch-up`, `ch-down` (сервер и запись — один ресурс); `stand` → `grafana-up`, `grafana-down`, `grafana-deploy-test`, `grafana-test-token`; `staging` → `deploy-staging`, `deploy-staging-binary`, `deploy-staging-dagu`, `deploy-staging-mcp`, `upgrade-staging`, `mcp-user-staging`, `grafana-provision-staging`, `grafana-deploy-staging`; без лока — `run-ingest`, `deploy-staging-preflight`, `deploy-staging-smoke` и read-only цели;
+- правило протокола — `AGENTS.md`, раздел «Параллельные сессии»;
+- синхронизированы `README.md` (раздел «Параллельные сессии») и `ARCHITECTURE.md` (§5.1 «Локальные стенды и общие ресурсы»).
+
+**Живая приёмка 2026-10-14** (рабочее дерево `.worktrees/parallel-sessions`, ветка `chore/parallel-sessions`, macOS, GNU Make 3.81):
+
+1. **Дерево и ветка.** `make wt-new NAME=probe-a` → `.worktrees/probe-a` на ветке `feat/probe-a` от `main` (9b92d1d); `make wt-list` показал шесть деревьев. Встать на ветку соседа не даёт сам git: `git -C .worktrees/probe-a checkout chore/parallel-sessions` → `fatal: 'chore/parallel-sessions' is already used by worktree at '/Users/whitefox/GolandProjects/clickhouse-import-rosstat/.worktrees/parallel-sessions'`. `make wt-rm NAME=probe-a` при незакоммиченном `PROBE.tmp` отказал («есть незакоммиченные изменения — сначала закоммитьте их; осознанный обход: FORCE=1»), с `FORCE=1` дерево удалено, ветка сохранена (`ветка сохранена: feat/probe-a`), после чего `git branch -d feat/probe-a` → `Deleted branch feat/probe-a (was 9b92d1d)`; `git worktree list` вернулся к пяти деревьям.
+2. **Коммиты в своей ветке.** `make hooks-install` → `core.hooksPath=.githooks` (значение в `.git/config`, действует во всех деревьях), `chmod +x` на хуке. Коммиты спеки, плана и реализации в `chore/parallel-sessions` прошли при установленном хуке; в одноразовом клоне самотест подтверждает и положительный случай (`ok pre-commit: … в feat/x проходит`).
+3. **Защита ветки.** Коммит на `main` отбивается: `ok pre-commit: коммит на main отказывает с подсказкой, в feat/x проходит` и `ok pre-commit: detached HEAD отказывает, ALLOW_PROTECTED_COMMIT=1 пропускает коммит` (обходы — `ALLOW_PROTECTED_COMMIT=1`, `git commit --no-verify`).
+4. **Локи общих ресурсов.** При чужом занятом локе `db` (`scripts/lock.sh db -- sleep 25`, `ROSSTAT_SESSION=probe-holder-db`): `WAIT=0 make import STAT=bea` → `lock.sh: лок 'db' занят (WAIT=0 — не жду); владелец: key=db tool=sleep 25 session=probe-holder-db pid=50099 host=whitefox-Mac-9945 since=… cwd=…/parallel-sessions` и `make: *** [import] Error 3`, и **импортёр не запускался** (в выводе только строка лока, `Error 3` до старта бинаря); `WAIT=0 make ch-sql FILE=sql/events_calendar_q4_2026.sql` → то же по ключу `db`; `make session-info` показал владельца с полями `owner`. После освобождения: `scripts/lock.sh status` → «активных локов нет», `make ch-up` → `ClickHouse уже отвечает на порту 8123` (rc=0). Ключ `db` у `ch-up`/`ch-down` (fix-раунд) живым прогоном не проверялся: `make ch-up`/`ch-down` регламент запрещает трогать без явной просьбы владельца; соответствие проверено через `make -n ch-up`/`make -n ch-down` и самотесты.
+5. **Самотесты.** `make test-parallel` → 20/20 проверок (включая reentrancy вложенного `make`, перехват брошенного лока по мёртвому pid, по окну `GRACE` и при зависшем мьютексе, коды возврата, `wt-new`/`wt-rm`, отказ `wt-rm` на `NAME` с `..`, базу из `origin/$BASE`, `pre-commit` в корневом и в linked worktree); цель включена в `make all`.
+6. **`make all`** — зелёный: `gofmt` и `golangci-lint` без замечаний, `go vet ./...` чисто, `go test -race ./...` — все пакеты `ok` (самый долгий `wgc` 94.6 с), обе сборки — `build/clickhouse-import-rosstat` (linux/amd64) и `build/ingest`.
+
+**После независимого ревью исправлено:** перехват лока только по мёртвому владельцу (было — по возрасту у живого), `ch-up`/`ch-down` переведены на ключ `db` (было `stand`), снят лок с `run-ingest`, добавлена валидация слага в `wt-rm`, `wt-new` берёт `origin/$BASE`, добавлен мьютекс перехвата. Почему это важно: перехват по возрасту у живого владельца давал двух одновременных владельцев одного ресурса — ровно тот ИБ-дефект, который регламент и должен был закрывать; остальное убирает ложные блокировки и молчаливую потерю свежей базы.
+
+**Что не проверено и почему:**
+
+- **Живой параллельный прогон двух `make import`** не делался: общий dev-стенд используют другие сессии. Очередь доказана блокировкой (п. 4) — второй прогон не доходит до импортёра и получает `Error 3`, а идемпотентность вставок в любом случае обеспечивает `ReplacingMergeTree`.
+- **`main` не вычекан ни в одном дереве**, поэтому отказ `pre-commit` на `main` подтверждён самотестом в одноразовом клоне, а не живым коммитом на защищённой ветке.
+- **JetBrains MCP с `projectPath`**: подтверждено только, что инструмент отвечает по переданному пути дерева; полноценная проверка требует, чтобы дерево было открыто в GoLand отдельным проектом, — это шаг владельца при открытии сессии (п. 2 регламента).
+
+
 ### Quick wins (можно сделать уже сегодня)
 
 1. Импортёр FRED — один файл по шаблону `util.ClickHouseImport`: у FRED есть прямые CSV-эндпоинты (`https://fred.stlouisfed.org/graph/fredgraph.csv?id=DFII10`), парсинг тривиален, а покрывает сразу ставку ФРС, TIPS, DXY и инфляционные ожидания.

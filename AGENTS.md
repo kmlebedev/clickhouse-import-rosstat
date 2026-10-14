@@ -82,6 +82,17 @@
     - (г) проверить через MCP (`list_tables`, `run_query` на витрину), что агент видит ряд и комментарии;
     - (д) обновить `ARCHITECTURE.md` (§6.2/§6.3) и `README.md`.
 
+## Параллельные сессии (две и больше на одном проекте)
+
+Над репозиторием могут одновременно работать несколько сессий (Kimi Code Desktop и CLI). Общий у них не только репозиторий: один инстанс GoLand с одним MCP-эндпоинтом, один локальный ClickHouse, один стенд Grafana, один staging-хост. Полный регламент — [docs/PARALLEL_SESSIONS.md](docs/PARALLEL_SESSIONS.md); ниже — обязательные правила.
+
+1. **Одна сессия — одно рабочее дерево — одна ветка — один пункт роадмапа.** Старт: `make wt-new NAME=<slug> [TYPE=feat] [BASE=main]` → каталог `.worktrees/<slug>` на ветке `<type>/<slug>`. В корне репозитория вторая сессия не запускается: корень — для интеграции и работы одной сессии. В Desktop каждое дерево открывается отдельным workspace; две сессии в одном workspace запрещены.
+2. **Ветка неприкосновенна.** Ни `checkout`/`switch`/`reset` чужой ветки, ни коммит в `main`/`master`/`main_worktree`. `git worktree` не даёт двум деревьям встать на одну ветку, а `.githooks/pre-commit` (`make hooks-install`, один раз на клон) режет коммит в защищённую ветку и в detached HEAD.
+3. **Общие ресурсы берутся локом, а не «на глазок».** Пишущие цели берут лок сами: `import`, `ch-sql`, `mcp-user`, `ch-up`, `ch-down` — ключ `db` (сервер и его данные — один ресурс); `grafana-up`, `grafana-down`, `grafana-deploy-test`, `grafana-test-token` — ключ `stand`; `deploy-staging`, `deploy-staging-binary`, `deploy-staging-dagu`, `deploy-staging-mcp`, `upgrade-staging`, `mcp-user-staging`, `grafana-provision-staging`, `grafana-deploy-staging` — ключ `staging`. Без лока: `run-ingest` (порт `:8081` сам не даст поднять второй экземпляр, а демон живёт часами) и проверки `deploy-staging-preflight`/`deploy-staging-smoke`. Занятый лок печатает владельца и ждёт (`WAIT` секунд, `WAIT=0` — падать сразу); перехватывается только лок с мёртвым владельцем. `make ch-down`, `make grafana-down`, `git worktree remove` — только владелец ресурса и только по явной просьбе пользователя.
+4. **JetBrains MCP — всегда с `projectPath`** = абсолютный путь своего дерева: без него проблемы, символы и рефакторинги приходят по тому проекту, который открыт в IDE, а не по дереву сессии. В GoLand дерево открывается отдельным проектом.
+5. **Один писатель на артефакт.** `ARCHITECTURE.md`, `sql/*`, `dashboard/*.json`, `docs/archive/registry.jsonl`, `.superpowers/sdd/<тема>/` правит одна сессия за раз; тема SDD — тема сессии, а не общая.
+6. **Сборка и тесты — в своём дереве:** `make all` (включает `make test-parallel` — самотесты лок- и worktree-хелпера). Диагностика: `make session-info` (дерево, ветка, активные локи), `make wt-list`.
+
 ## Стиль коммитов и PR
 
 - Коммиты: кратко, по-английски, в духе истории репозитория (`add fred importer`, `fix batch insert cbr_queries`).
