@@ -260,8 +260,8 @@ func TestLabourForceEmptyCellIsNotPoint(t *testing.T) {
 
 // TestLabourForceMisspelledMonthFails — опечатка в подписи месяца («феврал» вместо «февраль»)
 // даёт нераспознанную подпись в середине таблицы. Раньше разбор на ней молча замыкался и отдавал
-// 6 точек: неполный ряд в витрине выглядит полным, поэтому теперь замыкание проверяется — если
-// ниже строки с нераспознанной подписью в колонках рядов есть значения, это ошибка (§6.4).
+// 6 точек: неполный ряд в витрине выглядит полным, поэтому теперь замыкание проверяется — строка с
+// нераспознанной подписью, несущая значения в колонках рядов, сама является ошибкой (§6.4).
 func TestLabourForceMisspelledMonthFails(t *testing.T) {
 	const broken = "феврал"
 	xlsx := mutateLabourForceFixture(t, func(f *excelize.File) {
@@ -280,8 +280,62 @@ func TestLabourForceMisspelledMonthFails(t *testing.T) {
 	if !strings.Contains(err.Error(), broken) || !strings.Contains(err.Error(), "не распознана") {
 		t.Errorf("ошибка %q не называет нераспознанную подпись %q", err, broken)
 	}
-	if !strings.Contains(err.Error(), "строка 10") {
-		t.Errorf("ошибка %q не называет строку, где продолжаются данные", err)
+	if !strings.Contains(err.Error(), "строка 9") {
+		t.Errorf("ошибка %q не называет строку с нераспознанной подписью", err)
+	}
+}
+
+// TestLabourForceGarbageLabelOnLastMonthFails — та же поломка в последней строке таблицы: подпись
+// июля 2026 (A131) заменена мусором при заполненных значениях. Прежняя проверка начиналась со
+// следующей строки и пропускала саму строку-замыкание, поэтому июль исчезал молча (684 точки,
+// err=nil). Теперь строка-замыкание проверяется наравне с остальными, и ошибка называет её номер.
+func TestLabourForceGarbageLabelOnLastMonthFails(t *testing.T) {
+	const broken = "xxx"
+	xlsx := mutateLabourForceFixture(t, func(f *excelize.File) {
+		// A131 — подпись июля 2026; значения июля (B131:G131) остаются на месте.
+		if err := f.SetCellValue(labourForceSheet, "A131", broken); err != nil {
+			t.Fatal(err)
+		}
+	})
+	points, err := parseLabourForce(xlsx)
+	if err == nil {
+		t.Fatalf("подпись %q последней строки разобрана без ошибки: %d точек вместо 690", broken, len(points))
+	}
+	if !strings.Contains(err.Error(), rosstatLabourForceTable) || !strings.Contains(err.Error(), labourForceSheet) {
+		t.Errorf("ошибка %q не называет таблицу %q и лист %q", err, rosstatLabourForceTable, labourForceSheet)
+	}
+	if !strings.Contains(err.Error(), "строка 131") {
+		t.Errorf("ошибка %q не называет строку-замыкание 131", err)
+	}
+	if !strings.Contains(err.Error(), broken) || !strings.Contains(err.Error(), "не распознана") {
+		t.Errorf("ошибка %q не называет нераспознанную подпись %q", err, broken)
+	}
+}
+
+// TestLabourForceUnparsedLabelWithDataBelowFails — вторая ветка проверки замыкания: строка с
+// нераспознанной подписью значений не несёт (слетела только подпись), но данные идут ниже неё.
+// Без этой ветки разбор вернул бы пустые точки вместо ошибки при потерянной строке-подписи.
+func TestLabourForceUnparsedLabelWithDataBelowFails(t *testing.T) {
+	const broken = "феврал"
+	xlsx := mutateLabourForceFixture(t, func(f *excelize.File) {
+		if err := f.SetCellValue(labourForceSheet, "A9", broken); err != nil {
+			t.Fatal(err)
+		}
+		for _, cell := range []string{"B9", "C9", "D9", "E9", "F9", "G9"} {
+			if err := f.SetCellValue(labourForceSheet, cell, ""); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+	points, err := parseLabourForce(xlsx)
+	if err == nil {
+		t.Fatalf("подпись %q без значений разобрана без ошибки: %d точек вместо 690", broken, len(points))
+	}
+	if !strings.Contains(err.Error(), "данные продолжаются ниже строки 9") {
+		t.Errorf("ошибка %q не называет строку с нераспознанной подписью и продолжение данных ниже", err)
+	}
+	if !strings.Contains(err.Error(), "строка 10") || !strings.Contains(err.Error(), broken) {
+		t.Errorf("ошибка %q не называет строку данных 10 и подпись %q", err, broken)
 	}
 }
 
