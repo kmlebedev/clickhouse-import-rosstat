@@ -134,24 +134,21 @@ func requireParsedDescribed(t *testing.T, parsed []string, described map[string]
 	}
 }
 
+// TestIpcWeeksSeriesMetaCoversFixture — односторонний контракт каталога на реальной выгрузке
+// (стандарт §11.4): каждый разобранный товар описан в ipcWeeksSeriesMeta. Обратное направление
+// («описано ⊆ разобрано») не проверяется: имена товаров даёт источник, а не код, поэтому
+// товар, переставший публиковаться в обновлённой или урезанной фикстуре, остаётся описанным.
+//
+// Проверка дублирует TestIpcWeeksMetaCoversParsedRows (ipc_weeks_test.go): та же фикстура и то
+// же направление контракта. Оставлены обе осознанно: эта живёт рядом с каталогом вместе с
+// describedSeries, которая проверяет заполненность и уникальность описаний, и до перевода
+// импортёра на util.ClickHouseImport читала разбор напрямую (parseIpcWeeks) — теперь снимает
+// имена с точек, записанных в appendRecorder (§11.6).
 func TestIpcWeeksSeriesMetaCoversFixture(t *testing.T) {
-	xlsx, err := excelize.OpenFile("testdata/ipc_weeks.xlsx")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = xlsx.Close() }()
-	table, err := parseIpcWeeks(xlsx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	names := make([]string, 0, len(*table))
-	for _, row := range *table {
-		names = append(names, row[0])
-	}
 	described := describedSeries(t, ipcWeeksSeriesMeta())
-	for _, name := range names {
-		if !described[name] {
-			t.Errorf("ряд %q из выгрузки не описан в series_meta", name)
+	for _, row := range importIpcWeeksFixture(t) {
+		if !described[row.series] {
+			t.Errorf("ряд %q из выгрузки не описан в series_meta", row.series)
 		}
 	}
 }

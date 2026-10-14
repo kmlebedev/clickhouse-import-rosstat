@@ -1,146 +1,255 @@
 package rosstat
 
 import (
+	"context"
 	"fmt"
-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/gocolly/colly/v2"
-	"github.com/kmlebedev/clickhouse-import-rosstat/util"
-	log "github.com/sirupsen/logrus"
-	"github.com/xuri/excelize/v2"
+	"math"
 	"strconv"
 	"strings"
 	"time"
-)
 
-import (
-	"context"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+	log "github.com/sirupsen/logrus"
+	"github.com/xuri/excelize/v2"
 )
 
 const (
 	// ToDo update data source https://rosstat.gov.ru/statistics/price
 	// Еженедельные индексы потребительских цен (тарифов) на отдельные товары и услуги по Российской
 	rosstatIPCWeeksTable = "rosstat_ipc_weeks"
-	ipcWeeksDdl          = `CREATE TABLE IF NOT EXISTS ` + rosstatIPCWeeksTable + ` (
+	// ipcWeeksDdl — DDL в %s-форме: имя таблицы подставляет шаблон util.ClickHouseImport
+	// (fmt.Sprintf). Литеральное имя в DDL, как было, дублировало бы TableName — второй
+	// источник истины о таблице, который расходится при переименовании.
+	ipcWeeksDdl = `CREATE TABLE IF NOT EXISTS %s (
 				  name LowCardinality(String)
 				, date Date
 				, percent Float32
 			) ENGINE = ReplacingMergeTree ORDER BY (name, date);
 		`
-	ipcWeeksInsert = "INSERT INTO " + rosstatIPCWeeksTable
-	ipcWeeksField  = "Наименование"
+	// ipcWeeksField — якорь шапки листа года: строка с этой подписью в первой колонке.
+	// Разметка ищется по признаку, а не по номеру строки (§6.3): сноски и вставленные
+	// строки сдвигают лист, и жёсткий индекс прочитал бы не те строки.
+	ipcWeeksField = "Наименование"
+	// ipcWeeksYearStart — нижняя граница года листа: имя листа обязано быть числом не меньше
+	// этого года. «Содержание» и прочие нечисловые листы рядами не являются и пропускаются.
+	ipcWeeksYearStart = 1997
+	// ipcWeeksLinkSelector — селектор ссылки на актуальный Nedel_ipc.xlsx: константа рядом с
+	// импортёром, а не литерал в теле функции (§4.5) — тот же селектор проверяет тест на
+	// HTML-фикстуре. Прежняя позиционная CSS-цепочка из номеров вложенных элементов
+	// ломалась от любой правки вёрстки страницы; имя файла (Nedel_ipc.xlsx) постоянное,
+	// поэтому селектор — по фрагменту href.
+	ipcWeeksLinkSelector = `a[href*="Nedel_ipc"]`
+	// ipcWeeksTimeLayout — макет даты точки: день и месяц приходят из подписи колонки
+	// («на 12 января**»), год — из имени листа.
+	ipcWeeksTimeLayout = "2006-1-2"
+	// ipcWeeksNoData — подпись источника «данных не имеется»: так названа сноска листа
+	// («… - данных не имеется»), и ею же помечены недели, по которым значений нет. Пустая
+	// ячейка и эта подпись — не точка ряда (§6.7): прежний разбор писал по ним ноль.
+	ipcWeeksNoData = "…"
 )
 
 type IpcWeeksStat struct {
+	util.ClickHouseImport
 }
 
-func (s *IpcWeeksStat) Name() string {
-	return rosstatIPCWeeksTable
+// ipcWeeksPoint — точка листа: товар, дата регистрации и значение недельного индекса.
+// Значение остаётся float64 до записи в батч: сужение до Float32 делает колонка таблицы.
+type ipcWeeksPoint struct {
+	product string
+	date    time.Time
+	value   float64
 }
 
-func (s *IpcWeeksStat) getXlsDataUrl() (url string, err error) {
-	c := colly.NewCollector()
-	c.SetClient(util.HttpClient)
-	// body > main > section:nth-child(2) > div > div > div > div > div > div > div.col-lg-8.order-1.order-lg-1 > div > div:nth-child(3) > div > div.toggle-section__content.toggle-section__content--open > div > div > div > div:nth-child(1) > div > div.toggle-card__main > div > div > div > div:nth-child(1) > div.document-list__item-link > a
-	c.OnHTML(".row > div:nth-child(3) div.toggle-section__content.toggle-section__content--open > div > div > div > div:nth-child(1) > div > div.toggle-card__main > div > div > div > div:nth-child(1) > div.document-list__item-link > a", func(e *colly.HTMLElement) {
-		url = fmt.Sprintf("%s%s", rosstatUrl, e.Attr("href"))
-		log.Infof("href url %s", url)
-	})
-	if err = c.Visit(fmt.Sprintf("%s/statistics/price", rosstatUrl)); err != nil {
-		log.Errorf("Visit %v+", err)
+// ipcWeeksKnownProducts — множество товаров, описанных в каталоге (ipcWeeksProducts,
+// series_meta.go): по нему разбор отличает ожидаемое изменение источника (товар, которого в
+// каталоге ещё нет) от сломанной выгрузки (§6.6). Множество выводится из того же списка, а не
+// повторяется литералами: описания товаров остаются в одном месте.
+var ipcWeeksKnownProducts = func() map[string]bool {
+	known := make(map[string]bool, len(ipcWeeksProducts))
+	for _, product := range ipcWeeksProducts {
+		known[product] = true
 	}
-	c.Wait()
-	return url, nil
+	return known
+}()
+
+// getXlsDataUrl ищет ссылку на актуальный Nedel_ipc.xlsx на странице цен Росстата.
+// Транспорт — через util (§4.1), а ошибка не проглатывается (§4.4): без ссылки импорт
+// обязан упасть до записи в БД, а не писать «0 строк» по устаревшему адресу (прежний
+// транспорт логировал ошибку обхода и возвращал пустой url как успех).
+func (s *IpcWeeksStat) getXlsDataUrl() (string, error) {
+	pageUrl := fmt.Sprintf("%s/statistics/price", rosstatUrl)
+	page, err := util.GetPage(pageUrl)
+	if err != nil {
+		return "", fmt.Errorf("ipcWeeks: %s: %w", pageUrl, err)
+	}
+	href, err := util.FindLink(page, ipcWeeksLinkSelector)
+	if err != nil {
+		return "", fmt.Errorf("ipcWeeks: ссылка на Nedel_ipc*.xlsx не найдена на %s: %w", pageUrl, err)
+	}
+	return rosstatUrl + href, nil
 }
 
-func parseIpcWeeks(xlsx *excelize.File) (table *[][]string, err error) {
-	table = new([][]string)
+// ipcWeeksDate разбирает подпись колонки («на 12 января**», «26 декабря») в дату точки.
+// Семантика прежнего разбора сохранена: «*» (метка первой колонки года) и префикс «на »
+// отбрасываются, остаток делится по пробелу на день и месяц, месяц берётся из
+// util.MonthsToNum. Незнакомый месяц теперь ошибка, а не месяц 0 (§6.4): нулевой месяц
+// доходил до time.Parse и возвращался ошибкой даты, а не причиной — подписью колонки.
+// Год берётся из имени листа.
+func ipcWeeksDate(year int, label string) (time.Time, error) {
+	parts := strings.Split(strings.ReplaceAll(strings.ReplaceAll(label, "*", ""), "на ", ""), " ")
+	if len(parts) < 2 {
+		return time.Time{}, fmt.Errorf("подпись колонки %q не «день месяц»", label)
+	}
+	day, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	if err != nil {
+		return time.Time{}, fmt.Errorf("день %q подписи колонки %q не число: %w", parts[0], label, err)
+	}
+	month, ok := util.MonthsToNum[strings.ToLower(strings.TrimSpace(parts[1]))]
+	if !ok {
+		return time.Time{}, fmt.Errorf("месяц %q подписи колонки %q не распознан", parts[1], label)
+	}
+	date, err := time.Parse(ipcWeeksTimeLayout, fmt.Sprintf("%d-%d-%d", year, int(month), day))
+	if err != nil {
+		return time.Time{}, fmt.Errorf("подпись колонки %q: %w", label, err)
+	}
+	return date, nil
+}
+
+// ipcWeeksHeaderDates разбирает шапку листа в даты колонок: dates[j] — дата колонки j,
+// длина среза совпадает с шапкой. Шапка разбирается целиком до чтения строк данных: сломанная
+// подпись — ошибка (§6.4) и без значений, а не паника на разборе подписи посреди книги (§6.5).
+// Ячейка данных за последней колонкой шапки даты не получает и точкой не становится.
+func ipcWeeksHeaderDates(sheet string, year int, header []string) ([]time.Time, error) {
+	dates := make([]time.Time, len(header))
+	for j := 1; j < len(header); j++ {
+		date, err := ipcWeeksDate(year, header[j])
+		if err != nil {
+			return nil, fmt.Errorf("%s: лист %q, колонка %d: %w", rosstatIPCWeeksTable, sheet, j+1, err)
+		}
+		dates[j] = date
+	}
+	return dates, nil
+}
+
+// ipcWeeksValue разбирает ячейку значения. Ячейка приходит сырым текстом (§6.2); ошибка
+// разбора не проглатывается — прежний разбор делал `percent, _ := strconv.ParseFloat(...)`
+// и писал по нечисловой ячейке ноль (в живой витрине таких нулевых точек было ровно 28).
+// NaN и бесконечность ParseFloat принимает, а точкой ряда быть не могут (§6.4).
+func ipcWeeksValue(cell string) (float64, error) {
+	value, err := strconv.ParseFloat(cell, 64)
+	if err != nil {
+		return 0, fmt.Errorf("значение ячейки %q не число: %w", cell, err)
+	}
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0, fmt.Errorf("значение ячейки %q не конечное число", cell)
+	}
+	return value, nil
+}
+
+// ipcWeeksImport разбирает книгу и пишет точки в batch. Разбор идёт целиком до первой записи:
+// ошибка любого листа оставляет батч пустым, а не пишет половину книги.
+//
+// Товар вне каталога — предупреждение и импорт (§6.6): набор товаров меняется между
+// выгрузками Росстата, и падение недельного шага (он первый в цепочке dagu/rosstat.yaml)
+// лишило бы данных все последующие шаги (§12.3). Предупреждение выводится один раз на товар,
+// а не на каждую его точку: у недельного ряда точек сотни.
+func ipcWeeksImport(xlsx *excelize.File, batch driver.Batch) error {
+	var points []ipcWeeksPoint
+	warned := make(map[string]bool)
 	for _, sheet := range xlsx.GetSheetList() {
-		var year, fieldIdx int
-		if year, err = strconv.Atoi(sheet); err != nil || year < 1997 {
-			continue
+		year, err := strconv.Atoi(sheet)
+		if err != nil || year < ipcWeeksYearStart {
+			continue // «Содержание» и прочие нечисловые листы рядами не являются
 		}
-		//if year != 2026 {
-		//	continue
-		//}
-		var rows [][]string
-		if rows, err = xlsx.GetRows(sheet); err != nil {
-			return nil, err
+		// Сырые значения ячеек (§6.2): форматированная строка отдала бы представление, а не
+		// данные — формат выгрузки `0.00` превратил бы 100.126 в «100.13».
+		rows, err := xlsx.GetRows(sheet, excelize.Options{RawCellValue: true})
+		if err != nil {
+			return fmt.Errorf("%s: лист %q: %w", rosstatIPCWeeksTable, sheet, err)
 		}
-		fieldFound := false
+		fieldIdx := -1
 		for i, row := range rows {
-			if fieldFound {
-				if len(row) < 2 {
-					break
-				}
-				if _, err = strconv.ParseFloat(row[1], 32); err != nil {
-					break
-				}
-				for j, cell := range row[1:] {
-					dataArr := strings.Split(strings.ReplaceAll(strings.ReplaceAll(rows[fieldIdx][j+1], "*", ""), "на ", ""), " ")
-					fmt.Printf("dataArr %+v, string: %s, cell %s\n", dataArr, fmt.Sprintf("%s-%d-%s", sheet, int(util.MonthsToNum[dataArr[1]]), dataArr[0]), cell)
-					*table = append(*table, []string{row[0], fmt.Sprintf("%s-%d-%s", sheet, int(util.MonthsToNum[dataArr[1]]), dataArr[0]), cell})
-				}
-			} else if row[0] == ipcWeeksField {
-				fieldFound = true
+			if len(row) > 0 && strings.TrimSpace(row[0]) == ipcWeeksField {
 				fieldIdx = i
+				break
+			}
+		}
+		if fieldIdx < 0 {
+			return fmt.Errorf("%s: лист %q: строка «%s» не найдена", rosstatIPCWeeksTable, sheet, ipcWeeksField)
+		}
+		dates, err := ipcWeeksHeaderDates(sheet, year, rows[fieldIdx])
+		if err != nil {
+			return err
+		}
+		for _, row := range rows[fieldIdx+1:] {
+			// Первая колонка — имя товара, первая колонка значений — признак строки данных:
+			// строка без имени или без значения в ней строкой данных не является — таблица
+			// листа на ней кончилась (ниже итог и сноски). Правило обрыва сохранено прежним
+			// (тем же правилом лист обрывается и на строке с «…» в первой колонке значений),
+			// проверка имени добавлена, чтобы точки не ушли в ряд с пустым именем, которого
+			// каталог не описывает (§10.6).
+			if len(row) < 2 || strings.TrimSpace(row[0]) == "" {
+				break
+			}
+			if _, err = strconv.ParseFloat(strings.TrimSpace(row[1]), 64); err != nil {
+				break
+			}
+			product := strings.TrimSpace(row[0])
+			if !ipcWeeksKnownProducts[product] && !warned[product] {
+				warned[product] = true
+				log.Warnf("%s: товар %q не описан в ipcWeeksProducts — точка записана, описание товара добавить в каталог", rosstatIPCWeeksTable, product)
+			}
+			// Ячейки за последней колонкой шапки даты не описывает, и точкой они не
+			// становятся: прежний разбор индексировал шапку без проверки границы
+			// (rows[fieldIdx][j+1]) и падал паникой на строке длиннее шапки (§6.5).
+			for j := 1; j < len(row) && j < len(dates); j++ {
+				cell := strings.TrimSpace(row[j])
+				if cell == "" || cell == ipcWeeksNoData {
+					continue // нет данных: недели, по которым значений не публиковалось (§6.7)
+				}
+				value, err := ipcWeeksValue(cell)
+				if err != nil {
+					return fmt.Errorf("%s: лист %q, %s, товар %q: %w",
+						rosstatIPCWeeksTable, sheet, dates[j].Format("2006-01-02"), product, err)
+				}
+				points = append(points, ipcWeeksPoint{product: product, date: dates[j], value: value})
 			}
 		}
 	}
-
-	return table, nil
+	if len(points) == 0 {
+		return fmt.Errorf("%s: разбор дал 0 точек — в книге нет листов года с данными (строка «%s» не найдена или выгрузка пуста)", rosstatIPCWeeksTable, ipcWeeksField)
+	}
+	for _, point := range points {
+		if err := batch.Append(point.product, point.date, float32(point.value)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-func (s *IpcWeeksStat) export() (table *[][]string, err error) {
-	var xlsDataUrl string
-	if xlsDataUrl, err = s.getXlsDataUrl(); err != nil {
-		log.Errorf("getXlsDataUrl  %v+", err)
-		return nil, err
-	}
-	var xlsx *excelize.File
-	if xlsx, err = util.GetXlsx(xlsDataUrl); err != nil {
-		return nil, err
-	}
-	return parseIpcWeeks(xlsx)
-}
-
+// Import берёт адрес актуального Nedel_ipc.xlsx со страницы цен Росстата: имени файла в коде
+// нет (ссылка берётся со страницы), а сетевое обращение в init() запрещено
+// (ARCHITECTURE.md §8.6). Дальше — полный цикл шаблона: DDL → точки → производные
+// (AfterImport: каталог рядов и витрина v_rosstat_macro) → строка версии. Префлайта нет:
+// файл перезаписывается по тому же URL в недельном темпе, равном темпу шага расписания,
+// поэтому no-op недостижим (§9.3), а HEAD был бы чистыми накладными расходами.
 func (s *IpcWeeksStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	if err = conn.Exec(ctx, ipcWeeksDdl); err != nil {
-		return count, err
-	}
-	var table *[][]string
-	if table, err = s.export(); err != nil {
-		return count, err
-	}
-	log.Infof("Export %d rows of %s", len(*table), s.Name())
-	batch, err := conn.PrepareBatch(ctx, ipcWeeksInsert)
+	xlsDataUrl, err := s.getXlsDataUrl()
 	if err != nil {
 		return count, err
 	}
-	for _, row := range *table {
-		percent, _ := strconv.ParseFloat(row[2], 32)
-		date, err := time.Parse("2006-1-2", row[1])
-		if err != nil {
-			return count, fmt.Errorf("parse %s, err: %v", row[1], err)
-		}
-		if err = batch.Append(row[0], date, float32(percent)); err != nil {
-			return count, err
-		}
-		count++
-	}
-	if err = batch.Send(); err != nil {
-		return count, err
-	}
-	if err = util.UpsertSeriesCatalog(ctx, conn, ipcWeeksSeriesMeta()); err != nil {
-		return count, err
-	}
-	if _, err = util.CreateView(ctx, conn, rosstatMacroView); err != nil {
-		return count, err
-	}
-	return count, nil
+	s.DataUrl = xlsDataUrl
+	return s.ClickHouseImport.Import(ctx, conn)
 }
 
 // ipcWeeksImporter — еженедельные индексы цен Росстата; регистрируется реестром
-// rosstat/importers.go. На общий шаблон util.ClickHouseImport импортёр пока не переведён:
-// DDL, вставка и производные у него свои (см. export/Import), поэтому в реестре он стоит
-// со своим Name() и своим countPoints (пустым — префлайта у недельного ряда нет).
-var ipcWeeksImporter = &IpcWeeksStat{}
+// rosstat/importers.go. PublicationCountPoints и PublicationSource не заполняются (§9.3):
+// у недельного файла точке контроля публикации места нет, и реестр держит для него пустой
+// countPoints — расхождение поймал бы тест реестра.
+var ipcWeeksImporter = &IpcWeeksStat{ClickHouseImport: util.ClickHouseImport{
+	TableName:   rosstatIPCWeeksTable,
+	CreateTable: []string{ipcWeeksDdl},
+	ImportFunc:  ipcWeeksImport,
+	AfterImport: afterRosstatMacro(ipcWeeksSeriesMeta()),
+}}

@@ -45,10 +45,11 @@ var expectedPublicationCountPoints = map[string]string{
 
 // publicationDeclarer — то, как тест достаёт объявление импортёра из реестра: метод
 // Publication() промотируется из встроенного util.ClickHouseImport, поэтому приведение
-// работает для трёх импортёров пакета (rosstat_ipc_mes, rosstat_salaries_mes,
-// rosstat_vvp_kvartal) и не срабатывает для rosstat_ipc_weeks — тот ещё не переведён на
-// общий шаблон и объявления не имеет. Именованный тип, а не литерал интерфейса в теле
-// цикла: так проверка читается как контракт, а не как приём приведения.
+// работает для всех четырёх импортёров пакета. У трёх (rosstat_ipc_mes,
+// rosstat_salaries_mes, rosstat_vvp_kvartal) объявление непустое, у rosstat_ipc_weeks —
+// нулевое: точке контроля публикации у недельного файла места нет (§9.3). Именованный тип,
+// а не литерал интерфейса в теле цикла: так проверка читается как контракт, а не как приём
+// приведения.
 type publicationDeclarer interface {
 	Publication() util.PublicationDecl
 }
@@ -123,11 +124,10 @@ func TestRosstatImportersPrefixedAndRegistered(t *testing.T) {
 		if !strings.HasPrefix(imp.table, rosstatNamePrefix) {
 			t.Errorf("таблица %q импортёра %q без префикса %q", imp.table, name, rosstatNamePrefix)
 		}
-		// У трёх импортёров Name() — это TableName встроенного util.ClickHouseImport;
-		// rosstat_ipc_weeks переопределяет Name() тем же значением своей константы.
-		// Значит, литерал в колонке table обязан совпадать с Name(): иначе реестр
-		// описывает не ту таблицу, в которую импортёр пишет (переименовали константу —
-		// обновили литерал).
+		// У всех четырёх импортёров Name() — это TableName встроенного
+		// util.ClickHouseImport. Значит, литерал в колонке table обязан совпадать с
+		// Name(): иначе реестр описывает не ту таблицу, в которую импортёр пишет
+		// (переименовали константу — обновили литерал).
 		if name != imp.table {
 			t.Errorf("реестр записал импортёру %q таблицу %q, а Name() (TableName импортёра) — %q", name, imp.table, name)
 		}
@@ -154,9 +154,11 @@ func TestRosstatImportersPrefixedAndRegistered(t *testing.T) {
 			if imp.countPoints != "" {
 				t.Errorf("реестр записал импортёру %q запрос чека %q, хотя префлайт ему не положен", name, imp.countPoints)
 			}
-			// rosstat_ipc_weeks не переведён на общий шаблон и метода Publication() не
-			// имеет вовсе — приведение к publicationDeclarer для него не срабатывает.
-			// Нулевое объявление остальных вне набора означает то же самое.
+			// Нулевое объявление rosstat_ipc_weeks — не отсутствие метода, а осознанно
+			// незаполненные PublicationCountPoints/PublicationSource: приведение к
+			// publicationDeclarer срабатывает (метод промотируется встроенным шаблоном), а
+			// Publication() даёт нулевое значение. Импортёр вне набора не должен обзавестись
+			// префлайтом «на всякий случай».
 			if declares && pub.CountPoints != "" {
 				t.Errorf("импортёр %q объявил точку контроля публикации (%q), хотя префлайт ему не положен", name, pub.CountPoints)
 			}
@@ -228,9 +230,9 @@ func TestRosstatImportersPrefixedAndRegistered(t *testing.T) {
 	// Обратное направление: каждый импортёр реестра обязан быть шагом расписания.
 	// Пропавший шаг не заметил бы больше ни один тест: реестр верен сам по себе, а
 	// витрины v_rosstat_macro и v_model_inputs оставались бы пустыми при зелёном
-	// пакете. rosstat_ipc_weeks здесь не исключение, а худший случай: у него нет ни
-	// колонки countPoints в реестре, ни объявления у импортёра, с которыми состав
-	// расписания можно было бы сверить отдельно.
+	// пакете. rosstat_ipc_weeks здесь не исключение, а худший случай: у него и колонка
+	// countPoints в реестре пуста, и объявления префлайта у импортёра нет, с которыми
+	// состав расписания можно было бы сверить отдельно.
 	for name := range seen {
 		if !scheduled[name] {
 			t.Errorf("в dagu/rosstat.yaml нет шага CLICKHOUSE_IMPORT_STAT=%s: импортёр зарегистрирован, но по расписанию не запускается", name)
