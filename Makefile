@@ -95,10 +95,14 @@ build:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o $(TARGET) .
 
 # Нужен CLICKHOUSE_URL в окружении; CLICKHOUSE_IMPORT_STAT фильтрует импортёры.
+# Запуск идёт под локом db: это тот же писатель в общий ClickHouse, что и make import.
 run: build
-	./$(TARGET)
+	@$(LOCK) db -- ./$(TARGET)
 
 # Локальный ClickHouse для проверок; данные вне репозитория (CH_DIR), бинарник ищется в PATH или ~/.clickhouse.
+# Обёртки под локом устроены одинаково: тело цели живёт в _<цель>, потому что лок оборачивает
+# команду, а не рецепт. Тело заблокированной цели смотрится через `make -n _<цель>`: `make -n`
+# самой обёртки печатает только вызов лока (вложенный $(MAKE) под -n не раскрывается).
 ch-up:
 	@$(LOCK) db -- $(RECURSE) _ch-up
 
@@ -182,7 +186,7 @@ import:
 	@test -n "$(STAT)" || { echo "укажите импортёр: make import STAT=bea"; exit 1; }
 	@mkdir -p $(BUILD_DIR)
 	go build -o $(BUILD_DIR)/$(BINARY)-native .
-	CLICKHOUSE_IMPORT_STAT=$(STAT) $(LOCK) db -- ./$(BUILD_DIR)/$(BINARY)-native
+	CLICKHOUSE_IMPORT_STAT=$(STAT) ROSSTAT_LOCK_TOOL="import STAT=$(STAT)" $(LOCK) db -- ./$(BUILD_DIR)/$(BINARY)-native
 
 # Ingest-сервис контура прогноза (единственный путь записи в model_runs/forecast_log/macro_series).
 # Нужны CLICKHOUSE_URL и INGEST_TOKEN из $(ROSSTAT_ENV); INGEST_ADDR по умолчанию :8081.
@@ -642,7 +646,7 @@ hooks-install:
 	@git config core.hooksPath .githooks
 	@echo "git-хуки включены: core.hooksPath=.githooks"
 
-# Самотесты лок- и worktree-хелпера (герметичные, ~5 с).
+# Самотесты хелперов параллельных сессий и сверки карты локов с доками (герметичные, ~12 с).
 test-parallel:
 	@sh scripts/parallel_sessions_test.sh
 

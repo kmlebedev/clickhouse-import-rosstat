@@ -249,7 +249,7 @@ func init() {
 | Ресурс | Где живёт | Под каким локом |
 |---|---|---|
 | ClickHouse, сервер | `:8123` (HTTP) / `:9000` (native), данные и pid — `~/clickhouse-dev/.clickhouse/servers/dev` (`CH_DIR`); остановка — `Makefile:133-144` | `db` (`ch-up`, `ch-down`) — тот же ресурс, что и запись: гашение не совпадёт с импортом |
-| ClickHouse, данные | одни таблицы и витрины на все сессии: DDL идёт внутри `Import()` (`util/clickhouse_import.go` — шаг `CreateTable`), витрины пересоздаёт `CreateView` (`util/views.go:23-50`) | `db` (`import`, `ch-sql`, `mcp-user`) |
+| ClickHouse, данные | одни таблицы и витрины на все сессии: DDL идёт внутри `Import()` (`util/clickhouse_import.go` — шаг `CreateTable`), витрины пересоздаёт `CreateView` (`util/views.go:23-50`) | `db` (`import`, `run`, `ch-sql`, `mcp-user`) |
 | Grafana | `:3000`, данные, логи и плагины — `~/grafana-dev` (`GF_DIR`) | `stand` (`grafana-up`, `grafana-down`, `grafana-deploy-test`, `grafana-test-token`) |
 | ingest-endpoint | `:8081` (`INGEST_ADDR`) | без лока: порт сам не даст поднять второй экземпляр, а демон живёт часами |
 | Staging-хост | `STAGING_HOST` (по умолчанию `palmshell`), ssh и systemd | `staging` (`deploy-staging`, `deploy-staging-binary`, `deploy-staging-dagu`, `deploy-staging-mcp`, `upgrade-staging`, `mcp-user-staging`, `grafana-provision-staging`, `grafana-deploy-staging`; проверки `deploy-staging-preflight`/`-smoke` — без лока) |

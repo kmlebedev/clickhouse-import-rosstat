@@ -10,8 +10,13 @@
 # это страховка от случайности, а не барьер. Барьеры — .githooks/pre-commit
 # (fail-closed на коммит в защищённую ветку) и scripts/lock.sh.
 #
-# Скрипт активен только внутри этого репозитория: если вверх по cwd нет
-# .githooks/pre-commit, он молча выходит 0.
+# Скрипт активен только внутри ЭТОГО репозитория, и признак «тот самый» не зависит от
+# содержимого чекаута: вверх по cwd ищется либо .githooks/pre-commit (дерево от ветки,
+# где хук уже влит), либо корень git-репозитория, у которого путь origin — ровно
+# …/clickhouse-import-rosstat или …/clickhouse-import-rosstat.git (корневое дерево и
+# деревья, созданные ДО этой ветки, где .githooks в чекауте ещё нет). Сравнение именно по
+# пути, а не по вхождению подстроки: чужой форк (…/clickhouse-import-rosstat-fork.git)
+# блокировок не получает. Вне этого репозитория — молча exit 0.
 #
 # Ручная проверка:
 #   echo '{"cwd":"'"$PWD"'","tool_input":{"command":"make ch-down"}}' | sh scripts/agent-guard.sh; echo $?
@@ -123,13 +128,47 @@ cmd=$(printf '%s\n' "$parsed" | sed -n '2p')
 [ -n "$cwd" ] || exit 0
 [ -n "$cmd" ] || exit 0
 
-# Активен только там, где стоит хук репозитория: поднимаемся от cwd вверх.
-dir=$cwd
+# «origin — это тот самый репозиторий»: путь сравнивается ЦЕЛИКОМ, а не по вхождению
+# подстроки, иначе чужой форк (…/clickhouse-import-rosstat-fork.git) получал бы блокировки
+# гарда. Хвост .git и завершающий слеш нормализуются; ssh-форма
+# (git@github.com:kmlebedev/clickhouse-import-rosstat.git) разбирается тем же сравнением —
+# имя репозитория стоит в конце пути.
+origin_is_this_repo() {
+	l_url=$1
+	case "$l_url" in
+	'') return 1 ;;
+	esac
+	case "$l_url" in
+	*/) l_url=${l_url%/} ;;
+	esac
+	case "$l_url" in
+	*.git) l_url=${l_url%.git} ;;
+	esac
+	case "$l_url" in
+	*/clickhouse-import-rosstat|*:clickhouse-import-rosstat) return 0 ;;
+	esac
+	return 1
+}
+
+# Активен только внутри ЭТОГО репозитория. Признак не зависит от содержимого чекаута:
+# поднимаемся от cwd вверх и активируемся, если нашли .githooks/pre-commit (дерево от
+# ветки, где хук уже влит; альтернатива на случай переименования origin) или корень git,
+# у которого путь origin — ровно …/clickhouse-import-rosstat(.git) (корневое дерево и
+# деревья, созданные ДО этой ветки, где .githooks в чекауте ещё нет). Вне репозитория — 0.
 in_repo=0
+dir=$cwd
 while [ -n "$dir" ]; do
 	if [ -f "$dir/.githooks/pre-commit" ]; then
 		in_repo=1
 		break
+	fi
+	if [ -e "$dir/.git" ]; then
+		if origin_is_this_repo "$(git -C "$dir" remote get-url origin 2>/dev/null)"; then
+			in_repo=1
+			break
+		fi
+		# Чужой .git (вложенный репозиторий или форк) — подъём продолжаем: свой
+		# корень может быть выше.
 	fi
 	parent=$(dirname -- "$dir")
 	[ "$parent" = "$dir" ] && break

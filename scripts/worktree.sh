@@ -11,9 +11,10 @@
 #   scripts/worktree.sh info
 #
 # BASE и TYPE — из env или из аргументов KEY=VALUE. Сеть нужна только в new
-# (git fetch origin BASE, best effort: недоступный origin — предупреждение, не отказ).
+# (git fetch origin BASE, best effort: неудачный fetch — предупреждение, не отказ).
 # База дерева — origin/$BASE (его обновляет fetch), локальный refs/heads/$BASE —
-# только если origin/$BASE нет. NAME проверяется одним valid_slug в new и в rm.
+# только если origin/$BASE нет. NAME проверяется одним valid_slug в new и в rm,
+# TYPE — как имя ветки (git check-ref-format --branch) в new.
 
 set -u
 
@@ -58,9 +59,15 @@ new_worktree() {
 	case "$TYPE" in
 	*[!A-Za-z0-9._/-]*) die "new: недопустимый TYPE='$TYPE'" ;;
 	esac
+	# TYPE — префикс имени ветки, поэтому проверяется как имя ветки: произвольная строка
+	# («..», «@{-1}», «-x») не должна превратиться в ветку через git worktree add -b.
+	git check-ref-format --branch "$TYPE" >/dev/null 2>&1 ||
+		die "new: недопустимый TYPE='$TYPE' (это не имя ветки: git check-ref-format --branch)"
 
 	wt="$root/.worktrees/$NAME"
 	branch="$TYPE/$NAME"
+	git check-ref-format --branch "$branch" >/dev/null 2>&1 ||
+		die "new: '$branch' — не имя ветки (TYPE=$TYPE, NAME=$NAME)"
 
 	[ -e "$wt" ] && die "new: каталог уже существует: $wt (возьмите другое имя или удалите его дерево)"
 	if git show-ref --verify --quiet "refs/heads/$branch"; then
@@ -68,13 +75,14 @@ new_worktree() {
 	fi
 
 	mkdir -p "$root/.worktrees" || die "new: не удалось создать $root/.worktrees"
-	# Свежий BASE: обновить его может только fetch, локальный ref отстаёт. Недоступный
-	# origin — не повод отказывать: тогда работаем на локальном ref (с предупреждением).
+	# Свежий BASE: обновить его может только fetch, локальный ref отстаёт. Неудачный
+	# fetch origin/$BASE (нет сети, нет такого ref на remote) — не повод отказывать:
+	# тогда работаем на локальном ref, но говорим об этом прямо.
 	git fetch --quiet origin "$BASE" 2>/dev/null || true
 	if git rev-parse --verify --quiet "refs/remotes/origin/$BASE^{commit}" >/dev/null; then
 		base_ref="origin/$BASE"
 	else
-		printf 'worktree.sh: предупреждение: origin недоступен, база — локальный ref refs/heads/%s\n' "$BASE" >&2
+		printf 'worktree.sh: предупреждение: fetch origin/%s не удался, база — локальный ref refs/heads/%s\n' "$BASE" "$BASE" >&2
 		base_ref="refs/heads/$BASE"
 	fi
 	# Базу приводим к коммиту: git worktree add -b ВЕТКА main при отсутствии локальной
@@ -110,7 +118,14 @@ list_worktrees() {
 		case "$line" in
 		'')
 			if [ -n "$wt_path" ]; then
-				printf '%s %s%s  %s\n' "$wt_path" "$wt_head" "$wt_ref" "$(dirty_state "$wt_path")"
+				# Каталога дерева может уже не быть (снесли руками): запись о таком
+				# дереве снимает git worktree prune — так и помечаем, а не «clean».
+				if [ -d "$wt_path" ]; then
+					wt_state=$(dirty_state "$wt_path")
+				else
+					wt_state='missing (git worktree prune)'
+				fi
+				printf '%s %s%s  %s\n' "$wt_path" "$wt_head" "$wt_ref" "$wt_state"
 			fi
 			wt_path=''
 			wt_head=''
@@ -134,7 +149,12 @@ rm_worktree() {
 	[ -n "$NAME" ] || die 'rm: не задан NAME=<slug>'
 	valid_slug "$NAME" || die "rm: недопустимый NAME='$NAME' (ожидается [a-z0-9][a-z0-9._-]*)"
 	wt="$root/.worktrees/$NAME"
-	[ -d "$wt" ] || die "rm: дерева нет: $wt"
+	if [ ! -d "$wt" ]; then
+		# Каталога нет: дерево могли снести руками — тогда запись о нём остаётся в git.
+		printf 'rm: каталога дерева нет: %s\n' "$wt" >&2
+		printf 'если дерево сносили руками (rm -rf .worktrees/<slug>), запись о нём снимает: git worktree prune\n' >&2
+		die "rm: дерева нет: $wt"
+	fi
 
 	branch=$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null)
 	dirty=$(git -C "$wt" status --porcelain 2>/dev/null)

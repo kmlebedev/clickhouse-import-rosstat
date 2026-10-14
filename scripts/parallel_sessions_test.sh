@@ -4,9 +4,13 @@
 # Пункты: lock (взаимное исключение, ожидание, WAIT=0, перехват брошенного лока —
 # мёртвый pid или отсутствие owner дольше GRACE, reentrancy, проброс кода возврата),
 # worktree (new/list/info/rm в одноразовом клоне, база из origin/$BASE, отказ на
-# недопустимом NAME), .githooks/pre-commit (защищённая ветка, detached HEAD, обход,
-# linked worktree) и scripts/agent-guard.sh (staging-цели, различие «корневое дерево
-# vs linked worktree» для git clean / git stash drop / find .worktrees -delete).
+# недопустимом NAME и TYPE, состояние missing у снесённого руками дерева),
+# .githooks/pre-commit (защищённая ветка, detached HEAD, обход, linked worktree),
+# scripts/agent-guard.sh (активация по origin этого репозитория и по .githooks,
+# staging-цели, различие «корневое дерево vs linked worktree» для git clean /
+# git stash drop / find .worktrees -delete) и сверка карты локов из Makefile со списками
+# в docs/PARALLEL_SESSIONS.md и README.md (залоченная цель обязана быть упомянута,
+# read-only цель — лок не брать).
 #
 # Прогон герметичен: всё живёт в mktemp -d, сеть не нужна, настоящий
 # $HOME/.rosstat-locks не трогается — ROSSTAT_LOCK_DIR указывает внутрь tmp.
@@ -242,18 +246,35 @@ git -C "$clone" config user.email selftest@example.com
 git -C "$clone" config user.name selftest
 git -C "$clone" config commit.gpgsign false
 # Своя main в клоне: тест не зависит от того, какая ветка checked out в источнике.
-git -C "$clone" branch -f main HEAD
-git -C "$clone" checkout --quiet main
+# branch -f падает, если клон уже стоит на main (типовой случай) — это не ошибка: main
+# тогда уже указывает на HEAD.
+git -C "$clone" branch -f main HEAD 2>/dev/null || true
+git -C "$clone" checkout --quiet main || fail 'worktree: не удалось встать на ветку main в клоне'
 
-# Файлы Task 1 могут быть ещё не закоммичены — переносим их в клон руками,
-# иначе тест проверял бы дерево без самих проверяемых скриптов и хука.
+# Копии проверяемых скриптов и хука переносятся в клон руками: тест проверяет файлы
+# рабочего дерева, а не то, что успело попасть в коммит. Когда файлы уже в HEAD, git add
+# ничего не стейджит, и коммита нет вовсе — раньше безусловный git commit падал здесь с
+# кодом 1 и обрывал весь остаток теста.
 mkdir -p "$clone/scripts" "$clone/.githooks"
 cp "$lock_sh" "$wt_sh" "$guard_sh" "$clone/scripts/"
 cp "$hook" "$clone/.githooks/pre-commit"
 chmod +x "$clone/scripts/lock.sh" "$clone/scripts/worktree.sh" "$clone/.githooks/pre-commit"
 git -C "$clone" add --all scripts .githooks
-git -C "$clone" commit --quiet -m 'selftest: scripts and hook under test' ||
+git -C "$clone" diff --cached --quiet ||
+	git -C "$clone" commit --quiet -m 'selftest: scripts and hook under test' ||
 	fail 'worktree: не удалось зафиксировать копии скриптов в клоне'
+
+# Свой bare-«origin» внутри tmp: refs/remotes/origin/* ставятся явно и не зависят ни от
+# ветвей источника клона (локальной main в клоне может не быть вовсе — тогда при
+# клонировании не появится и refs/remotes/origin/main), ни от маппинга refs.
+origin_bare="$tmp/origin.git"
+git init --quiet --bare "$origin_bare" || fail 'worktree: git init --bare для тестового origin не удался'
+git -C "$clone" push --quiet "$origin_bare" refs/heads/main:refs/heads/main ||
+	fail 'worktree: не удалось залить main в тестовый origin'
+git -C "$clone" remote set-url origin "$origin_bare"
+git -C "$clone" fetch --quiet origin main || fail 'worktree: git fetch из тестового origin не удался'
+[ "$(git -C "$clone" rev-parse refs/remotes/origin/main)" = "$(git -C "$clone" rev-parse refs/heads/main)" ] ||
+	fail 'worktree: refs/remotes/origin/main в клоне не совпал с main'
 
 c_wt="$clone/scripts/worktree.sh"
 probe="$clone/.worktrees/probe"
@@ -278,6 +299,16 @@ if (cd "$clone" && sh "$c_wt" new NAME=other >"$tmp/dup-branch.out" 2>&1); then
 	fail 'worktree: new создал дерево на уже существующей ветке'
 fi
 ok 'worktree: повторный new и new на существующей ветке отказывают'
+
+# TYPE — префикс имени ветки; вне git-ref-формата он отклоняется (иначе TYPE=.. или @{-1}
+# дал бы git worktree add -b ветку-мусор).
+if (cd "$clone" && sh "$c_wt" new NAME=badtype TYPE=.. >"$tmp/badtype.out" 2>&1); then
+	fail 'worktree: new принял TYPE, не являющийся именем ветки (TYPE=..)'
+fi
+grep -q 'недопустимый TYPE' "$tmp/badtype.out" ||
+	fail 'worktree: отказ new по TYPE без объяснения' "$(cat "$tmp/badtype.out")"
+[ ! -e "$clone/.worktrees/badtype" ] || fail 'worktree: new создал дерево с недопустимым TYPE'
+ok 'worktree: new отклоняет TYPE, не являющийся именем ветки'
 
 out=$(cd "$clone" && sh "$c_wt" list)
 printf '%s' "$out" | grep -q '.worktrees/probe' || fail 'worktree: list не показал дерево probe' "$out"
@@ -330,6 +361,26 @@ fi
 grep -q 'недопустимый NAME' "$tmp/rm-outside.out" ||
 	fail 'worktree: отказ rm по NAME без объяснения' "$(cat "$tmp/rm-outside.out")"
 ok 'worktree: rm отказывает на NAME с «..» и не трогает каталоги вне .worktrees'
+
+# Дерево, снесённое руками (rm -rf .worktrees/<slug>): git всё ещё держит запись о нём.
+# list обязан пометить путь как missing, а rm — подсказать git worktree prune.
+git -C "$clone" worktree add --quiet --detach "$clone/.worktrees/ghost" main ||
+	fail 'worktree: не удалось создать дерево ghost для проверки сноса руками'
+rm -rf "$clone/.worktrees/ghost"
+out=$(cd "$clone" && sh "$c_wt" list)
+ghost_line=$(printf '%s\n' "$out" | grep 'worktrees/ghost' | head -n 1)
+case "$ghost_line" in
+*missing*) ;;
+*) fail 'worktree: list не пометил снесённое руками дерево как missing' "$out" ;;
+esac
+if (cd "$clone" && sh "$c_wt" rm NAME=ghost >"$tmp/rm-ghost.out" 2>&1); then
+	fail 'worktree: rm счёл снесённое руками дерево удалённым'
+fi
+grep -q 'git worktree prune' "$tmp/rm-ghost.out" ||
+	fail 'worktree: rm не подсказал git worktree prune для снесённого руками дерева' "$(cat "$tmp/rm-ghost.out")"
+git -C "$clone" worktree prune
+[ -e "$clone/.worktrees/ghost" ] && fail 'worktree: git worktree prune не снял запись о дереве ghost'
+ok 'worktree: снесённое руками дерево помечается missing, rm подсказывает git worktree prune'
 
 # --- 3. pre-commit ----------------------------------------------------------------
 
@@ -413,11 +464,60 @@ guard_expect "$clone" 'find .worktrees -delete' 2 'guard: find .worktrees -delet
 guard_expect "$clone/.worktrees/hooktree" 'find .worktrees -delete' 0 'guard: find .worktrees -delete в linked worktree заблокирован'
 ok 'guard: git clean/git stash drop/find -delete блокируются только в корневом дереве'
 
+# Активация гарда не зависит от .githooks в чекауте: репозиторий узнаётся по origin
+# ближайшего корня (.git). Фикстуры — свои одноразовые репозитории в tmp, поэтому
+# проверка не опирается на то, что origin самого клона совпал с именем репозитория.
+origin_repo="$tmp/origin-only"
+git init --quiet "$origin_repo" || fail 'guard: git init фикстуры origin не удался'
+git -C "$origin_repo" remote add origin https://github.com/example/clickhouse-import-rosstat.git
+mkdir -p "$origin_repo/sub"
+guard_expect "$origin_repo" 'make upgrade-staging' 2 'guard: без .githooks, но с origin этого репозитория, upgrade-staging не заблокирован'
+guard_expect "$origin_repo/sub" 'make deploy-staging' 2 'guard: из подкаталога дерева с нашим origin deploy-staging не заблокирован'
+guard_expect "$origin_repo" 'git clean -fdx' 2 'guard: без .githooks, но с origin этого репозитория, git clean не заблокирован'
+guard_expect "$origin_repo" 'git reset --hard' 2 'guard: без .githooks, но с origin этого репозитория, git reset --hard не заблокирован'
+
+# ssh-форма origin (git@host:owner/repo.git) распознаётся тем же сравнением пути.
+ssh_repo="$tmp/ssh-only"
+git init --quiet "$ssh_repo" || fail 'guard: git init фикстуры ssh-origin не удался'
+git -C "$ssh_repo" remote add origin git@github.com:kmlebedev/clickhouse-import-rosstat.git
+guard_expect "$ssh_repo" 'make ch-down' 2 'guard: ssh-форма origin не активировала гард'
+
+# Origin сравнивается по пути целиком: чужой форк с тем же префиксом имени гард не включает.
+fork_repo="$tmp/fork-only"
+git init --quiet "$fork_repo" || fail 'guard: git init фикстуры форка не удался'
+git -C "$fork_repo" remote add origin https://github.com/example/clickhouse-import-rosstat-fork.git
+guard_expect "$fork_repo" 'make ch-down' 0 'guard: форк clickhouse-import-rosstat-fork активировал гард'
+guard_expect "$fork_repo" 'git clean -fdx' 0 'guard: форк clickhouse-import-rosstat-fork активировал гард (git clean)'
+ok 'guard: origin сравнивается по пути (ssh-форма активирует, форк …-fork — нет)'
+
+# Второй признак — .githooks/pre-commit в чекауте — сохраняется: если origin переименуют,
+# деревья с хуком остаются под защитой.
+hook_repo="$tmp/hook-only"
+git init --quiet "$hook_repo" || fail 'guard: git init фикстуры хука не удался'
+git -C "$hook_repo" remote add origin https://example.invalid/other-repo.git
+mkdir -p "$hook_repo/.githooks"
+printf '#!/bin/sh\nexit 0\n' >"$hook_repo/.githooks/pre-commit"
+guard_expect "$hook_repo" 'make upgrade-staging' 2 'guard: с .githooks, но с чужим origin, upgrade-staging не заблокирован'
+ok 'guard: активируется по origin этого репозитория (без .githooks) и по .githooks в чекауте'
+
+# Вне этого репозитория гард молчит: и в чужом git-репозитории, и в каталоге без .git.
+foreign_repo="$tmp/foreign"
+git init --quiet "$foreign_repo" || fail 'guard: git init чужого репозитория не удался'
+git -C "$foreign_repo" remote add origin https://example.invalid/other-repo.git
+guard_expect "$foreign_repo" 'make upgrade-staging' 0 'guard: в чужом репозитории upgrade-staging заблокирован'
+guard_expect "$foreign_repo" 'git clean -fdx' 0 'guard: в чужом репозитории git clean заблокирован'
+guard_expect "$tmp" 'make ch-down' 0 'guard: вне git-репозитория make ch-down заблокирован'
+ok 'guard: вне этого репозитория молчит (чужой git-репозиторий и каталог без .git)'
+
 
 # BASE, существующий только как origin/<BASE>: дерево обязано встать на feat/<slug>.
 # Без явного sha `git worktree add -b feat/x main` сам заводит локальную main
 # (DWIM до origin/main) и оставляет новое дерево на защищённой ветке.
 git -C "$clone" checkout --quiet feat/hook-test
+# refs/remotes/origin/main ставим явно: клон мог не получить его вовсе (если в источнике
+# клонирования нет локальной main) — тест не должен зависеть от маппинга refs при клонировании.
+git -C "$clone" update-ref refs/remotes/origin/main "$(git -C "$clone" rev-parse refs/heads/main)" ||
+	fail 'worktree: не удалось поставить refs/remotes/origin/main в клоне'
 if ! git -C "$clone" branch -D main >/dev/null 2>&1; then
 	fail 'worktree: не удалось удалить локальную main для проверки BASE только в origin'
 fi
@@ -443,6 +543,158 @@ fi
 [ "$(git -C "$clone/.worktrees/originbase" rev-parse HEAD)" = "$origin_main" ] ||
 	fail 'worktree: new встал на локальный main вместо origin/main' "$(cat "$tmp/originbase.out")"
 ok 'worktree: new берёт базу из origin/$BASE, а не из отставшего локального ref'
+
+# --- 5. карта локов: Makefile ↔ доки -----------------------------------------------
+# Залоченные цели и их ключи перечисляются в документации руками, поэтому расхождение
+# должно падать тестом, а не находиться на ревью. Проверяется:
+#   * каждая цель под $(LOCK) есть в карте локов docs/PARALLEL_SESSIONS.md и README.md;
+#   * ключ цели в Makefile совпадает с документированным в обоих файлах;
+#   * одна цель не перечислена в документе под двумя разными ключами;
+#   * цель из списка read-only лок не берёт.
+# Разбор fail-closed: пустая карта или ненайденная цель — FAIL с подсказкой, что список не
+# разобран. Тихое ok на неразобранном списке было бы ложным подтверждением, поэтому цель,
+# упомянутая в доке только прозой (вне таблицы регламента и абзаца README), теперь падает.
+#
+# Что разбором НЕ покрыто (проверяется глазами, за покрытое не выдаём):
+#   * ключ не-литерал: строка вида «$(LOCK) $(KEY) -- …» в карту не попадёт, но и счётчик
+#     разобранных строк её заметит (он сверяет число строк с $(LOCK) с числом пар);
+#   * имя цели, собранное через переменную (`$(VAR):`) или define — такой цели в карте не
+#     будет вовсе; сейчас в Makefile таких залоченных целей нет, появление тест не поймает;
+#   * порядок/дубли целей внутри одной документированной группы и тексты вне таблицы
+#     регламента и абзаца README не проверяются.
+makefile="$script_dir/../Makefile"
+doc_ps="$script_dir/../docs/PARALLEL_SESSIONS.md"
+doc_readme="$script_dir/../README.md"
+for doc_file in "$makefile" "$doc_ps" "$doc_readme"; do
+	[ -f "$doc_file" ] || fail "локи: нет файла $doc_file"
+done
+
+# Разбор Makefile: имя цели + ключ лока из строки «... $(LOCK) <key> -- ...».
+# Позиция «$(LOCK) » ищется через index(), а не регексом: экранирование $() в awk-регексе
+# зависит от реализации, а пропущенная строка тихо спрятала бы залоченную цель.
+locked=$(awk -F: '
+	/^[A-Za-z0-9_.-]+:/ { name = $1; sub(/:.*/, "", name); next }
+	/\$\(LOCK\)/ {
+		total++
+		p = index($0, "$(LOCK) ")
+		if (p > 0 && name != "") {
+			rest = substr($0, p + 8)
+			sub(/[ \t].*/, "", rest)
+			if (rest != "") { print name " " rest; parsed++ }
+		}
+	}
+	END { if (parsed != total) exit 1 }
+' "$makefile") || fail 'локи: не удалось разобрать строки $(LOCK) в Makefile'
+locked=$(printf '%s\n' "$locked" | sort -u)
+[ -n "$locked" ] || fail 'локи: в Makefile не нашлось ни одной цели под $(LOCK)'
+locked_targets=$(printf '%s\n' "$locked" | sed 's/ .*//' | tr '\n' ' ')
+all_targets=" $(awk '/^[A-Za-z0-9_.-]+:/ { name = $1; sub(/:.*/, "", name); print name }' "$makefile" |
+	sort -u | tr '\n' ' ') "
+
+# Карта «цель → ключ» из таблицы регламента «| Ключ | Что сериализует | Цели под локом |»:
+# берётся третья ячейка строк, ключ — первая ячейка. Проза и другие таблицы не смотрятся.
+locks_ps=$(awk -v targets="$all_targets" -F'|' '
+	/^\| `[A-Za-z]/ {
+		key = $2
+		gsub(/[ \t`]/, "", key)
+		n = split($4, toks, "`")
+		for (i = 2; i <= n; i += 2) {
+			t = toks[i]
+			sub(/^make +/, "", t)
+			if (index(targets, " " t " ") > 0) print t " " key
+		}
+	}' "$doc_ps" | sort -u)
+[ -n "$locks_ps" ] ||
+	fail 'локи: не разобран список локов docs/PARALLEL_SESSIONS.md (таблица «Ключ | Что сериализует | Цели под локом» пуста или изменила формат)'
+
+# Карта «цель → ключ» из абзаца README («… — ключ `db` (…); `grafana-up` / … — ключ `stand`»).
+# Куски режутся по «— ключ »: ключ группы — первый бэктик-токен СЛЕДУЮЩЕГО куска, цели —
+# бэктик-токены текущего; у кусков со второго первый токен — это ключ предыдущей группы.
+locks_readme=$(sed -n 's/.*Лок берут только пишущие цели://p' "$doc_readme" |
+	sed 's/Без лока:.*//' |
+	awk -v targets="$all_targets" '
+		{
+			n = split($0, seg, "— ключ ")
+			for (i = 1; i < n; i++) {
+				m = split(seg[i + 1], keytok, "`")
+				if (m < 2) continue
+				key = keytok[2]
+				k = split(seg[i], toks, "`")
+				start = (i == 1) ? 2 : 4
+				for (j = start; j <= k; j += 2) {
+					t = toks[j]
+					sub(/^make +/, "", t)
+					if (index(targets, " " t " ") > 0) print t " " key
+				}
+			}
+		}' | sort -u)
+[ -n "$locks_readme" ] ||
+	fail 'локи: не разобран список локов README.md (абзац «Лок берут только пишущие цели» пуст или изменил формат)'
+
+# map_key <пары «цель ключ»> <цель>: печатает ключ цели (пусто, если цели в карте нет).
+map_key() {
+	printf '%s\n' "$1" | awk -v want="$2" '$1 == want { print $2; exit }'
+}
+
+# check_dup_keys <пары «цель ключ»> <где>: цель не может стоять под двумя разными ключами.
+check_dup_keys() {
+	dup_pairs=$(printf '%s\n' "$1" | awk '
+		{ if (!($1 in seen)) seen[$1] = $2; else if (seen[$1] != $2) bad[$1] = seen[$1] " и " $2 }
+		END { for (t in bad) print t ": " bad[t] }')
+	[ -n "$dup_pairs" ] || return 0
+	fail "локи: цель в $2 перечислена под двумя разными ключами" "$dup_pairs"
+}
+
+check_dup_keys "$locks_ps" 'docs/PARALLEL_SESSIONS.md'
+check_dup_keys "$locks_readme" 'README.md'
+
+# Списки read-only: строка PARALLEL_SESSIONS.md про read-only цели и хвост строки README.md
+# после «Без лока:» (в той же строке перечислены и цели под локом, поэтому берём только хвост).
+# Проверяются ДО обхода залоченных целей: у конфликта «цель под локом, а в доке она read-only»
+# сообщение должно называть именно это, а не «цель не найдена в карте локов».
+readonly_ps=$(sed -n '/^Read-only цели лок/p' "$doc_ps" | tr -cs 'A-Za-z0-9_.-' ' ')
+readonly_readme=$(sed -n 's/.*Без лока://p' "$doc_readme" | tr -cs 'A-Za-z0-9_.-' ' ')
+
+check_readonly() {
+	# check_readonly <токены> <файл>
+	for ro_target in $1; do
+		case "$all_targets" in
+		*" $ro_target "*) ;;
+		*) continue ;; # не имя цели Makefile — слово из прозы
+		esac
+		case " $locked_targets " in
+		*" $ro_target "*) fail "локи: цель '$ro_target' перечислена как read-only в $2, но берёт лок в Makefile" ;;
+		esac
+	done
+	return 0
+}
+
+check_readonly "$readonly_ps" 'docs/PARALLEL_SESSIONS.md'
+check_readonly "$readonly_readme" 'README.md'
+ok 'локи: цели из списка read-only лок в Makefile не берут'
+
+# Построчно (IFS — только перевод строки): иначе «ch-down db» распалось бы на два слова.
+old_ifs=$IFS
+IFS='
+'
+set -f
+for pair in $locked; do
+	lk_target=${pair%% *}
+	lk_key=${pair#* }
+	ps_key=$(map_key "$locks_ps" "$lk_target")
+	[ -n "$ps_key" ] ||
+		fail "локи: цель '$lk_target' под локом '$lk_key' не найдена в карте локов docs/PARALLEL_SESSIONS.md (список не разобран или цель в нём не упомянута)"
+	[ "$ps_key" = "$lk_key" ] ||
+		fail "локи: цель '$lk_target' под локом '$lk_key', а в docs/PARALLEL_SESSIONS.md — '$ps_key'"
+	readme_key=$(map_key "$locks_readme" "$lk_target")
+	[ -n "$readme_key" ] ||
+		fail "локи: цель '$lk_target' под локом '$lk_key' не найдена в карте локов README.md (список не разобран или цель в нём не упомянута)"
+	[ "$readme_key" = "$lk_key" ] ||
+		fail "локи: цель '$lk_target' под локом '$lk_key', а в README.md — '$readme_key'"
+done
+set +f
+IFS=$old_ifs
+ok 'локи: каждая цель под $(LOCK) есть в регламенте и README с тем же ключом'
 
 printf '\nвсе самотесты пройдены: %s проверок\n' "$checks"
 exit 0
