@@ -1,13 +1,18 @@
 package cbr
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	log "github.com/sirupsen/logrus"
 )
@@ -24,15 +29,26 @@ const (
 	// сверке с текстом резюме не подлежит.
 	mpKindNote = "note"
 
-	// mpLLMChatPath — метод OpenAI-совместимого API (первичный провайдер — DeepSeek).
-	mpLLMChatPath = "/chat/completions"
+	// mpLLMMaxTokens — предел вывода модели. В Anthropic Messages API max_tokens обязателен:
+	// без него запрос отвергается. 8192 — запас на разметку 11 каналов с дословными цитатами;
+	// у deepseek-chat это предел вывода, то есть значение не урезает разметку, а только
+	// страхует от бесконечной генерации.
+	mpLLMMaxTokens = 8192
 
 	// Переменные окружения LLM-слоя (все — обязательные; значения ключа не печатаются ни
-	// в логах, ни в ошибках: ключ едет заголовком Authorization, а не в query).
+	// в логах, ни в ошибках: SDK шлёт ключ заголовком x-api-key, а не в query).
 	mpLLMBaseURLEnv = "LLM_BASE_URL"
 	mpLLMAPIKeyEnv  = "LLM_API_KEY"
 	mpLLMModelEnv   = "MP_SUMMARY_LLM_MODEL"
 )
+
+// mpLLMTimeout — дедлайн одного запроса к провайдеру (преемник util.postJSONTimeout, удалённого
+// вместе с самописным транспортом). Переменная, а не константа: тест подставляет короткий
+// дедлайн вместо минутного. 65 с — не минута GetJSON: вызов LLM генерирует разметку резюме
+// (десятки цитат и заметок) и отвечает заметно дольше обычного фида, а дедлайн нужен затем,
+// чтобы зависший провайдер дал ошибку, по которой импортёр деградирует до regex-слоя: без него
+// шаг dagu повис бы вместе с провайдером.
+var mpLLMTimeout = 65 * time.Second
 
 // mpLLMConfigFromEnv читает конфигурацию LLM-слоя (спека §3.5). Любая пустая переменная →
 // ok = false: это не ошибка, а основание для деградации — документ остаётся с regex-слоем, а
@@ -44,31 +60,6 @@ func mpLLMConfigFromEnv() (baseURL, apiKey, model string, ok bool) {
 	apiKey = strings.TrimSpace(os.Getenv(mpLLMAPIKeyEnv))
 	model = strings.TrimSpace(os.Getenv(mpLLMModelEnv))
 	return baseURL, apiKey, model, baseURL != "" && apiKey != "" && model != ""
-}
-
-// mpLLMMessage — одно сообщение чата OpenAI-совместимого API.
-type mpLLMMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-// mpLLMRequest — тело запроса /chat/completions. temperature = 0: разметка должна быть
-// воспроизводимой, а не творческой (смена ответа при том же промпте ломала бы сверку
-// «(model, prompt_version) уже размечен»). tools/response_format не используются — первичный
-// провайдер их поддержку не гарантирует, схему задаёт сам промпт.
-type mpLLMRequest struct {
-	Model       string         `json:"model"`
-	Messages    []mpLLMMessage `json:"messages"`
-	Temperature float64        `json:"temperature"`
-}
-
-// mpLLMChatResponse — конверт ответа: нужен только текст первого выбора.
-type mpLLMChatResponse struct {
-	Choices []struct {
-		Message struct {
-			Content string `json:"content"`
-		} `json:"message"`
-	} `json:"choices"`
 }
 
 // mpLLMQuote — цитата канала в ответе модели: вид (risk_pro|risk_dez|prose) и дословный
@@ -106,13 +97,22 @@ func mpIsFormatError(err error) bool {
 	return errors.As(err, &fe)
 }
 
-// mpIsJSONDecodeError — ошибка разбора JSON, которую вернул PostJSON из json.Unmarshal:
-// обрезанное или не то (HTML WAF и т.п.) тело ответа. Статус и транспорт дают ошибки других
-// типов, поэтому по этой проверке формат отделяется от отказа провайдера.
+// mpIsJSONDecodeError — ошибка декодирования конверта ответа, то есть тело успешного ответа не
+// разобрано: обрезанное, не-JSON или не той схемы. SDK читает тело через json.Decoder и
+// оборачивает провал в «error parsing response json: %w» (%w — поэтому errors.As/errors.Is его
+// видят): не-JSON мусор (HTML заглушки WAF, отданной как application/json) даёт
+// *json.SyntaxError, не тот тип поля — *json.UnmarshalTypeError, а обрыв тела на середине —
+// io.ErrUnexpectedEOF (проверено на anthropic-sdk-go v1.80.0: обрезанный конверт приходит
+// именно так, а не *json.SyntaxError; тот же io.ErrUnexpectedEOF даёт и оборванное соединение
+// при чтении тела). Отказ провайдера (*anthropic.Error) и транспорт/дедлайн дают ошибки других
+// типов, поэтому по этой проверке формат отделяется от отказа провайдера. Тело с чужим
+// Content-Type (HTML заглушки WAF отдаются как text/html) SDK отвергает своей ошибкой ещё до
+// json.Decoder — по типам её не опознать, и она уходит как есть: документ деградирует до
+// regex-слоя сразу, без лишнего повтора формата.
 func mpIsJSONDecodeError(err error) bool {
 	var syntax *json.SyntaxError
 	var typeErr *json.UnmarshalTypeError
-	return errors.As(err, &syntax) || errors.As(err, &typeErr)
+	return errors.As(err, &syntax) || errors.As(err, &typeErr) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 // mpLLMQuoteKind — вид цитаты из разрешённой тройки risk_pro|risk_dez|prose.
@@ -200,33 +200,72 @@ func mpLLMJSONBody(content string) (string, bool) {
 	return s[start : end+1], true
 }
 
-// mpLLMAskOnce — один запрос к провайдеру и разбор ответа до структуры. Обрезанный конверт
-// (json.Unmarshal внутри PostJSON), отсутствие choices, пустой или неразобранный content и
-// не та схема — ошибки формата (mpLLMFormatError), их повторяет mpLLMAsk. Отказ провайдера
-// (не-2xx) и ошибка транспорта уходят как есть: они не формат. Ключ API едет заголовком
-// Authorization, поэтому URL в текстах ошибок секрета не несёт (конвенция util.PostJSON).
-func mpLLMAskOnce(doc mpSummaryDoc, baseURL, apiKey, model string) (mpLLMPayload, error) {
-	req := mpLLMRequest{
-		Model: model,
-		Messages: []mpLLMMessage{
-			{Role: "system", Content: mpLLMSystemPrompt()},
-			{Role: "user", Content: mpLLMUserPrompt(doc)},
-		},
-		Temperature: 0,
+// mpLLMText склеивает текстовые блоки ответа в порядке выдачи. Anthropic-конверт может нести
+// и блоки других типов (например, thinking): к разметке они отношения не имеют и пропускаются.
+// Пустой результат — не ответ, а ошибка формата (её ловит mpLLMAskOnce).
+func mpLLMText(msg *anthropic.Message) string {
+	var b strings.Builder
+	for _, block := range msg.Content {
+		if block.Type != "text" {
+			continue
+		}
+		b.WriteString(block.Text)
 	}
-	headers := map[string]string{"Authorization": "Bearer " + apiKey}
-	url := strings.TrimRight(baseURL, "/") + mpLLMChatPath
-	var resp mpLLMChatResponse
-	if err := util.PostJSON(url, headers, req, &resp); err != nil {
+	return b.String()
+}
+
+// mpLLMAskOnce — один запрос к провайдеру официальным SDK (Anthropic Messages API:
+// POST <baseURL>/v1/messages) и разбор ответа до структуры. Обрезанный или чужой конверт,
+// ответ без text-блока, пустой или неразобранный content и не та схема JSON — ошибки формата
+// (mpLLMFormatError), их повторяет mpLLMAsk. Отказ провайдера (*anthropic.Error, не-2xx) и
+// ошибка транспорта или дедлайна уходят как есть: они не формат — повтором не лечатся, и
+// вызывающий должен узнать о них сразу, чтобы деградировать до regex-слоя, не тратя второй
+// вызов.
+//
+// Клиент строится на каждый вызов: конфигурация приходит аргументами (значения — только из
+// os.Getenv у вызывающего), а общий util.HttpClient сохраняет конвенцию транспорта проекта
+// (национальные TLS-roots, cookie jar; свой Timeout у него не выставлен — дедлайн задаёт
+// контекст запроса). Повторы SDK выключены сознательно (WithMaxRetries(0), у SDK по умолчанию
+// их два): спека §3.5 — отказ провайдера и транспортная ошибка означают деградацию до
+// regex-слоя и догон следующим прогоном, а не скрытые ретраи внутри одного вызова, из-за
+// которых импортёр молча ждал бы провайдера дольше дедлайна.
+//
+// Дедлайн запроса (mpLLMTimeout): зависший провайдер обязан дать ошибку, по которой импортёр
+// деградирует, а не подвесить шаг dagu. Ключ API SDK шлёт заголовком x-api-key (не в
+// URL/query), поэтому ни сам ключ, ни URL секрета в текстах ошибок не несут.
+func mpLLMAskOnce(doc mpSummaryDoc, baseURL, apiKey, model string) (mpLLMPayload, error) {
+	client := anthropic.NewClient(
+		option.WithAPIKey(apiKey),
+		option.WithBaseURL(strings.TrimRight(baseURL, "/")),
+		option.WithHTTPClient(util.HttpClient),
+		option.WithMaxRetries(0),
+	)
+	ctx, cancel := context.WithTimeout(context.Background(), mpLLMTimeout)
+	defer cancel()
+	msg, err := client.Messages.New(ctx, anthropic.MessageNewParams{
+		Model:     model,
+		MaxTokens: mpLLMMaxTokens,
+		// System — отдельное поле Anthropic-конверта: системной роли в сообщениях там нет.
+		System: []anthropic.TextBlockParam{{Text: mpLLMSystemPrompt()}},
+		Messages: []anthropic.MessageParam{
+			anthropic.NewUserMessage(anthropic.NewTextBlock(mpLLMUserPrompt(doc))),
+		},
+		// temperature = 0: разметка должна быть воспроизводимой, а не творческой (смена ответа
+		// при том же промпте ломала бы сверку «(model, prompt_version) уже размечен»).
+		// tools/response_format не используются — провайдер их поддержку не гарантирует,
+		// схему задаёт сам промпт.
+		Temperature: anthropic.Float(0),
+	})
+	if err != nil {
 		if mpIsJSONDecodeError(err) {
 			return mpLLMPayload{}, mpLLMFormatError{err}
 		}
 		return mpLLMPayload{}, err
 	}
-	if len(resp.Choices) == 0 {
-		return mpLLMPayload{}, mpLLMFormatError{fmt.Errorf("в ответе нет choices")}
+	content := mpLLMText(msg)
+	if content == "" {
+		return mpLLMPayload{}, mpLLMFormatError{fmt.Errorf("в ответе нет text-блока")}
 	}
-	content := resp.Choices[0].Message.Content
 	body, ok := mpLLMJSONBody(content)
 	if !ok {
 		return mpLLMPayload{}, mpLLMFormatError{fmt.Errorf("в content нет JSON-объекта (content: %d байт)", len(content))}
@@ -252,8 +291,8 @@ func mpLLMAsk(doc mpSummaryDoc, baseURL, apiKey, model string) (mpLLMPayload, er
 }
 
 // tagMPChannelsLLM размечает документ резюме по 11 каналам моделью LLM (слой 2, спека §3.5):
-// промпт с реестром каналов → OpenAI-совместимый /chat/completions → разбор строгого JSON с
-// одним ретраем на ошибку формата (mpLLMAsk).
+// промпт с реестром каналов → Anthropic-совместимый POST <baseURL>/v1/messages (клиент SDK
+// строит mpLLMAskOnce) → разбор строгого JSON с одним ретраем на ошибку формата (mpLLMAsk).
 //
 // Валидация против галлюцинаций: каждая цитата обязана дословно встречаться в
 // нормализованном тексте документа, иначе отбрасывается с warn (модель «доцитирует»);

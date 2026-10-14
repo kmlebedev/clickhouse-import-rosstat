@@ -1,13 +1,16 @@
 package cbr
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // Пины-цитаты — дословные предложения фикстуры 23.09.2026 (hold), те же, что в
@@ -30,18 +33,18 @@ type mpLLMMockResponse struct {
 }
 
 // mpLLMMockRequest — записанный мок-запрос: путь, заголовки и тело — предмет пинов
-// TestTagMPChannelsLLMOK (ключ едет заголовком, а не в URL).
+// TestTagMPChannelsLLMOK (ключ едет заголовком x-api-key, а не в URL).
 type mpLLMMockRequest struct {
 	Method      string
 	Path        string
-	Auth        string
+	APIKey      string
 	ContentType string
 	Body        string
 }
 
-// mpLLMMock — httptest-мок OpenAI-совместимого провайдера: отдаёт ответы скрипта по порядку
-// вызовов и записывает все запросы. Запрос после исчерпания скрипта получает 500 — лишний
-// вызов (третий после ретрая) не должен маскироваться успешным ответом.
+// mpLLMMock — httptest-мок Anthropic-совместимого провайдера: отдаёт ответы скрипта по
+// порядку вызовов и записывает все запросы. Запрос после исчерпания скрипта получает 500 —
+// лишний вызов (третий после ретрая) не должен маскироваться успешным ответом.
 type mpLLMMock struct {
 	script []mpLLMMockResponse
 	url    string
@@ -60,7 +63,7 @@ func mpNewLLMMock(t *testing.T, responses ...mpLLMMockResponse) *mpLLMMock {
 		m.requests = append(m.requests, mpLLMMockRequest{
 			Method:      r.Method,
 			Path:        r.URL.Path,
-			Auth:        r.Header.Get("Authorization"),
+			APIKey:      r.Header.Get("x-api-key"),
 			ContentType: r.Header.Get("Content-Type"),
 			Body:        string(body),
 		})
@@ -70,6 +73,7 @@ func mpNewLLMMock(t *testing.T, responses ...mpLLMMockResponse) *mpLLMMock {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
+		w.Header().Set("Content-Type", "application/json")
 		if resp := m.script[idx]; resp.Status != 0 {
 			w.WriteHeader(resp.Status)
 		}
@@ -97,12 +101,35 @@ func (m *mpLLMMock) request(i int) mpLLMMockRequest {
 	return m.requests[i]
 }
 
-// mpLLMContentBody — тело успешного ответа провайдера: OpenAI-конверт с одним choice и
-// строкой content.
+// mpLLMContentBody — тело успешного ответа провайдера: Anthropic-конверт с одним text-блоком
+// (content — то, что в OpenAI-конверте лежало в choices[0].message.content).
 func mpLLMContentBody(t *testing.T, content string) string {
 	t.Helper()
+	return mpLLMEnvelope(t, []any{map[string]any{"type": "text", "text": content}})
+}
+
+// mpLLMEmptyContentBody — успешный ответ (200) без единого блока контента: провайдер прислал
+// валидный конверт, но разметки в нём нет.
+func mpLLMEmptyContentBody(t *testing.T) string {
+	t.Helper()
+	return mpLLMEnvelope(t, []any{})
+}
+
+// mpLLMEnvelope собирает конверт ответа Anthropic Messages API с заданным content.
+func mpLLMEnvelope(t *testing.T, content []any) string {
+	t.Helper()
+	if content == nil {
+		content = []any{}
+	}
 	body, err := json.Marshal(map[string]any{
-		"choices": []any{map[string]any{"message": map[string]any{"content": content}}},
+		"id":            "msg_1",
+		"type":          "message",
+		"role":          "assistant",
+		"model":         "test-model",
+		"content":       content,
+		"stop_reason":   "end_turn",
+		"stop_sequence": nil,
+		"usage":         map[string]any{"input_tokens": 1, "output_tokens": 1},
 	})
 	if err != nil {
 		t.Fatalf("сборка конверта ответа: %v", err)
@@ -293,8 +320,9 @@ func TestMpPromptVersion(t *testing.T) {
 
 // TestTagMPChannelsLLMOK — валидный ответ с 11 каналами: цитаты становятся матчами с
 // видом из ответа, заметки — матчами Kind='note' (у money_supply note пуста — матча нет),
-// Seq сквозной; запрос уходит на /chat/completions с ключом в заголовке Authorization и
-// промптом, содержащим все 11 slug'ов и текст документа.
+// Seq сквозной; запрос уходит на /v1/messages (Anthropic-совместимый транспорт) с ключом в
+// заголовке x-api-key, обязательным max_tokens и промптом, содержащим все 11 slug'ов и текст
+// документа.
 func TestTagMPChannelsLLMOK(t *testing.T) {
 	doc := mpLLMFixtureDoc(t)
 	mpLLMCheckPins(t, doc, mpLLMLaborPin, mpLLMLaborPin2, mpLLMExpectationsPin,
@@ -303,7 +331,7 @@ func TestTagMPChannelsLLMOK(t *testing.T) {
 	channels := mpLLMValidChannels()
 	mock := mpNewLLMMock(t, mpLLMMockResponse{Body: mpLLMContentBody(t, mpLLMPayloadBody(t, channels...))})
 
-	// baseURL с хвостовым слэшем: путь запроса не должен получиться «//chat/completions».
+	// baseURL с хвостовым слэшем: путь запроса не должен получиться «//v1/messages».
 	matches, err := tagMPChannelsLLM(doc, mock.url+"/", "test-key", "test-model")
 	if err != nil {
 		t.Fatalf("tagMPChannelsLLM: %v", err)
@@ -317,11 +345,11 @@ func TestTagMPChannelsLLMOK(t *testing.T) {
 	if req.Method != http.MethodPost {
 		t.Errorf("метод %q, ожидался POST", req.Method)
 	}
-	if req.Path != "/chat/completions" {
-		t.Errorf("путь %q, ожидался /chat/completions", req.Path)
+	if req.Path != "/v1/messages" {
+		t.Errorf("путь %q, ожидался /v1/messages", req.Path)
 	}
-	if req.Auth != "Bearer test-key" {
-		t.Errorf("Authorization = %q, ожидалось %q", req.Auth, "Bearer test-key")
+	if req.APIKey != "test-key" {
+		t.Errorf("x-api-key = %q, ожидалось %q", req.APIKey, "test-key")
 	}
 	if req.ContentType != "application/json" {
 		t.Errorf("Content-Type = %q, ожидался application/json", req.ContentType)
@@ -334,7 +362,8 @@ func TestTagMPChannelsLLMOK(t *testing.T) {
 	for _, want := range []string{
 		`"model":"test-model"`,
 		`"temperature":0`,
-		`"role":"system"`,
+		`"max_tokens":8192`, // в Anthropic API max_tokens обязателен
+		`"system":[{"text":"Редакция инструкции: 1.`, // system — отдельное поле, не роль в messages
 		`"role":"user"`,
 		mpLLMLaborPin,        // user-сообщение несёт дословный текст документа
 		"Инфляционные риски", // …и заголовки блоков
@@ -470,8 +499,27 @@ func TestTagMPChannelsLLMValidatesSlugAndKind(t *testing.T) {
 	}
 }
 
+// mpLLMCheckRetryToLaborMatch — общий хвост тестов «первый ответ битый → ретрай → разметка»:
+// ретрай вылечил формат (ровно два запроса с тем же телом промпта) и дал один дословный матч
+// labor_market.
+func mpLLMCheckRetryToLaborMatch(t *testing.T, mock *mpLLMMock, matches []mpChannelMatch, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("tagMPChannelsLLM: %v (ретрай должен был вылечить формат)", err)
+	}
+	if mock.calls() != 2 {
+		t.Errorf("запросов %d, ожидалось 2 (первый + ретрай)", mock.calls())
+	}
+	if len(matches) != 1 || !mpHasMatchKindText(matches, "labor_market", mpKindProse, mpLLMLaborPin) {
+		t.Errorf("матчи после ретрая = %+v, ожидался один дословный матч labor_market", matches)
+	}
+	if first, second := mock.request(0).Body, mock.request(1).Body; first != second {
+		t.Error("ретрай отправил другое тело запроса: промпт должен быть тем же")
+	}
+}
+
 // TestTagMPChannelsLLMBrokenJSON — один ретрай на ошибку формата: обрезанный content,
-// обрезанное тело ответа и пустой content лечатся вторым запросом; два битых ответа подряд
+// обрезанное тело ответа и пустой text-блок лечатся вторым запросом; два битых ответа подряд
 // дают ошибку (импортёр деградирует до regex-слоя) и третьего запроса не делают.
 func TestTagMPChannelsLLMBrokenJSON(t *testing.T) {
 	doc := mpLLMFixtureDoc(t)
@@ -480,8 +528,8 @@ func TestTagMPChannelsLLMBrokenJSON(t *testing.T) {
 
 	// Обрезанный content: модель не дописала JSON разметки.
 	const truncatedContent = `{"channels":[{"slug":"labor_market","quotes":[{"kind":"prose","text":"Дефицит работников`
-	// Обрезанное тело ответа: конверт не дописан — json.Unmarshal внутри PostJSON падает.
-	const truncatedEnvelope = `{"choices":[{"message":{"content":"{\"channels\":[]}`
+	// Обрезанное тело ответа: конверт не дописан — json.Decoder внутри SDK падает на середине.
+	const truncatedEnvelope = `{"id":"msg_1","type":"message","content":[{"type":"text","text":"{\"channels\":[]}`
 
 	cases := []struct {
 		name  string
@@ -489,7 +537,7 @@ func TestTagMPChannelsLLMBrokenJSON(t *testing.T) {
 	}{
 		{"обрезанный content", mpLLMContentBody(t, truncatedContent)},
 		{"обрезанное тело ответа", truncatedEnvelope},
-		{"пустой content", mpLLMContentBody(t, "")},
+		{"пустой text-блок", mpLLMContentBody(t, "")},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -497,18 +545,7 @@ func TestTagMPChannelsLLMBrokenJSON(t *testing.T) {
 				mpLLMMockResponse{Body: tc.first},
 				mpLLMMockResponse{Body: valid})
 			matches, err := tagMPChannelsLLM(doc, mock.url, "test-key", "test-model")
-			if err != nil {
-				t.Fatalf("tagMPChannelsLLM: %v (ретрай должен был вылечить формат)", err)
-			}
-			if mock.calls() != 2 {
-				t.Errorf("запросов %d, ожидалось 2 (первый + ретрай)", mock.calls())
-			}
-			if len(matches) != 1 || !mpHasMatchKindText(matches, "labor_market", mpKindProse, mpLLMLaborPin) {
-				t.Errorf("матчи после ретрая = %+v, ожидался один дословный матч labor_market", matches)
-			}
-			if first, second := mock.request(0).Body, mock.request(1).Body; first != second {
-				t.Error("ретрай отправил другое тело запроса: промпт должен быть тем же")
-			}
+			mpLLMCheckRetryToLaborMatch(t, mock, matches, err)
 		})
 	}
 	t.Run("оба ответа битые → ошибка", func(t *testing.T) {
@@ -522,6 +559,39 @@ func TestTagMPChannelsLLMBrokenJSON(t *testing.T) {
 		if mock.calls() != 2 {
 			t.Errorf("запросов %d, ожидалось 2 (больше одного ретрая не делаем)", mock.calls())
 		}
+	})
+}
+
+// TestTagMPChannelsLLMNoTextBlock — успешный ответ (200, валидный конверт) без единого
+// text-блока: разметки в нём нет, и это ошибка формата, а не «разметки нет» — иначе документ
+// молча остался бы без слоя 2 при зелёном прогоне. Классификация пинится напрямую по
+// mpLLMAskOnce (формат, не отказ провайдера), а через tagMPChannelsLLM — ретрай формата:
+// первый вызов лечится вторым, то есть ровно два запроса.
+func TestTagMPChannelsLLMNoTextBlock(t *testing.T) {
+	doc := mpLLMFixtureDoc(t)
+
+	t.Run("один вызов без text-блока → ошибка формата", func(t *testing.T) {
+		mock := mpNewLLMMock(t, mpLLMMockResponse{Body: mpLLMEmptyContentBody(t)})
+		_, err := mpLLMAskOnce(doc, mock.url, "test-key", "test-model")
+		if err == nil {
+			t.Fatal("ответ без text-блока: ожидалась ошибка")
+		}
+		if !mpIsFormatError(err) {
+			t.Errorf("ошибка %v не классифицирована как ошибка формата", err)
+		}
+		if mock.calls() != 1 {
+			t.Errorf("запросов %d, ожидался 1 (ретрейт решает mpLLMAsk, а не mpLLMAskOnce)", mock.calls())
+		}
+	})
+
+	t.Run("без text-блока → один ретрай → разметка", func(t *testing.T) {
+		valid := mpLLMContentBody(t, mpLLMPayloadBody(t,
+			mpLLMChannelSpec{Slug: "labor_market", Quotes: []mpLLMQuoteSpec{{Kind: mpKindProse, Text: mpLLMLaborPin}}}))
+		mock := mpNewLLMMock(t,
+			mpLLMMockResponse{Body: mpLLMEmptyContentBody(t)},
+			mpLLMMockResponse{Body: valid})
+		matches, err := tagMPChannelsLLM(doc, mock.url, "test-key", "test-model")
+		mpLLMCheckRetryToLaborMatch(t, mock, matches, err)
 	})
 }
 
@@ -550,8 +620,9 @@ func TestTagMPChannelsLLMFencedJSON(t *testing.T) {
 }
 
 // TestTagMPChannelsLLM500 — отказ провайдера (500) возвращается ошибкой сразу, без ретрая:
-// повтором он не лечится, а импортёр по ошибке уходит в деградацию. Ключ в текст ошибки
-// не попадает (он едет заголовком).
+// повтором он не лечится, а импортёр по ошибке уходит в деградацию. Счётчик запросов пинит и
+// выключенные повторы SDK (WithMaxRetries(0): с дефолтными двумя их было бы три — 500 для SDK
+// ретраебелен). Ключ в текст ошибки не попадает (он едет заголовком x-api-key).
 func TestTagMPChannelsLLM500(t *testing.T) {
 	doc := mpLLMFixtureDoc(t)
 	mock := mpNewLLMMock(t, mpLLMMockResponse{Status: http.StatusInternalServerError, Body: `{"error":"internal"}`})
@@ -582,6 +653,41 @@ func TestTagMPChannelsLLMTransportError(t *testing.T) {
 	_, err := tagMPChannelsLLM(doc, url, "test-key", "test-model")
 	if err == nil {
 		t.Fatal("недоступный провайдер: ожидалась ошибка")
+	}
+	if strings.Contains(err.Error(), "test-key") {
+		t.Errorf("в текст ошибки утёк ключ API: %v", err)
+	}
+}
+
+// TestTagMPChannelsLLMTimeout — зависший провайдер: запрос падает по дедлайну (mpLLMTimeout,
+// короткий дедлайн подставлен тестом), а не ждёт вечно — иначе шаг dagu повис бы вместе с
+// провайдером. Ошибка дедлайна — не формат: ретрая формата нет (одна попытка SDK).
+func TestTagMPChannelsLLMTimeout(t *testing.T) {
+	const handlerDelay = 5 * time.Second
+	doc := mpLLMFixtureDoc(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		// Тело вычитывается до конца до select: на разрыв соединения (отмену контекста)
+		// хендлер завершается сразу и server.Close() в defer не ждёт полный handlerDelay.
+		_, _ = io.Copy(io.Discard, r.Body)
+		select {
+		case <-r.Context().Done():
+		case <-time.After(handlerDelay):
+		}
+	}))
+	defer srv.Close()
+
+	old := mpLLMTimeout
+	mpLLMTimeout = time.Second
+	t.Cleanup(func() { mpLLMTimeout = old })
+
+	_, err := tagMPChannelsLLM(doc, srv.URL, "test-key", "test-model")
+	if err == nil {
+		t.Fatal("зависший провайдер: ожидалась ошибка дедлайна")
+	}
+	// Именно дедлайн, а не любая другая ошибка: на него и рассчитывает деградация до
+	// regex-слоя — иначе «получили ошибку» ничего не говорит о причине.
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("ошибка %v не является ошибкой дедлайна (context.DeadlineExceeded)", err)
 	}
 	if strings.Contains(err.Error(), "test-key") {
 		t.Errorf("в текст ошибки утёк ключ API: %v", err)

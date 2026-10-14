@@ -1,7 +1,6 @@
 package util
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -27,13 +26,6 @@ const (
 // ответ без дедлайна ошибки не даёт — `make import STAT=wgc_etf_flows` повис бы
 // вместо фолбэка.
 var jsonTimeout = 60 * time.Second
-
-// postJSONTimeout — дедлайн одного запроса PostJSON. Тоже переменная, чтобы тест
-// подставил короткий дедлайн вместо длинного. 65 s — не минута GetJSON: вызов LLM
-// генерирует разметку резюме (десятки цитат и заметок) и отвечает заметно дольше
-// обычного фида, а дедлайн нужен затем, чтобы зависший провайдер дал ошибку, по которой
-// импортёр деградирует до регекс-слоя: без него шаг dagu повис бы вместе с провайдером.
-var postJSONTimeout = 65 * time.Second
 
 // GetJSON скачивает url общим HttpClient (тот же User-Agent, что у GetFile/GetCSV)
 // и разбирает ответ как JSON в out. Отличие от GetFile — статус проверяется явно:
@@ -64,56 +56,6 @@ func GetJSON(url string, out any) error {
 		return err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("http status %d: %s", resp.StatusCode, errorSnippet(body))
-	}
-	if len(body) == 0 {
-		return fmt.Errorf("пустое тело")
-	}
-	if err = json.Unmarshal(body, out); err != nil {
-		return err
-	}
-	return nil
-}
-
-// PostJSON отправляет request как JSON-тело POST-запроса на url общим HttpClient (тот
-// же случайный User-Agent, что у GetFile/GetJSON) и разбирает ответ как JSON в out —
-// транспорт будущего LLM-слоя (интерфейс — OpenAI-совместимый /chat/completions).
-// headers накладываются поверх Content-Type: ключ LLM едет заголовком Authorization, а
-// не в query, поэтому в тексты ошибок он не попадает — ошибка статуса строится только из
-// кода и начала тела (обрезка как у GetJSON), URL в неё не пишется (конвенция GetJSON: у
-// вызывающих в URL бывает ключ, а ошибка уезжает в лог; URL-контекст добавляет
-// вызывающий). Ошибки транспорта приходят из net/http как *url.Error и содержат URL —
-// заголовки в такую ошибку net/http не добавляет, так что и секретов из headers там нет;
-// сами заголовки хелпер в обёртки не подставляет. Пустое тело — тоже ошибка: пустой
-// ответ неотличим от «разметка без каналов» и не должен выглядеть успешным вызовом.
-// Запрос ограничен postJSONTimeout: на зависший ответ импортёр должен получить ошибку и
-// уйти в деградацию до регекс-слоя, а не ждать его вечно.
-func PostJSON(url string, headers map[string]string, request any, out any) error {
-	jsonBody, err := json.Marshal(request)
-	if err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), postJSONTimeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(jsonBody))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("User-Agent", randomUA)
-	req.Header.Set("Content-Type", "application/json")
-	for name, value := range headers {
-		req.Header.Set(name, value)
-	}
-	resp, err := HttpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return fmt.Errorf("http status %d: %s", resp.StatusCode, errorSnippet(body))
 	}
 	if len(body) == 0 {
