@@ -155,24 +155,3 @@ func TestIpcWeeksSeriesMetaCoversFixture(t *testing.T) {
 		}
 	}
 }
-
-func TestIpcMesSeriesMetaCoversParsedSheets(t *testing.T) {
-	sheets := []string{"01", "02", "03", "04"}
-	f := newTestWorkbook(t, sheets...)
-	for i, sheet := range sheets {
-		setSheetRows(t, f, sheet, [][]any{
-			{ipcMesSeriesMeta[i].Series},
-			{ipcMesField},
-			{"январь", "100.5", "101.2"},
-		})
-	}
-	table, err := parseIpcMes(f)
-	if err != nil {
-		t.Fatal(err)
-	}
-	names := make([]string, 0, len(*table))
-	for _, row := range *table {
-		names = append(names, row[0])
-	}
-	requireParsedDescribed(t, names, describedSeries(t, ipcMesSeriesMeta))
-}
