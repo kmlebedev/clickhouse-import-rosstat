@@ -255,8 +255,9 @@ git commit -m "rosstat: real source fixtures in testdata/, drop legacy data dir"
 Общий харнесс `appendRecorder` (подмена `driver.Batch`: собирает `[]appendedRow{series, date, value}`) вынести в `rosstat/series_meta_test.go` — его используют T5–T7. Тесты:
 
 ```go
-func TestSalariesMesReadsFixture(t *testing.T)        // точек 418 (в файле 418 ненулевых числовых ячеек: 6 нулей января–июня 1991 и 5 пустых августа–декабря 2026 отброшены); ряд один — salariesMesSeriesName
+func TestSalariesMesReadsFixture(t *testing.T)        // точек 421: 418 ненулевых числовых ячеек + 3 текстовые со сноской («62 470(2)» — октябрь–декабрь 2022, значения ряда); отброшены 6 нулей января–июня 1991 и 5 пустых августа–декабря 2026; ряд один — salariesMesSeriesName
 func TestSalariesMesSkipsZeroCells(t *testing.T)      // среди точек нет value == 0 (январь–июнь 1991 в источнике — «данных не имеется»)
+func TestSalariesMesReadsFootnoteCells(t *testing.T)  // 2022-10 → 2022-11-01 = 62470; 2022-11 → 2022-12-01 = 63060; 2022-12 → 2023-01-01 = 88468
 func TestSalariesMesSpotValues(t *testing.T)          // 1992-01 → дата 1992-02-01, значение 1; 2026-06 → дата 2026-07-01, значение 114743
 func TestSalariesMesSeriesMetaCoversParsedRows(t *testing.T) // двусторонний контракт с salariesMesSeriesMeta
 func TestSalariesMesMissingSheetFails(t *testing.T)   // пустая книга → ошибка, в тексте имя таблицы, в батче 0 строк
@@ -541,7 +542,7 @@ Expected: rc=0 у всех; новые таблицы создаются **ря�
 - [ ] **Step 4: Сверить состав и данные**
 
 Run (через MCP по витрине, сырые закрыты) и записать факты: число рядов и строк по каждому из четырёх источников, крайние даты.
-Ожидание: `rosstat_ipc_mes` — 4 ряда / 1716 строк (имена рядов новые, значения совпадают с базовой линией); `rosstat_ipc_weeks` — 128 рядов / 25691 строка; `rosstat_salaries_mes` — 1 ряд, 418 точек, 1991-07-01…2026-07-01 (нулей января–июня 1991 нет); `rosstat_vvp_kvartal` — 5 рядов, 302 точки, с 2011-04-01 по 2026-07-01 (2 квартал 2026).
+Ожидание: `rosstat_ipc_mes` — 4 ряда / 1716 строк (имена рядов новые, значения совпадают с базовой линией); `rosstat_ipc_weeks` — 128 рядов / 25691 строка; `rosstat_salaries_mes` — 1 ряд, 421 точка, 1991-08-01…2026-08-01 (нулей января–июня 1991 нет; дата точки — 1-е число месяца, следующего за отчётным, поэтому июль 1991 записан на 1991-08-01, а июль 2026 — на 2026-08-01); `rosstat_vvp_kvartal` — 5 рядов, 302 точки, с 2011-04-01 по 2026-07-01 (2 квартал 2026).
 
 - [ ] **Step 5: Spot-сверка с публикацией Росстата**
 
