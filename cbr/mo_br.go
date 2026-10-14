@@ -55,11 +55,11 @@ func (s *moBrStat) Name() string { return moBrName }
 // прогона (волны выходят 8 раз в год): шаблон вернёт записанное число точек, не
 // скачивая файл и не делая записей в БД.
 func (s *moBrStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	page, err := getPage(moBrPageUrl)
+	page, err := util.GetPage(moBrPageUrl)
 	if err != nil {
 		return count, fmt.Errorf("%s: %s: %w", moBrName, moBrPageUrl, err)
 	}
-	href, err := findLink(page, moBrLinkSel)
+	href, err := util.FindLink(page, moBrLinkSel)
 	if err != nil {
 		return count, fmt.Errorf("%s: не найдена ссылка на xlsx на %s: %w", moBrName, moBrPageUrl, err)
 	}

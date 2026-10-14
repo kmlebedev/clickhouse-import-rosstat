@@ -11,8 +11,8 @@ import "github.com/kmlebedev/clickhouse-import-rosstat/util"
 var modelInputsView = util.View{
 	Name: "v_model_inputs",
 	Tables: []string{
-		"gold_prices", "cbr_currency_usd", "cbr_key_rate", "ofz_curve", "ipc_mes",
-		"ipc_weeks", "macro_series", "stock_prices", "model_runs",
+		"gold_prices", "cbr_currency_usd", "cbr_key_rate", "ofz_curve", "rosstat_ipc_mes",
+		"rosstat_ipc_weeks", "macro_series", "stock_prices", "model_runs",
 	},
 	Select: `SELECT
     gold_moex_fix_usd, gold_date,
@@ -63,7 +63,7 @@ CROSS JOIN (
     SELECT
         argMaxIf(toNullable(percent), date, startsWith(name, 'Индексы потребительских цен на товары и услуги')) AS ipc_mes_last,
         argMaxIf(toNullable(date), date, startsWith(name, 'Индексы потребительских цен на товары и услуги')) AS ipc_mes_last_date
-    FROM ipc_mes FINAL
+    FROM rosstat_ipc_mes FINAL
 ) AS ipc_m
 CROSS JOIN (
     SELECT
@@ -74,9 +74,9 @@ CROSS JOIN (
             name,
             sum(log(toFloat64(percent) / 100)) AS log_ytd,
             max(date) AS last_date
-        FROM ipc_weeks FINAL
+        FROM rosstat_ipc_weeks FINAL
         WHERE percent > 0
-          AND toYear(date) = (SELECT toYear(max(date)) FROM ipc_weeks FINAL)
+          AND toYear(date) = (SELECT toYear(max(date)) FROM rosstat_ipc_weeks FINAL)
         GROUP BY name
     )
 ) AS ipc_w

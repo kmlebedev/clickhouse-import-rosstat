@@ -218,8 +218,9 @@ async def check(params, server_log):
             elif catalog_wgc_n == 34:
                 catalog_wgc_detail = "рядов wgc: 34 (20 ETF + 14 ЦБ)"
             else:
-                catalog_wgc_detail = (f"рядов wgc: {catalog_wgc_n}, want 34 — прогнать "
-                                      "make import STAT=wgc_etf_flows и STAT=wgc_cb_reserves")
+                catalog_wgc_detail = (f"рядов wgc: {catalog_wgc_n}, want 34 — прогнать по одному: "
+                                      "make import STAT=wgc_etf_flows, затем "
+                                      "make import STAT=wgc_cb_reserves")
             failed += not expect("каталог wgc полон", catalog_wgc_n == 34, catalog_wgc_detail)
 
             # Консенсус аналитиков — 11 строк сида. Пустой v_gold_forecasts означает
@@ -505,6 +506,83 @@ async def check(params, server_log):
             for table, label in (("cbr_mp_summary", "шапка"),
                                  ("cbr_mp_summary_block", "блоки"),
                                  ("cbr_mp_summary_channel", "каналы")):
+                raw = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {table}"}))
+                denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+                failed += not expect(f"сырая {table} закрыта ({label})", denied,
+                                     f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
+
+            # Контур Росстата (фаза 3 роадмапа, задачи T4–T7): витрина v_rosstat_macro видна
+            # и НЕПУСТА, каталог описывает ряды всех четырёх импортёров пакета, а четыре
+            # сырые таблицы — источники витрины — агенту закрыты (как macro_series и
+            # cbr_households_b_mes: читать контур агент обязан только через витрину,
+            # правило 11 AGENTS.md).
+            #
+            # Здесь, в отличие от v_dcf_assumptions, пустая витрина успехом не считается:
+            # строки публикуют импортёры rosstat/, поэтому ноль строк и ноль различных
+            # рядов означают ни разу не отработавший контур, а не отсутствие данных у
+            # источника. Число точек меняется с каждым прогоном источника, поэтому
+            # точное значение count() не сверяется — проверяются count() > 0 и
+            # uniqExact(series) > 0 оба разом: «витрина читается» без непустоты пропустило
+            # бы пустую витрину. Существование витрины подтверждается ЗАПРОСОМ К НЕЙ, а не
+            # только поиском имени в ответе list_tables: в том тексте лежат
+            # create_table_query с комментариями таблиц и колонок, и имя отсутствующей
+            # витрины попадало туда из COMMENT соседки (урок bold). Разобранный ответ
+            # run_query доказывает и существование, и право чтения; «нет витрины» и «нет
+            # прав» приходят ошибкой (UNKNOWN_TABLE / ACCESS_DENIED) и в result_rows не
+            # разбираются.
+            failed += not expect("витрина v_rosstat_macro видна", "v_rosstat_macro" in tables, "list_tables default")
+
+            rosstat_view = text(await session.call_tool("run_query", {"query": "SELECT count() AS rows, uniqExact(series) AS series FROM v_rosstat_macro"}))
+            rosstat_view_rows = result_rows(rosstat_view)
+            rosstat_points_n = rosstat_view_rows[0].get("rows") if rosstat_view_rows else None
+            rosstat_series_n = rosstat_view_rows[0].get("series") if rosstat_view_rows else None
+            if rosstat_view_rows is None:
+                rosstat_view_detail = f"витрина не читается: {rosstat_view[:200]}"
+            elif (rosstat_points_n or 0) > 0 and (rosstat_series_n or 0) > 0:
+                rosstat_view_detail = f"строк: {rosstat_points_n}, рядов: {rosstat_series_n}"
+            else:
+                rosstat_view_detail = (f"строк: {rosstat_points_n}, рядов: {rosstat_series_n} — прогнать "
+                                       "импортёры контура по одному: make import STAT=<имя> для "
+                                       "каждого из rosstat_ipc_mes, rosstat_ipc_weeks, "
+                                       "rosstat_salaries_mes, rosstat_vvp_kvartal")
+            failed += not expect("витрина v_rosstat_macro непуста",
+                                 (rosstat_points_n or 0) > 0 and (rosstat_series_n or 0) > 0, rosstat_view_detail)
+
+            # Каталог описывает все 141 ряд источника: 4 ИПЦ (rosstat_ipc_mes) + 131 недельный
+            # товар (rosstat_ipc_weeks) + 5 рядов ВВП (rosstat_vvp_kvartal) + 1 зарплата
+            # (rosstat_salaries_mes).
+            # Число сверяется точным равенством, а не «> 0»: односторонний контракт §11.4
+            # стандарта требует описания каждого разобранного ряда, а меньше 141 значит
+            # ни разу не отработавший импортёр (числа агент прочитает, а что измеряет ряд
+            # и в каких единицах — нет). В плане фазы написано 138: это арифметика
+            # 4 + 128 + 5 + 1 до fix-round задачи T7, который вернул три товара под обрывом
+            # листа (fc0d28f) — в ipcWeeksProducts 131 название, то есть верное число 141.
+            # detail печатает наблюдённое число, когда оно расходится с ожиданием.
+            rosstat_catalog = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'rosstat'"}))
+            rosstat_catalog_rows = result_rows(rosstat_catalog)
+            rosstat_catalog_n = rosstat_catalog_rows[0].get("n") if rosstat_catalog_rows else None
+            if rosstat_catalog_rows is None:
+                rosstat_catalog_detail = f"ответ не распознан: {rosstat_catalog[:200]}"
+            elif rosstat_catalog_n == 141:
+                rosstat_catalog_detail = "рядов rosstat: 141 (4 ИПЦ + 131 недельный + 5 ВВП + 1 зарплата)"
+            else:
+                rosstat_catalog_detail = (f"рядов rosstat: {rosstat_catalog_n}, want 141 — прогнать "
+                                          "импортёры по одному: make import STAT=<имя> для каждого "
+                                          "из rosstat_ipc_mes, rosstat_ipc_weeks, "
+                                          "rosstat_salaries_mes, rosstat_vvp_kvartal "
+                                          "(каталог перепубликовывается каждым прогоном)")
+            failed += not expect("каталог rosstat полон", rosstat_catalog_n == 141, rosstat_catalog_detail)
+
+            # Сырые таблицы контура агенту не выданы — как macro_series и
+            # cbr_households_b_mes: витрина — единственное место, где агент читает ряды
+            # (единицы и привязка даты различаются между рядами и описаны в v_series_catalog).
+            # До первого живого прогона импортёров таблиц может не быть вовсе, и запрос
+            # отвечает UNKNOWN_TABLE, а не ACCESS_DENIED, — это провал, а не успех: таблица
+            # обязана существовать и быть закрытой.
+            for table, label in (("rosstat_ipc_mes", "ИПЦ помесячно"),
+                                 ("rosstat_ipc_weeks", "недельные цены"),
+                                 ("rosstat_salaries_mes", "зарплата помесячно"),
+                                 ("rosstat_vvp_kvartal", "ВВП поквартально")):
                 raw = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {table}"}))
                 denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
                 failed += not expect(f"сырая {table} закрыта ({label})", denied,

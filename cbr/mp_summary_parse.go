@@ -14,7 +14,7 @@ import (
 
 // mpSummaryRef — карточка индекса материалов заседаний с резюме обсуждения ключевой ставки:
 // дата публикации (document-regular_date) и href в том виде, как он записан в разметке
-// (относительный; домен навешивает вызывающий — как в findLink).
+// (относительный; домен навешивает вызывающий — как в util.FindLink).
 type mpSummaryRef struct {
 	Published time.Time
 	Href      string

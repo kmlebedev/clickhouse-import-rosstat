@@ -105,13 +105,13 @@ type inflExpStat struct {
 
 // Import берёт адрес актуального XLSX со страницы инфляционных ожиданий: имени файла
 // в коде нет, а сетевое обращение в init() запрещено (ARCHITECTURE.md §8.6). Ссылку
-// ищем тем же кодом, что и тест на фикстуре (util.GetFile + findLink).
+// ищем тем же кодом, что и тест на фикстуре (util.GetPage + util.FindLink).
 func (s *inflExpStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	page, err := getPage(inflExpUrl)
+	page, err := util.GetPage(inflExpUrl)
 	if err != nil {
 		return count, fmt.Errorf("inflExp: %s: %w", inflExpUrl, err)
 	}
-	href, err := findLink(page, inflExpLinkSelector)
+	href, err := util.FindLink(page, inflExpLinkSelector)
 	if err != nil {
 		return count, fmt.Errorf("inflExp: не найдена ссылка на xlsx на %s: %w", inflExpUrl, err)
 	}

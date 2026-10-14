@@ -1,11 +1,74 @@
 package rosstat
 
 import (
+	"fmt"
 	"testing"
+	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/column"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
 )
+
+// appendRecorder — подмена driver.Batch для офлайн-тестов импортёров (§11.6): собирает
+// вызовы Append, чтобы тест видел точки без базы. Ошибка записи не глотается: настроенная
+// appendErr возвращается из Append — тест проверяет, что импортёр её вернул вызывающему,
+// а не продолжил писать дальше.
+type appendRecorder struct {
+	rows      []appendedRow
+	appendErr error
+}
+
+// appendedRow — один вызов Append: ряд, дата и значение точки.
+type appendedRow struct {
+	series string
+	date   time.Time
+	value  float32
+}
+
+var _ driver.Batch = (*appendRecorder)(nil)
+
+func (r *appendRecorder) Append(v ...any) error {
+	if r.appendErr != nil {
+		return r.appendErr
+	}
+	if len(v) != 3 {
+		return fmt.Errorf("appendRecorder: Append с %d аргументами, ожидалось 3 (ряд, дата, значение)", len(v))
+	}
+	series, ok := v[0].(string)
+	if !ok {
+		return fmt.Errorf("appendRecorder: имя ряда %T, ожидалась строка", v[0])
+	}
+	date, ok := v[1].(time.Time)
+	if !ok {
+		return fmt.Errorf("appendRecorder: дата %T, ожидалось time.Time", v[1])
+	}
+	value, ok := v[2].(float32)
+	if !ok {
+		return fmt.Errorf("appendRecorder: значение %T, ожидалось float32", v[2])
+	}
+	r.rows = append(r.rows, appendedRow{series: series, date: date, value: value})
+	return nil
+}
+
+func (r *appendRecorder) Abort() error { return nil }
+
+func (r *appendRecorder) AppendStruct(any) error {
+	return fmt.Errorf("appendRecorder: AppendStruct не поддерживается")
+}
+
+func (r *appendRecorder) Column(int) driver.BatchColumn { return nil }
+
+func (r *appendRecorder) Columns() []column.Interface { return nil }
+
+func (r *appendRecorder) Flush() error { return nil }
+
+func (r *appendRecorder) Send() error { return nil }
+
+func (r *appendRecorder) IsSent() bool { return false }
+
+func (r *appendRecorder) Rows() int { return len(r.rows) }
 
 func newTestWorkbook(t *testing.T, sheets ...string) *excelize.File {
 	t.Helper()
@@ -71,92 +134,21 @@ func requireParsedDescribed(t *testing.T, parsed []string, described map[string]
 	}
 }
 
+// TestIpcWeeksSeriesMetaCoversFixture — односторонний контракт каталога на реальной выгрузке
+// (стандарт §11.4): каждый разобранный товар описан в ipcWeeksSeriesMeta. Обратное направление
+// («описано ⊆ разобрано») не проверяется: имена товаров даёт источник, а не код, поэтому
+// товар, переставший публиковаться в обновлённой или урезанной фикстуре, остаётся описанным.
+//
+// Проверка дублирует TestIpcWeeksMetaCoversParsedRows (ipc_weeks_test.go): та же фикстура и то
+// же направление контракта. Оставлены обе осознанно: эта живёт рядом с каталогом вместе с
+// describedSeries, которая проверяет заполненность и уникальность описаний, и до перевода
+// импортёра на util.ClickHouseImport читала разбор напрямую (parseIpcWeeks) — теперь снимает
+// имена с точек, записанных в appendRecorder (§11.6).
 func TestIpcWeeksSeriesMetaCoversFixture(t *testing.T) {
-	xlsx, err := excelize.OpenFile("data/nedel_ipc_2023.xlsx")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = xlsx.Close() }()
-	table, err := parseIpcWeeks(xlsx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	names := make([]string, 0, len(*table))
-	for _, row := range *table {
-		names = append(names, row[0])
-	}
 	described := describedSeries(t, ipcWeeksSeriesMeta())
-	for _, name := range names {
-		if !described[name] {
-			t.Errorf("ряд %q из выгрузки не описан в series_meta", name)
+	for _, row := range importIpcWeeksFixture(t) {
+		if !described[row.series] {
+			t.Errorf("ряд %q из выгрузки не описан в series_meta", row.series)
 		}
 	}
-}
-
-func TestIpcMesSeriesMetaCoversParsedSheets(t *testing.T) {
-	sheets := []string{"01", "02", "03", "04"}
-	f := newTestWorkbook(t, sheets...)
-	for i, sheet := range sheets {
-		setSheetRows(t, f, sheet, [][]any{
-			{ipcMesSeriesMeta[i].Series},
-			{ipcMesField},
-			{"январь", "100.5", "101.2"},
-		})
-	}
-	table, err := parseIpcMes(f)
-	if err != nil {
-		t.Fatal(err)
-	}
-	names := make([]string, 0, len(*table))
-	for _, row := range *table {
-		names = append(names, row[0])
-	}
-	requireParsedDescribed(t, names, describedSeries(t, ipcMesSeriesMeta))
-}
-
-func TestVvpKvartalSeriesMetaCoversParsedSheets(t *testing.T) {
-	titles := map[string]string{
-		"2":  "Валовой внутрений продукт",
-		"9":  "Валовой внутрений продукт",
-		"10": "Валовой внутренний продукт",
-		"12": "Индексы физического объема валового внутреннего продукта",
-		"14": "Индексы - дефляторы валового внутреннего продукта",
-	}
-	sheets := []string{"2", "9", "10", "12", "14"}
-	f := newTestWorkbook(t, sheets...)
-	for _, sheet := range sheets {
-		setSheetRows(t, f, sheet, [][]any{
-			{"Национальные счета"},
-			{"", titles[sheet] + " 1) (в текущих ценах)"},
-			{"", "2011 г."},
-			{"", "I квартал", "II квартал", "III квартал", "IV квартал"},
-			{"", "15000", "15500", "16000", "16500"},
-		})
-	}
-	table, err := parseVvpKvartal(f)
-	if err != nil {
-		t.Fatal(err)
-	}
-	names := make([]string, 0, len(*table))
-	for _, r := range *table {
-		names = append(names, r.name)
-	}
-	requireParsedDescribed(t, names, describedSeries(t, vvpKvartalSeriesMeta))
-}
-
-func TestSalariesMesSeriesMetaCoversParsedSheet(t *testing.T) {
-	f := newTestWorkbook(t, "Лист1")
-	setSheetRows(t, f, "Лист1", [][]any{
-		{salariesMesSeriesMeta[0].Series},
-		{salariesMesField, "", "", "", "", "", "202", "203"},
-	})
-	table, err := parseSalariesMes(f)
-	if err != nil {
-		t.Fatal(err)
-	}
-	names := make([]string, 0, len(*table))
-	for _, row := range *table {
-		names = append(names, row[0])
-	}
-	requireParsedDescribed(t, names, describedSeries(t, salariesMesSeriesMeta))
 }

@@ -3,34 +3,34 @@ schedule: "17 12 * * 4"
 overlap_policy: skip
 
 steps:
-  - id: ipc_mes
+  - id: rosstat_ipc_mes
     run: "$ROSSTAT_IMPORT_BIN"
     env:
-      - CLICKHOUSE_IMPORT_STAT=ipc_mes
+      - CLICKHOUSE_IMPORT_STAT=rosstat_ipc_mes
     retry_policy:
       limit: 3
       interval_sec: 300
 
-  - id: ipc_weeks
+  - id: rosstat_ipc_weeks
     run: "$ROSSTAT_IMPORT_BIN"
     env:
-      - CLICKHOUSE_IMPORT_STAT=ipc_weeks
+      - CLICKHOUSE_IMPORT_STAT=rosstat_ipc_weeks
     retry_policy:
       limit: 3
       interval_sec: 300
 
-  - id: salaries_mes
+  - id: rosstat_salaries_mes
     run: "$ROSSTAT_IMPORT_BIN"
     env:
-      - CLICKHOUSE_IMPORT_STAT=salaries_mes
+      - CLICKHOUSE_IMPORT_STAT=rosstat_salaries_mes
     retry_policy:
       limit: 3
       interval_sec: 300
 
-  - id: vvp_kvartal
+  - id: rosstat_vvp_kvartal
     run: "$ROSSTAT_IMPORT_BIN"
     env:
-      - CLICKHOUSE_IMPORT_STAT=vvp_kvartal
+      - CLICKHOUSE_IMPORT_STAT=rosstat_vvp_kvartal
     retry_policy:
       limit: 3
       interval_sec: 300

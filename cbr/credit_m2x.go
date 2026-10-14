@@ -95,13 +95,13 @@ type cbrCreditM2xStat struct {
 }
 
 // Import берёт адрес актуального credit_m2x.xlsx со страницы ДКС. Ссылку ищем тем же
-// кодом, что и тест на фикстуре (util.GetFile + findLink).
+// кодом, что и тест на фикстуре (util.GetPage + util.FindLink).
 func (s *cbrCreditM2xStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	page, err := getPage(cbrCreditM2xUrl)
+	page, err := util.GetPage(cbrCreditM2xUrl)
 	if err != nil {
 		return count, fmt.Errorf("cbrCreditM2x: %s: %w", cbrCreditM2xUrl, err)
 	}
-	href, err := findLink(page, cbrCreditM2xLinkSelector)
+	href, err := util.FindLink(page, cbrCreditM2xLinkSelector)
 	if err != nil {
 		return count, fmt.Errorf("cbrCreditM2x: не найдена ссылка на credit_m2x.xlsx на %s: %w", cbrCreditM2xUrl, err)
 	}
