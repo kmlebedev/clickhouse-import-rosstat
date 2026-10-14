@@ -83,7 +83,7 @@ func TestSalariesMesSpotValues(t *testing.T) {
 	rows := importSalariesMesFixture(t)
 	spots := []struct {
 		date  time.Time
-		value float32
+		value float64
 	}{
 		// Январь 1992 (A9 = 1992, G9 = 1) записан на 1 февраля 1992 — сдвиг AddDate(0, 1, 0).
 		{time.Date(1992, 2, 1, 0, 0, 0, 0, time.UTC), 1},
@@ -115,7 +115,7 @@ func TestSalariesMesReadsFootnoteCells(t *testing.T) {
 	rows := importSalariesMesFixture(t)
 	spots := []struct {
 		date  time.Time
-		value float32
+		value float64
 	}{
 		// P39 = «62 470(2)» — октябрь 2022, точка на 1 ноября 2022.
 		{time.Date(2022, 11, 1, 0, 0, 0, 0, time.UTC), 62470},
