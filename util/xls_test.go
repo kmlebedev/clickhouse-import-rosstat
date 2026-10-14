@@ -71,3 +71,26 @@ func TestGetFileTimeoutFails(t *testing.T) {
 		t.Errorf("ошибка %v не является ошибкой дедлайна (context.DeadlineExceeded)", err)
 	}
 }
+
+// GetFileBytes — тот же GetFile, но телом-срезом: байты нужны обеим рукам шаблона сразу —
+// разбору (excelize.OpenReader) и винтажному архиву, а скачивать один и тот же файл дважды
+// значило бы удвоить и трафик, и время прогона. Проверки те же, что у GetFile: тело целиком
+// и User-Agent в запросе (конвенция проекта, правило 4 AGENTS.md).
+func TestGetFileBytes(t *testing.T) {
+	const body = "выгрузка ЦБ целиком"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("User-Agent") == "" {
+			t.Error("запрос ушёл без User-Agent — хелпер обязан слать randomUA, как GetFile")
+		}
+		_, _ = io.WriteString(w, body)
+	}))
+	defer server.Close()
+
+	got, err := GetFileBytes(server.URL)
+	if err != nil {
+		t.Fatalf("GetFileBytes 200: %v", err)
+	}
+	if string(got) != body {
+		t.Errorf("тело %q, ожидалось %q", got, body)
+	}
+}
