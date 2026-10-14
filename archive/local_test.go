@@ -110,3 +110,57 @@ func TestLocalNestedKey(t *testing.T) {
 		t.Errorf("Get() = %q, ожидалось %q", got, "тело")
 	}
 }
+
+// Объект появляется на целевом пути только целиком — запись идёт через временный файл рядом и
+// rename. Иначе прерванная запись (kill, полный диск) оставила бы усечённый объект: Exists увидел
+// бы его как «версия есть», no-op-путь пропустил бы повторную архивацию, и версия потерялась бы
+// молча — а архив объявлен источником истины (спека §3.1). Наблюдаемое здесь: временных файлов
+// после Put не остаётся, и повторная запись того же ключа отдаёт новое содержимое, а не дозапись
+// (ключ и есть версия, но объект мог быть перезаписан — в том числе при самолечении архива).
+func TestLocalPutIsAtomic(t *testing.T) {
+	dir := t.TempDir()
+	store := NewLocal(dir)
+	ctx := context.Background()
+	key := "cbr_m2/x_y.xlsx"
+
+	if err := store.Put(ctx, key, []byte("первая версия")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	assertNoTempLeftovers(t, filepath.Join(dir, "cbr_m2"))
+	if got, err := store.Get(ctx, key); err != nil {
+		t.Fatalf("Get после первого Put: %v", err)
+	} else if string(got) != "первая версия" {
+		t.Errorf("Get() = %q, ожидалось %q", got, "первая версия")
+	}
+	// Права объекта: CreateTemp даёт 0600, а выгрузка в архиве обязана читаться как обычный файл —
+	// 0644, как и предписывал бриф для записи целиком.
+	if info, err := os.Stat(filepath.Join(dir, filepath.FromSlash(key))); err != nil {
+		t.Fatalf("Stat объекта: %v", err)
+	} else if perm := info.Mode().Perm(); perm != 0o644 {
+		t.Errorf("права объекта %o, ожидалось 644", perm)
+	}
+
+	if err := store.Put(ctx, key, []byte("вторая версия")); err != nil {
+		t.Fatalf("повторный Put: %v", err)
+	}
+	assertNoTempLeftovers(t, filepath.Join(dir, "cbr_m2"))
+	if got, err := store.Get(ctx, key); err != nil {
+		t.Fatalf("Get после повторного Put: %v", err)
+	} else if string(got) != "вторая версия" {
+		t.Errorf("Get() = %q, ожидалось %q (перезапись не должна дописывать и не должна оставлять хвост прежней версии)", got, "вторая версия")
+	}
+}
+
+// assertNoTempLeftovers — временный файл записи лежит в том же каталоге, что и объект (rename
+// атомарен только в пределах одной ФС), поэтому утечка .tmp видна прямо в каталоге архива.
+// Мусор из них опасен тем, что его не считает объектом ни реестр, ни приёмка: он просто копится.
+func assertNoTempLeftovers(t *testing.T, dir string) {
+	t.Helper()
+	leftovers, err := filepath.Glob(filepath.Join(dir, "*.tmp"))
+	if err != nil {
+		t.Fatalf("Glob %s: %v", dir, err)
+	}
+	if len(leftovers) != 0 {
+		t.Errorf("после Put в %s остались временные файлы: %v", dir, leftovers)
+	}
+}

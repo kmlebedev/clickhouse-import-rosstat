@@ -42,8 +42,54 @@ func (s *LocalStore) Put(ctx context.Context, key string, body []byte) error {
 	if err = os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return fmt.Errorf("archive local: каталог %s: %w", filepath.Dir(p), err)
 	}
-	if err = os.WriteFile(p, body, 0o644); err != nil {
+	// Запись идёт через временный файл и rename (writeFileAtomic), а не os.WriteFile: архив объявлен
+	// источником истины (спека §3.1), и усечённый объект от прерванной записи хуже отсутствующего —
+	// Exists увидел бы «версия есть», no-op-путь пропустил бы повторную архивацию, и версия
+	// потерялась бы молча. Текст ошибки остаётся прежним: к ключу добавляется причина сбоя.
+	if err = writeFileAtomic(p, body); err != nil {
 		return fmt.Errorf("archive local: запись %s: %w", key, err)
+	}
+	return nil
+}
+
+// writeFileAtomic кладёт body в path так, чтобы в path никогда не оказалось половины объекта:
+// временный файл в том же каталоге → Write → Chmod → Sync → Close → Rename. Временный файл обязан
+// лежать рядом с целевым: rename атомарен в пределах одной ФС, в чужом каталоге он выродился бы в
+// копирование — ту же неатомарную запись. При любой неудаче временный файл снимается: .tmp не
+// считает объектом ни реестр, ни приёмка, он просто копился бы в каталоге архива навсегда.
+// Осиротевший .tmp после убийства процесса (SIGKILL снять его уже нечем) безвреден по той же
+// причине: ни реестр, ни префлайт на него не смотрят, а повторный Put перезапишет целевой объект.
+func writeFileAtomic(path string, body []byte) error {
+	dir := filepath.Dir(path)
+	f, err := os.CreateTemp(dir, "*.tmp")
+	if err != nil {
+		return fmt.Errorf("временный файл в %s: %w", dir, err)
+	}
+	tmp := f.Name()
+	flush := func() error {
+		if _, err := f.Write(body); err != nil {
+			return fmt.Errorf("запись: %w", err)
+		}
+		// CreateTemp даёт 0600, а объект архива — обычная выгрузка: 0644, как и было у записи
+		// целиком (иначе читать архив с чужого пользователя стало бы нельзя).
+		if err := f.Chmod(0o644); err != nil {
+			return fmt.Errorf("права: %w", err)
+		}
+		// Sync до rename: без него объект может пережить переименование только в кэше ФС и не дойти
+		// до диска при падении машины — ровно та потеря версии, от которой спасает временный файл.
+		if err := f.Sync(); err != nil {
+			return fmt.Errorf("синхронизация: %w", err)
+		}
+		return f.Close()
+	}
+	if err = flush(); err != nil {
+		_ = f.Close() // при сбое Write/Sync файл ещё открыт
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err = os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("переименование: %w", err)
 	}
 	return nil
 }
