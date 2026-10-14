@@ -10,6 +10,7 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+	log "github.com/sirupsen/logrus"
 	"github.com/xuri/excelize/v2"
 )
 
@@ -206,12 +207,30 @@ func parseVvpKvartalSheet(xlsx *excelize.File, sheet string) ([]vvpKvartalPoint,
 			break
 		}
 		// Год выписан в первой колонке группы (A, E, I, …), в колонках II–IV кварталов ячейка
-		// годов пуста: непустая ячейка обновляет текущий год, пустые его переносят. Без переноса
+		// годов пуста: непустая ячейка задаёт текущий год, пустые его переносят. Без переноса
 		// у II–IV кварталов года не было бы вовсе (год 0 → дата «0000-01-01»).
 		if i < len(years) && strings.TrimSpace(years[i]) != "" {
-			if year, err = vvpKvartalYear(years[i]); err != nil {
+			labelYear, err := vvpKvartalYear(years[i])
+			if err != nil {
 				return nil, fmt.Errorf("%s: лист %q, колонка %d: %w", rosstatVVPKvartalTable, sheet, i+1, err)
 			}
+			// Метка года не больше текущего года — это повтор (или откат) метки, и год выводится
+			// из структуры таблицы, а не угадывается: группы кварталов идут I→IV и продолжаются
+			// I следующего года, поэтому колонка под повторившейся меткой — I квартал следующего
+			// года. Так помечен лист «14» выгрузки: на его последней группе стоит «20252)» (то же
+			// значение, что у предыдущей группы), тогда как листы «2», «9», «10», «12» того же
+			// выпуска Росстата на этой колонке несут «20262)». Принять метку на веру нельзя:
+			// значения 2026-I и 2026-II записались бы датами 2025-I и 2025-II и затёрли настоящие
+			// значения 2025 года — в таблице с ключом (name, date) это тихая подмена данных, а не
+			// пропуск. Когда источник исправит метку, вывод совпадёт с ней и предупреждение
+			// исчезнет само. Нулевая метка (year == 0, года ещё не было) выводу не подлежит:
+			// пустой год остаётся ошибкой «год данных не задан» ниже.
+			if year != 0 && labelYear <= year {
+				log.Warnf("vvpKvartal: %s: лист %q, колонка %d: метка года %q не больше текущего %d — год выведен как %d",
+					rosstatVVPKvartalTable, sheet, i+1, strings.TrimSpace(years[i]), year, year+1)
+				labelYear = year + 1
+			}
+			year = labelYear
 		}
 		if year == 0 {
 			return nil, fmt.Errorf("%s: лист %q, колонка %d: год данных не задан", rosstatVVPKvartalTable, sheet, i+1)
