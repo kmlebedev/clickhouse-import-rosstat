@@ -279,8 +279,12 @@ func TestPostJSONEmptyBodyFails(t *testing.T) {
 func TestPostJSONTimeoutFails(t *testing.T) {
 	const handlerDelay = 2 * time.Second
 	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		// select, а не голый time.Sleep: на разрыв клиента хендлер завершается сам,
-		// и server.Close() в defer не ждёт полные 2 s впустую.
+		// Тело вычитывается до конца: сервер узнаёт о разрыве соединения (и отменяет
+		// контекст запроса) только после чтения тела — без этого select ниже не увидел бы
+		// отмену, дождался бы handlerDelay, и тест занимал бы 2 s вместо ≈0,05 s
+		// (server.Close() в defer ждёт незавершённые хендлеры).
+		_, _ = io.Copy(io.Discard, r.Body)
+		// select, а не голый time.Sleep: на разрыв клиента хендлер завершается сам.
 		select {
 		case <-r.Context().Done():
 		case <-time.After(handlerDelay):

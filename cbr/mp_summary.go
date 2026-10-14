@@ -160,21 +160,23 @@ type mpLLMDoc struct {
 
 // Import — полный прогон импортёра (спека §3.1, §3.8). Порядок шагов — часть контракта:
 //  1. DDL трёх таблиц;
-//  2. индекс материалов заседаний → карточки резюме;
-//  3. дельта по таблицам: новые документы (адреса нет в шапке ИЛИ нет блоков по дате его
+//  2. три витрины v_cbr_mp_summary* — зависят только от своих таблиц (шаг 1), поэтому
+//     создаются сразу после DDL и ДО проверки no-op: иначе сбой CreateView в прошлом прогоне
+//     не исправился бы — no-op отчитывался бы «все резюме на месте» и exit 0, а агент жил бы
+//     без витрин до следующего нового резюме (~6 недель, ~8 публикаций в год);
+//  3. индекс материалов заседаний → карточки резюме;
+//  4. дельта по таблицам: новые документы (адреса нет в шапке ИЛИ нет блоков по дате его
 //     заседания ИЛИ нет regex-строк каналов — недописанный документ слоя 1);
-//  4. прошлые решения таблицы: ставки для дельты и адреса для LLM-догона;
-//  5. отстающие LLM-документы — известные заседания, у которых нет LLM-строк текущей пары
+//  5. прошлые решения таблицы: ставки для дельты и адреса для LLM-догона;
+//  6. отстающие LLM-документы — известные заседания, у которых нет LLM-строк текущей пары
 //     (model, prompt_version);
-//  6. no-op, если ни новых, ни отстающих нет (витрины не трогаем — они созданы ранее);
-//  7. скачивание и разбор новых резюме — fail-fast: ошибка до записи, иначе
+//  7. no-op, если ни новых, ни отстающих нет (витрины к этому моменту уже созданы — шаг 2);
+//  8. скачивание и разбор новых резюме — fail-fast: ошибка до записи, иначе
 //     decision_delta_bp посчитался бы по неполному ряду заседаний;
-//  8. батчи по таблицам (шапка, блоки, regex-каналы), Send каждого — ошибка наверх;
-//  9. LLM-догон: разметка новых документов и документов без строк текущей пары
+//  9. батчи по таблицам (шапка, блоки, regex-каналы), Send каждого — ошибка наверх;
+//  10. LLM-догон: разметка новых документов и документов без строк текущей пары
 //     (model, prompt_version): ошибка одного документа — warn и продолжение
-//     (деградация до regex-слоя), ошибка базы — наверх;
-//
-// 10. витрины v_cbr_mp_summary* — производные, после данных.
+//     (деградация до regex-слоя), ошибка базы — наверх.
 //
 // Префлайта (PublicationCountPoints/PublicationSource) и AfterImport у импортёра нет
 // сознательно: дельта считается по индексу и полноте документа в таблицах, а не по
@@ -188,7 +190,17 @@ func (s *mpSummaryStat) Import(ctx context.Context, conn driver.Conn) (count int
 		}
 	}
 
-	// 2.
+	// 2. Витрины создаются до проверки no-op и до чтений данных: они производны только от
+	// таблиц шага 1, а no-op-прогон обязан самовосстанавливать контур (см. шаг 2 в описании
+	// Import выше). Сбой здесь — ошибка прогона: витрина, о которой агент не знает, хуже
+	// красного шага dagu.
+	for _, view := range []util.View{mpSummaryView, mpSummaryBlocksView, mpSummaryChannelsView} {
+		if _, err = util.CreateView(ctx, conn, view); err != nil {
+			return 0, err
+		}
+	}
+
+	// 3.
 	index, err := getPage(mpSummaryIndexUrl)
 	if err != nil {
 		return 0, fmt.Errorf("%s: %s: %w", mpSummaryName, mpSummaryIndexUrl, err)
@@ -198,7 +210,7 @@ func (s *mpSummaryStat) Import(ctx context.Context, conn driver.Conn) (count int
 		return 0, fmt.Errorf("%s: %w", mpSummaryName, err)
 	}
 
-	// 3.
+	// 4.
 	imported, err := mpImportedSummaries(ctx, conn)
 	if err != nil {
 		return 0, err
@@ -213,17 +225,17 @@ func (s *mpSummaryStat) Import(ctx context.Context, conn driver.Conn) (count int
 	}
 	missing := mpMissingRefs(refs, imported, blockDates, regexDates)
 
-	// 4. Прошлые решения читаются до проверки no-op: без них не определить отстающие
-	// LLM-документы (шаг 5), а без отстающих ветка no-op неполна.
+	// 5. Прошлые решения читаются до проверки no-op: без них не определить отстающие
+	// LLM-документы (шаг 6), а без отстающих ветка no-op неполна.
 	past, err := mpPastSummaries(ctx, conn)
 	if err != nil {
 		return 0, err
 	}
 
-	// 5. Отстающие — известные заседания, у которых нет LLM-строк текущей пары
+	// 6. Отстающие — известные заседания, у которых нет LLM-строк текущей пары
 	// (model, prompt_version). Множество известных заседаний берётся из шапки: где строка
 	// есть, там LLM-разметка должна быть, а новых документов в прошлых решениях ещё нет
-	// (они размечаются шагом 9 как новые). Пусто → догонять нечего.
+	// (они размечаются шагом 10 как новые). Пусто → догонять нечего.
 	baseURL, apiKey, model, llmOK := mpLLMConfigFromEnv()
 	var pending map[time.Time]bool
 	if llmOK {
@@ -234,7 +246,7 @@ func (s *mpSummaryStat) Import(ctx context.Context, conn driver.Conn) (count int
 		pending = mpLLMPendingDates(past, tagged)
 	}
 
-	// 6.
+	// 7.
 	if len(missing) == 0 && len(pending) == 0 {
 		var knownCount uint64
 		if err = conn.QueryRow(ctx, mpSummaryCountQuery).Scan(&knownCount); err != nil {
@@ -244,7 +256,7 @@ func (s *mpSummaryStat) Import(ctx context.Context, conn driver.Conn) (count int
 		return 0, nil
 	}
 
-	// 7.
+	// 8.
 	docs := make([]mpFetchedSummary, 0, len(missing))
 	for _, ref := range missing {
 		url := cbrUrl + ref.Href
@@ -259,7 +271,7 @@ func (s *mpSummaryStat) Import(ctx context.Context, conn driver.Conn) (count int
 		docs = append(docs, mpFetchedSummary{Url: url, Published: ref.Published, Doc: doc})
 	}
 
-	// 8. Дельта считается по всему ряду (прошлые решения + новые документы), поэтому
+	// 9. Дельта считается по всему ряду (прошлые решения + новые документы), поэтому
 	// ряд собирается до первых записей — иначе шаг у нового резюме не с чем было бы
 	// сравнить.
 	deltas := mpDecisionDeltas(past, docs)
@@ -287,24 +299,38 @@ func (s *mpSummaryStat) Import(ctx context.Context, conn driver.Conn) (count int
 			}
 		}
 	}
-	for _, batch := range []*mpBatch{header, blockRows, regexRows} {
+	// Сбой Send закрывает и свой батч, и все ещё не отправленные: соединения с открытым
+	// батчем не возвращаются в пул, а процесс продолжает следующие импортёры — утечка
+	// осталась бы до конца прогона (см. abort).
+	batches := []*mpBatch{header, blockRows, regexRows}
+	for i, batch := range batches {
 		if err = batch.send(); err != nil {
+			for _, unsent := range batches[i+1:] {
+				unsent.abort()
+			}
 			return 0, err
 		}
 		count += batch.rows
 	}
 
-	// 9.
+	// 10.
 	var llmCount int64
 	if !llmOK {
 		log.Warnf("%s: LLM-разметка пропущена (нет %s/%s/%s)", mpSummaryName,
 			mpLLMBaseURLEnv, mpLLMAPIKeyEnv, mpLLMModelEnv)
 	} else {
+		// Новые документы размечаются тем же прогоном, а отстающие берутся из таблицы.
+		// Документ, который попал и туда, и туда (неполный слой 1 И нет LLM-строк), не должен
+		// уйти в LLM дважды: его разобранный текст передаётся в mpFetchPending и повторно
+		// не скачивается.
+		fetched := make(map[time.Time]mpFetchedSummary, len(docs))
 		llmDocs := make([]mpLLMDoc, 0, len(docs)+len(pending))
 		for _, d := range docs {
-			llmDocs = append(llmDocs, mpLLMDoc{Date: mpDay(d.Doc.MeetingDate), Url: d.Url, Doc: d.Doc})
+			date := mpDay(d.Doc.MeetingDate)
+			fetched[date] = d
+			llmDocs = append(llmDocs, mpLLMDoc{Date: date, Url: d.Url, Doc: d.Doc})
 		}
-		llmDocs = append(llmDocs, mpFetchPending(past, pending)...)
+		llmDocs = append(llmDocs, mpFetchPending(past, pending, fetched)...)
 
 		llmRows := &mpBatch{ctx: ctx, conn: conn, table: mpSummaryChannelTable, insert: mpSummaryChannelInsert}
 		for _, d := range llmDocs {
@@ -317,13 +343,6 @@ func (s *mpSummaryStat) Import(ctx context.Context, conn driver.Conn) (count int
 		}
 		llmCount = llmRows.rows
 		count += llmCount
-	}
-
-	// 10.
-	for _, view := range []util.View{mpSummaryView, mpSummaryBlocksView, mpSummaryChannelsView} {
-		if _, err = util.CreateView(ctx, conn, view); err != nil {
-			return 0, err
-		}
 	}
 
 	log.Infof("%s: резюме %d новых, блоков %d, каналов regex %d, LLM %d", mpSummaryName,
@@ -521,13 +540,23 @@ func mpDecisionDeltas(past []mpPastSummary, docs []mpFetchedSummary) map[time.Ti
 }
 
 // mpFetchPending — документы отстающих резюме для LLM-догона. Адрес страницы берётся из
-// таблицы: дата заседания известна, а url карточки записан шапкой при импорте. Недоступная
-// или неразобранная страница — warn и продолжение: это деградация одного документа до
-// regex-слоя (спека §3.5), а не сбой прогона; следующий прогон повторит догон.
-func mpFetchPending(past []mpPastSummary, pending map[time.Time]bool) []mpLLMDoc {
+// таблицы: дата заседания известна, а url карточки записан шапкой при импорте. Документ,
+// уже скачанный и разобранный в этом же прогоне (он пришёл в missing — неполный слой 1),
+// повторно не качается и не размечается дважды: его разобранный текст берётся из justFetched
+// (иначе один вызов LLM на документ превратился бы в два и страница скачивалась бы второй раз).
+// Недоступная или неразобранная страница — warn и продолжение: это деградация одного документа
+// до regex-слоя (спека §3.5), а не сбой прогона; следующий прогон повторит догон.
+func mpFetchPending(past []mpPastSummary, pending map[time.Time]bool, justFetched map[time.Time]mpFetchedSummary) []mpLLMDoc {
 	var out []mpLLMDoc
 	for _, p := range past {
-		if !pending[p.MeetingDate] || p.Url == "" {
+		if !pending[p.MeetingDate] {
+			continue
+		}
+		if d, ok := justFetched[p.MeetingDate]; ok {
+			out = append(out, mpLLMDoc{Date: p.MeetingDate, Url: d.Url, Doc: d.Doc})
+			continue
+		}
+		if p.Url == "" {
 			continue
 		}
 		page, err := getPage(p.Url)
@@ -582,8 +611,9 @@ type mpBatch struct {
 	batch  driver.Batch
 }
 
-// append добавляет строку батча. Ошибка Append закрывает открытый батч: соединение,
-// оставшееся с незакрытым батчем, сломает следующий импортёр («уже есть незакрытый батч»).
+// append добавляет строку батча. Ошибка Append закрывает открытый батч: соединение с
+// незакрытым батчем не возвращается в пул, а процесс продолжает следующие импортёры — то
+// есть до конца прогона утекало бы соединение (Abort возвращает его в пул).
 func (b *mpBatch) append(vals ...any) error {
 	if b.batch == nil {
 		batch, err := b.conn.PrepareBatch(b.ctx, b.insert)
@@ -593,10 +623,7 @@ func (b *mpBatch) append(vals ...any) error {
 		b.batch = batch
 	}
 	if err := b.batch.Append(vals...); err != nil {
-		if b.batch != nil {
-			mpAbortBatch(b.batch, b.table)
-			b.batch = nil
-		}
+		b.abort()
 		return fmt.Errorf("%s %s: append: %w", mpSummaryName, b.table, err)
 	}
 	b.rows++
@@ -604,21 +631,35 @@ func (b *mpBatch) append(vals ...any) error {
 }
 
 // send отправляет накопленное. Батч не открывался — отправлять нечего: пустой Send не
-// нужен ни базе (лишняя транзакция), ни отчёту (строк ноль).
+// нужен ни базе (лишняя транзакция), ни отчёту (строк ноль). Сбой Send тоже закрывает батч:
+// отправлять его повторно нельзя, а брошенное соединение — та же утечка (см. abort).
 func (b *mpBatch) send() error {
 	if b.batch == nil {
 		return nil
 	}
 	if err := b.batch.Send(); err != nil {
+		b.abort()
 		return fmt.Errorf("%s %s: send: %w", mpSummaryName, b.table, err)
 	}
 	b.batch = nil
 	return nil
 }
 
-// mpAbortBatch закрывает батч на ошибке Append и не теряет сбой закрытия: `_ =` скрыл бы
-// причину, по которой батч всё же остался открытым. Возвращается первопричина (Append) —
-// она точнее сбоя Abort, случившегося уже после неё (прецедент — forecast/resolve.go).
+// abort закрывает открытый батч, не отправляя его. Нужен там, где прогон уже завершается
+// ошибкой: батчи, до которых очередь Send не дошла (сбой предыдущего Send), остались бы
+// открытыми и держали бы соединения пула до конца процесса. Идемпотентен: закрытый или
+// вовсе не открывавшийся батч — no-op.
+func (b *mpBatch) abort() {
+	if b.batch == nil {
+		return
+	}
+	mpAbortBatch(b.batch, b.table)
+	b.batch = nil
+}
+
+// mpAbortBatch закрывает батч на ошибке и не теряет сбой закрытия: `_ =` скрыл бы причину,
+// по которой батч всё же остался открытым. Возвращается первопричина (Append или Send) — она
+// точнее сбоя Abort, случившегося уже после неё (прецедент — forecast/resolve.go).
 func mpAbortBatch(batch driver.Batch, what string) {
 	if err := batch.Abort(); err != nil {
 		log.Warnf("%s %s: не удалось закрыть батч после ошибки: %v", mpSummaryName, what, err)

@@ -44,14 +44,15 @@ const (
 	calMPStatus    = "pending"
 )
 
-// eventsView — витрина календаря событий-триггеров для MCP-агента.
-// Сид данных живёт в sql/events_calendar_q4_2026.sql (идемпотентен за счёт ReplacingMergeTree),
-// импортёр только создаёт таблицу и витрину.
+// eventsView — витрина календаря событий-триггеров для MCP-агента: и триггеры золото/NAV,
+// и даты заседаний СД ЦБ по ключевой ставке. Сид триггеров живёт в sql/events_calendar_q4_2026.sql
+// (идемпотентен за счёт ReplacingMergeTree), канонические строки заседаний ЦБ (category='cbr',
+// из cbr.ru/dkp/cal_mp/) импортёр заводит сам — именно их читает агент контура ключевой ставки.
 var eventsView = util.View{
 	Name:    "v_events_calendar",
 	Tables:  []string{eventsTable},
 	Select:  `SELECT * FROM ` + eventsTable + ` FINAL`,
-	Comment: "Календарь событий-триггеров прогноза золота/NAV; status: pending|done|verified",
+	Comment: "Календарь событий-триггеров прогноза золота/NAV и дат заседаний СД ЦБ по ключевой ставке (category='cbr', канонические строки — из cbr.ru/dkp/cal_mp/, их читает агент контура ставки; рядом ручные строки-триггеры с другим title); status: pending|done|verified",
 	Columns: map[string]string{
 		"event_date": "Дата события (Date)",
 		"event_time": "Время события (местное/UTC, строка; NULL — время не фиксировано)",
