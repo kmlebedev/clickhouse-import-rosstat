@@ -216,7 +216,7 @@ func TestIpcWeeksSpotValue(t *testing.T) {
 			continue
 		}
 		found++
-		if row.value != want {
+		if row.value != float64(want) {
 			t.Errorf("%s: значение %v, ожидалось %v", date.Format("2006-01-02"), row.value, want)
 		}
 	}
@@ -355,7 +355,7 @@ func TestIpcWeeksReadsRawCellValues(t *testing.T) {
 	if len(rec.rows) != 1 {
 		t.Fatalf("точек %d, ожидалась 1: %v", len(rec.rows), rec.rows)
 	}
-	if got := rec.rows[0].value; got != float32(100.126) {
+	if got := rec.rows[0].value; got != float64(float32(100.126)) {
 		t.Errorf("значение %v, ожидалось 100.126 (формат `0.00` дал бы 100.13)", got)
 	}
 }
@@ -385,7 +385,7 @@ func TestIpcWeeksSkipsNoDataCells(t *testing.T) {
 		if got := row.date.Format("2006-01-02"); got != wantDate[i] {
 			t.Errorf("точка %d: дата %s, ожидалась %s", i+1, got, wantDate[i])
 		}
-		if row.value != wantValue[i] {
+		if row.value != float64(wantValue[i]) {
 			t.Errorf("точка %d: значение %v, ожидалось %v", i+1, row.value, wantValue[i])
 		}
 	}

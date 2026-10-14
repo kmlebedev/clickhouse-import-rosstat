@@ -125,7 +125,7 @@ func TestIpcMesStopsAtEndOfMonthBlock(t *testing.T) {
 		if row.series != ipcMesSeriesGoods {
 			continue
 		}
-		if row.value == float32(2608.84) {
+		if row.value == float64(float32(2608.84)) {
 			t.Errorf("в ряд «01» попало годовое значение 2608.84 датой %s", row.date.Format("2006-01-02"))
 		}
 		if row.date.Year() == 1992 {
@@ -149,7 +149,7 @@ func TestIpcMesSpotValue(t *testing.T) {
 			continue
 		}
 		found++
-		if row.value != want {
+		if row.value != float64(want) {
 			t.Errorf("%s: значение %v, ожидалось %v", date.Format("2006-01-02"), row.value, want)
 		}
 	}

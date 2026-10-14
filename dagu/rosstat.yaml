@@ -35,3 +35,11 @@ steps:
       limit: 3
       interval_sec: 300
 
+  - id: rosstat_labour_force_mes
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=rosstat_labour_force_mes
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+

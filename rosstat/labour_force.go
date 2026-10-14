@@ -1,0 +1,432 @@
+package rosstat
+
+import (
+	"context"
+	"fmt"
+	"math"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+	"github.com/xuri/excelize/v2"
+)
+
+const (
+	// Рынок труда Росстата: рабочая сила, занятые и безработные (тыс. чел.) и три уровня (%)
+	// https://rosstat.gov.ru/labour_force.
+	rosstatLabourForceTable = "rosstat_labour_force_mes"
+	// labourForceDdl — DDL в %s-форме (§5.1): имя таблицы подставляет шаблон. Значение — Float64,
+	// а не Float32 legacy-колонок соседних рядов: разница видна только по типу записи, поэтому
+	// схему пинит тест импортёра (§11.6).
+	labourForceDdl = `CREATE TABLE IF NOT EXISTS %s (
+      name LowCardinality(String)
+    , date Date
+    , value Float64
+) ENGINE = ReplacingMergeTree ORDER BY (name, date);
+`
+	// labourForceSheet — лист «5» книги «Численность и состав рабочей силы в возрасте 15 лет и
+	// старше по Российской Федерации». Лист ищется по имени (§6.3): номер листа в книге
+	// сдвинулся бы от любого добавленного листа, а имя — часть разметки выгрузки.
+	labourForceSheet = "5"
+	// labourForcePage — страница источника. Ссылка на файл берётся с неё, а не собирается в
+	// коде: имя файла стабильное, но адрес хранения Росстат менял.
+	labourForcePage = "https://rosstat.gov.ru/labour_force"
+	// labourForceLinkSelector — селектор ссылки на xlsx: константа рядом с импортёром (§4.5).
+	// Дефис в имени файла — не опечатка разбора: у соседних выгрузок той же карточки стоит
+	// подчёркивание (trud_1_15-72.xlsx), и общая маска по «trud» вернула бы не тот файл.
+	labourForceLinkSelector = `a[href$="trud-1_15-s.xlsx"]`
+	// labourForceCountPoints — количественный чек версии (§9.1): число точек своих шести рядов.
+	// Литерал, как и таблица: запрос — часть утверждения «эти точки мои». FINAL обязателен —
+	// иначе count() считал бы несмёрженные части и менялся бы от прогона к прогону.
+	labourForceCountPoints = "SELECT count() FROM rosstat_labour_force_mes FINAL"
+
+	// Имена шести рядов — стабильные идентификаторы в каталоге (§6.8). Из заголовка листа они не
+	// читаются: заголовок несёт годы и редакцию («…в возрасте 15 лет и старше…») и меняется при
+	// каждом обновлении файла, тогда как ряд обязан остаться тем же.
+	labourForceSeriesLabourForce   = "Рабочая сила"
+	labourForceSeriesEmployed      = "Занятые"
+	labourForceSeriesUnemployed    = "Безработные"
+	labourForceSeriesParticipation = "Уровень участия в составе рабочей силы"
+	labourForceSeriesEmployment    = "Уровень занятости"
+	labourForceSeriesUnemployment  = "Уровень безработицы"
+)
+
+// labourForcePoint — точка ряда: имя ряда объявлено кодом (§6.8), дата — последний день
+// отчётного месяца (значение относится к отчётному месяцу и лежит внутри него), значение —
+// сырое значение ячейки (§6.2).
+type labourForcePoint struct {
+	series string
+	date   time.Time
+	value  float64
+}
+
+// labourForceSeries — пин ряда: стабильное имя (§6.8) и якорь его колонки в шапке (§6.3).
+// Якоря «занятые» и «безработные» лежат строкой ниже верхней строки шапки: ячейка C5 «в том
+// числе» раскрывается подписями C6/D6, поэтому колонка ищется по обеим строкам шапки.
+type labourForceSeries struct {
+	name   string
+	anchor string
+}
+
+// labourForceSeriesPins — шесть рядов выгрузки и их якоря в шапке листа.
+var labourForceSeriesPins = []labourForceSeries{
+	{name: labourForceSeriesLabourForce, anchor: "Рабочая сила"},
+	{name: labourForceSeriesEmployed, anchor: "занятые"},
+	{name: labourForceSeriesUnemployed, anchor: "безработные"},
+	{name: labourForceSeriesParticipation, anchor: "Уровень участия в составе рабочей силы, в %"},
+	{name: labourForceSeriesEmployment, anchor: "Уровень занятости, в %"},
+	{name: labourForceSeriesUnemployment, anchor: "Уровень безработицы, в %"},
+}
+
+// labourForceColumn — колонка ряда в шапке: имя ряда и индекс колонки (0-based).
+type labourForceColumn struct {
+	series string
+	col    int
+}
+
+// labourForceFootnoteRe — хвостовые сноски источника на подписи: «январь1)», «октябрь1)2)».
+// С октября 2022 г. источник ставит на каждый месяц обе сноски сразу, поэтому правило снимает
+// группу сносок целиком, а не одну.
+var labourForceFootnoteRe = regexp.MustCompile(`(?:\s*\d+\))+$`)
+
+// labourForceLabel приводит подпись ячейки к сравнимому виду: сжимает все пробельные
+// последовательности в один пробел (внутри ячейки «Уровень занятости, \nв %» — перевод строки) и
+// снимает хвостовые сноски источника. util.MonthsToNum сноски не понимает (util/xls.go:25) и по
+// «январь1)» месяц не находит, поэтому снятие сноски — часть разбора, а не косметика.
+func labourForceLabel(raw string) string {
+	label := strings.Join(strings.Fields(raw), " ")
+	label = labourForceFootnoteRe.ReplaceAllString(label, "")
+	return strings.TrimSpace(label)
+}
+
+// labourForceNormalize — форма подписи для сравнения с якорем: регистр заголовка источник менял
+// от редакции к редакции, а подпись месяца приходит со сноской.
+func labourForceNormalize(raw string) string {
+	return strings.ToLower(labourForceLabel(raw))
+}
+
+// labourForceCell — ячейка строки по индексу колонки; выход за границу среза отдаёт пустую
+// ячейку, а не панику (§6.5): GetRows обрезает хвостовые пустые ячейки, и короткая строка —
+// обычное дело (у последнего месяца нового года данные ещё пусты).
+func labourForceCell(row []string, col int) string {
+	if col < 0 || col >= len(row) {
+		return ""
+	}
+	return strings.TrimSpace(row[col])
+}
+
+// labourForceHeaderRow ищет строку шапки по признаку (§6.3): первая строка, где встречается
+// якорь первого ряда. Номер строки в разметке не пишется — сноски и вставленные строки сдвигают
+// лист. -1 — шапки нет.
+func labourForceHeaderRow(rows [][]string) int {
+	anchor := labourForceNormalize(labourForceSeriesPins[0].anchor)
+	for i, row := range rows {
+		for _, cell := range row {
+			if labourForceNormalize(cell) == anchor {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+// labourForceColumns находит колонку каждого из шести рядов по нормализованному якорю в строке
+// шапки и строке под ней и возвращает также последнюю строку шапки. Якорь обязан найтись ровно
+// один раз (§6.4): два совпадения означают, что разметка изменилась, и выбрать из них одну —
+// значит молча читать не тот показатель.
+func labourForceColumns(rows [][]string, header int) ([]labourForceColumn, int, error) {
+	columns := make([]labourForceColumn, 0, len(labourForceSeriesPins))
+	headerEnd := header
+	for _, pin := range labourForceSeriesPins {
+		anchor := labourForceNormalize(pin.anchor)
+		col := -1
+		for i := header; i < len(rows) && i <= header+1; i++ {
+			for c, cell := range rows[i] {
+				if labourForceNormalize(cell) != anchor {
+					continue
+				}
+				if col >= 0 && col != c {
+					return nil, 0, fmt.Errorf("%s: лист %q: якорь %q найден дважды (колонки %d и %d)",
+						rosstatLabourForceTable, labourForceSheet, pin.anchor, col+1, c+1)
+				}
+				col = c
+				if i > headerEnd {
+					headerEnd = i
+				}
+			}
+		}
+		if col < 0 {
+			return nil, 0, fmt.Errorf("%s: лист %q: у ряда %q не найдена колонка (якорь %q) в строках шапки %d–%d",
+				rosstatLabourForceTable, labourForceSheet, pin.name, pin.anchor, header+1, header+2)
+		}
+		columns = append(columns, labourForceColumn{series: pin.name, col: col})
+	}
+	return columns, headerEnd, nil
+}
+
+// labourForceYear — год строки-секции: подпись — единственная непустая ячейка строки и это
+// четырёхзначное число («2017»…«2026»). Год переносится вперёд из найденной строки (§6.3), а не
+// отсчитывается от первой: строк-секций в листе столько, сколько лет в выгрузке.
+func labourForceYear(row []string) (int, bool) {
+	label := labourForceCell(row, 0)
+	if len(label) != 4 {
+		return 0, false
+	}
+	for i := 1; i < len(row); i++ {
+		if strings.TrimSpace(row[i]) != "" {
+			return 0, false
+		}
+	}
+	year, err := strconv.Atoi(label)
+	if err != nil {
+		return 0, false
+	}
+	return year, true
+}
+
+// labourForceMonthNames — русские подписи месяцев для текстов ошибок разбора (§6.4).
+// time.Month печатается своим String() по-английски («January»), и оператор увидел бы в ошибке
+// чужое имя месяца; массив даёт подпись на языке источника.
+var labourForceMonthNames = [...]string{
+	"январь", "февраль", "март", "апрель", "май", "июнь",
+	"июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь",
+}
+
+// labourForceMonthName отдаёт русскую подпись месяца. Месяц вне 1–12 (0 — до первого месяца
+// года, если строка января потеряна) печатается числом, а не пустой строкой.
+func labourForceMonthName(month time.Month) string {
+	if month < time.January || month > time.December {
+		return strconv.Itoa(int(month))
+	}
+	return labourForceMonthNames[month-1]
+}
+
+// labourForceValue разбирает ячейку значения. Ячейка приходит сырым текстом (§6.2): числовой
+// формат выгрузки — представление, а не данные. NaN и бесконечность, которые принимает
+// ParseFloat, отбрасываются, как у соседних рядов пакета: такой мусор уехал бы в витрину точкой
+// ряда (§6.4).
+func labourForceValue(cell string) (float64, error) {
+	value, err := strconv.ParseFloat(cell, 64)
+	if err != nil {
+		return 0, fmt.Errorf("значение ячейки %q не число: %w", cell, err)
+	}
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0, fmt.Errorf("значение ячейки %q не конечное число", cell)
+	}
+	return value, nil
+}
+
+// labourForceFilledCell — первая непустая ячейка значений в колонках шести рядов: её индекс и
+// текст. ok == false — в строке значений нет вовсе.
+func labourForceFilledCell(row []string, columns []labourForceColumn) (int, string, bool) {
+	for _, column := range columns {
+		if cell := labourForceCell(row, column.col); cell != "" {
+			return column.col, cell, true
+		}
+	}
+	return 0, "", false
+}
+
+// parseLabourForce читает лист «5» книги и отдаёт плоскую таблицу точек шести рядов. Разметка:
+// строка шапки с якорем «Рабочая сила» (и строка под ней с «занятые»/«безработные»), ниже —
+// строки-секции годов («2017»…«2026») и строки месяцев со сносками. Строка, чья подпись — не год
+// и не месяц, замыкает таблицу: под данными листа лежит текст сносок источника, а не значения;
+// замыкание проверяется — если в самой такой строке или ниже неё в колонках рядов есть непустые
+// значения, значит подпись месяца не распознана и разбор обязан упасть (§6.4), а не отдать молча
+// усечённый ряд.
+// Пустая ячейка значением не является и точкой не становится (§6.7) — у последних месяцев
+// нового года данных ещё нет; нечисловая ячейка, наоборот, ошибка (§6.4), а не пропуск.
+func parseLabourForce(xlsx *excelize.File) ([]labourForcePoint, error) {
+	sheetFound := false
+	for _, sheet := range xlsx.GetSheetList() {
+		if sheet == labourForceSheet {
+			sheetFound = true
+			break
+		}
+	}
+	if !sheetFound {
+		return nil, fmt.Errorf("%s: в книге нет листа %q", rosstatLabourForceTable, labourForceSheet)
+	}
+	// Сырые значения ячеек (§6.2): форматированная строка отдала бы значение по формату ячейки.
+	rows, err := xlsx.GetRows(labourForceSheet, excelize.Options{RawCellValue: true})
+	if err != nil {
+		return nil, fmt.Errorf("%s: лист %q: %w", rosstatLabourForceTable, labourForceSheet, err)
+	}
+	header := labourForceHeaderRow(rows)
+	if header < 0 {
+		return nil, fmt.Errorf("%s: лист %q: строка шапки «%s» не найдена",
+			rosstatLabourForceTable, labourForceSheet, labourForceSeriesPins[0].anchor)
+	}
+	columns, headerEnd, err := labourForceColumns(rows, header)
+	if err != nil {
+		return nil, err
+	}
+	var points []labourForcePoint
+	year := 0
+	month := time.Month(0)
+	// tableEnd — 0-based номер строки, замкнувшей таблицу; -1 — таблица прочитана до конца листа.
+	// Незамкнутый разбор значит, что текста сносок под данными не было; замкнутый — что ниже могло
+	// остаться продолжение, которое сверяет проверка под циклом.
+	tableEnd := -1
+	for i := headerEnd + 1; i < len(rows); i++ {
+		row := rows[i]
+		label := labourForceLabel(labourForceCell(row, 0))
+		if label == "" {
+			// Пустая подпись у строки-разделителя (без значений в колонках рядов) — норма: между
+			// блоками листа и внизу стоят пустые строки. Но пустая подпись при заполненных
+			// значениях означает потерянную подпись месяца: молча пропустить такую строку —
+			// значит отдать усечённый ряд без ошибки (§6.4).
+			if col, cell, filled := labourForceFilledCell(row, columns); filled {
+				return nil, fmt.Errorf("%s: лист %q, строка %d: подпись месяца пуста, а ячейка %q (колонка %d) заполнена",
+					rosstatLabourForceTable, labourForceSheet, i+1, cell, col+1)
+			}
+			continue
+		}
+		if sectionYear, ok := labourForceYear(row); ok {
+			// Год обязан быть строго больше предыдущего. Строка-секция, повторяющая или
+			// уменьшающая год, сдвинула бы подпись месяцев назад: месяцы нового года записались
+			// бы датами прошлого и по ключу (name, date) заклеили бы корректные точки тех же
+			// месяцев (§6.4). Порча неотличима от обновления источника, поэтому ошибка громкая.
+			if year != 0 && sectionYear <= year {
+				return nil, fmt.Errorf("%s: лист %q, строка %d: год %d идёт после года %d — годы обязаны идти по возрастанию",
+					rosstatLabourForceTable, labourForceSheet, i+1, sectionYear, year)
+			}
+			// Предыдущий год обязан быть закрыт декабрём: секция нового года, под которую
+			// предыдущий пришёл не с декабрём, значит потерянную строку месяца в середине ряда —
+			// ровно та дыра, что не видна в витрине (неполный ряд выглядит полным), а префлайт
+			// закрепляет её числом точек и уводит импортёр в вечный no-op (§6.4). Первый год
+			// проверкой не задет (year == 0), неполный последний год законен: секции следующего
+			// года за ним нет, а пропуск целой секции года — осознанное разрешение (Ruling R6).
+			if year != 0 && month != 12 {
+				return nil, fmt.Errorf("%s: лист %q, строка %d: год %d не закончен: последний месяц %q, ожидался %q",
+					rosstatLabourForceTable, labourForceSheet, i+1, year, labourForceMonthName(month), labourForceMonthName(12))
+			}
+			year, month = sectionYear, 0
+			continue
+		}
+		sectionMonth, ok := util.MonthsToNum[strings.ToLower(label)]
+		if !ok {
+			// Подпись не год и не месяц — так выглядит текст сносок под таблицей: данные кончились.
+			tableEnd = i
+			break
+		}
+		if year == 0 {
+			return nil, fmt.Errorf("%s: лист %q, строка %d: месяц %q до строки-года",
+				rosstatLabourForceTable, labourForceSheet, i+1, label)
+		}
+		// Месяц обязан быть следующим за предыдущим. Пропущенная строка месяца иначе выпала бы
+		// из ряда молча (неполный ряд в витрине выглядит полным), а префлайт записал бы points
+		// на месяц меньше и дальше ушёл бы в вечный no-op (§6.4). Январь проходит законно:
+		// строка-секция года сбросила month в 0.
+		if sectionMonth != month+1 {
+			return nil, fmt.Errorf("%s: лист %q, строка %d: месяц %q не следует за месяцем %q — месяцы обязаны идти по возрастанию",
+				rosstatLabourForceTable, labourForceSheet, i+1, label, labourForceMonthName(month))
+		}
+		month = sectionMonth
+		for _, column := range columns {
+			cell := labourForceCell(row, column.col)
+			if cell == "" {
+				// Пустая ячейка — не точка (§6.7): пропуск означает отсутствие значения, а не нуль.
+				continue
+			}
+			value, err := labourForceValue(cell)
+			if err != nil {
+				return nil, fmt.Errorf("%s: лист %q, строка %d, колонка %d: %w",
+					rosstatLabourForceTable, labourForceSheet, i+1, column.col+1, err)
+			}
+			points = append(points, labourForcePoint{
+				series: column.series,
+				// Последний день отчётного месяца, UTC: time.Date нормализует месяц 13 в январь
+				// следующего года, а день 0 — в последний день предыдущего месяца.
+				date:  time.Date(year, sectionMonth+1, 0, 0, 0, 0, 0, time.UTC),
+				value: value,
+			})
+		}
+	}
+	// Замыкание проверяется целиком — и сама строка-замыкание, и всё, что ниже неё. Опечатка в
+	// подписи месяца («феврал») или потерянная подпись иначе обрезали бы ряд молча: неполный ряд в
+	// витрине выглядит полным — тот самый дефект, от которого защищает §6.4. Строка-замыкание входит
+	// в проверку наравне с остальными: её подпись не распознана, но значения в колонках рядов делают
+	// её строкой данных, и в последней строке таблицы (июль) это тихо теряло бы шесть точек.
+	if tableEnd >= 0 {
+		closingLabel := labourForceLabel(labourForceCell(rows[tableEnd], 0))
+		for i := tableEnd; i < len(rows); i++ {
+			col, cell, filled := labourForceFilledCell(rows[i], columns)
+			if !filled {
+				continue
+			}
+			if i == tableEnd {
+				return nil, fmt.Errorf("%s: лист %q, строка %d, колонка %d: подпись %q не распознана, а значение %q заполнено",
+					rosstatLabourForceTable, labourForceSheet, i+1, col+1, closingLabel, cell)
+			}
+			return nil, fmt.Errorf("%s: лист %q, строка %d: данные продолжаются ниже строки %d, подпись %q не распознана (значение %q)",
+				rosstatLabourForceTable, labourForceSheet, i+1, tableEnd+1, closingLabel, cell)
+		}
+	}
+	if len(points) == 0 {
+		return nil, fmt.Errorf("%s: лист %q: разбор дал 0 точек", rosstatLabourForceTable, labourForceSheet)
+	}
+	return points, nil
+}
+
+// labourForceDataUrl берёт адрес актуальной книги со страницы рынка труда Росстата: имя файла
+// стабильное, но адрес хранения Росстат менял, поэтому ссылка не собирается в коде. Транспорт —
+// через util (§4.1), и ошибка не проглатывается (§4.4): без ссылки импорт обязан упасть до записи
+// в БД, а не писать «0 строк» по устаревшему адресу. Обе ошибки называют страницу и ожидаемый
+// файл — иначе оператор по тексту не отличит недоступный сайт от изменившейся разметки карточки.
+func labourForceDataUrl() (string, error) {
+	page, err := util.GetPage(labourForcePage)
+	if err != nil {
+		return "", fmt.Errorf("labourForce: %s: %w", labourForcePage, err)
+	}
+	href, err := util.FindLink(page, labourForceLinkSelector)
+	if err != nil {
+		return "", fmt.Errorf("labourForce: ссылка на trud-1_15-s.xlsx не найдена на %s: %w", labourForcePage, err)
+	}
+	return rosstatUrl + href, nil
+}
+
+type LabourForceStat struct {
+	util.ClickHouseImport
+}
+
+// labourForceImport разбирает книгу и пишет точки в batch. Значение — float64 (§5.3): колонка
+// value объявлена Float64, и запись float32 прошла бы в неё молча, потеряв точность.
+func labourForceImport(xlsx *excelize.File, batch driver.Batch) error {
+	points, err := parseLabourForce(xlsx)
+	if err != nil {
+		return err
+	}
+	for _, point := range points {
+		if err = batch.Append(point.series, point.date, point.value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Import берёт адрес книги со страницы рынка труда (§5.4): имя файла стабильное, но адрес
+// хранения Росстат менял, а сетевое обращение в init() запрещено (§4.3). Дальше — полный цикл
+// шаблона: DDL → префлайт по HEAD (файл обновляется ~раз в месяц, шаг расписания — недельный) →
+// точки → производные (AfterImport) → строка версии.
+func (s *LabourForceStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+	url, err := labourForceDataUrl()
+	if err != nil {
+		return count, err
+	}
+	s.DataUrl = url
+	return s.ClickHouseImport.Import(ctx, conn)
+}
+
+// labourForceImporter — рынок труда РФ: рабочая сила, занятые, безработные и три уровня;
+// регистрируется реестром rosstat/importers.go.
+var labourForceImporter = &LabourForceStat{ClickHouseImport: util.ClickHouseImport{
+	TableName:              rosstatLabourForceTable,
+	CreateTable:            []string{labourForceDdl},
+	ImportFunc:             labourForceImport,
+	AfterImport:            afterRosstatMacro(labourForceSeriesMeta),
+	PublicationCountPoints: labourForceCountPoints,
+}}

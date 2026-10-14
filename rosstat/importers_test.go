@@ -21,7 +21,7 @@ const (
 	// v_model_inputs и агент MCP).
 	rosstatNamePrefix = "rosstat_"
 	// sharedMacroSeriesTable — общая таблица вне rosstat_-пространства. У пакета rosstat
-	// её нет (в отличие от cbr/macro_series): все четыре импортёра владеют своей таблицей,
+	// её нет (в отличие от cbr/macro_series): все пять импортёров владеют своей таблицей,
 	// поэтому исключение пусто и проверка (б) сводится к «таблица с префиксом» и
 	// «Name() совпадает с именем таблицы».
 	sharedMacroSeriesTable = ""
@@ -36,20 +36,21 @@ const (
 //
 // Набор неполный по построению: у rosstat_ipc_weeks префлайта нет и быть не должно
 // (Nedel_ipc.xlsx перезаписывается по тому же URL в недельном темпе, равном темпу
-// шага расписания, спека §3.7), а у остальных трёх файл обновляется реже прогонов.
+// шага расписания, спека §3.7), а у остальных четырёх файл обновляется реже прогонов.
 var expectedPublicationCountPoints = map[string]string{
-	"rosstat_ipc_mes":      "SELECT count() FROM rosstat_ipc_mes FINAL",
-	"rosstat_salaries_mes": "SELECT count() FROM rosstat_salaries_mes FINAL",
-	"rosstat_vvp_kvartal":  "SELECT count() FROM rosstat_vvp_kvartal FINAL",
+	"rosstat_ipc_mes":          "SELECT count() FROM rosstat_ipc_mes FINAL",
+	"rosstat_labour_force_mes": "SELECT count() FROM rosstat_labour_force_mes FINAL",
+	"rosstat_salaries_mes":     "SELECT count() FROM rosstat_salaries_mes FINAL",
+	"rosstat_vvp_kvartal":      "SELECT count() FROM rosstat_vvp_kvartal FINAL",
 }
 
 // publicationDeclarer — то, как тест достаёт объявление импортёра из реестра: метод
 // Publication() промотируется из встроенного util.ClickHouseImport, поэтому приведение
-// работает для всех четырёх импортёров пакета. У трёх (rosstat_ipc_mes,
-// rosstat_salaries_mes, rosstat_vvp_kvartal) объявление непустое, у rosstat_ipc_weeks —
-// нулевое: точке контроля публикации у недельного файла места нет (§9.3). Именованный тип,
-// а не литерал интерфейса в теле цикла: так проверка читается как контракт, а не как приём
-// приведения.
+// работает для всех пяти импортёров пакета. У четырёх (rosstat_ipc_mes,
+// rosstat_salaries_mes, rosstat_vvp_kvartal, rosstat_labour_force_mes) объявление непустое,
+// у rosstat_ipc_weeks — нулевое: точке контроля публикации у недельного файла места нет
+// (§9.3). Именованный тип, а не литерал интерфейса в теле цикла: так проверка читается как
+// контракт, а не как приём приведения.
 type publicationDeclarer interface {
 	Publication() util.PublicationDecl
 }
@@ -83,7 +84,7 @@ var daguStatRef = regexp.MustCompile(`CLICKHOUSE_IMPORT_STAT=([A-Za-z0-9_]+)`)
 //     расписание — единственный продакшн-вызов, и его опечатка или пропавший шаг
 //     иначе не видны ничем; у rosstat_ipc_weeks нет даже объявления префлайта,
 //     которое могло бы заметить исчезнувший шаг;
-//   - (д) точка контроля публикации (префлайт) объявлена ровно у ожидаемых трёх
+//   - (д) точка контроля публикации (префлайт) объявлена ровно у ожидаемых четырёх
 //     импортёров и запросом из expectedPublicationCountPoints: колонка countPoints
 //     реестра сверяется с объявлением самого импортёра (метод Publication()
 //     встроенного util.ClickHouseImport), а у rosstat_ipc_weeks объявления нет ни
@@ -118,13 +119,13 @@ func TestRosstatImportersPrefixedAndRegistered(t *testing.T) {
 
 		// (б)
 		if imp.table == sharedMacroSeriesTable {
-			t.Errorf("импортёр %q не объявил таблицу: общей таблицы вне префикса %q у пакета нет — все четыре импортёра владеют своей", name, rosstatNamePrefix)
+			t.Errorf("импортёр %q не объявил таблицу: общей таблицы вне префикса %q у пакета нет — все пять импортёров владеют своей", name, rosstatNamePrefix)
 			continue
 		}
 		if !strings.HasPrefix(imp.table, rosstatNamePrefix) {
 			t.Errorf("таблица %q импортёра %q без префикса %q", imp.table, name, rosstatNamePrefix)
 		}
-		// У всех четырёх импортёров Name() — это TableName встроенного
+		// У всех пяти импортёров Name() — это TableName встроенного
 		// util.ClickHouseImport. Значит, литерал в колонке table обязан совпадать с
 		// Name(): иначе реестр описывает не ту таблицу, в которую импортёр пишет
 		// (переименовали константу — обновили литерал).
