@@ -107,7 +107,9 @@ func (s *YandexDisk) Get(ctx context.Context, key string) ([]byte, error) {
 		return nil, err
 	}
 	if status != http.StatusOK {
-		return nil, statusError(opDownload, diskPath, status)
+		// Тело не передаётся: ответ пришёл от хоста по подписанной ссылке, а её подпись в тексте
+		// ошибки — утечка (statusError).
+		return nil, statusError(opDownload, diskPath, status, nil)
 	}
 	return body, nil
 }
@@ -121,7 +123,7 @@ func (s *YandexDisk) Exists(ctx context.Context, key string) (bool, error) {
 
 	diskPath := s.diskPath(key)
 	reqURL := s.apiURL("/resources", url.Values{"path": {diskPath}})
-	_, status, err := s.do(ctx, opExists, diskPath, http.MethodGet, reqURL, nil, true)
+	body, status, err := s.do(ctx, opExists, diskPath, http.MethodGet, reqURL, nil, true)
 	if err != nil {
 		return false, err
 	}
@@ -133,7 +135,8 @@ func (s *YandexDisk) Exists(ctx context.Context, key string) (bool, error) {
 		// иначе префлайт принимал бы штатный ответ «версии нет» за сбой проверки.
 		return false, nil
 	}
-	return false, statusError(opExists, diskPath, status)
+	// body — запрос к API с токеном: тело безопасно для лога и различает причины одного кода (statusError).
+	return false, statusError(opExists, diskPath, status, body)
 }
 
 // mkdir заводит один каталог. 409 — успех: так Диск отвечает на уже существующую папку, и без
@@ -141,12 +144,13 @@ func (s *YandexDisk) Exists(ctx context.Context, key string) (bool, error) {
 // раз на источник.
 func (s *YandexDisk) mkdir(ctx context.Context, dir string) error {
 	const endpoint = "/resources"
-	_, status, err := s.do(ctx, opMkdir, dir, http.MethodPut, s.apiURL(endpoint, url.Values{"path": {dir}}), nil, true)
+	body, status, err := s.do(ctx, opMkdir, dir, http.MethodPut, s.apiURL(endpoint, url.Values{"path": {dir}}), nil, true)
 	if err != nil {
 		return err
 	}
 	if status != http.StatusCreated && status != http.StatusConflict {
-		return statusError(opMkdir, dir, status)
+		// body — запрос к API с токеном: по фрагменту ответа дежурный различает «нет прав» и «нет места».
+		return statusError(opMkdir, dir, status, body)
 	}
 	return nil
 }
@@ -160,7 +164,9 @@ func (s *YandexDisk) signedHref(ctx context.Context, op, diskPath, endpoint stri
 		return "", err
 	}
 	if status != http.StatusOK {
-		return "", statusError(op, diskPath, status)
+		// body — ответ ручки API, а не хоста по ссылке: href в нём не содержится, и фрагмент помогает
+		// отличить «нет прав» (токен выдан без scope) от квоты (statusError).
+		return "", statusError(op, diskPath, status, body)
 	}
 	var resp struct {
 		Href string `json:"href"`
@@ -185,7 +191,8 @@ func (s *YandexDisk) upload(ctx context.Context, diskPath, href string, body []b
 		return err
 	}
 	if status != http.StatusCreated && status != http.StatusAccepted {
-		return statusError(opUpload, diskPath, status)
+		// Тело не передаётся: отвечал хост по подписанной ссылке (см. statusError).
+		return statusError(opUpload, diskPath, status, nil)
 	}
 	return nil
 }
@@ -230,18 +237,50 @@ func (s *YandexDisk) do(ctx context.Context, op, diskPath, method, rawURL string
 	}
 }
 
+// errSnippetLimit — сколько байт тела ответа Диска остаётся в тексте ошибки: дежурному нужна причина
+// («недостаточно прав», «квота»), а не весь ответ ручки.
+const errSnippetLimit = 200
+
+// errSnippet сжимает тело ответа до одной строки не длиннее errSnippetLimit байт. Локальная копия
+// util.ErrorSnippet, а не импорт: util уже импортирует archive, и обратная зависимость замкнула бы
+// цикл импортов. Пустое тело — пустая строка: текст ошибки и без того называет шаг и путь, и
+// подставлять в него «(пустое тело)» незачем. Обрезка идёт по байту, а нечитаемая руна на срезе
+// вычищается ToValidUTF8: в ответах Диска бывает кириллица, и разрезанная посреди неё строка
+// уехала бы в лог мусором.
+func errSnippet(body []byte) string {
+	snippet := strings.Join(strings.Fields(string(body)), " ")
+	if snippet == "" {
+		return ""
+	}
+	if len(snippet) > errSnippetLimit {
+		snippet = strings.ToValidUTF8(snippet[:errSnippetLimit], "") + "…"
+	}
+	return snippet
+}
+
 // statusError — ошибка шага по коду ответа. 401 и «квота» (403/413/423/507) оборачивают sentinel-
 // ошибки из store.go: по ним дежурный различает «обновить токен» и «освободить место» (спека §3.2),
 // и проверяются они через errors.Is, а не по тексту. Остальные коды — обычная ошибка с номером, по
 // которому причину ищут в API Диска. В тексте — путь на Диске, а не URL запроса: правится именно он.
-func statusError(op, diskPath string, status int) error {
+//
+// Тело ответа добавляется к тексту фрагментом (errSnippet): один и тот же 403 Диск отдаёт и при
+// исчерпанной квоте, и при нехватке прав у токена (выдан без scope на disk:/, часто при app:/), а
+// дежурному по одному коду не выбрать — освобождать место или перевыпускать токен. Фрагмент
+// передаётся только у запросов к API: ответы хостов по подписанной ссылке (загрузчик, файловый хост)
+// бывают HTML-страницей, повторяющей URL запроса вместе с подписью, а подпись — временный секрет
+// (см. signedHref), поэтому там тело в текст ошибки не берётся.
+func statusError(op, diskPath string, status int, body []byte) error {
+	tail := ""
+	if snippet := errSnippet(body); snippet != "" {
+		tail = "; ответ Диска: " + snippet
+	}
 	switch status {
 	case http.StatusUnauthorized:
-		return fmt.Errorf("%s %s: %w", op, diskPath, ErrAuth)
+		return fmt.Errorf("%s %s: %w%s", op, diskPath, ErrAuth, tail)
 	case http.StatusForbidden, http.StatusRequestEntityTooLarge, http.StatusLocked, http.StatusInsufficientStorage:
-		return fmt.Errorf("%s %s: %w", op, diskPath, ErrQuota)
+		return fmt.Errorf("%s %s: %w%s", op, diskPath, ErrQuota, tail)
 	default:
-		return fmt.Errorf("%s %s: статус %d", op, diskPath, status)
+		return fmt.Errorf("%s %s: статус %d%s", op, diskPath, status, tail)
 	}
 }
 

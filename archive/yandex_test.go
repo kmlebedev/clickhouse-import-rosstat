@@ -43,6 +43,14 @@ type fakeDir struct {
 	codes  []int
 }
 
+// fakeFail — подменённый ответ ручки: код и тело. Тело нужно там, где проверяется фрагмент ответа в
+// тексте ошибки: один и тот же 403 Диск отдаёт и при нехватке прав у токена, и при квоте, и
+// различить их можно только тем, что Диск написал в теле (statusError).
+type fakeFail struct {
+	code int
+	body string
+}
+
 // fakeDisk — эмулятор REST API Диска на httptest-сервере: держит каталоги и объекты в памяти и
 // ведёт журнал запросов клиента. Мок стоит на уровне http.Handler, а не на уровне методов клиента,
 // поэтому тесты видят настоящие запросы — путь в query, заголовок авторизации, метод, тело — и
@@ -55,9 +63,9 @@ type fakeDisk struct {
 	// только под mu: пакет гоняется с -race.
 	mu      sync.Mutex
 	dirs    map[string]*fakeDir
-	objects map[string][]byte // путь объекта → байты; «удаление» — delete
-	queue   map[string][]int  // ручка → статусы, которые она отдаст раньше штатного ответа
-	calls   map[string]int    // ручка → число запросов
+	objects map[string][]byte     // путь объекта → байты; «удаление» — delete
+	queue   map[string][]fakeFail // ручка → подменённые ответы (код и тело) раньше штатного
+	calls   map[string]int        // ручка → число запросов
 
 	apiAuth  []string // Authorization запросов к API Диска
 	hrefAuth []string // Authorization запросов по подписанной ссылке
@@ -94,7 +102,7 @@ func newFakeDisk(t *testing.T) *fakeDisk {
 	f := &fakeDisk{
 		dirs:    map[string]*fakeDir{},
 		objects: map[string][]byte{},
-		queue:   map[string][]int{},
+		queue:   map[string][]fakeFail{},
 		calls:   map[string]int{},
 	}
 	f.server = httptest.NewServer(http.HandlerFunc(f.handle))
@@ -109,11 +117,22 @@ func newFakeStore(f *fakeDisk) *YandexDisk {
 }
 
 // failNext ставит ручке статус-ответы раньше штатных: «первый ответ 429, второй нормальный» — ровно
-// тот сценарий, ради которого шаг повторяется.
+// тот сценарий, ради которого шаг повторяется. Тела у этих ответов нет: он нужен только там, где
+// проверяется фрагмент ответа в тексте ошибки (failNextWithBody).
 func (f *fakeDisk) failNext(endpoint string, codes ...int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.queue[endpoint] = append(f.queue[endpoint], codes...)
+	for _, code := range codes {
+		f.queue[endpoint] = append(f.queue[endpoint], fakeFail{code: code})
+	}
+}
+
+// failNextWithBody — тот же подменённый ответ, но с телом: им проверяется, что причина одного кода
+// (403 — нехватка прав против квоты) доезжает до текста ошибки, а не теряется за sentinel-ом.
+func (f *fakeDisk) failNextWithBody(endpoint string, code int, body string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.queue[endpoint] = append(f.queue[endpoint], fakeFail{code: code, body: body})
 }
 
 // overrideUploadHref заменяет адрес, который ручка загрузки отдаёт в href: так проверяется путь
@@ -187,9 +206,9 @@ func (f *fakeDisk) handleMkdir(w http.ResponseWriter, r *http.Request) {
 	f.note(r, fakeMkdir)
 	path := r.URL.Query().Get("path")
 	d := f.dir(path)
-	if code, ok := f.take(fakeMkdir); ok {
-		d.codes = append(d.codes, code)
-		w.WriteHeader(code)
+	if fail, ok := f.take(fakeMkdir); ok {
+		d.codes = append(d.codes, fail.code)
+		f.fail(w, fail)
 		return
 	}
 	code := http.StatusCreated
@@ -216,8 +235,8 @@ func (f *fakeDisk) handleHref(w http.ResponseWriter, r *http.Request, endpoint, 
 		f.downloadPaths = append(f.downloadPaths, path)
 		f.downloadPath = path
 	}
-	if code, ok := f.take(endpoint); ok {
-		w.WriteHeader(code)
+	if fail, ok := f.take(endpoint); ok {
+		f.fail(w, fail)
 		return
 	}
 	if endpoint == fakeDownload {
@@ -243,8 +262,8 @@ func (f *fakeDisk) handleBody(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	if code, ok := f.take(fakeBody); ok {
-		w.WriteHeader(code)
+	if fail, ok := f.take(fakeBody); ok {
+		f.fail(w, fail)
 		return
 	}
 	f.objects[f.uploadPath] = body
@@ -254,8 +273,8 @@ func (f *fakeDisk) handleBody(w http.ResponseWriter, r *http.Request) {
 // handleData отдаёт байты объекта по ссылке скачивания.
 func (f *fakeDisk) handleData(w http.ResponseWriter, r *http.Request) {
 	f.note(r, fakeData)
-	if code, ok := f.take(fakeData); ok {
-		w.WriteHeader(code)
+	if fail, ok := f.take(fakeData); ok {
+		f.fail(w, fail)
 		return
 	}
 	body, ok := f.objects[f.downloadPath]
@@ -270,8 +289,8 @@ func (f *fakeDisk) handleExists(w http.ResponseWriter, r *http.Request) {
 	f.note(r, fakeExists)
 	path := r.URL.Query().Get("path")
 	f.existsPaths = append(f.existsPaths, path)
-	if code, ok := f.take(fakeExists); ok {
-		w.WriteHeader(code)
+	if fail, ok := f.take(fakeExists); ok {
+		f.fail(w, fail)
 		return
 	}
 	if _, ok := f.objects[path]; ok {
@@ -292,14 +311,23 @@ func (f *fakeDisk) note(r *http.Request, endpoint string) {
 	f.hrefAuth = append(f.hrefAuth, r.Header.Get("Authorization"))
 }
 
-// take снимает с ручки очередной подменённый статус. Вызывается под f.mu.
-func (f *fakeDisk) take(endpoint string) (int, bool) {
+// take снимает с ручки очередной подменённый ответ. Вызывается под f.mu.
+func (f *fakeDisk) take(endpoint string) (fakeFail, bool) {
 	queue := f.queue[endpoint]
 	if len(queue) == 0 {
-		return 0, false
+		return fakeFail{}, false
 	}
 	f.queue[endpoint] = queue[1:]
 	return queue[0], true
+}
+
+// fail отвечает подменённым ответом: код, затем — если Диск его назвал — тело. Тело пишется после
+// WriteHeader: так статус не подменяется неявным 200 при записи тела.
+func (f *fakeDisk) fail(w http.ResponseWriter, fail fakeFail) {
+	w.WriteHeader(fail.code)
+	if fail.body != "" {
+		_, _ = io.WriteString(w, fail.body)
+	}
 }
 
 // dir возвращает запись каталога, заводя её при первом обращении. Вызывается под f.mu.
@@ -494,6 +522,60 @@ func TestYandexQuotaError(t *testing.T) {
 			err := store.Put(context.Background(), Key("cbr_m2", "monetary_agg_SA.xlsx", fp, zeroSum), []byte("байты"))
 			if !errors.Is(err, ErrQuota) {
 				t.Errorf("Put при %d: %v, ожидалась обёртка ErrQuota", status, err)
+			}
+		})
+	}
+}
+
+// Тело ответа Диска доезжает до текста ошибки: один и тот же 403 Диск отдаёт и при нехватке прав у
+// токена (выдан без scope на disk:/), и при исчерпанной квоте, а ErrQuota у них один — по коду
+// дежурный не выберет, освобождать место или перевыпускать токен, и различает причины именно
+// фрагмент тела (statusError). Проверяются оба утверждения сразу: маппинг кодов не изменился
+// (errors.Is на ErrQuota), и Диск в логе говорит, что именно пошло не так.
+func TestYandexForbiddenKeepsBodySnippet(t *testing.T) {
+	const diskSays = "ForbiddenError: недостаточно прав на запись в disk:/rosstat-archive"
+	f := newFakeDisk(t)
+	f.failNextWithBody(fakeUpload, http.StatusForbidden, diskSays)
+
+	store := newFakeStore(f)
+	err := store.Put(context.Background(), Key("cbr_m2", "monetary_agg_SA.xlsx", fp, zeroSum), []byte("байты"))
+	if !errors.Is(err, ErrQuota) {
+		t.Errorf("Put при 403: %v, ожидалась обёртка ErrQuota", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), diskSays) {
+		t.Errorf("текст ошибки %v не называет ответ Диска %q — причину 403 (права против квоты) в логе не различить", err, diskSays)
+	}
+	// Фрагмент — из ответа API по запросу с токеном: сам токен в тело ответа не попадает, и в текст
+	// ошибки он тоже попасть не должен (правило 1 AGENTS.md).
+	if err != nil && strings.Contains(err.Error(), fakeToken) {
+		t.Errorf("в тексте ошибки %q есть значение токена", err)
+	}
+}
+
+// Тело ответа в тексте ошибки — одна строка не длиннее лимита: ответ ручки бывает HTML-страницей
+// прокси, и её переводы строк разорвали бы запись лога, а весь ответ вытеснил бы сам диагноз. Тело
+// обрезается по байту, поэтому на срезе руна может распасться — она вычищается, а не уезжает в лог.
+func TestErrSnippet(t *testing.T) {
+	for _, c := range []struct{ name, body, want string }{
+		{"пустое тело", "", ""},
+		{"пробелы и переводы строк сжимаются", "{\n  \"message\":\t\"нет места\"\n}\n", `{ "message": "нет места" }`},
+		{
+			"длинное тело режется по лимиту без разрезанной руны",
+			strings.Repeat("я", errSnippetLimit) + "хвост",
+			strings.Repeat("я", errSnippetLimit/2) + "…",
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := errSnippet([]byte(c.body))
+			if got != c.want {
+				t.Errorf("errSnippet(%q) = %q, ожидалось %q", c.body, got, c.want)
+			}
+			// Инварианты, которые и защищают лог: одна строка и предел длины.
+			if strings.ContainsAny(got, "\n\r\t") {
+				t.Errorf("фрагмент %q не сжат в одну строку", got)
+			}
+			if len(got) > errSnippetLimit+len("…") {
+				t.Errorf("фрагмент %q длиннее лимита %d байт", got, errSnippetLimit)
 			}
 		})
 	}
