@@ -512,8 +512,8 @@ async def check(params, server_log):
                                      f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
 
             # Контур Росстата (фаза 3 роадмапа, задачи T4–T7): витрина v_rosstat_macro видна
-            # и НЕПУСТА, каталог описывает ряды всех четырёх импортёров пакета, а четыре
-            # сырые таблицы — источники витрины — агенту закрыты (как macro_series и
+            # и НЕПУСТА, каталог описывает ряды всех пяти импортёров пакета, а пять
+            # сырых таблиц — источники витрины — агенту закрыты (как macro_series и
             # cbr_households_b_mes: читать контур агент обязан только через витрину,
             # правило 11 AGENTS.md).
             #
@@ -544,34 +544,37 @@ async def check(params, server_log):
                 rosstat_view_detail = (f"строк: {rosstat_points_n}, рядов: {rosstat_series_n} — прогнать "
                                        "импортёры контура по одному: make import STAT=<имя> для "
                                        "каждого из rosstat_ipc_mes, rosstat_ipc_weeks, "
-                                       "rosstat_salaries_mes, rosstat_vvp_kvartal")
+                                       "rosstat_salaries_mes, rosstat_vvp_kvartal, "
+                                       "rosstat_labour_force_mes")
             failed += not expect("витрина v_rosstat_macro непуста",
                                  (rosstat_points_n or 0) > 0 and (rosstat_series_n or 0) > 0, rosstat_view_detail)
 
-            # Каталог описывает все 141 ряд источника: 4 ИПЦ (rosstat_ipc_mes) + 131 недельный
+            # Каталог описывает все 147 рядов источника: 4 ИПЦ (rosstat_ipc_mes) + 131 недельный
             # товар (rosstat_ipc_weeks) + 5 рядов ВВП (rosstat_vvp_kvartal) + 1 зарплата
-            # (rosstat_salaries_mes).
+            # (rosstat_salaries_mes) + 6 рядов рынка труда (rosstat_labour_force_mes).
             # Число сверяется точным равенством, а не «> 0»: односторонний контракт §11.4
-            # стандарта требует описания каждого разобранного ряда, а меньше 141 значит
+            # стандарта требует описания каждого разобранного ряда, а меньше 147 значит
             # ни разу не отработавший импортёр (числа агент прочитает, а что измеряет ряд
             # и в каких единицах — нет). В плане фазы написано 138: это арифметика
             # 4 + 128 + 5 + 1 до fix-round задачи T7, который вернул три товара под обрывом
-            # листа (fc0d28f) — в ipcWeeksProducts 131 название, то есть верное число 141.
+            # листа (fc0d28f) — в ipcWeeksProducts 131 название, а шести рядов рынка труда
+            # в той арифметике нет вовсе, поэтому верное число — 147.
             # detail печатает наблюдённое число, когда оно расходится с ожиданием.
             rosstat_catalog = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'rosstat'"}))
             rosstat_catalog_rows = result_rows(rosstat_catalog)
             rosstat_catalog_n = rosstat_catalog_rows[0].get("n") if rosstat_catalog_rows else None
             if rosstat_catalog_rows is None:
                 rosstat_catalog_detail = f"ответ не распознан: {rosstat_catalog[:200]}"
-            elif rosstat_catalog_n == 141:
-                rosstat_catalog_detail = "рядов rosstat: 141 (4 ИПЦ + 131 недельный + 5 ВВП + 1 зарплата)"
+            elif rosstat_catalog_n == 147:
+                rosstat_catalog_detail = "рядов rosstat: 147 (4 ИПЦ + 131 недельный + 5 ВВП + 1 зарплата + 6 рабочая сила)"
             else:
-                rosstat_catalog_detail = (f"рядов rosstat: {rosstat_catalog_n}, want 141 — прогнать "
+                rosstat_catalog_detail = (f"рядов rosstat: {rosstat_catalog_n}, want 147 — прогнать "
                                           "импортёры по одному: make import STAT=<имя> для каждого "
                                           "из rosstat_ipc_mes, rosstat_ipc_weeks, "
-                                          "rosstat_salaries_mes, rosstat_vvp_kvartal "
+                                          "rosstat_salaries_mes, rosstat_vvp_kvartal, "
+                                          "rosstat_labour_force_mes "
                                           "(каталог перепубликовывается каждым прогоном)")
-            failed += not expect("каталог rosstat полон", rosstat_catalog_n == 141, rosstat_catalog_detail)
+            failed += not expect("каталог rosstat полон", rosstat_catalog_n == 147, rosstat_catalog_detail)
 
             # Сырые таблицы контура агенту не выданы — как macro_series и
             # cbr_households_b_mes: витрина — единственное место, где агент читает ряды
@@ -582,7 +585,8 @@ async def check(params, server_log):
             for table, label in (("rosstat_ipc_mes", "ИПЦ помесячно"),
                                  ("rosstat_ipc_weeks", "недельные цены"),
                                  ("rosstat_salaries_mes", "зарплата помесячно"),
-                                 ("rosstat_vvp_kvartal", "ВВП поквартально")):
+                                 ("rosstat_vvp_kvartal", "ВВП поквартально"),
+                                 ("rosstat_labour_force_mes", "рабочая сила и безработица")):
                 raw = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {table}"}))
                 denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
                 failed += not expect(f"сырая {table} закрыта ({label})", denied,
