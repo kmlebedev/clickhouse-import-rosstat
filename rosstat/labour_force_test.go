@@ -228,7 +228,9 @@ func TestLabourForceNonNumericCellFails(t *testing.T) {
 // нет, источник печатает месяц заранее) точками не становятся: Review Focus 1. Книга — копия
 // реальной фикстуры с очищенными ячейками июля 2026; нулей в ряду при этом быть не должно (§6.7).
 func TestLabourForceEmptyCellIsNotPoint(t *testing.T) {
-	baseline := len(parseLabourForceFixture(t))
+	// Ожидание — литерал (690 точек), а не пересчёт по фикстуре: иначе потерянный при разборе
+	// месяц уехал бы вместе с ожиданием и тест остался бы зелёным.
+	const baseline = 690
 	const emptied = 6
 	xlsx := mutateLabourForceFixture(t, func(f *excelize.File) {
 		for _, cell := range []string{"B131", "C131", "D131", "E131", "F131", "G131"} {
@@ -256,11 +258,103 @@ func TestLabourForceEmptyCellIsNotPoint(t *testing.T) {
 	}
 }
 
+// TestLabourForceMisspelledMonthFails — опечатка в подписи месяца («феврал» вместо «февраль»)
+// даёт нераспознанную подпись в середине таблицы. Раньше разбор на ней молча замыкался и отдавал
+// 6 точек: неполный ряд в витрине выглядит полным, поэтому теперь замыкание проверяется — если
+// ниже строки с нераспознанной подписью в колонках рядов есть значения, это ошибка (§6.4).
+func TestLabourForceMisspelledMonthFails(t *testing.T) {
+	const broken = "феврал"
+	xlsx := mutateLabourForceFixture(t, func(f *excelize.File) {
+		// A9 — подпись февраля 2017; значения февраля (B9:G9) остаются на месте.
+		if err := f.SetCellValue(labourForceSheet, "A9", broken); err != nil {
+			t.Fatal(err)
+		}
+	})
+	points, err := parseLabourForce(xlsx)
+	if err == nil {
+		t.Fatalf("подпись %q разобрана без ошибки: %d точек вместо 690", broken, len(points))
+	}
+	if !strings.Contains(err.Error(), rosstatLabourForceTable) || !strings.Contains(err.Error(), labourForceSheet) {
+		t.Errorf("ошибка %q не называет таблицу %q и лист %q", err, rosstatLabourForceTable, labourForceSheet)
+	}
+	if !strings.Contains(err.Error(), broken) || !strings.Contains(err.Error(), "не распознана") {
+		t.Errorf("ошибка %q не называет нераспознанную подпись %q", err, broken)
+	}
+	if !strings.Contains(err.Error(), "строка 10") {
+		t.Errorf("ошибка %q не называет строку, где продолжаются данные", err)
+	}
+}
+
+// TestLabourForceLostMonthLabelFails — потерянная подпись месяца (пустая A9) при заполненных
+// значениях: строка-разделитель без значений — норма, но строка значений без подписи означает
+// сломанную разметку, и пропуск такой строки терял бы шесть точек молча (§6.4).
+func TestLabourForceLostMonthLabelFails(t *testing.T) {
+	xlsx := mutateLabourForceFixture(t, func(f *excelize.File) {
+		if err := f.SetCellValue(labourForceSheet, "A9", ""); err != nil {
+			t.Fatal(err)
+		}
+	})
+	points, err := parseLabourForce(xlsx)
+	if err == nil {
+		t.Fatalf("строка значений без подписи месяца разобрана без ошибки: %d точек вместо 690", len(points))
+	}
+	if !strings.Contains(err.Error(), rosstatLabourForceTable) || !strings.Contains(err.Error(), labourForceSheet) {
+		t.Errorf("ошибка %q не называет таблицу %q и лист %q", err, rosstatLabourForceTable, labourForceSheet)
+	}
+	if !strings.Contains(err.Error(), "подпись месяца пуста") {
+		t.Errorf("ошибка %q не называет потерянную подпись месяца", err)
+	}
+}
+
+// TestLabourForceEmptyParseFails — все строки месяцев на месте, но значения в шести колонках
+// пусты: разбор обязан вернуть ошибку «0 точек» (§6.4, §11.5), а не пустой батч — пустая
+// выгрузка означает сломанный или подменённый источник, а не отсутствие показателя.
+func TestLabourForceEmptyParseFails(t *testing.T) {
+	xlsx := mutateLabourForceFixture(t, func(f *excelize.File) {
+		rows, err := f.GetRows(labourForceSheet, excelize.Options{RawCellValue: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, row := range rows {
+			if len(row) == 0 {
+				continue
+			}
+			// Подписи месяцев остаются на месте — очищаются только ячейки значений шести колонок.
+			if _, ok := util.MonthsToNum[strings.ToLower(labourForceLabel(row[0]))]; !ok {
+				continue
+			}
+			for col := 1; col <= 6; col++ {
+				cell, err := excelize.CoordinatesToCellName(col+1, i+1)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = f.SetCellValue(labourForceSheet, cell, ""); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	})
+	points, err := parseLabourForce(xlsx)
+	if err == nil {
+		t.Fatalf("лист без значений разобран без ошибки: %d точек", len(points))
+	}
+	if !strings.Contains(err.Error(), rosstatLabourForceTable) || !strings.Contains(err.Error(), labourForceSheet) {
+		t.Errorf("ошибка %q не называет таблицу %q и лист %q", err, rosstatLabourForceTable, labourForceSheet)
+	}
+	if !strings.Contains(err.Error(), "разбор дал 0 точек") {
+		t.Errorf("ошибка %q не называет пустой разбор", err)
+	}
+}
+
 // TestLabourForceIgnoresTrailingFootnoteRows — после последней строки месяца (131) идут строки
 // 132–133 с текстом сносок источника: разбор на них завершается, а не падает и не читает их
-// точками (Review Focus 4). Число точек сверяется с числом строк-месяцев самой книги — так тест
-// ловит и «лишнюю» точку из строки сносок, и потерянный месяц.
+// точками (Review Focus 4). Ожидания — литералы (115 строк-месяцев, 690 точек), а не пересчёт
+// через тот же util.MonthsToNum, что и разбор: иначе исчезнувший из выгрузки месяц уехал бы
+// вместе с ожиданием и тест остался бы зелёным. Число строк-месяцев в книге считается отдельно —
+// так тест ловит и «лишнюю» точку из строки сносок, и потерянный месяц.
 func TestLabourForceIgnoresTrailingFootnoteRows(t *testing.T) {
+	const wantMonths = 115
+	const wantPoints = 690
 	xlsx := openLabourForceFixture(t)
 	points, err := parseLabourForce(xlsx)
 	if err != nil {
@@ -279,8 +373,11 @@ func TestLabourForceIgnoresTrailingFootnoteRows(t *testing.T) {
 			months++
 		}
 	}
-	if len(points) != months*6 {
-		t.Errorf("точек %d, ожидалось %d (строк-месяцев %d × 6 рядов)", len(points), months*6, months)
+	if months != wantMonths {
+		t.Errorf("строк-месяцев в книге %d, ожидалось %d", months, wantMonths)
+	}
+	if len(points) != wantPoints {
+		t.Errorf("точек %d, ожидалось %d (%d месяцев × 6 рядов)", len(points), wantPoints, wantMonths)
 	}
 	last := time.Date(2026, time.July, 31, 0, 0, 0, 0, time.UTC)
 	for _, point := range points {

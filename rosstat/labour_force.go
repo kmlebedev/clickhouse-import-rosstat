@@ -188,10 +188,23 @@ func labourForceValue(cell string) (float64, error) {
 	return value, nil
 }
 
+// labourForceFilledCell — первая непустая ячейка значений в колонках шести рядов: её индекс и
+// текст. ok == false — в строке значений нет вовсе.
+func labourForceFilledCell(row []string, columns []labourForceColumn) (int, string, bool) {
+	for _, column := range columns {
+		if cell := labourForceCell(row, column.col); cell != "" {
+			return column.col, cell, true
+		}
+	}
+	return 0, "", false
+}
+
 // parseLabourForce читает лист «5» книги и отдаёт плоскую таблицу точек шести рядов. Разметка:
 // строка шапки с якорем «Рабочая сила» (и строка под ней с «занятые»/«безработные»), ниже —
 // строки-секции годов («2017»…«2026») и строки месяцев со сносками. Строка, чья подпись — не год
-// и не месяц, замыкает таблицу: под данными листа лежит текст сносок источника, а не значения.
+// и не месяц, замыкает таблицу: под данными листа лежит текст сносок источника, а не значения;
+// замыкание проверяется — если ниже такой строки в колонках рядов есть непустые значения, значит
+// подпись месяца не распознана и разбор обязан упасть (§6.4), а не отдать молча усечённый ряд.
 // Пустая ячейка значением не является и точкой не становится (§6.7) — у последних месяцев
 // нового года данных ещё нет; нечисловая ячейка, наоборот, ошибка (§6.4), а не пропуск.
 func parseLabourForce(xlsx *excelize.File) ([]labourForcePoint, error) {
@@ -222,10 +235,22 @@ func parseLabourForce(xlsx *excelize.File) ([]labourForcePoint, error) {
 	var points []labourForcePoint
 	year := 0
 	month := time.Month(0)
+	// tableEnd — 0-based номер строки, замкнувшей таблицу; -1 — таблица прочитана до конца листа.
+	// Незамкнутый разбор значит, что текста сносок под данными не было; замкнутый — что ниже могло
+	// остаться продолжение, которое сверяет проверка под циклом.
+	tableEnd := -1
 	for i := headerEnd + 1; i < len(rows); i++ {
 		row := rows[i]
 		label := labourForceLabel(labourForceCell(row, 0))
 		if label == "" {
+			// Пустая подпись у строки-разделителя (без значений в колонках рядов) — норма: между
+			// блоками листа и внизу стоят пустые строки. Но пустая подпись при заполненных
+			// значениях означает потерянную подпись месяца: молча пропустить такую строку —
+			// значит отдать усечённый ряд без ошибки (§6.4).
+			if col, cell, filled := labourForceFilledCell(row, columns); filled {
+				return nil, fmt.Errorf("%s: лист %q, строка %d: подпись месяца пуста, а ячейка %q (колонка %d) заполнена",
+					rosstatLabourForceTable, labourForceSheet, i+1, cell, col+1)
+			}
 			continue
 		}
 		if sectionYear, ok := labourForceYear(row); ok {
@@ -234,7 +259,8 @@ func parseLabourForce(xlsx *excelize.File) ([]labourForcePoint, error) {
 		}
 		sectionMonth, ok := util.MonthsToNum[strings.ToLower(label)]
 		if !ok {
-			// Подпись не год и не месяц — текст сносок под таблицей: данные кончились.
+			// Подпись не год и не месяц — так выглядит текст сносок под таблицей: данные кончились.
+			tableEnd = i
 			break
 		}
 		if year == 0 {
@@ -264,6 +290,18 @@ func parseLabourForce(xlsx *excelize.File) ([]labourForcePoint, error) {
 				date:  time.Date(year, sectionMonth+1, 0, 0, 0, 0, 0, time.UTC),
 				value: value,
 			})
+		}
+	}
+	// Замыкание таблицы проверено: под строкой с нераспознанной подписью значений быть не должно.
+	// Опечатка в подписи месяца («феврал») или потерянная подпись иначе обрезали бы ряд молча —
+	// неполный ряд в витрине выглядит полным, а это тот самый дефект, от которого защищает §6.4.
+	if tableEnd >= 0 {
+		for i := tableEnd + 1; i < len(rows); i++ {
+			if _, cell, filled := labourForceFilledCell(rows[i], columns); filled {
+				return nil, fmt.Errorf("%s: лист %q, строка %d: данные продолжаются ниже строки %d, подпись %q не распознана (значение %q)",
+					rosstatLabourForceTable, labourForceSheet, i+1, tableEnd+1,
+					labourForceLabel(labourForceCell(rows[tableEnd], 0)), cell)
+			}
 		}
 	}
 	if len(points) == 0 {
