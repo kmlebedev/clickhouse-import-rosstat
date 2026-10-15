@@ -270,6 +270,93 @@ func TestParseSberRowsSkipsEmptyValues(t *testing.T) {
 	}
 }
 
+// sberFixtureSeries — имена рядов, разобранные из фикстуры: контракт каталога проверяется против
+// разбора, а не против самого себя (стандарт §11.4). Дубли имён не схлопываются намеренно: набор
+// имён для сверки строит вызывающий.
+func sberFixtureSeries(t *testing.T, fixture string) []string {
+	t.Helper()
+	points, _, err := parseSberRows(loadFixture(t, fixture))
+	if err != nil {
+		t.Fatalf("parseSberRows(%s): %v", fixture, err)
+	}
+	names := make([]string, 0, len(points))
+	for _, p := range points {
+		names = append(names, p.Series)
+	}
+	return names
+}
+
+// TestSberSeriesMetaCoversFixtures — контракт каталога на живых фикстурах (стандарт §11.4):
+// каждая категория, разобранная из выгрузки, описана в каталоге своего набора — месячная в
+// sberIndexSeriesMeta, недельная в sberWeekSeriesMeta. Контракт односторонний («разобрано ⊆
+// описано»): имена рядов даёт источник, а урезанная фикстура не доказывает, что описанный ряд ещё
+// публикуется. Разные наборы проверяются по отдельности, потому что имена категорий у них
+// пересекаются («Услуги», «Продовольственные товары»): описание месячной категории не описывает
+// одноимённый недельный ряд, у которого другая единица (индекс против % г/г).
+//
+// Кроме покрытия сверяются: заполненность описания (пустое поле — ряд, о котором агенту нечего
+// прочитать), уникальность имени внутри источника (дубль схлопнул бы два разных ряда в один ключ
+// каталога), число описаний (5 и 46 — набор живой выгрузки, спека §4.3) и состав sberSeriesMeta,
+// которую получает AfterImport: каталог и витрина строятся из неё, и потерянный при сборке ряд не
+// заметил бы больше ни один тест (стандарт §10.1, §10.6).
+func TestSberSeriesMetaCoversFixtures(t *testing.T) {
+	cases := []struct {
+		fixture string
+		meta    []util.SeriesMeta
+		source  string
+		series  int
+		// titleSuffix — конец заголовка по шаблону набора (у недельного он собирается
+		// fmt.Sprintf вместе с описанием): пустая строка — шаблона у набора нет.
+		titleSuffix string
+	}{
+		{sberMonthlyFixture, sberIndexSeriesMeta, sberSourceIndex, 5, ""},
+		{sberWeeklyFixture, sberWeekSeriesMeta, sberSourceWeek, 46, ", недельно, % г/г"},
+	}
+
+	described := make(map[string]bool, len(sberSeriesMeta))
+	for _, c := range cases {
+		if len(c.meta) != c.series {
+			t.Errorf("%s: описаний %d, ожидалось %d", c.source, len(c.meta), c.series)
+		}
+		own := make(map[string]bool, len(c.meta))
+		for _, m := range c.meta {
+			if m.Source != c.source {
+				t.Errorf("ряд %q: источник %q, ожидался %q", m.Series, m.Source, c.source)
+			}
+			if m.Series == "" || m.Title == "" || m.Unit == "" || m.Frequency == "" || m.Origin == "" || m.Description == "" {
+				t.Errorf("описание ряда %q заполнено не полностью: %+v", m.Series, m)
+			}
+			// Описание недельного ряда собирает fmt.Sprintf: незакрытый знак процента превратил бы
+			// текст в «%!(NOVERB)» — в каталоге у агента оказался бы мусор формата, а не фраза.
+			if strings.Contains(m.Title+m.Unit+m.Description, "%!") {
+				t.Errorf("ряд %q: в описании остался мусор формата (%q)", m.Series, m.Title)
+			}
+			if c.titleSuffix != "" && !strings.HasSuffix(m.Title, c.titleSuffix) {
+				t.Errorf("ряд %q: заголовок %q не по шаблону набора (ожидался конец %q)", m.Series, m.Title, c.titleSuffix)
+			}
+			if own[m.Series] {
+				t.Errorf("ряд %q описан в %s дважды", m.Series, c.source)
+			}
+			own[m.Series] = true
+			described[c.source+"/"+m.Series] = true
+		}
+		for _, series := range sberFixtureSeries(t, c.fixture) {
+			if !own[series] {
+				t.Errorf("ряд %q из фикстуры %s не описан в %s", series, c.fixture, c.source)
+			}
+		}
+	}
+
+	if want := len(sberIndexSeriesMeta) + len(sberWeekSeriesMeta); len(sberSeriesMeta) != want {
+		t.Errorf("sberSeriesMeta: описаний %d, ожидалось %d (оба набора)", len(sberSeriesMeta), want)
+	}
+	for _, m := range sberSeriesMeta {
+		if !described[m.Source+"/"+m.Series] {
+			t.Errorf("ряд %s/%s есть в sberSeriesMeta, но не в описаниях набора", m.Source, m.Series)
+		}
+	}
+}
+
 // TestSberUndescribed — точка, чьё имя отсутствует в каталоге, возвращается (импортёр
 // журналирует warn и импортирует её, §6.6); описанная — нет. Имена идут в порядке первого
 // появления и без дублей: предупреждение в журнале не должно повторяться на каждую точку.

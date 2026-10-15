@@ -60,6 +60,15 @@ func sberCSIWeekCraw(dataUrl string, conn driver.Conn) (count int64, err error) 
 	if skipped > 0 {
 		log.Warnf("sber %s: пропущено %d записей с пустым значением (не точки ряда, стандарт §6.7)", sberCSIWeekTable, skipped)
 	}
+	// Незнакомая категория — ожидаемое изменение источника (новый товар/услуга), а не порча
+	// выгрузки: импорт продолжается, но след в журнале остаётся (стандарт §6.6, спека §4.4). Иначе
+	// ряд жил бы в таблице и витрине без описания у агента (стандарт §10.6), а падение шага в
+	// цепочке dagu лишило бы данных tbank/vtb (стандарт §12.3). Имена перечисляются целиком и без
+	// дублей: по одному warn-у на новую категорию, а не на каждую её неделю.
+	if unknown := sberUndescribed(points, sberWeekSeriesMeta); len(unknown) > 0 {
+		log.Warnf("sber %s: нет описания в каталоге для %q — импорт продолжен, описание догонять правкой каталога",
+			sberCSIWeekTable, unknown)
+	}
 	batch, err := conn.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s", sberCSIWeekTable))
 	if err != nil {
 		return 0, err
@@ -84,6 +93,10 @@ var sberCSIWeekImporter = &SberCSIWeek{ClickHouseImport: util.ClickHouseImport{
 	CreateTable: []string{sberCSIWeekDdl},
 	DataUrl:     sberCSIWeekDataUrl,
 	CrawFunc:    sberCSIWeekCraw,
+	// Производные (каталог рядов и витрина) публикует шаблон после Send точек и до записи строки
+	// версии (стандарт §5.2, §10.2) — тем же хелпером, что месячный импортёр: каталог и витрина
+	// общие на оба набора, поэтому каждый прогон перезаписывает все 51 описание и витрину целиком.
+	AfterImport: afterSberMacro(sberSeriesMeta),
 }}
 
 func init() {

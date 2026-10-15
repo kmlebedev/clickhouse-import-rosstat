@@ -61,6 +61,14 @@ func sberCSICraw(dataUrl string, conn driver.Conn) (count int64, err error) {
 	if skipped > 0 {
 		log.Warnf("sber %s: пропущено %d записей с пустым значением (не точки ряда, стандарт §6.7)", sberCSITable, skipped)
 	}
+	// Категория, которой нет в каталоге, — ожидаемое изменение источника: импорт продолжается, но
+	// след в журнале остаётся, иначе ряд живёт в таблице без описания у агента (стандарт §6.6,
+	// §10.6). У месячного набора список категорий фиксирован (5), поэтому warn здесь означает
+	// смену классификации источником, а не «новый товар».
+	if unknown := sberUndescribed(points, sberIndexSeriesMeta); len(unknown) > 0 {
+		log.Warnf("sber %s: нет описания в каталоге для %q — импорт продолжен, описание догонять правкой каталога",
+			sberCSITable, unknown)
+	}
 	batch, err := conn.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s", sberCSITable))
 	if err != nil {
 		return 0, err
@@ -86,6 +94,10 @@ var sberCSIImporter = &SberCSI{ClickHouseImport: util.ClickHouseImport{
 	CreateTable: []string{sberCSIDdl},
 	DataUrl:     sberCSIDataUrl,
 	CrawFunc:    sberCSICraw,
+	// Производные (каталог рядов и витрина) публикует шаблон после Send точек и до записи строки
+	// версии (стандарт §5.2, §10.2): сбой публикации оставляет версию незаписанной, и следующий
+	// прогон повторяет полный путь, а не уходит в no-op без каталога у агента.
+	AfterImport: afterSberMacro(sberSeriesMeta),
 }}
 
 func init() {
