@@ -1,0 +1,216 @@
+# Review package: 7dba222a648ddcdf707bc682c6f5df307c6d0af2..cb29d2d
+
+## Commits
+cb29d2d register cbr_int_rate_loans, add to v_cbr_macro
+
+## Files changed
+ cbr/importers.go        |  3 ++-
+ cbr/importers_test.go   |  3 ++-
+ cbr/series_meta_test.go |  2 ++
+ cbr/views.go            | 11 ++++++-----
+ 4 files changed, 12 insertions(+), 7 deletions(-)
+
+## Diff
+diff --git a/cbr/importers.go b/cbr/importers.go
+index b986173..7cfc5ee 100644
+--- a/cbr/importers.go
++++ b/cbr/importers.go
+@@ -13,21 +13,21 @@ import "github.com/kmlebedev/clickhouse-import-rosstat/chimport"
+ type cbrImporter struct {
+ 	chimport.ImportStat
+ 	table string
+ 	// countPoints — литерал PublicationCountPoints импортёра ("" — префлайта нет).
+ 	// Литерал, а не метод Publication(): именно расхождение этих двух источников
+ 	// значения и обязан ловить тест реестра.
+ 	countPoints string
+ }
+ 
+ // cbrImporters — единственная точка регистрации импортёров ЦБ: персональных
+-// init()-append по файлам импортёров больше нет (15 записей в одном месте вместо
++// init()-append по файлам импортёров больше нет (16 записей в одном месте вместо
+ // 13 прежних). Порядок повторяет dagu/cbr.yaml; в chimport.Stats порядок значения
+ // не имеет.
+ //
+ // Таблицы записаны литералами намеренно. Ссылка на константу импортёра
+ // (cbrKeyRateTable) сделала бы проверку префикса тавтологичной: тест сравнивал бы
+ // константу с самой собой, тогда как литерал падает ровно на переименовании
+ // таблицы в имя вне cbr_-пространства — то есть на правке, которая увела бы
+ // витрину v_cbr_macro к чужим данным. Литералы сверены с константами кода при
+ // переносе регистрации.
+ //
+@@ -53,20 +53,21 @@ type cbrImporter struct {
+ var cbrImporters = []cbrImporter{
+ 	{cbrCurrencyUSDImporter, "cbr_currency_usd", ""},
+ 	{householdsBMesImporter, "cbr_households_b_mes", "SELECT count() FROM cbr_households_b_mes FINAL"},
+ 	{cbrKeyRateImporter, "cbr_key_rate", ""},
+ 	{cbrM2Importer, "cbr_m2", "SELECT count() FROM cbr_m2 FINAL"},
+ 	{cbrGoldImporter, "cbr_gold", ""},
+ 	{loansToCorporationsImporter, "cbr_loans_to_corporations", "SELECT count() FROM cbr_loans_to_corporations FINAL"},
+ 	{loansToIndividualsImporter, "cbr_loans_to_individuals", "SELECT count() FROM cbr_loans_to_individuals FINAL"},
+ 	{cbrInflExpImporter, "cbr_infl_exp", "SELECT count() FROM cbr_infl_exp FINAL"},
+ 	{cbrBankIntRateImporter, "cbr_bank_int_rate", "SELECT count() FROM cbr_bank_int_rate FINAL"},
++	{cbrIntRateLoansImporter, "cbr_int_rate_loans", "SELECT count() FROM cbr_int_rate_loans FINAL"},
+ 	{cbrCreditM2xImporter, "cbr_credit_m2x", "SELECT count() FROM cbr_credit_m2x FINAL"},
+ 	{cbrIndicatorsCpdImporter, "cbr_indicators_cpd", "SELECT count() FROM cbr_indicators_cpd FINAL"},
+ 	{cbrRuoniaImporter, "cbr_ruania", ""},
+ 	{mpSurveyImporter, "macro_series", "SELECT count() FROM macro_series FINAL WHERE source = 'cbr_survey'"},
+ 	{moBrImporter, "macro_series", "SELECT count() FROM macro_series FINAL WHERE source = 'cbr_mo_br'"},
+ 	{mpSummaryImporter, "cbr_mp_summary", ""},
+ }
+ 
+ // init — единственная регистрация импортёров ЦБ в chimport.Stats. Порядок
+ // append совпадает с порядком реестра; main.go запускает всех (или фильтрует по
+diff --git a/cbr/importers_test.go b/cbr/importers_test.go
+index 07b98c4..83f8f6f 100644
+--- a/cbr/importers_test.go
++++ b/cbr/importers_test.go
+@@ -46,20 +46,21 @@ var sharedMacroSeriesOwners = map[string]bool{
+ // должно (у cbr_key_rate/cbr_ruania/cbr_currency_usd/cbr_gold URL содержит
+ // сегодняшнюю дату, отпечаток меняется каждый прогон и no-op недостижим).
+ var expectedPublicationCountPoints = map[string]string{
+ 	"cbr_mp_survey":             "SELECT count() FROM macro_series FINAL WHERE source = 'cbr_survey'",
+ 	"cbr_households_b_mes":      "SELECT count() FROM cbr_households_b_mes FINAL",
+ 	"cbr_m2":                    "SELECT count() FROM cbr_m2 FINAL",
+ 	"cbr_credit_m2x":            "SELECT count() FROM cbr_credit_m2x FINAL",
+ 	"cbr_loans_to_corporations": "SELECT count() FROM cbr_loans_to_corporations FINAL",
+ 	"cbr_loans_to_individuals":  "SELECT count() FROM cbr_loans_to_individuals FINAL",
+ 	"cbr_bank_int_rate":         "SELECT count() FROM cbr_bank_int_rate FINAL",
++	"cbr_int_rate_loans":        "SELECT count() FROM cbr_int_rate_loans FINAL",
+ 	"cbr_indicators_cpd":        "SELECT count() FROM cbr_indicators_cpd FINAL",
+ 	"cbr_infl_exp":              "SELECT count() FROM cbr_infl_exp FINAL",
+ 	"cbr_mo_br":                 "SELECT count() FROM macro_series FINAL WHERE source = 'cbr_mo_br'",
+ }
+ 
+ // publicationDeclarer — то, как тест достаёт объявление импортёра из реестра:
+ // метод Publication() промотируется из встроенного util.ClickHouseImport, поэтому
+ // приведение работает и для голого *util.ClickHouseImport (cbr_bank_int_rate,
+ // cbr_credit_m2x зарегистрированы так), и для обёрток со встроенным значением
+ // (cbr_mo_br, cbr_mp_survey). Именованный тип, а не литерал интерфейса в теле
+@@ -92,21 +93,21 @@ var daguStatRef = regexp.MustCompile(`CLICKHOUSE_IMPORT_STAT=([A-Za-z0-9_]+)`)
+ //     известных владельцев (cbr_mp_survey, cbr_mo_br): смена таблицы под
+ //     импортёром увела бы витрину v_cbr_macro к чужим данным;
+ //   - (в) имена уникальны и лежат в chimport.Stats: дубль имени в фильтре
+ //     `make import STAT=...` выбрал бы произвольный из двух импортёров;
+ //   - (г) каждый шаг dagu/cbr.yaml присутствует в реестре: расписание —
+ //     единственный продакшн-вызов, и его опечатка иначе не видна ничем; и
+ //     обратно — шаг контура макроопроса в расписании есть (иначе пропавший шаг
+ //     dagu не заметил бы ни один тест: реестр остаётся верным сам по себе), как и
+ //     шаг контура резюме обсуждений (cbr_mp_summary: пропавший шаг оставил бы
+ //     витрины v_cbr_mp_summary* пустыми при всех зелёных тестах);
+-//   - (д) точка контроля публикации (префлайт) объявлена ровно у ожидаемых десяти
++//   - (д) точка контроля публикации (префлайт) объявлена ровно у ожидаемых одиннадцати
+ //     импортёров и запросом из expectedPublicationCountPoints: колонка countPoints
+ //     реестра сверяется с объявлением самого импортёра (метод Publication()
+ //     встроенного util.ClickHouseImport), а у импортёров вне ожидаемого набора
+ //     объявления нет вовсе — забытое объявление молча выключило бы префлайт, а
+ //     лишнее у дневных рядов дало бы HEAD на каждом прогоне без шанса на no-op.
+ func TestCbrImportersPrefixedAndRegistered(t *testing.T) {
+ 	if len(cbrImporters) == 0 {
+ 		t.Fatal("реестр cbrImporters пуст: ни один импортёр пакета не зарегистрирован")
+ 	}
+ 
+diff --git a/cbr/series_meta_test.go b/cbr/series_meta_test.go
+index 6f9d365..f0e5fe1 100644
+--- a/cbr/series_meta_test.go
++++ b/cbr/series_meta_test.go
+@@ -327,20 +327,21 @@ func TestAppendRecorderRejectsSchemaMismatch(t *testing.T) {
+ 
+ func cbrAllSeriesMeta() [][]util.SeriesMeta {
+ 	return [][]util.SeriesMeta{
+ 		cbrKeyRateSeriesMeta,
+ 		cbrCurrencyUSDSeriesMeta,
+ 		cbrGoldSeriesMeta,
+ 		cbrRuaniaSeriesMeta,
+ 		cbrM2SeriesMeta,
+ 		cbrCreditM2xSeriesMeta,
+ 		cbrBankIntRateSeriesMeta,
++		cbrIntRateLoansSeriesMeta,
+ 		cbrIndicatorsCpdSeriesMeta,
+ 		cbrInflExpSeriesMeta,
+ 		cbrLoansToIndSeriesMeta,
+ 		cbrLoansToCorpSeriesMeta,
+ 		householdsBMesSeriesMeta,
+ 	}
+ }
+ 
+ // TestSeriesMetaWellFormed: у каждого ряда заполнены все поля, ключи (source, series) не дублируются.
+ func TestSeriesMetaWellFormed(t *testing.T) {
+@@ -376,20 +377,21 @@ func TestNamedListsCovered(t *testing.T) {
+ 	for _, meta := range cbrAllSeriesMeta() {
+ 		for _, m := range meta {
+ 			catalog[m.Series] = true
+ 		}
+ 	}
+ 	lists := map[string][]string{
+ 		"cbr_indicators_cpd":        cbrIndicatorsCpdNames,
+ 		"cbr_infl_exp":              cbrInflExpNames,
+ 		"cbr_credit_m2x":            cbrCreditM2xNames,
+ 		"cbr_bank_int_rate":         cbrBankIntRateNames,
++		"cbr_int_rate_loans":        cbrIntRateLoansNames,
+ 		"cbr_loans_to_individuals":  cbrLoansToIndNames,
+ 		"cbr_loans_to_corporations": cbrLoansToCorpNames,
+ 	}
+ 	for table, names := range lists {
+ 		for _, name := range names {
+ 			if !catalog[name] {
+ 				t.Errorf("%s: name %q не описан в каталоге", table, name)
+ 			}
+ 		}
+ 	}
+diff --git a/cbr/views.go b/cbr/views.go
+index c619415..8dc988a 100644
+--- a/cbr/views.go
++++ b/cbr/views.go
+@@ -4,46 +4,47 @@ import (
+ 	"context"
+ 
+ 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+ )
+ 
+ var cbrMacroView = util.View{
+ 	Name: "v_cbr_macro",
+ 	Tables: []string{
+ 		"cbr_key_rate", "cbr_currency_usd", "cbr_gold", "cbr_ruania", "cbr_m2", "cbr_credit_m2x",
+-		"cbr_bank_int_rate", "cbr_indicators_cpd", "cbr_infl_exp", "cbr_loans_to_individuals",
+-		"cbr_loans_to_corporations", "cbr_households_b_mes",
++		"cbr_bank_int_rate", "cbr_int_rate_loans", "cbr_indicators_cpd", "cbr_infl_exp",
++		"cbr_loans_to_individuals", "cbr_loans_to_corporations", "cbr_households_b_mes",
+ 	},
+ 	Select: `SELECT 'cbr' AS source, 'cbr_key_rate' AS series, date, toFloat64(rate) AS value FROM cbr_key_rate FINAL
+ UNION ALL SELECT 'cbr', 'cbr_currency_usd', date, toFloat64(price) FROM cbr_currency_usd FINAL
+ UNION ALL SELECT 'cbr', 'cbr_gold', date, toFloat64(price) FROM cbr_gold FINAL
+ UNION ALL SELECT 'cbr', 'cbr_ruania_ruo', date, toFloat64(ruo) FROM cbr_ruania FINAL
+ UNION ALL SELECT 'cbr', 'cbr_ruania_vol', date, toFloat64(vol) FROM cbr_ruania FINAL
+ UNION ALL SELECT 'cbr', 'cbr_ruania_trans', date, toFloat64(trans) FROM cbr_ruania FINAL
+ UNION ALL SELECT 'cbr', 'cbr_ruania_min_rate', date, toFloat64(minRate) FROM cbr_ruania FINAL
+ UNION ALL SELECT 'cbr', 'cbr_ruania_max_rate', date, toFloat64(maxRate) FROM cbr_ruania FINAL
+ UNION ALL SELECT 'cbr', 'cbr_ruania_p25', date, toFloat64(percentile25) FROM cbr_ruania FINAL
+ UNION ALL SELECT 'cbr', 'cbr_ruania_p75', date, toFloat64(Percentile75) FROM cbr_ruania FINAL
+ UNION ALL SELECT 'cbr', toString(name), date, toFloat64(balance) FROM cbr_m2 FINAL
+ UNION ALL SELECT 'cbr', toString(name), date, toFloat64(value) FROM cbr_credit_m2x FINAL
+ UNION ALL SELECT 'cbr', toString(name), date, toFloat64(rate) FROM cbr_bank_int_rate FINAL
++UNION ALL SELECT 'cbr', toString(name), date, toFloat64(rate) FROM cbr_int_rate_loans FINAL
+ UNION ALL SELECT 'cbr', toString(name), date, toFloat64(value) FROM cbr_indicators_cpd FINAL
+ UNION ALL SELECT 'cbr', toString(name), date, toFloat64(value) FROM cbr_infl_exp FINAL
+ UNION ALL SELECT 'cbr', toString(name), date, toFloat64(balance) FROM cbr_loans_to_individuals FINAL
+ UNION ALL SELECT 'cbr', toString(name), date, toFloat64(balance) FROM cbr_loans_to_corporations FINAL
+ UNION ALL SELECT 'cbr', toString(name), date, toFloat64(balance) FROM cbr_households_b_mes FINAL`,
+-	Comment: "Макроряды ЦБ РФ: ключевая ставка, курс USD, учётная цена золота, RUONIA, М2 SA, кредиты физлицам и юрлицам, ставки по вкладам, ИПЦ (темпы), инфляционные ожидания, балансы домашних хозяйств. Перед расчётом читать v_series_catalog по (source, series): единицы и привязка даты различаются между рядами",
++	Comment: "Макроряды ЦБ РФ: ключевая ставка, курс USD, учётная цена золота, RUONIA, М2 SA, кредиты физлицам и юрлицам, ставки по вкладам и кредитам, ИПЦ (темпы), инфляционные ожидания, балансы домашних хозяйств. Перед расчётом читать v_series_catalog по (source, series): единицы и привязка даты различаются между рядами",
+ 	Columns: map[string]string{
+ 		"source": "Импортёр-источник: всегда cbr",
+-		"series": "Название ряда; совпадает с series в v_series_catalog. Для кредитов, ставок по вкладам, ИПЦ, инфляционных ожиданий и балансов домохозяйств название — строка исходной таблицы ЦБ",
+-		"date":   "Дата наблюдения (Date). Сдвиги даты различаются по рядам: кредиты — на месяц вперёд, инфляционные ожидания — 14-е число, ставки по вкладам — предпоследний день месяца; см. description в v_series_catalog",
++		"series": "Название ряда; совпадает с series в v_series_catalog. Для кредитов по регионам, ставок по вкладам и кредитам, ИПЦ, инфляционных ожиданий и балансов домохозяйств название — строка исходной таблицы ЦБ: у ставок по кредитам это группа заёмщиков (Всего/СМП) и срок кредита",
++		"date":   "Дата наблюдения (Date). Сдвиги даты различаются по рядам: кредиты — на месяц вперёд, инфляционные ожидания — 14-е число, ставки по вкладам и кредитам — предпоследний день месяца; см. description в v_series_catalog",
+ 		"value":  "Значение ряда (Float64). Единицы зависят от ряда: % годовых, руб. за USD, руб./грамм, млрд руб., млн руб., % к предыдущему месяцу — см. unit в v_series_catalog",
+ 	},
+ }
+ 
+ func publishSeries(ctx context.Context, conn driver.Conn, meta []util.SeriesMeta) error {
+ 	if err := util.UpsertSeriesCatalog(ctx, conn, meta); err != nil {
+ 		return err
+ 	}
+ 	_, err := util.CreateView(ctx, conn, cbrMacroView)
+ 	return err

@@ -1,0 +1,914 @@
+# Review package: 17496de..e0f330f
+
+## Commits
+e0f330f fix cbr_int_rate_loans: anchor-based column base, zero as no-data, review minors
+
+## Files changed
+ ARCHITECTURE.md                                    |   2 +-
+ cbr/int_rate_loans.go                              |  96 +++++---
+ cbr/int_rate_loans_test.go                         | 260 ++++++++++++++++++++-
+ cbr/series_meta.go                                 |  47 +++-
+ cbr/views.go                                       |   2 +-
+ .../plans/2026-10-15-cbr-int-rate-loans.md         |  25 +-
+ .../specs/2026-10-15-cbr-int-rate-loans-design.md  |  15 +-
+ scripts/mcp_check.py                               |   2 +-
+ 8 files changed, 393 insertions(+), 56 deletions(-)
+
+## Diff
+diff --git a/ARCHITECTURE.md b/ARCHITECTURE.md
+index 47d9a24..7d08116 100644
+--- a/ARCHITECTURE.md
++++ b/ARCHITECTURE.md
+@@ -1,14 +1,14 @@
+ # ARCHITECTURE.md — clickhouse-import-rosstat
+ 
+ > Контекстный документ для AI-ассистентов (Kimi Code и др.). Содержит всё необходимое для написания нового кода без полного чтения репозитория: паттерны, конвенции, схемы БД, целевую архитектуру. Обновлять при каждом изменении архитектуры.
+-> Последнее обновление: 2026-10-15 — фаза 2 [ROADMAP_KEY_RATE.md](docs/ROADMAP_KEY_RATE.md) §6, пункт 4.2 №8 — «ставки по кредитам нефинансовым организациям» ([спека](docs/superpowers/specs/2026-10-15-cbr-int-rate-loans-design.md), [план](docs/superpowers/plans/2026-10-15-cbr-int-rate-loans.md)): пакет `cbr/` получил импортёр `cbr_int_rate_loans` (`cbr/int_rate_loans.go`; 10-я запись реестра `cbr/importers.go` и 10-й шаг `dagu/cbr.yaml` — сразу после `cbr_bank_int_rate`, поэтому шагов цепочки стало 16) — средневзвешенные процентные ставки по кредитам, предоставленным кредитными организациями нефинансовым организациям в рублях (страница источника `cbr.ru/statistics/pdko/int_rat/`), из XLSX `loans_nonfin.xlsx` по прямой стабильной ссылке `https://www.cbr.ru/vfs/statistics/pdko/int_rat/loans_nonfin.xlsx` (в URL даты нет — файл качает шаблон, те же байты уходят и в разбор, и в винтажный архив версии, §9.6), лист `ставки_руб`: 16 рядов = 8 сроков × две группы («Всего:» и «СМП:»; имена рядов объявляет код, текст заголовков источника сверяется с ожидаемым сроком), помесячно с 2014-01; дата точки — предпоследний день отчётного месяца (конвенция та же, что у `cbr_bank_int_rate`, поэтому ставки по вкладам и по кредитам сопоставимы на одной оси), значение — % годовых; таблица `cbr_int_rate_loans` (`name LowCardinality(String)`, `date Date`, `rate Float64`, `ReplacingMergeTree ORDER BY (name, date)`, §6.2); точка контроля публикации объявлена (`PublicationCountPoints = SELECT count() FROM cbr_int_rate_loans FINAL`, §8 п. 13) — файл обновляется раз в месяц (реже ежедневного шага), поэтому будничный прогон — HEAD-префлайт и no-op без скачивания; производные (каталог рядов `series_catalog` и витрина `v_cbr_macro`, §6.3) публикует шаблон через `AfterImport`; разбор fail-fast (якорь шапки «% годовых», строка групп и строка заголовков колонок выводятся из якоря, пустая ячейка источника — не точка ряда, стандарт §6.7, сноска источника `*` завершает данные, ноль точек — ошибка), тесты офлайн на живой фикстуре `cbr/testdata/loans_nonfin.xlsx`; проверки контура добавлены в `scripts/mcp_check.py` (полнота каталога — 16 рядов, закрытость сырой таблицы), снимок покрытия — ветка `cbr_int_rate_loans` в `sql/key_rate_coverage.sql`; шаг `cbr_int_rate_loans` — 10-й из 16 шагов `dagu/cbr.yaml` (09:17 МСК); живая приёмка 2026-10-15: `make import STAT=cbr_int_rate_loans` — `Imported 2432 rows` (16 рядов × 152 месяца, 2014-01-30 … 2026-08-30), повтор — `no-op, версия 32dafeda… уже импортирована, 2432 точек на месте`, spot-сверка с живым xlsx (7.35 / 19.06 / 14.22) совпала, каталог 16 рядов, витрина `v_cbr_macro` +2 432 строки (48 942 всего), сырая таблица закрыта для `kimi_reader` (497), `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА, `dagu validate dagu/cbr.yaml` — exit 0, версия файла в винтажном архиве и в `registry.jsonl`; §2/§6.1/§6.2/§6.3/§7/§8 обновлены; ранее 2026-10-15 — фаза 2 [ROADMAP_KEY_RATE.md](docs/ROADMAP_KEY_RATE.md) §6, «починка пустых рядов» — остаток Сбера ([спека](docs/superpowers/specs/2026-10-15-sber-spending-importers-design.md), [план](docs/superpowers/plans/2026-10-15-sber-spending-importers.md)): старый путь выгрузки `sberindex.ru/proxy/services/node-services/v1/...` отдаёт HTML-оболочку SPA (`200`, `text/html`) — из-за этого таблицы `sber_consumper_spending_index` и `sber_izmenenie_trat` годами были пусты; оба импортёра пакета `bank/` переведены на шаблон `util.ClickHouseImport` (случай `CrawFunc`, DDL в `%s`-форме) и качают живые CSV общим транспортом `util.GetCSV` по `https://sberindex.ru/api/dataset/deprecated/csv/ru/consumper-spending-index-sa.csv` (470 точек = 5 категорий × 94 месяца, 2018-12-01 … 2026-09-01, индекс реальных потребительских расходов, 100 = декабрь 2018) и `.../ver-izmenenie-trat-po-kategoriyam.csv` (7 038 точек = 46 категорий × 153 ISO-недели, 2023-11-12 … 2026-10-11, % г/г); формат обоих — UTF-8 с BOM, LF, `date;category;value`, скачиваются обычным GET без cookie (HEAD источника — 403); разбор вынесен в чистую `bank/sber_csi_parse.go` (пустое значение источника — не точка ряда, стандарт §6.7; fail-fast на чужой шапке, битой дате и нечисловом значении), появился первый тест пакета `bank/sber_csi_test.go` на урезанных живых фикстурах `bank/testdata/*.csv`, каталог `bank/series_meta.go` (два **разных** `source` — `sber_consumper_spending_index` и `sber_izmenenie_trat`: у наборов пересекаются имена категорий, общий ключ схлопнул бы разные ряды; 5 + 46 = 51 ряд) и витрина `bank/views.go` (`v_bank_sber_spending`, long-форма `source, series, date, value`, 7 508 строк); точка контроля публикации у обоих **не объявлена** осознанно (HEAD источника — 403, отпечаток версии непостроим, префлайт деградировал бы в полный импорт; у недельного набора ещё и темп файла равен темпу шага — §8 п. 13), и это **не относится** к `sber_finansovie_rezultaty` — у того объявление есть (в README формулировку про «HEAD-префлайт у Сбера» развели явно); живая приёмка 2026-10-15: `Imported 470 rows` и `Imported 7038 rows`, повтор — те же числа (`count() FINAL` 470 / 7 038, витрина не растёт), снимок покрытия — 51 строка (5 × 94 и 46 × 153 точки), витрина `v_bank_sber_spending` — 7 508 строк, каталог 5 и 46 рядов, `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА, `dagu validate dagu/bank.yaml` — exit 0; тем же PR `util.GetCSV` получил снятие UTF-8 BOM (нужно было для этих выгрузок); полный рефакторинг пакета `bank/` (реестр, остальные четыре импортёра, `colly` в `domrf_mortgage.go`) — вне объёма пункта (стандарт §18), отдельный будущий пункт; §2/§6.1/§6.3 обновлены; ранее 2026-10-14 — фаза 2, шаг 2 [ROADMAP_KEY_RATE.md](docs/ROADMAP_KEY_RATE.md) §6 («рынок труда Росстата»): импортёр `rosstat_labour_force_mes` (пакет `rosstat/`, пятый шаг `dagu/rosstat.yaml`, четверг 12:17 МСК) читает лист «5» выгрузки `trud-1_15-s.xlsx` со страницы `rosstat.gov.ru/labour_force` — шесть рядов рынка труда (рабочая сила, занятые, безработные, уровень участия, уровень занятости, уровень безработицы), помесячно с 2017-01; значения — Float64 (у соседних росстатовских рядов legacy Float32); точка контроля публикации объявлена шаблоном (§8 п. 13) — повтор — no-op без скачивания файла; производные (каталог и витрина `v_rosstat_macro`) публикует `AfterImport: afterRosstatMacro`; живая приёмка 2026-10-14: `Imported 690 rows` (6 рядов × 115 месяцев, 2017-01-31 … 2026-07-31), повтор — `no-op, версия 22d4dd4e… уже импортирована, 690 точек на месте`, spot-сверка с живым xlsx совпала по всем шести рядам, `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА (`v_rosstat_macro` 29 740 строк / 147 рядов, каталог `rosstat` 147, сырая `rosstat_labour_force_mes` закрыта), `dagu validate dagu/rosstat.yaml` — exit 0; §2/§6.1/§6.3/§7/§8 обновлены; ранее 2026-10-14 — фаза 2, шаг 1 [ROADMAP_KEY_RATE.md](docs/ROADMAP_KEY_RATE.md) §6 («починка пустых рядов»): пакет `rosstat/` переведён на общий транспорт `util.GetPage`/`util.FindLink` (§3; собственный colly-обход и построчные вставки удалены), импортёры и их таблицы переименованы в `rosstat_ipc_mes`/`rosstat_ipc_weeks`/`rosstat_salaries_mes`/`rosstat_vvp_kvartal`, регистрация сведена в единый реестр `rosstat/importers.go` с тестом-энфорсером `TestRosstatImportersPrefixedAndRegistered` (§2), четыре ряда ИПЦ получили имена, закреплённые кодом, и исправлен недельный разбор (128 рядов / 25 691 точка → 131 / 26 611); два импортёра, падавшие до `AfterImport` (`salaries_mes`, `vvp_kvartal`), починены, и все четыре приняты живым прогоном — `rosstat_ipc_mes` 1 716 точек, `rosstat_ipc_weeks` 26 611, `rosstat_salaries_mes` 421, `rosstat_vvp_kvartal` 302, повтор у трёх с точкой контроля публикации — no-op без скачивания файла; миграция выполнена в порядке «заполнить новые таблицы → сверить → переключить витрины → удалить старые»: `v_rosstat_macro` пересоздана публикацией `AfterImport` (29 050 строк / 141 ряд), `v_model_inputs` переключена на `rosstat_ipc_mes`/`rosstat_ipc_weeks`, старые таблицы `ipc_mes`/`ipc_weeks`/`salaries_mes`/`vvp_kvartal` удалены после сверки, `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА; тем же PR введён нормативный [docs/IMPORTER_PACKAGE_STANDARD.md](docs/IMPORTER_PACKAGE_STANDARD.md) — стандарт пакета импортёров (состав файлов, транспорт, шаблон, имена, регистрация, тесты, каталог и витрины, точка контроля публикации, расписание, порядок приёмки), по которому выполнен этот рефакторинг и на который ссылаются §3, `AGENTS.md` (правило 7 и порядок начала сессии) и `README.md`; §2/§3/§6.1/§6.3/§8 обновлены; ранее 2026-10-14 — LLM-слой 1.2 переведён на официальный `anthropic-sdk-go` (Anthropic Messages API: `POST <base>/v1/messages`, ключ заголовком `x-api-key`, обязательный `max_tokens = 8192`; base — без `/v1`, путь SDK дописывает сам; клиент строится на каждый вызов с общим `util.HttpClient`, User-Agent — SDK-шный `Anthropic/Go …` (ротация `randomUA` нужна сайтам РФ, не API провайдера), повторы SDK выключены сознательно, дедлайн запроса — `mpLLMTimeout`, 65 с): base владельца (`LLM_BASE_URL` — Anthropic-совместимый DeepSeek) работает как есть, без правки env (прежний OpenAI-совместимый `/chat/completions` на нём отдавал 404) — подтверждено живой проверкой 2026-10-14: полный прогон на изолированной БД с реальным env владельца дал 22 резюме / 1303 блока / 3488 regex-строк / 1020 LLM-строк, ошибок транспорта нет; классификация ошибок прежняя: отказ провайдера (`*anthropic.Error`, тело режется до фрагмента ≤512 байт) и ошибки, при которых не пришло ни байта ответа (имя не разрешилось, соединение, TLS, дедлайн) — без повтора; обрыв на неполном ответе (неполные заголовки или оборванное тело — SDK отдаёт это как `io.ErrUnexpectedEOF`) и обрезанный конверт — формат, один повтор (по типам SDK их не различить, цена повтора — один вызов); самописный `util.PostJSON` удалён вместе с `postJSONTimeout` и своими тестами (в §3 вместо записи о нём — `util.ErrorSnippet`, которым режется и тело провайдерской ошибки); конфигурация, состав данных и деградация до regex-слоя не изменились; §3/§5/§6.1/§11 обновлены; ранее 2026-10-14 — контур резюме обсуждения ключевой ставки ЦБ, шаг 1.2 [ROADMAP_KEY_RATE.md](docs/ROADMAP_KEY_RATE.md) §6: пакет `cbr/` получил импортёр `cbr_mp_summary` (15-я, последняя запись реестра `cbr/importers.go`) — три свои таблицы (`cbr_mp_summary` — шапка решения, `cbr_mp_summary_block` — дословный текст пяти блоков, `cbr_mp_summary_channel` — разметка по 11 каналам ДКП) и три витрины (`v_cbr_mp_summary`, `v_cbr_mp_summary_blocks`, `v_cbr_mp_summary_channels`); разметка каналов **двухслойная** — детерминированные регексы (`method='regex'`, работают всегда, без сети и ключей) и модель LLM (`method='llm'`, фактическое имя модели и версия промпта пишутся в данные и входят в ключ `ReplacingMergeTree`, поэтому смена модели или промпта добавляет строки рядом, не затирая старые); `Import()` у импортёра свой (шаблон `util.ClickHouseImport` не участвует): дельта считается по индексу материалов заседаний `cbr.ru/dkp/mp_dec/decision_key_rate/`, известность документа — адрес в шапке **∧** строки блоков по дате заседания **∧** regex-строки каналов (`method='regex'`), HEAD-префлайта нет сознательно (§8 п. 13); транспорт LLM-слоя — новый хелпер `util.PostJSON` (§3; ключ едет заголовком, в тексты ошибок не попадает), конфигурация — `LLM_BASE_URL`/`LLM_API_KEY`/`MP_SUMMARY_LLM_MODEL` (§5), без ключа документ остаётся с regex-слоем (warn, догон следующим прогоном); шаг `cbr_mp_summary` — 15-й (последний) в `dagu/cbr.yaml` (09:17 МСК), плюс новый DAG `dagu/calendar.yaml` (10:07 МСК, один шаг `events_calendar`), а `calendar/events.go` теперь сам забирает календарь заседаний из `cbr.ru/dkp/cal_mp/` — канонические строки заседаний ложатся в `events_calendar` рядом с ручными строками-триггерами сида (различие рядов документировано в §7); §2/§3/§5/§6.1/§6.2/§6.3/§6.5/§7/§8 обновлены; живая приёмка (бэкфилл 22 резюме, калибровка разметки, `make mcp-check`) — отдельным шагом плана; ранее 2026-10-14 — механизм точек контроля публикаций переведён из персонального кода `cbr_mo_br` в **свойство общего шаблона** `util.ClickHouseImport`: три опциональных поля — `PublicationCountPoints` (SQL числа точек ряда; непустое значение включает точку контроля публикации), `PublicationSource` (ключ версии в `source_publications` и префикс лога префлайта; пусто → `TableName`) и `AfterImport` (производные — каталог и витрина — после `Send` точек и до записи строки версии) — плюс хелперы `util.PublicationPreflight`/`util.CountPoints` и методы шаблона `PublicationKey()`/`Publication()` (`util/publications.go`); полный цикл `Import` — DDL → `BeforeImport` → префлайт → точки → `AfterImport` → строка версии последней, а `points` строки версии — результат запроса `CountPoints`, а не `batch.Rows()` (у `cbr_households_b_mes` 9030 ячеек листа против 7350 точек ряда); объявления получили **14 импортёров**: десять в `cbr/` (`cbr_mp_survey`, `cbr_households_b_mes`, `cbr_m2`, `cbr_credit_m2x`, `cbr_loans_to_corporations`, `cbr_loans_to_individuals`, `cbr_bank_int_rate`, `cbr_indicators_cpd`, `cbr_infl_exp`, `cbr_mo_br`) и четыре вне него — `rosstat/ipc_mes`, `rosstat/salaries_mes`, `rosstat/vvp_kvartal` (их производные `series_catalog` + `v_rosstat_macro` переехали в `AfterImport: afterRosstatMacro`) и `bank/sber_finansovie_rezultaty`; это результат инвентаря всего реестра (51 запись `chimport.Stats`, 37 вне `cbr/`: 4 переведённых, 26 отказов по трём критериям, 6 импортёров без артефакта, 1 исключение `tbank_group_ifrs`); обёртка `publishedStat` упразднена — производные публикует шаблон (`AfterImport: afterCbrMacro(<мета>)`), реестр `cbrImporter` получил колонку `countPoints`, а тест-энфорсер `TestCbrImportersPrefixedAndRegistered` проверяет и ожидаемый набор объявлений, и совпадение литерала с объявлением самого импортёра; четыре дневных `cbr_*` (`cbr_key_rate`, `cbr_ruania`, `cbr_currency_usd`, `cbr_gold`) и `ipc_weeks` оставлены без префлайта осознанно (в URL подставляется сегодняшняя дата / темп файла равен темпу шага), `tbank_group_ifrs` исключён (ссылка ведёт на PDF, а своей таблицы у импортёра нет — он пишет в общую `rus_vtb_group_ifrs`); §3/§6.1/§6.2/§7/§8 обновлены; живая приёмка (первый прогон, no-op повтора, `make mcp-check`) — отдельным шагом, `docs/ROADMAP_KEY_RATE.md` §6 пункт 1.7; ранее 2026-10-13 — контур ключевой ставки, шаг 1.5 [ROADMAP_KEY_RATE.md](docs/ROADMAP_KEY_RATE.md) §6 «макроэкономический опрос ЦБ»: импортёр `cbr_mo_br` (пакет `cbr/`, 14-я запись реестра `cbr/importers.go` — стало 14) читает консенсус-бенчмарк аналитиков из XLSX `full.xlsx` (ссылка `a[href$="full.xlsx"]` на странице `cbr.ru/statistics/ddkp/mo_br/`; 18 листов = «Навигация» + 17 листов-показателей; из 9 блоков статистик файла берутся 6 — median, p10, p90, min, max, answers; волны с 2021-05, ~8 в год) → общая `macro_series` (`source='cbr_mo_br'`, имена рядов `<base>_<year>_<stat>`, у листов 16–17 без года), каталог `series_catalog` (описания генерируются из разбора) и витрина `v_cbr_mo_br` (грант `kimi_reader` — `sql/mcp_kimi_reader.sql`, проверки — `scripts/mcp_check.py`); новый общий механизм точек контроля публикаций — `util/publications.go` (`HeadFingerprint`/`PublicationKnown`/`SavePublication`, `EnsurePublications`) и каноническая таблица `source_publications` (§6.2, агенту не выдана): ежедневный прогон делает HEAD-префлайт по ссылке файла, и при известной версии с совпавшим числом точек это no-op без скачивания (первый потребитель механизма — `cbr_mo_br`; миграция остальных импортёров — вне объёма, §8); шаг `cbr_mo_br` — последний в `dagu/cbr.yaml` (шагов цепочки стало 14); §2/§3/§6.1/§6.2/§6.3/§6.5/§7/§8 обновлены; живая приёмка (первый прогон, no-op повтора, `make mcp-check`, статус 1.5) — отдельным шагом плана; ранее 2026-10-13 — рефакторинг пакета `cbr/` (фаза 3 [ROADMAP_KEY_RATE.md](docs/ROADMAP_KEY_RATE.md) §6): весь пакет приведён к единому стандарту — XML-транспорты `cbr_currency_usd` и `cbr_gold` переведены на официальные ленты ЦБ (`XML_dynamic.asp`, `xml_metall.asp`: windows-1251 через `util.GetXML`/`util.ParseXML`, глубина с 2013-01-10), HTML-транспорты (`cbr_key_rate` и поиск ссылок на XLSX в `cbr_infl_exp`/`cbr_credit_m2x`/`cbr_indicators_cpd`) — с colly на `util.GetFile` + goquery (`cbr/links.go`, `findLink`), XLSX-импортёры (`cbr_households_b_mes`, `cbr_m2`, `cbr_loans_*`) пишут одним батчем и покрыты тестами на фикстурах, `cbr_ruania`/`cbr_bank_int_rate` почищены; таблица балансов домохозяйств переименована в `cbr_households_b_mes` (к прежнему имени добавлен префикс пакета; витрина `v_cbr_macro` обновлена); удалены дубли и мёртвый код — `cbr/avgproc_stav.go`, `cbr/queries.go` (таблицы `cbr_queries_*`), `cbr/purcb.go` и мёртвый скрапер cbr в `financial/` вместе со своим DDL `cbr_rates`; контур мониторинга предприятий ЦБ переехал из отдельного пакета в `cbr/` — импортёр `cbr_mp_survey` добавлен 13-м шагом в `dagu/cbr.yaml`, отдельный DAG-файл и расписание упразднены (общее расписание контура — 09:17 МСК, цепочка из 13 шагов, ныне 14 — см. запись выше); регистрация импортёров пакета сведена в единый реестр `cbr/importers.go` (13 записей, один `init()`, ныне 14 — см. запись выше) с тестом-энфорсером `TestCbrImportersPrefixedAndRegistered` (префикс `cbr_` у имён и таблиц, уникальность имён, каждая строка `dagu/cbr.yaml` есть в реестре); §2/§3/§6.1/§6.3/§6.5/§7/§8 обновлены; сами данные контура не меняются — приёмка «числа совпали с baseline» и миграция имён таблиц идут отдельным шагом; ранее 2026-10-13 — контур мониторинга предприятий ЦБ: импортёр `cbr_mp_survey` (`mp_survey_data.xlsx`, стабильный id 135603; 31 лист, читаются 4) → 13 рядов `macro_series` (`source='cbr_survey'`: ценовые ожидания бизнеса и ИБК ±с.к., условия кредитования, ожидаемый прирост отпускных цен ±с.к., загрузка мощностей ±с.к., обеспеченность персоналом ±с.к., ожидания численности ±с.к. — 2084 точки, 1640 месячных + 444 квартальных), каталог `series_catalog` (13 записей), витрина `v_cbr_survey` (грант `kimi_reader` — `sql/mcp_kimi_reader.sql`), ежедневный прогон в составе расписания ЦБ (на тот момент — отдельный файл), прогон идемпотентен; §2/§6.1/§6.2/§6.3/§6.5/§7 обновлены; ✅ живая приёмка 2026-10-13 (`Imported 2084 rows`; `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА: витрина 2084 строки, каталог 13 записей, сырая `macro_series` закрыта; сверка с ЦБ: с.к. ценовые ожидания 2026-08 = 22,7 п., +1,6 п. к июлю); ранее 2026-10-13 — реестр СБКТС Росстандарта: импортёр `gost_vehicle_safety_certificate` (`craw/`) переписан на REST API портала `gost.ru` (заголовок `gtn.access.appid` из `GOST_APP_ID`; плоский дневной срез по дате публикации, `size=900`), три режима `GOST_MODE` (`since`/`full`/`check`) и расширенная схема (10 колонок; шесть новых добавляются идемпотентными `ALTER TABLE … ADD COLUMN IF NOT EXISTS`, живая таблица не пересоздаётся); витрины `v_gost_vehicle_safety_certificate` (строки) и `v_gost_vehicle_safety_daily` (день × марка, `certificates = uniqExact`); расписание `dagu/craw.yaml` — раз в час, режим `since` (`GOST_MODE=full`/`check` — вручную); §2/§3/§5/§6.1/§6.2/§6.3/§6.5/§7 обновлены; ранее 2026-10-12 — контур новостей РФ-канала: пакет `news/`, импортёр `news_watch` (5 RSS-лент: Интерфакс, РБК, ЦБ РФ ×2, TASS → `news_events`, режимы `all`/`since`/`check`, витрина `v_news_events` с фильтром тезисов, расписание `dagu/news.yaml` каждые 30 минут); §3 — `util.GetXML`; §5 — `NEWS_WATCH_MODE`; §6.1/§6.2/§6.3/§7 обновлены; ранее 2026-10-12 (контур bold.report (ByteTree) — T+1 ETF-агрегат и цена: пакет `bold/`, два импортёра — `bold_etf_flows` (7 рядов `etf_bold_*` в `macro_series`, `source = 'bold'`, плюс таблица пер-фондового среза `bold_fund_snapshot` с ключом `(date, ticker, name)`) и `bold_gold_price` (площадка `bold` в `gold_prices`); §6.1 — строки импортёров, режимы 4/8 запросов и триггеры полного пути; §6.2 — `source='bold'` в комментарии DDL `macro_series` (копия синхронизирована в `ingest/schema.go`) и канонический DDL `bold_fund_snapshot`; §6.3 — витрины `v_gold_etf_flows_daily` и `v_gold_etf_funds_daily`; §7 — расписание `dagu/bold.yaml`, ежедневно 08:07 МСК; ✅ живая приёмка 2026-10-12 пройдена после фикса путей: `bold_gold_price` — 3138 точек (`2026-10-09` = 4216,3), `bold_etf_flows` — 21054 точки + 73 строки среза, повтор — no-op, `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА; у эндпоинтов источника обязателен суффикс `.json` (без него CDN отдаёт `403 AccessDenied`), он закреплён тестом `TestBoldEndpointsPinPaths`); ранее 2026-10-12 — (WGC ETF Flows: канонический транспорт — JSON API `fscdn.gold.org` (`wgc/etf_api.go` + `util.GetJSON`), локальная выгрузка `ETF_Flows_*.xlsx` — фолбэк; §3 — в `util/` добавлен `GetJSON` с проверкой HTTP-статуса; §6.1 — строка `wgc_etf_flows` (транспорт API, глубины рядов, округление тоннажных стоков источника до 0,01 т); §6.3 — источник рядов `v_gold_etf_flows`; §6.1/§7 — расписание `wgc` ежедневно 20:17 МСК вместо понедельника, выгрузки ЦБ по-прежнему качаются вручную); ранее 2026-10-11 — wgc-контур «ETF Flows и резервы ЦБ»: §6.1 — реализованы импортёры `wgc_etf_flows` (20 рядов `etf_<метрика>_<регион>` месячных потоков и запасов золотых ETF из выгрузки `ETF_Flows_*.xlsx`) и `wgc_cb_reserves` (14 рядов `cb_gold_change_tonnes_<iso3>` и `cb_gold_holdings_tonnes_<iso3>` по семи ЦБ из выгрузок `Changes_latest_as_of_*.xlsx` и `World_official_gold_holdings_as_of_*.xlsx`), пакет `wgc/`, расписание `dagu/wgc.yaml` (понедельник 20:17 МСК; с 2026-10-12 — ежедневно, см. запись выше), `source = 'wgc'`; §6.2 — `wgc` перенесён из планируемых в реализованные `source` (копии комментария DDL `macro_series` — здесь и в `ingest/schema.go` — синхронизированы); §6.3 — приоритет `v_gold_etf_flows` стал `wgc > webbridge > manual`, добавлена витрина `v_cb_gold_dynamics` (7 ЦБ: MoM/YTD и уровень) с комментариями и грантом `kimi_reader`; §6.5 — контур правилу 11 удовлетворяет, проверки добавлены в `scripts/mcp_check.py`; ранее того же дня — фаза 3 «спрос, консенсус и обратная связь»: §6.1 — реализован импортёр `forecast_resolve` (пакет `forecast/`, расписание `dagu/forecast.yaml`, 20:23 МСК) — сверка прогнозов `xau_q_avg` с фактом из `gold_prices`; §6.2 — `gold_forecasts` перенесена из «не реализованы» в реализованные (копии DDL: `ingest/schema.go` и сид `sql/gold_forecasts_q4_2026_seed.sql`, комментарий `scenario` дополнен `'range'`); §6.3 — витрины `v_gold_forecasts` (консенсус банков и own-сетка) и `v_gold_etf_flows` (пивот 20 рядов WGC Gold ETF Flows, source `webbridge`), `v_forecast_accuracy` заполняет резолвер; §6.5 — endpoint `POST /v1/gold_forecasts` и пятая таблица `EnsureTables`; сиды `sql/wgc_etf_flows_catalog.sql` и бэкфилл `sql/forecast_log_backfill.sql`; ранее того же дня — §6.1/§6.3 — реализован импортёр `eia` (EIA API v2: запасы дистиллятов WDISTUS1, загрузка НПЗ WPULEUS3) → `macro_series` (`source='eia'`), витрина `v_eia_petroleum`; `v_gold_dashboard` читает значения по приоритету `eia > webbridge > manual`; §5 — env `EIA_API_KEY`; dagu — `dagu/eia.yaml`, среда 19:43 МСК; §6.2 — комментарий `source` в DDL `macro_series` приведён к код-копии `ingest/schema.go`; §6.5 — «единственный путь записи» называет и `gold_prices`; валидация ingest отсекает даты вне диапазона Date32 [1900-01-01, 2299-12-31] → 400; ранее того же дня — §6.5 — endpoint `POST /v1/gold_prices` (venue `comex_front`) и поле `source` в `POST /v1/manual_series` (`manual`/`webbridge`/`imf`); §6.3 — витрина `v_imf_macro` (золотые резервы ЦБ, IMF IRFCL); §6.2 — копия DDL `gold_prices` в `ingest/schema.go` и комментарий source; ранее того же дня — §6.4 — поактивный AISC Полюса теперь калибруется скриптом `scripts/extrapolation_aisc.py` (цель `make dcf-aisc`) как доля клина по пресс-релизам 2019–2021 с увязкой к групповому AISC и `capex_sustaining = 0`; сид применяется вручную и в `dagu/dcf.yaml` не входит — цепочка остаётся двухшаговой; ранее 2026-10-11 — §6.1/§6.2 сид `mine_plans` в расписании `dagu/dcf.yaml` и окно правдоподобных годов плана в `dcf/seed.go`; 2026-10-10 — в `polyus/` включены шесть пресс-релизов 4Q/FY за 2019–2024). Базовый коммит: `a43af65` (разделы сверены с кодом на этом коммите).
++> Последнее обновление: 2026-10-15 — фаза 2 [ROADMAP_KEY_RATE.md](docs/ROADMAP_KEY_RATE.md) §6, пункт 4.2 №8 — «ставки по кредитам нефинансовым организациям» ([спека](docs/superpowers/specs/2026-10-15-cbr-int-rate-loans-design.md), [план](docs/superpowers/plans/2026-10-15-cbr-int-rate-loans.md)): пакет `cbr/` получил импортёр `cbr_int_rate_loans` (`cbr/int_rate_loans.go`; 10-я запись реестра `cbr/importers.go` и 10-й шаг `dagu/cbr.yaml` — сразу после `cbr_bank_int_rate`, поэтому шагов цепочки стало 16) — средневзвешенные процентные ставки по кредитам, предоставленным кредитными организациями нефинансовым организациям в рублях (страница источника `cbr.ru/statistics/pdko/int_rat/`), из XLSX `loans_nonfin.xlsx` по прямой стабильной ссылке `https://www.cbr.ru/vfs/statistics/pdko/int_rat/loans_nonfin.xlsx` (в URL даты нет — файл качает шаблон, те же байты уходят и в разбор, и в винтажный архив версии, §9.6), лист `ставки_руб`: 16 рядов = 8 сроков × две группы («Всего:» и «СМП:»; имена рядов объявляет код, текст заголовков источника сверяется с ожидаемым сроком), помесячно с 2014-01; дата точки — предпоследний день отчётного месяца (конвенция та же, что у `cbr_bank_int_rate`, поэтому ставки по вкладам и по кредитам сопоставимы на одной оси), значение — % годовых; таблица `cbr_int_rate_loans` (`name LowCardinality(String)`, `date Date`, `rate Float64`, `ReplacingMergeTree ORDER BY (name, date)`, §6.2); точка контроля публикации объявлена (`PublicationCountPoints = SELECT count() FROM cbr_int_rate_loans FINAL`, §8 п. 13) — файл обновляется раз в месяц (реже ежедневного шага), поэтому будничный прогон — HEAD-префлайт и no-op без скачивания; производные (каталог рядов `series_catalog` и витрина `v_cbr_macro`, §6.3) публикует шаблон через `AfterImport`; разбор fail-fast (якорь шапки «% годовых», из якоря выводятся строка групп, строка заголовков колонок и база колонок данных, пустая ячейка источника и литеральный ноль — не точка ряда, стандарт §6.7, сноска источника `*` завершает данные, ноль точек — ошибка), тесты офлайн на живой фикстуре `cbr/testdata/loans_nonfin.xlsx`; проверки контура добавлены в `scripts/mcp_check.py` (полнота каталога — 16 рядов, закрытость сырой таблицы), снимок покрытия — ветка `cbr_int_rate_loans` в `sql/key_rate_coverage.sql`; шаг `cbr_int_rate_loans` — 10-й из 16 шагов `dagu/cbr.yaml` (09:17 МСК); живая приёмка 2026-10-15: `make import STAT=cbr_int_rate_loans` — `Imported 2432 rows` (16 рядов × 152 месяца, 2014-01-30 … 2026-08-30), повтор — `no-op, версия 32dafeda… уже импортирована, 2432 точек на месте`, spot-сверка с живым xlsx (7.35 / 19.06 / 14.22) совпала, каталог 16 рядов, витрина `v_cbr_macro` +2 432 строки (48 942 всего), сырая таблица закрыта для `kimi_reader` (497), `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА, `dagu validate dagu/cbr.yaml` — exit 0, версия файла в винтажном архиве и в `registry.jsonl`; §2/§6.1/§6.2/§6.3/§7/§8 обновлены; ранее 2026-10-15 — фаза 2 [ROADMAP_KEY_RATE.md](docs/ROADMAP_KEY_RATE.md) §6, «починка пустых рядов» — остаток Сбера ([спека](docs/superpowers/specs/2026-10-15-sber-spending-importers-design.md), [план](docs/superpowers/plans/2026-10-15-sber-spending-importers.md)): старый путь выгрузки `sberindex.ru/proxy/services/node-services/v1/...` отдаёт HTML-оболочку SPA (`200`, `text/html`) — из-за этого таблицы `sber_consumper_spending_index` и `sber_izmenenie_trat` годами были пусты; оба импортёра пакета `bank/` переведены на шаблон `util.ClickHouseImport` (случай `CrawFunc`, DDL в `%s`-форме) и качают живые CSV общим транспортом `util.GetCSV` по `https://sberindex.ru/api/dataset/deprecated/csv/ru/consumper-spending-index-sa.csv` (470 точек = 5 категорий × 94 месяца, 2018-12-01 … 2026-09-01, индекс реальных потребительских расходов, 100 = декабрь 2018) и `.../ver-izmenenie-trat-po-kategoriyam.csv` (7 038 точек = 46 категорий × 153 ISO-недели, 2023-11-12 … 2026-10-11, % г/г); формат обоих — UTF-8 с BOM, LF, `date;category;value`, скачиваются обычным GET без cookie (HEAD источника — 403); разбор вынесен в чистую `bank/sber_csi_parse.go` (пустое значение источника — не точка ряда, стандарт §6.7; fail-fast на чужой шапке, битой дате и нечисловом значении), появился первый тест пакета `bank/sber_csi_test.go` на урезанных живых фикстурах `bank/testdata/*.csv`, каталог `bank/series_meta.go` (два **разных** `source` — `sber_consumper_spending_index` и `sber_izmenenie_trat`: у наборов пересекаются имена категорий, общий ключ схлопнул бы разные ряды; 5 + 46 = 51 ряд) и витрина `bank/views.go` (`v_bank_sber_spending`, long-форма `source, series, date, value`, 7 508 строк); точка контроля публикации у обоих **не объявлена** осознанно (HEAD источника — 403, отпечаток версии непостроим, префлайт деградировал бы в полный импорт; у недельного набора ещё и темп файла равен темпу шага — §8 п. 13), и это **не относится** к `sber_finansovie_rezultaty` — у того объявление есть (в README формулировку про «HEAD-префлайт у Сбера» развели явно); живая приёмка 2026-10-15: `Imported 470 rows` и `Imported 7038 rows`, повтор — те же числа (`count() FINAL` 470 / 7 038, витрина не растёт), снимок покрытия — 51 строка (5 × 94 и 46 × 153 точки), витрина `v_bank_sber_spending` — 7 508 строк, каталог 5 и 46 рядов, `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА, `dagu validate dagu/bank.yaml` — exit 0; тем же PR `util.GetCSV` получил снятие UTF-8 BOM (нужно было для этих выгрузок); полный рефакторинг пакета `bank/` (реестр, остальные четыре импортёра, `colly` в `domrf_mortgage.go`) — вне объёма пункта (стандарт §18), отдельный будущий пункт; §2/§6.1/§6.3 обновлены; ранее 2026-10-14 — фаза 2, шаг 2 [ROADMAP_KEY_RATE.md](docs/ROADMAP_KEY_RATE.md) §6 («рынок труда Росстата»): импортёр `rosstat_labour_force_mes` (пакет `rosstat/`, пятый шаг `dagu/rosstat.yaml`, четверг 12:17 МСК) читает лист «5» выгрузки `trud-1_15-s.xlsx` со страницы `rosstat.gov.ru/labour_force` — шесть рядов рынка труда (рабочая сила, занятые, безработные, уровень участия, уровень занятости, уровень безработицы), помесячно с 2017-01; значения — Float64 (у соседних росстатовских рядов legacy Float32); точка контроля публикации объявлена шаблоном (§8 п. 13) — повтор — no-op без скачивания файла; производные (каталог и витрина `v_rosstat_macro`) публикует `AfterImport: afterRosstatMacro`; живая приёмка 2026-10-14: `Imported 690 rows` (6 рядов × 115 месяцев, 2017-01-31 … 2026-07-31), повтор — `no-op, версия 22d4dd4e… уже импортирована, 690 точек на месте`, spot-сверка с живым xlsx совпала по всем шести рядам, `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА (`v_rosstat_macro` 29 740 строк / 147 рядов, каталог `rosstat` 147, сырая `rosstat_labour_force_mes` закрыта), `dagu validate dagu/rosstat.yaml` — exit 0; §2/§6.1/§6.3/§7/§8 обновлены; ранее 2026-10-14 — фаза 2, шаг 1 [ROADMAP_KEY_RATE.md](docs/ROADMAP_KEY_RATE.md) §6 («починка пустых рядов»): пакет `rosstat/` переведён на общий транспорт `util.GetPage`/`util.FindLink` (§3; собственный colly-обход и построчные вставки удалены), импортёры и их таблицы переименованы в `rosstat_ipc_mes`/`rosstat_ipc_weeks`/`rosstat_salaries_mes`/`rosstat_vvp_kvartal`, регистрация сведена в единый реестр `rosstat/importers.go` с тестом-энфорсером `TestRosstatImportersPrefixedAndRegistered` (§2), четыре ряда ИПЦ получили имена, закреплённые кодом, и исправлен недельный разбор (128 рядов / 25 691 точка → 131 / 26 611); два импортёра, падавшие до `AfterImport` (`salaries_mes`, `vvp_kvartal`), починены, и все четыре приняты живым прогоном — `rosstat_ipc_mes` 1 716 точек, `rosstat_ipc_weeks` 26 611, `rosstat_salaries_mes` 421, `rosstat_vvp_kvartal` 302, повтор у трёх с точкой контроля публикации — no-op без скачивания файла; миграция выполнена в порядке «заполнить новые таблицы → сверить → переключить витрины → удалить старые»: `v_rosstat_macro` пересоздана публикацией `AfterImport` (29 050 строк / 141 ряд), `v_model_inputs` переключена на `rosstat_ipc_mes`/`rosstat_ipc_weeks`, старые таблицы `ipc_mes`/`ipc_weeks`/`salaries_mes`/`vvp_kvartal` удалены после сверки, `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА; тем же PR введён нормативный [docs/IMPORTER_PACKAGE_STANDARD.md](docs/IMPORTER_PACKAGE_STANDARD.md) — стандарт пакета импортёров (состав файлов, транспорт, шаблон, имена, регистрация, тесты, каталог и витрины, точка контроля публикации, расписание, порядок приёмки), по которому выполнен этот рефакторинг и на который ссылаются §3, `AGENTS.md` (правило 7 и порядок начала сессии) и `README.md`; §2/§3/§6.1/§6.3/§8 обновлены; ранее 2026-10-14 — LLM-слой 1.2 переведён на официальный `anthropic-sdk-go` (Anthropic Messages API: `POST <base>/v1/messages`, ключ заголовком `x-api-key`, обязательный `max_tokens = 8192`; base — без `/v1`, путь SDK дописывает сам; клиент строится на каждый вызов с общим `util.HttpClient`, User-Agent — SDK-шный `Anthropic/Go …` (ротация `randomUA` нужна сайтам РФ, не API провайдера), повторы SDK выключены сознательно, дедлайн запроса — `mpLLMTimeout`, 65 с): base владельца (`LLM_BASE_URL` — Anthropic-совместимый DeepSeek) работает как есть, без правки env (прежний OpenAI-совместимый `/chat/completions` на нём отдавал 404) — подтверждено живой проверкой 2026-10-14: полный прогон на изолированной БД с реальным env владельца дал 22 резюме / 1303 блока / 3488 regex-строк / 1020 LLM-строк, ошибок транспорта нет; классификация ошибок прежняя: отказ провайдера (`*anthropic.Error`, тело режется до фрагмента ≤512 байт) и ошибки, при которых не пришло ни байта ответа (имя не разрешилось, соединение, TLS, дедлайн) — без повтора; обрыв на неполном ответе (неполные заголовки или оборванное тело — SDK отдаёт это как `io.ErrUnexpectedEOF`) и обрезанный конверт — формат, один повтор (по типам SDK их не различить, цена повтора — один вызов); самописный `util.PostJSON` удалён вместе с `postJSONTimeout` и своими тестами (в §3 вместо записи о нём — `util.ErrorSnippet`, которым режется и тело провайдерской ошибки); конфигурация, состав данных и деградация до regex-слоя не изменились; §3/§5/§6.1/§11 обновлены; ранее 2026-10-14 — контур резюме обсуждения ключевой ставки ЦБ, шаг 1.2 [ROADMAP_KEY_RATE.md](docs/ROADMAP_KEY_RATE.md) §6: пакет `cbr/` получил импортёр `cbr_mp_summary` (15-я, последняя запись реестра `cbr/importers.go`) — три свои таблицы (`cbr_mp_summary` — шапка решения, `cbr_mp_summary_block` — дословный текст пяти блоков, `cbr_mp_summary_channel` — разметка по 11 каналам ДКП) и три витрины (`v_cbr_mp_summary`, `v_cbr_mp_summary_blocks`, `v_cbr_mp_summary_channels`); разметка каналов **двухслойная** — детерминированные регексы (`method='regex'`, работают всегда, без сети и ключей) и модель LLM (`method='llm'`, фактическое имя модели и версия промпта пишутся в данные и входят в ключ `ReplacingMergeTree`, поэтому смена модели или промпта добавляет строки рядом, не затирая старые); `Import()` у импортёра свой (шаблон `util.ClickHouseImport` не участвует): дельта считается по индексу материалов заседаний `cbr.ru/dkp/mp_dec/decision_key_rate/`, известность документа — адрес в шапке **∧** строки блоков по дате заседания **∧** regex-строки каналов (`method='regex'`), HEAD-префлайта нет сознательно (§8 п. 13); транспорт LLM-слоя — новый хелпер `util.PostJSON` (§3; ключ едет заголовком, в тексты ошибок не попадает), конфигурация — `LLM_BASE_URL`/`LLM_API_KEY`/`MP_SUMMARY_LLM_MODEL` (§5), без ключа документ остаётся с regex-слоем (warn, догон следующим прогоном); шаг `cbr_mp_summary` — 15-й (последний) в `dagu/cbr.yaml` (09:17 МСК), плюс новый DAG `dagu/calendar.yaml` (10:07 МСК, один шаг `events_calendar`), а `calendar/events.go` теперь сам забирает календарь заседаний из `cbr.ru/dkp/cal_mp/` — канонические строки заседаний ложатся в `events_calendar` рядом с ручными строками-триггерами сида (различие рядов документировано в §7); §2/§3/§5/§6.1/§6.2/§6.3/§6.5/§7/§8 обновлены; живая приёмка (бэкфилл 22 резюме, калибровка разметки, `make mcp-check`) — отдельным шагом плана; ранее 2026-10-14 — механизм точек контроля публикаций переведён из персонального кода `cbr_mo_br` в **свойство общего шаблона** `util.ClickHouseImport`: три опциональных поля — `PublicationCountPoints` (SQL числа точек ряда; непустое значение включает точку контроля публикации), `PublicationSource` (ключ версии в `source_publications` и префикс лога префлайта; пусто → `TableName`) и `AfterImport` (производные — каталог и витрина — после `Send` точек и до записи строки версии) — плюс хелперы `util.PublicationPreflight`/`util.CountPoints` и методы шаблона `PublicationKey()`/`Publication()` (`util/publications.go`); полный цикл `Import` — DDL → `BeforeImport` → префлайт → точки → `AfterImport` → строка версии последней, а `points` строки версии — результат запроса `CountPoints`, а не `batch.Rows()` (у `cbr_households_b_mes` 9030 ячеек листа против 7350 точек ряда); объявления получили **14 импортёров**: десять в `cbr/` (`cbr_mp_survey`, `cbr_households_b_mes`, `cbr_m2`, `cbr_credit_m2x`, `cbr_loans_to_corporations`, `cbr_loans_to_individuals`, `cbr_bank_int_rate`, `cbr_indicators_cpd`, `cbr_infl_exp`, `cbr_mo_br`) и четыре вне него — `rosstat/ipc_mes`, `rosstat/salaries_mes`, `rosstat/vvp_kvartal` (их производные `series_catalog` + `v_rosstat_macro` переехали в `AfterImport: afterRosstatMacro`) и `bank/sber_finansovie_rezultaty`; это результат инвентаря всего реестра (51 запись `chimport.Stats`, 37 вне `cbr/`: 4 переведённых, 26 отказов по трём критериям, 6 импортёров без артефакта, 1 исключение `tbank_group_ifrs`); обёртка `publishedStat` упразднена — производные публикует шаблон (`AfterImport: afterCbrMacro(<мета>)`), реестр `cbrImporter` получил колонку `countPoints`, а тест-энфорсер `TestCbrImportersPrefixedAndRegistered` проверяет и ожидаемый набор объявлений, и совпадение литерала с объявлением самого импортёра; четыре дневных `cbr_*` (`cbr_key_rate`, `cbr_ruania`, `cbr_currency_usd`, `cbr_gold`) и `ipc_weeks` оставлены без префлайта осознанно (в URL подставляется сегодняшняя дата / темп файла равен темпу шага), `tbank_group_ifrs` исключён (ссылка ведёт на PDF, а своей таблицы у импортёра нет — он пишет в общую `rus_vtb_group_ifrs`); §3/§6.1/§6.2/§7/§8 обновлены; живая приёмка (первый прогон, no-op повтора, `make mcp-check`) — отдельным шагом, `docs/ROADMAP_KEY_RATE.md` §6 пункт 1.7; ранее 2026-10-13 — контур ключевой ставки, шаг 1.5 [ROADMAP_KEY_RATE.md](docs/ROADMAP_KEY_RATE.md) §6 «макроэкономический опрос ЦБ»: импортёр `cbr_mo_br` (пакет `cbr/`, 14-я запись реестра `cbr/importers.go` — стало 14) читает консенсус-бенчмарк аналитиков из XLSX `full.xlsx` (ссылка `a[href$="full.xlsx"]` на странице `cbr.ru/statistics/ddkp/mo_br/`; 18 листов = «Навигация» + 17 листов-показателей; из 9 блоков статистик файла берутся 6 — median, p10, p90, min, max, answers; волны с 2021-05, ~8 в год) → общая `macro_series` (`source='cbr_mo_br'`, имена рядов `<base>_<year>_<stat>`, у листов 16–17 без года), каталог `series_catalog` (описания генерируются из разбора) и витрина `v_cbr_mo_br` (грант `kimi_reader` — `sql/mcp_kimi_reader.sql`, проверки — `scripts/mcp_check.py`); новый общий механизм точек контроля публикаций — `util/publications.go` (`HeadFingerprint`/`PublicationKnown`/`SavePublication`, `EnsurePublications`) и каноническая таблица `source_publications` (§6.2, агенту не выдана): ежедневный прогон делает HEAD-префлайт по ссылке файла, и при известной версии с совпавшим числом точек это no-op без скачивания (первый потребитель механизма — `cbr_mo_br`; миграция остальных импортёров — вне объёма, §8); шаг `cbr_mo_br` — последний в `dagu/cbr.yaml` (шагов цепочки стало 14); §2/§3/§6.1/§6.2/§6.3/§6.5/§7/§8 обновлены; живая приёмка (первый прогон, no-op повтора, `make mcp-check`, статус 1.5) — отдельным шагом плана; ранее 2026-10-13 — рефакторинг пакета `cbr/` (фаза 3 [ROADMAP_KEY_RATE.md](docs/ROADMAP_KEY_RATE.md) §6): весь пакет приведён к единому стандарту — XML-транспорты `cbr_currency_usd` и `cbr_gold` переведены на официальные ленты ЦБ (`XML_dynamic.asp`, `xml_metall.asp`: windows-1251 через `util.GetXML`/`util.ParseXML`, глубина с 2013-01-10), HTML-транспорты (`cbr_key_rate` и поиск ссылок на XLSX в `cbr_infl_exp`/`cbr_credit_m2x`/`cbr_indicators_cpd`) — с colly на `util.GetFile` + goquery (`cbr/links.go`, `findLink`), XLSX-импортёры (`cbr_households_b_mes`, `cbr_m2`, `cbr_loans_*`) пишут одним батчем и покрыты тестами на фикстурах, `cbr_ruania`/`cbr_bank_int_rate` почищены; таблица балансов домохозяйств переименована в `cbr_households_b_mes` (к прежнему имени добавлен префикс пакета; витрина `v_cbr_macro` обновлена); удалены дубли и мёртвый код — `cbr/avgproc_stav.go`, `cbr/queries.go` (таблицы `cbr_queries_*`), `cbr/purcb.go` и мёртвый скрапер cbr в `financial/` вместе со своим DDL `cbr_rates`; контур мониторинга предприятий ЦБ переехал из отдельного пакета в `cbr/` — импортёр `cbr_mp_survey` добавлен 13-м шагом в `dagu/cbr.yaml`, отдельный DAG-файл и расписание упразднены (общее расписание контура — 09:17 МСК, цепочка из 13 шагов, ныне 14 — см. запись выше); регистрация импортёров пакета сведена в единый реестр `cbr/importers.go` (13 записей, один `init()`, ныне 14 — см. запись выше) с тестом-энфорсером `TestCbrImportersPrefixedAndRegistered` (префикс `cbr_` у имён и таблиц, уникальность имён, каждая строка `dagu/cbr.yaml` есть в реестре); §2/§3/§6.1/§6.3/§6.5/§7/§8 обновлены; сами данные контура не меняются — приёмка «числа совпали с baseline» и миграция имён таблиц идут отдельным шагом; ранее 2026-10-13 — контур мониторинга предприятий ЦБ: импортёр `cbr_mp_survey` (`mp_survey_data.xlsx`, стабильный id 135603; 31 лист, читаются 4) → 13 рядов `macro_series` (`source='cbr_survey'`: ценовые ожидания бизнеса и ИБК ±с.к., условия кредитования, ожидаемый прирост отпускных цен ±с.к., загрузка мощностей ±с.к., обеспеченность персоналом ±с.к., ожидания численности ±с.к. — 2084 точки, 1640 месячных + 444 квартальных), каталог `series_catalog` (13 записей), витрина `v_cbr_survey` (грант `kimi_reader` — `sql/mcp_kimi_reader.sql`), ежедневный прогон в составе расписания ЦБ (на тот момент — отдельный файл), прогон идемпотентен; §2/§6.1/§6.2/§6.3/§6.5/§7 обновлены; ✅ живая приёмка 2026-10-13 (`Imported 2084 rows`; `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА: витрина 2084 строки, каталог 13 записей, сырая `macro_series` закрыта; сверка с ЦБ: с.к. ценовые ожидания 2026-08 = 22,7 п., +1,6 п. к июлю); ранее 2026-10-13 — реестр СБКТС Росстандарта: импортёр `gost_vehicle_safety_certificate` (`craw/`) переписан на REST API портала `gost.ru` (заголовок `gtn.access.appid` из `GOST_APP_ID`; плоский дневной срез по дате публикации, `size=900`), три режима `GOST_MODE` (`since`/`full`/`check`) и расширенная схема (10 колонок; шесть новых добавляются идемпотентными `ALTER TABLE … ADD COLUMN IF NOT EXISTS`, живая таблица не пересоздаётся); витрины `v_gost_vehicle_safety_certificate` (строки) и `v_gost_vehicle_safety_daily` (день × марка, `certificates = uniqExact`); расписание `dagu/craw.yaml` — раз в час, режим `since` (`GOST_MODE=full`/`check` — вручную); §2/§3/§5/§6.1/§6.2/§6.3/§6.5/§7 обновлены; ранее 2026-10-12 — контур новостей РФ-канала: пакет `news/`, импортёр `news_watch` (5 RSS-лент: Интерфакс, РБК, ЦБ РФ ×2, TASS → `news_events`, режимы `all`/`since`/`check`, витрина `v_news_events` с фильтром тезисов, расписание `dagu/news.yaml` каждые 30 минут); §3 — `util.GetXML`; §5 — `NEWS_WATCH_MODE`; §6.1/§6.2/§6.3/§7 обновлены; ранее 2026-10-12 (контур bold.report (ByteTree) — T+1 ETF-агрегат и цена: пакет `bold/`, два импортёра — `bold_etf_flows` (7 рядов `etf_bold_*` в `macro_series`, `source = 'bold'`, плюс таблица пер-фондового среза `bold_fund_snapshot` с ключом `(date, ticker, name)`) и `bold_gold_price` (площадка `bold` в `gold_prices`); §6.1 — строки импортёров, режимы 4/8 запросов и триггеры полного пути; §6.2 — `source='bold'` в комментарии DDL `macro_series` (копия синхронизирована в `ingest/schema.go`) и канонический DDL `bold_fund_snapshot`; §6.3 — витрины `v_gold_etf_flows_daily` и `v_gold_etf_funds_daily`; §7 — расписание `dagu/bold.yaml`, ежедневно 08:07 МСК; ✅ живая приёмка 2026-10-12 пройдена после фикса путей: `bold_gold_price` — 3138 точек (`2026-10-09` = 4216,3), `bold_etf_flows` — 21054 точки + 73 строки среза, повтор — no-op, `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА; у эндпоинтов источника обязателен суффикс `.json` (без него CDN отдаёт `403 AccessDenied`), он закреплён тестом `TestBoldEndpointsPinPaths`); ранее 2026-10-12 — (WGC ETF Flows: канонический транспорт — JSON API `fscdn.gold.org` (`wgc/etf_api.go` + `util.GetJSON`), локальная выгрузка `ETF_Flows_*.xlsx` — фолбэк; §3 — в `util/` добавлен `GetJSON` с проверкой HTTP-статуса; §6.1 — строка `wgc_etf_flows` (транспорт API, глубины рядов, округление тоннажных стоков источника до 0,01 т); §6.3 — источник рядов `v_gold_etf_flows`; §6.1/§7 — расписание `wgc` ежедневно 20:17 МСК вместо понедельника, выгрузки ЦБ по-прежнему качаются вручную); ранее 2026-10-11 — wgc-контур «ETF Flows и резервы ЦБ»: §6.1 — реализованы импортёры `wgc_etf_flows` (20 рядов `etf_<метрика>_<регион>` месячных потоков и запасов золотых ETF из выгрузки `ETF_Flows_*.xlsx`) и `wgc_cb_reserves` (14 рядов `cb_gold_change_tonnes_<iso3>` и `cb_gold_holdings_tonnes_<iso3>` по семи ЦБ из выгрузок `Changes_latest_as_of_*.xlsx` и `World_official_gold_holdings_as_of_*.xlsx`), пакет `wgc/`, расписание `dagu/wgc.yaml` (понедельник 20:17 МСК; с 2026-10-12 — ежедневно, см. запись выше), `source = 'wgc'`; §6.2 — `wgc` перенесён из планируемых в реализованные `source` (копии комментария DDL `macro_series` — здесь и в `ingest/schema.go` — синхронизированы); §6.3 — приоритет `v_gold_etf_flows` стал `wgc > webbridge > manual`, добавлена витрина `v_cb_gold_dynamics` (7 ЦБ: MoM/YTD и уровень) с комментариями и грантом `kimi_reader`; §6.5 — контур правилу 11 удовлетворяет, проверки добавлены в `scripts/mcp_check.py`; ранее того же дня — фаза 3 «спрос, консенсус и обратная связь»: §6.1 — реализован импортёр `forecast_resolve` (пакет `forecast/`, расписание `dagu/forecast.yaml`, 20:23 МСК) — сверка прогнозов `xau_q_avg` с фактом из `gold_prices`; §6.2 — `gold_forecasts` перенесена из «не реализованы» в реализованные (копии DDL: `ingest/schema.go` и сид `sql/gold_forecasts_q4_2026_seed.sql`, комментарий `scenario` дополнен `'range'`); §6.3 — витрины `v_gold_forecasts` (консенсус банков и own-сетка) и `v_gold_etf_flows` (пивот 20 рядов WGC Gold ETF Flows, source `webbridge`), `v_forecast_accuracy` заполняет резолвер; §6.5 — endpoint `POST /v1/gold_forecasts` и пятая таблица `EnsureTables`; сиды `sql/wgc_etf_flows_catalog.sql` и бэкфилл `sql/forecast_log_backfill.sql`; ранее того же дня — §6.1/§6.3 — реализован импортёр `eia` (EIA API v2: запасы дистиллятов WDISTUS1, загрузка НПЗ WPULEUS3) → `macro_series` (`source='eia'`), витрина `v_eia_petroleum`; `v_gold_dashboard` читает значения по приоритету `eia > webbridge > manual`; §5 — env `EIA_API_KEY`; dagu — `dagu/eia.yaml`, среда 19:43 МСК; §6.2 — комментарий `source` в DDL `macro_series` приведён к код-копии `ingest/schema.go`; §6.5 — «единственный путь записи» называет и `gold_prices`; валидация ingest отсекает даты вне диапазона Date32 [1900-01-01, 2299-12-31] → 400; ранее того же дня — §6.5 — endpoint `POST /v1/gold_prices` (venue `comex_front`) и поле `source` в `POST /v1/manual_series` (`manual`/`webbridge`/`imf`); §6.3 — витрина `v_imf_macro` (золотые резервы ЦБ, IMF IRFCL); §6.2 — копия DDL `gold_prices` в `ingest/schema.go` и комментарий source; ранее того же дня — §6.4 — поактивный AISC Полюса теперь калибруется скриптом `scripts/extrapolation_aisc.py` (цель `make dcf-aisc`) как доля клина по пресс-релизам 2019–2021 с увязкой к групповому AISC и `capex_sustaining = 0`; сид применяется вручную и в `dagu/dcf.yaml` не входит — цепочка остаётся двухшаговой; ранее 2026-10-11 — §6.1/§6.2 сид `mine_plans` в расписании `dagu/dcf.yaml` и окно правдоподобных годов плана в `dcf/seed.go`; 2026-10-10 — в `polyus/` включены шесть пресс-релизов 4Q/FY за 2019–2024). Базовый коммит: `a43af65` (разделы сверены с кодом на этом коммите).
+ 
+ ---
+ 
+ ## 1. Что это за проект
+ 
+ Go-конвейер (ETL) импорта российской макроэкономической статистики и финансовых данных в **ClickHouse** для дашбордов **Grafana** и аналитических моделей (сценарный прогноз золота → DCF → NAV акции PLZL). Монолитный репозиторий: основной бинарник импорта и отдельный бинарник `cmd/ingest` (ingest-endpoint контура прогноза, §6.5); конфигурация только через env.
+ 
+ - Репозиторий: `github.com/kmlebedev/clickhouse-import-rosstat`
+ - Go 1.27, сборка: `make build` → статический linux/amd64 бинарник (CGO_ENABLED=0, ldflags `-s -w`); `make build-ingest` → `build/ingest`
+ - Драйвер БД: `github.com/ClickHouse/clickhouse-go/v2` (native protocol)
+diff --git a/cbr/int_rate_loans.go b/cbr/int_rate_loans.go
+index d5c5e22..c082449 100644
+--- a/cbr/int_rate_loans.go
++++ b/cbr/int_rate_loans.go
+@@ -1,14 +1,15 @@
+ package cbr
+ 
+ import (
+ 	"fmt"
++	"math"
+ 	"strconv"
+ 	"strings"
+ 	"time"
+ 
+ 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+ 	"github.com/xuri/excelize/v2"
+ )
+ 
+ // Средневзвешенные процентные ставки по кредитам, предоставленным кредитными организациями
+@@ -24,30 +25,33 @@ const (
+ 	// cbrIntRateLoansCountPoints — количественный чек версии (спека §3.5): число точек своей
+ 	// таблицы. Литерал, как и имя таблицы: запрос — часть утверждения «эти точки мои». FINAL
+ 	// обязателен — иначе count() считал бы несмёрженные части.
+ 	cbrIntRateLoansCountPoints = "SELECT count() FROM cbr_int_rate_loans FINAL"
+ 	// cbrIntRateLoansHeaderAnchor — подпись шапки источника в первой колонке («% годовых»).
+ 	// От неё отсчитываются строка групп и строка заголовков колонок: магических индексов строк
+ 	// в разборе нет, номер шапки выводится из якоря (стандарт §6.3).
+ 	cbrIntRateLoansHeaderAnchor = "% годовых"
+ )
+ 
+-// cbrIntRateLoansGroups — группы колонок в порядке листа: префикс имени ряда в коде и подпись
+-// группы в строке групп источника. У второй группы подпись в файле длиннее («в том числе
+-// субъектам малого и среднего предпринимательства»), в якорь взято её устойчивое начало —
+-// так же, как это делает спека §3.4.
++// cbrIntRateLoansGroups — группы колонок в порядке листа: префикс имени ряда в коде, подпись
++// группы в строке групп источника и полный текст этой подписи для каталога рядов. У второй
++// группы подпись в файле длиннее («в том числе субъектам малого и среднего
++// предпринимательства»), в якорь (Label) взято её устойчивое начало — так же, как это делает
++// спека §3.4; в origin каталога (series_meta.go) группа называется целиком (SourceLabel): иначе
++// агент MCP прочитал бы обрезанное начало как отдельную группу.
+ var cbrIntRateLoansGroups = []struct {
+-	Prefix string
+-	Label  string
++	Prefix      string
++	Label       string
++	SourceLabel string
+ }{
+-	{Prefix: "Всего: ", Label: "Всего"},
+-	{Prefix: "СМП: ", Label: "в том числе субъектам малого"},
++	{Prefix: "Всего: ", Label: "Всего", SourceLabel: "Всего"},
++	{Prefix: "СМП: ", Label: "в том числе субъектам малого", SourceLabel: "в том числе субъектам малого и среднего предпринимательства"},
+ }
+ 
+ // cbrIntRateLoansTerms — восемь сроков кредита в порядке колонок внутри каждой группы. Наборы
+ // сроков двух групп идентичны, поэтому заголовок колонки сам по себе имя ряда не даёт: имя
+ // собирает код из префикса группы и срока (стандарт §6.8), а текст источника только сверяется
+ // с ожидаемым — расхождение означает смену структуры листа (§6.4), а не новый ряд.
+ var cbrIntRateLoansTerms = []string{
+ 	"до 30 дней, включая «до востребования»",
+ 	"от 31 до 90 дней",
+ 	"от 91 до 180 дней",
+@@ -117,82 +121,97 @@ func cbrIntRateLoansGroupStarts(row []string) []int {
+ 			starts = append(starts, i)
+ 		}
+ 	}
+ 	if len(starts) != len(cbrIntRateLoansGroups) {
+ 		return nil
+ 	}
+ 	return starts
+ }
+ 
+ // cbrIntRateLoansColumns разбирает шапку листа и возвращает имена колонок данных в порядке
+-// листа и номер первой строки данных — следующей за шапкой. Якоря, а не магические индексы
+-// (стандарт §6.3): строка «% годовых» даёт начало шапки, в следующей за ней строке ищутся
+-// подписи групп, строка заголовков колонок — следующая за строкой групп. Колонки привязываются
+-// к группам позиционно (границы — от подписи группы до подписи следующей; merged-диапазоны не
+-// читаются), внутри группы — по порядку сроков: имена идут из кода, заголовок сверяется.
+-func cbrIntRateLoansColumns(rows [][]string) (names []string, firstDataRow int, err error) {
++// листа, номер первой колонки данных (base — колонка, в которой стоит первое имя) и номер первой
++// строки данных — следующей за шапкой. Якоря, а не магические индексы (стандарт §6.3): строка
++// «% годовых» даёт начало шапки, в следующей за ней строке ищутся подписи групп, строка
++// заголовков колонок — следующая за строкой групп. Колонки привязываются к группам позиционно
++// (границы — от подписи группы до подписи следующей; merged-диапазоны не читаются), внутри
++// группы — по порядку сроков: имена идут из кода, заголовок сверяется. База тоже выводится из
++// шапки: у колонки-метки слева от первой группы позиция в файле не фиксирована, а разбор данных
++// считает колонку как base+i — при вставке колонки перед группой шапка «совпала» бы, и значения
++// прочитались бы из сдвинутых колонок под правильными именами.
++func cbrIntRateLoansColumns(rows [][]string) (names []string, base, firstDataRow int, err error) {
+ 	anchor := -1
+ 	for i, row := range rows {
+ 		if len(row) > 0 && strings.TrimSpace(row[0]) == cbrIntRateLoansHeaderAnchor {
+ 			anchor = i
+ 			break
+ 		}
+ 	}
+ 	if anchor < 0 {
+-		return nil, 0, fmt.Errorf("%s: в листе «%s» не найдена строка «%s» — шапка источника не распознана",
++		return nil, 0, 0, fmt.Errorf("%s: в листе «%s» не найдена строка «%s» — шапка источника не распознана",
+ 			cbrIntRateLoansTable, cbrIntRateLoansSheet, cbrIntRateLoansHeaderAnchor)
+ 	}
+ 	groupRow, starts := -1, []int(nil)
+ 	for i := anchor + 1; i < len(rows); i++ {
+ 		if rowStarts := cbrIntRateLoansGroupStarts(rows[i]); rowStarts != nil {
+ 			groupRow, starts = i, rowStarts
+ 			break
+ 		}
+ 	}
+ 	if groupRow < 0 {
+-		return nil, 0, fmt.Errorf("%s: в листе «%s» не найдена строка с подписями групп «%s» и «%s» — шапка источника не распознана",
++		return nil, 0, 0, fmt.Errorf("%s: в листе «%s» не найдена строка с подписями групп «%s» и «%s» — шапка источника не распознана",
+ 			cbrIntRateLoansTable, cbrIntRateLoansSheet, cbrIntRateLoansGroups[0].Label, cbrIntRateLoansGroups[1].Label)
+ 	}
+ 	// Строка заголовков колонок — следующая за строкой групп. Её отсутствие (строка групп
+ 	// последняя) проверяется, а не предполагается: срез rows[firstDataRow:] ниже паникует на
+ 	// индексе за концом слайса (стандарт §6.5).
+ 	headerRow := groupRow + 1
+ 	if headerRow >= len(rows) {
+-		return nil, 0, fmt.Errorf("%s: в листе «%s» нет строки заголовков колонок под строкой групп",
++		return nil, 0, 0, fmt.Errorf("%s: в листе «%s» нет строки заголовков колонок под строкой групп",
+ 			cbrIntRateLoansTable, cbrIntRateLoansSheet)
+ 	}
++	// Первая колонка данных — та, в которой стоит подпись первой группы: строка групп и строка
++	// заголовков колонок выровнены, и левее неё лежит только метка периода.
++	base = starts[0]
+ 	names = make([]string, 0, len(cbrIntRateLoansNames))
+ 	for g, start := range starts {
+ 		end := len(rows[headerRow])
+ 		if g+1 < len(starts) {
+ 			end = starts[g+1]
+ 		}
+ 		// Границы группы проверяются до индексации: конец группы — либо начало следующей
+ 		// подписи, либо конец строки заголовков, и оба случая обязаны укладываться в её длину.
+ 		if end > len(rows[headerRow]) {
+-			return nil, 0, fmt.Errorf("%s: лист «%s», группа «%s»: строка заголовков колонок короче границ группы (%d колонок, группа кончается на %d) — источник изменил структуру листа",
++			return nil, 0, 0, fmt.Errorf("%s: лист «%s», группа «%s»: строка заголовков колонок короче границ группы (%d колонок, группа кончается на %d) — источник изменил структуру листа",
+ 				cbrIntRateLoansTable, cbrIntRateLoansSheet, cbrIntRateLoansGroups[g].Label, len(rows[headerRow]), end)
+ 		}
+ 		if end-start != len(cbrIntRateLoansTerms) {
+-			return nil, 0, fmt.Errorf("%s: лист «%s», группа «%s»: колонок %d, а сроков %d — источник изменил структуру листа",
++			return nil, 0, 0, fmt.Errorf("%s: лист «%s», группа «%s»: колонок %d, а сроков %d — источник изменил структуру листа",
+ 				cbrIntRateLoansTable, cbrIntRateLoansSheet, cbrIntRateLoansGroups[g].Label, end-start, len(cbrIntRateLoansTerms))
+ 		}
+ 		for j, term := range cbrIntRateLoansTerms {
+ 			header := rows[headerRow][start+j]
+ 			if cbrIntRateLoansHeaderKey(header) != cbrIntRateLoansHeaderKey(term) {
+-				return nil, 0, fmt.Errorf("%s: лист «%s», группа «%s»: заголовок колонки %q не совпал с ожидаемым сроком %q — источник изменил структуру листа",
++				return nil, 0, 0, fmt.Errorf("%s: лист «%s», группа «%s»: заголовок колонки %q не совпал с ожидаемым сроком %q — источник изменил структуру листа",
+ 					cbrIntRateLoansTable, cbrIntRateLoansSheet, cbrIntRateLoansGroups[g].Label, header, term)
+ 			}
+ 			names = append(names, cbrIntRateLoansGroups[g].Prefix+term)
+ 		}
+ 	}
+-	return names, headerRow + 1, nil
++	// Инвариант, на который опирается разбор данных: база и все имена укладываются в строку
++	// заголовков (column = base+i в cbrIntRateLoansImport). Границы групп выше уже проверены
++	// каждая по отдельности — это не их повтор, а вывод из них, стерегущий возвращаемую базу:
++	// будущая правка, сдвинувшая её за конец шапки, иначе увела бы разбор в чужие колонки молча.
++	if base+len(names) > len(rows[headerRow]) {
++		return nil, 0, 0, fmt.Errorf("%s: лист «%s»: %d колонок данных от колонки %d не укладываются в строку заголовков (%d колонок)",
++			cbrIntRateLoansTable, cbrIntRateLoansSheet, len(names), base, len(rows[headerRow]))
++	}
++	return names, base, headerRow + 1, nil
+ }
+ 
+ // cbrIntRateLoansMonthDate превращает метку периода «Январь 2014» в дату точки — предпоследний
+ // день месяца отчётного периода: time.Date(year, month+1, -1, …). Конвенция та же, что у
+ // cbr_bank_int_rate (спека §3.3), поэтому ставки по вкладам и по кредитам сопоставимы на одной
+ // оси; месяц берётся из util.MonthsToNum — словарь месяцев один на пакет.
+ func cbrIntRateLoansMonthDate(label string) (time.Time, error) {
+ 	parts := strings.Fields(label)
+ 	if len(parts) != 2 {
+ 		return time.Time{}, fmt.Errorf("метка %q не разобрана как «Месяц Год»", label)
+@@ -203,29 +222,30 @@ func cbrIntRateLoansMonthDate(label string) (time.Time, error) {
+ 	}
+ 	year, err := strconv.Atoi(parts[1])
+ 	if err != nil {
+ 		return time.Time{}, fmt.Errorf("год %q в метке %q: %w", parts[1], label, err)
+ 	}
+ 	return time.Date(year, month+1, -1, 0, 0, 0, 0, time.UTC), nil
+ }
+ 
+ // cbrIntRateLoansImport разбирает лист «ставки_руб»: метка строки «Январь 2014» — месяц
+ // отчётного периода, 16 колонок — ряды (группа × срок), значение — средневзвешенная ставка,
+-// % годовых. Пустая ячейка — пропуск точки (стандарт §6.7); строка сноски, начинающаяся с «*»
+-// и стоящая после данных, завершает разбор, любая другая неразобранная метка — ошибка: это
+-// смена структуры листа (§6.4), а не конец данных.
++// % годовых. Пустая ячейка и литеральный ноль — пропуск точки (стандарт §6.7: ноль в источнике
++// означает «данных не имеется», а не 0 % годовых); строка сноски, начинающаяся с «*» и стоящая
++// после данных, завершает разбор, любая другая неразобранная метка — ошибка: это смена структуры
++// листа (§6.4), а не конец данных.
+ func cbrIntRateLoansImport(xlsx *excelize.File, batch driver.Batch) error {
+ 	rows, err := xlsx.GetRows(cbrIntRateLoansSheet, excelize.Options{RawCellValue: true})
+ 	if err != nil {
+ 		return fmt.Errorf("%s: лист «%s»: %w", cbrIntRateLoansTable, cbrIntRateLoansSheet, err)
+ 	}
+-	names, firstDataRow, err := cbrIntRateLoansColumns(rows)
++	names, base, firstDataRow, err := cbrIntRateLoansColumns(rows)
+ 	if err != nil {
+ 		return err
+ 	}
+ 	count := 0
+ 	for _, row := range rows[firstDataRow:] {
+ 		if len(row) == 0 {
+ 			continue
+ 		}
+ 		label := strings.TrimSpace(row[0])
+ 		if label == "" {
+@@ -235,38 +255,54 @@ func cbrIntRateLoansImport(xlsx *excelize.File, batch driver.Batch) error {
+ 		if err != nil {
+ 			// Сноска источника начинается с «*» и стоит после данных — разбор закончен. Любая
+ 			// другая неразобранная метка означает смену структуры листа: ошибка, а не «0 rows»,
+ 			// иначе шаг DAG завершился бы успешно, а 16 рядов остались бы без обновления молча.
+ 			if strings.HasPrefix(label, "*") {
+ 				break
+ 			}
+ 			return fmt.Errorf("%s: лист «%s»: %w", cbrIntRateLoansTable, cbrIntRateLoansSheet, err)
+ 		}
+ 		for i, name := range names {
+-			// Колонка данных i — это ячейка i+1 строки: ячейка 0 занята меткой периода.
+-			column := i + 1
+-			// Строка короче шапки — у остальных колонок данных нет; недостающие ячейки
+-			// равносильны пустым и точками не становятся (§6.7).
++			// Колонка данных i — ячейка base+i строки: база (первая колонка данных) выведена из
++			// шапки в cbrIntRateLoansColumns, а нулевая ячейка занята меткой периода. Жёсткое i+1
++			// читало бы соседние колонки, если источник вставит колонку перед первой группой.
++			column := base + i
++			// Строка короче набора колонок данных — у остальных колонок ячеек нет; недостающие
++			// ячейки равносильны пустым и точками не становятся (§6.7).
+ 			if column >= len(row) {
+ 				break
+ 			}
+ 			cell := strings.TrimSpace(row[column])
+ 			if cell == "" {
+ 				continue
+ 			}
+ 			rate, err := strconv.ParseFloat(cell, 64)
+ 			if err != nil {
+ 				return fmt.Errorf("%s: лист «%s», метка %q, ряд «%s»: значение %q: %w",
+ 					cbrIntRateLoansTable, cbrIntRateLoansSheet, label, name, cell, err)
+ 			}
++			// «NaN» и «Inf» из ячейки ParseFloat принимает, но ставкой они не являются: записанные
++			// в колонку Float64, они отравили бы ряд (сравнения с NaN ложны, суммы — NaN). Ошибка та
++			// же, что у нечисловой ячейки: смена структуры листа (§6.4), а не точка.
++			if math.IsNaN(rate) || math.IsInf(rate, 0) {
++				return fmt.Errorf("%s: лист «%s», метка %q, ряд «%s»: значение %q не конечно (NaN/Inf)",
++					cbrIntRateLoansTable, cbrIntRateLoansSheet, label, name, cell)
++			}
++			// Литеральный 0 в источнике означает «данных не имеется» (стандарт §6.7) и точкой ряда
++			// не становится — так же, как пустая ячейка: нулевой ставки по выданным кредитам не
++			// бывает, а 0 % годовых агент прочитал бы как настоящее значение.
++			if rate == 0 {
++				continue
++			}
+ 			if err = batch.Append(name, date, rate); err != nil {
+-				return err
++				return fmt.Errorf("%s: метка %q, ряд %q, %s: %w",
++					cbrIntRateLoansTable, label, name, date.Format("2006-01-02"), err)
+ 			}
+ 			count++
+ 		}
+ 	}
+ 	if count == 0 {
+ 		return fmt.Errorf("%s: разбор листа «%s» не дал ни одной точки", cbrIntRateLoansTable, cbrIntRateLoansSheet)
+ 	}
+ 	return nil
+ }
+ 
+diff --git a/cbr/int_rate_loans_test.go b/cbr/int_rate_loans_test.go
+index 5ef56e0..50f8a89 100644
+--- a/cbr/int_rate_loans_test.go
++++ b/cbr/int_rate_loans_test.go
+@@ -2,23 +2,23 @@ package cbr
+ 
+ import (
+ 	"fmt"
+ 	"strings"
+ 	"testing"
+ 	"time"
+ 
+ 	"github.com/xuri/excelize/v2"
+ )
+ 
+-// intRateLoansFixture — живой файл источника целиком (124 КБ, 8 листов): стандарт §11.2 —
+-// книга в десятки килобайт коммитится как есть, zip-хирургия нужна только крупным книгам.
+-// Разбор читает из неё единственный лист «ставки_руб».
++// intRateLoansFixture — живой файл источника целиком: книга ~124 КБ (124 288 байт, 8 листов)
++// коммитится как есть — стандарт §11.2, zip-хирургия нужна только крупным книгам. Разбор
++// читает из неё единственный лист «ставки_руб».
+ const intRateLoansFixture = "testdata/loans_nonfin.xlsx"
+ 
+ // intRateLoansWantNames — 16 имён рядов литералами по спеке §3.2, в порядке колонок листа:
+ // две группы по восемь сроков. Литералы, а не ссылка на cbrIntRateLoansNames: имена в коде
+ // собираются из префиксов групп и сроков, и сверка с литералами — единственное место, где
+ // расхождение со спекой (опечатка в префиксе группы, перестановка сроков) видит тест, а не глаз
+ // ревьюера. Порядок: сначала все сроки группы «Всего» (колонки B–I), затем группы «СМП» (J–Q).
+ var intRateLoansWantNames = []string{
+ 	"Всего: до 30 дней, включая «до востребования»",
+ 	"Всего: от 31 до 90 дней",
+@@ -283,41 +283,42 @@ func TestCbrIntRateLoansShortSheetFails(t *testing.T) {
+ 				t.Errorf("ошибка %q не называет таблицу cbr_int_rate_loans", err)
+ 			}
+ 			if len(rec.raw) != 0 {
+ 				t.Errorf("при ошибке записано %d строк, want 0", len(rec.raw))
+ 			}
+ 		})
+ 	}
+ }
+ 
+ // TestCbrIntRateLoansFailFastBranches: ветки, где разбор обязан вернуть ошибку, а не «0 строк»
+-// (стандарт §6.4): сломанная шапка, метка периода не месяц, значение не число. Книги
+-// синтетические (живых фикстур этих состояний нет), поэтому первым подтестом идёт контроль:
+-// правильная синтетическая книга разбирается — значит ошибки ниже приходят от мутации, а не от
+-// сборки книги или от нормализации заголовков. Мутации выбраны в первых колонках шапки и
+-// данных: батч уходит в БД только по Send, поэтому при ошибке разбора в рекордере обязано быть
+-// 0 строк — частично пройденная строка до таблицы не доходит.
++// (стандарт §6.4): сломанная шапка, метка периода не месяц, значение не число или не конечно
++// (NaN/Inf ParseFloat принимает молча). Книги синтетические (живых фикстур этих состояний нет),
++// поэтому первым подтестом идёт контроль: правильная синтетическая книга разбирается — значит
++// ошибки ниже приходят от мутации, а не от сборки книги или от нормализации заголовков. Мутации
++// выбраны в первых колонках шапки и данных: батч уходит в БД только по Send, поэтому при ошибке
++// разбора в рекордере обязано быть 0 строк — частично пройденная строка до таблицы не доходит.
+ func TestCbrIntRateLoansFailFastBranches(t *testing.T) {
+ 	t.Run("правильная шапка разбирается", func(t *testing.T) {
+ 		rec := newCbrRecorder()
+ 		if err := cbrIntRateLoans.ImportFunc(intRateLoansBook(t, intRateLoansSheetWithData()), rec); err != nil {
+ 			t.Fatalf("разбор контрольной книги: %v", err)
+ 		}
+ 		if len(rec.rows) != len(cbrIntRateLoansNames) {
+ 			t.Errorf("точек %d, want %d (по одной на ряд)", len(rec.rows), len(cbrIntRateLoansNames))
+ 		}
+ 	})
+ 	for name, mutate := range map[string]func(rows [][]string){
+ 		"заголовок колонки не совпал с ожидаемым сроком": func(rows [][]string) { rows[4][3] = "от 32 до 90 дней" },
+ 		"подпись группы не найдена":                      func(rows [][]string) { rows[3][1] = "Итого" },
+ 		"метка периода не месяц":                         func(rows [][]string) { rows[5][0] = "Итого 2014" },
+ 		"значение не число":                              func(rows [][]string) { rows[5][1] = "н/д" },
++		"значение NaN":                                   func(rows [][]string) { rows[5][1] = "NaN" },
+ 	} {
+ 		t.Run(name, func(t *testing.T) {
+ 			rows := intRateLoansSheetWithData()
+ 			mutate(rows)
+ 			rec := newCbrRecorder()
+ 			err := cbrIntRateLoans.ImportFunc(intRateLoansBook(t, rows), rec)
+ 			if err == nil {
+ 				t.Fatalf("ожидалась ошибка, разбор дал %d строк", len(rec.rows))
+ 			}
+ 			if !strings.Contains(err.Error(), "cbr_int_rate_loans") {
+@@ -339,10 +340,251 @@ func TestCbrIntRateLoansFootnoteEndsParsing(t *testing.T) {
+ 	rows = append(rows, []string{"Январь 2015", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16"})
+ 	rec := newCbrRecorder()
+ 	if err := cbrIntRateLoans.ImportFunc(intRateLoansBook(t, rows), rec); err != nil {
+ 		t.Fatalf("разбор книги со сноской: %v", err)
+ 	}
+ 	if len(rec.rows) != len(cbrIntRateLoansNames) {
+ 		t.Errorf("точек %d, want %d: строка после сноски разобрана не должна быть",
+ 			len(rec.rows), len(cbrIntRateLoansNames))
+ 	}
+ }
++
++// intRateLoansOpenFixture — копия живой фикстуры, загруженная в память под мутацию: ветки
++// fail-fast и пропуск ячеек проверяются на ней, а не на книге, собранной с нуля (стандарт §11.1:
++// синтетика кодирует допущения теста и остаётся зелёной, когда разбор разошёлся с источником).
++// Правки идут по копии в памяти — файл на диске не меняется.
++func intRateLoansOpenFixture(t *testing.T, mutate func(t *testing.T, f *excelize.File)) *excelize.File {
++	t.Helper()
++	f, err := excelize.OpenFile(intRateLoansFixture)
++	if err != nil {
++		t.Fatalf("открытие фикстуры %s: %v", intRateLoansFixture, err)
++	}
++	t.Cleanup(func() { _ = f.Close() })
++	mutate(t, f)
++	return f
++}
++
++// intRateLoansSetCell — правка ячейки мутируемой фикстуры: excelize сообщает о негодном адресе
++// ошибкой, и проглотить её значило бы проверять немутнутый лист.
++func intRateLoansSetCell(t *testing.T, f *excelize.File, cell string, value any) {
++	t.Helper()
++	if err := f.SetCellValue(cbrIntRateLoansSheet, cell, value); err != nil {
++		t.Fatalf("SetCellValue(%s): %v", cell, err)
++	}
++}
++
++// intRateLoansCell — адрес ячейки листа (колонка и строка, 1-based): колонки мутаций выводятся из
++// той же разметки, что и разбор (1 — метка периода, 2…9 — сроки группы «Всего», 10…17 — «СМП»),
++// а не читаются строкой «B6» в коде.
++func intRateLoansCell(t *testing.T, col, row int) string {
++	t.Helper()
++	cell, err := excelize.CoordinatesToCellName(col, row)
++	if err != nil {
++		t.Fatalf("CoordinatesToCellName(%d, %d): %v", col, row, err)
++	}
++	return cell
++}
++
++// intRateLoansHasPoint — есть ли в разборе точка (ряд, дата).
++func intRateLoansHasPoint(rows []appendedRow, name string, date time.Time) bool {
++	for _, row := range rows {
++		if row.name == name && row.date.Equal(date) {
++			return true
++		}
++	}
++	return false
++}
++
++// TestCbrIntRateLoansStructureFailsFastOnFixture: смена структуры листа живой фикстуры — ошибка с
++// именем таблицы, а не «0 rows» (стандарт §6.4): группа из 7 колонок вместо 8 (подпись второй
++// группы сдвинута на колонку влево — текст шапки сходится, а границы группы другие) и лист, у
++// которого осталась одна шапка. У второго случая проверяется и текст ошибки: молчаливый ноль
++// точек оставил бы все 16 рядов без обновления.
++func TestCbrIntRateLoansStructureFailsFastOnFixture(t *testing.T) {
++	for name, tc := range map[string]struct {
++		mutate  func(t *testing.T, f *excelize.File)
++		wantErr string
++	}{
++		"группа из 7 колонок вместо 8": {
++			// Подпись второй группы перенесена на колонку влево (J4 → I4): текст шапки сходится,
++			// а первая группа сужается до семи колонок — разбор обязан это заметить, а не
++			// разложить сроки по сдвинутым колонкам. Объединённые ячейки строки групп сначала
++			// разъединяются: excelize направляет запись в объединённый диапазон в его левую
++			// верхнюю ячейку (запись в I4 легла бы в B4 и стёрла «Всего»), тогда как разбор
++			// читает объединённые диапазоны как обычные ячейки — значение несёт только первая.
++			mutate: func(t *testing.T, f *excelize.File) {
++				if err := f.UnmergeCell(cbrIntRateLoansSheet, "B4", "J4"); err != nil {
++					t.Fatalf("UnmergeCell(B4, J4): %v", err)
++				}
++				intRateLoansSetCell(t, f, "I4", cbrIntRateLoansGroups[1].SourceLabel)
++				intRateLoansSetCell(t, f, "J4", "")
++			},
++			wantErr: "источник изменил структуру листа",
++		},
++		"шапка без строк данных": {
++			// Строки данных и сноска удалены — шапка цела, разбирать нечего.
++			mutate: func(t *testing.T, f *excelize.File) {
++				rows, err := f.GetRows(cbrIntRateLoansSheet)
++				if err != nil {
++					t.Fatalf("GetRows: %v", err)
++				}
++				// Снизу вверх: RemoveRow сдвигает строки за удалённой, и обратный порядок избавляет
++				// от пересчёта номера. Шапка — те же 5 строк, что в intRateLoansSheet.
++				for row := len(rows); row > len(intRateLoansSheet); row-- {
++					if err := f.RemoveRow(cbrIntRateLoansSheet, row); err != nil {
++						t.Fatalf("RemoveRow(%d): %v", row, err)
++					}
++				}
++			},
++			wantErr: "не дал ни одной точки",
++		},
++	} {
++		t.Run(name, func(t *testing.T) {
++			rec := newCbrRecorder()
++			err := cbrIntRateLoans.ImportFunc(intRateLoansOpenFixture(t, tc.mutate), rec)
++			if err == nil {
++				t.Fatalf("ожидалась ошибка, разбор дал %d строк", len(rec.rows))
++			}
++			if !strings.Contains(err.Error(), "cbr_int_rate_loans") {
++				t.Errorf("ошибка %q не называет таблицу cbr_int_rate_loans", err)
++			}
++			if !strings.Contains(err.Error(), tc.wantErr) {
++				t.Errorf("ошибка %q не содержит %q", err, tc.wantErr)
++			}
++			if len(rec.raw) != 0 {
++				t.Errorf("при ошибке записано %d строк, want 0", len(rec.raw))
++			}
++		})
++	}
++}
++
++// TestCbrIntRateLoansSkipsNonPointsOnFixture: ячейка, которая точкой не является, точек не даёт
++// (стандарт §6.7): пустая, литеральный ноль (в источнике — «данных не имеется») и ячейки за
++// концом короткой строки данных. Проверка на живой фикстуре, где каждая из 2 432 ячеек на счету:
++// точек становится ровно на пропущенное меньше, а соседние месяцы и ряды остаются на месте.
++// Литеральный ноль до этой правки писался точкой 0 % годовых — подтест стережёт новую семантику.
++func TestCbrIntRateLoansSkipsNonPointsOnFixture(t *testing.T) {
++	total := len(cbrIntRateLoansNames) * len(intRateLoansMonths)
++	// Первая строка данных листа — «Январь 2014»: шапка живой фикстуры занимает те же пять строк,
++	// что intRateLoansSheet (заголовок файла 1–3, подписи групп, заголовки сроков).
++	firstDataRow := len(intRateLoansSheet) + 1
++	// Даты соседних месяцев по правилу разбора: предпоследний день месяца отчётного периода
++	// (2014-01-30, а в феврале 2014 — 27-е: дней 28). Литералы — как в спот-проверках выше.
++	jan := time.Date(2014, time.January, 30, 0, 0, 0, 0, time.UTC)
++	feb := time.Date(2014, time.February, 27, 0, 0, 0, 0, time.UTC)
++	allNames := intRateLoansWantNames[:len(cbrIntRateLoansTerms)]
++	smpNames := intRateLoansWantNames[len(cbrIntRateLoansTerms):]
++	for name, tc := range map[string]struct {
++		mutate   func(t *testing.T, f *excelize.File)
++		wantRows int
++		absent   []string
++	}{
++		"пустая ячейка": {
++			// Колонка 2 — первый срок группы «Всего» (B), строка — «Январь 2014».
++			mutate: func(t *testing.T, f *excelize.File) {
++				intRateLoansSetCell(t, f, intRateLoansCell(t, 2, firstDataRow), "")
++			},
++			wantRows: total - 1,
++			absent:   []string{allNames[0]},
++		},
++		"литеральный ноль": {
++			mutate: func(t *testing.T, f *excelize.File) {
++				intRateLoansSetCell(t, f, intRateLoansCell(t, 2, firstDataRow), 0)
++			},
++			wantRows: total - 1,
++			absent:   []string{allNames[0]},
++		},
++		"строка данных короче шапки": {
++			// Опустошены колонки 10–17 (группа «СМП») строки «Январь 2014»: строка становится
++			// короче набора колонок данных, и восемь её последних колонок точек не дают.
++			mutate: func(t *testing.T, f *excelize.File) {
++				for col := 2 + len(cbrIntRateLoansTerms); col <= 1+2*len(cbrIntRateLoansTerms); col++ {
++					intRateLoansSetCell(t, f, intRateLoansCell(t, col, firstDataRow), "")
++				}
++			},
++			wantRows: total - len(cbrIntRateLoansTerms),
++			absent:   smpNames,
++		},
++	} {
++		t.Run(name, func(t *testing.T) {
++			rec := newCbrRecorder()
++			if err := cbrIntRateLoans.ImportFunc(intRateLoansOpenFixture(t, tc.mutate), rec); err != nil {
++				t.Fatalf("разбор мутированной фикстуры: %v", err)
++			}
++			if rec.err != nil {
++				t.Fatalf("схема строк не совпала с разбором: %v", rec.err)
++			}
++			if len(rec.rows) != tc.wantRows {
++				t.Errorf("точек %d, want %d: пропущенная ячейка не даёт точки и не теряет соседей",
++					len(rec.rows), tc.wantRows)
++			}
++			for _, absent := range tc.absent {
++				if intRateLoansHasPoint(rec.rows, absent, jan) {
++					t.Errorf("ряд %q: точка на %s записана, хотя ячейка пропущена",
++						absent, jan.Format("2006-01-02"))
++				}
++				if !intRateLoansHasPoint(rec.rows, absent, feb) {
++					t.Errorf("ряд %q: пропала точка на %s — пропуск одной ячейки соседний месяц не трогает",
++						absent, feb.Format("2006-01-02"))
++				}
++			}
++			// Соседняя колонка не сдвинулась: пропуск ячейки не меняет привязку значений к именам.
++			if !intRateLoansHasPoint(rec.rows, allNames[1], jan) {
++				t.Errorf("ряд %q: точка на %s пропала — привязка колонок к именам сдвинулась",
++					allNames[1], jan.Format("2006-01-02"))
++			}
++		})
++	}
++}
++
++// TestCbrIntRateLoansAppendErrorNamesRow: ошибка записи в батч не отдаётся голой — в ней есть
++// таблица, метка периода, имя ряда и дата точки: по одной ошибке видно, какая строка не ушла.
++// Схема приёмника из одной колонки заставляет его отвергнуть каждую строку (name, date, rate) —
++// то же, что делает настоящий батч на негодной строке.
++func TestCbrIntRateLoansAppendErrorNamesRow(t *testing.T) {
++	rec := newCbrRecorder("name")
++	err := cbrIntRateLoans.ImportFunc(intRateLoansOpenFixture(t, func(*testing.T, *excelize.File) {}), rec)
++	if err == nil {
++		t.Fatalf("ожидалась ошибка записи, разбор дал %d строк", len(rec.rows))
++	}
++	for _, want := range []string{
++		cbrIntRateLoansTable,
++		"Январь 2014",
++		intRateLoansWantNames[0],
++		"2014-01-30",
++	} {
++		if !strings.Contains(err.Error(), want) {
++			t.Errorf("ошибка %q не содержит %q", err, want)
++		}
++	}
++}
++
++// TestCbrIntRateLoansOriginNamesGroupAndTerm: origin называет группу и срок раздельно и не
++// укладывает составное имя ряда в кавычки целиком (правило 11 AGENTS.md): агент MCP обязан
++// видеть, что «Всего: от 1 года до 3 лет» — это группа плюс срок, а не одна ячейка источника.
++// Формат сверяется подстроками, а не равенством: текст origin может уточняться.
++func TestCbrIntRateLoansOriginNamesGroupAndTerm(t *testing.T) {
++	if len(cbrIntRateLoansSeriesMeta) != len(cbrIntRateLoansNames) {
++		t.Fatalf("записей каталога %d, want %d", len(cbrIntRateLoansSeriesMeta), len(cbrIntRateLoansNames))
++	}
++	for i, meta := range cbrIntRateLoansSeriesMeta {
++		group := cbrIntRateLoansGroups[i/len(cbrIntRateLoansTerms)]
++		term := cbrIntRateLoansTerms[i%len(cbrIntRateLoansTerms)]
++		if meta.Series != group.Prefix+term {
++			t.Errorf("запись %d: series %q, want %q (порядок каталога — порядок колонок листа)",
++				i, meta.Series, group.Prefix+term)
++		}
++		for _, want := range []string{
++			"лист «" + cbrIntRateLoansSheet + "»",
++			"группа «" + group.SourceLabel + "»",
++			"срок «" + term + "»",
++		} {
++			if !strings.Contains(meta.Origin, want) {
++				t.Errorf("ряд %q: origin %q не содержит %q", meta.Series, meta.Origin, want)
++			}
++		}
++		if strings.Contains(meta.Origin, "«"+meta.Series+"»") {
++			t.Errorf("ряд %q: origin %q уложил составное имя ряда в кавычки целиком — группа и срок неразличимы",
++				meta.Series, meta.Origin)
++		}
++	}
++}
+diff --git a/cbr/series_meta.go b/cbr/series_meta.go
+index dbd22f3..d6036ed 100644
+--- a/cbr/series_meta.go
++++ b/cbr/series_meta.go
+@@ -154,21 +154,66 @@ var cbrBankIntRateNames = []string{
+ 	"от 1 года до 3 лет",
+ 	"свыше 3 лет",
+ }
+ 
+ var cbrBankIntRateSeriesMeta = namedSeriesMeta(cbrBankIntRateNames, seriesTemplate{Unit: "% годовых", Frequency: "M", Origin: "cbr.ru/vfs/statistics/pdko/int_rat/regulatory_rates.xlsx, лист «в рублях»", Description: "Средняя процентная ставка по вкладам физических лиц в рублях за месяц, % годовых, по сроку вклада (название ряда — срок вклада, как в заголовке ЦБ). В таблице дата — предпоследний день месяца отчётного периода: сопоставлять по toStartOfMonth(date).", Label: "колонка срока"})
+ 
+ // cbrIntRateLoansSeriesMeta — каталог ставок по кредитам юрлицам: 16 рядов (2 группы × 8
+ // сроков), имена объявлены кодом в cbr/int_rate_loans.go (заголовок колонки несёт только срок,
+ // наборы сроков групп идентичны). Название ряда читается как «группа: срок»: «Всего» — все
+ // нефинансовые организации, «СМП» — субъекты малого и среднего предпринимательства.
+-var cbrIntRateLoansSeriesMeta = namedSeriesMeta(cbrIntRateLoansNames, seriesTemplate{Unit: "% годовых", Frequency: "M", Origin: "cbr.ru/vfs/statistics/pdko/int_rat/loans_nonfin.xlsx, лист «ставки_руб»", Description: "Средневзвешенная процентная ставка по кредитам, предоставленным нефинансовым организациям в рублях, за отчётный месяц: уровень, % годовых. Название ряда — группа заёмщиков («Всего» — все нефинансовые организации, «СМП» — субъекты малого и среднего предпринимательства) и срок кредита. Ставка взвешена объёмом предоставленных кредитов, поэтому её динамика определяется и уровнем ставок, и объёмом размещённых средств (сноска источника): темп — разница в процентных пунктах, а не отношение уровней. Дата — предпоследний день месяца отчётного периода: сопоставлять по toStartOfMonth(date). Пустая ячейка источника — пропуск точки (в текущем файле пустых нет).", Label: "группа и колонка срока"})
++// Каталог собирается своим циклом, а не namedSeriesMeta: имя ряда — комбинация двух ячеек
++// источника, и origin обязан называть их раздельно и без вложенных кавычек («группа «Всего»,
++// срок «от 1 года до 3 лет»») — шаблонная подпись «группа и колонка срока» уложила бы составное
++// имя целиком в одни кавычки, и агент MCP не различил бы, где группа, а где срок (правило 11
++// AGENTS.md; составное имя — стандарт §6.8).
++var cbrIntRateLoansSeriesMeta = cbrIntRateLoansMeta()
++
++// cbrIntRateLoansOrigin — источник рядов: файл и лист в форме origin каталога; группа и срок
++// дописываются в цикле. Один литерал на 16 рядов листа: разные origin у рядов одного листа были
++// бы ошибкой, а не свойством ряда.
++const cbrIntRateLoansOrigin = "cbr.ru/vfs/statistics/pdko/int_rat/loans_nonfin.xlsx, лист «ставки_руб»"
++
++// cbrIntRateLoansDescription — описание всех 16 рядов: что измеряет, как читать (уровень, а не
++// темп), и что пропуск точки в источнике — пропуск, а не ноль.
++const cbrIntRateLoansDescription = "Средневзвешенная процентная ставка по кредитам, " +
++	"предоставленным нефинансовым организациям в рублях, за отчётный месяц: уровень, % годовых. " +
++	"Название ряда — группа заёмщиков («Всего» — все нефинансовые организации, «СМП» — субъекты " +
++	"малого и среднего предпринимательства) и срок кредита. Ставка взвешена объёмом " +
++	"предоставленных кредитов, поэтому её динамика определяется и уровнем ставок, и объёмом " +
++	"размещённых средств (сноска источника): темп — разница в процентных пунктах, а не отношение " +
++	"уровней. Дата — предпоследний день месяца отчётного периода: сопоставлять по " +
++	"toStartOfMonth(date). Пустая ячейка источника и литеральный ноль (в стандарте §6.7 — " +
++	"«данных не имеется») — пропуск точки, а не 0 % годовых: нулевой ставки в ряду не бывает. " +
++	"В текущем файле пропусков нет."
++
++// cbrIntRateLoansMeta собирает 16 записей каталога из групп и сроков в порядке колонок листа —
++// том же, в каком имена собирает разбор (cbrIntRateLoansSeriesNames): каталог и разбор не могут
++// разойтись ни по составу имён, ни по порядку.
++func cbrIntRateLoansMeta() []util.SeriesMeta {
++	meta := make([]util.SeriesMeta, 0, len(cbrIntRateLoansGroups)*len(cbrIntRateLoansTerms))
++	for _, group := range cbrIntRateLoansGroups {
++		for _, term := range cbrIntRateLoansTerms {
++			name := group.Prefix + term
++			meta = append(meta, util.SeriesMeta{
++				Source:      cbrSource,
++				Series:      name,
++				Title:       name,
++				Unit:        "% годовых",
++				Frequency:   "M",
++				Origin:      cbrIntRateLoansOrigin + ", группа «" + group.SourceLabel + "», срок «" + term + "»",
++				Description: cbrIntRateLoansDescription,
++			})
++		}
++	}
++	return meta
++}
+ 
+ var cbrIndicatorsCpdNames = []string{"Все товары и услуги", "Базовый ИПЦ"}
+ 
+ var cbrIndicatorsCpdSeriesMeta = namedSeriesMeta(cbrIndicatorsCpdNames, seriesTemplate{Unit: "% к предыдущему месяцу", Frequency: "M", Origin: "cbr.ru/Content/Document/File/108632/indicators_cpd.xlsx (ссылка со страницы cbr.ru/statistics/ddkp/aipd), лист «Лист1»", Description: "Месячный прирост цен в процентах к предыдущему месяцу, сезонно очищенный, по данным ЦБ; значение — уже посчитанный темп, а не индекс. Годовой темп = (произведение (1 + value/100) за 12 месяцев − 1) × 100%. «Все товары и услуги» — общий ИПЦ, «Базовый ИПЦ» — базовая инфляция ЦБ. Дата — последний день месяца.", Label: "строка"})
+ 
+ var cbrInflExpNames = []string{"наблюдаемая инфляция", "ожидаемая инфляция"}
+ 
+ var cbrInflExpSeriesMeta = namedSeriesMeta(cbrInflExpNames, seriesTemplate{Unit: "% годовых", Frequency: "M", Origin: "cbr.ru/analytics/dkp/inflationary_expectations, файл Infl_exp_ГГ-ММ.xlsx (ссылка со страницы), лист «Данные для графиков», таблица «Прямые оценки годовой инфляции: медианные значения»", Description: "Медианные прямые оценки годовой инфляции по опросу населения, % годовых. «наблюдаемая инфляция» — оценка роста цен за последние 12 месяцев; «ожидаемая инфляция» — ожидание на следующие 12 месяцев. Дата — 14-е число месяца опроса (в таблице 1-е число + 13 дней).", Label: "строка"})
+ 
+ var cbrLoansToIndNames = []string{
+diff --git a/cbr/views.go b/cbr/views.go
+index 8dc988a..084e8a1 100644
+--- a/cbr/views.go
++++ b/cbr/views.go
+@@ -29,21 +29,21 @@ UNION ALL SELECT 'cbr', toString(name), date, toFloat64(value) FROM cbr_credit_m
+ UNION ALL SELECT 'cbr', toString(name), date, toFloat64(rate) FROM cbr_bank_int_rate FINAL
+ UNION ALL SELECT 'cbr', toString(name), date, toFloat64(rate) FROM cbr_int_rate_loans FINAL
+ UNION ALL SELECT 'cbr', toString(name), date, toFloat64(value) FROM cbr_indicators_cpd FINAL
+ UNION ALL SELECT 'cbr', toString(name), date, toFloat64(value) FROM cbr_infl_exp FINAL
+ UNION ALL SELECT 'cbr', toString(name), date, toFloat64(balance) FROM cbr_loans_to_individuals FINAL
+ UNION ALL SELECT 'cbr', toString(name), date, toFloat64(balance) FROM cbr_loans_to_corporations FINAL
+ UNION ALL SELECT 'cbr', toString(name), date, toFloat64(balance) FROM cbr_households_b_mes FINAL`,
+ 	Comment: "Макроряды ЦБ РФ: ключевая ставка, курс USD, учётная цена золота, RUONIA, М2 SA, кредиты физлицам и юрлицам, ставки по вкладам и кредитам, ИПЦ (темпы), инфляционные ожидания, балансы домашних хозяйств. Перед расчётом читать v_series_catalog по (source, series): единицы и привязка даты различаются между рядами",
+ 	Columns: map[string]string{
+ 		"source": "Импортёр-источник: всегда cbr",
+-		"series": "Название ряда; совпадает с series в v_series_catalog. Для кредитов по регионам, ставок по вкладам и кредитам, ИПЦ, инфляционных ожиданий и балансов домохозяйств название — строка исходной таблицы ЦБ: у ставок по кредитам это группа заёмщиков (Всего/СМП) и срок кредита",
++		"series": "Название ряда; совпадает с series в v_series_catalog. У кредитов физлицам по регионам, кредитов юрлицам по видам деятельности (ОКВЭД), ставок по вкладам, ИПЦ, инфляционных ожиданий и балансов домохозяйств название — текст исходной таблицы ЦБ (строка региона или вида деятельности, заголовок колонки срока); у ставок по кредитам юрлицам имя — комбинация двух ячеек источника, группы заёмщиков («Всего»/«СМП») и срока кредита, которую собирает код (стандарт §6.8)",
+ 		"date":   "Дата наблюдения (Date). Сдвиги даты различаются по рядам: кредиты — на месяц вперёд, инфляционные ожидания — 14-е число, ставки по вкладам и кредитам — предпоследний день месяца; см. description в v_series_catalog",
+ 		"value":  "Значение ряда (Float64). Единицы зависят от ряда: % годовых, руб. за USD, руб./грамм, млрд руб., млн руб., % к предыдущему месяцу — см. unit в v_series_catalog",
+ 	},
+ }
+ 
+ func publishSeries(ctx context.Context, conn driver.Conn, meta []util.SeriesMeta) error {
+ 	if err := util.UpsertSeriesCatalog(ctx, conn, meta); err != nil {
+ 		return err
+ 	}
+ 	_, err := util.CreateView(ctx, conn, cbrMacroView)
+diff --git a/docs/superpowers/plans/2026-10-15-cbr-int-rate-loans.md b/docs/superpowers/plans/2026-10-15-cbr-int-rate-loans.md
+index 41f83d9..5b40e55 100644
+--- a/docs/superpowers/plans/2026-10-15-cbr-int-rate-loans.md
++++ b/docs/superpowers/plans/2026-10-15-cbr-int-rate-loans.md
+@@ -34,27 +34,29 @@
+   - разбор фикстуры: 16 × 152 = 2 432 точки; даты — предпоследний день месяца
+     (правило даты, не литерал списка — по образцу `bank_int_rat_test.go`);
+   - spot-значения: 2014-01 «Всего: до 30 дней, включая «до востребования»» = 7.35;
+     2026-08 то же = 19.06; 2026-08 «СМП: свыше 1 года» = 14.22;
+   - fail-fast: книга без листа — ошибка; пустой/короткий лист — ошибка с именем таблицы
+     в тексте; при ошибке в рекордер записано 0 строк.
+ 
+ ### Task 2: каталог рядов
+ 
+ - `cbr/series_meta.go`: `cbrIntRateLoansSeriesMeta` — 16 записей `util.SeriesMeta`
+-  (`Source: cbrSource`), через `namedSeriesMeta` с `seriesTemplate` (спека §3.6):
+-  unit «% годовых», F=M, origin «cbr.ru/vfs/statistics/pdko/int_rat/loans_nonfin.xlsx,
+-  лист «ставки_руб», группа …, колонка срока «…»», description: средневзвешенная ставка по
+-  кредитам нефинансовым организациям в рублях за месяц (взвешена объёмом размещений;
++  (`Source: cbrSource`), собирается своим циклом по группам и срокам, а не `namedSeriesMeta`:
++  имя ряда — комбинация двух ячеек источника, и шаблонная подпись уложила бы его в одни кавычки
++  целиком (спека §3.6). Поля: unit «% годовых», F=M, origin — ссылка и лист
++  («cbr.ru/vfs/statistics/pdko/int_rat/loans_nonfin.xlsx, лист «ставки_руб»») плюс группа и срок
++  раздельно («группа «Всего», срок «от 1 года до 3 лет»»), description: средневзвешенная ставка
++  по кредитам нефинансовым организациям в рублях за месяц (взвешена объёмом размещений;
+   динамика определяется и ставками, и объёмами — из сноски источника), дата — предпоследний
+   день месяца отчётного периода (сопоставлять по toStartOfMonth(date)), темп — разница
+-  в п.п., пустая ячейка источника — пропуск точки.
++  в п.п., пустая ячейка и литеральный ноль источника — пропуск точки.
+ - Подключить `AfterImport: afterCbrMacro(cbrIntRateLoansSeriesMeta)` в импортёре T1.
+ 
+ ### Task 3: витрина и реестр
+ 
+ - `cbr/views.go`: `cbrMacroView.Tables` += `cbr_int_rate_loans`; `UNION ALL SELECT 'cbr',
+   toString(name), date, toFloat64(rate) FROM cbr_int_rate_loans FINAL` после строки
+   `cbr_bank_int_rate`; Comment/Columns: «ставки по вкладам и кредитам», в описании `series`
+   и `date` — добавить кредитные ставки и ту же привязку даты.
+ - `cbr/importers.go`: запись `{cbrIntRateLoansImporter, "cbr_int_rate_loans", "SELECT count() FROM cbr_int_rate_loans FINAL"}`
+   после `cbr_bank_int_rate` (порядок = порядок `dagu/cbr.yaml`).
+@@ -97,39 +99,42 @@
+ 4. Повторный `make import STAT=cbr_int_rate_loans` — no-op («версия … уже импортирована»).
+ 5. MCP: `SELECT count() FROM v_cbr_macro` (вырос на 2 432), `SELECT count() FROM
+    v_series_catalog WHERE source='cbr' AND origin LIKE '%loans_nonfin.xlsx%'` = 16,
+    сырой SELECT под `kimi_reader` — отказ.
+ 6. `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА. `dagu validate dagu/cbr.yaml` — exit 0.
+ 7. `make ch-sql FILE=sql/key_rate_coverage.sql` — новая таблица в снимке с 16 рядами.
+ 8. `docs/ROADMAP_KEY_RATE.md`: §4.2 №8 — «✅ фаза 2, этим PR (`cbr_int_rate_loans`: 16 рядов,
+    2 432 точки, 2014-01 … 2026-08, приёмка 2026-10-15)»; абзац фазы 2 в §6 — отметить
+    закрытие №8. Факты приёмки — команда/числа/даты — в коммит и этот план.
+ 
+-**Результат приёмки (2026-10-15, воспроизведено дословно)**
++**Результат приёмки (2026-10-15)**
++
++Факты приёмки перенесены из протокола прогона; в командах и URL сохранены многоточия — там
++опущены части, не влияющие на результат (полные строки — в теле коммита и в версии архива).
+ 
+ Ветка `key-rate-4-2-8-loan-rates`, dev-ClickHouse; запуск — через `make`, SQL-проверки — через MCP.
+ 
+ | Проверка | Команда | Результат |
+ |---|---|---|
+ | Доступность БД | `make ch-status` | `ClickHouse отвечает на порту 8123` |
+ | Импорт | `make import STAT=cbr_int_rate_loans` | `Imported 2432 rows of cbr_int_rate_loans` — скачан `https://www.cbr.ru/vfs/statistics/pdko/int_rat/loans_nonfin.xlsx` |
+-| Снимок покрытия | `make ch-sql` | `rows_total 2432`, `dates 2014-01-30 .. 2026-08-30`, `series 16`; каждый из 16 рядов — 152 точки, 2014-01-30 … 2026-08-30 |
++| Снимок покрытия | `make ch-sql FILE=sql/key_rate_coverage.sql` | `rows_total 2432`, `dates 2014-01-30 .. 2026-08-30`, `series 16`; каждый из 16 рядов — 152 точки, 2014-01-30 … 2026-08-30 |
+ | Spot-сверка | spot-запрос к витрине | `Всего: до 30 дней, включая «до востребования»` — 2014-01-30 = 7.35, 2026-08-30 = 19.06; `СМП: свыше 1 года` — 2026-08-30 = 14.22 |
+-| Каталог | `SELECT count() FROM series_catalog FINAL WHERE source='cbr' AND origin LIKE '%loans_nonfin.xlsx%'` | `catalog_rows 16` |
++| Каталог | `SELECT count() FROM v_series_catalog WHERE source='cbr' AND origin LIKE '%loans_nonfin.xlsx%'` | `catalog_rows 16` (каталог читается агентом через витрину `v_series_catalog`, а не через сырую `series_catalog`) |
+ | Витрина | `SELECT count(), uniqExact(series) FROM v_cbr_macro FINAL` по новым рядам | `view_rows 2432`, `view_series 16`; всего строк витрины — 48 942 |
+-| Строка версии | `SELECT … FROM source_publications` | `cbr_int_rate_loans` / `loans_nonfin.xlsx` / `points 2432` — дословная строка ниже |
++| Строка версии | `SELECT … FROM source_publications` | `cbr_int_rate_loans` / `loans_nonfin.xlsx` / `points 2432` — строка ниже |
+ | Идемпотентность | повтор `make import STAT=cbr_int_rate_loans` | `cbr_int_rate_loans: no-op, версия 32dafeda77a8bcddd8b9feb846a40840 уже импортирована, 2432 точек на месте` |
+ | MCP end-to-end | `make mcp-check` | `ПРОВЕРКА ПРОЙДЕНА`, в т.ч. `OK каталог cbr_int_rate_loans полон: рядов cbr_int_rate_loans: 16 (8 сроков × 2 группы: Всего/СМП)` и `OK сырая cbr_int_rate_loans закрыта: отказ ClickHouse 497 на cbr_int_rate_loans (ожидаемо)` |
+ | Расписание | `dagu validate dagu/cbr.yaml` | exit 0 |
+ | Реестр архива | `make archive-registry` | `реестр архива: 2 строк -> docs/archive/registry.jsonl`; строка архива: `cbr_int_rate_loans/32dafeda77a8bcdd_loans_nonfin.xlsx`, sha256 `87492617bf86c30fb280ffee15c3d2eab3bafa8fd0e248b9f659ef37bbd2bc3e`, 124 288 байт, `first_seen 2026-10-15T12:53:12.43343+05:00` |
+ 
+-Строка версии в `source_publications` (дословно, разделители — вертикальные черты):
++Строка версии в `source_publications` (разделители — вертикальные черты; URL сокращён):
+ 
+ ```text
+ cbr_int_rate_loans | loans_nonfin.xlsx | points 2432 | first_seen 2026-10-15 12:53:23 | url …/int_rat/loans_nonfin.xlsx
+ ```
+ 
+ Независимая перепроверка ревьюером через MCP под `kimi_reader`: `v_cbr_macro` — 48 942,
+ каталог — 16, ряды ставок — 2 432; совпало. Те же факты — в теле коммита `key rate roadmap:
+ close 4.2 #8 loan rates`.
+ 
+ ### Task 7: финальное ревью и PR
+diff --git a/docs/superpowers/specs/2026-10-15-cbr-int-rate-loans-design.md b/docs/superpowers/specs/2026-10-15-cbr-int-rate-loans-design.md
+index 2049767..d569829 100644
+--- a/docs/superpowers/specs/2026-10-15-cbr-int-rate-loans-design.md
++++ b/docs/superpowers/specs/2026-10-15-cbr-int-rate-loans-design.md
+@@ -74,26 +74,30 @@ CREATE TABLE IF NOT EXISTS %s (
+ конвенция, что у `cbr_bank_int_rate`, поэтому ставки по вкладам и по кредитам сопоставимы
+ на одной временной оси во витрине. Привязка фиксируется в `description` каталога:
+ «сопоставлять по toStartOfMonth(date)».
+ 
+ ### 3.4 Парсер (стандарт §6)
+ 
+ - Значения — сырые (`GetRows(sheet, excelize.Options{RawCellValue: true})`, стандарт §6.2).
+ - Якоря, а не магические индексы (§6.3): строка «% годовых» — ориентир шапки; строка групп
+   ищется по подписям «Всего» / «в том числе субъектам малого»; строка заголовков колонок —
+   следующая за ней. Колонки привязываются к группе позиционно (между первой колонкой группы
+-  и первой колонкой следующей группы), merged-диапазоны не читаются.
++  и первой колонкой следующей группы), merged-диапазоны не читаются; база колонок данных —
++  позиция подписи первой группы, а не литеральный номер: иначе вставка колонки перед группой
++  оставила бы шапку «совпавшей», а значения прочитались бы из соседних колонок под правильными
++  именами.
+ - Метки периодов — через `util.MonthsToNum`; строка, чья метка не парсится как месяц и
+   начинается с «*» — сноска, разбор данных закончен; любая иная непарсящаяся непустая метка —
+   ошибка (§6.4).
+-- Пустая ячейка — пропуск точки (§6.7; в текущем файле пустых нет, решение зафиксировано
+-  про запас и описано в `description` рядов).
++- Пропуск точки — пустая ячейка **или** литеральный ноль: по §6.7 ноль означает в источнике
++  «данных не имеется», а не 0 % годовых, поэтому точкой ряда он не становится (в текущем файле
++  пропусков нет, решение зафиксировано про запас и описано в `description` рядов).
+ - Fail-fast с именем таблицы в ошибке: лист отсутствует, лист короче шапки, ноль точек
+   (§6.4); без `panic`, индексация слайсов с проверкой (§6.5).
+ 
+ ### 3.5 Точка контроля публикации (стандарт §9)
+ 
+ Объявлена: файл помесячный, шаг ежедневный (§9.1).
+ `PublicationCountPoints: SELECT count() FROM cbr_int_rate_loans FINAL` (FINAL — §9.2).
+ Артефакт качается шаблонным путём (`DataUrl` + `ImportFunc`) → версии попадают в винтажный
+ архив общим механизмом шаблона (§9.6), кода импортёра архивация не требует.
+ 
+@@ -111,20 +115,25 @@ CREATE TABLE IF NOT EXISTS %s (
+ - Грант: отдельный не нужен (`v_cbr_macro` уже выдана `kimi_reader`,
+   `sql/mcp_kimi_reader.sql`); сырые таблицы по-прежнему закрыты (§10.4).
+ - Публикует `AfterImport: afterCbrMacro(cbrIntRateLoansSeriesMeta)` (стандарт §10.2).
+ 
+ ### 3.7 Транспорт
+ 
+ `util.GetXlsx` по статичному `DataUrl` (стандарт §4.1, таблица «XLSX (ссылка стабильная)»).
+ Сетевых вызовов в `init()` нет (§4.3). HTTP-статус `GetFile` не проверяет (§4.2) — fail-fast
+ парсера (§3.4) закрывает этот случай.
+ 
++Шаг вставлен в середину цепочки `dagu/cbr.yaml` — 10-й из 16, сразу после `cbr_bank_int_rate`:
++структурный сбой источника останавливает и последующие шаги цепочки, и это осознанное решение
++(стандарт §12.1 — ценой падения соседних шагов шаг не пропускает молчаливое отсутствие данных),
++а не побочный эффект вставки.
++
+ ## 4. Состав изменений (файлы)
+ 
+ | Файл | Изменение |
+ |---|---|
+ | `cbr/int_rate_loans.go` | новый импортёр `cbrIntRateLoans` на `util.ClickHouseImport` |
+ | `cbr/testdata/loans_nonfin.xlsx` | фикстура — живой файл целиком (124 КБ, стандарт §11.2: «книги в десятки килобайт коммитятся как есть») |
+ | `cbr/int_rate_loans_test.go` | тесты разбора и каталога (§11.5) |
+ | `cbr/series_meta.go` | `cbrIntRateLoansSeriesMeta` (16 рядов) |
+ | `cbr/views.go` | `v_cbr_macro`: `Tables`, `UNION ALL`, комментарии |
+ | `cbr/importers.go` | запись реестра после `cbr_bank_int_rate` (литералы таблицы и countPoints, §8.2) |
+diff --git a/scripts/mcp_check.py b/scripts/mcp_check.py
+index 590d68e..3a9471b 100644
+--- a/scripts/mcp_check.py
++++ b/scripts/mcp_check.py
+@@ -479,21 +479,21 @@ async def check(params, server_log):
+             # cbr_int_rate_loans, шаг 4.2 #8 роадмапа): ряды контура агент читает только
+             # через общую витрину v_cbr_macro (проверка выше), а сырая таблица ему не
+             # выдана. Каталог обязан описывать все 16 рядов источника, и число сверяется
+             # точным равенством, а не «> 0»: 16 = 8 сроков кредита × 2 группы («Всего» и
+             # «СМП»), и имя ряда код собирает из группы и срока. Меньшее число значит ни
+             # разу не отработавший шаг cbr_int_rate_loans (числа агент прочитает, а что
+             # измеряет ряд и в каких единицах — нет), большее — ряд, которому в листе
+             # источника не соответствует колонка. Выборка по origin, а не по source: у
+             # source='cbr' лежат ряды всех импортёров ЦБ, а файл loans_nonfin.xlsx —
+             # источник ровно этого набора.
+-            loans_catalog = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_series_catalog WHERE source = 'cbr' AND origin LIKE '%loans_nonfin.xlsx%'"}))
++            loans_catalog = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_series_catalog WHERE source = 'cbr' AND origin LIKE '%loans\\_nonfin.xlsx%'"}))
+             loans_catalog_rows = result_rows(loans_catalog)
+             loans_catalog_n = loans_catalog_rows[0].get("count()") if loans_catalog_rows else None
+             if loans_catalog_rows is None:
+                 loans_catalog_detail = f"каталог не читается: {loans_catalog[:200]}"
+             elif loans_catalog_n == 16:
+                 loans_catalog_detail = "рядов cbr_int_rate_loans: 16 (8 сроков × 2 группы: Всего/СМП)"
+             else:
+                 loans_catalog_detail = (f"рядов cbr_int_rate_loans: {loans_catalog_n}, want 16 (8 сроков "
+                                         "× 2 группы: Всего/СМП) — прогнать make import STAT=cbr_int_rate_loans "
+                                         "(каталог перепубликовывается прогоном)")
