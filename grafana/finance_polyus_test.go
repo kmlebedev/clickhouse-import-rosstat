@@ -262,30 +262,31 @@ func TestFinancePolyusGoldOutputFrequencies(t *testing.T) {
 // TestFinancePolyusNineAssets: панель 8 — выпуск золота годовым срезом по активам датапака: девять
 // таргетов, по одному на актив, с алиасом «<актив>, koz» (иначе в легенде девять одинаковых
 // «value»). Консолидированного итога среди них нет — он на панели 7: уровень компании и уровень
-// актива на одной оси читались бы как двойной счёт. Список активов — дословно из спеки §5, но
-// написание сверяется с витриной: ключ 'ZAPADOWE' в v_company_operating не встречается (там
-// 'ZAPADNOYE'), и серия возвращает пусто — это и фиксирует тест (плюс оговорка в Description).
+// актива на одной оси читались бы как двойной счёт. Метрика у восьми активов одна
+// ('Total refined gold output'), а у ALLUVIALS своя ('Refined gold production'): россыпной актив
+// ведётся в датапаке отдельной строкой (правка контракта по живым данным, 2026-10-16).
 func TestFinancePolyusNineAssets(t *testing.T) {
 	panel := panelByID(t, builtFinancePolyus(t), 8)
 	if len(panel.Targets) != 9 {
 		t.Fatalf("у панели %q %d запросов, ожидалось 9 (по одному на актив)", panelTitle(panel), len(panel.Targets))
 	}
-	for _, tc := range []struct{ refID, asset string }{
-		{"A", "OLIMPIADA"},
-		{"B", "BLAGODATNOYE"},
-		{"C", "NATALKA"},
-		{"D", "KURANAKH"},
-		{"E", "VERNINSKOYE2"},
-		{"F", "ALLUVIALS"},
-		{"G", "Sukhoi Log"},
-		{"H", "TITIMUKHTA"},
-		{"I", "ZAPADOWE"},
+	for _, tc := range []struct{ refID, asset, metric string }{
+		{"A", "OLIMPIADA", "Total refined gold output"},
+		{"B", "BLAGODATNOYE", "Total refined gold output"},
+		{"C", "NATALKA", "Total refined gold output"},
+		{"D", "KURANAKH", "Total refined gold output"},
+		{"E", "VERNINSKOYE2", "Total refined gold output"},
+		{"F", "ALLUVIALS", "Refined gold production"},
+		{"G", "Sukhoi Log", "Total refined gold output"},
+		{"H", "TITIMUKHTA", "Total refined gold output"},
+		{"I", "ZAPADNOYE", "Total refined gold output"},
 	} {
 		query := targetByRefID(t, panel, tc.refID)
 		for _, want := range []string{
 			"FROM v_company_operating",
+			"company = 'PLZL'",
 			"asset = '" + tc.asset + "'",
-			"metric = 'Total refined gold output'",
+			"metric = '" + tc.metric + "'",
 			"frequency = 'ANNUAL'",
 			`AS "` + tc.asset + `, koz"`,
 			"$__timeFilter(date)",
@@ -299,10 +300,11 @@ func TestFinancePolyusNineAssets(t *testing.T) {
 			t.Fatalf("панель 8: запрос %s читает консолидированный итог (он на панели 7): %s", tc.refID, query.RawSql)
 		}
 	}
-	// Три пустые серии панели — охват датапака и написание ключа (F ALLUVIALS, G Sukhoi Log,
-	// I ZAPADOWE), а не ноль добычи: описание панели обязано называть и сами серии, и их причину.
+	// Две оговорки охвата — обрыв истории ZAPADNOYE на 2024-м и пустая серия Sukhoi Log (проект до
+	// запуска ЗИФ) — видны только в легенде, и обязана их объяснить Description: иначе обрыв и
+	// пустота читаются как дефект дашборда, а не как охват источника.
 	description := optionalString(panel.Description)
-	for _, want := range []string{"консолидирован", "ALLUVIALS", "Sukhoi Log", "ZAPADNOYE"} {
+	for _, want := range []string{"консолидирован", "ALLUVIALS", "Sukhoi Log", "ZAPADNOYE", "ЗИФ", "2024"} {
 		if !strings.Contains(description, want) {
 			t.Fatalf("Description панели 8 не объясняет охват (нет %q): %s", want, description)
 		}

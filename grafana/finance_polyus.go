@@ -385,23 +385,28 @@ func fpGoldOutputPanel() *timeseries.PanelBuilder {
 	return panel
 }
 
-// fpGoldOutputAssets — активы панели 8 в порядке серий A..I: месторождения датапака (написание —
-// дословно из спеки §5, это ключи витрины). Сводных итогов компании ('CONSOLIDATED OPERATING
-// RESULTS') в списке нет: они на панели 7, и компания с активом на одной оси читались бы как двойной
-// счёт. Три серии не вернут строк, и причина у каждой своя: у Sukhoi Log (проект) и у ALLUVIALS
-// (россыпи ведутся отдельной метрикой 'Refined gold production') годового выпуска аффинированного
-// золота в датапаке нет, а ключ 'ZAPADOWE' витрина хранит как 'ZAPADNOYE' — написание сверяется при
-// приёмке (все три оговорены в Description панели: пустая серия — охват источника, а не ноль добычи).
-var fpGoldOutputAssets = []struct{ refID, asset string }{
-	{"A", "OLIMPIADA"},
-	{"B", "BLAGODATNOYE"},
-	{"C", "NATALKA"},
-	{"D", "KURANAKH"},
-	{"E", "VERNINSKOYE2"},
-	{"F", "ALLUVIALS"},
-	{"G", "Sukhoi Log"},
-	{"H", "TITIMUKHTA"},
-	{"I", "ZAPADOWE"},
+// fpGoldOutputAssets — активы панели 8 в порядке серий A..I с их метрикой выпуска: восемь активов
+// считаются 'Total refined gold output' (у семи годовые точки идут до 2026-01, у ZAPADNOYE история
+// обрывается на 2024-01), а ALLUVIALS — единственный со своей метрикой (см. комментарий в таблице).
+// Сводных итогов компании ('CONSOLIDATED OPERATING RESULTS') в списке нет: они на панели 7, и
+// компания с активом на одной оси читались бы как двойной счёт. Правка контракта спеки §5 по живым
+// данным (2026-10-16): было 'ZAPADOWE' (в витрине такого ключа нет) и общая метрика для ALLUVIALS.
+// Оговорки по охвату (ZAPADNOYE → 2024; Sukhoi Log без строк) — в Description панели: пустая серия
+// это охват источника, а не ноль добычи.
+var fpGoldOutputAssets = []struct{ refID, asset, metric string }{
+	{"A", "OLIMPIADA", fpGoldOutputMetric},
+	{"B", "BLAGODATNOYE", fpGoldOutputMetric},
+	{"C", "NATALKA", fpGoldOutputMetric},
+	{"D", "KURANAKH", fpGoldOutputMetric},
+	{"E", "VERNINSKOYE2", fpGoldOutputMetric},
+	// ALLUVIALS — россыпной актив: в датапаке его выпуск ведётся строкой 'Refined gold production'
+	// (2008→2024, 17 годовых точек), а 'Total refined gold output' для него не публикуется вовсе.
+	{"F", "ALLUVIALS", "Refined gold production"},
+	// Sukhoi Log — проект до запуска ЗИФ: метрики выпуска в датапаке нет (только руда и вскрыша),
+	// поэтому серия пуста до появления данных; метрика — как у остальных рудников.
+	{"G", "Sukhoi Log", fpGoldOutputMetric},
+	{"H", "TITIMUKHTA", fpGoldOutputMetric},
+	{"I", "ZAPADNOYE", fpGoldOutputMetric},
 }
 
 // fpGoldOutputByAssetPanel — панель 8: тот же выпуск золота, но годовым срезом по активам — девять
@@ -412,19 +417,19 @@ func fpGoldOutputByAssetPanel() *timeseries.PanelBuilder {
 		Id(8).
 		Title("Выпуск золота по активам (год), koz").
 		GridPos(fpPanelGridPos(0, 47, 24)).
-		Description("Выпуск аффинированного золота по активам, koz/год (v_company_operating: metric = " +
-			"'Total refined gold output', frequency = 'ANNUAL', asset — месторождение датапака). Девять " +
-			"серий — по одной на актив; консолидированный итог компании ('CONSOLIDATED OPERATING " +
-			"RESULTS') исключён: он на панели 7, и уровень компании на одной оси с активами читался бы " +
-			"как двойной счёт выпуска. Три серии пусты, и у каждой своя причина: F — ALLUVIALS (в " +
-			"датапаке россыпи ведутся отдельной метрикой 'Refined gold production'), G — Sukhoi Log " +
-			"(проект, годового выпуска ещё нет) и I — ZAPADOWE (в витрине ключ этого актива хранится " +
-			"как 'ZAPADNOYE'): пустая серия — это охват источника и написание ключа, а не ноль добычи. " +
-			"Значения — ЗА год, в одних единицах, поэтому серии сопоставимы напрямую.").
+		Description("Выпуск золота по активам, koz/год (v_company_operating, frequency = 'ANNUAL'): " +
+			"восемь активов считаются метрикой 'Total refined gold output' (аффинированное золото), " +
+			"ALLUVIALS — своей 'Refined gold production' (россыпь в датапаке ведётся отдельной строкой). " +
+			"Девять серий — по одной на актив; консолидированный итог компании ('CONSOLIDATED " +
+			"OPERATING RESULTS') исключён: он на панели 7, и уровень компании на одной оси с активами " +
+			"читался бы как двойной счёт выпуска. Оговорки по охвату: история ZAPADNOYE заканчивается " +
+			"2024 годом, а у Sukhoi Log строк выпуска в датапаке нет — проект до запуска ЗИФ, серия " +
+			"появится вместе с данными; обрыв и пустота — это охват источника, а не дефект дашборда и " +
+			"не ноль добычи. Значения — ЗА год, в одних единицах, поэтому серии сопоставимы напрямую.").
 		Unit(units.Short)
 	for _, target := range fpGoldOutputAssets {
 		panel = panel.WithTarget(timeseriesQuery(target.refID,
-			fpOperatingSQL(target.asset, fpGoldOutputMetric, "ANNUAL", fmt.Sprintf(`"%s, koz"`, target.asset))))
+			fpOperatingSQL(target.asset, target.metric, "ANNUAL", fmt.Sprintf(`"%s, koz"`, target.asset))))
 	}
 	return panel
 }

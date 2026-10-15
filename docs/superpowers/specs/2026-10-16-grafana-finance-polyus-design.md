@@ -31,7 +31,7 @@
 | `v_fred_macro` | `DFII10`, `DGS10`, `FEDFUNDS`, `T5YIE` (+`CPIAUCSL`, `DTWEXBGS`) | %; → 2026-10-07/08 |
 | `v_ofz_curve` | `1y/3y/5y/10y` — по 1 точке (снимок), `RGBI` — история | % / пункты |
 | `v_stock_prices` | `code='PLZL'`, `close` | ₽; 4 330 точек, 2026-10-09 = 1006.80 |
-| `v_company_operating` | `asset` ∈ {`CONSOLIDATED OPERATING RESULTS`, `OLIMPIADA`, `BLAGODATNOYE`, `NATALKA`, `KURANAKH`, `VERNINSKOYE2`, `ALLUVIALS`, `Sukhoi Log`, `TITIMUKHTA`, `ZAPADOWE`}; `metric` ∈ {`Total refined gold output`, `Total Dore gold output`, `Total gold produced`, `Ore mined`, `Ore processed`, `Stripping`, `Stripping ratio`, `Average grade in ore mined/processed`, `Recovery`, `Gold contained/payable in concentrate`}; `frequency` ∈ ANNUAL/SEMI-ANNUAL/QUARTERLY | из `v_series_catalog`: koz, kT, «000 m3», m3/t, g/t, %; QUARTERLY → 2022-01, SEMI-ANNUAL → 2026-01, ANNUAL → 2026-01 |
+| `v_company_operating` | `asset` ∈ {`CONSOLIDATED OPERATING RESULTS`, `OLIMPIADA`, `BLAGODATNOYE`, `NATALKA`, `KURANAKH`, `VERNINSKOYE2`, `ALLUVIALS`, `Sukhoi Log`, `TITIMUKHTA`, `ZAPADNOYE`}; `metric` ∈ {`Total refined gold output`, `Total Dore gold output`, `Total gold produced`, `Ore mined`, `Ore processed`, `Stripping`, `Stripping ratio`, `Average grade in ore mined/processed`, `Recovery`, `Gold contained/payable in concentrate`}; `frequency` ∈ ANNUAL/SEMI-ANNUAL/QUARTERLY | из `v_series_catalog`: koz, kT, «000 m3», m3/t, g/t, %; QUARTERLY → 2022-01, SEMI-ANNUAL → 2026-01, ANNUAL → 2026-01. Покрытие годового выпуска золота (`Total refined gold output`, 2008→2026-01, 19 точек) есть у семи активов и у консолидированного итога; **`ALLUVIALS` считается своей метрикой `Refined gold production`** (2008→2024, 17 точек) — `Total refined gold output` для него не публикуется; **`Sukhoi Log`** (проект до запуска ЗИФ) строк выпуска не имеет вовсе — только руда, вскрыша и содержание; у `ZAPADNOYE` история обрывается на 2024-01 |
 | `v_company_financials` | `metric` ∈ {`capex`, `revenue`, `adjusted_ebitda`, `gold_sold`, `tcc_per_ounce`, …}; `period` = `'YYYYH1/H2/FY/Qn'`, `period_type` Enum(Q,H,FY,LTM) | «USD million», «koz», «USD/oz»; capex H → 2026H1 |
 | `v_gold_forecasts` | волна `published=2026-10-07`: `own` bull (4600–5000, mid 4800, 25%) / base (4000–4600, 4300, 40%) / bear (3750–4050, 3900, 35%); банки: citi `short` 4000, goldman `2027` range 5400–5600 (mid 5500) и `YE-2026` 4900, hsbc `2027` 5025 / `YE-2026` 4750, jpm `2027` 5400 / `Q4-2026` 4500, ubs `12M` 5200 | $/oz; вероятность — `probability` |
 | `v_forecast_accuracy` | `metric='xau_q_avg'`: 2026-09-30 — 4450 vs факт 4300.80 (ошибка +3.47%); 2026-12-31 — 4285 (ждёт) | $/oz |
@@ -148,7 +148,7 @@ ORDER BY date
 -- B: frequency = 'SEMI-ANNUAL' («Полугодия, koz»); C: frequency = 'QUARTERLY' («Кварталы, koz»)
 ```
 
-**8. «Выпуск золота по активам (год), koz»** (timeseries, Span 24; 9 таргетов — по одному на актив; консолидированный ряд исключён).
+**8. «Выпуск золота по активам (год), koz»** (timeseries, Span 24; 9 таргетов — по одному на актив; консолидированный ряд исключён; метрика у каждого актива — по контракту ниже).
 ```sql
 SELECT date AS time, value AS "OLIMPIADA, koz"
 FROM v_company_operating
@@ -157,8 +157,13 @@ WHERE company = 'PLZL' AND asset = 'OLIMPIADA'
   AND $__timeFilter(date)
 ORDER BY date
 -- остальные восемь таргетов — тот же шаблон по активам: BLAGODATNOYE, NATALKA, KURANAKH,
--- VERNINSKOYE2, ALLUVIALS, Sukhoi Log, TITIMUKHTA, ZAPADOWE
+-- VERNINSKOYE2, TITIMUKHTA, ZAPADNOYE — metric = 'Total refined gold output' (у ZAPADNOYE история
+-- обрывается на 2024-01); ALLUVIALS — metric = 'Refined gold production' (россыпь ведётся отдельной
+-- строкой датапака, 2008→2024); Sukhoi Log — metric = 'Total refined gold output', но строк выпуска
+-- у проекта нет: серия пуста до запуска ЗИФ (это данные, а не дефект дашборда)
 ```
+
+**Обновление 2026-10-16 (сверка с живой витриной):** контракт панели 8 исправлен по данным `v_company_operating` — актив называется `ZAPADNOYE` (в первой редакции стоял `ZAPADOWE`, такого ключа в витрине нет: 0 строк); `ALLUVIALS` (`Total refined gold output` у него не публикуется) считается своей метрикой `Refined gold production` (17 годовых точек, 2008→2024); у `Sukhoi Log` (проект до запуска ЗИФ) строк выпуска нет вовсе — только руда, вскрыша и содержание, поэтому его серия пуста до появления данных. Правка синхронизирована с `grafana/finance_polyus.go` (таблица `fpGoldOutputAssets` + `Description` панели) и тестом `TestFinancePolyusNineAssets`.
 
 **9. «Руда: добыто и переработано (год), kT»** (timeseries, `short`; 2 таргета).
 ```sql

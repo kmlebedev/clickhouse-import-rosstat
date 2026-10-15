@@ -699,7 +699,7 @@
           },
           {
             "refId": "F",
-            "rawSql": "SELECT date AS time, value AS \"ALLUVIALS, koz\"\nFROM v_company_operating\nWHERE company = 'PLZL' AND asset = 'ALLUVIALS'\n  AND metric = 'Total refined gold output' AND frequency = 'ANNUAL'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "rawSql": "SELECT date AS time, value AS \"ALLUVIALS, koz\"\nFROM v_company_operating\nWHERE company = 'PLZL' AND asset = 'ALLUVIALS'\n  AND metric = 'Refined gold production' AND frequency = 'ANNUAL'\n  AND $__timeFilter(date)\nORDER BY date\n",
             "editorType": "sql",
             "format": 0,
             "queryType": "timeseries",
@@ -723,7 +723,7 @@
           },
           {
             "refId": "I",
-            "rawSql": "SELECT date AS time, value AS \"ZAPADOWE, koz\"\nFROM v_company_operating\nWHERE company = 'PLZL' AND asset = 'ZAPADOWE'\n  AND metric = 'Total refined gold output' AND frequency = 'ANNUAL'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "rawSql": "SELECT date AS time, value AS \"ZAPADNOYE, koz\"\nFROM v_company_operating\nWHERE company = 'PLZL' AND asset = 'ZAPADNOYE'\n  AND metric = 'Total refined gold output' AND frequency = 'ANNUAL'\n  AND $__timeFilter(date)\nORDER BY date\n",
             "editorType": "sql",
             "format": 0,
             "queryType": "timeseries",
@@ -731,7 +731,7 @@
           }
         ],
         "title": "Выпуск золота по активам (год), koz",
-        "description": "Выпуск аффинированного золота по активам, koz/год (v_company_operating: metric = 'Total refined gold output', frequency = 'ANNUAL', asset — месторождение датапака). Девять серий — по одной на актив; консолидированный итог компании ('CONSOLIDATED OPERATING RESULTS') исключён: он на панели 7, и уровень компании на одной оси с активами читался бы как двойной счёт выпуска. Три серии пусты, и у каждой своя причина: F — ALLUVIALS (в датапаке россыпи ведутся отдельной метрикой 'Refined gold production'), G — Sukhoi Log (проект, годового выпуска ещё нет) и I — ZAPADOWE (в витрине ключ этого актива хранится как 'ZAPADNOYE'): пустая серия — это охват источника и написание ключа, а не ноль добычи. Значения — ЗА год, в одних единицах, поэтому серии сопоставимы напрямую.",
+        "description": "Выпуск золота по активам, koz/год (v_company_operating, frequency = 'ANNUAL'): восемь активов считаются метрикой 'Total refined gold output' (аффинированное золото), ALLUVIALS — своей 'Refined gold production' (россыпь в датапаке ведётся отдельной строкой). Девять серий — по одной на актив; консолидированный итог компании ('CONSOLIDATED OPERATING RESULTS') исключён: он на панели 7, и уровень компании на одной оси с активами читался бы как двойной счёт выпуска. Оговорки по охвату: история ZAPADNOYE заканчивается 2024 годом, а у Sukhoi Log строк выпуска в датапаке нет — проект до запуска ЗИФ, серия появится вместе с данными; обрыв и пустота — это охват источника, а не дефект дашборда и не ноль добычи. Значения — ЗА год, в одних единицах, поэтому серии сопоставимы напрямую.",
         "transparent": false,
         "datasource": {
           "type": "grafana-clickhouse-datasource",
