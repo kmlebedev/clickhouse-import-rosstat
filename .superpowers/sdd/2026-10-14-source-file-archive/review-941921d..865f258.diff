@@ -1,0 +1,570 @@
+# Review package: 941921d..865f258
+
+## Commits
+865f258 add archive registry with jsonl upsert
+
+## Files changed
+ archive/registry.go      | 183 ++++++++++++++++++++++++
+ archive/registry_test.go | 364 +++++++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 547 insertions(+)
+
+## Diff
+diff --git a/archive/registry.go b/archive/registry.go
+new file mode 100644
+index 0000000..46e191c
+--- /dev/null
++++ b/archive/registry.go
+@@ -0,0 +1,183 @@
++package archive
++
++import (
++	"bytes"
++	"context"
++	"encoding/json"
++	"fmt"
++	"slices"
++	"strings"
++	"sync"
++	"time"
++)
++
++// RegistryKey — ключ реестра версий: файл в корне хранилища, рядом с каталогами источников. Ключ
++// фиксирован (в отличие от Key): реестр один на всё хранилище, и по одному имени его находит и
++// вызывающий, и режим ARCHIVE_ACTION=registry, и git-зеркало.
++const RegistryKey = "registry.jsonl"
++
++// Entry — одна сохранённая версия файла источника, то есть строка реестра. Поля — из §3.4 спеки:
++// fingerprint — отпечаток HEAD (как в source_publications, чтобы архив и таблица версий называли
++// версию одинаково), sha256 — фактическое содержимое (при неизменных заголовках оно могло
++// смениться), key — объект в хранилище, first_seen — когда конвейер увидел версию, url — аудит.
++// Идентичность строки — Key. Секретов в записи нет: source/name/url/sha256 и есть весь её состав.
++type Entry struct {
++	Source      string    `json:"source"`
++	Name        string    `json:"name"`
++	Fingerprint string    `json:"fingerprint"`
++	SHA256      string    `json:"sha256"`
++	Size        int64     `json:"size"`
++	URL         string    `json:"url"`
++	Key         string    `json:"key"`
++	FirstSeen   time.Time `json:"first_seen"`
++}
++
++// Registry — реестр версий: JSONL-файл в хранилище плюс его состояние в памяти процесса. Файл
++// читается лениво, при первой записи: реестр нужен архивации, а прогон без архивации не должен
++// ни читать, ни заводить его. Запись — upsert по Key (та же версия с тем же sha256 не меняет ни
++// строку, ни байты файла, иначе строка заменяется на месте, новый ключ дописывается в конец), а
++// весь файл уходит в хранилище одним Put: объект там пишется целиком, дописывания по строке нет.
++//
++// Мьютекс защищает состояние внутри процесса и не разводит писателей между процессами: штатный
++// писатель один (последовательная цепочка dagu), а строка, потерянная конкурентным ручным прогоном,
++// самолечится префлайтом (§3.4). Внутри же процесса сериализация обязательна: файл пишется целиком,
++// и два Ensure (самолечение архива в одном импортёре и запись в соседнем) в read-modify-write
++// затёрли бы строку друг друга.
++type Registry struct {
++	store Store
++
++	mu      sync.Mutex
++	loaded  bool    // файл прочитан; пустой реестр тоже считается прочитанным
++	entries []Entry // порядок — порядок добавления, он же порядок строк в файле
++}
++
++// NewRegistry — реестр поверх хранилища. В хранилище конструктор не ходит (ни Exists, ни Get) и
++// файла не заводит: пустой реестр от несуществующего отличается только на записи, и решает это
++// load — так прогон, который до архивации не дошёл, не создаёт пустой registry.jsonl.
++func NewRegistry(store Store) *Registry {
++	return &Registry{store: store}
++}
++
++// Ensure записывает версию в реестр. Ошибка — сбой архивации (§3.3): вызывающий не пишет строку
++// версии в source_publications, и следующий прогон повторит архив целиком, поэтому заметить и
++// разобрать сбой можно до того, как версия будет объявлена импортированной.
++func (r *Registry) Ensure(ctx context.Context, e Entry) error {
++	r.mu.Lock()
++	defer r.mu.Unlock()
++
++	if err := r.load(ctx); err != nil {
++		return err
++	}
++	next, changed := upsert(r.entries, e)
++	if !changed {
++		return nil
++	}
++	body, err := marshalEntries(next)
++	if err != nil {
++		return err
++	}
++	if err = r.store.Put(ctx, RegistryKey, body); err != nil {
++		return fmt.Errorf("archive registry: запись %s: %w", RegistryKey, err)
++	}
++	// Состояние принимается только после успешного Put: иначе неудачная запись одной версии утекла
++	// бы в файл следующим Ensure — строкой на объект, которого в хранилище нет (Put объекта идёт до
++	// реестра и к этому моменту мог не состояться).
++	r.entries = next
++	return nil
++}
++
++// Entries — копия состояния реестра: вызывающий не должен менять реестр через возвращённый слайс,
++// а расхождение с файлом у источника истины дороже копии в десяток записей. До первого Ensure
++// список пуст — файл читается лениво; для чтения реестра целиком (зеркало) есть Store.Get.
++func (r *Registry) Entries() []Entry {
++	r.mu.Lock()
++	defer r.mu.Unlock()
++	return append([]Entry(nil), r.entries...)
++}
++
++// load читает реестр при первом обращении. Отсутствие файла — не ошибка: самый первый прогон
++// заводит его сам, поэтому «нет файла» и «файл пуст» — пустой реестр (Review Focus №1). Битая
++// строка, наоборот, ошибка: реестр объявлен источником истины, и пропустить строку молча значит
++// потерять версию — следующий Put записал бы файл уже без неё. loaded выставляется лишь после
++// успеха: сбой чтения оставляет реестр непрочитанным, и это видит вызывающий.
++func (r *Registry) load(ctx context.Context) error {
++	if r.loaded {
++		return nil
++	}
++	exists, err := r.store.Exists(ctx, RegistryKey)
++	if err != nil {
++		return fmt.Errorf("archive registry: проверка %s: %w", RegistryKey, err)
++	}
++	if !exists {
++		r.loaded = true
++		return nil
++	}
++	body, err := r.store.Get(ctx, RegistryKey)
++	if err != nil {
++		return fmt.Errorf("archive registry: чтение %s: %w", RegistryKey, err)
++	}
++	entries, err := parseEntries(body)
++	if err != nil {
++		return err
++	}
++	r.entries, r.loaded = entries, true
++	return nil
++}
++
++// parseEntries разбирает JSONL и нумерует строки с единицы — по номеру дежурный находит битую
++// строку и в зеркале (docs/archive/registry.jsonl), и в файле на Диске. Пустая строка записи не
++// несёт и ошибкой не считается: перевод строки отделяет записи, и лишний мог оставить ручной
++// разбор или инструмент зеркала, тогда как терять при этом нечего.
++func parseEntries(body []byte) ([]Entry, error) {
++	var entries []Entry
++	for i, line := range strings.Split(string(body), "\n") {
++		if strings.TrimSpace(line) == "" {
++			continue
++		}
++		var e Entry
++		if err := json.Unmarshal([]byte(line), &e); err != nil {
++			return nil, fmt.Errorf("archive registry: %s: строка %d: %w", RegistryKey, i+1, err)
++		}
++		entries = append(entries, e)
++	}
++	return entries, nil
++}
++
++// upsert возвращает новое состояние реестра и признак изменения. Та же версия (совпали и Key, и
++// sha256) — изменений нет: сравниваются ровно эти поля, потому что версию называет key, а смену
++// содержимого — sha256 (§3.4). Замена идёт на месте: строка остаётся там, где была записана
++// впервые, и файл читается как порядок появления источников, а не по последнему обновлению.
++// Возвращается копия, а не правка слайса на месте: состояние принимается лишь после успешного Put.
++func upsert(entries []Entry, e Entry) ([]Entry, bool) {
++	for i, old := range entries {
++		if old.Key != e.Key {
++			continue
++		}
++		if old.SHA256 == e.SHA256 {
++			return nil, false
++		}
++		next := slices.Clone(entries)
++		next[i] = e
++		return next, true
++	}
++	return append(slices.Clone(entries), e), true
++}
++
++// marshalEntries собирает файл: одна запись — одна строка JSON, перевод строки — разделитель
++// (JSONL). Собирается весь файл целиком, потому что объект в хранилище пишется целиком.
++// json.Marshal экранирует «&» в url как \u0026 (он же экранирует «<» и «>»): на разбор это не
++// влияет — строка остаётся тем же JSON, — а формат строки задаёт писатель, а не читатель.
++func marshalEntries(entries []Entry) ([]byte, error) {
++	var buf bytes.Buffer
++	for _, e := range entries {
++		line, err := json.Marshal(e)
++		if err != nil {
++			// Entry — плоские строки, число и время: сюда попасть нельзя. Но молча потерять запись
++			// хуже ошибки — её видит вызывающий и не пишет строку версии в source_publications.
++			return nil, fmt.Errorf("archive registry: %s: запись %q: %w", RegistryKey, e.Key, err)
++		}
++		buf.Write(line)
++		buf.WriteByte('\n')
++	}
++	return buf.Bytes(), nil
++}
+diff --git a/archive/registry_test.go b/archive/registry_test.go
+new file mode 100644
+index 0000000..3301010
+--- /dev/null
++++ b/archive/registry_test.go
+@@ -0,0 +1,364 @@
++package archive
++
++import (
++	"bytes"
++	"context"
++	"crypto/sha256"
++	"encoding/hex"
++	"encoding/json"
++	"fmt"
++	"os"
++	"path/filepath"
++	"strings"
++	"sync"
++	"testing"
++	"time"
++)
++
++// registryTestEntry — запись в том виде, в каком её собирает util после архивации версии: ключ из
++// Key (префикс отпечатка HEAD), sha256 фактического содержимого, размер, URL аудита. Имя входит и
++// в name, и в URL: выгрузки ЦБ и Росстата названы по-русски, и запись обязана доехать до зеркала
++// без искажений.
++func registryTestEntry(name, sum string, size int64) Entry {
++	return Entry{
++		Source:      "cbr_m2",
++		Name:        name,
++		Fingerprint: fp,
++		SHA256:      sum,
++		Size:        size,
++		URL:         "https://www.cbr.ru/vfs/macro/" + name,
++		Key:         Key("cbr_m2", name, fp, zeroSum),
++		FirstSeen:   time.Date(2026, 10, 14, 9, 20, 11, 0, time.FixedZone("MSK", 3*60*60)),
++	}
++}
++
++// sumHex — sha256 содержимого в hex, как его пишет util: у двух версий одного файла различается
++// ровно это поле (отпечаток HEAD при неизменных заголовках остаётся прежним, §3.2).
++func sumHex(body string) string {
++	sum := sha256.Sum256([]byte(body))
++	return hex.EncodeToString(sum[:])
++}
++
++// registryPutCounter считает записи в хранилище. Байты файла одинаковы и при перезаписи тем же
++// содержимым, поэтому «повторный Ensure не делает Put» иначе не отличить от «перезаписал то же
++// самое»; хранилище при этом настоящее — LocalStore в t.TempDir().
++type registryPutCounter struct {
++	Store
++	puts int
++}
++
++func (s *registryPutCounter) Put(ctx context.Context, key string, body []byte) error {
++	s.puts++
++	return s.Store.Put(ctx, key, body)
++}
++
++// registryBytes — байты registry.jsonl с диска, а не через Store: проверяется ровно тот файл,
++// который уезжает в git-зеркало и станет входом будущего восстановления.
++func registryBytes(t *testing.T, dir string) []byte {
++	t.Helper()
++	body, err := os.ReadFile(filepath.Join(dir, RegistryKey))
++	if err != nil {
++		t.Fatalf("чтение %s: %v", RegistryKey, err)
++	}
++	return body
++}
++
++// registryLines — строки файла реестра. JSONL: перевод строки отделяет записи, поэтому файл обязан
++// им заканчиваться, а последний перевод строки новой записи не создаёт.
++func registryLines(t *testing.T, dir string) []string {
++	t.Helper()
++	body := string(registryBytes(t, dir))
++	if body == "" {
++		return nil
++	}
++	if !strings.HasSuffix(body, "\n") {
++		t.Fatalf("реестр не заканчивается переводом строки: %q", body)
++	}
++	return strings.Split(strings.TrimSuffix(body, "\n"), "\n")
++}
++
++// decodedEntries — разобранные строки файла: тесты проверяют и порядок строк, и содержимое, но
++// именно по файлу, а не по памяти процесса.
++func decodedEntries(t *testing.T, dir string) []Entry {
++	t.Helper()
++	lines := registryLines(t, dir)
++	out := make([]Entry, 0, len(lines))
++	for i, line := range lines {
++		var e Entry
++		if err := json.Unmarshal([]byte(line), &e); err != nil {
++			t.Fatalf("строка %d реестра не разбирается как запись: %v (%s)", i+1, err, line)
++		}
++		out = append(out, e)
++	}
++	return out
++}
++
++// assertRegistryEntry — сравнение по полям: time.Time несравним через ==, а поле, потерянное из-за
++// неверного тега, видно именно здесь.
++func assertRegistryEntry(t *testing.T, got, want Entry) {
++	t.Helper()
++	if got.Source != want.Source || got.Name != want.Name || got.Fingerprint != want.Fingerprint ||
++		got.SHA256 != want.SHA256 || got.Size != want.Size || got.URL != want.URL || got.Key != want.Key {
++		t.Errorf("запись реестра = %+v, ожидалось %+v", got, want)
++	}
++	if !got.FirstSeen.Equal(want.FirstSeen) {
++		t.Errorf("first_seen = %s, ожидалось %s", got.FirstSeen, want.FirstSeen)
++	}
++}
++
++// Самый первый прогон: файла нет, и это не ошибка — Ensure заводит реестр одной строкой (Review
++// Focus №1). Формат пинится по файлу: одна JSON-строка, перевод строки в конце, ровно восемь
++// полей спеки §3.4 — потерянное поле лишает восстановление key/url/sha256.
++func TestRegistryEnsureCreatesMissingFile(t *testing.T) {
++	dir := t.TempDir()
++	store := NewLocal(dir)
++	ctx := context.Background()
++	want := registryTestEntry("monetary_agg_SA.xlsx", sumHex("версия первая"), 583746)
++
++	if err := NewRegistry(store).Ensure(ctx, want); err != nil {
++		t.Fatalf("Ensure в пустое хранилище: %v", err)
++	}
++	// Имя файла — часть контракта: по нему реестр находят зеркало, ARCHIVE_ACTION=registry и будущее
++	// восстановление, поэтому проверяется литералом, а не константой, из которой собран этот же путь.
++	if RegistryKey != "registry.jsonl" {
++		t.Errorf("RegistryKey = %q, ожидалось %q", RegistryKey, "registry.jsonl")
++	}
++
++	lines := registryLines(t, dir)
++	if len(lines) != 1 {
++		t.Fatalf("строк в реестре %d, ожидалась 1:\n%s", len(lines), strings.Join(lines, "\n"))
++	}
++	var raw map[string]json.RawMessage
++	if err := json.Unmarshal([]byte(lines[0]), &raw); err != nil {
++		t.Fatalf("строка реестра не JSON-объект: %v (%s)", err, lines[0])
++	}
++	if len(raw) != 8 {
++		t.Errorf("полей в строке %d, ожидалось 8: %s", len(raw), lines[0])
++	}
++	for _, field := range []string{"source", "name", "fingerprint", "sha256", "size", "url", "key", "first_seen"} {
++		if _, ok := raw[field]; !ok {
++			t.Errorf("в строке реестра нет поля %q: %s", field, lines[0])
++		}
++	}
++	assertRegistryEntry(t, decodedEntries(t, dir)[0], want)
++}
++
++// Пустой файл — тоже пустой реестр (Review Focus №1): обнулённый или потерянный реестр не должен
++// ронять архивацию, Ensure заводит в нём первую строку. Ошибка здесь означала бы, что после сбоя
++// инструмента зеркала архив перестал пополняться, и версии терялись бы молча.
++func TestRegistryEnsureEmptyFile(t *testing.T) {
++	dir := t.TempDir()
++	store := NewLocal(dir)
++	ctx := context.Background()
++	want := registryTestEntry("monetary_agg_SA.xlsx", sumHex("версия первая"), 583746)
++	if err := os.WriteFile(filepath.Join(dir, RegistryKey), nil, 0o644); err != nil {
++		t.Fatalf("подготовка пустого %s: %v", RegistryKey, err)
++	}
++
++	if err := NewRegistry(store).Ensure(ctx, want); err != nil {
++		t.Fatalf("Ensure в пустой реестр: %v", err)
++	}
++
++	if lines := registryLines(t, dir); len(lines) != 1 {
++		t.Fatalf("строк в реестре %d, ожидалась 1:\n%s", len(lines), strings.Join(lines, "\n"))
++	}
++	assertRegistryEntry(t, decodedEntries(t, dir)[0], want)
++}
++
++// Повторная архивация той же версии (тот же Key, тот же sha256) — не запись: байты файла обязаны
++// остаться прежними, а Put — не состояться (перезапись тем же содержимым стоила бы запроса к
++// хранилищу на каждый прогон каждого импортёра, а на Диске это ещё и лишний трафик). Первый
++// повтор идёт в тот же Registry (версия уже в памяти), второй — в новый (следующий прогон: реестр
++// читается с нуля, и «уже записано» видно по файлу).
++func TestRegistryEnsureIsIdempotent(t *testing.T) {
++	dir := t.TempDir()
++	store := &registryPutCounter{Store: NewLocal(dir)}
++	ctx := context.Background()
++	e := registryTestEntry("monetary_agg_SA.xlsx", sumHex("версия первая"), 583746)
++
++	reg := NewRegistry(store)
++	if err := reg.Ensure(ctx, e); err != nil {
++		t.Fatalf("первый Ensure: %v", err)
++	}
++	if store.puts != 1 {
++		t.Fatalf("после первой записи Put вызван %d раз, ожидался 1", store.puts)
++	}
++	before := registryBytes(t, dir)
++
++	for _, repeat := range []*Registry{reg, NewRegistry(store)} {
++		if err := repeat.Ensure(ctx, e); err != nil {
++			t.Fatalf("повторный Ensure: %v", err)
++		}
++	}
++	if after := registryBytes(t, dir); !bytes.Equal(before, after) {
++		t.Errorf("повторный Ensure изменил файл реестра:\nдо:    %q\nпосле: %q", before, after)
++	}
++	if store.puts != 1 {
++		t.Errorf("повторный Ensure сделал Put (%d вызовов против 1): содержимое не менялось", store.puts)
++	}
++	if lines := registryLines(t, dir); len(lines) != 1 {
++		t.Errorf("строк в реестре %d, ожидалась 1", len(lines))
++	}
++}
++
++// Содержимое версии под тем же Key изменилось (заголовки те же — sha256 другой): строка заменяется
++// на месте, число строк не растёт (last-wins, §3.4). Прежняя версия в реестре не остаётся: две
++// строки на один key сломали бы поиск версии при восстановлении. Место строки сохраняется — файл
++// упорядочен по первому появлению версии. Второй Ensure идёт из нового Registry: версия могла
++// смениться между прогонами, и решение принимается по файлу, а не по памяти процесса.
++func TestRegistryEnsureReplacesChangedContent(t *testing.T) {
++	dir := t.TempDir()
++	store := NewLocal(dir)
++	ctx := context.Background()
++	first := registryTestEntry("monetary_agg_SA.xlsx", sumHex("версия первая"), 583746)
++	second := registryTestEntry("monetary_agg_SA.xlsx", sumHex("версия вторая"), 601233)
++	other := registryTestEntry("other.xlsx", sumHex("другой файл"), 10)
++	if first.Key != second.Key {
++		t.Fatalf("ключи тестовых записей разошлись: %q и %q", first.Key, second.Key)
++	}
++
++	reg := NewRegistry(store)
++	for _, e := range []Entry{first, other} {
++		if err := reg.Ensure(ctx, e); err != nil {
++			t.Fatalf("Ensure %s: %v", e.Key, err)
++		}
++	}
++	if err := NewRegistry(store).Ensure(ctx, second); err != nil {
++		t.Fatalf("Ensure изменившейся версии: %v", err)
++	}
++
++	entries := decodedEntries(t, dir)
++	if len(entries) != 2 {
++		t.Fatalf("строк в реестре %d, ожидалось 2 (замена на месте, а не дописывание):\n%+v", len(entries), entries)
++	}
++	assertRegistryEntry(t, entries[0], second)
++	assertRegistryEntry(t, entries[1], other)
++}
++
++// Новый ключ дописывается строкой ниже: порядок строк — порядок добавления (first_seen, §3.4),
++// поэтому реестр читается сверху вниз как история архива, а не как случайный набор версий.
++func TestRegistryAppendsNewKeys(t *testing.T) {
++	dir := t.TempDir()
++	store := NewLocal(dir)
++	ctx := context.Background()
++	first := registryTestEntry("monetary_agg_SA.xlsx", sumHex("версия первая"), 583746)
++	second := registryTestEntry("other.xlsx", sumHex("другой файл"), 10)
++
++	if err := NewRegistry(store).Ensure(ctx, first); err != nil {
++		t.Fatalf("Ensure первой версии: %v", err)
++	}
++	// Второй ключ — из нового Registry: так выглядит следующий прогон, реестр читается из файла.
++	if err := NewRegistry(store).Ensure(ctx, second); err != nil {
++		t.Fatalf("Ensure второй версии: %v", err)
++	}
++
++	entries := decodedEntries(t, dir)
++	if len(entries) != 2 {
++		t.Fatalf("строк в реестре %d, ожидалось 2:\n%+v", len(entries), entries)
++	}
++	assertRegistryEntry(t, entries[0], first)
++	assertRegistryEntry(t, entries[1], second)
++}
++
++// Entries отдаёт копию: правка возвращённого слайса не должна менять ни состояние реестра, ни
++// файл — иначе случайная мутация у вызывающего разошлась бы с реестром, объявленным источником
++// истины. До первого Ensure список пуст: файл читается лениво и только тогда, когда нужен записи.
++func TestRegistryEntriesReturnsCopy(t *testing.T) {
++	dir := t.TempDir()
++	store := NewLocal(dir)
++	ctx := context.Background()
++	e := registryTestEntry("monetary_agg_SA.xlsx", sumHex("версия первая"), 583746)
++
++	reg := NewRegistry(store)
++	if got := reg.Entries(); len(got) != 0 {
++		t.Errorf("до первого Ensure Entries вернул %d записей, ожидалось 0", len(got))
++	}
++	if err := reg.Ensure(ctx, e); err != nil {
++		t.Fatalf("Ensure: %v", err)
++	}
++	before := registryBytes(t, dir)
++
++	got := reg.Entries()
++	if len(got) != 1 {
++		t.Fatalf("Entries вернул %d записей, ожидалась 1", len(got))
++	}
++	got[0].SHA256 = sumHex("подмена")
++	got[0].Key = "cbr_m2/подмена.xlsx"
++	got[0].FirstSeen = time.Now()
++
++	again := reg.Entries()
++	if len(again) != 1 {
++		t.Fatalf("после правки копии Entries вернул %d записей, ожидалась 1", len(again))
++	}
++	assertRegistryEntry(t, again[0], e)
++	if after := registryBytes(t, dir); !bytes.Equal(before, after) {
++		t.Errorf("правка копии изменила файл реестра:\nдо:    %q\nпосле: %q", before, after)
++	}
++}
++
++// Битая строка реестра — ошибка, а не пропуск: реестр объявлен источником истины, и молча
++// потерянная строка означает потерянную версию — следующий Ensure записал бы файл уже без неё.
++// По той же причине при ошибке разбора файл не перезаписывается: прежнее содержимое остаётся для
++// разбора дежурным (номер битой строки — в тексте ошибки).
++func TestRegistryBrokenLineIsError(t *testing.T) {
++	dir := t.TempDir()
++	store := NewLocal(dir)
++	ctx := context.Background()
++	good := `{"source":"cbr_m2","name":"full.xlsx","fingerprint":"` + fp + `","sha256":"b7d1","size":1,` +
++		`"url":"https://www.cbr.ru/vfs/macro/full.xlsx","key":"cbr_m2/` + fp16 + `_full.xlsx",` +
++		`"first_seen":"2026-10-14T09:20:11+03:00"}`
++	body := []byte(good + "\n" + `{"source":"cbr_m2",` + "\n")
++	if err := os.WriteFile(filepath.Join(dir, RegistryKey), body, 0o644); err != nil {
++		t.Fatalf("подготовка реестра: %v", err)
++	}
++
++	err := NewRegistry(store).Ensure(ctx, registryTestEntry("other.xlsx", sumHex("версия вторая"), 10))
++	if err == nil {
++		t.Fatal("Ensure на реестре с битой строкой не дал ошибки")
++	}
++	if !strings.Contains(err.Error(), "строка 2") {
++		t.Errorf("в ошибке нет номера битой строки: %v", err)
++	}
++	if after := registryBytes(t, dir); !bytes.Equal(body, after) {
++		t.Errorf("при ошибке разбора реестр перезаписан:\nбыло:  %q\nстало: %q", body, after)
++	}
++}
++
++// Мьютекс разводит писателей внутри процесса: файл пишется целиком, поэтому два Ensure из горутин
++// одного процесса (самолечение архива в соседнем импортёре, ручной прогон рядом с dagu) в
++// read-modify-write затёрли бы строку друг друга. Проверяется на -race: гонки нет, и все записи
++// на месте.
++func TestRegistryConcurrentEnsure(t *testing.T) {
++	dir := t.TempDir()
++	store := NewLocal(dir)
++	ctx := context.Background()
++	reg := NewRegistry(store)
++	const writers = 8
++
++	var wg sync.WaitGroup
++	for i := 0; i < writers; i++ {
++		wg.Add(1)
++		go func(i int) {
++			defer wg.Done()
++			name := fmt.Sprintf("file_%d.xlsx", i)
++			if err := reg.Ensure(ctx, registryTestEntry(name, sumHex(name), int64(i))); err != nil {
++				t.Errorf("Ensure %s: %v", name, err)
++			}
++			reg.Entries() // чтение параллельно записи: так реестр читает соседний вызывающий
++		}(i)
++	}
++	wg.Wait()
++
++	entries := decodedEntries(t, dir)
++	if len(entries) != writers {
++		t.Fatalf("строк в реестре %d, ожидалось %d (потеря записи при конкурентном Ensure):\n%+v",
++			len(entries), writers, entries)
++	}
++	seen := make(map[string]bool, writers)
++	for _, e := range entries {
++		seen[e.Key] = true
++	}
++	if len(seen) != writers {
++		t.Errorf("уникальных ключей в реестре %d, ожидалось %d", len(seen), writers)
++	}
++}

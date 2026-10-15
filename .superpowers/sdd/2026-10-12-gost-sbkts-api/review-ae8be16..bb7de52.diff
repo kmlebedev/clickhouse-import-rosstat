@@ -1,0 +1,455 @@
+# Review package: ae8be16..HEAD
+
+## Commits
+bb7de52 craw: publish gost views and mcp checks
+
+## Files changed
+ craw/gost.go            |  19 ++--
+ craw/gost_views.go      |  80 +++++++++++++++++
+ craw/gost_views_test.go | 225 ++++++++++++++++++++++++++++++++++++++++++++++++
+ scripts/mcp_check.py    |  30 +++++++
+ sql/mcp_kimi_reader.sql |   2 +
+ 5 files changed, 351 insertions(+), 5 deletions(-)
+
+## Diff
+diff --git a/craw/gost.go b/craw/gost.go
+index f3dc19b..7775fd1 100644
+--- a/craw/gost.go
++++ b/craw/gost.go
+@@ -504,38 +504,47 @@ func gostStoredDayCounts(ctx context.Context, conn driver.Conn, from, to time.Ti
+ 
+ // gostImporter — импортёр реестра СБКТС в режимах since/full/check.
+ type gostImporter struct{}
+ 
+ func (s *gostImporter) Name() string { return gostTable }
+ 
+ // Import — один прогон. Порядок шагов — часть контракта, а не стиль:
+ //  1. конфиг из окружения: опечатка в режиме, дате или хвосте падает до любого обращения к conn;
+ //  2. DDL и идемпотентная миграция: импортёр обязан отработать и на чистой базе, и на живой
+ //     четырёхколоночной таблице dev-БД;
+-//  3. предупреждение о строках до бэкфилла (ошибка счёта фатальна: молчание лишило бы оператора
++//  3. публикация витрин v_gost_* — в пишущих режимах (since/full) и до первого обращения к API:
++//     правка определения витрины уезжает вместе с импортом (как у news). В check витрины не
++//     публикуются: режим только читает таблицу;
++//  4. предупреждение о строках до бэкфилла (ошибка счёта фатальна: молчание лишило бы оператора
+ //     единственного сигнала, что историю надо перезаписать полным прогоном);
+-//  4. ветка режима: check — сверка без записи, since/full — обход дней дневными батчами.
+-//
+-// Витрины v_gost_* публикуются не здесь: их добавляет следующий шаг работы (gostPublishViews
+-// перед обходом дней), и до него пакет обязан собираться без этой функции.
++//  5. ветка режима: check — сверка без записи, since/full — обход дней дневными батчами.
+ func (s *gostImporter) Import(ctx context.Context, conn driver.Conn) (int64, error) {
+ 	cfg, err := gostConfigFromEnv()
+ 	if err != nil {
+ 		return 0, err
+ 	}
+ 
+ 	for _, stmt := range gostSchemaStatements() {
+ 		if err = conn.Exec(ctx, stmt); err != nil {
+ 			return 0, fmt.Errorf("%s: схема: %w", gostTable, err)
+ 		}
+ 	}
+ 
++	// check — режим чтения: он ходит только в сырую таблицу и витрины не публикует, поэтому
++	// шаг пропускается, а не выполняется вхолостую. Сбой публикации фатален: прогон, у которого
++	// витрина осталась от прошлой версии определения, отчитывался бы успехом о чужой схеме.
++	if cfg.Mode != gostModeCheck {
++		if err = gostPublishViews(ctx, conn); err != nil {
++			return 0, err
++		}
++	}
++
+ 	legacy, err := gostLegacyRows(ctx, conn)
+ 	if err != nil {
+ 		return 0, err
+ 	}
+ 	if legacy > 0 {
+ 		log.Warnf("%s: %d строк до бэкфилла (publication_date = 1970-01-01) — в сверке check они не участвуют; запустите GOST_MODE=full, чтобы перезаписать их по ключу",
+ 			gostTable, legacy)
+ 	}
+ 
+ 	api := newGostAPI(util.HttpClient, cfg.AppID)
+diff --git a/craw/gost_views.go b/craw/gost_views.go
+new file mode 100644
+index 0000000..3996a9d
+--- /dev/null
++++ b/craw/gost_views.go
+@@ -0,0 +1,80 @@
++package craw
++
++import (
++	"context"
++	"fmt"
++
++	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
++)
++
++// Витрины v_gost_* — читательский контур реестра СБКТС (правило 11 AGENTS.md): сырая
++// gost_vehicle_safety_certificate агенту не выдаётся, читать реестр он обязан через витрину.
++// Витрин две, потому что вопросы к реестру разные: «какие сертификаты выданы» (строки) и
++// «сколько машин въехало» (дневной поток) — второй считается uniqExact по номерам, а не
++// count() строк таблицы (изменения сертификата дают вторую строку при том же номере).
++//
++// Публикуются витрины импортёром в начале пишущего прогона (before first API call) — по образцу
++// news/, чтобы правка определения уезжала вместе с импортом, а не отдельным ручным шагом.
++
++// Имена витрин — контракт с sql/mcp_kimi_reader.sql (гранты), ARCHITECTURE.md §6.3
++// и scripts/mcp_check.py: промах в имени — это витрина, которой агент не видит.
++const (
++	// gostRowsView — строковая витрина реестра: один сертификат — одна строка (FINAL
++	// схлопывает вытесненные копии ReplacingMergeTree).
++	gostRowsView = "v_gost_vehicle_safety_certificate"
++	// gostDailyView — дневной поток выдачи: день выдачи × марка.
++	gostDailyView = "v_gost_vehicle_safety_daily"
++)
++
++// gostViewStatements — стейтменты витрин по порядку: два определения, затем комментарии
++// таблиц и колонок (ALTER TABLE … MODIFY COMMENT / COMMENT COLUMN — DDL-стиль проекта,
++// не COMMENT ON). Комментарии — часть контракта витрины: агент читает их как описание
++// данных, и именно в них живут оговорки (лаг публикации, amendments, год выпуска 0,
++// uniqExact, пустой день).
++//
++// В строковой витрине нет ORDER BY: 3.4 млн строк не сортируются на каждом запросе, вместо
++// этого комментарий велит фильтровать по `date`. Технический `uid` в витрину не выводится —
++// он провенанс импортёра, а не данные о сертификате. Дневная витрина, наоборот, сортирована
++// (строк ~дни × марки): `date DESC` — свежий день сверху, `mark` — стабильный порядок внутри дня.
++var gostViewStatements = []string{
++	`CREATE OR REPLACE VIEW ` + gostRowsView + ` DEFINER = default SQL SECURITY DEFINER AS
++	SELECT date, publication_date, mark, type, certificate_number, ecoclass, enginetrademark, yearofmanufacturing, nameofmanufacturer
++	FROM ` + gostTable + ` FINAL`,
++
++	`CREATE OR REPLACE VIEW ` + gostDailyView + ` DEFINER = default SQL SECURITY DEFINER AS
++	SELECT date, mark, uniqExact(certificate_number) AS certificates
++	FROM ` + gostTable + ` FINAL
++	GROUP BY date, mark
++	ORDER BY date DESC, mark`,
++
++	"ALTER TABLE " + gostRowsView + " MODIFY COMMENT 'Реестр СБКТС Росстандарта (свидетельства о безопасности конструкции ТС): источник — REST API портала gost.ru, импортёр gost_vehicle_safety_certificate, режимы since (ежечасно) / full (история с 2016). `date` — дата выдачи СБКТС (МСК); `publication_date` — дата батча публикации у источника; строка может обновляться (ReplacingMergeTree FINAL); изменения сертификата дают вторую строку при том же номере; в витрине нет технического `uid`; фильтруйте по `date` — витрина не сортирована'",
++
++	"ALTER TABLE " + gostRowsView + " COMMENT COLUMN date '`date` — дата выдачи (МСК)'",
++	"ALTER TABLE " + gostRowsView + " COMMENT COLUMN publication_date '`publication_date` — дата публикации среза у источника (лаг к выдаче ~2 суток)'",
++	"ALTER TABLE " + gostRowsView + " COMMENT COLUMN mark '`mark` — марка ТС (`product`)'",
++	"ALTER TABLE " + gostRowsView + " COMMENT COLUMN type '`type` — тип/модель ТС (`type`)'",
++	"ALTER TABLE " + gostRowsView + " COMMENT COLUMN certificate_number '`certificate_number` — номер СБКТС («ТС RU …»)'",
++	"ALTER TABLE " + gostRowsView + " COMMENT COLUMN ecoclass '`ecoclass` — экологический класс, `-` — не применимо'",
++	"ALTER TABLE " + gostRowsView + " COMMENT COLUMN enginetrademark '`enginetrademark` — двигатель (модель, топливо: дизель/бензин/электро)'",
++	"ALTER TABLE " + gostRowsView + " COMMENT COLUMN yearofmanufacturing '`yearofmanufacturing` — год выпуска, `0` — не указан или строка до бэкфилла'",
++	"ALTER TABLE " + gostRowsView + " COMMENT COLUMN nameofmanufacturer '`nameofmanufacturer` — производитель'",
++
++	"ALTER TABLE " + gostDailyView + " MODIFY COMMENT 'Дневной поток выдачи СБКТС: одна строка на (день выдачи × марка), `certificates` — число уникальных номеров (`uniqExact`), а не строк таблицы; счётчик импорта автомобилей по реестру Росстандарта; пустой день отсутствует (не 0)'",
++
++	"ALTER TABLE " + gostDailyView + " COMMENT COLUMN date '`date` — день выдачи (МСК)'",
++	"ALTER TABLE " + gostDailyView + " COMMENT COLUMN mark '`mark` — марка ТС'",
++	"ALTER TABLE " + gostDailyView + " COMMENT COLUMN certificates '`certificates` — выдано сертификатов за день (уникальные номера)'",
++}
++
++// gostPublishViews публикует витрины: стейтменты исполняются по порядку (определение →
++// комментарии), первый сбой останавливает публикацию. Ошибка фатальна для прогона: витрина,
++// определения которой нет, — это чтение агента по устаревшей или отсутствующей схеме, а
++// не «прогон прошёл без витрин». Вызывается только в пишущих режимах (since/full).
++func gostPublishViews(ctx context.Context, conn driver.Conn) error {
++	for _, stmt := range gostViewStatements {
++		if err := conn.Exec(ctx, stmt); err != nil {
++			return fmt.Errorf("%s: публикация витрин: %w", gostTable, err)
++		}
++	}
++	return nil
++}
+diff --git a/craw/gost_views_test.go b/craw/gost_views_test.go
+new file mode 100644
+index 0000000..62f8119
+--- /dev/null
++++ b/craw/gost_views_test.go
+@@ -0,0 +1,225 @@
++package craw
++
++import (
++	"context"
++	"strings"
++	"testing"
++)
++
++// Тесты витрин v_gost_* офлайн: соединение — фейковое (gostFakeConn из gost_test.go),
++// источник — httptest (gostNewTestAPI/gostEveryDayServer). Пинятся три контракта:
++// состав и форма стейтментов (число, определения витрин, комментарии), смысл комментариев
++// (оговорки, без которых витрина читается неверно) и порядок публикации в Import —
++// витрины публикуются в пишущем прогоне и до первого обращения к API.
++//
++// Число стейтментов — 16, а не 14 из плана: 2 × CREATE OR REPLACE VIEW + комментарий
++// таблицы и 9 комментариев колонок строковой витрины + комментарий таблицы и 3 комментария
++// колонок дневной. 3.4 млн строк витрины обязаны быть описаны для агента, и «14» в плане
++// было арифметической ошибкой (решение контроллера, зафиксировано здесь).
++
++// gostRowViewColumns — колонки строковой витрины по порядку определения: технический `uid`
++// в витрину не выводится (провенанс остаётся в сырой таблице).
++var gostRowViewColumns = []string{
++	"date", "publication_date", "mark", "type", "certificate_number",
++	"ecoclass", "enginetrademark", "yearofmanufacturing", "nameofmanufacturer",
++}
++
++// gostDailyViewColumns — колонки дневной витрины: день × марка и счётчик сертификатов.
++var gostDailyViewColumns = []string{"date", "mark", "certificates"}
++
++// gostCommentCount считает стейтменты-комментарии витрины: MODIFY COMMENT — комментарий
++// таблицы, COMMENT COLUMN — комментарии колонок (DDL-стиль проекта: не COMMENT ON).
++func gostCommentCount(t *testing.T, stmts []string, prefix string) int {
++	t.Helper()
++	count := 0
++	for _, stmt := range stmts {
++		if strings.HasPrefix(stmt, prefix) {
++			count++
++		}
++	}
++	return count
++}
++
++// gostColumnComment ищет единственный комментарий колонки витрины. Префикс заканчивается
++// на `"' "` — иначе `date` совпал бы с колонкой, начинающейся на `date` (в news это
++// date/date_msk, здесь — страховка на будущее).
++func gostColumnComment(t *testing.T, stmts []string, view, column string) string {
++	t.Helper()
++	prefix := "ALTER TABLE " + view + " COMMENT COLUMN " + column + " '"
++	var found []string
++	for _, stmt := range stmts {
++		if strings.HasPrefix(stmt, prefix) {
++			found = append(found, stmt)
++		}
++	}
++	if len(found) != 1 {
++		t.Fatalf("комментариев колонки %s.%s: %d, ожидался один", view, column, len(found))
++	}
++	return found[0]
++}
++
++func TestGostViewStatementsShape(t *testing.T) {
++	stmts := gostViewStatements
++	if len(stmts) != 16 {
++		t.Fatalf("стейтментов %d, ожидалось 16 (2 витрины + комментарий таблицы и 9 колонок строковой + комментарий таблицы и 3 колонки дневной)", len(stmts))
++	}
++
++	rows := stmts[0]
++	for _, want := range []string{
++		"CREATE OR REPLACE VIEW " + gostRowsView,
++		"DEFINER = default SQL SECURITY DEFINER",
++		"FROM " + gostTable + " FINAL",
++		"SELECT date, publication_date, mark, type, certificate_number, ecoclass, enginetrademark, yearofmanufacturing, nameofmanufacturer",
++	} {
++		if !strings.Contains(rows, want) {
++			t.Errorf("строковая витрина без %q: %q", want, rows)
++		}
++	}
++	if strings.Contains(rows, "uid") {
++		t.Errorf("строковая витрина выводит техническую колонку uid: %q", rows)
++	}
++	// 3.4 млн строк: сортировка на каждом запросе не нужна, фильтровать агент обязан по date,
++	// а об этом говорит комментарий витрины (TestGostViewsDocumentSemantics).
++	if strings.Contains(rows, "ORDER BY") {
++		t.Errorf("строковая витрина сортируется: %q", rows)
++	}
++
++	daily := stmts[1]
++	for _, want := range []string{
++		"CREATE OR REPLACE VIEW " + gostDailyView,
++		"DEFINER = default SQL SECURITY DEFINER",
++		"uniqExact(certificate_number)",
++		"GROUP BY date, mark",
++		"ORDER BY date DESC, mark",
++	} {
++		if !strings.Contains(daily, want) {
++			t.Errorf("дневная витрина без %q: %q", want, daily)
++		}
++	}
++	// certificates — число уникальных номеров, а не строк таблицы: изменения сертификата
++	// (amendments) дают вторую строку с тем же номером, и count() завысил бы день.
++	if strings.Contains(daily, "count()") {
++		t.Errorf("дневная витрина считает строки вместо уникальных номеров: %q", daily)
++	}
++
++	// Комментарии — только после определений витрин: агент читает витрину с описанием, а не
++	// комментарии к ещё не созданному объекту.
++	comments := stmts[2:]
++	if got := gostCommentCount(t, comments, "ALTER TABLE "+gostRowsView+" MODIFY COMMENT"); got != 1 {
++		t.Errorf("комментариев таблицы строковой витрины %d, ожидался один", got)
++	}
++	if got := gostCommentCount(t, comments, "ALTER TABLE "+gostDailyView+" MODIFY COMMENT"); got != 1 {
++		t.Errorf("комментариев таблицы дневной витрины %d, ожидался один", got)
++	}
++	if got := gostCommentCount(t, comments, "ALTER TABLE "+gostRowsView+" COMMENT COLUMN "); got != len(gostRowViewColumns) {
++		t.Errorf("комментариев колонок строковой витрины %d, ожидалось %d", got, len(gostRowViewColumns))
++	}
++	if got := gostCommentCount(t, comments, "ALTER TABLE "+gostDailyView+" COMMENT COLUMN "); got != len(gostDailyViewColumns) {
++		t.Errorf("комментариев колонок дневной витрины %d, ожидалось %d", got, len(gostDailyViewColumns))
++	}
++	// Каждая колонка обеих витрин обязана быть описана: колонка без комментария — это колонка,
++	// смысл которой агент угадывает.
++	for _, column := range gostRowViewColumns {
++		gostColumnComment(t, comments, gostRowsView, column)
++	}
++	for _, column := range gostDailyViewColumns {
++		gostColumnComment(t, comments, gostDailyView, column)
++	}
++}
++
++func TestGostViewsDocumentSemantics(t *testing.T) {
++	// Тексты комментариев — часть контракта витрин: агент читает их как описание данных.
++	// Проверяются оговорки, без которых витрина читается неверно (даты, лаг публикации,
++	// amendments, год выпуска 0, uniqExact, пустой день), а не дословные формулировки.
++	var text strings.Builder
++	for _, stmt := range gostViewStatements[2:] {
++		text.WriteString(stmt)
++		text.WriteString("\n")
++	}
++	comments := text.String()
++	// Регистр — потому что комментарий таблицы начинается с «Реестр СБКТС Росстандарта».
++	lowered := strings.ToLower(comments)
++
++	for _, want := range []string{
++		"реестр сбктс росстандарта",
++		"rest api",
++		"gost.ru",
++		"дата выдачи сбктс (мск)",
++		"дата публикации среза",
++		"лаг к выдаче ~2 суток",
++		"изменения сертификата дают вторую строку",
++		"replacingmergetree final",
++		"фильтруйте по `date`",
++		"витрина не сортирована",
++		"год выпуска",
++		"`0` — не указан",
++		"до бэкфилла",
++		"uniqexact",
++		"уникальных номеров",
++		"пустой день отсутствует",
++	} {
++		if !strings.Contains(lowered, want) {
++			t.Errorf("в комментариях витрин нет %q:\n%s", want, comments)
++		}
++	}
++
++	// «Одна строка каждый»: перенос внутри комментария — это либо незакрытая кавычка,
++	// либо комментарий, у которого потерялась половина смысла.
++	for i, stmt := range gostViewStatements[2:] {
++		if strings.Contains(stmt, "\n") {
++			t.Errorf("комментарий %d не одной строкой: %q", i, stmt)
++		}
++	}
++}
++
++func TestGostImportWritesPublishViews(t *testing.T) {
++	gostPinClock(t, gostTestNow)
++	gostEnv(t, map[string]string{gostModeEnv: gostModeSince, gostAppIDEnv: gostTestAppID})
++	gostNewTestAPI(t, gostEveryDayServer(t, gostDaySpec{Count: 1}))
++	conn := &gostFakeConn{} // пустая таблица: свой прогон дней, но порядок шагов тот же
++
++	if _, err := (&gostImporter{}).Import(context.Background(), conn); err != nil {
++		t.Fatalf("since по пустой таблице: %v", err)
++	}
++
++	calls := conn.callList()
++	want := make(map[string]bool, len(gostViewStatements))
++	for _, stmt := range gostViewStatements {
++		want[stmt] = true
++	}
++
++	var viewIdx []int
++	for i, call := range calls {
++		stmt := strings.TrimPrefix(call, "exec: ")
++		if stmt != call && want[stmt] {
++			viewIdx = append(viewIdx, i)
++		}
++	}
++	if len(viewIdx) != len(gostViewStatements) {
++		t.Fatalf("Exec стейтментов витрин %d, ожидалось %d; вызовы: %v", len(viewIdx), len(gostViewStatements), calls)
++	}
++	// Порядок стейтментов — порядок среза: колонка обязана быть описана после создания витрины,
++	// а дневная витрина — после строковой (её определение читает таблицу, а не витрину, но
++	// отчёт о сбое без порядка не читается).
++	for n, i := range viewIdx {
++		if got := strings.TrimPrefix(calls[i], "exec: "); got != gostViewStatements[n] {
++			t.Errorf("стейтмент витрин %d = %q, ожидался %q", n, got, gostViewStatements[n])
++		}
++	}
++	// Публикация — до первого обращения к API: правка определения витрины обязана уехать вместе
++	// с прогоном, а не после него (и не после первой записи дня).
++	firstBatch := -1
++	for i, call := range calls {
++		if strings.HasPrefix(call, "preparebatch:") {
++			firstBatch = i
++			break
++		}
++	}
++	if firstBatch < 0 {
++		t.Fatalf("ни одного батча в прогоне: %v", calls)
++	}
++	if viewIdx[len(viewIdx)-1] > firstBatch {
++		t.Errorf("витрины публикуются после первого батча: последний стейтмент — вызов %d, батч — %d",
++			viewIdx[len(viewIdx)-1], firstBatch)
++	}
++}
+diff --git a/scripts/mcp_check.py b/scripts/mcp_check.py
+index ff6ce1a..7f1c96f 100644
+--- a/scripts/mcp_check.py
++++ b/scripts/mcp_check.py
+@@ -319,15 +319,45 @@ async def check(params, server_log):
+                 news_view_detail = f"строк: {news_view_rows[0].get('count()')}"
+             else:
+                 news_view_detail = "в ответе нет строк"
+             failed += not expect("витрина v_news_events существует и читается", bool(news_view_rows), news_view_detail)
+ 
+             raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM news_events"}))
+             denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+             failed += not expect("сырая news_events закрыта", denied,
+                                  "отказ ClickHouse 497 на news_events (ожидаемо)" if denied else raw[:200])
+ 
++            # Контур СБКТС Росстандарта (правило 11): обе витрины читаются агентом, а сырая
++            # gost_vehicle_safety_certificate — источник витрин — агенту закрыта (как macro_series
++            # и news_events: читать реестр агент обязан только через витрины). Существование
++            # витрины подтверждается ЗАПРОСОМ К НЕЙ, а не поиском имени в ответе list_tables:
++            # в том тексте лежат create_table_query с комментариями таблиц и колонок, и имя
++            # отсутствующей витрины попадало туда из COMMENT соседки (урок bold). Разобранный
++            # ответ run_query доказывает и существование, и право чтения; «нет витрины» и «нет
++            # прав» приходят ошибкой (UNKNOWN_TABLE / ACCESS_DENIED) и в result_rows не разбираются.
++            #
++            # Пустая витрина — не отказ: до первого прогона импортёра (или в день без публикаций)
++            # строк нет и вовсе, поэтому значение count не проверяется — только разрешение
++            # чтения, как у v_dcf_assumptions.
++            for view, label in (("v_gost_vehicle_safety_certificate", "реестр СБКТС"),
++                                ("v_gost_vehicle_safety_daily", "дневной поток выдачи СБКТС")):
++                gost_view = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {view}"}))
++                gost_view_rows = result_rows(gost_view)
++                if gost_view_rows is None:
++                    gost_view_detail = f"витрина не читается: {gost_view[:200]}"
++                elif gost_view_rows:
++                    gost_view_detail = f"строк: {gost_view_rows[0].get('count()')}"
++                else:
++                    gost_view_detail = "в ответе нет строк"
++                failed += not expect(f"витрина {view} существует и читается ({label})",
++                                     bool(gost_view_rows), gost_view_detail)
++
++            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM gost_vehicle_safety_certificate"}))
++            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
++            failed += not expect("сырая gost_vehicle_safety_certificate закрыта", denied,
++                                 "отказ ClickHouse 497 на gost_vehicle_safety_certificate (ожидаемо)" if denied else raw[:200])
++
+     return failed
+ 
+ 
+ if __name__ == "__main__":
+     sys.exit(asyncio.run(main()))
+diff --git a/sql/mcp_kimi_reader.sql b/sql/mcp_kimi_reader.sql
+index 7c53329..b82b075 100644
+--- a/sql/mcp_kimi_reader.sql
++++ b/sql/mcp_kimi_reader.sql
+@@ -22,10 +22,12 @@ GRANT SELECT ON default.v_company_metric_sources TO kimi_reader;
+ GRANT SELECT ON default.v_company_operating TO kimi_reader;
+ GRANT SELECT ON default.v_dcf_assumptions TO kimi_reader;
+ GRANT SELECT ON default.v_imf_macro TO kimi_reader;
+ GRANT SELECT ON default.v_eia_petroleum TO kimi_reader;
+ GRANT SELECT ON default.v_gold_forecasts TO kimi_reader;
+ GRANT SELECT ON default.v_gold_etf_flows TO kimi_reader;
+ GRANT SELECT ON default.v_cb_gold_dynamics TO kimi_reader;
+ GRANT SELECT ON default.v_gold_etf_flows_daily TO kimi_reader;
+ GRANT SELECT ON default.v_gold_etf_funds_daily TO kimi_reader;
+ GRANT SELECT ON default.v_news_events TO kimi_reader;
++GRANT SELECT ON default.v_gost_vehicle_safety_certificate TO kimi_reader;
++GRANT SELECT ON default.v_gost_vehicle_safety_daily TO kimi_reader;

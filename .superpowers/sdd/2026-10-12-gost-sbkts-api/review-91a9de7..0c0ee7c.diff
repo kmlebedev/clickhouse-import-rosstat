@@ -1,0 +1,326 @@
+# Review package: 91a9de7..HEAD
+
+## Commits
+0c0ee7c craw: fix gost api error paths and retry tests
+
+## Files changed
+ craw/gost_api.go      | 20 +++++++----
+ craw/gost_api_test.go | 99 +++++++++++++++++++++++++++++++++++++++++++++++++--
+ 2 files changed, 109 insertions(+), 10 deletions(-)
+
+## Diff
+diff --git a/craw/gost_api.go b/craw/gost_api.go
+index 8ab5485..22e3cfc 100644
+--- a/craw/gost_api.go
++++ b/craw/gost_api.go
+@@ -1,13 +1,14 @@
+ package craw
+ 
+ import (
++	"bytes"
+ 	"context"
+ 	"encoding/json"
+ 	"errors"
+ 	"fmt"
+ 	"io"
+ 	"net/http"
+ 	"net/url"
+ 	"os"
+ 	"strconv"
+ 	"strings"
+@@ -152,43 +153,45 @@ func (a *gostAPI) fetchPage(ctx context.Context, day time.Time, page, size int)
+ 	b := gostBackoffPolicy
+ 
+ 	op := func() (gostSearchResponse, error) {
+ 		// Дедлайн на каждую попытку, а не на весь Retry: иначе повторы шли бы уже по
+ 		// истёкшему контексту и были бы бессмысленны.
+ 		reqCtx, cancel := context.WithTimeout(ctx, gostAPITimeout)
+ 		defer cancel()
+ 
+ 		req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, urlStr, nil)
+ 		if err != nil {
+-			// Сломанный URL повтором не лечится.
+-			return gostSearchResponse{}, backoff.Permanent(err)
++			// Сломанный URL повтором не лечится. Ошибка разбора приходит из net/http
++			// обёрнутой в *url.Error с полным адресом — её снимает gostNoURL.
++			return gostSearchResponse{}, backoff.Permanent(gostNoURL(err))
+ 		}
+ 		req.Header.Set(gostAppIDHeader, a.AppID)
+ 		req.Header.Set("Accept", gostAcceptHeader)
+ 		req.Header.Set("User-Agent", util.HttpUA)
+ 
+ 		resp, err := a.Client.Do(req)
+ 		if err != nil {
+ 			return gostSearchResponse{}, gostTransportError(err)
+ 		}
+ 		defer func() { _ = resp.Body.Close() }()
+ 
+ 		body, err := io.ReadAll(resp.Body)
+ 		if err != nil {
+ 			return gostSearchResponse{}, gostTransportError(err)
+ 		}
+ 		if resp.StatusCode != http.StatusOK {
+ 			return gostSearchResponse{}, gostStatusError(resp.StatusCode)
+ 		}
+-		if len(body) == 0 {
+-			// Пустой ответ неотличим от «данных нет» и не должен выглядеть успехом.
+-			// Повторяем: это сбой ответа, а не день без документов.
++		// Пустое тело (в том числе из одних пробелов) и литерал null неотличимы от
++		// «данных нет»: разбор такого ответа дал бы count = 0 и выглядел бы успехом.
++		// Повторяем — это сбой ответа, а не день без документов.
++		if trimmed := bytes.TrimSpace(body); len(trimmed) == 0 || string(trimmed) == "null" {
+ 			return gostSearchResponse{}, fmt.Errorf("пустое тело ответа")
+ 		}
+ 		var out gostSearchResponse
+ 		if err := json.Unmarshal(body, &out); err != nil {
+ 			return gostSearchResponse{}, fmt.Errorf("разбор JSON: %w", err)
+ 		}
+ 		return out, nil
+ 	}
+ 	return backoff.Retry(ctx, op, backoff.WithBackOff(&b), backoff.WithMaxTries(gostMaxTries))
+ }
+@@ -214,23 +217,26 @@ func gostStatusError(status int) error {
+ // gostTransportError классифицирует сбой транспорта. Дедлайн попытки и таймаут сокета —
+ // не отказ портала, а перегрузка: повторяем с большой паузой. Прочие обрывы (сброс
+ // соединения, неудачный DNS) — обычный повтор.
+ func gostTransportError(err error) error {
+ 	if errors.Is(err, context.DeadlineExceeded) || os.IsTimeout(err) {
+ 		return errors.Join(gostNoURL(err), gostRetryAfter(gostRetryAfterTimeout))
+ 	}
+ 	return gostNoURL(err)
+ }
+ 
+-// gostRetryAfter — RetryAfter от длительности: backoff принимает целые секунды.
++// gostRetryAfter — ошибка «повторить через d». backoff.RetryAfter принимает только целые
++// секунды, а переменные пауз — длительности, поэтому длительность передаётся как есть:
++// округление вниз потеряло бы и секундную точность настройки, и короткие тестовые паузы
++// (RetryAfterError.Duration — то самое поле, по которому backoff выдерживает паузу).
+ func gostRetryAfter(d time.Duration) error {
+-	return backoff.RetryAfter(int(d.Seconds()))
++	return &backoff.RetryAfterError{Duration: d}
+ }
+ 
+ // gostNoURL убирает URL из ошибки транспорта: net/http заворачивает всё в *url.Error и
+ // печатает адрес вместе с query целиком. URL-контекст добавляет вызывающий — как в util.GetJSON.
+ func gostNoURL(err error) error {
+ 	var uerr *url.Error
+ 	if errors.As(err, &uerr) {
+ 		return uerr.Err
+ 	}
+ 	return err
+diff --git a/craw/gost_api_test.go b/craw/gost_api_test.go
+index 3e64779..9f566cb 100644
+--- a/craw/gost_api_test.go
++++ b/craw/gost_api_test.go
+@@ -1,28 +1,30 @@
+ package craw
+ 
+ import (
+ 	"context"
+ 	"encoding/json"
++	"errors"
+ 	"net/http"
+ 	"net/http/httptest"
+ 	"net/url"
+ 	"os"
+ 	"path/filepath"
+ 	"slices"
+ 	"strconv"
+ 	"strings"
+ 	"sync"
+ 	"sync/atomic"
+ 	"testing"
+ 	"time"
+ 
++	"github.com/cenkalti/backoff/v5"
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+ )
+ 
+ // Тесты транспорта API СБКТС офлайн: источник — httptest-сервер, тела ответов —
+ // фикстура craw/testdata/gost_day.json (срез живого ответа) или собранный из неё же
+ // JSON. Ни сети, ни ClickHouse, ни токена здесь нет: appid подставной.
+ // Пинятся четыре контракта ручки: форма запроса (путь, query, заголовки), сборка дня
+ // по страницам, клиентский фильтр и класс повторов (permanent против retryable).
+ 
+ const (
+@@ -271,37 +273,51 @@ func TestGostYear(t *testing.T) {
+ func TestGostRowsFromDocsFilters(t *testing.T) {
+ 	resp := gostDayFixture(t)
+ 	if resp.Count != 4 || len(resp.Data) != 4 {
+ 		t.Fatalf("фикстура: count=%d, документов=%d, ожидалось 4 и 4", resp.Count, len(resp.Data))
+ 	}
+ 	// День фикстуры совпадает с gostTestDay: на этом держатся все проверки дня.
+ 	if got := resp.Data[0].Fields.DateOfPublication; got != gostTestPublication {
+ 		t.Fatalf("фикстура: дата публикации первого документа = %q, ожидалась %q", got, gostTestPublication)
+ 	}
+ 
+-	// Причина пропуска у каждого документа своя: чужой день публикации, нет даты выдачи,
+-	// нет номера сертификата. Первый документ — единственный полный и свой.
++	// Причина пропуска у каждого документа фикстуры своя: чужой день публикации, нет даты
++	// выдачи, нет номера сертификата. Первый документ — единственный полный и свой.
+ 	want := []bool{true, false, false, false}
+ 	for i, ok := range want {
+ 		if _, got := gostRowFromDoc(gostTestDay, resp.Data[i]); got != ok {
+ 			t.Errorf("документ %d (%s): в срезе = %v, ожидалось %v", i, resp.Data[i].Fields.Product, got, ok)
+ 		}
+ 	}
+ 
+ 	rows, skipped := gostRowsFromDocs(gostTestDay, resp.Data)
+ 	if len(rows) != 1 {
+ 		t.Fatalf("строк %d, ожидалась 1: %+v", len(rows), rows)
+ 	}
+ 	if skipped != 3 {
+ 		t.Errorf("skipped = %d, ожидалось 3", skipped)
+ 	}
+ 
++	// Проверка «нет даты выдачи» изолируется отдельно: у документа 2 фикстуры пусты и дата,
++	// и номер, поэтому его пропуск объясняется и тем и другим, и снятие проверки nil он не
++	// поймает. Здесь та же карточка, но с заполненным номером — единственная причина
++	// пропуска именно nil-дата, и без этой проверки документ обязан попасть в срез.
++	noIssueDate := resp.Data[2]
++	noIssueDate.Fields.NumberOfCertificate = "ТС RU А-DE.РА15.99999"
++	if row, ok := gostRowFromDoc(gostTestDay, noIssueDate); ok {
++		t.Errorf("документ без даты выдачи попал в срез: %+v", row)
++	}
++	withNoIssueDate := append(append([]gostDoc(nil), resp.Data...), noIssueDate)
++	if rows, skipped = gostRowsFromDocs(gostTestDay, withNoIssueDate); len(rows) != 1 || skipped != 4 {
++		t.Errorf("с документом без даты выдачи: строк %d, skipped %d, ожидалось 1 и 4", len(rows), skipped)
++	}
++
+ 	// Строка собирается целиком: и сдвиг даты выдачи в МСК, и год, и все поля карточки.
+ 	got := rows[0]
+ 	expected := gostRow{
+ 		Mark:                "Toyota",
+ 		Type:                "ZGE25",
+ 		Date:                time.Date(2026, 10, 9, 0, 0, 0, 0, time.UTC),
+ 		CertificateNumber:   "ТС RU А-JP.ОМ80.51298",
+ 		EcoClass:            "4",
+ 		EngineTrademark:     "Toyota, 2ZR,четырехтактный, бензиновый",
+ 		YearOfManufacturing: 2016,
+@@ -473,27 +489,30 @@ func TestGostDayRetriesServerError(t *testing.T) {
+ 		if !strings.Contains(err.Error(), "http status 500") {
+ 			t.Errorf("ошибка = %q, ожидался статус в тексте", err)
+ 		}
+ 		if got := ta.requestCount(); got != gostMaxTries {
+ 			t.Errorf("попыток %d, ожидалось %d", got, gostMaxTries)
+ 		}
+ 	})
+ }
+ 
+ func TestGostDayEmptyBodyFails(t *testing.T) {
+-	// И пустое тело, и битый JSON — не отказ портала, а сбой ответа: повторяем.
++	// И пустое тело, и пробелы, и литерал null (разбирается без ошибки в нулевой count),
++	// и битый JSON — не «день без документов», а сбой ответа: повторяем.
+ 	cases := []struct {
+ 		name string
+ 		body string
+ 		want string
+ 	}{
+ 		{"пустое тело", "", "пустое тело"},
++		{"одни пробелы", " \n\t ", "пустое тело"},
++		{"литерал null", "null", "пустое тело"},
+ 		{"битый JSON", "{", "разбор JSON"},
+ 	}
+ 	for _, c := range cases {
+ 		t.Run(c.name, func(t *testing.T) {
+ 			body := []byte(c.body)
+ 			ta := gostNewTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+ 				_, _ = w.Write(body)
+ 			})
+ 
+ 			_, err := ta.api.day(context.Background(), gostTestDay)
+@@ -503,20 +522,94 @@ func TestGostDayEmptyBodyFails(t *testing.T) {
+ 			if !strings.Contains(err.Error(), c.want) {
+ 				t.Errorf("ошибка = %q, ожидалась подстрока %q", err, c.want)
+ 			}
+ 			if got := ta.requestCount(); got != gostMaxTries {
+ 				t.Errorf("попыток %d, ожидалось %d: пустой ответ повторяем", got, gostMaxTries)
+ 			}
+ 		})
+ 	}
+ }
+ 
++// TestGostRetryAfterPauses пинит не факт повтора, а саму паузу: backoff выдерживает ровно
++// RetryAfterError.Duration, и она обязана совпадать со значением переменной — иначе
++// объявленные 60 с для 5xx и 30 с для дедлайна молча превращаются в ноль.
++func TestGostRetryAfterPauses(t *testing.T) {
++	if gostRetryAfterTimeout != 30*time.Second || gostRetryAfterServer != 60*time.Second {
++		t.Errorf("паузы по умолчанию = %s / %s, ожидались 30s / 60s",
++			gostRetryAfterTimeout, gostRetryAfterServer)
++	}
++
++	pauses := []struct {
++		name string
++		err  error
++		want time.Duration
++	}{
++		{"429", gostStatusError(http.StatusTooManyRequests), gostRetryAfterServer},
++		{"500", gostStatusError(http.StatusInternalServerError), gostRetryAfterServer},
++		{"дедлайн попытки", gostTransportError(context.DeadlineExceeded), gostRetryAfterTimeout},
++	}
++	for _, c := range pauses {
++		t.Run(c.name, func(t *testing.T) {
++			var retryAfter *backoff.RetryAfterError
++			if !errors.As(c.err, &retryAfter) {
++				t.Fatalf("ошибка %q не несёт RetryAfterError: пауза перед повтором не задана", c.err)
++			}
++			if retryAfter.Duration != c.want {
++				t.Errorf("пауза = %s, ожидалась %s", retryAfter.Duration, c.want)
++			}
++			var permanent *backoff.PermanentError
++			if errors.As(c.err, &permanent) {
++				t.Errorf("ошибка %q помечена permanent — повтора по паузе не будет", c.err)
++			}
++		})
++	}
++
++	// Та же пауза, но по всему пути до ошибки дня: значение переменной доезжает из
++	// fetchPage наружу без округлений (тестовые миллисекунды не должны стать нулём).
++	t.Run("пауза доезжает до ошибки дня", func(t *testing.T) {
++		ta := gostNewTestAPI(t, gostStatusHandler(http.StatusInternalServerError))
++		gostRetryAfterServer = 5 * time.Millisecond // gostNewTestAPI ставил 1 мс
++
++		_, err := ta.api.day(context.Background(), gostTestDay)
++		if err == nil {
++			t.Fatal("ожидалась ошибка после исчерпания попыток")
++		}
++		var retryAfter *backoff.RetryAfterError
++		if !errors.As(err, &retryAfter) {
++			t.Fatalf("ошибка %q не несёт RetryAfterError", err)
++		}
++		if retryAfter.Duration != gostRetryAfterServer {
++			t.Errorf("пауза = %s, ожидалась %s (значение переменной)", retryAfter.Duration, gostRetryAfterServer)
++		}
++	})
++}
++
++// TestGostDayBrokenURLErrorHidesURL: ошибка разбора адреса приходит из net/http обёрнутой
++// в *url.Error с полным URL (в query бывают ключи), и в текст ошибки URL попадать не должен.
++func TestGostDayBrokenURLErrorHidesURL(t *testing.T) {
++	ta := gostNewTestAPI(t, gostPagesHandler(nil))
++	gostAPIURL = "http://[::1" // незакрытая скобка: url.Parse падает до запроса
++
++	_, err := ta.api.day(context.Background(), gostTestDay)
++	if err == nil {
++		t.Fatal("ожидалась ошибка на сломанный адрес ручки")
++	}
++	for _, bad := range []string{"http", "query="} {
++		if strings.Contains(err.Error(), bad) {
++			t.Errorf("ошибка = %q: URL не должен попадать в текст (найдена подстрока %q)", err, bad)
++		}
++	}
++	if got := ta.requestCount(); got != 0 {
++		t.Errorf("запросов %d, ожидалось 0: сломанный адрес повтором не лечится", got)
++	}
++}
++
+ func TestGostDayRequestShape(t *testing.T) {
+ 	body := gostTestBody(t, 1, []gostDoc{gostFixtureDoc(t, 0)})
+ 	ta := gostNewTestAPI(t, gostPagesHandler(map[int][]byte{1: body}))
+ 
+ 	if _, err := ta.api.day(context.Background(), gostTestDay); err != nil {
+ 		t.Fatalf("day: %v", err)
+ 	}
+ 	if _, err := ta.api.dayCount(context.Background(), gostTestDay); err != nil {
+ 		t.Fatalf("dayCount: %v", err)
+ 	}

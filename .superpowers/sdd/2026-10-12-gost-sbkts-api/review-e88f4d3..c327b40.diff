@@ -1,0 +1,1063 @@
+# Review package: e88f4d3..HEAD
+
+## Commits
+c327b40 craw: today upper bound, abort on auth failure, minor hardening
+
+## Files changed
+ ARCHITECTURE.md                  |   6 +-
+ README.md                        |   2 +-
+ craw/gost.go                     |  80 ++++++++++++++++++++------
+ craw/gost_api.go                 |  45 +++++++++++----
+ craw/gost_api_test.go            |  45 +++++++++++++--
+ craw/gost_test.go                | 117 ++++++++++++++++++++++++++++++++++-----
+ dagu/craw.yaml                   |   5 +-
+ docs/GOLD_THESIS_DATA_ROADMAP.md |   4 +-
+ 8 files changed, 251 insertions(+), 53 deletions(-)
+
+## Diff
+diff --git a/ARCHITECTURE.md b/ARCHITECTURE.md
+index 8a35471..4a23ac6 100644
+--- a/ARCHITECTURE.md
++++ b/ARCHITECTURE.md
+@@ -184,21 +184,21 @@ func init() {
+ | `CLICKHOUSE_URL` | DSN подключения (обязательная для импорта и для `cmd/ingest`) |
+ | `CLICKHOUSE_IMPORT_STAT` | Фильтр импортёров через запятую (пусто = все) |
+ | `LOG_LEVEL` | logrus-уровень (debug/info/warn/error) |
+ | `CERT_FILES` | Пути к PEM-сертификатам через запятую |
+ | `TICKER` | Маршрутизация legacy-контура financial (MOEX/VTBR/CHMF/MAGN/NLMK/Exports/ALL) |
+ | `INVESTING_EMAIL`, `INVESTING_PASSWORD` | ⚠️ deprecated, переезжаем на MOEX ISS / stooq |
+ | `BLS_API_KEY` | Регистрационный ключ BLS (необязательно, для `bls`) |
+ | `BEA_API_KEY` | UserID BEA API (обязательно, для `bea`) |
+ | `EIA_API_KEY` | Ключ EIA API v2 (обязательно, для `eia`; без него импортёр завершается ошибкой; ключ маскируется в текстах ошибок) |
+ | `NEWS_WATCH_MODE` | Режим импортёра `news_watch`: пусто/`all` — полный upsert окна всех лент (ручной прогон/пересборка), `since` — режим dagu: только отсутствующие в `news_events` позиции по ключу `(date, source, title)`, `check` — проверка дыр/окон без записи; неизвестное значение — ошибка до сети и до БД |
+-| `GOST_MODE` | Режим импортёра `gost_vehicle_safety_certificate` (реестр СБКТС): пусто/`since` — режим dagu, хвост `[якорь − GOST_SETTLE_DAYS, вчера МСК]`; `full` — вся история по `GOST_FROM`/`GOST_TO`; `check` — read-only сверка `count` API против `uniqExact(certificate_number)` по дню публикации (расхождение — ошибка прогона). Неизвестное значение — ошибка до сети и до БД |
++| `GOST_MODE` | Режим импортёра `gost_vehicle_safety_certificate` (реестр СБКТС): пусто/`since` — режим dagu, хвост `[якорь − GOST_SETTLE_DAYS, сегодня МСК]` (верхняя граница — сегодня: часовой прогон ловит и дневной батч текущего дня); `full` — вся история по `GOST_FROM`/`GOST_TO`; `check` — read-only сверка `count` API против `uniqExact(certificate_number)` по дню публикации (расхождение — ошибка прогона). Неизвестное значение — ошибка до сети и до БД |
+ | `GOST_FROM` | Нижняя граница диапазона режимов `full`/`check`, формат `YYYY-MM-DD`; по умолчанию `2016-01-01` (публикации реестра старше 2016 практически отсутствуют); в `since` не используется |
+ | `GOST_TO` | Верхняя граница диапазона режимов `full`/`check`, формат `YYYY-MM-DD`; по умолчанию — вчера МСК (лаг «выдача → публикация» ≈ 2 суток); в `since` не используется |
+ | `GOST_SETTLE_DAYS` | Хвост режима `since` в днях — сколько дней до якоря таблицы перечитывать каждый прогон; по умолчанию `3` (лаг публикации ≈ 2 суток); целое ≥ 0, иначе ошибка |
+ | `GOST_APP_ID` | Токен `gtn.access.appid` REST API портала Росстандарта (обязателен для `gost_vehicle_safety_certificate`; без него импортёр завершается ошибкой с подсказкой, где взять значение: JS-конфиг страницы реестра, `standarts.adminsHeaders`). **Значение только в окружении:** dev — `~/.config/rosstat/env`, staging — `/etc/clickhouse-import-rosstat.env` (тот же файл, что читает `deploy/staging/dagu.service`; образец — `deploy/staging/clickhouse-import-rosstat.env.example`); в репозитории не хранится, в тексты ошибок не попадает |
+ | `INGEST_TOKEN` | Bearer-токен ingest-endpoint (`cmd/ingest`); обязательна для него: пустое значение — выход с ошибкой. Значение только в окружении, в репозитории не хранится |
+ | `INGEST_ADDR` | Адрес HTTP-сервера `cmd/ingest`, по умолчанию `:8081` |
+ | `INGEST_RATE_PER_MIN` | Лимит запросов ingest-endpoint в минуту (token bucket, burst 10); по умолчанию 60; пустое или некорректное значение — 60. Превышение — `429` |
+ | `GRAFANA_TEST_URL`, `GRAFANA_TEST_TOKEN` | Тест-стенд Grafana (`make grafana-deploy-test`, `make grafana-check`): URL по умолчанию `http://localhost:3000`, токен — сервис-аккаунт **Editor**. Токен только в окружении (`~/.config/rosstat/env`), в репозиторий и логи не попадает |
+ | `GRAFANA_STAGING_URL`, `GRAFANA_STAGING_TOKEN` | Staging-стенд Grafana (`make grafana-deploy-staging`): URL по умолчанию `http://localhost:3001` (ssh-туннель на staging), токен — сервис-аккаунт **Editor** на staging |
+ | `GRAFANA_ORG_ID` | org-id инстанса Grafana для `gcx` (on-prem без него отвергается: `missing stacks.default.grafana.org-id`), по умолчанию `1` |
+@@ -223,21 +223,21 @@ func init() {
+ | `databook_ugk` | `financial/` | реализован (legacy) | xlsx-датапак ЮГК | Остаётся в `financial/`; перенос — отдельный пункт, когда ЮГК понадобится для `peers_nav` |
+ | `dcf_mine_plans` | `dcf/` | реализован; `Name()` = `dcf_mine_plans`. Сид LOM-планов из публичной отчётности Полюса (**владеет** таблицей `mine_plans`; DDL — копия §6.2 в `dcf/schema.go`). Идёт в DAG **ДО** `dcf_engine`: ядро читает `mine_plans` как вход (§6.4). Порядок шагов исполняет `dagu/dcf.yaml` (`type: chain`; шаг сида — первый). **Уточнённый поактивный AISC** (§6.4) — отдельный РУЧНОЙ шаг `make dcf-aisc` поверх этого сида (скрипт `scripts/extrapolation_aisc.py`, генерирует `sql/dcf_mine_plans_seed.sql`); в `dagu/dcf.yaml` он НЕ входит | Факт последнего отчётного года — из `databook_polyus` (`FINAL`, метрика `Total Dore gold output`, `data='ANNUAL'`, год берётся из колонки `date` через `toYear(date)`, а не из подписи периода); остальные числа — константы сида `dcf/mine_plans_seed.go` (снимок Годового обзора ПАО «Полюс» за 2025 год + презентация «Ключевые проекты роста», декабрь 2024) | Развёртка `assetPlanSeed` → строки по годам — чистая `dcf/mine_plans_build.go` (`buildPlanYears`/`buildProfileYears`), без БД и часов; факт читается `readActualProduction` только у активов без `ProductionProfile`. Запись — ОДНИМ батчем `PrepareBatch → Append (err checked) → Send` (правило 2); `Abort` только в ветке `Append`. Актива с нулевым/отсутствующим фактом добычи **пропускается с `log.Warn`** (`minePlansSkipWarn`), а не пишется с нулевой добычей: сегодня так штатно выпадают `TITIMUKHTA` и `ZAPADNOYE` (их россыпная добыча в датапаке лежит в таблице `ALLUVIALS`). Год плана вне правдоподобного окна `[minPlanYear, maxPlanYear)` (`dcf/seed.go`: 2000–2100, полуоткрытое) **не сеется**: `planYears` отбрасывает его и пишет `log.Warnf` (Finding 1 финального ревью), а `checkYearCoverage` считает такой год непокрытым. План из одних мусорных лет падает ошибкой до расчёта (на пустой `price_decks` — `seedPriceDecks` с пустым горизонтом, на непустой — `checkYearCoverage`), а не пишет бессмысленный NAV. Каталог рядов (правило 11a) — `dcf/series_meta.go`, 8 записей, source `dcf_mine_plans`, частота `A` (годовая), пишется ПОСЛЕ успешного `Send`. Тесты — `dcf/mine_plans_*_test.go`, `dcf/seed_test.go`, `dcf/coverage_test.go`, `dcf/series_meta_test.go` (офлайн, без БД и сети) |
+ | `dcf_engine` | `dcf/` | реализован; `Name()` = `dcf_engine`. Расчётное ядро sum-of-parts LOM-NAV (§6.4): **заводит** `mine_plans`, `price_decks`, `nav_by_asset` (DDL — копии §6.2 в `dcf/schema.go`); **читает** `mine_plans` (`FINAL`, порядок `company, asset, year` — группировка планов одним проходом) и `price_decks` (`FINAL`), а на пустой таблице деков сеет её сама: `spot_flat` — последняя цена `gold_prices`(`venue='moex_fix_usd'`), `consensus_lt` $3 000 и `own_scenario` $4 600 — задокументированные LT-якоря §6.4. Идёт в `dagu/dcf.yaml` **ПОСЛЕ** `dcf_mine_plans` (шаг 2; `type: chain` исполняет шаги по порядку) | Чистое ядро `dcf/model.go` — `ndpiPerOz` (база + надбавка 10% с превышения порога $1 900, порог и ставка — поля `Params`, не литералы), `npvLOM` (год `t` плана: `Prod_koz×(gold−AISC) − НДПИ×Prod − налог с положительного потока − capex − ΔWC`, деньги внутри года приводятся к тыс. USD; в последнем году — ОТРИЦАТЕЛЬНЫЙ `closure_costs` налогово вычитаемым, perpetual TV нет; год плана без цены дека пропускается с `log.Warnf`, но индекс года всё равно сдвигает дисконт), `escalate` (затраты по накопленному ИПЦ; `Params.Ipc` в этом срезе `nil` — упрощение задокументировано). Ставки двух контуров — `dcf/params.go` (`industrial` 0.05, `local` 0.16). Ядро записи `navRows` — чистая, без БД и часов: `активы × 3 дека × 2 контура`, деки идут отсортированными (порядок вставки воспроизводим), `stage_haircut` всегда NULL (стадийные haircut'ы вне среза). Запись — ОДНИМ батчем `PrepareBatch → Append (err checked) → Send` (правило 2); `Abort` вызывается только в ветке `Append`, где батч ещё открыт. Пустой `mine_plans` — **не ошибка**: `log.Warn` и `Imported 0 rows`, чтобы `make import STAT=dcf_engine` и DAG не краснели на dev-БД до сида планов. `run_id` приходит ТОЛЬКО из `DCF_RUN_ID` (`os.Getenv`, не-UUID отсекается до расчёта): пустой `DCF_RUN_ID` печатает готовое тело `POST /v1/model_run` (`dcf/run_json.go`, зеркало `ingest.ModelRun` с `DisallowUnknownFields`) и **ничего не пишет** — в `model_runs` пишет только ingest-endpoint; поэтому `dagu/dcf.yaml` не задаёт `DCF_RUN_ID` (это параметр разового прогона), и связанный прогон делается вручную. Тесты — `dcf/*_test.go` (ядро на закреплённых числах, без БД и сети) |
+ | `forecast_resolve` | `forecast/` | реализован; `Name()` = `forecast_resolve` (своих таблиц импортёр не создаёт: читает `forecast_log` и `gold_prices`, дописывает `forecast_log`; имя в реестре — контракт `CLICKHOUSE_IMPORT_STAT` и id шага `dagu/forecast.yaml`) | `forecast_log` (`metric = 'xau_q_avg'`, `target_date <= today()`) + `gold_prices` (`venue` — факт) | Читает `forecast_log FINAL` по `metric = 'xau_q_avg'` с наступившей `target_date`; окно сверки — квартал, содержащий `target_date` (`[начало квартала, target_date]`, у штатных `target_date` = последний день квартала), `actual` = среднее `gold_prices FINAL` за окно по приоритету `comex_front > moex_fix_usd` (выбор по количеству точек — `avg` пустого окна даёт NaN), `error_pct = (predicted − actual) / actual × 100`. `nav` и прочие метрики не резолвятся (факта для NAV нет); окно без точек цены — `log.Warn`, строка остаётся нерезолвленной. Запись — одним батчем и **только при изменившемся `actual`** (совпадение — молчание, `log.Debugf`); таблицу `forecast_log` создаёт ingest, резолвер её не создаёт. Тесты `forecast/resolve_test.go` (офлайн, фейковый стор). Расписание: `dagu/forecast.yaml`, ежедневно 20:23 (МСК) — после `gold.yaml` (18:47) и `moex.yaml` (19:13); разовый бэкфилл прогноза Q3-2026 — `sql/forecast_log_backfill.sql`; результат читается витриной `v_forecast_accuracy` (§6.3) |
+ | `eia` | `eia/` | реализован; `Name()` = `eia`. Закрывает дизельный канал §6 статьи данными вместо ручного ввода | EIA API v2, Weekly Petroleum Status Report: `/v2/petroleum/stoc/wstk/data/` серия WDISTUS1 (запасы дистиллятного топлива, тыс. барр.) и `/v2/petroleum/pnp/wiup/data/` серия WPULEUS3 (загрузка мощностей НПЗ, %) — коды подтверждены фасетами API 11.10.2026 (ожидавшийся WUPRUUS2 в фасетах отсутствует) | Ключ `EIA_API_KEY` обязателен (пустой — ошибка до сети); ключ маскируется в ошибках (`url.Error` содержит URL). GET с `frequency=weekly`, `data[0]=value`, `facets[series][]=<код>`, `start=2019-01-01`, сортировка по `period`, `length=5000` и превентивной пагинацией по `response.total` (у серий 405 точек). Ряды в `macro_series`: `distillate_stocks` (имя совпадает с индикатором `v_gold_dashboard` — единая линия значений по источникам) и `refinery_utilization`; нативный код EIA фиксируется в `series_catalog.origin`. Запись — одним батчем; **серия с нулём наблюдений — ошибка импорта целиком** (fail-fast: так ловятся ретайр/переименование кода серии и расхождение поля `series`, вместо молчаливого `Imported 0 rows`; обе серии пишутся одним батчем, поэтому отказ любой отменяет запись обеих); диагностика не-200 включает до 512 байт тела (маскированные) — при неверном ключе видно `API_KEY_MISSING`, а не только `http status 403`. Тесты `eia/eia_test.go` (офлайн, httptest). Расписание: `dagu/eia.yaml`, среда 19:43 (МСК) → `macro_series`; описания рядов → `series_catalog`; витрина `v_eia_petroleum` (с комментариями, грант `kimi_reader`) |
+ | `wgc_etf_flows` | `wgc/` | реализован; `Name()` = `wgc_etf_flows`. Закрывает тезис 1 (ETF-цикл) каноническим источником: месячная выгрузка WGC вместо ручного переноса ~20 чисел через `POST /v1/manual_series` | **JSON API** `https://fscdn.gold.org/api/v11/charts/etfv2/revised/`: `flows-chart2` — потоки (блок `chartData.data.Monthly.series.{usd,tonnes}`, `usd` — абсолютные доллары) и `holdings-chart2` — запасы и AUM (блок `Monthly.{tonnes,usd}`, `usd` — абсолютные доллары, отсутствие данных — `null`); без ключа, `system.cached = false`, `asOfDate = 2026-09-30`, 284 месячных точки с 2003-02-28. **Фолбэк** — локальная выгрузка `ETF_Flows_*.xlsx` в папке `wgc/data` (скачивается с `gold.org/goldhub` только браузером: сервер отдаёт `/download/file/*` залогированному браузеру, боту — 403; папка в `.gitignore`). Листы фолбэка: `Fund flows by month` (месячный поток, млн USD), `Demand by month` (поток, тонны), `Holdings by month` (запас, тонны), `Charts Data` (AUM, блок `Area chart - monthly holdings in US$`) | Транспорт выбирает `etfLoadPoints`: сначала API, при его ошибке — `log.Warn` с причиной и свежайшая по `mtime` выгрузка (транспорты в одном прогоне не смешиваются), причём в лог идут путь выбранного файла и максимум его дат; ни API, ни файла — `log.Warn` + 0 строк (DAG не краснеет), битый файл или пустой разбор — ошибка (fail-fast), пустая метрика в ответе API (проверяются все четыре: потоки USD и тонн, стоки, AUM) — тоже ошибка, иначе половина рядов молча старела бы. Разбор API — `wgc/etf_api.go`: регионы через существующий словарь, элемент `Gold Price (rhs)` пропускается по имени, любое другое незнакомое имя — ошибка; масштабы `÷1e6` (поток USD → млн USD) и `÷1e9` (AUM → млрд USD), `null` в стоках — точки нет (не 0), дата — конец месяца; полнота набора проверяется: в потоках ровно четыре региона и ни один не повторяется, а в шапке стоков нулевая колонка — `Date` (без учёта регистра) и регионы тоже без дубликатов. Разбор фолбэка — `excelize/v2`: регионы строго `North America`/`Europe`/`Asia`/`Other` → `north_america`/`europe`/`asia`/`other` (значение вне словаря — ошибка, не молчаливая потеря), колонки фондов — динамически по строке 4. 4 метрики (`flow_usd_mln`, `flow_tonnes`, `holdings_tonnes`, `aum_usd_bn`) × 5 регионов (`world` + четыре) = **20 рядов** `etf_<метрика>_<регион>`, `source = 'wgc'`. Глубина: потоки (`flow_*`) всех пяти регионов — **284** точки с 2003-02-28 (нули в потоках явные, поэтому точка есть и у месяца без потока; `world`-поток — сумма четырёх регионов, тоже с 2003-02-28), стоки и AUM `region='world'` — **235** точек с 2007-03-31 (первый месяц со значениями всех четырёх регионов: в `holdings` Азии до этого `null`); разная глубина потоков и стоков — свойство источника, а не дефект. **Тоннажные стоки источник отдаёт округлёнными до 0,01 т** (потоки и AUM — полной точности), поэтому один и тот же месяц из API и из xlsx-фолбэка расходится ≤ 0,01 т; оговорка внесена в описания рядов каталога. Guard устаревшего источника (одинаков для обоих транспортов, информационный, не отказ импорта): если максимум дат API или локальной выгрузки меньше сохранённого `maxOrNull(date)` по `macro_series FINAL`, в лог идёт warn (перезапись пересекающихся месяцев старыми ревизиями WGC иначе осталась бы незамеченной, а перезапись тех же значений идемпотентна); DDL `macro_series` выполняется до этого guard-а, поэтому первый прогон по чистой базе не даёт ложного warn. Запись — одним батчем, затем каталог 20 рядов (`util.UpsertSeriesCatalog`). Тесты — `wgc/etf_api_test.go` (httptest + JSON-фикстуры `wgc/testdata/etf_flows_api.json`, `etf_holdings_api.json`), `wgc/etf_parse_test.go`, `wgc/etf_test.go` (офлайн, фикстура `wgc/testdata/ETF_Flows_2026-10-02_1401.xlsx`). Расписание: `dagu/wgc.yaml`, ежедневно 20:17 МСК (за 6 минут до `dagu/forecast.yaml`); читается витриной `v_gold_etf_flows` (§6.3) |
+ | `wgc_cb_reserves` | `wgc/` | реализован; `Name()` = `wgc_cb_reserves`. Золотые резервы ЦБ вне IMF (POL/CZE/TUR/RUS/KAZ/UZB/CHN): месячные изменения в тоннах и уровни — закрывает тезисы 3–4 | Локальные выгрузки в `wgc/data` (скачиваются браузером вручную): `Changes_latest_as_of_*.xlsx`, лист `Monthly` — месячные дельты со знаком с 2002-01 (пустая ячейка — пропуск, явный `0` пишется) и словарь стран по короткому имени (`Poland, Rep. of`→POL, `Czech Rep.`→CZE, `Turkey`→TUR строго равенством — **`Turkey*` (gross, включая банки) не импортируется**, `Russian Federation`→RUS, `Kazakhstan, Rep. of`→KAZ, `Uzbekistan, Rep. of`→UZB, `China, P.R.: Mainland`→CHN); `World_official_gold_holdings_as_of_*.xlsx`, лист `PDF` — топ-100: уровень и per-country дата `Holdings as of` (нормализуется к концу месяца), `% of reserves` не импортируется | 7 стран × 2 метрики = **14 рядов** `cb_gold_change_tonnes_<iso3>` (дельты) и `cb_gold_holdings_tonnes_<iso3>` (уровни), `source = 'wgc'`; дата точки — конец отчётного месяца. Частичный набор — норма: нет changes — только уровни, нет holdings — только дельты (`log.Warn`); нет ни одного файла — warn + 0 строк; битый файл или ноль точек — ошибка (fail-fast). Каталог — после `Send` и только по метрикам с точками. Тесты — `wgc/cb_parse_test.go`, `wgc/cb_test.go` (офлайн, фикстуры винтажа 2026-10). Расписание: `dagu/wgc.yaml`, ежедневно 20:17 МСК; читается витриной `v_cb_gold_dynamics` (§6.3). Оговорки: RUS — пропущены месяцы 2025-12…2026-03; UZB — фактические точки с 2013-02 (комментарий файла «Data first available in January 2018» данным не соответствует) |
+ | `bold_etf_flows` | `bold/` | реализован; `Name()` = `bold_etf_flows`. T+1 ETF-контур: агрегат 73 золотых фондов (≈83 % мировой величины WGC) — 7 рядов `etf_bold_*` в `macro_series` (`source = 'bold'`) и пер-фондовый срез в `bold_fund_snapshot`. ✅ Приёмка 2026-10-12: полный путь — **21054** точки + **73** строки среза (`дней истории 3008`, `дата источника 2026-10-09`), повтор — no-op `0 строк` | JSON API `https://bold.report/api/v1/` без ключа: `gold/funds/units.json`, `gold/funds/aum.json`, `gold/flows/all.json` (на инкременте — их `-latest`-варианты) и `gold/summary.json`. **Суффикс `.json` у источника обязателен:** ключи без него CDN (статика S3 за CloudFront) отдаёт `403 AccessDenied` (проверено `curl` 2026-10-12); суффикс стоит у всех девяти констант путей `bold/parse.go` и закреплён тестом `TestBoldEndpointsPinPaths` — офлайн-`httptest` такую ошибку не ловит, путь без `.json` валит тест | Инкремент — 4 запроса (`units-latest`, `aum-latest`, `flows/all-latest`, `summary`); полный путь — те же 4 плюс три файла истории и `summary`, итого 8. Триггеры полного пути: пустая таблица, сохранённый максимум не является непосредственно предыдущим торговым днём даты источника (сбой джобы или пропущенный торговый день; сюда же попадают любые разрывы больше 4 календарных дней), расхождение половин (максимум рядов ≠ максимум пер-фондового среза — берётся минимум, ноль в любой половине тоже уводит на полный путь). Инкремент: дата источника не новее сохранённого максимума → no-op без записи точек (каталог перепубликовывается); иначе 7 точек одного дня (дневной поток — Δ запасов к стоку непосредственно предыдущего торгового дня из ClickHouse) плюс 73 строки среза. Окна — как публикует источник (`culm7/30/90day ÷ 32150,7465686`), без пересчёта из дневного ряда. Fail-fast: не-200, пустое тело, отсутствие обязательного ключа, расхождение дат или цены трёх ответов, ноль точек — ошибка. Срез — `bold_fund_snapshot` с ключом `(date, ticker, name)` (тикер не уникален: три `GLD`), каталог 7 рядов — после успешного `Send` (и перепубликация в ветке no-op). Тесты — `bold/bold_test.go`, `bold/parse_test.go` (httptest + фикстуры `bold/testdata/`, офлайн). Расписание: `dagu/bold.yaml`, ежедневно 08:07 МСК, шаг 2 (после цены дня); читается витринами `v_gold_etf_flows_daily` и `v_gold_etf_funds_daily` (§6.3) |
+ | `bold_gold_price` | `bold/` | реализован; `Name()` = `bold_gold_price`. Цена золота дня источника — площадка `bold` в `gold_prices` (третья после `comex_front` и `moex_fix_usd`). Метод источником не раскрыт («Futures Price»): это не спот, не LBMA и не `GC=F`, с `comex_front` совпадает частично (3 из 13 контрольных дат, расхождения до $42). ✅ Приёмка 2026-10-12: полный путь — **3138** точек `2014-10-01`…`2026-10-09` (`2026-10-09` = 4216,3), повтор — no-op `0 строк` | `https://bold.report/api/v1/gold/price-latest.json` (инкремент) и `gold/price.json` (полный путь; 3138 точек с 2014-10-01). Суффикс `.json` обязателен так же, как у ETF-импортёра — без него `403` | Один запрос: режим решается ДО запроса по `maxOrNull(date)` площадки `bold` — пустая (или отсутствующая) площадка либо максимум старше 96 ч (`now − stored > 96 ч`) → полный файл `price.json`; иначе `price-latest`, и если его дата не новее сохранённого максимума → no-op. `nil` в `value` и пустой результат — ошибка (не тихий пропуск дня). Запись одним батчем, затем каталог `gold.BoldPriceSeriesMeta()` (`source='gold'`, `series='bold'`); в ветке no-op каталог перепубликовывается. Тесты — `bold/price_test.go`. Расписание: `dagu/bold.yaml`, ежедневно 08:07 МСК, шаг 1 (порядок шагов — только порядок прогонов: зависимости нет, USD-поток считается по цене из ответа источника, а не по площадке `bold`); читается витриной `v_gold_prices` (§6.3) |
+ | `news_watch` | `news/` | реализован; `Name()` = `news_watch` | 5 RSS-лент: Интерфакс `https://www.interfax.ru/rss`, РБК `rssexport.rbc.ru/rbcnews/news/30/full.rss`, ЦБ РФ ×2 (`RssNews`, `eventrss`), TASS `tass.ru/rss/v2.xml` (окна 25–100 позиций; история копится с первого прогона) | Разбор `pubDate` по трём формам (`RFC1123Z`, та же форма без секунд, `RFC1123` — только для `GMT`/`UTC`); позиция без даты или заголовка — в счётчик пропусков (ненулевое значение в логе видно); ноль позиций или сбой ленты — ошибка ленты (остальные ленты пишутся, итог — `errors.Join`); запись одним батчем; витрина `v_news_events`; `sentiment` пока NULL (канал записи — follow-up). Расписание: `dagu/news.yaml` каждые 30 минут (`:07`/`:37` МСК), retry 3 × 300 с, `NEWS_WATCH_MODE=since` — прогон пишет только позиции, которых нет в `news_events` (проверка наличия по ключу `(date, source, title)`, а не по дате-курсору: опоздавшие позиции и два фида ЦБ под одним `source='cbr'` не теряются; окно лент всё равно читается целиком — у RSS нет «since»-параметра); `all` — ручной полный upsert окна (пересборка) |
+-| `gost_vehicle_safety_certificate` | `craw/` | реализован; `Name()` = `gost_vehicle_safety_certificate` (имя таблицы, шага DAG `dagu/craw.yaml` и `CLICKHOUSE_IMPORT_STAT`). Прокси объёма импорта автомобилей: дневной поток выданных СБКТС (свидетельств о безопасности конструкции ТС); тезис «импорт авто ↔ ослабление рубля» (канал №7 §10.1 [ROADMAP_DCF_POLYUS.md](docs/ROADMAP_DCF_POLYUS.md)). Заменяет прежний colly-краулер: построчный `conn.Exec` в цикле, мёртвый DDL `gost_vehicle_safety_certificate_type` и вписанный в комментарии токен `gtn.access.appid` удалены (спека [2026-10-12-gost-sbkts-api-design.md](docs/superpowers/specs/2026-10-12-gost-sbkts-api-design.md)) | **REST API портала** `https://www.gost.ru/standards/rest-api/libraries/search` (заголовок `gtn.access.appid` из `GOST_APP_ID`, `Accept: application/json`, дедлайн попытки 120 с, ретраи `backoff/v5` с `RetryAfter` на таймаут/5xx, пауза 200 мс между страницами). Обычный текстовый `query=DD.MM.YYYY` матчит **дату публикации** → плоский дневной срез любой глубины, страницы по `size=900`. HTTP-листинг портала убран целиком: пагинация `navigationalstate` упирается в стену (`from=20000` ≈ 3 с, `from=100000` ≈ 10.7 с, `from=150000` и глубже — стабильный таймаут 60 с), а API отдаёт те же документы | Режимы `GOST_MODE`: `since` (по умолчанию и режим dagu — хвост `[якорь − GOST_SETTLE_DAYS, вчера МСК]`, дефолт 3 дня: лаг «выдача → публикация» ≈ 2 суток; пустая таблица — последние 7 дней + warn «запустите `GOST_MODE=full`»; якорь старше 30 дней обрезается окном в 30 дней (`gostMaxSinceDays`) с тем же warn — `since` историю глубже 30 дней не перечитывает), `full` (диапазон `GOST_FROM`/`GOST_TO`, дефолт `2016-01-01` … вчера МСК; идемпотентен и резюмируем, часы на всю историю — запускается чанками по годам), `check` (read-only сверка `count` API против `uniqExact(certificate_number)` по дню публикации; расхождение — ошибка прогона). Неизвестный режим — ошибка до сети и до БД. День собирается постранично, документы дедуплицируются по `id`, день с недобором или `count > 10000` — ошибка дня (остальные дни пишутся, итог — агрегат ошибок с именами дней); запись — один батч на день (`PrepareBatch → Append (err checked) → Send`). Тесты — `craw/gost_api_test.go`, `craw/gost_test.go`, `craw/gost_views_test.go` (офлайн: `httptest` + фикстуры `craw/testdata/`, фейковое соединение). Расписание: `dagu/craw.yaml`, раз в час (`:17` МСК), `GOST_MODE=since`, retry 3 × 300 с; читается витринами `v_gost_vehicle_safety_certificate` и `v_gost_vehicle_safety_daily` (§6.3) |
++| `gost_vehicle_safety_certificate` | `craw/` | реализован; `Name()` = `gost_vehicle_safety_certificate` (имя таблицы, шага DAG `dagu/craw.yaml` и `CLICKHOUSE_IMPORT_STAT`). Прокси объёма импорта автомобилей: дневной поток выданных СБКТС (свидетельств о безопасности конструкции ТС); тезис «импорт авто ↔ ослабление рубля» (канал №7 §10.1 [ROADMAP_DCF_POLYUS.md](docs/ROADMAP_DCF_POLYUS.md)). Заменяет прежний colly-краулер: построчный `conn.Exec` в цикле, мёртвый DDL `gost_vehicle_safety_certificate_type` и вписанный в комментарии токен `gtn.access.appid` удалены (спека [2026-10-12-gost-sbkts-api-design.md](docs/superpowers/specs/2026-10-12-gost-sbkts-api-design.md)) | **REST API портала** `https://www.gost.ru/standards/rest-api/libraries/search` (заголовок `gtn.access.appid` из `GOST_APP_ID`, `Accept: application/json`, дедлайн попытки 120 с, ретраи `backoff/v5` с `RetryAfter` на таймаут/5xx, пауза 200 мс между страницами). Обычный текстовый `query=DD.MM.YYYY` матчит **дату публикации** → плоский дневной срез любой глубины, страницы по `size=900`. HTTP-листинг портала убран целиком: пагинация `navigationalstate` упирается в стену (`from=20000` ≈ 3 с, `from=100000` ≈ 10.7 с, `from=150000` и глубже — стабильный таймаут 60 с), а API отдаёт те же документы | Режимы `GOST_MODE`: `since` (по умолчанию и режим dagu — хвост `[якорь − GOST_SETTLE_DAYS, сегодня МСК]`, дефолт 3 дня: лаг «выдача → публикация» ≈ 2 суток, а верхняя граница — сегодня, чтобы часовой прогон ловил и дневной батч текущего дня; пустая таблица — последние 7 дней + warn «запустите `GOST_MODE=full`»; якорь старше 30 дней обрезается окном в 30 дней (`gostMaxSinceDays`) с тем же warn — `since` историю глубже 30 дней не перечитывает), `full` (диапазон `GOST_FROM`/`GOST_TO`, дефолт `2016-01-01` … вчера МСК; идемпотентен и резюмируем, часы на всю историю — запускается чанками по годам), `check` (read-only сверка `count` API против `uniqExact(certificate_number)` по дню публикации; расхождение — ошибка прогона). Неизвестный режим — ошибка до сети и до БД. День собирается постранично, документы дедуплицируются по `id`, день с недобором или `count > 10000` — ошибка дня (остальные дни пишутся, итог — агрегат ошибок с именами дней); запись — один батч на день (`PrepareBatch → Append (err checked) → Send`). Тесты — `craw/gost_api_test.go`, `craw/gost_test.go`, `craw/gost_views_test.go` (офлайн: `httptest` + фикстуры `craw/testdata/`, фейковое соединение). Расписание: `dagu/craw.yaml`, раз в час (`:17` МСК), `GOST_MODE=since`, retry 3 × 300 с; читается витринами `v_gost_vehicle_safety_certificate` и `v_gost_vehicle_safety_daily` (§6.3) |
+ | `lbma_gold` | `gold/` | не реализован (LBMA недоступен с этой сети); вместо него реализован `gold`, `Name()` = `gold_prices` | ⚠️ Временно вместо LBMA: MOEX `GOLDFIXME` (борд FIXI, ₽/г, с 2024-08-05) × 31,1034768 ÷ курс `cbr_currency_usd`; производная цена, не LBMA. Курс берётся последний известный не позже даты (ЦБ не публикует понедельники и новогодние праздники; окно 10 дней). Расписание: `dagu/gold.yaml`, ежедневно 18:47 (МСК); первым шагом DAG выполняется `cbr_currency_usd`. LBMA не реализован: prices.lbma.org.uk и Nasdaq Data Link `LBMA/GOLD` отвечают 403 WAF (датасетный эндпоинт блокируется с этого IP даже с валидным ключом), stooq — JS-проверкой, FRED серии LBMA удалил (404), Yahoo — 429. Цена COMEX front-month (`GC=F`, фьючерс, не спот) заведена отдельным venue `comex_front` и пишется сессионно через ingest (`POST /v1/gold_prices`) — по той же причине Go-импортёра Yahoo нет | → `gold_prices` |
+ | `moex_iss` | `moex/` | реализован; `Name()` = `stock_prices` | MOEX ISS REST (анонимный): дневные свечи PLZL `/iss/engines/stock/markets/shares/securities/PLZL/candles.json?interval=24` (пагинация `start` шагом 100 при явном `limit=100` — без limit страницы по 500 и дубли). | Инкремент от max(date) по `code='PLZL'`; пустая таблица → с 2010-01-01. Пишет в существующую legacy-таблицу `stock_prices` (схема Float32 не меняется). Тесты: `moex/moex_test.go`. Расписание: `dagu/moex.yaml`, ежедневно 19:13 (МСК) → `stock_prices`; series_catalog (source='moex'); витрина `v_stock_prices` (с комментариями, грант `kimi_reader`) |
+ | `ofz_curve` | `moex/` | реализован; `Name()` = `ofz_curve` | MOEX ISS: индекс RGBI (свечи `engines/stock/markets/index/securities/RGBI/candles.json`, полная история с 2010-01-01, тенор `RGBI` — уровень индекса, не доходность) + годовые доходности G-curve `/iss/engines/stock/zcyc.json`, блок `yearyields` (period 1/3/5/10 → теноры `1y`/`3y`/`5y`/`10y`, % годовых). ⚠️ zcyc — только снимок текущего дня: история доходностей накапливается с первого запуска. | Инкремент от max(date); даты из БД нормализуются в UTC (clickhouse-go отдаёт Date с таймзоной сессии). Расписание: `dagu/moex.yaml`, ежедневно 19:13 (МСК) → `ofz_curve`; series_catalog (source='moex'); витрина `v_ofz_curve` (с комментариями, грант `kimi_reader`) |
+ | `mmf_aum` | `funds/` | не реализован | СЧА фондов ликвидности | парсинг → `mmf_aum` |
+ 
+ `Name()` импортёров — то, что передаётся в `CLICKHOUSE_IMPORT_STAT`: `fred`, `bls`, `bea`, `eia`, `gold_prices`, `stock_prices`, `ofz_curve`, `events_calendar`, `gold_views`, `company_views`, `databook_polyus`, `polyus_financial_metrics`, `databook_ugk`, `dcf_mine_plans`, `dcf_engine`, `forecast_resolve`, `wgc_etf_flows`, `wgc_cb_reserves`, `bold_etf_flows`, `bold_gold_price`, `news_watch`, `gost_vehicle_safety_certificate`. Пакет `craw/` регистрирует ОДИН импортёр: `Name()` = `gost_vehicle_safety_certificate` — имя таблицы (совпадает с id шага `dagu/craw.yaml`; прежние краулеры пакета удалены вместе с colly-обходом). Пакет `news/` регистрирует ОДИН импортёр: `Name()` = `news_watch` (имя шага DAG `dagu/news.yaml` и `CLICKHOUSE_IMPORT_STAT`); он же заводит таблицу `news_events` и витрину `v_news_events`, поэтому имя импортёра не совпадает ни с именем таблицы, ни с именем пакета. Пакет `bold/` регистрирует ДВА импортёра: `Name()` = `bold_etf_flows` (7 рядов `etf_bold_*` в `macro_series` плюс таблица пер-фондового среза `bold_fund_snapshot`) и `Name()` = `bold_gold_price` (площадка `bold` в `gold_prices`); ни одно из имён не совпадает с именем пакета, а в `dagu/bold.yaml` это id шагов цепочки — цена дня первым шагом, ETF-контур вторым. Пакет `forecast/` регистрирует ОДИН импортёр: `Name()` = `forecast_resolve` (имя шага DAG и `CLICKHOUSE_IMPORT_STAT`); таблиц он не заводит, а дописывает `forecast_log`, поэтому `Name()` не совпадает ни с именем создаваемой таблицы, ни с именем пакета. Пакет `wgc/` регистрирует два импортёра (`wgc_etf_flows`, `wgc_cb_reserves`); оба пишут в общую `macro_series` (`source = 'wgc'`) и своих таблиц не заводят, поэтому в `dagu/wgc.yaml` это id шагов DAG, а не имена таблиц. Пакет `gold/` выполняет `Name()` = `gold_prices`, поэтому в README и командах используется имя таблицы. Пакет `polyus/` регистрирует два импортёра, оба сохраняют свои `Name()` (`databook_polyus`, `polyus_financial_metrics`) независимо от имени таблицы, в которую пишут; пакет `views/` — тоже два импортёра (`gold_views`, `company_views`; `views/` не существует как имя импортёра). Пакет `dcf/` регистрирует ДВА импортёра: `Name()` = `dcf_mine_plans` (сид `mine_plans`, имя совпадает с таблицей) и `Name()` = `dcf_engine` (имя шага DAG и `CLICKHOUSE_IMPORT_STAT`, а таблиц у него три — `mine_plans`, `price_decks`, `nav_by_asset`, — поэтому `Name()` не совпадает ни с одной из них). В одном запуске `dcf_mine_plans` должен отработать **раньше** `dcf_engine`; в расписании это гарантирует `dagu/dcf.yaml` (`type: chain`, шаг сида — первый, шаг расчёта — второй).
+ 
+ `DCF_RUN_ID` (UUID прогона, клиентский `run_id` строк `nav_by_asset`) в таблицу env выше не входит: это параметр разового прогона, а не ключ источника, и передаётся он прямо в команде (`DCF_RUN_ID=<uuid> make import STAT=dcf_engine`). Без него движок считает, печатает тело `POST /v1/model_run` и не пишет ничего.
+ 
+ Оба канала WGC-семейства теперь имеют импортёров (§6.1: `wgc_etf_flows` — читает JSON API `fscdn.gold.org`, а локальная выгрузка в `wgc/data` остаётся фолбэком; `wgc_cb_reserves` — читает выгрузки из `wgc/data`), а CME FedWatch — по-прежнему без импортёра: `fedwatch_dec_hike` вводится сессионно через `POST /v1/manual_series`. **Структурные ряды WGC ETF Flows** (20 рядов `etf_<метрика>_<регион>`; 4 метрики × 5 регионов) пишет импортёр `wgc_etf_flows` (`source = 'wgc'`); сессионный ввод тем же POST (`source = 'webbridge'`) и ручной (`manual`) остаются фолбэками и описаны каталогом-сидом `sql/wgc_etf_flows_catalog.sql` (20 записей, частота `M`); читает их витрина `v_gold_etf_flows` (§6.3) с приоритетом `wgc > webbridge > manual`, а не `v_gold_dashboard`. **Золотые резервы ЦБ вне IMF** (POL/CZE/TUR/RUS/KAZ/UZB/CHN) пишет импортёр `wgc_cb_reserves` (`source = 'wgc'`, 14 рядов), читаются витриной `v_cb_gold_dynamics` (§6.3). Ручной индикатор `etf_flows_month` (`source = 'manual'`, млрд USD) остаётся в `v_gold_dashboard` — это отдельный ряд: не путать и не складывать с `etf_flow_usd_mln_world` (млн USD). **CME FedWatch** — по-прежнему без импортёра: `fedwatch_dec_hike` вводится вручную (`source = 'manual'`) и читается витриной `v_gold_dashboard` (§6.3). Запасы дистиллятов — **уже с импортёром**: `eia` пишет `source = 'eia'`, а витрина выбирает значение по приоритету `eia > webbridge > manual` (ручной ввод остаётся фолбэком). Золотые резервы ЦБ (IMF IRFCL) — тоже без импортёра: вводятся с `source = 'imf'` и читаются витриной `v_imf_macro`; цена COMEX front-month — через `POST /v1/gold_prices` (venue `comex_front`).
+@@ -804,21 +804,21 @@ uv run --with mcp-clickhouse==0.7.0 --python 3.12 mcp-clickhouse
+ 
+ **CI** `.github/workflows/dashboards.yml` (PR + push в `main`, секретов нет, деплоя нет): `go vet`/`go test` модуля, `make grafana-build`, `git diff --exit-code -- dashboard/gold-thesis.json` (артефакт синхронен коду — заодно ловит недетерминированность), офлайновый `gcx dev lint run` (два idiomatic-предупреждения генератора — `editable`-дашборд и отсутствие описаний панелей — отключены по именам, иначе exit 4) и upload артефакта. Серверный `gcx resources validate` в CI не входит: это server-side dry-run и требует сервер, org-id и креды (рабочая форма — комментарий цели `make grafana-validate`).
+ 
+ **Деплой** — только вручную, из CI не деплоим. `make grafana-deploy-test` — `gcx resources push dashboards --path dashboard/gold-thesis.json` против `GRAFANA_TEST_URL` с Bearer-токеном (переменные gcx `GRAFANA_SERVER`/`GRAFANA_TOKEN`/`GRAFANA_ORG_ID` выставляет make, токен не светится в `ps`), затем smoke `make grafana-check` (`scripts/grafana_check.py`: uid виден, первые панели отдают точки; SQL берётся из снятого со стенда дашборда, а не из скрипта). `make grafana-deploy-staging` — то же через ssh-туннель `:3001` плюс провижининг датасорса. Push идемпотентен (внутренний id ресурса не меняется, растёт только `version`); фолбэки — `gcx resources push -p <file>` и `gcx api /api/dashboards/db` (тело обязано быть обёрнуто в `{"dashboard": <spec>}`).
+ 
+ ## 7. Календарь триггеров (актуальный Q4-2026)
+ 
+ | Дата | Событие | Действие модели |
+ |---|---|---|
+ | постоянно (каждые 30 минут) | ленты РФ-канала: Интерфакс/РБК/ЦБ РФ/TASS — импортёр `news_watch` (`dagu/news.yaml`, :07/:37 МСК, режим `since` — пишутся только отсутствующие позиции) | события-решения вне календаря (дизель/санкции/ставка), витрина `v_news_events`; `NEWS_WATCH_MODE=check` — ручная проверка дыр/окон |
+-| постоянно (каждый час) | реестр СБКТС Росстандарта — импортёр `gost_vehicle_safety_certificate` (`dagu/craw.yaml`, :17 МСК, режим `since`: хвост `[якорь − 3 дня, вчера МСК]`, 4–12 запросов в час) | прокси импорта авто (канал №7 §10.1 ROADMAP_DCF_POLYUS.md): дневной поток выдачи — витрина `v_gost_vehicle_safety_daily`; строки — `v_gost_vehicle_safety_certificate`; `GOST_MODE=full` (история с 2016) и `GOST_MODE=check` — ручные |
++| постоянно (каждый час) | реестр СБКТС Росстандарта — импортёр `gost_vehicle_safety_certificate` (`dagu/craw.yaml`, :17 МСК, режим `since`: хвост `[якорь − 3 дня, сегодня МСК]`, 4–12 запросов в час) | прокси импорта авто (канал №7 §10.1 ROADMAP_DCF_POLYUS.md): дневной поток выдачи — витрина `v_gost_vehicle_safety_daily`; строки — `v_gost_vehicle_safety_certificate`; `GOST_MODE=full` (история с 2016) и `GOST_MODE=check` — ручные |
+ | ежедневно | bold.report (ByteTree), данные T+1 — `dagu/bold.yaml`, 08:07 МСК (источник готов к 07:32 МСК): цена дня (`bold_gold_price`) и ETF-контур 73 фондов (`bold_etf_flows`) | поток дня и его USD-оценка (`v_gold_etf_flows_daily`), пер-фондовый срез (`v_gold_etf_funds_daily`); 73 фонда ≈83 % мировой величины WGC — не складывать и не сравнивать с мировыми рядами WGC (там все фонды мира, месячная частота) |
+ | по средам (еженед.) | EIA дистилляты (запасы; загрузка НПЗ) — импортёр `eia` `dagu/eia.yaml`, 19:43 МСК; недельный ИПЦ Росстата (день недели сверить с календарём Росстата) | EIA — пороги: crack >$50 медведь / <$30 снято |
+ | 10-е ежемес. (публикация WGC) | WGC ETF-потоки + ЦБ: импортёр `wgc_etf_flows` читает JSON API и ловит публикацию ежедневно (`dagu/wgc.yaml`, 20:17 МСК) — ждать 10-го числа больше не нужно; выгрузки ЦБ по-прежнему кладутся в `wgc/data` вручную | норма покупок ЦБ 40–60 т/мес |
+ | 23.10.2026 | СД ЦБ РФ (ставка 14%) | снижение → флаг перетока ликвидности |
+ | 01.11.2026 | Истечение запрета РФ на экспорт дизеля | продление → bear; отмена → bull |
+ | 10.11.2026 | CPI США за октябрь | горячий → FOMC-hike 85–90% |
+ | 09.12.2026 | FOMC + dot plot | 2-е повышение → пробой $4,000 → $3,750–3,800 |
+ | 18.12.2026 | СД ЦБ РФ + ребалансировка MOEX | база: −25 б.п. до 13,75% |
+ | 15.11.2026 | Полюс: пресс-релиз 9М2026 (`polyus_ir`) | статус стройки ЗИФ Сухого Лога, ОПР, прогноз производства и TCC |
+ | **31.12.2026** | **Полюс: обновлённое ТЭО (feasibility study) Сухого Лога (`polyus_ir`)** | **ожидается в конце 2026; порог `launch_year_revision >= 1` → пересчитать сид выпуска.** Дата — плейсхолдер на конец года, точный день не анонсирован |
+diff --git a/README.md b/README.md
+index 629e4e5..caf663c 100644
+--- a/README.md
++++ b/README.md
+@@ -84,21 +84,21 @@ make import STAT=gold_views        # витрины контура, включа
+ Пакет `news/` даёт импортёр `news_watch` — событийная лента РФ-канала: пять RSS-лент (Интерфакс, РБК, две ленты ЦБ РФ — `RssNews` и `eventrss`, TASS) пишутся в `news_events` (ключ `(date, source, title)` — повторный прогон идемпотентен), а агент читает витрину `v_news_events` с широким фильтром по стемам тезисов (дизель/нефть/НПЗ, санкции, ставка/ФРС, инфляция, золото/резервы, НДПИ, Полюс) — сырая таблица ему не выдана. Окна лент конечны (Интерфакс 25 позиций, РБК 30, ЦБ и TASS по 100), поэтому расписание — каждые 30 минут (`dagu/news.yaml`, :07/:37 МСК), а режим расписания — `since`: прогон пишет **только отсутствующие** в `news_events` позиции (проверка наличия по ключу `(date, source, title)`, а не по дате-курсору), поэтому окно не переписывается целиком каждые полчаса, а опоздавшие позиции и второй фид ЦБ под тем же `source` не теряются; окно лент всё равно вычитывается целиком — у RSS нет «since»-параметра. Пропущенный прогон не теряет данные, пока следующее успешное чтение укладывается в окно ленты (простой дольше окна теряет её позиции безвозвратно — границы окон в «Ограничениях и известных проблемах»), и история копится с первого прогона (глубокой ретроспективы ленты не отдают). Дата позиции разбирается по формам `RFC1123Z`, той же форме без секунд и `RFC1123` (последняя — только для `GMT`/`UTC`: иначе аббревиатура зоны молча сдвинула бы время); позиция без распознанной даты или заголовка попадает в счётчик пропусков (ненулевое значение в логе — сигнал, что лента сменила форму), а ноль позиций в ленте или её сбой — ошибка ленты: остальные ленты при этом пишутся, итог собирается через `errors.Join`. Колонка `sentiment` пока остаётся NULL — канал записи для LLM-сессии это follow-up. Режимы переключаются переменной `NEWS_WATCH_MODE` (`all` по умолчанию):
+ 
+ ```bash
+ make import STAT=news_watch                       # полный upsert окна всех лент (режим all — ручная пересборка)
+ NEWS_WATCH_MODE=since make import STAT=news_watch # режим расписания: только отсутствующие позиции (ключ date/source/title)
+ NEWS_WATCH_MODE=check make import STAT=news_watch # диагностика покрытия: окна источников и дыры, без записи
+ ```
+ 
+ `check` читает ленты по HTTP и выполняет DDL `CREATE TABLE IF NOT EXISTS news_events` (импортёр обязан отработать и на чистой базе), но **строк не пишет** и витрину не публикует; покрытие он берёт из сырой `news_events`; найденная дыра — ошибка прогона (режим ручной, «зелёный» отчёт с дырой никто не перечитает). Ограничение метода: дыру видно, пока сохранённый максимум источника старше начала окна его ленты, — после следующей успешной записи окно сдвигается вперёд, и `check` её больше не покажет, хотя пропущенные позиции так и не собраны. Отказ ленты виден и в `check`: список непрочитанных лент есть в отчёте, а окно помечено неполным — по неполному окну (например, выжила одна из двух лент ЦБ) дыра намеренно не объявляется, потому что промежуток могла закрывать упавшая лента.
+ 
+-Пакет `craw/` даёт импортёр `gost_vehicle_safety_certificate` — реестр СБКТС Росстандарта (свидетельства о безопасности конструкции ТС), прокси объёма импорта автомобилей: каждой ввезённой машине соответствует запись реестра, и дневной поток выданных сертификатов читается как поток импорта. **Транспорт — REST API портала `gost.ru`** (`/standards/rest-api/libraries/search`, заголовок `gtn.access.appid`), а не HTTP-листинг: портальная пагинация упирается в стену (`from=20000` ≈ 3 с, `from=100000` ≈ 10.7 с, `from=150000` и глубже — стабильный таймаут 60 с), а текстовый `query=DD.MM.YYYY` отдаёт те же документы плоским дневным срезом по дате публикации любой глубины. День читается целиком одним батчем, документы дедуплицируются по `id`, день с недобором — ошибка прогона, день с `count > 10000` отвергается (окно поиска ручки; исторический максимум дня ≈ 2.3 тыс.). Режим задаёт `GOST_MODE`: `since` (по умолчанию и режим расписания — хвост `[якорь − GOST_SETTLE_DAYS, вчера МСК]`, дефолт `GOST_SETTLE_DAYS=3`; лаг «выдача → публикация» у источника ≈ 2 суток, поэтому хвост перечитывается каждый час), `full` (вся история, диапазон `GOST_FROM`/`GOST_TO`, по умолчанию `2016-01-01` … вчера МСК), `check` (read-only сверка `count` API против `uniqExact(certificate_number)` по дню публикации; расхождение — ошибка прогона). Неизвестный режим — ошибка до сети и до БД. Расписание — `dagu/craw.yaml`, раз в час (`:17` МСК), режим `since`; `full` и `check` — только вручную. Витрины `v_gost_vehicle_safety_certificate` (строки, без технического `uid`) и `v_gost_vehicle_safety_daily` (`date, mark, certificates = uniqExact(certificate_number)`) публикует сам импортёр в пишущих режимах. Запуск:
++Пакет `craw/` даёт импортёр `gost_vehicle_safety_certificate` — реестр СБКТС Росстандарта (свидетельства о безопасности конструкции ТС), прокси объёма импорта автомобилей: каждой ввезённой машине соответствует запись реестра, и дневной поток выданных сертификатов читается как поток импорта. **Транспорт — REST API портала `gost.ru`** (`/standards/rest-api/libraries/search`, заголовок `gtn.access.appid`), а не HTTP-листинг: портальная пагинация упирается в стену (`from=20000` ≈ 3 с, `from=100000` ≈ 10.7 с, `from=150000` и глубже — стабильный таймаут 60 с), а текстовый `query=DD.MM.YYYY` отдаёт те же документы плоским дневным срезом по дате публикации любой глубины. День читается целиком одним батчем, документы дедуплицируются по `id`, день с недобором — ошибка прогона, день с `count > 10000` отвергается (окно поиска ручки; исторический максимум дня ≈ 2.3 тыс.). Режим задаёт `GOST_MODE`: `since` (по умолчанию и режим расписания — хвост `[якорь − GOST_SETTLE_DAYS, сегодня МСК]`, дефолт `GOST_SETTLE_DAYS=3`; лаг «выдача → публикация» у источника ≈ 2 суток, поэтому хвост перечитывается каждый час, а верхняя граница — сегодня: часовой прогон ловит и дневной батч текущего дня), `full` (вся история, диапазон `GOST_FROM`/`GOST_TO`, по умолчанию `2016-01-01` … вчера МСК), `check` (read-only сверка `count` API против `uniqExact(certificate_number)` по дню публикации; расхождение — ошибка прогона). Неизвестный режим — ошибка до сети и до БД. Расписание — `dagu/craw.yaml`, раз в час (`:17` МСК), режим `since`; `full` и `check` — только вручную. Витрины `v_gost_vehicle_safety_certificate` (строки, без технического `uid`) и `v_gost_vehicle_safety_daily` (`date, mark, certificates = uniqExact(certificate_number)`) публикует сам импортёр в пишущих режимах. Запуск:
+ 
+ ```bash
+ make import STAT=gost_vehicle_safety_certificate                        # since: хвост (штатный, этим ходит dagu)
+ GOST_MODE=full GOST_FROM=2016-01-01 GOST_TO=2026-10-11 make import STAT=gost_vehicle_safety_certificate
+ GOST_MODE=check GOST_FROM=2026-06-01 GOST_TO=2026-06-30 make import STAT=gost_vehicle_safety_certificate
+ ```
+ 
+ `GOST_APP_ID` лежит в env-файле хоста: **dev** — `~/.config/rosstat/env`, **staging** — `/etc/clickhouse-import-rosstat.env` (тот же файл, что читает `deploy/staging/dagu.service`; образец — `deploy/staging/clickhouse-import-rosstat.env.example`). Значение — токен `gtn.access.appid` из JS-конфига страницы реестра (`standarts.adminsHeaders`); в репозитории не хранится, без него импортёр падает до сети.
+ 
+ **В env-файле держите только `GOST_APP_ID`.** Файл подключается Makefile через `-include`, а его переменные объявлены с `export`, поэтому значения из файла перекрывают префикс команды: `GOST_MODE=full make import STAT=gost_vehicle_safety_certificate` молча прочитает значение из файла, если `GOST_MODE` там есть. Режимные переменные (`GOST_MODE`/`GOST_FROM`/`GOST_TO`/`GOST_SETTLE_DAYS`) передавайте префиксом команды или в `env` шага DAG — как `GOST_MODE=since` в `dagu/craw.yaml`.
+diff --git a/craw/gost.go b/craw/gost.go
+index d046130..1e79e8d 100644
+--- a/craw/gost.go
++++ b/craw/gost.go
+@@ -1,14 +1,15 @@
+ package craw
+ 
+ import (
+ 	"context"
++	"errors"
+ 	"fmt"
+ 	"os"
+ 	"strconv"
+ 	"strings"
+ 	"time"
+ 
+ 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+ 	log "github.com/sirupsen/logrus"
+@@ -41,36 +42,39 @@ const (
+ 	gostDefaultSettleDays = 3
+ 	// gostEmptyTableDays — окно пустой таблицы в since: обход десяти лет в режиме расписания
+ 	// недопустим, но и падать впустую dagu не должен — читаем последнюю неделю и предупреждаем.
+ 	gostEmptyTableDays = 7
+ 	// gostMaxSinceDays — предел окна since: на отставшей таблице якорь бывает старше на месяцы
+ 	// (первый плановый прогон на legacy-таблице без бэкфилла), и часовой DAG ушёл бы в обход
+ 	// тысяч дней, заняв портал и не догнав хвост за один прогон. Окно обрезается месяцем, а
+ 	// оператору печатается призыв к GOST_MODE=full.
+ 	gostMaxSinceDays = 30
+ 	// gostMaxRangeDays — предохранитель диапазона full/check: вся история реестра — ~4000 дней,
+-	// и больший запрос означает опечатку в границах, а не диапазон.
+-	gostMaxRangeDays = 4000
++	// но дефолтный диапазон растёт вместе с календарём (с 2016-01-01 порог в 4000 дней исчерпался
++	// бы к 2026-12-15), поэтому запас — до ~2029-09 (5000 дней от 2016-01-01). Больший запрос —
++	// уже опечатка в границах, а не диапазон.
++	gostMaxRangeDays = 5000
+ )
+ 
+ // Имена переменных окружения прогона: они же — часть ошибок конфига (по тексту понятно, что
+ // править в ~/.config/rosstat/env).
+ const (
+ 	gostModeEnv   = "GOST_MODE"
+ 	gostFromEnv   = "GOST_FROM"
+ 	gostToEnv     = "GOST_TO"
+ 	gostSettleEnv = "GOST_SETTLE_DAYS"
+ 	gostAppIDEnv  = "GOST_APP_ID"
+ )
+ 
+ // gostClock — «сейчас» прогона. Переменная, а не time.Now на месте: от неё зависят окно since
+-// и дефолт GOST_TO (вчера МСК), и тесты подменяют часы, чтобы окно не зависело от дня запуска.
++// (до сегодня МСК) и дефолт GOST_TO (вчера МСК), и тесты подменяют часы, чтобы окно не зависело
++// от дня запуска.
+ var gostClock = time.Now
+ 
+ // Запросы к ClickHouse. Их текст — часть контракта (пинится тестами) и живёт рядом с таблицей,
+ // чтобы правка схемы не разъезжалась с чтением.
+ const (
+ 	// gostAnchorQuery — якорь режима since: последняя дата выдачи и последняя дата публикации.
+ 	// Вторая половина нормализована: maxIf на непустой таблице без настоящих публикаций вернул бы
+ 	// 1970-01-01 (дефолт колонки у строк до бэкфилла), и этот ноль выглядел бы настоящей датой;
+ 	// nullIf(…, toDate('1970-01-01')) делает его NULL — как у пустой таблицы. Порог 2016-01-01
+ 	// отсекает те же строки до бэкфилла: дата среза раньше начала реестра означает отсутствие
+@@ -192,22 +196,24 @@ func gostConfigFromEnv() (gostConfig, error) {
+ 	if err != nil {
+ 		return gostConfig{}, err
+ 	}
+ 	if cfg.Mode != gostModeSince {
+ 		if from.IsZero() {
+ 			if from, err = time.Parse(gostDateLayout, gostDefaultFrom); err != nil {
+ 				return gostConfig{}, fmt.Errorf("разбор границы по умолчанию %s: %w", gostDefaultFrom, err)
+ 			}
+ 		}
+ 		if to.IsZero() {
+-			// Верхняя граница — вчера МСК: публикация среза отстаёт от дня прогона (~2 суток),
+-			// и сегодняшний день читать нечего.
++			// Верхняя граница диапазона full/check по умолчанию — вчера МСК: основной объём дня
++			// публикуется с лагом (~2 суток), поэтому ручной диапазон, дотянутый до сегодня, смотрит
++			// в почти пустой день. Окно since берёт верхнюю границу не отсюда: ему нужен и дневной
++			// батч текущего дня (см. gostSinceDays).
+ 			to = gostYesterdayMSK(gostClock())
+ 		}
+ 	}
+ 	cfg.From, cfg.To = from, to
+ 	if !from.IsZero() && !to.IsZero() && from.After(to) {
+ 		return gostConfig{}, fmt.Errorf("%s=%s больше %s=%s: пустой диапазон",
+ 			gostFromEnv, from.Format(gostDateLayout), gostToEnv, to.Format(gostDateLayout))
+ 	}
+ 	return cfg, nil
+ }
+@@ -220,32 +226,39 @@ func gostEnvDate(name string) (time.Time, error) {
+ 	if raw == "" {
+ 		return time.Time{}, nil
+ 	}
+ 	day, err := time.Parse(gostDateLayout, raw)
+ 	if err != nil {
+ 		return time.Time{}, fmt.Errorf("%s=%q: ожидалась дата в формате %s: %w", name, raw, gostDateLayout, err)
+ 	}
+ 	return day, nil
+ }
+ 
+-// gostYesterdayMSK — «вчера» по Москве: день прогона МСК минус сутки. Одна функция на дефолт
+-// GOST_TO и на верхнюю границу окна since: обе границы обязаны совпадать, иначе штатный прогон
+-// и ручной full смотрели бы на разные дни.
++// gostTodayMSK — «сегодня» по Москве: календарный день момента now. Верхняя граница окна since:
++// часовой прогон обязан ловить и дневной батч текущего дня, а не ждать до завтра (спека
++// §«Три режима»: окно [якорь − GOST_SETTLE_DAYS, сегодня МСК]).
++func gostTodayMSK(now time.Time) time.Time {
++	return gostMSKDate(now.UnixMilli())
++}
++
++// gostYesterdayMSK — «вчера» по Москве: дефолт верхней границы диапазонов full/check (основной
++// объём дня публикуется с лагом ~2 суток). Окно since им не пользуется — у него своя граница,
++// gostTodayMSK: границы у режимов сознательно разные.
+ func gostYesterdayMSK(now time.Time) time.Time {
+-	return gostMSKDate(now.UnixMilli()).AddDate(0, 0, -1)
++	return gostTodayMSK(now).AddDate(0, 0, -1)
+ }
+ 
+ // gostDaysBetween — дни диапазона включительно. Границы приводятся к календарному дню в
+ // UTC-полуночи (в этой шкале живут все даты прогона), шаг — календарные сутки (AddDate), а не
+ // 24 часа: переход на летнее время не должен ни терять, ни дублировать день. Пустой диапазон —
+ // ошибка (перевёрнутые границы это опечатка, а не «нечего делать»), слишком длинный — тоже:
+-// 4000 дней по паре запросов на день это часы работы, такие прогоны запускают чанками осознанно.
++// 5000 дней по паре запросов на день это часы работы, такие прогоны запускают чанками осознанно.
+ func gostDaysBetween(from, to time.Time) ([]time.Time, error) {
+ 	from, to = gostDateOnly(from), gostDateOnly(to)
+ 	if from.After(to) {
+ 		return nil, fmt.Errorf("пустой диапазон %s…%s: начало позже конца",
+ 			from.Format(gostDateLayout), to.Format(gostDateLayout))
+ 	}
+ 	days := make([]time.Time, 0, int(to.Sub(from).Hours()/24)+1)
+ 	for day := from; !day.After(to); day = day.AddDate(0, 0, 1) {
+ 		if len(days) == gostMaxRangeDays {
+ 			return nil, fmt.Errorf("диапазон %s…%s длиннее %d дней: разбейте прогон на чанки",
+@@ -256,37 +269,40 @@ func gostDaysBetween(from, to time.Time) ([]time.Time, error) {
+ 	return days, nil
+ }
+ 
+ // gostDateOnly — календарный день даты в UTC-полуночи. Все даты прогона (дни окна, даты колонок
+ // из clickhouse-go, gostMSKDate) живут в этой шкале; сравнение иначе зависело бы от времени суток
+ // и таймзоны процесса.
+ func gostDateOnly(t time.Time) time.Time {
+ 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+ }
+ 
+-// gostSinceDays — дни хвоста режима since: от якоря таблицы минус settle до вчера МСК.
++// gostSinceDays — дни хвоста режима since: от якоря таблицы минус settle до сегодня МСК.
+ // Якорь — максимум даты выдачи и даты публикации: первая растёт от самих документов, вторая —
+ // от дня среза, и «последнее, что мы видели» — максимум обеих. Пустая таблица (оба NULL после
+ // нормализации 1970-01-01) — не обход всей истории, а окно последних семи дней: флаг tableEmpty
+ // возвращается вызывающему, чтобы тот сказал оператору про GOST_MODE=full. Якорь из будущего
+-// (часы источника вперёд, ручная правка) прижимается к вчера — «завтра» читать нечего.
++// (часы источника вперёд, ручная правка) прижимается к сегодня — «завтра» читать нечего.
++//
++// Верхняя граница — сегодня, а не вчера (спека §«Три режима»): день публикуется с лагом, но
++// дневной батч текущего дня часовой прогон обязан ловить, а не откладывать до завтра.
+ //
+ // Окно ограничено gostMaxSinceDays: на отставшей таблице (якорь старше месяца) часовой прогон
+ // иначе читал бы тысячи дней подряд, не догоняя хвост и занимая портал, — вместо этого читается
+ // последний месяц, а оператор получает призыв к полному прогону.
+ func gostSinceDays(ctx context.Context, conn driver.Conn, settle int, now time.Time) (days []time.Time, tableEmpty bool, err error) {
+ 	var maxIssue, maxPub *time.Time
+ 	if err = conn.QueryRow(ctx, gostAnchorQuery).Scan(&maxIssue, &maxPub); err != nil {
+ 		return nil, false, fmt.Errorf("%s: якорь таблицы не прочитан: %w", gostTable, err)
+ 	}
+ 
+-	to := gostYesterdayMSK(now)
++	to := gostTodayMSK(now)
+ 	if maxIssue == nil && maxPub == nil {
+ 		from := to.AddDate(0, 0, -(gostEmptyTableDays - 1))
+ 		days, err = gostDaysBetween(from, to)
+ 		return days, true, err
+ 	}
+ 
+ 	anchor := time.Time{}
+ 	for _, candidate := range []*time.Time{maxIssue, maxPub} {
+ 		if candidate == nil {
+ 			continue
+@@ -348,39 +364,56 @@ func gostWriteDay(ctx context.Context, conn driver.Conn, rows []gostRow) (int64,
+ 			}
+ 			return 0, fmt.Errorf("%s: append %s %s: %w", gostTable, r.CertificateNumber, r.PublicationDate.Format(gostDateLayout), err)
+ 		}
+ 	}
+ 	if err = batch.Send(); err != nil {
+ 		return 0, fmt.Errorf("%s: %s: %w", gostTable, gostInsert, err)
+ 	}
+ 	return int64(batch.Rows()), nil
+ }
+ 
+-// gostRunDays обходит дни и пишет каждый одним батчем. День с ошибкой не останавливает проход:
+-// импортёр резюмируемый — остальные дни всё равно попадут в таблицу, а повтор упавших
+-// идемпотентен (ReplacingMergeTree по ключу). Итог — агрегат ошибок с перечислением дней:
+-// «упало 3 дня из 4000» без имён не разобрать.
++// gostRunDays обходит дни и пишет каждый одним батчем. Обычный день с ошибкой не останавливает
++// проход: импортёр резюмируемый — остальные дни всё равно попадут в таблицу, а повтор упавших
++// идемпотентен (ReplacingMergeTree по ключу). Итог — агрегат ошибок с перечислением дней
++// (первые десять и остаток счётчиком: «упало 3 дня из 5000» без имён не разобрать, а полный
++// список утопил бы первопричину).
++//
++// Исключение — отказ авторизации (401/403, gostAuthError): он систематический (неверный или
++// отозванный GOST_APP_ID повторы не лечат), и продолжать обход тысяч дней, зная, что каждый
++// следующий запрос так же безнадёжен, — значит жечь часы впустую и хоронить подсказку про
++// GOST_APP_ID в мегабайтном агрегате. Такой прогон прерывается на первом же дне.
+ func gostRunDays(ctx context.Context, conn driver.Conn, api *gostAPI, days []time.Time) (int64, error) {
+ 	var (
+ 		total  int64
+ 		failed []string
+ 	)
+ 	for i, day := range days {
+ 		if i > 0 {
+ 			// Пауза между днями: щадим портал. Штатный прогон делает 4–12 запросов в час, но
+ 			// полный — тысячи, и без пауз это выглядело бы для источника шквалом.
+ 			time.Sleep(gostRequestGap)
+ 		}
+ 		label := day.Format(gostDateLayout)
+ 
+ 		slice, err := api.day(ctx, day)
+ 		if err != nil {
++			var authErr *gostAuthError
++			if errors.As(err, &authErr) {
++				// Остаток окна не читаем: при систематическом отказе доступа каждый следующий
++				// день ждёт та же ошибка. В сообщении — день прерывания и остаток дней, а не
++				// агрегат на тысячи строк. Причина оборачивается (%w): подсказка про
++				// GOST_APP_ID должна дожить до оператора.
++				errText := fmt.Sprintf("авторизация отклонена (проверьте GOST_APP_ID): прервано на дне %s, дней не прочитано %d",
++					label, len(days)-i)
++				log.Errorf("%s: %s: %v", gostTable, errText, err)
++				return total, fmt.Errorf("%s: %s: %w", gostTable, errText, err)
++			}
+ 			log.Errorf("%s: день %s не прочитан: %v", gostTable, label, err)
+ 			failed = append(failed, fmt.Sprintf("%s: %v", label, err))
+ 			continue
+ 		}
+ 		if slice.Count == 0 {
+ 			// Пустой день — норма (публикаций не было): батч не открываем, но и это факт дня.
+ 			log.Infof("%s: день %s: публикаций нет", gostTable, label)
+ 			continue
+ 		}
+ 		if slice.Skipped > 0 {
+@@ -417,25 +450,36 @@ func gostRunDays(ctx context.Context, conn driver.Conn, api *gostAPI, days []tim
+ 		written, err := gostWriteDay(ctx, conn, slice.Rows)
+ 		if err != nil {
+ 			log.Errorf("%s: день %s не записан: %v", gostTable, label, err)
+ 			failed = append(failed, fmt.Sprintf("%s: запись: %v", label, err))
+ 			continue
+ 		}
+ 		total += written
+ 		log.Infof("%s: день %s: записано %d строк", gostTable, label, written)
+ 	}
+ 	if len(failed) > 0 {
+-		return total, fmt.Errorf("%s: не прочитаны дни (%d): %s", gostTable, len(failed), strings.Join(failed, "; "))
++		return total, fmt.Errorf("%s: не прочитаны дни (%d): %s", gostTable, len(failed), gostDaysHint(failed))
+ 	}
+ 	return total, nil
+ }
+ 
++// gostDaysHint — перечисление неудачных дней в агрегате: первые десять и остаток счётчиком.
++// На полном прогоне упавших дней бывают сотни, и полный список утопил бы в тексте первопричину,
++// которая у них, как правило, одна на всех.
++func gostDaysHint(failed []string) string {
++	const shown = 10
++	if len(failed) <= shown {
++		return strings.Join(failed, "; ")
++	}
++	return fmt.Sprintf("%s; и ещё %d", strings.Join(failed[:shown], "; "), len(failed)-shown)
++}
++
+ // gostCheckDays сверяет полноту окна, не записывая ничего: по каждому дню count ручки против
+ // uniqExact(certificate_number) таблицы по дню публикации.
+ //
+ // Совпавшие счётчики закрывают день одним запросом. Расхождение — ещё не дыра, и разбирается по
+ // номерам в три шага. Сначала день выкачивается целиком: сошлась длина среза после клиентского
+ // фильтра — это текстовый шум ручки, которая ищет дату в любом поле документа. Не сошлась —
+ // номера среза сверяются с номерами таблицы этого дня публикации: отсутствующих нет — расхождения
+ // нет. Оставшиеся проверяются по таблице вообще: ключ не хранит publication_date, поэтому
+ // документ, перепубликованный позже, лежит в таблице под более поздним днём. Такой номер —
+ // перепубликация (строка отчёта и счётчик, не ошибка); номера, которого в таблице нет вовсе, —
+diff --git a/craw/gost_api.go b/craw/gost_api.go
+index b120e57..04adde2 100644
+--- a/craw/gost_api.go
++++ b/craw/gost_api.go
+@@ -90,22 +90,25 @@ var (
+ type gostAPI struct {
+ 	Client *http.Client
+ 	AppID  string
+ }
+ 
+ func newGostAPI(client *http.Client, appID string) *gostAPI {
+ 	return &gostAPI{Client: client, AppID: appID}
+ }
+ 
+ // gostSearchResponse — ответ ручки: count — всего совпадений в окне поиска, Data — страница.
++// Count — указатель ради строгости разбора: валидный JSON без ключа (в том числе {} и
++// {"data":[]}) дал бы неотличимый от «дня без публикаций» ноль, поэтому отсутствие ключа
++// проверяется в fetchPage и считается сбоем ответа (retryable), а не пустым днём.
+ type gostSearchResponse struct {
+-	Count int       `json:"count"`
++	Count *int      `json:"count"`
+ 	Data  []gostDoc `json:"data"`
+ }
+ 
+ // gostDoc — документ реестра: идентификатор и поля карточки.
+ type gostDoc struct {
+ 	ID     int64      `json:"id"`
+ 	Fields gostFields `json:"fields"`
+ }
+ 
+ // gostFields — поля карточки в написании источника. DateOfIssueOfCertificate — указатель:
+@@ -204,32 +207,51 @@ func (a *gostAPI) fetchPage(ctx context.Context, day time.Time, page, size int)
+ 		// Пустое тело (в том числе из одних пробелов) и литерал null неотличимы от
+ 		// «данных нет»: разбор такого ответа дал бы count = 0 и выглядел бы успехом.
+ 		// Повторяем — это сбой ответа, а не день без документов.
+ 		if trimmed := bytes.TrimSpace(body); len(trimmed) == 0 || string(trimmed) == "null" {
+ 			return gostSearchResponse{}, fmt.Errorf("пустое тело ответа")
+ 		}
+ 		var out gostSearchResponse
+ 		if err := json.Unmarshal(body, &out); err != nil {
+ 			return gostSearchResponse{}, fmt.Errorf("разбор JSON: %w", err)
+ 		}
++		// Валидный JSON без ключа count — тот же сбой ответа: {} и {"data":[]} прошли бы разбор
++		// как Count: 0 и выглядели бы днём без публикаций, хотя это неполный ответ ручки.
++		if out.Count == nil {
++			return gostSearchResponse{}, fmt.Errorf("ответ без count: неполный ответ ручки")
++		}
+ 		return out, nil
+ 	}
+ 	return backoff.Retry(ctx, op, backoff.WithBackOff(&b), backoff.WithMaxTries(gostMaxTries))
+ }
+ 
++// gostAuthError — отказ доступа (401/403): токен gtn.access.appid не принят. Отдельный тип нужен
++// вызывающему (gostRunDays): такой отказ систематический — повтором не лечится (в gostStatusError
++// он обёрнут permanent), — и обход тысяч дней при нём обязан прерываться, а не копить агрегат.
++// Ошибка оборачивается, а не подменяется: подсказка про GOST_APP_ID остаётся и в тексте, и в
++// %w-цепи. backoff.Retry разворачивает permanent-ошибку, поэтому errors.As достаёт тип и из
++// ошибки дня.
++type gostAuthError struct {
++	err error
++}
++
++func (e *gostAuthError) Error() string { return e.err.Error() }
++
++func (e *gostAuthError) Unwrap() error { return e.err }
++
+ // gostStatusError раскладывает статус по классам повторов.
+ func gostStatusError(status int) error {
+ 	switch {
+ 	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+-		return backoff.Permanent(fmt.Errorf(
++		return backoff.Permanent(&gostAuthError{err: fmt.Errorf(
+ 			"http status %d — проверьте GOST_APP_ID (токен gtn.access.appid из JS-конфига страницы реестра, standarts.adminsHeaders)",
+-			status))
++			status)})
+ 	case status == http.StatusTooManyRequests || status >= 500:
+ 		// 429/5xx — предел портала: ждём и повторяем. Причина идёт в текст вместе с
+ 		// паузой: сам RetryAfterError её не несёт, и «retry after 1m0s» без статуса
+ 		// ничего не сказал бы оператору.
+ 		return errors.Join(fmt.Errorf("http status %d", status), gostRetryAfter(gostRetryAfterServer))
+ 	default:
+ 		// Прочие 4xx (404, 400, WAF-отказ) — не тот запрос, повтор не поможет.
+ 		return backoff.Permanent(fmt.Errorf("http status %d", status))
+ 	}
+ }
+@@ -263,48 +285,50 @@ func gostNoURL(err error) error {
+ }
+ 
+ // day собирает срез одного дня: все страницы окна поиска, клиентский фильтр по дню
+ // публикации. Частичной записи нет: если страница дня не доехала или уникальных документов
+ // пришло меньше count, возвращается ошибка — решение «день полный» принимается до батча.
+ func (a *gostAPI) day(ctx context.Context, day time.Time) (gostDaySlice, error) {
+ 	first, err := a.fetchPage(ctx, day, 1, gostPageSize)
+ 	if err != nil {
+ 		return gostDaySlice{}, err
+ 	}
+-	if first.Count > gostMaxDayCount {
++	// Count не nil: fetchPage считает ответ без ключа сбоем разбора.
++	count := *first.Count
++	if count > gostMaxDayCount {
+ 		return gostDaySlice{}, fmt.Errorf(
+ 			"в дне %s %d документов — больше окна поиска ручки (%d): такой день постранично не читается",
+-			day.Format(gostQueryDayLayout), first.Count, gostMaxDayCount)
++			day.Format(gostQueryDayLayout), count, gostMaxDayCount)
+ 	}
+ 
+ 	docs := first.Data
+-	for page := 2; page <= gostPageCount(first.Count); page++ {
++	for page := 2; page <= gostPageCount(count); page++ {
+ 		time.Sleep(gostRequestGap)
+ 		next, err := a.fetchPage(ctx, day, page, gostPageSize)
+ 		if err != nil {
+ 			return gostDaySlice{}, err
+ 		}
+ 		docs = append(docs, next.Data...)
+ 	}
+ 
+ 	// Дедупликация — до сравнения с count: окно поиска ручки не снапшот, и при изменении данных
+ 	// между запросами страница может вернуть документ, уже пришедший на предыдущей (сдвиг
+ 	// пагинации). Без неё такой день выглядел бы полным (len(docs) == count) при настоящей
+ 	// недостаче — и check объявил бы ложную дыру либо, наоборот, скрыл реальную.
+ 	unique, dropped := gostUniqueDocs(docs)
+-	if len(unique) < first.Count {
++	if len(unique) < count {
+ 		return gostDaySlice{}, fmt.Errorf("получено %d документов из %d (дубликатов страниц: %d)",
+-			len(unique), first.Count, dropped)
++			len(unique), count, dropped)
+ 	}
+ 
+ 	rows, skipped, invalid := gostRowsFromDocs(day, unique)
+-	return gostDaySlice{Rows: rows, Count: first.Count, Skipped: skipped, Invalid: invalid}, nil
++	return gostDaySlice{Rows: rows, Count: count, Skipped: skipped, Invalid: invalid}, nil
+ }
+ 
+ // gostUniqueDocs оставляет по одному документу на id, сохраняя порядок появления, и считает
+ // отброшенные копии: id — идентичность документа в реестре, поэтому повтор id и есть дубликат
+ // страницы. Нулевой id (сменившаяся форма ответа) схлопывается так же: день не запишется и
+ // прогон упадёт громко, а это безопасное направление — молчаливая потеря документов хуже.
+ func gostUniqueDocs(docs []gostDoc) (unique []gostDoc, dropped int) {
+ 	seen := make(map[int64]struct{}, len(docs))
+ 	unique = make([]gostDoc, 0, len(docs))
+ 	for _, d := range docs {
+@@ -318,21 +342,22 @@ func gostUniqueDocs(docs []gostDoc) (unique []gostDoc, dropped int) {
+ 	return unique, dropped
+ }
+ 
+ // dayCount возвращает только число совпадений дня — одним запросом минимальной страницы.
+ // В check-прогоне это запрос на день вместо выкачивания полного диапазона.
+ func (a *gostAPI) dayCount(ctx context.Context, day time.Time) (int, error) {
+ 	resp, err := a.fetchPage(ctx, day, 1, 1)
+ 	if err != nil {
+ 		return 0, err
+ 	}
+-	return resp.Count, nil
++	// Count не nil: fetchPage считает ответ без ключа сбоем разбора.
++	return *resp.Count, nil
+ }
+ 
+ // gostPageCount — сколько страниц нужно, чтобы забрать count документов.
+ func gostPageCount(count int) int {
+ 	if count <= 0 {
+ 		return 0
+ 	}
+ 	return (count + gostPageSize - 1) / gostPageSize
+ }
+ 
+diff --git a/craw/gost_api_test.go b/craw/gost_api_test.go
+index a58ffa8..27679e1 100644
+--- a/craw/gost_api_test.go
++++ b/craw/gost_api_test.go
+@@ -82,21 +82,21 @@ func gostRepeatDocFrom(doc gostDoc, n, startID int) []gostDoc {
+ 	for i := range out {
+ 		doc.ID = int64(startID + i)
+ 		out[i] = doc
+ 	}
+ 	return out
+ }
+ 
+ // gostTestBody собирает тело ответа ручки: count — «всего совпадений», data — страница.
+ func gostTestBody(t *testing.T, count int, docs []gostDoc) []byte {
+ 	t.Helper()
+-	body, err := json.Marshal(gostSearchResponse{Count: count, Data: docs})
++	body, err := json.Marshal(gostSearchResponse{Count: &count, Data: docs})
+ 	if err != nil {
+ 		t.Fatalf("сборка тела ответа: %v", err)
+ 	}
+ 	return body
+ }
+ 
+ // gostTestRequest — записанный запрос: по нему проверяется форма обращения к ручке.
+ type gostTestRequest struct {
+ 	Path   string
+ 	Query  url.Values
+@@ -290,22 +290,25 @@ func TestGostYear(t *testing.T) {
+ 		t.Run(c.raw, func(t *testing.T) {
+ 			if got := gostYear(c.raw); got != c.want {
+ 				t.Errorf("gostYear(%q) = %d, ожидалось %d", c.raw, got, c.want)
+ 			}
+ 		})
+ 	}
+ }
+ 
+ func TestGostRowsFromDocsFilters(t *testing.T) {
+ 	resp := gostDayFixture(t)
+-	if resp.Count != 4 || len(resp.Data) != 4 {
+-		t.Fatalf("фикстура: count=%d, документов=%d, ожидалось 4 и 4", resp.Count, len(resp.Data))
++	if resp.Count == nil {
++		t.Fatal("фикстура без ключа count")
++	}
++	if *resp.Count != 4 || len(resp.Data) != 4 {
++		t.Fatalf("фикстура: count=%d, документов=%d, ожидалось 4 и 4", *resp.Count, len(resp.Data))
+ 	}
+ 	// День фикстуры совпадает с gostTestDay: на этом держатся все проверки дня.
+ 	if got := resp.Data[0].Fields.DateOfPublication; got != gostTestPublication {
+ 		t.Fatalf("фикстура: дата публикации первого документа = %q, ожидалась %q", got, gostTestPublication)
+ 	}
+ 
+ 	// Причина пропуска у каждого документа фикстуры своя: первый — полный и свой, второй —
+ 	// чужой день публикации (дата разбирается), третий и четвёртый — невалидные (нет даты
+ 	// выдачи / пуст номер). Разделение причин — контракт: по нему gostRunDays решает, валить
+ 	// прогон или считать день без своих публикаций.
+@@ -548,20 +551,26 @@ func TestGostDayPermanentStatusFails(t *testing.T) {
+ 			_, err := ta.api.day(context.Background(), gostTestDay)
+ 			if err == nil {
+ 				t.Fatalf("ожидалась ошибка на статус %d", status)
+ 			}
+ 			if want := "http status " + strconv.Itoa(status); !strings.Contains(err.Error(), want) {
+ 				t.Errorf("ошибка = %q, ожидалась подстрока %q", err, want)
+ 			}
+ 			if !strings.Contains(err.Error(), "GOST_APP_ID") {
+ 				t.Errorf("ошибка = %q: текст должен подсказывать про GOST_APP_ID", err)
+ 			}
++			// Тип-сентинел обязан дожить до ошибки дня: именно по нему gostRunDays отличает
++			// систематический отказ доступа и прерывает обход.
++			var authErr *gostAuthError
++			if !errors.As(err, &authErr) {
++				t.Errorf("ошибка = %q не обёрнута в gostAuthError: gostRunDays не отличит систематический отказ", err)
++			}
+ 			if got := ta.requestCount(); got != 1 {
+ 				t.Errorf("запросов %d, ожидался 1: permanent-ошибка не повторяется", got)
+ 			}
+ 		})
+ 	}
+ }
+ 
+ func TestGostDayRetriesServerError(t *testing.T) {
+ 	t.Run("500, затем 200", func(t *testing.T) {
+ 		body := gostTestBody(t, 1, []gostDoc{gostFixtureDoc(t, 0)})
+@@ -599,29 +608,32 @@ func TestGostDayRetriesServerError(t *testing.T) {
+ 			t.Errorf("ошибка = %q, ожидался статус в тексте", err)
+ 		}
+ 		if got := ta.requestCount(); got != gostMaxTries {
+ 			t.Errorf("попыток %d, ожидалось %d", got, gostMaxTries)
+ 		}
+ 	})
+ }
+ 
+ func TestGostDayEmptyBodyFails(t *testing.T) {
+ 	// И пустое тело, и пробелы, и литерал null (разбирается без ошибки в нулевой count),
+-	// и битый JSON — не «день без документов», а сбой ответа: повторяем.
++	// и валидный JSON без ключа count ({} и {"data":[]} — тоже не «день без документов»,
++	// а неполный ответ), и битый JSON — сбой ответа: повторяем.
+ 	cases := []struct {
+ 		name string
+ 		body string
+ 		want string
+ 	}{
+ 		{"пустое тело", "", "пустое тело"},
+ 		{"одни пробелы", " \n\t ", "пустое тело"},
+ 		{"литерал null", "null", "пустое тело"},
++		{"нет ключа count", "{}", "ответ без count"},
++		{"нет ключа count, есть data", `{"data":[]}`, "ответ без count"},
+ 		{"битый JSON", "{", "разбор JSON"},
+ 	}
+ 	for _, c := range cases {
+ 		t.Run(c.name, func(t *testing.T) {
+ 			body := []byte(c.body)
+ 			ta := gostNewTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+ 				_, _ = w.Write(body)
+ 			})
+ 
+ 			_, err := ta.api.day(context.Background(), gostTestDay)
+@@ -631,20 +643,45 @@ func TestGostDayEmptyBodyFails(t *testing.T) {
+ 			if !strings.Contains(err.Error(), c.want) {
+ 				t.Errorf("ошибка = %q, ожидалась подстрока %q", err, c.want)
+ 			}
+ 			if got := ta.requestCount(); got != gostMaxTries {
+ 				t.Errorf("попыток %d, ожидалось %d: пустой ответ повторяем", got, gostMaxTries)
+ 			}
+ 		})
+ 	}
+ }
+ 
++// TestGostDayZeroCountIsValid — легальный пустой день: {"count":0,"data":[]} — полноценный
++// ответ ручки, и он не повторяется и не считается ошибкой (в отличие от ответа без ключа count).
++func TestGostDayZeroCountIsValid(t *testing.T) {
++	ta := gostNewTestAPI(t, gostPagesHandler(map[int][]byte{1: []byte(`{"count":0,"data":[]}`)}))
++
++	slice, err := ta.api.day(context.Background(), gostTestDay)
++	if err != nil {
++		t.Fatalf("пустой день отдан ошибкой: %v", err)
++	}
++	if slice.Count != 0 || len(slice.Rows) != 0 {
++		t.Errorf("срез пустого дня = %+v, ожидались нулевые Count и Rows", slice)
++	}
++	if got := ta.requestCount(); got != 1 {
++		t.Errorf("запросов %d, ожидался 1: легальный пустой день не повторяется", got)
++	}
++
++	count, err := ta.api.dayCount(context.Background(), gostTestDay)
++	if err != nil {
++		t.Fatalf("dayCount пустого дня: %v", err)
++	}
++	if count != 0 {
++		t.Errorf("dayCount = %d, ожидался 0", count)
++	}
++}
++
+ // TestGostRetryAfterPauses пинит не факт повтора, а саму паузу: backoff выдерживает ровно
+ // RetryAfterError.Duration, и она обязана совпадать со значением переменной — иначе
+ // объявленные 60 с для 5xx и 30 с для дедлайна молча превращаются в ноль.
+ func TestGostRetryAfterPauses(t *testing.T) {
+ 	if gostRetryAfterTimeout != 30*time.Second || gostRetryAfterServer != 60*time.Second {
+ 		t.Errorf("паузы по умолчанию = %s / %s, ожидались 30s / 60s",
+ 			gostRetryAfterTimeout, gostRetryAfterServer)
+ 	}
+ 
+ 	pauses := []struct {
+diff --git a/craw/gost_test.go b/craw/gost_test.go
+index 3e920a6..fa93fb8 100644
+--- a/craw/gost_test.go
++++ b/craw/gost_test.go
+@@ -29,22 +29,23 @@ import (
+ // указатель: у документа без даты выдачи строки нет вовсе.
+ const gostIssueMS int64 = 1791493200000
+ 
+ // gostForeignPublication — дата публикации «чужого» документа: ручка ищет текстом и отдаёт
+ // документы соседних окон, а клиентский фильтр дня их отбрасывает. Форма — чистая дата без
+ // времени и зоны: именно так выглядел документ, уронивший живой июньский прогон 2026 года
+ // (одна такая дата среди 35 обычных делала день «невалидным»), поэтому тесты обвязки гоняют
+ // эту форму через весь путь от разбора до решения по дню.
+ const gostForeignPublication = "01.01.2020"
+ 
+-// gostTestNow — подменённые часы прогона: 12.10.2026 12:00 UTC, то есть «вчера МСК» = 11.10.2026
+-// (МСК = UTC+3, дата прогона 12.10.2026).
++// gostTestNow — подменённые часы прогона: 12.10.2026 12:00 UTC, то есть «сегодня МСК» = 12.10.2026,
++// «вчера МСК» = 11.10.2026 (МСК = UTC+3, дата прогона 12.10.2026). Обе границы тестируются
++// явно: окно since кончается сегодняшним днём, дефолт full/check — вчерашним.
+ var gostTestNow = time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
+ 
+ // gostEnv выставляет окружение конфига: сначала все переменные прогона пустые (тест не должен
+ // зависеть от окружения машины), затем — переданные значения.
+ func gostEnv(t *testing.T, values map[string]string) {
+ 	t.Helper()
+ 	for _, name := range []string{gostModeEnv, gostFromEnv, gostToEnv, gostSettleEnv, gostAppIDEnv} {
+ 		t.Setenv(name, "")
+ 	}
+ 	for name, value := range values {
+@@ -315,40 +316,42 @@ func TestGostSinceDaysAnchors(t *testing.T) {
+ 		name       string
+ 		maxDate    string // пусто — NULL
+ 		maxPub     string // пусто — NULL
+ 		settle     int
+ 		wantEmpty  bool
+ 		wantDays   []string
+ 		wantAnchor string // ожидаемая подстрока записанного вызова якоря
+ 	}{
+ 		{
+ 			// Якорь — дата выдачи: хвост перекрывает лаг публикации, а сама выдача новее дня среза.
++			// Верхняя граница — сегодня МСК (12.10): часовой прогон обязан ловить и дневной батч
++			// текущего дня, поэтому окно шире, чем «до вчера».
+ 			name: "якорь по дате выдачи", maxDate: "2026-10-09", maxPub: "2026-10-05",
+-			settle: 3, wantDays: []string{"2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10", "2026-10-11"},
++			settle: 3, wantDays: []string{"2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10", "2026-10-11", "2026-10-12"},
+ 			wantAnchor: "maxOrNull(date)",
+ 		},
+ 		{
+ 			// Даты выдачи нет (все строки пришли без неё) — якорем становится дата публикации.
+ 			name: "якорь по дате публикации", maxPub: "2026-10-08",
+-			settle: 1, wantDays: []string{"2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10", "2026-10-11"},
++			settle: 1, wantDays: []string{"2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10", "2026-10-11", "2026-10-12"},
+ 			wantAnchor: "maxOrNull(date)",
+ 		},
+ 		{
+ 			// Пустая таблица: не обход всей истории, а окно последних семи дней и флаг для warn.
+ 			name: "пустая таблица — последняя неделя", settle: 3, wantEmpty: true,
+-			wantDays:   []string{"2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10", "2026-10-11"},
++			wantDays:   []string{"2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10", "2026-10-11", "2026-10-12"},
+ 			wantAnchor: "maxOrNull(date)",
+ 		},
+ 		{
+-			// Якорь из будущего (часы источника вперёд) прижимается к вчера: «завтра» читать нечего.
++			// Якорь из будущего (часы источника вперёд) прижимается к сегодня: «завтра» читать нечего.
+ 			name: "якорь из будущего", maxPub: "2026-12-01",
+-			settle: 3, wantDays: []string{"2026-10-08", "2026-10-09", "2026-10-10", "2026-10-11"},
++			settle: 3, wantDays: []string{"2026-10-09", "2026-10-10", "2026-10-11", "2026-10-12"},
+ 			wantAnchor: "maxOrNull(date)",
+ 		},
+ 	}
+ 
+ 	for _, c := range cases {
+ 		t.Run(c.name, func(t *testing.T) {
+ 			conn := &gostFakeConn{}
+ 			if c.maxDate != "" {
+ 				day := gostTime(t, c.maxDate)
+ 				conn.maxDate = &day
+@@ -375,50 +378,52 @@ func TestGostSinceDaysAnchors(t *testing.T) {
+ 			}
+ 			calls := conn.callList()
+ 			if len(calls) != 1 || !strings.Contains(calls[0], c.wantAnchor) {
+ 				t.Errorf("якорь читается одним запросом maxOrNull(date): вызовы %v", calls)
+ 			}
+ 		})
+ 	}
+ }
+ 
+ func TestGostSinceDaysCapsStaleAnchor(t *testing.T) {
+-	t.Run("свежий якорь — обычное окно", func(t *testing.T) {
++	t.Run("свежий якорь — обычное окно до сегодня", func(t *testing.T) {
+ 		fresh := gostTime(t, "2026-10-09")
+ 		conn := &gostFakeConn{maxDate: &fresh}
+ 
+ 		days, _, err := gostSinceDays(context.Background(), conn, 3, gostTestNow)
+ 		if err != nil {
+ 			t.Fatalf("окно since: %v", err)
+ 		}
+-		if len(days) != 6 || !days[0].Equal(gostTime(t, "2026-10-06")) || !days[5].Equal(gostTime(t, "2026-10-11")) {
+-			t.Errorf("дни %v, ожидалось 2026-10-06…2026-10-11 (6 дней)", gostDayStrings(days))
++		// Верхняя граница — сегодняшний день МСК (12.10.2026), а не вчерашний: часовой прогон
++		// обязан ловить и дневной батч текущего дня.
++		if len(days) != 7 || !days[0].Equal(gostTime(t, "2026-10-06")) || !days[6].Equal(gostTime(t, "2026-10-12")) {
++			t.Errorf("дни %v, ожидалось 2026-10-06…2026-10-12 (7 дней)", gostDayStrings(days))
+ 		}
+ 	})
+ 
+ 	t.Run("старый якорь — окно обрезано", func(t *testing.T) {
+ 		stale := gostTime(t, "2026-01-01")
+ 		conn := &gostFakeConn{maxDate: &stale}
+ 		logs := gostCaptureLog(t)
+ 
+ 		days, empty, err := gostSinceDays(context.Background(), conn, 3, gostTestNow)
+ 		if err != nil {
+ 			t.Fatalf("окно since: %v", err)
+ 		}
+ 		if empty {
+ 			t.Error("tableEmpty = true, ожидалось false: строки в таблице есть")
+ 		}
+ 		if len(days) != gostMaxSinceDays {
+ 			t.Fatalf("дней %d, ожидалось ровно %d", len(days), gostMaxSinceDays)
+ 		}
+-		if !days[0].Equal(gostTime(t, "2026-09-12")) || !days[len(days)-1].Equal(gostTime(t, "2026-10-11")) {
+-			t.Errorf("окно %v, ожидалось 2026-09-12…2026-10-11", gostDayStrings(days))
++		if !days[0].Equal(gostTime(t, "2026-09-13")) || !days[len(days)-1].Equal(gostTime(t, "2026-10-12")) {
++			t.Errorf("окно %v, ожидалось 2026-09-13…2026-10-12", gostDayStrings(days))
+ 		}
+ 		for _, want := range []string{"таблица отстала", "2026-01-01", "GOST_MODE=full"} {
+ 			if !strings.Contains(logs.String(), want) {
+ 				t.Errorf("предупреждение без %q: %s", want, logs.String())
+ 			}
+ 		}
+ 	})
+ }
+ 
+ func TestGostWriteDayOneBatch(t *testing.T) {
+@@ -498,20 +503,105 @@ func TestGostRunDaysSkipsEmptyAndAggregatesErrors(t *testing.T) {
+ 	}
+ 	inserted := batches[0].inserted(t)
+ 	if len(inserted) != 1 || !inserted[0].PublicationDate.Equal(gostTime(t, "2026-10-07")) {
+ 		t.Errorf("в батче %+v, ожидалась одна строка дня 2026-10-07", inserted)
+ 	}
+ 	if !strings.Contains(logs.String(), "публикаций нет") {
+ 		t.Errorf("пустой день не отмечен в логе: %s", logs.String())
+ 	}
+ }
+ 
++// TestGostRunDaysAbortsOnAuthError — систематический отказ доступа (401) прерывает обход на
++// первом же дне, а не копит агрегат: при отозванном или неверном GOST_APP_ID каждый следующий
++// из тысяч дней ждала бы та же ошибка, а подсказка про токен тонула бы в мегабайтном тексте.
++func TestGostRunDaysAbortsOnAuthError(t *testing.T) {
++	days := []time.Time{
++		gostTime(t, "2026-10-05"),
++		gostTime(t, "2026-10-06"),
++		gostTime(t, "2026-10-07"),
++	}
++	ta := gostNewTestAPI(t, gostDayServer(t, map[string]gostDaySpec{
++		"05.10.2026": {Status: http.StatusUnauthorized},
++		"06.10.2026": {Count: 1},
++		"07.10.2026": {Count: 1},
++	}))
++	conn := &gostFakeConn{}
++	logs := gostCaptureLog(t)
++
++	count, err := gostRunDays(context.Background(), conn, ta.api, days)
++	if err == nil {
++		t.Fatal("отказ авторизации не прервал прогон")
++	}
++	for _, want := range []string{
++		"авторизация отклонена (проверьте GOST_APP_ID)",
++		"прервано на дне 2026-10-05",
++		"дней не прочитано 3",
++		"http status 401",
++	} {
++		if !strings.Contains(err.Error(), want) {
++			t.Errorf("ошибка %q не содержит %q", err, want)
++		}
++	}
++	if count != 0 {
++		t.Errorf("записано строк %d, ожидалось 0", count)
++	}
++	// Обход прерван на первом дне: остальные дни не запрашивались вовсе.
++	if got := ta.requestCount(); got != 1 {
++		t.Errorf("запросов %d, ожидался 1: авторизация обходом не чинится", got)
++	}
++	if batches := conn.batchList(); len(batches) != 0 {
++		t.Errorf("батчей %d, ожидалось 0: прерывание до первой записи", len(batches))
++	}
++	if !strings.Contains(logs.String(), "авторизация отклонена") {
++		t.Errorf("прерывание не попало в лог: %s", logs.String())
++	}
++}
++
++// TestGostRunDaysCapsFailedDayList — список неудачных дней в агрегате усечён первыми десятью:
++// на полном прогоне упавших дней бывают сотни, и полный перечень утопил бы первопричину,
++// которая у них, как правило, одна на всех. Здесь же пин того, что 500-е дни обход не прерывают:
++// запрошены все дни и агрегат собран целиком.
++func TestGostRunDaysCapsFailedDayList(t *testing.T) {
++	var days []time.Time
++	specs := make(map[string]gostDaySpec)
++	for i := 1; i <= 12; i++ {
++		day := gostTime(t, fmt.Sprintf("2026-10-%02d", i))
++		days = append(days, day)
++		specs[day.Format(gostQueryDayLayout)] = gostDaySpec{Status: http.StatusInternalServerError}
++	}
++	ta := gostNewTestAPI(t, gostDayServer(t, specs))
++	conn := &gostFakeConn{}
++
++	count, err := gostRunDays(context.Background(), conn, ta.api, days)
++	if err == nil {
++		t.Fatal("дни со сбоем не попали в ошибку прогона")
++	}
++	if !strings.Contains(err.Error(), "не прочитаны дни (12)") {
++		t.Errorf("ошибка %q не называет число сбойных дней", err)
++	}
++	if !strings.Contains(err.Error(), "и ещё 2") {
++		t.Errorf("ошибка %q не усекает список дней", err)
++	}
++	if !strings.Contains(err.Error(), "2026-10-10") {
++		t.Errorf("ошибка %q не перечисляет первые десять дней", err)
++	}
++	if strings.Contains(err.Error(), "2026-10-11") || strings.Contains(err.Error(), "2026-10-12") {
++		t.Errorf("ошибка %q перечисляет дни сверх первых десяти", err)
++	}
++	if got := ta.requestCount(); got != len(days)*gostMaxTries {
++		t.Errorf("запросов %d, ожидалось %d: 500-е дни обход не прерывают", got, len(days)*gostMaxTries)
++	}
++	if count != 0 {
++		t.Errorf("записано строк %d, ожидалось 0", count)
++	}
++}
++
+ func TestGostRunDaysForeignDateOnlyDayWarns(t *testing.T) {
+ 	days := []time.Time{gostTime(t, "2026-10-05"), gostTime(t, "2026-10-06")}
+ 	// Текстовый query ручки матчит дату в любом поле документа, поэтому у дня может не быть
+ 	// своих публикаций, а count — ненулевой: все четыре совпадения относятся к другим датам
+ 	// публикации. Это штатное поведение источника, и день не ошибка — иначе часовой DAG
+ 	// краснел бы на каждом таком дне, пока окно его не проедет.
+ 	ta := gostNewTestAPI(t, gostDayServer(t, map[string]gostDaySpec{
+ 		"05.10.2026": {Count: 4, Noise: 4},
+ 		"06.10.2026": {Count: 1},
+ 	}))
+@@ -1355,21 +1445,22 @@ func gostDayResponse(t *testing.T, w http.ResponseWriter, r *http.Request, day s
+ 		switch {
+ 		case i < spec.Invalid:
+ 			docs = append(docs, gostInvalidDoc(day, i+1))
+ 		case i < spec.Invalid+spec.Noise:
+ 			docs = append(docs, gostForeignDoc(day, i+1))
+ 		default:
+ 			docs = append(docs, gostDayDoc(day, i+1))
+ 		}
+ 	}
+ 	// Тело собирается без t: хендлер живёт в горутине сервера, и t.Fatalf оттуда недопустим.
+-	body, err := json.Marshal(gostSearchResponse{Count: spec.Count, Data: docs})
++	count := spec.Count
++	body, err := json.Marshal(gostSearchResponse{Count: &count, Data: docs})
+ 	if err != nil {
+ 		w.WriteHeader(http.StatusInternalServerError)
+ 		return
+ 	}
+ 	_, _ = w.Write(body)
+ }
+ 
+ // gostDayDoc — документ, попадающий в срез дня: дата публикации равна дню запроса.
+ func gostDayDoc(day string, id int) gostDoc {
+ 	issue := gostIssueMS
+diff --git a/dagu/craw.yaml b/dagu/craw.yaml
+index ee09efd..85b9b36 100644
+--- a/dagu/craw.yaml
++++ b/dagu/craw.yaml
+@@ -1,23 +1,24 @@
+ type: chain
+ schedule: "17 * * * *"
+ overlap_policy: skip
+ 
+ # Реестр СБКТС Росстандарта (свидетельства о безопасности конструкции ТС) — прокси
+ # объёма импорта автомобилей: каждой ввезённой машине соответствует запись реестра.
+ # Транспорт — REST API портала (/standards/rest-api/libraries/search с заголовком
+ # gtn.access.appid), а не HTTP-листинг: портальная пагинация упирается в стену —
+ # from=20000 ≈ 3 с, from=100000 ≈ 10.7 с, from=150000 и глубже — стабильный таймаут
+ # 60 с, а текстовый query=DD.MM.YYYY отдаёт те же документы плоским дневным срезом
+-# любой глубины. Режим since (хвост [якорь − GOST_SETTLE_DAYS, вчера МСК], дефолт
++# любой глубины. Режим since (хвост [якорь − GOST_SETTLE_DAYS, сегодня МСК], дефолт
+ # 3 дня) — потому что лаг «выдача → публикация» у источника ≈ 2 суток: опоздавшие
+-# документы обязаны догоняться, а не теряться. Прогон щадящий: 4–12 запросов в час
++# документы обязаны догоняться, а не теряться, а верхняя граница — сегодня, чтобы
++# часовой прогон ловил и дневной батч текущего дня. Прогон щадящий: 4–12 запросов в час
+ # (день с count > 10000 отвергается — окно поиска ручки). GOST_MODE=full (вся
+ # история с 2016, часы работы) и GOST_MODE=check (сверка полноты без записи) —
+ # ручные, в расписании их нет. GOST_APP_ID приходит из env-файла хоста — dev:
+ # ~/.config/rosstat/env, staging: /etc/clickhouse-import-rosstat.env (тот же файл,
+ # что читает deploy/staging/dagu.service; образец —
+ # deploy/staging/clickhouse-import-rosstat.env.example) — и в DAG не прописывается:
+ # значения токена в репозитории нет (правило 1). В env-файле держат только токен:
+ # режимные переменные (GOST_MODE/GOST_FROM/GOST_TO/GOST_SETTLE_DAYS) задаёт сам DAG
+ # (env шага), иначе значение из файла перекрыло бы префикс команды ручного запуска.
+ steps:
+diff --git a/docs/GOLD_THESIS_DATA_ROADMAP.md b/docs/GOLD_THESIS_DATA_ROADMAP.md
+index 9d65e6d..4c85cd7 100644
+--- a/docs/GOLD_THESIS_DATA_ROADMAP.md
++++ b/docs/GOLD_THESIS_DATA_ROADMAP.md
+@@ -224,36 +224,36 @@
+ **Follow-up 1 — канал записи от сессии:** `POST /v1/news_events` в ingest (курированные события и `sentiment`; заполняет LLM-сессия); индекс настроений (7д/30д MA) — после накопления данных. ⏳ не начат.
+ **Follow-up 2 — `v_gold_attribution` (GRAM):** разложение движения золота (экспансия/риск/альтернативная стоимость/импульс); ошибки прогнозов атрибутируются фактору. ⏳ не начат.
+ **Follow-up 3 — `regime_states` (HMM/Markov-switching):** режимная детекция; согласование сценарных вероятностей с режимом. ⏳ не начат.
+ **Follow-up 4 — расширение источников:** первичка кабмина (`government.ru`, `publication.pravo.gov.ru` — с этой сети таймаут, проверить через `util.HttpClient`/нац. сертификаты); Коммерсант (лента отвечает 200); IR Полюса (HTML-скрейпинг `/ru/media/press-releases/` + `/ru/media/news/`); Минфин; первичка ФРС/WGC/EIA — по мере надобности. ⏳ не начат.
+ **Follow-up 5 — исторический новостной слой (для атрибуции и ML):** `news_watch` собирает «с этого дня» — RSS отдаёт только текущее окно (25–100 позиций), до первого прогона (12.10.2026) истории нет ни в БД, ни в лентах. Для GRAM-атрибуции (follow-up 2), sentiment-индекса (follow-up 1) и возможных новостных признаков ML-трека (§5 — там пока только макро/ценовые витрины) нужен бэкфилл за годы. Разведка 12.10.2026: **GDELT Doc 2.0 API** доступен и историю отдаёт (проверено окно 2024-01), но с этой сети требует пауз между запросами (чаще отвечает заглушкой «high-traffic» — нужен пейсинг ≥~5–30 с); для контура удобны агрегаты (`mode=timelinevol`/`timelinetone` — один запрос на стем × период даёт дневные ряды) и, опционально, заголовочные выборки (`mode=artlist`, ≤250 на запрос). **Сырые архивы GDELT** (`data.gdeltproject.org`, GKG с 2015, ~5,7 МБ × 96 файлов/сутки ≈ 0,5 ГБ/сутки) — доступны (range-запрос 206), брать селективно. **Wayback** RSS-снапшотов Интерфакса не имеет (CDX пуст); архивы сайтов (Интерфакс/РБК/ТАСС) с ходу не нашлись (`/archive` и дата-URL — 404) — скрейпинг с нуля, дорого. Приёмка уточняется при старте. ⏳ не начат.
+ 
+ ### Фаза 4 — follow-up 6: СБКТС Росстандарта — прокси импорта авто (торговый баланс → курс рубля) — ✅ выполнен 2026-10-13
+ 
+ **Пробел:** рублёвая сторона оценки Полюса (импорт авто → спрос на валюту → курс рубля → рублёвая выручка от продажи золота за валюту и рублёвая оценка NAV) не имела в контуре ни одного измеримого ряда, хотя источник числился подключённым. Реестр СБКТС Росстандарта (свидетельства о безопасности конструкции ТС) — публичный прокси объёма импорта автомобилей: каждой ввезённой машине соответствует запись реестра. Прежний импортёр `craw/gost.go` был colly-краулером с месячным расписанием: построчный `conn.Exec` в цикле (нарушение правила 2), проглатывание ошибок в `OnHTML`, мёртвый второй DDL `gost_vehicle_safety_certificate_type`, токен `gtn.access.appid` в комментариях (нарушение правила 1), а «исторический» обход умирал на стене портальной пагинации (глубже ~2 месяцев данные недостижимы). Канал №7 — [ROADMAP_DCF_POLYUS.md](ROADMAP_DCF_POLYUS.md) §10.1.
+ **Что даёт:** дневной поток выданных СБКТС с ежечасной свежестью: прокси импорта авто читается одним запросом к витрине («сколько машин ввезено за месяц и по каким маркам»), а история с 2016 года достижима целиком (полный прогон).
+-**Метод:** транспорт — **REST API портала** `gost.ru` (`/standards/rest-api/libraries/search`, заголовок `gtn.access.appid` из `GOST_APP_ID`): обычный текстовый `query=DD.MM.YYYY` матчит дату публикации и даёт плоский дневной срез любой глубины (страницы по `size=900`), тогда как HTTP-листинг портала упирается в стену пагинации (`from=20000` ≈ 3 с, `from=100000` ≈ 10.7 с, `from=150000` и глубже — стабильный таймаут 60 с) — поэтому colly-обход убран целиком. Три режима `GOST_MODE`: `since` (режим dagu — хвост `[якорь − GOST_SETTLE_DAYS, вчера МСК]`, дефолт 3 дня под лаг «выдача → публикация» ≈ 2 суток), `full` (диапазон `GOST_FROM`/`GOST_TO`, дефолт `2016-01-01` … вчера МСК; идемпотентен и резюмируем, часы на всю историю — чанками по годам), `check` (read-only сверка `count` API против `uniqExact(certificate_number)` по дню публикации; расхождение — ошибка прогона). Схема расширена до 10 колонок идемпотентными `ALTER TABLE … ADD COLUMN IF NOT EXISTS` (живая четырёхколоночная таблица не пересоздаётся; строки до бэкфилла несут `publication_date = 1970-01-01`, импортёр о них предупреждает). Витрины: `v_gost_vehicle_safety_certificate` (строки, без технического `uid`) и `v_gost_vehicle_safety_daily` (`date, mark, certificates = uniqExact(certificate_number)`). Расписание — `dagu/craw.yaml`, раз в час (`:17` МСК), режим `since`.
++**Метод:** транспорт — **REST API портала** `gost.ru` (`/standards/rest-api/libraries/search`, заголовок `gtn.access.appid` из `GOST_APP_ID`): обычный текстовый `query=DD.MM.YYYY` матчит дату публикации и даёт плоский дневной срез любой глубины (страницы по `size=900`), тогда как HTTP-листинг портала упирается в стену пагинации (`from=20000` ≈ 3 с, `from=100000` ≈ 10.7 с, `from=150000` и глубже — стабильный таймаут 60 с) — поэтому colly-обход убран целиком. Три режима `GOST_MODE`: `since` (режим dagu — хвост `[якорь − GOST_SETTLE_DAYS, сегодня МСК]`, дефолт 3 дня под лаг «выдача → публикация» ≈ 2 суток; верхняя граница — сегодня, чтобы часовой прогон ловил и дневной батч текущего дня), `full` (диапазон `GOST_FROM`/`GOST_TO`, дефолт `2016-01-01` … вчера МСК; идемпотентен и резюмируем, часы на всю историю — чанками по годам), `check` (read-only сверка `count` API против `uniqExact(certificate_number)` по дню публикации; расхождение — ошибка прогона). Схема расширена до 10 колонок идемпотентными `ALTER TABLE … ADD COLUMN IF NOT EXISTS` (живая четырёхколоночная таблица не пересоздаётся; строки до бэкфилла несут `publication_date = 1970-01-01`, импортёр о них предупреждает). Витрины: `v_gost_vehicle_safety_certificate` (строки, без технического `uid`) и `v_gost_vehicle_safety_daily` (`date, mark, certificates = uniqExact(certificate_number)`). Расписание — `dagu/craw.yaml`, раз в час (`:17` МСК), режим `since`.
+ **Реализовано (ветка `feat/gost-sbkts-api-importer`, спека [2026-10-12-gost-sbkts-api-design.md](superpowers/specs/2026-10-12-gost-sbkts-api-design.md), план [2026-10-12-gost-sbkts-api.md](superpowers/plans/2026-10-12-gost-sbkts-api.md)):**
+ - транспорт `craw/gost_api.go`: страницы по `size=900`, клиентский фильтр по дате публикации, дедупликация документов по `id`, дедлайн попытки 120 с, ретраи `backoff/v5` (`RetryAfter` на таймаут/5xx), пауза 200 мс между страницами; день с недобором или `count > 10000` — ошибка дня;
+ - импортёр `craw/gost.go`: три режима `GOST_MODE` (неизвестный — ошибка до сети и до БД), якорь `since` по максимуму даты выдачи и публикации (пустая таблица — последние 7 дней + warn «запустите `GOST_MODE=full`»; отставание больше 30 дней обрезается окном в 30 дней с тем же warn), запись одним батчем на день, агрегат ошибок по дням, `full`/`check` — ручные (в расписании их нет);
+ - витрины `craw/gost_views.go` (`CREATE OR REPLACE VIEW … DEFINER = default SQL SECURITY DEFINER`, комментарии таблицы и каждой колонки; публикуются в пишущих режимах); `GRANT SELECT` обеих — `sql/mcp_kimi_reader.sql`, проверки — `scripts/mcp_check.py` (обе витрины читаются запросом, сырая таблица — `ACCESS_DENIED`);
+ - расписание `dagu/craw.yaml` — один шаг, `schedule: "17 * * * *"`, `overlap_policy: skip`, `GOST_MODE=since`, retry 3 × 300 с; `GOST_APP_ID` лежит в env-файле хоста (dev — `~/.config/rosstat/env`; staging — `/etc/clickhouse-import-rosstat.env`, файл `deploy/staging/dagu.service`) и в репозитории не хранится — в env-файле держат только токен;
+ - тесты офлайн: `craw/gost_api_test.go`, `craw/gost_test.go`, `craw/gost_views_test.go` (`httptest` + фикстуры `craw/testdata/`, фейковое соединение).
+ 
+ **Результат — приёмка 2026-10-13 (живые прогоны, dev-БД):**
+ - `make all` — зелёный (gofmt, `golangci-lint` 0 issues, `go vet`, `go test -race` — `craw` ok, обе сборки).
+ - `make import STAT=gost_vehicle_safety_certificate` (режим `since`, режим расписания): окно 2026-10-04…2026-10-11 — записано **11 382** строки за 5 дней публикаций (06–09 и 11.10), 04.10 и 10.10 — «публикаций нет», 05.10 — 47 документов чужой даты (после фикса — предупреждение, не ошибка); повтор — 4 дня (08–11.10), **6 753** строки, exit 0; логическая таблица идемпотентна: **261 224 = 249 842** легаси + **11 382** размеченных.
+ - `GOST_MODE=full GOST_FROM=2026-06-01 GOST_TO=2026-06-30` — **69 355** строк за **20** дней, 10 дней без публикаций, exit 0 (7м40с). Первый прогон вскрыл три дефекта, закрытых в этой же ветке: форма `dateofpublication` без времени и зоны (`'28.03.2024'`) роняла день 15.06 (фикс парсера — принимаются обе формы), правило «день из невалидных документов» уточнено до `Invalid == Count` (частичный мусор — предупреждение с разбивкой «чужой даты: F, невалидных: I»).
+ - `GOST_MODE=check` за июнь — **30 дней, дыр 0, перепубликаций 53**, exit 0 (8м49с): проверка отличает «перепубликацию» (сертификат есть в таблице, но под другой датой публикации — свойство источника, документ публикуется дважды) от реальной дыры; без этого фикса 2 дня ложно считались дырами.
+ - Сверка с порталом (метод разведки из спеки, `navigationalstate` с `pageSize=900`): **09.10.2026 — 1712 = 1712**, **07.10.2026 — 2170 = 2170**, расхождений 0 в обе стороны.
+ - `make mcp-user` — гранты обеих витрин; `make mcp-check` — **ПРОВЕРКА ПРОЙДЕНА**: `v_gost_vehicle_safety_certificate` — **293 221** строка, `v_gost_vehicle_safety_daily` — **9 786** строк, сырая таблица — `ACCESS_DENIED` (497).
+-- Состояние данных после приёмки: логически **293 221** строка (FINAL), размечено (не легаси) **80 684** = 69 302 (июнь 2026) + 11 382 (октябрь 2026); легаси-строк **212 537** (2021-02…2026-06) — до бэкфилла.
++- Состояние данных после приёмки: логически **293 221** строка (FINAL), размечено (не легаси) **80 684** = 69 302 (июнь 2026) + 11 382 (октябрь 2026), даты выдачи размеченных строк охватывают **2021-02…2026-10-09** (реестр перепубликует старые сертификаты — эти строки `check` и показывает как «перепубликации»); легаси-строк **212 537** с датами выдачи **2026-06-16…2026-10-02** (`publication_date = 1970-01-01`) — до бэкфилла.
+ - **Не выполнено (документированный ручной шаг):** полный прогон истории 2016 → сегодня (`GOST_MODE=full` чанками по годам — часы; процедура в README, раздел про кроулер Росстандарта) и staging-прогон dagu.
+ - **Ограничения метода** (зафиксированы): `since` не перечитывает дни старше 30 дней (только `full`); день с `count > 10000` отвергается; один сертификат может появляться в двух днях публикации (строка хранит последнюю) — метрика дня считает уникальные номера; расхождение счётчиков портала (~3.569 млн) и API (~3.44 млн) ≈3.6 % не объяснено — на сверенных окнах наборы совпали.
+ 
+ ---
+ 
+ ## 3. Roadmap аналитических витрин (токен-экономия)
+ 
+ **Проблема (замерено 2026-10-11):** типовые вопросы прогнозной сессии сегодня требуют выгрузки рядов в контекст LLM и арифметики «в уме»:
+ - «Сколько тестов пола $4,000 и ближайший минимум» → 93 строки `v_gold_prices` (~2k токенов) + подсчёт в сессии (факт: минимум режима $3 917,9 на 01.06; 28 дней ниже $4 100);
+ - «CPI YoY и сюрприз к прошлому выпуску» → 13 строк `v_bls_macro` + ручной YoY/MoM;

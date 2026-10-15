@@ -1,0 +1,2419 @@
+# Production-code review package: 5e4b97b2d324c14e57e6b4638e63dcaae2c64b12..a524b4a235588780c4628ac84aacf99f49ca71c8
+# Scope: non-test .go of the refactor + SQL/YAML/Python wiring. Tests and markdown excluded (reviewed per task).
+
+## Commits
+a524b4a docs: importer package standard and rosstat rename sync
+577864d roadmap: phase 2 first step done — rosstat empty series fixed, package refactored
+53e8443 rosstat: truthful series comment; mcp_check hints use real step names
+a4ffef7 plan+spec: rosstat catalogue grows to 141 series after ipc_weeks product recovery
+c25aa07 mcp_check: verify rosstat view, catalog and closed raw tables
+bdd9b40 plan: ipc_weeks delta is net +920
+5d326ca plan: ipc_weeks expectations corrected to 26611 points over 131 series
+fc0d28f fix ipc_weeks: footnote row ends the sheet, «…» is a no-data cell
+fbc216d plan: ipc_weeks terminator stops at the footnote row, ellipsis cells are no-data
+210deb8 ipc_weeks: port to util.ClickHouseImport, harden parsing
+d3b5ef1 ipc_mes: stable code-side series names, layout-driven parsing
+cd11fb5 fix vvp_kvartal: derive year when source repeats a year label
+e62e1bb plan: vvp_kvartal must advance a repeated source year label
+882300e fix vvp_kvartal: stable series names, scan from column A, carry year across group
+a4be818 fix salaries_mes: cover parser error branches, reject NaN/Inf, first-anchor
+fd4de43 plan: salaries_mes expects 421 points incl. footnote-marked 2022 values
+b4e4a9e fix salaries_mes: read footnote-marked 2022 values as series points
+bad89b7 fix salaries_mes: raw cell values, skip no-data zeros, stable series name
+0c816c8 rosstat: real source fixtures in testdata/, drop legacy data dir
+b3a10b4 rosstat: single importer registry and rosstat_ table prefix
+75fdc96 agents: pin deepseek-flash for coding subagents, glm as fix-loop escalation tier
+e81b496 test: FindLink on markup without matching link fails with selector in message
+5029610 move findLink/getPage from cbr/ to util as GetPage/FindLink
+6f29238 docs: implementation plan for rosstat refactor
+97ea784 docs: spec for rosstat refactor and phase 2 empty-series fix
+6c86785 docs: importer package standard (target shape of an importer package)
+
+## Files changed (all, for orientation)
+ AGENTS.md                                          |    8 +-
+ ARCHITECTURE.md                                    |   35 +-
+ README.md                                          |   16 +-
+ cbr/Infl_exp.go                                    |    6 +-
+ cbr/Infl_exp_test.go                               |    7 +-
+ cbr/credit_m2x.go                                  |    6 +-
+ cbr/credit_m2x_test.go                             |    5 +-
+ cbr/indicators_cpd.go                              |    4 +-
+ cbr/indicators_cpd_test.go                         |    5 +-
+ cbr/key_rate.go                                    |    2 +-
+ cbr/mo_br.go                                       |    4 +-
+ cbr/mp_summary.go                                  |    8 +-
+ cbr/mp_summary_parse.go                            |    2 +-
+ cbr/views.go                                       |    2 +-
+ dagu/rosstat.yaml                                  |   16 +-
+ docs/DCF_DATA_COVERAGE.md                          |    4 +-
+ docs/IMPORTER_PACKAGE_STANDARD.md                  |  326 +
+ docs/KEY_RATE_CHANNELS.md                          |    6 +-
+ docs/KEY_RATE_MODEL.md                             |    4 +-
+ docs/KEY_RATE_PUBLICATIONS.md                      |    5 +-
+ docs/ROADMAP_DCF_POLYUS.md                         |    4 +-
+ docs/ROADMAP_KEY_RATE.md                           |   52 +-
+ .../plans/2026-10-14-rosstat-refactor.md           |  636 ++
+ .../specs/2026-10-14-rosstat-refactor-design.md    |  123 +
+ rosstat/data/nedel_ipc_2023.xlsx                   |  Bin 119465 -> 0 bytes
+ rosstat/importers.go                               |   64 +
+ rosstat/importers_test.go                          |  241 +
+ rosstat/ipc_mes.go                                 |  326 +-
+ rosstat/ipc_mes_test.go                            |  346 +
+ rosstat/ipc_weeks.go                               |  306 +-
+ rosstat/ipc_weeks_test.go                          |  503 ++
+ rosstat/salaries_mes.go                            |  220 +-
+ rosstat/salaries_mes_test.go                       |  290 +
+ rosstat/series_meta.go                             |   41 +-
+ rosstat/series_meta_test.go                        |  160 +-
+ rosstat/testdata/accounts_page.html                | 6389 ++++++++++++++++
+ rosstat/testdata/ipc_mes.xlsx                      |  Bin 0 -> 37940 bytes
+ rosstat/testdata/ipc_weeks.xlsx                    |  Bin 0 -> 173353 bytes
+ rosstat/testdata/price_page.html                   | 7703 ++++++++++++++++++++
+ rosstat/testdata/salaries_mes.xlsx                 |  Bin 0 -> 20819 bytes
+ rosstat/testdata/salaries_page.html                | 6333 ++++++++++++++++
+ rosstat/testdata/vvp_kvartal.xlsx                  |  Bin 0 -> 115224 bytes
+ rosstat/vvp_kvartal.go                             |  298 +-
+ rosstat/vvp_kvartal_test.go                        |  472 ++
+ scripts/mcp_check.py                               |   74 +
+ sql/key_rate_coverage.sql                          |    8 +-
+ {cbr => util}/links.go                             |   25 +-
+ util/links_test.go                                 |   80 +
+ util/publications.go                               |    2 +-
+ views/gold_views.go                                |    4 +-
+ views/model_inputs.go                              |   10 +-
+ 51 files changed, 24652 insertions(+), 529 deletions(-)
+
+## Diff: production code
+diff --git a/cbr/Infl_exp.go b/cbr/Infl_exp.go
+index c33e35d..87cbfe4 100644
+--- a/cbr/Infl_exp.go
++++ b/cbr/Infl_exp.go
+@@ -98,27 +98,27 @@ func inflExpImport(xlsx *excelize.File, batch driver.Batch) error {
+ 	}
+ 	return nil
+ }
+ 
+ type inflExpStat struct {
+ 	util.ClickHouseImport
+ }
+ 
+ // Import берёт адрес актуального XLSX со страницы инфляционных ожиданий: имени файла
+ // в коде нет, а сетевое обращение в init() запрещено (ARCHITECTURE.md §8.6). Ссылку
+-// ищем тем же кодом, что и тест на фикстуре (util.GetFile + findLink).
++// ищем тем же кодом, что и тест на фикстуре (util.GetPage + util.FindLink).
+ func (s *inflExpStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+-	page, err := getPage(inflExpUrl)
++	page, err := util.GetPage(inflExpUrl)
+ 	if err != nil {
+ 		return count, fmt.Errorf("inflExp: %s: %w", inflExpUrl, err)
+ 	}
+-	href, err := findLink(page, inflExpLinkSelector)
++	href, err := util.FindLink(page, inflExpLinkSelector)
+ 	if err != nil {
+ 		return count, fmt.Errorf("inflExp: не найдена ссылка на xlsx на %s: %w", inflExpUrl, err)
+ 	}
+ 	s.DataUrl = cbrUrl + href
+ 	return s.ClickHouseImport.Import(ctx, conn)
+ }
+ 
+ // cbrInflExpImporter — инфляционные ожидания: ссылка на актуальный XLSX ищется в
+ // Import() (ARCHITECTURE.md §8.6), регистрация — реестром cbr/importers.go.
+ // Своего кода префлайта у импортёра нет: Import() выставляет s.DataUrl до
+diff --git a/cbr/credit_m2x.go b/cbr/credit_m2x.go
+index 048e2e0..2adceba 100644
+--- a/cbr/credit_m2x.go
++++ b/cbr/credit_m2x.go
+@@ -88,27 +88,27 @@ var cbrСreditM2x = util.ClickHouseImport{
+ 	},
+ 	AfterImport:            afterCbrMacro(cbrCreditM2xSeriesMeta),
+ 	PublicationCountPoints: cbrCreditM2xCountPoints,
+ }
+ 
+ type cbrCreditM2xStat struct {
+ 	util.ClickHouseImport
+ }
+ 
+ // Import берёт адрес актуального credit_m2x.xlsx со страницы ДКС. Ссылку ищем тем же
+-// кодом, что и тест на фикстуре (util.GetFile + findLink).
++// кодом, что и тест на фикстуре (util.GetPage + util.FindLink).
+ func (s *cbrCreditM2xStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+-	page, err := getPage(cbrCreditM2xUrl)
++	page, err := util.GetPage(cbrCreditM2xUrl)
+ 	if err != nil {
+ 		return count, fmt.Errorf("cbrCreditM2x: %s: %w", cbrCreditM2xUrl, err)
+ 	}
+-	href, err := findLink(page, cbrCreditM2xLinkSelector)
++	href, err := util.FindLink(page, cbrCreditM2xLinkSelector)
+ 	if err != nil {
+ 		return count, fmt.Errorf("cbrCreditM2x: не найдена ссылка на credit_m2x.xlsx на %s: %w", cbrCreditM2xUrl, err)
+ 	}
+ 	s.DataUrl = cbrUrl + href
+ 	return s.ClickHouseImport.Import(ctx, conn)
+ }
+ 
+ // cbrCreditM2xImporter — кредит экономике и денежная масса: адрес актуального
+ // credit_m2x.xlsx берётся со страницы ДКС в Import() (ARCHITECTURE.md §8.6),
+ // регистрация — реестром cbr/importers.go.
+diff --git a/cbr/indicators_cpd.go b/cbr/indicators_cpd.go
+index c45f37b..f69b311 100644
+--- a/cbr/indicators_cpd.go
++++ b/cbr/indicators_cpd.go
+@@ -32,25 +32,25 @@ const cbrIndicatorsCpdCountPoints = "SELECT count() FROM cbr_indicators_cpd FINA
+ const indicatorsCpdLinkSelector = ".container-fluid > div > div:nth-child(6) > div > div.body-2.document-regular_main > div > div > a.referenceable"
+ 
+ type indicatorsCpdStat struct {
+ 	util.ClickHouseImport
+ }
+ 
+ // Import берёт адрес актуального XLSX со страницы aipd: id файла в URL меняется при
+ // обновлении, поэтому ссылку ищем на странице, а не хардкодим. Вызывается из Import():
+ // сетевые вызовы в init() запрещены (ARCHITECTURE.md §8.6).
+ func (s *indicatorsCpdStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+-	page, err := getPage(indicatorsCpdUrl)
++	page, err := util.GetPage(indicatorsCpdUrl)
+ 	if err != nil {
+ 		return count, fmt.Errorf("indicatorsCpd: %s: %w", indicatorsCpdUrl, err)
+ 	}
+-	href, err := findLink(page, indicatorsCpdLinkSelector)
++	href, err := util.FindLink(page, indicatorsCpdLinkSelector)
+ 	if err != nil {
+ 		return count, fmt.Errorf("indicatorsCpd: не найдена ссылка на xlsx на %s: %w", indicatorsCpdUrl, err)
+ 	}
+ 	s.DataUrl = "https://www.cbr.ru" + href
+ 	return s.ClickHouseImport.Import(ctx, conn)
+ }
+ 
+ // cbrIndicatorsCpdImporter — сезонно сглаженная динамика потребительских цен;
+ // регистрируется реестром cbr/importers.go.
+ var cbrIndicatorsCpdImporter = &indicatorsCpdStat{ClickHouseImport: util.ClickHouseImport{
+diff --git a/cbr/key_rate.go b/cbr/key_rate.go
+index 7858276..0620a24 100644
+--- a/cbr/key_rate.go
++++ b/cbr/key_rate.go
+@@ -88,21 +88,21 @@ func keyRateRows(html []byte) ([]cbrPoint, error) {
+ 	if parseErr != nil {
+ 		return nil, parseErr
+ 	}
+ 	if len(points) == 0 {
+ 		return nil, fmt.Errorf("%s: в таблице нет ни одной точки", cbrKeyRateTable)
+ 	}
+ 	return points, nil
+ }
+ 
+ func cbrKeyRateCraw(crawUrl string, conn driver.Conn) (count int64, err error) {
+-	page, err := getPage(crawUrl)
++	page, err := util.GetPage(crawUrl)
+ 	if err != nil {
+ 		return count, fmt.Errorf("%s: %w", cbrKeyRateTable, err)
+ 	}
+ 	points, err := keyRateRows(page)
+ 	if err != nil {
+ 		return count, err
+ 	}
+ 	batch, err := conn.PrepareBatch(ctx, cbrKeyRateInsert)
+ 	if err != nil {
+ 		return count, err
+diff --git a/cbr/mo_br.go b/cbr/mo_br.go
+index 30f00ff..455d6a5 100644
+--- a/cbr/mo_br.go
++++ b/cbr/mo_br.go
+@@ -48,25 +48,25 @@ func (s *moBrStat) Name() string { return moBrName }
+ 
+ // Import идёт по спеке §3.4: ссылка на полную книгу ищется на странице (имя файла
+ // меняется с каждой волной), затем полный путь ведёт шаблон — HEAD-префлайт по
+ // готовому URL, разбор + батч, публикация производных, строка версии последней.
+ // Префлайта в самом Import больше нет: он живёт в util.ClickHouseImport.Import и
+ // включается объявлением PublicationCountPoints; оставшаяся здесь копия дала бы два
+ // HEAD за прогон. Знакомая версия с совпавшим числом точек — no-op ежедневного
+ // прогона (волны выходят 8 раз в год): шаблон вернёт записанное число точек, не
+ // скачивая файл и не делая записей в БД.
+ func (s *moBrStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+-	page, err := getPage(moBrPageUrl)
++	page, err := util.GetPage(moBrPageUrl)
+ 	if err != nil {
+ 		return count, fmt.Errorf("%s: %s: %w", moBrName, moBrPageUrl, err)
+ 	}
+-	href, err := findLink(page, moBrLinkSel)
++	href, err := util.FindLink(page, moBrLinkSel)
+ 	if err != nil {
+ 		return count, fmt.Errorf("%s: не найдена ссылка на xlsx на %s: %w", moBrName, moBrPageUrl, err)
+ 	}
+ 	url := cbrUrl + href
+ 
+ 	// Полный путь — через локальную копию встроенной структуры: DataUrl и
+ 	// AfterImport зависят от волны (ссылка на файл волны и меты её разбора), а
+ 	// мутировать общую структуру импортёра нельзя. Объявление префлайта
+ 	// (PublicationSource/PublicationCountPoints) копия приносит из литерала
+ 	// moBrImporter — там оно одно на импортёр, и его же видит тест реестра.
+diff --git a/cbr/mp_summary.go b/cbr/mp_summary.go
+index 866d0d8..e9cdd6e 100644
+--- a/cbr/mp_summary.go
++++ b/cbr/mp_summary.go
+@@ -8,21 +8,21 @@ import (
+ 	"time"
+ 
+ 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+ 	log "github.com/sirupsen/logrus"
+ )
+ 
+ const (
+ 	// mpSummaryIndexUrl — индекс материалов заседаний ЦБ: карточки «Резюме обсуждения
+ 	// ключевой ставки» с датой публикации и относительным href. Домен навешивает
+-	// импортёр (cbrUrl) — как в findLink; страница резюме = cbrUrl + href.
++	// импортёр (cbrUrl) — как в util.FindLink; страница резюме = cbrUrl + href.
+ 	mpSummaryIndexUrl = "https://www.cbr.ru/dkp/mp_dec/decision_key_rate/"
+ 
+ 	// mpSummaryName — имя импортёра в CLICKHOUSE_IMPORT_STAT и id шага dagu/cbr.yaml;
+ 	// оно же — имя таблицы-шапки: у импортёров со своими таблицами пакет держит
+ 	// конвенцию «Name() == TableName» (v_cbr_mp_summary* и агент MCP ищут данные по
+ 	// нему). Блоки и каналы — отдельные таблицы того же контура.
+ 	mpSummaryName         = "cbr_mp_summary"
+ 	mpSummaryTable        = "cbr_mp_summary"
+ 	mpSummaryBlockTable   = "cbr_mp_summary_block"
+ 	mpSummaryChannelTable = "cbr_mp_summary_channel"
+@@ -194,21 +194,21 @@ func (s *mpSummaryStat) Import(ctx context.Context, conn driver.Conn) (count int
+ 	// таблиц шага 1, а no-op-прогон обязан самовосстанавливать контур (см. шаг 2 в описании
+ 	// Import выше). Сбой здесь — ошибка прогона: витрина, о которой агент не знает, хуже
+ 	// красного шага dagu.
+ 	for _, view := range []util.View{mpSummaryView, mpSummaryBlocksView, mpSummaryChannelsView} {
+ 		if _, err = util.CreateView(ctx, conn, view); err != nil {
+ 			return 0, err
+ 		}
+ 	}
+ 
+ 	// 3.
+-	index, err := getPage(mpSummaryIndexUrl)
++	index, err := util.GetPage(mpSummaryIndexUrl)
+ 	if err != nil {
+ 		return 0, fmt.Errorf("%s: %s: %w", mpSummaryName, mpSummaryIndexUrl, err)
+ 	}
+ 	refs, err := parseMPDecIndex(index)
+ 	if err != nil {
+ 		return 0, fmt.Errorf("%s: %w", mpSummaryName, err)
+ 	}
+ 
+ 	// 4.
+ 	imported, err := mpImportedSummaries(ctx, conn)
+@@ -257,21 +257,21 @@ func (s *mpSummaryStat) Import(ctx context.Context, conn driver.Conn) (count int
+ 			return 0, fmt.Errorf("%s: число резюме таблицы не прочитано: %w", mpSummaryName, err)
+ 		}
+ 		log.Infof("%s: no-op, все %d резюме на месте", mpSummaryName, knownCount)
+ 		return 0, nil
+ 	}
+ 
+ 	// 8.
+ 	docs := make([]mpFetchedSummary, 0, len(missing))
+ 	for _, ref := range missing {
+ 		url := cbrUrl + ref.Href
+-		page, pageErr := getPage(url)
++		page, pageErr := util.GetPage(url)
+ 		if pageErr != nil {
+ 			return 0, fmt.Errorf("%s: %s: %w", mpSummaryName, url, pageErr)
+ 		}
+ 		doc, parseErr := parseMPSummary(page)
+ 		if parseErr != nil {
+ 			return 0, fmt.Errorf("%s: %s: %w", mpSummaryName, url, parseErr)
+ 		}
+ 		docs = append(docs, mpFetchedSummary{Url: url, Published: ref.Published, Doc: doc})
+ 	}
+ 
+@@ -580,21 +580,21 @@ func mpLLMDocs(docs []mpFetchedSummary, pending, tagged map[time.Time]bool) (rea
+ // уже вычтенный набор (mpLLMDocs): ни новых документов этого прогона, ни размеченных пар в нём
+ // нет, поэтому повторного вызова модели на документ здесь быть не может.
+ // Недоступная или неразобранная страница — warn и продолжение: это деградация одного документа
+ // до regex-слоя (спека §3.5), а не сбой прогона; следующий прогон повторит догон.
+ func mpFetchPending(past []mpPastSummary, pending map[time.Time]bool) []mpLLMDoc {
+ 	var out []mpLLMDoc
+ 	for _, p := range past {
+ 		if !pending[p.MeetingDate] || p.Url == "" {
+ 			continue
+ 		}
+-		page, err := getPage(p.Url)
++		page, err := util.GetPage(p.Url)
+ 		if err != nil {
+ 			log.Warnf("%s: LLM-догон %s: страница %s не скачана: %v", mpSummaryName,
+ 				p.MeetingDate.Format(mpSummaryDayLayout), p.Url, err)
+ 			continue
+ 		}
+ 		doc, err := parseMPSummary(page)
+ 		if err != nil {
+ 			log.Warnf("%s: LLM-догон %s: страница %s не разобрана: %v", mpSummaryName,
+ 				p.MeetingDate.Format(mpSummaryDayLayout), p.Url, err)
+ 			continue
+diff --git a/cbr/mp_summary_parse.go b/cbr/mp_summary_parse.go
+index 73a3ad0..181f256 100644
+--- a/cbr/mp_summary_parse.go
++++ b/cbr/mp_summary_parse.go
+@@ -7,21 +7,21 @@ import (
+ 	"strconv"
+ 	"strings"
+ 	"time"
+ 	"unicode"
+ 
+ 	"github.com/PuerkitoBio/goquery"
+ )
+ 
+ // mpSummaryRef — карточка индекса материалов заседаний с резюме обсуждения ключевой ставки:
+ // дата публикации (document-regular_date) и href в том виде, как он записан в разметке
+-// (относительный; домен навешивает вызывающий — как в findLink).
++// (относительный; домен навешивает вызывающий — как в util.FindLink).
+ type mpSummaryRef struct {
+ 	Published time.Time
+ 	Href      string
+ }
+ 
+ // mpSummaryBlock — одна текстовая единица страницы резюме: абзац (Kind = paragraph) или
+ // пункт списка (Kind = bullet). Seq — сквозной номер внутри блока, Subsection — подзаголовок
+ // div.title_20 («Основные факты»/«Дискуссия»; в блоках 4–5 подзаголовков нет — пустая строка).
+ type mpSummaryBlock struct {
+ 	Block      string
+diff --git a/cbr/views.go b/cbr/views.go
+index b09a220..c619415 100644
+--- a/cbr/views.go
++++ b/cbr/views.go
+@@ -58,14 +58,14 @@ func afterCbrMacro(meta []util.SeriesMeta) func(context.Context, driver.Conn) er
+ // cbrSurveyView — витрина рядов мониторинга предприятий (source='cbr_survey', импортёр
+ // cbr_mp_survey); общая витрина cbrMacroView её не покрывает.
+ var cbrSurveyView = util.View{
+ 	Name:    "v_cbr_survey",
+ 	Tables:  []string{"macro_series"},
+ 	Select:  `SELECT source, series, date, value FROM macro_series FINAL WHERE source = 'cbr_survey'`,
+ 	Comment: "Мониторинг предприятий Банка России (опросы нефинансовых компаний): ценовые ожидания бизнеса, ИБК и условия кредитования (месячные); загрузка мощностей, обеспеченность персоналом, ожидания численности (квартальные). Дата — отчётный период: 1-е число месяца, у квартальных — 1-е число месяца, следующего за кварталом; ЦБ публикует волну в первую декаду следующего месяца и нумерует справки по месяцу волны (справка «сентябрь 2026» цитирует точку отчётного периода август 2026). Перед использованием читать v_series_catalog по (source='cbr_survey', series): единицы и знаки различаются. ЦБ в комментариях цитирует сезонно сглаженные ряды (…_sa)",
+ 	Columns: map[string]string{
+ 		"source": "Всегда cbr_survey",
+ 		"series": "Код ряда; 13 рядов — описания в v_series_catalog (source='cbr_survey')",
+-		"date":   "Отчётный период: 1-е число месяца; у квартальных рядов — 1-е число месяца, следующего за отчётным кварталом (конвенция vvp_kvartal)",
++		"date":   "Отчётный период: 1-е число месяца; у квартальных рядов — 1-е число месяца, следующего за отчётным кварталом (конвенция rosstat_vvp_kvartal)",
+ 		"value":  "Значение в единицах ряда: пункты баланса ответов, % (загрузка мощностей), % годовых (ожидаемый прирост цен) — см. unit и description в v_series_catalog",
+ 	},
+ }
+diff --git a/dagu/rosstat.yaml b/dagu/rosstat.yaml
+index 7dd65e4..4e9eeda 100644
+--- a/dagu/rosstat.yaml
++++ b/dagu/rosstat.yaml
+@@ -1,37 +1,37 @@
+ type: chain
+ schedule: "17 12 * * 4"
+ overlap_policy: skip
+ 
+ steps:
+-  - id: ipc_mes
++  - id: rosstat_ipc_mes
+     run: "$ROSSTAT_IMPORT_BIN"
+     env:
+-      - CLICKHOUSE_IMPORT_STAT=ipc_mes
++      - CLICKHOUSE_IMPORT_STAT=rosstat_ipc_mes
+     retry_policy:
+       limit: 3
+       interval_sec: 300
+ 
+-  - id: ipc_weeks
++  - id: rosstat_ipc_weeks
+     run: "$ROSSTAT_IMPORT_BIN"
+     env:
+-      - CLICKHOUSE_IMPORT_STAT=ipc_weeks
++      - CLICKHOUSE_IMPORT_STAT=rosstat_ipc_weeks
+     retry_policy:
+       limit: 3
+       interval_sec: 300
+ 
+-  - id: salaries_mes
++  - id: rosstat_salaries_mes
+     run: "$ROSSTAT_IMPORT_BIN"
+     env:
+-      - CLICKHOUSE_IMPORT_STAT=salaries_mes
++      - CLICKHOUSE_IMPORT_STAT=rosstat_salaries_mes
+     retry_policy:
+       limit: 3
+       interval_sec: 300
+ 
+-  - id: vvp_kvartal
++  - id: rosstat_vvp_kvartal
+     run: "$ROSSTAT_IMPORT_BIN"
+     env:
+-      - CLICKHOUSE_IMPORT_STAT=vvp_kvartal
++      - CLICKHOUSE_IMPORT_STAT=rosstat_vvp_kvartal
+     retry_policy:
+       limit: 3
+       interval_sec: 300
+ 
+diff --git a/rosstat/importers.go b/rosstat/importers.go
+new file mode 100644
+index 0000000..690e883
+--- /dev/null
++++ b/rosstat/importers.go
+@@ -0,0 +1,64 @@
++package rosstat
++
++import "github.com/kmlebedev/clickhouse-import-rosstat/chimport"
++
++// rosstatImporter — запись реестра импортёров пакета: сам импортёр, таблица, в которую
++// он пишет, и запрос количественного чека версии (префлайта). Регистрируется импортёр
++// пакета, а не отдельный тип-обёртка: все четыре импортёра объявлены структурами с
++// встроенным util.ClickHouseImport, поэтому Name(), Import() (цикл «DDL → префлайт →
++// точки → производные → версия») и публикация производных (каталог рядов и витрина
++// v_rosstat_macro — поле AfterImport шаблона) наследуются из шаблона, а не пишутся кодом
++// импортёра; свой Import() оставляет только тот, кому адрес артефакта нужно взять со
++// страницы. Полей table и countPoints не видит никто, кроме теста
++// TestRosstatImportersPrefixedAndRegistered: по ним проверяется, что импортёр не занял
++// таблицу вне пространства rosstat_ и что объявленный в реестре префлайт совпадает с
++// объявлением самого импортёра (Publication()).
++type rosstatImporter struct {
++	chimport.ImportStat
++	table string
++	// countPoints — литерал PublicationCountPoints импортёра ("" — префлайта нет).
++	// Литерал, а не метод Publication(): именно расхождение этих двух источников
++	// значения и обязан ловить тест реестра.
++	countPoints string
++}
++
++// rosstatImporters — единственная точка регистрации импортёров Росстата: персональных
++// init()-append по файлам импортёров больше нет. Порядок повторяет dagu/rosstat.yaml;
++// в chimport.Stats порядок значения не имеет.
++//
++// Таблицы записаны литералами намеренно. Ссылка на константу импортёра
++// (rosstatIPCMesTable) сделала бы проверку префикса тавтологичной: тест сравнивал бы
++// константу с самой собой, тогда как литерал падает ровно на переименовании таблицы в
++// имя вне rosstat_-пространства — то есть на правке, которая увела бы витрины
++// v_rosstat_macro и v_model_inputs (вход контура золота, грант агенту) к чужим данным.
++// Литералы сверены с константами кода при переносе регистрации.
++//
++// rosstat_ipc_weeks — единственная запись с пустым countPoints, и сознательно: файл
++// Nedel_ipc.xlsx перезаписывается по тому же URL в недельном темпе, равном темпу шага
++// расписания, поэтому no-op недостижим, а HEAD был бы чистыми накладными расходами
++// (спека §3.7, стандарт §9.3). Поля PublicationCountPoints/PublicationSource у импортёра
++// не заполнены, поэтому Publication() даёт нулевое объявление — ровно то, что сверяет
++// пустая колонка реестра.
++//
++// Колонка countPoints — запрос количественного чека версии у импортёров, у которых
++// точка контроля публикации объявлена (спека §3.5); пустая строка — префлайта нет.
++// Литералы и здесь: запрос — часть утверждения «эти точки мои» (FINAL обязателен, иначе
++// count() считал бы несмёрженные части и менялся бы от прогона к прогону), и тест реестра
++// сверяет их с объявлением импортёра (Publication().CountPoints) — двумя независимыми
++// записями одного утверждения. Незамеченная правка запроса в объявлении оставила бы
++// реестр описывающим другой чек, а забытое объявление молча выключило бы префлайт.
++var rosstatImporters = []rosstatImporter{
++	{ipcMesImporter, "rosstat_ipc_mes", "SELECT count() FROM rosstat_ipc_mes FINAL"},
++	{ipcWeeksImporter, "rosstat_ipc_weeks", ""},
++	{salariesMesImporter, "rosstat_salaries_mes", "SELECT count() FROM rosstat_salaries_mes FINAL"},
++	{vvpKvartalImporter, "rosstat_vvp_kvartal", "SELECT count() FROM rosstat_vvp_kvartal FINAL"},
++}
++
++// init — единственная регистрация импортёров Росстата в chimport.Stats. Порядок
++// append совпадает с порядком реестра; main.go запускает всех (или фильтрует по
++// CLICKHOUSE_IMPORT_STAT=Name()).
++func init() {
++	for _, imp := range rosstatImporters {
++		chimport.Stats = append(chimport.Stats, imp)
++	}
++}
+diff --git a/rosstat/ipc_mes.go b/rosstat/ipc_mes.go
+index c212c87..ea9b1b9 100644
+--- a/rosstat/ipc_mes.go
++++ b/rosstat/ipc_mes.go
+@@ -1,147 +1,309 @@
+ package rosstat
+ 
+ import (
+ 	"context"
+ 	"fmt"
++	"math"
++	"sort"
++	"strconv"
++	"strings"
++	"time"
++
+ 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+-	"github.com/gocolly/colly/v2"
+-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+ 	log "github.com/sirupsen/logrus"
+ 	"github.com/xuri/excelize/v2"
+-	"strconv"
+-	"time"
+ )
+ 
+ const (
+ 	// ToDo update data source Потребительские цены https://rosstat.gov.ru/statistics/price
+ 	// Индексы потребительских цен на товары и услуги по Российской Федерации, месяцы (с 1991 г.)
+-	ipcMesTable = "ipc_mes"
+-	ipcMesDdl   = `CREATE TABLE IF NOT EXISTS %s (
++	rosstatIPCMesTable = "rosstat_ipc_mes"
++	ipcMesDdl          = `CREATE TABLE IF NOT EXISTS %s (
+ 				  name LowCardinality(String)
+ 				, date Date
+ 				, percent Float32
+ 			) ENGINE = ReplacingMergeTree ORDER BY (name, date);
+ 		`
+-	ipcMesField      = "к концу предыдущего месяца"
+-	ipcMesYearStart  = 1991
+-	ipcMesTimeLayout = "2006-01"
++	// ipcMesField — якорь блока месячных значений: строка с этой подписью в первой колонке.
++	// Разметка ищется по признаку, а не по номеру строки (§6.3): сноски и вставленные строки
++	// сдвигают лист, и жёсткий индекс читал бы не те строки.
++	ipcMesField = "к концу предыдущего месяца"
++	// ipcMesLinkSelector — селектор ссылки на актуальный xlsx: константа рядом с импортёром, а
++	// не литерал в теле функции (§4.5) — тот же селектор проверяет тест на HTML-фикстуре.
++	// Прежняя позиционная CSS-цепочка из номеров вложенных элементов ломалась от любой правки
++	// вёрстки страницы; на странице цен лежат и другие выгрузки `ipc_*`, поэтому селектор
++	// ограничен `ipc_mes_`.
++	ipcMesLinkSelector = `a[href*="ipc_mes_"]`
++	ipcMesTimeLayout   = "2006-01"
+ 	// ipcMesCountPoints — количественный чек версии (спека §3.5): число точек своего ряда.
+ 	// Литерал, как и таблица: запрос — часть утверждения «эти точки мои». FINAL обязателен —
+ 	// без него count() считает несмёрженные части и растёт после каждого повторного импорта,
+ 	// то есть чек сравнивал бы величину, меняющуюся от прогона к прогону.
+-	ipcMesCountPoints = "SELECT count() FROM ipc_mes FINAL"
++	ipcMesCountPoints = "SELECT count() FROM rosstat_ipc_mes FINAL"
+ )
+ 
++// ipcMesSeriesNames — имя ряда для листа, объявленное кодом (§6.8). Имя не читается из заголовка
++// листа: заголовок несёт сноску («…на товары и услуги1)…») и годы выгрузки («…в 1991-2026*)гг.»),
++// которые Росстат меняет при каждом обновлении файла, — ряд из заголовка оборвался бы на первой же
++// редакции, а таблица получила бы новый ряд. Заголовок не читается вовсе; из файла берутся только
++// значения и годы строки над якорем. Значения совпадают с ipcMesSeriesMeta[].Series дословно —
++// эти строки и есть тождество ряда в каталоге, совпадение проверяют тесты.
++var ipcMesSeriesNames = map[int]string{
++	1: "Индексы потребительских цен на товары и услуги по Российской Федерации",
++	2: "Индексы потребительских цен на продовольственные товары по Российской Федерации",
++	3: "Индексы потребительских цен на непродовольственные товары по Российской Федерации",
++	4: "Индексы потребительских цен на услуги по Российской Федерации",
++}
++
+ type IpcMesStat struct {
+ 	util.ClickHouseImport
+ }
+ 
+-// getXlsDataUrl ищет ссылку на актуальный ipc_mes_*.xlsx на странице цен Росстата и
+-// возвращает её как есть: пустой результат — признак «ссылки нет», и вызывающий обязан
+-// отличить его от рабочей ссылки сам (то же устройство у соседей — salaries_mes, vvp_kvartal).
+-// Ошибка обхода страницы только логируется: решение о сбое принимает вызывающий по пустому URL.
+-func (s *IpcMesStat) getXlsDataUrl() (url string) {
+-	c := colly.NewCollector()
+-	c.SetClient(util.HttpClient)
+-	c.OnHTML(".row > div:nth-child(3) div.toggle-section__content.toggle-section__content--open > div > div > div > div:nth-child(1) > div > div.toggle-card__main > div > div > div > div:nth-child(3) > div.document-list__item-link > a", func(e *colly.HTMLElement) {
+-		url = fmt.Sprintf("%s%s", rosstatUrl, e.Attr("href"))
+-		log.Infof("href url %s", url)
+-	})
+-	if err := c.Visit(fmt.Sprintf("%s/statistics/price", rosstatUrl)); err != nil {
+-		log.Errorf("Visit %v+", err)
+-	}
+-	c.Wait()
+-	return url
++// getXlsDataUrl ищет ссылку на актуальный ipc_mes_*.xlsx на странице цен Росстата: имени файла в
++// коде нет (ipc_mes_ММ-ГГГГ.xlsx меняется при каждом обновлении), а сетевое обращение в init()
++// запрещено (ARCHITECTURE.md §8.6). Транспорт — через util (§4.1), и ошибка не проглатывается
++// (§4.4): без ссылки импорт обязан упасть до записи в БД, а не писать «0 строк» по устаревшему
++// адресу.
++func (s *IpcMesStat) getXlsDataUrl() (string, error) {
++	pageUrl := fmt.Sprintf("%s/statistics/price", rosstatUrl)
++	page, err := util.GetPage(pageUrl)
++	if err != nil {
++		return "", fmt.Errorf("ipcMes: %s: %w", pageUrl, err)
++	}
++	href, err := util.FindLink(page, ipcMesLinkSelector)
++	if err != nil {
++		return "", fmt.Errorf("ipcMes: ссылка на ipc_mes_*.xlsx не найдена на %s: %w", pageUrl, err)
++	}
++	return rosstatUrl + href, nil
++}
++
++// ipcMesPoint — точка листа: дата записи (последний день отчётного месяца) и сырое значение
++// индекса. Значение остаётся float64 до записи в батч: сужение до Float32 делает шаблон (колонка
++// таблицы), поэтому тест на сырое значение ячейки (§6.2) видит значение целиком.
++type ipcMesPoint struct {
++	date  time.Time
++	value float64
++}
++
++// ipcMes — точка книги: имя ряда объявлено кодом (§6.8), лист даёт дату и значение.
++type ipcMes struct {
++	name  string
++	date  time.Time
++	value float64
++}
++
++// ipcMesYears читает годы из строки над якорем: колонки 1… до первой пустой ячейки. Год берётся
++// из файла, а не из константы: строка годов содержит годы выгрузки и сдвигается при её обновлении,
++// и константа (1991) сдвинула бы весь ряд, а в таблице с ключом (name, date) это тихая подмена
++// данных. Пустая строка годов — ошибка (§6.4): без годов точки получили бы дату «0000-01-01».
++func ipcMesYears(row []string) ([]int, error) {
++	var years []int
++	for i := 1; i < len(row); i++ {
++		cell := strings.TrimSpace(row[i])
++		if cell == "" {
++			break
++		}
++		year, err := strconv.Atoi(cell)
++		if err != nil {
++			return nil, fmt.Errorf("ячейка года %q (колонка %d) не число: %w", cell, i+1, err)
++		}
++		years = append(years, year)
++	}
++	if len(years) == 0 {
++		return nil, fmt.Errorf("строка годов пуста")
++	}
++	return years, nil
++}
++
++// ipcMesValue разбирает ячейку значения. Ячейка приходит сырым текстом (§6.2): форматированная
++// строка формата `0.00` — представление, а не данные. NaN и бесконечность, которые принимает
++// ParseFloat, отбрасываются, как у соседних рядов пакета: такой мусор уехал бы в витрину точкой
++// ряда (§6.4).
++func ipcMesValue(cell string) (float64, error) {
++	value, err := strconv.ParseFloat(strings.TrimSpace(cell), 64)
++	if err != nil {
++		return 0, fmt.Errorf("значение %q не число: %w", cell, err)
++	}
++	if math.IsNaN(value) || math.IsInf(value, 0) {
++		return 0, fmt.Errorf("значение %q не конечное число", cell)
++	}
++	return value, nil
++}
++
++// ipcMesDate переводит год и месяц в дату точки — последний день отчётного месяца (январь 1992 —
++// 1992-01-31). Семантика прежнего разбора сохранена дословно: месяц разбирается макетом
++// ipcMesTimeLayout, затем к первому числу месяца прибавляется месяц и отнимается день.
++func ipcMesDate(year int, month time.Month) (time.Time, error) {
++	first, err := time.Parse(ipcMesTimeLayout, fmt.Sprintf("%d-%02d", year, int(month)))
++	if err != nil {
++		return time.Time{}, fmt.Errorf("дата %d-%02d: %w", year, int(month), err)
++	}
++	return first.AddDate(0, 1, -1), nil
++}
++
++// parseIpcMesSheet читает один лист книги. Разметка листа: A1 — заголовок со сносками и годами (в
++// имени ряда не участвует), ниже — строка годов (колонки B…, то есть индексы 1…), под ней — якорь
++// «к концу предыдущего месяца», под якорем — строки «январь»…«декабрь» с одним значением на
++// колонку года. Ряд идёт от начала блока месяцев: строка короче двух колонок или строка, первая
++// ячейка которой не месяц, блок замыкает. Так из ряда выпадают второй якорь «к декабрю предыдущего
++// года» с годовым декабрём (другой показатель: в листе «01» за 1992 год 2608.84 против месячного
++// 125.2) и сноски внизу листа.
++func parseIpcMesSheet(xlsx *excelize.File, sheet string) ([]ipcMesPoint, error) {
++	// Сырые значения ячеек (§6.2): форматированная строка отдала бы значение по формату ячейки,
++	// а не то, что хранит файл.
++	rows, err := xlsx.GetRows(sheet, excelize.Options{RawCellValue: true})
++	if err != nil {
++		return nil, fmt.Errorf("%s: лист %q: %w", rosstatIPCMesTable, sheet, err)
++	}
++	anchor := -1
++	for i, row := range rows {
++		if len(row) > 0 && strings.TrimSpace(row[0]) == ipcMesField {
++			anchor = i
++			break
++		}
++	}
++	if anchor < 0 {
++		return nil, fmt.Errorf("%s: лист %q: строка «%s» не найдена", rosstatIPCMesTable, sheet, ipcMesField)
++	}
++	// Годы — строкой выше якоря. Проверка границы обязательна: выход за срез — паника, а разбор
++	// обязан отдавать ошибку (§6.5).
++	if anchor == 0 {
++		return nil, fmt.Errorf("%s: лист %q: строки годов нет над строкой «%s» (строка %d)", rosstatIPCMesTable, sheet, ipcMesField, anchor+1)
++	}
++	years, err := ipcMesYears(rows[anchor-1])
++	if err != nil {
++		return nil, fmt.Errorf("%s: лист %q, строка %d: %w", rosstatIPCMesTable, sheet, anchor, err)
++	}
++	var points []ipcMesPoint
++	monthNum := 0
++	for _, row := range rows[anchor+1:] {
++		if len(row) < 2 {
++			break
++		}
++		month, ok := util.MonthsToNum[strings.ToLower(strings.TrimSpace(row[0]))]
++		if !ok {
++			break
++		}
++		// Месяцы блока перечисляются по возрастанию: повтор или откат подписи — сломанная
++		// разметка, а не данные, и читать дальше нельзя (§6.4).
++		if int(month) <= monthNum {
++			return nil, fmt.Errorf("%s: лист %q: месяц %q идёт после месяца %d — месяцы обязаны идти по возрастанию",
++				rosstatIPCMesTable, sheet, strings.TrimSpace(row[0]), monthNum)
++		}
++		monthNum = int(month)
++		for i := 1; i < len(row); i++ {
++			cell := strings.TrimSpace(row[i])
++			if cell == "" {
++				// Пустая ячейка — не точка: у последних месяцев нового года данных ещё нет,
++				// и пропуск означает отсутствие значения, а не ноль (§6.7).
++				continue
++			}
++			if i > len(years) {
++				return nil, fmt.Errorf("%s: лист %q: колонка %d вне строки годов (%d колонок)",
++					rosstatIPCMesTable, sheet, i+1, len(years))
++			}
++			value, err := ipcMesValue(cell)
++			if err != nil {
++				return nil, fmt.Errorf("%s: лист %q, %d-%02d: %w", rosstatIPCMesTable, sheet, years[i-1], month, err)
++			}
++			date, err := ipcMesDate(years[i-1], month)
++			if err != nil {
++				return nil, fmt.Errorf("%s: лист %q: %w", rosstatIPCMesTable, sheet, err)
++			}
++			points = append(points, ipcMesPoint{date: date, value: value})
++		}
++	}
++	if len(points) == 0 {
++		return nil, fmt.Errorf("%s: лист %q: разбор дал 0 точек", rosstatIPCMesTable, sheet)
++	}
++	return points, nil
+ }
+ 
+-func parseIpcMes(xlsx *excelize.File) (table *[][]string, err error) {
+-	table = new([][]string)
++// parseIpcMes читает книгу целиком и отдаёт плоскую таблицу точек: листы обходятся в порядке
++// книги, имя ряда — из ipcMesSeriesNames (§6.8). Числовой лист вне карты — предупреждение и
++// пропуск (§6.6): добавленный источником лист — ожидаемое изменение выгрузки и не должен валить
++// недельную цепочку, но и молчать о нём нельзя. Отсутствие ожидаемого листа — ошибка (§6.4):
++// книга без листа означала бы тихий обрыв ряда, который в витрине выглядит полным. Разбор идёт
++// целиком до первой записи в батч: ошибка любого листа оставляет батч пустым.
++func parseIpcMes(xlsx *excelize.File) ([]ipcMes, error) {
++	var table []ipcMes
++	seen := make(map[int]bool, len(ipcMesSeriesNames))
+ 	for _, sheet := range xlsx.GetSheetList() {
+-		var rows [][]string
+-		if _, err = strconv.Atoi(sheet); err != nil {
++		number, err := strconv.Atoi(sheet)
++		if err != nil {
++			continue // «Содержание» и прочие нечисловые листы рядами не являются
++		}
++		name, ok := ipcMesSeriesNames[number]
++		if !ok {
++			log.Warnf("%s: лист %q не описан в ipcMesSeriesNames — лист пропущен", rosstatIPCMesTable, sheet)
+ 			continue
+ 		}
+-		if rows, err = xlsx.GetRows(sheet); err != nil {
++		points, err := parseIpcMesSheet(xlsx, sheet)
++		if err != nil {
+ 			return nil, err
+ 		}
+-		fieldFound := false
+-		mes := 0
+-		for _, row := range rows {
+-			if fieldFound {
+-				mes += 1
+-				if len(row) < 2 || mes > 12 {
+-					break
+-				}
+-				for i, cell := range row[1:] {
+-					if cell == "" {
+-						continue
+-					}
+-					if _, err = strconv.ParseFloat(cell, 32); err != nil {
+-						return nil, err
+-					}
+-					//                                name           year
+-					*table = append(*table, []string{rows[0][0], strconv.Itoa(ipcMesYearStart + i), fmt.Sprintf("%02d", mes), cell})
+-				}
+-			} else if row[0] == ipcMesField {
+-				fieldFound = true
+-			}
++		for _, point := range points {
++			table = append(table, ipcMes{name: name, date: point.date, value: point.value})
+ 		}
++		seen[number] = true
++	}
++	// Номера пропавших листов сортируются: обход карты в Go случаен, и текст ошибки менялся бы
++	// от прогона к прогону.
++	missing := make([]int, 0, len(ipcMesSeriesNames))
++	for number := range ipcMesSeriesNames {
++		if !seen[number] {
++			missing = append(missing, number)
++		}
++	}
++	if len(missing) > 0 {
++		sort.Ints(missing)
++		names := make([]string, 0, len(missing))
++		for _, number := range missing {
++			names = append(names, fmt.Sprintf("«%02d»", number))
++		}
++		return nil, fmt.Errorf("%s: в книге нет ожидаемых листов %s", rosstatIPCMesTable, strings.Join(names, ", "))
+ 	}
+ 	return table, nil
+ }
+ 
+-// ipcMesImport разбирает файл и пишет точки в batch: семантика прежних export() и цикла
+-// вставки Import сохранена дословно — имя ряда из первой ячейки листа, дата «год-месяц»
+-// строки, значение — процент, дата сдвинута на 1-е число отчётного месяца (AddDate(0, 1, -1)).
+-// Пустой разбор ошибкой не считается — так же вёл себя прежний Import: пустой батч
+-// отправлялся, и прогон возвращал ноль точек (fail-fast на пустом листе — контракт cbr, не этого ряда).
++// ipcMesImport разбирает файл и пишет точки в batch: семантика прежнего разбора сохранена — имя
++// ряда объявлено кодом (§6.8), дата — последний день отчётного месяца (ipcMesDate), значение —
++// индекс к концу предыдущего месяца. Разбор идёт целиком до первой записи: ошибка листа оставляет
++// батч пустым, а не пишет половину книги.
+ func ipcMesImport(xlsx *excelize.File, batch driver.Batch) error {
+ 	table, err := parseIpcMes(xlsx)
+ 	if err != nil {
+ 		return err
+ 	}
+-	for _, row := range *table {
+-		// Calling Parse() method with its parameters
+-		mes, err := time.Parse(ipcMesTimeLayout, fmt.Sprintf("%s-%s", row[1], row[2]))
+-		if err != nil {
+-			return err
+-		}
+-		percent, err := strconv.ParseFloat(row[3], 32)
+-		if err != nil {
+-			return err
+-		}
+-		if err = batch.Append(row[0], mes.AddDate(0, 1, -1), float32(percent)); err != nil {
++	for _, row := range table {
++		if err = batch.Append(row.name, row.date, float32(row.value)); err != nil {
+ 			return err
+ 		}
+ 	}
+ 	return nil
+ }
+ 
+ // Import берёт адрес актуального xlsx со страницы цен Росстата: имени файла в коде нет
+-// (ipc_mes_ММ-ГГГГ.xlsx меняется при каждом обновлении), а сетевое обращение в init()
+-// запрещено (ARCHITECTURE.md §8.6). Пустой URL — сразу ошибка, как у соседей (salaries_mes,
+-// vvp_kvartal): иначе прогон дошёл бы до GetXlsx("") и упал невнятно. Дальше — полный цикл
+-// шаблона: DDL → префлайт по HEAD (файл обновляется раз в месяц, шаг расписания — недельный)
+-// → точки → производные (AfterImport) → строка версии.
++// (ipc_mes_ММ-ГГГГ.xlsx меняется при каждом обновлении), а сетевое обращение в init() запрещено
++// (ARCHITECTURE.md §8.6). Ошибка обхода страницы не проглатывается (§4.4): иначе прогон дошёл бы
++// до GetXlsx("") и упал невнятно. Дальше — полный цикл шаблона: DDL → префлайт по HEAD (файл
++// обновляется раз в месяц, шаг расписания — недельный) → точки → производные (AfterImport) →
++// строка версии.
+ func (s *IpcMesStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+-	xlsDataUrl := s.getXlsDataUrl()
+-	if xlsDataUrl == "" {
+-		return count, fmt.Errorf("ipcMes: не найдена ссылка на ipc_mes_*.xlsx на %s/statistics/price", rosstatUrl)
++	xlsDataUrl, err := s.getXlsDataUrl()
++	if err != nil {
++		return count, err
+ 	}
+ 	s.DataUrl = xlsDataUrl
+ 	return s.ClickHouseImport.Import(ctx, conn)
+ }
+ 
+-// ipcMesImporter — помесячные ИПЦ Росстата; регистрируется init() пакета.
++// ipcMesImporter — помесячные ИПЦ Росстата; регистрируется реестром rosstat/importers.go.
+ var ipcMesImporter = &IpcMesStat{ClickHouseImport: util.ClickHouseImport{
+-	TableName:              ipcMesTable,
++	TableName:              rosstatIPCMesTable,
+ 	CreateTable:            []string{ipcMesDdl},
+ 	ImportFunc:             ipcMesImport,
+ 	AfterImport:            afterRosstatMacro(ipcMesSeriesMeta),
+ 	PublicationCountPoints: ipcMesCountPoints,
+ }}
+-
+-func init() {
+-	chimport.Stats = append(chimport.Stats, ipcMesImporter)
+-}
+diff --git a/rosstat/ipc_weeks.go b/rosstat/ipc_weeks.go
+index 84794d0..38ab629 100644
+--- a/rosstat/ipc_weeks.go
++++ b/rosstat/ipc_weeks.go
+@@ -1,145 +1,255 @@
+ package rosstat
+ 
+ import (
++	"context"
+ 	"fmt"
+-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+-	"github.com/gocolly/colly/v2"
+-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
+-	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+-	log "github.com/sirupsen/logrus"
+-	"github.com/xuri/excelize/v2"
++	"math"
+ 	"strconv"
+ 	"strings"
+ 	"time"
+-)
+ 
+-import (
+-	"context"
++	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
++	"github.com/kmlebedev/clickhouse-import-rosstat/util"
++	log "github.com/sirupsen/logrus"
++	"github.com/xuri/excelize/v2"
+ )
+ 
+ const (
+ 	// ToDo update data source https://rosstat.gov.ru/statistics/price
+ 	// Еженедельные индексы потребительских цен (тарифов) на отдельные товары и услуги по Российской
+-	ipcWeeksTable = "ipc_weeks"
+-	ipcWeeksDdl   = `CREATE TABLE IF NOT EXISTS ` + ipcWeeksTable + ` (
++	rosstatIPCWeeksTable = "rosstat_ipc_weeks"
++	// ipcWeeksDdl — DDL в %s-форме: имя таблицы подставляет шаблон util.ClickHouseImport
++	// (fmt.Sprintf). Литеральное имя в DDL, как было, дублировало бы TableName — второй
++	// источник истины о таблице, который расходится при переименовании.
++	ipcWeeksDdl = `CREATE TABLE IF NOT EXISTS %s (
+ 				  name LowCardinality(String)
+ 				, date Date
+ 				, percent Float32
+ 			) ENGINE = ReplacingMergeTree ORDER BY (name, date);
+ 		`
+-	ipcWeeksInsert = "INSERT INTO " + ipcWeeksTable
+-	ipcWeeksField  = "Наименование"
++	// ipcWeeksField — якорь шапки листа года: строка с этой подписью в первой колонке.
++	// Разметка ищется по признаку, а не по номеру строки (§6.3): сноски и вставленные
++	// строки сдвигают лист, и жёсткий индекс прочитал бы не те строки.
++	ipcWeeksField = "Наименование"
++	// ipcWeeksYearStart — нижняя граница года листа: имя листа обязано быть числом не меньше
++	// этого года. «Содержание» и прочие нечисловые листы рядами не являются и пропускаются.
++	ipcWeeksYearStart = 1997
++	// ipcWeeksLinkSelector — селектор ссылки на актуальный Nedel_ipc.xlsx: константа рядом с
++	// импортёром, а не литерал в теле функции (§4.5) — тот же селектор проверяет тест на
++	// HTML-фикстуре. Прежняя позиционная CSS-цепочка из номеров вложенных элементов
++	// ломалась от любой правки вёрстки страницы; имя файла (Nedel_ipc.xlsx) постоянное,
++	// поэтому селектор — по фрагменту href.
++	ipcWeeksLinkSelector = `a[href*="Nedel_ipc"]`
++	// ipcWeeksTimeLayout — макет даты точки: день и месяц приходят из подписи колонки
++	// («на 12 января**»), год — из имени листа.
++	ipcWeeksTimeLayout = "2006-1-2"
++	// ipcWeeksNoData — подпись источника «данных не имеется»: так названа сноска листа
++	// («… - данных не имеется»), и ею же помечены недели, по которым значений нет. Пустая
++	// ячейка и эта подпись — не точка ряда (§6.7): прежний разбор писал по ним ноль. Точкой
++	// ячейка не становится, но строку и лист не обрывает: пропуск данных у одного товара —
++	// не конец таблицы, ниже стоят строки других товаров.
++	ipcWeeksNoData = "…"
+ )
+ 
+ type IpcWeeksStat struct {
++	util.ClickHouseImport
+ }
+ 
+-func (s *IpcWeeksStat) Name() string {
+-	return ipcWeeksTable
++// ipcWeeksPoint — точка листа: товар, дата регистрации и значение недельного индекса.
++// Значение остаётся float64 до записи в батч: сужение до Float32 делает колонка таблицы.
++type ipcWeeksPoint struct {
++	product string
++	date    time.Time
++	value   float64
+ }
+ 
+-func (s *IpcWeeksStat) getXlsDataUrl() (url string, err error) {
+-	c := colly.NewCollector()
+-	c.SetClient(util.HttpClient)
+-	// body > main > section:nth-child(2) > div > div > div > div > div > div > div.col-lg-8.order-1.order-lg-1 > div > div:nth-child(3) > div > div.toggle-section__content.toggle-section__content--open > div > div > div > div:nth-child(1) > div > div.toggle-card__main > div > div > div > div:nth-child(1) > div.document-list__item-link > a
+-	c.OnHTML(".row > div:nth-child(3) div.toggle-section__content.toggle-section__content--open > div > div > div > div:nth-child(1) > div > div.toggle-card__main > div > div > div > div:nth-child(1) > div.document-list__item-link > a", func(e *colly.HTMLElement) {
+-		url = fmt.Sprintf("%s%s", rosstatUrl, e.Attr("href"))
+-		log.Infof("href url %s", url)
+-	})
+-	if err = c.Visit(fmt.Sprintf("%s/statistics/price", rosstatUrl)); err != nil {
+-		log.Errorf("Visit %v+", err)
++// ipcWeeksKnownProducts — множество товаров, описанных в каталоге (ipcWeeksProducts,
++// series_meta.go): по нему разбор отличает ожидаемое изменение источника (товар, которого в
++// каталоге ещё нет) от сломанной выгрузки (§6.6). Множество выводится из того же списка, а не
++// повторяется литералами: описания товаров остаются в одном месте.
++var ipcWeeksKnownProducts = func() map[string]bool {
++	known := make(map[string]bool, len(ipcWeeksProducts))
++	for _, product := range ipcWeeksProducts {
++		known[product] = true
+ 	}
+-	c.Wait()
+-	return url, nil
+-}
++	return known
++}()
+ 
+-func parseIpcWeeks(xlsx *excelize.File) (table *[][]string, err error) {
+-	table = new([][]string)
+-	for _, sheet := range xlsx.GetSheetList() {
+-		var year, fieldIdx int
+-		if year, err = strconv.Atoi(sheet); err != nil || year < 1997 {
+-			continue
+-		}
+-		//if year != 2026 {
+-		//	continue
+-		//}
+-		var rows [][]string
+-		if rows, err = xlsx.GetRows(sheet); err != nil {
+-			return nil, err
+-		}
+-		fieldFound := false
+-		for i, row := range rows {
+-			if fieldFound {
+-				if len(row) < 2 {
+-					break
+-				}
+-				if _, err = strconv.ParseFloat(row[1], 32); err != nil {
+-					break
+-				}
+-				for j, cell := range row[1:] {
+-					dataArr := strings.Split(strings.ReplaceAll(strings.ReplaceAll(rows[fieldIdx][j+1], "*", ""), "на ", ""), " ")
+-					fmt.Printf("dataArr %+v, string: %s, cell %s\n", dataArr, fmt.Sprintf("%s-%d-%s", sheet, int(util.MonthsToNum[dataArr[1]]), dataArr[0]), cell)
+-					*table = append(*table, []string{row[0], fmt.Sprintf("%s-%d-%s", sheet, int(util.MonthsToNum[dataArr[1]]), dataArr[0]), cell})
+-				}
+-			} else if row[0] == ipcWeeksField {
+-				fieldFound = true
+-				fieldIdx = i
+-			}
+-		}
++// getXlsDataUrl ищет ссылку на актуальный Nedel_ipc.xlsx на странице цен Росстата.
++// Транспорт — через util (§4.1), а ошибка не проглатывается (§4.4): без ссылки импорт
++// обязан упасть до записи в БД, а не писать «0 строк» по устаревшему адресу (прежний
++// транспорт логировал ошибку обхода и возвращал пустой url как успех).
++func (s *IpcWeeksStat) getXlsDataUrl() (string, error) {
++	pageUrl := fmt.Sprintf("%s/statistics/price", rosstatUrl)
++	page, err := util.GetPage(pageUrl)
++	if err != nil {
++		return "", fmt.Errorf("ipcWeeks: %s: %w", pageUrl, err)
+ 	}
+-
+-	return table, nil
++	href, err := util.FindLink(page, ipcWeeksLinkSelector)
++	if err != nil {
++		return "", fmt.Errorf("ipcWeeks: ссылка на Nedel_ipc*.xlsx не найдена на %s: %w", pageUrl, err)
++	}
++	return rosstatUrl + href, nil
+ }
+ 
+-func (s *IpcWeeksStat) export() (table *[][]string, err error) {
+-	var xlsDataUrl string
+-	if xlsDataUrl, err = s.getXlsDataUrl(); err != nil {
+-		log.Errorf("getXlsDataUrl  %v+", err)
+-		return nil, err
++// ipcWeeksDate разбирает подпись колонки («на 12 января**», «26 декабря») в дату точки.
++// Семантика прежнего разбора сохранена: «*» (метка первой колонки года) и префикс «на »
++// отбрасываются, остаток делится по пробелу на день и месяц, месяц берётся из
++// util.MonthsToNum. Незнакомый месяц теперь ошибка, а не месяц 0 (§6.4): нулевой месяц
++// доходил до time.Parse и возвращался ошибкой даты, а не причиной — подписью колонки.
++// Год берётся из имени листа.
++func ipcWeeksDate(year int, label string) (time.Time, error) {
++	parts := strings.Split(strings.ReplaceAll(strings.ReplaceAll(label, "*", ""), "на ", ""), " ")
++	if len(parts) < 2 {
++		return time.Time{}, fmt.Errorf("подпись колонки %q не «день месяц»", label)
++	}
++	day, err := strconv.Atoi(strings.TrimSpace(parts[0]))
++	if err != nil {
++		return time.Time{}, fmt.Errorf("день %q подписи колонки %q не число: %w", parts[0], label, err)
+ 	}
+-	var xlsx *excelize.File
+-	if xlsx, err = util.GetXlsx(xlsDataUrl); err != nil {
+-		return nil, err
++	month, ok := util.MonthsToNum[strings.ToLower(strings.TrimSpace(parts[1]))]
++	if !ok {
++		return time.Time{}, fmt.Errorf("месяц %q подписи колонки %q не распознан", parts[1], label)
+ 	}
+-	return parseIpcWeeks(xlsx)
++	date, err := time.Parse(ipcWeeksTimeLayout, fmt.Sprintf("%d-%d-%d", year, int(month), day))
++	if err != nil {
++		return time.Time{}, fmt.Errorf("подпись колонки %q: %w", label, err)
++	}
++	return date, nil
+ }
+ 
+-func (s *IpcWeeksStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+-	if err = conn.Exec(ctx, ipcWeeksDdl); err != nil {
+-		return count, err
+-	}
+-	var table *[][]string
+-	if table, err = s.export(); err != nil {
+-		return count, err
++// ipcWeeksHeaderDates разбирает шапку листа в даты колонок: dates[j] — дата колонки j,
++// длина среза совпадает с шапкой. Шапка разбирается целиком до чтения строк данных: сломанная
++// подпись — ошибка (§6.4) и без значений, а не паника на разборе подписи посреди книги (§6.5).
++// Ячейка данных за последней колонкой шапки даты не получает и точкой не становится.
++func ipcWeeksHeaderDates(sheet string, year int, header []string) ([]time.Time, error) {
++	dates := make([]time.Time, len(header))
++	for j := 1; j < len(header); j++ {
++		date, err := ipcWeeksDate(year, header[j])
++		if err != nil {
++			return nil, fmt.Errorf("%s: лист %q, колонка %d: %w", rosstatIPCWeeksTable, sheet, j+1, err)
++		}
++		dates[j] = date
+ 	}
+-	log.Infof("Export %d rows of %s", len(*table), s.Name())
+-	batch, err := conn.PrepareBatch(ctx, ipcWeeksInsert)
++	return dates, nil
++}
++
++// ipcWeeksValue разбирает ячейку значения. Ячейка приходит сырым текстом (§6.2); ошибка
++// разбора не проглатывается — прежний разбор делал `percent, _ := strconv.ParseFloat(...)`
++// и писал по нечисловой ячейке ноль (в живой витрине таких нулевых точек было ровно 28).
++// NaN и бесконечность ParseFloat принимает, а точкой ряда быть не могут (§6.4).
++func ipcWeeksValue(cell string) (float64, error) {
++	value, err := strconv.ParseFloat(cell, 64)
+ 	if err != nil {
+-		return count, err
++		return 0, fmt.Errorf("значение ячейки %q не число: %w", cell, err)
++	}
++	if math.IsNaN(value) || math.IsInf(value, 0) {
++		return 0, fmt.Errorf("значение ячейки %q не конечное число", cell)
+ 	}
+-	for _, row := range *table {
+-		percent, _ := strconv.ParseFloat(row[2], 32)
+-		date, err := time.Parse("2006-1-2", row[1])
++	return value, nil
++}
++
++// ipcWeeksImport разбирает книгу и пишет точки в batch. Разбор идёт целиком до первой записи:
++// ошибка любого листа оставляет батч пустым, а не пишет половину книги.
++//
++// Товар вне каталога — предупреждение и импорт (§6.6): набор товаров меняется между
++// выгрузками Росстата, и падение недельного шага (он первый в цепочке dagu/rosstat.yaml)
++// лишило бы данных все последующие шаги (§12.3). Предупреждение выводится один раз на товар,
++// а не на каждую его точку: у недельного ряда точек сотни.
++func ipcWeeksImport(xlsx *excelize.File, batch driver.Batch) error {
++	var points []ipcWeeksPoint
++	warned := make(map[string]bool)
++	for _, sheet := range xlsx.GetSheetList() {
++		year, err := strconv.Atoi(sheet)
++		if err != nil || year < ipcWeeksYearStart {
++			continue // «Содержание» и прочие нечисловые листы рядами не являются
++		}
++		// Сырые значения ячеек (§6.2): форматированная строка отдала бы представление, а не
++		// данные — формат выгрузки `0.00` превратил бы 100.126 в «100.13».
++		rows, err := xlsx.GetRows(sheet, excelize.Options{RawCellValue: true})
++		if err != nil {
++			return fmt.Errorf("%s: лист %q: %w", rosstatIPCWeeksTable, sheet, err)
++		}
++		fieldIdx := -1
++		for i, row := range rows {
++			if len(row) > 0 && strings.TrimSpace(row[0]) == ipcWeeksField {
++				fieldIdx = i
++				break
++			}
++		}
++		if fieldIdx < 0 {
++			return fmt.Errorf("%s: лист %q: строка «%s» не найдена", rosstatIPCWeeksTable, sheet, ipcWeeksField)
++		}
++		dates, err := ipcWeeksHeaderDates(sheet, year, rows[fieldIdx])
+ 		if err != nil {
+-			return count, fmt.Errorf("parse %s, err: %v", row[1], err)
++			return err
+ 		}
+-		if err = batch.Append(row[0], date, float32(percent)); err != nil {
+-			return count, err
++		for _, row := range rows[fieldIdx+1:] {
++			// Терминатор таблицы листа — строка-сноска: у неё заполнена одна ячейка
++			// («* Без учета…», «** В % к концу предыдущего года», «… - данных не имеется»),
++			// поэтому признак конца — строка короче двух ячеек. Пустой первый столбец —
++			// не строка таблицы: точки ушли бы в ряд с пустым именем, которого каталог не
++			// описывает (§10.6). Нечисловая ячейка значения терминатором не является:
++			// источник помечает «…» пропуск данных у отдельного товара, и строки ниже
++			// остаются таблицей (обрыв по ней терял и товар, и его значения).
++			if len(row) < 2 || strings.TrimSpace(row[0]) == "" {
++				break
++			}
++			product := strings.TrimSpace(row[0])
++			if !ipcWeeksKnownProducts[product] && !warned[product] {
++				warned[product] = true
++				log.Warnf("%s: товар %q не описан в ipcWeeksProducts — точка записана, описание товара добавить в каталог", rosstatIPCWeeksTable, product)
++			}
++			// Ячейки за последней колонкой шапки даты не описывает, и точкой они не
++			// становятся: прежний разбор индексировал шапку без проверки границы
++			// (rows[fieldIdx][j+1]) и падал паникой на строке длиннее шапки (§6.5).
++			for j := 1; j < len(row) && j < len(dates); j++ {
++				cell := strings.TrimSpace(row[j])
++				if cell == "" || cell == ipcWeeksNoData {
++					continue // нет данных: недели, по которым значений не публиковалось (§6.7)
++				}
++				value, err := ipcWeeksValue(cell)
++				if err != nil {
++					return fmt.Errorf("%s: лист %q, %s, товар %q: %w",
++						rosstatIPCWeeksTable, sheet, dates[j].Format("2006-01-02"), product, err)
++				}
++				points = append(points, ipcWeeksPoint{product: product, date: dates[j], value: value})
++			}
+ 		}
+-		count++
+ 	}
+-	if err = batch.Send(); err != nil {
+-		return count, err
++	if len(points) == 0 {
++		return fmt.Errorf("%s: разбор дал 0 точек — в книге нет листов года с данными (строка «%s» не найдена или выгрузка пуста)", rosstatIPCWeeksTable, ipcWeeksField)
+ 	}
+-	if err = util.UpsertSeriesCatalog(ctx, conn, ipcWeeksSeriesMeta()); err != nil {
+-		return count, err
++	for _, point := range points {
++		if err := batch.Append(point.product, point.date, float32(point.value)); err != nil {
++			return err
++		}
+ 	}
+-	if _, err = util.CreateView(ctx, conn, rosstatMacroView); err != nil {
++	return nil
++}
++
++// Import берёт адрес актуального Nedel_ipc.xlsx со страницы цен Росстата: имени файла в коде
++// нет (ссылка берётся со страницы), а сетевое обращение в init() запрещено
++// (ARCHITECTURE.md §8.6). Дальше — полный цикл шаблона: DDL → точки → производные
++// (AfterImport: каталог рядов и витрина v_rosstat_macro) → строка версии. Префлайта нет:
++// файл перезаписывается по тому же URL в недельном темпе, равном темпу шага расписания,
++// поэтому no-op недостижим (§9.3), а HEAD был бы чистыми накладными расходами.
++func (s *IpcWeeksStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
++	xlsDataUrl, err := s.getXlsDataUrl()
++	if err != nil {
+ 		return count, err
+ 	}
+-	return count, nil
++	s.DataUrl = xlsDataUrl
++	return s.ClickHouseImport.Import(ctx, conn)
+ }
+ 
+-func init() {
+-	chimport.Stats = append(chimport.Stats, &IpcWeeksStat{})
+-}
++// ipcWeeksImporter — еженедельные индексы цен Росстата; регистрируется реестром
++// rosstat/importers.go. PublicationCountPoints и PublicationSource не заполняются (§9.3):
++// у недельного файла точке контроля публикации места нет, и реестр держит для него пустой
++// countPoints — расхождение поймал бы тест реестра.
++var ipcWeeksImporter = &IpcWeeksStat{ClickHouseImport: util.ClickHouseImport{
++	TableName:   rosstatIPCWeeksTable,
++	CreateTable: []string{ipcWeeksDdl},
++	ImportFunc:  ipcWeeksImport,
++	AfterImport: afterRosstatMacro(ipcWeeksSeriesMeta()),
++}}
+diff --git a/rosstat/salaries_mes.go b/rosstat/salaries_mes.go
+index cecb72d..2108801 100644
+--- a/rosstat/salaries_mes.go
++++ b/rosstat/salaries_mes.go
+@@ -1,153 +1,223 @@
+ package rosstat
+ 
+ import (
+ 	"context"
+ 	"fmt"
+-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+-	"github.com/gocolly/colly/v2"
+-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
+-	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+-	log "github.com/sirupsen/logrus"
+-	"github.com/xuri/excelize/v2"
++	"math"
+ 	"strconv"
+ 	"strings"
+ 	"time"
++
++	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
++	"github.com/kmlebedev/clickhouse-import-rosstat/util"
++	"github.com/xuri/excelize/v2"
+ )
+ 
+ const (
+ 	// Рынок труда, занятость и заработная плата https://rosstat.gov.ru/labor_market_employment_salaries
+ 	// Среднемесячная номинальная начисленная заработная плата работников в целом по экономике Российской Федерации
+ 	// Имя файла содержит месяц и год (tab1-zpl_ММ-ГГГГ.xlsx) и меняется при обновлении,
+ 	// поэтому ссылка берётся со страницы.
+-	salariesMesTable = "salaries_mes"
+-	salariesMesDdl   = `CREATE TABLE IF NOT EXISTS %s (
++	rosstatSalariesMesTable = "rosstat_salaries_mes"
++	salariesMesDdl          = `CREATE TABLE IF NOT EXISTS %s (
+ 				  name LowCardinality(String)
+ 				, date Date
+ 				, salary Float32
+ 			) ENGINE = ReplacingMergeTree ORDER BY (name, date);
+ 		`
+ 	salariesMesField      = "1991"
+ 	salariesMesYearStart  = 1991
+ 	salariesMesTimeLayout = "2006-01"
++	// salariesMesLinkSelector — селектор ссылки на актуальный xlsx: константа рядом с
++	// импортёром, а не литерал в теле функции (§4.5) — тот же селектор проверяет тест на
++	// HTML-фикстуре.
++	salariesMesLinkSelector = `a[href*="tab1-zpl"]`
++	// salariesMesMonthColumn — индекс первой колонки месяцев. Лист «Лист1» устроен так:
++	// A — год, B — «В среднем за год», C–F — «В среднем за кварталы», G…R — январь…декабрь,
++	// поэтому row[6:] — ровно 12 месяцев, а строка короче колонки января (в выгрузке это
++	// «… данных не имеется») обрывает таблицу листа.
++	salariesMesMonthColumn = 6
++	// salariesMesSeriesName — стабильное имя ряда, объявленное кодом (§6.8): заголовок
++	// источника («Среднемесячная номинальная начисленная заработная плата работников по
++	// полному кругу организаций», A1; годы выгрузки — в A2) меняется при обновлении файла,
++	// и ряд из заголовка оборвался бы на первой же редакции. Значение — сегодняшний
++	// заголовок листа «Лист1»; в каталоге ряд записан литералом независимо (series_meta.go),
++	// а совпадение двух записей проверяют тесты.
++	salariesMesSeriesName = "Среднемесячная номинальная начисленная заработная плата работников по полному кругу организаций"
+ 	// salariesMesCountPoints — количественный чек версии (спека §3.5): число точек своего
+ 	// ряда. Литерал, как и таблица: запрос — часть утверждения «эти точки мои». FINAL
+ 	// обязателен — иначе count() считал бы несмёрженные части.
+-	salariesMesCountPoints = "SELECT count() FROM salaries_mes FINAL"
++	salariesMesCountPoints = "SELECT count() FROM rosstat_salaries_mes FINAL"
+ )
+ 
+-// getSalariesMesXlsDataUrl ищет ссылку на актуальный tab1-zpl_*.xlsx на странице
+-// рынка труда Росстата.
+-func getSalariesMesXlsDataUrl() (url string) {
+-	c := colly.NewCollector()
+-	c.SetClient(util.HttpClient)
+-	c.OnHTML(`a[href*="tab1-zpl"]`, func(e *colly.HTMLElement) {
+-		if url == "" {
+-			url = fmt.Sprintf("%s%s", rosstatUrl, e.Attr("href"))
+-			log.Infof("href url %s", url)
+-		}
+-	})
+-	if err := c.Visit(fmt.Sprintf("%s/labor_market_employment_salaries", rosstatUrl)); err != nil {
+-		log.Errorf("Visit %v+", err)
++// getSalariesMesXlsDataUrl возвращает адрес актуального tab1-zpl_*.xlsx со страницы рынка
++// труда Росстата: имя файла содержит месяц и год (tab1-zpl_ММ-ГГГГ.xlsx) и меняется при
++// обновлении, поэтому ссылка берётся со страницы. Транспорт — через util (§4.1), а ошибка
++// не проглатывается (§4.4): без ссылки импорт обязан упасть до записи в БД, а не писать
++// «0 строк» по устаревшему адресу.
++func getSalariesMesXlsDataUrl() (string, error) {
++	pageUrl := fmt.Sprintf("%s/labor_market_employment_salaries", rosstatUrl)
++	page, err := util.GetPage(pageUrl)
++	if err != nil {
++		return "", fmt.Errorf("salariesMes: %s: %w", pageUrl, err)
++	}
++	href, err := util.FindLink(page, salariesMesLinkSelector)
++	if err != nil {
++		return "", fmt.Errorf("salariesMes: ссылка на tab1-zpl_*.xlsx не найдена на %s: %w", pageUrl, err)
+ 	}
+-	c.Wait()
+-	return url
++	return rosstatUrl + href, nil
+ }
+ 
+ type SalariesMesStat struct {
+ 	util.ClickHouseImport
+ }
+ 
+-func parseSalariesMes(xlsx *excelize.File) (table *[][]string, err error) {
+-	table = new([][]string)
++// salariesMesPoint — точка ряда: значение месяца и дата её записи — 1-е число месяца,
++// следующего за отчётным (AddDate(0, 1, 0)).
++type salariesMesPoint struct {
++	date  time.Time
++	value float64
++}
++
++// salariesMesValue разбирает ячейку месяца. point == false — ячейка точкой не является:
++// пустая ячейка и литеральный 0 в этом источнике означают «данных не имеется» (§6.7; нули
++// января–июня 1991 квартальные колонки той же строки помечают «…»). Значение, помеченное
++// сноской источника («62 470(2)» — октябрь–декабрь 2022), читается точкой: это
++// опубликованное значение того же ряда, где пробел — разделитель тысяч, а «(2)» — номер
++// сноски о покрытии (без учёта статистической информации по ДНР, ЛНР, Запорожской и
++// Херсонской областям), а не другой показатель. Пропуск такой ячейки оставил бы дыру в три
++// месяца головного ряда. Любой другой текст — ошибка: «значение не число там, где ожидалось
++// число» (§6.4).
++func salariesMesValue(cell string) (float64, bool, error) {
++	cell = strings.TrimSpace(cell)
++	if cell == "" {
++		return 0, false, nil
++	}
++	value, err := strconv.ParseFloat(cell, 64)
++	if err != nil {
++		footnote, ok := salariesMesFootnoteValue(cell)
++		if !ok {
++			return 0, false, fmt.Errorf("значение ячейки %q не число: %w", cell, err)
++		}
++		value = footnote
++	}
++	// ParseFloat принимает «NaN» и «Inf», и NaN прошёл бы проверку value != 0, став точкой
++	// ряда — мусором, который тихо уехал бы в витрину. Конечность значения — часть контракта
++	// разбора (§6.4): отказ, а не пропуск.
++	if math.IsNaN(value) || math.IsInf(value, 0) {
++		return 0, false, fmt.Errorf("значение ячейки %q не конечное число", cell)
++	}
++	return value, value != 0, nil
++}
++
++// salariesMesFootnoteValue разбирает ячейку, у которой значение записано текстом со сноской
++// источника: «62 470(2)». Разделитель тысяч — пробел (в том числе неразрывный), сноска —
++// «(N)» в конце ячейки.
++func salariesMesFootnoteValue(cell string) (float64, bool) {
++	i := strings.LastIndex(cell, "(")
++	if i < 1 || !strings.HasSuffix(cell, ")") {
++		return 0, false
++	}
++	value, err := strconv.ParseFloat(strings.Join(strings.Fields(cell[:i]), ""), 64)
++	return value, err == nil
++}
++
++// parseSalariesMes читает листы книги и отдаёт точки ряда. Ячейки берутся сырыми
++// значениями (§6.2): числовой формат выгрузки — `#,##0`, и форматированная строка дала бы
++// «1,074» вместо 1074 (а в локали с запятой — и ошибку разбора; на ней прежний разбор и
++// падал). Имя ряда — константа (§6.8), заголовок листа не читается вовсе.
++func parseSalariesMes(xlsx *excelize.File) ([]salariesMesPoint, error) {
++	var points []salariesMesPoint
+ 	for _, sheet := range xlsx.GetSheetList() {
+-		var rows [][]string
+-		if rows, err = xlsx.GetRows(sheet); err != nil {
+-			return nil, err
++		rows, err := xlsx.GetRows(sheet, excelize.Options{RawCellValue: true})
++		if err != nil {
++			return nil, fmt.Errorf("%s: лист %q: %w", rosstatSalariesMesTable, sheet, err)
+ 		}
+-		fieldFound := 0
+-		// Строки с годами
++		// Якорь — строка первого года в первой колонке; год остальных строк считается от
++		// него смещением, а не полем каждой строки (§6.3). Год у поздних лет несёт сноску
++		// («2026(2)»), поэтому строку не сверяют с годом целиком — только якорь. Первое
++		// совпадение: повтор «1991» в колонке A якорь не сдвигает.
++		anchor := -1
+ 		for i, row := range rows {
+-			if len(row) == 0 {
+-				continue
+-			}
+-			if row[0] == salariesMesField {
+-				fieldFound = i
++			if len(row) > 0 && row[0] == salariesMesField {
++				anchor = i
++				break
+ 			}
+-			if fieldFound == 0 {
++		}
++		if anchor < 0 {
++			// Лист без якоря (пустые «Лист2»/«Лист3») — не ошибка: ряд собирают листы, где
++			// якорь есть, а отсутствие данных во всей книге ловит проверка внизу.
++			continue
++		}
++		// Строки данных: от якоря до строки «… данных не имеется» — она и сноски внизу
++		// листа короче колонки января, таблица на ней кончается.
++		for i := anchor; i < len(rows); i++ {
++			row := rows[i]
++			if len(row) == 0 {
+ 				continue
+ 			}
+-			if len(row) < 7 {
++			if len(row) <= salariesMesMonthColumn {
+ 				break
+ 			}
+-			mes := 0
+-			// Колонки с месяцами и пропуском кварталов
+-			for _, cell := range row[6:] {
+-				mes += 1
+-				if cell == "" {
++			year := salariesMesYearStart + i - anchor
++			for mes, cell := range row[salariesMesMonthColumn:] {
++				value, point, err := salariesMesValue(cell)
++				if err != nil {
++					return nil, fmt.Errorf("%s: %d-%02d: %w", rosstatSalariesMesTable, year, mes+1, err)
++				}
++				if !point {
+ 					continue
+ 				}
+-				// fmt.Printf("year %d mes %02d cell %s\n", salariesMesYearStart+i-fieldFound, mes, cell)
+-				salary := strings.Split(cell, "(")[0]
+-				if _, err = strconv.ParseFloat(salary, 32); err != nil {
+-					return nil, err
++				month, err := time.Parse(salariesMesTimeLayout, fmt.Sprintf("%d-%02d", year, mes+1))
++				if err != nil {
++					return nil, fmt.Errorf("%s: %d-%02d: %w", rosstatSalariesMesTable, year, mes+1, err)
+ 				}
+-				//                                name           year
+-				*table = append(*table, []string{rows[0][0], strconv.Itoa(salariesMesYearStart + i - fieldFound), fmt.Sprintf("%02d", mes), salary})
++				points = append(points, salariesMesPoint{date: month.AddDate(0, 1, 0), value: value})
+ 			}
+ 		}
+ 	}
+-	return table, nil
++	if len(points) == 0 {
++		return nil, fmt.Errorf("%s: разбор дал 0 точек — якорь %q не найден или выгрузка пуста", rosstatSalariesMesTable, salariesMesField)
++	}
++	return points, nil
+ }
+ 
+-// salariesMesImport разбирает файл и пишет точки в batch: семантика прежних export() и цикла
+-// вставки Import сохранена дословно — имя ряда из первой ячейки листа, дата «год-месяц»
+-// строки, значение — зарплата, дата сдвинута на 1-е число месяца, следующего за отчётным
+-// (AddDate(0, 1, 0)).
++// salariesMesImport разбирает файл и пишет точки в batch. Семантика прежних export() и цикла
++// вставки Import сохранена: имя ряда — константа salariesMesSeriesName (§6.8), дата «год-месяц»
++// строки сдвинута на 1-е число следующего месяца, значение — зарплата месяца. Повторный
++// ParseFloat убран: разбор отдаёт уже разобранные значения.
+ func salariesMesImport(xlsx *excelize.File, batch driver.Batch) error {
+-	table, err := parseSalariesMes(xlsx)
++	points, err := parseSalariesMes(xlsx)
+ 	if err != nil {
+ 		return err
+ 	}
+-	for _, row := range *table {
+-		// Calling Parse() method with its parameters
+-		mes, err := time.Parse(salariesMesTimeLayout, fmt.Sprintf("%s-%s", row[1], row[2]))
+-		if err != nil {
+-			return err
+-		}
+-		salary, err := strconv.ParseFloat(row[3], 32)
+-		if err != nil {
+-			return err
+-		}
+-		if err = batch.Append(row[0], mes.AddDate(0, 1, 0), float32(salary)); err != nil {
++	for _, point := range points {
++		if err = batch.Append(salariesMesSeriesName, point.date, float32(point.value)); err != nil {
+ 			return err
+ 		}
+ 	}
+ 	return nil
+ }
+ 
+ // Import берёт адрес актуального xlsx со страницы рынка труда Росстата: имя файла содержит
+ // месяц и год (tab1-zpl_ММ-ГГГГ.xlsx) и меняется при обновлении, а сетевое обращение в
+ // init() запрещено (ARCHITECTURE.md §8.6). Дальше — полный цикл шаблона: DDL → префлайт по
+ // HEAD (файл обновляется раз в месяц, шаг расписания — недельный) → точки → производные
+ // (AfterImport) → строка версии.
+ func (s *SalariesMesStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+-	xlsDataUrl := getSalariesMesXlsDataUrl()
+-	if xlsDataUrl == "" {
+-		return count, fmt.Errorf("salariesMes: не найдена ссылка на tab1-zpl_*.xlsx на %s/labor_market_employment_salaries", rosstatUrl)
++	xlsDataUrl, err := getSalariesMesXlsDataUrl()
++	if err != nil {
++		return count, err
+ 	}
+ 	s.DataUrl = xlsDataUrl
+ 	return s.ClickHouseImport.Import(ctx, conn)
+ }
+ 
+-// salariesMesImporter — среднемесячная начисленная зарплата по РФ; регистрируется init() пакета.
++// salariesMesImporter — среднемесячная начисленная зарплата по РФ; регистрируется реестром rosstat/importers.go.
+ var salariesMesImporter = &SalariesMesStat{ClickHouseImport: util.ClickHouseImport{
+-	TableName:              salariesMesTable,
++	TableName:              rosstatSalariesMesTable,
+ 	CreateTable:            []string{salariesMesDdl},
+ 	ImportFunc:             salariesMesImport,
+ 	AfterImport:            afterRosstatMacro(salariesMesSeriesMeta),
+ 	PublicationCountPoints: salariesMesCountPoints,
+ }}
+-
+-func init() {
+-	chimport.Stats = append(chimport.Stats, salariesMesImporter)
+-}
+diff --git a/rosstat/series_meta.go b/rosstat/series_meta.go
+index 0fdefa3..73ce6fc 100644
+--- a/rosstat/series_meta.go
++++ b/rosstat/series_meta.go
+@@ -19,70 +19,70 @@ func afterRosstatMacro(meta []util.SeriesMeta) func(context.Context, driver.Conn
+ 		if err := util.UpsertSeriesCatalog(ctx, conn, meta); err != nil {
+ 			return err
+ 		}
+ 		_, err := util.CreateView(ctx, conn, rosstatMacroView)
+ 		return err
+ 	}
+ }
+ 
+ var rosstatMacroView = util.View{
+ 	Name:   "v_rosstat_macro",
+-	Tables: []string{ipcMesTable, ipcWeeksTable, vvpKvartalTable, salariesMesTable},
+-	Select: `SELECT 'rosstat' AS source, name AS series, date, toFloat64(percent) AS value FROM ipc_mes FINAL
+-UNION ALL SELECT 'rosstat', name, date, toFloat64(percent) FROM ipc_weeks FINAL
+-UNION ALL SELECT 'rosstat', name, date, toFloat64(vvp) FROM vvp_kvartal FINAL
+-UNION ALL SELECT 'rosstat', name, date, toFloat64(salary) FROM salaries_mes FINAL`,
++	Tables: []string{rosstatIPCMesTable, rosstatIPCWeeksTable, rosstatVVPKvartalTable, rosstatSalariesMesTable},
++	Select: `SELECT 'rosstat' AS source, name AS series, date, toFloat64(percent) AS value FROM rosstat_ipc_mes FINAL
++UNION ALL SELECT 'rosstat', name, date, toFloat64(percent) FROM rosstat_ipc_weeks FINAL
++UNION ALL SELECT 'rosstat', name, date, toFloat64(vvp) FROM rosstat_vvp_kvartal FINAL
++UNION ALL SELECT 'rosstat', name, date, toFloat64(salary) FROM rosstat_salaries_mes FINAL`,
+ 	Comment: "Ряды Росстата: ИПЦ по товарам и услугам (помесячно), еженедельные цены на отдельные товары и услуги, ВВП по кварталам, средняя номинальная зарплата по месяцам. Единицы значения и привязка даты различаются между рядами: перед расчётом читать v_series_catalog по (source, series)",
+ 	Columns: map[string]string{
+ 		"source": "Источник данных: всегда rosstat",
+-		"series": "Название ряда; совпадает с series в v_series_catalog. Для ИПЦ и ВВП название содержит сноски и годы выгрузки",
++		"series": "Название ряда; совпадает с series в v_series_catalog. У помесячного ИПЦ, квартального ВВП и зарплаты имя закреплено в коде и при обновлении файла-источника не меняется. У недельных рядов имя берётся из файла — это название товара или услуги из товарного списка источника; каталог описывает текущий набор товаров, а товар, которого в v_series_catalog ещё нет, записывается в витрину с предупреждением в журнале, пока его описание не добавлено в код",
+ 		"date":   "Дата наблюдения (Date). Для месячных и недельных рядов — день из таблицы; для квартальных и зарплатных дат сдвинута — см. description ряда в v_series_catalog",
+ 		"value":  "Значение ряда (Float64). Единицы зависят от ряда: индекс цен (100 = без изменения), млрд руб., рубли — см. unit в v_series_catalog",
+ 	},
+ }
+ 
+ var ipcMesSeriesMeta = []util.SeriesMeta{
+ 	{
+ 		Source:      rosstatSource,
+-		Series:      "Индексы потребительских цен на товары и услуги1) по Российской Федерации в 1991-2026*)гг.",
++		Series:      "Индексы потребительских цен на товары и услуги по Российской Федерации",
+ 		Title:       "ИПЦ на товары и услуги, РФ, помесячно",
+ 		Unit:        "индекс, % к концу предыдущего месяца (100 = без изменения)",
+ 		Frequency:   "M",
+-		Origin:      "rosstat.gov.ru/statistics/price, файл ipc_mes_*.xlsx, лист «01»; строка = месяц, колонка = год с 1991; строка «к концу предыдущего месяца»",
+-		Description: "Индекс потребительских цен на товары и услуги по РФ в целом: цены за месяц относительно конца предыдущего месяца. 100 — без изменения, 103,5 — рост на 3,5% за месяц. Дата — последний день отчётного месяца. Инфляция за год (декабрь к декабрю) = (Π индексов за 12 месяцев / 100^12 − 1) × 100%. Название содержит сноски и годы выгрузки и меняется при обновлении файла Росстата.",
++		Origin:      "rosstat.gov.ru/statistics/price, файл ipc_mes_*.xlsx, лист «01»: имя ряда задано кодом (ipcMesSeriesNames), из файла берутся только годы (строка над якорем) и значения; строка = месяц, колонка = год, якорь «к концу предыдущего месяца»",
++		Description: "Индекс потребительских цен на товары и услуги по РФ в целом: цены за месяц относительно конца предыдущего месяца. 100 — без изменения, 103,5 — рост на 3,5% за месяц. Дата — последний день отчётного месяца. Инфляция за год (декабрь к декабрю) = (Π индексов за 12 месяцев / 100^12 − 1) × 100%. Имя ряда объявлено кодом и от заголовка листа не зависит. Годовой блок листа («к декабрю предыдущего года») — другой показатель и в ряд не входит.",
+ 	},
+ 	{
+ 		Source:      rosstatSource,
+-		Series:      "Индексы потребительских цен на продовольственные товары по Российской Федерации в 1991-2026*)гг.",
++		Series:      "Индексы потребительских цен на продовольственные товары по Российской Федерации",
+ 		Title:       "ИПЦ на продовольственные товары, РФ, помесячно",
+ 		Unit:        "индекс, % к концу предыдущего месяца (100 = без изменения)",
+ 		Frequency:   "M",
+-		Origin:      "rosstat.gov.ru/statistics/price, файл ipc_mes_*.xlsx, лист «02»; строка = месяц, колонка = год с 1991; строка «к концу предыдущего месяца»",
+-		Description: "Индекс потребительских цен на продовольственные товары по РФ: цены за месяц относительно конца предыдущего месяца. 100 — без изменения. Дата — последний день отчётного месяца. Инфляция за год (декабрь к декабрю) = (Π индексов за 12 месяцев / 100^12 − 1) × 100%. Название содержит сноски и годы выгрузки и меняется при обновлении файла Росстата.",
++		Origin:      "rosstat.gov.ru/statistics/price, файл ipc_mes_*.xlsx, лист «02»: имя ряда задано кодом (ipcMesSeriesNames), из файла берутся только годы (строка над якорем) и значения; строка = месяц, колонка = год, якорь «к концу предыдущего месяца»",
++		Description: "Индекс потребительских цен на продовольственные товары по РФ: цены за месяц относительно конца предыдущего месяца. 100 — без изменения. Дата — последний день отчётного месяца. Инфляция за год (декабрь к декабрю) = (Π индексов за 12 месяцев / 100^12 − 1) × 100%. Имя ряда объявлено кодом и от заголовка листа не зависит. Годовой блок листа («к декабрю предыдущего года») — другой показатель и в ряд не входит.",
+ 	},
+ 	{
+ 		Source:      rosstatSource,
+-		Series:      "Индексы потребительских цен на непродовольственные товары по Российской Федерации в 1991-2026*)гг.",
++		Series:      "Индексы потребительских цен на непродовольственные товары по Российской Федерации",
+ 		Title:       "ИПЦ на непродовольственные товары, РФ, помесячно",
+ 		Unit:        "индекс, % к концу предыдущего месяца (100 = без изменения)",
+ 		Frequency:   "M",
+-		Origin:      "rosstat.gov.ru/statistics/price, файл ipc_mes_*.xlsx, лист «03»; строка = месяц, колонка = год с 1991; строка «к концу предыдущего месяца»",
+-		Description: "Индекс потребительских цен на непродовольственные товары по РФ: цены за месяц относительно конца предыдущего месяца. 100 — без изменения. Дата — последний день отчётного месяца. Инфляция за год (декабрь к декабрю) = (Π индексов за 12 месяцев / 100^12 − 1) × 100%. Название содержит сноски и годы выгрузки и меняется при обновлении файла Росстата.",
++		Origin:      "rosstat.gov.ru/statistics/price, файл ipc_mes_*.xlsx, лист «03»: имя ряда задано кодом (ipcMesSeriesNames), из файла берутся только годы (строка над якорем) и значения; строка = месяц, колонка = год, якорь «к концу предыдущего месяца»",
++		Description: "Индекс потребительских цен на непродовольственные товары по РФ: цены за месяц относительно конца предыдущего месяца. 100 — без изменения. Дата — последний день отчётного месяца. Инфляция за год (декабрь к декабрю) = (Π индексов за 12 месяцев / 100^12 − 1) × 100%. Имя ряда объявлено кодом и от заголовка листа не зависит. Годовой блок листа («к декабрю предыдущего года») — другой показатель и в ряд не входит.",
+ 	},
+ 	{
+ 		Source:      rosstatSource,
+-		Series:      "Индексы потребительских цен на услуги по Российской Федерации в 1991-2026*)гг.",
++		Series:      "Индексы потребительских цен на услуги по Российской Федерации",
+ 		Title:       "ИПЦ на услуги, РФ, помесячно",
+ 		Unit:        "индекс, % к концу предыдущего месяца (100 = без изменения)",
+ 		Frequency:   "M",
+-		Origin:      "rosstat.gov.ru/statistics/price, файл ipc_mes_*.xlsx, лист «04»; строка = месяц, колонка = год с 1991; строка «к концу предыдущего месяца»",
+-		Description: "Индекс потребительских цен на платные услуги населению по РФ: цены за месяц относительно конца предыдущего месяца. 100 — без изменения. Дата — последний день отчётного месяца. Инфляция за год (декабрь к декабрю) = (Π индексов за 12 месяцев / 100^12 − 1) × 100%. Название содержит сноски и годы выгрузки и меняется при обновлении файла Росстата.",
++		Origin:      "rosstat.gov.ru/statistics/price, файл ipc_mes_*.xlsx, лист «04»: имя ряда задано кодом (ipcMesSeriesNames), из файла берутся только годы (строка над якорем) и значения; строка = месяц, колонка = год, якорь «к концу предыдущего месяца»",
++		Description: "Индекс потребительских цен на платные услуги населению по РФ: цены за месяц относительно конца предыдущего месяца. 100 — без изменения. Дата — последний день отчётного месяца. Инфляция за год (декабрь к декабрю) = (Π индексов за 12 месяцев / 100^12 − 1) × 100%. Имя ряда объявлено кодом и от заголовка листа не зависит. Годовой блок листа («к декабрю предыдущего года») — другой показатель и в ряд не входит.",
+ 	},
+ }
+ 
+ var vvpKvartalSeriesMeta = []util.SeriesMeta{
+ 	{
+ 		Source:      rosstatSource,
+ 		Series:      "2 Валовой внутрений продукт",
+ 		Title:       "ВВП РФ, квартальный, в текущих ценах",
+ 		Unit:        "млрд руб.",
+ 		Frequency:   "Q",
+@@ -128,21 +128,21 @@ var vvpKvartalSeriesMeta = []util.SeriesMeta{
+ }
+ 
+ var salariesMesSeriesMeta = []util.SeriesMeta{
+ 	{
+ 		Source:      rosstatSource,
+ 		Series:      "Среднемесячная номинальная начисленная заработная плата работников по полному кругу организаций",
+ 		Title:       "Среднемесячная номинальная начисленная зарплата, РФ",
+ 		Unit:        "руб. в месяц (до 1998 г. — тыс. руб.)",
+ 		Frequency:   "M",
+ 		Origin:      "rosstat.gov.ru/labor_market_employment_salaries, файл tab1-zpl_*.xlsx, лист «Лист1»; строка = год, колонки «Январь»…«Декабрь»",
+-		Description: "Среднемесячная номинальная начисленная зарплата работников в целом по экономике РФ, рубли в месяц (до 1998 г. — тыс. руб., деноминация 1:1000). Значение — за месяц, в колонке месяца. Дата в таблице — 1-е число месяца, следующего за отчётным (зарплата за январь записана на 1 февраля). Реальный рост: номинальная зарплата / ИПЦ (ipc_mes) с поправкой на базу. Название меняется при обновлении файла Росстата.",
++		Description: "Среднемесячная номинальная начисленная зарплата работников в целом по экономике РФ, рубли в месяц (до 1998 г. — тыс. руб., деноминация 1:1000). Значение — за месяц, в колонке месяца. Дата в таблице — 1-е число месяца, следующего за отчётным (зарплата за январь записана на 1 февраля). Реальный рост: номинальная зарплата / ИПЦ (rosstat_ipc_mes) с поправкой на базу. Нулевые ячейки источника (январь–июнь 1991 — «данных не имеется») точками не записываются: пропуск в начале ряда означает отсутствие данных, а не нулевую зарплату. Значения октября–декабря 2022 г. записаны из ячеек со сноской 2, то есть без учёта статистической информации по ДНР, ЛНР, Запорожской и Херсонской областям: сравнение этих трёх месяцев с соседними месяцами ряда требует осторожности (сама сноска — оговорка о покрытии, а не другой показатель). Имя ряда объявлено кодом и от заголовка файла не зависит.",
+ 	},
+ }
+ 
+ func ipcWeeksSeriesMeta() []util.SeriesMeta {
+ 	meta := make([]util.SeriesMeta, 0, len(ipcWeeksProducts))
+ 	for _, product := range ipcWeeksProducts {
+ 		meta = append(meta, util.SeriesMeta{
+ 			Source:      rosstatSource,
+ 			Series:      product,
+ 			Title:       product,
+@@ -226,20 +226,23 @@ var ipcWeeksProducts = []string{
+ 	"Огурцы свежие, кг",
+ 	"Отопление, Гкал",
+ 	"Паста зубная, 100 г (100 мл)",
+ 	"Пеленки для новорожденных, шт.",
+ 	"Пенталгин, 24 таблетки",
+ 	"Печенье, кг",
+ 	"Плата за жилье в домах государственного и муниципального жилищных фондов, м2 общей площади",
+ 	"Плиты древесностружечные, ориентированно-стружечные, м2",
+ 	"Подгузники детские бумажные, 10 шт.",
+ 	"Поездка на отдых в ОАЭ, поездка",
++	"Поездка на отдых в Турцию, поездка",
++	"Поездка на отдых на Черноморское побережье России, поездка",
++	"Поездки в отдельные страны Юго-Восточной Азии, поездка",
+ 	"Полет в салоне экономического класса самолета, в расчете на 1000 км пути",
+ 	"Поливитамины, 10 шт.",
+ 	"Помидоры свежие, кг",
+ 	"Порошок стиральный, кг",
+ 	"Проезд в городском автобусе, поездка",
+ 	"Проезд в метро, поездка",
+ 	"Проезд в трамвае, поездка",
+ 	"Проезд в троллейбусе, поездка",
+ 	"Проживание в гостинице 1* или в мотеле, сутки с человека",
+ 	"Проживание в гостинице 2*, сутки с человека",
+diff --git a/rosstat/vvp_kvartal.go b/rosstat/vvp_kvartal.go
+index b7cefcd..13c7fc8 100644
+--- a/rosstat/vvp_kvartal.go
++++ b/rosstat/vvp_kvartal.go
+@@ -1,159 +1,319 @@
+ package rosstat
+ 
+ import (
+ 	"context"
+ 	"fmt"
++	"math"
++	"strconv"
++	"strings"
++	"time"
++
+ 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+-	"github.com/gocolly/colly/v2"
+-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+ 	log "github.com/sirupsen/logrus"
+ 	"github.com/xuri/excelize/v2"
+-	"strconv"
+-	"strings"
+-	"time"
+ )
+ 
+-func getQuarterDate(year int, quarter string) time.Time {
++// getQuarterDate переводит подпись квартала в дату точки — 1-е число месяца, следующего за
++// отчётным (I → 1 апреля, II → 1 июля, III → 1 октября, IV → 1 января следующего года).
++// Семантика прежнего разбора сохранена дословно; изменён только отказ: незнакомая подпись —
++// ошибка, а не panic, который убивал весь прогон импортёра.
++func getQuarterDate(year int, quarter string) (time.Time, error) {
+ 	var startMonth time.Month
+ 	switch quarter {
+ 	case "I":
+ 		startMonth = time.January
+ 	case "II":
+ 		startMonth = time.April
+ 	case "III":
+ 		startMonth = time.July
+ 	case "IV":
+ 		startMonth = time.October
+ 	default:
+-		panic("Invalid quarter")
++		return time.Time{}, fmt.Errorf("незнакомая подпись квартала %q", quarter)
+ 	}
+-	return time.Date(year, startMonth+3, 1, 0, 0, 0, 0, time.UTC)
++	return time.Date(year, startMonth+3, 1, 0, 0, 0, 0, time.UTC), nil
+ }
+ 
+ const (
+ 	// Национальные счета https://rosstat.gov.ru/statistics/accounts
+ 	// ВВП кварталы (с 1995 г.) — имя файла содержит диапазон лет (VVP_kvartal_s_1995-2025.xlsx)
+ 	// и меняется при обновлении, поэтому ссылка берётся со страницы.
+ 	// Валовой внутренний продукт 1) (в ценах 2021 г., млрд руб., с исключением сезонного фактора)
+-	vvpKvartalTable = "vvp_kvartal"
+-	vvpKvartalDdl   = `CREATE TABLE IF NOT EXISTS %s (
++	rosstatVVPKvartalTable = "rosstat_vvp_kvartal"
++	vvpKvartalDdl          = `CREATE TABLE IF NOT EXISTS %s (
+ 				  name LowCardinality(String)
+ 				, date Date
+ 				, vvp Float32
+ 			) ENGINE = ReplacingMergeTree ORDER BY (name, date);
+ 		`
++	// vvpKvartalLinkSelector — селектор ссылки на актуальный xlsx: константа рядом с
++	// импортёром, а не литерал в теле функции (§4.5) — тот же селектор проверяет тест на
++	// HTML-фикстуре страницы национальных счетов.
++	vvpKvartalLinkSelector = `a[href*="VVP_kvartal"]`
+ 	// vvpKvartalCountPoints — количественный чек версии (спека §3.5): число точек своего
+ 	// ряда. Литерал, как и таблица: запрос — часть утверждения «эти точки мои». FINAL
+ 	// обязателен — иначе count() считал бы несмёрженные части.
+-	vvpKvartalCountPoints = "SELECT count() FROM vvp_kvartal FINAL"
++	vvpKvartalCountPoints = "SELECT count() FROM rosstat_vvp_kvartal FINAL"
+ )
+ 
+-// getVvpKvartalXlsDataUrl ищет ссылку на актуальный VVP_kvartal_*.xlsx на странице
+-// национальных счетов Росстата.
+-func getVvpKvartalXlsDataUrl() (url string) {
+-	c := colly.NewCollector()
+-	c.SetClient(util.HttpClient)
+-	c.OnHTML(`a[href*="VVP_kvartal"]`, func(e *colly.HTMLElement) {
+-		if url == "" {
+-			url = fmt.Sprintf("%s%s", rosstatUrl, e.Attr("href"))
+-			log.Infof("href url %s", url)
+-		}
+-	})
+-	if err := c.Visit(fmt.Sprintf("%s/statistics/accounts", rosstatUrl)); err != nil {
+-		log.Errorf("Visit %v+", err)
++// vvpKvartalSheetNames — порядок обхода листов. Именно слайс, а не ключи карты имён: обход
++// карты в Go случаен, и порядок записи точек менялся бы от прогона к прогону (§6.8).
++var vvpKvartalSheetNames = []string{"2", "9", "10", "12", "14"}
++
++// vvpKvartalSeriesNames — имя ряда для листа, объявленное кодом (§6.8). Заголовок листа (A2)
++// в имени не участвует: он несёт сноски и редакции выгрузки («1)», «в текущих ценах», «в
++// ценах 2021г.») и на первой же редакции файла оборвал бы ряд. Значения совпадают с
++// vvpKvartalSeriesMeta[].Series дословно, включая опечатки источника: «внутрений» на листах
++// «2» и «9», «внутренний» на листе «10» — эти строки и есть тождество ряда в каталоге.
++var vvpKvartalSeriesNames = map[string]string{
++	"2":  "2 Валовой внутрений продукт",
++	"9":  "9 Валовой внутрений продукт",
++	"10": "10 Валовой внутренний продукт",
++	"12": "12 Индексы физического объема валового внутреннего продукта",
++	"14": "14 Индексы - дефляторы валового внутреннего продукта",
++}
++
++// getVvpKvartalXlsDataUrl возвращает адрес актуального VVP_kvartal_*.xlsx со страницы
++// национальных счетов Росстата: имя файла содержит диапазон лет (VVP_kvartal_s-1995-ГГГГ.xlsx)
++// и меняется при обновлении, поэтому ссылка берётся со страницы. Транспорт — через util (§4.1),
++// а ошибка не проглатывается (§4.4): без ссылки импорт обязан упасть до записи в БД, а не
++// писать «0 строк» по устаревшему адресу.
++func getVvpKvartalXlsDataUrl() (string, error) {
++	pageUrl := fmt.Sprintf("%s/statistics/accounts", rosstatUrl)
++	page, err := util.GetPage(pageUrl)
++	if err != nil {
++		return "", fmt.Errorf("vvpKvartal: %s: %w", pageUrl, err)
+ 	}
+-	c.Wait()
+-	return url
++	href, err := util.FindLink(page, vvpKvartalLinkSelector)
++	if err != nil {
++		return "", fmt.Errorf("vvpKvartal: ссылка на VVP_kvartal_*.xlsx не найдена на %s: %w", pageUrl, err)
++	}
++	return rosstatUrl + href, nil
+ }
+ 
+ type vvpKvartalDdlStat struct {
+ 	util.ClickHouseImport
+ }
+ 
+ type vvpKvartal struct {
+ 	name string
+ 	date time.Time
+ 	vvp  float64
+ }
+ 
+-func parseVvpKvartal(xlsx *excelize.File) (table *[]vvpKvartal, err error) {
+-	table = &[]vvpKvartal{}
+-	var rows [][]string
+-	// ВВП (в ценах 2021 г., млрд руб., с исключением сезонного фактора)
+-	for _, sheet := range []string{"2", "9", "10", "12", "14"} {
+-		if rows, err = xlsx.GetRows(sheet); err != nil {
+-			return nil, err
++// vvpKvartalPoint — точка листа: дата записи и сырое значение выгрузки. Значение остаётся
++// float64 до записи в батч: сужение до Float32 делает шаблон (колонка таблицы), поэтому тест
++// на сырое значение ячейки (§6.2) видит значение целиком.
++type vvpKvartalPoint struct {
++	date  time.Time
++	value float64
++}
++
++// vvpKvartalIsLabelRow — строка подписей кварталов узнаётся по содержимому, а не по номеру:
++// первая ячейка начинается с «I », «II », «III » или «IV » и содержит «квартал». Номер строки в
++// выгрузке плавает (сноски, вставленные строки), и жёсткий индекс — ровно тот дефект, из-за
++// которого прежний разбор читал не те строки.
++func vvpKvartalIsLabelRow(row []string) bool {
++	if len(row) == 0 {
++		return false
++	}
++	cell := strings.TrimSpace(row[0])
++	if !strings.Contains(cell, "квартал") {
++		return false
++	}
++	for _, prefix := range []string{"I ", "II ", "III ", "IV "} {
++		if strings.HasPrefix(cell, prefix) {
++			return true
+ 		}
+-		tableName := fmt.Sprintf("%s %s", sheet, strings.Trim(strings.Split(rows[1][1], ")")[0], " 1"))
+-		fmt.Printf("table name %s\n", tableName)
+-		// Строки с годами(2011) 2 и кварталами(I квартал) 3
+-		// Колонки со ВВП
+-		var year int64
+-		var vvp float64
+-		for i, cell := range rows[4][1:] {
+-			if cell == "" {
+-				break
+-			}
+-			if len(rows[2]) > i+1 && len(rows[2][i+1]) >= 4 {
+-				if year, err = strconv.ParseInt(rows[2][i+1][0:4], 10, 16); err != nil {
+-					return nil, err
+-				}
++	}
++	return false
++}
++
++// vvpKvartalYear разбирает ячейку года: год записан первыми четырьмя цифрами, у поздних групп
++// со сноской («20262)»). Мусор в ячейке года — ошибка (§6.4), а не молчаливый ноль: год 0 дал
++// бы дату «0000-01-01», которую ClickHouse отвергает.
++func vvpKvartalYear(cell string) (int, error) {
++	cell = strings.TrimSpace(cell)
++	if len(cell) < 4 {
++		return 0, fmt.Errorf("ячейка года %q короче четырёх цифр", cell)
++	}
++	year, err := strconv.Atoi(cell[:4])
++	if err != nil {
++		return 0, fmt.Errorf("ячейка года %q не число: %w", cell, err)
++	}
++	return year, nil
++}
++
++// vvpKvartalValue разбирает ячейку данных. Ячейка приходит сырым текстом (§6.2), поэтому
++// значение берётся как есть — «13024.799539024814», а не формат ячейки «13,024.8». NaN и
++// бесконечность отбрасываются, как и в соседнем rosstat_salaries_mes: ParseFloat их принимает,
++// и мусор уехал бы в витрину точкой ряда.
++func vvpKvartalValue(cell string) (float64, error) {
++	value, err := strconv.ParseFloat(strings.TrimSpace(cell), 64)
++	if err != nil {
++		return 0, fmt.Errorf("значение %q не число: %w", cell, err)
++	}
++	if math.IsNaN(value) || math.IsInf(value, 0) {
++		return 0, fmt.Errorf("значение %q не конечное число", cell)
++	}
++	return value, nil
++}
++
++// parseVvpKvartalSheet читает один лист книги. Разметка листа («2», «9», «10», «12», «14»):
++// A2 — заголовок листа (объединённая A2:D2, то есть строка из одной ячейки; в имени ряда он не
++// участвует), ниже — строка годов в колонках A, E, I, … (первая колонка каждой группы
++// кварталов), ниже — строка подписей «I квартал»…«IV квартал», под ними — строка данных; данные
++// и подписи начинаются с колонки A.
++func parseVvpKvartalSheet(xlsx *excelize.File, sheet string) ([]vvpKvartalPoint, error) {
++	// Сырые значения ячеек (§6.2): форматированная строка отдала бы «13,024.8» вместо
++	// «13024.799539024814», и ряд потерял бы точность значений.
++	rows, err := xlsx.GetRows(sheet, excelize.Options{RawCellValue: true})
++	if err != nil {
++		// Отсутствие ожидаемого листа — ошибка с именем листа (§6.4), а не «0 точек»: книга без
++		// листа означала бы оборванный ряд, который в витрине выглядит полным.
++		return nil, fmt.Errorf("%s: лист %q: %w", rosstatVVPKvartalTable, sheet, err)
++	}
++	labelRow := -1
++	for i, row := range rows {
++		if vvpKvartalIsLabelRow(row) {
++			labelRow = i
++			break
++		}
++	}
++	if labelRow < 0 {
++		return nil, fmt.Errorf("%s: лист %q: строка подписей кварталов не найдена", rosstatVVPKvartalTable, sheet)
++	}
++	// Годы — строкой выше подписей, данные — строкой ниже. Проверка границ обязательна: выход за
++	// срез — это паника, а разбор обязан отдавать ошибку.
++	if labelRow == 0 {
++		return nil, fmt.Errorf("%s: лист %q: строки годов нет над подписями кварталов (строка %d)",
++			rosstatVVPKvartalTable, sheet, labelRow+1)
++	}
++	if labelRow+1 >= len(rows) {
++		return nil, fmt.Errorf("%s: лист %q: строки данных нет под подписями кварталов (строка %d)",
++			rosstatVVPKvartalTable, sheet, labelRow+1)
++	}
++	years, labels, data := rows[labelRow-1], rows[labelRow], rows[labelRow+1]
++	var points []vvpKvartalPoint
++	year := 0
++	// Обход колонок строго с нуля и до длины среза данных: таблица листа начинается с колонки A,
++	// и пропуск нулевой колонки терял бы I квартал каждой группы — первую точку ряда
++	// (2011-04-01 на листах «2», «9», «10»). Пустая ячейка замыкает таблицу: excelize обрезает
++	// хвостовые пустые ячейки, поэтому индекс за пределами data гарантированно пуст.
++	for i := 0; i < len(data); i++ {
++		cell := data[i]
++		if strings.TrimSpace(cell) == "" {
++			break
++		}
++		// Год выписан в первой колонке группы (A, E, I, …), в колонках II–IV кварталов ячейка
++		// годов пуста: непустая ячейка задаёт текущий год, пустые его переносят. Без переноса
++		// у II–IV кварталов года не было бы вовсе (год 0 → дата «0000-01-01»).
++		if i < len(years) && strings.TrimSpace(years[i]) != "" {
++			labelYear, err := vvpKvartalYear(years[i])
++			if err != nil {
++				return nil, fmt.Errorf("%s: лист %q, колонка %d: %w", rosstatVVPKvartalTable, sheet, i+1, err)
+ 			}
+-			vvpStr := strings.ReplaceAll(strings.ReplaceAll(cell, " ", ""), ",", "")
+-			if vvp, err = strconv.ParseFloat(vvpStr, 32); err != nil {
+-				return nil, err
++			// Метка года не больше текущего года — это повтор (или откат) метки, и год выводится
++			// из структуры таблицы, а не угадывается: группы кварталов идут I→IV и продолжаются
++			// I следующего года, поэтому колонка под повторившейся меткой — I квартал следующего
++			// года. Так помечен лист «14» выгрузки: на его последней группе стоит «20252)» (то же
++			// значение, что у предыдущей группы), тогда как листы «2», «9», «10», «12» того же
++			// выпуска Росстата на этой колонке несут «20262)». Принять метку на веру нельзя:
++			// значения 2026-I и 2026-II записались бы датами 2025-I и 2025-II и затёрли настоящие
++			// значения 2025 года — в таблице с ключом (name, date) это тихая подмена данных, а не
++			// пропуск. Когда источник исправит метку, вывод совпадёт с ней и предупреждение
++			// исчезнет само. Нулевая метка (year == 0, года ещё не было) выводу не подлежит:
++			// пустой год остаётся ошибкой «год данных не задан» ниже.
++			if year != 0 && labelYear <= year {
++				log.Warnf("vvpKvartal: %s: лист %q, колонка %d: метка года %q не больше текущего %d — год выведен как %d",
++					rosstatVVPKvartalTable, sheet, i+1, strings.TrimSpace(years[i]), year, year+1)
++				labelYear = year + 1
+ 			}
+-			fmt.Printf("%s kvartal %v+ cell %v\n", strings.Split(rows[3][i+1], " ")[0], getQuarterDate(int(year), strings.Split(rows[3][i+1], " ")[0]), vvp)
+-			*table = append(*table, vvpKvartal{
+-				tableName,
+-				getQuarterDate(int(year), strings.Split(rows[3][i+1], " ")[0]),
+-				vvp,
+-			})
++			year = labelYear
++		}
++		if year == 0 {
++			return nil, fmt.Errorf("%s: лист %q, колонка %d: год данных не задан", rosstatVVPKvartalTable, sheet, i+1)
++		}
++		if i >= len(labels) {
++			return nil, fmt.Errorf("%s: лист %q, колонка %d: подписи квартала нет", rosstatVVPKvartalTable, sheet, i+1)
++		}
++		fields := strings.Fields(labels[i])
++		if len(fields) == 0 {
++			return nil, fmt.Errorf("%s: лист %q, колонка %d: подпись квартала пуста", rosstatVVPKvartalTable, sheet, i+1)
++		}
++		date, err := getQuarterDate(year, fields[0])
++		if err != nil {
++			return nil, fmt.Errorf("%s: лист %q, колонка %d: %w", rosstatVVPKvartalTable, sheet, i+1, err)
++		}
++		value, err := vvpKvartalValue(cell)
++		if err != nil {
++			return nil, fmt.Errorf("%s: лист %q, колонка %d: %w", rosstatVVPKvartalTable, sheet, i+1, err)
++		}
++		points = append(points, vvpKvartalPoint{date: date, value: value})
++	}
++	if len(points) == 0 {
++		return nil, fmt.Errorf("%s: лист %q: разбор дал 0 точек", rosstatVVPKvartalTable, sheet)
++	}
++	return points, nil
++}
++
++// parseVvpKvartal читает всю книгу и отдаёт плоскую таблицу точек: имя ряда — из
++// vvpKvartalSeriesNames (§6.8), листы обходятся в порядке слайса. Разбор идёт целиком до первой
++// записи в батч: ошибка любого листа оставляет батч пустым, а не записывает половину книги.
++func parseVvpKvartal(xlsx *excelize.File) ([]vvpKvartal, error) {
++	var table []vvpKvartal
++	for _, sheet := range vvpKvartalSheetNames {
++		name, ok := vvpKvartalSeriesNames[sheet]
++		if !ok {
++			return nil, fmt.Errorf("%s: лист %q не описан в vvpKvartalSeriesNames", rosstatVVPKvartalTable, sheet)
++		}
++		points, err := parseVvpKvartalSheet(xlsx, sheet)
++		if err != nil {
++			return nil, err
++		}
++		for _, point := range points {
++			table = append(table, vvpKvartal{name: name, date: point.date, vvp: point.value})
+ 		}
+ 	}
+ 	return table, nil
+ }
+ 
+-// vvpKvartalImport разбирает файл и пишет точки в batch: семантика прежних export() и цикла
+-// вставки Import сохранена дословно — имя ряда собирается из номеров листов, дата — 1-е число
+-// месяца, следующего за отчётным кварталом (getQuarterDate).
++// vvpKvartalImport разбирает файл и пишет точки в batch: семантика прежнего разбора сохранена —
++// имя ряда объявлено кодом (§6.8), дата — 1-е число месяца, следующего за отчётным кварталом
++// (getQuarterDate), значение — ВВП или индекс квартала.
+ func vvpKvartalImport(xlsx *excelize.File, batch driver.Batch) error {
+ 	table, err := parseVvpKvartal(xlsx)
+ 	if err != nil {
+ 		return err
+ 	}
+-	for _, r := range *table {
++	for _, r := range table {
+ 		if err = batch.Append(r.name, r.date, float32(r.vvp)); err != nil {
+ 			return err
+ 		}
+ 	}
+ 	return nil
+ }
+ 
+ // Import берёт адрес актуального xlsx со страницы национальных счётов Росстата: имя файла
+ // содержит диапазон лет (VVP_kvartal_s-1995-ГГГГ.xlsx) и меняется при обновлении, а сетевое
+ // обращение в init() запрещено (ARCHITECTURE.md §8.6). Дальше — полный цикл шаблона: DDL →
+ // префлайт по HEAD (ряд обновляется раз в квартал, шаг расписания — недельный) → точки →
+ // производные (AfterImport) → строка версии.
+ func (s *vvpKvartalDdlStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+-	xlsDataUrl := getVvpKvartalXlsDataUrl()
+-	if xlsDataUrl == "" {
+-		return count, fmt.Errorf("vvpKvartal: не найдена ссылка на VVP_kvartal_*.xlsx на %s/statistics/accounts", rosstatUrl)
++	xlsDataUrl, err := getVvpKvartalXlsDataUrl()
++	if err != nil {
++		return count, err
+ 	}
+ 	s.DataUrl = xlsDataUrl
+ 	return s.ClickHouseImport.Import(ctx, conn)
+ }
+ 
+-// vvpKvartalImporter — квартальный ВВП РФ; регистрируется init() пакета.
++// vvpKvartalImporter — квартальный ВВП РФ; регистрируется реестром rosstat/importers.go.
+ var vvpKvartalImporter = &vvpKvartalDdlStat{ClickHouseImport: util.ClickHouseImport{
+-	TableName:              vvpKvartalTable,
++	TableName:              rosstatVVPKvartalTable,
+ 	CreateTable:            []string{vvpKvartalDdl},
+ 	ImportFunc:             vvpKvartalImport,
+ 	AfterImport:            afterRosstatMacro(vvpKvartalSeriesMeta),
+ 	PublicationCountPoints: vvpKvartalCountPoints,
+ }}
+-
+-func init() {
+-	chimport.Stats = append(chimport.Stats, vvpKvartalImporter)
+-}
+diff --git a/scripts/mcp_check.py b/scripts/mcp_check.py
+index dd6c577..295d5b9 100644
+--- a/scripts/mcp_check.py
++++ b/scripts/mcp_check.py
+@@ -503,15 +503,89 @@ async def check(params, server_log):
+                                      (summary_view_n or 0) > 0, summary_view_detail)
+ 
+             for table, label in (("cbr_mp_summary", "шапка"),
+                                  ("cbr_mp_summary_block", "блоки"),
+                                  ("cbr_mp_summary_channel", "каналы")):
+                 raw = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {table}"}))
+                 denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+                 failed += not expect(f"сырая {table} закрыта ({label})", denied,
+                                      f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
+ 
++            # Контур Росстата (фаза 3 роадмапа, задачи T4–T7): витрина v_rosstat_macro видна
++            # и НЕПУСТА, каталог описывает ряды всех четырёх импортёров пакета, а четыре
++            # сырые таблицы — источники витрины — агенту закрыты (как macro_series и
++            # cbr_households_b_mes: читать контур агент обязан только через витрину,
++            # правило 11 AGENTS.md).
++            #
++            # Здесь, в отличие от v_dcf_assumptions, пустая витрина успехом не считается:
++            # строки публикуют импортёры rosstat/, поэтому ноль строк и ноль различных
++            # рядов означают ни разу не отработавший контур, а не отсутствие данных у
++            # источника. Число точек меняется с каждым прогоном источника, поэтому
++            # точное значение count() не сверяется — проверяются count() > 0 и
++            # uniqExact(series) > 0 оба разом: «витрина читается» без непустоты пропустило
++            # бы пустую витрину. Существование витрины подтверждается ЗАПРОСОМ К НЕЙ, а не
++            # только поиском имени в ответе list_tables: в том тексте лежат
++            # create_table_query с комментариями таблиц и колонок, и имя отсутствующей
++            # витрины попадало туда из COMMENT соседки (урок bold). Разобранный ответ
++            # run_query доказывает и существование, и право чтения; «нет витрины» и «нет
++            # прав» приходят ошибкой (UNKNOWN_TABLE / ACCESS_DENIED) и в result_rows не
++            # разбираются.
++            failed += not expect("витрина v_rosstat_macro видна", "v_rosstat_macro" in tables, "list_tables default")
++
++            rosstat_view = text(await session.call_tool("run_query", {"query": "SELECT count() AS rows, uniqExact(series) AS series FROM v_rosstat_macro"}))
++            rosstat_view_rows = result_rows(rosstat_view)
++            rosstat_points_n = rosstat_view_rows[0].get("rows") if rosstat_view_rows else None
++            rosstat_series_n = rosstat_view_rows[0].get("series") if rosstat_view_rows else None
++            if rosstat_view_rows is None:
++                rosstat_view_detail = f"витрина не читается: {rosstat_view[:200]}"
++            elif (rosstat_points_n or 0) > 0 and (rosstat_series_n or 0) > 0:
++                rosstat_view_detail = f"строк: {rosstat_points_n}, рядов: {rosstat_series_n}"
++            else:
++                rosstat_view_detail = (f"строк: {rosstat_points_n}, рядов: {rosstat_series_n} — прогнать "
++                                       "импортёры контура (make import STAT=rosstat_ipc_mes, "
++                                       "STAT=rosstat_ipc_weeks, STAT=rosstat_salaries_mes, STAT=rosstat_vvp_kvartal)")
++            failed += not expect("витрина v_rosstat_macro непуста",
++                                 (rosstat_points_n or 0) > 0 and (rosstat_series_n or 0) > 0, rosstat_view_detail)
++
++            # Каталог описывает все 141 ряд источника: 4 ИПЦ (ipc_mes) + 131 недельный
++            # товар (ipc_weeks) + 5 рядов ВВП (vvp_kvartal) + 1 зарплата (salaries_mes).
++            # Число сверяется точным равенством, а не «> 0»: односторонний контракт §11.4
++            # стандарта требует описания каждого разобранного ряда, а меньше 141 значит
++            # ни разу не отработавший импортёр (числа агент прочитает, а что измеряет ряд
++            # и в каких единицах — нет). В плане фазы написано 138: это арифметика
++            # 4 + 128 + 5 + 1 до fix-round задачи T7, который вернул три товара под обрывом
++            # листа (fc0d28f) — в ipcWeeksProducts 131 название, то есть верное число 141.
++            # detail печатает наблюдённое число, когда оно расходится с ожиданием.
++            rosstat_catalog = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'rosstat'"}))
++            rosstat_catalog_rows = result_rows(rosstat_catalog)
++            rosstat_catalog_n = rosstat_catalog_rows[0].get("n") if rosstat_catalog_rows else None
++            if rosstat_catalog_rows is None:
++                rosstat_catalog_detail = f"ответ не распознан: {rosstat_catalog[:200]}"
++            elif rosstat_catalog_n == 141:
++                rosstat_catalog_detail = "рядов rosstat: 141 (4 ИПЦ + 131 недельный + 5 ВВП + 1 зарплата)"
++            else:
++                rosstat_catalog_detail = (f"рядов rosstat: {rosstat_catalog_n}, want 141 — прогнать "
++                                          "make import STAT=rosstat_ipc_mes, STAT=rosstat_ipc_weeks, "
++                                          "STAT=rosstat_salaries_mes и STAT=rosstat_vvp_kvartal "
++                                          "(каталог перепубликовывается каждым прогоном)")
++            failed += not expect("каталог rosstat полон", rosstat_catalog_n == 141, rosstat_catalog_detail)
++
++            # Сырые таблицы контура агенту не выданы — как macro_series и
++            # cbr_households_b_mes: витрина — единственное место, где агент читает ряды
++            # (единицы и привязка даты различаются между рядами и описаны в v_series_catalog).
++            # До первого живого прогона импортёров таблиц может не быть вовсе, и запрос
++            # отвечает UNKNOWN_TABLE, а не ACCESS_DENIED, — это провал, а не успех: таблица
++            # обязана существовать и быть закрытой.
++            for table, label in (("rosstat_ipc_mes", "ИПЦ помесячно"),
++                                 ("rosstat_ipc_weeks", "недельные цены"),
++                                 ("rosstat_salaries_mes", "зарплата помесячно"),
++                                 ("rosstat_vvp_kvartal", "ВВП поквартально")):
++                raw = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {table}"}))
++                denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
++                failed += not expect(f"сырая {table} закрыта ({label})", denied,
++                                     f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
++
+     return failed
+ 
+ 
+ if __name__ == "__main__":
+     sys.exit(asyncio.run(main()))
+diff --git a/sql/key_rate_coverage.sql b/sql/key_rate_coverage.sql
+index 87d77e8..350f0d2 100644
+--- a/sql/key_rate_coverage.sql
++++ b/sql/key_rate_coverage.sql
+@@ -29,27 +29,27 @@ SELECT * FROM (
+     UNION ALL SELECT 'cbr_indicators_cpd', name, count(), min(date), max(date) FROM cbr_indicators_cpd FINAL GROUP BY name
+     
+     UNION ALL SELECT 'cbr_infl_exp', name, count(), min(date), max(date) FROM cbr_infl_exp FINAL GROUP BY name
+     
+     UNION ALL SELECT 'cbr_loans_to_corporations', name, count(), min(date), max(date) FROM cbr_loans_to_corporations FINAL GROUP BY name
+     
+     UNION ALL SELECT 'cbr_loans_to_individuals', name, count(), min(date), max(date) FROM cbr_loans_to_individuals FINAL GROUP BY name
+     
+     UNION ALL SELECT 'cbr_households_b_mes', name, count(), min(date), max(date) FROM cbr_households_b_mes FINAL GROUP BY name
+     
+-    UNION ALL SELECT 'ipc_mes', name, count(), min(date), max(date) FROM ipc_mes FINAL GROUP BY name
++    UNION ALL SELECT 'rosstat_ipc_mes', name, count(), min(date), max(date) FROM rosstat_ipc_mes FINAL GROUP BY name
+     
+-    UNION ALL SELECT 'ipc_weeks', name, count(), min(date), max(date) FROM ipc_weeks FINAL GROUP BY name
++    UNION ALL SELECT 'rosstat_ipc_weeks', name, count(), min(date), max(date) FROM rosstat_ipc_weeks FINAL GROUP BY name
+     
+-    UNION ALL SELECT 'vvp_kvartal', name, count(), min(date), max(date) FROM vvp_kvartal FINAL GROUP BY name
++    UNION ALL SELECT 'rosstat_vvp_kvartal', name, count(), min(date), max(date) FROM rosstat_vvp_kvartal FINAL GROUP BY name
+     
+-    UNION ALL SELECT 'salaries_mes', name, count(), min(date), max(date) FROM salaries_mes FINAL GROUP BY name
++    UNION ALL SELECT 'rosstat_salaries_mes', name, count(), min(date), max(date) FROM rosstat_salaries_mes FINAL GROUP BY name
+     
+     UNION ALL SELECT 'minfin_fed_bud_mes', name, count(), min(date), max(date) FROM minfin_fed_bud_mes FINAL GROUP BY name
+     
+     UNION ALL SELECT 'minfin_fed_bud_mesyats', name, count(), min(date), max(date) FROM minfin_fed_bud_mesyats FINAL GROUP BY name
+     
+     UNION ALL SELECT 'ofz_curve', tenor, count(), min(date), max(date) FROM ofz_curve FINAL GROUP BY tenor
+     
+     UNION ALL SELECT 'events_calendar', category, count(), min(event_date), max(event_date) FROM events_calendar FINAL GROUP BY category
+     
+     UNION ALL SELECT 'news_events', source, count(), min(toDate(date)), max(toDate(date)) FROM news_events FINAL GROUP BY source
+diff --git a/cbr/links.go b/util/links.go
+similarity index 50%
+rename from cbr/links.go
+rename to util/links.go
+index 5ab63ee..70152ca 100644
+--- a/cbr/links.go
++++ b/util/links.go
+@@ -1,44 +1,47 @@
+-package cbr
++package util
+ 
+ import (
+ 	"bytes"
+ 	"fmt"
+ 	"io"
+ 	"strings"
+ 
+ 	"github.com/PuerkitoBio/goquery"
+-	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+ )
+ 
+-// findLink возвращает href первой ссылки, найденной селектором на HTML-странице.
++// FindLink возвращает href первой ссылки, найденной селектором на HTML-странице.
+ // href отдаётся как есть (абсолютный или относительный): префикс домена навешивает
+ // вызывающий — так же, как делал прежний HTML-транспорт. Пустой href или отсутствие совпадения —
+ // ошибка: без ссылки на XLSX импорт должен падать до записи в БД, а не тихо писать
+ // «0 rows» по устаревшему или чужому адресу.
+-func findLink(page []byte, selector string) (string, error) {
++func FindLink(page []byte, selector string) (string, error) {
+ 	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(page))
++	// Ветка защитная: на практике goquery терпим к битой разметке (обрезанные теги
++	// отбрасывает) и ошибки разбора не отдаёт, но без проверки nil-документ паниковал бы
++	// на doc.Find ниже.
+ 	if err != nil {
+-		return "", fmt.Errorf("findLink: разбор страницы: %w", err)
++		return "", fmt.Errorf("FindLink: разбор страницы: %w", err)
+ 	}
+ 	href, ok := doc.Find(selector).First().Attr("href")
+ 	if !ok || strings.TrimSpace(href) == "" {
+-		return "", fmt.Errorf("findLink: по селектору %q ссылка не найдена", selector)
++		return "", fmt.Errorf("FindLink: по селектору %q ссылка не найдена", selector)
+ 	}
+ 	return href, nil
+ }
+ 
+-// getPage скачивает HTML-страницу целиком через util.GetFile. Ридер закрывается всегда:
+-// ошибки чтения и закрытия возвращаются обе, иначе повреждённая страница выглядела бы
+-// успешным разбором.
+-func getPage(pageURL string) ([]byte, error) {
+-	reader, err := util.GetFile(pageURL)
++// GetPage скачивает HTML-страницу целиком через GetFile — общий хелпер пакетов
++// импортёров (стандарт §4.1: все сетевые обращения — через util). Ридер закрывается
++// всегда: ошибки чтения и закрытия возвращаются обе, иначе повреждённая страница
++// выглядела бы успешным разбором.
++func GetPage(pageURL string) ([]byte, error) {
++	reader, err := GetFile(pageURL)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	page, readErr := io.ReadAll(reader)
+ 	closeErr := reader.Close()
+ 	if readErr != nil {
+ 		return nil, readErr
+ 	}
+ 	if closeErr != nil {
+ 		return nil, closeErr
+diff --git a/util/publications.go b/util/publications.go
+index 9745077..4ac9b11 100644
+--- a/util/publications.go
++++ b/util/publications.go
+@@ -20,21 +20,21 @@ import (
+ // прогонов, и включается полями шаблона util.ClickHouseImport (PublicationCountPoints /
+ // PublicationSource); фактический список потребителей — ARCHITECTURE §8 п. 13 (десять
+ // импортёров cbr/ и четыре вне него). Таблица внутренняя: агенту (kimi_reader) не выдаётся.
+ const PublicationsTable = "source_publications"
+ 
+ // PublicationsDdl — канонический DDL (ARCHITECTURE §6.2, спека §3.4). Литерал, а не %s-форма
+ // (как у пер-источниковых таблиц): таблица одна на все источники, %-шаблон здесь только
+ // размывал бы «канонический» статус. Комментарии колонок — часть спекового литерала и остаются
+ // в тексте SQL; ClickHouse их отбрасывает.
+ const PublicationsDdl = `CREATE TABLE IF NOT EXISTS source_publications (
+-    source LowCardinality(String),  -- источник-потребитель: 'cbr_mo_br', 'ipc_mes', … (ключ версии: PublicationSource импортёра или его TableName)
++    source LowCardinality(String),  -- источник-потребитель: 'cbr_mo_br', 'rosstat_ipc_mes', … (ключ версии: PublicationSource импортёра или его TableName)
+     name LowCardinality(String),    -- имя артефакта: 'full.xlsx'
+     fingerprint String,             -- md5 от (имя|ETag|Last-Modified|Content-Length) — отпечаток версии контента
+     first_seen DateTime,            -- когда конвейер впервые увидел эту версию
+     points UInt64,                  -- число точек ряда в таблице на момент версии (запрос PublicationCountPoints импортёра)
+     url String                      -- URL артефакта (аудит)
+ ) ENGINE = ReplacingMergeTree ORDER BY (source, name, fingerprint);
+ `
+ 
+ const (
+ 	publicationsInsert = "INSERT INTO " + PublicationsTable
+diff --git a/views/gold_views.go b/views/gold_views.go
+index c0c5d76..80e98ef 100644
+--- a/views/gold_views.go
++++ b/views/gold_views.go
+@@ -5,22 +5,22 @@
+ // v_imf_macro (золотые резервы ЦБ из IMF IRFCL, source='imf'),
+ // v_gold_forecasts (консенсус аналитиков и own-сетка из gold_forecasts),
+ // v_gold_etf_flows (пивот месячных потоков и запасов золотых ETF WGC по регионам),
+ // v_cb_gold_dynamics (динамика резервов семи ЦБ WGC: MoM/YTD и уровень по стране),
+ // v_gold_etf_flows_daily (дневной пивот семи рядов ETF-контура bold.report)
+ // и v_gold_etf_funds_daily (пер-фондовый дневной срез того же контура).
+ //
+ // Импортёр gold_views запускается после ingest-первого-прогона: util.CreateView
+ // пропускает витрину, пока не существуют все её таблицы (model_runs создаёт ingest),
+ // поэтому его вызывают отдельным шагом после первого запуска ingest. Гейт проверяет
+-// только наличие таблиц, а не их заполненность: ipc_mes и ipc_weeks создаются до
+-// загрузки Росстата, и при его сбое витрина создаётся с NULL или устаревшими ipc_*.
++// только наличие таблиц, а не их заполненность: rosstat_ipc_mes и rosstat_ipc_weeks
++// создаются до загрузки Росстата, и при его сбое витрина создаётся с NULL или устаревшими ipc_*.
+ package views
+ 
+ import (
+ 	"context"
+ 
+ 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+ 	log "github.com/sirupsen/logrus"
+ )
+diff --git a/views/model_inputs.go b/views/model_inputs.go
+index ad21f98..79a3aa4 100644
+--- a/views/model_inputs.go
++++ b/views/model_inputs.go
+@@ -4,22 +4,22 @@ import "github.com/kmlebedev/clickhouse-import-rosstat/util"
+ 
+ // modelInputsView — витрина входов DCF-модели: одна строка с последними значениями
+ // всех рядов (argMax по дате). Каждый блок — отдельный однострочный подзапрос:
+ // подзапрос без GROUP BY всегда отдаёт ровно одну строку, даже по пустой таблице,
+ // а toNullable даёт NULL вместо нулевого значения по умолчанию. Поэтому при пустых
+ // таблицах (model_runs, например, до первого прогона) витрина всё равно возвращает
+ // одну строку с NULL.
+ var modelInputsView = util.View{
+ 	Name: "v_model_inputs",
+ 	Tables: []string{
+-		"gold_prices", "cbr_currency_usd", "cbr_key_rate", "ofz_curve", "ipc_mes",
+-		"ipc_weeks", "macro_series", "stock_prices", "model_runs",
++		"gold_prices", "cbr_currency_usd", "cbr_key_rate", "ofz_curve", "rosstat_ipc_mes",
++		"rosstat_ipc_weeks", "macro_series", "stock_prices", "model_runs",
+ 	},
+ 	Select: `SELECT
+     gold_moex_fix_usd, gold_date,
+     usdrub, usdrub_date,
+     cbr_key_rate, cbr_key_rate_date,
+     ofz_1y, ofz_1y_date, ofz_3y, ofz_3y_date, ofz_5y, ofz_5y_date, ofz_10y, ofz_10y_date,
+     rgbi, rgbi_date,
+     ipc_mes_last, ipc_mes_last_date,
+     ipc_week_ytd, ipc_week_ytd_date,
+     fedfunds, fedfunds_date, dfii10, dfii10_date, dgs10, dgs10_date,
+@@ -56,34 +56,34 @@ CROSS JOIN (
+         argMaxIf(toNullable(yield), date, tenor = '10y') AS ofz_10y,
+         argMaxIf(toNullable(date), date, tenor = '10y') AS ofz_10y_date,
+         argMaxIf(toNullable(yield), date, tenor = 'RGBI') AS rgbi,
+         argMaxIf(toNullable(date), date, tenor = 'RGBI') AS rgbi_date
+     FROM ofz_curve FINAL
+ ) AS ofz
+ CROSS JOIN (
+     SELECT
+         argMaxIf(toNullable(percent), date, startsWith(name, 'Индексы потребительских цен на товары и услуги')) AS ipc_mes_last,
+         argMaxIf(toNullable(date), date, startsWith(name, 'Индексы потребительских цен на товары и услуги')) AS ipc_mes_last_date
+-    FROM ipc_mes FINAL
++    FROM rosstat_ipc_mes FINAL
+ ) AS ipc_m
+ CROSS JOIN (
+     SELECT
+         if(count() > 0, avg(exp(log_ytd) - 1) * 100, NULL) AS ipc_week_ytd,
+         if(count() > 0, max(last_date), NULL) AS ipc_week_ytd_date
+     FROM (
+         SELECT
+             name,
+             sum(log(toFloat64(percent) / 100)) AS log_ytd,
+             max(date) AS last_date
+-        FROM ipc_weeks FINAL
++        FROM rosstat_ipc_weeks FINAL
+         WHERE percent > 0
+-          AND toYear(date) = (SELECT toYear(max(date)) FROM ipc_weeks FINAL)
++          AND toYear(date) = (SELECT toYear(max(date)) FROM rosstat_ipc_weeks FINAL)
+         GROUP BY name
+     )
+ ) AS ipc_w
+ CROSS JOIN (
+     SELECT
+         argMaxIf(toNullable(value), date, series = 'FEDFUNDS') AS fedfunds,
+         argMaxIf(toNullable(date), date, series = 'FEDFUNDS') AS fedfunds_date,
+         argMaxIf(toNullable(value), date, series = 'DFII10') AS dfii10,
+         argMaxIf(toNullable(date), date, series = 'DFII10') AS dfii10_date,
+         argMaxIf(toNullable(value), date, series = 'DGS10') AS dgs10,

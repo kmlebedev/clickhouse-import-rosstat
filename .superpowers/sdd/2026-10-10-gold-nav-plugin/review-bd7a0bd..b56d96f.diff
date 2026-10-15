@@ -1,0 +1,70 @@
+diff --git a/ARCHITECTURE.md b/ARCHITECTURE.md
+index d7306bb..6ea5436 100644
+--- a/ARCHITECTURE.md
++++ b/ARCHITECTURE.md
+@@ -367,11 +367,11 @@ CREATE TABLE IF NOT EXISTS regime_states (
+ Правила витрин:
+ - создаются через `CREATE OR REPLACE VIEW ... DEFINER = default SQL SECURITY DEFINER AS ...` — определение может меняться, и агент читает сырые таблицы через definer, без прав на `macro_series`;
+ - комментарии ставятся через `ALTER TABLE v_x MODIFY COMMENT '...'` и `ALTER TABLE v_x COMMENT COLUMN col '...'`: синтаксис `COMMENT ON TABLE/COLUMN` в текущей версии ClickHouse (26.10) не поддерживается;
+ - `CREATE OR REPLACE` для витрин — отступление от правила «DDL всегда `IF NOT EXISTS`» (то правило относится к таблицам);
+ - для каждой новой витрины — `GRANT SELECT` пользователю `kimi_reader` в `sql/mcp_kimi_reader.sql`;
+-- витрины контура прогноза (`views/`, импортёр `gold_views`) создаются `util.CreateView` и пропускаются, пока не существуют все их исходные таблицы. `v_model_inputs` требует 9 таблиц, в том числе `ipc_mes` и `ipc_weeks` (Росстат) и `model_runs` (ingest), поэтому при падении импорта Росстата витрина не создаётся. Запускать `make import STAT=gold_views` после первого запуска ingest и после импорта Росстата
++- витрины контура прогноза (`views/`, импортёр `gold_views`) создаются `util.CreateView` и пропускаются, пока не существуют все их исходные таблицы. `v_model_inputs` требует 9 таблиц, в том числе `ipc_mes` и `ipc_weeks` (Росстат) и `model_runs` (ingest). Гейт проверяет только наличие таблиц (`system.tables`), не заполненность: `ipc_mes` и `ipc_weeks` создаются до загрузки Росстата, поэтому при его сбое витрина создаётся, а колонки `ipc_mes_last` и `ipc_week_ytd` дают NULL или устаревшие значения (ориентироваться по `*_date`). Запускать `make import STAT=gold_views` после первого запуска ingest
+ - групповые витрины legacy-источников (`v_cbr_macro`, `v_rosstat_macro`, `v_minfin_budget`, `v_gold_prices`) создаются через `util.CreateView`: витрина появляется, только когда все таблицы её группы уже импортированы, поэтому её создаёт последний импортёр группы; описания рядов группы пишутся в `series_catalog` каждым импортёром своими записями.
+ 
+ ### 6.4 DCF-модель Полюса (ключевые допущения, rev.2 по мировой практике)
+ 
+ ```
+diff --git a/README.md b/README.md
+index 01ce8e0..99dd3ae 100644
+--- a/README.md
++++ b/README.md
+@@ -286,11 +286,11 @@ MCP GoLand (опционально, ускоряет работу Kimi Code с 
+ - **`financial/`.** Legacy-контур (database/sql, свой main). Новые импортёры туда не добавляются.
+ - **Ingest-endpoint без ограничения частоты и размера тела, TLS — снаружи.** TLS и rate limit предполагаются на reverse proxy, в репозитории он не описан. Повторный `POST /v1/model_run` с тем же `run_id` отвечает `200 {"inserted": 1}`, хотя строк не пишет: ответ не отличает дубль от новой записи.
+ - **HTTP-режим mcp-clickhouse для плагина не развёрнут в репозитории.** Локальная конфигурация Kimi — stdio (блок «MCP для Kimi» в разделе «Ключи и окружение»). Для плагина `gold-nav` сервер автора по HTTPS с токеном нужно поднять отдельно.
+ - **Индикаторы `v_gold_dashboard` вводятся вручную.** `crack_ulsd_proxy`, `distillate_stocks`, `fedwatch_dec_hike`, `etf_flows_month`, `dxy` имеют только `manual_series`; импортёров нет. Без ввода они показываются как `stale`.
+ - **Сверка прогнозов не автоматизирована.** `actual` и `error_pct` в `forecast_log` не заполняются кодом; `v_forecast_accuracy` покажет `is_resolved = 0` до ручного ввода.
+-- **`v_model_inputs` зависит от Росстата.** Витрина требует таблицы `ipc_mes` и `ipc_weeks`; при ошибке Росстата (см. выше) `gold_views` её не создаёт, пока импорт не пройдёт.
++- **ИПЦ в `v_model_inputs` может быть пустым.** Витрина требует, чтобы существовали таблицы `ipc_mes` и `ipc_weeks`, но не проверяет их заполненность. Таблицы создаются до загрузки Росстата, поэтому при его ошибке (см. выше) витрина создаётся, а `ipc_mes_last` и `ipc_week_ytd` остаются NULL или устаревают; ориентироваться по `*_date`.
+ - **`nav_beta_gold` не заполняется** (поля нет во входе `ModelRun`), в таблицу пишется NULL.
+ - **Имена импортёров.** `Name()` у `fred` — `fred` (несколько серий, одна таблица `macro_series`), у `cbr` часть импортёров делит таблицу (`cbr_currency_usd`, `households_b_mes`).
+ - **Таблица `gold_prices` использует `Date32`.** Так как LBMA-ряд начинается в 1968 году.
+ - **Доходности G-curve (`ofz_curve`, теноры 1y/3y/5y/10y) — без ретроспективы.** Эндпоинт MOEX ISS `/iss/engines/stock/zcyc.json` отдаёт только снимок текущего дня; история накапливается с даты первого запуска импортёра. Индекс RGBI (тот же zcyc + свечи) имеет полную историю с 2010 года.
+ 
+diff --git a/docs/ROADMAP_DCF_POLYUS.md b/docs/ROADMAP_DCF_POLYUS.md
+index 05a8425..349bbba 100644
+--- a/docs/ROADMAP_DCF_POLYUS.md
++++ b/docs/ROADMAP_DCF_POLYUS.md
+@@ -157,11 +157,11 @@ docker run -d --name ch-mcp \
+ 
+ | Фаза | Срок | Содержание | Результат |
+ |---|---|---|---|
+ | **0. Гигиена** | неделя 1 | Ротация утёкших паролей, лицензия, docker-compose (ClickHouse + Grafana + importer + mcp-clickhouse), `kimi_reader` read-only | Безопасная воспроизводимая инфраструктура |
+ | **1. Данные для золота** | недели 1–3 | Исторический базлайн: `fred` (FEDFUNDS, DFII10, DGS10, DTWEXBGS, CPI/PPI через FRED) — ✅ готов 2026-10-08 (35 092 строки, 6 серий); `bls` (CPI, безработица, NFP, зарплата, PPI, JOLTS) и `bea` (PCE, NIPA T20804) — ✅ код и тесты 2026-10-09, `bea` ждёт `BEA_API_KEY` для живого прогона; `moex_iss` (PLZL OHLCV) — ✅ готов 2026-10-09 (4330 торговых дней с 2010-01-11; DAG `dagu/moex.yaml`); `gold` (MOEX GOLDFIXME ÷ курс ЦБ, производная цена) — ✅ готов 2026-10-08 (553 дня; DAG `dagu/gold.yaml`); `ofz_curve` (RGBI история с 2010 + G-curve 1y/3y/5y/10y снимком текущего дня) — ✅ готов 2026-10-09; `dividend_events`, `mmf_aum`. **Статус `fred`/`bls`/`bea`/`gold` — исторический базлайн + Grafana + верификация; первичный источник мировых данных для прогнозной сессии — datasource (Kimi Code: `kimi-datasource`; Kimi Work: Global Finance Data/IMF).** Go-импортёры `eia` (crack закрыт datasource `HO=F`, запасы — ручной ввод), нативный `lbma_gold` (закрыт `GC=F`), `wgc`, `fedwatch` — **вычеркнуты из плана** (ручной ввод / WebBridge, фаза 5) | `macro_series`, `gold_prices`, котировки PLZL, кривая ОФЗ; все «мировые» пороги — в БД |
+-| **2. Семантика + MCP** | неделя 3 | View `v_model_inputs` (один SELECT = входы DCF), `v_gold_dashboard` (дашборд верификации с флагами), `v_events_calendar`; COMMENT-документация витрин; плагин `gold-nav` (skill «сценарная сессия» + `/gold-nav:session`); mcp-clickhouse в HTTP-режиме с токеном (read-only `kimi_reader`); ingest-endpoint с Bearer-токеном для записи `model_runs`; тестовая сессия «дай срез входов DCF» | Kimi читает БД через MCP; контур «прогноз за одну сессию» установлен одной командой |
++| **2. Семантика + MCP** | неделя 3 | ✅ `events_calendar` Q4-2026 (сид `sql/events_calendar_q4_2026.sql`); ✅ View `v_model_inputs` (один SELECT = входы DCF); ✅ `v_gold_dashboard` (дашборд верификации с флагами); ✅ `v_events_calendar`; ✅ COMMENT-документация витрин; ✅ плагин `gold-nav` (skill «сценарная сессия» + `/gold-nav:session`; код в отдельном репозитории, живая приёмка не выполнена); ❌ mcp-clickhouse в HTTP-режиме с токеном (read-only `kimi_reader`) — не сделано, в репозитории не развёрнуто; ✅ ingest-endpoint с Bearer-токеном для записи `model_runs` (`cmd/ingest`); ❌ тестовая сессия «дай срез входов DCF» — не проведена | Kimi читает БД через MCP; контур «прогноз за одну сессию» установлен одной командой |
+ | **3. DCF-движок** | недели 4–6 | Таблицы модели + `reserves_*`, `mine_plans`, `nav_by_asset`, `price_decks`; sum-of-parts LOM-NAV с хвостом закрытия; двухконтурная ставка; НДПИ-функция; обнуление дивидендов до 2030; стадийные haircut'ы ресурсов; мост NAV → цена; NAV-матрица в Grafana | Первый версионированный NAV с сценариями |
+ | **4. Цикл прогноза** | недели 6–8 | Календарные cron-сессии; `regime_states` (HMM) и согласование вероятностей с режимом; годовой отчёт о запасах (март) как триггер пересчёта; автоверификация прогнозов | Прогноз обновляется регулярно и по событиям |
+ | **5. Автономность** | квартал | `news_watch` + `sentiment_index`; парсинг FedWatch и WGC ETF-потоков; алерты Grafana (crack >$50, FedWatch >80%, закрытие недели <$3,950); алерты на смену веса PLZL в IMOEX, налоговые законопроекты, разворот ставки ЦБ; `v_peers_comparison` + алерт «дислокация P/NAV»; `v_gold_attribution`; ML-ансамбль как конкурентный трек прогноза (DM-тест против экспертного) | Система сама сигнализирует о необходимости пересчёта |
+ 
+ ### Quick wins (можно сделать уже сегодня)
+diff --git a/views/gold_views.go b/views/gold_views.go
+index 144263e..598374e 100644
+--- a/views/gold_views.go
++++ b/views/gold_views.go
+@@ -2,11 +2,13 @@
+ // v_model_inputs (входы DCF), v_gold_dashboard (дашборд верификации) и
+ // v_forecast_accuracy (точность прогнозов из forecast_log).
+ //
+ // Импортёр gold_views запускается после ingest-первого-прогона: util.CreateView
+ // пропускает витрину, пока не существуют все её таблицы (model_runs создаёт ingest),
+-// поэтому его вызывают отдельным шагом после первого запуска ingest.
++// поэтому его вызывают отдельным шагом после первого запуска ingest. Гейт проверяет
++// только наличие таблиц, а не их заполненность: ipc_mes и ipc_weeks создаются до
++// загрузки Росстата, и при его сбое витрина создаётся с NULL или устаревшими ipc_*.
+ package views
+ 
+ import (
+ 	"context"
+ 

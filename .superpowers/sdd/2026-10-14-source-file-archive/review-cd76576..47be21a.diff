@@ -1,0 +1,680 @@
+# Review package: cd76576..47be21a
+
+## Commits
+47be21a add archive store contract, key scheme and local backend
+
+## Files changed
+ archive/fromenv.go      |  63 +++++++++++++++++++++++
+ archive/fromenv_test.go | 130 ++++++++++++++++++++++++++++++++++++++++++++++++
+ archive/key.go          |  77 ++++++++++++++++++++++++++++
+ archive/key_test.go     | 107 +++++++++++++++++++++++++++++++++++++++
+ archive/local.go        |  95 +++++++++++++++++++++++++++++++++++
+ archive/local_test.go   | 112 +++++++++++++++++++++++++++++++++++++++++
+ archive/store.go        |  38 ++++++++++++++
+ 7 files changed, 622 insertions(+)
+
+## Diff
+diff --git a/archive/fromenv.go b/archive/fromenv.go
+new file mode 100644
+index 0000000..38eca7e
+--- /dev/null
++++ b/archive/fromenv.go
+@@ -0,0 +1,63 @@
++package archive
++
++import (
++	"fmt"
++	"net/http"
++	"os"
++)
++
++// Имена переменных окружения архива вынесены в константы, потому что строку называют и загрузка
++// конфигурации, и тексты ошибок: расхождение в написании («ARCHIVE_YANDEX_DIR» против
++// «ARCHIVE_YANDEXDIR») стоило бы молча выключенной архивации.
++const (
++	EnvBackend     = "ARCHIVE_BACKEND"      // local | yandex | пусто = архивация выключена
++	EnvYandexToken = "ARCHIVE_YANDEX_TOKEN" // OAuth-токен приложения (секрет: только os.Getenv)
++	EnvYandexDir   = "ARCHIVE_YANDEX_DIR"   // корень архива на Диске
++	EnvLocalDir    = "ARCHIVE_LOCAL_DIR"    // корень LocalStore (dev-прогон, приёмка, тесты)
++)
++
++// DefaultYandexDir — корень архива на Диске, когда ARCHIVE_YANDEX_DIR пуст: каталог настраивается
++// (dev-прогон, приёмка), но у штатного конвейера он один, и подставлять его руками в каждую команду
++// незачем — забытая переменная отключала бы архивацию молча.
++const DefaultYandexDir = "disk:/rosstat-archive"
++
++// FromEnv собирает хранилище по окружению. Пустой EnvBackend — архивация выключена: это (nil, nil),
++// штатный режим, а не ошибка: архив — опция и включается парой «бэкенд настроен + у импортёра
++// объявлена точка контроля» (спека §3.3). Любая другая неудача — ошибка конфигурации, и вызывающий
++// (util) логирует её и продолжает импорт без архива: недоступный архив не должен останавливать
++// данные (спека §3.1). Поэтому каждый текст ошибки называет переменную окружения: по логу дежурный
++// должен понять, какую строку править, а не искать причину в API хранилища.
++func FromEnv(hc *http.Client) (Store, error) {
++	backend := os.Getenv(EnvBackend)
++	switch backend {
++	case "":
++		return nil, nil
++	case "local":
++		dir := os.Getenv(EnvLocalDir)
++		if dir == "" {
++			return nil, fmt.Errorf("%s не задан (нужен при %s=local)", EnvLocalDir, EnvBackend)
++		}
++		return NewLocal(dir), nil
++	case "yandex":
++		// Токен — секрет: его значение уйдёт только в конструктор Диска (yandex.go, отдельный шаг),
++		// вместе с hc; в текст ошибки и в лог оно не попадает — лог читает дежурный (правило 1 AGENTS.md).
++		if os.Getenv(EnvYandexToken) == "" {
++			return nil, fmt.Errorf("%s не задан (нужен при %s=yandex)", EnvYandexToken, EnvBackend)
++		}
++		// Конструктора пока нет, поэтому ветка отвечает ошибкой незакрытой конфигурации, а не nil:
++		// молчаливый nil выглядел бы как включённая архивация, и пропажу версий заметили бы только
++		// при попытке восстановления — то есть когда файла у источника уже нет.
++		return nil, fmt.Errorf("%s=%s: бэкенд Диска не реализован (корень %s)", EnvBackend, backend, yandexRoot())
++	default:
++		return nil, fmt.Errorf("неизвестный %s=%q (ожидается local или yandex)", EnvBackend, backend)
++	}
++}
++
++// yandexRoot — корень архива на Диске: ARCHIVE_YANDEX_DIR, а при пустом значении DefaultYandexDir.
++// Путь не секрет (в отличие от токена), поэтому его можно и показать в тексте ошибки.
++func yandexRoot() string {
++	if root := os.Getenv(EnvYandexDir); root != "" {
++		return root
++	}
++	return DefaultYandexDir
++}
+diff --git a/archive/fromenv_test.go b/archive/fromenv_test.go
+new file mode 100644
+index 0000000..4d94d99
+--- /dev/null
++++ b/archive/fromenv_test.go
+@@ -0,0 +1,130 @@
++package archive
++
++import (
++	"context"
++	"net/http"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++)
++
++// Пустой ARCHIVE_BACKEND — архивация выключена, и это (nil, nil), а не ошибка: без архива
++// конвейер работает как раньше (спека §3.1), а ошибка на каждом прогоне мусорила бы в логе у всех,
++// кто архив не заводил. Клиент здесь и ниже (&http.Client{}) в сеть не ходит — local и «выключено»
++// работают с файловой системой; но он часть сигнатуры FromEnv, потому что прод передаёт
++// util.HttpClient с национальными TLS-сертификатами РФ (правило 4 AGENTS.md), и подменять её в
++// тестах своим вариантом нельзя.
++func TestFromEnvDisabled(t *testing.T) {
++	t.Setenv(EnvBackend, "")
++
++	store, err := FromEnv(&http.Client{})
++	if err != nil {
++		t.Fatalf("FromEnv без %s: %v", EnvBackend, err)
++	}
++	if store != nil {
++		t.Errorf("FromEnv без %s вернул %v, ожидался nil", EnvBackend, store)
++	}
++}
++
++// local → LocalStore на ARCHIVE_LOCAL_DIR, и каталог доезжает до бэкенда: запись обязана лечь
++// именно в него — так dev-прогон и приёмка видят версии глазами, без Диска.
++func TestFromEnvLocal(t *testing.T) {
++	dir := t.TempDir()
++	t.Setenv(EnvBackend, "local")
++	t.Setenv(EnvLocalDir, dir)
++
++	store, err := FromEnv(&http.Client{})
++	if err != nil {
++		t.Fatalf("FromEnv %s=local: %v", EnvBackend, err)
++	}
++	if store == nil {
++		t.Fatalf("FromEnv %s=local вернул nil", EnvBackend)
++	}
++	if store.Name() != "local" {
++		t.Errorf("Name() = %q, ожидалось %q", store.Name(), "local")
++	}
++	key := Key("cbr_m2", "x.xlsx", fp, zeroSum)
++	if err = store.Put(context.Background(), key, []byte("тело")); err != nil {
++		t.Fatalf("Put в local-хранилище: %v", err)
++	}
++	if _, err = os.Stat(filepath.Join(dir, filepath.FromSlash(key))); err != nil {
++		t.Errorf("объект не лёг в %s: %v", dir, err)
++	}
++}
++
++// Пустой ARCHIVE_LOCAL_DIR — ошибка, называющая переменную: иначе дежурный по логу не знает, какую
++// строку править, а хранилище молча оказалось бы каталогом по умолчанию.
++func TestFromEnvLocalWithoutDir(t *testing.T) {
++	t.Setenv(EnvBackend, "local")
++	t.Setenv(EnvLocalDir, "")
++
++	store, err := FromEnv(&http.Client{})
++	if err == nil {
++		t.Fatalf("ожидалась ошибка, получено хранилище %v", store)
++	}
++	if !strings.Contains(err.Error(), EnvLocalDir) {
++		t.Errorf("ошибка %q не называет %s — по логу не понять, что править", err, EnvLocalDir)
++	}
++}
++
++// yandex без токена останавливается на конфигурации: без токена хранилище не собрать, и текст
++// ошибки называет переменную, чтобы дежурный правил одну строку, а не искал причину в API.
++func TestFromEnvYandexRequiresToken(t *testing.T) {
++	t.Setenv(EnvBackend, "yandex")
++	t.Setenv(EnvYandexToken, "")
++
++	store, err := FromEnv(&http.Client{})
++	if err == nil {
++		t.Fatalf("ожидалась ошибка, получено хранилище %v", store)
++	}
++	if !strings.Contains(err.Error(), EnvYandexToken) {
++		t.Errorf("ошибка %q не называет %s", err, EnvYandexToken)
++	}
++}
++
++// Токен задан: корень архива берётся из ARCHIVE_YANDEX_DIR, а при пустом значении — из
++// DefaultYandexDir. Значение токена при этом не должно попадать в текст ошибки: лог архивации
++// читает дежурный, и секрет в логе — утечка (правило 1 AGENTS.md). Хранилища Диска на этом шаге
++// ещё нет (yandex.go — следующий), поэтому ветка отвечает ошибкой незакрытой конфигурации:
++// молчаливый nil выглядел бы как включённая архивация, а версии не сохранялись бы вовсе.
++func TestFromEnvYandexRoot(t *testing.T) {
++	const token = "SECRET_TOKEN_VALUE"
++	t.Setenv(EnvBackend, "yandex")
++	t.Setenv(EnvYandexToken, token)
++
++	for _, c := range []struct{ name, dir, wantRoot string }{
++		{"корень по умолчанию", "", DefaultYandexDir},
++		{"корень из переменной", "disk:/custom-archive", "disk:/custom-archive"},
++	} {
++		t.Run(c.name, func(t *testing.T) {
++			t.Setenv(EnvYandexDir, c.dir)
++
++			store, err := FromEnv(&http.Client{})
++			if err == nil {
++				t.Fatalf("ожидалась ошибка, получено хранилище %v", store)
++			}
++			if !strings.Contains(err.Error(), c.wantRoot) {
++				t.Errorf("ошибка %q не называет корень %q", err, c.wantRoot)
++			}
++			if strings.Contains(err.Error(), token) {
++				t.Errorf("в тексте ошибки %q есть значение токена", err)
++			}
++		})
++	}
++}
++
++// Неизвестное значение ARCHIVE_BACKEND (опечатка) — ошибка с именем переменной и её значением:
++// молчаливое «архивация выключена» заметили бы только при попытке восстановить версию, то есть
++// тогда, когда файла у источника уже нет.
++func TestFromEnvUnknownBackend(t *testing.T) {
++	t.Setenv(EnvBackend, "ftp")
++
++	store, err := FromEnv(&http.Client{})
++	if err == nil {
++		t.Fatalf("ожидалась ошибка, получено хранилище %v", store)
++	}
++	if !strings.Contains(err.Error(), EnvBackend) || !strings.Contains(err.Error(), "ftp") {
++		t.Errorf("ошибка %q не называет %s и его значение", err, EnvBackend)
++	}
++}
+diff --git a/archive/key.go b/archive/key.go
+new file mode 100644
+index 0000000..3fdb0c7
+--- /dev/null
++++ b/archive/key.go
+@@ -0,0 +1,77 @@
++package archive
++
++import (
++	"crypto/sha256"
++	"encoding/hex"
++	"strings"
++	"unicode"
++	"unicode/utf8"
++)
++
++const (
++	// keyNameMaxBytes — потолок имени артефакта в ключе: 200 байт. Компонент пути в хранилище
++	// ограничен 255 байтами (имя файла на Диске, NAME_MAX в ФС), а имя делит компонент с префиксом
++	// версии (≤20 байт: «sha-» и 16 hex) и '_'. Кириллица — два байта на символ, поэтому потолок
++	// режется по границе руны, а не по байту: см. sanitizeName.
++	keyNameMaxBytes = 200
++
++	// keyNameFallback — имя для пустого basename: имя приходит из URL, и пустой путь дал бы
++	// ключ с хвостом «_» — такой объект не читается ни в логе, ни глазами в каталоге архива.
++	keyNameFallback = "file"
++
++	// keyPrefixHex — длина префикса версии в ключе: 16 символов отпечатка (64 бита). Версии одного
++	// файла так различаются с большим запасом, и те же 16 символов видно в логе и в строке
++	// source_publications — ключ архива и таблица версий должны называть версию одинаково.
++	keyPrefixHex = 16
++)
++
++// Key — ключ объекта версии: «<источник>/<префикс версии>_<имя>». Префикс — из отпечатка версии,
++// который даёт префлайт (util.HeadFingerprint): по нему архив и source_publications говорят об
++// одной версии, а проверка «версия уже в архиве?» на no-op-пути обходится без чтения файла.
++// Отпечатка нет (HEAD недоступен) → префикс из sha256 содержимого: без него две версии одного
++// файла схлопнулись бы в один ключ, и новая вытеснила бы прежнюю — ровно та потеря, ради которой
++// архив заведён.
++func Key(source, basename, fingerprint string, sum [sha256.Size]byte) string {
++	prefix := prefix16(fingerprint)
++	if prefix == "" {
++		prefix = "sha-" + prefix16(hex.EncodeToString(sum[:]))
++	}
++	return source + "/" + prefix + "_" + sanitizeName(basename)
++}
++
++// prefix16 — не более 16 символов. Отпечаток короче 16 — нештатная ситуация (HeadFingerprint
++// всегда даёт 32 hex), но падать на срезе нельзя: сбой сборки ключа уронил бы импорт, тогда как
++// короткий префикс версию всё равно называет, а пустой склеил бы разные версии одного файла.
++func prefix16(s string) string {
++	if len(s) > keyPrefixHex {
++		return s[:keyPrefixHex]
++	}
++	return s
++}
++
++// sanitizeName готовит basename к роли компонента ключа: имя приходит из URL источника, а ключ
++// становится путём в хранилище (у LocalStore — путём файловой системы), поэтому разделители пути
++// и запрещённые в именах символы заменяются на '_'. Управляющие символы убираются вместе с ними:
++// многострочные имена ломают и лог, и список объектов. Кириллица сохраняется — выгрузки ЦБ и
++// Росстата названы по-русски, и переименование исказило бы аудит версии.
++func sanitizeName(name string) string {
++	clean := strings.Map(func(r rune) rune {
++		if unicode.IsControl(r) || strings.ContainsRune(`/\:*?"<>|`, r) {
++			return '_'
++		}
++		return r
++	}, name)
++	if len(clean) > keyNameMaxBytes {
++		// utf8.RuneStart: отступ от потолка до начала руны — разрезанная руна сделала бы имя
++		// объекта невосстановимым (в ключе остались бы битые байты).
++		cut := keyNameMaxBytes
++		for cut > 0 && !utf8.RuneStart(clean[cut]) {
++			cut--
++		}
++		clean = clean[:cut]
++	}
++	if clean == "" {
++		return keyNameFallback
++	}
++	return clean
++}
+diff --git a/archive/key_test.go b/archive/key_test.go
+new file mode 100644
+index 0000000..27235d5
+--- /dev/null
++++ b/archive/key_test.go
+@@ -0,0 +1,107 @@
++package archive
++
++import (
++	"crypto/sha256"
++	"encoding/hex"
++	"strings"
++	"testing"
++	"unicode/utf8"
++)
++
++// fp — отпечаток версии в том виде, в каком его даёт util.HeadFingerprint (md5 от заголовков,
++// 32 hex-символа), fp16 — те его 16 символов, которые попадают в ключ.
++const (
++	fp   = "8f3c1d2e4a5b6c7d8e9f0a1b2c3d4e5f"
++	fp16 = "8f3c1d2e4a5b6c7d"
++)
++
++var zeroSum [sha256.Size]byte
++
++// Отпечаток префлайта есть — ключ строится из него, и sha256 содержимого на ключ не влияет:
++// «версия уже в архиве?» на no-op-пути решается одним Exists по данным HEAD, без чтения файла
++// (спека §3.2). Если бы содержимое участвовало, проверка (она считает ключ без файла, с нулевой
++// суммой) не нашла бы объект, записанный полным импортом, и каждый прогон шёл бы в полный импорт.
++func TestKeyFromFingerprint(t *testing.T) {
++	got := Key("cbr_m2", "monetary_agg_SA.xlsx", fp, zeroSum)
++	if want := "cbr_m2/" + fp16 + "_monetary_agg_SA.xlsx"; got != want {
++		t.Errorf("Key() = %q, ожидалось %q", got, want)
++	}
++	first := sha256.Sum256([]byte("версия первая"))
++	second := sha256.Sum256([]byte("версия вторая"))
++	if Key("cbr_m2", "monetary_agg_SA.xlsx", fp, first) != Key("cbr_m2", "monetary_agg_SA.xlsx", fp, second) {
++		t.Error("при непустом отпечатке содержимое изменило ключ: префлайт считает ключ без файла")
++	}
++}
++
++// Отпечатка нет (HEAD недоступен) — ключ из sha256 содержимого. Префикс «sha-» называет
++// происхождение префикса (в логе и на Диске он отличим от отпечатка префлайта), а разные версии
++// файла обязаны давать разные ключи: иначе новая версия заняла бы место прежней — та самая потеря,
++// ради которой архив и заведён (спека §3.1, риск «HEAD недоступен»).
++func TestKeyWithoutFingerprintUsesSHA(t *testing.T) {
++	sum := sha256.Sum256([]byte("версия"))
++	got := Key("cbr_m2", "monetary_agg_SA.xlsx", "", sum)
++	want := "cbr_m2/sha-" + hex.EncodeToString(sum[:])[:16] + "_monetary_agg_SA.xlsx"
++	if got != want {
++		t.Errorf("Key() = %q, ожидалось %q", got, want)
++	}
++	other := sha256.Sum256([]byte("другая версия"))
++	if Key("cbr_m2", "monetary_agg_SA.xlsx", "", other) == got {
++		t.Error("разные суммы sha256 дали один ключ: две версии схлопнулись бы в один объект")
++	}
++}
++
++// Имя приходит из URL источника, а ключ становится путём в хранилище (у LocalStore — путём ФС),
++// поэтому разделители и запрещённые в именах символы заменяются. Кириллица сохраняется: выгрузки
++// ЦБ и Росстата названы по-русски, и переименование исказило бы аудит версии.
++func TestKeySanitizesBasename(t *testing.T) {
++	sum := sha256.Sum256([]byte("версия"))
++	cases := []struct{ name, basename, want string }{
++		{"разделители пути", `monetary/agg\SA.xlsx`, "monetary_agg_SA.xlsx"},
++		{"запрещённые в именах", `a:b*c?d"e<f>g|h.xlsx`, "a_b_c_d_e_f_g_h.xlsx"},
++		{"управляющие символы", "monetary\x00agg\x1fSA.xlsx", "monetary_agg_SA.xlsx"},
++		{"кириллица сохраняется", "выгрузка_ЦБ.xlsx", "выгрузка_ЦБ.xlsx"},
++		{"пустое имя", "", "file"},
++	}
++	for _, c := range cases {
++		t.Run(c.name, func(t *testing.T) {
++			got := Key("cbr_m2", c.basename, fp, sum)
++			if want := "cbr_m2/" + fp16 + "_" + c.want; got != want {
++				t.Errorf("Key(%q) = %q, ожидалось %q", c.basename, got, want)
++			}
++		})
++	}
++
++	// Обрезка длинного имени: компонент ключа обязан влезать в 255 байт (предел имени файла и на
++	// Диске, и в ФС), поэтому имя режется до 200 — префикс версии (≤20) и '_' оставляют запас.
++	// Режется по границе руны: «a» + 100 «я» (201 байт) даёт 199 байт, а не 200, где последняя «я»
++	// была бы разрезана пополам и имя в хранилище стало бы битым UTF-8.
++	t.Run("длинное имя режется по границе руны", func(t *testing.T) {
++		basename := "a" + strings.Repeat("я", 100) + ".xlsx"
++		got := Key("cbr_m2", basename, fp, sum)
++		if want := "cbr_m2/" + fp16 + "_a" + strings.Repeat("я", 99); got != want {
++			t.Errorf("Key() = %q, ожидалось %q", got, want)
++		}
++		component := strings.TrimPrefix(got, "cbr_m2/")
++		if !utf8.ValidString(component) {
++			t.Errorf("компонент ключа %q — не валидный UTF-8", component)
++		}
++		if len(component) > 255 {
++			t.Errorf("компонент ключа %d байт, предел — 255", len(component))
++		}
++	})
++}
++
++// Короткий отпечаток нештатен (HeadFingerprint всегда даёт 32 hex), но паниковать и отдавать
++// пустой префикс нельзя: паника уронила бы импорт на ровном месте, а пустой префикс склеил бы
++// версии одного файла в один объект («…/_file.xlsx»).
++func TestKeyFingerprintShorterThan16(t *testing.T) {
++	for _, c := range []struct{ fingerprint, want string }{
++		{"abc", "cbr_m2/abc_x.xlsx"},
++		{"f", "cbr_m2/f_x.xlsx"},
++	} {
++		got := Key("cbr_m2", "x.xlsx", c.fingerprint, sha256.Sum256(nil))
++		if got != c.want {
++			t.Errorf("Key(отпечаток %q) = %q, ожидалось %q", c.fingerprint, got, c.want)
++		}
++	}
++}
+diff --git a/archive/local.go b/archive/local.go
+new file mode 100644
+index 0000000..ec86dd0
+--- /dev/null
++++ b/archive/local.go
+@@ -0,0 +1,95 @@
++package archive
++
++import (
++	"context"
++	"errors"
++	"fmt"
++	"os"
++	"path/filepath"
++	"strings"
++)
++
++// LocalStore — хранилище на каталоге файловой системы: dev-прогоны (ARCHIVE_BACKEND=local) и
++// харнесс тестов. Своей структуры не заводит — ключ и есть относительный путь, поэтому каталог
++// архива читается глазами, а версии одного источника лежат рядом, как и на Диске.
++//
++// ctx у операций не проверяется: файловые вызовы отмены не умеют, а параметр — часть контракта
++// Store, чтобы бэкенды оставались взаимозаменяемыми.
++type LocalStore struct {
++	Dir string
++}
++
++// LocalStore обязан удовлетворять Store: бэкенды подставляются друг вместо друга (тесты util
++// берут local вместо Диска), и расхождение сигнатур должно ломать сборку, а не прогон.
++var _ Store = (*LocalStore)(nil)
++
++// NewLocal — хранилище в каталоге dir. Каталог здесь не создаётся: пустой каталог под архив ничего
++// не значит, а Put заводит и его, и подкаталог источника (MkdirAll родителя) — так dev-прогон и
++// приёмка получают дерево ровно из тех версий, что действительно сохранились.
++func NewLocal(dir string) *LocalStore {
++	return &LocalStore{Dir: dir}
++}
++
++func (s *LocalStore) Name() string {
++	return "local"
++}
++
++func (s *LocalStore) Put(ctx context.Context, key string, body []byte) error {
++	p, err := s.path(key)
++	if err != nil {
++		return err
++	}
++	if err = os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
++		return fmt.Errorf("archive local: каталог %s: %w", filepath.Dir(p), err)
++	}
++	if err = os.WriteFile(p, body, 0o644); err != nil {
++		return fmt.Errorf("archive local: запись %s: %w", key, err)
++	}
++	return nil
++}
++
++func (s *LocalStore) Get(ctx context.Context, key string) ([]byte, error) {
++	p, err := s.path(key)
++	if err != nil {
++		return nil, err
++	}
++	body, err := os.ReadFile(p)
++	if err != nil {
++		return nil, fmt.Errorf("archive local: чтение %s: %w", key, err)
++	}
++	return body, nil
++}
++
++// Exists — отсутствие файла это «версии нет» (false, nil), а не ошибка: так на него смотрит и
++// префлайт — «нет» отправляет в полный импорт и самолечение архива, тогда как ошибка означала бы
++// сбой проверки. Дежурный по логу должен различать эти два случая.
++func (s *LocalStore) Exists(ctx context.Context, key string) (bool, error) {
++	p, err := s.path(key)
++	if err != nil {
++		return false, err
++	}
++	if _, err = os.Stat(p); err != nil {
++		if errors.Is(err, os.ErrNotExist) {
++			return false, nil
++		}
++		return false, fmt.Errorf("archive local: проверка %s: %w", key, err)
++	}
++	return true, nil
++}
++
++// path переводит ключ в путь внутри Dir и отвергает выход за каталог. Ключ относительный (его
++// собирает Key), но проверка нужна: путь — единственное, что отделяет строку от файловой системы,
++// а ключ с «..» записал бы объект рядом с архивом (тот потерялся бы при переносе каталога и разошёлся
++// бы с реестром). Сравниваются абсолютные пути: Join чистит «.» и «..» в ключе, поэтому префиксная
++// проверка по неочищенному корню отсекла бы валидные ключи при относительном Dir (и при Dir = «.»).
++func (s *LocalStore) path(key string) (string, error) {
++	root, err := filepath.Abs(s.Dir)
++	if err != nil {
++		return "", fmt.Errorf("archive local: каталог %q: %w", s.Dir, err)
++	}
++	p := filepath.Join(root, filepath.FromSlash(key))
++	if !strings.HasPrefix(p, root+string(filepath.Separator)) {
++		return "", fmt.Errorf("archive local: ключ %q вне каталога %q", key, s.Dir)
++	}
++	return p, nil
++}
+diff --git a/archive/local_test.go b/archive/local_test.go
+new file mode 100644
+index 0000000..fc15fb4
+--- /dev/null
++++ b/archive/local_test.go
+@@ -0,0 +1,112 @@
++package archive
++
++import (
++	"bytes"
++	"context"
++	"crypto/sha256"
++	"errors"
++	"os"
++	"path/filepath"
++	"testing"
++)
++
++// Round-trip Put → Get → Exists: локальный бэкенд — это dev-прогон (ARCHIVE_BACKEND=local) и
++// харнесс тестов, поэтому проверяется ровно то, на что опирается вызывающий: положили байты,
++// прочитали те же байты, наличие видно.
++func TestLocalRoundTrip(t *testing.T) {
++	store := NewLocal(t.TempDir())
++	ctx := context.Background()
++	key := Key("cbr_m2", "monetary_agg_SA.xlsx", fp, sha256.Sum256([]byte("версия")))
++	body := []byte("байты выгрузки")
++
++	if store.Name() != "local" {
++		t.Errorf("Name() = %q, ожидалось %q", store.Name(), "local")
++	}
++	if err := store.Put(ctx, key, body); err != nil {
++		t.Fatalf("Put: %v", err)
++	}
++	got, err := store.Get(ctx, key)
++	if err != nil {
++		t.Fatalf("Get: %v", err)
++	}
++	if !bytes.Equal(got, body) {
++		t.Errorf("Get() = %q, ожидалось %q", got, body)
++	}
++	exists, err := store.Exists(ctx, key)
++	if err != nil {
++		t.Fatalf("Exists: %v", err)
++	}
++	if !exists {
++		t.Error("Exists после Put = false, ожидалось true")
++	}
++}
++
++// Отсутствие объекта — не ошибка (false, nil): Exists зовётся на каждом no-op-прогоне, и ошибка
++// вместо ответа «нет» превращала бы штатное «версия новая» в сбой архивации. Get при этом обязан
++// падать: пустые байты как версия файла — молчаливая потеря.
++func TestLocalMissingKey(t *testing.T) {
++	store := NewLocal(t.TempDir())
++	ctx := context.Background()
++
++	exists, err := store.Exists(ctx, "cbr_m2/none.xlsx")
++	if err != nil {
++		t.Fatalf("Exists отсутствующего ключа: %v", err)
++	}
++	if exists {
++		t.Error("Exists отсутствующего ключа = true, ожидалось false")
++	}
++	if _, err = store.Get(ctx, "cbr_m2/none.xlsx"); err == nil {
++		t.Error("Get отсутствующего ключа вернул байты без ошибки")
++	}
++}
++
++// Ключ с «..» отвергается всеми операциями, и файла вне каталога архива не появляется. Ключи
++// собирает Key из данных источника, но путь — единственное, что отделяет строку от файловой
++// системы: объект, записанный рядом с каталогом архива, потерялся бы при его переносе (и молча
++// разошёлся бы с реестром).
++func TestLocalRejectsParentKey(t *testing.T) {
++	dir := t.TempDir()
++	store := NewLocal(dir)
++	ctx := context.Background()
++	escaped := filepath.Join(dir, "..", "escaped.xlsx")
++
++	if err := store.Put(ctx, "../escaped.xlsx", []byte("нет")); err == nil {
++		t.Error("Put ключа с «..» не дал ошибки")
++	}
++	if _, err := store.Get(ctx, "../escaped.xlsx"); err == nil {
++		t.Error("Get ключа с «..» не дал ошибки")
++	}
++	if _, err := store.Exists(ctx, "../escaped.xlsx"); err == nil {
++		t.Error("Exists ключа с «..» не дал ошибки")
++	}
++	if _, err := os.Stat(escaped); !errors.Is(err, os.ErrNotExist) {
++		t.Errorf("файл вне каталога архива существует (%v), ожидалось его отсутствие", err)
++	}
++}
++
++// Вложенный ключ (…/<источник>/<префикс>_<имя>) создаёт подкаталог источника: каталог архива
++// читается глазами, и версии одного источника лежат рядом — как и на Диске по тому же ключу.
++func TestLocalNestedKey(t *testing.T) {
++	dir := t.TempDir()
++	store := NewLocal(dir)
++	ctx := context.Background()
++	key := "cbr_m2/x_y.xlsx"
++
++	if err := store.Put(ctx, key, []byte("тело")); err != nil {
++		t.Fatalf("Put: %v", err)
++	}
++	info, err := os.Stat(filepath.Join(dir, "cbr_m2"))
++	if err != nil {
++		t.Fatalf("подкаталог источника не создан: %v", err)
++	}
++	if !info.IsDir() {
++		t.Errorf("%s не каталог", filepath.Join(dir, "cbr_m2"))
++	}
++	got, err := store.Get(ctx, key)
++	if err != nil {
++		t.Fatalf("Get: %v", err)
++	}
++	if string(got) != "тело" {
++		t.Errorf("Get() = %q, ожидалось %q", got, "тело")
++	}
++}
+diff --git a/archive/store.go b/archive/store.go
+new file mode 100644
+index 0000000..bb101e3
+--- /dev/null
++++ b/archive/store.go
+@@ -0,0 +1,38 @@
++// Package archive хранит версии файлов источников: одна версия файла — один объект в хранилище
++// плюс строка реестра увиденных версий. Нужен потому, что выгрузки источников обновляются реже
++// прогонов конвейера: после публикации новой версии прежняя с сайта исчезает, и восстановить по
++// ней ряд (или объяснить расхождение в витрине) уже нечем. Архив не дублирует данные — истина о
++// рядах остаётся в ClickHouse; архив отвечает только на вопрос «что именно импортировали тогда».
++package archive
++
++import (
++	"context"
++	"errors"
++)
++
++// ErrAuth — токен не принят (401): отозван, истёк или выдан без нужного scope. Отдельный
++// sentinel, а не текст: действие дежурного по логу другое, чем при квоте, — обновить токен.
++// Обёртывается через %w, поэтому проверяется errors.Is, а не сравнением строк.
++var ErrAuth = errors.New("archive: токен не принят (401)")
++
++// ErrQuota — квота или лимит хранилища (403/413/423/507): место кончилось либо файл больше
++// разрешённого. Второй различимый случай (спека §3.3): «токен» и «квота» требуют разных действий.
++var ErrQuota = errors.New("archive: квота или лимит хранилища (403/413/423/507)")
++
++// Store — объектное хранилище версий файлов. Контракт минимален под два бэкенда: Яндекс.Диск
++// (upload/download/resources) сегодня и S3 (PutObject/GetObject/HeadObject) — потом; вызывающему
++// нужны ровно три операции — записать байты, прочитать их и спросить наличие. Ключи относительные,
++// с «/»-разделителями; корень навешивает бэкенд, поэтому смена хранилища или его каталога не
++// меняет ключи (и не расходится с ними реестр).
++type Store interface {
++	// Name — "local" | "yandex": попадает в логи и реестр, чтобы по записи было видно бэкенд.
++	Name() string
++	// Put записывает версию целиком (ключ и есть версия: второй Put того же ключа — не ошибка).
++	Put(ctx context.Context, key string, body []byte) error
++	// Get отдаёт байты версии: реестр, тесты и восстановление из архива — названный follow-up
++	// этого пункта (спека §1.3), ради которого объекты и хранятся целиком, а не хешами.
++	Get(ctx context.Context, key string) ([]byte, error)
++	// Exists — есть ли версия. Единственная операция префлайта на no-op-пути: «версия известна, но
++	// не в архиве» проверяется без чтения реестра и без ClickHouse (спека §3.2).
++	Exists(ctx context.Context, key string) (bool, error)
++}

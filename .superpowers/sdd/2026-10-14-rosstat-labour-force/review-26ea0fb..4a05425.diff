@@ -1,0 +1,107 @@
+# Review package: 26ea0fb..4a05425
+
+## Commits
+4a05425 fix: require december to close each labour force year
+
+## Files changed
+ rosstat/labour_force.go      | 10 ++++++++++
+ rosstat/labour_force_test.go | 36 ++++++++++++++++++++++++++++++++++++
+ 2 files changed, 46 insertions(+)
+
+## Diff
+diff --git a/rosstat/labour_force.go b/rosstat/labour_force.go
+index 4324ef8..895e2c7 100644
+--- a/rosstat/labour_force.go
++++ b/rosstat/labour_force.go
+@@ -287,20 +287,30 @@ func parseLabourForce(xlsx *excelize.File) ([]labourForcePoint, error) {
+ 		}
+ 		if sectionYear, ok := labourForceYear(row); ok {
+ 			// Год обязан быть строго больше предыдущего. Строка-секция, повторяющая или
+ 			// уменьшающая год, сдвинула бы подпись месяцев назад: месяцы нового года записались
+ 			// бы датами прошлого и по ключу (name, date) заклеили бы корректные точки тех же
+ 			// месяцев (§6.4). Порча неотличима от обновления источника, поэтому ошибка громкая.
+ 			if year != 0 && sectionYear <= year {
+ 				return nil, fmt.Errorf("%s: лист %q, строка %d: год %d идёт после года %d — годы обязаны идти по возрастанию",
+ 					rosstatLabourForceTable, labourForceSheet, i+1, sectionYear, year)
+ 			}
++			// Предыдущий год обязан быть закрыт декабрём: секция нового года, под которую
++			// предыдущий пришёл не с декабрём, значит потерянную строку месяца в середине ряда —
++			// ровно та дыра, что не видна в витрине (неполный ряд выглядит полным), а префлайт
++			// закрепляет её числом точек и уводит импортёр в вечный no-op (§6.4). Первый год
++			// проверкой не задет (year == 0), неполный последний год законен: секции следующего
++			// года за ним нет, а пропуск целой секции года — осознанное разрешение (Ruling R6).
++			if year != 0 && month != 12 {
++				return nil, fmt.Errorf("%s: лист %q, строка %d: год %d не закончен: последний месяц %q, ожидался %q",
++					rosstatLabourForceTable, labourForceSheet, i+1, year, labourForceMonthName(month), labourForceMonthName(12))
++			}
+ 			year, month = sectionYear, 0
+ 			continue
+ 		}
+ 		sectionMonth, ok := util.MonthsToNum[strings.ToLower(label)]
+ 		if !ok {
+ 			// Подпись не год и не месяц — так выглядит текст сносок под таблицей: данные кончились.
+ 			tableEnd = i
+ 			break
+ 		}
+ 		if year == 0 {
+diff --git a/rosstat/labour_force_test.go b/rosstat/labour_force_test.go
+index 94d400e..76c1bae 100644
+--- a/rosstat/labour_force_test.go
++++ b/rosstat/labour_force_test.go
+@@ -422,20 +422,56 @@ func TestLabourForceMismatchedYearSectionFails(t *testing.T) {
+ 		t.Errorf("ошибка %q не называет таблицу %q и лист %q", err, rosstatLabourForceTable, labourForceSheet)
+ 	}
+ 	if !strings.Contains(err.Error(), "строка 124") {
+ 		t.Errorf("ошибка %q не называет строку-секцию года", err)
+ 	}
+ 	if !strings.Contains(err.Error(), "год 2025 идёт после года 2025") {
+ 		t.Errorf("ошибка %q не называет повтор года 2025", err)
+ 	}
+ }
+ 
++// TestLabourForceRemovedDecemberRowFails — источник потерял строку декабря 2025 (удалена строка
++// 123), поэтому секция 2026 года наступает, когда 2025 не закрыт декабрём. До проверки закрытия
++// года разбор отдавал 684 точки и err=nil, префлайт записывал points=684, и дыра в середине ряда
++// закреплялась навсегда (версия известна — дальше вечный no-op). Теперь разбор обязан упасть и
++// назвать незакрытый год и ожидаемый декабрь.
++func TestLabourForceRemovedDecemberRowFails(t *testing.T) {
++	xlsx := mutateLabourForceFixture(t, func(f *excelize.File) {
++		// Строка 123 — декабрь 2025; строки ниже сдвигаются, и секция 2026 оказывается строкой 123.
++		if err := f.RemoveRow(labourForceSheet, 123); err != nil {
++			t.Fatal(err)
++		}
++	})
++	points, err := parseLabourForce(xlsx)
++	if err == nil {
++		t.Fatalf("потеря строки декабря разобрана без ошибки: %d точек вместо ошибки", len(points))
++	}
++	if points != nil {
++		t.Errorf("на ошибке вернулось %d точек, ожидалось nil", len(points))
++	}
++	if !strings.Contains(err.Error(), rosstatLabourForceTable) || !strings.Contains(err.Error(), labourForceSheet) {
++		t.Errorf("ошибка %q не называет таблицу %q и лист %q", err, rosstatLabourForceTable, labourForceSheet)
++	}
++	if !strings.Contains(err.Error(), "год 2025 не закончен") {
++		t.Errorf("ошибка %q не называет незакрытый год 2025", err)
++	}
++	if !strings.Contains(err.Error(), "декабрь") {
++		t.Errorf("ошибка %q не называет ожидаемый декабрь", err)
++	}
++	if !strings.Contains(err.Error(), "строка 123") {
++		t.Errorf("ошибка %q не называет строку-секцию нового года", err)
++	}
++	if strings.Contains(err.Error(), "December") {
++		t.Errorf("ошибка %q печатает месяц по-английски: оператор должен видеть русскую подпись", err)
++	}
++}
++
+ // TestLabourForceEmptyParseFails — все строки месяцев на месте, но значения в шести колонках
+ // пусты: разбор обязан вернуть ошибку «0 точек» (§6.4, §11.5), а не пустой батч — пустая
+ // выгрузка означает сломанный или подменённый источник, а не отсутствие показателя.
+ func TestLabourForceEmptyParseFails(t *testing.T) {
+ 	xlsx := mutateLabourForceFixture(t, func(f *excelize.File) {
+ 		rows, err := f.GetRows(labourForceSheet, excelize.Options{RawCellValue: true})
+ 		if err != nil {
+ 			t.Fatal(err)
+ 		}
+ 		for i, row := range rows {

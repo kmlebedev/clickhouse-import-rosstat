@@ -1,0 +1,961 @@
+# Review package: a4be8189671b65251c1dcf7eb44000cb060a61a4..cd11fb5b0114aac8ea7400d5f439b15b9a46543f
+
+## Commits
+cd11fb5 fix vvp_kvartal: derive year when source repeats a year label
+e62e1bb plan: vvp_kvartal must advance a repeated source year label
+882300e fix vvp_kvartal: stable series names, scan from column A, carry year across group
+
+## Files changed
+ .../plans/2026-10-14-rosstat-refactor.md           |   2 +
+ rosstat/series_meta_test.go                        |  30 --
+ rosstat/vvp_kvartal.go                             | 283 +++++++++---
+ rosstat/vvp_kvartal_test.go                        | 472 +++++++++++++++++++++
+ 4 files changed, 698 insertions(+), 89 deletions(-)
+
+## Diff
+diff --git a/docs/superpowers/plans/2026-10-14-rosstat-refactor.md b/docs/superpowers/plans/2026-10-14-rosstat-refactor.md
+index 3a56d41..66b2842 100644
+--- a/docs/superpowers/plans/2026-10-14-rosstat-refactor.md
++++ b/docs/superpowers/plans/2026-10-14-rosstat-refactor.md
+@@ -312,36 +312,38 @@ git commit -m "fix salaries_mes: raw cell values, skip no-data zeros, stable ser
+ 
+ - [ ] **Step 2: Написать падающий тест `rosstat/vvp_kvartal_test.go`**
+ 
+ ```go
+ func TestVvpKvartalReadsFixture(t *testing.T)          // ровно 5 рядов = карта листов, точек 302: листы "2"/"9"/"10" — по 62 (2011-I … 2026-II), листы "12"/"14" — по 58 (2012-I … 2026-II)
+ func TestVvpKvartalKeepsFirstGroup(t *testing.T)       // в ряду листа "2" есть точка с датой 2011-04-01 (первая группа не теряется)
+ func TestVvpKvartalSpotValue(t *testing.T)             // лист "2", 2011-04-01 → 13024.799539024814 (допуск 1e-6) — сырое значение, не формат "13,024.8"
+ func TestVvpKvartalSeriesMetaCoversParsedRows(t *testing.T) // двусторонний контракт с vvpKvartalSeriesMeta
+ func TestVvpKvartalMissingSheetFails(t *testing.T)     // книга без листа "9" → ошибка с именем листа и таблицы, 0 строк в батче
+ func TestVvpKvartalUnknownQuarterFails(t *testing.T)   // подпись "X квартал" → ошибка, НЕ panic
++func TestVvpKvartalRepeatedYearLabelAdvances(t *testing.T) // лист "14" (метка последней группы повторяет "20252)") → 58 различных дат: 2025-I = 106.7618431956141 и 2026-I = 104.1602983322909 остаются разными точками, последние даты ряда — 2026-04-01 и 2026-07-01; повтор метки виден в журнале (Warn)
+ func TestVvpKvartalFindLink(t *testing.T)              // util.FindLink(testdata/accounts_page.html, vvpKvartalLinkSelector) → href с "VVP_kvartal"
+ ```
+ 
+ - [ ] **Step 3: Запустить и убедиться, что падает**
+ 
+ Run: `go test ./rosstat/ -run TestVvpKvartal -v`
+ Expected: FAIL — `panic: runtime error: index out of range` на чтении заголовка (нынешняя строка 88 файла).
+ 
+ - [ ] **Step 4: Переписать разбор**
+ 
+ Порядок для каждого листа из `vvpKvartalSheetNames` (слайс, а не карта — порядок обхода должен быть детерминированным):
+ 
+ 1. `rows, err := xlsx.GetRows(sheet, excelize.Options{RawCellValue: true})`; ошибка — с именем листа.
+ 2. Найти строку подписей кварталов: первая строка, где первая ячейка начинается с `I `, `II `, `III ` или `IV ` и содержит `квартал`. Не найдена — ошибка.
+ 3. `yearRow = labelRow - 1`, `dataRow = labelRow + 1`; выход за границы — ошибка.
+ 4. Обход колонок `i` с **нуля**, пока ячейка `dataRow[i]` не пуста: непустая ячейка `yearRow[i]` обновляет текущий год (первые 4 символа, `strconv.Atoi`; иначе ошибка); год 0 — ошибка с номером колонки; подпись квартала — первый токен, отображение `{"I":1,"II":2,"III":3,"IV":4}`, незнакомая подпись — ошибка; значение — `ParseFloat` в сыром виде, ошибка при нечисле.
++   **Год обязан возрастать.** Повтор метки прошлой группы — дефект самой выгрузки: у листа 14 в книге 09-2026 последняя группа помечена `20252)`, тогда как все четыре соседних листа того же файла говорят `20262)`. Если принять метку на веру, значения 2026-I и 2026-II запишутся датами 2025 года и **затрут** настоящие 2025-I/2025-II (в таблице `ReplacingMergeTree ORDER BY (name, date)`). Поэтому: непустая метка, равная или меньшая текущего года, выводит год как `текущий + 1` и логирует `Warn` с листом, колонкой и обеими метками; молчаливое принятие повтора запрещено. Это вывод из структуры (кварталы идут I→IV и продолжаются I следующего года), а не догадка, и он сходится с четырьмя соседними листами; когда источник исправит метку, вывод совпадёт с ней и предупреждение исчезнет.
+ 5. Ноль точек на листе — ошибка.
+ 
+ `getQuarterDate(year int, quarter string) (time.Time, error)` возвращает ошибку вместо `panic`; `strings.Split(label, " ")[0]` заменяется разбором первого токена; `fmt.Printf` удаляются.
+ 
+ - [ ] **Step 5: Имя ряда — из карты, а не из заголовка**
+ 
+ `vvpKvartalSeriesNames` — карта «номер листа → стабильное имя», 1:1 с нынешними `vvpKvartalSeriesMeta[].Series` (`2 Валовой внутрений продукт`, `9 Валовой внутрений продукт`, `10 Валовой внутренний продукт`, `12 Индексы физического объема валового внутреннего продукта`, `14 Индексы - дефляторы валового внутреннего продукта`). Заголовок A2 больше не участвует в имени ряда (сноски и редакции перестают двигать имя); отсутствие ожидаемого листа ловит §6.4.
+ 
+ - [ ] **Step 6: Перевести `Import()` на `util`**
+ 
+diff --git a/rosstat/series_meta_test.go b/rosstat/series_meta_test.go
+index 8378ea3..9af7dde 100644
+--- a/rosstat/series_meta_test.go
++++ b/rosstat/series_meta_test.go
+@@ -169,40 +169,10 @@ func TestIpcMesSeriesMetaCoversParsedSheets(t *testing.T) {
+ 	table, err := parseIpcMes(f)
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	names := make([]string, 0, len(*table))
+ 	for _, row := range *table {
+ 		names = append(names, row[0])
+ 	}
+ 	requireParsedDescribed(t, names, describedSeries(t, ipcMesSeriesMeta))
+ }
+-
+-func TestVvpKvartalSeriesMetaCoversParsedSheets(t *testing.T) {
+-	titles := map[string]string{
+-		"2":  "Валовой внутрений продукт",
+-		"9":  "Валовой внутрений продукт",
+-		"10": "Валовой внутренний продукт",
+-		"12": "Индексы физического объема валового внутреннего продукта",
+-		"14": "Индексы - дефляторы валового внутреннего продукта",
+-	}
+-	sheets := []string{"2", "9", "10", "12", "14"}
+-	f := newTestWorkbook(t, sheets...)
+-	for _, sheet := range sheets {
+-		setSheetRows(t, f, sheet, [][]any{
+-			{"Национальные счета"},
+-			{"", titles[sheet] + " 1) (в текущих ценах)"},
+-			{"", "2011 г."},
+-			{"", "I квартал", "II квартал", "III квартал", "IV квартал"},
+-			{"", "15000", "15500", "16000", "16500"},
+-		})
+-	}
+-	table, err := parseVvpKvartal(f)
+-	if err != nil {
+-		t.Fatal(err)
+-	}
+-	names := make([]string, 0, len(*table))
+-	for _, r := range *table {
+-		names = append(names, r.name)
+-	}
+-	requireParsedDescribed(t, names, describedSeries(t, vvpKvartalSeriesMeta))
+-}
+diff --git a/rosstat/vvp_kvartal.go b/rosstat/vvp_kvartal.go
+index ab9a698..13c7fc8 100644
+--- a/rosstat/vvp_kvartal.go
++++ b/rosstat/vvp_kvartal.go
+@@ -1,151 +1,316 @@
+ package rosstat
+ 
+ import (
+ 	"context"
+ 	"fmt"
++	"math"
++	"strconv"
++	"strings"
++	"time"
++
+ 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+-	"github.com/gocolly/colly/v2"
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+ 	log "github.com/sirupsen/logrus"
+ 	"github.com/xuri/excelize/v2"
+-	"strconv"
+-	"strings"
+-	"time"
+ )
+ 
+-func getQuarterDate(year int, quarter string) time.Time {
++// getQuarterDate переводит подпись квартала в дату точки — 1-е число месяца, следующего за
++// отчётным (I → 1 апреля, II → 1 июля, III → 1 октября, IV → 1 января следующего года).
++// Семантика прежнего разбора сохранена дословно; изменён только отказ: незнакомая подпись —
++// ошибка, а не panic, который убивал весь прогон импортёра.
++func getQuarterDate(year int, quarter string) (time.Time, error) {
+ 	var startMonth time.Month
+ 	switch quarter {
+ 	case "I":
+ 		startMonth = time.January
+ 	case "II":
+ 		startMonth = time.April
+ 	case "III":
+ 		startMonth = time.July
+ 	case "IV":
+ 		startMonth = time.October
+ 	default:
+-		panic("Invalid quarter")
++		return time.Time{}, fmt.Errorf("незнакомая подпись квартала %q", quarter)
+ 	}
+-	return time.Date(year, startMonth+3, 1, 0, 0, 0, 0, time.UTC)
++	return time.Date(year, startMonth+3, 1, 0, 0, 0, 0, time.UTC), nil
+ }
+ 
+ const (
+ 	// Национальные счета https://rosstat.gov.ru/statistics/accounts
+ 	// ВВП кварталы (с 1995 г.) — имя файла содержит диапазон лет (VVP_kvartal_s_1995-2025.xlsx)
+ 	// и меняется при обновлении, поэтому ссылка берётся со страницы.
+ 	// Валовой внутренний продукт 1) (в ценах 2021 г., млрд руб., с исключением сезонного фактора)
+ 	rosstatVVPKvartalTable = "rosstat_vvp_kvartal"
+ 	vvpKvartalDdl          = `CREATE TABLE IF NOT EXISTS %s (
+ 				  name LowCardinality(String)
+ 				, date Date
+ 				, vvp Float32
+ 			) ENGINE = ReplacingMergeTree ORDER BY (name, date);
+ 		`
++	// vvpKvartalLinkSelector — селектор ссылки на актуальный xlsx: константа рядом с
++	// импортёром, а не литерал в теле функции (§4.5) — тот же селектор проверяет тест на
++	// HTML-фикстуре страницы национальных счетов.
++	vvpKvartalLinkSelector = `a[href*="VVP_kvartal"]`
+ 	// vvpKvartalCountPoints — количественный чек версии (спека §3.5): число точек своего
+ 	// ряда. Литерал, как и таблица: запрос — часть утверждения «эти точки мои». FINAL
+ 	// обязателен — иначе count() считал бы несмёрженные части.
+ 	vvpKvartalCountPoints = "SELECT count() FROM rosstat_vvp_kvartal FINAL"
+ )
+ 
+-// getVvpKvartalXlsDataUrl ищет ссылку на актуальный VVP_kvartal_*.xlsx на странице
+-// национальных счетов Росстата.
+-func getVvpKvartalXlsDataUrl() (url string) {
+-	c := colly.NewCollector()
+-	c.SetClient(util.HttpClient)
+-	c.OnHTML(`a[href*="VVP_kvartal"]`, func(e *colly.HTMLElement) {
+-		if url == "" {
+-			url = fmt.Sprintf("%s%s", rosstatUrl, e.Attr("href"))
+-			log.Infof("href url %s", url)
+-		}
+-	})
+-	if err := c.Visit(fmt.Sprintf("%s/statistics/accounts", rosstatUrl)); err != nil {
+-		log.Errorf("Visit %v+", err)
++// vvpKvartalSheetNames — порядок обхода листов. Именно слайс, а не ключи карты имён: обход
++// карты в Go случаен, и порядок записи точек менялся бы от прогона к прогону (§6.8).
++var vvpKvartalSheetNames = []string{"2", "9", "10", "12", "14"}
++
++// vvpKvartalSeriesNames — имя ряда для листа, объявленное кодом (§6.8). Заголовок листа (A2)
++// в имени не участвует: он несёт сноски и редакции выгрузки («1)», «в текущих ценах», «в
++// ценах 2021г.») и на первой же редакции файла оборвал бы ряд. Значения совпадают с
++// vvpKvartalSeriesMeta[].Series дословно, включая опечатки источника: «внутрений» на листах
++// «2» и «9», «внутренний» на листе «10» — эти строки и есть тождество ряда в каталоге.
++var vvpKvartalSeriesNames = map[string]string{
++	"2":  "2 Валовой внутрений продукт",
++	"9":  "9 Валовой внутрений продукт",
++	"10": "10 Валовой внутренний продукт",
++	"12": "12 Индексы физического объема валового внутреннего продукта",
++	"14": "14 Индексы - дефляторы валового внутреннего продукта",
++}
++
++// getVvpKvartalXlsDataUrl возвращает адрес актуального VVP_kvartal_*.xlsx со страницы
++// национальных счетов Росстата: имя файла содержит диапазон лет (VVP_kvartal_s-1995-ГГГГ.xlsx)
++// и меняется при обновлении, поэтому ссылка берётся со страницы. Транспорт — через util (§4.1),
++// а ошибка не проглатывается (§4.4): без ссылки импорт обязан упасть до записи в БД, а не
++// писать «0 строк» по устаревшему адресу.
++func getVvpKvartalXlsDataUrl() (string, error) {
++	pageUrl := fmt.Sprintf("%s/statistics/accounts", rosstatUrl)
++	page, err := util.GetPage(pageUrl)
++	if err != nil {
++		return "", fmt.Errorf("vvpKvartal: %s: %w", pageUrl, err)
++	}
++	href, err := util.FindLink(page, vvpKvartalLinkSelector)
++	if err != nil {
++		return "", fmt.Errorf("vvpKvartal: ссылка на VVP_kvartal_*.xlsx не найдена на %s: %w", pageUrl, err)
+ 	}
+-	c.Wait()
+-	return url
++	return rosstatUrl + href, nil
+ }
+ 
+ type vvpKvartalDdlStat struct {
+ 	util.ClickHouseImport
+ }
+ 
+ type vvpKvartal struct {
+ 	name string
+ 	date time.Time
+ 	vvp  float64
+ }
+ 
+-func parseVvpKvartal(xlsx *excelize.File) (table *[]vvpKvartal, err error) {
+-	table = &[]vvpKvartal{}
+-	var rows [][]string
+-	// ВВП (в ценах 2021 г., млрд руб., с исключением сезонного фактора)
+-	for _, sheet := range []string{"2", "9", "10", "12", "14"} {
+-		if rows, err = xlsx.GetRows(sheet); err != nil {
+-			return nil, err
++// vvpKvartalPoint — точка листа: дата записи и сырое значение выгрузки. Значение остаётся
++// float64 до записи в батч: сужение до Float32 делает шаблон (колонка таблицы), поэтому тест
++// на сырое значение ячейки (§6.2) видит значение целиком.
++type vvpKvartalPoint struct {
++	date  time.Time
++	value float64
++}
++
++// vvpKvartalIsLabelRow — строка подписей кварталов узнаётся по содержимому, а не по номеру:
++// первая ячейка начинается с «I », «II », «III » или «IV » и содержит «квартал». Номер строки в
++// выгрузке плавает (сноски, вставленные строки), и жёсткий индекс — ровно тот дефект, из-за
++// которого прежний разбор читал не те строки.
++func vvpKvartalIsLabelRow(row []string) bool {
++	if len(row) == 0 {
++		return false
++	}
++	cell := strings.TrimSpace(row[0])
++	if !strings.Contains(cell, "квартал") {
++		return false
++	}
++	for _, prefix := range []string{"I ", "II ", "III ", "IV "} {
++		if strings.HasPrefix(cell, prefix) {
++			return true
+ 		}
+-		tableName := fmt.Sprintf("%s %s", sheet, strings.Trim(strings.Split(rows[1][1], ")")[0], " 1"))
+-		fmt.Printf("table name %s\n", tableName)
+-		// Строки с годами(2011) 2 и кварталами(I квартал) 3
+-		// Колонки со ВВП
+-		var year int64
+-		var vvp float64
+-		for i, cell := range rows[4][1:] {
+-			if cell == "" {
+-				break
+-			}
+-			if len(rows[2]) > i+1 && len(rows[2][i+1]) >= 4 {
+-				if year, err = strconv.ParseInt(rows[2][i+1][0:4], 10, 16); err != nil {
+-					return nil, err
+-				}
++	}
++	return false
++}
++
++// vvpKvartalYear разбирает ячейку года: год записан первыми четырьмя цифрами, у поздних групп
++// со сноской («20262)»). Мусор в ячейке года — ошибка (§6.4), а не молчаливый ноль: год 0 дал
++// бы дату «0000-01-01», которую ClickHouse отвергает.
++func vvpKvartalYear(cell string) (int, error) {
++	cell = strings.TrimSpace(cell)
++	if len(cell) < 4 {
++		return 0, fmt.Errorf("ячейка года %q короче четырёх цифр", cell)
++	}
++	year, err := strconv.Atoi(cell[:4])
++	if err != nil {
++		return 0, fmt.Errorf("ячейка года %q не число: %w", cell, err)
++	}
++	return year, nil
++}
++
++// vvpKvartalValue разбирает ячейку данных. Ячейка приходит сырым текстом (§6.2), поэтому
++// значение берётся как есть — «13024.799539024814», а не формат ячейки «13,024.8». NaN и
++// бесконечность отбрасываются, как и в соседнем rosstat_salaries_mes: ParseFloat их принимает,
++// и мусор уехал бы в витрину точкой ряда.
++func vvpKvartalValue(cell string) (float64, error) {
++	value, err := strconv.ParseFloat(strings.TrimSpace(cell), 64)
++	if err != nil {
++		return 0, fmt.Errorf("значение %q не число: %w", cell, err)
++	}
++	if math.IsNaN(value) || math.IsInf(value, 0) {
++		return 0, fmt.Errorf("значение %q не конечное число", cell)
++	}
++	return value, nil
++}
++
++// parseVvpKvartalSheet читает один лист книги. Разметка листа («2», «9», «10», «12», «14»):
++// A2 — заголовок листа (объединённая A2:D2, то есть строка из одной ячейки; в имени ряда он не
++// участвует), ниже — строка годов в колонках A, E, I, … (первая колонка каждой группы
++// кварталов), ниже — строка подписей «I квартал»…«IV квартал», под ними — строка данных; данные
++// и подписи начинаются с колонки A.
++func parseVvpKvartalSheet(xlsx *excelize.File, sheet string) ([]vvpKvartalPoint, error) {
++	// Сырые значения ячеек (§6.2): форматированная строка отдала бы «13,024.8» вместо
++	// «13024.799539024814», и ряд потерял бы точность значений.
++	rows, err := xlsx.GetRows(sheet, excelize.Options{RawCellValue: true})
++	if err != nil {
++		// Отсутствие ожидаемого листа — ошибка с именем листа (§6.4), а не «0 точек»: книга без
++		// листа означала бы оборванный ряд, который в витрине выглядит полным.
++		return nil, fmt.Errorf("%s: лист %q: %w", rosstatVVPKvartalTable, sheet, err)
++	}
++	labelRow := -1
++	for i, row := range rows {
++		if vvpKvartalIsLabelRow(row) {
++			labelRow = i
++			break
++		}
++	}
++	if labelRow < 0 {
++		return nil, fmt.Errorf("%s: лист %q: строка подписей кварталов не найдена", rosstatVVPKvartalTable, sheet)
++	}
++	// Годы — строкой выше подписей, данные — строкой ниже. Проверка границ обязательна: выход за
++	// срез — это паника, а разбор обязан отдавать ошибку.
++	if labelRow == 0 {
++		return nil, fmt.Errorf("%s: лист %q: строки годов нет над подписями кварталов (строка %d)",
++			rosstatVVPKvartalTable, sheet, labelRow+1)
++	}
++	if labelRow+1 >= len(rows) {
++		return nil, fmt.Errorf("%s: лист %q: строки данных нет под подписями кварталов (строка %d)",
++			rosstatVVPKvartalTable, sheet, labelRow+1)
++	}
++	years, labels, data := rows[labelRow-1], rows[labelRow], rows[labelRow+1]
++	var points []vvpKvartalPoint
++	year := 0
++	// Обход колонок строго с нуля и до длины среза данных: таблица листа начинается с колонки A,
++	// и пропуск нулевой колонки терял бы I квартал каждой группы — первую точку ряда
++	// (2011-04-01 на листах «2», «9», «10»). Пустая ячейка замыкает таблицу: excelize обрезает
++	// хвостовые пустые ячейки, поэтому индекс за пределами data гарантированно пуст.
++	for i := 0; i < len(data); i++ {
++		cell := data[i]
++		if strings.TrimSpace(cell) == "" {
++			break
++		}
++		// Год выписан в первой колонке группы (A, E, I, …), в колонках II–IV кварталов ячейка
++		// годов пуста: непустая ячейка задаёт текущий год, пустые его переносят. Без переноса
++		// у II–IV кварталов года не было бы вовсе (год 0 → дата «0000-01-01»).
++		if i < len(years) && strings.TrimSpace(years[i]) != "" {
++			labelYear, err := vvpKvartalYear(years[i])
++			if err != nil {
++				return nil, fmt.Errorf("%s: лист %q, колонка %d: %w", rosstatVVPKvartalTable, sheet, i+1, err)
+ 			}
+-			vvpStr := strings.ReplaceAll(strings.ReplaceAll(cell, " ", ""), ",", "")
+-			if vvp, err = strconv.ParseFloat(vvpStr, 32); err != nil {
+-				return nil, err
++			// Метка года не больше текущего года — это повтор (или откат) метки, и год выводится
++			// из структуры таблицы, а не угадывается: группы кварталов идут I→IV и продолжаются
++			// I следующего года, поэтому колонка под повторившейся меткой — I квартал следующего
++			// года. Так помечен лист «14» выгрузки: на его последней группе стоит «20252)» (то же
++			// значение, что у предыдущей группы), тогда как листы «2», «9», «10», «12» того же
++			// выпуска Росстата на этой колонке несут «20262)». Принять метку на веру нельзя:
++			// значения 2026-I и 2026-II записались бы датами 2025-I и 2025-II и затёрли настоящие
++			// значения 2025 года — в таблице с ключом (name, date) это тихая подмена данных, а не
++			// пропуск. Когда источник исправит метку, вывод совпадёт с ней и предупреждение
++			// исчезнет само. Нулевая метка (year == 0, года ещё не было) выводу не подлежит:
++			// пустой год остаётся ошибкой «год данных не задан» ниже.
++			if year != 0 && labelYear <= year {
++				log.Warnf("vvpKvartal: %s: лист %q, колонка %d: метка года %q не больше текущего %d — год выведен как %d",
++					rosstatVVPKvartalTable, sheet, i+1, strings.TrimSpace(years[i]), year, year+1)
++				labelYear = year + 1
+ 			}
+-			fmt.Printf("%s kvartal %v+ cell %v\n", strings.Split(rows[3][i+1], " ")[0], getQuarterDate(int(year), strings.Split(rows[3][i+1], " ")[0]), vvp)
+-			*table = append(*table, vvpKvartal{
+-				tableName,
+-				getQuarterDate(int(year), strings.Split(rows[3][i+1], " ")[0]),
+-				vvp,
+-			})
++			year = labelYear
++		}
++		if year == 0 {
++			return nil, fmt.Errorf("%s: лист %q, колонка %d: год данных не задан", rosstatVVPKvartalTable, sheet, i+1)
++		}
++		if i >= len(labels) {
++			return nil, fmt.Errorf("%s: лист %q, колонка %d: подписи квартала нет", rosstatVVPKvartalTable, sheet, i+1)
++		}
++		fields := strings.Fields(labels[i])
++		if len(fields) == 0 {
++			return nil, fmt.Errorf("%s: лист %q, колонка %d: подпись квартала пуста", rosstatVVPKvartalTable, sheet, i+1)
++		}
++		date, err := getQuarterDate(year, fields[0])
++		if err != nil {
++			return nil, fmt.Errorf("%s: лист %q, колонка %d: %w", rosstatVVPKvartalTable, sheet, i+1, err)
++		}
++		value, err := vvpKvartalValue(cell)
++		if err != nil {
++			return nil, fmt.Errorf("%s: лист %q, колонка %d: %w", rosstatVVPKvartalTable, sheet, i+1, err)
++		}
++		points = append(points, vvpKvartalPoint{date: date, value: value})
++	}
++	if len(points) == 0 {
++		return nil, fmt.Errorf("%s: лист %q: разбор дал 0 точек", rosstatVVPKvartalTable, sheet)
++	}
++	return points, nil
++}
++
++// parseVvpKvartal читает всю книгу и отдаёт плоскую таблицу точек: имя ряда — из
++// vvpKvartalSeriesNames (§6.8), листы обходятся в порядке слайса. Разбор идёт целиком до первой
++// записи в батч: ошибка любого листа оставляет батч пустым, а не записывает половину книги.
++func parseVvpKvartal(xlsx *excelize.File) ([]vvpKvartal, error) {
++	var table []vvpKvartal
++	for _, sheet := range vvpKvartalSheetNames {
++		name, ok := vvpKvartalSeriesNames[sheet]
++		if !ok {
++			return nil, fmt.Errorf("%s: лист %q не описан в vvpKvartalSeriesNames", rosstatVVPKvartalTable, sheet)
++		}
++		points, err := parseVvpKvartalSheet(xlsx, sheet)
++		if err != nil {
++			return nil, err
++		}
++		for _, point := range points {
++			table = append(table, vvpKvartal{name: name, date: point.date, vvp: point.value})
+ 		}
+ 	}
+ 	return table, nil
+ }
+ 
+-// vvpKvartalImport разбирает файл и пишет точки в batch: семантика прежних export() и цикла
+-// вставки Import сохранена дословно — имя ряда собирается из номеров листов, дата — 1-е число
+-// месяца, следующего за отчётным кварталом (getQuarterDate).
++// vvpKvartalImport разбирает файл и пишет точки в batch: семантика прежнего разбора сохранена —
++// имя ряда объявлено кодом (§6.8), дата — 1-е число месяца, следующего за отчётным кварталом
++// (getQuarterDate), значение — ВВП или индекс квартала.
+ func vvpKvartalImport(xlsx *excelize.File, batch driver.Batch) error {
+ 	table, err := parseVvpKvartal(xlsx)
+ 	if err != nil {
+ 		return err
+ 	}
+-	for _, r := range *table {
++	for _, r := range table {
+ 		if err = batch.Append(r.name, r.date, float32(r.vvp)); err != nil {
+ 			return err
+ 		}
+ 	}
+ 	return nil
+ }
+ 
+ // Import берёт адрес актуального xlsx со страницы национальных счётов Росстата: имя файла
+ // содержит диапазон лет (VVP_kvartal_s-1995-ГГГГ.xlsx) и меняется при обновлении, а сетевое
+ // обращение в init() запрещено (ARCHITECTURE.md §8.6). Дальше — полный цикл шаблона: DDL →
+ // префлайт по HEAD (ряд обновляется раз в квартал, шаг расписания — недельный) → точки →
+ // производные (AfterImport) → строка версии.
+ func (s *vvpKvartalDdlStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+-	xlsDataUrl := getVvpKvartalXlsDataUrl()
+-	if xlsDataUrl == "" {
+-		return count, fmt.Errorf("vvpKvartal: не найдена ссылка на VVP_kvartal_*.xlsx на %s/statistics/accounts", rosstatUrl)
++	xlsDataUrl, err := getVvpKvartalXlsDataUrl()
++	if err != nil {
++		return count, err
+ 	}
+ 	s.DataUrl = xlsDataUrl
+ 	return s.ClickHouseImport.Import(ctx, conn)
+ }
+ 
+ // vvpKvartalImporter — квартальный ВВП РФ; регистрируется реестром rosstat/importers.go.
+ var vvpKvartalImporter = &vvpKvartalDdlStat{ClickHouseImport: util.ClickHouseImport{
+ 	TableName:              rosstatVVPKvartalTable,
+ 	CreateTable:            []string{vvpKvartalDdl},
+ 	ImportFunc:             vvpKvartalImport,
+diff --git a/rosstat/vvp_kvartal_test.go b/rosstat/vvp_kvartal_test.go
+new file mode 100644
+index 0000000..9f7c4b5
+--- /dev/null
++++ b/rosstat/vvp_kvartal_test.go
+@@ -0,0 +1,472 @@
++package rosstat
++
++import (
++	"errors"
++	"math"
++	"os"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/kmlebedev/clickhouse-import-rosstat/util"
++	"github.com/xuri/excelize/v2"
++)
++
++// openVvpKvartalFixture открывает реальную выгрузку Росстата (testdata/vvp_kvartal.xlsx):
++// книга из 16 листов, из которых ряд собирают пять («2», «9», «10», «12», «14»), — и именно
++// в той разметке, на которой прежний разбор падал в продакшене: заголовок листа лежит в A2
++// (объединённая A2:D2, поэтому строка заголовка состоит из одной ячейки), годы — в колонках
++// A, E, I, … (у поздних групп со сноской: «20262)»), подписи кварталов и данные — с колонки A.
++func openVvpKvartalFixture(t *testing.T) *excelize.File {
++	t.Helper()
++	xlsx, err := excelize.OpenFile("testdata/vvp_kvartal.xlsx")
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { _ = xlsx.Close() })
++	return xlsx
++}
++
++// importVvpKvartalFixture прогоняет импортёр по фикстуре и отдаёт записанные точки:
++// ни базы, ни сети тесту не нужно (§11.6).
++func importVvpKvartalFixture(t *testing.T) []appendedRow {
++	t.Helper()
++	rec := &appendRecorder{}
++	if err := vvpKvartalImport(openVvpKvartalFixture(t), rec); err != nil {
++		t.Fatalf("vvpKvartalImport: %v", err)
++	}
++	return rec.rows
++}
++
++// countBySeries считает точки каждого ряда.
++func countBySeries(rows []appendedRow) map[string]int {
++	counts := make(map[string]int, len(rows))
++	for _, row := range rows {
++		counts[row.series]++
++	}
++	return counts
++}
++
++// seriesDates отдаёт даты точек одного ряда в порядке записи.
++func seriesDates(rows []appendedRow, series string) []time.Time {
++	dates := make([]time.Time, 0, len(rows))
++	for _, row := range rows {
++		if row.series == series {
++			dates = append(dates, row.date)
++		}
++	}
++	return dates
++}
++
++// vvpKvartalSheetFixtureRows — минимальный лист в разметке выгрузки: заголовок в A2, годы в
++// A и E, подписи кварталов и данные с колонки A. Прежний разбор на такой разметке падал:
++// строку заголовка он читал как rows[1][1], а в объединённой A2:D2 она одноячейковая.
++func vvpKvartalSheetFixtureRows() [][]any {
++	return [][]any{
++		{"К содержанию"},
++		{"Валовой внутренний продукт 1)  \n(в текущих ценах, млрд.руб.)"},
++		{"2011", "", "", "", "2012"},
++		{"I квартал", "II квартал", "III квартал", "IV квартал", "I квартал"},
++		{"100", "101", "102", "103", "104"},
++	}
++}
++
++func TestVvpKvartalReadsFixture(t *testing.T) {
++	rows := importVvpKvartalFixture(t)
++	// 302 точки: листы «2», «9», «10» — по 62 (2011-I … 2026-II), листы «12», «14» — по 58
++	// (2012-I … 2026-II). Числа точные: выгрузка полная, пропусков в ней нет. Пропуск нулевой
++	// колонки срезал бы начало каждой группы, а непрочитанный год — все кварталы, кроме I.
++	if len(rows) != 302 {
++		t.Fatalf("точек %d, ожидалось 302", len(rows))
++	}
++	counts := countBySeries(rows)
++	if len(counts) != 5 {
++		t.Fatalf("рядов %d, ожидалось 5", len(counts))
++	}
++	want := map[string]int{
++		"2 Валовой внутрений продукт":                                 62,
++		"9 Валовой внутрений продукт":                                 62,
++		"10 Валовой внутренний продукт":                               62,
++		"12 Индексы физического объема валового внутреннего продукта": 58,
++		"14 Индексы - дефляторы валового внутреннего продукта":        58,
++	}
++	for name, n := range want {
++		if counts[name] != n {
++			t.Errorf("ряд %q: точек %d, ожидалось %d", name, counts[name], n)
++		}
++	}
++	// Границы рядов: первая точка — I квартал первого года, последняя — II квартал 2026.
++	// Проверяются оба конца: II–IV кварталы групп подписями дат не помечены, их год держится
++	// только переносом года по колонкам. Лист «14» — сюда же: его последняя группа помечена
++	// источником повторной меткой «20252)», год выведен из структуры таблицы (2026), и все 58
++	// точек ряда различны — подробности в TestVvpKvartalRepeatedYearLabelAdvances.
++	for _, tt := range []struct {
++		series string
++		first  string
++		last   string
++	}{
++		{"2 Валовой внутрений продукт", "2011-04-01", "2026-07-01"},
++		{"9 Валовой внутрений продукт", "2011-04-01", "2026-07-01"},
++		{"10 Валовой внутренний продукт", "2011-04-01", "2026-07-01"},
++		{"12 Индексы физического объема валового внутреннего продукта", "2012-04-01", "2026-07-01"},
++		{"14 Индексы - дефляторы валового внутреннего продукта", "2012-04-01", "2026-07-01"},
++	} {
++		dates := seriesDates(rows, tt.series)
++		if len(dates) == 0 {
++			t.Errorf("ряд %q не найден", tt.series)
++			continue
++		}
++		first, last := dates[0], dates[0]
++		for _, date := range dates {
++			if date.Before(first) {
++				first = date
++			}
++			if date.After(last) {
++				last = date
++			}
++		}
++		if got := first.Format("2006-01-02"); got != tt.first {
++			t.Errorf("ряд %q: первая точка %s, ожидалась %s", tt.series, got, tt.first)
++		}
++		if got := last.Format("2006-01-02"); got != tt.last {
++			t.Errorf("ряд %q: последняя точка %s, ожидалась %s", tt.series, got, tt.last)
++		}
++	}
++}
++
++// TestVvpKvartalKeepsFirstGroup — I квартал 2011 — первая точка ряда листа «2», и она лежит в
++// нулевой колонке листа. Прежний разбор обходил данные как rows[4][1:], теряя её и начало
++// каждой следующей группы (та группа начинается после года в колонке A, E, I, …).
++func TestVvpKvartalKeepsFirstGroup(t *testing.T) {
++	const series = "2 Валовой внутрений продукт"
++	rows := importVvpKvartalFixture(t)
++	var first time.Time
++	for _, date := range seriesDates(rows, series) {
++		if first.IsZero() || date.Before(first) {
++			first = date
++		}
++	}
++	want := time.Date(2011, 4, 1, 0, 0, 0, 0, time.UTC)
++	if !first.Equal(want) {
++		t.Fatalf("первая точка ряда %q — %s, ожидалась %s", series, first.Format("2006-01-02"), want.Format("2006-01-02"))
++	}
++}
++
++// TestVvpKvartalSpotValue — ячейка A5 листа «2» хранит 13024.799539024814, и разбор обязан
++// отдать это сырое значение целиком (§6.2), а не форматированный текст ячейки «13,024.8»
++// (допуск 1e-6 их различает). Проверка идёт по результату разбора, а не по батчу: колонка
++// таблицы — Float32, и этот же допуск к float32 неприменим (шаг представления там ~1e-3).
++func TestVvpKvartalSpotValue(t *testing.T) {
++	table, err := parseVvpKvartal(openVvpKvartalFixture(t))
++	if err != nil {
++		t.Fatalf("parseVvpKvartal: %v", err)
++	}
++	const want = 13024.799539024814
++	date := time.Date(2011, 4, 1, 0, 0, 0, 0, time.UTC)
++	found := false
++	for _, row := range table {
++		if row.name != "2 Валовой внутрений продукт" || !row.date.Equal(date) {
++			continue
++		}
++		found = true
++		if math.Abs(row.vvp-want) > 1e-6 {
++			t.Errorf("%s: значение %v, ожидалось %v", date.Format("2006-01-02"), row.vvp, want)
++		}
++	}
++	if !found {
++		t.Fatalf("точка %s ряда «2» не найдена", date.Format("2006-01-02"))
++	}
++}
++
++// TestVvpKvartalSeriesMetaCoversParsedRows — двусторонний контракт каталога (§11.4): имя ряда
++// объявлено кодом (§6.8, vvpKvartalSeriesNames) и обязано совпадать с каталогом дословно, а
++// каждый описанный ряд — разбираться. Имя в каталоге записано литералом, поэтому сравнение не
++// тавтологично: опечатка в карте («внутрений»/«внутренний») или лишняя строка каталога его
++// ломают.
++func TestVvpKvartalSeriesMetaCoversParsedRows(t *testing.T) {
++	rows := importVvpKvartalFixture(t)
++	names := make([]string, 0, len(rows))
++	for _, row := range rows {
++		names = append(names, row.series)
++	}
++	requireParsedDescribed(t, names, describedSeries(t, vvpKvartalSeriesMeta))
++}
++
++// TestVvpKvartalMissingSheetFails — fail-fast (§6.4): книга без ожидаемого листа — ошибка с
++// именем листа и таблицы, а не «ноль точек» и не тихий пропуск. Разбор идёт целиком до первой
++// записи, поэтому батч обязан остаться пустым: частичная запись книги выглядела бы успешным
++// импортом с неполным рядом.
++func TestVvpKvartalMissingSheetFails(t *testing.T) {
++	f := newTestWorkbook(t, "2", "10", "12", "14")
++	for _, sheet := range []string{"2", "10", "12", "14"} {
++		setSheetRows(t, f, sheet, vvpKvartalSheetFixtureRows())
++	}
++	rec := &appendRecorder{}
++	err := vvpKvartalImport(f, rec)
++	if err == nil {
++		t.Fatal("книга без листа «9»: ожидалась ошибка, получен nil")
++	}
++	if !strings.Contains(err.Error(), `"9"`) {
++		t.Errorf("в ошибке нет имени листа «9»: %v", err)
++	}
++	if !strings.Contains(err.Error(), rosstatVVPKvartalTable) {
++		t.Errorf("в ошибке нет имени таблицы %s: %v", rosstatVVPKvartalTable, err)
++	}
++	if len(rec.rows) != 0 {
++		t.Errorf("в батч записано %d строк, ожидалось 0", len(rec.rows))
++	}
++}
++
++// TestVvpKvartalUnknownQuarterFails — прежний getQuarterDate на незнакомой подписи вызывал
++// panic("Invalid quarter") и убивал прогон целиком; разбор обязан вернуть ошибку (§6.4).
++// Строку подписей разбор распознаёт по первой ячейке, поэтому испорченная подпись стоит в
++// следующей колонке — ровно там, где её читает обход.
++func TestVvpKvartalUnknownQuarterFails(t *testing.T) {
++	f := newTestWorkbook(t, "2")
++	setSheetRows(t, f, "2", [][]any{
++		{"К содержанию"},
++		{"Валовой внутренний продукт 1)  \n(в текущих ценах, млрд.руб.)"},
++		{"2011", "", "", "", "2012"},
++		{"I квартал", "X квартал"},
++		{"100", "101"},
++	})
++	rec := &appendRecorder{}
++	err := vvpKvartalImport(f, rec)
++	if err == nil {
++		t.Fatal("подпись «X квартал»: ожидалась ошибка, получен nil (паника была бы убийством прогона)")
++	}
++	if !strings.Contains(err.Error(), "X") {
++		t.Errorf("в ошибке нет подписи квартала: %v", err)
++	}
++	if len(rec.rows) != 0 {
++		t.Errorf("в батч записано %d строк, ожидалось 0", len(rec.rows))
++	}
++}
++
++// TestVvpKvartalFindLink — селектор проверяется на HTML-фикстуре страницы национальных счётов
++// тем же util.FindLink, что и в Import() (§11.3): ссылка на файл ищется на странице, а не
++// собирается из угаданного имени VVP_kvartal_s-1995-ГГГГ.xlsx, которое меняется при обновлении.
++func TestVvpKvartalFindLink(t *testing.T) {
++	page, err := os.ReadFile("testdata/accounts_page.html")
++	if err != nil {
++		t.Fatal(err)
++	}
++	href, err := util.FindLink(page, vvpKvartalLinkSelector)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !strings.Contains(href, "VVP_kvartal") {
++		t.Errorf("href %q не содержит VVP_kvartal", href)
++	}
++}
++
++// TestVvpKvartalCarriesYearAcrossDataGroups — год выписан только в первой колонке группы
++// (A, E, I, …), и кварталы II–IV обязаны брать его из предыдущей колонки. Регрессия чтения
++// года со сдвигом (прежний разбор читал rows[2][i+1]) сдвинула бы год группы и дала бы
++// 2011-04-01 вместо 2012-04-01 на I квартале следующего года.
++func TestVvpKvartalCarriesYearAcrossDataGroups(t *testing.T) {
++	f := newTestWorkbook(t, "2")
++	setSheetRows(t, f, "2", [][]any{
++		{"К содержанию"},
++		{"Валовой внутренний продукт 1)  \n(в текущих ценах, млрд.руб.)"},
++		{"2011", "", "", "", "2012", "", "", ""},
++		{"I квартал", "II квартал", "III квартал", "IV квартал", "I квартал", "II квартал", "III квартал", "IV квартал"},
++		{"1", "2", "3", "4", "5", "6", "7", "8"},
++	})
++	points, err := parseVvpKvartalSheet(f, "2")
++	if err != nil {
++		t.Fatalf("parseVvpKvartalSheet: %v", err)
++	}
++	want := []string{
++		"2011-04-01", "2011-07-01", "2011-10-01", "2012-01-01",
++		"2012-04-01", "2012-07-01", "2012-10-01", "2013-01-01",
++	}
++	if len(points) != len(want) {
++		t.Fatalf("точек %d, ожидалось %d", len(points), len(want))
++	}
++	for i, point := range points {
++		if got := point.date.Format("2006-01-02"); got != want[i] {
++			t.Errorf("точка %d: дата %s, ожидалась %s", i+1, got, want[i])
++		}
++	}
++}
++
++// TestVvpKvartalRepeatedYearLabelAdvances — в выгрузке строка годов листа «14» помечает
++// последнюю группу повторной меткой «20252)» (в листах «2», «9», «10», «12» того же выпуска на
++// этой колонке стоит «20262)»). Принять метку на веру нельзя: значения 2026-I и 2026-II легли бы
++// на даты 2025-I и 2025-II и затёрли настоящие значения 2025 года — в таблице с ключом
++// (name, date) это тихая подмена данных, а не пропуск. Год выводится из структуры таблицы
++// (после IV квартала группы идёт I квартал следующего года), поэтому у ряда 58 различных дат,
++// а не 56.
++func TestVvpKvartalRepeatedYearLabelAdvances(t *testing.T) {
++	const series = "14 Индексы - дефляторы валового внутреннего продукта"
++
++	dates := seriesDates(importVvpKvartalFixture(t), series)
++	if len(dates) != 58 {
++		t.Fatalf("точек %d, ожидалось 58", len(dates))
++	}
++	distinct := make(map[string]bool, len(dates))
++	for _, date := range dates {
++		distinct[date.Format("2006-01-02")] = true
++	}
++	if len(distinct) != 58 {
++		t.Errorf("различающихся дат %d, ожидалось 58: повторная метка года не выводится", len(distinct))
++	}
++	// Порядок точек — порядок записи: последние две — I и II кварталы выведенного 2026 года.
++	tail := []string{dates[len(dates)-2].Format("2006-01-02"), dates[len(dates)-1].Format("2006-01-02")}
++	if want := [2]string{"2026-04-01", "2026-07-01"}; tail[0] != want[0] || tail[1] != want[1] {
++		t.Errorf("последние две даты %v, ожидались %v", tail, want)
++	}
++
++	// Значения сверяются по разбору: колонка таблицы — Float32, и допуск 1e-6 к ней неприменим.
++	table, err := parseVvpKvartal(openVvpKvartalFixture(t))
++	if err != nil {
++		t.Fatalf("parseVvpKvartal: %v", err)
++	}
++	for _, spot := range []struct {
++		date string
++		want float64
++	}{
++		// Колонка 53 — I квартал 2025 (106.76184319561411) и колонка 57 — I квартал 2026
++		// (104.16029833229091): обе точки обязаны существовать каждая со своим значением.
++		{date: "2025-04-01", want: 106.7618431956141},
++		{date: "2026-04-01", want: 104.1602983322909},
++	} {
++		found := 0
++		for _, row := range table {
++			if row.name != series || row.date.Format("2006-01-02") != spot.date {
++				continue
++			}
++			found++
++			if math.Abs(row.vvp-spot.want) > 1e-6 {
++				t.Errorf("%s: значение %v, ожидалось %v", spot.date, row.vvp, spot.want)
++			}
++		}
++		if found != 1 {
++			t.Errorf("точек на %s — %d, ожидалась 1", spot.date, found)
++		}
++	}
++}
++
++// TestVvpKvartalSheetErrorBranches — ветки ошибок разбора листа, которых в полной выгрузке нет
++// (§6.4): без них разбор молча записал бы точку без года, мусор вместо значения или прочитал
++// бы ячейку мимо среза. Книга у каждого случая своя — проверяется ровно одна ветка.
++func TestVvpKvartalSheetErrorBranches(t *testing.T) {
++	const title = "Валовой внутренний продукт 1)  \n(в текущих ценах, млрд.руб.)"
++	labels := []any{"I квартал", "II квартал", "III квартал", "IV квартал"}
++	tests := []struct {
++		name string
++		rows [][]any
++		want string
++	}{
++		{
++			name: "строка подписей кварталов не найдена",
++			rows: [][]any{{"К содержанию"}, {title}, {"2011"}, {"100"}},
++			want: "подписей кварталов не найдена",
++		},
++		{
++			name: "строка годов отсутствует",
++			rows: [][]any{{"I квартал", "II квартал"}, {"100", "101"}},
++			want: "строки годов нет",
++		},
++		{
++			name: "строка данных отсутствует",
++			rows: [][]any{{"К содержанию"}, {title}, {"2011", "", "", ""}, labels},
++			want: "строки данных нет",
++		},
++		{
++			name: "год данных не задан",
++			rows: [][]any{{"К содержанию"}, {title}, {"", "", "", "", "2012"}, labels, {"100", "101", "102", "103", "104"}},
++			want: "год данных не задан",
++		},
++		{
++			name: "ячейка года короче четырёх цифр",
++			rows: [][]any{{"К содержанию"}, {title}, {"20", "", "", ""}, labels, {"100", "101", "102", "103"}},
++			want: `"20"`,
++		},
++		{
++			name: "год не число",
++			rows: [][]any{{"К содержанию"}, {title}, {"20хх", "", "", ""}, labels, {"100", "101", "102", "103"}},
++			want: "20хх",
++		},
++		{
++			name: "значение не число",
++			rows: [][]any{{"К содержанию"}, {title}, {"2011", "", "", ""}, labels, {"100", "нет", "", ""}},
++			want: "не число",
++		},
++		{
++			name: "значение не конечное число",
++			rows: [][]any{{"К содержанию"}, {title}, {"2011", "", "", ""}, labels, {"NaN", "101", "102", "103"}},
++			want: "не конечное число",
++		},
++		{
++			name: "подписей меньше, чем данных",
++			rows: [][]any{{"К содержанию"}, {title}, {"2011", "", "", ""}, {"I квартал"}, {"100", "101"}},
++			want: "подпис",
++		},
++		{
++			name: "точек нет",
++			rows: [][]any{{"К содержанию"}, {title}, {"2011", "", "", ""}, labels, {" "}},
++			want: "0 точек",
++		},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			f := newTestWorkbook(t, "2")
++			setSheetRows(t, f, "2", tt.rows)
++			points, err := parseVvpKvartalSheet(f, "2")
++			if err == nil {
++				t.Fatalf("ожидалась ошибка, получено %d точек", len(points))
++			}
++			if !strings.Contains(err.Error(), tt.want) {
++				t.Errorf("в ошибке нет %q: %v", tt.want, err)
++			}
++			if !strings.Contains(err.Error(), rosstatVVPKvartalTable) {
++				t.Errorf("в ошибке нет имени таблицы %s: %v", rosstatVVPKvartalTable, err)
++			}
++			if len(points) != 0 {
++				t.Errorf("при ошибке отдано %d точек, ожидалось 0", len(points))
++			}
++		})
++	}
++}
++
++// TestGetQuarterDate — дата точки — 1-е число месяца, следующего за отчётным кварталом
++// (I → апрель, II → июль, III → октябрь, IV → январь следующего года): семантика прежнего
++// разбора сохранена дословно, но незнакомая подпись теперь ошибка, а не panic.
++func TestGetQuarterDate(t *testing.T) {
++	for _, tt := range []struct {
++		quarter string
++		want    string
++	}{
++		{"I", "2026-04-01"},
++		{"II", "2026-07-01"},
++		{"III", "2026-10-01"},
++		{"IV", "2027-01-01"},
++	} {
++		date, err := getQuarterDate(2026, tt.quarter)
++		if err != nil {
++			t.Fatalf("квартал %s: %v", tt.quarter, err)
++		}
++		if got := date.Format("2006-01-02"); got != tt.want {
++			t.Errorf("квартал %s: дата %s, ожидалась %s", tt.quarter, got, tt.want)
++		}
++	}
++	if _, err := getQuarterDate(2026, "V"); err == nil {
++		t.Error("незнакомая подпись квартала «V»: ожидалась ошибка, получен nil")
++	}
++}
++
++// TestVvpKvartalAppendErrorNotSwallowed — ошибка записи доходит до вызывающего (§5.5, §11.6):
++// сбой Append в середине батча обязан вернуть ошибку, а не выглядеть успешным импортом.
++func TestVvpKvartalAppendErrorNotSwallowed(t *testing.T) {
++	wantErr := errors.New("append сломан")
++	rec := &appendRecorder{appendErr: wantErr}
++	err := vvpKvartalImport(openVvpKvartalFixture(t), rec)
++	if !errors.Is(err, wantErr) {
++		t.Fatalf("ошибка Append не вернулась: err = %v", err)
++	}
++	if len(rec.rows) != 0 {
++		t.Errorf("в батч записано %d строк, ожидалось 0 (первый Append упал)", len(rec.rows))
++	}
++}

@@ -1,0 +1,965 @@
+# Review package: 863bf98..HEAD
+
+## Commits
+5b2341a add bold.report json parsing and conversions
+
+## Files changed
+ bold/parse.go                         | 393 ++++++++++++++++++++++++++++
+ bold/parse_test.go                    | 468 ++++++++++++++++++++++++++++++++++
+ bold/testdata/bold_aum_history.json   |   1 +
+ bold/testdata/bold_aum_latest.json    |   1 +
+ bold/testdata/bold_flows_history.json |   1 +
+ bold/testdata/bold_flows_latest.json  |   1 +
+ bold/testdata/bold_price_history.json |   1 +
+ bold/testdata/bold_price_latest.json  |   1 +
+ bold/testdata/bold_summary.json       |   1 +
+ bold/testdata/bold_units_history.json |   1 +
+ bold/testdata/bold_units_latest.json  |   1 +
+ 11 files changed, 870 insertions(+)
+
+## Diff
+diff --git a/bold/parse.go b/bold/parse.go
+new file mode 100644
+index 0000000..7bb74cf
+--- /dev/null
++++ b/bold/parse.go
+@@ -0,0 +1,393 @@
++// Package bold тянет ежедневные T+1 данные из публичного JSON API bold.report (ByteTree):
++// агрегат 73 золотых ETF (≈83 % мировой величины WGC) и цена золота. Здесь — только чистый
++// разбор ответов и конверсии; сеть и запись в ClickHouse живут в импортёрах (bold.go).
++package bold
++
++import (
++	"encoding/json"
++	"errors"
++	"fmt"
++	"sort"
++	"time"
++)
++
++// Эндпоинты источника. Формат истории — {version, updated, data:[…]}, формат «последнего
++// дня» — объект верхнего уровня {version, updated, date, …поля}.
++const (
++	boldBaseURL = "https://bold.report/api/v1/"
++
++	boldPathPrice       = "gold/price"
++	boldPathPriceLatest = "gold/price-latest"
++	boldPathUnits       = "gold/funds/units"
++	boldPathUnitsLatest = "gold/funds/units-latest"
++	boldPathAum         = "gold/funds/aum"
++	boldPathAumLatest   = "gold/funds/aum-latest"
++	boldPathFlows       = "gold/flows/all"
++	boldPathFlowsLatest = "gold/flows/all-latest"
++	boldPathSummary     = "gold/summary"
++)
++
++// Имена семи рядов ETF-контура (source='bold' в macro_series).
++const (
++	boldSeriesFlowTonnes     = "etf_bold_flow_tonnes"
++	boldSeriesFlowUsdMln     = "etf_bold_flow_usd_mln"
++	boldSeriesFlow7dTonnes   = "etf_bold_flow_7d_tonnes"
++	boldSeriesFlow30dTonnes  = "etf_bold_flow_30d_tonnes"
++	boldSeriesFlow90dTonnes  = "etf_bold_flow_90d_tonnes"
++	boldSeriesHoldingsTonnes = "etf_bold_holdings_tonnes"
++	boldSeriesAumUsdBn       = "etf_bold_aum_usd_bn"
++)
++
++const (
++	// boldDateLayout — даты источника («2026-10-09»); строки «последнего дня» и истории
++	// уже конец дня, поэтому далее никакой нормализации дат нет (в ClickHouse — Date32).
++	boldDateLayout = "2006-01-02"
++	// troyOunceGrams — тройская унция в граммах: та же константа, что в gold/gold.go.
++	troyOunceGrams = 31.1034768
++	// ouncesPerTonne — унций в тонне: 1e6/31.1034768 = 32150.74656862…
++	ouncesPerTonne = 1e6 / troyOunceGrams
++	// aumUsdDivisor — AUM источника в USD, ряд etf_bold_aum_usd_bn — в млрд USD.
++	aumUsdDivisor = 1e9
++	// flowUsdDivisor — поток в USD, ряд etf_bold_flow_usd_mln — в млн USD.
++	flowUsdDivisor = 1e6
++)
++
++// point — точка ряда: имя ряда, дата (конец дня, 00:00 UTC) и значение в единицах ряда.
++// Объявлен локально: пакеты источников не зависят друг от друга (аналог wgc.seriesPoint).
++type point struct {
++	Series string
++	Date   time.Time
++	Value  float64
++}
++
++// boldRow — строка истории/«последнего дня»; отсутствующие поля источника остаются nil
++// (у 64 первых строк истории есть только price — это отсутствие данных, а не ноль).
++type boldRow struct {
++	Date   string   `json:"date"`
++	Value  *float64 `json:"value"`
++	Units  *float64 `json:"units"`
++	Aum    *float64 `json:"aum"`
++	Culm7  *float64 `json:"culm7day"`
++	Culm30 *float64 `json:"culm30day"`
++	Culm90 *float64 `json:"culm90day"`
++	Price  *float64 `json:"price"`
++}
++
++// boldEnvelope — обёртка файлов истории.
++type boldEnvelope struct {
++	Version string    `json:"version"`
++	Updated string    `json:"updated"`
++	Data    []boldRow `json:"data"`
++}
++
++// boldFundRow — строка пер-фондового среза (у среза нет поля даты: дата берётся из
++// ответа «последнего дня», поэтому расхождение дат обязано быть ошибкой, а не записью).
++type boldFundRow struct {
++	Ticker       string   `json:"ticker"`
++	Name         string   `json:"name"`
++	Units        *float64 `json:"units"`
++	UnitsChange  *float64 `json:"unitsChange"`
++	Aum          *float64 `json:"aum"`
++	AumChange    *float64 `json:"aumChange"`
++	Price        *float64 `json:"price"`
++	PriceChange  *float64 `json:"priceChange"`
++	Shares       *float64 `json:"shares"`
++	SharesChange *float64 `json:"sharesChange"`
++}
++
++// boldFundSnapshot — ответ gold/summary: срез 73 фондов за последний день.
++type boldFundSnapshot struct {
++	Version string        `json:"version"`
++	Updated string        `json:"updated"`
++	Data    []boldFundRow `json:"data"`
++}
++
++// boldFundPoint — точка пер-фондового среза для bold_fund_snapshot.
++type boldFundPoint struct {
++	Date         time.Time
++	Ticker       string
++	Name         string
++	Units        float64
++	UnitsChange  float64
++	Aum          float64
++	AumChange    float64
++	Price        float64
++	PriceChange  float64
++	Shares       float64
++	SharesChange float64
++}
++
++// boldMetric — метрика эндпоинта: какие поля строки обязаны быть заполнены.
++type boldMetric int
++
++const (
++	boldMetricPrice boldMetric = iota
++	boldMetricUnits
++	boldMetricAum
++	boldMetricFlows
++)
++
++// name — имя метрики в терминах источника (для сообщений об ошибках).
++func (m boldMetric) name() string {
++	switch m {
++	case boldMetricPrice:
++		return "price"
++	case boldMetricUnits:
++		return "units"
++	case boldMetricAum:
++		return "aum"
++	case boldMetricFlows:
++		return "flows"
++	}
++	return fmt.Sprintf("boldMetric(%d)", int(m))
++}
++
++// missing — первое обязательное поле метрики, которого нет в строке ("" — строка полна).
++// У flows обязательны все три окна: источник публикует их вместе, и одиночный nil —
++// сигнал смены формы ответа, а не отсутствие данных.
++func (m boldMetric) missing(r boldRow) string {
++	switch m {
++	case boldMetricPrice:
++		if r.Value == nil {
++			return "value"
++		}
++	case boldMetricUnits:
++		if r.Units == nil {
++			return "units"
++		}
++	case boldMetricAum:
++		if r.Aum == nil {
++			return "aum"
++		}
++	case boldMetricFlows:
++		switch {
++		case r.Culm7 == nil:
++			return "culm7day"
++		case r.Culm30 == nil:
++			return "culm30day"
++		case r.Culm90 == nil:
++			return "culm90day"
++		}
++	default:
++		return "обязательные поля (метрика не распознана)"
++	}
++	return ""
++}
++
++// require проверяет, что строка несёт обязательные поля метрики; иначе — ошибка с именем
++// метрики и даты (пустое поле не должно доехать до БД нулём).
++func (m boldMetric) require(r boldRow) error {
++	switch m {
++	case boldMetricPrice, boldMetricUnits, boldMetricAum, boldMetricFlows:
++	default:
++		return fmt.Errorf("bold: неизвестная метрика boldMetric(%d)", int(m))
++	}
++	if field := m.missing(r); field != "" {
++		return fmt.Errorf("bold: в ответе метрики %s за %s нет обязательного поля %s", m.name(), r.Date, field)
++	}
++	return nil
++}
++
++// present — то же, что require, но без ошибки: есть ли в строке поля метрики.
++func (m boldMetric) present(r boldRow) bool { return m.missing(r) == "" }
++
++// parseBoldDate разбирает дату источника («2026-10-09») в 00:00 UTC.
++func parseBoldDate(s string) (time.Time, error) {
++	d, err := time.ParseInLocation(boldDateLayout, s, time.UTC)
++	if err != nil {
++		return time.Time{}, fmt.Errorf("bold: дата %q не разобрана (нужен формат %s): %w", s, boldDateLayout, err)
++	}
++	return d, nil
++}
++
++// parseLatest разбирает ответ «последнего дня»: это объект верхнего уровня, а не список,
++// поэтому unmarshal идёт сразу в boldRow. Дата и обязательные поля метрики проверяются.
++func parseLatest(body []byte, metric boldMetric) (boldRow, error) {
++	var row boldRow
++	if err := json.Unmarshal(body, &row); err != nil {
++		return boldRow{}, fmt.Errorf("bold: разбор ответа метрики %s: %w", metric.name(), err)
++	}
++	if _, err := parseBoldDate(row.Date); err != nil {
++		return boldRow{}, err
++	}
++	if err := metric.require(row); err != nil {
++		return boldRow{}, err
++	}
++	return row, nil
++}
++
++// parseHistory разбирает файл истории. Строки без полей метрики остаются в срезе с nil —
++// решение о точке принимает boldETFSets (нулевой сток не должен попасть в ряды как факт);
++// ошибка только тогда, когда метрики нет ни в одной строке (не тот эндпоинт).
++func parseHistory(body []byte, metric boldMetric) ([]boldRow, error) {
++	var envelope boldEnvelope
++	if err := json.Unmarshal(body, &envelope); err != nil {
++		return nil, fmt.Errorf("bold: разбор истории метрики %s: %w", metric.name(), err)
++	}
++	if len(envelope.Data) == 0 {
++		return nil, fmt.Errorf("bold: история метрики %s пуста", metric.name())
++	}
++	full := 0
++	for i, row := range envelope.Data {
++		if _, err := parseBoldDate(row.Date); err != nil {
++			return nil, fmt.Errorf("bold: история метрики %s, строка %d: %w", metric.name(), i+1, err)
++		}
++		if metric.present(row) {
++			full++
++		}
++	}
++	if full == 0 {
++		return nil, fmt.Errorf("bold: в истории метрики %s нет ни одной строки с её полями", metric.name())
++	}
++	return envelope.Data, nil
++}
++
++// parseFundSnapshot разбирает пер-фондовый срез. Пустой срез и строка с любым незаполненным
++// полем — ошибка: срез обязан быть полным, отсутствие поля означает смену формы ответа.
++func parseFundSnapshot(body []byte) ([]boldFundRow, error) {
++	var snapshot boldFundSnapshot
++	if err := json.Unmarshal(body, &snapshot); err != nil {
++		return nil, fmt.Errorf("bold: разбор среза фондов (%s): %w", boldPathSummary, err)
++	}
++	if len(snapshot.Data) == 0 {
++		return nil, fmt.Errorf("bold: срез фондов (%s) пуст", boldPathSummary)
++	}
++	for i, row := range snapshot.Data {
++		if err := requireFundRow(row); err != nil {
++			return nil, fmt.Errorf("bold: срез фондов, строка %d (%s): %w", i+1, row.Ticker, err)
++		}
++	}
++	return snapshot.Data, nil
++}
++
++// requireFundRow проверяет полноту строки среза. Проверка живёт здесь, а не в boldFundPoints:
++// перевод в точки отдаёт []boldFundPoint без ошибки, поэтому «nil — это смена формы ответа»
++// ловится на разборе.
++func requireFundRow(f boldFundRow) error {
++	if f.Ticker == "" {
++		return errors.New("пустой ticker")
++	}
++	if f.Name == "" {
++		return errors.New("пустое name")
++	}
++	fields := []struct {
++		name  string
++		value *float64
++	}{
++		{"units", f.Units},
++		{"unitsChange", f.UnitsChange},
++		{"aum", f.Aum},
++		{"aumChange", f.AumChange},
++		{"price", f.Price},
++		{"priceChange", f.PriceChange},
++		{"shares", f.Shares},
++		{"sharesChange", f.SharesChange},
++	}
++	for _, field := range fields {
++		if field.value == nil {
++			return fmt.Errorf("нет обязательного поля %s", field.name)
++		}
++	}
++	return nil
++}
++
++// ozToTonnes переводит тройские унции в тонны (1 т = 1e6/31.1034768 = 32150.74656862… унции).
++func ozToTonnes(oz float64) float64 { return oz / ouncesPerTonne }
++
++// boldETFSets строит точки семи рядов ETF-контура по строкам истории (слитым по дате) или по
++// одной строке инкремента. prevUnits/prevDate — сток предыдущего торгового дня, прочитанный
++// из ClickHouse (на полном пути не нужен). Строки сортируются по дате: порядок точек не должен
++// зависеть от порядка входа. Пустой результат — ошибка «нет точек», а не тихий ноль.
++func boldETFSets(rows []boldRow, prevUnits *float64, prevDate time.Time) ([]point, error) {
++	type datedRow struct {
++		date time.Time
++		row  boldRow
++	}
++	dated := make([]datedRow, 0, len(rows))
++	for i, row := range rows {
++		d, err := parseBoldDate(row.Date)
++		if err != nil {
++			return nil, fmt.Errorf("bold: строка %d: %w", i+1, err)
++		}
++		dated = append(dated, datedRow{date: d, row: row})
++	}
++	sort.SliceStable(dated, func(i, j int) bool { return dated[i].date.Before(dated[j].date) })
++
++	var points []point
++	// base/baseDate — сток и его дата для дельты: внутри среза берётся из предыдущей строки,
++	// для первой строки — из prevUnits/prevDate (ClickHouse).
++	var base *float64
++	var baseDate time.Time
++	for i, item := range dated {
++		row, date := item.row, item.date
++		if row.Units != nil {
++			points = append(points, point{boldSeriesHoldingsTonnes, date, ozToTonnes(*row.Units)})
++		}
++		if row.Aum != nil {
++			points = append(points, point{boldSeriesAumUsdBn, date, *row.Aum / aumUsdDivisor})
++		}
++		if row.Culm7 != nil {
++			points = append(points, point{boldSeriesFlow7dTonnes, date, ozToTonnes(*row.Culm7)})
++		}
++		if row.Culm30 != nil {
++			points = append(points, point{boldSeriesFlow30dTonnes, date, ozToTonnes(*row.Culm30)})
++		}
++		if row.Culm90 != nil {
++			points = append(points, point{boldSeriesFlow90dTonnes, date, ozToTonnes(*row.Culm90)})
++		}
++
++		if i == 0 {
++			base, baseDate = prevUnits, prevDate
++		}
++		if base != nil && row.Units != nil {
++			if !baseDate.Before(date) {
++				return nil, fmt.Errorf("bold: предыдущий сток за %s не старше строки %s — дельта потока посчиталась бы неверно",
++					baseDate.Format(boldDateLayout), date.Format(boldDateLayout))
++			}
++			delta := *row.Units - *base
++			points = append(points, point{boldSeriesFlowTonnes, date, ozToTonnes(delta)})
++			if row.Price != nil {
++				points = append(points, point{boldSeriesFlowUsdMln, date, delta * *row.Price / flowUsdDivisor})
++			}
++		}
++		// Предыдущий сток строки: nil значит «в этой строке запасов нет», и потока для
++		// следующей строки тоже нет (нет предыдущего — нет дельты).
++		base, baseDate = row.Units, date
++	}
++
++	if len(points) == 0 {
++		return nil, errors.New("bold: нет точек: ни в одной строке нет units, aum или окон culm*")
++	}
++	return points, nil
++}
++
++// boldFundPoints переводит пер-фондовый срез в точки за date (у среза своего поля даты нет —
++// дата приходит из ответа «последнего дня»). Полноту строк проверил parseFundSnapshot.
++func boldFundPoints(snapshot []boldFundRow, date time.Time) []boldFundPoint {
++	points := make([]boldFundPoint, 0, len(snapshot))
++	for _, fund := range snapshot {
++		points = append(points, boldFundPoint{
++			Date:         date,
++			Ticker:       fund.Ticker,
++			Name:         fund.Name,
++			Units:        fundValue(fund.Units),
++			UnitsChange:  fundValue(fund.UnitsChange),
++			Aum:          fundValue(fund.Aum),
++			AumChange:    fundValue(fund.AumChange),
++			Price:        fundValue(fund.Price),
++			PriceChange:  fundValue(fund.PriceChange),
++			Shares:       fundValue(fund.Shares),
++			SharesChange: fundValue(fund.SharesChange),
++		})
++	}
++	return points
++}
++
++// fundValue раскрывает необязательное поле среза. nil сюда не доходит: полноту строк
++// проверяет parseFundSnapshot (отсутствие поля — смена формы ответа, а не ноль).
++func fundValue(v *float64) float64 {
++	if v == nil {
++		return 0
++	}
++	return *v
++}
+diff --git a/bold/parse_test.go b/bold/parse_test.go
+new file mode 100644
+index 0000000..298e010
+--- /dev/null
++++ b/bold/parse_test.go
+@@ -0,0 +1,468 @@
++package bold
++
++import (
++	"encoding/json"
++	"math"
++	"net/url"
++	"os"
++	"path/filepath"
++	"sort"
++	"strconv"
++	"strings"
++	"testing"
++	"time"
++)
++
++// Фикстуры bold/testdata — урезанные живые ответы bold.report от 2026-10-11:
++// «последний день» как есть, история — три даты (2015-01-01 без units/aum, 2026-10-08,
++// 2026-10-09). Тесты офлайн: сеть и httptest не нужны, читается только testdata/.
++const (
++	boldPinDate    = "2026-10-09"
++	boldPinPrior   = "2026-10-08"
++	boldPinEmpty   = "2015-01-01"
++	boldPinUnits   = 113180843
++	boldPinAPrior  = 113044763
++	boldPinOunces  = 32150.74656862 // 1 т = 1e6/31.1034768 унции
++	boldPinSummary = "bold_summary.json"
++)
++
++// testFixture читает фикстуру из testdata/ (тесты идут в каталоге пакета, сеть не нужна).
++func testFixture(t *testing.T, name string) []byte {
++	t.Helper()
++	body, err := os.ReadFile(filepath.Join("testdata", name))
++	if err != nil {
++		t.Fatalf("чтение фикстуры %s: %v", name, err)
++	}
++	return body
++}
++
++func testDate(t *testing.T, s string) time.Time {
++	t.Helper()
++	d, err := parseBoldDate(s)
++	if err != nil {
++		t.Fatalf("дата %q не разобрана: %v", s, err)
++	}
++	return d
++}
++
++func testLatest(t *testing.T, name string, metric boldMetric) boldRow {
++	t.Helper()
++	row, err := parseLatest(testFixture(t, name), metric)
++	if err != nil {
++		t.Fatalf("%s: %v", name, err)
++	}
++	return row
++}
++
++func testHistory(t *testing.T, name string, metric boldMetric) []boldRow {
++	t.Helper()
++	rows, err := parseHistory(testFixture(t, name), metric)
++	if err != nil {
++		t.Fatalf("%s: %v", name, err)
++	}
++	return rows
++}
++
++func testFunds(t *testing.T) []boldFundRow {
++	t.Helper()
++	rows, err := parseFundSnapshot(testFixture(t, boldPinSummary))
++	if err != nil {
++		t.Fatalf("%s: %v", boldPinSummary, err)
++	}
++	return rows
++}
++
++// testMergedHistory сливает три файла истории (units, aum, flows) по дате — так же, как это
++// делает полный путь импортёра (Task 2), — и отдаёт строки в порядке дат.
++func testMergedHistory(t *testing.T) []boldRow {
++	t.Helper()
++	index := map[string]*boldRow{}
++	var dates []string
++	row := func(date string) *boldRow {
++		if r, ok := index[date]; ok {
++			return r
++		}
++		r := &boldRow{Date: date}
++		index[date] = r
++		dates = append(dates, date)
++		return r
++	}
++	for _, r := range testHistory(t, "bold_units_history.json", boldMetricUnits) {
++		row(r.Date).Units, row(r.Date).Price = r.Units, r.Price
++	}
++	for _, r := range testHistory(t, "bold_aum_history.json", boldMetricAum) {
++		row(r.Date).Aum = r.Aum
++	}
++	for _, r := range testHistory(t, "bold_flows_history.json", boldMetricFlows) {
++		row(r.Date).Culm7, row(r.Date).Culm30, row(r.Date).Culm90 = r.Culm7, r.Culm30, r.Culm90
++	}
++	sort.Strings(dates)
++	merged := make([]boldRow, 0, len(dates))
++	for _, date := range dates {
++		merged = append(merged, *index[date])
++	}
++	return merged
++}
++
++// testDayRows оставляет строки только за указанную дату.
++func testDayRows(t *testing.T, date string) []boldRow {
++	t.Helper()
++	var out []boldRow
++	for _, r := range testMergedHistory(t) {
++		if r.Date == date {
++			out = append(out, r)
++		}
++	}
++	if len(out) == 0 {
++		t.Fatalf("в слитой истории нет строки за %s", date)
++	}
++	return out
++}
++
++func testPoints(t *testing.T, rows []boldRow, prevUnits *float64, prevDate time.Time) []point {
++	t.Helper()
++	points, err := boldETFSets(rows, prevUnits, prevDate)
++	if err != nil {
++		t.Fatalf("boldETFSets: %v", err)
++	}
++	return points
++}
++
++// testPoint ищет точку ряда за дату; отсутствие — фатально (диагностика печатает все точки).
++func testPoint(t *testing.T, points []point, series, date string) point {
++	t.Helper()
++	want := testDate(t, date)
++	for _, p := range points {
++		if p.Series == series && p.Date.Equal(want) {
++			return p
++		}
++	}
++	t.Fatalf("нет точки %s за %s; есть: %s", series, date, testDescribe(points))
++	return point{}
++}
++
++func testSeries(t *testing.T, points []point) []string {
++	t.Helper()
++	seen := map[string]bool{}
++	for _, p := range points {
++		seen[p.Series] = true
++	}
++	names := make([]string, 0, len(seen))
++	for name := range seen {
++		names = append(names, name)
++	}
++	sort.Strings(names)
++	return names
++}
++
++func testDescribe(points []point) string {
++	parts := make([]string, 0, len(points))
++	for _, p := range points {
++		parts = append(parts, p.Series+"@"+p.Date.Format("2006-01-02")+"="+strconv.FormatFloat(p.Value, 'f', 6, 64))
++	}
++	return strings.Join(parts, ", ")
++}
++
++func testNear(t *testing.T, label string, got, want, tol float64) {
++	t.Helper()
++	if math.Abs(got-want) > tol {
++		t.Fatalf("%s: получено %v, ожидалось %v (±%v)", label, got, want, tol)
++	}
++}
++
++func testPtr(v float64) *float64 { return &v }
++
++// TestParseLatestPinsFacts пинит факты 2026-10-09 из четырёх ответов «последнего дня».
++func TestParseLatestPinsFacts(t *testing.T) {
++	price := testLatest(t, "bold_price_latest.json", boldMetricPrice)
++	if price.Date != boldPinDate || price.Value == nil {
++		t.Fatalf("price-latest: дата %q, value %v", price.Date, price.Value)
++	}
++	testNear(t, "price", *price.Value, 4216.3, 1e-9)
++
++	units := testLatest(t, "bold_units_latest.json", boldMetricUnits)
++	// цена в units-latest дублирует price-latest: расхождение поймает импортёр (Task 2).
++	testNear(t, "units", *units.Units, boldPinUnits, 1e-9)
++	testNear(t, "units.price", *units.Price, 4216.3, 1e-9)
++
++	aum := testLatest(t, "bold_aum_latest.json", boldMetricAum)
++	testNear(t, "aum", *aum.Aum, 476677811738, 1e-6)
++
++	flows := testLatest(t, "bold_flows_latest.json", boldMetricFlows)
++	testNear(t, "culm7day", *flows.Culm7, 43740, 1e-9)
++	testNear(t, "culm30day", *flows.Culm30, 991060, 1e-9)
++	testNear(t, "culm90day", *flows.Culm90, 5376055, 1e-9)
++
++	for name, row := range map[string]boldRow{"price": price, "units": units, "aum": aum, "flows": flows} {
++		if row.Date != boldPinDate {
++			t.Fatalf("%s-latest: дата %q, ожидалась %s", name, row.Date, boldPinDate)
++		}
++	}
++}
++
++// TestParseLatestRequiresMetricFields: отсутствие обязательного поля метрики — ошибка,
++// называющая метрику, а не строка с нулём.
++func TestParseLatestRequiresMetricFields(t *testing.T) {
++	if _, err := parseLatest([]byte(`{"version":"1","updated":"2026-10-11T04:32:05.131Z","date":"2026-10-09","price":4216.3}`), boldMetricUnits); err == nil {
++		t.Fatal("units-latest без units обязан быть ошибкой")
++	} else if !strings.Contains(err.Error(), "units") {
++		t.Fatalf("ошибка обязана называть метрику units: %v", err)
++	}
++
++	body := `{"version":"1","updated":"2026-10-11T04:32:05.028Z","date":"2026-10-09","culm7day":43740,"culm90day":5376055,"price":4216.3}`
++	if _, err := parseLatest([]byte(body), boldMetricFlows); err == nil {
++		t.Fatal("flows-latest без culm30day обязан быть ошибкой")
++	} else if !strings.Contains(err.Error(), "culm30day") {
++		t.Fatalf("ошибка обязана называть поле culm30day: %v", err)
++	}
++}
++
++// TestParseLatestRejectsBadDate: дата не в формате 2006-01-02 — ошибка, а не нулевая дата.
++func TestParseLatestRejectsBadDate(t *testing.T) {
++	body := `{"version":"1","updated":"2026-10-11T04:32:05.131Z","date":"09/10/2026","value":4216.3}`
++	if _, err := parseLatest([]byte(body), boldMetricPrice); err == nil {
++		t.Fatal("дата 09/10/2026 обязана быть ошибкой")
++	} else if !strings.Contains(err.Error(), "09/10/2026") {
++		t.Fatalf("ошибка обязана называть дату: %v", err)
++	}
++}
++
++// TestParseHistorySkipsNullUnits: 2015-01-01 без units/aum — строка остаётся с nil и в точки
++// не идёт (вклад в точки дают 2 строки из 3); одинокие такие строки дают «нет точек».
++func TestParseHistorySkipsNullUnits(t *testing.T) {
++	rows := testHistory(t, "bold_units_history.json", boldMetricUnits)
++	if len(rows) != 3 {
++		t.Fatalf("строк в урезанной истории units: %d, ожидалось 3", len(rows))
++	}
++	if rows[0].Date != boldPinEmpty || rows[0].Units != nil || rows[0].Value != nil {
++		t.Fatalf("2015-01-01: дата %q, units %v, value %v — ожидались nil", rows[0].Date, rows[0].Units, rows[0].Value)
++	}
++	if rows[1].Units == nil || rows[2].Units == nil {
++		t.Fatalf("units за 08.10/09.10 обязаны быть: %v / %v", rows[1].Units, rows[2].Units)
++	}
++	testNear(t, "units 08.10", *rows[1].Units, boldPinAPrior, 1e-9)
++	testNear(t, "units 09.10", *rows[2].Units, boldPinUnits, 1e-9)
++
++	points := testPoints(t, rows, nil, time.Time{})
++	// 08.10: только сток (предыдущего дня нет), 09.10: сток + поток в тоннах и USD.
++	if len(points) != 4 {
++		t.Fatalf("точек из одной истории units: %d, ожидалось 4 (%s)", len(points), testDescribe(points))
++	}
++	for _, p := range points {
++		if p.Date.Format("2006-01-02") != boldPinDate && p.Date.Format("2006-01-02") != boldPinPrior {
++			t.Fatalf("точка за %s: строка без units в точки не идёт", p.Date.Format("2006-01-02"))
++		}
++	}
++
++	if _, err := boldETFSets(rows[:1], nil, time.Time{}); err == nil {
++		t.Fatal("строка без units/aum/culm обязана давать ошибку «нет точек»")
++	} else if !strings.Contains(err.Error(), "нет точек") {
++		t.Fatalf("ошибка обязана говорить «нет точек»: %v", err)
++	}
++
++	body := `{"version":"1","updated":"2026-10-11T04:32:19.813Z","data":[{"date":"2015-01-01","price":1199.25}]}`
++	if _, err := parseHistory([]byte(body), boldMetricUnits); err == nil {
++		t.Fatal("история units без единой строки с units обязана быть ошибкой")
++	} else if !strings.Contains(err.Error(), "units") {
++		t.Fatalf("ошибка обязана называть метрику units: %v", err)
++	}
++}
++
++// TestBoldETFSetsPinsFacts пинит факты 2026-10-09 на слитой истории: сток 3520.318 т,
++// AUM 476.678 млрд $, окна 1.360/30.825/167.214 т, поток +4.233 т / 573.75 млн $.
++func TestBoldETFSetsPinsFacts(t *testing.T) {
++	rows := testMergedHistory(t)
++	reversed := make([]boldRow, 0, len(rows))
++	for i := len(rows) - 1; i >= 0; i-- { // обратный порядок: boldETFSets обязан отсортировать сам
++		reversed = append(reversed, rows[i])
++	}
++	points := testPoints(t, reversed, nil, time.Time{})
++
++	if len(points) != 12 {
++		t.Fatalf("точек: %d, ожидалось 12 (5 за 08.10 + 7 за 09.10): %s", len(points), testDescribe(points))
++	}
++	want := []string{
++		"etf_bold_aum_usd_bn", "etf_bold_flow_30d_tonnes", "etf_bold_flow_7d_tonnes", "etf_bold_flow_90d_tonnes",
++		"etf_bold_flow_tonnes", "etf_bold_flow_usd_mln", "etf_bold_holdings_tonnes",
++	}
++	if got := testSeries(t, points); strings.Join(got, ",") != strings.Join(want, ",") {
++		t.Fatalf("ряды: %s, ожидались %s", strings.Join(got, ","), strings.Join(want, ","))
++	}
++
++	testNear(t, "holdings 09.10", testPoint(t, points, "etf_bold_holdings_tonnes", boldPinDate).Value, 3520.318, 1e-3)
++	testNear(t, "aum 09.10", testPoint(t, points, "etf_bold_aum_usd_bn", boldPinDate).Value, 476.678, 1e-3)
++	testNear(t, "flow 7d 09.10", testPoint(t, points, "etf_bold_flow_7d_tonnes", boldPinDate).Value, 1.360, 1e-3)
++	testNear(t, "flow 30d 09.10", testPoint(t, points, "etf_bold_flow_30d_tonnes", boldPinDate).Value, 30.825, 1e-3)
++	testNear(t, "flow 90d 09.10", testPoint(t, points, "etf_bold_flow_90d_tonnes", boldPinDate).Value, 167.214, 1e-3)
++	testNear(t, "flow 09.10", testPoint(t, points, "etf_bold_flow_tonnes", boldPinDate).Value, 4.233, 1e-3)
++	testNear(t, "flow usd 09.10", testPoint(t, points, "etf_bold_flow_usd_mln", boldPinDate).Value, 573.75, 1e-2)
++	testNear(t, "holdings 08.10", testPoint(t, points, "etf_bold_holdings_tonnes", boldPinPrior).Value, 3516.085, 1e-3)
++
++	// 08.10 — первая строка с units: предыдущего дня нет, потока нет.
++	for _, p := range points {
++		if p.Series != "etf_bold_flow_tonnes" && p.Series != "etf_bold_flow_usd_mln" {
++			continue
++		}
++		if p.Date.Format("2006-01-02") == boldPinPrior {
++			t.Fatalf("поток за 08.10 без предыдущего дня: %v", p)
++		}
++	}
++	if _, err := boldETFSets([]boldRow{{Date: boldPinEmpty, Value: testPtr(1199.25)}}, nil, time.Time{}); err == nil {
++		t.Fatal("строка 2015-01-01 без units/aum обязана давать «нет точек»")
++	}
++}
++
++// TestBoldETFSetsSkipsFirstFlow: одна строка истории — ряда потока нет, остальные пять есть.
++func TestBoldETFSetsSkipsFirstFlow(t *testing.T) {
++	points := testPoints(t, testDayRows(t, boldPinDate), nil, time.Time{})
++	if len(points) != 5 {
++		t.Fatalf("точек одной строки: %d, ожидалось 5 (%s)", len(points), testDescribe(points))
++	}
++	want := "etf_bold_aum_usd_bn,etf_bold_flow_30d_tonnes,etf_bold_flow_7d_tonnes,etf_bold_flow_90d_tonnes,etf_bold_holdings_tonnes"
++	if got := testSeries(t, points); strings.Join(got, ",") != want {
++		t.Fatalf("ряды: %s, ожидались %s", strings.Join(got, ","), want)
++	}
++}
++
++// TestBoldETFSetsUsesPrevUnitsFromDB: на инкременте предыдущие унции приходят из ClickHouse —
++// поток 09.10 считается от 08.10 (136 080 oz → +4.233 т и 573.75 млн $).
++func TestBoldETFSetsUsesPrevUnitsFromDB(t *testing.T) {
++	points := testPoints(t, testDayRows(t, boldPinDate), testPtr(boldPinAPrior), testDate(t, boldPinPrior))
++	if len(points) != 7 {
++		t.Fatalf("точек: %d, ожидалось 7 (%s)", len(points), testDescribe(points))
++	}
++	testNear(t, "flow", testPoint(t, points, "etf_bold_flow_tonnes", boldPinDate).Value, 4.233, 1e-3)
++	testNear(t, "flow usd", testPoint(t, points, "etf_bold_flow_usd_mln", boldPinDate).Value, 573.75, 1e-2)
++}
++
++// TestBoldETFSetsErrorsOnDateMismatch: предыдущий день (10-09) не старше строки (10-08) —
++// дельта посчиталась бы с будущим стоком, поэтому это ошибка, а не тихий поток.
++func TestBoldETFSetsErrorsOnDateMismatch(t *testing.T) {
++	_, err := boldETFSets(testDayRows(t, boldPinPrior), testPtr(boldPinUnits), testDate(t, boldPinDate))
++	if err == nil {
++		t.Fatal("prevDate 10-09 при строке 10-08 обязан быть ошибкой")
++	}
++	for _, want := range []string{boldPinDate, boldPinPrior} {
++		if !strings.Contains(err.Error(), want) {
++			t.Fatalf("ошибка обязана называть обе даты (%s): %v", want, err)
++		}
++	}
++}
++
++// TestParseFundSnapshotPinsFacts: 73 фонда, у GLD (SPDR Gold Shares) 33 552 628 oz,
++// ни одного пустого поля в срезе.
++func TestParseFundSnapshotPinsFacts(t *testing.T) {
++	rows := testFunds(t)
++	if len(rows) != 73 {
++		t.Fatalf("фондов: %d, ожидалось 73", len(rows))
++	}
++	gld := 0
++	for _, r := range rows {
++		if r.Ticker == "" || r.Name == "" {
++			t.Fatalf("фонд без тикера/имени: %+v", r)
++		}
++		if r.Units == nil || r.UnitsChange == nil || r.Aum == nil || r.AumChange == nil ||
++			r.Price == nil || r.PriceChange == nil || r.Shares == nil || r.SharesChange == nil {
++			t.Fatalf("%s (%s): неполная строка среза", r.Ticker, r.Name)
++		}
++		if r.Ticker == "GLD" {
++			gld++
++		}
++	}
++	// Тикер не уникален: GLD встречается трижды (Бангкок, NewGold, SPDR) — известно и учтено
++	// на стороне импортёра (ключ таблицы (date, ticker) столько строк не сохранит).
++	if gld != 3 {
++		t.Fatalf("строк с тикером GLD: %d, ожидалось 3", gld)
++	}
++
++	points := boldFundPoints(rows, testDate(t, boldPinDate))
++	if len(points) != 73 {
++		t.Fatalf("точек фондов: %d, ожидалось 73", len(points))
++	}
++	found := false
++	for _, p := range points {
++		if !p.Date.Equal(testDate(t, boldPinDate)) {
++			t.Fatalf("точка фонда с датой %s, ожидалась %s", p.Date.Format("2006-01-02"), boldPinDate)
++		}
++		if p.Ticker != "GLD" || p.Units != 33552628 {
++			continue
++		}
++		found = true
++		if p.Name != "SPDR Gold Shares" {
++			t.Fatalf("GLD с 33552628 oz: имя %q", p.Name)
++		}
++		testNear(t, "GLD unitsChange", p.UnitsChange, -68447.07, 1e-2)
++		testNear(t, "GLD aum", p.Aum, 141684193497, 1e-3)
++		testNear(t, "GLD price", p.Price, 384.58, 1e-9)
++		testNear(t, "GLD shares", p.Shares, 369200004, 1e-6)
++	}
++	if !found {
++		t.Fatal("в срезе нет GLD с 33 552 628 oz")
++	}
++}
++
++// TestParseFundSnapshotRejectsMissingFields: срез — полный снимок; отсутствие любого поля
++// (или пустой срез) — ошибка, сигнал смены формы ответа, а не ноль в точке.
++func TestParseFundSnapshotRejectsMissingFields(t *testing.T) {
++	var doc struct {
++		Version string           `json:"version"`
++		Updated string           `json:"updated"`
++		Data    []map[string]any `json:"data"`
++	}
++	if err := json.Unmarshal(testFixture(t, boldPinSummary), &doc); err != nil {
++		t.Fatalf("разбор фикстуры %s: %v", boldPinSummary, err)
++	}
++	delete(doc.Data[0], "aum")
++	body, err := json.Marshal(doc)
++	if err != nil {
++		t.Fatalf("сборка тела: %v", err)
++	}
++	if _, err := parseFundSnapshot(body); err == nil {
++		t.Fatal("строка среза без aum обязана быть ошибкой")
++	} else if !strings.Contains(err.Error(), "aum") {
++		t.Fatalf("ошибка обязана называть поле aum: %v", err)
++	}
++	if _, err := parseFundSnapshot([]byte(`{"version":"1","updated":"","data":[]}`)); err == nil {
++		t.Fatal("пустой срез фондов обязан быть ошибкой")
++	}
++}
++
++// TestOzToTonnes: унции → тонны по 1 т = 32150.74656862 унции (та же константа, что в gold/).
++func TestOzToTonnes(t *testing.T) {
++	testNear(t, "113180843 oz", ozToTonnes(boldPinUnits), 3520.318, 1e-3)
++	testNear(t, "32150.74656862 oz", ozToTonnes(boldPinOunces), 1, 1e-9)
++	testNear(t, "0 oz", ozToTonnes(0), 0, 1e-12)
++}
++
++// TestBoldEndpointsPinPaths финит эндпоинты, объявленные для импортёров (Task 2/3): молчаливая
++// правка пути сломала бы и счётчики запросов, и расхождение дат «последнего дня».
++func TestBoldEndpointsPinPaths(t *testing.T) {
++	base, err := url.Parse(boldBaseURL)
++	if err != nil {
++		t.Fatalf("boldBaseURL %q не разбирается: %v", boldBaseURL, err)
++	}
++	if base.Scheme != "https" || base.Host != "bold.report" || base.Path != "/api/v1/" {
++		t.Fatalf("boldBaseURL = %q, ожидался https://bold.report/api/v1/", boldBaseURL)
++	}
++	paths := []struct {
++		name, got, want string
++	}{
++		{"boldPathPrice", boldPathPrice, "gold/price"},
++		{"boldPathPriceLatest", boldPathPriceLatest, "gold/price-latest"},
++		{"boldPathUnits", boldPathUnits, "gold/funds/units"},
++		{"boldPathUnitsLatest", boldPathUnitsLatest, "gold/funds/units-latest"},
++		{"boldPathAum", boldPathAum, "gold/funds/aum"},
++		{"boldPathAumLatest", boldPathAumLatest, "gold/funds/aum-latest"},
++		{"boldPathFlows", boldPathFlows, "gold/flows/all"},
++		{"boldPathFlowsLatest", boldPathFlowsLatest, "gold/flows/all-latest"},
++		{"boldPathSummary", boldPathSummary, "gold/summary"},
++	}
++	for _, p := range paths {
++		if p.got != p.want {
++			t.Fatalf("%s = %q, ожидалось %q", p.name, p.got, p.want)
++		}
++		if strings.HasPrefix(p.got, "/") {
++			t.Fatalf("%s = %q: путь склеивается с boldBaseURL без ведущего слэша", p.name, p.got)
++		}
++	}
++}
+diff --git a/bold/testdata/bold_aum_history.json b/bold/testdata/bold_aum_history.json
+new file mode 100644
+index 0000000..01502b5
+--- /dev/null
++++ b/bold/testdata/bold_aum_history.json
+@@ -0,0 +1 @@
++{"version":"1","updated":"2026-10-11T04:32:19.921Z","data":[{"date":"2015-01-01","price":1199.25},{"date":"2026-10-08","aum":469507787742,"price":4199.4},{"date":"2026-10-09","aum":476677811738,"price":4216.3}]}
+\ No newline at end of file
+diff --git a/bold/testdata/bold_aum_latest.json b/bold/testdata/bold_aum_latest.json
+new file mode 100644
+index 0000000..7b5c176
+--- /dev/null
++++ b/bold/testdata/bold_aum_latest.json
+@@ -0,0 +1 @@
++{"version":"1","updated":"2026-10-11T04:32:05.231Z","date":"2026-10-09","aum":476677811738,"price":4216.3}
+\ No newline at end of file
+diff --git a/bold/testdata/bold_flows_history.json b/bold/testdata/bold_flows_history.json
+new file mode 100644
+index 0000000..22be699
+--- /dev/null
++++ b/bold/testdata/bold_flows_history.json
+@@ -0,0 +1 @@
++{"version":"1","updated":"2026-10-11T04:32:19.707Z","data":[{"date":"2015-01-01","price":1199.25},{"date":"2026-10-08","culm7day":-25131,"culm30day":888969,"culm90day":5339131,"price":4199.4},{"date":"2026-10-09","culm7day":43740,"culm30day":991060,"culm90day":5376055,"price":4216.3}]}
+\ No newline at end of file
+diff --git a/bold/testdata/bold_flows_latest.json b/bold/testdata/bold_flows_latest.json
+new file mode 100644
+index 0000000..a6f87c8
+--- /dev/null
++++ b/bold/testdata/bold_flows_latest.json
+@@ -0,0 +1 @@
++{"version":"1","updated":"2026-10-11T04:32:05.028Z","date":"2026-10-09","culm7day":43740,"culm30day":991060,"culm90day":5376055,"price":4216.3}
+\ No newline at end of file
+diff --git a/bold/testdata/bold_price_history.json b/bold/testdata/bold_price_history.json
+new file mode 100644
+index 0000000..1e69fb8
+--- /dev/null
++++ b/bold/testdata/bold_price_history.json
+@@ -0,0 +1 @@
++{"version":"1","updated":"2026-10-11T04:32:19.496Z","data":[{"date":"2015-01-01","value":1199.25},{"date":"2026-10-08","value":4199.4},{"date":"2026-10-09","value":4216.3}]}
+\ No newline at end of file
+diff --git a/bold/testdata/bold_price_latest.json b/bold/testdata/bold_price_latest.json
+new file mode 100644
+index 0000000..2cd5265
+--- /dev/null
++++ b/bold/testdata/bold_price_latest.json
+@@ -0,0 +1 @@
++{"version":"1","updated":"2026-10-11T04:32:04.826Z","date":"2026-10-09","value":4216.3}
+\ No newline at end of file
+diff --git a/bold/testdata/bold_summary.json b/bold/testdata/bold_summary.json
+new file mode 100644
+index 0000000..0413cb5
+--- /dev/null
++++ b/bold/testdata/bold_summary.json
+@@ -0,0 +1 @@
++{"version":"1","updated":"2026-10-11T04:32:19.710Z","data":[{"ticker":"ETFGLD","name":"1nvest Gold ETF (Johannesburg)","units":308,"unitsChange":0.01,"aum":1282769,"aumChange":-2760.02,"price":40.37,"priceChange":0.57,"shares":32230,"sharesChange":0},{"ticker":"SGOL","name":"Aberdeen Standard Physical Gold Shares ETF","units":1700799,"unitsChange":216.55,"aum":7183151684,"aumChange":104573422.84,"price":39.92,"priceChange":0.61,"shares":180299992,"sharesChange":-15},{"ticker":"BSLGOLD","name":"Aditya Birla Sun Life Gold ETF (India)","units":70461,"unitsChange":16.17,"aum":298924138,"aumChange":4356616.87,"price":1.35,"priceChange":0.01,"shares":221643268,"sharesChange":-21},{"ticker":"ALBIGOLD","name":"Albilad Gold ETF (Saudi Arabia)","units":14894,"unitsChange":-2.72,"aum":61630037,"aumChange":3529.84,"price":5.78,"priceChange":0,"shares":10799999,"sharesChange":0},{"ticker":"GOLD","name":"Amundi Physical Gold","units":3115690,"unitsChange":334.38,"aum":13161678116,"aumChange":193694663.54,"price":166,"priceChange":2.97,"shares":79382860,"sharesChange":3},{"ticker":"AXGOLD","name":"AXIS GOLD ETF (India)","units":20294,"unitsChange":13.64,"aum":85907662,"aumChange":0,"price":1.24,"priceChange":0,"shares":70307196,"sharesChange":0},{"ticker":"QAU","name":"BetaShares Gold Bullion ETF","units":197128,"unitsChange":273,"aum":806074397,"aumChange":4508968.57,"price":21.9,"priceChange":0.09,"shares":37370711,"sharesChange":71571},{"ticker":"ZGLH","name":"BMO Gold Bullion Hedged to CAD ETF Class CAD INC (Canada)","units":23494,"unitsChange":-11.98,"aum":97284098,"aumChange":1147174.03,"price":39.98,"priceChange":0.52,"shares":2441001,"sharesChange":0},{"ticker":"518890","name":"BOC Shanghai Gold ETF","units":115774,"unitsChange":154.65,"aum":489520564,"aumChange":9818579.27,"price":1.29,"priceChange":0.01,"shares":379630855,"sharesChange":485267},{"ticker":"159937","name":"Bosera Gold ETF","units":1473431,"unitsChange":654.25,"aum":6218746052,"aumChange":96771656.84,"price":1.28,"priceChange":0.01,"shares":4851122058,"sharesChange":1701033},{"ticker":"518860","name":"CCB Principal Shanghai Gold ETF","units":149785,"unitsChange":9.59,"aum":632657171,"aumChange":11331988.74,"price":1.29,"priceChange":0.01,"shares":490959805,"sharesChange":31},{"ticker":"159834","name":"China Southern Shanghai Gold ETF","units":80882,"unitsChange":-9.62,"aum":342052153,"aumChange":6112687.16,"price":1.34,"priceChange":0.01,"shares":254361382,"sharesChange":-56773},{"ticker":"518850","name":"ChinaAMC Gold ETF","units":632879,"unitsChange":221.41,"aum":2671491192,"aumChange":41310041.7,"price":1.3,"priceChange":0.01,"shares":2057478608,"sharesChange":474390},{"ticker":"DGOLETF","name":"DSP Gold ETF Class ETF (India)","units":283474,"unitsChange":-7176.57,"aum":299243455,"aumChange":4484503.95,"price":0.15,"priceChange":0,"shares":2008822765,"sharesChange":1000071},{"ticker":"FXGD","name":"FinEx Gold ETF (Euronext Amsterdam)","units":71006,"unitsChange":45.97,"aum":347832115,"aumChange":0,"price":2.71,"priceChange":0,"shares":112527972,"sharesChange":0},{"ticker":"159812","name":"First Seafront Gold ETF","units":50959,"unitsChange":22.43,"aum":215165870,"aumChange":3394162.36,"price":1.28,"priceChange":0.01,"shares":168032744,"sharesChange":58934},{"ticker":"FGDL","name":"Franklin Responsibly Sourced Gold ETF (U.S.)","units":102872,"unitsChange":1.77,"aum":434429683,"aumChange":6342322.76,"price":55.84,"priceChange":0.87,"shares":7799456,"sharesChange":-970},{"ticker":"518680","name":"Fullgoal Shanghai Gold ETF","units":287144,"unitsChange":481.01,"aum":1213461780,"aumChange":23762893.39,"price":1.35,"priceChange":0.01,"shares":900369807,"sharesChange":1402747},{"ticker":"518600","name":"GF Shanghai Gold ETF","units":271379,"unitsChange":-60.19,"aum":1146644738,"aumChange":20430797.89,"price":1.34,"priceChange":0.01,"shares":855535032,"sharesChange":-285411},{"ticker":"GXLD","name":"Global X Gold Bullion ETF (Australia)","units":128195,"unitsChange":-0.06,"aum":534796994,"aumChange":1971073.82,"price":41.69,"priceChange":0.15,"shares":12965897,"sharesChange":0},{"ticker":"HUG","name":"Global X Gold ETF (Canada)","units":8065,"unitsChange":-4.61,"aum":33427655,"aumChange":378766.43,"price":21.33,"priceChange":0.25,"shares":1568000,"sharesChange":0},{"ticker":"AAAU","name":"Goldman Sachs Physical Gold ETF","units":632218,"unitsChange":84.13,"aum":2669440981,"aumChange":38828119.82,"price":41.35,"priceChange":0.63,"shares":64713721,"sharesChange":-3},{"ticker":"BAR","name":"Graniteshares Gold Trust","units":317971,"unitsChange":38.75,"aum":1343119978,"aumChange":19885963.92,"price":41.27,"priceChange":0.63,"shares":32599999,"sharesChange":-1},{"ticker":"518800","name":"Guotai Gold ETF","units":1252220,"unitsChange":706.2,"aum":5288395792,"aumChange":82718443.17,"price":1.35,"priceChange":0.01,"shares":3925779088,"sharesChange":1746937},{"ticker":"83168","name":"Hang Seng RMB Gold ETF Class RMB CNY ACC (Hong Kong)","units":1432,"unitsChange":0.98,"aum":6145529,"aumChange":8894.07,"price":8.17,"priceChange":0.01,"shares":753300,"sharesChange":0},{"ticker":"159831","name":"Harvest Shanghai Gold ETF","units":94983,"unitsChange":119.43,"aum":401195525,"aumChange":7490406.84,"price":1.3,"priceChange":0.01,"shares":308985189,"sharesChange":357214},{"ticker":"518880","name":"Huaan Yifu Gold ETF","units":3646778,"unitsChange":44166,"aum":15390673081,"aumChange":415885766.6,"price":1.29,"priceChange":0.01,"shares":11978040320,"sharesChange":143842575},{"ticker":"GOLDIETF","name":"ICICI Prudential Gold ETF Fund (India)","units":128137,"unitsChange":1458.62,"aum":543435686,"aumChange":13808202.85,"price":1.32,"priceChange":0.01,"shares":413931985,"sharesChange":4573107},{"ticker":"SGLD","name":"Invesco Physical Gold ETC ETCS","units":6932262,"unitsChange":-5198.46,"aum":29315645133,"aumChange":406721372.49,"price":402.99,"priceChange":7.12,"shares":72814001,"sharesChange":-64475},{"ticker":"CGL","name":"iShares Gold Bullion","units":358293,"unitsChange":-189.25,"aum":1482834935,"aumChange":17442437.06,"price":22.2,"priceChange":0.29,"shares":66999997,"sharesChange":0},{"ticker":"CSGOLD","name":"iShares Gold CH","units":377754,"unitsChange":32.64,"aum":1594366458,"aumChange":23519163.05,"price":400.55,"priceChange":7.6,"shares":3986315,"sharesChange":0},{"ticker":"CSGLDC","name":"iShares Gold CHF Hedged CH","units":176077,"unitsChange":182.74,"aum":726702289,"aumChange":12730737.14,"price":310.57,"priceChange":5.86,"shares":2344000,"sharesChange":4000},{"ticker":"CSGLDE","name":"iShares Gold EUR Hedged CH","units":50973,"unitsChange":-41.17,"aum":209997732,"aumChange":2977222.28,"price":229.13,"priceChange":4.32,"shares":916000,"sharesChange":0},{"ticker":"IAU","name":"iShares Gold Trust","units":14772036,"unitsChange":12658.75,"aum":62429043567,"aumChange":1397148707.42,"price":78.87,"priceChange":1.21,"shares":793450011,"sharesChange":549970},{"ticker":"GLDN","name":"iShares Physical Gold ETF (Australia)","units":74496,"unitsChange":-0.15,"aum":310577988,"aumChange":3317289.32,"price":33.2,"priceChange":0.12,"shares":9460331,"sharesChange":0},{"ticker":"IGLN","name":"iShares Physical Gold","units":9185484,"unitsChange":958.18,"aum":38761888054,"aumChange":572878967.06,"price":81.28,"priceChange":1.47,"shares":477456057,"sharesChange":15263},{"ticker":"1540","name":"Japan Physical Gold ETF","units":2267991,"unitsChange":4454.29,"aum":9675094982,"aumChange":175984311.33,"price":125.32,"priceChange":0.33,"shares":76170198,"sharesChange":154227},{"ticker":"411060","name":"KIM ACE KRX Physical Gold ETF (South Korea)","units":667326,"unitsChange":-372.04,"aum":2786971312,"aumChange":7563768.93,"price":18.48,"priceChange":0.05,"shares":149800000,"sharesChange":0},{"ticker":"GOLD1","name":"Kotak Gold ETF (India)","units":9733,"unitsChange":2.94,"aum":41280603,"aumChange":602828.03,"price":1.28,"priceChange":0.01,"shares":32262162,"sharesChange":1},{"ticker":"GLD","name":"KTAM Gold ETF Tracker Class GLD (Bangkok)","units":9903,"unitsChange":88.85,"aum":41483159,"aumChange":1012489.81,"price":0.16,"priceChange":0,"shares":252676204,"sharesChange":2280489},{"ticker":"LICMFGLD","name":"LIC MF Gold ETF (India)","units":94,"unitsChange":-1,"aum":274902,"aumChange":3986.46,"price":1.38,"priceChange":0.01,"shares":198976,"sharesChange":0},{"ticker":"GOLDETF","name":"Mirae Asset Gold ETF Class ETF (India)","units":88374,"unitsChange":2340.2,"aum":374955926,"aumChange":15121868.76,"price":1.49,"priceChange":0.01,"shares":251532287,"sharesChange":6600002},{"ticker":"GLD","name":"NewGold Issuer Ltd","units":5221,"unitsChange":0.74,"aum":21848470,"aumChange":166313.52,"price":38.68,"priceChange":0.58,"shares":571379,"sharesChange":0},{"ticker":"1328","name":"NEXT FUNDS Gold Price Exchange Traded Fund (Japan)","units":82321,"unitsChange":580.88,"aum":342100735,"aumChange":3775377.77,"price":98.85,"priceChange":0.27,"shares":3510958,"sharesChange":24789},{"ticker":"GBEES","name":"NIPPON INDIA ETF GOLD BEES","units":982624,"unitsChange":296.12,"aum":4167963854,"aumChange":60582912.44,"price":1.27,"priceChange":0.01,"shares":3289635947,"sharesChange":-6},{"ticker":"RGLDO","name":"Raiffeisen ETF - Solid Gold Ounces Class A CHF (Switzerland)","units":97965,"unitsChange":10.28,"aum":408059071,"aumChange":3561567.42,"price":3970.15,"priceChange":62.1,"shares":104356,"sharesChange":0},{"ticker":"MNT","name":"Royal Canadian Mint - Canadian Gold Reserves","units":197074,"unitsChange":60.48,"aum":795675341,"aumChange":-2267253.04,"price":44.79,"priceChange":1.38,"shares":18716872,"sharesChange":-1},{"ticker":"SETFGOLD","name":"SBI-ETF Gold Class INR INC (India)","units":657137,"unitsChange":1381.75,"aum":2786938641,"aumChange":45598715.49,"price":1.31,"priceChange":0.01,"shares":2132377725,"sharesChange":3860273},{"ticker":"GLDM","name":"SPDR Gold MiniShares Trust","units":7349564,"unitsChange":-6503.84,"aum":31078978425,"aumChange":425292411.6,"price":82.99,"priceChange":1.27,"shares":375349981,"sharesChange":-400031},{"ticker":"GLD","name":"SPDR Gold Shares","units":33552628,"unitsChange":-68447.07,"aum":141684193497,"aumChange":1787202858.93,"price":384.58,"priceChange":5.96,"shares":369200004,"sharesChange":-799971},{"ticker":"PHYS","name":"Sprott Physical Gold Trust","units":3636525,"unitsChange":521.84,"aum":15775332320,"aumChange":233132800.37,"price":31.7,"priceChange":0.5,"shares":485693729,"sharesChange":-6},{"ticker":"159830","name":"Tianhong Shanghai Gold ETF","units":124180,"unitsChange":152.16,"aum":525259980,"aumChange":10076815.58,"price":1.34,"priceChange":0.01,"shares":390600830,"sharesChange":435447},{"ticker":"GOLD11","name":"Trend ETF LBMA Ouro Fundo de Investimento em Indice IE (Brazil)","units":85781,"unitsChange":-352.17,"aum":359424936,"aumChange":3976542.7,"price":4.35,"priceChange":0.05,"shares":83450003,"sharesChange":-350002},{"ticker":"GLDCO2","name":"UBS CH Fund Solutions - Carbon Compensated Gold ETF Class USD A-ACC (Switzerland)","units":8792,"unitsChange":-0.03,"aum":36998399,"aumChange":541196.67,"price":22.6,"priceChange":0.24,"shares":1640000,"sharesChange":0},{"ticker":"AUUSI","name":"UBS CH-Gold","units":1408617,"unitsChange":2965.04,"aum":5857600913,"aumChange":53134791.47,"price":133.84,"priceChange":2.42,"shares":44480226,"sharesChange":89998},{"ticker":"AUCHAH","name":"UBS CH-Gold CHF hedged","units":722070,"unitsChange":306.73,"aum":2938624324,"aumChange":26287452.63,"price":160.54,"priceChange":2.9,"shares":18606075,"sharesChange":19998},{"ticker":"AUEUAH","name":"UBS CH-Gold EUR hedged","units":237535,"unitsChange":381.37,"aum":963785612,"aumChange":8252839.69,"price":118.92,"priceChange":1.48,"shares":8218782,"sharesChange":20000},{"ticker":"UTIGOL","name":"UTI-Gold Exchange Traded Fund (Natl SE of India)","units":109543,"unitsChange":175.84,"aum":464597780,"aumChange":7389575.74,"price":1.29,"priceChange":0.01,"shares":360156281,"sharesChange":483722},{"ticker":"NUGG","name":"VanEck Gold Bullion ETF Class AUD ACC (Australia)","units":44496,"unitsChange":0.66,"aum":187976614,"aumChange":3120148.46,"price":41.44,"priceChange":0.16,"shares":4529787,"sharesChange":0},{"ticker":"WGLD","name":"WisdomTree Core Physical Gold","units":497531,"unitsChange":36.48,"aum":2068843406,"aumChange":-6.63,"price":416.06,"priceChange":7.39,"shares":5052639,"sharesChange":0},{"ticker":"BULL","name":"WisdomTree Gold","units":24681,"unitsChange":-0.14,"aum":102694909,"aumChange":6.38,"price":41.09,"priceChange":0.72,"shares":2532113,"sharesChange":0},{"ticker":"GBSP","name":"WisdomTree Physical Gold GBP","units":6949,"unitsChange":-2.62,"aum":28527804,"aumChange":-8454.34,"price":28.13,"priceChange":0.5,"shares":1030326,"sharesChange":0},{"ticker":"PHAU","name":"WisdomTree Physical Gold","units":1661501,"unitsChange":112.4,"aum":6910325136,"aumChange":411.13,"price":388.27,"priceChange":6.75,"shares":18077694,"sharesChange":1},{"ticker":"SGBS","name":"WisdomTree Physical Swiss Gold","units":1267150,"unitsChange":82.78,"aum":5269298587,"aumChange":142.36,"price":400.33,"priceChange":6.97,"shares":13370970,"sharesChange":0},{"ticker":"4GLD","name":"Xetra-Gold (EUR)","units":5637891,"unitsChange":146711.52,"aum":23401634191,"aumChange":601423235.53,"price":134.87,"priceChange":-1.37,"shares":176759776,"sharesChange":4582660},{"ticker":"XGDE","name":"Xtrackers IE Physical Gold EUR","units":289472,"unitsChange":-817.92,"aum":1178171944,"aumChange":4930385.26,"price":56.39,"priceChange":0.92,"shares":21225621,"sharesChange":-45828},{"ticker":"XGDG","name":"Xtrackers IE Physical Gold GBP","units":1301,"unitsChange":1.81,"aum":5342214,"aumChange":45422.23,"price":63.77,"priceChange":1.09,"shares":85080,"sharesChange":151},{"ticker":"XGDU","name":"Xtrackers IE Physical Gold","units":1542759,"unitsChange":385.05,"aum":6437363375,"aumChange":36755647.55,"price":64.41,"priceChange":1.04,"shares":101454006,"sharesChange":8981},{"ticker":"XAD5","name":"Xtrackers Physical Gold EU","units":631335,"unitsChange":100.13,"aum":2947914003,"aumChange":18663730.45,"price":401.32,"priceChange":6.54,"shares":6663316,"sharesChange":0},{"ticker":"XAD1","name":"Xtrackers Physical Gold EUR He","units":523775,"unitsChange":-817.04,"aum":2127931797,"aumChange":11296764.32,"price":262.88,"priceChange":3.84,"shares":8227957,"sharesChange":-6994},{"ticker":"XGLS","name":"Xtrackers Physical Gold GBP He","units":134,"unitsChange":-1.65,"aum":550209,"aumChange":-2828.99,"price":27.82,"priceChange":0.47,"shares":20087,"sharesChange":-240},{"ticker":"XGLD","name":"Xtrackers Physical Gold","units":114000,"unitsChange":114.03,"aum":474022225,"aumChange":3788650.87,"price":400.88,"priceChange":7.04,"shares":1201224,"sharesChange":1125},{"ticker":"ZGLD","name":"ZKB Gold ETF","units":1836844,"unitsChange":1974.82,"aum":7660907089,"aumChange":73263785.86,"price":1239.87,"priceChange":19.59,"shares":6267743,"sharesChange":6001}]}
+\ No newline at end of file
+diff --git a/bold/testdata/bold_units_history.json b/bold/testdata/bold_units_history.json
+new file mode 100644
+index 0000000..9f1b47a
+--- /dev/null
++++ b/bold/testdata/bold_units_history.json
+@@ -0,0 +1 @@
++{"version":"1","updated":"2026-10-11T04:32:19.813Z","data":[{"date":"2015-01-01","price":1199.25},{"date":"2026-10-08","units":113044763,"price":4199.4},{"date":"2026-10-09","units":113180843,"price":4216.3}]}
+\ No newline at end of file
+diff --git a/bold/testdata/bold_units_latest.json b/bold/testdata/bold_units_latest.json
+new file mode 100644
+index 0000000..34f894d
+--- /dev/null
++++ b/bold/testdata/bold_units_latest.json
+@@ -0,0 +1 @@
++{"version":"1","updated":"2026-10-11T04:32:05.131Z","date":"2026-10-09","units":113180843,"price":4216.3}
+\ No newline at end of file

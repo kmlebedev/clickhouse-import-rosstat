@@ -1,0 +1,546 @@
+# Review package: a524b4a235588780c4628ac84aacf99f49ca71c8..38f26fa76c075e0b05703b7c81b923d007a97d02
+
+## Commits
+38f26fa rosstat: fail on repeated year label outside Q1; review-wave fixes
+
+## Files changed
+ docs/IMPORTER_PACKAGE_STANDARD.md                  |  4 +--
+ .../plans/2026-10-14-rosstat-refactor.md           |  2 +-
+ .../specs/2026-10-14-rosstat-refactor-design.md    |  4 +--
+ rosstat/ipc_mes_test.go                            |  5 ++-
+ rosstat/ipc_weeks_test.go                          |  5 ++-
+ rosstat/salaries_mes.go                            |  4 ++-
+ rosstat/vvp_kvartal.go                             | 36 ++++++++++++++++------
+ rosstat/vvp_kvartal_test.go                        | 27 ++++++++++++----
+ scripts/extrapolation_aisc.py                      |  4 +--
+ scripts/mcp_check.py                               | 20 +++++++-----
+ util/xls.go                                        |  3 +-
+ views/gold_views.go                                |  2 +-
+ 12 files changed, 80 insertions(+), 36 deletions(-)
+
+## Diff
+diff --git a/docs/IMPORTER_PACKAGE_STANDARD.md b/docs/IMPORTER_PACKAGE_STANDARD.md
+index 8ea0e43..3512c16 100644
+--- a/docs/IMPORTER_PACKAGE_STANDARD.md
++++ b/docs/IMPORTER_PACKAGE_STANDARD.md
+@@ -57,21 +57,21 @@
+ | Тип источника | Хелпер | Что делает |
+ |---|---|---|
+ | HTML-страница (нужен только href на файл) | `util.GetPage(url)` + `util.FindLink(page, selector)` | скачивает страницу, отдаёт href первой ссылки по CSS-селектору; пустое совпадение — ошибка |
+ | HTML-страница (нужен разбор содержимого) | `util.GetPage(url)` + `goquery` | как в `cbr/key_rate.go` |
+ | XLSX (ссылка стабильная) | `util.GetXlsx(url)` | скачивает и открывает книгу `excelize` |
+ | XLSX (ссылка вычисляется) | `util.GetPage` + `util.FindLink` → `DataUrl` → шаблон | §5.4 |
+ | XML-фид | `util.GetXML(url, &out)` / `util.ParseXML(body, &out)` | проверяет HTTP-статус, читает windows-1251, блокирует пустое тело |
+ | JSON-API | `util.GetJSON(url, &out)` | проверяет HTTP-статус, блокирует пустое тело |
+ | CSV | `util.GetCSV(url)` | разделитель `;` |
+ 
+-4.2. **ОБЯЗАТЕЛЬНО.** `util.GetFile` (и, значит, `GetXlsx`) **не проверяет HTTP-статус**: HTML-заглушка WAF приходит ошибкой разбора книги. Поэтому парсер обязан падать на пустом разборе (§6.4), а не записывать «0 строк».
++4.2. **ОБЯЗАТЕЛЬНО.** `util.GetFile` (и, значит, `GetXlsx`) **не проверяет HTTP-статус ответа** — в отличие от `GetJSON`/`GetXML`: заглушка WAF приходит с любым кодом (200, 403, 426) и телом HTML, поэтому вызывающий видит только ошибку разбора книги от `excelize`, в которой нет ни кода ответа, ни имени файла. Симптом не называет причину, и разбираться с ней приходится по контексту, поэтому парсер обязан падать быстро и громко на первом же признаке: пустой разбор или отсутствие ожидаемого листа — ошибка с именем таблицы и листа (§6.4), а не «0 строк».
+ 
+ 4.3. **ОБЯЗАТЕЛЬНО.** Сетевых вызовов в `init()` нет. Адрес страницы и ссылку на файл импортёр вычисляет внутри `Import()`: регистрация импортёра не должна ходить в сеть.
+ 
+ 4.4. **ОБЯЗАТЕЛЬНО.** Ошибка обхода страницы не проглатывается: если ссылка не найдена, `Import()` возвращает ошибку с доменом и ожидаемым именем файла, а не вызывает `GetXlsx("")`.
+ 
+ 4.5. **ОБЯЗАТЕЛЬНО.** Селектор ссылки — константа пакета рядом с импортёром, а не литерал в теле функции: тот же селектор использует тест на HTML-фикстуре (§11.4).
+ 
+ ## 5. Шаблон импортёра
+ 
+ 5.1. **ОБЯЗАТЕЛЬНО.** Импортёр строится на `util.ClickHouseImport`. Поля и их смысл:
+@@ -301,21 +301,21 @@ func init() { for _, imp := range xxxImporters { chimport.Stats = append(chimpor
+ | Харнесс `appendRecorder` | `cbr/series_meta_test.go` |
+ | Проверки MCP | `scripts/mcp_check.py` |
+ 
+ ## 18. Применение по пакетам
+ 
+ Состояние на **2026-10-14**, снятое дешёвыми признаками (`colly` в пакете, `fmt.Print*` в пакете, наличие `importers.go`, наличие `testdata/`, число тестовых файлов). Это **обзор, а не аудит**: полный инвентарь — работа отдельного пункта роадмапа «рефакторинг остальных пакетов по стандарту». Число `.go`-файлов дано для оценки объёма.
+ 
+ | Пакет | Тип | Файлов `.go` | `colly` | `fmt.Print*` | Реестр | `testdata/` | Тестов | Состояние |
+ |---|---|---|---|---|---|---|---|---|
+ | `cbr` | источник | 49 | — | — | да | да | 24 | **✅ соответствует** (фаза 3) |
+-| `rosstat` | источник | 7 | 4 файла | 4 | нет | нет | 1 | **цель текущего пункта** |
++| `rosstat` | источник | 13 | — | — | да | да | 6 | **✅ соответствует** (фаза 2) |
+ | `bank` | источник | 6 | 1 файл | 9 | нет | нет | 0 | не соответствует (§4, §5.6, §6, §8, §11) |
+ | `moex` | источник | 9 | — | — | нет | да | 3 | частично: нет реестра (§8), нет точки контроля (§9) |
+ | `bold` | источник | 6 | — | — | нет | да | 3 | частично: нет реестра (§8) |
+ | `wgc` | источник | 15 | — | — | нет | да | 7 | частично: нет реестра (§8) |
+ | `craw` | источник | 6 | — | — | нет | да | 3 | частично: нет реестра (§8) |
+ | `news` | источник | 6 | — | — | нет | да | 3 | частично: нет реестра (§8) |
+ | `minfin` | источник | 4 | 2 файла | 4 | нет | нет | 1 | не соответствует (§4, §5.6) |
+ | `customs` | источник | 1 | 1 файл | — | нет | нет | 0 | не соответствует (§4, §8, §11) |
+ | `fao` | источник | 1 | 1 файл | 1 | нет | нет | 0 | не соответствует (§4, §5.6, §8, §11) |
+ | `financial` | источник (legacy) | 14 | 3 файла | 3 | нет | нет | 0 | не соответствует (§4, §5.6); новый код в пакет не добавляется (правило 7 AGENTS.md) |
+diff --git a/docs/superpowers/plans/2026-10-14-rosstat-refactor.md b/docs/superpowers/plans/2026-10-14-rosstat-refactor.md
+index 8c5bc3c..2a4845d 100644
+--- a/docs/superpowers/plans/2026-10-14-rosstat-refactor.md
++++ b/docs/superpowers/plans/2026-10-14-rosstat-refactor.md
+@@ -11,21 +11,21 @@
+ **Spec:** `docs/superpowers/specs/2026-10-14-rosstat-refactor-design.md` (дизайн) и `docs/IMPORTER_PACKAGE_STANDARD.md` (норма; ссылки вида «стандарт §6.3» указывают на его разделы).
+ 
+ ## Global Constraints
+ 
+ - Рабочая ветка `feat/rosstat-refactor`; незакоммиченная правка владельца `deploy/staging/dagu.service` **не трогается**.
+ - Новых зависимостей не добавлять: `goquery`, `excelize`, `x/text` уже прямые; `colly` остаётся в `go.mod` (нужен `financial/`, `customs/`, `fao/`, `minfin/`, `bank/`), но из `rosstat/` удаляется полностью.
+ - Вставки в ClickHouse — только батчами `PrepareBatch → Append(err!) → Send`; HTTP — только через `util.*`; логирование — только logrus (ноль `fmt.Print*` в `rosstat/`); сетевых вызовов в `init()` нет.
+ - DDL каждого импортёра — в `%s`-форме (`CREATE TABLE IF NOT EXISTS %s (`): шаблон исполняет `fmt.Sprintf`.
+ - `Name()` и таблицы — с префиксом `rosstat_`; `Name() == TableName` у всех четырёх импортёров пакета.
+ - Парсеры офлайн: вход `*excelize.File`, внутри — ни одного обращения к сети; значения ячеек — `excelize.Options{RawCellValue: true}`.
+-- Данные не меняются, кроме заявленного: `ipc_mes` меняет имена 4 рядов (остальные значения те же), `ipc_weeks` — те же ряды и точки, `salaries_mes` и `vvp_kvartal` наполняются с нуля.
++- Данные не меняются, кроме заявленного: `ipc_mes` меняет имена 4 рядов (остальные значения те же), у `ipc_weeks` тождества нет — 131 ряд и 26 611 точек вместо 128 и 25 691, а значения расходятся в третьем знаке (`RawCellValue` читает сырой float, а не форматированный текст); `salaries_mes` и `vvp_kvartal` наполняются с нуля.
+ - Секреты — только через `os.Getenv`; содержимое `~/.config/rosstat/env` не читать и не печатать. Команды, которым нужны ключи или ClickHouse, запускать через `make`.
+ - Каждая задача заканчивается gofmt-чистым кодом и зелёными `go build ./...` и `go test ./rosstat/ ./util/ ./cbr/`.
+ 
+ ## Review Focus
+ 
+ Пять классов входа, которые спека подразумевает, но рутинные тесты задачи не покрывают; для каждого в задаче-владельце стоит свой тест.
+ 
+ 1. **Источник отдаёт не XLSX, а заглушку/«Upgrade Required»** (`util.GetFile` не проверяет HTTP-статус): ожидаемое поведение — внятная ошибка с именем таблицы, а не `Imported 0 rows` и не запись мусора. Тест: пустая книга и книга без нужного листа → ошибка, 0 строк в батче (T4, T5, T6, T7).
+ 2. **Заголовок источника меняется** (год в названии, редакция, сноска): ожидаемое — имя ряда в базе не меняется, ряд не рвётся. Тест: серия из разбора равна стабильному имени из кода (T4, T5, T6).
+ 3. **В источнике появился новый лист или товар** (ожидаемое изменение): ожидаемое — warn и импорт остального, цепочка dagu не падает; неописанный ряд не уходит агенту молча. Тест: лист вне карты и товар вне списка → предупреждение, разбор остального продолжается (T6, T7).
+diff --git a/docs/superpowers/specs/2026-10-14-rosstat-refactor-design.md b/docs/superpowers/specs/2026-10-14-rosstat-refactor-design.md
+index 3191eb7..11fe244 100644
+--- a/docs/superpowers/specs/2026-10-14-rosstat-refactor-design.md
++++ b/docs/superpowers/specs/2026-10-14-rosstat-refactor-design.md
+@@ -95,29 +95,29 @@
+ ### 4.3. Что не меняется
+ 
+ Состав импортёров (4), их расписание (`четверг 12:17`, `dagu/rosstat.yaml`), имя витрины `v_rosstat_macro` и её грант в `sql/mcp_kimi_reader.sql`, `rosstatSource = "rosstat"`, число рядов каталога (141: 4 + 131 + 5 + 1), семантика дат всех четырёх рядов, наборы товаров `ipc_weeks` и структура DDL.
+ 
+ ## 5. Риски и митигации
+ 
+ | Риск | Митигация |
+ |---|---|
+ | Переименование ломает вход контура золота (`v_model_inputs` читает `ipc_mes`/`ipc_weeks` и грантован агенту) | порядок стандарта §15.3: новые таблицы наполняются рядом, витрина переключается шагом `gold_views` после сверки с базовой линией, старые таблицы удаляются последними |
+ | `RawCellValue` меняет значения в младших разрядах | сверка с базовой линией по числу рядов/строк и spot-значениям; расхождение называется в отчёте |
+-| Урезанная фикстура `ipc_weeks` не содержит всех 128 товаров | контракт каталога односторонний (Р7), обратное направление не заявляется |
++| Урезанная фикстура `ipc_weeks` не содержит всех 131 товара | контракт каталога односторонний (Р7), обратное направление не заявляется |
+ | Живой источник недоступен на прогоне (HTTP 426 у `rosstat.gov.ru` — известное ограничение) | приёмочный прогон выполняется при доступном источнике; при недоступности фиксируется факт и прогон повторяется |
+ | Переименование осиротит версии в `source_publications` | первый прогон после переименования — полный импорт (не no-op); строки по старым ключам удаляются на шаге приёмки |
+ 
+ ## 6. Приёмка
+ 
+ 1. `make all` — зелёный (gofmt, golangci-lint, `go vet ./...`, `go test -race ./...`, обе сборки); по затронутым пакетам свежим прогоном `go test -race -count=1 ./rosstat/ ./cbr/ ./util/`.
+ 2. Grep-чистота пакета: ноль `gocolly/colly` и ноль `fmt.Print` в `rosstat/`.
+-3. Живой прогон четырёх импортёров на dev-ClickHouse: `rosstat_ipc_mes` (4 ряда, 1716 строк), `rosstat_ipc_weeks` (128 рядов, 25691 строка), `rosstat_salaries_mes` и `rosstat_vvp_kvartal` — **непусты** (число точек и крайние даты).
++3. Живой прогон четырёх импортёров на dev-ClickHouse: `rosstat_ipc_mes` (4 ряда, 1716 строк), `rosstat_ipc_weeks` (131 ряд, 26 611 строк), `rosstat_salaries_mes` и `rosstat_vvp_kvartal` — **непусты** (число точек и крайние даты).
+ 4. Spot-сверка с публикацией Росстата: зарплата за июнь 2026, ВВП 2026-I/II в текущих ценах, ИФО ВВП.
+ 5. Повторный прогон: три импортёра с точкой контроля — no-op без скачивания; `rosstat_ipc_weeks` — идемпотентный повтор.
+ 6. `make import STAT=gold_views` — `v_model_inputs` пересоздана на новых таблицах, `ipc_mes_last`/`ipc_week_ytd` не NULL.
+ 7. Старые таблицы удалены; `sql`- и `views`-ссылок на них не осталось.
+ 8. `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА; `dagu validate dagu/rosstat.yaml` — exit 0.
+ 9. Документация и статусы в `docs/ROADMAP_KEY_RATE.md` (§4.1, §6 фаза 2, §8) обновлены тем же PR с командой и результатом.
+ 
+ ## 7. Порядок
+ 
+ Ветка `feat/rosstat-refactor`; коммиты: (1) стандарт; (2) эта спека; (3) план `docs/superpowers/plans/2026-10-14-rosstat-refactor.md`; далее задачи T1–T10 плана через `superpowers:subagent-driven-development` (ревью задач на `haiku`, финальное ревью ветки — на самой способной модели), затем `superpowers:requesting-code-review` и `superpowers:verification-before-completion`. Один PR в конце.
+diff --git a/rosstat/ipc_mes_test.go b/rosstat/ipc_mes_test.go
+index 271f64b..21f3e46 100644
+--- a/rosstat/ipc_mes_test.go
++++ b/rosstat/ipc_mes_test.go
+@@ -204,21 +204,24 @@ func TestIpcMesUnknownSheetWarns(t *testing.T) {
+ 	log.SetOutput(&logged)
+ 	t.Cleanup(func() { log.SetOutput(prevOut) })
+ 
+ 	sheets := []string{"01", "02", "03", "04", "05"}
+ 	f := newTestWorkbook(t, sheets...)
+ 	setIpcMesSheetRows(t, f, sheets, ipcMesSheetFixtureRows())
+ 	rec := &appendRecorder{}
+ 	if err := ipcMesImport(f, rec); err != nil {
+ 		t.Fatalf("лист «05» — ожидаемое изменение источника, ошибки быть не должно: %v", err)
+ 	}
+-	if !strings.Contains(logged.String(), "05") {
++	// logrus экранирует кавычки внутри сообщения, поэтому в буфере имя листа записано как
++	// \"05\": проверяется форма с именем листа, а не голая подстрока «05» (её дал бы любой
++	// год 05 и любое число с этими цифрами).
++	if !strings.Contains(logged.String(), `лист \"05\"`) {
+ 		t.Errorf("в предупреждении нет имени листа «05»: %q", logged.String())
+ 	}
+ 	counts := countBySeries(rec.rows)
+ 	if len(counts) != 4 {
+ 		t.Errorf("рядов %d, ожидалось 4: %v", len(counts), counts)
+ 	}
+ 	for _, name := range ipcMesStableNames {
+ 		if counts[name] != 4 {
+ 			t.Errorf("ряд %q: точек %d, ожидалось 4", name, counts[name])
+ 		}
+diff --git a/rosstat/ipc_weeks_test.go b/rosstat/ipc_weeks_test.go
+index 1c21f6f..b0363cb 100644
+--- a/rosstat/ipc_weeks_test.go
++++ b/rosstat/ipc_weeks_test.go
+@@ -37,34 +37,37 @@ func importIpcWeeksFixture(t *testing.T) []appendedRow {
+ 		t.Fatalf("ipcWeeksImport: %v", err)
+ 	}
+ 	return rec.rows
+ }
+ 
+ // TestIpcWeeksReadsFixture — разбор реальной выгрузки. Числа точные: 550 строк данных
+ // (108 + 110 + 110 + 110 + 112 — листы 2022…2026; таблицу листа замыкает сноска с одной
+ // заполненной ячейкой) и 131 различный товар.
+ //
+ // Точки: 26 611. От прежней таблицы ipc_weeks и числа в rosstat-baseline.md (25 691) разбор
+-// отличается на +948, и обе составляющие разницы — исправления дефектов разбора:
++// отличается нетто на +920, и все три составляющие разницы — исправления дефектов разбора:
+ //   - −28: 25 691 — все ячейки значений разобранных строк, но 28 из них — «…» («данных не
+ //     имеется», так подписана сноска листа; лист 2026, строка «Поездка на отдых в ОАЭ,
+ //     поездка»). Прежний разбор глотал ошибку strconv.ParseFloat и писал по «…» ноль — в
+ //     живой v_rosstat_macro таких нулевых точек было ровно 28 (из 27 407 точек пакета).
+ //     Теперь ячейка без данных точкой не становится (§6.7).
+ //   - +66: значения строк, у которых «…» стоит в первой колонке значений: лист 2022,
+ //     «Полет в салоне экономического класса самолета» (39 точек) и лист 2026, «Поездки в
+ //     отдельные страны Юго-Восточной Азии» (27 точек). Прежний разбор обрывал по такой
+ //     строке лист целиком и терял саму строку.
+ //   - +882: строки ниже такой строки, которые прежний обрыв терял вместе с ней: 2022 —
+ //     726 точек (15 строк: 14 полных по 51 значению и «Поездка на отдых в Турцию» с 12),
+ //     2026 — 156 (4 строки по 39). Все они — значения реальных товаров, перечисленных
+ //     в каталоге.
++//
++// Сумма составляющих: −28 + 66 + 882 = +920 (нетто). Число 948 — не разница, а грубая сумма
++// возвращённых ячеек (66 + 882): нетто меньше неё ровно на 28 исчезнувших нулей старого разбора.
+ func TestIpcWeeksReadsFixture(t *testing.T) {
+ 	rows := importIpcWeeksFixture(t)
+ 	if len(rows) != 26611 {
+ 		t.Fatalf("точек %d, ожидалось 26611", len(rows))
+ 	}
+ 	counts := countBySeries(rows)
+ 	if len(counts) != 131 {
+ 		t.Fatalf("рядов %d, ожидалось 131", len(counts))
+ 	}
+ 	for _, row := range rows {
+diff --git a/rosstat/salaries_mes.go b/rosstat/salaries_mes.go
+index 2108801..2cd642e 100644
+--- a/rosstat/salaries_mes.go
++++ b/rosstat/salaries_mes.go
+@@ -132,21 +132,23 @@ func parseSalariesMes(xlsx *excelize.File) ([]salariesMesPoint, error) {
+ 		rows, err := xlsx.GetRows(sheet, excelize.Options{RawCellValue: true})
+ 		if err != nil {
+ 			return nil, fmt.Errorf("%s: лист %q: %w", rosstatSalariesMesTable, sheet, err)
+ 		}
+ 		// Якорь — строка первого года в первой колонке; год остальных строк считается от
+ 		// него смещением, а не полем каждой строки (§6.3). Год у поздних лет несёт сноску
+ 		// («2026(2)»), поэтому строку не сверяют с годом целиком — только якорь. Первое
+ 		// совпадение: повтор «1991» в колонке A якорь не сдвигает.
+ 		anchor := -1
+ 		for i, row := range rows {
+-			if len(row) > 0 && row[0] == salariesMesField {
++			// TrimSpace — как у якоря ipc_weeks.go (§6.3): сравнение сырой ячейки не нашло бы
++			// якорь, если выгрузка записала его с пробелом.
++			if len(row) > 0 && strings.TrimSpace(row[0]) == salariesMesField {
+ 				anchor = i
+ 				break
+ 			}
+ 		}
+ 		if anchor < 0 {
+ 			// Лист без якоря (пустые «Лист2»/«Лист3») — не ошибка: ряд собирают листы, где
+ 			// якорь есть, а отсутствие данных во всей книге ловит проверка внизу.
+ 			continue
+ 		}
+ 		// Строки данных: от якоря до строки «… данных не имеется» — она и сноски внизу
+diff --git a/rosstat/vvp_kvartal.go b/rosstat/vvp_kvartal.go
+index 13c7fc8..92a1b1e 100644
+--- a/rosstat/vvp_kvartal.go
++++ b/rosstat/vvp_kvartal.go
+@@ -208,31 +208,47 @@ func parseVvpKvartalSheet(xlsx *excelize.File, sheet string) ([]vvpKvartalPoint,
+ 		}
+ 		// Год выписан в первой колонке группы (A, E, I, …), в колонках II–IV кварталов ячейка
+ 		// годов пуста: непустая ячейка задаёт текущий год, пустые его переносят. Без переноса
+ 		// у II–IV кварталов года не было бы вовсе (год 0 → дата «0000-01-01»).
+ 		if i < len(years) && strings.TrimSpace(years[i]) != "" {
+ 			labelYear, err := vvpKvartalYear(years[i])
+ 			if err != nil {
+ 				return nil, fmt.Errorf("%s: лист %q, колонка %d: %w", rosstatVVPKvartalTable, sheet, i+1, err)
+ 			}
+ 			// Метка года не больше текущего года — это повтор (или откат) метки, и год выводится
+-			// из структуры таблицы, а не угадывается: группы кварталов идут I→IV и продолжаются
+-			// I следующего года, поэтому колонка под повторившейся меткой — I квартал следующего
+-			// года. Так помечен лист «14» выгрузки: на его последней группе стоит «20252)» (то же
+-			// значение, что у предыдущей группы), тогда как листы «2», «9», «10», «12» того же
+-			// выпуска Росстата на этой колонке несут «20262)». Принять метку на веру нельзя:
+-			// значения 2026-I и 2026-II записались бы датами 2025-I и 2025-II и затёрли настоящие
+-			// значения 2025 года — в таблице с ключом (name, date) это тихая подмена данных, а не
+-			// пропуск. Когда источник исправит метку, вывод совпадёт с ней и предупреждение
+-			// исчезнет само. Нулевая метка (year == 0, года ещё не было) выводу не подлежит:
+-			// пустой год остаётся ошибкой «год данных не задан» ниже.
++			// из структуры таблицы, а не угадывается. Вывод законен ровно для I квартала: группы
++			// кварталов идут I→IV и продолжаются I следующего года, поэтому колонка под
++			// повторившейся меткой — I квартал следующего года, только если она и есть I квартал.
++			// Так помечен лист «14» выгрузки: его последняя группа несёт «20252)» — ту же метку,
++			// что и предыдущая группа (колонки 53 и 57, причём 57 — I квартал; дальше колонки
++			// пусты). У листов «2», «9», «10» того же выпуска метки правильные: «20242)» в
++			// колонке 53, «20252)» в 57, «20262)» в 61; у листа «12» — «20262)» в 57.
++			// Принять метку на веру нельзя: значения 2026-I и 2026-II записались бы датами 2025-I
++			// и 2025-II и затёрли настоящие значения 2025 года — в таблице с ключом (name, date)
++			// это тихая подмена данных, а не пропуск. Повтор метки на II–IV квартале выводу не
++			// подлежит вовсе: сдвинув год группы вперёд, он затёр бы настоящие значения под чужим
++			// годом, поэтому это ошибка, а не предупреждение. Когда источник исправит метку, вывод
++			// совпадёт с ней и предупреждение исчезнет само. Нулевая метка (year == 0, года ещё не
++			// было) выводу не подлежит: пустой год остаётся ошибкой «год данных не задан» ниже.
+ 			if year != 0 && labelYear <= year {
++				// Подпись квартала читается до проверки её границы: без неё вывод года не
++				// доказуем. Пустая подпись (колонка за концом строки) — тоже не «I».
++				quarter := ""
++				if i < len(labels) {
++					if fields := strings.Fields(labels[i]); len(fields) > 0 {
++						quarter = fields[0]
++					}
++				}
++				if quarter != "I" {
++					return nil, fmt.Errorf("%s: лист %q, колонка %d: повтор метки года %d на квартале %q",
++						rosstatVVPKvartalTable, sheet, i+1, labelYear, quarter)
++				}
+ 				log.Warnf("vvpKvartal: %s: лист %q, колонка %d: метка года %q не больше текущего %d — год выведен как %d",
+ 					rosstatVVPKvartalTable, sheet, i+1, strings.TrimSpace(years[i]), year, year+1)
+ 				labelYear = year + 1
+ 			}
+ 			year = labelYear
+ 		}
+ 		if year == 0 {
+ 			return nil, fmt.Errorf("%s: лист %q, колонка %d: год данных не задан", rosstatVVPKvartalTable, sheet, i+1)
+ 		}
+ 		if i >= len(labels) {
+diff --git a/rosstat/vvp_kvartal_test.go b/rosstat/vvp_kvartal_test.go
+index 9f7c4b5..1f4e456 100644
+--- a/rosstat/vvp_kvartal_test.go
++++ b/rosstat/vvp_kvartal_test.go
+@@ -285,26 +285,28 @@ func TestVvpKvartalCarriesYearAcrossDataGroups(t *testing.T) {
+ 		t.Fatalf("точек %d, ожидалось %d", len(points), len(want))
+ 	}
+ 	for i, point := range points {
+ 		if got := point.date.Format("2006-01-02"); got != want[i] {
+ 			t.Errorf("точка %d: дата %s, ожидалась %s", i+1, got, want[i])
+ 		}
+ 	}
+ }
+ 
+ // TestVvpKvartalRepeatedYearLabelAdvances — в выгрузке строка годов листа «14» помечает
+-// последнюю группу повторной меткой «20252)» (в листах «2», «9», «10», «12» того же выпуска на
+-// этой колонке стоит «20262)»). Принять метку на веру нельзя: значения 2026-I и 2026-II легли бы
+-// на даты 2025-I и 2025-II и затёрли настоящие значения 2025 года — в таблице с ключом
+-// (name, date) это тихая подмена данных, а не пропуск. Год выводится из структуры таблицы
+-// (после IV квартала группы идёт I квартал следующего года), поэтому у ряда 58 различных дат,
+-// а не 56.
++// последнюю группу повторной меткой «20252)»: та же метка, что у предыдущей группы (колонки 53 и
++// 57; колонка 57 — I квартал, дальше колонки пусты). У листов «2», «9», «10» того же выпуска
++// метки правильные — «20242)» в колонке 53, «20252)» в 57, «20262)» в 61, у листа «12» —
++// «20262)» в 57. Принять метку на веру нельзя: значения 2026-I и 2026-II легли бы на даты 2025-I
++// и 2025-II и затёрли настоящие значения 2025 года — в таблице с ключом (name, date) это тихая
++// подмена данных, а не пропуск. Год выводится из структуры таблицы (после IV квартала группы идёт
++// I квартал следующего года), поэтому у ряда 58 различных дат, а не 56. Вывод законен только на
++// I квартале: повтор метки на II–IV — ошибка, а не сдвиг (TestVvpKvartalSheetErrorBranches).
+ func TestVvpKvartalRepeatedYearLabelAdvances(t *testing.T) {
+ 	const series = "14 Индексы - дефляторы валового внутреннего продукта"
+ 
+ 	dates := seriesDates(importVvpKvartalFixture(t), series)
+ 	if len(dates) != 58 {
+ 		t.Fatalf("точек %d, ожидалось 58", len(dates))
+ 	}
+ 	distinct := make(map[string]bool, len(dates))
+ 	for _, date := range dates {
+ 		distinct[date.Format("2006-01-02")] = true
+@@ -382,20 +384,33 @@ func TestVvpKvartalSheetErrorBranches(t *testing.T) {
+ 		{
+ 			name: "ячейка года короче четырёх цифр",
+ 			rows: [][]any{{"К содержанию"}, {title}, {"20", "", "", ""}, labels, {"100", "101", "102", "103"}},
+ 			want: `"20"`,
+ 		},
+ 		{
+ 			name: "год не число",
+ 			rows: [][]any{{"К содержанию"}, {title}, {"20хх", "", "", ""}, labels, {"100", "101", "102", "103"}},
+ 			want: "20хх",
+ 		},
++		{
++			// Повтор метки года на II квартале выводу не подлежит: сдвиг вперёд записал бы
++			// значения группы под чужой год (см. TestVvpKvartalRepeatedYearLabelAdvances).
++			name: "повтор метки года на квартале II",
++			rows: [][]any{
++				{"К содержанию"},
++				{title},
++				{"2011", "", "", "", "", "2011"},
++				{"I квартал", "II квартал", "III квартал", "IV квартал", "I квартал", "II квартал"},
++				{"100", "101", "102", "103", "104", "105"},
++			},
++			want: "повтор метки года 2011",
++		},
+ 		{
+ 			name: "значение не число",
+ 			rows: [][]any{{"К содержанию"}, {title}, {"2011", "", "", ""}, labels, {"100", "нет", "", ""}},
+ 			want: "не число",
+ 		},
+ 		{
+ 			name: "значение не конечное число",
+ 			rows: [][]any{{"К содержанию"}, {title}, {"2011", "", "", ""}, labels, {"NaN", "101", "102", "103"}},
+ 			want: "не конечное число",
+ 		},
+diff --git a/scripts/extrapolation_aisc.py b/scripts/extrapolation_aisc.py
+index 2916e37..4a809d4 100644
+--- a/scripts/extrapolation_aisc.py
++++ b/scripts/extrapolation_aisc.py
+@@ -103,28 +103,28 @@ ACTUAL_PRODUCTION_LAST_YEAR = 2025
+ 
+ # Эскалация затрат по годам — ДОЛИ, а не проценты: 0.06 = +6 % за год.
+ # ЕДИНСТВЕННЫЙ источник эскалации в скрипте (на него же опирается
+ # `escalation_factor`).
+ #
+ # ИСТОЧНИК КОНСТАНТ — ЯВНО НАЗВАННОЕ ДОПУЩЕНИЕ, потому что готовая
+ # константа `ESCALATION` из Задачи 1 В РЕПОЗИТОРИИ ОТСУТСТВУЕТ: Задача 1 её
+ # не завела (проверено `grep -rn ESCALATION` по `scripts/`, `dcf/`, `docs/`:
+ # только упоминания в плане и спеке), а заводить ВТОРОЙ источник эскалации
+ # бриф запрещает. Спекулятивного ряда ИПЦ в репозитории тоже нет:
+-# `ipc_mes` лежит в БД, но движок его не читает (`Params.Ipc` пуст), и
++# `rosstat_ipc_mes` лежит в БД, но движок его не читает (`Params.Ipc` пуст), и
+ # `read_actual_production` читает из `databook_polyus`, а не оттуда.
+ #
+ # ЧИСЛА. Темп 6 % — верхняя часть целевого коридора ЦБ РФ (4 %); узловая
+ # точка 2028 — первый год ПОСЛЕ последнего, по которому есть факт добычи
+ # (`ACTUAL_PRODUCTION_LAST_YEAR`), после чего темп снижается до 4 %. Это
+ # НЕ измеренный ИПЦ, а допущение политики затрат, названное здесь, чтобы его
+-# можно было заменить чтением `ipc_mes` правкой ОДНОГО словаря: формула
++# можно было заменить чтением `rosstat_ipc_mes` правкой ОДНОГО словаря: формула
+ # `escalation_factor` при этом не меняется (спека §3.4).
+ ESCALATION = {
+     2025: 0.06,
+     2026: 0.06,
+     2027: 0.06,
+     2028: 0.04,
+     2029: 0.04,
+     2030: 0.04,
+     2031: 0.04,
+     2032: 0.04,
+diff --git a/scripts/mcp_check.py b/scripts/mcp_check.py
+index 295d5b9..4c33295 100644
+--- a/scripts/mcp_check.py
++++ b/scripts/mcp_check.py
+@@ -211,22 +211,23 @@ async def check(params, server_log):
+             failed += not expect("динамика резервов ЦБ: 7 стран", bool(dynamics) and len(dynamics) == 7, dynamics_detail)
+ 
+             catalog_wgc_source = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'wgc'"}))
+             catalog_wgc_rows = result_rows(catalog_wgc_source)
+             catalog_wgc_n = catalog_wgc_rows[0].get("n") if catalog_wgc_rows else None
+             if catalog_wgc_rows is None:
+                 catalog_wgc_detail = f"ответ не распознан: {catalog_wgc_source[:200]}"
+             elif catalog_wgc_n == 34:
+                 catalog_wgc_detail = "рядов wgc: 34 (20 ETF + 14 ЦБ)"
+             else:
+-                catalog_wgc_detail = (f"рядов wgc: {catalog_wgc_n}, want 34 — прогнать "
+-                                      "make import STAT=wgc_etf_flows и STAT=wgc_cb_reserves")
++                catalog_wgc_detail = (f"рядов wgc: {catalog_wgc_n}, want 34 — прогнать по одному: "
++                                      "make import STAT=wgc_etf_flows, затем "
++                                      "make import STAT=wgc_cb_reserves")
+             failed += not expect("каталог wgc полон", catalog_wgc_n == 34, catalog_wgc_detail)
+ 
+             # Консенсус аналитиков — 11 строк сида. Пустой v_gold_forecasts означает
+             # неприменённый сид, ошибка запроса даёт detail сырым текстом.
+             forecasts_raw = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_gold_forecasts"}))
+             forecasts = result_rows(forecasts_raw)
+             forecasts_n = forecasts[0].get("n") if forecasts else None
+             if forecasts is None:
+                 forecasts_detail = f"ответ не распознан: {forecasts_raw[:200]}"
+             elif (forecasts_n or 0) > 0:
+@@ -534,45 +535,48 @@ async def check(params, server_log):
+             rosstat_view = text(await session.call_tool("run_query", {"query": "SELECT count() AS rows, uniqExact(series) AS series FROM v_rosstat_macro"}))
+             rosstat_view_rows = result_rows(rosstat_view)
+             rosstat_points_n = rosstat_view_rows[0].get("rows") if rosstat_view_rows else None
+             rosstat_series_n = rosstat_view_rows[0].get("series") if rosstat_view_rows else None
+             if rosstat_view_rows is None:
+                 rosstat_view_detail = f"витрина не читается: {rosstat_view[:200]}"
+             elif (rosstat_points_n or 0) > 0 and (rosstat_series_n or 0) > 0:
+                 rosstat_view_detail = f"строк: {rosstat_points_n}, рядов: {rosstat_series_n}"
+             else:
+                 rosstat_view_detail = (f"строк: {rosstat_points_n}, рядов: {rosstat_series_n} — прогнать "
+-                                       "импортёры контура (make import STAT=rosstat_ipc_mes, "
+-                                       "STAT=rosstat_ipc_weeks, STAT=rosstat_salaries_mes, STAT=rosstat_vvp_kvartal)")
++                                       "импортёры контура по одному: make import STAT=<имя> для "
++                                       "каждого из rosstat_ipc_mes, rosstat_ipc_weeks, "
++                                       "rosstat_salaries_mes, rosstat_vvp_kvartal")
+             failed += not expect("витрина v_rosstat_macro непуста",
+                                  (rosstat_points_n or 0) > 0 and (rosstat_series_n or 0) > 0, rosstat_view_detail)
+ 
+-            # Каталог описывает все 141 ряд источника: 4 ИПЦ (ipc_mes) + 131 недельный
+-            # товар (ipc_weeks) + 5 рядов ВВП (vvp_kvartal) + 1 зарплата (salaries_mes).
++            # Каталог описывает все 141 ряд источника: 4 ИПЦ (rosstat_ipc_mes) + 131 недельный
++            # товар (rosstat_ipc_weeks) + 5 рядов ВВП (rosstat_vvp_kvartal) + 1 зарплата
++            # (rosstat_salaries_mes).
+             # Число сверяется точным равенством, а не «> 0»: односторонний контракт §11.4
+             # стандарта требует описания каждого разобранного ряда, а меньше 141 значит
+             # ни разу не отработавший импортёр (числа агент прочитает, а что измеряет ряд
+             # и в каких единицах — нет). В плане фазы написано 138: это арифметика
+             # 4 + 128 + 5 + 1 до fix-round задачи T7, который вернул три товара под обрывом
+             # листа (fc0d28f) — в ipcWeeksProducts 131 название, то есть верное число 141.
+             # detail печатает наблюдённое число, когда оно расходится с ожиданием.
+             rosstat_catalog = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'rosstat'"}))
+             rosstat_catalog_rows = result_rows(rosstat_catalog)
+             rosstat_catalog_n = rosstat_catalog_rows[0].get("n") if rosstat_catalog_rows else None
+             if rosstat_catalog_rows is None:
+                 rosstat_catalog_detail = f"ответ не распознан: {rosstat_catalog[:200]}"
+             elif rosstat_catalog_n == 141:
+                 rosstat_catalog_detail = "рядов rosstat: 141 (4 ИПЦ + 131 недельный + 5 ВВП + 1 зарплата)"
+             else:
+                 rosstat_catalog_detail = (f"рядов rosstat: {rosstat_catalog_n}, want 141 — прогнать "
+-                                          "make import STAT=rosstat_ipc_mes, STAT=rosstat_ipc_weeks, "
+-                                          "STAT=rosstat_salaries_mes и STAT=rosstat_vvp_kvartal "
++                                          "импортёры по одному: make import STAT=<имя> для каждого "
++                                          "из rosstat_ipc_mes, rosstat_ipc_weeks, "
++                                          "rosstat_salaries_mes, rosstat_vvp_kvartal "
+                                           "(каталог перепубликовывается каждым прогоном)")
+             failed += not expect("каталог rosstat полон", rosstat_catalog_n == 141, rosstat_catalog_detail)
+ 
+             # Сырые таблицы контура агенту не выданы — как macro_series и
+             # cbr_households_b_mes: витрина — единственное место, где агент читает ряды
+             # (единицы и привязка даты различаются между рядами и описаны в v_series_catalog).
+             # До первого живого прогона импортёров таблиц может не быть вовсе, и запрос
+             # отвечает UNKNOWN_TABLE, а не ACCESS_DENIED, — это провал, а не успех: таблица
+             # обязана существовать и быть закрытой.
+             for table, label in (("rosstat_ipc_mes", "ИПЦ помесячно"),
+diff --git a/util/xls.go b/util/xls.go
+index 69e1e42..ae51d77 100644
+--- a/util/xls.go
++++ b/util/xls.go
+@@ -108,21 +108,22 @@ func init() {
+ 	HttpClient = &http.Client{Transport: tr, Jar: jar}
+ }
+ 
+ // fileTimeout — дедлайн одного запроса GetFile. Переменная (а не константа), чтобы тест
+ // мог подставить короткий дедлайн вместо двухминутного. Прецеденты — xmlTimeout и
+ // jsonTimeout (util/xml.go, util/json.go), у обоих минута: они обслуживают фиды и API, а
+ // GetFile общий для всех пакетов и тянет многомегабайтные XLSX-выгрузки ЦБ, поэтому
+ // значение взято с запасом. Дедлайн — не украшение: HttpClient создан без Timeout, и
+ // зависший ответ ЦБ без дедлайна ошибки не даёт вовсе — импортёр ждал бы его вместо
+ // отчёта о сбое. Регрессия, ради которой дедлайн возвращён: cbr_key_rate ходит через
+-// GetFile (cbr/links.go) и при переводе с colly потерял его десятисекундный таймаут;
++// GetFile (зовут его util/links.go — GetPage — и импортёры cbr/ и rosstat/ через
++// GetXlsx) и при переводе с colly потерял его десятисекундный таймаут;
+ // key_rate — третий шаг цепочки dagu/cbr.yaml (overlap_policy: skip), и зависание
+ // остановило бы десять шагов после него.
+ var fileTimeout = 2 * time.Minute
+ 
+ // GetFile скачивает url общим HttpClient (тот же User-Agent, что у GetXML/GetJSON) и
+ // отдаёт тело ридером. Статус не проверяется (в отличие от GetJSON/GetXML): HTML-заглушку
+ // WAF вызывающий увидит ошибкой разбора XLSX — эта ветка у GetXlsx/GetXls уже есть.
+ // Тело читается целиком до возврата, поэтому дедлайн fileTimeout действует и на чтение;
+ // запрос ограничен им: зависший ответ иначе не дал бы ошибки.
+ func GetFile(url string) (io.ReadCloser, error) {
+diff --git a/views/gold_views.go b/views/gold_views.go
+index 80e98ef..f6594ed 100644
+--- a/views/gold_views.go
++++ b/views/gold_views.go
+@@ -6,21 +6,21 @@
+ // v_gold_forecasts (консенсус аналитиков и own-сетка из gold_forecasts),
+ // v_gold_etf_flows (пивот месячных потоков и запасов золотых ETF WGC по регионам),
+ // v_cb_gold_dynamics (динамика резервов семи ЦБ WGC: MoM/YTD и уровень по стране),
+ // v_gold_etf_flows_daily (дневной пивот семи рядов ETF-контура bold.report)
+ // и v_gold_etf_funds_daily (пер-фондовый дневной срез того же контура).
+ //
+ // Импортёр gold_views запускается после ingest-первого-прогона: util.CreateView
+ // пропускает витрину, пока не существуют все её таблицы (model_runs создаёт ingest),
+ // поэтому его вызывают отдельным шагом после первого запуска ingest. Гейт проверяет
+ // только наличие таблиц, а не их заполненность: rosstat_ipc_mes и rosstat_ipc_weeks
+-// создаются до загрузки Росстата, и при его сбое витрина создаётся с NULL или устаревшими ipc_*.
++// создаются до загрузки Росстата, и при его сбое витрина создаётся с NULL или устаревшими rosstat_*.
+ package views
+ 
+ import (
+ 	"context"
+ 
+ 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+ 	log "github.com/sirupsen/logrus"
+ )

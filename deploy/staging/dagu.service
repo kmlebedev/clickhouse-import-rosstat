@@ -8,7 +8,7 @@ Type=simple
 WorkingDirectory=/root/dagu
 # start-all: веб-сервер + планировщик в одном процессе.
 # Координатор выключен: развёртывание на одной машине, распределённых воркеров нет.
-ExecStart=/root/.local/bin/dagu start-all --dags /root/dagu --host 127.0.0.1 --port 8080
+ExecStart=/root/.local/bin/dagu start-all --dags /root/dagu --host=0.0.0.0 --port 8080
 EnvironmentFile=/etc/clickhouse-import-rosstat.env
 # HOME обязателен: systemd не задаёт его, а dagu определяет по нему домашний каталог
 # и падает на старте с "could not determine home directory: $HOME is not defined".
