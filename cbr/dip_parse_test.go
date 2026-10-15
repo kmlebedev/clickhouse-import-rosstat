@@ -273,7 +273,11 @@ var dipVintages = []dipVintage{
 		spots: []dipSpot{
 			{"saar_all_goods", dipDate(2021, time.January, 31), 4.781574875641297},
 			{"saar_food", dipDate(2021, time.January, 31), 3.7864708443726727},
+			{"saar_nonfood", dipDate(2021, time.January, 31), 6.784635832108691},
+			{"saar_services", dipDate(2021, time.January, 31), 3.753536989360313},
 			{"saar_all_goods", dipDate(2026, time.July, 31), 11.591788035567617},
+			{"saar_nonfood", dipDate(2026, time.July, 31), 15.053402778744825},
+			{"saar_services", dipDate(2026, time.July, 31), 5.879975039452702},
 			{"unemployment_nsa", dipDate(2015, time.January, 31), 5.455578448855274},
 			{"unemployment_nsa", dipDate(2021, time.January, 31), 5.767823278912974},
 			{"unemployment_sa", dipDate(2015, time.January, 31), 5.233359},
@@ -753,6 +757,33 @@ func TestDipMissingColumnWarns(t *testing.T) {
 			len(bySeries["unemployment_sa"]))
 	}
 	dipAssertWarn(t, hook, "saar_services", "не найдена", "Услуги")
+}
+
+// TestDipDuplicateColumnLabelFails: одна объявленная подпись у двух колонок листа — ошибка
+// (спека §3.2), а не «победила первая колонка»: какую из колонок считать рядом, разбор не
+// знает, и молча выбранная первая записала бы значения чужой метрики под известным именем.
+// Мутация на живой фикстуре 26-06 (стандарт §11.1): подпись колонки «Услуги» (E3) заменена
+// подписью колонки «Все товары и услуги» (B3) — обе несут один объявленный ряд.
+func TestDipDuplicateColumnLabelFails(t *testing.T) {
+	f := dipOpenFixture(t, dipFixture2606, func(t *testing.T, f *excelize.File) {
+		dipSetCell(t, f, "2", "E3", "Все товары и услуги")
+	})
+	points, err := cbrDipParseBook(f, dipFixtureReleases[dipFixture2606])
+	if err == nil {
+		t.Fatalf("ожидалась ошибка, разбор дал %d точек", len(points))
+	}
+	for _, want := range []string{
+		"cbr_dip_bulletin", "26-06", "62343", "лист «2»",
+		`подпись "Все товары и услуги" повторяется`, `ряд "saar_all_goods"`,
+		"одна подпись у двух колонок",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("ошибка %q не содержит %q", err, want)
+		}
+	}
+	if len(points) != 0 {
+		t.Errorf("при ошибке разбор отдал %d точек — частичный выпуск хуже пустого", len(points))
+	}
 }
 
 // TestDipDuplicateSheetWarns: в выпуске 22-05 один объявленный заголовок A1 несут два листа
