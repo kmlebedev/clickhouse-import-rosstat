@@ -43,7 +43,9 @@ type cbrBopStandardSheet struct {
 
 // cbrBopStandardSheets — обход листов в порядке книги. Имена листов здесь — константы, а не
 // признак: даты выпуска в них нет (лист оценки ищется по префиксу, здесь — по точному имени),
-// поэтому отсутствие любого из двух листов — ошибка (спека §3.5).
+// поэтому отсутствие любого из двух листов — ошибка (спека §3.5). Номер квартала эти листы пишут
+// арабской цифрой («1 квартал 1994 г.»), тогда как оценка — римской: обе записи разбирает общий
+// cbrBopQuarter, и переписывать подписи перед разбором не нужно.
 var cbrBopStandardSheets = []cbrBopStandardSheet{
 	{Sheet: "Кварталы", Kind: cbrBopKindQuarter},
 	{Sheet: "Годы", Kind: cbrBopKindYear},
@@ -147,57 +149,7 @@ func cbrBopStandardName(code, kind string) string {
 	return code + " (" + kind + ")"
 }
 
-// cbrBopStandardQuarterNumerals — арабская запись номера квартала в подписях листов этой выгрузки:
-// «1 квартал 1994 г.». Общий разбор подписи периода (cbr/bop_parse.go) знает квартал только
-// латинской римской цифрой («I квартал 1994 г.»), и это его закреплённый тестом контракт
-// (cbr/bop_parse_test.go: «квартал — латинской римской цифрой с годом»); оба файла ЦБ пишут
-// кварталы по-разному, поэтому цифру квартала к канонической форме приводит файл своего
-// источника, а не общий разбор.
-var cbrBopStandardQuarterNumerals = map[string]string{"1": "I", "2": "II", "3": "III", "4": "IV"}
-
-// cbrBopStandardCanonicalLabel переводит подпись периода листа в каноническую форму общего разбора:
-// «1 квартал 1994 г.» → «I квартал 1994 г.». Переводится ровно полная квартальная форма
-// «<1…4> квартал <год>» (с хвостом «г.» и без него); подпись любой другой формы возвращается как
-// есть, чтобы разбор назвал в ошибке исходный текст ячейки, а не его переписанный вид (стандарт
-// §6.4). Незнакомая подпись поэтому остаётся ошибкой: молчаливого «похоже на квартал» здесь нет.
-func cbrBopStandardCanonicalLabel(cell string) string {
-	if !strings.Contains(cell, "квартал") {
-		return cell
-	}
-	fields := strings.Fields(cell)
-	// Приводится только полная форма «<1…4> квартал <год>» — с хвостом «г.» или без него: у
-	// неполной или дополненной подписи разбор обязан назвать исходный текст ячейки.
-	full := len(fields) == 3 || (len(fields) == 4 && fields[3] == "г.")
-	if !full {
-		return cell
-	}
-	if !strings.EqualFold(fields[1], "квартал") {
-		return cell
-	}
-	numeral, ok := cbrBopStandardQuarterNumerals[fields[0]]
-	if !ok {
-		return cell
-	}
-	if _, err := strconv.Atoi(fields[2]); err != nil {
-		return cell
-	}
-	fields[0] = numeral
-	return strings.Join(fields, " ")
-}
-
-// cbrBopStandardCanonicalRows приводит подписи периодов листа к канонической форме. Правка идёт по
-// срезу строк, который вернул GetRows, — то есть по копии в памяти: файл не меняется, а значения
-// ячеек данных перевод не задевает (цифра квартала стоит только в подписях шапки).
-func cbrBopStandardCanonicalRows(rows [][]string) {
-	for _, row := range rows {
-		for i, cell := range row {
-			row[i] = cbrBopStandardCanonicalLabel(cell)
-		}
-	}
-}
-
-// cbrBopStandardSheetPlan — разобранная разметка листа: его строки (сырые значения ячеек, но
-// подписи периодов шапки — уже в канонической форме, см. cbrBopStandardCanonicalRows), разметка
+// cbrBopStandardSheetPlan — разобранная разметка листа: его строки (сырые значения ячеек), разметка
 // колонок из cbrBopSheetLayout и строка каждого из 17 агрегатов. Разметка обоих листов строится
 // до первой записи: пропавшая подпись или лист на втором листе не должны оставить в таблице
 // половину выпуска — частично разобранный выпуск хуже пустого, потому что выглядит успешным
@@ -227,9 +179,6 @@ func cbrBopStandardReadSheet(xlsx *excelize.File, sheet cbrBopStandardSheet) (cb
 		return plan, fmt.Errorf("%s: лист «%s»: %w", cbrBopStandardTable, name, err)
 	}
 	plan.Rows = rows
-	// Подписи периодов листа приводятся к канонической форме до разметки: ЦБ пишет номер квартала
-	// арабской цифрой, а общий разбор знает римскую (cbrBopStandardCanonicalLabel).
-	cbrBopStandardCanonicalRows(rows)
 	// Первая ожидаемая подпись — якорь первой строки данных; список агрегатов непуст по
 	// объявлению, поэтому индекс 0 здесь есть всегда.
 	layout, err := cbrBopSheetLayout(rows, cbrBopStandardTable, name, cbrBopStandardAggregates[0].Label)

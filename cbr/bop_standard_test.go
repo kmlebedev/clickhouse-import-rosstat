@@ -345,46 +345,12 @@ func TestCbrBopStandardFixtureRows(t *testing.T) {
 	}
 }
 
-// TestCbrBopStandardQuarterLabelCanonicalized: подписи периода листов ЦБ пишут номер квартала
-// арабской цифрой («1 квартал 1994 г.»), а общий разбор подписи периода знает только латинскую
-// римскую (контракт Task 1, закреплённый bop_parse_test.go). Приведение к канонической форме
-// проверяется здесь отдельно от разбора фикстуры: переменная форма (пропал год, чужой хвост)
-// обязана остаться исходным текстом, чтобы ошибка разбора называла текст источника, а не его
-// переписанный вид (стандарт §6.4). Проверка «первый квартал 1994 года даёт 1996,33» в
-// TestCbrBopStandardSpotValues — сквозное доказательство, что арабская цифра из живого листа
-// доходит до даты 1994-03-31.
-func TestCbrBopStandardQuarterLabelCanonicalized(t *testing.T) {
-	for label, want := range map[string]string{
-		"1 квартал 1994 г.":     "I квартал 1994 г.",
-		"4 квартал 2025 г.":     "IV квартал 2025 г.",
-		"2 квартал 2026":        "II квартал 2026",
-		"I квартал 1994 г.":     "I квартал 1994 г.",
-		"5 квартал 1994 г.":     "5 квартал 1994 г.",
-		"2 квартал 2026 года":   "2 квартал 2026 года",
-		"1 квартал":             "1 квартал",
-		"1994 г.":               "1994 г.",
-		"Счет текущих операций": "Счет текущих операций",
-	} {
-		if got := cbrBopStandardCanonicalLabel(label); got != want {
-			t.Errorf("cbrBopStandardCanonicalLabel(%q) = %q, want %q", label, got, want)
-		}
-	}
-	for _, label := range []string{"1 квартал 1994 г.", "4 квартал 2025 г.", "2 квартал 2026"} {
-		got, err := cbrBopParsePeriod(cbrBopStandardCanonicalLabel(label))
-		if err != nil {
-			t.Errorf("cbrBopParsePeriod(%q) после приведения: %v", label, err)
-			continue
-		}
-		if got.Kind != "квартал" {
-			t.Errorf("подпись %q дала вид %q, want квартал", label, got.Kind)
-		}
-	}
-}
-
 // TestCbrBopStandardSpotValues: значения из известных ячеек живой фикстуры (спека §3.9) — края
 // квартального и годового рядов, включая девятнадцатитысячный счёт текущих операций последнего
 // квартала и отрицательные резервные активы первого. Значения литералами: сверка идёт с разбором,
-// а не с константой кода.
+// а не с константой кода. Точка 1996,33 стоит в колонке с подписью источника «1 квартал 1994 г.»,
+// то есть тест же доказывает, что арабская запись квартала из живого листа доходит до 1994-03-31
+// (общий разбор принимает обе записи номера — cbrBopQuarter).
 func TestCbrBopStandardSpotValues(t *testing.T) {
 	rows := cbrFixtureRows(t, bopStandardFixture, cbrBopStandard.ImportFunc)
 	firstQuarter := time.Date(1994, time.March, 31, 0, 0, 0, 0, time.UTC)
