@@ -1256,6 +1256,401 @@
           },
           "overrides": []
         }
+      },
+      {
+        "type": "row",
+        "collapsed": false,
+        "title": "Сигнал, консенсус, календарь",
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 75
+        },
+        "id": 24,
+        "panels": []
+      },
+      {
+        "type": "timeseries",
+        "id": 15,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, value AS \"Ключевая, 2026 (медиана)\"\nFROM v_cbr_mo_br\nWHERE series = 'key_rate_avg_2026_median' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT date AS time, value AS \"Ключевая, 2027 (медиана)\"\nFROM v_cbr_mo_br\nWHERE series = 'key_rate_avg_2027_median' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "C",
+            "rawSql": "SELECT date AS time, value AS \"Инфляция, 2026 (медиана)\"\nFROM v_cbr_mo_br\nWHERE series = 'cpi_avg_2026_median' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "D",
+            "rawSql": "SELECT date AS time, value AS \"Инфляция, 2027 (медиана)\"\nFROM v_cbr_mo_br\nWHERE series = 'cpi_avg_2027_median' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "E",
+            "rawSql": "SELECT date AS time, value AS \"Интервал 2027, p10\"\nFROM v_cbr_mo_br\nWHERE series = 'key_rate_avg_2027_p10' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "F",
+            "rawSql": "SELECT date AS time, value AS \"Интервал 2027, p90\"\nFROM v_cbr_mo_br\nWHERE series = 'key_rate_avg_2027_p90' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Консенсус макроопроса: ставка и инфляция",
+        "description": "Консенсус макроэкономического опроса ЦБ (v_cbr_mo_br): медианы прогнозов участников по ключевой ставке и инфляции на 2026 и 2027 годы (% годовых; одна точка — волна опроса, а не непрерывный ряд) и интервал 2027 — 10-й и 90-й процентили прогнозов по ставке. Медиана — центральная оценка участников, p10/p90 — разброс ответов: границы интервала не являются ни диапазоном возможных ставок, ни обязательством ЦБ. Ставка и инфляция — уровни в одних единицах, поэтому лежат на одной шкале.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 76
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "A"
+              },
+              "properties": [
+                {
+                  "id": "color",
+                  "value": {
+                    "mode": "fixed",
+                    "fixedColor": "light-blue"
+                  }
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "B"
+              },
+              "properties": [
+                {
+                  "id": "color",
+                  "value": {
+                    "mode": "fixed",
+                    "fixedColor": "blue"
+                  }
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "C"
+              },
+              "properties": [
+                {
+                  "id": "color",
+                  "value": {
+                    "mode": "fixed",
+                    "fixedColor": "light-green"
+                  }
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "D"
+              },
+              "properties": [
+                {
+                  "id": "color",
+                  "value": {
+                    "mode": "fixed",
+                    "fixedColor": "green"
+                  }
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "E"
+              },
+              "properties": [
+                {
+                  "id": "color",
+                  "value": {
+                    "mode": "fixed",
+                    "fixedColor": "super-light-blue"
+                  }
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "F"
+              },
+              "properties": [
+                {
+                  "id": "color",
+                  "value": {
+                    "mode": "fixed",
+                    "fixedColor": "super-light-blue"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "type": "table",
+        "id": 16,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT meeting_date AS \"Заседание\", published AS \"Публикация\", decision_action AS \"Действие\",\n       decision_rate AS \"Ставка, %\", decision_delta_bp AS \"Шаг, б.п.\", signal AS \"Сигнал\"\nFROM v_cbr_mp_summary\nORDER BY meeting_date DESC\nLIMIT 3\n",
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Последние резюме ЦБ: решение и сигнал",
+        "description": "Три последних резюме обсуждения ключевой ставки (v_cbr_mp_summary). Заседание и публикация — РАЗНЫЕ даты: резюме выходит с лагом к решению, поэтому со ставкой на дату заседания строка сопоставляется по «Заседанию», а не по дате публикации. Действие — hold/cut/hike, ставка — принятый уровень (% годовых), шаг — изменение к предыдущему решению в б.п. (минус — снижение), сигнал — формулировка резюме о направленности дальнейших решений: это текст ЦБ, а не прогноз ставки.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 12,
+          "y": 76
+        },
+        "repeatDirection": "h",
+        "options": {
+          "frameIndex": 0,
+          "showHeader": true,
+          "showTypeIcons": false,
+          "footer": {
+            "show": false,
+            "reducer": null,
+            "countRows": false
+          },
+          "cellHeight": "sm"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "inspect": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "table",
+        "id": 17,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT channel AS \"Канал\", kind AS \"Вид\", text AS \"Фрагмент\"\nFROM v_cbr_mp_summary_channels\nWHERE method = 'regex' AND kind IN ('risk_pro', 'risk_dez')\n  AND meeting_date = (SELECT max(meeting_date) FROM v_cbr_mp_summary_channels)\nORDER BY channel, kind\n",
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Каналы последнего резюме (риски)",
+        "description": "Каналы рисков последнего опубликованного резюме (v_cbr_mp_summary_channels): фрагменты текста, размеченные регексами (method = 'regex' — детерминированный слой; LLM-разметка того же вида в витрине существует, но здесь не берётся). risk_pro — проинфляционные риски, risk_dez — дезинфляционные: «Вид» различает знак, «Канал» — тему (спрос, рынок труда, бюджет, курсы и т.д.). Последнее заседание берётся подзапросом max(meeting_date). Это названные ЦБ риски, а не оценка их вероятностей.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 85
+        },
+        "repeatDirection": "h",
+        "options": {
+          "frameIndex": 0,
+          "showHeader": true,
+          "showTypeIcons": false,
+          "footer": {
+            "show": false,
+            "reducer": null,
+            "countRows": false
+          },
+          "cellHeight": "sm"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "inspect": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "table",
+        "id": 18,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT event_date AS \"Дата\", event_time AS \"Время\", title AS \"Событие\", threshold AS \"Порог\"\nFROM v_events_calendar\nWHERE category = 'cbr' AND event_date \u003e= today()\nORDER BY event_date\nLIMIT 10\n",
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Календарь заседаний ЦБ",
+        "description": "Ближайшие события календаря ЦБ (v_events_calendar, category = 'cbr'): заседания Совета директоров по ключевой ставке, только будущие (event_date \u003e= today()), десять ближайших. Время — время публикации решения; у служебных строк календаря его может не быть. Порог — техническое условие сценария контура (JSON, например минимальный шаг ставки: \u003e=25 б.п.), а не часть решения ЦБ и не прогноз ставки; пусто — порога нет.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 12,
+          "y": 85
+        },
+        "repeatDirection": "h",
+        "options": {
+          "frameIndex": 0,
+          "showHeader": true,
+          "showTypeIcons": false,
+          "footer": {
+            "show": false,
+            "reducer": null,
+            "countRows": false
+          },
+          "cellHeight": "sm"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "inspect": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "table",
+        "id": 19,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date_msk AS \"Дата\", source AS \"Источник\", title AS \"Событие\"\nFROM v_news_events\nORDER BY date_msk DESC\nLIMIT 15\n",
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Событийный фон (лента)",
+        "description": "Лента событий (v_news_events): дата по МСК, источник (cbr/tass/interfax/rbc) и заголовок; свежие сверху, пятнадцать последних. Отбора по теме и значимости нет — это фон вокруг ставки, а не календарь (заседания — панель 18); заголовки даны как в фиде источника, один сюжет может занимать несколько строк.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 94
+        },
+        "repeatDirection": "h",
+        "options": {
+          "frameIndex": 0,
+          "showHeader": true,
+          "showTypeIcons": false,
+          "footer": {
+            "show": false,
+            "reducer": null,
+            "countRows": false
+          },
+          "cellHeight": "sm"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "inspect": false
+            }
+          },
+          "overrides": []
+        }
       }
     ],
     "templating": {},

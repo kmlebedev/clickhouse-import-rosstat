@@ -205,6 +205,61 @@ WHERE r.series = 'cbr_ruania_ruo' AND $__timeFilter(r.date)
 ORDER BY r.date
 `
 
+// krConsensusTemplate — срез витрины макроопроса v_cbr_mo_br «дата + значение» по коду ряда:
+// панель 15 читает шесть рядов одной формой (медианы ключевой ставки и инфляции на 2026/2027
+// и границы интервала 2027). Значения витрины — уровни в % годовых, преобразований в SQL нет,
+// поэтому единица панели percent. %s по порядку: алиас серии, код ряда.
+const krConsensusTemplate = `SELECT date AS time, value AS %s
+FROM v_cbr_mo_br
+WHERE series = '%s' AND $__timeFilter(date)
+ORDER BY date
+`
+
+// krConsensusSQL собирает запрос консенсуса по шаблону.
+func krConsensusSQL(series, alias string) string {
+	return fmt.Sprintf(krConsensusTemplate, alias, series)
+}
+
+// krMpSummaryTableSQL — последние резюме ЦБ: решение заседания, его шаг и сигнал одной таблицей,
+// свежие сверху. LIMIT 3 здесь — размер карточки, а не обрезка истории: три последних резюме
+// отвечают на вопрос «что решили и каким сигналом сопроводили»; история решений — точки панели 1.
+const krMpSummaryTableSQL = `SELECT meeting_date AS "Заседание", published AS "Публикация", decision_action AS "Действие",
+       decision_rate AS "Ставка, %", decision_delta_bp AS "Шаг, б.п.", signal AS "Сигнал"
+FROM v_cbr_mp_summary
+ORDER BY meeting_date DESC
+LIMIT 3
+`
+
+// krMpChannelsSQL — каналы рисков последнего резюме. method = 'regex' — детерминированный слой
+// разметки (LLM-строки того же вида в витрине есть, но берётся только regex); kind ограничен
+// risk_pro/risk_dez — риски обоих знаков. Последнее заседание выбирается подзапросом
+// max(meeting_date), а не LIMIT: LIMIT взял бы первые строки сортировки по каналу, а не строки
+// последнего резюме. LIMIT у этого запроса нет вовсе (спека §5).
+const krMpChannelsSQL = `SELECT channel AS "Канал", kind AS "Вид", text AS "Фрагмент"
+FROM v_cbr_mp_summary_channels
+WHERE method = 'regex' AND kind IN ('risk_pro', 'risk_dez')
+  AND meeting_date = (SELECT max(meeting_date) FROM v_cbr_mp_summary_channels)
+ORDER BY channel, kind
+`
+
+// krEventsCalendarSQL — календарь заседаний ЦБ: только будущие события (event_date >= today())
+// и только category = 'cbr'. LIMIT 10 — размер карточки: десять ближайших событий, полный
+// календарь читается запросом к витрине.
+const krEventsCalendarSQL = `SELECT event_date AS "Дата", event_time AS "Время", title AS "Событие", threshold AS "Порог"
+FROM v_events_calendar
+WHERE category = 'cbr' AND event_date >= today()
+ORDER BY event_date
+LIMIT 10
+`
+
+// krNewsFeedSQL — событийный фон: последние 15 заголовков ленты, свежие сверху. Отбора по теме
+// и значимости нет — это фон вокруг ставки, а не календарь (календарь — панель 18).
+const krNewsFeedSQL = `SELECT date_msk AS "Дата", source AS "Источник", title AS "Событие"
+FROM v_news_events
+ORDER BY date_msk DESC
+LIMIT 15
+`
+
 // krPanelDefaults — общие визуальные конвенции дашборда (выведены из UI-экспорта): палитра classic,
 // легенда снизу таблицей с calcs (последнее/среднее/максимум), tooltip по одной серии, линия
 // шириной 1 без заливки, градиента и соединения разрывов (spanNulls false — разрыв недельного
@@ -277,9 +332,9 @@ func krZeroThresholds() *dashboard.ThresholdsConfigBuilder {
 }
 
 // NewKeyRatePublications собирает дашборд «Ключевая ставка — публикации». Собраны ряды 21 «Ставка
-// и инфляция» (панели 1–5), 22 «Деньги, кредит, бюджет, труд» (панели 6–10) и 23 «Рыночный контур»
-// (панели 11–14); ряд 24 добавляется следующей задачей. Порядок вызовов WithRow/WithPanel задаёт
-// и порядок сетки, и нумерацию панелей 1..19.
+// и инфляция» (панели 1–5), 22 «Деньги, кредит, бюджет, труд» (панели 6–10), 23 «Рыночный контур»
+// (панели 11–14) и 24 «Сигнал, консенсус, календарь» (панели 15–19) — полный контракт спеки §5.
+// Порядок вызовов WithRow/WithPanel задаёт и порядок сетки, и нумерацию панелей 1..19.
 func NewKeyRatePublications() *dashboard.DashboardBuilder {
 	return dashboard.NewDashboardBuilder("Ключевая ставка — публикации").
 		Uid(KeyRatePublicationsUID).
@@ -303,7 +358,13 @@ func NewKeyRatePublications() *dashboard.DashboardBuilder {
 		WithPanel(krKeyrateTrajectoryPanel()).
 		WithPanel(krKeyrateSnapshotPanel()).
 		WithPanel(krOfzCurvePanel()).
-		WithPanel(krRuoniaPanel())
+		WithPanel(krRuoniaPanel()).
+		WithRow(dashboard.NewRowBuilder("Сигнал, консенсус, календарь").Id(firstKeyRateRowID + 3)).
+		WithPanel(krConsensusPanel()).
+		WithPanel(krMpSummaryPanel()).
+		WithPanel(krMpChannelsPanel()).
+		WithPanel(krEventsCalendarPanel()).
+		WithPanel(krNewsFeedPanel())
 }
 
 // krRatePanel — панель 1: ключевая ставка линией и точки решений ЦБ. Ставка — уровень на дату,
@@ -592,4 +653,108 @@ func krRuoniaPanel() *timeseries.PanelBuilder {
 		WithTarget(timeseriesQuery("B", krMacroValueSQL("cbr_key_rate", `"Ключевая ставка, % годовых"`))).
 		WithTarget(timeseriesQuery("C", krRuoniaSpreadSQL)).
 		Unit(units.Percent)
+}
+
+// krConsensusPanel — панель 15: консенсус макроопроса ЦБ — медианы прогнозов по ключевой ставке
+// и инфляции на 2026 и 2027 плюс интервал 2027 (p10/p90). Шесть рядов одной витрины v_cbr_mo_br,
+// значения — уровни в % годовых, поэтому единица percent и никаких преобразований в SQL.
+// Цвета зафиксированы: цвет кодирует метрику, оттенок — горизонт и роль (синие — ключевая,
+// зелёные — инфляция; светлее — 2026, насыщенный — 2027, самый светлый — границы интервала
+// вокруг 2027-й медианы). Без фиксации палитра classic красила бы серии по порядку таргетов,
+// и добавление новой серии меняло бы цвета уже собранных.
+func krConsensusPanel() *timeseries.PanelBuilder {
+	return krPanelDefaults(timeseries.NewPanelBuilder()).
+		Id(15).
+		Title("Консенсус макроопроса: ставка и инфляция").
+		Span(spanHalf).
+		Description("Консенсус макроэкономического опроса ЦБ (v_cbr_mo_br): медианы прогнозов "+
+			"участников по ключевой ставке и инфляции на 2026 и 2027 годы (% годовых; одна точка — "+
+			"волна опроса, а не непрерывный ряд) и интервал 2027 — 10-й и 90-й процентили прогнозов "+
+			"по ставке. Медиана — центральная оценка участников, p10/p90 — разброс ответов: границы "+
+			"интервала не являются ни диапазоном возможных ставок, ни обязательством ЦБ. Ставка "+
+			"и инфляция — уровни в одних единицах, поэтому лежат на одной шкале.").
+		WithTarget(timeseriesQuery("A", krConsensusSQL("key_rate_avg_2026_median", `"Ключевая, 2026 (медиана)"`))).
+		WithTarget(timeseriesQuery("B", krConsensusSQL("key_rate_avg_2027_median", `"Ключевая, 2027 (медиана)"`))).
+		WithTarget(timeseriesQuery("C", krConsensusSQL("cpi_avg_2026_median", `"Инфляция, 2026 (медиана)"`))).
+		WithTarget(timeseriesQuery("D", krConsensusSQL("cpi_avg_2027_median", `"Инфляция, 2027 (медиана)"`))).
+		WithTarget(timeseriesQuery("E", krConsensusSQL("key_rate_avg_2027_p10", `"Интервал 2027, p10"`))).
+		WithTarget(timeseriesQuery("F", krConsensusSQL("key_rate_avg_2027_p90", `"Интервал 2027, p90"`))).
+		Unit(units.Percent).
+		OverrideByQuery("A", []dashboard.DynamicConfigValue{krFixedColorProp("light-blue")}).
+		OverrideByQuery("B", []dashboard.DynamicConfigValue{krFixedColorProp("blue")}).
+		OverrideByQuery("C", []dashboard.DynamicConfigValue{krFixedColorProp("light-green")}).
+		OverrideByQuery("D", []dashboard.DynamicConfigValue{krFixedColorProp("green")}).
+		OverrideByQuery("E", []dashboard.DynamicConfigValue{krFixedColorProp("super-light-blue")}).
+		OverrideByQuery("F", []dashboard.DynamicConfigValue{krFixedColorProp("super-light-blue")})
+}
+
+// krMpSummaryPanel — панель 16: последние резюме ЦБ одной таблицей — решение заседания, его шаг
+// и сигнал. LIMIT 3 в запросе — размер карточки, а не обрезка истории: три последних резюме
+// отвечают на вопрос «что решили и каким сигналом сопроводили»; сами решения видны точками панели 1.
+func krMpSummaryPanel() *table.PanelBuilder {
+	return table.NewPanelBuilder().
+		Id(16).
+		Title("Последние резюме ЦБ: решение и сигнал").
+		Span(spanHalf).
+		Description("Три последних резюме обсуждения ключевой ставки (v_cbr_mp_summary). Заседание " +
+			"и публикация — РАЗНЫЕ даты: резюме выходит с лагом к решению, поэтому со ставкой на " +
+			"дату заседания строка сопоставляется по «Заседанию», а не по дате публикации. Действие — " +
+			"hold/cut/hike, ставка — принятый уровень (% годовых), шаг — изменение к предыдущему " +
+			"решению в б.п. (минус — снижение), сигнал — формулировка резюме о направленности " +
+			"дальнейших решений: это текст ЦБ, а не прогноз ставки.").
+		Datasource(datasourceRef()).
+		WithTarget(tableQuery("A", krMpSummaryTableSQL))
+}
+
+// krMpChannelsPanel — панель 17: каналы рисков последнего резюме. method = 'regex' — детерминированный
+// слой разметки витрины, kind ограничен risk_pro/risk_dez: риски обоих знаков. Последнее заседание
+// выбирается в SQL подзапросом max(meeting_date), LIMIT у запроса нет: строк ровно столько, сколько
+// каналов рисков размечено в последнем резюме (см. krMpChannelsSQL).
+func krMpChannelsPanel() *table.PanelBuilder {
+	return table.NewPanelBuilder().
+		Id(17).
+		Title("Каналы последнего резюме (риски)").
+		Span(spanHalf).
+		Description("Каналы рисков последнего опубликованного резюме (v_cbr_mp_summary_channels): " +
+			"фрагменты текста, размеченные регексами (method = 'regex' — детерминированный слой; " +
+			"LLM-разметка того же вида в витрине существует, но здесь не берётся). risk_pro — " +
+			"проинфляционные риски, risk_dez — дезинфляционные: «Вид» различает знак, «Канал» — тему " +
+			"(спрос, рынок труда, бюджет, курсы и т.д.). Последнее заседание берётся подзапросом " +
+			"max(meeting_date). Это названные ЦБ риски, а не оценка их вероятностей.").
+		Datasource(datasourceRef()).
+		WithTarget(tableQuery("A", krMpChannelsSQL))
+}
+
+// krEventsCalendarPanel — панель 18: календарь ЦБ — будущие события (event_date >= today())
+// категории 'cbr'. LIMIT 10 — размер карточки: десять ближайших событий. threshold — техническое
+// условие сценария контура (JSON), а не решение ЦБ: подписано в Description, чтобы порог
+// не прочли как прогноз ставки.
+func krEventsCalendarPanel() *table.PanelBuilder {
+	return table.NewPanelBuilder().
+		Id(18).
+		Title("Календарь заседаний ЦБ").
+		Span(spanHalf).
+		Description("Ближайшие события календаря ЦБ (v_events_calendar, category = 'cbr'): заседания " +
+			"Совета директоров по ключевой ставке, только будущие (event_date >= today()), десять " +
+			"ближайших. Время — время публикации решения; у служебных строк календаря его может " +
+			"не быть. Порог — техническое условие сценария контура (JSON, например минимальный шаг " +
+			"ставки: >=25 б.п.), а не часть решения ЦБ и не прогноз ставки; пусто — порога нет.").
+		Datasource(datasourceRef()).
+		WithTarget(tableQuery("A", krEventsCalendarSQL))
+}
+
+// krNewsFeedPanel — панель 19: событийный фон — лента новостей. Отбора по теме и значимости нет:
+// это фон вокруг ставки, а не календарь (календарь — панель 18); свежие сверху, 15 последних.
+// date_msk — дата по московскому времени: лента не зависит от часового пояса браузера.
+func krNewsFeedPanel() *table.PanelBuilder {
+	return table.NewPanelBuilder().
+		Id(19).
+		Title("Событийный фон (лента)").
+		Span(spanHalf).
+		Description("Лента событий (v_news_events): дата по МСК, источник (cbr/tass/interfax/rbc) " +
+			"и заголовок; свежие сверху, пятнадцать последних. Отбора по теме и значимости нет — " +
+			"это фон вокруг ставки, а не календарь (заседания — панель 18); заголовки даны как " +
+			"в фиде источника, один сюжет может занимать несколько строк.").
+		Datasource(datasourceRef()).
+		WithTarget(tableQuery("A", krNewsFeedSQL))
 }

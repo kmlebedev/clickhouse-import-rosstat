@@ -10,12 +10,14 @@ import (
 	"github.com/grafana/grafana-foundation-sdk/go/units"
 )
 
-// keyRateRowTitles — ряды дашборда в порядке следования (id 21–24). Готовы ряды 21–23;
-// список растёт вместе с панелями (T4).
+// keyRateRowTitles — ряды дашборда в порядке следования (id 21–24). Собраны все четыре ряда спеки:
+// список фиксирует и заголовки, и порядок сетки, а id (вне диапазона панелей 1..19) проверяет
+// TestKeyRatePublicationsRowTitles.
 var keyRateRowTitles = []string{
 	"Ставка и инфляция",
 	"Деньги, кредит, бюджет, труд",
 	"Рыночный контур",
+	"Сигнал, консенсус, календарь",
 }
 
 func builtKeyRatePublications(t *testing.T) dashboard.Dashboard {
@@ -27,11 +29,11 @@ func builtKeyRatePublications(t *testing.T) dashboard.Dashboard {
 	return d
 }
 
-// TestKeyRatePublicationsPanelCount фиксирует состав дашборда: собраны ряды 21 (панели 1–5),
-// 22 (панели 6–10) и 23 (панели 11–14) — 14 панелей (растёт до 19 в T4).
-func TestKeyRatePublicationsPanelCount(t *testing.T) {
-	if panels := panelsOf(builtKeyRatePublications(t)); len(panels) != 14 {
-		t.Fatalf("панелей %d, ожидалось 14", len(panels))
+// TestKeyRatePublicationsHasNineteenPanels фиксирует состав дашборда: собраны ряды 21 (панели 1–5),
+// 22 (панели 6–10), 23 (панели 11–14) и 24 (панели 15–19) — 19 панелей, полный контракт спеки §5.
+func TestKeyRatePublicationsHasNineteenPanels(t *testing.T) {
+	if panels := panelsOf(builtKeyRatePublications(t)); len(panels) != 19 {
+		t.Fatalf("панелей %d, ожидалось 19", len(panels))
 	}
 }
 
@@ -480,8 +482,9 @@ func TestKeyRateRuoniaSpreadSelfJoin(t *testing.T) {
 }
 
 // TestKeyRateNoLimitOnTimeseries: LIMIT на временном ряду — анти-паттерн UI-экспорта: он молча
-// обрезает историю, и «последние N точек» выглядят как весь ряд. В v1 таргетов с LIMIT нет вовсе
-// (таблица-срез панели 12 берёт последнюю дату подзапросом max(date), а не LIMIT).
+// обрезает историю, и «последние N точек» выглядят как весь ряд. LIMIT допустим только у таблиц
+// (панели 16/18/19 — размер карточки); временным рядам он не нужен: срез панели 12 берёт последнюю
+// дату подзапросом max(date), каналы 17 — последнее заседание подзапросом max(meeting_date).
 func TestKeyRateNoLimitOnTimeseries(t *testing.T) {
 	for _, p := range panelsOf(builtKeyRatePublications(t)) {
 		for _, target := range p.Targets {
@@ -495,6 +498,90 @@ func TestKeyRateNoLimitOnTimeseries(t *testing.T) {
 			if strings.Contains(query.RawSql, "LIMIT") {
 				t.Fatalf("панель %q: у таргета %q LIMIT в timeseries-запросе: %s", panelTitle(p), query.RefId, query.RawSql)
 			}
+		}
+	}
+}
+
+// TestKeyRateConsensusPanelTargets: панель 15 — шесть рядов v_cbr_mo_br одной формы: медианы
+// ключевой ставки и инфляции на 2026/2027 плюс интервал 2027 (p10/p90). Алиасы — дословно
+// из спеки §5: по ним серии различаются в легенде (иначе было бы шесть одинаковых «value»),
+// а код ряда — единственная связь с витриной, и опечатка оставила бы серию молча пустой.
+// Цвета зафиксированы у всех шести серий: без этого раскладку перекрашивал бы порядок таргетов
+// в палитре classic, а ставка и инфляция двух горизонтов читались бы как четыре безымянных кривых.
+func TestKeyRateConsensusPanelTargets(t *testing.T) {
+	panel := panelByID(t, builtKeyRatePublications(t), 15)
+	if len(panel.Targets) != 6 {
+		t.Fatalf("у панели %q %d запросов, ожидалось 6 (медианы 2026/2027 и интервал 2027)", panelTitle(panel), len(panel.Targets))
+	}
+	if unit := panel.FieldConfig.Defaults.Unit; unit == nil || *unit != units.Percent {
+		t.Fatalf("панель 15: unit %v, ожидался %q (консенсус — уровни, проценты годовых)", unit, units.Percent)
+	}
+	for _, tc := range []struct{ refID, series, alias string }{
+		{"A", "key_rate_avg_2026_median", "Ключевая, 2026 (медиана)"},
+		{"B", "key_rate_avg_2027_median", "Ключевая, 2027 (медиана)"},
+		{"C", "cpi_avg_2026_median", "Инфляция, 2026 (медиана)"},
+		{"D", "cpi_avg_2027_median", "Инфляция, 2027 (медиана)"},
+		{"E", "key_rate_avg_2027_p10", "Интервал 2027, p10"},
+		{"F", "key_rate_avg_2027_p90", "Интервал 2027, p90"},
+	} {
+		query := targetByRefID(t, panel, tc.refID)
+		for _, want := range []string{
+			"FROM v_cbr_mo_br",
+			"series = '" + tc.series + "'",
+			`AS "` + tc.alias + `"`,
+			"$__timeFilter(date)",
+			"ORDER BY date",
+		} {
+			if !strings.Contains(query.RawSql, want) {
+				t.Fatalf("панель 15: запрос %q не содержит %q: %s", tc.refID, want, query.RawSql)
+			}
+		}
+		color, ok := overridePropByRefID(panel, tc.refID, "color").(dashboard.FieldColor)
+		if !ok || color.Mode != dashboard.FieldColorModeIdFixed || color.FixedColor == nil {
+			t.Fatalf("панель 15: цвет серии %s = %#v, ожидался fixed (палитра classic красит по порядку таргетов)", tc.refID, color)
+		}
+	}
+}
+
+// TestKeyRateSignalRowUsesTableQueries: панели 16–19 — таблицы, и плагину нужен queryType "table"
+// с форматом 1, иначе строковые колонки («Сигнал», «Фрагмент», «Событие») уехали бы в timeseries-формат.
+// У каждой панели один таргет на своей витрине. LIMIT у таблиц — размер карточки, а не обрезка
+// истории: 3 последних резюме (16), 10 ближайших заседаний (18), 15 свежих новостей (19);
+// у каналов (17) LIMIT нет — последнее заседание выбирается подзапросом max(meeting_date).
+func TestKeyRateSignalRowUsesTableQueries(t *testing.T) {
+	board := builtKeyRatePublications(t)
+	for _, tc := range []struct {
+		panelID uint32
+		view    string
+		limit   string
+	}{
+		{16, "v_cbr_mp_summary", "LIMIT 3"},
+		{17, "v_cbr_mp_summary_channels", ""},
+		{18, "v_events_calendar", "LIMIT 10"},
+		{19, "v_news_events", "LIMIT 15"},
+	} {
+		panel := panelByID(t, board, tc.panelID)
+		if len(panel.Targets) != 1 {
+			t.Fatalf("у панели %q %d запросов, ожидался 1", panelTitle(panel), len(panel.Targets))
+		}
+		query, ok := chQuery(panel.Targets[0])
+		if !ok {
+			t.Fatalf("панель %q: запрос не является запросом ClickHouse", panelTitle(panel))
+		}
+		if query.Format != queryFormatTable || query.QueryType != queryTypeTable {
+			t.Fatalf("панель %d: format=%d queryType=%q, ожидались %d/%q (строковые колонки в timeseries не укладываются)", tc.panelID, query.Format, query.QueryType, queryFormatTable, queryTypeTable)
+		}
+		if !strings.Contains(query.RawSql, "FROM "+tc.view) {
+			t.Fatalf("панель %d: запрос читает не %s: %s", tc.panelID, tc.view, query.RawSql)
+		}
+		if tc.limit == "" {
+			if strings.Contains(query.RawSql, "LIMIT") {
+				t.Fatalf("панель %d: LIMIT в запросе каналов — последнее заседание берётся подзапросом max(): %s", tc.panelID, query.RawSql)
+			}
+			continue
+		}
+		if !strings.Contains(query.RawSql, tc.limit) {
+			t.Fatalf("панель %d: запрос не содержит %q: %s", tc.panelID, tc.limit, query.RawSql)
 		}
 	}
 }
