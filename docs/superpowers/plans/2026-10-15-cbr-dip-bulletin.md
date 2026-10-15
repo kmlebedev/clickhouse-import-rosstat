@@ -9,7 +9,7 @@
 
 ## Критерий приёмки пункта
 
-Зелёный `make all`; живой прогон `make import STAT=cbr_dip_bulletin` (первый — с `ARCHIVE_BACKEND=local ARCHIVE_LOCAL_DIR=build/archive-dev`, затем с `ARCHIVE_BACKEND=yandex`) c записью факта (команда, число строк, число выпусков, крайние даты); повторный прогон — no-op без скачивания приложений; spot-сверка с живыми xlsx; объекты всех 49 файлов в архиве и строки в `docs/archive/registry.jsonl`; `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА; `dagu validate dagu/cbr.yaml` — exit 0; `ARCHITECTURE.md` / `README.md` / `docs/ROADMAP_KEY_RATE.md` тем же PR; протокол приёмки — комментарием в PR (стандарт §16.1 п. 8).
+Зелёный `make all`; живой прогон `make import STAT=cbr_dip_bulletin` (первый — с `ARCHIVE_BACKEND=local ARCHIVE_LOCAL_DIR=build/archive-dev`, затем с `ARCHIVE_BACKEND=yandex`) c записью факта (команда, число строк, число выпусков, крайние даты); повторный прогон — no-op без скачивания приложений; spot-сверка с живыми xlsx; объекты всех 49 файлов — в винтажном архиве dev-хранилища (49 объектов и 49 строк `build/archive-dev/registry.jsonl`, ≈69,6 МБ), а git-зеркало `docs/archive/registry.jsonl` — по факту доступности реестра хранилища (в приёмке 2026-10-16 реестр яндекс-архива на Диске отдавал 500 — зеркало не обновилось, Task 7.6); `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА; `dagu validate dagu/cbr.yaml` — exit 0; `ARCHITECTURE.md` / `README.md` / `docs/ROADMAP_KEY_RATE.md` тем же PR; протокол приёмки — комментарием в PR (стандарт §16.1 п. 8).
 
 **Сделано до начала задач** (контроллером): ветка `cbr-dip-bulletin`; фикстуры `cbr/testdata/dip_bulletin_26-06.xlsx` (листы `2`, `23`), `dip_bulletin_26-07.xlsx` (`2`, `20`), `dip_bulletin_2021-06.xlsx` (`3`, `64`), `dip_page.html`; инструменты `scripts/xlsx_trim.py` (trim/verify) и `scripts/xlsx_inspect.py`; спека и этот план — первыми коммитами.
 
@@ -64,10 +64,10 @@
 
 1. `make all` (gofmt, lint, vet, `go test -race`, обе сборки).
 2. `make ch-status` (ClickHouse поднимает владелец; если не отвечает — остановиться и попросить).
-3. `make import STAT=cbr_dip_bulletin ARCHIVE_BACKEND=local ARCHIVE_LOCAL_DIR=build/archive-dev` — первый прогон: ≈ 20–25 тыс. точек, 49 выпусков, крайние даты 2015-01-31 … 2026-09-30; проверить `ls build/archive-dev/cbr_dip_bulletin | wc -l` = 49.
+3. `make import STAT=cbr_dip_bulletin ARCHIVE_BACKEND=local ARCHIVE_LOCAL_DIR=build/archive-dev` — первый прогон (dev-хранилище): **18 000** точек, 49 выпусков, крайние даты **2014-01-31 … 2026-09-30** (2014-01 приходит с SAAR-рядами старых выпусков); проверить `ls build/archive-dev/cbr_dip_bulletin | wc -l` = 49 и `wc -l build/archive-dev/registry.jsonl` = 49 (≈69,6 МБ).
 4. Повтор — `Imported 0 rows`, «новых выпусков нет», без скачиваний (время прогона).
 5. Spot-сверка с живыми xlsx (SA и NSA, один месяц из двух выпусков).
-6. `make import STAT=cbr_dip_bulletin ARCHIVE_BACKEND=yandex` + `make archive-registry` → 49 строк в `docs/archive/registry.jsonl`.
+6. `make import STAT=cbr_dip_bulletin ARCHIVE_BACKEND=yandex` + `make archive-registry ARCHIVE_BACKEND=yandex` — фактический результат: self-heal сработал (49 × «версия известна, но точек меньше — полный импорт»), объекты залиты в яндекс-архив (ошибка возникала уже после `Put`), но реестр на Диске отдавал **500** на скачивание (подписанная ссылка; 5 попыток за ~50 минут) — `make archive-registry` упал, git-зеркало `docs/archive/registry.jsonl` не обновилось (0 строк `cbr_dip_bulletin`); подтверждённый архив приёмки — dev-хранилище. Причина внешняя (Диск), а не дефект импортёра.
 7. `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА; `dagu validate dagu/cbr.yaml` — exit 0.
 8. Записать протокол в план и в тело коммита статуса.
 
