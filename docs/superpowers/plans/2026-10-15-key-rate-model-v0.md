@@ -295,3 +295,17 @@ git commit -m "docs: key rate model v0 — readme, architecture, roadmap"
 - **Согласованность имён:** `Decision/Row/Forecast/Prediction`, `available_from_cpd/available_from_survey`, `fit_taylor/fit_ordered_logit`, `SEED` — едины во всех задачах.
 - **Review Focus:** каждый пункт привязан к тесту своей задачи (Task 1 — календарь; Task 2 — окна/утечки; Task 3 — метрики/нулевая дисперсия; Task 5 — вырожденные окна).
 - **Пропорция:** план не воспроизводит код; тела функций пишет имплементер по сигнатурам и пинам.
+
+---
+
+## Протокол живой приёмки (2026-10-16, HEAD 8b15bdd)
+
+Команды и результаты (повторные прогоны идемпотентны: те же числа при повторе):
+
+1. `make all` — зелёный (gofmt, golangci-lint 0 issues, `go vet`, `go test -race`, обе сборки).
+2. `uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/key_rate_model_test.py` — `Ran 169 tests … OK` (offline, транспорт мокается).
+3. `make import STAT=events_calendar` → `Imported 118 rows of events_calendar` (фолд-в-фолд тот же результат при повторе); `make ch-sql FILE=sql/key_rate_coverage.sql` → строка `events_calendar cbr 120 2014-02-14 2027-12-17` (118 канонических + 2 ручных строки-триггера).
+4. `make key-rate-model` → выборка 108 решений (2014-02-14 … 2026-09-11); предстоящих 10; вне выборки 0; пропущено 0/0; сверка шагов с `cbr_mp_summary` 21/22; фолды 84 (расширяющееся) / 68 (скользящее 40), вырожденных 0. Expanding RMSE, б.п.: `ordered_logit` 145.06 (лучший), B1 148.35, `climatology` 149.49, `taylor` 151.70, B3 151.71, B2 171.39; DM против бенчмарков незначим (p ≈ 0.19–0.68). Прогноз на 2026-10-23: `taylor` −65.15 б.п.; `ordered_logit` P(−1)=81.65 %, P(0)=16.24 %, P(+1)=2.12 %, E[step] −63.36 б.п.
+5. `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА (витрины контура и Сбера видны агенту, сырые таблицы закрыты).
+
+Протокол опубликован комментарием в PR ветки (стандарт §16.1 п. 8).
