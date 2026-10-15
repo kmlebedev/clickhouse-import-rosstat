@@ -578,9 +578,12 @@ class TestCli(unittest.TestCase):
     """CLI: сводка и перехват ошибки выборки."""
 
     def test_summary_counts_decisions_excluded_and_missing(self):
-        with unittest.mock.patch.object(km, "ch_query", side_effect=ch_query_from_fixtures):
-            with contextlib.redirect_stdout(io.StringIO()) as out:
-                code = km.run_summary(rolling=False, today=date(2016, 1, 1))
+        with tempfile.TemporaryDirectory() as tmp:
+            with unittest.mock.patch.object(km, "ch_query", side_effect=ch_query_from_fixtures):
+                with contextlib.redirect_stdout(io.StringIO()) as out:
+                    code = km.run_summary(
+                        rolling=False, today=date(2016, 1, 1), out_dir=Path(tmp)
+                    )
         text = out.getvalue()
         self.assertEqual(code, 0)
         # Прошедшие заседания фикстуры по 2016-01-01 — 18 (2014: 10, 2015: 8);
@@ -590,6 +593,16 @@ class TestCli(unittest.TestCase):
         self.assertTrue(summary_value(text, "пропущено (нет ставки на d−1):").startswith("0"))
         self.assertTrue(summary_value(text, "пропущено (нет данных по признакам):").startswith("0"))
         self.assertTrue(summary_value(text, "предстоящих (позже даты прогона):").startswith("100"))
+        # 18 решений короче обучения (24) — фолдов нет ни в одном окне, и
+        # сводка печатает это числом, а не молчит (отчёт рендерится и пустым).
+        self.assertTrue(
+            summary_value(text, f"фолдов (расширяющееся окно, min_train={km.MIN_TRAIN}):")
+            .startswith("0")
+        )
+        self.assertTrue(
+            summary_value(text, f"фолдов (скользящее окно, {km.ROLLING_WINDOW}):").startswith("0")
+        )
+        self.assertIn("(фолдов нет", text)
 
     def test_main_reports_sample_error_without_traceback(self):
         # Расхождение с cbr_mp_summary: main обязан вернуть ненулевой код и
@@ -606,6 +619,670 @@ class TestCli(unittest.TestCase):
         self.assertIn("2014-02-14", message)
         self.assertIn("не совпал", message)
         self.assertNotIn("Traceback", message)
+
+
+# --- Синтетика для harness'а (Task 3) -----------------------------------------
+#
+# Walk-forward, метрики и тесты значимости проверяются на СИНТЕТИЧЕСКИХ
+# строках, а не на фикстурах: в фикстуре 26 решений, и при `min_train=24`
+# расширяющееся окно даёт 2 фолда, а скользящее 40 — ни одного. Поведение
+# окон, метрик и вырожденных случаев на таком материале не проверяется
+# (решение контроллера, план Task 3).
+
+
+def synthetic_rows(count, first=date(2014, 1, 1), rate=10.0, steps=(0,), pi=4.0, gap=0.0):
+    """Синтетическая выборка: заседание раз в 30 дней, шаг из `steps` по кругу.
+
+    Уровень ставки накапливается, поэтому `rate_before`/`rate_after`/
+    `step_bp`/`y3` каждой строки известны точно, а прогнозы бенчмарков
+    сверяются руками (шаг B2 — шаг предыдущей строки и т.п.).
+    """
+    rows = []
+    level = rate
+    for index in range(count):
+        step = steps[index % len(steps)]
+        after = level + step / 100.0
+        decision = km.Decision(
+            first + timedelta(days=30 * index), level, after, step, (step > 0) - (step < 0)
+        )
+        rows.append(km.Row(decision, pi, gap))
+        level = after
+    return rows
+
+
+def ar1_rows(count, intercept=10.0, phi=0.5):
+    """Строки с ТОЧНОЙ связью `rate_after = intercept + phi·rate_before`.
+
+    OLS на такой синтетике обязан восстановить коэффициенты, и прогноз B3
+    `pred_level − rate_before` считается руками.
+    """
+    rows = []
+    for index in range(count):
+        before = 10.0 + index
+        after = intercept + phi * before
+        step = round((after - before) * 100.0)
+        decision = km.Decision(
+            date(2014, 1, 1) + timedelta(days=30 * index),
+            before,
+            after,
+            step,
+            (step > 0) - (step < 0),
+        )
+        rows.append(km.Row(decision, 4.0, 0.0))
+    return rows
+
+
+def benchmark_predictions(rows):
+    """Бенчмарки B1–B3 по двум окнам — ровно так, как их строит прогон."""
+    predictions = []
+    for window in (None, km.ROLLING_WINDOW):
+        for method, fit_predict in km.BENCHMARKS:
+            predictions.extend(km.walk_forward(rows, method, fit_predict, rolling=window))
+    return predictions
+
+
+class TestWalkForward(unittest.TestCase):
+    """Walk-forward: обучение только на прошлом, два окна (спека §7)."""
+
+    def probe(self, seen):
+        """Фиктивная модель, отвечающая длиной обучающего окна."""
+
+        def fit_predict(train, row):
+            seen.append(len(train))
+            return km.Forecast(float(len(train)), None)
+
+        return fit_predict
+
+    def test_expanding_window_trains_only_on_the_past(self):
+        rows = synthetic_rows(60)
+        seen = []
+        predictions = km.walk_forward(rows, "probe", self.probe(seen), min_train=24)
+        # Длины строго растут: каждый фолд видит ВСЁ прошлое и только его.
+        self.assertEqual(seen, list(range(24, 60)))
+        # Первый прогноз — 25-е заседание (24 в обучении), последнее — 60-е.
+        self.assertEqual(len(predictions), 36)
+        self.assertEqual(predictions[0].meeting_date, rows[24].decision.meeting_date)
+        self.assertEqual(predictions[-1].meeting_date, rows[-1].decision.meeting_date)
+        dates = [prediction.meeting_date for prediction in predictions]
+        self.assertEqual(dates, sorted(dates))
+        self.assertEqual(len(set(dates)), len(dates))
+        self.assertEqual({prediction.method for prediction in predictions}, {"probe"})
+        self.assertEqual({prediction.window for prediction in predictions}, {"expanding"})
+        self.assertEqual(predictions[0].step_bp, 24.0)
+        self.assertEqual(predictions[0].actual_step_bp, float(rows[24].decision.step_bp))
+        self.assertEqual(predictions[0].actual_y3, rows[24].decision.y3)
+
+    def test_rolling_window_enters_the_run_full(self):
+        rows = synthetic_rows(60)
+        seen = []
+        predictions = km.walk_forward(
+            rows, "probe", self.probe(seen), min_train=24, rolling=40
+        )
+        # Окно скользящее 40 входит ПОЛНЫМ: первый фолд — 41-е заседание,
+        # то есть 60 − 40 = 20 фолдов (иначе «окно 40» начиналось бы с 24).
+        self.assertEqual(seen, [40] * 20)
+        self.assertEqual(len(predictions), 20)
+        self.assertEqual(predictions[0].meeting_date, rows[40].decision.meeting_date)
+        self.assertEqual({prediction.window for prediction in predictions}, {"rolling40"})
+
+    def test_sample_shorter_than_min_train_gives_no_folds(self):
+        # Выборка короче обучения — пустой список, а не исключение: отчёт
+        # этого шага (например, на срезе фикстур) обязан рендериться.
+        self.assertEqual(km.walk_forward(synthetic_rows(20), "hold", km.predict_hold), [])
+
+    def test_probs_and_step_are_passed_through(self):
+        def fit_predict(train, row):
+            return km.Forecast(1.5, (0.1, 0.8, 0.1))
+
+        predictions = km.walk_forward(synthetic_rows(26), "probe", fit_predict, min_train=24)
+        self.assertEqual(predictions[0].step_bp, 1.5)
+        self.assertEqual(predictions[0].probs, (0.1, 0.8, 0.1))
+
+    def test_hold_predicts_zero_without_probs(self):
+        predictions = km.walk_forward(
+            synthetic_rows(30, steps=(50,)), "hold", km.predict_hold, min_train=24
+        )
+        self.assertEqual(len(predictions), 6)
+        for prediction in predictions:
+            self.assertEqual(prediction.step_bp, 0.0)
+            self.assertIsNone(prediction.probs)
+
+    def test_repeat_repeats_the_previous_decision(self):
+        rows = synthetic_rows(60, steps=(0, 50, -25))
+        predictions = km.walk_forward(rows, "repeat", km.predict_repeat, min_train=24)
+        self.assertEqual(len(predictions), 36)
+        for prediction, index in zip(predictions, range(24, 60)):
+            self.assertEqual(prediction.step_bp, float(rows[index - 1].decision.step_bp))
+
+    def test_repeat_needs_a_previous_decision(self):
+        with self.assertRaises(ValueError) as caught:
+            km.predict_repeat([], synthetic_rows(1)[0])
+        self.assertIn("предыдущего решения", str(caught.exception))
+
+    def test_ar1_recovers_the_synthetic_level_relation(self):
+        rows = ar1_rows(40)
+        train = rows[:24]
+        row = rows[24]
+        forecast = km.fit_ar1(train, row)
+        # pred_level = 10 + 0.5·rate_before; прогноз шага — разность уровней.
+        expected = 10.0 + 0.5 * row.decision.rate_before - row.decision.rate_before
+        self.assertAlmostEqual(forecast.step_bp, expected, places=9)
+        self.assertIsNone(forecast.probs)
+
+    def test_ar1_uses_hac_with_the_pinned_configuration(self):
+        # Конфигурация HAC — часть спецификации (спека §6): Ньюи–Уэст, 4 лага
+        # (≈ полугодие между заседаниями), малая выборка с поправкой. Тест
+        # подменяет OLS и проверяет сам вызов: подмена ковариации невидима
+        # в числах прогноза, а сравнение p-value с методами №2–3 — нет.
+        rows = ar1_rows(40)
+        with unittest.mock.patch.object(km.sm, "OLS") as ols:
+            ols.return_value.fit.return_value.params = [10.0, 0.5]
+            forecast = km.fit_ar1(rows[:24], rows[24])
+        kwargs = ols.return_value.fit.call_args.kwargs
+        self.assertEqual(kwargs["cov_type"], "HAC")
+        self.assertEqual(kwargs["cov_kwds"], {"maxlags": 4, "use_correction": True})
+        row = rows[24]
+        self.assertAlmostEqual(
+            forecast.step_bp,
+            10.0 + 0.5 * row.decision.rate_before - row.decision.rate_before,
+            places=12,
+        )
+
+    def test_ar1_rejects_a_window_too_short_for_ols(self):
+        rows = ar1_rows(3)
+        with self.assertRaises(ValueError) as caught:
+            km.fit_ar1(rows[:2], rows[2])
+        self.assertIn("AR(1)", str(caught.exception))
+        self.assertIn("OLS", str(caught.exception))
+
+    def test_ar1_rejects_a_window_without_level_variation(self):
+        # Уровень в окне неизменен: наклон φ коллинеарен свободному члену,
+        # регрессия не определена — понятная ошибка, а не падение statsmodels.
+        rows = synthetic_rows(30, steps=(0,))
+        with self.assertRaises(ValueError) as caught:
+            km.fit_ar1(rows[:24], rows[24])
+        self.assertIn("не меняется", str(caught.exception))
+
+
+class TestMetrics(unittest.TestCase):
+    """Метрики §7: числа проверяются руками на фиксированных векторах."""
+
+    def test_rmse_and_mae_on_numbers(self):
+        self.assertAlmostEqual(km.rmse_bp([10.0, -10.0]), 10.0, places=12)
+        self.assertAlmostEqual(km.mae_bp([10.0, -10.0]), 10.0, places=12)
+        # RMSE([3, 4]) = sqrt((9 + 16)/2) = sqrt(12.5); MAE = 3.5.
+        self.assertAlmostEqual(km.rmse_bp([3.0, 4.0]), 3.5355339059327378, places=12)
+        self.assertAlmostEqual(km.mae_bp([3.0, 4.0]), 3.5, places=12)
+
+    def test_metrics_refuse_an_empty_list(self):
+        # Пустой список — это «фолдов нет»: ноль на его месте выглядел бы
+        # измеренной ошибкой, и отчёт молча показал бы идеальную модель.
+        for metric in (km.rmse_bp, km.mae_bp):
+            with self.assertRaises(ValueError):
+                metric([])
+
+    def test_hit_rate_counts_matching_directions(self):
+        # Совпали 3 из 4: 10↔20 (вверх), −10↔−5 (вниз), 0↔0 (сохранение);
+        # 5↔−3 — промах.
+        self.assertAlmostEqual(
+            km.hit_rate([10.0, -10.0, 0.0, 5.0], [20.0, -5.0, 0.0, -3.0]), 0.75, places=12
+        )
+
+    def test_confusion3_rows_are_fact_and_columns_are_forecast(self):
+        # Тот же вектор: факт (1, −1, 0, −1) против прогноза (1, −1, 0, 1)
+        # в порядке классов (−1, 0, +1).
+        matrix = km.confusion3([10.0, -10.0, 0.0, 5.0], [20.0, -5.0, 0.0, -3.0])
+        self.assertEqual(
+            matrix,
+            [
+                [1, 0, 1],  # факт −1: прогнозы −1 (1 шт.) и +1 (1 шт.)
+                [0, 1, 0],  # факт 0: прогноз 0
+                [0, 0, 1],  # факт +1: прогноз +1
+            ],
+        )
+        self.assertEqual(sum(sum(row) for row in matrix), 4)
+
+    def test_qwk_on_a_hand_counted_example(self):
+        # Факт (−1, 0, 0, +1), прогноз (−1, 0, +1, +1): единственное
+        # расхождение — факт 0 при прогнозе +1 (вес (1/4)).
+        #   O = [[1,0,0],[0,1,1],[0,0,1]], маргиналы факта (1,2,1),
+        #   прогноза (1,1,2); Σw·E = 1.25, Σw·O = 0.25 → QWK = 1 − 0.2 = 0.8.
+        self.assertAlmostEqual(
+            km.qwk([-1.0, 0.0, 1.0, 1.0], [-1.0, 0.0, 0.0, 1.0]), 0.8, places=12
+        )
+
+    def test_qwk_is_one_on_perfect_agreement(self):
+        self.assertAlmostEqual(km.qwk([0.0, 50.0, -25.0], [0.0, 50.0, -25.0]), 1.0, places=12)
+
+    def test_qwk_degenerate_case_is_one(self):
+        # Все прогнозы и факты — «сохранение»: ожидаемое расхождение нулевое,
+        # kappa не определён; соглашение — 1.0 (полное совпадение).
+        self.assertAlmostEqual(km.qwk([0.0, 0.0, 0.0], [0.0, 0.0, 0.0]), 1.0, places=12)
+
+    def test_qwk_does_not_reward_a_constant_forecast(self):
+        # B1 («ставка не изменится») при 3 из 4 сохранений получает QWK = 0:
+        # постоянный прогноз не несёт информации, и метрика это показывает.
+        self.assertAlmostEqual(
+            km.qwk([0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 50.0, 0.0]), 0.0, places=12
+        )
+
+    def test_brier_multi_on_known_probabilities(self):
+        # Идеальный прогноз — 0; (0.5, 0.3, 0.2) при факте «сохранение» —
+        # (0.5−0)² + (0.3−1)² + (0.2−0)² = 0.78.
+        self.assertAlmostEqual(km.brier_multi([(1.0, 0.0, 0.0)], [-1]), 0.0, places=12)
+        self.assertAlmostEqual(km.brier_multi([(0.5, 0.3, 0.2)], [0]), 0.78, places=12)
+        # Два фолда: 0.06 и 0.14 → 0.10.
+        self.assertAlmostEqual(
+            km.brier_multi([(0.8, 0.1, 0.1), (0.1, 0.2, 0.7)], [-1, 1]), 0.10, places=12
+        )
+
+    def test_log_loss_multi_on_known_probabilities(self):
+        # −ln 0.8 = 0.22314355131420976.
+        self.assertAlmostEqual(
+            km.log_loss_multi([(0.8, 0.1, 0.1)], [-1]), 0.22314355131420976, places=12
+        )
+        # Нулевая вероятность факта не даёт бесконечности: вероятность
+        # снизу ограничена 1e-15 → −ln(1e-15) = 34.538776394910684.
+        self.assertAlmostEqual(
+            km.log_loss_multi([(0.0, 1.0, 0.0)], [-1]), 34.538776394910684, places=9
+        )
+
+    def test_probabilistic_metrics_refuse_a_broken_distribution(self):
+        for metric in (km.brier_multi, km.log_loss_multi, km.reliability_bins):
+            with self.assertRaises(ValueError):
+                metric([(0.5, 0.3, 0.3)], [0])  # сумма 1.1, не распределение
+            with self.assertRaises(ValueError):
+                metric([(0.5, 0.5, 0.5)], [0])
+
+    def test_reliability_bins_refuse_a_non_positive_bin_count(self):
+        with self.assertRaises(ValueError):
+            km.reliability_bins([(1.0, 0.0, 0.0)], [-1], n_bins=0)
+
+    def test_metrics_report_length_mismatch(self):
+        for call in (
+            lambda: km.hit_rate([1.0], [1.0, 2.0]),
+            lambda: km.confusion3([1.0], [1.0, 2.0]),
+            lambda: km.qwk([1.0], [1.0, 2.0]),
+            lambda: km.brier_multi([(1.0, 0.0, 0.0)], [1, 0]),
+            lambda: km.log_loss_multi([(1.0, 0.0, 0.0)], [1, 0]),
+            lambda: km.reliability_bins([(1.0, 0.0, 0.0)], [1, 0]),
+        ):
+            with self.assertRaises(ValueError):
+                call()
+
+    def test_reliability_bins_counts_and_shares(self):
+        probs = [
+            (0.15, 0.55, 0.30),  # уверенность 0.55, класс 0 — попадание
+            (0.10, 0.62, 0.28),  # уверенность 0.62, класс 0 — промах (факт +1)
+            (0.02, 0.03, 0.95),  # уверенность 0.95, класс +1 — попадание
+            (0.85, 0.10, 0.05),  # уверенность 0.85, класс −1 — попадание
+        ]
+        y_true = [0, 1, 1, -1]
+        bins = km.reliability_bins(probs, y_true, n_bins=5)
+        # Пустые бины в таблицу не попадают: у них нет ни счётчика, ни долей.
+        self.assertEqual(
+            [(b.lo, b.hi, b.count) for b in bins],
+            [(0.4, 0.6, 1), (0.6, 0.8, 1), (0.8, 1.0, 2)],
+        )
+        self.assertAlmostEqual(bins[0].mean_prob, 0.55, places=12)
+        self.assertAlmostEqual(bins[0].accuracy, 1.0, places=12)
+        self.assertAlmostEqual(bins[1].mean_prob, 0.62, places=12)
+        self.assertAlmostEqual(bins[1].accuracy, 0.0, places=12)
+        self.assertAlmostEqual(bins[2].mean_prob, 0.90, places=12)
+        self.assertAlmostEqual(bins[2].accuracy, 1.0, places=12)
+
+
+class TestDieboldMariano(unittest.TestCase):
+    """DM с поправкой HLN (спека §7); соглашение о вырождении — план Task 3."""
+
+    def test_identical_errors_give_zero_and_one(self):
+        errors = [10.0, -10.0, 0.0]
+        self.assertEqual(km.diebold_mariano(errors, list(errors)), (0.0, 1.0))
+
+    def test_zero_variance_gives_infinite_statistic(self):
+        # Разница потерь постоянна и не нулевая: преимущество точное и
+        # бесспорное → ±inf при p = 0 (соглашение).
+        statistic, pvalue = km.diebold_mariano([5.0] * 10, [0.0] * 10)
+        self.assertEqual(statistic, float("inf"))
+        self.assertEqual(pvalue, 0.0)
+        statistic, pvalue = km.diebold_mariano([0.0] * 10, [5.0] * 10)
+        self.assertEqual(statistic, float("-inf"))
+        self.assertEqual(pvalue, 0.0)
+
+    def test_known_pair_matches_the_manual_hln_calculation(self):
+        # err_a = [1..5], err_b = [0..4] → d = e_a² − e_b² = [1, 3, 5, 7, 9],
+        # d̄ = 5; HAC-Бартлетт с 2 лагами (⌈T^{1/3}⌉ — правило библиотеки):
+        # γ̂0 = 8, γ̂1 = 3.2, γ̂2 = −0.8 → s = 11.7333;
+        # DM = 5/√(s/T) = 3.2639560…; HLN: ×√((T−1)/T) = 2.9193710…;
+        # p — из t(T−1 = 4) = 0.043270657626682994.
+        statistic, pvalue = km.diebold_mariano([1.0, 2.0, 3.0, 4.0, 5.0], [0.0, 1.0, 2.0, 3.0, 4.0])
+        self.assertAlmostEqual(statistic, 2.9193710406057116, places=9)
+        self.assertAlmostEqual(pvalue, 0.043270657626682994, places=9)
+
+    def test_swapping_the_series_flips_the_statistic(self):
+        err_a = [1.0, 2.0, 3.0, 4.0, 5.0]
+        err_b = [0.0, 1.0, 2.0, 3.0, 4.0]
+        forward, p_forward = km.diebold_mariano(err_a, err_b)
+        backward, p_backward = km.diebold_mariano(err_b, err_a)
+        self.assertGreater(forward, 0.0)  # err_a хуже: потеря больше
+        self.assertAlmostEqual(forward, -backward, places=12)
+        self.assertAlmostEqual(p_forward, p_backward, places=12)
+
+    def test_single_fold_does_not_crash(self):
+        statistic, pvalue = km.diebold_mariano([3.0], [1.0])
+        self.assertEqual(statistic, float("inf"))
+        self.assertEqual(pvalue, 0.0)
+
+    def test_empty_and_mismatched_series_are_refused(self):
+        with self.assertRaises(ValueError):
+            km.diebold_mariano([], [])
+        with self.assertRaises(ValueError):
+            km.diebold_mariano([1.0], [1.0, 2.0])
+
+
+class TestPesaranTimmermann(unittest.TestCase):
+    """PT по знакам (спека §7); путь — statsmodels, вырождение — соглашение."""
+
+    def test_known_hit_table_matches_the_manual_formula(self):
+        # Таблица попаданий по знаку: факт (+, +, +, 0, 0) против прогноза
+        # (+, −, −, 0, 0) → p̂ = 3/5, p̂y = 3/5, p̂z = 1/5, p̂* = 11/25,
+        # v̂ = 0.04928, ŵ = 0.01856 → S = 0.16/√0.03072 = 0.912870929…,
+        # двустороннее p = 0.361310429….
+        statistic, pvalue = km.pesaran_timmermann(
+            [1, -1, -1, 0, 0], [1, 1, 1, 0, 0]
+        )
+        self.assertAlmostEqual(statistic, 0.9128709291752763, places=12)
+        self.assertAlmostEqual(pvalue, 0.36131042852617923, places=12)
+
+    def test_perfect_directional_predictor(self):
+        # p̂ = 1, p̂y = p̂z = 0.5 → S = 0.5/√(0.00625) = 6.324555…, p ≈ 0.
+        statistic, pvalue = km.pesaran_timmermann([1, -1] * 20, [1, -1] * 20)
+        self.assertAlmostEqual(statistic, 6.324555320336759, places=9)
+        self.assertLess(pvalue, 1e-9)
+
+    def test_no_sign_variation_is_undefined_by_convention(self):
+        # Бенчмарк B1 не меняет знак вовсе — тест не определён; соглашение
+        # (как у DM на одинаковых ошибках): (0.0, 1.0).
+        self.assertEqual(km.pesaran_timmermann([0, 0, 0], [0, 1, -1]), (0.0, 1.0))
+        self.assertEqual(km.pesaran_timmermann([0, 0, -1], [0, 1, -1]), (0.0, 1.0))
+
+    def test_empty_and_mismatched_series_are_refused(self):
+        with self.assertRaises(ValueError):
+            km.pesaran_timmermann([], [])
+        with self.assertRaises(ValueError):
+            km.pesaran_timmermann([1, 0], [1])
+
+
+class TestMincerZarnowitz(unittest.TestCase):
+    """MZ: регрессия «факт на прогноз» с HAC, гипотеза a = 0 ∧ b = 1."""
+
+    def test_slope_recovers_a_doubled_forecast(self):
+        # Точная синтетика `факт = 2×прогноз`: b = 2, a = 0.
+        predicted = [10.0 + index for index in range(40)]
+        actual = [2.0 * value for value in predicted]
+        result = km.mincer_zarnowitz(actual, predicted)
+        self.assertAlmostEqual(result.slope, 2.0, places=9)
+        self.assertLess(abs(result.intercept), 1e-9)
+        # H0 (a = 0 ∧ b = 1) нарушена, и остатков нет: соглашение о точной
+        # подгонке даёт p = 0 (дисперсия оценки нулевая — статистика ±inf).
+        self.assertEqual(result.p_value, 0.0)
+
+    def test_exact_fit_under_the_null_does_not_reject(self):
+        # Точная подгонка при ВЕРНОЙ H0: остатков нет, F = 0/0; без соглашения
+        # шум округления дал бы ложное p ≈ 0.0001.
+        predicted = [10.0 + index for index in range(40)]
+        result = km.mincer_zarnowitz(list(predicted), predicted)
+        self.assertAlmostEqual(result.slope, 1.0, places=9)
+        self.assertEqual(result.p_value, 1.0)
+
+    def test_noisy_data_with_a_wrong_slope_is_rejected(self):
+        predicted = [10.0 + index for index in range(40)]
+        actual = [2.0 * value + 0.01 * (-1) ** index for index, value in enumerate(predicted)]
+        result = km.mincer_zarnowitz(actual, predicted)
+        self.assertAlmostEqual(result.slope, 2.0, places=3)
+        self.assertLess(result.p_value, 0.001)
+
+    def test_noisy_data_under_the_null_is_not_rejected(self):
+        predicted = [10.0 + index for index in range(40)]
+        actual = [value + 0.01 * (-1) ** index for index, value in enumerate(predicted)]
+        result = km.mincer_zarnowitz(actual, predicted)
+        self.assertAlmostEqual(result.slope, 1.0, places=3)
+        self.assertGreater(result.p_value, 0.05)
+
+    def test_constant_forecast_and_tiny_samples_return_none(self):
+        # Постоянный прогноз коллинеарен свободному члену (так выглядит B1),
+        # двух точек мало для HAC-регрессии: регрессия не определена — None,
+        # в отчёте «—», прогон не падает.
+        self.assertIsNone(km.mincer_zarnowitz([1.0] * 10, [1.0] * 10))
+        self.assertIsNone(km.mincer_zarnowitz([1.0, 2.0], [1.0, 2.0]))
+
+
+class TestBootstrap(unittest.TestCase):
+    """Блочный бутстрап разницы RMSE (спека §7, план Task 3)."""
+
+    def test_repeats_with_the_fixed_seed(self):
+        err_a = [3.0, -2.0, 5.0, 0.0, -1.0, 4.0, 2.0, -3.0]
+        err_b = [1.0, 1.0, -2.0, 2.0, 0.0, -1.0, 3.0, 1.0]
+        first = km.block_bootstrap_rmse_diff(err_a, err_b)
+        second = km.block_bootstrap_rmse_diff(err_a, err_b)
+        self.assertEqual(first, second)
+
+    def test_defaults_are_the_pinned_specification(self):
+        # Значения по умолчанию — часть спецификации, зафиксированной ДО
+        # результатов: блок 4 заседания, 2000 ресэмплов, сид SEED.
+        err_a = [3.0, -2.0, 5.0, 0.0, -1.0, 4.0, 2.0, -3.0]
+        err_b = [1.0, 1.0, -2.0, 2.0, 0.0, -1.0, 3.0, 1.0]
+        self.assertEqual(
+            km.block_bootstrap_rmse_diff(err_a, err_b),
+            km.block_bootstrap_rmse_diff(err_a, err_b, block=4, n=2000, seed=km.SEED),
+        )
+
+    def test_identical_errors_include_zero_and_give_p_one(self):
+        errors = [4.0, -4.0, 9.0, -9.0, 1.0, -1.0, 6.0, -6.0]
+        result = km.block_bootstrap_rmse_diff(errors, list(errors))
+        self.assertEqual(result.rmse_diff, 0.0)
+        self.assertEqual((result.low, result.high), (0.0, 0.0))
+        self.assertEqual(result.p_value, 1.0)
+
+    def test_constant_errors_without_variance_do_not_crash(self):
+        result = km.block_bootstrap_rmse_diff([5.0] * 20, [1.0] * 20)
+        self.assertAlmostEqual(result.rmse_diff, 4.0, places=12)
+        self.assertEqual((result.low, result.high), (4.0, 4.0))
+        self.assertEqual(result.p_value, 0.0)
+
+    def test_interval_brackets_the_point_estimate(self):
+        err_a = [3.0, -2.0, 5.0, 0.0, -1.0, 4.0, 2.0, -3.0, 6.0, -5.0, 1.0, 0.5]
+        err_b = [1.0, 1.0, -2.0, 2.0, 0.0, -1.0, 3.0, 1.0, 2.0, -2.0, 0.0, 1.5]
+        result = km.block_bootstrap_rmse_diff(err_a, err_b)
+        self.assertLessEqual(result.low, result.rmse_diff)
+        self.assertLessEqual(result.rmse_diff, result.high)
+        self.assertGreater(result.rmse_diff, 0.0)
+
+    def test_invalid_inputs_are_refused(self):
+        with self.assertRaises(ValueError):
+            km.block_bootstrap_rmse_diff([], [])
+        with self.assertRaises(ValueError):
+            km.block_bootstrap_rmse_diff([1.0], [1.0, 2.0])
+        with self.assertRaises(ValueError):
+            km.block_bootstrap_rmse_diff([1.0, 2.0], [1.0, 2.0], block=0)
+        with self.assertRaises(ValueError):
+            km.block_bootstrap_rmse_diff([1.0, 2.0], [1.0, 2.0], n=0)
+
+
+class TestReport(unittest.TestCase):
+    """Отчёт и артефакты §8: разделы, строки «метод × окно», CSV."""
+
+    @classmethod
+    def setUpClass(cls):
+        # Шаги чередуются: с постоянным шагом уровень ставки в окне не менялся
+        # бы, и AR(1) справедливо отказывался бы оцениваться.
+        cls.rows = synthetic_rows(60, first=date(2024, 1, 1), steps=(0, 50, -25))
+        cls.predictions = benchmark_predictions(cls.rows)
+        cls.skipped = km.Skipped((), (), ())
+
+    def render(self, predictions=None, forecast=None):
+        return km.render_report(
+            self.rows,
+            self.skipped,
+            self.predictions if predictions is None else predictions,
+            forecast,
+            today=date(2026, 10, 16),
+        )
+
+    def test_report_has_every_section_of_the_step(self):
+        text = self.render()
+        for section in (
+            "## Выборка",
+            "## Walk-forward",
+            "## Метрики: метод × окно",
+            "## Тесты значимости",
+            "## Mincer–Zarnowitz и Pesaran–Timmermann",
+            "## Режимный блок 2024–2026",
+            "## Что не проверено",
+        ):
+            self.assertIn(section, text)
+        self.assertIn("2026-10-16", text)
+
+    def test_sample_table_counts_and_enumerates_the_skipped_lists(self):
+        skipped = km.Skipped((date(2026, 10, 23),), (), (date(2014, 2, 14),))
+        text = km.render_report(
+            self.rows, skipped, self.predictions, None, today=date(2026, 10, 16)
+        )
+        # Пропуски перечисляются ДАТАМИ, а не только счётчиком (спека §4).
+        self.assertIn("| вне выборки (окно исхода не наблюдаемо) | 1 — 2026-10-23 |", text)
+        self.assertIn("| пропущено (нет данных по признакам) | 1 — 2014-02-14 |", text)
+        # Пустой список — без тире и дат.
+        self.assertIn("| пропущено (нет ставки на d−1) | 0 |", text)
+
+    def test_walk_forward_section_reports_fold_counts(self):
+        text = self.render()
+        expanding = sum(1 for p in self.predictions if p.window == "expanding")
+        rolling = sum(1 for p in self.predictions if p.window == "rolling40")
+        self.assertEqual(expanding, 3 * (60 - 24))
+        self.assertEqual(rolling, 3 * (60 - 40))
+        self.assertIn(f"расширяющееся окно (минимум {km.MIN_TRAIN} заседаний в обучении)", text)
+        self.assertIn(f"скользящее окно {km.ROLLING_WINDOW} заседаний", text)
+
+    def test_metric_table_has_a_row_per_method_and_window(self):
+        text = self.render()
+        for method_label in ("B1 hold", "B2 repeat", "B3 AR(1)"):
+            for window in ("expanding", "rolling40"):
+                self.assertIn(f"| {method_label} | {window} |", text)
+        # Малая отрицательная разница печатается как «0.00», а не «-0.00»:
+        # минус в разрядах таблицы читался бы как ошибка знака.
+        self.assertNotIn("-0.00", text)
+
+    def test_benchmark_rows_have_no_probabilistic_metrics(self):
+        # Спека §5: вырожденные бенчмарки распределений не дают, Brier и
+        # log loss к ним не применяются (в таблице — «—»), и надёжностной
+        # таблицы в отчёте из одних бенчмарков нет.
+        text = self.render()
+        self.assertNotIn("## Надёжностная таблица", text)
+
+    def test_significance_section_covers_every_pair_against_benchmarks(self):
+        text = self.render()
+        # DM каждой строки против каждого бенчмарка, кроме себя самого.
+        for method_label in ("B1 hold", "B2 repeat", "B3 AR(1)"):
+            for opponent in ("B1 hold", "B2 repeat", "B3 AR(1)"):
+                if method_label != opponent:
+                    self.assertIn(f"| {method_label} | expanding | {opponent} |", text)
+        # Путь назван явно (требование плана: библиотека или формула).
+        self.assertIn("statsmodels", text)
+
+    def test_regime_block_counts_the_meetings_it_covers(self):
+        text = self.render()
+        regime_rows = [
+            row
+            for row in self.rows
+            if km.REGIME_FROM <= row.decision.meeting_date <= km.REGIME_TO
+        ]
+        self.assertEqual(len(regime_rows), 37)
+        self.assertIn(f"заседаний 2024–2026 в выборке: {len(regime_rows)}", text)
+
+    def test_report_is_deterministic(self):
+        self.assertEqual(self.render(), self.render())
+
+    def test_report_without_folds_does_not_crash(self):
+        text = km.render_report(self.rows, self.skipped, [], None, today=date(2026, 10, 16))
+        self.assertIn("фолдов нет", text)
+
+    def test_probabilistic_method_gets_brier_log_loss_and_reliability(self):
+        # Расширяемость шага: строка метода с вероятностями получает
+        # вероятностные метрики и надёжностную таблицу (Tasks 4–5 используют
+        # этот же путь). Фолды — те же, что у бенчмарков (парность DM).
+        predictions = list(self.predictions)
+        predictions.extend(
+            km.Prediction(
+                row.decision.meeting_date,
+                float(row.decision.step_bp),
+                row.decision.y3,
+                "ordered_logit",
+                "expanding",
+                0.0,
+                (0.2, 0.7, 0.1),
+            )
+            for row in self.rows[24:]
+        )
+        text = self.render(predictions)
+        self.assertIn("| ordered_logit | expanding |", text)
+        self.assertIn("## Надёжностная таблица", text)
+        self.assertIn("| ordered_logit | expanding | 0.60–0.80 |", text)
+        # Все 36 прогнозов — в одном бине уверенности 0.70.
+        expected_hits = sum(1 for row in self.rows[24:] if row.decision.y3 == 0)
+        self.assertIn(f"| 36 | 0.700 | {expected_hits / 36:.3f} |", text)
+
+    def test_forecast_section_appears_only_with_a_forecast(self):
+        # `forecast` — готовый markdown-блок текущего прогноза (Task 6) или
+        # None: без него раздела нет, и отчёт не обещает несделанного.
+        self.assertNotIn("## Текущий прогноз", self.render())
+        text = self.render(forecast="Заседание 2026-10-23: шаг −50 б.п. (заглушка).")
+        self.assertIn("## Текущий прогноз", text)
+        self.assertIn("Заседание 2026-10-23", text)
+
+    def test_predictions_csv_is_written_row_by_row(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "predictions.csv"
+            km.write_predictions(path, self.predictions)
+            raw = path.read_bytes()
+            self.assertNotIn(b"\r\n", raw)
+            lines = raw.decode("utf-8").splitlines()
+            self.assertEqual(lines[0], ",".join(km.PREDICTION_COLUMNS))
+            self.assertEqual(len(lines) - 1, len(self.predictions))
+            first = lines[1].split(",")
+            self.assertEqual(first[0], self.predictions[0].meeting_date.isoformat())
+            self.assertEqual(first[1], "hold")
+            self.assertEqual(first[2], "expanding")
+
+
+class TestRunSummaryArtifacts(unittest.TestCase):
+    """Живой контур прогона: отчёт и CSV пишутся, окна считаются (§8)."""
+
+    def run_into(self, directory, today, rolling=False):
+        with unittest.mock.patch.object(km, "ch_query", side_effect=ch_query_from_fixtures):
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                code = km.run_summary(rolling=rolling, today=today, out_dir=Path(directory))
+        return code, out.getvalue()
+
+    def test_writes_both_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code, text = self.run_into(tmp, date(2017, 1, 1))
+            self.assertEqual(code, 0)
+            report = Path(tmp) / km.REPORT_NAME
+            predictions = Path(tmp) / km.PREDICTIONS_NAME
+            self.assertTrue(report.is_file() and predictions.is_file())
+            self.assertIn("# Модель ключевой ставки v0", report.read_text(encoding="utf-8"))
+            # 26 решений среза: расширяющееся окно — 2 фолда на бенчмарк
+            # (3 × 2 = 6 строк CSV), скользящее 40 — ноль.
+            self.assertEqual(len(predictions.read_text(encoding="utf-8").splitlines()), 7)
+            self.assertIn("фолдов (расширяющееся окно", text)
+            self.assertIn("фолдов (скользящее окно", text)
+
+    def test_console_metrics_follow_the_rolling_flag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, expanding = self.run_into(tmp, date(2017, 1, 1), rolling=False)
+            _, rolling = self.run_into(tmp, date(2017, 1, 1), rolling=True)
+        self.assertIn("метрики окна «expanding»", expanding)
+        self.assertIn("метрики окна «rolling40»", rolling)
 
 
 if __name__ == "__main__":
