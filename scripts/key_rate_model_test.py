@@ -2061,6 +2061,14 @@ class TestCurrentForecast(unittest.TestCase):
             today,
         )
 
+    def row(self, today, meeting):
+        """Прогнозная строка из тех же входов, что считает `current_forecast`.
+
+        Строка собирается ИЗ ГОТОВЫХ входов (`forecast_inputs` → `forecast_row`):
+        тройка считается один раз, как в прогоне, — в тесте нет второй формулы.
+        """
+        return km.forecast_row(meeting, km.forecast_inputs(today, *self.series(today)))
+
     def test_takes_the_first_meeting_strictly_after_the_run_date(self):
         today = date(2016, 3, 15)
         forecast = self.build(
@@ -2089,7 +2097,7 @@ class TestCurrentForecast(unittest.TestCase):
     def test_forecast_row_takes_inputs_as_of_the_run_date(self):
         today = date(2016, 3, 15)
         key_rate, cpd, ibk = self.series(today)
-        row = km.forecast_row(date(2016, 3, 25), today, key_rate, cpd, ibk)
+        row = self.row(today, date(2016, 3, 25))
         self.assertEqual(row.decision.meeting_date, date(2016, 3, 25))
         # Ставка — точка ровно на дату среза; точки позже (99.0) не читаются.
         self.assertEqual(row.decision.rate_before, 10.5)
@@ -2101,25 +2109,42 @@ class TestCurrentForecast(unittest.TestCase):
         # доступны на дату среза: строка обязана остаться той же.
         leaked = km.forecast_row(
             date(2016, 3, 25),
-            today,
-            key_rate + [(date(2016, 3, 20), 8.0)],
-            cpd + [(date(2016, 3, 31), 9.9)],
-            ibk + [(date(2016, 3, 1), 9.9)],
+            km.forecast_inputs(
+                today,
+                key_rate + [(date(2016, 3, 20), 8.0)],
+                cpd + [(date(2016, 3, 31), 9.9)],
+                ibk + [(date(2016, 3, 1), 9.9)],
+            ),
         )
         self.assertEqual(leaked, row)
 
-    def test_forecast_row_marks_the_meeting_facts_as_unknown(self):
+    def test_forecast_row_refuses_unavailable_inputs(self):
+        # `None` на месте входа (любого из `FORECAST_INPUTS`) — строку не
+        # собрать: прогнозная строка не выдумывает отсутствующий вход.
         today = date(2016, 3, 15)
-        row = km.forecast_row(date(2016, 3, 25), today, *self.series(today))
-        # Фактов будущего заседания не существует: в `Decision` — плейсхолдер,
-        # который методы обязаны не читать (следующий тест).
-        self.assertTrue(math.isnan(row.decision.rate_after))
-        self.assertEqual(row.decision.step_bp, km.FORECAST_UNKNOWN_STEP_BP)
-        self.assertEqual(row.decision.y3, km.FORECAST_UNKNOWN_Y3)
+        inputs = list(km.forecast_inputs(today, *self.series(today)))
+        self.assertEqual(len(inputs), len(km.FORECAST_INPUTS))
+        for index, name in enumerate(km.FORECAST_INPUTS):
+            with self.subTest(input=name):
+                broken = list(inputs)
+                broken[index] = None
+                self.assertIsNone(km.forecast_row(date(2016, 3, 25), tuple(broken)))
+
+    def test_forecast_row_marks_the_meeting_facts_as_unknown(self):
+        row = self.row(date(2016, 3, 15), date(2016, 3, 25))
+        # Фактов будущего заседания не существует: фактические поля `Decision`
+        # несут ОДИН маркер «нет данных» — NaN, а не ноль («нулевой шаг» /
+        # «сохранение» выглядели бы правдоподобным значением). Методы их не
+        # читают — следующий тест подменяет факты мусором.
+        for value in (row.decision.rate_after, row.decision.step_bp, row.decision.y3):
+            with self.subTest(value=value):
+                self.assertTrue(math.isnan(value))
+        # Маркер — один и тот же объект у всех трёх полей.
+        self.assertIs(row.decision.rate_after, km.FORECAST_UNKNOWN_FACT)
+        self.assertIs(row.decision.y3, km.FORECAST_UNKNOWN_FACT)
 
     def test_methods_never_read_the_unknown_facts_of_the_forecast_row(self):
-        today = date(2016, 3, 15)
-        row = km.forecast_row(date(2016, 3, 25), today, *self.series(today))
+        row = self.row(date(2016, 3, 15), date(2016, 3, 25))
         garbage = dataclasses.replace(
             row,
             decision=dataclasses.replace(
@@ -2134,7 +2159,6 @@ class TestCurrentForecast(unittest.TestCase):
 
     def test_forecast_json_matches_the_artifact_format(self):
         today = date(2016, 3, 15)
-        key_rate, cpd, ibk = self.series(today)
         forecast = self.build(today, [date(2016, 3, 20), date(2016, 6, 10)])
         payload = json.loads(km.forecast_json(forecast))
         self.assertEqual(
@@ -2149,7 +2173,7 @@ class TestCurrentForecast(unittest.TestCase):
         # (вероятности классов и E[step]).
         self.assertEqual(list(payload["methods"]), list(self.FORECAST_METHODS))
         self.assertIn("forecast_log", payload["note"])
-        row = km.forecast_row(date(2016, 3, 20), today, key_rate, cpd, ibk)
+        row = self.row(today, date(2016, 3, 20))
         taylor = km.fit_taylor(self.ROWS, row)
         self.assertEqual(payload["methods"]["taylor"], {"step_bp": taylor.step_bp})
         ordered = km.fit_ordered_logit(self.ROWS, row)
@@ -2162,16 +2186,41 @@ class TestCurrentForecast(unittest.TestCase):
         self.assertAlmostEqual(sum(methods["probs"].values()), 1.0)
         self.assertEqual(methods["expected_step_bp"], ordered.step_bp)
 
-    def test_forecast_json_is_deterministic(self):
+    def test_forecast_json_serialization_is_stable(self):
+        # Сериализация не добавляет ничего от себя: равный прогноз — равный
+        # текст (порядок ключей, форматирование). Детерминизм ПРОГОНА (отметок
+        # времени сверх даты нет) пинован на уровне артефакта —
+        # `test_forecast_json_is_identical_across_runs`.
         today = date(2016, 3, 15)
         first = km.forecast_json(self.build(today, [date(2016, 3, 20)]))
         second = km.forecast_json(self.build(today, [date(2016, 3, 20)]))
-        # В JSON нет ни одного поля, зависящего от часов: только дата прогноза.
         self.assertEqual(first, second)
 
+    def test_forecast_artifact_is_written_or_cleared(self):
+        # Артефакт — снимок прогноза: ему нельзя ни остаться от прошлого
+        # прогона, ни появиться без единого метода.
+        forecast = self.build(date(2016, 3, 15), [date(2016, 3, 20)])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / km.FORECAST_NAME
+            self.assertTrue(km.write_forecast_artifact(path, forecast))
+            self.assertEqual(
+                path.read_text(encoding="utf-8"), km.forecast_json(forecast)
+            )
+            self.assertFalse(
+                km.write_forecast_artifact(
+                    path, dataclasses.replace(forecast, methods={})
+                )
+            )
+            self.assertFalse(path.exists())
+            path.write_text("устаревший прогноз", encoding="utf-8")
+            self.assertFalse(km.write_forecast_artifact(path, None))
+            self.assertFalse(path.exists())
+
     def test_unavailable_input_keeps_the_methods_out_without_failing(self):
-        # Признак недоступен на дату среза: методы не оцениваются, прогноз
-        # остаётся артефактом с пометкой, и прогон не падает (JSON пишется).
+        # Признак недоступен на дату среза: методы не оцениваются, причина — в
+        # `skipped`/`note`, и прогон не падает. Прогноз при этом остаётся в
+        # отчёте, но артефакт по нему не пишется (`write_forecast_artifact`:
+        # пустой `methods` — не прогноз).
         today = date(2016, 3, 15)
         forecast = self.build(today, [date(2016, 3, 20)], key_rate=[])
         self.assertEqual(forecast.methods, {})
@@ -2183,6 +2232,16 @@ class TestCurrentForecast(unittest.TestCase):
         payload = json.loads(km.forecast_json(forecast))
         self.assertEqual(payload["methods"], {})
         self.assertIn("forecast_log", payload["note"])
+
+    def test_current_forecast_refuses_an_empty_sample(self):
+        # Пустая выборка — не «прогноз без данных»: срок наблюдения и методы на
+        # ней не определены, и это ошибка вызывающего, а не свойство данных.
+        with self.assertRaises(ValueError) as caught:
+            km.current_forecast(
+                [], [date(2016, 3, 20)], *self.series(date(2016, 3, 15)),
+                date(2016, 3, 15),
+            )
+        self.assertIn("выборка", str(caught.exception))
 
     def test_missing_inputs_are_named_one_by_one(self):
         today = date(2016, 3, 15)
@@ -2300,13 +2359,42 @@ class TestRunSummaryArtifacts(unittest.TestCase):
 
     def test_reports_without_writing_a_forecast_when_no_meeting_is_ahead(self):
         with tempfile.TemporaryDirectory() as tmp:
+            # Снимок прошлого прогона НА МЕСТЕ: оставленный, он был бы прочитан
+            # как текущий прогноз (в имени файла даты не видно).
+            stale = Path(tmp) / km.FORECAST_NAME
+            stale.write_text("устаревший прогноз", encoding="utf-8")
             code, text = self.run_into(tmp, date(2028, 1, 1))
             self.assertEqual(code, 0)
-            self.assertFalse((Path(tmp) / km.FORECAST_NAME).exists())
+            self.assertFalse(stale.exists())
             self.assertIn("не сделан", text)
             self.assertIn("не пишется", text)
+            self.assertIn("устаревший файл", text)
             report = (Path(tmp) / km.REPORT_NAME).read_text(encoding="utf-8")
             self.assertNotIn("## Текущий прогноз", report)
+
+    def test_reports_without_writing_a_forecast_when_no_method_is_evaluable(self):
+        # Выборка непуста, но для ОБОИХ методов §6 вырождена (признаки
+        # постоянны): прогноз есть, методов в нём нет — и артефакт не пишется,
+        # а прежний файл удаляется. Причина — в консоли, прогон не падает.
+        with tempfile.TemporaryDirectory() as tmp:
+            stale = Path(tmp) / km.FORECAST_NAME
+            stale.write_text("устаревший прогноз", encoding="utf-8")
+            with unittest.mock.patch.object(km, "ch_query", side_effect=ch_query_from_fixtures):
+                with unittest.mock.patch.object(
+                    km, "load_cpd_core", return_value=[(date(2013, 1, 31), 0.5)]
+                ), unittest.mock.patch.object(
+                    km, "load_ibk", return_value=[(date(2013, 1, 1), 1.0)]
+                ):
+                    with contextlib.redirect_stdout(io.StringIO()) as out:
+                        code = km.run_summary(
+                            rolling=False, today=date(2017, 1, 1), out_dir=Path(tmp)
+                        )
+            self.assertEqual(code, 0)
+            self.assertFalse(stale.exists())
+            text = out.getvalue()
+            self.assertIn("ни один метод не посчитан", text)
+            self.assertIn("не оценён", text)
+            self.assertIn("устаревший файл", text)
 
     def test_forecast_json_is_identical_across_runs(self):
         # Детерминизм артефакта: два прогона на одной дате и данных дают один
