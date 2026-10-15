@@ -146,3 +146,11 @@ steps:
     retry_policy:
       limit: 3
       interval_sec: 300
+
+  - id: cbr_dip_bulletin
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=cbr_dip_bulletin
+    retry_policy:
+      limit: 3
+      interval_sec: 300
