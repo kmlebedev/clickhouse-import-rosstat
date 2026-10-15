@@ -3,11 +3,10 @@ package cbr
 import "github.com/kmlebedev/clickhouse-import-rosstat/util"
 
 // Каталог рядов платёжного баланса РФ (стандарт §10.1): секция cbr_bop_est — оценка ключевых
-// агрегатов (cbr/bop_est.go). Источник каталога равен имени таблицы (спека §3.7), а не
-// литералу 'cbr': в общей витрине v_cbr_macro источник — литерал 'cbr', и имена рядов двух
-// выгрузок ЦБ («Счет текущих операций») в нём бы столкнулись. Секцию cbr_bop_standard
-// (34 ряда: те же 17 агрегатов по листам «Кварталы» и «Годы») добавляет следующая задача пункта
-// своим объявлением рядом с этим.
+// агрегатов (cbr/bop_est.go), секция cbr_bop_standard — стандартная презентация
+// (cbr/bop_standard.go). Источник каталога равен имени таблицы (спека §3.7), а не литералу 'cbr':
+// в общей витрине v_cbr_macro источник — литерал 'cbr', и имена рядов двух выгрузок ЦБ
+// («Счет текущих операций») в нём бы столкнулись.
 
 // cbrBopEstSeriesMeta — каталог оценки ключевых агрегатов: 17 агрегатов × 3 вида периода = 51
 // ряд, в порядке агрегатов листа и видов в cbrBopEstKinds — том же, в каком имена собирает
@@ -69,6 +68,78 @@ func cbrBopEstMeta() []util.SeriesMeta {
 				Frequency:   cbrBopEstKindFrequency[kind],
 				Origin:      origin,
 				Description: agg.Measures + " " + cbrBopEstKindDates[kind] + cbrBopEstDescriptionTail,
+			})
+		}
+	}
+	return meta
+}
+
+// cbrBopStandardSeriesMeta — каталог стандартной презентации: 17 верхних агрегатов × 2 листа = 34
+// ряда, в порядке листов cbrBopStandardSheets и агрегатов листа — том же, в каком точки пишет
+// разбор (cbrBopStandardReadSheet). Каталог и разбор не могут разойтись ни по составу рядов, ни
+// по их порядку, и двусторонний контракт проверяется тестом (стандарт §11.4).
+var cbrBopStandardSeriesMeta = cbrBopStandardMeta()
+
+// cbrBopStandardOrigin — источник рядов: файл и лист в форме origin каталога. Имена листов у этой
+// выгрузки постоянны («Кварталы», «Годы»), поэтому origin называет лист целиком, а подпись строки
+// источника (и блок для повторяющихся подписей) дописывается в цикле. Опечатка «standart» —
+// в имени файла источника, и она названа тут и в описании ряда: агент, ищущий файл на сайте ЦБ,
+// иначе принял бы имя из origin за ошибку выгрузки.
+const cbrBopStandardOrigin = "cbr.ru/vfs/statistics/credit_statistics/bop/bal_of_payments_standart.xlsx " +
+	"(«standart» — опечатка в имени файла ЦБ), лист "
+
+// cbrBopStandardKindDates — привязка даты точки по виду периода (спека §3.4), в description ряда:
+// у квартала — последний день квартала, у года — 31 декабря.
+var cbrBopStandardKindDates = map[string]string{
+	cbrBopKindQuarter: "Дата точки — последний день отчётного квартала: сопоставлять по toStartOfQuarter(date).",
+	cbrBopKindYear:    "Дата точки — 31 декабря отчётного года: сопоставлять по toYear(date).",
+}
+
+// cbrBopStandardKindFrequency — частота ряда в каталоге: лист «Кварталы» — Q, лист «Годы» — A
+// (стандарт §10.1, спека §3.7).
+var cbrBopStandardKindFrequency = map[string]string{
+	cbrBopKindQuarter: "Q",
+	cbrBopKindYear:    "A",
+}
+
+// cbrBopStandardDescriptionTail — общий хвост description всех 34 рядов: единицы, знак, ноль,
+// методология 2022 года и ревизия очередным выпуском. Отдельным текстом, а не частью Measures:
+// эти факты одинаковы у всех рядов выгрузки, и их правка — одна, а не 34 (описание каждого
+// агрегата задано в cbrBopStandardAggregates). Единицы здесь другие, чем у оценки (cbr_bop_est):
+// млн против млрд долларов США, — и об этом сказано явно, потому что имена рядов у двух выгрузок
+// совпадают до вида периода.
+const cbrBopStandardDescriptionTail = " Единица — млн долларов США (в 1000 раз мельче, чем у " +
+	"оценки cbr_bop_est, где те же агрегаты идут в млрд долларов США). Знак — по методологии " +
+	"платёжного баланса: положительное значение — превышение поступлений над выплатами (или " +
+	"чистый прирост требований), отрицательное — обратное; отрицательные значения в файле есть. " +
+	"Ноль в источнике — настоящее значение (сальдо равно нулю), а не «данных не имеется»: " +
+	"точкой не становится только пустая ячейка. Выгрузка — стандартная презентация по методологии " +
+	"платёжного баланса 2022 года; рядом ЦБ держит файл bal_of_payments_standart_before_2022.xlsx " +
+	"с прежней методологией (в этом импортёре он не разбирается, и сопоставление значений до " +
+	"2022 года с ним требует пересчёта). Выпуск квартальный, и ЦБ пересчитывает историю: очередной " +
+	"выпуск ревизует прошлые точки, а импортёр перезаписывает точку по ключу (name, date), поэтому " +
+	"историю ревизий хранит только винтажный архив файла."
+
+// cbrBopStandardMeta собирает 34 записи каталога из объявлений кода — листов выгрузки
+// (cbrBopStandardSheets) и агрегатов листа (cbrBopStandardAggregates): тот же порядок, что у
+// разбора.
+func cbrBopStandardMeta() []util.SeriesMeta {
+	meta := make([]util.SeriesMeta, 0, len(cbrBopStandardAggregates)*len(cbrBopStandardSheets))
+	for _, sheet := range cbrBopStandardSheets {
+		for _, agg := range cbrBopStandardAggregates {
+			name := cbrBopStandardName(agg.Code, sheet.Kind)
+			origin := cbrBopStandardOrigin + "«" + sheet.Sheet + "», строка «" + agg.Label + "»"
+			if agg.Block != "" {
+				origin += " блока «" + agg.Block + "»"
+			}
+			meta = append(meta, util.SeriesMeta{
+				Source:      cbrBopStandardTable,
+				Series:      name,
+				Title:       name,
+				Unit:        cbrBopStandardUnit,
+				Frequency:   cbrBopStandardKindFrequency[sheet.Kind],
+				Origin:      origin,
+				Description: agg.Measures + " " + cbrBopStandardKindDates[sheet.Kind] + cbrBopStandardDescriptionTail,
 			})
 		}
 	}

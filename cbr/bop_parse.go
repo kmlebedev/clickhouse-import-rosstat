@@ -237,6 +237,22 @@ func cbrBopSheetByPrefix(xlsx *excelize.File, table, prefix string) (string, err
 	return "", fmt.Errorf("%s: в книге нет листа с префиксом %q (листы книги: %s)", table, prefix, strings.Join(sheets, ", "))
 }
 
+// cbrBopSheetByName ищет лист книги по точному имени и возвращает его же: у стандартной
+// презентации имена листов — константы («Кварталы», «Годы»), даты выпуска в них нет, поэтому
+// префиксный поиск здесь был бы слабее признака — он принял бы «Кварталы (30.09.2026)» за тот же
+// лист и молча разобрал бы не то, что объявлено. Отсутствие листа — ошибка с именем таблицы и
+// списком листов книги: «0 rows» на переименованном листе выглядели бы успешным прогоном
+// (стандарт §6.4, спека §3.5).
+func cbrBopSheetByName(xlsx *excelize.File, table, name string) (string, error) {
+	sheets := xlsx.GetSheetList()
+	for _, sheet := range sheets {
+		if sheet == name {
+			return sheet, nil
+		}
+	}
+	return "", fmt.Errorf("%s: в книге нет листа «%s» (листы книги: %s)", table, name, strings.Join(sheets, ", "))
+}
+
 // cbrBopRowContains — есть ли в строке ячейка, содержащая подстроку.
 func cbrBopRowContains(row []string, substr string) bool {
 	for _, cell := range row {
