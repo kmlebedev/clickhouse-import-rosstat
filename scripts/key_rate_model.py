@@ -1371,10 +1371,10 @@ def _significance_rows(groups: dict) -> list:
     бенчмарки между собой выводятся: это часть картины «кто из обязательных
     бенчмарков точнее», и спека §5 фиксирует их порядок.
 
-    Парность: ошибки сравниваются на заседаниях МЕТОДА (у методов №2–3 фолд
-    с вырожденным окном пропускается — Tasks 4–5), и у бенчмарка прогноз на
-    каждом из этих заседаний обязан быть: пропуск заседания бенчмарком —
-    дефект прогона, а не повод молча сравнить разные наборы.
+    Парность: ошибки сравниваются на ОБЩИХ заседаниях двух строк — если у одной
+    стороны фолд пропущен (вырожденное окно, Tasks 4–5), он выпадает у обеих, и
+    DM не сравнивает потери на разных наборах. Пустое пересечение — ошибка
+    прогона (сравнивать нечего), а не строка с пустыми числами.
     """
     rows = []
     for (method, window), group in groups.items():
@@ -1388,15 +1388,22 @@ def _significance_rows(groups: dict) -> list:
                 prediction.meeting_date: prediction.step_bp - prediction.actual_step_bp
                 for prediction in reference
             }
-            dates = [prediction.meeting_date for prediction in group]
-            missing = [day for day in dates if day not in reference_errors]
-            if missing:
+            method_errors = {
+                prediction.meeting_date: prediction.step_bp - prediction.actual_step_bp
+                for prediction in group
+            }
+            # Парность — на ОБЩИХ заседаниях: если у одной из сторон фолд
+            # пропущен (вырожденное окно, Tasks 4–5), он выпадает у обеих, иначе
+            # DM сравнивал бы потери на разных наборах. Пустое пересечение —
+            # ошибка прогона: сравнивать нечего.
+            shared = [day for day in method_errors if day in reference_errors]
+            if not shared:
                 raise ValueError(
-                    f"DM: у бенчмарка «{benchmark}» ({window}) нет прогноза на "
-                    f"{missing[0]} — фолды бенчмарков полны, сравнивать не с чем"
+                    f"DM: у «{method}» и «{benchmark}» ({window}) нет общих заседаний "
+                    f"— сравнивать нечего"
                 )
-            errors_a = _group_errors(group)
-            errors_b = [reference_errors[day] for day in dates]
+            errors_a = [method_errors[day] for day in shared]
+            errors_b = [reference_errors[day] for day in shared]
             statistic, pvalue = diebold_mariano(errors_a, errors_b)
             bootstrap = block_bootstrap_rmse_diff(errors_a, errors_b)
             rows.append(

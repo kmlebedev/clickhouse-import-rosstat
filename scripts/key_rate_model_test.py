@@ -1260,6 +1260,43 @@ class TestReport(unittest.TestCase):
         # Путь назван явно (требование плана: библиотека или формула).
         self.assertIn("statsmodels", text)
 
+    def test_significance_pairs_on_shared_folds_only(self):
+        # Метод, пропустивший фолд (вырожденное окно), сравнивается с
+        # бенчмарками на ОБЩИХ заседаниях: пара строится, а не падает, и
+        # заседание выпадает у обеих сторон, а не у одной.
+        # Заседание 50-е — внутри обоих окон (расширяющееся начинается с 25-го,
+        # скользящее 40 — с 41-го), поэтому выпадают оба фолда.
+        dropped = self.rows[50].decision.meeting_date
+        trimmed = [
+            prediction
+            for prediction in self.predictions
+            if not (prediction.method == "repeat" and prediction.meeting_date == dropped)
+        ]
+        self.assertEqual(len(trimmed), len(self.predictions) - 2)  # оба окна
+        text = self.render(trimmed)
+        for pair in (
+            "| B2 repeat | expanding | B1 hold |",
+            "| B1 hold | expanding | B2 repeat |",
+            "| B2 repeat | expanding | B3 AR(1) |",
+        ):
+            self.assertIn(pair, text)
+
+    def test_significance_refuses_groups_without_shared_folds(self):
+        # Ни одного общего заседания — сравнивать нечего: ошибка прогона, а не
+        # строка с пустыми числами.
+        alien = [
+            km.Prediction(date(2030, 1, 1), 0.0, 0, "alien", "expanding", 0.0, None)
+        ]
+        with self.assertRaises(ValueError) as caught:
+            km.render_report(
+                self.rows,
+                self.skipped,
+                list(self.predictions) + alien,
+                None,
+                today=date(2026, 10, 16),
+            )
+        self.assertIn("общих заседаний", str(caught.exception))
+
     def test_regime_block_counts_the_meetings_it_covers(self):
         text = self.render()
         regime_rows = [
