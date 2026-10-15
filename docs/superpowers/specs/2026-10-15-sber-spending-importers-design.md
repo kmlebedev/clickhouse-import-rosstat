@@ -125,7 +125,7 @@ API данных SberIndex (`/api/dataset/v1/meta/...`, `/api/i18n`) закры�
 
 | Файл | Содержание |
 |---|---|
-| `bank/sber_csi_parse.go` (новый) | `type sberPoint struct{ Series string; Date time.Time; Value float64 }`; `parseSberRows(records [][]string) ([]sberPoint, error)` — чистая функция (без сети, стандарт §6.1): снимает BOM с первого поля шапки, сверяет шапку с `date;category;value` (ошибка с текстом «не CSV — вероятно, HTML-заглушка»), `TrimSpace` категории, разбор даты `2006-01-02` и `ParseFloat` с номером строки в ошибке, пустой результат — ошибка |
+| `bank/sber_csi_parse.go` (новый) | `type sberPoint struct{ Series string; Date time.Time; Value float64 }`; `parseSberRows(records [][]string) (points []sberPoint, skipped int, err error)` — чистая функция (без сети, стандарт §6.1): снимает BOM с первого поля шапки, сверяет шапку с `date;category;value` (ошибка с текстом «не CSV — вероятно, HTML-заглушка»), `TrimSpace` категории, разбор даты `2006-01-02` и `ParseFloat` с номером строки в ошибке, пустой результат — ошибка; запись с пустым значением — не точка ряда, а пропуск (стандарт §6.7), и её число возвращается вторым значением `skipped` (импортёр журналирует его warn'ом, не роняя прогон) |
 | `bank/sber_csi.go` (переписывается) | импортёр `SberCSI` на шаблоне: `TableName`/DDL (`%s`-форма)/`DataUrl`/`CrawFunc`/`AfterImport`; `CrawFunc`: `util.GetCSV` → `parseSberRows` → один `PrepareBatch` → `Append` с проверкой → `Send`, `Abort` на ошибке; `ctx` — пакетный (`bank/sber_fin_rez.go`) |
 | `bank/sber_csi_week.go` (переписывается) | то же для `SberCSIWeek` / `sber_izmenenie_trat` |
 | `bank/series_meta.go` (новый) | `sberSourceIndex`/`sberSourceWeek`; `sberIndexSeriesMeta` (5), `sberWeekSeriesMeta` (46), `sberSeriesMeta`; `afterSberMacro(meta)` — `util.UpsertSeriesCatalog` + `util.CreateView` (образец — `rosstat/series_meta.go`) |
@@ -160,7 +160,7 @@ DDL таблиц остаётся прежним по колонкам (`name`/`
 | Риск | Митигация |
 |---|---|
 | «deprecated» в имени эндпоинта — путь может исчезнуть | fail-fast с понятным текстом (не «0 строк»); комментарий в коде с резервным ZIP-экспортом месячного набора; ссылки в README |
-| WAF Sber закроет и GET (сейчас открыт) | ошибка с HTTP-контекстом; смена источника — решение владельца, вне PR |
+| WAF Sber закроет и GET (сейчас открыт) | страж — сверка шапки в `parseSberRows` (ошибка «неожиданная шапка … вероятно, источник отдал HTML-заглушку» с полученным и ожидаемым значением), покрыта тестом `TestParseSberRowsFailFast`; проверки HTTP-статуса у `util.GetCSV` нет намеренно — сбой-заглушка приходит с кодом 200 (спека §2). Смена источника — решение владельца, вне PR |
 | пересчёт истории источником (июнь/декабрь 2025; допересчёт недель) | идемпотентная вставка `ReplacingMergeTree` перезаписывает точки; оговорка в `description` рядов |
 | незнакомая категория в живом файле | warn и импорт (§6.6), догон описания в каталоге отдельной правкой |
 

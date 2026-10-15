@@ -41,7 +41,7 @@
 - Create: `bank/sber_csi_test.go`
 
 **Interfaces:**
-- Produces: `type sberPoint struct{ Series string; Date time.Time; Value float64 }`; `func parseSberRows(records [][]string) ([]sberPoint, error)`; `func sberUndescribed(points []sberPoint, meta []util.SeriesMeta) []string`; константы `sberCSVTimeLayout = "2006-01-02"`.
+- Produces: `type sberPoint struct{ Series string; Date time.Time; Value float64 }`; `func parseSberRows(records [][]string) (points []sberPoint, skipped int, err error)` (пустое значение — пропуск, стандарт §6.7); `func sberUndescribed(points []sberPoint, meta []util.SeriesMeta) []string`; константы `sberCSVTimeLayout = "2006-01-02"`.
 - Consumes: `util.SeriesMeta` (существующий тип).
 
 - [ ] **Step 1: Снять фикстуры с живых файлов источника**
@@ -103,14 +103,15 @@ var sberCSVHeader = []string{"date", "category", "value"}
 
 // parseSberRows — чистый разбор выгрузки (сеть — в CrawFunc импортёра): шапка сверяется
 // целиком (BOM снимается), счёт — с контекстом строки, пустой результат — ошибка.
-func parseSberRows(records [][]string) ([]sberPoint, error)
+// Второе значение — число пропущенных записей с пустым значением (стандарт §6.7).
+func parseSberRows(records [][]string) (points []sberPoint, skipped int, err error)
 
 // sberUndescribed — имена точек, отсутствующие в каталоге: вызывающий журналирует warn и
 // импортирует точку (стандарт §6.6 — новый товар источника не валит цепочку).
 func sberUndescribed(points []sberPoint, meta []util.SeriesMeta) []string
 ```
 
-Требования к телу: `len(records) == 0` → ошибка «пустая выгрузка»; сверка шапки после `strings.TrimPrefix(records[0][0], "\ufeff")` со `sberCSVHeader`, при расхождении — ошибка с полученным и ожидаемым значением и подсказкой «вероятно, источник отдал HTML-заглушку»; на каждую строку — проверка `len(row) == 3`, `TrimSpace` категории (пустая — ошибка), разбор даты и `strconv.ParseFloat(row[2], 64)`, ошибка включает номер строки и её содержимое; итоговый пустой список — ошибка.
+Требования к телу: `len(records) == 0` → ошибка «пустая выгрузка»; сверка шапки после `strings.TrimPrefix(records[0][0], "\ufeff")` со `sberCSVHeader`, при расхождении — ошибка с полученным и ожидаемым значением и подсказкой «вероятно, источник отдал HTML-заглушку»; на каждую строку — проверка `len(row) == 3`, `TrimSpace` категории (пустая — ошибка), разбор даты и `strconv.ParseFloat(row[2], 64)`, ошибка включает номер строки и её содержимое; запись с пустым значением — пропуск (стандарт §6.7), её число возвращается вторым значением `skipped` (импортёр журналирует его warn'ом, не роняя прогон), а не превращается в нулевую точку; итоговый пустой список — ошибка.
 
 - [ ] **Step 5: Прогнать тесты задачи**
 
