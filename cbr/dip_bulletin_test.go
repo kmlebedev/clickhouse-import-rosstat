@@ -206,15 +206,17 @@ func TestDipAppendPointsAppendError(t *testing.T) {
 	}
 }
 
-// dipFakeConn — фейковое соединение гейта: тест не ходит в БД (стандарт §11.3) и подменяет
-// драйвер минимальным типом. Встраивание driver.Conn оставляет необъявленные методы nil — вызов
-// одного из них паникует, и это признак того, что сценарий дошёл до обращения, которого фейк не
-// обещал (прецедент — etfFakeConn, wgc/etf_test.go).
+// dipFakeConn — фейковое соединение гейта и проверки выпуска: тест не ходит в БД (стандарт
+// §11.3) и подменяет драйвер минимальным типом. Встраивание driver.Conn оставляет необъявленные
+// методы nil — вызов одного из них паникует, и это признак того, что сценарий дошёл до
+// обращения, которого фейк не обещал (прецедент — etfFakeConn, wgc/etf_test.go).
 type dipFakeConn struct {
 	driver.Conn
 	rows     driver.Rows // ответ Query, когда ошибки нет
 	queryErr error       // ошибка Query: сценарий «гейт не прочитан»
-	queries  []string    // тексты запросов: тест пинит сам запрос гейта
+	queries  []string    // тексты запросов Query и QueryRow: тест пинит сами запросы
+	row      driver.Row  // ответ QueryRow, когда ошибки нет
+	rowArgs  [][]any     // аргументы QueryRow: тест пинит, что id выпуска уходит плейсхолдером
 }
 
 func (c *dipFakeConn) Query(_ context.Context, query string, _ ...any) (driver.Rows, error) {
@@ -223,6 +225,16 @@ func (c *dipFakeConn) Query(_ context.Context, query string, _ ...any) (driver.R
 		return nil, c.queryErr
 	}
 	return c.rows, nil
+}
+
+// QueryRow — ответ проверки «строки выпуска в таблице есть» (cbrDipReleaseWritten). Ошибка
+// запроса у clickhouse-go приходит из Scan, а не из QueryRow: сценарий «запрос не выполнен»
+// моделируется полем scanErr у dipFakeRow. row == nil — сценарий до проверки не доходил, и
+// паника на Scan здесь означает обращение, которого фейк не обещал.
+func (c *dipFakeConn) QueryRow(_ context.Context, query string, args ...any) driver.Row {
+	c.queries = append(c.queries, query)
+	c.rowArgs = append(c.rowArgs, args)
+	return c.row
 }
 
 // dipFakeRows — ответ гейта: строки release_id. Объявлены только методы, которые вызывает
@@ -267,6 +279,33 @@ func (r *dipFakeRows) Err() error { return r.err }
 
 func (r *dipFakeRows) Close() error {
 	r.closed = true
+	return nil
+}
+
+// dipFakeRow — ответ QueryRow проверки «строки выпуска в таблице есть»: число строк выпуска.
+// Объявлен только Scan — единственный метод, который вызывает cbrDipReleaseWritten; Err и
+// ScanStruct унаследованы nil-заглушками (вызов — паника: фейк их не обещал). Сбой запроса у
+// clickhouse-go приходит именно из Scan, поэтому сценарий «запрос не выполнен» — scanErr, а не
+// ошибка QueryRow. Тип приёмника проверяется: count() сканируется только в *uint64, и ответ
+// другого типа означал бы расхождение фейка с драйвером (прецедент — etfFakeRow, wgc/etf_test.go).
+type dipFakeRow struct {
+	driver.Row
+	written uint64 // число строк выпуска в ответе
+	scanErr error  // ошибка чтения ответа: сценарий «запрос не выполнен»
+}
+
+func (r *dipFakeRow) Scan(dest ...any) error {
+	if r.scanErr != nil {
+		return r.scanErr
+	}
+	if len(dest) != 1 {
+		return fmt.Errorf("фейковый ответ: приёмников %d, ожидался один (число строк)", len(dest))
+	}
+	written, ok := dest[0].(*uint64)
+	if !ok {
+		return fmt.Errorf("фейковый ответ: приёмник %T, ожидался *uint64", dest[0])
+	}
+	*written = r.written
 	return nil
 }
 
@@ -328,6 +367,65 @@ func TestDipKnownReleasesErrors(t *testing.T) {
 				t.Errorf("при ошибке возвращено множество из %d id: пустое множество пере-импортировало бы все выпуски", len(known))
 			}
 		})
+	}
+}
+
+// TestDipReleaseWritten: успешный импорт выпуска подтверждён его строками в таблице (спека §3.5
+// шаг 4): число строк по release_id больше нуля — nil. Запрос пиннится литералом целиком: FINAL
+// читает смёрженное состояние (стандарт §9.2), имя таблицы — то же, что у импортёра, а id выпуска
+// уходит плейсхолдером драйвера, а не подстановкой в текст (release_id — данные страницы, и
+// литерал в запросе разошёлся бы с ними молча).
+func TestDipReleaseWritten(t *testing.T) {
+	release := dipFixtureReleases[dipFixture2606]
+	conn := &dipFakeConn{row: &dipFakeRow{written: 544}}
+	if err := cbrDipReleaseWritten(context.Background(), conn, release); err != nil {
+		t.Fatalf("cbrDipReleaseWritten: %v", err)
+	}
+	if len(conn.queries) != 1 || conn.queries[0] != "SELECT count() FROM cbr_dip_bulletin FINAL WHERE release_id = ?" {
+		t.Errorf("запросы проверки = %v, ожидался один SELECT count() FROM cbr_dip_bulletin FINAL WHERE release_id = ?", conn.queries)
+	}
+	if len(conn.rowArgs) != 1 || len(conn.rowArgs[0]) != 1 || conn.rowArgs[0][0] != release.ID {
+		t.Errorf("аргументы проверки = %v, ожидался id выпуска %q плейсхолдером", conn.rowArgs, release.ID)
+	}
+}
+
+// TestDipReleaseWrittenMissing: шаблон вернул no-op (версия известна), но строк выпуска в таблице
+// нет — ошибка с именем выпуска (release + id) и подсказкой про source_publications: молча
+// пропущенный выпуск следующий прогон снова счёл бы новым (спека §3.5 шаг 4). Состояние
+// практически недостижимо (число точек всей таблицы растёт с каждым выпуском), но тихая дыра
+// обязана стать громкой ошибкой.
+func TestDipReleaseWrittenMissing(t *testing.T) {
+	release := dipFixtureReleases[dipFixture2606]
+	conn := &dipFakeConn{row: &dipFakeRow{}}
+	err := cbrDipReleaseWritten(context.Background(), conn, release)
+	if err == nil {
+		t.Fatal("ожидалась ошибка: успех шаблона без строк выпуска — ровно та тихая дыра, ради которой проверка написана")
+	}
+	for _, want := range []string{"cbr_dip_bulletin", "26-06", "62343", "no-op", "source_publications", "повторите прогон"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("ошибка %q не содержит %q", err, want)
+		}
+	}
+}
+
+// TestDipReleaseWrittenError: сбой чтения — ошибка прогона, а не «считаем, что записано»:
+// проглоченный сбой проверки пропустил бы ровно ту дыру, ради которой она написана. Ошибка
+// оборачивает причину (errors.Is) и называет выпуск. Сбой запроса у clickhouse-go приходит из
+// Scan — им и моделируется «запрос не выполнен».
+func TestDipReleaseWrittenError(t *testing.T) {
+	release := dipFixtureReleases[dipFixture2606]
+	scanErr := errors.New("фейковое соединение: число строк выпуска не прочитано")
+	err := cbrDipReleaseWritten(context.Background(), &dipFakeConn{row: &dipFakeRow{scanErr: scanErr}}, release)
+	if err == nil {
+		t.Fatal("ожидалась ошибка чтения")
+	}
+	if !errors.Is(err, scanErr) {
+		t.Errorf("ошибка %v не оборачивает %v: причина сбоя потеряна", err, scanErr)
+	}
+	for _, want := range []string{"cbr_dip_bulletin", "26-06", "62343"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("ошибка %q не содержит %q: без имени выпуска сбой не привязать к шагу", err, want)
+		}
 	}
 }
 
