@@ -41,13 +41,15 @@
 ### Task 2: каталог рядов
 
 - `cbr/series_meta.go`: `cbrIntRateLoansSeriesMeta` — 16 записей `util.SeriesMeta`
-  (`Source: cbrSource`), через `namedSeriesMeta` с `seriesTemplate` (спека §3.6):
-  unit «% годовых», F=M, origin «cbr.ru/vfs/statistics/pdko/int_rat/loans_nonfin.xlsx,
-  лист «ставки_руб», группа …, колонка срока «…»», description: средневзвешенная ставка по
-  кредитам нефинансовым организациям в рублях за месяц (взвешена объёмом размещений;
+  (`Source: cbrSource`), собирается своим циклом по группам и срокам, а не `namedSeriesMeta`:
+  имя ряда — комбинация двух ячеек источника, и шаблонная подпись уложила бы его в одни кавычки
+  целиком (спека §3.6). Поля: unit «% годовых», F=M, origin — ссылка и лист
+  («cbr.ru/vfs/statistics/pdko/int_rat/loans_nonfin.xlsx, лист «ставки_руб»») плюс группа и срок
+  раздельно («группа «Всего», срок «от 1 года до 3 лет»»), description: средневзвешенная ставка
+  по кредитам нефинансовым организациям в рублях за месяц (взвешена объёмом размещений;
   динамика определяется и ставками, и объёмами — из сноски источника), дата — предпоследний
   день месяца отчётного периода (сопоставлять по toStartOfMonth(date)), темп — разница
-  в п.п., пустая ячейка источника — пропуск точки.
+  в п.п., пустая ячейка и литеральный ноль источника — пропуск точки.
 - Подключить `AfterImport: afterCbrMacro(cbrIntRateLoansSeriesMeta)` в импортёре T1.
 
 ### Task 3: витрина и реестр
@@ -104,7 +106,10 @@
    2 432 точки, 2014-01 … 2026-08, приёмка 2026-10-15)»; абзац фазы 2 в §6 — отметить
    закрытие №8. Факты приёмки — команда/числа/даты — в коммит и этот план.
 
-**Результат приёмки (2026-10-15, воспроизведено дословно)**
+**Результат приёмки (2026-10-15)**
+
+Факты приёмки перенесены из протокола прогона; в командах и URL сохранены многоточия — там
+опущены части, не влияющие на результат (полные строки — в теле коммита и в версии архива).
 
 Ветка `key-rate-4-2-8-loan-rates`, dev-ClickHouse; запуск — через `make`, SQL-проверки — через MCP.
 
@@ -112,17 +117,17 @@
 |---|---|---|
 | Доступность БД | `make ch-status` | `ClickHouse отвечает на порту 8123` |
 | Импорт | `make import STAT=cbr_int_rate_loans` | `Imported 2432 rows of cbr_int_rate_loans` — скачан `https://www.cbr.ru/vfs/statistics/pdko/int_rat/loans_nonfin.xlsx` |
-| Снимок покрытия | `make ch-sql` | `rows_total 2432`, `dates 2014-01-30 .. 2026-08-30`, `series 16`; каждый из 16 рядов — 152 точки, 2014-01-30 … 2026-08-30 |
+| Снимок покрытия | `make ch-sql FILE=sql/key_rate_coverage.sql` | `rows_total 2432`, `dates 2014-01-30 .. 2026-08-30`, `series 16`; каждый из 16 рядов — 152 точки, 2014-01-30 … 2026-08-30 |
 | Spot-сверка | spot-запрос к витрине | `Всего: до 30 дней, включая «до востребования»` — 2014-01-30 = 7.35, 2026-08-30 = 19.06; `СМП: свыше 1 года` — 2026-08-30 = 14.22 |
-| Каталог | `SELECT count() FROM series_catalog FINAL WHERE source='cbr' AND origin LIKE '%loans_nonfin.xlsx%'` | `catalog_rows 16` |
+| Каталог | `SELECT count() FROM v_series_catalog WHERE source='cbr' AND origin LIKE '%loans_nonfin.xlsx%'` | `catalog_rows 16` (каталог читается агентом через витрину `v_series_catalog`, а не через сырую `series_catalog`) |
 | Витрина | `SELECT count(), uniqExact(series) FROM v_cbr_macro FINAL` по новым рядам | `view_rows 2432`, `view_series 16`; всего строк витрины — 48 942 |
-| Строка версии | `SELECT … FROM source_publications` | `cbr_int_rate_loans` / `loans_nonfin.xlsx` / `points 2432` — дословная строка ниже |
+| Строка версии | `SELECT … FROM source_publications` | `cbr_int_rate_loans` / `loans_nonfin.xlsx` / `points 2432` — строка ниже |
 | Идемпотентность | повтор `make import STAT=cbr_int_rate_loans` | `cbr_int_rate_loans: no-op, версия 32dafeda77a8bcddd8b9feb846a40840 уже импортирована, 2432 точек на месте` |
 | MCP end-to-end | `make mcp-check` | `ПРОВЕРКА ПРОЙДЕНА`, в т.ч. `OK каталог cbr_int_rate_loans полон: рядов cbr_int_rate_loans: 16 (8 сроков × 2 группы: Всего/СМП)` и `OK сырая cbr_int_rate_loans закрыта: отказ ClickHouse 497 на cbr_int_rate_loans (ожидаемо)` |
 | Расписание | `dagu validate dagu/cbr.yaml` | exit 0 |
 | Реестр архива | `make archive-registry` | `реестр архива: 2 строк -> docs/archive/registry.jsonl`; строка архива: `cbr_int_rate_loans/32dafeda77a8bcdd_loans_nonfin.xlsx`, sha256 `87492617bf86c30fb280ffee15c3d2eab3bafa8fd0e248b9f659ef37bbd2bc3e`, 124 288 байт, `first_seen 2026-10-15T12:53:12.43343+05:00` |
 
-Строка версии в `source_publications` (дословно, разделители — вертикальные черты):
+Строка версии в `source_publications` (разделители — вертикальные черты; URL сокращён):
 
 ```text
 cbr_int_rate_loans | loans_nonfin.xlsx | points 2432 | first_seen 2026-10-15 12:53:23 | url …/int_rat/loans_nonfin.xlsx

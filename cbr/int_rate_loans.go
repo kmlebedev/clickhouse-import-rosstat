@@ -2,6 +2,7 @@ package cbr
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -31,16 +32,19 @@ const (
 	cbrIntRateLoansHeaderAnchor = "% годовых"
 )
 
-// cbrIntRateLoansGroups — группы колонок в порядке листа: префикс имени ряда в коде и подпись
-// группы в строке групп источника. У второй группы подпись в файле длиннее («в том числе
-// субъектам малого и среднего предпринимательства»), в якорь взято её устойчивое начало —
-// так же, как это делает спека §3.4.
+// cbrIntRateLoansGroups — группы колонок в порядке листа: префикс имени ряда в коде, подпись
+// группы в строке групп источника и полный текст этой подписи для каталога рядов. У второй
+// группы подпись в файле длиннее («в том числе субъектам малого и среднего
+// предпринимательства»), в якорь (Label) взято её устойчивое начало — так же, как это делает
+// спека §3.4; в origin каталога (series_meta.go) группа называется целиком (SourceLabel): иначе
+// агент MCP прочитал бы обрезанное начало как отдельную группу.
 var cbrIntRateLoansGroups = []struct {
-	Prefix string
-	Label  string
+	Prefix      string
+	Label       string
+	SourceLabel string
 }{
-	{Prefix: "Всего: ", Label: "Всего"},
-	{Prefix: "СМП: ", Label: "в том числе субъектам малого"},
+	{Prefix: "Всего: ", Label: "Всего", SourceLabel: "Всего"},
+	{Prefix: "СМП: ", Label: "в том числе субъектам малого", SourceLabel: "в том числе субъектам малого и среднего предпринимательства"},
 }
 
 // cbrIntRateLoansTerms — восемь сроков кредита в порядке колонок внутри каждой группы. Наборы
@@ -124,12 +128,16 @@ func cbrIntRateLoansGroupStarts(row []string) []int {
 }
 
 // cbrIntRateLoansColumns разбирает шапку листа и возвращает имена колонок данных в порядке
-// листа и номер первой строки данных — следующей за шапкой. Якоря, а не магические индексы
-// (стандарт §6.3): строка «% годовых» даёт начало шапки, в следующей за ней строке ищутся
-// подписи групп, строка заголовков колонок — следующая за строкой групп. Колонки привязываются
-// к группам позиционно (границы — от подписи группы до подписи следующей; merged-диапазоны не
-// читаются), внутри группы — по порядку сроков: имена идут из кода, заголовок сверяется.
-func cbrIntRateLoansColumns(rows [][]string) (names []string, firstDataRow int, err error) {
+// листа, номер первой колонки данных (base — колонка, в которой стоит первое имя) и номер первой
+// строки данных — следующей за шапкой. Якоря, а не магические индексы (стандарт §6.3): строка
+// «% годовых» даёт начало шапки, в следующей за ней строке ищутся подписи групп, строка
+// заголовков колонок — следующая за строкой групп. Колонки привязываются к группам позиционно
+// (границы — от подписи группы до подписи следующей; merged-диапазоны не читаются), внутри
+// группы — по порядку сроков: имена идут из кода, заголовок сверяется. База тоже выводится из
+// шапки: у колонки-метки слева от первой группы позиция в файле не фиксирована, а разбор данных
+// считает колонку как base+i — при вставке колонки перед группой шапка «совпала» бы, и значения
+// прочитались бы из сдвинутых колонок под правильными именами.
+func cbrIntRateLoansColumns(rows [][]string) (names []string, base, firstDataRow int, err error) {
 	anchor := -1
 	for i, row := range rows {
 		if len(row) > 0 && strings.TrimSpace(row[0]) == cbrIntRateLoansHeaderAnchor {
@@ -138,7 +146,7 @@ func cbrIntRateLoansColumns(rows [][]string) (names []string, firstDataRow int, 
 		}
 	}
 	if anchor < 0 {
-		return nil, 0, fmt.Errorf("%s: в листе «%s» не найдена строка «%s» — шапка источника не распознана",
+		return nil, 0, 0, fmt.Errorf("%s: в листе «%s» не найдена строка «%s» — шапка источника не распознана",
 			cbrIntRateLoansTable, cbrIntRateLoansSheet, cbrIntRateLoansHeaderAnchor)
 	}
 	groupRow, starts := -1, []int(nil)
@@ -149,7 +157,7 @@ func cbrIntRateLoansColumns(rows [][]string) (names []string, firstDataRow int, 
 		}
 	}
 	if groupRow < 0 {
-		return nil, 0, fmt.Errorf("%s: в листе «%s» не найдена строка с подписями групп «%s» и «%s» — шапка источника не распознана",
+		return nil, 0, 0, fmt.Errorf("%s: в листе «%s» не найдена строка с подписями групп «%s» и «%s» — шапка источника не распознана",
 			cbrIntRateLoansTable, cbrIntRateLoansSheet, cbrIntRateLoansGroups[0].Label, cbrIntRateLoansGroups[1].Label)
 	}
 	// Строка заголовков колонок — следующая за строкой групп. Её отсутствие (строка групп
@@ -157,9 +165,12 @@ func cbrIntRateLoansColumns(rows [][]string) (names []string, firstDataRow int, 
 	// индексе за концом слайса (стандарт §6.5).
 	headerRow := groupRow + 1
 	if headerRow >= len(rows) {
-		return nil, 0, fmt.Errorf("%s: в листе «%s» нет строки заголовков колонок под строкой групп",
+		return nil, 0, 0, fmt.Errorf("%s: в листе «%s» нет строки заголовков колонок под строкой групп",
 			cbrIntRateLoansTable, cbrIntRateLoansSheet)
 	}
+	// Первая колонка данных — та, в которой стоит подпись первой группы: строка групп и строка
+	// заголовков колонок выровнены, и левее неё лежит только метка периода.
+	base = starts[0]
 	names = make([]string, 0, len(cbrIntRateLoansNames))
 	for g, start := range starts {
 		end := len(rows[headerRow])
@@ -169,23 +180,31 @@ func cbrIntRateLoansColumns(rows [][]string) (names []string, firstDataRow int, 
 		// Границы группы проверяются до индексации: конец группы — либо начало следующей
 		// подписи, либо конец строки заголовков, и оба случая обязаны укладываться в её длину.
 		if end > len(rows[headerRow]) {
-			return nil, 0, fmt.Errorf("%s: лист «%s», группа «%s»: строка заголовков колонок короче границ группы (%d колонок, группа кончается на %d) — источник изменил структуру листа",
+			return nil, 0, 0, fmt.Errorf("%s: лист «%s», группа «%s»: строка заголовков колонок короче границ группы (%d колонок, группа кончается на %d) — источник изменил структуру листа",
 				cbrIntRateLoansTable, cbrIntRateLoansSheet, cbrIntRateLoansGroups[g].Label, len(rows[headerRow]), end)
 		}
 		if end-start != len(cbrIntRateLoansTerms) {
-			return nil, 0, fmt.Errorf("%s: лист «%s», группа «%s»: колонок %d, а сроков %d — источник изменил структуру листа",
+			return nil, 0, 0, fmt.Errorf("%s: лист «%s», группа «%s»: колонок %d, а сроков %d — источник изменил структуру листа",
 				cbrIntRateLoansTable, cbrIntRateLoansSheet, cbrIntRateLoansGroups[g].Label, end-start, len(cbrIntRateLoansTerms))
 		}
 		for j, term := range cbrIntRateLoansTerms {
 			header := rows[headerRow][start+j]
 			if cbrIntRateLoansHeaderKey(header) != cbrIntRateLoansHeaderKey(term) {
-				return nil, 0, fmt.Errorf("%s: лист «%s», группа «%s»: заголовок колонки %q не совпал с ожидаемым сроком %q — источник изменил структуру листа",
+				return nil, 0, 0, fmt.Errorf("%s: лист «%s», группа «%s»: заголовок колонки %q не совпал с ожидаемым сроком %q — источник изменил структуру листа",
 					cbrIntRateLoansTable, cbrIntRateLoansSheet, cbrIntRateLoansGroups[g].Label, header, term)
 			}
 			names = append(names, cbrIntRateLoansGroups[g].Prefix+term)
 		}
 	}
-	return names, headerRow + 1, nil
+	// Инвариант, на который опирается разбор данных: база и все имена укладываются в строку
+	// заголовков (column = base+i в cbrIntRateLoansImport). Границы групп выше уже проверены
+	// каждая по отдельности — это не их повтор, а вывод из них, стерегущий возвращаемую базу:
+	// будущая правка, сдвинувшая её за конец шапки, иначе увела бы разбор в чужие колонки молча.
+	if base+len(names) > len(rows[headerRow]) {
+		return nil, 0, 0, fmt.Errorf("%s: лист «%s»: %d колонок данных от колонки %d не укладываются в строку заголовков (%d колонок)",
+			cbrIntRateLoansTable, cbrIntRateLoansSheet, len(names), base, len(rows[headerRow]))
+	}
+	return names, base, headerRow + 1, nil
 }
 
 // cbrIntRateLoansMonthDate превращает метку периода «Январь 2014» в дату точки — предпоследний
@@ -210,15 +229,16 @@ func cbrIntRateLoansMonthDate(label string) (time.Time, error) {
 
 // cbrIntRateLoansImport разбирает лист «ставки_руб»: метка строки «Январь 2014» — месяц
 // отчётного периода, 16 колонок — ряды (группа × срок), значение — средневзвешенная ставка,
-// % годовых. Пустая ячейка — пропуск точки (стандарт §6.7); строка сноски, начинающаяся с «*»
-// и стоящая после данных, завершает разбор, любая другая неразобранная метка — ошибка: это
-// смена структуры листа (§6.4), а не конец данных.
+// % годовых. Пустая ячейка и литеральный ноль — пропуск точки (стандарт §6.7: ноль в источнике
+// означает «данных не имеется», а не 0 % годовых); строка сноски, начинающаяся с «*» и стоящая
+// после данных, завершает разбор, любая другая неразобранная метка — ошибка: это смена структуры
+// листа (§6.4), а не конец данных.
 func cbrIntRateLoansImport(xlsx *excelize.File, batch driver.Batch) error {
 	rows, err := xlsx.GetRows(cbrIntRateLoansSheet, excelize.Options{RawCellValue: true})
 	if err != nil {
 		return fmt.Errorf("%s: лист «%s»: %w", cbrIntRateLoansTable, cbrIntRateLoansSheet, err)
 	}
-	names, firstDataRow, err := cbrIntRateLoansColumns(rows)
+	names, base, firstDataRow, err := cbrIntRateLoansColumns(rows)
 	if err != nil {
 		return err
 	}
@@ -242,10 +262,12 @@ func cbrIntRateLoansImport(xlsx *excelize.File, batch driver.Batch) error {
 			return fmt.Errorf("%s: лист «%s»: %w", cbrIntRateLoansTable, cbrIntRateLoansSheet, err)
 		}
 		for i, name := range names {
-			// Колонка данных i — это ячейка i+1 строки: ячейка 0 занята меткой периода.
-			column := i + 1
-			// Строка короче шапки — у остальных колонок данных нет; недостающие ячейки
-			// равносильны пустым и точками не становятся (§6.7).
+			// Колонка данных i — ячейка base+i строки: база (первая колонка данных) выведена из
+			// шапки в cbrIntRateLoansColumns, а нулевая ячейка занята меткой периода. Жёсткое i+1
+			// читало бы соседние колонки, если источник вставит колонку перед первой группой.
+			column := base + i
+			// Строка короче набора колонок данных — у остальных колонок ячеек нет; недостающие
+			// ячейки равносильны пустым и точками не становятся (§6.7).
 			if column >= len(row) {
 				break
 			}
@@ -258,8 +280,22 @@ func cbrIntRateLoansImport(xlsx *excelize.File, batch driver.Batch) error {
 				return fmt.Errorf("%s: лист «%s», метка %q, ряд «%s»: значение %q: %w",
 					cbrIntRateLoansTable, cbrIntRateLoansSheet, label, name, cell, err)
 			}
+			// «NaN» и «Inf» из ячейки ParseFloat принимает, но ставкой они не являются: записанные
+			// в колонку Float64, они отравили бы ряд (сравнения с NaN ложны, суммы — NaN). Ошибка та
+			// же, что у нечисловой ячейки: смена структуры листа (§6.4), а не точка.
+			if math.IsNaN(rate) || math.IsInf(rate, 0) {
+				return fmt.Errorf("%s: лист «%s», метка %q, ряд «%s»: значение %q не конечно (NaN/Inf)",
+					cbrIntRateLoansTable, cbrIntRateLoansSheet, label, name, cell)
+			}
+			// Литеральный 0 в источнике означает «данных не имеется» (стандарт §6.7) и точкой ряда
+			// не становится — так же, как пустая ячейка: нулевой ставки по выданным кредитам не
+			// бывает, а 0 % годовых агент прочитал бы как настоящее значение.
+			if rate == 0 {
+				continue
+			}
 			if err = batch.Append(name, date, rate); err != nil {
-				return err
+				return fmt.Errorf("%s: метка %q, ряд %q, %s: %w",
+					cbrIntRateLoansTable, label, name, date.Format("2006-01-02"), err)
 			}
 			count++
 		}

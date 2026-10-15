@@ -9,9 +9,9 @@ import (
 	"github.com/xuri/excelize/v2"
 )
 
-// intRateLoansFixture — живой файл источника целиком (124 КБ, 8 листов): стандарт §11.2 —
-// книга в десятки килобайт коммитится как есть, zip-хирургия нужна только крупным книгам.
-// Разбор читает из неё единственный лист «ставки_руб».
+// intRateLoansFixture — живой файл источника целиком: книга ~124 КБ (124 288 байт, 8 листов)
+// коммитится как есть — стандарт §11.2, zip-хирургия нужна только крупным книгам. Разбор
+// читает из неё единственный лист «ставки_руб».
 const intRateLoansFixture = "testdata/loans_nonfin.xlsx"
 
 // intRateLoansWantNames — 16 имён рядов литералами по спеке §3.2, в порядке колонок листа:
@@ -290,12 +290,12 @@ func TestCbrIntRateLoansShortSheetFails(t *testing.T) {
 }
 
 // TestCbrIntRateLoansFailFastBranches: ветки, где разбор обязан вернуть ошибку, а не «0 строк»
-// (стандарт §6.4): сломанная шапка, метка периода не месяц, значение не число. Книги
-// синтетические (живых фикстур этих состояний нет), поэтому первым подтестом идёт контроль:
-// правильная синтетическая книга разбирается — значит ошибки ниже приходят от мутации, а не от
-// сборки книги или от нормализации заголовков. Мутации выбраны в первых колонках шапки и
-// данных: батч уходит в БД только по Send, поэтому при ошибке разбора в рекордере обязано быть
-// 0 строк — частично пройденная строка до таблицы не доходит.
+// (стандарт §6.4): сломанная шапка, метка периода не месяц, значение не число или не конечно
+// (NaN/Inf ParseFloat принимает молча). Книги синтетические (живых фикстур этих состояний нет),
+// поэтому первым подтестом идёт контроль: правильная синтетическая книга разбирается — значит
+// ошибки ниже приходят от мутации, а не от сборки книги или от нормализации заголовков. Мутации
+// выбраны в первых колонках шапки и данных: батч уходит в БД только по Send, поэтому при ошибке
+// разбора в рекордере обязано быть 0 строк — частично пройденная строка до таблицы не доходит.
 func TestCbrIntRateLoansFailFastBranches(t *testing.T) {
 	t.Run("правильная шапка разбирается", func(t *testing.T) {
 		rec := newCbrRecorder()
@@ -311,6 +311,7 @@ func TestCbrIntRateLoansFailFastBranches(t *testing.T) {
 		"подпись группы не найдена":                      func(rows [][]string) { rows[3][1] = "Итого" },
 		"метка периода не месяц":                         func(rows [][]string) { rows[5][0] = "Итого 2014" },
 		"значение не число":                              func(rows [][]string) { rows[5][1] = "н/д" },
+		"значение NaN":                                   func(rows [][]string) { rows[5][1] = "NaN" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			rows := intRateLoansSheetWithData()
@@ -344,5 +345,246 @@ func TestCbrIntRateLoansFootnoteEndsParsing(t *testing.T) {
 	if len(rec.rows) != len(cbrIntRateLoansNames) {
 		t.Errorf("точек %d, want %d: строка после сноски разобрана не должна быть",
 			len(rec.rows), len(cbrIntRateLoansNames))
+	}
+}
+
+// intRateLoansOpenFixture — копия живой фикстуры, загруженная в память под мутацию: ветки
+// fail-fast и пропуск ячеек проверяются на ней, а не на книге, собранной с нуля (стандарт §11.1:
+// синтетика кодирует допущения теста и остаётся зелёной, когда разбор разошёлся с источником).
+// Правки идут по копии в памяти — файл на диске не меняется.
+func intRateLoansOpenFixture(t *testing.T, mutate func(t *testing.T, f *excelize.File)) *excelize.File {
+	t.Helper()
+	f, err := excelize.OpenFile(intRateLoansFixture)
+	if err != nil {
+		t.Fatalf("открытие фикстуры %s: %v", intRateLoansFixture, err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+	mutate(t, f)
+	return f
+}
+
+// intRateLoansSetCell — правка ячейки мутируемой фикстуры: excelize сообщает о негодном адресе
+// ошибкой, и проглотить её значило бы проверять немутнутый лист.
+func intRateLoansSetCell(t *testing.T, f *excelize.File, cell string, value any) {
+	t.Helper()
+	if err := f.SetCellValue(cbrIntRateLoansSheet, cell, value); err != nil {
+		t.Fatalf("SetCellValue(%s): %v", cell, err)
+	}
+}
+
+// intRateLoansCell — адрес ячейки листа (колонка и строка, 1-based): колонки мутаций выводятся из
+// той же разметки, что и разбор (1 — метка периода, 2…9 — сроки группы «Всего», 10…17 — «СМП»),
+// а не читаются строкой «B6» в коде.
+func intRateLoansCell(t *testing.T, col, row int) string {
+	t.Helper()
+	cell, err := excelize.CoordinatesToCellName(col, row)
+	if err != nil {
+		t.Fatalf("CoordinatesToCellName(%d, %d): %v", col, row, err)
+	}
+	return cell
+}
+
+// intRateLoansHasPoint — есть ли в разборе точка (ряд, дата).
+func intRateLoansHasPoint(rows []appendedRow, name string, date time.Time) bool {
+	for _, row := range rows {
+		if row.name == name && row.date.Equal(date) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestCbrIntRateLoansStructureFailsFastOnFixture: смена структуры листа живой фикстуры — ошибка с
+// именем таблицы, а не «0 rows» (стандарт §6.4): группа из 7 колонок вместо 8 (подпись второй
+// группы сдвинута на колонку влево — текст шапки сходится, а границы группы другие) и лист, у
+// которого осталась одна шапка. У второго случая проверяется и текст ошибки: молчаливый ноль
+// точек оставил бы все 16 рядов без обновления.
+func TestCbrIntRateLoansStructureFailsFastOnFixture(t *testing.T) {
+	for name, tc := range map[string]struct {
+		mutate  func(t *testing.T, f *excelize.File)
+		wantErr string
+	}{
+		"группа из 7 колонок вместо 8": {
+			// Подпись второй группы перенесена на колонку влево (J4 → I4): текст шапки сходится,
+			// а первая группа сужается до семи колонок — разбор обязан это заметить, а не
+			// разложить сроки по сдвинутым колонкам. Объединённые ячейки строки групп сначала
+			// разъединяются: excelize направляет запись в объединённый диапазон в его левую
+			// верхнюю ячейку (запись в I4 легла бы в B4 и стёрла «Всего»), тогда как разбор
+			// читает объединённые диапазоны как обычные ячейки — значение несёт только первая.
+			mutate: func(t *testing.T, f *excelize.File) {
+				if err := f.UnmergeCell(cbrIntRateLoansSheet, "B4", "J4"); err != nil {
+					t.Fatalf("UnmergeCell(B4, J4): %v", err)
+				}
+				intRateLoansSetCell(t, f, "I4", cbrIntRateLoansGroups[1].SourceLabel)
+				intRateLoansSetCell(t, f, "J4", "")
+			},
+			wantErr: "источник изменил структуру листа",
+		},
+		"шапка без строк данных": {
+			// Строки данных и сноска удалены — шапка цела, разбирать нечего.
+			mutate: func(t *testing.T, f *excelize.File) {
+				rows, err := f.GetRows(cbrIntRateLoansSheet)
+				if err != nil {
+					t.Fatalf("GetRows: %v", err)
+				}
+				// Снизу вверх: RemoveRow сдвигает строки за удалённой, и обратный порядок избавляет
+				// от пересчёта номера. Шапка — те же 5 строк, что в intRateLoansSheet.
+				for row := len(rows); row > len(intRateLoansSheet); row-- {
+					if err := f.RemoveRow(cbrIntRateLoansSheet, row); err != nil {
+						t.Fatalf("RemoveRow(%d): %v", row, err)
+					}
+				}
+			},
+			wantErr: "не дал ни одной точки",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := newCbrRecorder()
+			err := cbrIntRateLoans.ImportFunc(intRateLoansOpenFixture(t, tc.mutate), rec)
+			if err == nil {
+				t.Fatalf("ожидалась ошибка, разбор дал %d строк", len(rec.rows))
+			}
+			if !strings.Contains(err.Error(), "cbr_int_rate_loans") {
+				t.Errorf("ошибка %q не называет таблицу cbr_int_rate_loans", err)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("ошибка %q не содержит %q", err, tc.wantErr)
+			}
+			if len(rec.raw) != 0 {
+				t.Errorf("при ошибке записано %d строк, want 0", len(rec.raw))
+			}
+		})
+	}
+}
+
+// TestCbrIntRateLoansSkipsNonPointsOnFixture: ячейка, которая точкой не является, точек не даёт
+// (стандарт §6.7): пустая, литеральный ноль (в источнике — «данных не имеется») и ячейки за
+// концом короткой строки данных. Проверка на живой фикстуре, где каждая из 2 432 ячеек на счету:
+// точек становится ровно на пропущенное меньше, а соседние месяцы и ряды остаются на месте.
+// Литеральный ноль до этой правки писался точкой 0 % годовых — подтест стережёт новую семантику.
+func TestCbrIntRateLoansSkipsNonPointsOnFixture(t *testing.T) {
+	total := len(cbrIntRateLoansNames) * len(intRateLoansMonths)
+	// Первая строка данных листа — «Январь 2014»: шапка живой фикстуры занимает те же пять строк,
+	// что intRateLoansSheet (заголовок файла 1–3, подписи групп, заголовки сроков).
+	firstDataRow := len(intRateLoansSheet) + 1
+	// Даты соседних месяцев по правилу разбора: предпоследний день месяца отчётного периода
+	// (2014-01-30, а в феврале 2014 — 27-е: дней 28). Литералы — как в спот-проверках выше.
+	jan := time.Date(2014, time.January, 30, 0, 0, 0, 0, time.UTC)
+	feb := time.Date(2014, time.February, 27, 0, 0, 0, 0, time.UTC)
+	allNames := intRateLoansWantNames[:len(cbrIntRateLoansTerms)]
+	smpNames := intRateLoansWantNames[len(cbrIntRateLoansTerms):]
+	for name, tc := range map[string]struct {
+		mutate   func(t *testing.T, f *excelize.File)
+		wantRows int
+		absent   []string
+	}{
+		"пустая ячейка": {
+			// Колонка 2 — первый срок группы «Всего» (B), строка — «Январь 2014».
+			mutate: func(t *testing.T, f *excelize.File) {
+				intRateLoansSetCell(t, f, intRateLoansCell(t, 2, firstDataRow), "")
+			},
+			wantRows: total - 1,
+			absent:   []string{allNames[0]},
+		},
+		"литеральный ноль": {
+			mutate: func(t *testing.T, f *excelize.File) {
+				intRateLoansSetCell(t, f, intRateLoansCell(t, 2, firstDataRow), 0)
+			},
+			wantRows: total - 1,
+			absent:   []string{allNames[0]},
+		},
+		"строка данных короче шапки": {
+			// Опустошены колонки 10–17 (группа «СМП») строки «Январь 2014»: строка становится
+			// короче набора колонок данных, и восемь её последних колонок точек не дают.
+			mutate: func(t *testing.T, f *excelize.File) {
+				for col := 2 + len(cbrIntRateLoansTerms); col <= 1+2*len(cbrIntRateLoansTerms); col++ {
+					intRateLoansSetCell(t, f, intRateLoansCell(t, col, firstDataRow), "")
+				}
+			},
+			wantRows: total - len(cbrIntRateLoansTerms),
+			absent:   smpNames,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := newCbrRecorder()
+			if err := cbrIntRateLoans.ImportFunc(intRateLoansOpenFixture(t, tc.mutate), rec); err != nil {
+				t.Fatalf("разбор мутированной фикстуры: %v", err)
+			}
+			if rec.err != nil {
+				t.Fatalf("схема строк не совпала с разбором: %v", rec.err)
+			}
+			if len(rec.rows) != tc.wantRows {
+				t.Errorf("точек %d, want %d: пропущенная ячейка не даёт точки и не теряет соседей",
+					len(rec.rows), tc.wantRows)
+			}
+			for _, absent := range tc.absent {
+				if intRateLoansHasPoint(rec.rows, absent, jan) {
+					t.Errorf("ряд %q: точка на %s записана, хотя ячейка пропущена",
+						absent, jan.Format("2006-01-02"))
+				}
+				if !intRateLoansHasPoint(rec.rows, absent, feb) {
+					t.Errorf("ряд %q: пропала точка на %s — пропуск одной ячейки соседний месяц не трогает",
+						absent, feb.Format("2006-01-02"))
+				}
+			}
+			// Соседняя колонка не сдвинулась: пропуск ячейки не меняет привязку значений к именам.
+			if !intRateLoansHasPoint(rec.rows, allNames[1], jan) {
+				t.Errorf("ряд %q: точка на %s пропала — привязка колонок к именам сдвинулась",
+					allNames[1], jan.Format("2006-01-02"))
+			}
+		})
+	}
+}
+
+// TestCbrIntRateLoansAppendErrorNamesRow: ошибка записи в батч не отдаётся голой — в ней есть
+// таблица, метка периода, имя ряда и дата точки: по одной ошибке видно, какая строка не ушла.
+// Схема приёмника из одной колонки заставляет его отвергнуть каждую строку (name, date, rate) —
+// то же, что делает настоящий батч на негодной строке.
+func TestCbrIntRateLoansAppendErrorNamesRow(t *testing.T) {
+	rec := newCbrRecorder("name")
+	err := cbrIntRateLoans.ImportFunc(intRateLoansOpenFixture(t, func(*testing.T, *excelize.File) {}), rec)
+	if err == nil {
+		t.Fatalf("ожидалась ошибка записи, разбор дал %d строк", len(rec.rows))
+	}
+	for _, want := range []string{
+		cbrIntRateLoansTable,
+		"Январь 2014",
+		intRateLoansWantNames[0],
+		"2014-01-30",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("ошибка %q не содержит %q", err, want)
+		}
+	}
+}
+
+// TestCbrIntRateLoansOriginNamesGroupAndTerm: origin называет группу и срок раздельно и не
+// укладывает составное имя ряда в кавычки целиком (правило 11 AGENTS.md): агент MCP обязан
+// видеть, что «Всего: от 1 года до 3 лет» — это группа плюс срок, а не одна ячейка источника.
+// Формат сверяется подстроками, а не равенством: текст origin может уточняться.
+func TestCbrIntRateLoansOriginNamesGroupAndTerm(t *testing.T) {
+	if len(cbrIntRateLoansSeriesMeta) != len(cbrIntRateLoansNames) {
+		t.Fatalf("записей каталога %d, want %d", len(cbrIntRateLoansSeriesMeta), len(cbrIntRateLoansNames))
+	}
+	for i, meta := range cbrIntRateLoansSeriesMeta {
+		group := cbrIntRateLoansGroups[i/len(cbrIntRateLoansTerms)]
+		term := cbrIntRateLoansTerms[i%len(cbrIntRateLoansTerms)]
+		if meta.Series != group.Prefix+term {
+			t.Errorf("запись %d: series %q, want %q (порядок каталога — порядок колонок листа)",
+				i, meta.Series, group.Prefix+term)
+		}
+		for _, want := range []string{
+			"лист «" + cbrIntRateLoansSheet + "»",
+			"группа «" + group.SourceLabel + "»",
+			"срок «" + term + "»",
+		} {
+			if !strings.Contains(meta.Origin, want) {
+				t.Errorf("ряд %q: origin %q не содержит %q", meta.Series, meta.Origin, want)
+			}
+		}
+		if strings.Contains(meta.Origin, "«"+meta.Series+"»") {
+			t.Errorf("ряд %q: origin %q уложил составное имя ряда в кавычки целиком — группа и срок неразличимы",
+				meta.Series, meta.Origin)
+		}
 	}
 }

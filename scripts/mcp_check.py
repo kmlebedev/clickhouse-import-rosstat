@@ -486,7 +486,7 @@ async def check(params, server_log):
             # источника не соответствует колонка. Выборка по origin, а не по source: у
             # source='cbr' лежат ряды всех импортёров ЦБ, а файл loans_nonfin.xlsx —
             # источник ровно этого набора.
-            loans_catalog = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_series_catalog WHERE source = 'cbr' AND origin LIKE '%loans_nonfin.xlsx%'"}))
+            loans_catalog = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_series_catalog WHERE source = 'cbr' AND origin LIKE '%loans\\_nonfin.xlsx%'"}))
             loans_catalog_rows = result_rows(loans_catalog)
             loans_catalog_n = loans_catalog_rows[0].get("count()") if loans_catalog_rows else None
             if loans_catalog_rows is None:
