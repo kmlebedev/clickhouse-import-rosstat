@@ -10,11 +10,12 @@ import (
 	"github.com/grafana/grafana-foundation-sdk/go/units"
 )
 
-// keyRateRowTitles — ряды дашборда в порядке следования (id 21–24). Готовы ряды 21–22;
-// список растёт вместе с панелями (T3–T4).
+// keyRateRowTitles — ряды дашборда в порядке следования (id 21–24). Готовы ряды 21–23;
+// список растёт вместе с панелями (T4).
 var keyRateRowTitles = []string{
 	"Ставка и инфляция",
 	"Деньги, кредит, бюджет, труд",
+	"Рыночный контур",
 }
 
 func builtKeyRatePublications(t *testing.T) dashboard.Dashboard {
@@ -26,11 +27,11 @@ func builtKeyRatePublications(t *testing.T) dashboard.Dashboard {
 	return d
 }
 
-// TestKeyRatePublicationsPanelCount фиксирует состав дашборда: собраны ряд 21 (панели 1–5)
-// и ряд 22 (панели 6–10) — 10 панелей (растёт до 19 в T3–T4).
+// TestKeyRatePublicationsPanelCount фиксирует состав дашборда: собраны ряды 21 (панели 1–5),
+// 22 (панели 6–10) и 23 (панели 11–14) — 14 панелей (растёт до 19 в T4).
 func TestKeyRatePublicationsPanelCount(t *testing.T) {
-	if panels := panelsOf(builtKeyRatePublications(t)); len(panels) != 10 {
-		t.Fatalf("панелей %d, ожидалось 10", len(panels))
+	if panels := panelsOf(builtKeyRatePublications(t)); len(panels) != 14 {
+		t.Fatalf("панелей %d, ожидалось 14", len(panels))
 	}
 }
 
@@ -132,7 +133,8 @@ func TestKeyRateWeeklyJoinCatalog(t *testing.T) {
 // TestKeyRateUnits: SQL панели 1 отдаёт проценты годовых (percent), панелей 4 и 6 — доли
 // (pow(...) - 1, value/lag - 1), которые Grafana как percentunit домножит на 100 и напечатает
 // «3.2%». У панели 9 серия A — проценты, а зарплата (B) — доля: её единица задаётся пер-серийным
-// override'ом, там же правая ось (шкалы безработицы и роста зарплаты несопоставимы).
+// override'ом, там же правая ось (шкалы безработицы и роста зарплаты несопоставимы). Панель 5:
+// C — пункты (short), панель 13: RGBI — уровень индекса (short) против процентов теноров.
 // Перепутанные единицы дают ошибку чтения на два порядка.
 func TestKeyRateUnits(t *testing.T) {
 	board := builtKeyRatePublications(t)
@@ -154,6 +156,28 @@ func TestKeyRateUnits(t *testing.T) {
 	}
 	if got := overridePropByRefID(labour, "B", "custom.axisPlacement"); got != "right" {
 		t.Fatalf("панель 9: ось серии B = %v, ожидалась \"right\" (шкалы безработицы и роста зарплаты несопоставимы)", got)
+	}
+	expectations := panelByID(t, board, 5)
+	if unit := expectations.FieldConfig.Defaults.Unit; unit == nil || *unit != units.Percent {
+		t.Fatalf("панель 5: unit %v, ожидался %q (ожидания населения — проценты)", unit, units.Percent)
+	}
+	if got := overridePropByRefID(expectations, "C", "unit"); got != units.Short {
+		t.Fatalf("панель 5: unit серии C = %v, ожидался %q (ценовые ожидания бизнеса — пункты)", got, units.Short)
+	}
+	trajectory := panelByID(t, board, 11)
+	if unit := trajectory.FieldConfig.Defaults.Unit; unit == nil || *unit != units.Percent {
+		t.Fatalf("панель 11: unit %v, ожидался %q (вменённая ставка — проценты годовых)", unit, units.Percent)
+	}
+	curve := panelByID(t, board, 13)
+	if unit := curve.FieldConfig.Defaults.Unit; unit == nil || *unit != units.Percent {
+		t.Fatalf("панель 13: unit %v, ожидался %q (доходности теноров — проценты годовых)", unit, units.Percent)
+	}
+	if got := overridePropByRefID(curve, "A", "unit"); got != units.Short {
+		t.Fatalf("панель 13: unit серии A = %v, ожидался %q (RGBI — уровень индекса, а не проценты)", got, units.Short)
+	}
+	ruonia := panelByID(t, board, 14)
+	if unit := ruonia.FieldConfig.Defaults.Unit; unit == nil || *unit != units.Percent {
+		t.Fatalf("панель 14: unit %v, ожидался %q (RUONIA, ставка и спред — проценты и п.п.)", unit, units.Percent)
 	}
 }
 
@@ -312,6 +336,165 @@ func TestKeyRateBudgetPanelNamesConsolidatedBudget(t *testing.T) {
 	for _, want := range []string{"minfin_mesyats", "федеральн", "дефицит", "контуре", "млрд руб."} {
 		if !strings.Contains(description, want) {
 			t.Fatalf("Description панели 8 не содержит %q: %s", want, description)
+		}
+	}
+}
+
+// assertPointsOnly проверяет оба свойства «серия рисуется только точками» (pointsOnlyProps золотого
+// дашборда): custom.lineWidth 0 и custom.showPoints always. Свойства ищутся в override'е конкретной
+// серии: опечатка в refId молча оставила бы серию сплошной линией по одной точке.
+func assertPointsOnly(t *testing.T, p *dashboard.Panel, refID string) {
+	t.Helper()
+	if got := overridePropByRefID(p, refID, "custom.lineWidth"); got != 0 {
+		t.Fatalf("панель %q: custom.lineWidth серии %s = %v, ожидался 0 (серия из одной точки — не линия)", panelTitle(p), refID, got)
+	}
+	if got := overridePropByRefID(p, refID, "custom.showPoints"); got != "always" {
+		t.Fatalf("панель %q: custom.showPoints серии %s = %v, ожидалось \"always\"", panelTitle(p), refID, got)
+	}
+}
+
+// TestKeyRateTrajectoryUsesKnownSecids: панель 11 — три известные серии KEYRATE (KKV6, KKZ6, KKG7),
+// у каждой свой secid в предикате. Список серий точечно обновляется при появлении новых (переменные
+// темплейтинга — вне v1); пропущенный или перепутанный secid оставил бы серию молча пустой.
+func TestKeyRateTrajectoryUsesKnownSecids(t *testing.T) {
+	panel := panelByID(t, builtKeyRatePublications(t), 11)
+	if len(panel.Targets) != 3 {
+		t.Fatalf("у панели %q %d запросов, ожидалось 3 (KKV6, KKZ6, KKG7)", panelTitle(panel), len(panel.Targets))
+	}
+	for _, tc := range []struct{ refID, secid string }{{"A", "KKV6"}, {"B", "KKZ6"}, {"C", "KKG7"}} {
+		query := targetByRefID(t, panel, tc.refID)
+		for _, want := range []string{
+			"FROM v_keyrate_expectations", "secid = '" + tc.secid + "'", "$__timeFilter(date)", "ORDER BY date",
+		} {
+			if !strings.Contains(query.RawSql, want) {
+				t.Fatalf("панель 11: запрос %q не содержит %q: %s", tc.refID, want, query.RawSql)
+			}
+		}
+	}
+}
+
+// TestKeyRateSparseSeriesPoints: разрежённые серии рисуются точками, а не линией — панель 11
+// (KKG7: дальняя серия без сделок, одно наблюдение) и панель 13 (теноры кривой ОФЗ — снимок по одной
+// точке, история наполняется). Сплошная линия по единственной точке не читается. У KKG7 ещё и
+// фиксированный цвет: цвет точечной серии не должен зависеть от порядка таргетов в палитре.
+func TestKeyRateSparseSeriesPoints(t *testing.T) {
+	board := builtKeyRatePublications(t)
+	for _, tc := range []struct {
+		panelID uint32
+		refIDs  []string
+	}{
+		{11, []string{"C"}},
+		{13, []string{"B", "C", "D", "E"}},
+	} {
+		panel := panelByID(t, board, tc.panelID)
+		for _, refID := range tc.refIDs {
+			assertPointsOnly(t, panel, refID)
+		}
+	}
+	color, ok := overridePropByRefID(panelByID(t, board, 11), "C", "color").(dashboard.FieldColor)
+	if !ok || color.Mode != dashboard.FieldColorModeIdFixed || color.FixedColor == nil {
+		t.Fatalf("панель 11: цвет серии C = %#v, ожидался fixed (палитра classic красит по порядку таргетов)", color)
+	}
+}
+
+// TestKeyRateCurveCoversFourTenors: панель 13 — RGBI (A) и четыре тенора кривой (B..E) с алиасами
+// «1y, %» и т.д.: алиас — единственное, чем серии одного вида отличаются в легенде (без него было бы
+// четыре одинаковых «yield»), а тенор без алиаса молча терял бы подпись.
+func TestKeyRateCurveCoversFourTenors(t *testing.T) {
+	panel := panelByID(t, builtKeyRatePublications(t), 13)
+	if len(panel.Targets) != 5 {
+		t.Fatalf("у панели %q %d запросов, ожидалось 5 (RGBI и четыре тенора)", panelTitle(panel), len(panel.Targets))
+	}
+	rgbi := targetByRefID(t, panel, "A")
+	for _, want := range []string{"FROM v_ofz_curve", "tenor = 'RGBI'", "$__timeFilter(date)", "ORDER BY date"} {
+		if !strings.Contains(rgbi.RawSql, want) {
+			t.Fatalf("панель 13: запрос A не содержит %q: %s", want, rgbi.RawSql)
+		}
+	}
+	for _, tc := range []struct{ refID, tenor string }{{"B", "1y"}, {"C", "3y"}, {"D", "5y"}, {"E", "10y"}} {
+		query := targetByRefID(t, panel, tc.refID)
+		for _, want := range []string{"tenor = '" + tc.tenor + "'", `AS "` + tc.tenor + `, %"`} {
+			if !strings.Contains(query.RawSql, want) {
+				t.Fatalf("панель 13: запрос %q не содержит %q: %s", tc.refID, want, query.RawSql)
+			}
+		}
+	}
+}
+
+// TestKeyRateSnapshotIsTableQuery: панель 12 — таблица: плагину нужен queryType "table" и формат 1,
+// иначе строковая колонка «Серия» и построчный срез уехали бы в timeseries-формат. Колонки — ровно
+// из спеки, и значение стоит рядом с ликвидностью: вменённая ставка без объёма читается как
+// торгуемая, а дальняя KKG7 (объём 0) — как рыночная; срез берётся подзапросом по max(date).
+func TestKeyRateSnapshotIsTableQuery(t *testing.T) {
+	panel := panelByID(t, builtKeyRatePublications(t), 12)
+	if len(panel.Targets) != 1 {
+		t.Fatalf("у панели %q %d запросов, ожидался 1 (срез витрины одним подзапросом)", panelTitle(panel), len(panel.Targets))
+	}
+	query, ok := chQuery(panel.Targets[0])
+	if !ok {
+		t.Fatalf("панель %q: запрос не является запросом ClickHouse", panelTitle(panel))
+	}
+	if query.Format != queryFormatTable || query.QueryType != queryTypeTable {
+		t.Fatalf("панель 12: format=%d queryType=%q, ожидались %d/%q", query.Format, query.QueryType, queryFormatTable, queryTypeTable)
+	}
+	for _, want := range []string{
+		`series_name AS "Серия"`,
+		`decision_date AS "Заседание"`,
+		`settle AS "Вменённая ставка, %"`,
+		`expected_change_bp AS "Ожидаемый шаг, б.п."`,
+		`volume AS "Объём"`,
+		`openposition AS "Открытый интерес"`,
+		"WHERE date = (SELECT max(date) FROM v_keyrate_expectations)",
+		"ORDER BY decision_date",
+	} {
+		if !strings.Contains(query.RawSql, want) {
+			t.Fatalf("панель 12: SQL не содержит %q: %s", want, query.RawSql)
+		}
+	}
+}
+
+// TestKeyRateRuoniaSpreadSelfJoin: спред RUONIA к ключевой считается в SQL самоджойном витрины по
+// дате: RUONIA дневная, ключевая меняется решениями, и клиентское вычитание двух серий дало бы спред
+// к ставке другой даты. Знак спреда подписан в Description (минус — рынок ниже ключевой).
+func TestKeyRateRuoniaSpreadSelfJoin(t *testing.T) {
+	panel := panelByID(t, builtKeyRatePublications(t), 14)
+	spread := targetByRefID(t, panel, "C")
+	for _, want := range []string{
+		"INNER JOIN v_cbr_macro AS k ON k.date = r.date",
+		"k.series = 'cbr_key_rate'",
+		"r.series = 'cbr_ruania_ruo'",
+		"r.value - k.value",
+		"$__timeFilter(r.date)",
+		"ORDER BY r.date",
+	} {
+		if !strings.Contains(spread.RawSql, want) {
+			t.Fatalf("панель 14: запрос C не содержит %q: %s", want, spread.RawSql)
+		}
+	}
+	description := optionalString(panel.Description)
+	for _, want := range []string{"п.п.", "минус"} {
+		if !strings.Contains(description, want) {
+			t.Fatalf("Description панели 14 не объясняет знак и единицу спреда (%q нет): %s", want, description)
+		}
+	}
+}
+
+// TestKeyRateNoLimitOnTimeseries: LIMIT на временном ряду — анти-паттерн UI-экспорта: он молча
+// обрезает историю, и «последние N точек» выглядят как весь ряд. В v1 таргетов с LIMIT нет вовсе
+// (таблица-срез панели 12 берёт последнюю дату подзапросом max(date), а не LIMIT).
+func TestKeyRateNoLimitOnTimeseries(t *testing.T) {
+	for _, p := range panelsOf(builtKeyRatePublications(t)) {
+		for _, target := range p.Targets {
+			query, ok := chQuery(target)
+			if !ok {
+				t.Fatalf("панель %q: запрос не является запросом ClickHouse", panelTitle(p))
+			}
+			if query.QueryType != queryTypeTimeseries {
+				continue
+			}
+			if strings.Contains(query.RawSql, "LIMIT") {
+				t.Fatalf("панель %q: у таргета %q LIMIT в timeseries-запросе: %s", panelTitle(p), query.RefId, query.RawSql)
+			}
 		}
 	}
 }

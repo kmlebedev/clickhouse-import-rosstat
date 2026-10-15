@@ -853,6 +853,409 @@
           },
           "overrides": []
         }
+      },
+      {
+        "type": "row",
+        "collapsed": false,
+        "title": "Рыночный контур",
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 56
+        },
+        "id": 23,
+        "panels": []
+      },
+      {
+        "type": "timeseries",
+        "id": 11,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, settle AS \"KEYRATE-10.26, % годовых\"\nFROM v_keyrate_expectations\nWHERE secid = 'KKV6' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT date AS time, settle AS \"KEYRATE-12.26, % годовых\"\nFROM v_keyrate_expectations\nWHERE secid = 'KKZ6' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "C",
+            "rawSql": "SELECT date AS time, settle AS \"KEYRATE-2.27, % годовых\"\nFROM v_keyrate_expectations\nWHERE secid = 'KKG7' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "KEYRATE: вменённая траектория",
+        "description": "Вменённая рынком траектория ключевой ставки по фьючерсам KEYRATE (v_keyrate_expectations, settle — расчётная цена дня): уровень ключевой ставки на дату заседания ЦБ, % годовых. KKV6 — заседание 10.2026, KKZ6 — 12.2026, KKG7 — 02.2027. KKG7 — дальняя серия без сделок (объём 0): её точка — оценка, а не торгуемое ожидание, поэтому она нарисована точкой, а не линией, и сравнивать её с ликвидными сериями нельзя (ликвидность среза — панель 12). close не используется: без сделок он не отражает ожиданий. settle — вменённое рынком значение, а не прогноз и не ценовое обязательство.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 57
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "C"
+              },
+              "properties": [
+                {
+                  "id": "custom.lineWidth",
+                  "value": 0
+                },
+                {
+                  "id": "custom.showPoints",
+                  "value": "always"
+                },
+                {
+                  "id": "color",
+                  "value": {
+                    "mode": "fixed",
+                    "fixedColor": "orange"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "type": "table",
+        "id": 12,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT series_name AS \"Серия\", decision_date AS \"Заседание\", settle AS \"Вменённая ставка, %\",\n       expected_change_bp AS \"Ожидаемый шаг, б.п.\", volume AS \"Объём\", openposition AS \"Открытый интерес\"\nFROM v_keyrate_expectations\nWHERE date = (SELECT max(date) FROM v_keyrate_expectations)\nORDER BY decision_date\n",
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "KEYRATE: последний срез и ликвидность",
+        "description": "Последний срез витрины KEYRATE (v_keyrate_expectations, date = max(date)): по строке на серию фьючерса. settle — вменённая рынком ключевая ставка на дату заседания (%), expected_change_bp — вменённый шаг в базисных пунктах К ПОСЛЕДНЕЙ известной ставке cbr_key_rate (не к ставке на дату заседания), объём — сделки за день (контракты), открытый интерес — позиции на конец дня (индикатор ликвидности серии). Ликвидность обязана стоять рядом со значением (KEY_RATE_PUBLICATIONS §9): объём 0 означает, что сделок не было и settle серии за этот день — не рыночное ожидание, а оценка; шаг при нулевом объёме нерепрезентативен. NULL в шаге — ставка ещё не загружена, и это «неизвестно», а не нулевое изменение.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 12,
+          "y": 57
+        },
+        "repeatDirection": "h",
+        "options": {
+          "frameIndex": 0,
+          "showHeader": true,
+          "showTypeIcons": false,
+          "footer": {
+            "show": false,
+            "reducer": null,
+            "countRows": false
+          },
+          "cellHeight": "sm"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "inspect": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 13,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, yield AS \"RGBI\"\nFROM v_ofz_curve\nWHERE tenor = 'RGBI' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT date AS time, yield AS \"1y, %\"\nFROM v_ofz_curve\nWHERE tenor = '1y' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "C",
+            "rawSql": "SELECT date AS time, yield AS \"3y, %\"\nFROM v_ofz_curve\nWHERE tenor = '3y' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "D",
+            "rawSql": "SELECT date AS time, yield AS \"5y, %\"\nFROM v_ofz_curve\nWHERE tenor = '5y' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "E",
+            "rawSql": "SELECT date AS time, yield AS \"10y, %\"\nFROM v_ofz_curve\nWHERE tenor = '10y' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Кривая ОФЗ и RGBI",
+        "description": "Кривая бескупонной доходности ОФЗ (v_ofz_curve; теноры 1y/3y/5y/10y — % годовых) и уровень индекса RGBI. RGBI — ПУНКТЫ индекса облигаций федерального займа (от 100 при номинале), а не доходность: единица задана пер-серийным override'ом (short), сопоставлять его значения с процентами теноров нельзя — читается динамика каждой серии. Теноры сейчас по одному наблюдению (снимок, история наполняется): точки, не линии.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 66
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "A"
+              },
+              "properties": [
+                {
+                  "id": "unit",
+                  "value": "short"
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "B"
+              },
+              "properties": [
+                {
+                  "id": "custom.lineWidth",
+                  "value": 0
+                },
+                {
+                  "id": "custom.showPoints",
+                  "value": "always"
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "C"
+              },
+              "properties": [
+                {
+                  "id": "custom.lineWidth",
+                  "value": 0
+                },
+                {
+                  "id": "custom.showPoints",
+                  "value": "always"
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "D"
+              },
+              "properties": [
+                {
+                  "id": "custom.lineWidth",
+                  "value": 0
+                },
+                {
+                  "id": "custom.showPoints",
+                  "value": "always"
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "E"
+              },
+              "properties": [
+                {
+                  "id": "custom.lineWidth",
+                  "value": 0
+                },
+                {
+                  "id": "custom.showPoints",
+                  "value": "always"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 14,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, value AS \"RUONIA, % годовых\"\nFROM v_cbr_macro\nWHERE series = 'cbr_ruania_ruo' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT date AS time, value AS \"Ключевая ставка, % годовых\"\nFROM v_cbr_macro\nWHERE series = 'cbr_key_rate' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "C",
+            "rawSql": "SELECT r.date AS time, r.value - k.value AS \"Спред RUONIA к ключевой, п.п.\"\nFROM v_cbr_macro AS r\nINNER JOIN v_cbr_macro AS k ON k.date = r.date AND k.series = 'cbr_key_rate'\nWHERE r.series = 'cbr_ruania_ruo' AND $__timeFilter(r.date)\nORDER BY r.date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "RUONIA и спред к ключевой",
+        "description": "RUONIA — ставка денежного рынка по сделкам овернайт (v_cbr_macro, series = 'cbr_ruania_ruo', % годовых), ключевая — уровень решений ЦБ (series = 'cbr_key_rate'). Спред RUONIA − ключевая (п.п.) считается в SQL самоджойном витрины по дате: серии разной частоты, и вычитать их на клиенте значило бы взять ставку не той даты. Знак: минус — банки занимают дешевле ключевой (ликвидность мягкая), плюс — дороже (жёсткая); спред — разница уровней, и со ставками его модуль сравнивать нельзя.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 12,
+          "y": 66
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
       }
     ],
     "templating": {},

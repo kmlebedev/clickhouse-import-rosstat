@@ -5,6 +5,7 @@ import (
 
 	"github.com/grafana/grafana-foundation-sdk/go/common"
 	"github.com/grafana/grafana-foundation-sdk/go/dashboard"
+	"github.com/grafana/grafana-foundation-sdk/go/table"
 	"github.com/grafana/grafana-foundation-sdk/go/timeseries"
 	"github.com/grafana/grafana-foundation-sdk/go/units"
 )
@@ -150,6 +151,60 @@ WHERE source = 'sber_izmenenie_trat' AND series = 'Все категории'
 ORDER BY date
 `
 
+// krKeyrateTemplate — срез витрины v_keyrate_expectations «дата + вменённая ставка» по коду серии
+// фьючерса KEYRATE: панель 11 читает три известные серии одной формой (различаются secid и алиас).
+// settle — расчётная цена дня, вменённый рынком уровень ключевой ставки на дату заседания
+// (не close: без сделок close не отражает ожиданий). %s по порядку: алиас серии, код серии.
+const krKeyrateTemplate = `SELECT date AS time, settle AS %s
+FROM v_keyrate_expectations
+WHERE secid = '%s' AND $__timeFilter(date)
+ORDER BY date
+`
+
+// krKeyrateSQL собирает запрос траектории по шаблону.
+func krKeyrateSQL(secid, alias string) string {
+	return fmt.Sprintf(krKeyrateTemplate, alias, secid)
+}
+
+// krKeyrateSnapshotSQL — последний срез витрины KEYRATE, по строке на серию. Срез берётся
+// подзапросом max(date), а не LIMIT: нужна последняя ДАТА витрины (строка данных), а не первая
+// строка какой-то сортировки (LIMIT на временном ряду — анти-паттерн UI-экспорта).
+// Ликвидность стоит рядом со значением (чек-лист KEY_RATE_PUBLICATIONS §9): volume = 0 значит,
+// что сделок не было и settle серии за этот день — не рыночное ожидание, а оценка; openposition —
+// индикатор ликвидности серии. expected_change_bp — шаг к последней ИЗВЕСТНОЙ ставке cbr_key_rate,
+// а не к ставке на дату заседания, и при нулевом объёме нерепрезентативен.
+const krKeyrateSnapshotSQL = `SELECT series_name AS "Серия", decision_date AS "Заседание", settle AS "Вменённая ставка, %",
+       expected_change_bp AS "Ожидаемый шаг, б.п.", volume AS "Объём", openposition AS "Открытый интерес"
+FROM v_keyrate_expectations
+WHERE date = (SELECT max(date) FROM v_keyrate_expectations)
+ORDER BY decision_date
+`
+
+// krOfzYieldTemplate — срез витрины v_ofz_curve «дата + доходность» по тенору: у кривой 1y/3y/5y/10y
+// это доходность G-curve (% годовых), у RGBI — уровень индекса облигаций федерального займа
+// (пункты, единица short). %s по порядку: алиас серии, тенор.
+const krOfzYieldTemplate = `SELECT date AS time, yield AS %s
+FROM v_ofz_curve
+WHERE tenor = '%s' AND $__timeFilter(date)
+ORDER BY date
+`
+
+// krOfzYieldSQL собирает запрос кривой по шаблону.
+func krOfzYieldSQL(tenor, alias string) string {
+	return fmt.Sprintf(krOfzYieldTemplate, alias, tenor)
+}
+
+// krRuoniaSpreadSQL — спред RUONIA к ключевой ставке самоджойном витрины по дате: RUONIA дневная,
+// ключевая меняется решениями, и клиентское вычитание двух серий дало бы спред к ставке другой даты.
+// Знак: минус — ставка денежного рынка ниже ключевой (ликвидность мягкая), плюс — выше (жёсткая).
+// Фильтр окна — по r.date (левая таблица): обе таблицы среза одной витрины, даты совпадают джойном.
+const krRuoniaSpreadSQL = `SELECT r.date AS time, r.value - k.value AS "Спред RUONIA к ключевой, п.п."
+FROM v_cbr_macro AS r
+INNER JOIN v_cbr_macro AS k ON k.date = r.date AND k.series = 'cbr_key_rate'
+WHERE r.series = 'cbr_ruania_ruo' AND $__timeFilter(r.date)
+ORDER BY r.date
+`
+
 // krPanelDefaults — общие визуальные конвенции дашборда (выведены из UI-экспорта): палитра classic,
 // легенда снизу таблицей с calcs (последнее/среднее/максимум), tooltip по одной серии, линия
 // шириной 1 без заливки, градиента и соединения разрывов (spanNulls false — разрыв недельного
@@ -221,10 +276,10 @@ func krZeroThresholds() *dashboard.ThresholdsConfigBuilder {
 		})
 }
 
-// NewKeyRatePublications собирает дашборд «Ключевая ставка — публикации». Собраны ряд 21 «Ставка
-// и инфляция» (панели 1–5) и ряд 22 «Деньги, кредит, бюджет, труд» (панели 6–10); ряды 23–24
-// добавляются следующими задачами. Порядок вызовов WithRow/WithPanel задаёт и порядок сетки,
-// и нумерацию панелей 1..19.
+// NewKeyRatePublications собирает дашборд «Ключевая ставка — публикации». Собраны ряды 21 «Ставка
+// и инфляция» (панели 1–5), 22 «Деньги, кредит, бюджет, труд» (панели 6–10) и 23 «Рыночный контур»
+// (панели 11–14); ряд 24 добавляется следующей задачей. Порядок вызовов WithRow/WithPanel задаёт
+// и порядок сетки, и нумерацию панелей 1..19.
 func NewKeyRatePublications() *dashboard.DashboardBuilder {
 	return dashboard.NewDashboardBuilder("Ключевая ставка — публикации").
 		Uid(KeyRatePublicationsUID).
@@ -243,7 +298,12 @@ func NewKeyRatePublications() *dashboard.DashboardBuilder {
 		WithPanel(krCreditRatesPanel()).
 		WithPanel(krBudgetPanel()).
 		WithPanel(krLabourPanel()).
-		WithPanel(krSberSpendingPanel())
+		WithPanel(krSberSpendingPanel()).
+		WithRow(dashboard.NewRowBuilder("Рыночный контур").Id(firstKeyRateRowID + 2)).
+		WithPanel(krKeyrateTrajectoryPanel()).
+		WithPanel(krKeyrateSnapshotPanel()).
+		WithPanel(krOfzCurvePanel()).
+		WithPanel(krRuoniaPanel())
 }
 
 // krRatePanel — панель 1: ключевая ставка линией и точки решений ЦБ. Ставка — уровень на дату,
@@ -435,5 +495,101 @@ func krSberSpendingPanel() *timeseries.PanelBuilder {
 			"обязательна, лицензия и условия использования не подтверждены (KEY_RATE_MODEL §4) — читать " +
 			"как индикативный ориентир.").
 		WithTarget(timeseriesQuery("A", krSberSpendingSQL)).
+		Unit(units.Percent)
+}
+
+// krKeyrateTrajectoryPanel — панель 11: вменённая рынком траектория ключевой ставки по фьючерсам
+// KEYRATE — три известные серии (KKV6/KKZ6/KKG7), точка на каждый торговый день. Значения — settle:
+// уровень ставки на дату заседания, а не темп, поэтому единица percent (никаких pow здесь нет).
+// Дальняя KKG7 неликвидна (сделок нет, объём нулевой): её единственная точка рисуется точкой,
+// а не линией, и цветом, не зависящим от порядка таргетов. Список серий обновляется точечно при
+// появлении новых (переменные темплейтинга — вне v1); про ликвидность среза — панель 12.
+func krKeyrateTrajectoryPanel() *timeseries.PanelBuilder {
+	return krPanelDefaults(timeseries.NewPanelBuilder()).
+		Id(11).
+		Title("KEYRATE: вменённая траектория").
+		Span(spanHalf).
+		Description("Вменённая рынком траектория ключевой ставки по фьючерсам KEYRATE "+
+			"(v_keyrate_expectations, settle — расчётная цена дня): уровень ключевой ставки на дату "+
+			"заседания ЦБ, % годовых. KKV6 — заседание 10.2026, KKZ6 — 12.2026, KKG7 — 02.2027. "+
+			"KKG7 — дальняя серия без сделок (объём 0): её точка — оценка, а не торгуемое ожидание, "+
+			"поэтому она нарисована точкой, а не линией, и сравнивать её с ликвидными сериями нельзя "+
+			"(ликвидность среза — панель 12). close не используется: без сделок он не отражает "+
+			"ожиданий. settle — вменённое рынком значение, а не прогноз и не ценовое обязательство.").
+		WithTarget(timeseriesQuery("A", krKeyrateSQL("KKV6", `"KEYRATE-10.26, % годовых"`))).
+		WithTarget(timeseriesQuery("B", krKeyrateSQL("KKZ6", `"KEYRATE-12.26, % годовых"`))).
+		WithTarget(timeseriesQuery("C", krKeyrateSQL("KKG7", `"KEYRATE-2.27, % годовых"`))).
+		Unit(units.Percent).
+		OverrideByQuery("C", append(pointsOnlyProps(), krFixedColorProp("orange")))
+}
+
+// krKeyrateSnapshotPanel — панель 12: таблица последнего среза KEYRATE — значение рядом с
+// ликвидностью (чек-лист KEY_RATE_PUBLICATIONS §9): объём и открытый интерес отвечают на вопрос,
+// можно ли верить вменённой ставке. Срез — подзапросом max(date), не LIMIT: дата последнего
+// торгового дня, а не произвольная строка сортировки. Table-формат (1) обязателен: строковая
+// колонка «Серия» и построчный срез в timeseries-формат не укладываются.
+func krKeyrateSnapshotPanel() *table.PanelBuilder {
+	return table.NewPanelBuilder().
+		Id(12).
+		Title("KEYRATE: последний срез и ликвидность").
+		Span(spanHalf).
+		Description("Последний срез витрины KEYRATE (v_keyrate_expectations, date = max(date)): " +
+			"по строке на серию фьючерса. settle — вменённая рынком ключевая ставка на дату " +
+			"заседания (%), expected_change_bp — вменённый шаг в базисных пунктах К ПОСЛЕДНЕЙ " +
+			"известной ставке cbr_key_rate (не к ставке на дату заседания), объём — сделки за день " +
+			"(контракты), открытый интерес — позиции на конец дня (индикатор ликвидности серии). " +
+			"Ликвидность обязана стоять рядом со значением (KEY_RATE_PUBLICATIONS §9): объём 0 " +
+			"означает, что сделок не было и settle серии за этот день — не рыночное ожидание, а " +
+			"оценка; шаг при нулевом объёме нерепрезентативен. NULL в шаге — ставка ещё не загружена, " +
+			"и это «неизвестно», а не нулевое изменение.").
+		Datasource(datasourceRef()).
+		WithTarget(tableQuery("A", krKeyrateSnapshotSQL))
+}
+
+// krOfzCurvePanel — панель 13: доходности кривой ОФЗ и уровень RGBI. Теноры 1y/3y/5y/10y сейчас —
+// снимок по одному наблюдению (история кривой наполняется), поэтому точки, а не линии. RGBI —
+// уровень индекса в пунктах, а не доходность: его единица задана пер-серийным override'ом unit=short,
+// иначе панельные проценты напечатали бы индекс как «96% годовых».
+func krOfzCurvePanel() *timeseries.PanelBuilder {
+	return krPanelDefaults(timeseries.NewPanelBuilder()).
+		Id(13).
+		Title("Кривая ОФЗ и RGBI").
+		Span(spanHalf).
+		Description("Кривая бескупонной доходности ОФЗ (v_ofz_curve; теноры 1y/3y/5y/10y — "+
+			"% годовых) и уровень индекса RGBI. RGBI — ПУНКТЫ индекса облигаций федерального займа "+
+			"(от 100 при номинале), а не доходность: единица задана пер-серийным override'ом (short), "+
+			"сопоставлять его значения с процентами теноров нельзя — читается динамика каждой серии. "+
+			"Теноры сейчас по одному наблюдению (снимок, история наполняется): точки, не линии.").
+		WithTarget(timeseriesQuery("A", krOfzYieldSQL("RGBI", `"RGBI"`))).
+		WithTarget(timeseriesQuery("B", krOfzYieldSQL("1y", `"1y, %"`))).
+		WithTarget(timeseriesQuery("C", krOfzYieldSQL("3y", `"3y, %"`))).
+		WithTarget(timeseriesQuery("D", krOfzYieldSQL("5y", `"5y, %"`))).
+		WithTarget(timeseriesQuery("E", krOfzYieldSQL("10y", `"10y, %"`))).
+		Unit(units.Percent).
+		OverrideByQuery("A", []dashboard.DynamicConfigValue{{Id: "unit", Value: units.Short}}).
+		OverrideByQuery("B", pointsOnlyProps()).
+		OverrideByQuery("C", pointsOnlyProps()).
+		OverrideByQuery("D", pointsOnlyProps()).
+		OverrideByQuery("E", pointsOnlyProps())
+}
+
+// krRuoniaPanel — панель 14: ставка денежного рынка RUONIA, ключевая ставка и спред между ними.
+// Спред считается в SQL самоджойном витрины по дате (krRuoniaSpreadSQL): RUONIA дневная, ключевая
+// меняется решениями, и клиентское вычитание дало бы спред к ставке другой даты. Знак спреда
+// объяснён в Description: «минус» на этой панели — не ошибка данных, а мягкая ликвидность.
+func krRuoniaPanel() *timeseries.PanelBuilder {
+	return krPanelDefaults(timeseries.NewPanelBuilder()).
+		Id(14).
+		Title("RUONIA и спред к ключевой").
+		Span(spanHalf).
+		Description("RUONIA — ставка денежного рынка по сделкам овернайт (v_cbr_macro, series = " +
+			"'cbr_ruania_ruo', % годовых), ключевая — уровень решений ЦБ (series = 'cbr_key_rate'). " +
+			"Спред RUONIA − ключевая (п.п.) считается в SQL самоджойном витрины по дате: серии разной " +
+			"частоты, и вычитать их на клиенте значило бы взять ставку не той даты. Знак: минус — " +
+			"банки занимают дешевле ключевой (ликвидность мягкая), плюс — дороже (жёсткая); спред — " +
+			"разница уровней, и со ставками его модуль сравнивать нельзя.").
+		WithTarget(timeseriesQuery("A", krMacroValueSQL("cbr_ruania_ruo", `"RUONIA, % годовых"`))).
+		WithTarget(timeseriesQuery("B", krMacroValueSQL("cbr_key_rate", `"Ключевая ставка, % годовых"`))).
+		WithTarget(timeseriesQuery("C", krRuoniaSpreadSQL)).
 		Unit(units.Percent)
 }
