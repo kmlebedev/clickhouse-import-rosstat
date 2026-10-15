@@ -20,7 +20,7 @@ type cbrImporter struct {
 }
 
 // cbrImporters — единственная точка регистрации импортёров ЦБ: персональных
-// init()-append по файлам импортёров больше нет (18 записей в одном месте вместо
+// init()-append по файлам импортёров больше нет (19 записей в одном месте вместо
 // 13 прежних). Порядок повторяет dagu/cbr.yaml; в chimport.Stats порядок значения
 // не имеет.
 //
@@ -50,6 +50,12 @@ type cbrImporter struct {
 // regex-строка каналов (cbr_mp_summary_channel, method='regex'); HEAD-отпечаток страницы
 // резюме ответил бы только за неё саму — у импортёра три свои таблицы, а не один артефакт
 // версии.
+//
+// У cbr_dip_bulletin префлайт объявлен, но повторный прогон решает не он, а гейт: артефакт —
+// набор из 49 выпусков, и чек известной версии по счёту всей таблицы не сходился бы ни разу
+// (каждый прогон пере-импортировал бы все файлы). Гейт — SELECT DISTINCT release_id по своей
+// таблице: отвечает на тот же вопрос («этот выпуск уже импортирован?») одним запросом и не
+// делает ни одного HEAD на повторном прогоне (спека §3.5, §5.2).
 var cbrImporters = []cbrImporter{
 	{cbrCurrencyUSDImporter, "cbr_currency_usd", ""},
 	{householdsBMesImporter, "cbr_households_b_mes", "SELECT count() FROM cbr_households_b_mes FINAL"},
@@ -69,6 +75,7 @@ var cbrImporters = []cbrImporter{
 	{mpSummaryImporter, "cbr_mp_summary", ""},
 	{cbrBopEstImporter, "cbr_bop_est", "SELECT count() FROM cbr_bop_est FINAL"},
 	{cbrBopStandardImporter, "cbr_bop_standard", "SELECT count() FROM cbr_bop_standard FINAL"},
+	{cbrDipBulletinImporter, "cbr_dip_bulletin", "SELECT count() FROM cbr_dip_bulletin FINAL"},
 }
 
 // init — единственная регистрация импортёров ЦБ в chimport.Stats. Порядок
