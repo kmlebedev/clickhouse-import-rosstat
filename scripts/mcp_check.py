@@ -541,24 +541,38 @@ async def check(params, server_log):
 
             # Каталог обязан описывать ВСЕ ряды обоих наборов — точным равенством, а не «> 0»
             # (односторонний контракт стандарта §11.4: каждый разобранный ряд обязан иметь
-            # описание). Меньшее число значит ни разу не отработавший шаг cbr_bop_est или
-            # cbr_bop_standard: числа агент прочитает, а что измеряет ряд, в каких единицах и как
-            # привязана дата точки — нет; большее — ряд, которому в листе источника не
-            # соответствует строка-агрегат. Выборка по source, а не по origin: у этих наборов
-            # источник каталога равен имени таблицы (спека §3.7), а origin кроме файла называет
-            # ещё лист и подпись строки. 51 = 17 агрегатов × 3 вида периода (месяц, квартал,
-            # накопленным итогом), 34 = 17 агрегатов × 2 листа (кварталы, годы).
-            for bop_source, bop_want in (("cbr_bop_est", 51), ("cbr_bop_standard", 34)):
-                bop_catalog = text(await session.call_tool("run_query", {"query": f"SELECT count() AS n FROM v_series_catalog WHERE source = '{bop_source}'"}))
+            # описание). Выборка по ОБОИМ полям, source И origin (LIKE с экранированными
+            # подчёркиваниями, как у cbr_int_rate_loans выше): source говорит, что ряд
+            # принадлежит нужному импортёру, а origin — что он разобран именно из файла этого
+            # импортёра (у этих наборов origin несёт имя файла, лист и подпись строки-агрегата,
+            # спека §3.7). Одного счёта по source мало: 51 (или 34) записи с верным source, но
+            # origin чужого файла означали бы каталог, описывающий не тот артефакт, чьи точки
+            # лежат в витрине.
+            # Меньшее число значит ни разу не отработавший шаг cbr_bop_est или cbr_bop_standard —
+            # прогнать make import STAT=<имя шага> (числа агент прочитает, а что измеряет ряд,
+            # в каких единицах и как привязана дата точки — нет); большее — ряд, которому в листе
+            # источника не соответствует строка-агрегат. 51 = 17 агрегатов × 3 вида периода
+            # (месяц, квартал, накопленным итогом), 34 = 17 агрегатов × 2 листа (кварталы, годы).
+            #
+            # Знак «_» в LIKE — одиночный любой символ, поэтому он экранирован (\_): без этого
+            # шаблон bop_est.xlsx совпал бы и с посторонним именем файла, отличающимся от него
+            # одним символом на месте подчёркивания.
+            bop_catalogs = (
+                ("cbr_bop_est", "bop_est.xlsx", "%bop\\_est.xlsx%", 51),
+                ("cbr_bop_standard", "bal_of_payments_standart.xlsx",
+                 "%bal\\_of\\_payments\\_standart.xlsx%", 34),
+            )
+            for bop_source, bop_file, bop_origin_like, bop_want in bop_catalogs:
+                bop_catalog = text(await session.call_tool("run_query", {"query": f"SELECT count() AS n FROM v_series_catalog WHERE source = '{bop_source}' AND origin LIKE '{bop_origin_like}'"}))
                 bop_catalog_rows = result_rows(bop_catalog)
                 bop_catalog_n = bop_catalog_rows[0].get("n") if bop_catalog_rows else None
                 if bop_catalog_rows is None:
                     bop_catalog_detail = f"ответ не распознан: {bop_catalog[:200]}"
                 elif bop_catalog_n == bop_want:
-                    bop_catalog_detail = f"рядов {bop_source}: {bop_want}"
+                    bop_catalog_detail = f"рядов {bop_source} из {bop_file}: {bop_want}"
                 else:
-                    bop_catalog_detail = (f"рядов {bop_source}: {bop_catalog_n}, want {bop_want} — прогнать "
-                                          f"make import STAT={bop_source} (каталог перепубликовывается прогоном)")
+                    bop_catalog_detail = (f"рядов {bop_source} из {bop_file}: {bop_catalog_n}, want {bop_want} — "
+                                          f"прогнать make import STAT={bop_source} (каталог перепубликовывается прогоном)")
                 failed += not expect(f"каталог {bop_source} полон", bop_catalog_n == bop_want, bop_catalog_detail)
 
             # Сырые cbr_bop_est и cbr_bop_standard агенту не выданы — как cbr_int_rate_loans:
