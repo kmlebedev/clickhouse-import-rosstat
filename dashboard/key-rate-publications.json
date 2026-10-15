@@ -464,6 +464,395 @@
             }
           ]
         }
+      },
+      {
+        "type": "row",
+        "collapsed": false,
+        "title": "Деньги, кредит, бюджет, труд",
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 28
+        },
+        "id": 22,
+        "panels": []
+      },
+      {
+        "type": "timeseries",
+        "id": 6,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT time, yoy AS \"М2, г/г\"\nFROM (\n    SELECT date AS time, value / nullIf(lagInFrame(value, 12) OVER (ORDER BY date), 0) - 1 AS yoy\n    FROM v_cbr_macro\n    WHERE series = 'М2 SA'\n)\nWHERE $__timeFilter(time)\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT time, yoy AS \"Кредит экономике, г/г\"\nFROM (\n    SELECT date AS time, value / nullIf(lagInFrame(value, 12) OVER (ORDER BY date), 0) - 1 AS yoy\n    FROM v_cbr_macro\n    WHERE series = 'Кредит экономике'\n)\nWHERE $__timeFilter(time)\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Денежная масса и кредит, г/г",
+        "description": "Годовые темпы денежной массы М2, сезонно скорректированной (v_cbr_macro, series = 'М2 SA'), и кредита экономике — value к значению 12 месяцев назад − 1. YoY считается окном по полному ряду, фильтр окна — снаружи подзапроса: при обрезке первые 12 месяцев считались бы по неполному ряду. Значения — доли (Grafana печатает «3.2%»): выше нуля — рост, ниже — сжатие.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 29
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "value": null,
+                  "color": "red"
+                },
+                {
+                  "value": 0,
+                  "color": "green"
+                }
+              ]
+            },
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "thresholdsStyle": {
+                "mode": "line"
+              },
+              "lineWidth": 1,
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 7,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, value AS \"Ключевая ставка, % годовых\"\nFROM v_cbr_macro\nWHERE series = 'cbr_key_rate' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT date AS time, value AS \"Всего: до 1 года, % годовых\"\nFROM v_cbr_macro\nWHERE series = 'Всего: до 1 года, включая «до востребования»' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "C",
+            "rawSql": "SELECT date AS time, value AS \"СМП: до 1 года, % годовых\"\nFROM v_cbr_macro\nWHERE series = 'СМП: до 1 года, включая «до востребования»' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Кредитные ставки и ключевая",
+        "description": "Трансмиссия ключевой ставки в кредитные: ключевая (v_cbr_macro, series = 'cbr_key_rate') и средневзвешенные ставки по кредитам, предоставленным нефинансовым организациям в рублях сроком до 1 года — по кругу «Всего» и по субъектам МСП (ряды ЦБ, месячные, дата — предпоследний день отчётного месяца). Все значения — % годовых.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 12,
+          "y": 29
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 8,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, value AS \"Расходы, всего, млрд руб.\"\nFROM v_minfin_budget\nWHERE source = 'minfin_mesyats' AND series = 'Расходы, всего'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT date AS time, value AS \"Доходы, всего, млрд руб.\"\nFROM v_minfin_budget\nWHERE source = 'minfin_mesyats' AND series = 'Доходы, всего'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "C",
+            "rawSql": "SELECT date AS time, value AS \"Дефицит (-)/Профицит (+), млрд руб.\"\nFROM v_minfin_budget\nWHERE source = 'minfin_mesyats' AND series = 'Дефицит (-)/Профицит (+)'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Бюджет: доходы, расходы, дефицит",
+        "description": "Помесячное исполнение консолидированного бюджета РФ и государственных внебюджетных фондов (v_minfin_budget, source = 'minfin_mesyats' — единственный источник с рядом дефицита). Значения — млрд руб. ЗА МЕСЯЦ, не накопленным итогом (год — сумма 12 месяцев); сальдо знаковое: минус — дефицит, плюс — профицит. Одноимённые ряды из source = 'minfin' — федеральный бюджет, значения не совпадают.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 38
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyRUB",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 9,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, value AS \"Уровень безработицы, %\"\nFROM v_rosstat_macro\nWHERE series = 'Уровень безработицы' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT time, yoy AS \"Зарплата, г/г\"\nFROM (\n    SELECT date AS time, value / nullIf(lagInFrame(value, 12) OVER (ORDER BY date), 0) - 1 AS yoy\n    FROM v_rosstat_macro\n    WHERE series = 'Среднемесячная номинальная начисленная заработная плата работников по полному кругу организаций'\n)\nWHERE $__timeFilter(time)\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Рынок труда: безработица и зарплата",
+        "description": "Рынок труда: уровень безработицы (v_rosstat_macro, % рабочей силы; дата — последний день отчётного месяца) и среднемесячная номинальная зарплата в годовом выражении (value к значению год назад − 1) — YoY окном по полному ряду, фильтр окна снаружи подзапроса. У зарплаты другая единица (доля, percentunit) и своя шкала: override'ом она уезжает на правую ось, сравнивать её уровень с процентами безработицы нельзя.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 12,
+          "y": 38
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "B"
+              },
+              "properties": [
+                {
+                  "id": "unit",
+                  "value": "percentunit"
+                },
+                {
+                  "id": "custom.axisPlacement",
+                  "value": "right"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 10,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, value AS \"Расходы Сбера, % г/г\"\nFROM v_bank_sber_spending\nWHERE source = 'sber_izmenenie_trat' AND series = 'Все категории'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Расходы Сбера (nowcast), % г/г",
+        "description": "SberIndex: изменение потребительских расходов год к году, недельно (v_bank_sber_spending, source = 'sber_izmenenie_trat', series = 'Все категории'). Значение — % к сопоставимой ISO-неделе прошлого года (положительное — рост): высокочастотный nowcast потребительского спроса, а не официальная статистика. Источник — СберИндекс: атрибуция обязательна, лицензия и условия использования не подтверждены (KEY_RATE_MODEL §4) — читать как индикативный ориентир.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 24,
+          "x": 0,
+          "y": 47
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
       }
     ],
     "templating": {},

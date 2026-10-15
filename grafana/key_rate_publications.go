@@ -92,6 +92,64 @@ WHERE series = 'price_expectations_sa' AND $__timeFilter(date)
 ORDER BY date
 `
 
+// krYoYTemplate — YoY месячного ряда по ПОЛНОМУ ряду: если отфильтровать окно внутри подзапроса,
+// первые 12 точек считались бы по обрезанному ряду. Лаг 12 — год для месячных данных; фильтр
+// времени поэтому снаружи — по time подзапроса, а не по date источника. Делитель обёрнут в nullIf:
+// в первых 12 строках lagInFrame даёт 0, и без него YoY = +Inf (широкое окно ломало бы ось).
+// %s по порядку: алиас серии, витрина, код ряда. Форма — как yoyTemplate золотого дашборда.
+const krYoYTemplate = `SELECT time, yoy AS %s
+FROM (
+    SELECT date AS time, value / nullIf(lagInFrame(value, 12) OVER (ORDER BY date), 0) - 1 AS yoy
+    FROM %s
+    WHERE series = '%s'
+)
+WHERE $__timeFilter(time)
+ORDER BY time
+`
+
+// krYoYSQL собирает запрос YoY по шаблону: панель 6 (М2 и кредит, v_cbr_macro) и панель 9-B
+// (зарплата, v_rosstat_macro) различаются только витриной, кодом ряда и алиасом.
+func krYoYSQL(view, series, alias string) string {
+	return fmt.Sprintf(krYoYTemplate, alias, view, series)
+}
+
+// krSalarySeries — код ряда среднемесячной зарплаты в v_rosstat_macro: длинное имя, которое
+// в SQL панели 9-B легко набрать с опечаткой, а неверное имя оставило бы серию молча пустой.
+const krSalarySeries = "Среднемесячная номинальная начисленная заработная плата работников по полному кругу организаций"
+
+// krUnemploymentSQL — уровень безработицы: единственная серия панели 9 в процентах (уровень,
+// а не темп), поэтому в общий YoY-шаблон она не идёт.
+const krUnemploymentSQL = `SELECT date AS time, value AS "Уровень безработицы, %"
+FROM v_rosstat_macro
+WHERE series = 'Уровень безработицы' AND $__timeFilter(date)
+ORDER BY date
+`
+
+// krBudgetTemplate — срез v_minfin_budget по источнику и коду ряда: все три серии панели 8 — из
+// minfin_mesyats, единственного источника с рядом дефицита (в minfin его нет, а одноимённые ряды
+// там — федеральный бюджет, значения не совпадают). %s по порядку: алиас серии, код ряда.
+const krBudgetTemplate = `SELECT date AS time, value AS %s
+FROM v_minfin_budget
+WHERE source = 'minfin_mesyats' AND series = '%s'
+  AND $__timeFilter(date)
+ORDER BY date
+`
+
+// krBudgetSQL собирает запрос бюджета по шаблону.
+func krBudgetSQL(series, alias string) string {
+	return fmt.Sprintf(krBudgetTemplate, alias, series)
+}
+
+// krSberSpendingSQL — недельные потребительские расходы Сбера (nowcast) в % г/г: витрина уже
+// хранит готовый темп, преобразований в SQL нет, поэтому единица панели 10 — percent.
+// Оговорка про лицензию источника — в Description панели.
+const krSberSpendingSQL = `SELECT date AS time, value AS "Расходы Сбера, % г/г"
+FROM v_bank_sber_spending
+WHERE source = 'sber_izmenenie_trat' AND series = 'Все категории'
+  AND $__timeFilter(date)
+ORDER BY date
+`
+
 // krPanelDefaults — общие визуальные конвенции дашборда (выведены из UI-экспорта): палитра classic,
 // легенда снизу таблицей с calcs (последнее/среднее/максимум), tooltip по одной серии, линия
 // шириной 1 без заливки, градиента и соединения разрывов (spanNulls false — разрыв недельного
@@ -151,9 +209,22 @@ func krThresholdLineStyle() *common.GraphThresholdsStyleConfigBuilder {
 	return common.NewGraphThresholdsStyleConfigBuilder().Mode(common.GraphThresholdsStyleModeLine)
 }
 
-// NewKeyRatePublications собирает дашборд «Ключевая ставка — публикации». В этой задаче собран
-// ряд 21 «Ставка и инфляция» (панели 1–5); ряды 22–24 добавляются следующими задачами. Порядок
-// вызовов WithRow/WithPanel задаёт и порядок сетки, и нумерацию панелей 1..19.
+// krZeroThresholds — нулевой порог панели 6: темп г/г выше нуля (рост) зелёный, ниже (сжатие)
+// красный. Как и 4%-ный порог, задаётся панельными thresholds и рисуется только вместе со стилем
+// line (krThresholdLineStyle); значения серий — доли, поэтому граница тоже 0, а не «0%».
+func krZeroThresholds() *dashboard.ThresholdsConfigBuilder {
+	return dashboard.NewThresholdsConfigBuilder().
+		Mode(dashboard.ThresholdsModeAbsolute).
+		Steps([]dashboard.Threshold{
+			{Value: nil, Color: "red"},
+			{Value: ptr(0.0), Color: "green"},
+		})
+}
+
+// NewKeyRatePublications собирает дашборд «Ключевая ставка — публикации». Собраны ряд 21 «Ставка
+// и инфляция» (панели 1–5) и ряд 22 «Деньги, кредит, бюджет, труд» (панели 6–10); ряды 23–24
+// добавляются следующими задачами. Порядок вызовов WithRow/WithPanel задаёт и порядок сетки,
+// и нумерацию панелей 1..19.
 func NewKeyRatePublications() *dashboard.DashboardBuilder {
 	return dashboard.NewDashboardBuilder("Ключевая ставка — публикации").
 		Uid(KeyRatePublicationsUID).
@@ -166,7 +237,13 @@ func NewKeyRatePublications() *dashboard.DashboardBuilder {
 		WithPanel(krWeeklyAnnualizedPanel()).
 		WithPanel(krWeeklyRisersPanel()).
 		WithPanel(krInflationPanel()).
-		WithPanel(krExpectationsPanel())
+		WithPanel(krExpectationsPanel()).
+		WithRow(dashboard.NewRowBuilder("Деньги, кредит, бюджет, труд").Id(firstKeyRateRowID + 1)).
+		WithPanel(krMoneyCreditPanel()).
+		WithPanel(krCreditRatesPanel()).
+		WithPanel(krBudgetPanel()).
+		WithPanel(krLabourPanel()).
+		WithPanel(krSberSpendingPanel())
 }
 
 // krRatePanel — панель 1: ключевая ставка линией и точки решений ЦБ. Ставка — уровень на дату,
@@ -257,4 +334,102 @@ func krExpectationsPanel() *timeseries.PanelBuilder {
 			{Id: "unit", Value: units.Short},
 			krFixedColorProp("text"),
 		})
+}
+
+// krMoneyCreditPanel — панель 6: годовые темпы денежной массы (М2 SA) и кредита экономике.
+// YoY — окном по полному ряду (см. krYoYTemplate), значения — доли, поэтому percentunit и порог
+// нуля тоже доля: линией размечается граница роста (зелёный) и сжатия (красный).
+func krMoneyCreditPanel() *timeseries.PanelBuilder {
+	return krPanelDefaults(timeseries.NewPanelBuilder()).
+		Id(6).
+		Title("Денежная масса и кредит, г/г").
+		Span(spanHalf).
+		Description("Годовые темпы денежной массы М2, сезонно скорректированной (v_cbr_macro, series = 'М2 SA'), " +
+			"и кредита экономике — value к значению 12 месяцев назад − 1. YoY считается окном по полному " +
+			"ряду, фильтр окна — снаружи подзапроса: при обрезке первые 12 месяцев считались бы по неполному " +
+			"ряду. Значения — доли (Grafana печатает «3.2%»): выше нуля — рост, ниже — сжатие.").
+		WithTarget(timeseriesQuery("A", krYoYSQL("v_cbr_macro", "М2 SA", `"М2, г/г"`))).
+		WithTarget(timeseriesQuery("B", krYoYSQL("v_cbr_macro", "Кредит экономике", `"Кредит экономике, г/г"`))).
+		Unit(units.PercentUnit).
+		Thresholds(krZeroThresholds()).
+		ThresholdsStyle(krThresholdLineStyle())
+}
+
+// krCreditRatesPanel — панель 7: трансмиссия ключевой ставки в кредитные — уровень ключевой против
+// ставок по кредитам юрлицам до 1 года (по кругу «Всего» и по СМП). Все серии — % годовых (percent):
+// уровни сопоставимы напрямую, долей и наложений здесь нет.
+func krCreditRatesPanel() *timeseries.PanelBuilder {
+	return krPanelDefaults(timeseries.NewPanelBuilder()).
+		Id(7).
+		Title("Кредитные ставки и ключевая").
+		Span(spanHalf).
+		Description("Трансмиссия ключевой ставки в кредитные: ключевая (v_cbr_macro, series = 'cbr_key_rate') " +
+			"и средневзвешенные ставки по кредитам, предоставленным нефинансовым организациям в рублях " +
+			"сроком до 1 года — по кругу «Всего» и по субъектам МСП (ряды ЦБ, месячные, дата — предпоследний " +
+			"день отчётного месяца). Все значения — % годовых.").
+		WithTarget(timeseriesQuery("A", krMacroValueSQL("cbr_key_rate", `"Ключевая ставка, % годовых"`))).
+		WithTarget(timeseriesQuery("B", krMacroValueSQL("Всего: до 1 года, включая «до востребования»", `"Всего: до 1 года, % годовых"`))).
+		WithTarget(timeseriesQuery("C", krMacroValueSQL("СМП: до 1 года, включая «до востребования»", `"СМП: до 1 года, % годовых"`))).
+		Unit(units.Percent)
+}
+
+// krBudgetPanel — панель 8: исполнение консолидированного бюджета — доходы, расходы и сальдо.
+// Все три серии — из minfin_mesyats: только там есть «Дефицит (-)/Профицит (+)», и попасть
+// в федеральный minfin с одноимёнными рядами нельзя — другой охват (см. Description). Единица —
+// млрд руб. (currencyRUB); значения помесячные, а не накопленные.
+func krBudgetPanel() *timeseries.PanelBuilder {
+	return krPanelDefaults(timeseries.NewPanelBuilder()).
+		Id(8).
+		Title("Бюджет: доходы, расходы, дефицит").
+		Span(spanHalf).
+		Description("Помесячное исполнение консолидированного бюджета РФ и государственных внебюджетных " +
+			"фондов (v_minfin_budget, source = 'minfin_mesyats' — единственный источник с рядом дефицита). " +
+			"Значения — млрд руб. ЗА МЕСЯЦ, не накопленным итогом (год — сумма 12 месяцев); сальдо знаковое: " +
+			"минус — дефицит, плюс — профицит. Одноимённые ряды из source = 'minfin' — федеральный бюджет, " +
+			"значения не совпадают.").
+		WithTarget(timeseriesQuery("A", krBudgetSQL("Расходы, всего", `"Расходы, всего, млрд руб."`))).
+		WithTarget(timeseriesQuery("B", krBudgetSQL("Доходы, всего", `"Доходы, всего, млрд руб."`))).
+		WithTarget(timeseriesQuery("C", krBudgetSQL("Дефицит (-)/Профицит (+)", `"Дефицит (-)/Профицит (+), млрд руб."`))).
+		Unit(units.Rubles)
+}
+
+// krLabourPanel — панель 9: безработица (уровень, percent) и зарплата в годовом выражении (доля,
+// percentunit). Единица серии B задана пер-серийным override'ом — без него доля печаталась бы как
+// процент (ошибка в 100 раз); там же правая ось: 3–6% безработицы и двузначный рост зарплаты
+// на одной шкале нечитаемы. Серия A — уровень, а не темп, поэтому идёт без lagInFrame.
+func krLabourPanel() *timeseries.PanelBuilder {
+	return krPanelDefaults(timeseries.NewPanelBuilder()).
+		Id(9).
+		Title("Рынок труда: безработица и зарплата").
+		Span(spanHalf).
+		Description("Рынок труда: уровень безработицы (v_rosstat_macro, % рабочей силы; дата — последний "+
+			"день отчётного месяца) и среднемесячная номинальная зарплата в годовом выражении (value к "+
+			"значению год назад − 1) — YoY окном по полному ряду, фильтр окна снаружи подзапроса. "+
+			"У зарплаты другая единица (доля, percentunit) и своя шкала: override'ом она уезжает на правую "+
+			"ось, сравнивать её уровень с процентами безработицы нельзя.").
+		WithTarget(timeseriesQuery("A", krUnemploymentSQL)).
+		WithTarget(timeseriesQuery("B", krYoYSQL("v_rosstat_macro", krSalarySeries, `"Зарплата, г/г"`))).
+		Unit(units.Percent).
+		OverrideByQuery("B", []dashboard.DynamicConfigValue{
+			{Id: "unit", Value: units.PercentUnit},
+			axisPlacementRightProp(),
+		})
+}
+
+// krSberSpendingPanel — панель 10: недельные расходы Сбера (nowcast) во всю ширину — недельный ряд
+// с разрывами читается шире (span 24, как у панели 5). Витрина хранит готовый % г/г, поэтому
+// единица — percent и никаких преобразований.
+func krSberSpendingPanel() *timeseries.PanelBuilder {
+	return krPanelDefaults(timeseries.NewPanelBuilder()).
+		Id(10).
+		Title("Расходы Сбера (nowcast), % г/г").
+		Span(24).
+		Description("SberIndex: изменение потребительских расходов год к году, недельно " +
+			"(v_bank_sber_spending, source = 'sber_izmenenie_trat', series = 'Все категории'). Значение — " +
+			"% к сопоставимой ISO-неделе прошлого года (положительное — рост): высокочастотный nowcast " +
+			"потребительского спроса, а не официальная статистика. Источник — СберИндекс: атрибуция " +
+			"обязательна, лицензия и условия использования не подтверждены (KEY_RATE_MODEL §4) — читать " +
+			"как индикативный ориентир.").
+		WithTarget(timeseriesQuery("A", krSberSpendingSQL)).
+		Unit(units.Percent)
 }
