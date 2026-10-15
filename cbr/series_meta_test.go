@@ -229,6 +229,31 @@ func cbrCheckSpot(t *testing.T, rows []appendedRow, name string, date time.Time,
 	t.Errorf("в разборе нет точки (%q, %s): спот baseline проверить нечем", name, date.Format(layout))
 }
 
+// cbrSpotEqualFloat64 сравнивает значения Float64-таблиц (платёжный баланс). Отдельный хелпер, а
+// не параметр допуска у cbrSpotEqual: у таблиц пакета колонка value разного типа — Float32 (там
+// сверка идёт в машинной точности столбца) и Float64 здесь, где приведение к float32 сделало бы
+// незаметной ошибку разбора вплоть до ~1e-2 на значениях порядка 1e5 (ulp Float32 у 125716 — 0,008).
+func cbrSpotEqualFloat64(got, want float64) bool {
+	return math.Abs(got-want) <= 1e-9
+}
+
+// cbrCheckSpotFloat64 сверяет одну точку Float64-таблицы с литералом, выписанным из живого файла
+// источника: xlsx хранит число десятичной записью, и ParseFloat даёт то же ближайшее float64, что
+// и литерал в тесте, поэтому допуск 1e-9 на порядки меньше последнего опубликованного разряда.
+func cbrCheckSpotFloat64(t *testing.T, rows []appendedRow, name string, date time.Time, want float64) {
+	t.Helper()
+	const layout = "2006-01-02"
+	for _, row := range rows {
+		if row.name == name && row.date.Equal(date) {
+			if !cbrSpotEqualFloat64(row.value, want) {
+				t.Errorf("точка (%q, %s) = %v, want %v (значение из файла источника)", name, date.Format(layout), row.value, want)
+			}
+			return
+		}
+	}
+	t.Errorf("в разборе нет точки (%q, %s): значение из файла проверить нечем", name, date.Format(layout))
+}
+
 // TestAppendRecorderAcceptsImporterForms: формы и типы, которыми реально пишут импортёры
 // T5/T6, принимаются как есть — значение приходит float64, float32, int64 или строкой.
 func TestAppendRecorderAcceptsImporterForms(t *testing.T) {

@@ -244,11 +244,21 @@ func TestCbrImportersPrefixedAndRegistered(t *testing.T) {
 			t.Errorf("в dagu/cbr.yaml нет шага CLICKHOUSE_IMPORT_STAT=%s: владелец общей %s не запускается по расписанию", owner, sharedMacroSeriesTable)
 		}
 	}
-	// Отдельно от владельцев общей macro_series: cbr_mp_summary пишет в свои три
-	// таблицы, и обратное направление (г) для него иначе не выполнялось бы вовсе —
-	// шаг расписания, пропавший из dagu/cbr.yaml, не ломает ни реестр, ни парсеры,
-	// а витрины v_cbr_mp_summary* остались бы пустыми при зелёных тестах.
-	if !scheduled["cbr_mp_summary"] {
-		t.Errorf("в dagu/cbr.yaml нет шага CLICKHOUSE_IMPORT_STAT=cbr_mp_summary: контур резюме обсуждений не запускается по расписанию")
+	// Отдельно от владельцев общей macro_series: cbr_mp_summary пишет в свои три таблицы,
+	// cbr_bop_est и cbr_bop_standard — в свои две, и обратное направление (г) для них иначе не
+	// выполнялось бы вовсе — шаг расписания, пропавший из dagu/cbr.yaml, не ломает ни реестр,
+	// ни парсеры. У резюме обсуждений витрины v_cbr_mp_summary* остались бы пустыми, а у
+	// платёжного баланса витрина v_cbr_bop осталась бы непустой и просто перестала бы
+	// обновляться; последнего не замечает и mcp_check (он проверяет непустоту витрины и полноту
+	// каталога, а не свежесть точек), поэтому оба шага перечислены здесь явно.
+	keyScheduled := map[string]string{
+		"cbr_mp_summary":   "контур резюме обсуждений не запускается по расписанию, а витрины v_cbr_mp_summary* остаются пустыми",
+		"cbr_bop_est":      "оценка платёжного баланса не обновляется, а витрина v_cbr_bop тихо стареет",
+		"cbr_bop_standard": "стандартная презентация платёжного баланса не обновляется, а витрина v_cbr_bop тихо стареет",
+	}
+	for step, why := range keyScheduled {
+		if !scheduled[step] {
+			t.Errorf("в dagu/cbr.yaml нет шага CLICKHOUSE_IMPORT_STAT=%s: %s", step, why)
+		}
 	}
 }

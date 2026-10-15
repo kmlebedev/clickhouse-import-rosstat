@@ -414,9 +414,44 @@ func TestCbrBopEstSpotValues(t *testing.T) {
 		t.Run(vintage.release, func(t *testing.T) {
 			rows := cbrFixtureRows(t, vintage.fixture, cbrBopEst.ImportFunc)
 			for _, spot := range vintage.spots {
-				cbrCheckSpot(t, rows, spot.series, spot.date, spot.value)
+				cbrCheckSpotFloat64(t, rows, spot.series, spot.date, spot.value)
 			}
 		})
+	}
+}
+
+// bopRowValue — значение точки (ряд, дата) в разборе фикстуры; отсутствие точки фатально: тест,
+// сверяющий два источника, обязан упасть, если один из них точку не дал.
+func bopRowValue(t *testing.T, rows []appendedRow, name string, date time.Time) float64 {
+	t.Helper()
+	for _, row := range rows {
+		if row.name == name && row.date.Equal(date) {
+			return row.value
+		}
+	}
+	t.Fatalf("в разборе нет точки (%q, %s)", name, date.Format("2006-01-02"))
+	return 0
+}
+
+// TestCbrBopUnitsAgreeAcrossSources: единицы двух выгрузок согласованы — и связь закреплена числом,
+// а не только текстом каталога. Одни и те же агрегаты у оценки идут в млрд долларов США, у
+// стандартной презентации — в млн, поэтому значение оценки равно значению стандартной презентации,
+// делённому на 1000 (спека §3.6, §3.7). Сверяется один ряд одной даты на двух живых фикстурах
+// («Товары: экспорт» за II квартал 2026: 125,7 млрд против 125 716,38 млн). Споты внутри одной
+// выгрузки такую рассинхронизацию не поймают — они не видят вторую; допуск 0,1 — точность
+// публикации оценки (один знак после запятой по млрд), то есть уже прошедшее округление источника.
+func TestCbrBopUnitsAgreeAcrossSources(t *testing.T) {
+	const (
+		series    = "Товары: экспорт (квартал)"
+		tolerance = 0.1
+	)
+	date := bopEstLastQuarter(2026, 2)
+	estimate := bopRowValue(t, cbrFixtureRows(t, bopEstFixture, cbrBopEst.ImportFunc), series, date)
+	standard := bopRowValue(t, cbrFixtureRows(t, bopStandardFixture, cbrBopStandard.ImportFunc), series, date)
+	want := standard / 1000
+	if diff := estimate - want; diff > tolerance || diff < -tolerance {
+		t.Errorf("ряд %q за %s: в оценке %v млрд долларов США, в стандартной презентации %v млн (= %v млрд): расхождение больше допуска %v — единицы двух выгрузок разошлись",
+			series, date.Format("2006-01-02"), estimate, standard, want, tolerance)
 	}
 }
 
@@ -492,8 +527,10 @@ func TestCbrBopEstEmptyBookFails(t *testing.T) {
 // TestCbrBopEstFailFastOnFixture: ветки, где разбор обязан вернуть ошибку, а не «0 строк»
 // (стандарт §6.4, спека §3.9), — на мутированной копии живой фикстуры текущего винтажа
 // (стандарт §11.1). Копия, а не синтетическая книга: якоря, шапка и ячейки данных в ней те же,
-// что у источника, поэтому ошибка приходит от мутации, а не от сборки книги. Батч уходит в БД
-// только по Send, поэтому при ошибке разбора в рекордере обязано быть 0 строк.
+// что у источника, поэтому ошибка приходит от мутации, а не от сборки книги. Проверка «в рекордере
+// 0 строк» — про гигиену парсера, а не про чистоту БД: при ошибке ImportFunc Send не вызывается
+// вовсе, и незаписанный батч в БД не уходит, но парсер не должен записать ни одной строки до того,
+// как поймал ошибку разбора (иначе частично разобранный выпуск выглядел бы успешным).
 func TestCbrBopEstFailFastOnFixture(t *testing.T) {
 	live := bopEstVintages[0]
 	for name, tc := range map[string]struct {
@@ -512,13 +549,13 @@ func TestCbrBopEstFailFastOnFixture(t *testing.T) {
 			// Строка 7 — «Товары»: разбор обязан назвать позицию и оба варианта её подписи, иначе по
 			// прогону не видно, чего именно он не дождался (спека §3.3).
 			mutate:  func(t *testing.T, f *excelize.File, sheet string) { bopEstSetCell(t, f, sheet, "A7", "Баланс") },
-			wantErr: "не найдена подпись агрегата 2 (варианты: «Товары» / «Торговый баланс»)",
+			wantErr: "не найдена подпись агрегата «Товары» (позиция 2; варианты: «Товары» / «Торговый баланс»)",
 		},
 		"пропала подпись в середине списка": {
 			// Строка 13 — «Первичные и вторичные доходы» (восьмая в списке): разбор ищет подписи
 			// последовательно, поэтому пропавшая в середине — ошибка, а не пропуск ряда.
 			mutate:  func(t *testing.T, f *excelize.File, sheet string) { bopEstSetCell(t, f, sheet, "A13", "Доходы") },
-			wantErr: "не найдена подпись агрегата 8",
+			wantErr: "не найдена подпись агрегата «Баланс первичных и вторичных доходов» (позиция 8",
 		},
 		"подпись периода не разбирается": {
 			// «II квартал» без года: подпись есть, период из неё не выводится — колонка осталась бы
@@ -628,7 +665,7 @@ func TestCbrBopEstFixtureSemantics(t *testing.T) {
 			if !tc.isPoint {
 				return
 			}
-			cbrCheckSpot(t, rec.rows, accumulated, august2026, tc.value)
+			cbrCheckSpotFloat64(t, rec.rows, accumulated, august2026, tc.value)
 		})
 	}
 }

@@ -267,8 +267,7 @@ func TestCbrBopStandardSeriesMetaNames(t *testing.T) {
 
 // TestCbrBopStandardImporterName: Name() — контракт фильтра `make import STAT=…` и id шага
 // dagu/cbr.yaml; сверяется литералом, а не таблицей кода (стандарт §8.5). Тест же держит
-// cbrBopStandardImporter «использованным» для линтера, пока реестр не завёл его сам (следующая
-// задача пункта).
+// cbrBopStandardImporter «использованным» для линтера.
 func TestCbrBopStandardImporterName(t *testing.T) {
 	if got := cbrBopStandardImporter.Name(); got != "cbr_bop_standard" {
 		t.Errorf("Name() = %q, want %q", got, "cbr_bop_standard")
@@ -363,14 +362,14 @@ func TestCbrBopStandardSpotValues(t *testing.T) {
 	lastQuarter := time.Date(2026, time.June, 30, 0, 0, 0, 0, time.UTC)
 	firstYear := time.Date(1994, time.December, 31, 0, 0, 0, 0, time.UTC)
 	lastYear := time.Date(2025, time.December, 31, 0, 0, 0, 0, time.UTC)
-	cbrCheckSpot(t, rows, "Счет текущих операций (квартал)", firstQuarter, 1996.33)
-	cbrCheckSpot(t, rows, "Счет текущих операций (квартал)", lastQuarter, 16949.24)
-	cbrCheckSpot(t, rows, "Счет текущих операций (год)", firstYear, 8941.89)
-	cbrCheckSpot(t, rows, "Счет текущих операций (год)", lastYear, 38588.14)
-	cbrCheckSpot(t, rows, "Резервные активы (квартал)", firstQuarter, -1261)
-	cbrCheckSpot(t, rows, "Резервные активы (квартал)", lastQuarter, 7251.98)
-	cbrCheckSpot(t, rows, "Товары: экспорт (квартал)", lastQuarter, 125716.38)
-	cbrCheckSpot(t, rows, "Услуги: импорт (квартал)", lastQuarter, 25080.56)
+	cbrCheckSpotFloat64(t, rows, "Счет текущих операций (квартал)", firstQuarter, 1996.33)
+	cbrCheckSpotFloat64(t, rows, "Счет текущих операций (квартал)", lastQuarter, 16949.24)
+	cbrCheckSpotFloat64(t, rows, "Счет текущих операций (год)", firstYear, 8941.89)
+	cbrCheckSpotFloat64(t, rows, "Счет текущих операций (год)", lastYear, 38588.14)
+	cbrCheckSpotFloat64(t, rows, "Резервные активы (квартал)", firstQuarter, -1261)
+	cbrCheckSpotFloat64(t, rows, "Резервные активы (квартал)", lastQuarter, 7251.98)
+	cbrCheckSpotFloat64(t, rows, "Товары: экспорт (квартал)", lastQuarter, 125716.38)
+	cbrCheckSpotFloat64(t, rows, "Услуги: импорт (квартал)", lastQuarter, 25080.56)
 }
 
 // TestCbrBopStandardAppendsFloat64: разбор пишет значение как float64 — тип колонки value в DDL
@@ -466,9 +465,11 @@ func TestCbrBopStandardEmptyBookFails(t *testing.T) {
 // TestCbrBopStandardFailFastOnFixture: ветки, где разбор обязан вернуть ошибку, а не «0 строк»
 // (стандарт §6.4, спека §3.9), — на мутированной копии живой фикстуры (стандарт §11.1). Копия, а
 // не синтетическая книга: якоря, шапка и ячейки данных в ней те же, что у источника, поэтому
-// ошибка приходит от мутации, а не от сборки книги. Батч уходит в БД только по Send, поэтому при
-// ошибке разбора в рекордере обязано быть 0 строк — и это же ловит запись до проверки второго
-// листа.
+// ошибка приходит от мутации, а не от сборки книги. Проверка «в рекордере 0 строк» — про гигиену
+// парсера, а не про чистоту БД: при ошибке ImportFunc Send не вызывается вовсе, и незаписанный
+// батч в БД не уходит, но парсер обязан не записать ни одной точки до того, как поймал ошибку
+// разбора — здесь ещё и не писать первый лист, разбирая второй (планы обоих листов строятся до
+// первой записи).
 func TestCbrBopStandardFailFastOnFixture(t *testing.T) {
 	for name, tc := range map[string]struct {
 		mutate  func(t *testing.T, f *excelize.File)
@@ -614,7 +615,7 @@ func TestCbrBopStandardFixtureSemantics(t *testing.T) {
 			if !tc.isPoint {
 				return
 			}
-			cbrCheckSpot(t, rec.rows, series, firstQuarter, tc.value)
+			cbrCheckSpotFloat64(t, rec.rows, series, firstQuarter, tc.value)
 		})
 	}
 }
