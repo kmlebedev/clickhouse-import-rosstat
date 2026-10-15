@@ -304,7 +304,7 @@
 
 **Осталось (owner-assisted — приёмка не объявляется пройденной):** оба токена владельцем заданы (`GRAFANA_TEST_TOKEN`/`GRAFANA_STAGING_TOKEN`), локальный живой цикл (push + smoke с Bearer-токеном) пройден 2026-10-12; не выполнены полный staging-прогон `make grafana-deploy-staging` (туннель `:3001` → провижининг → push → smoke; на staging после первого провижининга нужен один admin-reload датасорса) и визуальный просмотр дашборда в браузере.
 
-**Follow-up (вне объёма):** витрины §3 (`v_gold_floor`, `v_rates_snapshot`, `v_macro_releases` и др. — панели v1 читают `v_gold_prices`/`v_fred_macro`/`v_bls_macro`); миграция легаси-дашбордов (`rosstat.json`, `chmf.json`, `finance-polyus.json`) на код; алерты Grafana; PNG-рендер панелей для статьи; self-hosted runner и автодеплой.
+**Follow-up (вне объёма):** витрины §3 (`v_gold_floor`, `v_rates_snapshot`, `v_macro_releases` и др. — панели v1 читают `v_gold_prices`/`v_fred_macro`/`v_bls_macro`); миграция легаси-дашбордов (`rosstat.json`, `chmf.json`, `finance-polyus.json`) на код — механизм и живая очередь теперь в [ROADMAP_INFRA.md](ROADMAP_INFRA.md) (Фаза 2, «Шаг 0: механизм миграции и добавления дашбордов», скил `.kimi-code/skills/dashboard-migration/SKILL.md`); `finance-polyus` мигрируется первым в текущем PR (2026-10-16; пункт «Дашборд статьи PLZL» — [docs/ROADMAP_DCF_POLYUS.md](ROADMAP_DCF_POLYUS.md) §7.3); алерты Grafana; PNG-рендер панелей для статьи; self-hosted runner и автодеплой.
 
 ### Сырые таблицы или витрины — рекомендация: витрины
 

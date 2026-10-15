@@ -289,6 +289,13 @@ NPV       = FCF / 1000 / (1 + rate)^0              = 3955.1917 млн USD
 - **Сдвиг дисконта у Сухого Лога** — отдельное решение по ядру: либо `npvLOM` должен дисконтировать по КАЛЕНДАРНОМУ году, либо у проекта должна быть своя база отсчёта. Молчаливое завышение NAV на ~9 % — ровно тот класс дефекта, который карта полноты называет «ненаблюдаемым».
 - Сценарии запуска ЗИФ, ступенчатый профиль, окно ОПР как функция сценария, `MineLifeYears` — [docs/plans/POLYUS_OUTPUT_MODEL_PLAN.md](plans/POLYUS_OUTPUT_MODEL_PLAN.md).
 
+### 7.3 Дашборд статьи PLZL (Grafana `finance-polyus`) — ⏳ этим PR
+
+**Спека:** [docs/superpowers/specs/2026-10-16-grafana-finance-polyus-design.md](superpowers/specs/2026-10-16-grafana-finance-polyus-design.md). **План:** [docs/superpowers/plans/2026-10-16-grafana-finance-polyus.md](superpowers/plans/2026-10-16-grafana-finance-polyus.md). **Механизм и очередь миграции дашбордов** — [docs/ROADMAP_INFRA.md](ROADMAP_INFRA.md), Фаза 2, «Шаг 0: механизм миграции и добавления дашбордов».
+
+Легаси-экспорт `dashboard/finance-polyus.json` переводится в код `grafana/`: v1 — **19 панелей в 4 рядах** на существующих витринах (`v_cbr_macro`, `v_gold_prices`, `v_fred_macro`, `v_ofz_curve`, `v_stock_prices`, `v_company_operating`, `v_company_financials`, `v_gold_forecasts`, `v_forecast_accuracy`, `v_model_inputs`) — макро-входы прогноза, операционный и финансовый блоки, веер own-сценариев и точность прошлых прогнозов; маппинг «раздел статьи → панели» — §6 спеки. Артефакт заменяет легаси-экспорт (история — в git); статус пункта финализируется приёмкой, протокол — комментарием в PR.
+
+**Остаток — ❌ следующим пунктом:** витрины `mine_plans`/`price_decks`/`model_runs` (даты и сценарии прогонов) → панели «план из презентаций vs наш прогноз vs факт»; НАВ по активам последнего прогона; сценарии НАВ/цены акции; апсайд (мост NAV → цена акции). **NAV-матрица в Grafana** остаётся в остатке фазы 3 (§7 и §7.1 выше) — v1 её не покрывает.
 
 ### Quick wins (можно сделать уже сегодня)
 
