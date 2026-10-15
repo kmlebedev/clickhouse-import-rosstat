@@ -803,6 +803,105 @@ async def check(params, server_log):
                 failed += not expect(f"сырая {table} закрыта ({label})", denied,
                                      f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
 
+            # Контур приложений к бюллетеню ДИП ЦБ (пункт 4.2 №17 роадмапа — фаза 4, винтажный
+            # слой; спека 2026-10-15 cbr-dip-bulletin §3.6, импортёр cbr_dip_bulletin): витрина
+            # v_cbr_dip_bulletin читается агентом и НЕПУСТА, каталог описывает все 8 рядов
+            # источника, а сырая cbr_dip_bulletin — источник витрины — агенту закрыта (как
+            # macro_series и cbr_bop_est: читать контур агент обязан только через витрину,
+            # правило 11 AGENTS.md).
+            #
+            # Здесь, в отличие от v_dcf_assumptions, значение count проверяется: строки
+            # публикует импортёр cbr/, поэтому пустая витрина означает ни разу не отработавший
+            # шаг cbr_dip_bulletin (набор выпусков импортируется циклом, каждый выпуск — своей
+            # строкой версии), а не отсутствие данных у источника. Существование витрины
+            # подтверждается ЗАПРОСОМ К НЕЙ, а не поиском имени в ответе list_tables: в том
+            # тексте лежат create_table_query с комментариями таблиц и колонок, и имя
+            # отсутствующей витрины попадало туда из COMMENT соседки (урок bold). Разобранный
+            # ответ run_query доказывает и существование, и право чтения; «нет витрины» и «нет
+            # прав» приходят ошибкой (UNKNOWN_TABLE / ACCESS_DENIED) и в result_rows не
+            # разбираются.
+            dip_view = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_cbr_dip_bulletin"}))
+            dip_view_rows = result_rows(dip_view)
+            dip_view_n = dip_view_rows[0].get("count()") if dip_view_rows else None
+            if dip_view_rows is None:
+                dip_view_detail = (f"витрина не читается: {dip_view[:200]} — на пустой БД её создаёт "
+                                   "прогон импортёра (make import STAT=cbr_dip_bulletin)")
+            elif (dip_view_n or 0) > 0:
+                dip_view_detail = f"строк: {dip_view_n}"
+            else:
+                dip_view_detail = ("строк: 0 — прогнать импортёр контура: make import "
+                                   "STAT=cbr_dip_bulletin (витрину пересоздаёт AfterImport прогона)")
+            failed += not expect("витрина v_cbr_dip_bulletin существует и непуста", (dip_view_n or 0) > 0, dip_view_detail)
+
+            # Каталог обязан описывать все 8 объявленных рядов — точным равенством, а не «> 0»
+            # (односторонний контракт §11.4: каждый разобранный ряд обязан иметь описание).
+            # 8 = 4 SAAR роста цен (все товары и услуги, продовольствие, непродовольствие,
+            # услуги) + 2 безработицы (SA и NSA) + 2 занятости (SA и NSA); имена рядов объявляет
+            # код (спека §3.2). Меньшее число значит ни разу не отработавший шаг cbr_dip_bulletin
+            # (числа агент прочитает, а что измеряет ряд, в каких единицах и как привязана дата
+            # точки — нет); большее — ряд, которого нет в объявленном наборе.
+            #
+            # Выборка по одному source, без origin: у контура один импортёр и одна страница
+            # выпусков, поэтому source уникален, а origin восьми записей различается только
+            # листом и подписью колонки — файл-то один. (У пары cbr_bop_est / cbr_bop_standard
+            # наоборот: два разных файла, и там origin обязателен — как и у cbr_int_rate_loans.)
+            dip_catalog = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'cbr_dip_bulletin'"}))
+            dip_catalog_rows = result_rows(dip_catalog)
+            dip_catalog_n = dip_catalog_rows[0].get("n") if dip_catalog_rows else None
+            if dip_catalog_rows is None:
+                dip_catalog_detail = f"ответ не распознан: {dip_catalog[:200]}"
+            elif dip_catalog_n == 8:
+                dip_catalog_detail = "рядов cbr_dip_bulletin: 8 (4 SAAR + 2 безработицы + 2 занятости)"
+            else:
+                dip_catalog_detail = (f"рядов cbr_dip_bulletin: {dip_catalog_n}, want 8 (4 SAAR + "
+                                      "2 безработицы + 2 занятости) — прогнать make import "
+                                      "STAT=cbr_dip_bulletin (каталог перепубликовывается прогоном)")
+            failed += not expect("каталог cbr_dip_bulletin полон", dip_catalog_n == 8, dip_catalog_detail)
+
+            # Винтажность — то, ради чего у витрины есть колонки release, release_id и
+            # publication_date (спека §3.6): агент читает точку как «значение, каким его
+            # опубликовал выпуск release от publication_date», а без этих колонок ревизии
+            # SA-рядов выглядят фактами. Одной непустоты витрины выше мало: count() > 0 пройдёт
+            # и на срезе из одного выпуска. Поэтому оба свойства проверяются разом: выпусков в
+            # витрине больше одного (uniqExact(release_id) > 1) и винтажные колонки заполнены.
+            # Пустота release — это '', пустота publication_date — 1970-01-01 (toDate(0)):
+            # настоящей датой публикации выпуска он быть не может, а ссылку без
+            # data-tooltip-content импортёр считает fail-fast (спека §3.4), поэтому пустое
+            # значение здесь — не разобранный винтаж, а не свойство источника.
+            dip_vintage = text(await session.call_tool("run_query", {"query":
+                "SELECT uniqExact(release_id) AS releases, "
+                "countIf(release = '') AS blank_release, "
+                "countIf(publication_date = toDate(0)) AS blank_publication "
+                "FROM v_cbr_dip_bulletin"}))
+            dip_vintage_rows = result_rows(dip_vintage)
+            dip_releases_n = dip_vintage_rows[0].get("releases") if dip_vintage_rows else None
+            dip_blank_release_n = dip_vintage_rows[0].get("blank_release") if dip_vintage_rows else None
+            dip_blank_publication_n = dip_vintage_rows[0].get("blank_publication") if dip_vintage_rows else None
+            dip_vintage_ok = ((dip_releases_n or 0) > 1 and dip_blank_release_n == 0
+                              and dip_blank_publication_n == 0)
+            if dip_vintage_rows is None:
+                dip_vintage_detail = f"витрина не читается: {dip_vintage[:200]}"
+            elif dip_vintage_ok:
+                dip_vintage_detail = (f"выпусков: {dip_releases_n}, пустых release: 0, "
+                                      "пустых publication_date: 0")
+            else:
+                dip_vintage_detail = (f"выпусков: {dip_releases_n} (want > 1), пустых release: "
+                                      f"{dip_blank_release_n}, пустых publication_date: "
+                                      f"{dip_blank_publication_n} (want 0) — прогнать make import "
+                                      "STAT=cbr_dip_bulletin (винтаж разбирается прогоном)")
+            failed += not expect("витрина v_cbr_dip_bulletin винтажна", dip_vintage_ok, dip_vintage_detail)
+
+            # Сырая cbr_dip_bulletin агенту не выдана — как macro_series и cbr_bop_est: витрина —
+            # единственное место, где агент читает точки контура (винтажные колонки
+            # release/release_id/publication_date и комментарии есть только у неё, а ключ сырой
+            # таблицы — (series, date, release_id)). Таблицу создаёт DDL-прогон импортёра,
+            # поэтому UNKNOWN_TABLE здесь — провал, а не успех: таблица обязана существовать и
+            # быть закрытой.
+            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM cbr_dip_bulletin"}))
+            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+            failed += not expect("сырая cbr_dip_bulletin закрыта", denied,
+                                 "отказ ClickHouse 497 на cbr_dip_bulletin (ожидаемо)" if denied else raw[:200])
+
     return failed
 
 
