@@ -33,9 +33,9 @@
   `statsmodels.tsa.stattools.diebold_mariano_test`), Mincer–Zarnowitz с HAC,
   Pesaran–Timmermann (через `statsmodels.stats.diagnostic`) и блочный
   бутстрап разницы RMSE;
-* **артефакты §8** — `key_rate_model_report.md` и
-  `key_rate_model_predictions.csv` в каталоге прогона (корень репозитория; в
-  git не коммитятся).
+* **артефакты §8** — `key_rate_model_report.md`,
+  `key_rate_model_predictions.csv` и `key_rate_model_forecast.json` в каталоге
+  прогона (корень репозитория; в git не коммитятся).
 
 Что добавляет этот срез (Task 4):
 
@@ -66,10 +66,22 @@
   неидентифицируемый дизайн, несошедшийся MLE, сингулярная информация) —
   `DegenerateWindowError`, и walk-forward пропускает фолд со счётчиком.
 
-Чего здесь ЕЩЁ НЕТ (следующий шаг плана): текущего прогноза на ближайшее
-заседание (Task 6). Отчёт и метрики считаются по списку «метод × окно»,
-поэтому строки методов появляются в них без правки отчёта; вероятностные
-метрики считаются только для методов, которые отдают распределение классов.
+**Текущий прогноз (Task 6).** Ближайшее заседание — первая дата строго позже
+даты прогона (`current_forecast`); признаки прогнозной строки снимаются as-of
+даты прогона по правилам §4 (`forecast_row`), а факты будущего заседания в неё
+кладёт плейсхолдер (`Decision` с неизвестными полями): методов они не касаются —
+методы читают только `rate_before` и `x`, и это проверяется подменой фактов на
+мусор. Методы §6 (`taylor`, `ordered_logit`) обучаются на ПОЛНОЙ выборке;
+отсутствие входа на дату среза или вырожденная выборка — метод ВЫПАДАЕТ из
+прогноза с пометкой в `note`, прогон не падает. Нет будущих заседаний — прогноз
+не делается, JSON не пишется, прогон не падает. Артефакт —
+`key_rate_model_forecast.json` (`FORECAST_NAME`), раздел «Текущий прогноз» —
+в отчёте. В `forecast_log` прогноз НЕ пишется: запись прогнозов (с правкой
+ошибки в б.п. и резолвером `cbr_rate`) — отдельный пункт фазы 4 (спека §1/§8).
+
+Что остаётся за пределами среза — спека §11: метод №1 (рыночные вероятности из
+KEYRATE) и ансамбль, байесовские priors и «inflated»-версия, ML-трек,
+point-in-time слой, запись в `forecast_log`, витрина, графики и консенсус-бенчмарк.
 
 **Скрипт ничего не пишет в ClickHouse** — только читает (прецедент
 `polyus_output_model.py`); транспорт (`ch_query`) импортируется из
@@ -80,7 +92,7 @@
 Запуск — только через `make` (переменные окружения подключает Makefile):
 
 * `make key-rate-model` — полный прогон: сводка выборки, walk-forward
-  бенчмарков по двум окнам, отчёт и CSV;
+  бенчмарков по двум окнам, текущий прогноз, отчёт, CSV и JSON прогноза;
 * `make key-rate-model ARGS="--rolling"` — то же, но консольная таблица
   метрик печатается по скользящему окну 40 (в отчёт и CSV оба окна идут
   всегда);
@@ -94,6 +106,7 @@
 
 import argparse
 import csv
+import json
 import math
 import random
 import sys
@@ -224,6 +237,7 @@ LOG_LOSS_EPS = 1e-15
 # Артефакты прогона в каталоге прогона (в git не коммитятся, см. .gitignore).
 REPORT_NAME = "key_rate_model_report.md"
 PREDICTIONS_NAME = "key_rate_model_predictions.csv"
+FORECAST_NAME = "key_rate_model_forecast.json"
 
 # Колонки CSV прогнозов. `probs` — вероятности классов в порядке (−1, 0, +1)
 # через «|»; пустая ячейка — метод распределения не даёт (бенчмарки B1–B3).
@@ -2142,9 +2156,10 @@ def render_report(
         "- **Метод №2 распределения не даёт** (точечный шаг): вероятностные "
         "метрики к строке `taylor` не применяются — они у вероятностных строк "
         "`climatology` и `ordered_logit` (спека §6/§7).",
-        "- **Текущий прогноз на ближайшее заседание** — Task 6 этого же плана; "
-        "этот прогон содержит бенчмарки B1–B3, метод №2, метод №3 и вероятностный "
-        "базлайн `climatology`.",
+        "- **В журнал (`forecast_log`) прогноз не пишется**: текущий прогноз — "
+        "локальный артефакт `key_rate_model_forecast.json`; запись прогнозов "
+        "(с правкой ошибки в б.п. и резолвером `cbr_rate`) — отдельный пункт "
+        "фазы 4 (спека §1/§8).",
         "- **Гиперпараметры не подбираются**: ни на полной выборке, ни на "
         "режимном блоке 2024–2026; обе схемы окна — проверка робастности, а "
         "не выбор лучшей (спека §7).",
@@ -2181,6 +2196,288 @@ def write_predictions(path: Path, predictions: list) -> None:
         for prediction in predictions
     ]
     _write_csv(path, PREDICTION_COLUMNS, rows)
+
+
+# --- Текущий прогноз на ближайшее заседание (спека §8) ------------------------
+#
+# Прогноз на ближайшее заседание — не фолд walk-forward: методы обучаются на
+# ПОЛНОЙ выборке, и это «выход первого среза» (спека §1). Фактов будущего
+# заседания не существует, поэтому строка прогноза собирается с плейсхолдером
+# решения (`forecast_row`), а входы снимаются as-of даты прогона (§4).
+
+# Оговорка прогноза (поле `note` JSON и раздел отчёта): артефакт локальный,
+# в журнал прогнозов он НЕ пишется — это отдельный пункт фазы 4 (спека §8).
+FORECAST_NOTE = (
+    "текущий прогноз v0 (as-of — приближение, спека §4): в журнал не пишем — "
+    "запись в forecast_log отдельным пунктом фазы 4"
+)
+
+# Методы текущего прогноза (спека §1: выход первого среза — методы №2 и №3):
+# №2 даёт точечный шаг, №3 — вероятности классов. Порядок ключей `methods` —
+# он же контракт артефакта, пинованный тестом.
+FORECAST_METHODS = (("taylor", fit_taylor), ("ordered_logit", fit_ordered_logit))
+
+# Ключи классов в `methods.ordered_logit.probs`: те же классы {−1, 0, +1}, что
+# в `_CLASS_ORDER`, но строкой и со знаком у положительного класса — как в
+# формате §8. Ключи — контракт артефакта (тест пинует состав и порядок) и
+# совпадают с разметкой вероятностей в разделе «Текущий прогноз» отчёта.
+FORECAST_CLASS_KEYS = ("-1", "0", "+1")
+
+# Входы прогнозной строки в порядке, в котором они называются в пометке о
+# недоступности (`forecast_inputs`).
+FORECAST_INPUTS = ("rate_before", "pi_saar", "gap")
+
+# Плейсхолдер фактов прогнозного заседания: известна только «ставка до», а
+# фактов (уровень после, шаг, класс) не существует — и выдумывать их нельзя.
+# Методы обязаны читать только `rate_before` и признаки `x`; инвариант
+# пинован тестом, который подменяет фактические поля мусором (rate_after,
+# step_bp, y3) и требует ТОГО ЖЕ прогноза.
+FORECAST_UNKNOWN_RATE_AFTER = float("nan")
+FORECAST_UNKNOWN_STEP_BP = 0
+FORECAST_UNKNOWN_Y3 = 0
+
+_FORECAST_HEADER = (
+    "| Метод | Прогноз |",
+    "|---|---|",
+)
+
+
+@dataclass(frozen=True)
+class CurrentForecast:
+    """Текущий прогноз на ближайшее заседание (спека §8).
+
+    `meeting_date` — ближайшее заседание строго позже даты прогона, `data_asof`
+    — дата среза данных (она же дата прогноза: в v0 прогноз считается на живых
+    данных в момент прогона, и раздельные поля оставлены под будущий PIT-слой).
+    `sample_size`/`sample_first`/`sample_last` — размер выборки обучения и срок
+    наблюдения (они же «версия набора данных v0» вместе с датой прогноза).
+    `methods` — тело методов для JSON (`forecast_payload`), `skipped` — методы,
+    не попавшие в прогноз, с причиной, `note` — оговорка артефакта
+    (`FORECAST_NOTE`) плюс причины пропусков.
+    """
+
+    meeting_date: date
+    data_asof: date
+    sample_size: int
+    sample_first: date
+    sample_last: date
+    methods: dict
+    skipped: tuple
+    note: str
+
+
+def forecast_inputs(today: date, key_rate: list, cpd: list, ibk: list) -> tuple:
+    """Входы прогноза as-of `today` в порядке `FORECAST_INPUTS`.
+
+    Ставка — последняя действующая на дату среза (лага нет, `_available_on_the_day`),
+    `pi_saar` и `gap` — последние точки, доступные по правилам §4
+    (`available_from_cpd`, `available_from_survey`). Недоступный вход — `None`:
+    ноль на его месте выглядел бы измеренным.
+    """
+    return (
+        asof(key_rate, _available_on_the_day, today),
+        asof(cpd, available_from_cpd, today),
+        asof(ibk, available_from_survey, today),
+    )
+
+
+def forecast_row(
+    meeting: date, today: date, key_rate: list, cpd: list, ibk: list
+) -> Optional[Row]:
+    """Строка прогноза на `meeting`: признаки as-of `today`, факты — плейсхолдер.
+
+    Фактов будущего заседания не существует (§3): `Decision` строки несёт только
+    `rate_before`, а `rate_after`/`step_bp`/`y3` — плейсхолдер
+    (`FORECAST_UNKNOWN_*`). Методы обязаны читать только `rate_before` и `x`;
+    это не соглашение в комментарии, а инвариант, пинованный тестом (подмена
+    фактической части мусором не меняет прогноз).
+
+    `None` — хотя бы один вход недоступен на дату среза (какой именно, называет
+    `forecast_inputs`/пометка `current_forecast`): строку тогда не собрать, и
+    методы в прогноз не попадают, а прогон не падает.
+
+    `pi_saar` приводится к годовому тем же `annualize_saar`, что и признаки
+    выборки: единицы прогноза и обучения обязаны совпадать.
+    """
+    rate_before, monthly, gap = forecast_inputs(today, key_rate, cpd, ibk)
+    if rate_before is None or monthly is None or gap is None:
+        return None
+    unknown = Decision(
+        meeting_date=meeting,
+        rate_before=rate_before,
+        rate_after=FORECAST_UNKNOWN_RATE_AFTER,
+        step_bp=FORECAST_UNKNOWN_STEP_BP,
+        y3=FORECAST_UNKNOWN_Y3,
+    )
+    return Row(unknown, annualize_saar(monthly), gap)
+
+
+def forecast_payload(forecast: Forecast) -> dict:
+    """Тело метода в JSON-прогнозе: шаг в б.п. или вероятности классов и E[step].
+
+    Точечный прогноз (`probs is None`, метод №2) даёт `{"step_bp"}`; метод №3 —
+    `{"probs": {"-1": …, "0": …, "+1": …}, "expected_step_bp": …}` — форму
+    артефакта из §8. `expected_step_bp` — то же `E[step]` в БАЗИСНЫХ пунктах,
+    что у `Forecast.step_bp` (метрики walk-forward и артефакт в одной шкале).
+    """
+    if forecast.probs is None:
+        return {"step_bp": forecast.step_bp}
+    return {
+        "probs": {
+            key: float(probability)
+            for key, probability in zip(FORECAST_CLASS_KEYS, forecast.probs)
+        },
+        "expected_step_bp": forecast.step_bp,
+    }
+
+
+def forecast_cell(payload: dict) -> str:
+    """Числа прогноза метода одной строкой (отчёт и консоль).
+
+    Метод №2 — шаг в б.п.; метод №3 — вероятности классов в процентах (ключи
+    те же, что в JSON-артефакте: отчёт и артефакт сверяются построчно) и
+    `E[step]` в б.п.
+    """
+    if "probs" in payload:
+        percents = ", ".join(
+            f"P({key}) = {_fmt(probability * 100.0, 2)}%"
+            for key, probability in payload["probs"].items()
+        )
+        return f"{percents}; E[step] = {_fmt(payload['expected_step_bp'])} б.п."
+    return f"шаг {_fmt(payload['step_bp'])} б.п."
+
+
+def current_forecast(
+    rows: list,
+    meetings: list,
+    key_rate: list,
+    cpd: list,
+    ibk: list,
+    today: date,
+) -> Optional[CurrentForecast]:
+    """Текущий прогноз на ближайшее заседание (спека §8, Task 6).
+
+    Ближайшее заседание — первая дата СТРОГО позже `today` среди `meetings`
+    (будущие включительно): `min`, а не индекс списка, — порядок `meetings` не
+    важен. Заседание ровно на дату прогноза не выбирается. Нет будущих
+    заседаний — `None`: JSON не пишется, прогон не падает (сообщение печатает
+    вызывающий); исключения здесь нет намеренно.
+
+    Признаки — as-of даты среза по правилам §4 (`forecast_inputs`), фактов
+    заседания нет (`forecast_row`), методы §6 обучаются на ПОЛНОЙ выборке
+    `rows` — это выход первого среза, а не фолд walk-forward. Предполагается,
+    что `rows` непуста: пустую выборку прогон останавливает раньше.
+
+    Метод не попадает в `methods` и называется в `skipped` (причина — и в
+    `note`), если входы недоступны на дату среза или выборка вырождена для
+    метода (`DegenerateWindowError`): спека §6 — «метод на этом шаге
+    пропускается с записью в отчёт», и прогноз — тот же шаг.
+    """
+    upcoming = [day for day in meetings if day > today]
+    if not upcoming:
+        return None
+    meeting = min(upcoming)
+    inputs = forecast_inputs(today, key_rate, cpd, ibk)
+    missing = [name for name, value in zip(FORECAST_INPUTS, inputs) if value is None]
+    methods = {}
+    skipped = []
+    if missing:
+        reason = (
+            f"на дату среза {today.isoformat()} недоступны входы: "
+            f"{', '.join(missing)}"
+        )
+        skipped = [(method, reason) for method, _ in FORECAST_METHODS]
+    else:
+        row = forecast_row(meeting, today, key_rate, cpd, ibk)
+        for method, fit_predict in FORECAST_METHODS:
+            try:
+                methods[method] = forecast_payload(fit_predict(rows, row))
+            except DegenerateWindowError as error:
+                skipped.append((method, str(error)))
+    note = FORECAST_NOTE
+    if skipped:
+        note += "; " + "; ".join(
+            f"{method}: {reason}" for method, reason in skipped
+        )
+    return CurrentForecast(
+        meeting_date=meeting,
+        data_asof=today,
+        sample_size=len(rows),
+        sample_first=rows[0].decision.meeting_date,
+        sample_last=rows[-1].decision.meeting_date,
+        methods=methods,
+        skipped=tuple(skipped),
+        note=note,
+    )
+
+
+def render_forecast(forecast: CurrentForecast) -> str:
+    """Markdown-блок раздела «Текущий прогноз» (артефакт §8, Task 6).
+
+    Состав — по требованию шага: заседание, дата среза данных, срок наблюдения
+    выборки («версия набора данных v0»), методы со числами (вероятности классов
+    в процентах, `E[step]`/шаг в базисных пунктах) и оговорка `note` — включая
+    «в журнал не пишем»; метод, не попавший в прогноз, печатается строкой
+    «не оценён» с причиной, а не исчезает.
+
+    Блок передаётся в `render_report(forecast=…)` готовым текстом — так отчёт не
+    знает о внутренней форме прогноза, как и о форме фолдов walk-forward.
+    """
+    sample_span = (
+        f"{forecast.sample_first.isoformat()} … {forecast.sample_last.isoformat()}"
+    )
+    lines = [
+        f"Ближайшее заседание — **{forecast.meeting_date.isoformat()}**; данные "
+        f"среза — на **{forecast.data_asof.isoformat()}** (признаки as-of — "
+        f"приближение, спека §4). Выборка обучения: {forecast.sample_size} "
+        f"заседаний ({sample_span}).",
+        "",
+    ]
+    reasons = dict(forecast.skipped)
+    lines += _table(
+        _FORECAST_HEADER,
+        [
+            f"| {method_label(method)} | "
+            + (
+                forecast_cell(forecast.methods[method])
+                if method in forecast.methods
+                else f"не оценён: {reasons.get(method, 'причина не указана')}"
+            )
+            + " |"
+            for method, _ in FORECAST_METHODS
+        ],
+    )
+    lines += [
+        "",
+        f"Оговорка: {forecast.note}.",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def forecast_json(forecast: CurrentForecast) -> str:
+    """Текст JSON-артефакта `key_rate_model_forecast.json` (спека §8).
+
+    Формат: `forecast_date`, `meeting_date`, `data_asof`, `methods`,
+    `sample_size`, `note`. `forecast_date` — дата прогноза, она же в v0 дата
+    среза данных `data_asof` (прогноз считается на живых данных в дату прогона);
+    поля разделены под будущий PIT-слой. Других полей нет: ни отметок времени,
+    ни путей — JSON детерминирован при (данные, дата прогона), и это пиновано
+    тестом двух прогонов.
+
+    `methods` — методы §6 (`FORECAST_METHODS`): у каждого либо тело
+    (`forecast_payload`), либо его нет вовсе — пропуск с причиной виден в
+    `note`. `sample_size` вместе с `forecast_date` образует «версию набора
+    данных» v0 (спека §8).
+    """
+    payload = {
+        "forecast_date": forecast.data_asof.isoformat(),
+        "meeting_date": forecast.meeting_date.isoformat(),
+        "data_asof": forecast.data_asof.isoformat(),
+        "methods": forecast.methods,
+        "sample_size": forecast.sample_size,
+        "note": forecast.note,
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
 
 
 # --- Экспорт фикстур и прогон по умолчанию -------------------------------------
@@ -2281,14 +2578,16 @@ def _dates_suffix(days: list) -> str:
 
 
 def run_summary(rolling: bool, today: Optional[date] = None, out_dir: Path = ROOT) -> int:
-    """Полный прогон: выборка, walk-forward методов, отчёт и CSV (§7/§8).
+    """Полный прогон: выборка, walk-forward, текущий прогноз, артефакты (§7/§8).
 
     `today` — дата, относительно которой календарь делится на прошедшие и
-    предстоящие заседания (по умолчанию системная). Прошедшее заседание —
+    предстоящие заседания (по умолчанию системная), и дата среза текущего
+    прогноза (признаки — as-of `today`, спека §4). Прошедшее заседание —
     то, решение по которому ЦБ уже объявил; наблюдаемо ли уже ЕГО ИСХОД
     (окно `min(d+7, next−1)`), решает `build_decisions` и называет в
     «вне выборки». Предстоящие в выборку решений не подаются вовсе: у них нет
-    ни решения, ни исхода, и печатаются они отдельной строкой.
+    ни решения, ни исхода, и печатаются они отдельной строкой; ближайшее из них
+    — заседание текущего прогноза.
 
     `rolling` переключает ОКНО консольной таблицы метрик (`--rolling` —
     скользящее 40, по умолчанию — расширяющееся); в отчёт и CSV всегда идут
@@ -2300,6 +2599,11 @@ def run_summary(rolling: bool, today: Optional[date] = None, out_dir: Path = ROO
     Бенчмарки B1–B3, метод №2, метод №3 и вероятностный базлайн `climatology`
     идут в прогон одной строкой каждый (список `METHODS`): отчёт, DM/MZ/PT, CSV
     и режимный блок считаются по «метод × окно» и имён методов не знают.
+
+    Артефакты: отчёт (с разделом «Текущий прогноз», если прогноз сделан) и CSV
+    фолдов; `key_rate_model_forecast.json` пишется, только если есть будущее
+    заседание — иначе прогноз не делается, JSON не пишется, а консоль говорит
+    об этом прямо (исключения нет: отсутствие будущих заседаний — не ошибка).
     """
     today = today or date.today()
     meetings = load_meetings()
@@ -2310,8 +2614,13 @@ def run_summary(rolling: bool, today: Optional[date] = None, out_dir: Path = ROO
     past = [day for day in meetings if day <= today]
 
     deltas = load_mp_summary_deltas()
-    decisions, excluded, missing_rate = build_decisions(past, load_key_rate(), deltas)
-    rows, missing_features = build_rows(decisions, load_cpd_core(), load_ibk())
+    # Ряды читаются по одному разу: ключевая ставка нужна и выборке, и
+    # прогнозной строке; ИПЦ и ИБК — признакам выборки и признакам прогноза.
+    key_rate = load_key_rate()
+    decisions, excluded, missing_rate = build_decisions(past, key_rate, deltas)
+    cpd = load_cpd_core()
+    ibk = load_ibk()
+    rows, missing_features = build_rows(decisions, cpd, ibk)
     if not rows:
         print("выборка пуста: ни одного решения с наблюдаемым исходом и признаками")
         return 1
@@ -2321,21 +2630,25 @@ def run_summary(rolling: bool, today: Optional[date] = None, out_dir: Path = ROO
         1 for decision in decisions if delta_map.get(decision.meeting_date) is not None
     )
 
+    forecast = current_forecast(rows, meetings, key_rate, cpd, ibk, today)
     predictions, fold_skips = method_predictions(rows)
     report_path = out_dir / REPORT_NAME
     predictions_path = out_dir / PREDICTIONS_NAME
+    forecast_path = out_dir / FORECAST_NAME
     report_path.write_text(
         render_report(
             rows,
             Skipped(tuple(excluded), tuple(missing_rate), tuple(missing_features)),
             predictions,
-            None,
+            render_forecast(forecast) if forecast is not None else None,
             today=today,
             fold_skips=fold_skips,
         ),
         encoding="utf-8",
     )
     write_predictions(predictions_path, predictions)
+    if forecast is not None:
+        forecast_path.write_text(forecast_json(forecast), encoding="utf-8")
 
     print(f"Модель ключевой ставки v0 — выборка решений (дата прогона {today.isoformat()})")
     print(f"  канонических заседаний:                      {len(meetings)}"
@@ -2373,14 +2686,31 @@ def run_summary(rolling: bool, today: Optional[date] = None, out_dir: Path = ROO
         printed = True
     if not printed:
         print("    (фолдов нет — выборка короче обучения)")
+
+    if forecast is None:
+        print("  прогноз на ближайшее заседание:              не сделан — заседаний "
+              "позже даты прогона нет")
+    else:
+        print(f"  прогноз на ближайшее заседание:              {forecast.meeting_date}"
+              f" (данные среза {forecast.data_asof})")
+        reasons = dict(forecast.skipped)
+        for method, _ in FORECAST_METHODS:
+            if method in forecast.methods:
+                print(f"    {method_label(method):<16} {forecast_cell(forecast.methods[method])}")
+            else:
+                print(f"    {method_label(method):<16} не оценён: "
+                      f"{reasons.get(method, 'причина не указана')}")
     print(f"  отчёт:                                        {report_path}")
     print(f"  прогнозы:                                     {predictions_path}")
+    print(f"  прогноз (JSON):                               "
+          + (str(forecast_path) if forecast is not None else "не пишется"))
     return 0
 
 
 def main(argv: Optional[list] = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Модель ключевой ставки: выборка решений, as-of, walk-forward, отчёт."
+        description="Модель ключевой ставки: выборка решений, as-of, walk-forward, "
+                    "текущий прогноз, отчёт."
     )
     parser.add_argument(
         "--export-fixtures",

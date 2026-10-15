@@ -29,7 +29,9 @@ W = 2016-12-23) наблюдаемо целиком, а заседания 2017+
 
 import contextlib
 import csv
+import dataclasses
 import io
+import json
 import math
 import sys
 import tempfile
@@ -2013,8 +2015,235 @@ class TestReport(unittest.TestCase):
             self.assertEqual(first[2], "expanding")
 
 
+class TestCurrentForecast(unittest.TestCase):
+    """Текущий прогноз на ближайшее заседание: выбор заседания, as-of, JSON (§8).
+
+    Обучение идёт на полной выборке (а не на фолде walk-forward), поэтому
+    синтетика здесь — `ordinal_rows(60)`: три класса решения и регрессоры
+    полного ранга, на которых оцениваются оба метода §6.
+    """
+
+    ROWS = ordinal_rows(60)
+    FORECAST_METHODS = tuple(method for method, _ in km.FORECAST_METHODS)
+
+    def series(self, today=date(2016, 3, 15)):
+        """Малые ряды входов с границами доступности ровно вокруг `today`.
+
+        Точки, доступные ПОЗЖЕ даты среза, — ловушки на утечку as-of: они
+        заведомо исказили бы признаки, если бы `forecast_row` брал последнюю
+        точку ряда, а не последнюю доступную.
+        """
+        key_rate = [
+            (date(2016, 1, 1), 11.0),
+            (today, 10.5),  # точка ровно на дату среза — участвует
+            (date(2016, 4, 1), 99.0),  # позже даты среза — не участвует
+            (date(2016, 6, 1), 9.0),  # позже даты среза — не участвует
+        ]
+        cpd = [
+            (date(2016, 1, 31), 0.5),  # доступна 2016-02-29
+            (date(2016, 2, 29), 0.3),  # доступна 2016-03-31 — позже среза
+        ]
+        ibk = [
+            (date(2016, 1, 1), 1.0),  # доступна 2016-02-29
+            (date(2016, 2, 1), 2.0),  # доступна 2016-03-31 — позже среза
+        ]
+        return key_rate, cpd, ibk
+
+    def build(self, today, meetings, key_rate=None, cpd=None, ibk=None):
+        """`current_forecast` на рядах `series(today)` (можно подменить входы)."""
+        default_key_rate, default_cpd, default_ibk = self.series(today)
+        return km.current_forecast(
+            self.ROWS,
+            meetings,
+            default_key_rate if key_rate is None else key_rate,
+            default_cpd if cpd is None else cpd,
+            default_ibk if ibk is None else ibk,
+            today,
+        )
+
+    def test_takes_the_first_meeting_strictly_after_the_run_date(self):
+        today = date(2016, 3, 15)
+        forecast = self.build(
+            today,
+            # Порядок списка не важен: ближайшее заседание — min из будущих.
+            [date(2016, 6, 10), date(2016, 1, 1), today, date(2016, 3, 20)],
+        )
+        # Заседание РОВНО на дату среза не выбирается: строго позже.
+        self.assertEqual(forecast.meeting_date, date(2016, 3, 20))
+        self.assertEqual(forecast.data_asof, today)
+
+    def test_the_acceptance_run_targets_the_october_meeting(self):
+        # Спека §1: на дату прогона 2026-10-16 прогноз идёт на 23.10.2026.
+        # Календарь — фикстура (полный экспорт events_calendar), ряды входов —
+        # `series` (as-of на 2026-10-16 берёт последние доступные точки).
+        forecast = self.build(date(2026, 10, 16), fixture_meetings())
+        self.assertEqual(forecast.meeting_date, date(2026, 10, 23))
+
+    def test_without_future_meetings_there_is_no_forecast(self):
+        today = date(2016, 3, 15)
+        forecast = self.build(
+            today, [date(2014, 2, 14), date(2016, 3, 1), today]
+        )
+        self.assertIsNone(forecast)
+
+    def test_forecast_row_takes_inputs_as_of_the_run_date(self):
+        today = date(2016, 3, 15)
+        key_rate, cpd, ibk = self.series(today)
+        row = km.forecast_row(date(2016, 3, 25), today, key_rate, cpd, ibk)
+        self.assertEqual(row.decision.meeting_date, date(2016, 3, 25))
+        # Ставка — точка ровно на дату среза; точки позже (99.0) не читаются.
+        self.assertEqual(row.decision.rate_before, 10.5)
+        # Базовый ИПЦ: точка 2016-02-29 доступна только 2016-03-31 — берётся
+        # январьская; приведение к годовому — `annualize_saar`.
+        self.assertEqual(row.pi_saar, km.annualize_saar(0.5))
+        self.assertEqual(row.gap, 1.0)
+        # Те же правила ещё раз, но с более близкими точками, которые НЕ
+        # доступны на дату среза: строка обязана остаться той же.
+        leaked = km.forecast_row(
+            date(2016, 3, 25),
+            today,
+            key_rate + [(date(2016, 3, 20), 8.0)],
+            cpd + [(date(2016, 3, 31), 9.9)],
+            ibk + [(date(2016, 3, 1), 9.9)],
+        )
+        self.assertEqual(leaked, row)
+
+    def test_forecast_row_marks_the_meeting_facts_as_unknown(self):
+        today = date(2016, 3, 15)
+        row = km.forecast_row(date(2016, 3, 25), today, *self.series(today))
+        # Фактов будущего заседания не существует: в `Decision` — плейсхолдер,
+        # который методы обязаны не читать (следующий тест).
+        self.assertTrue(math.isnan(row.decision.rate_after))
+        self.assertEqual(row.decision.step_bp, km.FORECAST_UNKNOWN_STEP_BP)
+        self.assertEqual(row.decision.y3, km.FORECAST_UNKNOWN_Y3)
+
+    def test_methods_never_read_the_unknown_facts_of_the_forecast_row(self):
+        today = date(2016, 3, 15)
+        row = km.forecast_row(date(2016, 3, 25), today, *self.series(today))
+        garbage = dataclasses.replace(
+            row,
+            decision=dataclasses.replace(
+                row.decision, rate_after=123.45, step_bp=999, y3=-1
+            ),
+        )
+        for method, fit_predict in km.FORECAST_METHODS:
+            with self.subTest(method=method):
+                self.assertEqual(
+                    fit_predict(self.ROWS, row), fit_predict(self.ROWS, garbage)
+                )
+
+    def test_forecast_json_matches_the_artifact_format(self):
+        today = date(2016, 3, 15)
+        key_rate, cpd, ibk = self.series(today)
+        forecast = self.build(today, [date(2016, 3, 20), date(2016, 6, 10)])
+        payload = json.loads(km.forecast_json(forecast))
+        self.assertEqual(
+            sorted(payload),
+            ["data_asof", "forecast_date", "meeting_date", "methods", "note", "sample_size"],
+        )
+        self.assertEqual(payload["forecast_date"], today.isoformat())
+        self.assertEqual(payload["data_asof"], today.isoformat())
+        self.assertEqual(payload["meeting_date"], "2016-03-20")
+        self.assertEqual(payload["sample_size"], len(self.ROWS))
+        # Методы §6 в фиксированном порядке: №2 (точечный шаг) и №3
+        # (вероятности классов и E[step]).
+        self.assertEqual(list(payload["methods"]), list(self.FORECAST_METHODS))
+        self.assertIn("forecast_log", payload["note"])
+        row = km.forecast_row(date(2016, 3, 20), today, key_rate, cpd, ibk)
+        taylor = km.fit_taylor(self.ROWS, row)
+        self.assertEqual(payload["methods"]["taylor"], {"step_bp": taylor.step_bp})
+        ordered = km.fit_ordered_logit(self.ROWS, row)
+        methods = payload["methods"]["ordered_logit"]
+        self.assertEqual(sorted(methods), ["expected_step_bp", "probs"])
+        # Ключи классов — строки «-1»/«0»/«+1»: те же классы, что в отчёте и
+        # CSV, взятые в порядке `_CLASS_ORDER`; вероятности суммируются в 1.
+        self.assertEqual(list(methods["probs"]), ["-1", "0", "+1"])
+        self.assertEqual(list(methods["probs"].values()), list(ordered.probs))
+        self.assertAlmostEqual(sum(methods["probs"].values()), 1.0)
+        self.assertEqual(methods["expected_step_bp"], ordered.step_bp)
+
+    def test_forecast_json_is_deterministic(self):
+        today = date(2016, 3, 15)
+        first = km.forecast_json(self.build(today, [date(2016, 3, 20)]))
+        second = km.forecast_json(self.build(today, [date(2016, 3, 20)]))
+        # В JSON нет ни одного поля, зависящего от часов: только дата прогноза.
+        self.assertEqual(first, second)
+
+    def test_unavailable_input_keeps_the_methods_out_without_failing(self):
+        # Признак недоступен на дату среза: методы не оцениваются, прогноз
+        # остаётся артефактом с пометкой, и прогон не падает (JSON пишется).
+        today = date(2016, 3, 15)
+        forecast = self.build(today, [date(2016, 3, 20)], key_rate=[])
+        self.assertEqual(forecast.methods, {})
+        self.assertEqual(
+            [method for method, _ in forecast.skipped], list(self.FORECAST_METHODS)
+        )
+        self.assertIn("rate_before", forecast.note)
+        self.assertIn("недоступны входы", forecast.note)
+        payload = json.loads(km.forecast_json(forecast))
+        self.assertEqual(payload["methods"], {})
+        self.assertIn("forecast_log", payload["note"])
+
+    def test_missing_inputs_are_named_one_by_one(self):
+        today = date(2016, 3, 15)
+        for name, overrides in (
+            ("rate_before", {"key_rate": []}),
+            ("pi_saar", {"cpd": []}),
+            ("gap", {"ibk": []}),
+        ):
+            with self.subTest(input=name):
+                forecast = self.build(today, [date(2016, 3, 20)], **overrides)
+                self.assertIn(name, forecast.note)
+
+    def test_degenerate_training_sample_keeps_the_methods_out(self):
+        # Полная выборка вырождена для обоих методов (постоянные признаки,
+        # один класс): причина — в `skipped`/`note`, а не исключение.
+        today = date(2016, 3, 15)
+        forecast = km.current_forecast(
+            synthetic_rows(30), [date(2016, 3, 20)], *self.series(today), today
+        )
+        self.assertEqual(forecast.methods, {})
+        self.assertEqual(
+            [method for method, _ in forecast.skipped], list(self.FORECAST_METHODS)
+        )
+        for method, reason in forecast.skipped:
+            with self.subTest(method=method):
+                self.assertTrue(reason)
+
+    def test_forecast_block_lists_the_numbers_and_the_log_caveat(self):
+        today = date(2016, 3, 15)
+        forecast = self.build(today, [date(2016, 3, 20)])
+        block = km.render_forecast(forecast)
+        for text in (
+            "2016-03-20",  # заседание
+            "2016-03-15",  # дата среза данных
+            str(len(self.ROWS)),  # размер выборки
+            # срок наблюдения
+            f"{self.ROWS[0].decision.meeting_date} … {self.ROWS[-1].decision.meeting_date}",
+            "P(-1)", "P(0)", "P(+1)",  # вероятности классов…
+            "%",  # …в процентах
+            "E[step]", "б.п.",  # E[step]/шаг в базисных пунктах
+            "в журнал не пишем",  # оговорка про forecast_log
+            "отдельным пунктом фазы 4",
+        ):
+            self.assertIn(text, block)
+        # Раздел отчёта собирается из этого блока тем же путём, что и прогон.
+        report = km.render_report(
+            self.ROWS, km.Skipped((), (), ()), [], block, today=today
+        )
+        self.assertIn("## Текущий прогноз", report)
+        self.assertIn("2016-03-20", report)
+
+    def test_forecast_block_names_a_skipped_method(self):
+        today = date(2016, 3, 15)
+        forecast = self.build(today, [date(2016, 3, 20)], cpd=[])
+        block = km.render_forecast(forecast)
+        self.assertIn("не оценён", block)
+        self.assertIn("pi_saar", block)
+
+
 class TestRunSummaryArtifacts(unittest.TestCase):
-    """Живой контур прогона: отчёт и CSV пишутся, окна считаются (§8)."""
+    """Живой контур прогона: отчёт, CSV и прогноз пишутся, окна считаются (§8)."""
 
     def run_into(self, directory, today, rolling=False):
         with unittest.mock.patch.object(km, "ch_query", side_effect=ch_query_from_fixtures):
@@ -2050,6 +2279,44 @@ class TestRunSummaryArtifacts(unittest.TestCase):
             _, rolling = self.run_into(tmp, date(2017, 1, 1), rolling=True)
         self.assertIn("метрики окна «expanding»", expanding)
         self.assertIn("метрики окна «rolling40»", rolling)
+
+    def test_writes_the_forecast_artifact_and_section(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code, text = self.run_into(tmp, date(2017, 1, 1))
+            self.assertEqual(code, 0)
+            forecast_path = Path(tmp) / km.FORECAST_NAME
+            self.assertTrue(forecast_path.is_file())
+            payload = json.loads(forecast_path.read_text(encoding="utf-8"))
+            # Ближайшее заседание — первая дата календаря строго позже среза.
+            expected = min(day for day in fixture_meetings() if day > date(2017, 1, 1))
+            self.assertEqual(payload["meeting_date"], expected.isoformat())
+            self.assertEqual(payload["data_asof"], "2017-01-01")
+            self.assertEqual(payload["sample_size"], 26)
+            self.assertEqual(sorted(payload["methods"]), ["ordered_logit", "taylor"])
+            report = (Path(tmp) / km.REPORT_NAME).read_text(encoding="utf-8")
+            self.assertIn("## Текущий прогноз", report)
+            self.assertIn(expected.isoformat(), report)
+            self.assertIn("прогноз на ближайшее заседание", text)
+
+    def test_reports_without_writing_a_forecast_when_no_meeting_is_ahead(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code, text = self.run_into(tmp, date(2028, 1, 1))
+            self.assertEqual(code, 0)
+            self.assertFalse((Path(tmp) / km.FORECAST_NAME).exists())
+            self.assertIn("не сделан", text)
+            self.assertIn("не пишется", text)
+            report = (Path(tmp) / km.REPORT_NAME).read_text(encoding="utf-8")
+            self.assertNotIn("## Текущий прогноз", report)
+
+    def test_forecast_json_is_identical_across_runs(self):
+        # Детерминизм артефакта: два прогона на одной дате и данных дают один
+        # и тот же JSON — отметок времени сверх даты в нём нет.
+        with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
+            self.run_into(first, date(2017, 1, 1))
+            self.run_into(second, date(2017, 1, 1))
+            one = (Path(first) / km.FORECAST_NAME).read_bytes()
+            two = (Path(second) / km.FORECAST_NAME).read_bytes()
+        self.assertEqual(one, two)
 
 
 if __name__ == "__main__":
