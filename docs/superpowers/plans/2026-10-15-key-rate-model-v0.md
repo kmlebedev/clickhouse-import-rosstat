@@ -150,12 +150,13 @@ git commit -m "key rate model: sample, as-of layer and features"
 **Interfaces:**
 - Consumes: `Row`, `Decision`, `SEED` (Task 2).
 - Produces (используют Tasks 4–6):
-  - `@dataclass Forecast(step_bp: float, probs: tuple[float,float,float]|None)`;
-  - `FitPredict = Callable[[list[Row], Row], Forecast]`; `predict_hold`, `predict_repeat`, `fit_ar1(train, row) -> Forecast`;
+  - `@dataclass Forecast(step_bp: float, probs: tuple[float,float,float]|None)` — `step_bp` в БАЗИСНЫХ пунктах, как и факт (`Decision.step_bp`): у бенчмарков и методов одна шкала;
+  - `FitPredict = Callable[[list[Row], Row], Forecast]`; `predict_hold`, `predict_repeat`, `fit_ar1(train, row) -> Forecast` (шаг = `(pred_level − rate_before) × 100`, б.п.);
+  - `DegenerateWindowError(ValueError)` — обучающее окно непригодно для оценки (мало точек, один класс у ordered-модели и т.п.); методы №2–3 поднимают его на вырожденном окне;
   - `@dataclass Prediction(meeting_date, actual_step_bp, actual_y3, method, window, step_bp, probs)`;
-  - `walk_forward(rows, method, fit_predict, min_train=24, rolling=None) -> list[Prediction]`;
+  - `walk_forward(rows, method, fit_predict, min_train=24, rolling=None) -> tuple[list[Prediction], int]` — второй элемент: число пропущенных фолдов (`DegenerateWindowError` пропускается со счётчиком; прочие исключения пробрасываются);
   - метрики: `rmse_bp`, `mae_bp`, `hit_rate`, `confusion3`, `qwk`, `brier_multi`, `log_loss_multi`, `reliability_bins(probs, y_true, n_bins=5)`, `diebold_mariano(err_a, err_b, h=1)`, `mincer_zarnowitz(actual, predicted)`, `pesaran_timmermann(pred_sign, actual_sign)`, `block_bootstrap_rmse_diff(err_a, err_b, block=4, n=2000, seed=SEED)`;
-  - `render_report(sample, skipped, predictions, forecast) -> str`.
+  - `render_report(sample, skipped, predictions, forecast, fold_skips=None) -> str` — `fold_skips` («(метод, окно)» → пропущено) печатается сводкой «фолдов/пропущено» в разделе walk-forward.
 
 - [ ] **Step 1: Тесты метрик и walk-forward (red)**
 
@@ -189,7 +190,7 @@ git commit -m "key rate model: walk-forward harness, benchmarks and metrics"
 
 - [ ] **Step 1: Тесты (red)**
 
-Синтетические данные по формуле `i_t = c + ρ·i_{t−1} + a·π + b·gap` с известными коэффициентами → OLS на 40 точках восстанавливает их с точностью 1e-6 (свободных шумов нет); прогноз = `pred_level − rate_before`; HAC-конфигурация пинована (`maxlags=4`, `use_correction=True`) — тест подменяет ковариацию и проверяет вызов; вырожденное окно (2 точки) → исключение с понятным текстом (walk-forward его пропускает со счётчиком).
+Синтетические данные по формуле `i_t = c + ρ·i_{t−1} + a·π + b·gap` с известными коэффициентами → OLS на 40 точках восстанавливает их с точностью 1e-6 (свободных шумов нет); прогноз шага = `(pred_level − rate_before) × 100` (БАЗИСНЫЕ пункты, как у всех прогнозов и фактов harness'а); HAC-конфигурация пинована (`maxlags=4`, `use_correction=True`) — тест подменяет ковариацию и проверяет вызов; вырожденное окно (2 точки) → `DegenerateWindowError` с понятным текстом (walk-forward его пропускает со счётчиком).
 
 - [ ] **Step 2: Реализация, зелёные тесты, прогон**
 
@@ -216,7 +217,7 @@ git commit -m "key rate model: inertial Taylor rule (method 2)"
 
 - [ ] **Step 1: Тесты (red)**
 
-Синтетика с монотонной связью `gap` → класс (например, gap > порога ⇒ hike) → вероятности упорядочены по классам (P(hike) растёт по gap); вероятности суммируются к 1 (±1e-9); `E[step] = Σ P(c)·μ_c` сверяется руками; вырожденное окно (один класс) → пропуск со счётчиком, без падения; Brier/log loss на ручном примере.
+Синтетика с монотонной связью `gap` → класс (например, gap > порога ⇒ hike) → вероятности упорядочены по классам (P(hike) растёт по gap); вероятности суммируются к 1 (±1e-9); `E[step] = Σ P(c)·μ_c` сверяется руками; вырожденное окно (один класс) → `DegenerateWindowError`: walk-forward пропускает фолд со счётчиком, без падения; Brier/log loss на ручном примере.
 
 - [ ] **Step 2: Реализация, зелёные тесты, прогон**
 

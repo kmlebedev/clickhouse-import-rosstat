@@ -654,7 +654,8 @@ def ar1_rows(count, intercept=10.0, phi=0.5):
     """Строки с ТОЧНОЙ связью `rate_after = intercept + phi·rate_before`.
 
     OLS на такой синтетике обязан восстановить коэффициенты, и прогноз B3
-    `pred_level − rate_before` считается руками.
+    `(pred_level − rate_before) × 100` (б.п., как и остальные прогнозы и факты
+    harness'а) считается руками.
     """
     rows = []
     for index in range(count):
@@ -672,12 +673,19 @@ def ar1_rows(count, intercept=10.0, phi=0.5):
     return rows
 
 
+def folds(rows, method, fit_predict, **kwargs):
+    """Фолды одного метода — контракт `walk_forward` без счётчика пропусков.
+
+    Счётчик проверяется отдельными тестами (`TestWalkForward`); остальным
+    тестам нужны только фолды, и здесь они не отвлекаются на распаковку.
+    """
+    predictions, _ = km.walk_forward(rows, method, fit_predict, **kwargs)
+    return predictions
+
+
 def benchmark_predictions(rows):
     """Бенчмарки B1–B3 по двум окнам — ровно так, как их строит прогон."""
-    predictions = []
-    for window in (None, km.ROLLING_WINDOW):
-        for method, fit_predict in km.BENCHMARKS:
-            predictions.extend(km.walk_forward(rows, method, fit_predict, rolling=window))
+    predictions, _ = km.benchmark_predictions(rows)
     return predictions
 
 
@@ -696,7 +704,7 @@ class TestWalkForward(unittest.TestCase):
     def test_expanding_window_trains_only_on_the_past(self):
         rows = synthetic_rows(60)
         seen = []
-        predictions = km.walk_forward(rows, "probe", self.probe(seen), min_train=24)
+        predictions = folds(rows, "probe", self.probe(seen), min_train=24)
         # Длины строго растут: каждый фолд видит ВСЁ прошлое и только его.
         self.assertEqual(seen, list(range(24, 60)))
         # Первый прогноз — 25-е заседание (24 в обучении), последнее — 60-е.
@@ -715,9 +723,7 @@ class TestWalkForward(unittest.TestCase):
     def test_rolling_window_enters_the_run_full(self):
         rows = synthetic_rows(60)
         seen = []
-        predictions = km.walk_forward(
-            rows, "probe", self.probe(seen), min_train=24, rolling=40
-        )
+        predictions = folds(rows, "probe", self.probe(seen), min_train=24, rolling=40)
         # Окно скользящее 40 входит ПОЛНЫМ: первый фолд — 41-е заседание,
         # то есть 60 − 40 = 20 фолдов (иначе «окно 40» начиналось бы с 24).
         self.assertEqual(seen, [40] * 20)
@@ -726,20 +732,21 @@ class TestWalkForward(unittest.TestCase):
         self.assertEqual({prediction.window for prediction in predictions}, {"rolling40"})
 
     def test_sample_shorter_than_min_train_gives_no_folds(self):
-        # Выборка короче обучения — пустой список, а не исключение: отчёт
-        # этого шага (например, на срезе фикстур) обязан рендериться.
-        self.assertEqual(km.walk_forward(synthetic_rows(20), "hold", km.predict_hold), [])
+        # Выборка короче обучения — пустой список и нулевой счётчик пропусков,
+        # а не исключение: отчёт этого шага (например, на срезе фикстур)
+        # обязан рендериться.
+        self.assertEqual(km.walk_forward(synthetic_rows(20), "hold", km.predict_hold), ([], 0))
 
     def test_probs_and_step_are_passed_through(self):
         def fit_predict(train, row):
             return km.Forecast(1.5, (0.1, 0.8, 0.1))
 
-        predictions = km.walk_forward(synthetic_rows(26), "probe", fit_predict, min_train=24)
+        predictions = folds(synthetic_rows(26), "probe", fit_predict, min_train=24)
         self.assertEqual(predictions[0].step_bp, 1.5)
         self.assertEqual(predictions[0].probs, (0.1, 0.8, 0.1))
 
     def test_hold_predicts_zero_without_probs(self):
-        predictions = km.walk_forward(
+        predictions = folds(
             synthetic_rows(30, steps=(50,)), "hold", km.predict_hold, min_train=24
         )
         self.assertEqual(len(predictions), 6)
@@ -749,7 +756,7 @@ class TestWalkForward(unittest.TestCase):
 
     def test_repeat_repeats_the_previous_decision(self):
         rows = synthetic_rows(60, steps=(0, 50, -25))
-        predictions = km.walk_forward(rows, "repeat", km.predict_repeat, min_train=24)
+        predictions = folds(rows, "repeat", km.predict_repeat, min_train=24)
         self.assertEqual(len(predictions), 36)
         for prediction, index in zip(predictions, range(24, 60)):
             self.assertEqual(prediction.step_bp, float(rows[index - 1].decision.step_bp))
@@ -759,14 +766,57 @@ class TestWalkForward(unittest.TestCase):
             km.predict_repeat([], synthetic_rows(1)[0])
         self.assertIn("предыдущего решения", str(caught.exception))
 
-    def test_ar1_recovers_the_synthetic_level_relation(self):
+    def test_degenerate_window_is_skipped_and_counted(self):
+        # Вырожденное обучающее окно (в Tasks 4–5 — один класс у ordered-модели,
+        # здесь — фолды с 30 точками в обучении) пропускается, а не роняет
+        # прогон: пропуск — свойство окна, а не ошибка данных.
+        rows = synthetic_rows(60)
+
+        def fit_predict(train, row):
+            if len(train) == 30 or len(train) == 31:
+                raise km.DegenerateWindowError("вырожденное окно (тест)")
+            return km.Forecast(float(len(train)), None)
+
+        predictions, skipped = km.walk_forward(rows, "probe", fit_predict, min_train=24)
+        self.assertEqual(skipped, 2)
+        self.assertEqual(len(predictions), 34)
+        # Пропущены ИМЕННО вырожденные фолды (их прогнозы = длина окна).
+        realized = {prediction.step_bp for prediction in predictions}
+        self.assertNotIn(30.0, realized)
+        self.assertNotIn(31.0, realized)
+        dates = [prediction.meeting_date for prediction in predictions]
+        self.assertEqual(dates, sorted(dates))
+
+    def test_other_exceptions_are_not_swallowed(self):
+        # Пропускается ИМЕННО DegenerateWindowError: любая другая ошибка метода
+        # (баг в коде, порча данных) обязана остановить прогон.
+        def fit_predict(train, row):
+            raise ValueError("это не вырожденное окно")
+
+        with self.assertRaises(ValueError) as caught:
+            km.walk_forward(synthetic_rows(30), "probe", fit_predict, min_train=24)
+        self.assertIn("не вырожденное окно", str(caught.exception))
+
+    def test_ar1_degenerate_folds_are_skipped_by_walk_forward(self):
+        # Сквозная проверка механизма на ЖИВОМ бенчмарке: у выборки с
+        # неизменным уровнем ставки AR(1) вырожден на каждом фолде — прогон
+        # не падает, фолдов нет, счётчик равен числу фолдов.
+        rows = synthetic_rows(30, steps=(0,))
+        predictions, skipped = km.walk_forward(rows, "ar1", km.fit_ar1, min_train=24)
+        self.assertEqual(predictions, [])
+        self.assertEqual(skipped, 6)
+
+    def test_ar1_recovers_the_synthetic_level_relation_in_basis_points(self):
         rows = ar1_rows(40)
         train = rows[:24]
         row = rows[24]
         forecast = km.fit_ar1(train, row)
-        # pred_level = 10 + 0.5·rate_before; прогноз шага — разность уровней.
-        expected = 10.0 + 0.5 * row.decision.rate_before - row.decision.rate_before
+        # pred_level = 10 + 0.5·rate_before (уровни в %); прогноз шага — та же
+        # разность в БАЗИСНЫХ пунктах, как и факт `step_bp`: × 100.
+        expected = (10.0 + 0.5 * row.decision.rate_before - row.decision.rate_before) * 100.0
         self.assertAlmostEqual(forecast.step_bp, expected, places=9)
+        # Масштаб пина отдельно: без ×100 прогноз был бы ~−7 вместо ~−700.
+        self.assertAlmostEqual(forecast.step_bp, -700.0, places=9)
         self.assertIsNone(forecast.probs)
 
     def test_ar1_uses_hac_with_the_pinned_configuration(self):
@@ -784,22 +834,22 @@ class TestWalkForward(unittest.TestCase):
         row = rows[24]
         self.assertAlmostEqual(
             forecast.step_bp,
-            10.0 + 0.5 * row.decision.rate_before - row.decision.rate_before,
-            places=12,
+            (10.0 + 0.5 * row.decision.rate_before - row.decision.rate_before) * 100.0,
+            places=9,
         )
 
     def test_ar1_rejects_a_window_too_short_for_ols(self):
         rows = ar1_rows(3)
-        with self.assertRaises(ValueError) as caught:
+        with self.assertRaises(km.DegenerateWindowError) as caught:
             km.fit_ar1(rows[:2], rows[2])
         self.assertIn("AR(1)", str(caught.exception))
         self.assertIn("OLS", str(caught.exception))
 
     def test_ar1_rejects_a_window_without_level_variation(self):
         # Уровень в окне неизменен: наклон φ коллинеарен свободному члену,
-        # регрессия не определена — понятная ошибка, а не падение statsmodels.
+        # регрессия не определена — вырожденное окно, а не падение statsmodels.
         rows = synthetic_rows(30, steps=(0,))
-        with self.assertRaises(ValueError) as caught:
+        with self.assertRaises(km.DegenerateWindowError) as caught:
             km.fit_ar1(rows[:24], rows[24])
         self.assertIn("не меняется", str(caught.exception))
 
@@ -1067,6 +1117,19 @@ class TestBootstrap(unittest.TestCase):
         second = km.block_bootstrap_rmse_diff(err_a, err_b)
         self.assertEqual(first, second)
 
+    def test_another_seed_gives_another_resample(self):
+        # Сид влияет на ресэмпл (иначе «фиксированный сид» был бы декорацией):
+        # ряды ошибок подобраны так, что p не насыщается в 0/1, и интервалы
+        # разных сидов расходятся.
+        err_a = [3.0, -2.0, 5.0, 0.0, -1.0, 4.0, 2.0, -3.0, 1.5, -0.5, 2.5, -1.5]
+        err_b = [2.0, 0.0, 3.0, 1.0, 0.5, 2.5, 1.0, -1.0, 1.0, 0.5, 3.5, -0.5]
+        default = km.block_bootstrap_rmse_diff(err_a, err_b)
+        other = km.block_bootstrap_rmse_diff(err_a, err_b, seed=km.SEED + 1)
+        # Точечная оценка от сида не зависит — различаться обязаны ресэмплы.
+        self.assertEqual(default.rmse_diff, other.rmse_diff)
+        self.assertNotEqual((default.low, default.high, default.p_value),
+                            (other.low, other.high, other.p_value))
+
     def test_defaults_are_the_pinned_specification(self):
         # Значения по умолчанию — часть спецификации, зафиксированной ДО
         # результатов: блок 4 заседания, 2000 ресэмплов, сид SEED.
@@ -1120,13 +1183,14 @@ class TestReport(unittest.TestCase):
         cls.predictions = benchmark_predictions(cls.rows)
         cls.skipped = km.Skipped((), (), ())
 
-    def render(self, predictions=None, forecast=None):
+    def render(self, predictions=None, forecast=None, fold_skips=None):
         return km.render_report(
             self.rows,
             self.skipped,
             self.predictions if predictions is None else predictions,
             forecast,
             today=date(2026, 10, 16),
+            fold_skips=fold_skips,
         )
 
     def test_report_has_every_section_of_the_step(self):
@@ -1162,6 +1226,13 @@ class TestReport(unittest.TestCase):
         self.assertEqual(rolling, 3 * (60 - 40))
         self.assertIn(f"расширяющееся окно (минимум {km.MIN_TRAIN} заседаний в обучении)", text)
         self.assertIn(f"скользящее окно {km.ROLLING_WINDOW} заседаний", text)
+
+    def test_fold_summary_shows_realized_and_skipped_folds(self):
+        # Счётчик пропущенных вырожденных окон — в сводке «метод × окно»
+        # (Tasks 4–5 пропускают такие фолды, и отчёт обязан это показать).
+        text = self.render(fold_skips={("hold", "expanding"): 2})
+        self.assertIn("| B1 hold | expanding | 36 | 2 |", text)
+        self.assertIn("| B2 repeat | expanding | 36 | 0 |", text)
 
     def test_metric_table_has_a_row_per_method_and_window(self):
         text = self.render()

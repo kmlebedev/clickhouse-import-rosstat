@@ -23,9 +23,11 @@
 
 * **walk-forward** — расширяющееся окно (минимум 24 заседания в обучении) и
   скользящее 40 заседаний; каждый фолд переобучается только на прошлом,
-  горизонт прогноза — одно заседание (спека §7);
+  горизонт прогноза — одно заседание (спека §7); вырожденное обучающее окно
+  (`DegenerateWindowError`) пропускается со счётчиком, а не роняет прогон;
 * **бенчмарки B1–B3** (спека §5): «ставка не изменится», «повтор последнего
-  решения», AR(1) на уровне ставки (OLS с HAC);
+  решения», AR(1) на уровне ставки (OLS с HAC); все прогнозы и факты — в
+  БАЗИСНЫХ пунктах (одна шкала у бенчмарков и метрик);
 * **метрики §7** — RMSE и MAE по шагу в б.п., hit rate, матрица 3×3, QWK,
   Brier, log loss, надёжностная таблица; тесты DM (поправка HLN через
   `statsmodels.tsa.stattools.diebold_mariano_test`), Mincer–Zarnowitz с HAC,
@@ -595,9 +597,26 @@ def build_rows(decisions: list, cpd: list, ibk: list) -> tuple:
 # --- Walk-forward и бенчмарки B1–B3 (спека §5, §7) ----------------------------
 
 
+class DegenerateWindowError(ValueError):
+    """Обучающее окно непригодно для оценки метода (спека §6).
+
+    Поднимается методом walk-forward-шага, когда на прошлом нельзя оценить
+    ничего осмысленного: точек меньше, чем нужно регрессии, у ordered-модели в
+    окне один класс и т.п. `walk_forward` пропускает такой фолд и считает его,
+    а прогон не падает: вырожденность — свойство окна, а не ошибка данных.
+
+    Подкласс `ValueError` — чтобы вызывающий, ждущий `ValueError`, не ломался;
+    но walk-forward пропускает ИМЕННО этот тип: прочие `ValueError` — ошибка
+    прогона (баг кода или порча данных) и останавливают его.
+    """
+
+
 @dataclass(frozen=True)
 class Forecast:
-    """Прогноз одного фолда: шаг в б.п. и вероятности классов (или `None`).
+    """Прогноз одного фолда: шаг в БАЗИСНЫХ пунктах и вероятности классов.
+
+    Единицы — б.п., как у факта (`Decision.step_bp`): у бенчмарка и метода
+    одна шкала, иначе метрики, DM и бутстрап сравнивали бы разные величины.
 
     `probs` — вероятности классов в порядке (−1, 0, +1); `None` — метод
     распределения не даёт (вырожденные бенчмарки B1–B3, спека §5). Форма одна
@@ -668,11 +687,12 @@ def fit_ar1(train: list, row: Row) -> Forecast:
 
     В обучении берутся пары «(уровень до, уровень после)» = `(i_{t−1}, i_t)`:
     между соседними заседаниями ставка не меняется, поэтому `rate_before`
-    тестового заседания — это `i_{t−1}`. Прогноз шага — разность
-    `pred_level − rate_before`.
+    тестового заседания — это `i_{t−1}`. Уровни — в процентных пунктах, а
+    прогноз шага обязан быть в БАЗИСНЫХ, как у факта и остальных прогнозов
+    harness'а: `(pred_level − rate_before) × 100`.
     """
     if len(train) < MIN_OLS_OBS:
-        raise ValueError(
+        raise DegenerateWindowError(
             f"B3 (AR(1)): обучающее окно короче {MIN_OLS_OBS} заседаний — "
             f"OLS с HAC не оценивается"
         )
@@ -681,12 +701,13 @@ def fit_ar1(train: list, row: Row) -> Forecast:
     if len(set(levels_prev)) < 2:
         # Уровень в окне не менялся: наклон φ не идентифицирован (регрессор
         # коллинеарен свободному члену), и MLE вернул бы мусор или упал.
-        raise ValueError(
+        raise DegenerateWindowError(
             "B3 (AR(1)): уровень ставки в обучающем окне не меняется — φ не идентифицирован"
         )
     result = _ols_hac(levels_next, levels_prev)
     pred_level = float(result.params[0]) + float(result.params[1]) * row.decision.rate_before
-    return Forecast(pred_level - row.decision.rate_before, None)
+    step_percent = pred_level - row.decision.rate_before
+    return Forecast(step_percent * 100.0, None)
 
 
 # Бенчмарки B1–B3 в порядке отчёта (спека §5). Строки методов №2–3 добавят
@@ -717,7 +738,7 @@ def walk_forward(
     fit_predict: FitPredict,
     min_train: int = MIN_TRAIN,
     rolling: Optional[int] = None,
-) -> list:
+) -> tuple:
     """Walk-forward по одному методу и одному окну (спека §7).
 
     Фолд `i` обучается ТОЛЬКО на прошлых заседаниях (`rows[:i]`) и прогнозирует
@@ -728,18 +749,30 @@ def walk_forward(
     Скользящее окно входит в прогон ПОЛНЫМ: первый фолд — когда набрано
     `rolling` заседаний (`max(min_train, rolling)`), иначе «окно 40»
     начиналось бы с окна в `min_train` и окном 40 не было бы. Выборка короче
-    обучения даёт пустой список: отчёт этого шага обязан рендериться и без
-    фолдов.
+    обучения даёт `([], 0)`: отчёт этого шага обязан рендериться и без фолдов.
 
-    Возврат — фолды по возрастанию даты; `Prediction.window` несёт метку окна
-    (`window_label`), по которой отчёт группирует строки «метод × окно».
+    Вырожденное обучающее окно (`DegenerateWindowError` от метода) — ПРОПУСК
+    фолда со счётчиком, а не падение прогона: у ordered-модели в окне может
+    оказаться один класс, у AR(1) — неизменный уровень, и это свойство окна, а
+    не ошибка данных. Любое другое исключение метода пробрасывается: это баг
+    кода или порча данных, и молча пропускать его нельзя.
+
+    Возврат — `(фолды, пропущено)`: фолды по возрастанию даты
+    (`Prediction.window` несёт метку окна, по которой отчёт группирует строки
+    «метод × окно»), и число пропущенных фолдов — оно попадает в сводку отчёта
+    и не даёт прочитать «метод не пропустил ничего» там, где он пропустил.
     """
     start = min_train if rolling is None else max(min_train, rolling)
     window = window_label(rolling)
     predictions = []
+    skipped = 0
     for index in range(start, len(rows)):
         train = rows[:index] if rolling is None else rows[index - rolling:index]
-        forecast = fit_predict(train, rows[index])
+        try:
+            forecast = fit_predict(train, rows[index])
+        except DegenerateWindowError:
+            skipped += 1
+            continue
         decision = rows[index].decision
         predictions.append(
             Prediction(
@@ -752,23 +785,31 @@ def walk_forward(
                 probs=forecast.probs,
             )
         )
-    return predictions
+    return predictions, skipped
 
 
-def benchmark_predictions(rows: list, min_train: int = MIN_TRAIN) -> list:
+def benchmark_predictions(rows: list, min_train: int = MIN_TRAIN) -> tuple:
     """Бенчмарки B1–B3 по обоим окнам — строки «метод × окно» отчёта.
 
     Оба окна считаются всегда (спека §7): отчёт показывает их рядом, а выбор
     окна по ошибке не делается. Порядок обхода — окно, затем метод; от него
     зависит порядок строк в отчёте и в CSV, и он же задаёт группировку.
+
+    Возврат — `(фолды, пропущено)`: счётчик вырожденных окон по ключу
+    «(метод, окно)» для сводки отчёта. У B1 и B2 он нулевой по построению, у
+    B3 ненулевым бывает на выборке с неизменным уровнем ставки (и тогда это
+    факт отчёта, а не повод уронить прогон).
     """
     predictions = []
+    fold_skips = {}
     for window in (None, ROLLING_WINDOW):
         for method, fit_predict in BENCHMARKS:
-            predictions.extend(
-                walk_forward(rows, method, fit_predict, min_train=min_train, rolling=window)
+            folds, skipped = walk_forward(
+                rows, method, fit_predict, min_train=min_train, rolling=window
             )
-    return predictions
+            predictions.extend(folds)
+            fold_skips[(method, window_label(window))] = skipped
+    return predictions, fold_skips
 
 
 # --- Метрики §7 ----------------------------------------------------------------
@@ -1264,6 +1305,10 @@ _METRIC_HEADER = (
     "| метод | окно | n | RMSE, б.п. | MAE, б.п. | hit rate | QWK | Brier | log loss |",
     "|---|---|---|---|---|---|---|---|---|",
 )
+_FOLD_SUMMARY_HEADER = (
+    "| метод | окно | фолдов | пропущено (вырожденное окно) |",
+    "|---|---|---|---|",
+)
 _SIGNIFICANCE_HEADER = (
     "| метод | окно | против | ΔRMSE, б.п. | DM | DM p | 95% ДИ ΔRMSE | бутстр. p |",
     "|---|---|---|---|---|---|---|---|",
@@ -1283,6 +1328,18 @@ def _table(header: tuple, rows: list) -> list:
     if not rows:
         return ["_(фолдов нет.)_"]
     return list(header) + list(rows)
+
+
+def _fold_summary_row(method: str, window: str, group: list, fold_skips: dict) -> str:
+    """Строка сводки «метод × окно»: сделанные прогнозы и пропущенные окна.
+
+    «фолдов» — реально сделанные прогнозы (они же `n` в таблице метрик),
+    «пропущено» — вырожденные обучающие окна, на которых метод не оценился.
+    """
+    return (
+        f"| {method_label(method)} | {window} | {len(group)} "
+        f"| {fold_skips.get((method, window), 0)} |"
+    )
 
 
 def _metric_row(method: str, window: str, group: list) -> str:
@@ -1392,23 +1449,28 @@ def render_report(
     predictions: list,
     forecast: Optional[str] = None,
     today: Optional[date] = None,
+    fold_skips: Optional[dict] = None,
 ) -> str:
     """Markdown-отчёт прогона (спека §8).
 
-    Состав: выборка и пропуски, walk-forward по двум окнам, таблица «метод ×
-    окно» с метриками §7, DM (поправка HLN) против каждого бенчмарка вместе с
-    бутстрап-интервалом разницы RMSE, Mincer–Zarnowitz и Pesaran–Timmermann,
-    режимный блок 2024–2026, надёжностная таблица (если у методов есть
-    распределения) и «что не проверено».
+    Состав: выборка и пропуски, walk-forward по двум окнам со сводкой «метод ×
+    окно» (сделанные и пропущенные фолды), таблица «метод × окно» с метриками
+    §7, DM (поправка HLN) против каждого бенчмарка вместе с бутстрап-интервалом
+    разницы RMSE, Mincer–Zarnowitz и Pesaran–Timmermann, режимный блок
+    2024–2026, надёжностная таблица (если у методов есть распределения) и
+    «что не проверено».
 
     Строки методов №2–3 приходят сюда теми же `Prediction`, что и бенчмарки
     (Tasks 4–5): таблицы и разделы считаются по «метод × окно» и не знают имён
     методов, кроме меток в `METHOD_LABELS`. `forecast` — готовый markdown-блок
     текущего прогноза (Task 6) или `None`, если прогноза в прогоне ещё нет;
     `today` — дата прогона (по умолчанию системная), от неё зависит только
-    строка версии набора данных.
+    строка версии набора данных; `fold_skips` — счётчики вырожденных окон по
+    ключу «(метод, окно)» (`benchmark_predictions`), без них сводка показывает
+    нули — так отчёт не приписывает методу пропусков, которых не считали.
     """
     today = today or date.today()
+    fold_skips = fold_skips or {}
     groups = _predictions_by_group(predictions)
     counts = _fold_counts(predictions)
     regime_sample = [
@@ -1456,6 +1518,19 @@ def render_report(
         lines.append(
             f"* скользящее окно {ROLLING_WINDOW} заседаний: "
             f"{counts.get(window_label(ROLLING_WINDOW), 0)} фолдов на метод."
+        )
+        lines += [
+            "",
+            "Вырожденное обучающее окно (мало точек, один класс у ordered-модели "
+            "и т.п.) — фолд пропускается и считается, а не роняет прогон:",
+            "",
+        ]
+        lines += _table(
+            _FOLD_SUMMARY_HEADER,
+            [
+                _fold_summary_row(method, window, group, fold_skips)
+                for (method, window), group in groups.items()
+            ],
         )
     else:
         lines.append(
@@ -1727,7 +1802,7 @@ def run_summary(rolling: bool, today: Optional[date] = None, out_dir: Path = ROO
         1 for decision in decisions if delta_map.get(decision.meeting_date) is not None
     )
 
-    predictions = benchmark_predictions(rows)
+    predictions, fold_skips = benchmark_predictions(rows)
     report_path = out_dir / REPORT_NAME
     predictions_path = out_dir / PREDICTIONS_NAME
     report_path.write_text(
@@ -1737,6 +1812,7 @@ def run_summary(rolling: bool, today: Optional[date] = None, out_dir: Path = ROO
             predictions,
             None,
             today=today,
+            fold_skips=fold_skips,
         ),
         encoding="utf-8",
     )
@@ -1763,6 +1839,7 @@ def run_summary(rolling: bool, today: Optional[date] = None, out_dir: Path = ROO
           f"{counts.get(WINDOW_EXPANDING, 0)}")
     print(f"  фолдов (скользящее окно, {ROLLING_WINDOW}):               "
           f"{counts.get(window_label(ROLLING_WINDOW), 0)}")
+    print(f"  пропущено фолдов (вырожденное окно):         {sum(fold_skips.values())}")
 
     selected = window_label(ROLLING_WINDOW if rolling else None)
     print(f"  метрики окна «{selected}» (в отчёте и CSV — оба окна):")
