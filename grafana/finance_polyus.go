@@ -105,12 +105,24 @@ WHERE code = 'PLZL' AND $__timeFilter(date)
 ORDER BY date
 `
 
+// fpPanelHeight — высота панелей ряда в строках сетки Grafana: 9 — дефолт NewGridPos() SDK и высота
+// панелей соседних дашбордов (gold/key-rate).
+const fpPanelHeight = 9
+
+// fpPanelGridPos — явная позиция панели в сетке ряда 31 (x, y — в строках сетки, w — в колонках).
+// Авто-layout SDK ставит панель в курсор, оставшийся от предыдущей, и широкая панель 2 (24 колонки)
+// уехала бы в x=12 — за правую границу сетки (24 колонки). Явно заданный GridPos авто-layout не
+// переписывает: он трогает только позицию с x=0 и y=0 («не задана»), поэтому у панелей ряда y >= 1.
+func fpPanelGridPos(x, y, w uint32) dashboard.GridPos {
+	return dashboard.GridPos{X: x, Y: y, W: w, H: fpPanelHeight}
+}
+
 // fpPanelDefaults — общие визуальные конвенции панелей дашборда: палитра classic, легенда снизу
 // таблицей с calcs (последнее/среднее/максимум), tooltip по одной серии, линия шириной 1 без заливки,
 // градиента и соединения разрывов (разрыв ряда честно остаётся разрывом). Те же конвенции, что у
 // key-rate (спека §6, «визуал переносим»), но своим хелпером: финансы Полюса могут разойтись с
 // публикациями ставки, и правка конвенций одного дашборда не должна молча менять артефакт другого.
-// Панели добавляют свои Id/Title/Description/Span и таргеты поверх.
+// Панели добавляют свои Id/Title/Description/GridPos и таргеты поверх.
 func fpPanelDefaults(builder *timeseries.PanelBuilder) *timeseries.PanelBuilder {
 	return builder.
 		Datasource(datasourceRef()).
@@ -143,7 +155,9 @@ func fpFixedColorProp(color string) dashboard.DynamicConfigValue {
 // NewFinancePolyus собирает дашборд «Полюс (PLZL) — финансы и прогноз» (спека §4–§5). Собран ряд 31
 // «Золото, ставки, рынок» (панели 1–6) — макро-входы прогноза: учётная цена золота в ₽/г и $/oz,
 // курс, ставки локального и глобального контура, цена акции. Порядок вызовов WithRow/WithPanel
-// задаёт и порядок сетки, и нумерацию панелей.
+// задаёт нумерацию панелей, а место в сетке — явный GridPos каждой панели (fpPanelGridPos): верхняя
+// пара — цена ₽/г (1) и курс (3), ниже панель 2 во всю ширину (паритет ЦБ и рынок), затем ставки
+// (4/5) и цена акции (6). Точные координаты фиксирует TestFinancePolyusSpecConventions.
 func NewFinancePolyus() *dashboard.DashboardBuilder {
 	return dashboard.NewDashboardBuilder("Полюс (PLZL) — финансы и прогноз").
 		Uid(FinancePolyusUID).
@@ -161,12 +175,13 @@ func NewFinancePolyus() *dashboard.DashboardBuilder {
 }
 
 // fpGoldRubPanel — панель 1: учётная цена золота ЦБ в ₽/г. Рубли с копейками (decimals 2): цена
-// котируется до копеек, и без фиксации Grafana округляла бы её по ширине оси.
+// котируется до копеек, и без фиксации Grafana округляла бы её по ширине оси. В сетке — левая панель
+// верхней пары: цена ₽/г и курс (панель 3) читаются вместе — из них собирается паритет $/oz.
 func fpGoldRubPanel() *timeseries.PanelBuilder {
 	return fpPanelDefaults(timeseries.NewPanelBuilder()).
 		Id(1).
 		Title("Учётная цена золота ЦБ, ₽/г").
-		Span(spanHalf).
+		GridPos(fpPanelGridPos(0, 1, spanHalf)).
 		Description("Учётная цена золота Банка России (v_cbr_macro, series = 'cbr_gold') — уровень " +
 			"на дату, ₽ за грамм. Это цена для расчётов ЦБ, а не биржевая котировка: из неё и " +
 			"официального курса собирается ЦБ-паритет $/oz панели 2. Значения — ₽/г.").
@@ -176,14 +191,15 @@ func fpGoldRubPanel() *timeseries.PanelBuilder {
 }
 
 // fpGoldOzPanel — панель 2: золото в $/oz во всю ширину — четыре длинных дневных ряда, которые
-// сравниваются между собой (цены на одной шкале). A — ЦБ-паритет (самоджойн витрины, см.
-// fpDcfParitySQL), B/C/D — рыночные ряды v_gold_prices; одна единица на панель: $ за тройскую унцию
-// у всех четырёх, пер-серийные override'ы единиц не нужны.
+// сравниваются между собой (цены на одной шкале); 24 колонки не встают в пару панелей, поэтому у неё
+// своя строка сетки. A — ЦБ-паритет (самоджойн витрины, см. fpDcfParitySQL), B/C/D — рыночные ряды
+// v_gold_prices; одна единица на панель: $ за тройскую унцию у всех четырёх, пер-серийные override'ы
+// единиц не нужны.
 func fpGoldOzPanel() *timeseries.PanelBuilder {
 	return fpPanelDefaults(timeseries.NewPanelBuilder()).
 		Id(2).
 		Title("Золото, $/oz: паритет ЦБ и рынок").
-		Span(24).
+		GridPos(fpPanelGridPos(0, 10, 24)).
 		Description("Золото в долларах за тройскую унцию. A — ЦБ-паритет: учётная цена ₽/г ÷ курс " +
 			"USD/RUB × 31.1034768 (граммов в тройской унции) — цена, которая следует из двух рядов " +
 			"ЦБ, а не из сделок; джойн по дате в SQL, потому что ряды ЦБ разной длины. B — МосБиржа " +
@@ -198,14 +214,14 @@ func fpGoldOzPanel() *timeseries.PanelBuilder {
 		Unit(units.Dollars)
 }
 
-// fpUsdRubPanel — панель 3: официальный курс USD/RUB. Единица short с четырьмя знаками, а не
-// currencyRUB: курс — число рублей за доллар, и печатать «83,92 ₽» рядом с ценами в ₽ читалось бы
-// как сумма, а не как котировка.
+// fpUsdRubPanel — панель 3: официальный курс USD/RUB — правая панель верхней пары (рядом учётная
+// цена, панель 1). Единица short с четырьмя знаками, а не currencyRUB: курс — число рублей за
+// доллар, и печатать «83,92 ₽» рядом с ценами в ₽ читалось бы как сумма, а не как котировка.
 func fpUsdRubPanel() *timeseries.PanelBuilder {
 	return fpPanelDefaults(timeseries.NewPanelBuilder()).
 		Id(3).
 		Title("Курс USD/RUB").
-		Span(spanHalf).
+		GridPos(fpPanelGridPos(12, 1, spanHalf)).
 		Description("Официальный курс доллара к рублю (v_cbr_macro, series = 'cbr_currency_usd') — " +
 			"₽ за 1 USD, уровень на дату. Знаменатель ЦБ-паритета золота (панель 2) и вход рублёвой " +
 			"переоценки в DCF-модели. Единица — число с четырьмя знаками (decimals 4): ЦБ котирует " +
@@ -218,12 +234,13 @@ func fpUsdRubPanel() *timeseries.PanelBuilder {
 // fpRatesOfzPanel — панель 4: ставка ЦБ и кривая ОФЗ — локальный контур ставок DCF. Теноры B..E
 // сейчас по одному наблюдению (снимок кривой, история наполняется), поэтому точки с фикс-цветом:
 // сплошная линия по одной точке не читается, а цвет кодирует срок (оттенок синего растёт с тенором)
-// и не должен зависеть от порядка таргетов в палитре classic.
+// и не должен зависеть от порядка таргетов в палитре classic. В сетке — левая панель пары ставок
+// (рядом глобальный контур, панель 5).
 func fpRatesOfzPanel() *timeseries.PanelBuilder {
 	panel := fpPanelDefaults(timeseries.NewPanelBuilder()).
 		Id(4).
 		Title("Ставка ЦБ и кривая ОФЗ (локальный контур DCF)").
-		Span(spanHalf).
+		GridPos(fpPanelGridPos(0, 19, spanHalf)).
 		Description("Локальный контур ставок DCF: ключевая ставка ЦБ (v_cbr_macro, series = " +
 			"'cbr_key_rate', % годовых — уровень на дату решений) и доходности кривой бескупонной " +
 			"доходности ОФЗ (v_ofz_curve; теноры 1y/3y/5y/10y, % годовых). Теноры — снимок по одному " +
@@ -249,17 +266,19 @@ func fpRatesOfzPanel() *timeseries.PanelBuilder {
 // fpGlobalRatesPanel — панель 5: глобальный контур ставок — реальная доходность TIPS, номинальная
 // доходность UST, ставка ФРС и инфляционные ожидания. Все четыре ряда — уровни в % годовых, одна
 // единица и одна шкала: пары «номинальная − реальная = ожидания» разложимы прямо на графике.
+// В сетке — правая панель пары ставок: локальный и глобальный контуры рядом.
 func fpGlobalRatesPanel() *timeseries.PanelBuilder {
 	return fpPanelDefaults(timeseries.NewPanelBuilder()).
 		Id(5).
 		Title("Глобальный контур: реальная ставка и ожидания").
-		Span(spanHalf).
+		GridPos(fpPanelGridPos(12, 19, spanHalf)).
 		Description("Глобальный контур ставок (v_fred_macro, % годовых; уровни на дату, не темпы): " +
 			"DFII10 — реальная доходность TIPS 10 лет, DGS10 — номинальная доходность UST 10 лет, " +
 			"FEDFUNDS — эффективная ставка ФРС, T5YIE — 5-летние инфляционные ожидания рынка " +
 			"(breakeven). DGS10 − DFII10 ≈ T5YIE — разложение номинальной доходности на реальную " +
-			"ставку и ожидания; с локальными ставками панели 4 эти уровни сопоставимы только как " +
-			"ориентир другой денежной единицы.").
+			"ставку и ожидания. Единицы те же, что у панели 4 (% годовых), но контур другой: это " +
+			"ставки ФРС и рынка США против ключевой ставки ЦБ в рублях — разница уровней отражает " +
+			"разные режимы денежной политики, а не вменённую траекторию ставки ЦБ.").
 		WithTarget(timeseriesQuery("A", fpFredSQL("DFII10", `"DFII10, %"`))).
 		WithTarget(timeseriesQuery("B", fpFredSQL("DGS10", `"UST 10y, %"`))).
 		WithTarget(timeseriesQuery("C", fpFredSQL("FEDFUNDS", `"Fed Funds, %"`))).
@@ -267,13 +286,13 @@ func fpGlobalRatesPanel() *timeseries.PanelBuilder {
 		Unit(units.Percent)
 }
 
-// fpPlzlPricePanel — панель 6: цена акции PLZL. Рынок, к которому относится прогноз: цена
-// сопоставляется с НАВ на акцию последнего прогона модели и с ценой золота.
+// fpPlzlPricePanel — панель 6: цена акции PLZL, последняя панель ряда. Рынок, к которому относится
+// прогноз: цена сопоставляется с НАВ на акцию последнего прогона модели и с ценой золота.
 func fpPlzlPricePanel() *timeseries.PanelBuilder {
 	return fpPanelDefaults(timeseries.NewPanelBuilder()).
 		Id(6).
 		Title("PLZL: цена акции").
-		Span(spanHalf).
+		GridPos(fpPanelGridPos(0, 28, spanHalf)).
 		Description("Цена акции Полюса (v_stock_prices, code = 'PLZL', close — цена закрытия, ₽ за " +
 			"акцию). Рынок, к которому относится прогноз: цена сопоставляется с НАВ на акцию " +
 			"последнего прогона модели и с ценой золота; сама она — не прогноз и не оценка.").

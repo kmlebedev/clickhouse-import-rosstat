@@ -78,10 +78,11 @@ func TestFinancePolyusAllTargetsUseViews(t *testing.T) {
 	}
 }
 
-// TestFinancePolyusPanelIDsUnique проверяет и раскладку id (через Validate), и параметризацию
-// Validate: тот же дашборд с чужим uid обязан быть отвергнут, иначе опечатка в uid прошла бы молча
-// и один дашборд затёр бы другой при деплое.
-func TestFinancePolyusPanelIDsUnique(t *testing.T) {
+// TestFinancePolyusValidateUID проверяет параметризацию Validate: дашборд проходит проверку со своим
+// uid и отвергается с чужим — иначе опечатка в uid прошла бы молча, и один дашборд затёр бы другой
+// при деплое. Id панелей здесь не проверяются: их уникальность и диапазон держит
+// TestFinancePolyusSpecConventions, и имя теста обязано говорить, что именно он проверяет.
+func TestFinancePolyusValidateUID(t *testing.T) {
 	board := builtFinancePolyus(t)
 	if err := Validate(board, FinancePolyusUID); err != nil {
 		t.Fatalf("дашборд finance-polyus не прошёл валидацию: %v", err)
@@ -190,31 +191,88 @@ func TestFinancePolyusSparseSeriesPoints(t *testing.T) {
 	}
 }
 
-// TestFinancePolyusSpecConventions фиксирует конвенции каркаса одним проходом: id панелей 1..6 без
-// пропусков и повторов, непустой Description у каждой (спека §4), ширина 24 у панели 2 и 12
-// у остальных, FINAL и LIMIT в панельных запросах не пишутся (FINAL уже внутри витрин; LIMIT на
-// временном ряду молча обрезал бы историю — anti-pattern легаси-экспорта).
+// fpGoldRowLayout — ожидаемая раскладка панелей ряда 31 «Золото, ставки, рынок» (id → x/y/w/h):
+// верхняя пара — цена ₽/г (1) и курс (3), панель 2 (24 колонки) — своя строка, ниже пара ставок (4/5)
+// и цена акции (6). Таблица живёт в тесте, а не рядом с билдерами: она фиксирует раскладку (её видно
+// в артефакте и в UI), а панель без позиции в таблице — ошибка, а не «дорисует авто-layout».
+var fpGoldRowLayout = map[uint32]gridPos{
+	1: {x: 0, y: 1, w: 12, h: 9},
+	3: {x: 12, y: 1, w: 12, h: 9},
+	2: {x: 0, y: 10, w: 24, h: 9},
+	4: {x: 0, y: 19, w: 12, h: 9},
+	5: {x: 12, y: 19, w: 12, h: 9},
+	6: {x: 0, y: 28, w: 12, h: 9},
+}
+
+// gridPos — прямоугольник элемента сетки Grafana (24 колонки): раскладка ряда задана явно, поэтому
+// пересечение прямоугольников или выход за 24 колонки — ошибка кода, а не «Grafana разберётся».
+type gridPos struct {
+	x, y, w, h uint32
+}
+
+// overlaps: касание краями (x+w == чужой x) пересечением не считается.
+func (r gridPos) overlaps(other gridPos) bool {
+	return r.x < other.x+other.w && other.x < r.x+r.w &&
+		r.y < other.y+other.h && other.y < r.y+r.h
+}
+
+// layoutRect — элемент дашборда в сетке с подписью для сообщения об ошибке: в проверке пересечений
+// участвуют и панели, и ряды (ряд — такая же полоса сетки шириной 24 колонки).
+type layoutRect struct {
+	label string
+	pos   gridPos
+}
+
+// TestFinancePolyusSpecConventions фиксирует конвенции каркаса одним проходом: раскладку панелей
+// 1–6 по таблице fpGoldRowLayout (позиция задана явно, а не выведена авто-layout'ом SDK — тот ставил
+// панель 2 шириной 24 колонки в курсор после панели 1, то есть x=12..36, за правую границу сетки),
+// непустой Description у каждой панели (спека §4), id уникальные в 1..19, FINAL и LIMIT в панельных
+// запросах не пишутся (FINAL уже внутри витрин; LIMIT на временном ряду молча обрезал бы историю —
+// anti-pattern легаси-экспорта). Общие инварианты сетки: x + w <= 24, y >= 1 (для SDK x=0 и y=0 —
+// «позиция не задана», её перезапишет авто-layout), прямоугольники не пересекаются — ни панели между
+// собой, ни ряд с панелью.
 func TestFinancePolyusSpecConventions(t *testing.T) {
-	seen := make(map[uint32]bool, 6)
-	for _, p := range panelsOf(builtFinancePolyus(t)) {
+	board := builtFinancePolyus(t)
+	panels := panelsOf(board)
+	if len(panels) != len(fpGoldRowLayout) {
+		t.Fatalf("панелей %d, в таблице раскладки %d: панель ряда 31 добавляется вместе со своей позицией", len(panels), len(fpGoldRowLayout))
+	}
+
+	seen := make(map[uint32]bool, len(panels))
+	rects := make([]layoutRect, 0, len(panels)+1)
+	for _, p := range panels {
 		if p.Id == nil {
 			t.Fatalf("панель %q: не задан id", panelTitle(p))
 		}
 		id := *p.Id
-		if id < 1 || id > 6 || seen[id] {
-			t.Fatalf("панель %q: id %d вне 1..6 или повторяется", panelTitle(p), id)
+		if id < 1 || id > 19 || seen[id] {
+			t.Fatalf("панель %q: id %d вне 1..19 или повторяется", panelTitle(p), id)
 		}
 		seen[id] = true
 		if p.Description == nil || strings.TrimSpace(*p.Description) == "" {
 			t.Fatalf("панель %d: пустой Description (спека §4 — описание у каждой панели)", id)
 		}
-		wantSpan := uint32(12)
-		if id == 2 {
-			wantSpan = 24
+
+		want, ok := fpGoldRowLayout[id]
+		if !ok {
+			t.Fatalf("панель %d (%q): нет позиции в таблице раскладки ряда 31 — новая панель получает явный GridPos и попадает в таблицу", id, panelTitle(p))
 		}
-		if p.GridPos == nil || p.GridPos.W != wantSpan {
-			t.Fatalf("панель %d: span %v, ожидался %d (спека §4)", id, p.GridPos, wantSpan)
+		if p.GridPos == nil {
+			t.Fatalf("панель %d: gridPos не задан (авто-layout положит панель в курсор предыдущей)", id)
 		}
+		got := gridPos{x: p.GridPos.X, y: p.GridPos.Y, w: p.GridPos.W, h: p.GridPos.H}
+		if got != want {
+			t.Fatalf("панель %d: gridPos {x:%d y:%d w:%d h:%d}, ожидался {x:%d y:%d w:%d h:%d}",
+				id, got.x, got.y, got.w, got.h, want.x, want.y, want.w, want.h)
+		}
+		if got.y < 1 {
+			t.Fatalf("панель %d: y=%d — для SDK это часть «позиция не задана» (x=0 и y=0), и авто-layout перезапишет её", id, got.y)
+		}
+		if got.x+got.w > 24 {
+			t.Fatalf("панель %d: x=%d + w=%d выходит за 24 колонки сетки", id, got.x, got.w)
+		}
+		rects = append(rects, layoutRect{panelTitle(p), got})
+
 		for _, target := range p.Targets {
 			query, ok := chQuery(target)
 			if !ok {
@@ -228,8 +286,26 @@ func TestFinancePolyusSpecConventions(t *testing.T) {
 			}
 		}
 	}
-	if len(seen) != 6 {
-		t.Fatalf("панелей %d, ожидалось 6 (id 1..6 без пропусков)", len(seen))
+
+	for _, entry := range board.Panels {
+		if entry.RowPanel == nil || entry.RowPanel.GridPos == nil {
+			continue
+		}
+		row := gridPos{x: entry.RowPanel.GridPos.X, y: entry.RowPanel.GridPos.Y, w: entry.RowPanel.GridPos.W, h: entry.RowPanel.GridPos.H}
+		if row.x+row.w > 24 {
+			t.Fatalf("ряд %q: x=%d + w=%d выходит за 24 колонки сетки", optionalString(entry.RowPanel.Title), row.x, row.w)
+		}
+		rects = append(rects, layoutRect{"ряд " + optionalString(entry.RowPanel.Title), row})
+	}
+
+	for i := range rects {
+		for j := i + 1; j < len(rects); j++ {
+			a, b := rects[i], rects[j]
+			if a.pos.overlaps(b.pos) {
+				t.Fatalf("прямоугольники пересекаются: %s {x:%d y:%d w:%d h:%d} и %s {x:%d y:%d w:%d h:%d}",
+					a.label, a.pos.x, a.pos.y, a.pos.w, a.pos.h, b.label, b.pos.x, b.pos.y, b.pos.w, b.pos.h)
+			}
+		}
 	}
 }
 
@@ -244,8 +320,14 @@ func TestFinancePolyusGenerateDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b1, _ := json.MarshalIndent(Manifest(d1), "", "  ")
-	b2, _ := json.MarshalIndent(Manifest(d2), "", "  ")
+	b1, err := json.MarshalIndent(Manifest(d1), "", "  ")
+	if err != nil {
+		t.Fatalf("сериализация первой сборки: %v", err)
+	}
+	b2, err := json.MarshalIndent(Manifest(d2), "", "  ")
+	if err != nil {
+		t.Fatalf("сериализация второй сборки: %v", err)
+	}
 	if !bytes.Equal(b1, b2) {
 		t.Fatal("генерация недетерминирована")
 	}
