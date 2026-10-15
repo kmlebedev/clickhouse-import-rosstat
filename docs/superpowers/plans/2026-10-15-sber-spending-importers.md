@@ -438,3 +438,27 @@ git add ARCHITECTURE.md README.md docs/ROADMAP_KEY_RATE.md docs/KEY_RATE_PUBLICA
 - **Review Focus:** каждый пункт покрыт тестом или шагом верификации (1 → fail-fast тесты Task 1; 2 → `sberUndescribed` тест и warn Task 3; 3 → нормализация в тестах Task 1; 4 → фикстуры без финального `\n` и spot-даты, повтор в Task 6; 5 → spot-значения по обоим наборам + `source` в витрине).
 - **Имена/типы:** `parseSberRows`, `sberPoint`, `sberUndescribed`, `afterSberMacro`, `sberSeriesMeta`, `sberSpendingView`, `sber*Craw` — согласованы между задачами.
 - **Пропорция:** план описывает решения, не тела функций; единственный крупный литерал — описания каталога, они данные, а не логика.
+
+---
+
+## Протокол живой приёмки (2026-10-15, dev-ClickHouse)
+
+Ветка `fix/sber-spending-importers`, HEAD `7dd2b20` (до документации), команды запускались через `make` (env-файл подключает Makefile).
+
+| Проверка | Команда | Результат |
+|---|---|---|
+| Формат/линт | `gofmt -l .` / `golangci-lint run ./...` | вывод пуст / `0 issues.` |
+| Вет-тест | `go vet ./...` | exit 0 |
+| Тесты | `go test -race ./...` (внутри `make all`) | все пакеты `ok` |
+| Сборки | `make all` | `build/clickhouse-import-rosstat`, `build/ingest` |
+| Месячный импортёр | `make import STAT=sber_consumper_spending_index` | `Imported 470 rows` (5 категорий × 94 мес., 2018-12-01 … 2026-09-01) |
+| Недельный импортёр | `make import STAT=sber_izmenenie_trat` | `Imported 7038 rows` (46 категорий × 153 ISO-недели, 2023-11-12 … 2026-10-11) |
+| Идемпотентность | повтор обоих `make import` | те же числа; `count() FINAL` = 470 / 7 038 (не изменились) |
+| Снимок покрытия | `make ch-sql FILE=sql/key_rate_coverage.sql` | 51 строка: 5 × 94 точки и 46 × 153 точки, крайние даты совпали с ожиданием |
+| Витрина и каталог | `count() FROM v_bank_sber_spending`; `v_series_catalog` | 7 508 строк (= 470 + 7 038); каталог 5 и 46 рядов; имён с хвостовым пробелом — 0 |
+| Spot-сверка с живым файлом | `curl … \| grep '^"2026-09-01";"Всего";'` и `'^"2026-10-11";"Все категории '` | месяц: источник `128.99` = БД `128.99`; неделя: источник `7.46266724` → БД `7.4626675` — расхождение только в точности legacy-колонки `Float32` (Architecture §6.2) |
+| Грант агенту | `make mcp-user` | `OK GRANT SELECT ON default.v_bank_sber_spending TO kimi_reader` |
+| MCP end-to-end | `make mcp-check` | **ПРОВЕРКА ПРОЙДЕНА**: витрина непуста (7 508), каталог 5 + 46, обе сырые таблицы закрыты (497) |
+| Расписание | `dagu validate dagu/bank.yaml` | exit 0 |
+
+Замечания приёмки: (1) расхождение недельного spot-значения — не ошибка импорта, а округление legacy-`Float32` (осознанно, спека §4.5); (2) `v_series_catalog`/`series_catalog` — ReplacingMergeTree, счёт каталога проверяется через витрину (её `Select` содержит `FINAL`), прямой `count()` без `FINAL` считает несмёрженные копии; (3) повторные прогоны пишут те же ключи `(name|category, date)` — число строк `FINAL` стабильно, витрина не растёт.
