@@ -251,10 +251,12 @@ func TestFinancePolyusGoldOutputFrequencies(t *testing.T) {
 			}
 		}
 	}
+	// Оговорка обязана называть конкретику, а не «данные» вообще: какая частота обрывается, где
+	// именно (2022-01), докуда идут остальные (2026-01) и что обрыв — свойство источника.
 	description := optionalString(panel.Description)
-	for _, want := range []string{"2022", "данные"} {
+	for _, want := range []string{"квартал", "2022-01", "2026-01", "данные источника"} {
 		if !strings.Contains(description, want) {
-			t.Fatalf("Description панели 7 не оговаривает охват кварталов (нет %q): %s", want, description)
+			t.Fatalf("Description панели 7 не оговаривает охват частот (нет %q): %s", want, description)
 		}
 	}
 }
@@ -264,7 +266,7 @@ func TestFinancePolyusGoldOutputFrequencies(t *testing.T) {
 // «value»). Консолидированного итога среди них нет — он на панели 7: уровень компании и уровень
 // актива на одной оси читались бы как двойной счёт. Метрика у восьми активов одна
 // ('Total refined gold output'), а у ALLUVIALS своя ('Refined gold production'): россыпной актив
-// ведётся в датапаке отдельной строкой (правка контракта по живым данным, 2026-10-16).
+// ведётся в датапаке отдельной строкой.
 func TestFinancePolyusNineAssets(t *testing.T) {
 	panel := panelByID(t, builtFinancePolyus(t), 8)
 	if len(panel.Targets) != 9 {
@@ -377,6 +379,17 @@ func TestFinancePolyusSpecConventions(t *testing.T) {
 	panels := panelsOf(board)
 	if len(panels) != len(fpPanelLayout) {
 		t.Fatalf("панелей %d, в таблице раскладки %d: панель добавляется вместе со своей позицией", len(panels), len(fpPanelLayout))
+	}
+	// Симметрично панелям: потерянный ряд обязан падать здесь, а не только в TestFinancePolyusRowTitles
+	// — иначе ряд без позиции в fpRowLayout молча выпал бы из проверки пересечений.
+	rows := 0
+	for _, entry := range board.Panels {
+		if entry.RowPanel != nil {
+			rows++
+		}
+	}
+	if rows != len(fpRowLayout) {
+		t.Fatalf("рядов %d, в таблице раскладки %d: ряд добавляется вместе со своей позицией", rows, len(fpRowLayout))
 	}
 
 	seen := make(map[uint32]bool, len(panels))

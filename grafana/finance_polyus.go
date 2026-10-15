@@ -385,14 +385,13 @@ func fpGoldOutputPanel() *timeseries.PanelBuilder {
 	return panel
 }
 
-// fpGoldOutputAssets — активы панели 8 в порядке серий A..I с их метрикой выпуска: восемь активов
-// считаются 'Total refined gold output' (у семи годовые точки идут до 2026-01, у ZAPADNOYE история
-// обрывается на 2024-01), а ALLUVIALS — единственный со своей метрикой (см. комментарий в таблице).
-// Сводных итогов компании ('CONSOLIDATED OPERATING RESULTS') в списке нет: они на панели 7, и
-// компания с активом на одной оси читались бы как двойной счёт. Правка контракта спеки §5 по живым
-// данным (2026-10-16): было 'ZAPADOWE' (в витрине такого ключа нет) и общая метрика для ALLUVIALS.
-// Оговорки по охвату (ZAPADNOYE → 2024; Sukhoi Log без строк) — в Description панели: пустая серия
-// это охват источника, а не ноль добычи.
+// fpGoldOutputAssets — активы панели 8 в порядке серий A..I с их метрикой выпуска. Восемь активов
+// считаются 'Total refined gold output': у шести серии идут до 2026-01, у ZAPADNOYE история
+// обрывается на 2024-01, а у Sukhoi Log строк ещё нет (проект — см. комментарий в таблице).
+// ALLUVIALS — единственный со своей метрикой 'Refined gold production'. Сводных итогов компании
+// ('CONSOLIDATED OPERATING RESULTS') в списке нет: они на панели 7, и компания с активом на одной оси
+// читались бы как двойной счёт. Оговорки по охвату (ZAPADNOYE → 2024; Sukhoi Log без строк) — в
+// Description панели: обрыв и пустота это охват источника, а не ноль добычи.
 var fpGoldOutputAssets = []struct{ refID, asset, metric string }{
 	{"A", "OLIMPIADA", fpGoldOutputMetric},
 	{"B", "BLAGODATNOYE", fpGoldOutputMetric},
