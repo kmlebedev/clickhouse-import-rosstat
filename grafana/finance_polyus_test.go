@@ -10,11 +10,13 @@ import (
 	"github.com/grafana/grafana-foundation-sdk/go/units"
 )
 
-// financePolyusRowTitles — ряды дашборда в порядке следования. Собран ряд 31 «Золото, ставки, рынок»
-// (панели 1–6): список фиксирует и заголовок, и порядок сетки. Ряды 32–34 («Операционные показатели»,
-// «Финансовые показатели», «Прогноз и точность») добавляются следующими задачами.
+// financePolyusRowTitles — ряды дашборда в порядке следования. Собраны ряды 31 «Золото, ставки,
+// рынок» (панели 1–6) и 32 «Операционные показатели» (панели 7–11): список фиксирует и заголовки, и
+// порядок сетки. Ряды 33–34 («Финансовые показатели», «Прогноз и точность») добавляются следующими
+// задачами.
 var financePolyusRowTitles = []string{
 	"Золото, ставки, рынок",
+	"Операционные показатели",
 }
 
 func builtFinancePolyus(t *testing.T) dashboard.Dashboard {
@@ -26,12 +28,11 @@ func builtFinancePolyus(t *testing.T) dashboard.Dashboard {
 	return d
 }
 
-// TestFinancePolyusPanelCount фиксирует состав каркаса: ряд 31 — шесть панелей (id 1–6), полный
-// контракт спеки §5 для ряда «Золото, ставки, рынок». Счёт растёт по мере добавления рядов 32–34
-// (девятнадцать панелей в конце).
+// TestFinancePolyusPanelCount фиксирует состав собранных рядов: ряд 31 — шесть панелей (id 1–6),
+// ряд 32 — пять (id 7–11). Счёт растёт по мере добавления рядов 33–34 (девятнадцать панелей в конце).
 func TestFinancePolyusPanelCount(t *testing.T) {
-	if panels := panelsOf(builtFinancePolyus(t)); len(panels) != 6 {
-		t.Fatalf("панелей %d, ожидалось 6", len(panels))
+	if panels := panelsOf(builtFinancePolyus(t)); len(panels) != 11 {
+		t.Fatalf("панелей %d, ожидалось 11", len(panels))
 	}
 }
 
@@ -95,8 +96,9 @@ func TestFinancePolyusValidateUID(t *testing.T) {
 // TestFinancePolyusUnits: SQL панели 1 отдаёт учётную цену ЦБ в ₽/г (currencyRUB, 2 знака — цена
 // с копейками), панели 2 — доллары за тройскую унцию (currencyUSD, у таргетов паритета и рыночных
 // рядов одна единица), панели 3 — курс ₽/$ (short, 4 знака), панелей 4 и 5 — проценты годовых
-// (уровни ставок, не темпы), панели 6 — рубли за акцию (currencyRUB). Перепутанная единица даёт
-// ошибку чтения на порядки.
+// (уровни ставок, не темпы), панели 6 — рубли за акцию (currencyRUB), панелей 7–11 — операционные
+// показатели датапака (short: koz/kT/тыс. м³/м³/т/г/т/%). Перепутанная единица даёт ошибку чтения
+// на порядки.
 func TestFinancePolyusUnits(t *testing.T) {
 	board := builtFinancePolyus(t)
 	if unit := panelByID(t, board, 1).FieldConfig.Defaults.Unit; unit == nil || *unit != units.Rubles {
@@ -122,6 +124,14 @@ func TestFinancePolyusUnits(t *testing.T) {
 	}
 	if unit := panelByID(t, board, 6).FieldConfig.Defaults.Unit; unit == nil || *unit != units.Rubles {
 		t.Fatalf("панель 6: unit %v, ожидался %q (цена акции — ₽)", unit, units.Rubles)
+	}
+	// Панели 7–11 — операционные показатели датапака: koz, kT, тыс. м³, м³/т, г/т и % подписаны
+	// в алиасах и заголовках, а единица Grafana у всех одна — short (koz/kT — не валюты, %, м³/т и
+	// г/т — не доли: currencyRUB/percent дали бы «₽» и «%» на числах другой размерности).
+	for _, id := range []uint32{7, 8, 9, 10, 11} {
+		if unit := panelByID(t, board, id).FieldConfig.Defaults.Unit; unit == nil || *unit != units.Short {
+			t.Fatalf("панель %d: unit %v, ожидался %q (единицы koz/kT/тыс. м³/м³/т/г/т — в алиасах и заголовке)", id, unit, units.Short)
+		}
 	}
 }
 
@@ -191,17 +201,143 @@ func TestFinancePolyusSparseSeriesPoints(t *testing.T) {
 	}
 }
 
-// fpGoldRowLayout — ожидаемая раскладка панелей ряда 31 «Золото, ставки, рынок» (id → x/y/w/h):
-// верхняя пара — цена ₽/г (1) и курс (3), панель 2 (24 колонки) — своя строка, ниже пара ставок (4/5)
-// и цена акции (6). Таблица живёт в тесте, а не рядом с билдерами: она фиксирует раскладку (её видно
-// в артефакте и в UI), а панель без позиции в таблице — ошибка, а не «дорисует авто-layout».
-var fpGoldRowLayout = map[uint32]gridPos{
-	1: {x: 0, y: 1, w: 12, h: 9},
-	3: {x: 12, y: 1, w: 12, h: 9},
-	2: {x: 0, y: 10, w: 24, h: 9},
-	4: {x: 0, y: 19, w: 12, h: 9},
-	5: {x: 12, y: 19, w: 12, h: 9},
-	6: {x: 0, y: 28, w: 12, h: 9},
+// TestFinancePolyusRightAxis: у панелей 10 («Вскрыша и коэффициент вскрыши») и 11 («Содержание и
+// извлечение») серия B измеряется в других единицах, чем A (м³/т против тыс. м³; % против г/т), и
+// стоит на правой оси — на общей левой она была бы нечитаемой линией у нуля. Override — пер-серийный:
+// опечатка в refId молча оставила бы B на левой оси, а свойство у A — сломало бы левую шкалу.
+func TestFinancePolyusRightAxis(t *testing.T) {
+	board := builtFinancePolyus(t)
+	for _, tc := range []struct {
+		panelID uint32
+		refID   string
+	}{{10, "B"}, {11, "B"}} {
+		panel := panelByID(t, board, tc.panelID)
+		if got := overridePropByRefID(panel, tc.refID, "custom.axisPlacement"); got != "right" {
+			t.Fatalf("панель %d: custom.axisPlacement серии %s = %v, ожидался \"right\" (своя размерность против левой оси)",
+				tc.panelID, tc.refID, got)
+		}
+		if got := overridePropByRefID(panel, "A", "custom.axisPlacement"); got != nil {
+			t.Fatalf("панель %d: у серии A custom.axisPlacement = %v — левая ось это отсутствие свойства", tc.panelID, got)
+		}
+	}
+}
+
+// TestFinancePolyusGoldOutputFrequencies: панель 7 — один показатель (выпуск аффинированного золота
+// компании) в трёх частотах датапака: год, полугодие, квартал. Перепутанная frequency молча оставила
+// бы серию пустой, а оговорка про конец квартального ряда (2022-01) обязана быть в Description: без
+// неё обрыв кварталов читается как дефект дашборда, а не как охват источника.
+func TestFinancePolyusGoldOutputFrequencies(t *testing.T) {
+	panel := panelByID(t, builtFinancePolyus(t), 7)
+	if len(panel.Targets) != 3 {
+		t.Fatalf("у панели %q %d запросов, ожидалось 3 (год, полугодие, квартал)", panelTitle(panel), len(panel.Targets))
+	}
+	for _, tc := range []struct{ refID, frequency, alias string }{
+		{"A", "ANNUAL", "Год, koz"},
+		{"B", "SEMI-ANNUAL", "Полугодия, koz"},
+		{"C", "QUARTERLY", "Кварталы, koz"},
+	} {
+		query := targetByRefID(t, panel, tc.refID)
+		for _, want := range []string{
+			"FROM v_company_operating",
+			"asset = 'CONSOLIDATED OPERATING RESULTS'",
+			"metric = 'Total refined gold output'",
+			"frequency = '" + tc.frequency + "'",
+			`AS "` + tc.alias + `"`,
+			"$__timeFilter(date)",
+			"ORDER BY date",
+		} {
+			if !strings.Contains(query.RawSql, want) {
+				t.Fatalf("панель 7: запрос %s не содержит %q: %s", tc.refID, want, query.RawSql)
+			}
+		}
+	}
+	description := optionalString(panel.Description)
+	for _, want := range []string{"2022", "данные"} {
+		if !strings.Contains(description, want) {
+			t.Fatalf("Description панели 7 не оговаривает охват кварталов (нет %q): %s", want, description)
+		}
+	}
+}
+
+// TestFinancePolyusNineAssets: панель 8 — выпуск золота годовым срезом по активам датапака: девять
+// таргетов, по одному на актив, с алиасом «<актив>, koz» (иначе в легенде девять одинаковых
+// «value»). Консолидированного итога среди них нет — он на панели 7: уровень компании и уровень
+// актива на одной оси читались бы как двойной счёт. Список активов — дословно из спеки §5, но
+// написание сверяется с витриной: ключ 'ZAPADOWE' в v_company_operating не встречается (там
+// 'ZAPADNOYE'), и серия возвращает пусто — это и фиксирует тест (плюс оговорка в Description).
+func TestFinancePolyusNineAssets(t *testing.T) {
+	panel := panelByID(t, builtFinancePolyus(t), 8)
+	if len(panel.Targets) != 9 {
+		t.Fatalf("у панели %q %d запросов, ожидалось 9 (по одному на актив)", panelTitle(panel), len(panel.Targets))
+	}
+	for _, tc := range []struct{ refID, asset string }{
+		{"A", "OLIMPIADA"},
+		{"B", "BLAGODATNOYE"},
+		{"C", "NATALKA"},
+		{"D", "KURANAKH"},
+		{"E", "VERNINSKOYE2"},
+		{"F", "ALLUVIALS"},
+		{"G", "Sukhoi Log"},
+		{"H", "TITIMUKHTA"},
+		{"I", "ZAPADOWE"},
+	} {
+		query := targetByRefID(t, panel, tc.refID)
+		for _, want := range []string{
+			"FROM v_company_operating",
+			"asset = '" + tc.asset + "'",
+			"metric = 'Total refined gold output'",
+			"frequency = 'ANNUAL'",
+			`AS "` + tc.asset + `, koz"`,
+			"$__timeFilter(date)",
+			"ORDER BY date",
+		} {
+			if !strings.Contains(query.RawSql, want) {
+				t.Fatalf("панель 8: запрос %s (актив %s) не содержит %q: %s", tc.refID, tc.asset, want, query.RawSql)
+			}
+		}
+		if strings.Contains(query.RawSql, "CONSOLIDATED") {
+			t.Fatalf("панель 8: запрос %s читает консолидированный итог (он на панели 7): %s", tc.refID, query.RawSql)
+		}
+	}
+	// Три пустые серии панели — охват датапака и написание ключа (F ALLUVIALS, G Sukhoi Log,
+	// I ZAPADOWE), а не ноль добычи: описание панели обязано называть и сами серии, и их причину.
+	description := optionalString(panel.Description)
+	for _, want := range []string{"консолидирован", "ALLUVIALS", "Sukhoi Log", "ZAPADNOYE"} {
+		if !strings.Contains(description, want) {
+			t.Fatalf("Description панели 8 не объясняет охват (нет %q): %s", want, description)
+		}
+	}
+}
+
+// fpPanelLayout — ожидаемая раскладка панелей по рядам (id → x/y/w/h). Ряд 31 «Золото, ставки,
+// рынок» (1–6): верхняя пара — цена ₽/г (1) и курс (3), панель 2 (24 колонки) — своя строка, ниже
+// пара ставок (4/5) и цена акции (6). Ряд 32 «Операционные показатели» (7–11): две широкие панели
+// выпуска золота (7/8, 24 колонки) — каждая своей строкой, ниже пара руды (9/10) и содержание с
+// извлечением (11); ряд встаёт сразу за панелью 6 (28 + 9 = 37), поэтому первая его панель — на
+// y=38. Таблица живёт в тесте, а не рядом с билдерами: она фиксирует раскладку (её видно в артефакте
+// и в UI), а панель без позиции в таблице — ошибка, а не «дорисует авто-layout».
+var fpPanelLayout = map[uint32]gridPos{
+	1:  {x: 0, y: 1, w: 12, h: 9},
+	3:  {x: 12, y: 1, w: 12, h: 9},
+	2:  {x: 0, y: 10, w: 24, h: 9},
+	4:  {x: 0, y: 19, w: 12, h: 9},
+	5:  {x: 12, y: 19, w: 12, h: 9},
+	6:  {x: 0, y: 28, w: 12, h: 9},
+	7:  {x: 0, y: 38, w: 24, h: 9},
+	8:  {x: 0, y: 47, w: 24, h: 9},
+	9:  {x: 0, y: 56, w: 12, h: 9},
+	10: {x: 12, y: 56, w: 12, h: 9},
+	11: {x: 0, y: 65, w: 12, h: 9},
+}
+
+// fpRowLayout — ожидаемая раскладка рядов (id → x/y/w/h): ряд — полоса сетки шириной 24 колонки и
+// высотой 1. Позицию ряда задаёт fpRowGridPos явно, потому что авто-layout ставит ряд в курсор
+// панелей (currentY + высота последней): у ряда 32 курсор после явно разложенных панелей стоит на
+// y=28 — то есть ряд лёг бы поверх панели 6. У ряда 31 y=0, и SDK пересчитывает только пару «x=0 И
+// y=0»: у первого ряда дашборда пересчёт даёт ровно этот же прямоугольник.
+var fpRowLayout = map[uint32]gridPos{
+	31: {x: 0, y: 0, w: 24, h: 1},
+	32: {x: 0, y: 37, w: 24, h: 1},
 }
 
 // gridPos — прямоугольник элемента сетки Grafana (24 колонки): раскладка ряда задана явно, поэтому
@@ -224,22 +360,25 @@ type layoutRect struct {
 }
 
 // TestFinancePolyusSpecConventions фиксирует конвенции каркаса одним проходом: раскладку панелей
-// 1–6 по таблице fpGoldRowLayout (позиция задана явно, а не выведена авто-layout'ом SDK — тот ставил
-// панель 2 шириной 24 колонки в курсор после панели 1, то есть x=12..36, за правую границу сетки),
-// непустой Description у каждой панели (спека §4), id уникальные в 1..19, FINAL и LIMIT в панельных
-// запросах не пишутся (FINAL уже внутри витрин; LIMIT на временном ряду молча обрезал бы историю —
-// anti-pattern легаси-экспорта). Общие инварианты сетки: x + w <= 24, y >= 1 (для SDK x=0 и y=0 —
-// «позиция не задана», её перезапишет авто-layout), прямоугольники не пересекаются — ни панели между
-// собой, ни ряд с панелью.
+// 1–11 по таблице fpPanelLayout и рядов по fpRowLayout (позиция задана явно, а не выведена
+// авто-layout'ом SDK — тот ставил панель 2 шириной 24 колонки в курсор после панели 1, то есть
+// x=12..36, за правую границу сетки, а ряд 32 — поверх последней панели ряда 31), непустой
+// Description у каждой панели (спека §4), id уникальные в 1..19, FINAL и LIMIT в панельных запросах
+// не пишутся (FINAL уже внутри витрин; LIMIT на временном ряду молча обрезал бы историю —
+// anti-pattern легаси-экспорта). Общие инварианты сетки: x + w <= 24, y >= 1 у панелей (для SDK
+// x=0 и y=0 — «позиция не задана», её перезапишет авто-layout; ряд 31 — исключение: он первый,
+// и пересчёт даёт тот же прямоугольник), прямоугольники не пересекаются — панели между собой,
+// панели с рядами и ряды между собой (ряд участвует в проверке только со своим GridPos: ряд без
+// позиции в таблице — ошибка, а не «пропустить и не заметить»).
 func TestFinancePolyusSpecConventions(t *testing.T) {
 	board := builtFinancePolyus(t)
 	panels := panelsOf(board)
-	if len(panels) != len(fpGoldRowLayout) {
-		t.Fatalf("панелей %d, в таблице раскладки %d: панель ряда 31 добавляется вместе со своей позицией", len(panels), len(fpGoldRowLayout))
+	if len(panels) != len(fpPanelLayout) {
+		t.Fatalf("панелей %d, в таблице раскладки %d: панель добавляется вместе со своей позицией", len(panels), len(fpPanelLayout))
 	}
 
 	seen := make(map[uint32]bool, len(panels))
-	rects := make([]layoutRect, 0, len(panels)+1)
+	rects := make([]layoutRect, 0, len(panels)+len(fpRowLayout))
 	for _, p := range panels {
 		if p.Id == nil {
 			t.Fatalf("панель %q: не задан id", panelTitle(p))
@@ -253,9 +392,9 @@ func TestFinancePolyusSpecConventions(t *testing.T) {
 			t.Fatalf("панель %d: пустой Description (спека §4 — описание у каждой панели)", id)
 		}
 
-		want, ok := fpGoldRowLayout[id]
+		want, ok := fpPanelLayout[id]
 		if !ok {
-			t.Fatalf("панель %d (%q): нет позиции в таблице раскладки ряда 31 — новая панель получает явный GridPos и попадает в таблицу", id, panelTitle(p))
+			t.Fatalf("панель %d (%q): нет позиции в таблице раскладки — новая панель получает явный GridPos и попадает в таблицу", id, panelTitle(p))
 		}
 		if p.GridPos == nil {
 			t.Fatalf("панель %d: gridPos не задан (авто-layout положит панель в курсор предыдущей)", id)
@@ -288,14 +427,26 @@ func TestFinancePolyusSpecConventions(t *testing.T) {
 	}
 
 	for _, entry := range board.Panels {
-		if entry.RowPanel == nil || entry.RowPanel.GridPos == nil {
+		if entry.RowPanel == nil {
 			continue
 		}
-		row := gridPos{x: entry.RowPanel.GridPos.X, y: entry.RowPanel.GridPos.Y, w: entry.RowPanel.GridPos.W, h: entry.RowPanel.GridPos.H}
-		if row.x+row.w > 24 {
-			t.Fatalf("ряд %q: x=%d + w=%d выходит за 24 колонки сетки", optionalString(entry.RowPanel.Title), row.x, row.w)
+		title := optionalString(entry.RowPanel.Title)
+		want, ok := fpRowLayout[entry.RowPanel.Id]
+		if !ok {
+			t.Fatalf("ряд %q (id %d): нет позиции в таблице раскладки рядов — ряд получает явный GridPos и попадает в таблицу", title, entry.RowPanel.Id)
 		}
-		rects = append(rects, layoutRect{"ряд " + optionalString(entry.RowPanel.Title), row})
+		if entry.RowPanel.GridPos == nil {
+			t.Fatalf("ряд %q: gridPos не задан (авто-layout ставит ряд в курсор панелей — поверх последней)", title)
+		}
+		row := gridPos{x: entry.RowPanel.GridPos.X, y: entry.RowPanel.GridPos.Y, w: entry.RowPanel.GridPos.W, h: entry.RowPanel.GridPos.H}
+		if row != want {
+			t.Fatalf("ряд %q: gridPos {x:%d y:%d w:%d h:%d}, ожидался {x:%d y:%d w:%d h:%d}",
+				title, row.x, row.y, row.w, row.h, want.x, want.y, want.w, want.h)
+		}
+		if row.x+row.w > 24 {
+			t.Fatalf("ряд %q: x=%d + w=%d выходит за 24 колонки сетки", title, row.x, row.w)
+		}
+		rects = append(rects, layoutRect{"ряд " + title, row})
 	}
 
 	for i := range rects {

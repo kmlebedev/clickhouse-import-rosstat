@@ -564,6 +564,444 @@
           },
           "overrides": []
         }
+      },
+      {
+        "type": "row",
+        "collapsed": false,
+        "title": "Операционные показатели",
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 37
+        },
+        "id": 32,
+        "panels": []
+      },
+      {
+        "type": "timeseries",
+        "id": 7,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, value AS \"Год, koz\"\nFROM v_company_operating\nWHERE company = 'PLZL' AND asset = 'CONSOLIDATED OPERATING RESULTS'\n  AND metric = 'Total refined gold output' AND frequency = 'ANNUAL'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT date AS time, value AS \"Полугодия, koz\"\nFROM v_company_operating\nWHERE company = 'PLZL' AND asset = 'CONSOLIDATED OPERATING RESULTS'\n  AND metric = 'Total refined gold output' AND frequency = 'SEMI-ANNUAL'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "C",
+            "rawSql": "SELECT date AS time, value AS \"Кварталы, koz\"\nFROM v_company_operating\nWHERE company = 'PLZL' AND asset = 'CONSOLIDATED OPERATING RESULTS'\n  AND metric = 'Total refined gold output' AND frequency = 'QUARTERLY'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Выпуск золота: год, полугодия, кварталы",
+        "description": "Выпуск аффинированного золота компании (v_company_operating: asset = 'CONSOLIDATED OPERATING RESULTS', metric = 'Total refined gold output') в тысячах тройских унций (koz) тремя частотами датапака: A — год, B — полугодие, C — квартал. Значение — выпуск ЗА период, а не накопленный итог, поэтому ряды стоят на одной оси как уровни и не суммируются между собой. Покрытие частот разное: кварталы в датапаке заканчиваются 2022-01, полугодия и годы идут до 2026-01 — обрыв квартального ряда в 2022-м это данные источника, а не пропуск и не дефект дашборда.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 24,
+          "x": 0,
+          "y": 38
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 8,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, value AS \"OLIMPIADA, koz\"\nFROM v_company_operating\nWHERE company = 'PLZL' AND asset = 'OLIMPIADA'\n  AND metric = 'Total refined gold output' AND frequency = 'ANNUAL'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT date AS time, value AS \"BLAGODATNOYE, koz\"\nFROM v_company_operating\nWHERE company = 'PLZL' AND asset = 'BLAGODATNOYE'\n  AND metric = 'Total refined gold output' AND frequency = 'ANNUAL'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "C",
+            "rawSql": "SELECT date AS time, value AS \"NATALKA, koz\"\nFROM v_company_operating\nWHERE company = 'PLZL' AND asset = 'NATALKA'\n  AND metric = 'Total refined gold output' AND frequency = 'ANNUAL'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "D",
+            "rawSql": "SELECT date AS time, value AS \"KURANAKH, koz\"\nFROM v_company_operating\nWHERE company = 'PLZL' AND asset = 'KURANAKH'\n  AND metric = 'Total refined gold output' AND frequency = 'ANNUAL'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "E",
+            "rawSql": "SELECT date AS time, value AS \"VERNINSKOYE2, koz\"\nFROM v_company_operating\nWHERE company = 'PLZL' AND asset = 'VERNINSKOYE2'\n  AND metric = 'Total refined gold output' AND frequency = 'ANNUAL'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "F",
+            "rawSql": "SELECT date AS time, value AS \"ALLUVIALS, koz\"\nFROM v_company_operating\nWHERE company = 'PLZL' AND asset = 'ALLUVIALS'\n  AND metric = 'Total refined gold output' AND frequency = 'ANNUAL'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "G",
+            "rawSql": "SELECT date AS time, value AS \"Sukhoi Log, koz\"\nFROM v_company_operating\nWHERE company = 'PLZL' AND asset = 'Sukhoi Log'\n  AND metric = 'Total refined gold output' AND frequency = 'ANNUAL'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "H",
+            "rawSql": "SELECT date AS time, value AS \"TITIMUKHTA, koz\"\nFROM v_company_operating\nWHERE company = 'PLZL' AND asset = 'TITIMUKHTA'\n  AND metric = 'Total refined gold output' AND frequency = 'ANNUAL'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "I",
+            "rawSql": "SELECT date AS time, value AS \"ZAPADOWE, koz\"\nFROM v_company_operating\nWHERE company = 'PLZL' AND asset = 'ZAPADOWE'\n  AND metric = 'Total refined gold output' AND frequency = 'ANNUAL'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Выпуск золота по активам (год), koz",
+        "description": "Выпуск аффинированного золота по активам, koz/год (v_company_operating: metric = 'Total refined gold output', frequency = 'ANNUAL', asset — месторождение датапака). Девять серий — по одной на актив; консолидированный итог компании ('CONSOLIDATED OPERATING RESULTS') исключён: он на панели 7, и уровень компании на одной оси с активами читался бы как двойной счёт выпуска. Три серии пусты, и у каждой своя причина: F — ALLUVIALS (в датапаке россыпи ведутся отдельной метрикой 'Refined gold production'), G — Sukhoi Log (проект, годового выпуска ещё нет) и I — ZAPADOWE (в витрине ключ этого актива хранится как 'ZAPADNOYE'): пустая серия — это охват источника и написание ключа, а не ноль добычи. Значения — ЗА год, в одних единицах, поэтому серии сопоставимы напрямую.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 24,
+          "x": 0,
+          "y": 47
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 9,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, value AS \"Добыто руды, kT\"\nFROM v_company_operating\nWHERE company = 'PLZL' AND asset = 'CONSOLIDATED OPERATING RESULTS'\n  AND metric = 'Ore mined' AND frequency = 'ANNUAL'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT date AS time, value AS \"Переработано руды, kT\"\nFROM v_company_operating\nWHERE company = 'PLZL' AND asset = 'CONSOLIDATED OPERATING RESULTS'\n  AND metric = 'Ore processed' AND frequency = 'ANNUAL'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Руда: добыто и переработано (год), kT",
+        "description": "Руда компании за год, тысячи тонн (v_company_operating: asset = 'CONSOLIDATED OPERATING RESULTS', frequency = 'ANNUAL'): A — добыто руды ('Ore mined'), B — переработано руды ('Ore processed'). Обе серии — объёмы в одной единице (kT), поэтому сопоставимы напрямую, и разрыв между ними читается как склад руды, а не как разница масштаба. Значения — ЗА год, а не накопленный итог.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 56
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 10,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, value AS \"Вскрыша, тыс. м³\"\nFROM v_company_operating\nWHERE company = 'PLZL' AND asset = 'CONSOLIDATED OPERATING RESULTS'\n  AND metric = 'Stripping' AND frequency = 'ANNUAL'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT date AS time, value AS \"Коэффициент вскрыши, м³/т\"\nFROM v_company_operating\nWHERE company = 'PLZL' AND asset = 'CONSOLIDATED OPERATING RESULTS'\n  AND metric = 'Stripping ratio' AND frequency = 'ANNUAL'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Вскрыша и коэффициент вскрыши",
+        "description": "Вскрышные работы компании за год (v_company_operating: asset = 'CONSOLIDATED OPERATING RESULTS', frequency = 'ANNUAL'): A — вскрыша ('Stripping', тыс. м³), B — коэффициент вскрыши ('Stripping ratio', м³/т) — сколько кубометров породы снято на тонну руды. Размерности серий разные (объём против отношения), поэтому B нарисован на правой оси: на левой с тыс. м³ он был бы нечитаемой линией у нуля. Значения — ЗА год.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 12,
+          "y": 56
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "B"
+              },
+              "properties": [
+                {
+                  "id": "custom.axisPlacement",
+                  "value": "right"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 11,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, value AS \"Содержание в руде, г/т\"\nFROM v_company_operating\nWHERE company = 'PLZL' AND asset = 'CONSOLIDATED OPERATING RESULTS'\n  AND metric = 'Average grade in ore mined' AND frequency = 'ANNUAL'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT date AS time, value AS \"Извлечение, %\"\nFROM v_company_operating\nWHERE company = 'PLZL' AND asset = 'CONSOLIDATED OPERATING RESULTS'\n  AND metric = 'Recovery' AND frequency = 'ANNUAL'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Содержание и извлечение",
+        "description": "Качество руды и металлургия компании за год (v_company_operating: asset = 'CONSOLIDATED OPERATING RESULTS', frequency = 'ANNUAL'): A — среднее содержание золота в добытой руде ('Average grade in ore mined', г/т), B — извлечение ('Recovery', %) — какая доля металла уходит в продукт. Размерности серий разные, поэтому B нарисован на правой оси: на левой шкале с г/т проценты были бы линией у нуля. A и B вместе — вход металлургического баланса: падение содержания при том же выпуске означает рост объёмов переработки. Значения — ЗА год.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 65
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "B"
+              },
+              "properties": [
+                {
+                  "id": "custom.axisPlacement",
+                  "value": "right"
+                }
+              ]
+            }
+          ]
+        }
       }
     ],
     "templating": {},
