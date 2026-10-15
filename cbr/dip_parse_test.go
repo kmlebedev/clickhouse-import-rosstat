@@ -92,6 +92,25 @@ func dipSetCell(t *testing.T, f *excelize.File, sheet, cell string, value any) {
 	}
 }
 
+// dipCopySheetRaw — лист-дубль в мутируемой фикстуре: значения листа from копируются в новый лист
+// to тем же сырым видом (RawCellValue), включая заголовок A1. Так воспроизводится вёрстка выпуска
+// 22-05, где один объявленный заголовок A1 несут два листа с теми же данными.
+func dipCopySheetRaw(t *testing.T, f *excelize.File, from, to string) {
+	t.Helper()
+	rows, err := f.GetRows(from, excelize.Options{RawCellValue: true})
+	if err != nil {
+		t.Fatalf("GetRows(%s): %v", from, err)
+	}
+	if _, err := f.NewSheet(to); err != nil {
+		t.Fatalf("NewSheet(%s): %v", to, err)
+	}
+	for i, row := range rows {
+		if err := f.SetSheetRow(to, dipCellName(t, 1, i+1), &row); err != nil {
+			t.Fatalf("SetSheetRow(%s!A%d): %v", to, i+1, err)
+		}
+	}
+}
+
 // dipCellName — адрес ячейки по колонке и строке (1-based) — так же, как адресует ячейки разбор.
 func dipCellName(t *testing.T, column, row int) string {
 	t.Helper()
@@ -734,4 +753,33 @@ func TestDipMissingColumnWarns(t *testing.T) {
 			len(bySeries["unemployment_sa"]))
 	}
 	dipAssertWarn(t, hook, "saar_services", "не найдена", "Услуги")
+}
+
+// TestDipDuplicateSheetWarns: в выпуске 22-05 один объявленный заголовок A1 несут два листа
+// («Уровень безработицы, %» на листах «22» и «42»; данные в них те же, различие лишь в строке со
+// сноской «Источники: Росстат, расчеты ДИП.»). Лист-дубль — свойство вёрстки выпуска, а не поломка
+// источника: разбирается первый по порядку книги, лист-дубль пропускается с предупреждением —
+// разбор обоих дал бы дубль (series, date) и уронил прогон (проверено живым прогоном 2026-10-16,
+// спека §3.4). Мутация — копия листа безработицы живой фикстуры 26-06 в новый лист книги.
+func TestDipDuplicateSheetWarns(t *testing.T) {
+	hook := dipWarnHook(t)
+	f := dipOpenFixture(t, dipFixture2606, func(t *testing.T, f *excelize.File) {
+		dipCopySheetRaw(t, f, "23", "42")
+	})
+	points, err := cbrDipParseBook(f, dipFixtureReleases[dipFixture2606])
+	if err != nil {
+		t.Fatalf("разбор мутированной фикстуры: %v", err)
+	}
+	// Немутованная книга даёт те же 544 точки: лист-дубль не добавляет и не отнимает точек.
+	if len(points) != 544 {
+		t.Errorf("точек %d, want 544", len(points))
+	}
+	bySeries := dipGroupPoints(points)
+	for _, name := range []string{"unemployment_sa", "unemployment_nsa"} {
+		if len(bySeries[name]) != 138 {
+			t.Errorf("ряд %q: точек %d, want 138 (точки листа-дубля не читаются)", name, len(bySeries[name]))
+		}
+	}
+	dipCheckSpot(t, points, "unemployment_nsa", dipDate(2015, time.January, 31), 5.455578448855274)
+	dipAssertWarn(t, hook, "«23»", "«42»", "пропущен")
 }
