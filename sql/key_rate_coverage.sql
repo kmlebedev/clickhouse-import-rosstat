@@ -22,6 +22,8 @@ SELECT * FROM (
     
     UNION ALL SELECT 'cbr_bank_int_rate', name, count(), min(date), max(date) FROM cbr_bank_int_rate FINAL GROUP BY name
     
+    UNION ALL SELECT 'cbr_int_rate_loans', name, count(), min(date), max(date) FROM cbr_int_rate_loans FINAL GROUP BY name
+    
     UNION ALL SELECT 'cbr_m2', name, count(), min(date), max(date) FROM cbr_m2 FINAL GROUP BY name
     
     UNION ALL SELECT 'cbr_credit_m2x', name, count(), min(date), max(date) FROM cbr_credit_m2x FINAL GROUP BY name

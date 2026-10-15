@@ -18,8 +18,9 @@ import (
 // PublicationsTable — общая таблица точек контроля публикаций: одна строка = одна увиденная
 // версия артефакта источника. Механизм общий для источников, чьи файлы обновляются реже
 // прогонов, и включается полями шаблона util.ClickHouseImport (PublicationCountPoints /
-// PublicationSource); фактический список потребителей — ARCHITECTURE §8 п. 13 (пятнадцать
-// импортёров: десять в cbr/ и пять вне него). Таблица внутренняя: агенту (kimi_reader) не выдаётся.
+// PublicationSource); фактический список потребителей — ARCHITECTURE §8 п. 13
+// (шестнадцать импортёров: одиннадцать в cbr/ и пять вне него). Таблица внутренняя: агенту
+// (kimi_reader) не выдаётся.
 const PublicationsTable = "source_publications"
 
 // PublicationsDdl — канонический DDL (ARCHITECTURE §6.2, спека §3.4). Литерал, а не %s-форма
