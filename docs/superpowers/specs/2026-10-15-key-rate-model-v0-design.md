@@ -80,6 +80,14 @@
 
 **Сверка ярлыков:** для заседаний, присутствующих в `cbr_mp_summary` (22 резюме с февраля 2024), при непустом `decision_delta_bp` шаг обязан совпасть; расхождение — ошибка прогона (fail-fast), а не строка отчёта.
 
+**Три исхода заседания — и они различимы в отчёте** (уточнено 2026-10-16, ревью Task 2):
+
+- **решение** — ставка на `d − 1` известна и окно исхода наблюдаемо целиком (`min(d + 7, next − 1) ≤ max(date)` ряда `cbr_key_rate`);
+- **«вне выборки»** — окно исхода ещё не наблюдаемо (окно выходит за данные ставки: будущее заседание или заседание, у которого оно ещё не закрылось). «Ставка ещё не изменилась» — не наблюдённый исход;
+- **«пропущено»** — на `d − 1` нет точки ряда вовсе (ряд короче выборки): ставку «до» взять неоткуда, это дефект данных.
+
+Обе причины названы разными списками намеренно: слитый список прятал бы счётчик «пропущено», который требует §4. В выборку подаются прошедшие заседания (решение ЦБ объявлено); предстоящие печатаются отдельной строкой и в счётчики не входят.
+
 Ожидаемый размер выборки: 108 прошедших заседаний (2014-02-14 … 2026-09-11), из них цикл 2024–2026 — 24.
 
 ## 4. Признаки и as-of слой (v0)
@@ -140,8 +148,8 @@
 | `calendar/events.go`, `calendar/events_test.go` | разбор 2014–2019 (§2) |
 | `scripts/key_rate_model.py` | новый: выборка, as-of, признаки, бенчмарки, методы, walk-forward, метрики, отчёт. Транспорт — `ch_query` из `scripts/extrapolation_aisc.py` (прецедент `polyus_output_model.py`); в ClickHouse не пишет |
 | `scripts/key_rate_model_test.py` | новый: офлайн-набор (stdlib `unittest`, транспорт мокается) |
-| `scripts/testdata/key_rate/` | новые малые фикстуры: срезы `cbr_key_rate` (2014–2016), `cbr_indicators_cpd`, `cbr_survey`, `cbr_mp_summary`, список заседаний (+ручные строки — для фильтра по `title`) |
-| `Makefile` | цель `key-rate-model` (`uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy python3 scripts/key_rate_model.py`) |
+| `scripts/testdata/key_rate/` | новые малые фикстуры: срезы `cbr_key_rate` (2013–2016, `key_rate_2013_2016.csv`), базового ИПЦ (`cpd_core_2013_2016.csv`), ИБК (`ibk_2013_2016.csv`), резюме (`mp_summary.csv`), список заседаний `meetings.csv` (+ручные строки — для фильтра по `title`; экспорт добавляет ручную строку с уникальной датой) |
+| `Makefile` | цель `key-rate-model` (`uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/key_rate_model.py`; `--python 3.12` обязателен: `statsmodels>=0.15` требует Python≥3.10, а системный `python3` может быть 3.9) |
 | `.gitignore` | артефакты §8 |
 | `README.md`, `ARCHITECTURE.md` | скрипт и цель (skill `sync-readme-architecture`) |
 | `docs/ROADMAP_KEY_RATE.md` | статус пункта; подпункты фазы 4 (метод №1+ансамбль, байес, «inflated», ML-трек, запись в журнал, витрина, резолвер); строка календаря §4.1 |
@@ -151,7 +159,7 @@
 ## 10. Приёмка
 
 1. `make all` — зелёный (gofmt, golangci-lint, vet, test -race, сборки).
-2. `uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy python3 scripts/key_rate_model_test.py` — зелёный, offline.
+2. `uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/key_rate_model_test.py` — зелёный, offline (`--python 3.12` — как в цели Makefile: `statsmodels>=0.15` не резолвится на системном `python3` 3.9.6, а привязка к PATH делала бы приёмку зависимой от порядка путей).
 3. Живой прогон: `make import STAT=events_calendar` (календарь: ожидаемо 50 новых дат, строка coverage 120 / 2014-02-14), `make key-rate-model` (отчёт: 108 заседаний, метрики, DM, прогноз на 23.10.2026). Числа — в протокол приёмки PR.
 4. Статусы в `docs/ROADMAP_KEY_RATE.md`; синк README/ARCHITECTURE.
 5. Один PR в конце ветки; протокол живой приёмки — комментарием в PR (стандарт §16.1 п. 8).

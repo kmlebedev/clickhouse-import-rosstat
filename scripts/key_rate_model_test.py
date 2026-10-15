@@ -17,16 +17,21 @@
 
     make key-rate-model ARGS="--export-fixtures scripts/testdata/key_rate"
 
-Окно срезов — 2013-01-01…2016-12-31. Верхняя граница выбрана так, что окно
-исхода последнего заседания среза (2016-12-16, W = 2016-12-23) наблюдаемо
-целиком, а заседания 2017+ лежат за рядом ставки и проверяют правило «окно
-исхода вне данных ставки → заседание вне выборки» (на живом прогоне так
-отсеиваются будущие заседания). Файлы коммитятся: тесты обязаны
-воспроизводиться без сети и без БД.
+Окно срезов — 2013-01-01…2016-12-31 (имя файлов = фактическое окно). Верхняя
+граница выбрана так, что окно исхода последнего заседания среза (2016-12-16,
+W = 2016-12-23) наблюдаемо целиком, а заседания 2017+ лежат за рядом ставки и
+проверяют правило «окно исхода вне данных ставки → заседание вне выборки»
+(на живом прогоне так отсеиваются будущие заседания). В `meetings.csv` экспорт
+добавляет тестовую ручную строку-триггер с УНИКАЛЬНОЙ датой (2016-12-20): на
+живых данных ручные строки делят даты с каноническими, и фильтр по `title` был
+бы ненаблюдаем. Файлы коммитятся: тесты обязаны воспроизводиться без сети и БД.
 """
 
+import contextlib
 import csv
+import io
 import sys
+import tempfile
 import unittest
 import unittest.mock
 from datetime import date, timedelta
@@ -40,11 +45,38 @@ import key_rate_model as km
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "testdata" / "key_rate"
 
+FIXTURE_NAMES = (
+    "meetings.csv",
+    "key_rate_2013_2016.csv",
+    "cpd_core_2013_2016.csv",
+    "ibk_2013_2016.csv",
+    "mp_summary.csv",
+)
 
-def fixture_rows(name: str) -> list:
+
+def fixture_rows(name: str, directory: Path = FIXTURE_DIR) -> list:
     """Строки CSV-фикстуры словарями — в той же форме, что отдаёт ch_query."""
-    with (FIXTURE_DIR / name).open(newline="", encoding="utf-8") as handle:
+    with (directory / name).open(newline="", encoding="utf-8") as handle:
         return list(csv.DictReader(handle))
+
+
+def ch_query_from_fixtures(sql: str) -> list:
+    """Транспорт-заглушка: живой SQL → строки соответствующей фикстуры.
+
+    Прогоняет загрузчики и `run_summary` целиком офлайн — тем же путём, что и
+    живой прогон, но на закоммиченных срезах.
+    """
+    if "FROM events_calendar" in sql:
+        return fixture_rows("meetings.csv")
+    if "FROM cbr_key_rate" in sql:
+        return fixture_rows("key_rate_2013_2016.csv")
+    if "FROM cbr_indicators_cpd" in sql:
+        return fixture_rows("cpd_core_2013_2016.csv")
+    if "FROM macro_series" in sql:
+        return fixture_rows("ibk_2013_2016.csv")
+    if "FROM cbr_mp_summary" in sql:
+        return fixture_rows("mp_summary.csv")
+    raise AssertionError(f"неизвестный SQL: {sql}")
 
 
 def fixture_meetings() -> list:
@@ -52,7 +84,16 @@ def fixture_meetings() -> list:
 
 
 def fixture_key_rate() -> list:
-    return km.key_rate_from_rows(fixture_rows("key_rate_2013_2017.csv"))
+    return km.key_rate_from_rows(fixture_rows("key_rate_2013_2016.csv"))
+
+
+def summary_value(text: str, label: str) -> str:
+    """Значение строки сводки по её подписи (без привязки к отступам)."""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(label):
+            return stripped[len(label):].strip()
+    raise AssertionError(f"нет строки {label!r} в сводке:\n{text}")
 
 
 class TestSampleFilter(unittest.TestCase):
@@ -64,26 +105,36 @@ class TestSampleFilter(unittest.TestCase):
         self.assertEqual(km.SAMPLE_TITLE, "СД ЦБ РФ: заседание по ключевой ставке")
 
     def test_fixture_contains_manual_trigger_rows(self):
-        # Фикстура — ВСЯ категория 'cbr': 118 канонических строк плюс две ручные
-        # строки-триггера сида. Без них фильтр по title нечем проверять.
+        # Фикстура — ВСЯ категория 'cbr': 118 канонических строк плюс ручные
+        # строки-триггеры сида. Без них фильтр по title нечем проверять.
         rows = fixture_rows("meetings.csv")
-        self.assertEqual(len(rows), 120)
+        self.assertEqual(len(rows), 121)
         canonical = sum(1 for row in rows if row["title"] == km.SAMPLE_TITLE)
         self.assertEqual(canonical, 118)
         manual = sorted(row["event_date"] for row in rows if row["title"] != km.SAMPLE_TITLE)
-        self.assertEqual(manual, ["2026-10-23", "2026-12-18"])
+        self.assertEqual(manual, ["2016-12-20", "2026-10-23", "2026-12-18"])
+
+    def test_title_filter_has_observable_effect_on_the_fixture(self):
+        # Дата 2016-12-20 есть ТОЛЬКО у ручной строки-триггера (обе живые ручные
+        # строки делят даты с каноническими, и там фильтр по датам не виден).
+        # Без фильтра эта дата попала бы в список заседаний и дала бы лишнее
+        # «решение» — то есть тест падает не на отсутствии строки, а на её эффекте.
+        unique_day = [
+            row for row in fixture_rows("meetings.csv") if row["event_date"] == "2016-12-20"
+        ]
+        self.assertEqual(len(unique_day), 1)
+        self.assertNotEqual(unique_day[0]["title"], km.SAMPLE_TITLE)
+        self.assertNotIn(date(2016, 12, 20), fixture_meetings())
 
     def test_title_filter_keeps_only_canonical_meetings(self):
-        # 120 строк дают 118 заседаний: ручные строки делят даты с каноническими
-        # (2026-10-23 и 2026-12-18 помечены и сидом, и календарём ЦБ), поэтому
-        # по датам дедуп делает их невидимыми — эффект фильтра проверяется на
-        # ручной дате, которой нет среди канонических строк.
+        # 121 строка → 118 заседаний: живые ручные строки делят даты с
+        # каноническими (2026-10-23 и 2026-12-18 помечены и сидом, и календарём
+        # ЦБ), поэтому по датам дедуп делает их невидимыми, а эффект фильтра
+        # даёт тестовая строка от экспорта (см. предыдущий тест).
         meetings = fixture_meetings()
         self.assertEqual(len(meetings), 118)
         self.assertEqual(meetings[0], date(2014, 2, 14))
         self.assertEqual(meetings[-1], date(2027, 12, 17))
-        manual_only = [{"event_date": "2026-10-20", "category": "cbr", "title": "ручной триггер"}]
-        self.assertEqual(km.meetings_from_rows(manual_only), [])
 
 
 class TestLoaders(unittest.TestCase):
@@ -107,11 +158,9 @@ class TestLoaders(unittest.TestCase):
             )
 
     def test_load_cpd_core_converts_rows(self):
-        rows = [{"date": "2013-12-31", "value": 0.30000001192092896}]
+        rows = [{"date": "2013-12-31", "value": 0.3}]
         with unittest.mock.patch.object(km, "ch_query", return_value=rows) as query:
-            self.assertEqual(
-                km.load_cpd_core(), [(date(2013, 12, 31), 0.30000001192092896)]
-            )
+            self.assertEqual(km.load_cpd_core(), [(date(2013, 12, 31), 0.3)])
         self.assertIn("cbr_indicators_cpd", query.call_args.args[0])
 
     def test_load_ibk_converts_rows(self):
@@ -131,6 +180,38 @@ class TestLoaders(unittest.TestCase):
                 km.load_mp_summary_deltas(),
                 [(date(2024, 2, 16), None), (date(2024, 3, 22), 0), (date(2024, 7, 26), 200)],
             )
+
+    def test_duplicate_dates_are_rejected(self):
+        # Дубль даты в ряду — потерянный FINAL или неверный ключ: as-of выбрал бы
+        # одну из двух точек по порядку строк, и решение молча зависело бы от
+        # порядка ответа. Поэтому отказ с датой-дубликатом, а не «последний победил».
+        cases = (
+            (
+                km.key_rate_from_rows,
+                [{"date": "2014-12-11", "rate": 9.5}, {"date": "2014-12-11", "rate": 10.5}],
+            ),
+            (
+                km.cpd_from_rows,
+                [{"date": "2016-10-31", "value": 0.35}, {"date": "2016-10-31", "value": 0.4}],
+            ),
+            (
+                km.ibk_from_rows,
+                [{"date": "2016-10-01", "value": 1.4}, {"date": "2016-10-01", "value": 2.0}],
+            ),
+            (
+                km.mp_deltas_from_rows,
+                [
+                    {"meeting_date": "2024-07-26", "decision_delta_bp": 200},
+                    {"meeting_date": "2024-07-26", "decision_delta_bp": 100},
+                ],
+            ),
+        )
+        for parser, rows in cases:
+            with self.assertRaises(ValueError) as caught:
+                parser(rows)
+            self.assertIn("встречается дважды", str(caught.exception))
+            self.assertIn(rows[0]["date"] if "date" in rows[0] else rows[0]["meeting_date"],
+                          str(caught.exception))
 
     def test_replacing_merge_tree_queries_use_final(self):
         # Все пять таблиц — ReplacingMergeTree: без FINAL вытесненные копии
@@ -152,6 +233,24 @@ class TestLoaders(unittest.TestCase):
         self.assertIn("source = 'cbr_survey'", km.IBK_SQL)
         self.assertIn("series = 'business_climate_sa'", km.IBK_SQL)
 
+    def test_fixture_queries_are_windowed(self):
+        # Срезы фикстур — окно [2013-01-01, 2016-12-31] (имя файлов = окну).
+        # Проверяются границы в тексте WHERE, а не только FINAL/FORMAT JSON:
+        # снятый диапазон раздул бы фикстуры до всей истории, а суженный —
+        # сломал бы пин состава решений.
+        for sql in (km.FIXTURE_KEY_RATE_SQL, km.FIXTURE_CPD_CORE_SQL, km.FIXTURE_IBK_SQL):
+            self.assertIn("date >= '2013-01-01'", sql)
+            self.assertIn("date <= '2016-12-31'", sql)
+            self.assertIn("FINAL", sql)
+            self.assertIn("FORMAT JSON", sql)
+            self.assertLess(sql.index("date >= '2013-01-01'"), sql.index("ORDER BY "))
+        # Список заседаний и сводки выгружаются целиком — окна у них нет.
+        self.assertNotIn("date >=", km.MEETINGS_SQL)
+        self.assertNotIn("date >=", km.MP_SUMMARY_SQL)
+        # Фильтры рядов в фикстурных запросах сохраняются.
+        self.assertIn("Базовый ИПЦ", km.FIXTURE_CPD_CORE_SQL)
+        self.assertIn("series = 'business_climate_sa'", km.FIXTURE_IBK_SQL)
+
 
 class TestDecisions(unittest.TestCase):
     """Выборка решений на фикстурах (спека §3)."""
@@ -160,7 +259,9 @@ class TestDecisions(unittest.TestCase):
     def setUpClass(cls):
         cls.meetings = fixture_meetings()
         cls.key_rate = fixture_key_rate()
-        cls.decisions, cls.excluded = km.build_decisions(cls.meetings, cls.key_rate, [])
+        cls.decisions, cls.excluded, cls.missing = km.build_decisions(
+            cls.meetings, cls.key_rate, []
+        )
         cls.by_date = {d.meeting_date: d for d in cls.decisions}
 
     def test_composition_is_the_resolved_part_of_the_fixture(self):
@@ -171,6 +272,7 @@ class TestDecisions(unittest.TestCase):
         self.assertEqual([d.meeting_date for d in self.decisions][-1], date(2016, 12, 16))
         self.assertEqual(len(self.decisions), 26)
         self.assertEqual(len(self.excluded), len(self.meetings) - len(self.decisions))
+        self.assertEqual(self.missing, [])
         self.assertIn(date(2017, 2, 3), self.excluded)
         self.assertNotIn(date(2016, 12, 16), self.excluded)
 
@@ -216,13 +318,35 @@ class TestDecisions(unittest.TestCase):
                 decision.y3, (decision.step_bp > 0) - (decision.step_bp < 0)
             )
 
-    def test_meeting_without_rate_history_is_excluded(self):
-        # Заседание раньше начала ряда ставки: не «шаг 0», а вне выборки.
-        decisions, excluded = km.build_decisions(
+    def test_meeting_without_rate_history_is_missing(self):
+        # Заседание раньше начала ряда ставки: «пропущено» (нет ставки на d−1),
+        # а НЕ «вне выборки»: причина другая, и отчёт обязан их различать.
+        decisions, excluded, missing = km.build_decisions(
             [date(2013, 9, 16)], [(date(2013, 9, 17), 5.5), (date(2013, 9, 24), 5.5)], []
         )
         self.assertEqual(decisions, [])
-        self.assertEqual(excluded, [date(2013, 9, 16)])
+        self.assertEqual(excluded, [])
+        self.assertEqual(missing, [date(2013, 9, 16)])
+
+    def test_meeting_at_the_series_edge_is_excluded(self):
+        # Заседание внутри ряда ставки, но окно исхода (d+7) выходит за его
+        # максимум: «вне выборки», а не «пропущено» — ставка на d−1 известна.
+        key_rate = [(date(2016, 12, 1), 10.0), (date(2016, 12, 30), 10.0)]
+        decisions, excluded, missing = km.build_decisions([date(2016, 12, 28)], key_rate, [])
+        self.assertEqual(decisions, [])
+        self.assertEqual(excluded, [date(2016, 12, 28)])
+        self.assertEqual(missing, [])
+
+    def test_only_the_meeting_beyond_the_edge_is_excluded(self):
+        # Соседние заседания: у 2015-12-11 окно (2015-12-18) внутри ряда, у
+        # 2016-12-16 — тоже (2016-12-23); краевое 2016-12-28 — вне.
+        key_rate = [(date(2015, 12, 10), 11.0), (date(2016, 12, 22), 10.0)]
+        decisions, excluded, missing = km.build_decisions(
+            [date(2015, 12, 11), date(2016, 12, 28)], key_rate, []
+        )
+        self.assertEqual([d.meeting_date for d in decisions], [date(2015, 12, 11)])
+        self.assertEqual(excluded, [date(2016, 12, 28)])
+        self.assertEqual(missing, [])
 
 
 class TestMpSummaryReconciliation(unittest.TestCase):
@@ -258,14 +382,15 @@ class TestMpSummaryReconciliation(unittest.TestCase):
 
     def test_steps_match_summary_deltas(self):
         meetings, points, deltas = self._series()
-        decisions, excluded = km.build_decisions(meetings, points, deltas)
-        # Первое резюме (2024-02-16) — без предыдущей ставки, последнее
-        # (2026-09-11) — окно исхода ещё не наблюдаемо.
+        decisions, excluded, missing = km.build_decisions(meetings, points, deltas)
+        # Первое резюме (2024-02-16) — раньше начала синтетического ряда:
+        # «пропущено» (нет ставки на d−1), а не «вне выборки». Последнее
+        # (2026-09-11) — окно исхода ещё не наблюдаемо: «вне выборки».
         self.assertEqual(len(decisions), len(deltas) - 2)
         for decision in decisions:
             self.assertEqual(decision.step_bp, dict(deltas)[decision.meeting_date])
-        self.assertIn(date(2024, 2, 16), excluded)
-        self.assertIn(date(2026, 9, 11), excluded)
+        self.assertEqual(missing, [date(2024, 2, 16)])
+        self.assertEqual(excluded, [date(2026, 9, 11)])
 
     def test_perturbed_delta_raises(self):
         # Подмена дельты в фикстуре: расхождение ярлыка со ставкой — ошибка
@@ -282,10 +407,12 @@ class TestMpSummaryReconciliation(unittest.TestCase):
         # Дельта для заседания вне выборки сверять не с чем: оно не построено,
         # и падать на нём нельзя (иначе фикстура 2013–2016 и сводки 2024+
         # были бы несовместимы).
-        decisions, _ = km.build_decisions(
+        decisions, excluded, missing = km.build_decisions(
             [date(2014, 2, 14)], fixture_key_rate(), [(date(2024, 7, 26), 200)]
         )
         self.assertEqual(len(decisions), 1)
+        self.assertEqual(excluded, [])
+        self.assertEqual(missing, [])
 
 
 class TestAsof(unittest.TestCase):
@@ -329,9 +456,9 @@ class TestRows(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.decisions, _ = km.build_decisions(fixture_meetings(), fixture_key_rate(), [])
-        cls.cpd = km.cpd_from_rows(fixture_rows("cpd_core_2013_2017.csv"))
-        cls.ibk = km.ibk_from_rows(fixture_rows("ibk_2013_2017.csv"))
+        cls.decisions, _, _ = km.build_decisions(fixture_meetings(), fixture_key_rate(), [])
+        cls.cpd = km.cpd_from_rows(fixture_rows("cpd_core_2013_2016.csv"))
+        cls.ibk = km.ibk_from_rows(fixture_rows("ibk_2013_2016.csv"))
         cls.rows, cls.missing = km.build_rows(cls.decisions, cls.cpd, cls.ibk)
 
     def test_no_meeting_is_lost(self):
@@ -370,6 +497,115 @@ class TestRows(unittest.TestCase):
         rows, missing = km.build_rows([decision], self.cpd, [])
         self.assertEqual(rows, [])
         self.assertEqual(missing, [decision.meeting_date])
+
+
+class TestExportFixtures(unittest.TestCase):
+    """Экспорт фикстур: окно, LF, round-trip и отказ на пустом срезе."""
+
+    def export(self, directory: Path) -> int:
+        """Экспорт с замоканным транспортом и подавленной печатью."""
+        with unittest.mock.patch.object(km, "ch_query", side_effect=ch_query_from_fixtures):
+            with contextlib.redirect_stdout(io.StringIO()):
+                return km.export_fixtures(directory)
+
+    def test_round_trip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            self.assertEqual(self.export(directory), 0)
+            self.assertEqual(
+                sorted(path.name for path in directory.iterdir()),
+                [
+                    "cpd_core_2013_2016.csv",
+                    "ibk_2013_2016.csv",
+                    "key_rate_2013_2016.csv",
+                    "meetings.csv",
+                    "mp_summary.csv",
+                ],
+            )
+            for name in FIXTURE_NAMES:
+                raw = (directory / name).read_bytes()
+                self.assertNotIn(b"\r\n", raw, f"{name}: ожидались LF-переводы строк")
+                self.assertTrue(raw.endswith(b"\n"))
+                self.assertEqual(raw.split(b"\n", 1)[0].decode("utf-8"),
+                                 ",".join(km.FIXTURE_COLUMNS[name]))
+            # Содержимое читается теми же разборщиками, что и живые ответы.
+            self.assertEqual(
+                km.meetings_from_rows(fixture_rows("meetings.csv", directory)),
+                fixture_meetings(),
+            )
+            self.assertEqual(
+                km.key_rate_from_rows(fixture_rows("key_rate_2013_2016.csv", directory)),
+                fixture_key_rate(),
+            )
+            self.assertEqual(
+                km.cpd_from_rows(fixture_rows("cpd_core_2013_2016.csv", directory)),
+                km.cpd_from_rows(fixture_rows("cpd_core_2013_2016.csv")),
+            )
+            self.assertEqual(
+                km.mp_deltas_from_rows(fixture_rows("mp_summary.csv", directory)),
+                km.mp_deltas_from_rows(fixture_rows("mp_summary.csv")),
+            )
+
+    def test_exported_meetings_carry_the_unique_manual_row(self):
+        # Регенерация обязана давать тот же файл, включая тестовую ручную строку:
+        # она добавляется ЭКСПОРТОМ, а не правкой CSV руками.
+        with tempfile.TemporaryDirectory() as tmp:
+            self.export(Path(tmp))
+            rows = fixture_rows("meetings.csv", Path(tmp))
+            self.assertIn(
+                "2016-12-20", [row["event_date"] for row in rows if row["title"] != km.SAMPLE_TITLE]
+            )
+
+    def test_empty_slice_is_an_export_error(self):
+        # Пустая фикстура ослабила бы тесты молча — это ошибка экспорта
+        # (RuntimeError), а не расхождение выборки (SampleError).
+        def empty_key_rate(sql):
+            if "FROM cbr_key_rate" in sql:
+                return []
+            return ch_query_from_fixtures(sql)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with unittest.mock.patch.object(km, "ch_query", side_effect=empty_key_rate):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    with self.assertRaises(RuntimeError) as caught:
+                        km.export_fixtures(Path(tmp))
+            self.assertIn("key_rate_2013_2016.csv", str(caught.exception))
+            # Отказ — до записи: ни одного файла каталог не получил.
+            self.assertEqual(list(Path(tmp).iterdir()), [])
+
+
+class TestCli(unittest.TestCase):
+    """CLI: сводка и перехват ошибки выборки."""
+
+    def test_summary_counts_decisions_excluded_and_missing(self):
+        with unittest.mock.patch.object(km, "ch_query", side_effect=ch_query_from_fixtures):
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                code = km.run_summary(rolling=False, today=date(2016, 1, 1))
+        text = out.getvalue()
+        self.assertEqual(code, 0)
+        # Прошедшие заседания фикстуры по 2016-01-01 — 18 (2014: 10, 2015: 8);
+        # все с наблюдаемым окном и признаками.
+        self.assertTrue(summary_value(text, "в выборке решений:").startswith("18 ("))
+        self.assertTrue(summary_value(text, "вне выборки (окно исхода не наблюдаемо):").startswith("0"))
+        self.assertTrue(summary_value(text, "пропущено (нет ставки на d−1):").startswith("0"))
+        self.assertTrue(summary_value(text, "пропущено (нет данных по признакам):").startswith("0"))
+        self.assertTrue(summary_value(text, "предстоящих (позже даты прогона):").startswith("100"))
+
+    def test_main_reports_sample_error_without_traceback(self):
+        # Расхождение с cbr_mp_summary: main обязан вернуть ненулевой код и
+        # напечатать причину в stderr, а не упасть трейсбеком.
+        with unittest.mock.patch.object(km, "ch_query", side_effect=ch_query_from_fixtures):
+            with unittest.mock.patch.object(
+                km, "load_mp_summary_deltas", return_value=[(date(2014, 2, 14), 50)]
+            ):
+                error = io.StringIO()
+                with contextlib.redirect_stderr(error), contextlib.redirect_stdout(io.StringIO()):
+                    code = km.main([])
+        self.assertNotEqual(code, 0)
+        message = error.getvalue()
+        self.assertIn("2014-02-14", message)
+        self.assertIn("не совпал", message)
+        self.assertNotIn("Traceback", message)
 
 
 if __name__ == "__main__":

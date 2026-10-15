@@ -10,7 +10,9 @@
 * **выборка решений** — канонические строки `events_calendar`
   (`category='cbr'∧title=SAMPLE_TITLE`; ручные строки-триггеры сида отсекаются
   фильтром по `title`) плюс дневной ряд `cbr_key_rate`: `rate_before` на `d−1`,
-  `rate_after` на `min(d+7, next−1)`, шаг в б.п. и класс `y3`;
+  `rate_after` на `min(d+7, next−1)`, шаг в б.п. и класс `y3`. Заседание даёт
+  решение, только если его исход наблюдаем (окно уложилось в ряд ставки); иначе
+  оно «вне выборки», а при отсутствии ставки на `d−1` — «пропущено» (§3);
 * **as-of слой** — консервативные правила доступности объясняющих рядов (§4):
   точка участвует, только если её `available_from(period) ≤ даты заседания`;
 * **признаки** — `pi_saar` (базовый ИПЦ SA, приведённый к годовому) и `gap`
@@ -90,7 +92,7 @@ OUTCOME_WINDOW_DAYS = 7
 # проверяется правило «окно исхода вне данных ставки → заседание вне выборки»
 # (на живом прогоне оно отсеивает будущие заседания). Нижняя граница 2013-01-01
 # взята с запасом, чтобы ставка «на d−1» первого заседания (2014-02-14) была
-# покрыта. Имена файлов (`*_2013_2017`) — из плана; содержимое — срез 2013–2016.
+# покрыта. Имена файлов фикстур (`*_2013_2016`) равны фактическому окну содержимого.
 FIXTURE_FROM = date(2013, 1, 1)
 FIXTURE_TO = date(2016, 12, 31)
 
@@ -156,11 +158,22 @@ FIXTURE_IBK_SQL = _fixture_sql(IBK_SQL)
 # (строки фикстур читаются теми же `*_from_rows`, что и ответы ch_query).
 FIXTURE_COLUMNS = {
     "meetings.csv": ("event_date", "category", "title"),
-    "key_rate_2013_2017.csv": ("date", "rate"),
-    "cpd_core_2013_2017.csv": ("date", "value"),
-    "ibk_2013_2017.csv": ("date", "value"),
+    "key_rate_2013_2016.csv": ("date", "rate"),
+    "cpd_core_2013_2016.csv": ("date", "value"),
+    "ibk_2013_2016.csv": ("date", "value"),
     "mp_summary.csv": ("meeting_date", "decision_rate", "decision_delta_bp"),
 }
+
+# Ручная строка-триггер с УНИКАЛЬНОЙ датой — только для фикстуры, добавляется
+# ЭКСПОРТОМ (регенерация обязана давать тот же файл). Зачем: обе живые ручные
+# строки сида делят дату с каноническими (2026-10-23, 2026-12-18 помечены и
+# сидом, и календарём ЦБ), поэтому по датам фильтр по `title` на фикстуре
+# ненаблюдаем — дата осталась бы в списке и без него. У даты 2016-12-20
+# канонической строки нет: без фильтра она попала бы в выборку и дала бы лишнее
+# «решение», а тест это ловит.
+FIXTURE_MEETINGS_EXTRA = (
+    (date(2016, 12, 20), "cbr", "СД ЦБ РФ: тест-фикстура — ручной триггер с уникальной датой"),
+)
 
 
 class SampleError(Exception):
@@ -215,7 +228,9 @@ def meetings_from_rows(rows: list) -> list:
 
     Отбор: `category='cbr'` ∧ `title=SAMPLE_TITLE` (фильтр по title отсекает
     ручные строки-триггеры); дедуп и сортировка — свойство выборки, а не
-    порядка строк ответа.
+    порядка строк ответа. Дедуп здесь — НОРМА, а не защита от дублей: у одного
+    заседания законно лежат несколько строк (каноническая + ручной триггер), и
+    без сведения по дате одна дата дала бы два «заседания».
     """
     meetings = []
     for row in rows:
@@ -227,19 +242,41 @@ def meetings_from_rows(rows: list) -> list:
     return sorted(set(meetings))
 
 
+def _unique_dates(points: list, series: str) -> list:
+    """Отказывает на повторяющейся дате точки ряда (возвращает точки как есть).
+
+    Дубль даты в таблице без FINAL (или с неверным ключом) означал бы ДВЕ точки
+    одного дня: as-of выбрал бы одну из них по порядку сортировки, и решение
+    молча зависело бы от порядка строк в ответе ClickHouse. Поэтому отказ с
+    датой, а не «последний победил»: этот класс дефектов иначе не виден.
+    """
+    seen = set()
+    for point_date, _ in points:
+        if point_date in seen:
+            raise ValueError(
+                f"{series}: дата {point_date.isoformat()} встречается дважды — "
+                f"повторная точка исказила бы as-of"
+            )
+        seen.add(point_date)
+    return points
+
+
 def key_rate_from_rows(rows: list) -> list:
     """Точки `cbr_key_rate`: `(дата действия, ставка %)`, по возрастанию даты."""
-    return sorted((row_date(row["date"]), row_float(row["rate"])) for row in rows)
+    points = [(row_date(row["date"]), row_float(row["rate"])) for row in rows]
+    return sorted(_unique_dates(points, "cbr_key_rate"))
 
 
 def cpd_from_rows(rows: list) -> list:
     """Точки базового ИПЦ: `(конец месяца M, SA м/м %)`, по возрастанию даты."""
-    return sorted((row_date(row["date"]), row_float(row["value"])) for row in rows)
+    points = [(row_date(row["date"]), row_float(row["value"])) for row in rows]
+    return sorted(_unique_dates(points, CPD_CORE_SERIES))
 
 
 def ibk_from_rows(rows: list) -> list:
     """Точки ИБК SA: `(1-е число отчётного месяца, пункты)`, по возрастанию."""
-    return sorted((row_date(row["date"]), row_float(row["value"])) for row in rows)
+    points = [(row_date(row["date"]), row_float(row["value"])) for row in rows]
+    return sorted(_unique_dates(points, IBK_SERIES))
 
 
 def mp_deltas_from_rows(rows: list) -> list:
@@ -248,10 +285,11 @@ def mp_deltas_from_rows(rows: list) -> list:
     `None` у самого раннего резюме — «предыдущего решения в ряду нет», а не
     «шаг равен нулю»: с NULL сверка не выполняется (сверять не с чем).
     """
-    return sorted(
+    points = [
         (row_date(row["meeting_date"]), row_optional_int(row["decision_delta_bp"]))
         for row in rows
-    )
+    ]
+    return sorted(_unique_dates(points, "cbr_mp_summary"))
 
 
 # --- Загрузчики: SQL + транспорт + разбор ------------------------------------
@@ -387,16 +425,25 @@ def build_decisions(meetings: list, key_rate: list, mp_deltas: list) -> tuple:
       непустым `decision_delta_bp`, шаг обязан совпасть — расхождение
       поднимает `SampleError` (fail-fast).
 
-    Ряд ставки здесь — ЧАСЫ ВЫБОРКИ. Заседание попадает в первый возвращаемый
-    список, только если его окно исхода наблюдаемо целиком: `rate_before`
-    известен (есть точка не позже `d − 1`) и `window_end ≤ max(date)` ряда.
-    Всё остальное (будущие заседания — их окно ещё не закрылось) уходит во
-    второй список и в отчёт, а не в решение: «ставка ещё не изменилась» — не
-    наблюдённый исход. Заседание, у которого ставки на `d − 1` нет вовсе
-    (ряд короче выборки), попадает туда же.
+    Ряд ставки здесь — ЧАСЫ ВЫБОРКИ. У заседания ТРИ исхода, и они различимы:
 
-    Возврат: `(decisions, excluded)` — второй список нужен отчёту (счётчик и
-    перечисление), а не логике.
+    * решение — `rate_before` известен и окно исхода наблюдаемо целиком
+      (`window_end ≤ max(date)` ряда);
+    * «вне выборки» (`excluded`) — окно исхода ещё не наблюдаемо: заседание
+      прошло (или назначено), но `min(d+7, next−1)` выходит за данные ряда, и
+      «ставка ещё не изменилась» — не наблюдённый исход. Так же выглядит
+      будущее заседание, если вызывающий передал его в списке;
+    * «пропущено» (`missing`) — на `d − 1` нет точки ряда вовсе (ряд короче
+      выборки или начинается позже заседания): ставку «до» взять неоткуда, и
+      это дефект данных, а не незрелое окно.
+
+    Обе причины названы разными списками намеренно: спека §3/§4 требует
+    видимого счётчика «пропущено», а слитый список из двух разных причин его
+    прятал. Кто именно попадает в `meetings` — решение вызывающего: живой
+    прогон подаёт прошедшие заседания (решение ЦБ уже объявлено) и оставляет
+    будущие в календаре.
+
+    Возврат: `(decisions, excluded, missing)`.
 
     Формат входов: `meetings` — даты, `key_rate` — пары `(дата, ставка)`,
     `mp_deltas` — пары `(дата заседания, шаг в б.п. или None)`, как их отдают
@@ -406,18 +453,23 @@ def build_decisions(meetings: list, key_rate: list, mp_deltas: list) -> tuple:
     deltas = {day: delta for day, delta in mp_deltas}
     rate_points = sorted(key_rate)
     if not rate_points:
-        # Пустой ряд ставки: ни одного решения, вся выборка — «вне».
-        return [], ordered
+        # Пустой ряд ставки: решений нет, а каждое заседание — «пропущено»
+        # (ставки «на d−1» нет ни у кого).
+        return [], [], ordered
     series_max = rate_points[-1][0]
 
     decisions = []
     excluded = []
+    missing = []
     for index, meeting in enumerate(ordered):
         rate_before = asof(rate_points, _available_on_the_day, meeting - ONE_DAY)
+        if rate_before is None:
+            missing.append(meeting)
+            continue
         window_end = meeting + timedelta(days=OUTCOME_WINDOW_DAYS)
         if index + 1 < len(ordered):
             window_end = min(window_end, ordered[index + 1] - ONE_DAY)
-        if rate_before is None or window_end > series_max:
+        if window_end > series_max:
             excluded.append(meeting)
             continue
         rate_after = asof(rate_points, _available_on_the_day, window_end)
@@ -433,7 +485,7 @@ def build_decisions(meetings: list, key_rate: list, mp_deltas: list) -> tuple:
                 f"неверен, прогон остановлен"
             )
         decisions.append(Decision(meeting, rate_before, rate_after, step_bp, y3))
-    return decisions, excluded
+    return decisions, excluded, missing
 
 
 def build_rows(decisions: list, cpd: list, ibk: list) -> tuple:
@@ -491,29 +543,53 @@ def _write_fixture(path: Path, columns: tuple, rows: list) -> None:
             writer.writerow([_csv_cell(row.get(column)) for column in columns])
 
 
+def _with_fixture_extra_meetings(rows: list) -> list:
+    """Добавляет к срезу `events_calendar` тестовую ручную строку-триггер.
+
+    Строка объявлена в `FIXTURE_MEETINGS_EXTRA` и добавляется ИМЕННО экспортом:
+    правка CSV руками была бы затёрта следующей регенерацией, а требование
+    «регенерация даёт тот же файл» — часть контракта фикстур. Строки
+    сортируются по дате, чтобы файл читался как обычный срез календаря.
+    """
+    extra = [
+        {"event_date": day.isoformat(), "category": category, "title": title}
+        for day, category, title in FIXTURE_MEETINGS_EXTRA
+    ]
+    return sorted(list(rows) + extra, key=lambda row: str(row.get("event_date", "")))
+
+
 def export_fixtures(directory: Path) -> int:
     """Пишет пять CSV-фикстур офлайн-тестов в `directory`.
 
     Ряды серий — срез `[FIXTURE_FROM, FIXTURE_TO]`; список заседаний и резюме
     выгружаются целиком: список нужен вместе с ручными строками-триггерами
     (фильтр по title), а резюме малы и целиком образуют пару «ставка+дельта»
-    для сверки ярлыков. Ноль строк — ошибка: пустая фикстура молча ослабила бы
-    тесты, а не уронила экспорт.
+    для сверки ярлыков.
+
+    Ноль строк в ответе — ОШИБКА ЭКСПОРТА (`RuntimeError`), а не расхождение
+    выборки: пустая фикстура молча ослабила бы тесты. Все пять запросов
+    выполняются и проверяются ДО первой записи, поэтому неудачный экспорт не
+    оставляет каталога с половиной файлов.
     """
     directory.mkdir(parents=True, exist_ok=True)
     exports = (
         ("meetings.csv", MEETINGS_SQL),
-        ("key_rate_2013_2017.csv", FIXTURE_KEY_RATE_SQL),
-        ("cpd_core_2013_2017.csv", FIXTURE_CPD_CORE_SQL),
-        ("ibk_2013_2017.csv", FIXTURE_IBK_SQL),
+        ("key_rate_2013_2016.csv", FIXTURE_KEY_RATE_SQL),
+        ("cpd_core_2013_2016.csv", FIXTURE_CPD_CORE_SQL),
+        ("ibk_2013_2016.csv", FIXTURE_IBK_SQL),
         ("mp_summary.csv", MP_SUMMARY_SQL),
     )
-    print(f"Фикстуры записаны в {directory}:")
+    planned = []
     for name, sql in exports:
         rows = ch_query(sql)
         if not rows:
-            raise SampleError(f"фикстура {name}: запрос вернул 0 строк")
-        columns = FIXTURE_COLUMNS[name]
+            raise RuntimeError(f"фикстура {name}: запрос вернул 0 строк")
+        if name == "meetings.csv":
+            rows = _with_fixture_extra_meetings(rows)
+        planned.append((name, FIXTURE_COLUMNS[name], rows))
+
+    print(f"Фикстуры записаны в {directory}:")
+    for name, columns, rows in planned:
         _write_fixture(directory / name, columns, rows)
         first = _csv_cell(rows[0].get(columns[0]))
         last = _csv_cell(rows[-1].get(columns[0]))
@@ -521,21 +597,38 @@ def export_fixtures(directory: Path) -> int:
     return 0
 
 
-def run_summary(rolling: bool) -> int:
+def _dates_suffix(days: list) -> str:
+    """Перечисление дат для строки сводки: пустой список — пустая строка."""
+    if not days:
+        return ""
+    return " — " + ", ".join(day.isoformat() for day in days)
+
+
+def run_summary(rolling: bool, today: Optional[date] = None) -> int:
     """Прогон по умолчанию: сводка выборки решений и «что» пропущено.
+
+    `today` — дата, относительно которой календарь делится на прошедшие и
+    предстоящие заседания (по умолчанию системная). Прошедшее заседание —
+    то, решение по которому ЦБ уже объявил; наблюдаемо ли уже ЕГО ИСХОД
+    (окно `min(d+7, next−1)`), решает `build_decisions` и называет в
+    «вне выборки». Предстоящие в выборку решений не подаются вовсе: у них нет
+    ни решения, ни исхода, и печатаются они отдельной строкой.
 
     На этом шаге бэктеста ещё нет (его добавляют Tasks 3–6): печатается состав
     выборки — то, что обязано сойтись с ожидаемыми числами приёмки (108
-    заседаний, 0 пропущенных, диапазон 2014-02-14 … 2026-09-11).
+    заседаний, 0 пропущенных, 0 «вне выборки», диапазон 2014-02-14 … 2026-09-11).
     """
+    today = today or date.today()
     meetings = load_meetings()
     if not meetings:
         print("events_calendar: канонических заседаний нет — проверить импорт календаря")
         return 1
-    key_rate = load_key_rate()
+    upcoming = [day for day in meetings if day > today]
+    past = [day for day in meetings if day <= today]
+
     deltas = load_mp_summary_deltas()
-    decisions, excluded = build_decisions(meetings, key_rate, deltas)
-    rows, missing = build_rows(decisions, load_cpd_core(), load_ibk())
+    decisions, excluded, missing_rate = build_decisions(past, load_key_rate(), deltas)
+    rows, missing_features = build_rows(decisions, load_cpd_core(), load_ibk())
     if not rows:
         print("выборка пуста: ни одного решения с наблюдаемым исходом и признаками")
         return 1
@@ -546,15 +639,19 @@ def run_summary(rolling: bool) -> int:
     )
     window = "скользящее 40 (--rolling)" if rolling else "расширяющееся (по умолчанию)"
 
-    print("Модель ключевой ставки v0 — выборка решений")
+    print(f"Модель ключевой ставки v0 — выборка решений (дата прогона {today.isoformat()})")
     print(f"  канонических заседаний:                      {len(meetings)}"
           f" ({meetings[0]} … {meetings[-1]})")
+    print(f"  предстоящих (позже даты прогона):            {len(upcoming)}"
+          + _dates_suffix(upcoming))
     print(f"  в выборке решений:                           {len(rows)}"
           f" ({rows[0].decision.meeting_date} … {rows[-1].decision.meeting_date})")
-    print(f"  пропущено (нет данных по ставке/признакам):  {len(missing)}"
-          + ("" if not missing else " — " + ", ".join(d.isoformat() for d in missing)))
     print(f"  вне выборки (окно исхода не наблюдаемо):     {len(excluded)}"
-          + ("" if not excluded else " — " + ", ".join(d.isoformat() for d in excluded)))
+          + _dates_suffix(excluded))
+    print(f"  пропущено (нет ставки на d−1):               {len(missing_rate)}"
+          + _dates_suffix(missing_rate))
+    print(f"  пропущено (нет данных по признакам):         {len(missing_features)}"
+          + _dates_suffix(missing_features))
     print(f"  сверено шагов с cbr_mp_summary:              {checked} из {len(deltas)}"
           f" (у самого раннего резюме дельты нет)")
     print(f"  окно walk-forward:                           {window}")
@@ -577,9 +674,16 @@ def main(argv: Optional[list] = None) -> int:
         help="walk-forward по скользящему окну 40 (по умолчанию — расширяющееся)",
     )
     args = parser.parse_args(argv)
-    if args.export_fixtures:
-        return export_fixtures(Path(args.export_fixtures))
-    return run_summary(rolling=args.rolling)
+    try:
+        if args.export_fixtures:
+            return export_fixtures(Path(args.export_fixtures))
+        return run_summary(rolling=args.rolling)
+    except SampleError as exc:
+        # Расхождение ярлыка со сводкой ЦБ — ожидаемая диагностируемая ошибка
+        # прогона: у неё уже есть готовый текст (заседание и оба числа), и ей
+        # место в stderr с ненулевым кодом, а не трейсбеком на весь экран.
+        print(f"ошибка выборки решений: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

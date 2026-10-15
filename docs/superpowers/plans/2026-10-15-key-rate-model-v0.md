@@ -93,7 +93,7 @@ git commit -m "calendar: parse meeting tabs 2014-2019"
   - `SAMPLE_TITLE = "СД ЦБ РФ: заседание по ключевой ставке"`
   - `load_meetings() -> list[date]`, `load_key_rate() -> list[tuple[date, float]]`, `load_cpd_core() -> list[tuple[date, float]]`, `load_ibk() -> list[tuple[date, float]]`, `load_mp_summary_deltas() -> list[tuple[date, int|None]]`
   - `available_from_cpd(period_end: date) -> date`, `available_from_survey(period_first: date) -> date` (обе — конец следующего месяца), `asof(points, available, asof_date) -> float|None`
-  - `@dataclass Decision(meeting_date, rate_before, rate_after, step_bp, y3)`; `build_decisions(meetings, key_rate, mp_deltas) -> tuple[list[Decision], list[date]]`
+  - `@dataclass Decision(meeting_date, rate_before, rate_after, step_bp, y3)`; `build_decisions(meetings, key_rate, mp_deltas) -> tuple[list[Decision], list[date], list[date]]` — второй список `excluded` («окно исхода ещё не наблюдаемо»: `min(d+7, next−1) > max(date)` ряда), третий `missing` («пропущено»: на `d−1` нет точки ряда); `run_summary` подаёт только прошедшие заседания, предстоящие печатает отдельной строкой
   - `@dataclass Row(decision, pi_saar, gap)`; `build_rows(decisions, cpd, ibk) -> tuple[list[Row], list[date]]`
   - `SEED = 20261015`; `main(argv) -> int` с `--export-fixtures DIR` и флагом `--rolling`
 
@@ -106,16 +106,18 @@ git commit -m "calendar: parse meeting tabs 2014-2019"
 # бенчмарки, методы №2–3, walk-forward-бэктест. Читает ClickHouse, пишет локальные
 # артефакты; в ClickHouse НЕ пишет. Фикстуры офлайн-тестов: make key-rate-model ARGS="--export-fixtures scripts/testdata/key_rate"
 key-rate-model:
-	uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy python3 scripts/key_rate_model.py $(ARGS)
+	uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/key_rate_model.py $(ARGS)
 ```
 
-Реализовать `--export-fixtures DIR` (пишет CSV: `meetings.csv`, `key_rate_2013_2017.csv`, `cpd_core_2013_2017.csv`, `ibk_2013_2017.csv`, `mp_summary.csv`), затем выполнить:
+(`--python 3.12` — требование `statsmodels>=0.15` (Python≥3.10); на системном `python3` 3.9.6 резолвер uv падает, и привязка к PATH сделала бы цель непереносимой.)
+
+Реализовать `--export-fixtures DIR` (пишет CSV: `meetings.csv`, `key_rate_2013_2016.csv`, `cpd_core_2013_2016.csv`, `ibk_2013_2016.csv`, `mp_summary.csv`; имена = фактическое окно срезов 2013–2016, в `meetings.csv` экспорт добавляет ручную строку с уникальной датой), затем выполнить:
 `make key-rate-model ARGS="--export-fixtures scripts/testdata/key_rate"` и проверить глазами состав CSV (даты, значения).
 
 - [ ] **Step 2: Тесты выборки и as-of (red→green, TDD по каждому блоку)**
 
 В `scripts/key_rate_model_test.py`:
-1. `build_decisions` на фикстурах: состав 2014-02-14…2016-12-16; сдвоенная пара 2014-12-11 (+100 б.п.) / 2014-12-15 (+650 б.п.) — окно исхода не склеивает решения; `rate_before` берётся на `d−1`; фильтр `title` отсекает ручные строки-триггеры (в фикстуре `meetings.csv` они есть);
+1. `build_decisions` на фикстурах: состав 2014-02-14…2016-12-16; сдвоенная пара 2014-12-11 (+100 б.п.) / 2014-12-15 (+650 б.п.) — окно исхода не склеивает решения; `rate_before` берётся на `d−1`; фильтр `title` отсекает ручные строки-триггеры (в фикстуре `meetings.csv` они есть, у одной — уникальная дата 2016-12-20, чтобы эффект фильтра был наблюдаем); «пропущено» и «вне выборки» — разные списки;
 2. сверка с `mp_summary.csv`: совпадение `step_bp`; подмена delta в фикстуре → функция поднимает ошибку;
 3. `asof`: точка с доступностью позже даты заседания не выбирается; границы «ровно на дату» включительно; отсутствие ряда → дата в «пропущенных»;
 4. `build_rows`: `pi_saar` = `((1+x/100)^12 − 1)×100` (значение проверяется руками на одной точке фикстуры `cpd_core`); `gap` — из `business_climate_sa`; формат `x = [rate_before, pi_saar, gap]`.
@@ -126,10 +128,10 @@ key-rate-model:
 
 - [ ] **Step 4: Тесты и живой smoke**
 
-Run: `uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy python3 scripts/key_rate_model_test.py -v`
+Run: `uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/key_rate_model_test.py -v`
 Expected: PASS, offline.
 Run: `make key-rate-model`
-Expected: сводка: 108 заседаний в выборке, 0 пропущенных (перечислить, если нет), диапазон 2014-02-14…2026-09-11.
+Expected: сводка: 108 заседаний в выборке, 0 «вне выборки» (окно исхода ещё не наблюдаемо), 0 «пропущено» (нет ставки на `d−1` / нет признаков), диапазон 2014-02-14…2026-09-11; предстоящие заседания — отдельной строкой.
 
 - [ ] **Step 5: Commit**
 
