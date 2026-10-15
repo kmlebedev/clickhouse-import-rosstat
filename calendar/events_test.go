@@ -292,3 +292,58 @@ func TestParseCalMPOldTable(t *testing.T) {
 		}
 	}
 }
+
+// TestParseCalMPOldTableUnparsedDateCell — непустая нераспознанная ячейка даты (в таблице
+// вместо «16 декабря» стоит полная дата «16 декабря 2014 года») сбрасывает текущую дату:
+// событие строки не получает дату предыдущей строки молча (иначе заседание легло бы на
+// дату доклада), а следующая строка с распознанной датой снова задаёт дату.
+func TestParseCalMPOldTableUnparsedDateCell(t *testing.T) {
+	page := `<html><body>
+	<div class="tabs"><a class="tab" href="#t8" data-text="2014 год">2014</a></div>
+	<div data-tabs-content="t8"><table class="data"><tbody>
+	<tr><td>14&nbsp;февраля</td><td>Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики</td></tr>
+	<tr><td>18&nbsp;февраля</td><td>Доклад о&nbsp;денежно-кредитной политике</td></tr>
+	<tr><td>16&nbsp;декабря 2014 года</td><td>Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики</td></tr>
+	<tr><td>25&nbsp;апреля</td><td>Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики</td></tr>
+	</tbody></table></div>
+	</body></html>`
+	dates, err := parseCalMP([]byte(page))
+	if err != nil {
+		t.Fatalf("parseCalMP: %v", err)
+	}
+	want := []string{"2014-02-14", "2014-04-25"}
+	if len(dates) != len(want) {
+		t.Fatalf("parseCalMP = %v, ожидались даты %v (нераспознанная дата сбрасывает предыдущую)", dates, want)
+	}
+	for i, w := range want {
+		if got := dates[i].Format("2006-01-02"); got != w {
+			t.Errorf("дата %d = %s, ожидалась %s", i, got, w)
+		}
+	}
+}
+
+// TestParseCalMPCardPredicateUnchanged — регрессионный пин «2020+ не меняется»: предикат
+// карточек остался исходным, с окончанием «…политике». Карточка с полной датой и родительным
+// «…политики» (так формулированы строки таблиц 2014–2017) заседанием не считается — иначе
+// расширение разбора таблиц молча расширило бы и множество карточек 2020+.
+func TestParseCalMPCardPredicateUnchanged(t *testing.T) {
+	page := `<html><body>
+	<div class="main-events_day">
+	<div class="date col-md-5">13&nbsp;февраля 2026 года</div>
+	<div class="main-events"><div class="main-event">
+	<div class="title"><span>Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики</span></div>
+	</div></div></div>
+	<div class="main-events_day">
+	<div class="date col-md-5">20&nbsp;марта 2026 года</div>
+	<div class="main-events"><div class="main-event">
+	<div class="title"><span>Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span></div>
+	</div></div></div>
+	</body></html>`
+	dates, err := parseCalMP([]byte(page))
+	if err != nil {
+		t.Fatalf("parseCalMP: %v", err)
+	}
+	if len(dates) != 1 || dates[0].Format("2006-01-02") != "2026-03-20" {
+		t.Errorf("parseCalMP = %v, ожидалась одна дата 2026-03-20 (карточка с «…политики» не заседание)", dates)
+	}
+}
