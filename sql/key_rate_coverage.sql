@@ -70,5 +70,16 @@ SELECT * FROM (
     UNION ALL SELECT 'cbr_bop_est', name, count(), min(date), max(date) FROM cbr_bop_est FINAL GROUP BY name
     
     UNION ALL SELECT 'cbr_bop_standard', name, count(), min(date), max(date) FROM cbr_bop_standard FINAL GROUP BY name
+    
+    -- Приложения к бюллетеню ДИП ЦБ (спека 2026-10-15 cbr-dip-bulletin §3.6): ключ таблицы —
+    -- (series, date, release_id), id выпуска входит в ключ винтажа, поэтому число точек на ряд
+    -- здесь умножается на число выпусков, в которых этот ряд напечатан: снимок отвечает
+    -- «сколько точек набрано всего», а не «сколько месяцев наблюдений» (ревизии одного месяца
+    -- держат несколько выпусков). Число выпусков видно отдельным запросом:
+    --     SELECT uniqExact(release_id) FROM cbr_dip_bulletin FINAL;
+    -- FINAL обязателен: таблица — ReplacingMergeTree, и ревизия внутри выпуска (повторная
+    -- публикация того же id) перезаписывает точку — без FINAL вытесненные копии завысили бы
+    -- count(). min/max date при этом остаются границами наблюдённого периода.
+    UNION ALL SELECT 'cbr_dip_bulletin', series, count(), min(date), max(date) FROM cbr_dip_bulletin FINAL GROUP BY series
 )
 ORDER BY tbl, series;

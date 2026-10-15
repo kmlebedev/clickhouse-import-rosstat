@@ -30,13 +30,15 @@ GF_PID       := $(GF_DIR)/grafana.pid
 GF_LOG       := $(GF_DIR)/grafana.log
 GF_PLUGINS   := $(GF_DIR)/plugins
 
-# Деплой дашборда на тест-стенд и smoke (make grafana-deploy-test / grafana-check).
+# Деплой дашбордов на тест-стенд и smoke (make grafana-deploy-test / grafana-check).
 # gcx работает на переменных окружения: конфиг ~/.config/gcx не нужен, контексты не сохраняются,
 # поэтому в CI достаточно GRAFANA_SERVER/GRAFANA_TOKEN. Для on-prem gcx 1.5.0 дополнительно
 # требует org-id — без него «missing stacks.default.grafana.org-id» (проверено на стенде 13.2.3).
 # Токен подставляется в GRAFANA_TOKEN на уровне make, а не префиксом команды в рецепте: тогда он
 # уходит в окружение процесса gcx (make экспортирует переменные) и не светится в командной строке.
-DASHBOARD_UID    ?= gold-thesis
+# Список uid обоих дашбордов контура — источник истины для деплоя и smoke: цели ниже идут по нему
+# циклом, поэтому третий дашборд добавляется здесь одной строкой (свои uid генератор grafana/ знает сам).
+DASHBOARDS       := gold-thesis key-rate-publications
 GRAFANA_TEST_URL ?= http://localhost:3000
 GRAFANA_ORG_ID   ?= 1
 GRAFANA_TOKEN    ?= $(GRAFANA_TEST_TOKEN)
@@ -374,22 +376,27 @@ mcp-user-staging:
 		CLICKHOUSE_PASSWORD="$$kimi_pass" CH_SETUP_PASSWORD="$$setup_pass" python3 /tmp/mcp_setup_user.py'
 
 # Дашборды Grafana как код: отдельный Go-модуль grafana/ (SDK не тянется в ETL-бинарь).
-# Артефакт dashboard/gold-thesis.json коммитится; генерация детерминирована —
-# повторный прогон не должен менять файл (иначе CI-проверка diff вечно красная).
+# Артефакты dashboard/<uid>.json для обоих дашбордов ($(DASHBOARDS)) коммитятся; генерация
+# детерминирована — повторный прогон не меняет файлы (иначе CI-проверка diff вечно красная).
+# `-out-dir ../dashboard` и дефолт `-dashboard all` собирают весь список модуля; пересобрать один
+# дашборд — `cd grafana && go run . -dashboard <uid> -out-dir ../dashboard` (каталог должен существовать).
 grafana-build:
-	cd grafana && go run . -out ../dashboard/gold-thesis.json
+	cd grafana && go run . -out-dir ../dashboard
 
-# Валидация дашборда как кода: vet + тесты модуля grafana/ (в т.ч. таблица негативных правил Validate).
+# Валидация дашбордов как кода: vet + тесты модуля grafana/ (в т.ч. таблица негативных правил Validate).
 # Серверная `gcx resources validate` в цель НЕ входит: gcx 1.5.0 проверяет ресурс на живом инстансе
 # (server-side dry-run), то есть требует сервер, org-id и креды — в CI секретов нет и шаг всегда падал бы.
-# Рабочая форма проверена живьём на стенде 13.2.3 (gcx 1.5.0) и оставлена тут, а не в рецепте:
+# Рабочая форма проверена живьём на стенде 13.2.3 (gcx 1.5.0) и оставлена тут, а не в рецепте
+# (команда берёт один файл — при желании прогоняется циклом по $(DASHBOARDS)):
 #   GRAFANA_SERVER=$(GRAFANA_TEST_URL) GRAFANA_ORG_ID=$(GRAFANA_ORG_ID) \
 #     gcx resources validate dashboards --path dashboard/gold-thesis.json   # ✔ No errors found
 # Без конфига/кредов команда падает: «context references no stack with grafana config» (exit 1),
 # с неверными кредами — 401 (exit 3); basic auth поддержан (GRAFANA_USER/GRAFANA_PASSWORD).
-# Офлайновая альтернатива в CI (тоже gcx, без секретов) — линтер по файлу артефакта:
+# Офлайновая альтернатива в CI (тоже gcx, без секретов) — линтер по файлам артефактов:
+# `gcx dev lint run PATH...` принимает несколько путей и линтит их одним прогоном (проверено на gcx 1.5.0:
+# «2 files linted. No violations found.», exit 0):
 #   gcx dev lint run --disable uneditable-dashboard --disable panel-title-description \
-#     dashboard/gold-thesis.json
+#     dashboard/gold-thesis.json dashboard/key-rate-publications.json
 grafana-validate:
 	cd grafana && go vet ./... && go test ./...
 
@@ -438,26 +445,34 @@ grafana-down:
 		echo "PID-файл $(GF_PID) не найден или процесс не запущен (сервер, поднятый вне make, не останавливается)"; \
 	fi
 
-# Выгрузка артефакта Task 1 на тест-стенд и smoke-проверка панелей.
+# Выгрузка артефактов dashboard/<uid>.json обоих дашбордов на тест-стенд и smoke-проверка панелей.
 # Рабочая форма вызова подобрана живьём на стенде Grafana 13.2.3 (gcx 1.5.0): selector dashboards
 # + --path на файл-артефакт; push принимает apiVersion dashboard.grafana.app/v1beta1 и идемпотентен
-# (повторный прогон обновляет тот же ресурс metadata.name=gold-thesis, дубль не создаётся).
+# (повторный прогон обновляет тот же ресурс metadata.name=<uid>, дубль не создаётся).
 # Фолбэки (тоже проверены живьём, в цели не нужны):
-#   gcx resources push -p dashboard/gold-thesis.json
+#   gcx resources push -p dashboard/<uid>.json
 #   gcx api /api/dashboards/db -d @payload.json   # REST-фолбэк; payload = {"dashboard": <spec из артефакта>,
 #                                                 # "overwrite": true} — сама spec без обёртки не принимается
-# Полезно перед живым прогоном: gcx resources push dashboards --path dashboard/gold-thesis.json --dry-run
+# Полезно перед живым прогоном: gcx resources push dashboards --path dashboard/<uid>.json --dry-run
 grafana-deploy-test:
 	@test -n "$$GRAFANA_TOKEN" || { echo "задайте GRAFANA_TEST_TOKEN в $(ROSSTAT_ENV) (сервис-аккаунт Editor на $(GRAFANA_TEST_URL))"; exit 1; }
-	GRAFANA_SERVER=$(GRAFANA_TEST_URL) GRAFANA_ORG_ID=$(GRAFANA_ORG_ID) \
-		gcx resources push dashboards --path dashboard/gold-thesis.json
+	@for uid in $(DASHBOARDS); do \
+		echo "push dashboard/$$uid.json"; \
+		GRAFANA_SERVER=$(GRAFANA_TEST_URL) GRAFANA_ORG_ID=$(GRAFANA_ORG_ID) \
+			gcx resources push dashboards --path dashboard/$$uid.json || exit 1; \
+	done
 	@$(MAKE) grafana-check --no-print-directory
 
-# Smoke задеплоенного дашборда: дашборд виден по uid и первые панели отдают данные.
+# Smoke задеплоенных дашбордов: каждый виден по uid и первые панели отдают данные.
 # Проверка читает дашборд со стенда, поэтому ловит и «артефакт не доехал», и «панель пустая».
+# Цикл по $(DASHBOARDS) останавливается на первой ошибке: чинить и передеплоивать по одному дашборду проще,
+# чем разбирать два перемешанных отчёта (SQL каждого дашборда скрипт берёт из снятого со стенда артефакта).
 grafana-check:
 	@test -n "$$GRAFANA_TOKEN" || { echo "задайте GRAFANA_TEST_TOKEN в $(ROSSTAT_ENV) (сервис-аккаунт Editor на $(GRAFANA_TEST_URL))"; exit 1; }
-	GRAFANA_URL=$(GRAFANA_TEST_URL) python3 scripts/grafana_check.py --uid $(DASHBOARD_UID)
+	@for uid in $(DASHBOARDS); do \
+		echo "smoke uid=$$uid"; \
+		GRAFANA_URL=$(GRAFANA_TEST_URL) python3 scripts/grafana_check.py --uid $$uid || exit 1; \
+	done
 
 # Токен локального стенда одной командой: сервис-аккаунт создаётся идемпотентно (повторный прогон
 # переиспользует $(GRAFANA_SA_NAME) и говорит «уже есть»), а токен — всегда новый: Grafana показывает
@@ -551,7 +566,7 @@ grafana-provision-staging:
 			echo "  (или не перезапустит grafana-server), датасорс ch-rosstat не активен и smoke упадёт: см. deploy/staging/README.md"; \
 		fi'
 
-# Деплой дашборда gold-thesis на staging: провижининг датасорса → push → smoke.
+# Деплой обоих дашбордов ($(DASHBOARDS)) на staging: провижининг датасорса → push → smoke.
 # Токен (GRAFANA_STAGING_TOKEN, сервис-аккаунт Editor на staging) живёт только у владельца
 # в $(ROSSTAT_ENV); gcx общается с инстансом через туннель, а панели — с ClickHouse хоста.
 # Grafana и systemd на хосте не трогаются: нужен только поднятый туннель.
@@ -559,10 +574,16 @@ grafana-deploy-staging:
 	@test -n "$$GRAFANA_STAGING_TOKEN" || { echo "задайте GRAFANA_STAGING_TOKEN в $(ROSSTAT_ENV) — токен сервис-аккаунта Editor на staging; создаётся одноразово вручную (runbook: docs/superpowers/specs/2026-10-12-grafana-gold-thesis-design.md §6)"; exit 1; }
 	@curl -sf -m 3 $(GRAFANA_STAGING_URL)/api/health >/dev/null 2>&1 || { echo "staging Grafana не отвечает на $(GRAFANA_STAGING_URL): поднимите туннель — ssh -N -L 3001:127.0.0.1:3000 $(STAGING_HOST)"; exit 1; }
 	@$(MAKE) grafana-provision-staging --no-print-directory
-	GRAFANA_SERVER=$(GRAFANA_STAGING_URL) GRAFANA_ORG_ID=$(GRAFANA_ORG_ID) GRAFANA_TOKEN="$$GRAFANA_STAGING_TOKEN" \
-		gcx resources push dashboards --path dashboard/gold-thesis.json
-	@GRAFANA_URL=$(GRAFANA_STAGING_URL) GRAFANA_TOKEN="$$GRAFANA_STAGING_TOKEN" \
-		python3 scripts/grafana_check.py --uid $(DASHBOARD_UID)
+	@for uid in $(DASHBOARDS); do \
+		echo "push dashboard/$$uid.json"; \
+		GRAFANA_SERVER=$(GRAFANA_STAGING_URL) GRAFANA_ORG_ID=$(GRAFANA_ORG_ID) GRAFANA_TOKEN="$$GRAFANA_STAGING_TOKEN" \
+			gcx resources push dashboards --path dashboard/$$uid.json || exit 1; \
+	done
+	@for uid in $(DASHBOARDS); do \
+		echo "smoke uid=$$uid"; \
+		GRAFANA_URL=$(GRAFANA_STAGING_URL) GRAFANA_TOKEN="$$GRAFANA_STAGING_TOKEN" \
+			python3 scripts/grafana_check.py --uid $$uid || exit 1; \
+	done
 
 info:
 	@echo "BINARY    = $(TARGET)"

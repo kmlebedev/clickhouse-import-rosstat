@@ -14,8 +14,10 @@ const (
 	DatasourceType = "grafana-clickhouse-datasource"
 	DatasourceUID  = "ch-rosstat"
 
-	// DashboardUID — UID дашборда §4 золотого роадмапа; попадает и в spec, и в metadata.name.
-	DashboardUID = "gold-thesis"
+	// GoldThesisUID — UID дашборда §4 золотого роадмапа; попадает и в spec, и в metadata.name
+	// (имя манифеста Manifest берёт из spec.uid — инвариант). У второго дашборда контура —
+	// своя константа KeyRatePublicationsUID (key_rate_publications.go).
+	GoldThesisUID = "gold-thesis"
 	// ApiVersion — apiVersion K8s-стиля ресурса, который ждёт gcx resources push.
 	ApiVersion = "dashboard.grafana.app/v1beta1"
 
