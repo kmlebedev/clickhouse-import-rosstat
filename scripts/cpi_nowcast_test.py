@@ -21,11 +21,16 @@
 Окна срезов: `weekly_2022.csv` — 2021-12-01…2022-05-31 (фактически 2022-01-10…
 2022-05-27: глубже недельных данных нет); `weekly_recent.csv` — 2026-09-14…
 2026-10-05 (четыре публикации к cutoff сентября-2026); остальные — 2021–2022
-(2021-12 — y_lag1 первого месяца выборки). `ofz_2021_2022.csv` — ПУСТОЙ (только
-заголовок): у G-curve МосБиржи (`zcyc`) нет истории (снимок текущего дня),
+(2021-12 — y_lag1 первого месяца выборки). `ofz_2021_2022.csv` пуст НАМЕРЕННО
+(только заголовок) и пинован пустым (тест `test_fixture_inventory`): источник
+не отдаёт историю — у G-curve МосБиржи (`zcyc`) только снимок текущего дня,
 окно 2021–2022 пусто, и экспорт пишет это предупреждением, а не ошибкой. Живой
 прогон видит ровно то же самое (единственная точка ряда — 2026-10-09), поэтому
-тесты пинуют отсутствие точки как NaN, а формулу признака — на точках в памяти.
+тесты пинуют отсутствие точки как NaN и то, что месяц НЕ уходит в пропущенные
+(`test_ofz_missing_is_nan_and_month_is_kept`, `test_ofz_is_nan_for_fixture_months`),
+а формулу признака — на точках в памяти (`test_ofz_available_point_is_used`,
+`test_ofz_available_from_next_day`). Это исключение из правила «нет данных →
+месяц пропускается» зафиксировано в спеке §2.3/§2.4.
 Файлы коммитятся: тесты обязаны воспроизводиться без сети и БД.
 """
 
@@ -522,20 +527,30 @@ class TestBuildSampleSynthetic(unittest.TestCase):
             self.assertEqual(sorted(row.features), sorted(cm.feature_names()))
 
     def test_ofz_missing_is_nan_and_month_is_kept(self):
-        # Ограничение dev-БД: G-curve без истории. Месяц НЕ выбрасывается,
-        # признак честно помечен NaN (см. docstring модуля).
+        # Решение контроллера (спека §2.3/§2.4): отсутствие точки ofz_1y ≤ cutoff —
+        # ЕДИНСТВЕННОЕ исключение из «нет данных → месяц пропускается». Источник
+        # (G-curve, zcyc) хранит только снимок, истории нет; месяц остаётся,
+        # признак честно помечен NaN.
         rows, skipped = build_world(synthetic_world(ofz=[]))
         self.assertEqual(skipped, [])
+        self.assertEqual([row.month for row in rows], [
+            date(2022, 1, 1), date(2022, 2, 1), date(2022, 3, 1),
+        ])
         for row in rows:
             self.assertTrue(math.isnan(row.features["ofz_1y"]))
 
     def test_ofz_available_point_is_used(self):
+        # Обратная сторона политики: есть точка ≤ cutoff — берётся последняя
+        # доступная, месяцы не пропускаются.
         world = synthetic_world(
             ofz=[(date(2021, 12, 15), 8.0), (date(2022, 1, 20), 9.0), (date(2022, 2, 20), 10.0)]
         )
-        rows, _ = build_world(world)
+        rows, skipped = build_world(world)
+        self.assertEqual(skipped, [])
         self.assertAlmostEqual(rows[0].features["ofz_1y"], 9.0, places=9)
         self.assertAlmostEqual(rows[1].features["ofz_1y"], 10.0, places=9)
+        # Для марта доступна та же последняя точка (новых не появилось).
+        self.assertAlmostEqual(rows[2].features["ofz_1y"], 10.0, places=9)
 
     def test_missing_fao_puts_months_into_skipped(self):
         rows, skipped = build_world(synthetic_world(fao=[(date(2022, 1, 1), 112.0)]))
