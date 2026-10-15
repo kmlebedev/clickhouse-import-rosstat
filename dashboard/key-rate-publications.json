@@ -1,0 +1,472 @@
+{
+  "apiVersion": "dashboard.grafana.app/v1beta1",
+  "kind": "Dashboard",
+  "metadata": {
+    "name": "key-rate-publications"
+  },
+  "spec": {
+    "uid": "key-rate-publications",
+    "title": "Ключевая ставка — публикации",
+    "tags": [
+      "key-rate",
+      "publications"
+    ],
+    "timezone": "browser",
+    "editable": true,
+    "graphTooltip": 0,
+    "time": {
+      "from": "now-3y",
+      "to": "now"
+    },
+    "fiscalYearStartMonth": 0,
+    "refresh": "30m",
+    "schemaVersion": 42,
+    "panels": [
+      {
+        "type": "row",
+        "collapsed": false,
+        "title": "Ставка и инфляция",
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 0
+        },
+        "id": 21,
+        "panels": []
+      },
+      {
+        "type": "timeseries",
+        "id": 1,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, value AS \"Ключевая ставка, % годовых\"\nFROM v_cbr_macro\nWHERE series = 'cbr_key_rate' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT meeting_date AS time, decision_rate AS \"Решение ЦБ, % годовых\"\nFROM v_cbr_mp_summary\nWHERE $__timeFilter(meeting_date)\nORDER BY meeting_date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Ключевая ставка и решения ЦБ",
+        "description": "Ключевая ставка ЦБ (v_cbr_macro, series = 'cbr_key_rate') — уровень на дату; точки — принятые решения по датам заседаний (v_cbr_mp_summary.decision_rate). Значения — % годовых.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 1
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "B"
+              },
+              "properties": [
+                {
+                  "id": "custom.lineWidth",
+                  "value": 0
+                },
+                {
+                  "id": "custom.showPoints",
+                  "value": "always"
+                },
+                {
+                  "id": "color",
+                  "value": {
+                    "mode": "fixed",
+                    "fixedColor": "purple"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 2,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, pow(avg(value) / 100, 52) - 1 AS \"Текущий год, годовое выражение\"\nFROM v_rosstat_macro AS w\nINNER JOIN v_series_catalog AS c ON c.source = w.source AND c.series = w.series\nWHERE c.frequency = 'W' AND toYear(date) = toYear(now())\nGROUP BY date\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT date_add(YEAR, 1, date) AS time, pow(avg(value) / 100, 52) - 1 AS \"Прошлый год, годовое выражение\"\nFROM v_rosstat_macro AS w\nINNER JOIN v_series_catalog AS c ON c.source = w.source AND c.series = w.series\nWHERE c.frequency = 'W' AND toYear(date) = toYear(now()) - 1\nGROUP BY date\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Недельные цены: годовое выражение",
+        "description": "Средний недельный индекс цен недельных товарных рядов (v_rosstat_macro, отбор — v_series_catalog.frequency = 'W') возведён в степень 52: «если бы такие недели шли весь год». SAAR считает модель, здесь — годовое выражение, а не прогноз. Пунктир — прошлый год, сдвинутый на +1 год для наложения на текущий. Порог 4% — цель ЦБ.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 12,
+          "y": 1
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "value": null,
+                  "color": "super-light-green"
+                },
+                {
+                  "value": 0.04,
+                  "color": "super-light-red"
+                }
+              ]
+            },
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "thresholdsStyle": {
+                "mode": "line"
+              },
+              "lineWidth": 1,
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "B"
+              },
+              "properties": [
+                {
+                  "id": "custom.lineStyle",
+                  "value": {
+                    "fill": "dash",
+                    "dash": [
+                      10,
+                      10
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 3,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, countIf(value \u003e 100) / count() * 100 AS \"Доля подорожавших, %\"\nFROM v_rosstat_macro AS w\nINNER JOIN v_series_catalog AS c ON c.source = w.source AND c.series = w.series\nWHERE c.frequency = 'W' AND $__timeFilter(date)\nGROUP BY date\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Недельные цены: доля подорожавших позиций",
+        "description": "Доля недельных товарных рядов, подорожавших за неделю (индекс \u003e 100), в %: 100% — подорожало всё, 50% — половина позиций. Источник — v_rosstat_macro с отбором недельных рядов по v_series_catalog.frequency = 'W'. Это доля, а не индекс.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 10
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 4,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, pow(value / 100, 12) - 1 AS \"ИПЦ, годовое выражение\"\nFROM v_rosstat_macro\nWHERE series = 'Индексы потребительских цен на товары и услуги по Российской Федерации'\n  AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT date AS time, pow(1 + value / 100, 12) - 1 AS \"Базовая инфляция, годовое выражение\"\nFROM v_cbr_macro\nWHERE series = 'Базовый ИПЦ' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Инфляция: ИПЦ и базовая",
+        "description": "Годовое выражение месячных данных, формулы разные: ИПЦ — индекс (100 = без изменения), pow(индекс/100, 12) - 1; базовая инфляция — месячный прирост в %, pow(1 + прирост/100, 12) - 1. Базовую нельзя читать как индекс. Источники — v_rosstat_macro (ИПЦ) и v_cbr_macro (Базовый ИПЦ).",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 12,
+          "y": 10
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "value": null,
+                  "color": "super-light-green"
+                },
+                {
+                  "value": 0.04,
+                  "color": "super-light-red"
+                }
+              ]
+            },
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "thresholdsStyle": {
+                "mode": "line"
+              },
+              "lineWidth": 1,
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 5,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, value AS \"Наблюдаемая инфляция, % годовых\"\nFROM v_cbr_macro\nWHERE series = 'наблюдаемая инфляция' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT date AS time, value AS \"Ожидаемая инфляция, % годовых\"\nFROM v_cbr_macro\nWHERE series = 'ожидаемая инфляция' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "C",
+            "rawSql": "SELECT date AS time, value AS \"Ценовые ожидания бизнеса (SA), пункты\"\nFROM v_cbr_survey\nWHERE series = 'price_expectations_sa' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Инфляционные и ценовые ожидания",
+        "description": "Наблюдаемая и ожидаемая инфляция населения (v_cbr_macro, % годовых) и ценовые ожидания бизнеса (v_cbr_survey.price_expectations_sa, ПУНКТЫ — не %): у серии C единица override'ом (short), сравнивать её значения с процентами нельзя, читать — динамику.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 24,
+          "x": 0,
+          "y": 19
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "C"
+              },
+              "properties": [
+                {
+                  "id": "unit",
+                  "value": "short"
+                },
+                {
+                  "id": "color",
+                  "value": {
+                    "mode": "fixed",
+                    "fixedColor": "text"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "templating": {},
+    "annotations": {}
+  }
+}
