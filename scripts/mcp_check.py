@@ -592,6 +592,70 @@ async def check(params, server_log):
                 failed += not expect(f"сырая {table} закрыта ({label})", denied,
                                      f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
 
+            # Контур потребительских расходов Сбера (фаза 2 роадмапа «починка пустых рядов»,
+            # импортёры sber_consumper_spending_index и sber_izmenenie_trat): общая витрина
+            # v_bank_sber_spending читается агентом и НЕПУСТА, каталог описывает её ряды двумя
+            # РАЗНЫМИ ключами source, а две сырые таблицы — источники витрины — агенту закрыты
+            # (как macro_series и cbr_households_b_mes: читать контур агент обязан только через
+            # витрину, правило 11 AGENTS.md).
+            #
+            # Здесь, в отличие от v_dcf_assumptions, пустая витрина успехом не считается:
+            # строки публикуют импортёры bank/, поэтому ноль строк означает ни разу не
+            # отработавший контур, а не отсутствие данных у источника — исходная жалоба §4.1
+            # роадмапа и есть «обе таблицы по 0 строк при написанных импортёрах». Число точек
+            # меняется с каждым прогоном источника, поэтому точное значение count() не
+            # сверяется — проверяется count() > 0. Существование витрины подтверждается
+            # ЗАПРОСОМ К НЕЙ, а не поиском имени в ответе list_tables: в том тексте лежат
+            # create_table_query с комментариями таблиц и колонок, и имя отсутствующей витрины
+            # попадало туда из COMMENT соседки (урок bold). Разобранный ответ run_query
+            # доказывает и существование, и право чтения; «нет витрины» и «нет прав» приходят
+            # ошибкой (UNKNOWN_TABLE / ACCESS_DENIED) и в result_rows не разбираются.
+            sber_view = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_bank_sber_spending"}))
+            sber_view_rows = result_rows(sber_view)
+            sber_view_n = sber_view_rows[0].get("count()") if sber_view_rows else None
+            if sber_view_rows is None:
+                sber_view_detail = f"витрина не читается: {sber_view[:200]}"
+            elif (sber_view_n or 0) > 0:
+                sber_view_detail = f"строк: {sber_view_n}"
+            else:
+                sber_view_detail = ("строк: 0 — прогнать импортёры контура: make import "
+                                    "STAT=sber_consumper_spending_index и STAT=sber_izmenenie_trat "
+                                    "(витрину пересоздаёт AfterImport каждого прогона)")
+            failed += not expect("витрина v_bank_sber_spending непуста", (sber_view_n or 0) > 0, sber_view_detail)
+
+            # Каталог описывает все 5 месячных и все 46 недельных рядов — точным равенством, а не
+            # «> 0» (односторонний контракт §11.4: каждый разобранный ряд обязан иметь описание).
+            # Меньшее число значит ни разу не отработавший импортёр (числа агент прочитает, а что
+            # измеряет ряд и в каких единицах — нет); большее — ряд, которого витрина не знает.
+            # Два ключа source проверяются порознь: у наборов пересекаются имена категорий
+            # («Услуги», «Продовольственные товары»), и общий ключ каталога схлопнул бы разные
+            # ряды в один.
+            for sber_source, sber_want in (("sber_consumper_spending_index", 5), ("sber_izmenenie_trat", 46)):
+                sber_catalog = text(await session.call_tool("run_query", {"query": f"SELECT count() AS n FROM v_series_catalog WHERE source = '{sber_source}'"}))
+                sber_catalog_rows = result_rows(sber_catalog)
+                sber_catalog_n = sber_catalog_rows[0].get("n") if sber_catalog_rows else None
+                if sber_catalog_rows is None:
+                    sber_catalog_detail = f"ответ не распознан: {sber_catalog[:200]}"
+                elif sber_catalog_n == sber_want:
+                    sber_catalog_detail = f"рядов {sber_source}: {sber_want}"
+                else:
+                    sber_catalog_detail = (f"рядов {sber_source}: {sber_catalog_n}, want {sber_want} — прогнать "
+                                           f"make import STAT={sber_source} (каталог перепубликовывается прогоном)")
+                failed += not expect(f"каталог {sber_source} полон", sber_catalog_n == sber_want, sber_catalog_detail)
+
+            # Сырые таблицы контура агенту не выданы — как macro_series, cbr_households_b_mes и
+            # rosstat_ipc_mes: витрина — единственное место, где агент читает ряды (единицы и
+            # привязка даты различаются между наборами и описаны только в v_series_catalog).
+            # Обе таблицы создаёт DDL-прогон импортёра и они существовали в БД ещё до починки
+            # (пустыми, §4.1 роадмапа), поэтому UNKNOWN_TABLE здесь — провал, а не успех:
+            # таблица обязана существовать и быть закрытой.
+            for table, label in (("sber_consumper_spending_index", "месячный индекс расходов"),
+                                 ("sber_izmenenie_trat", "недельный темп по категориям")):
+                raw = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {table}"}))
+                denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+                failed += not expect(f"сырая {table} закрыта ({label})", denied,
+                                     f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
+
     return failed
 
 
