@@ -56,6 +56,46 @@ func afterCbrMacro(meta []util.SeriesMeta) func(context.Context, driver.Conn) er
 	return func(ctx context.Context, conn driver.Conn) error { return publishSeries(ctx, conn, meta) }
 }
 
+// cbrBopView — витрина платёжного баланса РФ (source = имя таблицы, а не литерал 'cbr'): ряды
+// выгрузок ЦБ по платёжному балансу имеют те же имена, что ряды общей витрины v_cbr_macro
+// («Счет текущих операций»), и в ней они бы столкнулись, поэтому у платёжного баланса отдельная
+// витрина — как у v_cbr_survey и v_cbr_mo_br. Пока в витрине одна ветка, cbr_bop_est (оценка
+// ключевых агрегатов): таблицу стандартных компонентов cbr_bop_standard добавит следующая
+// задача пункта.
+var cbrBopView = util.View{
+	Name:   "v_cbr_bop",
+	Tables: []string{"cbr_bop_est"},
+	Select: `SELECT 'cbr_bop_est' AS source, toString(name) AS series, date, toFloat64(value) AS value FROM cbr_bop_est FINAL`,
+	Comment: "Платёжный баланс РФ (ЦБ РФ, оценка ключевых агрегатов): счёт текущих операций, " +
+		"торговый баланс, экспорт и импорт товаров и услуг, доходы, счёт операций с капиталом, " +
+		"сальдо финансового счёта, резервные активы, чистые ошибки и пропуски. 51 ряд: 17 " +
+		"агрегатов × {месяц, квартал, накопленным итогом с начала года}. Единица — млрд долларов " +
+		"США. Дата точки: последний день отчётного месяца, последний день квартала, у " +
+		"накопленного итога — последний день последнего покрытого месяца (сопоставлять по " +
+		"toStartOfMonth(date) или toStartOfQuarter(date)). Значения — оценка ЦБ: следующим " +
+		"выпуском ревизуются. Перед использованием читать v_series_catalog по " +
+		"(source='cbr_bop_est', series): там описаны знак ряда и привязка даты",
+	Columns: map[string]string{
+		"source": "Импортёр-источник: cbr_bop_est — оценка ключевых агрегатов платёжного баланса ЦБ РФ",
+		"series": "Имя ряда: «<агрегат> (<вид>)», где вид — месяц, квартал или накопленным итогом с начала года; 51 ряд, описания — в v_series_catalog (source='cbr_bop_est')",
+		"date":   "Дата точки (Date): последний день отчётного месяца, последний день квартала, у накопленного итога — последний день последнего покрытого месяца. Сопоставлять по toStartOfMonth(date) или toStartOfQuarter(date)",
+		"value":  "Значение (Float64), млрд долларов США: сальдо агрегата. Положительное — превышение поступлений над выплатами или чистый прирост требований, отрицательное — обратное. Ноль — настоящее значение (сальдо нулевое), а не пропуск данных",
+	},
+}
+
+// afterCbrBop — производные импортёров платёжного баланса: каталог рядов (source = имя таблицы)
+// и витрина v_cbr_bop. Публикуются шаблоном после Send точек и до записи строки версии
+// (стандарт §10.2).
+func afterCbrBop(meta []util.SeriesMeta) func(context.Context, driver.Conn) error {
+	return func(ctx context.Context, conn driver.Conn) error {
+		if err := util.UpsertSeriesCatalog(ctx, conn, meta); err != nil {
+			return err
+		}
+		_, err := util.CreateView(ctx, conn, cbrBopView)
+		return err
+	}
+}
+
 // cbrSurveyView — витрина рядов мониторинга предприятий (source='cbr_survey', импортёр
 // cbr_mp_survey); общая витрина cbrMacroView её не покрывает.
 var cbrSurveyView = util.View{
