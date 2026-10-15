@@ -37,3 +37,4 @@ GRANT SELECT ON default.v_cbr_mo_br TO kimi_reader;
 GRANT SELECT ON default.v_cbr_mp_summary TO kimi_reader;
 GRANT SELECT ON default.v_cbr_mp_summary_blocks TO kimi_reader;
 GRANT SELECT ON default.v_cbr_mp_summary_channels TO kimi_reader;
+GRANT SELECT ON default.v_bank_sber_spending TO kimi_reader;

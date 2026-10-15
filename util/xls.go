@@ -197,6 +197,10 @@ func GetXls(url string) (xlsx *excelize.File, err error) {
 	return xlsx, nil
 }
 
+// GetCSV скачивает CSV-выгрузку и разбирает её в записи: разделитель `;`, CRLF → LF, ведущий
+// UTF-8 BOM снимается. BOM убирается именно здесь, до csv.Reader: он часть файла-обёртки, а не
+// данные, а encoding/csv считает его началом незакавыченного поля и падает на первой же кавычке
+// («bare " in non-quoted-field») — на живом файле SberIndex это значило бы ноль записей.
 func GetCSV(url string) (records [][]string, err error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -212,6 +216,7 @@ func GetCSV(url string) (records [][]string, err error) {
 	if err != nil {
 		return nil, err
 	}
+	body = bytes.TrimPrefix(body, []byte("\ufeff"))
 	reader := bytes.NewBufferString(strings.ReplaceAll(string(body), "\r", "\n"))
 	csvReader := csv.NewReader(reader)
 	csvReader.Comma = ';'

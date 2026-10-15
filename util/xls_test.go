@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 )
@@ -92,5 +93,39 @@ func TestGetFileBytes(t *testing.T) {
 	}
 	if string(got) != body {
 		t.Errorf("тело %q, ожидалось %q", got, body)
+	}
+}
+
+// GetCSV — форма выгрузки Сбера целиком: ведущий UTF-8 BOM, шапка и значения в кавычках,
+// разделитель `;`. BOM обязан сниматься в транспорте: encoding/csv видит его как
+// незакавыченное начало поля и падает на первой же кавычке («bare " in non-quoted-field»),
+// то есть на валидном файле получается ноль записей — живая выгрузка SberIndex именно такая
+// (bank/testdata), и без снятия BOM импортёр молча не пишет ни строки. Пиним и User-Agent:
+// конвенция проекта (правило 4 AGENTS.md).
+func TestGetCSVStripsBOM(t *testing.T) {
+	const body = "\xef\xbb\xbf\"date\";\"category\";\"value\"\n" +
+		"\"2026-09-01\";\"Всего\";128.99\n" +
+		"\"2026-10-11\";\"Все категории \";7.46266724\n"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("User-Agent") == "" {
+			t.Error("запрос ушёл без User-Agent — GetCSV обязан слать randomUA, как GetFile")
+		}
+		_, _ = io.WriteString(w, body)
+	}))
+	defer server.Close()
+
+	records, err := GetCSV(server.URL)
+	if err != nil {
+		t.Fatalf("GetCSV на CSV с BOM: %v", err)
+	}
+	if len(records) != 3 {
+		t.Fatalf("записей %d, ожидалось 3 (шапка и две точки)", len(records))
+	}
+	wantHeader := []string{"date", "category", "value"}
+	if !slices.Equal(records[0], wantHeader) {
+		t.Errorf("шапка %q, ожидалась %q — BOM должен быть снят до разбора", records[0], wantHeader)
+	}
+	if got := records[2][2]; got != "7.46266724" {
+		t.Errorf("значение второй точки %q, ожидалось %q: точность не должна теряться", got, "7.46266724")
 	}
 }

@@ -53,5 +53,12 @@ SELECT * FROM (
     UNION ALL SELECT 'events_calendar', category, count(), min(event_date), max(event_date) FROM events_calendar FINAL GROUP BY category
     
     UNION ALL SELECT 'news_events', source, count(), min(toDate(date)), max(toDate(date)) FROM news_events FINAL GROUP BY source
+    
+    -- Потребительские расходы Сбера (спека 2026-10-15 §4.6): высокочастотные признаки nowcast'а
+    -- ИПЦ. Месячный индекс разложен по name, недельный темп — по category; ключи разные, потому
+    -- что у наборов пересекаются имена категорий.
+    UNION ALL SELECT 'sber_consumper_spending_index', name, count(), min(date), max(date) FROM sber_consumper_spending_index FINAL GROUP BY name
+    
+    UNION ALL SELECT 'sber_izmenenie_trat', category, count(), min(date), max(date) FROM sber_izmenenie_trat FINAL GROUP BY category
 )
 ORDER BY tbl, series;
