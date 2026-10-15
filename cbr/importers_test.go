@@ -57,6 +57,8 @@ var expectedPublicationCountPoints = map[string]string{
 	"cbr_indicators_cpd":        "SELECT count() FROM cbr_indicators_cpd FINAL",
 	"cbr_infl_exp":              "SELECT count() FROM cbr_infl_exp FINAL",
 	"cbr_mo_br":                 "SELECT count() FROM macro_series FINAL WHERE source = 'cbr_mo_br'",
+	"cbr_bop_est":               "SELECT count() FROM cbr_bop_est FINAL",
+	"cbr_bop_standard":          "SELECT count() FROM cbr_bop_standard FINAL",
 }
 
 // publicationDeclarer — то, как тест достаёт объявление импортёра из реестра:
@@ -100,7 +102,7 @@ var daguStatRef = regexp.MustCompile(`CLICKHOUSE_IMPORT_STAT=([A-Za-z0-9_]+)`)
 //     dagu не заметил бы ни один тест: реестр остаётся верным сам по себе), как и
 //     шаг контура резюме обсуждений (cbr_mp_summary: пропавший шаг оставил бы
 //     витрины v_cbr_mp_summary* пустыми при всех зелёных тестах);
-//   - (д) точка контроля публикации (префлайт) объявлена ровно у ожидаемых одиннадцати
+//   - (д) точка контроля публикации (префлайт) объявлена ровно у ожидаемых тринадцати
 //     импортёров и запросом из expectedPublicationCountPoints: колонка countPoints
 //     реестра сверяется с объявлением самого импортёра (метод Publication()
 //     встроенного util.ClickHouseImport), а у импортёров вне ожидаемого набора
