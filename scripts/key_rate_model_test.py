@@ -85,6 +85,18 @@ def ch_query_from_fixtures(sql: str) -> list:
     raise AssertionError(f"неизвестный SQL: {sql}")
 
 
+def ch_query_without_meetings(sql: str) -> list:
+    """Транспорт-заглушка с ПУСТЫМ календарём: ранний выход `run_summary`.
+
+    Так выглядит сломанный импорт `events_calendar` (канонических заседаний
+    нет): до записи артефактов дело не доходит, и файлы прошлого прогона
+    обязаны исчезнуть, а не выжить «последним результатом».
+    """
+    if "FROM events_calendar" in sql:
+        return []
+    return ch_query_from_fixtures(sql)
+
+
 def fixture_meetings() -> list:
     return km.meetings_from_rows(fixture_rows("meetings.csv"))
 
@@ -2338,6 +2350,66 @@ class TestRunSummaryArtifacts(unittest.TestCase):
             _, rolling = self.run_into(tmp, date(2017, 1, 1), rolling=True)
         self.assertIn("метрики окна «expanding»", expanding)
         self.assertIn("метрики окна «rolling40»", rolling)
+
+    def stale_artifacts(self, directory):
+        """Три артефакта прошлого прогона (§8) — по одному на каждый путь."""
+        paths = {}
+        for name in km.ARTIFACT_NAMES:
+            path = Path(directory) / name
+            path.write_text("снимок прошлого прогона", encoding="utf-8")
+            paths[name] = path
+        return paths
+
+    def test_early_exit_without_meetings_clears_stale_artifacts(self):
+        # Пустой календарь — ранний выход ДО записи артефактов: без подчистки
+        # отчёт, CSV и JSON прошлого прогона читались бы как результат этого.
+        with tempfile.TemporaryDirectory() as tmp:
+            stale = self.stale_artifacts(tmp)
+            with unittest.mock.patch.object(
+                km, "ch_query", side_effect=ch_query_without_meetings
+            ):
+                with contextlib.redirect_stdout(io.StringIO()) as out:
+                    code = km.run_summary(
+                        rolling=False, today=date(2017, 1, 1), out_dir=Path(tmp)
+                    )
+            self.assertEqual(code, 1)
+            for name, path in stale.items():
+                with self.subTest(artifact=name):
+                    self.assertFalse(path.exists())
+            self.assertIn("канонических заседаний нет", out.getvalue())
+            self.assertIn("устаревшие артефакты прошлого прогона удалены", out.getvalue())
+
+    def test_early_exit_without_rows_clears_stale_artifacts(self):
+        # Пустая выборка (по решениям признаков нет вовсе) — второй ранний
+        # выход: артефакты прошлого прогона обязаны исчезнуть так же.
+        with tempfile.TemporaryDirectory() as tmp:
+            stale = self.stale_artifacts(tmp)
+            with unittest.mock.patch.object(km, "ch_query", side_effect=ch_query_from_fixtures):
+                with unittest.mock.patch.object(km, "load_cpd_core", return_value=[]):
+                    with contextlib.redirect_stdout(io.StringIO()) as out:
+                        code = km.run_summary(
+                            rolling=False, today=date(2017, 1, 1), out_dir=Path(tmp)
+                        )
+            self.assertEqual(code, 1)
+            for name, path in stale.items():
+                with self.subTest(artifact=name):
+                    self.assertFalse(path.exists())
+            self.assertIn("выборка пуста", out.getvalue())
+            self.assertIn("устаревшие артефакты прошлого прогона удалены", out.getvalue())
+
+    def test_early_exit_without_stale_artifacts_is_silent_about_clearing(self):
+        # Чистить было нечего — строка об удалении не печатается (сообщение не
+        # должно обещать подчистку, которой не было).
+        with tempfile.TemporaryDirectory() as tmp:
+            with unittest.mock.patch.object(
+                km, "ch_query", side_effect=ch_query_without_meetings
+            ):
+                with contextlib.redirect_stdout(io.StringIO()) as out:
+                    code = km.run_summary(
+                        rolling=False, today=date(2017, 1, 1), out_dir=Path(tmp)
+                    )
+            self.assertEqual(code, 1)
+            self.assertNotIn("устаревшие артефакты", out.getvalue())
 
     def test_writes_the_forecast_artifact_and_section(self):
         with tempfile.TemporaryDirectory() as tmp:

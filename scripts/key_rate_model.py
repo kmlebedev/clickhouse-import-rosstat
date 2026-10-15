@@ -239,6 +239,12 @@ REPORT_NAME = "key_rate_model_report.md"
 PREDICTIONS_NAME = "key_rate_model_predictions.csv"
 FORECAST_NAME = "key_rate_model_forecast.json"
 
+# Все артефакты §8 одним списком — для ранних выходов прогона (пустой календарь,
+# пустая выборка), где не пишется НИ ОДИН из них: даты в именах файлов нет,
+# поэтому оставшийся файл прошлого прогона читается как результат текущего, и
+# убирать надо каждый (`clear_stale_artifacts`).
+ARTIFACT_NAMES = (REPORT_NAME, PREDICTIONS_NAME, FORECAST_NAME)
+
 # Колонки CSV прогнозов. `probs` — вероятности классов в порядке (−1, 0, +1)
 # через «|»; пустая ячейка — метод распределения не даёт (бенчмарки B1–B3).
 PREDICTION_COLUMNS = (
@@ -2198,6 +2204,36 @@ def write_predictions(path: Path, predictions: list) -> None:
     _write_csv(path, PREDICTION_COLUMNS, rows)
 
 
+def clear_stale_artifacts(out_dir: Path) -> list:
+    """Убирает артефакты ПРОШЛОГО прогона; возвращает имена удалённых файлов.
+
+    Ранний выход `run_summary` (пустой календарь, пустая выборка) не пишет
+    ничего — ни отчёта, ни CSV, ни JSON, — но файлы предыдущего прогона лежат в
+    каталоге и читались бы как результат ЭТОГО: даты в именах файлов нет, а
+    `key_rate_model_forecast.json` ещё и выглядит как «текущий прогноз». Это тот
+    же класс дефекта, что закрыт для ветки «прогноза нет» нормального пути
+    (`write_forecast_artifact`), и лечится здесь одинаково для ВСЕХ трёх
+    артефактов: отчёт и CSV — тоже снимок прошлого прогона, а не «частично
+    текущий». Отсутствие файлов — не ошибка.
+
+    Возврат — имена для строки консоли раннего выхода (пусто, если чистить было
+    нечего): молчание о подчистке неотличимо от её отсутствия.
+    """
+    removed = []
+    for name in ARTIFACT_NAMES:
+        path = out_dir / name
+        if path.exists():
+            path.unlink()
+            removed.append(name)
+    return removed
+
+
+def _print_removed_artifacts(removed: list) -> None:
+    """Строка консоли об удалённых артефактах прошлого прогона (пусто — нет строки)."""
+    if removed:
+        print(f"  устаревшие артефакты прошлого прогона удалены: {', '.join(removed)}")
+
+
 # --- Текущий прогноз на ближайшее заседание (спека §8) ------------------------
 #
 # Прогноз на ближайшее заседание — не фолд walk-forward: методы обучаются на
@@ -2641,10 +2677,20 @@ def run_summary(rolling: bool, today: Optional[date] = None, out_dir: Path = ROO
     был бы прочитан как текущий прогноз. Консоль в обеих ветках называет причину
     прямо (исключения нет: ни отсутствие будущих заседаний, ни вырожденная для
     всех методов выборка — не ошибка).
+
+    Ранние выходы (пустой календарь, пустая выборка) возвращают 1 ДО записи
+    артефактов — и потому убирают файлы прошлого прогона
+    (`clear_stale_artifacts`, все три: отчёт и CSV тоже снимок прошлого прогона),
+    называя удалённое в консоли. Иначе «последний прогон» на диске врал бы о
+    результате этого.
     """
     today = today or date.today()
     meetings = load_meetings()
     if not meetings:
+        # Ранний выход не пишет артефактов: файлы прошлого прогона обязаны
+        # исчезнуть, иначе они читались бы как результат этого (см.
+        # `clear_stale_artifacts`).
+        _print_removed_artifacts(clear_stale_artifacts(out_dir))
         print("events_calendar: канонических заседаний нет — проверить импорт календаря")
         return 1
     upcoming = [day for day in meetings if day > today]
@@ -2659,6 +2705,7 @@ def run_summary(rolling: bool, today: Optional[date] = None, out_dir: Path = ROO
     ibk = load_ibk()
     rows, missing_features = build_rows(decisions, cpd, ibk)
     if not rows:
+        _print_removed_artifacts(clear_stale_artifacts(out_dir))
         print("выборка пуста: ни одного решения с наблюдаемым исходом и признаками")
         return 1
 
