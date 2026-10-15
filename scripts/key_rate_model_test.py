@@ -30,10 +30,12 @@ W = 2016-12-23) наблюдаемо целиком, а заседания 2017+
 import contextlib
 import csv
 import io
+import math
 import sys
 import tempfile
 import unittest
 import unittest.mock
+import warnings
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -713,6 +715,80 @@ def taylor_rows(
     return rows
 
 
+def ordinal_rows(count, first=date(2014, 1, 1), spread=4.0, noise=2.4, band=2.0):
+    """Синтетика метода №3: «gap выше порога ⇒ повышение» с перекрытием классов.
+
+    Класс — дискретизация `latent = gap + шум` (шум детерминированный: ±2.4 по
+    сетке из пяти уровней): выше `band` — повышение (+100 б.п.), ниже `−band` —
+    снижение (−50 б.п.), между — сохранение (0). Перекрытие классов здесь не для
+    красоты: при ТОЧНОМ пороге классы линейно разделимы, и MLE ordered-модели
+    уходит в бесконечность (вырожденный фолд), а не оценивается. Шум и порог
+    подобраны так, что КАЖДОЕ окно прогона (24 заседания и больше) содержит не
+    меньше двух классов: у окна из одного класса метода тоже нет.
+
+    `gap` растёт по выборке (сетка от `−spread` до `+spread`), `pi_saar`
+    чередуется, `rate_before` накапливает шаги — регрессоры метода №3 не
+    коллинеарны друг другу и не постоянны (дизайн полного ранга). Шаги классов
+    РАЗЛИЧНЫ и в б.п.: ловят перевод точки в п.п. (`E[step]` был бы в 100 раз
+    меньше). Зависимость вероятностей от gap — сигмоида линейного индекса:
+    `P(повышение) = 1 − F(τ₂ − xβ)`, поэтому при β_gap > 0 вероятность
+    монотонно растёт по gap (это пин `TestOrderedLogit`).
+    """
+    rows = []
+    level = 10.0
+    for index in range(count):
+        gap = -spread + 2.0 * spread * index / (count - 1)
+        pi = 4.0 + 2.0 * ((index * 7) % 3)
+        latent = gap + noise * (((index * 37) % 5) - 2) / 2.0
+        if latent > band:
+            step = 100
+        elif latent < -band:
+            step = -50
+        else:
+            step = 0
+        after = level + step / 100.0
+        decision = km.Decision(
+            first + timedelta(days=30 * index), level, after, step, (step > 0) - (step < 0)
+        )
+        rows.append(km.Row(decision, pi, gap))
+        level = after
+    return rows
+
+
+def ordinal_test_row(gap, rate=10.0, pi=4.0, day=date(2014, 1, 1)):
+    """Тестовая строка метода №3 с заданным `gap` (остальные признаки фиксированы).
+
+    Так проверяется монотонность P(повышение) по gap «при прочих равных»: у
+    ordered-модели вероятность зависит от линейного индекса `xβ`, и меняется
+    здесь ровно один регрессор.
+    """
+    return km.Row(km.Decision(day, rate, rate, 0, 0), pi, gap)
+
+
+def markdown_rows(text: str, columns: int) -> list:
+    """Ячейки строк markdown-таблиц отчёта с заданным числом колонок.
+
+    Число колонок различает таблицы отчёта (метрики — 9, надёжностная — 6), а
+    строка-разделитель (`|---|---|`) отбрасывается: её ячейки — из дефисов.
+    """
+    rows = []
+    for line in text.splitlines():
+        if not line.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) == columns and not all(set(cell) <= {"-"} for cell in cells):
+            rows.append(cells)
+    return rows
+
+
+def metric_cells(text: str, method: str, window: str) -> list:
+    """Ячейки строки таблицы метрик по метке метода и окну отчёта."""
+    for cells in markdown_rows(text, 9):
+        if cells[0] == method and cells[1] == window:
+            return cells
+    raise AssertionError(f"нет строки метрик {method!r} / {window!r} в отчёте")
+
+
 def folds(rows, method, fit_predict, **kwargs):
     """Фолды одного метода — контракт `walk_forward` без счётчика пропусков.
 
@@ -1075,6 +1151,230 @@ class TestTaylorRule(unittest.TestCase):
         )
         self.assertIn("## Долгосрочные импликации правила Тейлора", text)
         self.assertIn("| долгосрочные импликации | не оценены:", text)
+
+
+class TestOrderedLogit(unittest.TestCase):
+    """Метод №3: вероятности классов, точечный шаг E[step] и вырожденные окна."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.rows = ordinal_rows(120)
+        cls.train = cls.rows[:80]
+
+    def fit(self, gap):
+        return km.fit_ordered_logit(self.train, ordinal_test_row(gap))
+
+    def test_probabilities_are_a_distribution_in_the_fixed_class_order(self):
+        forecast = self.fit(1.0)
+        self.assertIsInstance(forecast.probs, tuple)
+        self.assertEqual(len(forecast.probs), 3)
+        self.assertAlmostEqual(sum(forecast.probs), 1.0, delta=1e-9)
+        # 3-кортеж — в фиксированном порядке (−1, 0, +1), а не в порядке уровней
+        # окна: у «низкого gap» максимум обязан быть в ячейке снижения (0), у
+        # «высокого» — в ячейке повышения (2). Это и пинует отображение столбцов
+        # statsmodels (они идут по возрастанию уровней обучающего окна).
+        cold = self.fit(-3.0).probs
+        hot = self.fit(3.0).probs
+        self.assertEqual(cold.index(max(cold)), 0)
+        self.assertEqual(hot.index(max(hot)), 2)
+
+    def test_point_step_is_the_expected_value_in_basis_points(self):
+        forecast = self.fit(1.0)
+        # Средние шаги классов известны по конструкции синтетики (а не взяты из
+        # `_class_means`): снижение — −50 б.п., сохранение — 0, повышение — +100.
+        # E[step] = Σ_c P(c)·μ_c и обязан быть в БАЗИСНЫХ пунктах, как факт.
+        means = {-1: -50.0, 0: 0.0, 1: 100.0}
+        expected = sum(
+            probability * means[label] for probability, label in zip(forecast.probs, (-1, 0, 1))
+        )
+        self.assertAlmostEqual(forecast.step_bp, expected, places=9)
+        # Единицы пинуются отдельно: у уверенного повышения шаг — десятки б.п., а
+        # не доли п.п. (перевод уровня в п.п. дал бы ≈ 1.0).
+        confident = self.fit(3.5)
+        self.assertGreater(confident.probs[2], 0.9)
+        self.assertGreater(confident.step_bp, 50.0)
+
+    def test_hike_probability_is_monotone_in_gap(self):
+        # Форма зависимости — сигмоида линейного индекса: у ordered-модели
+        # `P(повышение) = 1 − F(τ₂ − xβ)`, поэтому при β_gap > 0 вероятность
+        # неубывающая по gap (и строго растущая там, где не упирается в 0/1).
+        grid = [-4.0, -3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0]
+        hike = [self.fit(gap).probs[2] for gap in grid]
+        cut = [self.fit(gap).probs[0] for gap in grid]
+        self.assertEqual(hike, sorted(hike))
+        self.assertEqual(cut, sorted(cut, reverse=True))
+        middle = hike[3:8]
+        self.assertTrue(all(before < after for before, after in zip(middle, middle[1:])))
+        self.assertLess(hike[0], 0.1)
+        self.assertGreater(hike[-1], 0.9)
+
+    def test_a_missing_class_gets_a_zero_probability(self):
+        # Окно без снижений — НЕ вырожденное (вырождено окно из одного класса):
+        # у ordered-модели два уровня, и третий получает ровно 0, а сумма
+        # остаётся единицей.
+        without_cuts = [row for row in self.rows if row.decision.y3 >= 0]
+        forecast = km.fit_ordered_logit(without_cuts[:60], ordinal_test_row(3.0))
+        self.assertEqual(forecast.probs[0], 0.0)
+        self.assertAlmostEqual(sum(forecast.probs), 1.0, delta=1e-9)
+
+    def test_brier_and_log_loss_accept_the_three_tuple(self):
+        probs = self.fit(2.0).probs
+        # Ручной пример: факт — повышение, вероятности — из метода.
+        # Brier = Σ(p − 1[y])², log loss = −ln p(факт).
+        expected_brier = probs[0] ** 2 + probs[1] ** 2 + (probs[2] - 1.0) ** 2
+        self.assertAlmostEqual(km.brier_multi([probs], [1]), expected_brier, places=12)
+        self.assertAlmostEqual(km.log_loss_multi([probs], [1]), -math.log(probs[2]), places=12)
+
+    def test_fit_emits_no_warnings(self):
+        # Вывод тестов и прогона — только числа: предупреждения оптимизатора не
+        # печатаются, а превращаются в вырожденный фолд (и видны счётчиком).
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            self.fit(1.0)
+        self.assertEqual([str(warning.message) for warning in caught], [])
+
+    def test_rejects_a_single_class_window(self):
+        rows = synthetic_rows(40, steps=(0,))
+        with self.assertRaises(km.DegenerateWindowError) as caught:
+            km.fit_ordered_logit(rows[:30], rows[30])
+        self.assertIn("ordered logit", str(caught.exception))
+        self.assertIn("класс", str(caught.exception))
+
+    def test_rejects_unidentifiable_regressors(self):
+        # pi_saar и gap в окне постоянны: линейный индекс не идентифицирован
+        # (направление `Xv = c·1` сдвигает все пороги и не меняет
+        # правдоподобие), MLE вернул бы произвольное значение.
+        rows = synthetic_rows(40, steps=(0, 50, -25))
+        with self.assertRaises(km.DegenerateWindowError) as caught:
+            km.fit_ordered_logit(rows[:30], rows[30])
+        self.assertIn("дизайн", str(caught.exception))
+
+    def test_perfectly_separated_window_is_degenerate(self):
+        # Точный порог «gap > 0 ⇒ повышение, иначе снижение» делает классы
+        # линейно разделимыми: конечного максимума правдоподобия нет
+        # (коэффициенты уходят в бесконечность), и оптимизатор не сходится.
+        # Такой фолд — вырожденный, а не молчаливый мусор в отчёте: именно
+        # сходимость, а не форма распределения, отличает оценённое окно.
+        rows = []
+        level = 10.0
+        for index in range(60):
+            gap = -4.0 + 8.0 * index / 59
+            pi = 4.0 + 2.0 * ((index * 7) % 3)
+            step = 100 if gap > 0.0 else -50
+            after = level + step / 100.0
+            rows.append(
+                km.Row(
+                    km.Decision(
+                        date(2014, 1, 1) + timedelta(days=30 * index),
+                        level,
+                        after,
+                        step,
+                        (step > 0) - (step < 0),
+                    ),
+                    pi,
+                    gap,
+                )
+            )
+            level = after
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with self.assertRaises(km.DegenerateWindowError) as raised:
+                km.fit_ordered_logit(rows[:60], rows[59])
+        self.assertIn("ordered logit", str(raised.exception))
+        self.assertIn("не сошёлся", str(raised.exception))
+        # Предупреждение не утекло наружу (вывод чистый) — оно стало причиной
+        # пропуска фолда.
+        self.assertEqual([str(warning.message) for warning in caught], [])
+
+    def test_walk_forward_skips_degenerate_folds_with_a_counter(self):
+        # Один класс в окне (ставка не менялась): вырожденный фолд пропускается
+        # со счётчиком, прогон не падает.
+        rows = synthetic_rows(30, steps=(0,))
+        predictions, skipped = km.walk_forward(
+            rows, "ordered_logit", km.fit_ordered_logit, min_train=24
+        )
+        self.assertEqual(predictions, [])
+        self.assertEqual(skipped, 6)
+
+
+class TestClimatology(unittest.TestCase):
+    """Базлайн `climatology`: частоты классов окна и точка Σ p_c·μ_c (спека §7)."""
+
+    def setUp(self):
+        # Окно из 8 заседаний: 4 сохранения, 2 повышения (+50, +100) и 2 снижения
+        # (−50, −25). Частоты 0.5/0.25/0.25 и средние шаги 0/+75/−37.5 берутся
+        # руками из конструкции, а не из реализации.
+        self.train = synthetic_rows(8, steps=(0, 0, 50, 0, -50, 100, 0, -25))
+        self.row = ordinal_test_row(0.0)
+
+    def test_probabilities_are_the_window_frequencies(self):
+        forecast = km.fit_climatology(self.train, self.row)
+        self.assertEqual(forecast.probs, (0.25, 0.5, 0.25))
+        self.assertAlmostEqual(sum(forecast.probs), 1.0, delta=1e-9)
+
+    def test_point_step_is_the_frequency_weighted_mean_in_basis_points(self):
+        forecast = km.fit_climatology(self.train, self.row)
+        # E[step] = 0.25·(−37.5) + 0.5·0 + 0.25·(+75) = 9.375 б.п. В п.п. вышло
+        # бы 0.09375 — масштаб пинуется отдельной проверкой ниже.
+        self.assertAlmostEqual(forecast.step_bp, 9.375, places=9)
+        self.assertGreater(abs(forecast.step_bp), 1.0)
+
+    def test_brier_and_log_loss_on_a_hand_example(self):
+        # Факт — снижение: Brier = (0.25−1)² + 0.5² + 0.25² = 0.875,
+        # log loss = −ln 0.25.
+        probs = km.fit_climatology(self.train, self.row).probs
+        self.assertAlmostEqual(km.brier_multi([probs], [-1]), 0.875, places=12)
+        self.assertAlmostEqual(km.log_loss_multi([probs], [-1]), -math.log(0.25), places=12)
+
+    def test_single_class_window_is_degenerate(self):
+        rows = synthetic_rows(30, steps=(0,))
+        with self.assertRaises(km.DegenerateWindowError) as caught:
+            km.fit_climatology(rows[:24], rows[24])
+        self.assertIn("climatology", str(caught.exception))
+
+
+class TestProbabilisticReportRows(unittest.TestCase):
+    """Строки отчёта методов с распределением: `climatology` и `ordered_logit`."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.rows = ordinal_rows(60)
+        cls.predictions, cls.fold_skips = km.method_predictions(cls.rows)
+
+    def render(self):
+        return km.render_report(
+            self.rows,
+            km.Skipped((), (), ()),
+            self.predictions,
+            None,
+            today=date(2026, 10, 16),
+            fold_skips=self.fold_skips,
+        )
+
+    def test_both_methods_have_a_row_for_both_windows(self):
+        text = self.render()
+        for method in ("climatology", "ordered_logit"):
+            for window, folds in (("expanding", 36), ("rolling40", 20)):
+                self.assertEqual(metric_cells(text, method, window)[2], str(folds))
+                # DM — против каждого бенчмарка (спека §7), как у остальных строк.
+                self.assertIn(f"| {method} | {window} | B1 hold |", text)
+
+    def test_brier_log_loss_and_reliability_bins_are_filled(self):
+        text = self.render()
+        for method in ("climatology", "ordered_logit"):
+            for window in ("expanding", "rolling40"):
+                cells = metric_cells(text, method, window)
+                self.assertNotEqual(cells[7], "—")  # Brier
+                self.assertNotEqual(cells[8], "—")  # log loss
+            self.assertTrue(any(cells[0] == method for cells in markdown_rows(text, 6)))
+
+    def test_point_step_is_scored_like_the_other_methods(self):
+        text = self.render()
+        for method in ("climatology", "ordered_logit"):
+            cells = metric_cells(text, method, "expanding")
+            for column in (3, 4, 5, 6):  # RMSE, MAE, hit rate, QWK
+                self.assertNotEqual(cells[column], "—")
+        self.assertIn("## Надёжностная таблица", text)
 
 
 class TestMetrics(unittest.TestCase):
@@ -1444,10 +1744,16 @@ class TestReport(unittest.TestCase):
 
     def test_walk_forward_section_reports_fold_counts(self):
         text = self.render()
-        expanding = sum(1 for p in self.predictions if p.window == "expanding")
-        rolling = sum(1 for p in self.predictions if p.window == "rolling40")
-        self.assertEqual(expanding, 3 * (60 - 24))
-        self.assertEqual(rolling, 3 * (60 - 40))
+        # В этой синтетике признаки `pi_saar` и `gap` постоянны: метод №2 и
+        # ordered_logit вырождены на КАЖДОМ окне (фолды пропущены со счётчиком),
+        # а бенчмарки B1–B3 и `climatology` дают полный набор фолдов.
+        expanding = [p for p in self.predictions if p.window == "expanding"]
+        rolling = [p for p in self.predictions if p.window == "rolling40"]
+        self.assertEqual(
+            sorted({p.method for p in expanding}), ["ar1", "climatology", "hold", "repeat"]
+        )
+        self.assertEqual(len(expanding), 4 * (60 - 24))
+        self.assertEqual(len(rolling), 4 * (60 - 40))
         self.assertIn(f"расширяющееся окно (минимум {km.MIN_TRAIN} заседаний в обучении)", text)
         self.assertIn(f"скользящее окно {km.ROLLING_WINDOW} заседаний", text)
 
@@ -1457,6 +1763,24 @@ class TestReport(unittest.TestCase):
         text = self.render(fold_skips={("hold", "expanding"): 2})
         self.assertIn("| B1 hold | expanding | 36 | 2 |", text)
         self.assertIn("| B2 repeat | expanding | 36 | 0 |", text)
+
+    def test_fold_summary_lists_methods_that_skipped_every_window(self):
+        # Сводка — перепись «метод × окно», а не только строки с прогнозами:
+        # метод, вырожденный на ВСЕХ окнах (здесь ordered_logit при постоянных
+        # `pi_saar` и `gap`), остаётся в таблице с нулём фолдов и счётчиком
+        # пропущенных окон — спека §6 требует записи о пропуске в отчёт, и без
+        # строки пропуск метода был бы виден только консольным итогом.
+        text = km.render_report(
+            self.rows,
+            self.skipped,
+            self.predictions,
+            None,
+            today=date(2026, 10, 16),
+            fold_skips=km.method_predictions(self.rows)[1],
+        )
+        self.assertIn("| ordered_logit | expanding | 0 | 36 |", text)
+        self.assertIn("| ordered_logit | rolling40 | 0 | 20 |", text)
+        self.assertIn("| taylor | expanding | 0 | 36 |", text)
 
     def test_metric_table_has_a_row_per_method_and_window(self):
         text = self.render()
@@ -1468,11 +1792,18 @@ class TestReport(unittest.TestCase):
         self.assertNotIn("-0.00", text)
 
     def test_benchmark_rows_have_no_probabilistic_metrics(self):
-        # Спека §5: вырожденные бенчмарки распределений не дают, Brier и
-        # log loss к ним не применяются (в таблице — «—»), и надёжностной
-        # таблицы в отчёте из одних бенчмарков нет.
+        # Спека §5: вырожденные бенчмарки распределений не дают — Brier и log
+        # loss в их строках «—». Вероятностные строки есть только у методов с
+        # распределением (`climatology`, `ordered_logit`), вместе с ними в
+        # отчёте появляется и надёжностная таблица.
         text = self.render()
-        self.assertNotIn("## Надёжностная таблица", text)
+        for method_label in ("B1 hold", "B2 repeat", "B3 AR(1)"):
+            for window in ("expanding", "rolling40"):
+                cells = metric_cells(text, method_label, window)
+                self.assertEqual((cells[7], cells[8]), ("—", "—"))
+        self.assertIn("## Надёжностная таблица", text)
+        self.assertTrue(any(cells[0] == "climatology" for cells in markdown_rows(text, 6)))
+        self.assertFalse(any(cells[0] == "B1 hold" for cells in markdown_rows(text, 6)))
 
     def test_significance_section_covers_every_pair_against_benchmarks(self):
         text = self.render()
@@ -1604,11 +1935,14 @@ class TestRunSummaryArtifacts(unittest.TestCase):
             self.assertTrue(report.is_file() and predictions.is_file())
             report_text = report.read_text(encoding="utf-8")
             self.assertIn("# Модель ключевой ставки v0", report_text)
-            # 26 решений среза: расширяющееся окно — 2 фолда на метод
-            # (4 метода × 2 = 8 строк CSV), скользящее 40 — ноль.
-            self.assertEqual(len(predictions.read_text(encoding="utf-8").splitlines()), 9)
-            # Строка метода №2 и блок долгосрочных импликаций — в отчёте.
-            self.assertIn("| taylor | expanding |", report_text)
+            # 26 решений среза: расширяющееся окно — 2 фолда у каждого метода
+            # (6 строк METHODS × 2 = 12 строк CSV + заголовок), скользящее 40 —
+            # ноль (выборка короче окна).
+            self.assertEqual(len(predictions.read_text(encoding="utf-8").splitlines()), 13)
+            # Строки метода №2, метода №3 и базлайна climatology, а также блок
+            # долгосрочных импликаций — в отчёте.
+            for method in ("taylor", "climatology", "ordered_logit"):
+                self.assertIn(f"| {method} | expanding |", report_text)
             self.assertIn("## Долгосрочные импликации правила Тейлора", report_text)
             self.assertIn("taylor", text)
             self.assertIn("фолдов (расширяющееся окно", text)
