@@ -38,11 +38,11 @@ func sberDay(year int, month time.Month, day int) time.Time {
 	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
 }
 
-// loadFixture читает фикстуру так же, как транспорт (util.GetCSV): разделитель `;`, CRLF → LF.
-// BOM снимается до csv.Reader, а не после: encoding/csv видит BOM как незакавыченное поле и
-// падает на первой же кавычке («bare " in non-quoted-field»), то есть на живом файле источника
-// получается ноль записей. BOM обязан снимать и транспорт импортёра — файл SberIndex начинается
-// с ef bb bf (строку заголовка разбор дополнительно чистит сам).
+// loadFixture читает фикстуру ровно теми же шагами, что транспорт util.GetCSV: снимает ведущий
+// UTF-8 BOM (файл SberIndex начинается с ef bb bf), нормализует CRLF → LF и разбирает с
+// разделителем `;`. Нормализация повторена здесь по коду GetCSV намеренно: тест не должен ходить
+// в сеть (§11.3), а живой путь проверяется тестом транспорта util.TestGetCSVStripsBOM. При
+// изменении нормализации в GetCSV поправить и этот хелпер.
 func loadFixture(t *testing.T, name string) [][]string {
 	t.Helper()
 	body, err := os.ReadFile(filepath.Join("testdata", name))
@@ -156,27 +156,34 @@ func TestSberCSIWeekParse(t *testing.T) {
 	}
 }
 
-// TestParseSberRowsFailFast — каждый класс дефекта выгрузки даёт ошибку с контекстом строки,
-// а не «0 строк» (§6.4–6.5). Подстрока ошибки указывает на ожидаемое место дефекта: иначе
+// TestParseSberRowsFailFast — каждый класс дефекта выгрузки даёт ошибку с контекстом записи,
+// а не «0 строк» (§6.4–6.5). Подстроки ошибки указывают на ожидаемое место дефекта: иначе
 // подтест прошёл бы на любой другой ошибке разбора.
 func TestParseSberRowsFailFast(t *testing.T) {
 	// htmlStub — тело HTML-оболочки SPA: так отвечает мёртвый эндпоинт sberindex.ru.
 	const htmlStub = `<!doctype html><html lang="ru"><head><title>СберИндекс</title></head>` +
 		`<body><div id="root"></div></body></html>`
 	header := []string{"date", "category", "value"}
+	const badRow = "запись 2" // номер записи в выгрузке: шапка — первая
 
 	cases := []struct {
 		name    string
 		records [][]string
-		wantIn  string
+		wantIn  string // причина
+		wantPos string // номер записи в тексте ошибки; пусто — не проверяется
 	}{
-		{"Empty", [][]string{}, "пустая выгрузка"},
-		{"HeaderOnly", [][]string{header}, "пустая выгрузка"},
-		{"HtmlStub", [][]string{{htmlStub}}, "HTML-заглушку"},
-		{"BrokenDate", [][]string{header, {"2026-13-45", "Всего", "100"}}, "дата"},
-		{"NotANumber", [][]string{header, {"2026-09-01", "Всего", "сто"}}, "не число"},
-		{"ShortRow", [][]string{header, {"2026-09-01", "Всего"}}, "полей"},
-		{"EmptyCategory", [][]string{header, {"2026-09-01", "   ", "100"}}, "пустое имя категории"},
+		{"Empty", [][]string{}, "пустая выгрузка", ""},
+		{"HeaderOnly", [][]string{header}, "пустая выгрузка", ""},
+		{"HtmlStub", [][]string{{htmlStub}}, "HTML-заглушку", ""},
+		{"BrokenDate", [][]string{header, {"2026-13-45", "Всего", "100"}}, "дата", badRow},
+		{"NotANumber", [][]string{header, {"2026-09-01", "Всего", "сто"}}, "не число", badRow},
+		// ParseFloat принимает литералы NaN/Inf/infinity молча: без отдельной проверки такая
+		// точка уехала бы в ClickHouse как «значение».
+		{"NaNValue", [][]string{header, {"2026-09-01", "Всего", "NaN"}}, "не конечно", badRow},
+		{"InfValue", [][]string{header, {"2026-09-01", "Всего", "+Inf"}}, "не конечно", badRow},
+		{"InfinityValue", [][]string{header, {"2026-09-01", "Всего", "infinity"}}, "не конечно", badRow},
+		{"ShortRow", [][]string{header, {"2026-09-01", "Всего"}}, "полей", badRow},
+		{"EmptyCategory", [][]string{header, {"2026-09-01", "   ", "100"}}, "пустое имя категории", badRow},
 	}
 
 	for _, c := range cases {
@@ -187,6 +194,9 @@ func TestParseSberRowsFailFast(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), c.wantIn) {
 				t.Errorf("ошибка %q не упоминает %q", err, c.wantIn)
+			}
+			if c.wantPos != "" && !strings.Contains(err.Error(), c.wantPos) {
+				t.Errorf("ошибка %q не называет место дефекта %q", err, c.wantPos)
 			}
 		})
 	}

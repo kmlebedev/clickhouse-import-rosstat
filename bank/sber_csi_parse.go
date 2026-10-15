@@ -3,6 +3,7 @@ package bank
 import (
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -55,25 +56,33 @@ func parseSberRows(records [][]string) ([]sberPoint, error) {
 
 	points := make([]sberPoint, 0, len(records)-1)
 	for i, row := range records[1:] {
-		line := i + 2 // номер строки файла: шапка — первая
+		// Номер записи выгрузки (шапка — первая), а не номер строки файла: csv.Reader
+		// пропускает пустые строки, поэтому строка файла могла бы не совпасть с индексом.
+		record := i + 2
 		if len(row) != len(sberCSVHeader) {
-			return nil, fmt.Errorf("строка %d: полей %d, ожидалось %d: %q",
-				line, len(row), len(sberCSVHeader), row)
+			return nil, fmt.Errorf("запись %d: полей %d, ожидалось %d: %q",
+				record, len(row), len(sberCSVHeader), row)
 		}
 		// «Все категории » источника — та же категория, что «Все категории»: без TrimSpace
 		// опечатка источника стала бы отдельным рядом, а её будущее исправление «оборвало» бы
 		// накопленную историю.
 		series := strings.TrimSpace(row[1])
 		if series == "" {
-			return nil, fmt.Errorf("строка %d: пустое имя категории: %q", line, row)
+			return nil, fmt.Errorf("запись %d: пустое имя категории: %q", record, row)
 		}
 		date, err := time.Parse(sberCSVTimeLayout, row[0])
 		if err != nil {
-			return nil, fmt.Errorf("строка %d: дата %q: %w", line, row[0], err)
+			return nil, fmt.Errorf("запись %d: дата %q: %w", record, row[0], err)
 		}
 		value, err := strconv.ParseFloat(row[2], 64)
 		if err != nil {
-			return nil, fmt.Errorf("строка %d: значение %q не число: %w", line, row[2], err)
+			return nil, fmt.Errorf("запись %d: значение %q не число: %w", record, row[2], err)
+		}
+		// ParseFloat принимает литералы NaN/Inf/infinity без ошибки: это тоже порча выгрузки,
+		// но её не видно ни в разборе, ни в логе, пока NaN не доедет до ClickHouse и не начнёт
+		// портить агрегаты витрины.
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return nil, fmt.Errorf("запись %d: значение %q не конечно (NaN/Inf): %q", record, row[2], row)
 		}
 		points = append(points, sberPoint{Series: series, Date: date, Value: value})
 	}
