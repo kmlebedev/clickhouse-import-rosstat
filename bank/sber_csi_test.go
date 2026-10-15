@@ -384,3 +384,31 @@ func TestSberUndescribed(t *testing.T) {
 		t.Errorf("описанный ряд вернулся как неописанный: %q", got)
 	}
 }
+
+// TestSberSpendingViewContract — форма витрины v_bank_sber_spending (bank/views.go) закреплена
+// значениями, а не константами пакета: имя, обе таблицы-источника в Tables и оба source-литерала в
+// Select — публичный контракт для агента (правило 11 AGENTS.md, спека §4.3, стандарт §10.3).
+// Случайная правка витрины (выпавшая из Tables таблица, забытый UNION ALL, подменённый source)
+// обязана краснить тест, а не менять форму витрины молча: агент читает оба набора одним запросом, и
+// без второго source его ряд исчез бы из витрины, а без второй таблицы в Tables витрина собиралась
+// бы из одного набора. Литералы здесь намеренно записаны, а не взяты из sberSourceIndex/
+// sberSourceWeek: проверяется то, что реально увидит агент, — сверку с константами тест прошёл бы и
+// при их переименовании, то есть при смене ключей каталога.
+func TestSberSpendingViewContract(t *testing.T) {
+	if got := sberSpendingView.Name; got != "v_bank_sber_spending" {
+		t.Errorf("имя витрины %q, ожидалось v_bank_sber_spending", got)
+	}
+	for _, table := range []string{"sber_consumper_spending_index", "sber_izmenenie_trat"} {
+		if !slices.Contains(sberSpendingView.Tables, table) {
+			t.Errorf("таблица %q отсутствует в Tables (%v): util.CreateView пропустит витрину до "+
+				"первого прогона импортёра набора или соберёт её без части данных",
+				table, sberSpendingView.Tables)
+		}
+	}
+	for _, source := range []string{"sber_consumper_spending_index", "sber_izmenenie_trat"} {
+		if !strings.Contains(sberSpendingView.Select, "'"+source+"'") {
+			t.Errorf("source-литерал %q отсутствует в Select: набор исчезнет из витрины или "+
+				"сольётся с другим набором в один ключ", source)
+		}
+	}
+}

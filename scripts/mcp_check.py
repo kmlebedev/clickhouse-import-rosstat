@@ -623,6 +623,34 @@ async def check(params, server_log):
                                     "(витрину пересоздаёт AfterImport каждого прогона)")
             failed += not expect("витрина v_bank_sber_spending непуста", (sber_view_n or 0) > 0, sber_view_detail)
 
+            # Одного общего count() > 0 мало: каталог и витрину пересоздаёт AfterImport ЛЮБОГО из
+            # двух импортёров, поэтому зелёная витрина могла бы держать точки только одного набора —
+            # ровно исходный дефект §4.1 роадмапа (пустая sber_izmenenie_trat при непустой
+            # sber_consumper_spending_index) прошёл бы проверку. Поэтому наборы проверяются
+            # поэлементно по source, который витрина штампует литералом, плюс uniqExact(source) = 2:
+            # это разом доказывает и объединение наборов в одной витрине, и непустоту каждого из них.
+            for sber_source in ("sber_consumper_spending_index", "sber_izmenenie_trat"):
+                sber_source_raw = text(await session.call_tool("run_query", {"query": f"SELECT count() AS n FROM v_bank_sber_spending WHERE source = '{sber_source}'"}))
+                sber_source_rows = result_rows(sber_source_raw)
+                sber_source_n = sber_source_rows[0].get("n") if sber_source_rows else None
+                if sber_source_rows is None:
+                    sber_source_detail = f"ответ не распознан: {sber_source_raw[:200]}"
+                elif (sber_source_n or 0) > 0:
+                    sber_source_detail = f"точек: {sber_source_n}"
+                else:
+                    sber_source_detail = (f"точек: {sber_source_n} — прогнать импортёр набора: "
+                                          f"make import STAT={sber_source}")
+                failed += not expect(f"набор {sber_source} есть в витрине", (sber_source_n or 0) > 0, sber_source_detail)
+
+            sber_sources_raw = text(await session.call_tool("run_query", {"query": "SELECT uniqExact(source) AS sources FROM v_bank_sber_spending"}))
+            sber_sources_rows = result_rows(sber_sources_raw)
+            sber_sources_n = sber_sources_rows[0].get("sources") if sber_sources_rows else None
+            if sber_sources_rows is None:
+                sber_sources_detail = f"ответ не распознан: {sber_sources_raw[:200]}"
+            else:
+                sber_sources_detail = f"различных source: {sber_sources_n} (want 2)"
+            failed += not expect("витрина объединяет оба набора Сбера", sber_sources_n == 2, sber_sources_detail)
+
             # Каталог описывает все 5 месячных и все 46 недельных рядов — точным равенством, а не
             # «> 0» (односторонний контракт §11.4: каждый разобранный ряд обязан иметь описание).
             # Меньшее число значит ни разу не отработавший импортёр (числа агент прочитает, а что
