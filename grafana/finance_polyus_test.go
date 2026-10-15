@@ -6,18 +6,19 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/grafana/grafana-foundation-sdk/go/barchart"
 	"github.com/grafana/grafana-foundation-sdk/go/dashboard"
 	"github.com/grafana/grafana-foundation-sdk/go/units"
 )
 
 // financePolyusRowTitles — ряды дашборда в порядке следования. Собраны ряды 31 «Золото, ставки,
-// рынок» (панели 1–6), 32 «Операционные показатели» (панели 7–11) и 33 «Финансовые показатели»
-// (панели 12–15): список фиксирует и заголовки, и порядок сетки. Ряд 34 («Прогноз и точность»)
-// добавляется следующей задачей.
+// рынок» (панели 1–6), 32 «Операционные показатели» (панели 7–11), 33 «Финансовые показатели»
+// (панели 12–15) и 34 «Прогноз и точность» (16–19): список фиксирует и заголовки, и порядок сетки.
 var financePolyusRowTitles = []string{
 	"Золото, ставки, рынок",
 	"Операционные показатели",
 	"Финансовые показатели",
+	"Прогноз и точность",
 }
 
 func builtFinancePolyus(t *testing.T) dashboard.Dashboard {
@@ -29,12 +30,12 @@ func builtFinancePolyus(t *testing.T) dashboard.Dashboard {
 	return d
 }
 
-// TestFinancePolyusPanelCount фиксирует состав собранных рядов: ряд 31 — шесть панелей (id 1–6),
-// ряд 32 — пять (id 7–11), ряд 33 — четыре (id 12–15). Счёт растёт по мере добавления ряда 34
-// (девятнадцать панелей в конце).
-func TestFinancePolyusPanelCount(t *testing.T) {
-	if panels := panelsOf(builtFinancePolyus(t)); len(panels) != 15 {
-		t.Fatalf("панелей %d, ожидалось 15", len(panels))
+// TestFinancePolyusHasNineteenPanels фиксирует состав собранных рядов: ряд 31 — шесть панелей
+// (id 1–6), ряд 32 — пять (7–11), ряд 33 — четыре (12–15), ряд 34 — четыре (16–19). Итог — все
+// девятнадцать панелей спеки §5.
+func TestFinancePolyusHasNineteenPanels(t *testing.T) {
+	if panels := panelsOf(builtFinancePolyus(t)); len(panels) != 19 {
+		t.Fatalf("панелей %d, ожидалось 19", len(panels))
 	}
 }
 
@@ -100,8 +101,9 @@ func TestFinancePolyusValidateUID(t *testing.T) {
 // рядов одна единица), панели 3 — курс ₽/$ (short, 4 знака), панелей 4 и 5 — проценты годовых
 // (уровни ставок, не темпы), панели 6 — рубли за акцию (currencyRUB), панелей 7–11 — операционные
 // показатели датапака (short: koz/kT/тыс. м³/м³/т/г/т/%), панелей 12/13/15 — денежные показатели
-// отчётности ($ млн и $/oz, currencyUSD), панели 14 — продажи золота (short: koz). Перепутанная
-// единица даёт ошибку чтения на порядки.
+// отчётности ($ млн и $/oz, currencyUSD), панели 14 — продажи золота (short: koz), панелей 16/17 —
+// цена золота ($/oz, currencyUSD), а у таблиц 18/19 панельной единицы нет: единицы их колонок
+// (₽, $/oz, %) подписаны в алиасах. Перепутанная единица даёт ошибку чтения на порядки.
 func TestFinancePolyusUnits(t *testing.T) {
 	board := builtFinancePolyus(t)
 	if unit := panelByID(t, board, 1).FieldConfig.Defaults.Unit; unit == nil || *unit != units.Rubles {
@@ -146,6 +148,20 @@ func TestFinancePolyusUnits(t *testing.T) {
 	}
 	if unit := panelByID(t, board, 14).FieldConfig.Defaults.Unit; unit == nil || *unit != units.Short {
 		t.Fatalf("панель 14: unit %v, ожидался %q (продажи золота — koz, не валюта)", unit, units.Short)
+	}
+	// Панели 16 (факт и точки сценариев) и 17 (бар сценариев и консенсуса) — цена золота в долларах
+	// за унцию: та же единица currencyUSD, что у панели 2. Таблицы 18/19 — сводки с колонками разных
+	// единиц (₽, $/oz, %): панельной единицы у них нет, единица каждой колонки подписана в её алиасе,
+	// а панельный currencyUSD подписал бы рубли долларами.
+	for _, id := range []uint32{16, 17} {
+		if unit := panelByID(t, board, id).FieldConfig.Defaults.Unit; unit == nil || *unit != units.Dollars {
+			t.Fatalf("панель %d: unit %v, ожидался %q (цена золота — $/oz)", id, unit, units.Dollars)
+		}
+	}
+	for _, id := range []uint32{18, 19} {
+		if unit := panelByID(t, board, id).FieldConfig.Defaults.Unit; unit != nil {
+			t.Fatalf("панель %d: unit %q, ожидалось отсутствие панельной единицы (единицы колонок — в алиасах)", id, *unit)
+		}
 	}
 }
 
@@ -466,8 +482,10 @@ func TestFinancePolyusNineAssets(t *testing.T) {
 // извлечением (11); ряд встаёт сразу за панелью 6 (28 + 9 = 37), поэтому первая его панель — на
 // y=38. Ряд 33 «Финансовые показатели» (12–15): капекс (12) и выручка с EBITDA (13) верхней парой,
 // ниже продажи золота (14) и TCC (15); ряд — сразу за панелью 11 (65 + 9 = 74), панели начинаются
-// на y=75. Таблица живёт в тесте, а не рядом с билдерами: она фиксирует раскладку (её видно в
-// артефакте и в UI), а панель без позиции в таблице — ошибка, а не «дорисует авто-layout».
+// на y=75. Ряд 34 «Прогноз и точность» (16–19): веер цены золота (16) и бар сценариев (17) верхней
+// парой, ниже таблицы прогона (18) и точности (19); ряд — сразу за панелью 15 (84 + 9 = 93), панели
+// начинаются на y=94. Таблица живёт в тесте, а не рядом с билдерами: она фиксирует раскладку (её
+// видно в артефакте и в UI), а панель без позиции в таблице — ошибка, а не «дорисует авто-layout».
 var fpPanelLayout = map[uint32]gridPos{
 	1:  {x: 0, y: 1, w: 12, h: 9},
 	3:  {x: 12, y: 1, w: 12, h: 9},
@@ -484,18 +502,23 @@ var fpPanelLayout = map[uint32]gridPos{
 	13: {x: 12, y: 75, w: 12, h: 9},
 	14: {x: 0, y: 84, w: 12, h: 9},
 	15: {x: 12, y: 84, w: 12, h: 9},
+	16: {x: 0, y: 94, w: 12, h: 9},
+	17: {x: 12, y: 94, w: 12, h: 9},
+	18: {x: 0, y: 103, w: 12, h: 9},
+	19: {x: 12, y: 103, w: 12, h: 9},
 }
 
 // fpRowLayout — ожидаемая раскладка рядов (id → x/y/w/h): ряд — полоса сетки шириной 24 колонки и
 // высотой 1. Позицию ряда задаёт fpRowGridPos явно, потому что авто-layout ставит ряд в курсор
 // панелей (currentY + высота последней): у ряда 32 курсор после явно разложенных панелей стоит на
-// y=28 — то есть ряд лёг бы поверх панели 6, у ряда 33 — на y=65 (поверх панели 11). У ряда 31 y=0,
-// и SDK пересчитывает только пару «x=0 И y=0»: у первого ряда дашборда пересчёт даёт ровно этот же
-// прямоугольник.
+// y=28 — то есть ряд лёг бы поверх панели 6, у ряда 33 — на y=65 (поверх панели 11), у ряда 34 —
+// на y=84 (поверх панели 15). У ряда 31 y=0, и SDK пересчитывает только пару «x=0 И y=0»: у первого
+// ряда дашборда пересчёт даёт ровно этот же прямоугольник.
 var fpRowLayout = map[uint32]gridPos{
 	31: {x: 0, y: 0, w: 24, h: 1},
 	32: {x: 0, y: 37, w: 24, h: 1},
 	33: {x: 0, y: 74, w: 24, h: 1},
+	34: {x: 0, y: 93, w: 24, h: 1},
 }
 
 // gridPos — прямоугольник элемента сетки Grafana (24 колонки): раскладка ряда задана явно, поэтому
@@ -518,9 +541,9 @@ type layoutRect struct {
 }
 
 // TestFinancePolyusSpecConventions фиксирует конвенции каркаса одним проходом: раскладку панелей
-// 1–15 по таблице fpPanelLayout и рядов по fpRowLayout (позиция задана явно, а не выведена
+// 1–19 по таблице fpPanelLayout и рядов по fpRowLayout (позиция задана явно, а не выведена
 // авто-layout'ом SDK — тот ставил панель 2 шириной 24 колонки в курсор после панели 1, то есть
-// x=12..36, за правую границу сетки, а ряды 32/33 — поверх последних панелей предыдущих рядов),
+// x=12..36, за правую границу сетки, а ряды 32–34 — поверх последних панелей предыдущих рядов),
 // непустой Description у каждой панели (спека §4), id уникальные в 1..19, FINAL и LIMIT в панельных
 // запросах не пишутся (FINAL уже внутри витрин; LIMIT на временном ряду молча обрезал бы историю —
 // anti-pattern легаси-экспорта). Общие инварианты сетки: x + w <= 24, y >= 1 у панелей (для SDK
@@ -650,5 +673,225 @@ func TestFinancePolyusGenerateDeterministic(t *testing.T) {
 	}
 	if !bytes.Equal(b1, b2) {
 		t.Fatal("генерация недетерминирована")
+	}
+}
+
+// fpForecastScenarios — own-сценарии дашборда в порядке серий панели 16: refId, код сценария в
+// v_gold_forecasts, алиас серии и фикс-цвет. Цвет кодирует смысл сценария (bull — рост, bear —
+// падение, base — центральный), а не порядок таргетов: палитра classic красила бы точки по
+// позиции, и цвет сценария менялся бы при добавлении ряда.
+var fpForecastScenarios = []struct{ refID, scenario, alias, color string }{
+	{"B", "bull", "own: bull", "green"},
+	{"C", "base", "own: base", "blue"},
+	{"D", "bear", "own: bear", "red"},
+}
+
+// TestFinancePolyusForecastTargets: панель 16 — факт и три точки собственных сценариев. A — дневной
+// ряд COMEX-фронта (та же форма, что у панели 2-C: v_gold_prices, source = 'gold',
+// series = 'comex_front' и $__timeFilter), B/C/D — по одному сценарию из v_gold_forecasts с алиасом
+// «own: <сценарий>». Число таргетов фиксирует состав: пропавший сценарий молча убрал бы точку с
+// веера, а опечатка в scenario оставила бы серию пустой.
+func TestFinancePolyusForecastTargets(t *testing.T) {
+	panel := panelByID(t, builtFinancePolyus(t), 16)
+	if panel.Type != "timeseries" {
+		t.Fatalf("панель 16: тип %q, ожидался timeseries (факт линией и точки сценариев)", panel.Type)
+	}
+	if len(panel.Targets) != 4 {
+		t.Fatalf("у панели %q %d запросов, ожидалось 4 (факт и три own-сценария)", panelTitle(panel), len(panel.Targets))
+	}
+	fact := targetByRefID(t, panel, "A")
+	for _, want := range []string{
+		"FROM v_gold_prices",
+		"source = 'gold'",
+		"series = 'comex_front'",
+		`AS "COMEX-фронт, $/oz"`,
+		"$__timeFilter(date)",
+		"ORDER BY date",
+	} {
+		if !strings.Contains(fact.RawSql, want) {
+			t.Fatalf("панель 16: запрос A (факт) не содержит %q: %s", want, fact.RawSql)
+		}
+	}
+	for _, tc := range fpForecastScenarios {
+		query := targetByRefID(t, panel, tc.refID)
+		for _, want := range []string{
+			"FROM v_gold_forecasts",
+			"author = 'own'",
+			"scenario = '" + tc.scenario + "'",
+			`midpoint AS "` + tc.alias + `"`,
+			"ORDER BY time",
+		} {
+			if !strings.Contains(query.RawSql, want) {
+				t.Fatalf("панель 16: запрос %s (сценарий %s) не содержит %q: %s", tc.refID, tc.scenario, want, query.RawSql)
+			}
+		}
+	}
+	// Оговорка об охвате обязана быть в Description: ярлыки 12M и short в календарь не маппятся и
+	// точками не рисуются, а вероятности сценариев и диапазоны low/high видны только в баре 17 —
+	// без этого отсутствие точек читается как дефект дашборда.
+	description := optionalString(panel.Description)
+	for _, want := range []string{"v_gold_forecasts", "12M", "short", "31 декабря", "панель 17", "вероятност"} {
+		if !strings.Contains(description, want) {
+			t.Fatalf("Description панели 16 не оговаривает охват горизонтов (нет %q): %s", want, description)
+		}
+	}
+}
+
+// TestFinancePolyusHorizonMapping: дата точки сценария вычисляется из САМОГО ярлыка горизонта, без
+// хардкода годов: `Q#-YYYY` и `YE-YYYY` → 31 декабря года (год берётся из последних четырёх символов
+// ярлыка), голый `YYYY` → 31 декабря года; немэппируемые ярлыки (`12M`, `short`) отсекаются веткой
+// NULL и фильтром time IS NOT NULL. Литерал года или UNION с рукописными строками означал бы, что
+// прогноз вшит в запрос, а не прочитан из витрины (анти-паттерн легаси-экспорта).
+func TestFinancePolyusHorizonMapping(t *testing.T) {
+	panel := panelByID(t, builtFinancePolyus(t), 16)
+	for _, scenario := range fpForecastScenarios {
+		query := targetByRefID(t, panel, scenario.refID)
+		for _, want := range []string{
+			"multiIf(",
+			`match(horizon, '^(Q[1-4]|YE)-[0-9]{4}$')`,
+			"toDate(concat(substring(horizon, length(horizon) - 3, 4), '-12-31'))",
+			`match(horizon, '^[0-9]{4}$')`,
+			"toDate(concat(horizon, '-12-31'))",
+			"NULL\n        ) AS time",
+			"scenario = '" + scenario.scenario + "'",
+			"time IS NOT NULL",
+		} {
+			if !strings.Contains(query.RawSql, want) {
+				t.Fatalf("панель 16: запрос %s: нет %q — горизонт маппится по ярлыку: %s", scenario.refID, want, query.RawSql)
+			}
+		}
+		for _, forbidden := range []string{"UNION ALL", "'20", "12M", "short"} {
+			if strings.Contains(query.RawSql, forbidden) {
+				t.Fatalf("панель 16: запрос %s содержит %q (хардкод года или немэппируемого горизонта): %s",
+					scenario.refID, forbidden, query.RawSql)
+			}
+		}
+	}
+}
+
+// TestFinancePolyusForecastScenarioPoints: точки B/C/D панели 16 рисуются только точками
+// (lineWidth 0 + showPoints always) и с фикс-цветом сценария. Сплошная линия по одной точке на
+// горизонт не читается, а палитра classic покрасила бы сценарии по порядку таргетов.
+func TestFinancePolyusForecastScenarioPoints(t *testing.T) {
+	panel := panelByID(t, builtFinancePolyus(t), 16)
+	for _, tc := range fpForecastScenarios {
+		assertPointsOnly(t, panel, tc.refID)
+		color, ok := overridePropByRefID(panel, tc.refID, "color").(dashboard.FieldColor)
+		if !ok || color.Mode != dashboard.FieldColorModeIdFixed || color.FixedColor == nil || *color.FixedColor != tc.color {
+			t.Fatalf("панель 16: цвет серии %s (%s) = %#v, ожидался fixed %q", tc.refID, tc.scenario, color, tc.color)
+		}
+	}
+}
+
+// TestFinancePolyusForecastTables: панели 17–19 — бар сценариев и две таблицы, и плагину нужен
+// queryType "table" с форматом 1: строковые колонки («Прогноз», «Прогон», «Разрешён») в
+// timeseries-формат не укладываются. Панель 17 — barchart с XField «Прогноз» (как gold-панель 8):
+// без подписи оси X бар читался бы по первой числовой колонке, а не по ярлыку прогноза. У каждой
+// панели один таргет на своей витрине.
+func TestFinancePolyusForecastTables(t *testing.T) {
+	board := builtFinancePolyus(t)
+	for _, tc := range []struct {
+		panelID   uint32
+		panelType string
+		view      string
+		wants     []string
+	}{
+		{17, "barchart", "v_gold_forecasts", []string{
+			`concat(author, ' / ', scenario, ' (', ifNull(toString(toInt32(probability)), '—'), '%)') AS "Прогноз"`,
+			`midpoint AS "Середина, $/oz"`,
+			"low,\n    high",
+			"ORDER BY midpoint",
+		}},
+		{18, "table", "v_model_inputs", []string{
+			`toString(last_run_id) AS "Прогон"`,
+			`last_run_date AS "Дата прогона"`,
+			`last_nav_per_share AS "НАВ/акция, ₽"`,
+			`plzl_close AS "Цена PLZL, ₽"`,
+			`gold_moex_fix_usd AS "Золото (fix), $/oz"`,
+			`usdrub AS "USD/RUB"`,
+			`cbr_key_rate AS "Ключевая, %"`,
+			`ofz_5y AS "ОФЗ 5y, %"`,
+		}},
+		{19, "table", "v_forecast_accuracy", []string{
+			`forecast_date AS "Дата прогноза"`,
+			`target_date AS "Цель"`,
+			`predicted AS "Прогноз, $/oz"`,
+			`actual AS "Факт, $/oz"`,
+			`round(error_pct, 2) AS "Ошибка, %"`,
+			`is_resolved AS "Разрешён"`,
+			"metric = 'xau_q_avg'",
+			"ORDER BY target_date DESC",
+		}},
+	} {
+		panel := panelByID(t, board, tc.panelID)
+		if panel.Type != tc.panelType {
+			t.Fatalf("панель %d: тип %q, ожидался %q", tc.panelID, panel.Type, tc.panelType)
+		}
+		if len(panel.Targets) != 1 {
+			t.Fatalf("у панели %q %d запросов, ожидался 1", panelTitle(panel), len(panel.Targets))
+		}
+		query, ok := chQuery(panel.Targets[0])
+		if !ok {
+			t.Fatalf("панель %q: запрос не является запросом ClickHouse", panelTitle(panel))
+		}
+		if query.Format != queryFormatTable || query.QueryType != queryTypeTable {
+			t.Fatalf("панель %d: format=%d queryType=%q, ожидались %d/%q (строковые колонки в timeseries не укладываются)",
+				tc.panelID, query.Format, query.QueryType, queryFormatTable, queryTypeTable)
+		}
+		if !strings.Contains(query.RawSql, "FROM "+tc.view) {
+			t.Fatalf("панель %d: запрос читает не %s: %s", tc.panelID, tc.view, query.RawSql)
+		}
+		for _, want := range tc.wants {
+			if !strings.Contains(query.RawSql, want) {
+				t.Fatalf("панель %d: запрос не содержит %q: %s", tc.panelID, want, query.RawSql)
+			}
+		}
+	}
+	options, ok := panelByID(t, board, 17).Options.(*barchart.Options)
+	if !ok {
+		t.Fatalf("панель 17: options %T, ожидались *barchart.Options", panelByID(t, board, 17).Options)
+	}
+	if options.XField == nil || *options.XField != "Прогноз" {
+		t.Fatalf("панель 17: xField %v, ожидался \"Прогноз\" (подпись оси — ярлык прогноза, как у gold-панели 8)", options.XField)
+	}
+	// Оговорки панелей 17–19 — в Description: у 17 вероятности банковских строк не публикуются
+	// («—»), у 18 апсайд не считается (мост НАВ → цена акции — остаток фазы 3 роадмапа), у 19
+	// вторая строка ещё не разрешена: факт, ошибка и статус пусты, пока forecast_resolve не сверит
+	// цель с фактом.
+	for _, tc := range []struct {
+		panelID uint32
+		wants   []string
+	}{
+		{17, []string{"v_gold_forecasts", "вероятност", "12M", "short", "панели 16"}},
+		{18, []string{"v_model_inputs", "апсайд", "НЕ считается", "фазы 3", "как записан"}},
+		{19, []string{"v_forecast_accuracy", "xau_q_avg", "не разрешённую", "знаков"}},
+	} {
+		description := optionalString(panelByID(t, board, tc.panelID).Description)
+		for _, want := range tc.wants {
+			if !strings.Contains(description, want) {
+				t.Fatalf("Description панели %d не оговаривает контракт (нет %q): %s", tc.panelID, want, description)
+			}
+		}
+	}
+}
+
+// TestFinancePolyusNoInlinePoints: анти-паттерн легаси-экспорта — прогнозные точки вшивались прямо
+// в SQL панели (`UNION ALL SELECT toDateTime('2026-12-30')` → 2500). Точки прогноза обязаны
+// приходить из витрины (v_gold_forecasts) и вычисляться из ярлыка горизонта: UNION с рукописными
+// строками и даты-литералы `toDateTime('20…')` в SQL дашборда не пишутся.
+func TestFinancePolyusNoInlinePoints(t *testing.T) {
+	for _, p := range panelsOf(builtFinancePolyus(t)) {
+		for _, target := range p.Targets {
+			query, ok := chQuery(target)
+			if !ok {
+				t.Fatalf("панель %q: запрос не является запросом ClickHouse", panelTitle(p))
+			}
+			for _, forbidden := range []string{"UNION ALL", "SELECT toDateTime", "toDateTime('20"} {
+				if strings.Contains(query.RawSql, forbidden) {
+					t.Fatalf("панель %d: запрос %q содержит %q — точки прогноза берутся из витрины, а не вшиваются в SQL: %s",
+						*p.Id, query.RefId, forbidden, query.RawSql)
+				}
+			}
+		}
 	}
 }

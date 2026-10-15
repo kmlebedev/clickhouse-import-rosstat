@@ -1292,6 +1292,330 @@
             }
           ]
         }
+      },
+      {
+        "type": "row",
+        "collapsed": false,
+        "title": "Прогноз и точность",
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 93
+        },
+        "id": 34,
+        "panels": []
+      },
+      {
+        "type": "timeseries",
+        "id": 16,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, value AS \"COMEX-фронт, $/oz\"\nFROM v_gold_prices\nWHERE source = 'gold' AND series = 'comex_front' AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT time, midpoint AS \"own: bull\"\nFROM (\n    SELECT\n        multiIf(\n            match(horizon, '^(Q[1-4]|YE)-[0-9]{4}$'),\n                toDate(concat(substring(horizon, length(horizon) - 3, 4), '-12-31')),\n            match(horizon, '^[0-9]{4}$'), toDate(concat(horizon, '-12-31')),\n            NULL\n        ) AS time,\n        midpoint, scenario, author\n    FROM v_gold_forecasts\n)\nWHERE author = 'own' AND scenario = 'bull' AND time IS NOT NULL\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "C",
+            "rawSql": "SELECT time, midpoint AS \"own: base\"\nFROM (\n    SELECT\n        multiIf(\n            match(horizon, '^(Q[1-4]|YE)-[0-9]{4}$'),\n                toDate(concat(substring(horizon, length(horizon) - 3, 4), '-12-31')),\n            match(horizon, '^[0-9]{4}$'), toDate(concat(horizon, '-12-31')),\n            NULL\n        ) AS time,\n        midpoint, scenario, author\n    FROM v_gold_forecasts\n)\nWHERE author = 'own' AND scenario = 'base' AND time IS NOT NULL\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "D",
+            "rawSql": "SELECT time, midpoint AS \"own: bear\"\nFROM (\n    SELECT\n        multiIf(\n            match(horizon, '^(Q[1-4]|YE)-[0-9]{4}$'),\n                toDate(concat(substring(horizon, length(horizon) - 3, 4), '-12-31')),\n            match(horizon, '^[0-9]{4}$'), toDate(concat(horizon, '-12-31')),\n            NULL\n        ) AS time,\n        midpoint, scenario, author\n    FROM v_gold_forecasts\n)\nWHERE author = 'own' AND scenario = 'bear' AND time IS NOT NULL\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Золото, $/oz: факт и прогнозные точки (own-сценарии)",
+        "description": "Волна прогнозов 2026-10-07 (v_gold_forecasts, $/oz): A — факт, цена COMEX-фронта (v_gold_prices, series = 'comex_front'), дневным рядом; B/C/D — точки собственных сценариев (author = 'own'): bull («own: bull»), base и bear. Дата точки вычисляется из самого ярлыка горизонта, без хардкода годов: `Q#-YYYY` и `YE-YYYY` → 31 декабря года, голый `YYYY` → 31 декабря года; ярлыки `12M` и `short` в календарь не маппятся и точками не рисуются. Их заменяет панель 17: там видны и вероятности сценариев, и диапазоны low/high, и немэппируемые горизонты. Точка — уровень на дату горизонта, а не траектория: сети между точками нет. Значения — $/oz.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 94
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyUSD",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "B"
+              },
+              "properties": [
+                {
+                  "id": "custom.lineWidth",
+                  "value": 0
+                },
+                {
+                  "id": "custom.showPoints",
+                  "value": "always"
+                },
+                {
+                  "id": "color",
+                  "value": {
+                    "mode": "fixed",
+                    "fixedColor": "green"
+                  }
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "C"
+              },
+              "properties": [
+                {
+                  "id": "custom.lineWidth",
+                  "value": 0
+                },
+                {
+                  "id": "custom.showPoints",
+                  "value": "always"
+                },
+                {
+                  "id": "color",
+                  "value": {
+                    "mode": "fixed",
+                    "fixedColor": "blue"
+                  }
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "D"
+              },
+              "properties": [
+                {
+                  "id": "custom.lineWidth",
+                  "value": 0
+                },
+                {
+                  "id": "custom.showPoints",
+                  "value": "always"
+                },
+                {
+                  "id": "color",
+                  "value": {
+                    "mode": "fixed",
+                    "fixedColor": "red"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "type": "barchart",
+        "id": 17,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT\n    concat(author, ' / ', scenario, ' (', ifNull(toString(toInt32(probability)), '—'), '%)') AS \"Прогноз\",\n    midpoint AS \"Середина, $/oz\",\n    low,\n    high\nFROM v_gold_forecasts\nORDER BY midpoint\n",
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Прогноз цены золота: сценарии и консенсус (bar)",
+        "description": "Прогноз цены золота одной волной 2026-10-07 (v_gold_forecasts, $/oz): бар по середине диапазона (midpoint) — у точки это сама точка, у банковского диапазона середина low/high, у единственной заданной границы сама граница. Сценарии собственной сетки (author = 'own': bull, base, bear) подписаны вместе с вероятностью (25/40/35%); у банковского консенсуса (citi, goldman, hsbc, jpm, ubs) вероятность не публикуется — в подписи прочерк. Горизонты `12M` и `short` видны здесь и точками на панели 16 не рисуются: у них нет календарного маппинга. low и high — справка к бару: у точечных прогнозов они пусты. Значения — $/oz.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 12,
+          "y": 94
+        },
+        "repeatDirection": "h",
+        "options": {
+          "xField": "Прогноз",
+          "orientation": "auto",
+          "barRadius": 0,
+          "xTickLabelRotation": 0,
+          "xTickLabelMaxLength": 0,
+          "xTickLabelSpacing": 0,
+          "stacking": "none",
+          "showValue": "auto",
+          "barWidth": 0.97,
+          "groupWidth": 0.7,
+          "legend": {
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": false,
+            "calcs": []
+          },
+          "tooltip": {
+            "mode": "",
+            "sort": ""
+          },
+          "fullHighlight": false
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyUSD",
+            "custom": {
+              "lineWidth": 1,
+              "fillOpacity": 80,
+              "gradientMode": "none"
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "table",
+        "id": 18,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT\n    toString(last_run_id) AS \"Прогон\",\n    last_run_date AS \"Дата прогона\",\n    last_nav_per_share AS \"НАВ/акция, ₽\",\n    plzl_close AS \"Цена PLZL, ₽\",\n    gold_moex_fix_usd AS \"Золото (fix), $/oz\",\n    usdrub AS \"USD/RUB\",\n    cbr_key_rate AS \"Ключевая, %\",\n    ofz_5y AS \"ОФЗ 5y, %\"\nFROM v_model_inputs\n",
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Последний прогон модели (table)",
+        "description": "Снимок последнего прогона DCF-модели (v_model_inputs, одна строка): прогон, дата, НАВ на акцию (₽), цена PLZL (₽) и рыночные входы модели — золото (fix, $/oz), курс USD/RUB, ключевая ставка (%), ОФЗ 5 лет (%). Разница НАВ и цены показана как есть: апсайд НЕ считается — мост «НАВ → цена акции» остаётся остатком фазы 3 роадмапа. Числа показаны так, как записаны в источнике (точность Float32 не пересчитывается). Единицы колонок подписаны в их заголовках — панельной единицы у таблицы нет.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 103
+        },
+        "repeatDirection": "h",
+        "options": {
+          "frameIndex": 0,
+          "showHeader": true,
+          "showTypeIcons": false,
+          "footer": {
+            "show": false,
+            "reducer": null,
+            "countRows": false
+          },
+          "cellHeight": "sm"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "inspect": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "table",
+        "id": 19,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT\n    forecast_date AS \"Дата прогноза\",\n    target_date AS \"Цель\",\n    predicted AS \"Прогноз, $/oz\",\n    actual AS \"Факт, $/oz\",\n    round(error_pct, 2) AS \"Ошибка, %\",\n    is_resolved AS \"Разрешён\"\nFROM v_forecast_accuracy\nWHERE metric = 'xau_q_avg'\nORDER BY target_date DESC\n",
+            "editorType": "sql",
+            "format": 1,
+            "queryType": "table",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Точность прошлых прогнозов (table)",
+        "description": "Точность прошлых прогнозов (v_forecast_accuracy, metric = 'xau_q_avg'): обе строки волны, включая ещё не разрешённую — у неё факт, ошибка и статус пусты, пока forecast_resolve не сверит цель с фактом. «Ошибка, %» знаковая: (прогноз − факт) / факт × 100, «+» — прогноз выше факта. Строки отсортированы по цели (target_date DESC) — свежая цель сверху.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 12,
+          "y": 103
+        },
+        "repeatDirection": "h",
+        "options": {
+          "frameIndex": 0,
+          "showHeader": true,
+          "showTypeIcons": false,
+          "footer": {
+            "show": false,
+            "reducer": null,
+            "countRows": false
+          },
+          "cellHeight": "sm"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "inspect": false
+            }
+          },
+          "overrides": []
+        }
       }
     ],
     "templating": {},

@@ -3,8 +3,10 @@ package main
 import (
 	"fmt"
 
+	"github.com/grafana/grafana-foundation-sdk/go/barchart"
 	"github.com/grafana/grafana-foundation-sdk/go/common"
 	"github.com/grafana/grafana-foundation-sdk/go/dashboard"
+	"github.com/grafana/grafana-foundation-sdk/go/table"
 	"github.com/grafana/grafana-foundation-sdk/go/timeseries"
 	"github.com/grafana/grafana-foundation-sdk/go/units"
 )
@@ -24,6 +26,10 @@ const secondFinancePolyusRowID = 32
 // thirdFinancePolyusRowID — id ряда 33 «Финансовые показатели»: нумерация рядов идёт подряд вне
 // диапазона панелей (см. firstFinancePolyusRowID).
 const thirdFinancePolyusRowID = 33
+
+// fourthFinancePolyusRowID — id ряда 34 «Прогноз и точность»: нумерация рядов идёт подряд вне
+// диапазона панелей (см. firstFinancePolyusRowID).
+const fourthFinancePolyusRowID = 34
 
 // SQL-контракт ряда 31 (спека §5, дословно). Панели читают только витрины v_*: у датасорса стенда
 // нет грантов на сырые таблицы (легаси-экспорт читал cbr_gold, cbr_currency_usd, databook_polyus,
@@ -184,6 +190,94 @@ func fpFinancialsYearSQL(metric, alias string) string {
 	return fmt.Sprintf(fpFinancialsYearTemplate, alias, metric)
 }
 
+// SQL-контракт ряда 34 (спека §5, дословно). Ряд читает прогнозный контур: волну прогнозов
+// (v_gold_forecasts), снимок последнего прогона модели (v_model_inputs) и точность прошлых
+// прогнозов (v_forecast_accuracy). Точки own-сценариев НЕ вшиваются в SQL (анти-паттерн
+// легаси-экспорта — `UNION ALL SELECT toDateTime('2026-12-30') → 2500`): дата точки вычисляется
+// из ярлыка горизонта, а сами значения приходят из витрины.
+
+// fpForecastScenarioTemplate — точка own-сценария: горизонт маппится в календарную дату по самому
+// ярлыку, без хардкода годов. `Q#-YYYY` и `YE-YYYY` → 31 декабря года (год — последние четыре
+// символа ярлыка через substring(horizon, length(horizon) - 3, 4)), голый `YYYY` → 31 декабря года;
+// ярлыки без календарного маппинга (`12M`, `short`) дают NULL и отсекаются фильтром time IS NOT
+// NULL — их значения видны в баре панели 17. %s по порядку: алиас серии, код сценария.
+const fpForecastScenarioTemplate = `SELECT time, midpoint AS %s
+FROM (
+    SELECT
+        multiIf(
+            match(horizon, '^(Q[1-4]|YE)-[0-9]{4}$'),
+                toDate(concat(substring(horizon, length(horizon) - 3, 4), '-12-31')),
+            match(horizon, '^[0-9]{4}$'), toDate(concat(horizon, '-12-31')),
+            NULL
+        ) AS time,
+        midpoint, scenario, author
+    FROM v_gold_forecasts
+)
+WHERE author = 'own' AND scenario = '%s' AND time IS NOT NULL
+ORDER BY time
+`
+
+// fpForecastScenarioSQL собирает запрос точки own-сценария по шаблону.
+func fpForecastScenarioSQL(scenario, alias string) string {
+	return fmt.Sprintf(fpForecastScenarioTemplate, alias, scenario)
+}
+
+// fpForecastConsensusSQL — бар сценариев и банковского консенсуса: ярлык прогноза собирается из
+// автора, сценария и вероятности; середину диапазона витрина считает сама (point, иначе середина
+// low/high, иначе единственная заданная граница), поэтому бар рисуется по midpoint. Вероятность
+// публикуется только у own-сценариев: у банковских строк она NULL и печатается прочерком.
+const fpForecastConsensusSQL = `SELECT
+    concat(author, ' / ', scenario, ' (', ifNull(toString(toInt32(probability)), '—'), '%)') AS "Прогноз",
+    midpoint AS "Середина, $/oz",
+    low,
+    high
+FROM v_gold_forecasts
+ORDER BY midpoint
+`
+
+// fpModelRunSQL — снимок последнего прогона модели: одна строка, поэтому ORDER BY здесь нечему
+// упорядочивать (панель 18 — таблица, а не временной ряд). Апсайд в SQL не считается: мост
+// «НАВ → цена акции» — остаток фазы 3 роадмапа, и числа показываются как записаны в источнике.
+const fpModelRunSQL = `SELECT
+    toString(last_run_id) AS "Прогон",
+    last_run_date AS "Дата прогона",
+    last_nav_per_share AS "НАВ/акция, ₽",
+    plzl_close AS "Цена PLZL, ₽",
+    gold_moex_fix_usd AS "Золото (fix), $/oz",
+    usdrub AS "USD/RUB",
+    cbr_key_rate AS "Ключевая, %",
+    ofz_5y AS "ОФЗ 5y, %"
+FROM v_model_inputs
+`
+
+// fpForecastAccuracySQL — точность прошлых прогнозов золота: обе строки волны, включая ещё не
+// разрешённую (у неё actual/error_pct пусты до прогона forecast_resolve) — фильтр is_resolved здесь
+// осознанно не ставится, поэтому неразрешённая строка видна с прочерками. error_pct в витрине
+// знаковая: (predicted − actual) / actual × 100.
+const fpForecastAccuracySQL = `SELECT
+    forecast_date AS "Дата прогноза",
+    target_date AS "Цель",
+    predicted AS "Прогноз, $/oz",
+    actual AS "Факт, $/oz",
+    round(error_pct, 2) AS "Ошибка, %",
+    is_resolved AS "Разрешён"
+FROM v_forecast_accuracy
+WHERE metric = 'xau_q_avg'
+ORDER BY target_date DESC
+`
+
+// fpOwnScenarios — own-сценарии панели 16 в порядке серий B..D. Цвета кодируют смысл сценария
+// (bull — рост, bear — падение, base — центральный), а не порядок таргетов: палитра classic красит
+// серии по позиции, и без фиксации цвет точки менялся бы при добавлении ряда. Список повторяют
+// тесты панели 16 (TestFinancePolyusForecastTargets, TestFinancePolyusHorizonMapping,
+// TestFinancePolyusForecastScenarioPoints): перепутанный сценарий, алиас или цвет обязан ловиться
+// тестом, а не только этим комментарием.
+var fpOwnScenarios = []struct{ refID, scenario, alias, color string }{
+	{"B", "bull", `"own: bull"`, "green"},
+	{"C", "base", `"own: base"`, "blue"},
+	{"D", "bear", `"own: bear"`, "red"},
+}
+
 // fpPanelHeight — высота панелей ряда в строках сетки Grafana: 9 — дефолт NewGridPos() SDK и высота
 // панелей соседних дашбордов (gold/key-rate).
 const fpPanelHeight = 9
@@ -241,17 +335,21 @@ func fpFixedColorProp(color string) dashboard.DynamicConfigValue {
 }
 
 // NewFinancePolyus собирает дашборд «Полюс (PLZL) — финансы и прогноз» (спека §4–§5). Собраны ряды 31
-// «Золото, ставки, рынок» (панели 1–6), 32 «Операционные показатели» (панели 7–11) и 33 «Финансовые
-// показатели» (панели 12–15): первый — макро-входы прогноза (учётная цена золота в ₽/г и $/oz, курс,
-// ставки локального и глобального контура, цена акции), второй — операционные итоги датапака (выпуск
-// золота компанией и по активам, руда, вскрыша, содержание и извлечение), третий — отчётность
-// (капекс, выручка и EBITDA, продажи золота, TCC на унцию). Порядок вызовов WithRow/WithPanel задаёт
-// нумерацию панелей, а место в сетке — явный GridPos у каждого элемента: у панелей fpPanelGridPos, у
-// рядов fpRowGridPos. Ряд 31 раскладывается своей таблицей (верхняя пара — цена ₽/г (1) и курс (3),
-// ниже панель 2 во всю ширину, затем ставки (4/5) и цена акции (6)); ряд 32 начинается за последней
-// панелью ряда 31 (y=37), внутри — две широкие панели выпуска золота (7/8) и пары руды (9/10) и
-// качества (11); ряд 33 — за панелью 11 (y=74), внутри пара капекса и годовых показателей (12/13) и
-// пара продаж золота и TCC (14/15). Точные координаты фиксирует TestFinancePolyusSpecConventions.
+// «Золото, ставки, рынок» (панели 1–6), 32 «Операционные показатели» (панели 7–11), 33 «Финансовые
+// показатели» (панели 12–15) и 34 «Прогноз и точность» (панели 16–19): первый — макро-входы прогноза
+// (учётная цена золота в ₽/г и $/oz, курс, ставки локального и глобального контура, цена акции),
+// второй — операционные итоги датапака (выпуск золота компанией и по активам, руда, вскрыша,
+// содержание и извлечение), третий — отчётность (капекс, выручка и EBITDA, продажи золота, TCC на
+// унцию), четвёртый — прогнозный контур (факт и точки own-сценариев, бар сценариев и банковского
+// консенсуса, снимок последнего прогона модели и точность прошлых прогнозов). Порядок вызовов
+// WithRow/WithPanel задаёт нумерацию панелей, а место в сетке — явный GridPos у каждого элемента: у
+// панелей fpPanelGridPos, у рядов fpRowGridPos. Ряд 31 раскладывается своей таблицей (верхняя пара —
+// цена ₽/г (1) и курс (3), ниже панель 2 во всю ширину, затем ставки (4/5) и цена акции (6)); ряд 32
+// начинается за последней панелью ряда 31 (y=37), внутри — две широкие панели выпуска золота (7/8) и
+// пары руды (9/10) и качества (11); ряд 33 — за панелью 11 (y=74), внутри пара капекса и годовых
+// показателей (12/13) и пара продаж золота и TCC (14/15); ряд 34 — за панелью 15 (y=93), внутри пара
+// веера и бара (16/17) и пара таблиц — прогона и точности (18/19). Точные координаты фиксирует
+// TestFinancePolyusSpecConventions.
 func NewFinancePolyus() *dashboard.DashboardBuilder {
 	return dashboard.NewDashboardBuilder("Полюс (PLZL) — финансы и прогноз").
 		Uid(FinancePolyusUID).
@@ -280,7 +378,14 @@ func NewFinancePolyus() *dashboard.DashboardBuilder {
 		WithPanel(fpCapexPanel()).
 		WithPanel(fpRevenueEbitdaPanel()).
 		WithPanel(fpGoldSoldPanel()).
-		WithPanel(fpTccPanel())
+		WithPanel(fpTccPanel()).
+		// Ряд 34 — за последней панелью ряда 33 (84 + 9 = 93): без явной позиции авто-layout поставил
+		// бы его в курсор панелей, то есть на y=84 — поверх панели 15.
+		WithRow(dashboard.NewRowBuilder("Прогноз и точность").Id(fourthFinancePolyusRowID).GridPos(fpRowGridPos(93))).
+		WithPanel(fpGoldForecastPanel()).
+		WithPanel(fpForecastConsensusPanel()).
+		WithPanel(fpModelRunPanel()).
+		WithPanel(fpForecastAccuracyPanel())
 }
 
 // fpGoldRubPanel — панель 1: учётная цена золота ЦБ в ₽/г. Рубли с копейками (decimals 2): цена
@@ -625,4 +730,92 @@ func fpTccPanel() *timeseries.PanelBuilder {
 		WithTarget(timeseriesQuery("A", fpFinancialsHalfYearSQL("tcc_per_ounce", `"TCC, $/oz"`))).
 		OverrideByQuery("A", pointsOnlyProps()).
 		Unit(units.Dollars)
+}
+
+// fpGoldForecastPanel — панель 16: веер прогноза. A — факт (дневной ряд COMEX-фронта, форма панели
+// 2-C), B/C/D — точки own-сценариев на дате горизонта: точки, а не линия, потому что горизонт у
+// сценария один и траектории между фактом и прогнозом в витрине нет; цвет фиксирован по сценарию
+// (см. fpOwnScenarios). В сетке — левая панель пары ряда 34, рядом бар сценариев и консенсуса (17).
+func fpGoldForecastPanel() *timeseries.PanelBuilder {
+	panel := fpPanelDefaults(timeseries.NewPanelBuilder()).
+		Id(16).
+		Title("Золото, $/oz: факт и прогнозные точки (own-сценарии)").
+		GridPos(fpPanelGridPos(0, 94, spanHalf)).
+		Description("Волна прогнозов 2026-10-07 (v_gold_forecasts, $/oz): A — факт, цена " +
+			"COMEX-фронта (v_gold_prices, series = 'comex_front'), дневным рядом; B/C/D — точки " +
+			"собственных сценариев (author = 'own'): bull («own: bull»), base и bear. Дата точки " +
+			"вычисляется из самого ярлыка горизонта, без хардкода годов: `Q#-YYYY` и `YE-YYYY` → " +
+			"31 декабря года, голый `YYYY` → 31 декабря года; ярлыки `12M` и `short` в календарь " +
+			"не маппятся и точками не рисуются. Их заменяет панель 17: там видны и вероятности " +
+			"сценариев, и диапазоны low/high, и немэппируемые горизонты. Точка — уровень на дату " +
+			"горизонта, а не траектория: сети между точками нет. Значения — $/oz.").
+		WithTarget(timeseriesQuery("A", fpGoldPriceSQL("comex_front", `"COMEX-фронт, $/oz"`))).
+		Unit(units.Dollars)
+	for _, scenario := range fpOwnScenarios {
+		panel = panel.
+			WithTarget(timeseriesQuery(scenario.refID, fpForecastScenarioSQL(scenario.scenario, scenario.alias))).
+			OverrideByQuery(scenario.refID, append(pointsOnlyProps(), fpFixedColorProp(scenario.color)))
+	}
+	return panel
+}
+
+// fpForecastConsensusPanel — панель 17: бар сценариев и банковского консенсуса. Подпись бара —
+// ярлык прогноза (XField «Прогноз», как у gold-панели 8): вероятность own-сценария подписана прямо
+// в ярлыке, у банковских строк вместо неё прочерк. Данные — форма 1 + table: строковые колонки в
+// timeseries-формат не укладываются. В сетке — правая панель пары ряда 34, рядом веер (16).
+func fpForecastConsensusPanel() *barchart.PanelBuilder {
+	return barchart.NewPanelBuilder().
+		Id(17).
+		Title("Прогноз цены золота: сценарии и консенсус (bar)").
+		GridPos(fpPanelGridPos(12, 94, spanHalf)).
+		Description("Прогноз цены золота одной волной 2026-10-07 (v_gold_forecasts, $/oz): бар " +
+			"по середине диапазона (midpoint) — у точки это сама точка, у банковского диапазона " +
+			"середина low/high, у единственной заданной границы сама граница. Сценарии " +
+			"собственной сетки (author = 'own': bull, base, bear) подписаны вместе с " +
+			"вероятностью (25/40/35%); у банковского консенсуса (citi, goldman, hsbc, jpm, ubs) " +
+			"вероятность не публикуется — в подписи прочерк. Горизонты `12M` и `short` видны " +
+			"здесь и точками на панели 16 не рисуются: у них нет календарного маппинга. " +
+			"low и high — справка к бару: у точечных прогнозов они пусты. Значения — $/oz.").
+		Datasource(datasourceRef()).
+		XField("Прогноз").
+		WithTarget(tableQuery("A", fpForecastConsensusSQL)).
+		Unit(units.Dollars)
+}
+
+// fpModelRunPanel — панель 18: снимок последнего прогона DCF-модели одной строкой. Значения — как
+// записаны в источнике: апсайд (мост «НАВ → цена акции») в v1 не считается — это остаток фазы 3
+// роадмапа, и таблица показывает НАВ и цену рядом, не выводя из них оценку. В сетке — левая
+// панель нижней пары ряда 34, рядом точность прошлых прогнозов (19).
+func fpModelRunPanel() *table.PanelBuilder {
+	return table.NewPanelBuilder().
+		Id(18).
+		Title("Последний прогон модели (table)").
+		GridPos(fpPanelGridPos(0, 103, spanHalf)).
+		Description("Снимок последнего прогона DCF-модели (v_model_inputs, одна строка): прогон, " +
+			"дата, НАВ на акцию (₽), цена PLZL (₽) и рыночные входы модели — золото (fix, $/oz), " +
+			"курс USD/RUB, ключевая ставка (%), ОФЗ 5 лет (%). Разница НАВ и цены показана как " +
+			"есть: апсайд НЕ считается — мост «НАВ → цена акции» остаётся остатком фазы 3 " +
+			"роадмапа. Числа показаны так, как записаны в источнике (точность Float32 не " +
+			"пересчитывается). Единицы колонок подписаны в их заголовках — панельной единицы у " +
+			"таблицы нет.").
+		Datasource(datasourceRef()).
+		WithTarget(tableQuery("A", fpModelRunSQL))
+}
+
+// fpForecastAccuracyPanel — панель 19: точность прошлых прогнозов. Фильтра is_resolved в SQL нет
+// осознанно: показываются обе строки волны, включая неразрешённую — факт, ошибка и статус у неё
+// пусты до прогона forecast_resolve, и это видно в таблице, а не скрыто. В сетке — правая панель
+// нижней пары ряда 34, рядом снимок прогона (18).
+func fpForecastAccuracyPanel() *table.PanelBuilder {
+	return table.NewPanelBuilder().
+		Id(19).
+		Title("Точность прошлых прогнозов (table)").
+		GridPos(fpPanelGridPos(12, 103, spanHalf)).
+		Description("Точность прошлых прогнозов (v_forecast_accuracy, metric = 'xau_q_avg'): обе " +
+			"строки волны, включая ещё не разрешённую — у неё факт, ошибка и статус пусты, пока " +
+			"forecast_resolve не сверит цель с фактом. «Ошибка, %» знаковая: (прогноз − факт) / " +
+			"факт × 100, «+» — прогноз выше факта. Строки отсортированы по цели " +
+			"(target_date DESC) — свежая цель сверху.").
+		Datasource(datasourceRef()).
+		WithTarget(tableQuery("A", fpForecastAccuracySQL))
 }
