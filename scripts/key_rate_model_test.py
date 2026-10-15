@@ -1286,6 +1286,41 @@ class TestOrderedLogit(unittest.TestCase):
         # пропуска фолда.
         self.assertEqual([str(warning.message) for warning in caught], [])
 
+    def test_singular_information_matrix_is_degenerate(self):
+        # Ветка сингулярности: у разделимых классов `np.linalg.inv(Hessian)`
+        # внутри `fit` поднимает `LinAlgError`, и БЕЗ обёртки он пробил бы
+        # `walk_forward` (тот пропускает только `DegenerateWindowError`) —
+        # прогон упал бы вместо пропуска фолда. Какой именно ветке отказаться
+        # от фолда, зависит от окна и версии statsmodels, поэтому обработка
+        # пинуется подменой подгонки, а не поиском входа, который её вызовет.
+        rows = ordinal_rows(60)
+        with unittest.mock.patch.object(
+            km.OrderedModel, "fit", side_effect=np.linalg.LinAlgError("Singular matrix")
+        ):
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                with self.assertRaises(km.DegenerateWindowError) as raised:
+                    km.fit_ordered_logit(rows[:40], ordinal_test_row(1.0))
+        self.assertIn("ordered logit", str(raised.exception))
+        self.assertIn("сингулярная", str(raised.exception))
+        self.assertEqual([str(warning.message) for warning in caught], [])
+
+    def test_a_non_finite_probability_never_reaches_the_forecast(self):
+        # Тройка проверяется до `E[step]`: иначе nan молча уехал бы и в точку, и
+        # в Brier/log loss отчёта. Это `ValueError` (дефект кода), а НЕ
+        # `DegenerateWindowError`: walk-forward обязан остановить прогон, а не
+        # пропустить фолд.
+        rows = ordinal_rows(40)
+        result = unittest.mock.Mock()
+        result.mle_retvals = {"converged": True}
+        result.predict.return_value = [np.array([0.4, float("nan"), 0.6])]
+        with unittest.mock.patch.object(km.OrderedModel, "fit", return_value=result):
+            with self.assertRaises(ValueError) as raised:
+                km.fit_ordered_logit(rows[:30], ordinal_test_row(1.0))
+        self.assertEqual(type(raised.exception), ValueError)
+        self.assertIn("nan", str(raised.exception))
+        self.assertIn("не вероятности классов", str(raised.exception))
+
     def test_walk_forward_skips_degenerate_folds_with_a_counter(self):
         # Один класс в окне (ставка не менялась): вырожденный фолд пропускается
         # со счётчиком, прогон не падает.
@@ -1375,6 +1410,21 @@ class TestProbabilisticReportRows(unittest.TestCase):
             for column in (3, 4, 5, 6):  # RMSE, MAE, hit rate, QWK
                 self.assertNotEqual(cells[column], "—")
         self.assertIn("## Надёжностная таблица", text)
+
+    def test_no_zero_fold_rows_when_every_method_folds(self):
+        # Основная таблица метрик: окна этой синтетики не вырождаются ни у одного
+        # метода, поэтому строк с пометкой «0 фолдов» в ней быть не должно (это
+        # не «шум формата», а признак метода без единого фолда). В режимном блоке
+        # этого отчёта такие строки законны: заседаний 2024–2026 в выборке нет.
+        section = self.render().split("## Метрики: метод × окно")[1].split("## Долгосрочные")[0]
+        self.assertFalse(
+            any(cells[2] == "0 фолдов" for cells in markdown_rows(section, 9))
+        )
+        for method, _ in km.METHODS:
+            for window, folds in (("expanding", 36), ("rolling40", 20)):
+                self.assertEqual(
+                    metric_cells(section, km.method_label(method), window)[2], str(folds)
+                )
 
 
 class TestMetrics(unittest.TestCase):
@@ -1466,6 +1516,33 @@ class TestMetrics(unittest.TestCase):
                 metric([(0.5, 0.3, 0.3)], [0])  # сумма 1.1, не распределение
             with self.assertRaises(ValueError):
                 metric([(0.5, 0.5, 0.5)], [0])
+
+    def test_probabilistic_metrics_refuse_non_finite_probabilities(self):
+        # NaN и ±inf отвергаются ЯВНО (`math.isfinite`): сравнения `p < 0` и
+        # `p > 1` для NaN ложны, и без этой проверки тройка с NaN проходила бы
+        # диапазон молча, а log loss вернул бы nan-среднее вместо исключения.
+        for metric in (km.brier_multi, km.log_loss_multi, km.reliability_bins):
+            for broken in (
+                (float("nan"), 0.5, 0.5),
+                (0.5, float("nan"), 0.5),
+                (0.5, 0.5, float("nan")),
+                (float("inf"), 0.0, 0.0),
+                (0.5, 0.5, float("-inf")),
+            ):
+                with self.assertRaises(ValueError) as caught:
+                    metric([broken], [0])
+                self.assertIn("не вероятности классов", str(caught.exception))
+
+    def test_log_loss_does_not_silently_average_a_nan(self):
+        # Ядро дефекта: тройка с NaN проходила проверку диапазона (сравнения с NaN
+        # ложны), и log loss отдавал nan-среднее вместо исключения — число отчёта
+        # «уезжало» в nan молча. Теперь такой фолд отвергается.
+        with self.assertRaises(ValueError):
+            km.log_loss_multi(
+                [(0.2, 0.7, 0.1), (float("nan"), 0.5, 0.5), (0.1, 0.2, 0.7)], [0, 0, 1]
+            )
+        with self.assertRaises(ValueError):
+            km.brier_multi([(float("nan"), float("nan"), float("nan"))], [0])
 
     def test_reliability_bins_refuse_a_non_positive_bin_count(self):
         with self.assertRaises(ValueError):
@@ -1746,14 +1823,15 @@ class TestReport(unittest.TestCase):
         text = self.render()
         # В этой синтетике признаки `pi_saar` и `gap` постоянны: метод №2 и
         # ordered_logit вырождены на КАЖДОМ окне (фолды пропущены со счётчиком),
-        # а бенчмарки B1–B3 и `climatology` дают полный набор фолдов.
+        # а бенчмарки B1–B3 и `climatology` дают полный набор фолдов. Ожидание
+        # считается от выборки и констант окна, а не литералами.
         expanding = [p for p in self.predictions if p.window == "expanding"]
         rolling = [p for p in self.predictions if p.window == "rolling40"]
-        self.assertEqual(
-            sorted({p.method for p in expanding}), ["ar1", "climatology", "hold", "repeat"]
-        )
-        self.assertEqual(len(expanding), 4 * (60 - 24))
-        self.assertEqual(len(rolling), 4 * (60 - 40))
+        folding = sorted({p.method for p in expanding})
+        self.assertEqual(folding, ["ar1", "climatology", "hold", "repeat"])
+        self.assertEqual({p.method for p in rolling}, set(folding))
+        self.assertEqual(len(expanding), len(folding) * (len(self.rows) - km.MIN_TRAIN))
+        self.assertEqual(len(rolling), len(folding) * (len(self.rows) - km.ROLLING_WINDOW))
         self.assertIn(f"расширяющееся окно (минимум {km.MIN_TRAIN} заседаний в обучении)", text)
         self.assertIn(f"скользящее окно {km.ROLLING_WINDOW} заседаний", text)
 
@@ -1790,6 +1868,24 @@ class TestReport(unittest.TestCase):
         # Малая отрицательная разница печатается как «0.00», а не «-0.00»:
         # минус в разрядах таблицы читался бы как ошибка знака.
         self.assertNotIn("-0.00", text)
+
+    def test_metric_table_lists_methods_without_folds_as_zero_folds(self):
+        # Таблица метрик — тот же перечень `METHODS` × окна, что и сводка: строку
+        # получает каждый метод, и вырожденный на всех окнах виден пометкой
+        # «0 фолдов» с прочерками, а не исчезает из отчёта (в этой синтетике
+        # `pi_saar` и `gap` постоянны, поэтому вырождены метод №2 и метод №3).
+        text = self.render()
+        for window in ("expanding", "rolling40"):
+            for method in ("taylor", "ordered_logit"):
+                self.assertIn(
+                    f"| {method} | {window} | 0 фолдов | — | — | — | — | — | — |", text
+                )
+            for method in ("hold", "repeat", "ar1", "climatology"):
+                cells = metric_cells(text, km.method_label(method), window)
+                self.assertNotIn("—", cells[3])  # RMSE посчитан — фолды были
+        # Пометка появляется только там, где фолдов нет: у строк с фолдами —
+        # их число (та же колонка `n`).
+        self.assertNotIn("| B1 hold | expanding | 0 фолдов |", text)
 
     def test_benchmark_rows_have_no_probabilistic_metrics(self):
         # Спека §5: вырожденные бенчмарки распределений не дают — Brier и log
