@@ -57,6 +57,8 @@ var expectedPublicationCountPoints = map[string]string{
 	"cbr_indicators_cpd":        "SELECT count() FROM cbr_indicators_cpd FINAL",
 	"cbr_infl_exp":              "SELECT count() FROM cbr_infl_exp FINAL",
 	"cbr_mo_br":                 "SELECT count() FROM macro_series FINAL WHERE source = 'cbr_mo_br'",
+	"cbr_bop_est":               "SELECT count() FROM cbr_bop_est FINAL",
+	"cbr_bop_standard":          "SELECT count() FROM cbr_bop_standard FINAL",
 }
 
 // publicationDeclarer — то, как тест достаёт объявление импортёра из реестра:
@@ -100,7 +102,7 @@ var daguStatRef = regexp.MustCompile(`CLICKHOUSE_IMPORT_STAT=([A-Za-z0-9_]+)`)
 //     dagu не заметил бы ни один тест: реестр остаётся верным сам по себе), как и
 //     шаг контура резюме обсуждений (cbr_mp_summary: пропавший шаг оставил бы
 //     витрины v_cbr_mp_summary* пустыми при всех зелёных тестах);
-//   - (д) точка контроля публикации (префлайт) объявлена ровно у ожидаемых одиннадцати
+//   - (д) точка контроля публикации (префлайт) объявлена ровно у ожидаемых тринадцати
 //     импортёров и запросом из expectedPublicationCountPoints: колонка countPoints
 //     реестра сверяется с объявлением самого импортёра (метод Publication()
 //     встроенного util.ClickHouseImport), а у импортёров вне ожидаемого набора
@@ -242,11 +244,21 @@ func TestCbrImportersPrefixedAndRegistered(t *testing.T) {
 			t.Errorf("в dagu/cbr.yaml нет шага CLICKHOUSE_IMPORT_STAT=%s: владелец общей %s не запускается по расписанию", owner, sharedMacroSeriesTable)
 		}
 	}
-	// Отдельно от владельцев общей macro_series: cbr_mp_summary пишет в свои три
-	// таблицы, и обратное направление (г) для него иначе не выполнялось бы вовсе —
-	// шаг расписания, пропавший из dagu/cbr.yaml, не ломает ни реестр, ни парсеры,
-	// а витрины v_cbr_mp_summary* остались бы пустыми при зелёных тестах.
-	if !scheduled["cbr_mp_summary"] {
-		t.Errorf("в dagu/cbr.yaml нет шага CLICKHOUSE_IMPORT_STAT=cbr_mp_summary: контур резюме обсуждений не запускается по расписанию")
+	// Отдельно от владельцев общей macro_series: cbr_mp_summary пишет в свои три таблицы,
+	// cbr_bop_est и cbr_bop_standard — в свои две, и обратное направление (г) для них иначе не
+	// выполнялось бы вовсе — шаг расписания, пропавший из dagu/cbr.yaml, не ломает ни реестр,
+	// ни парсеры. У резюме обсуждений витрины v_cbr_mp_summary* остались бы пустыми, а у
+	// платёжного баланса витрина v_cbr_bop осталась бы непустой и просто перестала бы
+	// обновляться; последнего не замечает и mcp_check (он проверяет непустоту витрины и полноту
+	// каталога, а не свежесть точек), поэтому оба шага перечислены здесь явно.
+	keyScheduled := map[string]string{
+		"cbr_mp_summary":   "контур резюме обсуждений не запускается по расписанию, а витрины v_cbr_mp_summary* остаются пустыми",
+		"cbr_bop_est":      "оценка платёжного баланса не обновляется, а витрина v_cbr_bop тихо стареет",
+		"cbr_bop_standard": "стандартная презентация платёжного баланса не обновляется, а витрина v_cbr_bop тихо стареет",
+	}
+	for step, why := range keyScheduled {
+		if !scheduled[step] {
+			t.Errorf("в dagu/cbr.yaml нет шага CLICKHOUSE_IMPORT_STAT=%s: %s", step, why)
+		}
 	}
 }

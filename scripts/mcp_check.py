@@ -510,6 +510,90 @@ async def check(params, server_log):
             failed += not expect("сырая cbr_int_rate_loans закрыта", denied,
                                  "отказ ClickHouse 497 на cbr_int_rate_loans (ожидаемо)" if denied else raw[:200])
 
+            # Контур платёжного баланса ЦБ (пункт 4.2 №14 роадмапа — канал «внешние условия и
+            # курс», импортёры cbr_bop_est и cbr_bop_standard): витрина v_cbr_bop читается агентом
+            # и НЕПУСТА, каталог описывает оба набора целиком (51 и 34 ряда), а обе сырые таблицы —
+            # источники витрины — агенту закрыты (как macro_series и cbr_int_rate_loans: читать
+            # контур агент обязан только через витрину, правило 11 AGENTS.md).
+            #
+            # Здесь, в отличие от v_cbr_survey, значение count проверяется: строки публикуют
+            # импортёры cbr/ (17-й и 18-й шаги dagu/cbr.yaml), поэтому пустая витрина означает ни
+            # разу не отработавший контур, а не отсутствие данных у источника. Существование
+            # витрины подтверждается ЗАПРОСОМ К НЕЙ, а не поиском имени в ответе list_tables: в
+            # том тексте лежат create_table_query с комментариями таблиц и колонок, и имя
+            # отсутствующей витрины попадало туда из COMMENT соседки (урок bold). Разобранный
+            # ответ run_query доказывает и существование, и право чтения; «нет витрины» и «нет
+            # прав» приходят ошибкой (UNKNOWN_TABLE / ACCESS_DENIED) и в result_rows не
+            # разбираются.
+            bop_view = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_cbr_bop"}))
+            bop_view_rows = result_rows(bop_view)
+            bop_view_n = bop_view_rows[0].get("count()") if bop_view_rows else None
+            if bop_view_rows is None:
+                bop_view_detail = (f"витрина не читается: {bop_view[:200]} — на пустой БД её создаёт "
+                                   "прогон импортёра (make import STAT=cbr_bop_est)")
+            elif (bop_view_n or 0) > 0:
+                bop_view_detail = f"строк: {bop_view_n}"
+            else:
+                bop_view_detail = ("строк: 0 — прогнать импортёры контура: make import "
+                                   "STAT=cbr_bop_est и STAT=cbr_bop_standard (витрину "
+                                   "пересоздаёт AfterImport каждого прогона)")
+            failed += not expect("витрина v_cbr_bop существует и непуста", (bop_view_n or 0) > 0, bop_view_detail)
+
+            # Каталог обязан описывать ВСЕ ряды обоих наборов — точным равенством, а не «> 0»
+            # (односторонний контракт стандарта §11.4: каждый разобранный ряд обязан иметь
+            # описание). Выборка по ОБОИМ полям, source И origin (LIKE с экранированными
+            # подчёркиваниями, как у cbr_int_rate_loans выше): source говорит, что ряд
+            # принадлежит нужному импортёру, а origin — что он разобран именно из файла этого
+            # импортёра (у этих наборов origin несёт имя файла, лист и подпись строки-агрегата,
+            # спека §3.7). Одного счёта по source мало: 51 (или 34) записи с верным source, но
+            # origin чужого файла означали бы каталог, описывающий не тот артефакт, чьи точки
+            # лежат в витрине.
+            # Меньшее число значит ни разу не отработавший шаг cbr_bop_est или cbr_bop_standard —
+            # прогнать make import STAT=<имя шага> (числа агент прочитает, а что измеряет ряд,
+            # в каких единицах и как привязана дата точки — нет); большее — ряд, которому в листе
+            # источника не соответствует строка-агрегат. 51 = 17 агрегатов × 3 вида периода
+            # (месяц, квартал, накопленным итогом), 34 = 17 агрегатов × 2 листа (кварталы, годы).
+            #
+            # Шаблон origin в этой проверке обязан совпадать с origin, который собирает
+            # cbr/bop_meta.go: там имя файла несёт сам каталог (cbrBopEstOrigin,
+            # cbrBopStandardOrigin), и расхождение шаблона — например, переименование файла в
+            # каталоге — даёт то же «меньше рядов», что и неотработавший шаг импортёра. То есть
+            # «меньше рядов» здесь читается и как «не отработал шаг», и как «разошёлся шаблон»,
+            # и в отчёте прогона эти две причины надо различать по v_series_catalog, а не по числу.
+            #
+            # Знак «_» в LIKE — одиночный любой символ, поэтому он экранирован (\_): без этого
+            # шаблон bop_est.xlsx совпал бы и с посторонним именем файла, отличающимся от него
+            # одним символом на месте подчёркивания.
+            bop_catalogs = (
+                ("cbr_bop_est", "bop_est.xlsx", "%bop\\_est.xlsx%", 51),
+                ("cbr_bop_standard", "bal_of_payments_standart.xlsx",
+                 "%bal\\_of\\_payments\\_standart.xlsx%", 34),
+            )
+            for bop_source, bop_file, bop_origin_like, bop_want in bop_catalogs:
+                bop_catalog = text(await session.call_tool("run_query", {"query": f"SELECT count() AS n FROM v_series_catalog WHERE source = '{bop_source}' AND origin LIKE '{bop_origin_like}'"}))
+                bop_catalog_rows = result_rows(bop_catalog)
+                bop_catalog_n = bop_catalog_rows[0].get("n") if bop_catalog_rows else None
+                if bop_catalog_rows is None:
+                    bop_catalog_detail = f"ответ не распознан: {bop_catalog[:200]}"
+                elif bop_catalog_n == bop_want:
+                    bop_catalog_detail = f"рядов {bop_source} из {bop_file}: {bop_want}"
+                else:
+                    bop_catalog_detail = (f"рядов {bop_source} из {bop_file}: {bop_catalog_n}, want {bop_want} — "
+                                          f"прогнать make import STAT={bop_source} (каталог перепубликовывается прогоном)")
+                failed += not expect(f"каталог {bop_source} полон", bop_catalog_n == bop_want, bop_catalog_detail)
+
+            # Сырые cbr_bop_est и cbr_bop_standard агенту не выданы — как cbr_int_rate_loans:
+            # витрина — единственное место, где агент читает ряды контура (единицы двух наборов
+            # различаются в 1000 раз — млрд и млн долларов США — и описаны только в
+            # v_series_catalog). Таблицы создаёт DDL-прогон импортёра, поэтому UNKNOWN_TABLE
+            # здесь — провал, а не успех: таблица обязана существовать и быть закрытой.
+            for table, label in (("cbr_bop_est", "оценка ключевых агрегатов"),
+                                 ("cbr_bop_standard", "стандартная презентация")):
+                raw = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {table}"}))
+                denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+                failed += not expect(f"сырая {table} закрыта ({label})", denied,
+                                     f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
+
             # Контур резюме обсуждения ключевой ставки ЦБ (шаг 1.2 роадмапа, импортёр
             # cbr_mp_summary): все три витрины контура (шапка, полный текст, разметка каналов)
             # читаются агентом и непусты, а три сырые таблицы — источники этих витрин — агенту
