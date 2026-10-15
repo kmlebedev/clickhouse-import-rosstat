@@ -62,5 +62,13 @@ SELECT * FROM (
     UNION ALL SELECT 'sber_consumper_spending_index', name, count(), min(date), max(date) FROM sber_consumper_spending_index FINAL GROUP BY name
     
     UNION ALL SELECT 'sber_izmenenie_trat', category, count(), min(date), max(date) FROM sber_izmenenie_trat FINAL GROUP BY category
+    
+    -- Платёжный баланс ЦБ (спека 2026-10-15 cbr-bop §3.3): оценка ключевых агрегатов и стандартная
+    -- презентация одного и того же домена — разные единицы (млрд и млн долларов США) и разные виды
+    -- периода в имени ряда, поэтому ветки отдельные, а не одна. FINAL обязателен: обе таблицы —
+    -- ReplacingMergeTree, и оценка ЦБ ревизуется новым выпуском по тому же ключу (name, date).
+    UNION ALL SELECT 'cbr_bop_est', name, count(), min(date), max(date) FROM cbr_bop_est FINAL GROUP BY name
+    
+    UNION ALL SELECT 'cbr_bop_standard', name, count(), min(date), max(date) FROM cbr_bop_standard FINAL GROUP BY name
 )
 ORDER BY tbl, series;
