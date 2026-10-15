@@ -1,0 +1,92 @@
+# Review package: a4ffef7907ad51c451bf3c8ecfe4bfd4805c64db..53e8443792bb9e281ecc8da7f0fdf3dc92abf1a1
+
+## Commits
+53e8443 rosstat: truthful series comment; mcp_check hints use real step names
+
+## Files changed
+ rosstat/series_meta.go | 2 +-
+ scripts/mcp_check.py   | 8 +++++---
+ 2 files changed, 6 insertions(+), 4 deletions(-)
+
+## Diff
+diff --git a/rosstat/series_meta.go b/rosstat/series_meta.go
+index 7b338f1..73ce6fc 100644
+--- a/rosstat/series_meta.go
++++ b/rosstat/series_meta.go
+@@ -27,21 +27,21 @@ func afterRosstatMacro(meta []util.SeriesMeta) func(context.Context, driver.Conn
+ var rosstatMacroView = util.View{
+ 	Name:   "v_rosstat_macro",
+ 	Tables: []string{rosstatIPCMesTable, rosstatIPCWeeksTable, rosstatVVPKvartalTable, rosstatSalariesMesTable},
+ 	Select: `SELECT 'rosstat' AS source, name AS series, date, toFloat64(percent) AS value FROM rosstat_ipc_mes FINAL
+ UNION ALL SELECT 'rosstat', name, date, toFloat64(percent) FROM rosstat_ipc_weeks FINAL
+ UNION ALL SELECT 'rosstat', name, date, toFloat64(vvp) FROM rosstat_vvp_kvartal FINAL
+ UNION ALL SELECT 'rosstat', name, date, toFloat64(salary) FROM rosstat_salaries_mes FINAL`,
+ 	Comment: "Ряды Росстата: ИПЦ по товарам и услугам (помесячно), еженедельные цены на отдельные товары и услуги, ВВП по кварталам, средняя номинальная зарплата по месяцам. Единицы значения и привязка даты различаются между рядами: перед расчётом читать v_series_catalog по (source, series)",
+ 	Columns: map[string]string{
+ 		"source": "Источник данных: всегда rosstat",
+-		"series": "Название ряда; совпадает с series в v_series_catalog. Имя каждого ряда закреплено в коде и при обновлении файла-источника не меняется: у ИПЦ, ВВП и зарплат это фиксированные названия, у недельных товаров и услуг — название товара из товарного списка самого источника",
++		"series": "Название ряда; совпадает с series в v_series_catalog. У помесячного ИПЦ, квартального ВВП и зарплаты имя закреплено в коде и при обновлении файла-источника не меняется. У недельных рядов имя берётся из файла — это название товара или услуги из товарного списка источника; каталог описывает текущий набор товаров, а товар, которого в v_series_catalog ещё нет, записывается в витрину с предупреждением в журнале, пока его описание не добавлено в код",
+ 		"date":   "Дата наблюдения (Date). Для месячных и недельных рядов — день из таблицы; для квартальных и зарплатных дат сдвинута — см. description ряда в v_series_catalog",
+ 		"value":  "Значение ряда (Float64). Единицы зависят от ряда: индекс цен (100 = без изменения), млрд руб., рубли — см. unit в v_series_catalog",
+ 	},
+ }
+ 
+ var ipcMesSeriesMeta = []util.SeriesMeta{
+ 	{
+ 		Source:      rosstatSource,
+ 		Series:      "Индексы потребительских цен на товары и услуги по Российской Федерации",
+ 		Title:       "ИПЦ на товары и услуги, РФ, помесячно",
+diff --git a/scripts/mcp_check.py b/scripts/mcp_check.py
+index 4c7587b..295d5b9 100644
+--- a/scripts/mcp_check.py
++++ b/scripts/mcp_check.py
+@@ -534,21 +534,22 @@ async def check(params, server_log):
+             rosstat_view = text(await session.call_tool("run_query", {"query": "SELECT count() AS rows, uniqExact(series) AS series FROM v_rosstat_macro"}))
+             rosstat_view_rows = result_rows(rosstat_view)
+             rosstat_points_n = rosstat_view_rows[0].get("rows") if rosstat_view_rows else None
+             rosstat_series_n = rosstat_view_rows[0].get("series") if rosstat_view_rows else None
+             if rosstat_view_rows is None:
+                 rosstat_view_detail = f"витрина не читается: {rosstat_view[:200]}"
+             elif (rosstat_points_n or 0) > 0 and (rosstat_series_n or 0) > 0:
+                 rosstat_view_detail = f"строк: {rosstat_points_n}, рядов: {rosstat_series_n}"
+             else:
+                 rosstat_view_detail = (f"строк: {rosstat_points_n}, рядов: {rosstat_series_n} — прогнать "
+-                                       "импортёры контура (make import STAT=ipc_mes|ipc_weeks|salaries_mes|vvp_kvartal)")
++                                       "импортёры контура (make import STAT=rosstat_ipc_mes, "
++                                       "STAT=rosstat_ipc_weeks, STAT=rosstat_salaries_mes, STAT=rosstat_vvp_kvartal)")
+             failed += not expect("витрина v_rosstat_macro непуста",
+                                  (rosstat_points_n or 0) > 0 and (rosstat_series_n or 0) > 0, rosstat_view_detail)
+ 
+             # Каталог описывает все 141 ряд источника: 4 ИПЦ (ipc_mes) + 131 недельный
+             # товар (ipc_weeks) + 5 рядов ВВП (vvp_kvartal) + 1 зарплата (salaries_mes).
+             # Число сверяется точным равенством, а не «> 0»: односторонний контракт §11.4
+             # стандарта требует описания каждого разобранного ряда, а меньше 141 значит
+             # ни разу не отработавший импортёр (числа агент прочитает, а что измеряет ряд
+             # и в каких единицах — нет). В плане фазы написано 138: это арифметика
+             # 4 + 128 + 5 + 1 до fix-round задачи T7, который вернул три товара под обрывом
+@@ -556,22 +557,23 @@ async def check(params, server_log):
+             # detail печатает наблюдённое число, когда оно расходится с ожиданием.
+             rosstat_catalog = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'rosstat'"}))
+             rosstat_catalog_rows = result_rows(rosstat_catalog)
+             rosstat_catalog_n = rosstat_catalog_rows[0].get("n") if rosstat_catalog_rows else None
+             if rosstat_catalog_rows is None:
+                 rosstat_catalog_detail = f"ответ не распознан: {rosstat_catalog[:200]}"
+             elif rosstat_catalog_n == 141:
+                 rosstat_catalog_detail = "рядов rosstat: 141 (4 ИПЦ + 131 недельный + 5 ВВП + 1 зарплата)"
+             else:
+                 rosstat_catalog_detail = (f"рядов rosstat: {rosstat_catalog_n}, want 141 — прогнать "
+-                                          "make import STAT=ipc_mes, STAT=ipc_weeks, STAT=salaries_mes и "
+-                                          "STAT=vvp_kvartal (каталог перепубликовывается каждым прогоном)")
++                                          "make import STAT=rosstat_ipc_mes, STAT=rosstat_ipc_weeks, "
++                                          "STAT=rosstat_salaries_mes и STAT=rosstat_vvp_kvartal "
++                                          "(каталог перепубликовывается каждым прогоном)")
+             failed += not expect("каталог rosstat полон", rosstat_catalog_n == 141, rosstat_catalog_detail)
+ 
+             # Сырые таблицы контура агенту не выданы — как macro_series и
+             # cbr_households_b_mes: витрина — единственное место, где агент читает ряды
+             # (единицы и привязка даты различаются между рядами и описаны в v_series_catalog).
+             # До первого живого прогона импортёров таблиц может не быть вовсе, и запрос
+             # отвечает UNKNOWN_TABLE, а не ACCESS_DENIED, — это провал, а не успех: таблица
+             # обязана существовать и быть закрытой.
+             for table, label in (("rosstat_ipc_mes", "ИПЦ помесячно"),
+                                  ("rosstat_ipc_weeks", "недельные цены"),

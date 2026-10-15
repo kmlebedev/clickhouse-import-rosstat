@@ -1,0 +1,5 @@
+go build -o build/ingest ./cmd/ingest
+./build/ingest
+time="2026-10-10T02:06:46+05:00" level=info msg="ingest listening on :8081"
+time="2026-10-10T02:06:46+05:00" level=info msg="ingest: model_run 7f3c2a10-5b1e-4c7d-9a2f-0e8d4b6c1a99 already exists, skipping"
+make: *** [run-ingest] Terminated: 15

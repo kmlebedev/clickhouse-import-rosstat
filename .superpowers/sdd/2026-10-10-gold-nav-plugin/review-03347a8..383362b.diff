@@ -1,0 +1,774 @@
+383362b fix ingest dedupe ordering and input validation
+ ingest/clickhouse.go      | 108 +++++++++++----
+ ingest/clickhouse_test.go | 333 ++++++++++++++++++++++++++++++++++++++++++++++
+ ingest/model_run.go       |  22 ++-
+ ingest/model_run_test.go  |  40 ++++++
+ 4 files changed, 472 insertions(+), 31 deletions(-)
+diff --git a/ingest/clickhouse.go b/ingest/clickhouse.go
+index 495cc8e..4871c3b 100644
+--- a/ingest/clickhouse.go
++++ b/ingest/clickhouse.go
+@@ -1,111 +1,155 @@
+ package ingest
+ 
+ import (
+ 	"context"
+ 	"encoding/json"
+ 	"fmt"
+ 	"regexp"
+ 	"strconv"
+-	"strings"
++	"sync"
+ 	"time"
+ 
+ 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+ 	"github.com/google/uuid"
+ 	log "github.com/sirupsen/logrus"
+ )
+ 
+ const (
+ 	modelRunsInsert   = "INSERT INTO model_runs (run_id, run_date, trigger_type, trigger_ref, gold_scenario, usdrub_path, price_deck, discount_rate, wacc, nav_per_share, nav_bull, nav_base, nav_bear, market_price, upside_pct, nav_beta_gold, comment)"
+ 	forecastLogInsert = "INSERT INTO forecast_log (forecast_date, target_date, metric, predicted, actual, error_pct)"
+ 	macroSeriesInsert = "INSERT INTO macro_series (source, series, date, value)"
+ )
+ 
++// chStore — узкий срез ClickHouse, который нужен InsertModelRun; в тестах подменяется фейком.
++type chStore interface {
++	runExists(ctx context.Context, runID uuid.UUID) (bool, error)
++	prepareBatch(ctx context.Context, query string) (chBatch, error)
++}
++
++// chBatch — батч вставки: достаточно Append и Send из driver.Batch.
++type chBatch interface {
++	Append(v ...any) error
++	Send() error
++}
++
++// connStore — реализация chStore поверх driver.Conn.
++type connStore struct {
++	conn driver.Conn
++}
++
++func (s connStore) runExists(ctx context.Context, runID uuid.UUID) (bool, error) {
++	var count uint64
++	if err := s.conn.QueryRow(ctx, "SELECT count() FROM model_runs FINAL WHERE run_id = ?", runID).Scan(&count); err != nil {
++		return false, err
++	}
++	return count > 0, nil
++}
++
++func (s connStore) prepareBatch(ctx context.Context, query string) (chBatch, error) {
++	return s.conn.PrepareBatch(ctx, query)
++}
++
+ // ClickHouseWriter — BatchWriter поверх clickhouse-go: только батчи PrepareBatch/Append/Send.
+ type ClickHouseWriter struct {
+-	conn driver.Conn
++	conn  driver.Conn
++	store chStore
++	mu    sync.Mutex // сериализует InsertModelRun, см. комментарий у метода
+ }
+ 
+ func NewClickHouseWriter(conn driver.Conn) *ClickHouseWriter {
+-	return &ClickHouseWriter{conn: conn}
++	return &ClickHouseWriter{conn: conn, store: connStore{conn: conn}}
+ }
+ 
+ func (w *ClickHouseWriter) EnsureTables(ctx context.Context) error {
+ 	return ensureTables(ctx, w.conn)
+ }
+ 
+ // InsertModelRun пишет прогон модели и производные строки forecast_log:
+ // metric='nav' (predicted = nav_per_share) и metric='xau_q_avg' (вероятностно-взвешенная
+ // точка сценариев золота), target_date — конец горизонта сценария, actual/error_pct = NULL.
+-// Идемпотентность по клиентскому run_id: повторный POST пропускается — ORDER BY
+-// (run_date, run_id) в ReplacingMergeTree не схлопывает строки с разным run_date.
++//
++// Идемпотентность по клиентскому run_id: повторный POST с уже записанным run_id пропускается.
++// ORDER BY (run_date, run_id) в ReplacingMergeTree не схлопывает строки с разным run_date,
++// поэтому дубли из-за повторного POST этим движком не убираются — защищает только проверка ниже.
++// Поэтому вызовы сериализованы мьютексом (ingest — один инстанс): иначе два параллельных
++// повтора оба пройдут проверку и оба вставят строки.
++// Порядок записи: сначала forecast_log, последней — model_runs. Строка в model_runs — маркер
++// фиксации прогона: если forecast_log записан, а model_runs упал, повтор не увидит run и
++// допишет обе таблицы (forecast_log при повторе схлопывается по (metric, forecast_date) в пределах дня).
++// Обратный порядок привёл бы к тому, что упавший forecast_log навсегда отсутствует при существующем run.
+ func (w *ClickHouseWriter) InsertModelRun(ctx context.Context, r ModelRun) error {
++	w.mu.Lock()
++	defer w.mu.Unlock()
++
+ 	runID, err := uuid.Parse(r.RunID)
+ 	if err != nil {
+ 		return fmt.Errorf("run_id %q is not a UUID: %w", r.RunID, err)
+ 	}
+-	var existing uint64
+-	if err = w.conn.QueryRow(ctx, "SELECT count() FROM model_runs FINAL WHERE run_id = ?", runID).Scan(&existing); err != nil {
++	exists, err := w.store.runExists(ctx, runID)
++	if err != nil {
+ 		return err
+ 	}
+-	if existing > 0 {
++	if exists {
+ 		log.Infof("ingest: model_run %s already exists, skipping", r.RunID)
+ 		return nil
+ 	}
+ 	goldScenario, err := json.Marshal(r.GoldScenario)
+ 	if err != nil {
+ 		return fmt.Errorf("gold_scenario: %w", err)
+ 	}
+ 	usdrubPath, err := json.Marshal(r.UsdrubPath)
+ 	if err != nil {
+ 		return fmt.Errorf("usdrub_path: %w", err)
+ 	}
+ 	targetDate, err := scenarioTargetDate(r.GoldScenario)
+ 	if err != nil {
+ 		return err
+ 	}
+ 	xauAvg, err := weightedGoldPoint(r.GoldScenario, r.Probabilities)
+ 	if err != nil {
+ 		return err
+ 	}
+ 	now := time.Now()
+-	batch, err := w.conn.PrepareBatch(ctx, modelRunsInsert)
+-	if err != nil {
+-		return err
+-	}
+-	if err = batch.Append(
+-		runID, now, r.TriggerType, r.TriggerRef, string(goldScenario), string(usdrubPath),
+-		r.PriceDeck, r.DiscountRate, r.Wacc, r.NavPerShare, r.NavBull, r.NavBase, r.NavBear,
+-		r.MarketPrice, r.UpsidePct, nil, r.Comment,
+-	); err != nil {
+-		return err
+-	}
+-	if err = batch.Send(); err != nil {
+-		return err
+-	}
++
+ 	forecastDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+-	forecastBatch, err := w.conn.PrepareBatch(ctx, forecastLogInsert)
++	forecastBatch, err := w.store.prepareBatch(ctx, forecastLogInsert)
+ 	if err != nil {
+ 		return err
+ 	}
+ 	for _, row := range []struct {
+ 		metric    string
+ 		predicted float64
+ 	}{
+ 		{"nav", r.NavPerShare},
+ 		{"xau_q_avg", xauAvg},
+ 	} {
+ 		if err = forecastBatch.Append(forecastDate, targetDate, row.metric, row.predicted, nil, nil); err != nil {
+ 			return err
+ 		}
+ 	}
+-	return forecastBatch.Send()
++	if err = forecastBatch.Send(); err != nil {
++		return err
++	}
++
++	batch, err := w.store.prepareBatch(ctx, modelRunsInsert)
++	if err != nil {
++		return err
++	}
++	if err = batch.Append(
++		runID, now, r.TriggerType, r.TriggerRef, string(goldScenario), string(usdrubPath),
++		r.PriceDeck, r.DiscountRate, r.Wacc, r.NavPerShare, r.NavBull, r.NavBase, r.NavBear,
++		r.MarketPrice, r.UpsidePct, nil, r.Comment,
++	); err != nil {
++		return err
++	}
++	return batch.Send()
+ }
+ 
+ // InsertManualSeries пишет вручную введённые точки в macro_series с фиксированным source='manual'.
+ func (w *ClickHouseWriter) InsertManualSeries(ctx context.Context, points []ManualSeriesPoint) error {
+ 	if len(points) == 0 {
+ 		return nil
+ 	}
+ 	batch, err := w.conn.PrepareBatch(ctx, macroSeriesInsert)
+ 	if err != nil {
+ 		return err
+@@ -115,24 +159,28 @@ func (w *ClickHouseWriter) InsertManualSeries(ctx context.Context, points []Manu
+ 		if err != nil {
+ 			return fmt.Errorf("date %q: %w", point.Date, err)
+ 		}
+ 		if err = batch.Append(manualSeriesSource, point.Series, date, point.Value); err != nil {
+ 			return err
+ 		}
+ 	}
+ 	return batch.Send()
+ }
+ 
+-var quarterHorizonRe = regexp.MustCompile(`^Q([1-4])-(\d{4})$`)
++var (
++	quarterHorizonRe = regexp.MustCompile(`^Q([1-4])-(\d{4})$`)
++	yearHorizonRe    = regexp.MustCompile(`^(?:YE-)?(\d{4})$`)
++)
+ 
+ // scenarioTargetDate — конец горизонта сценария: "Q4-2026" → конец квартала,
+ // "YE-2026"/"2026" → 31 декабря, "2026-12-31" — как есть.
++// Используется и в ValidateModelRun (входные ошибки → 400), и в InsertModelRun.
+ func scenarioTargetDate(scenario map[string]any) (time.Time, error) {
+ 	raw, ok := scenario["horizon"]
+ 	if !ok {
+ 		return time.Time{}, fmt.Errorf("gold_scenario.horizon is required for forecast_log target_date")
+ 	}
+ 	horizon, ok := raw.(string)
+ 	if !ok {
+ 		return time.Time{}, fmt.Errorf("gold_scenario.horizon must be a string, got %v", raw)
+ 	}
+ 	if date, err := time.Parse(manualSeriesDateLayout, horizon); err == nil {
+@@ -142,45 +190,49 @@ func scenarioTargetDate(scenario map[string]any) (time.Time, error) {
+ 		quarter, err := strconv.Atoi(m[1])
+ 		if err != nil {
+ 			return time.Time{}, fmt.Errorf("gold_scenario.horizon %q: %w", horizon, err)
+ 		}
+ 		year, err := strconv.Atoi(m[2])
+ 		if err != nil {
+ 			return time.Time{}, fmt.Errorf("gold_scenario.horizon %q: %w", horizon, err)
+ 		}
+ 		return time.Date(year, time.Month(quarter*3)+1, 0, 0, 0, 0, 0, time.UTC), nil
+ 	}
+-	yearStr := strings.TrimPrefix(horizon, "YE-")
+-	if year, err := strconv.Atoi(yearStr); err == nil && len(yearStr) == 4 {
++	if m := yearHorizonRe.FindStringSubmatch(horizon); m != nil {
++		year, err := strconv.Atoi(m[1])
++		if err != nil {
++			return time.Time{}, fmt.Errorf("gold_scenario.horizon %q: %w", horizon, err)
++		}
+ 		return time.Date(year, time.December, 31, 0, 0, 0, 0, time.UTC), nil
+ 	}
+ 	return time.Time{}, fmt.Errorf("unsupported gold_scenario.horizon %q (want Q<n>-YYYY, YE-YYYY, YYYY or YYYY-MM-DD)", horizon)
+ }
+ 
+ // weightedGoldPoint — вероятностно-взвешенная точка золота: Σ prob×point / Σ prob.
+-// Точка сценария — "point", при её отсутствии — середина "low"/"high".
++// Используется и в ValidateModelRun (нет блока под вероятность → 400), и в InsertModelRun.
+ func weightedGoldPoint(scenario map[string]any, probabilities map[string]float64) (float64, error) {
+ 	var weighted, sum float64
+ 	for name, probability := range probabilities {
+ 		point, err := scenarioPoint(scenario, name)
+ 		if err != nil {
+ 			return 0, err
+ 		}
+ 		weighted += probability * point
+ 		sum += probability
+ 	}
+ 	if sum == 0 {
+ 		return 0, fmt.Errorf("probabilities are empty")
+ 	}
+ 	return weighted / sum, nil
+ }
+ 
++// scenarioPoint — точка сценария: "point", при её отсутствии — середина "low"/"high".
+ func scenarioPoint(scenario map[string]any, name string) (float64, error) {
+ 	raw, ok := scenario[name]
+ 	if !ok {
+ 		return 0, fmt.Errorf("gold_scenario has no %q block for probability", name)
+ 	}
+ 	block, ok := raw.(map[string]any)
+ 	if !ok {
+ 		return 0, fmt.Errorf("gold_scenario.%s must be an object, got %v", name, raw)
+ 	}
+ 	if point, ok := toFloat(block["point"]); ok {
+diff --git a/ingest/clickhouse_test.go b/ingest/clickhouse_test.go
+new file mode 100644
+index 0000000..db7b53b
+--- /dev/null
++++ b/ingest/clickhouse_test.go
+@@ -0,0 +1,333 @@
++package ingest
++
++import (
++	"context"
++	"errors"
++	"math"
++	"sync"
++	"testing"
++	"time"
++
++	"github.com/google/uuid"
++)
++
++// runExistsDelay расширяет окно между проверкой существования и вставкой:
++// без мьютекса конкурентные повторы успевают пройти проверку до первой записи.
++const runExistsDelay = 20 * time.Millisecond
++
++// sentBatch — батч, успешно отправленный фейковым ClickHouse.
++type sentBatch struct {
++	query string
++	rows  [][]any
++}
++
++// fakeStore — фейк chStore: помнит закоммиченные run_id и отправленные батчи.
++type fakeStore struct {
++	mu        sync.Mutex
++	committed map[uuid.UUID]bool
++	sent      []sentBatch
++	failSend  map[string]error // ошибка Send по тексту запроса
++}
++
++func newFakeStore() *fakeStore {
++	return &fakeStore{committed: map[uuid.UUID]bool{}, failSend: map[string]error{}}
++}
++
++func (f *fakeStore) runExists(_ context.Context, runID uuid.UUID) (bool, error) {
++	f.mu.Lock()
++	exists := f.committed[runID]
++	f.mu.Unlock()
++	time.Sleep(runExistsDelay)
++	return exists, nil
++}
++
++func (f *fakeStore) prepareBatch(_ context.Context, query string) (chBatch, error) {
++	return &fakeBatch{store: f, query: query}, nil
++}
++
++// batchesFor — сколько батчей с этим запросом успешно отправлено.
++func (f *fakeStore) batchesFor(query string) int {
++	f.mu.Lock()
++	defer f.mu.Unlock()
++	n := 0
++	for _, b := range f.sent {
++		if b.query == query {
++			n++
++		}
++	}
++	return n
++}
++
++// fakeBatch — батч фейка. Send для model_runs помечает run_id (первый столбец) как закоммиченный.
++type fakeBatch struct {
++	store *fakeStore
++	query string
++	rows  [][]any
++}
++
++func (b *fakeBatch) Append(v ...any) error {
++	b.rows = append(b.rows, v)
++	return nil
++}
++
++func (b *fakeBatch) Send() error {
++	b.store.mu.Lock()
++	defer b.store.mu.Unlock()
++	if err := b.store.failSend[b.query]; err != nil {
++		return err
++	}
++	if b.query == modelRunsInsert {
++		runID, ok := b.rows[0][0].(uuid.UUID)
++		if !ok {
++			return errors.New("model_runs row must start with a uuid.UUID run_id")
++		}
++		b.store.committed[runID] = true
++	}
++	b.store.sent = append(b.store.sent, sentBatch{query: b.query, rows: b.rows})
++	return nil
++}
++
++func newTestWriter(store *fakeStore) *ClickHouseWriter {
++	return &ClickHouseWriter{store: store}
++}
++
++func TestScenarioTargetDate(t *testing.T) {
++	tests := []struct {
++		name    string
++		horizon string
++		want    string
++	}{
++		{"quarter Q1", "Q1-2026", "2026-03-31"},
++		{"quarter Q4", "Q4-2026", "2026-12-31"},
++		{"year end YE", "YE-2026", "2026-12-31"},
++		{"bare year", "2026", "2026-12-31"},
++		{"ISO date", "2026-12-31", "2026-12-31"},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			got, err := scenarioTargetDate(map[string]any{"horizon": tt.horizon})
++			if err != nil {
++				t.Fatalf("horizon %q: unexpected error: %v", tt.horizon, err)
++			}
++			if s := got.Format(manualSeriesDateLayout); s != tt.want {
++				t.Fatalf("horizon %q: target_date %s, want %s", tt.horizon, s, tt.want)
++			}
++		})
++	}
++}
++
++func TestScenarioTargetDateErrors(t *testing.T) {
++	tests := []struct {
++		name     string
++		scenario map[string]any
++	}{
++		{"horizon missing", map[string]any{}},
++		{"horizon not a string", map[string]any{"horizon": 2026.0}},
++		{"quarter out of range", map[string]any{"horizon": "Q5-2026"}},
++		{"free text", map[string]any{"horizon": "next year"}},
++		{"short year", map[string]any{"horizon": "YE-26"}},
++		{"negative year", map[string]any{"horizon": "-123"}},
++		{"impossible date", map[string]any{"horizon": "2026-02-30"}},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			if _, err := scenarioTargetDate(tt.scenario); err == nil {
++				t.Fatalf("expected error for %v", tt.scenario)
++			}
++		})
++	}
++}
++
++func TestWeightedGoldPoint(t *testing.T) {
++	tests := []struct {
++		name          string
++		scenario      map[string]any
++		probabilities map[string]float64
++		want          float64
++		wantErr       bool
++	}{
++		{
++			name:          "point wins over midpoint",
++			scenario:      map[string]any{"bull": map[string]any{"low": 4600.0, "high": 5000.0, "point": 4900.0}},
++			probabilities: map[string]float64{"bull": 100},
++			want:          4900,
++		},
++		{
++			name:          "midpoint when no point",
++			scenario:      map[string]any{"base": map[string]any{"low": 4000.0, "high": 4600.0}},
++			probabilities: map[string]float64{"base": 100},
++			want:          4300,
++		},
++		{
++			name: "midpoint mixed with point",
++			scenario: map[string]any{
++				"bull": map[string]any{"low": 4600.0, "high": 5000.0},
++				"bear": map[string]any{"point": 3900.0},
++			},
++			probabilities: map[string]float64{"bull": 50, "bear": 50},
++			want:          4350,
++		},
++		{
++			name: "weights divided by their sum",
++			scenario: map[string]any{
++				"bull": map[string]any{"point": 4800.0},
++				"bear": map[string]any{"point": 3900.0},
++			},
++			probabilities: map[string]float64{"bull": 2, "bear": 2},
++			want:          4350,
++		},
++		{
++			name:          "probability key without block",
++			scenario:      map[string]any{"bull": map[string]any{"point": 4800.0}},
++			probabilities: map[string]float64{"bull": 25, "base": 75},
++			wantErr:       true,
++		},
++		{
++			name:          "block without point and range",
++			scenario:      map[string]any{"base": map[string]any{"low": 4000.0}},
++			probabilities: map[string]float64{"base": 100},
++			wantErr:       true,
++		},
++		{
++			name:          "block is not an object",
++			scenario:      map[string]any{"base": 4300.0},
++			probabilities: map[string]float64{"base": 100},
++			wantErr:       true,
++		},
++		{
++			name:          "probabilities empty",
++			scenario:      map[string]any{"base": map[string]any{"point": 4300.0}},
++			probabilities: nil,
++			wantErr:       true,
++		},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			got, err := weightedGoldPoint(tt.scenario, tt.probabilities)
++			if tt.wantErr {
++				if err == nil {
++					t.Fatalf("expected error, got %v", got)
++				}
++				return
++			}
++			if err != nil {
++				t.Fatalf("unexpected error: %v", err)
++			}
++			if math.Abs(got-tt.want) > 1e-9 {
++				t.Fatalf("weighted point %v, want %v", got, tt.want)
++			}
++		})
++	}
++}
++
++func TestInsertModelRunExistingRunSkipsAllBatches(t *testing.T) {
++	store := newFakeStore()
++	store.committed[uuid.MustParse(testRunID)] = true
++	writer := newTestWriter(store)
++
++	if err := writer.InsertModelRun(context.Background(), validModelRun()); err != nil {
++		t.Fatalf("repeat POST must succeed: %v", err)
++	}
++	if len(store.sent) != 0 {
++		t.Fatalf("existing run_id must not trigger any batch, got %d", len(store.sent))
++	}
++}
++
++func TestInsertModelRunWritesForecastLogBeforeModelRuns(t *testing.T) {
++	store := newFakeStore()
++	run := validModelRun()
++	run.NavPerShare = 12500
++
++	if err := newTestWriter(store).InsertModelRun(context.Background(), run); err != nil {
++		t.Fatalf("InsertModelRun: %v", err)
++	}
++	if len(store.sent) != 2 {
++		t.Fatalf("batches sent: %d, want 2", len(store.sent))
++	}
++	if store.sent[0].query != forecastLogInsert || store.sent[1].query != modelRunsInsert {
++		t.Fatalf("order: %q then %q, want forecast_log then model_runs", store.sent[0].query, store.sent[1].query)
++	}
++	if !store.committed[uuid.MustParse(testRunID)] {
++		t.Fatal("model_runs row must be committed")
++	}
++
++	forecast := store.sent[0].rows
++	if len(forecast) != 2 {
++		t.Fatalf("forecast_log rows: %d, want 2", len(forecast))
++	}
++	wantRows := []struct {
++		metric    string
++		predicted float64
++	}{
++		{"nav", 12500},
++		{"xau_q_avg", 4285},
++	}
++	for i, want := range wantRows {
++		metric, _ := forecast[i][2].(string)
++		predicted, _ := forecast[i][3].(float64)
++		target, _ := forecast[i][1].(time.Time)
++		if metric != want.metric || math.Abs(predicted-want.predicted) > 1e-9 {
++			t.Fatalf("forecast row %d: metric %q predicted %v, want %q %v", i, metric, predicted, want.metric, want.predicted)
++		}
++		if s := target.Format(manualSeriesDateLayout); s != "2026-12-31" {
++			t.Fatalf("forecast row %d: target_date %s, want 2026-12-31", i, s)
++		}
++	}
++}
++
++func TestInsertModelRunForecastFailureIsRetried(t *testing.T) {
++	store := newFakeStore()
++	store.failSend[forecastLogInsert] = errors.New("forecast_log unavailable")
++	writer := newTestWriter(store)
++	run := validModelRun()
++	run.NavPerShare = 12500
++
++	if err := writer.InsertModelRun(context.Background(), run); err == nil {
++		t.Fatal("expected error when forecast_log insert fails")
++	}
++	if n := store.batchesFor(modelRunsInsert); n != 0 {
++		t.Fatalf("model_runs written %d times after forecast_log failure, want 0", n)
++	}
++
++	delete(store.failSend, forecastLogInsert)
++	if err := writer.InsertModelRun(context.Background(), run); err != nil {
++		t.Fatalf("retry: %v", err)
++	}
++	if n := store.batchesFor(modelRunsInsert); n != 1 {
++		t.Fatalf("model_runs written %d times after retry, want 1", n)
++	}
++	if n := store.batchesFor(forecastLogInsert); n != 1 {
++		t.Fatalf("forecast_log batches %d after retry, want 1", n)
++	}
++}
++
++func TestInsertModelRunConcurrentRetriesWriteOnce(t *testing.T) {
++	store := newFakeStore()
++	writer := newTestWriter(store)
++	run := validModelRun()
++	run.NavPerShare = 12500
++
++	const attempts = 8
++	errs := make([]error, attempts)
++	var wg sync.WaitGroup
++	for i := 0; i < attempts; i++ {
++		wg.Add(1)
++		go func() {
++			defer wg.Done()
++			errs[i] = writer.InsertModelRun(context.Background(), run)
++		}()
++	}
++	wg.Wait()
++
++	for i, err := range errs {
++		if err != nil {
++			t.Fatalf("attempt %d: %v", i, err)
++		}
++	}
++	if n := store.batchesFor(modelRunsInsert); n != 1 {
++		t.Fatalf("model_runs written %d times for %d concurrent POSTs with one run_id, want 1", n, attempts)
++	}
++	if n := store.batchesFor(forecastLogInsert); n != 1 {
++		t.Fatalf("forecast_log batches %d, want 1", n)
++	}
++}
+diff --git a/ingest/model_run.go b/ingest/model_run.go
+index 87d9828..a492430 100644
+--- a/ingest/model_run.go
++++ b/ingest/model_run.go
+@@ -1,17 +1,19 @@
+ package ingest
+ 
+ import (
+ 	"fmt"
+ 	"math"
+ 	"strings"
+ 	"time"
++
++	"github.com/google/uuid"
+ )
+ 
+ const (
+ 	probabilitiesSumExpected  = 100.0
+ 	probabilitiesSumTolerance = 0.1
+ 	manualSeriesDateLayout    = "2006-01-02"
+ 	manualSeriesSource        = "manual"
+ )
+ 
+ var validTriggerTypes = map[string]bool{
+@@ -39,40 +41,54 @@ type ModelRun struct {
+ 	NavPerShare   float64            `json:"nav_per_share"`
+ 	NavBull       float64            `json:"nav_bull"`
+ 	NavBase       float64            `json:"nav_base"`
+ 	NavBear       float64            `json:"nav_bear"`
+ 	MarketPrice   float64            `json:"market_price"`
+ 	UpsidePct     float64            `json:"upside_pct"`
+ 	Comment       string             `json:"comment"`
+ 	Probabilities map[string]float64 `json:"probabilities"`
+ }
+ 
+-// ValidateModelRun проверяет вход модели до вставки в ClickHouse.
+-// run_id клиентский и обязателен: повторный POST с тем же run_id идемпотентен
+-// (ReplacingMergeTree схлопывает по ORDER BY).
++// ValidateModelRun проверяет вход модели до вставки в ClickHouse; все ошибки входа — 400.
++// run_id клиентский, обязателен и должен быть UUID: повторный POST с тем же run_id идемпотентен
++// (см. InsertModelRun). Горизонт и вероятности сверяются с gold_scenario теми же функциями,
++// которыми InsertModelRun считает target_date и взвешенную точку, — чтобы вход, который не
++// запишется, отсекался здесь, а не падал внутри записи.
+ func ValidateModelRun(r ModelRun) error {
+ 	if strings.TrimSpace(r.RunID) == "" {
+ 		return fmt.Errorf("run_id is required")
+ 	}
++	if _, err := uuid.Parse(r.RunID); err != nil {
++		return fmt.Errorf("run_id %q must be a UUID: %w", r.RunID, err)
++	}
+ 	if !validTriggerTypes[r.TriggerType] {
+ 		return fmt.Errorf("trigger_type %q must be one of: calendar, news, manual", r.TriggerType)
+ 	}
+ 	if !validPriceDecks[r.PriceDeck] {
+ 		return fmt.Errorf("price_deck %q must be one of: spot_flat, consensus_lt, own_scenario", r.PriceDeck)
+ 	}
+ 	var sum float64
+ 	for _, probability := range r.Probabilities {
+ 		sum += probability
+ 	}
+ 	if math.Abs(sum-probabilitiesSumExpected) > probabilitiesSumTolerance {
+ 		return fmt.Errorf("probabilities sum %.4f must be within %.1f of %.0f", sum, probabilitiesSumTolerance, probabilitiesSumExpected)
+ 	}
++	if r.GoldScenario == nil {
++		return fmt.Errorf("gold_scenario is required")
++	}
++	if _, err := scenarioTargetDate(r.GoldScenario); err != nil {
++		return err
++	}
++	if _, err := weightedGoldPoint(r.GoldScenario, r.Probabilities); err != nil {
++		return err
++	}
+ 	return nil
+ }
+ 
+ // ManualSeriesPoint — вручную введённая точка ряда macro_series (source='manual').
+ type ManualSeriesPoint struct {
+ 	Series string  `json:"series"`
+ 	Date   string  `json:"date"`
+ 	Value  float64 `json:"value"`
+ }
+ 
+diff --git a/ingest/model_run_test.go b/ingest/model_run_test.go
+index 243c57d..8266813 100644
+--- a/ingest/model_run_test.go
++++ b/ingest/model_run_test.go
+@@ -1,35 +1,75 @@
+ package ingest
+ 
+ import (
+ 	"strings"
+ 	"testing"
+ )
+ 
+ const testRunID = "11111111-2222-3333-4444-555555555555"
+ 
++// validGoldScenario — сценарная сетка Q4-2026: точки 4800/4300/3900, low/high заданы.
++func validGoldScenario() map[string]any {
++	return map[string]any{
++		"horizon": "Q4-2026",
++		"bull":    map[string]any{"low": 4600.0, "high": 5000.0, "point": 4800.0},
++		"base":    map[string]any{"low": 4000.0, "high": 4600.0, "point": 4300.0},
++		"bear":    map[string]any{"low": 3750.0, "high": 4050.0, "point": 3900.0},
++	}
++}
++
+ func validModelRun() ModelRun {
+ 	return ModelRun{
+ 		RunID:         testRunID,
+ 		TriggerType:   "manual",
+ 		TriggerRef:    "unit test",
++		GoldScenario:  validGoldScenario(),
+ 		PriceDeck:     "own_scenario",
+ 		Probabilities: map[string]float64{"bull": 25, "base": 40, "bear": 35},
+ 	}
+ }
+ 
+ func TestValidateModelRunValid(t *testing.T) {
+ 	if err := ValidateModelRun(validModelRun()); err != nil {
+ 		t.Fatalf("valid run rejected: %v", err)
+ 	}
+ }
+ 
++// Все эти входы должны давать ошибку валидации (HTTP 400), а не падать внутри записи (500).
++func TestValidateModelRunInputErrors(t *testing.T) {
++	tests := []struct {
++		name       string
++		mutate     func(*ModelRun)
++		wantSubstr string
++	}{
++		{"run_id is not a UUID", func(r *ModelRun) { r.RunID = "not-a-uuid" }, "UUID"},
++		{"gold_scenario is nil", func(r *ModelRun) { r.GoldScenario = nil }, "gold_scenario is required"},
++		{"horizon is missing", func(r *ModelRun) { delete(r.GoldScenario, "horizon") }, "horizon"},
++		{"horizon is not a string", func(r *ModelRun) { r.GoldScenario["horizon"] = 2026.0 }, "must be a string"},
++		{"horizon is unparsable", func(r *ModelRun) { r.GoldScenario["horizon"] = "Q5-2026" }, "unsupported gold_scenario.horizon"},
++		{"probability key has no gold block", func(r *ModelRun) {
++			r.Probabilities = map[string]float64{"bull": 25, "base": 40, "tail": 35}
++		}, "tail"},
++		{"block has no point and no range", func(r *ModelRun) { r.GoldScenario["bear"] = map[string]any{"comment": "x"} }, "bear"},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			run := validModelRun()
++			tt.mutate(&run)
++			err := ValidateModelRun(run)
++			if err == nil || !strings.Contains(err.Error(), tt.wantSubstr) {
++				t.Fatalf("expected error containing %q, got %v", tt.wantSubstr, err)
++			}
++		})
++	}
++}
++
+ func TestValidateModelRunProbabilitiesSum(t *testing.T) {
+ 	run := validModelRun()
+ 	run.Probabilities = map[string]float64{"bull": 25, "base": 40, "bear": 25}
+ 	err := ValidateModelRun(run)
+ 	if err == nil || !strings.Contains(err.Error(), "probabilities") {
+ 		t.Fatalf("expected probabilities sum error, got %v", err)
+ 	}
+ }
+ 
+ func TestValidateModelRunProbabilitiesEmpty(t *testing.T) {

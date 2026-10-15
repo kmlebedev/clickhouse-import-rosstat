@@ -1,0 +1,323 @@
+# Review package: 4a86c31..23356b2
+
+## Commits
+23356b2 add archive registry mirror target and staging env
+
+## Files changed
+ Makefile                                           | 10 ++-
+ .../staging/clickhouse-import-rosstat.env.example  | 11 ++++
+ docs/archive/README.md                             | 55 +++++++++++++++++
+ main.go                                            | 71 ++++++++++++++++++++++
+ 4 files changed, 146 insertions(+), 1 deletion(-)
+
+## Diff
+diff --git a/Makefile b/Makefile
+index 83ae15a..e041fcc 100644
+--- a/Makefile
++++ b/Makefile
+@@ -56,21 +56,21 @@ MCP_CMD      := uv run --with mcp-clickhouse==$(MCP_VERSION) --python $(MCP_PY)
+ #   make mcp-check MCP_CHECK_HOST=127.0.0.1 MCP_CHECK_PORT=8123
+ MCP_CHECK_HOST ?= localhost
+ MCP_CHECK_PORT ?= $(CH_HTTP_PORT)
+ 
+ # Деплой на staging (см. deploy/staging/README.md). Хост задаётся без правок Makefile.
+ STAGING_HOST     ?= palmshell
+ STAGING_BIN_DIR  ?= /root/.local/bin
+ STAGING_ENV_FILE ?= /etc/clickhouse-import-rosstat.env
+ DAGU_VERSION     ?= v2.18.2
+ 
+-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token
++.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import archive-registry mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token
+ 
+ all: lint test build build-ingest
+ 
+ # lint падает, если что-то не отформатировано, затем запускает golangci-lint,
+ # если он установлен. CI выполняет те же проверки.
+ lint:
+ 	@unformatted=$$(gofmt -l .); \
+ 	if [ -n "$$unformatted" ]; then echo "gofmt needed:"; echo "$$unformatted"; exit 1; fi
+ 	@if command -v golangci-lint >/dev/null 2>&1; then golangci-lint run ./...; \
+ 	else echo "golangci-lint not installed, skipping"; fi
+@@ -151,31 +151,39 @@ dev-check:
+ 		if command -v $$t >/dev/null 2>&1; then echo "OK   $$t: $$(command -v $$t)"; else echo "НЕТ  $$t (установка: см. README, раздел «Зависимости для разработки»)"; fi; \
+ 	done
+ 	@test -n "$(CH_BIN)" && echo "OK   clickhouse: $(CH_BIN)" || echo "НЕТ  clickhouse (задайте CH_BIN или установите ClickHouse)"
+ 
+ # Показывает, какие ключи заданы в окружении (файл $(ROSSTAT_ENV)); значения не выводятся.
+ env-check:
+ 	@echo "файл окружения: $(ROSSTAT_ENV) $$(test -f $(ROSSTAT_ENV) && echo найден || echo НЕ НАЙДЕН)"
+ 	@for v in BEA_API_KEY BLS_API_KEY EIA_API_KEY CLICKHOUSE_URL CLICKHOUSE_PASSWORD; do \
+ 		if [ -n "$$(printenv $$v)" ]; then echo "OK   $$v задан"; else echo "НЕТ  $$v не задан (см. README, раздел «Ключи и окружение»)"; fi; \
+ 	done
++	@if [ -n "$$ARCHIVE_YANDEX_TOKEN" ]; then echo "OK   ARCHIVE_YANDEX_TOKEN задан"; else echo "НЕТ  ARCHIVE_YANDEX_TOKEN не задан (нужен при ARCHIVE_BACKEND=yandex)"; fi
+ 	@if [ -n "$$GRAFANA_TEST_TOKEN" ]; then echo "OK   GRAFANA_TEST_TOKEN задан"; else echo "НЕТ  GRAFANA_TEST_TOKEN не задан (нужен для make grafana-deploy-test: сервис-аккаунт Editor на $(GRAFANA_TEST_URL))"; fi
+ 	@if [ -n "$$GRAFANA_STAGING_TOKEN" ]; then echo "OK   GRAFANA_STAGING_TOKEN задан"; else echo "НЕТ  GRAFANA_STAGING_TOKEN не задан (нужен для make grafana-deploy-staging: сервис-аккаунт Editor на staging, доступ через туннель $(GRAFANA_STAGING_URL))"; fi
+ 
+ # Локальный прогон одного импортёра: make import STAT=bea (нужны CLICKHOUSE_URL и ключ импортёра из $(ROSSTAT_ENV)).
+ STAT ?=
+ import:
+ 	@test -n "$(STAT)" || { echo "укажите импортёр: make import STAT=bea"; exit 1; }
+ 	@mkdir -p $(BUILD_DIR)
+ 	go build -o $(BUILD_DIR)/$(BINARY)-native .
+ 	CLICKHOUSE_IMPORT_STAT=$(STAT) ./$(BUILD_DIR)/$(BINARY)-native
+ 
++# Git-зеркало реестра винтажного архива (make archive-registry [ARCHIVE_BACKEND=yandex]):
++# скачивает registry.jsonl из хранилища в docs/archive/; коммит — ручной/периодический.
++archive-registry:
++	@mkdir -p $(BUILD_DIR)
++	go build -o $(BUILD_DIR)/$(BINARY)-native .
++	ARCHIVE_ACTION=registry ./$(BUILD_DIR)/$(BINARY)-native
++
+ # Ingest-сервис контура прогноза (единственный путь записи в model_runs/forecast_log/macro_series).
+ # Нужны CLICKHOUSE_URL и INGEST_TOKEN из $(ROSSTAT_ENV); INGEST_ADDR по умолчанию :8081.
+ build-ingest:
+ 	@mkdir -p $(BUILD_DIR)
+ 	go build -o $(BUILD_DIR)/ingest ./cmd/ingest
+ 
+ run-ingest: build-ingest
+ 	./$(BUILD_DIR)/ingest
+ 
+ # MCP-сервер mcp-clickhouse в режиме stdio (обычно его запускает Kimi сам; здесь — для ручной отладки).
+diff --git a/deploy/staging/clickhouse-import-rosstat.env.example b/deploy/staging/clickhouse-import-rosstat.env.example
+index f65f770..8a8431b 100644
+--- a/deploy/staging/clickhouse-import-rosstat.env.example
++++ b/deploy/staging/clickhouse-import-rosstat.env.example
+@@ -1,18 +1,29 @@
+ # Секреты staging. РЕАЛЬНЫЙ файл: /etc/clickhouse-import-rosstat.env, права 600, вне git.
+ # deploy-staging НЕ создаёт этот файл и падает, если его нет.
+ #
+ # CLICKHOUSE_URL            — для импортёров (запускает dagu); пользователь, который пишет в БД
+ # CLICKHOUSE_PASSWORD       — пароль пользователя kimi_reader; его читает mcp-clickhouse
+ # CLICKHOUSE_MCP_AUTH_TOKEN — Bearer-токен MCP-эндпоинта; генерировать: openssl rand -hex 32
+ # GOST_APP_ID               — токен gtn.access.appid REST API портала Росстандарта (импортёр
+ #                             gost_vehicle_safety_certificate, dagu/craw.yaml); значение — из
+ #                             JS-конфига страницы реестра (standarts.adminsHeaders)
++# ARCHIVE_BACKEND           — винтажный архив версий файлов источников (пакет archive/):
++#                             local | yandex | пусто = архивация выключена
++# ARCHIVE_YANDEX_TOKEN      — OAuth-токен приложения Яндекс.Диска, scope cloud_api:disk.write
++# ARCHIVE_YANDEX_DIR        — корень архива на Диске; при пустом значении disk:/rosstat-archive
+ #
+ # CLICKHOUSE_MCP_AUTH_TOKEN ОБЯЗАТЕЛЕН: в HTTP-режиме mcp-clickhouse падает на старте без него.
+ # GOST_APP_ID ОБЯЗАТЕЛЕН для часового шага gost_vehicle_safety_certificate: без него импортёр
+ # падает до сети («GOST_APP_ID не задан»). В этом файле держать ТОЛЬКО токен: режимные
+ # переменные (GOST_MODE/GOST_FROM/GOST_TO/GOST_SETTLE_DAYS) задаёт сам DAG в env шага.
++# ARCHIVE_YANDEX_TOKEN ОБЯЗАТЕЛЕН при ARCHIVE_BACKEND=yandex: без него хранилище не собирается,
++# импортёр пишет в лог «архив версий файлов выключен» и продолжает без архива — импорт не
++# останавливается, но новые версии файлов не сохраняются. При пустом ARCHIVE_BACKEND архивация
++# выключена целиком (штатный режим, если хранилище ещё не заведено).
+ CLICKHOUSE_URL=clickhouse://:REPLACE_ME@localhost:9000/default
+ CLICKHOUSE_PASSWORD=REPLACE_ME
+ CLICKHOUSE_MCP_AUTH_TOKEN=REPLACE_ME
+ GOST_APP_ID=REPLACE_ME
++ARCHIVE_BACKEND=yandex
++ARCHIVE_YANDEX_TOKEN=REPLACE_ME
++ARCHIVE_YANDEX_DIR=disk:/rosstat-archive
+diff --git a/docs/archive/README.md b/docs/archive/README.md
+new file mode 100644
+index 0000000..ce7086b
+--- /dev/null
++++ b/docs/archive/README.md
+@@ -0,0 +1,55 @@
++# Git-зеркало реестра винтажного архива
++
++`registry.jsonl` в этом каталоге — **копия** реестра версий файлов источников. Сам реестр живёт
++в хранилище винтажного архива (Яндекс.Диск, `disk:/rosstat-archive/registry.jsonl`); истина —
++файл там. Здесь он лежит, чтобы реестр был виден и версионировался в репозитории: по нему видно,
++какие версии файлов сохранены, без доступа к Диску и без ClickHouse.
++
++Файлы архива (`key` из реестра) в git **не хранятся** — только реестр: версии файлов могут весить
++сотни мегабайт, и их место в хранилище, а не в истории репозитория. Реестр читается без ClickHouse:
++таблицы для него нет намеренно (он обязан быть доступен при пустой БД).
++
++## Как обновлять
++
++```bash
++make archive-registry                        # ARCHIVE_BACKEND берётся из окружения
++make archive-registry ARCHIVE_BACKEND=yandex # явный бэкенд; нужен ARCHIVE_YANDEX_TOKEN
++make archive-registry ARCHIVE_BACKEND=local ARCHIVE_LOCAL_DIR=build/archive-dev
++```
++
++Цель собирает бинарник и запускает его в режиме `ARCHIVE_ACTION=registry`: режим скачивает
++`registry.jsonl` из хранилища и пишет его в `docs/archive/registry.jsonl` (`ARCHIVE_REGISTRY_OUT`
++переопределяет путь). ClickHouse этому режиму не нужен — подключения к базе не происходит.
++
++Пустой `ARCHIVE_BACKEND` — ошибка этого режима, а не пустое зеркало: выключенный архив неотличим
++от очищенного, и затирать зеркало нельзя. Пустой реестр в **настроенном** хранилище — наоборот,
++законный результат: архив ещё не наполнялся, и зеркало пишется пустым.
++
++## Коммит
++
++Коммит зеркала — **ручной/периодический**: на staging нет git-дерева, автокоммит там невозможен.
++Обновлённый `registry.jsonl` коммитится обычным коммитом вручную (или периодической задачей на
++машине, где дерево есть). Содержимое зеркала не критично для конвейера — это витрина реестра.
++
++## Формат строки
++
++Одна строка = одна сохранённая версия файла источника (JSONL). Поля записи `archive.Entry`:
++
++| Поле | Смысл |
++|---|---|
++| `source` | имя импортёра-источника (например `cbr_m2`) |
++| `name` | имя файла у источника |
++| `fingerprint` | отпечаток HEAD (как в `source_publications`: архив и таблица версий называют версию одинаково) |
++| `sha256` | хеш фактического содержимого (при неизменных заголовках тело могло смениться) |
++| `size` | размер объекта в байтах |
++| `url` | URL, откуда файл скачан (аудит) |
++| `key` | объект в хранилище; идентичность строки (upsert по нему) |
++| `first_seen` | когда конвейер впервые увидел версию (RFC 3339) |
++
++Пример строки:
++
++```json
++{"source":"cbr_m2","name":"monetary_agg_SA.xlsx","fingerprint":"8f3c…","sha256":"b7d1…","size":583746,"url":"https://www.cbr.ru/vfs/…","key":"cbr_m2/8f3c…_monetary_agg_SA.xlsx","first_seen":"2026-10-14T09:20:11+03:00"}
++```
++
++Секретов в реестре нет: `source`/`name`/`url`/`sha256` и есть весь его состав.
+diff --git a/main.go b/main.go
+index 45d37b7..42132b3 100644
+--- a/main.go
++++ b/main.go
+@@ -1,15 +1,18 @@
+ package main
+ 
+ import (
++	"bytes"
+ 	"context"
++	"fmt"
+ 	"github.com/ClickHouse/clickhouse-go/v2"
++	"github.com/kmlebedev/clickhouse-import-rosstat/archive"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/bank"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/bea"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/bls"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/bold"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/calendar"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/cbr"
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/craw"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/customs"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/dcf"
+@@ -17,36 +20,59 @@ import (
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/fao"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/financial"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/forecast"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/fred"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/gold"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/minfin"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/moex"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/news"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/polyus"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/rosstat"
++	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/views"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/wgc"
+ 	log "github.com/sirupsen/logrus"
+ 	"os"
++	"path/filepath"
+ 	"slices"
+ 	"strings"
+ )
+ 
+ var (
+ 	ctx = context.Background()
+ )
+ 
++// Режим одного действия ARCHIVE_ACTION: значение registry обновляет git-зеркало реестра
++// винтажного архива и завершает процесс — реестру ClickHouse не нужен, поэтому выход стоит
++// до ParseDSN (подключения к базе в этом режиме не происходит вовсе). Путь зеркала настраивается
++// (ARCHIVE_REGISTRY_OUT), но штатно он один: цель Makefile и README называют этот же файл.
++const (
++	archiveActionRegistry = "registry"
++	envArchiveRegistryOut = "ARCHIVE_REGISTRY_OUT"
++	defaultRegistryOut    = "docs/archive/registry.jsonl"
++)
++
+ func main() {
+ 	if lvl, err := log.ParseLevel(os.Getenv("LOG_LEVEL")); err == nil {
+ 		log.SetLevel(lvl)
+ 	}
++	if action := os.Getenv("ARCHIVE_ACTION"); action != "" {
++		// Неизвестное действие — ошибка, а не «пусть прогонит импортёры»: иначе опечатка
++		// (ARCHIVE_ACTION=Registry) молча запускала бы полный импорт по расписанию dagu.
++		if action != archiveActionRegistry {
++			log.Fatalf("неизвестное ARCHIVE_ACTION (ожидается %s)", archiveActionRegistry)
++		}
++		if err := runArchiveRegistry(ctx); err != nil {
++			log.Fatal(err)
++		}
++		return
++	}
+ 	clickhouseOptions, err := clickhouse.ParseDSN(os.Getenv("CLICKHOUSE_URL"))
+ 	if err != nil {
+ 		log.Fatal("invalid CLICKHOUSE_URL")
+ 	}
+ 	conn, err := clickhouse.Open(clickhouseOptions)
+ 	if err != nil {
+ 		log.Fatal(err)
+ 	}
+ 	if err = conn.Ping(ctx); err != nil {
+ 		log.Fatal(err)
+@@ -70,19 +96,64 @@ func main() {
+ 	for _, name := range requested {
+ 		if !matched[name] {
+ 			log.Warnf("no importer named %q", name)
+ 		}
+ 	}
+ 	if failed {
+ 		os.Exit(1)
+ 	}
+ }
+ 
++// runArchiveRegistry скачивает реестр версий (registry.jsonl) из хранилища винтажного архива
++// и кладёт его в репозиторий — это git-зеркало реестра. Истина — файл в самом хранилище:
++// зеркало читают глазами и версионируют, а восстановление версий идёт по оригиналу.
++// Отсутствие файла в хранилище — не ошибка, а ответ «архив ещё не наполнялся»: пишем пустое
++// зеркало, иначе первый прогон падал бы на пустом архиве, а зеркало в git задним числом
++// врало бы «архива нет» вместо «пока ничего не сохранено».
++func runArchiveRegistry(ctx context.Context) error {
++	store, err := archive.FromEnv(util.HttpClient)
++	if err != nil {
++		return err
++	}
++	if store == nil {
++		// Пустой ARCHIVE_BACKEND штатно значит «архивация выключена», но у этого действия
++		// другого источника реестра нет: молча вернуть пустой файл значило бы затереть зеркало
++		// (выключенный архив неотличим от очищенного). Поэтому — ошибка, и без значения переменной.
++		return fmt.Errorf("%s не задан", archive.EnvBackend)
++	}
++	out := os.Getenv(envArchiveRegistryOut)
++	if out == "" {
++		out = defaultRegistryOut
++	}
++	var body []byte
++	exists, err := store.Exists(ctx, archive.RegistryKey)
++	if err != nil {
++		return err
++	}
++	if exists {
++		if body, err = store.Get(ctx, archive.RegistryKey); err != nil {
++			return err
++		}
++	} else {
++		log.Warnf("реестр архива пуст: %s", archive.RegistryKey)
++	}
++	if err = os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
++		return err
++	}
++	if err = os.WriteFile(out, body, 0o644); err != nil {
++		return err
++	}
++	// Строк — по переводам строки: реестр пишется построчно с \n в конце, поэтому число
++	// завершённых строк и есть число записей (пустой файл — 0).
++	log.Infof("реестр архива: %d строк -> %s", bytes.Count(body, []byte("\n")), out)
++	return nil
++}
++
+ func parseImportFilter(value string) []string {
+ 	var names []string
+ 	for _, name := range strings.Split(value, ",") {
+ 		if name = strings.TrimSpace(name); name != "" {
+ 			names = append(names, name)
+ 		}
+ 	}
+ 	return names
+ }

@@ -1,0 +1,602 @@
+# Review package: 3c0f060..ebc2ef1
+
+## Commits
+ebc2ef1 document vintage file archive in normative docs
+
+## Files changed
+ AGENTS.md                                          |  2 +-
+ ARCHITECTURE.md                                    | 16 +++++++--
+ README.md                                          | 30 +++++++++++++++++
+ archive/registry.go                                |  4 ++-
+ cbr/mo_br.go                                       | 10 +++---
+ docs/IMPORTER_PACKAGE_STANDARD.md                  | 17 ++++++----
+ docs/ROADMAP_INFRA.md                              | 38 ++++++++++++++++++++++
+ .../plans/2026-10-14-source-file-archive.md        |  2 +-
+ .../specs/2026-10-14-source-file-archive-design.md |  2 +-
+ util/clickhouse_import.go                          |  5 ++-
+ 10 files changed, 106 insertions(+), 20 deletions(-)
+
+## Diff
+diff --git a/AGENTS.md b/AGENTS.md
+index 2165a37..1d16b13 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -9,21 +9,21 @@
+ Ты — Go-разработчик ETL-конвейера **clickhouse-import-rosstat**: импорт российской макростатистики и финансовых данных в ClickHouse для Grafana-дашбордов и аналитического контура «сценарный прогноз золота → DCF → NAV акции PLZL», который читается Kimi-агентом через MCP.
+ 
+ ## Обязательный порядок в начале сессии
+ 
+ 1. Прочитай `ARCHITECTURE.md` — там паттерны кода, схемы БД, конвенции, календарь триггеров.
+ 2. Если задача касается импортёров — прочитай `docs/IMPORTER_PACKAGE_STANDARD.md` (нормативный стандарт пакета импортёров: обязателен **перед созданием** нового пакета и **перед рефакторингом** существующего). Если задача касается новых импортёров, модели или MCP — сверься с `docs/ROADMAP_DCF_POLYUS.md`.
+ 3. Полное чтение репозитория НЕ требуется: эталонные файлы указаны в ARCHITECTURE.md, читай только их и файлы, которые собираешься менять.
+ 
+ ## Разработка строго по дорожной карте (обязательно)
+ 
+-1. Любая разработка кода идёт **по одному пункту роадмапа за раз** (`docs/ROADMAP_DCF_POLYUS.md`; пункты контура прогноза золота — `docs/GOLD_THESIS_DATA_ROADMAP.md`): ассистент сам называет пункт (§ фазы и конкретный шаг), сверяет объём работ с его формулировкой и не делает ничего за пределами этого пункта. Незапланированные улучшения — отдельным пунктом роадмапа, а не «попутно».
++1. Любая разработка кода идёт **по одному пункту роадмапа за раз** (`docs/ROADMAP_DCF_POLYUS.md`; пункты контура прогноза золота — `docs/GOLD_THESIS_DATA_ROADMAP.md`; инфраструктурные пункты, не принадлежащие ни одному треку, — `docs/ROADMAP_INFRA.md`): ассистент сам называет пункт (§ фазы и конкретный шаг), сверяет объём работ с его формулировкой и не делает ничего за пределами этого пункта. Незапланированные улучшения — отдельным пунктом роадмапа, а не «попутно».
+ 2. Работа по пункту ведётся **через скилы superpowers** (`.kimi-code/skills/` и плагин `superpowers`): сначала `/superpowers:brainstorming` (если пункт не оформлен как спека), затем `superpowers:writing-plans`, затем исполнение кода — строго через `superpowers:subagent-driven-development` (диспатч субагентов; нативное исполнение в этой же сессии через `superpowers:executing-plans` допустимо только если пользователь явно выбрал inline-исполнение для этого пункта или инструмент субагентов недоступен), затем `superpowers:requesting-code-review` и `superpowers:verification-before-completion`. Пропускать шаги нельзя; если пункт маленький сам по себе (документ, одна цель в Makefile) — достаточно минимального цикла brainstorm → план → реализация → проверка.
+ 
+    **При диспатче субагентов** (шаги `subagent-driven-development` / `executing-plans`) учитывай: тип `coder` в этом репозитории переопределён проектным файлом `.kimi-code/agents/coder.md` — у coder-субагентов проброшены `mcp__jetbrains__*` и `mcp__clickhouse__*`. Типы `explore` и `plan` — без MCP, им работать через `Grep`/`Read`/`Edit`. В **каждый** промпт coder-субагента вписывай блок:
+ 
+    > У тебя есть инструменты `mcp__jetbrains__*` (GoLand MCP) и `mcp__clickhouse__*`. Используй `mcp__jetbrains__*` для проверки правок и навигации вместо grep и лишней сборки; SQL к ClickHouse — только через `mcp__clickhouse__run_query`. Если вдруг MCP-инструментов в твоём наборе нет — скажи об этом в отчёте (`DONE_WITH_CONCERNS`), не молчи.
+ 
+    Скил `subagent-driven-development` не пробрасывает `AGENTS.md` субагенту автоматически — инструкцию надо вписать в диспатч-промпт руками, иначе она до субагента не доедет.
+ 
+    **Кодинг-задачи — на `deepseek/deepseek-flash`.** Имплементер-субагентов (реализация задач плана, fix-round'ы в цикле правок до раунда 3) диспатчи с явным `model: "deepseek/deepseek-flash"`: `Agent(subagent_type: "coder", model: "deepseek/deepseek-flash", ...)`. Это тот же DeepSeek V4.1 Flash, на котором идёт сама сессия, поэтому и контроллер, и имплементеры работают в одной модели — расхождение по контексту между ними минимально, а `primary` без явного параметра наследует модель сессии молча. Раунды 4–5 fix-loop'а — тоже `deepseek/deepseek-flash`, но с максимальным effort (см. ниже): тир здесь поднимается **effort'ом**, а не сменой модели.
+ 
+diff --git a/ARCHITECTURE.md b/ARCHITECTURE.md
+index ca4bc0a..2cb0dd9 100644
+--- a/ARCHITECTURE.md
++++ b/ARCHITECTURE.md
+@@ -12,20 +12,25 @@ Go-конвейер (ETL) импорта российской макроэкон
+ - Репозиторий: `github.com/kmlebedev/clickhouse-import-rosstat`
+ - Go 1.27, сборка: `make build` → статический linux/amd64 бинарник (CGO_ENABLED=0, ldflags `-s -w`); `make build-ingest` → `build/ingest`
+ - Драйвер БД: `github.com/ClickHouse/clickhouse-go/v2` (native protocol)
+ - Ключевые библиотеки: `excelize/v2` (XLSX), `xlsReader` (legacy XLS), `colly/v2` + `goquery` (скрейпинг), `unipdf/v3` (PDF), `cenkalti/backoff/v5` (ретраи), `logrus` (логи, `log.Infof/Errorf/Fatal`)
+ 
+ ## 2. Структура репозитория
+ 
+ ```
+ main.go            — точка входа: подключение к CH, запуск реестра импортёров
+ chimport/stats.go  — интерфейс ImportStat + глобальный реестр Stats
++archive/           — винтажный архив версий файлов источников: интерфейс Store + два бэкенда
++                     (LocalStore — dev/приёмка/тесты, YandexDisk — REST API Диска), реестр версий
++                     registry.jsonl (истина — файл в корне хранилища; git-зеркало docs/archive/registry.jsonl
++                     обновляет цель make archive-registry), сборка из окружения FromEnv (§5). Обслуживает
++                     шаблон util.ClickHouseImport (§3, §8 п. 13); S3-совместимое хранилище — будущий бэкенд
+ util/              — общие хелперы: HTTP-клиент (xls.go), шаблон импортёра ClickHouseImport (clickhouse_import.go), батч-импорт (db.go), каталог рядов series_catalog/v_series_catalog (series_catalog.go), создание витрин v_* с комментариями (views.go), точки контроля публикаций source_publications (publications.go: HeadFingerprint/PublicationKnown/SavePublication + префлайт PublicationPreflight/CountPoints; включается тремя опциональными полями шаблона, §3)
+ sql/               — SQL для ручной настройки: пользователь MCP kimi_reader и гранты на витрины (mcp_kimi_reader.sql); сид календаря Q4-2026 (events_calendar_q4_2026.sql); сид каталога ручных рядов дашборда золота (gold_dashboard_manual_series_catalog.sql); сид каталога рядов ЦБ из IMF (imf_ra_gold_catalog.sql)
+ scripts/           — скрипты MCP: mcp_setup_user.py (создание kimi_reader, make mcp-user), mcp_check.py (smoke-проверка, make mcp-check)
+ rosstat/           — Росстат: rosstat_ipc_mes, rosstat_ipc_weeks, rosstat_salaries_mes, rosstat_vvp_kvartal,
+                      rosstat_labour_force_mes (рынок труда: рабочая сила, занятые, безработные и три уровня) → series_catalog
+                      (source='rosstat', 147 рядов), витрина v_rosstat_macro; ссылки со страниц источника — общими
+                      util.GetPage/util.FindLink (не colly), регистрация — единым реестром rosstat/importers.go с
+                      тестом-энфорсером (§3); точка контроля публикации объявлена у четырёх (rosstat_ipc_mes, rosstat_salaries_mes,
+                      rosstat_vvp_kvartal, rosstat_labour_force_mes) — их производные публикует шаблон (afterRosstatMacro); у недельного
+                      rosstat_ipc_weeks её нет (темп файла равен шагу, §8 п. 13)
+@@ -182,21 +187,21 @@ func init() {
+         // CrawFunc: func(url string, conn driver.Conn) (int64, error) — альтернатива для краулеров
+         // BeforeImport: func(ctx, conn) error — вычислить DataUrl внутри шаблона
+         // AfterImport: func(ctx, conn) error — производные (series_catalog + витрина) после точек
+         // PublicationCountPoints: "SELECT count() FROM cbr_m2 FINAL" — включает префлайт (§8 п. 13)
+         // PublicationSource у cbr_m2 не нужен (ключ версии = TableName); его задают только владельцы
+         // общей macro_series, чей Name() != TableName — cbr_mp_survey и cbr_mo_br
+     }})
+ }
+ ```
+ 
+-Поля: `TableName`, `CreateTable []string` (`%s` подставляется `TableName`), `DataUrl`, `ImportFunc` **или** `CrawFunc` (или `BeforeImport` + `ImportFunc`); ровно один режим обязателен — иначе `Import()` вернёт ошибку «no CrawFunc or ImportFunc configured». Полный цикл шаблона: DDL → `BeforeImport` → префлайт → точки → `AfterImport` → строка версии (§8 п. 13). Механизм точек контроля публикации включается тремя опциональными полями: `PublicationCountPoints` (SQL числа точек ряда; непустое значение включает точку контроля — HEAD-префлайт по `DataUrl`, no-op известной версии, строка версии в `source_publications` последней), `PublicationSource` (ключ версии в `source_publications` и префикс лога префлайта; пусто → `TableName`; нужен импортёрам, чей `Name()` не равен `TableName`, — `cbr_mo_br` и `cbr_mp_survey` пишут в общую `macro_series`) и `AfterImport` (производные: каталог и витрина). Метод `PublicationKey()` отдаёт объявленный ключ версии, `Publication()` — объявление целиком (`Source`/`Url`/`CountPoints`): по нему тест-энфорсер реестра отличает «объявление забыли» от «объявление не нужно» (§3, §8 п. 13). Поля опциональны: у импортёров, которые их не задают, поведение `Import` не меняется ни на шаг.
++Поля: `TableName`, `CreateTable []string` (`%s` подставляется `TableName`), `DataUrl`, `ImportFunc` **или** `CrawFunc` (или `BeforeImport` + `ImportFunc`); ровно один режим обязателен — иначе `Import()` вернёт ошибку «no CrawFunc or ImportFunc configured». Полный цикл шаблона: DDL → `BeforeImport` → префлайт → точки → **архив версии файла** → `AfterImport` → строка версии (§8 п. 13, стандарт §9.6). Архив — опциональный шаг: включается парой «хранилище настроено (`ARCHIVE_BACKEND`, §5) + объявлена точка контроля», сохраняет ту же версию файла, по которой префлайт принимает решения, и его сбой прогон **не роняет** — импорт данных и производные выполняются штатно, но строка версии в `source_publications` не пишется (`warn`/`error` в логе с причиной), поэтому следующий прогон повторит полный импорт и допишет архив: дыры «версия считается импортированной, а в архиве её нет» не остаётся. Ветка `CrawFunc` архива не получает — файл качает сам импортёр, и шаблон его байтов не видит (стандарт §9.6). Механизм точек контроля публикации включается тремя опциональными полями: `PublicationCountPoints` (SQL числа точек ряда; непустое значение включает точку контроля — HEAD-префлайт по `DataUrl`, no-op известной версии, строка версии в `source_publications` последней), `PublicationSource` (ключ версии в `source_publications` и префикс лога префлайта; пусто → `TableName`; нужен импортёрам, чей `Name()` не равен `TableName`, — `cbr_mo_br` и `cbr_mp_survey` пишут в общую `macro_series`) и `AfterImport` (производные: каталог и витрина). Метод `PublicationKey()` отдаёт объявленный ключ версии, `Publication()` — объявление целиком (`Source`/`Url`/`CountPoints`): по нему тест-энфорсер реестра отличает «объявление забыли» от «объявление не нужно» (§3, §8 п. 13). Поля опциональны: у импортёров, которые их не задают, поведение `Import` не меняется ни на шаг.
+ 
+ Эталон краулера (`CrawFunc` + colly: листинг ссылок, пагинация, XLSX с каждой страницы) — `customs/vneshn_torg_countries.go`; XLSX с `DataUrl` в рантайме — `cbr/Infl_exp.go`, `cbr/indicators_cpd.go`, `minfin/fedbud_mes.go`; подстановка даты в URL — `cbr/ruonia.go`. Эталон объявления точки контроля публикации — `cbr/m2.go` (`AfterImport: afterCbrMacro(<мета>)` + `PublicationCountPoints`); эталон префлайта у импортёра со ссылкой со страницы — `cbr/mo_br.go`; эталон производных вне `cbr/` — `rosstat/ipc_mes.go` (`AfterImport: afterRosstatMacro(<мета>)`); эталон импортёра без `Name()`-таблицы — `bank/sber_fin_rez.go` (объявлен только `DataUrl`/`CrawFunc`/`PublicationCountPoints`).
+ 
+ ### Общие хелперы `util/`
+ 
+ - `util.HttpClient` — единый HTTP-клиент: системные CA + `CERT_FILES` (нац. сертификаты РФ), cookie-jar с `redirect_cookie` для rosstat.gov.ru
+ - `util.GetXlsx(url)` / `util.GetCSV(url)` (разделитель `;`) / `util.GetFile(url)` — скачивание с ротацией User-Agent; запрос `GetFile` ограничен дедлайном 2 мин (`fileTimeout` — с запасом на многомегабайтные XLSX, которые он же и тянет; `GetXlsx`/`GetXls` наследуют его через `GetFile`), потому что `HttpClient` создан без `Timeout`, и зависший ответ ЦБ иначе не дал бы ошибки вовсе — регрессия `cbr_key_rate`, потерявшего десятисекундный таймаут colly при переводе на общий хелпер (§6.1)
+ - `util.GetJSON(url, out)` — скачивание JSON тем же `HttpClient`: **сначала проверяется HTTP-статус** (не-200 → ошибка `http status %d: <фрагмент тела ≤512 байт>`; URL в текст не подставляется — у вызывающих в query бывает ключ), пустое тело и ошибка `json.Unmarshal` — тоже ошибка, запрос ограничен дедлайном 60 с. Отличие от `GetFile`, который статус не проверяет и вернул бы тело `403` «успехом»: фолбэк `wgc_etf_flows` срабатывает по ошибке API, а не по ошибке разбора (§6.1)
+ - `util.GetXML(url, out)` — скачивание XML тем же `HttpClient`: **сначала проверяется HTTP-статус** (не-200 → ошибка `http status %d: <фрагмент тела ≤512 байт>`; URL в текст не подставляется — у вызывающих в query бывает ключ), пустое тело — ошибка, запрос ограничен дедлайном 60 с (`xmlTimeout`), разбор — `xml.Decoder` с подменённой таблицей сущностей на `xml.HTMLEntity` (ленты встречаются с `&nbsp;`: именованная сущность иначе роняет разбор всей ленты, а не одного поля). Контракт приёмника: структура обязана пинить корень через `XMLName` (`xml:"rss"`) — без пина 200-страница HTML (заглушка WAF) разберётся в нулевую структуру без ошибки. Отличие от `GetFile`, который статус не проверяет: у лент РФ-канала (§6.1) заглушка читалась бы «успехом»
+ - `util.ErrorSnippet(body []byte) string` (`util/json.go`) — тело ответа, сжатое до одной строки не длиннее 512 байт (обрезка, сжатие пробелов, срез недописанной многобайтовой руны; пустое или пробельное тело → `(пустое тело)`). Из него строится фрагмент в ошибках статуса `GetJSON`/`GetXML`, и им же режется тело ошибки LLM-провайдера: `*anthropic.Error` несёт тело ответа целиком, а ошибка уезжает в warn-лог импортёра — конвенция одна: код и начало тела, без URL
+@@ -225,29 +230,34 @@ func init() {
+ | `INVESTING_EMAIL`, `INVESTING_PASSWORD` | ⚠️ deprecated, переезжаем на MOEX ISS / stooq |
+ | `BLS_API_KEY` | Регистрационный ключ BLS (необязательно, для `bls`) |
+ | `BEA_API_KEY` | UserID BEA API (обязательно, для `bea`) |
+ | `EIA_API_KEY` | Ключ EIA API v2 (обязательно, для `eia`; без него импортёр завершается ошибкой; ключ маскируется в текстах ошибок) |
+ | `NEWS_WATCH_MODE` | Режим импортёра `news_watch`: пусто/`all` — полный upsert окна всех лент (ручной прогон/пересборка), `since` — режим dagu: только отсутствующие в `news_events` позиции по ключу `(date, source, title)`, `check` — проверка дыр/окон без записи; неизвестное значение — ошибка до сети и до БД |
+ | `GOST_MODE` | Режим импортёра `gost_vehicle_safety_certificate` (реестр СБКТС): пусто/`since` — режим dagu, хвост `[якорь − GOST_SETTLE_DAYS, сегодня МСК]` (верхняя граница — сегодня: часовой прогон ловит и дневной батч текущего дня); `full` — вся история по `GOST_FROM`/`GOST_TO`; `check` — read-only сверка `count` API против `uniqExact(certificate_number)` по дню публикации (расхождение — ошибка прогона). Неизвестное значение — ошибка до сети и до БД |
+ | `GOST_FROM` | Нижняя граница диапазона режимов `full`/`check`, формат `YYYY-MM-DD`; по умолчанию `2016-01-01` (публикации реестра старше 2016 практически отсутствуют); в `since` не используется |
+ | `GOST_TO` | Верхняя граница диапазона режимов `full`/`check`, формат `YYYY-MM-DD`; по умолчанию — вчера МСК (лаг «выдача → публикация» ≈ 2 суток); в `since` не используется |
+ | `GOST_SETTLE_DAYS` | Хвост режима `since` в днях — сколько дней до якоря таблицы перечитывать каждый прогон; по умолчанию `3` (лаг публикации ≈ 2 суток); целое ≥ 0, иначе ошибка |
+ | `GOST_APP_ID` | Токен `gtn.access.appid` REST API портала Росстандарта (обязателен для `gost_vehicle_safety_certificate`; без него импортёр завершается ошибкой с подсказкой, где взять значение: JS-конфиг страницы реестра, `standarts.adminsHeaders`). **Значение только в окружении:** dev — `~/.config/rosstat/env`, staging — `/etc/clickhouse-import-rosstat.env` (тот же файл, что читает `deploy/staging/dagu.service`; образец — `deploy/staging/clickhouse-import-rosstat.env.example`); в репозитории не хранится, в тексты ошибок не попадает |
++| `ARCHIVE_BACKEND` | Хранилище винтажного архива версий файлов источников (пакет `archive/`, §2, §3): `local` \| `yandex` \| пусто = архивация выключена. Опция и включается осознанно: при пустом значении шаблон не делает ни одного лишнего вызова, а при настроенном — архивирует версию только у импортёров с объявленной точкой контроля (§8 п. 13) |
++| `ARCHIVE_YANDEX_TOKEN` | OAuth-токен приложения Яндекс.Диска (обязателен при `ARCHIVE_BACKEND=yandex`; токену нужны **оба** scope: `cloud_api:disk.write` — запись версий и `cloud_api:disk.read` — проверка наличия, чтение реестра и скачивание версий). **Значение только в окружении:** dev — `~/.config/rosstat/env`, staging — `/etc/clickhouse-import-rosstat.env` (образец — `deploy/staging/clickhouse-import-rosstat.env.example`); в репозитории не хранится, в логи и тексты ошибок не попадает |
++| `ARCHIVE_YANDEX_DIR` | Корень архива на Диске; при пустом значении `disk:/rosstat-archive` (не секрет — попадает в текст ошибки, в отличие от токена) |
++| `ARCHIVE_LOCAL_DIR` | Корень `LocalStore` (dev-прогон, приёмка, тесты); обязателен при `ARCHIVE_BACKEND=local` |
++| `ARCHIVE_ACTION`, `ARCHIVE_REGISTRY_OUT` | Режим одного действия: `registry` — скачать `registry.jsonl` из хранилища в git-зеркало и выйти **до** подключения к ClickHouse (цель `make archive-registry`); неизвестное значение — ошибка. `ARCHIVE_REGISTRY_OUT` переопределяет путь зеркала, по умолчанию `docs/archive/registry.jsonl` |
+ | `LLM_BASE_URL`, `LLM_API_KEY`, `MP_SUMMARY_LLM_MODEL` | LLM-слой разметки каналов `cbr_mp_summary`: base URL Anthropic-совместимого API (официальный SDK `anthropic-sdk-go` дописывает путь `v1/messages`; первичный провайдер — DeepSeek, у него такой base — `https://api.deepseek.com/anthropic`), ключ и имя модели. Обязательны все три; пустая любая — warn и деградация до regex-слоя (импорт не падает, догон следующим прогоном, когда владелец дополнит env-файл). Значения — **только в окружении** (`~/.config/rosstat/env`), в репозиторий, логи и тексты ошибок не попадают: SDK шлёт ключ заголовком `x-api-key`, а не в URL/query. Фактическое имя модели пишется в данные (колонка `model`) — отличить, какой моделью размечен документ, можно запросом |
+ | `INGEST_TOKEN` | Bearer-токен ingest-endpoint (`cmd/ingest`); обязательна для него: пустое значение — выход с ошибкой. Значение только в окружении, в репозитории не хранится |
+ | `INGEST_ADDR` | Адрес HTTP-сервера `cmd/ingest`, по умолчанию `:8081` |
+ | `INGEST_RATE_PER_MIN` | Лимит запросов ingest-endpoint в минуту (token bucket, burst 10); по умолчанию 60; пустое или некорректное значение — 60. Превышение — `429` |
+ | `GRAFANA_TEST_URL`, `GRAFANA_TEST_TOKEN` | Тест-стенд Grafana (`make grafana-deploy-test`, `make grafana-check`): URL по умолчанию `http://localhost:3000`, токен — сервис-аккаунт **Editor**. Токен только в окружении (`~/.config/rosstat/env`), в репозиторий и логи не попадает |
+ | `GRAFANA_STAGING_URL`, `GRAFANA_STAGING_TOKEN` | Staging-стенд Grafana (`make grafana-deploy-staging`): URL по умолчанию `http://localhost:3001` (ssh-туннель на staging), токен — сервис-аккаунт **Editor** на staging |
+ | `GRAFANA_ORG_ID` | org-id инстанса Grafana для `gcx` (on-prem без него отвергается: `missing stacks.default.grafana.org-id`), по умолчанию `1` |
+ 
+-⚠️ **В env-файле из `GOST_*` держат только `GOST_APP_ID`.** Локальный `~/.config/rosstat/env` подключается Makefile через `-include`, а его переменные объявлены с `export` — поэтому значение из файла перекрывает префикс команды, и `GOST_MODE=full make import STAT=gost_vehicle_safety_certificate` молча прочитает режим из файла. Режимные переменные (`GOST_MODE`/`GOST_FROM`/`GOST_TO`/`GOST_SETTLE_DAYS`) передавайте префиксом команды или в `env` шага DAG (как `GOST_MODE=since` в `dagu/craw.yaml`); на staging их не дублируют в `/etc/clickhouse-import-rosstat.env` — там живёт токен (`deploy/staging/clickhouse-import-rosstat.env.example`).
++⚠️ **В env-файле из `GOST_*` держат только `GOST_APP_ID`.** Локальный `~/.config/rosstat/env` подключается Makefile через `-include`, а его переменные объявлены с `export` — поэтому значение из файла перекрывает префикс команды, и `GOST_MODE=full make import STAT=gost_vehicle_safety_certificate` молча прочитает режим из файла. Режимные переменные (`GOST_MODE`/`GOST_FROM`/`GOST_TO`/`GOST_SETTLE_DAYS`) передавайте префиксом команды или в `env` шага DAG (как `GOST_MODE=since` в `dagu/craw.yaml`); на staging их не дублируют в `/etc/clickhouse-import-rosstat.env` — там живёт токен (`deploy/staging/clickhouse-import-rosstat.env.example`). **Ловушка та же у архива:** `ARCHIVE_BACKEND` — режимная переменная, в env-файле её не держат (только токен `ARCHIVE_YANDEX_TOKEN`), а бэкенд выбирают аргументом цели: `make import STAT=cbr_m2 ARCHIVE_BACKEND=local ARCHIVE_LOCAL_DIR=build/archive-dev` (README, «Ключи и окружение»).
+ 
+ ## 6. Целевая архитектура (дорожная карта 2026-Q4)
+ 
+ Контур: **Источники → ClickHouse (сырые + витрины) → MCP (read-only) → Kimi-агент → сценарный прогноз золота → DCF → NAV PLZL → model_runs**. Полная версия: [docs/ROADMAP_DCF_POLYUS.md](docs/ROADMAP_DCF_POLYUS.md). Спека контура прогноза и плагина: [docs/superpowers/specs/2026-10-10-gold-nav-plugin-design.md](docs/superpowers/specs/2026-10-10-gold-nav-plugin-design.md).
+ 
+ Статусы в §6.1–§6.3: **реализован** — есть в коде репозитория; **не реализован** — только в плане, в коде нет.
+ 
+ ### 6.1 Новые импортёры (по приоритету)
+ 
+ | Импортёр | Пакет | Статус | Источник | Метод |
+@@ -1038,12 +1048,12 @@ uv run --with mcp-clickhouse==0.7.0 --python 3.12 mcp-clickhouse
+ 3. Вставка только батчами (`PrepareBatch`/`Append`/`Send`). DDL `IF NOT EXISTS`. Значения новых таблиц — Float64.
+ 4. HTTP — только через `util.HttpClient` / `util.GetXlsx` / `util.GetCSV` (там нац. сертификаты и UA); для JSON-источников — `util.GetJSON`, для RSS/XML — `util.GetXML`: в отличие от `GetFile`, оба проверяют HTTP-статус (не-200 — ошибка с фрагментом тела, а не «успешно» прочитанный HTML WAF) и держат собственный дедлайн запроса (60 с; `GetFile` — свой, 2 мин, `fileTimeout`); `GetXML` к тому же разбирает `xml.Decoder` с таблицей `xml.HTMLEntity` и требует пина корня через `XMLName` (§3); POST-JSON (LLM-слой) — не свой хелпер, а официальный SDK `anthropic-sdk-go` (`option.WithHTTPClient(util.HttpClient)` сохраняет конвенцию TLS, ключ едет заголовком `x-api-key` и в тексты ошибок не попадает).
+ 5. **Не хардкодить секреты** (в т.ч. в комментариях и curl-примерах) — только `os.Getenv`.
+ 6. **Не делать сетевых вызовов в `init()`** — URL вычислять внутри `Import()` (бывший legacy-баг `minfin/fedbud_mes.go` исправлен; сетевых вызовов в `init()` в репозитории не осталось).
+ 7. Русские даты/месяцы — через `util.MonthsToNum`; форматы времени — константы рядом с импортёром.
+ 8. Накопленные значения «с начала года» конвертировать в потоки разностями (паттерн `fedBudImport`).
+ 9. Ошибки не проглатывать: парсинг чисел — с проверкой `err`; в `Import()` ошибка → `return count, err`.
+ 10. Пакет `financial/` — legacy (database/sql, свой main): новый код туда не добавлять, новые корпоративные импортёры делать на clickhouse-go/v2 в новых пакетах. Парсеры Полюса уже вынесены в `polyus/` (см. §6.6); в `financial/` остаётся `databook_ugk` и мёртвый код металлургов.
+ 11. Сборка-проверка: `make all` (gofmt, golangci-lint, `go vet`, `go test -race`, сборка). Тесты (фикстуры, без сети) есть у большинства источников — `bls/`, `bea/`, `bold/`, `calendar/`, `cbr/`, `craw/`, `dcf/`, `eia/`, `forecast/`, `fred/`, `gold/`, `ingest/`, `minfin/`, `moex/`, `news/`, `polyus/`, `rosstat/`, `util/`, `views/`, `wgc/`; для новых импортёров тесты парсера и HTTP-слоя обязательны (`httptest.Server` + подмена base URL-переменной пакета).
+ 12. После изменения архитектуры — обновить этот файл.
+-13. **Источник, чей файл обновляется реже прогонов, не скачивает его каждый раз** — точка контроля публикации объявляется **полями шаблона** `util.ClickHouseImport`, а не пишется кодом в импортёре: `PublicationCountPoints` (SQL числа точек ряда; непустое значение включает префлайт — она же даёт `points` строки версии), `PublicationSource` (ключ версии в `source_publications` и префикс лога префлайта; пусто → `TableName`) и `AfterImport` (производные — каталог и витрина — после точек и до строки версии). Полный цикл `Import`: DDL → `BeforeImport` → префлайт → точки → `AfterImport` → строка версии последней. Префлайт — лёгкий HEAD (`util.HeadFingerprint`) плюс общая служебная таблица `source_publications` (`util.EnsurePublications`/`PublicationKnown`/`SavePublication`, §6.2): если версия уже импортирована и число точек своего `source` в целевой таблице совпало, прогон становится **no-op без скачивания и без записи в БД**; строка версии пишется последней — после успешного `Send` точек и публикации производных (утверждает «эти точки записаны и опубликованы»); сбой производных или сбой `CountPoints` при записи версии оставляет версию незаписанной, и следующий прогон повторяет полный путь (идемпотентно), а новый файл даёт новую строку и полный импорт-обновление. Недоступный HEAD и сбой `SELECT` версии — не сбой, а деградация: warn и полный импорт без записи версии (иначе следующая волна считалась бы уже импортированной); сбой самого `count()` — ошибка прогона (без числа точек не сходится ни чек, ни `points` будущей записи, спека §3.4). **Объявлено у 15 импортёров**: десять в `cbr/` (`cbr_mp_survey`, `cbr_mo_br`, `cbr_households_b_mes`, `cbr_m2`, `cbr_credit_m2x`, `cbr_loans_to_corporations`, `cbr_loans_to_individuals`, `cbr_bank_int_rate`, `cbr_indicators_cpd`, `cbr_infl_exp`; запросы и расписание — §6.1) и пять вне него (`rosstat_ipc_mes`, `rosstat_salaries_mes`, `rosstat_vvp_kvartal`, `rosstat_labour_force_mes`, `bank/sber_finansovie_rezultaty`); **осознанно не объявлено** у дневных `cbr_key_rate`/`cbr_ruania`/`cbr_currency_usd`/`cbr_gold`, у недельного `rosstat_ipc_weeks`, у падающего `tbank_group_ifrs` и у контурного `cbr_mp_summary` (у него не один артефакт версии, а индекс материалов заседаний и набор документов: известность документа — адрес карточки в индексе **∧** строки блоков по дате заседания **∧** regex-строки каналов, и HEAD-отпечаток страницы резюме на вопрос «какие резюме уже разобраны» не отвечает — §6.1). Пер-источниковых таблиц версий не заводим — версии всех источников лежат в общей `source_publications`. Механизм не защита от подмены, а ответ на вопрос «это тот же файл, что импортировали?».
++13. **Источник, чей файл обновляется реже прогонов, не скачивает его каждый раз** — точка контроля публикации объявляется **полями шаблона** `util.ClickHouseImport`, а не пишется кодом в импортёре: `PublicationCountPoints` (SQL числа точек ряда; непустое значение включает префлайт — она же даёт `points` строки версии), `PublicationSource` (ключ версии в `source_publications` и префикс лога префлайта; пусто → `TableName`) и `AfterImport` (производные — каталог и витрина — после точек и до строки версии). Полный цикл `Import`: DDL → `BeforeImport` → префлайт → точки → **архив версии файла** → `AfterImport` → строка версии последней. Префлайт — лёгкий HEAD (`util.HeadFingerprint`) плюс общая служебная таблица `source_publications` (`util.EnsurePublications`/`PublicationKnown`/`SavePublication`, §6.2): если версия уже импортирована и число точек своего `source` в целевой таблице совпало, прогон становится **no-op без скачивания и без записи в БД**. **При включённом винтажном архиве** (`ARCHIVE_BACKEND`, §5, §2) no-op означает «версия известна **и** лежит в архиве»: тем же ключом (источник, basename URL, отпечаток) проверяется `Store.Exists`, и ответ «нет» или сбой проверки даёт warn «версия известна, но в архиве её нет — полный импорт» и полный прогон вместо no-op (самолечение: так дописывается архив при первом включении и после смены бэкенда). Проверка включается только у импортёров с XLSX-путём шаблона (`ImportFunc`) — таких 14 из перечисленных ниже 15: у `CrawFunc`-импортёра с точкой контроля (`bank/sber_finansovie_rezultaty`, файл `bank/sber_fin_rez.go`) файл качает сам импортёр и объекта в архиве нет и не будет, поэтому на его no-op-пути версия в архиве не спрашивается — иначе no-op не наступал бы ни разу, пока архив настроен. Архивация заводится **общим механизмом шаблона** и кода импортёра не требует, а сбой архива прогон не роняет, но строку версии отменяет: следующий прогон повторит полный импорт и допишет архив (стандарт §9.6). Реестр архива (`registry.jsonl`) — файл в хранилище, читается **без ClickHouse**: таблицы для него нет намеренно, и версии источников по нему найдёт будущее восстановление базы (git-зеркало `docs/archive/registry.jsonl` обновляет `make archive-registry`). Строка версии пишется последней — после успешного `Send` точек, архива и публикации производных (утверждает «эти точки записаны, сохранены и опубликованы»); сбой производных или сбой `CountPoints` при записи версии оставляет версию незаписанной, и следующий прогон повторяет полный путь (идемпотентно), а новый файл даёт новую строку и полный импорт-обновление. Недоступный HEAD и сбой `SELECT` версии — не сбой, а деградация: warn и полный импорт без записи версии (иначе следующая волна считалась бы уже импортированной); сбой самого `count()` — ошибка прогона (без числа точек не сходится ни чек, ни `points` будущей записи, спека §3.4). **Объявлено у 15 импортёров**: десять в `cbr/` (`cbr_mp_survey`, `cbr_mo_br`, `cbr_households_b_mes`, `cbr_m2`, `cbr_credit_m2x`, `cbr_loans_to_corporations`, `cbr_loans_to_individuals`, `cbr_bank_int_rate`, `cbr_indicators_cpd`, `cbr_infl_exp`; запросы и расписание — §6.1) и пять вне него (`rosstat_ipc_mes`, `rosstat_salaries_mes`, `rosstat_vvp_kvartal`, `rosstat_labour_force_mes`, `bank/sber_finansovie_rezultaty`); **осознанно не объявлено** у дневных `cbr_key_rate`/`cbr_ruania`/`cbr_currency_usd`/`cbr_gold`, у недельного `rosstat_ipc_weeks`, у падающего `tbank_group_ifrs` и у контурного `cbr_mp_summary` (у него не один артефакт версии, а индекс материалов заседаний и набор документов: известность документа — адрес карточки в индексе **∧** строки блоков по дате заседания **∧** regex-строки каналов, и HEAD-отпечаток страницы резюме на вопрос «какие резюме уже разобраны» не отвечает — §6.1). Пер-источниковых таблиц версий не заводим — версии всех источников лежат в общей `source_publications`. Механизм не защита от подмены, а ответ на вопрос «это тот же файл, что импортировали?».
+ 14. **LLM-разметка — только через официальный SDK `anthropic-sdk-go` и переменные окружения, с деградацией вместо отказа.** Единственный потребитель — слой 2 разметки каналов `cbr_mp_summary`: `LLM_BASE_URL`, `LLM_API_KEY`, `MP_SUMMARY_LLM_MODEL` (§5), Anthropic-совместимый `POST <baseURL>/v1/messages` (SDK `github.com/anthropics/anthropic-sdk-go`; `LLM_BASE_URL` — base **без** `/v1`: путь SDK дописывает сам, и «/v1» в base дал бы «/v1/v1/messages»; клиент строится на каждый вызов, `option.WithHTTPClient(util.HttpClient)` — конвенция TLS проекта, User-Agent остаётся SDK-шным (`Anthropic/Go …`): ротация `randomUA` нужна сайтам РФ, а не API провайдера, `option.WithMaxRetries(0)` — повторы SDK выключены сознательно: отказ провайдера и ошибки, при которых не пришло ни байта ответа (имя не разрешилось, соединение, TLS, дедлайн), означают деградацию до regex-слоя и догон следующим прогоном, а не скрытые ретраи внутри вызова, тогда как обрыв на неполном ответе (оборванные заголовки или оборванное тело) и обрезанный конверт — формат с одним повтором (различить их по типам SDK нельзя; цена повтора — один вызов); дедлайн запроса — `mpLLMTimeout`, 65 с; текст отказа провайдера режется до фрагмента `http status <код>: <тело ≤512 байт>` через `util.ErrorSnippet`). Свой POST-хелпер (`util.PostJSON`) и OpenAI-совместимый `/chat/completions` упразднены: base владельца Anthropic-совместим, и `/chat/completions` на нём давал 404. Значения — только `os.Getenv` (правило 5); ключ уходит заголовком `x-api-key` (не в URL/query), поэтому в логи и тексты ошибок не попадает. Любая пустая переменная, отказ провайдера или невалидный JSON после одного ретрая — `log.Warnf` и деградация: документ остаётся со слоем 1 (`method='regex'`), догон повторится следующим прогоном, ежедневная цепочка `dagu/cbr.yaml` при этом не краснеет. Фактическое имя модели пишется в данные (колонка `model` таблицы `cbr_mp_summary_channel`) и входит в ключ вместе с `prompt_version`: разметка другой модели или редакции промпта добавляется рядом со старой, не затирая её, поэтому ансамбль моделей включается конфигом без миграции схемы. Цитаты модели валидируются — обязаны дословно присутствовать в нормализованном тексте резюме, иначе отбрасываются с warn (§6.1).
+diff --git a/README.md b/README.md
+index ed9c86b..14dc1d1 100644
+--- a/README.md
++++ b/README.md
+@@ -130,20 +130,21 @@ make import STAT=cbr_mo_br   # первый прогон — полный имп
+ ```bash
+ make import STAT=cbr_mp_summary   # первый прогон — вся история резюме из индекса; повтор — чтения и no-op без вставок
+ make import STAT=events_calendar  # календарь заседаний из cbr.ru/dkp/cal_mp/ (ручные строки сида не трогает)
+ ```
+ 
+ ## Структура репозитория
+ 
+ ```text
+ main.go                  точка входа: подключение к ClickHouse, фильтр импортёров, код выхода
+ chimport/                интерфейс ImportStat и глобальный реестр Stats
++archive/                 винтажный архив версий файлов источников: объектное хранилище (LocalStore — dev/приёмка, YandexDisk — REST API) + реестр версий registry.jsonl с git-зеркалом docs/archive/registry.jsonl (цель make archive-registry); включается ARCHIVE_BACKEND, обслуживает шаблон util.ClickHouseImport
+ util/                    HTTP-клиент (национальные TLS-сертификаты РФ, ротация User-Agent; скачивание XLSX/CSV/JSON), шаблон импортёра ClickHouseImport (в т. ч. точка контроля публикации: HEAD-префлайт и служебная source_publications), батч-вставка
+ bank/ cbr/ craw/ customs/ fao/ minfin/ rosstat/   доменные импортёры (см. таблицу выше); в cbr/ — все источники ЦБ РФ (ключевая ставка, курс, золото, M2, кредиты, балансы домохозяйств, ставки по вкладам, RUONIA, ИПЦ, инфляционные ожидания) плюс контур мониторинга предприятий cbr_mp_survey → macro_series (source = 'cbr_survey'), макроэкономический опрос cbr_mo_br → macro_series (source = 'cbr_mo_br', консенсус аналитиков) и контур резюме обсуждения ключевой ставки cbr_mp_summary → три свои таблицы (cbr_mp_summary, cbr_mp_summary_block, cbr_mp_summary_channel) с витринами v_cbr_mp_summary, v_cbr_mp_summary_blocks, v_cbr_mp_summary_channels (разметка 11 каналов: регексы + LLM)
+ fred/                    FRED CSV → macro_series
+ calendar/                календарь событий-триггеров → events_calendar (ручные строки сида + канонические строки заседаний СД ЦБ из cbr.ru/dkp/cal_mp/, шаг dagu/calendar.yaml)
+ forecast/                резолвер журнала прогнозов forecast_resolve: forecast_log + gold_prices → actual/error_pct (своих таблиц не создаёт)
+ views/                   витрины контура прогноза (v_model_inputs, v_gold_dashboard, v_forecast_accuracy, v_imf_macro, v_gold_forecasts, v_gold_etf_flows, v_gold_etf_flows_daily, v_gold_etf_funds_daily; импортёр gold_views) и витрины метрик компаний сектора (company_financials → v_company_financials, v_company_metric_sources, v_company_operating; импортёр company_views + описания рядов Полюса в series_catalog, views/series_meta.go)
+ ingest/                  ingest-endpoint контура прогноза: model_runs, forecast_log, macro_series (source = 'manual' | 'webbridge' | 'imf'), gold_prices (venue comex_front), gold_forecasts
+ cmd/ingest/              бинарник ingest (отдельный от основного импорта)
+ bls/                     BLS API v2 → macro_series
+ bea/                     BEA API (NIPA T20804) → macro_series
+@@ -194,20 +195,21 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
+ | `LOG_LEVEL` | Уровень logrus: `debug`, `info`, `warn`, `error` |
+ | `CERT_FILES` | PEM-сертификаты через запятую (нац. УЦ РФ для gos-сайтов) |
+ | `BLS_API_KEY` | Регистрационный ключ BLS (необязателен; без него работает, но лимиты строже). Не выводится в логах |
+ | `BEA_API_KEY` | UserID BEA API (обязателен для `bea`; без него импортёр завершается ошибкой). Не выводится в логах |
+ | `EIA_API_KEY` | Ключ EIA API v2 (обязателен для `eia`; без него импортёр завершается ошибкой, ключ маскируется в текстах ошибок). Не выводится в логах |
+ | `LLM_BASE_URL`, `LLM_API_KEY`, `MP_SUMMARY_LLM_MODEL` | LLM-слой разметки каналов `cbr_mp_summary`: base URL Anthropic-совместимого API (**без** `/v1` — путь `v1/messages` дописывает официальный SDK `anthropic-sdk-go`, и `/v1` в base дал бы `/v1/v1/messages`; у DeepSeek такой base — `https://api.deepseek.com/anthropic`), ключ и имя модели. Нужны все три; пустая любая / отказ провайдера / невалидный JSON — `warn` и деградация до regex-слоя (импорт не падает, догон следующим прогоном). Значения — только в окружении (`~/.config/rosstat/env`), в репозиторий и логи не попадают: SDK шлёт ключ заголовком `x-api-key`, а не в URL/query |
+ | `INGEST_TOKEN` | Bearer-токен ingest-endpoint, обязателен для `cmd/ingest` (без него процесс не стартует). Не выводится в логах |
+ | `INGEST_ADDR` | Адрес HTTP-сервера `cmd/ingest`, по умолчанию `:8081` |
+ | `INGEST_RATE_PER_MIN` | Лимит запросов `cmd/ingest` в минуту (token bucket, burst 10), по умолчанию 60; превышение — `429` |
+ | `NEWS_WATCH_MODE` | Режим импортёра `news_watch`: пусто или `all` — полный upsert окна всех лент (ручная пересборка), `since` — режим расписания dagu: только отсутствующие в `news_events` позиции по ключу `(date, source, title)`, `check` — проверка дыр/окон без записи. Неизвестное значение — ошибка до сети и до БД |
++| `ARCHIVE_BACKEND`, `ARCHIVE_YANDEX_TOKEN`, `ARCHIVE_YANDEX_DIR`, `ARCHIVE_LOCAL_DIR`, `ARCHIVE_ACTION`, `ARCHIVE_REGISTRY_OUT` | Винтажный архив версий файлов источников (пакет `archive/`, ARCHITECTURE §2–§3): `ARCHIVE_BACKEND` = `local` \| `yandex` \| пусто = архивация выключена; `ARCHIVE_YANDEX_DIR` — корень архива на Яндекс.Диске (по умолчанию `disk:/rosstat-archive`), `ARCHIVE_LOCAL_DIR` — корень локального бэкенда (dev-прогон, приёмка), `ARCHIVE_ACTION=registry` — режим обновления git-зеркала реестра (`make archive-registry`; путь зеркала переопределяет `ARCHIVE_REGISTRY_OUT`). Токен — секрет: только в окружении, в репозиторий и логи не попадает; как получить и куда положить — «Ключи и окружение» |
+ 
+ Поведение при запуске: неизвестное имя в `CLICKHOUSE_IMPORT_STAT` даёт предупреждение; ошибка любого импортёра даёт код выхода `1`, остальные импортёры при этом выполняются.
+ 
+ Импортёр `financial` читает `TICKER`, `FINANCIAL_DATA_DIR`, `INVESTING_EMAIL`, `INVESTING_PASSWORD`; эти переменные устаревают вместе с legacy-контуром.
+ 
+ `DCF_RUN_ID` — переменная окружения **разового прогона** `dcf_engine`, а не строка конфигурации источника: UUID прогона, который уходит в `nav_by_asset.run_id` и связывает строки с записью `model_runs` (её создаёт ingest-endpoint). Передавайте её прямо в команде — `DCF_RUN_ID=$(uuidgen | tr A-Z a-z) make import STAT=dcf_engine`; в `~/.config/rosstat/env` её хранить не нужно. Без `DCF_RUN_ID` движок считает и печатает тело `POST /v1/model_run`, но не пишет ни строки (см. «Что импортируется»). Импортёр `dcf_mine_plans` переменных окружения не имеет (только `CLICKHOUSE_URL`).
+ 
+ Переменные стендов Grafana (`GRAFANA_TEST_URL`/`GRAFANA_TEST_TOKEN`, `GRAFANA_STAGING_URL`/`GRAFANA_STAGING_TOKEN`, `GRAFANA_ORG_ID`) к импортёрам не относятся — они нужны целям `make grafana-*` (дашборд как код, деплой и smoke). Значения живут в том же `~/.config/rosstat/env`, `make env-check` печатает только «задан/не задан»; описание — в разделе «Grafana».
+ 
+ ## Оркестрация (Dagu)
+@@ -253,20 +255,21 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
+ 
+ ## Разработка
+ 
+ | Команда | Что делает |
+ |---|---|
+ | `make lint` | `gofmt -l` (падает, если есть неотформатированный код) и `golangci-lint run ./...` |
+ | `make test` | `go vet` и `go test -race ./...` (тесты есть у `bea`, `bls`, `bold`, `calendar`, `cbr`, `craw`, `dcf`, `eia`, `forecast`, `fred`, `gold`, `ingest`, `minfin`, `moex`, `news`, `polyus`, `rosstat`, `util`, `views`, `wgc`) |
+ | `make build` | статический бинарник `linux/amd64` в `build/` |
+ | `make run` | сборка и запуск (нужен `CLICKHOUSE_URL`) |
+ | `make import STAT=<имя>` | локальный прогон одного импортёра по `Name()` (собирает `build/clickhouse-import-rosstat-native`). Для расчёта NAV: `DCF_RUN_ID=$(uuidgen \| tr A-Z a-z) make import STAT=dcf_engine` |
++| `make archive-registry` | обновить git-зеркало реестра винтажного архива: запускает бинарник в режиме `ARCHIVE_ACTION=registry`, тот скачивает `registry.jsonl` из хранилища в `docs/archive/registry.jsonl` (ClickHouse не нужен, подключения к базе нет). Бэкенд берётся из окружения: `make archive-registry ARCHIVE_BACKEND=yandex` (нужен `ARCHIVE_YANDEX_TOKEN`) или `... ARCHIVE_BACKEND=local ARCHIVE_LOCAL_DIR=build/archive-dev`; пустой `ARCHIVE_BACKEND` — ошибка, а не пустое зеркало. Коммит зеркала — ручной/периодический (на staging нет git-дерева): `docs/archive/README.md` |
+ | `make build-ingest` | сборка ingest-endpoint (`cmd/ingest`) в `build/ingest` |
+ | `make run-ingest` | сборка и запуск ingest-endpoint (нужны `CLICKHOUSE_URL` и `INGEST_TOKEN`) |
+ | `make fmt` | `gofmt -w .` |
+ | `make deps` | `go mod download` и `go mod tidy` |
+ | `make clean` | удалить `build/` |
+ | `make ch-up` | запустить локальный ClickHouse (порты 8123/9000), если он ещё не отвечает |
+ | `make ch-down` | остановить сервер, поднятый через `make ch-up` (по PID-файлу) |
+ | `make ch-status` | проверить, отвечает ли сервер на `localhost:8123` |
+ | `make ch-sql FILE=...` | прогнать SQL-файл репозитория в локальный ClickHouse (`--multiquery`; пользователь `CH_USER`, по умолчанию `default` без пароля) |
+ | `make dcf-aisc` | сгенерировать сид поактивного AISC Полюса `sql/dcf_mine_plans_seed.sql` (77 строк) и CSV-артефакт контроля; в ClickHouse не пишет. Нужны env-переменные ClickHouse и живая БД (читает факт добычи из `databook_polyus`); Python 3, без зависимостей. Применение сида — вручную, отдельным шагом (см. «Что импортируется») |
+@@ -374,38 +377,63 @@ make ch-down                         # остановить сервер
+ Ключи и пароли лежат в одном файле вне репозитория: `~/.config/rosstat/env` (права `600`, каталог `700`). Формат:
+ 
+ ```bash
+ export BEA_API_KEY=<your-key>
+ export EIA_API_KEY=<your-key>
+ # export GOST_APP_ID=<токен gtn.access.appid: JS-конфиг страницы реестра СБКТС, standarts.adminsHeaders>
+ export CLICKHOUSE_URL=clickhouse://localhost:9000/default
+ export CLICKHOUSE_PASSWORD=<kimi_reader-password>
+ # export CH_IMPORT_PASSWORD=<пароль пользователя, читающего сырые таблицы>
+ # export BLS_API_KEY=<your-key>
++# export ARCHIVE_YANDEX_TOKEN=<OAuth-токен Яндекс.Диска: оба scope — cloud_api:disk.write и cloud_api:disk.read>
++# ARCHIVE_BACKEND в этот файл НЕ добавлять: бэкенд выбирается аргументом make (см. «Винтажный архив»)
+ # export INGEST_TOKEN=<ingest-token>
+ # export INGEST_RATE_PER_MIN=60
+ # export GRAFANA_TEST_TOKEN=<токен сервис-аккаунта Editor локального стенда :3000>
+ # export GRAFANA_STAGING_TOKEN=<токен сервис-аккаунта Editor на staging, доступ через туннель :3001>
+ # export GRAFANA_ORG_ID=1
+ ```
+ 
+ - `CLICKHOUSE_URL` — **основной** способ задать адрес: это DSN, из которого Go-код (`clickhouse.ParseDSN`) и `scripts/extrapolation_aisc.py` берут хост, порт, пользователя и базу. Дискретные `CLICKHOUSE_HOST`/`CLICKHOUSE_PORT`/`CLICKHOUSE_USER`/`CLICKHOUSE_DATABASE` в файле обычно **не задаются**; скрипт читает их как переопределение поверх DSN;
+ - `CLICKHOUSE_PASSWORD` — пароль **`kimi_reader`**, read-only пользователя витрин (`make mcp-check`). Сырые таблицы ему закрыты: чтение `databook_polyus` и подобных идёт под другим пользователем, поэтому у скриптов есть **`CH_IMPORT_PASSWORD`**. Если пользователь из DSN пароля не имеет (локальный `default`), переменную задавать не нужно — подставлять вместо неё `CLICKHOUSE_PASSWORD` нельзя, это чужой пароль и он даёт 401.
+ 
+ - Makefile подключает файл сам (`-include`), поэтому любая `make`-цель видит ключи без `export` в shell; путь можно переопределить: `make ROSSTAT_ENV=/путь/к/файлу ...`;
+ - в терминале: `set -a; . ~/.config/rosstat/env; set +a`;
+ - проверка без вывода значений: `make env-check`;
+ - локальный импорт одного источника: `make import STAT=bea` (собирает бинарник под macOS в `build/clickhouse-import-rosstat-native`);
+ - Kimi Code: ключи для MCP задаются в `~/.kimi-code/mcp.json` (блок `env`), для остальных команд Kimi вызывает `make`, поэтому файл окружения подхватывается автоматически;
+ - Dagu (расписания): секреты описаны в `~/dagu-dev/base.yaml` через provider `file`, каждый ключ — отдельный файл `~/dagu-dev/secrets/<name>` (`600`). Для BEA: `bea_api_key`; для EIA: `eia_api_key`; при добавлении ключа нового импортёра — новый файл и строка в `secrets:`;
+ - файлы `*.env`, `secrets/` и ключи в коде не коммитить; `CLICKHOUSE_PASSWORD` только в файле окружения (`~/.config/rosstat/env`), в `mcp.json` его нет.
+ 
++#### Винтажный архив версий файлов источников (опция)
++
++Винтажный архив — сохранённые версии скачанных файлов источников в объектном хранилище плюс реестр `registry.jsonl` (ARCHITECTURE.md §2–§3, стандарт пакета импортёров §9.6). Штатно архивация **выключена**: пустой `ARCHIVE_BACKEND` = архива нет.
++
++Как получить токен Яндекса (OAuth, личная учётная запись):
++
++1. создать OAuth-приложение ([oauth.yandex.ru](https://oauth.yandex.ru/)), отметить **оба** scope: `cloud_api:disk.write` — запись версий и `cloud_api:disk.read` — проверка наличия, чтение реестра и скачивание версий;
++2. получить токен по implicit-flow: открыть `https://oauth.yandex.ru/authorize?response_type=token&client_id=<ClientID>` и подтвердить доступ — токен вернётся в адресной строке (`access_token=…`);
++3. положить строку `export ARCHIVE_YANDEX_TOKEN=…` в `~/.config/rosstat/env` (dev) или в `/etc/clickhouse-import-rosstat.env` на staging (образец — `deploy/staging/clickhouse-import-rosstat.env.example`); на staging и включается сам бэкенд (`ARCHIVE_BACKEND=yandex`);
++4. проверка без вывода значений: `make env-check` — строка `OK ARCHIVE_YANDEX_TOKEN задан`.
++
++**Ловушка:** `ARCHIVE_BACKEND` — режимная переменная, и в `~/.config/rosstat/env` её дублировать нельзя (переменные файла экспортируются и перекрывают префикс команды). Бэкенд выбирается аргументом цели — так приёмка идёт на локальном хранилище, не трогая Диск:
++
++```bash
++# приёмка на локальном бэкенде: объект версии и registry.jsonl в build/archive-dev/
++make import STAT=cbr_m2 ARCHIVE_BACKEND=local ARCHIVE_LOCAL_DIR=build/archive-dev   # повторный прогон → no-op
++# живой архив на Диске (токен берётся из окружения) и обновление git-зеркала реестра
++make import STAT=cbr_m2 ARCHIVE_BACKEND=yandex ARCHIVE_YANDEX_DIR=disk:/rosstat-archive
++make archive-registry ARCHIVE_BACKEND=yandex
++```
++
++Токен без одного из scope, отозванный или истёкший даёт `401` (`ErrAuth` — действие дежурного: обновить токен), квота Диска — `403`/`413`/`423`/`507` (`ErrQuota` — освободить место). В обоих случаях импорт данных продолжается, но версия файла в архив не сохраняется, и строка версии не пишется — следующий прогон повторит полный импорт.
++
+ MCP для Kimi (агент читает витрины `v_*`, без записи):
+ 
+ - установить `uv`: `brew install uv`;
+ - создать пользователя и выдать права: `make mcp-user` (берёт `CLICKHOUSE_PASSWORD` из файла окружения, выполняет `sql/mcp_kimi_reader.sql`; пароль в выводе не печатается; повторный запуск не меняет уже созданного пользователя);
+ - записать `~/.kimi-code/mcp.json` (права `600`); пароль в файл не пишется, команда сама подгружает `~/.config/rosstat/env`:
+ 
+ ```json
+ {
+   "mcpServers": {
+     "clickhouse": {
+@@ -505,20 +533,22 @@ MCP GoLand (опционально, ускоряет работу Kimi Code с 
+ - **Таблица `gold_prices` использует `Date32`.** Так как LBMA-ряд начинается в 1968 году.
+ - **Доходности G-curve (`ofz_curve`, теноры 1y/3y/5y/10y) — без ретроспективы.** Эндпоинт MOEX ISS `/iss/engines/stock/zcyc.json` отдаёт только снимок текущего дня; история накапливается с даты первого запуска импортёра. Индекс RGBI (тот же zcyc + свечи) имеет полную историю с 2010 года.
+ - **Фьючерс KEYRATE (`keyrate_futures`): короткая история и низкая ликвидность.** МосБиржа считает расчётный фьючерс на Индекс ключевой ставки с 29.09.2026 (у первой серии `KKV6` `FRSTTRADE = 2026-09-29`), поэтому ряд начинается с этой даты — более глубокой истории у инструмента просто нет. Открытые позиции серий — десятки контрактов, у дальней серии сделок может не быть вовсе, и её `SETTLEPRICE` — стартовое значение биржи, а не рыночное ожидание; кроме того, серии экспирируются каждый квартал, поэтому одна и та же строка серии живёт считанные месяцы и сравнивать серии между собой нужно по `decision_date` (дате заседания), а не по `date`. Поэтому `expected_change_pp`/`expected_change_bp` в `v_keyrate_expectations` — индикатив: это не прогноз рынка и не ценовое обязательство, а при нулевом объёме дня значение нерепрезентативно. Ожидания читать по `settle` (в дни без сделок ISS отдаёт по `LAST` ноль), а NULL в `expected_change_*` значит «ставка `cbr_key_rate` ещё не загружена», а не нулевое изменение. Даты экспирации серий — биржевые (`keyrate_contract.last_trade`), календарь заседаний ЦБ — `cbr.ru/dkp/cal_mp/`.
+ - **Дашборд `gold-thesis`: провижининг `datasources` применяется только при старте Grafana.** Проверено на staging (Grafana 13.1.1): каталог `provisioning/datasources` читается один раз при старте сервера (поллинг есть только у дашбордов), поэтому после `make grafana-provision-staging` новый датасорс `ch-rosstat` не появляется, пока владелец не сделает admin-reload (`POST /api/admin/provisioning/datasources/reload`) или не перезапустит `grafana-server`; до этого smoke упадёт с «datasource not found». Цель сама сервис не рестартует и печатает готовую команду reload. Токены стендов (`GRAFANA_TEST_TOKEN`/`GRAFANA_STAGING_TOKEN`) и полный staging-прогон — owner-assisted: сервис-аккаунты Editor и токены создаются вручную (см. «Grafana»).
+ - **`news_watch`: `sentiment` в `news_events` пока всегда NULL.** Тональность событий будет заполнять LLM-сессия, но канал записи для неё в ingest-endpoint не реализован (план — `POST /v1/news_events`, follow-up), поэтому витрина `v_news_events` отдаёт `sentiment` пустым: NULL означает «не размечено», а не «нейтрально».
+ - **`news_watch`: история событий копится с первого прогона, и простой дольше окна ленты теряет её позиции безвозвратно.** RSS отдаёт только текущее окно ленты, а окна у лент разные: Интерфакс 25 позиций, РБК 30 и TASS 100 покрывают ~1–2 часа публикаций, а фиды ЦБ (по 100 позиций) — дни (`cbr_news` ≈12 дней, `cbr_press` ≈83 дня публикаций). Глубокой ретроспективы у источников нет, поэтому позиции, выпавшие из окна за время простоя, не восстанавливаются — ни задним числом, ни повторным прогоном. `NEWS_WATCH_MODE=check` покажет дыру лишь пока следующая успешная запись её не «залечила», и только для тех лент, окно которых уже прошло мимо сохранённого максимума.
+ - **`news_watch`, режим `check`: дыра покрытия видна только до «залечивания» следующей успешной записью.** Пока сохранённый максимум источника старше начала окна его ленты, `check` показывает дыру (и это ошибка прогона); после следующей успешной записи окно сдвигается вперёд, и дыру `check` больше не покажет, хотя пропущенные позиции так и не собраны. Диагностика ручная: автопрогона `check` в `dagu/news.yaml` нет (там режим `since`), запускать нужно самому — `NEWS_WATCH_MODE=check make import STAT=news_watch`.
+ - **Витрина `v_news_events` фильтрует по широкому списку стемов тезисов.** Фильтр (`newsFilter`, RE2, `(?i)`) намеренно широкий: ложное срабатывание дешевле ложного пропуска, но полностью исключить пропуск события тезиса он не может — заголовок без слова из списка в витрину не попадёт. Лишнее снимает запрос сессии, а сам список уточняется пересозданием витрины: полный поток лежит в сырой `news_events`, поэтому сужение фильтра историю не теряет.
+ - **Резюме обсуждения: разметка каналов эвристическая, LLM-слой факультативен.** `v_cbr_mp_summary_channels` — **не позиция ЦБ**: слой 1 (`method='regex'`) — детерминированные регексы по нормализованному тексту, слой 2 (`method='llm'`) — разметка модели, цитаты которой сверяются с текстом резюме дословно (несовпавшие отбрасываются), а `kind='note'` — краткий вывод модели по каналу, а не цитата. Один фрагмент может попасть в несколько каналов, поэтому «главные каналы» выбирает читающий (агент), опираясь на цитаты; для одного `(meeting_date, channel, kind)` рядом лежат строки обоих слоёв и всех размеренных моделей. LLM-слой требует `LLM_BASE_URL`/`LLM_API_KEY`/`MP_SUMMARY_LLM_MODEL`: без них (или при отказе провайдера / невалидном JSON после ретрая) документ остаётся только с regex-слоем — это `warn`, а не ошибка прогона, и догон идёт следующим прогоном. Модель, которой размечен документ, видна в колонке `model`, версия промпта — в `prompt_version` (обе входят в ключ таблицы, поэтому смена модели или промпта не затирает старую разметку).
+ 
++- **Винтажный архив версий файлов источников — опция, и покрытие у него неполное.** При `ARCHIVE_BACKEND=local|yandex` шаблон `util.ClickHouseImport` сохраняет версию файла (объект в хранилище + строка в `registry.jsonl`) — но только у импортёров с объявленной точкой контроля публикации и **XLSX-путём** шаблона (`ImportFunc`): это 14 импортёров — десять в `cbr/` и четыре в `rosstat/`. **Не архивируются:** `CrawFunc`-импортёры, качающие файл внутри себя (`bank/sber_fin_rez.go`, импортёр `sber_finansovie_rezultaty`), остальные пакеты, PDF (в т.ч. отчёты Полюса), HTML-страницы и XML/JSON-фиды. **Первый прогон после включения архива — полный ре-импорт** всех 14 покрытых артефактов: текущие версии уже импортированы, но в архиве их ещё нет, поэтому no-op не наступает; дальше повторный прогон снова no-op. Сбой архива прогон не роняет — версия не сохраняется и строка версии в `source_publications` не пишется, поэтому следующий прогон повторяет полный импорт (данные при недоступном Диске не теряются). Восстановление и наполнение БД из архива — follow-up `docs/ROADMAP_INFRA.md` (шаг 1.2): реестр читается без ClickHouse, но команд получения версий пока нет; сам механизм — ARCHITECTURE.md §2–§3, §8 п. 13 и стандарт пакета §9.6.
++
+ ## Grafana
+ 
+ Установка Grafana 11.2.0 (Debian/Ubuntu, arm64):
+ 
+ ```bash
+ sudo apt-get install -y adduser libfontconfig1 musl
+ wget https://dl.grafana.com/oss/release/grafana_11.2.0_arm64.deb
+ sudo dpkg -i grafana_11.2.0_arm64.deb
+ ```
+ 
+diff --git a/archive/registry.go b/archive/registry.go
+index b6c6002..523e1d1 100644
+--- a/archive/registry.go
++++ b/archive/registry.go
+@@ -13,21 +13,23 @@ import (
+ 
+ // RegistryKey — ключ реестра версий: файл в корне хранилища, рядом с каталогами источников. Ключ
+ // фиксирован (в отличие от Key): реестр один на всё хранилище, и по одному имени его находит и
+ // вызывающий, и режим ARCHIVE_ACTION=registry, и git-зеркало.
+ const RegistryKey = "registry.jsonl"
+ 
+ // Entry — одна сохранённая версия файла источника, то есть строка реестра. Поля — из §3.4 спеки:
+ // fingerprint — отпечаток HEAD (как в source_publications, чтобы архив и таблица версий называли
+ // версию одинаково), sha256 — фактическое содержимое (при неизменных заголовках оно могло
+ // смениться), key — объект в хранилище, first_seen — когда конвейер увидел версию, url — аудит.
+-// Идентичность строки — Key. Секретов в записи нет: source/name/url/sha256 и есть весь её состав.
++// Идентичность строки — Key. Секретов в записи нет: все восемь полей (source, name, fingerprint,
++// sha256, size, url, key, first_seen) публичны — запись и есть реестр версий, он уезжает в
++// git-зеркало и служит входом будущего восстановления (§3.4).
+ type Entry struct {
+ 	Source      string    `json:"source"`
+ 	Name        string    `json:"name"`
+ 	Fingerprint string    `json:"fingerprint"`
+ 	SHA256      string    `json:"sha256"`
+ 	Size        int64     `json:"size"`
+ 	URL         string    `json:"url"`
+ 	Key         string    `json:"key"`
+ 	FirstSeen   time.Time `json:"first_seen"`
+ }
+diff --git a/cbr/mo_br.go b/cbr/mo_br.go
+index 455d6a5..50cd9cb 100644
+--- a/cbr/mo_br.go
++++ b/cbr/mo_br.go
+@@ -89,24 +89,26 @@ func (s *moBrStat) Import(ctx context.Context, conn driver.Conn) (count int64, e
+ 		}
+ 		meta = metas
+ 		log.Infof("%s: собрано %d точек", moBrName, len(points))
+ 		for _, p := range points {
+ 			if err = batch.Append(moBrSource, p.Series, p.Date, p.Value); err != nil {
+ 				return fmt.Errorf("append %s %s: %w", p.Series, p.Date.Format("2006-01-02"), err)
+ 			}
+ 		}
+ 		return nil
+ 	}
+-	// local.Import: DDL -> префлайт -> GetXlsx -> разбор+батч -> Send -> каталог и
+-	// витрина -> строка версии. Недоступный HEAD — деградация, а не сбой: импорт
+-	// полный, но версия не записывается (шаблон пишет её только при непустом
+-	// отпечатке), иначе следующая волна считалась бы уже импортированной.
++	// local.Import: DDL -> префлайт -> скачивание шаблоном и разбор из памяти ->
++	// Send -> архив версии файла -> каталог и витрина -> строка версии. Недоступный
++	// HEAD — деградация, а не сбой: импорт полный, но версия не записывается
++	// (шаблон пишет её только при непустом отпечатке), иначе следующая волна
++	// считалась бы уже импортированной; сбой архива, наоборот, отменяет запись
++	// версии — следующий прогон повторит импорт и допишет архив (спека §3.3).
+ 	count, err = local.Import(ctx, conn)
+ 	if err != nil {
+ 		return count, err
+ 	}
+ 	log.Infof("Imported %d rows of %s", count, moBrName)
+ 	return count, nil
+ }
+ 
+ // vCbrMoBrView — витрина рядов макроэкономического опроса ЦБ (source='cbr_mo_br',
+ // импортёр cbr_mo_br); общая витрина cbrMacroView и v_cbr_survey её не покрывают.
+diff --git a/docs/IMPORTER_PACKAGE_STANDARD.md b/docs/IMPORTER_PACKAGE_STANDARD.md
+index 3512c16..8ad65b3 100644
+--- a/docs/IMPORTER_PACKAGE_STANDARD.md
++++ b/docs/IMPORTER_PACKAGE_STANDARD.md
+@@ -22,20 +22,21 @@
+ ## 2. Термины
+ 
+ | Термин | Значение |
+ |---|---|
+ | **Пакет импортёров** | Go-пакет верхнего уровня (`cbr/`, `rosstat/`, `wgc/`, …), который регистрирует один или несколько импортёров через `chimport.Stats` |
+ | **Импортёр** | Значение, реализующее `chimport.ImportStat` (`Name()` + `Import(ctx, conn)`), запускаемое по `CLICKHOUSE_IMPORT_STAT=<Name()>` |
+ | **Реестр** | Единственный файл пакета (`importers.go`), откуда импортёры попадают в `chimport.Stats` |
+ | **Производные** | Данные, которые импортёр публикует после точек ряда: описания рядов в `series_catalog` и витрины |
+ | **Точка контроля публикации** | Объявление «файл источника обновляется реже расписания»: HEAD-отпечаток + строка версии в `source_publications` (§9) |
+ | **Версия артефакта** | Строка `source_publications`: ключ источника, имя и отпечаток файла, число точек ряда на момент записи |
++| **Винтажный архив** | Сохранённые версии файлов источника в объектном хранилище (пакет `archive/`) плюс реестр версий `registry.jsonl`; вход будущего восстановления базы (§9.6) |
+ | **Фикстура** | Урезанная копия **реального** артефакта источника в `testdata/`, на которой тесты разбирают данные офлайн |
+ 
+ ## 3. Состав пакета
+ 
+ 3.1. **ОБЯЗАТЕЛЬНО.** Роли файлов:
+ 
+ | Файл | Роль | Пример |
+ |---|---|---|
+ | `importers.go` | Реестр: тип записи, список импортёров, единственный `init()` | `cbr/importers.go` |
+ | `<источник>.go` | Импортёр и его парсер; по файлу на источник | `cbr/credit_m2x.go`, `rosstat/salaries_mes.go` |
+@@ -184,20 +185,22 @@ func init() { for _, imp := range xxxImporters { chimport.Stats = append(chimpor
+ |---|---|
+ | URL содержит сегодняшнюю дату — версия меняется каждый прогон | `cbr_key_rate`, `cbr_ruania`, `cbr_currency_usd`, `cbr_gold` |
+ | Темп файла равен темпу шага | `rosstat_ipc_weeks` (недельная выгрузка, недельный шаг) |
+ | Артефактов несколько (индекс + набор документов), отпечаток одного не отвечает на вопрос «что уже разобрано» | `cbr_mp_summary` |
+ | Ссылка ведёт не на разбираемый файл | `tbank_group_ifrs` (PDF, своей таблицы нет) |
+ 
+ 9.4. **ОБЯЗАТЕЛЬНО.** `PublicationSource` объявляется, если `Name() != TableName`: иначе версии двух импортёров одной общей таблицы слились бы в одну строку `source_publications`.
+ 
+ 9.5. **ОБЯЗАТЕЛЬНО.** Строка версии пишется **последней** — после точек и производных; пер-источниковых таблиц версий не заводится, все версии лежат в общей `source_publications`. Механизм не защита от подмены, а ответ на вопрос «это тот же файл, что импортировали?».
+ 
++9.6. **ОБЯЗАТЕЛЬНО.** Винтажная база: версия каждого скачанного файла сохраняется в **винтажном архиве** (термин §2) общим механизмом шаблона — парой «хранилище настроено (`ARCHIVE_BACKEND`) + объявлена точка контроля» (п. 9.1); собственного кода импортёра архивация не требует. Обязанность импортёра — качать артефакт **шаблонным** путём (`DataUrl`/`BeforeImport` + `ImportFunc`): тогда шаблон видит те же байты, что разбирает, и сохраняет ровно ту версию, по которой префлайт принимает решения. `CrawFunc`, качающий файл внутри себя (пример — `bank/sber_fin_rez.go`, импортёр `sber_finansovie_rezultaty`), в архив не попадает: шаблон его байтов не видит, и на no-op-пути такая версия в архиве не спрашивается. Новый источник с файлом на краулерном транспорте обязан назвать это отступление в спеке (п. 1.5). Детали механики, состав покрытия и семантика «версия известна ⇒ версия в архиве» — `ARCHITECTURE.md` §8 п. 13.
++
+ ## 10. Каталог рядов и витрины
+ 
+ 10.1. **ОБЯЗАТЕЛЬНО.** Каждый ряд каждого импортёра описан в `series_catalog` через `util.SeriesMeta` (правило 11 AGENTS.md): `title`, `unit`, `frequency`, `origin` (таблица/серия/строка API), `description` — что измеряет, как читать значение и считать темпы, как привязана дата.
+ 
+ 10.2. **ОБЯЗАТЕЛЬНО.** Производные публикует `AfterImport: afterXxxMacro(<meta>)` — общий хелпер пакета: `util.UpsertSeriesCatalog(ctx, conn, meta)`, затем `util.CreateView(ctx, conn, <витрина>)`. Импортёр не занимается публикацией вручную.
+ 
+ 10.3. **ОБЯЗАТЕЛЬНО.** Витрина пакета — long-форма (`source, series, date, value`) с комментарием таблицы и комментарием каждой колонки (`util.View.Comment` и `Columns`); `util.CreateView` создаёт `CREATE OR REPLACE VIEW … SQL SECURITY DEFINER` и пропускает витрину, пока не существуют все её исходные таблицы.
+ 
+ 10.4. **ОБЯЗАТЕЛЬНО.** Витрина выдаётся `kimi_reader` грантом в `sql/mcp_kimi_reader.sql`; сырые таблицы пакета агенту **не** выдаются (ни таблицы, ни служебная `source_publications`).
+ 
+@@ -241,46 +244,48 @@ func init() { for _, imp := range xxxImporters { chimport.Stats = append(chimpor
+ ## 14. Чек-лист: новый пакет
+ 
+ 1. Источник и ряды: что измеряет каждый ряд, единицы, частота, привязка даты.
+ 2. Транспорт по таблице §4; если ссылка вычисляется — `util.GetPage` + `util.FindLink`.
+ 3. `<источник>.go`: `util.ClickHouseImport` (DDL в `%s`-форме, `ImportFunc`/`CrawFunc`, `AfterImport`), либо override `Import()` для вычисляемой ссылки.
+ 4. Парсер по §6: сырые значения, поиск по признаку, fail-fast, без `panic`, имена рядов из кода.
+ 5. `series_meta.go`: описание каждого ряда (§10.1).
+ 6. `views.go`: витрина long-формы с комментариями + `afterXxxMacro`.
+ 7. `importers.go`: реестр с литералами таблицы и запроса чека (§8).
+ 8. Точка контроля публикации по §9 — объявить или обосновать отказ.
+-9. `dagu/<пакет>.yaml`: шаг на импортёр, `id` = `Name()`.
+-10. Фикстуры в `testdata/` и тесты по §11 (включая тест-энфорсер реестра).
+-11. Грант витрины в `sql/mcp_kimi_reader.sql` и проверки в `scripts/mcp_check.py` (§10.4–10.5).
+-12. `importers_test.go`: энфорсер (§8.3).
+-13. `ARCHITECTURE.md` / `README.md` / роадмап тем же PR (§13).
++9. Винтажная база по §9.6: артефакт качается шаблонным путём, версия файла видна в архиве и реестре; краулерный транспорт — отступление, названное в спеке.
++10. `dagu/<пакет>.yaml`: шаг на импортёр, `id` = `Name()`.
++11. Фикстуры в `testdata/` и тесты по §11 (включая тест-энфорсер реестра).
++12. Грант витрины в `sql/mcp_kimi_reader.sql` и проверки в `scripts/mcp_check.py` (§10.4–10.5).
++13. `importers_test.go`: энфорсер (§8.3).
++14. `ARCHITECTURE.md` / `README.md` / роадмап тем же PR (§13).
+ 
+ ## 15. Чек-лист: рефакторинг существующего пакета
+ 
+ 15.1. **Инвентарь и базовая линия.** Grep-инвентарь нарушений по пакету (`colly`, `fmt.Print*`, `conn.Exec` в цикле, `_, _ =` рядом с `Parse*`, `panic` в разборе, персональные `init()`), список импортёров с `Name()`/таблицами/транспортами, число тестовых файлов и фикстур. Снимок данных: число рядов и строк по каждой таблице пакета, крайние даты, значения-споты — в git-ignored файл `.superpowers/sdd/<дата>-<пакет>-refactor/<пакет>-baseline.md`.
+ 
+ 15.2. **Данные не меняются.** Если рефакторинг не заявлен как исправление дефекта, набор рядов и значения точек после работы обязаны совпасть с базовой линией; расхождения называются поимённо. Если заявлено исправление (как «починка пустых рядов» фазы 2) — в отчёте отдельно: что было пусто/неверно, что стало, чем сверено с публикацией источника.
+ 
+ 15.3. **Порядок миграции при переименовании.** Новые таблицы создаются и наполняются **рядом** со старыми; витрины пакета и витрины других контуров, читающие эти таблицы, пересоздаются после сверки; старые таблицы удаляются **последними**, после проверки, что их не читает ни одна витрина, ни один SQL-файл, ни один дашборд; осиротевшие строки `source_publications` по старым ключам удаляются. Всё время миграции потребители данных не остаются без входа.
+ 
+ 15.4. **Проверки после.** Grep-чистота (ноль `colly`, ноль `fmt.Print*` в пакете), `make all`, повторный прогон каждого импортёра — no-op; сверка с базовой линией; `make mcp-check`.
+ 
+ ## 16. Чек-лист приёмки и ревью
+ 
+ 16.1. **ОБЯЗАТЕЛЬНО** для любого пункта по импортёрам:
+ 
+ 1. `make all` — gofmt, golangci-lint, `go vet ./...`, `go test -race ./...`, обе сборки; по затронутым пакетам дополнительно `go test -race -count=1 ./<пакет>/` без кэша.
+ 2. Живой прогон каждого затронутого импортёра на dev-ClickHouse: команда, число строк, крайние даты.
+ 3. Повторный прогон — no-op (там, где объявлена точка контроля) или идемпотентный результат.
+ 4. `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА.
+ 5. `dagu validate dagu/<пакет>.yaml`.
+-6. Документация и статус роадмапа обновлены тем же PR (без этого пункт не считается закрытым).
++6. Файл версии в архиве, строка в `registry.jsonl` — для импортёров с точкой контроля публикации (§9.6); без этого п. 3 («повторный прогон — no-op») доказан не полностью.
++7. Документация и статус роадмапа обновлены тем же PR (без этого пункт не считается закрытым).
+ 
+ 16.2. **На ревью проверяется:** изоляция разбора от сети; отсутствие проглатываемых ошибок; литеральность реестра и наличие теста-энфорсера; двусторонность/односторонность контракта каталога с обоснованием; отсутствие синтетических фикстур; отсутствие `colly` и `fmt.Print*`; обоснованность решения по точке контроля публикации; порядок миграции при переименовании.
+ 
+ 16.3. Ревью идёт на модели, отличной от автора кода (`haiku` для задач, самая способная доступная модель — для финального ревью ветки).
+ 
+ ## 17. Эталоны
+ 
+ | Правило | Файл-эталон |
+ |---|---|
+ | Транспорт: HTML + ссылка | `util/links.go` (`GetPage`, `FindLink`), использование — `cbr/credit_m2x.go` |
+diff --git a/docs/ROADMAP_INFRA.md b/docs/ROADMAP_INFRA.md
+new file mode 100644
+index 0000000..e34f927
+--- /dev/null
++++ b/docs/ROADMAP_INFRA.md
+@@ -0,0 +1,38 @@
++# Дорожная карта: инфраструктура конвейера
++
++**Дата:** 14 октября 2026 г.
++**Роль документа:** инфраструктурные пункты конвейера — надёжность данных, хранение и восстановление входов, деплой, наблюдаемость. Это работы, которые обслуживают все треки сразу и не принадлежат ни одному из них.
++**Сопутствующие документы:** трековые роадмапы — [ROADMAP_DCF_POLYUS.md](ROADMAP_DCF_POLYUS.md) (контур золота → DCF → NAV PLZL), [GOLD_THESIS_DATA_ROADMAP.md](GOLD_THESIS_DATA_ROADMAP.md) (данные и витрины для обновления тезисов по золоту), [ROADMAP_DCF_METALS.md](ROADMAP_DCF_METALS.md) (металлурги CHMF/MAGN/NLMK), [ROADMAP_KEY_RATE.md](ROADMAP_KEY_RATE.md) (контур прогноза ключевой ставки); архитектура и правила — [ARCHITECTURE.md](../ARCHITECTURE.md), [AGENTS.md](../AGENTS.md), [docs/IMPORTER_PACKAGE_STANDARD.md](IMPORTER_PACKAGE_STANDARD.md).
++**Правило:** разработка идёт по одному пункту этого документа за раз (AGENTS.md, правило 1); порядок и состав фаз меняются только через этот документ.
++
++---
++
++## 1. Зачем отдельный роадмап
++
++Инфраструктура обслуживает все треки и не принадлежит ни одному из них: и контуру золота, и прогнозу ставки, и металлургам нужны одни и те же сохранность входных файлов, повторяемость прогона и понятный деплой. Пункт, положенный в трековый роадмап, читался бы как часть этого трека и ждал бы его приоритетов; пункт, не положенный никуда, не делался бы вовсе. Поэтому общие работы идут отдельным документом со своими фазами — трековые роадмапы перечислены в шапке ссылками и остаются при своих темах.
++
++Граница простая: сюда попадает только то, что не принадлежит ни одному треку. Пункт про данные, модель или витрины конкретного трека остаётся в роадмапе этого трека — даже если попутно трогает общий код.
++
++## 2. Фаза 1 — Надёжность данных
++
++| Шаг | Содержание | Статус | Критерий приёмки |
++|---|---|---|---|
++| **1.1** | **Винтажная база: архив версий файлов источников** (`archive/` + `registry.jsonl` на Яндекс.Диске, git-зеркало `docs/archive/registry.jsonl`; покрывает 14 импортёров с точкой контроля публикации, включая `rosstat_labour_force_mes` из PR #61) | ⏳ реализуется в ветке `source-file-archive` | Живой прогон на dev-ClickHouse: версия файла сохранена в архиве, запись о ней есть в `registry.jsonl`, повторный прогон — no-op (в т.ч. с проверкой «версия в архиве»); self-heal «версия известна, но не в архиве → полный импорт» проверен на local-бэкенде и на Яндекс.Диске; `make archive-registry` обновляет git-зеркало; `make env-check` показывает новый ключ; `make all` и `make mcp-check` зелёные. Дизайн — [спека 2026-10-14](superpowers/specs/2026-10-14-source-file-archive-design.md) §6 |
++| 1.2 | Восстановление и наполнение БД из архива: листинг и получение версий (будущие цели вида `make archive-list`/`archive-get` — сегодня их нет), наполнение пустой ClickHouse из архива. Реестр проектировался как вход этого пункта: он читается без ClickHouse и по `source`/`key`/`sha256`/`url` называет версию и её целостность | не начато | Восстановленный из архива ряд совпадает с таблицей по числу точек и spot-значениям; прогон на пустой БД доходит до витрин |
++| 1.3 | S3-совместимый бэкенд хранилища версий: третий `archive.Store` (`PutObject`/`GetObject`/`HeadObject`) без правок вызывающего кода | не начато | Тот же приёмочный цикл, что у 1.1, на S3-хранилище |
++| 1.4 | Детектор «урезанного покрытия»: сравнение точек артефакта с целевой таблицей — волна источника, несущая меньше истории, чем уже импортировано, должна быть замечена, а не принята молча | не начато | На подложенном урезанном файле прогон даёт различимый сигнал, а не тихий no-op |
++
++**Вне объёма шага 1.1** (названо явно, [спека](superpowers/specs/2026-10-14-source-file-archive-design.md) §1.3): `CrawFunc`-импортёры (пример — `bank/sber_fin_rez.go`), остальные пакеты, PDF (в т.ч. отчёты Полюса), HTML-страницы и XML/JSON-фиды; таблица или витрина ClickHouse для реестра; автообновление git-зеркала на staging (там нет git-дерева — только бинарник и DAG-файлы, см. `deploy/staging/README.md`).
++
++## 3. Приёмка и риски
++
++Пункт считается закрытым только по живой приёмке, и порядок один (AGENTS.md, правила 3–5):
++
++1. критерий приёмки пункта из таблицы — с **командой и результатом** (число строк, крайние даты, показанный no-op повторного прогона), а не с утверждением «работает»;
++2. `make all` — зелёный (gofmt, golangci-lint, `go vet`, `go test -race`, обе сборки);
++3. `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА (для пунктов, затрагивающих схему и гранты);
++4. статус пункта в таблице — ✅ с командой и результатом, тем же PR, что и реализация.
++
++**Один пункт = одна ветка = один PR.** Спека и план фиксируются первыми коммитами ветки, PR открывается один и в конце; промежуточные PR не открываются, merge решает владелец.
++
++Риски фазы названы в спеке шага ([§5](superpowers/specs/2026-10-14-source-file-archive-design.md)); общие для инфраструктурных пунктов: отказ внешнего хранилища не должен останавливать данные (деградация с warn, а не падение прогона), а первый прогон после включения механизма может быть полным — разовая цена, называемая в README.
+diff --git a/docs/superpowers/plans/2026-10-14-source-file-archive.md b/docs/superpowers/plans/2026-10-14-source-file-archive.md
+index 6d5b0ec..45bda46 100644
+--- a/docs/superpowers/plans/2026-10-14-source-file-archive.md
++++ b/docs/superpowers/plans/2026-10-14-source-file-archive.md
+@@ -217,21 +217,21 @@ Run: `go test -run TestGetFileBytes -count=1 ./util/` — Expected: FAIL (`undef
+ - [ ] **Step 3: Написать `util/archive.go`**
+ 
+ - `type archiveRuntime struct { store archive.Store; registry *archive.Registry }`.
+ - `activeArchive()`: если `archiveRuntimeForTests != nil` — вернуть его; иначе `sync.Once` → `archive.FromEnv(HttpClient)`; ошибка конфигурации → `log.Errorf` один раз + nil (данные важнее, спека §3.1).
+ - `versionExists(ctx, source, url, fingerprint)` — `archive.Key(source, path.Base(url), fingerprint, [32]byte{})` → `store.Exists` (при непустом отпечатке sha не участвует; ключ совпадает с тем, что пишет `save`).
+ - `save(ctx, source, url, body, fingerprint)` — `sha256.Sum256(body)` → `archive.Key` → `Exists` (есть — не перезагружать) → `Put` → `registry.Ensure(archive.Entry{Source, Name: path.Base(url), Fingerprint, SHA256: hex, Size: int64(len(body)), URL: url, Key, FirstSeen: time.Now()})`.
+ - Комментарии: почему `Exists`-предпроверка, почему строка реестра дописывается и при уже лежащем объекте (самолечение реестра), почему сорсы/сайд-эффекты не идут через поля структуры.
+ 
+ - [ ] **Step 4: Правка `util/clickhouse_import.go`**
+ 
+-- Выделить `importXlsBody(ctx, body []byte, conn driver.Conn) (int64, error)` (руки `PrepareBatch` → `ImportFunc` → `Send`; без изменений логики), `ImportXls` — тонкая обёртка: `GetFileBytes` + `log.Infof("Get xlsx file %+v", dataUrl)` + `importXlsBody`.
++- Выделить `importXlsBody(ctx, body []byte, conn driver.Conn) (int64, error)` (руки `PrepareBatch` → `ImportFunc` → `Send`; без изменений логики); путь `ImportFunc` шаблона переводится на `GetFileBytes` + `log.Infof("Get xlsx file %+v", dataUrl)` + `importXlsBody`. `ImportXls` при этом **удаляется** — его место и занимает приватный `importXlsBody`: потребителей вне `util` у метода нет, а непотребляемый экспорт — мёртвый код (стандарт §3.3).
+ - В `Import` путь `ImportFunc` заменяется на: `GetFileBytes` → лог → `importXlsBody`; байты остаются локальной переменной.
+ - После `Send`, там же в ветке `ImportFunc` (до `AfterImport`): если `activeArchive() != nil && s.PublicationCountPoints != ""` — `rt.save(…, fingerprint)`; ошибка → `log.Errorf("%s: версия %s не сохранена в архиве (%v) — строка версии не пишется, следующий прогон повторит импорт", …)` и локальный флаг `archiveFailed = true`. Ветка `CrawFunc` архива не получает (файл качает сам импортёр).
+ - В ветке `noop` префлайта (после `noop == true` и `fingerprint != ""`): при `activeArchive() != nil` — `versionExists`; `false` или ошибка → `log.Warnf("%s: версия %s известна, но в архиве её нет — полный импорт", …)` (ошибка — с текстом причины) и `noop = false`.
+ - `SavePublication` — только если `fingerprint != "" && !archiveFailed`.
+ 
+ - [ ] **Step 5: Тесты шаблона (`util/archive_test.go`)**
+ 
+ Хелпер: httptest-сервер, который на `HEAD` отдаёт версионные заголовки (как `publicationHeadServer`), на `GET` — минимальную валидную книгу (`excelize.NewFile` + `SetCellValue` + `WriteToBuffer`) и считает `GET`-запросы; `ImportFunc` пишет одну строку с `Append`. Хранилище — `archive.NewLocal(t.TempDir())` через `archiveRuntimeForTests` (`t.Cleanup` сбрасывает).
+ 
+ - `TestClickHouseImportArchivesVersion` — полный прогон (очередь `QueryRow`: `[sql.ErrNoRows (версия неизвестна), points]`): объект `cbr_m2/<fp16>_full.xlsx` и `registry.jsonl` в каталоге архива; строка версии записана; `Get` из LocalStore отдаёт те же байты (sha256 совпадает с реестром).
+diff --git a/docs/superpowers/specs/2026-10-14-source-file-archive-design.md b/docs/superpowers/specs/2026-10-14-source-file-archive-design.md
+index 738fe2b..47f173a 100644
+--- a/docs/superpowers/specs/2026-10-14-source-file-archive-design.md
++++ b/docs/superpowers/specs/2026-10-14-source-file-archive-design.md
+@@ -79,21 +79,21 @@ type Store interface {
+ Ключ выводится из данных префлайта (`source`, `name`, `fingerprint`) **без содержимого файла** — поэтому проверка «версия уже в архиве?» на no-op-пути — это один `Store.Exists(key)`, без чтения реестра и без ClickHouse. Это же свойство даёт самолечение: не найдя версию в архиве, префлайт уходит в полный импорт и дописывает архив (в т.ч. разово — при первом включении архива, когда все текущие версии уже импортированы, и при смене бэкенда).
+ 
+ Асимметрия принята сознательно: `source_publications` идентифицирует версию по тому же отпечатку, и архив обязан говорить на том же языке; `sha256` фактического содержимого пишется в реестр рядом (§3.4) — при неизменных заголовках и изменённом содержимом архивируется последняя версия отпечатка (как и в `source_publications`), но реестр фиксирует, что содержимое менялось.
+ 
+ ### 3.3 Интеграция в шаблон `util.ClickHouseImport` (пакеты импортёров не меняются)
+ 
+ Механизм включается парой «хранилище настроено (`ARCHIVE_BACKEND`) + объявлена точка контроля (`PublicationCountPoints`)». Архивация **не объявляется** отдельным полем импортёра: множество «файл обновляется реже прогонов» уже очерчено точкой контроля, и второй декларации не заводится.
+ 
+ **Порядок полного пути:** DDL → `BeforeImport` → префлайт → **точки** → **архив** → `AfterImport` → версия.
+ 
+-- Хелпер `util.GetFileBytes(url) ([]byte, error)` (`GetFile` + `ReadAll`); путь `ImportFunc` в шаблоне качает байты сам и разбирает из памяти (`excelize.OpenReader(bytes.NewReader(body))`); лог скачивания сохраняется. `ImportXls` остаётся тонкой обёрткой над тем же путём (его используют тесты).
++- Хелпер `util.GetFileBytes(url) ([]byte, error)` (`GetFile` + `ReadAll`); путь `ImportFunc` в шаблоне качает байты сам и разбирает из памяти (`excelize.OpenReader(bytes.NewReader(body))`); лог скачивания сохраняется. `ImportXls` **удалён**: его место занял приватный `importXlsBody(ctx, body, conn)` (разбор книги из памяти → `PrepareBatch` → `ImportFunc` → `Send`); потребителей вне `util` у метода не было, а непотребляемый экспорт — мёртвый код (стандарт §3.3).
+ - Архив пишется **после успешного разбора и `Send`** — HTML-заглушка WAF и битый файл в архив не попадают. Пишет `util`: `sha256` → ключ (§3.2) → `Exists` (есть — не перезагружаем) → `Put` → `Registry.Ensure` (§3.4).
+ - **Сбой архива — не сбой прогона, но блокирует запись версии:** лог `log.Errorf` с причиной (`ErrAuth`/`ErrQuota` — различимые тексты подсказывают действие), импорт данных и производные выполняются штатно, строка версии в `source_publications` **не пишется**. Тогда следующий прогон повторит полный импорт и допишет архив — дыры «версия считается импортированной, а в архиве её нет» не остаётся. Конвейер данных при недоступном Диске не встаёт.
+ - **Префлайт + проверка архива:** когда префлайт вернул `noop` и архивация включена — `Store.Exists(key)`; нет или ошибка → `warn` «версия известна, но не в архиве — полный импорт» и полный импорт. Архив выключен → поведение ровно прежнее (ни одного лишнего вызова).
+ - Состояние — ленивый синглтон `util` (env читается на первом обращении; тесты подставляют `Store` по образцу `fileTimeout`). `CrawFunc`-путь не трогается (файл качает сам импортёр — винтаж не обеспечивается, стандарт §9.6).
+ 
+ ### 3.4 Реестр: `registry.jsonl` на Диске + git-зеркало
+ 
+ Реестр — **файл в самом хранилище**, в корне: `registry.jsonl`, одна строка JSON = одна сохранённая версия. Идентичность строки — `key`; upsert: та же версия с тем же `sha256` — строка не меняется, иначе заменяется (last-wins, как `ReplacingMergeTree`); новые строки — в порядке `first_seen`. Чтение — один `Get`, лениво на процесс; запись — после `Put` объекта; сбой чтения/записи реестра — сбой архивации (§3.3). Штатный писатель один (последовательная цепочка dagu); потерянная при конкурентном ручном прогоне строка самолечится — `Exists` вернёт «нет», полный импорт допишет.
+ 
+ ```json
+diff --git a/util/clickhouse_import.go b/util/clickhouse_import.go
+index d1e7a73..ae634c3 100644
+--- a/util/clickhouse_import.go
++++ b/util/clickhouse_import.go
+@@ -77,23 +77,22 @@ func (s *ClickHouseImport) Publication() PublicationDecl {
+ 		CountPoints: s.PublicationCountPoints,
+ 	}
+ }
+ 
+ func (s *ClickHouseImport) Name() string {
+ 	return s.TableName
+ }
+ 
+ // importXlsBody разбирает книгу из памяти и отправляет её батчем: PrepareBatch → ImportFunc →
+ // Send. Байты вместо URL — ради архива версий: тот же срез уходит и в разбор, и в архив, а
+-// повторный GET по DataUrl удвоил бы трафик и время прогона (GetFileBytes). Логика отправки
+-// прежняя — ImportXls был тем же путём с собственным скачиванием, и кроме Import() его никто
+-// не звал.
++// повторный GET по DataUrl удвоил бы трафик и время прогона (GetFileBytes). Внутренняя рука
++// шаблона: снаружи её никто не зовёт, и публичным контрактом она не является.
+ func (s *ClickHouseImport) importXlsBody(ctx context.Context, body []byte, conn driver.Conn) (count int64, err error) {
+ 	xlsx, err := excelize.OpenReader(bytes.NewReader(body))
+ 	if err != nil {
+ 		return 0, fmt.Errorf("excelize %v", err)
+ 	}
+ 	defer func() { _ = xlsx.Close() }()
+ 	batch, err := conn.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s", s.TableName))
+ 	if err != nil {
+ 		return count, err
+ 	}

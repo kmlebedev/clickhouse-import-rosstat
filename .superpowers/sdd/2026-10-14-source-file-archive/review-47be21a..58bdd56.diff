@@ -1,0 +1,221 @@
+# Review package: 47be21a..58bdd56
+
+## Commits
+58bdd56 make local archive writes atomic
+
+## Files changed
+ archive/key.go        |  6 +++---
+ archive/key_test.go   |  5 +++--
+ archive/local.go      | 48 ++++++++++++++++++++++++++++++++++++++++++++-
+ archive/local_test.go | 54 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 107 insertions(+), 6 deletions(-)
+
+## Diff
+diff --git a/archive/key.go b/archive/key.go
+index 3fdb0c7..a3090e9 100644
+--- a/archive/key.go
++++ b/archive/key.go
+@@ -44,23 +44,23 @@ func Key(source, basename, fingerprint string, sum [sha256.Size]byte) string {
+ // короткий префикс версию всё равно называет, а пустой склеил бы разные версии одного файла.
+ func prefix16(s string) string {
+ 	if len(s) > keyPrefixHex {
+ 		return s[:keyPrefixHex]
+ 	}
+ 	return s
+ }
+ 
+ // sanitizeName готовит basename к роли компонента ключа: имя приходит из URL источника, а ключ
+ // становится путём в хранилище (у LocalStore — путём файловой системы), поэтому разделители пути
+-// и запрещённые в именах символы заменяются на '_'. Управляющие символы убираются вместе с ними:
+-// многострочные имена ломают и лог, и список объектов. Кириллица сохраняется — выгрузки ЦБ и
+-// Росстата названы по-русски, и переименование исказило бы аудит версии.
++// и запрещённые в именах символы заменяются на '_' — вместе с ними на '_' заменяются и управляющие
++// символы: имя с переводом строки ломает и лог, и список объектов. Кириллица сохраняется —
++// выгрузки ЦБ и Росстата названы по-русски, и переименование исказило бы аудит версии.
+ func sanitizeName(name string) string {
+ 	clean := strings.Map(func(r rune) rune {
+ 		if unicode.IsControl(r) || strings.ContainsRune(`/\:*?"<>|`, r) {
+ 			return '_'
+ 		}
+ 		return r
+ 	}, name)
+ 	if len(clean) > keyNameMaxBytes {
+ 		// utf8.RuneStart: отступ от потолка до начала руны — разрезанная руна сделала бы имя
+ 		// объекта невосстановимым (в ключе остались бы битые байты).
+diff --git a/archive/key_test.go b/archive/key_test.go
+index 27235d5..82ea9b6 100644
+--- a/archive/key_test.go
++++ b/archive/key_test.go
+@@ -66,22 +66,23 @@ func TestKeySanitizesBasename(t *testing.T) {
+ 		t.Run(c.name, func(t *testing.T) {
+ 			got := Key("cbr_m2", c.basename, fp, sum)
+ 			if want := "cbr_m2/" + fp16 + "_" + c.want; got != want {
+ 				t.Errorf("Key(%q) = %q, ожидалось %q", c.basename, got, want)
+ 			}
+ 		})
+ 	}
+ 
+ 	// Обрезка длинного имени: компонент ключа обязан влезать в 255 байт (предел имени файла и на
+ 	// Диске, и в ФС), поэтому имя режется до 200 — префикс версии (≤20) и '_' оставляют запас.
+-	// Режется по границе руны: «a» + 100 «я» (201 байт) даёт 199 байт, а не 200, где последняя «я»
+-	// была бы разрезана пополам и имя в хранилище стало бы битым UTF-8.
++	// Режется по границе руны: basename здесь — 206 байт (1 на «a» + 200 на сто «я» + 5 на «.xlsx»),
++	// и обрезка даёт 199 байт, а не 200, где последняя «я» была бы разрезана пополам и имя в
++	// хранилище стало бы битым UTF-8.
+ 	t.Run("длинное имя режется по границе руны", func(t *testing.T) {
+ 		basename := "a" + strings.Repeat("я", 100) + ".xlsx"
+ 		got := Key("cbr_m2", basename, fp, sum)
+ 		if want := "cbr_m2/" + fp16 + "_a" + strings.Repeat("я", 99); got != want {
+ 			t.Errorf("Key() = %q, ожидалось %q", got, want)
+ 		}
+ 		component := strings.TrimPrefix(got, "cbr_m2/")
+ 		if !utf8.ValidString(component) {
+ 			t.Errorf("компонент ключа %q — не валидный UTF-8", component)
+ 		}
+diff --git a/archive/local.go b/archive/local.go
+index ec86dd0..fb41286 100644
+--- a/archive/local.go
++++ b/archive/local.go
+@@ -35,26 +35,72 @@ func (s *LocalStore) Name() string {
+ }
+ 
+ func (s *LocalStore) Put(ctx context.Context, key string, body []byte) error {
+ 	p, err := s.path(key)
+ 	if err != nil {
+ 		return err
+ 	}
+ 	if err = os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+ 		return fmt.Errorf("archive local: каталог %s: %w", filepath.Dir(p), err)
+ 	}
+-	if err = os.WriteFile(p, body, 0o644); err != nil {
++	// Запись идёт через временный файл и rename (writeFileAtomic), а не os.WriteFile: архив объявлен
++	// источником истины (спека §3.1), и усечённый объект от прерванной записи хуже отсутствующего —
++	// Exists увидел бы «версия есть», no-op-путь пропустил бы повторную архивацию, и версия
++	// потерялась бы молча. Текст ошибки остаётся прежним: к ключу добавляется причина сбоя.
++	if err = writeFileAtomic(p, body); err != nil {
+ 		return fmt.Errorf("archive local: запись %s: %w", key, err)
+ 	}
+ 	return nil
+ }
+ 
++// writeFileAtomic кладёт body в path так, чтобы в path никогда не оказалось половины объекта:
++// временный файл в том же каталоге → Write → Chmod → Sync → Close → Rename. Временный файл обязан
++// лежать рядом с целевым: rename атомарен в пределах одной ФС, в чужом каталоге он выродился бы в
++// копирование — ту же неатомарную запись. При любой неудаче временный файл снимается: .tmp не
++// считает объектом ни реестр, ни приёмка, он просто копился бы в каталоге архива навсегда.
++// Осиротевший .tmp после убийства процесса (SIGKILL снять его уже нечем) безвреден по той же
++// причине: ни реестр, ни префлайт на него не смотрят, а повторный Put перезапишет целевой объект.
++func writeFileAtomic(path string, body []byte) error {
++	dir := filepath.Dir(path)
++	f, err := os.CreateTemp(dir, "*.tmp")
++	if err != nil {
++		return fmt.Errorf("временный файл в %s: %w", dir, err)
++	}
++	tmp := f.Name()
++	flush := func() error {
++		if _, err := f.Write(body); err != nil {
++			return fmt.Errorf("запись: %w", err)
++		}
++		// CreateTemp даёт 0600, а объект архива — обычная выгрузка: 0644, как и было у записи
++		// целиком (иначе читать архив с чужого пользователя стало бы нельзя).
++		if err := f.Chmod(0o644); err != nil {
++			return fmt.Errorf("права: %w", err)
++		}
++		// Sync до rename: без него объект может пережить переименование только в кэше ФС и не дойти
++		// до диска при падении машины — ровно та потеря версии, от которой спасает временный файл.
++		if err := f.Sync(); err != nil {
++			return fmt.Errorf("синхронизация: %w", err)
++		}
++		return f.Close()
++	}
++	if err = flush(); err != nil {
++		_ = f.Close() // при сбое Write/Sync файл ещё открыт
++		_ = os.Remove(tmp)
++		return err
++	}
++	if err = os.Rename(tmp, path); err != nil {
++		_ = os.Remove(tmp)
++		return fmt.Errorf("переименование: %w", err)
++	}
++	return nil
++}
++
+ func (s *LocalStore) Get(ctx context.Context, key string) ([]byte, error) {
+ 	p, err := s.path(key)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	body, err := os.ReadFile(p)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("archive local: чтение %s: %w", key, err)
+ 	}
+ 	return body, nil
+diff --git a/archive/local_test.go b/archive/local_test.go
+index fc15fb4..077e1ac 100644
+--- a/archive/local_test.go
++++ b/archive/local_test.go
+@@ -103,10 +103,64 @@ func TestLocalNestedKey(t *testing.T) {
+ 		t.Errorf("%s не каталог", filepath.Join(dir, "cbr_m2"))
+ 	}
+ 	got, err := store.Get(ctx, key)
+ 	if err != nil {
+ 		t.Fatalf("Get: %v", err)
+ 	}
+ 	if string(got) != "тело" {
+ 		t.Errorf("Get() = %q, ожидалось %q", got, "тело")
+ 	}
+ }
++
++// Объект появляется на целевом пути только целиком — запись идёт через временный файл рядом и
++// rename. Иначе прерванная запись (kill, полный диск) оставила бы усечённый объект: Exists увидел
++// бы его как «версия есть», no-op-путь пропустил бы повторную архивацию, и версия потерялась бы
++// молча — а архив объявлен источником истины (спека §3.1). Наблюдаемое здесь: временных файлов
++// после Put не остаётся, и повторная запись того же ключа отдаёт новое содержимое, а не дозапись
++// (ключ и есть версия, но объект мог быть перезаписан — в том числе при самолечении архива).
++func TestLocalPutIsAtomic(t *testing.T) {
++	dir := t.TempDir()
++	store := NewLocal(dir)
++	ctx := context.Background()
++	key := "cbr_m2/x_y.xlsx"
++
++	if err := store.Put(ctx, key, []byte("первая версия")); err != nil {
++		t.Fatalf("Put: %v", err)
++	}
++	assertNoTempLeftovers(t, filepath.Join(dir, "cbr_m2"))
++	if got, err := store.Get(ctx, key); err != nil {
++		t.Fatalf("Get после первого Put: %v", err)
++	} else if string(got) != "первая версия" {
++		t.Errorf("Get() = %q, ожидалось %q", got, "первая версия")
++	}
++	// Права объекта: CreateTemp даёт 0600, а выгрузка в архиве обязана читаться как обычный файл —
++	// 0644, как и предписывал бриф для записи целиком.
++	if info, err := os.Stat(filepath.Join(dir, filepath.FromSlash(key))); err != nil {
++		t.Fatalf("Stat объекта: %v", err)
++	} else if perm := info.Mode().Perm(); perm != 0o644 {
++		t.Errorf("права объекта %o, ожидалось 644", perm)
++	}
++
++	if err := store.Put(ctx, key, []byte("вторая версия")); err != nil {
++		t.Fatalf("повторный Put: %v", err)
++	}
++	assertNoTempLeftovers(t, filepath.Join(dir, "cbr_m2"))
++	if got, err := store.Get(ctx, key); err != nil {
++		t.Fatalf("Get после повторного Put: %v", err)
++	} else if string(got) != "вторая версия" {
++		t.Errorf("Get() = %q, ожидалось %q (перезапись не должна дописывать и не должна оставлять хвост прежней версии)", got, "вторая версия")
++	}
++}
++
++// assertNoTempLeftovers — временный файл записи лежит в том же каталоге, что и объект (rename
++// атомарен только в пределах одной ФС), поэтому утечка .tmp видна прямо в каталоге архива.
++// Мусор из них опасен тем, что его не считает объектом ни реестр, ни приёмка: он просто копится.
++func assertNoTempLeftovers(t *testing.T, dir string) {
++	t.Helper()
++	leftovers, err := filepath.Glob(filepath.Join(dir, "*.tmp"))
++	if err != nil {
++		t.Fatalf("Glob %s: %v", dir, err)
++	}
++	if len(leftovers) != 0 {
++		t.Errorf("после Put в %s остались временные файлы: %v", dir, leftovers)
++	}
++}

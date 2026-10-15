@@ -1,0 +1,14 @@
+# Review package: ff46259..5349d6b
+
+## Commits
+5349d6b cbr: mo_br test fixture (3 sheets of full.xlsx)
+
+## Files changed
+ cbr/testdata/mo_br_full.xlsx | Bin 0 -> 55237 bytes
+ 1 file changed, 0 insertions(+), 0 deletions(-)
+
+## Diff
+diff --git a/cbr/testdata/mo_br_full.xlsx b/cbr/testdata/mo_br_full.xlsx
+new file mode 100644
+index 0000000..81efd88
+Binary files /dev/null and b/cbr/testdata/mo_br_full.xlsx differ

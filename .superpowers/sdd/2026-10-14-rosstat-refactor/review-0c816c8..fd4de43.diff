@@ -1,0 +1,674 @@
+# Review package: 0c816c8759a10f5c8aa5a016019c13c98b697b79..fd4de4385daa082e946db62b32a2e2797e40ee45
+
+## Commits
+fd4de43 plan: salaries_mes expects 421 points incl. footnote-marked 2022 values
+b4e4a9e fix salaries_mes: read footnote-marked 2022 values as series points
+bad89b7 fix salaries_mes: raw cell values, skip no-data zeros, stable series name
+
+## Files changed
+ .../plans/2026-10-14-rosstat-refactor.md           |   5 +-
+ rosstat/salaries_mes.go                            | 182 +++++++++++++-------
+ rosstat/salaries_mes_test.go                       | 187 +++++++++++++++++++++
+ rosstat/series_meta.go                             |   2 +-
+ rosstat/series_meta_test.go                        |  80 +++++++--
+ 5 files changed, 375 insertions(+), 81 deletions(-)
+
+## Diff
+diff --git a/docs/superpowers/plans/2026-10-14-rosstat-refactor.md b/docs/superpowers/plans/2026-10-14-rosstat-refactor.md
+index 57a6999..3a56d41 100644
+--- a/docs/superpowers/plans/2026-10-14-rosstat-refactor.md
++++ b/docs/superpowers/plans/2026-10-14-rosstat-refactor.md
+@@ -248,22 +248,23 @@ git commit -m "rosstat: real source fixtures in testdata/, drop legacy data dir"
+ 
+ - [ ] **Step 1: Выяснить фактическую разметку по фикстуре**
+ 
+ Лист `Лист1`: A1 — заголовок, строка 5 — шапка (B «В среднем за год», C «В среднем за кварталы», D–F пусты, **G…R = Январь…Декабрь**), строки 8… — данные (A = год, у поздних лет с суффиксом `2026(2)`), строка «… данных не имеется» обрывает лист. Числовой формат данных — `#,##0`, поэтому значения надо читать сырыми.
+ 
+ - [ ] **Step 2: Написать падающий тест `rosstat/salaries_mes_test.go`**
+ 
+ Общий харнесс `appendRecorder` (подмена `driver.Batch`: собирает `[]appendedRow{series, date, value}`) вынести в `rosstat/series_meta_test.go` — его используют T5–T7. Тесты:
+ 
+ ```go
+-func TestSalariesMesReadsFixture(t *testing.T)        // точек 418 (в файле 418 ненулевых числовых ячеек: 6 нулей января–июня 1991 и 5 пустых августа–декабря 2026 отброшены); ряд один — salariesMesSeriesName
++func TestSalariesMesReadsFixture(t *testing.T)        // точек 421: 418 ненулевых числовых ячеек + 3 текстовые со сноской («62 470(2)» — октябрь–декабрь 2022, значения ряда); отброшены 6 нулей января–июня 1991 и 5 пустых августа–декабря 2026; ряд один — salariesMesSeriesName
+ func TestSalariesMesSkipsZeroCells(t *testing.T)      // среди точек нет value == 0 (январь–июнь 1991 в источнике — «данных не имеется»)
++func TestSalariesMesReadsFootnoteCells(t *testing.T)  // 2022-10 → 2022-11-01 = 62470; 2022-11 → 2022-12-01 = 63060; 2022-12 → 2023-01-01 = 88468
+ func TestSalariesMesSpotValues(t *testing.T)          // 1992-01 → дата 1992-02-01, значение 1; 2026-06 → дата 2026-07-01, значение 114743
+ func TestSalariesMesSeriesMetaCoversParsedRows(t *testing.T) // двусторонний контракт с salariesMesSeriesMeta
+ func TestSalariesMesMissingSheetFails(t *testing.T)   // пустая книга → ошибка, в тексте имя таблицы, в батче 0 строк
+ func TestSalariesMesFindLink(t *testing.T)            // util.FindLink(testdata/salaries_page.html, salariesMesLinkSelector) → href с "tab1-zpl"
+ ```
+ 
+ - [ ] **Step 3: Запустить и убедиться, что падает**
+ 
+ Run: `go test ./rosstat/ -run TestSalariesMes -v`
+ Expected: FAIL — значения вроде `"103,612"`; `strconv.ParseFloat` возвращает ошибку разбора.
+@@ -534,21 +535,21 @@ Run: `grep -rn "gocolly\|fmt\.Print" --include=*.go rosstat/`
+ Expected: пусто.
+ 
+ - [ ] **Step 3: Прогнать четыре импортёра по одному**
+ 
+ Run: `make import STAT=rosstat_ipc_mes`, затем `rosstat_ipc_weeks`, `rosstat_salaries_mes`, `rosstat_vvp_kvartal`.
+ Expected: rc=0 у всех; новые таблицы создаются **рядом** со старыми, `v_model_inputs` продолжает читать старые.
+ 
+ - [ ] **Step 4: Сверить состав и данные**
+ 
+ Run (через MCP по витрине, сырые закрыты) и записать факты: число рядов и строк по каждому из четырёх источников, крайние даты.
+-Ожидание: `rosstat_ipc_mes` — 4 ряда / 1716 строк (имена рядов новые, значения совпадают с базовой линией); `rosstat_ipc_weeks` — 128 рядов / 25691 строка; `rosstat_salaries_mes` — 1 ряд, 418 точек, 1991-07-01…2026-07-01 (нулей января–июня 1991 нет); `rosstat_vvp_kvartal` — 5 рядов, 302 точки, с 2011-04-01 по 2026-07-01 (2 квартал 2026).
++Ожидание: `rosstat_ipc_mes` — 4 ряда / 1716 строк (имена рядов новые, значения совпадают с базовой линией); `rosstat_ipc_weeks` — 128 рядов / 25691 строка; `rosstat_salaries_mes` — 1 ряд, 421 точка, 1991-08-01…2026-08-01 (нулей января–июня 1991 нет; дата точки — 1-е число месяца, следующего за отчётным, поэтому июль 1991 записан на 1991-08-01, а июль 2026 — на 2026-08-01); `rosstat_vvp_kvartal` — 5 рядов, 302 точки, с 2011-04-01 по 2026-07-01 (2 квартал 2026).
+ 
+ - [ ] **Step 5: Spot-сверка с публикацией Росстата**
+ 
+ Сверить и записать: средняя номинальная зарплата за июнь 2026 (из `salaries_mes`), ВВП в текущих ценах за 1кв и 2кв 2026 (лист «2»), ИФО ВВП за те же кварталы (лист «12»). Источник сверки — открытая публикация Росстата (страница рынка труда / национальных счётов).
+ 
+ - [ ] **Step 6: Повтор — no-op**
+ 
+ Run: `make import STAT=rosstat_ipc_mes`, `rosstat_salaries_mes`, `rosstat_vvp_kvartal`
+ Expected: `no-op, версия … точек на месте` без скачивания; `rosstat_ipc_weeks` — идемпотентный повтор, счётчики в витрине не меняются.
+ 
+diff --git a/rosstat/salaries_mes.go b/rosstat/salaries_mes.go
+index 28220f5..eb435b8 100644
+--- a/rosstat/salaries_mes.go
++++ b/rosstat/salaries_mes.go
+@@ -1,145 +1,205 @@
+ package rosstat
+ 
+ import (
+ 	"context"
+ 	"fmt"
+-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+-	"github.com/gocolly/colly/v2"
+-	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+-	log "github.com/sirupsen/logrus"
+-	"github.com/xuri/excelize/v2"
+ 	"strconv"
+ 	"strings"
+ 	"time"
++
++	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
++	"github.com/kmlebedev/clickhouse-import-rosstat/util"
++	"github.com/xuri/excelize/v2"
+ )
+ 
+ const (
+ 	// Рынок труда, занятость и заработная плата https://rosstat.gov.ru/labor_market_employment_salaries
+ 	// Среднемесячная номинальная начисленная заработная плата работников в целом по экономике Российской Федерации
+ 	// Имя файла содержит месяц и год (tab1-zpl_ММ-ГГГГ.xlsx) и меняется при обновлении,
+ 	// поэтому ссылка берётся со страницы.
+ 	rosstatSalariesMesTable = "rosstat_salaries_mes"
+ 	salariesMesDdl          = `CREATE TABLE IF NOT EXISTS %s (
+ 				  name LowCardinality(String)
+ 				, date Date
+ 				, salary Float32
+ 			) ENGINE = ReplacingMergeTree ORDER BY (name, date);
+ 		`
+ 	salariesMesField      = "1991"
+ 	salariesMesYearStart  = 1991
+ 	salariesMesTimeLayout = "2006-01"
++	// salariesMesLinkSelector — селектор ссылки на актуальный xlsx: константа рядом с
++	// импортёром, а не литерал в теле функции (§4.5) — тот же селектор проверяет тест на
++	// HTML-фикстуре.
++	salariesMesLinkSelector = `a[href*="tab1-zpl"]`
++	// salariesMesMonthColumn — индекс первой колонки месяцев. Лист «Лист1» устроен так:
++	// A — год, B — «В среднем за год», C–F — «В среднем за кварталы», G…R — январь…декабрь,
++	// поэтому row[6:] — ровно 12 месяцев, а строка короче колонки января (в выгрузке это
++	// «… данных не имеется») обрывает таблицу листа.
++	salariesMesMonthColumn = 6
++	// salariesMesSeriesName — стабильное имя ряда, объявленное кодом (§6.8): заголовок
++	// источника («Среднемесячная номинальная начисленная заработная плата работников по
++	// полному кругу организаций», A1; годы выгрузки — в A2) меняется при обновлении файла,
++	// и ряд из заголовка оборвался бы на первой же редакции. Значение — сегодняшний
++	// заголовок листа «Лист1»; в каталоге ряд записан литералом независимо (series_meta.go),
++	// а совпадение двух записей проверяют тесты.
++	salariesMesSeriesName = "Среднемесячная номинальная начисленная заработная плата работников по полному кругу организаций"
+ 	// salariesMesCountPoints — количественный чек версии (спека §3.5): число точек своего
+ 	// ряда. Литерал, как и таблица: запрос — часть утверждения «эти точки мои». FINAL
+ 	// обязателен — иначе count() считал бы несмёрженные части.
+ 	salariesMesCountPoints = "SELECT count() FROM rosstat_salaries_mes FINAL"
+ )
+ 
+-// getSalariesMesXlsDataUrl ищет ссылку на актуальный tab1-zpl_*.xlsx на странице
+-// рынка труда Росстата.
+-func getSalariesMesXlsDataUrl() (url string) {
+-	c := colly.NewCollector()
+-	c.SetClient(util.HttpClient)
+-	c.OnHTML(`a[href*="tab1-zpl"]`, func(e *colly.HTMLElement) {
+-		if url == "" {
+-			url = fmt.Sprintf("%s%s", rosstatUrl, e.Attr("href"))
+-			log.Infof("href url %s", url)
+-		}
+-	})
+-	if err := c.Visit(fmt.Sprintf("%s/labor_market_employment_salaries", rosstatUrl)); err != nil {
+-		log.Errorf("Visit %v+", err)
++// getSalariesMesXlsDataUrl возвращает адрес актуального tab1-zpl_*.xlsx со страницы рынка
++// труда Росстата: имя файла содержит месяц и год (tab1-zpl_ММ-ГГГГ.xlsx) и меняется при
++// обновлении, поэтому ссылка берётся со страницы. Транспорт — через util (§4.1), а ошибка
++// не проглатывается (§4.4): без ссылки импорт обязан упасть до записи в БД, а не писать
++// «0 строк» по устаревшему адресу.
++func getSalariesMesXlsDataUrl() (string, error) {
++	pageUrl := fmt.Sprintf("%s/labor_market_employment_salaries", rosstatUrl)
++	page, err := util.GetPage(pageUrl)
++	if err != nil {
++		return "", fmt.Errorf("salariesMes: %s: %w", pageUrl, err)
++	}
++	href, err := util.FindLink(page, salariesMesLinkSelector)
++	if err != nil {
++		return "", fmt.Errorf("salariesMes: ссылка на tab1-zpl_*.xlsx не найдена на %s: %w", pageUrl, err)
+ 	}
+-	c.Wait()
+-	return url
++	return rosstatUrl + href, nil
+ }
+ 
+ type SalariesMesStat struct {
+ 	util.ClickHouseImport
+ }
+ 
+-func parseSalariesMes(xlsx *excelize.File) (table *[][]string, err error) {
+-	table = new([][]string)
++// salariesMesPoint — точка ряда: значение месяца и дата её записи — 1-е число месяца,
++// следующего за отчётным (AddDate(0, 1, 0)).
++type salariesMesPoint struct {
++	date  time.Time
++	value float64
++}
++
++// salariesMesValue разбирает ячейку месяца. point == false — ячейка точкой не является:
++// пустая ячейка и литеральный 0 в этом источнике означают «данных не имеется» (§6.7; нули
++// января–июня 1991 квартальные колонки той же строки помечают «…»). Значение, помеченное
++// сноской источника («62 470(2)» — октябрь–декабрь 2022), читается точкой: это
++// опубликованное значение того же ряда, где пробел — разделитель тысяч, а «(2)» — номер
++// сноски о покрытии (без учёта статистической информации по ДНР, ЛНР, Запорожской и
++// Херсонской областям), а не другой показатель. Пропуск такой ячейки оставил бы дыру в три
++// месяца головного ряда. Любой другой текст — ошибка: «значение не число там, где ожидалось
++// число» (§6.4).
++func salariesMesValue(cell string) (value float64, point bool, err error) {
++	cell = strings.TrimSpace(cell)
++	if cell == "" {
++		return 0, false, nil
++	}
++	value, err = strconv.ParseFloat(cell, 64)
++	if err == nil {
++		return value, value != 0, nil
++	}
++	footnote, ok := salariesMesFootnoteValue(cell)
++	if !ok {
++		return 0, false, fmt.Errorf("значение ячейки %q не число: %w", cell, err)
++	}
++	return footnote, footnote != 0, nil
++}
++
++// salariesMesFootnoteValue разбирает ячейку, у которой значение записано текстом со сноской
++// источника: «62 470(2)». Разделитель тысяч — пробел (в том числе неразрывный), сноска —
++// «(N)» в конце ячейки.
++func salariesMesFootnoteValue(cell string) (float64, bool) {
++	i := strings.LastIndex(cell, "(")
++	if i < 1 || !strings.HasSuffix(cell, ")") {
++		return 0, false
++	}
++	value, err := strconv.ParseFloat(strings.Join(strings.Fields(cell[:i]), ""), 64)
++	return value, err == nil
++}
++
++// parseSalariesMes читает листы книги и отдаёт точки ряда. Ячейки берутся сырыми
++// значениями (§6.2): числовой формат выгрузки — `#,##0`, и форматированная строка дала бы
++// «1,074» вместо 1074 (а в локали с запятой — и ошибку разбора; на ней прежний разбор и
++// падал). Имя ряда — константа (§6.8), заголовок листа не читается вовсе.
++func parseSalariesMes(xlsx *excelize.File) ([]salariesMesPoint, error) {
++	var points []salariesMesPoint
+ 	for _, sheet := range xlsx.GetSheetList() {
+-		var rows [][]string
+-		if rows, err = xlsx.GetRows(sheet); err != nil {
+-			return nil, err
++		rows, err := xlsx.GetRows(sheet, excelize.Options{RawCellValue: true})
++		if err != nil {
++			return nil, fmt.Errorf("%s: лист %q: %w", rosstatSalariesMesTable, sheet, err)
+ 		}
+-		fieldFound := 0
+-		// Строки с годами
++		// Якорь — строка первого года в первой колонке; год остальных строк считается от
++		// него смещением, а не полем каждой строки (§6.3). Год у поздних лет несёт сноску
++		// («2026(2)»), поэтому строку не сверяют с годом целиком — только якорь.
++		anchor := -1
+ 		for i, row := range rows {
+ 			if len(row) == 0 {
+ 				continue
+ 			}
+ 			if row[0] == salariesMesField {
+-				fieldFound = i
++				anchor = i
+ 			}
+-			if fieldFound == 0 {
++			if anchor < 0 {
+ 				continue
+ 			}
+-			if len(row) < 7 {
++			// «… данных не имеется» и сноски внизу листа короче колонки января: таблица кончилась.
++			if len(row) <= salariesMesMonthColumn {
+ 				break
+ 			}
+-			mes := 0
+-			// Колонки с месяцами и пропуском кварталов
+-			for _, cell := range row[6:] {
+-				mes += 1
+-				if cell == "" {
++			year := salariesMesYearStart + i - anchor
++			for mes, cell := range row[salariesMesMonthColumn:] {
++				value, point, err := salariesMesValue(cell)
++				if err != nil {
++					return nil, fmt.Errorf("%s: %d-%02d: %w", rosstatSalariesMesTable, year, mes+1, err)
++				}
++				if !point {
+ 					continue
+ 				}
+-				// fmt.Printf("year %d mes %02d cell %s\n", salariesMesYearStart+i-fieldFound, mes, cell)
+-				salary := strings.Split(cell, "(")[0]
+-				if _, err = strconv.ParseFloat(salary, 32); err != nil {
+-					return nil, err
++				month, err := time.Parse(salariesMesTimeLayout, fmt.Sprintf("%d-%02d", year, mes+1))
++				if err != nil {
++					return nil, fmt.Errorf("%s: %d-%02d: %w", rosstatSalariesMesTable, year, mes+1, err)
+ 				}
+-				//                                name           year
+-				*table = append(*table, []string{rows[0][0], strconv.Itoa(salariesMesYearStart + i - fieldFound), fmt.Sprintf("%02d", mes), salary})
++				points = append(points, salariesMesPoint{date: month.AddDate(0, 1, 0), value: value})
+ 			}
+ 		}
+ 	}
+-	return table, nil
++	if len(points) == 0 {
++		return nil, fmt.Errorf("%s: разбор дал 0 точек — якорь %q не найден или выгрузка пуста", rosstatSalariesMesTable, salariesMesField)
++	}
++	return points, nil
+ }
+ 
+-// salariesMesImport разбирает файл и пишет точки в batch: семантика прежних export() и цикла
+-// вставки Import сохранена дословно — имя ряда из первой ячейки листа, дата «год-месяц»
+-// строки, значение — зарплата, дата сдвинута на 1-е число месяца, следующего за отчётным
+-// (AddDate(0, 1, 0)).
++// salariesMesImport разбирает файл и пишет точки в batch. Семантика прежних export() и цикла
++// вставки Import сохранена: имя ряда — константа salariesMesSeriesName (§6.8), дата «год-месяц»
++// строки сдвинута на 1-е число следующего месяца, значение — зарплата месяца. Повторный
++// ParseFloat убран: разбор отдаёт уже разобранные значения.
+ func salariesMesImport(xlsx *excelize.File, batch driver.Batch) error {
+-	table, err := parseSalariesMes(xlsx)
++	points, err := parseSalariesMes(xlsx)
+ 	if err != nil {
+ 		return err
+ 	}
+-	for _, row := range *table {
+-		// Calling Parse() method with its parameters
+-		mes, err := time.Parse(salariesMesTimeLayout, fmt.Sprintf("%s-%s", row[1], row[2]))
+-		if err != nil {
+-			return err
+-		}
+-		salary, err := strconv.ParseFloat(row[3], 32)
+-		if err != nil {
+-			return err
+-		}
+-		if err = batch.Append(row[0], mes.AddDate(0, 1, 0), float32(salary)); err != nil {
++	for _, point := range points {
++		if err = batch.Append(salariesMesSeriesName, point.date, float32(point.value)); err != nil {
+ 			return err
+ 		}
+ 	}
+ 	return nil
+ }
+ 
+ // Import берёт адрес актуального xlsx со страницы рынка труда Росстата: имя файла содержит
+ // месяц и год (tab1-zpl_ММ-ГГГГ.xlsx) и меняется при обновлении, а сетевое обращение в
+ // init() запрещено (ARCHITECTURE.md §8.6). Дальше — полный цикл шаблона: DDL → префлайт по
+ // HEAD (файл обновляется раз в месяц, шаг расписания — недельный) → точки → производные
+ // (AfterImport) → строка версии.
+ func (s *SalariesMesStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+-	xlsDataUrl := getSalariesMesXlsDataUrl()
+-	if xlsDataUrl == "" {
+-		return count, fmt.Errorf("salariesMes: не найдена ссылка на tab1-zpl_*.xlsx на %s/labor_market_employment_salaries", rosstatUrl)
++	xlsDataUrl, err := getSalariesMesXlsDataUrl()
++	if err != nil {
++		return count, err
+ 	}
+ 	s.DataUrl = xlsDataUrl
+ 	return s.ClickHouseImport.Import(ctx, conn)
+ }
+ 
+ // salariesMesImporter — среднемесячная начисленная зарплата по РФ; регистрируется реестром rosstat/importers.go.
+ var salariesMesImporter = &SalariesMesStat{ClickHouseImport: util.ClickHouseImport{
+ 	TableName:              rosstatSalariesMesTable,
+ 	CreateTable:            []string{salariesMesDdl},
+ 	ImportFunc:             salariesMesImport,
+diff --git a/rosstat/salaries_mes_test.go b/rosstat/salaries_mes_test.go
+new file mode 100644
+index 0000000..8437d89
+--- /dev/null
++++ b/rosstat/salaries_mes_test.go
+@@ -0,0 +1,187 @@
++package rosstat
++
++import (
++	"os"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/kmlebedev/clickhouse-import-rosstat/util"
++	"github.com/xuri/excelize/v2"
++)
++
++// openSalariesMesFixture открывает реальную выгрузку Росстата (testdata/salaries_mes.xlsx).
++// Фикстура — не синтетическая книга (§11.1): в ней те же листы, шапка, якорь и числовой
++// формат `#,##0`, на которых импортёр падал в продакшене.
++func openSalariesMesFixture(t *testing.T) *excelize.File {
++	t.Helper()
++	xlsx, err := excelize.OpenFile("testdata/salaries_mes.xlsx")
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { _ = xlsx.Close() })
++	return xlsx
++}
++
++// importSalariesMesFixture прогоняет импортёр по фикстуре и отдаёт записанные точки:
++// ни базы, ни сети тесту не нужно (§11.6).
++func importSalariesMesFixture(t *testing.T) []appendedRow {
++	t.Helper()
++	rec := &appendRecorder{}
++	if err := salariesMesImport(openSalariesMesFixture(t), rec); err != nil {
++		t.Fatalf("salariesMesImport: %v", err)
++	}
++	return rec.rows
++}
++
++func TestSalariesMesReadsFixture(t *testing.T) {
++	rows := importSalariesMesFixture(t)
++	// 421 — число ненулевых ячеек месяцев в выгрузке (июль 1991 — июль 2026): 6 точек 1991
++	// года + 408 за 1992–2025 + 7 за январь–июль 2026. Шесть нулей января–июня 1991
++	// («данных не имеется») и пять пустых августа–декабря 2026 точками не становятся.
++	if len(rows) != 421 {
++		t.Fatalf("точек %d, ожидалось 421", len(rows))
++	}
++	for _, row := range rows {
++		if row.series != salariesMesSeriesName {
++			t.Fatalf("%s: ряд %q, ожидался %q", row.date.Format("2006-01-02"), row.series, salariesMesSeriesName)
++		}
++	}
++	// Границы серии: первая точка — июль 1991 (дата сдвинута на 1 августа 1991), последняя —
++	// июль 2026 (1 августа 2026).
++	if want := time.Date(1991, 8, 1, 0, 0, 0, 0, time.UTC); !rows[0].date.Equal(want) {
++		t.Errorf("первая точка %s, ожидалась %s", rows[0].date.Format("2006-01-02"), want.Format("2006-01-02"))
++	}
++	last := rows[len(rows)-1]
++	if want := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC); !last.date.Equal(want) {
++		t.Errorf("последняя точка %s, ожидалась %s", last.date.Format("2006-01-02"), want.Format("2006-01-02"))
++	}
++}
++
++func TestSalariesMesSkipsZeroCells(t *testing.T) {
++	rows := importSalariesMesFixture(t)
++	for _, row := range rows {
++		if row.value == 0 {
++			t.Errorf("%s: записана нулевая точка — в источнике нуль означает «данных не имеется»", row.date.Format("2006-01-02"))
++		}
++	}
++	// Первая точка — июль 1991: нули января–июня 1991 пропущены, дата сдвинута на месяц
++	// вперёд (июль 1991 записан на 1 августа 1991).
++	first := rows[0]
++	for _, row := range rows {
++		if row.date.Before(first.date) {
++			first = row
++		}
++	}
++	if want := time.Date(1991, 8, 1, 0, 0, 0, 0, time.UTC); !first.date.Equal(want) {
++		t.Errorf("первая точка %s, ожидалась %s", first.date.Format("2006-01-02"), want.Format("2006-01-02"))
++	}
++}
++
++func TestSalariesMesSpotValues(t *testing.T) {
++	rows := importSalariesMesFixture(t)
++	spots := []struct {
++		date  time.Time
++		value float32
++	}{
++		// Январь 1992 (A9 = 1992, G9 = 1) записан на 1 февраля 1992 — сдвиг AddDate(0, 1, 0).
++		{time.Date(1992, 2, 1, 0, 0, 0, 0, time.UTC), 1},
++		// Июнь 2026 (R43 = 114743) записан на 1 июля 2026 (последняя точка — июль 2026).
++		{time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC), 114743},
++	}
++	for _, spot := range spots {
++		found := false
++		for _, row := range rows {
++			if !row.date.Equal(spot.date) {
++				continue
++			}
++			found = true
++			if row.value != spot.value {
++				t.Errorf("%s: значение %v, ожидалось %v", spot.date.Format("2006-01-02"), row.value, spot.value)
++			}
++		}
++		if !found {
++			t.Errorf("точка %s не найдена", spot.date.Format("2006-01-02"))
++		}
++	}
++}
++
++// TestSalariesMesReadsFootnoteCells — значения октября–декабря 2022 г. источник отдаёт
++// текстом со сноской («62 470(2)»: пробел — разделитель тысяч, «(2)» — номер сноски о
++// покрытии). Это опубликованные значения того же ряда, и они обязаны быть точками: пропуск
++// оставил бы дыру в три месяца головного ряда зарплат.
++func TestSalariesMesReadsFootnoteCells(t *testing.T) {
++	rows := importSalariesMesFixture(t)
++	spots := []struct {
++		date  time.Time
++		value float32
++	}{
++		// P39 = «62 470(2)» — октябрь 2022, точка на 1 ноября 2022.
++		{time.Date(2022, 11, 1, 0, 0, 0, 0, time.UTC), 62470},
++		// Q39 = «63 060(2)» — ноябрь 2022, точка на 1 декабря 2022.
++		{time.Date(2022, 12, 1, 0, 0, 0, 0, time.UTC), 63060},
++		// R39 = «88 468(2)» — декабрь 2022, точка на 1 января 2023.
++		{time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC), 88468},
++	}
++	for _, spot := range spots {
++		found := false
++		for _, row := range rows {
++			if !row.date.Equal(spot.date) {
++				continue
++			}
++			found = true
++			if row.value != spot.value {
++				t.Errorf("%s: значение %v, ожидалось %v", spot.date.Format("2006-01-02"), row.value, spot.value)
++			}
++		}
++		if !found {
++			t.Errorf("точка %s не найдена", spot.date.Format("2006-01-02"))
++		}
++	}
++}
++
++// TestSalariesMesSeriesMetaCoversParsedRows — двусторонний контракт каталога (§11.4):
++// ряд, имя которого объявлено кодом (§6.8), обязан быть описан в salariesMesSeriesMeta,
++// а каждый описанный ряд — разобран. Имя ряда в каталоге записано литералом, а не ссылкой
++// на salariesMesSeriesName: иначе тест сравнивал бы константу с самой собой.
++func TestSalariesMesSeriesMetaCoversParsedRows(t *testing.T) {
++	rows := importSalariesMesFixture(t)
++	names := make([]string, 0, len(rows))
++	for _, row := range rows {
++		names = append(names, row.series)
++	}
++	requireParsedDescribed(t, names, describedSeries(t, salariesMesSeriesMeta))
++}
++
++// TestSalariesMesMissingSheetFails — fail-fast (§6.4): книга без данных — ошибка с именем
++// таблицы, а не «0 строк» и не пустой результат.
++func TestSalariesMesMissingSheetFails(t *testing.T) {
++	rec := &appendRecorder{}
++	err := salariesMesImport(newTestWorkbook(t), rec)
++	if err == nil {
++		t.Fatal("пустая книга: ожидалась ошибка, получен nil")
++	}
++	if !strings.Contains(err.Error(), rosstatSalariesMesTable) {
++		t.Errorf("в ошибке нет имени таблицы %s: %v", rosstatSalariesMesTable, err)
++	}
++	if len(rec.rows) != 0 {
++		t.Errorf("в батч записано %d строк, ожидалось 0", len(rec.rows))
++	}
++}
++
++// TestSalariesMesFindLink — селектор ссылки проверяется на HTML-фикстуре тем же
++// util.FindLink, что и в Import() (§11.3): ссылка на файл ищется, а не собирается из
++// угаданного имени tab1-zpl_ММ-ГГГГ.xlsx.
++func TestSalariesMesFindLink(t *testing.T) {
++	page, err := os.ReadFile("testdata/salaries_page.html")
++	if err != nil {
++		t.Fatal(err)
++	}
++	href, err := util.FindLink(page, salariesMesLinkSelector)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !strings.Contains(href, "tab1-zpl") {
++		t.Errorf("href %q не содержит tab1-zpl", href)
++	}
++}
+diff --git a/rosstat/series_meta.go b/rosstat/series_meta.go
+index 69831b5..d50398b 100644
+--- a/rosstat/series_meta.go
++++ b/rosstat/series_meta.go
+@@ -128,21 +128,21 @@ var vvpKvartalSeriesMeta = []util.SeriesMeta{
+ }
+ 
+ var salariesMesSeriesMeta = []util.SeriesMeta{
+ 	{
+ 		Source:      rosstatSource,
+ 		Series:      "Среднемесячная номинальная начисленная заработная плата работников по полному кругу организаций",
+ 		Title:       "Среднемесячная номинальная начисленная зарплата, РФ",
+ 		Unit:        "руб. в месяц (до 1998 г. — тыс. руб.)",
+ 		Frequency:   "M",
+ 		Origin:      "rosstat.gov.ru/labor_market_employment_salaries, файл tab1-zpl_*.xlsx, лист «Лист1»; строка = год, колонки «Январь»…«Декабрь»",
+-		Description: "Среднемесячная номинальная начисленная зарплата работников в целом по экономике РФ, рубли в месяц (до 1998 г. — тыс. руб., деноминация 1:1000). Значение — за месяц, в колонке месяца. Дата в таблице — 1-е число месяца, следующего за отчётным (зарплата за январь записана на 1 февраля). Реальный рост: номинальная зарплата / ИПЦ (rosstat_ipc_mes) с поправкой на базу. Название меняется при обновлении файла Росстата.",
++		Description: "Среднемесячная номинальная начисленная зарплата работников в целом по экономике РФ, рубли в месяц (до 1998 г. — тыс. руб., деноминация 1:1000). Значение — за месяц, в колонке месяца. Дата в таблице — 1-е число месяца, следующего за отчётным (зарплата за январь записана на 1 февраля). Реальный рост: номинальная зарплата / ИПЦ (rosstat_ipc_mes) с поправкой на базу. Нулевые ячейки источника (январь–июнь 1991 — «данных не имеется») точками не записываются: пропуск в начале ряда означает отсутствие данных, а не нулевую зарплату. Значения октября–декабря 2022 г. источник помечает сноской 2 («без учёта статистической информации по ДНР, ЛНР, Запорожской и Херсонской областям») и отдаёт текстом («62 470(2)»); они записаны как есть — сноска это оговорка о покрытии, а не другой показатель. Имя ряда объявлено кодом и от заголовка файла не зависит.",
+ 	},
+ }
+ 
+ func ipcWeeksSeriesMeta() []util.SeriesMeta {
+ 	meta := make([]util.SeriesMeta, 0, len(ipcWeeksProducts))
+ 	for _, product := range ipcWeeksProducts {
+ 		meta = append(meta, util.SeriesMeta{
+ 			Source:      rosstatSource,
+ 			Series:      product,
+ 			Title:       product,
+diff --git a/rosstat/series_meta_test.go b/rosstat/series_meta_test.go
+index a433b30..8378ea3 100644
+--- a/rosstat/series_meta_test.go
++++ b/rosstat/series_meta_test.go
+@@ -1,19 +1,82 @@
+ package rosstat
+ 
+ import (
++	"fmt"
+ 	"testing"
++	"time"
+ 
++	"github.com/ClickHouse/clickhouse-go/v2/lib/column"
++	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+ 	"github.com/xuri/excelize/v2"
+ )
+ 
++// appendRecorder — подмена driver.Batch для офлайн-тестов импортёров (§11.6): собирает
++// вызовы Append, чтобы тест видел точки без базы. Ошибка записи не глотается: настроенная
++// appendErr возвращается из Append — тест проверяет, что импортёр её вернул вызывающему,
++// а не продолжил писать дальше.
++type appendRecorder struct {
++	rows      []appendedRow
++	appendErr error
++}
++
++// appendedRow — один вызов Append: ряд, дата и значение точки.
++type appendedRow struct {
++	series string
++	date   time.Time
++	value  float32
++}
++
++var _ driver.Batch = (*appendRecorder)(nil)
++
++func (r *appendRecorder) Append(v ...any) error {
++	if r.appendErr != nil {
++		return r.appendErr
++	}
++	if len(v) != 3 {
++		return fmt.Errorf("appendRecorder: Append с %d аргументами, ожидалось 3 (ряд, дата, значение)", len(v))
++	}
++	series, ok := v[0].(string)
++	if !ok {
++		return fmt.Errorf("appendRecorder: имя ряда %T, ожидалась строка", v[0])
++	}
++	date, ok := v[1].(time.Time)
++	if !ok {
++		return fmt.Errorf("appendRecorder: дата %T, ожидалось time.Time", v[1])
++	}
++	value, ok := v[2].(float32)
++	if !ok {
++		return fmt.Errorf("appendRecorder: значение %T, ожидалось float32", v[2])
++	}
++	r.rows = append(r.rows, appendedRow{series: series, date: date, value: value})
++	return nil
++}
++
++func (r *appendRecorder) Abort() error { return nil }
++
++func (r *appendRecorder) AppendStruct(any) error {
++	return fmt.Errorf("appendRecorder: AppendStruct не поддерживается")
++}
++
++func (r *appendRecorder) Column(int) driver.BatchColumn { return nil }
++
++func (r *appendRecorder) Columns() []column.Interface { return nil }
++
++func (r *appendRecorder) Flush() error { return nil }
++
++func (r *appendRecorder) Send() error { return nil }
++
++func (r *appendRecorder) IsSent() bool { return false }
++
++func (r *appendRecorder) Rows() int { return len(r.rows) }
++
+ func newTestWorkbook(t *testing.T, sheets ...string) *excelize.File {
+ 	t.Helper()
+ 	f := excelize.NewFile()
+ 	t.Cleanup(func() { _ = f.Close() })
+ 	for i, sheet := range sheets {
+ 		if i == 0 {
+ 			if err := f.SetSheetName("Sheet1", sheet); err != nil {
+ 				t.Fatal(err)
+ 			}
+ 			continue
+@@ -136,27 +199,10 @@ func TestVvpKvartalSeriesMetaCoversParsedSheets(t *testing.T) {
+ 	table, err := parseVvpKvartal(f)
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	names := make([]string, 0, len(*table))
+ 	for _, r := range *table {
+ 		names = append(names, r.name)
+ 	}
+ 	requireParsedDescribed(t, names, describedSeries(t, vvpKvartalSeriesMeta))
+ }
+-
+-func TestSalariesMesSeriesMetaCoversParsedSheet(t *testing.T) {
+-	f := newTestWorkbook(t, "Лист1")
+-	setSheetRows(t, f, "Лист1", [][]any{
+-		{salariesMesSeriesMeta[0].Series},
+-		{salariesMesField, "", "", "", "", "", "202", "203"},
+-	})
+-	table, err := parseSalariesMes(f)
+-	if err != nil {
+-		t.Fatal(err)
+-	}
+-	names := make([]string, 0, len(*table))
+-	for _, row := range *table {
+-		names = append(names, row[0])
+-	}
+-	requireParsedDescribed(t, names, describedSeries(t, salariesMesSeriesMeta))
+-}

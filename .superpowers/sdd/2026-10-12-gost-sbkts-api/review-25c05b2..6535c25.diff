@@ -1,0 +1,394 @@
+# Review package: 25c05b2..HEAD
+
+## Commits
+6535c25 craw: fail only when a day is entirely invalid
+4115560 craw: accept plain-date publication form and surface invalid counts
+
+## Files changed
+ craw/gost.go          | 39 ++++++++++++-----------
+ craw/gost_api.go      | 25 ++++++++++-----
+ craw/gost_api_test.go | 22 +++++++++++--
+ craw/gost_test.go     | 87 +++++++++++++++++++++++++++++++++++++++++++++------
+ 4 files changed, 135 insertions(+), 38 deletions(-)
+
+## Diff
+diff --git a/craw/gost.go b/craw/gost.go
+index 1c433e8..5dba1c2 100644
+--- a/craw/gost.go
++++ b/craw/gost.go
+@@ -366,44 +366,47 @@ func gostRunDays(ctx context.Context, conn driver.Conn, api *gostAPI, days []tim
+ 			log.Errorf("%s: день %s не прочитан: %v", gostTable, label, err)
+ 			failed = append(failed, fmt.Sprintf("%s: %v", label, err))
+ 			continue
+ 		}
+ 		if slice.Count == 0 {
+ 			// Пустой день — норма (публикаций не было): батч не открываем, но и это факт дня.
+ 			log.Infof("%s: день %s: публикаций нет", gostTable, label)
+ 			continue
+ 		}
+ 		if slice.Skipped > 0 {
+-			// Ненулевой Skipped — датчик: клиентский фильтр по дате публикации отбросил
+-			// документы, то есть ручка начала отдавать чужое окно. Резкий рост доли — смена
+-			// формата dateofpublication, и день «похудеет» молча.
+-			log.Warnf("%s: день %s: отброшено документов чужой даты публикации: %d из %d",
+-				gostTable, label, slice.Skipped, slice.Count)
++			// Разбивка обязательна: «чужой даты» — штатное окно текстового поиска, «невалидных» —
++			// поломка формата или данных, и по одному общему Skipped их не различить (у непустого
++			// дня невалидные документы иначе видны только этим счётчиком).
++			log.Warnf("%s: день %s: отброшено %d документов из %d (чужой даты: %d, невалидных: %d)",
++				gostTable, label, slice.Skipped, slice.Count, slice.Skipped-slice.Invalid, slice.Invalid)
+ 		}
+ 		if len(slice.Rows) == 0 {
+-			// Пустой срез при непустом count — две разные причины, и путать их нельзя.
+-			if slice.Invalid > 0 {
+-				// Часть документов дня не разобрана вовсе (нет даты выдачи, пуст номер, битая
+-				// дата публикации) — это поломка формата или данных, а не свойство источника;
+-				// молча пропущенный день оставил бы dagu зелёным при потерянных данных.
+-				errText := fmt.Sprintf("день %s: %d документов не разобраны (отброшено %d из %d) — проверьте поля dateofissueofcertificate/numberofcertificate/dateofpublication",
+-					label, slice.Invalid, slice.Skipped, slice.Count)
++			// Пустой срез при непустом count — отброшены все документы дня. Ошибка здесь ровно
++			// одна: не разобрался весь день, то есть поломка формата или данных, а не свойство
++			// источника. Невалидность части дня (одиночный мусорный документ) прогон не роняет.
++			if slice.Invalid == slice.Count {
++				// Ни один документ дня не разобран (нет даты выдачи, пуст номер, битая дата
++				// публикации) — это систематическая поломка, и молча пропущенный день оставил бы
++				// dagu зелёным при потерянных данных. Fail loud сохранён именно здесь.
++				errText := fmt.Sprintf("день %s: все %d документов дня невалидны — проверьте поля dateofissueofcertificate/numberofcertificate/dateofpublication",
++					label, slice.Count)
+ 				log.Errorf("%s: %s", gostTable, errText)
+ 				failed = append(failed, errText)
+ 				continue
+ 			}
+-			// Все отброшенные — документы чужой даты публикации: текстовый query ручки матчит
+-			// дату в любом поле, поэтому у дня может не быть своих публикаций, а count при этом
+-			// ненулевой. Это штатное поведение источника, а не сбой: день без публикаций не
+-			// ошибка (иначе часовой DAG краснел бы на каждом таком дне, пока окно его не проедет).
+-			log.Warnf("%s: день %s: публикаций нет — %d документов ручки относятся к другим датам публикации",
+-				gostTable, label, slice.Count)
++			// Остальное — документы чужой даты публикации: текстовый query ручки матчит дату в
++			// любом поле, поэтому у дня может не быть своих публикаций, а count при этом
++			// ненулевой, и это штатное поведение источника. Невалидные документы, если они есть,
++			// прогон не роняют: день успешен с предупреждением, но разбивка чисел обязательна —
++			// иначе одиночный мусорный документ не отличить от чужой даты.
++			log.Warnf("%s: день %s: публикаций нет — отброшено %d из %d (чужой даты: %d, невалидных: %d)",
++				gostTable, label, slice.Skipped, slice.Count, slice.Skipped-slice.Invalid, slice.Invalid)
+ 			continue
+ 		}
+ 
+ 		written, err := gostWriteDay(ctx, conn, slice.Rows)
+ 		if err != nil {
+ 			log.Errorf("%s: день %s не записан: %v", gostTable, label, err)
+ 			failed = append(failed, fmt.Sprintf("%s: запись: %v", label, err))
+ 			continue
+ 		}
+ 		total += written
+diff --git a/craw/gost_api.go b/craw/gost_api.go
+index f551999..b120e57 100644
+--- a/craw/gost_api.go
++++ b/craw/gost_api.go
+@@ -33,23 +33,26 @@ const (
+ 	// gostMaxDayCount — предохранитель от «дня-слона»: ручка не отдаёт больше окна поиска
+ 	// (~10 тыс. документов), и день сверх этого — не данные, а сломанный фильтр или
+ 	// сменившийся формат. Постранично такой день всё равно не читается.
+ 	gostMaxDayCount = 10000
+ 	// gostMaxTries — всего попыток запроса (первая и три повтора). Четырёх хватает
+ 	// пережить короткий сбой портала, а дальше ошибка должна дойти до оператора.
+ 	gostMaxTries = 4
+ 
+ 	// gostQueryDayLayout — формат query-параметра: ручка ищет по дате публикации.
+ 	gostQueryDayLayout = "02.01.2006"
+-	// gostPublicationLayout — префикс dateofpublication ("11.10.2026 00:00:00 ZE3"):
+-	// маркер пояса в строке информации не несёт, дата берётся по календарю.
+-	gostPublicationLayout = "02.01.2006 15:04:05"
++	// gostPublicationLayout — что разбирается из dateofpublication: только календарный день.
++	// Источник отдаёт две наблюдаемые формы — "11.10.2026 00:00:00 ZE3" (с временем и маркером
++	// пояса, который у всех записей одинаков и информации не несёт) и чистое "28.03.2024"; обе
++	// значат один и тот же день, поэтому время и зона не разбираются вовсе, а требуется лишь
++	// дата в начале строки.
++	gostPublicationLayout = "02.01.2006"
+ 	// gostAppIDHeader — заголовок с токеном из JS-конфига страницы реестра. Здесь имя
+ 	// заголовка, не значение: сам токен живёт только в окружении (правило 1 проекта).
+ 	gostAppIDHeader = "gtn.access.appid"
+ 	// gostAcceptHeader — что просим: без него портал может отдать HTML-страницу портала.
+ 	gostAcceptHeader = "application/json"
+ 
+ 	// gostMinYear/gostMaxYear — границы правдоподобного года выпуска: "16", "н/д" и ""
+ 	// в yearofmanufacturing значат «нет данных» и должны стать нулём, а не 16-м годом.
+ 	gostMinYear = 1900
+ 	gostMaxYear = 2100
+@@ -333,32 +336,38 @@ func gostPageCount(count int) int {
+ 	return (count + gostPageSize - 1) / gostPageSize
+ }
+ 
+ // gostMSKDate переводит миллисекунды источника в дату по Москве: источник кладёт момент
+ // UTC, а дата выдачи документа — московская (21:00 UTC = полночь следующего дня МСК).
+ // Время суток обнуляется: дата хранится и сравнивается в UTC-полуночи.
+ func gostMSKDate(ms int64) time.Time {
+ 	return time.UnixMilli(ms).UTC().Add(3 * time.Hour).Truncate(24 * time.Hour)
+ }
+ 
+-// gostParsePublicationDay разбирает dateofpublication ("11.10.2026 00:00:00 ZE3") до дня.
+-// Строка читается только до конца даты и времени: маркер пояса у всех записей одинаков и
+-// информации не несёт. Короткая или битая строка — ok=false (документ не наш).
++// gostParsePublicationDay разбирает dateofpublication до дня. Принимаются обе наблюдаемые живьём
++// формы: "11.10.2026 00:00:00 ZE3" и чистое "28.03.2024" (в июньском прогоне 2026 года такие
++// документы ручка отдавала вперемешку с обычными). Хвост после даты допускается только начиная с
++// пробела — время и маркер пояса разбирать незачем (они у всех записей одинаковы и информации не
++// несут), а мусор вида "28.03.2024xyz" остаётся невалидным. Короткая или битая строка — ok=false.
+ func gostParsePublicationDay(s string) (time.Time, bool) {
++	s = strings.TrimSpace(s)
+ 	if len(s) < len(gostPublicationLayout) {
+ 		return time.Time{}, false
+ 	}
+-	t, err := time.Parse(gostPublicationLayout, s[:len(gostPublicationLayout)])
++	day, err := time.Parse(gostPublicationLayout, s[:len(gostPublicationLayout)])
+ 	if err != nil {
+ 		return time.Time{}, false
+ 	}
+-	return t, true
++	if rest := s[len(gostPublicationLayout):]; rest != "" && !strings.HasPrefix(rest, " ") {
++		return time.Time{}, false
++	}
++	return day, true
+ }
+ 
+ // gostYear переводит год выпуска в число. В источнике это строка, причём "16", "н/д" и ""
+ // значат «нет данных»: год принимается только четырёхзначным и правдоподобным.
+ func gostYear(raw string) uint16 {
+ 	raw = strings.TrimSpace(raw)
+ 	if len(raw) != 4 {
+ 		return 0
+ 	}
+ 	year, err := strconv.Atoi(raw)
+diff --git a/craw/gost_api_test.go b/craw/gost_api_test.go
+index 3b7187a..a58ffa8 100644
+--- a/craw/gost_api_test.go
++++ b/craw/gost_api_test.go
+@@ -224,42 +224,60 @@ func TestGostMSKDate(t *testing.T) {
+ }
+ 
+ func TestGostParsePublicationDay(t *testing.T) {
+ 	cases := []struct {
+ 		name string
+ 		raw  string
+ 		want string
+ 		ok   bool
+ 	}{
+ 		{"живой формат с маркером пояса", "11.10.2026 00:00:00 ZE3", "2026-10-11", true},
+-		{"без маркера пояса", "11.10.2026 00:00:00", "2026-10-11", true},
++		{"форма с временем без маркера пояса", "11.10.2026 00:00:00", "2026-10-11", true},
++		// Чистая дата без времени и зоны — вторая наблюдаемая форма: в живом прогоне 15.06.2026
++		// ручка отдала документ с dateofpublication = "28.03.2024" среди обычных.
++		{"чистая дата", "28.03.2024", "2024-03-28", true},
++		{"чистая дата в пробелах", "  28.03.2024  ", "2024-03-28", true},
++		{"хвост без пробела — мусор", "28.03.2024xyz", "", false},
+ 		{"мусор", "мусор", "", false},
++		{"не дата нужной длины", "abcdefghij", "", false},
+ 		{"пусто", "", "", false},
+-		{"только дата без времени", "11.10.2026", "", false},
++		{"однозначный день и месяц", "8.3.2024", "", false},
+ 	}
+ 	for _, c := range cases {
+ 		t.Run(c.name, func(t *testing.T) {
+ 			got, ok := gostParsePublicationDay(c.raw)
+ 			if ok != c.ok {
+ 				t.Fatalf("gostParsePublicationDay(%q) = %s, %v, ожидалось ok=%v", c.raw, got, ok, c.ok)
+ 			}
+ 			if !ok {
+ 				if !got.IsZero() {
+ 					t.Errorf("при ok=false ожидалось нулевое время, получено %s", got)
+ 				}
+ 				return
+ 			}
+ 			if got.Format("2006-01-02") != c.want {
+ 				t.Errorf("gostParsePublicationDay(%q) = %s, ожидалось %s", c.raw, got, c.want)
+ 			}
+ 		})
+ 	}
++
++	// Обе наблюдаемые формы одной даты дают один и тот же день — так их и сравнивает клиентский
++	// фильтр дня (gostSameDay): чистая дата не должна становиться «чужой» из-за формы записи.
++	plain, okPlain := gostParsePublicationDay("28.03.2024")
++	stamped, okStamped := gostParsePublicationDay("28.03.2024 00:00:00 ZE3")
++	if !okPlain || !okStamped {
++		t.Fatalf("формы одной даты: чистая ok=%v, с временем и поясом ok=%v — обе обязаны разбираться",
++			okPlain, okStamped)
++	}
++	if !plain.Equal(stamped) {
++		t.Errorf("формы одной даты разошлись: %s и %s", plain, stamped)
++	}
+ }
+ 
+ func TestGostYear(t *testing.T) {
+ 	cases := []struct {
+ 		raw  string
+ 		want uint16
+ 	}{
+ 		{"2016", 2016},
+ 		{" 2019 ", 2019},
+ 		{"16", 0}, // двузначный год источника — не 16-й год
+diff --git a/craw/gost_test.go b/craw/gost_test.go
+index 7a76610..83b981a 100644
+--- a/craw/gost_test.go
++++ b/craw/gost_test.go
+@@ -23,22 +23,25 @@ import (
+ // appid подставной. Пинятся контракты обвязки: разбор окружения (до сети), форма схемы,
+ // включительность дневного окна, якорь since (включая пустую таблицу), дневной батч,
+ // агрегация ошибок дней и различие «дыра» / «текстовый шум» в check.
+ 
+ // gostIssueMS — миллисекунды даты выдачи документов тестов: 2026-10-08 21:00 UTC = 09.10.2026 МСК.
+ // Дата выдачи в срез дня не входит (день среза даёт дата публикации), важен только непустой
+ // указатель: у документа без даты выдачи строки нет вовсе.
+ const gostIssueMS int64 = 1791493200000
+ 
+ // gostForeignPublication — дата публикации «чужого» документа: ручка ищет текстом и отдаёт
+-// документы соседних окон, а клиентский фильтр дня их отбрасывает.
+-const gostForeignPublication = "01.01.2020 00:00:00 ZE3"
++// документы соседних окон, а клиентский фильтр дня их отбрасывает. Форма — чистая дата без
++// времени и зоны: именно так выглядел документ, уронивший живой июньский прогон 2026 года
++// (одна такая дата среди 35 обычных делала день «невалидным»), поэтому тесты обвязки гоняют
++// эту форму через весь путь от разбора до решения по дню.
++const gostForeignPublication = "01.01.2020"
+ 
+ // gostTestNow — подменённые часы прогона: 12.10.2026 12:00 UTC, то есть «вчера МСК» = 11.10.2026
+ // (МСК = UTC+3, дата прогона 12.10.2026).
+ var gostTestNow = time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
+ 
+ // gostEnv выставляет окружение конфига: сначала все переменные прогона пустые (тест не должен
+ // зависеть от окружения машины), затем — переданные значения.
+ func gostEnv(t *testing.T, values map[string]string) {
+ 	t.Helper()
+ 	for _, name := range []string{gostModeEnv, gostFromEnv, gostToEnv, gostSettleEnv, gostAppIDEnv} {
+@@ -518,60 +521,124 @@ func TestGostRunDaysForeignDateOnlyDayWarns(t *testing.T) {
+ 	count, err := gostRunDays(context.Background(), conn, ta.api, days)
+ 	if err != nil {
+ 		t.Fatalf("день из одних чужих дат публикации уронил прогон: %v", err)
+ 	}
+ 	if count != 1 {
+ 		t.Errorf("записано строк %d, ожидалась 1 (день с данными)", count)
+ 	}
+ 	if batches := conn.batchList(); len(batches) != 1 {
+ 		t.Errorf("батчей %d, ожидался 1: день без своих публикаций не пишется", len(batches))
+ 	}
+-	if !strings.Contains(logs.String(), "публикаций нет — 4 документов ручки относятся к другим датам публикации") {
+-		t.Errorf("день без своих публикаций не отмечен warn-ом: %s", logs.String())
++	if !strings.Contains(logs.String(), "публикаций нет — отброшено 4 из 4 (чужой даты: 4, невалидных: 0)") {
++		t.Errorf("день без своих публикаций не отмечен warn-ом с разбивкой: %s", logs.String())
+ 	}
+ 	if strings.Contains(logs.String(), "не разобраны") {
+ 		t.Errorf("чужие даты объявлены невалидными документами: %s", logs.String())
+ 	}
+ }
+ 
+-func TestGostRunDaysInvalidDocsFail(t *testing.T) {
++// TestGostRunDaysAllInvalidDocsFail — невалиден КАЖДЫЙ документ дня (Invalid == Count): это
++// систематическая поломка формата или данных, и день обязан попасть в ошибку прогона. Именно
++// этот случай удерживает правило «fail loud» — частичная невалидность дня прогон не роняет.
++func TestGostRunDaysAllInvalidDocsFail(t *testing.T) {
+ 	days := []time.Time{gostTime(t, "2026-10-05"), gostTime(t, "2026-10-06")}
+-	// Один документ дня невалиден (нет даты выдачи), остальные — чужих дат: срез пуст, и это
+-	// поломка данных, а не штатное окно поиска — день обязан попасть в ошибку прогона.
++	// Ни одного документа с датой выдачи: срез пуст, Invalid == Count.
+ 	ta := gostNewTestAPI(t, gostDayServer(t, map[string]gostDaySpec{
+-		"05.10.2026": {Count: 3, Invalid: 1, Noise: 2},
++		"05.10.2026": {Count: 3, Invalid: 3},
+ 		"06.10.2026": {Count: 1},
+ 	}))
+ 	conn := &gostFakeConn{}
+ 
+ 	count, err := gostRunDays(context.Background(), conn, ta.api, days)
+ 	if err == nil {
+-		t.Fatal("день с невалидным документом не попал в ошибку прогона")
++		t.Fatal("день, не разобранный целиком, не попал в ошибку прогона")
+ 	}
+ 	for _, want := range []string{
+ 		"2026-10-05",
+-		"1 документов не разобраны",
++		"все 3 документов дня невалидны",
+ 		"не прочитаны дни (1)",
+ 	} {
+ 		if !strings.Contains(err.Error(), want) {
+ 			t.Errorf("ошибка %q не содержит %q", err, want)
+ 		}
+ 	}
+ 	// Проход продолжается: следующий день записан, несмотря на сбойный.
+ 	if count != 1 {
+ 		t.Errorf("записано строк %d, ожидалась 1", count)
+ 	}
+ 	if batches := conn.batchList(); len(batches) != 1 {
+ 		t.Errorf("батчей %d, ожидался 1: сбойный день не пишется, следующий пишется", len(batches))
+ 	}
+ }
+ 
++// TestGostRunDaysWarnsInvalidBreakdown — невалидные документы видны и у дня с непустым срезом:
++// warn печатает разбивку отброшенных, иначе поломка формата тонула бы в общем Skipped.
++func TestGostRunDaysWarnsInvalidBreakdown(t *testing.T) {
++	days := []time.Time{gostTime(t, "2026-10-05")}
++	// Один свой документ, один чужой даты и один невалидный (нет даты выдачи).
++	ta := gostNewTestAPI(t, gostDayServer(t, map[string]gostDaySpec{
++		"05.10.2026": {Count: 3, Invalid: 1, Noise: 1},
++	}))
++	conn := &gostFakeConn{}
++	logs := gostCaptureLog(t)
++
++	count, err := gostRunDays(context.Background(), conn, ta.api, days)
++	if err != nil {
++		t.Fatalf("день с одним невалидным документом уронил прогон (срез непустой): %v", err)
++	}
++	if count != 1 {
++		t.Errorf("записано строк %d, ожидалась 1", count)
++	}
++	for _, want := range []string{"чужой даты: 1, невалидных: 1", "отброшено 2 документов из 3"} {
++		if !strings.Contains(logs.String(), want) {
++			t.Errorf("warn дня без %q: %s", want, logs.String())
++		}
++	}
++}
++
++// TestGostRunDaysPartlyInvalidNoisyDayWarns — день с пустым срезом, где невалидны лишь отдельные
++// документы (Invalid < Count), успешен: одиночный мусорный документ в шумовом дне — сбой одной
++// записи источника, и валить на нём весь прогон не за что. Warn обязан нести обе цифры: по одной
++// невалидности не отличить систематическую поломку от чужой даты публикации.
++func TestGostRunDaysPartlyInvalidNoisyDayWarns(t *testing.T) {
++	// Один документ из 36 невалиден (нет даты выдачи), остальные 35 — чужих дат публикации.
++	days := []time.Time{gostTime(t, "2026-10-05")}
++	ta := gostNewTestAPI(t, gostDayServer(t, map[string]gostDaySpec{
++		"05.10.2026": {Count: 36, Invalid: 1, Noise: 35},
++	}))
++	conn := &gostFakeConn{}
++	logs := gostCaptureLog(t)
++
++	count, err := gostRunDays(context.Background(), conn, ta.api, days)
++	if err != nil {
++		t.Fatalf("невалидность части дня уронила прогон: %v", err)
++	}
++	if count != 0 {
++		t.Errorf("записано строк %d, ожидалось 0: писать нечего", count)
++	}
++	// День не в списке неудачных: ни ошибки дня, ни агрегата.
++	if strings.Contains(logs.String(), "документов дня невалидны") {
++		t.Errorf("частично невалидный день помечен поломкой: %s", logs.String())
++	}
++	if batches := conn.batchList(); len(batches) != 0 {
++		t.Errorf("батчей %d, ожидалось 0: писать нечего", len(batches))
++	}
++	for _, want := range []string{
++		"публикаций нет — отброшено 36 из 36",
++		"чужой даты: 35, невалидных: 1",
++	} {
++		if !strings.Contains(logs.String(), want) {
++			t.Errorf("warn дня без %q: %s", want, logs.String())
++		}
++	}
++}
++
+ func TestGostCheckDaysMatchNoError(t *testing.T) {
+ 	days := []time.Time{gostTime(t, "2026-10-09")}
+ 	ta := gostNewTestAPI(t, gostDayServer(t, map[string]gostDaySpec{"09.10.2026": {Count: 5}}))
+ 	conn := &gostFakeConn{counters: map[string]uint64{"2026-10-09": 5}}
+ 
+ 	checked, err := gostCheckDays(context.Background(), conn, ta.api, days)
+ 	if err != nil {
+ 		t.Fatalf("совпавший день дал ошибку: %v", err)
+ 	}
+ 	if checked != 1 {

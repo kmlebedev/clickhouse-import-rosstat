@@ -1,0 +1,533 @@
+# Review package: c2436b0..8a97de3
+
+## Commits
+8a97de3 cbr: cbr_mo_br importer with source_publications preflight, view, registry and dagu step
+
+## Files changed
+ cbr/importers.go        |  13 ++--
+ cbr/importers_test.go   |  50 ++++++++++----
+ cbr/mo_br.go            | 177 ++++++++++++++++++++++++++++++++++++++++++++++++
+ cbr/mo_br_test.go       |  35 ++++++++++
+ dagu/cbr.yaml           |   8 +++
+ scripts/mcp_check.py    |  25 +++++++
+ sql/mcp_kimi_reader.sql |   1 +
+ 7 files changed, 290 insertions(+), 19 deletions(-)
+
+## Diff
+diff --git a/cbr/importers.go b/cbr/importers.go
+index 50c11c3..b196175 100644
+--- a/cbr/importers.go
++++ b/cbr/importers.go
+@@ -7,47 +7,50 @@ import "github.com/kmlebedev/clickhouse-import-rosstat/chimport"
+ // Import() делегируются обёртке (publishedStat публикует ряды и витрину,
+ // mpSurveyImporter — свои), а поле table видит только тест
+ // TestCbrImportersPrefixedAndRegistered: по нему проверяется, что импортёр не занял
+ // таблицу вне пространства cbr_.
+ type cbrImporter struct {
+ 	chimport.ImportStat
+ 	table string
+ }
+ 
+ // cbrImporters — единственная точка регистрации импортёров ЦБ: персональных
+-// init()-append по файлам импортёров больше нет (13 точек стали одной). Порядок
+-// повторяет dagu/cbr.yaml; в chimport.Stats порядок значения не имеет.
++// init()-append по файлам импортёров больше нет (14 записей в одном месте вместо
++// 13 прежних). Порядок повторяет dagu/cbr.yaml; в chimport.Stats порядок значения
++// не имеет.
+ //
+ // Таблицы записаны литералами намеренно. Ссылка на константу импортёра
+ // (cbrKeyRateTable) сделала бы проверку префикса тавтологичной: тест сравнивал бы
+ // константу с самой собой, тогда как литерал падает ровно на переименовании
+ // таблицы в имя вне cbr_-пространства — то есть на правке, которая увела бы
+ // витрину v_cbr_macro к чужим данным. Литералы сверены с константами кода при
+ // переносе регистрации.
+ //
+-// cbr_mp_survey — единственная запись с таблицей вне cbr_: ряды мониторинга
+-// предприятий лежат в общей macro_series под source='cbr_survey'. Его Name()
+-// отличается от имени таблицы, поэтому в реестре они записаны раздельно.
++// cbr_mp_survey и cbr_mo_br — записи с таблицей вне cbr_: ряды мониторинга
++// предприятий (source='cbr_survey') и макроэкономического опроса (source='cbr_mo_br')
++// лежат в общей macro_series. У обоих Name() отличается от имени таблицы, поэтому в
++// реестре они записаны раздельно.
+ var cbrImporters = []cbrImporter{
+ 	{cbrCurrencyUSDImporter, "cbr_currency_usd"},
+ 	{householdsBMesImporter, "cbr_households_b_mes"},
+ 	{cbrKeyRateImporter, "cbr_key_rate"},
+ 	{cbrM2Importer, "cbr_m2"},
+ 	{cbrGoldImporter, "cbr_gold"},
+ 	{loansToCorporationsImporter, "cbr_loans_to_corporations"},
+ 	{loansToIndividualsImporter, "cbr_loans_to_individuals"},
+ 	{cbrInflExpImporter, "cbr_infl_exp"},
+ 	{cbrBankIntRateImporter, "cbr_bank_int_rate"},
+ 	{cbrCreditM2xImporter, "cbr_credit_m2x"},
+ 	{cbrIndicatorsCpdImporter, "cbr_indicators_cpd"},
+ 	{cbrRuoniaImporter, "cbr_ruania"},
+ 	{mpSurveyImporter, "macro_series"},
++	{moBrImporter, "macro_series"},
+ }
+ 
+ // init — единственная регистрация импортёров ЦБ в chimport.Stats. Порядок
+ // append совпадает с порядком реестра; main.go запускает всех (или фильтрует по
+ // CLICKHOUSE_IMPORT_STAT=Name()).
+ func init() {
+ 	for _, imp := range cbrImporters {
+ 		chimport.Stats = append(chimport.Stats, imp)
+ 	}
+ }
+diff --git a/cbr/importers_test.go b/cbr/importers_test.go
+index 3c803b5..b162c37 100644
+--- a/cbr/importers_test.go
++++ b/cbr/importers_test.go
+@@ -11,54 +11,65 @@ import (
+ )
+ 
+ // Ожидаемые значения ниже — литералами, а не константами пакета. Тест, сверяющий
+ // cbrKeyRateTable с самим собой, прошёл бы и после переименования таблицы в key_rate,
+ // то есть ровно на той правке, от которой он и должен падать.
+ const (
+ 	// cbrNamePrefix — пространство имён импортёров и таблиц пакета cbr. Имя
+ 	// импортёра — контракт расписания (CLICKHOUSE_IMPORT_STAT и id шага
+ 	// dagu/cbr.yaml), имя таблицы — контракт данных (v_cbr_macro и агент MCP).
+ 	cbrNamePrefix = "cbr_"
+-	// sharedMacroSeriesTable — единственная таблица вне cbr_-пространства, которую
+-	// занимает импортёр ЦБ: ряды мониторинга предприятий лежат в общей macro_series
+-	// (source='cbr_survey'), рядом с fred/bls/bea.
++	// sharedMacroSeriesTable — таблица вне cbr_-пространства, которую занимают
++	// импортёры ЦБ: ряды мониторинга предприятий (source='cbr_survey') и
++	// макроэкономического опроса (source='cbr_mo_br') лежат в общей macro_series,
++	// рядом с fred/bls/bea.
+ 	sharedMacroSeriesTable = "macro_series"
+-	// sharedMacroSeriesOwner — импортёр, которому разрешено писать в общую таблицу.
+-	sharedMacroSeriesOwner = "cbr_mp_survey"
+ )
+ 
++// sharedMacroSeriesOwners — импортёры, которым разрешено писать в общую macro_series.
++// Набор литеральный (не ссылка на константу импортёра: та сделала бы проверку
++// тавтологичной — имя сверялось бы с самим собой), а незнакомец в этой таблице —
++// ровно тот случай, ради которого проверка (б) и существует.
++var sharedMacroSeriesOwners = map[string]bool{
++	"cbr_mp_survey": true, // source='cbr_survey'
++	"cbr_mo_br":     true, // source='cbr_mo_br'
++}
++
+ // daguCbrYAML — расписание cbr: каждый шаг задаёт CLICKHOUSE_IMPORT_STAT. Путь от
+ // каталога пакета (тесты идут с cwd=cbr/): так же читают фикстуры другие пакеты.
+ var daguCbrYAML = filepath.Join("..", "dagu", "cbr.yaml")
+ 
+ // daguStatRef вытаскивает имя из строки шага `- CLICKHOUSE_IMPORT_STAT=<name>`.
+ // Разбор построчный и регуляркой, без YAML-зависимости: тест не должен тянуть в
+ // пакетный go.mod парсер ради одного ключа.
+ var daguStatRef = regexp.MustCompile(`CLICKHOUSE_IMPORT_STAT=([A-Za-z0-9_]+)`)
+ 
+ // TestCbrImportersPrefixedAndRegistered держит инварианты реестра cbrImporters —
+ // единственной точки, из которой импортёры пакета попадают в chimport.Stats.
+ //
+ // Проверяется именно реестр, а не Import напрямую: остальные тесты пакета зовут
+ // парсеры и Import, и потому проходили бы, даже если импортёр не зарегистрирован
+ // и недостижим ни из `make import`, ни из расписания. Регистрация — единственное,
+ // что видит оператор.
+ //
+ //   - (а) Name() каждого импортёра начинается с cbr_ — иначе ручной запуск
+ //     CLICKHOUSE_IMPORT_STAT=<table> попадёт в чужой шаг конвейера (префикс cbr_
+ //     в репозитории уникален за пределами пакета);
+-//   - (б) таблица — cbr_-префикс, либо общий macro_series и только для cbr_mp_survey:
+-//     смена таблицы под импортёром увела бы витрину v_cbr_macro к чужим данным;
++//   - (б) таблица — cbr_-префикс, либо общий macro_series и только для его
++//     известных владельцев (cbr_mp_survey, cbr_mo_br): смена таблицы под
++//     импортёром увела бы витрину v_cbr_macro к чужим данным;
+ //   - (в) имена уникальны и лежат в chimport.Stats: дубль имени в фильтре
+ //     `make import STAT=...` выбрал бы произвольный из двух импортёров;
+ //   - (г) каждый шаг dagu/cbr.yaml присутствует в реестре: расписание —
+-//     единственный продакшн-вызов, и его опечатка иначе не видна ничем.
++//     единственный продакшн-вызов, и его опечатка иначе не видна ничем; и
++//     обратно — шаг контура макроопроса в расписании есть (иначе пропавший шаг
++//     dagu не заметил бы ни один тест: реестр остаётся верным сам по себе).
+ func TestCbrImportersPrefixedAndRegistered(t *testing.T) {
+ 	if len(cbrImporters) == 0 {
+ 		t.Fatal("реестр cbrImporters пуст: ни один импортёр пакета не зарегистрирован")
+ 	}
+ 
+ 	registered := make(map[string]bool, len(chimport.Stats))
+ 	for _, stat := range chimport.Stats {
+ 		registered[stat.Name()] = true
+ 	}
+ 
+@@ -75,31 +86,31 @@ func TestCbrImportersPrefixedAndRegistered(t *testing.T) {
+ 		if seen[name] {
+ 			t.Errorf("имя импортёра %q встречается в реестре дважды", name)
+ 		}
+ 		seen[name] = true
+ 		if !registered[name] {
+ 			t.Errorf("импортёр %q не зарегистрирован в chimport.Stats: `make import STAT=%s` и шаг dagu той же строкой не найдут ничего", name, name)
+ 		}
+ 
+ 		// (б)
+ 		if imp.table == sharedMacroSeriesTable {
+-			if name != sharedMacroSeriesOwner {
+-				t.Errorf("импортёр %q объявил общую таблицу %q: её занимает только %s (source='cbr_survey')", name, sharedMacroSeriesTable, sharedMacroSeriesOwner)
++			if !sharedMacroSeriesOwners[name] {
++				t.Errorf("импортёр %q объявил общую таблицу %q: её занимают только cbr_mp_survey (source='cbr_survey') и cbr_mo_br (source='cbr_mo_br')", name, sharedMacroSeriesTable)
+ 			}
+ 			continue
+ 		}
+ 		if !strings.HasPrefix(imp.table, cbrNamePrefix) {
+ 			t.Errorf("таблица %q импортёра %q без префикса %q и не равна %q", imp.table, name, cbrNamePrefix, sharedMacroSeriesTable)
+ 		}
+-		// У всех импортёров, кроме cbr_mp_survey, Name() — это TableName
+-		// встроенного util.ClickHouseImport. Значит, литерал в колонке table
+-		// обязан с ним совпадать: иначе реестр описывает не ту таблицу, в
++		// У всех импортёров, кроме владельцев общей macro_series, Name() — это
++		// TableName встроенного util.ClickHouseImport. Значит, литерал в колонке
++		// table обязан с ним совпадать: иначе реестр описывает не ту таблицу, в
+ 		// которую импортёр пишет (переименовали константу — обновили литерал).
+ 		if name != imp.table {
+ 			t.Errorf("реестр записал импортёру %q таблицу %q, а Name() (TableName импортёра) — %q", name, imp.table, name)
+ 		}
+ 	}
+ 
+ 	// «Ровно те же»: число cbr_-имён в Stats не может быть больше реестра
+ 	// (кто-то вернул персональный init()-append в файл импортёра) или меньше
+ 	// (запись забыта при консолидации) — ровно одна точка регистрации на пакет.
+ 	cbrRegistered := 0
+@@ -114,16 +125,27 @@ func TestCbrImportersPrefixedAndRegistered(t *testing.T) {
+ 
+ 	// (г)
+ 	data, err := os.ReadFile(daguCbrYAML)
+ 	if err != nil {
+ 		t.Fatalf("чтение %s: %v", daguCbrYAML, err)
+ 	}
+ 	steps := daguStatRef.FindAllStringSubmatch(string(data), -1)
+ 	if len(steps) == 0 {
+ 		t.Fatalf("в dagu/cbr.yaml не найдено ни одной строки CLICKHOUSE_IMPORT_STAT=: разбор сломан или шаги переписаны")
+ 	}
++	scheduled := make(map[string]bool, len(steps))
+ 	for _, step := range steps {
+-		if name := step[1]; !seen[name] {
++		name := step[1]
++		scheduled[name] = true
++		if !seen[name] {
+ 			t.Errorf("шаг dagu/cbr.yaml CLICKHOUSE_IMPORT_STAT=%s не найден в реестре cbrImporters: расписание позовёт импортёр, которого нет", name)
+ 		}
+ 	}
++	// Обратное направление цикл не ловит: реестр верен сам по себе и без шага
++	// расписания. Пропавший шаг cbr_mo_br означал бы, что волны макроопроса не
++	// импортируются вовсе, а витрина v_cbr_mo_br пустует при всех зелёных тестах.
++	for owner := range sharedMacroSeriesOwners {
++		if !scheduled[owner] {
++			t.Errorf("в dagu/cbr.yaml нет шага CLICKHOUSE_IMPORT_STAT=%s: владелец общей %s не запускается по расписанию", owner, sharedMacroSeriesTable)
++		}
++	}
+ }
+diff --git a/cbr/mo_br.go b/cbr/mo_br.go
+new file mode 100644
+index 0000000..55cb897
+--- /dev/null
++++ b/cbr/mo_br.go
+@@ -0,0 +1,177 @@
++package cbr
++
++import (
++	"context"
++	"fmt"
++	"path"
++	"time"
++
++	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
++	"github.com/kmlebedev/clickhouse-import-rosstat/util"
++	log "github.com/sirupsen/logrus"
++	"github.com/xuri/excelize/v2"
++)
++
++const (
++	// moBrPageUrl — страница макроэкономического опроса ЦБ; имя файла волны в коде
++	// не фиксируется: ссылка ищется в Import() (§3.1, ARCHITECTURE.md §8.6).
++	moBrPageUrl = "https://www.cbr.ru/statistics/ddkp/mo_br/"
++	// moBrLinkSel — селектор ссылки на полную книгу волны (full.xlsx).
++	moBrLinkSel = `a[href$="full.xlsx"]`
++	// moBrName — имя импортёра в CLICKHOUSE_IMPORT_STAT и в id шага dagu/cbr.yaml;
++	// moBrTable — общая macro_series (source='cbr_mo_br', см. moBrSource), поэтому
++	// имя не совпадает с таблицей (как у cbr_mp_survey).
++	moBrName  = "cbr_mo_br"
++	moBrTable = "macro_series"
++)
++
++// moBrCountPoints — количественный чек известной версии (спека §3.4, п. 2): число
++// точек своего source в macro_series. Литерал, как и таблицы в реестре: запрос —
++// часть утверждения «эти точки мои», и незамеченная смена source увела бы чек к
++// чужим рядам общей таблицы. FINAL — как в витрине v_cbr_mo_br.
++const moBrCountPoints = `SELECT count() FROM macro_series FINAL WHERE source = 'cbr_mo_br'`
++
++// moBrDdl — своя копия DDL macro_series по прецеденту пакета (у cbr_mp_survey —
++// mpSurveyDdl): общая константа связала бы импортёры, которые делят таблицу, но не
++// код. Комментарий source дополнен 'cbr_mo_br'. Исполняется через
++// fmt.Sprintf(sql, TableName) в util.ClickHouseImport.Import, поэтому %s обязателен.
++const moBrDdl = `CREATE TABLE IF NOT EXISTS %s (
++    source LowCardinality(String),   -- 'fred','bls','bea','eia','manual','webbridge','imf','wgc','bold','cbr_survey','cbr_mo_br'
++    series LowCardinality(String),   -- 'DFII10','distillate_stocks',...
++    date Date32,                     -- Date32, т.к. Date не покрывает даты до 1970 (CPIAUCSL с 1947, FEDFUNDS с 1954)
++    value Float64
++) ENGINE = ReplacingMergeTree ORDER BY (source, series, date);`
++
++type moBrStat struct {
++	util.ClickHouseImport
++}
++
++func (s *moBrStat) Name() string { return moBrName }
++
++// Import идёт по спеке §3.4: ссылка на полную книгу ищется на странице (имя файла
++// меняется с каждой волной), затем HEAD-префлайт отвечает, знакома ли версия. Знакома
++// и число точек в macro_series совпадает с записанным — это no-op ежедневного прогона
++// (волны выходят 8 раз в год). Незнакома или точек не столько — полный импорт; после
++// успешного Send сохраняется версия, каталог и витрина.
++func (s *moBrStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
++	page, err := getPage(moBrPageUrl)
++	if err != nil {
++		return count, fmt.Errorf("%s: %s: %w", moBrName, moBrPageUrl, err)
++	}
++	href, err := findLink(page, moBrLinkSel)
++	if err != nil {
++		return count, fmt.Errorf("%s: не найдена ссылка на xlsx на %s: %w", moBrName, moBrPageUrl, err)
++	}
++	url := cbrUrl + href
++	name := path.Base(url)
++
++	// HEAD-префлайт. Недоступный HEAD — деградация, а не сбой: источник мог не
++	// ответить на HEAD, не отдав при этом ничего нового. Тогда импорт полный, но
++	// версия не записывается (fp пуст) — иначе следующий прогон счёл бы файл уже
++	// импортированным и оставил бы данные устаревшими (спека §3.4, п. 3).
++	fp, fpErr := util.HeadFingerprint(url)
++	if fpErr != nil {
++		log.Warnf("%s: HEAD %s недоступен (%v) — полный импорт без записи версии", moBrName, url, fpErr)
++		fp = ""
++	}
++
++	if fp != "" {
++		if err = util.EnsurePublications(ctx, conn); err != nil {
++			return count, err
++		}
++		points, known, knownErr := util.PublicationKnown(ctx, conn, moBrName, name, fp)
++		if knownErr != nil {
++			// Сбой SELECT'а версии не должен ронять ежедневный прогон: падаем в
++			// полный импорт (он идемпотентен на ReplacingMergeTree), а версия потом
++			// перезаписывается. Новая волна важнее диагностики старой записи.
++			log.Warnf("%s: проверка версии %s в %s не удалась (%v) — полный импорт", moBrName, fp, util.PublicationsTable, knownErr)
++			known = false
++		}
++		if known {
++			var dbPoints uint64
++			if err = conn.QueryRow(ctx, moBrCountPoints).Scan(&dbPoints); err != nil {
++				return count, fmt.Errorf("%s: count точек в %s: %w", moBrName, moBrTable, err)
++			}
++			if dbPoints == points {
++				log.Infof("%s: no-op, версия %s уже импортирована, %d точек на месте", moBrName, fp, points)
++				return int64(points), nil
++			}
++			// Версия в source_publications есть, а точек в таблице не столько (ручная
++			// чистка, недоехавший батч) — self-heal полным импортом, а не тихий no-op.
++			log.Warnf("%s: версия %s известна, но в %s %d точек вместо %d — полный импорт", moBrName, fp, moBrTable, dbPoints, points)
++		}
++	}
++
++	// Полный путь — через локальную копию встроенной структуры: меты разбора
++	// нужны снаружи (каталог), а мутировать общую структуру импортёра нельзя —
++	// DataUrl и ImportFunc зависят от волны.
++	local := s.ClickHouseImport
++	local.DataUrl = url
++	var meta []util.SeriesMeta
++	local.ImportFunc = func(xlsx *excelize.File, batch driver.Batch) error {
++		points, metas, err := parseMoBr(xlsx)
++		if err != nil {
++			return err
++		}
++		meta = metas
++		log.Infof("%s: собрано %d точек", moBrName, len(points))
++		for _, p := range points {
++			if err = batch.Append(moBrSource, p.Series, p.Date, p.Value); err != nil {
++				return fmt.Errorf("append %s %s: %w", p.Series, p.Date.Format("2006-01-02"), err)
++			}
++		}
++		return nil
++	}
++	count, err = local.Import(ctx, conn) // DDL → GetXlsx → разбор+батч → count=batch.Rows() → Send
++	if err != nil {
++		return count, err
++	}
++	// Только после успешного Send: строка версии утверждает «эти точки записаны».
++	if fp != "" {
++		if err = util.SavePublication(ctx, conn, util.Publication{
++			Source:      moBrName,
++			Name:        name,
++			Fingerprint: fp,
++			Url:         url,
++			FirstSeen:   time.Now(),
++			Points:      uint64(count),
++		}); err != nil {
++			return count, err
++		}
++	}
++	if err = util.UpsertSeriesCatalog(ctx, conn, meta); err != nil {
++		return count, err
++	}
++	if _, err = util.CreateView(ctx, conn, vCbrMoBrView); err != nil {
++		return count, err
++	}
++	log.Infof("Imported %d rows of %s", count, moBrName)
++	return count, nil
++}
++
++// vCbrMoBrView — витрина рядов макроэкономического опроса ЦБ (source='cbr_mo_br',
++// импортёр cbr_mo_br); общая витрина cbrMacroView и v_cbr_survey её не покрывают.
++// Комментарии — по спеке §3.5: дата — волна опроса, значение — прогноз, а не факт.
++var vCbrMoBrView = util.View{
++	Name:   "v_cbr_mo_br",
++	Tables: []string{"macro_series"},
++	Select: `SELECT source, series, date, value FROM macro_series FINAL WHERE source = 'cbr_mo_br'`,
++	Comment: "Макроэкономический опрос Банка России (mo_br): прогнозы аналитиков по 17 показателям (ИПЦ, ВВП, ключевая ставка, курс USD/RUB, нефть и др.), 8 волн в год. " +
++		"Дата — волна опроса (1-е число месяца волны); волна публикуется на 2–6 дней позже, точная дата доступности версии файла — во внутренней source_publications (агенту не выдана). " +
++		"Значения — прогнозы аналитиков, а не факты: по каждому показателю и прогнозному году лежат медиана, квартильный интервал (p10/p90), диапазон (min/max) и число ответов (answers). " +
++		"Перед использованием читать v_series_catalog по (source='cbr_mo_br', series): единицы и смысл статистик различаются между рядами",
++	Columns: map[string]string{
++		"source": "Всегда cbr_mo_br",
++		"series": "Код ряда: <показатель>_<год прогноза>_<статистика>, у показателей без прогнозного года — <показатель>_<статистика>; статистики — median, p10, p90, min, max (прогнозы) и answers (число ответов). Описания — в v_series_catalog (source='cbr_mo_br')",
++		"date":   "Волна опроса: 1-е число месяца волны (Date32). Публикация волны — через 2–6 дней после этой даты; фактические даты доступности версий файла ведёт служебная source_publications (агенту не выдана)",
++		"value":  "У median/p10/p90/min/max — прогноз аналитиков в единицах показателя (медиана, границы центральной тенденции и всего диапазона ответов), у answers — число ответов участников по показателю и году в этой волне (не прогноз); см. unit и description в v_series_catalog",
++	},
++}
++
++// moBrImporter — макроэкономический опрос ЦБ: Name() = cbr_mo_br, таблица — общая
++// macro_series (source='cbr_mo_br'). DataUrl и ImportFunc вычисляются в Import()
++// (ссылка на файл волны меняется), регистрация — реестром cbr/importers.go.
++var moBrImporter = &moBrStat{ClickHouseImport: util.ClickHouseImport{
++	TableName:   moBrTable,
++	CreateTable: []string{moBrDdl},
++}}
+diff --git a/cbr/mo_br_test.go b/cbr/mo_br_test.go
+new file mode 100644
+index 0000000..fc0cc5a
+--- /dev/null
++++ b/cbr/mo_br_test.go
+@@ -0,0 +1,35 @@
++package cbr
++
++import (
++	"fmt"
++	"strings"
++	"testing"
++)
++
++// Name() — это CLICKHOUSE_IMPORT_STAT и id шага dagu/cbr.yaml. Имя отличается от
++// имени таблицы macro_series, которое вернул бы встроенный util.ClickHouseImport
++// (как у cbr_mp_survey): таблица общая с fred/bls/bea, и запуск «по таблице» попал
++// бы в чужой шаг конвейера, а TableName при этом обязан остаться macro_series —
++// иначе импортёр завёл бы вторую таблицу вместо общей.
++func TestMoBrImporterNameAndTable(t *testing.T) {
++	if got := moBrImporter.Name(); got != "cbr_mo_br" {
++		t.Errorf("Name() = %q, want %q", got, "cbr_mo_br")
++	}
++	if got := moBrImporter.TableName; got != "macro_series" {
++		t.Errorf("TableName = %q, want %q", got, "macro_series")
++	}
++}
++
++// DDL исполняется через fmt.Sprintf(sql, TableName), поэтому проверяется уже
++// подставленный текст. Ключ (source, series, date) и движок ReplacingMergeTree
++// обязаны совпасть с общей macro_series: второй ключ под тем же именем таблицы
++// молча развёл бы ряды импортёров (CREATE TABLE IF NOT EXISTS существующую таблицу
++// не пересоздаёт, и расхождение осталось бы незамеченным ничем, кроме этого теста).
++func TestMoBrDdlPinsMacroSeries(t *testing.T) {
++	ddl := fmt.Sprintf(moBrDdl, moBrTable)
++	for _, fragment := range []string{"macro_series", "ReplacingMergeTree", "ORDER BY (source, series, date)"} {
++		if !strings.Contains(ddl, fragment) {
++			t.Errorf("в DDL нет %q:\n%s", fragment, ddl)
++		}
++	}
++}
+diff --git a/dagu/cbr.yaml b/dagu/cbr.yaml
+index a8217d8..5af0f77 100644
+--- a/dagu/cbr.yaml
++++ b/dagu/cbr.yaml
+@@ -99,10 +99,18 @@ steps:
+       limit: 3
+       interval_sec: 300
+ 
+   - id: cbr_mp_survey
+     run: "$ROSSTAT_IMPORT_BIN"
+     env:
+       - CLICKHOUSE_IMPORT_STAT=cbr_mp_survey
+     retry_policy:
+       limit: 3
+       interval_sec: 300
++
++  - id: cbr_mo_br
++    run: "$ROSSTAT_IMPORT_BIN"
++    env:
++      - CLICKHOUSE_IMPORT_STAT=cbr_mo_br
++    retry_policy:
++      limit: 3
++      interval_sec: 300
+diff --git a/scripts/mcp_check.py b/scripts/mcp_check.py
+index 52b6ff9..a255335 100644
+--- a/scripts/mcp_check.py
++++ b/scripts/mcp_check.py
+@@ -401,20 +401,45 @@ async def check(params, server_log):
+             else:
+                 survey_view_detail = "в ответе нет строк"
+             failed += not expect("витрина v_cbr_survey существует и читается", bool(survey_view_rows), survey_view_detail)
+ 
+             survey_catalog = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_series_catalog WHERE source = 'cbr_survey'"}))
+             survey_catalog_rows = result_rows(survey_catalog)
+             survey_catalog_n = survey_catalog_rows[0].get("count()") if survey_catalog_rows else None
+             failed += not expect("каталог cbr_survey описывает 13 рядов", survey_catalog_n == 13,
+                                  f"записей: {survey_catalog_n}" if survey_catalog_rows is not None else f"каталог не читается: {survey_catalog[:200]}")
+ 
++            # Контур макроэкономического опроса ЦБ (шаг 1.5 роадмапа, импортёр cbr_mo_br):
++            # витрина v_cbr_mo_br читается агентом, каталог source='cbr_mo_br' непуст
++            # (число рядов зависит от числа вышедших волн и их показателей, поэтому
++            # проверяется не точное число, а непустота — как у v_cbr_macro ниже).
++            # Сырая macro_series для этого контура уже проверена выше как закрытая;
++            # волны обновляются 8 раз в год, поэтому пустая витрина означает ни разу
++            # не отработавший шаг cbr_mo_br, а не отсутствие данных у источника.
++            mobr_view = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_cbr_mo_br"}))
++            mobr_view_rows = result_rows(mobr_view)
++            mobr_view_n = mobr_view_rows[0].get("count()") if mobr_view_rows else None
++            if mobr_view_rows is None:
++                mobr_view_detail = f"витрина не читается: {mobr_view[:200]}"
++            elif (mobr_view_n or 0) > 0:
++                mobr_view_detail = f"строк: {mobr_view_n}"
++            else:
++                mobr_view_detail = (f"строк: {mobr_view_n} — прогнать импортёр контура "
++                                    "(make import STAT=cbr_mo_br)")
++            failed += not expect("витрина v_cbr_mo_br существует и читается", (mobr_view_n or 0) > 0, mobr_view_detail)
++
++            mobr_catalog = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_series_catalog WHERE source = 'cbr_mo_br'"}))
++            mobr_catalog_rows = result_rows(mobr_catalog)
++            mobr_catalog_n = mobr_catalog_rows[0].get("count()") if mobr_catalog_rows else None
++            failed += not expect("каталог cbr_mo_br непуст", (mobr_catalog_n or 0) > 0,
++                                 f"записей: {mobr_catalog_n}" if mobr_catalog_rows is not None else f"каталог не читается: {mobr_catalog[:200]}")
++
+             # Общая витрина контура ЦБ (правило 11, фаза 3 роадмапа): v_cbr_macro читается
+             # агентом, а сырая cbr_households_b_mes — источник её рядов по домохозяйствам —
+             # агенту закрыта (как macro_series и bold_fund_snapshot: читать контур агент
+             # обязан только через витрину). Существование витрины подтверждается ЗАПРОСОМ
+             # К НЕЙ, а не поиском имени в ответе list_tables: в том тексте лежат
+             # create_table_query с комментариями таблиц и колонок, и имя отсутствующей
+             # витрины попадало туда из COMMENT соседки (урок bold). Разобранный ответ
+             # run_query доказывает и существование, и право чтения; «нет витрины» и «нет
+             # прав» приходят ошибкой (UNKNOWN_TABLE / ACCESS_DENIED) и в result_rows не
+             # разбираются.
+diff --git a/sql/mcp_kimi_reader.sql b/sql/mcp_kimi_reader.sql
+index 95e3aa1..ab28303 100644
+--- a/sql/mcp_kimi_reader.sql
++++ b/sql/mcp_kimi_reader.sql
+@@ -26,10 +26,11 @@ GRANT SELECT ON default.v_eia_petroleum TO kimi_reader;
+ GRANT SELECT ON default.v_gold_forecasts TO kimi_reader;
+ GRANT SELECT ON default.v_gold_etf_flows TO kimi_reader;
+ GRANT SELECT ON default.v_cb_gold_dynamics TO kimi_reader;
+ GRANT SELECT ON default.v_gold_etf_flows_daily TO kimi_reader;
+ GRANT SELECT ON default.v_gold_etf_funds_daily TO kimi_reader;
+ GRANT SELECT ON default.v_news_events TO kimi_reader;
+ GRANT SELECT ON default.v_gost_vehicle_safety_certificate TO kimi_reader;
+ GRANT SELECT ON default.v_gost_vehicle_safety_daily TO kimi_reader;
+ GRANT SELECT ON default.v_keyrate_expectations TO kimi_reader;
+ GRANT SELECT ON default.v_cbr_survey TO kimi_reader;
++GRANT SELECT ON default.v_cbr_mo_br TO kimi_reader;

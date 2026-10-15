@@ -1,0 +1,970 @@
+# Review package: 9011194..HEAD
+
+## Commits
+4b521da add moex keyrate transport: series discovery, contract, paginated history
+9b24744 add moex keyrate ISS block parsers with live fixtures
+
+## Files changed
+ moex/keyrate.go                        |  80 ++++++++++
+ moex/keyrate_parse.go                  | 269 +++++++++++++++++++++++++++++++++
+ moex/keyrate_parse_test.go             | 240 +++++++++++++++++++++++++++++
+ moex/keyrate_test.go                   | 211 ++++++++++++++++++++++++++
+ moex/moex.go                           |  23 ++-
+ moex/testdata/keyrate_description.json |  21 +++
+ moex/testdata/keyrate_history.json     |  15 ++
+ moex/testdata/keyrate_securities.json  |  12 ++
+ 8 files changed, 865 insertions(+), 6 deletions(-)
+
+## Diff
+diff --git a/moex/keyrate.go b/moex/keyrate.go
+new file mode 100644
+index 0000000..eeb326a
+--- /dev/null
++++ b/moex/keyrate.go
+@@ -0,0 +1,80 @@
++package moex
++
++import (
++	"context"
++	"fmt"
++	"time"
++)
++
++// Транспорт серий расчётного фьючерса на Индекс ключевой ставки MOEX (KEYRATE):
++// обнаружение серий, паспорт серии, дневные итоги с пагинацией по start.
++const (
++	keyrateSearchPath  = "/iss/securities.json?q=KEYRATE&iss.meta=off"
++	keyrateDescPath    = "/iss/securities/%s.json?iss.meta=off"
++	keyrateHistoryPath = "/iss/history/engines/futures/markets/forts/securities/%s.json"
++	// блоки ответов ISS, которые читает транспорт
++	keyrateSecuritiesBlock  = "securities"
++	keyrateDescriptionBlock = "description"
++	// история и её курсор приходят одним ответом — оба блока берёт один getBlocks
++	keyrateHistoryBlock = "history"
++	keyrateCursorBlock  = "history.cursor"
++)
++
++// fetchKeyrateSecids — коды торгуемых серий KEYRATE из поиска по бумагам ISS.
++// Список не хардкодится: серии добавляются и истекают каждый квартал.
++func fetchKeyrateSecids(ctx context.Context) ([]string, error) {
++	block, err := getBlock(ctx, keyrateSearchPath, keyrateSecuritiesBlock)
++	if err != nil {
++		return nil, err
++	}
++	return parseKeyrateSecids(block)
++}
++
++// fetchKeyrateContract — паспорт серии: короткое имя, начало обращения и дата экспирации
++// (= дата заседания Совета директоров ЦБ, по ставке которого рассчитывается индекс).
++func fetchKeyrateContract(ctx context.Context, secid string) (keyrateContract, error) {
++	path := fmt.Sprintf(keyrateDescPath, secid)
++	block, err := getBlock(ctx, path, keyrateDescriptionBlock)
++	if err != nil {
++		return keyrateContract{}, err
++	}
++	contract, err := parseKeyrateContract(block)
++	if err != nil {
++		return keyrateContract{}, fmt.Errorf("%s: %w", path, err)
++	}
++	// secid берётся из запроса: описание его содержит, но идентификатор серии не должен
++	// зависеть от тела ответа (и подставляется в SQL-условие инкремента в импортёре).
++	contract.secid = secid
++	return contract, nil
++}
++
++// fetchKeyrateHistory — дневные итоги серии с даты from включительно.
++// ISS отдаёт страницы по moexPageLimit строк (PAGESIZE параметром не понижается), поэтому цикл
++// идёт шагом moexPageLimit и завершается, когда страница пуста или собраны все дни по TOTAL
++// из блока history.cursor.
++func fetchKeyrateHistory(ctx context.Context, secid string, from time.Time) ([]keyrateDay, error) {
++	path := fmt.Sprintf(keyrateHistoryPath, secid)
++	var days []keyrateDay
++	for start := 0; ; start += moexPageLimit {
++		blocks, err := getBlocks(ctx, fmt.Sprintf("%s?iss.meta=off&from=%s&start=%d", path, from.Format(moexDate), start))
++		if err != nil {
++			return nil, err
++		}
++		page, err := parseKeyrateHistory(blocks[keyrateHistoryBlock])
++		if err != nil {
++			return nil, fmt.Errorf("%s: %w", path, err)
++		}
++		if len(page) == 0 {
++			break
++		}
++		days = append(days, page...)
++		total, err := parseHistoryTotal(blocks[keyrateCursorBlock])
++		if err != nil {
++			return nil, fmt.Errorf("%s: %w", path, err)
++		}
++		if len(days) >= total {
++			break
++		}
++	}
++	return days, nil
++}
+diff --git a/moex/keyrate_parse.go b/moex/keyrate_parse.go
+new file mode 100644
+index 0000000..ee31b97
+--- /dev/null
++++ b/moex/keyrate_parse.go
+@@ -0,0 +1,269 @@
++package moex
++
++import (
++	"fmt"
++	"regexp"
++	"strings"
++	"time"
++)
++
++// keyrateContract — паспорт серии расчётного фьючерса на Индекс ключевой ставки MOEX (KEYRATE).
++type keyrateContract struct {
++	secid      string
++	seriesName string
++	firstTrade time.Time
++	// lastTrade — дата экспирации контракта (LSTDELDATE): она же дата заседания Совета директоров ЦБ,
++	// по ставке которого рассчитывается индекс KEYRATE.
++	lastTrade time.Time
++}
++
++// keyrateDay — дневной итог торгов одной серии. Цена дня — settle (SETTLEPRICE из блока history):
++// LAST у ISS равен нулю в дни без сделок (живая проба 2026-10-13) и ценой быть не может.
++type keyrateDay struct {
++	date         time.Time
++	close        float64
++	settle       float64
++	waprice      float64
++	volume       uint64
++	numtrades    uint64
++	openposition uint64
++}
++
++const (
++	// keyrateBoard — площадка срочного рынка, на которой торгуются серии KEYRATE.
++	keyrateBoard = "RFUD"
++	// keyrateSeriesPrefix — код серии начинается с KK; отсекает прочие инструменты срочного рынка.
++	keyrateSeriesPrefix = "KK"
++)
++
++// keyrateSecidRe — допустимый код серии: заглавные латинские буквы и цифры, не короче 4 символов
++// (secid приходит из внешнего JSON и подставляется в SQL-условие инкремента).
++var keyrateSecidRe = regexp.MustCompile(`^[A-Z0-9]{4,}$`)
++
++func validSecid(s string) bool {
++	return keyrateSecidRe.MatchString(s)
++}
++
++// parseKeyrateSecids — коды серий из блока securities запроса /iss/securities.json?q=KEYRATE.
++// Параметр assetcode= ISS игнорирует (отдаёт все бумаги), поэтому отбор — здесь: площадка RFUD,
++// код серии с префиксом KK, is_traded == 1 (календарные спреды и индекс KEYRATE отсеиваются).
++func parseKeyrateSecids(b issBlock) ([]string, error) {
++	secidIdx := keyrateColumnIndex(b.Columns, "secid")
++	boardIdx := keyrateColumnIndex(b.Columns, "primary_boardid")
++	tradedIdx := keyrateColumnIndex(b.Columns, "is_traded")
++	if secidIdx < 0 || boardIdx < 0 || tradedIdx < 0 {
++		return nil, errNoColumns(b.Columns)
++	}
++	var secids []string
++	for _, row := range b.Data {
++		secid, err := rowString(row, secidIdx, "secid")
++		if err != nil {
++			return nil, err
++		}
++		board, err := rowString(row, boardIdx, "primary_boardid")
++		if err != nil {
++			return nil, err
++		}
++		traded, err := rowTraded(row, tradedIdx)
++		if err != nil {
++			return nil, err
++		}
++		if board != keyrateBoard || !traded || !strings.HasPrefix(secid, keyrateSeriesPrefix) {
++			continue
++		}
++		secids = append(secids, secid)
++	}
++	return secids, nil
++}
++
++// parseKeyrateContract — паспорт серии из блока description (пары name/value) запроса
++// /iss/securities/<secid>.json. Обязательны SHORTNAME, FRSTTRADE и LSTDELDATE: молчаливый zero
++// time недопустим. Пустое значение LSTDELDATE откатывается на LSTTRADE.
++func parseKeyrateContract(b issBlock) (keyrateContract, error) {
++	nameIdx := keyrateColumnIndex(b.Columns, "name")
++	valueIdx := keyrateColumnIndex(b.Columns, "value")
++	if nameIdx < 0 || valueIdx < 0 {
++		return keyrateContract{}, errNoColumns(b.Columns)
++	}
++	fields := make(map[string]string, len(b.Data))
++	for _, row := range b.Data {
++		name, err := rowString(row, nameIdx, "name")
++		if err != nil {
++			return keyrateContract{}, err
++		}
++		value, err := rowString(row, valueIdx, "value")
++		if err != nil {
++			return keyrateContract{}, err
++		}
++		fields[name] = value
++	}
++	seriesName := fields["SHORTNAME"]
++	if seriesName == "" {
++		return keyrateContract{}, fmt.Errorf("empty SHORTNAME in description of %s", fields["SECID"])
++	}
++	firstTrade, err := parseKeyrateDate("FRSTTRADE", fields["FRSTTRADE"])
++	if err != nil {
++		return keyrateContract{}, err
++	}
++	lastRaw, ok := fields["LSTDELDATE"]
++	if !ok {
++		return keyrateContract{}, fmt.Errorf("no LSTDELDATE in description of %s", fields["SECID"])
++	}
++	if lastRaw == "" {
++		lastRaw = fields["LSTTRADE"]
++	}
++	lastTrade, err := parseKeyrateDate("LSTDELDATE", lastRaw)
++	if err != nil {
++		return keyrateContract{}, err
++	}
++	return keyrateContract{
++		secid:      fields["SECID"],
++		seriesName: seriesName,
++		firstTrade: firstTrade,
++		lastTrade:  lastTrade,
++	}, nil
++}
++
++// parseKeyrateHistory — дневные итоги из блока history запроса /iss/history/.../securities/<secid>.json.
++// Читаются только tradedate, close, settleprice, waprice, volume, numtrades, openposition:
++// колонка LAST не читается ни здесь, ни в импортёре.
++func parseKeyrateHistory(b issBlock) ([]keyrateDay, error) {
++	idx := make(map[string]int, 7)
++	for _, name := range []string{"tradedate", "close", "settleprice", "waprice", "volume", "numtrades", "openposition"} {
++		idx[name] = keyrateColumnIndex(b.Columns, name)
++		if idx[name] < 0 {
++			return nil, errNoColumns(b.Columns)
++		}
++	}
++	var days []keyrateDay
++	for _, row := range b.Data {
++		tradedate, err := rowString(row, idx["tradedate"], "tradedate")
++		if err != nil {
++			return nil, err
++		}
++		date, err := time.Parse(moexDate, tradedate)
++		if err != nil {
++			return nil, err
++		}
++		close_, err := rowFloat(row, idx["close"])
++		if err != nil {
++			return nil, err
++		}
++		settle, err := rowFloat(row, idx["settleprice"])
++		if err != nil {
++			return nil, err
++		}
++		waprice, err := rowFloat(row, idx["waprice"])
++		if err != nil {
++			return nil, err
++		}
++		volume, err := rowCount(row, idx["volume"], "volume")
++		if err != nil {
++			return nil, err
++		}
++		numtrades, err := rowCount(row, idx["numtrades"], "numtrades")
++		if err != nil {
++			return nil, err
++		}
++		openposition, err := rowCount(row, idx["openposition"], "openposition")
++		if err != nil {
++			return nil, err
++		}
++		days = append(days, keyrateDay{
++			date:         date,
++			close:        close_,
++			settle:       settle,
++			waprice:      waprice,
++			volume:       volume,
++			numtrades:    numtrades,
++			openposition: openposition,
++		})
++	}
++	return days, nil
++}
++
++// parseHistoryTotal — TOTAL из блока history.cursor: сколько дней отдаёт ISS по запросу целиком,
++// при PAGESIZE меньше TOTAL нужны страницы (параметр start).
++func parseHistoryTotal(b issBlock) (int, error) {
++	idx := keyrateColumnIndex(b.Columns, "TOTAL")
++	if idx < 0 {
++		return 0, errNoColumns(b.Columns)
++	}
++	if len(b.Data) == 0 {
++		return 0, nil
++	}
++	total, err := rowFloat(b.Data[0], idx)
++	if err != nil {
++		return 0, err
++	}
++	if total < 0 {
++		return 0, errBadCell("TOTAL", b.Data[0][idx])
++	}
++	return int(total), nil
++}
++
++// keyrateColumnIndex — поиск колонки без учёта регистра имени. Регистр у ISS разный от блока к блоку:
++// в securities/description имена строчные (secid, primary_boardid, is_traded, name, value), в блоке
++// history — заглавные (TRADEDATE, CLOSE, SETTLEPRICE, WAPRICE, VOLUME, NUMTRADES, OPENPOSITION).
++func keyrateColumnIndex(columns []string, name string) int {
++	for i, c := range columns {
++		if strings.EqualFold(c, name) {
++			return i
++		}
++	}
++	return -1
++}
++
++// rowString — строковая ячейка строки блока ISS.
++func rowString(row []any, idx int, name string) (string, error) {
++	if idx < 0 || len(row) <= idx {
++		return "", fmt.Errorf("short row %v", row)
++	}
++	v, ok := row[idx].(string)
++	if !ok {
++		return "", errBadCell(name, row[idx])
++	}
++	return v, nil
++}
++
++// rowTraded — колонка is_traded: у календарных спредов ISS отдаёт null (сведений о торгах нет),
++// такую бумагу считаем неторгуемой, а не ошибкой разбора.
++func rowTraded(row []any, idx int) (bool, error) {
++	if idx < 0 || len(row) <= idx {
++		return false, fmt.Errorf("short row %v", row)
++	}
++	switch v := row[idx].(type) {
++	case nil:
++		return false, nil
++	case float64:
++		return v == 1, nil
++	default:
++		return false, errBadCell("is_traded", row[idx])
++	}
++}
++
++// rowCount — целочисленная колонка (объём, число сделок, открытые позиции): ISS отдаёт их числами,
++// значение проверяется на неотрицательность перед приведением к uint64.
++func rowCount(row []any, idx int, name string) (uint64, error) {
++	v, err := rowFloat(row, idx)
++	if err != nil {
++		return 0, err
++	}
++	if v < 0 {
++		return 0, errBadCell(name, row[idx])
++	}
++	return uint64(v), nil
++}
++
++// parseKeyrateDate — дата в формате ISS (moexDate); пустое значение — ошибка: zero time в паспорте
++// серии означал бы «дата заседания неизвестна», и импортёр записал бы её молча.
++func parseKeyrateDate(name, value string) (time.Time, error) {
++	if value == "" {
++		return time.Time{}, fmt.Errorf("empty %s in description", name)
++	}
++	date, err := time.Parse(moexDate, value)
++	if err != nil {
++		return time.Time{}, fmt.Errorf("%s: %w", name, err)
++	}
++	return date, nil
++}
+diff --git a/moex/keyrate_parse_test.go b/moex/keyrate_parse_test.go
+new file mode 100644
+index 0000000..e0f3f9f
+--- /dev/null
++++ b/moex/keyrate_parse_test.go
+@@ -0,0 +1,240 @@
++package moex
++
++import (
++	"encoding/json"
++	"os"
++	"path/filepath"
++	"reflect"
++	"slices"
++	"testing"
++	"time"
++)
++
++// issFixture читает фикстуру ISS (moex/testdata/<name>) как набор блоков по именам — так же,
++// как ответ ISS разбирает getBlocks.
++func issFixture(t *testing.T, name string) map[string]issBlock {
++	t.Helper()
++	raw, err := os.ReadFile(filepath.Join("testdata", name))
++	if err != nil {
++		t.Fatalf("read fixture %s: %v", name, err)
++	}
++	var blocks map[string]issBlock
++	if err := json.Unmarshal(raw, &blocks); err != nil {
++		t.Fatalf("decode fixture %s: %v", name, err)
++	}
++	return blocks
++}
++
++// issFixtureBlock — один блок фикстуры; отсутствие блока — ошибка теста, а не нулевой блок.
++func issFixtureBlock(t *testing.T, name, block string) issBlock {
++	t.Helper()
++	b, ok := issFixture(t, name)[block]
++	if !ok {
++		t.Fatalf("fixture %s has no block %q", name, block)
++	}
++	return b
++}
++
++// moexDay — дата в UTC: так её возвращают парсеры пакета (fmt moexDate).
++func moexDay(s string) time.Time {
++	d, _ := time.Parse(moexDate, s)
++	return d
++}
++
++// descriptionBlock собирает блок description ISS (пары name/value) из пар ключ-значение.
++func descriptionBlock(pairs ...[2]string) issBlock {
++	block := issBlock{Columns: []string{"name", "title", "value", "type", "sort_order", "is_hidden", "precision"}}
++	for _, p := range pairs {
++		block.Data = append(block.Data, []any{p[0], "", p[1], "string", 1.0, 0.0, nil})
++	}
++	return block
++}
++
++func sortedCopy(s []string) []string {
++	out := append([]string(nil), s...)
++	slices.Sort(out)
++	return out
++}
++
++func TestParseKeyrateSecids(t *testing.T) {
++	block := issFixtureBlock(t, "keyrate_securities.json", "securities")
++	got, err := parseKeyrateSecids(block)
++	if err != nil {
++		t.Fatalf("parseKeyrateSecids: %v", err)
++	}
++	// Порядок строк задаёт ISS (в зафиксированной фикстуре — KKG7, KKV6, KKZ6), и он не
++	// контрактный: импортёр обрабатывает серии независимо. Сравниваем состав серий.
++	want := []string{"KKV6", "KKZ6", "KKG7"}
++	if !slices.Equal(sortedCopy(got), sortedCopy(want)) {
++		t.Fatalf("got %v, want %v", got, want)
++	}
++	for _, secid := range got {
++		if secid == "KEYRATE" || secid == "KKV6KKZ6" || secid == "KKZ6KKG7" {
++			t.Errorf("secid %s must be filtered out (index or calendar spread)", secid)
++		}
++	}
++}
++
++func TestParseKeyrateSecidsNoColumns(t *testing.T) {
++	block := issBlock{
++		Columns: []string{"secid", "is_traded"},
++		Data:    [][]any{{"KKV6", 1.0}},
++	}
++	if _, err := parseKeyrateSecids(block); err == nil {
++		t.Fatal("expected error for block without primary_boardid")
++	}
++}
++
++func TestParseKeyrateSecidsFilters(t *testing.T) {
++	// Правило отбора серии (дизайн, решение 3): primary_boardid == RFUD, код начинается с KK,
++	// is_traded == 1 (null у ISS значит «сведений о торгах нет» — серия не торгуется).
++	block := issBlock{
++		Columns: []string{"secid", "primary_boardid", "is_traded"},
++		Data: [][]any{
++			{"KKV6", "RFUD", 1.0},
++			{"KEYRATE", "RTSI", 1.0},  // индекс ключевой ставки — не серия фьючерса
++			{"KKV6KKZ6", "RFUD", 0.0}, // календарный спред: is_traded=0
++			{"KKZ6KKG7", "RFUD", nil}, // календарный спред: is_traded отсутствует
++			{"ABV6", "RFUD", 1.0},     // другая серия срочного рынка, не KEYRATE
++			{"KKZ6", "RTSI", 1.0},     // серия не на площадке RFUD
++			{"KKG7", "RFUD", "1"},     // неожиданный тип is_traded — ошибка
++		},
++	}
++	if _, err := parseKeyrateSecids(block); err == nil {
++		t.Fatal("expected error for non-numeric is_traded")
++	}
++	block.Data = block.Data[:len(block.Data)-1]
++	got, err := parseKeyrateSecids(block)
++	if err != nil {
++		t.Fatalf("parseKeyrateSecids: %v", err)
++	}
++	if want := []string{"KKV6"}; !slices.Equal(got, want) {
++		t.Fatalf("got %v, want %v", got, want)
++	}
++}
++
++func TestParseKeyrateContract(t *testing.T) {
++	block := issFixtureBlock(t, "keyrate_description.json", "description")
++	got, err := parseKeyrateContract(block)
++	if err != nil {
++		t.Fatalf("parseKeyrateContract: %v", err)
++	}
++	want := keyrateContract{
++		secid:      "KKV6",
++		seriesName: "KEYRATE-10.26",
++		firstTrade: moexDay("2026-09-29"),
++		lastTrade:  moexDay("2026-10-23"),
++	}
++	if !reflect.DeepEqual(got, want) {
++		t.Fatalf("got %+v, want %+v", got, want)
++	}
++}
++
++func TestParseKeyrateContractMissingKey(t *testing.T) {
++	// Молчаливый zero time недопустим: без LSTDELDATE паспорт серии неполон.
++	block := descriptionBlock(
++		[2]string{"SECID", "KKV6"},
++		[2]string{"SHORTNAME", "KEYRATE-10.26"},
++		[2]string{"FRSTTRADE", "2026-09-29"},
++		[2]string{"LSTTRADE", "2026-10-23"},
++	)
++	if _, err := parseKeyrateContract(block); err == nil {
++		t.Fatal("expected error for description without LSTDELDATE")
++	}
++}
++
++func TestParseKeyrateContractEmptyExpirationDate(t *testing.T) {
++	// LSTDELDATE — дата экспирации (= дата заседания ЦБ); пустое значение откатывается на LSTTRADE.
++	block := descriptionBlock(
++		[2]string{"SECID", "KKV6"},
++		[2]string{"SHORTNAME", "KEYRATE-10.26"},
++		[2]string{"FRSTTRADE", "2026-09-29"},
++		[2]string{"LSTTRADE", "2026-10-22"},
++		[2]string{"LSTDELDATE", ""},
++	)
++	got, err := parseKeyrateContract(block)
++	if err != nil {
++		t.Fatalf("parseKeyrateContract: %v", err)
++	}
++	if !got.lastTrade.Equal(moexDay("2026-10-22")) {
++		t.Fatalf("lastTrade %s, want LSTTRADE 2026-10-22", got.lastTrade.Format(moexDate))
++	}
++}
++
++func TestParseKeyrateHistory(t *testing.T) {
++	block := issFixtureBlock(t, "keyrate_history.json", "history")
++	got, err := parseKeyrateHistory(block)
++	if err != nil {
++		t.Fatalf("parseKeyrateHistory: %v", err)
++	}
++	want := []keyrateDay{
++		{date: moexDay("2026-09-29"), close: 13.94, settle: 13.94, waprice: 13.94, volume: 28, numtrades: 19, openposition: 28},
++		{date: moexDay("2026-09-30"), close: 13.94, settle: 13.95, waprice: 13.96, volume: 36, numtrades: 31, openposition: 68},
++		{date: moexDay("2026-10-01"), close: 13.96, settle: 13.96, waprice: 13.95, volume: 33, numtrades: 10, openposition: 116},
++	}
++	if !reflect.DeepEqual(got, want) {
++		t.Fatalf("got %+v, want %+v", got, want)
++	}
++}
++
++func TestParseKeyrateHistoryIgnoresLast(t *testing.T) {
++	block := issFixtureBlock(t, "keyrate_history.json", "history")
++	if columnIndex(block.Columns, "LAST") >= 0 {
++		t.Fatal("fixture must not contain a LAST column: the parser must not rely on it")
++	}
++	plain, err := parseKeyrateHistory(block)
++	if err != nil {
++		t.Fatalf("parseKeyrateHistory: %v", err)
++	}
++	// Добавляем LAST=0, как ISS отдаёт день без сделок: цена дня — SETTLEPRICE, LAST не читается.
++	withLast := issBlock{Columns: append(append([]string(nil), block.Columns...), "LAST")}
++	for _, row := range block.Data {
++		withLast.Data = append(withLast.Data, append(append([]any(nil), row...), 0.0))
++	}
++	got, err := parseKeyrateHistory(withLast)
++	if err != nil {
++		t.Fatalf("parseKeyrateHistory with LAST: %v", err)
++	}
++	if !reflect.DeepEqual(got, plain) {
++		t.Fatalf("LAST changed the parse result: got %+v, want %+v", got, plain)
++	}
++}
++
++func TestParseHistoryTotal(t *testing.T) {
++	block := issFixtureBlock(t, "keyrate_history.json", "history.cursor")
++	got, err := parseHistoryTotal(block)
++	if err != nil {
++		t.Fatalf("parseHistoryTotal: %v", err)
++	}
++	if got != 10 {
++		t.Fatalf("got %d, want 10", got)
++	}
++}
++
++func TestParseHistoryTotalNoColumns(t *testing.T) {
++	block := issBlock{Columns: []string{"INDEX", "PAGESIZE"}, Data: [][]any{{0.0, 100.0}}}
++	if _, err := parseHistoryTotal(block); err == nil {
++		t.Fatal("expected error for cursor block without TOTAL")
++	}
++}
++
++func TestValidSecid(t *testing.T) {
++	tests := []struct {
++		secid string
++		want  bool
++	}{
++		{"KKV6", true},
++		{"KKV6KKZ6", true},
++		{"KKG7", true},
++		{"kkv6", false},
++		{"KK V6", false},
++		{"", false},
++		{"KK", false},
++		{"KKV6-", false},
++	}
++	for _, tt := range tests {
++		if got := validSecid(tt.secid); got != tt.want {
++			t.Errorf("validSecid(%q) = %v, want %v", tt.secid, got, tt.want)
++		}
++	}
++}
+diff --git a/moex/keyrate_test.go b/moex/keyrate_test.go
+new file mode 100644
+index 0000000..2a80f38
+--- /dev/null
++++ b/moex/keyrate_test.go
+@@ -0,0 +1,211 @@
++package moex
++
++import (
++	"context"
++	"encoding/json"
++	"net/http"
++	"net/http/httptest"
++	"reflect"
++	"slices"
++	"strings"
++	"testing"
++	"time"
++)
++
++// useMoexServer подменяет moexBaseUrl тестовым сервером (сеть в тестах — только httptest)
++// и восстанавливает его по завершении теста.
++func useMoexServer(t *testing.T, handler http.HandlerFunc) {
++	t.Helper()
++	server := httptest.NewServer(handler)
++	t.Cleanup(server.Close)
++	prev := moexBaseUrl
++	t.Cleanup(func() { moexBaseUrl = prev })
++	moexBaseUrl = server.URL
++}
++
++// writeIssBlocks отдаёт блоки ISS одним JSON-ответом.
++func writeIssBlocks(t *testing.T, w http.ResponseWriter, blocks map[string]issBlock) {
++	t.Helper()
++	w.Header().Set("Content-Type", "application/json")
++	if err := json.NewEncoder(w).Encode(blocks); err != nil {
++		t.Errorf("write iss response: %v", err)
++	}
++}
++
++func TestFetchKeyrateSecids(t *testing.T) {
++	fixture := issFixture(t, "keyrate_securities.json")
++	var paths []string
++	useMoexServer(t, func(w http.ResponseWriter, r *http.Request) {
++		paths = append(paths, r.URL.String())
++		writeIssBlocks(t, w, fixture)
++	})
++
++	got, err := fetchKeyrateSecids(context.Background())
++	if err != nil {
++		t.Fatalf("fetchKeyrateSecids: %v", err)
++	}
++	want := []string{"KKV6", "KKZ6", "KKG7"}
++	if !slices.Equal(sortedCopy(got), sortedCopy(want)) {
++		t.Fatalf("got %v, want %v", got, want)
++	}
++	if want := []string{"/iss/securities.json?q=KEYRATE&iss.meta=off"}; !slices.Equal(paths, want) {
++		t.Fatalf("unexpected requests %v, want %v", paths, want)
++	}
++}
++
++func TestFetchKeyrateContract(t *testing.T) {
++	fixture := issFixture(t, "keyrate_description.json")
++	var paths []string
++	useMoexServer(t, func(w http.ResponseWriter, r *http.Request) {
++		paths = append(paths, r.URL.String())
++		writeIssBlocks(t, w, fixture)
++	})
++
++	got, err := fetchKeyrateContract(context.Background(), "KKV6")
++	if err != nil {
++		t.Fatalf("fetchKeyrateContract: %v", err)
++	}
++	want := keyrateContract{
++		secid:      "KKV6",
++		seriesName: "KEYRATE-10.26",
++		firstTrade: moexDay("2026-09-29"),
++		lastTrade:  moexDay("2026-10-23"),
++	}
++	if !reflect.DeepEqual(got, want) {
++		t.Fatalf("got %+v, want %+v", got, want)
++	}
++	if want := []string{"/iss/securities/KKV6.json?iss.meta=off"}; !slices.Equal(paths, want) {
++		t.Fatalf("unexpected requests %v, want %v", paths, want)
++	}
++}
++
++func TestFetchKeyrateContractHTTPError(t *testing.T) {
++	useMoexServer(t, func(w http.ResponseWriter, r *http.Request) {
++		http.Error(w, "boom", http.StatusInternalServerError)
++	})
++
++	if _, err := fetchKeyrateContract(context.Background(), "KKV6"); err == nil {
++		t.Fatal("expected error on http 500")
++	} else if !strings.Contains(err.Error(), "500") {
++		t.Fatalf("error text does not name the status: %v", err)
++	}
++}
++
++func TestFetchKeyrateHistoryPaginates(t *testing.T) {
++	fixture := issFixture(t, "keyrate_history.json")
++	columns := fixture["history"].Columns
++	rows := fixture["history"].Data
++	// Стенд отдаёт страницу короче TOTAL (=3): PAGESIZE у ISS (100) параметром не понижается,
++	// поэтому вторая страница достижима только по TOTAL из history.cursor — так пагинация и проверяется.
++	cursor := issBlock{
++		Columns: fixture["history.cursor"].Columns,
++		Data:    [][]any{{0.0, 3.0, float64(moexPageLimit)}},
++	}
++	var paths []string
++	useMoexServer(t, func(w http.ResponseWriter, r *http.Request) {
++		paths = append(paths, r.URL.String())
++		switch r.URL.Query().Get("start") {
++		case "0":
++			writeIssBlocks(t, w, map[string]issBlock{"history": {Columns: columns, Data: rows[:2]}, "history.cursor": cursor})
++		case "100":
++			writeIssBlocks(t, w, map[string]issBlock{"history": {Columns: columns, Data: rows[2:]}, "history.cursor": cursor})
++		default:
++			t.Errorf("unexpected start %q", r.URL.Query().Get("start"))
++			writeIssBlocks(t, w, map[string]issBlock{"history": {Columns: columns}, "history.cursor": cursor})
++		}
++	})
++
++	from, _ := time.Parse(moexDate, "2026-09-29")
++	days, err := fetchKeyrateHistory(context.Background(), "KKV6", from)
++	if err != nil {
++		t.Fatalf("fetchKeyrateHistory: %v", err)
++	}
++	want := []keyrateDay{
++		{date: moexDay("2026-09-29"), close: 13.94, settle: 13.94, waprice: 13.94, volume: 28, numtrades: 19, openposition: 28},
++		{date: moexDay("2026-09-30"), close: 13.94, settle: 13.95, waprice: 13.96, volume: 36, numtrades: 31, openposition: 68},
++		{date: moexDay("2026-10-01"), close: 13.96, settle: 13.96, waprice: 13.95, volume: 33, numtrades: 10, openposition: 116},
++	}
++	if !reflect.DeepEqual(days, want) {
++		t.Fatalf("got %+v, want %+v", days, want)
++	}
++	if len(paths) != 2 {
++		t.Fatalf("got %d requests %v, want 2 (start=0, start=100)", len(paths), paths)
++	}
++	if !strings.HasPrefix(paths[0], "/iss/history/engines/futures/markets/forts/securities/KKV6.json?") ||
++		!strings.Contains(paths[0], "from=2026-09-29") || !strings.Contains(paths[0], "start=0") {
++		t.Fatalf("unexpected first request %q", paths[0])
++	}
++	if !strings.Contains(paths[1], "start=100") {
++		t.Fatalf("second page must be requested with start=%d, got %q", moexPageLimit, paths[1])
++	}
++}
++
++func TestFetchKeyrateHistoryEmpty(t *testing.T) {
++	fixture := issFixture(t, "keyrate_history.json")
++	columns := fixture["history"].Columns
++	// TOTAL=0: дней по серии нет — запрос один, без второй страницы и без зацикливания.
++	cursor := issBlock{
++		Columns: fixture["history.cursor"].Columns,
++		Data:    [][]any{{0.0, 0.0, float64(moexPageLimit)}},
++	}
++	var paths []string
++	useMoexServer(t, func(w http.ResponseWriter, r *http.Request) {
++		paths = append(paths, r.URL.String())
++		if len(paths) > 3 {
++			// Зацикливание обязано валить тест падением, а не висеть до таймаута go test.
++			t.Errorf("fetchKeyrateHistory does not stop on empty page: %v", paths)
++			http.Error(w, "too many requests", http.StatusInternalServerError)
++			return
++		}
++		writeIssBlocks(t, w, map[string]issBlock{"history": {Columns: columns}, "history.cursor": cursor})
++	})
++
++	from, _ := time.Parse(moexDate, "2026-09-29")
++	days, err := fetchKeyrateHistory(context.Background(), "KKV6", from)
++	if err != nil {
++		t.Fatalf("fetchKeyrateHistory: %v", err)
++	}
++	if len(days) != 0 {
++		t.Fatalf("got %+v, want no days", days)
++	}
++	if len(paths) != 1 {
++		t.Fatalf("got %d requests %v, want 1", len(paths), paths)
++	}
++}
++
++func TestGetBlocksReturnsAllBlocks(t *testing.T) {
++	// Страница history и её курсор приходят одним ответом: оба блока обязан отдать один запрос.
++	fixture := issFixture(t, "keyrate_history.json")
++	requests := 0
++	useMoexServer(t, func(w http.ResponseWriter, r *http.Request) {
++		requests++
++		writeIssBlocks(t, w, fixture)
++	})
++
++	blocks, err := getBlocks(context.Background(), "/iss/history/engines/futures/markets/forts/securities/KKV6.json?iss.meta=off")
++	if err != nil {
++		t.Fatalf("getBlocks: %v", err)
++	}
++	if requests != 1 {
++		t.Fatalf("got %d requests, want 1", requests)
++	}
++	if !reflect.DeepEqual(blocks["history"], fixture["history"]) ||
++		!reflect.DeepEqual(blocks["history.cursor"], fixture["history.cursor"]) {
++		t.Fatalf("unexpected blocks %+v", blocks)
++	}
++}
++
++func TestGetBlockMissingBlock(t *testing.T) {
++	fixture := issFixture(t, "keyrate_history.json")
++	useMoexServer(t, func(w http.ResponseWriter, r *http.Request) {
++		writeIssBlocks(t, w, fixture)
++	})
++
++	_, err := getBlock(context.Background(), "/iss/history/fake/KKV6.json?iss.meta=off", "marketdata")
++	if err == nil {
++		t.Fatal("expected error for missing block")
++	}
++	if want := `no block "marketdata" in response`; !strings.Contains(err.Error(), want) {
++		t.Fatalf("error text changed: %v", err)
++	}
++}
+diff --git a/moex/moex.go b/moex/moex.go
+index 044571e..cd38a5e 100644
+--- a/moex/moex.go
++++ b/moex/moex.go
+@@ -55,40 +55,51 @@ func rowFloat(row []any, idx int) (float64, error) {
+ 	if idx < 0 || len(row) <= idx {
+ 		return 0, fmt.Errorf("short row %v", row)
+ 	}
+ 	v, ok := row[idx].(float64)
+ 	if !ok {
+ 		return 0, fmt.Errorf("not a number: %v", row[idx])
+ 	}
+ 	return v, nil
+ }
+ 
+-func getBlock(ctx context.Context, path string, block string) (issBlock, error) {
++// getBlocks читает все блоки ответа ISS одним запросом. getBlock — обёртка над ним
++// для путей, которым нужен ровно один блок.
++func getBlocks(ctx context.Context, path string) (map[string]issBlock, error) {
+ 	ctx, cancel := context.WithTimeout(ctx, moexTimeout)
+ 	defer cancel()
+ 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, moexBaseUrl+path, nil)
+ 	if err != nil {
+-		return issBlock{}, err
++		return nil, err
+ 	}
+ 	resp, err := util.HttpClient.Do(req)
+ 	if err != nil {
+-		return issBlock{}, err
++		return nil, err
+ 	}
+ 	defer func() { _ = resp.Body.Close() }()
+ 	if resp.StatusCode != http.StatusOK {
+-		return issBlock{}, fmt.Errorf("%s: http status %d", path, resp.StatusCode)
++		return nil, fmt.Errorf("%s: http status %d", path, resp.StatusCode)
+ 	}
+ 	var body map[string]issBlock
+ 	if err = json.NewDecoder(resp.Body).Decode(&body); err != nil {
+-		return issBlock{}, fmt.Errorf("%s: %w", path, err)
++		return nil, fmt.Errorf("%s: %w", path, err)
++	}
++	return body, nil
++}
++
++// getBlock — единственный блок ответа ISS по имени; тексты ошибок те же, что были до getBlocks.
++func getBlock(ctx context.Context, path string, block string) (issBlock, error) {
++	blocks, err := getBlocks(ctx, path)
++	if err != nil {
++		return issBlock{}, err
+ 	}
+-	b, ok := body[block]
++	b, ok := blocks[block]
+ 	if !ok {
+ 		return issBlock{}, fmt.Errorf("%s: no block %q in response", path, block)
+ 	}
+ 	return b, nil
+ }
+ 
+ // fetchCandles дневные свечи (interval=24) инструмента, пагинация параметром start.
+ // path — путь вида /iss/engines/<engine>/markets/<market>/securities/<secid>/candles.json
+ func fetchCandles(ctx context.Context, path string, from time.Time) ([]candle, error) {
+ 	var candles []candle
+diff --git a/moex/testdata/keyrate_description.json b/moex/testdata/keyrate_description.json
+new file mode 100644
+index 0000000..eee98f7
+--- /dev/null
++++ b/moex/testdata/keyrate_description.json
+@@ -0,0 +1,21 @@
++{
++"description": {
++	"columns": ["name", "title", "value", "type", "sort_order", "is_hidden", "precision"], 
++	"data": [
++		["SECID", "Краткий код", "KKV6", "string", 1, 0, null],
++		["SHORTNAME", "Краткое наименование контракта", "KEYRATE-10.26", "string", 3, 0, null],
++		["FRSTTRADE", "Начало обращения", "2026-09-29", "date", 9, 0, null],
++		["LSTTRADE", "Последний день обращения", "2026-10-23", "date", 10, 0, null],
++		["LSTDELDATE", "Дата экспирации", "2026-10-23", "date", 11, 0, null],
++		["ASSETCODE", "Код базового актива", "KEYRATE", "string", 20, 0, null],
++		["UNIT", "Котировка", "В пунктах как значение индекса", "string", 25, 0, null],
++		["EXPIRATION_TIME", "Время экспирации", "19:00:00", "time", 29, 0, null],
++		["GROUP", "Код типа инструмента", "futures_forts", "string", 9001, 1, null]
++	]
++},
++"boards": {
++	"columns": ["secid", "boardid", "title", "board_group_id", "market_id", "market", "engine_id", "engine", "is_traded", "decimals", "history_from", "history_till", "listed_from", "listed_till", "is_primary", "currencyid", "unit"], 
++	"data": [
++		["KKV6", "RFUD", "Фьючерсы", 45, 22, "forts", 4, "futures", 1, 2, "2026-09-28", "2026-10-12", "2026-09-28", "2026-10-13", 1, null, "P"]
++	]
++}}
+diff --git a/moex/testdata/keyrate_history.json b/moex/testdata/keyrate_history.json
+new file mode 100644
+index 0000000..d81b64b
+--- /dev/null
++++ b/moex/testdata/keyrate_history.json
+@@ -0,0 +1,15 @@
++{
++"history": {
++	"columns": ["BOARDID", "TRADEDATE", "SECID", "OPEN", "LOW", "HIGH", "CLOSE", "OPENPOSITIONVALUE", "VALUE", "VOLUME", "OPENPOSITION", "SETTLEPRICE", "SWAPRATE", "WAPRICE", "CHANGE", "QTY", "NUMTRADES", "SHORTNAME", "ASSETCODE", "SWAPRATE_CURR"], 
++	"data": [
++		["RFUD", "2026-09-29", "KKV6", 13.97000, 13.91000, 13.97000, 13.94000, 390320.00, 390190.00, 28, 28, 13.94000, 0.00000, 13.94000, 0.00000, 1, 19, "KEYRATE-10.26", "KEYRATE", 0.00000],
++		["RFUD", "2026-09-30", "KKV6", 13.94000, 13.94000, 13.97000, 13.94000, 948600.00, 502570.00, 36, 68, 13.95000, 0.00000, 13.96000, 0.00000, 1, 31, "KEYRATE-10.26", "KEYRATE", 0.00000],
++		["RFUD", "2026-10-01", "KKV6", 13.95000, 13.94000, 13.96000, 13.96000, 1619360.00, 460360.00, 33, 116, 13.96000, 0.00000, 13.95000, 0.14000, 4, 10, "KEYRATE-10.26", "KEYRATE", 0.00000]
++	]
++},
++"history.cursor": {
++	"columns": ["INDEX", "TOTAL", "PAGESIZE"], 
++	"data": [
++		[0, 10, 100]
++	]
++}}
+diff --git a/moex/testdata/keyrate_securities.json b/moex/testdata/keyrate_securities.json
+new file mode 100644
+index 0000000..25065c0
+--- /dev/null
++++ b/moex/testdata/keyrate_securities.json
+@@ -0,0 +1,12 @@
++{
++"securities": {
++	"columns": ["secid", "shortname", "regnumber", "name", "isin", "is_traded", "emitent_id", "emitent_title", "emitent_inn", "emitent_okpo", "type", "group", "primary_boardid", "marketprice_boardid"], 
++	"data": [
++		["KEYRATE", "KEYRATE", null, "Индекс МосБиржи Ключевой ставки", null, 1, null, null, null, null, "stock_index_ot", "stock_index", "RTSI", null],
++		["KKG7", "KEYRATE-2.27", null, "Фьючерсный контракт KEYRATE-2.27", null, 1, null, null, null, null, "futures", "futures_forts", "RFUD", null],
++		["KKV6", "KEYRATE-10.26", null, "Фьючерсный контракт KEYRATE-10.26", null, 1, null, null, null, null, "futures", "futures_forts", "RFUD", null],
++		["KKV6KKZ6", "KEYRATE-10.26-12.26", null, "KEYRATE-10.26-12.26", null, 0, null, null, null, null, "futures_spread", "futures_forts", "RFUD", null],
++		["KKZ6", "KEYRATE-12.26", null, "Фьючерсный контракт KEYRATE-12.26", null, 1, null, null, null, null, "futures", "futures_forts", "RFUD", null],
++		["KKZ6KKG7", "KEYRATE-12.26-2.27", null, "KEYRATE-12.26-2.27", null, null, null, null, null, null, "futures_spread", "futures_forts", "RFUD", null]
++	]
++}}

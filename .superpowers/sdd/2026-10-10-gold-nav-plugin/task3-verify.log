@@ -1,0 +1,52 @@
+== make ch-status
+ClickHouse отвечает на порту 8123
+== make all
+0 issues.
+go vet ./...
+go test -race ./...
+?   	github.com/kmlebedev/clickhouse-import-rosstat	[no test files]
+?   	github.com/kmlebedev/clickhouse-import-rosstat/bank	[no test files]
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/bea	1.588s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/bls	1.882s
+?   	github.com/kmlebedev/clickhouse-import-rosstat/calendar	[no test files]
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/cbr	2.598s
+?   	github.com/kmlebedev/clickhouse-import-rosstat/chimport	[no test files]
+?   	github.com/kmlebedev/clickhouse-import-rosstat/cmd/ingest	[no test files]
+?   	github.com/kmlebedev/clickhouse-import-rosstat/craw	[no test files]
+?   	github.com/kmlebedev/clickhouse-import-rosstat/customs	[no test files]
+?   	github.com/kmlebedev/clickhouse-import-rosstat/fao	[no test files]
+?   	github.com/kmlebedev/clickhouse-import-rosstat/financial	[no test files]
+?   	github.com/kmlebedev/clickhouse-import-rosstat/financial/exporter	[no test files]
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/fred	2.374s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/gold	2.692s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/ingest	3.253s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/minfin	3.491s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/moex	3.640s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/rosstat	4.568s
+?   	github.com/kmlebedev/clickhouse-import-rosstat/util	[no test files]
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o build/clickhouse-import-rosstat .
+== start ingest
+== POST #1
+{"inserted":1}
+ HTTP 200
+== POST #2
+{"inserted":1}
+ HTTP 200
+== POST bad run_id (expect 400)
+run_id "not-a-uuid" must be a UUID: invalid UUID length: 10
+ HTTP 400
+== POST no token (expect 401)
+unauthorized
+ HTTP 401
+== counts (expect model_runs 1)
+"/Users/whitefox/.clickhouse/versions/26.10.1.1853/clickhouse" client --user "default" --password "" --multiquery < ".superpowers/sdd/2026-10-10-gold-nav-plugin/task3-count.sql"
+model_runs	1
+forecast_log	nav	12500
+forecast_log	xau_q_avg	4285
+== ingest log tail
+go build -o build/ingest ./cmd/ingest
+./build/ingest
+time="2026-10-10T02:06:46+05:00" level=info msg="ingest listening on :8081"
+time="2026-10-10T02:06:46+05:00" level=info msg="ingest: model_run 7f3c2a10-5b1e-4c7d-9a2f-0e8d4b6c1a99 already exists, skipping"
+make: *** [run-ingest] Terminated: 15
+.superpowers/sdd/2026-10-10-gold-nav-plugin/task3-verify.sh: line 19: 75080 Terminated: 15          make run-ingest > $W/task3-ingest.log 2>&1

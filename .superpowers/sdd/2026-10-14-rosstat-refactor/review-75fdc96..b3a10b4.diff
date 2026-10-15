@@ -1,0 +1,958 @@
+# Review package: 75fdc96fe3e9ad06810eee5cde7ee579c790c30c..b3a10b461e2836d56bc7952106bf34f4420210a8
+
+## Commits
+b3a10b4 rosstat: single importer registry and rosstat_ table prefix
+
+## Files changed
+ cbr/views.go              |   2 +-
+ dagu/rosstat.yaml         |  16 ++--
+ rosstat/importers.go      |  60 ++++++++++++
+ rosstat/importers_test.go | 239 ++++++++++++++++++++++++++++++++++++++++++++++
+ rosstat/ipc_mes.go        |  21 ++--
+ rosstat/ipc_weeks.go      |  17 ++--
+ rosstat/salaries_mes.go   |  15 +--
+ rosstat/series_meta.go    |  12 +--
+ rosstat/vvp_kvartal.go    |  15 +--
+ sql/key_rate_coverage.sql |   8 +-
+ util/publications.go      |   2 +-
+ views/gold_views.go       |   4 +-
+ views/model_inputs.go     |  10 +-
+ 13 files changed, 353 insertions(+), 68 deletions(-)
+
+## Diff
+diff --git a/cbr/views.go b/cbr/views.go
+index b09a220..c619415 100644
+--- a/cbr/views.go
++++ b/cbr/views.go
+@@ -58,14 +58,14 @@ func afterCbrMacro(meta []util.SeriesMeta) func(context.Context, driver.Conn) er
+ // cbrSurveyView — витрина рядов мониторинга предприятий (source='cbr_survey', импортёр
+ // cbr_mp_survey); общая витрина cbrMacroView её не покрывает.
+ var cbrSurveyView = util.View{
+ 	Name:    "v_cbr_survey",
+ 	Tables:  []string{"macro_series"},
+ 	Select:  `SELECT source, series, date, value FROM macro_series FINAL WHERE source = 'cbr_survey'`,
+ 	Comment: "Мониторинг предприятий Банка России (опросы нефинансовых компаний): ценовые ожидания бизнеса, ИБК и условия кредитования (месячные); загрузка мощностей, обеспеченность персоналом, ожидания численности (квартальные). Дата — отчётный период: 1-е число месяца, у квартальных — 1-е число месяца, следующего за кварталом; ЦБ публикует волну в первую декаду следующего месяца и нумерует справки по месяцу волны (справка «сентябрь 2026» цитирует точку отчётного периода август 2026). Перед использованием читать v_series_catalog по (source='cbr_survey', series): единицы и знаки различаются. ЦБ в комментариях цитирует сезонно сглаженные ряды (…_sa)",
+ 	Columns: map[string]string{
+ 		"source": "Всегда cbr_survey",
+ 		"series": "Код ряда; 13 рядов — описания в v_series_catalog (source='cbr_survey')",
+-		"date":   "Отчётный период: 1-е число месяца; у квартальных рядов — 1-е число месяца, следующего за отчётным кварталом (конвенция vvp_kvartal)",
++		"date":   "Отчётный период: 1-е число месяца; у квартальных рядов — 1-е число месяца, следующего за отчётным кварталом (конвенция rosstat_vvp_kvartal)",
+ 		"value":  "Значение в единицах ряда: пункты баланса ответов, % (загрузка мощностей), % годовых (ожидаемый прирост цен) — см. unit и description в v_series_catalog",
+ 	},
+ }
+diff --git a/dagu/rosstat.yaml b/dagu/rosstat.yaml
+index 7dd65e4..4e9eeda 100644
+--- a/dagu/rosstat.yaml
++++ b/dagu/rosstat.yaml
+@@ -1,37 +1,37 @@
+ type: chain
+ schedule: "17 12 * * 4"
+ overlap_policy: skip
+ 
+ steps:
+-  - id: ipc_mes
++  - id: rosstat_ipc_mes
+     run: "$ROSSTAT_IMPORT_BIN"
+     env:
+-      - CLICKHOUSE_IMPORT_STAT=ipc_mes
++      - CLICKHOUSE_IMPORT_STAT=rosstat_ipc_mes
+     retry_policy:
+       limit: 3
+       interval_sec: 300
+ 
+-  - id: ipc_weeks
++  - id: rosstat_ipc_weeks
+     run: "$ROSSTAT_IMPORT_BIN"
+     env:
+-      - CLICKHOUSE_IMPORT_STAT=ipc_weeks
++      - CLICKHOUSE_IMPORT_STAT=rosstat_ipc_weeks
+     retry_policy:
+       limit: 3
+       interval_sec: 300
+ 
+-  - id: salaries_mes
++  - id: rosstat_salaries_mes
+     run: "$ROSSTAT_IMPORT_BIN"
+     env:
+-      - CLICKHOUSE_IMPORT_STAT=salaries_mes
++      - CLICKHOUSE_IMPORT_STAT=rosstat_salaries_mes
+     retry_policy:
+       limit: 3
+       interval_sec: 300
+ 
+-  - id: vvp_kvartal
++  - id: rosstat_vvp_kvartal
+     run: "$ROSSTAT_IMPORT_BIN"
+     env:
+-      - CLICKHOUSE_IMPORT_STAT=vvp_kvartal
++      - CLICKHOUSE_IMPORT_STAT=rosstat_vvp_kvartal
+     retry_policy:
+       limit: 3
+       interval_sec: 300
+ 
+diff --git a/rosstat/importers.go b/rosstat/importers.go
+new file mode 100644
+index 0000000..e6a2537
+--- /dev/null
++++ b/rosstat/importers.go
+@@ -0,0 +1,60 @@
++package rosstat
++
++import "github.com/kmlebedev/clickhouse-import-rosstat/chimport"
++
++// rosstatImporter — запись реестра импортёров пакета: сам импортёр, таблица, в которую
++// он пишет, и запрос количественного чека версии (префлайта). Регистрируется конкретный
++// тип пакета, а не обёртка: Name() и Import() — его собственные, производные (каталог
++// рядов, витрину v_rosstat_macro) публикует шаблон util.ClickHouseImport через поле
++// AfterImport. Полей table и countPoints не видит никто, кроме теста
++// TestRosstatImportersPrefixedAndRegistered: по ним проверяется, что импортёр не занял
++// таблицу вне пространства rosstat_ и что объявленный в реестре префлайт совпадает с
++// объявлением самого импортёра (Publication()).
++type rosstatImporter struct {
++	chimport.ImportStat
++	table string
++	// countPoints — литерал PublicationCountPoints импортёра ("" — префлайта нет).
++	// Литерал, а не метод Publication(): именно расхождение этих двух источников
++	// значения и обязан ловить тест реестра.
++	countPoints string
++}
++
++// rosstatImporters — единственная точка регистрации импортёров Росстата: персональных
++// init()-append по файлам импортёров больше нет. Порядок повторяет dagu/rosstat.yaml;
++// в chimport.Stats порядок значения не имеет.
++//
++// Таблицы записаны литералами намеренно. Ссылка на константу импортёра
++// (rosstatIPCMesTable) сделала бы проверку префикса тавтологичной: тест сравнивал бы
++// константу с самой собой, тогда как литерал падает ровно на переименовании таблицы в
++// имя вне rosstat_-пространства — то есть на правке, которая увела бы витрины
++// v_rosstat_macro и v_model_inputs (вход контура золота, грант агенту) к чужим данным.
++// Литералы сверены с константами кода при переносе регистрации.
++//
++// rosstat_ipc_weeks — единственная запись с пустым countPoints, и сознательно: файл
++// Nedel_ipc.xlsx перезаписывается по тому же URL в недельном темпе, равном темпу шага
++// расписания, поэтому no-op недостижим, а HEAD был бы чистыми накладными расходами
++// (спека §3.7). Порт импортёра на util.ClickHouseImport — отдельная задача; до неё он
++// регистрируется как есть, со своим Name() и Import().
++//
++// Колонка countPoints — запрос количественного чека версии у импортёров, у которых
++// точка контроля публикации объявлена (спека §3.5); пустая строка — префлайта нет.
++// Литералы и здесь: запрос — часть утверждения «эти точки мои» (FINAL обязателен, иначе
++// count() считал бы несмёрженные части и менялся бы от прогона к прогону), и тест реестра
++// сверяет их с объявлением импортёра (Publication().CountPoints) — двумя независимыми
++// записями одного утверждения. Незамеченная правка запроса в объявлении оставила бы
++// реестр описывающим другой чек, а забытое объявление молча выключило бы префлайт.
++var rosstatImporters = []rosstatImporter{
++	{ipcMesImporter, "rosstat_ipc_mes", "SELECT count() FROM rosstat_ipc_mes FINAL"},
++	{ipcWeeksImporter, "rosstat_ipc_weeks", ""},
++	{salariesMesImporter, "rosstat_salaries_mes", "SELECT count() FROM rosstat_salaries_mes FINAL"},
++	{vvpKvartalImporter, "rosstat_vvp_kvartal", "SELECT count() FROM rosstat_vvp_kvartal FINAL"},
++}
++
++// init — единственная регистрация импортёров Росстата в chimport.Stats. Порядок
++// append совпадает с порядком реестра; main.go запускает всех (или фильтрует по
++// CLICKHOUSE_IMPORT_STAT=Name()).
++func init() {
++	for _, imp := range rosstatImporters {
++		chimport.Stats = append(chimport.Stats, imp)
++	}
++}
+diff --git a/rosstat/importers_test.go b/rosstat/importers_test.go
+new file mode 100644
+index 0000000..738570c
+--- /dev/null
++++ b/rosstat/importers_test.go
+@@ -0,0 +1,239 @@
++package rosstat
++
++import (
++	"os"
++	"path/filepath"
++	"regexp"
++	"strings"
++	"testing"
++
++	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
++	"github.com/kmlebedev/clickhouse-import-rosstat/util"
++)
++
++// Ожидаемые значения ниже — литералами, а не константами пакета. Тест, сверяющий
++// rosstatIPCMesTable с самим собой, прошёл бы и после переименования таблицы в имя вне
++// rosstat_-пространства, то есть ровно на той правке, от которой он и должен падать.
++const (
++	// rosstatNamePrefix — пространство имён импортёров и таблиц пакета rosstat. Имя
++	// импортёра — контракт расписания (CLICKHOUSE_IMPORT_STAT и id шага
++	// dagu/rosstat.yaml), имя таблицы — контракт данных (v_rosstat_macro,
++	// v_model_inputs и агент MCP).
++	rosstatNamePrefix = "rosstat_"
++	// sharedMacroSeriesTable — общая таблица вне rosstat_-пространства. У пакета rosstat
++	// её нет (в отличие от cbr/macro_series): все четыре импортёра владеют своей таблицей,
++	// поэтому исключение пусто и проверка (б) сводится к «таблица с префиксом» и
++	// «Name() совпадает с именем таблицы».
++	sharedMacroSeriesTable = ""
++)
++
++// expectedPublicationCountPoints — запросы количественного чека (спека §3.5) для
++// импортёров, объявивших точку контроля публикации. Литералами, а не ссылкой на
++// константу импортёра: проверка «колонка countPoints реестра == объявление самого
++// импортёра» падает ровно на расхождении запросов, а сравнение константы с самой
++// собой прошло бы и после правки запроса в объявлении — то есть на том самом
++// случае, от которого проверка и защищает.
++//
++// Набор неполный по построению: у rosstat_ipc_weeks префлайта нет и быть не должно
++// (Nedel_ipc.xlsx перезаписывается по тому же URL в недельном темпе, равном темпу
++// шага расписания, спека §3.7), а у остальных трёх файл обновляется реже прогонов.
++var expectedPublicationCountPoints = map[string]string{
++	"rosstat_ipc_mes":      "SELECT count() FROM rosstat_ipc_mes FINAL",
++	"rosstat_salaries_mes": "SELECT count() FROM rosstat_salaries_mes FINAL",
++	"rosstat_vvp_kvartal":  "SELECT count() FROM rosstat_vvp_kvartal FINAL",
++}
++
++// publicationDeclarer — то, как тест достаёт объявление импортёра из реестра: метод
++// Publication() промотируется из встроенного util.ClickHouseImport, поэтому приведение
++// работает для трёх импортёров пакета (rosstat_ipc_mes, rosstat_salaries_mes,
++// rosstat_vvp_kvartal) и не срабатывает для rosstat_ipc_weeks — тот ещё не переведён на
++// общий шаблон и объявления не имеет. Именованный тип, а не литерал интерфейса в теле
++// цикла: так проверка читается как контракт, а не как приём приведения.
++type publicationDeclarer interface {
++	Publication() util.PublicationDecl
++}
++
++// daguRosstatYAML — расписание rosstat: каждый шаг задаёт CLICKHOUSE_IMPORT_STAT. Путь от
++// каталога пакета (тесты идут с cwd=rosstat/): так же читают фикстуры другие пакеты.
++var daguRosstatYAML = filepath.Join("..", "dagu", "rosstat.yaml")
++
++// daguStatRef вытаскивает имя из строки шага `- CLICKHOUSE_IMPORT_STAT=<name>`.
++// Разбор построчный и регуляркой, без YAML-зависимости: тест не должен тянуть в
++// пакетный go.mod парсер ради одного ключа.
++var daguStatRef = regexp.MustCompile(`CLICKHOUSE_IMPORT_STAT=([A-Za-z0-9_]+)`)
++
++// TestRosstatImportersPrefixedAndRegistered держит инварианты реестра rosstatImporters —
++// единственной точки, из которой импортёры пакета попадают в chimport.Stats.
++//
++// Проверяется именно реестр, а не Import напрямую: остальные тесты пакета зовут
++// парсеры, и потому проходили бы, даже если импортёр не зарегистрирован и
++// недостижим ни из `make import`, ни из расписания. Регистрация — единственное,
++// что видит оператор.
++//
++//   - (а) Name() каждого импортёра начинается с rosstat_ — иначе ручной запуск
++//     CLICKHOUSE_IMPORT_STAT=<table> попадёт в чужой шаг конвейера (префикс rosstat_
++//     в репозитории уникален за пределами пакета);
++//   - (б) таблица — rosstat_-префикс и совпадает с Name(): общих таблиц вне префикса
++//     пакет не занимает, а смена таблицы под импортёром увела бы витрины
++//     v_rosstat_macro и v_model_inputs к чужим данным;
++//   - (в) имена уникальны и лежат в chimport.Stats: дубль имени в фильтре
++//     `make import STAT=...` выбрал бы произвольный из двух импортёров;
++//   - (г) состав шагов dagu/rosstat.yaml и состав реестра совпадают в обе стороны:
++//     расписание — единственный продакшн-вызов, и его опечатка или пропавший шаг
++//     иначе не видны ничем; у rosstat_ipc_weeks нет даже объявления префлайта,
++//     которое могло бы заметить исчезнувший шаг;
++//   - (д) точка контроля публикации (префлайт) объявлена ровно у ожидаемых трёх
++//     импортёров и запросом из expectedPublicationCountPoints: колонка countPoints
++//     реестра сверяется с объявлением самого импортёра (метод Publication()
++//     встроенного util.ClickHouseImport), а у rosstat_ipc_weeks объявления нет ни
++//     в реестре, ни у импортёра.
++func TestRosstatImportersPrefixedAndRegistered(t *testing.T) {
++	if len(rosstatImporters) == 0 {
++		t.Fatal("реестр rosstatImporters пуст: ни один импортёр пакета не зарегистрирован")
++	}
++
++	registered := make(map[string]bool, len(chimport.Stats))
++	for _, stat := range chimport.Stats {
++		registered[stat.Name()] = true
++	}
++
++	seen := make(map[string]bool, len(rosstatImporters))
++	for _, imp := range rosstatImporters {
++		name := imp.Name()
++
++		// (а)
++		if !strings.HasPrefix(name, rosstatNamePrefix) {
++			t.Errorf("имя импортёра %q без префикса %q: Name() — это CLICKHOUSE_IMPORT_STAT и id шага dagu/rosstat.yaml", name, rosstatNamePrefix)
++		}
++
++		// (в)
++		if seen[name] {
++			t.Errorf("имя импортёра %q встречается в реестре дважды", name)
++		}
++		seen[name] = true
++		if !registered[name] {
++			t.Errorf("импортёр %q не зарегистрирован в chimport.Stats: `make import STAT=%s` и шаг dagu той же строкой не найдут ничего", name, name)
++		}
++
++		// (б)
++		if imp.table == sharedMacroSeriesTable {
++			t.Errorf("импортёр %q не объявил таблицу: общей таблицы вне префикса %q у пакета нет — все четыре импортёра владеют своей", name, rosstatNamePrefix)
++			continue
++		}
++		if !strings.HasPrefix(imp.table, rosstatNamePrefix) {
++			t.Errorf("таблица %q импортёра %q без префикса %q", imp.table, name, rosstatNamePrefix)
++		}
++		// У трёх импортёров Name() — это TableName встроенного util.ClickHouseImport;
++		// rosstat_ipc_weeks переопределяет Name() тем же значением своей константы.
++		// Значит, литерал в колонке table обязан совпадать с Name(): иначе реестр
++		// описывает не ту таблицу, в которую импортёр пишет (переименовали константу —
++		// обновили литерал).
++		if name != imp.table {
++			t.Errorf("реестр записал импортёру %q таблицу %q, а Name() (TableName импортёра) — %q", name, imp.table, name)
++		}
++	}
++
++	// (д) Точка контроля публикации: колонка countPoints реестра — литерал, как и
++	// колонка table, и сверяется с объявлением самого импортёра. Расхождение между
++	// ними и есть та правка, от которой проверка должна падать (прецедент — table):
++	// реестр описывал бы префлайт, которого у импортёра нет, или наоборот.
++	declared := make(map[string]bool, len(expectedPublicationCountPoints))
++	for _, imp := range rosstatImporters {
++		name := imp.Name()
++		decl, declares := imp.ImportStat.(publicationDeclarer)
++		var pub util.PublicationDecl
++		if declares {
++			pub = decl.Publication()
++		}
++		want, expected := expectedPublicationCountPoints[name]
++		if !expected {
++			// Импортёр вне ожидаемого набора: префлайта нет ни в реестре, ни в
++			// объявлении. rosstat_ipc_weeks не должен обзавестись им «на всякий
++			// случай»: его файл перезаписывается по тому же URL в недельном темпе,
++			// равном темпу шага, — HEAD был бы чистыми накладными расходами.
++			if imp.countPoints != "" {
++				t.Errorf("реестр записал импортёру %q запрос чека %q, хотя префлайт ему не положен", name, imp.countPoints)
++			}
++			// rosstat_ipc_weeks не переведён на общий шаблон и метода Publication() не
++			// имеет вовсе — приведение к publicationDeclarer для него не срабатывает.
++			// Нулевое объявление остальных вне набора означает то же самое.
++			if declares && pub.CountPoints != "" {
++				t.Errorf("импортёр %q объявил точку контроля публикации (%q), хотя префлайт ему не положен", name, pub.CountPoints)
++			}
++			continue
++		}
++		declared[name] = true
++
++		if !declares {
++			t.Errorf("импортёр %q объявил префлайт в реестре, но не имеет метода Publication(): объявление живёт рядом с импортёром и не может быть только в реестре", name)
++			continue
++		}
++
++		// (а) Литерал реестра против объявления импортёра — разные источники
++		// значения: реестр правит человек, объявление живёт рядом с импортёром.
++		if pub.CountPoints != imp.countPoints {
++			t.Errorf("импортёр %q объявил запрос чека %q, а реестр записал %q", name, pub.CountPoints, imp.countPoints)
++		}
++		// (б) Оба обязаны быть дословно равны спеке §3.5: FINAL — часть утверждения
++		// «эти точки мои» (без него count() считал бы несмёрженные части).
++		if imp.countPoints != want {
++			t.Errorf("реестр записал импортёру %q запрос чека %q, а спека §3.5 — %q", name, imp.countPoints, want)
++		}
++		// (в) Ключ версии — Source объявления: у импортёров с одной таблицей это
++		// TableName, и сдвиг ключа развёл бы одну версию файла на две строки
++		// source_publications.
++		if pub.Source != name {
++			t.Errorf("объявление импортёра %q даёт ключ версии %q, а импортёр называется %q: `make import STAT=%s` и dagu-шаг ищут его по имени", name, pub.Source, name, name)
++		}
++	}
++	// Обратное направление: карта не должна описывать импортёра, которого в реестре
++	// нет, — иначе ожидание §3.5 осталось бы без предъявителя, а проверки (а)–(в)
++	// над ним не выполнялись бы вовсе.
++	for name := range expectedPublicationCountPoints {
++		if !declared[name] {
++			t.Errorf("в реестре rosstatImporters нет импортёра %q, для которого спека §3.5 ожидает объявление префлайта", name)
++		}
++	}
++
++	// «Ровно те же»: число rosstat_-имён в Stats не может быть больше реестра
++	// (кто-то вернул персональный init()-append в файл импортёра) или меньше
++	// (запись забыта при консолидации) — ровно одна точка регистрации на пакет.
++	rosstatRegistered := 0
++	for _, stat := range chimport.Stats {
++		if strings.HasPrefix(stat.Name(), rosstatNamePrefix) {
++			rosstatRegistered++
++		}
++	}
++	if rosstatRegistered != len(rosstatImporters) {
++		t.Errorf("в chimport.Stats %d импортёров с префиксом %q, в реестре %d: регистрация должна быть только в rosstat/importers.go", rosstatRegistered, rosstatNamePrefix, len(rosstatImporters))
++	}
++
++	// (г)
++	data, err := os.ReadFile(daguRosstatYAML)
++	if err != nil {
++		t.Fatalf("чтение %s: %v", daguRosstatYAML, err)
++	}
++	steps := daguStatRef.FindAllStringSubmatch(string(data), -1)
++	if len(steps) == 0 {
++		t.Fatalf("в dagu/rosstat.yaml не найдено ни одной строки CLICKHOUSE_IMPORT_STAT=: разбор сломан или шаги переписаны")
++	}
++	scheduled := make(map[string]bool, len(steps))
++	for _, step := range steps {
++		name := step[1]
++		scheduled[name] = true
++		if !seen[name] {
++			t.Errorf("шаг dagu/rosstat.yaml CLICKHOUSE_IMPORT_STAT=%s не найден в реестре rosstatImporters: расписание позовёт импортёр, которого нет", name)
++		}
++	}
++	// Обратное направление: каждый импортёр реестра обязан быть шагом расписания.
++	// Пропавший шаг не заметил бы больше ни один тест: реестр верен сам по себе, а
++	// витрины v_rosstat_macro и v_model_inputs оставались бы пустыми при зелёном
++	// пакете. rosstat_ipc_weeks здесь не исключение, а худший случай: у него нет ни
++	// колонки countPoints в реестре, ни объявления у импортёра, с которыми состав
++	// расписания можно было бы сверить отдельно.
++	for name := range seen {
++		if !scheduled[name] {
++			t.Errorf("в dagu/rosstat.yaml нет шага CLICKHOUSE_IMPORT_STAT=%s: импортёр зарегистрирован, но по расписанию не запускается", name)
++		}
++	}
++}
+diff --git a/rosstat/ipc_mes.go b/rosstat/ipc_mes.go
+index c212c87..93aed1a 100644
+--- a/rosstat/ipc_mes.go
++++ b/rosstat/ipc_mes.go
+@@ -1,52 +1,51 @@
+ package rosstat
+ 
+ import (
+ 	"context"
+ 	"fmt"
+ 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+ 	"github.com/gocolly/colly/v2"
+-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+ 	log "github.com/sirupsen/logrus"
+ 	"github.com/xuri/excelize/v2"
+ 	"strconv"
+ 	"time"
+ )
+ 
+ const (
+ 	// ToDo update data source Потребительские цены https://rosstat.gov.ru/statistics/price
+ 	// Индексы потребительских цен на товары и услуги по Российской Федерации, месяцы (с 1991 г.)
+-	ipcMesTable = "ipc_mes"
+-	ipcMesDdl   = `CREATE TABLE IF NOT EXISTS %s (
++	rosstatIPCMesTable = "rosstat_ipc_mes"
++	ipcMesDdl          = `CREATE TABLE IF NOT EXISTS %s (
+ 				  name LowCardinality(String)
+ 				, date Date
+ 				, percent Float32
+ 			) ENGINE = ReplacingMergeTree ORDER BY (name, date);
+ 		`
+ 	ipcMesField      = "к концу предыдущего месяца"
+ 	ipcMesYearStart  = 1991
+ 	ipcMesTimeLayout = "2006-01"
+ 	// ipcMesCountPoints — количественный чек версии (спека §3.5): число точек своего ряда.
+ 	// Литерал, как и таблица: запрос — часть утверждения «эти точки мои». FINAL обязателен —
+ 	// без него count() считает несмёрженные части и растёт после каждого повторного импорта,
+ 	// то есть чек сравнивал бы величину, меняющуюся от прогона к прогону.
+-	ipcMesCountPoints = "SELECT count() FROM ipc_mes FINAL"
++	ipcMesCountPoints = "SELECT count() FROM rosstat_ipc_mes FINAL"
+ )
+ 
+ type IpcMesStat struct {
+ 	util.ClickHouseImport
+ }
+ 
+ // getXlsDataUrl ищет ссылку на актуальный ipc_mes_*.xlsx на странице цен Росстата и
+ // возвращает её как есть: пустой результат — признак «ссылки нет», и вызывающий обязан
+-// отличить его от рабочей ссылки сам (то же устройство у соседей — salaries_mes, vvp_kvartal).
++// отличить его от рабочей ссылки сам (то же устройство у соседей — rosstat_salaries_mes, rosstat_vvp_kvartal).
+ // Ошибка обхода страницы только логируется: решение о сбое принимает вызывающий по пустому URL.
+ func (s *IpcMesStat) getXlsDataUrl() (url string) {
+ 	c := colly.NewCollector()
+ 	c.SetClient(util.HttpClient)
+ 	c.OnHTML(".row > div:nth-child(3) div.toggle-section__content.toggle-section__content--open > div > div > div > div:nth-child(1) > div > div.toggle-card__main > div > div > div > div:nth-child(3) > div.document-list__item-link > a", func(e *colly.HTMLElement) {
+ 		url = fmt.Sprintf("%s%s", rosstatUrl, e.Attr("href"))
+ 		log.Infof("href url %s", url)
+ 	})
+ 	if err := c.Visit(fmt.Sprintf("%s/statistics/price", rosstatUrl)); err != nil {
+ 		log.Errorf("Visit %v+", err)
+@@ -113,35 +112,31 @@ func ipcMesImport(xlsx *excelize.File, batch driver.Batch) error {
+ 		}
+ 		if err = batch.Append(row[0], mes.AddDate(0, 1, -1), float32(percent)); err != nil {
+ 			return err
+ 		}
+ 	}
+ 	return nil
+ }
+ 
+ // Import берёт адрес актуального xlsx со страницы цен Росстата: имени файла в коде нет
+ // (ipc_mes_ММ-ГГГГ.xlsx меняется при каждом обновлении), а сетевое обращение в init()
+-// запрещено (ARCHITECTURE.md §8.6). Пустой URL — сразу ошибка, как у соседей (salaries_mes,
+-// vvp_kvartal): иначе прогон дошёл бы до GetXlsx("") и упал невнятно. Дальше — полный цикл
++// запрещено (ARCHITECTURE.md §8.6). Пустой URL — сразу ошибка, как у соседей (rosstat_salaries_mes,
++// rosstat_vvp_kvartal): иначе прогон дошёл бы до GetXlsx("") и упал невнятно. Дальше — полный цикл
+ // шаблона: DDL → префлайт по HEAD (файл обновляется раз в месяц, шаг расписания — недельный)
+ // → точки → производные (AfterImport) → строка версии.
+ func (s *IpcMesStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+ 	xlsDataUrl := s.getXlsDataUrl()
+ 	if xlsDataUrl == "" {
+ 		return count, fmt.Errorf("ipcMes: не найдена ссылка на ipc_mes_*.xlsx на %s/statistics/price", rosstatUrl)
+ 	}
+ 	s.DataUrl = xlsDataUrl
+ 	return s.ClickHouseImport.Import(ctx, conn)
+ }
+ 
+-// ipcMesImporter — помесячные ИПЦ Росстата; регистрируется init() пакета.
++// ipcMesImporter — помесячные ИПЦ Росстата; регистрируется реестром rosstat/importers.go.
+ var ipcMesImporter = &IpcMesStat{ClickHouseImport: util.ClickHouseImport{
+-	TableName:              ipcMesTable,
++	TableName:              rosstatIPCMesTable,
+ 	CreateTable:            []string{ipcMesDdl},
+ 	ImportFunc:             ipcMesImport,
+ 	AfterImport:            afterRosstatMacro(ipcMesSeriesMeta),
+ 	PublicationCountPoints: ipcMesCountPoints,
+ }}
+-
+-func init() {
+-	chimport.Stats = append(chimport.Stats, ipcMesImporter)
+-}
+diff --git a/rosstat/ipc_weeks.go b/rosstat/ipc_weeks.go
+index 84794d0..d206a1d 100644
+--- a/rosstat/ipc_weeks.go
++++ b/rosstat/ipc_weeks.go
+@@ -1,48 +1,47 @@
+ package rosstat
+ 
+ import (
+ 	"fmt"
+ 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+ 	"github.com/gocolly/colly/v2"
+-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+ 	log "github.com/sirupsen/logrus"
+ 	"github.com/xuri/excelize/v2"
+ 	"strconv"
+ 	"strings"
+ 	"time"
+ )
+ 
+ import (
+ 	"context"
+ )
+ 
+ const (
+ 	// ToDo update data source https://rosstat.gov.ru/statistics/price
+ 	// Еженедельные индексы потребительских цен (тарифов) на отдельные товары и услуги по Российской
+-	ipcWeeksTable = "ipc_weeks"
+-	ipcWeeksDdl   = `CREATE TABLE IF NOT EXISTS ` + ipcWeeksTable + ` (
++	rosstatIPCWeeksTable = "rosstat_ipc_weeks"
++	ipcWeeksDdl          = `CREATE TABLE IF NOT EXISTS ` + rosstatIPCWeeksTable + ` (
+ 				  name LowCardinality(String)
+ 				, date Date
+ 				, percent Float32
+ 			) ENGINE = ReplacingMergeTree ORDER BY (name, date);
+ 		`
+-	ipcWeeksInsert = "INSERT INTO " + ipcWeeksTable
++	ipcWeeksInsert = "INSERT INTO " + rosstatIPCWeeksTable
+ 	ipcWeeksField  = "Наименование"
+ )
+ 
+ type IpcWeeksStat struct {
+ }
+ 
+ func (s *IpcWeeksStat) Name() string {
+-	return ipcWeeksTable
++	return rosstatIPCWeeksTable
+ }
+ 
+ func (s *IpcWeeksStat) getXlsDataUrl() (url string, err error) {
+ 	c := colly.NewCollector()
+ 	c.SetClient(util.HttpClient)
+ 	// body > main > section:nth-child(2) > div > div > div > div > div > div > div.col-lg-8.order-1.order-lg-1 > div > div:nth-child(3) > div > div.toggle-section__content.toggle-section__content--open > div > div > div > div:nth-child(1) > div > div.toggle-card__main > div > div > div > div:nth-child(1) > div.document-list__item-link > a
+ 	c.OnHTML(".row > div:nth-child(3) div.toggle-section__content.toggle-section__content--open > div > div > div > div:nth-child(1) > div > div.toggle-card__main > div > div > div > div:nth-child(1) > div.document-list__item-link > a", func(e *colly.HTMLElement) {
+ 		url = fmt.Sprintf("%s%s", rosstatUrl, e.Attr("href"))
+ 		log.Infof("href url %s", url)
+ 	})
+@@ -133,13 +132,15 @@ func (s *IpcWeeksStat) Import(ctx context.Context, conn driver.Conn) (count int6
+ 	}
+ 	if err = util.UpsertSeriesCatalog(ctx, conn, ipcWeeksSeriesMeta()); err != nil {
+ 		return count, err
+ 	}
+ 	if _, err = util.CreateView(ctx, conn, rosstatMacroView); err != nil {
+ 		return count, err
+ 	}
+ 	return count, nil
+ }
+ 
+-func init() {
+-	chimport.Stats = append(chimport.Stats, &IpcWeeksStat{})
+-}
++// ipcWeeksImporter — еженедельные индексы цен Росстата; регистрируется реестром
++// rosstat/importers.go. На общий шаблон util.ClickHouseImport импортёр пока не переведён:
++// DDL, вставка и производные у него свои (см. export/Import), поэтому в реестре он стоит
++// со своим Name() и своим countPoints (пустым — префлайта у недельного ряда нет).
++var ipcWeeksImporter = &IpcWeeksStat{}
+diff --git a/rosstat/salaries_mes.go b/rosstat/salaries_mes.go
+index cecb72d..28220f5 100644
+--- a/rosstat/salaries_mes.go
++++ b/rosstat/salaries_mes.go
+@@ -1,45 +1,44 @@
+ package rosstat
+ 
+ import (
+ 	"context"
+ 	"fmt"
+ 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+ 	"github.com/gocolly/colly/v2"
+-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+ 	log "github.com/sirupsen/logrus"
+ 	"github.com/xuri/excelize/v2"
+ 	"strconv"
+ 	"strings"
+ 	"time"
+ )
+ 
+ const (
+ 	// Рынок труда, занятость и заработная плата https://rosstat.gov.ru/labor_market_employment_salaries
+ 	// Среднемесячная номинальная начисленная заработная плата работников в целом по экономике Российской Федерации
+ 	// Имя файла содержит месяц и год (tab1-zpl_ММ-ГГГГ.xlsx) и меняется при обновлении,
+ 	// поэтому ссылка берётся со страницы.
+-	salariesMesTable = "salaries_mes"
+-	salariesMesDdl   = `CREATE TABLE IF NOT EXISTS %s (
++	rosstatSalariesMesTable = "rosstat_salaries_mes"
++	salariesMesDdl          = `CREATE TABLE IF NOT EXISTS %s (
+ 				  name LowCardinality(String)
+ 				, date Date
+ 				, salary Float32
+ 			) ENGINE = ReplacingMergeTree ORDER BY (name, date);
+ 		`
+ 	salariesMesField      = "1991"
+ 	salariesMesYearStart  = 1991
+ 	salariesMesTimeLayout = "2006-01"
+ 	// salariesMesCountPoints — количественный чек версии (спека §3.5): число точек своего
+ 	// ряда. Литерал, как и таблица: запрос — часть утверждения «эти точки мои». FINAL
+ 	// обязателен — иначе count() считал бы несмёрженные части.
+-	salariesMesCountPoints = "SELECT count() FROM salaries_mes FINAL"
++	salariesMesCountPoints = "SELECT count() FROM rosstat_salaries_mes FINAL"
+ )
+ 
+ // getSalariesMesXlsDataUrl ищет ссылку на актуальный tab1-zpl_*.xlsx на странице
+ // рынка труда Росстата.
+ func getSalariesMesXlsDataUrl() (url string) {
+ 	c := colly.NewCollector()
+ 	c.SetClient(util.HttpClient)
+ 	c.OnHTML(`a[href*="tab1-zpl"]`, func(e *colly.HTMLElement) {
+ 		if url == "" {
+ 			url = fmt.Sprintf("%s%s", rosstatUrl, e.Attr("href"))
+@@ -132,22 +131,18 @@ func salariesMesImport(xlsx *excelize.File, batch driver.Batch) error {
+ // (AfterImport) → строка версии.
+ func (s *SalariesMesStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+ 	xlsDataUrl := getSalariesMesXlsDataUrl()
+ 	if xlsDataUrl == "" {
+ 		return count, fmt.Errorf("salariesMes: не найдена ссылка на tab1-zpl_*.xlsx на %s/labor_market_employment_salaries", rosstatUrl)
+ 	}
+ 	s.DataUrl = xlsDataUrl
+ 	return s.ClickHouseImport.Import(ctx, conn)
+ }
+ 
+-// salariesMesImporter — среднемесячная начисленная зарплата по РФ; регистрируется init() пакета.
++// salariesMesImporter — среднемесячная начисленная зарплата по РФ; регистрируется реестром rosstat/importers.go.
+ var salariesMesImporter = &SalariesMesStat{ClickHouseImport: util.ClickHouseImport{
+-	TableName:              salariesMesTable,
++	TableName:              rosstatSalariesMesTable,
+ 	CreateTable:            []string{salariesMesDdl},
+ 	ImportFunc:             salariesMesImport,
+ 	AfterImport:            afterRosstatMacro(salariesMesSeriesMeta),
+ 	PublicationCountPoints: salariesMesCountPoints,
+ }}
+-
+-func init() {
+-	chimport.Stats = append(chimport.Stats, salariesMesImporter)
+-}
+diff --git a/rosstat/series_meta.go b/rosstat/series_meta.go
+index 0fdefa3..69831b5 100644
+--- a/rosstat/series_meta.go
++++ b/rosstat/series_meta.go
+@@ -19,25 +19,25 @@ func afterRosstatMacro(meta []util.SeriesMeta) func(context.Context, driver.Conn
+ 		if err := util.UpsertSeriesCatalog(ctx, conn, meta); err != nil {
+ 			return err
+ 		}
+ 		_, err := util.CreateView(ctx, conn, rosstatMacroView)
+ 		return err
+ 	}
+ }
+ 
+ var rosstatMacroView = util.View{
+ 	Name:   "v_rosstat_macro",
+-	Tables: []string{ipcMesTable, ipcWeeksTable, vvpKvartalTable, salariesMesTable},
+-	Select: `SELECT 'rosstat' AS source, name AS series, date, toFloat64(percent) AS value FROM ipc_mes FINAL
+-UNION ALL SELECT 'rosstat', name, date, toFloat64(percent) FROM ipc_weeks FINAL
+-UNION ALL SELECT 'rosstat', name, date, toFloat64(vvp) FROM vvp_kvartal FINAL
+-UNION ALL SELECT 'rosstat', name, date, toFloat64(salary) FROM salaries_mes FINAL`,
++	Tables: []string{rosstatIPCMesTable, rosstatIPCWeeksTable, rosstatVVPKvartalTable, rosstatSalariesMesTable},
++	Select: `SELECT 'rosstat' AS source, name AS series, date, toFloat64(percent) AS value FROM rosstat_ipc_mes FINAL
++UNION ALL SELECT 'rosstat', name, date, toFloat64(percent) FROM rosstat_ipc_weeks FINAL
++UNION ALL SELECT 'rosstat', name, date, toFloat64(vvp) FROM rosstat_vvp_kvartal FINAL
++UNION ALL SELECT 'rosstat', name, date, toFloat64(salary) FROM rosstat_salaries_mes FINAL`,
+ 	Comment: "Ряды Росстата: ИПЦ по товарам и услугам (помесячно), еженедельные цены на отдельные товары и услуги, ВВП по кварталам, средняя номинальная зарплата по месяцам. Единицы значения и привязка даты различаются между рядами: перед расчётом читать v_series_catalog по (source, series)",
+ 	Columns: map[string]string{
+ 		"source": "Источник данных: всегда rosstat",
+ 		"series": "Название ряда; совпадает с series в v_series_catalog. Для ИПЦ и ВВП название содержит сноски и годы выгрузки",
+ 		"date":   "Дата наблюдения (Date). Для месячных и недельных рядов — день из таблицы; для квартальных и зарплатных дат сдвинута — см. description ряда в v_series_catalog",
+ 		"value":  "Значение ряда (Float64). Единицы зависят от ряда: индекс цен (100 = без изменения), млрд руб., рубли — см. unit в v_series_catalog",
+ 	},
+ }
+ 
+ var ipcMesSeriesMeta = []util.SeriesMeta{
+@@ -128,21 +128,21 @@ var vvpKvartalSeriesMeta = []util.SeriesMeta{
+ }
+ 
+ var salariesMesSeriesMeta = []util.SeriesMeta{
+ 	{
+ 		Source:      rosstatSource,
+ 		Series:      "Среднемесячная номинальная начисленная заработная плата работников по полному кругу организаций",
+ 		Title:       "Среднемесячная номинальная начисленная зарплата, РФ",
+ 		Unit:        "руб. в месяц (до 1998 г. — тыс. руб.)",
+ 		Frequency:   "M",
+ 		Origin:      "rosstat.gov.ru/labor_market_employment_salaries, файл tab1-zpl_*.xlsx, лист «Лист1»; строка = год, колонки «Январь»…«Декабрь»",
+-		Description: "Среднемесячная номинальная начисленная зарплата работников в целом по экономике РФ, рубли в месяц (до 1998 г. — тыс. руб., деноминация 1:1000). Значение — за месяц, в колонке месяца. Дата в таблице — 1-е число месяца, следующего за отчётным (зарплата за январь записана на 1 февраля). Реальный рост: номинальная зарплата / ИПЦ (ipc_mes) с поправкой на базу. Название меняется при обновлении файла Росстата.",
++		Description: "Среднемесячная номинальная начисленная зарплата работников в целом по экономике РФ, рубли в месяц (до 1998 г. — тыс. руб., деноминация 1:1000). Значение — за месяц, в колонке месяца. Дата в таблице — 1-е число месяца, следующего за отчётным (зарплата за январь записана на 1 февраля). Реальный рост: номинальная зарплата / ИПЦ (rosstat_ipc_mes) с поправкой на базу. Название меняется при обновлении файла Росстата.",
+ 	},
+ }
+ 
+ func ipcWeeksSeriesMeta() []util.SeriesMeta {
+ 	meta := make([]util.SeriesMeta, 0, len(ipcWeeksProducts))
+ 	for _, product := range ipcWeeksProducts {
+ 		meta = append(meta, util.SeriesMeta{
+ 			Source:      rosstatSource,
+ 			Series:      product,
+ 			Title:       product,
+diff --git a/rosstat/vvp_kvartal.go b/rosstat/vvp_kvartal.go
+index b7cefcd..ab9a698 100644
+--- a/rosstat/vvp_kvartal.go
++++ b/rosstat/vvp_kvartal.go
+@@ -1,18 +1,17 @@
+ package rosstat
+ 
+ import (
+ 	"context"
+ 	"fmt"
+ 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+ 	"github.com/gocolly/colly/v2"
+-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+ 	log "github.com/sirupsen/logrus"
+ 	"github.com/xuri/excelize/v2"
+ 	"strconv"
+ 	"strings"
+ 	"time"
+ )
+ 
+ func getQuarterDate(year int, quarter string) time.Time {
+ 	var startMonth time.Month
+@@ -29,31 +28,31 @@ func getQuarterDate(year int, quarter string) time.Time {
+ 		panic("Invalid quarter")
+ 	}
+ 	return time.Date(year, startMonth+3, 1, 0, 0, 0, 0, time.UTC)
+ }
+ 
+ const (
+ 	// Национальные счета https://rosstat.gov.ru/statistics/accounts
+ 	// ВВП кварталы (с 1995 г.) — имя файла содержит диапазон лет (VVP_kvartal_s_1995-2025.xlsx)
+ 	// и меняется при обновлении, поэтому ссылка берётся со страницы.
+ 	// Валовой внутренний продукт 1) (в ценах 2021 г., млрд руб., с исключением сезонного фактора)
+-	vvpKvartalTable = "vvp_kvartal"
+-	vvpKvartalDdl   = `CREATE TABLE IF NOT EXISTS %s (
++	rosstatVVPKvartalTable = "rosstat_vvp_kvartal"
++	vvpKvartalDdl          = `CREATE TABLE IF NOT EXISTS %s (
+ 				  name LowCardinality(String)
+ 				, date Date
+ 				, vvp Float32
+ 			) ENGINE = ReplacingMergeTree ORDER BY (name, date);
+ 		`
+ 	// vvpKvartalCountPoints — количественный чек версии (спека §3.5): число точек своего
+ 	// ряда. Литерал, как и таблица: запрос — часть утверждения «эти точки мои». FINAL
+ 	// обязателен — иначе count() считал бы несмёрженные части.
+-	vvpKvartalCountPoints = "SELECT count() FROM vvp_kvartal FINAL"
++	vvpKvartalCountPoints = "SELECT count() FROM rosstat_vvp_kvartal FINAL"
+ )
+ 
+ // getVvpKvartalXlsDataUrl ищет ссылку на актуальный VVP_kvartal_*.xlsx на странице
+ // национальных счетов Росстата.
+ func getVvpKvartalXlsDataUrl() (url string) {
+ 	c := colly.NewCollector()
+ 	c.SetClient(util.HttpClient)
+ 	c.OnHTML(`a[href*="VVP_kvartal"]`, func(e *colly.HTMLElement) {
+ 		if url == "" {
+ 			url = fmt.Sprintf("%s%s", rosstatUrl, e.Attr("href"))
+@@ -138,22 +137,18 @@ func vvpKvartalImport(xlsx *excelize.File, batch driver.Batch) error {
+ // производные (AfterImport) → строка версии.
+ func (s *vvpKvartalDdlStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+ 	xlsDataUrl := getVvpKvartalXlsDataUrl()
+ 	if xlsDataUrl == "" {
+ 		return count, fmt.Errorf("vvpKvartal: не найдена ссылка на VVP_kvartal_*.xlsx на %s/statistics/accounts", rosstatUrl)
+ 	}
+ 	s.DataUrl = xlsDataUrl
+ 	return s.ClickHouseImport.Import(ctx, conn)
+ }
+ 
+-// vvpKvartalImporter — квартальный ВВП РФ; регистрируется init() пакета.
++// vvpKvartalImporter — квартальный ВВП РФ; регистрируется реестром rosstat/importers.go.
+ var vvpKvartalImporter = &vvpKvartalDdlStat{ClickHouseImport: util.ClickHouseImport{
+-	TableName:              vvpKvartalTable,
++	TableName:              rosstatVVPKvartalTable,
+ 	CreateTable:            []string{vvpKvartalDdl},
+ 	ImportFunc:             vvpKvartalImport,
+ 	AfterImport:            afterRosstatMacro(vvpKvartalSeriesMeta),
+ 	PublicationCountPoints: vvpKvartalCountPoints,
+ }}
+-
+-func init() {
+-	chimport.Stats = append(chimport.Stats, vvpKvartalImporter)
+-}
+diff --git a/sql/key_rate_coverage.sql b/sql/key_rate_coverage.sql
+index 87d77e8..350f0d2 100644
+--- a/sql/key_rate_coverage.sql
++++ b/sql/key_rate_coverage.sql
+@@ -29,27 +29,27 @@ SELECT * FROM (
+     UNION ALL SELECT 'cbr_indicators_cpd', name, count(), min(date), max(date) FROM cbr_indicators_cpd FINAL GROUP BY name
+     
+     UNION ALL SELECT 'cbr_infl_exp', name, count(), min(date), max(date) FROM cbr_infl_exp FINAL GROUP BY name
+     
+     UNION ALL SELECT 'cbr_loans_to_corporations', name, count(), min(date), max(date) FROM cbr_loans_to_corporations FINAL GROUP BY name
+     
+     UNION ALL SELECT 'cbr_loans_to_individuals', name, count(), min(date), max(date) FROM cbr_loans_to_individuals FINAL GROUP BY name
+     
+     UNION ALL SELECT 'cbr_households_b_mes', name, count(), min(date), max(date) FROM cbr_households_b_mes FINAL GROUP BY name
+     
+-    UNION ALL SELECT 'ipc_mes', name, count(), min(date), max(date) FROM ipc_mes FINAL GROUP BY name
++    UNION ALL SELECT 'rosstat_ipc_mes', name, count(), min(date), max(date) FROM rosstat_ipc_mes FINAL GROUP BY name
+     
+-    UNION ALL SELECT 'ipc_weeks', name, count(), min(date), max(date) FROM ipc_weeks FINAL GROUP BY name
++    UNION ALL SELECT 'rosstat_ipc_weeks', name, count(), min(date), max(date) FROM rosstat_ipc_weeks FINAL GROUP BY name
+     
+-    UNION ALL SELECT 'vvp_kvartal', name, count(), min(date), max(date) FROM vvp_kvartal FINAL GROUP BY name
++    UNION ALL SELECT 'rosstat_vvp_kvartal', name, count(), min(date), max(date) FROM rosstat_vvp_kvartal FINAL GROUP BY name
+     
+-    UNION ALL SELECT 'salaries_mes', name, count(), min(date), max(date) FROM salaries_mes FINAL GROUP BY name
++    UNION ALL SELECT 'rosstat_salaries_mes', name, count(), min(date), max(date) FROM rosstat_salaries_mes FINAL GROUP BY name
+     
+     UNION ALL SELECT 'minfin_fed_bud_mes', name, count(), min(date), max(date) FROM minfin_fed_bud_mes FINAL GROUP BY name
+     
+     UNION ALL SELECT 'minfin_fed_bud_mesyats', name, count(), min(date), max(date) FROM minfin_fed_bud_mesyats FINAL GROUP BY name
+     
+     UNION ALL SELECT 'ofz_curve', tenor, count(), min(date), max(date) FROM ofz_curve FINAL GROUP BY tenor
+     
+     UNION ALL SELECT 'events_calendar', category, count(), min(event_date), max(event_date) FROM events_calendar FINAL GROUP BY category
+     
+     UNION ALL SELECT 'news_events', source, count(), min(toDate(date)), max(toDate(date)) FROM news_events FINAL GROUP BY source
+diff --git a/util/publications.go b/util/publications.go
+index 9745077..4ac9b11 100644
+--- a/util/publications.go
++++ b/util/publications.go
+@@ -20,21 +20,21 @@ import (
+ // прогонов, и включается полями шаблона util.ClickHouseImport (PublicationCountPoints /
+ // PublicationSource); фактический список потребителей — ARCHITECTURE §8 п. 13 (десять
+ // импортёров cbr/ и четыре вне него). Таблица внутренняя: агенту (kimi_reader) не выдаётся.
+ const PublicationsTable = "source_publications"
+ 
+ // PublicationsDdl — канонический DDL (ARCHITECTURE §6.2, спека §3.4). Литерал, а не %s-форма
+ // (как у пер-источниковых таблиц): таблица одна на все источники, %-шаблон здесь только
+ // размывал бы «канонический» статус. Комментарии колонок — часть спекового литерала и остаются
+ // в тексте SQL; ClickHouse их отбрасывает.
+ const PublicationsDdl = `CREATE TABLE IF NOT EXISTS source_publications (
+-    source LowCardinality(String),  -- источник-потребитель: 'cbr_mo_br', 'ipc_mes', … (ключ версии: PublicationSource импортёра или его TableName)
++    source LowCardinality(String),  -- источник-потребитель: 'cbr_mo_br', 'rosstat_ipc_mes', … (ключ версии: PublicationSource импортёра или его TableName)
+     name LowCardinality(String),    -- имя артефакта: 'full.xlsx'
+     fingerprint String,             -- md5 от (имя|ETag|Last-Modified|Content-Length) — отпечаток версии контента
+     first_seen DateTime,            -- когда конвейер впервые увидел эту версию
+     points UInt64,                  -- число точек ряда в таблице на момент версии (запрос PublicationCountPoints импортёра)
+     url String                      -- URL артефакта (аудит)
+ ) ENGINE = ReplacingMergeTree ORDER BY (source, name, fingerprint);
+ `
+ 
+ const (
+ 	publicationsInsert = "INSERT INTO " + PublicationsTable
+diff --git a/views/gold_views.go b/views/gold_views.go
+index c0c5d76..80e98ef 100644
+--- a/views/gold_views.go
++++ b/views/gold_views.go
+@@ -5,22 +5,22 @@
+ // v_imf_macro (золотые резервы ЦБ из IMF IRFCL, source='imf'),
+ // v_gold_forecasts (консенсус аналитиков и own-сетка из gold_forecasts),
+ // v_gold_etf_flows (пивот месячных потоков и запасов золотых ETF WGC по регионам),
+ // v_cb_gold_dynamics (динамика резервов семи ЦБ WGC: MoM/YTD и уровень по стране),
+ // v_gold_etf_flows_daily (дневной пивот семи рядов ETF-контура bold.report)
+ // и v_gold_etf_funds_daily (пер-фондовый дневной срез того же контура).
+ //
+ // Импортёр gold_views запускается после ingest-первого-прогона: util.CreateView
+ // пропускает витрину, пока не существуют все её таблицы (model_runs создаёт ingest),
+ // поэтому его вызывают отдельным шагом после первого запуска ingest. Гейт проверяет
+-// только наличие таблиц, а не их заполненность: ipc_mes и ipc_weeks создаются до
+-// загрузки Росстата, и при его сбое витрина создаётся с NULL или устаревшими ipc_*.
++// только наличие таблиц, а не их заполненность: rosstat_ipc_mes и rosstat_ipc_weeks
++// создаются до загрузки Росстата, и при его сбое витрина создаётся с NULL или устаревшими ipc_*.
+ package views
+ 
+ import (
+ 	"context"
+ 
+ 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+ 	log "github.com/sirupsen/logrus"
+ )
+diff --git a/views/model_inputs.go b/views/model_inputs.go
+index ad21f98..79a3aa4 100644
+--- a/views/model_inputs.go
++++ b/views/model_inputs.go
+@@ -4,22 +4,22 @@ import "github.com/kmlebedev/clickhouse-import-rosstat/util"
+ 
+ // modelInputsView — витрина входов DCF-модели: одна строка с последними значениями
+ // всех рядов (argMax по дате). Каждый блок — отдельный однострочный подзапрос:
+ // подзапрос без GROUP BY всегда отдаёт ровно одну строку, даже по пустой таблице,
+ // а toNullable даёт NULL вместо нулевого значения по умолчанию. Поэтому при пустых
+ // таблицах (model_runs, например, до первого прогона) витрина всё равно возвращает
+ // одну строку с NULL.
+ var modelInputsView = util.View{
+ 	Name: "v_model_inputs",
+ 	Tables: []string{
+-		"gold_prices", "cbr_currency_usd", "cbr_key_rate", "ofz_curve", "ipc_mes",
+-		"ipc_weeks", "macro_series", "stock_prices", "model_runs",
++		"gold_prices", "cbr_currency_usd", "cbr_key_rate", "ofz_curve", "rosstat_ipc_mes",
++		"rosstat_ipc_weeks", "macro_series", "stock_prices", "model_runs",
+ 	},
+ 	Select: `SELECT
+     gold_moex_fix_usd, gold_date,
+     usdrub, usdrub_date,
+     cbr_key_rate, cbr_key_rate_date,
+     ofz_1y, ofz_1y_date, ofz_3y, ofz_3y_date, ofz_5y, ofz_5y_date, ofz_10y, ofz_10y_date,
+     rgbi, rgbi_date,
+     ipc_mes_last, ipc_mes_last_date,
+     ipc_week_ytd, ipc_week_ytd_date,
+     fedfunds, fedfunds_date, dfii10, dfii10_date, dgs10, dgs10_date,
+@@ -56,34 +56,34 @@ CROSS JOIN (
+         argMaxIf(toNullable(yield), date, tenor = '10y') AS ofz_10y,
+         argMaxIf(toNullable(date), date, tenor = '10y') AS ofz_10y_date,
+         argMaxIf(toNullable(yield), date, tenor = 'RGBI') AS rgbi,
+         argMaxIf(toNullable(date), date, tenor = 'RGBI') AS rgbi_date
+     FROM ofz_curve FINAL
+ ) AS ofz
+ CROSS JOIN (
+     SELECT
+         argMaxIf(toNullable(percent), date, startsWith(name, 'Индексы потребительских цен на товары и услуги')) AS ipc_mes_last,
+         argMaxIf(toNullable(date), date, startsWith(name, 'Индексы потребительских цен на товары и услуги')) AS ipc_mes_last_date
+-    FROM ipc_mes FINAL
++    FROM rosstat_ipc_mes FINAL
+ ) AS ipc_m
+ CROSS JOIN (
+     SELECT
+         if(count() > 0, avg(exp(log_ytd) - 1) * 100, NULL) AS ipc_week_ytd,
+         if(count() > 0, max(last_date), NULL) AS ipc_week_ytd_date
+     FROM (
+         SELECT
+             name,
+             sum(log(toFloat64(percent) / 100)) AS log_ytd,
+             max(date) AS last_date
+-        FROM ipc_weeks FINAL
++        FROM rosstat_ipc_weeks FINAL
+         WHERE percent > 0
+-          AND toYear(date) = (SELECT toYear(max(date)) FROM ipc_weeks FINAL)
++          AND toYear(date) = (SELECT toYear(max(date)) FROM rosstat_ipc_weeks FINAL)
+         GROUP BY name
+     )
+ ) AS ipc_w
+ CROSS JOIN (
+     SELECT
+         argMaxIf(toNullable(value), date, series = 'FEDFUNDS') AS fedfunds,
+         argMaxIf(toNullable(date), date, series = 'FEDFUNDS') AS fedfunds_date,
+         argMaxIf(toNullable(value), date, series = 'DFII10') AS dfii10,
+         argMaxIf(toNullable(date), date, series = 'DFII10') AS dfii10_date,
+         argMaxIf(toNullable(value), date, series = 'DGS10') AS dgs10,

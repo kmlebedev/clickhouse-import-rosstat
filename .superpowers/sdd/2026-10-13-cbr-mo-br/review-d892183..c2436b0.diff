@@ -1,0 +1,1018 @@
+# Review package: d892183..c2436b0
+
+## Commits
+c2436b0 cbr: mo_br parser, indicator registry and catalog generation + tests
+
+## Files changed
+ cbr/mo_br_meta.go             | 136 ++++++++++++++
+ cbr/mo_br_parse.go            | 245 ++++++++++++++++++++++++++
+ cbr/mo_br_parse_test.go       | 401 ++++++++++++++++++++++++++++++++++++++++++
+ cbr/mo_br_series_meta_test.go | 199 +++++++++++++++++++++
+ 4 files changed, 981 insertions(+)
+
+## Diff
+diff --git a/cbr/mo_br_meta.go b/cbr/mo_br_meta.go
+new file mode 100644
+index 0000000..2da5791
+--- /dev/null
++++ b/cbr/mo_br_meta.go
+@@ -0,0 +1,136 @@
++package cbr
++
++import (
++	"fmt"
++	"sort"
++
++	"github.com/kmlebedev/clickhouse-import-rosstat/util"
++)
++
++// moBrSource — источник рядов макроэкономического опроса Банка России (импортёр cbr_mo_br):
++// в macro_series это source, в series_catalog — Source.
++const moBrSource = "cbr_mo_br"
++
++// moBrFrequency — частота выпуска волн опроса ЦБ (8 раз в год, полевая неделя раз в ~6 недель).
++// Отличается от кодов частот M/Q/R: значения — прогнозы аналитиков по волнам, а не регулярный
++// ряд, поэтому частота записана текстом и в series_catalog видна агенту как есть.
++const moBrFrequency = "8/год (волны опроса)"
++
++// moBrIndicator — дескриптор листа-показателя книги макроэкономического опроса ЦБ (full.xlsx):
++// номер листа (Sheet), базовое имя ряда в macro_series (Base — §3.3 спеки), заголовок каталога
++// (Title — показатель вместе с единицей измерения, как в mpSurveySeriesMeta) и единица (Unit).
++// NoYears отмечает листы 16–17: там блок статистики занимает одну строку, а прогнозного года
++// нет, поэтому имя ряда — <base>_<stat> без года.
++type moBrIndicator struct {
++	Sheet, Base, Title, Unit string
++	NoYears                  bool
++}
++
++// moBrIndicators — реестр 17 показателей опроса, дословно по таблице §2 спеки
++// (номер листа, показатель, единица). Незнакомый лист-показатель в книге — ошибка разбора:
++// структура источника изменилась, реестр нужно дополнять кодом.
++var moBrIndicators = []moBrIndicator{
++	{Sheet: "1", Base: "cpi_dec", Title: "ИПЦ, % дек. к дек. пред. года", Unit: "% дек. к дек. пред. года"},
++	{Sheet: "2", Base: "cpi_avg", Title: "ИПЦ, % к пред. году, в среднем за год", Unit: "% к пред. году, в среднем за год"},
++	{Sheet: "3", Base: "key_rate_avg", Title: "Ключевая ставка, % годовых, в среднем за год (с учётом выходных дней)", Unit: "% годовых, в среднем за год (с учётом выходных дней)"},
++	{Sheet: "4", Base: "gdp_yoy", Title: "ВВП, %, г/г", Unit: "%, г/г"},
++	{Sheet: "5", Base: "unemp_avg", Title: "Уровень безработицы, %, в среднем за год", Unit: "%, в среднем за год"},
++	{Sheet: "6", Base: "unemp_dec_nsa", Title: "Уровень безработицы, %, дек., без исключения сезонности", Unit: "%, дек., без исключения сезонности"},
++	{Sheet: "7", Base: "wage_nominal", Title: "Номинальная заработная плата, %, г/г, в среднем за год", Unit: "%, г/г, в среднем за год"},
++	{Sheet: "8", Base: "budget_balance", Title: "Баланс консолидированного бюджета, % ВВП за соответствующий год", Unit: "% ВВП за соответствующий год"},
++	{Sheet: "9", Base: "exports", Title: "Экспорт товаров и услуг, млрд долл. США в год", Unit: "млрд долл. США в год"},
++	{Sheet: "10", Base: "imports", Title: "Импорт товаров и услуг, млрд долл. США в год", Unit: "млрд долл. США в год"},
++	{Sheet: "11", Base: "usd_rub", Title: "Курс USD/RUB, руб. за долл., в среднем за год", Unit: "руб. за долл., в среднем за год"},
++	{Sheet: "12", Base: "oil_tax", Title: "Цена нефти для налогообложения, долл. США за баррель, в среднем за год", Unit: "долл. США за баррель, в среднем за год"},
++	{Sheet: "13", Base: "brent", Title: "Цена на нефть марки Brent, долл. США за баррель, в среднем за год", Unit: "долл. США за баррель, в среднем за год"},
++	{Sheet: "14", Base: "urals", Title: "Цена на нефть марки Urals, долл. США за баррель, в среднем за год", Unit: "долл. США за баррель, в среднем за год"},
++	{Sheet: "15", Base: "cds_5y", Title: "CDS-спред по России, б.п., в среднем за год", Unit: "б.п., в среднем за год"},
++	{Sheet: "16", Base: "neutral_rate", Title: "Нейтральная ключевая ставка, % годовых", Unit: "% годовых", NoYears: true},
++	{Sheet: "17", Base: "gdp_long_term", Title: "Долгосрочный рост ВВП, %, г/г", Unit: "%, г/г", NoYears: true},
++}
++
++// moBrStatSuffix — метки блоков статистик колонки B → суффиксы имён рядов. В файле метки
++// приходят с хвостовыми пробелами («Медиана »), поэтому парсер сопоставляет по trim; метки
++// вне набора («Среднее», 3-й и 1-й квартили) молча пропускаются — они вне объёма (§2 спеки).
++var moBrStatSuffix = map[string]string{
++	"Медиана":         "median",
++	"90-й процентиль": "p90",
++	"10-й процентиль": "p10",
++	"Мин":             "min",
++	"Макс":            "max",
++	"Всего ответов":   "answers",
++}
++
++// moBrStatLabel — каноническое имя блока статистики для Origin каталога и сообщений.
++var moBrStatLabel = map[string]string{
++	"median":  "Медиана",
++	"p90":     "90-й процентиль",
++	"p10":     "10-й процентиль",
++	"min":     "Мин",
++	"max":     "Макс",
++	"answers": "Всего ответов",
++}
++
++// moBrStatDesc — расшифровка статистики для Description каталога. Шаблоны различаются по
++// статистикам: агент должен видеть, что median/p10/p90/min/max — прогнозы аналитиков,
++// а answers — число ответов, а не прогноз (§3.5, риск «число ответов — не прогноз»).
++var moBrStatDesc = map[string]string{
++	"median":  "медиана прогнозов аналитиков",
++	"p10":     "10-й процентиль — нижняя граница центральной тенденции прогнозов",
++	"p90":     "90-й процентиль — верхняя граница центральной тенденции прогнозов",
++	"min":     "минимум прогнозов — нижняя граница всего диапазона ответов",
++	"max":     "максимум прогнозов — верхняя граница всего диапазона ответов",
++	"answers": "число ответов участников опроса по этому показателю (не прогноз)",
++}
++
++// moBrIndicatorBySheet — дескриптор листа-показателя по имени листа; ok=false, если лист
++// не из реестра 17 (разбор такого листа обязан упасть).
++func moBrIndicatorBySheet(sheet string) (moBrIndicator, bool) {
++	for _, ind := range moBrIndicators {
++		if ind.Sheet == sheet {
++			return ind, true
++		}
++	}
++	return moBrIndicator{}, false
++}
++
++// moBrStatLabels — метки блоков статистик в объёме, отсортированные (для сообщений об ошибке).
++func moBrStatLabels() []string {
++	out := make([]string, 0, len(moBrStatSuffix))
++	for label := range moBrStatSuffix {
++		out = append(out, label)
++	}
++	sort.Strings(out)
++	return out
++}
++
++// moBrSeriesName — имя ряда в macro_series и series_catalog: <base>_<year>_<stat> для годовых
++// показателей и <base>_<stat> для листов 16–17 (год — четыре цифры даты прогнозного года).
++func moBrSeriesName(base, year, stat string) string {
++	if year == "" {
++		return base + "_" + stat
++	}
++	return base + "_" + year + "_" + stat
++}
++
++// moBrSeriesMeta — запись каталога series_catalog для комбинации (дескриптор, год, статистика).
++// Description — шаблон «прогноз аналитиков: <title> на <year> год; <расшифровка статистики>»
++// (для листов 16–17 без года), Origin — источник, файл, лист и блок статистики.
++func moBrSeriesMeta(ind moBrIndicator, year, stat string) util.SeriesMeta {
++	origin := fmt.Sprintf("ЦБ, макроэкономический опрос (full.xlsx, mo_br), лист «%s», блок «%s»",
++		ind.Sheet, moBrStatLabel[stat])
++	description := fmt.Sprintf("прогноз аналитиков: %s; %s", ind.Title, moBrStatDesc[stat])
++	if year != "" {
++		origin += fmt.Sprintf(", год %s", year)
++		description = fmt.Sprintf("прогноз аналитиков: %s на %s год; %s", ind.Title, year, moBrStatDesc[stat])
++	}
++	return util.SeriesMeta{
++		Source:      moBrSource,
++		Series:      moBrSeriesName(ind.Base, year, stat),
++		Title:       ind.Title,
++		Unit:        ind.Unit,
++		Frequency:   moBrFrequency,
++		Origin:      origin,
++		Description: description,
++	}
++}
+diff --git a/cbr/mo_br_parse.go b/cbr/mo_br_parse.go
+new file mode 100644
+index 0000000..8e5d4ba
+--- /dev/null
++++ b/cbr/mo_br_parse.go
+@@ -0,0 +1,245 @@
++package cbr
++
++import (
++	"fmt"
++	"strconv"
++	"strings"
++	"time"
++
++	"github.com/kmlebedev/clickhouse-import-rosstat/util"
++	"github.com/xuri/excelize/v2"
++)
++
++// moBrPoint — одна точка ряда макроэкономического опроса ЦБ (full.xlsx): имя ряда в
++// macro_series (Series), дата волны опроса (Date — 1-е число месяца волны) и значение
++// прогноза или статистики (Value).
++type moBrPoint struct {
++	Series string
++	Date   time.Time
++	Value  float64
++}
++
++const (
++	// moBrNavigationMarker — подстрока имени навигационного листа полной книги ЦБ
++	// (в живом файле — «Навигация (Navigation) » с хвостовым пробелом, поэтому сравнение
++	// по вхождению). Наличие такого листа означает полную книгу: все 17 листов реестра
++	// обязаны быть на месте.
++	moBrNavigationMarker = "Навигация"
++
++	// Индексы колонок листа (0-based): B — метки блоков статистик, D — прогнозные годы.
++	moBrLabelCol = 1
++	moBrYearCol  = 3
++
++	// moBrMinHeaderDates — сколько дат должно быть в строке, чтобы считать её шапкой волн
++	// (у одиночных дат-годов в колонке D эта проверка не срабатывает).
++	moBrMinHeaderDates = 3
++
++	// Окно правдоподобных лет даты Excel: и дата волны, и год прогноза обязаны в него
++	// попадать. Значения-прогнозы (0–100) при переводе дают 1900 год и датами не считаются —
++	// это и отсеивает их при поиске шапки и колонок-волн.
++	moBrMinYear = 2000
++	moBrMaxYear = 2100
++
++	// moBrDash — маркер отсутствующего значения волны в файле.
++	moBrDash = "-"
++)
++
++// moBrWave — колонка-волна листа: индекс колонки (0-based) и дата волны из шапки.
++type moBrWave struct {
++	col  int
++	date time.Time
++}
++
++// parseMoBr читает книгу макроэкономического опроса ЦБ (full.xlsx) и возвращает точки рядов
++// и их описания для series_catalog. Функция чистая: на вход — открытая книга, без сети и БД.
++//
++// Числа и даты читаются только в raw-виде (RawCellValue): форматированные строки теряют
++// точность (14.599246575342466 вместо 14.5) и превращают даты в текст. Обход — по
++// GetSheetList (порядок книги), а не по реестру: лист с «Навигация» в имени пропускается,
++// лист реестра 17 разбирается, любой другой лист — ошибка (структура источника изменилась).
++// Если навигационный лист был (полная книга ЦБ), все 17 листов реестра обязаны присутствовать;
++// в сокращённой книге (например, фикстура) их отсутствие не ошибка.
++//
++// Разбор fail-fast: ошибка на любом листе или отсутствие точек — возврат без частичных данных,
++// поэтому импортёр не отправит неполный батч.
++func parseMoBr(xlsx *excelize.File) ([]moBrPoint, []util.SeriesMeta, error) {
++	var (
++		points []moBrPoint
++		metas  []util.SeriesMeta
++	)
++	present := make(map[string]bool, len(moBrIndicators))
++	full := false
++	for _, sheet := range xlsx.GetSheetList() {
++		if strings.Contains(sheet, moBrNavigationMarker) {
++			full = true
++			continue
++		}
++		ind, ok := moBrIndicatorBySheet(sheet)
++		if !ok {
++			return nil, nil, fmt.Errorf("неизвестный лист-показатель %q: структура книги изменилась, дополните реестр moBrIndicators", sheet)
++		}
++		present[sheet] = true
++		pts, sheetMetas, err := parseMoBrSheet(xlsx, ind)
++		if err != nil {
++			return nil, nil, err
++		}
++		points = append(points, pts...)
++		metas = append(metas, sheetMetas...)
++	}
++	if full {
++		var missing []string
++		for _, ind := range moBrIndicators {
++			if !present[ind.Sheet] {
++				missing = append(missing, fmt.Sprintf("«%s»", ind.Sheet))
++			}
++		}
++		if len(missing) > 0 {
++			return nil, nil, fmt.Errorf("полная книга (навигационный лист есть): нет %d листов-показателей из %d — %s",
++				len(missing), len(moBrIndicators), strings.Join(missing, ", "))
++		}
++	}
++	if len(points) == 0 {
++		return nil, nil, fmt.Errorf("не извлечено ни одной точки: проверьте структуру книги")
++	}
++	return points, metas, nil
++}
++
++// parseMoBrSheet разбирает один лист-показатель: находит шапку волн (строка с датами) и
++// колонки-волны, затем идёт по строкам, отслеживая текущий блок статистики (метка колонки B)
++// и прогнозный год (дата колонки D; у листов 16–17 годов нет). Пустые ячейки и «-» —
++// пропуск точки. Возвращает точки и описания каталога для комбинаций (год, статистика),
++// у которых оказалась хотя бы одна точка, — поэтому множества рядов точек и каталога
++// совпадают по построению.
++func parseMoBrSheet(xlsx *excelize.File, ind moBrIndicator) ([]moBrPoint, []util.SeriesMeta, error) {
++	rows, err := xlsx.GetRows(ind.Sheet, excelize.Options{RawCellValue: true})
++	if err != nil {
++		return nil, nil, fmt.Errorf("лист %q: чтение строк: %w", ind.Sheet, err)
++	}
++	headerRow, waves, err := moBrWaveHeader(rows, ind)
++	if err != nil {
++		return nil, nil, err
++	}
++
++	var (
++		points []moBrPoint
++		metas  []util.SeriesMeta
++	)
++	described := make(map[string]bool)
++	blocks, stat, year := 0, "", ""
++	for r := headerRow + 1; r <= len(rows); r++ {
++		if label := strings.TrimSpace(moBrCell(rows, r, moBrLabelCol)); label != "" {
++			// Новая метка блока: известная статистика — разбираем, неизвестная
++			// («Среднее», 3-й и 1-й квартили) — вне объёма, блок молча пропускается.
++			stat, _ = moBrStatSuffix[label]
++			if stat != "" {
++				blocks++
++			}
++			year = "" // год не переносится в следующий блок
++		}
++		if stat == "" {
++			continue
++		}
++		if !ind.NoYears {
++			// Год — дата в колонке D. Пустая ячейка оставляет год предыдущей строки
++			// (перенос объединённой ячейки); пока года нет, строка не разбирается.
++			if raw := strings.TrimSpace(moBrCell(rows, r, moBrYearCol)); raw != "" {
++				date, ok := moBrExcelDate(raw)
++				if !ok {
++					return nil, nil, fmt.Errorf("лист %q: строка %d, колонка D: значение %q не является датой прогнозного года", ind.Sheet, r, raw)
++				}
++				year = strconv.Itoa(date.Year())
++			}
++			if year == "" {
++				continue
++			}
++		}
++		series := moBrSeriesName(ind.Base, year, stat)
++		for _, wave := range waves {
++			raw := strings.TrimSpace(moBrCell(rows, r, wave.col))
++			if raw == "" || raw == moBrDash {
++				continue // «-» и пусто — отсутствие точки, соседние значения не страдают
++			}
++			value, err := strconv.ParseFloat(raw, 64)
++			if err != nil {
++				return nil, nil, fmt.Errorf("лист %q: ячейка %s: значение %q не является числом",
++					ind.Sheet, moBrCellName(wave.col, r), raw)
++			}
++			if !described[series] {
++				described[series] = true
++				metas = append(metas, moBrSeriesMeta(ind, year, stat))
++			}
++			points = append(points, moBrPoint{Series: series, Date: wave.date, Value: value})
++		}
++	}
++	if blocks == 0 {
++		return nil, nil, fmt.Errorf("лист %q: не найдено ни одного блока статистик из 6 в колонке B (ожидались метки: %s)",
++			ind.Sheet, strings.Join(moBrStatLabels(), ", "))
++	}
++	if len(points) == 0 {
++		return nil, nil, fmt.Errorf("лист %q: 0 точек после разбора (все значения пустые или «-»)", ind.Sheet)
++	}
++	return points, metas, nil
++}
++
++// moBrWaveHeader находит шапку волн — первую строку листа, в которой не меньше
++// moBrMinHeaderDates ячеек являются датами Excel, — и колонки-волны (по возрастанию).
++// На годовых листах колонка D отведена под прогнозные годы и волной не считается.
++func moBrWaveHeader(rows [][]string, ind moBrIndicator) (int, []moBrWave, error) {
++	for i, row := range rows {
++		var waves []moBrWave
++		for c, raw := range row {
++			if c == moBrYearCol && !ind.NoYears {
++				continue
++			}
++			date, ok := moBrExcelDate(strings.TrimSpace(raw))
++			if !ok {
++				continue
++			}
++			waves = append(waves, moBrWave{col: c, date: date})
++		}
++		if len(waves) >= moBrMinHeaderDates {
++			return i + 1, waves, nil
++		}
++	}
++	return 0, nil, fmt.Errorf("лист %q: не найдена шапка волн (строка с %d и более датами)", ind.Sheet, moBrMinHeaderDates)
++}
++
++// moBrExcelDate переводит raw-значение ячейки в дату Excel. Датой считается только значение
++// в окне лет moBrMinYear…moBrMaxYear: значения-прогнозы (0–100) дают 1900 год, поэтому
++// отличаются от дат волн и прогнозных годов без отдельного признака формата.
++func moBrExcelDate(raw string) (time.Time, bool) {
++	serial, err := strconv.ParseFloat(raw, 64)
++	if err != nil {
++		return time.Time{}, false
++	}
++	date, err := excelize.ExcelDateToTime(serial, false)
++	if err != nil {
++		return time.Time{}, false
++	}
++	if date.Year() < moBrMinYear || date.Year() > moBrMaxYear {
++		return time.Time{}, false
++	}
++	return date, true
++}
++
++// moBrCell — значение ячейки листа (строка 1-based, колонка 0-based); пустая строка, если
++// ячейки нет: GetRows обрезает хвостовые пустые ячейки строки.
++func moBrCell(rows [][]string, row, col int) string {
++	if row < 1 || row > len(rows) {
++		return ""
++	}
++	cells := rows[row-1]
++	if col < 0 || col >= len(cells) {
++		return ""
++	}
++	return cells[col]
++}
++
++// moBrCellName — адрес ячейки (строка 1-based, колонка 0-based) для сообщений об ошибке.
++func moBrCellName(col, row int) string {
++	name, err := excelize.CoordinatesToCellName(col+1, row)
++	if err != nil {
++		return fmt.Sprintf("колонка %d, строка %d", col+1, row)
++	}
++	return name
++}
+diff --git a/cbr/mo_br_parse_test.go b/cbr/mo_br_parse_test.go
+new file mode 100644
+index 0000000..eb8204a
+--- /dev/null
++++ b/cbr/mo_br_parse_test.go
+@@ -0,0 +1,401 @@
++package cbr
++
++import (
++	"math"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/xuri/excelize/v2"
++)
++
++// moBrFixturePath — урезанная копия full.xlsx (листы «1», «3», «16» — все три формы
++// разметки: два годовых листа и спецлист без годов); тесты идут из каталога пакета.
++const moBrFixturePath = "testdata/mo_br_full.xlsx"
++
++// Числа фикстуры (заморожены Task 1): 114 рядов / 2058 точек, по листам 54 / 54 / 6 рядов
++// и 900 / 900 / 258 точек; волн 43 (2021-05-01 … 2026-09-01).
++const (
++	moBrFixtureSeries = 114
++	moBrFixturePoints = 2058
++)
++
++// openMoBrFixture открывает фикстуру макроэкономического опроса; книга закрывается по
++// завершении теста.
++func openMoBrFixture(t *testing.T) *excelize.File {
++	t.Helper()
++	f, err := excelize.OpenFile(moBrFixturePath)
++	if err != nil {
++		t.Fatalf("открытие %s: %v", moBrFixturePath, err)
++	}
++	t.Cleanup(func() { _ = f.Close() })
++	return f
++}
++
++// moBrBySeries — точки, сгруппированные по имени ряда.
++func moBrBySeries(pts []moBrPoint) map[string][]moBrPoint {
++	out := make(map[string][]moBrPoint)
++	for _, p := range pts {
++		out[p.Series] = append(out[p.Series], p)
++	}
++	return out
++}
++
++// moBrValueAt — значение ряда на дату волны.
++func moBrValueAt(pts []moBrPoint, at time.Time) (float64, bool) {
++	for _, p := range pts {
++		if p.Date.Equal(at) {
++			return p.Value, true
++		}
++	}
++	return 0, false
++}
++
++// TestParseMoBrFixtureRows — сквозная проверка разбора фикстуры: 114 рядов и 2058 точек,
++// по листам 54 / 54 / 6 рядов, волны — 43 первых числа месяца от 2021-05-01 до 2026-09-01.
++func TestParseMoBrFixtureRows(t *testing.T) {
++	f := openMoBrFixture(t)
++
++	pts, metas, err := parseMoBr(f)
++	if err != nil {
++		t.Fatalf("parseMoBr: %v", err)
++	}
++	if len(pts) != moBrFixturePoints {
++		t.Errorf("всего точек: %d, ожидалось %d", len(pts), moBrFixturePoints)
++	}
++	if len(metas) != moBrFixtureSeries {
++		t.Errorf("записей каталога: %d, ожидалось %d", len(metas), moBrFixtureSeries)
++	}
++
++	series := moBrBySeries(pts)
++	if len(series) != moBrFixtureSeries {
++		t.Errorf("рядов в точках: %d, ожидалось %d", len(series), moBrFixtureSeries)
++	}
++
++	prefixes := map[string]struct{ series, points int }{
++		"cpi_dec":      {54, 900}, // лист «1»: 6 статистик × 9 лет
++		"key_rate_avg": {54, 900}, // лист «3»: 6 статистик × 9 лет
++		"neutral_rate": {6, 258},  // лист «16»: 6 статистик, без годов
++	}
++	totalSeries, totalPoints := 0, 0
++	for prefix, want := range prefixes {
++		gotSeries, gotPoints := 0, 0
++		for name, pts := range series {
++			if strings.HasPrefix(name, prefix+"_") {
++				gotSeries++
++				gotPoints += len(pts)
++			}
++		}
++		if gotSeries != want.series || gotPoints != want.points {
++			t.Errorf("показатель %s: %d рядов / %d точек, ожидалось %d / %d",
++				prefix, gotSeries, gotPoints, want.series, want.points)
++		}
++		totalSeries += gotSeries
++		totalPoints += gotPoints
++	}
++	if totalSeries != len(series) || totalPoints != len(pts) {
++		t.Errorf("неожиданные ряды вне трёх показателей фикстуры: рядов %d из %d, точек %d из %d",
++			totalSeries, len(series), totalPoints, len(pts))
++	}
++
++	// Волны: 43 различных первых числа месяца; крайние — по спеке.
++	waveSet := make(map[time.Time]bool)
++	var first, last time.Time
++	for _, p := range pts {
++		if p.Date.Day() != 1 {
++			t.Errorf("ряд %s: дата волны %s — не первое число месяца", p.Series, p.Date.Format("2006-01-02"))
++		}
++		if !waveSet[p.Date] {
++			waveSet[p.Date] = true
++			if first.IsZero() || p.Date.Before(first) {
++				first = p.Date
++			}
++			if last.IsZero() || p.Date.After(last) {
++				last = p.Date
++			}
++		}
++	}
++	if len(waveSet) != 43 {
++		t.Errorf("различных волн: %d, ожидалось 43", len(waveSet))
++	}
++	if want := utcDate(2021, time.May, 1); !first.Equal(want) {
++		t.Errorf("первая волна %s, ожидалась %s", first.Format("2006-01-02"), want.Format("2006-01-02"))
++	}
++	if want := utcDate(2026, time.September, 1); !last.Equal(want) {
++		t.Errorf("последняя волна %s, ожидалась %s", last.Format("2006-01-02"), want.Format("2006-01-02"))
++	}
++}
++
++// TestParseMoBrSpotValues — точечные значения последних волн (доказывают raw-чтение ячеек
++// и раскладку имён рядов): медианы и число ответов сентябрьской волны 2026-09-01 на листах
++// «1», «3», «16» плюс один спот процентиля.
++func TestParseMoBrSpotValues(t *testing.T) {
++	f := openMoBrFixture(t)
++
++	pts, _, err := parseMoBr(f)
++	if err != nil {
++		t.Fatalf("parseMoBr: %v", err)
++	}
++	series := moBrBySeries(pts)
++
++	const eps = 1e-6
++	spots := []struct {
++		series string
++		date   time.Time
++		want   float64
++	}{
++		{"key_rate_avg_2026_median", utcDate(2026, time.September, 1), 14.5},
++		{"key_rate_avg_2027_median", utcDate(2026, time.September, 1), 12.43},
++		{"cpi_dec_2026_median", utcDate(2026, time.September, 1), 6.6},
++		{"neutral_rate_median", utcDate(2026, time.September, 1), 8.0},
++		{"cpi_dec_2027_median", utcDate(2026, time.September, 1), 4.564565807129625},
++		{"key_rate_avg_2026_p10", utcDate(2026, time.September, 1), 14.460438356164385},
++		{"key_rate_avg_2026_answers", utcDate(2026, time.September, 1), 32},
++		{"cpi_dec_2026_answers", utcDate(2026, time.September, 1), 33},
++		{"neutral_rate_answers", utcDate(2026, time.September, 1), 29},
++	}
++	for _, s := range spots {
++		got, ok := moBrValueAt(series[s.series], s.date)
++		if !ok {
++			t.Errorf("ряд %s: нет точки на %s", s.series, s.date.Format("2006-01-02"))
++			continue
++		}
++		if math.Abs(got-s.want) > eps {
++			t.Errorf("ряд %s %s: значение %.12f, ожидалось %.12f",
++				s.series, s.date.Format("2006-01-02"), got, s.want)
++		}
++	}
++}
++
++// TestParseMoBrSkipsDashes — «-» в ячейке волны означает отсутствие точки (пропуск), а не
++// ноль: заполненность строк-лет блока «Медиана» листа «3» сохраняется точно, нулевых
++// значений в фикстуре нет вовсе.
++func TestParseMoBrSkipsDashes(t *testing.T) {
++	f := openMoBrFixture(t)
++
++	pts, _, err := parseMoBr(f)
++	if err != nil {
++		t.Fatalf("parseMoBr: %v", err)
++	}
++	series := moBrBySeries(pts)
++
++	// Медиана листа «3» по годам: 2021 — 5 заполненных волн, 2026 — 25, 2027 — 18.
++	counts := map[string]int{
++		"key_rate_avg_2021_median": 5,
++		"key_rate_avg_2026_median": 25,
++		"key_rate_avg_2027_median": 18,
++	}
++	for name, want := range counts {
++		if got := len(series[name]); got != want {
++			t.Errorf("ряд %s: %d точек, ожидалось %d", name, got, want)
++		}
++	}
++	for _, p := range pts {
++		if p.Value == 0 {
++			t.Errorf("ряд %s %s: значение 0 — «-» превратился в точку", p.Series, p.Date.Format("2006-01-02"))
++		}
++	}
++}
++
++// TestParseMoBrMetaTwoSided — множество Series точек и множество Series каталога совпадают
++// в обе стороны (каталог строится из фактически собранных точек), у каждой записи заполнены
++// все поля каталога, источник и частота — константы макроэкономического опроса.
++func TestParseMoBrMetaTwoSided(t *testing.T) {
++	f := openMoBrFixture(t)
++
++	pts, metas, err := parseMoBr(f)
++	if err != nil {
++		t.Fatalf("parseMoBr: %v", err)
++	}
++
++	fromPoints := make(map[string]bool, len(pts))
++	for _, p := range pts {
++		fromPoints[p.Series] = true
++	}
++	fromMeta := make(map[string]bool, len(metas))
++	bySeries := make(map[string]bool, len(metas))
++	for _, m := range metas {
++		if m.Source != moBrSource {
++			t.Errorf("series %q: source %q, ожидалось %q", m.Series, m.Source, moBrSource)
++		}
++		if m.Frequency != moBrFrequency {
++			t.Errorf("series %q: частота %q, ожидалось %q", m.Series, m.Frequency, moBrFrequency)
++		}
++		for field, v := range map[string]string{
++			"series": m.Series, "title": m.Title, "unit": m.Unit,
++			"origin": m.Origin, "description": m.Description,
++		} {
++			if strings.TrimSpace(v) == "" {
++				t.Errorf("series %q: пустое поле %s", m.Series, field)
++			}
++		}
++		if !strings.Contains(m.Origin, "лист «") {
++			t.Errorf("series %q: origin %q не называет лист", m.Series, m.Origin)
++		}
++		if fromMeta[m.Series] {
++			t.Errorf("series %q описан в каталоге дважды", m.Series)
++		}
++		fromMeta[m.Series] = true
++		bySeries[m.Series] = true
++	}
++	origins := make(map[string]string, len(metas))
++	descriptions := make(map[string]string, len(metas))
++	for _, m := range metas {
++		origins[m.Series] = m.Origin
++		descriptions[m.Series] = m.Description
++	}
++
++	// Origin называет источник, лист и блок статистики; у годовых рядов — ещё и год,
++	// у листов 16–17 года нет.
++	wantOrigins := map[string]string{
++		"key_rate_avg_2026_median": "ЦБ, макроэкономический опрос (full.xlsx, mo_br), лист «3», блок «Медиана», год 2026",
++		"neutral_rate_median":      "ЦБ, макроэкономический опрос (full.xlsx, mo_br), лист «16», блок «Медиана»",
++	}
++	for name, want := range wantOrigins {
++		if got := origins[name]; got != want {
++			t.Errorf("ряд %s: origin %q, ожидался %q", name, got, want)
++		}
++	}
++	// Description годового ряда называет прогнозный год и расшифровку статистики,
++	// у листа без годов год не упоминается вовсе.
++	if got := descriptions["cpi_dec_2027_p10"]; !strings.Contains(got, "2027") || !strings.Contains(got, "процентиль") {
++		t.Errorf("ряд cpi_dec_2027_p10: description %q не называет год и статистику", got)
++	}
++	if got, want := descriptions["neutral_rate_answers"],
++		"прогноз аналитиков: Нейтральная ключевая ставка, % годовых; число ответов участников опроса по этому показателю (не прогноз)"; got != want {
++		t.Errorf("ряд neutral_rate_answers: description %q, ожидалось %q", got, want)
++	}
++
++	for _, name := range []string{"key_rate_avg_2026_median", "cpi_dec_2027_p10", "neutral_rate_answers"} {
++		if !bySeries[name] {
++			t.Errorf("ряд %s отсутствует в каталоге", name)
++		}
++	}
++
++	for s := range fromPoints {
++		if !fromMeta[s] {
++			t.Errorf("ряд %s есть в точках, но не описан в каталоге", s)
++		}
++	}
++	for s := range fromMeta {
++		if !fromPoints[s] {
++			t.Errorf("ряд %s описан в каталоге, но точек нет", s)
++		}
++	}
++}
++
++// TestParseMoBrFailFast — разбор падает с ошибкой (а не отдаёт частичные данные) на каждом
++// классе дефектов книги: неполная полная книга (есть навигационный лист, нет листов реестра),
++// нет шапки волн, нет блоков статистик, 0 точек, незнакомый лист-показатель. Ошибка обязана
++// называть место дефекта — иначе подтест прошёл бы на любой другой ошибке разбора.
++func TestParseMoBrFailFast(t *testing.T) {
++	// fail — проверка, что ошибка есть и называет ожидаемые места дефекта.
++	fail := func(t *testing.T, err error, wants ...string) {
++		t.Helper()
++		if err == nil {
++			t.Fatal("ожидалась ошибка, получено nil")
++		}
++		for _, want := range wants {
++			if !strings.Contains(err.Error(), want) {
++				t.Errorf("ошибка %q не упоминает %q", err, want)
++			}
++		}
++	}
++	// newBook — пустая in-memory книга с заданными листами (Sheet1 удаляется).
++	newBook := func(t *testing.T, sheets ...string) *excelize.File {
++		t.Helper()
++		f := excelize.NewFile()
++		t.Cleanup(func() { _ = f.Close() })
++		for _, sheet := range sheets {
++			if _, err := f.NewSheet(sheet); err != nil {
++				t.Fatalf("NewSheet(%q): %v", sheet, err)
++			}
++		}
++		// Sheet1 удаляется после рабочих листов: excelize молча не удаляет единственный
++		// лист книги, и он остался бы первым в GetSheetList.
++		if err := f.DeleteSheet("Sheet1"); err != nil {
++			t.Fatalf("DeleteSheet(Sheet1): %v", err)
++		}
++		return f
++	}
++
++	t.Run("FullBookMissingIndicatorSheet", func(t *testing.T) {
++		// Копия фикстуры + навигационный лист = «полная книга» ЦБ; лист «3» удалён, поэтому
++		// разбор обязан перечислить отсутствующие листы реестра.
++		f := openMoBrFixture(t)
++		if err := f.DeleteSheet("3"); err != nil {
++			t.Fatalf("DeleteSheet: %v", err)
++		}
++		if _, err := f.NewSheet("Навигация (Navigation) "); err != nil {
++			t.Fatalf("NewSheet: %v", err)
++		}
++		_, _, err := parseMoBr(f)
++		fail(t, err, "«3»", "«2»", "листов-показателей")
++	})
++
++	t.Run("FullBookWithoutData", func(t *testing.T) {
++		// Все 17 листов реестра и навигационный лист, но данных и шапки волн нет.
++		names := make([]string, 0, len(moBrIndicators)+1)
++		for _, ind := range moBrIndicators {
++			names = append(names, ind.Sheet)
++		}
++		names = append(names, "Навигация (Navigation) ")
++		f := newBook(t, names...)
++		_, _, err := parseMoBr(f)
++		fail(t, err, "шапка волн", `лист "1"`)
++	})
++
++	t.Run("NoStatBlocks", func(t *testing.T) {
++		// Шапка волн есть, меток статистик в колонке B нет.
++		f := newBook(t, "1")
++		for cell, v := range map[string]string{"E6": "44317", "F6": "44378", "G6": "44440"} {
++			if err := f.SetCellValue("1", cell, v); err != nil {
++				t.Fatalf("SetCellValue(%s): %v", cell, err)
++			}
++		}
++		_, _, err := parseMoBr(f)
++		fail(t, err, "не найдено ни одного блока", `лист "1"`)
++	})
++
++	t.Run("ZeroPoints", func(t *testing.T) {
++		// Шапка волн и метка блока есть, но все значения волн — «-».
++		f := newBook(t, "1")
++		cells := map[string]string{
++			"E6": "44317", "F6": "44378", "G6": "44440",
++			"B8": "Медиана", "D8": "44561", "E8": "-", "F8": "-", "G8": "-",
++		}
++		for cell, v := range cells {
++			if err := f.SetCellValue("1", cell, v); err != nil {
++				t.Fatalf("SetCellValue(%s): %v", cell, err)
++			}
++		}
++		_, _, err := parseMoBr(f)
++		fail(t, err, "0 точек", `лист "1"`)
++	})
++
++	t.Run("NonNumericValue", func(t *testing.T) {
++		// Непустое значение волны, которое не число и не «-», — ошибка разбора с адресом
++		// ячейки: молча превратить его в пропуск нельзя.
++		f := newBook(t, "1")
++		cells := map[string]string{
++			"E6": "44317", "F6": "44378", "G6": "44440",
++			"B8": "Медиана", "D8": "44561", "E8": "н/д", "F8": "3.5", "G8": "-",
++		}
++		for cell, v := range cells {
++			if err := f.SetCellValue("1", cell, v); err != nil {
++				t.Fatalf("SetCellValue(%s): %v", cell, err)
++			}
++		}
++		_, _, err := parseMoBr(f)
++		fail(t, err, "E8", "не является числом", `лист "1"`)
++	})
++
++	t.Run("UnknownIndicatorSheet", func(t *testing.T) {
++		f := openMoBrFixture(t)
++		if _, err := f.NewSheet("99"); err != nil {
++			t.Fatalf("NewSheet: %v", err)
++		}
++		_, _, err := parseMoBr(f)
++		fail(t, err, "неизвестный лист-показатель", "99")
++	})
++}
+diff --git a/cbr/mo_br_series_meta_test.go b/cbr/mo_br_series_meta_test.go
+new file mode 100644
+index 0000000..f6bc6f7
+--- /dev/null
++++ b/cbr/mo_br_series_meta_test.go
+@@ -0,0 +1,199 @@
++package cbr
++
++import (
++	"sort"
++	"strings"
++	"testing"
++)
++
++// wantMoBrIndicators — 17 базовых имён рядов дословно из §3.3 спеки: номер листа → base.
++var wantMoBrIndicators = map[string]string{
++	"1":  "cpi_dec",
++	"2":  "cpi_avg",
++	"3":  "key_rate_avg",
++	"4":  "gdp_yoy",
++	"5":  "unemp_avg",
++	"6":  "unemp_dec_nsa",
++	"7":  "wage_nominal",
++	"8":  "budget_balance",
++	"9":  "exports",
++	"10": "imports",
++	"11": "usd_rub",
++	"12": "oil_tax",
++	"13": "brent",
++	"14": "urals",
++	"15": "cds_5y",
++	"16": "neutral_rate",
++	"17": "gdp_long_term",
++}
++
++// moBrStatSuffixes — суффиксы статистик в объёме (§2 спеки), отсортированные для
++// детерминированного обхода.
++func moBrStatSuffixes() []string {
++	out := make([]string, 0, len(moBrStatSuffix))
++	for _, suffix := range moBrStatSuffix {
++		out = append(out, suffix)
++	}
++	sort.Strings(out)
++	return out
++}
++
++// TestMoBrIndicatorsRegistry — реестр из 17 дескрипторов: номера листов 1…17 ровно по
++// одному разу, базовые имена рядов уникальны и совпадают со спекой, заголовок и единица
++// заполнены, признак «без годов» стоит только у листов 16–17 (нейтральная ставка и
++// долгосрочный рост ВВП — без прогнозного года).
++func TestMoBrIndicatorsRegistry(t *testing.T) {
++	if len(moBrIndicators) != len(wantMoBrIndicators) {
++		t.Fatalf("moBrIndicators: %d дескрипторов, ожидалось %d", len(moBrIndicators), len(wantMoBrIndicators))
++	}
++
++	seenSheet := make(map[string]bool, len(moBrIndicators))
++	seenBase := make(map[string]string, len(moBrIndicators))
++	noYears := map[string]bool{"16": true, "17": true}
++	for _, ind := range moBrIndicators {
++		wantBase, ok := wantMoBrIndicators[ind.Sheet]
++		if !ok {
++			t.Errorf("лист %q не ожидался в реестре", ind.Sheet)
++			continue
++		}
++		if ind.Base != wantBase {
++			t.Errorf("лист %q: base %q, ожидалось %q", ind.Sheet, ind.Base, wantBase)
++		}
++		if seenSheet[ind.Sheet] {
++			t.Errorf("лист %q описан дважды", ind.Sheet)
++		}
++		seenSheet[ind.Sheet] = true
++		if other, dup := seenBase[ind.Base]; dup {
++			t.Errorf("base %q повторяется: листы %q и %q", ind.Base, other, ind.Sheet)
++		}
++		seenBase[ind.Base] = ind.Sheet
++		if strings.TrimSpace(ind.Title) == "" {
++			t.Errorf("лист %q: пустой заголовок показателя", ind.Sheet)
++		}
++		if strings.TrimSpace(ind.Unit) == "" {
++			t.Errorf("лист %q: пустая единица измерения", ind.Sheet)
++		}
++		if ind.NoYears != noYears[ind.Sheet] {
++			t.Errorf("лист %q: NoYears=%v, ожидалось %v", ind.Sheet, ind.NoYears, noYears[ind.Sheet])
++		}
++		if _, ok := moBrIndicatorBySheet(ind.Sheet); !ok {
++			t.Errorf("лист %q: не найден поиском по имени листа", ind.Sheet)
++		}
++	}
++	for sheet := range wantMoBrIndicators {
++		if !seenSheet[sheet] {
++			t.Errorf("лист %q реестра не описан", sheet)
++		}
++	}
++	if _, ok := moBrIndicatorBySheet("99"); ok {
++		t.Error("лист \"99\" найден в реестре — реестр шире 17 показателей")
++	}
++}
++
++// TestMoBrStatTemplates — статистики в объёме (§2 спеки): шесть меток блоков колонки B,
++// шесть суффиксов имён рядов, у каждой статистики заполнены расшифровка (для Description)
++// и каноническая метка блока (для Origin), описания различаются между статистиками.
++func TestMoBrStatTemplates(t *testing.T) {
++	const want = 6
++	if len(moBrStatSuffix) != want {
++		t.Fatalf("moBrStatSuffix: %d меток, ожидалось %d", len(moBrStatSuffix), want)
++	}
++	if len(moBrStatDesc) != want {
++		t.Fatalf("moBrStatDesc: %d расшифровок, ожидалось %d", len(moBrStatDesc), want)
++	}
++	if len(moBrStatLabel) != want {
++		t.Fatalf("moBrStatLabel: %d меток, ожидалось %d", len(moBrStatLabel), want)
++	}
++
++	seenSuffix := make(map[string]string, want)
++	for label, suffix := range moBrStatSuffix {
++		if strings.TrimSpace(label) != label || label == "" {
++			t.Errorf("метка %q не нормализована (пробелы должны быть срезаны)", label)
++		}
++		if strings.TrimSpace(suffix) == "" {
++			t.Errorf("метка %q: пустой суффикс статистики", label)
++		}
++		if other, dup := seenSuffix[suffix]; dup {
++			t.Errorf("суффикс %q назначен и метке %q, и метке %q", suffix, other, label)
++		}
++		seenSuffix[suffix] = label
++	}
++	descriptions := make(map[string]string, want)
++	for suffix, desc := range moBrStatDesc {
++		if _, ok := seenSuffix[suffix]; !ok {
++			t.Errorf("описание статистики %q без метки блока", suffix)
++		}
++		if strings.TrimSpace(desc) == "" {
++			t.Errorf("статистика %q: пустая расшифровка", suffix)
++		}
++		if other, dup := descriptions[desc]; dup {
++			t.Errorf("расшифровки статистик %q и %q совпадают: %q", other, suffix, desc)
++		}
++		descriptions[desc] = suffix
++		if strings.TrimSpace(moBrStatLabel[suffix]) == "" {
++			t.Errorf("статистика %q: пустая каноническая метка блока", suffix)
++		}
++	}
++	for suffix := range moBrStatLabel {
++		if _, ok := seenSuffix[suffix]; !ok {
++			t.Errorf("каноническая метка %q без метки блока", suffix)
++		}
++	}
++}
++
++// TestMoBrSeriesMetaFields — запись каталога для каждой комбинации (дескриптор × год ×
++// статистика): Series по шаблону <base>_<year>_<stat> (у листов 16–17 без года), заполнены
++// все поля, частота — волны опроса, Origin называет лист и блок, Description называет год
++// и различается между статистиками одного ряда.
++func TestMoBrSeriesMetaFields(t *testing.T) {
++	suffixes := moBrStatSuffixes()
++	for _, ind := range moBrIndicators {
++		years := []string{"2021", "2026", "2029"}
++		if ind.NoYears {
++			years = []string{""}
++		}
++		for _, year := range years {
++			descriptions := make(map[string]string, len(suffixes))
++			for _, suffix := range suffixes {
++				meta := moBrSeriesMeta(ind, year, suffix)
++				if want := moBrSeriesName(ind.Base, year, suffix); meta.Series != want {
++					t.Errorf("лист %q, год %q, стат %s: series %q, ожидалось %q",
++						ind.Sheet, year, suffix, meta.Series, want)
++				}
++				if meta.Unit != ind.Unit {
++					t.Errorf("series %q: unit %q, ожидалось %q", meta.Series, meta.Unit, ind.Unit)
++				}
++				if meta.Source != moBrSource {
++					t.Errorf("series %q: source %q, ожидалось %q", meta.Series, meta.Source, moBrSource)
++				}
++				if meta.Frequency != moBrFrequency {
++					t.Errorf("series %q: частота %q, ожидалось %q", meta.Series, meta.Frequency, moBrFrequency)
++				}
++				for field, v := range map[string]string{
++					"series": meta.Series, "title": meta.Title, "unit": meta.Unit,
++					"frequency": meta.Frequency, "origin": meta.Origin, "description": meta.Description,
++				} {
++					if strings.TrimSpace(v) == "" {
++						t.Errorf("series %q: пустое поле %s", meta.Series, field)
++					}
++				}
++				if !strings.Contains(meta.Origin, "лист «"+ind.Sheet+"»") {
++					t.Errorf("series %q: origin %q не называет лист", meta.Series, meta.Origin)
++				}
++				if !strings.Contains(meta.Origin, "блок «"+moBrStatLabel[suffix]+"»") {
++					t.Errorf("series %q: origin %q не называет блок статистики", meta.Series, meta.Origin)
++				}
++				if !strings.Contains(meta.Description, moBrStatDesc[suffix]) {
++					t.Errorf("series %q: description %q не содержит расшифровку статистики", meta.Series, meta.Description)
++				}
++				if year != "" && !strings.Contains(meta.Description, year) {
++					t.Errorf("series %q: description %q не называет год", meta.Series, meta.Description)
++				}
++				if other, dup := descriptions[meta.Description]; dup {
++					t.Errorf("series %q: description совпадает с %q", meta.Series, other)
++				}
++				descriptions[meta.Description] = meta.Series
++			}
++		}
++	}
++}

@@ -1,0 +1,703 @@
+# Review package: c8d9ce6..HEAD
+
+## Commits
+217bcb7 add bold daily views, grants, mcp checks and schedule
+
+## Files changed
+ dagu/bold.yaml               |  34 +++++
+ gold/series_meta.go          |   6 +-
+ scripts/mcp_check.py         |  36 ++++++
+ sql/mcp_kimi_reader.sql      |   2 +
+ views/bold_etf_daily.go      | 157 ++++++++++++++++++++++
+ views/bold_etf_daily_test.go | 301 +++++++++++++++++++++++++++++++++++++++++++
+ views/gold_views.go          |  18 ++-
+ 7 files changed, 548 insertions(+), 6 deletions(-)
+
+## Diff
+diff --git a/dagu/bold.yaml b/dagu/bold.yaml
+new file mode 100644
+index 0000000..3fcc1f3
+--- /dev/null
++++ b/dagu/bold.yaml
+@@ -0,0 +1,34 @@
++type: chain
++schedule: "7 8 * * *"
++overlap_policy: skip
++
++# Ежедневный прогон контура bold.report (ByteTree) в 08:07 МСК: данные источника
++# готовы к 07:32 МСК, а слот свободен (соседние DAG-и: cbr/gold — 18:47, wgc — 20:17).
++# Контур щадящий: ключей у источника нет, а обычный инкремент — 4 запроса у
++# bold_etf_flows (units-latest, aum-latest, flows/all-latest, summary) плюс 1 у
++# bold_gold_price (price-latest), то есть до 5 запросов в сутки. Полный режим
++# (первый прогон, доказанный пропуск дней — дата источника ушла вперёд больше чем на
++# 4 календарных дня, или расхождение максимумов ряда и пер-фондового среза) читает
++# файлы истории: до 8 запросов, но это редкий путь, а не ежедневный, и он идемпотентен
++# (ReplacingMergeTree по ключам), поэтому может запускаться руками. Оба импортёра
++# fail-fast: не-200, пустое тело, отсутствие ключа, расхождение дат или цены и ноль
++# точек — ошибка, поэтому сбой виден в dagu, а не остаётся зелёным при рядах без
++# обновления. Данные источника T+1: прогон пишет прошедший торговый день, выходные
++# источник опускает. Шаги — цепочкой: сначала цена дня, затем ETF-контур (цена входит
++# множителем в etf_bold_flow_usd_mln, поэтому без неё USD-поток дня не посчитается).
++steps:
++  - id: bold_gold_price
++    run: "$ROSSTAT_IMPORT_BIN"
++    env:
++      - CLICKHOUSE_IMPORT_STAT=bold_gold_price
++    retry_policy:
++      limit: 3
++      interval_sec: 300
++
++  - id: bold_etf_flows
++    run: "$ROSSTAT_IMPORT_BIN"
++    env:
++      - CLICKHOUSE_IMPORT_STAT=bold_etf_flows
++    retry_policy:
++      limit: 3
++      interval_sec: 300
+diff --git a/gold/series_meta.go b/gold/series_meta.go
+index a47929f..5be0453 100644
+--- a/gold/series_meta.go
++++ b/gold/series_meta.go
+@@ -36,36 +36,36 @@ var goldSeriesMeta = []util.SeriesMeta{
+ 
+ // BoldPriceSeriesMeta — каталог цены золота от bold.report (площадка bold в gold_prices).
+ // Экспортируется, потому что запись описывает ряд, который пишет импортёр пакета bold: он и
+ // публикует её после успешного Send (описание ряда, которого в таблице нет, — обещание данных,
+ // которых агент не найдёт). Прецедент такой же связи — comex_front: ряд живёт в gold_prices, а
+ // пишет его ingest. Текст описания обязан называть главное для читателя: метод источником не
+ // раскрыт, это не спот, и comex_front этим рядом не подменяется (спека §4.2, §9) — и обязан
+ // оставаться качественным: снимковых чисел (глубина ряда, расхождения с comex_front на
+ // контрольных датах) здесь нет намеренно. Число точек устареет при первом же инкременте, а
+ // каталог читает агент: ложь в описании ряда хуже, чем отсутствие числа. Глубина ряда и текущий
+-// максимум живут в v_gold_prices и ARCHITECTURE.
++// максимум живут в v_gold_prices (ARCHITECTURE.md §6.3 — там описана сама витрина), а не в каталоге.
+ func BoldPriceSeriesMeta() util.SeriesMeta {
+ 	return util.SeriesMeta{
+ 		Source:    goldSource,
+ 		Series:    boldVenue,
+ 		Title:     "Цена золота: фьючерсная цена bold.report (ByteTree), не спот и не GC=F",
+ 		Unit:      "USD за тройскую унцию (фьючерс источника, метод детально не раскрыт)",
+ 		Frequency: "D",
+ 		Origin:    "bold.report/api/v1/gold/price.json (инкремент — gold/price-latest.json)",
+ 		Description: "Фьючерсная цена золота, которую источник публикует как «Futures Price»: конкретный метод — контракт " +
+ 			"и время снимка — источником детально не раскрыт, поэтому это не спот, не LBMA и не GC=F. " +
+ 			"С нашим comex_front (GC=F, фронт-месяц COMEX, сессионный ввод) совпадение лишь частичное — " +
+ 			"поэтому ряд идёт отдельной площадкой bold, отдельной серией, а не подменой comex_front. " +
+ 			"Источник — bold.report (ByteTree), ключей нет, режим щадящий (1 запрос в сутки); данные T+1, " +
+-			"выходные источник опускает. Глубину ряда и текущий максимум смотреть в v_gold_prices " +
+-			"(ARCHITECTURE.md §6.2), а не здесь: число точек меняется с каждым прогоном. " +
++			"выходные источник опускает. Глубину ряда и текущий максимум смотреть в v_gold_prices, " +
++			"а не здесь: число точек меняется с каждым прогоном (описание витрины — ARCHITECTURE.md §6.3). " +
+ 			"Темп — отношение к предыдущей строке.",
+ 	}
+ }
+ 
+ var goldPricesView = util.View{
+ 	Name:   "v_gold_prices",
+ 	Tables: []string{goldTable},
+ 	Select: `SELECT 'gold' AS source, toString(venue) AS series, toDate(date) AS date, usd AS value
+ 	FROM gold_prices FINAL`,
+ 	Comment: "Цены золота в USD/oz по площадкам (venue). Три площадки: moex_fix_usd — производная цена " +
+diff --git a/scripts/mcp_check.py b/scripts/mcp_check.py
+index 0803ccc..f2bb406 100644
+--- a/scripts/mcp_check.py
++++ b/scripts/mcp_check.py
+@@ -249,15 +249,51 @@ async def check(params, server_log):
+             failed += not expect("прогнозы резолвятся по факту", bool(accuracy) and (resolved_n or 0) >= 1, accuracy_detail)
+ 
+             raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM gold_forecasts"}))
+             denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+             failed += not expect("сырая gold_forecasts закрыта", denied, "отказ ClickHouse 497 на gold_forecasts (ожидаемо)" if denied else raw[:200])
+ 
+             raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM macro_series"}))
+             denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+             failed += not expect("сырая таблица закрыта", denied, "отказ ClickHouse 497 на macro_series (ожидаемо)" if denied else raw[:200])
+ 
++            # Контур bold.report (спека §4.4): витрины дневного агрегата и пер-фондового
++            # среза видны агенту, каталог source='bold' описывает ровно 7 рядов, а сырая
++            # bold_fund_snapshot — источник пер-фондовой витрины — агенту закрыта (как
++            # macro_series: читать её агент обязан только через витрину).
++            for view in ("v_gold_etf_flows_daily", "v_gold_etf_funds_daily"):
++                failed += not expect(f"витрина {view} видна", view in tables, "list_tables default")
++
++            # Пустая витрина — не отказ: до первого прогона bold_etf_flows (или при
++            # выходном дне источника) строк нет и вовсе, поэтому проверяется РАЗРЕШЕНИЕ
++            # чтения, как у v_dcf_assumptions и v_gold_etf_flows.
++            for view, label in (("v_gold_etf_flows_daily", "дневной агрегат bold читается"),
++                                ("v_gold_etf_funds_daily", "пер-фондовый срез bold читается")):
++                bold_view = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {view}"}))
++                failed += not expect(label, "rows" in bold_view and "Query execution failed" not in bold_view and "ACCESS_DENIED" not in bold_view, bold_view[:200])
++
++            # Каталог source='bold' — 7 рядов ETF-контура: каталог пишет импортёр только
++            # после успешного Send, поэтому «меньше 7» значит неприменённый импорт (числа
++            # агент прочитает, а что измеряет ряд и в каких единицах — нет), «больше 7» —
++            # ряд, которого витрина не знает.
++            catalog_bold_raw = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'bold'"}))
++            catalog_bold = result_rows(catalog_bold_raw)
++            catalog_bold_n = catalog_bold[0].get("n") if catalog_bold else None
++            if catalog_bold is None:
++                catalog_bold_detail = f"ответ не распознан: {catalog_bold_raw[:200]}"
++            elif catalog_bold_n == 7:
++                catalog_bold_detail = "рядов bold: 7"
++            else:
++                catalog_bold_detail = (f"рядов bold: {catalog_bold_n}, want 7 — прогнать "
++                                       "make import STAT=bold_etf_flows (каталог пишется после успешной записи)")
++            failed += not expect("каталог bold полон", catalog_bold_n == 7, catalog_bold_detail)
++
++            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM bold_fund_snapshot"}))
++            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
++            failed += not expect("сырой пер-фондовый срез закрыт", denied,
++                                 "отказ ClickHouse 497 на bold_fund_snapshot (ожидаемо)" if denied else raw[:200])
++
+     return failed
+ 
+ 
+ if __name__ == "__main__":
+     sys.exit(asyncio.run(main()))
+diff --git a/sql/mcp_kimi_reader.sql b/sql/mcp_kimi_reader.sql
+index 9cb4d24..229ec2b 100644
+--- a/sql/mcp_kimi_reader.sql
++++ b/sql/mcp_kimi_reader.sql
+@@ -19,10 +19,12 @@ GRANT SELECT ON default.v_gold_dashboard TO kimi_reader;
+ GRANT SELECT ON default.v_forecast_accuracy TO kimi_reader;
+ GRANT SELECT ON default.v_company_financials TO kimi_reader;
+ GRANT SELECT ON default.v_company_metric_sources TO kimi_reader;
+ GRANT SELECT ON default.v_company_operating TO kimi_reader;
+ GRANT SELECT ON default.v_dcf_assumptions TO kimi_reader;
+ GRANT SELECT ON default.v_imf_macro TO kimi_reader;
+ GRANT SELECT ON default.v_eia_petroleum TO kimi_reader;
+ GRANT SELECT ON default.v_gold_forecasts TO kimi_reader;
+ GRANT SELECT ON default.v_gold_etf_flows TO kimi_reader;
+ GRANT SELECT ON default.v_cb_gold_dynamics TO kimi_reader;
++GRANT SELECT ON default.v_gold_etf_flows_daily TO kimi_reader;
++GRANT SELECT ON default.v_gold_etf_funds_daily TO kimi_reader;
+diff --git a/views/bold_etf_daily.go b/views/bold_etf_daily.go
+new file mode 100644
+index 0000000..5be374d
+--- /dev/null
++++ b/views/bold_etf_daily.go
+@@ -0,0 +1,157 @@
++package views
++
++import (
++	"strings"
++
++	"github.com/kmlebedev/clickhouse-import-rosstat/util"
++)
++
++// boldETFSeriesPair — пара «код ряда macro_series → колонка витрины» одного из семи
++// рядов контура bold.report (source='bold', спека §4.1; описания рядов — в
++// bold/series_meta.go).
++type boldETFSeriesPair struct {
++	Series string
++	Metric string
++}
++
++// boldETFSeries — семь пар контура в порядке колонок витрины: поток дня (тонны),
++// тот же поток в USD, окна 7/30/90 календарных дней и два стока (запасы и AUM).
++// Срез один и на mapping-массив пивота, и на IN-фильтр: ряд, выпавший из него,
++// исчезает из выдачи молча — колонка осталась бы в SELECT и вечно отдавала NULL,
++// потому что «пусто» и «не публикуется» в длинном формате неразличимы. Поэтому
++// набор сверяется тестом не с копией самого себя, а с объявлениями имён в файле
++// импортёра (../bold/parse.go), который эти ряды пишет.
++var boldETFSeries = []boldETFSeriesPair{
++	{"etf_bold_flow_tonnes", "flow_tonnes"},
++	{"etf_bold_flow_usd_mln", "flow_usd_mln"},
++	{"etf_bold_flow_7d_tonnes", "flow_7d_tonnes"},
++	{"etf_bold_flow_30d_tonnes", "flow_30d_tonnes"},
++	{"etf_bold_flow_90d_tonnes", "flow_90d_tonnes"},
++	{"etf_bold_holdings_tonnes", "holdings_tonnes"},
++	{"etf_bold_aum_usd_bn", "aum_usd_bn"},
++}
++
++// boldETFSeriesNamesSQL — те же семь кодов строкой для IN (...). Ограничение списка
++// именами набора, а не LIKE 'etf_bold_%': посторонний ряд с тем же префиксом (ручной
++// ввод, будущий импортёр) не должен попадать в пивот.
++func boldETFSeriesNamesSQL() string {
++	quoted := make([]string, 0, len(boldETFSeries))
++
++	for _, pair := range boldETFSeries {
++		quoted = append(quoted, "'"+pair.Series+"'")
++	}
++
++	return strings.Join(quoted, ", ")
++}
++
++// boldETFSeriesMapSQL — пары (series, metric) для ARRAY JOIN: из этого массива
++// витрина узнаёт, какой колонке принадлежит значение ряда. Без разметки пивот не
++// смог бы разложить длинный формат macro_series (одно значение на ряд) по колонкам.
++func boldETFSeriesMapSQL() string {
++	rows := make([]string, 0, len(boldETFSeries))
++
++	for _, pair := range boldETFSeries {
++		rows = append(rows, "('"+pair.Series+"', '"+pair.Metric+"')")
++	}
++
++	return strings.Join(rows, ", ")
++}
++
++// goldEtfFlowsDailyView — дневной пивот семи рядов контура bold.report: одна строка
++// на торговый день источника с восемью колонками. Структура — как у v_gold_etf_flows
++// (mapping-массив (series, metric) + IN (...) с именами набора): macro_series хранит
++// длинный формат, и раскладывает его по колонкам сама витрина.
++//
++// Отличия от месячной WGC-витрины принципиальны и обе — свойства источника, а не
++// дефекты: (1) источник один — source='bold', поэтому приоритет источников
++// (coalesce по wgc > webbridge > manual) здесь не нужен, а версии ReplacingMergeTree
++// схлопывает FINAL; (2) maxIfOrNull, а не maxIf: maxIf при отсутствии совпадений
++// вернул бы 0 и подменил бы «ряда за этот день нет» нулевым потоком. Вложенный
++// подзапрос отдаёт по одной строке на (date, series): FINAL — по определению
++// ReplacingMergeTree, а WHERE pin-ит source, поэтому дублей ключа быть не может.
++var goldEtfFlowsDailyView = util.View{
++	Name:   "v_gold_etf_flows_daily",
++	Tables: []string{"macro_series"},
++	Select: `SELECT
++    v.date AS date,
++    maxIfOrNull(v.value, m.metric = 'flow_tonnes') AS flow_tonnes,
++    maxIfOrNull(v.value, m.metric = 'flow_usd_mln') AS flow_usd_mln,
++    maxIfOrNull(v.value, m.metric = 'flow_7d_tonnes') AS flow_7d_tonnes,
++    maxIfOrNull(v.value, m.metric = 'flow_30d_tonnes') AS flow_30d_tonnes,
++    maxIfOrNull(v.value, m.metric = 'flow_90d_tonnes') AS flow_90d_tonnes,
++    maxIfOrNull(v.value, m.metric = 'holdings_tonnes') AS holdings_tonnes,
++    maxIfOrNull(v.value, m.metric = 'aum_usd_bn') AS aum_usd_bn
++FROM (
++    SELECT x.1 AS series, x.2 AS metric
++    FROM (SELECT arrayJoin([` + boldETFSeriesMapSQL() + `]) AS x)
++) AS m
++INNER JOIN (
++    SELECT date, series, value
++    FROM macro_series FINAL
++    WHERE source = 'bold' AND series IN (` + boldETFSeriesNamesSQL() + `)
++) AS v ON v.series = m.series
++GROUP BY date
++ORDER BY date DESC`,
++	Comment: "Дневной агрегат золотых ETF контура bold.report (ByteTree): одна строка на торговый день источника — пивот семи рядов etf_bold_* из macro_series (source='bold'). " +
++		"Ряды пишет импортёр bold_etf_flows (расписание dagu/bold.yaml, ежедневно 08:07 МСК; данные T+1, ключей у источника нет, режим щадящий — 4 запроса на инкрементный прогон), описания рядов и единиц — в v_series_catalog (source='bold'). " +
++		"Агрегат 73 фондов (в списке GLD, IAU, IGLN, GLDM, SGLD, 4GLD, PHYS, 518880, GOLD, 1540, ZGLD, SGOL) — ≈83 % мировой величины WGC: не складывать и не сравнивать напрямую с etf_holdings_tonnes_world/etf_flow_tonnes_world (там все фонды мира и месячная частота). " +
++		"flow_tonnes — дневной поток: Δ совокупных запасов (units) между соседними торговыми днями, переведённая в тонны (÷32150,7465686); знак — направление (плюс приток); у первой точки ряда потока нет, поэтому колонка NULL. flow_usd_mln — тот же поток, оценённый ценой дня источника ((units_t − units_{t−1}) × price_t / 1e6): это не стоимость сделок и не объём торгов; нет цены дня — нет и точки USD-потока (тоннажный поток при этом пишется). " +
++		"flow_7d_tonnes/flow_30d_tonnes/flow_90d_tonnes — окна источника как опубликованы (culm7day/culm30day/culm90day ÷32150,7465686), без пересчёта из нашего дневного ряда: окна календарные (7/30/90 дней), поэтому сумма пяти торговых дней ≠ culm7day, а окна пересекаются — значения соседних дней суммировать нельзя. " +
++		"holdings_tonnes (units ÷32150,7465686) и aum_usd_bn (aum ÷1e9) — стоки на конец дня; AUM источник считает по своим ценам фондов, поэтому с нашим рядом gold/bold он может расходиться (метод цены источником не раскрыт — «Futures Price»). " +
++		"Глубина: строк до 2015-04-01 у источника нет вовсе, а первые 64 дня истории (2015-01-01…2015-03-31) несут только цену — точек в витрине у них не появляется; выходные и праздники источник опускает, поэтому день без ряда в выдаче отсутствует (а не NULL). NULL в колонке означает «ряда за этот день нет» (не 0: ноль означал бы нулевой поток). Порядок строк — date DESC (детерминированная выдача). " +
++		"Пер-фондовая детализация того же дня — в v_gold_etf_funds_daily (73 фонда; там унции и USD, здесь тонны и млрд USD)",
++	Columns: map[string]string{
++		"date":            "Торговый день источника (Date32) — дата точки рядов etf_bold_*; за выходные и праздники строк нет",
++		"flow_tonnes":     "Дневной поток: Δ совокупных запасов 73 фондов между соседними торговыми днями, тонны; знак — направление (плюс приток); NULL — у первой точки ряда потока нет или ряда за день нет",
++		"flow_usd_mln":    "Тот же дневной поток, оценённый ценой дня источника, млн USD: не стоимость сделок и не объём торгов; NULL — ряда или цены дня нет",
++		"flow_7d_tonnes":  "Поток за 7 календарных дней, как публикует источник (culm7day), тонны; окно календарное — сумма 5 торговых дней ему не равна; NULL — ряда за день нет",
++		"flow_30d_tonnes": "Поток за 30 календарных дней, как публикует источник (culm30day), тонны; окно календарное и пересекается с 7/90-дневным — суммировать нельзя; NULL — ряда за день нет",
++		"flow_90d_tonnes": "Поток за 90 календарных дней, как публикует источник (culm90day), тонны; окно календарное (отклонение от Δ за 90 календарных дней — свойство источника); NULL — ряда за день нет",
++		"holdings_tonnes": "Совокупные запасы 73 фондов на конец дня (сток), тонны: ≈83 % мировой величины WGC — не складывать с etf_holdings_tonnes_world (все фонды мира, месячная частота); NULL — ряда за день нет",
++		"aum_usd_bn":      "Совокупный AUM 73 фондов на конец дня (сток), млрд USD: источник считает его по своим ценам фондов, с нашим gold/bold возможны расхождения; NULL — ряда за день нет",
++	},
++}
++
++// v_gold_etf_funds_daily — пер-фондовый срез контура bold.report: одна строка на
++// (дата, фонд), 73 фонда за торговый день. Таблица-источник — bold_fund_snapshot
++// (её пишет тот же импортёр bold_etf_flows), а не macro_series: у среза свой ключ
++// (date, ticker, name), потому что тикер у источника не уникален (GLD в одном срезе
++// трижды). FINAL схлопывает версии ReplacingMergeTree по этому ключу. Витрина
++// отдаёт 10 из 11 колонок среза: price_change_usd в срез пишется, но в выдачу не
++// выведен (цену дня агент берёт колонкой price_usd).
++var boldFundsDailyView = util.View{
++	Name:   "v_gold_etf_funds_daily",
++	Tables: []string{"bold_fund_snapshot"},
++	Select: `SELECT
++    date,
++    ticker,
++    name,
++    units_oz,
++    aum_usd,
++    price_usd,
++    units_change_oz,
++    aum_change_usd,
++    shares,
++    shares_change
++FROM bold_fund_snapshot FINAL
++ORDER BY date DESC, ticker, name`,
++	Comment: "Пер-фондовый дневной срез золотых ETF контура bold.report (ByteTree): одна строка на (дата, фонд) — 73 фонда источника. " +
++		"Источник — bold.report/api/v1/gold/summary (у файла среза нет поля даты: дату приносит ответ «последнего дня», а расхождение дат — ошибка импортёра, а не тихая запись под чужим числом); пишет срез импортёр bold_etf_flows (расписание dagu/bold.yaml, ежедневно 08:07 МСК), ключей у источника нет. " +
++		"История копится с первого прогона: у источника пер-фондовой истории нет — только последний день, поэтому глубина витрины растёт по одному торговому дню за прогон, начиная с 2026-10. " +
++		"Тикер фонда у источника НЕ уникален: в одном срезе три разных фонда называются GLD (KTAM Gold ETF Tracker Class GLD, NewGold Issuer Ltd, SPDR Gold Shares), поэтому фонд определяется парой (ticker, name), а не тикером, и в выдаче одного дня GLD встречается трижды. " +
++		"Агрегат 73 фондов — ≈83 % мировой величины WGC: не складывать и не сравнивать напрямую с etf_holdings_tonnes_world/etf_flow_tonnes_world (там все фонды мира и месячная частота). " +
++		"units_oz — металл фонда в унциях (Total Units, Oz); aum_usd — AUM фонда в USD; price_usd — цена фонда источника («Futures Price»): конкретный метод, контракт и время снимка источником не раскрыты, это не спот и не наша цена золота comex_front; units_change_oz, aum_change_usd, shares, shares_change — дневные изменения и число паёв как публикует источник. " +
++		"Единицы этой витрины — унции и USD; агрегат контура в тоннах и млрд USD — в v_gold_etf_flows_daily. Все поля среза у источника обязательны, поэтому NULL в колонках витрины не бывает: отсутствует не значение, а строка — день, который источник не публиковал (выходные и праздники он опускает). Порядок строк — date DESC, ticker, name (детерминированная выдача)",
++	Columns: map[string]string{
++		"date":            "Дата среза (Date32) из ответа «последнего дня» источника: под ней записан весь пер-фондовый срез, у самого файла среза даты нет",
++		"ticker":          "Тикер фонда как публикует источник; НЕ уникален — в срезе три фонда с тикером GLD, поэтому строку определяет пара (ticker, name)",
++		"name":            "Имя фонда источника: различает фонды с одинаковым тикером (для GLD — KTAM Gold ETF Tracker Class GLD, NewGold Issuer Ltd, SPDR Gold Shares)",
++		"units_oz":        "Металл фонда в унциях (Total Units, Oz) на дату среза: сток, не поток",
++		"aum_usd":         "Активы фонда (AUM) в USD на дату среза: сток; источник считает его по своим ценам фондов",
++		"price_usd":       "Цена фонда источника («Futures Price»), USD: метод, контракт и время снимка источником не раскрыты — это не спот и не цена закрытия",
++		"units_change_oz": "Изменение металла фонда к предыдущему торговому дню, унции: знак — направление (плюс приток); как публикует источник",
++		"aum_change_usd":  "Изменение AUM фонда к предыдущему торговому дню, USD: как публикует источник (включает переоценку по цене)",
++		"shares":          "Число паёв (shares) фонда на дату среза: как публикует источник",
++		"shares_change":   "Изменение числа паёв фонда к предыдущему торговому дню: как публикует источник",
++	},
++}
+diff --git a/views/bold_etf_daily_test.go b/views/bold_etf_daily_test.go
+new file mode 100644
+index 0000000..992dae8
+--- /dev/null
++++ b/views/bold_etf_daily_test.go
+@@ -0,0 +1,301 @@
++package views
++
++import (
++	"os"
++	"regexp"
++	"sort"
++	"strings"
++	"testing"
++
++	"github.com/kmlebedev/clickhouse-import-rosstat/util"
++)
++
++// boldSeriesDeclaration — объявление имени ряда ETF-контура в файле импортёра:
++// boldSeriesX = "etf_bold_…". Разбор узкий и нарочно: он ищет ровно константы набора,
++// а не любую строку с префиксом (правило «похоже на имя ряда» поймало бы и ряд чужого
++// контура). Сверка идёт по САМОМУ файлу импортёра, а не по копии списка в тесте: тест,
++// повторяющий список витрины, проверял бы сам себя — переименованный в bold/ ряд
++// оставил бы витрину с вечным NULL и зелёный тест.
++var boldSeriesDeclaration = regexp.MustCompile(`boldSeries\w+\s*=\s*"(etf_bold_[a-z0-9_]+)"`)
++
++// boldEtfFlowsDailyColumns / boldFundsDailyColumns — колонки витрин в порядке
++// выдачи: порядок — контракт (спека §4.4), а не деталь реализации, потому что агент
++// читает витрину целиком (SELECT *) и перестановка колонок меняет заголовок, на
++// который он опирается. Списки дублируют бриф намеренно: сверка «SELECT ↔ Columns»
++// ловит забытый комментарий, но не подмену смысла колонки.
++var (
++	boldEtfFlowsDailyColumns = []string{
++		"date", "flow_tonnes", "flow_usd_mln", "flow_7d_tonnes", "flow_30d_tonnes",
++		"flow_90d_tonnes", "holdings_tonnes", "aum_usd_bn",
++	}
++	boldFundsDailyColumns = []string{
++		"date", "ticker", "name", "units_oz", "aum_usd", "price_usd",
++		"units_change_oz", "aum_change_usd", "shares", "shares_change",
++	}
++)
++
++// boldImporterSeriesNames достаёт имена рядов etf_bold_* из объявлений импортёра
++// (../bold/parse.go). Пустой результат — провал, а не пропуск: разбор, разошедшийся с
++// файлом, обязан быть виден (иначе тест «сверял» бы витрину с пустым списком).
++func boldImporterSeriesNames(t *testing.T) []string {
++	t.Helper()
++
++	const path = "../bold/parse.go"
++
++	data, err := os.ReadFile(path)
++	if err != nil {
++		t.Fatalf("файл импортёра %s не читается: %v", path, err)
++	}
++
++	matches := boldSeriesDeclaration.FindAllStringSubmatch(string(data), -1)
++	names := make([]string, 0, len(matches))
++
++	for _, match := range matches {
++		names = append(names, match[1])
++	}
++
++	if len(names) == 0 {
++		t.Fatalf("%s: не найдено ни одного объявления boldSeries… = \"etf_bold_…\" — правило разбора разошлось с файлом", path)
++	}
++
++	return names
++}
++
++// Форма витрины дневного агрегата: имя, таблица-источник и то, без чего пивот теряет
++// данные молча. FINAL обязателен по определению ReplacingMergeTree (без него
++// вложенный подзапрос читал бы физический хвост таблицы); maxIfOrNull, а не maxIf:
++// maxIf при отсутствии совпадений возвращает 0 и подменил бы «ряда за этот день нет»
++// нулевым потоком — выдуманным нулём вместо отсутствия данных; GROUP BY date — одна
++// строка на день.
++func TestGoldEtfFlowsDailyViewShape(t *testing.T) {
++	v := goldEtfFlowsDailyView
++	selectText := collapseSpaces(v.Select)
++
++	if v.Name != "v_gold_etf_flows_daily" {
++		t.Fatalf("Name = %q, want v_gold_etf_flows_daily", v.Name)
++	}
++
++	if len(v.Tables) != 1 || v.Tables[0] != "macro_series" {
++		t.Fatalf("%s tables = %v, want [macro_series]", v.Name, v.Tables)
++	}
++
++	if !strings.Contains(selectText, "macro_series FINAL") {
++		t.Fatalf("%s: SELECT must read macro_series FINAL (ReplacingMergeTree читается через FINAL), got: %s", v.Name, selectText)
++	}
++
++	if !strings.Contains(selectText, "source = 'bold'") {
++		t.Fatalf("%s: SELECT must filter source = 'bold', got: %s", v.Name, selectText)
++	}
++
++	for _, pair := range boldETFSeries {
++		if !strings.Contains(selectText, "'"+pair.Series+"'") {
++			t.Errorf("%s: ряд %s отсутствует в SELECT — колонка %s осталась бы вечным NULL", v.Name, pair.Series, pair.Metric)
++		}
++	}
++
++	if !strings.Contains(selectText, "maxIfOrNull(") {
++		t.Fatalf("%s: SELECT must pick values with maxIfOrNull, got: %s", v.Name, selectText)
++	}
++
++	if strings.Contains(selectText, "maxIf(") {
++		t.Fatalf("%s: maxIf returns 0 when nothing matches and «ряда за день нет» стало бы нулевым потоком", v.Name)
++	}
++
++	if !strings.Contains(selectText, "GROUP BY date") {
++		t.Fatalf("%s: pivot must return one row per day, got: %s", v.Name, selectText)
++	}
++}
++
++// Форма пер-фондовой витрины: имя, таблица-источник и FINAL по её ключу
++// (date, ticker, name). Порядок строк — date DESC, ticker, name: второй и третий
++// ключи обязательны, потому что тикер у источника не уникален (Ruling 3: GLD
++// встречается трижды), и без name строки одного дня шли бы в произвольном порядке.
++func TestBoldFundsDailyViewShape(t *testing.T) {
++	v := boldFundsDailyView
++	selectText := collapseSpaces(v.Select)
++
++	if v.Name != "v_gold_etf_funds_daily" {
++		t.Fatalf("Name = %q, want v_gold_etf_funds_daily", v.Name)
++	}
++
++	if len(v.Tables) != 1 || v.Tables[0] != "bold_fund_snapshot" {
++		t.Fatalf("%s tables = %v, want [bold_fund_snapshot]", v.Name, v.Tables)
++	}
++
++	if !strings.Contains(selectText, "bold_fund_snapshot FINAL") {
++		t.Fatalf("%s: SELECT must read bold_fund_snapshot FINAL, got: %s", v.Name, selectText)
++	}
++
++	if !strings.Contains(selectText, "ORDER BY date DESC, ticker, name") {
++		t.Fatalf("%s: SELECT must order rows by date DESC, ticker, name, got: %s", v.Name, selectText)
++	}
++}
++
++// Витрины обязаны быть зарегистрированы в импортёре gold_views: без этого их никто
++// не создаст, и грант в sql/mcp_kimi_reader.sql упадёт на несуществующей витрине.
++// Проверка идёт по САМОМУ списку импортёра (goldViewsList) — см. комментарий у
++// TestDcfAssumptionsViewIsBuiltByGoldViews. Таблица-источник обязана быть названа и
++// в Tables, и в самом SELECT: гейт CreateView считает Tables в system.tables и
++// молча пропускает витрину, пока таблицы нет, а расхождение имён дало бы витрину,
++// которая создалась и не читается.
++func TestBoldViewsRegistered(t *testing.T) {
++	for _, tc := range []struct {
++		view   util.View
++		tables []string
++	}{
++		{goldEtfFlowsDailyView, []string{"macro_series"}},
++		{boldFundsDailyView, []string{"bold_fund_snapshot"}},
++	} {
++		var found bool
++
++		for _, registered := range goldViewsList {
++			if registered.Name == tc.view.Name {
++				found = true
++			}
++		}
++
++		if !found {
++			t.Errorf("%s must be created by the gold_views importer: it is missing from goldViewsList", tc.view.Name)
++
++			continue
++		}
++
++		if len(tc.view.Tables) != len(tc.tables) {
++			t.Errorf("%s: Tables = %v, want %v", tc.view.Name, tc.view.Tables, tc.tables)
++
++			continue
++		}
++
++		for i, table := range tc.tables {
++			if tc.view.Tables[i] != table {
++				t.Errorf("%s: Tables[%d] = %q, want %q", tc.view.Name, i, tc.view.Tables[i], table)
++			}
++
++			if !strings.Contains(tc.view.Select, table) {
++				t.Errorf("%s: SELECT не читает таблицу-источник %q из Tables", tc.view.Name, table)
++			}
++		}
++	}
++}
++
++// Комментарий таблицы и каждой колонки — требование правила 11: через MCP агент
++// видит только их (SQL-код витрины читателю недоступен). Поэтому проверяется и
++// непустота Comment, и полное покрытие Columns: колонка без комментария — это число
++// без смысла. Колонки берутся из самого SELECT хелпером selectedColumns, а не
++// списком в тесте: список в тесте пропустил бы колонку, добавленную в SELECT позже.
++// Обратная проверка (комментарий к колонке, которой в выдаче нет) ловит опечатку,
++// которую ClickHouse отверг бы только на живом прогоне. Число колонок (8 и 10) —
++// контракт спеки §4.4, поэтому сверяется явно, а не «сколько получилось».
++func TestBoldViewsHaveComments(t *testing.T) {
++	for _, tc := range []struct {
++		view    util.View
++		columns []string
++	}{
++		{goldEtfFlowsDailyView, boldEtfFlowsDailyColumns},
++		{boldFundsDailyView, boldFundsDailyColumns},
++	} {
++		if strings.TrimSpace(tc.view.Comment) == "" {
++			t.Errorf("%s has no table comment", tc.view.Name)
++		}
++
++		columns := selectedColumns(tc.view.Select)
++		if len(columns) != len(tc.columns) {
++			t.Errorf("%s: SELECT возвращает %d колонок (%v), want %d (%v)", tc.view.Name, len(columns), columns, len(tc.columns), tc.columns)
++		}
++
++		for i, want := range tc.columns {
++			if i >= len(columns) {
++				break
++			}
++
++			if columns[i] != want {
++				t.Errorf("%s: колонка %d = %q, want %q (порядок выдачи — контракт витрины)", tc.view.Name, i, columns[i], want)
++			}
++		}
++
++		for _, column := range columns {
++			if strings.TrimSpace(tc.view.Columns[column]) == "" {
++				t.Errorf("%s: column %q has no comment — агент не поймёт её через MCP", tc.view.Name, column)
++			}
++		}
++
++		for column := range tc.view.Columns {
++			if !contains(columns, column) {
++				t.Errorf("%s: comment for %q, which the SELECT does not return", tc.view.Name, column)
++			}
++		}
++	}
++}
++
++// Семь рядов набора — данные витрины, а не текст: из boldETFSeries собираются и
++// IN (...)-фильтр, и mapping-массив пивота, и разметка колонок. Тест держит три
++// стороны вместе: (1) набор полон и без дублей, (2) каждый ряд и каждая метрика
++// реально стоят в SELECT витрины (иначе колонка молча отдавала бы вечный NULL),
++// (3) имена совпадают с объявлениями импортёра (../bold/parse.go) — файла, который
++// эти ряды пишет, а не копии списка в тесте.
++func TestBoldEtfFlowsDailySeriesSetMatchesViewAndImporter(t *testing.T) {
++	const want = 7
++
++	if len(boldETFSeries) != want {
++		t.Fatalf("набор boldETFSeries = %d пар, want %d (спека §4.1: 7 рядов ETF-контура)", len(boldETFSeries), want)
++	}
++
++	selectText := collapseSpaces(goldEtfFlowsDailyView.Select)
++	series := make([]string, 0, want)
++	metrics := make([]string, 0, want)
++
++	for _, pair := range boldETFSeries {
++		series = append(series, pair.Series)
++		metrics = append(metrics, pair.Metric)
++
++		if !strings.Contains(selectText, "('"+pair.Series+"', '"+pair.Metric+"')") {
++			t.Errorf("%s: в mapping-массиве нет пары (%s, %s)", goldEtfFlowsDailyView.Name, pair.Series, pair.Metric)
++		}
++
++		if !strings.Contains(selectText, ") AS "+pair.Metric) {
++			t.Errorf("%s: метрика %q не разложена в колонку — значение ряда %s в выдачу не попадает", goldEtfFlowsDailyView.Name, pair.Metric, pair.Series)
++		}
++	}
++
++	for _, list := range []struct {
++		what  string
++		items []string
++	}{{"ряд", series}, {"метрика", metrics}} {
++		seen := make(map[string]bool, len(list.items))
++
++		for _, item := range list.items {
++			if seen[item] {
++				t.Errorf("%s %q встречается в наборе дважды", list.what, item)
++			}
++
++			seen[item] = true
++		}
++	}
++
++	importer := boldImporterSeriesNames(t)
++	sort.Strings(series)
++	sort.Strings(importer)
++
++	if strings.Join(series, ",") != strings.Join(importer, ",") {
++		t.Errorf("ряды витрины %v не совпадают с рядами импортёра (../bold/parse.go) %v", series, importer)
++	}
++}
++
++// Порядок выдачи детерминирован — паритет с v_gold_etf_flows (у неё ORDER BY date
++// DESC, region): агент читает витрину без ORDER BY в своём запросе, и «плавающий»
++// порядок строк делал бы выдачу невоспроизводимой между прогонами.
++func TestBoldViewsOrderIsDeterministic(t *testing.T) {
++	for _, tc := range []struct {
++		view  util.View
++		order string
++	}{
++		{goldEtfFlowsDailyView, "ORDER BY date DESC"},
++		{boldFundsDailyView, "ORDER BY date DESC, ticker, name"},
++	} {
++		selectText := collapseSpaces(tc.view.Select)
++
++		if !strings.Contains(selectText, tc.order) {
++			t.Errorf("%s: SELECT must order rows by %s, got: %s", tc.view.Name, strings.TrimPrefix(tc.order, "ORDER BY "), selectText)
++		}
++	}
++}
+diff --git a/views/gold_views.go b/views/gold_views.go
+index f76094b..c0c5d76 100644
+--- a/views/gold_views.go
++++ b/views/gold_views.go
+@@ -1,18 +1,20 @@
+ // Package views создаёт витрины для LLM-агента прогноза золота и NAV PLZL:
+ // v_model_inputs (входы DCF), v_gold_dashboard (дашборд верификации),
+ // v_forecast_accuracy (точность прогнозов из forecast_log),
+ // v_dcf_assumptions (NPV активов по трём ценовым дека'м и двум контурам ставки),
+ // v_imf_macro (золотые резервы ЦБ из IMF IRFCL, source='imf'),
+ // v_gold_forecasts (консенсус аналитиков и own-сетка из gold_forecasts),
+-// v_gold_etf_flows (пивот месячных потоков и запасов золотых ETF WGC по регионам)
+-// и v_cb_gold_dynamics (динамика резервов семи ЦБ WGC: MoM/YTD и уровень по стране).
++// v_gold_etf_flows (пивот месячных потоков и запасов золотых ETF WGC по регионам),
++// v_cb_gold_dynamics (динамика резервов семи ЦБ WGC: MoM/YTD и уровень по стране),
++// v_gold_etf_flows_daily (дневной пивот семи рядов ETF-контура bold.report)
++// и v_gold_etf_funds_daily (пер-фондовый дневной срез того же контура).
+ //
+ // Импортёр gold_views запускается после ingest-первого-прогона: util.CreateView
+ // пропускает витрину, пока не существуют все её таблицы (model_runs создаёт ingest),
+ // поэтому его вызывают отдельным шагом после первого запуска ingest. Гейт проверяет
+ // только наличие таблиц, а не их заполненность: ipc_mes и ipc_weeks создаются до
+ // загрузки Росстата, и при его сбое витрина создаётся с NULL или устаревшими ipc_*.
+ package views
+ 
+ import (
+ 	"context"
+@@ -25,21 +27,31 @@ import (
+ 
+ type goldViews struct {
+ }
+ 
+ // goldViewsList — витрины импортёра gold_views в том порядке, в каком он их
+ // создаёт. Отдельная переменная уровня пакета, а не литерал на месте цикла:
+ // список нужен в двух местах — сам цикл создания и тест регистрации, который
+ // обязан видеть ИМЕННО то, что создаёт импортёр. Литерал внутри Import тест
+ // повторить не может, и написанный в тесте свой список проверял бы сам себя:
+ // витрина, выпавшая из импортёра, оставляла бы тест зелёным.
+-var goldViewsList = []util.View{modelInputsView, goldDashboardView, forecastAccuracyView, dcfAssumptionsView, imfMacroView, goldForecastsView, goldEtfFlowsView, cbGoldDynamicsView}
++//
++// Две последние витрины — контур bold.report: v_gold_etf_flows_daily читает
++// macro_series (её создаёт любой импортёр рядов), а v_gold_etf_funds_daily —
++// bold_fund_snapshot, которую создаёт импортёр bold_etf_flows. Гейт CreateView
++// пропустит витрину фондов, пока среза нет, поэтому gold_views запускают после
++// первого прогона bold_etf_flows (расписание — dagu/bold.yaml).
++var goldViewsList = []util.View{
++	modelInputsView, goldDashboardView, forecastAccuracyView, dcfAssumptionsView,
++	imfMacroView, goldForecastsView, goldEtfFlowsView, cbGoldDynamicsView,
++	goldEtfFlowsDailyView, boldFundsDailyView,
++}
+ 
+ func (s *goldViews) Name() string {
+ 	return "gold_views"
+ }
+ 
+ func (s *goldViews) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+ 	for _, v := range goldViewsList {
+ 		var created bool
+ 		if created, err = util.CreateView(ctx, conn, v); err != nil {
+ 			return count, err

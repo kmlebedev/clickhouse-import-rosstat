@@ -1,0 +1,334 @@
+# Review package: 061dfff..26ea0fb
+
+## Commits
+26ea0fb fix: check month and year sequence in labour force parser
+
+## Files changed
+ ARCHITECTURE.md              |  2 +-
+ README.md                    |  2 +-
+ rosstat/labour_force.go      | 35 ++++++++++++++++++--
+ rosstat/labour_force_test.go | 76 ++++++++++++++++++++++++++++++++++++++++++--
+ util/publications.go         |  4 +--
+ 5 files changed, 110 insertions(+), 9 deletions(-)
+
+## Diff
+diff --git a/ARCHITECTURE.md b/ARCHITECTURE.md
+index 63fdfb6..ca4bc0a 100644
+--- a/ARCHITECTURE.md
++++ b/ARCHITECTURE.md
+@@ -383,21 +383,21 @@ CREATE TABLE IF NOT EXISTS series_catalog (
+     frequency LowCardinality(String),   -- однобуквенный код частоты: 'M','Q','D','W','A' (A — годовая, ряды dcf_mine_plans); у рядов polyus/polyus_datapack здесь лежит прозаический ТИП периода ('ANNUAL','QUARTERLY','SEMI-ANNUAL'), см. §6.3
+     origin String,                      -- таблица/серия/строка API
+     description String
+ ) ENGINE = ReplacingMergeTree ORDER BY (source, series);
+ 
+ -- Точки контроля публикаций: одна строка = одна увиденная версия артефакта источника.
+ -- Создаётся util.EnsurePublications (первым обращением импортёра); канонический текст —
+ -- util/publications.go (PublicationsDdl), копия здесь обязана совпадать. Механизм общий для
+ -- источников, чей файл обновляется реже прогонов, и включается полями шаблона
+ -- util.ClickHouseImport (PublicationCountPoints/PublicationSource, §3): фактический список
+--- потребителей ведёт §8 п. 13 — десять импортёров cbr/ и четыре вне него.
++-- потребителей ведёт §8 п. 13 — пятнадцать импортёров: десять в cbr/ и пять вне него.
+ -- Ежедневный HEAD-префлайт узнаёт версию файла и пропускает скачивание, если она уже
+ -- импортирована (§8). `first_seen` — наблюдение конвейера, а не дата публикации источника;
+ -- `points` — число записанных этой версией точек (результат запроса PublicationCountPoints,
+ -- а не batch.Rows()), по нему импортёр делает self-heal-чек.
+ -- Таблица внутренняя: агенту (kimi_reader) не выдаётся.
+ CREATE TABLE IF NOT EXISTS source_publications (
+     source LowCardinality(String),  -- источник-потребитель: 'cbr_mo_br', 'rosstat_ipc_mes', … (ключ версии: PublicationSource импортёра или его TableName)
+     name LowCardinality(String),    -- имя артефакта: 'full.xlsx'
+     fingerprint String,             -- md5 от (имя|ETag|Last-Modified|Content-Length) — отпечаток версии контента
+     first_seen DateTime,            -- когда конвейер впервые увидел эту версию
+diff --git a/README.md b/README.md
+index 7a3bfc1..ed9c86b 100644
+--- a/README.md
++++ b/README.md
+@@ -473,21 +473,21 @@ MCP GoLand (опционально, ускоряет работу Kimi Code с 
+ 
+ `.github/workflows/dashboards.yml` (`dashboards`) на каждый push в `main` и на pull request проверяет дашборд `gold-thesis` как код: `go vet` и `go test` модуля `grafana/`, `make grafana-build`, `git diff --exit-code -- dashboard/gold-thesis.json` (артефакт совпадает со свежей сборкой — заодно ловит недетерминированную генерацию), установка пинуемой `gcx` v1.5.0 и офлайновый `gcx dev lint run` по файлу артефакта (два idiomatic-предупреждения генератора — `editable`-дашборд и отсутствие описаний панелей — отключены по именам, иначе был бы exit 4), затем upload артефакта. Секретов и деплоя в workflow нет: на стенд дашборд уезжает только вручную (`make grafana-deploy-test` / `make grafana-deploy-staging`), серверная `gcx resources validate` остаётся ручной проверкой (нужны сервер, org-id и креды).
+ 
+ `.github/workflows/release.yml` на тег `v*` запускает тесты и `goreleaser` (архив `linux/amd64`, `SHA256SUMS`, файлы `README.md` и `dagu/*.yaml`). Конфиг — `.goreleaser.yaml`; проверка: `goreleaser check`. В релиз входит только основной бинарник импорта; `cmd/ingest` собирается локально через `make build-ingest`.
+ 
+ ## Ограничения и известные проблемы
+ 
+ - **У эндпоинтов bold.report обязателен суффикс `.json`.** Источник — статика на S3 за CloudFront: объекта без расширения там нет, и CDN отвечает `403 AccessDenied` (не `404`). На этом упала первая живая приёмка 2026-10-12: в девяти константах путей `bold/parse.go` суффикса не было, оба импортёра писали `0` строк. Дефект жил с первого коммита контура (`5b2341a`) и был невидим офлайн-тестам: `httptest` отвечает на любой путь. Исправлено коммитом `bold: require .json suffix on api paths`; суффикс закреплён тестом `TestBoldEndpointsPinPaths` — путь без `.json` валит тест. Приёмка после фикса пройдена (`make mcp-check` — ПРОВЕРКА ПРОЙДЕНА): 3138 точек цены, 21054 точки + 73 строки пер-фондового среза; подробности — [docs/GOLD_THESIS_DATA_ROADMAP.md](docs/GOLD_THESIS_DATA_ROADMAP.md) (фаза 3, follow-up 4).
+ - **LBMA AM/PM не подключён.** Официальный LBMA JSON, Nasdaq Data Link `LBMA/GOLD` и stooq недоступны из этой сети (403 WAF, JS-проверка), FRED серии LBMA удалил. Временно используется `gold` (MOEX GOLDFIXME ÷ курс ЦБ).
+ - **Курс ЦБ без понедельников и новогодних праздников.** В `cbr_currency_usd` этих дат нет; `gold` берёт последний курс не позже даты и пропускает дни без курса старше 10 дней. Это дыра в источнике ЦБ.
+-- **Импортёры ЦБ/Росстата/ВТБ берут ссылку со страницы источника.** `cbr_infl_exp`, `cbr_credit_m2x`, `rosstat_vvp_kvartal`, `rosstat_salaries_mes`, `rus_vtb_group_ifrs` не хардкодят URL XLSX, а читают актуальную ссылку со страницы источника общими хелперами `util.GetPage` + `util.FindLink` (`util/links.go`, goquery; селектор — константа пакета), которыми пользуются `cbr/` и `rosstat/`. Остальные источники ЦБ используют стабильные пути `vfs/statistics/...`. У четырёх переведённых на точку контроля публикации росстатовских импортёров (`rosstat_ipc_mes`, `rosstat_salaries_mes`, `rosstat_vvp_kvartal`, `rosstat_labour_force_mes`) порядок изменён: ссылка ищется **до** вызова шаблона («страница → DDL → префлайт»), иначе префлайту неоткуда взять URL для HEAD; полный путь и результат совпадают, но при недоступной странице таблица уже не создаётся.
++- **Импортёры ЦБ/Росстата/ВТБ берут ссылку со страницы источника.** `cbr_infl_exp`, `cbr_credit_m2x`, `rosstat_vvp_kvartal`, `rosstat_salaries_mes`, `rosstat_labour_force_mes`, `rus_vtb_group_ifrs` не хардкодят URL XLSX, а читают актуальную ссылку со страницы источника общими хелперами `util.GetPage` + `util.FindLink` (`util/links.go`, goquery; селектор — константа пакета), которыми пользуются `cbr/` и `rosstat/`. Остальные источники ЦБ используют стабильные пути `vfs/statistics/...`. У четырёх переведённых на точку контроля публикации росстатовских импортёров (`rosstat_ipc_mes`, `rosstat_salaries_mes`, `rosstat_vvp_kvartal`, `rosstat_labour_force_mes`) порядок изменён: ссылка ищется **до** вызова шаблона («страница → DDL → префлайт»), иначе префлайту неоткуда взять URL для HEAD; полный путь и результат совпадают, но при недоступной странице таблица уже не создаётся.
+ - **`domrf_mortgage`, `sber_finansovie_rezultaty`, `tbank_group_ifrs` — ссылка задана статически.** Страницы источников закрыты JS-challenge (ServicePipe у ДОМ.РФ, TSPD у Сбера) либо не имеют листинга (CDN с UUID у Т-Банка), обход страницы (`util.GetPage` + `util.FindLink`) их не разбирает: ссылку обновляют вручную при каждом релизе. У `tbank_group_ifrs` текущая ссылка ведёт на PDF, а не XLSX, — импорт падает до вставки, поэтому точка контроля публикации у него не объявлена: контроля она не даёт, а количественный чек не на чем строить — своей таблицы у импортёра нет. **Таблица `rus_vtb_group_ifrs` общая у двух импортёров** — `rus_vtb_group_ifrs` и падающего `tbank_group_ifrs` (`bank/tbank_fin_rez.go` пишет чужими константами `vtbIfrsTableDdl`/`vtbIfrsDataInsert`); данные не портятся только потому, что путь Т-Банка падает раньше вставки, а при переводе ВТБ на шаблон таблицы обязаны быть развязаны — иначе префлайт и `count()` одного импортёра считали бы точки другого. У `sber_finansovie_rezultaty` точка контроля публикации объявлена: ссылка статична и меняется вручную — это ровно случай «файл обновляется реже прогонов».
+ - **Росстат может отдавать HTTP 426.** Домен `rosstat.gov.ru` периодически отклоняет запросы из-за технических работ (`Upgrade Required`), включая уже работавшие `rosstat_ipc_mes`/`rosstat_ipc_weeks`; это ограничение источника/сети, а не кода. Импортёры падают с диагностикой «не найдена ссылка на …».
+ - **`financial/`.** Legacy-контур (database/sql, свой main). Новые импортёры туда не добавляются; отчётность Полюса вынесена в `polyus/`, в `financial/` остался `databook_ugk` (ЮГК) и мёртвый код металлургов.
+ - **Поактивный AISC Полюса применяется вручную, а не по расписанию.** Уточнённый сид `sql/dcf_mine_plans_seed.sql` (`make dcf-aisc`) намеренно **не входит в `dagu/dcf.yaml`**: запланированный шаг `make ch-sql` на staging не заработал бы — в релиз попадают только `README.md` и `dagu/*.yaml` (`.goreleaser.yaml`), а `make`, Makefile и сам SQL-файл на хосте отсутствуют. Хуже то, что провал был бы **бесшумным**: `dcf_mine_plans` в той же цепочке пересеял бы ключи из Go-снимка, и `dcf_engine` посчитал бы на старом плоском клине «TCC + $698» с зелёным логом. Поэтому цепочка в `dagu/dcf.yaml` остаётся двухшаговой (`dcf_mine_plans` → `dcf_engine`), а сид AISC применяется человеком: `make ch-sql FILE=sql/dcf_mine_plans_seed.sql` до `DCF_RUN_ID=<uuid> make import STAT=dcf_engine`. Автоматизация (доставка SQL как релизного артефакта + способ его применить) — отдельный пункт роадмапа, вне текущего объёма.
+ - **Сторож устаревания сида и Python-тесты не покрыты CI.** `TestCommittedSeedIsFresh` (`scripts/extrapolation_aisc_test.py`) сверяет тело коммитируемого `sql/dcf_mine_plans_seed.sql` с тем, что порождает генератор, но для точного воспроизведения ему нужна живая ClickHouse (факт добычи приходит из `databook_polyus`); при недоступной БД тест **пропускается** с явной причиной. Сам Python-набор не запускается в CI: `.github/workflows/go.yml` выполняет только Go-проверки (`gofmt`, `go vet`, `go test -race`, `golangci-lint`, сборку), поэтому правленый вручную сид ловится только локальным прогоном `python3 scripts/extrapolation_aisc_test.py`. Связка Python-тестов с CI — отдельный пункт.
+ - **AISC Полюса за 2025+ остаётся выведенной величиной.** Per-asset AISC и TCC публикуются только в пресс-релизах 4Q/FY **2018–2021**; начиная с 2022 отчётность перешла на полугодовой формат и даёт поактивный TCC, но AISC — только групповой. Поэтому калибровка клина-доли опирается на 2019–2021, а годы плана 2025–LOM **экстраполируются** с них: сид улучшает структуру затрат (взвешенную по активам вместо единого клина) и переносит в модель наблюдённые веса, но не создаёт поздних измерений. Ровно поэтому `aisc` в каталоге рядов и в [docs/DCF_DATA_COVERAGE.md](docs/DCF_DATA_COVERAGE.md) §2 остаётся `derived`, а увязка к групповому AISC «точна» только на групповом уровне (по построению, независимо от качества входов).
+ - **Отчётность Полюса: `unitsMarker` привязан к строке, а не к смыслу.** `polyus/columns.go` распознаёт шапку финансовой таблицы только по склеенным меткам `$млн`, `$mln`, `$million`. Отчёт, печатающий `US$ million`, оставит набор колонок пустым, и парсер вернёт **0 записей с `err == nil`** — молчаливо пустую страницу, не отличимую от «в отчёте нет метрик». (Форма `US$ million` — находка контролёра по другим релизам; у включённых релизов 2019–2024 фикстуры несут `$ million`, и оно совпадает, поэтому расширение маркера этой работой не потребовалось.) Это самое важное ограничение парсера Полюса; подробности и остальные — в [ARCHITECTURE.md](ARCHITECTURE.md) §6.6.
+ - **Отчётность Полюса: остальные ограничения колоночной модели.** `parsePeriod` не принимает форму `FY 2014` (год с пробелом); на МСФО-страницах допущение «первое число = отчётный период» выполняется на обеих текущих страницах, но во время прогона не проверяется, и отчёт со сравнительным столбцом первым молча поменяет периоды местами; счётчик значений вне периодных колонок (178 на приёмке релизов 2019–2024) подтверждён только живым прогоном — сквозного теста на итоговую строку нет; `pageOfLine` возвращает первую ненулевую страницу слова (корректно, т.к. строка всегда принадлежит одной странице, но тест-инварианта нет); словарь `metrics.go` содержит метку `"Earnings per share – basic (US\nDollar)"` со встроенным переводом строки, который не совпадает со склеенным текстом, — на фикстуре FY2024 записей `eps_*` нет. Перечень — ARCHITECTURE.md §6.6.
+ - **Отчётность Полюса: полоса шапки по ролям строк может расти вниз, а подъём вверх ограничен 8pt.** Вниз полоса продолжается, пока строки играют роль строк шапки, а роль «подпись изменения» опознаётся по словарю меток (`Y-o-Y`, `H-o-H`, `Q-o-Q`, `change`): строка с такой подписью в области данных попадёт в полосу, и её метрики не прочитаются — ни записей, ни нераспределённых значений, тот же тихий ноль, что и у ограничения с `unitsMarker`. Вверх полоса поднимается на строку кварталов («4Q 3Q 4Q» над якорем), но только если разрыв не больше `maxFragmentLiftGap = 8pt` (`polyus/columns.go`): настоящий обрывок дальше 8pt не поднимется, и «4Q 2020» с «3Q 2020» молча схлопнутся в два годовых `2020FY` — значения останутся на месте, сменится только ключ периода, и счётчик нераспределённых этого не покажет. Ловит это `TestKPIPeriodsAreUniquePerMetric`: дубликат ключа внутри страницы валит тест громко. На девяти включённых отчётах оба порога недостижимы (замерено: полосы обрываются на строке данных, настоящие подъёмы — ровно 5.40pt), но 2015–2018, включаемые следующим пунктом, несут подписи изменений в области данных. Остальные ограничения того же списка — отбор строки метрики по первому `Top` и прочее — в ARCHITECTURE.md §6.6.
+ - **Отчётность Полюса: 5 отчётов 2015–2018 и 2025H2 отключены.** Включены 9 отчётов (2014FY EN KPI, 2019FY…2024FY EN 4Q/FY, RU 1H2026, EN МСФО 1H2026). Причина отключения оставшихся — не выверка страниц, а тип документа: 2015–2017 — MD&A с консолидированной отчётностью, 2018FY — консолидированная МСФО-форма (у них нет шапки «Comparative financial results»), 2025H2 — англоязычный 2H25-релиз с двухшапочной таблицей. Включение 2015–2018 — следующий пункт работ. Снятые ограничения (потеря документа на ключе без измерения источника, недоступность данных агенту) — ниже.
+diff --git a/rosstat/labour_force.go b/rosstat/labour_force.go
+index 00ac164..4324ef8 100644
+--- a/rosstat/labour_force.go
++++ b/rosstat/labour_force.go
+@@ -180,20 +180,37 @@ func labourForceYear(row []string) (int, bool) {
+ 			return 0, false
+ 		}
+ 	}
+ 	year, err := strconv.Atoi(label)
+ 	if err != nil {
+ 		return 0, false
+ 	}
+ 	return year, true
+ }
+ 
++// labourForceMonthNames — русские подписи месяцев для текстов ошибок разбора (§6.4).
++// time.Month печатается своим String() по-английски («January»), и оператор увидел бы в ошибке
++// чужое имя месяца; массив даёт подпись на языке источника.
++var labourForceMonthNames = [...]string{
++	"январь", "февраль", "март", "апрель", "май", "июнь",
++	"июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь",
++}
++
++// labourForceMonthName отдаёт русскую подпись месяца. Месяц вне 1–12 (0 — до первого месяца
++// года, если строка января потеряна) печатается числом, а не пустой строкой.
++func labourForceMonthName(month time.Month) string {
++	if month < time.January || month > time.December {
++		return strconv.Itoa(int(month))
++	}
++	return labourForceMonthNames[month-1]
++}
++
+ // labourForceValue разбирает ячейку значения. Ячейка приходит сырым текстом (§6.2): числовой
+ // формат выгрузки — представление, а не данные. NaN и бесконечность, которые принимает
+ // ParseFloat, отбрасываются, как у соседних рядов пакета: такой мусор уехал бы в витрину точкой
+ // ряда (§6.4).
+ func labourForceValue(cell string) (float64, error) {
+ 	value, err := strconv.ParseFloat(cell, 64)
+ 	if err != nil {
+ 		return 0, fmt.Errorf("значение ячейки %q не число: %w", cell, err)
+ 	}
+ 	if math.IsNaN(value) || math.IsInf(value, 0) {
+@@ -262,36 +279,48 @@ func parseLabourForce(xlsx *excelize.File) ([]labourForcePoint, error) {
+ 			// блоками листа и внизу стоят пустые строки. Но пустая подпись при заполненных
+ 			// значениях означает потерянную подпись месяца: молча пропустить такую строку —
+ 			// значит отдать усечённый ряд без ошибки (§6.4).
+ 			if col, cell, filled := labourForceFilledCell(row, columns); filled {
+ 				return nil, fmt.Errorf("%s: лист %q, строка %d: подпись месяца пуста, а ячейка %q (колонка %d) заполнена",
+ 					rosstatLabourForceTable, labourForceSheet, i+1, cell, col+1)
+ 			}
+ 			continue
+ 		}
+ 		if sectionYear, ok := labourForceYear(row); ok {
++			// Год обязан быть строго больше предыдущего. Строка-секция, повторяющая или
++			// уменьшающая год, сдвинула бы подпись месяцев назад: месяцы нового года записались
++			// бы датами прошлого и по ключу (name, date) заклеили бы корректные точки тех же
++			// месяцев (§6.4). Порча неотличима от обновления источника, поэтому ошибка громкая.
++			if year != 0 && sectionYear <= year {
++				return nil, fmt.Errorf("%s: лист %q, строка %d: год %d идёт после года %d — годы обязаны идти по возрастанию",
++					rosstatLabourForceTable, labourForceSheet, i+1, sectionYear, year)
++			}
+ 			year, month = sectionYear, 0
+ 			continue
+ 		}
+ 		sectionMonth, ok := util.MonthsToNum[strings.ToLower(label)]
+ 		if !ok {
+ 			// Подпись не год и не месяц — так выглядит текст сносок под таблицей: данные кончились.
+ 			tableEnd = i
+ 			break
+ 		}
+ 		if year == 0 {
+ 			return nil, fmt.Errorf("%s: лист %q, строка %d: месяц %q до строки-года",
+ 				rosstatLabourForceTable, labourForceSheet, i+1, label)
+ 		}
+-		if sectionMonth <= month {
+-			return nil, fmt.Errorf("%s: лист %q, строка %d: месяц %q идёт после месяца %q — месяцы обязаны идти по возрастанию",
+-				rosstatLabourForceTable, labourForceSheet, i+1, label, month)
++		// Месяц обязан быть следующим за предыдущим. Пропущенная строка месяца иначе выпала бы
++		// из ряда молча (неполный ряд в витрине выглядит полным), а префлайт записал бы points
++		// на месяц меньше и дальше ушёл бы в вечный no-op (§6.4). Январь проходит законно:
++		// строка-секция года сбросила month в 0.
++		if sectionMonth != month+1 {
++			return nil, fmt.Errorf("%s: лист %q, строка %d: месяц %q не следует за месяцем %q — месяцы обязаны идти по возрастанию",
++				rosstatLabourForceTable, labourForceSheet, i+1, label, labourForceMonthName(month))
+ 		}
+ 		month = sectionMonth
+ 		for _, column := range columns {
+ 			cell := labourForceCell(row, column.col)
+ 			if cell == "" {
+ 				// Пустая ячейка — не точка (§6.7): пропуск означает отсутствие значения, а не нуль.
+ 				continue
+ 			}
+ 			value, err := labourForceValue(cell)
+ 			if err != nil {
+diff --git a/rosstat/labour_force_test.go b/rosstat/labour_force_test.go
+index 145edc7..94d400e 100644
+--- a/rosstat/labour_force_test.go
++++ b/rosstat/labour_force_test.go
+@@ -119,20 +119,27 @@ func TestLabourForceSpotValues(t *testing.T) {
+ 		series string
+ 		date   time.Time
+ 		value  float64
+ 	}{
+ 		// B8 = 76489.193 — январь 2017.
+ 		{"Рабочая сила", time.Date(2017, time.January, 31, 0, 0, 0, 0, time.UTC), 76489.193},
+ 		// G8 = 5.6 — уровень безработицы января 2017.
+ 		{"Уровень безработицы", time.Date(2017, time.January, 31, 0, 0, 0, 0, time.UTC), 5.6},
+ 		// B131 = 76389.482 — последний месяц выгрузки, июль 2026.
+ 		{"Рабочая сила", time.Date(2026, time.July, 31, 0, 0, 0, 0, time.UTC), 76389.482},
++		// C131 = 74660.473, D131 = 1729.009 и E131 = 62.9 — занятые, безработные и уровень
++		// участия июля 2026. Рабочая сила за этот месяц пинтится строкой выше, но остальные
++		// колонки последнего месяца иначе не закреплены тестом, а урезание фикстуры или сдвиг
++		// строки-секции года меняет именно их.
++		{"Занятые", time.Date(2026, time.July, 31, 0, 0, 0, 0, time.UTC), 74660.473},
++		{"Безработные", time.Date(2026, time.July, 31, 0, 0, 0, 0, time.UTC), 1729.009},
++		{"Уровень участия в составе рабочей силы", time.Date(2026, time.July, 31, 0, 0, 0, 0, time.UTC), 62.9},
+ 		// F131 = 61.5 и G131 = 2.3 — уровни занятости и безработицы июля 2026.
+ 		{"Уровень занятости", time.Date(2026, time.July, 31, 0, 0, 0, 0, time.UTC), 61.5},
+ 		{"Уровень безработицы", time.Date(2026, time.July, 31, 0, 0, 0, 0, time.UTC), 2.3},
+ 	}
+ 	for _, spot := range spots {
+ 		found := 0
+ 		for _, point := range points {
+ 			if point.series != spot.series || !point.date.Equal(spot.date) {
+ 				continue
+ 			}
+@@ -354,20 +361,81 @@ func TestLabourForceLostMonthLabelFails(t *testing.T) {
+ 		t.Fatalf("строка значений без подписи месяца разобрана без ошибки: %d точек вместо 690", len(points))
+ 	}
+ 	if !strings.Contains(err.Error(), rosstatLabourForceTable) || !strings.Contains(err.Error(), labourForceSheet) {
+ 		t.Errorf("ошибка %q не называет таблицу %q и лист %q", err, rosstatLabourForceTable, labourForceSheet)
+ 	}
+ 	if !strings.Contains(err.Error(), "подпись месяца пуста") {
+ 		t.Errorf("ошибка %q не называет потерянную подпись месяца", err)
+ 	}
+ }
+ 
++// TestLabourForceRemovedMonthRowFails — источник потерял строку месяца (RemoveRow удалил февраль
++// 2017), поэтому март идёт сразу за январём. До проверки последовательности разбор отдавал 684
++// точки и err=nil, префлайт записывал points=684, и месячная дыра в головном ряду канала
++// оставалась навсегда без сигнала (версия известна — дальше вечный no-op). Теперь разбор обязан
++// упасть и назвать строку, сбитый месяц и предыдущий — по-русски.
++func TestLabourForceRemovedMonthRowFails(t *testing.T) {
++	xlsx := mutateLabourForceFixture(t, func(f *excelize.File) {
++		// Строка 9 — февраль 2017; строки ниже сдвигаются, и март оказывается строкой 9.
++		if err := f.RemoveRow(labourForceSheet, 9); err != nil {
++			t.Fatal(err)
++		}
++	})
++	points, err := parseLabourForce(xlsx)
++	if err == nil {
++		t.Fatalf("потеря строки месяца разобрана без ошибки: %d точек вместо ошибки", len(points))
++	}
++	if points != nil {
++		t.Errorf("на ошибке вернулось %d точек, ожидалось nil", len(points))
++	}
++	if !strings.Contains(err.Error(), rosstatLabourForceTable) || !strings.Contains(err.Error(), labourForceSheet) {
++		t.Errorf("ошибка %q не называет таблицу %q и лист %q", err, rosstatLabourForceTable, labourForceSheet)
++	}
++	if !strings.Contains(err.Error(), "строка 9") {
++		t.Errorf("ошибка %q не называет строку со сбитой последовательностью месяцев", err)
++	}
++	if !strings.Contains(err.Error(), `месяц "март" не следует за месяцем "январь"`) {
++		t.Errorf("ошибка %q не называет сбитый март и предыдущий январь", err)
++	}
++	if strings.Contains(err.Error(), "March") || strings.Contains(err.Error(), "January") {
++		t.Errorf("ошибка %q печатает месяц по-английски: оператор должен видеть русскую подпись", err)
++	}
++}
++
++// TestLabourForceMismatchedYearSectionFails — в строке-секции года напечатано «2025» вместо
++// «2026» (A124): январь–июль 2026 записались бы датами 2025-01-31 … 2025-07-31 и по ключу
++// (name, date) затёрли бы корректные точки тех же месяцев 2025 — тихая порча, а не ошибка.
++// До проверки последовательности разбор отдавал 690 точек и err=nil.
++func TestLabourForceMismatchedYearSectionFails(t *testing.T) {
++	xlsx := mutateLabourForceFixture(t, func(f *excelize.File) {
++		if err := f.SetCellValue(labourForceSheet, "A124", "2025"); err != nil {
++			t.Fatal(err)
++		}
++	})
++	points, err := parseLabourForce(xlsx)
++	if err == nil {
++		t.Fatalf("повтор года в строке-секции разобран без ошибки: %d точек вместо ошибки", len(points))
++	}
++	if points != nil {
++		t.Errorf("на ошибке вернулось %d точек, ожидалось nil", len(points))
++	}
++	if !strings.Contains(err.Error(), rosstatLabourForceTable) || !strings.Contains(err.Error(), labourForceSheet) {
++		t.Errorf("ошибка %q не называет таблицу %q и лист %q", err, rosstatLabourForceTable, labourForceSheet)
++	}
++	if !strings.Contains(err.Error(), "строка 124") {
++		t.Errorf("ошибка %q не называет строку-секцию года", err)
++	}
++	if !strings.Contains(err.Error(), "год 2025 идёт после года 2025") {
++		t.Errorf("ошибка %q не называет повтор года 2025", err)
++	}
++}
++
+ // TestLabourForceEmptyParseFails — все строки месяцев на месте, но значения в шести колонках
+ // пусты: разбор обязан вернуть ошибку «0 точек» (§6.4, §11.5), а не пустой батч — пустая
+ // выгрузка означает сломанный или подменённый источник, а не отсутствие показателя.
+ func TestLabourForceEmptyParseFails(t *testing.T) {
+ 	xlsx := mutateLabourForceFixture(t, func(f *excelize.File) {
+ 		rows, err := f.GetRows(labourForceSheet, excelize.Options{RawCellValue: true})
+ 		if err != nil {
+ 			t.Fatal(err)
+ 		}
+ 		for i, row := range rows {
+@@ -541,22 +609,26 @@ func TestLabourForceSeriesMetaCoversParsedRows(t *testing.T) {
+ 	for _, point := range points {
+ 		parsed = append(parsed, point.series)
+ 	}
+ 	requireParsedDescribed(t, parsed, described)
+ }
+ 
+ // TestLabourForcePublicationDeclaration — точка контроля публикации объявлена (§9.1): файл
+ // перезаписывается на месте под стабильным именем и обновляется раз в месяц при недельном шаге
+ // расписания. Url объявления пуст намеренно: ссылка вычисляется внутри Import(), и отпечаток
+ // префлайта шаблон строит по DataUrl, а не по этой копии (§5.4, util.PublicationDecl).
++// CountPoints сверяется с литералом, а не с константой labourForceCountPoints: объявление
++// собирается из той же константы, и сравнение с ней не могло бы упасть — настоящий литерал
++// живёт здесь и в колонке countPoints реестра (rosstat/importers.go), которую сверяет энфорсер
++// TestRosstatImportersPrefixedAndRegistered.
+ func TestLabourForcePublicationDeclaration(t *testing.T) {
+ 	pub := labourForceImporter.Publication()
+-	if pub.CountPoints != labourForceCountPoints {
+-		t.Errorf("объявление импортёра даёт запрос чека %q, ожидался %q", pub.CountPoints, labourForceCountPoints)
++	if want := "SELECT count() FROM rosstat_labour_force_mes FINAL"; pub.CountPoints != want {
++		t.Errorf("объявление импортёра даёт запрос чека %q, ожидался %q", pub.CountPoints, want)
+ 	}
+ 	if pub.Source != rosstatLabourForceTable {
+ 		t.Errorf("объявление импортёра даёт ключ версии %q, ожидался %q (Name() == TableName)", pub.Source, rosstatLabourForceTable)
+ 	}
+ 	if pub.Url != "" {
+ 		t.Errorf("объявление импортёра несёт Url %q, ожидалась пустая строка: ссылка вычисляется в Import()", pub.Url)
+ 	}
+ }
+diff --git a/util/publications.go b/util/publications.go
+index 4ac9b11..5daf367 100644
+--- a/util/publications.go
++++ b/util/publications.go
+@@ -11,22 +11,22 @@ import (
+ 	"path"
+ 	"time"
+ 
+ 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+ 	log "github.com/sirupsen/logrus"
+ )
+ 
+ // PublicationsTable — общая таблица точек контроля публикаций: одна строка = одна увиденная
+ // версия артефакта источника. Механизм общий для источников, чьи файлы обновляются реже
+ // прогонов, и включается полями шаблона util.ClickHouseImport (PublicationCountPoints /
+-// PublicationSource); фактический список потребителей — ARCHITECTURE §8 п. 13 (десять
+-// импортёров cbr/ и четыре вне него). Таблица внутренняя: агенту (kimi_reader) не выдаётся.
++// PublicationSource); фактический список потребителей — ARCHITECTURE §8 п. 13 (пятнадцать
++// импортёров: десять в cbr/ и пять вне него). Таблица внутренняя: агенту (kimi_reader) не выдаётся.
+ const PublicationsTable = "source_publications"
+ 
+ // PublicationsDdl — канонический DDL (ARCHITECTURE §6.2, спека §3.4). Литерал, а не %s-форма
+ // (как у пер-источниковых таблиц): таблица одна на все источники, %-шаблон здесь только
+ // размывал бы «канонический» статус. Комментарии колонок — часть спекового литерала и остаются
+ // в тексте SQL; ClickHouse их отбрасывает.
+ const PublicationsDdl = `CREATE TABLE IF NOT EXISTS source_publications (
+     source LowCardinality(String),  -- источник-потребитель: 'cbr_mo_br', 'rosstat_ipc_mes', … (ключ версии: PublicationSource импортёра или его TableName)
+     name LowCardinality(String),    -- имя артефакта: 'full.xlsx'
+     fingerprint String,             -- md5 от (имя|ETag|Last-Modified|Content-Length) — отпечаток версии контента

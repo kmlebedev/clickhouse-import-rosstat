@@ -1,0 +1,990 @@
+# Review package: 0be1d0775713c136f1ab0874f9401e0b87447588..HEAD
+
+## Commits
+91a9de7 craw: add gost api transport with day slices
+
+## Files changed
+ craw/gost_api.go            | 369 +++++++++++++++++++++++++++++
+ craw/gost_api_test.go       | 558 ++++++++++++++++++++++++++++++++++++++++++++
+ craw/testdata/gost_day.json |  33 +++
+ 3 files changed, 960 insertions(+)
+
+## Diff
+diff --git a/craw/gost_api.go b/craw/gost_api.go
+new file mode 100644
+index 0000000..8ab5485
+--- /dev/null
++++ b/craw/gost_api.go
+@@ -0,0 +1,369 @@
++package craw
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"io"
++	"net/http"
++	"net/url"
++	"os"
++	"strconv"
++	"strings"
++	"time"
++
++	"github.com/cenkalti/backoff/v5"
++	"github.com/kmlebedev/clickhouse-import-rosstat/util"
++)
++
++// Транспорт API-импортёра СБКТС (реестр Росстандарта): ручка поиска по библиотеке
++// документов отдаёт JSON-страницами, день собирается постранично и режется клиентским
++// фильтром по dateofpublication (окно поиска ручки шире одного дня). Здесь только
++// транспорт и дневной срез: запись в ClickHouse и обвязка импортёра — в craw/gost.go.
++//
++// Токен gtn.access.appid приходит снаружи (a.AppID, в проде — из окружения GOST_APP_ID)
++// и в тексты ошибок не попадает: подсказка 401/403 называет только переменную окружения.
++
++const (
++	// gostPageSize — размер страницы поиска: столько документов отдаёт одна страница
++	// (900 — рабочий максимум ручки, больше она молча не отдаёт).
++	gostPageSize = 900
++	// gostMaxDayCount — предохранитель от «дня-слона»: ручка не отдаёт больше окна поиска
++	// (~10 тыс. документов), и день сверх этого — не данные, а сломанный фильтр или
++	// сменившийся формат. Постранично такой день всё равно не читается.
++	gostMaxDayCount = 10000
++	// gostMaxTries — всего попыток запроса (первая и три повтора). Четырёх хватает
++	// пережить короткий сбой портала, а дальше ошибка должна дойти до оператора.
++	gostMaxTries = 4
++
++	// gostQueryDayLayout — формат query-параметра: ручка ищет по дате публикации.
++	gostQueryDayLayout = "02.01.2006"
++	// gostPublicationLayout — префикс dateofpublication ("11.10.2026 00:00:00 ZE3"):
++	// маркер пояса в строке информации не несёт, дата берётся по календарю.
++	gostPublicationLayout = "02.01.2006 15:04:05"
++	// gostAppIDHeader — заголовок с токеном из JS-конфига страницы реестра. Здесь имя
++	// заголовка, не значение: сам токен живёт только в окружении (правило 1 проекта).
++	gostAppIDHeader = "gtn.access.appid"
++	// gostAcceptHeader — что просим: без него портал может отдать HTML-страницу портала.
++	gostAcceptHeader = "application/json"
++
++	// gostMinYear/gostMaxYear — границы правдоподобного года выпуска: "16", "н/д" и ""
++	// в yearofmanufacturing значат «нет данных» и должны стать нулём, а не 16-м годом.
++	gostMinYear = 1900
++	gostMaxYear = 2100
++)
++
++var (
++	// gostAPIURL — ручка поиска по библиотеке реестра СБКТС. Переменная, а не константа:
++	// тесты подменяют её адресом httptest-сервера.
++	gostAPIURL = "https://www.gost.ru/standards/rest-api/libraries/search"
++	// gostAPITimeout — дедлайн одной попытки запроса. Переменная (прецедент — util.jsonTimeout):
++	// тесты подставляют короткий вместо минутного. Дедлайн нужен именно ради повторов:
++	// зависший ответ без него не дал бы ошибки, и день висел бы до ручного разбора.
++	gostAPITimeout = 120 * time.Second
++	// gostRequestGap — пауза между страницами одного дня: портал не любит шквал запросов
++	// (в старом colly-импортёре ту же роль играл backoff между визитами листалки).
++	gostRequestGap = 200 * time.Millisecond
++	// gostRetryAfterTimeout/gostRetryAfterServer — паузы «подожди и повтори» для дедлайна
++	// попытки и для отказов сервера. Переменные, а не литералы 30/60 секунд: иначе тесты
++	// повторов ждали бы эти паузы вживую (backoff.RetryAfter важнее политики повторов —
++	// он задаёт паузу сам и сбрасывает её счётчик).
++	gostRetryAfterTimeout = 30 * time.Second
++	gostRetryAfterServer  = 60 * time.Second
++	// gostBackoffPolicy — база экспоненциальных пауз между повторами. Копия берётся
++	// на запрос: ExponentialBackOff не потокобезопасен, а Retry сам вызывает Reset().
++	gostBackoffPolicy = backoff.ExponentialBackOff{
++		InitialInterval:     5 * time.Second,
++		RandomizationFactor: 0.5,
++		Multiplier:          2,
++		MaxInterval:         2 * time.Minute,
++	}
++)
++
++// gostAPI — клиент ручки поиска: Client — общий util.HttpClient (свой UA, куки портала),
++// AppID — токен gtn.access.appid.
++type gostAPI struct {
++	Client *http.Client
++	AppID  string
++}
++
++func newGostAPI(client *http.Client, appID string) *gostAPI {
++	return &gostAPI{Client: client, AppID: appID}
++}
++
++// gostSearchResponse — ответ ручки: count — всего совпадений в окне поиска, Data — страница.
++type gostSearchResponse struct {
++	Count int       `json:"count"`
++	Data  []gostDoc `json:"data"`
++}
++
++// gostDoc — документ реестра: идентификатор и поля карточки.
++type gostDoc struct {
++	ID     int64      `json:"id"`
++	Fields gostFields `json:"fields"`
++}
++
++// gostFields — поля карточки в написании источника. DateOfIssueOfCertificate — указатель:
++// у документов без даты выдачи источник отдаёт null, и ноль-время не должно выглядеть датой.
++type gostFields struct {
++	Product                  string `json:"product"`
++	Type                     string `json:"type"`
++	NumberOfCertificate      string `json:"numberofcertificate"`
++	DateOfIssueOfCertificate *int64 `json:"dateofissueofcertificate"`
++	EcoClass                 string `json:"ecoclass"`
++	EngineTrademark          string `json:"enginetrademark"`
++	YearOfManufacturing      string `json:"yearofmanufacturing"`
++	NameOfManufacturer       string `json:"nameofmanufacturer"`
++	UniqueIdentifier         string `json:"uniqueidentifierofdocument"`
++	DateOfPublication        string `json:"dateofpublication"`
++}
++
++// gostRow — строка витрины: только то, что нужно для записи. Даты — UTC-полночь
++// (конвенция сравнения time.Time), год выпуска — число, а не строка источника.
++type gostRow struct {
++	Mark, Type          string
++	Date                time.Time
++	CertificateNumber   string
++	EcoClass            string
++	EngineTrademark     string
++	YearOfManufacturing uint16
++	NameOfManufacturer  string
++	UID                 string
++	PublicationDate     time.Time
++}
++
++// gostDaySlice — дневной срез: строки дня, всего совпадений в ручке (Count) и сколько
++// документов страниц отбросил клиентский фильтр (Skipped). Skipped нужен как датчик:
++// резкий рост доли отброшенных — сигнал, что сменился формат dateofpublication.
++type gostDaySlice struct {
++	Rows    []gostRow
++	Count   int
++	Skipped int
++}
++
++// fetchPage забирает одну страницу дня. Повторы и классификация отказов — здесь:
++// transport-сбой и неполный ответ повторяемы, отказ доступа (401/403) и прочие 4xx —
++// нет, потому что повтор их не лечит. URL в тексты ошибок не попадает (конвенция
++// util.GetJSON): в query бывают ключи, а ошибка уезжает в лог.
++func (a *gostAPI) fetchPage(ctx context.Context, day time.Time, page, size int) (gostSearchResponse, error) {
++	urlStr := fmt.Sprintf("%s?query=%s&page=%d&size=%d&tmsp=%d",
++		gostAPIURL, url.QueryEscape(day.Format(gostQueryDayLayout)), page, size, time.Now().UnixMilli())
++	b := gostBackoffPolicy
++
++	op := func() (gostSearchResponse, error) {
++		// Дедлайн на каждую попытку, а не на весь Retry: иначе повторы шли бы уже по
++		// истёкшему контексту и были бы бессмысленны.
++		reqCtx, cancel := context.WithTimeout(ctx, gostAPITimeout)
++		defer cancel()
++
++		req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, urlStr, nil)
++		if err != nil {
++			// Сломанный URL повтором не лечится.
++			return gostSearchResponse{}, backoff.Permanent(err)
++		}
++		req.Header.Set(gostAppIDHeader, a.AppID)
++		req.Header.Set("Accept", gostAcceptHeader)
++		req.Header.Set("User-Agent", util.HttpUA)
++
++		resp, err := a.Client.Do(req)
++		if err != nil {
++			return gostSearchResponse{}, gostTransportError(err)
++		}
++		defer func() { _ = resp.Body.Close() }()
++
++		body, err := io.ReadAll(resp.Body)
++		if err != nil {
++			return gostSearchResponse{}, gostTransportError(err)
++		}
++		if resp.StatusCode != http.StatusOK {
++			return gostSearchResponse{}, gostStatusError(resp.StatusCode)
++		}
++		if len(body) == 0 {
++			// Пустой ответ неотличим от «данных нет» и не должен выглядеть успехом.
++			// Повторяем: это сбой ответа, а не день без документов.
++			return gostSearchResponse{}, fmt.Errorf("пустое тело ответа")
++		}
++		var out gostSearchResponse
++		if err := json.Unmarshal(body, &out); err != nil {
++			return gostSearchResponse{}, fmt.Errorf("разбор JSON: %w", err)
++		}
++		return out, nil
++	}
++	return backoff.Retry(ctx, op, backoff.WithBackOff(&b), backoff.WithMaxTries(gostMaxTries))
++}
++
++// gostStatusError раскладывает статус по классам повторов.
++func gostStatusError(status int) error {
++	switch {
++	case status == http.StatusUnauthorized || status == http.StatusForbidden:
++		return backoff.Permanent(fmt.Errorf(
++			"http status %d — проверьте GOST_APP_ID (токен gtn.access.appid из JS-конфига страницы реестра, standarts.adminsHeaders)",
++			status))
++	case status == http.StatusTooManyRequests || status >= 500:
++		// 429/5xx — предел портала: ждём и повторяем. Причина идёт в текст вместе с
++		// паузой: сам RetryAfterError её не несёт, и «retry after 1m0s» без статуса
++		// ничего не сказал бы оператору.
++		return errors.Join(fmt.Errorf("http status %d", status), gostRetryAfter(gostRetryAfterServer))
++	default:
++		// Прочие 4xx (404, 400, WAF-отказ) — не тот запрос, повтор не поможет.
++		return backoff.Permanent(fmt.Errorf("http status %d", status))
++	}
++}
++
++// gostTransportError классифицирует сбой транспорта. Дедлайн попытки и таймаут сокета —
++// не отказ портала, а перегрузка: повторяем с большой паузой. Прочие обрывы (сброс
++// соединения, неудачный DNS) — обычный повтор.
++func gostTransportError(err error) error {
++	if errors.Is(err, context.DeadlineExceeded) || os.IsTimeout(err) {
++		return errors.Join(gostNoURL(err), gostRetryAfter(gostRetryAfterTimeout))
++	}
++	return gostNoURL(err)
++}
++
++// gostRetryAfter — RetryAfter от длительности: backoff принимает целые секунды.
++func gostRetryAfter(d time.Duration) error {
++	return backoff.RetryAfter(int(d.Seconds()))
++}
++
++// gostNoURL убирает URL из ошибки транспорта: net/http заворачивает всё в *url.Error и
++// печатает адрес вместе с query целиком. URL-контекст добавляет вызывающий — как в util.GetJSON.
++func gostNoURL(err error) error {
++	var uerr *url.Error
++	if errors.As(err, &uerr) {
++		return uerr.Err
++	}
++	return err
++}
++
++// day собирает срез одного дня: все страницы окна поиска, клиентский фильтр по дню
++// публикации. Частичной записи нет: если страница дня не доехала или документов пришло
++// меньше count, возвращается ошибка — решение «день полный» принимается до батча.
++func (a *gostAPI) day(ctx context.Context, day time.Time) (gostDaySlice, error) {
++	first, err := a.fetchPage(ctx, day, 1, gostPageSize)
++	if err != nil {
++		return gostDaySlice{}, err
++	}
++	if first.Count > gostMaxDayCount {
++		return gostDaySlice{}, fmt.Errorf(
++			"в дне %s %d документов — больше окна поиска ручки (%d): такой день постранично не читается",
++			day.Format(gostQueryDayLayout), first.Count, gostMaxDayCount)
++	}
++
++	docs := first.Data
++	for page := 2; page <= gostPageCount(first.Count); page++ {
++		time.Sleep(gostRequestGap)
++		next, err := a.fetchPage(ctx, day, page, gostPageSize)
++		if err != nil {
++			return gostDaySlice{}, err
++		}
++		docs = append(docs, next.Data...)
++	}
++	if len(docs) < first.Count {
++		return gostDaySlice{}, fmt.Errorf("получено %d документов из %d", len(docs), first.Count)
++	}
++
++	rows, skipped := gostRowsFromDocs(day, docs)
++	return gostDaySlice{Rows: rows, Count: first.Count, Skipped: skipped}, nil
++}
++
++// dayCount возвращает только число совпадений дня — одним запросом минимальной страницы.
++// В check-прогоне это запрос на день вместо выкачивания полного диапазона.
++func (a *gostAPI) dayCount(ctx context.Context, day time.Time) (int, error) {
++	resp, err := a.fetchPage(ctx, day, 1, 1)
++	if err != nil {
++		return 0, err
++	}
++	return resp.Count, nil
++}
++
++// gostPageCount — сколько страниц нужно, чтобы забрать count документов.
++func gostPageCount(count int) int {
++	if count <= 0 {
++		return 0
++	}
++	return (count + gostPageSize - 1) / gostPageSize
++}
++
++// gostMSKDate переводит миллисекунды источника в дату по Москве: источник кладёт момент
++// UTC, а дата выдачи документа — московская (21:00 UTC = полночь следующего дня МСК).
++// Время суток обнуляется: дата хранится и сравнивается в UTC-полуночи.
++func gostMSKDate(ms int64) time.Time {
++	return time.UnixMilli(ms).UTC().Add(3 * time.Hour).Truncate(24 * time.Hour)
++}
++
++// gostParsePublicationDay разбирает dateofpublication ("11.10.2026 00:00:00 ZE3") до дня.
++// Строка читается только до конца даты и времени: маркер пояса у всех записей одинаков и
++// информации не несёт. Короткая или битая строка — ok=false (документ не наш).
++func gostParsePublicationDay(s string) (time.Time, bool) {
++	if len(s) < len(gostPublicationLayout) {
++		return time.Time{}, false
++	}
++	t, err := time.Parse(gostPublicationLayout, s[:len(gostPublicationLayout)])
++	if err != nil {
++		return time.Time{}, false
++	}
++	return t, true
++}
++
++// gostYear переводит год выпуска в число. В источнике это строка, причём "16", "н/д" и ""
++// значат «нет данных»: год принимается только четырёхзначным и правдоподобным.
++func gostYear(raw string) uint16 {
++	raw = strings.TrimSpace(raw)
++	if len(raw) != 4 {
++		return 0
++	}
++	year, err := strconv.Atoi(raw)
++	if err != nil || year < gostMinYear || year > gostMaxYear {
++		return 0
++	}
++	return uint16(year)
++}
++
++// gostRowFromDoc собирает строку витрины из документа. false — документ не относится к
++// срезу: нет даты выдачи, пуст номер сертификата или дата публикации не та (ручка ищет
++// по своему окну и отдаёт документы соседних дней).
++func gostRowFromDoc(day time.Time, d gostDoc) (gostRow, bool) {
++	f := d.Fields
++	if f.DateOfIssueOfCertificate == nil {
++		return gostRow{}, false
++	}
++	if strings.TrimSpace(f.NumberOfCertificate) == "" {
++		return gostRow{}, false
++	}
++	pub, ok := gostParsePublicationDay(f.DateOfPublication)
++	if !ok || !gostSameDay(pub, day) {
++		return gostRow{}, false
++	}
++	return gostRow{
++		Mark:                f.Product,
++		Type:                f.Type,
++		Date:                gostMSKDate(*f.DateOfIssueOfCertificate),
++		CertificateNumber:   f.NumberOfCertificate,
++		EcoClass:            f.EcoClass,
++		EngineTrademark:     f.EngineTrademark,
++		YearOfManufacturing: gostYear(f.YearOfManufacturing),
++		NameOfManufacturer:  f.NameOfManufacturer,
++		UID:                 f.UniqueIdentifier,
++		PublicationDate:     pub,
++	}, true
++}
++
++// gostRowsFromDocs — построчный фильтр дня: строки среза и число отброшенных документов.
++func gostRowsFromDocs(day time.Time, docs []gostDoc) (rows []gostRow, skipped int) {
++	for _, d := range docs {
++		row, ok := gostRowFromDoc(day, d)
++		if !ok {
++			skipped++
++			continue
++		}
++		rows = append(rows, row)
++	}
++	return rows, skipped
++}
++
++// gostSameDay сравнивает календарные дни: время суток в дате публикации и в срезе не значит
++// ничего, а сравнивать моменты нельзя — у источника пояс помечен строкой, а не смещением.
++func gostSameDay(a, b time.Time) bool {
++	return a.Year() == b.Year() && a.Month() == b.Month() && a.Day() == b.Day()
++}
+diff --git a/craw/gost_api_test.go b/craw/gost_api_test.go
+new file mode 100644
+index 0000000..3e64779
+--- /dev/null
++++ b/craw/gost_api_test.go
+@@ -0,0 +1,558 @@
++package craw
++
++import (
++	"context"
++	"encoding/json"
++	"net/http"
++	"net/http/httptest"
++	"net/url"
++	"os"
++	"path/filepath"
++	"slices"
++	"strconv"
++	"strings"
++	"sync"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"github.com/kmlebedev/clickhouse-import-rosstat/util"
++)
++
++// Тесты транспорта API СБКТС офлайн: источник — httptest-сервер, тела ответов —
++// фикстура craw/testdata/gost_day.json (срез живого ответа) или собранный из неё же
++// JSON. Ни сети, ни ClickHouse, ни токена здесь нет: appid подставной.
++// Пинятся четыре контракта ручки: форма запроса (путь, query, заголовки), сборка дня
++// по страницам, клиентский фильтр и класс повторов (permanent против retryable).
++
++const (
++	// gostTestPath — путь ручки внутри подменённого gostAPIURL: слаг живой ручки
++	// /standards/rest-api/libraries/search, чтобы форма запроса проверялась целиком.
++	gostTestPath = "/standards/rest-api/libraries/search"
++	// gostTestAppID — подставной appid: настоящий токен gtn.access.appid тестам не нужен.
++	gostTestAppID = "test-appid"
++)
++
++// gostTestDay — день среза, для которого фикстура отдаёт ровно одну строку: у остальных
++// документов либо другая дата публикации, либо не заполнены дата выдачи и номер.
++var gostTestDay = time.Date(2026, 10, 11, 0, 0, 0, 0, time.UTC)
++
++// gostTestPublication — дата публикации документов фикстуры, попадающих в gostTestDay.
++const gostTestPublication = "11.10.2026 00:00:00 ZE3"
++
++// gostDayFixture читает фикстуру дня и разбирает её в gostSearchResponse: разъехавшийся
++// json-тег gostDoc/gostFields сломает разбор и уронит тест, а не тихо отдаст пустые поля.
++func gostDayFixture(t *testing.T) gostSearchResponse {
++	t.Helper()
++	body, err := os.ReadFile(filepath.Join("testdata", "gost_day.json"))
++	if err != nil {
++		t.Fatalf("чтение фикстуры дня: %v", err)
++	}
++	var resp gostSearchResponse
++	if err := json.Unmarshal(body, &resp); err != nil {
++		t.Fatalf("разбор фикстуры дня: %v", err)
++	}
++	return resp
++}
++
++// gostFixtureDoc — документ фикстуры по номеру в data (порядок фикстуры фиксирован: 0 —
++// Toyota дня 11.10.2026, 1 — чужой день публикации, 2 — без даты выдачи, 3 — без номера).
++func gostFixtureDoc(t *testing.T, i int) gostDoc {
++	t.Helper()
++	docs := gostDayFixture(t).Data
++	if i < 0 || i >= len(docs) {
++		t.Fatalf("в фикстуре нет документа %d (всего %d)", i, len(docs))
++	}
++	return docs[i]
++}
++
++// gostRepeatDoc размножает документ до n штук, меняя id: из одной строки фикстуры
++// собирается страница нужного размера (gostPageSize документов) без рукописного JSON.
++func gostRepeatDoc(doc gostDoc, n int) []gostDoc {
++	out := make([]gostDoc, n)
++	for i := range out {
++		doc.ID = int64(i + 1)
++		out[i] = doc
++	}
++	return out
++}
++
++// gostTestBody собирает тело ответа ручки: count — «всего совпадений», data — страница.
++func gostTestBody(t *testing.T, count int, docs []gostDoc) []byte {
++	t.Helper()
++	body, err := json.Marshal(gostSearchResponse{Count: count, Data: docs})
++	if err != nil {
++		t.Fatalf("сборка тела ответа: %v", err)
++	}
++	return body
++}
++
++// gostTestRequest — записанный запрос: по нему проверяется форма обращения к ручке.
++type gostTestRequest struct {
++	Path   string
++	Query  url.Values
++	Header http.Header
++}
++
++// gostTestAPI — api, направленный на httptest-сервер с handler, и журнал его запросов.
++type gostTestAPI struct {
++	api    *gostAPI
++	server *httptest.Server
++	mu     sync.Mutex
++	reqs   []gostTestRequest
++}
++
++// gostNewTestAPI поднимает httptest-сервер, подменяет gostAPIURL его адресом и сокращает
++// паузы транспорта: тест не должен ждать ни gostRequestGap между страницами, ни
++// gostRetryAfter* между повторами. Значения переменных восстанавливаются после теста.
++func gostNewTestAPI(t *testing.T, handler http.HandlerFunc) *gostTestAPI {
++	t.Helper()
++	ta := &gostTestAPI{}
++	ta.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		ta.mu.Lock()
++		ta.reqs = append(ta.reqs, gostTestRequest{
++			Path:   r.URL.Path,
++			Query:  r.URL.Query(),
++			Header: r.Header.Clone(),
++		})
++		ta.mu.Unlock()
++		handler(w, r)
++	}))
++	t.Cleanup(ta.server.Close)
++
++	oldURL, oldGap := gostAPIURL, gostRequestGap
++	oldBackoff, oldRetryTimeout, oldRetryServer := gostBackoffPolicy, gostRetryAfterTimeout, gostRetryAfterServer
++	gostAPIURL = ta.server.URL + gostTestPath
++	gostRequestGap = 0
++	gostBackoffPolicy.InitialInterval = time.Millisecond
++	gostBackoffPolicy.MaxInterval = 10 * time.Millisecond
++	gostRetryAfterTimeout, gostRetryAfterServer = time.Millisecond, time.Millisecond
++	t.Cleanup(func() {
++		gostAPIURL, gostRequestGap = oldURL, oldGap
++		gostBackoffPolicy = oldBackoff
++		gostRetryAfterTimeout, gostRetryAfterServer = oldRetryTimeout, oldRetryServer
++	})
++
++	ta.api = newGostAPI(ta.server.Client(), gostTestAppID)
++	return ta
++}
++
++// requests — запросы в порядке прихода (копия: журнал живёт дольше теста).
++func (ta *gostTestAPI) requests() []gostTestRequest {
++	ta.mu.Lock()
++	defer ta.mu.Unlock()
++	return append([]gostTestRequest(nil), ta.reqs...)
++}
++
++func (ta *gostTestAPI) requestCount() int {
++	ta.mu.Lock()
++	defer ta.mu.Unlock()
++	return len(ta.reqs)
++}
++
++// queryParam — значения одного query-параметра по всем запросам в порядке прихода.
++func (ta *gostTestAPI) queryParam(name string) []string {
++	reqs := ta.requests()
++	out := make([]string, 0, len(reqs))
++	for _, r := range reqs {
++		out = append(out, r.Query.Get(name))
++	}
++	return out
++}
++
++// gostPagesHandler отдаёт тела страниц по номеру из pages; неизвестная страница — 404,
++// чтобы «прочитал лишнюю страницу» падало ошибкой импорта, а не тихим успехом.
++func gostPagesHandler(pages map[int][]byte) http.HandlerFunc {
++	return func(w http.ResponseWriter, r *http.Request) {
++		page, err := strconv.Atoi(r.URL.Query().Get("page"))
++		if err != nil {
++			w.WriteHeader(http.StatusBadRequest)
++			return
++		}
++		body, ok := pages[page]
++		if !ok {
++			w.WriteHeader(http.StatusNotFound)
++			return
++		}
++		_, _ = w.Write(body)
++	}
++}
++
++// gostStatusHandler отдаёт один и тот же статус на любой запрос.
++func gostStatusHandler(status int) http.HandlerFunc {
++	return func(w http.ResponseWriter, r *http.Request) {
++		w.WriteHeader(status)
++	}
++}
++
++func TestGostMSKDate(t *testing.T) {
++	cases := []struct {
++		name string
++		ms   int64
++		want string
++	}{
++		// 1791493200000 = 2026-10-08 21:00 UTC, то есть уже 00:00 МСК 09.10:
++		// источник кладёт в миллисекунды момент UTC, а дата выдачи — московская.
++		{"21:00 UTC — это полночь МСК", 1791493200000, "2026-10-09"},
++		{"эпоха", 0, "1970-01-01"},
++	}
++	for _, c := range cases {
++		t.Run(c.name, func(t *testing.T) {
++			want, err := time.Parse("2006-01-02", c.want)
++			if err != nil {
++				t.Fatalf("разбор ожидания: %v", err)
++			}
++			got := gostMSKDate(c.ms)
++			if !got.Equal(want) {
++				t.Errorf("gostMSKDate(%d) = %s, ожидалось %s", c.ms, got, want)
++			}
++			// Дата живёт в UTC-полуночи: так сравниваются срезы и пишется колонка Date.
++			if got.Location() != time.UTC || got.Hour() != 0 || got.Minute() != 0 || got.Second() != 0 {
++				t.Errorf("gostMSKDate(%d) = %s: ожидалась UTC-полночь", c.ms, got)
++			}
++		})
++	}
++}
++
++func TestGostParsePublicationDay(t *testing.T) {
++	cases := []struct {
++		name string
++		raw  string
++		want string
++		ok   bool
++	}{
++		{"живой формат с маркером пояса", "11.10.2026 00:00:00 ZE3", "2026-10-11", true},
++		{"без маркера пояса", "11.10.2026 00:00:00", "2026-10-11", true},
++		{"мусор", "мусор", "", false},
++		{"пусто", "", "", false},
++		{"только дата без времени", "11.10.2026", "", false},
++	}
++	for _, c := range cases {
++		t.Run(c.name, func(t *testing.T) {
++			got, ok := gostParsePublicationDay(c.raw)
++			if ok != c.ok {
++				t.Fatalf("gostParsePublicationDay(%q) = %s, %v, ожидалось ok=%v", c.raw, got, ok, c.ok)
++			}
++			if !ok {
++				if !got.IsZero() {
++					t.Errorf("при ok=false ожидалось нулевое время, получено %s", got)
++				}
++				return
++			}
++			if got.Format("2006-01-02") != c.want {
++				t.Errorf("gostParsePublicationDay(%q) = %s, ожидалось %s", c.raw, got, c.want)
++			}
++		})
++	}
++}
++
++func TestGostYear(t *testing.T) {
++	cases := []struct {
++		raw  string
++		want uint16
++	}{
++		{"2016", 2016},
++		{" 2019 ", 2019},
++		{"16", 0}, // двузначный год источника — не 16-й год
++		{"н/д", 0},
++		{"", 0},
++		{"0000", 0},
++		{"1899", 0}, // вне правдоподобного диапазона
++	}
++	for _, c := range cases {
++		t.Run(c.raw, func(t *testing.T) {
++			if got := gostYear(c.raw); got != c.want {
++				t.Errorf("gostYear(%q) = %d, ожидалось %d", c.raw, got, c.want)
++			}
++		})
++	}
++}
++
++func TestGostRowsFromDocsFilters(t *testing.T) {
++	resp := gostDayFixture(t)
++	if resp.Count != 4 || len(resp.Data) != 4 {
++		t.Fatalf("фикстура: count=%d, документов=%d, ожидалось 4 и 4", resp.Count, len(resp.Data))
++	}
++	// День фикстуры совпадает с gostTestDay: на этом держатся все проверки дня.
++	if got := resp.Data[0].Fields.DateOfPublication; got != gostTestPublication {
++		t.Fatalf("фикстура: дата публикации первого документа = %q, ожидалась %q", got, gostTestPublication)
++	}
++
++	// Причина пропуска у каждого документа своя: чужой день публикации, нет даты выдачи,
++	// нет номера сертификата. Первый документ — единственный полный и свой.
++	want := []bool{true, false, false, false}
++	for i, ok := range want {
++		if _, got := gostRowFromDoc(gostTestDay, resp.Data[i]); got != ok {
++			t.Errorf("документ %d (%s): в срезе = %v, ожидалось %v", i, resp.Data[i].Fields.Product, got, ok)
++		}
++	}
++
++	rows, skipped := gostRowsFromDocs(gostTestDay, resp.Data)
++	if len(rows) != 1 {
++		t.Fatalf("строк %d, ожидалась 1: %+v", len(rows), rows)
++	}
++	if skipped != 3 {
++		t.Errorf("skipped = %d, ожидалось 3", skipped)
++	}
++
++	// Строка собирается целиком: и сдвиг даты выдачи в МСК, и год, и все поля карточки.
++	got := rows[0]
++	expected := gostRow{
++		Mark:                "Toyota",
++		Type:                "ZGE25",
++		Date:                time.Date(2026, 10, 9, 0, 0, 0, 0, time.UTC),
++		CertificateNumber:   "ТС RU А-JP.ОМ80.51298",
++		EcoClass:            "4",
++		EngineTrademark:     "Toyota, 2ZR,четырехтактный, бензиновый",
++		YearOfManufacturing: 2016,
++		NameOfManufacturer:  "TOYOTA MOTOR CORPORATION",
++		UID:                 "0AFECC5373427BDA43258E8A00457597",
++		PublicationDate:     gostTestDay,
++	}
++	if !got.Date.Equal(expected.Date) || !got.PublicationDate.Equal(expected.PublicationDate) {
++		t.Errorf("даты строки: %s / %s, ожидались %s / %s", got.Date, got.PublicationDate, expected.Date, expected.PublicationDate)
++	}
++	got.Date, got.PublicationDate = time.Time{}, time.Time{}
++	expected.Date, expected.PublicationDate = time.Time{}, time.Time{}
++	if got != expected {
++		t.Errorf("строка = %+v, ожидалась %+v", got, expected)
++	}
++}
++
++func TestGostDayFetchesAllPages(t *testing.T) {
++	toyota := gostFixtureDoc(t, 0)
++	// День не влезает в одну страницу: 900 документов на первой, 100 на второй.
++	pages := map[int][]byte{
++		1: gostTestBody(t, 1000, gostRepeatDoc(toyota, gostPageSize)),
++		2: gostTestBody(t, 1000, gostRepeatDoc(toyota, 100)),
++	}
++	ta := gostNewTestAPI(t, gostPagesHandler(pages))
++
++	slice, err := ta.api.day(context.Background(), gostTestDay)
++	if err != nil {
++		t.Fatalf("day: %v", err)
++	}
++	if slice.Count != 1000 {
++		t.Errorf("Count = %d, ожидалось 1000 (всего совпадений из ответа)", slice.Count)
++	}
++	if len(slice.Rows) != 1000 {
++		t.Errorf("строк %d, ожидалось 1000: день должен читаться целиком", len(slice.Rows))
++	}
++	if slice.Skipped != 0 {
++		t.Errorf("Skipped = %d, ожидалось 0: документы фикстуры попадают в срез", slice.Skipped)
++	}
++	if got := ta.queryParam("page"); !slices.Equal(got, []string{"1", "2"}) {
++		t.Errorf("страницы = %v, ожидались [1 2]", got)
++	}
++	if got := ta.queryParam("size"); !slices.Equal(got, []string{strconv.Itoa(gostPageSize), strconv.Itoa(gostPageSize)}) {
++		t.Errorf("размеры страниц = %v, ожидался %d", got, gostPageSize)
++	}
++}
++
++func TestGostDayClientFilterCountsSkipped(t *testing.T) {
++	// Обе страницы чужого дня: ручка ищет совпадения по своему окну и отдаёт лишнее,
++	// отсекает документы уже клиент, и это видно в Skipped.
++	docs := gostDayFixture(t).Data[:2]
++	for i := range docs {
++		docs[i].Fields.DateOfPublication = "10.10.2026 00:00:00 ZE3"
++	}
++	ta := gostNewTestAPI(t, gostPagesHandler(map[int][]byte{1: gostTestBody(t, len(docs), docs)}))
++
++	slice, err := ta.api.day(context.Background(), gostTestDay)
++	if err != nil {
++		t.Fatalf("day: %v", err)
++	}
++	if slice.Count != 2 {
++		t.Errorf("Count = %d, ожидалось 2", slice.Count)
++	}
++	if len(slice.Rows) != 0 {
++		t.Errorf("строк %d, ожидалось 0: все документы чужого дня", len(slice.Rows))
++	}
++	if slice.Skipped != 2 {
++		t.Errorf("Skipped = %d, ожидалось 2", slice.Skipped)
++	}
++}
++
++func TestGostDayCountMismatchFails(t *testing.T) {
++	pages := map[int][]byte{
++		1: gostTestBody(t, 1000, gostRepeatDoc(gostFixtureDoc(t, 0), gostPageSize)),
++		2: gostTestBody(t, 1000, nil), // вторая страница пришла пустой
++	}
++	ta := gostNewTestAPI(t, gostPagesHandler(pages))
++
++	slice, err := ta.api.day(context.Background(), gostTestDay)
++	if err == nil {
++		t.Fatal("ожидалась ошибка о недостаче документов дня")
++	}
++	if want := "получено 900 документов из 1000"; !strings.Contains(err.Error(), want) {
++		t.Errorf("ошибка = %q, ожидалась подстрока %q", err, want)
++	}
++	if len(slice.Rows) != 0 {
++		t.Errorf("строк %d: неполный день писать нельзя", len(slice.Rows))
++	}
++}
++
++func TestGostDayTooManyDocsFails(t *testing.T) {
++	// Порог проверяется на границе: gostMaxDayCount документов — ещё не ошибка,
++	// gostMaxDayCount+1 — уже.
++	pages := map[int][]byte{
++		1: gostTestBody(t, gostMaxDayCount+1, []gostDoc{gostFixtureDoc(t, 0)}),
++	}
++	ta := gostNewTestAPI(t, gostPagesHandler(pages))
++
++	_, err := ta.api.day(context.Background(), gostTestDay)
++	if err == nil {
++		t.Fatal("ожидалась ошибка про окно поиска")
++	}
++	for _, want := range []string{strconv.Itoa(gostMaxDayCount + 1), "окна поиска"} {
++		if !strings.Contains(err.Error(), want) {
++			t.Errorf("ошибка = %q, ожидалась подстрока %q", err, want)
++		}
++	}
++	if got := ta.requestCount(); got != 1 {
++		t.Errorf("запросов %d, ожидался 1: при переполнении страницы 2+ качать незачем", got)
++	}
++}
++
++func TestGostDayPermanentStatusFails(t *testing.T) {
++	// 401/403 — отказ доступа, а не сбой: повтор не поможет и только злит портал.
++	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
++		t.Run(strconv.Itoa(status), func(t *testing.T) {
++			ta := gostNewTestAPI(t, gostStatusHandler(status))
++
++			_, err := ta.api.day(context.Background(), gostTestDay)
++			if err == nil {
++				t.Fatalf("ожидалась ошибка на статус %d", status)
++			}
++			if want := "http status " + strconv.Itoa(status); !strings.Contains(err.Error(), want) {
++				t.Errorf("ошибка = %q, ожидалась подстрока %q", err, want)
++			}
++			if !strings.Contains(err.Error(), "GOST_APP_ID") {
++				t.Errorf("ошибка = %q: текст должен подсказывать про GOST_APP_ID", err)
++			}
++			if got := ta.requestCount(); got != 1 {
++				t.Errorf("запросов %d, ожидался 1: permanent-ошибка не повторяется", got)
++			}
++		})
++	}
++}
++
++func TestGostDayRetriesServerError(t *testing.T) {
++	t.Run("500, затем 200", func(t *testing.T) {
++		body := gostTestBody(t, 1, []gostDoc{gostFixtureDoc(t, 0)})
++		var calls atomic.Int32
++		ta := gostNewTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
++			if calls.Add(1) == 1 {
++				w.WriteHeader(http.StatusInternalServerError)
++				return
++			}
++			_, _ = w.Write(body)
++		})
++
++		slice, err := ta.api.day(context.Background(), gostTestDay)
++		if err != nil {
++			t.Fatalf("500 должен повторяться, получено: %v", err)
++		}
++		if len(slice.Rows) != 1 {
++			t.Errorf("строк %d, ожидалась 1", len(slice.Rows))
++		}
++		if got := ta.requestCount(); got != 2 {
++			t.Errorf("запросов %d, ожидалось 2 (сбой и успех)", got)
++		}
++	})
++
++	t.Run("500 на всех попытках", func(t *testing.T) {
++		ta := gostNewTestAPI(t, gostStatusHandler(http.StatusInternalServerError))
++
++		_, err := ta.api.day(context.Background(), gostTestDay)
++		if err == nil {
++			t.Fatal("ожидалась ошибка после исчерпания попыток")
++		}
++		// Причина обязана дожить до текста ошибки: «retry after» без статуса оператору
++		// ничего не говорит.
++		if !strings.Contains(err.Error(), "http status 500") {
++			t.Errorf("ошибка = %q, ожидался статус в тексте", err)
++		}
++		if got := ta.requestCount(); got != gostMaxTries {
++			t.Errorf("попыток %d, ожидалось %d", got, gostMaxTries)
++		}
++	})
++}
++
++func TestGostDayEmptyBodyFails(t *testing.T) {
++	// И пустое тело, и битый JSON — не отказ портала, а сбой ответа: повторяем.
++	cases := []struct {
++		name string
++		body string
++		want string
++	}{
++		{"пустое тело", "", "пустое тело"},
++		{"битый JSON", "{", "разбор JSON"},
++	}
++	for _, c := range cases {
++		t.Run(c.name, func(t *testing.T) {
++			body := []byte(c.body)
++			ta := gostNewTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
++				_, _ = w.Write(body)
++			})
++
++			_, err := ta.api.day(context.Background(), gostTestDay)
++			if err == nil {
++				t.Fatal("ожидалась ошибка на пустой ответ")
++			}
++			if !strings.Contains(err.Error(), c.want) {
++				t.Errorf("ошибка = %q, ожидалась подстрока %q", err, c.want)
++			}
++			if got := ta.requestCount(); got != gostMaxTries {
++				t.Errorf("попыток %d, ожидалось %d: пустой ответ повторяем", got, gostMaxTries)
++			}
++		})
++	}
++}
++
++func TestGostDayRequestShape(t *testing.T) {
++	body := gostTestBody(t, 1, []gostDoc{gostFixtureDoc(t, 0)})
++	ta := gostNewTestAPI(t, gostPagesHandler(map[int][]byte{1: body}))
++
++	if _, err := ta.api.day(context.Background(), gostTestDay); err != nil {
++		t.Fatalf("day: %v", err)
++	}
++	if _, err := ta.api.dayCount(context.Background(), gostTestDay); err != nil {
++		t.Fatalf("dayCount: %v", err)
++	}
++
++	reqs := ta.requests()
++	if len(reqs) != 2 {
++		t.Fatalf("запросов %d, ожидалось 2 (страница дня и count)", len(reqs))
++	}
++	for i, r := range reqs {
++		if r.Path != gostTestPath {
++			t.Errorf("запрос %d: путь %q, ожидался %q", i, r.Path, gostTestPath)
++		}
++		if got := r.Query.Get("query"); got != "11.10.2026" {
++			t.Errorf("запрос %d: query = %q, ожидалось 11.10.2026 (день среза)", i, got)
++		}
++		if got := r.Query.Get("page"); got != "1" {
++			t.Errorf("запрос %d: page = %q, ожидалось 1", i, got)
++		}
++		if got := r.Header.Get(gostAppIDHeader); got != gostTestAppID {
++			t.Errorf("запрос %d: заголовок %s = %q, ожидался %q", i, gostAppIDHeader, got, gostTestAppID)
++		}
++		if got := r.Header.Get("Accept"); got != "application/json" {
++			t.Errorf("запрос %d: Accept = %q, ожидался application/json", i, got)
++		}
++		if got := r.Header.Get("User-Agent"); got != util.HttpUA {
++			t.Errorf("запрос %d: User-Agent = %q, ожидался util.HttpUA", i, got)
++		}
++		if tmsp, err := strconv.ParseInt(r.Query.Get("tmsp"), 10, 64); err != nil || tmsp <= 0 {
++			t.Errorf("запрос %d: tmsp = %q, ожидалась метка времени в миллисекундах", i, r.Query.Get("tmsp"))
++		}
++	}
++	// day() тянет полную страницу, dayCount() — минимальную: он нужен ради одного count.
++	if got := reqs[0].Query.Get("size"); got != strconv.Itoa(gostPageSize) {
++		t.Errorf("day: size = %q, ожидался %d", got, gostPageSize)
++	}
++	if got := reqs[1].Query.Get("size"); got != "1" {
++		t.Errorf("dayCount: size = %q, ожидался 1", got)
++	}
++}
+diff --git a/craw/testdata/gost_day.json b/craw/testdata/gost_day.json
+new file mode 100644
+index 0000000..d897de8
+--- /dev/null
++++ b/craw/testdata/gost_day.json
+@@ -0,0 +1,33 @@
++{
++  "count": 4,
++  "data": [
++    {"id": 3717458, "libraryId": 29, "fields": {
++      "product": "Toyota", "type": "ZGE25", "numberofcertificate": "ТС RU А-JP.ОМ80.51298",
++      "dateofissueofcertificate": 1791493200000, "ecoclass": "4",
++      "enginetrademark": "Toyota, 2ZR,четырехтактный, бензиновый", "yearofmanufacturing": "2016",
++      "nameofmanufacturer": "TOYOTA MOTOR CORPORATION",
++      "uniqueidentifierofdocument": "0AFECC5373427BDA43258E8A00457597",
++      "dateofpublication": "11.10.2026 00:00:00 ZE3"}},
++    {"id": 3713507, "libraryId": 29, "fields": {
++      "product": "VOLKSWAGEN", "type": "7N", "numberofcertificate": "ТС RU А-DE.РА15.36210",
++      "dateofissueofcertificate": 1791406800000, "ecoclass": "4",
++      "enginetrademark": "VOLKSWAGEN, CTH,четырехтактный бензиновый", "yearofmanufacturing": "2015",
++      "nameofmanufacturer": "VOLKSWAGEN AG",
++      "uniqueidentifierofdocument": "1B6DF825B5513DC543258E8A00458BEF",
++      "dateofpublication": "09.10.2026 00:00:00 ZE3"}},
++    {"id": 3713615, "libraryId": 29, "fields": {
++      "product": "Opel", "type": "Z16", "numberofcertificate": "",
++      "dateofissueofcertificate": null, "ecoclass": "-",
++      "enginetrademark": "", "yearofmanufacturing": "16",
++      "nameofmanufacturer": "Opel Automobile GmbH",
++      "uniqueidentifierofdocument": "1EC8257C1C6AFFEC43258E8A00456EFA",
++      "dateofpublication": "11.10.2026 00:00:00 ZE3"}},
++    {"id": 3713508, "libraryId": 29, "fields": {
++      "product": "HONDA", "type": "GB3", "numberofcertificate": "",
++      "dateofissueofcertificate": 1791493200000, "ecoclass": "4",
++      "enginetrademark": "HONDA, LEB, гибрид", "yearofmanufacturing": "2018",
++      "nameofmanufacturer": "HONDA MOTOR CO., LTD.",
++      "uniqueidentifierofdocument": "0AFECC5373427BDA43258E8A00457597",
++      "dateofpublication": "11.10.2026 00:00:00 ZE3"}}
++  ]
++}

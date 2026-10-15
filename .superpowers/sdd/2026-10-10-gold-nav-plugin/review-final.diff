@@ -1,0 +1,2720 @@
+# MAIN REPO b071260..HEAD
+b56d96f fix view gating claim and roadmap status
+bd7a0bd sync architecture and readme with gold-nav contour
+4d5923f add v_forecast_accuracy view
+94151d9 add v_model_inputs and v_gold_dashboard views
+383362b fix ingest dedupe ordering and input validation
+03347a8 add ingest endpoint for model_runs and manual series
+2d43601 add events_calendar Q4-2026 and v_events_calendar
+619ca2e revise roadmap for datasource-first contour
+ ARCHITECTURE.md                 |  96 +++++++++---
+ Makefile                        |  25 ++-
+ README.md                       |  55 ++++++-
+ calendar/events.go              |  64 ++++++++
+ cmd/ingest/main.go              |  51 ++++++
+ docs/ROADMAP_DCF_POLYUS.md      |  53 ++++---
+ go.mod                          |   2 +-
+ ingest/clickhouse.go            | 264 +++++++++++++++++++++++++++++++
+ ingest/clickhouse_test.go       | 333 ++++++++++++++++++++++++++++++++++++++++
+ ingest/model_run.go             | 106 +++++++++++++
+ ingest/model_run_test.go        | 134 ++++++++++++++++
+ ingest/schema.go                |  53 +++++++
+ ingest/server.go                |  85 ++++++++++
+ ingest/server_test.go           | 207 +++++++++++++++++++++++++
+ main.go                         |   2 +
+ sql/events_calendar_q4_2026.sql |  25 +++
+ sql/mcp_kimi_reader.sql         |   4 +
+ views/forecast_accuracy.go      |  33 ++++
+ views/gold_dashboard.go         |  63 ++++++++
+ views/gold_views.go             |  41 +++++
+ views/model_inputs.go           | 150 ++++++++++++++++++
+ 21 files changed, 1799 insertions(+), 47 deletions(-)
+diff --git a/ARCHITECTURE.md b/ARCHITECTURE.md
+index 9d85f07..6ea5436 100644
+--- a/ARCHITECTURE.md
++++ b/ARCHITECTURE.md
+@@ -1,39 +1,44 @@
+ # ARCHITECTURE.md — clickhouse-import-rosstat
+ 
+ > Контекстный документ для AI-ассистентов (Kimi Code и др.). Содержит всё необходимое для написания нового кода без полного чтения репозитория: паттерны, конвенции, схемы БД, целевую архитектуру. Обновлять при каждом изменении архитектуры.
+-> Последнее обновление: 2026-10-09. Базовый коммит: `c96fc1f`.
++> Последнее обновление: 2026-10-10. Базовый коммит: `4d5923f` (разделы сверены с кодом на этом коммите).
+ 
+ ---
+ 
+ ## 1. Что это за проект
+ 
+-Go-конвейер (ETL) импорта российской макроэкономической статистики и финансовых данных в **ClickHouse** для дашбордов **Grafana** и аналитических моделей (сценарный прогноз золота → DCF → NAV акции PLZL). Монолитный репозиторий, один бинарник, конфигурация только через env.
++Go-конвейер (ETL) импорта российской макроэкономической статистики и финансовых данных в **ClickHouse** для дашбордов **Grafana** и аналитических моделей (сценарный прогноз золота → DCF → NAV акции PLZL). Монолитный репозиторий: основной бинарник импорта и отдельный бинарник `cmd/ingest` (ingest-endpoint контура прогноза, §6.5); конфигурация только через env.
+ 
+ - Репозиторий: `github.com/kmlebedev/clickhouse-import-rosstat`
+-- Go 1.27, сборка: `make build` → статический linux/amd64 бинарник (CGO_ENABLED=0, ldflags `-s -w`)
++- Go 1.27, сборка: `make build` → статический linux/amd64 бинарник (CGO_ENABLED=0, ldflags `-s -w`); `make build-ingest` → `build/ingest`
+ - Драйвер БД: `github.com/ClickHouse/clickhouse-go/v2` (native protocol)
+ - Ключевые библиотеки: `excelize/v2` (XLSX), `xlsReader` (legacy XLS), `colly/v2` + `goquery` (скрейпинг), `unipdf/v3` (PDF), `cenkalti/backoff/v5` (ретраи), `logrus` (логи, `log.Infof/Errorf/Fatal`)
+ 
+ ## 2. Структура репозитория
+ 
+ ```
+ main.go            — точка входа: подключение к CH, запуск реестра импортёров
+ chimport/stats.go  — интерфейс ImportStat + глобальный реестр Stats
+ util/              — общие хелперы: HTTP-клиент (xls.go), шаблоны HdBase/ClickHouseImport, батч-импорт (db.go), каталог рядов series_catalog/v_series_catalog (series_catalog.go), создание витрин v_* с комментариями (views.go)
+-sql/               — SQL для ручной настройки: пользователь MCP kimi_reader и гранты на витрины (mcp_kimi_reader.sql)
++sql/               — SQL для ручной настройки: пользователь MCP kimi_reader и гранты на витрины (mcp_kimi_reader.sql); сид календаря Q4-2026 (events_calendar_q4_2026.sql)
++scripts/           — скрипты MCP: mcp_setup_user.py (создание kimi_reader, make mcp-user), mcp_check.py (smoke-проверка, make mcp-check)
+ rosstat/           — Росстат: ipc_mes, ipc_weeks, vvp_kvartal, salaries_mes → series_catalog (source='rosstat'), витрина v_rosstat_macro
+ cbr/               — ЦБ РФ: key_rate, currency_usd, m2, ruonia (таблица cbr_ruania), metal_gold (cbr_gold), households, avgproc_stav, ... → series_catalog (source='cbr'), витрина v_cbr_macro
+ minfin/            — Минфин: fedbud_mes, fedbud_mesyats (исполнение федбюджета) → series_catalog (source='minfin', 'minfin_mesyats'), витрина v_minfin_budget
+ customs/           — ФТС: внешняя торговля по странам
+ fao/               — ФАО: индексы продовольственных цен
+ fred/              — FRED (CSV-серии US-макро: DFII10, DGS10, FEDFUNDS, DTWEXBGS, CPIAUCSL, T5YIE) → macro_series
+ bls/               — BLS API v2 (CPI, безработица, NFP, зарплата, PPI, JOLTS) → macro_series (source = 'bls')
+ bea/               — BEA API (NIPA T20804: индексы PCE) → macro_series (source = 'bea')
+ gold/              — золото: MOEX GOLDFIXME (₽/г) ÷ курс ЦБ cbr_currency_usd → gold_prices (venue='moex_fix_usd'); series_catalog (source='gold'), витрина v_gold_prices
+ moex/              — МосБиржа ISS (анонимный REST, без ключа): свечи PLZL → stock_prices (существующая legacy-схема, Float32 не меняем), RGBI + G-curve → ofz_curve; series_catalog (source='moex'), витрины v_stock_prices, v_ofz_curve
++calendar/          — календарь событий-триггеров прогноза золота/NAV: events_calendar, витрина v_events_calendar; сид Q4-2026 — sql/events_calendar_q4_2026.sql
++views/             — витрины контура прогноза v_model_inputs, v_gold_dashboard, v_forecast_accuracy; импортёр gold_views (util.CreateView)
++ingest/            — ingest-endpoint контура прогноза: POST /v1/model_run, POST /v1/manual_series (Bearer INGEST_TOKEN); пишет model_runs, forecast_log, macro_series (source='manual')
++cmd/ingest/        — main-пакет бинарника ingest (make build-ingest / make run-ingest)
+ bank/              — банки: sber_csi(+week), sber/vtb/tbank_fin_rez, domrf_mortgage
+ craw/              — многостраничные краулеры: gost (сертификаты Росстандарта)
+ financial/         — ⚠️ legacy-контур: корпоративные databook'и (CHMF/MAGN/NLMK/PLZL/ЮГК),
+                      investing.com exporter, РЖД. Свой main.go, своё подключение database/sql
+ financial/data/    — локальные XLSX/XLS источники (databook'и компаний)
+ dashboard/         — экспортированные JSON-дашборды Grafana (плагин grafana-clickhouse-datasource)
+@@ -102,41 +107,55 @@ func init() {
+ - ⚠️ Дашборды/запросы к ReplacingMergeTree — с `FINAL` или дедупликацией
+ 
+ ## 5. Конфигурация (env)
+ 
+ | Переменная | Назначение |
+ |---|---|
+-| `CLICKHOUSE_URL` | DSN подключения (обязательная) |
++| `CLICKHOUSE_URL` | DSN подключения (обязательная для импорта и для `cmd/ingest`) |
+ | `CLICKHOUSE_IMPORT_STAT` | Фильтр импортёров через запятую (пусто = все) |
+ | `LOG_LEVEL` | logrus-уровень (debug/info/warn/error) |
+ | `CERT_FILES` | Пути к PEM-сертификатам через запятую |
+ | `TICKER` | Маршрутизация legacy-контура financial (MOEX/VTBR/CHMF/MAGN/NLMK/Exports/ALL) |
+ | `INVESTING_EMAIL`, `INVESTING_PASSWORD` | ⚠️ deprecated, переезжаем на MOEX ISS / stooq |
+ | `BLS_API_KEY` | Регистрационный ключ BLS (необязательно, для `bls`) |
+ | `BEA_API_KEY` | UserID BEA API (обязательно, для `bea`) |
++| `INGEST_TOKEN` | Bearer-токен ingest-endpoint (`cmd/ingest`); обязательна для него: пустое значение — выход с ошибкой. Значение только в окружении, в репозитории не хранится |
++| `INGEST_ADDR` | Адрес HTTP-сервера `cmd/ingest`, по умолчанию `:8081` |
+ 
+ ## 6. Целевая архитектура (дорожная карта 2026-Q4)
+ 
+-Контур: **Источники → ClickHouse (сырые + витрины) → MCP (read-only) → Kimi-агент → сценарный прогноз золота → DCF → NAV PLZL → model_runs**. Полная версия: [docs/ROADMAP_DCF_POLYUS.md](docs/ROADMAP_DCF_POLYUS.md).
++Контур: **Источники → ClickHouse (сырые + витрины) → MCP (read-only) → Kimi-агент → сценарный прогноз золота → DCF → NAV PLZL → model_runs**. Полная версия: [docs/ROADMAP_DCF_POLYUS.md](docs/ROADMAP_DCF_POLYUS.md). Спека контура прогноза и плагина: [docs/superpowers/specs/2026-10-10-gold-nav-plugin-design.md](docs/superpowers/specs/2026-10-10-gold-nav-plugin-design.md).
++
++Статусы в §6.1–§6.3: **реализован** — есть в коде репозитория; **не реализован** — только в плане, в коде нет.
+ 
+ ### 6.1 Новые импортёры (по приоритету)
+ 
+-| Импортёр | Пакет | Источник | Метод |
+-|---|---|---|---|
+-| `fred` | `fred/` | FRED CSV API: `https://fred.stlouisfed.org/graph/fredgraph.csv?id=DFII10` (серии: DFII10, DGS10, FEDFUNDS, DTWEXBGS, CPIAUCSL, T5YIE) | Свой парсер `encoding/csv` (не `util.GetCSV`: разделитель `,`), `Name()` = `fred` (несколько серий, одна таблица), пропуски (пустое значение) пропускаются; UA не задаём — FRED за Imperva рвёт соединение с браузерным UA. Расписание: `dagu/fred.yaml`, ежедневно 11:41 (МСК) → `macro_series`; описания рядов → `series_catalog`; витрина `v_fred_macro` (с комментариями, грант `kimi_reader`) |
+-| `bls` | `bls/` | BLS Public Data API v2: `POST https://api.bls.gov/publicAPI/v2/timeseries/data/` (JSON: `seriesid`, `startyear`, `endyear`, опц. `registrationkey` из `BLS_API_KEY`). Серии: CUUR0000SA0, CUSR0000SA0 (CPI), LNS14000000 (безработица), CES0000000001 (NFP), CES0500000003 (средняя зарплата), WPSFD4 (PPI final demand), JTS000000000000000JOL (JOLTS, вакансии). Окна лет по ≤10 лет с 2006 года; все серии одним запросом. Статус ≠ `REQUEST_SUCCEEDED` — ошибка; `message` при успехе (каталог, «no data») — не ошибка; периоды M13 и не-месячные пропускаются. Тесты: `bls/bls_test.go`. Расписание: `dagu/bls.yaml`, ежедневно 12:23 (МСК) → `macro_series`; описания рядов → `series_catalog`; витрина `v_bls_macro` (с комментариями, грант `kimi_reader`) |
+-| `bea` | `bea/` | BEA API: `GET https://apps.bea.gov/api/data?method=GetData&datasetname=NIPA&TableName=T20804&Frequency=M` (ключ `BEA_API_KEY` → параметр `UserID`, без него импорт падает с ошибкой). Строки T20804: 1 — PCE_PI (headline), 25 — PCE_PI_CORE (excluding food and energy). Ключ маскируется в текстах ошибок (`url.Error` содержит URL). Тесты: `bea/bea_test.go`. Расписание: `dagu/bea.yaml`, ежедневно 12:37 (МСК) → `macro_series`; описания рядов → `series_catalog`; витрина `v_bea_pce` (с комментариями, грант `kimi_reader`) |
+-| `eia` | `eia/` | EIA Weekly Petroleum Status (запасы дистиллятов, crack ULSD) | API EIA v2 (ключ в env `EIA_API_KEY`) → `macro_series` |
+-| `lbma_gold` | `gold/` | ⚠️ Временно вместо LBMA: MOEX `GOLDFIXME` (борд FIXI, ₽/г, с 2024-08-05) × 31,1034768 ÷ курс `cbr_currency_usd`; производная цена, не LBMA. Курс берётся последний известный не позже даты (ЦБ не публикует понедельники и новогодние праздники; окно 10 дней). Расписание: `dagu/gold.yaml`, ежедневно 18:47 (МСК); первым шагом DAG выполняется `cbr_currency_usd`. LBMA не реализован: prices.lbma.org.uk и Nasdaq Data Link `LBMA/GOLD` отвечают 403 WAF (датасетный эндпоинт блокируется с этого IP даже с валидным ключом), stooq — JS-проверкой, FRED серии LBMA удалил (404), Yahoo — 429 | → `gold_prices` |
+-| `moex_iss` | `moex/` | MOEX ISS REST (анонимный): дневные свечи PLZL `/iss/engines/stock/markets/shares/securities/PLZL/candles.json?interval=24` (пагинация `start` шагом 100 при явном `limit=100` — без limit страницы по 500 и дубли). Инкремент от max(date) по `code='PLZL'`; пустая таблица → с 2010-01-01. Пишет в существующую legacy-таблицу `stock_prices` (схема Float32 не меняется). Тесты: `moex/moex_test.go`. Расписание: `dagu/moex.yaml`, ежедневно 19:13 (МСК) → `stock_prices`; series_catalog (source='moex'); витрина `v_stock_prices` (с комментариями, грант `kimi_reader`) |
+-| `ofz_curve` | `moex/` | MOEX ISS: индекс RGBI (свечи `engines/stock/markets/index/securities/RGBI/candles.json`, полная история с 2010-01-01, тенор `RGBI` — уровень индекса, не доходность) + годовые доходности G-curve `/iss/engines/stock/zcyc.json`, блок `yearyields` (period 1/3/5/10 → теноры `1y`/`3y`/`5y`/`10y`, % годовых). ⚠️ zcyc — только снимок текущего дня: история доходностей накапливается с первого запуска. Инкремент от max(date); даты из БД нормализуются в UTC (clickhouse-go отдаёт Date с таймзоной сессии). Расписание: `dagu/moex.yaml`, ежедневно 19:13 (МСК) → `ofz_curve`; series_catalog (source='moex'); витрина `v_ofz_curve` (с комментариями, грант `kimi_reader`) |
+-| `mmf_aum` | `funds/` | СЧА фондов ликвидности | парсинг → `mmf_aum` |
+-| `news_watch` | `news/` | RSS Интерфакс/РБК/IR Полюса | → `news_events` |
++| Импортёр | Пакет | Статус | Источник | Метод |
++|---|---|---|---|---|
++| `fred` | `fred/` | реализован; `Name()` = `fred`. Исторический базлайн; первичный источник мировых рядов для прогнозной сессии — datasource (см. gold-nav) | FRED CSV API: `https://fred.stlouisfed.org/graph/fredgraph.csv?id=DFII10` (серии: DFII10, DGS10, FEDFUNDS, DTWEXBGS, CPIAUCSL, T5YIE) | Свой парсер `encoding/csv` (не `util.GetCSV`: разделитель `,`), `Name()` = `fred` (несколько серий, одна таблица), пропуски (пустое значение) пропускаются; UA не задаём — FRED за Imperva рвёт соединение с браузерным UA. Расписание: `dagu/fred.yaml`, ежедневно 11:41 (МСК) → `macro_series`; описания рядов → `series_catalog`; витрина `v_fred_macro` (с комментариями, грант `kimi_reader`) |
++| `bls` | `bls/` | реализован; `Name()` = `bls` | BLS Public Data API v2: `POST https://api.bls.gov/publicAPI/v2/timeseries/data/` (JSON: `seriesid`, `startyear`, `endyear`, опц. `registrationkey` из `BLS_API_KEY`). Серии: CUUR0000SA0, CUSR0000SA0 (CPI), LNS14000000 (безработица), CES0000000001 (NFP), CES0500000003 (средняя зарплата), WPSFD4 (PPI final demand), JTS000000000000000JOL (JOLTS, вакансии). | Окна лет по ≤10 лет с 2006 года; все серии одним запросом. Статус ≠ `REQUEST_SUCCEEDED` — ошибка; `message` при успехе (каталог, «no data») — не ошибка; периоды M13 и не-месячные пропускаются. Тесты: `bls/bls_test.go`. Расписание: `dagu/bls.yaml`, ежедневно 12:23 (МСК) → `macro_series`; описания рядов → `series_catalog`; витрина `v_bls_macro` (с комментариями, грант `kimi_reader`) |
++| `bea` | `bea/` | реализован; `Name()` = `bea` | BEA API: `GET https://apps.bea.gov/api/data?method=GetData&datasetname=NIPA&TableName=T20804&Frequency=M` (ключ `BEA_API_KEY` → параметр `UserID`, без него импорт падает с ошибкой). Строки T20804: 1 — PCE_PI (headline), 25 — PCE_PI_CORE (excluding food and energy). | Ключ маскируется в текстах ошибок (`url.Error` содержит URL). Тесты: `bea/bea_test.go`. Расписание: `dagu/bea.yaml`, ежедневно 12:37 (МСК) → `macro_series`; описания рядов → `series_catalog`; витрина `v_bea_pce` (с комментариями, грант `kimi_reader`) |
++| `eia` | `eia/` | не реализован; вычеркнут из Go-плана (crack — `HO=F` в сессии, запасы дистиллятов — `manual_series`), спека gold-nav §4 | EIA Weekly Petroleum Status (запасы дистиллятов, crack ULSD) | API EIA v2 (ключ в env `EIA_API_KEY`) → `macro_series` |
++| `lbma_gold` | `gold/` | не реализован (LBMA недоступен с этой сети); вместо него реализован `gold`, `Name()` = `gold_prices` | ⚠️ Временно вместо LBMA: MOEX `GOLDFIXME` (борд FIXI, ₽/г, с 2024-08-05) × 31,1034768 ÷ курс `cbr_currency_usd`; производная цена, не LBMA. Курс берётся последний известный не позже даты (ЦБ не публикует понедельники и новогодние праздники; окно 10 дней). Расписание: `dagu/gold.yaml`, ежедневно 18:47 (МСК); первым шагом DAG выполняется `cbr_currency_usd`. LBMA не реализован: prices.lbma.org.uk и Nasdaq Data Link `LBMA/GOLD` отвечают 403 WAF (датасетный эндпоинт блокируется с этого IP даже с валидным ключом), stooq — JS-проверкой, FRED серии LBMA удалил (404), Yahoo — 429 | → `gold_prices` |
++| `moex_iss` | `moex/` | реализован; `Name()` = `stock_prices` | MOEX ISS REST (анонимный): дневные свечи PLZL `/iss/engines/stock/markets/shares/securities/PLZL/candles.json?interval=24` (пагинация `start` шагом 100 при явном `limit=100` — без limit страницы по 500 и дубли). | Инкремент от max(date) по `code='PLZL'`; пустая таблица → с 2010-01-01. Пишет в существующую legacy-таблицу `stock_prices` (схема Float32 не меняется). Тесты: `moex/moex_test.go`. Расписание: `dagu/moex.yaml`, ежедневно 19:13 (МСК) → `stock_prices`; series_catalog (source='moex'); витрина `v_stock_prices` (с комментариями, грант `kimi_reader`) |
++| `ofz_curve` | `moex/` | реализован; `Name()` = `ofz_curve` | MOEX ISS: индекс RGBI (свечи `engines/stock/markets/index/securities/RGBI/candles.json`, полная история с 2010-01-01, тенор `RGBI` — уровень индекса, не доходность) + годовые доходности G-curve `/iss/engines/stock/zcyc.json`, блок `yearyields` (period 1/3/5/10 → теноры `1y`/`3y`/`5y`/`10y`, % годовых). ⚠️ zcyc — только снимок текущего дня: история доходностей накапливается с первого запуска. | Инкремент от max(date); даты из БД нормализуются в UTC (clickhouse-go отдаёт Date с таймзоной сессии). Расписание: `dagu/moex.yaml`, ежедневно 19:13 (МСК) → `ofz_curve`; series_catalog (source='moex'); витрина `v_ofz_curve` (с комментариями, грант `kimi_reader`) |
++| `mmf_aum` | `funds/` | не реализован | СЧА фондов ликвидности | парсинг → `mmf_aum` |
++| `news_watch` | `news/` | не реализован | RSS Интерфакс/РБК/IR Полюса | → `news_events` |
++
++`Name()` импортёров — то, что передаётся в `CLICKHOUSE_IMPORT_STAT`: `fred`, `bls`, `bea`, `gold_prices`, `stock_prices`, `ofz_curve`, `events_calendar`, `gold_views`. Пакет `gold/` выполняет `Name()` = `gold_prices`, поэтому в README и командах используется имя таблицы.
++
++Ряды WGC (ETF-потоки), CME FedWatch и запасы дистиллятов EIA импортёров не имеют. В контуре прогноза они вводятся вручную через `POST /v1/manual_series` (`source = 'manual'`) и читаются витриной `v_gold_dashboard` (§6.3).
+ 
+ ### 6.2 Новые таблицы (DDL — канонические, использовать как есть)
+ 
++Реализованы в коде (DDL в блоке ниже совпадает с кодом): `macro_series`, `model_runs`, `forecast_log` (создаются `ingest.EnsureTables` при старте `cmd/ingest`), `events_calendar` (`calendar/`, сид `sql/events_calendar_q4_2026.sql`), `series_catalog` (`util/`), `gold_prices` (`gold/`), `ofz_curve` (`moex/`). Таблица `stock_prices` (legacy Float32) создаётся в `moex/moex_iss.go` и в этот блок не входит.
++
++Не реализованы (в коде нет): `gold_forecasts`, `news_events`, `index_weights`, `dividend_events`, `mmf_aum`, `tax_events`, `reserves_assets`, `reserves_dynamics`, `license_events`, `peers_nav`, `mine_plans`, `nav_by_asset`, `price_decks`, `regime_states`.
++
++Значения `source`, используемые в коде `macro_series`: `fred`, `bls`, `bea`, `manual` (ingest). Комментарий в DDL про `eia`, `wgc`, `cme` — план, не текущее состояние.
++
+ ```sql
+ CREATE TABLE IF NOT EXISTS macro_series (
+     source LowCardinality(String),   -- 'fred','eia','wgc','cme'
+     series LowCardinality(String),   -- 'DFII10','distillate_stocks',...
+     date Date32,                     -- Date32, т.к. Date не покрывает даты до 1970 (CPIAUCSL с 1947, FEDFUNDS с 1954)
+     value Float64
+@@ -325,33 +344,35 @@ CREATE TABLE IF NOT EXISTS regime_states (
+     model LowCardinality(String)       -- 'hmm_2state','expert'
+ ) ENGINE = ReplacingMergeTree ORDER BY (date, model);
+ ```
+ 
+ ### 6.3 Витрины (views) — semantic layer для агента
+ 
+-- `v_model_inputs` — одна строка с последними входами DCF (gold spot, USDRUB, key_rate, DFII10, crack, TCC/AISC guidance)
+-- `v_gold_dashboard` — дашборд верификации: crack, запасы дистиллятов, FedWatch, ETF-потоки + флаги порогов
+-- `v_forecast_accuracy` — скользящая точность прогнозов из `forecast_log` (включая конкурентный ML-трек)
+-- `v_peers_comparison` — P/NAV, EV/oz, дисконт к лидеру по контурам `ru`/`global`; алерт-порог — дисконт PLZL за ±1σ исторической нормы
+-- `v_gold_attribution` — GRAM-разложение движения золота (экспансия / риск / альтернативная стоимость / импульс); ошибки прогноза атрибутируются к фактору
+-- `v_series_catalog` — `series_catalog FINAL`: название, единицы, частота, происхождение и описание каждого ряда `macro_series` (ведётся импортёрами через `util.UpsertSeriesCatalog`)
++- `v_model_inputs` — **реализован** (`views/model_inputs.go`): одна строка с последними значениями рядов (`argMax` по дате), у каждого ряда колонка даты актуальности `*_date`. Состав: `gold_moex_fix_usd` (MOEX-фикс, не LBMA), `usdrub`, `cbr_key_rate`, `ofz_1y/3y/5y/10y`, `rgbi`, `ipc_mes_last`, `ipc_week_ytd` (ориентир, не официальный ИПЦ), `fedfunds`, `dfii10`, `dgs10`, `t5yie`, `dtwexbgs`, `plzl_close`, `last_run_id`, `last_nav_per_share`, `last_run_date`. Crack, TCC и AISC в витрине **нет** (crack — в `v_gold_dashboard`, TCC/AISC в MCP не выводятся)
++- `v_gold_dashboard` — **реализован** (`views/gold_dashboard.go`): одна строка на индикатор `crack_ulsd_proxy`, `distillate_stocks`, `fedwatch_dec_hike`, `etf_flows_month`, `dxy`; значения из `macro_series` (`source IN ('manual','fred')`). `flag = 1` — порог пробит (crack >50, FedWatch >80, DXY >102); `stale = 1` — значения нет или последнее наблюдение старше 14 дней. Импортёров для этих индикаторов нет: значения только ручные, поэтому без ввода через `manual_series` они остаются `stale`
++- `v_forecast_accuracy` — **реализован** (`views/forecast_accuracy.go`): строка на прогноз из `forecast_log` (`metric`, `forecast_date`, `target_date`, `error_pct`, `is_resolved`). Отдельного конкурентного ML-трека в витрине нет (различается только `metric`). `actual` и `error_pct` в коде не заполняются: сверка с фактом после `target_date` не автоматизирована
++- `v_peers_comparison` — **не реализован** (в коде нет). План: P/NAV, EV/oz, дисконт к лидеру по контурам `ru`/`global`; алерт-порог — дисконт PLZL за ±1σ исторической нормы
++- `v_gold_attribution` — **не реализован** (в коде нет). План: GRAM-разложение движения золота (экспансия / риск / альтернативная стоимость / импульс); ошибки прогноза атрибутируются к фактору
++- `v_series_catalog` — **реализован** (`util/series_catalog.go`): `series_catalog FINAL`: название, единицы, частота, происхождение и описание каждого ряда `macro_series` (ведётся импортёрами через `util.UpsertSeriesCatalog`)
+ - `v_bea_pce` — `macro_series FINAL WHERE source = 'bea'`: индексы PCE из BEA (`PCE_PI`, `PCE_PI_CORE`), уровни 2017=100
+ - `v_fred_macro` — `macro_series FINAL WHERE source = 'fred'`: ряды FRED (DFII10, DGS10, FEDFUNDS, DTWEXBGS, CPIAUCSL, T5YIE)
+ - `v_bls_macro` — `macro_series FINAL WHERE source = 'bls'`: ряды BLS (CPI NSA/SA, безработица, NFP, зарплата, PPI, JOLTS)
+ - `v_cbr_macro` — ряды ЦБ РФ в единой форме `(source, series, date, value)`: `cbr_key_rate`, `cbr_currency_usd`, `cbr_gold`, `cbr_ruania` (7 метрик RUONIA), `cbr_m2`, `cbr_credit_m2x`, `cbr_bank_int_rate`, `cbr_indicators_cpd`, `cbr_infl_exp`, `cbr_loans_to_individuals`, `cbr_loans_to_corporations`, `households_b_mes`; единицы и сдвиги дат — в `v_series_catalog`
+ - `v_rosstat_macro` — ряды Росстата в той же форме: `ipc_mes`, `ipc_weeks`, `vvp_kvartal`, `salaries_mes`
+ - `v_minfin_budget` — исполнение бюджета: `minfin_fed_bud_mes` (source='minfin') и `minfin_fed_bud_mesyats` (source='minfin_mesyats', консолидированный бюджет; source различается, т.к. имена рядов совпадают)
+ - `v_gold_prices` — `gold_prices FINAL` в форме `(source, series, date, value)`: source='gold', series=venue (`moex_fix_usd` — производная цена, не LBMA)
+ - `v_stock_prices` — `stock_prices FINAL WHERE code='PLZL'`: дневные OHLCV акции Полюса (руб./акция); max/min — high/low дня
+ - `v_ofz_curve` — `ofz_curve FINAL`: доходности G-curve МосБиржи (теноры 1y/3y/5y/10y, % годовых) + уровень индекса RGBI (тенор RGBI — не доходность)
++- `v_events_calendar` — **реализован** (`calendar/events.go`): `events_calendar FINAL`: календарь событий-триггеров прогноза золота/NAV (дата, категория, заголовок, пороги-триггеры в JSON, статус pending|done|verified); сид Q4-2026 — `sql/events_calendar_q4_2026.sql`
+ 
+ Правила витрин:
+ - создаются через `CREATE OR REPLACE VIEW ... DEFINER = default SQL SECURITY DEFINER AS ...` — определение может меняться, и агент читает сырые таблицы через definer, без прав на `macro_series`;
+ - комментарии ставятся через `ALTER TABLE v_x MODIFY COMMENT '...'` и `ALTER TABLE v_x COMMENT COLUMN col '...'`: синтаксис `COMMENT ON TABLE/COLUMN` в текущей версии ClickHouse (26.10) не поддерживается;
+ - `CREATE OR REPLACE` для витрин — отступление от правила «DDL всегда `IF NOT EXISTS`» (то правило относится к таблицам);
+ - для каждой новой витрины — `GRANT SELECT` пользователю `kimi_reader` в `sql/mcp_kimi_reader.sql`;
++- витрины контура прогноза (`views/`, импортёр `gold_views`) создаются `util.CreateView` и пропускаются, пока не существуют все их исходные таблицы. `v_model_inputs` требует 9 таблиц, в том числе `ipc_mes` и `ipc_weeks` (Росстат) и `model_runs` (ingest). Гейт проверяет только наличие таблиц (`system.tables`), не заполненность: `ipc_mes` и `ipc_weeks` создаются до загрузки Росстата, поэтому при его сбое витрина создаётся, а колонки `ipc_mes_last` и `ipc_week_ytd` дают NULL или устаревшие значения (ориентироваться по `*_date`). Запускать `make import STAT=gold_views` после первого запуска ingest
+ - групповые витрины legacy-источников (`v_cbr_macro`, `v_rosstat_macro`, `v_minfin_budget`, `v_gold_prices`) создаются через `util.CreateView`: витрина появляется, только когда все таблицы её группы уже импортированы, поэтому её создаёт последний импортёр группы; описания рядов группы пишутся в `series_catalog` каждым импортёром своими записями.
+ 
+ ### 6.4 DCF-модель Полюса (ключевые допущения, rev.2 по мировой практике)
+ 
+ ```
+ СТРУКТУРА: sum-of-parts, не корпоративный DCF
+@@ -390,32 +411,59 @@ Peers-сверка (peer_universe='ru': PLZL/ЮГК/SELG) — относител
+ ```
+ uv run --with mcp-clickhouse --python 3.12 mcp-clickhouse
+ ```
+ 
+ Конфигурация Kimi — пользовательский `~/.kimi-code/mcp.json` (права 600), блок `mcpServers.clickhouse`: `command: bash`, `args`: `-c` с подгрузкой `~/.config/rosstat/env` и затем `exec uv run --with mcp-clickhouse --python 3.12 mcp-clickhouse`; `env`: `CLICKHOUSE_HOST`, `CLICKHOUSE_PORT=8123`, `CLICKHOUSE_SECURE=false`, `CLICKHOUSE_USER=kimi_reader`, `CLICKHOUSE_DATABASE=default`, `CLICKHOUSE_MCP_SERVER_TRANSPORT=stdio`. Пароль `CLICKHOUSE_PASSWORD` приходит из файла окружения и в `mcp.json` не хранится.
+ 
++Режим HTTP (для плагина gold-nav): плагин подключает mcp-clickhouse по URL (`mcpServers.clickhouse.url`, Bearer-токен на чтение `GOLD_NAV_MCP_TOKEN`). **Развёртывание HTTP-сервера на стороне автора в репозитории не описано и не проверено: конфигурации reverse proxy, TLS и выдачи токенов в коде нет — не реализовано.** Локальная конфигурация Kimi в этом разделе остаётся stdio.
++
+ Инструменты сервера: `list_databases`, `list_tables` (читает `system.tables`/`system.columns`, видит только то, на что есть гранты; комментарии колонок попадают в `create_table_query`), `run_query`.
+ 
+-Пользователь БД `kimi_reader`: **только SELECT, только витрины `v_*`**, `readonly = 1`, `DEFAULT DATABASE default`. Сырые таблицы (`macro_series`, `gold_prices`, ...) агенту недоступны: проверено `497 ACCESS_DENIED`. Создание и гранты — `sql/mcp_kimi_reader.sql` (пароль подставляется вручную). Запись прогнозов — не через MCP, а отдельным ingest-скриптом.
++Пользователь БД `kimi_reader`: **только SELECT, только витрины `v_*`**, `readonly = 1`, `DEFAULT DATABASE default`. Сырые таблицы (`macro_series`, `gold_prices`, ...) агенту недоступны: проверено `497 ACCESS_DENIED`. Создание и гранты — `sql/mcp_kimi_reader.sql` (пароль подставляется вручную). Запись прогнозов — не через MCP, а через ingest-endpoint (`cmd/ingest`, см. ниже).
+ 
+ Правило для новых источников и рядов (см. AGENTS.md, правило 11): каждый ряд описан в `series_catalog`, каждая витрина имеет комментарии таблицы и колонок и грант `kimi_reader`.
+ 
+ Отдельно от data-контура: опциональный dev-MCP `jetbrains` — встроенный MCP-сервер GoLand (2025.2+, HTTP-stream `http://127.0.0.1:<динамический порт>/stream`, запись в `~/.kimi-code/mcp.json`). Даёт агенту инструменты IDE для работы с кодом (`get_file_problems`, `get_symbol_info`, `search_symbol`, `analyze_calls`, `rename_refactoring`); правила использования и запреты — в AGENTS.md, раздел «Инструменты GoLand (MCP `jetbrains`)», настройка — в README, «MCP GoLand (опционально)». К данным ClickHouse отношения не имеет.
+ 
++#### Ingest-endpoint (пакет `ingest/`, бинарник `cmd/ingest`)
++
++**Реализован.** Единственный путь записи в `model_runs`, `forecast_log` и `macro_series` со стороны контура прогноза.
++
++- Сборка и запуск: `make build-ingest` → `build/ingest`; `make run-ingest`. Нужны `CLICKHOUSE_URL` и `INGEST_TOKEN` (см. §5); `INGEST_ADDR` по умолчанию `:8081`.
++- Старт: ping ClickHouse, затем `EnsureTables` — идемпотентное создание `model_runs`, `forecast_log`, `macro_series` по DDL §6.2 (копии в `ingest/schema.go`).
++- Авторизация: заголовок `Authorization: Bearer <INGEST_TOKEN>`, сравнение через `subtle.ConstantTimeCompare`. Без заголовка или с неверным токеном — `401`.
++- `POST /v1/model_run` — JSON `ModelRun`: клиентский `run_id` (UUID, обязателен), `trigger_type` ∈ {`calendar`,`news`,`manual`}, `price_deck` ∈ {`spot_flat`,`consensus_lt`,`own_scenario`}, `probabilities` (сумма 100 ±0.1), `gold_scenario` (с `horizon`: `Q<n>-YYYY`, `YE-YYYY`, `YYYY` или `YYYY-MM-DD`; блоки сценариев с `point` или `low`/`high`), `nav_per_share`, `nav_bull/base/bear`, `market_price`, `upside_pct`, `discount_rate`, `wacc`, `usdrub_path`, `comment`. Ответ `200 {"inserted": 1}`; `400` — ошибка валидации или JSON.
++- Запись: сначала `forecast_log` (две строки: `metric = 'nav'`, `predicted = nav_per_share`; `metric = 'xau_q_avg'`, `predicted` = Σ p×point / Σ p; `forecast_date` — дата сервера, `target_date` — конец горизонта, `actual` и `error_pct` = NULL), последней — `model_runs` (`run_date` = время сервера, `nav_beta_gold` = NULL, поля в входе нет). Строка в `model_runs` — маркер фиксации прогона.
++- Идемпотентность: повторный POST с тем же `run_id` ничего не пишет (проверка `count() ... FINAL` + мьютекс, один инстанс). `ReplacingMergeTree` по `(run_date, run_id)` дубли сам не схлопывает. Ответ при дубле такой же, как при записи: `200 {"inserted": 1}`.
++- `POST /v1/manual_series` — JSON-массив `{"series", "date" (YYYY-MM-DD), "value"}`; пишется в `macro_series` с `source = 'manual'`. Ответ `200 {"inserted": N}`; пустой массив — `N = 0`; `400` — ошибка валидации любой точки (запись не выполняется).
++- Ошибка записи в ClickHouse — `500 insert failed`, детали в логе.
++- Не реализовано: ограничение частоты запросов, ограничение размера тела, TLS в самом процессе. Предполагается reverse proxy с TLS (в репозитории не описан).
++
++#### Плагин gold-nav (отдельный репозиторий)
++
++Плагин Kimi Code / Kimi Work лежит вне этого репозитория, sibling-каталогом `../gold-nav` (публикуется отдельно на GitHub; ссылка — после публикации). Состав: `kimi.plugin.json` (`mcpServers.clickhouse` по URL), skills `gold-forecast-session` и `dcf-methodology`, команды `/gold-nav:session` и `/gold-nav:verify`.
++
++- Читает витрины `v_model_inputs`, `v_gold_dashboard`, `v_events_calendar`, `v_forecast_accuracy` через MCP (только `v_*`, пользователь `kimi_reader`).
++- Пишет run через `POST /v1/model_run` и ручные ряды через `POST /v1/manual_series` по адресу `GOLD_NAV_INGEST_URL` с токеном `GOLD_NAV_INGEST_TOKEN`. Без токена сессия работает в режиме «только расчёт» (файл `run.json`).
++- Переменные окружения плагина (имена): `GOLD_NAV_MCP_TOKEN` (выдаёт автор, read-only), `GOLD_NAV_INGEST_URL` и `GOLD_NAV_INGEST_TOKEN` (только у автора). Значения в репозиторий не кладутся.
++- Не проверено: установка и живой сценарий в Kimi Code и Kimi Work, подстановка `${GOLD_NAV_MCP_TOKEN}` в манифесте (раздел «Результат проверки» в README плагина пока не заполнен). Спека: [docs/superpowers/specs/2026-10-10-gold-nav-plugin-design.md](docs/superpowers/specs/2026-10-10-gold-nav-plugin-design.md).
++
+ ## 7. Календарь триггеров (актуальный Q4-2026)
+ 
+ | Дата | Событие | Действие модели |
+ |---|---|---|
+ | ср еженед. | EIA дистилляты; чт — недельный ИПЦ | пороги: crack >$50 медведь / <$30 снято |
+ | 10-е ежемес. | WGC ETF-потоки + ЦБ | норма покупок ЦБ 40–60 т/мес |
+ | 23.10.2026 | СД ЦБ РФ (ставка 14%) | снижение → флаг перетока ликвидности |
+ | 01.11.2026 | Истечение запрета РФ на экспорт дизеля | продление → bear; отмена → bull |
+ | 10.11.2026 | CPI США за октябрь | горячий → FOMC-hike 85–90% |
+ | 09.12.2026 | FOMC + dot plot | 2-е повышение → пробой $4,000 → $3,750–3,800 |
+ | 18.12.2026 | СД ЦБ РФ + ребалансировка MOEX | база: −25 б.п. до 13,75% |
+ 
++Та же информация хранится в таблице `events_calendar` (сид `sql/events_calendar_q4_2026.sql`, витрина `v_events_calendar`); агент читает календарь из витрины. Таблица выше — краткая сводка для людей: даты и пороги в сиде точнее, а WGC в сиде — одна дата 2026-10-30 (GDT), а не «10-е число ежемесячно». При расхождении верна таблица `events_calendar`, а эту сводку нужно обновить.
++
+ ## 8. Правила для AI-ассистента (Kimi Code)
+ 
+ 1. **Новый источник = новый файл** в доменном пакете + `init()`-регистрация. main.go не править (пакет уже импортирован) — если пакета нет, добавить blank-import.
+ 2. Использовать шаблон Б (`util.HdBase`) для XLSX-источников; шаблон В для краулеров; шаблон А — только если нужна кастомная логика поиска ссылки.
+ 3. Вставка только батчами (`PrepareBatch`/`Append`/`Send`). DDL `IF NOT EXISTS`. Значения новых таблиц — Float64.
+ 4. HTTP — только через `util.HttpClient` / `util.GetXlsx` / `util.GetCSV` (там нац. сертификаты и UA).
+diff --git a/Makefile b/Makefile
+index dd06575..8923940 100644
+--- a/Makefile
++++ b/Makefile
+@@ -15,13 +15,13 @@ CH_HTTP_PORT ?= 8123
+ CH_TCP_PORT  ?= 9000
+ 
+ MCP_USER     ?= kimi_reader
+ MCP_PY       ?= 3.12
+ MCP_CMD      := uv run --with mcp-clickhouse --python $(MCP_PY) mcp-clickhouse
+ 
+-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status dev-check env-check import mcp-run mcp-user mcp-check
++.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mcp-run mcp-user mcp-check build-ingest run-ingest
+ 
+ all: lint test build
+ 
+ # lint падает, если что-то не отформатировано, затем запускает golangci-lint,
+ # если он установлен. CI выполняет те же проверки.
+ lint:
+@@ -75,12 +75,26 @@ ch-down:
+ 		echo "PID-файл $(CH_PID) не найден или процесс не запущен (сервер, поднятый вне make, не останавливается)"; \
+ 	fi
+ 
+ ch-status:
+ 	@curl -sf -m 2 http://localhost:$(CH_HTTP_PORT)/ping >/dev/null 2>&1 && echo "ClickHouse отвечает на порту $(CH_HTTP_PORT)" || echo "ClickHouse не отвечает на порту $(CH_HTTP_PORT)"
+ 
++# Прогон SQL-файла в локальный ClickHouse: make ch-sql FILE=sql/events_calendar_q4_2026.sql
++# Файл должен лежать в репозитории (путь относительный). Многострочные скрипты — через --multiquery.
++# Подключается пользователем CH_USER (по умолчанию default, локальный dev-сервер без пароля);
++# CH_USER_PASSWORD задавайте, только если пользователю нужен пароль.
++FILE ?=
++CH_USER ?= default
++CH_USER_PASSWORD ?=
++ch-sql:
++	@test -n "$(FILE)" || { echo "укажите файл: make ch-sql FILE=sql/events_calendar_q4_2026.sql"; exit 1; }
++	@test -f "$(FILE)" || { echo "файл не найден: $(FILE)"; exit 1; }
++	@test -n "$(CH_BIN)" || { echo "clickhouse не найден: задайте CH_BIN=/путь/к/clickhouse"; exit 1; }
++	@curl -sf -m 2 http://localhost:$(CH_HTTP_PORT)/ping >/dev/null 2>&1 || { echo "ClickHouse не отвечает: make ch-up"; exit 1; }
++	"$(CH_BIN)" client --user "$(CH_USER)" --password "$(CH_USER_PASSWORD)" --multiquery < "$(FILE)"
++
+ # Проверка окружения разработчика: наличие инструментов и версий.
+ dev-check:
+ 	@for t in go gofmt golangci-lint uv curl; do \
+ 		if command -v $$t >/dev/null 2>&1; then echo "OK   $$t: $$(command -v $$t)"; else echo "НЕТ  $$t (установка: см. README, раздел «Зависимости для разработки»)"; fi; \
+ 	done
+ 	@test -n "$(CH_BIN)" && echo "OK   clickhouse: $(CH_BIN)" || echo "НЕТ  clickhouse (задайте CH_BIN или установите ClickHouse)"
+@@ -97,12 +111,21 @@ STAT ?=
+ import:
+ 	@test -n "$(STAT)" || { echo "укажите импортёр: make import STAT=bea"; exit 1; }
+ 	@mkdir -p $(BUILD_DIR)
+ 	go build -o $(BUILD_DIR)/$(BINARY)-native .
+ 	CLICKHOUSE_IMPORT_STAT=$(STAT) ./$(BUILD_DIR)/$(BINARY)-native
+ 
++# Ingest-сервис контура прогноза (единственный путь записи в model_runs/forecast_log/macro_series).
++# Нужны CLICKHOUSE_URL и INGEST_TOKEN из $(ROSSTAT_ENV); INGEST_ADDR по умолчанию :8081.
++build-ingest:
++	@mkdir -p $(BUILD_DIR)
++	go build -o $(BUILD_DIR)/ingest ./cmd/ingest
++
++run-ingest: build-ingest
++	./$(BUILD_DIR)/ingest
++
+ # MCP-сервер mcp-clickhouse в режиме stdio (обычно его запускает Kimi сам; здесь — для ручной отладки).
+ # Пароль берётся из CLICKHOUSE_PASSWORD окружения, в Makefile не хранится.
+ mcp-run:
+ 	@test -n "$$CLICKHOUSE_PASSWORD" || { echo "задайте CLICKHOUSE_PASSWORD (пароль пользователя $(MCP_USER))"; exit 1; }
+ 	CLICKHOUSE_HOST=localhost CLICKHOUSE_PORT=$(CH_HTTP_PORT) CLICKHOUSE_SECURE=false CLICKHOUSE_VERIFY=false \
+ 	CLICKHOUSE_USER=$(MCP_USER) CLICKHOUSE_DATABASE=default CLICKHOUSE_MCP_SERVER_TRANSPORT=stdio \
+diff --git a/README.md b/README.md
+index aa3d936..99dd3ae 100644
+--- a/README.md
++++ b/README.md
+@@ -1,11 +1,11 @@
+ # clickhouse-import-rosstat
+ 
+ Go-конвейер импорта российской макроэкономической и финансовой статистики в ClickHouse. Данные используются дашбордами Grafana и аналитическими моделями (сценарный прогноз золота, DCF и NAV акций ПАО «Полюс»). Один бинарник, конфигурация только через переменные окружения.
+ 
+-Подробная архитектура, схемы таблиц и конвенции — в [ARCHITECTURE.md](ARCHITECTURE.md). План развития — в [docs/ROADMAP_DCF_POLYUS.md](docs/ROADMAP_DCF_POLYUS.md). Правила для AI-ассистентов — в [AGENTS.md](AGENTS.md).
++Подробная архитектура, схемы таблиц и конвенции — в [ARCHITECTURE.md](ARCHITECTURE.md). План развития — в [docs/ROADMAP_DCF_POLYUS.md](docs/ROADMAP_DCF_POLYUS.md). Правила для AI-ассистентов — в [AGENTS.md](AGENTS.md). Контур прогноза золота (витрины, календарь, ingest-endpoint, плагин `gold-nav`) — в разделе «Контур прогноза золота» и в [спецификации](docs/superpowers/specs/2026-10-10-gold-nav-plugin-design.md).
+ 
+ ## Что импортируется
+ 
+ Каждый источник — импортёр с `init()`-регистрацией. Расписание задаёт Dagu (файлы в `dagu/`).
+ 
+ | Домен (пакет) | Источник | Таблицы ClickHouse | Расписание (МСК) |
+@@ -19,30 +19,38 @@ Go-конвейер импорта российской макроэкономи
+ | `craw` | Росстандарт: сертификаты ГОСТ (краулер) | `gost_*` | 1-е число 11:31 |
+ | `fred` | FRED (CSV): DFII10, DGS10, FEDFUNDS, DTWEXBGS, CPIAUCSL, T5YIE | `macro_series` (`source = 'fred'`), каталог `series_catalog`, витрина `v_fred_macro` | ежедневно 11:41 |
+ | `bls` | BLS API v2: CPI (CUUR0000SA0, CUSR0000SA0), безработица, NFP, средняя зарплата, PPI, JOLTS | `macro_series` (`source = 'bls'`), каталог `series_catalog`, витрина `v_bls_macro` | ежедневно 12:23 |
+ | `bea` | BEA API: индексы PCE (headline, excluding food and energy), таблица NIPA T20804 | `macro_series` (`source = 'bea'`) | ежедневно 12:37 |
+ | `gold` | Золото: фиксинг MOEX GOLDFIXME (₽/г) пересчитан в USD/oz по курсу ЦБ | `gold_prices` (`venue = 'moex_fix_usd'`); каталог `series_catalog`, витрина `v_gold_prices` | ежедневно 18:47 |
+ | `moex` | МосБиржа ISS: свечи PLZL (OHLCV), индекс RGBI, доходности G-curve ОФЗ (1y/3y/5y/10y) | `stock_prices` (`code = 'PLZL'`), `ofz_curve`; каталог `series_catalog`, витрины `v_stock_prices`, `v_ofz_curve` | ежедневно 19:13 |
++| `calendar` | Календарь событий-триггеров прогноза золота/NAV (Q4-2026; сид — `sql/events_calendar_q4_2026.sql`) | `events_calendar`; витрина `v_events_calendar` | вручную (`make import STAT=events_calendar`) |
++| `views` | Витрины контура прогноза: `v_model_inputs`, `v_gold_dashboard`, `v_forecast_accuracy` (импортёр `gold_views`) | витрины; гранты `kimi_reader` — в `sql/mcp_kimi_reader.sql` | вручную, после первого запуска ingest: `make import STAT=gold_views` |
+ | `financial` | Legacy: корпоративные databook'и (ЧМФ, ММК, НЛМК, Полюс, ЮГК), investing.com, РЖД | `databook_*`, `polyus_financial_metrics` и др. | понедельник 10:23 |
+ 
+ Импортёр `gold` — временный: производная цена, не LBMA. Официальный LBMA AM/PM пока не подключён, см. «Ограничения».
+ 
+ ## Структура репозитория
+ 
+ ```text
+ main.go                  точка входа: подключение к ClickHouse, фильтр импортёров, код выхода
+ chimport/                интерфейс ImportStat и глобальный реестр Stats
+ util/                    HTTP-клиент (национальные TLS-сертификаты РФ, ротация User-Agent), шаблоны HdBase и ClickHouseImport, батч-вставка
+ bank/ cbr/ craw/ customs/ fao/ minfin/ rosstat/   доменные импортёры (см. таблицу выше)
+ fred/                    FRED CSV → macro_series
++calendar/                календарь событий-триггеров → events_calendar
++views/                   витрины контура прогноза (v_model_inputs, v_gold_dashboard, v_forecast_accuracy)
++ingest/                  ingest-endpoint контура прогноза: model_runs, forecast_log, macro_series (source='manual')
++cmd/ingest/              бинарник ingest (отдельный от основного импорта)
+ bls/                     BLS API v2 → macro_series
+ bea/                     BEA API (NIPA T20804) → macro_series
+ gold/                    MOEX GOLDFIXME + cbr_currency_usd → gold_prices
+ moex/                    MOEX ISS: свечи PLZL → stock_prices, RGBI + G-curve → ofz_curve
+ financial/               legacy-контур (database/sql, свой main), новый код туда не добавляется
+ dagu/                    расписания: один DAG-файл на домен, имя файла = имя DAG
++sql/                     DDL и гранты вручную: пользователь kimi_reader, сид календаря Q4-2026
++scripts/                 проверки MCP (mcp_setup_user.py, mcp_check.py)
+ docs/                    аналитические статьи и дорожная карта
+ .github/workflows/       CI (go.yml) и релиз по тегу v* (release.yml)
+ ```
+ 
+ ## Быстрый старт
+ 
+@@ -70,37 +78,73 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
+ | `CLICKHOUSE_URL` | DSN подключения (обязательна). Не выводится в логах |
+ | `CLICKHOUSE_IMPORT_STAT` | Фильтр импортёров через запятую по имени (`Name()`). Пусто — все импортёры |
+ | `LOG_LEVEL` | Уровень logrus: `debug`, `info`, `warn`, `error` |
+ | `CERT_FILES` | PEM-сертификаты через запятую (нац. УЦ РФ для gos-сайтов) |
+ | `BLS_API_KEY` | Регистрационный ключ BLS (необязателен; без него работает, но лимиты строже). Не выводится в логах |
+ | `BEA_API_KEY` | UserID BEA API (обязателен для `bea`; без него импортёр завершается ошибкой). Не выводится в логах |
++| `INGEST_TOKEN` | Bearer-токен ingest-endpoint, обязателен для `cmd/ingest` (без него процесс не стартует). Не выводится в логах |
++| `INGEST_ADDR` | Адрес HTTP-сервера `cmd/ingest`, по умолчанию `:8081` |
+ 
+ Поведение при запуске: неизвестное имя в `CLICKHOUSE_IMPORT_STAT` даёт предупреждение; ошибка любого импортёра даёт код выхода `1`, остальные импортёры при этом выполняются.
+ 
+ Импортёр `financial` читает `TICKER`, `FINANCIAL_DATA_DIR`, `INVESTING_EMAIL`, `INVESTING_PASSWORD`; эти переменные устаревают вместе с legacy-контуром.
+ 
+ ## Оркестрация (Dagu)
+ 
+ Расписания описаны в `dagu/*.yaml`: `type: chain`, `overlap_policy: skip`, каждый шаг запускает бинарник с `CLICKHOUSE_IMPORT_STAT=<имя>`, ретраи — 3 попытки с паузой 300 с. Путь к бинарнику (`ROSSTAT_IMPORT_BIN`) и `CLICKHOUSE_URL` задаются в `base.yaml` Dagu; секреты лежат в файлах `/etc/dagu/secrets/` с правами `0600`, в репозитории их нет. Внутри домена зависимости задаются через `depends`; между DAG зависимостей нет (см. `gold.yaml`: шаг `cbr_currency_usd` стоит внутри DAG).
+ 
+ Запуск одного DAG вручную: `dagu start dagu/gold.yaml` (dev-окружение Dagu должно видеть `ROSSTAT_IMPORT_BIN` и `CLICKHOUSE_URL` через `base.yaml`).
+ 
++## Контур прогноза золота
++
++Составные части контура (подробно — ARCHITECTURE.md §6.3 и §6.5):
++
++- витрины `v_model_inputs`, `v_gold_dashboard`, `v_forecast_accuracy` и календарь `v_events_calendar` — читаются агентом через MCP (пользователь `kimi_reader`, только `v_*`);
++- ingest-endpoint (`cmd/ingest`) — единственный путь записи прогонов модели и ручных рядов;
++- плагин Kimi `gold-nav` — отдельный репозиторий, сценарная сессия прогноза и DCF NAV PLZL.
++
++### Ingest-endpoint
++
++Запуск: `make run-ingest` (нужны `CLICKHOUSE_URL` и `INGEST_TOKEN` в `~/.config/rosstat/env`; `INGEST_ADDR` по умолчанию `:8081`). При старте создаются `model_runs`, `forecast_log`, `macro_series`, если их ещё нет. Витрины `views/` создаются отдельно: `make import STAT=gold_views` после первого запуска ingest.
++
++| Метод и путь | Тело | Ответ |
++|---|---|---|
++| `POST /v1/model_run` | JSON прогона: клиентский `run_id` (UUID), `trigger_type`, `price_deck`, `probabilities`, `gold_scenario` с `horizon`, значения NAV | `200 {"inserted": 1}`; `400` при ошибке валидации |
++| `POST /v1/manual_series` | JSON-массив `{"series", "date": "YYYY-MM-DD", "value"}` → `macro_series`, `source = 'manual'` | `200 {"inserted": N}`; `400` при ошибке любой точки |
++
++Все запросы — с заголовком `Authorization: Bearer <INGEST_TOKEN>`; без него или с неверным токеном — `401`. Повторный `POST /v1/model_run` с тем же `run_id` ничего не записывает. Формат тела — в `ingest/model_run.go` (структура `ModelRun`).
++
++### Плагин gold-nav
++
++Плагин — отдельный репозиторий (не входит в этот проект). Локальная копия рядом: `../gold-nav`. Спецификация: [docs/superpowers/specs/2026-10-10-gold-nav-plugin-design.md](docs/superpowers/specs/2026-10-10-gold-nav-plugin-design.md).
++
++- Kimi Code: `/plugins install <github-url>` (ссылка на репозиторий — после публикации);
++- Kimi Work: зарегистрировать каталог плагина в персональном маркете (`kimi-daimon kimi-plugin register-personal <путь к gold-nav>`) и включить в «Плагины → Персональный».
++
++Переменные окружения пользователя плагина (только имена, значения выдаёт автор): `GOLD_NAV_MCP_TOKEN` — read-only токен MCP; `GOLD_NAV_INGEST_URL` и `GOLD_NAV_INGEST_TOKEN` — только у автора. Команды плагина: `/gold-nav:session` (сценарная сессия) и `/gold-nav:verify` (сверка прогнозов с фактом).
++
++Живая приёмка плагина в Kimi Code и Kimi Work не выполнена; см. раздел «Результат проверки» в README плагина.
++
+ ## Разработка
+ 
+ | Команда | Что делает |
+ |---|---|
+ | `make lint` | `gofmt -l` (падает, если есть неотформатированный код) и `golangci-lint run ./...` |
+ | `make test` | `go vet` и `go test -race ./...` (тесты есть у `bls`, `bea`, `cbr`, `rosstat`, `minfin`, `gold`, `moex`) |
+ | `make build` | статический бинарник `linux/amd64` в `build/` |
+ | `make run` | сборка и запуск (нужен `CLICKHOUSE_URL`) |
++| `make import STAT=<имя>` | локальный прогон одного импортёра по `Name()` (собирает `build/clickhouse-import-rosstat-native`) |
++| `make build-ingest` | сборка ingest-endpoint (`cmd/ingest`) в `build/ingest` |
++| `make run-ingest` | сборка и запуск ingest-endpoint (нужны `CLICKHOUSE_URL` и `INGEST_TOKEN`) |
+ | `make fmt` | `gofmt -w .` |
+ | `make deps` | `go mod download` и `go mod tidy` |
+ | `make clean` | удалить `build/` |
+ | `make ch-up` | запустить локальный ClickHouse (порты 8123/9000), если он ещё не отвечает |
+ | `make ch-down` | остановить сервер, поднятый через `make ch-up` (по PID-файлу) |
+ | `make ch-status` | проверить, отвечает ли сервер на `localhost:8123` |
++| `make ch-sql FILE=...` | прогнать SQL-файл репозитория в локальный ClickHouse (`--multiquery`; пользователь `CH_USER`, по умолчанию `default` без пароля) |
+ | `make dev-check` | проверить наличие `go`, `gofmt`, `golangci-lint`, `uv`, `curl`, `clickhouse` |
+ | `make mcp-run` | запустить MCP-сервер `mcp-clickhouse` в stdio вручную (нужен `CLICKHOUSE_PASSWORD`) |
+ | `make mcp-user` | создать пользователя `kimi_reader` и выдать `GRANT SELECT` на витрины из `sql/mcp_kimi_reader.sql` (нужен `CLICKHOUSE_PASSWORD`, запущенный ClickHouse) |
+ | `make mcp-check` | smoke-проверка MCP: инструменты, витрины, отказ на сырые таблицы (нужен `CLICKHOUSE_PASSWORD`, запущенный ClickHouse) |
+ 
+ ### Зависимости для разработки
+@@ -144,12 +188,13 @@ make ch-down                         # остановить сервер
+ 
+ ```bash
+ export BEA_API_KEY=<your-key>
+ export CLICKHOUSE_URL=clickhouse://localhost:9000/default
+ export CLICKHOUSE_PASSWORD=<kimi_reader-password>
+ # export BLS_API_KEY=<your-key>
++# export INGEST_TOKEN=<ingest-token>
+ ```
+ 
+ - Makefile подключает файл сам (`-include`), поэтому любая `make`-цель видит ключи без `export` в shell; путь можно переопределить: `make ROSSTAT_ENV=/путь/к/файлу ...`;
+ - в терминале: `set -a; . ~/.config/rosstat/env; set +a`;
+ - проверка без вывода значений: `make env-check`;
+ - локальный импорт одного источника: `make import STAT=bea` (собирает бинарник под macOS в `build/clickhouse-import-rosstat-native`);
+@@ -226,22 +271,28 @@ MCP GoLand (опционально, ускоряет работу Kimi Code с 
+ - `lint`: `golangci-lint` v2.14.0 с конфигом `.golangci.yml`. Пакет `financial/` исключён из линта как legacy;
+ - `vulncheck`: `govulncheck ./...` (падает при уязвимостях, которые затрагивают код);
+ - `build`: `make build`, артефакт `build/`.
+ 
+ Все задания используют Go `1.27.x`: `govulncheck` проверяет стандартную библиотеку тулчейном, которым запущен, и на go1.27.1 находил уязвимости `net/http` и `crypto/tls`, исправленные в go1.27.2.
+ 
+-`.github/workflows/release.yml` на тег `v*` запускает тесты и `goreleaser` (архив `linux/amd64`, `SHA256SUMS`, файлы `README.md` и `dagu/*.yaml`). Конфиг — `.goreleaser.yaml`; проверка: `goreleaser check`.
++`.github/workflows/release.yml` на тег `v*` запускает тесты и `goreleaser` (архив `linux/amd64`, `SHA256SUMS`, файлы `README.md` и `dagu/*.yaml`). Конфиг — `.goreleaser.yaml`; проверка: `goreleaser check`. В релиз входит только основной бинарник импорта; `cmd/ingest` собирается локально через `make build-ingest`.
+ 
+ ## Ограничения и известные проблемы
+ 
+ - **LBMA AM/PM не подключён.** Официальный LBMA JSON, Nasdaq Data Link `LBMA/GOLD` и stooq недоступны из этой сети (403 WAF, JS-проверка), FRED серии LBMA удалил. Временно используется `gold` (MOEX GOLDFIXME ÷ курс ЦБ).
+ - **Курс ЦБ без понедельников и новогодних праздников.** В `cbr_currency_usd` этих дат нет; `gold` берёт последний курс не позже даты и пропускает дни без курса старше 10 дней. Это дыра в источнике ЦБ.
+ - **Импортёры ЦБ/Росстата/ВТБ берут ссылку со страницы источника.** `cbr_infl_exp`, `cbr_credit_m2x`, `vvp_kvartal`, `salaries_mes`, `rus_vtb_group_ifrs` не хардкодят URL XLSX, а скрейпят актуальную ссылку (colly). Остальные источники ЦБ используют стабильные пути `vfs/statistics/...`.
+ - **`domrf_mortgage`, `sber_finansovie_rezultaty`, `tbank_group_ifrs` — ссылка задана статически.** Страницы источников закрыты JS-challenge (ServicePipe у ДОМ.РФ, TSPD у Сбера) либо не имеют листинга (CDN с UUID у Т-Банка), colly их не парсит: ссылку обновляют вручную при каждом релизе. У `tbank_group_ifrs` текущая ссылка ведёт на PDF, а не XLSX, — импорт падает.
+ - **Росстат может отдавать HTTP 426.** Домен `rosstat.gov.ru` периодически отклоняет запросы из-за технических работ (`Upgrade Required`), включая уже работавшие `ipc_mes`/`ipc_weeks`; это ограничение источника/сети, а не кода. Импортёры падают с диагностикой «не найдена ссылка на …».
+ - **`financial/`.** Legacy-контур (database/sql, свой main). Новые импортёры туда не добавляются.
++- **Ingest-endpoint без ограничения частоты и размера тела, TLS — снаружи.** TLS и rate limit предполагаются на reverse proxy, в репозитории он не описан. Повторный `POST /v1/model_run` с тем же `run_id` отвечает `200 {"inserted": 1}`, хотя строк не пишет: ответ не отличает дубль от новой записи.
++- **HTTP-режим mcp-clickhouse для плагина не развёрнут в репозитории.** Локальная конфигурация Kimi — stdio (блок «MCP для Kimi» в разделе «Ключи и окружение»). Для плагина `gold-nav` сервер автора по HTTPS с токеном нужно поднять отдельно.
++- **Индикаторы `v_gold_dashboard` вводятся вручную.** `crack_ulsd_proxy`, `distillate_stocks`, `fedwatch_dec_hike`, `etf_flows_month`, `dxy` имеют только `manual_series`; импортёров нет. Без ввода они показываются как `stale`.
++- **Сверка прогнозов не автоматизирована.** `actual` и `error_pct` в `forecast_log` не заполняются кодом; `v_forecast_accuracy` покажет `is_resolved = 0` до ручного ввода.
++- **ИПЦ в `v_model_inputs` может быть пустым.** Витрина требует, чтобы существовали таблицы `ipc_mes` и `ipc_weeks`, но не проверяет их заполненность. Таблицы создаются до загрузки Росстата, поэтому при его ошибке (см. выше) витрина создаётся, а `ipc_mes_last` и `ipc_week_ytd` остаются NULL или устаревают; ориентироваться по `*_date`.
++- **`nav_beta_gold` не заполняется** (поля нет во входе `ModelRun`), в таблицу пишется NULL.
+ - **Имена импортёров.** `Name()` у `fred` — `fred` (несколько серий, одна таблица `macro_series`), у `cbr` часть импортёров делит таблицу (`cbr_currency_usd`, `households_b_mes`).
+ - **Таблица `gold_prices` использует `Date32`.** Так как LBMA-ряд начинается в 1968 году.
+ - **Доходности G-curve (`ofz_curve`, теноры 1y/3y/5y/10y) — без ретроспективы.** Эндпоинт MOEX ISS `/iss/engines/stock/zcyc.json` отдаёт только снимок текущего дня; история накапливается с даты первого запуска импортёра. Индекс RGBI (тот же zcyc + свечи) имеет полную историю с 2010 года.
+ 
+ ## Grafana
+ 
+diff --git a/calendar/events.go b/calendar/events.go
+new file mode 100644
+index 0000000..d181b17
+--- /dev/null
++++ b/calendar/events.go
+@@ -0,0 +1,64 @@
++package calendar
++
++import (
++	"context"
++
++	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
++	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
++	"github.com/kmlebedev/clickhouse-import-rosstat/util"
++	log "github.com/sirupsen/logrus"
++)
++
++const (
++	eventsTable = "events_calendar"
++	eventsDdl   = `CREATE TABLE IF NOT EXISTS ` + eventsTable + ` (
++	    event_date Date,
++	    event_time Nullable(String),
++	    category LowCardinality(String), -- 'fomc','cpi','nfp','eia','wgc','cbr','polyus_ir','moex_rebalance','gov_rf'
++	    title String,
++	    threshold String,                -- JSON, напр. '{"crack":">50"}'
++	    status LowCardinality(String) DEFAULT 'pending'  -- pending|done|verified
++	) ENGINE = ReplacingMergeTree ORDER BY (event_date, category, title);
++	`
++)
++
++// eventsView — витрина календаря событий-триггеров для MCP-агента.
++// Сид данных живёт в sql/events_calendar_q4_2026.sql (идемпотентен за счёт ReplacingMergeTree),
++// импортёр только создаёт таблицу и витрину.
++var eventsView = util.View{
++	Name:    "v_events_calendar",
++	Tables:  []string{eventsTable},
++	Select:  `SELECT * FROM ` + eventsTable + ` FINAL`,
++	Comment: "Календарь событий-триггеров прогноза золота/NAV; status: pending|done|verified",
++	Columns: map[string]string{
++		"event_date": "Дата события (Date)",
++		"event_time": "Время события (местное/UTC, строка; NULL — время не фиксировано)",
++		"category":   "Категория триггера: fomc/cpi/nfp/eia/wgc/cbr/polyus_ir/moex_rebalance/gov_rf",
++		"title":      "Название события и действие модели при его наступлении",
++		"threshold":  "Пороги срабатывания в формате JSON, напр. '{\"crack\":\">50\"}'",
++		"status":     "Статус отработки: pending — ожидается, done — обработано, verified — сверено с фактом",
++	},
++}
++
++type eventsCalendar struct {
++}
++
++func (s *eventsCalendar) Name() string {
++	return eventsTable
++}
++
++func (s *eventsCalendar) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
++	if err = conn.Exec(ctx, eventsDdl); err != nil {
++		return count, err
++	}
++	created, err := util.CreateView(ctx, conn, eventsView)
++	if err != nil {
++		return count, err
++	}
++	log.Infof("View %s created: %t", eventsView.Name, created)
++	return count, nil
++}
++
++func init() {
++	chimport.Stats = append(chimport.Stats, &eventsCalendar{})
++}
+diff --git a/cmd/ingest/main.go b/cmd/ingest/main.go
+new file mode 100644
+index 0000000..b5fd012
+--- /dev/null
++++ b/cmd/ingest/main.go
+@@ -0,0 +1,51 @@
++package main
++
++import (
++	"context"
++	"net/http"
++	"os"
++	"time"
++
++	"github.com/ClickHouse/clickhouse-go/v2"
++	"github.com/kmlebedev/clickhouse-import-rosstat/ingest"
++	log "github.com/sirupsen/logrus"
++)
++
++const defaultAddr = ":8081"
++
++func main() {
++	if lvl, err := log.ParseLevel(os.Getenv("LOG_LEVEL")); err == nil {
++		log.SetLevel(lvl)
++	}
++	token := os.Getenv("INGEST_TOKEN")
++	if token == "" {
++		log.Fatal("INGEST_TOKEN is required")
++	}
++	clickhouseOptions, err := clickhouse.ParseDSN(os.Getenv("CLICKHOUSE_URL"))
++	if err != nil {
++		log.Fatal("invalid CLICKHOUSE_URL")
++	}
++	conn, err := clickhouse.Open(clickhouseOptions)
++	if err != nil {
++		log.Fatal(err)
++	}
++	ctx := context.Background()
++	if err = conn.Ping(ctx); err != nil {
++		log.Fatal(err)
++	}
++	writer := ingest.NewClickHouseWriter(conn)
++	if err = writer.EnsureTables(ctx); err != nil {
++		log.Fatal(err)
++	}
++	addr := os.Getenv("INGEST_ADDR")
++	if addr == "" {
++		addr = defaultAddr
++	}
++	log.Infof("ingest listening on %s", addr)
++	server := &http.Server{
++		Addr:              addr,
++		Handler:           ingest.NewServer(writer, token),
++		ReadHeaderTimeout: 10 * time.Second,
++	}
++	log.Fatal(server.ListenAndServe())
++}
+diff --git a/go.mod b/go.mod
+index 507182c..de1a603 100644
+--- a/go.mod
++++ b/go.mod
+@@ -5,12 +5,13 @@ go 1.27.2
+ require (
+ 	github.com/ClickHouse/clickhouse-go/v2 v2.32.0
+ 	github.com/PuerkitoBio/goquery v1.10.2
+ 	github.com/cenkalti/backoff/v5 v5.0.3
+ 	github.com/gocolly/colly/v2 v2.2.0
+ 	github.com/golang/glog v1.2.4
++	github.com/google/uuid v1.6.0
+ 	github.com/shakinm/xlsReader v0.9.12
+ 	github.com/sirupsen/logrus v1.9.3
+ 	github.com/xuri/excelize/v2 v2.11.0
+ 	golang.org/x/net v0.60.0
+ 	golang.org/x/text v0.42.0
+ )
+@@ -25,13 +26,12 @@ require (
+ 	github.com/bits-and-blooms/bitset v1.22.0 // indirect
+ 	github.com/go-faster/city v1.0.1 // indirect
+ 	github.com/go-faster/errors v0.7.1 // indirect
+ 	github.com/gobwas/glob v0.2.3 // indirect
+ 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
+ 	github.com/golang/protobuf v1.5.4 // indirect
+-	github.com/google/uuid v1.6.0 // indirect
+ 	github.com/kennygrant/sanitize v1.2.4 // indirect
+ 	github.com/klauspost/compress v1.17.11 // indirect
+ 	github.com/kr/pretty v0.3.1 // indirect
+ 	github.com/metakeule/fmtdate v1.1.2 // indirect
+ 	github.com/nlnwa/whatwg-url v0.6.1 // indirect
+ 	github.com/paulmach/orb v0.11.1 // indirect
+diff --git a/ingest/clickhouse.go b/ingest/clickhouse.go
+new file mode 100644
+index 0000000..4871c3b
+--- /dev/null
++++ b/ingest/clickhouse.go
+@@ -0,0 +1,264 @@
++package ingest
++
++import (
++	"context"
++	"encoding/json"
++	"fmt"
++	"regexp"
++	"strconv"
++	"sync"
++	"time"
++
++	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
++	"github.com/google/uuid"
++	log "github.com/sirupsen/logrus"
++)
++
++const (
++	modelRunsInsert   = "INSERT INTO model_runs (run_id, run_date, trigger_type, trigger_ref, gold_scenario, usdrub_path, price_deck, discount_rate, wacc, nav_per_share, nav_bull, nav_base, nav_bear, market_price, upside_pct, nav_beta_gold, comment)"
++	forecastLogInsert = "INSERT INTO forecast_log (forecast_date, target_date, metric, predicted, actual, error_pct)"
++	macroSeriesInsert = "INSERT INTO macro_series (source, series, date, value)"
++)
++
++// chStore — узкий срез ClickHouse, который нужен InsertModelRun; в тестах подменяется фейком.
++type chStore interface {
++	runExists(ctx context.Context, runID uuid.UUID) (bool, error)
++	prepareBatch(ctx context.Context, query string) (chBatch, error)
++}
++
++// chBatch — батч вставки: достаточно Append и Send из driver.Batch.
++type chBatch interface {
++	Append(v ...any) error
++	Send() error
++}
++
++// connStore — реализация chStore поверх driver.Conn.
++type connStore struct {
++	conn driver.Conn
++}
++
++func (s connStore) runExists(ctx context.Context, runID uuid.UUID) (bool, error) {
++	var count uint64
++	if err := s.conn.QueryRow(ctx, "SELECT count() FROM model_runs FINAL WHERE run_id = ?", runID).Scan(&count); err != nil {
++		return false, err
++	}
++	return count > 0, nil
++}
++
++func (s connStore) prepareBatch(ctx context.Context, query string) (chBatch, error) {
++	return s.conn.PrepareBatch(ctx, query)
++}
++
++// ClickHouseWriter — BatchWriter поверх clickhouse-go: только батчи PrepareBatch/Append/Send.
++type ClickHouseWriter struct {
++	conn  driver.Conn
++	store chStore
++	mu    sync.Mutex // сериализует InsertModelRun, см. комментарий у метода
++}
++
++func NewClickHouseWriter(conn driver.Conn) *ClickHouseWriter {
++	return &ClickHouseWriter{conn: conn, store: connStore{conn: conn}}
++}
++
++func (w *ClickHouseWriter) EnsureTables(ctx context.Context) error {
++	return ensureTables(ctx, w.conn)
++}
++
++// InsertModelRun пишет прогон модели и производные строки forecast_log:
++// metric='nav' (predicted = nav_per_share) и metric='xau_q_avg' (вероятностно-взвешенная
++// точка сценариев золота), target_date — конец горизонта сценария, actual/error_pct = NULL.
++//
++// Идемпотентность по клиентскому run_id: повторный POST с уже записанным run_id пропускается.
++// ORDER BY (run_date, run_id) в ReplacingMergeTree не схлопывает строки с разным run_date,
++// поэтому дубли из-за повторного POST этим движком не убираются — защищает только проверка ниже.
++// Поэтому вызовы сериализованы мьютексом (ingest — один инстанс): иначе два параллельных
++// повтора оба пройдут проверку и оба вставят строки.
++// Порядок записи: сначала forecast_log, последней — model_runs. Строка в model_runs — маркер
++// фиксации прогона: если forecast_log записан, а model_runs упал, повтор не увидит run и
++// допишет обе таблицы (forecast_log при повторе схлопывается по (metric, forecast_date) в пределах дня).
++// Обратный порядок привёл бы к тому, что упавший forecast_log навсегда отсутствует при существующем run.
++func (w *ClickHouseWriter) InsertModelRun(ctx context.Context, r ModelRun) error {
++	w.mu.Lock()
++	defer w.mu.Unlock()
++
++	runID, err := uuid.Parse(r.RunID)
++	if err != nil {
++		return fmt.Errorf("run_id %q is not a UUID: %w", r.RunID, err)
++	}
++	exists, err := w.store.runExists(ctx, runID)
++	if err != nil {
++		return err
++	}
++	if exists {
++		log.Infof("ingest: model_run %s already exists, skipping", r.RunID)
++		return nil
++	}
++	goldScenario, err := json.Marshal(r.GoldScenario)
++	if err != nil {
++		return fmt.Errorf("gold_scenario: %w", err)
++	}
++	usdrubPath, err := json.Marshal(r.UsdrubPath)
++	if err != nil {
++		return fmt.Errorf("usdrub_path: %w", err)
++	}
++	targetDate, err := scenarioTargetDate(r.GoldScenario)
++	if err != nil {
++		return err
++	}
++	xauAvg, err := weightedGoldPoint(r.GoldScenario, r.Probabilities)
++	if err != nil {
++		return err
++	}
++	now := time.Now()
++
++	forecastDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
++	forecastBatch, err := w.store.prepareBatch(ctx, forecastLogInsert)
++	if err != nil {
++		return err
++	}
++	for _, row := range []struct {
++		metric    string
++		predicted float64
++	}{
++		{"nav", r.NavPerShare},
++		{"xau_q_avg", xauAvg},
++	} {
++		if err = forecastBatch.Append(forecastDate, targetDate, row.metric, row.predicted, nil, nil); err != nil {
++			return err
++		}
++	}
++	if err = forecastBatch.Send(); err != nil {
++		return err
++	}
++
++	batch, err := w.store.prepareBatch(ctx, modelRunsInsert)
++	if err != nil {
++		return err
++	}
++	if err = batch.Append(
++		runID, now, r.TriggerType, r.TriggerRef, string(goldScenario), string(usdrubPath),
++		r.PriceDeck, r.DiscountRate, r.Wacc, r.NavPerShare, r.NavBull, r.NavBase, r.NavBear,
++		r.MarketPrice, r.UpsidePct, nil, r.Comment,
++	); err != nil {
++		return err
++	}
++	return batch.Send()
++}
++
++// InsertManualSeries пишет вручную введённые точки в macro_series с фиксированным source='manual'.
++func (w *ClickHouseWriter) InsertManualSeries(ctx context.Context, points []ManualSeriesPoint) error {
++	if len(points) == 0 {
++		return nil
++	}
++	batch, err := w.conn.PrepareBatch(ctx, macroSeriesInsert)
++	if err != nil {
++		return err
++	}
++	for _, point := range points {
++		date, err := time.Parse(manualSeriesDateLayout, point.Date)
++		if err != nil {
++			return fmt.Errorf("date %q: %w", point.Date, err)
++		}
++		if err = batch.Append(manualSeriesSource, point.Series, date, point.Value); err != nil {
++			return err
++		}
++	}
++	return batch.Send()
++}
++
++var (
++	quarterHorizonRe = regexp.MustCompile(`^Q([1-4])-(\d{4})$`)
++	yearHorizonRe    = regexp.MustCompile(`^(?:YE-)?(\d{4})$`)
++)
++
++// scenarioTargetDate — конец горизонта сценария: "Q4-2026" → конец квартала,
++// "YE-2026"/"2026" → 31 декабря, "2026-12-31" — как есть.
++// Используется и в ValidateModelRun (входные ошибки → 400), и в InsertModelRun.
++func scenarioTargetDate(scenario map[string]any) (time.Time, error) {
++	raw, ok := scenario["horizon"]
++	if !ok {
++		return time.Time{}, fmt.Errorf("gold_scenario.horizon is required for forecast_log target_date")
++	}
++	horizon, ok := raw.(string)
++	if !ok {
++		return time.Time{}, fmt.Errorf("gold_scenario.horizon must be a string, got %v", raw)
++	}
++	if date, err := time.Parse(manualSeriesDateLayout, horizon); err == nil {
++		return date, nil
++	}
++	if m := quarterHorizonRe.FindStringSubmatch(horizon); m != nil {
++		quarter, err := strconv.Atoi(m[1])
++		if err != nil {
++			return time.Time{}, fmt.Errorf("gold_scenario.horizon %q: %w", horizon, err)
++		}
++		year, err := strconv.Atoi(m[2])
++		if err != nil {
++			return time.Time{}, fmt.Errorf("gold_scenario.horizon %q: %w", horizon, err)
++		}
++		return time.Date(year, time.Month(quarter*3)+1, 0, 0, 0, 0, 0, time.UTC), nil
++	}
++	if m := yearHorizonRe.FindStringSubmatch(horizon); m != nil {
++		year, err := strconv.Atoi(m[1])
++		if err != nil {
++			return time.Time{}, fmt.Errorf("gold_scenario.horizon %q: %w", horizon, err)
++		}
++		return time.Date(year, time.December, 31, 0, 0, 0, 0, time.UTC), nil
++	}
++	return time.Time{}, fmt.Errorf("unsupported gold_scenario.horizon %q (want Q<n>-YYYY, YE-YYYY, YYYY or YYYY-MM-DD)", horizon)
++}
++
++// weightedGoldPoint — вероятностно-взвешенная точка золота: Σ prob×point / Σ prob.
++// Используется и в ValidateModelRun (нет блока под вероятность → 400), и в InsertModelRun.
++func weightedGoldPoint(scenario map[string]any, probabilities map[string]float64) (float64, error) {
++	var weighted, sum float64
++	for name, probability := range probabilities {
++		point, err := scenarioPoint(scenario, name)
++		if err != nil {
++			return 0, err
++		}
++		weighted += probability * point
++		sum += probability
++	}
++	if sum == 0 {
++		return 0, fmt.Errorf("probabilities are empty")
++	}
++	return weighted / sum, nil
++}
++
++// scenarioPoint — точка сценария: "point", при её отсутствии — середина "low"/"high".
++func scenarioPoint(scenario map[string]any, name string) (float64, error) {
++	raw, ok := scenario[name]
++	if !ok {
++		return 0, fmt.Errorf("gold_scenario has no %q block for probability", name)
++	}
++	block, ok := raw.(map[string]any)
++	if !ok {
++		return 0, fmt.Errorf("gold_scenario.%s must be an object, got %v", name, raw)
++	}
++	if point, ok := toFloat(block["point"]); ok {
++		return point, nil
++	}
++	low, lowOk := toFloat(block["low"])
++	high, highOk := toFloat(block["high"])
++	if lowOk && highOk {
++		return (low + high) / 2, nil
++	}
++	return 0, fmt.Errorf("gold_scenario.%s has no point and no low/high", name)
++}
++
++func toFloat(v any) (float64, bool) {
++	switch n := v.(type) {
++	case float64:
++		return n, true
++	case float32:
++		return float64(n), true
++	case int:
++		return float64(n), true
++	case int64:
++		return float64(n), true
++	case json.Number:
++		f, err := n.Float64()
++		return f, err == nil
++	}
++	return 0, false
++}
+diff --git a/ingest/clickhouse_test.go b/ingest/clickhouse_test.go
+new file mode 100644
+index 0000000..db7b53b
+--- /dev/null
++++ b/ingest/clickhouse_test.go
+@@ -0,0 +1,333 @@
++package ingest
++
++import (
++	"context"
++	"errors"
++	"math"
++	"sync"
++	"testing"
++	"time"
++
++	"github.com/google/uuid"
++)
++
++// runExistsDelay расширяет окно между проверкой существования и вставкой:
++// без мьютекса конкурентные повторы успевают пройти проверку до первой записи.
++const runExistsDelay = 20 * time.Millisecond
++
++// sentBatch — батч, успешно отправленный фейковым ClickHouse.
++type sentBatch struct {
++	query string
++	rows  [][]any
++}
++
++// fakeStore — фейк chStore: помнит закоммиченные run_id и отправленные батчи.
++type fakeStore struct {
++	mu        sync.Mutex
++	committed map[uuid.UUID]bool
++	sent      []sentBatch
++	failSend  map[string]error // ошибка Send по тексту запроса
++}
++
++func newFakeStore() *fakeStore {
++	return &fakeStore{committed: map[uuid.UUID]bool{}, failSend: map[string]error{}}
++}
++
++func (f *fakeStore) runExists(_ context.Context, runID uuid.UUID) (bool, error) {
++	f.mu.Lock()
++	exists := f.committed[runID]
++	f.mu.Unlock()
++	time.Sleep(runExistsDelay)
++	return exists, nil
++}
++
++func (f *fakeStore) prepareBatch(_ context.Context, query string) (chBatch, error) {
++	return &fakeBatch{store: f, query: query}, nil
++}
++
++// batchesFor — сколько батчей с этим запросом успешно отправлено.
++func (f *fakeStore) batchesFor(query string) int {
++	f.mu.Lock()
++	defer f.mu.Unlock()
++	n := 0
++	for _, b := range f.sent {
++		if b.query == query {
++			n++
++		}
++	}
++	return n
++}
++
++// fakeBatch — батч фейка. Send для model_runs помечает run_id (первый столбец) как закоммиченный.
++type fakeBatch struct {
++	store *fakeStore
++	query string
++	rows  [][]any
++}
++
++func (b *fakeBatch) Append(v ...any) error {
++	b.rows = append(b.rows, v)
++	return nil
++}
++
++func (b *fakeBatch) Send() error {
++	b.store.mu.Lock()
++	defer b.store.mu.Unlock()
++	if err := b.store.failSend[b.query]; err != nil {
++		return err
++	}
++	if b.query == modelRunsInsert {
++		runID, ok := b.rows[0][0].(uuid.UUID)
++		if !ok {
++			return errors.New("model_runs row must start with a uuid.UUID run_id")
++		}
++		b.store.committed[runID] = true
++	}
++	b.store.sent = append(b.store.sent, sentBatch{query: b.query, rows: b.rows})
++	return nil
++}
++
++func newTestWriter(store *fakeStore) *ClickHouseWriter {
++	return &ClickHouseWriter{store: store}
++}
++
++func TestScenarioTargetDate(t *testing.T) {
++	tests := []struct {
++		name    string
++		horizon string
++		want    string
++	}{
++		{"quarter Q1", "Q1-2026", "2026-03-31"},
++		{"quarter Q4", "Q4-2026", "2026-12-31"},
++		{"year end YE", "YE-2026", "2026-12-31"},
++		{"bare year", "2026", "2026-12-31"},
++		{"ISO date", "2026-12-31", "2026-12-31"},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			got, err := scenarioTargetDate(map[string]any{"horizon": tt.horizon})
++			if err != nil {
++				t.Fatalf("horizon %q: unexpected error: %v", tt.horizon, err)
++			}
++			if s := got.Format(manualSeriesDateLayout); s != tt.want {
++				t.Fatalf("horizon %q: target_date %s, want %s", tt.horizon, s, tt.want)
++			}
++		})
++	}
++}
++
++func TestScenarioTargetDateErrors(t *testing.T) {
++	tests := []struct {
++		name     string
++		scenario map[string]any
++	}{
++		{"horizon missing", map[string]any{}},
++		{"horizon not a string", map[string]any{"horizon": 2026.0}},
++		{"quarter out of range", map[string]any{"horizon": "Q5-2026"}},
++		{"free text", map[string]any{"horizon": "next year"}},
++		{"short year", map[string]any{"horizon": "YE-26"}},
++		{"negative year", map[string]any{"horizon": "-123"}},
++		{"impossible date", map[string]any{"horizon": "2026-02-30"}},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			if _, err := scenarioTargetDate(tt.scenario); err == nil {
++				t.Fatalf("expected error for %v", tt.scenario)
++			}
++		})
++	}
++}
++
++func TestWeightedGoldPoint(t *testing.T) {
++	tests := []struct {
++		name          string
++		scenario      map[string]any
++		probabilities map[string]float64
++		want          float64
++		wantErr       bool
++	}{
++		{
++			name:          "point wins over midpoint",
++			scenario:      map[string]any{"bull": map[string]any{"low": 4600.0, "high": 5000.0, "point": 4900.0}},
++			probabilities: map[string]float64{"bull": 100},
++			want:          4900,
++		},
++		{
++			name:          "midpoint when no point",
++			scenario:      map[string]any{"base": map[string]any{"low": 4000.0, "high": 4600.0}},
++			probabilities: map[string]float64{"base": 100},
++			want:          4300,
++		},
++		{
++			name: "midpoint mixed with point",
++			scenario: map[string]any{
++				"bull": map[string]any{"low": 4600.0, "high": 5000.0},
++				"bear": map[string]any{"point": 3900.0},
++			},
++			probabilities: map[string]float64{"bull": 50, "bear": 50},
++			want:          4350,
++		},
++		{
++			name: "weights divided by their sum",
++			scenario: map[string]any{
++				"bull": map[string]any{"point": 4800.0},
++				"bear": map[string]any{"point": 3900.0},
++			},
++			probabilities: map[string]float64{"bull": 2, "bear": 2},
++			want:          4350,
++		},
++		{
++			name:          "probability key without block",
++			scenario:      map[string]any{"bull": map[string]any{"point": 4800.0}},
++			probabilities: map[string]float64{"bull": 25, "base": 75},
++			wantErr:       true,
++		},
++		{
++			name:          "block without point and range",
++			scenario:      map[string]any{"base": map[string]any{"low": 4000.0}},
++			probabilities: map[string]float64{"base": 100},
++			wantErr:       true,
++		},
++		{
++			name:          "block is not an object",
++			scenario:      map[string]any{"base": 4300.0},
++			probabilities: map[string]float64{"base": 100},
++			wantErr:       true,
++		},
++		{
++			name:          "probabilities empty",
++			scenario:      map[string]any{"base": map[string]any{"point": 4300.0}},
++			probabilities: nil,
++			wantErr:       true,
++		},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			got, err := weightedGoldPoint(tt.scenario, tt.probabilities)
++			if tt.wantErr {
++				if err == nil {
++					t.Fatalf("expected error, got %v", got)
++				}
++				return
++			}
++			if err != nil {
++				t.Fatalf("unexpected error: %v", err)
++			}
++			if math.Abs(got-tt.want) > 1e-9 {
++				t.Fatalf("weighted point %v, want %v", got, tt.want)
++			}
++		})
++	}
++}
++
++func TestInsertModelRunExistingRunSkipsAllBatches(t *testing.T) {
++	store := newFakeStore()
++	store.committed[uuid.MustParse(testRunID)] = true
++	writer := newTestWriter(store)
++
++	if err := writer.InsertModelRun(context.Background(), validModelRun()); err != nil {
++		t.Fatalf("repeat POST must succeed: %v", err)
++	}
++	if len(store.sent) != 0 {
++		t.Fatalf("existing run_id must not trigger any batch, got %d", len(store.sent))
++	}
++}
++
++func TestInsertModelRunWritesForecastLogBeforeModelRuns(t *testing.T) {
++	store := newFakeStore()
++	run := validModelRun()
++	run.NavPerShare = 12500
++
++	if err := newTestWriter(store).InsertModelRun(context.Background(), run); err != nil {
++		t.Fatalf("InsertModelRun: %v", err)
++	}
++	if len(store.sent) != 2 {
++		t.Fatalf("batches sent: %d, want 2", len(store.sent))
++	}
++	if store.sent[0].query != forecastLogInsert || store.sent[1].query != modelRunsInsert {
++		t.Fatalf("order: %q then %q, want forecast_log then model_runs", store.sent[0].query, store.sent[1].query)
++	}
++	if !store.committed[uuid.MustParse(testRunID)] {
++		t.Fatal("model_runs row must be committed")
++	}
++
++	forecast := store.sent[0].rows
++	if len(forecast) != 2 {
++		t.Fatalf("forecast_log rows: %d, want 2", len(forecast))
++	}
++	wantRows := []struct {
++		metric    string
++		predicted float64
++	}{
++		{"nav", 12500},
++		{"xau_q_avg", 4285},
++	}
++	for i, want := range wantRows {
++		metric, _ := forecast[i][2].(string)
++		predicted, _ := forecast[i][3].(float64)
++		target, _ := forecast[i][1].(time.Time)
++		if metric != want.metric || math.Abs(predicted-want.predicted) > 1e-9 {
++			t.Fatalf("forecast row %d: metric %q predicted %v, want %q %v", i, metric, predicted, want.metric, want.predicted)
++		}
++		if s := target.Format(manualSeriesDateLayout); s != "2026-12-31" {
++			t.Fatalf("forecast row %d: target_date %s, want 2026-12-31", i, s)
++		}
++	}
++}
++
++func TestInsertModelRunForecastFailureIsRetried(t *testing.T) {
++	store := newFakeStore()
++	store.failSend[forecastLogInsert] = errors.New("forecast_log unavailable")
++	writer := newTestWriter(store)
++	run := validModelRun()
++	run.NavPerShare = 12500
++
++	if err := writer.InsertModelRun(context.Background(), run); err == nil {
++		t.Fatal("expected error when forecast_log insert fails")
++	}
++	if n := store.batchesFor(modelRunsInsert); n != 0 {
++		t.Fatalf("model_runs written %d times after forecast_log failure, want 0", n)
++	}
++
++	delete(store.failSend, forecastLogInsert)
++	if err := writer.InsertModelRun(context.Background(), run); err != nil {
++		t.Fatalf("retry: %v", err)
++	}
++	if n := store.batchesFor(modelRunsInsert); n != 1 {
++		t.Fatalf("model_runs written %d times after retry, want 1", n)
++	}
++	if n := store.batchesFor(forecastLogInsert); n != 1 {
++		t.Fatalf("forecast_log batches %d after retry, want 1", n)
++	}
++}
++
++func TestInsertModelRunConcurrentRetriesWriteOnce(t *testing.T) {
++	store := newFakeStore()
++	writer := newTestWriter(store)
++	run := validModelRun()
++	run.NavPerShare = 12500
++
++	const attempts = 8
++	errs := make([]error, attempts)
++	var wg sync.WaitGroup
++	for i := 0; i < attempts; i++ {
++		wg.Add(1)
++		go func() {
++			defer wg.Done()
++			errs[i] = writer.InsertModelRun(context.Background(), run)
++		}()
++	}
++	wg.Wait()
++
++	for i, err := range errs {
++		if err != nil {
++			t.Fatalf("attempt %d: %v", i, err)
++		}
++	}
++	if n := store.batchesFor(modelRunsInsert); n != 1 {
++		t.Fatalf("model_runs written %d times for %d concurrent POSTs with one run_id, want 1", n, attempts)
++	}
++	if n := store.batchesFor(forecastLogInsert); n != 1 {
++		t.Fatalf("forecast_log batches %d, want 1", n)
++	}
++}
+diff --git a/ingest/model_run.go b/ingest/model_run.go
+new file mode 100644
+index 0000000..a492430
+--- /dev/null
++++ b/ingest/model_run.go
+@@ -0,0 +1,106 @@
++package ingest
++
++import (
++	"fmt"
++	"math"
++	"strings"
++	"time"
++
++	"github.com/google/uuid"
++)
++
++const (
++	probabilitiesSumExpected  = 100.0
++	probabilitiesSumTolerance = 0.1
++	manualSeriesDateLayout    = "2006-01-02"
++	manualSeriesSource        = "manual"
++)
++
++var validTriggerTypes = map[string]bool{
++	"calendar": true,
++	"news":     true,
++	"manual":   true,
++}
++
++var validPriceDecks = map[string]bool{
++	"spot_flat":    true,
++	"consensus_lt": true,
++	"own_scenario": true,
++}
++
++// ModelRun — один прогон модели «золото → DCF → NAV» (таблица model_runs).
++type ModelRun struct {
++	RunID         string             `json:"run_id"`
++	TriggerType   string             `json:"trigger_type"`
++	TriggerRef    string             `json:"trigger_ref"`
++	GoldScenario  map[string]any     `json:"gold_scenario"`
++	UsdrubPath    map[string]any     `json:"usdrub_path"`
++	PriceDeck     string             `json:"price_deck"`
++	DiscountRate  float64            `json:"discount_rate"`
++	Wacc          float64            `json:"wacc"`
++	NavPerShare   float64            `json:"nav_per_share"`
++	NavBull       float64            `json:"nav_bull"`
++	NavBase       float64            `json:"nav_base"`
++	NavBear       float64            `json:"nav_bear"`
++	MarketPrice   float64            `json:"market_price"`
++	UpsidePct     float64            `json:"upside_pct"`
++	Comment       string             `json:"comment"`
++	Probabilities map[string]float64 `json:"probabilities"`
++}
++
++// ValidateModelRun проверяет вход модели до вставки в ClickHouse; все ошибки входа — 400.
++// run_id клиентский, обязателен и должен быть UUID: повторный POST с тем же run_id идемпотентен
++// (см. InsertModelRun). Горизонт и вероятности сверяются с gold_scenario теми же функциями,
++// которыми InsertModelRun считает target_date и взвешенную точку, — чтобы вход, который не
++// запишется, отсекался здесь, а не падал внутри записи.
++func ValidateModelRun(r ModelRun) error {
++	if strings.TrimSpace(r.RunID) == "" {
++		return fmt.Errorf("run_id is required")
++	}
++	if _, err := uuid.Parse(r.RunID); err != nil {
++		return fmt.Errorf("run_id %q must be a UUID: %w", r.RunID, err)
++	}
++	if !validTriggerTypes[r.TriggerType] {
++		return fmt.Errorf("trigger_type %q must be one of: calendar, news, manual", r.TriggerType)
++	}
++	if !validPriceDecks[r.PriceDeck] {
++		return fmt.Errorf("price_deck %q must be one of: spot_flat, consensus_lt, own_scenario", r.PriceDeck)
++	}
++	var sum float64
++	for _, probability := range r.Probabilities {
++		sum += probability
++	}
++	if math.Abs(sum-probabilitiesSumExpected) > probabilitiesSumTolerance {
++		return fmt.Errorf("probabilities sum %.4f must be within %.1f of %.0f", sum, probabilitiesSumTolerance, probabilitiesSumExpected)
++	}
++	if r.GoldScenario == nil {
++		return fmt.Errorf("gold_scenario is required")
++	}
++	if _, err := scenarioTargetDate(r.GoldScenario); err != nil {
++		return err
++	}
++	if _, err := weightedGoldPoint(r.GoldScenario, r.Probabilities); err != nil {
++		return err
++	}
++	return nil
++}
++
++// ManualSeriesPoint — вручную введённая точка ряда macro_series (source='manual').
++type ManualSeriesPoint struct {
++	Series string  `json:"series"`
++	Date   string  `json:"date"`
++	Value  float64 `json:"value"`
++}
++
++// ValidateManualSeriesPoint проверяет точку ряда. date — строго YYYY-MM-DD;
++// macro_series.date имеет тип Date32, поэтому даты до 1970 валидны.
++func ValidateManualSeriesPoint(p ManualSeriesPoint) error {
++	if strings.TrimSpace(p.Series) == "" {
++		return fmt.Errorf("series is required")
++	}
++	date, err := time.Parse(manualSeriesDateLayout, p.Date)
++	if err != nil || date.Format(manualSeriesDateLayout) != p.Date {
++		return fmt.Errorf("date %q must be in YYYY-MM-DD format", p.Date)
++	}
++	return nil
++}
+diff --git a/ingest/model_run_test.go b/ingest/model_run_test.go
+new file mode 100644
+index 0000000..8266813
+--- /dev/null
++++ b/ingest/model_run_test.go
+@@ -0,0 +1,134 @@
++package ingest
++
++import (
++	"strings"
++	"testing"
++)
++
++const testRunID = "11111111-2222-3333-4444-555555555555"
++
++// validGoldScenario — сценарная сетка Q4-2026: точки 4800/4300/3900, low/high заданы.
++func validGoldScenario() map[string]any {
++	return map[string]any{
++		"horizon": "Q4-2026",
++		"bull":    map[string]any{"low": 4600.0, "high": 5000.0, "point": 4800.0},
++		"base":    map[string]any{"low": 4000.0, "high": 4600.0, "point": 4300.0},
++		"bear":    map[string]any{"low": 3750.0, "high": 4050.0, "point": 3900.0},
++	}
++}
++
++func validModelRun() ModelRun {
++	return ModelRun{
++		RunID:         testRunID,
++		TriggerType:   "manual",
++		TriggerRef:    "unit test",
++		GoldScenario:  validGoldScenario(),
++		PriceDeck:     "own_scenario",
++		Probabilities: map[string]float64{"bull": 25, "base": 40, "bear": 35},
++	}
++}
++
++func TestValidateModelRunValid(t *testing.T) {
++	if err := ValidateModelRun(validModelRun()); err != nil {
++		t.Fatalf("valid run rejected: %v", err)
++	}
++}
++
++// Все эти входы должны давать ошибку валидации (HTTP 400), а не падать внутри записи (500).
++func TestValidateModelRunInputErrors(t *testing.T) {
++	tests := []struct {
++		name       string
++		mutate     func(*ModelRun)
++		wantSubstr string
++	}{
++		{"run_id is not a UUID", func(r *ModelRun) { r.RunID = "not-a-uuid" }, "UUID"},
++		{"gold_scenario is nil", func(r *ModelRun) { r.GoldScenario = nil }, "gold_scenario is required"},
++		{"horizon is missing", func(r *ModelRun) { delete(r.GoldScenario, "horizon") }, "horizon"},
++		{"horizon is not a string", func(r *ModelRun) { r.GoldScenario["horizon"] = 2026.0 }, "must be a string"},
++		{"horizon is unparsable", func(r *ModelRun) { r.GoldScenario["horizon"] = "Q5-2026" }, "unsupported gold_scenario.horizon"},
++		{"probability key has no gold block", func(r *ModelRun) {
++			r.Probabilities = map[string]float64{"bull": 25, "base": 40, "tail": 35}
++		}, "tail"},
++		{"block has no point and no range", func(r *ModelRun) { r.GoldScenario["bear"] = map[string]any{"comment": "x"} }, "bear"},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			run := validModelRun()
++			tt.mutate(&run)
++			err := ValidateModelRun(run)
++			if err == nil || !strings.Contains(err.Error(), tt.wantSubstr) {
++				t.Fatalf("expected error containing %q, got %v", tt.wantSubstr, err)
++			}
++		})
++	}
++}
++
++func TestValidateModelRunProbabilitiesSum(t *testing.T) {
++	run := validModelRun()
++	run.Probabilities = map[string]float64{"bull": 25, "base": 40, "bear": 25}
++	err := ValidateModelRun(run)
++	if err == nil || !strings.Contains(err.Error(), "probabilities") {
++		t.Fatalf("expected probabilities sum error, got %v", err)
++	}
++}
++
++func TestValidateModelRunProbabilitiesEmpty(t *testing.T) {
++	run := validModelRun()
++	run.Probabilities = nil
++	if err := ValidateModelRun(run); err == nil {
++		t.Fatal("expected error for empty probabilities")
++	}
++}
++
++func TestValidateModelRunPriceDeck(t *testing.T) {
++	run := validModelRun()
++	run.PriceDeck = "wacc_guess"
++	err := ValidateModelRun(run)
++	if err == nil || !strings.Contains(err.Error(), "price_deck") {
++		t.Fatalf("expected price_deck error, got %v", err)
++	}
++}
++
++func TestValidateModelRunRunIDRequired(t *testing.T) {
++	run := validModelRun()
++	run.RunID = ""
++	err := ValidateModelRun(run)
++	if err == nil || !strings.Contains(err.Error(), "run_id") {
++		t.Fatalf("expected run_id error, got %v", err)
++	}
++}
++
++func TestValidateModelRunTriggerType(t *testing.T) {
++	run := validModelRun()
++	run.TriggerType = "cron"
++	err := ValidateModelRun(run)
++	if err == nil || !strings.Contains(err.Error(), "trigger_type") {
++		t.Fatalf("expected trigger_type error, got %v", err)
++	}
++}
++
++func TestValidateManualSeriesPointPre1970(t *testing.T) {
++	point := ManualSeriesPoint{Series: "CPIAUCSL", Date: "1947-01-01", Value: 21.48}
++	if err := ValidateManualSeriesPoint(point); err != nil {
++		t.Fatalf("pre-1970 date must be valid (Date32): %v", err)
++	}
++}
++
++func TestValidateManualSeriesPointErrors(t *testing.T) {
++	tests := []struct {
++		name  string
++		point ManualSeriesPoint
++	}{
++		{"empty series", ManualSeriesPoint{Series: "", Date: "2026-01-01", Value: 1}},
++		{"bad month", ManualSeriesPoint{Series: "DFII10", Date: "2026-13-01", Value: 1}},
++		{"not a date", ManualSeriesPoint{Series: "DFII10", Date: "yesterday", Value: 1}},
++		{"short year", ManualSeriesPoint{Series: "DFII10", Date: "26-01-01", Value: 1}},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			if err := ValidateManualSeriesPoint(tt.point); err == nil {
++				t.Fatalf("expected error for %+v", tt.point)
++			}
++		})
++	}
++}
+diff --git a/ingest/schema.go b/ingest/schema.go
+new file mode 100644
+index 0000000..20fcdff
+--- /dev/null
++++ b/ingest/schema.go
+@@ -0,0 +1,53 @@
++package ingest
++
++import (
++	"context"
++
++	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
++)
++
++// Канонические DDL из ARCHITECTURE.md §6.2 — копировать как есть, не менять.
++
++const modelRunsDdl = `CREATE TABLE IF NOT EXISTS model_runs (
++    run_id UUID DEFAULT generateUUIDv4(),
++    run_date DateTime,
++    trigger_type LowCardinality(String),  -- 'calendar','news','manual'
++    trigger_ref String,
++    gold_scenario JSON,        -- сценарная сетка + вероятности
++    usdrub_path JSON,
++    price_deck LowCardinality(String) DEFAULT 'own_scenario',  -- 'spot_flat','consensus_lt','own_scenario'
++    discount_rate Float64,     -- 0.05 real USD база + надбавки; локальная ставка — в comment/JSON
++    wacc Float64,
++    nav_per_share Float64,
++    nav_bull Float64, nav_base Float64, nav_bear Float64,
++    market_price Float64,
++    upside_pct Float64,
++    nav_beta_gold Nullable(Float64),   -- рычаг NAV к цене золота (эталон: EBITDA-бета ~14% на +10% Au)
++    dividend_status LowCardinality(String) DEFAULT 'suspended',  -- до 2030
++    comment String
++) ENGINE = ReplacingMergeTree ORDER BY (run_date, run_id);`
++
++const forecastLogDdl = `CREATE TABLE IF NOT EXISTS forecast_log (
++    forecast_date Date,
++    target_date Date,
++    metric LowCardinality(String),   -- 'xau_q_avg','fed_decision','nav','cbr_rate'
++    predicted Float64, actual Nullable(Float64),
++    error_pct Nullable(Float64)
++) ENGINE = ReplacingMergeTree ORDER BY (metric, forecast_date);`
++
++const macroSeriesDdl = `CREATE TABLE IF NOT EXISTS macro_series (
++    source LowCardinality(String),   -- 'fred','eia','wgc','cme'
++    series LowCardinality(String),   -- 'DFII10','distillate_stocks',...
++    date Date32,                     -- Date32, т.к. Date не покрывает даты до 1970 (CPIAUCSL с 1947, FEDFUNDS с 1954)
++    value Float64
++) ENGINE = ReplacingMergeTree ORDER BY (source, series, date);`
++
++// ensureTables создаёт три таблицы контура прогноза (идемпотентно).
++func ensureTables(ctx context.Context, conn driver.Conn) error {
++	for _, ddl := range []string{modelRunsDdl, forecastLogDdl, macroSeriesDdl} {
++		if err := conn.Exec(ctx, ddl); err != nil {
++			return err
++		}
++	}
++	return nil
++}
+diff --git a/ingest/server.go b/ingest/server.go
+new file mode 100644
+index 0000000..e2e8f6d
+--- /dev/null
++++ b/ingest/server.go
+@@ -0,0 +1,85 @@
++package ingest
++
++import (
++	"crypto/subtle"
++	"encoding/json"
++	"net/http"
++
++	"context"
++
++	log "github.com/sirupsen/logrus"
++)
++
++// BatchWriter — точка записи ingest-контура; реализация на ClickHouse — в clickhouse.go.
++type BatchWriter interface {
++	EnsureTables(ctx context.Context) error
++	InsertModelRun(ctx context.Context, r ModelRun) error
++	InsertManualSeries(ctx context.Context, points []ManualSeriesPoint) error
++}
++
++// Server — HTTP-сервер ingest-контура: единственный путь записи в model_runs/forecast_log/macro_series.
++type Server struct {
++	writer BatchWriter
++	token  string
++	mux    *http.ServeMux
++}
++
++func NewServer(writer BatchWriter, token string) *Server {
++	s := &Server{writer: writer, token: token, mux: http.NewServeMux()}
++	s.mux.HandleFunc("POST /v1/model_run", s.handleModelRun)
++	s.mux.HandleFunc("POST /v1/manual_series", s.handleManualSeries)
++	return s
++}
++
++func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
++	if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+s.token)) != 1 {
++		http.Error(w, "unauthorized", http.StatusUnauthorized)
++		return
++	}
++	s.mux.ServeHTTP(w, r)
++}
++
++func (s *Server) handleModelRun(w http.ResponseWriter, r *http.Request) {
++	var run ModelRun
++	if err := json.NewDecoder(r.Body).Decode(&run); err != nil {
++		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
++		return
++	}
++	if err := ValidateModelRun(run); err != nil {
++		http.Error(w, err.Error(), http.StatusBadRequest)
++		return
++	}
++	if err := s.writer.InsertModelRun(r.Context(), run); err != nil {
++		log.Errorf("ingest: insert model_run %s: %v", run.RunID, err)
++		http.Error(w, "insert failed", http.StatusInternalServerError)
++		return
++	}
++	writeInserted(w, 1)
++}
++
++func (s *Server) handleManualSeries(w http.ResponseWriter, r *http.Request) {
++	var points []ManualSeriesPoint
++	if err := json.NewDecoder(r.Body).Decode(&points); err != nil {
++		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
++		return
++	}
++	for _, point := range points {
++		if err := ValidateManualSeriesPoint(point); err != nil {
++			http.Error(w, err.Error(), http.StatusBadRequest)
++			return
++		}
++	}
++	if err := s.writer.InsertManualSeries(r.Context(), points); err != nil {
++		log.Errorf("ingest: insert manual_series: %v", err)
++		http.Error(w, "insert failed", http.StatusInternalServerError)
++		return
++	}
++	writeInserted(w, len(points))
++}
++
++func writeInserted(w http.ResponseWriter, inserted int) {
++	w.Header().Set("Content-Type", "application/json")
++	if err := json.NewEncoder(w).Encode(map[string]int{"inserted": inserted}); err != nil {
++		log.Errorf("ingest: encode response: %v", err)
++	}
++}
+diff --git a/ingest/server_test.go b/ingest/server_test.go
+new file mode 100644
+index 0000000..76a792d
+--- /dev/null
++++ b/ingest/server_test.go
+@@ -0,0 +1,207 @@
++package ingest
++
++import (
++	"context"
++	"encoding/json"
++	"io"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"testing"
++)
++
++const testToken = "unit-test-token"
++
++type mockBatchWriter struct {
++	runs   []ModelRun
++	series [][]ManualSeriesPoint
++	err    error
++}
++
++func (m *mockBatchWriter) EnsureTables(_ context.Context) error {
++	return m.err
++}
++
++func (m *mockBatchWriter) InsertModelRun(_ context.Context, r ModelRun) error {
++	m.runs = append(m.runs, r)
++	return m.err
++}
++
++func (m *mockBatchWriter) InsertManualSeries(_ context.Context, points []ManualSeriesPoint) error {
++	m.series = append(m.series, points)
++	return m.err
++}
++
++func newTestServer(writer BatchWriter) *httptest.Server {
++	return httptest.NewServer(NewServer(writer, testToken))
++}
++
++func post(t *testing.T, url, token, body string) (int, []byte) {
++	t.Helper()
++	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(body))
++	if err != nil {
++		t.Fatal(err)
++	}
++	req.Header.Set("Content-Type", "application/json")
++	if token != "" {
++		req.Header.Set("Authorization", "Bearer "+token)
++	}
++	resp, err := http.DefaultClient.Do(req)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer func() { _ = resp.Body.Close() }()
++	payload, err := io.ReadAll(resp.Body)
++	if err != nil {
++		t.Fatal(err)
++	}
++	return resp.StatusCode, payload
++}
++
++const validRunBody = `{
++	"run_id": "` + testRunID + `",
++	"trigger_type": "manual",
++	"trigger_ref": "unit test",
++	"gold_scenario": {
++		"horizon": "Q4-2026",
++		"bull": {"low": 4600, "high": 5000, "point": 4800},
++		"base": {"low": 4000, "high": 4600, "point": 4300},
++		"bear": {"low": 3750, "high": 4050, "point": 3900}
++	},
++	"usdrub_path": {"Q4-2026": 81.5},
++	"price_deck": "own_scenario",
++	"discount_rate": 0.09,
++	"wacc": 0.14,
++	"nav_per_share": 12500,
++	"nav_bull": 16000,
++	"nav_base": 12500,
++	"nav_bear": 9500,
++	"market_price": 6800,
++	"upside_pct": 83.8,
++	"comment": "unit test",
++	"probabilities": {"bull": 25, "base": 40, "bear": 35}
++}`
++
++func TestModelRunUnauthorized(t *testing.T) {
++	writer := &mockBatchWriter{}
++	server := newTestServer(writer)
++	defer server.Close()
++
++	for _, token := range []string{"", "wrong-token"} {
++		status, _ := post(t, server.URL+"/v1/model_run", token, validRunBody)
++		if status != http.StatusUnauthorized {
++			t.Fatalf("token %q: status %d, want 401", token, status)
++		}
++	}
++	if len(writer.runs) != 0 {
++		t.Fatal("writer must not be called without valid token")
++	}
++}
++
++func TestModelRunInvalidJSON(t *testing.T) {
++	writer := &mockBatchWriter{}
++	server := newTestServer(writer)
++	defer server.Close()
++
++	status, _ := post(t, server.URL+"/v1/model_run", testToken, `{"run_id":`)
++	if status != http.StatusBadRequest {
++		t.Fatalf("status %d, want 400", status)
++	}
++	if len(writer.runs) != 0 {
++		t.Fatal("writer must not be called on malformed JSON")
++	}
++}
++
++func TestModelRunValidationError(t *testing.T) {
++	writer := &mockBatchWriter{}
++	server := newTestServer(writer)
++	defer server.Close()
++
++	body := strings.Replace(validRunBody, `"bear": 35}`, `"bear": 25}`, 1)
++	status, payload := post(t, server.URL+"/v1/model_run", testToken, body)
++	if status != http.StatusBadRequest {
++		t.Fatalf("status %d, want 400", status)
++	}
++	if !strings.Contains(string(payload), "probabilities") {
++		t.Fatalf("expected validation error text, got %s", payload)
++	}
++	if len(writer.runs) != 0 {
++		t.Fatal("writer must not be called on validation error")
++	}
++}
++
++func TestModelRunOK(t *testing.T) {
++	writer := &mockBatchWriter{}
++	server := newTestServer(writer)
++	defer server.Close()
++
++	status, payload := post(t, server.URL+"/v1/model_run", testToken, validRunBody)
++	if status != http.StatusOK {
++		t.Fatalf("status %d, want 200: %s", status, payload)
++	}
++	var response struct {
++		Inserted int `json:"inserted"`
++	}
++	if err := json.Unmarshal(payload, &response); err != nil {
++		t.Fatalf("response is not JSON: %s", payload)
++	}
++	if response.Inserted != 1 {
++		t.Fatalf("inserted = %d, want 1", response.Inserted)
++	}
++	if len(writer.runs) != 1 {
++		t.Fatalf("writer called %d times, want 1", len(writer.runs))
++	}
++	if writer.runs[0].RunID != testRunID {
++		t.Fatalf("run_id = %q, want %q", writer.runs[0].RunID, testRunID)
++	}
++}
++
++func TestManualSeriesPre1970Date(t *testing.T) {
++	writer := &mockBatchWriter{}
++	server := newTestServer(writer)
++	defer server.Close()
++
++	const body = `[{"series": "CPIAUCSL", "date": "1947-01-01", "value": 21.48}]`
++	status, payload := post(t, server.URL+"/v1/manual_series", testToken, body)
++	if status != http.StatusOK {
++		t.Fatalf("pre-1970 date (Date32) must pass: status %d: %s", status, payload)
++	}
++	var response struct {
++		Inserted int `json:"inserted"`
++	}
++	if err := json.Unmarshal(payload, &response); err != nil {
++		t.Fatalf("response is not JSON: %s", payload)
++	}
++	if response.Inserted != 1 {
++		t.Fatalf("inserted = %d, want 1", response.Inserted)
++	}
++	if len(writer.series) != 1 || writer.series[0][0].Date != "1947-01-01" {
++		t.Fatalf("writer got %+v", writer.series)
++	}
++}
++
++func TestManualSeriesValidationError(t *testing.T) {
++	writer := &mockBatchWriter{}
++	server := newTestServer(writer)
++	defer server.Close()
++
++	const body = `[{"series": "CPIAUCSL", "date": "2026-13-01", "value": 1}]`
++	status, _ := post(t, server.URL+"/v1/manual_series", testToken, body)
++	if status != http.StatusBadRequest {
++		t.Fatalf("status %d, want 400", status)
++	}
++	if len(writer.series) != 0 {
++		t.Fatal("writer must not be called on validation error")
++	}
++}
++
++func TestManualSeriesUnauthorized(t *testing.T) {
++	writer := &mockBatchWriter{}
++	server := newTestServer(writer)
++	defer server.Close()
++
++	status, _ := post(t, server.URL+"/v1/manual_series", "", `[]`)
++	if status != http.StatusUnauthorized {
++		t.Fatalf("status %d, want 401", status)
++	}
++}
+diff --git a/main.go b/main.go
+index 516ff47..b162088 100644
+--- a/main.go
++++ b/main.go
+@@ -3,23 +3,25 @@ package main
+ import (
+ 	"context"
+ 	"github.com/ClickHouse/clickhouse-go/v2"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/bank"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/bea"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/bls"
++	_ "github.com/kmlebedev/clickhouse-import-rosstat/calendar"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/cbr"
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/craw"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/customs"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/fao"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/financial"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/fred"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/gold"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/minfin"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/moex"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/rosstat"
++	_ "github.com/kmlebedev/clickhouse-import-rosstat/views"
+ 	log "github.com/sirupsen/logrus"
+ 	"os"
+ 	"slices"
+ 	"strings"
+ )
+ 
+diff --git a/sql/events_calendar_q4_2026.sql b/sql/events_calendar_q4_2026.sql
+new file mode 100644
+index 0000000..a59e5e1
+--- /dev/null
++++ b/sql/events_calendar_q4_2026.sql
+@@ -0,0 +1,25 @@
++-- Сид календаря событий-триггеров прогноза золота/NAV на Q4-2026 (ARCHITECTURE.md §7).
++-- Источник канонического DDL — ARCHITECTURE.md §6.2. Запуск: make ch-sql FILE=sql/events_calendar_q4_2026.sql
++-- Вставка идемпотентна: ReplacingMergeTree ORDER BY (event_date, category, title) сворачивает дубли.
++
++CREATE TABLE IF NOT EXISTS events_calendar (
++    event_date Date,
++    event_time Nullable(String),
++    category LowCardinality(String), -- 'fomc','cpi','nfp','eia','wgc','cbr','polyus_ir','moex_rebalance','gov_rf'
++    title String,
++    threshold String,                -- JSON, напр. '{"crack":">50"}'
++    status LowCardinality(String) DEFAULT 'pending'  -- pending|done|verified
++) ENGINE = ReplacingMergeTree ORDER BY (event_date, category, title);
++
++INSERT INTO events_calendar (event_date, event_time, category, title, threshold, status) VALUES
++    ('2026-10-14', NULL, 'eia',  'EIA дистилляты: недельный запас (ср еженед.; порог crack >$50 — медведь / <$30 — снято)',        '{"crack":">50","crack_bull":"<30"}', 'pending'),
++    ('2026-10-14', '15:30', 'cpi', 'CPI США за сентябрь 2026',                                                                        '{"hot_yoy":">3.5"}',                 'pending'),
++    ('2026-10-23', NULL, 'cbr',  'СД ЦБ РФ: ставка (14%) — снижение → флаг перетока ликвидности',                                     '{"cut_bp":">=25"}',                  'pending'),
++    ('2026-10-30', NULL, 'wgc',  'WGC GDT: спрос на золото, ETF-потоки + покупки ЦБ (~конец октября; норма 40–60 т/мес)',              '{"cb_purchase_t":">=40"}',           'pending'),
++    ('2026-11-01', NULL, 'gov_rf','Истечение запрета РФ на экспорт дизеля: продление → bear; отмена → bull',                            '{"extended":"bear","lifted":"bull"}', 'pending'),
++    ('2026-11-06', '15:30', 'nfp', 'NFP США за октябрь 2026',                                                                          '{"nfp_k":">100"}',                   'pending'),
++    ('2026-11-10', '15:30', 'cpi', 'CPI США за октябрь 2026: горячий → FOMC-hike 85–90%',                                              '{"hot_yoy":">3.5"}',                 'pending'),
++    ('2026-12-04', '15:30', 'nfp', 'NFP США за ноябрь 2026 (перенос: релиз 2026-12-04)',                                               '{"nfp_k":">100"}',                   'pending'),
++    ('2026-12-09', '21:00', 'fomc','FOMC + dot plot: 2-е повышение → пробой $4,000 → $3,750–3,800',                                    '{"hike_count":">=2"}',               'pending'),
++    ('2026-12-10', '15:30', 'cpi', 'CPI США за ноябрь 2026',                                                                            '{"hot_yoy":">3.5"}',                 'pending'),
++    ('2026-12-18', NULL, 'cbr',  'СД ЦБ РФ: база — −25 б.п. до 13,75% + ребалансировка индекса MOEX (один день)',                      '{"cut_bp":">=25"}',                  'pending');
+diff --git a/sql/mcp_kimi_reader.sql b/sql/mcp_kimi_reader.sql
+index 49d9535..5169f8b 100644
+--- a/sql/mcp_kimi_reader.sql
++++ b/sql/mcp_kimi_reader.sql
+@@ -10,6 +10,10 @@ GRANT SELECT ON default.v_bls_macro TO kimi_reader;
+ GRANT SELECT ON default.v_cbr_macro TO kimi_reader;
+ GRANT SELECT ON default.v_rosstat_macro TO kimi_reader;
+ GRANT SELECT ON default.v_minfin_budget TO kimi_reader;
+ GRANT SELECT ON default.v_gold_prices TO kimi_reader;
+ GRANT SELECT ON default.v_stock_prices TO kimi_reader;
+ GRANT SELECT ON default.v_ofz_curve TO kimi_reader;
++GRANT SELECT ON default.v_events_calendar TO kimi_reader;
++GRANT SELECT ON default.v_model_inputs TO kimi_reader;
++GRANT SELECT ON default.v_gold_dashboard TO kimi_reader;
++GRANT SELECT ON default.v_forecast_accuracy TO kimi_reader;
+diff --git a/views/forecast_accuracy.go b/views/forecast_accuracy.go
+new file mode 100644
+index 0000000..0e965ba
+--- /dev/null
++++ b/views/forecast_accuracy.go
+@@ -0,0 +1,33 @@
++package views
++
++import "github.com/kmlebedev/clickhouse-import-rosstat/util"
++
++// forecastAccuracyView — витрина точности прогнозов: forecast_log FINAL с производными
++// колонками абсолютной ошибки и признаком сверки с фактом. Строки создаёт ingest
++// (metric 'nav' и 'xau_q_avg' при каждом model_run); actual и error_pct заполняются
++// отдельно, пока их нет — NULL, is_resolved = 0.
++var forecastAccuracyView = util.View{
++	Name:   "v_forecast_accuracy",
++	Tables: []string{"forecast_log"},
++	Select: `SELECT
++    metric,
++    forecast_date,
++    target_date,
++    predicted,
++    actual,
++    error_pct,
++    abs(error_pct) AS abs_error_pct,
++    toUInt8(actual IS NOT NULL) AS is_resolved
++FROM forecast_log FINAL`,
++	Comment: "Точность прогнозов из forecast_log: одна строка на прогноз (metric, дата прогноза, дата цели). error_pct = (predicted − actual) / actual × 100; actual и error_pct заполняются после наступления target_date. is_resolved = 0 — факт ещё не сверен",
++	Columns: map[string]string{
++		"metric":        "Код прогноза: 'nav' — NAV на акцию, руб.; 'xau_q_avg' — вероятностно-взвешенная цена золота на горизонт, USD/oz",
++		"forecast_date": "Дата, на которую сделан прогноз (день записи run'а)",
++		"target_date":   "Дата цели прогноза (конец горизонта сценария: квартал, год или дата)",
++		"predicted":     "Прогнозное значение метрики",
++		"actual":        "Фактическое значение метрики на target_date; NULL — факт ещё не записан",
++		"error_pct":     "Ошибка прогноза, %: (predicted − actual) / actual × 100; NULL — факт не записан",
++		"abs_error_pct": "Абсолютная ошибка прогноза, %; NULL — факт не записан",
++		"is_resolved":   "1 — факт записан (actual не NULL); 0 — прогноз ещё не сверен",
++	},
++}
+diff --git a/views/gold_dashboard.go b/views/gold_dashboard.go
+new file mode 100644
+index 0000000..e0dd8a6
+--- /dev/null
++++ b/views/gold_dashboard.go
+@@ -0,0 +1,63 @@
++package views
++
++import "github.com/kmlebedev/clickhouse-import-rosstat/util"
++
++// goldDashboardIndicators — фиксированный список индикаторов дашборда верификации (статья §6).
++// Список зашит в витрине, а не берётся из macro_series: индикатор, который ни разу
++// не вводили, всё равно попадает в выдачу с value = NULL и stale = 1.
++const goldDashboardIndicators = `'crack_ulsd_proxy', 'distillate_stocks', 'fedwatch_dec_hike', 'etf_flows_month', 'dxy'`
++
++// goldDashboardView — дашборд верификации сценария золота: одна строка на индикатор.
++// Значения живут в macro_series (source 'manual' — ручной ввод через ingest, 'fred').
++// stale = 1, если значения нет или последнее наблюдение старше 14 дней.
++var goldDashboardView = util.View{
++	Name:   "v_gold_dashboard",
++	Tables: []string{"macro_series"},
++	Select: `SELECT
++    indicator,
++    value,
++    threshold,
++    toUInt8(coalesce(multiIf(
++        indicator = 'crack_ulsd_proxy', value > 50,
++        indicator = 'fedwatch_dec_hike', value > 80,
++        indicator = 'dxy', value > 102,
++        0), 0)) AS flag,
++    as_of,
++    toUInt8(if(as_of IS NOT NULL AND as_of >= today() - 14, 0, 1)) AS stale
++FROM (
++    SELECT
++        ind.indicator AS indicator,
++        if(v.n > 0, v.value, NULL) AS value,
++        if(v.n > 0, v.as_of, NULL) AS as_of,
++        multiIf(
++            ind.indicator = 'crack_ulsd_proxy', '>50 USD: медвежий сигнал (crack ULSD)',
++            ind.indicator = 'fedwatch_dec_hike', '>65%: сценарное переключение; >80%: алерт',
++            ind.indicator = 'dxy', '>102: порог модели (DXY)',
++            ind.indicator = 'distillate_stocks', 'порога в статье §6 нет',
++            ind.indicator = 'etf_flows_month', 'порога в статье §6 нет',
++            '-') AS threshold
++    FROM (
++        SELECT arrayJoin([` + goldDashboardIndicators + `]) AS indicator
++    ) AS ind
++    LEFT JOIN (
++        SELECT
++            series AS series_name,
++            count() AS n,
++            argMax(value, date) AS value,
++            argMax(date, date) AS as_of
++        FROM macro_series FINAL
++        WHERE source IN ('manual', 'fred')
++          AND series IN (` + goldDashboardIndicators + `)
++        GROUP BY series
++    ) AS v ON ind.indicator = v.series_name
++)`,
++	Comment: "Дашборд верификации сценария золота (статья §6): одна строка на индикатор. flag = 1 — пробит порог; stale = 1 — значения нет или последнее наблюдение старше 14 дней. Пороги: crack ULSD >50 USD (медвежий сигнал), FedWatch на декабрьское повышение >80% (алерт; >65% — сценарное переключение), DXY >102. Значения FedWatch — в процентах (65 = 65%)",
++	Columns: map[string]string{
++		"indicator": "Код индикатора: crack_ulsd_proxy, distillate_stocks, fedwatch_dec_hike, etf_flows_month, dxy",
++		"value":     "Последнее значение индикатора; NULL — значение ни разу не вводили",
++		"threshold": "Пороги из статьи §6 текстом; для индикаторов без порога — 'порога в статье §6 нет'",
++		"flag":      "1 — последнее значение пересекло порог из статьи §6 (crack >50, FedWatch >80, DXY >102); 0 — не пересекло или порога нет",
++		"as_of":     "Дата последнего наблюдения (Date32); NULL — значения нет",
++		"stale":     "1 — значения нет или последнее наблюдение старше 14 дней; 0 — свежее",
++	},
++}
+diff --git a/views/gold_views.go b/views/gold_views.go
+new file mode 100644
+index 0000000..598374e
+--- /dev/null
++++ b/views/gold_views.go
+@@ -0,0 +1,41 @@
++// Package views создаёт витрины для LLM-агента прогноза золота и NAV PLZL:
++// v_model_inputs (входы DCF), v_gold_dashboard (дашборд верификации) и
++// v_forecast_accuracy (точность прогнозов из forecast_log).
++//
++// Импортёр gold_views запускается после ingest-первого-прогона: util.CreateView
++// пропускает витрину, пока не существуют все её таблицы (model_runs создаёт ingest),
++// поэтому его вызывают отдельным шагом после первого запуска ingest. Гейт проверяет
++// только наличие таблиц, а не их заполненность: ipc_mes и ipc_weeks создаются до
++// загрузки Росстата, и при его сбое витрина создаётся с NULL или устаревшими ipc_*.
++package views
++
++import (
++	"context"
++
++	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
++	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
++	"github.com/kmlebedev/clickhouse-import-rosstat/util"
++	log "github.com/sirupsen/logrus"
++)
++
++type goldViews struct {
++}
++
++func (s *goldViews) Name() string {
++	return "gold_views"
++}
++
++func (s *goldViews) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
++	for _, v := range []util.View{modelInputsView, goldDashboardView, forecastAccuracyView} {
++		var created bool
++		if created, err = util.CreateView(ctx, conn, v); err != nil {
++			return count, err
++		}
++		log.Infof("View %s created: %t", v.Name, created)
++	}
++	return count, nil
++}
++
++func init() {
++	chimport.Stats = append(chimport.Stats, &goldViews{})
++}
+diff --git a/views/model_inputs.go b/views/model_inputs.go
+new file mode 100644
+index 0000000..ad21f98
+--- /dev/null
++++ b/views/model_inputs.go
+@@ -0,0 +1,150 @@
++package views
++
++import "github.com/kmlebedev/clickhouse-import-rosstat/util"
++
++// modelInputsView — витрина входов DCF-модели: одна строка с последними значениями
++// всех рядов (argMax по дате). Каждый блок — отдельный однострочный подзапрос:
++// подзапрос без GROUP BY всегда отдаёт ровно одну строку, даже по пустой таблице,
++// а toNullable даёт NULL вместо нулевого значения по умолчанию. Поэтому при пустых
++// таблицах (model_runs, например, до первого прогона) витрина всё равно возвращает
++// одну строку с NULL.
++var modelInputsView = util.View{
++	Name: "v_model_inputs",
++	Tables: []string{
++		"gold_prices", "cbr_currency_usd", "cbr_key_rate", "ofz_curve", "ipc_mes",
++		"ipc_weeks", "macro_series", "stock_prices", "model_runs",
++	},
++	Select: `SELECT
++    gold_moex_fix_usd, gold_date,
++    usdrub, usdrub_date,
++    cbr_key_rate, cbr_key_rate_date,
++    ofz_1y, ofz_1y_date, ofz_3y, ofz_3y_date, ofz_5y, ofz_5y_date, ofz_10y, ofz_10y_date,
++    rgbi, rgbi_date,
++    ipc_mes_last, ipc_mes_last_date,
++    ipc_week_ytd, ipc_week_ytd_date,
++    fedfunds, fedfunds_date, dfii10, dfii10_date, dgs10, dgs10_date,
++    t5yie, t5yie_date, dtwexbgs, dtwexbgs_date,
++    plzl_close, plzl_date,
++    last_run_id, last_nav_per_share, last_run_date
++FROM (
++    SELECT
++        argMax(toNullable(usd), date) AS gold_moex_fix_usd,
++        argMax(toNullable(date), date) AS gold_date
++    FROM gold_prices FINAL
++    WHERE venue = 'moex_fix_usd'
++) AS gold
++CROSS JOIN (
++    SELECT
++        argMax(toNullable(price), date) AS usdrub,
++        argMax(toNullable(date), date) AS usdrub_date
++    FROM cbr_currency_usd FINAL
++) AS fx
++CROSS JOIN (
++    SELECT
++        argMax(toNullable(rate), date) AS cbr_key_rate,
++        argMax(toNullable(date), date) AS cbr_key_rate_date
++    FROM cbr_key_rate FINAL
++) AS key_rate
++CROSS JOIN (
++    SELECT
++        argMaxIf(toNullable(yield), date, tenor = '1y') AS ofz_1y,
++        argMaxIf(toNullable(date), date, tenor = '1y') AS ofz_1y_date,
++        argMaxIf(toNullable(yield), date, tenor = '3y') AS ofz_3y,
++        argMaxIf(toNullable(date), date, tenor = '3y') AS ofz_3y_date,
++        argMaxIf(toNullable(yield), date, tenor = '5y') AS ofz_5y,
++        argMaxIf(toNullable(date), date, tenor = '5y') AS ofz_5y_date,
++        argMaxIf(toNullable(yield), date, tenor = '10y') AS ofz_10y,
++        argMaxIf(toNullable(date), date, tenor = '10y') AS ofz_10y_date,
++        argMaxIf(toNullable(yield), date, tenor = 'RGBI') AS rgbi,
++        argMaxIf(toNullable(date), date, tenor = 'RGBI') AS rgbi_date
++    FROM ofz_curve FINAL
++) AS ofz
++CROSS JOIN (
++    SELECT
++        argMaxIf(toNullable(percent), date, startsWith(name, 'Индексы потребительских цен на товары и услуги')) AS ipc_mes_last,
++        argMaxIf(toNullable(date), date, startsWith(name, 'Индексы потребительских цен на товары и услуги')) AS ipc_mes_last_date
++    FROM ipc_mes FINAL
++) AS ipc_m
++CROSS JOIN (
++    SELECT
++        if(count() > 0, avg(exp(log_ytd) - 1) * 100, NULL) AS ipc_week_ytd,
++        if(count() > 0, max(last_date), NULL) AS ipc_week_ytd_date
++    FROM (
++        SELECT
++            name,
++            sum(log(toFloat64(percent) / 100)) AS log_ytd,
++            max(date) AS last_date
++        FROM ipc_weeks FINAL
++        WHERE percent > 0
++          AND toYear(date) = (SELECT toYear(max(date)) FROM ipc_weeks FINAL)
++        GROUP BY name
++    )
++) AS ipc_w
++CROSS JOIN (
++    SELECT
++        argMaxIf(toNullable(value), date, series = 'FEDFUNDS') AS fedfunds,
++        argMaxIf(toNullable(date), date, series = 'FEDFUNDS') AS fedfunds_date,
++        argMaxIf(toNullable(value), date, series = 'DFII10') AS dfii10,
++        argMaxIf(toNullable(date), date, series = 'DFII10') AS dfii10_date,
++        argMaxIf(toNullable(value), date, series = 'DGS10') AS dgs10,
++        argMaxIf(toNullable(date), date, series = 'DGS10') AS dgs10_date,
++        argMaxIf(toNullable(value), date, series = 'T5YIE') AS t5yie,
++        argMaxIf(toNullable(date), date, series = 'T5YIE') AS t5yie_date,
++        argMaxIf(toNullable(value), date, series = 'DTWEXBGS') AS dtwexbgs,
++        argMaxIf(toNullable(date), date, series = 'DTWEXBGS') AS dtwexbgs_date
++    FROM macro_series FINAL
++    WHERE source = 'fred'
++) AS fred
++CROSS JOIN (
++    SELECT
++        argMax(toNullable(close), date) AS plzl_close,
++        argMax(toNullable(date), date) AS plzl_date
++    FROM stock_prices FINAL
++    WHERE code = 'PLZL'
++) AS plzl
++CROSS JOIN (
++    SELECT
++        argMax(toNullable(run_id), run_date) AS last_run_id,
++        argMax(toNullable(nav_per_share), run_date) AS last_nav_per_share,
++        argMax(toNullable(run_date), run_date) AS last_run_date
++    FROM model_runs FINAL
++) AS model`,
++	Comment: "Входы DCF-модели прогноза золота и NAV PLZL: одна строка с последними значениями рядов (argMax по дате). У каждого ряда есть дата актуальности *_date — проверять перед использованием; NULL — ряд пуст или не импортирован",
++	Columns: map[string]string{
++		"gold_moex_fix_usd":  "Цена золота, USD за унцию: фиксинг MOEX GOLDFIXME (руб./г) / курс ЦБ. Производная цена, не LBMA; сверка с GC=F в сессии",
++		"gold_date":          "Дата последнего наблюдения gold_moex_fix_usd (дата актуальности)",
++		"usdrub":             "Официальный курс ЦБ РФ, руб. за 1 USD (Float32)",
++		"usdrub_date":        "Дата последнего курса usdrub (дата актуальности)",
++		"cbr_key_rate":       "Ключевая ставка ЦБ РФ, % годовых (Float32)",
++		"cbr_key_rate_date":  "Дата последнего значения ключевой ставки (дата актуальности)",
++		"ofz_1y":             "Доходность ОФЗ, тенор 1 год, % годовых (G-curve МосБиржи)",
++		"ofz_1y_date":        "Дата последнего значения ofz_1y (дата актуальности)",
++		"ofz_3y":             "Доходность ОФЗ, тенор 3 года, % годовых (G-curve МосБиржи)",
++		"ofz_3y_date":        "Дата последнего значения ofz_3y (дата актуальности)",
++		"ofz_5y":             "Доходность ОФЗ, тенор 5 лет, % годовых (G-curve МосБиржи)",
++		"ofz_5y_date":        "Дата последнего значения ofz_5y (дата актуальности)",
++		"ofz_10y":            "Доходность ОФЗ, тенор 10 лет, % годовых (G-curve МосБиржи)",
++		"ofz_10y_date":       "Дата последнего значения ofz_10y (дата актуальности)",
++		"rgbi":               "Уровень индекса RGBI (пункты). Это не доходность: индекс полной доходности ОФЗ",
++		"rgbi_date":          "Дата последнего значения rgbi (дата актуальности)",
++		"ipc_mes_last":       "ИПЦ РФ на товары и услуги за последний месяц, индекс: 100 = без изменения, 103,5 = рост на 3,5% к концу предыдущего месяца (Float32)",
++		"ipc_mes_last_date":  "Дата последнего значения ipc_mes_last (дата актуальности)",
++		"ipc_week_ytd":       "Инфляция РФ с начала года по еженедельным ценам Росстата, %. Невзвешенное среднее YTD-изменений по товарам недельной выборки за последний год данных; ориентир, не официальный ИПЦ",
++		"ipc_week_ytd_date":  "Дата последнего недельного наблюдения, вошедшего в ipc_week_ytd (дата актуальности)",
++		"fedfunds":           "Effective Fed Funds Rate, % годовых (FRED FEDFUNDS)",
++		"fedfunds_date":      "Дата последнего значения fedfunds (дата актуальности)",
++		"dfii10":             "Реальная доходность 10-летних TIPS, % (FRED DFII10)",
++		"dfii10_date":        "Дата последнего значения dfii10 (дата актуальности)",
++		"dgs10":              "Номинальная доходность 10-летних казначейских облигаций США, % (FRED DGS10)",
++		"dgs10_date":         "Дата последнего значения dgs10 (дата актуальности)",
++		"t5yie":              "Breakeven-инфляция на 5 лет, % (FRED T5YIE)",
++		"t5yie_date":         "Дата последнего значения t5yie (дата актуальности)",
++		"dtwexbgs":           "Индекс широкого доллара США, индекс (FRED DTWEXBGS)",
++		"dtwexbgs_date":      "Дата последнего значения dtwexbgs (дата актуальности)",
++		"plzl_close":         "Цена закрытия акции Полюса (PLZL), руб. за акцию (MOEX)",
++		"plzl_date":          "Дата последней цены закрытия plzl_close (дата актуальности)",
++		"last_run_id":        "UUID последнего прогона модели из model_runs; NULL — прогонов ещё не было",
++		"last_nav_per_share": "NAV на акцию из последнего прогона модели, руб.; NULL — прогонов ещё не было",
++		"last_run_date":      "Дата и время последнего прогона модели; NULL — прогонов ещё не было",
++	},
++}
+# PLUGIN REPO gold-nav (full)
+4b88571 align ndpi currency in methodology
+7bbc075 fix verify view and nav currency
+27e20fd initial gold-nav plugin
+diff --git a/README.md b/README.md
+new file mode 100644
+index 0000000..9e16d3a
+--- /dev/null
++++ b/README.md
+@@ -0,0 +1,82 @@
++# gold-nav
++
++Плагин для Kimi Code и Kimi Work. Ведёт сценарную сессию прогноза золота и DCF NAV Полюса (PLZL):
++
++1. РФ-входы читаются из витрин ClickHouse автора через MCP (только чтение, витрины `v_*`).
++2. Мировые входы берутся из datasource-плагинов среды: `kimi-datasource` в Kimi Code, Global Finance Data / IMF в Kimi Work.
++3. Сценарии золота пересчитываются, NAV считается по методологии rev.2.
++4. Run записывается через ingest-endpoint автора.
++
++## Состав
++
++```
++kimi.plugin.json                      манифест (mcpServers.clickhouse, skills, commands)
++skills/gold-forecast-session/SKILL.md сценарная сессия, 6 шагов
++skills/dcf-methodology/SKILL.md       методология rev.2: NAV, НДПИ, ставка, price deck, триггеры
++commands/session.md                   /gold-nav:session
++commands/verify.md                    /gold-nav:verify
++```
++
++## Требования
++
++- Kimi Code или Kimi Work.
++- В Kimi Code — плагин `kimi-datasource` (для мировых данных).
++- В Kimi Work — плагины «Global Finance Data» и/или `imf` из маркета.
++- Токен чтения MCP (`GOLD_NAV_MCP_TOKEN`), выдаёт автор.
++
++## Установка
++
++**Kimi Code:**
++
++```
++/plugins install <github-url>
++```
++
++**Kimi Work:**
++
++1. Открыть Plugin Builder и зарегистрировать плагин в персональном маркете: `kimi-daimon kimi-plugin register-personal <путь к каталогу gold-nav>`.
++2. Открыть «Плагины → Персональный» и включить `gold-nav`.
++
++## Переменные окружения
++
++| Переменная | Для кого | Назначение |
++|---|---|---|
++| `GOLD_NAV_MCP_TOKEN` | получатели (выдаёт автор) | Bearer-токен read-only MCP `clickhouse` |
++| `GOLD_NAV_INGEST_URL` | только автор | базовый URL ingest-endpoint |
++| `GOLD_NAV_INGEST_TOKEN` | только автор | Bearer-токен ingest |
++
++Токены в репозиторий не кладутся. Манифест содержит только плейсхолдеры `${GOLD_NAV_MCP_TOKEN}`. Перед публикацией на GitHub автор заменяет `PLACEHOLDER_HOST` в `mcpServers.clickhouse.url` на адрес своего сервера.
++
++Без `GOLD_NAV_INGEST_TOKEN` сессия работает в режиме «только расчёт»: run сохраняется локально как `run.json`, запись на ingest не выполняется.
++
++## Если подстановка `${GOLD_NAV_MCP_TOKEN}` не работает
++
++Механика env-подстановки в `mcpServers.headers` в Kimi Work не подтверждена документацией. Если MCP-запросы возвращают 401 или пустой ответ, а переменная задана:
++
++1. Найти установленную копию манифеста (каталог установленных плагинов, файл `kimi.plugin.json` в каталоге `gold-nav`).
++2. В этой локальной копии заменить `${GOLD_NAV_MCP_TOKEN}` на значение токена в строке `"Authorization": "Bearer ..."`.
++3. Перезапустить подключение плагина или Kimi.
++
++Токен попадает в локальную копию манифеста. Эту копию нельзя коммитить, публиковать и присылать другим людям. Обновление плагина перезапишет правку, её нужно повторить.
++
++## Команды
++
++- `/gold-nav:session` — сценарная сессия: входы, сценарии, NAV, запись run'а.
++- `/gold-nav:verify` — сверка прогнозов с фактом по `forecast_log`.
++
++## Известные ограничения
++
++- `/gold-nav:verify` читает витрину `v_forecast_accuracy` (ARCHITECTURE §6.3). Её нужно создать на сервере автора (`gold_views` + грант `kimi_reader`). Без витрины команда сообщает, что сверка недоступна.
++- NAV до фазы 3 считается упрощённо (AISC × production), это фиксируется в `comment` каждого run'а. Параметры активов в MCP не выводятся, без них сессия спрашивает их у пользователя.
++- В `ModelRun` поле `wacc` несёт локальный ОФЗ-контур, хотя имя историческое (WACC/CAPM не применяются). Описано в скилле `gold-forecast-session`.
++- Мировые ряды EIA, ETF WGC и FedWatch источников не имеют, значения только ручные или «нет данных».
++
++## Результат проверки
++
++Не заполнено. Заполнить после проверки пользователем в Kimi Work:
++
++- регистрация: `kimi-daimon kimi-plugin register-personal <путь к каталогу gold-nav>` выполнена без ошибок;
++- плагин виден во вкладке «Плагины → Персональный» и включается;
++- подстановка `${GOLD_NAV_MCP_TOKEN}` работает: да / нет (если нет, применён обход из раздела выше);
++- живой запрос `GC=F` через Global Finance Data возвращает данные: да / нет;
++- `/gold-nav:session` доходит до записи run'а: да / нет.
+diff --git a/commands/session.md b/commands/session.md
+new file mode 100644
+index 0000000..8c0d85d
+--- /dev/null
++++ b/commands/session.md
+@@ -0,0 +1,9 @@
++---
++description: Сценарная сессия прогноза золота и NAV Полюса (PLZL): входы, сценарии, NAV, запись run'а
++---
++
++Запусти скилл `gold-forecast-session` и выполни его шесть шагов по порядку: РФ-входы из витрин, мировые входы из datasource среды, календарь и пороги, сценарии, NAV по методологии `dcf-methodology`, запись run'а на ingest.
++
++Если пользователь в сообщении указал горизонт или триггер, используй их. Иначе горизонт — Q4-2026, триггер — `manual`.
++
++Перед записью (шаг 6) покажи пользователю сводку: входы с датами, вероятности, NAV по сценариям, `comment`. Запись выполняй только после подтверждения. Если `GOLD_NAV_INGEST_TOKEN` не задан, запись пропусти и сохрани `run.json` локально.
+diff --git a/commands/verify.md b/commands/verify.md
+new file mode 100644
+index 0000000..3d92f07
+--- /dev/null
++++ b/commands/verify.md
+@@ -0,0 +1,25 @@
++---
++description: Сверить прогнозы forecast_log с фактом и показать ошибки прогноза золота и NAV
++---
++
++Выполни сверку прогнозов с фактом.
++
++1. Прочитай прогнозы через MCP (только чтение):
++
++   ```sql
++   SELECT metric, forecast_date, target_date, predicted, actual, error_pct, abs_error_pct, is_resolved
++   FROM v_forecast_accuracy
++   ORDER BY target_date
++   ```
++
++   Витрина `v_forecast_accuracy` — каноническое имя (ARCHITECTURE.md §6.3), строится из `forecast_log FINAL`. Если её нет или грант не выдан, ответ будет ошибкой. В этом случае сообщи пользователю, что сверка недоступна, и не обращайся к сырой таблице `forecast_log`: она закрыта грантами (ACCESS_DENIED).
++
++2. Для строк с `is_resolved = 0` и `target_date <= today()` определи факт:
++   - `xau_q_avg` — среднее `GC=F` за квартал `target_date` через datasource среды (`yahoo_finance`). Если datasource недоступен, факт не определять.
++   - `nav` — факт не определён, оставь `actual` пустым и укажи это в отчёте.
++
++3. Для строк с `is_resolved = 1` используй `error_pct` (= (predicted − actual) / actual × 100) и `abs_error_pct`; для записанных фактов сам пересчёт не нужен. Выведи таблицу: метрика, горизонт, прогноз, факт, ошибка в процентах.
++
++4. Отметь три наибольших отклонения и дай короткий вывод: по какому допущению модели ошибка, если это видно из `comment` прогона.
++
++5. Записи в `forecast_log` через ingest не выполняй: контракт ingest содержит только `model_run` и `manual_series`. Отчёт сохрани локально как `gold-verify-<дата>.md` в рабочей папке.
+diff --git a/kimi.plugin.json b/kimi.plugin.json
+new file mode 100644
+index 0000000..001776f
+--- /dev/null
++++ b/kimi.plugin.json
+@@ -0,0 +1,14 @@
++{
++  "name": "gold-nav",
++  "version": "0.1.0",
++  "description": "Scenario gold forecast to DCF NAV of Polyus (PLZL); reads RF macro via hosted ClickHouse MCP",
++  "skills": "./skills/",
++  "commands": "./commands/",
++  "mcpServers": {
++    "clickhouse": {
++      "url": "https://PLACEHOLDER_HOST/mcp",
++      "headers": { "Authorization": "Bearer ${GOLD_NAV_MCP_TOKEN}" }
++    }
++  },
++  "interface": { "displayName": "Gold NAV Forecast", "shortDescription": "Gold scenario forecast to PLZL NAV" }
++}
+diff --git a/skills/dcf-methodology/SKILL.md b/skills/dcf-methodology/SKILL.md
+new file mode 100644
+index 0000000..8480fe0
+--- /dev/null
++++ b/skills/dcf-methodology/SKILL.md
+@@ -0,0 +1,124 @@
++---
++name: dcf-methodology
++description: Методология rev.2 оценки Полюса (PLZL) — sum-of-parts NAV, НДПИ с надбавкой от золота, двухконтурная ставка дисконтирования (5% real USD + ОФЗ), три price deck'а, сценарии золота, ресурсы вне LOM, рыночный мост, пороги триггеров. Использовать вместе со скиллом gold-forecast-session при расчёте NAV.
++---
++
++# Методология DCF / NAV Полюса (rev.2)
++
++Источник: ARCHITECTURE.md §6.4 и §7 репозитория clickhouse-import-rosstat. Числа ниже — на момент rev.2 (2026-10) и обновляются по событиям.
++
++## 1. Структура: sum-of-parts, не корпоративный DCF
++
++```
++NAV = Σ_asset NPV(LOM-план актива из mine_plans) − NetDebt − CorpCosts + Опционность ресурсов
++```
++
++Оценка идёт по активам (LOM-план каждого рудника), а не по консолидированному DCF компании.
++
++## 2. LOM-DCF актива
++
++```
++FCF_t = Production_t × (Gold_deck_t − AISC_t) − НДПИ_t − налоги_t − capex_t ± ΔWC_t
++```
++
++- В конце LOM добавляется хвост `closure_costs` с отрицательным знаком.
++- Perpetual terminal value у рудника НЕТ: актив живёт ровно LOM.
++
++**Валюта.** FCF_t считается в USD: Production (oz) × (Gold − AISC) − НДПИ_t, все слагаемые в USD (НДПИ — по §3, в USD). Для каждого периода t USD-поток FCF_t переводится в RUB по курсу `usdrub_path[ключ периода t]` (ключи — горизонты/периоды, как в `gold_scenario.horizon`). Если курса на период нет, период не оценивается, а пропуск указывается в `comment`. Дисконтирование зависит от контура (§5): индустриальный — USD-поток по USD-ставке, итоговый NPV переводится в RUB по курсу ключа `gold_scenario.horizon` (одно число); локальный — RUB-поток по ОФЗ-ставке. NetDebt — в RUB (по балансу). Итог: NAV на акцию в RUB (`nav_per_share`, `nav_bull`, `nav_base`, `nav_bear`). Сравнение с ценой — `upside_pct = (nav_per_share / plzl_close − 1) × 100`, где `plzl_close` в RUB; результат в процентах (пример: NAV 12500, цена 6800 → 83.8).
++
++## 3. НДПИ
++
++```
++НДПИ = база + 10% × max(gold_usd − 1900, 0)    (на унцию, USD/oz)
++```
++
++- `gold_usd` и порог `1900` — в USD/oz, как и в ARCHITECTURE §6.4. Надбавка действует с 2025 года.
++- Надбавка считается от цены из выбранного deck'а в USD/oz и вычитается в USD внутри USD-FCF (§2).
++- НДПИ уплачивается в рублях. Рублёвая сумма = USD-сумма × `usdrub_path` того же периода. Рублёвая сумма нужна только для справки и в NAV не идёт: NAV считается по USD-FCF с переводом в RUB по §2.
++
++## 4. Эскалация AISC
++
++```
++AISC_t = AISC_base × эскалация(ИПЦ РФ)
++```
++
++Индекс брать из `v_model_inputs`: `ipc_mes_last` (месячный) или `ipc_week_ytd` (ориентир по еженедельным ценам, не официальный ИПЦ). Выбор и обоснование записать в `comment`.
++
++## 5. Ставка дисконтирования: два контура
++
++Оба результата записываются в `model_runs`.
++
++1. **Индустриальный контур (USD).** Основа 5% real USD. Дисконтируется USD-поток (до перевода в RUB) этой ставкой; итоговый NPV переводится в RUB по курсу ключа `gold_scenario.horizon` из `usdrub_path`. Добавляется страновая и стадийная надбавка. Для рисковых юрисдикций в CIM-обзоре — до 10%. Ставка сопоставима с глобальным P/NAV. CAPM/WACC для золотодобычи НЕ использовать: бета сектора около нуля или отрицательная.
++2. **Локальный контур (RUB, для российского инвестора).** Кривая ОФЗ (`ofz_1y/3y/5y/10y`) плюс премии. Дисконтируется RUB-поток (FCF, переведённый по курсу периода). Объясняет локальный дисконт.
++
++Соответствие полям `ModelRun`: `discount_rate` — индустриальный контур, `wacc` — локальный (см. SKILL `gold-forecast-session`, шаг 6).
++
++## 6. Price deck: три контура
++
++| Deck | Описание |
++|---|---|
++| `spot_flat` | Спот, без изменения на весь LOM |
++| `consensus_lt` | Долгосрочный консенсус. Якорь системно ниже спота: Scotia $2 600 с 2029, BMO $3 000 (ориентиры rev.2) |
++| `own_scenario` | Собственный сценарий из `gold_scenario`. Долгосрочный хвост обязан сходиться к обоснованной LT-оценке |
++
++## 7. Сценарии золота
++
++Горизонт Q4-2026 (база rev.2, USD/oz):
++
++| Сценарий | Диапазон | Вероятность |
++|---|---|---|
++| bull | 4 600–5 000 | 25% |
++| base | 4 000–4 600 | 40% |
++| bear | 3 750–4 050 | 35% |
++
++- Вероятности согласовать с режимами `regime_states` (HMM); в MCP витрины нет, согласование вручную.
++- Формат сценариев — по WGC Gold Outlook.
++- Сумма вероятностей — 100 ± 0.1.
++
++## 8. Ресурсы вне LOM
++
++Не входят в DCF. Оцениваются опционно: `EV/oz × stage_haircut`.
++
++| Стадия | Haircut |
++|---|---|
++| Construction | 0.7–0.9 |
++| DFS | 0.5–0.7 |
++| PEA | 0.2–0.4 |
++
++Сухой Лог (43 млн унций из 106,8 млн) — отдельная строка со стадийным дисконтом.
++
++## 9. Рыночный мост
++
++Дисконт NAV → цена раскладывается на две части:
++- **страновой** — RU-акции в 2025 торговались примерно на −75% к EM-пирам;
++- **компанейский** — дивидендный спред к ОФЗ, перетоки ликвидности, индексные потоки, sentiment.
++
++Относительная сверка: peer_universe `ru` (PLZL, ЮГК, SELG). Глобальные пиры используются только для измерения странового дисконта.
++
++## 10. Выходы run'а
++
++- NAV на акцию: 3 deck'а × 2 ставки (индустриальная, локальная). Одна пара пишется в поля run'а, остальные — в `comment`.
++- NAV-бета и EBITDA-бета к золоту. Эталон: EBITDA-бета около 14% на +10% золота. NAV-бета записывается в `comment` (отдельного поля в `ModelRun` нет).
++
++## 11. Дивиденды
++
++`dividend_status` — приостановлен до 2030 (значение по умолчанию в схеме). Дивидендная доходность в NAV не закладывается.
++
++## 12. Календарь триггеров Q4-2026
++
++Источник — `v_events_calendar` (категории: `eia`, `cpi`, `nfp`, `cbr`, `wgc`, `gov_rf`, `fomc`, `moex_rebalance`).
++
++| Дата | Событие | Действие модели |
++|---|---|---|
++| ср еженед. | EIA-дистилляты | crack ULSD >$50 — медвежий сигнал; <$30 — сигнал снят |
++| 10-е ежемес. | WGC ETF-потоки и ЦБ РФ | норма покупок ЦБ 40–60 т/мес |
++| 23.10.2026 | СД ЦБ РФ (ставка 14%) | снижение — флаг перетока ликвидности |
++| 01.11.2026 | Истечение запрета РФ на экспорт дизеля | продление → bear; отмена → bull |
++| 10.11.2026 | CPI США за октябрь | горячий → FOMC-hike 85–90% |
++| 09.12.2026 | FOMC + dot plot | второе повышение → пробой $4 000 → $3 750–3 800 |
++| 18.12.2026 | СД ЦБ РФ + ребалансировка MOEX | база: −25 б.п. до 13,75% |
++
++## 13. Ограничения
++
++- Пока не готова фаза 3, NAV считается упрощённо (AISC × production). Это фиксируется в `comment` каждого run'а.
++- Параметры активов (`mine_plans`, AISC_base, capex, NetDebt) в MCP не выводятся. Без них полный LOM-DCF не считается.
+diff --git a/skills/gold-forecast-session/SKILL.md b/skills/gold-forecast-session/SKILL.md
+new file mode 100644
+index 0000000..db40327
+--- /dev/null
++++ b/skills/gold-forecast-session/SKILL.md
+@@ -0,0 +1,158 @@
++---
++name: gold-forecast-session
++description: Сценарная сессия прогноза золота и DCF NAV Полюса (PLZL). Читает РФ-входы из витрин ClickHouse через MCP, мировые входы — из datasource-плагинов среды (Kimi Code / Kimi Work), пересчитывает bull/base/bear, считает NAV и пишет run на ingest-endpoint. Использовать при /gold-nav:session или при запросе прогноза золота / NAV Полюса.
++---
++
++# Сценарная сессия: золото → NAV PLZL
++
++Цель: за одну сессию получить воспроизводимый прогноз (сценарии золота на горизонт, NAV PLZL по методологии rev.2) и записать run в `model_runs` и `forecast_log`.
++
++## Правила сессии
++
++- MCP `clickhouse` только для чтения и только витрины `v_*`. Сырые таблицы (`macro_series`, `gold_prices`, `mine_plans` и др.) недоступны: ответ `ACCESS_DENIED`. Не пытаться обходить.
++- Токены не печатать, не вписывать в команды, файлы и комментарии. Используются только переменные окружения: `GOLD_NAV_MCP_TOKEN` (MCP), `GOLD_NAV_INGEST_URL` и `GOLD_NAV_INGEST_TOKEN` (запись).
++- Не выдумывать значения. Пустое поле — NULL, и это указывается явно.
++- Устаревшие данные не выдавать за актуальные: `stale = 1` или `*_date` старше нужного окна — пометить в `comment` и снизить уверенность.
++- Все даты в выводе абсолютные, с указанием «на дату».
++
++## Определить среду
++
++- **Kimi Code**: доступен плагин `kimi-datasource` (инструменты `yahoo_finance`, `fred_query`).
++- **Kimi Work**: доступны плагины «Global Finance Data» (`yahoo_finance`) и `imf`.
++
++Если datasource-инструментов нет совсем, шаг 2 выполняется только по РФ-данным. В `comment` записать: «мировые входы не получены».
++
++## Шаг 1. РФ-входы: витрины
++
++Два запроса через MCP:
++
++```sql
++SELECT * FROM v_model_inputs
++SELECT * FROM v_gold_dashboard
++```
++
++Что проверить:
++- `gold_moex_fix_usd`, `usdrub`, `cbr_key_rate`, `ofz_1y/3y/5y/10y`, `rgbi`, `ipc_mes_last`, `ipc_week_ytd`, `plzl_close` — и их `*_date`. Значения старше окна актуальности пометить.
++- `last_run_id`, `last_nav_per_share`, `last_run_date` равны NULL: прогонов ещё не было. Сообщить пользователю «модель ещё не считалась» и не подставлять несуществующий предыдущий NAV.
++- В `v_gold_dashboard`: `flag = 1` означает пробитый порог из статьи §6; `stale = 1` означает, что значения нет или оно старше 14 дней. Для `stale = 1` не использовать значение как текущее.
++
++## Шаг 2. Мировые входы
++
++Нужные ряды: золото (`GC=F`), DXY (`DX-Y.NYB`), ULSD (`HO=F`), ставки и инфляционные ожидания США (FRED: `FEDFUNDS`, `DFII10`, `DGS10`, `T5YIE`, `T5YIFR`, `DTWEXBGS`).
++
++**Ветка Kimi Code (kimi-datasource):**
++- `yahoo_finance`: `GC=F`, `DX-Y.NYB`, `HO=F`.
++- `fred_query` для рядов FRED. При верификации прошлого прогноза задавать `realtime_end` = дата прогноза, чтобы не было look-ahead.
++
++**Ветка Kimi Work (Global Finance Data / IMF):**
++- `yahoo_finance` через Global Finance Data: те же тикеры. История ограничена примерно 2 годами.
++- FRED-плагина нет. Ставку 10 лет брать как `^TNX` (Yahoo). Недостающие ряды — из `imf`. Если ряда нет, писать «нет данных», а не подменять.
++
++**Сверка:** `GC=F` на дату сверяется с `gold_moex_fix_usd` из шага 1 (витрина — производная цена MOEX fix / курс ЦБ, не LBMA). Величину расхождения записать в `comment`.
++
++**Ограничения источников:** LBMA недоступна (используется `GC=F`). EIA-запасы дистиллятов, ETF-потоки WGC и FedWatch — источников нет. Их значения берутся только из ручного ввода (шаг 6, `manual_series`) или отмечаются как «нет данных».
++
++## Шаг 3. Календарь и пороги
++
++```sql
++SELECT event_date, event_time, category, title, threshold, status
++FROM v_events_calendar
++WHERE event_date >= today()
++ORDER BY event_date
++LIMIT 20
++```
++
++Для каждого события:
++- Порог хранится в `threshold` (JSON), действие модели — в `title`.
++- Сопоставить порог с текущими значениями шагов 1–2: например, crack ULSD `>50` (медвежий сигнал) или CPI США `>3.5` (горячий).
++- Сработавшие триггеры перечислить в `trigger_ref`. Если прогон привязан к событию, `trigger_type = calendar`; если к новости, `news`; по решению пользователя, `manual`.
++
++## Шаг 4. Сценарии золота
++
++- Пересчитать блоки `bull`, `base`, `bear` на горизонт. Для каждого блока задать `low`, `high` и `point`. Если точка не обоснована иначе, `point` = середина диапазона.
++- Базовая сетка Q4-2026 из rev.2 (ARCHITECTURE §6.4): bull 4 600–5 000 (25%), base 4 000–4 600 (40%), bear 3 750–4 050 (35%). Отклонения от базы обосновать в `comment`.
++- Вероятности нормировать к 100. Сумма должна быть в пределах 100 ± 0.1, иначе ingest вернёт 400. Ключи `probabilities` — ровно `bull`, `base`, `bear` (совпадают с именами блоков `gold_scenario`).
++- Согласование с `regime_states` (HMM): витрины в MCP нет. Согласовать вручную по статье и отметить в `comment`.
++- Горизонт — одна из форм: `Q4-2026`, `YE-2026`, `2026`, `2026-12-31`.
++
++## Шаг 5. NAV Полюса
++
++Полный LOM-DCF по методологии rev.2 (см. скилл `dcf-methodology`) требует данных по активам (`mine_plans`, AISC, capex, чистый долг, число акций). В MCP этих данных нет.
++
++- До фазы 3 считать упрощённо: AISC × production. Формула: `FCF_t = Production_t × (Gold_t − AISC_t) − НДПИ_t`, где `НДПИ_t = база + 10% × max(Gold_t − 1900, 0)`. NAV — сумма дисконтированных FCF минус чистый долг, в расчёте на акцию.
++- **Валюты.** Gold, AISC и FCF_t считаются в USD (Production × (Gold − AISC) − НДПИ, USD/oz и USD). Перевод в RUB — для каждого периода t по курсу `usdrub_path` с ключом этого периода (ключи — те же горизонты, что в `gold_scenario.horizon`, например `Q4-2026`, `2027`). Одно число в RUB (единый курс run'а) — по ключу `gold_scenario.horizon` самого run'а. НДПИ_t в USD вычитается внутри USD-FCF; рублёвая сумма НДПИ только для справки. Если курса на период нет, период не считается: не подставлять последний известный курс молча, а отметить в `comment`. Чистый долг (NetDebt) — в RUB. NAV на акцию — в RUB на акцию (`nav_per_share`, `nav_bull`, `nav_base`, `nav_bear`).
++- Параметры (production по годам, AISC_base, NetDebt, число акций) — от пользователя. Если их нет в сессии, остановиться на этом шаге и спросить. Не записывать NAV, который не считался.
++- В `comment` обязательно написать: «NAV упрощённый: AISC × production, фаза 3 не готова».
++- `market_price = plzl_close` в RUB за акцию (дата указывается в `comment`). `upside_pct = (nav_per_share / market_price − 1) × 100`, в процентах (пример: NAV 12500, цена 6800 → 83.8, как в `ingest/server_test.go`). Обе величины в RUB, поэтому отношение безразмерное.
++- Один run = одна пара `price_deck` + ставка. Поле `price_deck` одно на run. Поэтому `spot_flat` и `consensus_lt` записываются отдельными run'ами (если пользователь их просит), а результаты остальных сочетаний пишутся в `comment`.
++
++## Шаг 6. Запись прогноза
++
++**run_id**: сгенерировать UUID v4 один раз на сессию, до первого POST. При повторе использовать тот же UUID, чтобы не создать дубль.
++
++**Формат записи** — фиксированный JSON-шаблон. Поля и теги совпадают с `ModelRun` в `ingest/model_run.go`. Лишних полей не добавлять.
++
++```json
++{
++  "run_id": "<UUID v4 сессии>",
++  "trigger_type": "calendar",
++  "trigger_ref": "<сработавшие триггеры из шага 3>",
++  "gold_scenario": {
++    "horizon": "Q4-2026",
++    "bull": {"low": 4600, "high": 5000, "point": 4800},
++    "base": {"low": 4000, "high": 4600, "point": 4300},
++    "bear": {"low": 3750, "high": 4050, "point": 3900}
++  },
++  "usdrub_path": {"Q4-2026": 81.5},
++  "price_deck": "own_scenario",
++  "discount_rate": 0.09,
++  "wacc": 0.14,
++  "nav_per_share": 12500,
++  "nav_bull": 16000,
++  "nav_base": 12500,
++  "nav_bear": 9500,
++  "market_price": 6800,
++  "upside_pct": 83.8,
++  "comment": "<методология, даты входов, допущения, NAV-бета, расхождения>",
++  "probabilities": {"bull": 25, "base": 40, "bear": 35}
++}
++```
++
++Значения в шаблоне — пример формата, их нужно заменить расчётом этой сессии.
++
++Допустимые значения:
++- `trigger_type`: `calendar`, `news`, `manual`.
++- `price_deck`: `spot_flat`, `consensus_lt`, `own_scenario`.
++- `discount_rate`: индустриальная ставка, доля (например 0.09 = 5% real USD + премия). Локальную ОФЗ-ставку не класть сюда.
++- `wacc`: локальная ОФЗ-ставка, доля. WACC/CAPM в rev.2 не применяются. Имя поля историческое; значение явно пояснить в `comment`.
++- `usdrub_path`: ключи — горизонты/периоды (те же, что в `gold_scenario.horizon`), значения — курс RUB за USD. По нему переводятся FCF из USD в RUB.
++- `probabilities`: ровно `bull`, `base`, `bear`, сумма 100 ± 0.1.
++
++**Отправка** (переменные задаются в окружении, в команде не пишутся):
++
++```bash
++curl -sS -X POST "$GOLD_NAV_INGEST_URL/v1/model_run" \
++  -H "Authorization: Bearer $GOLD_NAV_INGEST_TOKEN" \
++  -H "Content-Type: application/json" \
++  --data-binary @run.json
++```
++
++Ответы:
++- `200` и `{"inserted": 1}` — успех.
++- `400` — текст ошибки валидации. Исправить JSON и повторить с тем же `run_id`.
++- `401` — неверный или отсутствующий токен.
++- `500` — ошибка записи. Повторить позже с тем же `run_id`.
++
++**Ручные ряды** (только если значения получены вручную): `POST $GOLD_NAV_INGEST_URL/v1/manual_series`, тело — JSON-массив `[{"series": "...", "date": "YYYY-MM-DD", "value": 0.0}]`. Коды `series`: `crack_ulsd_proxy`, `distillate_stocks`, `fedwatch_dec_hike`, `etf_flows_month`, `dxy`. Ответ — `{"inserted": N}`.
++
++**Если `GOLD_NAV_INGEST_TOKEN` не задан**, не отправлять. Сохранить `run.json` и сообщить пользователю: запись на ingest выполняет только автор.
++
++**Проверка после записи** (через MCP, только чтение):
++
++```sql
++SELECT last_run_id, last_nav_per_share, last_run_date FROM v_model_inputs
++```
++
++`last_run_id` должен совпасть с `run_id` сессии.
++
++**Локальная выжимка**: markdown-файл в рабочей папке, `gold-forecast-<дата>.md`. Содержит входы с датами, триггеры, сценарии и вероятности, NAV по сценариям и deck'ам, допущения, результат ingest.

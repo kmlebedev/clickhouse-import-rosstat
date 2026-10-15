@@ -1,0 +1,764 @@
+# Review package: 0bb8c1b..HEAD
+
+## Commits
+a730e2e add bold_gold_price importer and price catalog entry
+
+## Files changed
+ bold/bold.go             | 230 ++++++++++++++++++++++++++++++++++--
+ bold/price_test.go       | 296 +++++++++++++++++++++++++++++++++++++++++++++++
+ gold/series_meta.go      |  42 ++++++-
+ gold/series_meta_test.go |  18 ++-
+ 4 files changed, 568 insertions(+), 18 deletions(-)
+
+## Diff
+diff --git a/bold/bold.go b/bold/bold.go
+index a79746a..03d421d 100644
+--- a/bold/bold.go
++++ b/bold/bold.go
+@@ -1,30 +1,33 @@
+-// Импортёр bold_etf_flows: ежедневный T+1 срез агрегата 73 золотых ETF (bold.report, ByteTree)
+-// — семь рядов etf_bold_* в macro_series (source='bold') и пер-фондовый дневной срез в
+-// bold_fund_snapshot. Чистый разбор ответов и конверсии — в parse.go; здесь сеть (только
+-// util.GetJSON), выбор режима (инкремент или полная история) и запись батчами.
+-// Документация пакета — в parse.go (пакет не должен иметь двух package-комментариев).
++// Импортёры пакета: bold_etf_flows — ежедневный T+1 срез агрегата 73 золотых ETF (bold.report,
++// ByteTree) в семь рядов etf_bold_* (macro_series, source='bold') и пер-фондовый дневной срез
++// bold_fund_snapshot; bold_gold_price — ежедневная цена золота источника в общую с пакетом gold/
++// таблицу gold_prices новой площадкой venue='bold'. Чистый разбор ответов и конверсии — в
++// parse.go; здесь сеть (только util.GetJSON), выбор режима (инкремент или полная история) и
++// запись батчами. Документация пакета — в parse.go (пакет не должен иметь двух
++// package-комментариев).
+ 
+ package bold
+ 
+ import (
+ 	"context"
+ 	"encoding/json"
+ 	"errors"
+ 	"fmt"
+ 	"slices"
+ 	"sort"
+ 	"strings"
+ 	"time"
+ 
+ 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
++	"github.com/kmlebedev/clickhouse-import-rosstat/gold"
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+ 	log "github.com/sirupsen/logrus"
+ )
+ 
+ const (
+ 	// boldSource — source рядов пакета в macro_series и series_catalog.
+ 	boldSource = "bold"
+ 
+ 	// boldEtfName — имя импортёра: Name() (контракт dagu и make import STAT=…), префикс логов
+ 	// и ошибок хелперов, которые самого boldEtfFlows не видят.
+@@ -43,21 +46,21 @@ const (
+ 	// (ARCHITECTURE.md §6.2).
+ 	macroSeriesTable = "macro_series"
+ 
+ 	// boldFullFetchGapHours — порог «инкремент не может исключить пропуск дней»: 4 календарных
+ 	// дня (план, Review Focus 3). Пятница → понедельник — это 3 дня (< 96 ч), и инкремент
+ 	// закрывает такой разрыв сам: Δ считается от стока, прочитанного из ClickHouse, а не от
+ 	// предыдущей строки ответа.
+ 	boldFullFetchGapHours = 96
+ )
+ 
+-// DDL и INSERT-ы пакета. Обе DDL выполняются до батчей: на чистой базе таблиц ещё нет.
++// DDL и INSERT-ы пакета. Все DDL выполняются до батчей: на чистой базе таблиц ещё нет.
+ const (
+ 	// boldMacroSeriesDdl — копия канона macro_series из wgc/etf.go (§4.1 спеки).
+ 	boldMacroSeriesDdl = `CREATE TABLE IF NOT EXISTS ` + macroSeriesTable + ` (
+ 			  source LowCardinality(String)
+ 			, series LowCardinality(String)
+ 			, date Date32
+ 			, value Float64
+ 		) ENGINE = ReplacingMergeTree ORDER BY (source, series, date);
+ 	`
+ 	boldMacroSeriesInsert = "INSERT INTO " + macroSeriesTable + " (source, series, date, value)"
+@@ -76,32 +79,70 @@ const (
+ 			, price_change_usd Float64
+ 			, shares Float64
+ 			, shares_change Float64
+ 		) ENGINE = ReplacingMergeTree ORDER BY (date, ticker, name);
+ 	`
+ 	boldFundInsert = "INSERT INTO " + boldFundTable + " (date, ticker, name, units_oz, units_change_oz," +
+ 		" aum_usd, aum_change_usd, price_usd, price_change_usd, shares, shares_change)"
+ )
+ 
+ // Гвардейские запросы к ClickHouse. Их текст — часть контракта (пинится тестами): у
+-// kimi_reader доступа к macro_series и bold_fund_snapshot нет, и проверить иначе будет нечем.
++// kimi_reader доступа к macro_series, bold_fund_snapshot и gold_prices нет (последняя видна ему
++// только витриной v_gold_prices), и проверить иначе будет нечем.
+ const (
+ 	// boldStoredSeriesMaxQuery — максимум дат рядов ETF-контура. LIKE с экранированным «_»:
+ 	// «_» в LIKE — одиночный символ, и без экранирования шаблон поймал бы чужие ряды.
+ 	boldStoredSeriesMaxQuery = "SELECT maxOrNull(date) FROM " + macroSeriesTable +
+ 		" FINAL WHERE source = '" + boldSource + "' AND series LIKE 'etf\\_bold\\_%'"
+ 
+ 	// boldStoredFundMaxQuery — максимум дат пер-фондового среза: вторая половина «сохранённого
+ 	// максимума» (Ruling 7).
+ 	boldStoredFundMaxQuery = "SELECT maxOrNull(date) FROM " + boldFundTable + " FINAL"
+ )
+ 
++// Контур цены (спека §4.2): цена золота источника живёт в общей с пакетом gold/ таблице
++// gold_prices новой площадкой, поэтому константы, копия канонического DDL и гвардейский запрос
++// стоят отдельной секцией — читателю видно, что это не второй ряд ETF-контура.
++const (
++	// boldGoldPriceName — имя импортёра цены: Name() (контракт dagu и make import STAT=…),
++	// префикс логов и ошибок хелперов.
++	boldGoldPriceName = "bold_gold_price"
++
++	// boldPriceTable — таблица цены золота: та же, что у пакета gold/ (площадки moex_fix_usd и
++	// comex_front), — цена источника добавляется новой площадкой, а не вторым рядом цены.
++	boldPriceTable = "gold_prices"
++
++	// boldPriceVenue — площадка цены bold: ключ gold_prices — (venue, date), и она же series
++	// записи каталога (в gold_prices series == venue, как у moex_fix_usd).
++	boldPriceVenue = "bold"
++)
++
++// boldGoldPricesDdl — копия канонического DDL gold_prices из gold/gold.go (та же копия лежит в
++// ingest/schema.go: у таблицы три независимых писателя). Копии обязаны совпадать, как у копий
++// macro_series (ARCHITECTURE.md §6.2): импортёр цены обязан отработать и на чистой базе, где
++// пакет gold/ ещё не прогонялся.
++const (
++	boldGoldPricesDdl = `CREATE TABLE IF NOT EXISTS ` + boldPriceTable + ` (
++			  venue LowCardinality(String)
++			, date Date32
++			, usd Float64
++		) ENGINE = ReplacingMergeTree ORDER BY (venue, date);
++	`
++	boldGoldPricesInsert = "INSERT INTO " + boldPriceTable + " (venue, date, usd)"
++)
++
++// boldPriceStoredMaxQuery — максимум дат площадки bold: сохранённый максимум импортёра цены.
++// Площадка в условии обязательна: gold_prices делят три источника (gold/, ingest и этот), и
++// максимум по всей таблице увёл бы прогон в «нечего обновлять» из-за чужих свежих точек.
++const boldPriceStoredMaxQuery = "SELECT maxOrNull(date) FROM " + boldPriceTable +
++	" FINAL WHERE venue = '" + boldPriceVenue + "'"
++
+ // boldEtfFlows — импортёр bold_etf_flows. Каждый набор ответов — четыре запроса: инкремент
+ // (обычный прогон) читает units-latest, aum-latest, flows/all-latest и summary, полный режим —
+ // три файла истории и summary. Полный прогон начинается с инкрементного набора (он даёт дату для
+ // решения no-op и для пер-фондового среза), поэтому в сумме делает восемь запросов; запись — два
+ // батча: macro_series (7 рядов) и bold_fund_snapshot (73 фонда).
+ type boldEtfFlows struct {
+ 	// apiBase — база API с тем же смыслом, что apiBase в wgc: пустая означает боевую
+ 	// boldBaseURL, в тестах подставляется httptest-сервер.
+ 	apiBase string
+ 	// now — часы прогона (nil → time.Now): ими инструментирован warn об отставании даты данных
+@@ -690,13 +731,186 @@ func boldWriteFunds(ctx context.Context, conn driver.Conn, funds []boldFundPoint
+ 				boldEtfName, f.Ticker, f.Name, f.Date.Format(boldDateLayout), err)
+ 		}
+ 	}
+ 
+ 	if err = batch.Send(); err != nil {
+ 		return fmt.Errorf("%s: %s: %w", boldEtfName, boldFundTable, err)
+ 	}
+ 	return nil
+ }
+ 
++// boldGoldPrice — импортёр bold_gold_price: ежедневная цена золота bold.report в общую таблицу
++// gold_prices площадкой venue='bold'. Один запрос за прогон в любом режиме: инкремент читает
++// price-latest, полный путь — файл истории price.json. Решение о режиме принимается до запроса
++// (см. Import), поэтому «пробного» price-latest, как у ETF-импортёра, здесь нет: он сделал бы
++// полный путь двухзапросным.
++type boldGoldPrice struct {
++	// apiBase — база API с тем же смыслом, что apiBase в boldEtfFlows: пустая означает боевую
++	// boldBaseURL, в тестах подставляется httptest-сервер.
++	apiBase string
++	// now — часы прогона (nil → time.Now): вход решения о режиме. Шов для тестов, как apiBase:
++	// с реальными часами выбор «инкремент или полный путь» зависел бы от дня запуска тестов.
++	now func() time.Time
++}
++
++func (s *boldGoldPrice) Name() string { return boldGoldPriceName }
++
++// base — база API прогона: пустое поле означает боевой адрес (пара к boldEtfFlows.base).
++func (s *boldGoldPrice) base() string {
++	if s.apiBase == "" {
++		return boldBaseURL
++	}
++	return s.apiBase
++}
++
++// clock — время прогона: nil-поле означает прод (time.Now), как у boldEtfFlows.
++func (s *boldGoldPrice) clock() time.Time {
++	if s.now == nil {
++		return time.Now()
++	}
++	return s.now()
++}
++
++// Import — один прогон импортёра цены. Порядок шагов: (1) сохранённый максимум площадки bold
++// (ошибка чтения — warn и нулевое время: диагностический запрос не повод терять обновление, как
++// в bold_etf_flows); (2) выбор режима до запроса; (3) один запрос источника — price-latest
++// (инкремент) или price.json (полный путь); (4) на инкременте дата источника не новее
++// сохранённого максимума — писать нечего, и соединение дальше чтения максимума не трогается
++// (ни DDL, ни батча, ни каталога); (5) DDL — копия канонического DDL gold_prices (на чистой базе
++// таблицы ещё нет); (6) батч venue='bold'; (7) каталог — только после успешного Send (описание
++// ряда, которого в таблице нет, — обещание данных, которых агент не найдёт; прецедент
++// bold_etf_flows).
++//
++// Решение о режиме принимается по часам прогона, а не по дате ответа: инкремент и полный путь
++// стоят по одному запросу, а «пробный» price-latest перед файлом истории сделал бы полный путь
++// двухзапросным. Верхняя граница даты источника и без запроса — день прогона, поэтому
++// boldNeedsFullFetch (тот же порог 4 календарных дня, что у ETF-импортёра) вызывается с часами:
++// сохранённый максимум старше порога значит, что источник мог опубликовать несколько дней,
++// которых у нас нет, и инкремент их не доберёт. Пустая площадка уводит на полный путь тем же
++// вызовом (нулевой максимум — это всегда полный путь).
++func (s *boldGoldPrice) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
++	stored, serr := boldPriceStoredMaxDate(ctx, conn)
++	if serr != nil {
++		log.Warnf("%s: сохранённый максимум площадки %s не прочитан (%v) — беру полную историю",
++			boldGoldPriceName, boldPriceVenue, serr)
++		stored = time.Time{}
++	}
++
++	var points []point
++	if boldNeedsFullFetch(s.clock(), stored) {
++		rows, ferr := boldFetchHistory(s.base(), boldPathPrice, boldMetricPrice)
++		if ferr != nil {
++			return 0, ferr
++		}
++		if points, err = boldPricePoints(rows); err != nil {
++			return 0, err
++		}
++		log.Infof("%s: полный режим: сохранённый максимум %s, точек истории %d",
++			boldGoldPriceName, boldFormatDate(stored), len(points))
++	} else {
++		latest, lerr := boldFetchLatestRow(s.base(), boldPathPriceLatest, boldMetricPrice)
++		if lerr != nil {
++			return 0, lerr
++		}
++		latestDate, derr := parseBoldDate(latest.Date)
++		if derr != nil {
++			return 0, derr
++		}
++		// Идемпотентный no-op: дата источника не новее сохранённого максимума (или равна ему) —
++		// писать те же точки незачем. На полном пути это условие не проверяется: там максимум
++		// старше порога, и цена ошибки обратная — пропущенный день остался бы незакрытым.
++		if !latestDate.After(stored) {
++			log.Infof("%s: дата источника %s не новее сохранённого максимума %s — нечего обновлять (0 строк)",
++				boldGoldPriceName, latestDate.Format(boldDateLayout), stored.Format(boldDateLayout))
++			return 0, nil
++		}
++		if points, err = boldPricePoints([]boldRow{latest}); err != nil {
++			return 0, err
++		}
++		log.Infof("%s: инкремент: сохранённый максимум %s, дата источника %s",
++			boldGoldPriceName, boldFormatDate(stored), latestDate.Format(boldDateLayout))
++	}
++
++	if err = conn.Exec(ctx, boldGoldPricesDdl); err != nil {
++		return 0, fmt.Errorf("%s: %s: %w", boldGoldPriceName, boldPriceTable, err)
++	}
++
++	count, err = boldWritePrices(ctx, conn, points)
++	if err != nil {
++		return count, err
++	}
++
++	if err = util.UpsertSeriesCatalog(ctx, conn, []util.SeriesMeta{gold.BoldPriceSeriesMeta()}); err != nil {
++		return count, fmt.Errorf("%s: каталог рядов: %w", boldGoldPriceName, err)
++	}
++
++	log.Infof("Imported %d rows of %s (цена %s: площадка %s в %s)",
++		count, boldGoldPriceName, boldPathPrice, boldPriceVenue, boldPriceTable)
++
++	return count, nil
++}
++
++// boldPriceStoredMaxDate — сохранённый максимум импортёра цены: максимум дат площадки bold в
++// gold_prices. Читается через boldScanMaxDate: NULL пустой таблицы и отсутствие самой таблицы
++// (чистая база) — это «данных нет» (нулевое время), а не ошибка чтения.
++func boldPriceStoredMaxDate(ctx context.Context, conn driver.Conn) (time.Time, error) {
++	return boldScanMaxDate(ctx, conn, boldPriceStoredMaxQuery)
++}
++
++// boldPricePoints переводит строки цены (файл истории или ответ «последнего дня») в точки
++// gold_prices. Series точки — площадка (в gold_prices series == venue), поэтому батч берёт её из
++// точки, а не из константы на месте записи. nil в value — ошибка, а не пропуск строки: у метрики
++// цены других полей нет, и строка без value означает смену формы ответа, а тихий пропуск дня
++// оставил бы в ряду дыру, неотличимую от выходного. Пустой результат — тоже ошибка (fail-fast,
++// урок eia): молчаливый ноль оставил бы dagu зелёным, а ряд — без обновления.
++func boldPricePoints(rows []boldRow) ([]point, error) {
++	points := make([]point, 0, len(rows))
++	for i, row := range rows {
++		if row.Value == nil {
++			return nil, fmt.Errorf("bold: цена, строка %d (%s): нет обязательного поля value", i+1, row.Date)
++		}
++		date, err := parseBoldDate(row.Date)
++		if err != nil {
++			return nil, fmt.Errorf("bold: цена, строка %d: %w", i+1, err)
++		}
++		points = append(points, point{Series: boldPriceVenue, Date: date, Value: *row.Value})
++	}
++	if len(points) == 0 {
++		return nil, errors.New("bold: нет точек цены: в ответе нет ни одной строки")
++	}
++	return points, nil
++}
++
++// boldWritePrices пишет точки цены одним батчем в gold_prices (venue, date, usd). Порядок батча
++// детерминирован (сортировка копии по дате): повторный импорт воспроизводим, а срез вызывающего
++// не переставляется (побочный эффект на аргументе — тот класс ошибок, который потом ищут в чужом
++// вызове). Abort после ошибки Append не оставляет соединению открытый батч; сбой Abort логируем,
++// а возвращаемой ошибкой остаётся первопричина Append (прецедент boldWritePoints).
++func boldWritePrices(ctx context.Context, conn driver.Conn, points []point) (int64, error) {
++	points = slices.Clone(points)
++	sort.Slice(points, func(i, j int) bool { return points[i].Date.Before(points[j].Date) })
++
++	batch, err := conn.PrepareBatch(ctx, boldGoldPricesInsert)
++	if err != nil {
++		return 0, fmt.Errorf("%s: %s: %w", boldGoldPriceName, boldPriceTable, err)
++	}
++
++	var count int64
++	for _, p := range points {
++		if err = batch.Append(p.Series, p.Date, p.Value); err != nil {
++			if aerr := batch.Abort(); aerr != nil {
++				log.Warnf("%s: не удалось закрыть батч цены после ошибки append: %v", boldGoldPriceName, aerr)
++			}
++			return 0, fmt.Errorf("%s: append %s %s: %w", boldGoldPriceName, p.Series, p.Date.Format(boldDateLayout), err)
++		}
++		count++
++	}
++
++	if err = batch.Send(); err != nil {
++		return 0, fmt.Errorf("%s: %s: %w", boldGoldPriceName, boldPriceTable, err)
++	}
++	return count, nil
++}
++
+ func init() {
+-	chimport.Stats = append(chimport.Stats, &boldEtfFlows{})
++	chimport.Stats = append(chimport.Stats, &boldEtfFlows{}, &boldGoldPrice{})
+ }
+diff --git a/bold/price_test.go b/bold/price_test.go
+new file mode 100644
+index 0000000..348541e
+--- /dev/null
++++ b/bold/price_test.go
+@@ -0,0 +1,296 @@
++package bold
++
++import (
++	"context"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
++	"github.com/kmlebedev/clickhouse-import-rosstat/gold"
++)
++
++// Тесты импортёра цены офлайн: источник — httptest-сервер по фикстурам bold/testdata, база —
++// фейковое соединение (те же хелперы, что у тестов ETF-импортёра: boldNewTestServer,
++// boldFakeConn, boldTestClock). Пинятся четыре вида контракта пакета: режим и число запросов
++// (один в любом режиме), площадка записи (venue='bold' в общей gold_prices), прогон-нечего-
++// обновлять без DDL и батчей, и запись каталога цены из пакета gold (импортёру принадлежит
++// публикация записи, а не её текст).
++
++// Пины фактов спеки §8 на фикстурах Task 1: цена 2026-10-09 — 4216.3, предыдущий торговый день
++// 2026-10-08 — 4199.4 (те же числа, что проверяет parse_test.go на уровне разбора).
++const (
++	boldPinPrice      = 4216.3
++	boldPinPricePrior = 4199.4
++)
++
++// boldPriceHistoryBody — тело файла истории цены для полного пути: две даты 2026-10-08 и
++// 2026-10-09. Общая фикстура bold_price_history.json урезана до трёх дат ради тестов
++// ETF-контура (2015-01-01 там — день без units/aum); для цены та строка тоже точка, и чтобы
++// состав батча был пином, а не следствием размера общей фикстуры, здесь остаются две даты
++// 2026 года (на живых данных полный путь пишет весь ряд — 3 138 точек с 2014-10-01).
++func boldPriceHistoryBody(t *testing.T) []byte {
++	t.Helper()
++	return boldMutateHistory(t, "bold_price_history.json", func(data []map[string]any) []map[string]any {
++		out := make([]map[string]any, 0, len(data))
++		for _, row := range data {
++			if row["date"] == boldPinEmpty {
++				continue
++			}
++			out = append(out, row)
++		}
++		return out
++	})
++}
++
++// boldPriceTestStat — импортёр цены прогона: httptest-сервер и фиксированные часы (boldTestNow).
++// Часы здесь — вход решения о режиме, а не только лог: см. TestBoldPriceImportFullWhenStoredIsStale.
++func boldPriceTestStat(server *boldTestServer) boldGoldPrice {
++	return boldGoldPrice{apiBase: server.base(), now: boldTestClock()}
++}
++
++// boldPriceBatchValue — значение цены из строки батча gold_prices по (venue, date).
++func boldPriceBatchValue(t *testing.T, batch *boldFakeBatch, venue, date string) float64 {
++	t.Helper()
++	want := testDate(t, date)
++	for _, row := range batch.rows {
++		if row[0] != venue {
++			continue
++		}
++		if d, ok := row[1].(time.Time); ok && d.Equal(want) {
++			value, ok := row[2].(float64)
++			if !ok {
++				t.Fatalf("значение цены %s@%s типа %T", venue, date, row[2])
++			}
++			return value
++		}
++	}
++	t.Fatalf("в батче нет цены %s@%s (%d строк)", venue, date, len(batch.rows))
++	return 0
++}
++
++func TestBoldGoldPriceName(t *testing.T) {
++	if got := (&boldGoldPrice{}).Name(); got != "bold_gold_price" {
++		t.Fatalf("Name() = %q, ожидалось bold_gold_price", got)
++	}
++}
++
++// TestBoldGoldPriceIsRegistered: без записи в chimport.Stats импортёр не найдётся ни в dagu, ни в
++// `make import STAT=bold_gold_price` (прецедент — TestBoldEtfFlowsIsRegistered). Пакет
++// подключается к main.go пустым импортом, поэтому единственный след регистрации — этот init().
++func TestBoldGoldPriceIsRegistered(t *testing.T) {
++	for _, stat := range chimport.Stats {
++		if stat.Name() != boldGoldPriceName {
++			continue
++		}
++		if _, ok := stat.(*boldGoldPrice); !ok {
++			t.Fatalf("под именем %q зарегистрирован %T, ожидался *boldGoldPrice", boldGoldPriceName, stat)
++		}
++		return
++	}
++	names := make([]string, 0, len(chimport.Stats))
++	for _, stat := range chimport.Stats {
++		names = append(names, stat.Name())
++	}
++	t.Fatalf("импортёр %q не зарегистрирован в chimport.Stats: %v", boldGoldPriceName, names)
++}
++
++// TestBoldPriceImportFullWritesVenue: пустая площадка (оба максимума NULL) уводит импорт на
++// полную историю — один запрос файла истории и батч gold_prices с двумя точками площадки
++// venue='bold'. Саботаж «писать venue='comex_front'» валит этот тест: подмена площадки была бы
++// тихой подменой смысла исторического ряда comex_front (3 совпадения из 13 контрольных дат).
++// Саботаж «спрашивать price-latest в полном режиме» тоже виден здесь: фикстуры этого пути нет,
++// и сервер ответил бы 404.
++func TestBoldPriceImportFullWritesVenue(t *testing.T) {
++	server := boldNewTestServer(t, map[string][]byte{boldPathPrice: boldPriceHistoryBody(t)})
++	conn := newBoldFakeConn() // пустая очередь — площадка bold пуста
++	stat := boldPriceTestStat(server)
++
++	count, err := stat.Import(context.Background(), conn)
++	if err != nil {
++		t.Fatalf("Import: %v", err)
++	}
++	if count != 2 {
++		t.Errorf("Import вернул %d строк, ожидалось 2 — полный путь пишет весь файл (08.10 и 09.10)", count)
++	}
++
++	batch := conn.batchFor(t, boldGoldPricesInsert)
++	if len(batch.rows) != 2 {
++		t.Fatalf("строк в %s: %d, ожидалось 2", boldPriceTable, len(batch.rows))
++	}
++	for _, row := range batch.rows {
++		if row[0] != boldPriceVenue {
++			t.Fatalf("venue строки = %v, ожидалась %q", row[0], boldPriceVenue)
++		}
++		if _, ok := row[1].(time.Time); !ok {
++			t.Fatalf("date строки типа %T", row[1])
++		}
++		if _, ok := row[2].(float64); !ok {
++			t.Fatalf("usd строки типа %T", row[2])
++		}
++	}
++	if got := boldPriceBatchValue(t, batch, boldPriceVenue, boldPinDate); got != boldPinPrice {
++		t.Errorf("цена %s = %v, ожидалось %v", boldPinDate, got, boldPinPrice)
++	}
++	if got := boldPriceBatchValue(t, batch, boldPriceVenue, boldPinPrior); got != boldPinPricePrior {
++		t.Errorf("цена %s = %v, ожидалось %v", boldPinPrior, got, boldPinPricePrior)
++	}
++	if !batch.sent {
++		t.Error("батч цены обязан быть отправлен (Send)")
++	}
++
++	// Гвардейский запрос максимума пинится текстом: у kimi_reader нет SELECT на gold_prices
++	// (проверено: чтение идёт через витрину v_gold_prices), поэтому проверить его иначе нечем.
++	// Площадка в запросе обязана быть своя: gold_prices делят три источника (gold, ingest и
++	// этот), и максимум всей таблицы увёл бы импорт в no-op из-за чужих свежих точек.
++	calls := conn.callList()
++	if boldTestCallIndex(calls, "queryrow: "+boldPriceStoredMaxQuery) < 0 {
++		t.Errorf("максимум площадки не прочитан запросом %q: %v", boldPriceStoredMaxQuery, calls)
++	}
++	// Копия канонического DDL gold_prices идёт до батча (на чистой базе таблицы ещё нет),
++	// каталог — после Send (описание ряда, которого в таблице нет, — обещание данных).
++	ddl := boldTestCallIndex(calls, "exec: CREATE TABLE IF NOT EXISTS "+boldPriceTable)
++	firstBatch := boldTestCallIndex(calls, "preparebatch: "+boldGoldPricesInsert)
++	catalog := boldTestCallIndex(calls, "preparebatch: INSERT INTO series_catalog")
++	if ddl < 0 || firstBatch < 0 || catalog < 0 {
++		t.Fatalf("порядок обращений: %v", calls)
++	}
++	if ddl > firstBatch {
++		t.Errorf("DDL обязана идти до батча: %v", calls)
++	}
++	if catalog < firstBatch {
++		t.Errorf("каталог обязан писаться после батча: %v", calls)
++	}
++
++	// Режим стоит один запрос, и это файл истории: пробного price-latest нет — иначе полный путь
++	// был бы двухзапросным.
++	if got := server.requested(); len(got) != 1 || got[0] != boldPathPrice {
++		t.Errorf("запросы полного пути: %v, ожидался один %q", got, boldPathPrice)
++	}
++}
++
++// TestBoldPriceImportIncrementalWritesOneDay: площадка за 08.10, дата источника 09.10, разрыв
++// один календарный день — инкремент: один запрос price-latest и одна точка 09.10. Саботаж
++// «ходить в файл истории и писать весь ряд» виден здесь: фикстуры gold/price у сервера нет, и
++// такой запрос вернул бы 404, а не тихо дописал лишние дни.
++func TestBoldPriceImportIncrementalWritesOneDay(t *testing.T) {
++	server := boldNewTestServer(t, map[string][]byte{boldPathPriceLatest: testFixture(t, "bold_price_latest.json")})
++	conn := newBoldFakeConn(boldFakeDate(t, boldPinPrior))
++	stat := boldPriceTestStat(server)
++
++	count, err := stat.Import(context.Background(), conn)
++	if err != nil {
++		t.Fatalf("Import: %v", err)
++	}
++	if count != 1 {
++		t.Errorf("Import вернул %d строк, ожидалось 1 — инкремент пишет только дату источника", count)
++	}
++
++	batch := conn.batchFor(t, boldGoldPricesInsert)
++	if len(batch.rows) != 1 {
++		t.Fatalf("строк в %s: %d, ожидалась 1 за 09.10", boldPriceTable, len(batch.rows))
++	}
++	if got := batch.rows[0][0]; got != boldPriceVenue {
++		t.Errorf("venue строки = %v, ожидалась %q", got, boldPriceVenue)
++	}
++	if date := batch.rows[0][1].(time.Time); !date.Equal(testDate(t, boldPinDate)) {
++		t.Errorf("дата точки = %s, ожидалась %s", date.Format(boldDateLayout), boldPinDate)
++	}
++	if got := boldPriceBatchValue(t, batch, boldPriceVenue, boldPinDate); got != boldPinPrice {
++		t.Errorf("цена %s = %v, ожидалось %v", boldPinDate, got, boldPinPrice)
++	}
++	if got := server.requested(); len(got) != 1 || got[0] != boldPathPriceLatest {
++		t.Errorf("запросы инкремента: %v, ожидался один %q", got, boldPathPriceLatest)
++	}
++}
++
++// TestBoldPriceImportFullWhenStoredIsStale: сохранённый максимум старше порога полного пути
++// (06.10 против дня прогона 10.10) — режим полный, потому что инкремент не может исключить
++// пропуск дней, а «пробный» price-latest сделал бы полный путь двухзапросным. Файл истории
++// пишется целиком, включая дни не новее сохранённого максимума: перезапись идемпотентна и
++// заодно лечит прошлые дыры.
++func TestBoldPriceImportFullWhenStoredIsStale(t *testing.T) {
++	server := boldNewTestServer(t, map[string][]byte{boldPathPrice: boldPriceHistoryBody(t)})
++	conn := newBoldFakeConn(boldFakeDate(t, "2026-10-06"))
++	stat := boldPriceTestStat(server)
++
++	count, err := stat.Import(context.Background(), conn)
++	if err != nil {
++		t.Fatalf("Import: %v", err)
++	}
++	if count != 2 {
++		t.Errorf("Import вернул %d строк, ожидалось 2 — полный путь пишет весь файл, а не один день", count)
++	}
++
++	batch := conn.batchFor(t, boldGoldPricesInsert)
++	if len(batch.rows) != 2 {
++		t.Fatalf("строк в %s: %d, ожидалось 2 (08.10 и 09.10)", boldPriceTable, len(batch.rows))
++	}
++	if got := server.requested(); len(got) != 1 || got[0] != boldPathPrice {
++		t.Errorf("запросы полного пути: %v, ожидался один %q без пробного %q", got, boldPathPrice, boldPathPriceLatest)
++	}
++}
++
++// TestBoldPriceImportNoopWhenUpToDate: дата источника не новее сохранённого максимума — 0 строк,
++// ни одной ошибки, ни одного батча и ни одной DDL: соединение трогается только чтением максимума
++// площадки, а источник — одним запросом price-latest.
++func TestBoldPriceImportNoopWhenUpToDate(t *testing.T) {
++	server := boldNewTestServer(t, map[string][]byte{boldPathPriceLatest: testFixture(t, "bold_price_latest.json")})
++	conn := newBoldFakeConn(boldFakeDate(t, boldPinDate))
++	stat := boldPriceTestStat(server)
++
++	count, err := stat.Import(context.Background(), conn)
++	if err != nil {
++		t.Fatalf("Import: %v", err)
++	}
++	if count != 0 {
++		t.Errorf("Import вернул %d строк, ожидалось 0", count)
++	}
++
++	calls := conn.callList()
++	if len(calls) != 1 || calls[0] != "queryrow: "+boldPriceStoredMaxQuery {
++		t.Errorf("обращения к соединению: %v, ожидалось одно чтение максимума площадки", calls)
++	}
++	for _, call := range calls {
++		if strings.HasPrefix(call, "preparebatch: ") {
++			t.Errorf("батч открывался на прогоне-нечего-обновлять: %v", calls)
++		}
++		if strings.HasPrefix(call, "exec: ") {
++			t.Errorf("DDL выполнялась на прогоне-нечего-обновлять: %v", calls)
++		}
++	}
++	if got := server.requested(); len(got) != 1 || got[0] != boldPathPriceLatest {
++		t.Errorf("запросы прогона: %v, ожидался один %q", got, boldPathPriceLatest)
++	}
++}
++
++// TestBoldPriceCatalogEntry: запись каталога цены (source='gold', series='bold') заполнена и
++// называет главное для читателя: единицы, что это фьючерсная цена источника с нераскрытым
++// методом и что подменять ею comex_front нельзя. Ряд живёт в таблице цены gold_prices, поэтому
++// запись объявлена в пакете gold, а печатает её импортёр цены.
++func TestBoldPriceCatalogEntry(t *testing.T) {
++	m := gold.BoldPriceSeriesMeta()
++	if m.Source != "gold" {
++		t.Errorf("source = %q, ожидался gold", m.Source)
++	}
++	if m.Series != boldPriceVenue {
++		t.Errorf("series = %q, ожидалась площадка %q (в gold_prices series == venue)", m.Series, boldPriceVenue)
++	}
++	if m.Frequency != "D" {
++		t.Errorf("frequency = %q, ожидалось D", m.Frequency)
++	}
++	if !strings.Contains(m.Unit, "USD") {
++		t.Errorf("unit = %q, ожидалась единица в USD", m.Unit)
++	}
++	if m.Title == "" || m.Origin == "" || m.Description == "" {
++		t.Errorf("пустое поле записи каталога: %+v", m)
++	}
++	for _, fragment := range []string{"метод", "не раскрыт", "не спот", "comex_front", "bold.report"} {
++		if !strings.Contains(m.Description, fragment) {
++			t.Errorf("описание не называет %q: %s", fragment, m.Description)
++		}
++	}
++	if !strings.Contains(m.Origin, boldPathPrice+".json") {
++		t.Errorf("origin = %q, ожидался эндпоинт %s.json", m.Origin, boldPathPrice)
++	}
++}
+diff --git a/gold/series_meta.go b/gold/series_meta.go
+index 30e73d2..ad0ff99 100644
+--- a/gold/series_meta.go
++++ b/gold/series_meta.go
+@@ -1,16 +1,21 @@
+ package gold
+ 
+ import "github.com/kmlebedev/clickhouse-import-rosstat/util"
+ 
+ const goldSource = "gold"
+ 
++// boldVenue — площадка цены золота от bold.report в той же таблице gold_prices. В gold_prices
++// series == venue, поэтому константа связывает запись каталога с площадкой, в которую пишет
++// импортёр пакета bold.
++const boldVenue = "bold"
++
+ var goldSeriesMeta = []util.SeriesMeta{
+ 	{
+ 		Source:    goldSource,
+ 		Series:    goldVenue,
+ 		Title:     "Цена золота: фиксинг MOEX GOLDFIXME, пересчитанный в USD/oz",
+ 		Unit:      "USD за тройскую унцию",
+ 		Frequency: "D",
+ 		Origin:    "iss.moex.com (борд FIXI, инструмент GOLDFIXME, ₽/г) × 31,1034768 г/oz ÷ курс ЦБ cbr_currency_usd",
+ 		Description: "Производная цена золота, не LBMA: фиксинг MOEX GOLDFIXME в рублях за грамм пересчитан в доллары " +
+ 			"за тройскую унцию по курсу ЦБ (последний известный не позже даты; окно 10 дней). Ряд начинается 2024-08-05. " +
+@@ -22,25 +27,52 @@ var goldSeriesMeta = []util.SeriesMeta{
+ 		Title:     "Цена золота: COMEX front-month (GC=F), закрытие дня",
+ 		Unit:      "USD за тройскую унцию (фьючерс, не спот)",
+ 		Frequency: "D",
+ 		Origin:    "Yahoo Finance GC=F (фронт-месяц COMEX) через kimi-datasource, сессионный ввод через POST /v1/gold_prices",
+ 		Description: "Цена фронт-месяца фьючерса COMEX из сессионного канала datasource. Не спот и не LBMA: " +
+ 			"базис фьючерса к споту не устраняется. Ряд начинается разовым backfill до 2 лет (лимит источника) " +
+ 			"и пишется сессионно, не импортёром; импортёр этот ряд не трогает. Темп — отношение к предыдущей строке.",
+ 	},
+ }
+ 
++// BoldPriceSeriesMeta — каталог цены золота от bold.report (площадка bold в gold_prices).
++// Экспортируется, потому что запись описывает ряд, который пишет импортёр пакета bold: он и
++// публикует её после успешного Send (описание ряда, которого в таблице нет, — обещание данных,
++// которых агент не найдёт). Прецедент такой же связи — comex_front: ряд живёт в gold_prices, а
++// пишет его ingest. Текст описания обязан называть главное для читателя: метод источником не
++// раскрыт, это не спот, и comex_front этим рядом не подменяется (спека §4.2, §9).
++func BoldPriceSeriesMeta() util.SeriesMeta {
++	return util.SeriesMeta{
++		Source:    goldSource,
++		Series:    boldVenue,
++		Title:     "Цена золота: фьючерсная цена bold.report (ByteTree), не спот и не GC=F",
++		Unit:      "USD за тройскую унцию (фьючерс источника, метод детально не раскрыт)",
++		Frequency: "D",
++		Origin:    "bold.report/api/v1/gold/price.json (инкремент — gold/price-latest.json)",
++		Description: "Фьючерсная цена золота, которую bold.report публикует как «Futures Price»: контракт и время снимка " +
++			"источником не раскрыты, поэтому метод детально не раскрыт — это не спот, не LBMA и не GC=F. " +
++			"С нашим comex_front (GC=F, фронт-месяц COMEX, сессионный ввод) совпадает лишь частично: 3 из 13 " +
++			"контрольных дат при расхождениях до $42 (2026-10-08: 4157,0 у comex_front против 4199,4 у источника), " +
++			"поэтому ряд — отдельная площадка bold, а не подмена comex_front. Источник — bold.report (ByteTree), " +
++			"ключей нет, режим щадящий (1 запрос в сутки); данные T+1, выходные источник опускает. Ряд начинается " +
++			"2014-10-01; на 2026-10-09 — 3 138 точек. Темп — отношение к предыдущей строке.",
++	}
++}
++
+ var goldPricesView = util.View{
+ 	Name:   "v_gold_prices",
+ 	Tables: []string{goldTable},
+ 	Select: `SELECT 'gold' AS source, toString(venue) AS series, toDate(date) AS date, usd AS value
+ 	FROM gold_prices FINAL`,
+-	Comment: "Цены золота в USD/oz по площадкам (venue). Две площадки: moex_fix_usd — производная цена " +
++	Comment: "Цены золота в USD/oz по площадкам (venue). Три площадки: moex_fix_usd — производная цена " +
+ 		"(фиксинг MOEX GOLDFIXME в ₽/г ÷ курс ЦБ), не LBMA; comex_front — фронт-месяц фьючерса COMEX (GC=F) " +
+-		"из сессионного канала, не спот. Единицы и метод — в v_series_catalog по (source='gold', series=venue)",
++		"из сессионного канала, не спот; bold — фьючерсная цена источника bold.report (ByteTree), метод " +
++		"детально не раскрыт: не спот и не GC=F, с comex_front совпадает частично (отдельная серия, а не " +
++		"замена). Единицы и метод — в v_series_catalog по (source='gold', series=venue)",
+ 	Columns: map[string]string{
+ 		"source": "Импортёр-источник: всегда gold",
+-		"series": "Площадка/метод цены; совпадает с series в v_series_catalog (moex_fix_usd — производная цена; comex_front — фьючерс, не спот)",
+-		"date":   "Дата наблюдения (Date)",
+-		"value":  "Цена золота, USD за тройскую унцию",
++		"series": "Площадка/метод цены; совпадает с series в v_series_catalog (moex_fix_usd — производная цена; " +
++			"comex_front — фьючерс GC=F, не спот; bold — фьючерсная цена bold.report с нераскрытым методом)",
++		"date":  "Дата наблюдения (Date)",
++		"value": "Цена золота, USD за тройскую унцию",
+ 	},
+ }
+diff --git a/gold/series_meta_test.go b/gold/series_meta_test.go
+index 9ba5e09..a39cbdc 100644
+--- a/gold/series_meta_test.go
++++ b/gold/series_meta_test.go
+@@ -1,21 +1,29 @@
+ package gold
+ 
+-import "testing"
++import (
++	"testing"
++
++	"github.com/kmlebedev/clickhouse-import-rosstat/util"
++)
+ 
+ // Каталог обязан описывать все venue, в которые пишет контур: импортёр gold — moex_fix_usd,
+-// ingest (/v1/gold_prices) — comex_front. Ряд без описания невидим агенту в v_series_catalog.
++// ingest (/v1/gold_prices) — comex_front, импортёр bold_gold_price (пакет bold) — bold. Ряд без
++// описания невидим агенту в v_series_catalog.
+ func TestSeriesMetaCoversAllVenues(t *testing.T) {
+-	want := []string{goldVenue, "comex_front"}
++	want := []string{goldVenue, "comex_front", boldVenue}
+ 
+-	described := make(map[string]bool, len(goldSeriesMeta))
+-	for _, m := range goldSeriesMeta {
++	// Записи каталога живут в двух видах: срез goldSeriesMeta и отдельная BoldPriceSeriesMeta()
++	// (её объявляет этот пакет, а публикует импортёр пакета bold). Проверка полноты обязана
++	// покрывать оба: иначе переезд записи в отдельную функцию тихо вывел бы её из-под теста.
++	described := make(map[string]bool, len(goldSeriesMeta)+1)
++	for _, m := range append([]util.SeriesMeta{BoldPriceSeriesMeta()}, goldSeriesMeta...) {
+ 		if m.Source != goldSource || m.Series == "" || m.Title == "" || m.Unit == "" || m.Frequency == "" || m.Origin == "" || m.Description == "" {
+ 			t.Errorf("описание ряда %q заполнено не полностью", m.Series)
+ 		}
+ 		if described[m.Series] {
+ 			t.Errorf("ряд %q описан дважды", m.Series)
+ 		}
+ 		described[m.Series] = true
+ 	}
+ 
+ 	for _, venue := range want {

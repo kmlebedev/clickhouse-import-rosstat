@@ -1,0 +1,340 @@
+# Review package: fd4de4385daa082e946db62b32a2e2797e40ee45..a4be8189671b65251c1dcf7eb44000cb060a61a4
+
+## Commits
+a4be818 fix salaries_mes: cover parser error branches, reject NaN/Inf, first-anchor
+
+## Files changed
+ rosstat/salaries_mes.go      |  45 ++++++++++++------
+ rosstat/salaries_mes_test.go | 111 +++++++++++++++++++++++++++++++++++++++++--
+ rosstat/series_meta.go       |   2 +-
+ 3 files changed, 138 insertions(+), 20 deletions(-)
+
+## Diff
+diff --git a/rosstat/salaries_mes.go b/rosstat/salaries_mes.go
+index eb435b8..2108801 100644
+--- a/rosstat/salaries_mes.go
++++ b/rosstat/salaries_mes.go
+@@ -1,15 +1,16 @@
+ package rosstat
+ 
+ import (
+ 	"context"
+ 	"fmt"
++	"math"
+ 	"strconv"
+ 	"strings"
+ 	"time"
+ 
+ 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+ 	"github.com/xuri/excelize/v2"
+ )
+ 
+ const (
+@@ -80,34 +81,40 @@ type salariesMesPoint struct {
+ 
+ // salariesMesValue разбирает ячейку месяца. point == false — ячейка точкой не является:
+ // пустая ячейка и литеральный 0 в этом источнике означают «данных не имеется» (§6.7; нули
+ // января–июня 1991 квартальные колонки той же строки помечают «…»). Значение, помеченное
+ // сноской источника («62 470(2)» — октябрь–декабрь 2022), читается точкой: это
+ // опубликованное значение того же ряда, где пробел — разделитель тысяч, а «(2)» — номер
+ // сноски о покрытии (без учёта статистической информации по ДНР, ЛНР, Запорожской и
+ // Херсонской областям), а не другой показатель. Пропуск такой ячейки оставил бы дыру в три
+ // месяца головного ряда. Любой другой текст — ошибка: «значение не число там, где ожидалось
+ // число» (§6.4).
+-func salariesMesValue(cell string) (value float64, point bool, err error) {
++func salariesMesValue(cell string) (float64, bool, error) {
+ 	cell = strings.TrimSpace(cell)
+ 	if cell == "" {
+ 		return 0, false, nil
+ 	}
+-	value, err = strconv.ParseFloat(cell, 64)
+-	if err == nil {
+-		return value, value != 0, nil
++	value, err := strconv.ParseFloat(cell, 64)
++	if err != nil {
++		footnote, ok := salariesMesFootnoteValue(cell)
++		if !ok {
++			return 0, false, fmt.Errorf("значение ячейки %q не число: %w", cell, err)
++		}
++		value = footnote
+ 	}
+-	footnote, ok := salariesMesFootnoteValue(cell)
+-	if !ok {
+-		return 0, false, fmt.Errorf("значение ячейки %q не число: %w", cell, err)
++	// ParseFloat принимает «NaN» и «Inf», и NaN прошёл бы проверку value != 0, став точкой
++	// ряда — мусором, который тихо уехал бы в витрину. Конечность значения — часть контракта
++	// разбора (§6.4): отказ, а не пропуск.
++	if math.IsNaN(value) || math.IsInf(value, 0) {
++		return 0, false, fmt.Errorf("значение ячейки %q не конечное число", cell)
+ 	}
+-	return footnote, footnote != 0, nil
++	return value, value != 0, nil
+ }
+ 
+ // salariesMesFootnoteValue разбирает ячейку, у которой значение записано текстом со сноской
+ // источника: «62 470(2)». Разделитель тысяч — пробел (в том числе неразрывный), сноска —
+ // «(N)» в конце ячейки.
+ func salariesMesFootnoteValue(cell string) (float64, bool) {
+ 	i := strings.LastIndex(cell, "(")
+ 	if i < 1 || !strings.HasSuffix(cell, ")") {
+ 		return 0, false
+ 	}
+@@ -121,33 +128,41 @@ func salariesMesFootnoteValue(cell string) (float64, bool) {
+ // падал). Имя ряда — константа (§6.8), заголовок листа не читается вовсе.
+ func parseSalariesMes(xlsx *excelize.File) ([]salariesMesPoint, error) {
+ 	var points []salariesMesPoint
+ 	for _, sheet := range xlsx.GetSheetList() {
+ 		rows, err := xlsx.GetRows(sheet, excelize.Options{RawCellValue: true})
+ 		if err != nil {
+ 			return nil, fmt.Errorf("%s: лист %q: %w", rosstatSalariesMesTable, sheet, err)
+ 		}
+ 		// Якорь — строка первого года в первой колонке; год остальных строк считается от
+ 		// него смещением, а не полем каждой строки (§6.3). Год у поздних лет несёт сноску
+-		// («2026(2)»), поэтому строку не сверяют с годом целиком — только якорь.
++		// («2026(2)»), поэтому строку не сверяют с годом целиком — только якорь. Первое
++		// совпадение: повтор «1991» в колонке A якорь не сдвигает.
+ 		anchor := -1
+ 		for i, row := range rows {
+-			if len(row) == 0 {
+-				continue
+-			}
+-			if row[0] == salariesMesField {
++			if len(row) > 0 && row[0] == salariesMesField {
+ 				anchor = i
++				break
+ 			}
+-			if anchor < 0 {
++		}
++		if anchor < 0 {
++			// Лист без якоря (пустые «Лист2»/«Лист3») — не ошибка: ряд собирают листы, где
++			// якорь есть, а отсутствие данных во всей книге ловит проверка внизу.
++			continue
++		}
++		// Строки данных: от якоря до строки «… данных не имеется» — она и сноски внизу
++		// листа короче колонки января, таблица на ней кончается.
++		for i := anchor; i < len(rows); i++ {
++			row := rows[i]
++			if len(row) == 0 {
+ 				continue
+ 			}
+-			// «… данных не имеется» и сноски внизу листа короче колонки января: таблица кончилась.
+ 			if len(row) <= salariesMesMonthColumn {
+ 				break
+ 			}
+ 			year := salariesMesYearStart + i - anchor
+ 			for mes, cell := range row[salariesMesMonthColumn:] {
+ 				value, point, err := salariesMesValue(cell)
+ 				if err != nil {
+ 					return nil, fmt.Errorf("%s: %d-%02d: %w", rosstatSalariesMesTable, year, mes+1, err)
+ 				}
+ 				if !point {
+diff --git a/rosstat/salaries_mes_test.go b/rosstat/salaries_mes_test.go
+index 8437d89..57415ad 100644
+--- a/rosstat/salaries_mes_test.go
++++ b/rosstat/salaries_mes_test.go
+@@ -1,13 +1,14 @@
+ package rosstat
+ 
+ import (
++	"errors"
+ 	"os"
+ 	"strings"
+ 	"testing"
+ 	"time"
+ 
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+ 	"github.com/xuri/excelize/v2"
+ )
+ 
+ // openSalariesMesFixture открывает реальную выгрузку Росстата (testdata/salaries_mes.xlsx).
+@@ -79,21 +80,21 @@ func TestSalariesMesSkipsZeroCells(t *testing.T) {
+ }
+ 
+ func TestSalariesMesSpotValues(t *testing.T) {
+ 	rows := importSalariesMesFixture(t)
+ 	spots := []struct {
+ 		date  time.Time
+ 		value float32
+ 	}{
+ 		// Январь 1992 (A9 = 1992, G9 = 1) записан на 1 февраля 1992 — сдвиг AddDate(0, 1, 0).
+ 		{time.Date(1992, 2, 1, 0, 0, 0, 0, time.UTC), 1},
+-		// Июнь 2026 (R43 = 114743) записан на 1 июля 2026 (последняя точка — июль 2026).
++		// Июнь 2026 (L43 = 114743) записан на 1 июля 2026 (последняя точка — июль 2026).
+ 		{time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC), 114743},
+ 	}
+ 	for _, spot := range spots {
+ 		found := false
+ 		for _, row := range rows {
+ 			if !row.date.Equal(spot.date) {
+ 				continue
+ 			}
+ 			found = true
+ 			if row.value != spot.value {
+@@ -146,23 +147,25 @@ func TestSalariesMesReadsFootnoteCells(t *testing.T) {
+ // на salariesMesSeriesName: иначе тест сравнивал бы константу с самой собой.
+ func TestSalariesMesSeriesMetaCoversParsedRows(t *testing.T) {
+ 	rows := importSalariesMesFixture(t)
+ 	names := make([]string, 0, len(rows))
+ 	for _, row := range rows {
+ 		names = append(names, row.series)
+ 	}
+ 	requireParsedDescribed(t, names, describedSeries(t, salariesMesSeriesMeta))
+ }
+ 
+-// TestSalariesMesMissingSheetFails — fail-fast (§6.4): книга без данных — ошибка с именем
+-// таблицы, а не «0 строк» и не пустой результат.
+-func TestSalariesMesMissingSheetFails(t *testing.T) {
++// TestSalariesMesEmptyWorkbookFails — fail-fast (§6.4): книга без листов с данными не даёт
++// ни одной точки, и это ошибка с именем таблицы, а не «0 строк». Проверяется ветка «разбор
++// дал 0 точек» (якорь года не найден), а не отсутствие конкретного листа: книга создаётся
++// пустой, листа «Лист1» в ней нет вовсе.
++func TestSalariesMesEmptyWorkbookFails(t *testing.T) {
+ 	rec := &appendRecorder{}
+ 	err := salariesMesImport(newTestWorkbook(t), rec)
+ 	if err == nil {
+ 		t.Fatal("пустая книга: ожидалась ошибка, получен nil")
+ 	}
+ 	if !strings.Contains(err.Error(), rosstatSalariesMesTable) {
+ 		t.Errorf("в ошибке нет имени таблицы %s: %v", rosstatSalariesMesTable, err)
+ 	}
+ 	if len(rec.rows) != 0 {
+ 		t.Errorf("в батч записано %d строк, ожидалось 0", len(rec.rows))
+@@ -178,10 +181,110 @@ func TestSalariesMesFindLink(t *testing.T) {
+ 		t.Fatal(err)
+ 	}
+ 	href, err := util.FindLink(page, salariesMesLinkSelector)
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	if !strings.Contains(href, "tab1-zpl") {
+ 		t.Errorf("href %q не содержит tab1-zpl", href)
+ 	}
+ }
++
++// TestSalariesMesValueBranches — табличный тест самих хелперов значения: ветки ошибок
++// (нечисловой текст, испорченная сноска, NaN/Inf) в фикстуре не встречаются, а без них
++// разбор молча пропустил бы мусор или записал бы его точкой (§6.4). Книга здесь не нужна —
++// хелперы работают со строкой ячейки.
++func TestSalariesMesValueBranches(t *testing.T) {
++	tests := []struct {
++		name      string
++		cell      string
++		wantValue float64
++		wantPoint bool
++		wantErr   bool
++	}{
++		{name: "пустая ячейка — не точка", cell: ""},
++		{name: "пробелы — не точка", cell: "   "},
++		{name: "литеральный нуль — не точка", cell: "0"},
++		{name: "нуль с дробью — не точка", cell: "0.0"},
++		{name: "сырое число", cell: "1074", wantValue: 1074, wantPoint: true},
++		{name: "сырое число с копейками", cell: "1017.35", wantValue: 1017.35, wantPoint: true},
++		{name: "значение со сноской", cell: "62 470(2)", wantValue: 62470, wantPoint: true},
++		{name: "значение со сноской и неразрывным пробелом", cell: "62\u00a0470(2)", wantValue: 62470, wantPoint: true},
++		{name: "текст — ошибка", cell: "abc", wantErr: true},
++		{name: "многоточие — ошибка", cell: "…", wantErr: true},
++		{name: "сноска без числа — ошибка", cell: "(2)", wantErr: true},
++		{name: "незакрытая сноска — ошибка", cell: "62 470(x", wantErr: true},
++		{name: "двойная сноска — ошибка", cell: "62 470(2)(3)", wantErr: true},
++		{name: "сноска без числа, пробелы — ошибка", cell: "  (2)  ", wantErr: true},
++		{name: "NaN — ошибка", cell: "NaN", wantErr: true},
++		{name: "Inf — ошибка", cell: "Inf", wantErr: true},
++		{name: "-Inf — ошибка", cell: "-Inf", wantErr: true},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			value, point, err := salariesMesValue(tt.cell)
++			if tt.wantErr {
++				if err == nil {
++					t.Fatalf("ячейка %q: ожидалась ошибка, получено значение %v (точка=%v)", tt.cell, value, point)
++				}
++				if point {
++					t.Errorf("ячейка %q: ошибка и точка одновременно (value=%v)", tt.cell, value)
++				}
++				return
++			}
++			if err != nil {
++				t.Fatalf("ячейка %q: неожиданная ошибка: %v", tt.cell, err)
++			}
++			if value != tt.wantValue || point != tt.wantPoint {
++				t.Errorf("ячейка %q: получено (%v, point=%v), ожидалось (%v, point=%v)",
++					tt.cell, value, point, tt.wantValue, tt.wantPoint)
++			}
++		})
++	}
++}
++
++// TestSalariesMesFootnoteValueBranches — табличный тест распознавания сноски: разделитель
++// тысяч пробелом снимается, а испорченная сноска («62 470(x», «(2)», двойная) не
++// распознаётся — иначе значение ушло бы точкой или, наоборот, пропало молча.
++func TestSalariesMesFootnoteValueBranches(t *testing.T) {
++	tests := []struct {
++		name      string
++		cell      string
++		wantValue float64
++		wantOK    bool
++	}{
++		{name: "пробел как разделитель тысяч", cell: "62 470(2)", wantValue: 62470, wantOK: true},
++		{name: "неразрывный пробел", cell: "62\u00a0470(2)", wantValue: 62470, wantOK: true},
++		{name: "сноска без разделителей", cell: "62470(2)", wantValue: 62470, wantOK: true},
++		{name: "без сноски", cell: "62 470"},
++		{name: "сноска без числа", cell: "(2)"},
++		{name: "незакрытая сноска", cell: "62 470(x"},
++		{name: "двойная сноска", cell: "62 470(2)(3)"},
++		{name: "текст со сноской", cell: "abc(2)"},
++		{name: "пустая ячейка", cell: ""},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			value, ok := salariesMesFootnoteValue(tt.cell)
++			if ok != tt.wantOK {
++				t.Fatalf("ячейка %q: распознано=%v, ожидалось %v", tt.cell, ok, tt.wantOK)
++			}
++			if ok && value != tt.wantValue {
++				t.Errorf("ячейка %q: значение %v, ожидалось %v", tt.cell, value, tt.wantValue)
++			}
++		})
++	}
++}
++
++// TestSalariesMesAppendErrorNotSwallowed — ошибка записи доходит до вызывающего (§5.5, §11.6):
++// сбой Append в середине батча обязан вернуть ошибку, а не выглядеть успешным импортом.
++func TestSalariesMesAppendErrorNotSwallowed(t *testing.T) {
++	wantErr := errors.New("append сломан")
++	rec := &appendRecorder{appendErr: wantErr}
++	err := salariesMesImport(openSalariesMesFixture(t), rec)
++	if !errors.Is(err, wantErr) {
++		t.Fatalf("ошибка Append не вернулась: err = %v", err)
++	}
++	if len(rec.rows) != 0 {
++		t.Errorf("в батч записано %d строк, ожидалось 0 (первый Append упал)", len(rec.rows))
++	}
++}
+diff --git a/rosstat/series_meta.go b/rosstat/series_meta.go
+index d50398b..a2083e4 100644
+--- a/rosstat/series_meta.go
++++ b/rosstat/series_meta.go
+@@ -128,21 +128,21 @@ var vvpKvartalSeriesMeta = []util.SeriesMeta{
+ }
+ 
+ var salariesMesSeriesMeta = []util.SeriesMeta{
+ 	{
+ 		Source:      rosstatSource,
+ 		Series:      "Среднемесячная номинальная начисленная заработная плата работников по полному кругу организаций",
+ 		Title:       "Среднемесячная номинальная начисленная зарплата, РФ",
+ 		Unit:        "руб. в месяц (до 1998 г. — тыс. руб.)",
+ 		Frequency:   "M",
+ 		Origin:      "rosstat.gov.ru/labor_market_employment_salaries, файл tab1-zpl_*.xlsx, лист «Лист1»; строка = год, колонки «Январь»…«Декабрь»",
+-		Description: "Среднемесячная номинальная начисленная зарплата работников в целом по экономике РФ, рубли в месяц (до 1998 г. — тыс. руб., деноминация 1:1000). Значение — за месяц, в колонке месяца. Дата в таблице — 1-е число месяца, следующего за отчётным (зарплата за январь записана на 1 февраля). Реальный рост: номинальная зарплата / ИПЦ (rosstat_ipc_mes) с поправкой на базу. Нулевые ячейки источника (январь–июнь 1991 — «данных не имеется») точками не записываются: пропуск в начале ряда означает отсутствие данных, а не нулевую зарплату. Значения октября–декабря 2022 г. источник помечает сноской 2 («без учёта статистической информации по ДНР, ЛНР, Запорожской и Херсонской областям») и отдаёт текстом («62 470(2)»); они записаны как есть — сноска это оговорка о покрытии, а не другой показатель. Имя ряда объявлено кодом и от заголовка файла не зависит.",
++		Description: "Среднемесячная номинальная начисленная зарплата работников в целом по экономике РФ, рубли в месяц (до 1998 г. — тыс. руб., деноминация 1:1000). Значение — за месяц, в колонке месяца. Дата в таблице — 1-е число месяца, следующего за отчётным (зарплата за январь записана на 1 февраля). Реальный рост: номинальная зарплата / ИПЦ (rosstat_ipc_mes) с поправкой на базу. Нулевые ячейки источника (январь–июнь 1991 — «данных не имеется») точками не записываются: пропуск в начале ряда означает отсутствие данных, а не нулевую зарплату. Значения октября–декабря 2022 г. записаны из ячеек со сноской 2, то есть без учёта статистической информации по ДНР, ЛНР, Запорожской и Херсонской областям: сравнение этих трёх месяцев с соседними месяцами ряда требует осторожности (сама сноска — оговорка о покрытии, а не другой показатель). Имя ряда объявлено кодом и от заголовка файла не зависит.",
+ 	},
+ }
+ 
+ func ipcWeeksSeriesMeta() []util.SeriesMeta {
+ 	meta := make([]util.SeriesMeta, 0, len(ipcWeeksProducts))
+ 	for _, product := range ipcWeeksProducts {
+ 		meta = append(meta, util.SeriesMeta{
+ 			Source:      rosstatSource,
+ 			Series:      product,
+ 			Title:       product,

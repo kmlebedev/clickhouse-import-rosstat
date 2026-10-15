@@ -1,0 +1,667 @@
+# Review package: 5ee7bb0..HEAD
+
+## Commits
+f76004a docs: align bold plan with request counts and full path
+89894ae bold etf flows: full fetch when series and funds diverge
+
+## Files changed
+ bold/bold.go                                       |  66 ++++++--
+ bold/bold_test.go                                  | 188 ++++++++++++++++++---
+ docs/superpowers/plans/2026-10-12-bold-t1-gold.md  |   2 +-
+ .../specs/2026-10-12-bold-t1-gold-design.md        |   5 +-
+ 4 files changed, 226 insertions(+), 35 deletions(-)
+
+## Diff
+diff --git a/bold/bold.go b/bold/bold.go
+index 2040cc8..a79746a 100644
+--- a/bold/bold.go
++++ b/bold/bold.go
+@@ -4,20 +4,21 @@
+ // util.GetJSON), выбор режима (инкремент или полная история) и запись батчами.
+ // Документация пакета — в parse.go (пакет не должен иметь двух package-комментариев).
+ 
+ package bold
+ 
+ import (
+ 	"context"
+ 	"encoding/json"
+ 	"errors"
+ 	"fmt"
++	"slices"
+ 	"sort"
+ 	"strings"
+ 	"time"
+ 
+ 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+ 	log "github.com/sirupsen/logrus"
+ )
+ 
+@@ -124,67 +125,90 @@ func (s *boldEtfFlows) clock() time.Time {
+ 		return time.Now()
+ 	}
+ 	return s.now()
+ }
+ 
+ // Import — один прогон импортёра. Порядок шагов важен: (1) сохранённый максимум из ClickHouse
+ // (ошибка чтения — warn и нулевое время, как в wgc: диагностический запрос не повод терять
+ // обновление); (2) четыре запроса «последнего дня» — они нужны и на полном пути: их дата
+ // решает no-op и датирует пер-фондовый срез; (3) решение no-op — дата источника не новее
+ // сохранённого максимума значит, что писать нечего, и батч не открывается вовсе; (4) выбор
+-// режима — полная история, если инкремент не может исключить пропуск дней; (5) точки фондов
++// режима — полная история, если инкремент не может исключить пропуск дней (boldNeedsFullFetch)
++// или если сохранённые максимумы ряда и среза разошлись (Ruling 8: инкремент посчитал бы
++// многодневный поток за дневной); (5) точки фондов
+ // считаются до батчей (ошибка здесь — смена формы ответа summary.json); (6) обе DDL; (7) два
+ // батча; (8) каталог — только после успешных Send (описание ряда, которого в таблице нет, —
+ // обещание данных, которых агент не найдёт; прецедент dcf_mine_plans).
+ func (s *boldEtfFlows) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+ 	base := s.base()
+ 
+-	stored, serr := boldStoredMaxDate(ctx, conn)
++	seriesMax, fundMax, serr := boldStoredBounds(ctx, conn)
+ 	if serr != nil {
+ 		log.Warnf("%s: сохранённый максимум дат не прочитан (%v) — считаю ряды пустыми и беру полную историю", boldEtfName, serr)
+-		stored = time.Time{}
++		seriesMax, fundMax = time.Time{}, time.Time{}
+ 	}
++	stored := boldMinDate(seriesMax, fundMax)
+ 
+ 	latest, funds, err := boldEtfFetchLatest(base)
+ 	if err != nil {
+ 		return 0, err
+ 	}
+ 	latestDate, err := parseBoldDate(latest.Date)
+ 	if err != nil {
+ 		return 0, err
+ 	}
+ 
+ 	if boldSourceLooksStale(latestDate, s.clock()) {
+ 		log.Warnf("%s: дата источника %s отстаёт от дня прогона больше чем на %d ч — возможен застой источника или его кэша (импорт не отменяется)",
+ 			boldEtfName, latestDate.Format(boldDateLayout), boldFullFetchGapHours)
+ 	}
+ 
+ 	// Идемпотентный no-op: дата источника не новее сохранённого максимума (или равна ему) —
+ 	// писать те же точки незачем, и соединение дальше чтения максимума не трогается.
++	// Расхождение половин (seriesMax != fundMax) no-op-ом не закрывается: это разбирает шаг ниже.
++	diverged := !seriesMax.Equal(fundMax)
+ 	if !stored.IsZero() && !latestDate.After(stored) {
++		if diverged {
++			log.Warnf("%s: ряд и срез разошлись (%s против %s), но дата источника %s не новее обоих — догонять нечего",
++				boldEtfName, boldFormatDate(seriesMax), boldFormatDate(fundMax), latestDate.Format(boldDateLayout))
++		}
+ 		log.Infof("%s: дата источника %s не новее сохранённого максимума %s — нечего обновлять (0 строк)",
+ 			boldEtfName, latestDate.Format(boldDateLayout), stored.Format(boldDateLayout))
+ 		return 0, nil
+ 	}
+ 
+ 	var points []point
+-	if boldNeedsFullFetch(latestDate, stored) {
++	// Полный путь — не только «пропуск дней» (boldNeedsFullFetch), но и расхождение половин
++	// сохранённого максимума (Ruling 8): частичный сбой прошлого прогона (батч рядов прошёл, батч
++	// среза упал) оставил срез за 08.10 при рядах за 09.10. Инкремент в такой день посчитал бы Δ
++	// от ряда, отставшего на торговый день, — то есть многодневный поток, выданный за дневной, и
++	// молча: база `stored` выглядит «предыдущим торговым днём». Полный путь пишет и ряды, и срез за
++	// дату источника; при обычном совпадении максимума истории с датой источника это выравнивает
++	// S = F = L, и предусловие инкремента снова выполнено (если файл истории отстал от ответа
++	// *-latest, срез уйдёт вперёд и следующий прогон снова пойдёт полным путём — это лишние
++	// запросы, но не потеря данных: полный путь идемпотентен).
++	if boldNeedsFullFetch(latestDate, stored) || diverged {
+ 		rows, fullFunds, ferr := boldEtfFullFetch(base)
+ 		if ferr != nil {
+ 			return 0, ferr
+ 		}
+ 		funds = fullFunds
+ 		if points, err = boldETFSets(rows, nil, time.Time{}); err != nil {
+ 			return 0, err
+ 		}
+-		log.Infof("%s: полный режим: сохранённый максимум %s, дата источника %s, дней истории %d",
+-			boldEtfName, boldFormatDate(stored), latestDate.Format(boldDateLayout), len(rows))
++		if diverged {
++			log.Infof("%s: полный режим: ряд и срез разошлись (%s против %s) — выравниваю по дате источника %s, дней истории %d",
++				boldEtfName, boldFormatDate(seriesMax), boldFormatDate(fundMax), latestDate.Format(boldDateLayout), len(rows))
++		} else {
++			log.Infof("%s: полный режим: сохранённый максимум %s, дата источника %s, дней истории %d",
++				boldEtfName, boldFormatDate(stored), latestDate.Format(boldDateLayout), len(rows))
++		}
+ 	} else {
+ 		// Инкремент: база для Δ — сток предыдущего торгового дня из ClickHouse. Ошибка чтения
+ 		// останавливает импорт: без предыдущего стока поток молча стал бы нулём (Review Focus 4).
+ 		prevUnits, uerr := boldStoredUnits(ctx, conn, stored)
+ 		if uerr != nil {
+ 			return 0, uerr
+ 		}
+ 		if points, err = boldETFSets([]boldRow{latest}, &prevUnits, stored); err != nil {
+ 			return 0, err
+ 		}
+@@ -497,33 +521,46 @@ func boldMergeHistory(units, aum, flows []boldRow) ([]boldRow, error) {
+ 	}
+ 	sort.Slice(dated, func(i, j int) bool { return dated[i].date.Before(dated[j].date) })
+ 
+ 	rows := make([]boldRow, 0, len(dated))
+ 	for _, item := range dated {
+ 		rows = append(rows, item.row)
+ 	}
+ 	return rows, nil
+ }
+ 
++// boldStoredBounds читает обе половины сохранённого максимума: максимум дат рядов source='bold'
++// в macro_series и максимум дат bold_fund_snapshot. Обе нужны вызывающему: минимум выбирает
++// режим (Ruling 7), а само расхождение половин — признак частичного сбоя прошлого прогона
++// (Ruling 8). Нулевое время половины означает «данных нет» (в том числе таблицы ещё нет);
++// ошибки не проглатываются, решение «warn и полный путь» принимает Import.
++func boldStoredBounds(ctx context.Context, conn driver.Conn) (seriesMax, fundMax time.Time, err error) {
++	seriesMax, err = boldScanMaxDate(ctx, conn, boldStoredSeriesMaxQuery)
++	if err != nil {
++		return time.Time{}, time.Time{}, err
++	}
++	fundMax, err = boldScanMaxDate(ctx, conn, boldStoredFundMaxQuery)
++	if err != nil {
++		return time.Time{}, time.Time{}, err
++	}
++	return seriesMax, fundMax, nil
++}
++
+ // boldStoredMaxDate — «сохранённый максимум» для выбора режима: минимум из максимума дат рядов
+ // source='bold' в macro_series и максимума дат bold_fund_snapshot (Ruling 7). Минимум, а не
+ // максимум: ряды и срез фондов пишутся двумя батчами, и частичный сбой (батч рядов прошёл, батч
+ // фондов упал) оставил бы срез позади — по максимуму следующий прогон счёл бы день уже
+ // обработанным, и пер-фондовый срез отстал бы навсегда. Минимум заставляет такой прогон
+ // догнать день. Нулевое время любой из половин («данных нет», в том числе таблицы ещё нет)
+ // означает полный путь.
+ func boldStoredMaxDate(ctx context.Context, conn driver.Conn) (time.Time, error) {
+-	seriesMax, err := boldScanMaxDate(ctx, conn, boldStoredSeriesMaxQuery)
+-	if err != nil {
+-		return time.Time{}, err
+-	}
+-	fundMax, err := boldScanMaxDate(ctx, conn, boldStoredFundMaxQuery)
++	seriesMax, fundMax, err := boldStoredBounds(ctx, conn)
+ 	if err != nil {
+ 		return time.Time{}, err
+ 	}
+ 	return boldMinDate(seriesMax, fundMax), nil
+ }
+ 
+ // boldScanMaxDate выполняет диагностический maxOrNull(date) и нормализует ответ пустой таблицы
+ // в нулевое время: NULL — это факт из ответа, а не вывод из года (прежняя эвристика
+ // max(date).Year() <= 1970 объявляла пустой и таблицу с настоящими точками 1970-01; поэтому
+ // Date сканируется в указатель). Отсутствие таблицы — тоже «данных нет»: на чистой базе её ещё
+@@ -583,24 +620,27 @@ func boldStoredUnits(ctx context.Context, conn driver.Conn, date time.Time) (flo
+ 	}
+ 	if tonnes == nil {
+ 		return 0, fmt.Errorf("%s: нет запасов (%s) за %s — дневной поток (Δ) посчитать нечем",
+ 			boldEtfName, boldSeriesHoldingsTonnes, date.Format(boldDateLayout))
+ 	}
+ 	return *tonnes * ouncesPerTonne, nil
+ }
+ 
+ // boldWritePoints пишет точки семи рядов одним батчем. Порядок батча детерминирован (сортировка
+ // по series, date): повторный импорт воспроизводим независимо от порядка обхода источника.
++// Сортируется копия: у вызывающего срез должен остаться в том порядке, в котором он его собрал
++// (побочный эффект на аргументе — тот класс ошибок, который потом ищут в чужом вызове).
+ // Abort после ошибки Append не даёт соединению остаться с открытым батчем (следующий шаг DAG-а
+ // получил бы «уже есть незакрытый батч»); сбой Abort логируем, а возвращаемой ошибкой остаётся
+ // первопричина Append (прецедент wgc/etf.go).
+ func boldWritePoints(ctx context.Context, conn driver.Conn, points []point) (int64, error) {
++	points = slices.Clone(points)
+ 	sort.Slice(points, func(i, j int) bool {
+ 		if points[i].Series != points[j].Series {
+ 			return points[i].Series < points[j].Series
+ 		}
+ 		return points[i].Date.Before(points[j].Date)
+ 	})
+ 
+ 	batch, err := conn.PrepareBatch(ctx, boldMacroSeriesInsert)
+ 	if err != nil {
+ 		return 0, fmt.Errorf("%s: %s: %w", boldEtfName, macroSeriesTable, err)
+@@ -617,22 +657,24 @@ func boldWritePoints(ctx context.Context, conn driver.Conn, points []point) (int
+ 		count++
+ 	}
+ 
+ 	if err = batch.Send(); err != nil {
+ 		return 0, fmt.Errorf("%s: %s: %w", boldEtfName, macroSeriesTable, err)
+ 	}
+ 	return count, nil
+ }
+ 
+ // boldWriteFunds пишет пер-фондовый срез одним батчем (73 строки за прогон). Порядок — по
+-// (ticker, name): он совпадает с ключом таблицы, и повторный импорт воспроизводим.
++// (ticker, name): он совпадает с ключом таблицы, и повторный импорт воспроизводим. Как и у точек,
++// сортируется копия — аргумент вызывающего не меняется.
+ func boldWriteFunds(ctx context.Context, conn driver.Conn, funds []boldFundPoint) error {
++	funds = slices.Clone(funds)
+ 	sort.Slice(funds, func(i, j int) bool {
+ 		if funds[i].Ticker != funds[j].Ticker {
+ 			return funds[i].Ticker < funds[j].Ticker
+ 		}
+ 		return funds[i].Name < funds[j].Name
+ 	})
+ 
+ 	batch, err := conn.PrepareBatch(ctx, boldFundInsert)
+ 	if err != nil {
+ 		return fmt.Errorf("%s: %s: %w", boldEtfName, boldFundTable, err)
+diff --git a/bold/bold_test.go b/bold/bold_test.go
+index 5ed1f16..ba9e46c 100644
+--- a/bold/bold_test.go
++++ b/bold/bold_test.go
+@@ -347,49 +347,64 @@ func TestBoldNeedsFullFetch(t *testing.T) {
+ 	for _, c := range cases {
+ 		t.Run(c.name, func(t *testing.T) {
+ 			if got := boldNeedsFullFetch(testDate(t, c.latest), c.stored); got != c.want {
+ 				t.Errorf("boldNeedsFullFetch(%s, %s) = %t, ожидалось %t",
+ 					c.latest, boldFormatDate(c.stored), got, c.want)
+ 			}
+ 		})
+ 	}
+ }
+ 
++// boldTestNow — фиксированный «день прогона» тестов: сутки после даты фикстур (2026-10-09) и
++// меньше порога застоя. Часы прогона — шов `now`, и тесты обязаны давать импортёру
++// детерминированный вход: с реальными часами лог (а в перспективе и поведение warn-а) зависел бы
++// от дня запуска тестов, а «2026-10-16» в таблице ниже однажды наступил бы.
++var boldTestNow = time.Date(2026, time.October, 10, 9, 0, 0, 0, time.UTC)
++
++// boldTestClock — часы для `boldEtfFlows{now: …}`: всегда boldTestNow.
++func boldTestClock() func() time.Time { return func() time.Time { return boldTestNow } }
++
++// boldTestStat — импортёр прогона: httptest-сервер и фиксированные часы (см. boldTestNow).
++func boldTestStat(server *boldTestServer) boldEtfFlows {
++	return boldEtfFlows{apiBase: server.base(), now: boldTestClock()}
++}
++
+ // TestBoldSourceLooksStaleAndClock — warn о застое источника (чистое решение) и шов часов
+-// прогона: nil-поле значит time.Now, подставленное время возвращается как есть.
++// прогона. Оба входа фиксированы: реальные часы здесь не читаются вовсе, поэтому тест не зависит
++// от дня запуска.
+ func TestBoldSourceLooksStaleAndClock(t *testing.T) {
+ 	latest := testDate(t, boldPinDate)
+ 	cases := []struct {
+ 		name string
+ 		now  time.Time
+ 		want bool
+ 	}{
+ 		{"T+1 — норма", testDate(t, "2026-10-10"), false},
+ 		{"понедельник после пятницы", testDate(t, "2026-10-12"), false},
++		{"ровно порог (4 дня)", testDate(t, "2026-10-13"), false},
+ 		{"неделя застоя", testDate(t, "2026-10-16"), true},
+ 		{"часы не заданы", time.Time{}, false},
+ 	}
+ 	for _, c := range cases {
+ 		t.Run(c.name, func(t *testing.T) {
+ 			if got := boldSourceLooksStale(latest, c.now); got != c.want {
+ 				t.Errorf("boldSourceLooksStale(%s, %s) = %t, ожидалось %t",
+ 					latest.Format(boldDateLayout), c.now.Format(boldDateLayout), got, c.want)
+ 			}
+ 		})
+ 	}
+ 
+-	if got := (&boldEtfFlows{}).clock(); got.IsZero() {
+-		t.Error("clock() без подставленных часов вернул нулевое время, ожидалось time.Now")
+-	}
+-	fixed := testDate(t, boldPinDate)
+-	if got := (&boldEtfFlows{now: func() time.Time { return fixed }}).clock(); !got.Equal(fixed) {
+-		t.Errorf("clock() с подставленными часами = %s, ожидалось %s", got, fixed)
++	// Шов обязан отдавать подставленное время как есть. Ветка «now == nil → time.Now» здесь не
++	// проверяется: её проверка читала бы реальные часы и зависела бы от них (а покрыта она всеми
++	// тестами Import выше, которые ходят через тот же шов с фиксированным временем).
++	if got := (&boldEtfFlows{now: boldTestClock()}).clock(); !got.Equal(boldTestNow) {
++		t.Errorf("clock() с подставленными часами = %s, ожидалось %s", got, boldTestNow)
+ 	}
+ }
+ 
+ // TestBoldEtfFetchLatestMismatchedDatesFails: даты трёх ответов «последнего дня» обязаны
+ // совпасть — срез фондов пишется под датой строки, и расхождение означало бы запись под чужой
+ // день. Саботаж «убрать сверку» этот тест валит.
+ func TestBoldEtfFetchLatestMismatchedDatesFails(t *testing.T) {
+ 	bodies := boldLatestBodies(t)
+ 	bodies[boldPathAumLatest] = boldMutateLatestDate(t, "bold_aum_latest.json", boldPinPrior)
+ 	server := boldNewTestServer(t, bodies)
+@@ -700,21 +715,21 @@ func TestBoldStoredUnitsPinsQueryAndConverts(t *testing.T) {
+ 		t.Errorf("ошибка не называет отсутствие запасов и дату: %v", err)
+ 	}
+ }
+ 
+ // TestBoldEtfImportFullWritesAllSeries: пустое соединение (обе таблицы пусты) уводит импорт на
+ // полную историю — в macro_series идут точки семи рядов, в bold_fund_snapshot — 73 строки, а
+ // каталог пишется после обоих Send.
+ func TestBoldEtfImportFullWritesAllSeries(t *testing.T) {
+ 	server := boldNewTestServer(t, boldAllBodies(t))
+ 	conn := newBoldFakeConn() // пустая очередь — оба максимума NULL
+-	stat := boldEtfFlows{apiBase: server.base()}
++	stat := boldTestStat(server)
+ 
+ 	count, err := stat.Import(context.Background(), conn)
+ 	if err != nil {
+ 		t.Fatalf("Import: %v", err)
+ 	}
+ 	if count != 12 {
+ 		t.Errorf("Import вернул %d строк, ожидалось 12 — точки за 08.10 и 09.10", count)
+ 	}
+ 
+ 	macro := conn.batchFor(t, boldMacroSeriesInsert)
+@@ -799,34 +814,36 @@ func TestBoldEtfImportFullWritesAllSeries(t *testing.T) {
+ 		t.Errorf("каталог обязан писаться после батчей: %v", calls)
+ 	}
+ 	// Полный прогон — 8 запросов: четыре «последнего дня» (дата для среза и решение no-op) и
+ 	// четыре файла полного режима. Контракт «не больше 4 запросов» — про режим, и он пинится
+ 	// TestBoldEtfFetchCountsRequests.
+ 	if got := server.requested(); len(got) != 8 {
+ 		t.Errorf("запросов за полный прогон: %d (%v), ожидалось 8 (4 последнего дня + 4 истории)", len(got), got)
+ 	}
+ }
+ 
+-// TestBoldEtfImportIncrementalWritesOneDay: соединение знает максимум 08.10 и сток за 08.10 —
+-// пишутся только точки 09.10, а поток считается от стока из ClickHouse (+4.233 т и 573.75 млн $).
+-// Саботаж «взять предыдущие унции из ответа источника» валит именно этот тест: в ответе
+-// units-latest есть только units дня, и Δ стала бы нулём.
++// TestBoldEtfImportIncrementalWritesOneDay: соединение знает максимум 08.10 в обеих таблицах
++// (S = F = 08.10 — инкремент разрешён) и сток за 08.10 — пишутся только точки 09.10, а поток
++// считается от стока из ClickHouse (+4.233 т и 573.75 млн $). Саботаж «взять предыдущие унции из
++// ответа источника» валит именно этот тест: в ответе units-latest есть только units дня, и Δ
++// стала бы нулём. Саботаж «снять условие seriesMax != fundMax» валит соседний
++// TestBoldEtfImportFullFetchWhenSeriesAndFundsDiverge: здесь расхождения нет по построению.
+ func TestBoldEtfImportIncrementalWritesOneDay(t *testing.T) {
+ 	server := boldNewTestServer(t, boldLatestBodies(t))
+ 	// В базе ряд etf_bold_holdings_tonnes в тоннах: 113 044 763 oz (= boldPinAPrior) — это
+ 	// 3516,0815 т, и запрос возвращает именно тонны.
+ 	conn := newBoldFakeConn(
+ 		boldFakeDate(t, boldPinPrior), // максимум рядов
+-		boldFakeDate(t, boldPinPrior), // максимум среза (минимум — 08.10)
++		boldFakeDate(t, boldPinPrior), // столько же в срезе: stored = 08.10, расхождения нет
+ 		boldFakeValue(ozToTonnes(boldPinAPrior)),
+ 	)
+-	stat := boldEtfFlows{apiBase: server.base()}
++	stat := boldTestStat(server)
+ 
+ 	count, err := stat.Import(context.Background(), conn)
+ 	if err != nil {
+ 		t.Fatalf("Import: %v", err)
+ 	}
+ 	if count != 7 {
+ 		t.Errorf("Import вернул %d строк, ожидалось 7 точек за 09.10", count)
+ 	}
+ 
+ 	macro := conn.batchFor(t, boldMacroSeriesInsert)
+@@ -850,56 +867,140 @@ func TestBoldEtfImportIncrementalWritesOneDay(t *testing.T) {
+ 	sort.Strings(want)
+ 	if got := server.requestedSorted(); strings.Join(got, ",") != strings.Join(want, ",") {
+ 		t.Errorf("пути инкремента: %v, ожидались %v", got, want)
+ 	}
+ 	// Гвардейский запрос за предыдущим стоком обязан быть в обращениях, и он один.
+ 	if got := boldTestCallIndex(conn.callList(), boldSeriesHoldingsTonnes); got < 0 {
+ 		t.Errorf("запрос за предыдущим стоком не выполнялся: %v", conn.callList())
+ 	}
+ }
+ 
++// TestBoldEtfImportFullFetchWhenSeriesAndFundsDiverge (Ruling 8): сохранённые максимумы ряда и
++// среза разошлись (ряды за 09.10, срез за 08.10 — частичный сбой прошлого прогона) — прогон
++// обязан пойти ПОЛНЫМ путём, а не инкрементом. Инкремент посчитал бы Δ от ряда, отставшего на
++// торговый день (09.10 против 08.10), и молча выдал бы многодневный поток за дневной; полный путь
++// пишет и ряды, и срез за дату источника, выравнивая S = F = L.
++func TestBoldEtfImportFullFetchWhenSeriesAndFundsDiverge(t *testing.T) {
++	server := boldNewTestServer(t, boldAllBodies(t))
++	// Два максимума читаются всегда (Ruling 7); третьего ответа (за стоком) быть не должно:
++	// инкремент не исполняется, и фейковое соединение отдало бы NULL, что уронило бы импорт.
++	conn := newBoldFakeConn(
++		boldFakeDate(t, boldPinDate),  // ряды: 09.10
++		boldFakeDate(t, boldPinPrior), // срез: 08.10 — расхождение
++	)
++	stat := boldTestStat(server)
++
++	count, err := stat.Import(context.Background(), conn)
++	if err != nil {
++		t.Fatalf("Import: %v", err)
++	}
++	if count != 12 {
++		t.Errorf("Import вернул %d строк, ожидалось 12 — полный путь пишет оба дня истории, а не один", count)
++	}
++
++	macro := conn.batchFor(t, boldMacroSeriesInsert)
++	if len(macro.rows) != 12 {
++		t.Fatalf("строк в macro_series: %d, ожидалось 12 (полный путь: 08.10 + 09.10)", len(macro.rows))
++	}
++	// Срез переписан за дату источника — после прогона S = F = 09.10, и инкремент снова возможен.
++	funds := conn.batchFor(t, boldFundInsert)
++	if len(funds.rows) != 73 {
++		t.Fatalf("строк в bold_fund_snapshot: %d, ожидалось 73", len(funds.rows))
++	}
++	if !funds.rows[0][0].(time.Time).Equal(testDate(t, boldPinDate)) {
++		t.Errorf("дата среза = %v, ожидалась дата источника %s (полный путь выравнивает S и F)", funds.rows[0][0], boldPinDate)
++	}
++
++	// Оба максимума прочитаны, DDL выполнены, оба батча открыты — и ни одного запроса за стоком:
++	// расхождение уводит на полный путь до инкрементной ветки.
++	calls := conn.callList()
++	for _, fragment := range []string{"queryrow: " + boldStoredSeriesMaxQuery, "queryrow: " + boldStoredFundMaxQuery} {
++		if boldTestCallIndex(calls, fragment) < 0 {
++			t.Errorf("не прочитан максимум %q: %v", fragment, calls)
++		}
++	}
++	if boldTestCallIndex(calls, boldSeriesHoldingsTonnes) >= 0 {
++		t.Errorf("запрос за предыдущим стоком на полном пути: %v", calls)
++	}
++	for _, fragment := range []string{
++		"exec: CREATE TABLE IF NOT EXISTS " + boldFundTable,
++		"exec: CREATE TABLE IF NOT EXISTS " + macroSeriesTable,
++		"preparebatch: " + boldMacroSeriesInsert,
++		"preparebatch: " + boldFundInsert,
++	} {
++		if boldTestCallIndex(calls, fragment) < 0 {
++			t.Errorf("полный путь обязан сделать %q: %v", fragment, calls)
++		}
++	}
++
++	// Полный прогон начался с четырёх запросов «последнего дня» и ушёл на файлы истории: все
++	// четыре пути истории запрошены ровно по разу.
++	requested := server.requested()
++	counts := map[string]int{}
++	for _, path := range requested {
++		counts[path]++
++	}
++	for _, path := range []string{boldPathUnits, boldPathAum, boldPathFlows} {
++		if counts[path] != 1 {
++			t.Errorf("путь %q запрошен %d раз (все запросы: %v), ожидался один запрос истории", path, counts[path], requested)
++		}
++	}
++	for _, path := range []string{boldPathUnitsLatest, boldPathAumLatest, boldPathFlowsLatest} {
++		if counts[path] != 1 {
++			t.Errorf("путь %q запрошен %d раз (все запросы: %v), ожидался один запрос последнего дня", path, counts[path], requested)
++		}
++	}
++}
++
+ // TestBoldEtfImportNoopWhenUpToDate: дата источника не новее сохранённого максимума — 0 строк,
+-// ни одной ошибки и ни одного открытого батча. DDL здесь тоже не выполняется: соединение
+-// трогается только чтениями.
++// ни одной ошибки, ни одного открытого батча и ни одного Exec: DDL здесь тоже не выполняется,
++// соединение трогается только двумя чтениями максимумов.
+ func TestBoldEtfImportNoopWhenUpToDate(t *testing.T) {
+ 	server := boldNewTestServer(t, boldLatestBodies(t))
+ 	conn := newBoldFakeConn(boldFakeDate(t, boldPinDate), boldFakeDate(t, boldPinDate))
+-	stat := boldEtfFlows{apiBase: server.base()}
++	stat := boldTestStat(server)
+ 
+ 	count, err := stat.Import(context.Background(), conn)
+ 	if err != nil {
+ 		t.Fatalf("Import: %v", err)
+ 	}
+ 	if count != 0 {
+ 		t.Errorf("Import вернул %d строк, ожидалось 0", count)
+ 	}
+-	for _, call := range conn.callList() {
++	calls := conn.callList()
++	if len(calls) != 2 {
++		t.Errorf("обращений к соединению: %v, ожидались два чтения максимумов", calls)
++	}
++	for _, call := range calls {
+ 		if strings.HasPrefix(call, "preparebatch: ") {
+-			t.Errorf("батч открывался на no-op прогоне: %v", conn.callList())
++			t.Errorf("батч открывался на no-op прогоне: %v", calls)
++		}
++		if strings.HasPrefix(call, "exec: ") {
++			t.Errorf("DDL выполнялась на no-op прогоне: %v", calls)
+ 		}
+ 	}
+ 	if got := server.requested(); len(got) != 4 {
+ 		t.Errorf("запросов на no-op прогоне: %d (%v)", len(got), got)
+ 	}
+ }
+ 
+ // TestBoldEtfImportMissingUnitsAtMaxFails: сохранённый максимум есть, а точки стока за него нет —
+ // ошибка импорта, а не поток = 0. Ноль вместо отсутствующих данных и есть та молчаливая подмена,
+ // от которой предостерегает Review Focus 4.
+ func TestBoldEtfImportMissingUnitsAtMaxFails(t *testing.T) {
+ 	server := boldNewTestServer(t, boldLatestBodies(t))
+ 	conn := newBoldFakeConn(
+ 		boldFakeDate(t, boldPinPrior),
+ 		boldFakeDate(t, boldPinPrior),
+ 		boldFakeNull(), // точки etf_bold_holdings_tonnes за 08.10 нет
+ 	)
+-	stat := boldEtfFlows{apiBase: server.base()}
++	stat := boldTestStat(server)
+ 
+ 	_, err := stat.Import(context.Background(), conn)
+ 	if err == nil {
+ 		t.Fatal("отсутствие предыдущего стока обязано останавливать импорт")
+ 	}
+ 	for _, fragment := range []string{"нет запасов", boldSeriesHoldingsTonnes, boldPinPrior} {
+ 		if !strings.Contains(err.Error(), fragment) {
+ 			t.Errorf("ошибка не называет %q: %v", fragment, err)
+ 		}
+ 	}
+@@ -910,31 +1011,76 @@ func TestBoldEtfImportMissingUnitsAtMaxFails(t *testing.T) {
+ 	}
+ }
+ 
+ // TestBoldEtfImportEmptyResponseFails: пустое тело ответа — ошибка импорта (fail-fast, урок eia):
+ // тихий ноль оставил бы dagu зелёным, а ряды — без обновления. Ошибка обязана называть эндпоинт:
+ // по «пустое тело» без имени файла не понять, какой из четырёх ответов сломался.
+ func TestBoldEtfImportEmptyResponseFails(t *testing.T) {
+ 	bodies := boldLatestBodies(t)
+ 	bodies[boldPathUnitsLatest] = nil // пустое тело
+ 	server := boldNewTestServer(t, bodies)
+-	stat := boldEtfFlows{apiBase: server.base()}
++	stat := boldTestStat(server)
+ 
+ 	_, err := stat.Import(context.Background(), newBoldFakeConn())
+ 	if err == nil {
+ 		t.Fatal("пустое тело ответа обязано быть ошибкой")
+ 	}
+ 	if !strings.Contains(err.Error(), boldPathUnitsLatest) || !strings.Contains(err.Error(), "пустое тело") {
+ 		t.Errorf("ошибка не называет эндпоинт и причину: %v", err)
+ 	}
+ }
+ 
++// TestBoldWriteKeepsInputOrder: батчи пишутся в отсортированном порядке, но срез вызывающего
++// сортировка не меняет — побочный эффект на аргументе ищут потом в чужом вызове, а не здесь
++// (саботаж «сортировать на месте», то есть без slices.Clone, валит этот тест).
++func TestBoldWriteKeepsInputOrder(t *testing.T) {
++	points := []point{
++		{Series: boldSeriesHoldingsTonnes, Date: testDate(t, boldPinDate), Value: 3520.318},
++		{Series: boldSeriesAumUsdBn, Date: testDate(t, boldPinPrior), Value: 469.508},
++		{Series: boldSeriesAumUsdBn, Date: testDate(t, boldPinDate), Value: 476.678},
++	}
++	conn := newBoldFakeConn()
++	if _, err := boldWritePoints(context.Background(), conn, points); err != nil {
++		t.Fatalf("boldWritePoints: %v", err)
++	}
++	wantPoints := []string{boldSeriesHoldingsTonnes, boldSeriesAumUsdBn, boldSeriesAumUsdBn}
++	for i, p := range points {
++		if p.Series != wantPoints[i] {
++			t.Fatalf("срез точек переставлен: %v (позиция %d = %s)", points, i, p.Series)
++		}
++	}
++	macro := conn.batchFor(t, boldMacroSeriesInsert)
++	if got := macro.rows[0][1]; got != boldSeriesAumUsdBn {
++		t.Errorf("первая строка батча — %v, ожидался ряд %s (батч обязан быть отсортирован)", got, boldSeriesAumUsdBn)
++	}
++
++	funds := []boldFundPoint{
++		{Ticker: "SPDR", Name: "SPDR Gold Shares"},
++		{Ticker: "GLD", Name: "KTAM Gold ETF Tracker Class GLD (Bangkok)"},
++		{Ticker: "GLD", Name: "NewGold Issuer Ltd"},
++	}
++	conn = newBoldFakeConn()
++	if err := boldWriteFunds(context.Background(), conn, funds); err != nil {
++		t.Fatalf("boldWriteFunds: %v", err)
++	}
++	wantFunds := []string{"SPDR", "GLD", "GLD"}
++	for i, f := range funds {
++		if f.Ticker != wantFunds[i] {
++			t.Fatalf("срез фондов переставлен: %v (позиция %d = %s)", funds, i, f.Ticker)
++		}
++	}
++	batch := conn.batchFor(t, boldFundInsert)
++	if got := batch.rows[0][1]; got != "GLD" {
++		t.Errorf("первая строка батча фондов — %v, ожидался тикер GLD (батч обязан быть отсортирован)", got)
++	}
++}
++
+ // TestBoldEtfCatalogDescribesEverySeries: семь записей каталога, все поля заполнены, имена
+ // совпадают с рядами контура, а описания несут оговорки спеки §4.4 — иначе агент прочитает ряд
+ // без «не складывать с WGC» и «окна календарные».
+ func TestBoldEtfCatalogDescribesEverySeries(t *testing.T) {
+ 	want := []string{
+ 		boldSeriesAumUsdBn, boldSeriesFlow30dTonnes, boldSeriesFlow7dTonnes, boldSeriesFlow90dTonnes,
+ 		boldSeriesFlowTonnes, boldSeriesFlowUsdMln, boldSeriesHoldingsTonnes,
+ 	}
+ 	meta := boldETFSeriesMeta()
+ 	if len(meta) != 7 {
+diff --git a/docs/superpowers/plans/2026-10-12-bold-t1-gold.md b/docs/superpowers/plans/2026-10-12-bold-t1-gold.md
+index 50ec38a..d6d3d68 100644
+--- a/docs/superpowers/plans/2026-10-12-bold-t1-gold.md
++++ b/docs/superpowers/plans/2026-10-12-bold-t1-gold.md
+@@ -12,21 +12,21 @@
+ 
+ ## Global Constraints
+ 
+ - Новых внешних зависимостей не добавлять; HTTP — только через `util.GetJSON` (проверка статуса, дедлайн 60 с).
+ - Запись в ClickHouse — только батчами: `PrepareBatch` → `Append` (с проверкой `err`) → `Send`; каждый `err` проверять.
+ - Секреты — только `os.Getenv` (в этом пункте их нет); логирование — `logrus`, без `fmt.Print`.
+ - Тесты офлайн: в `go test` нет обращений в сеть — только `httptest` и фикстуры `bold/testdata/`.
+ - Константа конверсии: `31.1034768` г/унция (та же, что в `gold/gold.go`), `1 т = 1e6/31.1034768 = 32150.74656862…` унции.
+ - Имена 7 рядов и `source` — дословно из спеки §4.1: `etf_bold_flow_tonnes`, `etf_bold_flow_usd_mln`, `etf_bold_flow_7d_tonnes`, `etf_bold_flow_30d_tonnes`, `etf_bold_flow_90d_tonnes`, `etf_bold_holdings_tonnes`, `etf_bold_aum_usd_bn`; `source='bold'`; цена — `venue='bold'` в `gold_prices` и запись каталога `source='gold'`, `series='bold'`.
+ - Знак потока: рост `units` — приток (плюс).
+-- За прогон — не больше 4 сетевых запросов на импортёр: `bold_etf_flows` — `units-latest`, `aum-latest`, `flows/all-latest`, `summary` (полный путь — три файла истории + `summary`); `bold_gold_price` — `price-latest` (полный путь — `price.json`, один запрос). Счётчики закрепляются тестами.
++- Сетевые запросы: `bold_etf_flows` — обычный инкремент **4** (`units-latest`, `aum-latest`, `flows/all-latest`, `summary`), первый прогон и восстановление после пропуска — **8** (те же 4 «последнего дня» нужны, чтобы узнать дату для сравнения и получить пер-фондовый срез, плюс 3 файла истории и `summary`); `bold_gold_price` — 1 запрос в любом режиме (`price-latest` / `price.json`). Штатный суточный итог контура — 5 запросов. Счётчики закрепляются тестами.
+ - Пины фактов (2026-10-09) запрещено «поправлять»: `units` 113 180 843 oz → `3520.318` т; `aum` 476 677 811 738 → `476.678` млрд $; `culm7day` 43 740 → `1.360` т; `culm30day` 991 060 → `30.825` т; `culm90day` 5 376 055 → `167.214` т; `price` `4216.3`; Δ(09.10 к 08.10) = 136 080 oz → `+4.233` т и `573.75` млн $ (допуск сравнения — 1e-6 относительной).
+ - Коммиты — по-английски, в духе истории репозитория.
+ 
+ ## Review Focus
+ 
+ 1. **`units`/`aum` = `null`** в первых 64 строках истории (2015-01-01 … 2015-03-31) — точки нет, не ноль: иначе нулевой сток попал бы в ряды как факт (Task 1).
+ 2. **Расхождение дат `*-latest`** (price / units / aum / flows) и **отсутствие даты** в пер-фондовом срезе — ошибка, а не запись под чужой датой (Task 1, Task 2).
+ 3. **Инкремент обязан ловить пропуск дней**: если дата `*-latest` ушла вперёд больше чем на 4 календарных дня от сохранённого максимума — полный путь; при равных датах — no-op с 0 строк, а не ошибка (Task 2).
+ 4. **Δ потока на границе истории**: у первой точки ряда потока нет; на инкременте предыдущие `units` читаются из ClickHouse (не из ответа «последнего дня»), иначе поток молча равен нулю или цене дня (Task 2).
+ 5. **Масштабы и конвенции окон**: унции → тонны (÷32150.74656862), USD-поток = Δунции × цена дня; окна берутся из `culm7/30/90day` **как опубликованы** (календарные окна), а не как сумма пяти торговых дней (Task 1).
+diff --git a/docs/superpowers/specs/2026-10-12-bold-t1-gold-design.md b/docs/superpowers/specs/2026-10-12-bold-t1-gold-design.md
+index c4ef668..7c99081 100644
+--- a/docs/superpowers/specs/2026-10-12-bold-t1-gold-design.md
++++ b/docs/superpowers/specs/2026-10-12-bold-t1-gold-design.md
+@@ -136,21 +136,24 @@ CREATE TABLE IF NOT EXISTS bold_fund_snapshot (
+ - **Инкремент (обычный прогон).** Четыре запроса: `units-latest`, `aum-latest`, `flows/all-latest`,
+   `summary` (≈500 байт суммарно; `price-latest` — отдельный импортёр цены, §5). Пишутся только точки новее сохранённого максимума (обычно один день):
+   дневной поток считается как Δ к `units` предыдущего торгового дня, **прочитанного из ClickHouse**
+   (`max(date)` ряда `etf_bold_holdings_tonnes`); окна берутся из `flows/all-latest` как опубликованы.
+   «Сохранённый максимум» — свой у каждого импортёра: для `bold_etf_flows` это `max(date)` рядов `source='bold'`
+   в `macro_series` и таблицы `bold_fund_snapshot`, для `bold_gold_price` — `max(date)` площадки `bold` в `gold_prices`.
+   Если дата `*-latest` не больше сохранённого максимума — прогон пишет 0 строк и завершается успешно (идемпотентный no-op).
+ - **Полный (первый прогон или доказанный пропуск дней).** Если точек нет вовсе — файлы истории (`units.json`,
+   `aum.json`, `flows/all.json`, `price.json`); если инкремент не может исключить пропуск дней
+   (`latest.date − сохранённый максимум > 4 календарных дня`: сбой джобы, длинные выходные) — те же файлы истории,
+-  и из них пишется всё новее сохранённого максимума. На пустых рядах это ≈21054 точки ETF + 3138 цены + 73 строки фондов.
++  и из них пишутся **все** точки: перезапись идемпотентна и заодно лечит прошлые дыры (путь редкий, не ежедневный).
++  На пустых рядах это ≈21054 точки ETF + 3138 цены + 73 строки фондов. Стоимость: полный путь — до 8 запросов
++  (4 «последнего дня» нужны, чтобы вообще узнать дату для сравнения и получить пер-фондовый срез, плюс 3 файла истории
++  и `summary`), обычный инкремент — 4; суточный итог контура остаётся ≤ 5 (4 ETF + 1 цена).
+ - Оба режима идемпотентны (`ReplacingMergeTree` по ключам), полный путь можно запустить руками.
+ 
+ **Fail-fast:** не-200, пустое тело, отсутствие нужного ключа, расхождение дат `*-latest`, ноль точек — ошибка
+ (уроки `eia`/`wgc`: тихий ноль оставил бы dagu зелёным, а ряды — без обновления). Ошибка диагностического запроса
+ максимума из ClickHouse — `log.Warnf` и продолжение (как в `wgc_etf_flows`).
+ 
+ ## 6. Расписание
+ 
+ `dagu/bold.yaml`: `type: chain`, `schedule: "7 8 * * *"` (08:07 МСК — данные источника готовы к 07:32 МСК, слот свободен),
+ `overlap_policy: skip`, шаги `bold_gold_price` → `bold_etf_flows`, retry 3 × 300 с.

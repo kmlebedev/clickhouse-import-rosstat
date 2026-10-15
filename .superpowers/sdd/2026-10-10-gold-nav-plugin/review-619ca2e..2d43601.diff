@@ -1,0 +1,315 @@
+# Review package: 619ca2e..HEAD
+
+## Commits
+2d43601 add events_calendar Q4-2026 and v_events_calendar
+
+## Files changed
+ ARCHITECTURE.md                 |  2 ++
+ Makefile                        | 16 ++++++++++-
+ README.md                       |  2 ++
+ calendar/events.go              | 64 +++++++++++++++++++++++++++++++++++++++++
+ main.go                         |  1 +
+ sql/events_calendar_q4_2026.sql | 25 ++++++++++++++++
+ sql/mcp_kimi_reader.sql         |  1 +
+ 7 files changed, 110 insertions(+), 1 deletion(-)
+
+## Diff
+diff --git a/ARCHITECTURE.md b/ARCHITECTURE.md
+index 9d85f07..8053568 100644
+--- a/ARCHITECTURE.md
++++ b/ARCHITECTURE.md
+@@ -24,20 +24,21 @@ sql/               — SQL для ручной настройки: пользо
+ rosstat/           — Росстат: ipc_mes, ipc_weeks, vvp_kvartal, salaries_mes → series_catalog (source='rosstat'), витрина v_rosstat_macro
+ cbr/               — ЦБ РФ: key_rate, currency_usd, m2, ruonia (таблица cbr_ruania), metal_gold (cbr_gold), households, avgproc_stav, ... → series_catalog (source='cbr'), витрина v_cbr_macro
+ minfin/            — Минфин: fedbud_mes, fedbud_mesyats (исполнение федбюджета) → series_catalog (source='minfin', 'minfin_mesyats'), витрина v_minfin_budget
+ customs/           — ФТС: внешняя торговля по странам
+ fao/               — ФАО: индексы продовольственных цен
+ fred/              — FRED (CSV-серии US-макро: DFII10, DGS10, FEDFUNDS, DTWEXBGS, CPIAUCSL, T5YIE) → macro_series
+ bls/               — BLS API v2 (CPI, безработица, NFP, зарплата, PPI, JOLTS) → macro_series (source = 'bls')
+ bea/               — BEA API (NIPA T20804: индексы PCE) → macro_series (source = 'bea')
+ gold/              — золото: MOEX GOLDFIXME (₽/г) ÷ курс ЦБ cbr_currency_usd → gold_prices (venue='moex_fix_usd'); series_catalog (source='gold'), витрина v_gold_prices
+ moex/              — МосБиржа ISS (анонимный REST, без ключа): свечи PLZL → stock_prices (существующая legacy-схема, Float32 не меняем), RGBI + G-curve → ofz_curve; series_catalog (source='moex'), витрины v_stock_prices, v_ofz_curve
++calendar/          — календарь событий-триггеров прогноза золота/NAV: events_calendar, витрина v_events_calendar; сид Q4-2026 — sql/events_calendar_q4_2026.sql
+ bank/              — банки: sber_csi(+week), sber/vtb/tbank_fin_rez, domrf_mortgage
+ craw/              — многостраничные краулеры: gost (сертификаты Росстандарта)
+ financial/         — ⚠️ legacy-контур: корпоративные databook'и (CHMF/MAGN/NLMK/PLZL/ЮГК),
+                      investing.com exporter, РЖД. Свой main.go, своё подключение database/sql
+ financial/data/    — локальные XLSX/XLS источники (databook'и компаний)
+ dashboard/         — экспортированные JSON-дашборды Grafana (плагин grafana-clickhouse-datasource)
+ docs/              — аналитические статьи (прогнозы золота)
+ *.crt              — национальные TLS CA РФ (для ГОСТ-шифрования gos-сайтов)
+ ```
+ 
+@@ -336,20 +337,21 @@ CREATE TABLE IF NOT EXISTS regime_states (
+ - `v_series_catalog` — `series_catalog FINAL`: название, единицы, частота, происхождение и описание каждого ряда `macro_series` (ведётся импортёрами через `util.UpsertSeriesCatalog`)
+ - `v_bea_pce` — `macro_series FINAL WHERE source = 'bea'`: индексы PCE из BEA (`PCE_PI`, `PCE_PI_CORE`), уровни 2017=100
+ - `v_fred_macro` — `macro_series FINAL WHERE source = 'fred'`: ряды FRED (DFII10, DGS10, FEDFUNDS, DTWEXBGS, CPIAUCSL, T5YIE)
+ - `v_bls_macro` — `macro_series FINAL WHERE source = 'bls'`: ряды BLS (CPI NSA/SA, безработица, NFP, зарплата, PPI, JOLTS)
+ - `v_cbr_macro` — ряды ЦБ РФ в единой форме `(source, series, date, value)`: `cbr_key_rate`, `cbr_currency_usd`, `cbr_gold`, `cbr_ruania` (7 метрик RUONIA), `cbr_m2`, `cbr_credit_m2x`, `cbr_bank_int_rate`, `cbr_indicators_cpd`, `cbr_infl_exp`, `cbr_loans_to_individuals`, `cbr_loans_to_corporations`, `households_b_mes`; единицы и сдвиги дат — в `v_series_catalog`
+ - `v_rosstat_macro` — ряды Росстата в той же форме: `ipc_mes`, `ipc_weeks`, `vvp_kvartal`, `salaries_mes`
+ - `v_minfin_budget` — исполнение бюджета: `minfin_fed_bud_mes` (source='minfin') и `minfin_fed_bud_mesyats` (source='minfin_mesyats', консолидированный бюджет; source различается, т.к. имена рядов совпадают)
+ - `v_gold_prices` — `gold_prices FINAL` в форме `(source, series, date, value)`: source='gold', series=venue (`moex_fix_usd` — производная цена, не LBMA)
+ - `v_stock_prices` — `stock_prices FINAL WHERE code='PLZL'`: дневные OHLCV акции Полюса (руб./акция); max/min — high/low дня
+ - `v_ofz_curve` — `ofz_curve FINAL`: доходности G-curve МосБиржи (теноры 1y/3y/5y/10y, % годовых) + уровень индекса RGBI (тенор RGBI — не доходность)
++- `v_events_calendar` — `events_calendar FINAL`: календарь событий-триггеров прогноза золота/NAV (дата, категория, заголовок, пороги-триггеры в JSON, статус pending|done|verified); сид Q4-2026 — `sql/events_calendar_q4_2026.sql`
+ 
+ Правила витрин:
+ - создаются через `CREATE OR REPLACE VIEW ... DEFINER = default SQL SECURITY DEFINER AS ...` — определение может меняться, и агент читает сырые таблицы через definer, без прав на `macro_series`;
+ - комментарии ставятся через `ALTER TABLE v_x MODIFY COMMENT '...'` и `ALTER TABLE v_x COMMENT COLUMN col '...'`: синтаксис `COMMENT ON TABLE/COLUMN` в текущей версии ClickHouse (26.10) не поддерживается;
+ - `CREATE OR REPLACE` для витрин — отступление от правила «DDL всегда `IF NOT EXISTS`» (то правило относится к таблицам);
+ - для каждой новой витрины — `GRANT SELECT` пользователю `kimi_reader` в `sql/mcp_kimi_reader.sql`;
+ - групповые витрины legacy-источников (`v_cbr_macro`, `v_rosstat_macro`, `v_minfin_budget`, `v_gold_prices`) создаются через `util.CreateView`: витрина появляется, только когда все таблицы её группы уже импортированы, поэтому её создаёт последний импортёр группы; описания рядов группы пишутся в `series_catalog` каждым импортёром своими записями.
+ 
+ ### 6.4 DCF-модель Полюса (ключевые допущения, rev.2 по мировой практике)
+ 
+diff --git a/Makefile b/Makefile
+index dd06575..4e127c2 100644
+--- a/Makefile
++++ b/Makefile
+@@ -11,21 +11,21 @@ CH_DIR       ?= $(HOME)/clickhouse-dev/.clickhouse/servers/dev
+ CH_DATA      := $(CH_DIR)/data
+ CH_PID       := $(CH_DIR)/clickhouse.pid
+ CH_LOG       := $(CH_DIR)/clickhouse.log
+ CH_HTTP_PORT ?= 8123
+ CH_TCP_PORT  ?= 9000
+ 
+ MCP_USER     ?= kimi_reader
+ MCP_PY       ?= 3.12
+ MCP_CMD      := uv run --with mcp-clickhouse --python $(MCP_PY) mcp-clickhouse
+ 
+-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status dev-check env-check import mcp-run mcp-user mcp-check
++.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mcp-run mcp-user mcp-check
+ 
+ all: lint test build
+ 
+ # lint падает, если что-то не отформатировано, затем запускает golangci-lint,
+ # если он установлен. CI выполняет те же проверки.
+ lint:
+ 	@unformatted=$$(gofmt -l .); \
+ 	if [ -n "$$unformatted" ]; then echo "gofmt needed:"; echo "$$unformatted"; exit 1; fi
+ 	@if command -v golangci-lint >/dev/null 2>&1; then golangci-lint run ./...; \
+ 	else echo "golangci-lint not installed, skipping"; fi
+@@ -71,20 +71,34 @@ ch-down:
+ 		kill $$(cat "$(CH_PID)"); \
+ 		for i in $$(seq 1 60); do kill -0 $$(cat "$(CH_PID)") 2>/dev/null || break; sleep 1; done; \
+ 		rm -f "$(CH_PID)"; echo "ClickHouse остановлен"; \
+ 	else \
+ 		echo "PID-файл $(CH_PID) не найден или процесс не запущен (сервер, поднятый вне make, не останавливается)"; \
+ 	fi
+ 
+ ch-status:
+ 	@curl -sf -m 2 http://localhost:$(CH_HTTP_PORT)/ping >/dev/null 2>&1 && echo "ClickHouse отвечает на порту $(CH_HTTP_PORT)" || echo "ClickHouse не отвечает на порту $(CH_HTTP_PORT)"
+ 
++# Прогон SQL-файла в локальный ClickHouse: make ch-sql FILE=sql/events_calendar_q4_2026.sql
++# Файл должен лежать в репозитории (путь относительный). Многострочные скрипты — через --multiquery.
++# Подключается пользователем CH_USER (по умолчанию default, локальный dev-сервер без пароля);
++# CH_USER_PASSWORD задавайте, только если пользователю нужен пароль.
++FILE ?=
++CH_USER ?= default
++CH_USER_PASSWORD ?=
++ch-sql:
++	@test -n "$(FILE)" || { echo "укажите файл: make ch-sql FILE=sql/events_calendar_q4_2026.sql"; exit 1; }
++	@test -f "$(FILE)" || { echo "файл не найден: $(FILE)"; exit 1; }
++	@test -n "$(CH_BIN)" || { echo "clickhouse не найден: задайте CH_BIN=/путь/к/clickhouse"; exit 1; }
++	@curl -sf -m 2 http://localhost:$(CH_HTTP_PORT)/ping >/dev/null 2>&1 || { echo "ClickHouse не отвечает: make ch-up"; exit 1; }
++	"$(CH_BIN)" client --user "$(CH_USER)" --password "$(CH_USER_PASSWORD)" --multiquery < "$(FILE)"
++
+ # Проверка окружения разработчика: наличие инструментов и версий.
+ dev-check:
+ 	@for t in go gofmt golangci-lint uv curl; do \
+ 		if command -v $$t >/dev/null 2>&1; then echo "OK   $$t: $$(command -v $$t)"; else echo "НЕТ  $$t (установка: см. README, раздел «Зависимости для разработки»)"; fi; \
+ 	done
+ 	@test -n "$(CH_BIN)" && echo "OK   clickhouse: $(CH_BIN)" || echo "НЕТ  clickhouse (задайте CH_BIN или установите ClickHouse)"
+ 
+ # Показывает, какие ключи заданы в окружении (файл $(ROSSTAT_ENV)); значения не выводятся.
+ env-check:
+ 	@echo "файл окружения: $(ROSSTAT_ENV) $$(test -f $(ROSSTAT_ENV) && echo найден || echo НЕ НАЙДЕН)"
+diff --git a/README.md b/README.md
+index aa3d936..246b849 100644
+--- a/README.md
++++ b/README.md
+@@ -15,20 +15,21 @@ Go-конвейер импорта российской макроэкономи
+ | `minfin` | Минфин: исполнение федерального бюджета | `minfin_fed_bud_mes`, `minfin_fed_bud_mesyats`; каталог `series_catalog`, витрина `v_minfin_budget` | 10-е число 10:41 |
+ | `customs` | ФТС: внешняя торговля по странам | `customs_vneshn_torg` | 15-е число 11:41 |
+ | `fao` | ФАО: индексы продовольственных цен | `fao_food_price` | 5-е число 10:47 |
+ | `bank` | Банки: индексы потребительских расходов, финрезультаты (Сбер, ВТБ, Т-Банк), ипотека ДОМ.РФ | `sber_consumper_spending_index`, `sber_izmenenie_trat`, `sber_finansovie_rezultaty`, `rus_vtb_group_ifrs`, `tbank_group_ifrs`, `domrf_mortgage` | понедельник 09:23 |
+ | `craw` | Росстандарт: сертификаты ГОСТ (краулер) | `gost_*` | 1-е число 11:31 |
+ | `fred` | FRED (CSV): DFII10, DGS10, FEDFUNDS, DTWEXBGS, CPIAUCSL, T5YIE | `macro_series` (`source = 'fred'`), каталог `series_catalog`, витрина `v_fred_macro` | ежедневно 11:41 |
+ | `bls` | BLS API v2: CPI (CUUR0000SA0, CUSR0000SA0), безработица, NFP, средняя зарплата, PPI, JOLTS | `macro_series` (`source = 'bls'`), каталог `series_catalog`, витрина `v_bls_macro` | ежедневно 12:23 |
+ | `bea` | BEA API: индексы PCE (headline, excluding food and energy), таблица NIPA T20804 | `macro_series` (`source = 'bea'`) | ежедневно 12:37 |
+ | `gold` | Золото: фиксинг MOEX GOLDFIXME (₽/г) пересчитан в USD/oz по курсу ЦБ | `gold_prices` (`venue = 'moex_fix_usd'`); каталог `series_catalog`, витрина `v_gold_prices` | ежедневно 18:47 |
+ | `moex` | МосБиржа ISS: свечи PLZL (OHLCV), индекс RGBI, доходности G-curve ОФЗ (1y/3y/5y/10y) | `stock_prices` (`code = 'PLZL'`), `ofz_curve`; каталог `series_catalog`, витрины `v_stock_prices`, `v_ofz_curve` | ежедневно 19:13 |
++| `calendar` | Календарь событий-триггеров прогноза золота/NAV (Q4-2026; сид — `sql/events_calendar_q4_2026.sql`) | `events_calendar`; витрина `v_events_calendar` | вручную (`make import STAT=events_calendar`) |
+ | `financial` | Legacy: корпоративные databook'и (ЧМФ, ММК, НЛМК, Полюс, ЮГК), investing.com, РЖД | `databook_*`, `polyus_financial_metrics` и др. | понедельник 10:23 |
+ 
+ Импортёр `gold` — временный: производная цена, не LBMA. Официальный LBMA AM/PM пока не подключён, см. «Ограничения».
+ 
+ ## Структура репозитория
+ 
+ ```text
+ main.go                  точка входа: подключение к ClickHouse, фильтр импортёров, код выхода
+ chimport/                интерфейс ImportStat и глобальный реестр Stats
+ util/                    HTTP-клиент (национальные TLS-сертификаты РФ, ротация User-Agent), шаблоны HdBase и ClickHouseImport, батч-вставка
+@@ -91,20 +92,21 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
+ | `make lint` | `gofmt -l` (падает, если есть неотформатированный код) и `golangci-lint run ./...` |
+ | `make test` | `go vet` и `go test -race ./...` (тесты есть у `bls`, `bea`, `cbr`, `rosstat`, `minfin`, `gold`, `moex`) |
+ | `make build` | статический бинарник `linux/amd64` в `build/` |
+ | `make run` | сборка и запуск (нужен `CLICKHOUSE_URL`) |
+ | `make fmt` | `gofmt -w .` |
+ | `make deps` | `go mod download` и `go mod tidy` |
+ | `make clean` | удалить `build/` |
+ | `make ch-up` | запустить локальный ClickHouse (порты 8123/9000), если он ещё не отвечает |
+ | `make ch-down` | остановить сервер, поднятый через `make ch-up` (по PID-файлу) |
+ | `make ch-status` | проверить, отвечает ли сервер на `localhost:8123` |
++| `make ch-sql FILE=...` | прогнать SQL-файл репозитория в локальный ClickHouse (`--multiquery`; пользователь `CH_USER`, по умолчанию `default` без пароля) |
+ | `make dev-check` | проверить наличие `go`, `gofmt`, `golangci-lint`, `uv`, `curl`, `clickhouse` |
+ | `make mcp-run` | запустить MCP-сервер `mcp-clickhouse` в stdio вручную (нужен `CLICKHOUSE_PASSWORD`) |
+ | `make mcp-user` | создать пользователя `kimi_reader` и выдать `GRANT SELECT` на витрины из `sql/mcp_kimi_reader.sql` (нужен `CLICKHOUSE_PASSWORD`, запущенный ClickHouse) |
+ | `make mcp-check` | smoke-проверка MCP: инструменты, витрины, отказ на сырые таблицы (нужен `CLICKHOUSE_PASSWORD`, запущенный ClickHouse) |
+ 
+ ### Зависимости для разработки
+ 
+ - Go — версия из `go.mod` (сейчас `1.27`); в CI используется Go `1.27.x`;
+ - `golangci-lint` v2 (`brew install golangci-lint`), конфиг — `.golangci.yml`;
+ - `uv` (`brew install uv`): запускает `mcp-clickhouse` без установки в систему, Python `3.12` подтягивается `uv`;
+diff --git a/calendar/events.go b/calendar/events.go
+new file mode 100644
+index 0000000..d181b17
+--- /dev/null
++++ b/calendar/events.go
+@@ -0,0 +1,64 @@
++package calendar
++
++import (
++	"context"
++
++	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
++	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
++	"github.com/kmlebedev/clickhouse-import-rosstat/util"
++	log "github.com/sirupsen/logrus"
++)
++
++const (
++	eventsTable = "events_calendar"
++	eventsDdl   = `CREATE TABLE IF NOT EXISTS ` + eventsTable + ` (
++	    event_date Date,
++	    event_time Nullable(String),
++	    category LowCardinality(String), -- 'fomc','cpi','nfp','eia','wgc','cbr','polyus_ir','moex_rebalance','gov_rf'
++	    title String,
++	    threshold String,                -- JSON, напр. '{"crack":">50"}'
++	    status LowCardinality(String) DEFAULT 'pending'  -- pending|done|verified
++	) ENGINE = ReplacingMergeTree ORDER BY (event_date, category, title);
++	`
++)
++
++// eventsView — витрина календаря событий-триггеров для MCP-агента.
++// Сид данных живёт в sql/events_calendar_q4_2026.sql (идемпотентен за счёт ReplacingMergeTree),
++// импортёр только создаёт таблицу и витрину.
++var eventsView = util.View{
++	Name:    "v_events_calendar",
++	Tables:  []string{eventsTable},
++	Select:  `SELECT * FROM ` + eventsTable + ` FINAL`,
++	Comment: "Календарь событий-триггеров прогноза золота/NAV; status: pending|done|verified",
++	Columns: map[string]string{
++		"event_date": "Дата события (Date)",
++		"event_time": "Время события (местное/UTC, строка; NULL — время не фиксировано)",
++		"category":   "Категория триггера: fomc/cpi/nfp/eia/wgc/cbr/polyus_ir/moex_rebalance/gov_rf",
++		"title":      "Название события и действие модели при его наступлении",
++		"threshold":  "Пороги срабатывания в формате JSON, напр. '{\"crack\":\">50\"}'",
++		"status":     "Статус отработки: pending — ожидается, done — обработано, verified — сверено с фактом",
++	},
++}
++
++type eventsCalendar struct {
++}
++
++func (s *eventsCalendar) Name() string {
++	return eventsTable
++}
++
++func (s *eventsCalendar) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
++	if err = conn.Exec(ctx, eventsDdl); err != nil {
++		return count, err
++	}
++	created, err := util.CreateView(ctx, conn, eventsView)
++	if err != nil {
++		return count, err
++	}
++	log.Infof("View %s created: %t", eventsView.Name, created)
++	return count, nil
++}
++
++func init() {
++	chimport.Stats = append(chimport.Stats, &eventsCalendar{})
++}
+diff --git a/main.go b/main.go
+index 516ff47..795a157 100644
+--- a/main.go
++++ b/main.go
+@@ -1,18 +1,19 @@
+ package main
+ 
+ import (
+ 	"context"
+ 	"github.com/ClickHouse/clickhouse-go/v2"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/bank"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/bea"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/bls"
++	_ "github.com/kmlebedev/clickhouse-import-rosstat/calendar"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/cbr"
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/craw"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/customs"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/fao"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/financial"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/fred"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/gold"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/minfin"
+ 	_ "github.com/kmlebedev/clickhouse-import-rosstat/moex"
+diff --git a/sql/events_calendar_q4_2026.sql b/sql/events_calendar_q4_2026.sql
+new file mode 100644
+index 0000000..a59e5e1
+--- /dev/null
++++ b/sql/events_calendar_q4_2026.sql
+@@ -0,0 +1,25 @@
++-- Сид календаря событий-триггеров прогноза золота/NAV на Q4-2026 (ARCHITECTURE.md §7).
++-- Источник канонического DDL — ARCHITECTURE.md §6.2. Запуск: make ch-sql FILE=sql/events_calendar_q4_2026.sql
++-- Вставка идемпотентна: ReplacingMergeTree ORDER BY (event_date, category, title) сворачивает дубли.
++
++CREATE TABLE IF NOT EXISTS events_calendar (
++    event_date Date,
++    event_time Nullable(String),
++    category LowCardinality(String), -- 'fomc','cpi','nfp','eia','wgc','cbr','polyus_ir','moex_rebalance','gov_rf'
++    title String,
++    threshold String,                -- JSON, напр. '{"crack":">50"}'
++    status LowCardinality(String) DEFAULT 'pending'  -- pending|done|verified
++) ENGINE = ReplacingMergeTree ORDER BY (event_date, category, title);
++
++INSERT INTO events_calendar (event_date, event_time, category, title, threshold, status) VALUES
++    ('2026-10-14', NULL, 'eia',  'EIA дистилляты: недельный запас (ср еженед.; порог crack >$50 — медведь / <$30 — снято)',        '{"crack":">50","crack_bull":"<30"}', 'pending'),
++    ('2026-10-14', '15:30', 'cpi', 'CPI США за сентябрь 2026',                                                                        '{"hot_yoy":">3.5"}',                 'pending'),
++    ('2026-10-23', NULL, 'cbr',  'СД ЦБ РФ: ставка (14%) — снижение → флаг перетока ликвидности',                                     '{"cut_bp":">=25"}',                  'pending'),
++    ('2026-10-30', NULL, 'wgc',  'WGC GDT: спрос на золото, ETF-потоки + покупки ЦБ (~конец октября; норма 40–60 т/мес)',              '{"cb_purchase_t":">=40"}',           'pending'),
++    ('2026-11-01', NULL, 'gov_rf','Истечение запрета РФ на экспорт дизеля: продление → bear; отмена → bull',                            '{"extended":"bear","lifted":"bull"}', 'pending'),
++    ('2026-11-06', '15:30', 'nfp', 'NFP США за октябрь 2026',                                                                          '{"nfp_k":">100"}',                   'pending'),
++    ('2026-11-10', '15:30', 'cpi', 'CPI США за октябрь 2026: горячий → FOMC-hike 85–90%',                                              '{"hot_yoy":">3.5"}',                 'pending'),
++    ('2026-12-04', '15:30', 'nfp', 'NFP США за ноябрь 2026 (перенос: релиз 2026-12-04)',                                               '{"nfp_k":">100"}',                   'pending'),
++    ('2026-12-09', '21:00', 'fomc','FOMC + dot plot: 2-е повышение → пробой $4,000 → $3,750–3,800',                                    '{"hike_count":">=2"}',               'pending'),
++    ('2026-12-10', '15:30', 'cpi', 'CPI США за ноябрь 2026',                                                                            '{"hot_yoy":">3.5"}',                 'pending'),
++    ('2026-12-18', NULL, 'cbr',  'СД ЦБ РФ: база — −25 б.п. до 13,75% + ребалансировка индекса MOEX (один день)',                      '{"cut_bp":">=25"}',                  'pending');
+diff --git a/sql/mcp_kimi_reader.sql b/sql/mcp_kimi_reader.sql
+index 49d9535..5f0f171 100644
+--- a/sql/mcp_kimi_reader.sql
++++ b/sql/mcp_kimi_reader.sql
+@@ -6,10 +6,11 @@ CREATE USER IF NOT EXISTS kimi_reader IDENTIFIED BY '<your-password>' DEFAULT DA
+ GRANT SELECT ON default.v_bea_pce TO kimi_reader;
+ GRANT SELECT ON default.v_series_catalog TO kimi_reader;
+ GRANT SELECT ON default.v_fred_macro TO kimi_reader;
+ GRANT SELECT ON default.v_bls_macro TO kimi_reader;
+ GRANT SELECT ON default.v_cbr_macro TO kimi_reader;
+ GRANT SELECT ON default.v_rosstat_macro TO kimi_reader;
+ GRANT SELECT ON default.v_minfin_budget TO kimi_reader;
+ GRANT SELECT ON default.v_gold_prices TO kimi_reader;
+ GRANT SELECT ON default.v_stock_prices TO kimi_reader;
+ GRANT SELECT ON default.v_ofz_curve TO kimi_reader;
++GRANT SELECT ON default.v_events_calendar TO kimi_reader;

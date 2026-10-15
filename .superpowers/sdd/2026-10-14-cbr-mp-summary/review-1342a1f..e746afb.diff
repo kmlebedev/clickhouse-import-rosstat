@@ -1,0 +1,682 @@
+# Review package: 1342a1f..e746afb
+
+## Commits
+e746afb cbr: 11-channel registry and regex tagging for mp summary
+
+## Files changed
+ cbr/mp_summary_channels.go      | 309 +++++++++++++++++++++++++++++++++++
+ cbr/mp_summary_channels_test.go | 350 ++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 659 insertions(+)
+
+## Diff
+diff --git a/cbr/mp_summary_channels.go b/cbr/mp_summary_channels.go
+new file mode 100644
+index 0000000..f9478e8
+--- /dev/null
++++ b/cbr/mp_summary_channels.go
+@@ -0,0 +1,309 @@
++package cbr
++
++import (
++	"regexp"
++	"strings"
++)
++
++// Виды цитат разметки каналов (колонка kind таблицы cbr_mp_summary_channel): пункт списка
++// проинфляционных рисков, пункт списка дезинфляционных рисков, предложение прозы.
++const (
++	mpKindRiskPro = "risk_pro"
++	mpKindRiskDez = "risk_dez"
++	mpKindProse   = "prose"
++)
++
++// mpBlockRisks — четвёртый блок резюме (mpSummaryBlocks[3]) с двумя списками рисков: только
++// его пункты дают kind risk_pro/risk_dez, абзацы остальных блоков — prose.
++const mpBlockRisks = "Инфляционные риски"
++
++// mpChannel — канал ЦБ из реестра 11 каналов (docs/KEY_RATE_CHANNELS.md §3, спека §3.4):
++// slug для хранения, русское имя канала, направление относительно инфляции и набор узоров.
++// Узоры — по стемам, в нижнем регистре, применяются к нормализованному (normMPText) тексту,
++// приведённому к нижнему регистру; именно поэтому в них нет «\w» (в RE2 это ASCII-класс,
++// кириллицу он не покрывает) — вместо него [а-яё]*.
++type mpChannel struct {
++	Slug     string
++	Title    string
++	Sign     string
++	Patterns []*regexp.Regexp
++}
++
++// mpChannelMatch — совпадение канала с дословным (нормализованным) фрагментом документа:
++// канал, вид (risk_pro|risk_dez|prose), сквозной номер фрагмента по документу и текст.
++type mpChannelMatch struct {
++	Channel string
++	Kind    string
++	Seq     int
++	Text    string
++}
++
++// mpChannelMatchKey — ключ дедупликации матчей внутри документа (Channel, Kind, Text):
++// одно предложение может попасть в несколько каналов, но не в один канал дважды.
++type mpChannelMatchKey struct {
++	Channel string
++	Kind    string
++	Text    string
++}
++
++// mpRes компилирует набор узоров канала. Ошибка регулярки — паника на этапе вычисления
++// пакетной переменной (сеть/init не затрагиваются): опечатка должна ронять тесты, а не
++// молча терять канал на проде.
++func mpRes(patterns ...string) []*regexp.Regexp {
++	out := make([]*regexp.Regexp, 0, len(patterns))
++	for _, p := range patterns {
++		out = append(out, regexp.MustCompile(p))
++	}
++	return out
++}
++
++// mpChannels — реестр ровно 11 каналов ЦБ в порядке спеки §3.4. Узоры подобраны по
++// формулировкам трёх эпох (hold/hike/cut, фикстуры cbr/testdata/mp_summary_*.html) и по
++// дословным цитатам docs/KEY_RATE_CHANNELS.md §3; один фрагмент текста может попасть сразу
++// в несколько каналов — это нормально, каналы пересекаются по смыслу.
++var mpChannels = []mpChannel{
++	{
++		Slug:  "current_inflation",
++		Title: "Текущий рост цен",
++		Sign:  "проинфляционный",
++		Patterns: mpRes(
++			`текущ[а-яё]*\s+рост\s+цен`,
++			`текущ[а-яё]*\s+инфляц[а-яё]*`,
++			`текущ[а-яё]*\s+давлени[а-яё]*`,
++			`инфляционн[а-яё]*\s+давлени[а-яё]*`,
++			`прирост\s+цен`,
++			`темп[а-яё]*\s+рост[а-яё]*\s+цен`,
++		),
++	},
++	{
++		Slug:  "core_inflation",
++		Title: "Устойчивая («базовая») инфляция",
++		Sign:  "проинфляционный",
++		Patterns: mpRes(
++			`устойчив[а-яё]*\s+инфляц[а-яё]*`,
++			`базов[а-яё]*\s+инфляц[а-яё]*`,
++			`устойчив[а-яё]*\s+рост[а-яё]*\s+цен`,
++			`устойчив[а-яё]*\s+давлени[а-яё]*`,
++			`устойчив[а-яё]*\s+част[а-яё]*`,
++		),
++	},
++	{
++		Slug:  "expectations",
++		Title: "Инфляционные и ценовые ожидания",
++		Sign:  "проинфляционный при росте",
++		Patterns: mpRes(
++			`инфляционн[а-яё]*\s+ожидан[а-яё]*`,
++			`ценов[а-яё]*\s+ожидан[а-яё]*`,
++			`ожидан[а-яё]*\s+(?:населен|бизнес|предприят|аналитик)[а-яё]*`,
++		),
++	},
++	{
++		Slug:  "labor_market",
++		Title: "Рынок труда",
++		Sign:  "проинфляционный, пока занятость жёсткая",
++		Patterns: mpRes(
++			`безработиц[а-яё]*`,
++			`рынк[а-яё]*\s+труда`,
++			`дефицит[а-яё]*\s+(?:кадр|работник|сотрудник)[а-яё]*`,
++			`заработн[а-яё]*`,
++			`зарплат[а-яё]*`,
++			`занятост[а-яё]*`,
++			`найм[а-яё]*\s+(?:работник|сотрудник)[а-яё]*`,
++			`производительност[а-яё]*\s+труда`,
++		),
++	},
++	{
++		Slug:  "lending_transmission",
++		Title: "Кредитование и трансмиссия ДКП",
++		Sign:  "дезинфляционный (ужесточение)",
++		Patterns: mpRes(
++			`кредитован[а-яё]*`,
++			`кредитн[а-яё]*\s+активност[а-яё]*`,
++			`выдач[а-яё]*\s+кредит[а-яё]*`,
++			`ставк[а-яё]*\s+по\s+кредит[а-яё]*`,
++			`депозитн[а-яё]*\s+ставк[а-яё]*`,
++			`процентн[а-яё]*\s+ставк[а-яё]*`,
++			`денежно-кредитн[а-яё]*\s+услови[а-яё]*`,
++			`трансмисс[а-яё]*`,
++			// \b — чтобы «спред» не срабатывал внутри «перераспределение».
++			`\bспред[а-яё]*`,
++		),
++	},
++	{
++		Slug:  "output_gap",
++		Title: "Разрыв выпуска / перегрев спроса",
++		Sign:  "проинфляционный",
++		Patterns: mpRes(
++			`разрыв[а-яё]*\s+выпуска`,
++			`перегрев[а-яё]*`,
++			`дисбаланс[а-яё]*\s+спроса`,
++			`спроса\s+и\s+предложения`,
++			`внутренн[а-яё]*\s+спрос[а-яё]*`,
++			`потенциал[а-яё]*\s+экономик[а-яё]*`,
++			`загрузк[а-яё]*\s+мощност[а-яё]*`,
++		),
++	},
++	{
++		Slug:  "budget_impulse",
++		Title: "Бюджетный импульс",
++		Sign:  "проинфляционный/дезинфляционный",
++		Patterns: mpRes(
++			`бюджет[а-яё]*`,
++			`структурн[а-яё]*\s+первичн[а-яё]*\s+дефицит[а-яё]*`,
++			`фискальн[а-яё]*`,
++			`налогов[а-яё]*\s+нагрузк[а-яё]*`,
++		),
++	},
++	{
++		Slug:  "money_supply",
++		Title: "Денежная масса",
++		Sign:  "проинфляционный",
++		Patterns: mpRes(
++			`денежн[а-яё]*\s+масс[а-яё]*`,
++			`\bм2\b`,
++			`монетарн[а-яё]*\s+агрегат[а-яё]*`,
++		),
++	},
++	{
++		Slug:  "external_fx",
++		Title: "Внешние условия и курс",
++		Sign:  "проинфляционный через курс и издержки",
++		Patterns: mpRes(
++			`внешн[а-яё]*\s+услови[а-яё]*`,
++			`внешн[а-яё]*\s+торговл[а-яё]*`,
++			`курс[а-яё]*`,
++			`валют[а-яё]*`,
++			`рубл[а-яё]*\s+(?:ослаб|укреп|дорожа|дешеве|обмен)`,
++			`(?:ослаблен|укреплен|ослаб|укреп)[а-яё]*\s+рубл[а-яё]*`,
++			`нефт[а-яё]*`,
++			`brent`,
++			`экспорт[а-яё]*`,
++			`импорт[а-яё]*`,
++			`миров[а-яё]*\s+(?:цен|эконом|товарн|сырьев)[а-яё]*`,
++			`геополитическ[а-яё]*`,
++			`санкци[а-яё]*`,
++		),
++	},
++	{
++		Slug:  "savings_behavior",
++		Title: "Сберегательное поведение",
++		Sign:  "дезинфляционный",
++		Patterns: mpRes(
++			`сбережен[а-яё]*`,
++			`сберегательн[а-яё]*`,
++			`срочн[а-яё]*\s+вклад[а-яё]*`,
++			`приток[а-яё]*\s+средств[а-яё]*`,
++		),
++	},
++	{
++		Slug:  "autonomous_factors",
++		Title: "Автономные (немонетарные) факторы",
++		Sign:  "дезинфляционный",
++		Patterns: mpRes(
++			`макропруденциальн[а-яё]*`,
++			`регуляторн[а-яё]*`,
++			`антициклическ[а-яё]*`,
++			`ликвидност[а-яё]*`,
++			`тариф[а-яё]*`,
++			`разов[а-яё]*\s+фактор[а-яё]*`,
++			`немонетарн[а-яё]*`,
++			`шок[а-яё]*\s+предложени[а-яё]*`,
++			`утильсбор[а-яё]*`,
++			`индексаци[а-яё]*`,
++			`автономн[а-яё]*\s+спрос[а-яё]*`,
++		),
++	},
++}
++
++// mpRiskDezHeaderRe — абзац-заголовок дезинфляционного списка блока «Инфляционные риски»:
++// «Основные дезинфляционные риски включают:» (23092026), «Основным дезинфляционным фактором
++// является:» (07052026), «Дезинфляционные риски выражены слабо…» (06112024). Одного стема
++// «дезинфляционн» мало: первый абзац блока говорит о преобладании проинфляционных рисков
++// над «дезинфляционными» и не открывает список.
++var mpRiskDezHeaderRe = regexp.MustCompile(
++	`основн[а-яё]*\s+дезинфляционн|дезинфляционн[а-яё]*\s+(?:риск|фактор)[а-яё]*\s+(?:включают|является|выражены|выделены)`)
++
++// mpChannelSplitRe — граница предложения: знак конца (.!?) и пробел после него; фрагмент
++// режется сразу после знака (так дословная цитата сохраняет свою пунктуацию).
++var mpChannelSplitRe = regexp.MustCompile(`[.!?]\s+`)
++
++// mpChannelSentences разбивает нормализованный текст абзаца или пункта на предложения по
++// правилу (?<=[.!?])\s+ — Go-RE2 lookbehind не поддерживает, поэтому граница ищется как
++// «знак + пробелы», а фрагмент берётся до знака включительно. Пустые фрагменты
++// отбрасываются. От mpSentences (Task 3) отличается намеренно: там границей считается
++// только точка перед заглавной буквой — для решения и сигнала это точнее, а разметке каналов
++// нужен простой сплит, зафиксированный контроллером в Task 4.
++func mpChannelSentences(text string) []string {
++	var out []string
++	start := 0
++	for _, loc := range mpChannelSplitRe.FindAllStringIndex(text, -1) {
++		if piece := strings.TrimSpace(text[start : loc[0]+1]); piece != "" {
++			out = append(out, piece)
++		}
++		start = loc[1]
++	}
++	if tail := strings.TrimSpace(text[start:]); tail != "" {
++		out = append(out, tail)
++	}
++	return out
++}
++
++// mpChannelHits — сработал ли хотя бы один узор канала на тексте (уже в нижнем регистре).
++func mpChannelHits(ch mpChannel, lowText string) bool {
++	for _, re := range ch.Patterns {
++		if re.MatchString(lowText) {
++			return true
++		}
++	}
++	return false
++}
++
++// tagMPChannels размечает один документ (все блоки одного резюме) по 11 каналам ЦБ:
++//   - пункты списков блока «Инфляционные риски» → risk_pro/risk_dez по порядку: пункты до
++//     абзаца-заголовка дезинфляционного списка — проинфляционные, после — дезинфляционные;
++//     абзацы этого блока — только заголовки списков и сами цитатами не являются;
++//   - предложения всех абзацев и пунктов остальных блоков (включая пункты «Основные
++//     аргументы…» блока 5 — они несут утверждения по каналам) → prose.
++//
++// Внутри пункта/абзаца разметка идёт по предложениям: одно предложение может попасть в
++// несколько каналов, повтор (Channel, Kind, Text) отбрасывается. Seq — сквозной номер
++// фрагмента в порядке обхода документа (один и тот же номер у всех каналов одного фрагмента).
++func tagMPChannels(blocks []mpSummaryBlock) []mpChannelMatch {
++	var (
++		out  []mpChannelMatch
++		seq  int
++		dez  bool // в блоке рисков: пройден заголовок дезинфляционного списка
++		seen = make(map[mpChannelMatchKey]bool)
++	)
++	for _, b := range blocks {
++		kind := mpKindProse
++		if b.Block == mpBlockRisks {
++			kind = mpKindRiskPro
++			if b.Kind == mpKindParagraph {
++				if mpRiskDezHeaderRe.MatchString(strings.ToLower(b.Text)) {
++					dez = true
++				}
++				continue
++			}
++			if dez {
++				kind = mpKindRiskDez
++			}
++		}
++		for _, sent := range mpChannelSentences(b.Text) {
++			seq++
++			low := strings.ToLower(sent)
++			for _, ch := range mpChannels {
++				if !mpChannelHits(ch, low) {
++					continue
++				}
++				key := mpChannelMatchKey{Channel: ch.Slug, Kind: kind, Text: sent}
++				if seen[key] {
++					continue
++				}
++				seen[key] = true
++				out = append(out, mpChannelMatch{Channel: ch.Slug, Kind: kind, Seq: seq, Text: sent})
++			}
++		}
++	}
++	return out
++}
+diff --git a/cbr/mp_summary_channels_test.go b/cbr/mp_summary_channels_test.go
+new file mode 100644
+index 0000000..247e1c1
+--- /dev/null
++++ b/cbr/mp_summary_channels_test.go
+@@ -0,0 +1,350 @@
++package cbr
++
++import (
++	"strings"
++	"testing"
++)
++
++// mpRegistrySlugs — 11 slug'ов реестра каналов в порядке таблицы спеки §3.4.
++func mpRegistrySlugs() []string {
++	return []string{
++		"current_inflation",
++		"core_inflation",
++		"expectations",
++		"labor_market",
++		"lending_transmission",
++		"output_gap",
++		"budget_impulse",
++		"money_supply",
++		"external_fx",
++		"savings_behavior",
++		"autonomous_factors",
++	}
++}
++
++// mpChannelCorpus — склейка нормализованных текстов всех текстовых узлов документа.
++// Каждая цитата разметки обязана входить в неё дословно (иначе сломается сверка LLM-слоя).
++func mpChannelCorpus(blocks []mpSummaryBlock) string {
++	var sb strings.Builder
++	for _, b := range blocks {
++		sb.WriteString(b.Text)
++		sb.WriteString("\n")
++	}
++	return sb.String()
++}
++
++// mpBlockBullets — склейка текстов пунктов списка одного блока: источник risk_-матчей.
++func mpBlockBullets(blocks []mpSummaryBlock, block string) string {
++	var sb strings.Builder
++	for _, b := range blocks {
++		if b.Block == block && b.Kind == mpKindBullet {
++			sb.WriteString(b.Text)
++			sb.WriteString("\n")
++		}
++	}
++	return sb.String()
++}
++
++// mpMatchTexts — тексты матчей канала (все виды), в порядке следования.
++func mpMatchTexts(matches []mpChannelMatch, channel string) []string {
++	var out []string
++	for _, m := range matches {
++		if m.Channel == channel {
++			out = append(out, m.Text)
++		}
++	}
++	return out
++}
++
++// mpHasMatchText — есть ли матч канала (любого вида) ровно с этим текстом.
++func mpHasMatchText(matches []mpChannelMatch, channel, text string) bool {
++	for _, m := range matches {
++		if m.Channel == channel && m.Text == text {
++			return true
++		}
++	}
++	return false
++}
++
++// mpHasTextWith — есть ли матч канала (любого вида) с подстрокой sub (регистронезависимо).
++func mpHasTextWith(matches []mpChannelMatch, channel, sub string) bool {
++	sub = strings.ToLower(sub)
++	for _, m := range matches {
++		if m.Channel == channel && strings.Contains(strings.ToLower(m.Text), sub) {
++			return true
++		}
++	}
++	return false
++}
++
++// mpMatchCounts — число матчей по каналам (все виды).
++func mpMatchCounts(matches []mpChannelMatch) map[string]int {
++	out := make(map[string]int, len(mpChannels))
++	for _, m := range matches {
++		out[m.Channel]++
++	}
++	return out
++}
++
++// mpCheckMatchShared — общие инварианты разметки: непустой текст, дословность (Text —
++// подстрока нормализованного документа), Seq — сквозной неубывающий с 1, канал — из реестра,
++// вид — из ожидаемых, дублей (Channel, Kind, Text) нет.
++func mpCheckMatchShared(t *testing.T, blocks []mpSummaryBlock, matches []mpChannelMatch) {
++	t.Helper()
++	corpus := mpChannelCorpus(blocks)
++	slugs := map[string]bool{}
++	for _, s := range mpRegistrySlugs() {
++		slugs[s] = true
++	}
++	kinds := map[string]bool{mpKindRiskPro: true, mpKindRiskDez: true, mpKindProse: true}
++	type key struct{ channel, kind, text string }
++	seen := map[key]bool{}
++	lastSeq := 0
++	for i, m := range matches {
++		if m.Text == "" {
++			t.Errorf("матч %d (%s): пустой текст", i, m.Channel)
++		}
++		if !strings.Contains(corpus, m.Text) {
++			t.Errorf("матч %d (%s): текст не дословный: %q", i, m.Channel, m.Text)
++		}
++		if !slugs[m.Channel] {
++			t.Errorf("матч %d: канал %q не из реестра", i, m.Channel)
++		}
++		if !kinds[m.Kind] {
++			t.Errorf("матч %d (%s): вид %q не из risk_pro|risk_dez|prose", i, m.Channel, m.Kind)
++		}
++		if m.Seq <= 0 {
++			t.Errorf("матч %d (%s): Seq=%d, ожидался сквозной с 1", i, m.Channel, m.Seq)
++		}
++		if m.Seq < lastSeq {
++			t.Errorf("матч %d (%s): Seq=%d убывает после %d", i, m.Channel, m.Seq, lastSeq)
++		}
++		lastSeq = m.Seq
++		k := key{m.Channel, m.Kind, m.Text}
++		if seen[k] {
++			t.Errorf("матч %d: дубль (Channel, Kind, Text) = (%s, %s, %q)", i, m.Channel, m.Kind, m.Text)
++		}
++		seen[k] = true
++	}
++}
++
++// TestMPChannelsRegistry — реестр каналов: ровно 11 записей из спеки §3.4, slug'и уникальны,
++// у каждой записи непустые Title/Sign/Patterns, узоры — непустые строки в нижнем регистре
++// (применяются к нормализованному тексту, приведённому к нижнему регистру).
++func TestMPChannelsRegistry(t *testing.T) {
++	if len(mpChannels) != 11 {
++		t.Fatalf("каналов %d, ожидалось 11", len(mpChannels))
++	}
++	want := mpRegistrySlugs()
++	if len(want) != 11 {
++		t.Fatalf("эталонный список slug'ов: %d записей, ожидалось 11", len(want))
++	}
++	seen := map[string]bool{}
++	for i, ch := range mpChannels {
++		if ch.Slug == "" || ch.Title == "" || ch.Sign == "" {
++			t.Errorf("канал %d (%q): пустое поле Slug/Title/Sign (%+v)", i, ch.Slug, ch)
++		}
++		if seen[ch.Slug] {
++			t.Errorf("канал %d: slug %q повторяется", i, ch.Slug)
++		}
++		seen[ch.Slug] = true
++		if i < len(want) && ch.Slug != want[i] {
++			t.Errorf("канал %d: slug %q, ожидался %q (порядок спеки §3.4)", i, ch.Slug, want[i])
++		}
++		if len(ch.Patterns) == 0 {
++			t.Errorf("канал %q: пустой набор узоров", ch.Slug)
++		}
++		for j, re := range ch.Patterns {
++			if re == nil || re.String() == "" {
++				t.Errorf("канал %q: узор %d пустой", ch.Slug, j)
++				continue
++			}
++			if re.String() != strings.ToLower(re.String()) {
++				t.Errorf("канал %q: узор %d %q не в нижнем регистре", ch.Slug, j, re.String())
++			}
++		}
++	}
++	for _, slug := range want {
++		if !seen[slug] {
++			t.Errorf("в реестре нет канала %q", slug)
++		}
++	}
++}
++
++// TestMPChannelsHoldFixture — разметка резюме 23.09.2026 (hold): качественные пины по
++// трём источникам матчей — инфляционные ожидания (проза, блок 1), пункты списков рисков
++// (risk_pro/risk_dez, блок 4), рынок труда (проза); негативный пин — предложение про нефть
++// не попадает в labor_market. Цитаты — дословно из task-2-report.md §3.2.
++func TestMPChannelsHoldFixture(t *testing.T) {
++	doc, err := parseMPSummary(mpFixture(t, "mp_summary_23092026.html"))
++	if err != nil {
++		t.Fatalf("parseMPSummary: %v", err)
++	}
++	matches := tagMPChannels(doc.Blocks)
++	if len(matches) == 0 {
++		t.Fatal("tagMPChannels: ноль матчей на документе")
++	}
++	mpCheckMatchShared(t, doc.Blocks, matches)
++
++	// (а) expectations — проза: дословный кандидат §3.2 (блок 1, «Основные факты»).
++	const expectationsPin = "Инфляционные ожидания населения в августе снизились, тогда как ценовые ожидания бизнеса в августе \u2013 сентябре несколько выросли."
++	lowPin := strings.ToLower(expectationsPin)
++	if !strings.Contains(lowPin, "ожидан") || !strings.Contains(lowPin, "инфляционн") {
++		t.Fatalf("пин expectations не содержит «инфляционн»/«ожидан»: %q", expectationsPin)
++	}
++	if !mpHasMatchText(matches, "expectations", expectationsPin) {
++		t.Errorf("expectations: нет матча с текстом %q (есть: %v)",
++			expectationsPin, mpMatchTexts(matches, "expectations"))
++	}
++	if !mpHasTextWith(matches, "expectations", "ожидан") {
++		t.Errorf("expectations: нет ни одного матча со словом «ожидан»")
++	}
++
++	// (б) списки рисков блока 4: пункты до заголовка «дезинфляционные …» — risk_pro,
++	// после — risk_dez; оба вида непусты, матчи берутся только из пунктов (не из абзацев).
++	var pro, dez []string
++	bulletCorpus := mpBlockBullets(doc.Blocks, "Инфляционные риски")
++	for _, m := range matches {
++		switch m.Kind {
++		case mpKindRiskPro:
++			pro = append(pro, m.Text)
++		case mpKindRiskDez:
++			dez = append(dez, m.Text)
++		}
++	}
++	if len(pro) == 0 {
++		t.Error("risk_pro: ноль матчей в блоке «Инфляционные риски»")
++	}
++	if len(dez) == 0 {
++		t.Error("risk_dez: ноль матчей в блоке «Инфляционные риски»")
++	}
++	for _, m := range matches {
++		if m.Kind != mpKindRiskPro && m.Kind != mpKindRiskDez {
++			continue
++		}
++		if !strings.Contains(bulletCorpus, m.Text) {
++			t.Errorf("%s: текст %q не из пунктов списка блока 4", m.Kind, m.Text)
++		}
++	}
++	// Дословные первые предложения пунктов 3 (проинфляционный) и 8 (дезинфляционный).
++	const (
++		riskProPin = "Усиление дисбаланса спроса и предложения."
++		riskDezPin = "Значительное замедление роста внутреннего спроса."
++	)
++	if !mpHasMatchText(matches, "output_gap", riskProPin) {
++		t.Errorf("risk_pro: нет матча %q (output_gap): %v", riskProPin, pro)
++	}
++	if !mpHasMatchText(matches, "output_gap", riskDezPin) {
++		t.Errorf("risk_dez: нет матча %q (output_gap): %v", riskDezPin, dez)
++	}
++
++	// (в) labor_market — проза: дословные кандидаты §3.2 (безработица и напряжённость).
++	const (
++		laborPin  = "Дефицит работников сокращался, безработица несколько выросла, темпы роста номинальных и реальных заработных плат замедлились."
++		laborPin2 = "Напряженность на рынке труда продолжала постепенно снижаться."
++	)
++	for _, pin := range []string{laborPin, laborPin2} {
++		if !mpHasMatchText(matches, "labor_market", pin) {
++			t.Errorf("labor_market: нет матча с текстом %q (есть: %v)", pin, mpMatchTexts(matches, "labor_market"))
++		}
++	}
++	if !mpHasTextWith(matches, "labor_market", "безработиц") {
++		t.Error("labor_market: нет матча со словом «безработиц»")
++	}
++
++	// (г) негативный пин: предложение про нефть (блок 3) размечено как external_fx, но не
++	// как labor_market — иначе регексы рынка труда ловят «топливный рынок»/«рынок» вообще.
++	const oilPin = "Цены на нефть складывались выше июльского прогноза на фоне сохраняющихся ограничений судоходства через Ормузский пролив."
++	if !mpHasMatchText(matches, "external_fx", oilPin) {
++		t.Errorf("external_fx: нет матча с нефтяным предложением %q", oilPin)
++	}
++	if mpHasMatchText(matches, "labor_market", oilPin) {
++		t.Errorf("labor_market ошибочно захватил предложение про нефть: %q", oilPin)
++	}
++	for _, m := range matches {
++		if m.Channel != "labor_market" {
++			continue
++		}
++		low := strings.ToLower(m.Text)
++		if strings.Contains(low, "нефт") || strings.Contains(low, "brent") {
++			t.Errorf("labor_market: нефтяное предложение %q", m.Text)
++		}
++	}
++
++	// Одно предложение может попасть в несколько каналов: пункт 3 списка проинфляционных
++	// рисков говорит и о перегреве спроса, и о кредитовании, и о бюджете, и о рынке труда.
++	const multiPin = "Внутренний спрос может оставаться высоким под влиянием ускорения кредитования, значительного бюджетного импульса и продолжающегося роста заработных плат темпами выше производительности труда."
++	var multi []string
++	for _, m := range matches {
++		if m.Text == multiPin {
++			multi = append(multi, m.Channel)
++		}
++	}
++	if len(multi) < 2 {
++		t.Errorf("предложение %q размечено каналами %v, ожидалось ≥2 (пересечение каналов)",
++			multiPin, multi)
++	}
++}
++
++// TestMPChannelsCounts — числа матчей по каналам на резюме 23.09.2026 (hold). Значения —
++// фактические из реализации (зафиксированы после зелёных качественных пинов выше), чтобы
++// правка узора, меняющая охват, падала здесь с конкретным числом.
++func TestMPChannelsCounts(t *testing.T) {
++	doc, err := parseMPSummary(mpFixture(t, "mp_summary_23092026.html"))
++	if err != nil {
++		t.Fatalf("parseMPSummary: %v", err)
++	}
++	matches := tagMPChannels(doc.Blocks)
++	got := mpMatchCounts(matches)
++	// Фактические числа реализации на 23.09.2026 (hold); сумма = 158.
++	want := map[string]int{
++		"current_inflation":    16,
++		"core_inflation":       12,
++		"expectations":         10,
++		"labor_market":         8,
++		"lending_transmission": 34,
++		"output_gap":           20,
++		"budget_impulse":       22,
++		"money_supply":         4,
++		"external_fx":          25,
++		"savings_behavior":     6,
++		"autonomous_factors":   1,
++	}
++	if len(want) != len(mpChannels) {
++		t.Fatalf("пин покрывает %d каналов, в реестре %d", len(want), len(mpChannels))
++	}
++	total := 0
++	for slug, n := range want {
++		if got[slug] != n {
++			t.Errorf("канал %s: матчей %d, ожидалось %d", slug, got[slug], n)
++		}
++		total += n
++	}
++	if total != len(matches) {
++		t.Errorf("сумма пина по каналам %d, матчей всего %d", total, len(matches))
++	}
++	for slug, n := range got {
++		if _, ok := want[slug]; !ok && n > 0 {
++			t.Errorf("канал %q вне пина: %d матчей", slug, n)
++		}
++	}
++	// Виды: пункты списков рисков (проинфляционный + дезинфляционный списки блока 4) дают
++	// risk_pro/risk_dez, все остальные абзацы и пункты — prose.
++	wantKinds := map[string]int{
++		mpKindProse:   133,
++		mpKindRiskPro: 19,
++		mpKindRiskDez: 6,
++	}
++	kinds := map[string]int{}
++	for _, m := range matches {
++		kinds[m.Kind]++
++	}
++	for kind, n := range wantKinds {
++		if kinds[kind] != n {
++			t.Errorf("вид %s: матчей %d, ожидалось %d", kind, kinds[kind], n)
++		}
++	}
++	if len(kinds) != len(wantKinds) {
++		t.Errorf("виды матчей %v, ожидались только %v", kinds, wantKinds)
++	}
++}

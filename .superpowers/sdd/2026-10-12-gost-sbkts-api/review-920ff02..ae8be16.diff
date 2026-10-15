@@ -1,0 +1,461 @@
+# Review package: 920ff02..HEAD
+
+## Commits
+ae8be16 craw: fail loud on filtered days, dedup day pages, cap since window
+
+## Files changed
+ craw/gost.go          | 29 ++++++++++++++++----
+ craw/gost_api.go      | 35 ++++++++++++++++++++----
+ craw/gost_api_test.go | 56 ++++++++++++++++++++++++++++++++++++---
+ craw/gost_test.go     | 73 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 180 insertions(+), 13 deletions(-)
+
+## Diff
+diff --git a/craw/gost.go b/craw/gost.go
+index 6516b0a..f3dc19b 100644
+--- a/craw/gost.go
++++ b/craw/gost.go
+@@ -35,20 +35,25 @@ const (
+ 
+ 	// gostDefaultFrom — начало всей истории: публикации реестра старше 2016 года практически
+ 	// отсутствуют (разведка в спеке: 15.06.2015 — 0 документов, 15.06.2017 — 316).
+ 	gostDefaultFrom = "2016-01-01"
+ 	// gostDefaultSettleDays — хвост, перечитываемый каждый час: лаг «выдача → публикация»
+ 	// около двух суток, и опоздавшие документы обязаны догоняться, а не теряться.
+ 	gostDefaultSettleDays = 3
+ 	// gostEmptyTableDays — окно пустой таблицы в since: обход десяти лет в режиме расписания
+ 	// недопустим, но и падать впустую dagu не должен — читаем последнюю неделю и предупреждаем.
+ 	gostEmptyTableDays = 7
++	// gostMaxSinceDays — предел окна since: на отставшей таблице якорь бывает старше на месяцы
++	// (первый плановый прогон на legacy-таблице без бэкфилла), и часовой DAG ушёл бы в обход
++	// тысяч дней, заняв портал и не догнав хвост за один прогон. Окно обрезается месяцем, а
++	// оператору печатается призыв к GOST_MODE=full.
++	gostMaxSinceDays = 30
+ 	// gostMaxRangeDays — предохранитель диапазона full/check: вся история реестра — ~4000 дней,
+ 	// и больший запрос означает опечатку в границах, а не диапазон.
+ 	gostMaxRangeDays = 4000
+ )
+ 
+ // Имена переменных окружения прогона: они же — часть ошибок конфига (по тексту понятно, что
+ // править в ~/.config/rosstat/env).
+ const (
+ 	gostModeEnv   = "GOST_MODE"
+ 	gostFromEnv   = "GOST_FROM"
+@@ -246,20 +251,24 @@ func gostDaysBetween(from, to time.Time) ([]time.Time, error) {
+ func gostDateOnly(t time.Time) time.Time {
+ 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+ }
+ 
+ // gostSinceDays — дни хвоста режима since: от якоря таблицы минус settle до вчера МСК.
+ // Якорь — максимум даты выдачи и даты публикации: первая растёт от самих документов, вторая —
+ // от дня среза, и «последнее, что мы видели» — максимум обеих. Пустая таблица (оба NULL после
+ // нормализации 1970-01-01) — не обход всей истории, а окно последних семи дней: флаг tableEmpty
+ // возвращается вызывающему, чтобы тот сказал оператору про GOST_MODE=full. Якорь из будущего
+ // (часы источника вперёд, ручная правка) прижимается к вчера — «завтра» читать нечего.
++//
++// Окно ограничено gostMaxSinceDays: на отставшей таблице (якорь старше месяца) часовой прогон
++// иначе читал бы тысячи дней подряд, не догоняя хвост и занимая портал, — вместо этого читается
++// последний месяц, а оператор получает призыв к полному прогону.
+ func gostSinceDays(ctx context.Context, conn driver.Conn, settle int, now time.Time) (days []time.Time, tableEmpty bool, err error) {
+ 	var maxIssue, maxPub *time.Time
+ 	if err = conn.QueryRow(ctx, gostAnchorQuery).Scan(&maxIssue, &maxPub); err != nil {
+ 		return nil, false, fmt.Errorf("%s: якорь таблицы не прочитан: %w", gostTable, err)
+ 	}
+ 
+ 	to := gostYesterdayMSK(now)
+ 	if maxIssue == nil && maxPub == nil {
+ 		from := to.AddDate(0, 0, -(gostEmptyTableDays - 1))
+ 		days, err = gostDaysBetween(from, to)
+@@ -271,21 +280,27 @@ func gostSinceDays(ctx context.Context, conn driver.Conn, settle int, now time.T
+ 		if candidate == nil {
+ 			continue
+ 		}
+ 		if day := gostDateOnly(*candidate); day.After(anchor) {
+ 			anchor = day
+ 		}
+ 	}
+ 	if anchor.After(to) {
+ 		anchor = to
+ 	}
+-	days, err = gostDaysBetween(anchor.AddDate(0, 0, -settle), to)
++	from := anchor.AddDate(0, 0, -settle)
++	if limit := to.AddDate(0, 0, -(gostMaxSinceDays - 1)); from.Before(limit) {
++		log.Warnf("%s: таблица отстала: якорь %s, окно since ограничено %d днями (с %s) — запустите GOST_MODE=full для истории",
++			gostTable, anchor.Format(gostDateLayout), gostMaxSinceDays, limit.Format(gostDateLayout))
++		from = limit
++	}
++	days, err = gostDaysBetween(from, to)
+ 	return days, false, err
+ }
+ 
+ // gostLegacyRows считает строки до бэкфилла: у них publication_date — дефолт колонки
+ // (1970-01-01), и в сверке check они не участвуют. Ошибка запроса фатальна: молча пропущенное
+ // предупреждение оставило бы оператора без единственного сигнала, что исторические строки ещё
+ // не перезаписаны полным прогоном.
+ func gostLegacyRows(ctx context.Context, conn driver.Conn) (uint64, error) {
+ 	var legacy uint64
+ 	if err := conn.QueryRow(ctx, gostLegacyQuery).Scan(&legacy); err != nil {
+@@ -358,24 +373,28 @@ func gostRunDays(ctx context.Context, conn driver.Conn, api *gostAPI, days []tim
+ 			continue
+ 		}
+ 		if slice.Skipped > 0 {
+ 			// Ненулевой Skipped — датчик: клиентский фильтр по дате публикации отбросил
+ 			// документы, то есть ручка начала отдавать чужое окно. Резкий рост доли — смена
+ 			// формата dateofpublication, и день «похудеет» молча.
+ 			log.Warnf("%s: день %s: отброшено документов чужой даты публикации: %d из %d",
+ 				gostTable, label, slice.Skipped, slice.Count)
+ 		}
+ 		if len(slice.Rows) == 0 {
+-			// Весь день отфильтрован (в ручке совпадения есть, в срез не попало ни одного):
+-			// пустой батч не отправляем, но день нельзя считать обработанным молча.
+-			log.Warnf("%s: день %s: в срез дня не попало ни одного документа (в ручке %d) — пропускаю",
+-				gostTable, label, slice.Count)
++			// В ручке совпадения есть, а в срез дня не попало ни одного документа: так выглядит
++			// смена формата dateofpublication (ручка ищет текстом, и день среза перестал
++			// совпадать с ответом). Это ошибка прогона, а не пустой день: молча пропущенный
++			// день оставил бы dagu зелёным при потерянных данных.
++			errText := fmt.Sprintf("день %s: все %d документов отброшены фильтром публикации (Skipped %d) — проверьте формат даты публикации/ручку",
++				label, slice.Count, slice.Skipped)
++			log.Errorf("%s: %s", gostTable, errText)
++			failed = append(failed, errText)
+ 			continue
+ 		}
+ 
+ 		written, err := gostWriteDay(ctx, conn, slice.Rows)
+ 		if err != nil {
+ 			log.Errorf("%s: день %s не записан: %v", gostTable, label, err)
+ 			failed = append(failed, fmt.Sprintf("%s: запись: %v", label, err))
+ 			continue
+ 		}
+ 		total += written
+diff --git a/craw/gost_api.go b/craw/gost_api.go
+index 22e3cfc..33eab7e 100644
+--- a/craw/gost_api.go
++++ b/craw/gost_api.go
+@@ -236,50 +236,75 @@ func gostRetryAfter(d time.Duration) error {
+ // печатает адрес вместе с query целиком. URL-контекст добавляет вызывающий — как в util.GetJSON.
+ func gostNoURL(err error) error {
+ 	var uerr *url.Error
+ 	if errors.As(err, &uerr) {
+ 		return uerr.Err
+ 	}
+ 	return err
+ }
+ 
+ // day собирает срез одного дня: все страницы окна поиска, клиентский фильтр по дню
+-// публикации. Частичной записи нет: если страница дня не доехала или документов пришло
+-// меньше count, возвращается ошибка — решение «день полный» принимается до батча.
++// публикации. Частичной записи нет: если страница дня не доехала или уникальных документов
++// пришло меньше count, возвращается ошибка — решение «день полный» принимается до батча.
+ func (a *gostAPI) day(ctx context.Context, day time.Time) (gostDaySlice, error) {
+ 	first, err := a.fetchPage(ctx, day, 1, gostPageSize)
+ 	if err != nil {
+ 		return gostDaySlice{}, err
+ 	}
+ 	if first.Count > gostMaxDayCount {
+ 		return gostDaySlice{}, fmt.Errorf(
+ 			"в дне %s %d документов — больше окна поиска ручки (%d): такой день постранично не читается",
+ 			day.Format(gostQueryDayLayout), first.Count, gostMaxDayCount)
+ 	}
+ 
+ 	docs := first.Data
+ 	for page := 2; page <= gostPageCount(first.Count); page++ {
+ 		time.Sleep(gostRequestGap)
+ 		next, err := a.fetchPage(ctx, day, page, gostPageSize)
+ 		if err != nil {
+ 			return gostDaySlice{}, err
+ 		}
+ 		docs = append(docs, next.Data...)
+ 	}
+-	if len(docs) < first.Count {
+-		return gostDaySlice{}, fmt.Errorf("получено %d документов из %d", len(docs), first.Count)
++
++	// Дедупликация — до сравнения с count: окно поиска ручки не снапшот, и при изменении данных
++	// между запросами страница может вернуть документ, уже пришедший на предыдущей (сдвиг
++	// пагинации). Без неё такой день выглядел бы полным (len(docs) == count) при настоящей
++	// недостаче — и check объявил бы ложную дыру либо, наоборот, скрыл реальную.
++	unique, dropped := gostUniqueDocs(docs)
++	if len(unique) < first.Count {
++		return gostDaySlice{}, fmt.Errorf("получено %d документов из %d (дубликатов страниц: %d)",
++			len(unique), first.Count, dropped)
+ 	}
+ 
+-	rows, skipped := gostRowsFromDocs(day, docs)
++	rows, skipped := gostRowsFromDocs(day, unique)
+ 	return gostDaySlice{Rows: rows, Count: first.Count, Skipped: skipped}, nil
+ }
+ 
++// gostUniqueDocs оставляет по одному документу на id, сохраняя порядок появления, и считает
++// отброшенные копии: id — идентичность документа в реестре, поэтому повтор id и есть дубликат
++// страницы. Нулевой id (сменившаяся форма ответа) схлопывается так же: день не запишется и
++// прогон упадёт громко, а это безопасное направление — молчаливая потеря документов хуже.
++func gostUniqueDocs(docs []gostDoc) (unique []gostDoc, dropped int) {
++	seen := make(map[int64]struct{}, len(docs))
++	unique = make([]gostDoc, 0, len(docs))
++	for _, d := range docs {
++		if _, ok := seen[d.ID]; ok {
++			dropped++
++			continue
++		}
++		seen[d.ID] = struct{}{}
++		unique = append(unique, d)
++	}
++	return unique, dropped
++}
++
+ // dayCount возвращает только число совпадений дня — одним запросом минимальной страницы.
+ // В check-прогоне это запрос на день вместо выкачивания полного диапазона.
+ func (a *gostAPI) dayCount(ctx context.Context, day time.Time) (int, error) {
+ 	resp, err := a.fetchPage(ctx, day, 1, 1)
+ 	if err != nil {
+ 		return 0, err
+ 	}
+ 	return resp.Count, nil
+ }
+ 
+diff --git a/craw/gost_api_test.go b/craw/gost_api_test.go
+index 9f566cb..49bcdd2 100644
+--- a/craw/gost_api_test.go
++++ b/craw/gost_api_test.go
+@@ -64,23 +64,30 @@ func gostFixtureDoc(t *testing.T, i int) gostDoc {
+ 	docs := gostDayFixture(t).Data
+ 	if i < 0 || i >= len(docs) {
+ 		t.Fatalf("в фикстуре нет документа %d (всего %d)", i, len(docs))
+ 	}
+ 	return docs[i]
+ }
+ 
+ // gostRepeatDoc размножает документ до n штук, меняя id: из одной строки фикстуры
+ // собирается страница нужного размера (gostPageSize документов) без рукописного JSON.
+ func gostRepeatDoc(doc gostDoc, n int) []gostDoc {
++	return gostRepeatDocFrom(doc, n, 1)
++}
++
++// gostRepeatDocFrom — то же, но с начальным id: страницы одного дня несут разные документы, и
++// нумерация со сдвигом не даёт разным страницам случайно совпасть id (для day() повтор id —
++// дубликат страницы, а не разные документы).
++func gostRepeatDocFrom(doc gostDoc, n, startID int) []gostDoc {
+ 	out := make([]gostDoc, n)
+ 	for i := range out {
+-		doc.ID = int64(i + 1)
++		doc.ID = int64(startID + i)
+ 		out[i] = doc
+ 	}
+ 	return out
+ }
+ 
+ // gostTestBody собирает тело ответа ручки: count — «всего совпадений», data — страница.
+ func gostTestBody(t *testing.T, count int, docs []gostDoc) []byte {
+ 	t.Helper()
+ 	body, err := json.Marshal(gostSearchResponse{Count: count, Data: docs})
+ 	if err != nil {
+@@ -330,24 +337,25 @@ func TestGostRowsFromDocsFilters(t *testing.T) {
+ 	}
+ 	got.Date, got.PublicationDate = time.Time{}, time.Time{}
+ 	expected.Date, expected.PublicationDate = time.Time{}, time.Time{}
+ 	if got != expected {
+ 		t.Errorf("строка = %+v, ожидалась %+v", got, expected)
+ 	}
+ }
+ 
+ func TestGostDayFetchesAllPages(t *testing.T) {
+ 	toyota := gostFixtureDoc(t, 0)
+-	// День не влезает в одну страницу: 900 документов на первой, 100 на второй.
++	// День не влезает в одну страницу: 900 документов на первой, 100 на второй. id сквозные:
++	// это разные документы одного дня, и дедупликация страниц их схлопывать не должна.
+ 	pages := map[int][]byte{
+ 		1: gostTestBody(t, 1000, gostRepeatDoc(toyota, gostPageSize)),
+-		2: gostTestBody(t, 1000, gostRepeatDoc(toyota, 100)),
++		2: gostTestBody(t, 1000, gostRepeatDocFrom(toyota, 100, gostPageSize+1)),
+ 	}
+ 	ta := gostNewTestAPI(t, gostPagesHandler(pages))
+ 
+ 	slice, err := ta.api.day(context.Background(), gostTestDay)
+ 	if err != nil {
+ 		t.Fatalf("day: %v", err)
+ 	}
+ 	if slice.Count != 1000 {
+ 		t.Errorf("Count = %d, ожидалось 1000 (всего совпадений из ответа)", slice.Count)
+ 	}
+@@ -358,20 +366,62 @@ func TestGostDayFetchesAllPages(t *testing.T) {
+ 		t.Errorf("Skipped = %d, ожидалось 0: документы фикстуры попадают в срез", slice.Skipped)
+ 	}
+ 	if got := ta.queryParam("page"); !slices.Equal(got, []string{"1", "2"}) {
+ 		t.Errorf("страницы = %v, ожидались [1 2]", got)
+ 	}
+ 	if got := ta.queryParam("size"); !slices.Equal(got, []string{strconv.Itoa(gostPageSize), strconv.Itoa(gostPageSize)}) {
+ 		t.Errorf("размеры страниц = %v, ожидался %d", got, gostPageSize)
+ 	}
+ }
+ 
++// TestGostDayDedupsRepeatedDocuments: страница вернула документ, уже пришедший на предыдущей
++// (сдвиг пагинации при изменении данных). Без дедупликации день выглядел бы собранным «с
++// запасом» — с настоящей недостачей внутри, и check либо соврал бы о дыре, либо скрыл её.
++func TestGostDayDedupsRepeatedDocuments(t *testing.T) {
++	toyota := gostFixtureDoc(t, 0)
++	docs := gostRepeatDoc(toyota, gostPageSize)
++	docs = append(docs, docs[0]) // одна и та же страница отдала первый документ ещё раз
++	ta := gostNewTestAPI(t, gostPagesHandler(map[int][]byte{1: gostTestBody(t, gostPageSize, docs)}))
++
++	slice, err := ta.api.day(context.Background(), gostTestDay)
++	if err != nil {
++		t.Fatalf("день с дубликатом страницы: %v", err)
++	}
++	if slice.Count != gostPageSize {
++		t.Errorf("Count = %d, ожидалось %d", slice.Count, gostPageSize)
++	}
++	if len(slice.Rows) != gostPageSize {
++		t.Errorf("строк %d, ожидалось %d: дубликат не должен попасть в срез дня", len(slice.Rows), gostPageSize)
++	}
++}
++
++// TestGostDayDuplicateShortageFails: страница вернула повторы вместо части документов —
++// уникальных меньше count, день не добран, и это ошибка, а не «день полный».
++func TestGostDayDuplicateShortageFails(t *testing.T) {
++	toyota := gostFixtureDoc(t, 0)
++	ta := gostNewTestAPI(t, gostPagesHandler(map[int][]byte{
++		1: gostTestBody(t, 1000, gostRepeatDoc(toyota, gostPageSize)),
++		2: gostTestBody(t, 1000, gostRepeatDocFrom(toyota, 100, 1)), // те же id: 100 дубликатов
++	}))
++
++	slice, err := ta.api.day(context.Background(), gostTestDay)
++	if err == nil {
++		t.Fatal("ожидалась ошибка о недостаче после дедупликации")
++	}
++	if want := "получено 900 документов из 1000 (дубликатов страниц: 100)"; !strings.Contains(err.Error(), want) {
++		t.Errorf("ошибка = %q, ожидалась подстрока %q", err, want)
++	}
++	if len(slice.Rows) != 0 {
++		t.Errorf("строк %d: неполный день писать нельзя", len(slice.Rows))
++	}
++}
++
+ func TestGostDayClientFilterCountsSkipped(t *testing.T) {
+ 	// Обе страницы чужого дня: ручка ищет совпадения по своему окну и отдаёт лишнее,
+ 	// отсекает документы уже клиент, и это видно в Skipped.
+ 	docs := gostDayFixture(t).Data[:2]
+ 	for i := range docs {
+ 		docs[i].Fields.DateOfPublication = "10.10.2026 00:00:00 ZE3"
+ 	}
+ 	ta := gostNewTestAPI(t, gostPagesHandler(map[int][]byte{1: gostTestBody(t, len(docs), docs)}))
+ 
+ 	slice, err := ta.api.day(context.Background(), gostTestDay)
+diff --git a/craw/gost_test.go b/craw/gost_test.go
+index fa891b4..89744b1 100644
+--- a/craw/gost_test.go
++++ b/craw/gost_test.go
+@@ -371,20 +371,60 @@ func TestGostSinceDaysAnchors(t *testing.T) {
+ 				}
+ 			}
+ 			calls := conn.callList()
+ 			if len(calls) != 1 || !strings.Contains(calls[0], c.wantAnchor) {
+ 				t.Errorf("якорь читается одним запросом maxOrNull(date): вызовы %v", calls)
+ 			}
+ 		})
+ 	}
+ }
+ 
++func TestGostSinceDaysCapsStaleAnchor(t *testing.T) {
++	t.Run("свежий якорь — обычное окно", func(t *testing.T) {
++		fresh := gostTime(t, "2026-10-09")
++		conn := &gostFakeConn{maxDate: &fresh}
++
++		days, _, err := gostSinceDays(context.Background(), conn, 3, gostTestNow)
++		if err != nil {
++			t.Fatalf("окно since: %v", err)
++		}
++		if len(days) != 6 || !days[0].Equal(gostTime(t, "2026-10-06")) || !days[5].Equal(gostTime(t, "2026-10-11")) {
++			t.Errorf("дни %v, ожидалось 2026-10-06…2026-10-11 (6 дней)", gostDayStrings(days))
++		}
++	})
++
++	t.Run("старый якорь — окно обрезано", func(t *testing.T) {
++		stale := gostTime(t, "2026-01-01")
++		conn := &gostFakeConn{maxDate: &stale}
++		logs := gostCaptureLog(t)
++
++		days, empty, err := gostSinceDays(context.Background(), conn, 3, gostTestNow)
++		if err != nil {
++			t.Fatalf("окно since: %v", err)
++		}
++		if empty {
++			t.Error("tableEmpty = true, ожидалось false: строки в таблице есть")
++		}
++		if len(days) != gostMaxSinceDays {
++			t.Fatalf("дней %d, ожидалось ровно %d", len(days), gostMaxSinceDays)
++		}
++		if !days[0].Equal(gostTime(t, "2026-09-12")) || !days[len(days)-1].Equal(gostTime(t, "2026-10-11")) {
++			t.Errorf("окно %v, ожидалось 2026-09-12…2026-10-11", gostDayStrings(days))
++		}
++		for _, want := range []string{"таблица отстала", "2026-01-01", "GOST_MODE=full"} {
++			if !strings.Contains(logs.String(), want) {
++				t.Errorf("предупреждение без %q: %s", want, logs.String())
++			}
++		}
++	})
++}
++
+ func TestGostWriteDayOneBatch(t *testing.T) {
+ 	rows := []gostRow{
+ 		{
+ 			Mark: "Toyota", Type: "ZGE25", Date: gostTime(t, "2026-10-09"),
+ 			CertificateNumber: "ТС RU А-JP.ОМ80.00001", EcoClass: "4", EngineTrademark: "2ZR-FE",
+ 			YearOfManufacturing: 2016, NameOfManufacturer: "TOYOTA", UID: "uid-1",
+ 			PublicationDate: gostTime(t, "2026-10-11"),
+ 		},
+ 		{
+ 			Mark: "Haval", Type: "Jolion", Date: gostTime(t, "2026-10-09"),
+@@ -455,20 +495,53 @@ func TestGostRunDaysSkipsEmptyAndAggregatesErrors(t *testing.T) {
+ 	}
+ 	inserted := batches[0].inserted(t)
+ 	if len(inserted) != 1 || !inserted[0].PublicationDate.Equal(gostTime(t, "2026-10-07")) {
+ 		t.Errorf("в батче %+v, ожидалась одна строка дня 2026-10-07", inserted)
+ 	}
+ 	if !strings.Contains(logs.String(), "публикаций нет") {
+ 		t.Errorf("пустой день не отмечен в логе: %s", logs.String())
+ 	}
+ }
+ 
++func TestGostRunDaysFilteredDayFails(t *testing.T) {
++	days := []time.Time{gostTime(t, "2026-10-05"), gostTime(t, "2026-10-06")}
++	// В ручке четыре совпадения, но все — текстовый шум чужой даты публикации: срез дня пуст.
++	// Так выглядит смена формата dateofpublication, и молча пропустить такой день нельзя —
++	// прогон отчитался бы успехом при потерянных данных.
++	ta := gostNewTestAPI(t, gostDayServer(t, map[string]gostDaySpec{
++		"05.10.2026": {Count: 4, Noise: 4},
++		"06.10.2026": {Count: 1},
++	}))
++	conn := &gostFakeConn{}
++
++	count, err := gostRunDays(context.Background(), conn, ta.api, days)
++	if err == nil {
++		t.Fatal("день, отфильтрованный целиком, не попал в ошибку прогона")
++	}
++	for _, want := range []string{
++		"2026-10-05",
++		"все 4 документов отброшены фильтром публикации",
++		"не прочитаны дни (1)",
++	} {
++		if !strings.Contains(err.Error(), want) {
++			t.Errorf("ошибка %q не содержит %q", err, want)
++		}
++	}
++	// Проход продолжается: следующий день записан, несмотря на сбойный.
++	if count != 1 {
++		t.Errorf("записано строк %d, ожидалась 1", count)
++	}
++	if batches := conn.batchList(); len(batches) != 1 {
++		t.Errorf("батчей %d, ожидался 1: отфильтрованный день не пишется, следующий пишется", len(batches))
++	}
++}
++
+ func TestGostCheckDaysMatchNoError(t *testing.T) {
+ 	days := []time.Time{gostTime(t, "2026-10-09")}
+ 	ta := gostNewTestAPI(t, gostDayServer(t, map[string]gostDaySpec{"09.10.2026": {Count: 5}}))
+ 	conn := &gostFakeConn{counters: map[string]uint64{"2026-10-09": 5}}
+ 
+ 	checked, err := gostCheckDays(context.Background(), conn, ta.api, days)
+ 	if err != nil {
+ 		t.Fatalf("совпавший день дал ошибку: %v", err)
+ 	}
+ 	if checked != 1 {

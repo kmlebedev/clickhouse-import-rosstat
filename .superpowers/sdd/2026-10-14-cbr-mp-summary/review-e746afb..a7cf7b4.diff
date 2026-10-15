@@ -1,0 +1,293 @@
+# Review package: e746afb..a7cf7b4
+
+## Commits
+a7cf7b4 cbr: keep risk-block prose in channel tagging (06112024 risk_dez)
+
+## Files changed
+ cbr/mp_summary_channels.go      | 51 +++++++++++++++++-----
+ cbr/mp_summary_channels_test.go | 97 +++++++++++++++++++++++++++++++++++++++--
+ 2 files changed, 132 insertions(+), 16 deletions(-)
+
+## Diff
+diff --git a/cbr/mp_summary_channels.go b/cbr/mp_summary_channels.go
+index f9478e8..4e13355 100644
+--- a/cbr/mp_summary_channels.go
++++ b/cbr/mp_summary_channels.go
+@@ -208,28 +208,43 @@ var mpChannels = []mpChannel{
+ 			`разов[а-яё]*\s+фактор[а-яё]*`,
+ 			`немонетарн[а-яё]*`,
+ 			`шок[а-яё]*\s+предложени[а-яё]*`,
+ 			`утильсбор[а-яё]*`,
+ 			`индексаци[а-яё]*`,
+ 			`автономн[а-яё]*\s+спрос[а-яё]*`,
+ 		),
+ 	},
+ }
+ 
+-// mpRiskDezHeaderRe — абзац-заголовок дезинфляционного списка блока «Инфляционные риски»:
+-// «Основные дезинфляционные риски включают:» (23092026), «Основным дезинфляционным фактором
+-// является:» (07052026), «Дезинфляционные риски выражены слабо…» (06112024). Одного стема
++// mpRiskDezRe — признак дезинфляционной части списка рисков блока «Инфляционные риски»:
++// ввод дезинфляционного списка («Основные дезинфляционные риски включают:» — 23092026,
++// «Основным дезинфляционным фактором является:» — 07052026) и абзац, которым эта часть
++// изложена вместо списка («Дезинфляционные риски выражены слабо…» — 06112024). Одного стема
+ // «дезинфляционн» мало: первый абзац блока говорит о преобладании проинфляционных рисков
+-// над «дезинфляционными» и не открывает список.
+-var mpRiskDezHeaderRe = regexp.MustCompile(
++// над «дезинфляционными» и дезинфляционную часть не открывает.
++var mpRiskDezRe = regexp.MustCompile(
+ 	`основн[а-яё]*\s+дезинфляционн|дезинфляционн[а-яё]*\s+(?:риск|фактор)[а-яё]*\s+(?:включают|является|выражены|выделены)`)
+ 
++// mpRiskHeader — служебный абзац-ввод списка рисков блока 4: «Основные проинфляционные риски
++// включают:», «Среди основных проинфляционных рисков были выделены следующие:», «Основным
++// дезинфляционным фактором является:». Признак — двоеточие в конце и упоминание риска или
++// фактора: такой абзац открывает список, сам цитатой не является, матчей не порождает и
++// Seq не двигает. Абзац, который лишь начинается с упоминания рисков и несёт содержание
++// («Дезинфляционные риски выражены слабо и в основном связаны с…»), вводом не считается —
++// он размечается как обычный текст блока (fix-round 1).
++func mpRiskHeader(lowText string) bool {
++	if !strings.HasSuffix(lowText, ":") {
++		return false
++	}
++	return strings.Contains(lowText, "риск") || strings.Contains(lowText, "фактор")
++}
++
+ // mpChannelSplitRe — граница предложения: знак конца (.!?) и пробел после него; фрагмент
+ // режется сразу после знака (так дословная цитата сохраняет свою пунктуацию).
+ var mpChannelSplitRe = regexp.MustCompile(`[.!?]\s+`)
+ 
+ // mpChannelSentences разбивает нормализованный текст абзаца или пункта на предложения по
+ // правилу (?<=[.!?])\s+ — Go-RE2 lookbehind не поддерживает, поэтому граница ищется как
+ // «знак + пробелы», а фрагмент берётся до знака включительно. Пустые фрагменты
+ // отбрасываются. От mpSentences (Task 3) отличается намеренно: там границей считается
+ // только точка перед заглавной буквой — для решения и сигнала это точнее, а разметке каналов
+ // нужен простой сплит, зафиксированный контроллером в Task 4.
+@@ -252,46 +267,58 @@ func mpChannelSentences(text string) []string {
+ func mpChannelHits(ch mpChannel, lowText string) bool {
+ 	for _, re := range ch.Patterns {
+ 		if re.MatchString(lowText) {
+ 			return true
+ 		}
+ 	}
+ 	return false
+ }
+ 
+ // tagMPChannels размечает один документ (все блоки одного резюме) по 11 каналам ЦБ:
+-//   - пункты списков блока «Инфляционные риски» → risk_pro/risk_dez по порядку: пункты до
+-//     абзаца-заголовка дезинфляционного списка — проинфляционные, после — дезинфляционные;
+-//     абзацы этого блока — только заголовки списков и сами цитатами не являются;
++//   - пункты и абзацы блока «Инфляционные риски» → risk_pro/risk_dez по порядку: всё до
++//     дезинфляционной части списка — проинфляционные, ввод дезинфляционной части и всё после
++//     него — дезинфляционные. Служебные абзацы-вводы списков («…риски включают:») пропускаются
++//     без матчей и без инкремента Seq, остальные абзацы блока размечаются наравне с пунктами
++//     (в 06112024 дезинфляционная часть изложена именно абзацем — fix-round 1);
+ //   - предложения всех абзацев и пунктов остальных блоков (включая пункты «Основные
+ //     аргументы…» блока 5 — они несут утверждения по каналам) → prose.
+ //
+ // Внутри пункта/абзаца разметка идёт по предложениям: одно предложение может попасть в
+ // несколько каналов, повтор (Channel, Kind, Text) отбрасывается. Seq — сквозной номер
+ // фрагмента в порядке обхода документа (один и тот же номер у всех каналов одного фрагмента).
+ func tagMPChannels(blocks []mpSummaryBlock) []mpChannelMatch {
+ 	var (
+ 		out  []mpChannelMatch
+ 		seq  int
+-		dez  bool // в блоке рисков: пройден заголовок дезинфляционного списка
++		dez  bool // в блоке рисков: пройдена дезинфляционная часть списка
+ 		seen = make(map[mpChannelMatchKey]bool)
+ 	)
+ 	for _, b := range blocks {
+ 		kind := mpKindProse
+ 		if b.Block == mpBlockRisks {
+-			kind = mpKindRiskPro
++			low := strings.ToLower(b.Text)
+ 			if b.Kind == mpKindParagraph {
+-				if mpRiskDezHeaderRe.MatchString(strings.ToLower(b.Text)) {
++				if mpRiskHeader(low) {
++					// Служебный ввод списка: цитатой не является и Seq не двигает, но
++					// переключает атрибуцию пунктов дезинфляционного списка.
++					if mpRiskDezRe.MatchString(low) {
++						dez = true
++					}
++					continue
++				}
++				if mpRiskDezRe.MatchString(low) {
++					// Дезинфляционная часть изложена абзацем (06112024): сам абзац —
++					// цитата risk_dez, а не только переключатель состояния.
+ 					dez = true
+ 				}
+-				continue
+ 			}
++			kind = mpKindRiskPro
+ 			if dez {
+ 				kind = mpKindRiskDez
+ 			}
+ 		}
+ 		for _, sent := range mpChannelSentences(b.Text) {
+ 			seq++
+ 			low := strings.ToLower(sent)
+ 			for _, ch := range mpChannels {
+ 				if !mpChannelHits(ch, low) {
+ 					continue
+diff --git a/cbr/mp_summary_channels_test.go b/cbr/mp_summary_channels_test.go
+index 247e1c1..0bd69e7 100644
+--- a/cbr/mp_summary_channels_test.go
++++ b/cbr/mp_summary_channels_test.go
+@@ -59,20 +59,39 @@ func mpMatchTexts(matches []mpChannelMatch, channel string) []string {
+ // mpHasMatchText — есть ли матч канала (любого вида) ровно с этим текстом.
+ func mpHasMatchText(matches []mpChannelMatch, channel, text string) bool {
+ 	for _, m := range matches {
+ 		if m.Channel == channel && m.Text == text {
+ 			return true
+ 		}
+ 	}
+ 	return false
+ }
+ 
++// mpHasMatchKindText — есть ли матч ровно с этим (Channel, Kind, Text).
++func mpHasMatchKindText(matches []mpChannelMatch, channel, kind, text string) bool {
++	for _, m := range matches {
++		if m.Channel == channel && m.Kind == kind && m.Text == text {
++			return true
++		}
++	}
++	return false
++}
++
++// mpMatchKinds — число матчей по видам.
++func mpMatchKinds(matches []mpChannelMatch) map[string]int {
++	out := map[string]int{}
++	for _, m := range matches {
++		out[m.Kind]++
++	}
++	return out
++}
++
+ // mpHasTextWith — есть ли матч канала (любого вида) с подстрокой sub (регистронезависимо).
+ func mpHasTextWith(matches []mpChannelMatch, channel, sub string) bool {
+ 	sub = strings.ToLower(sub)
+ 	for _, m := range matches {
+ 		if m.Channel == channel && strings.Contains(strings.ToLower(m.Text), sub) {
+ 			return true
+ 		}
+ 	}
+ 	return false
+ }
+@@ -106,20 +125,23 @@ func mpCheckMatchShared(t *testing.T, blocks []mpSummaryBlock, matches []mpChann
+ 		}
+ 		if !strings.Contains(corpus, m.Text) {
+ 			t.Errorf("матч %d (%s): текст не дословный: %q", i, m.Channel, m.Text)
+ 		}
+ 		if !slugs[m.Channel] {
+ 			t.Errorf("матч %d: канал %q не из реестра", i, m.Channel)
+ 		}
+ 		if !kinds[m.Kind] {
+ 			t.Errorf("матч %d (%s): вид %q не из risk_pro|risk_dez|prose", i, m.Channel, m.Kind)
+ 		}
++		if strings.HasSuffix(m.Text, ":") {
++			t.Errorf("матч %d (%s): цитатой стал служебный ввод списка: %q", i, m.Channel, m.Text)
++		}
+ 		if m.Seq <= 0 {
+ 			t.Errorf("матч %d (%s): Seq=%d, ожидался сквозной с 1", i, m.Channel, m.Seq)
+ 		}
+ 		if m.Seq < lastSeq {
+ 			t.Errorf("матч %d (%s): Seq=%d убывает после %d", i, m.Channel, m.Seq, lastSeq)
+ 		}
+ 		lastSeq = m.Seq
+ 		k := key{m.Channel, m.Kind, m.Text}
+ 		if seen[k] {
+ 			t.Errorf("матч %d: дубль (Channel, Kind, Text) = (%s, %s, %q)", i, m.Channel, m.Kind, m.Text)
+@@ -328,23 +350,90 @@ func TestMPChannelsCounts(t *testing.T) {
+ 			t.Errorf("канал %q вне пина: %d матчей", slug, n)
+ 		}
+ 	}
+ 	// Виды: пункты списков рисков (проинфляционный + дезинфляционный списки блока 4) дают
+ 	// risk_pro/risk_dez, все остальные абзацы и пункты — prose.
+ 	wantKinds := map[string]int{
+ 		mpKindProse:   133,
+ 		mpKindRiskPro: 19,
+ 		mpKindRiskDez: 6,
+ 	}
+-	kinds := map[string]int{}
+-	for _, m := range matches {
+-		kinds[m.Kind]++
+-	}
++	kinds := mpMatchKinds(matches)
+ 	for kind, n := range wantKinds {
+ 		if kinds[kind] != n {
+ 			t.Errorf("вид %s: матчей %d, ожидалось %d", kind, kinds[kind], n)
+ 		}
+ 	}
+ 	if len(kinds) != len(wantKinds) {
+ 		t.Errorf("виды матчей %v, ожидались только %v", kinds, wantKinds)
+ 	}
+ }
++
++// TestMPChannelsHikeFixture — резюме 06.11.2024 (hike): дезинфляционная часть рисков изложена
++// абзацем, а не пунктами списка («Дезинфляционные риски выражены слабо…»), и до fix-round 1
++// этот абзац молча терялся — risk_dez на документе был пуст (Important-замечание ревью).
++// Теперь абзацы блока 4 размечаются по той же атрибуции, что пункты: до ввода
++// дезинфляционной части — risk_pro, ввод и всё после него — risk_dez; служебные вводы
++// списков («…включают:») цитатами не становятся.
++func TestMPChannelsHikeFixture(t *testing.T) {
++	doc, err := parseMPSummary(mpFixture(t, "mp_summary_06112024.html"))
++	if err != nil {
++		t.Fatalf("parseMPSummary: %v", err)
++	}
++	matches := tagMPChannels(doc.Blocks)
++	if len(matches) == 0 {
++		t.Fatal("tagMPChannels: ноль матчей на документе")
++	}
++	mpCheckMatchShared(t, doc.Blocks, matches)
++
++	// Пины дословных фрагментов из фикстуры: первый абзац дезинфляционной части (в списке
++	// кандидатов Task 2 §3.2 представлен абзацем «Дезинфляционные риски выражены слабо…») и
++	// первый пункт проинфляционного списка.
++	const (
++		dezPin = "Дезинфляционные риски выражены слабо и в основном связаны с возможным более быстрым замедлением внутреннего спроса под влиянием ужесточения денежно-кредитной политики."
++		proPin = "Дальнейший рост инфляционных ожиданий."
++	)
++	if !mpHasMatchKindText(matches, "output_gap", mpKindRiskDez, dezPin) {
++		t.Errorf("risk_dez: нет матча output_gap с текстом %q (risk_dez: %v, risk_block: %v)",
++			dezPin, mpMatchKinds(matches), mpMatchTexts(matches, "output_gap"))
++	}
++	if !mpHasMatchKindText(matches, "expectations", mpKindRiskPro, proPin) {
++		t.Errorf("risk_pro: нет матча expectations с текстом %q", proPin)
++	}
++
++	// Числа этого документа закреплены после fix-round 1: было 135 (prose 119 + risk_pro 16,
++	// risk_dez 0) — стало 137 (prose 119 + risk_pro 16 + risk_dez 2). Дельта — два предложения
++	// дезинфляционного абзаца.
++	wantKinds := map[string]int{
++		mpKindProse:   119,
++		mpKindRiskPro: 16,
++		mpKindRiskDez: 2,
++	}
++	kinds := mpMatchKinds(matches)
++	for kind, n := range wantKinds {
++		if kinds[kind] != n {
++			t.Errorf("вид %s: матчей %d, ожидалось %d", kind, kinds[kind], n)
++		}
++	}
++	if len(matches) != 137 {
++		t.Errorf("матчей всего %d, ожидалось 137 (135 до fix-round 1 + 2 risk_dez)", len(matches))
++	}
++	wantChannels := map[string]int{
++		"current_inflation":    7,
++		"core_inflation":       4,
++		"expectations":         16,
++		"labor_market":         9,
++		"lending_transmission": 32,
++		"output_gap":           14,
++		"budget_impulse":       15,
++		"money_supply":         0,
++		"external_fx":          25,
++		"savings_behavior":     7,
++		"autonomous_factors":   8,
++	}
++	got := mpMatchCounts(matches)
++	for slug, n := range wantChannels {
++		if got[slug] != n {
++			t.Errorf("канал %s: матчей %d, ожидалось %d", slug, got[slug], n)
++		}
++	}
++}
