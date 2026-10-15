@@ -21,6 +21,10 @@ const firstFinancePolyusRowID = 31
 // диапазона панелей (см. firstFinancePolyusRowID).
 const secondFinancePolyusRowID = 32
 
+// thirdFinancePolyusRowID — id ряда 33 «Финансовые показатели»: нумерация рядов идёт подряд вне
+// диапазона панелей (см. firstFinancePolyusRowID).
+const thirdFinancePolyusRowID = 33
+
 // SQL-контракт ряда 31 (спека §5, дословно). Панели читают только витрины v_*: у датасорса стенда
 // нет грантов на сырые таблицы (легаси-экспорт читал cbr_gold, cbr_currency_usd, databook_polyus,
 // polyus_financial_metrics), это же требует Validate.
@@ -139,11 +143,52 @@ func fpOperatingSQL(asset, metric, frequency, alias string) string {
 	return fmt.Sprintf(fpOperatingTemplate, alias, asset, metric, frequency)
 }
 
+// SQL-контракт ряда 33 (спека §5, дословно). Ряд читает финансовую отчётность Полюса через витрину
+// v_company_financials по паре (metric, period_type): у capex и gold_sold полугодовые и годовые
+// строки лежат на те же годы, поэтому тип периода обязателен в WHERE. Ось времени здесь
+// ВЫЧИСЛЯЕТСЯ из строки периода (`period`: '2024H1' → 1 января, '2024H2' → 1 июля, '2024FY' → 1
+// января года), а $__timeFilter не применяется осознанно: ось производная, и окно дашборда клипает
+// построенный ряд на клиенте (паттерн dxy/crack золотого дашборда; оговорка — в Description каждой
+// панели ряда). Значения — Nullable(Float64): coalesce не нужен, прочерк документа остаётся
+// разрывом ряда, а не нулём.
+
+// fpFinancialsHalfYearTemplate — срез v_company_financials «time + value» по метрике за полугодия:
+// ось ветвится multiIf по хвосту строки периода (H1 → 1 января, H2 → 1 июля). %s по порядку: алиас
+// серии, метрика. Единицы ($ млн, koz, $/oz) подписаны в алиасах — как у шаблона ряда 32.
+const fpFinancialsHalfYearTemplate = `SELECT
+    multiIf(
+        endsWith(period, 'H1'), toDate(concat(substring(period, 1, 4), '-01-01')),
+        toDate(concat(substring(period, 1, 4), '-07-01'))
+    ) AS time,
+    value AS %s
+FROM v_company_financials
+WHERE company = 'PLZL' AND metric = '%s' AND period_type = 'H'
+ORDER BY time
+`
+
+// fpFinancialsHalfYearSQL собирает запрос полугодового показателя отчётности по шаблону.
+func fpFinancialsHalfYearSQL(metric, alias string) string {
+	return fmt.Sprintf(fpFinancialsHalfYearTemplate, alias, metric)
+}
+
+// fpFinancialsYearTemplate — тот же срез за год: у period_type = 'FY' ось — одна ветвь, 1 января
+// года периода. %s по порядку: алиас серии, метрика.
+const fpFinancialsYearTemplate = `SELECT toDate(concat(substring(period, 1, 4), '-01-01')) AS time, value AS %s
+FROM v_company_financials
+WHERE company = 'PLZL' AND metric = '%s' AND period_type = 'FY'
+ORDER BY time
+`
+
+// fpFinancialsYearSQL собирает запрос годового показателя отчётности по шаблону.
+func fpFinancialsYearSQL(metric, alias string) string {
+	return fmt.Sprintf(fpFinancialsYearTemplate, alias, metric)
+}
+
 // fpPanelHeight — высота панелей ряда в строках сетки Grafana: 9 — дефолт NewGridPos() SDK и высота
 // панелей соседних дашбордов (gold/key-rate).
 const fpPanelHeight = 9
 
-// fpPanelGridPos — явная позиция панели в сетке ряда 31 (x, y — в строках сетки, w — в колонках).
+// fpPanelGridPos — явная позиция панели в сетке дашборда (x, y — в строках сетки, w — в колонках).
 // Авто-layout SDK ставит панель в курсор, оставшийся от предыдущей, и широкая панель 2 (24 колонки)
 // уехала бы в x=12 — за правую границу сетки (24 колонки). Явно заданный GridPos авто-layout не
 // переписывает: он трогает только позицию с x=0 и y=0 («не задана»), поэтому у панелей ряда y >= 1.
@@ -196,15 +241,17 @@ func fpFixedColorProp(color string) dashboard.DynamicConfigValue {
 }
 
 // NewFinancePolyus собирает дашборд «Полюс (PLZL) — финансы и прогноз» (спека §4–§5). Собраны ряды 31
-// «Золото, ставки, рынок» (панели 1–6) и 32 «Операционные показатели» (панели 7–11): первый —
-// макро-входы прогноза (учётная цена золота в ₽/г и $/oz, курс, ставки локального и глобального
-// контура, цена акции), второй — операционные итоги датапака (выпуск золота компанией и по активам,
-// руда, вскрыша, содержание и извлечение). Порядок вызовов WithRow/WithPanel задаёт нумерацию
-// панелей, а место в сетке — явный GridPos у каждого элемента: у панелей fpPanelGridPos, у рядов
-// fpRowGridPos. Ряд 31 раскладывается своей таблицей (верхняя пара — цена ₽/г (1) и курс (3), ниже
-// панель 2 во всю ширину, затем ставки (4/5) и цена акции (6)); ряд 32 начинается за последней
+// «Золото, ставки, рынок» (панели 1–6), 32 «Операционные показатели» (панели 7–11) и 33 «Финансовые
+// показатели» (панели 12–15): первый — макро-входы прогноза (учётная цена золота в ₽/г и $/oz, курс,
+// ставки локального и глобального контура, цена акции), второй — операционные итоги датапака (выпуск
+// золота компанией и по активам, руда, вскрыша, содержание и извлечение), третий — отчётность
+// (капекс, выручка и EBITDA, продажи золота, TCC на унцию). Порядок вызовов WithRow/WithPanel задаёт
+// нумерацию панелей, а место в сетке — явный GridPos у каждого элемента: у панелей fpPanelGridPos, у
+// рядов fpRowGridPos. Ряд 31 раскладывается своей таблицей (верхняя пара — цена ₽/г (1) и курс (3),
+// ниже панель 2 во всю ширину, затем ставки (4/5) и цена акции (6)); ряд 32 начинается за последней
 // панелью ряда 31 (y=37), внутри — две широкие панели выпуска золота (7/8) и пары руды (9/10) и
-// качества (11). Точные координаты фиксирует TestFinancePolyusSpecConventions.
+// качества (11); ряд 33 — за панелью 11 (y=74), внутри пара капекса и годовых показателей (12/13) и
+// пара продаж золота и TCC (14/15). Точные координаты фиксирует TestFinancePolyusSpecConventions.
 func NewFinancePolyus() *dashboard.DashboardBuilder {
 	return dashboard.NewDashboardBuilder("Полюс (PLZL) — финансы и прогноз").
 		Uid(FinancePolyusUID).
@@ -226,7 +273,14 @@ func NewFinancePolyus() *dashboard.DashboardBuilder {
 		WithPanel(fpGoldOutputByAssetPanel()).
 		WithPanel(fpOrePanel()).
 		WithPanel(fpStrippingPanel()).
-		WithPanel(fpGradeRecoveryPanel())
+		WithPanel(fpGradeRecoveryPanel()).
+		// Ряд 33 — за последней панелью ряда 32 (65 + 9 = 74): без явной позиции авто-layout поставил
+		// бы его в курсор панелей, то есть на y=65 — поверх панели 11.
+		WithRow(dashboard.NewRowBuilder("Финансовые показатели").Id(thirdFinancePolyusRowID).GridPos(fpRowGridPos(74))).
+		WithPanel(fpCapexPanel()).
+		WithPanel(fpRevenueEbitdaPanel()).
+		WithPanel(fpGoldSoldPanel()).
+		WithPanel(fpTccPanel())
 }
 
 // fpGoldRubPanel — панель 1: учётная цена золота ЦБ в ₽/г. Рубли с копейками (decimals 2): цена
@@ -491,4 +545,84 @@ func fpGradeRecoveryPanel() *timeseries.PanelBuilder {
 		WithTarget(timeseriesQuery("B", fpOperatingSQL(fpConsolidatedAsset, "Recovery", "ANNUAL", `"Извлечение, %"`))).
 		OverrideByQuery("B", []dashboard.DynamicConfigValue{axisPlacementRightProp()}).
 		Unit(units.Short)
+}
+
+// fpCapexPanel — панель 12: капекс за полугодия (A) и год (B), $ млн — левая панель верхней пары
+// ряда 33 (рядом годовые выручка и EBITDA, панель 13): капекс — инвестиционный выход DCF, выручка и
+// EBITDA — база операционного результата. Ось времени строится из строки периода, а не из даты
+// наблюдения (см. комментарий к шаблонам ряда): полугодовая серия ветвится multiIf по H1/H2,
+// годовая — одна ветвь на 1 января.
+func fpCapexPanel() *timeseries.PanelBuilder {
+	return fpPanelDefaults(timeseries.NewPanelBuilder()).
+		Id(12).
+		Title("Капекс, $ млн: полугодия и год").
+		GridPos(fpPanelGridPos(0, 75, spanHalf)).
+		Description("Капитальные затраты Полюса (v_company_financials, metric = 'capex'), $ млн: A — " +
+			"полугодия (period_type = 'H'), B — год ('FY'). Ось времени вычисляется из строки периода " +
+			"(`period`), а не из даты наблюдения: '2024H1' → 1 января, '2024H2' → 1 июля, '2024FY' → " +
+			"1 января года. $__timeFilter в запросе не применяется осознанно (тот же приём, что у " +
+			"dxy/crack золотого дашборда): окно дашборда клипает вывод на клиенте. Значения — из " +
+			"отчётных периодов, уровни ЗА период (не накопленный итог).").
+		WithTarget(timeseriesQuery("A", fpFinancialsHalfYearSQL("capex", `"Капекс, полугодие, $ млн"`))).
+		WithTarget(timeseriesQuery("B", fpFinancialsYearSQL("capex", `"Капекс, год, $ млн"`))).
+		Unit(units.Dollars)
+}
+
+// fpRevenueEbitdaPanel — панель 13: выручка и скорректированная EBITDA за год, $ млн. Обе серии —
+// годовые ('FY'), поэтому ось у них одна ветвь без multiIf. Ряд EBITDA короче: метрика заведена в
+// датапаке с 2023FY — оговорка об этом в Description, потому что обрыв читается как дефект.
+func fpRevenueEbitdaPanel() *timeseries.PanelBuilder {
+	return fpPanelDefaults(timeseries.NewPanelBuilder()).
+		Id(13).
+		Title("Выручка и EBITDA (год), $ млн").
+		GridPos(fpPanelGridPos(12, 75, spanHalf)).
+		Description("Выручка и скорректированная EBITDA Полюса за год (v_company_financials, " +
+			"period_type = 'FY'), $ млн: A — 'revenue', B — 'adjusted_ebitda'. Ось времени вычисляется " +
+			"из строки периода (`period`): '2024FY' → 1 января 2024 года; $__timeFilter в запросе не " +
+			"применяется осознанно (тот же приём, что у dxy/crack золотого дашборда) — окно дашборда " +
+			"клипает вывод на клиенте. Ряд B короче: 'adjusted_ebitda' заведён в датапаке с 2023FY, и " +
+			"его начало — охват источника, а не пропуск и не дефект дашборда. Значения — уровни ЗА год.").
+		WithTarget(timeseriesQuery("A", fpFinancialsYearSQL("revenue", `"Выручка, $ млн"`))).
+		WithTarget(timeseriesQuery("B", fpFinancialsYearSQL("adjusted_ebitda", `"Скорр. EBITDA, $ млн"`))).
+		Unit(units.Dollars)
+}
+
+// fpGoldSoldPanel — панель 14: продажи золота (koz) за полугодия и год — левая панель нижней пары
+// ряда 33 (рядом TCC, панель 15). Продажи — отгруженный металл, а не выпуск (выпуск — панели 7/8).
+// Единица short, как у выпуска: koz — не валюта, currencyUSD дал бы «$» на тысячах унций.
+func fpGoldSoldPanel() *timeseries.PanelBuilder {
+	return fpPanelDefaults(timeseries.NewPanelBuilder()).
+		Id(14).
+		Title("Продажи золота, koz").
+		GridPos(fpPanelGridPos(0, 84, spanHalf)).
+		Description("Продажи золота Полюса (v_company_financials, metric = 'gold_sold'), тыс. тройских " +
+			"унций (koz): A — полугодия (period_type = 'H'), B — год ('FY'). Ось времени вычисляется из " +
+			"строки периода (`period`): '2024H1' → 1 января, '2024H2' → 1 июля, '2024FY' → 1 января " +
+			"года. $__timeFilter в запросе не применяется осознанно (тот же приём, что у dxy/crack " +
+			"золотого дашборда): окно дашборда клипает вывод на клиенте. Продажи — отгруженный металл, " +
+			"а не выпуск (выпуск — панели 7 и 8): значения из отчётных периодов, уровни ЗА период, а не " +
+			"накопленный итог.").
+		WithTarget(timeseriesQuery("A", fpFinancialsHalfYearSQL("gold_sold", `"Продажи, полугодие, koz"`))).
+		WithTarget(timeseriesQuery("B", fpFinancialsYearSQL("gold_sold", `"Продажи, год, koz"`))).
+		Unit(units.Short)
+}
+
+// fpTccPanel — панель 15: TCC на унцию, $/oz — единственная серия ряда и только отчётные полугодия.
+// Точки вместо линии (pointsOnlyProps): метрика разрежена (2025H1, 2025H2, 2026H1), и сплошная линия
+// по трём точкам читалась бы как непрерывный ряд. AISC в витринах не публикуется — оговорка в
+// Description.
+func fpTccPanel() *timeseries.PanelBuilder {
+	return fpPanelDefaults(timeseries.NewPanelBuilder()).
+		Id(15).
+		Title("TCC на унцию, $/oz").
+		GridPos(fpPanelGridPos(12, 84, spanHalf)).
+		Description("TCC (total cash costs) на унцию проданного золота (v_company_financials, metric = "+
+			"'tcc_per_ounce'), $/oz, только отчётные полугодия (period_type = 'H'): в датапаке это "+
+			"2025H1, 2025H2 и 2026H1 — три точки, поэтому серия нарисована точками, а не линией. Ось "+
+			"времени вычисляется из строки периода (`period`): '2026H1' → 1 января, '2025H2' → 1 июля; "+
+			"$__timeFilter в запросе не применяется осознанно — окно дашборда клипает вывод на клиенте. "+
+			"AISC в контуре считается вне витрин: в v_company_financials он не публикуется.").
+		WithTarget(timeseriesQuery("A", fpFinancialsHalfYearSQL("tcc_per_ounce", `"TCC, $/oz"`))).
+		OverrideByQuery("A", pointsOnlyProps()).
+		Unit(units.Dollars)
 }

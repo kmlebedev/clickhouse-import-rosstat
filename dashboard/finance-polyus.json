@@ -1002,6 +1002,296 @@
             }
           ]
         }
+      },
+      {
+        "type": "row",
+        "collapsed": false,
+        "title": "Финансовые показатели",
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 74
+        },
+        "id": 33,
+        "panels": []
+      },
+      {
+        "type": "timeseries",
+        "id": 12,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT\n    multiIf(\n        endsWith(period, 'H1'), toDate(concat(substring(period, 1, 4), '-01-01')),\n        toDate(concat(substring(period, 1, 4), '-07-01'))\n    ) AS time,\n    value AS \"Капекс, полугодие, $ млн\"\nFROM v_company_financials\nWHERE company = 'PLZL' AND metric = 'capex' AND period_type = 'H'\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT toDate(concat(substring(period, 1, 4), '-01-01')) AS time, value AS \"Капекс, год, $ млн\"\nFROM v_company_financials\nWHERE company = 'PLZL' AND metric = 'capex' AND period_type = 'FY'\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Капекс, $ млн: полугодия и год",
+        "description": "Капитальные затраты Полюса (v_company_financials, metric = 'capex'), $ млн: A — полугодия (period_type = 'H'), B — год ('FY'). Ось времени вычисляется из строки периода (`period`), а не из даты наблюдения: '2024H1' → 1 января, '2024H2' → 1 июля, '2024FY' → 1 января года. $__timeFilter в запросе не применяется осознанно (тот же приём, что у dxy/crack золотого дашборда): окно дашборда клипает вывод на клиенте. Значения — из отчётных периодов, уровни ЗА период (не накопленный итог).",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 75
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyUSD",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 13,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT toDate(concat(substring(period, 1, 4), '-01-01')) AS time, value AS \"Выручка, $ млн\"\nFROM v_company_financials\nWHERE company = 'PLZL' AND metric = 'revenue' AND period_type = 'FY'\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT toDate(concat(substring(period, 1, 4), '-01-01')) AS time, value AS \"Скорр. EBITDA, $ млн\"\nFROM v_company_financials\nWHERE company = 'PLZL' AND metric = 'adjusted_ebitda' AND period_type = 'FY'\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Выручка и EBITDA (год), $ млн",
+        "description": "Выручка и скорректированная EBITDA Полюса за год (v_company_financials, period_type = 'FY'), $ млн: A — 'revenue', B — 'adjusted_ebitda'. Ось времени вычисляется из строки периода (`period`): '2024FY' → 1 января 2024 года; $__timeFilter в запросе не применяется осознанно (тот же приём, что у dxy/crack золотого дашборда) — окно дашборда клипает вывод на клиенте. Ряд B короче: 'adjusted_ebitda' заведён в датапаке с 2023FY, и его начало — охват источника, а не пропуск и не дефект дашборда. Значения — уровни ЗА год.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 12,
+          "y": 75
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyUSD",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 14,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT\n    multiIf(\n        endsWith(period, 'H1'), toDate(concat(substring(period, 1, 4), '-01-01')),\n        toDate(concat(substring(period, 1, 4), '-07-01'))\n    ) AS time,\n    value AS \"Продажи, полугодие, koz\"\nFROM v_company_financials\nWHERE company = 'PLZL' AND metric = 'gold_sold' AND period_type = 'H'\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          },
+          {
+            "refId": "B",
+            "rawSql": "SELECT toDate(concat(substring(period, 1, 4), '-01-01')) AS time, value AS \"Продажи, год, koz\"\nFROM v_company_financials\nWHERE company = 'PLZL' AND metric = 'gold_sold' AND period_type = 'FY'\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Продажи золота, koz",
+        "description": "Продажи золота Полюса (v_company_financials, metric = 'gold_sold'), тыс. тройских унций (koz): A — полугодия (period_type = 'H'), B — год ('FY'). Ось времени вычисляется из строки периода (`period`): '2024H1' → 1 января, '2024H2' → 1 июля, '2024FY' → 1 января года. $__timeFilter в запросе не применяется осознанно (тот же приём, что у dxy/crack золотого дашборда): окно дашборда клипает вывод на клиенте. Продажи — отгруженный металл, а не выпуск (выпуск — панели 7 и 8): значения из отчётных периодов, уровни ЗА период, а не накопленный итог.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 84
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 15,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT\n    multiIf(\n        endsWith(period, 'H1'), toDate(concat(substring(period, 1, 4), '-01-01')),\n        toDate(concat(substring(period, 1, 4), '-07-01'))\n    ) AS time,\n    value AS \"TCC, $/oz\"\nFROM v_company_financials\nWHERE company = 'PLZL' AND metric = 'tcc_per_ounce' AND period_type = 'H'\nORDER BY time\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "TCC на унцию, $/oz",
+        "description": "TCC (total cash costs) на унцию проданного золота (v_company_financials, metric = 'tcc_per_ounce'), $/oz, только отчётные полугодия (period_type = 'H'): в датапаке это 2025H1, 2025H2 и 2026H1 — три точки, поэтому серия нарисована точками, а не линией. Ось времени вычисляется из строки периода (`period`): '2026H1' → 1 января, '2025H2' → 1 июля; $__timeFilter в запросе не применяется осознанно — окно дашборда клипает вывод на клиенте. AISC в контуре считается вне витрин: в v_company_financials он не публикуется.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 12,
+          "y": 84
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyUSD",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byFrameRefID",
+                "options": "A"
+              },
+              "properties": [
+                {
+                  "id": "custom.lineWidth",
+                  "value": 0
+                },
+                {
+                  "id": "custom.showPoints",
+                  "value": "always"
+                }
+              ]
+            }
+          ]
+        }
       }
     ],
     "templating": {},

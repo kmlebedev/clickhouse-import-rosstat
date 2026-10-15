@@ -11,12 +11,13 @@ import (
 )
 
 // financePolyusRowTitles — ряды дашборда в порядке следования. Собраны ряды 31 «Золото, ставки,
-// рынок» (панели 1–6) и 32 «Операционные показатели» (панели 7–11): список фиксирует и заголовки, и
-// порядок сетки. Ряды 33–34 («Финансовые показатели», «Прогноз и точность») добавляются следующими
-// задачами.
+// рынок» (панели 1–6), 32 «Операционные показатели» (панели 7–11) и 33 «Финансовые показатели»
+// (панели 12–15): список фиксирует и заголовки, и порядок сетки. Ряд 34 («Прогноз и точность»)
+// добавляется следующей задачей.
 var financePolyusRowTitles = []string{
 	"Золото, ставки, рынок",
 	"Операционные показатели",
+	"Финансовые показатели",
 }
 
 func builtFinancePolyus(t *testing.T) dashboard.Dashboard {
@@ -29,10 +30,11 @@ func builtFinancePolyus(t *testing.T) dashboard.Dashboard {
 }
 
 // TestFinancePolyusPanelCount фиксирует состав собранных рядов: ряд 31 — шесть панелей (id 1–6),
-// ряд 32 — пять (id 7–11). Счёт растёт по мере добавления рядов 33–34 (девятнадцать панелей в конце).
+// ряд 32 — пять (id 7–11), ряд 33 — четыре (id 12–15). Счёт растёт по мере добавления ряда 34
+// (девятнадцать панелей в конце).
 func TestFinancePolyusPanelCount(t *testing.T) {
-	if panels := panelsOf(builtFinancePolyus(t)); len(panels) != 11 {
-		t.Fatalf("панелей %d, ожидалось 11", len(panels))
+	if panels := panelsOf(builtFinancePolyus(t)); len(panels) != 15 {
+		t.Fatalf("панелей %d, ожидалось 15", len(panels))
 	}
 }
 
@@ -97,8 +99,9 @@ func TestFinancePolyusValidateUID(t *testing.T) {
 // с копейками), панели 2 — доллары за тройскую унцию (currencyUSD, у таргетов паритета и рыночных
 // рядов одна единица), панели 3 — курс ₽/$ (short, 4 знака), панелей 4 и 5 — проценты годовых
 // (уровни ставок, не темпы), панели 6 — рубли за акцию (currencyRUB), панелей 7–11 — операционные
-// показатели датапака (short: koz/kT/тыс. м³/м³/т/г/т/%). Перепутанная единица даёт ошибку чтения
-// на порядки.
+// показатели датапака (short: koz/kT/тыс. м³/м³/т/г/т/%), панелей 12/13/15 — денежные показатели
+// отчётности ($ млн и $/oz, currencyUSD), панели 14 — продажи золота (short: koz). Перепутанная
+// единица даёт ошибку чтения на порядки.
 func TestFinancePolyusUnits(t *testing.T) {
 	board := builtFinancePolyus(t)
 	if unit := panelByID(t, board, 1).FieldConfig.Defaults.Unit; unit == nil || *unit != units.Rubles {
@@ -132,6 +135,17 @@ func TestFinancePolyusUnits(t *testing.T) {
 		if unit := panelByID(t, board, id).FieldConfig.Defaults.Unit; unit == nil || *unit != units.Short {
 			t.Fatalf("панель %d: unit %v, ожидался %q (единицы koz/kT/тыс. м³/м³/т/г/т — в алиасах и заголовке)", id, unit, units.Short)
 		}
+	}
+	// Панели 12/13/15 — показатели отчётности в долларах ($ млн и $/oz): валюта, а не «число» —
+	// currencyUSD печатает знак $ и разряды. Панель 14 — продажи золота в koz: единица short, как у
+	// выпуска (панели 7/8): currencyUSD дал бы «$» на тысячах унций.
+	for _, id := range []uint32{12, 13, 15} {
+		if unit := panelByID(t, board, id).FieldConfig.Defaults.Unit; unit == nil || *unit != units.Dollars {
+			t.Fatalf("панель %d: unit %v, ожидался %q (показатели отчётности — $ млн и $/oz)", id, unit, units.Dollars)
+		}
+	}
+	if unit := panelByID(t, board, 14).FieldConfig.Defaults.Unit; unit == nil || *unit != units.Short {
+		t.Fatalf("панель 14: unit %v, ожидался %q (продажи золота — koz, не валюта)", unit, units.Short)
 	}
 }
 
@@ -218,6 +232,117 @@ func TestFinancePolyusRightAxis(t *testing.T) {
 		}
 		if got := overridePropByRefID(panel, "A", "custom.axisPlacement"); got != nil {
 			t.Fatalf("панель %d: у серии A custom.axisPlacement = %v — левая ось это отсутствие свойства", tc.panelID, got)
+		}
+	}
+}
+
+// TestFinancePolyusFinancialsTargets: ряд 33 читает v_company_financials по паре (metric,
+// period_type) — у capex и gold_sold на одни и те же годы лежат И полугодовые, И годовые строки, и
+// перепутанный period_type молча подменил бы ряд другим (у revenue/adjusted_ebitda и
+// tcc_per_ounce второй частоты в датапаке нет — ошибка оставила бы серию пустой). Алиасы — дословно
+// из спеки §5: в легенде рядом стоят «полугодие» и «год» одной метрики, и без подписи они
+// неразличимы; число таргетов фиксирует состав серий каждой панели.
+func TestFinancePolyusFinancialsTargets(t *testing.T) {
+	board := builtFinancePolyus(t)
+	for _, tc := range []struct {
+		panelID    uint32
+		targets    int
+		refID      string
+		metric     string
+		periodType string
+		alias      string
+	}{
+		{12, 2, "A", "capex", "H", "Капекс, полугодие, $ млн"},
+		{12, 2, "B", "capex", "FY", "Капекс, год, $ млн"},
+		{13, 2, "A", "revenue", "FY", "Выручка, $ млн"},
+		{13, 2, "B", "adjusted_ebitda", "FY", "Скорр. EBITDA, $ млн"},
+		{14, 2, "A", "gold_sold", "H", "Продажи, полугодие, koz"},
+		{14, 2, "B", "gold_sold", "FY", "Продажи, год, koz"},
+		{15, 1, "A", "tcc_per_ounce", "H", "TCC, $/oz"},
+	} {
+		panel := panelByID(t, board, tc.panelID)
+		if len(panel.Targets) != tc.targets {
+			t.Fatalf("у панели %d %d запросов, ожидалось %d", tc.panelID, len(panel.Targets), tc.targets)
+		}
+		query := targetByRefID(t, panel, tc.refID)
+		for _, want := range []string{
+			"FROM v_company_financials",
+			"company = 'PLZL'",
+			"metric = '" + tc.metric + "'",
+			"period_type = '" + tc.periodType + "'",
+			`AS "` + tc.alias + `"`,
+			"ORDER BY time",
+		} {
+			if !strings.Contains(query.RawSql, want) {
+				t.Fatalf("панель %d: запрос %s не содержит %q: %s", tc.panelID, tc.refID, want, query.RawSql)
+			}
+		}
+	}
+}
+
+// TestFinancePolyusNoTimeFilterOnDerivedAxis: ось времени панелей 12–15 вычисляется из строки
+// периода (`period`), а не из даты наблюдения, — полугодовые серии ветвятся multiIf по H1/H2
+// (1 января / 1 июля), годовые собираются одной ветвью на 1 января, — и $__timeFilter в этих
+// запросах не применяется осознанно: ось здесь производная, и клип окна дашборда Grafana делает сам
+// (паттерн dxy/crack золотого дашборда). Оговорка об этом обязана быть в Description: без неё
+// отсутствие фильтра читается как забытый предикат, а не как контракт панели. Панель 13 — целиком
+// годовая (period_type у обеих серий 'FY'), multiIf в ней не нужен, и это проверяется отдельно.
+func TestFinancePolyusNoTimeFilterOnDerivedAxis(t *testing.T) {
+	board := builtFinancePolyus(t)
+	for _, tc := range []struct {
+		panelID    uint32
+		refID      string
+		periodType string
+	}{
+		{12, "A", "H"},
+		{12, "B", "FY"},
+		{13, "A", "FY"},
+		{13, "B", "FY"},
+		{14, "A", "H"},
+		{14, "B", "FY"},
+		{15, "A", "H"},
+	} {
+		query := targetByRefID(t, panelByID(t, board, tc.panelID), tc.refID)
+		if strings.Contains(query.RawSql, "$__timeFilter") {
+			t.Fatalf("панель %d: запрос %s применяет $__timeFilter, а ось вычисляется из period: %s", tc.panelID, tc.refID, query.RawSql)
+		}
+		if tc.periodType == "H" {
+			if !strings.Contains(query.RawSql, "multiIf(") {
+				t.Fatalf("панель %d: запрос %s без multiIf — полугодовая ось ветвится по H1/H2: %s", tc.panelID, tc.refID, query.RawSql)
+			}
+			continue
+		}
+		if !strings.Contains(query.RawSql, "toDate(concat(substring(period, 1, 4), '-01-01')) AS time") {
+			t.Fatalf("панель %d: запрос %s без годовой оси (1 января года периода): %s", tc.panelID, tc.refID, query.RawSql)
+		}
+	}
+	if strings.Contains(targetByRefID(t, panelByID(t, board, 13), "A").RawSql, "multiIf(") {
+		t.Fatal("панель 13: годовая ось собрана через multiIf, хотя period_type у обеих серий — 'FY'")
+	}
+	for _, id := range []uint32{12, 13, 14, 15} {
+		description := optionalString(panelByID(t, board, id).Description)
+		for _, want := range []string{"period", "$__timeFilter", "окно дашборда"} {
+			if !strings.Contains(description, want) {
+				t.Fatalf("Description панели %d не оговаривает ось из периода (нет %q): %s", id, want, description)
+			}
+		}
+	}
+}
+
+// TestFinancePolyusTccPanel: панель 15 — TCC на унцию, единственная серия ряда (полугодия, три
+// точки), поэтому нарисована точками: сплошная линия по трём точкам читается как непрерывный ряд.
+// Охват и AISC обязаны быть в Description: три точки — это весь охват метрики в датапаке, а AISC
+// здесь не публикуется вовсе — без оговорки его отсутствие читается как дефект дашборда.
+func TestFinancePolyusTccPanel(t *testing.T) {
+	panel := panelByID(t, builtFinancePolyus(t), 15)
+	if len(panel.Targets) != 1 {
+		t.Fatalf("у панели %q %d запросов, ожидалась одна серия (полугодия)", panelTitle(panel), len(panel.Targets))
+	}
+	assertPointsOnly(t, panel, "A")
+	description := optionalString(panel.Description)
+	for _, want := range []string{"AISC", "полугод", "2025H1", "2026H1"} {
+		if !strings.Contains(description, want) {
+			t.Fatalf("Description панели 15 не оговаривает охват TCC (нет %q): %s", want, description)
 		}
 	}
 }
@@ -318,8 +443,10 @@ func TestFinancePolyusNineAssets(t *testing.T) {
 // пара ставок (4/5) и цена акции (6). Ряд 32 «Операционные показатели» (7–11): две широкие панели
 // выпуска золота (7/8, 24 колонки) — каждая своей строкой, ниже пара руды (9/10) и содержание с
 // извлечением (11); ряд встаёт сразу за панелью 6 (28 + 9 = 37), поэтому первая его панель — на
-// y=38. Таблица живёт в тесте, а не рядом с билдерами: она фиксирует раскладку (её видно в артефакте
-// и в UI), а панель без позиции в таблице — ошибка, а не «дорисует авто-layout».
+// y=38. Ряд 33 «Финансовые показатели» (12–15): капекс (12) и выручка с EBITDA (13) верхней парой,
+// ниже продажи золота (14) и TCC (15); ряд — сразу за панелью 11 (65 + 9 = 74), панели начинаются
+// на y=75. Таблица живёт в тесте, а не рядом с билдерами: она фиксирует раскладку (её видно в
+// артефакте и в UI), а панель без позиции в таблице — ошибка, а не «дорисует авто-layout».
 var fpPanelLayout = map[uint32]gridPos{
 	1:  {x: 0, y: 1, w: 12, h: 9},
 	3:  {x: 12, y: 1, w: 12, h: 9},
@@ -332,16 +459,22 @@ var fpPanelLayout = map[uint32]gridPos{
 	9:  {x: 0, y: 56, w: 12, h: 9},
 	10: {x: 12, y: 56, w: 12, h: 9},
 	11: {x: 0, y: 65, w: 12, h: 9},
+	12: {x: 0, y: 75, w: 12, h: 9},
+	13: {x: 12, y: 75, w: 12, h: 9},
+	14: {x: 0, y: 84, w: 12, h: 9},
+	15: {x: 12, y: 84, w: 12, h: 9},
 }
 
 // fpRowLayout — ожидаемая раскладка рядов (id → x/y/w/h): ряд — полоса сетки шириной 24 колонки и
 // высотой 1. Позицию ряда задаёт fpRowGridPos явно, потому что авто-layout ставит ряд в курсор
 // панелей (currentY + высота последней): у ряда 32 курсор после явно разложенных панелей стоит на
-// y=28 — то есть ряд лёг бы поверх панели 6. У ряда 31 y=0, и SDK пересчитывает только пару «x=0 И
-// y=0»: у первого ряда дашборда пересчёт даёт ровно этот же прямоугольник.
+// y=28 — то есть ряд лёг бы поверх панели 6, у ряда 33 — на y=65 (поверх панели 11). У ряда 31 y=0,
+// и SDK пересчитывает только пару «x=0 И y=0»: у первого ряда дашборда пересчёт даёт ровно этот же
+// прямоугольник.
 var fpRowLayout = map[uint32]gridPos{
 	31: {x: 0, y: 0, w: 24, h: 1},
 	32: {x: 0, y: 37, w: 24, h: 1},
+	33: {x: 0, y: 74, w: 24, h: 1},
 }
 
 // gridPos — прямоугольник элемента сетки Grafana (24 колонки): раскладка ряда задана явно, поэтому
@@ -364,11 +497,11 @@ type layoutRect struct {
 }
 
 // TestFinancePolyusSpecConventions фиксирует конвенции каркаса одним проходом: раскладку панелей
-// 1–11 по таблице fpPanelLayout и рядов по fpRowLayout (позиция задана явно, а не выведена
+// 1–15 по таблице fpPanelLayout и рядов по fpRowLayout (позиция задана явно, а не выведена
 // авто-layout'ом SDK — тот ставил панель 2 шириной 24 колонки в курсор после панели 1, то есть
-// x=12..36, за правую границу сетки, а ряд 32 — поверх последней панели ряда 31), непустой
-// Description у каждой панели (спека §4), id уникальные в 1..19, FINAL и LIMIT в панельных запросах
-// не пишутся (FINAL уже внутри витрин; LIMIT на временном ряду молча обрезал бы историю —
+// x=12..36, за правую границу сетки, а ряды 32/33 — поверх последних панелей предыдущих рядов),
+// непустой Description у каждой панели (спека §4), id уникальные в 1..19, FINAL и LIMIT в панельных
+// запросах не пишутся (FINAL уже внутри витрин; LIMIT на временном ряду молча обрезал бы историю —
 // anti-pattern легаси-экспорта). Общие инварианты сетки: x + w <= 24, y >= 1 у панелей (для SDK
 // x=0 и y=0 — «позиция не задана», её перезапишет авто-layout; ряд 31 — исключение: он первый,
 // и пересчёт даёт тот же прямоугольник), прямоугольники не пересекаются — панели между собой,
