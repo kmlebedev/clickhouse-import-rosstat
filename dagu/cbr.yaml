@@ -75,6 +75,14 @@ steps:
       limit: 3
       interval_sec: 300
 
+  - id: cbr_int_rate_loans
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=cbr_int_rate_loans
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
   - id: cbr_credit_m2x
     run: "$ROSSTAT_IMPORT_BIN"
     env:

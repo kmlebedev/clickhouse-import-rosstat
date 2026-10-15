@@ -157,6 +157,57 @@ var cbrBankIntRateNames = []string{
 
 var cbrBankIntRateSeriesMeta = namedSeriesMeta(cbrBankIntRateNames, seriesTemplate{Unit: "% годовых", Frequency: "M", Origin: "cbr.ru/vfs/statistics/pdko/int_rat/regulatory_rates.xlsx, лист «в рублях»", Description: "Средняя процентная ставка по вкладам физических лиц в рублях за месяц, % годовых, по сроку вклада (название ряда — срок вклада, как в заголовке ЦБ). В таблице дата — предпоследний день месяца отчётного периода: сопоставлять по toStartOfMonth(date).", Label: "колонка срока"})
 
+// cbrIntRateLoansSeriesMeta — каталог ставок по кредитам юрлицам: 16 рядов (2 группы × 8
+// сроков), имена объявлены кодом в cbr/int_rate_loans.go (заголовок колонки несёт только срок,
+// наборы сроков групп идентичны). Название ряда читается как «группа: срок»: «Всего» — все
+// нефинансовые организации, «СМП» — субъекты малого и среднего предпринимательства.
+// Каталог собирается своим циклом, а не namedSeriesMeta: имя ряда — комбинация двух ячеек
+// источника, и origin обязан называть их раздельно и без вложенных кавычек («группа «Всего»,
+// срок «от 1 года до 3 лет»») — шаблонная подпись «группа и колонка срока» уложила бы составное
+// имя целиком в одни кавычки, и агент MCP не различил бы, где группа, а где срок (правило 11
+// AGENTS.md; составное имя — стандарт §6.8).
+var cbrIntRateLoansSeriesMeta = cbrIntRateLoansMeta()
+
+// cbrIntRateLoansOrigin — источник рядов: файл и лист в форме origin каталога; группа и срок
+// дописываются в цикле. Один литерал на 16 рядов листа: разные origin у рядов одного листа были
+// бы ошибкой, а не свойством ряда.
+const cbrIntRateLoansOrigin = "cbr.ru/vfs/statistics/pdko/int_rat/loans_nonfin.xlsx, лист «ставки_руб»"
+
+// cbrIntRateLoansDescription — описание всех 16 рядов: что измеряет, как читать (уровень, а не
+// темп), и что пропуск точки в источнике — пропуск, а не ноль.
+const cbrIntRateLoansDescription = "Средневзвешенная процентная ставка по кредитам, " +
+	"предоставленным нефинансовым организациям в рублях, за отчётный месяц: уровень, % годовых. " +
+	"Название ряда — группа заёмщиков («Всего» — все нефинансовые организации, «СМП» — субъекты " +
+	"малого и среднего предпринимательства) и срок кредита. Ставка взвешена объёмом " +
+	"предоставленных кредитов, поэтому её динамика определяется и уровнем ставок, и объёмом " +
+	"размещённых средств (сноска источника): темп — разница в процентных пунктах, а не отношение " +
+	"уровней. Дата — предпоследний день месяца отчётного периода: сопоставлять по " +
+	"toStartOfMonth(date). Пустая ячейка источника и литеральный ноль (в стандарте §6.7 — " +
+	"«данных не имеется») — пропуск точки, а не 0 % годовых: нулевой ставки в ряду не бывает. " +
+	"В текущем файле пропусков нет."
+
+// cbrIntRateLoansMeta собирает 16 записей каталога из групп и сроков в порядке колонок листа —
+// том же, в каком имена собирает разбор (cbrIntRateLoansSeriesNames): каталог и разбор не могут
+// разойтись ни по составу имён, ни по порядку.
+func cbrIntRateLoansMeta() []util.SeriesMeta {
+	meta := make([]util.SeriesMeta, 0, len(cbrIntRateLoansGroups)*len(cbrIntRateLoansTerms))
+	for _, group := range cbrIntRateLoansGroups {
+		for _, term := range cbrIntRateLoansTerms {
+			name := group.Prefix + term
+			meta = append(meta, util.SeriesMeta{
+				Source:      cbrSource,
+				Series:      name,
+				Title:       name,
+				Unit:        "% годовых",
+				Frequency:   "M",
+				Origin:      cbrIntRateLoansOrigin + ", группа «" + group.SourceLabel + "», срок «" + term + "»",
+				Description: cbrIntRateLoansDescription,
+			})
+		}
+	}
+	return meta
+}
+
 var cbrIndicatorsCpdNames = []string{"Все товары и услуги", "Базовый ИПЦ"}
 
 var cbrIndicatorsCpdSeriesMeta = namedSeriesMeta(cbrIndicatorsCpdNames, seriesTemplate{Unit: "% к предыдущему месяцу", Frequency: "M", Origin: "cbr.ru/Content/Document/File/108632/indicators_cpd.xlsx (ссылка со страницы cbr.ru/statistics/ddkp/aipd), лист «Лист1»", Description: "Месячный прирост цен в процентах к предыдущему месяцу, сезонно очищенный, по данным ЦБ; значение — уже посчитанный темп, а не индекс. Годовой темп = (произведение (1 + value/100) за 12 месяцев − 1) × 100%. «Все товары и услуги» — общий ИПЦ, «Базовый ИПЦ» — базовая инфляция ЦБ. Дата — последний день месяца.", Label: "строка"})
