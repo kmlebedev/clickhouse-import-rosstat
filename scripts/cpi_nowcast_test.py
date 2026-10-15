@@ -38,19 +38,25 @@ import contextlib
 import csv
 import io
 import math
+import random
 import statistics
 import sys
 import tempfile
 import unittest
 import unittest.mock
+import warnings
 from datetime import date, datetime, timedelta
 from pathlib import Path
+
+import numpy as np
+from sklearn.model_selection import TimeSeriesSplit
 
 # Модуль и тест лежат рядом, запуск прямой (`python3 scripts/...`), поэтому его
 # каталог добавляется в sys.path до импорта.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import cpi_nowcast as cm
+import eval_utils as eu
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "testdata" / "cpi_nowcast"
 
@@ -261,6 +267,41 @@ class TestConstants(unittest.TestCase):
     def test_degenerate_window_error_is_value_error(self):
         # Task 3 будет ловить его отдельной веткой walk-forward.
         self.assertTrue(issubclass(cm.DegenerateWindowError, ValueError))
+
+    def test_walk_forward_window_defaults(self):
+        # Спека §4: старт 24 — основной, 48 и embargo=1 — робастность.
+        self.assertEqual((cm.MAIN_START, cm.MAIN_EMBARGO), (24, 0))
+        self.assertEqual((cm.ROBUST_START, cm.ROBUST_EMBARGO), (48, 1))
+
+    def test_model_names_and_labels_are_pinned(self):
+        self.assertEqual(
+            (cm.MODEL_LAST, cm.MODEL_AR1, cm.MODEL_ENET),
+            ("b1_last_value", "b2_ar1_seasonal", "b3_elastic_net"),
+        )
+        self.assertEqual(list(cm.BENCHMARKS), [cm.MODEL_LAST, cm.MODEL_AR1, cm.MODEL_ENET])
+        self.assertIn("B1", cm.model_label(cm.MODEL_LAST))
+        self.assertIn("ElasticNetCV", cm.model_label(cm.MODEL_ENET))
+        # Незарегистрированное имя (модели Task 4) не подменяется меткой бенчмарка.
+        self.assertEqual(cm.model_label("catboost_direct"), "catboost_direct")
+
+    def test_significance_benchmark_and_artifact_constants(self):
+        # Спека §4: блок 3 месяца, n=2000, seed=SEED; §5 — точные имена артефактов.
+        self.assertEqual((cm.BOOTSTRAP_BLOCK, cm.BOOTSTRAP_N), (3, 2000))
+        self.assertEqual((cm.LAST_FOLDS, cm.ENET_MIN_TRAIN), (12, 12))
+        self.assertEqual(cm.HAC_MAXLAGS, 3)
+        self.assertEqual(len(cm.AR1_DUMMY_MONTHS), 11)
+        self.assertEqual(cm.REPORT_NAME, "cpi_nowcast_report.md")
+        self.assertEqual(cm.PREDICTIONS_NAME, "cpi_nowcast_predictions.csv")
+
+    def test_enet_configuration_matches_the_spec(self):
+        # Спека §3.3, дословно; конфигурация, подставленная в модель, пинуется
+        # ещё и по атрибутам подобранного пайплайна (TestBenchmarkEnet).
+        np.testing.assert_allclose(cm.ENET_ALPHAS, np.logspace(-4, 1, 20))
+        self.assertEqual(list(cm.ENET_L1_RATIOS), [0.1, 0.5, 0.9])
+        self.assertEqual(cm.ENET_CV_SPLITS, 3)
+        self.assertEqual(cm.ENET_MIN_TRAIN, 12)
+        self.assertNotIn("month", cm.ENET_FEATURES)
+        self.assertEqual(len(cm.ENET_FEATURES), 9)
 
 
 class TestMonthArithmetic(unittest.TestCase):
@@ -825,8 +866,13 @@ class TestRunSummaryOffline(unittest.TestCase):
 
     def run_summary(self, argv=None) -> tuple:
         output = io.StringIO()
-        with fixture_transport(), contextlib.redirect_stdout(output):
-            code = cm.main(argv or [])
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                fixture_transport(),
+                unittest.mock.patch.object(cm, "ARTIFACTS_DIR", Path(tmp)),
+                contextlib.redirect_stdout(output),
+            ):
+                code = cm.main(argv or [])
         return code, output.getvalue()
 
     def test_summary_reports_fixture_sample(self):
@@ -850,12 +896,17 @@ class TestRunSummaryOffline(unittest.TestCase):
         )
         self.assertEqual(summary_value(text, "purge-проверка (структурная):"), "OK")
 
-    def test_start_and_embargo_are_accepted_as_noops(self):
-        code, text = self.run_summary(["--start", "24", "--embargo-months", "1"])
+    def test_start_and_embargo_drive_the_main_window(self):
+        code, text = self.run_summary(["--start", "3", "--embargo-months", "1"])
         self.assertEqual(code, 0)
-        self.assertIn("принят", summary_value(text, "--start:"))
-        self.assertIn("принят", summary_value(text, "--embargo-months:"))
-        # На саму сводку они пока не влияют (walk-forward — Task 3).
+        self.assertIn("start=3, embargo=1 (основное)", text)
+        self.assertEqual(
+            summary_value(text, "--start:"), "3 (основное окно walk-forward)"
+        )
+        self.assertEqual(
+            summary_value(text, "--embargo-months:"), "1 (эмбарго основного окна)"
+        )
+        # Выборка флагами не меняется.
         self.assertEqual(
             summary_value(text, "выборка:"), "5 месяцев (2022-01 … 2022-05), пропущено 0"
         )
@@ -873,16 +924,17 @@ class TestRunSummaryOffline(unittest.TestCase):
         months += [date(2023, m, 1) for m in range(1, 4)]
         world = synthetic_world(months=months, fao=[])
         output = io.StringIO()
-        with contextlib.ExitStack() as stack:
-            for loader, key in (
-                ("load_targets", "targets"), ("load_weekly", "weekly"), ("load_usd", "usd"),
-                ("load_key_rate", "key_rate"), ("load_ofz_1y", "ofz"), ("load_fao", "fao"),
-            ):
-                stack.enter_context(
-                    unittest.mock.patch.object(cm, loader, lambda key=key: world[key])
-                )
-            stack.enter_context(contextlib.redirect_stdout(output))
-            code = cm.run_summary()
+        with tempfile.TemporaryDirectory() as tmp:
+            with contextlib.ExitStack() as stack:
+                for loader, key in (
+                    ("load_targets", "targets"), ("load_weekly", "weekly"), ("load_usd", "usd"),
+                    ("load_key_rate", "key_rate"), ("load_ofz_1y", "ofz"), ("load_fao", "fao"),
+                ):
+                    stack.enter_context(
+                        unittest.mock.patch.object(cm, loader, lambda key=key: world[key])
+                    )
+                stack.enter_context(contextlib.redirect_stdout(output))
+                code = cm.run_summary(out_dir=Path(tmp), today=date(2026, 10, 16))
         text = output.getvalue()
         self.assertEqual(code, 0)
         self.assertEqual(summary_value(text, "выборка:"), "пусто, пропущено 15")
@@ -900,6 +952,530 @@ class TestSummaryFormat(unittest.TestCase):
         self.assertEqual(cm._plural(429, "месяц", "месяца", "месяцев"), "месяцев")
         self.assertEqual(cm._plural(11, "точка", "точки", "точек"), "точек")
         self.assertEqual(cm._plural(1, "точка", "точки", "точек"), "точка")
+
+
+# --- Task 3: синтетика харнесса и бенчмарков ----------------------------------
+
+
+def harness_rows(count: int = 61, effects: dict = None) -> list:
+    """Строки харнесса: `y_t = 1 + 0.6·y_{t−1} + effect(месяц)`, признаки варьируют.
+
+    Формула известна точно, поэтому OLS-бенчмарк B2 обязан её восстановить
+    (c = 1, φ = 0.6, коэффициенты дамми — эффекты месяца), а `y_lag1` каждой
+    строки — метка предыдущей строки: та же связка «признак ↔ прошлая метка»,
+    что в живой выборке. 61 месяц — горизонт длиннее стартов walk-forward 24/48.
+    """
+    effects = effects or {}
+    rows = []
+    lag = 1.0
+    for index in range(count):
+        month = cm._month_shift(date(2020, 1, 1), index)
+        y = 1.0 + 0.6 * lag + effects.get(month.month, 0.0)
+        features = {
+            "share_rising_wk": 0.5 + 0.01 * (index % 7),
+            "median_wk": 0.2 + 0.001 * index,
+            "median_wk4": 0.25 + 0.001 * index,
+            "gasoline_4w": 0.4 + 0.002 * index,
+            "usd_20d": 1.0 + 0.01 * (index % 11),
+            "key_rate": 7.5 + 0.01 * (index % 5),
+            "ofz_1y": 8.0 + 0.01 * (index % 3),
+            "fao_mm": 0.1 + 0.001 * index,
+            "y_lag1": lag,
+            "month": month.month,
+        }
+        rows.append(
+            cm.Row(month=month, y={code: y for code in cm.TARGET_SERIES}, features=features)
+        )
+        lag = y
+    return rows
+
+
+def enet_rows(count: int = 40) -> list:
+    """Синтетика B3: таргет — линейная функция признаков (ElasticNet их находит).
+
+    `ofz_1y` входит в таргет с большим весом: тест импутации обязан видеть, что
+    подмена признака (а не только NaN) меняет прогноз.
+    """
+    generator = random.Random(cm.SEED)
+    rows = []
+    lag = 0.5
+    for index in range(count):
+        month = cm._month_shift(date(2020, 1, 1), index)
+        values = {name: generator.uniform(-1.0, 1.0) for name in cm.ENET_FEATURES}
+        values["y_lag1"] = lag
+        y = 1.0 + 0.5 * lag + 0.3 * values["key_rate"] + values["ofz_1y"]
+        rows.append(
+            cm.Row(
+                month=month,
+                y={code: y for code in cm.TARGET_SERIES},
+                features={**values, "month": month.month},
+            )
+        )
+        lag = y
+    return rows
+
+
+def row_like(row: cm.Row, **features) -> cm.Row:
+    """Копия строки с заменёнными признаками (`Row` неизменяем, признаки — dict)."""
+    return cm.Row(month=row.month, y=dict(row.y), features={**row.features, **features})
+
+
+class TestWalkForwardHarness(unittest.TestCase):
+    """Walk-forward: только прошлое, эмбарго, счётчик вырожденных окон (спека §4)."""
+
+    def setUp(self):
+        self.rows = harness_rows()
+        self.months = [row.month for row in self.rows]
+
+    def test_first_fold_is_the_month_after_start_and_trains_on_past_only(self):
+        seen = []
+
+        def recording(train, row):
+            seen.append([item.month for item in train])
+            return float(len(train))
+
+        predictions = cm.walk_forward(self.rows, {"stub": recording}, start=24, embargo=0)
+        self.assertEqual(len(predictions), len(self.rows) - 24)
+        self.assertEqual(predictions[0].month, self.months[24])  # 25-й месяц
+        self.assertEqual(predictions[0].model, "stub")
+        self.assertEqual(predictions[0].y_true, self.rows[24].y[cm.TARGET_ALL])
+        self.assertEqual(predictions[0].y_pred, 24.0)
+        # Обучающее окно каждого фолда — ровно предыдущие месяцы, ничего вперёд.
+        for index, train_months in enumerate(seen, start=24):
+            self.assertEqual(train_months, self.months[:index])
+
+    def test_embargo_drops_the_month_before_the_test(self):
+        seen = []
+
+        def recording(train, row):
+            seen.append(len(train))
+            return 0.0
+
+        cm.walk_forward(self.rows, {"stub": recording}, start=24, embargo=1)
+        self.assertEqual(seen[0], 23)  # месяц перед тестом выброшен
+        self.assertEqual(seen[1], 24)
+        self.assertEqual(seen[-1], len(self.rows) - 2)
+
+    def test_short_sample_gives_no_folds(self):
+        predictions = cm.walk_forward(
+            harness_rows(count=10), {"stub": lambda train, row: 0.0}, start=24, embargo=0
+        )
+        self.assertEqual(predictions, [])
+
+    def test_walk_forward_is_deterministic(self):
+        first = cm.walk_forward(self.rows, {cm.MODEL_ENET: cm.fit_enet}, start=24, embargo=0)
+        second = cm.walk_forward(self.rows, {cm.MODEL_ENET: cm.fit_enet}, start=24, embargo=0)
+        self.assertEqual(first, second)
+
+    def test_degenerate_windows_are_counted_not_raised(self):
+        skipped = {}
+        predictions = cm.walk_forward(
+            self.rows, {"enet": cm.fit_enet}, start=8, embargo=0, skipped=skipped
+        )
+        # Окно короче ENET_MIN_TRAIN=12 — четыре первых фолда пропущены со счётчиком.
+        self.assertEqual(skipped, {"enet": 4})
+        self.assertEqual(len(predictions), len(self.rows) - 12)
+        self.assertEqual(predictions[0].month, self.months[12])
+
+    def test_model_that_always_degrades_is_skipped_with_counter(self):
+        def degenerate(train, row):
+            raise cm.DegenerateWindowError("окно вырождено")
+
+        skipped = {}
+        predictions = cm.walk_forward(
+            self.rows, {"bad": degenerate}, start=24, embargo=0, skipped=skipped
+        )
+        self.assertEqual(predictions, [])
+        self.assertEqual(skipped, {"bad": len(self.rows) - 24})
+
+    def test_other_model_errors_are_not_swallowed(self):
+        def broken(train, row):
+            raise RuntimeError("баг модели")
+
+        with self.assertRaises(RuntimeError):
+            cm.walk_forward(self.rows, {"broken": broken}, start=24, embargo=0)
+
+    def test_invalid_window_parameters_fail(self):
+        stub = {"stub": lambda train, row: 0.0}
+        with self.assertRaises(ValueError):
+            cm.walk_forward(self.rows, stub, start=0, embargo=0)
+        with self.assertRaises(ValueError):
+            # embargo съедает весь обучающий набор — окна нет по построению
+            cm.walk_forward(self.rows, stub, start=24, embargo=24)
+
+    def test_window_specs_default_to_main_plus_robustness(self):
+        self.assertEqual(cm.window_specs(), [(24, 0), (48, 0), (24, 1)])
+
+    def test_evaluate_windows_marks_main_and_collects_counters(self):
+        runs = cm.evaluate_windows(self.rows, {"stub": lambda train, row: 0.0}, [(24, 0), (48, 0)])
+        self.assertEqual([run.main for run in runs], [True, False])
+        self.assertEqual([(run.start, run.embargo) for run in runs], [(24, 0), (48, 0)])
+        self.assertEqual(runs[0].skipped, {"stub": 0})
+        self.assertEqual(runs[0].folds, len(self.rows) - 24)
+        self.assertEqual(len(runs[0].predictions), len(self.rows) - 24)
+        self.assertEqual(len(runs[1].predictions), len(self.rows) - 48)
+
+
+class TestBenchmarkLastValue(unittest.TestCase):
+    """B1 «прошлый месяц»: прогноз — `y_{M−1}` из признаков строки (спека §3.3)."""
+
+    def test_prediction_is_the_lag_feature(self):
+        rows = harness_rows()
+        row = rows[30]
+        self.assertEqual(cm.predict_last([], row), row.features["y_lag1"])
+        self.assertEqual(cm.predict_last(rows[:3], row), rows[29].y[cm.TARGET_ALL])
+        # Источник лага не зависит от обучающего окна (и совпадает с моделями).
+        self.assertEqual(cm.predict_last(rows[:3], row), cm.predict_last(rows[:29], row))
+
+    def test_every_fold_forecasts_the_previous_month_even_with_embargo(self):
+        rows = harness_rows()
+        by_month = {row.month: row for row in rows}
+        predictions = cm.walk_forward(rows, {cm.MODEL_LAST: cm.predict_last}, start=24, embargo=1)
+        self.assertTrue(predictions)
+        for prediction in predictions:
+            previous = cm.previous_month(prediction.month)
+            self.assertEqual(prediction.y_pred, by_month[previous].y[cm.TARGET_ALL])
+
+
+class TestBenchmarkAr1(unittest.TestCase):
+    """B2: OLS `y_M` на `y_{M−1}` + 11 дамми месяца, HAC (спека §3.3)."""
+
+    def test_recovers_phi_and_intercept_on_known_formula(self):
+        rows = harness_rows()
+        prediction = cm.fit_ar1(rows[:50], rows[50])
+        result = cm.fit_ar1.last_result
+        self.assertAlmostEqual(float(result.params[0]), 1.0, places=6)
+        self.assertAlmostEqual(float(result.params[1]), 0.6, places=6)
+        self.assertAlmostEqual(prediction, rows[50].y[cm.TARGET_ALL], places=6)
+
+    def test_hac_configuration_is_pinned_by_result_attributes(self):
+        rows = harness_rows()
+        cm.fit_ar1(rows[:40], rows[40])
+        result = cm.fit_ar1.last_result
+        self.assertEqual(result.cov_type, "HAC")
+        self.assertEqual(result.cov_kwds["maxlags"], cm.HAC_MAXLAGS)
+        self.assertTrue(result.cov_kwds["use_correction"])
+        # const + y_lag1 + 11 дамми месяца
+        self.assertEqual(len(result.params), 2 + len(cm.AR1_DUMMY_MONTHS))
+
+    def test_month_dummies_map_to_calendar_months(self):
+        rows = harness_rows(effects={3: 5.0})
+        for month_number, expected in ((3, 5.0), (1, 0.0)):
+            target = [row for row in rows if row.month.month == month_number][-1]
+            train = [row for row in rows if row.month < target.month]
+            seasonality = cm.fit_ar1(train, target) - (1.0 + 0.6 * target.features["y_lag1"])
+            self.assertAlmostEqual(seasonality, expected, places=6)
+
+    def test_degenerate_on_short_window(self):
+        rows = harness_rows()
+        with self.assertRaises(cm.DegenerateWindowError):
+            cm.fit_ar1(rows[:13], rows[13])
+
+    def test_degenerate_on_constant_lag(self):
+        rows = harness_rows()
+        for row in rows:
+            row.features["y_lag1"] = 1.0
+            row.y.update({code: 1.0 for code in cm.TARGET_SERIES})
+        with self.assertRaises(cm.DegenerateWindowError):
+            cm.fit_ar1(rows[:30], rows[30])
+
+
+class TestBenchmarkEnet(unittest.TestCase):
+    """B3: ElasticNetCV на стандартизованных признаках §2.3 без `month` (спека §3.3)."""
+
+    def test_feature_vector_excludes_month(self):
+        self.assertEqual(
+            cm.ENET_FEATURES, tuple(name for name in cm.feature_names() if name != "month")
+        )
+        self.assertEqual(len(cm.ENET_FEATURES), 9)
+        self.assertNotIn("month", cm.ENET_FEATURES)
+
+    def test_configuration_is_pinned_from_the_fitted_model(self):
+        rows = enet_rows()
+        cm.fit_enet(rows[:30], rows[30])
+        enet = cm.fit_enet.last_fit.model.named_steps["enet"]
+        params = enet.get_params()
+        np.testing.assert_allclose(params["alphas"], np.logspace(-4, 1, 20))
+        self.assertEqual(list(params["l1_ratio"]), [0.1, 0.5, 0.9])
+        self.assertIsInstance(params["cv"], TimeSeriesSplit)
+        self.assertEqual(params["cv"].n_splits, 3)
+        self.assertEqual(params["random_state"], cm.SEED)
+
+    def test_scaler_is_fitted_on_the_train_window_only(self):
+        rows = enet_rows()
+        cm.fit_enet(rows[:30], rows[30])
+        fit = cm.fit_enet.last_fit
+        scaler = fit.model.named_steps["scaler"]
+        np.testing.assert_allclose(scaler.mean_, fit.imputed.mean(axis=0))
+        np.testing.assert_allclose(scaler.scale_, fit.imputed.std(axis=0))
+
+    def test_prediction_is_deterministic(self):
+        rows = enet_rows()
+        self.assertEqual(cm.fit_enet(rows[:30], rows[30]), cm.fit_enet(rows[:30], rows[30]))
+
+    def test_fit_emits_no_warnings(self):
+        # Вывод тестов и прогона — только числа: недосчёт координатного спуска на
+        # малых alpha подавлен внутри `fit_enet` (конфигурация закреплена спекой
+        # §3.3), а не утекает в консоль.
+        rows = enet_rows()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            cm.fit_enet(rows[:30], rows[30])
+        self.assertEqual([str(warning.message) for warning in caught], [])
+
+    def test_nan_in_train_is_imputed_with_column_median(self):
+        rows = enet_rows()
+        column = cm.ENET_FEATURES.index("ofz_1y")
+        nan_positions = [3, 7, 9]
+        for position in nan_positions:
+            rows[position].features["ofz_1y"] = float("nan")
+        present = [
+            rows[position].features["ofz_1y"]
+            for position in range(30)
+            if position not in nan_positions
+        ]
+        median = statistics.median(present)
+        cm.fit_enet(rows[:30], rows[30])
+        fit = cm.fit_enet.last_fit
+        self.assertAlmostEqual(fit.medians[column], median, places=12)
+        for position in nan_positions:
+            self.assertAlmostEqual(fit.imputed[position][column], median, places=12)
+        self.assertFalse(np.isnan(fit.imputed).any())
+
+    def test_nan_in_test_is_imputed_with_train_median(self):
+        rows = enet_rows()
+        column = cm.ENET_FEATURES.index("ofz_1y")
+        train, test = rows[:30], rows[30]
+        with_nan = cm.fit_enet(train, row_like(test, ofz_1y=float("nan")))
+        median = float(cm.fit_enet.last_fit.medians[column])
+        with_median = cm.fit_enet(train, row_like(test, ofz_1y=median))
+        self.assertAlmostEqual(with_nan, with_median, places=12)
+        # Импутация не «съедает» признак: другое значение прогноз всё же меняет.
+        self.assertNotAlmostEqual(
+            cm.fit_enet(train, row_like(test, ofz_1y=median + 10.0)), with_nan, places=6
+        )
+
+    def test_all_nan_column_is_a_neutral_constant(self):
+        # Живой бэктест: ofz_1y — NaN во всех месяцах (у G-curve нет истории).
+        rows = enet_rows()
+        for row in rows:
+            row.features["ofz_1y"] = float("nan")
+        value = cm.fit_enet(rows[:30], rows[30])
+        fit = cm.fit_enet.last_fit
+        column = cm.ENET_FEATURES.index("ofz_1y")
+        self.assertEqual(fit.medians[column], 0.0)
+        self.assertFalse(np.isnan(fit.imputed).any())
+        self.assertTrue(math.isfinite(value))
+
+    def test_degenerate_when_most_columns_are_nan_columns(self):
+        rows = enet_rows()
+        names = ("median_wk", "median_wk4", "gasoline_4w", "usd_20d", "fao_mm")  # 5 из 9
+        for position in range(30):
+            for name in names:
+                if position % 10 != 0:
+                    rows[position].features[name] = float("nan")
+        with self.assertRaises(cm.DegenerateWindowError):
+            cm.fit_enet(rows[:30], rows[30])
+
+    def test_minority_nan_columns_are_imputed_not_degenerate(self):
+        rows = enet_rows()
+        names = ("median_wk", "median_wk4", "gasoline_4w", "usd_20d")  # 4 из 9 — меньше половины
+        for position in range(30):
+            for name in names:
+                if position % 10 != 0:
+                    rows[position].features[name] = float("nan")
+        self.assertTrue(math.isfinite(cm.fit_enet(rows[:30], rows[30])))
+
+    def test_degenerate_below_min_train(self):
+        rows = enet_rows()
+        with self.assertRaises(cm.DegenerateWindowError):
+            cm.fit_enet(rows[:11], rows[11])
+        self.assertTrue(math.isfinite(cm.fit_enet(rows[:12], rows[12])))
+
+
+class TestMetricsAndSignificance(unittest.TestCase):
+    """Метрики в п.п. через `eval_utils` и парные тесты значимости (спека §4)."""
+
+    @staticmethod
+    def predictions(errors, model="m", first_month=date(2022, 1, 1)):
+        return [
+            cm.Prediction(
+                month=cm._month_shift(first_month, index),
+                model=model,
+                y_true=1.0,
+                y_pred=1.0 + error,
+            )
+            for index, error in enumerate(errors)
+        ]
+
+    def test_errors_are_prediction_minus_fact(self):
+        self.assertEqual(cm.errors(self.predictions([0.5, -1.5])), [0.5, -1.5])
+
+    def test_rmse_and_mae_match_eval_utils_on_hand_numbers(self):
+        predictions = self.predictions([0.5, -1.5])
+        self.assertAlmostEqual(cm.rmse_pp(predictions), eu.rmse([0.5, -1.5]), places=12)
+        self.assertAlmostEqual(cm.rmse_pp(predictions), math.sqrt((0.25 + 2.25) / 2), places=12)
+        self.assertAlmostEqual(cm.mae_pp(predictions), 1.0, places=12)
+
+    def test_diebold_mariano_wrapper_uses_h1(self):
+        err_a = [0.1, -0.2, 0.3, 0.05, -0.4, 0.2, 0.1, -0.1]
+        err_b = [0.2, -0.1, 0.25, 0.1, -0.3, 0.15, 0.2, -0.05]
+        self.assertEqual(cm.diebold_mariano(err_a, err_b), eu.diebold_mariano(err_a, err_b, 1))
+
+    def test_bootstrap_wrapper_pins_block_n_and_seed(self):
+        err_a = [0.1, -0.2, 0.3, 0.05, -0.4, 0.2]
+        err_b = [0.2, -0.1, 0.25, 0.1, -0.3, 0.15]
+        self.assertEqual(
+            cm.block_bootstrap_rmse_diff(err_a, err_b),
+            eu.block_bootstrap_rmse_diff(err_a, err_b, block=3, n=2000, seed=cm.SEED),
+        )
+
+    def test_pairwise_tests_flag_a_biased_model(self):
+        months = [cm._month_shift(date(2020, 1, 1), index) for index in range(24)]
+        good = [cm.Prediction(month=m, model="good", y_true=1.0, y_pred=1.0) for m in months]
+        bad = [cm.Prediction(month=m, model="bad", y_true=1.0, y_pred=1.4) for m in months]
+        tests = cm.pairwise_tests(good + bad)
+        self.assertEqual(len(tests), 1)
+        pair = tests[0]
+        self.assertEqual((pair.model_a, pair.model_b), ("good", "bad"))
+        self.assertEqual(pair.n, 24)
+        self.assertAlmostEqual(pair.rmse_diff, -0.4, places=12)  # RMSE(good) − RMSE(bad)
+        self.assertTrue(math.isinf(pair.dm_stat) and pair.dm_stat < 0)
+        self.assertEqual(pair.dm_p, 0.0)
+        self.assertAlmostEqual(pair.ci_low, -0.4, places=12)
+        self.assertAlmostEqual(pair.ci_high, -0.4, places=12)
+        self.assertEqual(pair.bootstrap_p, 0.0)
+
+    def test_pairwise_tests_skip_models_without_common_months(self):
+        first = self.predictions([0.1, 0.2, 0.3], model="a", first_month=date(2022, 1, 1))
+        second = self.predictions([0.1, 0.2, 0.3], model="b", first_month=date(2024, 1, 1))
+        self.assertEqual(cm.pairwise_tests(first + second), [])
+
+
+class TestReportSkeleton(unittest.TestCase):
+    """Скелет отчёта: «модель × окно», последние 12 фолдов, значимость, границы."""
+
+    @staticmethod
+    def build_runs():
+        rows = harness_rows()
+        models = {
+            cm.MODEL_LAST: lambda train, row: row.y[cm.TARGET_ALL],
+            cm.MODEL_AR1: lambda train, row: row.y[cm.TARGET_ALL] + 0.2,
+            cm.MODEL_ENET: lambda train, row: row.y[cm.TARGET_ALL] + 0.5,
+        }
+        return rows, cm.evaluate_windows(rows, models, cm.window_specs())
+
+    def render(self, rows=None, runs=None, nowcast=None):
+        rows = harness_rows() if rows is None else rows
+        runs = self.build_runs()[1] if runs is None else runs
+        return cm.render_report(rows, [], runs, nowcast=nowcast, today=date(2026, 10, 16))
+
+    def test_sections_and_model_by_window_table(self):
+        report = self.render()
+        for section in (
+            "# CPI nowcast",
+            "## Выборка",
+            "## Walk-forward",
+            "## Метрики (RMSE / MAE, п.п.)",
+            "## Последние 12 фолдов (основное окно start=24)",
+            "## Тесты значимости между моделями (основное окно start=24)",
+            "## Что не проверено",
+            "## Текущий nowcast",
+        ):
+            self.assertIn(section, report)
+        self.assertIn("Дата прогона: 2026-10-16", report)
+        # «модель × окно»: фолды и метрики по каждому окну
+        self.assertIn("| B1 last value | start=24 (основное) | 37 | 0 |", report)
+        self.assertIn("| B3 ElasticNetCV | start=48 (робастность) | 13 | 0 |", report)
+        self.assertIn("| B1 last value | start=24 (основное) | 37 | 0.000 | 0.000 |", report)
+        self.assertIn("| B2 AR(1)+сезонные дамми | start=24 (основное) | 37 | 0.200 | 0.200 |", report)
+        # блок «последние 12 фолдов» — тот же отрезок для всех моделей
+        self.assertIn("| B1 last value | 12 | 0.000 | 0.000 |", report)
+        # значимость между бенчмарками: B1 точнее B2 на 0.2 п.п. (ошибки константны)
+        self.assertIn("-0.200", report)
+        self.assertIn("<0.0001", report)
+
+    def test_nan_policy_is_documented(self):
+        report = self.render()
+        self.assertIn("импутирует NaN медианой обучающего окна фолда", report)
+        self.assertIn("StandardScaler", report)
+        self.assertIn("ofz_1y", report)
+
+    def test_nowcast_block_is_a_placeholder_until_task5(self):
+        self.assertIn("Task 5", self.render())
+        block = "**Октябрь-2026**: 0.55 п.п. (предварительно)"
+        self.assertIn(block, self.render(nowcast=block))
+
+    def test_report_renders_without_sample_or_runs(self):
+        report = cm.render_report([], [], [], nowcast=None, today=date(2026, 10, 16))
+        self.assertIn("# CPI nowcast", report)
+        self.assertIn("## Что не проверено", report)
+
+    def test_report_is_deterministic_for_a_fixed_date(self):
+        self.assertEqual(self.render(), self.render())
+
+
+class TestArtifacts(unittest.TestCase):
+    """Артефакты прогона: имена, LF, колонки CSV, порядок строк."""
+
+    @staticmethod
+    def runs():
+        rows = harness_rows()
+        models = {cm.MODEL_LAST: lambda train, row: row.y[cm.TARGET_ALL]}
+        return cm.evaluate_windows(rows, models, [(24, 0), (24, 1)])
+
+    def test_write_artifacts_names_columns_and_lf(self):
+        runs = self.runs()
+        with tempfile.TemporaryDirectory() as tmp:
+            report_path, predictions_path = cm.write_artifacts(Path(tmp), "# отчёт\n", runs)
+            self.assertEqual(report_path.name, cm.REPORT_NAME)
+            self.assertEqual(predictions_path.name, cm.PREDICTIONS_NAME)
+            self.assertEqual(report_path.read_text(encoding="utf-8"), "# отчёт\n")
+            raw = predictions_path.read_bytes()
+            self.assertNotIn(b"\r", raw)
+            rows = list(csv.DictReader(io.StringIO(raw.decode("utf-8"))))
+            self.assertEqual(len(rows), sum(len(run.predictions) for run in runs))
+            self.assertEqual(tuple(rows[0]), cm.PREDICTIONS_COLUMNS)
+            self.assertEqual(rows[0]["window"], "start=24")
+            self.assertEqual(rows[0]["model"], cm.MODEL_LAST)
+            self.assertAlmostEqual(
+                float(rows[0]["error"]),
+                float(rows[0]["y_pred"]) - float(rows[0]["y_true"]),
+                places=12,
+            )
+            self.assertEqual(
+                {row["window"] for row in rows}, {"start=24", "start=24, embargo=1"}
+            )
+            # Порядок — окна прогона: строки второго окна идут после первого.
+            windows = [row["window"] for row in rows]
+            self.assertEqual(
+                windows.index("start=24, embargo=1"),
+                sum(1 for window in windows if window == "start=24"),
+            )
+
+
+class TestRunOffline(unittest.TestCase):
+    """Живой путь прогона офлайн: фикстуры, walk-forward, артефакты."""
+
+    def test_run_summary_writes_artifacts_on_fixtures(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = io.StringIO()
+            with fixture_transport(), contextlib.redirect_stdout(output):
+                code = cm.run_summary(
+                    start=3, embargo_months=0, out_dir=Path(tmp), today=date(2026, 10, 16)
+                )
+            self.assertEqual(code, 0)
+            self.assertIn("walk-forward", output.getvalue())
+            report = (Path(tmp) / cm.REPORT_NAME).read_text(encoding="utf-8")
+            self.assertIn("2022-01 … 2022-05", report)
+            self.assertIn("Дата прогона: 2026-10-16", report)
+            with (Path(tmp) / cm.PREDICTIONS_NAME).open(encoding="utf-8", newline="") as handle:
+                predictions = list(csv.DictReader(handle))
+            self.assertTrue(predictions)
+            # На пяти месяцах фолд B2/B3 вырожден (окно короче минимума) — пропуск
+            # со счётчиком, а не падение: в CSV остаются только прогнозы B1.
+            self.assertEqual({row["model"] for row in predictions}, {cm.MODEL_LAST})
+            self.assertIn("| B3 ElasticNetCV | start=3 (основное) | 0 | 2 |", report)
 
 
 if __name__ == "__main__":
