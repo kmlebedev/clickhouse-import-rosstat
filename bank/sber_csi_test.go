@@ -95,9 +95,12 @@ func TestSberCSIParse(t *testing.T) {
 		t.Error("фикстура потеряла BOM источника — это уже не урезание живого файла")
 	}
 
-	points, err := parseSberRows(loadFixture(t, sberMonthlyFixture))
+	points, skipped, err := parseSberRows(loadFixture(t, sberMonthlyFixture))
 	if err != nil {
 		t.Fatalf("parseSberRows: %v", err)
+	}
+	if skipped != 0 {
+		t.Errorf("фикстура не содержит пустых значений, а разбор пропустил %d записей", skipped)
 	}
 	if len(points) != 10 {
 		t.Fatalf("точек %d, ожидалось 10", len(points))
@@ -117,25 +120,29 @@ func TestSberCSIParse(t *testing.T) {
 
 	// Шапку с неснятым BOM (файл без кавычек) разбор обязан распознать, а не падать
 	// «неожиданная шапка»: так выглядит выгрузка, если транспорт BOM не снял.
-	bomPoints, err := parseSberRows([][]string{
+	bomPoints, bomSkipped, err := parseSberRows([][]string{
 		{"\ufeffdate", "category", "value"},
 		{"2026-09-01", "Всего", "100"},
 	})
 	if err != nil {
 		t.Fatalf("parseSberRows с BOM в шапке: %v", err)
 	}
-	if len(bomPoints) != 1 || bomPoints[0].Series != "Всего" {
-		t.Errorf("parseSberRows с BOM в шапке: %+v", bomPoints)
+	if len(bomPoints) != 1 || bomPoints[0].Series != "Всего" || bomSkipped != 0 {
+		t.Errorf("parseSberRows с BOM в шапке: точки %+v, пропущено %d", bomPoints, bomSkipped)
 	}
 }
 
 // TestSberCSIWeekParse — недельная выгрузка: ровно 138 точек (46 категорий × 3 недели),
 // дата — воскресенье ISO-недели, значения — % г/г, имена нормализованы: «Все категории »
-// источника становится «Все категории».
+// источника становится «Все категории». Фикстуры обеих выгрузок сняты с живых файлов и пустых
+// ячеек значения не содержат (`skipped == 0`): правка «пропуск вместо ошибки» их не касается.
 func TestSberCSIWeekParse(t *testing.T) {
-	points, err := parseSberRows(loadFixture(t, sberWeeklyFixture))
+	points, skipped, err := parseSberRows(loadFixture(t, sberWeeklyFixture))
 	if err != nil {
 		t.Fatalf("parseSberRows: %v", err)
+	}
+	if skipped != 0 {
+		t.Errorf("фикстура не содержит пустых значений, а разбор пропустил %d записей", skipped)
 	}
 	if len(points) != 138 {
 		t.Fatalf("точек %d, ожидалось 138", len(points))
@@ -184,11 +191,16 @@ func TestParseSberRowsFailFast(t *testing.T) {
 		{"InfinityValue", [][]string{header, {"2026-09-01", "Всего", "infinity"}}, "не конечно", badRow},
 		{"ShortRow", [][]string{header, {"2026-09-01", "Всего"}}, "полей", badRow},
 		{"EmptyCategory", [][]string{header, {"2026-09-01", "   ", "100"}}, "пустое имя категории", badRow},
+		// Пропуск записи с пустым значением (стандарт §6.7) не отменяет остальных проверок: у
+		// записи с пустой ячейкой значения битая дата и пустая категория остаются ошибками —
+		// иначе порча выгрузки пряталась бы за «пропуском».
+		{"BrokenDateWithEmptyValue", [][]string{header, {"2026-13-45", "Всего", ""}}, "дата", badRow},
+		{"EmptyCategoryWithEmptyValue", [][]string{header, {"2026-09-01", "   ", ""}}, "пустое имя категории", badRow},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			points, err := parseSberRows(c.records)
+			points, _, err := parseSberRows(c.records)
 			if err == nil {
 				t.Fatalf("ожидалась ошибка, получено %d точек", len(points))
 			}
@@ -199,6 +211,62 @@ func TestParseSberRowsFailFast(t *testing.T) {
 				t.Errorf("ошибка %q не называет место дефекта %q", err, c.wantPos)
 			}
 		})
+	}
+}
+
+// TestParseSberRowsSkipsEmptyValues — запись с пустой ячейкой значения не валит прогон и не
+// становится нулевой точкой (§6.7): такое наблюдение источника просто отсутствует. Это
+// требование цепочки `type: chain` (dagu/bank.yaml): падение шага Сбера лишило бы данных шаги
+// tbank/vtb (стандарт §12.3). Прежний недельный импортёр вёл себя так же (`continue`).
+func TestParseSberRowsSkipsEmptyValues(t *testing.T) {
+	header := []string{"date", "category", "value"}
+
+	points, skipped, err := parseSberRows([][]string{
+		header,
+		{"2026-09-01", "Всего", ""},
+		{"2026-08-01", "Всего", "   "}, // пробелы — та же пустая ячейка
+		{"2026-07-01", "Всего", "99"},
+		{"2026-09-01", "Услуги", "125.23"},
+	})
+	if err != nil {
+		t.Fatalf("пустое значение не ошибка, получено: %v", err)
+	}
+	if skipped != 2 {
+		t.Errorf("пропущено %d записей, ожидалось 2", skipped)
+	}
+	if len(points) != 2 {
+		t.Fatalf("точек %d, ожидалось 2: %+v", len(points), points)
+	}
+	// Пропуск не превращается в точку: ни нулевого значения, ни точки на дату пропуска (иначе
+	// пропуск источника прочитался бы агентом как «расходы упали до нуля»).
+	for _, p := range points {
+		if p.Value == 0 {
+			t.Errorf("нулевая точка %+v: пропуск превратился в значение", p)
+		}
+		if p.Date.Equal(sberDay(2026, time.September, 1)) && p.Series == "Всего" {
+			t.Errorf("точка на дату пропуска: %+v", p)
+		}
+	}
+	if got := sberAt(t, points, "Всего", sberDay(2026, time.July, 1)); got != 99 {
+		t.Errorf("значение уцелевшей точки %v, ожидалось 99", got)
+	}
+
+	// Выгрузка, где пусты значения всех записей, остаётся ошибкой: это не «0 строк» шаблона, а
+	// подменённый или сломанный источник. Сообщение называет число пропущенных записей.
+	allEmpty, skipped, err := parseSberRows([][]string{
+		header,
+		{"2026-09-01", "Всего", ""},
+		{"2026-08-01", "Всего", "  "},
+	})
+	if err == nil {
+		t.Fatalf("ожидалась ошибка «все значения пусты», получено %d точек", len(allEmpty))
+	}
+	if !strings.Contains(err.Error(), "пустая выгрузка") ||
+		!strings.Contains(err.Error(), "пропущено записей с пустым значением: 2") {
+		t.Errorf("ошибка %q не называет пустую выгрузку и число пропущенных записей", err)
+	}
+	if skipped != 2 || len(allEmpty) != 0 {
+		t.Errorf("пропущено %d, точек %d — ожидалось 2 и 0", skipped, len(allEmpty))
 	}
 }
 

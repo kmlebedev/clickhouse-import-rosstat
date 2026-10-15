@@ -6,13 +6,17 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+	log "github.com/sirupsen/logrus"
 )
 
 const (
 	// Старый путь /proxy/services/node-services/v1/... мёртв: отдаёт HTML-оболочку SPA (200 text/html),
 	// из-за чего таблица годами оставалась пустой. Живая выгрузка — пункт «…в .csv» кнопки «Скачать»
 	// дашборда sberindex.ru/ru/dashboards/consumper-spending-index-sa (проверено 2026-10-15).
-	// Резерв при исчезновении пути: /api/dataset/v1/download/consumper-spending-index-sa/csv (ZIP с CSV).
+	// Резерв при исчезновении пути: /api/dataset/v1/download/consumper-spending-index-sa/csv — но
+	// это ZIP с CSV другой раскладки, а util.GetCSV архив не распаковывает. Резервный адрес
+	// документируется как источник, а не как drop-in замена: переход на него требует распаковки
+	// ZIP или другого транспорта (спека §3, п. 4).
 	sberCSIDataUrl = "https://sberindex.ru/api/dataset/deprecated/csv/ru/consumper-spending-index-sa.csv"
 	sberCSITable   = "sber_consumper_spending_index"
 	// DDL в %s-форме: имя таблицы подставляет шаблон (стандарт §5.1). Колонки — прежние, legacy
@@ -48,8 +52,14 @@ func sberCSICraw(dataUrl string, conn driver.Conn) (count int64, err error) {
 	// Разбор отделён от сети (стандарт §6.1) и падает громко на HTML-заглушке или пустой
 	// выгрузке — молчаливый «0 строк» и был дефектом, ради которого заведён пункт (стандарт §6.4).
 	var points []sberPoint
-	if points, err = parseSberRows(records); err != nil {
+	var skipped int
+	if points, skipped, err = parseSberRows(records); err != nil {
 		return 0, fmt.Errorf("sber %s: %w", sberCSITable, err)
+	}
+	// Запись с пустым значением — не точка ряда (стандарт §6.7): разбор её пропускает, и прогон
+	// продолжается. Ошибка здесь лишила бы данных шаги tbank/vtb цепочки dagu (стандарт §12.3).
+	if skipped > 0 {
+		log.Warnf("sber %s: пропущено %d записей с пустым значением (не точки ряда, стандарт §6.7)", sberCSITable, skipped)
 	}
 	batch, err := conn.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s", sberCSITable))
 	if err != nil {

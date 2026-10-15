@@ -6,6 +6,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -47,11 +48,17 @@ func sberCSIWeekCraw(dataUrl string, conn driver.Conn) (count int64, err error) 
 		return 0, fmt.Errorf("sber %s: %w", sberCSIWeekTable, err)
 	}
 	// Разбор общий с месячным набором (bank/sber_csi_parse.go): формат `date;category;value` у
-	// выгрузок один, включая TrimSpace категории («Все категории » источника) и fail-fast на
-	// HTML-заглушке и пустом результате (стандарт §6.1, §6.4).
+	// выгрузок один, включая TrimSpace категории («Все категории » источника), fail-fast на
+	// HTML-заглушке и пустом результате (стандарт §6.1, §6.4) и пропуск записей с пустым
+	// значением (стандарт §6.7) — прежний код пропускал такие строки молча, теперь о пропуске
+	// сообщает журнал.
 	var points []sberPoint
-	if points, err = parseSberRows(records); err != nil {
+	var skipped int
+	if points, skipped, err = parseSberRows(records); err != nil {
 		return 0, fmt.Errorf("sber %s: %w", sberCSIWeekTable, err)
+	}
+	if skipped > 0 {
+		log.Warnf("sber %s: пропущено %d записей с пустым значением (не точки ряда, стандарт §6.7)", sberCSIWeekTable, skipped)
 	}
 	batch, err := conn.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s", sberCSIWeekTable))
 	if err != nil {
