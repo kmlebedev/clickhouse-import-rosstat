@@ -62,7 +62,7 @@
 - Produces: константы `DatasourceType = "grafana-clickhouse-datasource"`, `DatasourceUID = "ch-rosstat"`, `DashboardUID = "gold-thesis"`, `ApiVersion = "dashboard.grafana.app/v1beta1"`;
   `NewCHQuery(refID, rawSQL string) *CHQueryBuilder` с методами `Format(int) *CHQueryBuilder`, `QueryType(string) *CHQueryBuilder`, `Build() (variants.Dataquery, error)`;
   `CHQueryVariant() variants.DataqueryConfig`; `NewGoldThesis() *dashboard.DashboardBuilder`; `Manifest(d dashboard.Dashboard) resource.Manifest`;
-  `Validate(d dashboard.Dashboard) error`; helper `ptr[T any](v T) *T`; CLI `go run . -out ../dashboard/gold-thesis.json`.
+  `Validate(d dashboard.Dashboard) error`; helper `ptr[T any](v T) *T`; CLI `go run . -out ../dashboard/gold-thesis.json` *(историческая форма: с 2026-10-16 действующие флаги — `-dashboard`/`-out-dir`, см. спеку 2026-10-16-grafana-key-rate-design.md §7)*.
 
 - [ ] **Step 1: Создать модуль и получить зависимости**
 
@@ -168,7 +168,7 @@ Expected: PASS (все тесты).
 
 - [ ] **Step 6: Цель `make grafana-build` и живая проверка**
 
-В `Makefile`: `grafana-build:` → `cd grafana && go run . -out ../dashboard/gold-thesis.json`; добавить цель в `.PHONY`.
+В `Makefile`: `grafana-build:` → `cd grafana && go run . -out ../dashboard/gold-thesis.json`; добавить цель в `.PHONY`. *(Историческая форма флага `-out`: с 2026-10-16 цель зовёт `cd grafana && go run . -out-dir ../dashboard` и собирает артефакты всех дашбордов списка — спека 2026-10-16-grafana-key-rate-design.md §7.)*
 Run: `make grafana-build && git diff --stat && make grafana-build && git diff --stat`
 Expected: после первого прогона — новый `dashboard/gold-thesis.json`; после второго `git diff` пуст; в артефакте `"uid": "gold-thesis"` и datasource `ch-rosstat` (проверить `jq`).
 
