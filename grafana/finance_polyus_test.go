@@ -281,12 +281,14 @@ func TestFinancePolyusFinancialsTargets(t *testing.T) {
 }
 
 // TestFinancePolyusNoTimeFilterOnDerivedAxis: ось времени панелей 12–15 вычисляется из строки
-// периода (`period`), а не из даты наблюдения, — полугодовые серии ветвятся multiIf по H1/H2
-// (1 января / 1 июля), годовые собираются одной ветвью на 1 января, — и $__timeFilter в этих
-// запросах не применяется осознанно: ось здесь производная, и клип окна дашборда Grafana делает сам
-// (паттерн dxy/crack золотого дашборда). Оговорка об этом обязана быть в Description: без неё
-// отсутствие фильтра читается как забытый предикат, а не как контракт панели. Панель 13 — целиком
-// годовая (period_type у обеих серий 'FY'), multiIf в ней не нужен, и это проверяется отдельно.
+// периода (`period`), а не из даты наблюдения, — полугодовые серии ветвятся multiIf по хвосту
+// периода (H1 → 1 января, H2 → 1 июля), годовые собираются одной ветвью на 1 января (multiIf у них
+// нет вовсе), — и $__timeFilter в этих запросах не применяется осознанно: ось здесь производная, и
+// клип окна дашборда Grafana делает сам (паттерн dxy/crack золотого дашборда). Ветки полугодовой оси
+// сверяются дословными фрагментами, а не только фактом «multiIf есть»: перестановка веток (H1 →
+// 1 июля) или сдвиг даты второго полугодия прошли бы такую проверку, а панели 12/14/15 показали бы
+// неверные даты. Оговорка про ось обязана быть в Description: без неё отсутствие фильтра читается
+// как забытый предикат, а не как контракт панели.
 func TestFinancePolyusNoTimeFilterOnDerivedAxis(t *testing.T) {
 	board := builtFinancePolyus(t)
 	for _, tc := range []struct {
@@ -307,21 +309,40 @@ func TestFinancePolyusNoTimeFilterOnDerivedAxis(t *testing.T) {
 			t.Fatalf("панель %d: запрос %s применяет $__timeFilter, а ось вычисляется из period: %s", tc.panelID, tc.refID, query.RawSql)
 		}
 		if tc.periodType == "H" {
-			if !strings.Contains(query.RawSql, "multiIf(") {
-				t.Fatalf("панель %d: запрос %s без multiIf — полугодовая ось ветвится по H1/H2: %s", tc.panelID, tc.refID, query.RawSql)
+			// Ветка H1 сверяется вместе со своей датой (1 января): по отдельности «multiIf(» и
+			// «-07-01» прошли бы и на ветках, переставленных местами, — панели показали бы июль
+			// вместо января. Вторая ветка ловит сдвиг даты второго полугодия с 1 июля.
+			for _, want := range []string{
+				"multiIf(",
+				"endsWith(period, 'H1'), toDate(concat(substring(period, 1, 4), '-01-01'))",
+				"toDate(concat(substring(period, 1, 4), '-07-01'))",
+			} {
+				if !strings.Contains(query.RawSql, want) {
+					t.Fatalf("панель %d: запрос %s не содержит %q — полугодовая ось ветвится по хвосту периода (H1 → 1 января, H2 → 1 июля): %s",
+						tc.panelID, tc.refID, want, query.RawSql)
+				}
 			}
 			continue
+		}
+		// Годовые серии (12-B, 13-A/B, 14-B): ось — одна ветвь, multiIf в них лишний.
+		if strings.Contains(query.RawSql, "multiIf(") {
+			t.Fatalf("панель %d: запрос %s — годовая ось собрана через multiIf, хотя period_type = 'FY': %s", tc.panelID, tc.refID, query.RawSql)
 		}
 		if !strings.Contains(query.RawSql, "toDate(concat(substring(period, 1, 4), '-01-01')) AS time") {
 			t.Fatalf("панель %d: запрос %s без годовой оси (1 января года периода): %s", tc.panelID, tc.refID, query.RawSql)
 		}
 	}
-	if strings.Contains(targetByRefID(t, panelByID(t, board, 13), "A").RawSql, "multiIf(") {
-		t.Fatal("панель 13: годовая ось собрана через multiIf, хотя period_type у обеих серий — 'FY'")
-	}
+	// Оговорка сверяется целыми формулировками, а не словом «period» (оно есть почти в любом
+	// описании и ничего не лочит): описания обязаны называть ось производной от строки отчётного
+	// периода и отсутствие оконного фильтра осознанным.
 	for _, id := range []uint32{12, 13, 14, 15} {
 		description := optionalString(panelByID(t, board, id).Description)
-		for _, want := range []string{"period", "$__timeFilter", "окно дашборда"} {
+		for _, want := range []string{
+			"Ось времени вычисляется из строки периода (`period`)",
+			"$__timeFilter",
+			"не применяется осознанно",
+			"окно дашборда",
+		} {
 			if !strings.Contains(description, want) {
 				t.Fatalf("Description панели %d не оговаривает ось из периода (нет %q): %s", id, want, description)
 			}
