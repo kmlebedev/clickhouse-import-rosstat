@@ -180,8 +180,9 @@ func cbrBopStandardReadSheet(xlsx *excelize.File, sheet cbrBopStandardSheet) (cb
 	}
 	plan.Rows = rows
 	// Первая ожидаемая подпись — якорь первой строки данных; список агрегатов непуст по
-	// объявлению, поэтому индекс 0 здесь есть всегда.
-	layout, err := cbrBopSheetLayout(rows, cbrBopStandardTable, name, cbrBopStandardAggregates[0].Label)
+	// объявлению, поэтому индекс 0 здесь есть всегда. Вариант подписи у стандартной презентации
+	// один: оба набора подписей ЦБ менял только в листе оценки (спека §3.3).
+	layout, err := cbrBopSheetLayout(rows, cbrBopStandardTable, name, []string{cbrBopStandardAggregates[0].Label})
 	if err != nil {
 		return plan, err
 	}

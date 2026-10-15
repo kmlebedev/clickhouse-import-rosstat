@@ -15,7 +15,7 @@ import "github.com/kmlebedev/clickhouse-import-rosstat/util"
 var cbrBopEstSeriesMeta = cbrBopEstMeta()
 
 // cbrBopEstOrigin — источник рядов: файл и лист в форме origin каталога. Имя листа в файле несёт
-// дату выпуска («Оценка ПБ (14.09.2026)») и меняется с ним, поэтому origin называет префикс
+// дату выпуска («Оценка ПБ (15.10.2026)») и меняется с ним, поэтому origin называет префикс
 // листа и объясняет дату; подпись строки источника (и блок для повторяющихся подписей)
 // дописывается в цикле.
 const cbrBopEstOrigin = "cbr.ru/vfs/statistics/credit_statistics/bop/bop_est.xlsx, " +
@@ -26,7 +26,7 @@ const cbrBopEstOrigin = "cbr.ru/vfs/statistics/credit_statistics/bop/bop_est.xls
 var cbrBopEstKindDates = map[string]string{
 	cbrBopKindMonth:      "Дата точки — последний день отчётного месяца: сопоставлять по toStartOfMonth(date).",
 	cbrBopKindQuarter:    "Дата точки — последний день отчётного квартала: сопоставлять по toStartOfQuarter(date).",
-	cbrBopKindCumulative: "Накопленный итог с начала года: значение накапливается внутри года (в декабре равно году), дата точки — последний день последнего месяца итога («январь - июль 2026» → 2026-07-31), сопоставлять по toStartOfMonth(date).",
+	cbrBopKindCumulative: "Накопленный итог с начала года: значение накапливается внутри года (в декабре равно году), дата точки — последний день последнего месяца итога («январь - август 2026» → 2026-08-31), сопоставлять по toStartOfMonth(date).",
 }
 
 // cbrBopEstKindFrequency — частота ряда в каталоге: у накопленного итога — месячная (M) с
@@ -49,14 +49,27 @@ const cbrBopEstDescriptionTail = " Единица — млрд долларов 
 	"импортёр перезаписывает точку по ключу (name, date), поэтому историю ревизий хранит только " +
 	"винтажный архив файла."
 
+// cbrBopEstSourceRow — подпись строки источника в origin: у позиции может быть два варианта — ЦБ
+// переименовал часть строк в выпуске 15.10.2026, и разбор принимает оба набора подписей
+// (cbrBopEstAggregates, спека §3.3). Прежний вариант называется явно: агент, сверяющий ряд со
+// старым выпуском файла, должен видеть, какой строке он соответствует.
+func cbrBopEstSourceRow(labels []string) string {
+	row := "строка «" + labels[0] + "»"
+	if len(labels) > 1 {
+		row += " (в прежних выпусках " + cbrBopLabelsText(labels[1:]) + ")"
+	}
+	return row
+}
+
 // cbrBopEstMeta собирает 51 запись каталога из объявлений кода — агрегатов листа
-// (cbrBopEstAggregates) и видов периода (cbrBopEstKinds): тот же порядок, что у разбора.
+// (cbrBopEstAggregates) и видов периода (cbrBopEstKinds): тот же порядок, что у разбора. Оба
+// набора подписей источника новых рядов не заводят: позиция строки одна, имя кода одно.
 func cbrBopEstMeta() []util.SeriesMeta {
 	meta := make([]util.SeriesMeta, 0, len(cbrBopEstAggregates)*len(cbrBopEstKinds))
 	for _, agg := range cbrBopEstAggregates {
 		for _, kind := range cbrBopEstKinds {
 			name := cbrBopEstName(agg.Code, kind)
-			origin := cbrBopEstOrigin + ", строка «" + agg.Label + "»"
+			origin := cbrBopEstOrigin + ", " + cbrBopEstSourceRow(agg.Labels)
 			if agg.Block != "" {
 				origin += " блока «" + agg.Block + "»"
 			}

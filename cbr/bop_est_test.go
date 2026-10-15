@@ -9,30 +9,58 @@ import (
 	"github.com/xuri/excelize/v2"
 )
 
-// bopEstFixture — живой файл источника целиком: книга 115 017 байт с одним листом, коммитится
-// как есть (стандарт §11.2). Винтаж снимка — лист «Оценка ПБ (14.09.2026)»: ЦБ перезаписывает
-// файл по тому же адресу, поэтому прежние значения фикстуры не воспроизводятся.
-const bopEstFixture = "testdata/bop_est.xlsx"
-
-// Разметка живой фикстуры, нужная мутациям: строка 3 — строка единиц (ячейка O3), строка 4 —
-// подписи периодов текущего года и «Справочно:», строка 5 — подписи прошлого года, строки 6…22 —
-// 17 агрегатов, колонки B…O — 14 колонок данных (A — метки агрегатов). Числа взяты из разметки
-// листа, а не из кода разбора: мутация обязана попадать в те же ячейки, что читает разбор.
+// Оценка ключевых агрегатов проверяется на двух живых винтажах: ЦБ перезаписывает файл по тому же
+// адресу и меняет в нём и колонки, и подписи строк, поэтому старый выпуск остаётся в фикстуре
+// отдельным файлом (спека §3.3, §3.9).
+//
+// bopEstFixture — текущий винтаж (лист «Оценка ПБ (15.10.2026)», январь – август, 10 колонок,
+// 114 411 байт); bopEstFixturePrev — прежний (лист «Оценка ПБ (14.09.2026)», январь – июль,
+// 14 колонок, 115 017 байт) — на нём проверяется приём прежнего набора подписей строк. Обе книги
+// коммитятся целиком, zip-хирургии нет (стандарт §11.2).
 const (
-	bopEstUnitCell     = "O3"
-	bopEstFirstDataRow = 6
-	bopEstDataColumns  = 14
+	bopEstFixture     = "testdata/bop_est.xlsx"
+	bopEstFixturePrev = "testdata/bop_est_prev.xlsx"
 )
 
-// bopEstWantCodes — 17 агрегатов листа оценки литералами, в порядке строк листа (спека §3.3).
-// Литералы, а не ссылка на cbrBopEstAggregates: сверка со списком спеки — единственное место,
-// где видно переименование агрегата или перестановку строк, а не код, читающий сам себя.
+// bopEstFirstDataRow — номер первой строки данных в обоих винтажах: строки 1–5 заняты заголовком
+// файла, строкой единиц и двумя строками шапки, строки 6…22 — 17 агрегатов (спека §2). Число
+// берётся из разметки листа, а не из кода разбора: мутация обязана попадать в те же ячейки, что
+// читает разбор.
+const bopEstFirstDataRow = 6
+
+// bopEstWantLabels — подписи строк источника по позициям: варианты в порядке «текущий винтаж,
+// прежний» (спека §3.3). Литералы, а не ссылка на cbrBopEstAggregates: сверка со списком спеки —
+// единственное место, где видно переименование подписи или перестановку строк, а не код, читающий
+// сам себя.
+var bopEstWantLabels = [][]string{
+	{"Счет текущих операций"},
+	{"Товары", "Торговый баланс"},
+	{"Экспорт"},
+	{"Импорт"},
+	{"Услуги", "Баланс услуг"},
+	{"Экспорт"},
+	{"Импорт"},
+	{"Первичные и вторичные доходы", "Баланс первичных и вторичных доходов"},
+	{"К получению", "Доходы к получению"},
+	{"К выплате", "Доходы к выплате"},
+	{"Счет операций с капиталом"},
+	{"Счет текущих операций и счет операций с капиталом", "Сальдо счета текущих операций и счета операций с капиталом"},
+	{"Финансовый счет, исключая резервные активы", "Сальдо финансового счета, исключая резервные активы"},
+	{"Чистое приобретение финансовых активов, исключая резервные активы"},
+	{"Чистое принятие обязательств"},
+	{"Резервные активы", "Изменение резервных активов"},
+	{"Чистые ошибки и пропуски"},
+}
+
+// bopEstWantCodes — имена кода 17 агрегатов в порядке строк листа (спека §3.3). У агрегатов,
+// которые есть и в стандартной презентации, имя кода то же, что там («Товары», «Услуги»): агент
+// сравнивает оценку с финальными данными по имени, а различает по source.
 var bopEstWantCodes = []string{
 	"Счет текущих операций",
-	"Торговый баланс",
+	"Товары",
 	"Товары: экспорт",
 	"Товары: импорт",
-	"Баланс услуг",
+	"Услуги",
 	"Услуги: экспорт",
 	"Услуги: импорт",
 	"Баланс первичных и вторичных доходов",
@@ -88,28 +116,90 @@ func bopEstLastQuarter(year, quarter int) time.Time {
 	return bopEstLastDay(year, time.Month(quarter*3))
 }
 
-// bopEstExpectedDates — даты точек выпуска по виду периода в порядке колонок листа: накопленный
-// итог с января, два квартала и четыре месяца текущего года, затем та же часть «Справочно:» за
-// прошлый год. Дат 8/4/2 — всего 14 на ряд, 238 на выпуск (спека §3.3).
-var bopEstExpectedDates = map[string][]time.Time{
-	"месяц": {
-		bopEstLastDay(2026, time.April), bopEstLastDay(2026, time.May),
-		bopEstLastDay(2026, time.June), bopEstLastDay(2026, time.July),
-		bopEstLastDay(2025, time.April), bopEstLastDay(2025, time.May),
-		bopEstLastDay(2025, time.June), bopEstLastDay(2025, time.July),
+// bopEstSpot — спот-значение выпуска: точка, которую тест сверяет с разбором.
+type bopEstSpot struct {
+	series string
+	date   time.Time
+	value  float64
+}
+
+// bopEstVintage — живой выпуск оценки: файл фикстуры, разметка его листа и ожидания тестов.
+type bopEstVintage struct {
+	release  string                 // дата выпуска: она же в имени листа и в сообщениях теста
+	fixture  string                 // файл фикстуры
+	unitCell string                 // ячейка строки единиц: переезжает вместе с числом колонок
+	columns  int                    // колонок данных (B…): 10 у текущего винтажа, 14 у прежнего
+	dates    map[string][]time.Time // даты точек по видам периода в порядке колонок листа
+	spots    []bopEstSpot
+}
+
+// total — число точек выпуска: 17 агрегатов × число колонок (170 у 15.10.2026, 238 у 14.09.2026).
+func (v bopEstVintage) total() int {
+	return len(bopEstWantCodes) * v.columns
+}
+
+// bopEstVintages — два живых выпуска оценки: текущий и прежний. У прежнего другое число колонок
+// (январь – июль) и другой набор подписей строк — оба разбираются одним импортёром.
+var bopEstVintages = []bopEstVintage{
+	{
+		release: "15.10.2026", fixture: bopEstFixture, unitCell: "K3", columns: 10,
+		// Колонки листа: итог января – августа, I и II кварталы, июль и август текущего года, затем
+		// та же пятёрка «Справочно:» за прошлый год — дат 2/4/4, всего 10 на ряд.
+		dates: map[string][]time.Time{
+			"месяц": {
+				bopEstLastDay(2026, time.July), bopEstLastDay(2026, time.August),
+				bopEstLastDay(2025, time.July), bopEstLastDay(2025, time.August),
+			},
+			"квартал": {
+				bopEstLastQuarter(2026, 1), bopEstLastQuarter(2026, 2),
+				bopEstLastQuarter(2025, 1), bopEstLastQuarter(2025, 2),
+			},
+			"накопленным итогом": {
+				bopEstLastDay(2026, time.August), bopEstLastDay(2025, time.August),
+			},
+		},
+		spots: []bopEstSpot{
+			{"Счет текущих операций (накопленным итогом)", bopEstLastDay(2026, time.August), 35},
+			{"Счет текущих операций (месяц)", bopEstLastDay(2026, time.August), 3.3},
+			{"Товары: экспорт (месяц)", bopEstLastDay(2026, time.August), 40.9},
+			{"Услуги: импорт (квартал)", bopEstLastQuarter(2026, 2), 25.1},
+			{"Счет операций с капиталом (квартал)", bopEstLastQuarter(2026, 2), 0},
+			{"Счет текущих операций (накопленным итогом)", bopEstLastDay(2025, time.August), 21},
+		},
 	},
-	"квартал": {
-		bopEstLastQuarter(2026, 1), bopEstLastQuarter(2026, 2),
-		bopEstLastQuarter(2025, 1), bopEstLastQuarter(2025, 2),
-	},
-	"накопленным итогом": {
-		bopEstLastDay(2026, time.July), bopEstLastDay(2025, time.July),
+	{
+		release: "14.09.2026", fixture: bopEstFixturePrev, unitCell: "O3", columns: 14,
+		// Колонки листа: итог января – июля, два квартала и четыре месяца текущего года, затем та же
+		// семёрка «Справочно:» за прошлый год — дат 8/4/2, всего 14 на ряд.
+		dates: map[string][]time.Time{
+			"месяц": {
+				bopEstLastDay(2026, time.April), bopEstLastDay(2026, time.May),
+				bopEstLastDay(2026, time.June), bopEstLastDay(2026, time.July),
+				bopEstLastDay(2025, time.April), bopEstLastDay(2025, time.May),
+				bopEstLastDay(2025, time.June), bopEstLastDay(2025, time.July),
+			},
+			"квартал": {
+				bopEstLastQuarter(2026, 1), bopEstLastQuarter(2026, 2),
+				bopEstLastQuarter(2025, 1), bopEstLastQuarter(2025, 2),
+			},
+			"накопленным итогом": {
+				bopEstLastDay(2026, time.July), bopEstLastDay(2025, time.July),
+			},
+		},
+		spots: []bopEstSpot{
+			{"Счет текущих операций (накопленным итогом)", bopEstLastDay(2026, time.July), 33.9},
+			{"Счет текущих операций (месяц)", bopEstLastDay(2026, time.July), 1.7},
+			{"Товары: экспорт (месяц)", bopEstLastDay(2025, time.July), 37.7},
+			{"Услуги: импорт (квартал)", bopEstLastQuarter(2026, 2), 25.2},
+			{"Счет операций с капиталом (квартал)", bopEstLastQuarter(2026, 2), 0},
+		},
 	},
 }
 
 // bopEstOpenFixture — копия живой фикстуры, загруженная в память под мутацию: ветки fail-fast и
 // семантика ячеек проверяются на ней, а не на книге, собранной с нуля (стандарт §11.1). Правки
-// идут по копии в памяти — файл на диске не меняется.
+// идут по копии в памяти — файл на диске не меняется. Мутируется текущий винтаж: его разметка и
+// нужна подтестам.
 func bopEstOpenFixture(t *testing.T, mutate func(t *testing.T, f *excelize.File, sheet string)) *excelize.File {
 	t.Helper()
 	f, err := excelize.OpenFile(bopEstFixture)
@@ -135,7 +225,7 @@ func bopEstSetCell(t *testing.T, f *excelize.File, sheet, cell string, value any
 }
 
 // bopEstCell — адрес ячейки листа по колонке и строке (1-based) — так же, как адресует ячейки
-// разбор: колонка 1 — метка агрегата, 2…15 — колонки данных.
+// разбор: колонка 1 — метка агрегата, 2… — колонки данных.
 func bopEstCell(t *testing.T, column, row int) string {
 	t.Helper()
 	cell, err := excelize.CoordinatesToCellName(column, row)
@@ -155,11 +245,32 @@ func bopEstHasPoint(rows []appendedRow, name string, date time.Time) bool {
 	return false
 }
 
+// TestCbrBopEstAggregateLabels: подписи строк по позициям совпадают со спекой §3.3 — оба набора,
+// в порядке «текущий винтаж, прежний»: именно эта таблица решает, какой текст источника разбор
+// считает подписью агрегата, и ошибка в ней читалась бы как пропавшая строка.
+func TestCbrBopEstAggregateLabels(t *testing.T) {
+	if len(cbrBopEstAggregates) != len(bopEstWantLabels) {
+		t.Fatalf("агрегатов %d, want %d", len(cbrBopEstAggregates), len(bopEstWantLabels))
+	}
+	for i, want := range bopEstWantLabels {
+		got := cbrBopEstAggregates[i].Labels
+		if len(got) != len(want) {
+			t.Errorf("агрегат %d (%s): вариантов подписи %d, want %d (%v)", i+1, bopEstWantCodes[i], len(got), len(want), want)
+			continue
+		}
+		for j := range want {
+			if got[j] != want[j] {
+				t.Errorf("агрегат %d (%s): подпись %d = %q, want %q", i+1, bopEstWantCodes[i], j, got[j], want[j])
+			}
+		}
+	}
+}
+
 // TestCbrBopEstSeriesMetaNames: имена 51 ряда каталога совпадают со списком спеки §3.3 дословно —
 // и агрегаты, и виды периода, и их порядок, и форма «<агрегат> (<вид>)»; вместе с ними
 // проверяются поля, от которых зависит чтение ряда агентом MCP: единицы, частота, origin с
-// файлом, листом и подписью строки источника (для повторяющихся подписей — с блоком) и
-// description, где есть привязка даты, ноль как значение и ревизия оценки.
+// файлом, листом и подписями строки источника (всеми вариантами и блоком для повторяющихся
+// подписей) и description, где есть привязка даты, ноль как значение и ревизия оценки.
 func TestCbrBopEstSeriesMetaNames(t *testing.T) {
 	want := bopEstWantNames()
 	if len(cbrBopEstSeriesMeta) != len(want) {
@@ -172,8 +283,8 @@ func TestCbrBopEstSeriesMetaNames(t *testing.T) {
 			t.Errorf("ряд %d каталога = %q, want %q", i, meta.Series, name)
 			continue
 		}
-		kind := bopEstWantKinds[i%len(bopEstWantKinds)]
 		code := bopEstWantCodes[i/len(bopEstWantKinds)]
+		kind := bopEstWantKinds[i%len(bopEstWantKinds)]
 		if meta.Source != "cbr_bop_est" {
 			t.Errorf("ряд %q: source %q, want cbr_bop_est (источник каталога = имя таблицы)", name, meta.Source)
 		}
@@ -183,13 +294,16 @@ func TestCbrBopEstSeriesMetaNames(t *testing.T) {
 		if meta.Frequency != frequency[kind] {
 			t.Errorf("ряд %q: frequency %q, want %q", name, meta.Frequency, frequency[kind])
 		}
-		label := code
-		if repeated, ok := bopEstRepeatedLabels[code]; ok {
-			label = repeated.label
-		}
-		for _, want := range []string{"bop_est.xlsx", "Оценка ПБ", "строка «" + label + "»"} {
+		for _, want := range []string{"bop_est.xlsx", "Оценка ПБ"} {
 			if !strings.Contains(meta.Origin, want) {
 				t.Errorf("ряд %q: origin %q не содержит %q", name, meta.Origin, want)
+			}
+		}
+		// origin называет все подписи строки — и текущую, и прежнюю: агент, сверяющий ряд со старым
+		// выпуском файла, обязан видеть, какой строке он соответствует (спека §3.3).
+		for _, label := range bopEstWantLabels[i/len(bopEstWantKinds)] {
+			if !strings.Contains(meta.Origin, "«"+label+"»") {
+				t.Errorf("ряд %q: origin %q не называет подпись строки «%s»", name, meta.Origin, label)
 			}
 		}
 		if repeated, ok := bopEstRepeatedLabels[code]; ok {
@@ -207,8 +321,7 @@ func TestCbrBopEstSeriesMetaNames(t *testing.T) {
 }
 
 // TestCbrBopEstImporterName: Name() — контракт фильтра `make import STAT=…` и id шага dagu/cbr.yaml;
-// сверяется литералом, а не таблицей кода (стандарт §8.5). Тест же держит cbrBopEstImporter
-// «использованным» для линтера, пока реестр не завёл его сам (следующая задача пункта).
+// сверяется литералом, а не таблицей кода (стандарт §8.5).
 func TestCbrBopEstImporterName(t *testing.T) {
 	if got := cbrBopEstImporter.Name(); got != "cbr_bop_est" {
 		t.Errorf("Name() = %q, want %q", got, "cbr_bop_est")
@@ -239,98 +352,104 @@ func TestCbrBopEstDdl(t *testing.T) {
 	}
 }
 
-// TestCbrBopEstSeriesMetaCoversParsedRows: каталог cbr_bop_est (51 ряд) и разбор живой фикстуры
+// TestCbrBopEstSeriesMetaCoversParsedRows: каталог cbr_bop_est (51 ряд) и разбор каждой фикстуры
 // совпадают в обе стороны (стандарт §11.4): имена рядов объявлены кодом, поэтому проверяются и
-// забытое имя ряда в каталоге, и забытая колонка в разборе.
+// забытое имя ряда в каталоге, и забытая колонка в разборе — на обоих наборах подписей строк.
 func TestCbrBopEstSeriesMetaCoversParsedRows(t *testing.T) {
-	checkCbrSeriesMeta(t, "cbr_bop_est", cbrBopEstSeriesMeta, func(rec *appendRecorder) error {
-		f, err := excelize.OpenFile(bopEstFixture)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = f.Close() }()
-		return cbrBopEst.ImportFunc(f, rec)
-	})
+	for _, vintage := range bopEstVintages {
+		t.Run(vintage.release, func(t *testing.T) {
+			checkCbrSeriesMeta(t, "cbr_bop_est", cbrBopEstSeriesMeta, func(rec *appendRecorder) error {
+				f, err := excelize.OpenFile(vintage.fixture)
+				if err != nil {
+					return err
+				}
+				defer func() { _ = f.Close() }()
+				return cbrBopEst.ImportFunc(f, rec)
+			})
+		})
+	}
 }
 
-// TestCbrBopEstFixtureRows: разбор живой фикстуры даёт 238 точек (17 агрегатов × 14 колонок) и
-// по каждому ряду — 8, 4 или 2 точки в зависимости от вида периода, с датами по правилу
-// привязки (спека §3.4), а не списком дней: месяцы и кварталы текущего года и «Справочно:»
-// прошлого.
+// TestCbrBopEstFixtureRows: разбор каждой фикстуры даёт 17 × число её колонок точек (170 у текущего
+// винтажа, 238 у прежнего) и по каждому ряду — точки всех видов периода с датами по правилу
+// привязки (спека §3.4), а не списком дней.
 func TestCbrBopEstFixtureRows(t *testing.T) {
-	rows := cbrFixtureRows(t, bopEstFixture, cbrBopEst.ImportFunc)
-	wantTotal := 0
-	for _, dates := range bopEstExpectedDates {
-		wantTotal += len(dates) * len(bopEstWantCodes)
-	}
-	if len(rows) != wantTotal {
-		t.Errorf("строк разбора %d, want %d (17 агрегатов × 14 колонок)", len(rows), wantTotal)
-	}
-	dates := map[string][]time.Time{}
-	for _, row := range rows {
-		dates[row.name] = append(dates[row.name], row.date)
-	}
-	for _, code := range bopEstWantCodes {
-		for _, kind := range bopEstWantKinds {
-			name := bopEstWantName(code, kind)
-			want := bopEstExpectedDates[kind]
-			got := dates[name]
-			if len(got) != len(want) {
-				t.Errorf("ряд %q: точек %d, want %d (вид «%s»)", name, len(got), len(want), kind)
-				continue
+	for _, vintage := range bopEstVintages {
+		t.Run(vintage.release, func(t *testing.T) {
+			rows := cbrFixtureRows(t, vintage.fixture, cbrBopEst.ImportFunc)
+			if len(rows) != vintage.total() {
+				t.Errorf("строк разбора %d, want %d (17 агрегатов × %d колонок)", len(rows), vintage.total(), vintage.columns)
 			}
-			for i := range want {
-				if !got[i].Equal(want[i]) {
-					t.Errorf("ряд %q: точка %d = %s, want %s (привязка даты вида «%s»)",
-						name, i, got[i].Format("2006-01-02"), want[i].Format("2006-01-02"), kind)
-					break
+			dates := map[string][]time.Time{}
+			for _, row := range rows {
+				dates[row.name] = append(dates[row.name], row.date)
+			}
+			for _, code := range bopEstWantCodes {
+				for _, kind := range bopEstWantKinds {
+					name := bopEstWantName(code, kind)
+					want := vintage.dates[kind]
+					got := dates[name]
+					if len(got) != len(want) {
+						t.Errorf("ряд %q: точек %d, want %d (вид «%s»)", name, len(got), len(want), kind)
+						continue
+					}
+					for i := range want {
+						if !got[i].Equal(want[i]) {
+							t.Errorf("ряд %q: точка %d = %s, want %s (привязка даты вида «%s»)",
+								name, i, got[i].Format("2006-01-02"), want[i].Format("2006-01-02"), kind)
+							break
+						}
+					}
 				}
 			}
-		}
+		})
 	}
 }
 
-// TestCbrBopEstSpotValues: значения из известных ячеек живой фикстуры (спека §3.9) — крайние
-// агрегаты выпуска, месяц прошлого года и ноль как настоящее значение (сальдо счёта операций с
-// капиталом). Значения литералами: сверка идёт с разбором, а не с константой кода.
+// TestCbrBopEstSpotValues: значения из известных ячеек обоих винтажей (спека §3.9) — крайние
+// агрегаты выпуска, месяцы текущего и прошлого года и ноль как настоящее значение (сальдо счёта
+// операций с капиталом). Значения литералами: сверка идёт с разбором, а не с константой кода.
 func TestCbrBopEstSpotValues(t *testing.T) {
-	rows := cbrFixtureRows(t, bopEstFixture, cbrBopEst.ImportFunc)
-	july2026 := time.Date(2026, time.July, 31, 0, 0, 0, 0, time.UTC)
-	july2025 := time.Date(2025, time.July, 31, 0, 0, 0, 0, time.UTC)
-	june2026 := time.Date(2026, time.June, 30, 0, 0, 0, 0, time.UTC)
-	cbrCheckSpot(t, rows, "Счет текущих операций (накопленным итогом)", july2026, 33.9)
-	cbrCheckSpot(t, rows, "Счет текущих операций (месяц)", july2026, 1.7)
-	cbrCheckSpot(t, rows, "Товары: экспорт (месяц)", july2025, 37.7)
-	cbrCheckSpot(t, rows, "Услуги: импорт (квартал)", june2026, 25.2)
-	cbrCheckSpot(t, rows, "Счет операций с капиталом (квартал)", june2026, 0)
+	for _, vintage := range bopEstVintages {
+		t.Run(vintage.release, func(t *testing.T) {
+			rows := cbrFixtureRows(t, vintage.fixture, cbrBopEst.ImportFunc)
+			for _, spot := range vintage.spots {
+				cbrCheckSpot(t, rows, spot.series, spot.date, spot.value)
+			}
+		})
+	}
 }
 
 // TestCbrBopEstAppendsFloat64: разбор пишет значение как float64 — тип колонки value в DDL
 // (правило 5 AGENTS.md). Запись float32 прошла бы в колонку Float64 молча, потеряв точность на
 // шаге представления, и расхождение заметила бы только живая БД.
 func TestCbrBopEstAppendsFloat64(t *testing.T) {
-	f, err := excelize.OpenFile(bopEstFixture)
-	if err != nil {
-		t.Fatalf("открытие фикстуры %s: %v", bopEstFixture, err)
-	}
-	defer func() { _ = f.Close() }()
-	rec := newCbrRecorder()
-	if err = cbrBopEst.ImportFunc(f, rec); err != nil {
-		t.Fatalf("разбор фикстуры: %v", err)
-	}
-	if rec.err != nil {
-		t.Fatalf("разбор фикстуры: схема строк не совпала с разбором: %v", rec.err)
-	}
-	if len(rec.raw) == 0 {
-		t.Fatal("разбор не дал ни одной точки")
-	}
-	for i, raw := range rec.raw {
-		if len(raw) != 3 {
-			t.Fatalf("строка %d: %d значений, ожидалась форма (name, date, value)", i, len(raw))
-		}
-		if _, ok := raw[2].(float64); !ok {
-			t.Fatalf("строка %d: значение записано как %T, ожидался float64 (колонка value — Float64)", i, raw[2])
-		}
+	for _, vintage := range bopEstVintages {
+		t.Run(vintage.release, func(t *testing.T) {
+			f, err := excelize.OpenFile(vintage.fixture)
+			if err != nil {
+				t.Fatalf("открытие фикстуры %s: %v", vintage.fixture, err)
+			}
+			defer func() { _ = f.Close() }()
+			rec := newCbrRecorder()
+			if err = cbrBopEst.ImportFunc(f, rec); err != nil {
+				t.Fatalf("разбор фикстуры: %v", err)
+			}
+			if rec.err != nil {
+				t.Fatalf("разбор фикстуры: схема строк не совпала с разбором: %v", rec.err)
+			}
+			if len(rec.raw) == 0 {
+				t.Fatal("разбор не дал ни одной точки")
+			}
+			for i, raw := range rec.raw {
+				if len(raw) != 3 {
+					t.Fatalf("строка %d: %d значений, ожидалась форма (name, date, value)", i, len(raw))
+				}
+				if _, ok := raw[2].(float64); !ok {
+					t.Fatalf("строка %d: значение записано как %T, ожидался float64 (колонка value — Float64)", i, raw[2])
+				}
+			}
+		})
 	}
 }
 
@@ -371,28 +490,35 @@ func TestCbrBopEstEmptyBookFails(t *testing.T) {
 }
 
 // TestCbrBopEstFailFastOnFixture: ветки, где разбор обязан вернуть ошибку, а не «0 строк»
-// (стандарт §6.4, спека §3.9), — на мутированной копии живой фикстуры (стандарт §11.1). Копия,
-// а не синтетическая книга: якоря, шапка и ячейки данных в ней те же, что у источника, поэтому
-// ошибка приходит от мутации, а не от сборки книги. Батч уходит в БД только по Send, поэтому
-// при ошибке разбора в рекордере обязано быть 0 строк.
+// (стандарт §6.4, спека §3.9), — на мутированной копии живой фикстуры текущего винтажа
+// (стандарт §11.1). Копия, а не синтетическая книга: якоря, шапка и ячейки данных в ней те же,
+// что у источника, поэтому ошибка приходит от мутации, а не от сборки книги. Батч уходит в БД
+// только по Send, поэтому при ошибке разбора в рекордере обязано быть 0 строк.
 func TestCbrBopEstFailFastOnFixture(t *testing.T) {
+	live := bopEstVintages[0]
 	for name, tc := range map[string]struct {
 		mutate  func(t *testing.T, f *excelize.File, sheet string)
 		wantErr string
 	}{
 		"нет строки единиц": {
-			mutate:  func(t *testing.T, f *excelize.File, sheet string) { bopEstSetCell(t, f, sheet, bopEstUnitCell, "") },
+			mutate:  func(t *testing.T, f *excelize.File, sheet string) { bopEstSetCell(t, f, sheet, live.unitCell, "") },
 			wantErr: "не найдена строка единиц",
 		},
 		"нет первой подписи агрегата": {
 			mutate:  func(t *testing.T, f *excelize.File, sheet string) { bopEstSetCell(t, f, sheet, "A6", "Итого") },
 			wantErr: "нет первой ожидаемой подписи агрегата",
 		},
+		"подпись не совпала ни с одним вариантом": {
+			// Строка 7 — «Товары»: разбор обязан назвать позицию и оба варианта её подписи, иначе по
+			// прогону не видно, чего именно он не дождался (спека §3.3).
+			mutate:  func(t *testing.T, f *excelize.File, sheet string) { bopEstSetCell(t, f, sheet, "A7", "Баланс") },
+			wantErr: "не найдена подпись агрегата 2 (варианты: «Товары» / «Торговый баланс»)",
+		},
 		"пропала подпись в середине списка": {
-			// Строка 13 — «Баланс первичных и вторичных доходов» (восьмая в списке): разбор ищет
-			// подписи последовательно, поэтому пропавшая в середине — ошибка, а не пропуск ряда.
+			// Строка 13 — «Первичные и вторичные доходы» (восьмая в списке): разбор ищет подписи
+			// последовательно, поэтому пропавшая в середине — ошибка, а не пропуск ряда.
 			mutate:  func(t *testing.T, f *excelize.File, sheet string) { bopEstSetCell(t, f, sheet, "A13", "Доходы") },
-			wantErr: "не найдена ожидаемая подпись агрегата",
+			wantErr: "не найдена подпись агрегата 8",
 		},
 		"подпись периода не разбирается": {
 			// «II квартал» без года: подпись есть, период из неё не выводится — колонка осталась бы
@@ -420,7 +546,7 @@ func TestCbrBopEstFailFastOnFixture(t *testing.T) {
 			// ряд без обновления.
 			mutate: func(t *testing.T, f *excelize.File, sheet string) {
 				for row := bopEstFirstDataRow; row < bopEstFirstDataRow+len(bopEstWantCodes); row++ {
-					for column := 2; column < 2+bopEstDataColumns; column++ {
+					for column := 2; column < 2+live.columns; column++ {
 						bopEstSetCell(t, f, sheet, bopEstCell(t, column, row), "")
 					}
 				}
@@ -447,17 +573,14 @@ func TestCbrBopEstFailFastOnFixture(t *testing.T) {
 	}
 }
 
-// TestCbrBopEstFixtureSemantics — разбор мутированной копии живой фикстуры при ожидаемом
-// изменении источника: дата выпуска в имени листа разбору не мешает (лист ищется по префиксу,
-// спека §3.5), пустая ячейка точки не даёт, а литеральный ноль даёт (стандарт §6.7, спека §3.5:
-// в платёжном балансе ноль — настоящее значение, в отличие от cbr_int_rate_loans).
+// TestCbrBopEstFixtureSemantics — разбор мутированной копии живой фикстуры текущего винтажа при
+// ожидаемом изменении источника: дата выпуска в имени листа разбору не мешает (лист ищется по
+// префиксу, спека §3.5), пустая ячейка точки не даёт, а литеральный ноль даёт (стандарт §6.7,
+// спека §3.5: в платёжном балансе ноль — настоящее значение, в отличие от cbr_int_rate_loans).
 func TestCbrBopEstFixtureSemantics(t *testing.T) {
-	total := 0
-	for _, dates := range bopEstExpectedDates {
-		total += len(dates) * len(bopEstWantCodes)
-	}
-	accumulated := "Счет текущих операций (накопленным итогом)"
-	july2026 := time.Date(2026, time.July, 31, 0, 0, 0, 0, time.UTC)
+	live := bopEstVintages[0]
+	accumulated := live.spots[0].series
+	august2026 := live.spots[0].date
 	for name, tc := range map[string]struct {
 		mutate   func(t *testing.T, f *excelize.File, sheet string)
 		wantRows int
@@ -466,23 +589,23 @@ func TestCbrBopEstFixtureSemantics(t *testing.T) {
 	}{
 		"дата выпуска в имени листа не мешает разбору": {
 			mutate: func(t *testing.T, f *excelize.File, sheet string) {
-				if err := f.SetSheetName(sheet, "Оценка ПБ (01.10.2026)"); err != nil {
+				if err := f.SetSheetName(sheet, "Оценка ПБ (01.11.2026)"); err != nil {
 					t.Fatalf("SetSheetName: %v", err)
 				}
 			},
-			wantRows: total,
-			value:    33.9,
+			wantRows: live.total(),
+			value:    live.spots[0].value,
 			isPoint:  true,
 		},
 		"пустая ячейка точки не даёт": {
-			// B6 — накопленный итог счёта текущих операций за январь - июль 2026.
+			// B6 — накопленный итог счёта текущих операций за январь - август 2026.
 			mutate:   func(t *testing.T, f *excelize.File, sheet string) { bopEstSetCell(t, f, sheet, "B6", "") },
-			wantRows: total - 1,
+			wantRows: live.total() - 1,
 			isPoint:  false,
 		},
 		"литеральный ноль — точка": {
 			mutate:   func(t *testing.T, f *excelize.File, sheet string) { bopEstSetCell(t, f, sheet, "B6", 0) },
-			wantRows: total,
+			wantRows: live.total(),
 			value:    0,
 			isPoint:  true,
 		},
@@ -499,13 +622,13 @@ func TestCbrBopEstFixtureSemantics(t *testing.T) {
 				t.Errorf("точек %d, want %d: ячейка без значения точки не даёт, а ноль и значение месяца — дают",
 					len(rec.rows), tc.wantRows)
 			}
-			if got := bopEstHasPoint(rec.rows, accumulated, july2026); got != tc.isPoint {
-				t.Errorf("точка (%q, %s): наличие %v, want %v", accumulated, july2026.Format("2006-01-02"), got, tc.isPoint)
+			if got := bopEstHasPoint(rec.rows, accumulated, august2026); got != tc.isPoint {
+				t.Errorf("точка (%q, %s): наличие %v, want %v", accumulated, august2026.Format("2006-01-02"), got, tc.isPoint)
 			}
 			if !tc.isPoint {
 				return
 			}
-			cbrCheckSpot(t, rec.rows, accumulated, july2026, tc.value)
+			cbrCheckSpot(t, rec.rows, accumulated, august2026, tc.value)
 		})
 	}
 }
