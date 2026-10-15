@@ -86,6 +86,7 @@
 
 - Коммиты: кратко, по-английски, в духе истории репозитория (`add fred importer`, `fix batch insert cbr_queries`).
 - PR: одна фича = один импортёр/таблица; в описании — источник данных, схема таблицы, как запускать (`CLICKHOUSE_IMPORT_STAT=<name>`), пример проверки (`SELECT ... FROM <table> FINAL LIMIT 5`).
+- Протокол живой приёмки — **комментарием в PR** того же пункта: состав, источник протокола и порядок — `docs/IMPORTER_PACKAGE_STANDARD.md` §16.1 п. 8 (первое применение — PR #66, `cbr_int_rate_loans`).
 - Логирование — logrus (`log.Infof("Imported %d rows of %s", ...)`), без fmt.Print в прод-коде импортёров.
 
 ## Календарь и приоритеты
