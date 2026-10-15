@@ -297,3 +297,21 @@ func targetByRefID(t *testing.T, p *dashboard.Panel, refID string) CHQuery {
 	t.Fatalf("панель %q: запроса с refId %q нет", panelTitle(p), refID)
 	return CHQuery{}
 }
+
+// TestKeyRateBudgetPanelNamesConsolidatedBudget: панель 8 читает minfin_mesyats — это
+// консолидированный бюджет РФ и государственных внебюджетных фондов, а не федеральный
+// (федеральный — source = 'minfin', и отдельного ряда его дефицита в контуре пока нет — фаза 2).
+// Заголовок и Description обязаны называть охват: без этого числа прочтут как федеральный бюджет.
+func TestKeyRateBudgetPanelNamesConsolidatedBudget(t *testing.T) {
+	panel := panelByID(t, builtKeyRatePublications(t), 8)
+	title := optionalString(panel.Title)
+	if !strings.Contains(title, "Консолидированный") {
+		t.Fatalf("заголовок панели 8 %q не называет охват (консолидированный бюджет)", title)
+	}
+	description := optionalString(panel.Description)
+	for _, want := range []string{"minfin_mesyats", "федеральн", "дефицит", "контуре", "млрд руб."} {
+		if !strings.Contains(description, want) {
+			t.Fatalf("Description панели 8 не содержит %q: %s", want, description)
+		}
+	}
+}
