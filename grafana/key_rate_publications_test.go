@@ -585,3 +585,47 @@ func TestKeyRateSignalRowUsesTableQueries(t *testing.T) {
 		}
 	}
 }
+
+// TestKeyRateSpecConventions фиксирует конвенции спеки §4/§7 одним проходом: id панелей 1..19
+// без пропусков и повторов, непустой Description у каждой, ширина 24 у панелей 5 и 10 и 12
+// у остальных, FINAL в панельных запросах не пишется (FINAL уже внутри витрин, спека §2),
+// а LIMIT — только у таблиц 12/16/17/18/19: на timeseries это анти-паттерн спеки §6.
+func TestKeyRateSpecConventions(t *testing.T) {
+	tablePanels := map[uint32]bool{12: true, 16: true, 17: true, 18: true, 19: true}
+	seen := make(map[uint32]bool, 19)
+	for _, p := range panelsOf(builtKeyRatePublications(t)) {
+		if p.Id == nil {
+			t.Fatalf("панель %q: не задан id", panelTitle(p))
+		}
+		id := *p.Id
+		if id < 1 || id > 19 || seen[id] {
+			t.Fatalf("панель %q: id %d вне 1..19 или повторяется", panelTitle(p), id)
+		}
+		seen[id] = true
+		if p.Description == nil || strings.TrimSpace(*p.Description) == "" {
+			t.Fatalf("панель %d: пустой Description (спека §4 — описание у каждой панели)", id)
+		}
+		wantSpan := uint32(12)
+		if id == 5 || id == 10 {
+			wantSpan = 24
+		}
+		if p.GridPos == nil || p.GridPos.W != wantSpan {
+			t.Fatalf("панель %d: span %v, ожидался %d (спека §4)", id, p.GridPos, wantSpan)
+		}
+		for _, target := range p.Targets {
+			query, ok := chQuery(target)
+			if !ok {
+				t.Fatalf("панель %d: запрос не является запросом ClickHouse", id)
+			}
+			if strings.Contains(strings.ToUpper(query.RawSql), "FINAL") {
+				t.Fatalf("панель %d: FINAL в панельном запросе (FINAL — внутри витрин): %s", id, query.RawSql)
+			}
+			if !tablePanels[id] && strings.Contains(query.RawSql, "LIMIT") {
+				t.Fatalf("панель %d: LIMIT в timeseries-запросе (анти-паттерн спеки §6): %s", id, query.RawSql)
+			}
+		}
+	}
+	if len(seen) != 19 {
+		t.Fatalf("панелей %d, ожидалось 19 (id 1..19 без пропусков)", len(seen))
+	}
+}
