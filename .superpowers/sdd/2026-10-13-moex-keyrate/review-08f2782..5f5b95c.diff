@@ -1,0 +1,573 @@
+# Review package: 08f2782..HEAD
+
+## Commits
+5f5b95c fix keyrate importer: fail empty run before publishing, guard spot with nullIf
+
+## Files changed
+ moex/keyrate.go      |  63 +++++++-----
+ moex/keyrate_test.go | 272 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 313 insertions(+), 22 deletions(-)
+
+## Diff
+diff --git a/moex/keyrate.go b/moex/keyrate.go
+index a4ff7ae..086126d 100644
+--- a/moex/keyrate.go
++++ b/moex/keyrate.go
+@@ -47,21 +47,21 @@ func fetchKeyrateSecids(ctx context.Context) ([]string, error) {
+ 		}
+ 		valid = append(valid, secid)
+ 	}
+ 	return valid, nil
+ }
+ 
+ // fetchKeyrateContract — паспорт серии: короткое имя, начало обращения и дата экспирации
+ // (= дата заседания Совета директоров ЦБ, по ставке которого рассчитывается индекс).
+ func fetchKeyrateContract(ctx context.Context, secid string) (keyrateContract, error) {
+ 	if !validSecid(secid) {
+-		return keyrateContract{}, fmt.Errorf("keyrate: invalid secid %q", secid)
++		return keyrateContract{}, fmt.Errorf("keyrate: недопустимый код серии %q", secid)
+ 	}
+ 	path := fmt.Sprintf(keyrateDescPath, secid)
+ 	block, err := getBlock(ctx, path, keyrateDescriptionBlock)
+ 	if err != nil {
+ 		return keyrateContract{}, err
+ 	}
+ 	contract, err := parseKeyrateContract(block)
+ 	if err != nil {
+ 		return keyrateContract{}, fmt.Errorf("%s: %w", path, err)
+ 	}
+@@ -70,21 +70,21 @@ func fetchKeyrateContract(ctx context.Context, secid string) (keyrateContract, e
+ 	contract.secid = secid
+ 	return contract, nil
+ }
+ 
+ // fetchKeyrateHistory — дневные итоги серии с даты from включительно.
+ // ISS отдаёт страницы по moexPageLimit строк (PAGESIZE параметром не понижается), поэтому цикл
+ // идёт шагом moexPageLimit и завершается, когда страница пуста или собраны все дни по TOTAL
+ // из блока history.cursor.
+ func fetchKeyrateHistory(ctx context.Context, secid string, from time.Time) ([]keyrateDay, error) {
+ 	if !validSecid(secid) {
+-		return nil, fmt.Errorf("keyrate: invalid secid %q", secid)
++		return nil, fmt.Errorf("keyrate: недопустимый код серии %q", secid)
+ 	}
+ 	path := fmt.Sprintf(keyrateHistoryPath, secid)
+ 	var days []keyrateDay
+ 	for start := 0; ; start += moexPageLimit {
+ 		blocks, err := getBlocks(ctx, fmt.Sprintf("%s?iss.meta=off&from=%s&start=%d", path, from.Format(moexDate), start))
+ 		if err != nil {
+ 			return nil, err
+ 		}
+ 		page, err := parseKeyrateHistory(blocks[keyrateHistoryBlock])
+ 		if err != nil {
+@@ -102,22 +102,21 @@ func fetchKeyrateHistory(ctx context.Context, secid string, from time.Time) ([]k
+ 			break
+ 		}
+ 	}
+ 	return days, nil
+ }
+ 
+ // Импортёр keyrate_futures: дневные итоги торгов расчётного фьючерса на Индекс ключевой
+ // ставки МосБиржи (MOEX KEYRATE) по всем торгуемым сериям, паспорт каждой серии
+ // (дата экспирации = дата заседания Совета директоров ЦБ) и витрина вменённых ожиданий
+ // рынка по ставке. Цена серии — расчётная цена дня SETTLEPRICE в пунктах, равных п.п. ставки.
+-type keyrateFutures struct {
+-}
++type keyrateFutures struct{}
+ 
+ const (
+ 	keyrateTable          = "keyrate_futures"
+ 	keyrateContractTable  = "keyrate_contract"
+ 	keyrateInsert         = "INSERT INTO " + keyrateTable
+ 	keyrateContractInsert = "INSERT INTO " + keyrateContractTable
+ 	// cbrKeyRateTable — ряд фактической ставки (импортёр cbr, Name() = cbr_key_rate):
+ 	// витрина считает вменённое изменение к последней известной ставке из него.
+ 	cbrKeyRateTable = "cbr_key_rate"
+ 
+@@ -140,45 +139,53 @@ const (
+     , updated_at DateTime
+ ) ENGINE = ReplacingMergeTree ORDER BY (secid);`
+ )
+ 
+ var keyrateView = util.View{
+ 	Name:   "v_keyrate_expectations",
+ 	Tables: []string{keyrateTable, keyrateContractTable, cbrKeyRateTable},
+ 	// Спот — скалярный подзапрос, а не CROSS JOIN: на одну связь меньше и нет зависимости от
+ 	// семантики CROSS JOIN. Алиас обязан стоять ДО FINAL (`AS f FINAL`): форма
+ 	// `keyrate_futures FINAL f` — SYNTAX_ERROR ClickHouse 26.10.
++	// nullIf(…, 0) — страховка от пустой cbr_key_rate: argMax по пустой таблице отдаёт 0,
++	// а не NULL, и без обёртки вменённое изменение выродилось бы в settle × 100 б.п.
+ 	Select: `SELECT f.date AS date, f.secid AS secid, c.series_name AS series_name,
+        c.last_trade AS decision_date, f.settle AS settle, f.close AS close,
+        f.volume AS volume, f.openposition AS openposition,
+-       round(f.settle - (SELECT argMax(rate, date) FROM cbr_key_rate FINAL), 4) AS expected_change_pp,
+-       round((f.settle - (SELECT argMax(rate, date) FROM cbr_key_rate FINAL)) * 100, 1) AS expected_change_bp
++       round(f.settle - nullIf((SELECT argMax(rate, date) FROM cbr_key_rate FINAL), 0), 4) AS expected_change_pp,
++       round((f.settle - nullIf((SELECT argMax(rate, date) FROM cbr_key_rate FINAL), 0)) * 100, 1) AS expected_change_bp
+ FROM keyrate_futures AS f FINAL
+ INNER JOIN keyrate_contract AS c FINAL ON f.secid = c.secid`,
+ 	Comment: "Вменённый рынком уровень ключевой ставки на дату заседания Совета директоров ЦБ по " +
+ 		"расчётному фьючерсу MOEX KEYRATE (серии KKV6, KKZ6, KKG7, ...): settle — расчётная цена дня " +
+ 		"(SETTLEPRICE), в п.п. ставки, decision_date — дата экспирации серии, она же дата заседания. " +
+ 		"Инструмент низколиквиден (открытые позиции — десятки контрактов), поэтому значение " +
+ 		"индикативно: это НЕ прогноз рынка и НЕ цена обязательства. LAST не используется: в дни без " +
+-		"сделок ISS отдаёт по нему ноль, ожидания читать по settle. Описания серий — в v_series_catalog " +
+-		"по source='moex'",
++		"сделок ISS отдаёт по нему ноль, ожидания читать по settle. expected_change_pp/bp равны NULL, " +
++		"пока cbr_key_rate пуста (ставка ещё не загружена) — это «неизвестно», а не нулевое изменение. " +
++		"Описания серий — в v_series_catalog по source='moex'",
+ 	Columns: map[string]string{
+-		"date":               "Торговый день (Date)",
+-		"secid":              "Код серии фьючерса KEYRATE (KKV6, KKZ6, KKG7, ...): 1 п.п. ставки = 1 000 ₽ (шаг цены 0,01 п.п. = 10 ₽)",
+-		"series_name":        "Короткое имя серии по ISS (SHORTNAME), например KEYRATE-10.26 — вменённая ставка на заседание 10.2026",
+-		"decision_date":      "Дата экспирации серии (LSTDELDATE); она же дата заседания Совета директоров ЦБ, по объявленной на нём ставке рассчитывается индекс KEYRATE",
+-		"settle":             "Расчётная цена дня (SETTLEPRICE), п.п. ставки: вменённый рынком уровень ключевой ставки на дату заседания decision_date",
+-		"close":              "Цена закрытия дня (CLOSE), п.п.; при отсутствии сделок не отражает ожиданий — читать settle",
+-		"volume":             "Количество контрактов в сделках за день, шт.; 0 означает, что сделок не было и settle серии за этот день — не рыночное ожидание",
+-		"openposition":       "Открытые позиции на конец дня, контрактов (индикатор ликвидности серии)",
+-		"expected_change_pp": "Вменённое изменение ключевой ставки к дате заседания: settle − последняя известная ставка cbr_key_rate, п.п.; плюс — рынок ждёт повышения, минус — понижения. Тип Nullable(Float64) — артефакт скалярного подзапроса, NULL в значении не появляется",
+-		"expected_change_bp": "То же в базисных пунктах: (settle − последняя известная ставка cbr_key_rate) × 100. Считается к последней ИЗВЕСТНОЙ ставке, а не к ставке на дату decision_date; при нулевом объёме серии значение нерепрезентативно, а при пустой cbr_key_rate подзапрос отдаёт 0 и значение вырождается. Вменённое рынком значение, а не прогноз и не ценовое обязательство",
++		"date":          "Торговый день (Date)",
++		"secid":         "Код серии фьючерса KEYRATE (KKV6, KKZ6, KKG7, ...): 1 п.п. ставки = 1 000 ₽ (шаг цены 0,01 п.п. = 10 ₽)",
++		"series_name":   "Короткое имя серии по ISS (SHORTNAME), например KEYRATE-10.26 — вменённая ставка на заседание 10.2026",
++		"decision_date": "Дата экспирации серии (LSTDELDATE); она же дата заседания Совета директоров ЦБ, по объявленной на нём ставке рассчитывается индекс KEYRATE",
++		"settle":        "Расчётная цена дня (SETTLEPRICE), п.п. ставки: вменённый рынком уровень ключевой ставки на дату заседания decision_date",
++		"close":         "Цена закрытия дня (CLOSE), п.п.; при отсутствии сделок не отражает ожиданий — читать settle",
++		"volume":        "Количество контрактов в сделках за день, шт.; 0 означает, что сделок не было и settle серии за этот день — не рыночное ожидание",
++		"openposition":  "Открытые позиции на конец дня, контрактов (индикатор ликвидности серии)",
++		"expected_change_pp": "Вменённое изменение ключевой ставки к дате заседания: settle − последняя известная ставка cbr_key_rate, п.п.; " +
++			"плюс — рынок ждёт повышения, минус — понижения. NULL означает, что ставка ещё не загружена (cbr_key_rate пуста): " +
++			"вменённое значение неизвестно, нулём его считать нельзя",
++		"expected_change_bp": "То же в базисных пунктах: (settle − последняя известная ставка cbr_key_rate) × 100. " +
++			"Считается к последней ИЗВЕСТНОЙ ставке, а не к ставке на дату decision_date; при нулевом объёме серии значение " +
++			"нерепрезентативно, а NULL (cbr_key_rate пуста, ставка ещё не загружена) значит «неизвестно», а не нулевое изменение. " +
++			"Вменённое рынком значение, а не прогноз и не ценовое обязательство",
+ 	},
+ }
+ 
+ func (s *keyrateFutures) Name() string {
+ 	return keyrateTable
+ }
+ 
+ func (s *keyrateFutures) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+ 	// DDL — до сети: импортёр обязан отработать на чистой базе.
+ 	if err = conn.Exec(ctx, keyrateDdl); err != nil {
+@@ -226,49 +233,61 @@ func (s *keyrateFutures) Import(ctx context.Context, conn driver.Conn) (count in
+ 	for _, c := range contracts {
+ 		if err = contractBatch.Append(c.secid, c.seriesName, c.firstTrade, c.lastTrade, now); err != nil {
+ 			return count, err
+ 		}
+ 	}
+ 	dayBatch, err := conn.PrepareBatch(ctx, keyrateInsert)
+ 	if err != nil {
+ 		return count, err
+ 	}
+ 	// Инкремент — по каждой серии от её max(date) + 1 день: серии появляются и истекают
+-	// в разные дни, общей даты у них нет.
++	// в разные дни, общей даты у них нет. okSeries считает серии, по которым дни действительно
++	// собраны, — по нему решается, публиковать ли прогон.
++	okSeries := 0
+ 	for _, c := range contracts {
+ 		stored, err := keyrateStoredDate(ctx, conn, c)
+ 		if err != nil {
+ 			log.Warnf("keyrate_futures: последний день серии %s не прочитан: %v", c.secid, err)
+ 			seriesErrs = append(seriesErrs, fmt.Errorf("%s: %w", c.secid, err))
+ 			continue
+ 		}
+ 		days, err := fetchKeyrateHistory(ctx, c.secid, keyrateSince(c, stored))
+ 		if err != nil {
+ 			log.Warnf("keyrate_futures: история серии %s не получена: %v", c.secid, err)
+ 			seriesErrs = append(seriesErrs, fmt.Errorf("%s: %w", c.secid, err))
+ 			continue
+ 		}
++		okSeries++
+ 		for _, d := range days {
+ 			if err = dayBatch.Append(c.secid, d.date, d.close, d.settle, d.waprice, d.volume, d.numtrades, d.openposition); err != nil {
+ 				return count, err
+ 			}
+ 			count++
+ 		}
+ 	}
++	if okSeries == 0 {
++		// Сбой всех серий — ошибка импорта, и она возвращается ДО публикации: пустой прогон
++		// не должен отправлять батчи, писать каталог и пересоздавать витрину.
++		return count, errors.Join(
++			fmt.Errorf("keyrate_futures: дни не собраны ни по одной из %d серий", len(contracts)),
++			errors.Join(seriesErrs...))
++	}
+ 	if err = contractBatch.Send(); err != nil {
+ 		return count, err
+ 	}
+ 	if err = dayBatch.Send(); err != nil {
+ 		return count, err
+ 	}
+-	log.Infof("Собрано %d дней по %d сериям KEYRATE", count, len(contracts))
+-	// Каталог — после успешного Send: описания рядов появляются только у записанных серий.
++	log.Infof("Собрано %d дней по %d сериям KEYRATE", count, okSeries)
++	// Каталог — после успешного Send и на КАЖДУЮ обнаруженную серию (её паспорт), в том числе
++	// на серию без дневных итогов: инструмент существует, его ряд должен быть виден агенту ещё
++	// до первых сделок — так требует план («одна запись на обнаруженную серию»).
+ 	if err = util.UpsertSeriesCatalog(ctx, conn, keyrateSeriesMeta(contracts)); err != nil {
+ 		return count, err
+ 	}
+ 	if _, err = util.CreateView(ctx, conn, keyrateView); err != nil {
+ 		return count, err
+ 	}
+ 	return count, errors.Join(seriesErrs...)
+ }
+ 
+ // keyrateSince — с какой даты запрашивать историю серии: день после последнего сохранённого
+@@ -277,21 +296,21 @@ func keyrateSince(c keyrateContract, stored time.Time) time.Time {
+ 	if stored.IsZero() {
+ 		return c.firstTrade
+ 	}
+ 	return stored.AddDate(0, 0, 1)
+ }
+ 
+ // keyrateStoredDate — дата последнего сохранённого дня серии. secid подставляется в SQL-условие,
+ // поэтому проверяется validSecid: код приходит из тела ответа ISS.
+ func keyrateStoredDate(ctx context.Context, conn driver.Conn, c keyrateContract) (time.Time, error) {
+ 	if !validSecid(c.secid) {
+-		return time.Time{}, fmt.Errorf("keyrate: invalid secid %q", c.secid)
++		return time.Time{}, fmt.Errorf("keyrate: недопустимый код серии %q", c.secid)
+ 	}
+ 	return lastDate(ctx, conn, keyrateTable, "secid = '"+c.secid+"'")
+ }
+ 
+ // keyrateSeriesMeta — описания рядов в series_catalog: по одной записи на обнаруженную серию.
+ // Статического списка быть не может — серии добавляются и истекают каждый квартал.
+ func keyrateSeriesMeta(contracts []keyrateContract) []util.SeriesMeta {
+ 	meta := make([]util.SeriesMeta, 0, len(contracts))
+ 	for _, c := range contracts {
+ 		expiry := c.lastTrade.Format(moexDate)
+diff --git a/moex/keyrate_test.go b/moex/keyrate_test.go
+index 1a2e613..2243c8b 100644
+--- a/moex/keyrate_test.go
++++ b/moex/keyrate_test.go
+@@ -1,23 +1,27 @@
+ package moex
+ 
+ import (
+ 	"context"
+ 	"encoding/json"
++	"errors"
++	"fmt"
+ 	"net/http"
+ 	"net/http/httptest"
+ 	"reflect"
+ 	"slices"
+ 	"strings"
++	"sync"
+ 	"testing"
+ 	"time"
+ 
++	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+ )
+ 
+ // useMoexServer подменяет moexBaseUrl тестовым сервером (сеть в тестах — только httptest)
+ // и восстанавливает его по завершении теста.
+ func useMoexServer(t *testing.T, handler http.HandlerFunc) {
+ 	t.Helper()
+ 	server := httptest.NewServer(handler)
+ 	t.Cleanup(server.Close)
+@@ -304,20 +308,33 @@ func TestKeyrateViewContract(t *testing.T) {
+ 	if !slices.Contains(keyrateView.Tables, "cbr_key_rate") {
+ 		t.Error("cbr_key_rate отсутствует в Tables: витрина без ряда ставки станет неполной")
+ 	}
+ 	// Спот — скалярный подзапрос (решение контроллера): CROSS JOIN в витрине не нужен.
+ 	if !strings.Contains(keyrateView.Select, "(SELECT argMax(rate, date) FROM cbr_key_rate FINAL)") {
+ 		t.Errorf("спот берётся не скалярным подзапросом:\n%s", keyrateView.Select)
+ 	}
+ 	if strings.Contains(keyrateView.Select, "CROSS JOIN") {
+ 		t.Errorf("в витрине остался CROSS JOIN:\n%s", keyrateView.Select)
+ 	}
++	// Решение контроллера 5: пустая cbr_key_rate даёт argMax = 0, поэтому спот обёрнут
++	// в nullIf(…, 0) — иначе вменённое изменение выродилось бы в settle × 100 б.п. вместо
++	// «неизвестно» (NULL). Обе вычисляемые колонки обязаны нести обёртку: их в витрине ровно две.
++	guard := "nullIf((SELECT argMax(rate, date) FROM cbr_key_rate FINAL), 0)"
++	if got := strings.Count(keyrateView.Select, guard); got != 2 {
++		t.Errorf("nullIf-обёртка спота встречается %d раз, want 2 (expected_change_pp и expected_change_bp):\n%s",
++			got, keyrateView.Select)
++	}
++	for _, col := range []string{"expected_change_pp", "expected_change_bp"} {
++		if comment := keyrateView.Columns[col]; !strings.Contains(comment, "NULL") {
++			t.Errorf("комментарий %s не объясняет NULL при пустой cbr_key_rate: %q", col, comment)
++		}
++	}
+ 	// Алиас ставится ДО FINAL: `FROM keyrate_futures FINAL f` — SYNTAX_ERROR ClickHouse 26.10
+ 	// (проверено живым DESCRIBE), рабочая форма — `AS f FINAL`.
+ 	if !strings.Contains(keyrateView.Select, "FROM "+keyrateTable+" AS f FINAL") ||
+ 		!strings.Contains(keyrateView.Select, "INNER JOIN "+keyrateContractTable+" AS c FINAL") {
+ 		t.Errorf("FINAL должен стоять после алиаса (AS f FINAL / AS c FINAL):\n%s", keyrateView.Select)
+ 	}
+ }
+ 
+ func TestKeyrateDdlHasNoMinStepColumns(t *testing.T) {
+ 	// MINSTEP/STEPPRICE (0,01 п.п. = 10 ₽ → 1 п.п. = 1 000 ₽) лежат в блоке securities движка forts,
+@@ -376,10 +393,265 @@ func TestKeyrateSecidValidatedBeforeRequestAndSQL(t *testing.T) {
+ 		t.Error("fetchKeyrateContract: ожидалась ошибка на недопустимом secid")
+ 	}
+ 	if _, err := fetchKeyrateHistory(context.Background(), bad, moexDay("2026-09-29")); err == nil {
+ 		t.Error("fetchKeyrateHistory: ожидалась ошибка на недопустимом secid")
+ 	}
+ 	// conn не используется: код проверяется до обращения к базе, поэтому nil здесь безопасен.
+ 	if _, err := keyrateStoredDate(context.Background(), nil, keyrateContract{secid: bad}); err == nil {
+ 		t.Error("keyrateStoredDate: ожидалась ошибка на недопустимом secid")
+ 	}
+ }
++
++// seriesCatalogTableForTest — имя таблицы каталога рядов: в util/ она не экспортируется.
++const seriesCatalogTableForTest = "series_catalog"
++
++// keyrateFakeRow — фейковая строка QueryRow: дата последнего дня серии либо число существующих
++// таблиц для проверки в util.CreateView. Пустая таблица отдаёт epoch (1970-01-01) — так же, как
++// настоящий max(date) по Date-колонке; lastDate превращает её в zero time.
++type keyrateFakeRow struct {
++	date  *time.Time
++	count *uint64
++	err   error
++}
++
++// keyrateFakeEpoch — ответ max(date) по пустой таблице clickhouse-драйвера (Date = 1970-01-01).
++var keyrateFakeEpoch = time.Unix(0, 0).UTC()
++
++func (r keyrateFakeRow) Err() error { return r.err }
++
++func (r keyrateFakeRow) ScanStruct(any) error {
++	return errors.New("фейковая строка: ScanStruct не используется")
++}
++
++func (r keyrateFakeRow) Scan(dest ...any) error {
++	if r.err != nil {
++		return r.err
++	}
++	if len(dest) != 1 {
++		return fmt.Errorf("фейковая строка: ожидался один приёмник, получено %d", len(dest))
++	}
++	switch d := dest[0].(type) {
++	case *time.Time:
++		if r.date != nil {
++			*d = *r.date
++			return nil
++		}
++		*d = keyrateFakeEpoch
++	case *uint64:
++		if r.count == nil {
++			return errors.New("фейковая строка: счётчик таблиц не задан")
++		}
++		*d = *r.count
++	default:
++		return fmt.Errorf("фейковая строка: приёмник %T не поддержан", dest[0])
++	}
++	return nil
++}
++
++// keyrateFakeBatch — батч в память: тест проверяет состав строк и факт отправки.
++type keyrateFakeBatch struct {
++	driver.Batch
++	query string
++	rows  [][]any
++	sent  bool
++}
++
++func (b *keyrateFakeBatch) Append(v ...any) error {
++	b.rows = append(b.rows, append([]any(nil), v...))
++	return nil
++}
++
++func (b *keyrateFakeBatch) Send() error { b.sent = true; return nil }
++
++func (b *keyrateFakeBatch) Abort() error { return nil }
++
++// keyrateFakeConn — фейковое соединение импортёра: встраивание driver.Conn оставляет
++// неиспользуемые методы nil (паника, если тест зайдёт дальше сценария), а переопределены Exec,
++// QueryRow и PrepareBatch. Запросы к system.tables отвечают «все таблицы группы есть», чтобы
++// прогон доходил до публикации витрины; max(date) отвечает NULL — таблица пуста.
++type keyrateFakeConn struct {
++	driver.Conn
++	mu      sync.Mutex
++	calls   []string
++	batches []*keyrateFakeBatch
++}
++
++func (c *keyrateFakeConn) record(call string) {
++	c.mu.Lock()
++	defer c.mu.Unlock()
++	c.calls = append(c.calls, call)
++}
++
++func (c *keyrateFakeConn) Exec(_ context.Context, query string, _ ...any) error {
++	c.record("exec: " + query)
++	return nil
++}
++
++func (c *keyrateFakeConn) QueryRow(_ context.Context, query string, _ ...any) driver.Row {
++	c.record("queryrow: " + query)
++	if strings.Contains(query, "system.tables") {
++		existing := uint64(len(keyrateView.Tables))
++		return keyrateFakeRow{count: &existing}
++	}
++	return keyrateFakeRow{}
++}
++
++func (c *keyrateFakeConn) PrepareBatch(_ context.Context, query string, _ ...driver.PrepareBatchOption) (driver.Batch, error) {
++	c.record("preparebatch: " + query)
++	batch := &keyrateFakeBatch{query: query}
++	c.mu.Lock()
++	c.batches = append(c.batches, batch)
++	c.mu.Unlock()
++	return batch, nil
++}
++
++func (c *keyrateFakeConn) callList() []string {
++	c.mu.Lock()
++	defer c.mu.Unlock()
++	return append([]string(nil), c.calls...)
++}
++
++// batchFor ищет батч по тексту INSERT: различить их иначе нельзя.
++func (c *keyrateFakeConn) batchFor(t *testing.T, query string) *keyrateFakeBatch {
++	t.Helper()
++	c.mu.Lock()
++	var found *keyrateFakeBatch
++	for _, b := range c.batches {
++		if b.query == query {
++			found = b
++			break
++		}
++	}
++	c.mu.Unlock()
++	if found == nil {
++		// callList берёт тот же мьютекс, поэтому вызывается уже после разблокировки.
++		t.Fatalf("батч %q не открывался; вызовы: %v", query, c.callList())
++	}
++	return found
++}
++
++// useKeyrateIssServer поднимает ISS-стенд импортёра: две серии, паспорт по шаблону и сбой
++// истории по secid из failing (для остальных отдаётся фикстура одностраничной истории).
++func useKeyrateIssServer(t *testing.T, secids []string, failing map[string]bool) {
++	t.Helper()
++	historyFix := issFixture(t, "keyrate_history.json")
++	history := historyFix[keyrateHistoryBlock]
++	cursor := issBlock{
++		Columns: historyFix[keyrateCursorBlock].Columns,
++		Data:    [][]any{{0.0, float64(len(history.Data)), float64(moexPageLimit)}},
++	}
++	securities := issBlock{Columns: []string{"secid", "primary_boardid", "is_traded"}}
++	for _, secid := range secids {
++		securities.Data = append(securities.Data, []any{secid, keyrateBoard, 1.0})
++	}
++	useMoexServer(t, func(w http.ResponseWriter, r *http.Request) {
++		switch {
++		case r.URL.Path == "/iss/securities.json":
++			writeIssBlocks(t, w, map[string]issBlock{keyrateSecuritiesBlock: securities})
++		case strings.HasPrefix(r.URL.Path, "/iss/history/"):
++			secid := pathBase(r.URL.Path, ".json")
++			if failing[secid] {
++				http.Error(w, "boom", http.StatusInternalServerError)
++				return
++			}
++			writeIssBlocks(t, w, map[string]issBlock{keyrateHistoryBlock: history, keyrateCursorBlock: cursor})
++		case strings.HasPrefix(r.URL.Path, "/iss/securities/"):
++			secid := pathBase(r.URL.Path, ".json")
++			writeIssBlocks(t, w, map[string]issBlock{keyrateDescriptionBlock: descriptionBlock(
++				[2]string{"SECID", secid},
++				[2]string{"SHORTNAME", "KEYRATE-10.26"},
++				[2]string{"FRSTTRADE", "2026-09-29"},
++				[2]string{"LSTDELDATE", "2026-10-23"},
++			)})
++		default:
++			t.Errorf("неожиданный запрос к ISS: %s", r.URL.String())
++			http.Error(w, "unexpected", http.StatusNotFound)
++		}
++	})
++}
++
++func pathBase(path, suffix string) string {
++	return strings.TrimSuffix(path[strings.LastIndex(path, "/")+1:], suffix)
++}
++
++func TestKeyrateImportAllSeriesFailedBeforePublication(t *testing.T) {
++	// Сбой всех серий — ошибка импорта ДО публикации: пустой прогон не отправляет батчи,
++	// не пишет каталог и не пересоздаёт витрину.
++	useKeyrateIssServer(t, []string{"KKV6", "KKZ6"}, map[string]bool{"KKV6": true, "KKZ6": true})
++	conn := &keyrateFakeConn{}
++
++	count, err := (&keyrateFutures{}).Import(context.Background(), conn)
++	if err == nil {
++		t.Fatal("ожидалась ошибка импорта: дни не собраны ни по одной серии")
++	}
++	if !strings.Contains(err.Error(), "ни по одной") {
++		t.Errorf("ошибка не называет причину: %v", err)
++	}
++	if count != 0 {
++		t.Errorf("собрано строк %d, want 0", count)
++	}
++	for _, call := range conn.callList() {
++		if strings.Contains(call, seriesCatalogTableForTest) || strings.Contains(call, keyrateView.Name) {
++			t.Errorf("до публикации дело дошло: %s", call)
++		}
++	}
++	// Батчи открывались только под паспорта и дни — третьего (каталога) быть не должно.
++	if len(conn.batches) != 2 {
++		t.Fatalf("открыто батчей %d, want 2: %v", len(conn.batches), conn.callList())
++	}
++	for _, b := range conn.batches {
++		if b.sent {
++			t.Errorf("батч %q отправлен, хотя прогон неуспешен", b.query)
++		}
++	}
++}
++
++func TestKeyrateImportPartialFailurePublishes(t *testing.T) {
++	// Сбой одной серии — предупреждение и продолжение по остальным: дни собраны, батчи
++	// отправлены, каталог описывает ОБЕ обнаруженные серии (в том числе пустую), витрина создана.
++	useKeyrateIssServer(t, []string{"KKV6", "KKZ6"}, map[string]bool{"KKZ6": true})
++	conn := &keyrateFakeConn{}
++
++	count, err := (&keyrateFutures{}).Import(context.Background(), conn)
++	if err == nil {
++		t.Fatal("сбой серии обязан попадать в ошибку прогона (не молчание)")
++	}
++	if !strings.Contains(err.Error(), "KKZ6") {
++		t.Errorf("ошибка не называет сбойную серию: %v", err)
++	}
++	history := issFixture(t, "keyrate_history.json")[keyrateHistoryBlock]
++	if count != int64(len(history.Data)) {
++		t.Errorf("собрано строк %d, want %d (дни только по KKV6)", count, len(history.Data))
++	}
++	contracts := conn.batchFor(t, keyrateContractInsert)
++	if !contracts.sent || len(contracts.rows) != 2 {
++		t.Errorf("паспорта: отправлен=%v строк=%d, want отправлен и 2 строки", contracts.sent, len(contracts.rows))
++	}
++	days := conn.batchFor(t, keyrateInsert)
++	if !days.sent || len(days.rows) != len(history.Data) {
++		t.Errorf("дни: отправлен=%v строк=%d, want отправлен и %d строк", days.sent, len(days.rows), len(history.Data))
++	}
++	catalog := conn.batchFor(t, "INSERT INTO "+seriesCatalogTableForTest)
++	if len(catalog.rows) != 2 {
++		t.Fatalf("в каталоге %d записей, want 2 (по одной на обнаруженную серию)", len(catalog.rows))
++	}
++	described := make([]string, 0, len(catalog.rows))
++	for _, row := range catalog.rows {
++		series, ok := row[1].(string)
++		if !ok {
++			t.Fatalf("series в записи каталога типа %T", row[1])
++		}
++		described = append(described, series)
++	}
++	if want := []string{"KKV6", "KKZ6"}; !slices.Equal(described, want) {
++		t.Errorf("каталог описывает %v, want %v (серия без дней тоже существует как инструмент)", described, want)
++	}
++	published := false
++	for _, call := range conn.callList() {
++		if strings.Contains(call, "CREATE OR REPLACE VIEW "+keyrateView.Name) {
++			published = true
++		}
++	}
++	if !published {
++		t.Errorf("витрина не создана: %v", conn.callList())
++	}
++}

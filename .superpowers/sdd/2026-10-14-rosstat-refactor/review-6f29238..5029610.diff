@@ -1,0 +1,565 @@
+# Review package: 6f2923824b3c4baf44d463cdb8d43e890a3a34e1..5029610f169d1d4a114cc80319a55e10c8d6281f
+
+## Commits
+5029610 move findLink/getPage from cbr/ to util as GetPage/FindLink
+
+## Files changed
+ cbr/Infl_exp.go            |  6 ++--
+ cbr/Infl_exp_test.go       |  7 +++--
+ cbr/credit_m2x.go          |  6 ++--
+ cbr/credit_m2x_test.go     |  5 +--
+ cbr/indicators_cpd.go      |  4 +--
+ cbr/indicators_cpd_test.go |  5 +--
+ cbr/key_rate.go            |  2 +-
+ cbr/mo_br.go               |  4 +--
+ cbr/mp_summary.go          |  8 ++---
+ cbr/mp_summary_parse.go    |  2 +-
+ {cbr => util}/links.go     | 22 +++++++-------
+ util/links_test.go         | 76 ++++++++++++++++++++++++++++++++++++++++++++++
+ 12 files changed, 113 insertions(+), 34 deletions(-)
+
+## Diff
+diff --git a/cbr/Infl_exp.go b/cbr/Infl_exp.go
+index c33e35d..87cbfe4 100644
+--- a/cbr/Infl_exp.go
++++ b/cbr/Infl_exp.go
+@@ -98,27 +98,27 @@ func inflExpImport(xlsx *excelize.File, batch driver.Batch) error {
+ 	}
+ 	return nil
+ }
+ 
+ type inflExpStat struct {
+ 	util.ClickHouseImport
+ }
+ 
+ // Import берёт адрес актуального XLSX со страницы инфляционных ожиданий: имени файла
+ // в коде нет, а сетевое обращение в init() запрещено (ARCHITECTURE.md §8.6). Ссылку
+-// ищем тем же кодом, что и тест на фикстуре (util.GetFile + findLink).
++// ищем тем же кодом, что и тест на фикстуре (util.GetPage + util.FindLink).
+ func (s *inflExpStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+-	page, err := getPage(inflExpUrl)
++	page, err := util.GetPage(inflExpUrl)
+ 	if err != nil {
+ 		return count, fmt.Errorf("inflExp: %s: %w", inflExpUrl, err)
+ 	}
+-	href, err := findLink(page, inflExpLinkSelector)
++	href, err := util.FindLink(page, inflExpLinkSelector)
+ 	if err != nil {
+ 		return count, fmt.Errorf("inflExp: не найдена ссылка на xlsx на %s: %w", inflExpUrl, err)
+ 	}
+ 	s.DataUrl = cbrUrl + href
+ 	return s.ClickHouseImport.Import(ctx, conn)
+ }
+ 
+ // cbrInflExpImporter — инфляционные ожидания: ссылка на актуальный XLSX ищется в
+ // Import() (ARCHITECTURE.md §8.6), регистрация — реестром cbr/importers.go.
+ // Своего кода префлайта у импортёра нет: Import() выставляет s.DataUrl до
+diff --git a/cbr/Infl_exp_test.go b/cbr/Infl_exp_test.go
+index db96d4e..9742633 100644
+--- a/cbr/Infl_exp_test.go
++++ b/cbr/Infl_exp_test.go
+@@ -1,42 +1,43 @@
+ package cbr
+ 
+ import (
+ 	"strings"
+ 	"testing"
+ 
++	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+ 	"github.com/xuri/excelize/v2"
+ )
+ 
+ // TestFindLinkMissingAnchor: страница без нужного якоря — ошибка, а не пустой href.
+ func TestFindLinkMissingAnchor(t *testing.T) {
+ 	for name, tc := range map[string]struct {
+ 		page []byte
+ 		sel  string
+ 	}{
+ 		"пустая страница": {[]byte(`<html><body></body></html>`), inflExpLinkSelector},
+ 		"чужой якорь":     {[]byte(`<html><body><a class="versions_item" href="/a.pdf">x</a></body></html>`), inflExpLinkSelector},
+ 		"пустой href":     {[]byte(`<html><body><a class="versions_item" href="">x</a></body></html>`), inflExpLinkSelector},
+ 	} {
+ 		t.Run(name, func(t *testing.T) {
+-			if href, err := findLink(tc.page, tc.sel); err == nil {
++			if href, err := util.FindLink(tc.page, tc.sel); err == nil {
+ 				t.Errorf("ожидалась ошибка, получен href %q", href)
+ 			}
+ 		})
+ 	}
+ }
+ 
+ // TestInflExpFindLink: на странице инфляционных ожиданий первая ссылка — свежий xlsx.
+ func TestInflExpFindLink(t *testing.T) {
+-	href, err := findLink(readCbrTestdata(t, "infl_exp_page.html"), inflExpLinkSelector)
++	href, err := util.FindLink(readCbrTestdata(t, "infl_exp_page.html"), inflExpLinkSelector)
+ 	if err != nil {
+-		t.Fatalf("findLink: %v", err)
++		t.Fatalf("FindLink: %v", err)
+ 	}
+ 	if !strings.HasSuffix(href, ".xlsx") || !strings.Contains(href, "Infl_exp_") {
+ 		t.Errorf("href %q не похож на свежий Infl_exp_*.xlsx", href)
+ 	}
+ }
+ 
+ // TestInflExpSeriesMetaCoversParsedRows: разбор фикстуры и каталог совпадают в обе стороны.
+ func TestInflExpSeriesMetaCoversParsedRows(t *testing.T) {
+ 	checkCbrSeriesMeta(t, cbrSource, cbrInflExpSeriesMeta, func(rec *appendRecorder) error {
+ 		f, err := excelize.OpenFile("testdata/infl_exp.xlsx")
+diff --git a/cbr/credit_m2x.go b/cbr/credit_m2x.go
+index 048e2e0..2adceba 100644
+--- a/cbr/credit_m2x.go
++++ b/cbr/credit_m2x.go
+@@ -88,27 +88,27 @@ var cbrСreditM2x = util.ClickHouseImport{
+ 	},
+ 	AfterImport:            afterCbrMacro(cbrCreditM2xSeriesMeta),
+ 	PublicationCountPoints: cbrCreditM2xCountPoints,
+ }
+ 
+ type cbrCreditM2xStat struct {
+ 	util.ClickHouseImport
+ }
+ 
+ // Import берёт адрес актуального credit_m2x.xlsx со страницы ДКС. Ссылку ищем тем же
+-// кодом, что и тест на фикстуре (util.GetFile + findLink).
++// кодом, что и тест на фикстуре (util.GetPage + util.FindLink).
+ func (s *cbrCreditM2xStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+-	page, err := getPage(cbrCreditM2xUrl)
++	page, err := util.GetPage(cbrCreditM2xUrl)
+ 	if err != nil {
+ 		return count, fmt.Errorf("cbrCreditM2x: %s: %w", cbrCreditM2xUrl, err)
+ 	}
+-	href, err := findLink(page, cbrCreditM2xLinkSelector)
++	href, err := util.FindLink(page, cbrCreditM2xLinkSelector)
+ 	if err != nil {
+ 		return count, fmt.Errorf("cbrCreditM2x: не найдена ссылка на credit_m2x.xlsx на %s: %w", cbrCreditM2xUrl, err)
+ 	}
+ 	s.DataUrl = cbrUrl + href
+ 	return s.ClickHouseImport.Import(ctx, conn)
+ }
+ 
+ // cbrCreditM2xImporter — кредит экономике и денежная масса: адрес актуального
+ // credit_m2x.xlsx берётся со страницы ДКС в Import() (ARCHITECTURE.md §8.6),
+ // регистрация — реестром cbr/importers.go.
+diff --git a/cbr/credit_m2x_test.go b/cbr/credit_m2x_test.go
+index 037591f..c2e94ed 100644
+--- a/cbr/credit_m2x_test.go
++++ b/cbr/credit_m2x_test.go
+@@ -1,24 +1,25 @@
+ package cbr
+ 
+ import (
+ 	"strings"
+ 	"testing"
+ 
++	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+ 	"github.com/xuri/excelize/v2"
+ )
+ 
+ // TestCreditM2xFindLink: селектор страницы ДКС находит credit_m2x.xlsx.
+ func TestCreditM2xFindLink(t *testing.T) {
+-	href, err := findLink(readCbrTestdata(t, "credit_m2x_page.html"), cbrCreditM2xLinkSelector)
++	href, err := util.FindLink(readCbrTestdata(t, "credit_m2x_page.html"), cbrCreditM2xLinkSelector)
+ 	if err != nil {
+-		t.Fatalf("findLink: %v", err)
++		t.Fatalf("FindLink: %v", err)
+ 	}
+ 	if !strings.HasSuffix(href, "credit_m2x.xlsx") {
+ 		t.Errorf("href %q должен указывать на credit_m2x.xlsx", href)
+ 	}
+ }
+ 
+ // TestCreditM2xSeriesMetaCoversParsedRows: все 22 имени разбора описаны в каталоге и наоборот.
+ func TestCreditM2xSeriesMetaCoversParsedRows(t *testing.T) {
+ 	checkCbrSeriesMeta(t, cbrSource, cbrCreditM2xSeriesMeta, func(rec *appendRecorder) error {
+ 		f, err := excelize.OpenFile("testdata/credit_m2x.xlsx")
+diff --git a/cbr/indicators_cpd.go b/cbr/indicators_cpd.go
+index c45f37b..f69b311 100644
+--- a/cbr/indicators_cpd.go
++++ b/cbr/indicators_cpd.go
+@@ -32,25 +32,25 @@ const cbrIndicatorsCpdCountPoints = "SELECT count() FROM cbr_indicators_cpd FINA
+ const indicatorsCpdLinkSelector = ".container-fluid > div > div:nth-child(6) > div > div.body-2.document-regular_main > div > div > a.referenceable"
+ 
+ type indicatorsCpdStat struct {
+ 	util.ClickHouseImport
+ }
+ 
+ // Import берёт адрес актуального XLSX со страницы aipd: id файла в URL меняется при
+ // обновлении, поэтому ссылку ищем на странице, а не хардкодим. Вызывается из Import():
+ // сетевые вызовы в init() запрещены (ARCHITECTURE.md §8.6).
+ func (s *indicatorsCpdStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+-	page, err := getPage(indicatorsCpdUrl)
++	page, err := util.GetPage(indicatorsCpdUrl)
+ 	if err != nil {
+ 		return count, fmt.Errorf("indicatorsCpd: %s: %w", indicatorsCpdUrl, err)
+ 	}
+-	href, err := findLink(page, indicatorsCpdLinkSelector)
++	href, err := util.FindLink(page, indicatorsCpdLinkSelector)
+ 	if err != nil {
+ 		return count, fmt.Errorf("indicatorsCpd: не найдена ссылка на xlsx на %s: %w", indicatorsCpdUrl, err)
+ 	}
+ 	s.DataUrl = "https://www.cbr.ru" + href
+ 	return s.ClickHouseImport.Import(ctx, conn)
+ }
+ 
+ // cbrIndicatorsCpdImporter — сезонно сглаженная динамика потребительских цен;
+ // регистрируется реестром cbr/importers.go.
+ var cbrIndicatorsCpdImporter = &indicatorsCpdStat{ClickHouseImport: util.ClickHouseImport{
+diff --git a/cbr/indicators_cpd_test.go b/cbr/indicators_cpd_test.go
+index e2d8fb1..f3e38a7 100644
+--- a/cbr/indicators_cpd_test.go
++++ b/cbr/indicators_cpd_test.go
+@@ -1,24 +1,25 @@
+ package cbr
+ 
+ import (
+ 	"strings"
+ 	"testing"
+ 
++	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+ 	"github.com/xuri/excelize/v2"
+ )
+ 
+ // TestIndicatorsCpdFindLink: позиционный селектор страницы aipd находит indicators_cpd.xlsx.
+ func TestIndicatorsCpdFindLink(t *testing.T) {
+-	href, err := findLink(readCbrTestdata(t, "aipd_page.html"), indicatorsCpdLinkSelector)
++	href, err := util.FindLink(readCbrTestdata(t, "aipd_page.html"), indicatorsCpdLinkSelector)
+ 	if err != nil {
+-		t.Fatalf("findLink: %v", err)
++		t.Fatalf("FindLink: %v", err)
+ 	}
+ 	if !strings.HasSuffix(href, "indicators_cpd.xlsx") {
+ 		t.Errorf("href %q должен указывать на indicators_cpd.xlsx", href)
+ 	}
+ }
+ 
+ // TestIndicatorsCpdSeriesMetaCoversParsedRows: разбор фикстуры и каталог совпадают в обе стороны.
+ func TestIndicatorsCpdSeriesMetaCoversParsedRows(t *testing.T) {
+ 	checkCbrSeriesMeta(t, cbrSource, cbrIndicatorsCpdSeriesMeta, func(rec *appendRecorder) error {
+ 		f, err := excelize.OpenFile("testdata/aipd.xlsx")
+diff --git a/cbr/key_rate.go b/cbr/key_rate.go
+index 7858276..0620a24 100644
+--- a/cbr/key_rate.go
++++ b/cbr/key_rate.go
+@@ -88,21 +88,21 @@ func keyRateRows(html []byte) ([]cbrPoint, error) {
+ 	if parseErr != nil {
+ 		return nil, parseErr
+ 	}
+ 	if len(points) == 0 {
+ 		return nil, fmt.Errorf("%s: в таблице нет ни одной точки", cbrKeyRateTable)
+ 	}
+ 	return points, nil
+ }
+ 
+ func cbrKeyRateCraw(crawUrl string, conn driver.Conn) (count int64, err error) {
+-	page, err := getPage(crawUrl)
++	page, err := util.GetPage(crawUrl)
+ 	if err != nil {
+ 		return count, fmt.Errorf("%s: %w", cbrKeyRateTable, err)
+ 	}
+ 	points, err := keyRateRows(page)
+ 	if err != nil {
+ 		return count, err
+ 	}
+ 	batch, err := conn.PrepareBatch(ctx, cbrKeyRateInsert)
+ 	if err != nil {
+ 		return count, err
+diff --git a/cbr/mo_br.go b/cbr/mo_br.go
+index 30f00ff..455d6a5 100644
+--- a/cbr/mo_br.go
++++ b/cbr/mo_br.go
+@@ -48,25 +48,25 @@ func (s *moBrStat) Name() string { return moBrName }
+ 
+ // Import идёт по спеке §3.4: ссылка на полную книгу ищется на странице (имя файла
+ // меняется с каждой волной), затем полный путь ведёт шаблон — HEAD-префлайт по
+ // готовому URL, разбор + батч, публикация производных, строка версии последней.
+ // Префлайта в самом Import больше нет: он живёт в util.ClickHouseImport.Import и
+ // включается объявлением PublicationCountPoints; оставшаяся здесь копия дала бы два
+ // HEAD за прогон. Знакомая версия с совпавшим числом точек — no-op ежедневного
+ // прогона (волны выходят 8 раз в год): шаблон вернёт записанное число точек, не
+ // скачивая файл и не делая записей в БД.
+ func (s *moBrStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+-	page, err := getPage(moBrPageUrl)
++	page, err := util.GetPage(moBrPageUrl)
+ 	if err != nil {
+ 		return count, fmt.Errorf("%s: %s: %w", moBrName, moBrPageUrl, err)
+ 	}
+-	href, err := findLink(page, moBrLinkSel)
++	href, err := util.FindLink(page, moBrLinkSel)
+ 	if err != nil {
+ 		return count, fmt.Errorf("%s: не найдена ссылка на xlsx на %s: %w", moBrName, moBrPageUrl, err)
+ 	}
+ 	url := cbrUrl + href
+ 
+ 	// Полный путь — через локальную копию встроенной структуры: DataUrl и
+ 	// AfterImport зависят от волны (ссылка на файл волны и меты её разбора), а
+ 	// мутировать общую структуру импортёра нельзя. Объявление префлайта
+ 	// (PublicationSource/PublicationCountPoints) копия приносит из литерала
+ 	// moBrImporter — там оно одно на импортёр, и его же видит тест реестра.
+diff --git a/cbr/mp_summary.go b/cbr/mp_summary.go
+index 866d0d8..e9cdd6e 100644
+--- a/cbr/mp_summary.go
++++ b/cbr/mp_summary.go
+@@ -8,21 +8,21 @@ import (
+ 	"time"
+ 
+ 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+ 	log "github.com/sirupsen/logrus"
+ )
+ 
+ const (
+ 	// mpSummaryIndexUrl — индекс материалов заседаний ЦБ: карточки «Резюме обсуждения
+ 	// ключевой ставки» с датой публикации и относительным href. Домен навешивает
+-	// импортёр (cbrUrl) — как в findLink; страница резюме = cbrUrl + href.
++	// импортёр (cbrUrl) — как в util.FindLink; страница резюме = cbrUrl + href.
+ 	mpSummaryIndexUrl = "https://www.cbr.ru/dkp/mp_dec/decision_key_rate/"
+ 
+ 	// mpSummaryName — имя импортёра в CLICKHOUSE_IMPORT_STAT и id шага dagu/cbr.yaml;
+ 	// оно же — имя таблицы-шапки: у импортёров со своими таблицами пакет держит
+ 	// конвенцию «Name() == TableName» (v_cbr_mp_summary* и агент MCP ищут данные по
+ 	// нему). Блоки и каналы — отдельные таблицы того же контура.
+ 	mpSummaryName         = "cbr_mp_summary"
+ 	mpSummaryTable        = "cbr_mp_summary"
+ 	mpSummaryBlockTable   = "cbr_mp_summary_block"
+ 	mpSummaryChannelTable = "cbr_mp_summary_channel"
+@@ -194,21 +194,21 @@ func (s *mpSummaryStat) Import(ctx context.Context, conn driver.Conn) (count int
+ 	// таблиц шага 1, а no-op-прогон обязан самовосстанавливать контур (см. шаг 2 в описании
+ 	// Import выше). Сбой здесь — ошибка прогона: витрина, о которой агент не знает, хуже
+ 	// красного шага dagu.
+ 	for _, view := range []util.View{mpSummaryView, mpSummaryBlocksView, mpSummaryChannelsView} {
+ 		if _, err = util.CreateView(ctx, conn, view); err != nil {
+ 			return 0, err
+ 		}
+ 	}
+ 
+ 	// 3.
+-	index, err := getPage(mpSummaryIndexUrl)
++	index, err := util.GetPage(mpSummaryIndexUrl)
+ 	if err != nil {
+ 		return 0, fmt.Errorf("%s: %s: %w", mpSummaryName, mpSummaryIndexUrl, err)
+ 	}
+ 	refs, err := parseMPDecIndex(index)
+ 	if err != nil {
+ 		return 0, fmt.Errorf("%s: %w", mpSummaryName, err)
+ 	}
+ 
+ 	// 4.
+ 	imported, err := mpImportedSummaries(ctx, conn)
+@@ -257,21 +257,21 @@ func (s *mpSummaryStat) Import(ctx context.Context, conn driver.Conn) (count int
+ 			return 0, fmt.Errorf("%s: число резюме таблицы не прочитано: %w", mpSummaryName, err)
+ 		}
+ 		log.Infof("%s: no-op, все %d резюме на месте", mpSummaryName, knownCount)
+ 		return 0, nil
+ 	}
+ 
+ 	// 8.
+ 	docs := make([]mpFetchedSummary, 0, len(missing))
+ 	for _, ref := range missing {
+ 		url := cbrUrl + ref.Href
+-		page, pageErr := getPage(url)
++		page, pageErr := util.GetPage(url)
+ 		if pageErr != nil {
+ 			return 0, fmt.Errorf("%s: %s: %w", mpSummaryName, url, pageErr)
+ 		}
+ 		doc, parseErr := parseMPSummary(page)
+ 		if parseErr != nil {
+ 			return 0, fmt.Errorf("%s: %s: %w", mpSummaryName, url, parseErr)
+ 		}
+ 		docs = append(docs, mpFetchedSummary{Url: url, Published: ref.Published, Doc: doc})
+ 	}
+ 
+@@ -580,21 +580,21 @@ func mpLLMDocs(docs []mpFetchedSummary, pending, tagged map[time.Time]bool) (rea
+ // уже вычтенный набор (mpLLMDocs): ни новых документов этого прогона, ни размеченных пар в нём
+ // нет, поэтому повторного вызова модели на документ здесь быть не может.
+ // Недоступная или неразобранная страница — warn и продолжение: это деградация одного документа
+ // до regex-слоя (спека §3.5), а не сбой прогона; следующий прогон повторит догон.
+ func mpFetchPending(past []mpPastSummary, pending map[time.Time]bool) []mpLLMDoc {
+ 	var out []mpLLMDoc
+ 	for _, p := range past {
+ 		if !pending[p.MeetingDate] || p.Url == "" {
+ 			continue
+ 		}
+-		page, err := getPage(p.Url)
++		page, err := util.GetPage(p.Url)
+ 		if err != nil {
+ 			log.Warnf("%s: LLM-догон %s: страница %s не скачана: %v", mpSummaryName,
+ 				p.MeetingDate.Format(mpSummaryDayLayout), p.Url, err)
+ 			continue
+ 		}
+ 		doc, err := parseMPSummary(page)
+ 		if err != nil {
+ 			log.Warnf("%s: LLM-догон %s: страница %s не разобрана: %v", mpSummaryName,
+ 				p.MeetingDate.Format(mpSummaryDayLayout), p.Url, err)
+ 			continue
+diff --git a/cbr/mp_summary_parse.go b/cbr/mp_summary_parse.go
+index 73a3ad0..181f256 100644
+--- a/cbr/mp_summary_parse.go
++++ b/cbr/mp_summary_parse.go
+@@ -7,21 +7,21 @@ import (
+ 	"strconv"
+ 	"strings"
+ 	"time"
+ 	"unicode"
+ 
+ 	"github.com/PuerkitoBio/goquery"
+ )
+ 
+ // mpSummaryRef — карточка индекса материалов заседаний с резюме обсуждения ключевой ставки:
+ // дата публикации (document-regular_date) и href в том виде, как он записан в разметке
+-// (относительный; домен навешивает вызывающий — как в findLink).
++// (относительный; домен навешивает вызывающий — как в util.FindLink).
+ type mpSummaryRef struct {
+ 	Published time.Time
+ 	Href      string
+ }
+ 
+ // mpSummaryBlock — одна текстовая единица страницы резюме: абзац (Kind = paragraph) или
+ // пункт списка (Kind = bullet). Seq — сквозной номер внутри блока, Subsection — подзаголовок
+ // div.title_20 («Основные факты»/«Дискуссия»; в блоках 4–5 подзаголовков нет — пустая строка).
+ type mpSummaryBlock struct {
+ 	Block      string
+diff --git a/cbr/links.go b/util/links.go
+similarity index 58%
+rename from cbr/links.go
+rename to util/links.go
+index 5ab63ee..c555998 100644
+--- a/cbr/links.go
++++ b/util/links.go
+@@ -1,44 +1,44 @@
+-package cbr
++package util
+ 
+ import (
+ 	"bytes"
+ 	"fmt"
+ 	"io"
+ 	"strings"
+ 
+ 	"github.com/PuerkitoBio/goquery"
+-	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+ )
+ 
+-// findLink возвращает href первой ссылки, найденной селектором на HTML-странице.
++// FindLink возвращает href первой ссылки, найденной селектором на HTML-странице.
+ // href отдаётся как есть (абсолютный или относительный): префикс домена навешивает
+ // вызывающий — так же, как делал прежний HTML-транспорт. Пустой href или отсутствие совпадения —
+ // ошибка: без ссылки на XLSX импорт должен падать до записи в БД, а не тихо писать
+ // «0 rows» по устаревшему или чужому адресу.
+-func findLink(page []byte, selector string) (string, error) {
++func FindLink(page []byte, selector string) (string, error) {
+ 	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(page))
+ 	if err != nil {
+-		return "", fmt.Errorf("findLink: разбор страницы: %w", err)
++		return "", fmt.Errorf("FindLink: разбор страницы: %w", err)
+ 	}
+ 	href, ok := doc.Find(selector).First().Attr("href")
+ 	if !ok || strings.TrimSpace(href) == "" {
+-		return "", fmt.Errorf("findLink: по селектору %q ссылка не найдена", selector)
++		return "", fmt.Errorf("FindLink: по селектору %q ссылка не найдена", selector)
+ 	}
+ 	return href, nil
+ }
+ 
+-// getPage скачивает HTML-страницу целиком через util.GetFile. Ридер закрывается всегда:
+-// ошибки чтения и закрытия возвращаются обе, иначе повреждённая страница выглядела бы
+-// успешным разбором.
+-func getPage(pageURL string) ([]byte, error) {
+-	reader, err := util.GetFile(pageURL)
++// GetPage скачивает HTML-страницу целиком через GetFile — общий хелпер пакетов
++// импортёров (стандарт §4.1: все сетевые обращения — через util). Ридер закрывается
++// всегда: ошибки чтения и закрытия возвращаются обе, иначе повреждённая страница
++// выглядела бы успешным разбором.
++func GetPage(pageURL string) ([]byte, error) {
++	reader, err := GetFile(pageURL)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	page, readErr := io.ReadAll(reader)
+ 	closeErr := reader.Close()
+ 	if readErr != nil {
+ 		return nil, readErr
+ 	}
+ 	if closeErr != nil {
+ 		return nil, closeErr
+diff --git a/util/links_test.go b/util/links_test.go
+new file mode 100644
+index 0000000..0d9c687
+--- /dev/null
++++ b/util/links_test.go
+@@ -0,0 +1,76 @@
++package util
++
++import (
++	"io"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"testing"
++)
++
++// Happy path: 200 + HTML → тело возвращается целиком, ошибки нет. Заодно пиним
++// User-Agent: GetPage обязан ехать через util.HttpClient, как GetFile/GetJSON
++// (конвенция проекта, стандарт §4.1).
++func TestGetPageReturnsBody(t *testing.T) {
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		if r.Header.Get("User-Agent") == "" {
++			t.Error("запрос ушёл без User-Agent — хелпер обязан слать randomUA, как GetFile/GetJSON")
++		}
++		_, _ = io.WriteString(w, `<a href="/x.xlsx">x</a>`)
++	}))
++	defer server.Close()
++
++	page, err := GetPage(server.URL)
++	if err != nil {
++		t.Fatalf("GetPage 200: %v", err)
++	}
++	if string(page) != `<a href="/x.xlsx">x</a>` {
++		t.Errorf("GetPage() = %q, ожидалось тело страницы без изменений", page)
++	}
++}
++
++// Пустое тело со статусом 200 — ошибка (GetFile уже так делает): пустой ответ
++// неотличим от «данных нет», и молчаливый ноль оставил бы ряды без обновления.
++func TestGetPageEmptyBodyFails(t *testing.T) {
++	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
++	defer server.Close()
++
++	if _, err := GetPage(server.URL); err == nil {
++		t.Fatal("пустое тело должно давать ошибку, а не тихий ноль")
++	}
++}
++
++// TestFindLinkReturnsHref: href отдаётся как есть (относительный в этой проверке —
++// префикс домена навешивает вызывающий).
++func TestFindLinkReturnsHref(t *testing.T) {
++	page := []byte(`<html><body><a href="/storage/x.xlsx">x</a></body></html>`)
++	href, err := FindLink(page, `a[href$=".xlsx"]`)
++	if err != nil {
++		t.Fatalf("FindLink: %v", err)
++	}
++	if href != "/storage/x.xlsx" {
++		t.Errorf("FindLink() = %q, ожидалось %q", href, "/storage/x.xlsx")
++	}
++}
++
++// Совпадений нет — ошибка, и селектор в её тексте: дежурный по логу должен видеть,
++// чем именно страница не подошла, не открывая код. %q в сообщении экранирует кавычки
++// селектора, поэтому сверяем его литеральную часть.
++func TestFindLinkMissingSelectorFails(t *testing.T) {
++	page := []byte(`<html><body><a href="/a.pdf">x</a></body></html>`)
++	href, err := FindLink(page, `a[href$=".xlsx"]`)
++	if err == nil {
++		t.Fatalf("ожидалась ошибка, получен href %q", href)
++	}
++	if !strings.Contains(err.Error(), `a[href$=`) {
++		t.Errorf("ошибка %q не называет селектор", err)
++	}
++}
++
++// Битый HTML — ошибка разбора, а не молчаливый ноль: иначе импортёр счёл бы
++// страницу без ссылки и упал бы с менее понятным сообщением.
++func TestFindLinkBadHTMLFails(t *testing.T) {
++	if _, err := FindLink([]byte("<a href="), `a`); err == nil {
++		t.Fatal("битый HTML должен давать ошибку разбора, а не тихий ноль")
++	}
++}

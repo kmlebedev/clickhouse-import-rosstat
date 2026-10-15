@@ -1,0 +1,991 @@
+# Review package: 217bcb7..HEAD
+
+## Commits
+063aea0 docs: require json suffix in bold paths
+34c63f2 bold: fix catalog origins and publish catalog on no-op
+d5b4d6e docs: bold t+1 gold acceptance
+1a50a60 bold: require .json suffix on api paths
+528ef81 docs: bold t+1 gold contour
+
+## Files changed
+ ARCHITECTURE.md                                    | 52 ++++++++++++++++++---
+ README.md                                          | 20 ++++++--
+ bold/bold.go                                       | 14 ++++--
+ bold/bold_test.go                                  | 54 +++++++++++++++++-----
+ bold/parse.go                                      | 25 ++++++----
+ bold/parse_test.go                                 | 26 +++++++----
+ bold/price_test.go                                 |  4 +-
+ bold/series_meta.go                                | 14 ++++--
+ docs/GOLD_THESIS_DATA_ROADMAP.md                   | 18 ++++++++
+ docs/superpowers/plans/2026-10-12-bold-t1-gold.md  |  2 +-
+ .../specs/2026-10-12-bold-t1-gold-design.md        |  2 +-
+ ingest/schema.go                                   |  2 +-
+ scripts/mcp_check.py                               | 33 +++++++++----
+ 13 files changed, 204 insertions(+), 62 deletions(-)
+
+## Diff
+diff --git a/ARCHITECTURE.md b/ARCHITECTURE.md
+index 091f447..d69608d 100644
+--- a/ARCHITECTURE.md
++++ b/ARCHITECTURE.md
+@@ -1,14 +1,14 @@
+ # ARCHITECTURE.md — clickhouse-import-rosstat
+ 
+ > Контекстный документ для AI-ассистентов (Kimi Code и др.). Содержит всё необходимое для написания нового кода без полного чтения репозитория: паттерны, конвенции, схемы БД, целевую архитектуру. Обновлять при каждом изменении архитектуры.
+-> Последнее обновление: 2026-10-12 (WGC ETF Flows: канонический транспорт — JSON API `fscdn.gold.org` (`wgc/etf_api.go` + `util.GetJSON`), локальная выгрузка `ETF_Flows_*.xlsx` — фолбэк; §3 — в `util/` добавлен `GetJSON` с проверкой HTTP-статуса; §6.1 — строка `wgc_etf_flows` (транспорт API, глубины рядов, округление тоннажных стоков источника до 0,01 т); §6.3 — источник рядов `v_gold_etf_flows`; §6.1/§7 — расписание `wgc` ежедневно 20:17 МСК вместо понедельника, выгрузки ЦБ по-прежнему качаются вручную); ранее 2026-10-11 — wgc-контур «ETF Flows и резервы ЦБ»: §6.1 — реализованы импортёры `wgc_etf_flows` (20 рядов `etf_<метрика>_<регион>` месячных потоков и запасов золотых ETF из выгрузки `ETF_Flows_*.xlsx`) и `wgc_cb_reserves` (14 рядов `cb_gold_change_tonnes_<iso3>` и `cb_gold_holdings_tonnes_<iso3>` по семи ЦБ из выгрузок `Changes_latest_as_of_*.xlsx` и `World_official_gold_holdings_as_of_*.xlsx`), пакет `wgc/`, расписание `dagu/wgc.yaml` (понедельник 20:17 МСК; с 2026-10-12 — ежедневно, см. запись выше), `source = 'wgc'`; §6.2 — `wgc` перенесён из планируемых в реализованные `source` (копии комментария DDL `macro_series` — здесь и в `ingest/schema.go` — синхронизированы); §6.3 — приоритет `v_gold_etf_flows` стал `wgc > webbridge > manual`, добавлена витрина `v_cb_gold_dynamics` (7 ЦБ: MoM/YTD и уровень) с комментариями и грантом `kimi_reader`; §6.5 — контур правилу 11 удовлетворяет, проверки добавлены в `scripts/mcp_check.py`; ранее того же дня — фаза 3 «спрос, консенсус и обратная связь»: §6.1 — реализован импортёр `forecast_resolve` (пакет `forecast/`, расписание `dagu/forecast.yaml`, 20:23 МСК) — сверка прогнозов `xau_q_avg` с фактом из `gold_prices`; §6.2 — `gold_forecasts` перенесена из «не реализованы» в реализованные (копии DDL: `ingest/schema.go` и сид `sql/gold_forecasts_q4_2026_seed.sql`, комментарий `scenario` дополнен `'range'`); §6.3 — витрины `v_gold_forecasts` (консенсус банков и own-сетка) и `v_gold_etf_flows` (пивот 20 рядов WGC Gold ETF Flows, source `webbridge`), `v_forecast_accuracy` заполняет резолвер; §6.5 — endpoint `POST /v1/gold_forecasts` и пятая таблица `EnsureTables`; сиды `sql/wgc_etf_flows_catalog.sql` и бэкфилл `sql/forecast_log_backfill.sql`; ранее того же дня — §6.1/§6.3 — реализован импортёр `eia` (EIA API v2: запасы дистиллятов WDISTUS1, загрузка НПЗ WPULEUS3) → `macro_series` (`source='eia'`), витрина `v_eia_petroleum`; `v_gold_dashboard` читает значения по приоритету `eia > webbridge > manual`; §5 — env `EIA_API_KEY`; dagu — `dagu/eia.yaml`, среда 19:43 МСК; §6.2 — комментарий `source` в DDL `macro_series` приведён к код-копии `ingest/schema.go`; §6.5 — «единственный путь записи» называет и `gold_prices`; валидация ingest отсекает даты вне диапазона Date32 [1900-01-01, 2299-12-31] → 400; ранее того же дня — §6.5 — endpoint `POST /v1/gold_prices` (venue `comex_front`) и поле `source` в `POST /v1/manual_series` (`manual`/`webbridge`/`imf`); §6.3 — витрина `v_imf_macro` (золотые резервы ЦБ, IMF IRFCL); §6.2 — копия DDL `gold_prices` в `ingest/schema.go` и комментарий source; ранее того же дня — §6.4 — поактивный AISC Полюса теперь калибруется скриптом `scripts/extrapolation_aisc.py` (цель `make dcf-aisc`) как доля клина по пресс-релизам 2019–2021 с увязкой к групповому AISC и `capex_sustaining = 0`; сид применяется вручную и в `dagu/dcf.yaml` не входит — цепочка остаётся двухшаговой; ранее 2026-10-11 — §6.1/§6.2 сид `mine_plans` в расписании `dagu/dcf.yaml` и окно правдоподобных годов плана в `dcf/seed.go`; 2026-10-10 — в `polyus/` включены шесть пресс-релизов 4Q/FY за 2019–2024). Базовый коммит: `a43af65` (разделы сверены с кодом на этом коммите).
++> Последнее обновление: 2026-10-12 (контур bold.report (ByteTree) — T+1 ETF-агрегат и цена: пакет `bold/`, два импортёра — `bold_etf_flows` (7 рядов `etf_bold_*` в `macro_series`, `source = 'bold'`, плюс таблица пер-фондового среза `bold_fund_snapshot` с ключом `(date, ticker, name)`) и `bold_gold_price` (площадка `bold` в `gold_prices`); §6.1 — строки импортёров, режимы 4/8 запросов и триггеры полного пути; §6.2 — `source='bold'` в комментарии DDL `macro_series` (копия синхронизирована в `ingest/schema.go`) и канонический DDL `bold_fund_snapshot`; §6.3 — витрины `v_gold_etf_flows_daily` и `v_gold_etf_funds_daily`; §7 — расписание `dagu/bold.yaml`, ежедневно 08:07 МСК; ✅ живая приёмка 2026-10-12 пройдена после фикса путей: `bold_gold_price` — 3138 точек (`2026-10-09` = 4216,3), `bold_etf_flows` — 21054 точки + 73 строки среза, повтор — no-op, `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА; у эндпоинтов источника обязателен суффикс `.json` (без него CDN отдаёт `403 AccessDenied`), он закреплён тестом `TestBoldEndpointsPinPaths`); ранее 2026-10-12 — (WGC ETF Flows: канонический транспорт — JSON API `fscdn.gold.org` (`wgc/etf_api.go` + `util.GetJSON`), локальная выгрузка `ETF_Flows_*.xlsx` — фолбэк; §3 — в `util/` добавлен `GetJSON` с проверкой HTTP-статуса; §6.1 — строка `wgc_etf_flows` (транспорт API, глубины рядов, округление тоннажных стоков источника до 0,01 т); §6.3 — источник рядов `v_gold_etf_flows`; §6.1/§7 — расписание `wgc` ежедневно 20:17 МСК вместо понедельника, выгрузки ЦБ по-прежнему качаются вручную); ранее 2026-10-11 — wgc-контур «ETF Flows и резервы ЦБ»: §6.1 — реализованы импортёры `wgc_etf_flows` (20 рядов `etf_<метрика>_<регион>` месячных потоков и запасов золотых ETF из выгрузки `ETF_Flows_*.xlsx`) и `wgc_cb_reserves` (14 рядов `cb_gold_change_tonnes_<iso3>` и `cb_gold_holdings_tonnes_<iso3>` по семи ЦБ из выгрузок `Changes_latest_as_of_*.xlsx` и `World_official_gold_holdings_as_of_*.xlsx`), пакет `wgc/`, расписание `dagu/wgc.yaml` (понедельник 20:17 МСК; с 2026-10-12 — ежедневно, см. запись выше), `source = 'wgc'`; §6.2 — `wgc` перенесён из планируемых в реализованные `source` (копии комментария DDL `macro_series` — здесь и в `ingest/schema.go` — синхронизированы); §6.3 — приоритет `v_gold_etf_flows` стал `wgc > webbridge > manual`, добавлена витрина `v_cb_gold_dynamics` (7 ЦБ: MoM/YTD и уровень) с комментариями и грантом `kimi_reader`; §6.5 — контур правилу 11 удовлетворяет, проверки добавлены в `scripts/mcp_check.py`; ранее того же дня — фаза 3 «спрос, консенсус и обратная связь»: §6.1 — реализован импортёр `forecast_resolve` (пакет `forecast/`, расписание `dagu/forecast.yaml`, 20:23 МСК) — сверка прогнозов `xau_q_avg` с фактом из `gold_prices`; §6.2 — `gold_forecasts` перенесена из «не реализованы» в реализованные (копии DDL: `ingest/schema.go` и сид `sql/gold_forecasts_q4_2026_seed.sql`, комментарий `scenario` дополнен `'range'`); §6.3 — витрины `v_gold_forecasts` (консенсус банков и own-сетка) и `v_gold_etf_flows` (пивот 20 рядов WGC Gold ETF Flows, source `webbridge`), `v_forecast_accuracy` заполняет резолвер; §6.5 — endpoint `POST /v1/gold_forecasts` и пятая таблица `EnsureTables`; сиды `sql/wgc_etf_flows_catalog.sql` и бэкфилл `sql/forecast_log_backfill.sql`; ранее того же дня — §6.1/§6.3 — реализован импортёр `eia` (EIA API v2: запасы дистиллятов WDISTUS1, загрузка НПЗ WPULEUS3) → `macro_series` (`source='eia'`), витрина `v_eia_petroleum`; `v_gold_dashboard` читает значения по приоритету `eia > webbridge > manual`; §5 — env `EIA_API_KEY`; dagu — `dagu/eia.yaml`, среда 19:43 МСК; §6.2 — комментарий `source` в DDL `macro_series` приведён к код-копии `ingest/schema.go`; §6.5 — «единственный путь записи» называет и `gold_prices`; валидация ingest отсекает даты вне диапазона Date32 [1900-01-01, 2299-12-31] → 400; ранее того же дня — §6.5 — endpoint `POST /v1/gold_prices` (venue `comex_front`) и поле `source` в `POST /v1/manual_series` (`manual`/`webbridge`/`imf`); §6.3 — витрина `v_imf_macro` (золотые резервы ЦБ, IMF IRFCL); §6.2 — копия DDL `gold_prices` в `ingest/schema.go` и комментарий source; ранее того же дня — §6.4 — поактивный AISC Полюса теперь калибруется скриптом `scripts/extrapolation_aisc.py` (цель `make dcf-aisc`) как доля клина по пресс-релизам 2019–2021 с увязкой к групповому AISC и `capex_sustaining = 0`; сид применяется вручную и в `dagu/dcf.yaml` не входит — цепочка остаётся двухшаговой; ранее 2026-10-11 — §6.1/§6.2 сид `mine_plans` в расписании `dagu/dcf.yaml` и окно правдоподобных годов плана в `dcf/seed.go`; 2026-10-10 — в `polyus/` включены шесть пресс-релизов 4Q/FY за 2019–2024). Базовый коммит: `a43af65` (разделы сверены с кодом на этом коммите).
+ 
+ ---
+ 
+ ## 1. Что это за проект
+ 
+ Go-конвейер (ETL) импорта российской макроэкономической статистики и финансовых данных в **ClickHouse** для дашбордов **Grafana** и аналитических моделей (сценарный прогноз золота → DCF → NAV акции PLZL). Монолитный репозиторий: основной бинарник импорта и отдельный бинарник `cmd/ingest` (ingest-endpoint контура прогноза, §6.5); конфигурация только через env.
+ 
+ - Репозиторий: `github.com/kmlebedev/clickhouse-import-rosstat`
+ - Go 1.27, сборка: `make build` → статический linux/amd64 бинарник (CGO_ENABLED=0, ldflags `-s -w`); `make build-ingest` → `build/ingest`
+ - Драйвер БД: `github.com/ClickHouse/clickhouse-go/v2` (native protocol)
+@@ -36,20 +36,27 @@ wgc/               — WGC (World Gold Council): импортёры wgc_etf_flow
+                      fscdn.gold.org — месячные потоки, запасы и AUM золотых ETF; выгрузка ETF_Flows_*.xlsx —
+                      фолбэк) и wgc_cb_reserves (14 рядов cb_gold_change_tonnes_<iso3> /
+                      cb_gold_holdings_tonnes_<iso3> по POL/CZE/TUR/RUS/KAZ/UZB/CHN из Changes_latest_as_of_*.xlsx
+                      и World_official_gold_holdings_as_of_*.xlsx) → macro_series (source='wgc');
+                      витрины v_gold_etf_flows и v_cb_gold_dynamics (views/). Выгрузки ЦБ и ETF-фолбэк скачиваются
+                      вручную браузером (боту goldhub отдаёт 403) и лежат в wgc/data (в .gitignore)
+ wgc/data/          — вручную скачанные выгрузки WGC (Changes_latest_as_of_*.xlsx,
+                      World_official_gold_holdings_as_of_*.xlsx и ETF_Flows_*.xlsx — фолбэк ETF-канала);
+                      в репозитории не хранятся
+ wgc/testdata/      — фикстуры тестов-парсеров: те же три выгрузки винтажа 2026-10 (коммитятся; ~2 МБ)
++bold/              — bold.report (ByteTree), публичный JSON API без ключа (у эндпоинтов обязателен суффикс `.json`):
++                     два импортёра — bold_etf_flows (7 рядов etf_bold_* в macro_series, source='bold': дневной
++                     поток и его USD-оценка, окна 7/30/90 календарных дней, запасы и AUM агрегата 73 фондов
++                     ≈83 % мировой величины WGC; плюс таблица пер-фондового среза bold_fund_snapshot с ключом
++                     (date, ticker, name)) и bold_gold_price (цена дня источника → gold_prices, venue='bold').
++                     Данные T+1, расписание dagu/bold.yaml (ежедневно 08:07 МСК); витрины v_gold_etf_flows_daily
++                     и v_gold_etf_funds_daily (views/); §6.1–§6.3. Тесты офлайн: httptest + bold/testdata/
+ moex/              — МосБиржа ISS (анонимный REST, без ключа): свечи PLZL → stock_prices (существующая legacy-схема, Float32 не меняем), RGBI + G-curve → ofz_curve; series_catalog (source='moex'), витрины v_stock_prices, v_ofz_curve
+ calendar/          — календарь событий-триггеров прогноза золота/NAV: events_calendar, витрина v_events_calendar; сид Q4-2026 — sql/events_calendar_q4_2026.sql
+ forecast/          — журнал прогнозов золотого контура: единственный импортёр forecast_resolve заполняет forecast_log.actual/error_pct сверкой прогноза xau_q_avg со средним gold_prices за квартал target_date (comex_front → moex_fix_usd); своих таблиц не создаёт
+ views/             — витрины контура прогноза v_model_inputs, v_gold_dashboard, v_forecast_accuracy, v_imf_macro; импортёр gold_views.
+                      Импортёр company_views: таблица company_financials (метрики компаний сектора) + витрины
+                      v_company_financials, v_company_metric_sources, v_company_operating; описания рядов Полюса
+                      в series_catalog (views/series_meta.go, source='polyus' и 'polyus_datapack')
+ ingest/            — ingest-endpoint контура прогноза: POST /v1/model_run, POST /v1/manual_series (source='manual'|'webbridge'|'imf'), POST /v1/gold_prices, POST /v1/gold_forecasts (Bearer INGEST_TOKEN); пишет model_runs, forecast_log, macro_series, gold_prices, gold_forecasts
+ cmd/ingest/        — main-пакет бинарника ingest (make build-ingest / make run-ingest)
+ dcf/               — расчётное ядро DCF: sum-of-parts LOM-NAV по активам (таблицы mine_plans,
+@@ -187,35 +194,37 @@ func init() {
+ | `bea` | `bea/` | реализован; `Name()` = `bea` | BEA API: `GET https://apps.bea.gov/api/data?method=GetData&datasetname=NIPA&TableName=T20804&Frequency=M` (ключ `BEA_API_KEY` → параметр `UserID`, без него импорт падает с ошибкой). Строки T20804: 1 — PCE_PI (headline), 25 — PCE_PI_CORE (excluding food and energy). | Ключ маскируется в текстах ошибок (`url.Error` содержит URL). Тесты: `bea/bea_test.go`. Расписание: `dagu/bea.yaml`, ежедневно 12:37 (МСК) → `macro_series`; описания рядов → `series_catalog`; витрина `v_bea_pce` (с комментариями, грант `kimi_reader`) |
+ | `databook_polyus` | `polyus/` | реализован; `Name()` = `databook_polyus` | Локальный xlsx-датапак Polyus `polyus/data/polyus_datapack_fy2025_new.xlsx` (лист `Sheet1`): операционные результаты по активам с 2007 (CONSOLIDATED OPERATING RESULTS, OLIMPIADA, BLAGODATNOYE, TITIMUKHTA, VERNINSKOYE2, ALLUVIALS, KURANAKH, ZAPADNOYE, NATALKA, Sukhoi Log) | Разбор через `excelize/v2`; битая ячейка (`N/A`, текст) — пропуск строки с `log.Warnf`, импорт не падает. Тесты: `polyus/datapack_test.go`. Расписание: `dagu/financial.yaml`, понедельник 10:23 (МСК) → `databook_polyus`. Описания рядов — в `series_catalog` (source `polyus_datapack`, 19 рядов; пишет импортёр `company_views`, см. §6.3), витрина `v_company_operating` с комментариями и грантом `kimi_reader`. Отдельного набора `v_polyus_*` нет намеренно: витрина общая для сектора (§6.3) |
+ | `polyus_financial_metrics` | `polyus/` | реализован; `Name()` = `polyus_financial_metrics` (имя импортёра; пишет в таблицу `company_financials`). Отчётность Полюса — прямые входы DCF (производство, TCC, выручка, прибыль, capex) | PDF-отчёты ПАО «Полюс»: KPI-пресс-релизы (RU 1H2026, EN 4Q/FY 2019–2024, EN MD&A FY2014) и МСФО-формы (EN 1H2026, стр. 6–7) | Извлечение текста — `pdftotext -tsv` (координаты слов, `polyus/source.go`); разбор — колоночная модель: слова группируются в визуальные строки (`polyus/words.go`), полоса шапки собирается по ролям строк, колонки выводятся из неё по X (`polyus/columns.go`), значение относится к колонке, накрывающей его X. Два режима: `Kind: "kpi"` (таблица «метрика + строки периодов», период из шапки страницы) и `Kind: "ifrs"` (статья + два столбца периодов, период отчёта — параметр). Список отчётов — данные (`polyus/pages.go`, `[]Report`): 9 включённых, 5 с `Enabled: false` (2015–2018 и 2025H2) и причиной в комментарии. Guard `polyus/guard.go` — резерв: отбрасывает только записи с пустым `Period` и сообщает число значений вне периодных колонок (см. §6.6). Тесты: `polyus/kpi_test.go`, `ifrs_test.go`, `columns_test.go`, `words_test.go`, `periods_test.go`, `guard_test.go`. Расписание: `dagu/financial.yaml`, понедельник 10:23 (МСК) → `company_financials`; описания рядов — в `series_catalog` (source `polyus`, 18 рядов; пишет `company_views`), витрины `v_company_financials` и `v_company_metric_sources` с комментариями и грантом `kimi_reader`. `Name()` и имя таблицы разведены намеренно: имя в реестре — контракт CLI и `dagu/financial.yaml` (`financialMetricsStatName`), а таблица сменилась на общую для сектора |
+ | `databook_ugk` | `financial/` | реализован (legacy) | xlsx-датапак ЮГК | Остаётся в `financial/`; перенос — отдельный пункт, когда ЮГК понадобится для `peers_nav` |
+ | `dcf_mine_plans` | `dcf/` | реализован; `Name()` = `dcf_mine_plans`. Сид LOM-планов из публичной отчётности Полюса (**владеет** таблицей `mine_plans`; DDL — копия §6.2 в `dcf/schema.go`). Идёт в DAG **ДО** `dcf_engine`: ядро читает `mine_plans` как вход (§6.4). Порядок шагов исполняет `dagu/dcf.yaml` (`type: chain`; шаг сида — первый). **Уточнённый поактивный AISC** (§6.4) — отдельный РУЧНОЙ шаг `make dcf-aisc` поверх этого сида (скрипт `scripts/extrapolation_aisc.py`, генерирует `sql/dcf_mine_plans_seed.sql`); в `dagu/dcf.yaml` он НЕ входит | Факт последнего отчётного года — из `databook_polyus` (`FINAL`, метрика `Total Dore gold output`, `data='ANNUAL'`, год берётся из колонки `date` через `toYear(date)`, а не из подписи периода); остальные числа — константы сида `dcf/mine_plans_seed.go` (снимок Годового обзора ПАО «Полюс» за 2025 год + презентация «Ключевые проекты роста», декабрь 2024) | Развёртка `assetPlanSeed` → строки по годам — чистая `dcf/mine_plans_build.go` (`buildPlanYears`/`buildProfileYears`), без БД и часов; факт читается `readActualProduction` только у активов без `ProductionProfile`. Запись — ОДНИМ батчем `PrepareBatch → Append (err checked) → Send` (правило 2); `Abort` только в ветке `Append`. Актива с нулевым/отсутствующим фактом добычи **пропускается с `log.Warn`** (`minePlansSkipWarn`), а не пишется с нулевой добычей: сегодня так штатно выпадают `TITIMUKHTA` и `ZAPADNOYE` (их россыпная добыча в датапаке лежит в таблице `ALLUVIALS`). Год плана вне правдоподобного окна `[minPlanYear, maxPlanYear)` (`dcf/seed.go`: 2000–2100, полуоткрытое) **не сеется**: `planYears` отбрасывает его и пишет `log.Warnf` (Finding 1 финального ревью), а `checkYearCoverage` считает такой год непокрытым. План из одних мусорных лет падает ошибкой до расчёта (на пустой `price_decks` — `seedPriceDecks` с пустым горизонтом, на непустой — `checkYearCoverage`), а не пишет бессмысленный NAV. Каталог рядов (правило 11a) — `dcf/series_meta.go`, 8 записей, source `dcf_mine_plans`, частота `A` (годовая), пишется ПОСЛЕ успешного `Send`. Тесты — `dcf/mine_plans_*_test.go`, `dcf/seed_test.go`, `dcf/coverage_test.go`, `dcf/series_meta_test.go` (офлайн, без БД и сети) |
+ | `dcf_engine` | `dcf/` | реализован; `Name()` = `dcf_engine`. Расчётное ядро sum-of-parts LOM-NAV (§6.4): **заводит** `mine_plans`, `price_decks`, `nav_by_asset` (DDL — копии §6.2 в `dcf/schema.go`); **читает** `mine_plans` (`FINAL`, порядок `company, asset, year` — группировка планов одним проходом) и `price_decks` (`FINAL`), а на пустой таблице деков сеет её сама: `spot_flat` — последняя цена `gold_prices`(`venue='moex_fix_usd'`), `consensus_lt` $3 000 и `own_scenario` $4 600 — задокументированные LT-якоря §6.4. Идёт в `dagu/dcf.yaml` **ПОСЛЕ** `dcf_mine_plans` (шаг 2; `type: chain` исполняет шаги по порядку) | Чистое ядро `dcf/model.go` — `ndpiPerOz` (база + надбавка 10% с превышения порога $1 900, порог и ставка — поля `Params`, не литералы), `npvLOM` (год `t` плана: `Prod_koz×(gold−AISC) − НДПИ×Prod − налог с положительного потока − capex − ΔWC`, деньги внутри года приводятся к тыс. USD; в последнем году — ОТРИЦАТЕЛЬНЫЙ `closure_costs` налогово вычитаемым, perpetual TV нет; год плана без цены дека пропускается с `log.Warnf`, но индекс года всё равно сдвигает дисконт), `escalate` (затраты по накопленному ИПЦ; `Params.Ipc` в этом срезе `nil` — упрощение задокументировано). Ставки двух контуров — `dcf/params.go` (`industrial` 0.05, `local` 0.16). Ядро записи `navRows` — чистая, без БД и часов: `активы × 3 дека × 2 контура`, деки идут отсортированными (порядок вставки воспроизводим), `stage_haircut` всегда NULL (стадийные haircut'ы вне среза). Запись — ОДНИМ батчем `PrepareBatch → Append (err checked) → Send` (правило 2); `Abort` вызывается только в ветке `Append`, где батч ещё открыт. Пустой `mine_plans` — **не ошибка**: `log.Warn` и `Imported 0 rows`, чтобы `make import STAT=dcf_engine` и DAG не краснели на dev-БД до сида планов. `run_id` приходит ТОЛЬКО из `DCF_RUN_ID` (`os.Getenv`, не-UUID отсекается до расчёта): пустой `DCF_RUN_ID` печатает готовое тело `POST /v1/model_run` (`dcf/run_json.go`, зеркало `ingest.ModelRun` с `DisallowUnknownFields`) и **ничего не пишет** — в `model_runs` пишет только ingest-endpoint; поэтому `dagu/dcf.yaml` не задаёт `DCF_RUN_ID` (это параметр разового прогона), и связанный прогон делается вручную. Тесты — `dcf/*_test.go` (ядро на закреплённых числах, без БД и сети) |
+ | `forecast_resolve` | `forecast/` | реализован; `Name()` = `forecast_resolve` (своих таблиц импортёр не создаёт: читает `forecast_log` и `gold_prices`, дописывает `forecast_log`; имя в реестре — контракт `CLICKHOUSE_IMPORT_STAT` и id шага `dagu/forecast.yaml`) | `forecast_log` (`metric = 'xau_q_avg'`, `target_date <= today()`) + `gold_prices` (`venue` — факт) | Читает `forecast_log FINAL` по `metric = 'xau_q_avg'` с наступившей `target_date`; окно сверки — квартал, содержащий `target_date` (`[начало квартала, target_date]`, у штатных `target_date` = последний день квартала), `actual` = среднее `gold_prices FINAL` за окно по приоритету `comex_front > moex_fix_usd` (выбор по количеству точек — `avg` пустого окна даёт NaN), `error_pct = (predicted − actual) / actual × 100`. `nav` и прочие метрики не резолвятся (факта для NAV нет); окно без точек цены — `log.Warn`, строка остаётся нерезолвленной. Запись — одним батчем и **только при изменившемся `actual`** (совпадение — молчание, `log.Debugf`); таблицу `forecast_log` создаёт ingest, резолвер её не создаёт. Тесты `forecast/resolve_test.go` (офлайн, фейковый стор). Расписание: `dagu/forecast.yaml`, ежедневно 20:23 (МСК) — после `gold.yaml` (18:47) и `moex.yaml` (19:13); разовый бэкфилл прогноза Q3-2026 — `sql/forecast_log_backfill.sql`; результат читается витриной `v_forecast_accuracy` (§6.3) |
+ | `eia` | `eia/` | реализован; `Name()` = `eia`. Закрывает дизельный канал §6 статьи данными вместо ручного ввода | EIA API v2, Weekly Petroleum Status Report: `/v2/petroleum/stoc/wstk/data/` серия WDISTUS1 (запасы дистиллятного топлива, тыс. барр.) и `/v2/petroleum/pnp/wiup/data/` серия WPULEUS3 (загрузка мощностей НПЗ, %) — коды подтверждены фасетами API 11.10.2026 (ожидавшийся WUPRUUS2 в фасетах отсутствует) | Ключ `EIA_API_KEY` обязателен (пустой — ошибка до сети); ключ маскируется в ошибках (`url.Error` содержит URL). GET с `frequency=weekly`, `data[0]=value`, `facets[series][]=<код>`, `start=2019-01-01`, сортировка по `period`, `length=5000` и превентивной пагинацией по `response.total` (у серий 405 точек). Ряды в `macro_series`: `distillate_stocks` (имя совпадает с индикатором `v_gold_dashboard` — единая линия значений по источникам) и `refinery_utilization`; нативный код EIA фиксируется в `series_catalog.origin`. Запись — одним батчем; **серия с нулём наблюдений — ошибка импорта целиком** (fail-fast: так ловятся ретайр/переименование кода серии и расхождение поля `series`, вместо молчаливого `Imported 0 rows`; обе серии пишутся одним батчем, поэтому отказ любой отменяет запись обеих); диагностика не-200 включает до 512 байт тела (маскированные) — при неверном ключе видно `API_KEY_MISSING`, а не только `http status 403`. Тесты `eia/eia_test.go` (офлайн, httptest). Расписание: `dagu/eia.yaml`, среда 19:43 (МСК) → `macro_series`; описания рядов → `series_catalog`; витрина `v_eia_petroleum` (с комментариями, грант `kimi_reader`) |
+ | `wgc_etf_flows` | `wgc/` | реализован; `Name()` = `wgc_etf_flows`. Закрывает тезис 1 (ETF-цикл) каноническим источником: месячная выгрузка WGC вместо ручного переноса ~20 чисел через `POST /v1/manual_series` | **JSON API** `https://fscdn.gold.org/api/v11/charts/etfv2/revised/`: `flows-chart2` — потоки (блок `chartData.data.Monthly.series.{usd,tonnes}`, `usd` — абсолютные доллары) и `holdings-chart2` — запасы и AUM (блок `Monthly.{tonnes,usd}`, `usd` — абсолютные доллары, отсутствие данных — `null`); без ключа, `system.cached = false`, `asOfDate = 2026-09-30`, 284 месячных точки с 2003-02-28. **Фолбэк** — локальная выгрузка `ETF_Flows_*.xlsx` в папке `wgc/data` (скачивается с `gold.org/goldhub` только браузером: сервер отдаёт `/download/file/*` залогированному браузеру, боту — 403; папка в `.gitignore`). Листы фолбэка: `Fund flows by month` (месячный поток, млн USD), `Demand by month` (поток, тонны), `Holdings by month` (запас, тонны), `Charts Data` (AUM, блок `Area chart - monthly holdings in US$`) | Транспорт выбирает `etfLoadPoints`: сначала API, при его ошибке — `log.Warn` с причиной и свежайшая по `mtime` выгрузка (транспорты в одном прогоне не смешиваются), причём в лог идут путь выбранного файла и максимум его дат; ни API, ни файла — `log.Warn` + 0 строк (DAG не краснеет), битый файл или пустой разбор — ошибка (fail-fast), пустая метрика в ответе API (проверяются все четыре: потоки USD и тонн, стоки, AUM) — тоже ошибка, иначе половина рядов молча старела бы. Разбор API — `wgc/etf_api.go`: регионы через существующий словарь, элемент `Gold Price (rhs)` пропускается по имени, любое другое незнакомое имя — ошибка; масштабы `÷1e6` (поток USD → млн USD) и `÷1e9` (AUM → млрд USD), `null` в стоках — точки нет (не 0), дата — конец месяца; полнота набора проверяется: в потоках ровно четыре региона и ни один не повторяется, а в шапке стоков нулевая колонка — `Date` (без учёта регистра) и регионы тоже без дубликатов. Разбор фолбэка — `excelize/v2`: регионы строго `North America`/`Europe`/`Asia`/`Other` → `north_america`/`europe`/`asia`/`other` (значение вне словаря — ошибка, не молчаливая потеря), колонки фондов — динамически по строке 4. 4 метрики (`flow_usd_mln`, `flow_tonnes`, `holdings_tonnes`, `aum_usd_bn`) × 5 регионов (`world` + четыре) = **20 рядов** `etf_<метрика>_<регион>`, `source = 'wgc'`. Глубина: потоки (`flow_*`) всех пяти регионов — **284** точки с 2003-02-28 (нули в потоках явные, поэтому точка есть и у месяца без потока; `world`-поток — сумма четырёх регионов, тоже с 2003-02-28), стоки и AUM `region='world'` — **235** точек с 2007-03-31 (первый месяц со значениями всех четырёх регионов: в `holdings` Азии до этого `null`); разная глубина потоков и стоков — свойство источника, а не дефект. **Тоннажные стоки источник отдаёт округлёнными до 0,01 т** (потоки и AUM — полной точности), поэтому один и тот же месяц из API и из xlsx-фолбэка расходится ≤ 0,01 т; оговорка внесена в описания рядов каталога. Guard устаревшего источника (одинаков для обоих транспортов, информационный, не отказ импорта): если максимум дат API или локальной выгрузки меньше сохранённого `maxOrNull(date)` по `macro_series FINAL`, в лог идёт warn (перезапись пересекающихся месяцев старыми ревизиями WGC иначе осталась бы незамеченной, а перезапись тех же значений идемпотентна); DDL `macro_series` выполняется до этого guard-а, поэтому первый прогон по чистой базе не даёт ложного warn. Запись — одним батчем, затем каталог 20 рядов (`util.UpsertSeriesCatalog`). Тесты — `wgc/etf_api_test.go` (httptest + JSON-фикстуры `wgc/testdata/etf_flows_api.json`, `etf_holdings_api.json`), `wgc/etf_parse_test.go`, `wgc/etf_test.go` (офлайн, фикстура `wgc/testdata/ETF_Flows_2026-10-02_1401.xlsx`). Расписание: `dagu/wgc.yaml`, ежедневно 20:17 МСК (за 6 минут до `dagu/forecast.yaml`); читается витриной `v_gold_etf_flows` (§6.3) |
+ | `wgc_cb_reserves` | `wgc/` | реализован; `Name()` = `wgc_cb_reserves`. Золотые резервы ЦБ вне IMF (POL/CZE/TUR/RUS/KAZ/UZB/CHN): месячные изменения в тоннах и уровни — закрывает тезисы 3–4 | Локальные выгрузки в `wgc/data` (скачиваются браузером вручную): `Changes_latest_as_of_*.xlsx`, лист `Monthly` — месячные дельты со знаком с 2002-01 (пустая ячейка — пропуск, явный `0` пишется) и словарь стран по короткому имени (`Poland, Rep. of`→POL, `Czech Rep.`→CZE, `Turkey`→TUR строго равенством — **`Turkey*` (gross, включая банки) не импортируется**, `Russian Federation`→RUS, `Kazakhstan, Rep. of`→KAZ, `Uzbekistan, Rep. of`→UZB, `China, P.R.: Mainland`→CHN); `World_official_gold_holdings_as_of_*.xlsx`, лист `PDF` — топ-100: уровень и per-country дата `Holdings as of` (нормализуется к концу месяца), `% of reserves` не импортируется | 7 стран × 2 метрики = **14 рядов** `cb_gold_change_tonnes_<iso3>` (дельты) и `cb_gold_holdings_tonnes_<iso3>` (уровни), `source = 'wgc'`; дата точки — конец отчётного месяца. Частичный набор — норма: нет changes — только уровни, нет holdings — только дельты (`log.Warn`); нет ни одного файла — warn + 0 строк; битый файл или ноль точек — ошибка (fail-fast). Каталог — после `Send` и только по метрикам с точками. Тесты — `wgc/cb_parse_test.go`, `wgc/cb_test.go` (офлайн, фикстуры винтажа 2026-10). Расписание: `dagu/wgc.yaml`, ежедневно 20:17 МСК; читается витриной `v_cb_gold_dynamics` (§6.3). Оговорки: RUS — пропущены месяцы 2025-12…2026-03; UZB — фактические точки с 2013-02 (комментарий файла «Data first available in January 2018» данным не соответствует) |
++| `bold_etf_flows` | `bold/` | реализован; `Name()` = `bold_etf_flows`. T+1 ETF-контур: агрегат 73 золотых фондов (≈83 % мировой величины WGC) — 7 рядов `etf_bold_*` в `macro_series` (`source = 'bold'`) и пер-фондовый срез в `bold_fund_snapshot`. ✅ Приёмка 2026-10-12: полный путь — **21054** точки + **73** строки среза (`дней истории 3008`, `дата источника 2026-10-09`), повтор — no-op `0 строк` | JSON API `https://bold.report/api/v1/` без ключа: `gold/funds/units.json`, `gold/funds/aum.json`, `gold/flows/all.json` (на инкременте — их `-latest`-варианты) и `gold/summary.json`. **Суффикс `.json` у источника обязателен:** ключи без него CDN (статика S3 за CloudFront) отдаёт `403 AccessDenied` (проверено `curl` 2026-10-12); суффикс стоит у всех девяти констант путей `bold/parse.go` и закреплён тестом `TestBoldEndpointsPinPaths` — офлайн-`httptest` такую ошибку не ловит, путь без `.json` валит тест | Инкремент — 4 запроса (`units-latest`, `aum-latest`, `flows/all-latest`, `summary`); полный путь — те же 4 плюс три файла истории и `summary`, итого 8. Триггеры полного пути: пустая таблица, максимум источника свежее сохранённого больше чем на 4 календарных дня (`>96 ч`), расхождение половин (максимум рядов ≠ максимум пер-фондового среза — берётся минимум, ноль в любой половине тоже уводит на полный путь). Инкремент: дата источника не новее сохранённого максимума → no-op без записи; иначе 7 точек одного дня (дневной поток — Δ запасов к предыдущему стоку из ClickHouse) плюс 73 строки среза. Окна — как публикует источник (`culm7/30/90day ÷ 32150,7465686`), без пересчёта из дневного ряда. Fail-fast: не-200, пустое тело, отсутствие обязательного ключа, расхождение дат или цены трёх ответов, ноль точек — ошибка. Срез — `bold_fund_snapshot` с ключом `(date, ticker, name)` (тикер не уникален: три `GLD`), каталог 7 рядов — после успешного `Send`. Тесты — `bold/bold_test.go`, `bold/parse_test.go` (httptest + фикстуры `bold/testdata/`, офлайн). Расписание: `dagu/bold.yaml`, ежедневно 08:07 МСК, шаг 2 (после цены дня); читается витринами `v_gold_etf_flows_daily` и `v_gold_etf_funds_daily` (§6.3) |
++| `bold_gold_price` | `bold/` | реализован; `Name()` = `bold_gold_price`. Цена золота дня источника — площадка `bold` в `gold_prices` (третья после `comex_front` и `moex_fix_usd`). Метод источником не раскрыт («Futures Price»): это не спот, не LBMA и не `GC=F`, с `comex_front` совпадает частично (3 из 13 контрольных дат, расхождения до $42). ✅ Приёмка 2026-10-12: полный путь — **3138** точек `2014-10-01`…`2026-10-09` (`2026-10-09` = 4216,3), повтор — no-op `0 строк` | `https://bold.report/api/v1/gold/price-latest.json` (инкремент) и `gold/price.json` (полный путь; 3138 точек с 2014-10-01). Суффикс `.json` обязателен так же, как у ETF-импортёра — без него `403` | Один запрос: режим решается ДО запроса по `maxOrNull(date)` площадки `bold` — дата источника не новее сохранённого максимума → no-op, пустая таблица или отсутствующая → полный путь. `nil` в `value` и пустой результат — ошибка (не тихий пропуск дня). Запись одним батчем, затем каталог `gold.BoldPriceSeriesMeta()` (`source='gold'`, `series='bold'`). Тесты — `bold/price_test.go`. Расписание: `dagu/bold.yaml`, ежедневно 08:07 МСК, шаг 1 (цена входит множителем в `etf_bold_flow_usd_mln`, поэтому без неё USD-поток дня не посчитается); читается витриной `v_gold_prices` (§6.3) |
+ | `lbma_gold` | `gold/` | не реализован (LBMA недоступен с этой сети); вместо него реализован `gold`, `Name()` = `gold_prices` | ⚠️ Временно вместо LBMA: MOEX `GOLDFIXME` (борд FIXI, ₽/г, с 2024-08-05) × 31,1034768 ÷ курс `cbr_currency_usd`; производная цена, не LBMA. Курс берётся последний известный не позже даты (ЦБ не публикует понедельники и новогодние праздники; окно 10 дней). Расписание: `dagu/gold.yaml`, ежедневно 18:47 (МСК); первым шагом DAG выполняется `cbr_currency_usd`. LBMA не реализован: prices.lbma.org.uk и Nasdaq Data Link `LBMA/GOLD` отвечают 403 WAF (датасетный эндпоинт блокируется с этого IP даже с валидным ключом), stooq — JS-проверкой, FRED серии LBMA удалил (404), Yahoo — 429. Цена COMEX front-month (`GC=F`, фьючерс, не спот) заведена отдельным venue `comex_front` и пишется сессионно через ingest (`POST /v1/gold_prices`) — по той же причине Go-импортёра Yahoo нет | → `gold_prices` |
+ | `moex_iss` | `moex/` | реализован; `Name()` = `stock_prices` | MOEX ISS REST (анонимный): дневные свечи PLZL `/iss/engines/stock/markets/shares/securities/PLZL/candles.json?interval=24` (пагинация `start` шагом 100 при явном `limit=100` — без limit страницы по 500 и дубли). | Инкремент от max(date) по `code='PLZL'`; пустая таблица → с 2010-01-01. Пишет в существующую legacy-таблицу `stock_prices` (схема Float32 не меняется). Тесты: `moex/moex_test.go`. Расписание: `dagu/moex.yaml`, ежедневно 19:13 (МСК) → `stock_prices`; series_catalog (source='moex'); витрина `v_stock_prices` (с комментариями, грант `kimi_reader`) |
+ | `ofz_curve` | `moex/` | реализован; `Name()` = `ofz_curve` | MOEX ISS: индекс RGBI (свечи `engines/stock/markets/index/securities/RGBI/candles.json`, полная история с 2010-01-01, тенор `RGBI` — уровень индекса, не доходность) + годовые доходности G-curve `/iss/engines/stock/zcyc.json`, блок `yearyields` (period 1/3/5/10 → теноры `1y`/`3y`/`5y`/`10y`, % годовых). ⚠️ zcyc — только снимок текущего дня: история доходностей накапливается с первого запуска. | Инкремент от max(date); даты из БД нормализуются в UTC (clickhouse-go отдаёт Date с таймзоной сессии). Расписание: `dagu/moex.yaml`, ежедневно 19:13 (МСК) → `ofz_curve`; series_catalog (source='moex'); витрина `v_ofz_curve` (с комментариями, грант `kimi_reader`) |
+ | `mmf_aum` | `funds/` | не реализован | СЧА фондов ликвидности | парсинг → `mmf_aum` |
+ | `news_watch` | `news/` | не реализован | RSS Интерфакс/РБК/IR Полюса | → `news_events` |
+ 
+-`Name()` импортёров — то, что передаётся в `CLICKHOUSE_IMPORT_STAT`: `fred`, `bls`, `bea`, `eia`, `gold_prices`, `stock_prices`, `ofz_curve`, `events_calendar`, `gold_views`, `company_views`, `databook_polyus`, `polyus_financial_metrics`, `databook_ugk`, `dcf_mine_plans`, `dcf_engine`, `forecast_resolve`, `wgc_etf_flows`, `wgc_cb_reserves`. Пакет `forecast/` регистрирует ОДИН импортёр: `Name()` = `forecast_resolve` (имя шага DAG и `CLICKHOUSE_IMPORT_STAT`); таблиц он не заводит, а дописывает `forecast_log`, поэтому `Name()` не совпадает ни с именем создаваемой таблицы, ни с именем пакета. Пакет `wgc/` регистрирует два импортёра (`wgc_etf_flows`, `wgc_cb_reserves`); оба пишут в общую `macro_series` (`source = 'wgc'`) и своих таблиц не заводят, поэтому в `dagu/wgc.yaml` это id шагов DAG, а не имена таблиц. Пакет `gold/` выполняет `Name()` = `gold_prices`, поэтому в README и командах используется имя таблицы. Пакет `polyus/` регистрирует два импортёра, оба сохраняют свои `Name()` (`databook_polyus`, `polyus_financial_metrics`) независимо от имени таблицы, в которую пишут; пакет `views/` — тоже два импортёра (`gold_views`, `company_views`; `views/` не существует как имя импортёра). Пакет `dcf/` регистрирует ДВА импортёра: `Name()` = `dcf_mine_plans` (сид `mine_plans`, имя совпадает с таблицей) и `Name()` = `dcf_engine` (имя шага DAG и `CLICKHOUSE_IMPORT_STAT`, а таблиц у него три — `mine_plans`, `price_decks`, `nav_by_asset`, — поэтому `Name()` не совпадает ни с одной из них). В одном запуске `dcf_mine_plans` должен отработать **раньше** `dcf_engine`; в расписании это гарантирует `dagu/dcf.yaml` (`type: chain`, шаг сида — первый, шаг расчёта — второй).
++`Name()` импортёров — то, что передаётся в `CLICKHOUSE_IMPORT_STAT`: `fred`, `bls`, `bea`, `eia`, `gold_prices`, `stock_prices`, `ofz_curve`, `events_calendar`, `gold_views`, `company_views`, `databook_polyus`, `polyus_financial_metrics`, `databook_ugk`, `dcf_mine_plans`, `dcf_engine`, `forecast_resolve`, `wgc_etf_flows`, `wgc_cb_reserves`, `bold_etf_flows`, `bold_gold_price`. Пакет `bold/` регистрирует ДВА импортёра: `Name()` = `bold_etf_flows` (7 рядов `etf_bold_*` в `macro_series` плюс таблица пер-фондового среза `bold_fund_snapshot`) и `Name()` = `bold_gold_price` (площадка `bold` в `gold_prices`); ни одно из имён не совпадает с именем пакета, а в `dagu/bold.yaml` это id шагов цепочки — цена дня первым шагом, ETF-контур вторым. Пакет `forecast/` регистрирует ОДИН импортёр: `Name()` = `forecast_resolve` (имя шага DAG и `CLICKHOUSE_IMPORT_STAT`); таблиц он не заводит, а дописывает `forecast_log`, поэтому `Name()` не совпадает ни с именем создаваемой таблицы, ни с именем пакета. Пакет `wgc/` регистрирует два импортёра (`wgc_etf_flows`, `wgc_cb_reserves`); оба пишут в общую `macro_series` (`source = 'wgc'`) и своих таблиц не заводят, поэтому в `dagu/wgc.yaml` это id шагов DAG, а не имена таблиц. Пакет `gold/` выполняет `Name()` = `gold_prices`, поэтому в README и командах используется имя таблицы. Пакет `polyus/` регистрирует два импортёра, оба сохраняют свои `Name()` (`databook_polyus`, `polyus_financial_metrics`) независимо от имени таблицы, в которую пишут; пакет `views/` — тоже два импортёра (`gold_views`, `company_views`; `views/` не существует как имя импортёра). Пакет `dcf/` регистрирует ДВА импортёра: `Name()` = `dcf_mine_plans` (сид `mine_plans`, имя совпадает с таблицей) и `Name()` = `dcf_engine` (имя шага DAG и `CLICKHOUSE_IMPORT_STAT`, а таблиц у него три — `mine_plans`, `price_decks`, `nav_by_asset`, — поэтому `Name()` не совпадает ни с одной из них). В одном запуске `dcf_mine_plans` должен отработать **раньше** `dcf_engine`; в расписании это гарантирует `dagu/dcf.yaml` (`type: chain`, шаг сида — первый, шаг расчёта — второй).
+ 
+ `DCF_RUN_ID` (UUID прогона, клиентский `run_id` строк `nav_by_asset`) в таблицу env выше не входит: это параметр разового прогона, а не ключ источника, и передаётся он прямо в команде (`DCF_RUN_ID=<uuid> make import STAT=dcf_engine`). Без него движок считает, печатает тело `POST /v1/model_run` и не пишет ничего.
+ 
+ Оба канала WGC-семейства теперь имеют импортёров (§6.1: `wgc_etf_flows` — читает JSON API `fscdn.gold.org`, а локальная выгрузка в `wgc/data` остаётся фолбэком; `wgc_cb_reserves` — читает выгрузки из `wgc/data`), а CME FedWatch — по-прежнему без импортёра: `fedwatch_dec_hike` вводится сессионно через `POST /v1/manual_series`. **Структурные ряды WGC ETF Flows** (20 рядов `etf_<метрика>_<регион>`; 4 метрики × 5 регионов) пишет импортёр `wgc_etf_flows` (`source = 'wgc'`); сессионный ввод тем же POST (`source = 'webbridge'`) и ручной (`manual`) остаются фолбэками и описаны каталогом-сидом `sql/wgc_etf_flows_catalog.sql` (20 записей, частота `M`); читает их витрина `v_gold_etf_flows` (§6.3) с приоритетом `wgc > webbridge > manual`, а не `v_gold_dashboard`. **Золотые резервы ЦБ вне IMF** (POL/CZE/TUR/RUS/KAZ/UZB/CHN) пишет импортёр `wgc_cb_reserves` (`source = 'wgc'`, 14 рядов), читаются витриной `v_cb_gold_dynamics` (§6.3). Ручной индикатор `etf_flows_month` (`source = 'manual'`, млрд USD) остаётся в `v_gold_dashboard` — это отдельный ряд: не путать и не складывать с `etf_flow_usd_mln_world` (млн USD). **CME FedWatch** — по-прежнему без импортёра: `fedwatch_dec_hike` вводится вручную (`source = 'manual'`) и читается витриной `v_gold_dashboard` (§6.3). Запасы дистиллятов — **уже с импортёром**: `eia` пишет `source = 'eia'`, а витрина выбирает значение по приоритету `eia > webbridge > manual` (ручной ввод остаётся фолбэком). Золотые резервы ЦБ (IMF IRFCL) — тоже без импортёра: вводятся с `source = 'imf'` и читаются витриной `v_imf_macro`; цена COMEX front-month — через `POST /v1/gold_prices` (venue `comex_front`).
+ 
+ ### 6.2 Новые таблицы (DDL — канонические, использовать как есть)
+ 
+-Реализованы в коде (DDL в блоке ниже совпадает с кодом): `macro_series`, `model_runs`, `forecast_log`, `gold_prices`, `gold_forecasts` (создаются `ingest.EnsureTables` при старте `cmd/ingest`; DDL `gold_prices` — копия из `gold/gold.go`, DDL `gold_forecasts` — копия в сиде `sql/gold_forecasts_q4_2026_seed.sql`; копии обязаны совпадать), `events_calendar` (`calendar/`, сид `sql/events_calendar_q4_2026.sql`), `series_catalog` (`util/`), `ofz_curve` (`moex/`), а также `mine_plans`, `price_decks`, `nav_by_asset` (создаются импортёрами пакета `dcf/`, §6.1). Таблица `stock_prices` (legacy Float32) создаётся в `moex/moex_iss.go` и в этот блок не входит.
++Реализованы в коде (DDL в блоке ниже совпадает с кодом): `macro_series`, `model_runs`, `forecast_log`, `gold_prices`, `gold_forecasts` (создаются `ingest.EnsureTables` при старте `cmd/ingest`; DDL `gold_prices` — копия из `gold/gold.go`, DDL `gold_forecasts` — копия в сиде `sql/gold_forecasts_q4_2026_seed.sql`; копии обязаны совпадать), `events_calendar` (`calendar/`, сид `sql/events_calendar_q4_2026.sql`), `series_catalog` (`util/`), `ofz_curve` (`moex/`), а также `mine_plans`, `price_decks`, `nav_by_asset` (создаются импортёрами пакета `dcf/`, §6.1) и `bold_fund_snapshot` (создаётся импортёром `bold_etf_flows`, §6.1). Таблица `stock_prices` (legacy Float32) создаётся в `moex/moex_iss.go` и в этот блок не входит.
+ 
+ Отдельно — таблицы отчётности Полюса (`polyus/`). Канонические DDL — в коде (`polyus/datapack.go`, `polyus/import.go`, `views/company.go`), здесь приведены для справки:
+ 
+ ```sql
+ -- polyus/datapack.go — xlsx-датапак, операционные результаты по активам
+ CREATE TABLE IF NOT EXISTS databook_polyus (
+    table LowCardinality(String),
+    name LowCardinality(String),
+    data LowCardinality(String),   -- ANNUAL | QUARTERLY | SEMI-ANNUAL
+    date Date,
+@@ -277,47 +286,71 @@ CREATE TABLE IF NOT EXISTS polyus_financial_metrics
+     loaded_at DateTime DEFAULT now()
+ )
+ ENGINE = ReplacingMergeTree(loaded_at)
+ ORDER BY (company, metric, period)
+ ```
+ 
+ Не реализованы (в коде нет): `news_events`, `index_weights`, `dividend_events`, `mmf_aum`, `tax_events`, `reserves_assets`, `reserves_dynamics`, `license_events`, `peers_nav`, `regime_states`.
+ 
+ `mine_plans`, `price_decks` и `nav_by_asset` заведены в коде пакетом `dcf/` (DDL — копии блока выше в `dcf/schema.go`) и создаются импортёрами идемпотентно. Наполнение: `mine_plans` **сеет импортёр `dcf_mine_plans`** из публичной отчётности Полюса (§6.1) — факт последнего отчётного года из `databook_polyus` и версионные константы сида `dcf/mine_plans_seed.go`; `nav_by_asset` пишет `dcf_engine` (при заданном `DCF_RUN_ID`), `price_decks` он же сеет на пустой таблице. Оба шага и их порядок (сид → расчёт) задаёт `dagu/dcf.yaml`. Год плана вне окна `[minPlanYear, maxPlanYear)` (`dcf/seed.go`) не сеется и не считается покрытым (§6.1): мусорный год — дефект данных, и план из одних мусорных лет даёт ошибку до расчёта (на пустой `price_decks` — `seedPriceDecks`, на непустой — `checkYearCoverage`), а не успешный прогон с бессмысленным NAV. Сид `mine_plans` **не покрывает все 8 моделируемых активов**: он заводит **6 из 8** — `TITIMUKHTA` и `ZAPADNOYE` пропускаются с `log.Warn`, потому что их добыча в датапаке равна нулю (россыпное золото учтено отдельной таблицей `ALLUVIALS`), а ноль на месте факта молча занизил бы NPV актива. `closure_costs` у всех засеянных активов равен `0` — это означает **«не задано»** (per-asset провижен на рекультивацию Полюс не публикует), а не «закрытие бесплатно». Полная карта пробелов — [docs/DCF_DATA_COVERAGE.md](docs/DCF_DATA_COVERAGE.md). На пустых `mine_plans` движок по-прежнему прогоняется вхолостую: `log.Warn` и `Imported 0 rows`.
+ 
+-Значения `source`, используемые в коде `macro_series`: `fred`, `bls`, `bea`, `eia` (импортёр `eia`, витрина `v_eia_petroleum`), `manual` (ingest), `webbridge` (20 рядов WGC ETF Flows `etf_<метрика>_<регион>`, сессионный ввод через `POST /v1/manual_series`, читаются витриной `v_gold_etf_flows`), `imf` (золотые резервы ЦБ, витрина `v_imf_macro`), `wgc` (импортёры `wgc_etf_flows` и `wgc_cb_reserves` из выгрузок WGC, витрины `v_gold_etf_flows` и `v_cb_gold_dynamics`) — они же перечислены в комментарии DDL блока ниже. Планируемый источник `cme` в DDL не входит.
++Значения `source`, используемые в коде `macro_series`: `fred`, `bls`, `bea`, `eia` (импортёр `eia`, витрина `v_eia_petroleum`), `manual` (ingest), `webbridge` (20 рядов WGC ETF Flows `etf_<метрика>_<регион>`, сессионный ввод через `POST /v1/manual_series`, читаются витриной `v_gold_etf_flows`), `imf` (золотые резервы ЦБ, витрина `v_imf_macro`), `wgc` (импортёры `wgc_etf_flows` и `wgc_cb_reserves` из выгрузок WGC, витрины `v_gold_etf_flows` и `v_cb_gold_dynamics`), `bold` (импортёр `bold_etf_flows`: 7 рядов `etf_bold_*` дневного ETF-агрегата 73 фондов, читаются витринами `v_gold_etf_flows_daily` и `v_gold_etf_funds_daily`) — они же перечислены в комментарии DDL блока ниже. Планируемый источник `cme` в DDL не входит.
+ 
+ ```sql
+ CREATE TABLE IF NOT EXISTS macro_series (
+-    source LowCardinality(String),   -- 'fred','bls','bea','eia','manual','webbridge','imf','wgc'
++    source LowCardinality(String),   -- 'fred','bls','bea','eia','manual','webbridge','imf','wgc','bold'
+     series LowCardinality(String),   -- 'DFII10','distillate_stocks',...
+     date Date32,                     -- Date32, т.к. Date не покрывает даты до 1970 (CPIAUCSL с 1947, FEDFUNDS с 1954)
+     value Float64
+ ) ENGINE = ReplacingMergeTree ORDER BY (source, series, date);
+ 
+ -- Каталог рядов macro_series: заполняет util.UpsertSeriesCatalog при каждом импорте источника
+ CREATE TABLE IF NOT EXISTS series_catalog (
+     source LowCardinality(String),
+     series LowCardinality(String),
+     title String,
+     unit String,
+     frequency LowCardinality(String),   -- однобуквенный код частоты: 'M','Q','D','W','A' (A — годовая, ряды dcf_mine_plans); у рядов polyus/polyus_datapack здесь лежит прозаический ТИП периода ('ANNUAL','QUARTERLY','SEMI-ANNUAL'), см. §6.3
+     origin String,                      -- таблица/серия/строка API
+     description String
+ ) ENGINE = ReplacingMergeTree ORDER BY (source, series);
+ 
+ CREATE TABLE IF NOT EXISTS gold_prices (
+-    venue LowCardinality(String),    -- 'lbma_am','lbma_pm','spot','comex_front','moex_fix_usd' (производный, см. gold/)
++    venue LowCardinality(String),    -- 'lbma_am','lbma_pm','spot','comex_front','moex_fix_usd' (производный, см. gold/),'bold' (цена дня bold.report, см. bold/)
+     date Date32,                     -- Date32: Date не покрывает даты до 1970 (LBMA с 1968)
+     usd Float64
+ ) ENGINE = ReplacingMergeTree ORDER BY (venue, date);
+ 
++-- Пер-фондовый срез контура bold.report (ByteTree): одна строка на (фонд, торговый день),
++-- 73 фонда в дне. DDL — копия в `bold/bold.go` (`boldFundDdl`), создаётся импортёром
++-- `bold_etf_flows` (§6.1) вместе с батчами; копии обязаны совпадать. Ключ включает ИМЯ
++-- фонда, а не только тикер: в живом срезе 73 строки при 71 уникальном тикере — `GLD`
++-- встречается трижды с разными именами, и на ключе (date, ticker) две строки схлопнулись бы.
++-- `date` берётся не из среза (у него поля даты нет), а из ответов «последнего дня»: их
++-- расхождение — ошибка импорта, а не запись под чужой датой. `units_oz` и `price_usd` — унции
++-- и USD/oz, как публикует источник; тонны и млрд USD живут в рядах `etf_bold_*` (§6.3).
++-- История копится с первого прогона: пер-фондовой истории источник не отдаёт. Читается
++-- витриной `v_gold_etf_funds_daily` (§6.3).
++CREATE TABLE IF NOT EXISTS bold_fund_snapshot (
++    date Date32,                    -- торговый день источника (из ответов «последнего дня»)
++    ticker LowCardinality(String),  -- тикер источника; НЕ уникален (GLD трижды)
++    name LowCardinality(String),    -- имя фонда из среза; вместе с тикером — часть ключа
++    units_oz Float64,               -- запасы фонда, тройские унции
++    units_change_oz Float64,        -- изменение запасов за день, унции
++    aum_usd Float64,                -- AUM фонда, USD
++    aum_change_usd Float64,         -- изменение AUM за день, USD
++    price_usd Float64,              -- цена фонда (источник), USD
++    price_change_usd Float64,       -- изменение цены фонда за день, USD
++    shares Float64,                 -- число паёв
++    shares_change Float64           -- изменение числа паёв за день
++) ENGINE = ReplacingMergeTree ORDER BY (date, ticker, name);
++
+ -- Консенсус аналитиков по золоту и собственная сценарная сетка. DDL — копия в
+ -- `ingest/schema.go` (создаётся `EnsureTables` при старте `cmd/ingest`, §6.5) и в
+ -- сиде `sql/gold_forecasts_q4_2026_seed.sql` (самодостаточность, прецедент
+ -- `sql/events_calendar_q4_2026.sql`); копии обязаны совпадать. Числовые колонки не
+ -- Nullable: «поле не задано» кодируется нулём (point-строка хранит low = high = 0,
+ -- range — point = 0, банковские строки — probability = 0), а витрина
+ -- `v_gold_forecasts` (§6.3) превращает такие нули в NULL. Строки пишет ingest
+ -- (`POST /v1/gold_forecasts`) и сид.
+ -- источник собственного сценарного веера (price_deck 'own_scenario' собирается из него; сейчас читает витрина v_gold_forecasts)
+ CREATE TABLE IF NOT EXISTS gold_forecasts (
+@@ -493,37 +526,39 @@ CREATE TABLE IF NOT EXISTS regime_states (
+ ```
+ 
+ ### 6.3 Витрины (views) — semantic layer для агента
+ 
+ - `v_model_inputs` — **реализован** (`views/model_inputs.go`): одна строка с последними значениями рядов (`argMax` по дате), у каждого ряда колонка даты актуальности `*_date`. Состав: `gold_moex_fix_usd` (MOEX-фикс, не LBMA), `usdrub`, `cbr_key_rate`, `ofz_1y/3y/5y/10y`, `rgbi`, `ipc_mes_last`, `ipc_week_ytd` (ориентир, не официальный ИПЦ), `fedfunds`, `dfii10`, `dgs10`, `t5yie`, `dtwexbgs`, `plzl_close`, `last_run_id`, `last_nav_per_share`, `last_run_date`. Crack, TCC и AISC в витрине **нет** (crack — в `v_gold_dashboard`, TCC/AISC в MCP не выводятся)
+ - `v_gold_dashboard` — **реализован** (`views/gold_dashboard.go`): одна строка на индикатор `crack_ulsd_proxy`, `distillate_stocks`, `fedwatch_dec_hike`, `etf_flows_month`, `dxy`; значения из `macro_series` с приоритетом источников **`eia` > `webbridge` > `manual`** (автоматический источник канонический, ручной ввод — фолбэк; агрегат по `(series, source)` через `maxIfOrNull`, а не `maxIf`: `maxIf` при отсутствии совпадений возвращает `0`, и `coalesce` не провалился бы на следующий источник). `flag = 1` — порог пробит (crack >50, FedWatch >65 — сценарное переключение; >80 — уровень алерта в тексте порога; DXY >102); `stale = 1` — значения нет или последнее наблюдение старше 14 дней. `distillate_stocks` пополняет импортёр `eia` (автоматически, среда) — без ручного ввода; `crack_ulsd_proxy`, `fedwatch_dec_hike`, `etf_flows_month`, `dxy` импортёров не имеют: значения только ручные, поэтому без ввода через `manual_series` они остаются `stale`
+ - `v_eia_petroleum` — **реализован** (`eia/eia.go`): `date, series, value` из `macro_series FINAL WHERE source = 'eia'` — недельные ряды нефтяного канала США (`distillate_stocks` — запасы дистиллятного топлива, тыс. барр.; `refinery_utilization` — загрузка мощностей НПЗ, %). Единицы и происхождение каждого ряда — в `v_series_catalog`; создаётся импортёром `eia` с комментариями таблицы и колонок, грант `kimi_reader` — в `sql/mcp_kimi_reader.sql`
+ - `v_gold_forecasts` — **реализован** (`views/gold_forecasts.go`, импортёр `gold_views`): `gold_forecasts FINAL` — консенсус аналитиков и собственная сценарная сетка, одна строка на `(author, published, horizon, scenario)`. Колонки: `author` (`goldman`/`hsbc`/`jpm`/`ubs`/`citi`/`own`, словарь расширяемый), `published`, `horizon`, `scenario` (`point`/`range`/`bull`/`base`/`bear`), `low`, `high`, `point`, `midpoint` (`point`, если задан, иначе середина `(low + high) / 2` при обеих границах, иначе единственная заданная граница, иначе NULL) и `probability` (заполнена только у own-сценариев). Нули DDL означают «поле не задано» и показаны как NULL (`nullIf`); порядок строк — `published DESC, author, horizon, scenario`. Строки пишет ingest (`POST /v1/gold_forecasts`) и сид `sql/gold_forecasts_q4_2026_seed.sql` (11 строк, `published = 2026-10-07`); вероятностно-взвешенная цена own-сетки Q4-2026 (25/40/35 → 4 285) сверяется с `xau_q_avg` в `v_forecast_accuracy`. Комментарии таблицы и колонок, грант `kimi_reader` — в `sql/mcp_kimi_reader.sql`
+ - `v_gold_etf_flows` — **реализован** (`views/gold_etf_flows.go`, импортёр `gold_views`): пивот 20 рядов WGC Gold ETF Flows `etf_<метрика>_<регион>` из `macro_series` — одна строка на `(date, region)`, колонки `flow_usd_mln`, `flow_tonnes` (поток за месяц, знак — направление: плюс приток) и `holdings_tonnes`, `aum_usd_bn` (сток на конец месяца). Регионы: `world` (итог), `north_america`, `europe`, `asia`, `other` — 4 метрики × 5 регионов = 20 рядов; имена и разметка `(регион, метрика)` — данные в Go, из них собираются и `IN (...)`, и mapping-массив `ARRAY JOIN`. Источники: приоритет **`wgc` > `webbridge` > `manual`** (та же конвенция, что в `v_gold_dashboard`: агрегат по `(date, series, source)`, выбор через `coalesce(maxIfOrNull(...))`, не `maxIf`); канонический ряд пишет импортёр `wgc_etf_flows` из JSON API `fscdn.gold.org` (фолбэк — месячная выгрузка `ETF_Flows_*.xlsx` в `wgc/data`, `source = 'wgc'`, §6.1), а сессионный сбор после месячного отчёта WGC (`source = 'webbridge'`, все 20 рядов одним `POST /v1/manual_series`) и ручной ввод (`manual`) остаются фолбэками, если импорт не отработал (каталог сессионных рядов — сид `sql/wgc_etf_flows_catalog.sql`, 20 записей, частота `M`). NULL в колонке — метрика за этот месяц не введена (0 в `macro_series` означал бы «потока не было»). Мировой `etf_flow_usd_mln_world` (млн USD) — не путать и не складывать с ручным `etf_flows_month` (млрд USD) из `v_gold_dashboard`. Грант `kimi_reader` — `sql/mcp_kimi_reader.sql`
+ - `v_cb_gold_dynamics` — **реализован** (`views/cb_gold_dynamics.go`, импортёр `gold_views`): динамика официальных золотых резервов семи ЦБ — одна строка на страну словаря (`POL`, `CZE`, `TUR`, `RUS`, `KAZ`, `UZB`, `CHN`). Источник — `macro_series FINAL` с `source = 'wgc'`: ряды `cb_gold_change_tonnes_<iso3>` (месячные дельты, тонны) и `cb_gold_holdings_tonnes_<iso3>` (уровни) пишет импортёр `wgc_cb_reserves` из выгрузок `Changes_latest_as_of_*.xlsx` и `World_official_gold_holdings_as_of_*.xlsx` (§6.1). Колонки: `last_change_date` и `mom_change_tonnes` — дата и значение последней месячной дельты (MoM), `ytd_change_tonnes` — сумма дельт с 01.01 года **последней точки страны** (год берётся у `max(date)` самого ряда: у стран разные последние месяцы), `holdings_date` и `holdings_tonnes` — последний уровень и его дата «Holdings as of» (может отставать от `last_change_date`: уровни и дельты из разных выгрузок). Список 14 имён рядов и словарь `iso3 → страна` — данные в Go (`wgc.CbSeriesNames()`, `wgc.CbCountries()`), из них собираются `IN (...)` и mapping-массив; от словаря идёт `LEFT JOIN`, поэтому страна без рядов остаётся в выдаче с NULL-метриками (не 0: `if(n > 0, …, NULL)`, `join_use_nulls = 0`), порядок строк — `iso3`. Оговорки данных: RUS — пропущены месяцы 2025-12…2026-03 (YTD по фактическим точкам); TUR — net-ряд официального сектора (строка `Turkey`; gross `Turkey*`, включая банки, не импортируется); UZB — значения с 2013-02 (комментарий файла «Data first available in January 2018» данным не соответствует). Не путать с `v_imf_macro` (IMF IRFCL, USD, фактически только Китай). Комментарии таблицы и каждой колонки, грант `kimi_reader` — `sql/mcp_kimi_reader.sql`
++- `v_gold_etf_flows_daily` — **реализован** (`views/bold_etf_daily.go`, импортёр `gold_views`): дневной (T+1) пивот семи рядов `etf_bold_*` из `macro_series FINAL WHERE source = 'bold'` — одна строка на торговый день источника, восемь колонок: `flow_tonnes` (дневной поток — Δ совокупных запасов 73 фондов между соседними торговыми днями, тонны; знак — направление, плюс приток; у первой точки ряда потока нет), `flow_usd_mln` (тот же поток, оценённый ценой дня источника, — не стоимость сделок и не объём торгов), окна `flow_7d/30d/90d_tonnes` (как публикует источник, `culm7/30/90day ÷32150,7465686`; окна календарные и пересекаются — суммировать нельзя), `holdings_tonnes` и `aum_usd_bn` (стоки на конец дня). Структура — как у `v_gold_etf_flows` (mapping-массив `(series, metric)` + `IN (...)` по именам набора, агрегат `maxIfOrNull`, а не `maxIf`), но источник один, поэтому приоритет `coalesce` по источникам не нужен: версии `ReplacingMergeTree` схлопывает `FINAL`, а NULL в колонке значит «ряда за этот день нет» (не 0 — ноль означал бы нулевой поток). Оговорки данных: агрегат 73 фондов — ≈83 % мировой величины WGC, поэтому не складывать и не сравнивать напрямую с `etf_holdings_tonnes_world`/`etf_flow_tonnes_world` (там все фонды мира и месячная частота); выходные и праздники источник опускает — дня в выдаче нет вовсе. Комментарии таблицы и каждой колонки, грант `kimi_reader` — `sql/mcp_kimi_reader.sql`. ✅ Приёмка 2026-10-12: **3008** торговых дней (`2015-04-01`…`2026-10-09`), `flow_tonnes` и `flow_usd_mln` — в 3007 днях (у первой точки ряда потока нет), `holdings_tonnes` и `aum_usd_bn` — во всех 3008
++- `v_gold_etf_funds_daily` — **реализован** (`views/bold_etf_daily.go`, импортёр `gold_views`): пер-фондовый срез `bold_fund_snapshot FINAL` — одна строка на `(date, ticker, name)`, 10 из 11 колонок среза (`units_oz`, `units_change_oz`, `aum_usd`, `aum_change_usd`, `price_usd`, `shares`, `shares_change`; `price_change_usd` в таблицу пишется, но в выдачу не выведен), порядок строк — `date DESC, ticker, name`. Ключ включает имя фонда, а не только тикер: в живом срезе 73 строки при 71 уникальном тикере (`GLD` встречается трижды с разными именами). История копится с первого прогона — пер-фондовой истории источник не отдаёт. Витрина гейтится по `bold_fund_snapshot` (создаёт её импортёр `bold_etf_flows`), поэтому `make import STAT=gold_views` запускают после его первого прогона; комментарии таблицы и каждой колонки, грант `kimi_reader` — `sql/mcp_kimi_reader.sql`. ✅ Приёмка 2026-10-12: **73** строки за `2026-10-09` при 71 уникальном тикере (три `GLD`: SPDR Gold Shares 33 552 628 oz, KTAM Gold ETF Tracker Class GLD, NewGold Issuer Ltd); пер-фондовая история начинается с первого прогона
+ - `v_forecast_accuracy` — **реализован** (`views/forecast_accuracy.go`): строка на прогноз из `forecast_log` (`metric`, `forecast_date`, `target_date`, `predicted`, `actual`, `error_pct`, `abs_error_pct`, `is_resolved`). Отдельного конкурентного ML-трека в витрине нет (различается только `metric`). `actual` и `error_pct` заполняет импортёр `forecast_resolve` (§6.1): окно сверки — квартал, содержащий `target_date`, факт — среднее `gold_prices` по venue `comex_front` (фолбэк `moex_fix_usd`), `error_pct = (predicted − actual) / actual × 100`. Строка остаётся `is_resolved = 0`, пока `target_date` в будущем или в окне нет точек цены; `metric = 'nav'` не резолвится вовсе — факта (NAV на дату) нет, `actual` остаётся NULL
+ - `v_peers_comparison` — **не реализован** (в коде нет). План: P/NAV, EV/oz, дисконт к лидеру по контурам `ru`/`global`; алерт-порог — дисконт PLZL за ±1σ исторической нормы
+ - `v_company_financials` — **реализован** (`views/company.go`, импортёр `company_views`): метрики компаний сектора, **одна строка на `(company, metric, period)`** — разрешённое значение плюс провенанс (`source_kind`, `source_url`, `source_page`, `unit`, `period_type`). Основной вход DCF: один ответ без споров. Сейчас наполнена только Полюсом (`company = 'PLZL'`); схема заложена общей под металлургов (`docs/ROADMAP_DCF_METALS.md`). Правило разрешения: `ifrs` (аудит) > `kpi` (пресс-релиз); при равном виде документа — по свежести `loaded_at`, затем по `source_url` (детерминированный тай-брейк, чтобы выдача не «плавала» между прогонами). Внутри одного прогона импортёра все строки получают одну `loaded_at`, поэтому между двумя пресс-релизами за один период решает `source_url`, а не «свежесть документа» (спека §3.4)
+ - `v_company_metric_sources` — **реализован** (`views/company.go`): **все** версии значения, включая проигравшую в `v_company_financials`. Правило приоритета не применяется: витрина нужна затем, чтобы расхождение документов оставалось видимым. Проверено живым прогоном: `gold_output` за `2023FY` даёт две строки (2 799 из релиза FY2024 и 2 902 из релиза FY2023) с разными `source_url`; 347 строк при 265 различных `(company, metric, period)`
+ - `v_company_operating` — **реализован** (`views/company.go`): `company, asset, metric, frequency, date, value` из `databook_polyus FINAL` — операционка по активам (вход `mine_plans`). `company` — константа `'PLZL'`. Гранулярность ДРУГАЯ, чем у релизных метрик (`asset` — месторождение, `frequency` — ANNUAL/QUARTERLY/SEMI-ANNUAL); с `v_company_financials` не смешивать: совпадающие имена метрик означают здесь величину по активу, а не по компании
+ - `v_dcf_assumptions` — **реализован** (`views/dcf_assumptions.go`): выход DCF-движка, **одна строка на `(run_id, deck, contour, asset)`** плюс оконный итог `nav_total_usd_mln = sum(npv_usd_mln) OVER (PARTITION BY run_id, deck, contour)` — тот же итог повторяется в каждой строке группы, поэтому при выборке нескольких активов суммировать его повторно нельзя. Колонки: `run_id` (связка со строкой `model_runs` этого прогона), `deck` (`spot_flat`/`consensus_lt`/`own_scenario`), `contour` (`industrial`/`local`), `asset`, `npv_usd_mln` (NPV LOM-плана актива, млн USD, с НДПИ, налогом и ОТРИЦАТЕЛЬНЫМ хвостом закрытия — perpetual TV у рудника нет), `discount_rate` (ставка **этого** контура: 0.05 индустриальная / 0.16 локальная), `stage_haircut` (всегда NULL на этой итерации — стадийные haircut'ы вне среза; NULL значит «дисконт не применён», а не «нулевой»). Складывать `npv_usd_mln` между контурами или дека'ми **нельзя** — это две разные ставки и три разных ценовых сценария (§13.1, §13.4); сравнивать P/NAV допустимо только по одинаковому deck. `nav_total_usd_mln` — NAV **рудников**, а не NAV акции: net debt, корпоративные затраты и опционность ресурсов вне LOM в него не входят. Источник — `nav_by_asset FINAL`, которую наполняет импортёр `dcf_engine`; **сырая `nav_by_asset` агенту не выдана** (грант `kimi_reader` — только на витрину, `sql/mcp_kimi_reader.sql`), как и `mine_plans`/`price_decks`. Комментарий таблицы и каждой колонки поставлены через `ALTER TABLE ... MODIFY COMMENT` / `COMMENT COLUMN`. Пустая выдача витрины означает «`nav_by_asset` этого прогона пуста» (план актива ещё не засеян или прогон шёл без `DCF_RUN_ID`), а не «активов нет»: набор активов задаёт `mine_plans`, а не витрина
+ - `v_polyus_*` — **не заводится и не планируется.** Решение заказчика (спека [2026-10-10-company-financials-views-design.md](docs/superpowers/specs/2026-10-10-company-financials-views-design.md) §10): персональный набор витрин под одного эмитента повторял бы работу, гранты и комментарии столько раз, сколько компаний. Вместо него — общие `v_company_*` выше; дефект (4) ROADMAP §8.1 закрыт, ограничение «агент MCP не видит данные Полюса» снято (§6.5)
+ - `v_gold_attribution` — **не реализован** (в коде нет). План: GRAM-разложение движения золота (экспансия / риск / альтернативная стоимость / импульс); ошибки прогноза атрибутируются к фактору
+ - `v_series_catalog` — **реализован** (`util/series_catalog.go`): `series_catalog FINAL`: название, единицы, частота, происхождение и описание каждого ряда `macro_series` **плюс засеянных входов `mine_plans`** (source `dcf_mine_plans`, 8 записей) — ведётся импортёрами через `util.UpsertSeriesCatalog`. Колонка `frequency` — однобуквенный код (`M`/`Q`/`D`/`W`/`A`, где `A` — годовая, ряды `dcf_mine_plans`); у рядов Полюса (`polyus`/`polyus_datapack`) в ней лежит прозаический тип периода (`ANNUAL`/`QUARTERLY`/`SEMI-ANNUAL`), поэтому сравнивать `frequency` между источниками посимвольно нельзя
+ - `v_bea_pce` — `macro_series FINAL WHERE source = 'bea'`: индексы PCE из BEA (`PCE_PI`, `PCE_PI_CORE`), уровни 2017=100
+ - `v_fred_macro` — `macro_series FINAL WHERE source = 'fred'`: ряды FRED (DFII10, DGS10, FEDFUNDS, DTWEXBGS, CPIAUCSL, T5YIE)
+ - `v_bls_macro` — `macro_series FINAL WHERE source = 'bls'`: ряды BLS (CPI NSA/SA, безработица, NFP, зарплата, PPI, JOLTS)
+ - `v_imf_macro` — **реализован** (`views/imf_macro.go`, импортёр `gold_views`): `macro_series FINAL WHERE source = 'imf'` — золотые резервы (monetary gold) из IMF IRFCL; фактически заполнен один ряд `ra_gold_chn` (значение — как отдаёт `IRFCLDT1_IRFCL40_USD`: USD, рыночная стоимость, не тонны; месячная частота, лаг ~2 мес.) — IRFCL через datasource даёт нули/пропуски по POL/CZE/TUR/RUS/KAZ/UZB, покупки ЦБ по ним — WGC/WebBridge (фаза 3 [GOLD_THESIS_DATA_ROADMAP.md](docs/GOLD_THESIS_DATA_ROADMAP.md)); каталог — `sql/imf_ra_gold_catalog.sql`; пишется сессионно через `POST /v1/manual_series` (`source = 'imf'`); дельты — `argMaxIf`/`argMinIf` по датам, тонны — делением на цену золота; грант `kimi_reader`
+ - `v_cbr_macro` — ряды ЦБ РФ в единой форме `(source, series, date, value)`: `cbr_key_rate`, `cbr_currency_usd`, `cbr_gold`, `cbr_ruania` (7 метрик RUONIA), `cbr_m2`, `cbr_credit_m2x`, `cbr_bank_int_rate`, `cbr_indicators_cpd`, `cbr_infl_exp`, `cbr_loans_to_individuals`, `cbr_loans_to_corporations`, `households_b_mes`; единицы и сдвиги дат — в `v_series_catalog`
+ - `v_rosstat_macro` — ряды Росстата в той же форме: `ipc_mes`, `ipc_weeks`, `vvp_kvartal`, `salaries_mes`
+ - `v_minfin_budget` — исполнение бюджета: `minfin_fed_bud_mes` (source='minfin') и `minfin_fed_bud_mesyats` (source='minfin_mesyats', консолидированный бюджет; source различается, т.к. имена рядов совпадают)
+-- `v_gold_prices` — `gold_prices FINAL` в форме `(source, series, date, value)`: source='gold', series=venue (`moex_fix_usd` — производная цена, не LBMA; `comex_front` — фронт-месяц фьючерса COMEX GC=F из сессионного ввода, не спот)
++- `v_gold_prices` — `gold_prices FINAL` в форме `(source, series, date, value)`: source='gold', series=venue (`moex_fix_usd` — производная цена, не LBMA; `comex_front` — фронт-месяц фьючерса COMEX GC=F из сессионного ввода, не спот; `bold` — цена дня bold.report (ByteTree), метод источником не раскрыт — «Futures Price», с `comex_front` совпадает частично, пишет импортёр `bold_gold_price`, §6.1)
+ - `v_stock_prices` — `stock_prices FINAL WHERE code='PLZL'`: дневные OHLCV акции Полюса (руб./акция); max/min — high/low дня
+ - `v_ofz_curve` — `ofz_curve FINAL`: доходности G-curve МосБиржи (теноры 1y/3y/5y/10y, % годовых) + уровень индекса RGBI (тенор RGBI — не доходность)
+ - `v_events_calendar` — **реализован** (`calendar/events.go`): `events_calendar FINAL`: календарь событий-триггеров прогноза золота/NAV (дата, категория, заголовок, пороги-триггеры в JSON, статус pending|done|verified); сид Q4-2026 — `sql/events_calendar_q4_2026.sql`
+ 
+ Правила витрин:
+ - создаются через `CREATE OR REPLACE VIEW ... DEFINER = default SQL SECURITY DEFINER AS ...` — определение может меняться, и агент читает сырые таблицы через definer, без прав на `macro_series`;
+ - комментарии ставятся через `ALTER TABLE v_x MODIFY COMMENT '...'` и `ALTER TABLE v_x COMMENT COLUMN col '...'`: синтаксис `COMMENT ON TABLE/COLUMN` в текущей версии ClickHouse (26.10) не поддерживается;
+ - `CREATE OR REPLACE` для витрин — отступление от правила «DDL всегда `IF NOT EXISTS`» (то правило относится к таблицам);
+ - для каждой новой витрины — `GRANT SELECT` пользователю `kimi_reader` в `sql/mcp_kimi_reader.sql`;
+ - витрины контура прогноза (`views/`, импортёр `gold_views`) создаются `util.CreateView` и пропускаются, пока не существуют все их исходные таблицы. `v_model_inputs` требует 9 таблиц, в том числе `ipc_mes` и `ipc_weeks` (Росстат) и `model_runs` (ingest). Гейт проверяет только наличие таблиц (`system.tables`), не заполненность: `ipc_mes` и `ipc_weeks` создаются до загрузки Росстата, поэтому при его сбое витрина создаётся, а колонки `ipc_mes_last` и `ipc_week_ytd` дают NULL или устаревшие значения (ориентироваться по `*_date`). Запускать `make import STAT=gold_views` после первого запуска ingest
+@@ -616,20 +651,22 @@ uv run --with mcp-clickhouse==0.7.0 --python 3.12 mcp-clickhouse
+ - **каталог рядов:** `views/series_meta.go` описывает все ряды Полюса в общем `series_catalog` — 18 релизных метрик (`source = 'polyus'`) и 19 рядов датапака (`source = 'polyus_datapack'`), 37 строк; агенту по-прежнему доступна одна точка входа `v_series_catalog` (отдельного каталога под Полюса не заводится);
+ - **комментарии и провенанс:** у таблицы `company_financials` и всех трёх витрин есть комментарий таблицы и каждой колонки (`ALTER TABLE ... MODIFY COMMENT` / `COMMENT COLUMN`; `COMMENT ON` в ClickHouse 26.10 не работает);
+ - **грант:** `GRANT SELECT` на `v_company_financials`, `v_company_metric_sources`, `v_company_operating` добавлен в `sql/mcp_kimi_reader.sql` (выдаётся вручную через `make mcp-user`).
+ 
+ Поэтому ограничение «агент MCP не видит данные Полюса» **снято**: производительность, TCC, AISC, capex, выручка и операционка по активам читаются агентом через `v_company_*`. Сырые таблицы `databook_polyus`, `polyus_financial_metrics` и `company_financials` агенту по-прежнему **не выданы и не должны** — это сырые таблицы; доступ даёт только витрина. Проверено живым `make mcp-check` 2026-10-10 (ПРОВЕРКА ПРОЙДЕНА): три витрины видны в `list_tables`, `run_query` к ним читается, запрос к сырым таблицам даёт `ACCESS_DENIED`. Дашборд `dashboard/finance-polyus.json` продолжает читать legacy-таблицу `polyus_financial_metrics` (она не тронута); перевод дашборда на `v_company_*` — отдельный шаг (docs/ROADMAP_DCF_METALS.md).
+ 
+ **Контур спроса фазы 3 (2026-10-11) правилу 11 удовлетворяет:** витрины `v_gold_forecasts` и `v_gold_etf_flows` созданы с комментариями таблицы и каждой колонки, `GRANT SELECT` на обе добавлен в `sql/mcp_kimi_reader.sql` (выдаётся вручную, `make mcp-user`); 20 рядов WGC (`source = 'webbridge'`) описаны каталогом-сидом `sql/wgc_etf_flows_catalog.sql` — у сессионных рядов нет импортёра, который вызвал бы `util.UpsertSeriesCatalog` (правило 11a). Обратная связь журнала прогнозов теперь автоматизирована: `actual`/`error_pct` в `forecast_log` заполняет импортёр `forecast_resolve` (§6.1), поэтому `v_forecast_accuracy` перестала быть вечно нерезолвленной. Сырая `gold_forecasts` агенту **не выдана**. Проверки этих артефактов добавлены в `scripts/mcp_check.py` (`make mcp-check`).
+ 
+ **WGC-контур (`wgc/`) правилу 11 удовлетворяет** (2026-10-11, импортёры `wgc_etf_flows` и `wgc_cb_reserves`): каталог рядов ведут сами импортёры через `util.UpsertSeriesCatalog` — `source = 'wgc'`, 34 записи (20 рядов ETF + 14 рядов ЦБ), поэтому у автоматических рядов WGC каталог не сид, а часть `Import()`; витрины `v_gold_etf_flows` и `v_cb_gold_dynamics` созданы с комментариями таблицы и каждой колонки, `GRANT SELECT` на `v_cb_gold_dynamics` добавлен в `sql/mcp_kimi_reader.sql` (`v_gold_etf_flows` получила его раньше). Сырые `macro_series` агенту по-прежнему **не выданы** — доступ даёт только витрина. Проверки добавлены в `scripts/mcp_check.py`: витрина `v_cb_gold_dynamics` видна через `list_tables` и читается, каталог `source = 'wgc'` полон (34).
+ 
++**Контур bold.report (`bold/`) — правило 11 (2026-10-12):** каталог семи рядов ведёт сам импортёр `bold_etf_flows` через `util.UpsertSeriesCatalog` после успешного `Send` (`source = 'bold'`), поэтому у автоматических рядов bold каталог — часть `Import()`, а не сид; витрины `v_gold_etf_flows_daily` и `v_gold_etf_funds_daily` созданы с комментариями таблицы и каждой колонки, `GRANT SELECT` на обе добавлен в `sql/mcp_kimi_reader.sql`, а сырая `bold_fund_snapshot` агенту **не выдана**: доступ к пер-фондовому срезу — только через витрину (как к рядам — через дневной пивот, как к `macro_series` — вообще нигде напрямую). Проверки добавлены в `scripts/mcp_check.py`: существование и читаемость обеих витрин доказывает запрос к самой витрине (`SELECT count()` — 3008 и 73 строки), каталог `source = 'bold'` описывает 7 рядов, `SELECT count() FROM bold_fund_snapshot` под `kimi_reader` даёт `ACCESS_DENIED` (497). Проверено живым `make mcp-check` 2026-10-12 — ПРОВЕРКА ПРОЙДЕНА. Оговорка: проверка «имя витрины в тексте `list_tables`» ненадёжна как признак существования — в тексте ответа лежат `create_table_query` с комментариями, поэтому имя отсутствующей витрины попадает туда из `COMMENT` соседки (`v_gold_etf_funds_daily` «была видна», не существуя); поэтому в bold-блоке существование подтверждается запросом, а не поиском подстроки.
++
+ Отдельно от data-контура: опциональный dev-MCP `jetbrains` — встроенный MCP-сервер GoLand (2025.2+, HTTP-stream `http://127.0.0.1:<динамический порт>/stream`, запись в `~/.kimi-code/mcp.json`). Даёт агенту инструменты IDE для работы с кодом (`get_file_problems`, `get_symbol_info`, `search_symbol`, `analyze_calls`, `rename_refactoring`); правила использования и запреты — в AGENTS.md, раздел «Инструменты GoLand (MCP `jetbrains`)», настройка — в README, «MCP GoLand (опционально)». К данным ClickHouse отношения не имеет.
+ 
+ #### Ingest-endpoint (пакет `ingest/`, бинарник `cmd/ingest`)
+ 
+ **Реализован.** Единственный путь записи в `model_runs`, `forecast_log`, `macro_series`, `gold_prices` и `gold_forecasts` со стороны контура прогноза.
+ 
+ - Сборка и запуск: `make build-ingest` → `build/ingest`; `make run-ingest`. Нужны `CLICKHOUSE_URL` и `INGEST_TOKEN` (см. §5); `INGEST_ADDR` по умолчанию `:8081`; `INGEST_RATE_PER_MIN` по умолчанию 60.
+ - Старт: ping ClickHouse, затем `EnsureTables` — идемпотентное создание `model_runs`, `forecast_log`, `macro_series`, `gold_prices`, `gold_forecasts` по DDL §6.2 (копии в `ingest/schema.go`).
+ - Авторизация: заголовок `Authorization: Bearer <INGEST_TOKEN>`, сравнение через `subtle.ConstantTimeCompare`. Без заголовка или с неверным токеном — `401`.
+ - Частота: token bucket (stdlib, `ingest/ratelimit.go`), общий на сервер, burst 10, `INGEST_RATE_PER_MIN` запросов в минуту (по умолчанию 60). Проверяется после авторизации: неавторизованные запросы лимит не расходуют. Превышение — `429`.
+@@ -693,20 +730,21 @@ uv run --with mcp-clickhouse==0.7.0 --python 3.12 mcp-clickhouse
+ 9. **Дефект словаря метрик (существовал до этой работы):** `metrics.go` перечисляет `"Earnings per share – basic (US\nDollar)"` со встроенным переводом строки, который не может совпасть со склеенным текстом строки; следствие — на фикстуре FY2024 `parseKPIPage` не даёт ни одной записи `eps_*`. Записано, не исправлено.
+ 10. **Отключённые отчёты сузились до 2015–2018 (плюс 2025H2)** — после включения шести релизов 4Q/FY за 2019–2024 причина отключения у оставшихся не в выверке страниц, а в типе документа: 2015–2017 — MD&A с консолидированной отчётностью, 2018 — консолидированная МСФО-форма, у которых нет шапки «Comparative financial results», а 2025H2 — англоязычный 2H25-релиз с двухшапочной таблицей. Включение 2015–2018 — следующий пункт (спека [docs/superpowers/specs/2026-10-10-polyus-history-reports-design.md](docs/superpowers/specs/2026-10-10-polyus-history-reports-design.md), §4 «Границы»): у каждого файла свои `Kind`, `Lang` и `Pages`, и, возможно, понадобится несколько `Pages` на отчёт.
+ 
+ Ограничение «агент MCP не видит данные Полюса» (`v_polyus_*` и гранта `kimi_reader` не было) **снято 2026-10-10** — витрины `v_company_*` с комментариями и грантом (§6.3, §6.5).
+ 
+ 
+ ## 7. Календарь триггеров (актуальный Q4-2026)
+ 
+ | Дата | Событие | Действие модели |
+ |---|---|---|
++| ежедневно | bold.report (ByteTree), данные T+1 — `dagu/bold.yaml`, 08:07 МСК (источник готов к 07:32 МСК): цена дня (`bold_gold_price`) и ETF-контур 73 фондов (`bold_etf_flows`) | поток дня и его USD-оценка (`v_gold_etf_flows_daily`), пер-фондовый срез (`v_gold_etf_funds_daily`); 73 фонда ≈83 % мировой величины WGC — не складывать и не сравнивать с мировыми рядами WGC (там все фонды мира, месячная частота) |
+ | по средам (еженед.) | EIA дистилляты (запасы; загрузка НПЗ) — импортёр `eia` `dagu/eia.yaml`, 19:43 МСК; недельный ИПЦ Росстата (день недели сверить с календарём Росстата) | EIA — пороги: crack >$50 медведь / <$30 снято |
+ | 10-е ежемес. (публикация WGC) | WGC ETF-потоки + ЦБ: импортёр `wgc_etf_flows` читает JSON API и ловит публикацию ежедневно (`dagu/wgc.yaml`, 20:17 МСК) — ждать 10-го числа больше не нужно; выгрузки ЦБ по-прежнему кладутся в `wgc/data` вручную | норма покупок ЦБ 40–60 т/мес |
+ | 23.10.2026 | СД ЦБ РФ (ставка 14%) | снижение → флаг перетока ликвидности |
+ | 01.11.2026 | Истечение запрета РФ на экспорт дизеля | продление → bear; отмена → bull |
+ | 10.11.2026 | CPI США за октябрь | горячий → FOMC-hike 85–90% |
+ | 09.12.2026 | FOMC + dot plot | 2-е повышение → пробой $4,000 → $3,750–3,800 |
+ | 18.12.2026 | СД ЦБ РФ + ребалансировка MOEX | база: −25 б.п. до 13,75% |
+ | 15.11.2026 | Полюс: пресс-релиз 9М2026 (`polyus_ir`) | статус стройки ЗИФ Сухого Лога, ОПР, прогноз производства и TCC |
+ | **31.12.2026** | **Полюс: обновлённое ТЭО (feasibility study) Сухого Лога (`polyus_ir`)** | **ожидается в конце 2026; порог `launch_year_revision >= 1` → пересчитать сид выпуска.** Дата — плейсхолдер на конец года, точный день не анонсирован |
+ | 15.02.2027 | Полюс: пресс-релиз FY2026 (`polyus_ir`) | подтверждение или сдвиг дат запуска, новые запасы JORC (`life_years` изменение >2 лет) |
+diff --git a/README.md b/README.md
+index 7b9e50a..4ee2fd4 100644
+--- a/README.md
++++ b/README.md
+@@ -15,25 +15,26 @@ Go-конвейер импорта российской макроэкономи
+ | `minfin` | Минфин: исполнение федерального бюджета | `minfin_fed_bud_mes`, `minfin_fed_bud_mesyats`; каталог `series_catalog`, витрина `v_minfin_budget` | 10-е число 10:41 |
+ | `customs` | ФТС: внешняя торговля по странам | `customs_vneshn_torg` | 15-е число 11:41 |
+ | `fao` | ФАО: индексы продовольственных цен | `fao_food_price` | 5-е число 10:47 |
+ | `bank` | Банки: индексы потребительских расходов, финрезультаты (Сбер, ВТБ, Т-Банк), ипотека ДОМ.РФ | `sber_consumper_spending_index`, `sber_izmenenie_trat`, `sber_finansovie_rezultaty`, `rus_vtb_group_ifrs`, `tbank_group_ifrs`, `domrf_mortgage` | понедельник 09:23 |
+ | `craw` | Росстандарт: сертификаты ГОСТ (краулер) | `gost_*` | 1-е число 11:31 |
+ | `fred` | FRED (CSV): DFII10, DGS10, FEDFUNDS, DTWEXBGS, CPIAUCSL, T5YIE | `macro_series` (`source = 'fred'`), каталог `series_catalog`, витрина `v_fred_macro` | ежедневно 11:41 |
+ | `bls` | BLS API v2: CPI (CUUR0000SA0, CUSR0000SA0), безработица, NFP, средняя зарплата, PPI, JOLTS | `macro_series` (`source = 'bls'`), каталог `series_catalog`, витрина `v_bls_macro` | ежедневно 12:23 |
+ | `bea` | BEA API: индексы PCE (headline, excluding food and energy), таблица NIPA T20804 | `macro_series` (`source = 'bea'`) | ежедневно 12:37 |
+ | `eia` | EIA API v2 (Weekly Petroleum Status): запасы дистиллятного топлива в США (WDISTUS1) и загрузка мощностей НПЗ (WPULEUS3) | `macro_series` (`source = 'eia'`), каталог `series_catalog`, витрина `v_eia_petroleum` | среда 19:43 |
+ | `wgc` | WGC (World Gold Council): месячные потоки и запасы золотых ETF (JSON API `fscdn.gold.org`; фолбэк — `ETF_Flows_*.xlsx`) и золотые резервы семи ЦБ (POL/CZE/TUR/RUS/KAZ/UZB/CHN; `Changes_latest_as_of_*.xlsx` + `World_official_gold_holdings_as_of_*.xlsx`) | `macro_series` (`source = 'wgc'`: 20 рядов `etf_<метрика>_<регион>` + 14 рядов `cb_gold_<метрика>_<iso3>`), каталог `series_catalog` (34 записи), витрины `v_gold_etf_flows` и `v_cb_gold_dynamics` | `dagu/wgc.yaml`, ежедневно 20:17; ETF — из API (автоматически), выгрузки ЦБ (и фолбэк ETF) кладутся в `wgc/data/` вручную |
++| `bold` | bold.report (ByteTree), публичный JSON API без ключа: T+1 агрегат 73 золотых ETF (≈83 % мировой величины WGC) — дневной поток и его USD-оценка, окна 7/30/90 календарных дней, запасы и AUM, пер-фондовый срез; плюс цена дня источника («Futures Price», метод не раскрыт — не спот и не `GC=F`) | `macro_series` (`source = 'bold'`: 7 рядов `etf_bold_*`), `bold_fund_snapshot` (73 фонда, ключ `(date, ticker, name)`), `gold_prices` (`venue = 'bold'`); каталог `series_catalog` (7 записей), витрины `v_gold_etf_flows_daily` и `v_gold_etf_funds_daily` | `dagu/bold.yaml`, ежедневно 08:07 (шаг 1 — цена дня, шаг 2 — ETF-контур); вручную — `make import STAT=bold_gold_price`, `make import STAT=bold_etf_flows` |
+ | `gold` | Золото: фиксинг MOEX GOLDFIXME (₽/г) пересчитан в USD/oz по курсу ЦБ | `gold_prices` (`venue = 'moex_fix_usd'`); каталог `series_catalog`, витрина `v_gold_prices` | ежедневно 18:47 |
+ | `moex` | МосБиржа ISS: свечи PLZL (OHLCV), индекс RGBI, доходности G-curve ОФЗ (1y/3y/5y/10y) | `stock_prices` (`code = 'PLZL'`), `ofz_curve`; каталог `series_catalog`, витрины `v_stock_prices`, `v_ofz_curve` | ежедневно 19:13 |
+ | `calendar` | Календарь событий-триггеров прогноза золота/NAV (Q4-2026; сид — `sql/events_calendar_q4_2026.sql`) | `events_calendar`; витрина `v_events_calendar` | вручную (`make import STAT=events_calendar`) |
+ | `forecast` | Резолвер журнала прогнозов: сверяет прогнозы `xau_q_avg` из `forecast_log` со средним `gold_prices` за квартал `target_date` (приоритет `comex_front > moex_fix_usd`), пишет `actual`/`error_pct`; `nav` не резолвится — факта нет | `forecast_log` (`actual`/`error_pct`; таблицу не создаёт — её создаёт ingest); витрина `v_forecast_accuracy` | ежедневно 20:23 |
+-| `views` | Витрины контура прогноза: `v_model_inputs`, `v_gold_dashboard`, `v_forecast_accuracy`, `v_imf_macro`, `v_gold_forecasts`, `v_gold_etf_flows`, `v_cb_gold_dynamics` (импортёр `gold_views`) | витрины; гранты `kimi_reader` — в `sql/mcp_kimi_reader.sql` | вручную, после первого запуска ingest: `make import STAT=gold_views` |
++| `views` | Витрины контура прогноза: `v_model_inputs`, `v_gold_dashboard`, `v_forecast_accuracy`, `v_imf_macro`, `v_gold_forecasts`, `v_gold_etf_flows`, `v_cb_gold_dynamics`, `v_gold_etf_flows_daily`, `v_gold_etf_funds_daily` (импортёр `gold_views`) | витрины; гранты `kimi_reader` — в `sql/mcp_kimi_reader.sql` | вручную, после первого запуска ingest: `make import STAT=gold_views` |
+ | `views` | Метрики компаний сектора: таблица `company_financials` + витрины `v_company_financials` (разрешённое значение, одна строка на компанию/метрику/период), `v_company_metric_sources` (все версии, включая проигравшую), `v_company_operating` (операционка по активам); каталог рядов Полюса в `series_catalog` (импортёр `company_views`) | таблица `company_financials`, витрины; гранты `kimi_reader` — в `sql/mcp_kimi_reader.sql` | `dagu/financial.yaml`, понедельник 10:23 (МСК), после `polyus_financial_metrics`; вручную — `make import STAT=company_views` |
+ | `dcf` | Сид LOM-планов Полюса из публичной отчётности (импортёр `dcf_mine_plans`): факт добычи последнего отчётного года из `databook_polyus` + версионные константы сида. **Идёт ДО расчётного ядра** | `mine_plans`; каталог `series_catalog` (source `dcf_mine_plans`, 8 рядов) | `dagu/dcf.yaml`, понедельник 11:29 (МСК), шаг 1 из 2 (до `dcf_engine`); вручную: `make import STAT=dcf_mine_plans` |
+ | `dcf` | Уточнённый поактивный AISC поверх Go-сида (скрипт `scripts/extrapolation_aisc.py`, цель `make dcf-aisc`): калибрует клин поддержания как долю от TCC по пресс-релизам 4Q/FY 2018–2021, экстраполирует на 2025–LOM и увязывает к групповому AISC. **В расписание НЕ входит — применяется вручную** | пишет `sql/dcf_mine_plans_seed.sql` (77 строк) — те же 5 активов × та же сетка годов, что у Go-сида, ключ `(company, asset, year)` → `ReplacingMergeTree` перезапишет 77 строк из 87 | вручную, после `dcf_mine_plans`: `make dcf-aisc` → `make ch-sql FILE=sql/dcf_mine_plans_seed.sql` → `DCF_RUN_ID=<uuid> make import STAT=dcf_engine` |
+ | `dcf` | Расчётное ядро sum-of-parts LOM-NAV Полюса (импортёр `dcf_engine`): НДПИ-функция, LOM-NPV с хвостом закрытия, эскалация по ИПЦ, два контура ставки. Читает `mine_plans` и `price_decks`, пишет `nav_by_asset` (активы × 3 дека × 2 контура). **Идёт ПОСЛЕ `dcf_mine_plans`** | `mine_plans`, `price_decks`, `nav_by_asset`; витрина `v_dcf_assumptions` (грант `kimi_reader`) | `dagu/dcf.yaml`, понедельник 11:29 (МСК), шаг 2 из 2 (после `dcf_mine_plans`); вручную: `make import STAT=dcf_mine_plans`, затем `DCF_RUN_ID=<uuid> make import STAT=dcf_engine` |
+ | `polyus` | Отчётность ПАО «Полюс»: xlsx-датапак (операционные результаты по активам с 2007) и PDF-отчёты (KPI-пресс-релизы EN/RU + МСФО-формы EN). Разбор PDF — колоночная модель: `pdftotext -tsv`, полоса шапки по ролям строк, колонки из неё по X | `databook_polyus`; PDF-отчёты → `company_financials` (общая таблица сектора) | понедельник 10:23 |
+ | `financial` | Legacy: корпоративные databook'и (ЮГК), investing.com, РЖД | `databook_ugk` и др. | понедельник 10:23 |
+ 
+ Импортёр `gold` — временный: производная цена, не LBMA. Официальный LBMA AM/PM пока не подключён, см. «Ограничения».
+ 
+ Импортёр `forecast_resolve` (пакет `forecast/`) закрывает обратную связь журнала прогнозов. Он читает `forecast_log FINAL` по `metric = 'xau_q_avg'` с наступившей `target_date`, берёт окно сверки — квартал, содержащий `target_date` (`[начало квартала, target_date]`), считает `actual` средним `gold_prices` в окне по приоритету `comex_front > moex_fix_usd` (площадка выбирается по количеству точек: среднее пустого окна — NaN, поэтому гейт по счётчику) и `error_pct = (predicted − actual) / actual × 100`. Записывает **одним батчем и только изменившиеся строки** — прогон ежедневный, перезапись того же значения не делается. `nav` и прочие метрики не резолвятся: факта для NAV нет, строка остаётся `is_resolved = 0`. Окно без точек цены — пропуск с предупреждением в логе; таблицу `forecast_log` резолвер не создаёт (её создаёт ingest при старте). Расписание — `dagu/forecast.yaml`, ежедневно 20:23 МСК (после `gold.yaml` и `moex.yaml`); разовый бэкфилл прогноза Q3-2026 — `sql/forecast_log_backfill.sql`. Результат виден в витрине `v_forecast_accuracy`.
+@@ -64,38 +65,47 @@ make import STAT=dcf_engine                                      # без DCF_RU
+ 
+ Пакет `wgc/` даёт два импортёра: `wgc_etf_flows` — 20 рядов месячных потоков и запасов физически обеспеченных золотых ETF (`etf_<метрика>_<регион>`, 4 метрики × 5 регионов) и `wgc_cb_reserves` — 14 рядов золотых резервов семи ЦБ (`cb_gold_change_tonnes_<iso3>` — месячные дельты, `cb_gold_holdings_tonnes_<iso3>` — уровни). Оба пишут в `macro_series` с `source = 'wgc'`, читаются витринами `v_gold_etf_flows` (приоритет источников `wgc > webbridge > manual`; сессионный сбор `webbridge` и ручной ввод — фолбэки) и `v_cb_gold_dynamics` (7 стран: MoM, YTD и уровень). **Транспорт ETF-канала — JSON API `fscdn.gold.org`** (`flows-chart2` — потоки, `holdings-chart2` — запасы и AUM; без ключа, `asOfDate` источника — 2026-09-30): ручного шага в прогоне нет, поэтому публикация WGC ловится в день выхода. Локальная выгрузка `ETF_Flows_*.xlsx` в `wgc/data/` — **фолбэк**, если API недоступно (в логе видно `API WGC недоступно … — пробую локальную выгрузку`), а для выгрузок ЦБ ручное скачивание браузером остаётся единственным путём: goldhub отдаёт `/download/file/*` залогированному браузеру, боту отвечает `403`, поэтому папка `wgc/data/` лежит в `.gitignore` и в репозитории не хранится (фикстуры тестов — `wgc/testdata/`). Runbook: ETF — качать ничего не нужно, достаточно дождаться `dagu/wgc.yaml` (ежедневно 20:17 МСК) или прогнать вручную; ЦБ — скачать на gold.org/goldhub актуальные `Changes_latest_as_of_*.xlsx` и `World_official_gold_holdings_as_of_*.xlsx` → положить в `wgc/data/`:
+ 
+ ```bash
+ make import STAT=wgc_etf_flows     # 20 рядов ETF: JSON API (фолбэк — свежайший по mtime ETF_Flows_*.xlsx в wgc/data)
+ make import STAT=wgc_cb_reserves   # 14 рядов ЦБ (Changes_*.xlsx + World_official_gold_holdings_*.xlsx)
+ ```
+ 
+ Ни API и ни файла ETF, равно как и отсутствие выгрузок ЦБ, — предупреждение в логе и `0` строк (DAG остаётся зелёным); битый файл или пустой разбор — ошибка импорта, а ошибка API сама по себе уводит прогон на файл, а не гасит его. Данные месячные (недельные апдейты — только на сайте, вне контура): релиз ETF-отчёта выходит ~10-го числа следующего месяца, данные ЦБ — с лагом ~2 месяца. Тоннажные стоки (`holdings_tonnes`) API отдаёт **округлёнными до 0,01 т** (потоки и AUM — полной точности), поэтому один и тот же месяц из API и из xlsx-фолбэка расходится не более чем на 0,01 т — это округление источника, а не дефект импорта; глубина: потоки (`flow_*`) всех пяти регионов — с 2003-02-28 (нули в потоках явные), стоки и AUM `world` — с 2007-03-31 (в `holdings` Азии до этого месяца `null`). Оговорки данных (пропуски RUS, net-ряд TUR, UZB с 2013-02) — в разделе «Ограничения».
+ 
++Пакет `bold/` даёт два импортёра T+1-контура bold.report (ByteTree) — публичного JSON API без ключа (у эндпоинтов обязателен суффикс `.json`, без него источник отвечает `403` — см. «Ограничения»): `bold_etf_flows` — 7 дневных рядов `etf_bold_*` в `macro_series` (`source = 'bold'`) по агрегату 73 золотых ETF и таблица пер-фондового среза `bold_fund_snapshot` (ключ `(date, ticker, name)`: тикер не уникален — `GLD` встречается трижды), а `bold_gold_price` — цена дня источника в `gold_prices` (`venue = 'bold'`; метод источником не раскрыт — «Futures Price», это не спот и не `GC=F`). Агрегат покрывает ≈83 % мировой величины WGC, поэтому его нельзя складывать и сравнивать напрямую с `etf_holdings_tonnes_world`/`etf_flow_tonnes_world` (там все фонды мира и месячная частота); окна 7/30/90 дней календарные (сумма 5 торговых дней не равна `culm7day`), а пер-фондовая история копится с первого прогона — по фондам истории источник не отдаёт. Ряды описаны в каталоге (7 записей), читаются витринами `v_gold_etf_flows_daily` (одна строка на торговый день, 8 колонок) и `v_gold_etf_funds_daily` (73 фонда в день, 10 колонок) — вторая гейтится по `bold_fund_snapshot`, поэтому `make import STAT=gold_views` запускают после первого прогона ETF-импортёра. Обычный прогон щадящий: 4 запроса у ETF и 1 у цены; полный путь (пустая таблица, пропуск в источнике больше 4 календарных дней, расхождение максимумов рядов и среза) читает файлы истории — 8 запросов, результат идемпотентен по ключам `ReplacingMergeTree`. Данные T+1 (прошедший торговый день; выходные источник опускает), расписание — `dagu/bold.yaml`, ежедневно 08:07 МСК цепочкой (цена дня → ETF-контур). Запуск:
++
++```bash
++make import STAT=bold_gold_price   # цена дня: инкремент — 1 точка, полный путь — вся история (3138 точек с 2014-10-01)
++make import STAT=bold_etf_flows    # 7 рядов ETF + 73 строки пер-фондового среза; инкремент — 4 запроса, полный путь — 8
++make import STAT=gold_views        # витрины контура, включая v_gold_etf_flows_daily и v_gold_etf_funds_daily
++```
++
+ ## Структура репозитория
+ 
+ ```text
+ main.go                  точка входа: подключение к ClickHouse, фильтр импортёров, код выхода
+ chimport/                интерфейс ImportStat и глобальный реестр Stats
+ util/                    HTTP-клиент (национальные TLS-сертификаты РФ, ротация User-Agent; скачивание XLSX/CSV/JSON), шаблон импортёра ClickHouseImport, батч-вставка
+ bank/ cbr/ craw/ customs/ fao/ minfin/ rosstat/   доменные импортёры (см. таблицу выше)
+ fred/                    FRED CSV → macro_series
+ calendar/                календарь событий-триггеров → events_calendar
+ forecast/                резолвер журнала прогнозов forecast_resolve: forecast_log + gold_prices → actual/error_pct (своих таблиц не создаёт)
+-views/                   витрины контура прогноза (v_model_inputs, v_gold_dashboard, v_forecast_accuracy, v_imf_macro, v_gold_forecasts, v_gold_etf_flows; импортёр gold_views) и витрины метрик компаний сектора (company_financials → v_company_financials, v_company_metric_sources, v_company_operating; импортёр company_views + описания рядов Полюса в series_catalog, views/series_meta.go)
++views/                   витрины контура прогноза (v_model_inputs, v_gold_dashboard, v_forecast_accuracy, v_imf_macro, v_gold_forecasts, v_gold_etf_flows, v_gold_etf_flows_daily, v_gold_etf_funds_daily; импортёр gold_views) и витрины метрик компаний сектора (company_financials → v_company_financials, v_company_metric_sources, v_company_operating; импортёр company_views + описания рядов Полюса в series_catalog, views/series_meta.go)
+ ingest/                  ingest-endpoint контура прогноза: model_runs, forecast_log, macro_series (source = 'manual' | 'webbridge' | 'imf'), gold_prices (venue comex_front), gold_forecasts
+ cmd/ingest/              бинарник ingest (отдельный от основного импорта)
+ bls/                     BLS API v2 → macro_series
+ bea/                     BEA API (NIPA T20804) → macro_series
+ eia/                     EIA API v2: недельные запасы дистиллятов и загрузка НПЗ США → macro_series
+ gold/                    MOEX GOLDFIXME + cbr_currency_usd → gold_prices
+ wgc/                     WGC: месячные потоки и запасы золотых ETF (JSON API fscdn.gold.org; выгрузка ETF_Flows_*.xlsx — фолбэк) + золотые резервы семи ЦБ (выгрузки скачиваются вручную браузером) → macro_series (source = 'wgc'); wgc/data в .gitignore, фикстуры тестов — wgc/testdata
++bold/                    bold.report (ByteTree), публичный JSON API без ключа (у эндпоинтов обязателен суффикс .json): два импортёра — bold_etf_flows (7 рядов etf_bold_* → macro_series, source = 'bold' + таблица пер-фондового среза bold_fund_snapshot) и bold_gold_price (цена дня → gold_prices, venue = 'bold'); витрины v_gold_etf_flows_daily и v_gold_etf_funds_daily (views/); тесты офлайн — httptest + bold/testdata
+ moex/                    MOEX ISS: свечи PLZL → stock_prices, RGBI + G-curve → ofz_curve
+ polyus/                  отчётность Полюса: xlsx-датапак → databook_polyus; PDF-отчёты (KPI EN/RU, МСФО EN) → company_financials (общая таблица сектора; читается витринами v_company_*, разбор — колоночная модель: pdftotext -tsv + полоса шапки по ролям строк + колонки по X)
+ dcf/                     расчётное ядро DCF: sum-of-parts LOM-NAV по активам, таблицы mine_plans, price_decks, nav_by_asset (DDL — копии канонических из ARCHITECTURE.md §6.2), чистое ядро без БД (НДПИ на унцию, LOM-NPV с хвостом закрытия, эскалация по ИПЦ, две ставки контуров). Два импортёра: dcf_mine_plans (сид mine_plans из отчётности Полюса + каталог рядов dcf/series_meta.go; идёт ДО движка) и dcf_engine (расчёт; витрина views/dcf_assumptions.go). Порядок гарантирует dagu/dcf.yaml. model_runs не пишет
+ financial/               legacy-контур (database/sql, свой main), новый код туда не добавляется; остался databook_ugk (ЮГК)
+ dagu/                    расписания: один DAG-файл на домен, имя файла = имя DAG
+ sql/                     DDL и гранты вручную: пользователь kimi_reader и гранты на витрины, сид календаря Q4-2026, сид консенсуса gold_forecasts (gold_forecasts_q4_2026_seed.sql), каталог 20 рядов WGC ETF Flows (wgc_etf_flows_catalog.sql), бэкфилл журнала прогнозов (forecast_log_backfill.sql)
+ scripts/                 проверки MCP (mcp_setup_user.py, mcp_check.py), экстраполяция поактивного AISC Полюса (extrapolation_aisc.py + тест и генератор испорченной PDF-фикстуры) и тесты скриптов
+ deploy/staging/           артефакты деплоя на staging: юниты dagu и mcp-clickhouse, образец env
+ docs/                    аналитические статьи и дорожная карта
+ .github/workflows/       CI (go.yml) и релиз по тегу v* (release.yml)
+@@ -144,21 +154,21 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
+ ## Оркестрация (Dagu)
+ 
+ Расписания описаны в `dagu/*.yaml`: `type: chain`, `overlap_policy: skip`, каждый шаг запускает бинарник с `CLICKHOUSE_IMPORT_STAT=<имя>`, ретраи — 3 попытки с паузой 300 с. Путь к бинарнику (`ROSSTAT_IMPORT_BIN`) и `CLICKHOUSE_URL` задаются в `base.yaml` Dagu; секреты лежат в файлах `/etc/dagu/secrets/` с правами `0600`, в репозитории их нет. Внутри домена зависимости задаются через `depends`; между DAG зависимостей нет (см. `gold.yaml`: шаг `cbr_currency_usd` стоит внутри DAG). Отдельный `dagu/dcf.yaml` использует именно это свойство DAG-а: `type: chain` исполняет `dcf_mine_plans` строго до `dcf_engine`, и «сид раньше расчёта» — гарантия расписания, а не только порядок ручных команд (Finding 3 финального ревью). **Шага уточнённого AISC-сида в `dagu/dcf.yaml` нет** — он применяется вручную (см. «Что импортируется» и «Ограничения»); DAG содержит ровно два шага, и придумывать третий не нужно.
+ 
+ Запуск одного DAG вручную: `dagu start dagu/gold.yaml` (dev-окружение Dagu должно видеть `ROSSTAT_IMPORT_BIN` и `CLICKHOUSE_URL` через `base.yaml`).
+ 
+ ## Контур прогноза золота
+ 
+ Составные части контура (подробно — ARCHITECTURE.md §6.3 и §6.5):
+ 
+-- витрины `v_model_inputs`, `v_gold_dashboard`, `v_forecast_accuracy`, `v_imf_macro`, `v_eia_petroleum`, `v_gold_forecasts`, `v_gold_etf_flows`, `v_cb_gold_dynamics` и календарь `v_events_calendar` — читаются агентом через MCP (пользователь `kimi_reader`, только `v_*`); гранты — в `sql/mcp_kimi_reader.sql`;
++- витрины `v_model_inputs`, `v_gold_dashboard`, `v_forecast_accuracy`, `v_imf_macro`, `v_eia_petroleum`, `v_gold_forecasts`, `v_gold_etf_flows`, `v_cb_gold_dynamics`, `v_gold_etf_flows_daily`, `v_gold_etf_funds_daily` и календарь `v_events_calendar` — читаются агентом через MCP (пользователь `kimi_reader`, только `v_*`); гранты — в `sql/mcp_kimi_reader.sql`;
+ - витрины метрик компаний сектора `v_company_financials`, `v_company_metric_sources`, `v_company_operating` (импортёр `company_views`) — читаются агентом через MCP; сейчас наполнены данными Полюса (ARCHITECTURE.md §6.3);
+ - витрина `v_dcf_assumptions` — NPV рудников Полюса по каждому (deck, контур ставки, актив) плюс суммарный NAV рудников; пишет её импортёр `dcf_engine` (пакет `dcf/`, `DCF_RUN_ID=<uuid> make import STAT=dcf_engine`), сырая `nav_by_asset` агенту не выдана;
+ - импортёр `forecast_resolve` (пакет `forecast/`, `dagu/forecast.yaml`, 20:23 МСК) — обратная связь журнала прогнозов: заполняет `actual`/`error_pct` в `forecast_log` сверкой `xau_q_avg` со средним `gold_prices` за квартал `target_date` (ARCHITECTURE.md §6.1);
+ - ingest-endpoint (`cmd/ingest`) — единственный путь записи прогонов модели, ручных рядов, цен COMEX и консенсус-прогнозов;
+ - плагин Kimi `gold-nav` — отдельный репозиторий, сценарная сессия прогноза и DCF NAV PLZL.
+ 
+ ### Ingest-endpoint
+ 
+ Запуск: `make run-ingest` (нужны `CLICKHOUSE_URL` и `INGEST_TOKEN` в `~/.config/rosstat/env`; `INGEST_ADDR` по умолчанию `:8081`). При старте создаются `model_runs`, `forecast_log`, `macro_series`, `gold_prices`, `gold_forecasts`, если их ещё нет. Витрины `views/` создаются отдельно: `make import STAT=gold_views` после первого запуска ingest.
+ 
+@@ -247,20 +257,23 @@ CLICKHOUSE_PASSWORD=<пароль kimi_reader> make mcp-check MCP_CHECK_HOST=127
+ 
+ ```bash
+ make dev-check                       # что установлено
+ make all                             # lint, test, build
+ make env-check                       # ключи из ~/.config/rosstat/env на месте
+ make ch-up                           # локальный ClickHouse на 8123/9000
+ make import STAT=bea                 # импорт bea (ключ BEA_API_KEY из файла окружения)
+ make import STAT=eia                 # импорт eia (ключ EIA_API_KEY из файла окружения)
+ make import STAT=wgc_etf_flows       # WGC ETF Flows: JSON API fscdn.gold.org (фолбэк — ETF_Flows_*.xlsx в wgc/data)
+ make import STAT=wgc_cb_reserves     # WGC золотые резервы ЦБ (Changes_*.xlsx + World_official_gold_holdings_*.xlsx в wgc/data)
++make import STAT=bold_gold_price     # bold.report: цена дня (JSON API без ключа; полный путь — вся история)
++make import STAT=bold_etf_flows      # bold.report: 7 дневных рядов ETF-агрегата 73 фондов + пер-фондовый срез
++make import STAT=gold_views          # витрины контура, включая v_gold_etf_flows_daily и v_gold_etf_funds_daily (после первого прогона bold_etf_flows)
+ make import STAT=dcf_mine_plans      # сид mine_plans из отчётности Полюса (идёт до движка)
+ make dcf-aisc                        # (опционально) уточнённый поактивный AISC → sql/dcf_mine_plans_seed.sql
+ make ch-sql FILE=sql/dcf_mine_plans_seed.sql   # (опционально) применить сид AISC поверх Go-сида
+ DCF_RUN_ID=$(uuidgen | tr A-Z a-z) make import STAT=dcf_engine   # расчёт NAV по засеянным планам (в шелле без uuidgen — любой UUID)
+ make import STAT=forecast_resolve    # сверка прогнозов журнала с фактом (нужны строки forecast_log: ingest-прогон или бэкфилл sql/forecast_log_backfill.sql)
+ make ch-sql FILE=sql/gold_forecasts_q4_2026_seed.sql   # (опционально) сид консенсуса банков → v_gold_forecasts (до make import STAT=gold_views)
+ make ch-sql FILE=sql/wgc_etf_flows_catalog.sql         # (опционально) каталог 20 рядов WGC ETF Flows (source='webbridge')
+ make mcp-check                       # MCP end-to-end (CLICKHOUSE_PASSWORD из файла окружения)
+ make ch-down                         # остановить сервер
+ ```
+@@ -374,20 +387,21 @@ MCP GoLand (опционально, ускоряет работу Kimi Code с 
+ - `lint`: `golangci-lint` v2.14.0 с конфигом `.golangci.yml`. Пакет `financial/` исключён из линта как legacy;
+ - `vulncheck`: `govulncheck ./...` (падает при уязвимостях, которые затрагивают код);
+ - `build`: `make build`, артефакт `build/`.
+ 
+ Все задания используют Go `1.27.x`: `govulncheck` проверяет стандартную библиотеку тулчейном, которым запущен, и на go1.27.1 находил уязвимости `net/http` и `crypto/tls`, исправленные в go1.27.2.
+ 
+ `.github/workflows/release.yml` на тег `v*` запускает тесты и `goreleaser` (архив `linux/amd64`, `SHA256SUMS`, файлы `README.md` и `dagu/*.yaml`). Конфиг — `.goreleaser.yaml`; проверка: `goreleaser check`. В релиз входит только основной бинарник импорта; `cmd/ingest` собирается локально через `make build-ingest`.
+ 
+ ## Ограничения и известные проблемы
+ 
++- **У эндпоинтов bold.report обязателен суффикс `.json`.** Источник — статика на S3 за CloudFront: объекта без расширения там нет, и CDN отвечает `403 AccessDenied` (не `404`). На этом упала первая живая приёмка 2026-10-12: в девяти константах путей `bold/parse.go` суффикса не было, оба импортёра писали `0` строк. Дефект жил с первого коммита контура (`5b2341a`) и был невидим офлайн-тестам: `httptest` отвечает на любой путь. Исправлено коммитом `bold: require .json suffix on api paths`; суффикс закреплён тестом `TestBoldEndpointsPinPaths` — путь без `.json` валит тест. Приёмка после фикса пройдена (`make mcp-check` — ПРОВЕРКА ПРОЙДЕНА): 3138 точек цены, 21054 точки + 73 строки пер-фондового среза; подробности — [docs/GOLD_THESIS_DATA_ROADMAP.md](docs/GOLD_THESIS_DATA_ROADMAP.md) (фаза 3, follow-up 4).
+ - **LBMA AM/PM не подключён.** Официальный LBMA JSON, Nasdaq Data Link `LBMA/GOLD` и stooq недоступны из этой сети (403 WAF, JS-проверка), FRED серии LBMA удалил. Временно используется `gold` (MOEX GOLDFIXME ÷ курс ЦБ).
+ - **Курс ЦБ без понедельников и новогодних праздников.** В `cbr_currency_usd` этих дат нет; `gold` берёт последний курс не позже даты и пропускает дни без курса старше 10 дней. Это дыра в источнике ЦБ.
+ - **Импортёры ЦБ/Росстата/ВТБ берут ссылку со страницы источника.** `cbr_infl_exp`, `cbr_credit_m2x`, `vvp_kvartal`, `salaries_mes`, `rus_vtb_group_ifrs` не хардкодят URL XLSX, а скрейпят актуальную ссылку (colly). Остальные источники ЦБ используют стабильные пути `vfs/statistics/...`.
+ - **`domrf_mortgage`, `sber_finansovie_rezultaty`, `tbank_group_ifrs` — ссылка задана статически.** Страницы источников закрыты JS-challenge (ServicePipe у ДОМ.РФ, TSPD у Сбера) либо не имеют листинга (CDN с UUID у Т-Банка), colly их не парсит: ссылку обновляют вручную при каждом релизе. У `tbank_group_ifrs` текущая ссылка ведёт на PDF, а не XLSX, — импорт падает.
+ - **Росстат может отдавать HTTP 426.** Домен `rosstat.gov.ru` периодически отклоняет запросы из-за технических работ (`Upgrade Required`), включая уже работавшие `ipc_mes`/`ipc_weeks`; это ограничение источника/сети, а не кода. Импортёры падают с диагностикой «не найдена ссылка на …».
+ - **`financial/`.** Legacy-контур (database/sql, свой main). Новые импортёры туда не добавляются; отчётность Полюса вынесена в `polyus/`, в `financial/` остался `databook_ugk` (ЮГК) и мёртвый код металлургов.
+ - **Поактивный AISC Полюса применяется вручную, а не по расписанию.** Уточнённый сид `sql/dcf_mine_plans_seed.sql` (`make dcf-aisc`) намеренно **не входит в `dagu/dcf.yaml`**: запланированный шаг `make ch-sql` на staging не заработал бы — в релиз попадают только `README.md` и `dagu/*.yaml` (`.goreleaser.yaml`), а `make`, Makefile и сам SQL-файл на хосте отсутствуют. Хуже то, что провал был бы **бесшумным**: `dcf_mine_plans` в той же цепочке пересеял бы ключи из Go-снимка, и `dcf_engine` посчитал бы на старом плоском клине «TCC + $698» с зелёным логом. Поэтому цепочка в `dagu/dcf.yaml` остаётся двухшаговой (`dcf_mine_plans` → `dcf_engine`), а сид AISC применяется человеком: `make ch-sql FILE=sql/dcf_mine_plans_seed.sql` до `DCF_RUN_ID=<uuid> make import STAT=dcf_engine`. Автоматизация (доставка SQL как релизного артефакта + способ его применить) — отдельный пункт роадмапа, вне текущего объёма.
+ - **Сторож устаревания сида и Python-тесты не покрыты CI.** `TestCommittedSeedIsFresh` (`scripts/extrapolation_aisc_test.py`) сверяет тело коммитируемого `sql/dcf_mine_plans_seed.sql` с тем, что порождает генератор, но для точного воспроизведения ему нужна живая ClickHouse (факт добычи приходит из `databook_polyus`); при недоступной БД тест **пропускается** с явной причиной. Сам Python-набор не запускается в CI: `.github/workflows/go.yml` выполняет только Go-проверки (`gofmt`, `go vet`, `go test -race`, `golangci-lint`, сборку), поэтому правленый вручную сид ловится только локальным прогоном `python3 scripts/extrapolation_aisc_test.py`. Связка Python-тестов с CI — отдельный пункт.
+ - **AISC Полюса за 2025+ остаётся выведенной величиной.** Per-asset AISC и TCC публикуются только в пресс-релизах 4Q/FY **2018–2021**; начиная с 2022 отчётность перешла на полугодовой формат и даёт поактивный TCC, но AISC — только групповой. Поэтому калибровка клина-доли опирается на 2019–2021, а годы плана 2025–LOM **экстраполируются** с них: сид улучшает структуру затрат (взвешенную по активам вместо единого клина) и переносит в модель наблюдённые веса, но не создаёт поздних измерений. Ровно поэтому `aisc` в каталоге рядов и в [docs/DCF_DATA_COVERAGE.md](docs/DCF_DATA_COVERAGE.md) §2 остаётся `derived`, а увязка к групповому AISC «точна» только на групповом уровне (по построению, независимо от качества входов).
+ - **Отчётность Полюса: `unitsMarker` привязан к строке, а не к смыслу.** `polyus/columns.go` распознаёт шапку финансовой таблицы только по склеенным меткам `$млн`, `$mln`, `$million`. Отчёт, печатающий `US$ million`, оставит набор колонок пустым, и парсер вернёт **0 записей с `err == nil`** — молчаливо пустую страницу, не отличимую от «в отчёте нет метрик». (Форма `US$ million` — находка контролёра по другим релизам; у включённых релизов 2019–2024 фикстуры несут `$ million`, и оно совпадает, поэтому расширение маркера этой работой не потребовалось.) Это самое важное ограничение парсера Полюса; подробности и остальные — в [ARCHITECTURE.md](ARCHITECTURE.md) §6.6.
+diff --git a/bold/bold.go b/bold/bold.go
+index b256110..e61d2e9 100644
+--- a/bold/bold.go
++++ b/bold/bold.go
+@@ -165,21 +165,23 @@ func (s *boldEtfFlows) clock() time.Time {
+ 	if s.now == nil {
+ 		return time.Now()
+ 	}
+ 	return s.now()
+ }
+ 
+ // Import — один прогон импортёра. Порядок шагов важен: (1) сохранённый максимум из ClickHouse
+ // (ошибка чтения — warn и нулевое время, как в wgc: диагностический запрос не повод терять
+ // обновление); (2) четыре запроса «последнего дня» — они нужны и на полном пути: их дата
+ // решает no-op и датирует пер-фондовый срез; (3) решение no-op — дата источника не новее
+-// сохранённого максимума значит, что писать нечего, и батч не открывается вовсе; (4) выбор
++// сохранённого максимума значит, что писать нечего: ни батча, ни DDL, ни чтения стока, но каталог
++// рядов публикуется (ряды в таблице уже есть — предусловие ветки, и их описания обязаны быть
++// актуальны без новых данных); (4) выбор
+ // режима — полная история, если инкремент не может исключить пропуск дней (boldNeedsFullFetch)
+ // или если сохранённые максимумы ряда и среза разошлись (Ruling 8: инкремент посчитал бы
+ // многодневный поток за дневной); (5) точки фондов
+ // считаются до батчей (ошибка здесь — смена формы ответа summary.json); (6) обе DDL; (7) два
+ // батча; (8) каталог — только после успешных Send (описание ряда, которого в таблице нет, —
+ // обещание данных, которых агент не найдёт; прецедент dcf_mine_plans).
+ func (s *boldEtfFlows) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+ 	base := s.base()
+ 
+ 	seriesMax, fundMax, serr := boldStoredBounds(ctx, conn)
+@@ -197,30 +199,36 @@ func (s *boldEtfFlows) Import(ctx context.Context, conn driver.Conn) (count int6
+ 	if err != nil {
+ 		return 0, err
+ 	}
+ 
+ 	if boldSourceLooksStale(latestDate, s.clock()) {
+ 		log.Warnf("%s: дата источника %s отстаёт от дня прогона больше чем на %d ч — возможен застой источника или его кэша (импорт не отменяется)",
+ 			boldEtfName, latestDate.Format(boldDateLayout), boldFullFetchGapHours)
+ 	}
+ 
+ 	// Идемпотентный no-op: дата источника не новее сохранённого максимума (или равна ему) —
+-	// писать те же точки незачем, и соединение дальше чтения максимума не трогается.
++	// писать те же точки незачем, батчи и DDL не трогаются вовсе. Каталог рядов публикуется и
++	// здесь: предусловие ветки — непустой сохранённый максимум, то есть ряды в таблице уже есть,
++	// и их описания обязаны быть актуальны без новых данных (иначе правка текста каталога
++	// доезжала бы до агента только вместе с новыми точками — а их в выходные и праздники нет).
+ 	// Расхождение половин (seriesMax != fundMax) no-op-ом не закрывается: это разбирает шаг ниже.
+ 	diverged := !seriesMax.Equal(fundMax)
+ 	if !stored.IsZero() && !latestDate.After(stored) {
+ 		if diverged {
+ 			log.Warnf("%s: ряд и срез разошлись (%s против %s), но дата источника %s не новее обоих — догонять нечего",
+ 				boldEtfName, boldFormatDate(seriesMax), boldFormatDate(fundMax), latestDate.Format(boldDateLayout))
+ 		}
+-		log.Infof("%s: дата источника %s не новее сохранённого максимума %s — нечего обновлять (0 строк)",
++		log.Infof("%s: дата источника %s не новее сохранённого максимума %s — нечего обновлять (0 строк, каталог перепубликован)",
+ 			boldEtfName, latestDate.Format(boldDateLayout), stored.Format(boldDateLayout))
++		if cerr := util.UpsertSeriesCatalog(ctx, conn, boldETFSeriesMeta()); cerr != nil {
++			return 0, fmt.Errorf("%s: каталог рядов: %w", boldEtfName, cerr)
++		}
+ 		return 0, nil
+ 	}
+ 
+ 	var points []point
+ 	// Полный путь — не только «пропуск дней» (boldNeedsFullFetch), но и расхождение половин
+ 	// сохранённого максимума (Ruling 8): частичный сбой прошлого прогона (батч рядов прошёл, батч
+ 	// среза упал) оставил срез за 08.10 при рядах за 09.10. Инкремент в такой день посчитал бы Δ
+ 	// от ряда, отставшего на торговый день, — то есть многодневный поток, выданный за дневной, и
+ 	// молча: база `stored` выглядит «предыдущим торговым днём». Полный путь пишет и ряды, и срез за
+ 	// дату источника; при обычном совпадении максимума истории с датой источника это выравнивает
+diff --git a/bold/bold_test.go b/bold/bold_test.go
+index ba9e46c..f229dcd 100644
+--- a/bold/bold_test.go
++++ b/bold/bold_test.go
+@@ -945,46 +945,66 @@ func TestBoldEtfImportFullFetchWhenSeriesAndFundsDiverge(t *testing.T) {
+ 		}
+ 	}
+ 	for _, path := range []string{boldPathUnitsLatest, boldPathAumLatest, boldPathFlowsLatest} {
+ 		if counts[path] != 1 {
+ 			t.Errorf("путь %q запрошен %d раз (все запросы: %v), ожидался один запрос последнего дня", path, counts[path], requested)
+ 		}
+ 	}
+ }
+ 
+ // TestBoldEtfImportNoopWhenUpToDate: дата источника не новее сохранённого максимума — 0 строк,
+-// ни одной ошибки, ни одного открытого батча и ни одного Exec: DDL здесь тоже не выполняется,
+-// соединение трогается только двумя чтениями максимумов.
++// ни одной ошибки, и данные не трогаются: ни DDL обеих таблиц, ни батчей INSERT в них, ни запроса
++// за предыдущим стоком. Каталог рядов при этом публикуется — предусловие ветки непустой
++// сохранённый максимум, то есть ряды в таблице уже есть, и их описания обязаны быть актуальны без
++// новых данных (иначе правка текста каталога доезжала бы до агента только вместе с новыми точками).
+ func TestBoldEtfImportNoopWhenUpToDate(t *testing.T) {
+ 	server := boldNewTestServer(t, boldLatestBodies(t))
+ 	conn := newBoldFakeConn(boldFakeDate(t, boldPinDate), boldFakeDate(t, boldPinDate))
+ 	stat := boldTestStat(server)
+ 
+ 	count, err := stat.Import(context.Background(), conn)
+ 	if err != nil {
+ 		t.Fatalf("Import: %v", err)
+ 	}
+ 	if count != 0 {
+ 		t.Errorf("Import вернул %d строк, ожидалось 0", count)
+ 	}
+ 	calls := conn.callList()
+-	if len(calls) != 2 {
+-		t.Errorf("обращений к соединению: %v, ожидались два чтения максимумов", calls)
+-	}
+-	for _, call := range calls {
+-		if strings.HasPrefix(call, "preparebatch: ") {
+-			t.Errorf("батч открывался на no-op прогоне: %v", calls)
++	for _, fragment := range []string{
++		"exec: CREATE TABLE IF NOT EXISTS " + boldFundTable,
++		"exec: CREATE TABLE IF NOT EXISTS " + macroSeriesTable,
++		"preparebatch: " + boldMacroSeriesInsert,
++		"preparebatch: " + boldFundInsert,
++	} {
++		if boldTestCallIndex(calls, fragment) >= 0 {
++			t.Errorf("no-op прогон тронул данные (%q): %v", fragment, calls)
+ 		}
+-		if strings.HasPrefix(call, "exec: ") {
+-			t.Errorf("DDL выполнялась на no-op прогоне: %v", calls)
++	}
++	if boldTestCallIndex(calls, boldSeriesHoldingsTonnes) >= 0 {
++		t.Errorf("no-op прогон читал предыдущий сток: %v", calls)
++	}
++	for _, fragment := range []string{"queryrow: " + boldStoredSeriesMaxQuery, "queryrow: " + boldStoredFundMaxQuery} {
++		if boldTestCallIndex(calls, fragment) < 0 {
++			t.Errorf("no-op прогон обязан прочитать максимум %q: %v", fragment, calls)
+ 		}
+ 	}
++
++	// Каталог опубликован целиком: батч series_catalog (текст INSERT задаёт util.UpsertSeriesCatalog)
++	// открыт, заполнен семью рядами и отправлен — иначе исправленный origin не доехал бы до агента.
++	catalog := conn.batchFor(t, "INSERT INTO series_catalog")
++	if !catalog.sent {
++		t.Error("батч каталога на no-op прогоне не отправлен")
++	}
++	if len(catalog.rows) != 7 {
++		t.Errorf("строк каталога на no-op прогоне: %d, ожидалось 7", len(catalog.rows))
++	}
++
+ 	if got := server.requested(); len(got) != 4 {
+ 		t.Errorf("запросов на no-op прогоне: %d (%v)", len(got), got)
+ 	}
+ }
+ 
+ // TestBoldEtfImportMissingUnitsAtMaxFails: сохранённый максимум есть, а точки стока за него нет —
+ // ошибка импорта, а не поток = 0. Ноль вместо отсутствующих данных и есть та молчаливая подмена,
+ // от которой предостерегает Review Focus 4.
+ func TestBoldEtfImportMissingUnitsAtMaxFails(t *testing.T) {
+ 	server := boldNewTestServer(t, boldLatestBodies(t))
+@@ -1069,21 +1089,22 @@ func TestBoldWriteKeepsInputOrder(t *testing.T) {
+ 		}
+ 	}
+ 	batch := conn.batchFor(t, boldFundInsert)
+ 	if got := batch.rows[0][1]; got != "GLD" {
+ 		t.Errorf("первая строка батча фондов — %v, ожидался тикер GLD (батч обязан быть отсортирован)", got)
+ 	}
+ }
+ 
+ // TestBoldEtfCatalogDescribesEverySeries: семь записей каталога, все поля заполнены, имена
+ // совпадают с рядами контура, а описания несут оговорки спеки §4.4 — иначе агент прочитает ряд
+-// без «не складывать с WGC» и «окна календарные».
++// без «не складывать с WGC» и «окна календарные». Здесь же origin сверяется с общим boldETFOrigin:
++// пути в нём обязаны быть боевыми (с суффиксом .json), а не «как в статье».
+ func TestBoldEtfCatalogDescribesEverySeries(t *testing.T) {
+ 	want := []string{
+ 		boldSeriesAumUsdBn, boldSeriesFlow30dTonnes, boldSeriesFlow7dTonnes, boldSeriesFlow90dTonnes,
+ 		boldSeriesFlowTonnes, boldSeriesFlowUsdMln, boldSeriesHoldingsTonnes,
+ 	}
+ 	meta := boldETFSeriesMeta()
+ 	if len(meta) != 7 {
+ 		t.Fatalf("записей каталога: %d, ожидалось 7", len(meta))
+ 	}
+ 	for _, entry := range meta {
+@@ -1094,20 +1115,31 @@ func TestBoldEtfCatalogDescribesEverySeries(t *testing.T) {
+ 			t.Errorf("%s: пустое поле каталога: %+v", entry.Series, entry)
+ 		}
+ 		if entry.Frequency != "D" {
+ 			t.Errorf("%s: frequency = %q, ожидалось D", entry.Series, entry.Frequency)
+ 		}
+ 		for _, fragment := range []string{"bold.report", "83 %", "не складывать", "календарные"} {
+ 			if !strings.Contains(entry.Description, fragment) {
+ 				t.Errorf("%s: описание не содержит %q", entry.Series, fragment)
+ 			}
+ 		}
++		// Origin собирается из констант boldPath* и обязан называть все боевые эндпоинты — они
++		// оканчиваются на .json (TestBoldEndpointsPinPaths), а путь без суффикса источник отдаёт
++		// 403: агент, читающий каталог, получил бы нерабочее происхождение (fix round 2, Ruling 16).
++		if entry.Origin != boldETFOrigin {
++			t.Errorf("%s: origin = %q, ожидалась общая строка boldETFOrigin", entry.Series, entry.Origin)
++		}
++		for _, path := range []string{boldPathUnits, boldPathAum, boldPathFlows, boldPathSummary, boldPathPrice} {
++			if !strings.Contains(entry.Origin, path) {
++				t.Errorf("%s: origin %q не называет эндпоинт %q", entry.Series, entry.Origin, path)
++			}
++		}
+ 	}
+ 
+ 	names := make([]string, 0, len(meta))
+ 	for _, entry := range meta {
+ 		names = append(names, entry.Series)
+ 	}
+ 	sort.Strings(names)
+ 	if strings.Join(names, ",") != strings.Join(want, ",") {
+ 		t.Errorf("ряды каталога: %v, ожидались %v", names, want)
+ 	}
+diff --git a/bold/parse.go b/bold/parse.go
+index f6f5c29..05dec45 100644
+--- a/bold/parse.go
++++ b/bold/parse.go
+@@ -7,32 +7,39 @@ import (
+ 	"encoding/json"
+ 	"errors"
+ 	"fmt"
+ 	"sort"
+ 	"strings"
+ 	"time"
+ )
+ 
+ // Эндпоинты источника. Формат истории — {version, updated, data:[…]}, формат «последнего
+ // дня» — объект верхнего уровня {version, updated, date, …поля}.
++//
++// Суффикс `.json` в пути ОБЯЗАТЕЛЕН: источник — статика на S3 за CloudFront, объекта без
++// расширения там просто нет, а CDN без права ListBucket маскирует отсутствующий ключ
++// отказом в доступе (не 404, а 403 AccessDenied). Проверено живым curl 2026-10-12:
++// `gold/price-latest` → 403 AccessDenied, `gold/price-latest.json` → 200. Офлайн-тесты
++// (httptest) этого не видят — они отвечают на любой путь, поэтому суффикс пришпилен
++// отдельной проверкой в TestBoldEndpointsPinPaths: путь без `.json` — ошибка теста.
+ const (
+ 	boldBaseURL = "https://bold.report/api/v1/"
+ 
+-	boldPathPrice       = "gold/price"
+-	boldPathPriceLatest = "gold/price-latest"
+-	boldPathUnits       = "gold/funds/units"
+-	boldPathUnitsLatest = "gold/funds/units-latest"
+-	boldPathAum         = "gold/funds/aum"
+-	boldPathAumLatest   = "gold/funds/aum-latest"
+-	boldPathFlows       = "gold/flows/all"
+-	boldPathFlowsLatest = "gold/flows/all-latest"
+-	boldPathSummary     = "gold/summary"
++	boldPathPrice       = "gold/price.json"
++	boldPathPriceLatest = "gold/price-latest.json"
++	boldPathUnits       = "gold/funds/units.json"
++	boldPathUnitsLatest = "gold/funds/units-latest.json"
++	boldPathAum         = "gold/funds/aum.json"
++	boldPathAumLatest   = "gold/funds/aum-latest.json"
++	boldPathFlows       = "gold/flows/all.json"
++	boldPathFlowsLatest = "gold/flows/all-latest.json"
++	boldPathSummary     = "gold/summary.json"
+ )
+ 
+ // Имена семи рядов ETF-контура (source='bold' в macro_series).
+ const (
+ 	boldSeriesFlowTonnes     = "etf_bold_flow_tonnes"
+ 	boldSeriesFlowUsdMln     = "etf_bold_flow_usd_mln"
+ 	boldSeriesFlow7dTonnes   = "etf_bold_flow_7d_tonnes"
+ 	boldSeriesFlow30dTonnes  = "etf_bold_flow_30d_tonnes"
+ 	boldSeriesFlow90dTonnes  = "etf_bold_flow_90d_tonnes"
+ 	boldSeriesHoldingsTonnes = "etf_bold_holdings_tonnes"
+diff --git a/bold/parse_test.go b/bold/parse_test.go
+index fbd7a75..6751bb1 100644
+--- a/bold/parse_test.go
++++ b/bold/parse_test.go
+@@ -541,41 +541,47 @@ func TestParseHistoryRejectsDuplicateDates(t *testing.T) {
+ 	_, err := parseHistory(body, boldMetricAum)
+ 	if err == nil {
+ 		t.Fatal("повтор даты в файле истории обязан быть ошибкой")
+ 	}
+ 	if !strings.Contains(err.Error(), "дата "+boldPinPrior+" повторяется (строки 2 и 3)") {
+ 		t.Fatalf("ошибка обязана называть дату и номера строк: %v", err)
+ 	}
+ }
+ 
+ // TestBoldEndpointsPinPaths финит эндпоинты, объявленные для импортёров (Task 2/3): молчаливая
+-// правка пути сломала бы и счётчики запросов, и расхождение дат «последнего дня».
++// правка пути сломала бы и счётчики запросов, и расхождение дат «последнего дня». Здесь же
++// пришпилен обязательный суффикс `.json`: без расширения объекта в источнике нет и живой
++// запрос получает 403 AccessDenied, а httptest отвечает на любой путь и молчит об этом —
++// именно так дефект и дожил до живой приёмки (fix round 1, Ruling 14).
+ func TestBoldEndpointsPinPaths(t *testing.T) {
+ 	base, err := url.Parse(boldBaseURL)
+ 	if err != nil {
+ 		t.Fatalf("boldBaseURL %q не разбирается: %v", boldBaseURL, err)
+ 	}
+ 	if base.Scheme != "https" || base.Host != "bold.report" || base.Path != "/api/v1/" {
+ 		t.Fatalf("boldBaseURL = %q, ожидался https://bold.report/api/v1/", boldBaseURL)
+ 	}
+ 	paths := []struct {
+ 		name, got, want string
+ 	}{
+-		{"boldPathPrice", boldPathPrice, "gold/price"},
+-		{"boldPathPriceLatest", boldPathPriceLatest, "gold/price-latest"},
+-		{"boldPathUnits", boldPathUnits, "gold/funds/units"},
+-		{"boldPathUnitsLatest", boldPathUnitsLatest, "gold/funds/units-latest"},
+-		{"boldPathAum", boldPathAum, "gold/funds/aum"},
+-		{"boldPathAumLatest", boldPathAumLatest, "gold/funds/aum-latest"},
+-		{"boldPathFlows", boldPathFlows, "gold/flows/all"},
+-		{"boldPathFlowsLatest", boldPathFlowsLatest, "gold/flows/all-latest"},
+-		{"boldPathSummary", boldPathSummary, "gold/summary"},
++		{"boldPathPrice", boldPathPrice, "gold/price.json"},
++		{"boldPathPriceLatest", boldPathPriceLatest, "gold/price-latest.json"},
++		{"boldPathUnits", boldPathUnits, "gold/funds/units.json"},
++		{"boldPathUnitsLatest", boldPathUnitsLatest, "gold/funds/units-latest.json"},
++		{"boldPathAum", boldPathAum, "gold/funds/aum.json"},
++		{"boldPathAumLatest", boldPathAumLatest, "gold/funds/aum-latest.json"},
++		{"boldPathFlows", boldPathFlows, "gold/flows/all.json"},
++		{"boldPathFlowsLatest", boldPathFlowsLatest, "gold/flows/all-latest.json"},
++		{"boldPathSummary", boldPathSummary, "gold/summary.json"},
+ 	}
+ 	for _, p := range paths {
++		if !strings.HasSuffix(p.got, ".json") {
++			t.Fatalf("%s = %q: путь обязан оканчиваться на .json — без расширения объект в источнике не существует и CDN отвечает 403 AccessDenied, а httptest отвечает на любой путь и этого не ловит", p.name, p.got)
++		}
+ 		if p.got != p.want {
+ 			t.Fatalf("%s = %q, ожидалось %q", p.name, p.got, p.want)
+ 		}
+ 		if strings.HasPrefix(p.got, "/") {
+ 			t.Fatalf("%s = %q: путь склеивается с boldBaseURL без ведущего слэша", p.name, p.got)
+ 		}
+ 	}
+ }
+diff --git a/bold/price_test.go b/bold/price_test.go
+index 0249f2d..7709f62 100644
+--- a/bold/price_test.go
++++ b/bold/price_test.go
+@@ -344,14 +344,14 @@ func TestBoldPriceCatalogEntry(t *testing.T) {
+ 		t.Errorf("unit = %q, ожидалась единица в USD", m.Unit)
+ 	}
+ 	if m.Title == "" || m.Origin == "" || m.Description == "" {
+ 		t.Errorf("пустое поле записи каталога: %+v", m)
+ 	}
+ 	for _, fragment := range []string{"метод", "не раскрыт", "не спот", "comex_front", "bold.report"} {
+ 		if !strings.Contains(m.Description, fragment) {
+ 			t.Errorf("описание не называет %q: %s", fragment, m.Description)
+ 		}
+ 	}
+-	if !strings.Contains(m.Origin, boldPathPrice+".json") {
+-		t.Errorf("origin = %q, ожидался эндпоинт %s.json", m.Origin, boldPathPrice)
++	if !strings.Contains(m.Origin, boldPathPrice) {
++		t.Errorf("origin = %q, ожидался эндпоинт %s", m.Origin, boldPathPrice)
+ 	}
+ }
+diff --git a/bold/series_meta.go b/bold/series_meta.go
+index 1355492..0a9199b 100644
+--- a/bold/series_meta.go
++++ b/bold/series_meta.go
+@@ -6,25 +6,29 @@ import "github.com/kmlebedev/clickhouse-import-rosstat/util"
+ // намеренно: агент читает каталог построчно (v_series_catalog по (source, series)), а не
+ // целиком, поэтому оговорки обязаны стоять в той же строке, что и значение. Без них агрегатор
+ // складывают с мировыми рядами WGC (там все фонды мира и месячная частота), окна читают как
+ // сумму торговых дней, а «неполный день» принимают за обвал потока.
+ const boldETFScope = "Источник — bold.report (ByteTree), ключей нет, режим щадящий (4 запроса в сутки, T+1). " +
+ 	"Агрегат 73 фонда (в списке GLD, IAU, IGLN, GLDM, SGLD, 4GLD, PHYS, 518880, GOLD, 1540, ZGLD, SGOL) — " +
+ 	"≈83 % мировой величины WGC, поэтому не складывать и не сравнивать напрямую с etf_holdings_tonnes_world/etf_flow_tonnes_world " +
+ 	"(там все фонды мира и месячная частота). Окна — календарные (7/30/90 дней): сумма 5 торговых дней ≠ culm7day."
+ 
+ // boldETFOrigin — происхождение рядов контура: три ответа «последнего дня» плюс (в полном
+-// режиме) три файла истории. Срез фондов и цена живут своими рядами/таблицами и здесь названы,
+-// чтобы читатель каталога не искал их в macro_series.
+-const boldETFOrigin = "bold.report/api/v1/: gold/funds/units, gold/funds/aum, gold/flows/all " +
+-	"(ответы *-latest на инкременте, файлы истории — в полном режиме); пер-фондовый срез — gold/summary " +
+-	"(таблица bold_fund_snapshot), цена дня — gold/price (ряд gold/bold в gold_prices)"
++// режиме) три файла истории. Пути собираются из констант boldPath*, а не пишутся литералом: у
++// источника суффикс `.json` обязателен, и дублированная строка рано или поздно разошлась бы с
++// боевыми путями — агент прочитал бы в каталоге путь, на который CDN отвечает 403 (fix round 2,
++// Ruling 16). Срез фондов и цена живут своими рядами/таблицами и здесь названы, чтобы читатель
++// каталога не искал их в macro_series.
++const boldETFOrigin = "bold.report/api/v1/: " + boldPathUnits + ", " + boldPathAum + ", " + boldPathFlows + " " +
++	"(ответы *-latest на инкременте, файлы истории — в полном режиме); " +
++	"пер-фондовый срез — " + boldPathSummary + " (таблица bold_fund_snapshot), " +
++	"цена дня — " + boldPathPrice + " (ряд gold/bold в gold_prices)"
+ 
+ // boldETFSeriesMeta — каталог семи рядов ETF-контура (спека §4.1/§4.4). Единицы — целевые:
+ // источник публикует унции и USD, в ряды они идут в тоннах, млрд USD и млн USD.
+ func boldETFSeriesMeta() []util.SeriesMeta {
+ 	return []util.SeriesMeta{
+ 		{
+ 			Source:    boldSource,
+ 			Series:    boldSeriesFlowTonnes,
+ 			Title:     "Дневной поток золота в ETF-контуре bold.report (Δ запасов дня)",
+ 			Unit:      "тонны",
+diff --git a/docs/GOLD_THESIS_DATA_ROADMAP.md b/docs/GOLD_THESIS_DATA_ROADMAP.md
+index fee1346..6095e02 100644
+--- a/docs/GOLD_THESIS_DATA_ROADMAP.md
++++ b/docs/GOLD_THESIS_DATA_ROADMAP.md
+@@ -177,20 +177,38 @@
+ - `make import STAT=wgc_etf_flows` — **5462 строки, 20 рядов**, канал API канонический: в логе `потоки asOfDate=2026-09-30 + стоки asOfDate=2026-09-30, точек 5462`, сообщения о переходе на локальную выгрузку **нет**; повторный прогон — те же 5462 строки (идемпотентно).
+ - `v_gold_etf_flows` за 2026-09-30 (сверка с прежней xlsx-историей, MCP `kimi_reader`): потоки и AUM совпадают **до 1e-9** — `asia` 2 255,40929756 млн $ / 16,18610771 т / 75,594060865 млрд $; `north_america` 3 961,93761905 / 27,72232162 / 284,088446499 (максимальная невязка 4,5·10⁻¹⁰); `world`-поток 9 952,21564139 млн $ / 67,28075855 т.
+ - `holdings_tonnes` совпадает **до 0,01 т**: `asia` 541,88, `world` 4 255,66 (сумма четырёх регионов) против xlsx-точек 541,88460453 и 4 255,66981354 — тоннажные стоки API приходят округлёнными до второго знака, и это округление источника (закреплено в каталоге рядов), а не дефект импорта.
+ - Глубина: потоки — **284** точки у каждого из пяти регионов с **2003-02-28** (нули в потоках явные, `world`-поток тоже с 2003-02-28 вместо прежних 235 с 2007-03), стоки и AUM `world` — **235** с **2007-03-31** (в `holdings` Азии до этого месяца `null`); история только дополнилась — значения в пересечении диапазонов не менялись.
+ - `make import STAT=gold_views` (пересоздание витрин с новыми комментариями) → `make mcp-user` (гранты `kimi_reader`; вывод target — только строки `OK GRANT …`, пароль не печатается): комментарии `v_gold_etf_flows` и `v_cb_gold_dynamics` в БД называют JSON API, фолбэк и ежедневное расписание.
+ - `make all` зелёный (gofmt, golangci-lint 0 issues, `go vet`, `go test -race`, обе сборки); `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА (34 ряда `wgc`, витрина читается; правок `scripts/mcp_check.py` не потребовалось).
+ - Фолбэк на локальный файл закрыт тестом (`API 500` → импорт из `wgc/data`), а не живой подменой URL: боевой адрес API в проде не переопределяется.
+ 
+ **Осталось/ограничения:** собственный лаг публикации WGC (7–10 дней) остаётся; недельные региональные ряды из тех же эндпоинтов не берём (свежесть ~16 дней — хуже месячного отчёта); на staging `make import STAT=gold_views` и `make mcp-user` применяются вручную, как в фазах 2–3; выгрузки ЦБ (`wgc_cb_reserves`) по-прежнему качаются браузером вручную — машинного эквивалента нет.
+ 
++### Фаза 3 — follow-up 4: T+1 золото из bold.report (ETF-контур и цена) — ✅ выполнен 2026-10-12
++
++**Пробел:** ETF-цикл проекта был представлен только месячными рядами WGC (собственный лаг публикации 7–10 дней) и ручным вводом; дневных данных о потоках в ETF и о цене золота с лагом T+1 в контуре не было — свежесть тезиса 1 упиралась в месячный отчёт.
++**Что даёт:** публичный агрегатор bold.report (ByteTree) без ключей отдаёт дневной (T+1) срез по 73 золотым ETF ≈83 % мировой величины WGC: дневной поток, окна 7/30/90 календарных дней, запасы, AUM и пер-фондовый срез, плюс цену золота дня. **Ранее запланированный парсинг эмитентов (топ-4 американских ETF, ≈42,5 % мировой величины) снят в пользу агрегатора:** один источник вместо трёх-четырёх парсеров, охват вдвое больше (≈83 % против 42,5 %), а пер-фондовая детализация (73 строки в день) приходит бонусом.
++**Метод:** пакет `bold/` — два импортёра: `bold_etf_flows` (7 рядов `etf_bold_*` в `macro_series`, `source = 'bold'` + таблица `bold_fund_snapshot` с ключом `(date, ticker, name)`) и `bold_gold_price` (`gold_prices`, `venue = 'bold'`); витрины `v_gold_etf_flows_daily` и `v_gold_etf_funds_daily` (`views/`); каталог 7 рядов (`util.UpsertSeriesCatalog`); расписание `dagu/bold.yaml` — ежедневно 08:07 МСК цепочкой (цена дня → ETF-контур). Режимы: инкремент — 4 запроса у ETF (`units-latest`, `aum-latest`, `flows/all-latest`, `summary`) и 1 у цены; полный путь — 8 запросов; триггеры полного пути — пустая таблица, пропуск в источнике больше 4 календарных дней, расхождение половин (максимум рядов ≠ максимум пер-фондового среза). Оба режима идемпотентны по ключам `ReplacingMergeTree`; fail-fast — не-200, пустое тело, отсутствие обязательного ключа, расхождение дат или цены трёх ответов и ноль точек.
++
++**Приёмка 2026-10-12 (живой прогон, после фикса путей — коммит `1a50a60`):**
++
++- `make import STAT=bold_gold_price` → **3138** точек: в логе `полный режим: сохранённый максимум (таблицы пусты), точек истории 3138` и `Imported 3138 rows of bold_gold_price (цена gold/price.json: площадка bold в gold_prices)`; MCP — `v_gold_prices WHERE series = 'bold'`: **3138** точек, `2014-10-01`…`2026-10-09`, `2026-10-09` = **4216,3** (`2026-10-08` = 4199,4).
++- `make import STAT=bold_etf_flows` → **21054** точки + **73** строки среза: в логе `полный режим: сохранённый максимум (таблицы пусты), дата источника 2026-10-09, дней истории 3008` и `Imported 21054 rows of bold_etf_flows (bold ETF: 21054 точек, 73 фондов)`; warn про отсутствие `bold_fund_snapshot` на первом прогоне — штатный путь (таблицы ещё нет). Разложение: 3008 запасов + 3008 AUM + 3×3008 окон (7/30/90 дней) + 2×3007 дневного потока = **21054** — сходится с живым источником.
++- Повтор обоих прогонов — идемпотентный no-op: `дата источника 2026-10-09 не новее сохранённого максимума 2026-10-09 — нечего обновлять (0 строк)` у обоих импортёров, код выхода 0; инкрементный путь — 4 запроса у ETF и 1 у цены.
++- `make import STAT=gold_views` → `v_gold_etf_flows_daily created: true`, `v_gold_etf_funds_daily created: true` (до прогона `bold_etf_flows` вторая пропускалась гейтом — таблицы-источника не было); `make mcp-user` → 26/26 OK; `make mcp-check` → **ПРОВЕРКА ПРОЙДЕНА**: обе витрины читаются (3008 и 73 строки), каталог `source = 'bold'` — **7** рядов, `SELECT count() FROM bold_fund_snapshot` — `ACCESS_DENIED` (497).
++- MCP-сверка (`kimi_reader`): `v_gold_etf_flows_daily` за `2026-10-09` — `4,233 т / 573,75 млн $ / 1,360 / 30,825 / 167,214 / 3520,318 т / 476,678 млрд $` (сырые: `4,232561122944 / 573,754104 / 1,360466075232 / 30,825411717408 / 167,214001968024 / 3520,3177244549426 / 476,677811738`); всего **3008** торговых дней (`2015-04-01`…`2026-10-09`), `flow_tonnes` и `flow_usd_mln` заполнены в **3007** днях (у первой точки ряда потока нет), `holdings_tonnes` и `aum_usd_bn` — во всех 3008. Пер-фондовая витрина: **73** строки за `2026-10-09` при **71** уникальном тикере — три `GLD` с разными именами (SPDR Gold Shares 33 552 628 oz, KTAM Gold ETF Tracker Class GLD, NewGold Issuer Ltd). Наблюдаемый пункт: максимумы дат обеих витрин совпадают — `2026-10-09` = `2026-10-09` (`same_day = 1`).
++- `make all` — зелёный (gofmt, `golangci-lint` 0 issues, `go vet`, `go test -race`, обе сборки).
++
++**Дефект, найденный первой приёмкой, и его фикс.** Первый прогон 2026-10-12 упал: оба импортёра получили `403 AccessDenied`, потому что в девяти константах путей `bold/parse.go` не было обязательного суффикса `.json` (источник — статика S3 за CloudFront: ключа без расширения нет, и CDN отвечает отказом в доступе, а не `404`). Офлайн-тесты (`httptest`) этого не видели — они отвечают на любой путь, поэтому дефект жил с первого коммита контура (`5b2341a`) и обнаружился только на живой приёмке. Фикс — коммит `bold: require .json suffix on api paths`: суффикс у всех девяти путей, пин `TestBoldEndpointsPinPaths` (путь без `.json` валит тест) и надёжная проверка существования витрин в `scripts/mcp_check.py` (существование подтверждается запросом к витрине, а не поиском имени в ответе `list_tables`, где лежат комментарии — из-за этого отсутствующая `v_gold_etf_funds_daily` «была видна»).
++**Ограничения:** агрегат 73 фондов ≈83 % мировой величины WGC — не складывать и не сравнивать напрямую с `etf_holdings_tonnes_world`/`etf_flow_tonnes_world` (там все фонды мира и месячная частота); окна календарные (сумма 5 торговых дней ≠ `culm7day`); пер-фондовая история копится с первого прогона (истории по фондам у источника нет); метод цены источником не раскрыт («Futures Price»), с `comex_front` совпадает частично.
++
+ ### Фаза 4 — РФ-канал и контекст (по мере надобности)
+ 
+ **Пробел:** геополитика и новостной фон — вне контура; GRAM-атрибуция и режимная детекция — только в плане.
+ **Метод:** `news_watch` (RSS Интерфакс/РБК/IR Полюса → `news_events`, sentiment — LLM-сессия); опционально `v_gold_attribution`, `regime_states` (HMM).
+ **Приёмка:** тезис «геополитика работает через нефть/ставку» имеет событийный след в БД.
+ 
+ ---
+ 
+ ## 3. Roadmap аналитических витрин (токен-экономия)
+ 
+diff --git a/docs/superpowers/plans/2026-10-12-bold-t1-gold.md b/docs/superpowers/plans/2026-10-12-bold-t1-gold.md
+index c9d27c3..9196938 100644
+--- a/docs/superpowers/plans/2026-10-12-bold-t1-gold.md
++++ b/docs/superpowers/plans/2026-10-12-bold-t1-gold.md
+@@ -34,21 +34,21 @@
+ ---
+ 
+ ### Task 1: `bold/` — разбор JSON, конверсии и построение точек
+ 
+ **Files:**
+ - Create: `bold/parse.go`, `bold/parse_test.go`, `bold/testdata/bold_price_latest.json`, `bold/testdata/bold_units_latest.json`, `bold/testdata/bold_aum_latest.json`, `bold/testdata/bold_flows_latest.json`, `bold/testdata/bold_summary.json`, `bold/testdata/bold_units_history.json`, `bold/testdata/bold_aum_history.json`, `bold/testdata/bold_flows_history.json`, `bold/testdata/bold_price_history.json`
+ 
+ **Interfaces:**
+ - Consumes: `wgc.seriesPoint`-подобный тип — **не импортировать `wgc`**; объявить локально `type point struct { Series string; Date time.Time; Value float64 }` в `bold/parse.go` (пакеты источников не зависят друг от друга).
+ - Produces (нужно Task 2 и Task 3):
+-  - `const boldBaseURL = "https://bold.report/api/v1/"`, пути `boldPathPrice = "gold/price"`, `boldPathPriceLatest = "gold/price-latest"`, `boldPathUnits = "gold/funds/units"`, `boldPathUnitsLatest = "gold/funds/units-latest"`, `boldPathAum = "gold/funds/aum"`, `boldPathAumLatest = "gold/funds/aum-latest"`, `boldPathFlows = "gold/flows/all"`, `boldPathFlowsLatest = "gold/flows/all-latest"`, `boldPathSummary = "gold/summary"`.
++  - `const boldBaseURL = "https://bold.report/api/v1/"`, пути **с обязательным суффиксом `.json`** (без него CDN отдаёт 403): `boldPathPrice = "gold/price.json"`, `boldPathPriceLatest = "gold/price-latest.json"`, `boldPathUnits = "gold/funds/units.json"`, `boldPathUnitsLatest = "gold/funds/units-latest.json"`, `boldPathAum = "gold/funds/aum.json"`, `boldPathAumLatest = "gold/funds/aum-latest.json"`, `boldPathFlows = "gold/flows/all.json"`, `boldPathFlowsLatest = "gold/flows/all-latest.json"`, `boldPathSummary = "gold/summary.json"`.
+   - `type boldRow struct { Date string; Value, Units, Aum, Culm7, Culm30, Culm90, Price *float64 }` (JSON-теги `date`, `value`, `units`, `aum`, `culm7day`, `culm30day`, `culm90day`, `price`) и `type boldEnvelope struct { Version, Updated string; Data []boldRow }`.
+   - `type boldFundRow struct { Ticker, Name string; Units, UnitsChange, Aum, AumChange, Price, PriceChange, Shares, SharesChange *float64 }` (`units`, `unitsChange`, `aum`, `aumChange`, `price`, `priceChange`, `shares`, `sharesChange`); `type boldFundSnapshot struct { Version, Updated string; Data []boldFundRow }`.
+   - `type boldMetric int` + `const ( boldMetricPrice boldMetric = iota; boldMetricUnits; boldMetricAum; boldMetricFlows )`; `func (m boldMetric) require(r boldRow) error` — отсутствие обязательного поля метрики → ошибка с именем метрики и даты; `func (m boldMetric) present(r boldRow) bool`.
+   - `func parseLatest(body []byte, metric boldMetric) (boldRow, error)`, `func parseHistory(body []byte, metric boldMetric) ([]boldRow, error)`, `func parseFundSnapshot(body []byte) ([]boldFundRow, error)`.
+   - `func parseBoldDate(s string) (time.Time, error)` (layout `2006-01-02`, UTC), `func ozToTonnes(oz float64) float64`.
+   - `func boldETFSets(rows []boldRow, prevUnits *float64, prevDate time.Time) ([]point, error)` — строит точки 7 рядов (см. Step 3).
+   - `func boldFundPoints(snapshot []boldFundRow, date time.Time) ([]boldFundPoint, error)` — `nil` в любом поле строки → ошибка (тикер/имя/поле в тексте); дубликат ключа (дата, тикер, имя) ошибкой **не** считается: при записи он идемпотентен по ключу `ReplacingMergeTree`, а противоречивых дублей источник не даёт (в живом срезе повторов (ticker, name) нет) (`type boldFundPoint struct { Date time.Time; Ticker, Name string; Units, UnitsChange, Aum, AumChange, Price, PriceChange, Shares, SharesChange float64 }`).
+ 
+ - [ ] **Step 1: Сгенерировать фикстуры из живых ответов**
+ 
+diff --git a/docs/superpowers/specs/2026-10-12-bold-t1-gold-design.md b/docs/superpowers/specs/2026-10-12-bold-t1-gold-design.md
+index f844dd3..25ebe0c 100644
+--- a/docs/superpowers/specs/2026-10-12-bold-t1-gold-design.md
++++ b/docs/superpowers/specs/2026-10-12-bold-t1-gold-design.md
+@@ -22,21 +22,21 @@
+ 
+ Оператор — ByteTree (на сайте указан контакт `bold@bytetree.com`). Страница данных: `bold.report/data-api`.
+ 
+ - Форматы: история `{version, updated, data:[…]}` и последний день `{version, updated, date, …поля}`; всё доступно
+   и JSON, и CSV, HTTP GET **без ключа и авторизации**.
+ - Ограничения: «Excessive usage will be rate limited» → режим щадящий (5 запросов в сутки); `robots.txt` разрешает всё,
+   кроме `/_astro/`. Атрибуция источника обязательна в каталоге и README.
+ - Обновление: **04:32 UTC (07:32 МСК)** ежедневно; выходные в рядах отсутствуют (документация: «weekends omitted»),
+   поэтому «T+1» означает первый торговый день после отчётного.
+ 
+-| эндпоинт | формат | поля | живой объём/глубина |
++| эндпоинт (пути — **с суффиксом `.json`**, без него CDN отдаёт 403) | формат | поля | живой объём/глубина |
+ |---|---|---|---|
+ | `gold/price.json` | история | `date`, `value` | 3 138 точек, 2014-10-01 … 2026-10-09, 117 КБ |
+ | `gold/price-latest.json` | последний день | `date`, `value` | 87 байт |
+ | `gold/funds/units.json` | история | `date`, `units`, `price` | 3 072 строки, 166 КБ; `units` — у 3 008 (2015-04-01…2026-10-09) |
+ | `gold/funds/units-latest.json` | последний день | `date`, `units`, `price` | 105 байт |
+ | `gold/funds/aum.json` | история | `date`, `aum`, `price` | 3 072 строки, 170 КБ; `aum` — у 3 008 |
+ | `gold/funds/aum-latest.json` | последний день | `date`, `aum`, `price` | 106 байт |
+ | `gold/flows/all.json` | история | `date`, `culm7day`, `culm30day`, `culm90day`, `price` | 3 138 строк, 293 КБ; `culm*` — у 3 008 |
+ | `gold/flows/all-latest.json` | последний день | те же поля | 143 байта |
+ | `gold/summary.json` | **только последний день** | `ticker`, `name`, `units`, `unitsChange`, `aum`, `aumChange`, `price`, `priceChange`, `shares`, `sharesChange` | 73 фонда, 15 КБ |
+diff --git a/ingest/schema.go b/ingest/schema.go
+index 1595035..2a88a9c 100644
+--- a/ingest/schema.go
++++ b/ingest/schema.go
+@@ -29,21 +29,21 @@ const modelRunsDdl = `CREATE TABLE IF NOT EXISTS model_runs (
+ 
+ const forecastLogDdl = `CREATE TABLE IF NOT EXISTS forecast_log (
+     forecast_date Date,
+     target_date Date,
+     metric LowCardinality(String),   -- 'xau_q_avg','fed_decision','nav','cbr_rate'
+     predicted Float64, actual Nullable(Float64),
+     error_pct Nullable(Float64)
+ ) ENGINE = ReplacingMergeTree ORDER BY (metric, forecast_date);`
+ 
+ const macroSeriesDdl = `CREATE TABLE IF NOT EXISTS macro_series (
+-    source LowCardinality(String),   -- 'fred','bls','bea','eia','manual','webbridge','imf','wgc'
++    source LowCardinality(String),   -- 'fred','bls','bea','eia','manual','webbridge','imf','wgc','bold'
+     series LowCardinality(String),   -- 'DFII10','distillate_stocks',...
+     date Date32,                     -- Date32, т.к. Date не покрывает даты до 1970 (CPIAUCSL с 1947, FEDFUNDS с 1954)
+     value Float64
+ ) ENGINE = ReplacingMergeTree ORDER BY (source, series, date);`
+ 
+ // goldPricesDdl — копия DDL из gold/gold.go; копии обязаны совпадать (прецедент
+ // company_financials): ingest пишет в gold_prices и должен быть самодостаточен —
+ // POST /v1/gold_prices не должен зависеть от того, отработал ли уже импортёр gold.
+ const goldPricesDdl = `CREATE TABLE IF NOT EXISTS gold_prices (
+ 			  venue LowCardinality(String)
+diff --git a/scripts/mcp_check.py b/scripts/mcp_check.py
+index f2bb406..0f64876 100644
+--- a/scripts/mcp_check.py
++++ b/scripts/mcp_check.py
+@@ -250,33 +250,48 @@ async def check(params, server_log):
+ 
+             raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM gold_forecasts"}))
+             denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+             failed += not expect("сырая gold_forecasts закрыта", denied, "отказ ClickHouse 497 на gold_forecasts (ожидаемо)" if denied else raw[:200])
+ 
+             raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM macro_series"}))
+             denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+             failed += not expect("сырая таблица закрыта", denied, "отказ ClickHouse 497 на macro_series (ожидаемо)" if denied else raw[:200])
+ 
+             # Контур bold.report (спека §4.4): витрины дневного агрегата и пер-фондового
+-            # среза видны агенту, каталог source='bold' описывает ровно 7 рядов, а сырая
++            # среза читаются агентом, каталог source='bold' описывает ровно 7 рядов, а сырая
+             # bold_fund_snapshot — источник пер-фондовой витрины — агенту закрыта (как
+             # macro_series: читать её агент обязан только через витрину).
+-            for view in ("v_gold_etf_flows_daily", "v_gold_etf_funds_daily"):
+-                failed += not expect(f"витрина {view} видна", view in tables, "list_tables default")
+-
++            #
++            # Существование витрины проверяется ЗАПРОСОМ К НЕЙ, а не поиском имени в ответе
++            # list_tables: в том тексте лежат create_table_query с комментариями таблиц и
++            # колонок, поэтому имя отсутствующей витрины попадало туда из COMMENT соседки —
++            # проверка «имя в тексте» давала ложное OK, когда v_gold_etf_funds_daily не
++            # существовала вовсе (её имя названо в комментарии v_gold_etf_flows_daily).
++            # Разобранный ответ run_query доказывает и существование, и право чтения; «нет
++            # витрины» и «нет прав» приходят ошибкой (UNKNOWN_TABLE / ACCESS_DENIED) и в
++            # result_rows не разбираются.
++            #
+             # Пустая витрина — не отказ: до первого прогона bold_etf_flows (или при
+-            # выходном дне источника) строк нет и вовсе, поэтому проверяется РАЗРЕШЕНИЕ
+-            # чтения, как у v_dcf_assumptions и v_gold_etf_flows.
+-            for view, label in (("v_gold_etf_flows_daily", "дневной агрегат bold читается"),
+-                                ("v_gold_etf_funds_daily", "пер-фондовый срез bold читается")):
++            # выходном дне источника) строк нет и вовсе, поэтому значение count не
++            # проверяется — только разрешение чтения, как у v_dcf_assumptions.
++            for view, label in (("v_gold_etf_flows_daily", "дневной агрегат bold"),
++                                ("v_gold_etf_funds_daily", "пер-фондовый срез bold")):
+                 bold_view = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {view}"}))
+-                failed += not expect(label, "rows" in bold_view and "Query execution failed" not in bold_view and "ACCESS_DENIED" not in bold_view, bold_view[:200])
++                bold_view_rows = result_rows(bold_view)
++                if bold_view_rows is None:
++                    bold_view_detail = f"витрина не читается: {bold_view[:200]}"
++                elif bold_view_rows:
++                    bold_view_detail = f"строк: {bold_view_rows[0].get('count()')}"
++                else:
++                    bold_view_detail = "в ответе нет строк"
++                failed += not expect(f"витрина {view} существует и читается ({label})",
++                                     bool(bold_view_rows), bold_view_detail)
+ 
+             # Каталог source='bold' — 7 рядов ETF-контура: каталог пишет импортёр только
+             # после успешного Send, поэтому «меньше 7» значит неприменённый импорт (числа
+             # агент прочитает, а что измеряет ряд и в каких единицах — нет), «больше 7» —
+             # ряд, которого витрина не знает.
+             catalog_bold_raw = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'bold'"}))
+             catalog_bold = result_rows(catalog_bold_raw)
+             catalog_bold_n = catalog_bold[0].get("n") if catalog_bold else None
+             if catalog_bold is None:
+                 catalog_bold_detail = f"ответ не распознан: {catalog_bold_raw[:200]}"

@@ -1,0 +1,70 @@
+# Review package: 5029610f169d1d4a114cc80319a55e10c8d6281f..e81b496fecd3cfb918effe4088d309147a1afe1a
+
+## Commits
+e81b496 test: FindLink on markup without matching link fails with selector in message
+
+## Files changed
+ util/links.go      |  3 +++
+ util/links_test.go | 14 +++++++++-----
+ 2 files changed, 12 insertions(+), 5 deletions(-)
+
+## Diff
+diff --git a/util/links.go b/util/links.go
+index c555998..70152ca 100644
+--- a/util/links.go
++++ b/util/links.go
+@@ -9,20 +9,23 @@ import (
+ 	"github.com/PuerkitoBio/goquery"
+ )
+ 
+ // FindLink возвращает href первой ссылки, найденной селектором на HTML-странице.
+ // href отдаётся как есть (абсолютный или относительный): префикс домена навешивает
+ // вызывающий — так же, как делал прежний HTML-транспорт. Пустой href или отсутствие совпадения —
+ // ошибка: без ссылки на XLSX импорт должен падать до записи в БД, а не тихо писать
+ // «0 rows» по устаревшему или чужому адресу.
+ func FindLink(page []byte, selector string) (string, error) {
+ 	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(page))
++	// Ветка защитная: на практике goquery терпим к битой разметке (обрезанные теги
++	// отбрасывает) и ошибки разбора не отдаёт, но без проверки nil-документ паниковал бы
++	// на doc.Find ниже.
+ 	if err != nil {
+ 		return "", fmt.Errorf("FindLink: разбор страницы: %w", err)
+ 	}
+ 	href, ok := doc.Find(selector).First().Attr("href")
+ 	if !ok || strings.TrimSpace(href) == "" {
+ 		return "", fmt.Errorf("FindLink: по селектору %q ссылка не найдена", selector)
+ 	}
+ 	return href, nil
+ }
+ 
+diff --git a/util/links_test.go b/util/links_test.go
+index 0d9c687..2725a80 100644
+--- a/util/links_test.go
++++ b/util/links_test.go
+@@ -60,17 +60,21 @@ func TestFindLinkMissingSelectorFails(t *testing.T) {
+ 	page := []byte(`<html><body><a href="/a.pdf">x</a></body></html>`)
+ 	href, err := FindLink(page, `a[href$=".xlsx"]`)
+ 	if err == nil {
+ 		t.Fatalf("ожидалась ошибка, получен href %q", href)
+ 	}
+ 	if !strings.Contains(err.Error(), `a[href$=`) {
+ 		t.Errorf("ошибка %q не называет селектор", err)
+ 	}
+ }
+ 
+-// Битый HTML — ошибка разбора, а не молчаливый ноль: иначе импортёр счёл бы
+-// страницу без ссылки и упал бы с менее понятным сообщением.
+-func TestFindLinkBadHTMLFails(t *testing.T) {
+-	if _, err := FindLink([]byte("<a href="), `a`); err == nil {
+-		t.Fatal("битый HTML должен давать ошибку разбора, а не тихий ноль")
++// Битая разметка («<a href=») — ошибка: goquery терпим к обрезанным тегам и разбирает
++// страницу без ошибки, поэтому падает именно ветка «ссылка не найдена», и её текст —
++// контракт: дежурный по логу должен видеть, каким селектором страница не подошла.
++func TestFindLinkHTMLWithoutLinkFails(t *testing.T) {
++	const sel = `a[href]`
++	if _, err := FindLink([]byte("<a href="), sel); err == nil {
++		t.Fatal("страница без ссылки по селектору должна давать ошибку, а не тихий ноль")
++	} else if !strings.Contains(err.Error(), sel) {
++		t.Errorf("ошибка %q не называет селектор %q", err, sel)
+ 	}
+ }

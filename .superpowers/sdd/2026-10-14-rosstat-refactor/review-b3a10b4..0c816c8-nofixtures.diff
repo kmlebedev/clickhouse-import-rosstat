@@ -1,0 +1,68 @@
+# Review package (fixture blobs excluded): b3a10b461e2836d56bc7952106bf34f4420210a8..0c816c8759a10f5c8aa5a016019c13c98b697b79
+
+## Commits
+0c816c8 rosstat: real source fixtures in testdata/, drop legacy data dir
+
+## Files changed
+ rosstat/data/nedel_ipc_2023.xlsx    |  Bin 119465 -> 0 bytes
+ rosstat/series_meta_test.go         |    2 +-
+ rosstat/testdata/accounts_page.html | 6389 +++++++++++++++++++++++++++++
+ rosstat/testdata/ipc_mes.xlsx       |  Bin 0 -> 37940 bytes
+ rosstat/testdata/ipc_weeks.xlsx     |  Bin 0 -> 173353 bytes
+ rosstat/testdata/price_page.html    | 7703 +++++++++++++++++++++++++++++++++++
+ rosstat/testdata/salaries_mes.xlsx  |  Bin 0 -> 20819 bytes
+ rosstat/testdata/salaries_page.html | 6333 ++++++++++++++++++++++++++++
+ rosstat/testdata/vvp_kvartal.xlsx   |  Bin 0 -> 115224 bytes
+ 9 files changed, 20426 insertions(+), 1 deletion(-)
+
+## Diff (fixture blobs excluded — verify them by size/sha below, do not read them)
+diff --git a/rosstat/data/nedel_ipc_2023.xlsx b/rosstat/data/nedel_ipc_2023.xlsx
+deleted file mode 100644
+index c6528bd..0000000
+Binary files a/rosstat/data/nedel_ipc_2023.xlsx and /dev/null differ
+diff --git a/rosstat/series_meta_test.go b/rosstat/series_meta_test.go
+index d44d0e6..a433b30 100644
+--- a/rosstat/series_meta_test.go
++++ b/rosstat/series_meta_test.go
+@@ -65,21 +65,21 @@ func requireParsedDescribed(t *testing.T, parsed []string, described map[string]
+ 		seen[name] = true
+ 	}
+ 	for name := range described {
+ 		if !seen[name] {
+ 			t.Errorf("описанный ряд %q не встретился при разборе", name)
+ 		}
+ 	}
+ }
+ 
+ func TestIpcWeeksSeriesMetaCoversFixture(t *testing.T) {
+-	xlsx, err := excelize.OpenFile("data/nedel_ipc_2023.xlsx")
++	xlsx, err := excelize.OpenFile("testdata/ipc_weeks.xlsx")
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	defer func() { _ = xlsx.Close() }()
+ 	table, err := parseIpcWeeks(xlsx)
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	names := make([]string, 0, len(*table))
+ 	for _, row := range *table {
+
+## Fixture identity (new files, byte sizes and sha256)
+total 5616
+drwxr-xr-x@  9 whitefox  staff     288 Oct 14 11:13 .
+drwxr-xr-x@ 12 whitefox  staff     384 Oct 14 11:13 ..
+-rw-r--r--@  1 whitefox  staff  804425 Oct 14 11:13 accounts_page.html
+-rw-r--r--@  1 whitefox  staff   37940 Oct 14 11:13 ipc_mes.xlsx
+-rw-r--r--@  1 whitefox  staff  173353 Oct 14 11:13 ipc_weeks.xlsx
+-rw-r--r--@  1 whitefox  staff  881609 Oct 14 11:13 price_page.html
+-rw-r--r--@  1 whitefox  staff   20819 Oct 14 11:13 salaries_mes.xlsx
+-rw-r--r--@  1 whitefox  staff  822239 Oct 14 11:13 salaries_page.html
+-rw-r--r--@  1 whitefox  staff  115224 Oct 14 11:13 vvp_kvartal.xlsx
+cedcee508c5044862532b4404556e07192a33a42f13222936fe22d3d988f49eb  accounts_page.html
+540553b4fce35ed2c57e5497f1f1fa1011c3da4dcf39d7191185760568f97d3e  ipc_mes.xlsx
+dcccf65de3c196bb4464c4d15ed17ba7a3c9edc5ad427e21ff8d4bd6abba17d4  ipc_weeks.xlsx
+69439bd13b5480795431a9abd38d488d860d85ff6568058a07726769f95b81d4  price_page.html
+1228595982e9d03bfca4db6a6d22a4150db9d688ee5c0e00e39c64de6cdd2adf  salaries_mes.xlsx
+f5d9f3608aab16f3f58d8678f67d163025b994940d94616b421c62324c28da8b  salaries_page.html
+66eaab3f7b687fa09b427a020d038698e85665a669bf1e64bb6fa37a006086b0  vvp_kvartal.xlsx

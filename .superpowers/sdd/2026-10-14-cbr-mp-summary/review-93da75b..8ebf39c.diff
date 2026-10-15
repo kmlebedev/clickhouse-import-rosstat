@@ -1,0 +1,62 @@
+# Review package: 93da75b..8ebf39c
+
+## Commits
+8ebf39c util: fix PostJSON UA test to catch missing User-Agent
+
+## Files changed
+ util/json_test.go | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+## Diff
+diff --git a/util/json_test.go b/util/json_test.go
+index d6db91a..d7202a4 100644
+--- a/util/json_test.go
++++ b/util/json_test.go
+@@ -1,19 +1,20 @@
+ package util
+ 
+ import (
+ 	"context"
+ 	"encoding/json"
+ 	"errors"
+ 	"io"
+ 	"net/http"
+ 	"net/http/httptest"
++	"slices"
+ 	"strings"
+ 	"testing"
+ 	"time"
+ 	"unicode/utf8"
+ )
+ 
+ // Happy path: 200 + валидный JSON → поля заполнены, ошибки нет. Заодно пиним
+ // User-Agent: хелпер обязан слать randomUA, как GetFile/GetCSV (конвенция проекта,
+ // правило 4 AGENTS.md). Обратного утверждения («источник без заголовка отдаёт 403»)
+ // здесь быть не должно: проверено 2026-10-12 — fscdn.gold.org отвечает 200 и без
+@@ -139,22 +140,24 @@ func TestGetJSONTimeoutFails(t *testing.T) {
+ // форму запроса будущего LLM-слоя (Task 5 плана cbr_mp_summary): метод POST, User-Agent
+ // randomUA (конвенция GetFile/GetJSON, правило 4 AGENTS.md), Content-Type
+ // application/json и сериализацию request в тело, а не в query. Проверки живут в
+ // хендлере: он выполняет запрос, а t.Errorf безопасен из чужой горутины (t.Fatal там же
+ // уронил бы не тот фрейм).
+ func TestPostJSONDecodesBody(t *testing.T) {
+ 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+ 		if r.Method != http.MethodPost {
+ 			t.Errorf("метод %s, ожидался POST: промпт едет телом, а не query", r.Method)
+ 		}
+-		if r.Header.Get("User-Agent") == "" {
+-			t.Error("запрос ушёл без User-Agent — хелпер обязан слать randomUA, как GetJSON")
++		if ua := r.Header.Get("User-Agent"); !slices.Contains(userAgents, ua) {
++			t.Errorf("User-Agent = %q — не из списка userAgents: хелпер обязан слать randomUA, как GetJSON. "+
++				"Проверка на непустоту тут вакуумна: без установки заголовка Go сам шлёт Go-http-client/1.1, "+
++				"и удаление строки req.Header.Set(\"User-Agent\", randomUA) прошло бы зелёным", ua)
+ 		}
+ 		if got := r.Header.Get("Content-Type"); got != "application/json" {
+ 			t.Errorf("Content-Type = %q, ожидался application/json", got)
+ 		}
+ 		body, err := io.ReadAll(r.Body)
+ 		if err != nil {
+ 			t.Errorf("чтение тела запроса: %v", err)
+ 		}
+ 		var sent struct {
+ 			Model string `json:"model"`

@@ -1,0 +1,1148 @@
+# MAIN b56d96f..HEAD
+671ad40 harden ingest validation, add rate limit, fix dashboard filter and weekly events
+diff --git a/ARCHITECTURE.md b/ARCHITECTURE.md
+index 6ea5436..4e1d3bf 100644
+--- a/ARCHITECTURE.md
++++ b/ARCHITECTURE.md
+@@ -117,12 +117,13 @@ func init() {
+ | `TICKER` | Маршрутизация legacy-контура financial (MOEX/VTBR/CHMF/MAGN/NLMK/Exports/ALL) |
+ | `INVESTING_EMAIL`, `INVESTING_PASSWORD` | ⚠️ deprecated, переезжаем на MOEX ISS / stooq |
+ | `BLS_API_KEY` | Регистрационный ключ BLS (необязательно, для `bls`) |
+ | `BEA_API_KEY` | UserID BEA API (обязательно, для `bea`) |
+ | `INGEST_TOKEN` | Bearer-токен ingest-endpoint (`cmd/ingest`); обязательна для него: пустое значение — выход с ошибкой. Значение только в окружении, в репозитории не хранится |
+ | `INGEST_ADDR` | Адрес HTTP-сервера `cmd/ingest`, по умолчанию `:8081` |
++| `INGEST_RATE_PER_MIN` | Лимит запросов ingest-endpoint в минуту (token bucket, burst 10); по умолчанию 60; пустое или некорректное значение — 60. Превышение — `429` |
+ 
+ ## 6. Целевая архитектура (дорожная карта 2026-Q4)
+ 
+ Контур: **Источники → ClickHouse (сырые + витрины) → MCP (read-only) → Kimi-агент → сценарный прогноз золота → DCF → NAV PLZL → model_runs**. Полная версия: [docs/ROADMAP_DCF_POLYUS.md](docs/ROADMAP_DCF_POLYUS.md). Спека контура прогноза и плагина: [docs/superpowers/specs/2026-10-10-gold-nav-plugin-design.md](docs/superpowers/specs/2026-10-10-gold-nav-plugin-design.md).
+ 
+ Статусы в §6.1–§6.3: **реализован** — есть в коде репозитория; **не реализован** — только в плане, в коде нет.
+@@ -345,13 +346,13 @@ CREATE TABLE IF NOT EXISTS regime_states (
+ ) ENGINE = ReplacingMergeTree ORDER BY (date, model);
+ ```
+ 
+ ### 6.3 Витрины (views) — semantic layer для агента
+ 
+ - `v_model_inputs` — **реализован** (`views/model_inputs.go`): одна строка с последними значениями рядов (`argMax` по дате), у каждого ряда колонка даты актуальности `*_date`. Состав: `gold_moex_fix_usd` (MOEX-фикс, не LBMA), `usdrub`, `cbr_key_rate`, `ofz_1y/3y/5y/10y`, `rgbi`, `ipc_mes_last`, `ipc_week_ytd` (ориентир, не официальный ИПЦ), `fedfunds`, `dfii10`, `dgs10`, `t5yie`, `dtwexbgs`, `plzl_close`, `last_run_id`, `last_nav_per_share`, `last_run_date`. Crack, TCC и AISC в витрине **нет** (crack — в `v_gold_dashboard`, TCC/AISC в MCP не выводятся)
+-- `v_gold_dashboard` — **реализован** (`views/gold_dashboard.go`): одна строка на индикатор `crack_ulsd_proxy`, `distillate_stocks`, `fedwatch_dec_hike`, `etf_flows_month`, `dxy`; значения из `macro_series` (`source IN ('manual','fred')`). `flag = 1` — порог пробит (crack >50, FedWatch >80, DXY >102); `stale = 1` — значения нет или последнее наблюдение старше 14 дней. Импортёров для этих индикаторов нет: значения только ручные, поэтому без ввода через `manual_series` они остаются `stale`
++- `v_gold_dashboard` — **реализован** (`views/gold_dashboard.go`): одна строка на индикатор `crack_ulsd_proxy`, `distillate_stocks`, `fedwatch_dec_hike`, `etf_flows_month`, `dxy`; значения из `macro_series` (`source IN ('manual','webbridge')`, spec §5.2). `flag = 1` — порог пробит (crack >50, FedWatch >65 — сценарное переключение; >80 — уровень алерта в тексте порога; DXY >102); `stale = 1` — значения нет или последнее наблюдение старше 14 дней. Импортёров для этих индикаторов нет: значения только ручные, поэтому без ввода через `manual_series` они остаются `stale`
+ - `v_forecast_accuracy` — **реализован** (`views/forecast_accuracy.go`): строка на прогноз из `forecast_log` (`metric`, `forecast_date`, `target_date`, `error_pct`, `is_resolved`). Отдельного конкурентного ML-трека в витрине нет (различается только `metric`). `actual` и `error_pct` в коде не заполняются: сверка с фактом после `target_date` не автоматизирована
+ - `v_peers_comparison` — **не реализован** (в коде нет). План: P/NAV, EV/oz, дисконт к лидеру по контурам `ru`/`global`; алерт-порог — дисконт PLZL за ±1σ исторической нормы
+ - `v_gold_attribution` — **не реализован** (в коде нет). План: GRAM-разложение движения золота (экспансия / риск / альтернативная стоимость / импульс); ошибки прогноза атрибутируются к фактору
+ - `v_series_catalog` — **реализован** (`util/series_catalog.go`): `series_catalog FINAL`: название, единицы, частота, происхождение и описание каждого ряда `macro_series` (ведётся импортёрами через `util.UpsertSeriesCatalog`)
+ - `v_bea_pce` — `macro_series FINAL WHERE source = 'bea'`: индексы PCE из BEA (`PCE_PI`, `PCE_PI_CORE`), уровни 2017=100
+ - `v_fred_macro` — `macro_series FINAL WHERE source = 'fred'`: ряды FRED (DFII10, DGS10, FEDFUNDS, DTWEXBGS, CPIAUCSL, T5YIE)
+@@ -425,21 +426,23 @@ uv run --with mcp-clickhouse --python 3.12 mcp-clickhouse
+ Отдельно от data-контура: опциональный dev-MCP `jetbrains` — встроенный MCP-сервер GoLand (2025.2+, HTTP-stream `http://127.0.0.1:<динамический порт>/stream`, запись в `~/.kimi-code/mcp.json`). Даёт агенту инструменты IDE для работы с кодом (`get_file_problems`, `get_symbol_info`, `search_symbol`, `analyze_calls`, `rename_refactoring`); правила использования и запреты — в AGENTS.md, раздел «Инструменты GoLand (MCP `jetbrains`)», настройка — в README, «MCP GoLand (опционально)». К данным ClickHouse отношения не имеет.
+ 
+ #### Ingest-endpoint (пакет `ingest/`, бинарник `cmd/ingest`)
+ 
+ **Реализован.** Единственный путь записи в `model_runs`, `forecast_log` и `macro_series` со стороны контура прогноза.
+ 
+-- Сборка и запуск: `make build-ingest` → `build/ingest`; `make run-ingest`. Нужны `CLICKHOUSE_URL` и `INGEST_TOKEN` (см. §5); `INGEST_ADDR` по умолчанию `:8081`.
++- Сборка и запуск: `make build-ingest` → `build/ingest`; `make run-ingest`. Нужны `CLICKHOUSE_URL` и `INGEST_TOKEN` (см. §5); `INGEST_ADDR` по умолчанию `:8081`; `INGEST_RATE_PER_MIN` по умолчанию 60.
+ - Старт: ping ClickHouse, затем `EnsureTables` — идемпотентное создание `model_runs`, `forecast_log`, `macro_series` по DDL §6.2 (копии в `ingest/schema.go`).
+ - Авторизация: заголовок `Authorization: Bearer <INGEST_TOKEN>`, сравнение через `subtle.ConstantTimeCompare`. Без заголовка или с неверным токеном — `401`.
+-- `POST /v1/model_run` — JSON `ModelRun`: клиентский `run_id` (UUID, обязателен), `trigger_type` ∈ {`calendar`,`news`,`manual`}, `price_deck` ∈ {`spot_flat`,`consensus_lt`,`own_scenario`}, `probabilities` (сумма 100 ±0.1), `gold_scenario` (с `horizon`: `Q<n>-YYYY`, `YE-YYYY`, `YYYY` или `YYYY-MM-DD`; блоки сценариев с `point` или `low`/`high`), `nav_per_share`, `nav_bull/base/bear`, `market_price`, `upside_pct`, `discount_rate`, `wacc`, `usdrub_path`, `comment`. Ответ `200 {"inserted": 1}`; `400` — ошибка валидации или JSON.
++- Частота: token bucket (stdlib, `ingest/ratelimit.go`), общий на сервер, burst 10, `INGEST_RATE_PER_MIN` запросов в минуту (по умолчанию 60). Проверяется после авторизации: неавторизованные запросы лимит не расходуют. Превышение — `429`.
++- Тело запроса — не более 1 MiB (`http.MaxBytesReader`; больше — `413`). JSON декодируется с `DisallowUnknownFields`: неизвестное поле — `400`.
++- `POST /v1/model_run` — JSON `ModelRun`: клиентский `run_id` (UUID, обязателен), `trigger_type` ∈ {`calendar`,`news`,`manual`}, `price_deck` ∈ {`spot_flat`,`consensus_lt`,`own_scenario`}, `probabilities` (ключи только `bull`/`base`/`bear`, каждый вес 0–100, сумма 100 ±0.1), `gold_scenario` (с `horizon`: `Q<n>-YYYY`, `YE-YYYY`, `YYYY` или `YYYY-MM-DD`; блоки сценариев с `point` (число, если задан) или `low`/`high`), `nav_per_share`, `nav_bull/base/bear`, `market_price`, `upside_pct`, `discount_rate`, `wacc`, `usdrub_path`, `comment`. Ответ `200 {"inserted": 1}`; `400` — ошибка валидации или JSON.
+ - Запись: сначала `forecast_log` (две строки: `metric = 'nav'`, `predicted = nav_per_share`; `metric = 'xau_q_avg'`, `predicted` = Σ p×point / Σ p; `forecast_date` — дата сервера, `target_date` — конец горизонта, `actual` и `error_pct` = NULL), последней — `model_runs` (`run_date` = время сервера, `nav_beta_gold` = NULL, поля в входе нет). Строка в `model_runs` — маркер фиксации прогона.
+ - Идемпотентность: повторный POST с тем же `run_id` ничего не пишет (проверка `count() ... FINAL` + мьютекс, один инстанс). `ReplacingMergeTree` по `(run_date, run_id)` дубли сам не схлопывает. Ответ при дубле такой же, как при записи: `200 {"inserted": 1}`.
+ - `POST /v1/manual_series` — JSON-массив `{"series", "date" (YYYY-MM-DD), "value"}`; пишется в `macro_series` с `source = 'manual'`. Ответ `200 {"inserted": N}`; пустой массив — `N = 0`; `400` — ошибка валидации любой точки (запись не выполняется).
+ - Ошибка записи в ClickHouse — `500 insert failed`, детали в логе.
+-- Не реализовано: ограничение частоты запросов, ограничение размера тела, TLS в самом процессе. Предполагается reverse proxy с TLS (в репозитории не описан).
++- Реализовано: ограничение частоты (`429`), предел тела 1 MiB (`413`). Не реализовано: TLS в самом процессе — предполагается reverse proxy с TLS (в репозитории не описан).
+ 
+ #### Плагин gold-nav (отдельный репозиторий)
+ 
+ Плагин Kimi Code / Kimi Work лежит вне этого репозитория, sibling-каталогом `../gold-nav` (публикуется отдельно на GitHub; ссылка — после публикации). Состав: `kimi.plugin.json` (`mcpServers.clickhouse` по URL), skills `gold-forecast-session` и `dcf-methodology`, команды `/gold-nav:session` и `/gold-nav:verify`.
+ 
+ - Читает витрины `v_model_inputs`, `v_gold_dashboard`, `v_events_calendar`, `v_forecast_accuracy` через MCP (только `v_*`, пользователь `kimi_reader`).
+@@ -448,13 +451,13 @@ uv run --with mcp-clickhouse --python 3.12 mcp-clickhouse
+ - Не проверено: установка и живой сценарий в Kimi Code и Kimi Work, подстановка `${GOLD_NAV_MCP_TOKEN}` в манифесте (раздел «Результат проверки» в README плагина пока не заполнен). Спека: [docs/superpowers/specs/2026-10-10-gold-nav-plugin-design.md](docs/superpowers/specs/2026-10-10-gold-nav-plugin-design.md).
+ 
+ ## 7. Календарь триггеров (актуальный Q4-2026)
+ 
+ | Дата | Событие | Действие модели |
+ |---|---|---|
+-| ср еженед. | EIA дистилляты; чт — недельный ИПЦ | пороги: crack >$50 медведь / <$30 снято |
++| по средам (еженед.) | EIA дистилляты (запасы); недельный ИПЦ Росстата (день недели сверить с календарём Росстата) | EIA — пороги: crack >$50 медведь / <$30 снято |
+ | 10-е ежемес. | WGC ETF-потоки + ЦБ | норма покупок ЦБ 40–60 т/мес |
+ | 23.10.2026 | СД ЦБ РФ (ставка 14%) | снижение → флаг перетока ликвидности |
+ | 01.11.2026 | Истечение запрета РФ на экспорт дизеля | продление → bear; отмена → bull |
+ | 10.11.2026 | CPI США за октябрь | горячий → FOMC-hike 85–90% |
+ | 09.12.2026 | FOMC + dot plot | 2-е повышение → пробой $4,000 → $3,750–3,800 |
+ | 18.12.2026 | СД ЦБ РФ + ребалансировка MOEX | база: −25 б.п. до 13,75% |
+diff --git a/Makefile b/Makefile
+index 8923940..bb12a84 100644
+--- a/Makefile
++++ b/Makefile
+@@ -17,13 +17,13 @@ CH_TCP_PORT  ?= 9000
+ MCP_USER     ?= kimi_reader
+ MCP_PY       ?= 3.12
+ MCP_CMD      := uv run --with mcp-clickhouse --python $(MCP_PY) mcp-clickhouse
+ 
+ .PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mcp-run mcp-user mcp-check build-ingest run-ingest
+ 
+-all: lint test build
++all: lint test build build-ingest
+ 
+ # lint падает, если что-то не отформатировано, затем запускает golangci-lint,
+ # если он установлен. CI выполняет те же проверки.
+ lint:
+ 	@unformatted=$$(gofmt -l .); \
+ 	if [ -n "$$unformatted" ]; then echo "gofmt needed:"; echo "$$unformatted"; exit 1; fi
+diff --git a/README.md b/README.md
+index 99dd3ae..9d1e8d3 100644
+--- a/README.md
++++ b/README.md
+@@ -80,12 +80,13 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
+ | `LOG_LEVEL` | Уровень logrus: `debug`, `info`, `warn`, `error` |
+ | `CERT_FILES` | PEM-сертификаты через запятую (нац. УЦ РФ для gos-сайтов) |
+ | `BLS_API_KEY` | Регистрационный ключ BLS (необязателен; без него работает, но лимиты строже). Не выводится в логах |
+ | `BEA_API_KEY` | UserID BEA API (обязателен для `bea`; без него импортёр завершается ошибкой). Не выводится в логах |
+ | `INGEST_TOKEN` | Bearer-токен ingest-endpoint, обязателен для `cmd/ingest` (без него процесс не стартует). Не выводится в логах |
+ | `INGEST_ADDR` | Адрес HTTP-сервера `cmd/ingest`, по умолчанию `:8081` |
++| `INGEST_RATE_PER_MIN` | Лимит запросов `cmd/ingest` в минуту (token bucket, burst 10), по умолчанию 60; превышение — `429` |
+ 
+ Поведение при запуске: неизвестное имя в `CLICKHOUSE_IMPORT_STAT` даёт предупреждение; ошибка любого импортёра даёт код выхода `1`, остальные импортёры при этом выполняются.
+ 
+ Импортёр `financial` читает `TICKER`, `FINANCIAL_DATA_DIR`, `INVESTING_EMAIL`, `INVESTING_PASSWORD`; эти переменные устаревают вместе с legacy-контуром.
+ 
+ ## Оркестрация (Dagu)
+@@ -108,13 +109,13 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
+ 
+ | Метод и путь | Тело | Ответ |
+ |---|---|---|
+ | `POST /v1/model_run` | JSON прогона: клиентский `run_id` (UUID), `trigger_type`, `price_deck`, `probabilities`, `gold_scenario` с `horizon`, значения NAV | `200 {"inserted": 1}`; `400` при ошибке валидации |
+ | `POST /v1/manual_series` | JSON-массив `{"series", "date": "YYYY-MM-DD", "value"}` → `macro_series`, `source = 'manual'` | `200 {"inserted": N}`; `400` при ошибке любой точки |
+ 
+-Все запросы — с заголовком `Authorization: Bearer <INGEST_TOKEN>`; без него или с неверным токеном — `401`. Повторный `POST /v1/model_run` с тем же `run_id` ничего не записывает. Формат тела — в `ingest/model_run.go` (структура `ModelRun`).
++Все запросы — с заголовком `Authorization: Bearer <INGEST_TOKEN>`; без него или с неверным токеном — `401`. Сверх `INGEST_RATE_PER_MIN` (по умолчанию 60 в минуту) — `429`; тело больше 1 MiB — `413`; неизвестное поле в JSON — `400`. Повторный `POST /v1/model_run` с тем же `run_id` ничего не записывает. Формат тела — в `ingest/model_run.go` (структура `ModelRun`).
+ 
+ ### Плагин gold-nav
+ 
+ Плагин — отдельный репозиторий (не входит в этот проект). Локальная копия рядом: `../gold-nav`. Спецификация: [docs/superpowers/specs/2026-10-10-gold-nav-plugin-design.md](docs/superpowers/specs/2026-10-10-gold-nav-plugin-design.md).
+ 
+ - Kimi Code: `/plugins install <github-url>` (ссылка на репозиторий — после публикации);
+@@ -189,12 +190,13 @@ make ch-down                         # остановить сервер
+ ```bash
+ export BEA_API_KEY=<your-key>
+ export CLICKHOUSE_URL=clickhouse://localhost:9000/default
+ export CLICKHOUSE_PASSWORD=<kimi_reader-password>
+ # export BLS_API_KEY=<your-key>
+ # export INGEST_TOKEN=<ingest-token>
++# export INGEST_RATE_PER_MIN=60
+ ```
+ 
+ - Makefile подключает файл сам (`-include`), поэтому любая `make`-цель видит ключи без `export` в shell; путь можно переопределить: `make ROSSTAT_ENV=/путь/к/файлу ...`;
+ - в терминале: `set -a; . ~/.config/rosstat/env; set +a`;
+ - проверка без вывода значений: `make env-check`;
+ - локальный импорт одного источника: `make import STAT=bea` (собирает бинарник под macOS в `build/clickhouse-import-rosstat-native`);
+@@ -281,13 +283,13 @@ MCP GoLand (опционально, ускоряет работу Kimi Code с 
+ - **LBMA AM/PM не подключён.** Официальный LBMA JSON, Nasdaq Data Link `LBMA/GOLD` и stooq недоступны из этой сети (403 WAF, JS-проверка), FRED серии LBMA удалил. Временно используется `gold` (MOEX GOLDFIXME ÷ курс ЦБ).
+ - **Курс ЦБ без понедельников и новогодних праздников.** В `cbr_currency_usd` этих дат нет; `gold` берёт последний курс не позже даты и пропускает дни без курса старше 10 дней. Это дыра в источнике ЦБ.
+ - **Импортёры ЦБ/Росстата/ВТБ берут ссылку со страницы источника.** `cbr_infl_exp`, `cbr_credit_m2x`, `vvp_kvartal`, `salaries_mes`, `rus_vtb_group_ifrs` не хардкодят URL XLSX, а скрейпят актуальную ссылку (colly). Остальные источники ЦБ используют стабильные пути `vfs/statistics/...`.
+ - **`domrf_mortgage`, `sber_finansovie_rezultaty`, `tbank_group_ifrs` — ссылка задана статически.** Страницы источников закрыты JS-challenge (ServicePipe у ДОМ.РФ, TSPD у Сбера) либо не имеют листинга (CDN с UUID у Т-Банка), colly их не парсит: ссылку обновляют вручную при каждом релизе. У `tbank_group_ifrs` текущая ссылка ведёт на PDF, а не XLSX, — импорт падает.
+ - **Росстат может отдавать HTTP 426.** Домен `rosstat.gov.ru` периодически отклоняет запросы из-за технических работ (`Upgrade Required`), включая уже работавшие `ipc_mes`/`ipc_weeks`; это ограничение источника/сети, а не кода. Импортёры падают с диагностикой «не найдена ссылка на …».
+ - **`financial/`.** Legacy-контур (database/sql, свой main). Новые импортёры туда не добавляются.
+-- **Ingest-endpoint без ограничения частоты и размера тела, TLS — снаружи.** TLS и rate limit предполагаются на reverse proxy, в репозитории он не описан. Повторный `POST /v1/model_run` с тем же `run_id` отвечает `200 {"inserted": 1}`, хотя строк не пишет: ответ не отличает дубль от новой записи.
++- **Ingest-endpoint: TLS — снаружи.** Лимит частоты (`INGEST_RATE_PER_MIN`, `429`) и предел тела 1 MiB (`413`) реализованы в процессе; TLS предполагается на reverse proxy, в репозитории он не описан. Повторный `POST /v1/model_run` с тем же `run_id` отвечает `200 {"inserted": 1}`, хотя строк не пишет: ответ не отличает дубль от новой записи.
+ - **HTTP-режим mcp-clickhouse для плагина не развёрнут в репозитории.** Локальная конфигурация Kimi — stdio (блок «MCP для Kimi» в разделе «Ключи и окружение»). Для плагина `gold-nav` сервер автора по HTTPS с токеном нужно поднять отдельно.
+ - **Индикаторы `v_gold_dashboard` вводятся вручную.** `crack_ulsd_proxy`, `distillate_stocks`, `fedwatch_dec_hike`, `etf_flows_month`, `dxy` имеют только `manual_series`; импортёров нет. Без ввода они показываются как `stale`.
+ - **Сверка прогнозов не автоматизирована.** `actual` и `error_pct` в `forecast_log` не заполняются кодом; `v_forecast_accuracy` покажет `is_resolved = 0` до ручного ввода.
+ - **ИПЦ в `v_model_inputs` может быть пустым.** Витрина требует, чтобы существовали таблицы `ipc_mes` и `ipc_weeks`, но не проверяет их заполненность. Таблицы создаются до загрузки Росстата, поэтому при его ошибке (см. выше) витрина создаётся, а `ipc_mes_last` и `ipc_week_ytd` остаются NULL или устаревают; ориентироваться по `*_date`.
+ - **`nav_beta_gold` не заполняется** (поля нет во входе `ModelRun`), в таблицу пишется NULL.
+ - **Имена импортёров.** `Name()` у `fred` — `fred` (несколько серий, одна таблица `macro_series`), у `cbr` часть импортёров делит таблицу (`cbr_currency_usd`, `households_b_mes`).
+diff --git a/cmd/ingest/main.go b/cmd/ingest/main.go
+index b5fd012..ac5ac6d 100644
+--- a/cmd/ingest/main.go
++++ b/cmd/ingest/main.go
+@@ -1,12 +1,13 @@
+ package main
+ 
+ import (
+ 	"context"
+ 	"net/http"
+ 	"os"
++	"strconv"
+ 	"time"
+ 
+ 	"github.com/ClickHouse/clickhouse-go/v2"
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/ingest"
+ 	log "github.com/sirupsen/logrus"
+ )
+@@ -38,14 +39,18 @@ func main() {
+ 		log.Fatal(err)
+ 	}
+ 	addr := os.Getenv("INGEST_ADDR")
+ 	if addr == "" {
+ 		addr = defaultAddr
+ 	}
+-	log.Infof("ingest listening on %s", addr)
++	ratePerMin, err := strconv.Atoi(os.Getenv("INGEST_RATE_PER_MIN"))
++	if err != nil || ratePerMin <= 0 {
++		ratePerMin = ingest.DefaultRatePerMin
++	}
++	log.Infof("ingest listening on %s, rate limit %d req/min", addr, ratePerMin)
+ 	server := &http.Server{
+ 		Addr:              addr,
+-		Handler:           ingest.NewServer(writer, token),
++		Handler:           ingest.NewServer(writer, token, ratePerMin),
+ 		ReadHeaderTimeout: 10 * time.Second,
+ 	}
+ 	log.Fatal(server.ListenAndServe())
+ }
+diff --git a/docs/ROADMAP_DCF_POLYUS.md b/docs/ROADMAP_DCF_POLYUS.md
+index 349bbba..07e2772 100644
+--- a/docs/ROADMAP_DCF_POLYUS.md
++++ b/docs/ROADMAP_DCF_POLYUS.md
+@@ -136,13 +136,13 @@ docker run -d --name ch-mcp \
+ 
+ ### 6.1 Календарный контур
+ 
+ `events_calendar` наполняется один раз на квартал из известных расписаний (CPI 14 окт, PPI 15 окт, FOMC 28 окт и 9 дек, NFP 6 ноя / 4 дек, EIA — каждая среда, WGC GDT — конец октября, запрет дизеля — 1 ноя, совет директоров ЦБ РФ, отчётности Полюса). Планировщик:
+ 
+ - **ежедневный ETL** (cron → `make run` с фильтром `CLICKHOUSE_IMPORT_STAT` по дневным источникам: золото, DXY, USDRUB, crack, PLZL);
+-- **еженедельный** (среда, после EIA; пятница — недельный ИПЦ);
++- **еженедельный**: по средам — EIA (запасы дистиллятов) и недельный ИПЦ Росстата (день недели сверить с календарём Росстата);
+ - **по событию**: в день `event_date` запускается соответствующий импортёр + сессия Kimi «обнови прогноз»: агент читает свежий релиз через MCP, сверяет с порогами из `events_calendar`, пересчитывает сценарные вероятности → новая запись `model_runs` → обновлённый NAV.
+ 
+ ### 6.2 Новостной контур (в моменте)
+ 
+ 1. **Простой (стартовый):** ручной триггер — новость в чат («запрет на дизель продлён», «FOMC повысил на 25 б.п.»), агент по MCP подтягивает текущие данные, пересчитывает сценарии и NAV, пишет в `model_runs` с `trigger_type='news'`.
+ 2. **Продвинутый (фаза 5):** импортёр `news_watch` — RSS/парсинг ключевых лент (ЦБ РФ, Минфин, ФРС, WGC, EIA, IR Полюса) в `news_events`; свежие события сами становятся триггерами сессии пересчёта.
+@@ -215,13 +215,13 @@ NAV из DCF — это «справедливая» цена; биржевая
+ ### 11.1 Почему это лучший слой оркестрации
+ 
+ **Kimi Work** — десктопный локальный агент Moonshot AI (запущен 03.06.2026, Beta, macOS/Windows; ядро Kimi Code/K3, длительные задачи, планировщик cron, WebBridge-автоматизация браузера, Goal-режим, виджеты и дашборды). Проект изначально строится «Kimi ↔ ClickHouse через MCP» — Kimi Work добавляет исполнительную среду той же модели без переконтекста.
+ 
+ | Возможность Kimi Work | Применение в проекте |
+ |---|---|
+-| **Cron-планировщик** (бесплатно 2 задачи; исполнение локально, компьютер должен быть включён) | Ежедневный ETL-прогон, чт — запасы дистиллятов/ИПЦ, 10-е — ETF-потоки, дни FOMC/CPI/ЦБ; статус, история и отчёт по итогу прямо в UI — прозрачнее crontab |
++| **Cron-планировщик** (бесплатно 2 задачи; исполнение локально, компьютер должен быть включён) | Ежедневный ETL-прогон, по средам — запасы дистиллятов/недельный ИПЦ (день недели сверить с календарём Росстата), 10-е — ETF-потоки, дни FOMC/CPI/ЦБ; статус, история и отчёт по итогу прямо в UI — прозрачнее crontab |
+ | **Goal-режим** (многошаговые задачи с критериями приёмки) | Сценарные сессии пересчёта NAV: «обнови прогноз при пробитии $4,800» — цель + приёмка (вероятности нормированы, запись в `model_runs`, выжимка в `forecast_log`) |
+ | **WebBridge** (браузер локальной машины, переиспользует логин-сессии) | Сбор рядов без API: FedWatch (CME), ETF-потоки WGC, СЧА фондов ликвидности, составы индексов MOEX; заодно снимает TLS/ГОСТ-проблемы gos-источников |
+ | **Нативные финансовые БД** (плагины) | Кросс-проверка данных Полюса/IMOEX по запросу, без API-ключей |
+ | **Виджеты + Dashboard** (динамическое обновление из локальных данных/плагинов) | Персональная панель «Прогноз золота → NAV PLZL»: спот, сценарии, вероятности, NAV-матрица, календарь триггеров, sentiment; пин на рабочий стол |
+ 
+ ### 11.2 Архитектура контура
+diff --git a/ingest/clickhouse.go b/ingest/clickhouse.go
+index 4871c3b..4786be7 100644
+--- a/ingest/clickhouse.go
++++ b/ingest/clickhouse.go
+@@ -23,16 +23,18 @@ const (
+ // chStore — узкий срез ClickHouse, который нужен InsertModelRun; в тестах подменяется фейком.
+ type chStore interface {
+ 	runExists(ctx context.Context, runID uuid.UUID) (bool, error)
+ 	prepareBatch(ctx context.Context, query string) (chBatch, error)
+ }
+ 
+-// chBatch — батч вставки: достаточно Append и Send из driver.Batch.
++// chBatch — батч вставки: Append, Send и Abort из driver.Batch.
++// Abort вызывается, если ошибка случилась после PrepareBatch и до Send.
+ type chBatch interface {
+ 	Append(v ...any) error
+ 	Send() error
++	Abort() error
+ }
+ 
+ // connStore — реализация chStore поверх driver.Conn.
+ type connStore struct {
+ 	conn driver.Conn
+ }
+@@ -121,12 +123,13 @@ func (w *ClickHouseWriter) InsertModelRun(ctx context.Context, r ModelRun) error
+ 		predicted float64
+ 	}{
+ 		{"nav", r.NavPerShare},
+ 		{"xau_q_avg", xauAvg},
+ 	} {
+ 		if err = forecastBatch.Append(forecastDate, targetDate, row.metric, row.predicted, nil, nil); err != nil {
++			_ = forecastBatch.Abort()
+ 			return err
+ 		}
+ 	}
+ 	if err = forecastBatch.Send(); err != nil {
+ 		return err
+ 	}
+@@ -137,12 +140,13 @@ func (w *ClickHouseWriter) InsertModelRun(ctx context.Context, r ModelRun) error
+ 	}
+ 	if err = batch.Append(
+ 		runID, now, r.TriggerType, r.TriggerRef, string(goldScenario), string(usdrubPath),
+ 		r.PriceDeck, r.DiscountRate, r.Wacc, r.NavPerShare, r.NavBull, r.NavBase, r.NavBear,
+ 		r.MarketPrice, r.UpsidePct, nil, r.Comment,
+ 	); err != nil {
++		_ = batch.Abort()
+ 		return err
+ 	}
+ 	return batch.Send()
+ }
+ 
+ // InsertManualSeries пишет вручную введённые точки в macro_series с фиксированным source='manual'.
+@@ -154,15 +158,17 @@ func (w *ClickHouseWriter) InsertManualSeries(ctx context.Context, points []Manu
+ 	if err != nil {
+ 		return err
+ 	}
+ 	for _, point := range points {
+ 		date, err := time.Parse(manualSeriesDateLayout, point.Date)
+ 		if err != nil {
++			_ = batch.Abort()
+ 			return fmt.Errorf("date %q: %w", point.Date, err)
+ 		}
+ 		if err = batch.Append(manualSeriesSource, point.Series, date, point.Value); err != nil {
++			_ = batch.Abort()
+ 			return err
+ 		}
+ 	}
+ 	return batch.Send()
+ }
+ 
+@@ -232,13 +238,17 @@ func scenarioPoint(scenario map[string]any, name string) (float64, error) {
+ 		return 0, fmt.Errorf("gold_scenario has no %q block for probability", name)
+ 	}
+ 	block, ok := raw.(map[string]any)
+ 	if !ok {
+ 		return 0, fmt.Errorf("gold_scenario.%s must be an object, got %v", name, raw)
+ 	}
+-	if point, ok := toFloat(block["point"]); ok {
++	if rawPoint, present := block["point"]; present {
++		point, ok := toFloat(rawPoint)
++		if !ok {
++			return 0, fmt.Errorf("gold_scenario.%s.point must be a number, got %v", name, rawPoint)
++		}
+ 		return point, nil
+ 	}
+ 	low, lowOk := toFloat(block["low"])
+ 	high, highOk := toFloat(block["high"])
+ 	if lowOk && highOk {
+ 		return (low + high) / 2, nil
+diff --git a/ingest/clickhouse_test.go b/ingest/clickhouse_test.go
+index db7b53b..6b1c7a7 100644
+--- a/ingest/clickhouse_test.go
++++ b/ingest/clickhouse_test.go
+@@ -20,20 +20,34 @@ type sentBatch struct {
+ 	query string
+ 	rows  [][]any
+ }
+ 
+ // fakeStore — фейк chStore: помнит закоммиченные run_id и отправленные батчи.
+ type fakeStore struct {
+-	mu        sync.Mutex
+-	committed map[uuid.UUID]bool
+-	sent      []sentBatch
+-	failSend  map[string]error // ошибка Send по тексту запроса
++	mu         sync.Mutex
++	committed  map[uuid.UUID]bool
++	sent       []sentBatch
++	failSend   map[string]error // ошибка Send по тексту запроса
++	failAppend map[string]error // ошибка Append по тексту запроса
++	aborted    map[string]int   // сколько раз Abort вызван по тексту запроса
+ }
+ 
+ func newFakeStore() *fakeStore {
+-	return &fakeStore{committed: map[uuid.UUID]bool{}, failSend: map[string]error{}}
++	return &fakeStore{
++		committed:  map[uuid.UUID]bool{},
++		failSend:   map[string]error{},
++		failAppend: map[string]error{},
++		aborted:    map[string]int{},
++	}
++}
++
++// abortedFor — сколько раз батч с этим запросом был прерван через Abort.
++func (f *fakeStore) abortedFor(query string) int {
++	f.mu.Lock()
++	defer f.mu.Unlock()
++	return f.aborted[query]
+ }
+ 
+ func (f *fakeStore) runExists(_ context.Context, runID uuid.UUID) (bool, error) {
+ 	f.mu.Lock()
+ 	exists := f.committed[runID]
+ 	f.mu.Unlock()
+@@ -63,16 +77,29 @@ type fakeBatch struct {
+ 	store *fakeStore
+ 	query string
+ 	rows  [][]any
+ }
+ 
+ func (b *fakeBatch) Append(v ...any) error {
++	b.store.mu.Lock()
++	err := b.store.failAppend[b.query]
++	b.store.mu.Unlock()
++	if err != nil {
++		return err
++	}
+ 	b.rows = append(b.rows, v)
+ 	return nil
+ }
+ 
++func (b *fakeBatch) Abort() error {
++	b.store.mu.Lock()
++	defer b.store.mu.Unlock()
++	b.store.aborted[b.query]++
++	return nil
++}
++
+ func (b *fakeBatch) Send() error {
+ 	b.store.mu.Lock()
+ 	defer b.store.mu.Unlock()
+ 	if err := b.store.failSend[b.query]; err != nil {
+ 		return err
+ 	}
+@@ -191,12 +218,18 @@ func TestWeightedGoldPoint(t *testing.T) {
+ 		{
+ 			name:          "block is not an object",
+ 			scenario:      map[string]any{"base": 4300.0},
+ 			probabilities: map[string]float64{"base": 100},
+ 			wantErr:       true,
+ 		},
++		{
++			name:          "point is not numeric even when low/high present",
++			scenario:      map[string]any{"base": map[string]any{"point": "4300", "low": 4000.0, "high": 4600.0}},
++			probabilities: map[string]float64{"base": 100},
++			wantErr:       true,
++		},
+ 		{
+ 			name:          "probabilities empty",
+ 			scenario:      map[string]any{"base": map[string]any{"point": 4300.0}},
+ 			probabilities: nil,
+ 			wantErr:       true,
+ 		},
+@@ -272,12 +305,44 @@ func TestInsertModelRunWritesForecastLogBeforeModelRuns(t *testing.T) {
+ 		if s := target.Format(manualSeriesDateLayout); s != "2026-12-31" {
+ 			t.Fatalf("forecast row %d: target_date %s, want 2026-12-31", i, s)
+ 		}
+ 	}
+ }
+ 
++// Ошибка Append после PrepareBatch должна прерывать батч через Abort и не доходить до Send.
++func TestInsertModelRunAppendErrorAbortsBatch(t *testing.T) {
++	tests := []struct {
++		name  string
++		query string
++	}{
++		{"forecast_log append fails", forecastLogInsert},
++		{"model_runs append fails", modelRunsInsert},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			store := newFakeStore()
++			store.failAppend[tt.query] = errors.New("append rejected")
++			run := validModelRun()
++			run.NavPerShare = 12500
++
++			if err := newTestWriter(store).InsertModelRun(context.Background(), run); err == nil {
++				t.Fatal("expected error from failed append")
++			}
++			if n := store.abortedFor(tt.query); n != 1 {
++				t.Fatalf("Abort calls for %s: %d, want 1", tt.query, n)
++			}
++			if n := store.batchesFor(tt.query); n != 0 {
++				t.Fatalf("%s sent %d times after append failure, want 0", tt.query, n)
++			}
++			if store.committed[uuid.MustParse(testRunID)] {
++				t.Fatal("run must not be committed after append failure")
++			}
++		})
++	}
++}
++
+ func TestInsertModelRunForecastFailureIsRetried(t *testing.T) {
+ 	store := newFakeStore()
+ 	store.failSend[forecastLogInsert] = errors.New("forecast_log unavailable")
+ 	writer := newTestWriter(store)
+ 	run := validModelRun()
+ 	run.NavPerShare = 12500
+diff --git a/ingest/model_run.go b/ingest/model_run.go
+index a492430..cdd4385 100644
+--- a/ingest/model_run.go
++++ b/ingest/model_run.go
+@@ -1,11 +1,12 @@
+ package ingest
+ 
+ import (
+ 	"fmt"
+ 	"math"
++	"sort"
+ 	"strings"
+ 	"time"
+ 
+ 	"github.com/google/uuid"
+ )
+ 
+@@ -19,12 +20,19 @@ const (
+ var validTriggerTypes = map[string]bool{
+ 	"calendar": true,
+ 	"news":     true,
+ 	"manual":   true,
+ }
+ 
++// validProbabilityKeys — сценарии золота, которым назначается вероятность (spec, ARCHITECTURE §6.4).
++var validProbabilityKeys = map[string]bool{
++	"bull": true,
++	"base": true,
++	"bear": true,
++}
++
+ var validPriceDecks = map[string]bool{
+ 	"spot_flat":    true,
+ 	"consensus_lt": true,
+ 	"own_scenario": true,
+ }
+ 
+@@ -63,12 +71,15 @@ func ValidateModelRun(r ModelRun) error {
+ 	if !validTriggerTypes[r.TriggerType] {
+ 		return fmt.Errorf("trigger_type %q must be one of: calendar, news, manual", r.TriggerType)
+ 	}
+ 	if !validPriceDecks[r.PriceDeck] {
+ 		return fmt.Errorf("price_deck %q must be one of: spot_flat, consensus_lt, own_scenario", r.PriceDeck)
+ 	}
++	if err := validateProbabilities(r.Probabilities); err != nil {
++		return err
++	}
+ 	var sum float64
+ 	for _, probability := range r.Probabilities {
+ 		sum += probability
+ 	}
+ 	if math.Abs(sum-probabilitiesSumExpected) > probabilitiesSumTolerance {
+ 		return fmt.Errorf("probabilities sum %.4f must be within %.1f of %.0f", sum, probabilitiesSumTolerance, probabilitiesSumExpected)
+@@ -82,12 +93,31 @@ func ValidateModelRun(r ModelRun) error {
+ 	if _, err := weightedGoldPoint(r.GoldScenario, r.Probabilities); err != nil {
+ 		return err
+ 	}
+ 	return nil
+ }
+ 
++// validateProbabilities проверяет ключи (только bull/base/bear) и веса (0 ≤ p ≤ 100).
++// Ключи обходятся по возрастанию, чтобы текст ошибки был детерминированным.
++func validateProbabilities(probabilities map[string]float64) error {
++	keys := make([]string, 0, len(probabilities))
++	for key := range probabilities {
++		keys = append(keys, key)
++	}
++	sort.Strings(keys)
++	for _, key := range keys {
++		if !validProbabilityKeys[key] {
++			return fmt.Errorf("probability key %q must be one of: bull, base, bear", key)
++		}
++		if p := probabilities[key]; p < 0 || p > 100 {
++			return fmt.Errorf("probability %q = %v must be within 0..100", key, p)
++		}
++	}
++	return nil
++}
++
+ // ManualSeriesPoint — вручную введённая точка ряда macro_series (source='manual').
+ type ManualSeriesPoint struct {
+ 	Series string  `json:"series"`
+ 	Date   string  `json:"date"`
+ 	Value  float64 `json:"value"`
+ }
+diff --git a/ingest/model_run_test.go b/ingest/model_run_test.go
+index 8266813..bb3d9a8 100644
+--- a/ingest/model_run_test.go
++++ b/ingest/model_run_test.go
+@@ -47,12 +47,24 @@ func TestValidateModelRunInputErrors(t *testing.T) {
+ 		{"horizon is not a string", func(r *ModelRun) { r.GoldScenario["horizon"] = 2026.0 }, "must be a string"},
+ 		{"horizon is unparsable", func(r *ModelRun) { r.GoldScenario["horizon"] = "Q5-2026" }, "unsupported gold_scenario.horizon"},
+ 		{"probability key has no gold block", func(r *ModelRun) {
+ 			r.Probabilities = map[string]float64{"bull": 25, "base": 40, "tail": 35}
+ 		}, "tail"},
+ 		{"block has no point and no range", func(r *ModelRun) { r.GoldScenario["bear"] = map[string]any{"comment": "x"} }, "bear"},
++		{"point is present but not numeric", func(r *ModelRun) {
++			r.GoldScenario["bull"] = map[string]any{"low": 4600.0, "high": 5000.0, "point": "4800"}
++		}, "point"},
++		{"probability is negative", func(r *ModelRun) {
++			r.Probabilities = map[string]float64{"bull": -5, "base": 40, "bear": 65}
++		}, "within 0..100"},
++		{"probability is above 100", func(r *ModelRun) {
++			r.Probabilities = map[string]float64{"bull": 150, "base": 40, "bear": 35}
++		}, "within 0..100"},
++		{"probability key is unknown", func(r *ModelRun) {
++			r.Probabilities = map[string]float64{"bull": 25, "base": 40, "bear": 25, "tail": 10}
++		}, "probability key"},
+ 	}
+ 	for _, tt := range tests {
+ 		t.Run(tt.name, func(t *testing.T) {
+ 			run := validModelRun()
+ 			tt.mutate(&run)
+ 			err := ValidateModelRun(run)
+@@ -60,12 +72,21 @@ func TestValidateModelRunInputErrors(t *testing.T) {
+ 				t.Fatalf("expected error containing %q, got %v", tt.wantSubstr, err)
+ 			}
+ 		})
+ 	}
+ }
+ 
++// Граничные веса 0 и 100 допустимы; сумма всё так же должна быть 100.
++func TestValidateModelRunProbabilityBoundsValid(t *testing.T) {
++	run := validModelRun()
++	run.Probabilities = map[string]float64{"bull": 0, "base": 100, "bear": 0}
++	if err := ValidateModelRun(run); err != nil {
++		t.Fatalf("boundary weights 0 and 100 must be valid: %v", err)
++	}
++}
++
+ func TestValidateModelRunProbabilitiesSum(t *testing.T) {
+ 	run := validModelRun()
+ 	run.Probabilities = map[string]float64{"bull": 25, "base": 40, "bear": 25}
+ 	err := ValidateModelRun(run)
+ 	if err == nil || !strings.Contains(err.Error(), "probabilities") {
+ 		t.Fatalf("expected probabilities sum error, got %v", err)
+diff --git a/ingest/ratelimit.go b/ingest/ratelimit.go
+new file mode 100644
+index 0000000..356a617
+--- /dev/null
++++ b/ingest/ratelimit.go
+@@ -0,0 +1,51 @@
++package ingest
++
++import (
++	"math"
++	"sync"
++	"time"
++)
++
++// DefaultRatePerMin — лимит запросов в минуту по умолчанию (INGEST_RATE_PER_MIN в cmd/ingest).
++const DefaultRatePerMin = 60
++
++// rateBurst — размер «ведра»: сколько запросов можно сделать подряд сверх средней частоты.
++const rateBurst = 10
++
++// tokenBucket — ограничитель частоты по алгоритму token bucket на stdlib.
++// Ведро вмещает burst токенов и пополняется со скоростью ratePerMin/минуту; запрос берёт один токен.
++// now внедряется для тестов; в проде — time.Now.
++type tokenBucket struct {
++	mu       sync.Mutex
++	capacity float64
++	tokens   float64
++	perSec   float64
++	last     time.Time
++	now      func() time.Time
++}
++
++func newTokenBucket(ratePerMin int, burst int, now func() time.Time) *tokenBucket {
++	return &tokenBucket{
++		capacity: float64(burst),
++		tokens:   float64(burst),
++		perSec:   float64(ratePerMin) / 60,
++		last:     now(),
++		now:      now,
++	}
++}
++
++// allow снимает один токен; false — лимит исчерпан (ответ 429).
++func (b *tokenBucket) allow() bool {
++	b.mu.Lock()
++	defer b.mu.Unlock()
++	current := b.now()
++	if elapsed := current.Sub(b.last).Seconds(); elapsed > 0 {
++		b.tokens = math.Min(b.capacity, b.tokens+elapsed*b.perSec)
++		b.last = current
++	}
++	if b.tokens < 1 {
++		return false
++	}
++	b.tokens--
++	return true
++}
+diff --git a/ingest/server.go b/ingest/server.go
+index e2e8f6d..55f9d97 100644
+--- a/ingest/server.go
++++ b/ingest/server.go
+@@ -1,51 +1,83 @@
+ package ingest
+ 
+ import (
++	"context"
+ 	"crypto/subtle"
+ 	"encoding/json"
++	"errors"
+ 	"net/http"
+-
+-	"context"
++	"time"
+ 
+ 	log "github.com/sirupsen/logrus"
+ )
+ 
++// maxBodyBytes — предел тела запроса (1 MiB); больше — 413.
++const maxBodyBytes = 1 << 20
++
+ // BatchWriter — точка записи ingest-контура; реализация на ClickHouse — в clickhouse.go.
+ type BatchWriter interface {
+ 	EnsureTables(ctx context.Context) error
+ 	InsertModelRun(ctx context.Context, r ModelRun) error
+ 	InsertManualSeries(ctx context.Context, points []ManualSeriesPoint) error
+ }
+ 
+ // Server — HTTP-сервер ingest-контура: единственный путь записи в model_runs/forecast_log/macro_series.
+ type Server struct {
+-	writer BatchWriter
+-	token  string
+-	mux    *http.ServeMux
++	writer  BatchWriter
++	token   string
++	mux     *http.ServeMux
++	limiter *tokenBucket
++}
++
++// NewServer строит сервер с общим лимитом ratePerMin запросов в минуту (burst 10).
++func NewServer(writer BatchWriter, token string, ratePerMin int) *Server {
++	return newServer(writer, token, newTokenBucket(ratePerMin, rateBurst, time.Now))
+ }
+ 
+-func NewServer(writer BatchWriter, token string) *Server {
+-	s := &Server{writer: writer, token: token, mux: http.NewServeMux()}
++func newServer(writer BatchWriter, token string, limiter *tokenBucket) *Server {
++	s := &Server{writer: writer, token: token, mux: http.NewServeMux(), limiter: limiter}
+ 	s.mux.HandleFunc("POST /v1/model_run", s.handleModelRun)
+ 	s.mux.HandleFunc("POST /v1/manual_series", s.handleManualSeries)
+ 	return s
+ }
+ 
++// ServeHTTP: сначала авторизация (401), затем лимит частоты (429), затем маршрут.
++// Неавторизованные запросы лимит не расходуют.
+ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+ 	if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+s.token)) != 1 {
+ 		http.Error(w, "unauthorized", http.StatusUnauthorized)
+ 		return
+ 	}
++	if !s.limiter.allow() {
++		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
++		return
++	}
+ 	s.mux.ServeHTTP(w, r)
+ }
+ 
++// decodeBody читает тело ровно одного JSON-объекта: лимит размера, неизвестные поля — ошибка.
++// Возвращает статус HTTP для ошибки: 413 при превышении лимита, иначе 400.
++func decodeBody(w http.ResponseWriter, r *http.Request, v any) (int, error) {
++	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
++	decoder := json.NewDecoder(r.Body)
++	decoder.DisallowUnknownFields()
++	if err := decoder.Decode(v); err != nil {
++		var tooLarge *http.MaxBytesError
++		if errors.As(err, &tooLarge) {
++			return http.StatusRequestEntityTooLarge, err
++		}
++		return http.StatusBadRequest, err
++	}
++	return http.StatusOK, nil
++}
++
+ func (s *Server) handleModelRun(w http.ResponseWriter, r *http.Request) {
+ 	var run ModelRun
+-	if err := json.NewDecoder(r.Body).Decode(&run); err != nil {
+-		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
++	if status, err := decodeBody(w, r, &run); err != nil {
++		http.Error(w, "invalid JSON: "+err.Error(), status)
+ 		return
+ 	}
+ 	if err := ValidateModelRun(run); err != nil {
+ 		http.Error(w, err.Error(), http.StatusBadRequest)
+ 		return
+ 	}
+@@ -56,14 +88,14 @@ func (s *Server) handleModelRun(w http.ResponseWriter, r *http.Request) {
+ 	}
+ 	writeInserted(w, 1)
+ }
+ 
+ func (s *Server) handleManualSeries(w http.ResponseWriter, r *http.Request) {
+ 	var points []ManualSeriesPoint
+-	if err := json.NewDecoder(r.Body).Decode(&points); err != nil {
+-		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
++	if status, err := decodeBody(w, r, &points); err != nil {
++		http.Error(w, "invalid JSON: "+err.Error(), status)
+ 		return
+ 	}
+ 	for _, point := range points {
+ 		if err := ValidateManualSeriesPoint(point); err != nil {
+ 			http.Error(w, err.Error(), http.StatusBadRequest)
+ 			return
+diff --git a/ingest/server_test.go b/ingest/server_test.go
+index 76a792d..65125e0 100644
+--- a/ingest/server_test.go
++++ b/ingest/server_test.go
+@@ -4,13 +4,15 @@ import (
+ 	"context"
+ 	"encoding/json"
+ 	"io"
+ 	"net/http"
+ 	"net/http/httptest"
+ 	"strings"
++	"sync"
+ 	"testing"
++	"time"
+ )
+ 
+ const testToken = "unit-test-token"
+ 
+ type mockBatchWriter struct {
+ 	runs   []ModelRun
+@@ -30,13 +32,31 @@ func (m *mockBatchWriter) InsertModelRun(_ context.Context, r ModelRun) error {
+ func (m *mockBatchWriter) InsertManualSeries(_ context.Context, points []ManualSeriesPoint) error {
+ 	m.series = append(m.series, points)
+ 	return m.err
+ }
+ 
+ func newTestServer(writer BatchWriter) *httptest.Server {
+-	return httptest.NewServer(NewServer(writer, testToken))
++	return httptest.NewServer(NewServer(writer, testToken, DefaultRatePerMin))
++}
++
++// manualClock — часы для теста ограничителя: время меняется только через Advance.
++type manualClock struct {
++	mu  sync.Mutex
++	now time.Time
++}
++
++func (c *manualClock) Now() time.Time {
++	c.mu.Lock()
++	defer c.mu.Unlock()
++	return c.now
++}
++
++func (c *manualClock) Advance(d time.Duration) {
++	c.mu.Lock()
++	defer c.mu.Unlock()
++	c.now = c.now.Add(d)
+ }
+ 
+ func post(t *testing.T, url, token, body string) (int, []byte) {
+ 	t.Helper()
+ 	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(body))
+ 	if err != nil {
+@@ -202,6 +222,72 @@ func TestManualSeriesUnauthorized(t *testing.T) {
+ 
+ 	status, _ := post(t, server.URL+"/v1/manual_series", "", `[]`)
+ 	if status != http.StatusUnauthorized {
+ 		t.Fatalf("status %d, want 401", status)
+ 	}
+ }
++
++func TestModelRunUnknownFieldIsRejected(t *testing.T) {
++	writer := &mockBatchWriter{}
++	server := newTestServer(writer)
++	defer server.Close()
++
++	body := strings.Replace(validRunBody, `"comment": "unit test",`, `"comment": "unit test", "nav_pershare": 1,`, 1)
++	status, payload := post(t, server.URL+"/v1/model_run", testToken, body)
++	if status != http.StatusBadRequest {
++		t.Fatalf("status %d, want 400: %s", status, payload)
++	}
++	if !strings.Contains(string(payload), "nav_pershare") {
++		t.Fatalf("expected unknown field name in error, got %s", payload)
++	}
++	if len(writer.runs) != 0 {
++		t.Fatal("writer must not be called with unknown field")
++	}
++}
++
++func TestManualSeriesUnknownFieldIsRejected(t *testing.T) {
++	writer := &mockBatchWriter{}
++	server := newTestServer(writer)
++	defer server.Close()
++
++	const body = `[{"series": "CPIAUCSL", "date": "2026-01-01", "value": 1, "source": "fred"}]`
++	status, payload := post(t, server.URL+"/v1/manual_series", testToken, body)
++	if status != http.StatusBadRequest {
++		t.Fatalf("status %d, want 400: %s", status, payload)
++	}
++	if len(writer.series) != 0 {
++		t.Fatal("writer must not be called with unknown field")
++	}
++}
++
++// Лимит: burst 2 при 60/мин (1 токен в секунду). Неавторизованные запросы токены не тратят.
++func TestRateLimitReturns429AfterBurst(t *testing.T) {
++	clock := &manualClock{now: time.Unix(1800000000, 0)}
++	writer := &mockBatchWriter{}
++	server := httptest.NewServer(newServer(writer, testToken, newTokenBucket(60, 2, clock.Now)))
++	defer server.Close()
++
++	for i := 0; i < 5; i++ {
++		if status, _ := post(t, server.URL+"/v1/manual_series", "wrong-token", `[]`); status != http.StatusUnauthorized {
++			t.Fatalf("unauthorized request %d: status %d, want 401", i+1, status)
++		}
++	}
++	for i := 0; i < 2; i++ {
++		if status, payload := post(t, server.URL+"/v1/manual_series", testToken, `[]`); status != http.StatusOK {
++			t.Fatalf("request %d within burst: status %d, want 200: %s", i+1, status, payload)
++		}
++	}
++	if status, _ := post(t, server.URL+"/v1/manual_series", testToken, `[]`); status != http.StatusTooManyRequests {
++		t.Fatalf("request over burst: status %d, want 429", status)
++	}
++	if len(writer.series) != 2 {
++		t.Fatalf("writer called %d times, want 2 (429 must not reach the writer)", len(writer.series))
++	}
++
++	clock.Advance(time.Second)
++	if status, _ := post(t, server.URL+"/v1/manual_series", testToken, `[]`); status != http.StatusOK {
++		t.Fatalf("request after 1s refill: status %d, want 200", status)
++	}
++	if status, _ := post(t, server.URL+"/v1/manual_series", testToken, `[]`); status != http.StatusTooManyRequests {
++		t.Fatalf("second request after 1s refill: status %d, want 429", status)
++	}
++}
+diff --git a/sql/events_calendar_q4_2026.sql b/sql/events_calendar_q4_2026.sql
+index a59e5e1..b61063f 100644
+--- a/sql/events_calendar_q4_2026.sql
++++ b/sql/events_calendar_q4_2026.sql
+@@ -20,6 +20,35 @@ INSERT INTO events_calendar (event_date, event_time, category, title, threshold,
+     ('2026-11-06', '15:30', 'nfp', 'NFP США за октябрь 2026',                                                                          '{"nfp_k":">100"}',                   'pending'),
+     ('2026-11-10', '15:30', 'cpi', 'CPI США за октябрь 2026: горячий → FOMC-hike 85–90%',                                              '{"hot_yoy":">3.5"}',                 'pending'),
+     ('2026-12-04', '15:30', 'nfp', 'NFP США за ноябрь 2026 (перенос: релиз 2026-12-04)',                                               '{"nfp_k":">100"}',                   'pending'),
+     ('2026-12-09', '21:00', 'fomc','FOMC + dot plot: 2-е повышение → пробой $4,000 → $3,750–3,800',                                    '{"hike_count":">=2"}',               'pending'),
+     ('2026-12-10', '15:30', 'cpi', 'CPI США за ноябрь 2026',                                                                            '{"hot_yoy":">3.5"}',                 'pending'),
+     ('2026-12-18', NULL, 'cbr',  'СД ЦБ РФ: база — −25 б.п. до 13,75% + ребалансировка индекса MOEX (один день)',                      '{"cut_bp":">=25"}',                  'pending');
++
++-- Еженедельные релизы по средам (ARCHITECTURE.md §7): EIA Weekly Petroleum Status и недельный ИПЦ Росстата.
++-- Дни недели проверены: все даты — среда. Строка EIA 2026-10-14 вставлена выше и здесь не дублируется.
++-- Для недельного ИПЦ порог не задан в спеке: threshold = '{}'.
++-- Дубли EIA 2026-10-14 исключены; ReplacingMergeTree сворачивает повторный запуск по (event_date, category, title).
++INSERT INTO events_calendar (event_date, event_time, category, title, threshold, status) VALUES
++    ('2026-10-21', NULL, 'eia', 'EIA дистилляты: недельный запас (ср еженед.; порог crack >$50 — медведь / <$30 — снято)', '{"crack":">50","crack_bull":"<30"}', 'pending'),
++    ('2026-10-28', NULL, 'eia', 'EIA дистилляты: недельный запас (ср еженед.; порог crack >$50 — медведь / <$30 — снято)', '{"crack":">50","crack_bull":"<30"}', 'pending'),
++    ('2026-11-04', NULL, 'eia', 'EIA дистилляты: недельный запас (ср еженед.; порог crack >$50 — медведь / <$30 — снято)', '{"crack":">50","crack_bull":"<30"}', 'pending'),
++    ('2026-11-11', NULL, 'eia', 'EIA дистилляты: недельный запас (ср еженед.; порог crack >$50 — медведь / <$30 — снято)', '{"crack":">50","crack_bull":"<30"}', 'pending'),
++    ('2026-11-18', NULL, 'eia', 'EIA дистилляты: недельный запас (ср еженед.; порог crack >$50 — медведь / <$30 — снято)', '{"crack":">50","crack_bull":"<30"}', 'pending'),
++    ('2026-11-25', NULL, 'eia', 'EIA дистилляты: недельный запас (ср еженед.; порог crack >$50 — медведь / <$30 — снято)', '{"crack":">50","crack_bull":"<30"}', 'pending'),
++    ('2026-12-02', NULL, 'eia', 'EIA дистилляты: недельный запас (ср еженед.; порог crack >$50 — медведь / <$30 — снято)', '{"crack":">50","crack_bull":"<30"}', 'pending'),
++    ('2026-12-09', NULL, 'eia', 'EIA дистилляты: недельный запас (ср еженед.; порог crack >$50 — медведь / <$30 — снято)', '{"crack":">50","crack_bull":"<30"}', 'pending'),
++    ('2026-12-16', NULL, 'eia', 'EIA дистилляты: недельный запас (ср еженед.; порог crack >$50 — медведь / <$30 — снято)', '{"crack":">50","crack_bull":"<30"}', 'pending'),
++    ('2026-12-23', NULL, 'eia', 'EIA дистилляты: недельный запас (ср еженед.; порог crack >$50 — медведь / <$30 — снято)', '{"crack":">50","crack_bull":"<30"}', 'pending'),
++    ('2026-12-30', NULL, 'eia', 'EIA дистилляты: недельный запас (ср еженед.; порог crack >$50 — медведь / <$30 — снято)', '{"crack":">50","crack_bull":"<30"}', 'pending'),
++    ('2026-10-14', NULL, 'cpi', 'Росстат: недельный ИПЦ (по средам; день недели сверить с календарём Росстата)', '{}', 'pending'),
++    ('2026-10-21', NULL, 'cpi', 'Росстат: недельный ИПЦ (по средам; день недели сверить с календарём Росстата)', '{}', 'pending'),
++    ('2026-10-28', NULL, 'cpi', 'Росстат: недельный ИПЦ (по средам; день недели сверить с календарём Росстата)', '{}', 'pending'),
++    ('2026-11-04', NULL, 'cpi', 'Росстат: недельный ИПЦ (по средам; день недели сверить с календарём Росстата)', '{}', 'pending'),
++    ('2026-11-11', NULL, 'cpi', 'Росстат: недельный ИПЦ (по средам; день недели сверить с календарём Росстата)', '{}', 'pending'),
++    ('2026-11-18', NULL, 'cpi', 'Росстат: недельный ИПЦ (по средам; день недели сверить с календарём Росстата)', '{}', 'pending'),
++    ('2026-11-25', NULL, 'cpi', 'Росстат: недельный ИПЦ (по средам; день недели сверить с календарём Росстата)', '{}', 'pending'),
++    ('2026-12-02', NULL, 'cpi', 'Росстат: недельный ИПЦ (по средам; день недели сверить с календарём Росстата)', '{}', 'pending'),
++    ('2026-12-09', NULL, 'cpi', 'Росстат: недельный ИПЦ (по средам; день недели сверить с календарём Росстата)', '{}', 'pending'),
++    ('2026-12-16', NULL, 'cpi', 'Росстат: недельный ИПЦ (по средам; день недели сверить с календарём Росстата)', '{}', 'pending'),
++    ('2026-12-23', NULL, 'cpi', 'Росстат: недельный ИПЦ (по средам; день недели сверить с календарём Росстата)', '{}', 'pending'),
++    ('2026-12-30', NULL, 'cpi', 'Росстат: недельный ИПЦ (по средам; день недели сверить с календарём Росстата)', '{}', 'pending');
+diff --git a/views/gold_dashboard.go b/views/gold_dashboard.go
+index e0dd8a6..966f082 100644
+--- a/views/gold_dashboard.go
++++ b/views/gold_dashboard.go
+@@ -5,24 +5,24 @@ import "github.com/kmlebedev/clickhouse-import-rosstat/util"
+ // goldDashboardIndicators — фиксированный список индикаторов дашборда верификации (статья §6).
+ // Список зашит в витрине, а не берётся из macro_series: индикатор, который ни разу
+ // не вводили, всё равно попадает в выдачу с value = NULL и stale = 1.
+ const goldDashboardIndicators = `'crack_ulsd_proxy', 'distillate_stocks', 'fedwatch_dec_hike', 'etf_flows_month', 'dxy'`
+ 
+ // goldDashboardView — дашборд верификации сценария золота: одна строка на индикатор.
+-// Значения живут в macro_series (source 'manual' — ручной ввод через ingest, 'fred').
++// Значения живут в macro_series (source 'manual' — ручной ввод через ingest, 'webbridge' — WebBridge-сбор, фаза 5; spec §5.2).
+ // stale = 1, если значения нет или последнее наблюдение старше 14 дней.
+ var goldDashboardView = util.View{
+ 	Name:   "v_gold_dashboard",
+ 	Tables: []string{"macro_series"},
+ 	Select: `SELECT
+     indicator,
+     value,
+     threshold,
+     toUInt8(coalesce(multiIf(
+         indicator = 'crack_ulsd_proxy', value > 50,
+-        indicator = 'fedwatch_dec_hike', value > 80,
++        indicator = 'fedwatch_dec_hike', value > 65,
+         indicator = 'dxy', value > 102,
+         0), 0)) AS flag,
+     as_of,
+     toUInt8(if(as_of IS NOT NULL AND as_of >= today() - 14, 0, 1)) AS stale
+ FROM (
+     SELECT
+@@ -43,21 +43,21 @@ FROM (
+         SELECT
+             series AS series_name,
+             count() AS n,
+             argMax(value, date) AS value,
+             argMax(date, date) AS as_of
+         FROM macro_series FINAL
+-        WHERE source IN ('manual', 'fred')
++        WHERE source IN ('manual', 'webbridge')
+           AND series IN (` + goldDashboardIndicators + `)
+         GROUP BY series
+     ) AS v ON ind.indicator = v.series_name
+ )`,
+-	Comment: "Дашборд верификации сценария золота (статья §6): одна строка на индикатор. flag = 1 — пробит порог; stale = 1 — значения нет или последнее наблюдение старше 14 дней. Пороги: crack ULSD >50 USD (медвежий сигнал), FedWatch на декабрьское повышение >80% (алерт; >65% — сценарное переключение), DXY >102. Значения FedWatch — в процентах (65 = 65%)",
++	Comment: "Дашборд верификации сценария золота (статья §6): одна строка на индикатор. flag = 1 — пробит порог; stale = 1 — значения нет или последнее наблюдение старше 14 дней. Пороги: crack ULSD >50 USD (медвежий сигнал), FedWatch на декабрьское повышение: flag = 1 при >65% (сценарное переключение), >80% — уровень алерта (текст порога); DXY >102. Значения FedWatch — в процентах (65 = 65%)",
+ 	Columns: map[string]string{
+ 		"indicator": "Код индикатора: crack_ulsd_proxy, distillate_stocks, fedwatch_dec_hike, etf_flows_month, dxy",
+ 		"value":     "Последнее значение индикатора; NULL — значение ни разу не вводили",
+ 		"threshold": "Пороги из статьи §6 текстом; для индикаторов без порога — 'порога в статье §6 нет'",
+-		"flag":      "1 — последнее значение пересекло порог из статьи §6 (crack >50, FedWatch >80, DXY >102); 0 — не пересекло или порога нет",
++		"flag":      "1 — последнее значение пересекло порог из статьи §6 (crack >50, FedWatch >65 — сценарное переключение, DXY >102); 0 — не пересекло или порога нет",
+ 		"as_of":     "Дата последнего наблюдения (Date32); NULL — значения нет",
+ 		"stale":     "1 — значения нет или последнее наблюдение старше 14 дней; 0 — свежее",
+ 	},
+ }
+# PLUGIN 4b88571..HEAD
+ef7bd44 single nav procedure, define ndpi base, explicit run.json step
+diff --git a/README.md b/README.md
+index 9e16d3a..aea0e6d 100644
+--- a/README.md
++++ b/README.md
+@@ -1,8 +1,10 @@
+ # gold-nav
+ 
++> **Внимание: плагин — скелет.** Он не готов к работе, пока не развёрнут HTTP-endpoint mcp-clickhouse за TLS с read-only токеном. До этого `PLACEHOLDER_HOST` в `kimi.plugin.json` остаётся плейсхолдером, витрины ClickHouse недоступны, а запись на ingest невозможна.
++
+ Плагин для Kimi Code и Kimi Work. Ведёт сценарную сессию прогноза золота и DCF NAV Полюса (PLZL):
+ 
+ 1. РФ-входы читаются из витрин ClickHouse автора через MCP (только чтение, витрины `v_*`).
+ 2. Мировые входы берутся из datasource-плагинов среды: `kimi-datasource` в Kimi Code, Global Finance Data / IMF в Kimi Work.
+ 3. Сценарии золота пересчитываются, NAV считается по методологии rev.2.
+ 4. Run записывается через ingest-endpoint автора.
+@@ -23,21 +25,23 @@ commands/verify.md                    /gold-nav:verify
+ - В Kimi Code — плагин `kimi-datasource` (для мировых данных).
+ - В Kimi Work — плагины «Global Finance Data» и/или `imf` из маркета.
+ - Токен чтения MCP (`GOLD_NAV_MCP_TOKEN`), выдаёт автор.
+ 
+ ## Установка
+ 
+-**Kimi Code:**
++Команды установки не проверены: сверить с документацией Kimi перед использованием.
++
++**Kimi Code** — не проверено, сверить с документацией Kimi:
+ 
+ ```
+ /plugins install <github-url>
+ ```
+ 
+-**Kimi Work:**
++**Kimi Work** — не проверено, сверить с документацией Kimi:
+ 
+-1. Открыть Plugin Builder и зарегистрировать плагин в персональном маркете: `kimi-daimon kimi-plugin register-personal <путь к каталогу gold-nav>`.
++1. Открыть Plugin Builder и зарегистрировать плагин в персональном маркете: `kimi-daimon kimi-plugin register-personal <путь к каталогу gold-nav>` (команда не проверена, сверить с документацией Kimi).
+ 2. Открыть «Плагины → Персональный» и включить `gold-nav`.
+ 
+ ## Переменные окружения
+ 
+ | Переменная | Для кого | Назначение |
+ |---|---|---|
+diff --git a/skills/dcf-methodology/SKILL.md b/skills/dcf-methodology/SKILL.md
+index 8480fe0..c567bb1 100644
+--- a/skills/dcf-methodology/SKILL.md
++++ b/skills/dcf-methodology/SKILL.md
+@@ -21,40 +21,44 @@ NAV = Σ_asset NPV(LOM-план актива из mine_plans) − NetDebt − Co
+ FCF_t = Production_t × (Gold_deck_t − AISC_t) − НДПИ_t − налоги_t − capex_t ± ΔWC_t
+ ```
+ 
+ - В конце LOM добавляется хвост `closure_costs` с отрицательным знаком.
+ - Perpetual terminal value у рудника НЕТ: актив живёт ровно LOM.
+ 
+-**Валюта.** FCF_t считается в USD: Production (oz) × (Gold − AISC) − НДПИ_t, все слагаемые в USD (НДПИ — по §3, в USD). Для каждого периода t USD-поток FCF_t переводится в RUB по курсу `usdrub_path[ключ периода t]` (ключи — горизонты/периоды, как в `gold_scenario.horizon`). Если курса на период нет, период не оценивается, а пропуск указывается в `comment`. Дисконтирование зависит от контура (§5): индустриальный — USD-поток по USD-ставке, итоговый NPV переводится в RUB по курсу ключа `gold_scenario.horizon` (одно число); локальный — RUB-поток по ОФЗ-ставке. NetDebt — в RUB (по балансу). Итог: NAV на акцию в RUB (`nav_per_share`, `nav_bull`, `nav_base`, `nav_bear`). Сравнение с ценой — `upside_pct = (nav_per_share / plzl_close − 1) × 100`, где `plzl_close` в RUB; результат в процентах (пример: NAV 12500, цена 6800 → 83.8).
++**Валюта.** Все слагаемые FCF_t считаются в USD: Production (oz) × (Gold − AISC) − НДПИ_t, где НДПИ_t — в USD по §3. Перевод в RUB и дисконтирование выполняются только по процедуре NAV в §5; здесь курс не применяется.
+ 
+ ## 3. НДПИ
+ 
+ ```
+-НДПИ = база + 10% × max(gold_usd − 1900, 0)    (на унцию, USD/oz)
++НДПИ (USD/oz)     = база + 10% × max(gold_usd − 1900, 0)
++база (USD/oz)     = 6% × gold_usd
++НДПИ_t (USD)      = НДПИ (USD/oz) × Production_t (oz)
+ ```
+ 
+-- `gold_usd` и порог `1900` — в USD/oz, как и в ARCHITECTURE §6.4. Надбавка действует с 2025 года.
+-- Надбавка считается от цены из выбранного deck'а в USD/oz и вычитается в USD внутри USD-FCF (§2).
+-- НДПИ уплачивается в рублях. Рублёвая сумма = USD-сумма × `usdrub_path` того же периода. Рублёвая сумма нужна только для справки и в NAV не идёт: NAV считается по USD-FCF с переводом в RUB по §2.
++- Единицы: `gold_usd` — цена сценария, USD/oz (как в ARCHITECTURE §6.4). Результат `НДПИ_t` — в USD и вычитается из USD-FCF (§2). Надбавка 10% действует с 2025 года.
++- **База** — базовая ставка НДПИ для золота: 6% от стоимости добытого золота по цене сценария. Ставка 6% — из ROADMAP (§6, «с 2026 — 6% на концентраты с драгметаллами»). В ARCHITECTURE §6.4 база не определена, поэтому это принятое допущение: сверить с НК РФ ст. 342.
++- Рублёвая сумма НДПИ = USD-сумма × `usdrub_path` периода. Она только для справки; в NAV отдельно не идёт, её учитывает перевод FCF в §5.
+ 
+ ## 4. Эскалация AISC
+ 
+ ```
+ AISC_t = AISC_base × эскалация(ИПЦ РФ)
+ ```
+ 
+ Индекс брать из `v_model_inputs`: `ipc_mes_last` (месячный) или `ipc_week_ytd` (ориентир по еженедельным ценам, не официальный ИПЦ). Выбор и обоснование записать в `comment`.
+ 
+-## 5. Ставка дисконтирования: два контура
++## 5. Ставка дисконтирования и процедура NAV
+ 
+-Оба результата записываются в `model_runs`.
++Процедура NAV одна, для обоих контуров. Скилл `gold-forecast-session` (шаг 5) ссылается на этот раздел и не описывает её заново.
+ 
+-1. **Индустриальный контур (USD).** Основа 5% real USD. Дисконтируется USD-поток (до перевода в RUB) этой ставкой; итоговый NPV переводится в RUB по курсу ключа `gold_scenario.horizon` из `usdrub_path`. Добавляется страновая и стадийная надбавка. Для рисковых юрисдикций в CIM-обзоре — до 10%. Ставка сопоставима с глобальным P/NAV. CAPM/WACC для золотодобычи НЕ использовать: бета сектора около нуля или отрицательная.
+-2. **Локальный контур (RUB, для российского инвестора).** Кривая ОФЗ (`ofz_1y/3y/5y/10y`) плюс премии. Дисконтируется RUB-поток (FCF, переведённый по курсу периода). Объясняет локальный дисконт.
+-
+-Соответствие полям `ModelRun`: `discount_rate` — индустриальный контур, `wacc` — локальный (см. SKILL `gold-forecast-session`, шаг 6).
++1. **Индустриальный контур (USD).** FCF_t в USD (§2) дисконтируется ставкой 5% real USD плюс страновая и стадийная надбавка (для рисковых юрисдикций в CIM-обзоре — до 10%). Полученный NPV_USD переводится в RUB одним курсом: `usdrub_path[gold_scenario.horizon]`. CAPM/WACC для золотодобычи НЕ использовать: бета сектора около нуля или отрицательная. Ставка сопоставима с глобальным P/NAV.
++2. **Локальный контур (RUB, для российского инвестора).** Для каждого периода t FCF_t (USD) переводится в RUB по курсу `usdrub_path[ключ периода t]`. RUB-поток дисконтируется ставкой ОФЗ (`ofz_1y/3y/5y/10y`) плюс премии. Контур объясняет локальный дисконт. Если курса на период нет, период не оценивается, пропуск указывается в `comment`.
++3. **Общее.** NetDebt — в RUB (по балансу). NAV на акцию в RUB: `nav_* = (NPV_RUB − NetDebt_RUB) / число акций`.
++   - Поля run'а: `discount_rate` — индустриальная ставка, `nav_per_share`, `nav_bull`, `nav_base`, `nav_bear` — индустриальный контур по основной деке.
++   - `wacc` — локальная ОФЗ-ставка (имя историческое, WACC/CAPM не применяются). NAV локального контура записывается в `comment`.
++4. **Цена и апсайд.** `market_price` = `plzl_close` (RUB, дата в `comment`). `upside_pct = (nav_per_share / plzl_close − 1) × 100`, в процентах. Пример: NAV 12500, цена 6800 → 83.8.
+ 
+ ## 6. Price deck: три контура
+ 
+ | Deck | Описание |
+ |---|---|
+ | `spot_flat` | Спот, без изменения на весь LOM |
+@@ -94,13 +98,14 @@ AISC_t = AISC_base × эскалация(ИПЦ РФ)
+ - **компанейский** — дивидендный спред к ОФЗ, перетоки ликвидности, индексные потоки, sentiment.
+ 
+ Относительная сверка: peer_universe `ru` (PLZL, ЮГК, SELG). Глобальные пиры используются только для измерения странового дисконта.
+ 
+ ## 10. Выходы run'а
+ 
+-- NAV на акцию: 3 deck'а × 2 ставки (индустриальная, локальная). Одна пара пишется в поля run'а, остальные — в `comment`.
++- NAV на акцию: индустриальный контур по основной деке — в полях run'а (§5, пункт 3). Локальный контур (`wacc`) — в `comment`.
++- Альтернативные деки (`spot_flat`, `consensus_lt`) и их NAV в ingest не пишутся: только в локальную markdown-сводку (шаг 6 скилла `gold-forecast-session`).
+ - NAV-бета и EBITDA-бета к золоту. Эталон: EBITDA-бета около 14% на +10% золота. NAV-бета записывается в `comment` (отдельного поля в `ModelRun` нет).
+ 
+ ## 11. Дивиденды
+ 
+ `dividend_status` — приостановлен до 2030 (значение по умолчанию в схеме). Дивидендная доходность в NAV не закладывается.
+ 
+diff --git a/skills/gold-forecast-session/SKILL.md b/skills/gold-forecast-session/SKILL.md
+index db40327..764c86a 100644
+--- a/skills/gold-forecast-session/SKILL.md
++++ b/skills/gold-forecast-session/SKILL.md
+@@ -74,24 +74,29 @@ LIMIT 20
+ - Вероятности нормировать к 100. Сумма должна быть в пределах 100 ± 0.1, иначе ingest вернёт 400. Ключи `probabilities` — ровно `bull`, `base`, `bear` (совпадают с именами блоков `gold_scenario`).
+ - Согласование с `regime_states` (HMM): витрины в MCP нет. Согласовать вручную по статье и отметить в `comment`.
+ - Горизонт — одна из форм: `Q4-2026`, `YE-2026`, `2026`, `2026-12-31`.
+ 
+ ## Шаг 5. NAV Полюса
+ 
+-Полный LOM-DCF по методологии rev.2 (см. скилл `dcf-methodology`) требует данных по активам (`mine_plans`, AISC, capex, чистый долг, число акций). В MCP этих данных нет.
++Процедура NAV (валюты, курсы, ставки, NetDebt, nav_* на акцию, upside_pct) одна, она описана в скилле `dcf-methodology`, §2, §3 и §5. Здесь только входы и вычисление.
+ 
+-- До фазы 3 считать упрощённо: AISC × production. Формула: `FCF_t = Production_t × (Gold_t − AISC_t) − НДПИ_t`, где `НДПИ_t = база + 10% × max(Gold_t − 1900, 0)`. NAV — сумма дисконтированных FCF минус чистый долг, в расчёте на акцию.
+-- **Валюты.** Gold, AISC и FCF_t считаются в USD (Production × (Gold − AISC) − НДПИ, USD/oz и USD). Перевод в RUB — для каждого периода t по курсу `usdrub_path` с ключом этого периода (ключи — те же горизонты, что в `gold_scenario.horizon`, например `Q4-2026`, `2027`). Одно число в RUB (единый курс run'а) — по ключу `gold_scenario.horizon` самого run'а. НДПИ_t в USD вычитается внутри USD-FCF; рублёвая сумма НДПИ только для справки. Если курса на период нет, период не считается: не подставлять последний известный курс молча, а отметить в `comment`. Чистый долг (NetDebt) — в RUB. NAV на акцию — в RUB на акцию (`nav_per_share`, `nav_bull`, `nav_base`, `nav_bear`).
+-- Параметры (production по годам, AISC_base, NetDebt, число акций) — от пользователя. Если их нет в сессии, остановиться на этом шаге и спросить. Не записывать NAV, который не считался.
++- Ключевые входы: `usdrub_path` (ключи периодов и `gold_scenario.horizon`), `discount_rate` (индустриальная ставка), ОФЗ-кривая из `v_model_inputs` (локальный контур), `plzl_close`, NetDebt в RUB, число акций, production по годам, AISC_base.
++- До фазы 3 FCF_t = Production_t × (Gold_t − AISC_t) − НДПИ_t, НДПИ — по `dcf-methodology` §3. Остальные параметры — от пользователя. Если их нет в сессии, остановиться на этом шаге и спросить. NAV, который не считался, не записывать.
++- Если курса на период нет, период не считать и отметить в `comment`; последний известный курс молча не подставлять.
+ - В `comment` обязательно написать: «NAV упрощённый: AISC × production, фаза 3 не готова».
+-- `market_price = plzl_close` в RUB за акцию (дата указывается в `comment`). `upside_pct = (nav_per_share / market_price − 1) × 100`, в процентах (пример: NAV 12500, цена 6800 → 83.8, как в `ingest/server_test.go`). Обе величины в RUB, поэтому отношение безразмерное.
+-- Один run = одна пара `price_deck` + ставка. Поле `price_deck` одно на run. Поэтому `spot_flat` и `consensus_lt` записываются отдельными run'ами (если пользователь их просит), а результаты остальных сочетаний пишутся в `comment`.
++- `market_price = plzl_close` (RUB, дата в `comment`); `upside_pct` — по формуле `dcf-methodology` §5.
++- **Один run в день в ingest — основная дека** (в шаблоне шага 6 — `own_scenario`) и индустриальная ставка. Альтернативные деки `spot_flat` и `consensus_lt` в ingest не пишутся: `forecast_log` хранит одну строку на метрику в день. Они попадают только в локальную markdown-сводку, как и локальный контур (`wacc`), который идёт в `comment`.
+ 
+ ## Шаг 6. Запись прогноза
+ 
+-**run_id**: сгенерировать UUID v4 один раз на сессию, до первого POST. При повторе использовать тот же UUID, чтобы не создать дубль.
++**run_id**: сгенерировать UUID v4 один раз на сессию, до записи файла. При повторе использовать тот же UUID, чтобы не создать дубль.
++
++**Порядок записи:**
++1. Записать `run.json` из JSON-шаблона ниже: подставить UUID сессии в `run_id` и значения расчёта этой сессии.
++2. Только после этого выполнить `curl` с `--data-binary @run.json`. Отправлять то, что уже лежит в файле, а не набирать тело заново.
++3. Один run в день (основная дека, см. шаг 5). Повторный POST с тем же `run_id` безопасен. Новый `run_id` в тот же день добавит вторую строку в `model_runs`, а строки `forecast_log` за этот день схлопнутся к одной на метрику, поэтому второй run за день не отправлять.
+ 
+ **Формат записи** — фиксированный JSON-шаблон. Поля и теги совпадают с `ModelRun` в `ingest/model_run.go`. Лишних полей не добавлять.
+ 
+ ```json
+ {
+   "run_id": "<UUID v4 сессии>",

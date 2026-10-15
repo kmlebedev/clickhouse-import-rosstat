@@ -1,0 +1,266 @@
+## main repo 94151d9..4d5923f
+4d5923f add v_forecast_accuracy view
+diff --git a/sql/mcp_kimi_reader.sql b/sql/mcp_kimi_reader.sql
+index a903ff8..5169f8b 100644
+--- a/sql/mcp_kimi_reader.sql
++++ b/sql/mcp_kimi_reader.sql
+@@ -9,10 +9,11 @@ GRANT SELECT ON default.v_fred_macro TO kimi_reader;
+ GRANT SELECT ON default.v_bls_macro TO kimi_reader;
+ GRANT SELECT ON default.v_cbr_macro TO kimi_reader;
+ GRANT SELECT ON default.v_rosstat_macro TO kimi_reader;
+ GRANT SELECT ON default.v_minfin_budget TO kimi_reader;
+ GRANT SELECT ON default.v_gold_prices TO kimi_reader;
+ GRANT SELECT ON default.v_stock_prices TO kimi_reader;
+ GRANT SELECT ON default.v_ofz_curve TO kimi_reader;
+ GRANT SELECT ON default.v_events_calendar TO kimi_reader;
+ GRANT SELECT ON default.v_model_inputs TO kimi_reader;
+ GRANT SELECT ON default.v_gold_dashboard TO kimi_reader;
++GRANT SELECT ON default.v_forecast_accuracy TO kimi_reader;
+diff --git a/views/forecast_accuracy.go b/views/forecast_accuracy.go
+new file mode 100644
+index 0000000..0e965ba
+--- /dev/null
++++ b/views/forecast_accuracy.go
+@@ -0,0 +1,33 @@
++package views
++
++import "github.com/kmlebedev/clickhouse-import-rosstat/util"
++
++// forecastAccuracyView — витрина точности прогнозов: forecast_log FINAL с производными
++// колонками абсолютной ошибки и признаком сверки с фактом. Строки создаёт ingest
++// (metric 'nav' и 'xau_q_avg' при каждом model_run); actual и error_pct заполняются
++// отдельно, пока их нет — NULL, is_resolved = 0.
++var forecastAccuracyView = util.View{
++	Name:   "v_forecast_accuracy",
++	Tables: []string{"forecast_log"},
++	Select: `SELECT
++    metric,
++    forecast_date,
++    target_date,
++    predicted,
++    actual,
++    error_pct,
++    abs(error_pct) AS abs_error_pct,
++    toUInt8(actual IS NOT NULL) AS is_resolved
++FROM forecast_log FINAL`,
++	Comment: "Точность прогнозов из forecast_log: одна строка на прогноз (metric, дата прогноза, дата цели). error_pct = (predicted − actual) / actual × 100; actual и error_pct заполняются после наступления target_date. is_resolved = 0 — факт ещё не сверен",
++	Columns: map[string]string{
++		"metric":        "Код прогноза: 'nav' — NAV на акцию, руб.; 'xau_q_avg' — вероятностно-взвешенная цена золота на горизонт, USD/oz",
++		"forecast_date": "Дата, на которую сделан прогноз (день записи run'а)",
++		"target_date":   "Дата цели прогноза (конец горизонта сценария: квартал, год или дата)",
++		"predicted":     "Прогнозное значение метрики",
++		"actual":        "Фактическое значение метрики на target_date; NULL — факт ещё не записан",
++		"error_pct":     "Ошибка прогноза, %: (predicted − actual) / actual × 100; NULL — факт не записан",
++		"abs_error_pct": "Абсолютная ошибка прогноза, %; NULL — факт не записан",
++		"is_resolved":   "1 — факт записан (actual не NULL); 0 — прогноз ещё не сверен",
++	},
++}
+diff --git a/views/gold_views.go b/views/gold_views.go
+index 588d7ad..144263e 100644
+--- a/views/gold_views.go
++++ b/views/gold_views.go
+@@ -1,12 +1,13 @@
+ // Package views создаёт витрины для LLM-агента прогноза золота и NAV PLZL:
+-// v_model_inputs (входы DCF) и v_gold_dashboard (дашборд верификации).
++// v_model_inputs (входы DCF), v_gold_dashboard (дашборд верификации) и
++// v_forecast_accuracy (точность прогнозов из forecast_log).
+ //
+ // Импортёр gold_views запускается после ingest-первого-прогона: util.CreateView
+ // пропускает витрину, пока не существуют все её таблицы (model_runs создаёт ingest),
+ // поэтому его вызывают отдельным шагом после первого запуска ingest.
+ package views
+ 
+ import (
+ 	"context"
+ 
+ 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+@@ -16,21 +17,21 @@ import (
+ )
+ 
+ type goldViews struct {
+ }
+ 
+ func (s *goldViews) Name() string {
+ 	return "gold_views"
+ }
+ 
+ func (s *goldViews) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+-	for _, v := range []util.View{modelInputsView, goldDashboardView} {
++	for _, v := range []util.View{modelInputsView, goldDashboardView, forecastAccuracyView} {
+ 		var created bool
+ 		if created, err = util.CreateView(ctx, conn, v); err != nil {
+ 			return count, err
+ 		}
+ 		log.Infof("View %s created: %t", v.Name, created)
+ 	}
+ 	return count, nil
+ }
+ 
+ func init() {
+## plugin 27e20fd..7bbc075
+diff --git a/README.md b/README.md
+index 8ae073d..9e16d3a 100644
+--- a/README.md
++++ b/README.md
+@@ -59,21 +59,21 @@ commands/verify.md                    /gold-nav:verify
+ 
+ Токен попадает в локальную копию манифеста. Эту копию нельзя коммитить, публиковать и присылать другим людям. Обновление плагина перезапишет правку, её нужно повторить.
+ 
+ ## Команды
+ 
+ - `/gold-nav:session` — сценарная сессия: входы, сценарии, NAV, запись run'а.
+ - `/gold-nav:verify` — сверка прогнозов с фактом по `forecast_log`.
+ 
+ ## Известные ограничения
+ 
+-- Витрина `v_forecast_log` не создана. Без неё `/gold-nav:verify` не работает: сырая таблица закрыта грантами `kimi_reader`.
++- `/gold-nav:verify` читает витрину `v_forecast_accuracy` (ARCHITECTURE §6.3). Её нужно создать на сервере автора (`gold_views` + грант `kimi_reader`). Без витрины команда сообщает, что сверка недоступна.
+ - NAV до фазы 3 считается упрощённо (AISC × production), это фиксируется в `comment` каждого run'а. Параметры активов в MCP не выводятся, без них сессия спрашивает их у пользователя.
+ - В `ModelRun` поле `wacc` несёт локальный ОФЗ-контур, хотя имя историческое (WACC/CAPM не применяются). Описано в скилле `gold-forecast-session`.
+ - Мировые ряды EIA, ETF WGC и FedWatch источников не имеют, значения только ручные или «нет данных».
+ 
+ ## Результат проверки
+ 
+ Не заполнено. Заполнить после проверки пользователем в Kimi Work:
+ 
+ - регистрация: `kimi-daimon kimi-plugin register-personal <путь к каталогу gold-nav>` выполнена без ошибок;
+ - плагин виден во вкладке «Плагины → Персональный» и включается;
+diff --git a/commands/verify.md b/commands/verify.md
+index b616b0d..3d92f07 100644
+--- a/commands/verify.md
++++ b/commands/verify.md
+@@ -1,25 +1,25 @@
+ ---
+ description: Сверить прогнозы forecast_log с фактом и показать ошибки прогноза золота и NAV
+ ---
+ 
+ Выполни сверку прогнозов с фактом.
+ 
+ 1. Прочитай прогнозы через MCP (только чтение):
+ 
+    ```sql
+-   SELECT metric, forecast_date, target_date, predicted, actual, error_pct
+-   FROM v_forecast_log
++   SELECT metric, forecast_date, target_date, predicted, actual, error_pct, abs_error_pct, is_resolved
++   FROM v_forecast_accuracy
+    ORDER BY target_date
+    ```
+ 
+-   Витрина `v_forecast_log` должна быть создана на сервере автора. Если её нет, ответ будет ошибкой. В этом случае сообщи пользователю, что сверка недоступна, и не обращайся к сырой таблице `forecast_log`: она закрыта грантами (ACCESS_DENIED).
++   Витрина `v_forecast_accuracy` — каноническое имя (ARCHITECTURE.md §6.3), строится из `forecast_log FINAL`. Если её нет или грант не выдан, ответ будет ошибкой. В этом случае сообщи пользователю, что сверка недоступна, и не обращайся к сырой таблице `forecast_log`: она закрыта грантами (ACCESS_DENIED).
+ 
+-2. Для строк с `target_date <= today()` и пустым `actual` определи факт:
++2. Для строк с `is_resolved = 0` и `target_date <= today()` определи факт:
+    - `xau_q_avg` — среднее `GC=F` за квартал `target_date` через datasource среды (`yahoo_finance`). Если datasource недоступен, факт не определять.
+    - `nav` — факт не определён, оставь `actual` пустым и укажи это в отчёте.
+ 
+-3. Посчитай `error_pct = (predicted − actual) / actual × 100` и выведи таблицу: метрика, горизонт, прогноз, факт, ошибка в процентах.
++3. Для строк с `is_resolved = 1` используй `error_pct` (= (predicted − actual) / actual × 100) и `abs_error_pct`; для записанных фактов сам пересчёт не нужен. Выведи таблицу: метрика, горизонт, прогноз, факт, ошибка в процентах.
+ 
+ 4. Отметь три наибольших отклонения и дай короткий вывод: по какому допущению модели ошибка, если это видно из `comment` прогона.
+ 
+ 5. Записи в `forecast_log` через ingest не выполняй: контракт ingest содержит только `model_run` и `manual_series`. Отчёт сохрани локально как `gold-verify-<дата>.md` в рабочей папке.
+diff --git a/skills/dcf-methodology/SKILL.md b/skills/dcf-methodology/SKILL.md
+index df8cfbc..ef9a31e 100644
+--- a/skills/dcf-methodology/SKILL.md
++++ b/skills/dcf-methodology/SKILL.md
+@@ -17,42 +17,44 @@ NAV = Σ_asset NPV(LOM-план актива из mine_plans) − NetDebt − Co
+ 
+ ## 2. LOM-DCF актива
+ 
+ ```
+ FCF_t = Production_t × (Gold_deck_t − AISC_t) − НДПИ_t − налоги_t − capex_t ± ΔWC_t
+ ```
+ 
+ - В конце LOM добавляется хвост `closure_costs` с отрицательным знаком.
+ - Perpetual terminal value у рудника НЕТ: актив живёт ровно LOM.
+ 
++**Валюта.** FCF_t считается в USD: Production (oz) × (Gold − AISC) в USD/oz, НДПИ — в USD по той же базе, что и цена. Для каждого периода t FCF_t переводится в RUB по курсу `usdrub_path[t]` (ключи — горизонты/периоды, как в `gold_scenario.horizon`). Если курса на период нет, период не оценивается, а пропуск указывается в `comment`. Дисконтирование зависит от контура (§5): индустриальный — USD-поток по USD-ставке, NPV переводится в RUB по курсу оценки; локальный — RUB-поток по ОФЗ-ставке. NetDebt — в RUB (по балансу). Итог: NAV на акцию в RUB (`nav_per_share`, `nav_bull`, `nav_base`, `nav_bear`). Сравнение с ценой — `upside_pct = (nav_per_share / plzl_close − 1) × 100`, где `plzl_close` в RUB; результат в процентах (пример: NAV 12500, цена 6800 → 83.8).
++
+ ## 3. НДПИ
+ 
+ ```
+ НДПИ = база + 10% × max(gold − 1900, 0)
+ ```
+ 
+ Надбавка действует с 2025 года. `gold` — цена из выбранного deck'а (USD/oz, пересчёт в руб. по курсу из `usdrub_path`).
+ 
+ ## 4. Эскалация AISC
+ 
+ ```
+ AISC_t = AISC_base × эскалация(ИПЦ РФ)
+ ```
+ 
+ Индекс брать из `v_model_inputs`: `ipc_mes_last` (месячный) или `ipc_week_ytd` (ориентир по еженедельным ценам, не официальный ИПЦ). Выбор и обоснование записать в `comment`.
+ 
+ ## 5. Ставка дисконтирования: два контура
+ 
+ Оба результата записываются в `model_runs`.
+ 
+-1. **Индустриальный контур (USD).** Основа 5% real USD. Добавляется страновая и стадийная надбавка. Для рисковых юрисдикций в CIM-обзоре — до 10%. Ставка сопоставима с глобальным P/NAV. CAPM/WACC для золотодобычи НЕ использовать: бета сектора около нуля или отрицательная.
+-2. **Локальный контур (RUB, для российского инвестора).** Кривая ОФЗ (`ofz_1y/3y/5y/10y`) плюс премии. Объясняет локальный дисконт.
++1. **Индустриальный контур (USD).** Основа 5% real USD. Дисконтируется USD-поток (до перевода в RUB) этой ставкой; итоговый NPV переводится в RUB по курсу оценки из `usdrub_path`. Добавляется страновая и стадийная надбавка. Для рисковых юрисдикций в CIM-обзоре — до 10%. Ставка сопоставима с глобальным P/NAV. CAPM/WACC для золотодобычи НЕ использовать: бета сектора около нуля или отрицательная.
++2. **Локальный контур (RUB, для российского инвестора).** Кривая ОФЗ (`ofz_1y/3y/5y/10y`) плюс премии. Дисконтируется RUB-поток (FCF, переведённый по курсу периода). Объясняет локальный дисконт.
+ 
+ Соответствие полям `ModelRun`: `discount_rate` — индустриальный контур, `wacc` — локальный (см. SKILL `gold-forecast-session`, шаг 6).
+ 
+ ## 6. Price deck: три контура
+ 
+ | Deck | Описание |
+ |---|---|
+ | `spot_flat` | Спот, без изменения на весь LOM |
+ | `consensus_lt` | Долгосрочный консенсус. Якорь системно ниже спота: Scotia $2 600 с 2029, BMO $3 000 (ориентиры rev.2) |
+ | `own_scenario` | Собственный сценарий из `gold_scenario`. Долгосрочный хвост обязан сходиться к обоснованной LT-оценке |
+diff --git a/skills/gold-forecast-session/SKILL.md b/skills/gold-forecast-session/SKILL.md
+index b24395f..4d1d736 100644
+--- a/skills/gold-forecast-session/SKILL.md
++++ b/skills/gold-forecast-session/SKILL.md
+@@ -73,23 +73,24 @@ LIMIT 20
+ - Базовая сетка Q4-2026 из rev.2 (ARCHITECTURE §6.4): bull 4 600–5 000 (25%), base 4 000–4 600 (40%), bear 3 750–4 050 (35%). Отклонения от базы обосновать в `comment`.
+ - Вероятности нормировать к 100. Сумма должна быть в пределах 100 ± 0.1, иначе ingest вернёт 400. Ключи `probabilities` — ровно `bull`, `base`, `bear` (совпадают с именами блоков `gold_scenario`).
+ - Согласование с `regime_states` (HMM): витрины в MCP нет. Согласовать вручную по статье и отметить в `comment`.
+ - Горизонт — одна из форм: `Q4-2026`, `YE-2026`, `2026`, `2026-12-31`.
+ 
+ ## Шаг 5. NAV Полюса
+ 
+ Полный LOM-DCF по методологии rev.2 (см. скилл `dcf-methodology`) требует данных по активам (`mine_plans`, AISC, capex, чистый долг, число акций). В MCP этих данных нет.
+ 
+ - До фазы 3 считать упрощённо: AISC × production. Формула: `FCF_t = Production_t × (Gold_t − AISC_t) − НДПИ_t`, где `НДПИ_t = база + 10% × max(Gold_t − 1900, 0)`. NAV — сумма дисконтированных FCF минус чистый долг, в расчёте на акцию.
++- **Валюты.** Gold, AISC и FCF_t считаются в USD (Production × (Gold − AISC) − НДПИ, USD/oz и USD). Перевод в RUB — для каждого периода t по курсу `usdrub_path` с теми же ключами горизонта (например `Q4-2026`, `2027`), что и в `gold_scenario.horizon`. Если курса на период нет, период не считается: не подставлять последний известный курс молча, а отметить в `comment`. Чистый долг (NetDebt) — в RUB. NAV на акцию — в RUB на акцию (`nav_per_share`, `nav_bull`, `nav_base`, `nav_bear`).
+ - Параметры (production по годам, AISC_base, NetDebt, число акций) — от пользователя. Если их нет в сессии, остановиться на этом шаге и спросить. Не записывать NAV, который не считался.
+ - В `comment` обязательно написать: «NAV упрощённый: AISC × production, фаза 3 не готова».
+-- `market_price = plzl_close` (дата указывается в `comment`). `upside_pct = (nav_per_share / market_price − 1) × 100`.
++- `market_price = plzl_close` в RUB за акцию (дата указывается в `comment`). `upside_pct = (nav_per_share / market_price − 1) × 100`, в процентах (пример: NAV 12500, цена 6800 → 83.8, как в `ingest/server_test.go`). Обе величины в RUB, поэтому отношение безразмерное.
+ - Один run = одна пара `price_deck` + ставка. Поле `price_deck` одно на run. Поэтому `spot_flat` и `consensus_lt` записываются отдельными run'ами (если пользователь их просит), а результаты остальных сочетаний пишутся в `comment`.
+ 
+ ## Шаг 6. Запись прогноза
+ 
+ **run_id**: сгенерировать UUID v4 один раз на сессию, до первого POST. При повторе использовать тот же UUID, чтобы не создать дубль.
+ 
+ **Формат записи** — фиксированный JSON-шаблон. Поля и теги совпадают с `ModelRun` в `ingest/model_run.go`. Лишних полей не добавлять.
+ 
+ ```json
+ {
+@@ -117,21 +118,21 @@ LIMIT 20
+ }
+ ```
+ 
+ Значения в шаблоне — пример формата, их нужно заменить расчётом этой сессии.
+ 
+ Допустимые значения:
+ - `trigger_type`: `calendar`, `news`, `manual`.
+ - `price_deck`: `spot_flat`, `consensus_lt`, `own_scenario`.
+ - `discount_rate`: индустриальная ставка, доля (например 0.09 = 5% real USD + премия). Локальную ОФЗ-ставку не класть сюда.
+ - `wacc`: локальная ОФЗ-ставка, доля. WACC/CAPM в rev.2 не применяются. Имя поля историческое; значение явно пояснить в `comment`.
+-- `usdrub_path`: ключ — горизонт, значение — курс.
++- `usdrub_path`: ключи — горизонты/периоды (те же, что в `gold_scenario.horizon`), значения — курс RUB за USD. По нему переводятся FCF из USD в RUB.
+ - `probabilities`: ровно `bull`, `base`, `bear`, сумма 100 ± 0.1.
+ 
+ **Отправка** (переменные задаются в окружении, в команде не пишутся):
+ 
+ ```bash
+ curl -sS -X POST "$GOLD_NAV_INGEST_URL/v1/model_run" \
+   -H "Authorization: Bearer $GOLD_NAV_INGEST_TOKEN" \
+   -H "Content-Type: application/json" \
+   --data-binary @run.json
+ ```

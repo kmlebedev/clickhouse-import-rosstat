@@ -1,0 +1,562 @@
+# Review package: 6535c25..HEAD
+
+## Commits
+5a0f4d2 craw: tell republication drift from real check gaps
+
+## Files changed
+ craw/gost.go      | 154 +++++++++++++++++++++++++++++++++++++++++--
+ craw/gost_test.go | 193 ++++++++++++++++++++++++++++++++++++++++++++++++++++--
+ 2 files changed, 334 insertions(+), 13 deletions(-)
+
+## Diff
+diff --git a/craw/gost.go b/craw/gost.go
+index 5dba1c2..d046130 100644
+--- a/craw/gost.go
++++ b/craw/gost.go
+@@ -81,20 +81,31 @@ const (
+ 	gostLegacyQuery = "SELECT count() FROM " + gostTable + " WHERE publication_date = toDate('1970-01-01')"
+ 
+ 	// gostCountersQuery — счётчики таблицы по дню публикации для check: одним запросом на всё
+ 	// окно (иначе сверка 4000 дней сделала бы 4000 запросов к базе). uniqExact, а не count():
+ 	// ключ ReplacingMergeTree — (mark, type, date, certificate_number), и изменение сертификата
+ 	// даёт вторую строку с тем же номером — считать надо уникальные номера, иначе check видел бы
+ 	// дыру там, где её нет. FINAL — по определению ReplacingMergeTree: без него вытесненные
+ 	// копии строк считались бы дважды.
+ 	gostCountersQuery = "SELECT publication_date, uniqExact(certificate_number) FROM " + gostTable + " FINAL WHERE publication_date BETWEEN ? AND ? GROUP BY publication_date"
+ 
++	// gostDayNumbersQuery — номера таблицы, помеченные днём публикации: ими проверяется, что
++	// каждый номер дневного среза источника лежит в таблице именно этим днём. Один запрос на день
++	// расхождения (совпавшие дни закрываются счётчиком).
++	gostDayNumbersQuery = "SELECT certificate_number FROM " + gostTable + " FINAL WHERE publication_date = ?"
++
++	// gostNumbersQuery — какие из переданных номеров есть в таблице вообще, без привязки к дню
++	// публикации: ключ ReplacingMergeTree — (mark, type, date, certificate_number) — не хранит
++	// publication_date, поэтому перепубликованный документ лежит под более поздним днём. Список
++	// приходит одним аргументом-массивом: ? разворачивает драйвер.
++	gostNumbersQuery = "SELECT certificate_number FROM " + gostTable + " FINAL WHERE certificate_number IN (?)"
++
+ 	// gostInsert — запись дня. Порядок колонок — контракт с порядком Append в gostWriteDay
+ 	// и с порядком колонок DDL.
+ 	gostInsert = "INSERT INTO " + gostTable + " (mark, type, date, certificate_number, ecoclass, enginetrademark, yearofmanufacturing, nameofmanufacturer, uid, publication_date)"
+ )
+ 
+ // gostTableDdl — копия канонического DDL (ARCHITECTURE.md §6.2, спека §«Схема и миграция»);
+ // копии обязаны совпадать, как у macro_series и news_events. Существующая в dev-БД таблица
+ // создана с тем же ORDER BY, поэтому CREATE … IF NOT EXISTS её не пересоздаёт.
+ const gostTableDdl = `CREATE TABLE IF NOT EXISTS ` + gostTable + ` (
+ 		  mark LowCardinality(String)                  -- марка ТС (product)
+@@ -414,37 +425,44 @@ func gostRunDays(ctx context.Context, conn driver.Conn, api *gostAPI, days []tim
+ 	}
+ 	if len(failed) > 0 {
+ 		return total, fmt.Errorf("%s: не прочитаны дни (%d): %s", gostTable, len(failed), strings.Join(failed, "; "))
+ 	}
+ 	return total, nil
+ }
+ 
+ // gostCheckDays сверяет полноту окна, не записывая ничего: по каждому дню count ручки против
+ // uniqExact(certificate_number) таблицы по дню публикации.
+ //
+-// Совпавшие счётчики закрывают день одним запросом. Расхождение — ещё не дыра: ручка ищет
+-// текстом, и в count попадают документы, чья дата публикации на самом деле другая. Поэтому при
+-// расхождении день выкачивается целиком и сравнивается длина среза после клиентского фильтра:
+-// сошлась — это текстовый шум (строка отчёта), не сошлась — дыра (ошибка прогона). Так
+-// «день не дочитан» и «шум» перестают быть неразличимыми.
++// Совпавшие счётчики закрывают день одним запросом. Расхождение — ещё не дыра, и разбирается по
++// номерам в три шага. Сначала день выкачивается целиком: сошлась длина среза после клиентского
++// фильтра — это текстовый шум ручки, которая ищет дату в любом поле документа. Не сошлась —
++// номера среза сверяются с номерами таблицы этого дня публикации: отсутствующих нет — расхождения
++// нет. Оставшиеся проверяются по таблице вообще: ключ не хранит publication_date, поэтому
++// документ, перепубликованный позже, лежит в таблице под более поздним днём. Такой номер —
++// перепубликация (строка отчёта и счётчик, не ошибка); номера, которого в таблице нет вовсе, —
++// настоящий пропуск и ошибка прогона.
+ func gostCheckDays(ctx context.Context, conn driver.Conn, api *gostAPI, days []time.Time) (checked int64, err error) {
+ 	if len(days) == 0 {
+ 		return 0, fmt.Errorf("%s: check без дней: пустое окно", gostTable)
+ 	}
+ 	counters, err := gostStoredDayCounts(ctx, conn, days[0], days[len(days)-1])
+ 	if err != nil {
+ 		return 0, err
+ 	}
+ 
+ 	var (
+ 		problems []string
+ 		gaps     int
++		// repub — счётчик перепубликаций в сводке: документы (номера), найденные в таблице под
++		// другой датой публикации. День с перепубликациями, но без настоящих пропусков в дыры не
++		// идёт: каждый его сертификат в таблице есть.
++		repub int
+ 	)
+ 	for i, day := range days {
+ 		if i > 0 {
+ 			time.Sleep(gostRequestGap)
+ 		}
+ 		label := day.Format(gostDateLayout)
+ 
+ 		apiCount, cerr := api.dayCount(ctx, day)
+ 		if cerr != nil {
+ 			log.Errorf("%s: check: день %s: count ручки не прочитан: %v", gostTable, label, cerr)
+@@ -467,25 +485,53 @@ func gostCheckDays(ctx context.Context, conn driver.Conn, api *gostAPI, days []t
+ 		slice, derr := api.day(ctx, day)
+ 		if derr != nil {
+ 			problems = append(problems, fmt.Sprintf("%s: день не дочитан: %v", label, derr))
+ 			continue
+ 		}
+ 		if len(slice.Rows) == int(stored) {
+ 			log.Infof("%s: check: %s: шум: %d → %d (в таблице %d) — дыр нет",
+ 				gostTable, label, apiCount, len(slice.Rows), stored)
+ 			continue
+ 		}
++
++		dayNumbers, nerr := gostStoredDayNumbers(ctx, conn, day)
++		if nerr != nil {
++			problems = append(problems, fmt.Sprintf("%s: номера таблицы по дню публикации не прочитаны: %v", label, nerr))
++			continue
++		}
++		missing := gostMissingNumbers(slice.Rows, dayNumbers)
++		if len(missing) == 0 {
++			log.Infof("%s: check: %s: %d против %d — все номера дневного среза есть в таблице, дыр нет",
++				gostTable, label, len(slice.Rows), stored)
++			continue
++		}
++
++		known, kerr := gostKnownNumbers(ctx, conn, missing)
++		if kerr != nil {
++			problems = append(problems, fmt.Sprintf("%s: номера таблицы не прочитаны: %v", label, kerr))
++			continue
++		}
++		realMissing, drifted := gostSplitDrift(missing, known)
++		if len(drifted) > 0 {
++			repub += len(drifted)
++			log.Warnf("%s: check: день %s: %d документов перепубликованы под другой датой публикации (например, %s), реальных пропусков %d",
++				gostTable, label, len(drifted), drifted[0], len(realMissing))
++		}
++		if len(realMissing) == 0 {
++			continue
++		}
+ 		gaps++
+-		problems = append(problems, fmt.Sprintf("%s: в таблице %d против %d в дне источника", label, stored, len(slice.Rows)))
++		problems = append(problems, fmt.Sprintf("%s: в таблице %d против %d в дне источника, реальных пропусков %d: %s",
++			label, stored, len(slice.Rows), len(realMissing), gostNumbersHint(realMissing)))
+ 	}
+ 
+-	log.Infof("%s: check: проверено %d дней, дыр %d", gostTable, checked, gaps)
++	log.Infof("%s: check: проверено %d дней, дыр %d, перепубликаций %d", gostTable, checked, gaps, repub)
+ 	if len(problems) > 0 {
+ 		return checked, fmt.Errorf("%s: check: расхождения (%d): %s", gostTable, len(problems), strings.Join(problems, "; "))
+ 	}
+ 	return checked, nil
+ }
+ 
+ // gostStoredDayCounts читает число уникальных номеров по дню публикации одним запросом на всё
+ // окно. Дни без строк в map отсутствуют (GROUP BY их не отдаёт) — для сверки это ноль. Обрыв
+ // обхода строк (rows.Err) обязан быть виден: молча вернувшаяся половина счётчиков объявила бы
+ // дырами дни, которые на самом деле есть.
+@@ -507,20 +553,114 @@ func gostStoredDayCounts(ctx context.Context, conn driver.Conn, from, to time.Ti
+ 			return nil, fmt.Errorf("%s: строка счётчиков не прочитана: %w", gostTable, err)
+ 		}
+ 		counts[day.Format(gostDateLayout)] = count
+ 	}
+ 	if err = rows.Err(); err != nil {
+ 		return nil, fmt.Errorf("%s: счётчики таблицы не дочитаны: %w", gostTable, err)
+ 	}
+ 	return counts, nil
+ }
+ 
++// gostStoredDayNumbers читает номера таблицы, помеченные днём публикации day: ими проверяется,
++// что каждый номер дневного среза источника лежит в таблице именно этим днём. Один запрос на
++// день расхождения (совпавшие дни закрываются счётчиком и сюда не доходят). Обрыв обхода
++// (rows.Err) обязан быть виден: неполный набор объявил бы настоящим пропуском номер, который в
++// таблице есть.
++func gostStoredDayNumbers(ctx context.Context, conn driver.Conn, day time.Time) (map[string]struct{}, error) {
++	rows, err := conn.Query(ctx, gostDayNumbersQuery, day)
++	if err != nil {
++		return nil, fmt.Errorf("%s: номера дня публикации %s не прочитаны: %w", gostTable, day.Format(gostDateLayout), err)
++	}
++	defer func() { _ = rows.Close() }()
++
++	numbers := make(map[string]struct{})
++	for rows.Next() {
++		var number string
++		if err = rows.Scan(&number); err != nil {
++			return nil, fmt.Errorf("%s: строка номеров дня %s не прочитана: %w", gostTable, day.Format(gostDateLayout), err)
++		}
++		numbers[number] = struct{}{}
++	}
++	if err = rows.Err(); err != nil {
++		return nil, fmt.Errorf("%s: номера дня %s не дочитаны: %w", gostTable, day.Format(gostDateLayout), err)
++	}
++	return numbers, nil
++}
++
++// gostKnownNumbers читает, какие из номеров есть в таблице вообще, без привязки к дню публикации:
++// этим перепубликованный документ отличается от настоящего пропуска. Запрос один, и список мал —
++// только номера, отсутствующие в дне публикации.
++func gostKnownNumbers(ctx context.Context, conn driver.Conn, numbers []string) (map[string]struct{}, error) {
++	rows, err := conn.Query(ctx, gostNumbersQuery, numbers)
++	if err != nil {
++		return nil, fmt.Errorf("%s: номера таблицы не прочитаны: %w", gostTable, err)
++	}
++	defer func() { _ = rows.Close() }()
++
++	known := make(map[string]struct{}, len(numbers))
++	for rows.Next() {
++		var number string
++		if err = rows.Scan(&number); err != nil {
++			return nil, fmt.Errorf("%s: строка номеров таблицы не прочитана: %w", gostTable, err)
++		}
++		known[number] = struct{}{}
++	}
++	if err = rows.Err(); err != nil {
++		return nil, fmt.Errorf("%s: номера таблицы не дочитаны: %w", gostTable, err)
++	}
++	return known, nil
++}
++
++// gostMissingNumbers — номера дневного среза, которых нет в множестве номеров таблицы. Порядок
++// среза сохраняется, повторы схлопываются: ключ таблицы — по номеру, и звучать в отчёте он должен
++// один раз.
++func gostMissingNumbers(rows []gostRow, tableNumbers map[string]struct{}) []string {
++	seen := make(map[string]struct{}, len(rows))
++	var missing []string
++	for _, row := range rows {
++		number := row.CertificateNumber
++		if _, ok := tableNumbers[number]; ok {
++			continue
++		}
++		if _, ok := seen[number]; ok {
++			continue
++		}
++		seen[number] = struct{}{}
++		missing = append(missing, number)
++	}
++	return missing
++}
++
++// gostSplitDrift делит отсутствующие в дне публикации номера на перепубликованные (номер в таблице
++// есть — под другой датой публикации) и настоящие пропуски (номера нет нигде). Порядок номеров
++// сохраняется: перечисление в отчёте стабильно.
++func gostSplitDrift(missing []string, known map[string]struct{}) (realMissing, republished []string) {
++	for _, number := range missing {
++		if _, ok := known[number]; ok {
++			republished = append(republished, number)
++			continue
++		}
++		realMissing = append(realMissing, number)
++	}
++	return realMissing, republished
++}
++
++// gostNumbersHint — перечисление номеров для отчёта: первые пять и остаток счётчиком, чтобы
++// строка ошибки на дне с сотнями настоящих пропусков оставалась читаемой.
++func gostNumbersHint(numbers []string) string {
++	const shown = 5
++	if len(numbers) <= shown {
++		return strings.Join(numbers, ", ")
++	}
++	return fmt.Sprintf("%s и ещё %d", strings.Join(numbers[:shown], ", "), len(numbers)-shown)
++}
++
+ // gostImporter — импортёр реестра СБКТС в режимах since/full/check.
+ type gostImporter struct{}
+ 
+ func (s *gostImporter) Name() string { return gostTable }
+ 
+ // Import — один прогон. Порядок шагов — часть контракта, а не стиль:
+ //  1. конфиг из окружения: опечатка в режиме, дате или хвосте падает до любого обращения к conn;
+ //  2. DDL и идемпотентная миграция: импортёр обязан отработать и на чистой базе, и на живой
+ //     четырёхколоночной таблице dev-БД;
+ //  3. публикация витрин v_gost_* — в пишущих режимах (since/full) и до первого обращения к API:
+diff --git a/craw/gost_test.go b/craw/gost_test.go
+index 83b981a..3e920a6 100644
+--- a/craw/gost_test.go
++++ b/craw/gost_test.go
+@@ -692,20 +692,132 @@ func TestGostCheckDaysTextNoiseNotGap(t *testing.T) {
+ 		t.Errorf("проверено дней %d, ожидался 1", checked)
+ 	}
+ 	if !strings.Contains(logs.String(), "шум: 7 → 5") {
+ 		t.Errorf("отчёт не различает текстовый шум: %s", logs.String())
+ 	}
+ 	if !strings.Contains(logs.String(), "дыр 0") {
+ 		t.Errorf("сводка не сообщает об отсутствии дыр: %s", logs.String())
+ 	}
+ }
+ 
++// gostCertNumber — номер i-го документа дня: тем же форматом его собирает gostDayDoc, и по нему
++// фикстуры фейковой таблицы (dayNums/numbers) стыкуются с дневным срезом источника.
++func gostCertNumber(id int) string { return fmt.Sprintf("ТС RU А-JP.ОМ80.%05d", id) }
++
++// TestGostCheckDaysRepublicationNotGap — расхождение счётчиков объясняется перепубликацией:
++// документ лежит в таблице, но под более поздней датой публикации, потому что ключ таблицы её не
++// хранит. Такой день — не дыра: он виден строкой отчёта и счётчиком перепубликаций.
++func TestGostCheckDaysRepublicationNotGap(t *testing.T) {
++	days := []time.Time{gostTime(t, "2026-10-09")}
++	ta := gostNewTestAPI(t, gostDayServer(t, map[string]gostDaySpec{"09.10.2026": {Count: 5}}))
++	conn := &gostFakeConn{
++		counters: map[string]uint64{"2026-10-09": 3},
++		dayNums: map[string][]string{"2026-10-09": {
++			gostCertNumber(1), gostCertNumber(2), gostCertNumber(3),
++		}},
++		// Номера 4 и 5 в таблице есть, но помечены другой (более поздней) датой публикации.
++		numbers: map[string]bool{gostCertNumber(4): true, gostCertNumber(5): true},
++	}
++	logs := gostCaptureLog(t)
++
++	checked, err := gostCheckDays(context.Background(), conn, ta.api, days)
++	if err != nil {
++		t.Fatalf("перепубликация объявлена дырой: %v", err)
++	}
++	if checked != 1 {
++		t.Errorf("проверено дней %d, ожидался 1", checked)
++	}
++	for _, want := range []string{
++		"2 документов перепубликованы под другой датой публикации",
++		gostCertNumber(4),
++		"реальных пропусков 0",
++		"дыр 0, перепубликаций 2",
++	} {
++		if !strings.Contains(logs.String(), want) {
++			t.Errorf("отчёт о перепубликации без %q: %s", want, logs.String())
++		}
++	}
++}
++
++// TestGostCheckDaysAllNumbersStoredNoGap — каждый номер дневного среза в таблице этого дня
++// публикации есть, хотя счётчик таблицы больше среза (ручка часть своих документов текстом не
++// нашла): расхождения нет, и перепубликаций в этот день тоже нет.
++func TestGostCheckDaysAllNumbersStoredNoGap(t *testing.T) {
++	days := []time.Time{gostTime(t, "2026-10-09")}
++	ta := gostNewTestAPI(t, gostDayServer(t, map[string]gostDaySpec{"09.10.2026": {Count: 5}}))
++	conn := &gostFakeConn{
++		counters: map[string]uint64{"2026-10-09": 7},
++		dayNums: map[string][]string{"2026-10-09": {
++			gostCertNumber(1), gostCertNumber(2), gostCertNumber(3), gostCertNumber(4),
++			gostCertNumber(5), gostCertNumber(6), gostCertNumber(7),
++		}},
++	}
++	logs := gostCaptureLog(t)
++
++	checked, err := gostCheckDays(context.Background(), conn, ta.api, days)
++	if err != nil {
++		t.Fatalf("полный день объявлен расхождением: %v", err)
++	}
++	if checked != 1 {
++		t.Errorf("проверено дней %d, ожидался 1", checked)
++	}
++	if !strings.Contains(logs.String(), "все номера дневного среза есть в таблице") {
++		t.Errorf("отчёт не отмечает, что все номера дня в таблице: %s", logs.String())
++	}
++	if !strings.Contains(logs.String(), "дыр 0, перепубликаций 0") {
++		t.Errorf("сводка не названа: %s", logs.String())
++	}
++}
++
++// TestGostCheckDaysRealGapAfterRepublication — часть отсутствующих номеров дня в таблице есть под
++// другой датой (перепубликация), а одного нет вовсе: день обязан попасть в ошибку, и в списке
++// пропусков должен стоять только настоящий пропуск. Счётчик перепубликаций при этом тоже растёт.
++func TestGostCheckDaysRealGapAfterRepublication(t *testing.T) {
++	days := []time.Time{gostTime(t, "2026-10-09")}
++	ta := gostNewTestAPI(t, gostDayServer(t, map[string]gostDaySpec{"09.10.2026": {Count: 5}}))
++	conn := &gostFakeConn{
++		counters: map[string]uint64{"2026-10-09": 3},
++		dayNums: map[string][]string{"2026-10-09": {
++			gostCertNumber(1), gostCertNumber(2), gostCertNumber(3),
++		}},
++		// Номер 4 — перепубликован, номера 5 в таблице нет вовсе.
++		numbers: map[string]bool{gostCertNumber(4): true},
++	}
++	logs := gostCaptureLog(t)
++
++	checked, err := gostCheckDays(context.Background(), conn, ta.api, days)
++	if err == nil {
++		t.Fatal("настоящий пропуск не стал ошибкой check")
++	}
++	if checked != 1 {
++		t.Errorf("проверено дней %d, ожидался 1", checked)
++	}
++	if !strings.Contains(err.Error(), "2026-10-09") || !strings.Contains(err.Error(), gostCertNumber(5)) {
++		t.Errorf("ошибка %q не называет день и настоящий пропуск %s", err, gostCertNumber(5))
++	}
++	if !strings.Contains(err.Error(), "реальных пропусков 1") {
++		t.Errorf("ошибка %q не называет число настоящих пропусков", err)
++	}
++	if strings.Contains(err.Error(), gostCertNumber(4)) {
++		t.Errorf("перепубликованный номер объявлен пропуском: %q", err)
++	}
++	for _, want := range []string{
++		"перепубликованы под другой датой публикации",
++		"реальных пропусков 1",
++		"дыр 1, перепубликаций 1",
++	} {
++		if !strings.Contains(logs.String(), want) {
++			t.Errorf("отчёт без %q: %s", want, logs.String())
++		}
++	}
++}
++
+ func TestGostCheckDaysSkippedDayFails(t *testing.T) {
+ 	days := []time.Time{gostTime(t, "2026-10-08"), gostTime(t, "2026-10-09")}
+ 	ta := gostNewTestAPI(t, gostDayServer(t, map[string]gostDaySpec{
+ 		"08.10.2026": {Count: 5},
+ 		"09.10.2026": {Status: http.StatusInternalServerError},
+ 	}))
+ 	conn := &gostFakeConn{counters: map[string]uint64{"2026-10-08": 5}}
+ 	logs := gostCaptureLog(t)
+ 
+ 	checked, err := gostCheckDays(context.Background(), conn, ta.api, days)
+@@ -980,32 +1092,35 @@ func (r *gostFakeRow) Scan(dest ...any) error {
+ 	if r.err != nil {
+ 		return r.err
+ 	}
+ 	return r.scan(dest...)
+ }
+ 
+ func (r *gostFakeRow) Err() error { return r.err }
+ 
+ // gostFakeConn — фейковое соединение импортёра: встраивание driver.Conn оставляет
+ // неиспользуемые методы nil (паника, если тест зайдёт дальше сценария), а переопределены ровно
+-// четыре метода прогона: Exec (DDL), QueryRow (якорь since и легаси-строки), Query (счётчики
+-// check) и PrepareBatch (запись дня). Ответы выбираются по виду запроса, а не по номеру вызова.
++// четыре метода прогона: Exec (DDL), QueryRow (якорь since и легаси-строки), Query (счётчики и
++// номера check) и PrepareBatch (запись дня). Ответы выбираются по виду запроса, а не по номеру
++// вызова.
+ type gostFakeConn struct {
+ 	driver.Conn
+ 	mu       sync.Mutex
+ 	calls    []string
+ 	maxDate  *time.Time // NULL — пустая таблица: строк с настоящей датой выдачи нет
+ 	maxPub   *time.Time // NULL — настоящих publication_date нет (только дефолт 1970-01-01)
+ 	legacy   uint64
+-	counters map[string]uint64 // счётчики uniqExact(certificate_number) по дню publication_date
+-	queryErr error             // Query/QueryRow вернут её вместо строк
+-	rowsErr  error             // её отдаст rows.Err()
++	counters map[string]uint64   // счётчики uniqExact(certificate_number) по дню publication_date
++	dayNums  map[string][]string // номера таблицы по дню publication_date (запрос номеров дня)
++	numbers  map[string]bool     // номера, встречающиеся в таблице вообще (запрос перепубликаций)
++	queryErr error               // Query/QueryRow вернут её вместо строк
++	rowsErr  error               // её отдаст rows.Err()
+ 	batches  []*gostFakeBatch
+ }
+ 
+ func (c *gostFakeConn) record(call string) {
+ 	c.mu.Lock()
+ 	defer c.mu.Unlock()
+ 	c.calls = append(c.calls, call)
+ }
+ 
+ func (c *gostFakeConn) callList() []string {
+@@ -1032,27 +1147,48 @@ func (c *gostFakeConn) PrepareBatch(_ context.Context, query string, _ ...driver
+ 	c.batches = append(c.batches, batch)
+ 	c.mu.Unlock()
+ 	return batch, nil
+ }
+ 
+ func (c *gostFakeConn) Query(_ context.Context, query string, args ...any) (driver.Rows, error) {
+ 	c.record("query: " + query)
+ 	if c.queryErr != nil {
+ 		return nil, c.queryErr
+ 	}
+-	if strings.Contains(query, "uniqExact(certificate_number)") {
++	switch {
++	case strings.Contains(query, "uniqExact(certificate_number)"):
+ 		var from, to time.Time
+ 		if len(args) == 2 {
+ 			from, _ = args[0].(time.Time)
+ 			to, _ = args[1].(time.Time)
+ 		}
+ 		return &gostFakeRows{setters: gostCounterSetters(c.counters, from, to), err: c.rowsErr}, nil
++	case strings.Contains(query, "WHERE publication_date = ?"):
++		// Номера дня публикации: аргумент — сам день, набор — из dayNums.
++		if len(args) != 1 {
++			return nil, fmt.Errorf("фейковый запрос номеров дня: аргументов %d (want 1)", len(args))
++		}
++		day, ok := args[0].(time.Time)
++		if !ok {
++			return nil, fmt.Errorf("фейковый запрос номеров дня: аргумент %T (want time.Time)", args[0])
++		}
++		return &gostFakeRows{setters: gostNumberSetters(c.dayNums[day.Format(gostDateLayout)]), err: c.rowsErr}, nil
++	case strings.Contains(query, "certificate_number IN (?)"):
++		// Номера, встречающиеся в таблице вообще: список приходит одним аргументом-срезом.
++		if len(args) != 1 {
++			return nil, fmt.Errorf("фейковый запрос номеров таблицы: аргументов %d (want 1)", len(args))
++		}
++		numbers, ok := args[0].([]string)
++		if !ok {
++			return nil, fmt.Errorf("фейковый запрос номеров таблицы: аргумент %T (want []string)", args[0])
++		}
++		return &gostFakeRows{setters: gostKnownNumberSetters(c.numbers, numbers), err: c.rowsErr}, nil
+ 	}
+ 	return nil, fmt.Errorf("gostFakeConn: неожиданный запрос %q", query)
+ }
+ 
+ func (c *gostFakeConn) QueryRow(_ context.Context, query string, _ ...any) driver.Row {
+ 	c.record("queryrow: " + query)
+ 	switch {
+ 	case strings.Contains(query, "maxOrNull(date)"):
+ 		return &gostFakeRow{err: c.queryErr, scan: func(dest ...any) error {
+ 			if len(dest) != 2 {
+@@ -1110,20 +1246,65 @@ func gostCounterSetters(counters map[string]uint64, from, to time.Time) []func(d
+ 			if !ok {
+ 				return fmt.Errorf("фейковые счётчики: приёмник uniqExact %T (want *uint64)", dest[1])
+ 			}
+ 			*d, *n = day, count
+ 			return nil
+ 		})
+ 	}
+ 	return setters
+ }
+ 
++// gostNumberSetters — строки ответа запроса номеров дня публикации: по одному *string на номер.
++func gostNumberSetters(numbers []string) []func(dest ...any) error {
++	setters := make([]func(dest ...any) error, 0, len(numbers))
++	for _, number := range numbers {
++		// Переменные цикла в Go ≥1.22 у каждой итерации свои: замыкание захватывает их
++		// безопасно, копия не нужна.
++		setters = append(setters, func(dest ...any) error {
++			if len(dest) != 1 {
++				return fmt.Errorf("фейковые номера дня: приёмников %d (want 1)", len(dest))
++			}
++			n, ok := dest[0].(*string)
++			if !ok {
++				return fmt.Errorf("фейковые номера дня: приёмник certificate_number %T (want *string)", dest[0])
++			}
++			*n = number
++			return nil
++		})
++	}
++	return setters
++}
++
++// gostKnownNumberSetters — строки ответа запроса «какие номера есть в таблице вообще»: только те
++// из запрошенных, что лежат в множестве таблицы, в порядке запроса (порядок строк ответа в
++// ClickHouse не гарантирован, и тест не должен зависеть от него).
++func gostKnownNumberSetters(known map[string]bool, numbers []string) []func(dest ...any) error {
++	setters := make([]func(dest ...any) error, 0, len(numbers))
++	for _, number := range numbers {
++		if !known[number] {
++			continue
++		}
++		setters = append(setters, func(dest ...any) error {
++			if len(dest) != 1 {
++				return fmt.Errorf("фейковые номера таблицы: приёмников %d (want 1)", len(dest))
++			}
++			n, ok := dest[0].(*string)
++			if !ok {
++				return fmt.Errorf("фейковые номера таблицы: приёмник certificate_number %T (want *string)", dest[0])
++			}
++			*n = number
++			return nil
++		})
++	}
++	return setters
++}
++
+ // gostDaySpec — форма ответа ручки на день: Count — сколько совпадений ручка называет (count
+ // ответа), Noise — сколько документов из них пришли с чужой, но разбираемой датой публикации
+ // (в count они входят, клиентский фильтр дня их отбрасывает), Invalid — сколько документов
+ // не разбираются вовсе (нет даты выдачи), Status — статус вместо ответа.
+ type gostDaySpec struct {
+ 	Count   int
+ 	Noise   int
+ 	Invalid int
+ 	Status  int
+ }

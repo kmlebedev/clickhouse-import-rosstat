@@ -1,0 +1,610 @@
+# Review package: ebc2ef1..43539ad
+
+## Commits
+43539ad fix archive staging env wording and surface api error snippets
+
+## Files changed
+ ARCHITECTURE.md                                    |   2 +-
+ README.md                                          |   2 +-
+ archive/yandex.go                                  |  61 +++++++++--
+ archive/yandex_test.go                             | 122 +++++++++++++++++----
+ .../specs/2026-10-14-source-file-archive-design.md |   2 +-
+ 5 files changed, 155 insertions(+), 34 deletions(-)
+
+## Diff
+diff --git a/ARCHITECTURE.md b/ARCHITECTURE.md
+index 2cb0dd9..80a4457 100644
+--- a/ARCHITECTURE.md
++++ b/ARCHITECTURE.md
+@@ -243,21 +243,21 @@ func init() {
+ | `ARCHIVE_LOCAL_DIR` | Корень `LocalStore` (dev-прогон, приёмка, тесты); обязателен при `ARCHIVE_BACKEND=local` |
+ | `ARCHIVE_ACTION`, `ARCHIVE_REGISTRY_OUT` | Режим одного действия: `registry` — скачать `registry.jsonl` из хранилища в git-зеркало и выйти **до** подключения к ClickHouse (цель `make archive-registry`); неизвестное значение — ошибка. `ARCHIVE_REGISTRY_OUT` переопределяет путь зеркала, по умолчанию `docs/archive/registry.jsonl` |
+ | `LLM_BASE_URL`, `LLM_API_KEY`, `MP_SUMMARY_LLM_MODEL` | LLM-слой разметки каналов `cbr_mp_summary`: base URL Anthropic-совместимого API (официальный SDK `anthropic-sdk-go` дописывает путь `v1/messages`; первичный провайдер — DeepSeek, у него такой base — `https://api.deepseek.com/anthropic`), ключ и имя модели. Обязательны все три; пустая любая — warn и деградация до regex-слоя (импорт не падает, догон следующим прогоном, когда владелец дополнит env-файл). Значения — **только в окружении** (`~/.config/rosstat/env`), в репозиторий, логи и тексты ошибок не попадают: SDK шлёт ключ заголовком `x-api-key`, а не в URL/query. Фактическое имя модели пишется в данные (колонка `model`) — отличить, какой моделью размечен документ, можно запросом |
+ | `INGEST_TOKEN` | Bearer-токен ingest-endpoint (`cmd/ingest`); обязательна для него: пустое значение — выход с ошибкой. Значение только в окружении, в репозитории не хранится |
+ | `INGEST_ADDR` | Адрес HTTP-сервера `cmd/ingest`, по умолчанию `:8081` |
+ | `INGEST_RATE_PER_MIN` | Лимит запросов ingest-endpoint в минуту (token bucket, burst 10); по умолчанию 60; пустое или некорректное значение — 60. Превышение — `429` |
+ | `GRAFANA_TEST_URL`, `GRAFANA_TEST_TOKEN` | Тест-стенд Grafana (`make grafana-deploy-test`, `make grafana-check`): URL по умолчанию `http://localhost:3000`, токен — сервис-аккаунт **Editor**. Токен только в окружении (`~/.config/rosstat/env`), в репозиторий и логи не попадает |
+ | `GRAFANA_STAGING_URL`, `GRAFANA_STAGING_TOKEN` | Staging-стенд Grafana (`make grafana-deploy-staging`): URL по умолчанию `http://localhost:3001` (ssh-туннель на staging), токен — сервис-аккаунт **Editor** на staging |
+ | `GRAFANA_ORG_ID` | org-id инстанса Grafana для `gcx` (on-prem без него отвергается: `missing stacks.default.grafana.org-id`), по умолчанию `1` |
+ 
+-⚠️ **В env-файле из `GOST_*` держат только `GOST_APP_ID`.** Локальный `~/.config/rosstat/env` подключается Makefile через `-include`, а его переменные объявлены с `export` — поэтому значение из файла перекрывает префикс команды, и `GOST_MODE=full make import STAT=gost_vehicle_safety_certificate` молча прочитает режим из файла. Режимные переменные (`GOST_MODE`/`GOST_FROM`/`GOST_TO`/`GOST_SETTLE_DAYS`) передавайте префиксом команды или в `env` шага DAG (как `GOST_MODE=since` в `dagu/craw.yaml`); на staging их не дублируют в `/etc/clickhouse-import-rosstat.env` — там живёт токен (`deploy/staging/clickhouse-import-rosstat.env.example`). **Ловушка та же у архива:** `ARCHIVE_BACKEND` — режимная переменная, в env-файле её не держат (только токен `ARCHIVE_YANDEX_TOKEN`), а бэкенд выбирают аргументом цели: `make import STAT=cbr_m2 ARCHIVE_BACKEND=local ARCHIVE_LOCAL_DIR=build/archive-dev` (README, «Ключи и окружение»).
++⚠️ **В env-файле из `GOST_*` держат только `GOST_APP_ID`.** Локальный `~/.config/rosstat/env` подключается Makefile через `-include`, а его переменные объявлены с `export` — поэтому значение из файла перекрывает префикс команды, и `GOST_MODE=full make import STAT=gost_vehicle_safety_certificate` молча прочитает режим из файла. Режимные переменные (`GOST_MODE`/`GOST_FROM`/`GOST_TO`/`GOST_SETTLE_DAYS`) передавайте префиксом команды или в `env` шага DAG (как `GOST_MODE=since` в `dagu/craw.yaml`); на staging их не дублируют в `/etc/clickhouse-import-rosstat.env` — там живёт токен (`deploy/staging/clickhouse-import-rosstat.env.example`). **Ловушка та же у архива, но только в dev-файле:** в `~/.config/rosstat/env` держат только токен `ARCHIVE_YANDEX_TOKEN`, а `ARCHIVE_BACKEND` туда не пишут — как и `GOST_MODE`, это режимная переменная, и `export` из `-include` перекрыл бы префикс команды; в dev бэкенд выбирают аргументом цели: `make import STAT=cbr_m2 ARCHIVE_BACKEND=local ARCHIVE_LOCAL_DIR=build/archive-dev` (README, «Ключи и окружение»). На staging — наоборот: там команду запускает не человек, а расписание, и `ARCHIVE_BACKEND=yandex` задаётся именно в `/etc/clickhouse-import-rosstat.env` рядом с токеном (файл читает `deploy/staging/dagu.service` через `EnvironmentFile`; образец — `deploy/staging/clickhouse-import-rosstat.env.example`).
+ 
+ ## 6. Целевая архитектура (дорожная карта 2026-Q4)
+ 
+ Контур: **Источники → ClickHouse (сырые + витрины) → MCP (read-only) → Kimi-агент → сценарный прогноз золота → DCF → NAV PLZL → model_runs**. Полная версия: [docs/ROADMAP_DCF_POLYUS.md](docs/ROADMAP_DCF_POLYUS.md). Спека контура прогноза и плагина: [docs/superpowers/specs/2026-10-10-gold-nav-plugin-design.md](docs/superpowers/specs/2026-10-10-gold-nav-plugin-design.md).
+ 
+ Статусы в §6.1–§6.3: **реализован** — есть в коде репозитория; **не реализован** — только в плане, в коде нет.
+ 
+ ### 6.1 Новые импортёры (по приоритету)
+ 
+ | Импортёр | Пакет | Статус | Источник | Метод |
+diff --git a/README.md b/README.md
+index 14dc1d1..d4510c0 100644
+--- a/README.md
++++ b/README.md
+@@ -418,21 +418,21 @@ export CLICKHOUSE_PASSWORD=<kimi_reader-password>
+ **Ловушка:** `ARCHIVE_BACKEND` — режимная переменная, и в `~/.config/rosstat/env` её дублировать нельзя (переменные файла экспортируются и перекрывают префикс команды). Бэкенд выбирается аргументом цели — так приёмка идёт на локальном хранилище, не трогая Диск:
+ 
+ ```bash
+ # приёмка на локальном бэкенде: объект версии и registry.jsonl в build/archive-dev/
+ make import STAT=cbr_m2 ARCHIVE_BACKEND=local ARCHIVE_LOCAL_DIR=build/archive-dev   # повторный прогон → no-op
+ # живой архив на Диске (токен берётся из окружения) и обновление git-зеркала реестра
+ make import STAT=cbr_m2 ARCHIVE_BACKEND=yandex ARCHIVE_YANDEX_DIR=disk:/rosstat-archive
+ make archive-registry ARCHIVE_BACKEND=yandex
+ ```
+ 
+-Токен без одного из scope, отозванный или истёкший даёт `401` (`ErrAuth` — действие дежурного: обновить токен), квота Диска — `403`/`413`/`423`/`507` (`ErrQuota` — освободить место). В обоих случаях импорт данных продолжается, но версия файла в архив не сохраняется, и строка версии не пишется — следующий прогон повторит полный импорт.
++Коды ошибок в логе: `401` (`ErrAuth`) — токен не принят (отозван, истёк или выдан без нужного scope): действие — перевыпустить токен по шагам выше. `403` (`ErrQuota`) — **двоякий**: так Диск отвечает и при нехватке прав у токена (не отданы оба scope, либо архив заведён на `disk:/`, а токен выдан приложению с доступом к `app:/`), и при исчерпанной квоте; к `ErrQuota` сводятся ещё `413` (файл больше лимита), `423` (ресурс занят) и `507` (нет места). Причину различает фрагмент ответа Диска в тексте ошибки (`; ответ Диска: …`): если в нём про права — перевыпускать токен с обоими scope и сверять путь (`disk:/` против `app:/`), если про место — освобождать. Поэтому прежде чем идти освобождать место, прочитайте фрагмент: у `403` без прав места может быть сколько угодно. Импорт данных при любой из этих ошибок не останавливается, но версия файла в архив не сохраняется и строка версии не пишется — следующий прогон повторит полный импорт.
+ 
+ MCP для Kimi (агент читает витрины `v_*`, без записи):
+ 
+ - установить `uv`: `brew install uv`;
+ - создать пользователя и выдать права: `make mcp-user` (берёт `CLICKHOUSE_PASSWORD` из файла окружения, выполняет `sql/mcp_kimi_reader.sql`; пароль в выводе не печатается; повторный запуск не меняет уже созданного пользователя);
+ - записать `~/.kimi-code/mcp.json` (права `600`); пароль в файл не пишется, команда сама подгружает `~/.config/rosstat/env`:
+ 
+ ```json
+ {
+   "mcpServers": {
+diff --git a/archive/yandex.go b/archive/yandex.go
+index 9c06572..d442e41 100644
+--- a/archive/yandex.go
++++ b/archive/yandex.go
+@@ -100,74 +100,80 @@ func (s *YandexDisk) Get(ctx context.Context, key string) ([]byte, error) {
+ 	href, err := s.signedHref(ctx, opDownloadHref, diskPath, "/resources/download",
+ 		url.Values{"path": {diskPath}})
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	body, status, err := s.do(ctx, opDownload, diskPath, http.MethodGet, href, nil, false)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	if status != http.StatusOK {
+-		return nil, statusError(opDownload, diskPath, status)
++		// Тело не передаётся: ответ пришёл от хоста по подписанной ссылке, а её подпись в тексте
++		// ошибки — утечка (statusError).
++		return nil, statusError(opDownload, diskPath, status, nil)
+ 	}
+ 	return body, nil
+ }
+ 
+ // Exists — есть ли версия: GET ресурса отвечает метаданными объекта (200) или «не найдено» (404).
+ // Отдельной ручки «проверить» у Диска нет, но метаданных и достаточно: префлайт спрашивает только
+ // «есть или нет», чтобы не качать файл зря (спека §3.2).
+ func (s *YandexDisk) Exists(ctx context.Context, key string) (bool, error) {
+ 	ctx, cancel := context.WithTimeout(ctx, opTimeout)
+ 	defer cancel()
+ 
+ 	diskPath := s.diskPath(key)
+ 	reqURL := s.apiURL("/resources", url.Values{"path": {diskPath}})
+-	_, status, err := s.do(ctx, opExists, diskPath, http.MethodGet, reqURL, nil, true)
++	body, status, err := s.do(ctx, opExists, diskPath, http.MethodGet, reqURL, nil, true)
+ 	if err != nil {
+ 		return false, err
+ 	}
+ 	switch status {
+ 	case http.StatusOK:
+ 		return true, nil
+ 	case http.StatusNotFound:
+ 		// «Нет объекта» — ответ, а не ошибка: тем же (false, nil) заканчивается LocalStore.Exists,
+ 		// иначе префлайт принимал бы штатный ответ «версии нет» за сбой проверки.
+ 		return false, nil
+ 	}
+-	return false, statusError(opExists, diskPath, status)
++	// body — запрос к API с токеном: тело безопасно для лога и различает причины одного кода (statusError).
++	return false, statusError(opExists, diskPath, status, body)
+ }
+ 
+ // mkdir заводит один каталог. 409 — успех: так Диск отвечает на уже существующую папку, и без
+ // этого второй Put в тот же каталог источника падал бы всегда, то есть архив работал бы ровно один
+ // раз на источник.
+ func (s *YandexDisk) mkdir(ctx context.Context, dir string) error {
+ 	const endpoint = "/resources"
+-	_, status, err := s.do(ctx, opMkdir, dir, http.MethodPut, s.apiURL(endpoint, url.Values{"path": {dir}}), nil, true)
++	body, status, err := s.do(ctx, opMkdir, dir, http.MethodPut, s.apiURL(endpoint, url.Values{"path": {dir}}), nil, true)
+ 	if err != nil {
+ 		return err
+ 	}
+ 	if status != http.StatusCreated && status != http.StatusConflict {
+-		return statusError(opMkdir, dir, status)
++		// body — запрос к API с токеном: по фрагменту ответа дежурный различает «нет прав» и «нет места».
++		return statusError(opMkdir, dir, status, body)
+ 	}
+ 	return nil
+ }
+ 
+ // signedHref спрашивает у ручки ресурсов подписанную ссылку на загрузку или скачивание. Сама ссылка
+ // дальше живёт в локальной переменной: в лог и в тексты ошибок она не попадает — в её query вшито
+ // право на запись/чтение объекта, то есть временный секрет (спека §3.3).
+ func (s *YandexDisk) signedHref(ctx context.Context, op, diskPath, endpoint string, params url.Values) (string, error) {
+ 	body, status, err := s.do(ctx, op, diskPath, http.MethodGet, s.apiURL(endpoint, params), nil, true)
+ 	if err != nil {
+ 		return "", err
+ 	}
+ 	if status != http.StatusOK {
+-		return "", statusError(op, diskPath, status)
++		// body — ответ ручки API, а не хоста по ссылке: href в нём не содержится, и фрагмент помогает
++		// отличить «нет прав» (токен выдан без scope) от квоты (statusError).
++		return "", statusError(op, diskPath, status, body)
+ 	}
+ 	var resp struct {
+ 		Href string `json:"href"`
+ 	}
+ 	if err = json.Unmarshal(body, &resp); err != nil {
+ 		return "", fmt.Errorf("%s %s: разбор ответа: %w", op, diskPath, err)
+ 	}
+ 	// Пустая ссылка — ошибка сразу: запрос на пустой URL дал бы «unsupported protocol scheme», и по
+ 	// такому тексту дежурный не понял бы, что Диск не выдал ссылку.
+ 	if resp.Href == "" {
+@@ -178,21 +184,22 @@ func (s *YandexDisk) signedHref(ctx context.Context, op, diskPath, endpoint stri
+ 
+ // upload кладёт тело на подписанную ссылку. Токен туда не добавляется: ссылка уже авторизована, а
+ // лишний заголовок унёс бы секрет на хост загрузчика. 201 и 202 равноправны — 202 Диск отдаёт,
+ // когда загрузка встаёт в очередь.
+ func (s *YandexDisk) upload(ctx context.Context, diskPath, href string, body []byte) error {
+ 	_, status, err := s.do(ctx, opUpload, diskPath, http.MethodPut, href, body, false)
+ 	if err != nil {
+ 		return err
+ 	}
+ 	if status != http.StatusCreated && status != http.StatusAccepted {
+-		return statusError(opUpload, diskPath, status)
++		// Тело не передаётся: отвечал хост по подписанной ссылке (см. statusError).
++		return statusError(opUpload, diskPath, status, nil)
+ 	}
+ 	return nil
+ }
+ 
+ // do выполняет один HTTP-шаг с повторами и возвращает тело и статус последней попытки. Повтор — на
+ // шаг, а не на операцию: повторять ручку ссылки дешевле, чем перекачивать тело файла выгрузки.
+ // Запрос строится заново на каждую попытку, потому что body — reader, израсходованный первой
+ // попыткой. withToken включает авторизацию: к API — с токеном, по подписанной ссылке — без него.
+ func (s *YandexDisk) do(ctx context.Context, op, diskPath, method, rawURL string, body []byte, withToken bool) ([]byte, int, error) {
+ 	for attempt := 0; ; attempt++ {
+@@ -223,32 +230,64 @@ func (s *YandexDisk) do(ctx context.Context, op, diskPath, method, rawURL string
+ 		// 429 и 503 — «сбавь темп», а не отказ: шаг повторяется, пока в запасе есть пауза.
+ 		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
+ 			if attempt < len(retrySleeps) {
+ 				continue
+ 			}
+ 		}
+ 		return respBody, resp.StatusCode, nil
+ 	}
+ }
+ 
++// errSnippetLimit — сколько байт тела ответа Диска остаётся в тексте ошибки: дежурному нужна причина
++// («недостаточно прав», «квота»), а не весь ответ ручки.
++const errSnippetLimit = 200
++
++// errSnippet сжимает тело ответа до одной строки не длиннее errSnippetLimit байт. Локальная копия
++// util.ErrorSnippet, а не импорт: util уже импортирует archive, и обратная зависимость замкнула бы
++// цикл импортов. Пустое тело — пустая строка: текст ошибки и без того называет шаг и путь, и
++// подставлять в него «(пустое тело)» незачем. Обрезка идёт по байту, а нечитаемая руна на срезе
++// вычищается ToValidUTF8: в ответах Диска бывает кириллица, и разрезанная посреди неё строка
++// уехала бы в лог мусором.
++func errSnippet(body []byte) string {
++	snippet := strings.Join(strings.Fields(string(body)), " ")
++	if snippet == "" {
++		return ""
++	}
++	if len(snippet) > errSnippetLimit {
++		snippet = strings.ToValidUTF8(snippet[:errSnippetLimit], "") + "…"
++	}
++	return snippet
++}
++
+ // statusError — ошибка шага по коду ответа. 401 и «квота» (403/413/423/507) оборачивают sentinel-
+ // ошибки из store.go: по ним дежурный различает «обновить токен» и «освободить место» (спека §3.2),
+ // и проверяются они через errors.Is, а не по тексту. Остальные коды — обычная ошибка с номером, по
+ // которому причину ищут в API Диска. В тексте — путь на Диске, а не URL запроса: правится именно он.
+-func statusError(op, diskPath string, status int) error {
++//
++// Тело ответа добавляется к тексту фрагментом (errSnippet): один и тот же 403 Диск отдаёт и при
++// исчерпанной квоте, и при нехватке прав у токена (выдан без scope на disk:/, часто при app:/), а
++// дежурному по одному коду не выбрать — освобождать место или перевыпускать токен. Фрагмент
++// передаётся только у запросов к API: ответы хостов по подписанной ссылке (загрузчик, файловый хост)
++// бывают HTML-страницей, повторяющей URL запроса вместе с подписью, а подпись — временный секрет
++// (см. signedHref), поэтому там тело в текст ошибки не берётся.
++func statusError(op, diskPath string, status int, body []byte) error {
++	tail := ""
++	if snippet := errSnippet(body); snippet != "" {
++		tail = "; ответ Диска: " + snippet
++	}
+ 	switch status {
+ 	case http.StatusUnauthorized:
+-		return fmt.Errorf("%s %s: %w", op, diskPath, ErrAuth)
++		return fmt.Errorf("%s %s: %w%s", op, diskPath, ErrAuth, tail)
+ 	case http.StatusForbidden, http.StatusRequestEntityTooLarge, http.StatusLocked, http.StatusInsufficientStorage:
+-		return fmt.Errorf("%s %s: %w", op, diskPath, ErrQuota)
++		return fmt.Errorf("%s %s: %w%s", op, diskPath, ErrQuota, tail)
+ 	default:
+-		return fmt.Errorf("%s %s: статус %d", op, diskPath, status)
++		return fmt.Errorf("%s %s: статус %d%s", op, diskPath, status, tail)
+ 	}
+ }
+ 
+ // transportError убирает URL из ошибки транспорта: http.Client оборачивает сбой в *url.Error, чей
+ // текст содержит адрес запроса, а адрес загрузки и скачивания — подписанная ссылка href. Причина
+ // сбоя (отказ соединения, дедлайн) сохраняется: она и нужна логу, чтобы дежурный понял, что чинить.
+ func transportError(err error) error {
+ 	var uerr *url.Error
+ 	if errors.As(err, &uerr) {
+ 		return uerr.Err
+diff --git a/archive/yandex_test.go b/archive/yandex_test.go
+index b839374..adc1eb8 100644
+--- a/archive/yandex_test.go
++++ b/archive/yandex_test.go
+@@ -36,35 +36,43 @@ const (
+ 	fakeExists   = "exists"   // GET /resources — наличие объекта
+ )
+ 
+ // fakeDir — что эмулятор отвечал про каталог: существует ли он и какие коды ушли на его создание
+ // (201 — завели, 409 — уже был).
+ type fakeDir struct {
+ 	exists bool
+ 	codes  []int
+ }
+ 
++// fakeFail — подменённый ответ ручки: код и тело. Тело нужно там, где проверяется фрагмент ответа в
++// тексте ошибки: один и тот же 403 Диск отдаёт и при нехватке прав у токена, и при квоте, и
++// различить их можно только тем, что Диск написал в теле (statusError).
++type fakeFail struct {
++	code int
++	body string
++}
++
+ // fakeDisk — эмулятор REST API Диска на httptest-сервере: держит каталоги и объекты в памяти и
+ // ведёт журнал запросов клиента. Мок стоит на уровне http.Handler, а не на уровне методов клиента,
+ // поэтому тесты видят настоящие запросы — путь в query, заголовок авторизации, метод, тело — и
+ // ловят то, что иначе прошло бы незамеченным: токен на подписанной ссылке, потерянный overwrite,
+ // запрос не тем методом.
+ type fakeDisk struct {
+ 	server *httptest.Server
+ 
+ 	// Поля ниже пишутся и из хендлеров (горутина сервера), и из теста, поэтому доступ к ним —
+ 	// только под mu: пакет гоняется с -race.
+ 	mu      sync.Mutex
+ 	dirs    map[string]*fakeDir
+-	objects map[string][]byte // путь объекта → байты; «удаление» — delete
+-	queue   map[string][]int  // ручка → статусы, которые она отдаст раньше штатного ответа
+-	calls   map[string]int    // ручка → число запросов
++	objects map[string][]byte     // путь объекта → байты; «удаление» — delete
++	queue   map[string][]fakeFail // ручка → подменённые ответы (код и тело) раньше штатного
++	calls   map[string]int        // ручка → число запросов
+ 
+ 	apiAuth  []string // Authorization запросов к API Диска
+ 	hrefAuth []string // Authorization запросов по подписанной ссылке
+ 
+ 	uploadPaths   []string // path из resources/upload
+ 	downloadPaths []string // path из resources/download
+ 	existsPaths   []string // path из GET resources
+ 	overwrites    []string // overwrite из resources/upload
+ 
+ 	uploadPath   string // объект, на который выдана последняя ссылка загрузки
+@@ -87,40 +95,51 @@ type fakeState struct {
+ 	existsPaths   []string
+ 	overwrites    []string
+ }
+ 
+ // newFakeDisk поднимает эмулятор и закрывает его по окончании теста.
+ func newFakeDisk(t *testing.T) *fakeDisk {
+ 	t.Helper()
+ 	f := &fakeDisk{
+ 		dirs:    map[string]*fakeDir{},
+ 		objects: map[string][]byte{},
+-		queue:   map[string][]int{},
++		queue:   map[string][]fakeFail{},
+ 		calls:   map[string]int{},
+ 	}
+ 	f.server = httptest.NewServer(http.HandlerFunc(f.handle))
+ 	t.Cleanup(f.server.Close)
+ 	return f
+ }
+ 
+ // newFakeStore — клиент, направленный на эмулятор. Клиент без Timeout, как util.HttpClient в
+ // проде (правило 4 AGENTS.md): дедлайн операции живёт в самом бэкенде, и тест это проверяет.
+ func newFakeStore(f *fakeDisk) *YandexDisk {
+ 	return NewYandex(fakeToken, fakeRoot, f.server.URL, &http.Client{})
+ }
+ 
+ // failNext ставит ручке статус-ответы раньше штатных: «первый ответ 429, второй нормальный» — ровно
+-// тот сценарий, ради которого шаг повторяется.
++// тот сценарий, ради которого шаг повторяется. Тела у этих ответов нет: он нужен только там, где
++// проверяется фрагмент ответа в тексте ошибки (failNextWithBody).
+ func (f *fakeDisk) failNext(endpoint string, codes ...int) {
+ 	f.mu.Lock()
+ 	defer f.mu.Unlock()
+-	f.queue[endpoint] = append(f.queue[endpoint], codes...)
++	for _, code := range codes {
++		f.queue[endpoint] = append(f.queue[endpoint], fakeFail{code: code})
++	}
++}
++
++// failNextWithBody — тот же подменённый ответ, но с телом: им проверяется, что причина одного кода
++// (403 — нехватка прав против квоты) доезжает до текста ошибки, а не теряется за sentinel-ом.
++func (f *fakeDisk) failNextWithBody(endpoint string, code int, body string) {
++	f.mu.Lock()
++	defer f.mu.Unlock()
++	f.queue[endpoint] = append(f.queue[endpoint], fakeFail{code: code, body: body})
+ }
+ 
+ // overrideUploadHref заменяет адрес, который ручка загрузки отдаёт в href: так проверяется путь
+ // «ссылка протухла или загрузчик недоступен».
+ func (f *fakeDisk) overrideUploadHref(href string) {
+ 	f.mu.Lock()
+ 	defer f.mu.Unlock()
+ 	f.uploadHref = href
+ }
+ 
+@@ -180,23 +199,23 @@ func (f *fakeDisk) handle(w http.ResponseWriter, r *http.Request) {
+ 		w.WriteHeader(http.StatusNotFound)
+ 	}
+ }
+ 
+ // handleMkdir отвечает на создание каталога: 201 в первый раз и 409 на повтор. 409 здесь — не
+ // сбой, а «уже существует»; второй Put в тот же каталог обязан пройти.
+ func (f *fakeDisk) handleMkdir(w http.ResponseWriter, r *http.Request) {
+ 	f.note(r, fakeMkdir)
+ 	path := r.URL.Query().Get("path")
+ 	d := f.dir(path)
+-	if code, ok := f.take(fakeMkdir); ok {
+-		d.codes = append(d.codes, code)
+-		w.WriteHeader(code)
++	if fail, ok := f.take(fakeMkdir); ok {
++		d.codes = append(d.codes, fail.code)
++		f.fail(w, fail)
+ 		return
+ 	}
+ 	code := http.StatusCreated
+ 	if d.exists {
+ 		code = http.StatusConflict
+ 	}
+ 	d.exists = true
+ 	d.codes = append(d.codes, code)
+ 	w.WriteHeader(code)
+ }
+@@ -209,22 +228,22 @@ func (f *fakeDisk) handleHref(w http.ResponseWriter, r *http.Request, endpoint,
+ 	path := r.URL.Query().Get("path")
+ 	switch endpoint {
+ 	case fakeUpload:
+ 		f.uploadPaths = append(f.uploadPaths, path)
+ 		f.overwrites = append(f.overwrites, r.URL.Query().Get("overwrite"))
+ 		f.uploadPath = path
+ 	case fakeDownload:
+ 		f.downloadPaths = append(f.downloadPaths, path)
+ 		f.downloadPath = path
+ 	}
+-	if code, ok := f.take(endpoint); ok {
+-		w.WriteHeader(code)
++	if fail, ok := f.take(endpoint); ok {
++		f.fail(w, fail)
+ 		return
+ 	}
+ 	if endpoint == fakeDownload {
+ 		if _, ok := f.objects[path]; !ok {
+ 			w.WriteHeader(http.StatusNotFound)
+ 			return
+ 		}
+ 	}
+ 	if endpoint == fakeUpload && f.uploadHref != "" {
+ 		target = f.uploadHref
+@@ -236,79 +255,88 @@ func (f *fakeDisk) handleHref(w http.ResponseWriter, r *http.Request, endpoint,
+ 
+ // handleBody принимает тело на ссылку загрузки и кладёт его по пути, который назвала ручка ссылки:
+ // у самой ссылки path нет — она и есть право на запись объекта.
+ func (f *fakeDisk) handleBody(w http.ResponseWriter, r *http.Request) {
+ 	f.note(r, fakeBody)
+ 	body, err := io.ReadAll(r.Body)
+ 	if err != nil {
+ 		w.WriteHeader(http.StatusBadRequest)
+ 		return
+ 	}
+-	if code, ok := f.take(fakeBody); ok {
+-		w.WriteHeader(code)
++	if fail, ok := f.take(fakeBody); ok {
++		f.fail(w, fail)
+ 		return
+ 	}
+ 	f.objects[f.uploadPath] = body
+ 	w.WriteHeader(http.StatusCreated)
+ }
+ 
+ // handleData отдаёт байты объекта по ссылке скачивания.
+ func (f *fakeDisk) handleData(w http.ResponseWriter, r *http.Request) {
+ 	f.note(r, fakeData)
+-	if code, ok := f.take(fakeData); ok {
+-		w.WriteHeader(code)
++	if fail, ok := f.take(fakeData); ok {
++		f.fail(w, fail)
+ 		return
+ 	}
+ 	body, ok := f.objects[f.downloadPath]
+ 	if !ok {
+ 		w.WriteHeader(http.StatusNotFound)
+ 		return
+ 	}
+ 	_, _ = w.Write(body)
+ }
+ 
+ func (f *fakeDisk) handleExists(w http.ResponseWriter, r *http.Request) {
+ 	f.note(r, fakeExists)
+ 	path := r.URL.Query().Get("path")
+ 	f.existsPaths = append(f.existsPaths, path)
+-	if code, ok := f.take(fakeExists); ok {
+-		w.WriteHeader(code)
++	if fail, ok := f.take(fakeExists); ok {
++		f.fail(w, fail)
+ 		return
+ 	}
+ 	if _, ok := f.objects[path]; ok {
+ 		w.WriteHeader(http.StatusOK)
+ 		return
+ 	}
+ 	w.WriteHeader(http.StatusNotFound)
+ }
+ 
+ // note считает запросы к ручке и раскладывает Authorization по журналам: у запросов к API он
+ // обязан быть, у запросов по подписанной ссылке — нет. Вызывается под f.mu.
+ func (f *fakeDisk) note(r *http.Request, endpoint string) {
+ 	f.calls[endpoint]++
+ 	if strings.HasPrefix(r.URL.Path, "/resources") {
+ 		f.apiAuth = append(f.apiAuth, r.Header.Get("Authorization"))
+ 		return
+ 	}
+ 	f.hrefAuth = append(f.hrefAuth, r.Header.Get("Authorization"))
+ }
+ 
+-// take снимает с ручки очередной подменённый статус. Вызывается под f.mu.
+-func (f *fakeDisk) take(endpoint string) (int, bool) {
++// take снимает с ручки очередной подменённый ответ. Вызывается под f.mu.
++func (f *fakeDisk) take(endpoint string) (fakeFail, bool) {
+ 	queue := f.queue[endpoint]
+ 	if len(queue) == 0 {
+-		return 0, false
++		return fakeFail{}, false
+ 	}
+ 	f.queue[endpoint] = queue[1:]
+ 	return queue[0], true
+ }
+ 
++// fail отвечает подменённым ответом: код, затем — если Диск его назвал — тело. Тело пишется после
++// WriteHeader: так статус не подменяется неявным 200 при записи тела.
++func (f *fakeDisk) fail(w http.ResponseWriter, fail fakeFail) {
++	w.WriteHeader(fail.code)
++	if fail.body != "" {
++		_, _ = io.WriteString(w, fail.body)
++	}
++}
++
+ // dir возвращает запись каталога, заводя её при первом обращении. Вызывается под f.mu.
+ func (f *fakeDisk) dir(path string) *fakeDir {
+ 	d, ok := f.dirs[path]
+ 	if !ok {
+ 		d = &fakeDir{}
+ 		f.dirs[path] = d
+ 	}
+ 	return d
+ }
+ 
+@@ -492,20 +520,74 @@ func TestYandexQuotaError(t *testing.T) {
+ 
+ 			store := newFakeStore(f)
+ 			err := store.Put(context.Background(), Key("cbr_m2", "monetary_agg_SA.xlsx", fp, zeroSum), []byte("байты"))
+ 			if !errors.Is(err, ErrQuota) {
+ 				t.Errorf("Put при %d: %v, ожидалась обёртка ErrQuota", status, err)
+ 			}
+ 		})
+ 	}
+ }
+ 
++// Тело ответа Диска доезжает до текста ошибки: один и тот же 403 Диск отдаёт и при нехватке прав у
++// токена (выдан без scope на disk:/), и при исчерпанной квоте, а ErrQuota у них один — по коду
++// дежурный не выберет, освобождать место или перевыпускать токен, и различает причины именно
++// фрагмент тела (statusError). Проверяются оба утверждения сразу: маппинг кодов не изменился
++// (errors.Is на ErrQuota), и Диск в логе говорит, что именно пошло не так.
++func TestYandexForbiddenKeepsBodySnippet(t *testing.T) {
++	const diskSays = "ForbiddenError: недостаточно прав на запись в disk:/rosstat-archive"
++	f := newFakeDisk(t)
++	f.failNextWithBody(fakeUpload, http.StatusForbidden, diskSays)
++
++	store := newFakeStore(f)
++	err := store.Put(context.Background(), Key("cbr_m2", "monetary_agg_SA.xlsx", fp, zeroSum), []byte("байты"))
++	if !errors.Is(err, ErrQuota) {
++		t.Errorf("Put при 403: %v, ожидалась обёртка ErrQuota", err)
++	}
++	if err == nil || !strings.Contains(err.Error(), diskSays) {
++		t.Errorf("текст ошибки %v не называет ответ Диска %q — причину 403 (права против квоты) в логе не различить", err, diskSays)
++	}
++	// Фрагмент — из ответа API по запросу с токеном: сам токен в тело ответа не попадает, и в текст
++	// ошибки он тоже попасть не должен (правило 1 AGENTS.md).
++	if err != nil && strings.Contains(err.Error(), fakeToken) {
++		t.Errorf("в тексте ошибки %q есть значение токена", err)
++	}
++}
++
++// Тело ответа в тексте ошибки — одна строка не длиннее лимита: ответ ручки бывает HTML-страницей
++// прокси, и её переводы строк разорвали бы запись лога, а весь ответ вытеснил бы сам диагноз. Тело
++// обрезается по байту, поэтому на срезе руна может распасться — она вычищается, а не уезжает в лог.
++func TestErrSnippet(t *testing.T) {
++	for _, c := range []struct{ name, body, want string }{
++		{"пустое тело", "", ""},
++		{"пробелы и переводы строк сжимаются", "{\n  \"message\":\t\"нет места\"\n}\n", `{ "message": "нет места" }`},
++		{
++			"длинное тело режется по лимиту без разрезанной руны",
++			strings.Repeat("я", errSnippetLimit) + "хвост",
++			strings.Repeat("я", errSnippetLimit/2) + "…",
++		},
++	} {
++		t.Run(c.name, func(t *testing.T) {
++			got := errSnippet([]byte(c.body))
++			if got != c.want {
++				t.Errorf("errSnippet(%q) = %q, ожидалось %q", c.body, got, c.want)
++			}
++			// Инварианты, которые и защищают лог: одна строка и предел длины.
++			if strings.ContainsAny(got, "\n\r\t") {
++				t.Errorf("фрагмент %q не сжат в одну строку", got)
++			}
++			if len(got) > errSnippetLimit+len("…") {
++				t.Errorf("фрагмент %q длиннее лимита %d байт", got, errSnippetLimit)
++			}
++		})
++	}
++}
++
+ // Прочий код ответа — обычная ошибка с номером статуса и путём на Диске. Путь, а не URL запроса:
+ // чинится корень архива (ARCHIVE_YANDEX_DIR), и подписанной ссылки в тексте быть не должно.
+ func TestYandexUnexpectedStatus(t *testing.T) {
+ 	f := newFakeDisk(t)
+ 	f.failNext(fakeExists, http.StatusInternalServerError)
+ 
+ 	store := newFakeStore(f)
+ 	key := Key("cbr_m2", "monetary_agg_SA.xlsx", fp, zeroSum)
+ 	_, err := store.Exists(context.Background(), key)
+ 	if err == nil {
+diff --git a/docs/superpowers/specs/2026-10-14-source-file-archive-design.md b/docs/superpowers/specs/2026-10-14-source-file-archive-design.md
+index 47f173a..34c2340 100644
+--- a/docs/superpowers/specs/2026-10-14-source-file-archive-design.md
++++ b/docs/superpowers/specs/2026-10-14-source-file-archive-design.md
+@@ -157,21 +157,21 @@ type Store interface {
+ ### 4.3 Что не меняется
+ 
+ - **Схема ClickHouse не меняется**: новых таблиц и витрин нет; `source_publications`, витрины, гранты `kimi_reader` и `scripts/mcp_check.py` — не трогаются (агенту архив не выдаётся, как и служебная `source_publications`).
+ - Пакеты импортёров (`cbr/`, `rosstat/`) — ни строки кода; объявления точек контроля не меняются.
+ - Поведение без настроенного архива: `ClickHouseImport.Import` не делает ни одного лишнего вызова; `CrawFunc`-путь и все прочие пакеты — как раньше.
+ 
+ ## 5. Риски и митигации
+ 
+ | Риск | Митигация |
+ |---|---|
+-| Токен истёк/отозван, квота, `429`/`503`/`423` | Различимые `ErrAuth`/`ErrQuota` в логе; warn + self-heal (версия не пишется, следующий прогон дописывает архив); данные не зависят от Диска |
++| Токен истёк/отозван (`401` → `ErrAuth`), квота или нехватка прав у токена (`403`; к тому же `ErrQuota` сводятся `413`/`423`/`507`), всплеск запросов и работы Диска (`429`/`503` — повтор шага) | Различимые `ErrAuth`/`ErrQuota` в логе, а причину двоякого `403` различает фрагмент тела ответа в тексте ошибки; `429`/`503` повторяются (до трёх попыток с нарастающими паузами), а не падают; warn + self-heal (версия не пишется, следующий прогон дописывает архив); данные не зависят от Диска |
+ | Лимиты бесплатного тарифа (объём загрузок, размер одного файла) | 150–250 МБ/год и файлы ≤ нескольких МБ — запас на порядки; проверяется живой приёмкой |
+ | Смена семантики префлайта («версия известна» ⇒ «версия в архиве») | Только при включённом архиве; выключение `ARCHIVE_BACKEND` возвращает прежнее поведение; названо в ARCHITECTURE §8 и стандарте §9.6 |
+ | Первый прогон после включения — полный ре-импорт 14 артефактов | Ожидаемая разовая цена (так текущие версии попадают в архив); названо в README |
+ | Read-modify-write `registry.jsonl` при конкурентных ручных прогонах | Штатный писатель один; строка самолечится префлайтом (см. §3.4) |
+ | Заголовки не изменились, содержимое — да (слабость отпечатка) | Унаследована от `source_publications`; `sha256` в реестре фиксирует факт смены содержимого (§3.2) |
+ | Утечка токена или подписанной `href` в логи | Только `os.Getenv`; логируется путь на Диске, не `href`/токен |
+ | `archive/registry.jsonl` разошёлся с Диском (зеркало устарело) | Зеркало — снимок на дату; в `docs/archive/README.md` порядок обновления; истина — файл на Диске |
+ 
+ ## 6. Приёмка
+ 

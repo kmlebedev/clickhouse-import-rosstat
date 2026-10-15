@@ -1,0 +1,854 @@
+# Review package: cd11fb5b0114aac8ea7400d5f439b15b9a46543f..d3b5ef101d63263863aefb14481d45ba78a027f0
+
+## Commits
+d3b5ef1 ipc_mes: stable code-side series names, layout-driven parsing
+
+## Files changed
+ rosstat/ipc_mes.go          | 311 ++++++++++++++++++++++++++++++---------
+ rosstat/ipc_mes_test.go     | 346 ++++++++++++++++++++++++++++++++++++++++++++
+ rosstat/series_meta.go      |  24 +--
+ rosstat/series_meta_test.go |  21 ---
+ 4 files changed, 597 insertions(+), 105 deletions(-)
+
+## Diff
+diff --git a/rosstat/ipc_mes.go b/rosstat/ipc_mes.go
+index 93aed1a..ea9b1b9 100644
+--- a/rosstat/ipc_mes.go
++++ b/rosstat/ipc_mes.go
+@@ -1,139 +1,306 @@
+ package rosstat
+ 
+ import (
+ 	"context"
+ 	"fmt"
++	"math"
++	"sort"
++	"strconv"
++	"strings"
++	"time"
++
+ 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+-	"github.com/gocolly/colly/v2"
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+ 	log "github.com/sirupsen/logrus"
+ 	"github.com/xuri/excelize/v2"
+-	"strconv"
+-	"time"
+ )
+ 
+ const (
+ 	// ToDo update data source Потребительские цены https://rosstat.gov.ru/statistics/price
+ 	// Индексы потребительских цен на товары и услуги по Российской Федерации, месяцы (с 1991 г.)
+ 	rosstatIPCMesTable = "rosstat_ipc_mes"
+ 	ipcMesDdl          = `CREATE TABLE IF NOT EXISTS %s (
+ 				  name LowCardinality(String)
+ 				, date Date
+ 				, percent Float32
+ 			) ENGINE = ReplacingMergeTree ORDER BY (name, date);
+ 		`
+-	ipcMesField      = "к концу предыдущего месяца"
+-	ipcMesYearStart  = 1991
+-	ipcMesTimeLayout = "2006-01"
++	// ipcMesField — якорь блока месячных значений: строка с этой подписью в первой колонке.
++	// Разметка ищется по признаку, а не по номеру строки (§6.3): сноски и вставленные строки
++	// сдвигают лист, и жёсткий индекс читал бы не те строки.
++	ipcMesField = "к концу предыдущего месяца"
++	// ipcMesLinkSelector — селектор ссылки на актуальный xlsx: константа рядом с импортёром, а
++	// не литерал в теле функции (§4.5) — тот же селектор проверяет тест на HTML-фикстуре.
++	// Прежняя позиционная CSS-цепочка из номеров вложенных элементов ломалась от любой правки
++	// вёрстки страницы; на странице цен лежат и другие выгрузки `ipc_*`, поэтому селектор
++	// ограничен `ipc_mes_`.
++	ipcMesLinkSelector = `a[href*="ipc_mes_"]`
++	ipcMesTimeLayout   = "2006-01"
+ 	// ipcMesCountPoints — количественный чек версии (спека §3.5): число точек своего ряда.
+ 	// Литерал, как и таблица: запрос — часть утверждения «эти точки мои». FINAL обязателен —
+ 	// без него count() считает несмёрженные части и растёт после каждого повторного импорта,
+ 	// то есть чек сравнивал бы величину, меняющуюся от прогона к прогону.
+ 	ipcMesCountPoints = "SELECT count() FROM rosstat_ipc_mes FINAL"
+ )
+ 
++// ipcMesSeriesNames — имя ряда для листа, объявленное кодом (§6.8). Имя не читается из заголовка
++// листа: заголовок несёт сноску («…на товары и услуги1)…») и годы выгрузки («…в 1991-2026*)гг.»),
++// которые Росстат меняет при каждом обновлении файла, — ряд из заголовка оборвался бы на первой же
++// редакции, а таблица получила бы новый ряд. Заголовок не читается вовсе; из файла берутся только
++// значения и годы строки над якорем. Значения совпадают с ipcMesSeriesMeta[].Series дословно —
++// эти строки и есть тождество ряда в каталоге, совпадение проверяют тесты.
++var ipcMesSeriesNames = map[int]string{
++	1: "Индексы потребительских цен на товары и услуги по Российской Федерации",
++	2: "Индексы потребительских цен на продовольственные товары по Российской Федерации",
++	3: "Индексы потребительских цен на непродовольственные товары по Российской Федерации",
++	4: "Индексы потребительских цен на услуги по Российской Федерации",
++}
++
+ type IpcMesStat struct {
+ 	util.ClickHouseImport
+ }
+ 
+-// getXlsDataUrl ищет ссылку на актуальный ipc_mes_*.xlsx на странице цен Росстата и
+-// возвращает её как есть: пустой результат — признак «ссылки нет», и вызывающий обязан
+-// отличить его от рабочей ссылки сам (то же устройство у соседей — rosstat_salaries_mes, rosstat_vvp_kvartal).
+-// Ошибка обхода страницы только логируется: решение о сбое принимает вызывающий по пустому URL.
+-func (s *IpcMesStat) getXlsDataUrl() (url string) {
+-	c := colly.NewCollector()
+-	c.SetClient(util.HttpClient)
+-	c.OnHTML(".row > div:nth-child(3) div.toggle-section__content.toggle-section__content--open > div > div > div > div:nth-child(1) > div > div.toggle-card__main > div > div > div > div:nth-child(3) > div.document-list__item-link > a", func(e *colly.HTMLElement) {
+-		url = fmt.Sprintf("%s%s", rosstatUrl, e.Attr("href"))
+-		log.Infof("href url %s", url)
+-	})
+-	if err := c.Visit(fmt.Sprintf("%s/statistics/price", rosstatUrl)); err != nil {
+-		log.Errorf("Visit %v+", err)
+-	}
+-	c.Wait()
+-	return url
++// getXlsDataUrl ищет ссылку на актуальный ipc_mes_*.xlsx на странице цен Росстата: имени файла в
++// коде нет (ipc_mes_ММ-ГГГГ.xlsx меняется при каждом обновлении), а сетевое обращение в init()
++// запрещено (ARCHITECTURE.md §8.6). Транспорт — через util (§4.1), и ошибка не проглатывается
++// (§4.4): без ссылки импорт обязан упасть до записи в БД, а не писать «0 строк» по устаревшему
++// адресу.
++func (s *IpcMesStat) getXlsDataUrl() (string, error) {
++	pageUrl := fmt.Sprintf("%s/statistics/price", rosstatUrl)
++	page, err := util.GetPage(pageUrl)
++	if err != nil {
++		return "", fmt.Errorf("ipcMes: %s: %w", pageUrl, err)
++	}
++	href, err := util.FindLink(page, ipcMesLinkSelector)
++	if err != nil {
++		return "", fmt.Errorf("ipcMes: ссылка на ipc_mes_*.xlsx не найдена на %s: %w", pageUrl, err)
++	}
++	return rosstatUrl + href, nil
++}
++
++// ipcMesPoint — точка листа: дата записи (последний день отчётного месяца) и сырое значение
++// индекса. Значение остаётся float64 до записи в батч: сужение до Float32 делает шаблон (колонка
++// таблицы), поэтому тест на сырое значение ячейки (§6.2) видит значение целиком.
++type ipcMesPoint struct {
++	date  time.Time
++	value float64
++}
++
++// ipcMes — точка книги: имя ряда объявлено кодом (§6.8), лист даёт дату и значение.
++type ipcMes struct {
++	name  string
++	date  time.Time
++	value float64
++}
++
++// ipcMesYears читает годы из строки над якорем: колонки 1… до первой пустой ячейки. Год берётся
++// из файла, а не из константы: строка годов содержит годы выгрузки и сдвигается при её обновлении,
++// и константа (1991) сдвинула бы весь ряд, а в таблице с ключом (name, date) это тихая подмена
++// данных. Пустая строка годов — ошибка (§6.4): без годов точки получили бы дату «0000-01-01».
++func ipcMesYears(row []string) ([]int, error) {
++	var years []int
++	for i := 1; i < len(row); i++ {
++		cell := strings.TrimSpace(row[i])
++		if cell == "" {
++			break
++		}
++		year, err := strconv.Atoi(cell)
++		if err != nil {
++			return nil, fmt.Errorf("ячейка года %q (колонка %d) не число: %w", cell, i+1, err)
++		}
++		years = append(years, year)
++	}
++	if len(years) == 0 {
++		return nil, fmt.Errorf("строка годов пуста")
++	}
++	return years, nil
++}
++
++// ipcMesValue разбирает ячейку значения. Ячейка приходит сырым текстом (§6.2): форматированная
++// строка формата `0.00` — представление, а не данные. NaN и бесконечность, которые принимает
++// ParseFloat, отбрасываются, как у соседних рядов пакета: такой мусор уехал бы в витрину точкой
++// ряда (§6.4).
++func ipcMesValue(cell string) (float64, error) {
++	value, err := strconv.ParseFloat(strings.TrimSpace(cell), 64)
++	if err != nil {
++		return 0, fmt.Errorf("значение %q не число: %w", cell, err)
++	}
++	if math.IsNaN(value) || math.IsInf(value, 0) {
++		return 0, fmt.Errorf("значение %q не конечное число", cell)
++	}
++	return value, nil
++}
++
++// ipcMesDate переводит год и месяц в дату точки — последний день отчётного месяца (январь 1992 —
++// 1992-01-31). Семантика прежнего разбора сохранена дословно: месяц разбирается макетом
++// ipcMesTimeLayout, затем к первому числу месяца прибавляется месяц и отнимается день.
++func ipcMesDate(year int, month time.Month) (time.Time, error) {
++	first, err := time.Parse(ipcMesTimeLayout, fmt.Sprintf("%d-%02d", year, int(month)))
++	if err != nil {
++		return time.Time{}, fmt.Errorf("дата %d-%02d: %w", year, int(month), err)
++	}
++	return first.AddDate(0, 1, -1), nil
++}
++
++// parseIpcMesSheet читает один лист книги. Разметка листа: A1 — заголовок со сносками и годами (в
++// имени ряда не участвует), ниже — строка годов (колонки B…, то есть индексы 1…), под ней — якорь
++// «к концу предыдущего месяца», под якорем — строки «январь»…«декабрь» с одним значением на
++// колонку года. Ряд идёт от начала блока месяцев: строка короче двух колонок или строка, первая
++// ячейка которой не месяц, блок замыкает. Так из ряда выпадают второй якорь «к декабрю предыдущего
++// года» с годовым декабрём (другой показатель: в листе «01» за 1992 год 2608.84 против месячного
++// 125.2) и сноски внизу листа.
++func parseIpcMesSheet(xlsx *excelize.File, sheet string) ([]ipcMesPoint, error) {
++	// Сырые значения ячеек (§6.2): форматированная строка отдала бы значение по формату ячейки,
++	// а не то, что хранит файл.
++	rows, err := xlsx.GetRows(sheet, excelize.Options{RawCellValue: true})
++	if err != nil {
++		return nil, fmt.Errorf("%s: лист %q: %w", rosstatIPCMesTable, sheet, err)
++	}
++	anchor := -1
++	for i, row := range rows {
++		if len(row) > 0 && strings.TrimSpace(row[0]) == ipcMesField {
++			anchor = i
++			break
++		}
++	}
++	if anchor < 0 {
++		return nil, fmt.Errorf("%s: лист %q: строка «%s» не найдена", rosstatIPCMesTable, sheet, ipcMesField)
++	}
++	// Годы — строкой выше якоря. Проверка границы обязательна: выход за срез — паника, а разбор
++	// обязан отдавать ошибку (§6.5).
++	if anchor == 0 {
++		return nil, fmt.Errorf("%s: лист %q: строки годов нет над строкой «%s» (строка %d)", rosstatIPCMesTable, sheet, ipcMesField, anchor+1)
++	}
++	years, err := ipcMesYears(rows[anchor-1])
++	if err != nil {
++		return nil, fmt.Errorf("%s: лист %q, строка %d: %w", rosstatIPCMesTable, sheet, anchor, err)
++	}
++	var points []ipcMesPoint
++	monthNum := 0
++	for _, row := range rows[anchor+1:] {
++		if len(row) < 2 {
++			break
++		}
++		month, ok := util.MonthsToNum[strings.ToLower(strings.TrimSpace(row[0]))]
++		if !ok {
++			break
++		}
++		// Месяцы блока перечисляются по возрастанию: повтор или откат подписи — сломанная
++		// разметка, а не данные, и читать дальше нельзя (§6.4).
++		if int(month) <= monthNum {
++			return nil, fmt.Errorf("%s: лист %q: месяц %q идёт после месяца %d — месяцы обязаны идти по возрастанию",
++				rosstatIPCMesTable, sheet, strings.TrimSpace(row[0]), monthNum)
++		}
++		monthNum = int(month)
++		for i := 1; i < len(row); i++ {
++			cell := strings.TrimSpace(row[i])
++			if cell == "" {
++				// Пустая ячейка — не точка: у последних месяцев нового года данных ещё нет,
++				// и пропуск означает отсутствие значения, а не ноль (§6.7).
++				continue
++			}
++			if i > len(years) {
++				return nil, fmt.Errorf("%s: лист %q: колонка %d вне строки годов (%d колонок)",
++					rosstatIPCMesTable, sheet, i+1, len(years))
++			}
++			value, err := ipcMesValue(cell)
++			if err != nil {
++				return nil, fmt.Errorf("%s: лист %q, %d-%02d: %w", rosstatIPCMesTable, sheet, years[i-1], month, err)
++			}
++			date, err := ipcMesDate(years[i-1], month)
++			if err != nil {
++				return nil, fmt.Errorf("%s: лист %q: %w", rosstatIPCMesTable, sheet, err)
++			}
++			points = append(points, ipcMesPoint{date: date, value: value})
++		}
++	}
++	if len(points) == 0 {
++		return nil, fmt.Errorf("%s: лист %q: разбор дал 0 точек", rosstatIPCMesTable, sheet)
++	}
++	return points, nil
+ }
+ 
+-func parseIpcMes(xlsx *excelize.File) (table *[][]string, err error) {
+-	table = new([][]string)
++// parseIpcMes читает книгу целиком и отдаёт плоскую таблицу точек: листы обходятся в порядке
++// книги, имя ряда — из ipcMesSeriesNames (§6.8). Числовой лист вне карты — предупреждение и
++// пропуск (§6.6): добавленный источником лист — ожидаемое изменение выгрузки и не должен валить
++// недельную цепочку, но и молчать о нём нельзя. Отсутствие ожидаемого листа — ошибка (§6.4):
++// книга без листа означала бы тихий обрыв ряда, который в витрине выглядит полным. Разбор идёт
++// целиком до первой записи в батч: ошибка любого листа оставляет батч пустым.
++func parseIpcMes(xlsx *excelize.File) ([]ipcMes, error) {
++	var table []ipcMes
++	seen := make(map[int]bool, len(ipcMesSeriesNames))
+ 	for _, sheet := range xlsx.GetSheetList() {
+-		var rows [][]string
+-		if _, err = strconv.Atoi(sheet); err != nil {
++		number, err := strconv.Atoi(sheet)
++		if err != nil {
++			continue // «Содержание» и прочие нечисловые листы рядами не являются
++		}
++		name, ok := ipcMesSeriesNames[number]
++		if !ok {
++			log.Warnf("%s: лист %q не описан в ipcMesSeriesNames — лист пропущен", rosstatIPCMesTable, sheet)
+ 			continue
+ 		}
+-		if rows, err = xlsx.GetRows(sheet); err != nil {
++		points, err := parseIpcMesSheet(xlsx, sheet)
++		if err != nil {
+ 			return nil, err
+ 		}
+-		fieldFound := false
+-		mes := 0
+-		for _, row := range rows {
+-			if fieldFound {
+-				mes += 1
+-				if len(row) < 2 || mes > 12 {
+-					break
+-				}
+-				for i, cell := range row[1:] {
+-					if cell == "" {
+-						continue
+-					}
+-					if _, err = strconv.ParseFloat(cell, 32); err != nil {
+-						return nil, err
+-					}
+-					//                                name           year
+-					*table = append(*table, []string{rows[0][0], strconv.Itoa(ipcMesYearStart + i), fmt.Sprintf("%02d", mes), cell})
+-				}
+-			} else if row[0] == ipcMesField {
+-				fieldFound = true
+-			}
++		for _, point := range points {
++			table = append(table, ipcMes{name: name, date: point.date, value: point.value})
++		}
++		seen[number] = true
++	}
++	// Номера пропавших листов сортируются: обход карты в Go случаен, и текст ошибки менялся бы
++	// от прогона к прогону.
++	missing := make([]int, 0, len(ipcMesSeriesNames))
++	for number := range ipcMesSeriesNames {
++		if !seen[number] {
++			missing = append(missing, number)
++		}
++	}
++	if len(missing) > 0 {
++		sort.Ints(missing)
++		names := make([]string, 0, len(missing))
++		for _, number := range missing {
++			names = append(names, fmt.Sprintf("«%02d»", number))
+ 		}
++		return nil, fmt.Errorf("%s: в книге нет ожидаемых листов %s", rosstatIPCMesTable, strings.Join(names, ", "))
+ 	}
+ 	return table, nil
+ }
+ 
+-// ipcMesImport разбирает файл и пишет точки в batch: семантика прежних export() и цикла
+-// вставки Import сохранена дословно — имя ряда из первой ячейки листа, дата «год-месяц»
+-// строки, значение — процент, дата сдвинута на 1-е число отчётного месяца (AddDate(0, 1, -1)).
+-// Пустой разбор ошибкой не считается — так же вёл себя прежний Import: пустой батч
+-// отправлялся, и прогон возвращал ноль точек (fail-fast на пустом листе — контракт cbr, не этого ряда).
++// ipcMesImport разбирает файл и пишет точки в batch: семантика прежнего разбора сохранена — имя
++// ряда объявлено кодом (§6.8), дата — последний день отчётного месяца (ipcMesDate), значение —
++// индекс к концу предыдущего месяца. Разбор идёт целиком до первой записи: ошибка листа оставляет
++// батч пустым, а не пишет половину книги.
+ func ipcMesImport(xlsx *excelize.File, batch driver.Batch) error {
+ 	table, err := parseIpcMes(xlsx)
+ 	if err != nil {
+ 		return err
+ 	}
+-	for _, row := range *table {
+-		// Calling Parse() method with its parameters
+-		mes, err := time.Parse(ipcMesTimeLayout, fmt.Sprintf("%s-%s", row[1], row[2]))
+-		if err != nil {
+-			return err
+-		}
+-		percent, err := strconv.ParseFloat(row[3], 32)
+-		if err != nil {
+-			return err
+-		}
+-		if err = batch.Append(row[0], mes.AddDate(0, 1, -1), float32(percent)); err != nil {
++	for _, row := range table {
++		if err = batch.Append(row.name, row.date, float32(row.value)); err != nil {
+ 			return err
+ 		}
+ 	}
+ 	return nil
+ }
+ 
+ // Import берёт адрес актуального xlsx со страницы цен Росстата: имени файла в коде нет
+-// (ipc_mes_ММ-ГГГГ.xlsx меняется при каждом обновлении), а сетевое обращение в init()
+-// запрещено (ARCHITECTURE.md §8.6). Пустой URL — сразу ошибка, как у соседей (rosstat_salaries_mes,
+-// rosstat_vvp_kvartal): иначе прогон дошёл бы до GetXlsx("") и упал невнятно. Дальше — полный цикл
+-// шаблона: DDL → префлайт по HEAD (файл обновляется раз в месяц, шаг расписания — недельный)
+-// → точки → производные (AfterImport) → строка версии.
++// (ipc_mes_ММ-ГГГГ.xlsx меняется при каждом обновлении), а сетевое обращение в init() запрещено
++// (ARCHITECTURE.md §8.6). Ошибка обхода страницы не проглатывается (§4.4): иначе прогон дошёл бы
++// до GetXlsx("") и упал невнятно. Дальше — полный цикл шаблона: DDL → префлайт по HEAD (файл
++// обновляется раз в месяц, шаг расписания — недельный) → точки → производные (AfterImport) →
++// строка версии.
+ func (s *IpcMesStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+-	xlsDataUrl := s.getXlsDataUrl()
+-	if xlsDataUrl == "" {
+-		return count, fmt.Errorf("ipcMes: не найдена ссылка на ipc_mes_*.xlsx на %s/statistics/price", rosstatUrl)
++	xlsDataUrl, err := s.getXlsDataUrl()
++	if err != nil {
++		return count, err
+ 	}
+ 	s.DataUrl = xlsDataUrl
+ 	return s.ClickHouseImport.Import(ctx, conn)
+ }
+ 
+ // ipcMesImporter — помесячные ИПЦ Росстата; регистрируется реестром rosstat/importers.go.
+ var ipcMesImporter = &IpcMesStat{ClickHouseImport: util.ClickHouseImport{
+ 	TableName:              rosstatIPCMesTable,
+ 	CreateTable:            []string{ipcMesDdl},
+ 	ImportFunc:             ipcMesImport,
+diff --git a/rosstat/ipc_mes_test.go b/rosstat/ipc_mes_test.go
+new file mode 100644
+index 0000000..271f64b
+--- /dev/null
++++ b/rosstat/ipc_mes_test.go
+@@ -0,0 +1,346 @@
++package rosstat
++
++import (
++	"bytes"
++	"os"
++	"strings"
++	"testing"
++	"time"
++
++	log "github.com/sirupsen/logrus"
++	"github.com/xuri/excelize/v2"
++
++	"github.com/kmlebedev/clickhouse-import-rosstat/util"
++)
++
++// Стабильные имена рядов импортёра: в тесте они записаны литералами, поэтому совпадение с
++// ipcMesSeriesNames и с ipcMesSeriesMeta не тавтологично (§6.8, §11.4).
++const (
++	ipcMesSeriesGoods    = "Индексы потребительских цен на товары и услуги по Российской Федерации"
++	ipcMesSeriesFood     = "Индексы потребительских цен на продовольственные товары по Российской Федерации"
++	ipcMesSeriesNonFood  = "Индексы потребительских цен на непродовольственные товары по Российской Федерации"
++	ipcMesSeriesServices = "Индексы потребительских цен на услуги по Российской Федерации"
++)
++
++var ipcMesStableNames = []string{ipcMesSeriesGoods, ipcMesSeriesFood, ipcMesSeriesNonFood, ipcMesSeriesServices}
++
++// openIpcMesFixture открывает реальную выгрузку Росстата (testdata/ipc_mes.xlsx): листы
++// «Содержание», «01»…«04». В каждом числовом листе A1 — заголовок со сноской «1)» и годами
++// выгрузки («…в 1991-2026*)гг.»), строка 4 — годы с колонки B, строка 5 — якорь
++// «к концу предыдущего месяца», строки 6…17 — январь…декабрь, строка 18 — второй якорь
++// «к декабрю предыдущего года» с годовым декабрём, ниже — сноски.
++func openIpcMesFixture(t *testing.T) *excelize.File {
++	t.Helper()
++	xlsx, err := excelize.OpenFile("testdata/ipc_mes.xlsx")
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { _ = xlsx.Close() })
++	return xlsx
++}
++
++// importIpcMesFixture прогоняет импортёр по фикстуре и отдаёт записанные точки: ни базы,
++// ни сети тесту не нужно (§11.6).
++func importIpcMesFixture(t *testing.T) []appendedRow {
++	t.Helper()
++	rec := &appendRecorder{}
++	if err := ipcMesImport(openIpcMesFixture(t), rec); err != nil {
++		t.Fatalf("ipcMesImport: %v", err)
++	}
++	return rec.rows
++}
++
++// ipcMesSheetFixtureRows — лист в разметке выгрузки, но с годами 2019–2020: год берётся из
++// строки листа, и кодовая константа 1991 дала бы на такой книге даты начала девяностых
++// (TestIpcMesYearsComeFromFileRow). Ниже месяцев стоит второй якорь «к декабрю предыдущего
++// года» с годовым декабрём — он в ряд попасть не должен (TestIpcMesStopsAtEndOfMonthBlock).
++func ipcMesSheetFixtureRows() [][]any {
++	return [][]any{
++		{"Индексы потребительских цен на товары и услуги1) по Российской Федерации в 1991-2026*)гг."},
++		{"К содержанию"},
++		{"на конец периода, в %"},
++		{"", "2019", "2020"},
++		{ipcMesField},
++		{"январь", "100.5", "101.2"},
++		{"февраль", "100.6", "101.3"},
++		{"к декабрю предыдущего года"},
++		{"декабрь", "200", "300"},
++	}
++}
++
++// setIpcMesSheetRows наполняет лист построчной разметкой теста.
++func setIpcMesSheetRows(t *testing.T, f *excelize.File, sheets []string, rows [][]any) {
++	t.Helper()
++	for _, sheet := range sheets {
++		setSheetRows(t, f, sheet, rows)
++	}
++}
++
++// TestIpcMesReadsFixture — разбор реальной выгрузки даёт четыре ряда по 429 точек. Число точное:
++// январь–сентябрь доступны все 36 лет (36 × 9), а октябрь–декабрь выгрузки сентября 2026 кончаются
++// 2025 годом (35 × 3). Сдвиг строки годов или чтение второго блока сдвинули бы число точек.
++func TestIpcMesReadsFixture(t *testing.T) {
++	rows := importIpcMesFixture(t)
++	if len(rows) != 1716 {
++		t.Fatalf("точек %d, ожидалось 1716", len(rows))
++	}
++	counts := countBySeries(rows)
++	if len(counts) != 4 {
++		t.Fatalf("рядов %d, ожидалось 4: %v", len(counts), counts)
++	}
++	for _, name := range ipcMesStableNames {
++		if counts[name] != 429 {
++			t.Errorf("ряд %q: точек %d, ожидалось 429", name, counts[name])
++		}
++	}
++}
++
++// TestIpcMesStableSeriesNames — имя ряда объявлено кодом (§6.8), а не взято из заголовка листа:
++// заголовок несёт сноску «1)» и годы выгрузки («…в 1991-2026*)гг.»), и имя из заголовка оборвало
++// бы головной ряд инфляции на первой же редакции файла Росстата.
++func TestIpcMesStableSeriesNames(t *testing.T) {
++	rows := importIpcMesFixture(t)
++	seen := make(map[string]bool, len(ipcMesStableNames))
++	for _, row := range rows {
++		if strings.Contains(row.series, "1991-2026") || strings.Contains(row.series, ")") {
++			t.Errorf("имя ряда %q содержит годы или сноску заголовка листа", row.series)
++		}
++		seen[row.series] = true
++	}
++	for _, name := range ipcMesStableNames {
++		if !seen[name] {
++			t.Errorf("ряда %q нет среди разобранных имён", name)
++		}
++	}
++}
++
++// TestIpcMesStopsAtEndOfMonthBlock — блок месяцев кончается до второго якоря «к декабрю
++// предыдущего года» (строка 18 листа «01»): под ним лежит годовой декабрь — другой показатель
++// («01», 1992 год: 2608.84 против месячного 125.2). Попади он в ряд, у декабря 1992 было бы две
++// точки, а годовой индекс стоял бы датой 1992-12-31.
++func TestIpcMesStopsAtEndOfMonthBlock(t *testing.T) {
++	rows := importIpcMesFixture(t)
++	in1992 := 0
++	for _, row := range rows {
++		if row.series != ipcMesSeriesGoods {
++			continue
++		}
++		if row.value == float32(2608.84) {
++			t.Errorf("в ряд «01» попало годовое значение 2608.84 датой %s", row.date.Format("2006-01-02"))
++		}
++		if row.date.Year() == 1992 {
++			in1992++
++		}
++	}
++	if in1992 != 12 {
++		t.Errorf("точек ряда «01» за 1992 год %d, ожидалось 12", in1992)
++	}
++}
++
++// TestIpcMesSpotValue — январь 1992 листа «01» = 345.3, дата — последний день отчётного месяца
++// (1992-01-31). Константа 1991 на этой фикстуре совпала бы с годом из строки 4 случайно, поэтому
++// происхождение года проверяет отдельная книга с чужими годами (TestIpcMesYearsComeFromFileRow).
++func TestIpcMesSpotValue(t *testing.T) {
++	const want = float32(345.3)
++	date := time.Date(1992, time.January, 31, 0, 0, 0, 0, time.UTC)
++	found := 0
++	for _, row := range importIpcMesFixture(t) {
++		if row.series != ipcMesSeriesGoods || !row.date.Equal(date) {
++			continue
++		}
++		found++
++		if row.value != want {
++			t.Errorf("%s: значение %v, ожидалось %v", date.Format("2006-01-02"), row.value, want)
++		}
++	}
++	if found != 1 {
++		t.Fatalf("точек ряда «01» на %s — %d, ожидалась 1", date.Format("2006-01-02"), found)
++	}
++}
++
++// TestIpcMesYearsComeFromFileRow — годы берутся из строки листа над якорем, а не из константы:
++// на книге с годами 2019–2020 кодовый год начала ряда дал бы даты 1991–1992, и точки встали бы
++// в конец чужого ряда (в таблице с ключом (name, date) это тихая подмена данных).
++func TestIpcMesYearsComeFromFileRow(t *testing.T) {
++	sheets := []string{"01", "02", "03", "04"}
++	f := newTestWorkbook(t, sheets...)
++	setIpcMesSheetRows(t, f, sheets, ipcMesSheetFixtureRows())
++	rec := &appendRecorder{}
++	if err := ipcMesImport(f, rec); err != nil {
++		t.Fatalf("ipcMesImport: %v", err)
++	}
++	dates := seriesDates(rec.rows, ipcMesSeriesGoods)
++	want := []string{"2019-01-31", "2020-01-31", "2019-02-28", "2020-02-29"}
++	if len(dates) != len(want) {
++		t.Fatalf("точек ряда «01» %d, ожидалось %d", len(dates), len(want))
++	}
++	for i, date := range dates {
++		if got := date.Format("2006-01-02"); got != want[i] {
++			t.Errorf("точка %d: дата %s, ожидалась %s", i+1, got, want[i])
++		}
++	}
++}
++
++// TestIpcMesSeriesMetaCoversParsedRows — двусторонний контракт каталога (§11.4): имя ряда
++// объявлено кодом (§6.8), поэтому проверяются оба направления — каждый разобранный ряд описан в
++// ipcMesSeriesMeta и каждый описанный ряд разбирается. Имена каталога записаны литералами, так
++// что правка только одного из двух мест тест ломает.
++func TestIpcMesSeriesMetaCoversParsedRows(t *testing.T) {
++	rows := importIpcMesFixture(t)
++	names := make([]string, 0, len(rows))
++	for _, row := range rows {
++		names = append(names, row.series)
++	}
++	requireParsedDescribed(t, names, describedSeries(t, ipcMesSeriesMeta))
++}
++
++// TestIpcMesUnknownSheetWarns — добавленный источником числовой лист («05») — ожидаемое
++// изменение выгрузки (§6.6): импортёр пишет предупреждение с именем листа и продолжает разбор
++// листов «01»–«04», а не валит недельную цепочку. Молчаливый пропуск тоже неверен: оператор
++// должен видеть, что новый лист не разбирается.
++func TestIpcMesUnknownSheetWarns(t *testing.T) {
++	var logged bytes.Buffer
++	prevOut := log.StandardLogger().Out
++	log.SetOutput(&logged)
++	t.Cleanup(func() { log.SetOutput(prevOut) })
++
++	sheets := []string{"01", "02", "03", "04", "05"}
++	f := newTestWorkbook(t, sheets...)
++	setIpcMesSheetRows(t, f, sheets, ipcMesSheetFixtureRows())
++	rec := &appendRecorder{}
++	if err := ipcMesImport(f, rec); err != nil {
++		t.Fatalf("лист «05» — ожидаемое изменение источника, ошибки быть не должно: %v", err)
++	}
++	if !strings.Contains(logged.String(), "05") {
++		t.Errorf("в предупреждении нет имени листа «05»: %q", logged.String())
++	}
++	counts := countBySeries(rec.rows)
++	if len(counts) != 4 {
++		t.Errorf("рядов %d, ожидалось 4: %v", len(counts), counts)
++	}
++	for _, name := range ipcMesStableNames {
++		if counts[name] != 4 {
++			t.Errorf("ряд %q: точек %d, ожидалось 4", name, counts[name])
++		}
++	}
++}
++
++// TestIpcMesMissingSheetFails — fail-fast (§6.4): книга без ожидаемого листа — ошибка с именем
++// листа и таблицы, а не «0 точек» и не тихий пропуск. Разбор идёт целиком до первой записи, и
++// батч обязан остаться пустым: частичная запись книги выглядела бы успешным импортом с
++// оборванным рядом.
++func TestIpcMesMissingSheetFails(t *testing.T) {
++	sheets := []string{"01", "02", "04"}
++	f := newTestWorkbook(t, sheets...)
++	setIpcMesSheetRows(t, f, sheets, ipcMesSheetFixtureRows())
++	rec := &appendRecorder{}
++	err := ipcMesImport(f, rec)
++	if err == nil {
++		t.Fatal("книга без листа «03»: ожидалась ошибка, получен nil")
++	}
++	if !strings.Contains(err.Error(), "03") {
++		t.Errorf("в ошибке нет номера листа «03»: %v", err)
++	}
++	if !strings.Contains(err.Error(), rosstatIPCMesTable) {
++		t.Errorf("в ошибке нет имени таблицы %s: %v", rosstatIPCMesTable, err)
++	}
++	if len(rec.rows) != 0 {
++		t.Errorf("в батч записано %d строк, ожидалось 0", len(rec.rows))
++	}
++}
++
++// TestIpcMesFindLink — селектор проверяется на HTML-фикстуре страницы цен тем же util.FindLink,
++// что и в Import() (§11.3): на странице лежат и другие выгрузки `ipc_*`, поэтому селектор
++// ограничен `ipc_mes_`, а ссылка не собирается из угаданного имени файла ipc_mes_ММ-ГГГГ.xlsx.
++func TestIpcMesFindLink(t *testing.T) {
++	page, err := os.ReadFile("testdata/price_page.html")
++	if err != nil {
++		t.Fatal(err)
++	}
++	href, err := util.FindLink(page, ipcMesLinkSelector)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !strings.Contains(href, "ipc_mes_") {
++		t.Errorf("href %q не содержит ipc_mes_", href)
++	}
++}
++
++// TestIpcMesSheetErrorBranches — ветки отказа разбора листа (§6.4), которых в полной выгрузке
++// нет: без них сдвиг разметки дал бы «ноль точек» вместо ошибки, а мусор в ячейке — точку ряда.
++// Книга у каждого случая своя, но листы в ней все четыре: проверяется ровно одна ветка, а не
++// полнота книги.
++func TestIpcMesSheetErrorBranches(t *testing.T) {
++	sheets := []string{"01", "02", "03", "04"}
++	tests := []struct {
++		name string
++		rows [][]any
++		want string
++	}{
++		{
++			name: "якорь не найден",
++			rows: [][]any{{"Заголовок"}, {"", "2019", "2020"}, {"январь", "100"}},
++			want: "не найдена",
++		},
++		{
++			name: "строка годов пуста",
++			rows: [][]any{{"Заголовок"}, {ipcMesField}, {"январь", "100"}},
++			want: "строка годов пуста",
++		},
++		{
++			name: "якорь в первой строке листа",
++			rows: [][]any{{ipcMesField}, {"январь", "100"}},
++			want: "строки годов нет над",
++		},
++		{
++			name: "год не число",
++			rows: [][]any{{"Заголовок"}, {"", "20хх", "2020"}, {ipcMesField}, {"январь", "100", "101"}},
++			want: "20хх",
++		},
++		{
++			name: "месяцы не по возрастанию",
++			rows: [][]any{{"Заголовок"}, {"", "2019", "2020"}, {ipcMesField}, {"февраль", "100", "101"}, {"январь", "102", "103"}},
++			want: "по возрастанию",
++		},
++		{
++			name: "значение не число",
++			rows: [][]any{{"Заголовок"}, {"", "2019", "2020"}, {ipcMesField}, {"январь", "нет", "101"}},
++			want: "не число",
++		},
++		{
++			name: "значение не конечное число",
++			rows: [][]any{{"Заголовок"}, {"", "2019"}, {ipcMesField}, {"январь", "NaN"}},
++			want: "не конечное",
++		},
++		{
++			name: "колонка вне строки годов",
++			rows: [][]any{{"Заголовок"}, {"", "2019"}, {ipcMesField}, {"январь", "100", "101"}},
++			want: "вне строки годов",
++		},
++		{
++			name: "точек нет",
++			rows: [][]any{{"Заголовок"}, {"", "2019"}, {ipcMesField}, {"январь", ""}},
++			want: "0 точек",
++		},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			f := newTestWorkbook(t, sheets...)
++			setIpcMesSheetRows(t, f, sheets, tt.rows)
++			rec := &appendRecorder{}
++			err := ipcMesImport(f, rec)
++			if err == nil {
++				t.Fatalf("ожидалась ошибка, получено %d строк", len(rec.rows))
++			}
++			if !strings.Contains(err.Error(), tt.want) {
++				t.Errorf("в ошибке нет %q: %v", tt.want, err)
++			}
++			if !strings.Contains(err.Error(), rosstatIPCMesTable) {
++				t.Errorf("в ошибке нет имени таблицы %s: %v", rosstatIPCMesTable, err)
++			}
++			if len(rec.rows) != 0 {
++				t.Errorf("при ошибке в батч записано %d строк, ожидалось 0", len(rec.rows))
++			}
++		})
++	}
++}
+diff --git a/rosstat/series_meta.go b/rosstat/series_meta.go
+index a2083e4..63781d8 100644
+--- a/rosstat/series_meta.go
++++ b/rosstat/series_meta.go
+@@ -36,53 +36,53 @@ UNION ALL SELECT 'rosstat', name, date, toFloat64(salary) FROM rosstat_salaries_
+ 		"source": "Источник данных: всегда rosstat",
+ 		"series": "Название ряда; совпадает с series в v_series_catalog. Для ИПЦ и ВВП название содержит сноски и годы выгрузки",
+ 		"date":   "Дата наблюдения (Date). Для месячных и недельных рядов — день из таблицы; для квартальных и зарплатных дат сдвинута — см. description ряда в v_series_catalog",
+ 		"value":  "Значение ряда (Float64). Единицы зависят от ряда: индекс цен (100 = без изменения), млрд руб., рубли — см. unit в v_series_catalog",
+ 	},
+ }
+ 
+ var ipcMesSeriesMeta = []util.SeriesMeta{
+ 	{
+ 		Source:      rosstatSource,
+-		Series:      "Индексы потребительских цен на товары и услуги1) по Российской Федерации в 1991-2026*)гг.",
++		Series:      "Индексы потребительских цен на товары и услуги по Российской Федерации",
+ 		Title:       "ИПЦ на товары и услуги, РФ, помесячно",
+ 		Unit:        "индекс, % к концу предыдущего месяца (100 = без изменения)",
+ 		Frequency:   "M",
+-		Origin:      "rosstat.gov.ru/statistics/price, файл ipc_mes_*.xlsx, лист «01»; строка = месяц, колонка = год с 1991; строка «к концу предыдущего месяца»",
+-		Description: "Индекс потребительских цен на товары и услуги по РФ в целом: цены за месяц относительно конца предыдущего месяца. 100 — без изменения, 103,5 — рост на 3,5% за месяц. Дата — последний день отчётного месяца. Инфляция за год (декабрь к декабрю) = (Π индексов за 12 месяцев / 100^12 − 1) × 100%. Название содержит сноски и годы выгрузки и меняется при обновлении файла Росстата.",
++		Origin:      "rosstat.gov.ru/statistics/price, файл ipc_mes_*.xlsx, лист «01»: имя ряда задано кодом (ipcMesSeriesNames), из файла берутся только годы (строка над якорем) и значения; строка = месяц, колонка = год, якорь «к концу предыдущего месяца»",
++		Description: "Индекс потребительских цен на товары и услуги по РФ в целом: цены за месяц относительно конца предыдущего месяца. 100 — без изменения, 103,5 — рост на 3,5% за месяц. Дата — последний день отчётного месяца. Инфляция за год (декабрь к декабрю) = (Π индексов за 12 месяцев / 100^12 − 1) × 100%. Имя ряда объявлено кодом и от заголовка листа не зависит. Годовой блок листа («к декабрю предыдущего года») — другой показатель и в ряд не входит.",
+ 	},
+ 	{
+ 		Source:      rosstatSource,
+-		Series:      "Индексы потребительских цен на продовольственные товары по Российской Федерации в 1991-2026*)гг.",
++		Series:      "Индексы потребительских цен на продовольственные товары по Российской Федерации",
+ 		Title:       "ИПЦ на продовольственные товары, РФ, помесячно",
+ 		Unit:        "индекс, % к концу предыдущего месяца (100 = без изменения)",
+ 		Frequency:   "M",
+-		Origin:      "rosstat.gov.ru/statistics/price, файл ipc_mes_*.xlsx, лист «02»; строка = месяц, колонка = год с 1991; строка «к концу предыдущего месяца»",
+-		Description: "Индекс потребительских цен на продовольственные товары по РФ: цены за месяц относительно конца предыдущего месяца. 100 — без изменения. Дата — последний день отчётного месяца. Инфляция за год (декабрь к декабрю) = (Π индексов за 12 месяцев / 100^12 − 1) × 100%. Название содержит сноски и годы выгрузки и меняется при обновлении файла Росстата.",
++		Origin:      "rosstat.gov.ru/statistics/price, файл ipc_mes_*.xlsx, лист «02»: имя ряда задано кодом (ipcMesSeriesNames), из файла берутся только годы (строка над якорем) и значения; строка = месяц, колонка = год, якорь «к концу предыдущего месяца»",
++		Description: "Индекс потребительских цен на продовольственные товары по РФ: цены за месяц относительно конца предыдущего месяца. 100 — без изменения. Дата — последний день отчётного месяца. Инфляция за год (декабрь к декабрю) = (Π индексов за 12 месяцев / 100^12 − 1) × 100%. Имя ряда объявлено кодом и от заголовка листа не зависит. Годовой блок листа («к декабрю предыдущего года») — другой показатель и в ряд не входит.",
+ 	},
+ 	{
+ 		Source:      rosstatSource,
+-		Series:      "Индексы потребительских цен на непродовольственные товары по Российской Федерации в 1991-2026*)гг.",
++		Series:      "Индексы потребительских цен на непродовольственные товары по Российской Федерации",
+ 		Title:       "ИПЦ на непродовольственные товары, РФ, помесячно",
+ 		Unit:        "индекс, % к концу предыдущего месяца (100 = без изменения)",
+ 		Frequency:   "M",
+-		Origin:      "rosstat.gov.ru/statistics/price, файл ipc_mes_*.xlsx, лист «03»; строка = месяц, колонка = год с 1991; строка «к концу предыдущего месяца»",
+-		Description: "Индекс потребительских цен на непродовольственные товары по РФ: цены за месяц относительно конца предыдущего месяца. 100 — без изменения. Дата — последний день отчётного месяца. Инфляция за год (декабрь к декабрю) = (Π индексов за 12 месяцев / 100^12 − 1) × 100%. Название содержит сноски и годы выгрузки и меняется при обновлении файла Росстата.",
++		Origin:      "rosstat.gov.ru/statistics/price, файл ipc_mes_*.xlsx, лист «03»: имя ряда задано кодом (ipcMesSeriesNames), из файла берутся только годы (строка над якорем) и значения; строка = месяц, колонка = год, якорь «к концу предыдущего месяца»",
++		Description: "Индекс потребительских цен на непродовольственные товары по РФ: цены за месяц относительно конца предыдущего месяца. 100 — без изменения. Дата — последний день отчётного месяца. Инфляция за год (декабрь к декабрю) = (Π индексов за 12 месяцев / 100^12 − 1) × 100%. Имя ряда объявлено кодом и от заголовка листа не зависит. Годовой блок листа («к декабрю предыдущего года») — другой показатель и в ряд не входит.",
+ 	},
+ 	{
+ 		Source:      rosstatSource,
+-		Series:      "Индексы потребительских цен на услуги по Российской Федерации в 1991-2026*)гг.",
++		Series:      "Индексы потребительских цен на услуги по Российской Федерации",
+ 		Title:       "ИПЦ на услуги, РФ, помесячно",
+ 		Unit:        "индекс, % к концу предыдущего месяца (100 = без изменения)",
+ 		Frequency:   "M",
+-		Origin:      "rosstat.gov.ru/statistics/price, файл ipc_mes_*.xlsx, лист «04»; строка = месяц, колонка = год с 1991; строка «к концу предыдущего месяца»",
+-		Description: "Индекс потребительских цен на платные услуги населению по РФ: цены за месяц относительно конца предыдущего месяца. 100 — без изменения. Дата — последний день отчётного месяца. Инфляция за год (декабрь к декабрю) = (Π индексов за 12 месяцев / 100^12 − 1) × 100%. Название содержит сноски и годы выгрузки и меняется при обновлении файла Росстата.",
++		Origin:      "rosstat.gov.ru/statistics/price, файл ipc_mes_*.xlsx, лист «04»: имя ряда задано кодом (ipcMesSeriesNames), из файла берутся только годы (строка над якорем) и значения; строка = месяц, колонка = год, якорь «к концу предыдущего месяца»",
++		Description: "Индекс потребительских цен на платные услуги населению по РФ: цены за месяц относительно конца предыдущего месяца. 100 — без изменения. Дата — последний день отчётного месяца. Инфляция за год (декабрь к декабрю) = (Π индексов за 12 месяцев / 100^12 − 1) × 100%. Имя ряда объявлено кодом и от заголовка листа не зависит. Годовой блок листа («к декабрю предыдущего года») — другой показатель и в ряд не входит.",
+ 	},
+ }
+ 
+ var vvpKvartalSeriesMeta = []util.SeriesMeta{
+ 	{
+ 		Source:      rosstatSource,
+ 		Series:      "2 Валовой внутрений продукт",
+ 		Title:       "ВВП РФ, квартальный, в текущих ценах",
+ 		Unit:        "млрд руб.",
+ 		Frequency:   "Q",
+diff --git a/rosstat/series_meta_test.go b/rosstat/series_meta_test.go
+index 9af7dde..a7f123e 100644
+--- a/rosstat/series_meta_test.go
++++ b/rosstat/series_meta_test.go
+@@ -148,31 +148,10 @@ func TestIpcWeeksSeriesMetaCoversFixture(t *testing.T) {
+ 	for _, row := range *table {
+ 		names = append(names, row[0])
+ 	}
+ 	described := describedSeries(t, ipcWeeksSeriesMeta())
+ 	for _, name := range names {
+ 		if !described[name] {
+ 			t.Errorf("ряд %q из выгрузки не описан в series_meta", name)
+ 		}
+ 	}
+ }
+-
+-func TestIpcMesSeriesMetaCoversParsedSheets(t *testing.T) {
+-	sheets := []string{"01", "02", "03", "04"}
+-	f := newTestWorkbook(t, sheets...)
+-	for i, sheet := range sheets {
+-		setSheetRows(t, f, sheet, [][]any{
+-			{ipcMesSeriesMeta[i].Series},
+-			{ipcMesField},
+-			{"январь", "100.5", "101.2"},
+-		})
+-	}
+-	table, err := parseIpcMes(f)
+-	if err != nil {
+-		t.Fatal(err)
+-	}
+-	names := make([]string, 0, len(*table))
+-	for _, row := range *table {
+-		names = append(names, row[0])
+-	}
+-	requireParsedDescribed(t, names, describedSeries(t, ipcMesSeriesMeta))
+-}

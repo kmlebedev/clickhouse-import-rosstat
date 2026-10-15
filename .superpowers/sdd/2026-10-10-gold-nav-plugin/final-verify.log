@@ -1,0 +1,110 @@
+671ad40 harden ingest validation, add rate limit, fix dashboard filter and weekly events
+== make ch-status
+ClickHouse отвечает на порту 8123
+== make all (lint, vet, test -race, build, build-ingest)
+0 issues.
+go vet ./...
+go test -race ./...
+?   	github.com/kmlebedev/clickhouse-import-rosstat	[no test files]
+?   	github.com/kmlebedev/clickhouse-import-rosstat/bank	[no test files]
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/bea	(cached)
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/bls	(cached)
+?   	github.com/kmlebedev/clickhouse-import-rosstat/calendar	[no test files]
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/cbr	(cached)
+?   	github.com/kmlebedev/clickhouse-import-rosstat/chimport	[no test files]
+?   	github.com/kmlebedev/clickhouse-import-rosstat/cmd/ingest	[no test files]
+?   	github.com/kmlebedev/clickhouse-import-rosstat/craw	[no test files]
+?   	github.com/kmlebedev/clickhouse-import-rosstat/customs	[no test files]
+?   	github.com/kmlebedev/clickhouse-import-rosstat/fao	[no test files]
+?   	github.com/kmlebedev/clickhouse-import-rosstat/financial	[no test files]
+?   	github.com/kmlebedev/clickhouse-import-rosstat/financial/exporter	[no test files]
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/fred	(cached)
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/gold	(cached)
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/ingest	2.045s
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/minfin	(cached)
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/moex	(cached)
+ok  	github.com/kmlebedev/clickhouse-import-rosstat/rosstat	(cached)
+?   	github.com/kmlebedev/clickhouse-import-rosstat/util	[no test files]
+?   	github.com/kmlebedev/clickhouse-import-rosstat/views	[no test files]
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o build/clickhouse-import-rosstat .
+go build -o build/ingest ./cmd/ingest
+== reseed events_calendar
+"/Users/whitefox/.clickhouse/versions/26.10.1.1853/clickhouse" client --user "default" --password "" --multiquery < "sql/events_calendar_q4_2026.sql"
+== make import STAT=gold_views
+go build -o build/clickhouse-import-rosstat-native .
+CLICKHOUSE_IMPORT_STAT=gold_views ./build/clickhouse-import-rosstat-native
+time="2026-10-10T02:47:22+05:00" level=info msg="href url https://www.cbr.ru/Content/Document/File/108632/indicators_cpd.xlsx"
+time="2026-10-10T02:47:22+05:00" level=info msg="Connected to clickhouse"
+time="2026-10-10T02:47:22+05:00" level=info msg="View v_model_inputs created: true"
+time="2026-10-10T02:47:22+05:00" level=info msg="View v_gold_dashboard created: true"
+time="2026-10-10T02:47:22+05:00" level=info msg="View v_forecast_accuracy created: true"
+time="2026-10-10T02:47:22+05:00" level=info msg="Imported 0 rows of gold_views"
+== view checks
+"/Users/whitefox/.clickhouse/versions/26.10.1.1853/clickhouse" client --user "default" --password "" --multiquery < ".superpowers/sdd/2026-10-10-gold-nav-plugin/final-check.sql"
+v_model_inputs rows	1
+Row 1:
+──────
+gold_moex_fix_usd:  4126.342605774913
+gold_date:          2026-10-08
+usdrub:             85.4173
+usdrub_date:        2026-10-09
+cbr_key_rate:       14
+cbr_key_rate_date:  2026-10-08
+ofz_1y:             13.7592
+ofz_1y_date:        2026-10-09
+ofz_3y:             15.9688
+ofz_3y_date:        2026-10-09
+ofz_5y:             16.568
+ofz_5y_date:        2026-10-09
+ofz_10y:            16.8486
+ofz_10y_date:       2026-10-09
+rgbi:               110.55
+rgbi_date:          2026-10-09
+ipc_mes_last:       99.92
+ipc_mes_last_date:  2026-08-31
+ipc_week_ytd:       6.504149308567153
+ipc_week_ytd_date:  2026-10-05
+fedfunds:           3.75
+fedfunds_date:      2026-09-01
+dfii10:             2.92
+dfii10_date:        2026-10-07
+dgs10:              5.28
+dgs10_date:         2026-10-07
+t5yie:              2.37
+t5yie_date:         2026-10-08
+dtwexbgs:           121.3848
+dtwexbgs_date:      2026-10-02
+plzl_close:         1006.8
+plzl_date:          2026-10-09
+last_run_id:        7f3c2a10-5b1e-4c7d-9a2f-0e8d4b6c1a99
+last_nav_per_share: 12500
+last_run_date:      2026-10-10 02:06:46
+crack_ulsd_proxy	\N	>50 USD: медвежий сигнал (crack ULSD)	0	\N	1
+distillate_stocks	\N	порога в статье §6 нет	0	\N	1
+fedwatch_dec_hike	\N	>65%: сценарное переключение; >80%: алерт	0	\N	1
+etf_flows_month	\N	порога в статье §6 нет	0	\N	1
+dxy	\N	>102: порог модели (DXY)	0	\N	1
+nav	2026-10-10	2026-12-31	12500	0
+xau_q_avg	2026-10-10	2026-12-31	4285	0
+cbr	2
+cpi	15
+eia	12
+fomc	1
+gov_rf	1
+nfp	2
+wgc	1
+v_model_inputs	35	35
+v_gold_dashboard	6	6
+v_forecast_accuracy	8	8
+== unknown field (expect 400)
+invalid JSON: json: unknown field "nav_bulll"
+ HTTP 400
+== negative probability (expect 400)
+probability "base" = -40 must be within 0..100
+ HTTP 400
+== plugin repo
+.superpowers/sdd/2026-10-10-gold-nav-plugin/final-verify.sh: line 21: 77817 Terminated: 15          ./build/ingest > $W/final-ingest.log 2>&1
+ef7bd44 single nav procedure, define ndpi base, explicit run.json step
+4b88571 align ndpi currency in methodology
+7bbc075 fix verify view and nav currency
+27e20fd initial gold-nav plugin

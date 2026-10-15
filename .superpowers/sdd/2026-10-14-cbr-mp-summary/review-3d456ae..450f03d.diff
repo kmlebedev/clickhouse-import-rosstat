@@ -1,0 +1,387 @@
+# Review package: 3d456ae..450f03d
+
+## Commits
+450f03d cbr: known = url + blocks + regex channels (full layer-1 completeness)
+a81a165 cbr: refetch partially written mp summaries (known = url + blocks)
+
+## Files changed
+ cbr/mp_summary.go                                  | 127 ++++++++++++++++-----
+ cbr/mp_summary_test.go                             |  64 ++++++++++-
+ .../specs/2026-10-14-cbr-mp-summary-design.md      |   2 +-
+ 3 files changed, 164 insertions(+), 29 deletions(-)
+
+## Diff
+diff --git a/cbr/mp_summary.go b/cbr/mp_summary.go
+index 3643b4b..cf98f76 100644
+--- a/cbr/mp_summary.go
++++ b/cbr/mp_summary.go
+@@ -82,24 +82,37 @@ const (
+ // Append обязательна: правило проекта, без неё строка молча теряется).
+ const (
+ 	mpSummaryInsert        = "INSERT INTO " + mpSummaryTable + " (meeting_date, published, url, decision_action, decision_rate, decision_delta_bp, effective_from, signal)"
+ 	mpSummaryBlockInsert   = "INSERT INTO " + mpSummaryBlockTable + " (meeting_date, block, subsection, kind, seq, text)"
+ 	mpSummaryChannelInsert = "INSERT INTO " + mpSummaryChannelTable + " (meeting_date, channel, kind, method, model, prompt_version, seq, text)"
+ )
+ 
+ // Запросы чтения. FINAL обязателен: ключи таблиц — ReplacingMergeTree, и без него
+ // несмёрженные части дали бы дубли дат и повторные матчи каналов.
+ const (
+-	// mpSummaryKnownUrlsQuery — адреса резюме, уже лежащие в таблице. Дельта считается
+-	// по индексу материалов заседаний: нет новых адресов и нет отстающих LLM-документов —
+-	// прогон no-op без обращений к страницам резюме (спека §3.1).
+-	mpSummaryKnownUrlsQuery = "SELECT DISTINCT url FROM " + mpSummaryTable + " FINAL"
++	// mpSummaryImportedQuery — шапки уже импортированных резюме: адрес страницы и дата
++	// заседания. Адрес нужен дельте по индексу (что в индексе ново), дата — проверке
++	// полноты документа: шапка пишется первым батчем, и по одному адресу недописанный
++	// документ (сбой батча блоков или каналов) считался бы готовым — потерянное не
++	// вернулось бы следующим прогоном (спека §3.1).
++	mpSummaryImportedQuery = "SELECT url, meeting_date FROM " + mpSummaryTable + " FINAL"
++
++	// mpSummaryBlockDatesQuery / mpSummaryRegexDatesQuery — даты заседаний, у которых есть
++	// хотя бы одна строка соответствующего уровня: блоки текста и regex-разметка каналов.
++	// Вместе с адресом шапки это и есть признак записанного целиком документа: шапка,
++	// блоки и regex-каналы — три батча слоя 1, и сбой любого из них должен возвращать
++	// документ в перекачку (спека §3.1). Отбор именно по method='regex' — иначе строки
++	// LLM-разметки (пишутся после слоя 1 и догоняются отдельно) замаскировали бы
++	// отсутствие regex-слоя, и третий батч потерялся бы навсегда.
++	mpSummaryBlockDatesQuery = "SELECT DISTINCT meeting_date FROM " + mpSummaryBlockTable + " FINAL"
++	mpSummaryRegexDatesQuery = "SELECT DISTINCT meeting_date FROM " + mpSummaryChannelTable +
++		" FINAL WHERE method = '" + mpMethodRegex + "'"
+ 
+ 	// mpSummaryPastQuery — прошлые решения: ставки для decision_delta_bp и адреса
+ 	// страниц для LLM-догона. ORDER BY meeting_date — дельта идёт по порядку заседаний.
+ 	mpSummaryPastQuery = "SELECT meeting_date, decision_rate, url FROM " + mpSummaryTable + " FINAL ORDER BY meeting_date"
+ 
+ 	// mpSummaryCountQuery — число резюме таблицы: сообщение no-op называет его
+ 	// (прогон без новых документов обязан отчитаться, а сколько всего на месте).
+ 	mpSummaryCountQuery = "SELECT count() FROM " + mpSummaryTable + " FINAL"
+ 
+ 	// mpLLMPendingQuery — даты заседаний, у которых нет LLM-строк текущей пары
+@@ -139,64 +152,69 @@ type mpFetchedSummary struct {
+ // страницы (только для сообщений о пропуске) и разобранное резюме.
+ type mpLLMDoc struct {
+ 	Date time.Time
+ 	Url  string
+ 	Doc  mpSummaryDoc
+ }
+ 
+ // Import — полный прогон импортёра (спека §3.1, §3.8). Порядок шагов — часть контракта:
+ //  1. DDL трёх таблиц;
+ //  2. индекс материалов заседаний → карточки резюме;
+-//  3. дельта по адресам таблицы: новые документы и отстающая LLM-разметка;
++//  3. дельта по таблицам: новые документы (адреса нет в шапке ИЛИ нет блоков по дате его
++//     заседания ИЛИ нет regex-строк каналов — недописанный документ слоя 1) и отстающая
++//     LLM-разметка;
+ //  4. no-op, если ни того, ни другого нет (витрины не трогаем — они созданы ранее);
+ //  5. прошлые решения таблицы: ставки для дельты и адреса для LLM-догона;
+ //  6. скачивание и разбор новых резюме — fail-fast: ошибка до записи, иначе
+ //     decision_delta_bp посчитался бы по неполному ряду заседаний;
+ //  7. батчи по таблицам (шапка, блоки, regex-каналы), Send каждого — ошибка наверх;
+ //  8. LLM-догон: разметка новых документов и документов без строк текущей пары
+ //     (model, prompt_version): ошибка одного документа — warn и продолжение
+ //     (деградация до regex-слоя), ошибка базы — наверх;
+ //  9. витрины v_cbr_mp_summary* — производные, после данных.
+ //
+ // Префлайта (PublicationCountPoints/PublicationSource) и AfterImport у импортёра нет
+-// сознательно: дельта считается по индексу, а не по отпечатку артефакта, и
+-// само-исцеление «известная версия → no-op» здесь заменено проверкой адресов (спека §3.1).
++// сознательно: дельта считается по индексу и полноте документа в таблицах, а не по
++// отпечатку артефакта, и само-исцеление «известная версия → no-op» здесь заменено
++// проверкой адресов и блоков (спека §3.1).
+ func (s *mpSummaryStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+ 	// 1.
+ 	for _, ddl := range []string{mpSummaryDdl, mpSummaryBlockDdl, mpSummaryChannelDdl} {
+ 		if err = conn.Exec(ctx, ddl); err != nil {
+ 			return 0, fmt.Errorf("%s: DDL: %w", mpSummaryName, err)
+ 		}
+ 	}
+ 
+ 	// 2.
+ 	index, err := getPage(mpSummaryIndexUrl)
+ 	if err != nil {
+ 		return 0, fmt.Errorf("%s: %s: %w", mpSummaryName, mpSummaryIndexUrl, err)
+ 	}
+ 	refs, err := parseMPDecIndex(index)
+ 	if err != nil {
+ 		return 0, fmt.Errorf("%s: %w", mpSummaryName, err)
+ 	}
+ 
+ 	// 3.
+-	known, err := mpKnownUrls(ctx, conn)
++	imported, err := mpImportedSummaries(ctx, conn)
+ 	if err != nil {
+ 		return 0, err
+ 	}
+-	missing := make([]mpSummaryRef, 0, len(refs))
+-	for _, ref := range refs {
+-		if known[cbrUrl+ref.Href] {
+-			continue
+-		}
+-		missing = append(missing, ref)
++	blockDates, err := mpDateSet(ctx, conn, mpSummaryBlockDatesQuery, "даты блоков")
++	if err != nil {
++		return 0, err
++	}
++	regexDates, err := mpDateSet(ctx, conn, mpSummaryRegexDatesQuery, "даты regex-разметки")
++	if err != nil {
++		return 0, err
+ 	}
++	missing := mpMissingRefs(refs, imported, blockDates, regexDates)
+ 
+ 	baseURL, apiKey, model, llmOK := mpLLMConfigFromEnv()
+ 	var pending map[time.Time]bool
+ 	if llmOK {
+ 		if pending, err = mpLLMPending(ctx, conn, model, mpPromptVersion); err != nil {
+ 			return 0, err
+ 		}
+ 	}
+ 
+ 	// 4.
+@@ -295,41 +313,98 @@ func (s *mpSummaryStat) Import(ctx context.Context, conn driver.Conn) (count int
+ 		if _, err = util.CreateView(ctx, conn, view); err != nil {
+ 			return 0, err
+ 		}
+ 	}
+ 
+ 	log.Infof("%s: резюме %d новых, блоков %d, каналов regex %d, LLM %d", mpSummaryName,
+ 		len(docs), blockRows.rows, regexRows.rows, llmCount)
+ 	return count, nil
+ }
+ 
+-// mpKnownUrls — адреса уже импортированных резюме. Множество, а не срез: проверка идёт
+-// по каждой карточке индекса.
+-func mpKnownUrls(ctx context.Context, conn driver.Conn) (map[string]bool, error) {
+-	rows, err := conn.Query(ctx, mpSummaryKnownUrlsQuery)
++// mpMissingRefs — карточки индекса, которых в таблице нет целиком. Документ считается
++// известным, только если выполнены все три условия: его адрес есть в шапке, по дате его
++// заседания есть хотя бы одна строка блоков и хотя бы одна regex-строка каналов. Слой 1 —
++// три батча (шапка, блоки, regex-каналы), и сбой любого из них оставил бы документ неполным:
++// по одному адресу следующий прогон ушёл бы в no-op, и потерянное не вернулось бы никогда
++// (спека §3.1 п. 2: сбой батчей слоя 1 = следующий прогон повторит). Недописанный документ
++// попадает в missing, перекачивается и перезаписывается целиком; ключи ReplacingMergeTree
++// делают повторную запись идемпотентной. Порядок индекса (от новых к старым) сохраняется:
++// он же порядок скачивания и записи.
++//
++// Чистая функция без обращений к БД: сценарии «шапка есть, блоков нет» и «шапка и блоки есть,
++// regex-строк нет» пинятся тестом без драйвера и сети.
++func mpMissingRefs(refs []mpSummaryRef, imported map[string]time.Time, blockDates, regexDates map[time.Time]bool) []mpSummaryRef {
++	missing := make([]mpSummaryRef, 0, len(refs))
++	for _, ref := range refs {
++		date, ok := imported[cbrUrl+ref.Href]
++		if ok && blockDates[date] && regexDates[date] {
++			continue
++		}
++		missing = append(missing, ref)
++	}
++	return missing
++}
++
++// mpImportedSummaries — шапки таблицы: адрес страницы → дата заседания (день в UTC, mpDay).
++// Дата нормализуется тем же mpDay, что и даты блоков: иначе проверка полноты документа не
++// нашла бы блоки (драйвер отдаёт Date в зоне сессии). Ключ таблицы — meeting_date, поэтому
++// один адрес встречается один раз; если адрес всё же попадёт под две даты, в карте останется
++// последняя прочитанная — документ может лишний раз попасть в missing (лишнее скачивание и
++// идемпотентная перезапись), но не потеряется: это безопасное направление ошибки.
++func mpImportedSummaries(ctx context.Context, conn driver.Conn) (map[string]time.Time, error) {
++	rows, err := conn.Query(ctx, mpSummaryImportedQuery)
++	if err != nil {
++		return nil, fmt.Errorf("%s: шапки таблицы не прочитаны: %w", mpSummaryName, err)
++	}
++	defer func() { _ = rows.Close() }()
++
++	imported := make(map[string]time.Time)
++	for rows.Next() {
++		var (
++			url  string
++			date time.Time
++		)
++		if err = rows.Scan(&url, &date); err != nil {
++			return nil, fmt.Errorf("%s: строка шапок таблицы не прочитана: %w", mpSummaryName, err)
++		}
++		imported[url] = mpDay(date)
++	}
++	if err = rows.Err(); err != nil {
++		return nil, fmt.Errorf("%s: шапки таблицы не дочитаны: %w", mpSummaryName, err)
++	}
++	return imported, nil
++}
++
++// mpDateSet — даты заседаний (день в UTC, mpDay) из запроса, возвращающего одну колонку
++// meeting_date: «есть ли по этой дате хоть одна строка уровня». Одна и та же проверка нужна
++// блокам и regex-разметке каналов, отличаются только запрос и слово в сообщении об ошибке.
++// Даты нормализуются тем же mpDay, что и даты шапок: драйвер отдаёт Date в зоне сессии, и без
++// приведения множества не совпали бы между собой — документ вечно считался бы недописанным.
++func mpDateSet(ctx context.Context, conn driver.Conn, query, what string) (map[time.Time]bool, error) {
++	rows, err := conn.Query(ctx, query)
+ 	if err != nil {
+-		return nil, fmt.Errorf("%s: адреса таблицы не прочитаны: %w", mpSummaryName, err)
++		return nil, fmt.Errorf("%s: %s не прочитаны: %w", mpSummaryName, what, err)
+ 	}
+ 	defer func() { _ = rows.Close() }()
+ 
+-	known := make(map[string]bool)
++	dated := make(map[time.Time]bool)
+ 	for rows.Next() {
+-		var url string
+-		if err = rows.Scan(&url); err != nil {
+-			return nil, fmt.Errorf("%s: адрес таблицы не прочитан: %w", mpSummaryName, err)
++		var date time.Time
++		if err = rows.Scan(&date); err != nil {
++			return nil, fmt.Errorf("%s: %s: строка не прочитана: %w", mpSummaryName, what, err)
+ 		}
+-		known[url] = true
++		dated[mpDay(date)] = true
+ 	}
+ 	if err = rows.Err(); err != nil {
+-		return nil, fmt.Errorf("%s: адреса таблицы не дочитаны: %w", mpSummaryName, err)
++		return nil, fmt.Errorf("%s: %s не дочитаны: %w", mpSummaryName, what, err)
+ 	}
+-	return known, nil
++	return dated, nil
+ }
+ 
+ // mpPastSummaries — прошлые решения таблицы. Дата приводится к календарному дню в UTC
+ // (mpDay): clickhouse-go отдаёт Date с таймзоной сессии, и без приведения дата таблицы не
+ // совпала бы с датой разобранного документа (она всегда UTC-полночь) — дельта считалась бы
+ // по двум разным рядам, а LLM-догон не нашёл бы отстающих документов.
+ func mpPastSummaries(ctx context.Context, conn driver.Conn) ([]mpPastSummary, error) {
+ 	rows, err := conn.Query(ctx, mpSummaryPastQuery)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("%s: прошлые решения не прочитаны: %w", mpSummaryName, err)
+diff --git a/cbr/mp_summary_test.go b/cbr/mp_summary_test.go
+index e876d3c..5825be6 100644
+--- a/cbr/mp_summary_test.go
++++ b/cbr/mp_summary_test.go
+@@ -6,22 +6,23 @@ import (
+ 	"time"
+ 
+ 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+ )
+ 
+ // Ожидаемые значения ниже — литералами, а не константами пакета: тест, сверяющий
+ // mpSummaryName с самим собой, прошёл бы и после переименования таблицы или шага dagu,
+ // то есть ровно на той правке, от которой он и должен падать.
+ //
+ // Контур резюме обсуждений пишется в три свои таблицы и читается агентом через три
+-// витрины, поэтому пины идут по всем четырём контрактам: имя импортёра (шаг расписания),
+-// DDL (схема, которую ждут витрины и агент) и Select витрин (что именно увидит агент).
++// витрины, поэтому пины идут по всем контрактам контура: имя импортёра (шаг расписания),
++// DDL (схема, которую ждут витрины и агент), Select витрин (что именно увидит агент),
++// решение «известен/не известен» (что перекачивается повторным прогоном) и дельта ставки.
+ 
+ // TestMPSummaryImporterNameAndTable — имя импортёра и таблица-шапка: первое — контракт
+ // CLICKHOUSE_IMPORT_STAT и id шага dagu/cbr.yaml, второе — контракт данных (витрина
+ // v_cbr_mp_summary и агент MCP). У импортёров с собственными таблицами пакет держит
+ // конвенцию «Name() == TableName», и расхождение означало бы прогон, который пишет в одну
+ // таблицу, а витрина читает другую.
+ func TestMPSummaryImporterNameAndTable(t *testing.T) {
+ 	const name = "cbr_mp_summary"
+ 
+ 	if got := mpSummaryImporter.Name(); got != name {
+@@ -147,20 +148,79 @@ func TestMPSummaryViewPins(t *testing.T) {
+ 			t.Errorf("витрина %s без комментария таблицы: агент не поймёт, что это за данные", c.name)
+ 		}
+ 		for _, col := range c.columns {
+ 			if c.view.Columns[col] == "" {
+ 				t.Errorf("витрина %s: колонка %s без комментария", c.name, col)
+ 			}
+ 		}
+ 	}
+ }
+ 
++// TestMPSummaryMissingRefs — что прогон считает новым документом. Известен только документ,
++// записанный целиком: адрес в шапке, хотя бы одна строка блоков по дате его заседания и хотя
++// бы одна regex-строка каналов по той же дате (слой 1 — три батча, и сбой любого из них
++// оставляет документ неполным). По одному адресу недописанный документ ушёл бы в no-op, и
++// потерянное не вернулось бы никогда (спека §3.1 п. 2: сбой батчей слоя 1 = следующий прогон
++// повторит). Недописанный документ обязан попадать в missing: он перекачивается и
++// перезаписывается целиком, а ключи ReplacingMergeTree делают перезапись идемпотентной.
++// Порядок индекса (от новых к старым) при этом сохраняется — он же порядок скачивания.
++func TestMPSummaryMissingRefs(t *testing.T) {
++	day := func(d int, m time.Month) time.Time { return time.Date(2026, m, d, 0, 0, 0, 0, time.UTC) }
++
++	// Четыре карточки индекса: полный документ; документ с одной шапкой (блоков нет);
++	// документ с шапкой и блоками, но без regex-разметки (сбой третьего батча слоя 1);
++	// и вовсе неизвестный. Даты заседания первых трёх — из шапок таблицы, они же ключи
++	// блоков и каналов.
++	full := mpSummaryRef{Published: day(23, time.September), Href: "/dkp/mp_dec/decision_key_rate/summary_key_rate_23092026/"}
++	headerOnly := mpSummaryRef{Published: day(5, time.August), Href: "/dkp/mp_dec/decision_key_rate/summary_key_rate_05082026/"}
++	noRegex := mpSummaryRef{Published: day(1, time.July), Href: "/dkp/mp_dec/decision_key_rate/summary_key_rate_01072026/"}
++	unknown := mpSummaryRef{Published: day(1, time.April), Href: "/dkp/mp_dec/decision_key_rate/summary_key_rate_01042026/"}
++	refs := []mpSummaryRef{full, headerOnly, noRegex, unknown}
++
++	imported := map[string]time.Time{
++		cbrUrl + full.Href:       day(11, time.September),
++		cbrUrl + headerOnly.Href: day(24, time.July), // шапка есть — блоков по этой дате нет
++		cbrUrl + noRegex.Href:    day(5, time.June),  // шапка и блоки есть — regex-строк нет
++	}
++	blockDates := map[time.Time]bool{
++		day(11, time.September): true,
++		day(5, time.June):       true,
++	}
++	regexDates := map[time.Time]bool{day(11, time.September): true}
++
++	got := mpMissingRefs(refs, imported, blockDates, regexDates)
++	want := []mpSummaryRef{headerOnly, noRegex, unknown}
++	if len(got) != len(want) {
++		t.Fatalf("missing: %d карточек %v, want %d %v: неполный документ слоя 1 обязан перекачиваться",
++			len(got), got, len(want), want)
++	}
++	for i := range want {
++		if got[i] != want[i] {
++			t.Errorf("missing[%d] = %+v, want %+v", i, got[i], want[i])
++		}
++	}
++
++	// Обратное направление: у документа со всеми тремя уровнями повторный прогон не скачивает
++	// ничего — иначе ежедневный шаг заново разбирал бы все 22 резюме.
++	if again := mpMissingRefs(refs[:1], imported, blockDates, regexDates); len(again) != 0 {
++		t.Errorf("missing полного документа = %v, want пусто: известный документ не перекачивается", again)
++	}
++
++	// Признак третьего уровня — именно method='regex': строки LLM-разметки лежат в той же
++	// таблице и догоняются отдельно, поэтому по ним потерянный regex-слой (сбой третьего
++	// батча) выглядел бы записанным и не вернулся бы никогда.
++	const wantRegexQuery = "SELECT DISTINCT meeting_date FROM cbr_mp_summary_channel FINAL WHERE method = 'regex'"
++	if mpSummaryRegexDatesQuery != wantRegexQuery {
++		t.Errorf("запрос regex-уровня = %q, want %q", mpSummaryRegexDatesQuery, wantRegexQuery)
++	}
++}
++
+ // TestMPSummaryDecisionDeltas — шаг ставки в базисных пунктах: NULL у самого раннего
+ // решения ряда, 0 у hold (ставка не менялась) и round((rate − предыдущая rate) × 100) у
+ // изменений. Проверка отдельная от Import(): дельта — единственная арифметика импортёра,
+ // а её ошибка тихая (число выглядит правдоподобно), и живой прогон — не место, где её
+ // искать. Значение нового документа той же даты сильнее прошлого: повторный прогон
+ // пересчитывает шаг, а не теряет ставку.
+ func TestMPSummaryDecisionDeltas(t *testing.T) {
+ 	day := func(d int, m time.Month) time.Time { return time.Date(2026, m, d, 0, 0, 0, 0, time.UTC) }
+ 	bp := func(v int16) *int16 { return &v }
+ 
+diff --git a/docs/superpowers/specs/2026-10-14-cbr-mp-summary-design.md b/docs/superpowers/specs/2026-10-14-cbr-mp-summary-design.md
+index 5456a63..b1d91d5 100644
+--- a/docs/superpowers/specs/2026-10-14-cbr-mp-summary-design.md
++++ b/docs/superpowers/specs/2026-10-14-cbr-mp-summary-design.md
+@@ -23,21 +23,21 @@
+   - hike (06.11.2024): «По итогам состоявшейся дискуссии Совет директоров Банка России 25 октября 2024 года повысил ключевую ставку до 21,00% годовых с 28 октября 2024 года и дал направленный сигнал о возможном повышении ключевой ставки на ближайшем заседании.»;
+   - сигнал отдельной прозой: «Участники также посчитали обоснованным не давать сигнала о направленности дальнейших шагов.»;
+ - дата заседания дублируется фразой «Суждения участников основаны на данных, доступных к …» — фолбэк для парсера.
+ 
+ **Календарь заседаний** `https://www.cbr.ru/dkp/cal_mp/` — статический HTML (169 613 Б). Карточки заседаний с полной датой «DD месяца YYYY года» за 2022–2027 (на дату проверки: остаток 2026 — 23.10.2026 и 18.12.2026; все восемь дат 2027 — 12.02, 19.03, 30.04, 11.06, 30.07, 10.09, 22.10, 17.12); времена карточек: публикация пресс-релиза 13:30 МСК, пресс-конференция 15:00 МСК. Табличные секции старых лет (день+месяц, год из закладки таба) — **вне объёма**.
+ 
+ ## 3. Решения
+ 
+ ### 3.1 Транспорт и дельта-прогон
+ 
+-1. Каждый прогон: `getPage(индекс)` → goquery-разбор карточек «Резюме обсуждения ключевой ставки» → список `(published, url)`. Известность проверяется по `url` (SELECT DISTINCT url из `cbr_mp_summary FINAL`).
++1. Каждый прогон: `getPage(индекс)` → goquery-разбор карточек «Резюме обсуждения ключевой ставки» → список `(published, url)`. Известность документа — `url` в шапке **и** хотя бы одна строка блоков по его `meeting_date` (`cbr_mp_summary_block FINAL`), **и** хотя бы одна regex-строка каналов по `meeting_date` (`cbr_mp_summary_channel FINAL`, `method='regex'`; именно `regex` — иначе строки LLM-разметки замаскировали бы отсутствие слоя 1): частично записанный документ (сбой любого из трёх батчей слоя 1) перекачивается и дописывается идемпотентно.
+ 2. Для отсутствующих — `getPage(url)` + разбор; строки раскладываются по батчам **по таблицам** (шапка, блоки, regex-каналы — три `PrepareBatch → Send` подряд: батч в clickhouse-go принадлежит одной таблице); LLM-слой — отдельным батчем (каналы, `method='llm'`) после успешной записи слоя 1 (см. §3.5). Сбой батчей слоя 1 = следующий прогон повторит (ключи Replacing идемпотентны); сбой LLM-батча = слой 1 уже записан, LLM догоняется следующим прогоном.
+ 3. Обычный день: скачивается только индекс (~116 КБ), вставок ноль; новое резюме подхватывается в день публикации.
+ 4. `source_publications`/HEAD-префлайт **не применяем** (механизм — для одного артефакта, здесь индекс+набор документов; дельта по ссылкам дешевле). В ARCHITECTURE §8 — оговорка, чтобы конвенцию не читали как обязательную для любого источника.
+ 
+ ### 3.2 Разбор страницы (чистая функция, goquery)
+ 
+ - Обход документа в порядке следования: `h2` (блок), `div.title_20` (подзаголовок), `p` (абзац), `li` (пункт списка). Все пять известных `h2` обязательны — иначе ошибка (структура источника изменилась).
+ - Из блока «Выводы…» регексами (после нормализации NBSP/неразрывных дефисов/«ё»):
+   - дата заседания — «Совет директоров Банка России DD месяца YYYY года (сохранил|повысил|снизил)»; фолбэк — «данных, доступных к DD месяца YYYY года»;
+   - действие: `hold` («сохранил … на уровне»), `hike` («повысил … до»), `cut` («снизил … до»);
