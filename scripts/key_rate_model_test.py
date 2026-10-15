@@ -673,6 +673,38 @@ def ar1_rows(count, intercept=10.0, phi=0.5):
     return rows
 
 
+def taylor_rows(count, rho=0.9, c=1.0, a_pi=0.2, b_gap=-0.5, first=date(2014, 1, 1)):
+    """Строки с ТОЧНОЙ связью `i_t = c + ρ·i_{t−1} + a·π + b·gap` (метод №2).
+
+    Безрелейная синтетика: OLS на такой выборке обязан восстановить
+    коэффициенты до машинной погрешности, а прогноз шага в б.п.
+    (`(pred_level − rate_before) × 100`) считается руками.
+
+    Признаки меняются и НЕ коллинеарны друг другу и уровню: `π` чередуется
+    5/8, `gap` растёт на 0.1 за заседание. Это важно: у монотонных признаков
+    уровень сходится к их линейной комбинации и колонка `rate_before` становится
+    коллинеарной свободному члену — окно вырождается по построению, а не по
+    делу. Долгосрочные импликации этой синтетики: `r* = 10`, `α = 2`, `β = −5`.
+    """
+    rows = []
+    level = 10.0
+    for index in range(count):
+        pi = 5.0 + 3.0 * (index % 2)
+        gap = -2.0 + 0.1 * index
+        after = c + rho * level + a_pi * pi + b_gap * gap
+        step = round((after - level) * 100.0)
+        decision = km.Decision(
+            first + timedelta(days=30 * index),
+            level,
+            after,
+            step,
+            (step > 0) - (step < 0),
+        )
+        rows.append(km.Row(decision, pi, gap))
+        level = after
+    return rows
+
+
 def folds(rows, method, fit_predict, **kwargs):
     """Фолды одного метода — контракт `walk_forward` без счётчика пропусков.
 
@@ -852,6 +884,133 @@ class TestWalkForward(unittest.TestCase):
         with self.assertRaises(km.DegenerateWindowError) as caught:
             km.fit_ar1(rows[:24], rows[24])
         self.assertIn("не меняется", str(caught.exception))
+
+
+class TestTaylorRule(unittest.TestCase):
+    """Метод №2: инерционное правило Тейлора (спека §6)."""
+
+    def test_ols_recovers_the_synthetic_coefficients(self):
+        # Безрелейная синтетика: OLS на 40 точках восстанавливает c, ρ, a, b
+        # с точностью 1e-6. Порядок параметров — дизайн `[1, rate_before,
+        # pi_saar, gap]` (свободный член первым: его добавляет add_constant).
+        result = km._taylor_fit(taylor_rows(40))
+        for parameter, expected in zip(result.params, (1.0, 0.9, 0.2, -0.5)):
+            self.assertAlmostEqual(float(parameter), expected, places=6)
+
+    def test_forecast_step_is_in_basis_points(self):
+        # Единицы: прогноз шага — в БАЗИСНЫХ пунктах, как факт и остальные
+        # прогнозы harness'а: `(pred_level − rate_before) × 100`. Урок B3
+        # (Task 3): смешение п.п./б.п. делает сравнения недействительными.
+        rows = taylor_rows(40)
+        row = rows[30]
+        forecast = km.fit_taylor(rows[:30], row)
+        expected = (row.decision.rate_after - row.decision.rate_before) * 100.0
+        self.assertAlmostEqual(forecast.step_bp, expected, places=4)
+        # Масштаб пина отдельно: шаг этого заседания ≈ −70 б.п., то есть в
+        # п.п. (без ×100) прогноз был бы ≈ −0.7 и тест упал бы.
+        self.assertAlmostEqual(forecast.step_bp, -69.6425, places=3)
+        self.assertIsNone(forecast.probs)
+
+    def test_uses_hac_with_the_pinned_configuration(self):
+        # Конфигурация HAC — часть спецификации (спека §6): Ньюи–Уэст,
+        # maxlags=4 (≈ полугодие между заседаниями), small-sample correction
+        # включена. Пин — по атрибутам ПОДОБРАННОЙ модели (решение
+        # контроллера), а не подменой реализации: сравнение p-value с B3,
+        # MZ/PT и методом №3 осмысленно только на одной ковариации.
+        result = km._taylor_fit(taylor_rows(24))
+        self.assertEqual(result.cov_type, "HAC")
+        self.assertEqual(result.cov_kwds["maxlags"], 4)
+        self.assertTrue(result.cov_kwds["use_correction"])
+
+    def test_rejects_a_window_too_short_for_ols(self):
+        # Вырожденное окно (2 точки) — DegenerateWindowError с понятным
+        # текстом, а не LinAlgError/ZeroDivisionError из statsmodels: у
+        # четырёхпараметрической регрессии не остаётся остаточных степеней
+        # свободы, и HAC-поправка делит на ноль.
+        rows = taylor_rows(6)
+        with self.assertRaises(km.DegenerateWindowError) as caught:
+            km.fit_taylor(rows[:2], rows[2])
+        self.assertIn("Тейлор", str(caught.exception))
+        self.assertIn("окно короче", str(caught.exception))
+
+    def test_window_boundary_keeps_one_residual_degree_of_freedom(self):
+        # 4 заседания — 4 параметра: остаточных степеней свободы нет (HAC
+        # делит на ноль), 5 — минимум. Граница пинуется, а не «примерно».
+        rows = taylor_rows(6)
+        with self.assertRaises(km.DegenerateWindowError):
+            km.fit_taylor(rows[:4], rows[4])
+        forecast = km.fit_taylor(rows[:5], rows[5])
+        self.assertIsInstance(forecast, km.Forecast)
+
+    def test_rejects_a_degenerate_design(self):
+        # Регрессор, не меняющийся в окне, коллинеарен свободному члену:
+        # коэффициенты не идентифицированы (пикнуть мусорные числа нельзя).
+        rows = synthetic_rows(30)
+        with self.assertRaises(km.DegenerateWindowError) as caught:
+            km.fit_taylor(rows[:24], rows[24])
+        self.assertIn("дизайн", str(caught.exception))
+
+    def test_degenerate_folds_are_skipped_by_walk_forward(self):
+        # Сквозная проверка механизма (как у B3): на выборке с неизменными
+        # признаками Тейлор вырожден на каждом фолде — прогон не падает,
+        # фолдов нет, а счётчик пропусков равен числу фолдов.
+        rows = synthetic_rows(30, steps=(0,))
+        predictions, skipped = km.walk_forward(rows, "taylor", km.fit_taylor, min_train=24)
+        self.assertEqual(predictions, [])
+        self.assertEqual(skipped, 6)
+
+    def test_long_run_implications_follow_the_steady_state_formula(self):
+        # Из `i_t = c + ρ·i_{t−1} + a·π + b·gap` в устойчивом состоянии
+        # `i* = r* + α·π + β·gap`, где r* = c/(1−ρ), α = a/(1−ρ), β = b/(1−ρ).
+        # У синтетики c=1, ρ=0.9, a=0.2, b=−0.5 → r* = 10, α = 2, β = −5.
+        long_run = km.taylor_long_run(taylor_rows(40))
+        self.assertEqual(long_run.n, 40)
+        self.assertAlmostEqual(long_run.rho, 0.9, places=6)
+        self.assertAlmostEqual(long_run.c, 1.0, places=6)
+        self.assertAlmostEqual(long_run.a_pi, 0.2, places=6)
+        self.assertAlmostEqual(long_run.b_gap, -0.5, places=6)
+        self.assertAlmostEqual(long_run.r_star, 10.0, places=5)
+        self.assertAlmostEqual(long_run.alpha, 2.0, places=5)
+        self.assertAlmostEqual(long_run.beta, -5.0, places=5)
+
+    def test_long_run_refuses_a_unit_root(self):
+        # ρ = 1: устойчивого состояния нет, 1 − ρ = 0 — долгосрочные
+        # импликации не определены (отчёт печатает это строкой, а не падает).
+        with self.assertRaises(km.DegenerateWindowError) as caught:
+            km.taylor_long_run(taylor_rows(40, rho=1.0))
+        self.assertIn("устойчивого состояния", str(caught.exception))
+
+    def test_report_prints_the_taylor_row_for_both_windows(self):
+        rows = taylor_rows(60)
+        # Строки прогона — ровно то, что гоняет `run_summary`: бенчмарки B1–B3
+        # и метод №2 (он входит в METHODS), оба окна.
+        predictions = benchmark_predictions(rows)
+        text = km.render_report(
+            rows, km.Skipped((), (), ()), predictions, None, today=date(2026, 10, 16)
+        )
+        for window in ("expanding", "rolling40"):
+            self.assertIn(f"| taylor | {window} |", text)
+        # Число фолдов видно в строке: 36 у расширяющегося (60 − 24) и 20 у
+        # скользящего 40 — то есть метод посчитан в ОБОИХ окнах, а не пропущен.
+        self.assertIn("| taylor | expanding | 36 |", text)
+        self.assertIn("| taylor | rolling40 | 20 |", text)
+        # DM строки метода — против каждого бенчмарка (спека §7), и долгосрочные
+        # импликации — отдельным блоком.
+        self.assertIn("| taylor | expanding | B1 hold |", text)
+        self.assertIn("| taylor | rolling40 | B3 AR(1) |", text)
+        self.assertIn("## Долгосрочные импликации правила Тейлора", text)
+        self.assertIn("| r* = c/(1−ρ) | 10.00 |", text)
+        self.assertIn("| α = a/(1−ρ) | 2.00 |", text)
+        self.assertIn("| β = b/(1−ρ) | -5.00 |", text)
+
+    def test_report_says_not_estimated_when_the_sample_is_degenerate(self):
+        # Вырожденная выборка (признаки не меняются) — блок остаётся и
+        # называет причину: отчёт не падает и не прячет блок молча.
+        text = km.render_report(
+            synthetic_rows(30), km.Skipped((), (), ()), [], None, today=date(2026, 10, 16)
+        )
+        self.assertIn("## Долгосрочные импликации правила Тейлора", text)
+        self.assertIn("| долгосрочные импликации | не оценены:", text)
 
 
 class TestMetrics(unittest.TestCase):
@@ -1199,6 +1358,7 @@ class TestReport(unittest.TestCase):
             "## Выборка",
             "## Walk-forward",
             "## Метрики: метод × окно",
+            "## Долгосрочные импликации правила Тейлора",
             "## Тесты значимости",
             "## Mincer–Zarnowitz и Pesaran–Timmermann",
             "## Режимный блок 2024–2026",
@@ -1378,10 +1538,15 @@ class TestRunSummaryArtifacts(unittest.TestCase):
             report = Path(tmp) / km.REPORT_NAME
             predictions = Path(tmp) / km.PREDICTIONS_NAME
             self.assertTrue(report.is_file() and predictions.is_file())
-            self.assertIn("# Модель ключевой ставки v0", report.read_text(encoding="utf-8"))
-            # 26 решений среза: расширяющееся окно — 2 фолда на бенчмарк
-            # (3 × 2 = 6 строк CSV), скользящее 40 — ноль.
-            self.assertEqual(len(predictions.read_text(encoding="utf-8").splitlines()), 7)
+            report_text = report.read_text(encoding="utf-8")
+            self.assertIn("# Модель ключевой ставки v0", report_text)
+            # 26 решений среза: расширяющееся окно — 2 фолда на метод
+            # (4 метода × 2 = 8 строк CSV), скользящее 40 — ноль.
+            self.assertEqual(len(predictions.read_text(encoding="utf-8").splitlines()), 9)
+            # Строка метода №2 и блок долгосрочных импликаций — в отчёте.
+            self.assertIn("| taylor | expanding |", report_text)
+            self.assertIn("## Долгосрочные импликации правила Тейлора", report_text)
+            self.assertIn("taylor", text)
             self.assertIn("фолдов (расширяющееся окно", text)
             self.assertIn("фолдов (скользящее окно", text)
 
