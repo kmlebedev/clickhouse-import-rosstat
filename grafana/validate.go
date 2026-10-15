@@ -10,17 +10,17 @@ import (
 )
 
 // Validate проверяет дашборд по правилам контура:
-//   - uid дашборда равен DashboardUID;
+//   - uid дашборда равен wantUID (у каждого дашборда контура своя uid-константа);
 //   - id заданы, непусты и уникальны у всех элементов верхнего уровня (панели и ряды),
 //     а также у панелей, вложенных в свёрнутые ряды;
 //   - у каждой панели датасорс — константы DatasourceType/DatasourceUID;
 //   - каждый запрос — CHQuery с непустым rawSql, читающим витрину v_*.
-func Validate(d dashboard.Dashboard) error {
+func Validate(d dashboard.Dashboard, wantUID string) error {
 	if d.Uid == nil {
 		return errors.New("у дашборда не задан uid")
 	}
-	if *d.Uid != DashboardUID {
-		return fmt.Errorf("uid дашборда %q, ожидался %q", *d.Uid, DashboardUID)
+	if *d.Uid != wantUID {
+		return fmt.Errorf("uid дашборда %q, ожидался %q", *d.Uid, wantUID)
 	}
 	if err := validateIDs(d); err != nil {
 		return err

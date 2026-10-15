@@ -3,7 +3,8 @@
 Артефакты деплоя на хост `palmshell` (Ubuntu 24.04, x86_64, вход `root`). Разворачивает три
 компонента: бинарник `clickhouse-import-rosstat`, планировщик `dagu`, MCP-сервер
 `mcp-clickhouse` (HTTP, read-only). ClickHouse на хосте **не трогается**; у Grafana — только
-файл провижининга датасорса для дашборда `gold-thesis` (раздел [«Grafana на staging»](#grafana-на-staging-датасорс-провижининг-и-деплой-дашборда)),
+файл провижининга датасорса для дашбордов `gold-thesis` и `key-rate-publications` (раздел
+[«Grafana на staging»](#grafana-на-staging-датасорс-провижининг-и-деплой-дашбордов)),
 сам сервис не перезапускается.
 
 Спецификация: [docs/superpowers/specs/2026-10-10-staging-deploy-phase1-design.md](../../docs/superpowers/specs/2026-10-10-staging-deploy-phase1-design.md).
@@ -91,10 +92,11 @@ Smoke-проверки внутри `deploy-staging`: наличие бинар�
 включения сервисов), затем `dagu` отвечает, MCP `/health` = 200, MCP **без токена → 401**,
 MCP с токеном отвечает.
 
-## Grafana на staging: датасорс-провижининг и деплой дашборда
+## Grafana на staging: датасорс-провижининг и деплой дашбордов
 
-Дашборд `gold-thesis` едет на staging как код: артефакт `dashboard/gold-thesis.json` пушится в
-Grafana через ssh-туннель, а датасорс описывается шаблоном `grafana-datasource.yaml` в этом каталоге.
+Оба дашборда контура — `gold-thesis` и `key-rate-publications` — едут на staging как код: артефакты
+`dashboard/<uid>.json` пушутся в Grafana через ssh-туннель, а датасорс описывается шаблоном
+`grafana-datasource.yaml` в этом каталоге.
 
 ```bash
 # 1. Туннель к Grafana хоста (:3001, чтобы не конфликтовать с локальным стендом на :3000)
@@ -103,16 +105,17 @@ ssh -N -L 3001:127.0.0.1:3000 palmshell &
 # 2. Токен сервис-аккаунта Editor на staging — в ~/.config/rosstat/env, в репозиторий не попадает:
 #      GRAFANA_STAGING_TOKEN=<токен>
 
-# 3. Провижининг датасорса → push дашборда → smoke панелей
+# 3. Провижининг датасорса → push обоих дашбордов → smoke панелей
 make grafana-deploy-staging
 ```
 
 Цель по шагам: проверяет непустой `GRAFANA_STAGING_TOKEN` → проверяет туннель
 (`curl $(GRAFANA_STAGING_URL)/api/health`, `GRAFANA_STAGING_URL ?= http://localhost:3001`) →
-идемпотентный провижининг датасорса → `gcx resources push dashboards --path dashboard/gold-thesis.json`
-против `GRAFANA_SERVER=$(GRAFANA_STAGING_URL)` → smoke `python3 scripts/grafana_check.py --uid gold-thesis`
-(дашборд виден по uid + первые панели отдают точки). Grafana и systemd на хосте цель **не трогает**:
-только `scp` файла и HTTP-запросы через туннель.
+идемпотентный провижининг датасорса → цикл по `DASHBOARDS` (`gold-thesis`, `key-rate-publications`):
+`gcx resources push dashboards --path dashboard/<uid>.json`
+против `GRAFANA_SERVER=$(GRAFANA_STAGING_URL)` → smoke `python3 scripts/grafana_check.py --uid <uid>`
+(дашборд виден по uid + первые панели отдают точки). Цикл останавливается на первой ошибке.
+Grafana и systemd на хосте цель **не трогает**: только `scp` файла и HTTP-запросы через туннель.
 
 ### Датасорс
 
@@ -163,9 +166,9 @@ make grafana-deploy-staging
   `grafana-datasource.yaml`. Цель печатает напоминание, когда файл был переустановлен.
 - Пользователь ClickHouse `kimi_reader` уже есть на хосте (гранты readonly на витрины `v_*`).
 
-Приёмка полного прогона: `make grafana-deploy-staging` → `OK   дашборд виден` и непустые точки по
-первым панелям, затем `gcx dashboards list` показывает `gold-thesis` (первый дашборд на staging,
-существующие не затронуты).
+Приёмка полного прогона: `make grafana-deploy-staging` → по каждому uid из `DASHBOARDS`
+(`gold-thesis`, `key-rate-publications`) `OK   дашборд виден` и непустые точки по первым панелям,
+затем `gcx dashboards list` показывает оба дашборда (существующие на staging не затронуты).
 
 ## Отладка и откат
 

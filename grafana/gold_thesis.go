@@ -239,7 +239,7 @@ func cbPurchaseThresholds() *dashboard.ThresholdsConfigBuilder {
 // в 5 рядах. Порядок вызовов WithRow/WithPanel задаёт и порядок сетки, и нумерацию панелей 1..9.
 func NewGoldThesis() *dashboard.DashboardBuilder {
 	return dashboard.NewDashboardBuilder("Золото — тезисы статьи").
-		Uid(DashboardUID).
+		Uid(GoldThesisUID).
 		Tags([]string{"gold", "article"}).
 		Refresh("5m").
 		Time("now-1y", "now").
@@ -379,12 +379,13 @@ func forecastAccuracyPanel() *table.PanelBuilder {
 }
 
 // Manifest оборачивает дашборд в K8s-стиль ресурс, который принимает gcx resources push.
-// metadata.name и spec.uid равны DashboardUID (инвариант проверяет Validate).
+// metadata.name и spec.uid равны (инвариант): имя берётся из uid дашборда, а непустой uid
+// гарантирует Validate — main вызывает её до Manifest.
 func Manifest(d dashboard.Dashboard) resource.Manifest {
 	return resource.Manifest{
 		ApiVersion: ApiVersion,
 		Kind:       resource.DashboardKind,
-		Metadata:   resource.Metadata{Name: DashboardUID},
+		Metadata:   resource.Metadata{Name: *d.Uid},
 		Spec:       d,
 	}
 }

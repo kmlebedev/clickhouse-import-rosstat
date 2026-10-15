@@ -230,7 +230,7 @@ func TestManifestWrapper(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := Manifest(d)
-	if m.ApiVersion != ApiVersion || m.Kind != resource.DashboardKind || m.Metadata.Name != DashboardUID {
+	if m.ApiVersion != ApiVersion || m.Kind != resource.DashboardKind || m.Metadata.Name != GoldThesisUID {
 		t.Fatalf("обёртка: %+v", m)
 	}
 }
