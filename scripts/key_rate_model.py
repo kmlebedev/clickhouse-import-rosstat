@@ -46,10 +46,9 @@
   (`(pred_level − rate_before) × 100`), как у факта и остальных прогнозов;
   вырожденное окно — `DegenerateWindowError`, и walk-forward пропускает фолд
   со счётчиком;
-* **долгосрочные импликации** — отдельным блоком отчёта: форма свободной
-  оценки в устойчивом состоянии (`r* = c/(1−ρ)`, `α = a/(1−ρ)`,
-  `β = b/(1−ρ)`), выведенная в docstring `taylor_long_run` и НЕ ограниченная
-  экономическими значениями.
+* **долгосрочные импликации** — отдельным блоком отчёта: коэффициенты
+  правила и его устойчивое состояние (`r*`, `α`, `β`); формулы выведены в
+  docstring `taylor_long_run` и НЕ ограничивают свободную оценку.
 
 Чего здесь ЕЩЁ НЕТ (следующие шаги плана): метод №3 (упорядоченный логит) и
 текущий прогноз на ближайшее заседание — их добавляют Tasks 5–6 в этот же
@@ -91,6 +90,7 @@ from typing import Callable, Optional
 
 import numpy as np
 import statsmodels.api as sm
+from statsmodels.regression.linear_model import RegressionResultsWrapper
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -692,19 +692,33 @@ def predict_repeat(train: list, row: Row) -> Forecast:
     return Forecast(float(train[-1].decision.step_bp), None)
 
 
-def _ols_hac(y: list, x: list):
-    """OLS `y = a + b·x` с ковариацией HAC (Ньюи–Уэст, спека §6).
+def _hac_fit(y: list, design) -> RegressionResultsWrapper:
+    """OLS на ГОТОВОМ дизайне с ковариацией HAC (одна конфигурация, спека §6).
 
-    Конфигурация одна на срез (`HAC_MAXLAGS`, `use_correction=True`) и
-    пинована тестом: AR(1), Mincer–Zarnowitz и методы №2–3 обязаны считать
-    p-value на одной ковариации, иначе строки отчёта несопоставимы.
+    Конфигурация одна на срез (`HAC_MAXLAGS`, `use_correction=True`) и пинована
+    тестом: AR(1), Mincer–Zarnowitz и методы №2–3 обязаны считать p-value на
+    одной ковариации, иначе строки отчёта несопоставимы. Дизайн подаётся
+    вызывающим — так проверка ранга у метода №2 идёт по тем же столбцам, что и
+    подгонка, и «дизайн без константы» невозможен по построению.
 
     Возврат — результаты statsmodels (`params`, `ssr`, `f_test`): вызывающий
     берёт из них коэффициенты и совместные гипотезы.
     """
-    design = sm.add_constant(np.asarray(x, dtype=float))
-    model = sm.OLS(np.asarray(y, dtype=float), design)
+    model = sm.OLS(np.asarray(y, dtype=float), np.asarray(design, dtype=float))
     return model.fit(cov_type="HAC", cov_kwds={"maxlags": HAC_MAXLAGS, "use_correction": True})
+
+
+def _ols_hac(y: list, x: list) -> RegressionResultsWrapper:
+    """OLS `y = a + b·x` с ковариацией HAC (Ньюи–Уэст, спека §6).
+
+    Константа добавляется ВСЕГДА (`has_constant="add"`): умолчание statsmodels
+    (`has_constant="skip"`) пропускает её, если в `x` есть постоянный столбец, —
+    тогда регрессия идёт на столбце меньше, и вызывающий, ждущий `k + 1`
+    параметров, разваливается. Вырожденность регрессора ловят вызывающие, а не
+    молчаливый пропуск константы.
+    """
+    design = sm.add_constant(np.asarray(x, dtype=float), has_constant="add")
+    return _hac_fit(y, design)
 
 
 def fit_ar1(train: list, row: Row) -> Forecast:
@@ -735,19 +749,28 @@ def fit_ar1(train: list, row: Row) -> Forecast:
     return Forecast(step_percent * 100.0, None)
 
 
-def _taylor_fit(train: list):
+def _taylor_fit(train: list) -> RegressionResultsWrapper:
     """Оценка правила Тейлора на обучающем окне: OLS с HAC (спека §6).
 
-    Дизайн — `[1, rate_before, pi_saar, gap]` (свободный член добавляет
-    `_ols_hac`), отклик — уровень после решения `i_t`. Ковариация — HAC с
-    конфигурацией `_ols_hac` (та же, что у B3 и Mincer–Zarnowitz): p-value
-    строк отчёта обязаны считаться на одной ковариации.
+    Дизайн — `[1, rate_before, pi_saar, gap]`: константа добавляется явно
+    (`has_constant="add"`), и проверка ранга идёт по ТЕМ ЖЕ столбцам, что и
+    подгонка. Молчаливый пропуск константы (умолчание statsmodels) — не
+    теория: при постоянном `pi_saar` регрессия шла бы на трёх столбцах,
+    свободного члена в ней не было бы вовсе, а `fit_taylor` распаковывал бы
+    четыре параметра и падал `ValueError` в середине фолда. Вырожденность
+    обязана быть видна ЗДЕСЬ и поднимать `DegenerateWindowError`, который
+    walk-forward пропускает со счётчиком.
+
+    Отклик — уровень после решения `i_t`; ковариация — HAC с конфигурацией
+    `_hac_fit` (та же, что у B3 и Mincer–Zarnowitz): p-value строк отчёта
+    обязаны считаться на одной ковариации.
 
     Вырожденное окно — `DegenerateWindowError` с причиной, а не исключение
     statsmodels: окно короче `MIN_TAYLOR_OBS` (у четырёхпараметрической
     регрессии не остаётся остаточных степеней свободы, и HAC-поправка делит на
-    ноль) или вырожденный дизайн (регрессор коллинеарен свободному члену —
-    например, `pi_saar` в окне не менялся).
+    ноль) или вырожденный дизайн (ранг полного дизайна с константой меньше
+    числа столбцов: регрессор коллинеарен свободному члену — например,
+    `pi_saar` или `gap` в окне не меняется).
 
     Возврат — результаты statsmodels; коэффициенты берут из них `fit_taylor`
     (прогноз) и `taylor_long_run` (форма свободной оценки).
@@ -757,15 +780,16 @@ def _taylor_fit(train: list):
             f"Тейлор (метод №2): обучающее окно короче {MIN_TAYLOR_OBS} заседаний — "
             f"OLS на [1, rate_before, pi_saar, gap] не оценивается"
         )
-    design = sm.add_constant(np.asarray([sample.x for sample in train], dtype=float))
+    design = sm.add_constant(
+        np.asarray([sample.x for sample in train], dtype=float), has_constant="add"
+    )
     if np.linalg.matrix_rank(design) < design.shape[1]:
         raise DegenerateWindowError(
             "Тейлор (метод №2): вырожденный дизайн обучающего окна — регрессор "
             "коллинеарен свободному члену (в окне не меняется), коэффициенты "
             "не идентифицированы"
         )
-    levels = [sample.decision.rate_after for sample in train]
-    return _ols_hac(levels, [sample.x for sample in train])
+    return _hac_fit([sample.decision.rate_after for sample in train], design)
 
 
 def fit_taylor(train: list, row: Row) -> Forecast:
@@ -851,7 +875,7 @@ def taylor_long_run(rows: list) -> TaylorLongRun:
 
 # Бенчмарки B1–B3 в порядке отчёта (спека §5). Строка метода №3 добавится сюда
 # же (Task 5): walk-forward, таблицы отчёта и CSV их не различают — см.
-# `benchmark_predictions`.
+# `method_predictions`.
 BENCHMARKS = (
     ("hold", predict_hold),
     ("repeat", predict_repeat),
@@ -933,14 +957,13 @@ def walk_forward(
     return predictions, skipped
 
 
-def benchmark_predictions(rows: list, min_train: int = MIN_TRAIN) -> tuple:
+def method_predictions(rows: list, min_train: int = MIN_TRAIN) -> tuple:
     """Бенчмарки B1–B3 и методы §6 по обоим окнам — строки «метод × окно».
 
     Оба окна считаются всегда (спека §7): отчёт показывает их рядом, а выбор
     окна по ошибке не делается. Порядок обхода — окно, затем метод; от него
     зависит порядок строк в отчёте и в CSV, и он же задаёт группировку.
-    Список методов — `METHODS` (бенчмарки §5, затем методы §6); имя функции
-    осталось от Task 3, но она гоняет все строки отчёта.
+    Список строк — `METHODS` (бенчмарки §5, затем методы §6).
 
     Возврат — `(фолды, пропущено)`: счётчик вырожденных окон по ключу
     «(метод, окно)» для сводки отчёта. У B1 и B2 он нулевой по построению, у
@@ -1376,7 +1399,7 @@ class Skipped:
 def _predictions_by_group(predictions: list) -> dict:
     """«метод × окно» → фолды, в порядке первого появления.
 
-    Порядок задаёт прогон (`benchmark_predictions` и строки методов №2–3), и
+    Порядок задаёт прогон (`method_predictions` и строки методов №2–3), и
     от него зависят строки таблиц отчёта: сортировка по имени сделала бы
     отчёт зависимым от алфавита, а не от спецификации.
     """
@@ -1652,7 +1675,7 @@ def render_report(
     готовый markdown-блок текущего прогноза (Task 6) или `None`, если прогноза
     в прогоне ещё нет; `today` — дата прогона (по умолчанию системная), от неё
     зависит только строка версии набора данных; `fold_skips` — счётчики
-    вырожденных окон по ключу «(метод, окно)» (`benchmark_predictions`), без
+    вырожденных окон по ключу «(метод, окно)» (`method_predictions`), без
     них сводка показывает нули — так отчёт не приписывает методу пропусков,
     которых не считали.
     """
@@ -1734,14 +1757,13 @@ def render_report(
         "",
         "## Долгосрочные импликации правила Тейлора",
         "",
-        "Метод №2 — правило `i_t = c + ρ·i_{t−1} + a·π + b·gap` (спека §6). "
-        "В устойчивом состоянии (`i_t = i_{t−1} = i*`) оно даёт правило в "
-        "уровнях `i* = r* + α·π + β·gap`, где `r* = c/(1−ρ)`, `α = a/(1−ρ)`, "
-        "`β = b/(1−ρ)`. Коэффициенты — свободная оценка: Тейлоровы значения не "
-        "навязываются, и величины приводятся как есть (ρ ≈ 1 делает "
-        "преобразование чувствительным к малым изменениям оценки). Оценка — "
-        "на полной выборке, вне walk-forward: блок описывает ФОРМУ правила, а "
-        "не прогнозные фолды.",
+        "Метод №2 — правило `i_t = c + ρ·i_{t−1} + a·π + b·gap` (спека §6); "
+        "блок докладывает его коэффициенты и устойчивое состояние. Вывод "
+        "формул — в docstring `taylor_long_run`; Тейлоровы значения не "
+        "навязываются, и величины приводятся как есть, без ограничений на "
+        "свободную оценку (ρ ≈ 1 делает преобразование чувствительным к малым "
+        "изменениям оценки). Оценка — на полной выборке, вне walk-forward: "
+        "блок описывает ФОРМУ правила, а не прогнозные фолды.",
         "",
     ]
     lines += _table(_LONG_RUN_HEADER, _long_run_rows(sample))
@@ -2008,7 +2030,7 @@ def run_summary(rolling: bool, today: Optional[date] = None, out_dir: Path = ROO
         1 for decision in decisions if delta_map.get(decision.meeting_date) is not None
     )
 
-    predictions, fold_skips = benchmark_predictions(rows)
+    predictions, fold_skips = method_predictions(rows)
     report_path = out_dir / REPORT_NAME
     predictions_path = out_dir / PREDICTIONS_NAME
     report_path.write_text(

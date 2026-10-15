@@ -37,6 +37,8 @@ import unittest.mock
 from datetime import date, timedelta
 from pathlib import Path
 
+import numpy as np
+
 # Модуль и тест лежат рядом, запуск прямой (`python3 scripts/...`), поэтому его
 # каталог добавляется в sys.path до импорта.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -673,7 +675,9 @@ def ar1_rows(count, intercept=10.0, phi=0.5):
     return rows
 
 
-def taylor_rows(count, rho=0.9, c=1.0, a_pi=0.2, b_gap=-0.5, first=date(2014, 1, 1)):
+def taylor_rows(
+    count, rho=0.9, c=1.0, a_pi=0.2, b_gap=-0.5, constant=None, first=date(2014, 1, 1)
+):
     """Строки с ТОЧНОЙ связью `i_t = c + ρ·i_{t−1} + a·π + b·gap` (метод №2).
 
     Безрелейная синтетика: OLS на такой выборке обязан восстановить
@@ -685,12 +689,16 @@ def taylor_rows(count, rho=0.9, c=1.0, a_pi=0.2, b_gap=-0.5, first=date(2014, 1,
     уровень сходится к их линейной комбинации и колонка `rate_before` становится
     коллинеарной свободному члену — окно вырождается по построению, а не по
     делу. Долгосрочные импликации этой синтетики: `r* = 10`, `α = 2`, `β = −5`.
+
+    `constant` — имя регрессора (`"pi"` или `"gap"`), который делается
+    ПОСТОЯННЫМ во всей выборке: окно с таким дизайном вырождено ровно из-за
+    одного признака (а не потому, что постоянны все столбцы сразу).
     """
     rows = []
     level = 10.0
     for index in range(count):
-        pi = 5.0 + 3.0 * (index % 2)
-        gap = -2.0 + 0.1 * index
+        pi = 5.0 if constant == "pi" else 5.0 + 3.0 * (index % 2)
+        gap = -2.0 if constant == "gap" else -2.0 + 0.1 * index
         after = c + rho * level + a_pi * pi + b_gap * gap
         step = round((after - level) * 100.0)
         decision = km.Decision(
@@ -715,9 +723,9 @@ def folds(rows, method, fit_predict, **kwargs):
     return predictions
 
 
-def benchmark_predictions(rows):
-    """Бенчмарки B1–B3 по двум окнам — ровно так, как их строит прогон."""
-    predictions, _ = km.benchmark_predictions(rows)
+def method_predictions(rows):
+    """Бенчмарки B1–B3 и методы §6 по двум окнам — ровно как их строит прогон."""
+    predictions, _ = km.method_predictions(rows)
     return predictions
 
 
@@ -901,14 +909,16 @@ class TestTaylorRule(unittest.TestCase):
         # Единицы: прогноз шага — в БАЗИСНЫХ пунктах, как факт и остальные
         # прогнозы harness'а: `(pred_level − rate_before) × 100`. Урок B3
         # (Task 3): смешение п.п./б.п. делает сравнения недействительными.
+        # Ожидание считается ПО ФОРМУЛЕ, а не пинуется магическим числом:
+        # синтетика известна точно, поэтому прогноз обязан совпасть с фактом.
         rows = taylor_rows(40)
         row = rows[30]
         forecast = km.fit_taylor(rows[:30], row)
         expected = (row.decision.rate_after - row.decision.rate_before) * 100.0
         self.assertAlmostEqual(forecast.step_bp, expected, places=4)
-        # Масштаб пина отдельно: шаг этого заседания ≈ −70 б.п., то есть в
-        # п.п. (без ×100) прогноз был бы ≈ −0.7 и тест упал бы.
-        self.assertAlmostEqual(forecast.step_bp, -69.6425, places=3)
+        # Масштаб — отдельный пин тех же единиц: без ×100 (в п.п.) шаг этого
+        # фолда был бы ≈ 0.7, и условие ниже не выполнилось бы.
+        self.assertGreater(abs(forecast.step_bp), 10.0)
         self.assertIsNone(forecast.probs)
 
     def test_uses_hac_with_the_pinned_configuration(self):
@@ -950,6 +960,60 @@ class TestTaylorRule(unittest.TestCase):
             km.fit_taylor(rows[:24], rows[24])
         self.assertIn("дизайн", str(caught.exception))
 
+    def test_rejects_a_window_with_exactly_one_constant_regressor(self):
+        # Причина однозначна: постоянен РОВНО ОДИН регрессор, второй варьирует
+        # (и уровень ставки тоже). При `add_constant` с умолчанием statsmodels
+        # (`has_constant="skip"`) свободный член молча НЕ добавился бы:
+        # дизайн — три столбца, подгонка проходит, а прогноз распаковывает
+        # четыре параметра и падает `ValueError: shapes (3,) and (4,)` —
+        # walk_forward такое не пропускает, и прогон рушится вместо пропуска
+        # фолда со счётчиком.
+        for constant, regressor in (("pi", "pi_saar"), ("gap", "gap")):
+            with self.subTest(constant=regressor):
+                rows = taylor_rows(30, constant=constant)
+                with self.assertRaises(km.DegenerateWindowError) as caught:
+                    km.fit_taylor(rows[:24], rows[24])
+                self.assertIn("дизайн", str(caught.exception))
+                # Тот же дизайн, что строит `_taylor_fit` (`[1, X]`), — четыре
+                # столбца ранга 3: свободный член добавлен ЯВНО, поэтому
+                # постоянный регрессор виден проверке ранга (иначе регрессия
+                # шла бы на трёх столбцах и прогноз падал бы ValueError).
+                design = np.column_stack(
+                    [np.ones(24), np.asarray([row.x for row in rows[:24]], dtype=float)]
+                )
+                self.assertEqual(design.shape, (24, 4))
+                self.assertEqual(np.linalg.matrix_rank(design), 3)
+
+    def test_walk_forward_skips_a_fold_with_a_degenerate_design(self):
+        # Сквозная проверка того же контракта: у ЧАСТИ фолдов признак постоянен
+        # во всём обучающем окне (вырожденный дизайн), у остальных — варьирует.
+        # Вырожденные фолды обязаны пропускаться со счётчиком, а не ронять
+        # прогон (walk_forward ловит ИМЕННО DegenerateWindowError).
+        rows = []
+        level = 10.0
+        for index in range(34):
+            pi = 5.0 + 3.0 * (index % 2)
+            gap = -2.0 if index < 28 else -1.9 + 0.1 * (index - 28)
+            after = 1.0 + 0.9 * level + 0.2 * pi - 0.5 * gap
+            step = round((after - level) * 100.0)
+            decision = km.Decision(
+                date(2014, 1, 1) + timedelta(days=30 * index),
+                level,
+                after,
+                step,
+                (step > 0) - (step < 0),
+            )
+            rows.append(km.Row(decision, pi, gap))
+            level = after
+        predictions, skipped = km.walk_forward(rows, "taylor", km.fit_taylor, min_train=24)
+        # Обучающее окно фолда i — rows[:i]: `gap` постоянен в первых 28
+        # заседаниях, поэтому вырождены фолды 24…28 (5 штук), а с 29-го окно
+        # полноранговое: 10 фолдов всего, 5 — с прогнозом.
+        self.assertEqual(skipped, 5)
+        self.assertEqual(len(predictions), 5)
+        self.assertEqual(predictions[0].meeting_date, rows[29].decision.meeting_date)
+        self.assertEqual({prediction.method for prediction in predictions}, {"taylor"})
+
     def test_degenerate_folds_are_skipped_by_walk_forward(self):
         # Сквозная проверка механизма (как у B3): на выборке с неизменными
         # признаками Тейлор вырожден на каждом фолде — прогон не падает,
@@ -984,7 +1048,7 @@ class TestTaylorRule(unittest.TestCase):
         rows = taylor_rows(60)
         # Строки прогона — ровно то, что гоняет `run_summary`: бенчмарки B1–B3
         # и метод №2 (он входит в METHODS), оба окна.
-        predictions = benchmark_predictions(rows)
+        predictions = method_predictions(rows)
         text = km.render_report(
             rows, km.Skipped((), (), ()), predictions, None, today=date(2026, 10, 16)
         )
@@ -1339,7 +1403,7 @@ class TestReport(unittest.TestCase):
         # Шаги чередуются: с постоянным шагом уровень ставки в окне не менялся
         # бы, и AR(1) справедливо отказывался бы оцениваться.
         cls.rows = synthetic_rows(60, first=date(2024, 1, 1), steps=(0, 50, -25))
-        cls.predictions = benchmark_predictions(cls.rows)
+        cls.predictions = method_predictions(cls.rows)
         cls.skipped = km.Skipped((), (), ())
 
     def render(self, predictions=None, forecast=None, fold_skips=None):
