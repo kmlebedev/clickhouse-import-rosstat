@@ -124,7 +124,7 @@ CREATE TABLE IF NOT EXISTS %s (
 
 - Каталог — `cbr/dip_meta.go`, 8 записей: `title`, `unit` = `%`, `frequency` = `M`, `origin` — страница, лист и подпись колонки источника, `description` — что измеряет, привязка даты (последний день месяца; `toStartOfMonth`), что значение — версия конкретного выпуска (`release`, `publication_date`), что SA-ряды ревизуются между выпусками, а NSA-колонка в части выпусков идёт без пары.
 - Витрина `v_cbr_dip_bulletin` (`cbr/views.go`, `afterCbrDip`): long-форма **с винтажными колонками** — `source, series, date, value, release, release_id, publication_date` (прецедент расширенной витрины — `v_keyrate_expectations`), комментарии таблицы и каждой колонки; `util.CreateView` (§10.3). Агент читает точку как «значение, каким его опубликовал выпуск `release` от `publication_date`».
-- Грант `GRANT SELECT ON default.v_cbr_dip_bulletin` в `sql/mcp_kimi_reader.sql`; сырая `cbr_dip_bulletin` агенту не выдаётся (§10.4). Проверки — в `scripts/mcp_check.py` (§10.5): витрина видна и непуста, каталог 8 рядов по `origin`, отказ ClickHouse 497 на сырой таблице.
+- Грант `GRANT SELECT ON default.v_cbr_dip_bulletin` в `sql/mcp_kimi_reader.sql`; сырая `cbr_dip_bulletin` агенту не выдаётся (§10.4). Проверки — в `scripts/mcp_check.py` (§10.5): витрина видна и непуста, каталог 8 рядов по `source = 'cbr_dip_bulletin'` (источник у импортёра один, `origin` LIKE-ом не пинится: у пары `cbr_bop_est`/`cbr_bop_standard` он нужен из-за двух выгрузок, здесь — нет), винтажные колонки витрины непусты и выпусков больше одного (`uniqExact(release_id) > 1`), отказ ClickHouse 497 на сырой таблице.
 
 ### 3.7 Расписание (стандарт §12)
 

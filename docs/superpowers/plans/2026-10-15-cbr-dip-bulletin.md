@@ -3,7 +3,7 @@
 **Дата:** 15 октября 2026 г.
 **Спека:** [2026-10-15-cbr-dip-bulletin-design.md](../superpowers/specs/2026-10-15-cbr-dip-bulletin-design.md).
 **Пункт роадмапа:** [ROADMAP_KEY_RATE.md](../../ROADMAP_KEY_RATE.md) фаза 4, первый шаг (§4.4).
-**Ветка:** `cbr-dip-bulletin`. **Исполнение:** `superpowers:subagent-driven-development` (coder — `joingonka/zai-org/GLM-5.3-Flash`, ревью задач — `anthropic/haiku`, fix-раунды ≤ 3 на задачу тем же coder, далее эскалация контроллеру; финальное ревью ветки — `deepseek/deepseek-flash`).
+**Ветка:** `cbr-dip-bulletin`. **Исполнение:** `superpowers:subagent-driven-development` — **продовый код пишет `joingonka/zai-org/GLM-5.3-Flash`, тесты — `deepseek/deepseek-flash`** (решение владельца 2026-10-15: у GLM лимит вывода 8192, и тестовые диффы на нём не укладываются; тесты ведёт отдельный исполнитель и он же отвечает за их полноту), ревью задач — `anthropic/haiku`, fix-раунды ≤ 3 на задачу, далее эскалация контроллеру; финальное ревью ветки — `deepseek/deepseek-flash`.
 
 ---
 
