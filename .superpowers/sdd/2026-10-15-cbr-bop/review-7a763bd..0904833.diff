@@ -1,0 +1,1388 @@
+# Review package: 7a763bde04cf9243491568431c9101238f7c78ec..HEAD
+
+## Commits
+0904833 cbr: add payment balance estimate importer (cbr_bop_est) with catalog, view and tests
+
+## Files changed
+ cbr/bop_est.go            | 255 +++++++++++++++++++++++
+ cbr/bop_est_test.go       | 511 ++++++++++++++++++++++++++++++++++++++++++++++
+ cbr/bop_meta.go           |  76 +++++++
+ cbr/bop_parse.go          | 364 +++++++++++++++++++++++++++++++++
+ cbr/bop_parse_test.go     |  67 ++++++
+ cbr/testdata/bop_est.xlsx | Bin 0 -> 115017 bytes
+ cbr/views.go              |  40 ++++
+ 7 files changed, 1313 insertions(+)
+
+## Diff
+diff --git a/cbr/bop_est.go b/cbr/bop_est.go
+new file mode 100644
+index 0000000..4df19aa
+--- /dev/null
++++ b/cbr/bop_est.go
+@@ -0,0 +1,255 @@
++package cbr
++
++import (
++	"fmt"
++	"math"
++	"strconv"
++	"strings"
++
++	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
++	"github.com/kmlebedev/clickhouse-import-rosstat/util"
++	"github.com/xuri/excelize/v2"
++)
++
++// Оценка ключевых агрегатов платёжного баланса Российской Федерации (ЦБ РФ):
++// https://www.cbr.ru/statistics/macro_itm/external_sector/pb/ — прямая стабильная выгрузка
++// bop_est.xlsx. Один лист: 17 агрегатов (строки) × 14 колонок — накопленный итог с начала года,
++// два квартала и четыре месяца текущего года плюс та же часть «Справочно:» за прошлый год.
++// Канал «внешние условия и курс» контура ключевой ставки (пункт 4.2 №14 роадмапа).
++
++const (
++	cbrBopEstTable = "cbr_bop_est"
++	// cbrBopEstSheetPrefix — префикс имени листа: полное имя «Оценка ПБ (14.09.2026)» несёт дату
++	// выпуска и меняется с ним, поэтому лист ищется по префиксу (спека §3.5), а не константой.
++	cbrBopEstSheetPrefix = "Оценка ПБ"
++	// cbrBopEstDataUrl — стабильная прямая ссылка на файл (стандарт §4.1, строка «XLSX»): даты
++	// в ней нет, файл ЦБ обновляет раз в месяц, поэтому качает его шаблон — те же байты уходят
++	// и в разбор, и в винтажный архив версии (§9.6).
++	cbrBopEstDataUrl = "https://www.cbr.ru/vfs/statistics/credit_statistics/bop/bop_est.xlsx"
++	// cbrBopEstCountPoints — количественный чек версии (стандарт §9.2): число точек своей
++	// таблицы. FINAL обязателен — иначе count() считал бы несмёрженные части.
++	cbrBopEstCountPoints = "SELECT count() FROM cbr_bop_est FINAL"
++	// cbrBopEstUnit — единицы значения, как в строке единиц источника «(млрд долларов США)».
++	cbrBopEstUnit = "млрд долларов США"
++)
++
++// cbrBopEstKinds — виды периода, которые публикует лист оценки, в порядке имён ряда (спека
++// §3.3): месяц, квартал и накопленный итог с начала года. Года в оценке нет — годовая форма
++// есть только у стандартных компонентов (cbr_bop_standard). Колонка с другим видом — ошибка
++// разбора, а не новый ряд: ряд без описания в каталоге в витрину попадать не должен
++// (стандарт §10.6).
++var cbrBopEstKinds = []string{cbrBopKindMonth, cbrBopKindQuarter, cbrBopKindCumulative}
++
++// cbrBopEstAggregates — 17 агрегатов листа оценки в порядке строк (спека §3.3). Label — подпись
++// строки источника, по которой идёт последовательный поиск: «Экспорт» и «Импорт» встречаются в
++// листе по два раза (товары и услуги), и поиск без порядка прочитал бы экспорт услуг как экспорт
++// товаров. Code — имя кода: повторяющуюся подпись имя различить не может, поэтому имя собирает
++// код (стандарт §6.8). Block — блок листа, к которому относится повторяющаяся подпись: origin
++// каталога обязан назвать его, иначе «строка «Экспорт»» не говорит, о каком экспорте речь.
++// Measures — что измеряет агрегат: description каталога собирается из него в cbr/bop_meta.go
++// (правило 11 AGENTS.md — описание каждого ряда).
++var cbrBopEstAggregates = []struct {
++	Label    string
++	Code     string
++	Block    string
++	Measures string
++}{
++	{
++		Label: "Счет текущих операций", Code: "Счет текущих операций",
++		Measures: "Сальдо счёта текущих операций: поступления от экспорта товаров и услуг и полученные первичные и вторичные доходы минус импорт и выплаченные доходы. Ключевой агрегат внешних условий: профицит — приток средств в экономику, дефицит — отток.",
++	},
++	{
++		Label: "Торговый баланс", Code: "Торговый баланс",
++		Measures: "Сальдо торгового баланса: экспорт товаров минус импорт товаров.",
++	},
++	{
++		Label: "Экспорт", Code: "Товары: экспорт", Block: "Товары",
++		Measures: "Стоимость экспорта товаров — без услуг и доходов (блок торгового баланса).",
++	},
++	{
++		Label: "Импорт", Code: "Товары: импорт", Block: "Товары",
++		Measures: "Стоимость импорта товаров — без услуг и доходов (блок торгового баланса).",
++	},
++	{
++		Label: "Баланс услуг", Code: "Баланс услуг",
++		Measures: "Сальдо баланса услуг: экспорт услуг минус импорт услуг.",
++	},
++	{
++		Label: "Экспорт", Code: "Услуги: экспорт", Block: "Услуги",
++		Measures: "Стоимость экспорта услуг (блок баланса услуг).",
++	},
++	{
++		Label: "Импорт", Code: "Услуги: импорт", Block: "Услуги",
++		Measures: "Стоимость импорта услуг (блок баланса услуг).",
++	},
++	{
++		Label: "Баланс первичных и вторичных доходов", Code: "Баланс первичных и вторичных доходов",
++		Measures: "Сальдо первичных и вторичных доходов: доходы к получению минус доходы к выплате (оплата труда, доходы от инвестиций, текущие трансферты).",
++	},
++	{
++		Label: "Доходы к получению", Code: "Доходы к получению",
++		Measures: "Первичные и вторичные доходы, полученные резидентами от нерезидентов.",
++	},
++	{
++		Label: "Доходы к выплате", Code: "Доходы к выплате",
++		Measures: "Первичные и вторичные доходы, выплаченные резидентами нерезидентам.",
++	},
++	{
++		Label: "Счет операций с капиталом", Code: "Счет операций с капиталом",
++		Measures: "Сальдо счёта операций с капиталом: трансферты капитала и операции с непроизведёнными нефинансовыми активами. В текущих выпусках оценка равна нулю — это значение («сальдо нулевое»), а не отсутствие данных.",
++	},
++	{
++		Label: "Сальдо счета текущих операций и счета операций с капиталом", Code: "Сальдо счета текущих операций и счета операций с капиталом",
++		Measures: "Сумма сальдо счёта текущих операций и счёта операций с капиталом — чистое кредитование (при положительном значении) или чистое заимствование экономики у внешнего мира.",
++	},
++	{
++		Label: "Сальдо финансового счета, исключая резервные активы", Code: "Сальдо финансового счета, исключая резервные активы",
++		Measures: "Сальдо финансового счёта без операций с резервными активами: чистое приобретение финансовых активов минус чистое принятие обязательств.",
++	},
++	{
++		Label: "Чистое приобретение финансовых активов, исключая резервные активы", Code: "Чистое приобретение финансовых активов, исключая резервные активы",
++		Measures: "Прирост требований резидентов к нерезидентам за период (без резервных активов Банка России): отток капитала по активам.",
++	},
++	{
++		Label: "Чистое принятие обязательств", Code: "Чистое принятие обязательств",
++		Measures: "Прирост обязательств резидентов перед нерезидентами за период: приток капитала.",
++	},
++	{
++		Label: "Изменение резервных активов", Code: "Изменение резервных активов",
++		Measures: "Операции с резервными активами Банка России за период: положительное значение — чистое приобретение (резервы выросли), отрицательное — сокращение. Это потоки, а не изменение запаса: курсовая и прочая переоценка резервов в файл не входит.",
++	},
++	{
++		Label: "Чистые ошибки и пропуски", Code: "Чистые ошибки и пропуски",
++		Measures: "Балансирующая статья платёжного баланса: расхождение между счётом текущих операций с капиталом и финансовым счётом (статистическая погрешность). Знак значения сам по себе экономического смысла не несёт.",
++	},
++}
++
++// cbrBopEstName собирает имя ряда из имени кода и вида периода: «Товары: экспорт (месяц)» —
++// вид идёт в имя, а не в колонку таблицы (спека §3.2). Имя собирает код, и его же видят каталог
++// рядов (cbr/bop_meta.go) и разбор: второго источника правды для имён нет.
++func cbrBopEstName(code, kind string) string {
++	return code + " (" + kind + ")"
++}
++
++// cbrBopEstKindKnown — вид периода колонки описан каталогом рядов; неизвестный вид — ошибка
++// разбора (стандарт §10.6: ряд, которого нет в каталоге, в витрину не попадает).
++func cbrBopEstKindKnown(kind string) bool {
++	for _, known := range cbrBopEstKinds {
++		if known == kind {
++			return true
++		}
++	}
++	return false
++}
++
++// cbrBopEstImport разбирает лист «Оценка ПБ …»: 17 агрегатов по 14 колонок (спека §3.3).
++// Подписи агрегатов ищутся последовательно, начиная с первой строки данных (порядок строк
++// листа), — это и различает повторяющиеся «Экспорт»/«Импорт»; ненайденная ожидаемая подпись —
++// ошибка с её текстом (стандарт §6.4), а посторонние строки между агрегатами молча
++// пропускаются (§6.6). Пустая ячейка — не точка (§6.7), литеральный ноль — точка: в платёжном
++// балансе ноль означает «сальдо нулевое», а не «данных не имеется» (например, сальдо счёта
++// операций с капиталом) — отличие от cbr_int_rate_loans, где ноль в ячейке означает пропуск.
++// Нечисловая ячейка и NaN/Inf — ошибка: ParseFloat принимает «NaN» молча, а точка с NaN
++// отравила бы ряд (сравнения с NaN ложны, суммы — NaN).
++func cbrBopEstImport(xlsx *excelize.File, batch driver.Batch) error {
++	sheet, err := cbrBopSheetByPrefix(xlsx, cbrBopEstTable, cbrBopEstSheetPrefix)
++	if err != nil {
++		return err
++	}
++	rows, err := xlsx.GetRows(sheet, excelize.Options{RawCellValue: true})
++	if err != nil {
++		return fmt.Errorf("%s: лист «%s»: %w", cbrBopEstTable, sheet, err)
++	}
++	// Первая ожидаемая подпись — якорь первой строки данных; список агрегатов непуст по
++	// объявлению, поэтому индекс 0 здесь есть всегда.
++	layout, err := cbrBopSheetLayout(rows, cbrBopEstTable, sheet, cbrBopEstAggregates[0].Label)
++	if err != nil {
++		return err
++	}
++	// Подписи всех 17 агрегатов ищутся до первой записи: пропавшая в середине списка подпись —
++	// ошибка структуры листа (стандарт §6.4), и после неё не должна быть записана ни одна точка —
++	// частично разобранный выпуск хуже пустого, потому что выглядит успешным.
++	rowIndexes := make([]int, len(cbrBopEstAggregates))
++	searchFrom := layout.FirstDataRow
++	for i, agg := range cbrBopEstAggregates {
++		rowIndex := -1
++		for j := searchFrom; j < len(rows); j++ {
++			if len(rows[j]) > 0 && cbrBopSameLabel(rows[j][0], agg.Label) {
++				rowIndex = j
++				break
++			}
++		}
++		if rowIndex < 0 {
++			return fmt.Errorf("%s: лист «%s»: после строки %d не найдена ожидаемая подпись агрегата %q — источник изменил состав листа",
++				cbrBopEstTable, sheet, searchFrom, agg.Label)
++		}
++		rowIndexes[i] = rowIndex
++		searchFrom = rowIndex + 1
++	}
++	// Вид периода каждой колонки обязан быть описан каталогом (стандарт §10.6): колонка нового
++	// вида создала бы ряд, которого нет в v_series_catalog, — агент MCP не понял бы его значения.
++	for _, column := range layout.Columns {
++		if !cbrBopEstKindKnown(column.Period.Kind) {
++			return fmt.Errorf("%s: лист «%s», колонка %s: вид периода %q не описан каталогом рядов таблицы",
++				cbrBopEstTable, sheet, cbrBopColumnName(column.Index), column.Period.Kind)
++		}
++	}
++	count := 0
++	for i, agg := range cbrBopEstAggregates {
++		row := rows[rowIndexes[i]]
++		for _, column := range layout.Columns {
++			// Строка короче набора колонок данных — у остальных колонок ячеек нет; недостающая
++			// ячейка равносильна пустой и точкой не становится (§6.7).
++			if column.Index >= len(row) {
++				continue
++			}
++			cell := strings.TrimSpace(row[column.Index])
++			if cell == "" {
++				continue
++			}
++			value, err := strconv.ParseFloat(cell, 64)
++			if err != nil {
++				return fmt.Errorf("%s: лист «%s», строка %q, колонка %s: значение %q: %w",
++					cbrBopEstTable, sheet, agg.Label, cbrBopColumnName(column.Index), cell, err)
++			}
++			if math.IsNaN(value) || math.IsInf(value, 0) {
++				return fmt.Errorf("%s: лист «%s», строка %q, колонка %s: значение %q не конечно (NaN/Inf)",
++					cbrBopEstTable, sheet, agg.Label, cbrBopColumnName(column.Index), cell)
++			}
++			name := cbrBopEstName(agg.Code, column.Period.Kind)
++			if err = batch.Append(name, column.Period.Date, value); err != nil {
++				return fmt.Errorf("%s: ряд %q, %s: %w",
++					cbrBopEstTable, name, column.Period.Date.Format("2006-01-02"), err)
++			}
++			count++
++		}
++	}
++	if count == 0 {
++		return fmt.Errorf("%s: лист «%s»: разбор не дал ни одной точки", cbrBopEstTable, sheet)
++	}
++	return nil
++}
++
++// cbrBopEst — оценка ключевых агрегатов платёжного баланса: таблица, DDL и разбор листа
++// «Оценка ПБ …»; каталог рядов и витрину v_cbr_bop публикует шаблон через AfterImport. Оценка
++// ЦБ ревизуется следующим выпуском, поэтому точка перезаписывается по ключу (name, date), а
++// лист ищется по префиксу имени — дата выпуска в нём меняется. Сломанная шапка, пропавшая
++// подпись агрегата и ноль точек — ошибка (fail-fast, стандарт §6.4): «0 rows» выглядели бы
++// успешным прогоном, а 51 ряд остался бы без обновления молча.
++var cbrBopEst = util.ClickHouseImport{
++	TableName: cbrBopEstTable,
++	CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (
++			  name LowCardinality(String)
++			, date Date
++			, value Float64
++		) ENGINE = ReplacingMergeTree ORDER BY (name, date);
++	`},
++	DataUrl:                cbrBopEstDataUrl,
++	ImportFunc:             cbrBopEstImport,
++	AfterImport:            afterCbrBop(cbrBopEstSeriesMeta),
++	PublicationCountPoints: cbrBopEstCountPoints,
++}
++
++// cbrBopEstImporter — оценка ключевых агрегатов платёжного баланса; регистрируется реестром
++// cbr/importers.go.
++var cbrBopEstImporter = &cbrBopEst
+diff --git a/cbr/bop_est_test.go b/cbr/bop_est_test.go
+new file mode 100644
+index 0000000..d3634e4
+--- /dev/null
++++ b/cbr/bop_est_test.go
+@@ -0,0 +1,511 @@
++package cbr
++
++import (
++	"fmt"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/xuri/excelize/v2"
++)
++
++// bopEstFixture — живой файл источника целиком: книга 115 017 байт с одним листом, коммитится
++// как есть (стандарт §11.2). Винтаж снимка — лист «Оценка ПБ (14.09.2026)»: ЦБ перезаписывает
++// файл по тому же адресу, поэтому прежние значения фикстуры не воспроизводятся.
++const bopEstFixture = "testdata/bop_est.xlsx"
++
++// Разметка живой фикстуры, нужная мутациям: строка 3 — строка единиц (ячейка O3), строка 4 —
++// подписи периодов текущего года и «Справочно:», строка 5 — подписи прошлого года, строки 6…22 —
++// 17 агрегатов, колонки B…O — 14 колонок данных (A — метки агрегатов). Числа взяты из разметки
++// листа, а не из кода разбора: мутация обязана попадать в те же ячейки, что читает разбор.
++const (
++	bopEstUnitCell     = "O3"
++	bopEstFirstDataRow = 6
++	bopEstDataColumns  = 14
++)
++
++// bopEstWantCodes — 17 агрегатов листа оценки литералами, в порядке строк листа (спека §3.3).
++// Литералы, а не ссылка на cbrBopEstAggregates: сверка со списком спеки — единственное место,
++// где видно переименование агрегата или перестановку строк, а не код, читающий сам себя.
++var bopEstWantCodes = []string{
++	"Счет текущих операций",
++	"Торговый баланс",
++	"Товары: экспорт",
++	"Товары: импорт",
++	"Баланс услуг",
++	"Услуги: экспорт",
++	"Услуги: импорт",
++	"Баланс первичных и вторичных доходов",
++	"Доходы к получению",
++	"Доходы к выплате",
++	"Счет операций с капиталом",
++	"Сальдо счета текущих операций и счета операций с капиталом",
++	"Сальдо финансового счета, исключая резервные активы",
++	"Чистое приобретение финансовых активов, исключая резервные активы",
++	"Чистое принятие обязательств",
++	"Изменение резервных активов",
++	"Чистые ошибки и пропуски",
++}
++
++// bopEstWantKinds — три вида периода листа оценки в порядке имён ряда (спека §3.2).
++var bopEstWantKinds = []string{"месяц", "квартал", "накопленным итогом"}
++
++// bopEstWantName — имя ряда по спеке §3.2: «<агрегат> (<вид>)».
++func bopEstWantName(code, kind string) string {
++	return code + " (" + kind + ")"
++}
++
++// bopEstWantNames — 51 имя ряда листа оценки: 17 агрегатов × 3 вида, агрегат — внешний цикл
++// (порядок строк листа), вид — внутренний.
++func bopEstWantNames() []string {
++	names := make([]string, 0, len(bopEstWantCodes)*len(bopEstWantKinds))
++	for _, code := range bopEstWantCodes {
++		for _, kind := range bopEstWantKinds {
++			names = append(names, bopEstWantName(code, kind))
++		}
++	}
++	return names
++}
++
++// bopEstRepeatedLabels — ряды, чья подпись источника повторяется в листе: origin обязан назвать
++// блок, иначе «строка «Экспорт»» не отличима между товарами и услугами (стандарт §6.8).
++var bopEstRepeatedLabels = map[string]struct{ label, block string }{
++	"Товары: экспорт": {"Экспорт", "Товары"},
++	"Товары: импорт":  {"Импорт", "Товары"},
++	"Услуги: экспорт": {"Экспорт", "Услуги"},
++	"Услуги: импорт":  {"Импорт", "Услуги"},
++}
++
++// bopEstLastDay — последний день месяца по правилу привязки даты (спека §3.4): сутки назад от
++// первого числа следующего месяца. Правило повторено в тесте намеренно: ожидания не должны
++// считаться тем же кодом, что разбирает подписи.
++func bopEstLastDay(year int, month time.Month) time.Time {
++	return time.Date(year, month+1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, -1)
++}
++
++// bopEstLastQuarter — последний день квартала: его третий месяц, затем последний день месяца.
++func bopEstLastQuarter(year, quarter int) time.Time {
++	return bopEstLastDay(year, time.Month(quarter*3))
++}
++
++// bopEstExpectedDates — даты точек выпуска по виду периода в порядке колонок листа: накопленный
++// итог с января, два квартала и четыре месяца текущего года, затем та же часть «Справочно:» за
++// прошлый год. Дат 8/4/2 — всего 14 на ряд, 238 на выпуск (спека §3.3).
++var bopEstExpectedDates = map[string][]time.Time{
++	"месяц": {
++		bopEstLastDay(2026, time.April), bopEstLastDay(2026, time.May),
++		bopEstLastDay(2026, time.June), bopEstLastDay(2026, time.July),
++		bopEstLastDay(2025, time.April), bopEstLastDay(2025, time.May),
++		bopEstLastDay(2025, time.June), bopEstLastDay(2025, time.July),
++	},
++	"квартал": {
++		bopEstLastQuarter(2026, 1), bopEstLastQuarter(2026, 2),
++		bopEstLastQuarter(2025, 1), bopEstLastQuarter(2025, 2),
++	},
++	"накопленным итогом": {
++		bopEstLastDay(2026, time.July), bopEstLastDay(2025, time.July),
++	},
++}
++
++// bopEstOpenFixture — копия живой фикстуры, загруженная в память под мутацию: ветки fail-fast и
++// семантика ячеек проверяются на ней, а не на книге, собранной с нуля (стандарт §11.1). Правки
++// идут по копии в памяти — файл на диске не меняется.
++func bopEstOpenFixture(t *testing.T, mutate func(t *testing.T, f *excelize.File, sheet string)) *excelize.File {
++	t.Helper()
++	f, err := excelize.OpenFile(bopEstFixture)
++	if err != nil {
++		t.Fatalf("открытие фикстуры %s: %v", bopEstFixture, err)
++	}
++	t.Cleanup(func() { _ = f.Close() })
++	sheets := f.GetSheetList()
++	if len(sheets) != 1 {
++		t.Fatalf("в фикстуре %d листов, want 1", len(sheets))
++	}
++	mutate(t, f, sheets[0])
++	return f
++}
++
++// bopEstSetCell — правка ячейки мутируемой фикстуры: excelize сообщает о негодном адресе
++// ошибкой, и проглотить её значило бы проверять немутнутый лист.
++func bopEstSetCell(t *testing.T, f *excelize.File, sheet, cell string, value any) {
++	t.Helper()
++	if err := f.SetCellValue(sheet, cell, value); err != nil {
++		t.Fatalf("SetCellValue(%s!%s, %v): %v", sheet, cell, value, err)
++	}
++}
++
++// bopEstCell — адрес ячейки листа по колонке и строке (1-based) — так же, как адресует ячейки
++// разбор: колонка 1 — метка агрегата, 2…15 — колонки данных.
++func bopEstCell(t *testing.T, column, row int) string {
++	t.Helper()
++	cell, err := excelize.CoordinatesToCellName(column, row)
++	if err != nil {
++		t.Fatalf("CoordinatesToCellName(%d, %d): %v", column, row, err)
++	}
++	return cell
++}
++
++// bopEstHasPoint — есть ли в разборе точка (ряд, дата).
++func bopEstHasPoint(rows []appendedRow, name string, date time.Time) bool {
++	for _, row := range rows {
++		if row.name == name && row.date.Equal(date) {
++			return true
++		}
++	}
++	return false
++}
++
++// TestCbrBopEstSeriesMetaNames: имена 51 ряда каталога совпадают со списком спеки §3.3 дословно —
++// и агрегаты, и виды периода, и их порядок, и форма «<агрегат> (<вид>)»; вместе с ними
++// проверяются поля, от которых зависит чтение ряда агентом MCP: единицы, частота, origin с
++// файлом, листом и подписью строки источника (для повторяющихся подписей — с блоком) и
++// description, где есть привязка даты, ноль как значение и ревизия оценки.
++func TestCbrBopEstSeriesMetaNames(t *testing.T) {
++	want := bopEstWantNames()
++	if len(cbrBopEstSeriesMeta) != len(want) {
++		t.Fatalf("записей каталога %d, want %d (17 агрегатов × 3 вида)", len(cbrBopEstSeriesMeta), len(want))
++	}
++	frequency := map[string]string{"месяц": "M", "квартал": "Q", "накопленным итогом": "M"}
++	for i, name := range want {
++		meta := cbrBopEstSeriesMeta[i]
++		if meta.Series != name {
++			t.Errorf("ряд %d каталога = %q, want %q", i, meta.Series, name)
++			continue
++		}
++		kind := bopEstWantKinds[i%len(bopEstWantKinds)]
++		code := bopEstWantCodes[i/len(bopEstWantKinds)]
++		if meta.Source != "cbr_bop_est" {
++			t.Errorf("ряд %q: source %q, want cbr_bop_est (источник каталога = имя таблицы)", name, meta.Source)
++		}
++		if meta.Unit != "млрд долларов США" {
++			t.Errorf("ряд %q: unit %q, want млрд долларов США", name, meta.Unit)
++		}
++		if meta.Frequency != frequency[kind] {
++			t.Errorf("ряд %q: frequency %q, want %q", name, meta.Frequency, frequency[kind])
++		}
++		label := code
++		if repeated, ok := bopEstRepeatedLabels[code]; ok {
++			label = repeated.label
++		}
++		for _, want := range []string{"bop_est.xlsx", "Оценка ПБ", "строка «" + label + "»"} {
++			if !strings.Contains(meta.Origin, want) {
++				t.Errorf("ряд %q: origin %q не содержит %q", name, meta.Origin, want)
++			}
++		}
++		if repeated, ok := bopEstRepeatedLabels[code]; ok {
++			if !strings.Contains(meta.Origin, "блока «"+repeated.block+"»") {
++				t.Errorf("ряд %q: origin %q не называет блок «%s» — повторяющаяся подпись «%s» не различима",
++					name, meta.Origin, repeated.block, repeated.label)
++			}
++		}
++		for _, want := range []string{"последний день", "Ноль", "ревизу"} {
++			if !strings.Contains(meta.Description, want) {
++				t.Errorf("ряд %q: description %q не содержит %q (правило 11 AGENTS.md)", name, meta.Description, want)
++			}
++		}
++	}
++}
++
++// TestCbrBopEstImporterName: Name() — контракт фильтра `make import STAT=…` и id шага dagu/cbr.yaml;
++// сверяется литералом, а не таблицей кода (стандарт §8.5). Тест же держит cbrBopEstImporter
++// «использованным» для линтера, пока реестр не завёл его сам (следующая задача пункта).
++func TestCbrBopEstImporterName(t *testing.T) {
++	if got := cbrBopEstImporter.Name(); got != "cbr_bop_est" {
++		t.Errorf("Name() = %q, want %q", got, "cbr_bop_est")
++	}
++}
++
++// TestCbrBopEstDdl: DDL — контракт данных (правило 5 AGENTS.md: значения — Float64; движок и ключ
++// общие для таблиц пакета). Проверяется литералами: DDL в %s-форме, имя таблицы подставляет
++// шаблон, и потеря %s оставила бы запрос без имени таблицы.
++func TestCbrBopEstDdl(t *testing.T) {
++	if len(cbrBopEst.CreateTable) != 1 {
++		t.Fatalf("DDL-инструкций %d, want 1", len(cbrBopEst.CreateTable))
++	}
++	ddl := fmt.Sprintf(cbrBopEst.CreateTable[0], "cbr_bop_est")
++	for _, want := range []string{
++		"CREATE TABLE IF NOT EXISTS cbr_bop_est",
++		"name LowCardinality(String)",
++		"date Date",
++		"value Float64",
++		"ENGINE = ReplacingMergeTree ORDER BY (name, date)",
++	} {
++		if !strings.Contains(ddl, want) {
++			t.Errorf("DDL %q не содержит %q", ddl, want)
++		}
++	}
++	if strings.Contains(ddl, "Float32") {
++		t.Errorf("DDL %q объявляет Float32: правило 5 AGENTS.md требует Float64", ddl)
++	}
++}
++
++// TestCbrBopEstSeriesMetaCoversParsedRows: каталог cbr_bop_est (51 ряд) и разбор живой фикстуры
++// совпадают в обе стороны (стандарт §11.4): имена рядов объявлены кодом, поэтому проверяются и
++// забытое имя ряда в каталоге, и забытая колонка в разборе.
++func TestCbrBopEstSeriesMetaCoversParsedRows(t *testing.T) {
++	checkCbrSeriesMeta(t, "cbr_bop_est", cbrBopEstSeriesMeta, func(rec *appendRecorder) error {
++		f, err := excelize.OpenFile(bopEstFixture)
++		if err != nil {
++			return err
++		}
++		defer func() { _ = f.Close() }()
++		return cbrBopEst.ImportFunc(f, rec)
++	})
++}
++
++// TestCbrBopEstFixtureRows: разбор живой фикстуры даёт 238 точек (17 агрегатов × 14 колонок) и
++// по каждому ряду — 8, 4 или 2 точки в зависимости от вида периода, с датами по правилу
++// привязки (спека §3.4), а не списком дней: месяцы и кварталы текущего года и «Справочно:»
++// прошлого.
++func TestCbrBopEstFixtureRows(t *testing.T) {
++	rows := cbrFixtureRows(t, bopEstFixture, cbrBopEst.ImportFunc)
++	wantTotal := 0
++	for _, dates := range bopEstExpectedDates {
++		wantTotal += len(dates) * len(bopEstWantCodes)
++	}
++	if len(rows) != wantTotal {
++		t.Errorf("строк разбора %d, want %d (17 агрегатов × 14 колонок)", len(rows), wantTotal)
++	}
++	dates := map[string][]time.Time{}
++	for _, row := range rows {
++		dates[row.name] = append(dates[row.name], row.date)
++	}
++	for _, code := range bopEstWantCodes {
++		for _, kind := range bopEstWantKinds {
++			name := bopEstWantName(code, kind)
++			want := bopEstExpectedDates[kind]
++			got := dates[name]
++			if len(got) != len(want) {
++				t.Errorf("ряд %q: точек %d, want %d (вид «%s»)", name, len(got), len(want), kind)
++				continue
++			}
++			for i := range want {
++				if !got[i].Equal(want[i]) {
++					t.Errorf("ряд %q: точка %d = %s, want %s (привязка даты вида «%s»)",
++						name, i, got[i].Format("2006-01-02"), want[i].Format("2006-01-02"), kind)
++					break
++				}
++			}
++		}
++	}
++}
++
++// TestCbrBopEstSpotValues: значения из известных ячеек живой фикстуры (спека §3.9) — крайние
++// агрегаты выпуска, месяц прошлого года и ноль как настоящее значение (сальдо счёта операций с
++// капиталом). Значения литералами: сверка идёт с разбором, а не с константой кода.
++func TestCbrBopEstSpotValues(t *testing.T) {
++	rows := cbrFixtureRows(t, bopEstFixture, cbrBopEst.ImportFunc)
++	july2026 := time.Date(2026, time.July, 31, 0, 0, 0, 0, time.UTC)
++	july2025 := time.Date(2025, time.July, 31, 0, 0, 0, 0, time.UTC)
++	june2026 := time.Date(2026, time.June, 30, 0, 0, 0, 0, time.UTC)
++	cbrCheckSpot(t, rows, "Счет текущих операций (накопленным итогом)", july2026, 33.9)
++	cbrCheckSpot(t, rows, "Счет текущих операций (месяц)", july2026, 1.7)
++	cbrCheckSpot(t, rows, "Товары: экспорт (месяц)", july2025, 37.7)
++	cbrCheckSpot(t, rows, "Услуги: импорт (квартал)", june2026, 25.2)
++	cbrCheckSpot(t, rows, "Счет операций с капиталом (квартал)", june2026, 0)
++}
++
++// TestCbrBopEstAppendsFloat64: разбор пишет значение как float64 — тип колонки value в DDL
++// (правило 5 AGENTS.md). Запись float32 прошла бы в колонку Float64 молча, потеряв точность на
++// шаге представления, и расхождение заметила бы только живая БД.
++func TestCbrBopEstAppendsFloat64(t *testing.T) {
++	f, err := excelize.OpenFile(bopEstFixture)
++	if err != nil {
++		t.Fatalf("открытие фикстуры %s: %v", bopEstFixture, err)
++	}
++	defer func() { _ = f.Close() }()
++	rec := newCbrRecorder()
++	if err = cbrBopEst.ImportFunc(f, rec); err != nil {
++		t.Fatalf("разбор фикстуры: %v", err)
++	}
++	if rec.err != nil {
++		t.Fatalf("разбор фикстуры: схема строк не совпала с разбором: %v", rec.err)
++	}
++	if len(rec.raw) == 0 {
++		t.Fatal("разбор не дал ни одной точки")
++	}
++	for i, raw := range rec.raw {
++		if len(raw) != 3 {
++			t.Fatalf("строка %d: %d значений, ожидалась форма (name, date, value)", i, len(raw))
++		}
++		if _, ok := raw[2].(float64); !ok {
++			t.Fatalf("строка %d: значение записано как %T, ожидался float64 (колонка value — Float64)", i, raw[2])
++		}
++	}
++}
++
++// TestCbrBopEstEmptyBookFails: книги без листа «Оценка ПБ …» — ошибка с именем таблицы и списком
++// листов, а не «0 rows» (стандарт §6.4). Пустая книга excelize — это лист «Sheet1», то есть та
++// же ветка «лист по префиксу не найден»; вторая книга проверяет, что префикс не сравнивается со
++// всем именем листа целиком.
++func TestCbrBopEstEmptyBookFails(t *testing.T) {
++	for name, sheet := range map[string]string{
++		"пустая книга":          "",
++		"лист с другим именем":  "Платёжный баланс",
++		"лист с похожим именем": "Оценка платежного баланса",
++	} {
++		t.Run(name, func(t *testing.T) {
++			f := excelize.NewFile()
++			t.Cleanup(func() { _ = f.Close() })
++			if sheet != "" {
++				if err := f.SetSheetName("Sheet1", sheet); err != nil {
++					t.Fatalf("SetSheetName(%q): %v", sheet, err)
++				}
++			}
++			rec := newCbrRecorder()
++			err := cbrBopEst.ImportFunc(f, rec)
++			if err == nil {
++				t.Fatalf("ожидалась ошибка, разбор дал %d строк", len(rec.rows))
++			}
++			if !strings.Contains(err.Error(), "cbr_bop_est") {
++				t.Errorf("ошибка %q не называет таблицу cbr_bop_est", err)
++			}
++			if !strings.Contains(err.Error(), "листа с префиксом") {
++				t.Errorf("ошибка %q не называет причину (лист по префиксу не найден)", err)
++			}
++			if len(rec.raw) != 0 {
++				t.Errorf("при ошибке записано %d строк, want 0", len(rec.raw))
++			}
++		})
++	}
++}
++
++// TestCbrBopEstFailFastOnFixture: ветки, где разбор обязан вернуть ошибку, а не «0 строк»
++// (стандарт §6.4, спека §3.9), — на мутированной копии живой фикстуры (стандарт §11.1). Копия,
++// а не синтетическая книга: якоря, шапка и ячейки данных в ней те же, что у источника, поэтому
++// ошибка приходит от мутации, а не от сборки книги. Батч уходит в БД только по Send, поэтому
++// при ошибке разбора в рекордере обязано быть 0 строк.
++func TestCbrBopEstFailFastOnFixture(t *testing.T) {
++	for name, tc := range map[string]struct {
++		mutate  func(t *testing.T, f *excelize.File, sheet string)
++		wantErr string
++	}{
++		"нет строки единиц": {
++			mutate:  func(t *testing.T, f *excelize.File, sheet string) { bopEstSetCell(t, f, sheet, bopEstUnitCell, "") },
++			wantErr: "не найдена строка единиц",
++		},
++		"нет первой подписи агрегата": {
++			mutate:  func(t *testing.T, f *excelize.File, sheet string) { bopEstSetCell(t, f, sheet, "A6", "Итого") },
++			wantErr: "нет первой ожидаемой подписи агрегата",
++		},
++		"пропала подпись в середине списка": {
++			// Строка 13 — «Баланс первичных и вторичных доходов» (восьмая в списке): разбор ищет
++			// подписи последовательно, поэтому пропавшая в середине — ошибка, а не пропуск ряда.
++			mutate:  func(t *testing.T, f *excelize.File, sheet string) { bopEstSetCell(t, f, sheet, "A13", "Доходы") },
++			wantErr: "не найдена ожидаемая подпись агрегата",
++		},
++		"подпись периода не разбирается": {
++			// «II квартал» без года: подпись есть, период из неё не выводится — колонка осталась бы
++			// без даты, а её точки молча потерялись бы.
++			mutate: func(t *testing.T, f *excelize.File, sheet string) {
++				bopEstSetCell(t, f, sheet, "D4", "II квартал")
++			},
++			wantErr: "не разобрана как период",
++		},
++		"колонка с данными без подписи": {
++			mutate:  func(t *testing.T, f *excelize.File, sheet string) { bopEstSetCell(t, f, sheet, "B4", "") },
++			wantErr: "подпись периода не разобрана",
++		},
++		"значение не число": {
++			mutate:  func(t *testing.T, f *excelize.File, sheet string) { bopEstSetCell(t, f, sheet, "B6", "н/д") },
++			wantErr: "значение \"н/д\"",
++		},
++		"значение NaN": {
++			// ParseFloat принимает «NaN» молча: точка с NaN отравила бы ряд (суммы — NaN).
++			mutate:  func(t *testing.T, f *excelize.File, sheet string) { bopEstSetCell(t, f, sheet, "B6", "NaN") },
++			wantErr: "не конечно",
++		},
++		"все ячейки данных пусты": {
++			// Шапка и подписи агрегатов целы, а точек нет: «0 rows» с зелёным dagu оставил бы все 51
++			// ряд без обновления.
++			mutate: func(t *testing.T, f *excelize.File, sheet string) {
++				for row := bopEstFirstDataRow; row < bopEstFirstDataRow+len(bopEstWantCodes); row++ {
++					for column := 2; column < 2+bopEstDataColumns; column++ {
++						bopEstSetCell(t, f, sheet, bopEstCell(t, column, row), "")
++					}
++				}
++			},
++			wantErr: "не дал ни одной точки",
++		},
++	} {
++		t.Run(name, func(t *testing.T) {
++			rec := newCbrRecorder()
++			err := cbrBopEst.ImportFunc(bopEstOpenFixture(t, tc.mutate), rec)
++			if err == nil {
++				t.Fatalf("ожидалась ошибка, разбор дал %d строк", len(rec.rows))
++			}
++			if !strings.Contains(err.Error(), "cbr_bop_est") {
++				t.Errorf("ошибка %q не называет таблицу cbr_bop_est", err)
++			}
++			if !strings.Contains(err.Error(), tc.wantErr) {
++				t.Errorf("ошибка %q не содержит %q", err, tc.wantErr)
++			}
++			if len(rec.raw) != 0 {
++				t.Errorf("при ошибке записано %d строк, want 0", len(rec.raw))
++			}
++		})
++	}
++}
++
++// TestCbrBopEstFixturesemantics — разбор мутированной копии живой фикстуры при ожидаемом
++// изменении источника: дата выпуска в имени листа разбору не мешает (лист ищется по префиксу,
++// спека §3.5), пустая ячейка точки не даёт, а литеральный ноль даёт (стандарт §6.7, спека §3.5:
++// в платёжном балансе ноль — настоящее значение, в отличие от cbr_int_rate_loans).
++func TestCbrBopEstFixtureSemantics(t *testing.T) {
++	total := 0
++	for _, dates := range bopEstExpectedDates {
++		total += len(dates) * len(bopEstWantCodes)
++	}
++	accumulated := "Счет текущих операций (накопленным итогом)"
++	july2026 := time.Date(2026, time.July, 31, 0, 0, 0, 0, time.UTC)
++	for name, tc := range map[string]struct {
++		mutate   func(t *testing.T, f *excelize.File, sheet string)
++		wantRows int
++		value    float64
++		isPoint  bool
++	}{
++		"дата выпуска в имени листа не мешает разбору": {
++			mutate: func(t *testing.T, f *excelize.File, sheet string) {
++				if err := f.SetSheetName(sheet, "Оценка ПБ (01.10.2026)"); err != nil {
++					t.Fatalf("SetSheetName: %v", err)
++				}
++			},
++			wantRows: total,
++			value:    33.9,
++			isPoint:  true,
++		},
++		"пустая ячейка точки не даёт": {
++			// B6 — накопленный итог счёта текущих операций за январь - июль 2026.
++			mutate:   func(t *testing.T, f *excelize.File, sheet string) { bopEstSetCell(t, f, sheet, "B6", "") },
++			wantRows: total - 1,
++			isPoint:  false,
++		},
++		"литеральный ноль — точка": {
++			mutate:   func(t *testing.T, f *excelize.File, sheet string) { bopEstSetCell(t, f, sheet, "B6", 0) },
++			wantRows: total,
++			value:    0,
++			isPoint:  true,
++		},
++	} {
++		t.Run(name, func(t *testing.T) {
++			rec := newCbrRecorder()
++			if err := cbrBopEst.ImportFunc(bopEstOpenFixture(t, tc.mutate), rec); err != nil {
++				t.Fatalf("разбор мутированной фикстуры: %v", err)
++			}
++			if rec.err != nil {
++				t.Fatalf("схема строк не совпала с разбором: %v", rec.err)
++			}
++			if len(rec.rows) != tc.wantRows {
++				t.Errorf("точек %d, want %d: ячейка без значения точки не даёт, а ноль и значение месяца — дают",
++					len(rec.rows), tc.wantRows)
++			}
++			if got := bopEstHasPoint(rec.rows, accumulated, july2026); got != tc.isPoint {
++				t.Errorf("точка (%q, %s): наличие %v, want %v", accumulated, july2026.Format("2006-01-02"), got, tc.isPoint)
++			}
++			if !tc.isPoint {
++				return
++			}
++			cbrCheckSpot(t, rec.rows, accumulated, july2026, tc.value)
++		})
++	}
++}
+diff --git a/cbr/bop_meta.go b/cbr/bop_meta.go
+new file mode 100644
+index 0000000..092016a
+--- /dev/null
++++ b/cbr/bop_meta.go
+@@ -0,0 +1,76 @@
++package cbr
++
++import "github.com/kmlebedev/clickhouse-import-rosstat/util"
++
++// Каталог рядов платёжного баланса РФ (стандарт §10.1): секция cbr_bop_est — оценка ключевых
++// агрегатов (cbr/bop_est.go). Источник каталога равен имени таблицы (спека §3.7), а не
++// литералу 'cbr': в общей витрине v_cbr_macro источник — литерал 'cbr', и имена рядов двух
++// выгрузок ЦБ («Счет текущих операций») в нём бы столкнулись. Секцию cbr_bop_standard
++// (34 ряда: те же 17 агрегатов по листам «Кварталы» и «Годы») добавляет следующая задача пункта
++// своим объявлением рядом с этим.
++
++// cbrBopEstSeriesMeta — каталог оценки ключевых агрегатов: 17 агрегатов × 3 вида периода = 51
++// ряд, в порядке агрегатов листа и видов в cbrBopEstKinds — том же, в каком имена собирает
++// разбор (cbrBopEstName). Каталог и разбор не могут разойтись ни по составу рядов, ни по их
++// порядку, и двусторонний контракт проверяется тестом (стандарт §11.4).
++var cbrBopEstSeriesMeta = cbrBopEstMeta()
++
++// cbrBopEstOrigin — источник рядов: файл и лист в форме origin каталога. Имя листа в файле несёт
++// дату выпуска («Оценка ПБ (14.09.2026)») и меняется с ним, поэтому origin называет префикс
++// листа и объясняет дату; подпись строки источника (и блок для повторяющихся подписей)
++// дописывается в цикле.
++const cbrBopEstOrigin = "cbr.ru/vfs/statistics/credit_statistics/bop/bop_est.xlsx, " +
++	"лист «Оценка ПБ …» (дата выпуска в имени листа)"
++
++// cbrBopEstKindDates — привязка даты точки по виду периода (спека §3.4), в description ряда:
++// у месяца и квартала — конец периода, у накопленного итога — конец последнего покрытого месяца.
++var cbrBopEstKindDates = map[string]string{
++	cbrBopKindMonth:      "Дата точки — последний день отчётного месяца: сопоставлять по toStartOfMonth(date).",
++	cbrBopKindQuarter:    "Дата точки — последний день отчётного квартала: сопоставлять по toStartOfQuarter(date).",
++	cbrBopKindCumulative: "Накопленный итог с начала года: значение накапливается внутри года (в декабре равно году), дата точки — последний день последнего месяца итога («январь - июль 2026» → 2026-07-31), сопоставлять по toStartOfMonth(date).",
++}
++
++// cbrBopEstKindFrequency — частота ряда в каталоге: у накопленного итога — месячная (M) с
++// объяснением в описании, а не годовая: точки приходят каждый месяц (стандарт §10.1, спека §3.7).
++var cbrBopEstKindFrequency = map[string]string{
++	cbrBopKindMonth:      "M",
++	cbrBopKindQuarter:    "Q",
++	cbrBopKindCumulative: "M",
++}
++
++// cbrBopEstDescriptionTail — общий хвост description всех 51 ряда: единицы, знак, ноль и ревизия
++// оценки. Отдельным текстом, а не частью Measures: четыре факта одинаковы у всех рядов листа, и
++// их правка — одна, а не 51 (описание каждого агрегата задано в cbrBopEstAggregates).
++const cbrBopEstDescriptionTail = " Единица — млрд долларов США. Знак — по методологии " +
++	"платёжного баланса: положительное значение — превышение поступлений над выплатами (или " +
++	"чистый прирост требований), отрицательное — обратное; отрицательные значения в файле есть. " +
++	"Ноль в источнике — настоящее значение (сальдо равно нулю), а не «данных не имеется»: " +
++	"точкой не становится только пустая ячейка, и в текущем выпуске таких нет. Значения — " +
++	"оценка ЦБ (подпись колонки содержит «(оценка)»): следующим выпуском ЦБ их ревизует, а " +
++	"импортёр перезаписывает точку по ключу (name, date), поэтому историю ревизий хранит только " +
++	"винтажный архив файла."
++
++// cbrBopEstMeta собирает 51 запись каталога из объявлений кода — агрегатов листа
++// (cbrBopEstAggregates) и видов периода (cbrBopEstKinds): тот же порядок, что у разбора.
++func cbrBopEstMeta() []util.SeriesMeta {
++	meta := make([]util.SeriesMeta, 0, len(cbrBopEstAggregates)*len(cbrBopEstKinds))
++	for _, agg := range cbrBopEstAggregates {
++		for _, kind := range cbrBopEstKinds {
++			name := cbrBopEstName(agg.Code, kind)
++			origin := cbrBopEstOrigin + ", строка «" + agg.Label + "»"
++			if agg.Block != "" {
++				origin += " блока «" + agg.Block + "»"
++			}
++			meta = append(meta, util.SeriesMeta{
++				Source:      cbrBopEstTable,
++				Series:      name,
++				Title:       name,
++				Unit:        cbrBopEstUnit,
++				Frequency:   cbrBopEstKindFrequency[kind],
++				Origin:      origin,
++				Description: agg.Measures + " " + cbrBopEstKindDates[kind] + cbrBopEstDescriptionTail,
++			})
++		}
++	}
++	return meta
++}
+diff --git a/cbr/bop_parse.go b/cbr/bop_parse.go
+new file mode 100644
+index 0000000..fd5f168
+--- /dev/null
++++ b/cbr/bop_parse.go
+@@ -0,0 +1,364 @@
++package cbr
++
++import (
++	"fmt"
++	"strconv"
++	"strings"
++	"time"
++
++	"github.com/kmlebedev/clickhouse-import-rosstat/util"
++	"github.com/xuri/excelize/v2"
++)
++
++// Общие хелперы разбора выгрузок платёжного баланса ЦБ РФ (cbr/bop_est.go — оценка ключевых
++// агрегатов, cbr/bop_standard.go — стандартные компоненты): якоря листа, подписи периодов и
++// привязка даты, стандарт §6 и спека пункта §3.5. Хелперы не знают ни имён рядов, ни имён
++// таблиц: их задаёт вызывающий импортёр, поэтому один код разбора обслуживает оба файла ЦБ.
++
++// Виды периода в имени ряда (спека §3.2): вид идёт в имя, а не в колонку таблицы — каталог и
++// витрина пакета устроены как (source, series) и (source, series, date, value), и измерение
++// «вид» в колонке разрушило бы и то и другое. Даты точек вида «квартал» и «последний месяц
++// квартала» совпадают, и различает их только имя ряда.
++const (
++	cbrBopKindMonth      = "месяц"
++	cbrBopKindQuarter    = "квартал"
++	cbrBopKindYear       = "год"
++	cbrBopKindCumulative = "накопленным итогом"
++)
++
++// cbrBopUnitAnchor — признак строки единиц: подпись «(млрд долларов США)» стоит в строке над
++// шапкой (в файле оценки — в колонке O). От неё отсчитываются строки шапки и первая строка
++// данных, поэтому магических индексов строк в разборе нет (стандарт §6.3).
++const cbrBopUnitAnchor = "долларов США"
++
++// cbrBopLabelReplacer — типографика подписей источника, не влияющая на смысл периода: ЦБ
++// ставит между месяцами накопленного итога короткое и длинное тире (в спеке — дефис).
++// Переносы строк и неразрывные пробелы отдельным правилом не нужны: их схлопывает
++// strings.Fields в cbrBopNormalizeLabel.
++var cbrBopLabelReplacer = strings.NewReplacer("–", "-", "—", "-")
++
++// cbrBopNormalizeLabel приводит подпись строки или колонки источника к сравнимому виду:
++// снимается пометка «(оценка)» (она относится к точке, а не к периоду: следующим выпуском ЦБ
++// её снимает, и подпись не должна от этого меняться), переносы строк и неразрывные пробелы
++// схлопываются в один пробел, тире становится дефисом, у формы «… 2026 г.» снимается хвост
++// «г.». Тот же вид получает ожидаемая подпись из кода, поэтому сравнение идёт по
++// нормализованным строкам (стандарт §6.3), а ошибки называют исходный текст ячейки.
++func cbrBopNormalizeLabel(raw string) string {
++	label := strings.ReplaceAll(raw, "(оценка)", "")
++	label = cbrBopLabelReplacer.Replace(label)
++	label = strings.Join(strings.Fields(label), " ")
++	return strings.TrimSpace(strings.TrimSuffix(label, "г."))
++}
++
++// cbrBopSameLabel — совпадают ли подписи после нормализации; регистр не значим. Пустая строка
++// не равна непустой подписи, поэтому пустые ячейки метки периода в поиске не участвуют.
++func cbrBopSameLabel(a, b string) bool {
++	return a != "" && b != "" && strings.EqualFold(cbrBopNormalizeLabel(a), cbrBopNormalizeLabel(b))
++}
++
++// cbrBopPeriod — разобранная подпись колонки: вид периода (он идёт в имя ряда) и дата точки.
++type cbrBopPeriod struct {
++	Kind string
++	Date time.Time
++}
++
++// cbrBopParsePeriod разбирает подпись периода в одну из четырёх форм (спека §3.5):
++// «месяц ГГГГ» (апрель 2026), «[IVX]+ квартал ГГГГ» (II квартал 2026), «месяц - месяц ГГГГ»
++// (январь - июль 2026; первый месяц обязан быть январь — иначе это не итог с начала года) и
++// «ГГГГ» (2026). Дата точки — по спеке §3.4: последний день месяца, последний день квартала,
++// 31 декабря, у накопленного итога — последний день последнего покрытого месяца. Неразобранная
++// подпись — ошибка, а не пропуск колонки: значение без периода записать нечем (стандарт §6.4).
++func cbrBopParsePeriod(raw string) (cbrBopPeriod, error) {
++	label := cbrBopNormalizeLabel(raw)
++	fields := strings.Fields(label)
++	switch len(fields) {
++	case 1:
++		year, err := cbrBopYear(fields[0], label)
++		if err != nil {
++			return cbrBopPeriod{}, err
++		}
++		return cbrBopPeriod{Kind: cbrBopKindYear, Date: time.Date(year, time.December, 31, 0, 0, 0, 0, time.UTC)}, nil
++	case 2:
++		month, err := cbrBopMonth(fields[0], label)
++		if err != nil {
++			return cbrBopPeriod{}, err
++		}
++		year, err := cbrBopYear(fields[1], label)
++		if err != nil {
++			return cbrBopPeriod{}, err
++		}
++		return cbrBopPeriod{Kind: cbrBopKindMonth, Date: cbrBopLastDayOfMonth(year, month)}, nil
++	case 3:
++		if !strings.EqualFold(fields[1], "квартал") {
++			return cbrBopPeriod{}, cbrBopPeriodFormError(label)
++		}
++		quarter, err := cbrBopRomanQuarter(fields[0], label)
++		if err != nil {
++			return cbrBopPeriod{}, err
++		}
++		year, err := cbrBopYear(fields[2], label)
++		if err != nil {
++			return cbrBopPeriod{}, err
++		}
++		return cbrBopPeriod{Kind: cbrBopKindQuarter, Date: cbrBopLastDayOfQuarter(year, quarter)}, nil
++	case 4:
++		if fields[1] != "-" {
++			return cbrBopPeriod{}, cbrBopPeriodFormError(label)
++		}
++		first, err := cbrBopMonth(fields[0], label)
++		if err != nil {
++			return cbrBopPeriod{}, err
++		}
++		if first != time.January {
++			return cbrBopPeriod{}, fmt.Errorf("подпись %q: первый месяц накопленного итога %q не январь — ЦБ считает итог с начала года", label, fields[0])
++		}
++		last, err := cbrBopMonth(fields[2], label)
++		if err != nil {
++			return cbrBopPeriod{}, err
++		}
++		year, err := cbrBopYear(fields[3], label)
++		if err != nil {
++			return cbrBopPeriod{}, err
++		}
++		return cbrBopPeriod{Kind: cbrBopKindCumulative, Date: cbrBopLastDayOfMonth(year, last)}, nil
++	default:
++		return cbrBopPeriod{}, cbrBopPeriodFormError(label)
++	}
++}
++
++// cbrBopPeriodFormError — отказ разбора с перечнем поддерживаемых форм: по тексту ошибки
++// видно, какую именно подпись источника разбор не знает.
++func cbrBopPeriodFormError(label string) error {
++	return fmt.Errorf("подпись %q не разобрана как период: ожидается «месяц ГГГГ», «[IVX]+ квартал ГГГГ», «месяц - месяц ГГГГ» или «ГГГГ»", label)
++}
++
++// cbrBopMonth — месяц по русскому названию. Словарь месяцев один на пакет (util.MonthsToNum,
++// правило 7 AGENTS.md): он знает и именительный падеж («июль»), и родительный («июля»).
++func cbrBopMonth(name, label string) (time.Month, error) {
++	month, ok := util.MonthsToNum[strings.ToLower(name)]
++	if !ok {
++		return 0, fmt.Errorf("подпись %q: неизвестный месяц %q", label, name)
++	}
++	return month, nil
++}
++
++// cbrBopYear — год подписи. Ошибка называется вместе с подписью: в листе десятки колонок, и
++// «invalid syntax» без контекста не говорит, какую правку ждать от ЦБ.
++func cbrBopYear(token, label string) (int, error) {
++	year, err := strconv.Atoi(token)
++	if err != nil {
++		return 0, fmt.Errorf("подпись %q: год %q: %w", label, token, err)
++	}
++	return year, nil
++}
++
++// cbrBopRomanDigits — римские цифры квартала. В файлах ЦБ они латинские (I — 0x49): похожие
++// кириллические «І» и «Х» цифрами не считаются и дают ошибку разбора — это смена формы
++// подписи источником, а не квартал (стандарт §6.4).
++var cbrBopRomanDigits = map[byte]int{'I': 1, 'V': 5, 'X': 10}
++
++// cbrBopRomanQuarter разбирает римскую цифру квартала и проверяет диапазон: «V квартал»
++// цифрой разбирается, но кварталом не является, и молча пропустить это нельзя.
++func cbrBopRomanQuarter(token, label string) (int, error) {
++	quarter := 0
++	for i := 0; i < len(token); i++ {
++		value, ok := cbrBopRomanDigits[token[i]]
++		if !ok {
++			return 0, fmt.Errorf("подпись %q: %q не римская цифра квартала (латинские I, V, X)", label, token)
++		}
++		// Вычитающее правило римской записи (IV = 4): следующая цифра больше текущей. За концом
++		// токена следующей цифры нет — сравнение с нулём ничего не вычитает.
++		next := 0
++		if i+1 < len(token) {
++			next = cbrBopRomanDigits[token[i+1]]
++		}
++		if value < next {
++			quarter -= value
++			continue
++		}
++		quarter += value
++	}
++	if quarter < 1 || quarter > 4 {
++		return 0, fmt.Errorf("подпись %q: номер квартала %d вне диапазона 1…4", label, quarter)
++	}
++	return quarter, nil
++}
++
++// cbrBopLastDayOfMonth — последний день месяца: нулевой день от первого числа следующего
++// месяца (time.Date нормализует день 0 в последний день предыдущего месяца). У привязки даты
++// платёжного баланса конвенция — конец периода (спека §3.4), поэтому день 0, а не -1, как в
++// cbrIntRateLoansMonthDate: там точка ряда — предпоследний день месяца.
++func cbrBopLastDayOfMonth(year int, month time.Month) time.Time {
++	return time.Date(year, month+1, 0, 0, 0, 0, 0, time.UTC)
++}
++
++// cbrBopLastDayOfQuarter — последний день квартала: его третий месяц, затем последний день
++// месяца. Четвёртый квартал даёт time.Date(year, 13, 0) — это 31 декабря, как и ожидается.
++func cbrBopLastDayOfQuarter(year, quarter int) time.Time {
++	return cbrBopLastDayOfMonth(year, time.Month(quarter*3))
++}
++
++// cbrBopColumn — колонка данных листа: её индекс в строке (0-based; колонка 0 — метка периода)
++// и разобранный период подписи.
++type cbrBopColumn struct {
++	Index  int
++	Period cbrBopPeriod
++}
++
++// cbrBopLayout — разметка листа, выведенная из якорей: номер первой строки данных и колонки с
++// разобранными периодами.
++type cbrBopLayout struct {
++	FirstDataRow int
++	Columns      []cbrBopColumn
++}
++
++// cbrBopColumnName — буква колонки листа по индексу (0-based): ошибки разбора называют колонку
++// так же, как её видит человек в Excel, а не «колонка 14».
++func cbrBopColumnName(index int) string {
++	name, err := excelize.ColumnNumberToName(index + 1)
++	if err != nil {
++		return strconv.Itoa(index + 1)
++	}
++	return name
++}
++
++// cbrBopSheetByPrefix ищет лист книги по префиксу имени и возвращает его точное имя: у выгрузки
++// оценки дата выпуска стоит в имени листа («Оценка ПБ (14.09.2026)») и меняется с выпуском,
++// поэтому имя листа — признак, а не константа (стандарт §6.3). Отсутствие листа — ошибка с
++// именем таблицы и списком листов книги: «0 rows» на переименованном листе выглядели бы
++// успешным прогоном (стандарт §6.4).
++func cbrBopSheetByPrefix(xlsx *excelize.File, table, prefix string) (string, error) {
++	sheets := xlsx.GetSheetList()
++	for _, name := range sheets {
++		if strings.HasPrefix(name, prefix) {
++			return name, nil
++		}
++	}
++	return "", fmt.Errorf("%s: в книге нет листа с префиксом %q (листы книги: %s)", table, prefix, strings.Join(sheets, ", "))
++}
++
++// cbrBopRowContains — есть ли в строке ячейка, содержащая подстроку.
++func cbrBopRowContains(row []string, substr string) bool {
++	for _, cell := range row {
++		if strings.Contains(cell, substr) {
++			return true
++		}
++	}
++	return false
++}
++
++// cbrBopRowEmpty — строка без единой непустой ячейки: пустые строки шапки её строками не
++// считаются, иначе шапка «нашлась» бы и в пустом листе.
++func cbrBopRowEmpty(row []string) bool {
++	for _, cell := range row {
++		if strings.TrimSpace(cell) != "" {
++			return false
++		}
++	}
++	return true
++}
++
++// cbrBopColumnPeriod выбирает подпись колонки из строк шапки снизу вверх: первая, разобравшаяся
++// как период. В файле оценки это само собой снимает «Справочно:» — под ним в следующей строке
++// лежит подпись периода прошлого года (спека §3.5). Возвращает разобранный период и текст, на
++// котором разбор остановился: если ни одна подпись не разобралась, это последняя непустая
++// ячейка колонки — ею ошибка называет текст источника. Пустой текст означает, что подписей в
++// колонке нет вовсе, то есть колонка данных не она.
++func cbrBopColumnPeriod(headerRows [][]string, column int) (cbrBopPeriod, string, bool) {
++	for i := len(headerRows) - 1; i >= 0; i-- {
++		row := headerRows[i]
++		if column >= len(row) {
++			continue
++		}
++		cell := strings.TrimSpace(row[column])
++		if cell == "" {
++			continue
++		}
++		period, err := cbrBopParsePeriod(cell)
++		if err != nil {
++			return cbrBopPeriod{}, cell, false
++		}
++		return period, cell, true
++	}
++	return cbrBopPeriod{}, "", false
++}
++
++// cbrBopSheetLayout выводит разметку листа из якорей (стандарт §6.3): строка единиц — ячейка с
++// «долларов США»; первая строка данных — первая ниже неё, где в колонке A стоит переданная
++// первая ожидаемая подпись агрегата; строки шапки — непустые строки между ними. Колонки данных —
++// колонки 1… (колонка A — метка периода), у каждой подпись берётся снизу вверх. Колонка с
++// подписью, не разобравшейся как период, и колонка со значением, но без подписи, — ошибка
++// (спека §3.5): первая означает смену формы подписи источником, вторая — значение, которому
++// нечем назначить период. Ошибки называют таблицу, лист, колонку буквой и строку.
++func cbrBopSheetLayout(rows [][]string, table, sheet, firstLabel string) (cbrBopLayout, error) {
++	layout := cbrBopLayout{}
++	unitRow := -1
++	for i, row := range rows {
++		if cbrBopRowContains(row, cbrBopUnitAnchor) {
++			unitRow = i
++			break
++		}
++	}
++	if unitRow < 0 {
++		return layout, fmt.Errorf("%s: лист «%s»: не найдена строка единиц (ячейка с %q) — шапка источника не распознана",
++			table, sheet, cbrBopUnitAnchor)
++	}
++	firstDataRow := -1
++	for i := unitRow + 1; i < len(rows); i++ {
++		if len(rows[i]) > 0 && cbrBopSameLabel(rows[i][0], firstLabel) {
++			firstDataRow = i
++			break
++		}
++	}
++	if firstDataRow < 0 {
++		return layout, fmt.Errorf("%s: лист «%s»: ниже строки единиц (строка %d) нет первой ожидаемой подписи агрегата %q — источник изменил состав листа",
++			table, sheet, unitRow+1, firstLabel)
++	}
++	headerRows := make([][]string, 0, firstDataRow-unitRow)
++	for i := unitRow + 1; i < firstDataRow; i++ {
++		if !cbrBopRowEmpty(rows[i]) {
++			headerRows = append(headerRows, rows[i])
++		}
++	}
++	if len(headerRows) == 0 {
++		return layout, fmt.Errorf("%s: лист «%s»: между строкой единиц и первой строкой данных нет строк с подписями периодов — колонки привязать не к чему",
++			table, sheet)
++	}
++	width := 0
++	for _, row := range headerRows {
++		if len(row) > width {
++			width = len(row)
++		}
++	}
++	columns := make([]cbrBopColumn, 0, width)
++	labeled := make(map[int]bool, width)
++	for c := 1; c < width; c++ {
++		period, text, ok := cbrBopColumnPeriod(headerRows, c)
++		if text == "" {
++			continue
++		}
++		if !ok {
++			return layout, fmt.Errorf("%s: лист «%s», колонка %s: подпись %q не разобрана как период — источник изменил шапку листа",
++				table, sheet, cbrBopColumnName(c), text)
++		}
++		columns = append(columns, cbrBopColumn{Index: c, Period: period})
++		labeled[c] = true
++	}
++	if len(columns) == 0 {
++		return layout, fmt.Errorf("%s: лист «%s»: в строках шапки нет ни одной колонки с разобранной подписью периода", table, sheet)
++	}
++	// Колонка со значением, но без разобравшейся подписи, — ошибка (спека §3.5): иначе точка
++	// молча не попала бы в таблицу, а ряд остался бы без обновления (стандарт §6.4).
++	for i := firstDataRow; i < len(rows); i++ {
++		for c, cell := range rows[i] {
++			if c == 0 || labeled[c] || strings.TrimSpace(cell) == "" {
++				continue
++			}
++			return layout, fmt.Errorf("%s: лист «%s», колонка %s строки %d: есть значение %q, но подпись периода не разобрана",
++				table, sheet, cbrBopColumnName(c), i+1, strings.TrimSpace(cell))
++		}
++	}
++	layout.FirstDataRow = firstDataRow
++	layout.Columns = columns
++	return layout, nil
++}
+diff --git a/cbr/bop_parse_test.go b/cbr/bop_parse_test.go
+new file mode 100644
+index 0000000..bf67bf3
+--- /dev/null
++++ b/cbr/bop_parse_test.go
+@@ -0,0 +1,67 @@
++package cbr
++
++import (
++	"testing"
++	"time"
++)
++
++// TestCbrBopParsePeriod: четыре формы подписи периода (спека §3.5) и привязка даты по виду
++// (§3.4). Подписи взяты как есть — с переносами строк, пометкой «(оценка)» и хвостом «г.»:
++// хелпер общий для обеих выгрузок платёжного баланса, и годовая форма, которой нет в оценке,
++// нужна стандартным компонентам (cbr_bop_standard).
++func TestCbrBopParsePeriod(t *testing.T) {
++	for name, tc := range map[string]struct {
++		label string
++		kind  string
++		date  string
++	}{
++		"месяц":                    {"июль \n2026 г.\n(оценка)", "месяц", "2026-07-31"},
++		"месяц прошлого года":      {"апрель\n2025 г.", "месяц", "2025-04-30"},
++		"февраль високосного года": {"февраль 2024 г.", "месяц", "2024-02-29"},
++		"первый квартал":           {"I квартал \n2025 г. ", "квартал", "2025-03-31"},
++		"второй квартал с оценкой": {"II квартал \n2026 г. \n(оценка)", "квартал", "2026-06-30"},
++		"четвёртый квартал":        {"IV квартал 2025", "квартал", "2025-12-31"},
++		"накопленный итог":         {"январь - июль \n2026 г.\n(оценка)", "накопленным итогом", "2026-07-31"},
++		"итог за декабрь":          {"январь - декабрь 2025", "накопленным итогом", "2025-12-31"},
++		"итог с длинным тире":      {"январь — июль 2025", "накопленным итогом", "2025-07-31"},
++		"год":                      {"2025 г.", "год", "2025-12-31"},
++		"год без хвоста":           {"1994", "год", "1994-12-31"},
++	} {
++		t.Run(name, func(t *testing.T) {
++			want, err := time.Parse("2006-01-02", tc.date)
++			if err != nil {
++				t.Fatalf("тест: дата %q: %v", tc.date, err)
++			}
++			got, err := cbrBopParsePeriod(tc.label)
++			if err != nil {
++				t.Fatalf("cbrBopParsePeriod(%q): %v", tc.label, err)
++			}
++			if got.Kind != tc.kind {
++				t.Errorf("cbrBopParsePeriod(%q): вид %q, want %q", tc.label, got.Kind, tc.kind)
++			}
++			if !got.Date.Equal(want) {
++				t.Errorf("cbrBopParsePeriod(%q): дата %s, want %s", tc.label, got.Date.Format("2006-01-02"), tc.date)
++			}
++		})
++	}
++	// Неразобранные подписи — ошибка, а не период: «Справочно:» стоит в строке шапки над подписью
++	// прошлого года (её снимает выбор подписи снизу вверх), итог обязан начинаться с января,
++	// квартал — латинской римской цифрой с годом.
++	for name, label := range map[string]string{
++		"пустая подпись":        "",
++		"«Справочно:»":          "Справочно:",
++		"итог не с января":      "февраль - июль 2026",
++		"квартал без года":      "II квартал",
++		"кириллическая цифра":   "Х квартал 2026",
++		"пятый квартал":         "V квартал 2026",
++		"месяц без года":        "июль",
++		"год и месяц вразнобой": "2026 июль",
++		"подпись с посторонним": "II квартал 2026 года",
++	} {
++		t.Run(name, func(t *testing.T) {
++			if _, err := cbrBopParsePeriod(label); err == nil {
++				t.Errorf("cbrBopParsePeriod(%q): ожидалась ошибка разбора", label)
++			}
++		})
++	}
++}
+diff --git a/cbr/testdata/bop_est.xlsx b/cbr/testdata/bop_est.xlsx
+new file mode 100644
+index 0000000..71c96cf
+Binary files /dev/null and b/cbr/testdata/bop_est.xlsx differ
+diff --git a/cbr/views.go b/cbr/views.go
+index 084e8a1..1e51ff7 100644
+--- a/cbr/views.go
++++ b/cbr/views.go
+@@ -49,20 +49,60 @@ func publishSeries(ctx context.Context, conn driver.Conn, meta []util.SeriesMeta
+ 	_, err := util.CreateView(ctx, conn, cbrMacroView)
+ 	return err
+ }
+ 
+ // afterCbrMacro — производные импортёров пакета: каталог рядов и общая витрина
+ // v_cbr_macro. Публикуются шаблоном после Send точек и до записи строки версии (§8 п. 13).
+ func afterCbrMacro(meta []util.SeriesMeta) func(context.Context, driver.Conn) error {
+ 	return func(ctx context.Context, conn driver.Conn) error { return publishSeries(ctx, conn, meta) }
+ }
+ 
++// cbrBopView — витрина платёжного баланса РФ (source = имя таблицы, а не литерал 'cbr'): ряды
++// выгрузок ЦБ по платёжному балансу имеют те же имена, что ряды общей витрины v_cbr_macro
++// («Счет текущих операций»), и в ней они бы столкнулись, поэтому у платёжного баланса отдельная
++// витрина — как у v_cbr_survey и v_cbr_mo_br. Пока в витрине одна ветка, cbr_bop_est (оценка
++// ключевых агрегатов): таблицу стандартных компонентов cbr_bop_standard добавит следующая
++// задача пункта.
++var cbrBopView = util.View{
++	Name:   "v_cbr_bop",
++	Tables: []string{"cbr_bop_est"},
++	Select: `SELECT 'cbr_bop_est' AS source, toString(name) AS series, date, toFloat64(value) AS value FROM cbr_bop_est FINAL`,
++	Comment: "Платёжный баланс РФ (ЦБ РФ, оценка ключевых агрегатов): счёт текущих операций, " +
++		"торговый баланс, экспорт и импорт товаров и услуг, доходы, счёт операций с капиталом, " +
++		"сальдо финансового счёта, резервные активы, чистые ошибки и пропуски. 51 ряд: 17 " +
++		"агрегатов × {месяц, квартал, накопленным итогом с начала года}. Единица — млрд долларов " +
++		"США. Дата точки: последний день отчётного месяца, последний день квартала, у " +
++		"накопленного итога — последний день последнего покрытого месяца (сопоставлять по " +
++		"toStartOfMonth(date) или toStartOfQuarter(date)). Значения — оценка ЦБ: следующим " +
++		"выпуском ревизуются. Перед использованием читать v_series_catalog по " +
++		"(source='cbr_bop_est', series): там описаны знак ряда и привязка даты",
++	Columns: map[string]string{
++		"source": "Импортёр-источник: cbr_bop_est — оценка ключевых агрегатов платёжного баланса ЦБ РФ",
++		"series": "Имя ряда: «<агрегат> (<вид>)», где вид — месяц, квартал или накопленным итогом с начала года; 51 ряд, описания — в v_series_catalog (source='cbr_bop_est')",
++		"date":   "Дата точки (Date): последний день отчётного месяца, последний день квартала, у накопленного итога — последний день последнего покрытого месяца. Сопоставлять по toStartOfMonth(date) или toStartOfQuarter(date)",
++		"value":  "Значение (Float64), млрд долларов США: сальдо агрегата. Положительное — превышение поступлений над выплатами или чистый прирост требований, отрицательное — обратное. Ноль — настоящее значение (сальдо нулевое), а не пропуск данных",
++	},
++}
++
++// afterCbrBop — производные импортёров платёжного баланса: каталог рядов (source = имя таблицы)
++// и витрина v_cbr_bop. Публикуются шаблоном после Send точек и до записи строки версии
++// (стандарт §10.2).
++func afterCbrBop(meta []util.SeriesMeta) func(context.Context, driver.Conn) error {
++	return func(ctx context.Context, conn driver.Conn) error {
++		if err := util.UpsertSeriesCatalog(ctx, conn, meta); err != nil {
++			return err
++		}
++		_, err := util.CreateView(ctx, conn, cbrBopView)
++		return err
++	}
++}
++
+ // cbrSurveyView — витрина рядов мониторинга предприятий (source='cbr_survey', импортёр
+ // cbr_mp_survey); общая витрина cbrMacroView её не покрывает.
+ var cbrSurveyView = util.View{
+ 	Name:    "v_cbr_survey",
+ 	Tables:  []string{"macro_series"},
+ 	Select:  `SELECT source, series, date, value FROM macro_series FINAL WHERE source = 'cbr_survey'`,
+ 	Comment: "Мониторинг предприятий Банка России (опросы нефинансовых компаний): ценовые ожидания бизнеса, ИБК и условия кредитования (месячные); загрузка мощностей, обеспеченность персоналом, ожидания численности (квартальные). Дата — отчётный период: 1-е число месяца, у квартальных — 1-е число месяца, следующего за кварталом; ЦБ публикует волну в первую декаду следующего месяца и нумерует справки по месяцу волны (справка «сентябрь 2026» цитирует точку отчётного периода август 2026). Перед использованием читать v_series_catalog по (source='cbr_survey', series): единицы и знаки различаются. ЦБ в комментариях цитирует сезонно сглаженные ряды (…_sa)",
+ 	Columns: map[string]string{
+ 		"source": "Всегда cbr_survey",
+ 		"series": "Код ряда; 13 рядов — описания в v_series_catalog (source='cbr_survey')",

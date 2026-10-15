@@ -1,0 +1,86 @@
+# Scoped re-review package (fix-round 1 по Task 6)
+
+PREFIX: a25f862 — коммит, который видела предыдущая ревью (после amend его дерево = 68881e4^ по роадмапу/реестру)
+
+## Что изменил fix (git diff a25f862 68881e4)
+```diff
+diff --git a/docs/superpowers/plans/2026-10-15-cbr-int-rate-loans.md b/docs/superpowers/plans/2026-10-15-cbr-int-rate-loans.md
+index 44d21d3..41f83d9 100644
+--- a/docs/superpowers/plans/2026-10-15-cbr-int-rate-loans.md
++++ b/docs/superpowers/plans/2026-10-15-cbr-int-rate-loans.md
+@@ -104,6 +104,34 @@
+    2 432 точки, 2014-01 … 2026-08, приёмка 2026-10-15)»; абзац фазы 2 в §6 — отметить
+    закрытие №8. Факты приёмки — команда/числа/даты — в коммит и этот план.
+ 
++**Результат приёмки (2026-10-15, воспроизведено дословно)**
++
++Ветка `key-rate-4-2-8-loan-rates`, dev-ClickHouse; запуск — через `make`, SQL-проверки — через MCP.
++
++| Проверка | Команда | Результат |
++|---|---|---|
++| Доступность БД | `make ch-status` | `ClickHouse отвечает на порту 8123` |
++| Импорт | `make import STAT=cbr_int_rate_loans` | `Imported 2432 rows of cbr_int_rate_loans` — скачан `https://www.cbr.ru/vfs/statistics/pdko/int_rat/loans_nonfin.xlsx` |
++| Снимок покрытия | `make ch-sql` | `rows_total 2432`, `dates 2014-01-30 .. 2026-08-30`, `series 16`; каждый из 16 рядов — 152 точки, 2014-01-30 … 2026-08-30 |
++| Spot-сверка | spot-запрос к витрине | `Всего: до 30 дней, включая «до востребования»` — 2014-01-30 = 7.35, 2026-08-30 = 19.06; `СМП: свыше 1 года` — 2026-08-30 = 14.22 |
++| Каталог | `SELECT count() FROM series_catalog FINAL WHERE source='cbr' AND origin LIKE '%loans_nonfin.xlsx%'` | `catalog_rows 16` |
++| Витрина | `SELECT count(), uniqExact(series) FROM v_cbr_macro FINAL` по новым рядам | `view_rows 2432`, `view_series 16`; всего строк витрины — 48 942 |
++| Строка версии | `SELECT … FROM source_publications` | `cbr_int_rate_loans` / `loans_nonfin.xlsx` / `points 2432` — дословная строка ниже |
++| Идемпотентность | повтор `make import STAT=cbr_int_rate_loans` | `cbr_int_rate_loans: no-op, версия 32dafeda77a8bcddd8b9feb846a40840 уже импортирована, 2432 точек на месте` |
++| MCP end-to-end | `make mcp-check` | `ПРОВЕРКА ПРОЙДЕНА`, в т.ч. `OK каталог cbr_int_rate_loans полон: рядов cbr_int_rate_loans: 16 (8 сроков × 2 группы: Всего/СМП)` и `OK сырая cbr_int_rate_loans закрыта: отказ ClickHouse 497 на cbr_int_rate_loans (ожидаемо)` |
++| Расписание | `dagu validate dagu/cbr.yaml` | exit 0 |
++| Реестр архива | `make archive-registry` | `реестр архива: 2 строк -> docs/archive/registry.jsonl`; строка архива: `cbr_int_rate_loans/32dafeda77a8bcdd_loans_nonfin.xlsx`, sha256 `87492617bf86c30fb280ffee15c3d2eab3bafa8fd0e248b9f659ef37bbd2bc3e`, 124 288 байт, `first_seen 2026-10-15T12:53:12.43343+05:00` |
++
++Строка версии в `source_publications` (дословно, разделители — вертикальные черты):
++
++```text
++cbr_int_rate_loans | loans_nonfin.xlsx | points 2432 | first_seen 2026-10-15 12:53:23 | url …/int_rat/loans_nonfin.xlsx
++```
++
++Независимая перепроверка ревьюером через MCP под `kimi_reader`: `v_cbr_macro` — 48 942,
++каталог — 16, ряды ставок — 2 432; совпало. Те же факты — в теле коммита `key rate roadmap:
++close 4.2 #8 loan rates`.
++
+ ### Task 7: финальное ревью и PR
+ 
+ - Финальное ревью ветки (`superpowers:requesting-code-review`) на самой способной доступной
+```
+
+## Тело коммита после amend (git log -1 --format=%B)
+```
+key rate roadmap: close 4.2 #8 loan rates
+
+Живая приёмка 2026-10-15 (dev-ClickHouse, ветка key-rate-4-2-8-loan-rates):
+дословные команды и числа.
+
+- make ch-status — ClickHouse отвечает на порту 8123.
+- make import STAT=cbr_int_rate_loans — Imported 2432 rows of cbr_int_rate_loans
+  (скачан https://www.cbr.ru/vfs/statistics/pdko/int_rat/loans_nonfin.xlsx).
+- make ch-sql (снимок покрытия) — rows_total 2432, dates 2014-01-30 .. 2026-08-30,
+  series 16; каждый из 16 рядов — 152 точки, 2014-01-30 … 2026-08-30.
+- Spot: Всего: до 30 дней, включая «до востребования» — 2014-01-30 = 7.35,
+  2026-08-30 = 19.06; СМП: свыше 1 года — 2026-08-30 = 14.22.
+- Каталог: series_catalog FINAL, source='cbr' AND origin LIKE '%loans_nonfin.xlsx%'
+  — catalog_rows 16.
+- Витрина: v_cbr_macro FINAL по новым рядам — view_rows 2432, view_series 16
+  (всего строк витрины 48 942).
+- source_publications — cbr_int_rate_loans | loans_nonfin.xlsx | points 2432 |
+  first_seen 2026-10-15 12:53:23 | url …/int_rat/loans_nonfin.xlsx.
+- Повтор make import STAT=cbr_int_rate_loans — cbr_int_rate_loans: no-op, версия
+  32dafeda77a8bcddd8b9feb846a40840 уже импортирована, 2432 точек на месте.
+- make mcp-check — ПРОВЕРКА ПРОЙДЕНА, в т.ч. OK каталог cbr_int_rate_loans полон:
+  рядов cbr_int_rate_loans: 16 (8 сроков × 2 группы: Всего/СМП) и OK сырая
+  cbr_int_rate_loans закрыта: отказ ClickHouse 497 на cbr_int_rate_loans (ожидаемо).
+- dagu validate dagu/cbr.yaml — exit 0.
+- make archive-registry — реестр архива: 2 строк -> docs/archive/registry.jsonl;
+  строка архива cbr_int_rate_loans/32dafeda77a8bcdd_loans_nonfin.xlsx, sha256
+  87492617bf86c30fb280ffee15c3d2eab3bafa8fd0e248b9f659ef37bbd2bc3e, 124 288 байт,
+  first_seen 2026-10-15T12:53:12.43343+05:00.
+
+Независимая перепроверка ревьюером через MCP под kimi_reader: v_cbr_macro — 48 942,
+каталог — 16, ряды ставок — 2 432; совпало.
+
+Роадмап: §4.2 №8 закрыт (✅ фаза 2), §4.3 — проверенный источник и глубина, §4.1 —
+строка таблицы со снимком 2026-10-15, §5 — вход контура, §6 — цепочка фазы 2.
+Протокол приёмки — docs/superpowers/plans/2026-10-15-cbr-int-rate-loans.md, Task 6.
+
+```
