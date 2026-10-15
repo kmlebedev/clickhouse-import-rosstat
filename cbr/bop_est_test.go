@@ -126,7 +126,7 @@ func bopEstOpenFixture(t *testing.T, mutate func(t *testing.T, f *excelize.File,
 }
 
 // bopEstSetCell — правка ячейки мутируемой фикстуры: excelize сообщает о негодном адресе
-// ошибкой, и проглотить её значило бы проверять немутнутый лист.
+// ошибкой, и проглотить её значило бы проверять немодифицированный лист.
 func bopEstSetCell(t *testing.T, f *excelize.File, sheet, cell string, value any) {
 	t.Helper()
 	if err := f.SetCellValue(sheet, cell, value); err != nil {
@@ -447,7 +447,7 @@ func TestCbrBopEstFailFastOnFixture(t *testing.T) {
 	}
 }
 
-// TestCbrBopEstFixturesemantics — разбор мутированной копии живой фикстуры при ожидаемом
+// TestCbrBopEstFixtureSemantics — разбор мутированной копии живой фикстуры при ожидаемом
 // изменении источника: дата выпуска в имени листа разбору не мешает (лист ищется по префиксу,
 // спека §3.5), пустая ячейка точки не даёт, а литеральный ноль даёт (стандарт §6.7, спека §3.5:
 // в платёжном балансе ноль — настоящее значение, в отличие от cbr_int_rate_loans).
