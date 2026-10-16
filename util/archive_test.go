@@ -552,6 +552,10 @@ func TestClickHouseImportArchiveFailureKeepsVersionUnwritten(t *testing.T) {
 // №6: включение механизма не должно ничего стоить импортёрам, у которых архива нет.
 func TestClickHouseImportArchiveOffNoCalls(t *testing.T) {
 	archiveRuntimeForTests = nil // хук снят: идёт прод-путь activeArchive()
+	// Синглтон прод-пути кэширует хранилище: обнуляем его результат, чтобы тест не взял чужой
+	// включённый бэкенд. Сам sync.Once не трогаем — его нельзя копировать (copylocks в go vet),
+	// а «однажды выполненный» Do здесь не мешает: тесту нужен именно nil-архив (бэкенд пуст).
+	archiveRT = nil
 	t.Setenv(archive.EnvBackend, "")
 	t.Setenv(archive.EnvLocalDir, "")
 

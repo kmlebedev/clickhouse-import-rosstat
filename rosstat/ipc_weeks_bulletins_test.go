@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -365,9 +366,11 @@ func TestIpcWeeksBulletinsUnknownProductWarns(t *testing.T) {
 	}
 }
 
-// TestIpcWeeksBulletinsSourcesInvariants — инварианты списка 71 выпуска (спека §3.5.1, §11):
-// 48 живых недельных выпусков (47 недель 2021 + неделя 22–28.12.2020), 4 восстановленные недели
-// 2021 и 19 фрагментов 2017; URL уникальны; даты строго возрастают; у Wayback-адресов — форма
+// TestIpcWeeksBulletinsSourcesInvariants — инварианты списка 80 выпусков (спека §3.5.1, §11;
+// расширение 2026-10-16 — приложение В): 48 живых недельных выпусков (47 недель 2021 + неделя
+// 22–28.12.2020), 4 восстановленные недели 2021, 25 фрагментов 2017 и 3 найденных выпуска 2020
+// (2020-11-16/12-07/12-21 — Wayback сохранил лишь эти недели до живого буфера); URL уникальны;
+// даты строго возрастают; у Wayback-адресов — форма
 // id_ (сырые байты документа, без панели Wayback); недельный блок 2020-12-28…2021-12-27 покрыт
 // всеми неделями: обычный шаг 6–8 дней (5 и 9 — стыки с Wayback-выпусками), единственный
 // 14-дневный шаг — новогодний
@@ -375,19 +378,22 @@ func TestIpcWeeksBulletinsUnknownProductWarns(t *testing.T) {
 // дней означал бы потерянный выпуск; 2021-02-01/08/15/24 — те самые удалённые из живого буфера
 // недели, ради которых и снят дамп.
 func TestIpcWeeksBulletinsSourcesInvariants(t *testing.T) {
-	if len(ipcWeeksBulletinsSources) != 71 {
-		t.Fatalf("выпусков %d, ожидался 71", len(ipcWeeksBulletinsSources))
+	if len(ipcWeeksBulletinsSources) != 80 {
+		t.Fatalf("выпусков %d, ожидалось 80", len(ipcWeeksBulletinsSources))
 	}
-	live, wayback2021, wayback2017 := 0, 0, 0
+	live, wayback2021, wayback2017, wayback2020 := 0, 0, 0, 0
 	urls := make(map[string]bool, len(ipcWeeksBulletinsSources))
 	prev := time.Time{}
 	weekly2021 := make([]time.Time, 0, 52)
+	pre2020Tail := make([]string, 0, 3)
 	for _, source := range ipcWeeksBulletinsSources {
 		switch {
 		case strings.HasPrefix(source.URL, "https://rosstat.gov.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/"):
 			live++
 		case strings.Contains(source.URL, "web.archive.org/web/2021"):
 			wayback2021++
+		case strings.Contains(source.URL, "web.archive.org/web/2020"):
+			wayback2020++
 		case strings.Contains(source.URL, "web.archive.org/web/2017"):
 			wayback2017++
 		}
@@ -403,14 +409,25 @@ func TestIpcWeeksBulletinsSourcesInvariants(t *testing.T) {
 		}
 		prev = source.Date
 		if source.Date.Year() >= 2020 {
-			weekly2021 = append(weekly2021, source.Date)
+			// Недельный блок 2020 до 2020-12-28 неполон по вине источника: Wayback сохранил
+			// лишь три недели ноября–декабря (остальные не были заархивированы ни разу) — они
+			// пинятся литералами отдельно, а сплошное покрытие проверяется от 2020-12-28, самого
+			// старого документа живого буфера.
+			if source.Date.Before(time.Date(2020, time.December, 28, 0, 0, 0, 0, time.UTC)) {
+				pre2020Tail = append(pre2020Tail, source.Date.Format("2006-01-02"))
+			} else {
+				weekly2021 = append(weekly2021, source.Date)
+			}
 		}
 		if strings.Contains(source.URL, "web.archive.org") && !strings.Contains(source.URL, "id_/") {
 			t.Errorf("у Wayback-адреса %q нет формы id_: панель Wayback переписала бы документ", source.URL)
 		}
 	}
-	if live != 48 || wayback2021 != 4 || wayback2017 != 19 {
-		t.Errorf("состав списка: живых %d, Wayback-2021 %d, Wayback-2017 %d; ожидалось 48 + 4 + 19", live, wayback2021, wayback2017)
+	if live != 48 || wayback2021 != 4 || wayback2017 != 25 || wayback2020 != 3 {
+		t.Errorf("состав списка: живых %d, Wayback-2021 %d, Wayback-2017 %d, Wayback-2020 %d; ожидалось 48 + 4 + 25 + 3 = 80", live, wayback2021, wayback2017, wayback2020)
+	}
+	if want := []string{"2020-11-16", "2020-12-07", "2020-12-21"}; !reflect.DeepEqual(pre2020Tail, want) {
+		t.Errorf("найденные недели 2020 до живого буфера: %v, ожидались %v (приложение В спеки)", pre2020Tail, want)
 	}
 	if len(weekly2021) != 52 {
 		t.Fatalf("недельный блок 2021: точек %d, ожидалось 52", len(weekly2021))
@@ -504,7 +521,7 @@ func TestIpcWeeksBulletinsMetaMatchesFixtures(t *testing.T) {
 	}
 
 	described := describedSeries(t, ipcWeeksBulletinsSeriesMeta())
-	for _, series := range []string{"Проживание в гостинице"} {
+	for _, series := range []string{"Проживание в гостинице", "Сорочка верхняя для мальчиков школьного возраста"} {
 		if !described[series] {
 			t.Errorf("extra-ряд %q не описан в каталоге", series)
 		}
