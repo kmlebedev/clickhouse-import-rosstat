@@ -14,9 +14,8 @@ import (
 const (
 
 	// https://www.sberbank.com/ru/investor-relations/groupresults/navigator/rezultaty-rpbu
-	// Страница источника отдаётся через JS-challenge (TSPD) и статичных ссылок не содержит,
-	// colly её распарсить не может — ссылку меняем вручную при обновлении,
-	// либо нужен headless-браузер.
+	// Страница источника отдаётся через JS-challenge (TSPD) и статичных ссылок не содержит:
+	// ссылку меняем вручную при обновлении, либо нужен headless-браузер.
 	// https://www.sberbank.com/common/img/uploaded/redirected/com/investor-relations/groupresults/sber_finansovie_rezultaty_2022-2024.xlsx
 	sberRpbuUrl          = "https://www.sberbank.com/common/img/uploaded/redirected/com/investor-relations/groupresults"
 	sberRpbuXlsDataUrl   = sberRpbuUrl + "/sber_finansovie_rezultaty_ras_2022-2024.xlsx"

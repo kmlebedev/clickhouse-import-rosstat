@@ -2,23 +2,29 @@ package bank
 
 import (
 	"context"
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
+
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
-	"strconv"
-	"strings"
-	"time"
 )
 
 const (
 	// Отчётность по МСФО лежит на CDN со случайным UUID в имени файла, который меняется
-	// с каждым релизом; листинга со ссылками у CDN нет, страницу источника colly не
-	// распарсит — ссылку меняем вручную при обновлении. Текущая ссылка ведёт на PDF.
+	// с каждым релизом; листинга со ссылками у CDN нет — ссылку меняем вручную при обновлении.
+	// Текущая ссылка ведёт на PDF.
 	// https://cdn.tbank.ru/static/documents/c4ade295-d683-431f-a7ac-4f88c685d548.xlsx
 	tbIfrsUrl       = "https://cdn.tbank.ru/static/documents/a27e2a89-0871-4d87-9847-46bce3a0ad3f.pdf"
 	tbIfrsTable     = "tbank_group_ifrs"
 	tbIfrsDataField = "Новостройка"
+	// tbIfrsDataInsert — построчная вставка прежнего импортёра: своя константа вместо
+	// ВТБ-шной (vtbIfrsDataInsert удалён вместе с транспортом ВТБ — у каждой таблицы своя
+	// строка); перевод импортёра на шаблон заменит её батчем.
+	tbIfrsDataInsert = "INSERT INTO " + tbIfrsTable + " VALUES (?, ?, ?)"
 )
 
 type TbIfrs struct {
@@ -79,7 +85,9 @@ func (s *TbIfrs) export() (table *[][]string, err error) {
 }
 
 func (s *TbIfrs) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	if err = conn.Exec(ctx, vtbIfrsTableDdl); err != nil {
+	// DDL — копия DDL ВТБ в %s-форме: имя таблицы подставляет вызывающий (у ВТБ это делает
+	// шаблон util.ClickHouseImport), а схема у Т-Банка до развязки таблиц та же.
+	if err = conn.Exec(ctx, fmt.Sprintf(vtbIfrsTableDdl, tbIfrsTable)); err != nil {
 		return count, err
 	}
 	var table *[][]string
@@ -91,7 +99,7 @@ func (s *TbIfrs) Import(ctx context.Context, conn driver.Conn) (count int64, err
 		if err != nil {
 			return count, err
 		}
-		if err = conn.Exec(ctx, vtbIfrsDataInsert, row[0], date, row[2]); err != nil {
+		if err = conn.Exec(ctx, tbIfrsDataInsert, row[0], date, row[2]); err != nil {
 			return count, err
 		} else {
 			count += 1

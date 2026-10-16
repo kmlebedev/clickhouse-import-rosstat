@@ -1,13 +1,18 @@
 package bank
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"math"
+	"net/http"
+	"os"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
 )
 
@@ -369,5 +374,172 @@ func TestAppendVtbPoints(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Чистая прибыль") {
 		t.Errorf("ошибка %q не называет точку, на которой запись остановилась", err)
+	}
+}
+
+// Фикстура — живая страница результатов ВТБ (https://www.vtb.ru/ir/statements/results/, скачана
+// 2026-10-17, 357 115 Б): коммитится как есть, разметка не пересобирается (§11.2). Разведка
+// 2026-10-17: 19 ссылок с якорем rus-vtb-group-ifrs-as-of — 13 xlsx и 6 pdf (pdf разбором
+// отбрасываются); у двух имён хвостовое подчёркивание (31-october-2025_, 30-april-2025_), у июля
+// 2025 — опечатка источника (31-jule-2025); порядок ссылок на странице — от свежих к старым и
+// между прогонами меняется (2026-10-16 первыми шли март-2025, февраль-2026, апрель-2025),
+// поэтому сортировка по дате отчёта — часть разбора.
+const vtbResultsPageFixture = "vtb_results_page.html"
+
+// vtbResultsPage — байты фикстуры страницы: разбор страницы чистый (§6.1) и проверяется офлайн
+// на байтах живого документа (§11.3).
+func vtbResultsPage(t *testing.T) []byte {
+	t.Helper()
+	page, err := os.ReadFile("testdata/" + vtbResultsPageFixture)
+	if err != nil {
+		t.Fatalf("чтение фикстуры %s: %v", vtbResultsPageFixture, err)
+	}
+	return page
+}
+
+// vtbPageWithDuplicate — копия страницы с повторённой ссылкой: дублируется реальный элемент
+// разметки (вырезается по границам <a …>…</a>), а не собирается заново (§11.1). Живая страница
+// дублей сейчас не несёт (все 19 href уникальны), а ветка дедупа обязана быть проверенной: с
+// двух копий одного отчёта импортёр скачал бы файл дважды.
+func vtbPageWithDuplicate(t *testing.T, page []byte, href string) []byte {
+	t.Helper()
+	at := bytes.Index(page, []byte(`href="`+href+`"`))
+	if at < 0 {
+		t.Fatalf("в фикстуре нет ссылки %q", href)
+	}
+	open := bytes.LastIndex(page[:at], []byte("<a "))
+	if open < 0 {
+		t.Fatalf("перед ссылкой %q не найдено открытие элемента <a", href)
+	}
+	closing := bytes.Index(page[at:], []byte("</a>"))
+	if closing < 0 {
+		t.Fatalf("у ссылки %q не найдено закрытие </a>", href)
+	}
+	end := at + closing + len("</a>")
+	element := page[open:end]
+	dup := make([]byte, 0, len(page)+len(element))
+	dup = append(dup, page[:end]...)
+	dup = append(dup, element...)
+	return append(dup, page[end:]...)
+}
+
+// vtbFixtureLinks — 13 отчётных xlsx живой страницы в порядке возрастания даты отчётности:
+// адреса — литералами (сверяется сборка «домен + href»), даты — как их даёт имя файла
+// (месяц — английское название; у июля 2025 — опечатка источника jule). PDF-версии тех же
+// отчётов (6 на странице) в список не входят.
+var vtbFixtureLinks = []vtbLink{
+	{Url: "https://www.vtb.ru/media-files/vtb.ru/sitepages/ir/statements/results/rus-vtb-group-ifrs-as-of-31-october-2024.xlsx", Report: time.Date(2024, time.October, 31, 0, 0, 0, 0, time.UTC)},
+	{Url: "https://www.vtb.ru/media-files/vtb.ru/sitepages/ir/statements/results/rus-vtb-group-ifrs-as-of-30-november-2024.xlsx", Report: time.Date(2024, time.November, 30, 0, 0, 0, 0, time.UTC)},
+	{Url: "https://www.vtb.ru/media-files/vtb.ru/sitepages/ir/statements/results/rus-vtb-group-ifrs-as-of-30-april-2025_.xlsx", Report: time.Date(2025, time.April, 30, 0, 0, 0, 0, time.UTC)},
+	{Url: "https://www.vtb.ru/media-files/vtb.ru/sitepages/ir/statements/results/rus-vtb-group-ifrs-as-of-31-may-2025.xlsx", Report: time.Date(2025, time.May, 31, 0, 0, 0, 0, time.UTC)},
+	{Url: "https://www.vtb.ru/media-files/vtb.ru/sitepages/ir/statements/results/rus-vtb-group-ifrs-as-of-31-jule-2025.xlsx", Report: time.Date(2025, time.July, 31, 0, 0, 0, 0, time.UTC)},
+	{Url: "https://www.vtb.ru/media-files/vtb.ru/sitepages/ir/statements/results/rus-vtb-group-ifrs-as-of-31-august-2025.xlsx", Report: time.Date(2025, time.August, 31, 0, 0, 0, 0, time.UTC)},
+	{Url: "https://www.vtb.ru/media-files/vtb.ru/sitepages/ir/statements/results/rus-vtb-group-ifrs-as-of-31-october-2025_.xlsx", Report: time.Date(2025, time.October, 31, 0, 0, 0, 0, time.UTC)},
+	{Url: "https://www.vtb.ru/media-files/vtb.ru/sitepages/ir/statements/results/rus-vtb-group-ifrs-as-of-30-november-2025.xlsx", Report: time.Date(2025, time.November, 30, 0, 0, 0, 0, time.UTC)},
+	{Url: "https://www.vtb.ru/media-files/vtb.ru/sitepages/ir/statements/results/rus-vtb-group-ifrs-as-of-28-february-2026.xlsx", Report: time.Date(2026, time.February, 28, 0, 0, 0, 0, time.UTC)},
+	{Url: "https://www.vtb.ru/media-files/vtb.ru/sitepages/ir/statements/results/rus-vtb-group-ifrs-as-of-30-april-2026.xlsx", Report: time.Date(2026, time.April, 30, 0, 0, 0, 0, time.UTC)},
+	{Url: "https://www.vtb.ru/media-files/vtb.ru/sitepages/ir/statements/results/rus-vtb-group-ifrs-as-of-31-may-2026.xlsx", Report: time.Date(2026, time.May, 31, 0, 0, 0, 0, time.UTC)},
+	{Url: "https://www.vtb.ru/media-files/vtb.ru/sitepages/ir/statements/results/rus-vtb-group-ifrs-as-of-31-july-2026.xlsx", Report: time.Date(2026, time.July, 31, 0, 0, 0, 0, time.UTC)},
+	{Url: "https://www.vtb.ru/media-files/vtb.ru/sitepages/ir/statements/results/rus-vtb-group-ifrs-as-of-31-august-2026.xlsx", Report: time.Date(2026, time.August, 31, 0, 0, 0, 0, time.UTC)},
+}
+
+// TestVtbIfrsXlsLinks: список со страницы — только xlsx (pdf тех же отчётов отброшены), с
+// дедупом по href, с абсолютными адресами и в порядке возрастания даты отчётности (порядок
+// страницы другой: свежие первыми). «Грязные» имена источника разбираются: опечатка jule у
+// июля 2025 и хвостовое подчёркивание у 31-october-2025_ / 30-april-2025_.
+func TestVtbIfrsXlsLinks(t *testing.T) {
+	page := vtbResultsPage(t)
+	links, err := vtbIfrsXlsLinks(page)
+	if err != nil {
+		t.Fatalf("vtbIfrsXlsLinks: %v", err)
+	}
+	if len(links) != len(vtbFixtureLinks) {
+		t.Fatalf("ссылок %d, want %d: только .xlsx (pdf отбрасываются), дедуп по href, дата отчёта из имени файла",
+			len(links), len(vtbFixtureLinks))
+	}
+	for i, want := range vtbFixtureLinks {
+		got := links[i]
+		if got.Url != want.Url || !got.Report.Equal(want.Report) {
+			t.Errorf("ссылка %d = %s (%s), want %s (%s)", i,
+				got.Url, got.Report.Format("2006-01-02"), want.Url, want.Report.Format("2006-01-02"))
+		}
+	}
+	// Дубль ссылки на странице — не второй отчёт: список обязан остаться прежним. Дубль —
+	// копия реального элемента разметки (живая страница дублей не несёт).
+	const dupHref = "/media-files/vtb.ru/sitepages/ir/statements/results/rus-vtb-group-ifrs-as-of-30-november-2024.xlsx"
+	dupLinks, err := vtbIfrsXlsLinks(vtbPageWithDuplicate(t, page, dupHref))
+	if err != nil {
+		t.Fatalf("vtbIfrsXlsLinks с дублем ссылки: %v", err)
+	}
+	if len(dupLinks) != len(links) {
+		t.Fatalf("с дублем ссылки разобрано %d, want %d (дедуп по href)", len(dupLinks), len(links))
+	}
+	for i := range dupLinks {
+		if dupLinks[i].Url != links[i].Url || !dupLinks[i].Report.Equal(links[i].Report) {
+			t.Errorf("с дублем ссылка %d = %s (%s), want %s (%s)", i,
+				dupLinks[i].Url, dupLinks[i].Report.Format("2006-01-02"),
+				links[i].Url, links[i].Report.Format("2006-01-02"))
+		}
+	}
+}
+
+// TestVtbIfrsXlsLinksEmpty: страница без ссылок — ошибка с доменом и ожидаемым именем файла, а не
+// пустой список: пустая дельта означала бы «новых отчётов нет» при живом источнике (§6.4).
+// Минимальная страница без ссылок допустима: проверяется ветка «ссылок нет», а не разметка
+// источника (§11.1 касается фикстур успешных разборов).
+func TestVtbIfrsXlsLinksEmpty(t *testing.T) {
+	_, err := vtbIfrsXlsLinks([]byte(`<!doctype html><html><body><p>Результаты</p></body></html>`))
+	if err == nil {
+		t.Fatal("страница без ссылок: ожидалась ошибка, а разбор прошёл")
+	}
+	for _, want := range []string{"www.vtb.ru", "rus-vtb-group-ifrs-as-of"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("ошибка %q не называет %q", err, want)
+		}
+	}
+}
+
+// TestVtbIfrsXlsLinksFailFast — ветки, где ссылка не разбирается: месяц имени не распознан и
+// дата отчётности не существует. Правки — на копии живой фикстуры в памяти (§11.1), обе обязаны
+// дать ошибку с именем файла: пропуск такой ссылки молча означал бы потерянный отчёт (§6.4).
+func TestVtbIfrsXlsLinksFailFast(t *testing.T) {
+	for name, tc := range map[string]struct{ from, to, want string }{
+		"месяц не распознан": {from: "as-of-31-may-2026", to: "as-of-31-mayy-2026", want: "mayy"},
+		"дата не существует": {from: "as-of-30-april-2026", to: "as-of-31-april-2026", want: "31-april-2026"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			page := bytes.Replace(vtbResultsPage(t), []byte(tc.from), []byte(tc.to), 1)
+			_, err := vtbIfrsXlsLinks(page)
+			if err == nil {
+				t.Fatal("ожидалась ошибка, а разбор прошёл")
+			}
+			for _, want := range []string{"www.vtb.ru", tc.want} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("ошибка %q не называет %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+// TestVtbIfrsImportRestoreMode — режим восстановления у импортёра набора файлов не поддержан
+// (спека §1.3): Import обязан упасть с понятным текстом до сети. Тест офлайновый ровно потому,
+// что отказ стоит до первого сетевого вызова: с восстановлением в окружении вызов возвращает
+// ошибку, не скачивая страницу. Клиент на случай съехавшего порядка подставлен падающий
+// мгновенно — сеть из тестов запрещена (§11.3).
+func TestVtbIfrsImportRestoreMode(t *testing.T) {
+	t.Setenv("ARCHIVE_ACTION", "restore")
+	client := util.HttpClient
+	util.HttpClient = &http.Client{Timeout: time.Nanosecond}
+	t.Cleanup(func() { util.HttpClient = client })
+
+	_, err := (&VtbIfrs{}).Import(context.Background(), nil)
+	if err == nil {
+		t.Fatal("режим восстановления: ожидалась ошибка, а Import прошёл")
+	}
+	for _, want := range []string{"rus_vtb_group_ifrs", "ARCHIVE_ACTION=restore", "набора файлов"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("ошибка %q не называет %q", err, want)
+		}
 	}
 }

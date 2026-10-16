@@ -1,16 +1,20 @@
 package bank
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"math"
+	"path"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/gocolly/colly/v2"
+	"github.com/PuerkitoBio/goquery"
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	log "github.com/sirupsen/logrus"
@@ -18,23 +22,41 @@ import (
 )
 
 const (
-
-	// https://www.vtb.ru/ir/statements/results/
-	// Имена файлов содержат дату отчётности (rus-vtb-group-ifrs-as-of-31-october-2024.xlsx)
-	// и меняются каждый отчётный период, поэтому список берётся со страницы результатов.
+	// vtbIfrsResultsUrl — страница результатов ВТБ, с которой берётся список отчётных файлов:
+	// имена файлов несут дату отчётности (rus-vtb-group-ifrs-as-of-31-october-2024.xlsx) и
+	// меняются каждый отчётный период, поэтому статичного адреса в коде нет (спека §3.3).
 	vtbIfrsResultsUrl = "https://www.vtb.ru/ir/statements/results/"
 	vtbIfrsTable      = "rus_vtb_group_ifrs"
-	vtbIfrsTableDdl   = `CREATE TABLE IF NOT EXISTS ` + vtbIfrsTable + ` (
+	// vtbIfrsDataUrlPrefix — домен источника: href ссылок страницы относительный, абсолютный
+	// адрес файла = домен + href. Литерал, а не vtbIfrsResultsUrl: тест сверяет сборку адреса
+	// с литералом.
+	vtbIfrsDataUrlPrefix = "https://www.vtb.ru"
+	// vtbIfrsLinkSelector — ссылки на отчётные файлы в разметке страницы. Якорь — фрагмент имени
+	// файла (rus-vtb-group-ifrs-as-of-…): под него не попадают ни сопутствующие файлы источника
+	// (financial_data_supplement_*), ни прочие ссылки страницы. Расширение выбирает разбор: рядом
+	// с xlsx источник выкладывает pdf-версии тех же отчётов — они отбрасываются.
+	vtbIfrsLinkSelector = `a[href*="rus-vtb-group-ifrs-as-of"]`
+	// vtbIfrsTableDdl — DDL таблицы в %s-форме шаблона (стандарт §5.1): имя подставляет
+	// util.ClickHouseImport. Типы — legacy-схема таблицы (ARCHITECTURE.md §6.2): name — имя ряда
+	// из подписи источника, date — последний день отчётного месяца, balance — сырое значение
+	// (баланс и P&L — млрд ₽, коэффициенты — доли), Float32 прежней таблицы не меняется.
+	vtbIfrsTableDdl = `CREATE TABLE IF NOT EXISTS %s (
 			  name LowCardinality(String)
 			, date Date
 			, balance Float32
 		) ENGINE = ReplacingMergeTree ORDER BY (name, date);
 	`
-	vtbIfrsDataInsert = "INSERT INTO " + vtbIfrsTable + " VALUES (?, ?, ?)"
-	// vtbIfrsDataField — первая строка балансового блока: якорь начала данных — и прежнего
-	// разбора (export), и нового (parseVtbBookSheet): строка над ней читается как шапка
-	// колонок-дат.
-	vtbIfrsDataField  = "Денежные средства и краткосрочные активы"
+	// vtbCountPoints — количественный чек точки контроля публикации: число точек своей таблицы.
+	// Литерал, как и таблица: запрос — часть утверждения «эти точки мои». FINAL обязателен — без
+	// него count() считал бы несмёрженные части. Число растёт с каждым отчётом, поэтому решением
+	// о no-op оно не служит (это делает гейт, О3 спеки), но объявлено: без него не включились бы
+	// винтажный архив версий файлов и строки source_publications (стандарт §9.6).
+	vtbCountPoints = "SELECT count() FROM rus_vtb_group_ifrs FINAL"
+	// vtbIfrsDataField — первая строка балансового блока: якорь начала данных разбора
+	// (parseVtbBookSheet) — строка над ней читается как шапка колонок-дат.
+	vtbIfrsDataField = "Денежные средства и краткосрочные активы"
+	// vtbIfrsTimeLayout — формат дат прежних построчных вставок: ещё используется импортёром
+	// Т-Банка (bank/tbank_fin_rez.go) — своя константа появится у него при переводе на шаблон.
 	vtbIfrsTimeLayout = "01-02-06"
 )
 
@@ -410,126 +432,236 @@ func appendVtbPoints(batch driver.Batch, points []vtbPoint) error {
 	return nil
 }
 
-// getVtbIfrsXlsDataUrl собирает ссылки на отчётные XLSX-файлы МСФО со страницы
-// результатов ВТБ. Отбираются только основные отчёты (rus-vtb-group-ifrs-as-of-*.xlsx);
-// вспомогательные файлы (financial_data_supplement_*) и legacy .xls отбрасываются.
-func getVtbIfrsXlsDataUrl() (urls []string) {
-	seen := make(map[string]bool)
-	c := colly.NewCollector(colly.UserAgent(util.HttpUA))
-	c.SetClient(util.HttpClient)
-	c.OnHTML(`a[href*="rus-vtb-group-ifrs-as-of"]`, func(e *colly.HTMLElement) {
-		href := e.Attr("href")
-		if !strings.HasSuffix(strings.ToLower(href), ".xlsx") {
+// vtbLink — отчётный файл МСФО со страницы результатов: абсолютный адрес и дата отчётности,
+// вынутая из имени файла.
+type vtbLink struct {
+	Url    string
+	Report time.Time
+}
+
+// vtbIfrsReportRe — дата отчётности в имени файла: «as-of-31-august-2026». Совпадение ищется по
+// всему href, поэтому хвостовое подчёркивание источника (31-october-2025_.xlsx) и его опечатка
+// месяца (31-jule-2025.xlsx) форме не мешают.
+var vtbIfrsReportRe = regexp.MustCompile(`as-of-(\d{1,2})-([a-z]+)-(\d{4})`)
+
+// vtbIfrsMonthNames — английские названия месяцев в имени файла, как их пишет источник; ключи — в
+// нижнем регистре. «jule» — опечатка источника для июля (31-jule-2025.xlsx): без неё живой отчёт
+// июля 2025 выпал бы из списка молча.
+var vtbIfrsMonthNames = map[string]time.Month{
+	"january":   time.January,
+	"february":  time.February,
+	"march":     time.March,
+	"april":     time.April,
+	"may":       time.May,
+	"june":      time.June,
+	"july":      time.July,
+	"jule":      time.July, // опечатка источника (31-jule-2025.xlsx)
+	"august":    time.August,
+	"september": time.September,
+	"october":   time.October,
+	"november":  time.November,
+	"december":  time.December,
+}
+
+// vtbIfrsReportDate — дата отчётности из имени файла. Незнакомый месяц, неразбираемые день или
+// год и несуществующая дата (31-april) — ошибка, а не пропуск ссылки: молча выпавший отчёт
+// выглядел бы как его отсутствие у источника (§6.4).
+func vtbIfrsReportDate(href string) (time.Time, error) {
+	m := vtbIfrsReportRe.FindStringSubmatch(href)
+	if m == nil {
+		return time.Time{}, fmt.Errorf("имя файла %q: не найдена дата отчётности вида as-of-<день>-<месяц>-<год>", href)
+	}
+	month, known := vtbIfrsMonthNames[strings.ToLower(m[2])]
+	if !known {
+		return time.Time{}, fmt.Errorf("имя файла %q: месяц %q не распознан", href, m[2])
+	}
+	day, err := strconv.Atoi(m[1])
+	if err != nil {
+		return time.Time{}, fmt.Errorf("имя файла %q: день %q: %w", href, m[1], err)
+	}
+	year, err := strconv.Atoi(m[3])
+	if err != nil {
+		return time.Time{}, fmt.Errorf("имя файла %q: год %q: %w", href, m[3], err)
+	}
+	date := time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+	if date.Day() != day || date.Month() != month || date.Year() != year {
+		return time.Time{}, fmt.Errorf("имя файла %q: дата отчётности %q не существует", href, m[0])
+	}
+	return date, nil
+}
+
+// vtbIfrsXlsLinks — список отчётных файлов со страницы результатов: goquery по байтам страницы
+// (образец — cbr/dip_page.go). Отбираются ссылки якоря vtbIfrsLinkSelector с расширением .xlsx
+// (pdf-версии тех же отчётов отбрасываются), дубли href дедуплицируются, дата отчётности
+// читается из имени файла, список сортируется по возрастанию даты отчётности: свежие отчёты
+// вставляются последними и выигрывают у пересекающихся периодов (в свежее опубликованном отчёте
+// есть колонки прошлых месяцев, и его значения — уточнение прежних, спека §3.3).
+//
+// Разбор чистый (§6.1): страницу скачивает вызывающий (Import импортёра, util.GetPage), поэтому
+// функция проверяется офлайн на HTML-фикстуре (§11.3). Fail-fast (§6.4): неразбираемое имя файла
+// и пустой список — ошибка с доменом и именем файла, а не «новых отчётов нет» при живом
+// источнике.
+func vtbIfrsXlsLinks(page []byte) ([]vtbLink, error) {
+	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(page))
+	if err != nil {
+		return nil, fmt.Errorf("%s: страница %s: не разбирается как HTML: %w", vtbIfrsTable, vtbIfrsResultsUrl, err)
+	}
+	var (
+		links    []vtbLink
+		seen     = make(map[string]bool)
+		parseErr error
+	)
+	doc.Find(vtbIfrsLinkSelector).Each(func(_ int, a *goquery.Selection) {
+		if parseErr != nil {
 			return
 		}
+		href, ok := a.Attr("href")
+		href = strings.TrimSpace(href)
+		if !ok || href == "" || !strings.HasSuffix(strings.ToLower(href), ".xlsx") {
+			return // pdf тех же отчётов и прочие файлы с якорем — не xlsx-отчёты
+		}
 		if seen[href] {
+			return // дубль ссылки — не второй отчёт
+		}
+		report, err := vtbIfrsReportDate(href)
+		if err != nil {
+			parseErr = fmt.Errorf("%s: страница %s: %w", vtbIfrsTable, vtbIfrsResultsUrl, err)
 			return
 		}
 		seen[href] = true
-		urls = append(urls, href)
+		links = append(links, vtbLink{Url: vtbIfrsDataUrlPrefix + href, Report: report})
 	})
-	if err := c.Visit(vtbIfrsResultsUrl); err != nil {
-		log.Errorf("Visit %v+", err)
+	if parseErr != nil {
+		return nil, parseErr
 	}
-	c.Wait()
-	return urls
+	if len(links) == 0 {
+		return nil, fmt.Errorf("%s: страница %s: не найдено ни одной ссылки на rus-vtb-group-ifrs-as-of-*.xlsx (селектор %s)",
+			vtbIfrsTable, vtbIfrsResultsUrl, vtbIfrsLinkSelector)
+	}
+	// sort.SliceStable, а не sort.Slice: у двух отчётов с одной датой порядок страницы сохранится,
+	// и результат детерминирован без уникальности дат.
+	sort.SliceStable(links, func(i, j int) bool { return links[i].Report.Before(links[j].Report) })
+	return links, nil
 }
 
-const vtbIfrsXlsDataPrefix = "https://www.vtb.ru"
-
+// VtbIfrs — импортёр rus_vtb_group_ifrs (МСФО группы ВТБ): встроенный util.ClickHouseImport
+// ведёт таблицу, DDL, точку контроля публикации и производные (каталог и витрину —
+// AfterImport появится в задаче 9), а Import переопределён: у импортёра не один артефакт, а
+// набор отчётных файлов по одному на дату отчётности (спека §3.3, отступление О3). Решение «что
+// уже импортировано» принимает гейт пофайловых версий, а не префлайт шаблона: отпечаток одного
+// файла не отвечает на вопрос о наборе, а число точек всей таблицы не сойдётся ни с одним файлом
+// — префлайт пере-импортировал бы весь набор на каждом прогоне. Name() не переопределён: имя
+// импортёра совпадает с именем таблицы.
 type VtbIfrs struct {
+	util.ClickHouseImport
 }
 
-func (s *VtbIfrs) Name() string {
-	return vtbIfrsTable
-}
-
-func (s *VtbIfrs) export() (table *[][]string, err error) {
-	vtbIfrsXlsData := getVtbIfrsXlsDataUrl()
-	if len(vtbIfrsXlsData) == 0 {
-		return nil, fmt.Errorf("vtbIfrs: не найдены ссылки на rus-vtb-group-ifrs-as-of-*.xlsx на %s", vtbIfrsResultsUrl)
-	}
-	var xlsx *excelize.File
-	table = new([][]string)
-	for _, xlsName := range vtbIfrsXlsData {
-		if xlsx, err = util.GetXlsx(vtbIfrsXlsDataPrefix + xlsName); err != nil {
-			return nil, fmt.Errorf("get xlsx %s failed: %v", xlsName, err)
-		}
-		var rows [][]string
-		if rows, err = xlsx.GetRows("Ключевые балансовые показатели"); err != nil {
-			return nil, err
-		}
-		_ = xlsx.Close()
-		fieldFound := 0
-		// Строки с годами
-		for i, row := range rows {
-			if len(row) == 0 {
-				continue
-			}
-			// fmt.Printf("file %s row: %s\n", xlsName, row[0])
-			if strings.TrimSpace(row[0]) == vtbIfrsDataField {
-				fieldFound = i - 1
-			}
-			if fieldFound == 0 {
-				continue
-			}
-			if len(row) < 2 {
-				break
-			}
-			if strings.TrimSpace(row[1]) == "" || strings.TrimSpace(row[1]) == "0" {
-				continue
-			}
-			// Колонки с месяцами и пропуском кварталов
-			for j, cell := range row[1:] {
-				if cell == "" {
-					continue
-				}
-				if j+1 >= len(rows[fieldFound]) {
-					break
-				}
-				if strings.HasPrefix(strings.TrimSpace(rows[fieldFound][j+1]), "изменение") {
-					continue
-				}
-				name := strings.TrimSpace(strings.ReplaceAll(row[0], "-", ""))
-				balance := strings.ReplaceAll(strings.TrimSpace(cell), ",", "")
-				//fmt.Printf("name %s date %v balance %s\n", name, rows[fieldFound][j+1], balance)
-				if _, err = strconv.ParseFloat(balance, 32); err != nil {
-					return nil, err
-				}
-
-				*table = append(*table, []string{name, rows[fieldFound][j+1], balance})
-			}
-			if row[0] == "Итого собственные средства" {
-				break
-			}
-		}
-	}
-
-	return table, nil
-}
-
+// Import — полный цикл одного прогона (структура — образец cbr/dip_bulletin.go):
+//  1. режим восстановления — ошибка до сети: restore резолвит один артефакт по url, а у этого
+//     импортёра адрес отчёта не один и не статичен (спека §1.3);
+//  2. страница результатов → список отчётных файлов по возрастанию даты отчётности;
+//  3. цикл: HEAD-отпечаток файла (util.HeadFingerprint) и известность версии
+//     (util.PublicationKnown) — известная версия пропускается, неизвестная импортируется
+//     локальной копией шаблона: DataUrl — свойство файла, а общую структуру импортёра мутировать
+//     нельзя (прецедент — cbr/mo_br.go) — её читают тест реестра и объявление точки контроля.
+//     Любая неудача гейта — недоступный HEAD (отпечатка нет, версию записывать нельзя) или
+//     нечитаемые версии — ведёт в полный импорт файла: «не смог проверить» не равно
+//     «импортировано», а импорт идемпотентен;
+//  4. производные ещё раз после цикла: гейт видит файлы известными и полный путь шаблона (а с
+//     ним его AfterImport) больше не повторяет — без этого пустая дельта оставляла бы каталог и
+//     витрину неопубликованными (урок rosstat_ipc_weeks_bulletins, спека §3.3).
+//
+// Сбой одного файла не отменяет остальные: файлы независимы (у каждого свой url, файл и строка
+// версии), ошибки копятся errors.Join, прогон завершается ошибкой — dagu видит сбой и не пускает
+// цепочку дальше. Архив и строки версий уже записанных файлов гейт не лечит — как у
+// cbr_dip_bulletin, лечение ручное: удалить строку файла из source_publications и повторить
+// прогон (ARCHITECTURE §8 п. 13). Ошибки разбора не оборачиваются именем таблицы второй раз:
+// parseVtbBook уже называет её (урок ревью domrf_mortgage).
 func (s *VtbIfrs) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	if err = conn.Exec(ctx, vtbIfrsTableDdl); err != nil {
-		return count, err
+	// Режим читается один раз на прогон: значение не меняется посреди импорта, а env читается в
+	// момент действия, не в init() (ARCHITECTURE §8.6).
+	if util.ArchiveRestoreMode() {
+		return 0, fmt.Errorf("%s: режим восстановления (%s=%s) не поддержан импортёром набора файлов: restore резолвит один артефакт по url, а адрес отчёта берётся со страницы %s",
+			vtbIfrsTable, util.EnvArchiveAction, util.ArchiveActionRestore, vtbIfrsResultsUrl)
 	}
-	var table *[][]string
-	if table, err = s.export(); err != nil {
-		return count, err
+	page, err := util.GetPage(vtbIfrsResultsUrl)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %s: %w", vtbIfrsTable, vtbIfrsResultsUrl, err)
 	}
-	for _, row := range *table {
-		// Calling Parse() method with its parameters
-		date, err := time.Parse(vtbIfrsTimeLayout, row[1])
-		if err != nil {
-			return count, err
+	links, err := vtbIfrsXlsLinks(page) // ветки разбора уже называют таблицу и страницу
+	if err != nil {
+		return 0, err
+	}
+
+	var errs []error
+	for _, link := range links {
+		name := path.Base(link.Url)
+		fp, herr := util.HeadFingerprint(link.Url)
+		if herr != nil {
+			log.Warnf("%s: HEAD %s недоступен (%v) — полный импорт без записи версии", vtbIfrsTable, link.Url, herr)
+		} else {
+			_, known, kerr := util.PublicationKnown(ctx, conn, vtbIfrsTable, name, fp)
+			switch {
+			case kerr != nil:
+				// Сбой чтения версий не роняет прогон: полный импорт идемпотентен, а версия потом
+				// перезапишется (та же политика, что у префлайта шаблона). На пустой базе
+				// source_publications ещё нет — первый файл заводит её префлайтом шаблона.
+				log.Warnf("%s: версия файла %s не проверена (%v) — полный импорт", vtbIfrsTable, name, kerr)
+			case known:
+				log.Infof("%s: файл %s (версия %s) уже импортирован — пропуск", vtbIfrsTable, name, fp)
+				continue
+			}
 		}
-		if err = conn.Exec(ctx, vtbIfrsDataInsert, row[0], date, row[2]); err != nil {
-			return count, err
+
+		// Локальная копия шаблона приносит объявленный префлайт (PublicationCountPoints):
+		// судьбу файла он не решает (решает гейт), но без него не было бы ни архива версии
+		// файла, ни строки source_publications. HEAD у префлайта свой — на новый файл это
+		// второй HEAD за прогон: отпечаток версии считает и записывает шаблон.
+		local := s.ClickHouseImport
+		local.DataUrl = link.Url
+		points, importErr := local.Import(ctx, conn)
+		if importErr != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", link.Url, importErr))
+			continue
 		}
-		count++
+		count += points
+		log.Infof("%s: файл %s: импортировано %d точек", vtbIfrsTable, name, points)
 	}
-	return count, nil
+
+	// Производные публикуются и на пустой дельте (идемпотентно): гейт видит файлы известными и
+	// полный путь шаблона больше не повторяет, поэтому сбой публикации каталога или витрины
+	// прошлого прогона лечится следующим (урок rosstat_ipc_weeks_bulletins).
+	if s.AfterImport != nil {
+		if err = s.AfterImport(ctx, conn); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return count, errors.Join(errs...)
 }
+
+// vtbIfrsImportFunc — ImportFunc шаблона: книга из памяти → точки → батч. Ошибку разбора не
+// оборачивает: parseVtbBook уже называет таблицу, второй префикс дал бы дубль (урок ревью
+// domrf_mortgage).
+func vtbIfrsImportFunc(xlsx *excelize.File, batch driver.Batch) error {
+	points, err := parseVtbBook(xlsx)
+	if err != nil {
+		return err
+	}
+	return appendVtbPoints(batch, points)
+}
+
+// vtbImporter — импортёр rus_vtb_group_ifrs для шаблона и реестра: таблица, DDL в %s-форме,
+// разбор книги (ImportFunc) и объявление точки контроля публикации (vtbCountPoints). Оно
+// включает винтажный архив и строки source_publications — их пишет шаблон в цикле Import,
+// пофайлово. AfterImport пуст до задачи 9 (каталог и витрина) — Import терпит nil. Регистрация —
+// персональным init() до задачи 8 (её снимает реестр).
+var vtbImporter = &VtbIfrs{ClickHouseImport: util.ClickHouseImport{
+	TableName:              vtbIfrsTable,
+	CreateTable:            []string{vtbIfrsTableDdl},
+	ImportFunc:             vtbIfrsImportFunc,
+	PublicationCountPoints: vtbCountPoints,
+}}
 
 func init() {
-	chimport.Stats = append(chimport.Stats, &VtbIfrs{})
+	chimport.Stats = append(chimport.Stats, vtbImporter)
 }
