@@ -668,37 +668,38 @@ async def check(params, server_log):
             failed += not expect("витрина v_rosstat_macro непуста",
                                  (rosstat_points_n or 0) > 0 and (rosstat_series_n or 0) > 0, rosstat_view_detail)
 
-            # Каталог описывает все 163 ряда источника: 4 ИПЦ (rosstat_ipc_mes) + 131 недельный
+            # Каталог описывает все 164 ряда источника: 4 ИПЦ (rosstat_ipc_mes) + 131 недельный
             # товар (rosstat_ipc_weeks) + 5 рядов ВВП (rosstat_vvp_kvartal) + 1 зарплата
-            # (rosstat_salaries_mes) + 6 рядов рынка труда (rosstat_labour_force_mes) + 16 рядов
-            # бюллетеней 2017/2021 (rosstat_ipc_weeks_bulletins): 1 агрегатный недельный ИПЦ
-            # и 15 extra-рядов (ipcWeeksBulletinsExtraSeries), которым канонического соответствия
-            # в XLSX-выгрузке нет, — а канонические товары бюллетеней описаны общей метой
+            # (rosstat_salaries_mes) + 6 рядов рынка труда (rosstat_labour_force_mes) + 17 рядов
+            # бюллетеней 2017/2020/2021 (rosstat_ipc_weeks_bulletins): 1 агрегатный недельный ИПЦ
+            # и 16 extra-рядов (ipcWeeksBulletinsExtraSeries), которым канонического соответствия
+            # в XLSX-выгрузке нет («Сорочка верхняя для мальчиков школьного возраста» добавлена
+            # расширением 2026-10-16), — а канонические товары бюллетеней описаны общей метой
             # 131 недельного товара и новых строк каталога не дают.
             # Число сверяется точным равенством, а не «> 0»: односторонний контракт §11.4
-            # стандарта требует описания каждого разобранного ряда, а меньше 163 значит
+            # стандарта требует описания каждого разобранного ряда, а меньше 164 значит
             # ни разу не отработавший импортёр (числа агент прочитает, а что измеряет ряд
             # и в каких единицах — нет). В плане фазы написано 138: это арифметика
             # 4 + 128 + 5 + 1 до fix-round задачи T7, который вернул три товара под обрывом
             # листа (fc0d28f) — в ipcWeeksProducts 131 название, а шести рядов рынка труда
-            # в той арифметике нет вовсе; бюллетени добавили ещё 16, поэтому верное число — 163.
+            # в той арифметике нет вовсе; бюллетени добавили ещё 17, поэтому верное число — 164.
             # detail печатает наблюдённое число, когда оно расходится с ожиданием.
             rosstat_catalog = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'rosstat'"}))
             rosstat_catalog_rows = result_rows(rosstat_catalog)
             rosstat_catalog_n = rosstat_catalog_rows[0].get("n") if rosstat_catalog_rows else None
             if rosstat_catalog_rows is None:
                 rosstat_catalog_detail = f"ответ не распознан: {rosstat_catalog[:200]}"
-            elif rosstat_catalog_n == 163:
-                rosstat_catalog_detail = ("рядов rosstat: 163 (4 ИПЦ + 131 недельный + 5 ВВП + 1 зарплата + "
-                                          "6 рабочая сила + 16 бюллетеней)")
+            elif rosstat_catalog_n == 164:
+                rosstat_catalog_detail = ("рядов rosstat: 164 (4 ИПЦ + 131 недельный + 5 ВВП + 1 зарплата + "
+                                          "6 рабочая сила + 17 бюллетеней)")
             else:
-                rosstat_catalog_detail = (f"рядов rosstat: {rosstat_catalog_n}, want 163 — прогнать "
+                rosstat_catalog_detail = (f"рядов rosstat: {rosstat_catalog_n}, want 164 — прогнать "
                                           "импортёры по одному: make import STAT=<имя> для каждого "
                                           "из rosstat_ipc_mes, rosstat_ipc_weeks, "
                                           "rosstat_ipc_weeks_bulletins, rosstat_salaries_mes, "
                                           "rosstat_vvp_kvartal, rosstat_labour_force_mes "
                                           "(каталог перепубликовывается каждым прогоном)")
-            failed += not expect("каталог rosstat полон", rosstat_catalog_n == 163, rosstat_catalog_detail)
+            failed += not expect("каталог rosstat полон", rosstat_catalog_n == 164, rosstat_catalog_detail)
 
             # Сырые таблицы контура агенту не выданы — как macro_series и
             # cbr_households_b_mes: витрина — единственное место, где агент читает ряды
@@ -718,22 +719,23 @@ async def check(params, server_log):
                                      f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
 
             # Агрегатный ряд бюллетеней виден агенту и непуст: он есть ровно в каждом выпуске
-            # импортёра — 52 недельные точки 2020-12-28…2021-12-27 и 19 фрагментов 2017
-            # (Wayback), поэтому ожидание точное — 71 точка. Меньшее число значит не доехавший
-            # прогон rosstat_ipc_weeks_bulletins (или ещё идущий: точки публикуются по мере
-            # разбора выпусков), поэтому detail печатает наблюдённое число; каталог этот разрыв
-            # не поймает — он полон и до первых точек.
+            # импортёра — 52 недельные точки 2020-12-28…2021-12-27, 25 фрагментов 2017 (Wayback)
+            # и 3 найденных выпуска 2020 (2020-11-16/12-07/12-21; расширение 2026-10-16),
+            # поэтому ожидание точное — 80 точек. Меньшее число значит не доехавший прогон
+            # rosstat_ipc_weeks_bulletins (или ещё идущий: точки публикуются по мере разбора
+            # выпусков), поэтому detail печатает наблюдённое число; каталог этот разрыв не
+            # поймает — он полон и до первых точек.
             rosstat_bulletins = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_rosstat_macro WHERE source = 'rosstat' AND series = 'Индекс потребительских цен (недельная оценка)'"}))
             rosstat_bulletins_rows = result_rows(rosstat_bulletins)
             rosstat_bulletins_n = rosstat_bulletins_rows[0].get("n") if rosstat_bulletins_rows else None
             if rosstat_bulletins_rows is None:
                 rosstat_bulletins_detail = f"ответ не распознан: {rosstat_bulletins[:200]}"
-            elif rosstat_bulletins_n == 71:
-                rosstat_bulletins_detail = "точек агрегатного ряда: 71 (52 недельные точки 2020-12-28…2021-12-27 + 19 фрагментов 2017)"
+            elif rosstat_bulletins_n == 80:
+                rosstat_bulletins_detail = "точек агрегатного ряда: 80 (52 недельные точки 2020-12-28…2021-12-27 + 25 фрагментов 2017 + 3 выпуска 2020)"
             else:
-                rosstat_bulletins_detail = (f"точек агрегатного ряда: {rosstat_bulletins_n}, want 71 — прогнать "
+                rosstat_bulletins_detail = (f"точек агрегатного ряда: {rosstat_bulletins_n}, want 80 — прогнать "
                                             "make import STAT=rosstat_ipc_weeks_bulletins")
-            failed += not expect("агрегатный ряд бюллетеней rosstat непуст", rosstat_bulletins_n == 71, rosstat_bulletins_detail)
+            failed += not expect("агрегатный ряд бюллетеней rosstat непуст", rosstat_bulletins_n == 80, rosstat_bulletins_detail)
 
             # Контур потребительских расходов Сбера (фаза 2 роадмапа «починка пустых рядов»,
             # импортёры sber_consumper_spending_index и sber_izmenenie_trat): общая витрина

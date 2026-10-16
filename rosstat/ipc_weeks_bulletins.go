@@ -126,14 +126,17 @@ type ipcWeeksBulletinsSource struct {
 	Date time.Time
 }
 
-// ipcWeeksBulletinsSources — все 71 выпуска (спека §2, приложения А и Б), отсортированные по
-// дате точки. Литералы кода, а не разбор страницы-каталога: источника-каталога у этого архива
-// нет, а спасательный дамп зафиксировал точные адреса и даты (тест-инварианты: 48 живых + 4
-// Wayback-2021 + 19 Wayback-2017, уникальные URL, строго возрастающие даты). Форма id_ у
-// Wayback-адресов обязательна: обычный режим вклеивает в страницу свою панель и переписывает
-// ссылки, а id_ отдаёт сырые байты документа. Первым семейством идёт 2017 (ранние даты), в
-// 2021 четыре февраля вклиниваются между живыми выпусками января и марта — дат этих недель в
-// живом буфере уже нет, их сохранил только Wayback (спека §2.2).
+// ipcWeeksBulletinsSources — все 80 выпусков (спека §2, приложения А и Б; расширение 2026-10-16 —
+// приложение В), отсортированные по дате точки. Литералы кода, а не разбор страницы-каталога:
+// источника-каталога у этого архива нет, а спасательный дамп зафиксировал точные адреса и даты
+// (тест-инварианты: 48 живых + 4 Wayback-2021 + 25 Wayback-2017 + 3 Wayback-2020, уникальные URL,
+// строго возрастающие даты). Форма id_ у Wayback-адресов обязательна: обычный режим вклеивает в
+// страницу свою панель и переписывает ссылки, а id_ отдаёт сырые байты документа. Первым
+// семейством идёт 2017 (ранние даты), в 2021 четыре февраля вклиниваются между живыми выпусками
+// января и марта — дат этих недель в живом буфере уже нет, их сохранил только Wayback (спека §2.2).
+// Девять выпусков расширения (2017×6, 2020×3) найдены разведкой Wayback-корпуса буфера (приложение
+// В спеки): их версии уже лежат в винтажном архиве, поэтому и живой импорт, и restore берут их
+// оттуда по этим же URL.
 var ipcWeeksBulletinsSources = []ipcWeeksBulletinsSource{
 	{URL: "https://web.archive.org/web/20170325031428id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/56.htm", Date: time.Date(2017, time.March, 20, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://web.archive.org/web/20170403234555id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/61.htm", Date: time.Date(2017, time.March, 27, 0, 0, 0, 0, time.UTC)},
@@ -142,18 +145,27 @@ var ipcWeeksBulletinsSources = []ipcWeeksBulletinsSource{
 	{URL: "https://web.archive.org/web/20170515170702id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/90.htm", Date: time.Date(2017, time.May, 10, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://web.archive.org/web/20170519061804id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/93.htm", Date: time.Date(2017, time.May, 15, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://web.archive.org/web/20170524185422id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/100.htm", Date: time.Date(2017, time.May, 22, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20170603044855id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d02/108.htm", Date: time.Date(2017, time.May, 29, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://web.archive.org/web/20170610040613id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/111.htm", Date: time.Date(2017, time.June, 5, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://web.archive.org/web/20170618205104id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/113.htm", Date: time.Date(2017, time.June, 13, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://web.archive.org/web/20170623204140id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/121.htm", Date: time.Date(2017, time.June, 19, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://web.archive.org/web/20170701041113id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/130.htm", Date: time.Date(2017, time.June, 26, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://web.archive.org/web/20170708041326id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/134.htm", Date: time.Date(2017, time.July, 3, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://web.archive.org/web/20170715084509id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/137.htm", Date: time.Date(2017, time.July, 10, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20170722010612id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d02/142.htm", Date: time.Date(2017, time.July, 17, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20170728222427id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d02/153.htm", Date: time.Date(2017, time.July, 24, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://web.archive.org/web/20170804230052id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/155.htm", Date: time.Date(2017, time.July, 31, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://web.archive.org/web/20170812041920id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/158.htm", Date: time.Date(2017, time.August, 7, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20170816212517id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/163.htm", Date: time.Date(2017, time.August, 14, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20170826103739id_/http://www.gks.ru:80/bgd/free/b04_03/IssWWW.exe/Stg/d02/169ozen23.htm", Date: time.Date(2017, time.August, 21, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20170831031543id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/176.htm", Date: time.Date(2017, time.August, 28, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://web.archive.org/web/20170908130745id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/179.htm", Date: time.Date(2017, time.September, 4, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://web.archive.org/web/20170916034320id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/182.htm", Date: time.Date(2017, time.September, 11, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://web.archive.org/web/20170923134535id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/190.htm", Date: time.Date(2017, time.September, 18, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://web.archive.org/web/20170929233425id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/198.htm", Date: time.Date(2017, time.September, 25, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20201124084711id_/https://rosstat.gov.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/213.htm", Date: time.Date(2020, time.November, 16, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20201211031227id_/https://rosstat.gov.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/228.htm", Date: time.Date(2020, time.December, 7, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20201224012041id_/https://rosstat.gov.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/237.htm", Date: time.Date(2020, time.December, 21, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://rosstat.gov.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/245.htm", Date: time.Date(2020, time.December, 28, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://rosstat.gov.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/2.htm", Date: time.Date(2021, time.January, 11, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://rosstat.gov.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/5.htm", Date: time.Date(2021, time.January, 18, 0, 0, 0, 0, time.UTC)},
@@ -277,6 +289,9 @@ var ipcWeeksBulletinsSeriesBySourceName = map[string]string{
 	"Куры охлажденные и мороженые":                                "Куры охлажденные и мороженые, кг",
 	"Левомеколь": "Левомеколь, мазь, 40 г",
 	"Легковой автомобиль иностранной марки новый": "Легковой автомобиль иностранной марки новый, шт.",
+	// 213.htm (2020-11-16): в выпуске 2020 года та же позиция напечатана во множественном числе —
+	// канонизация держит ряд непрерывным (вариант написания, не другая позиция).
+	"Легковые автомобили иностранной марки новые": "Легковой автомобиль иностранной марки новый, шт.",
 	"Легковой автомобиль отечественный новый":     "Легковой автомобиль отечественный новый, шт.",
 	"Лук репчатый":                                       "Лук репчатый, кг",
 	"Майка, футболка мужская бельевая":                   "Майка, футболка мужская бельевая, шт.",
@@ -380,8 +395,9 @@ var ipcWeeksBulletinsExtraSeries = []string{
 	// канонической позиции у обезличенной строки нет, ряд заморожен одной точкой и описан
 	// собственной метой.
 	"Проживание в гостинице",
-	"Ренни",       // медикаменты 2017
-	"Троксерутин", // медикаменты 2017
+	"Ренни", // медикаменты 2017
+	"Сорочка верхняя для мальчиков школьного возраста", // 213.htm (2020-11-16); в XLSX 2022+ позиции нет
+	"Троксерутин",           // медикаменты 2017
 	"Флуоцинолона ацетонид", // медикаменты 2017
 }
 
