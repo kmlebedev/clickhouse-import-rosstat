@@ -113,7 +113,7 @@ func abortBatch(batch driver.Batch, what string) {
 func (s *ClickHouseImport) importXlsBody(ctx context.Context, body []byte, conn driver.Conn) (count int64, err error) {
 	xlsx, err := excelize.OpenReader(bytes.NewReader(body))
 	if err != nil {
-		return 0, fmt.Errorf("excelize %v", err)
+		return 0, fmt.Errorf("%s: excelize %v", s.TableName, err)
 	}
 	defer func() { _ = xlsx.Close() }()
 	batch, err := conn.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s", s.TableName))
