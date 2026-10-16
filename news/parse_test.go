@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -133,16 +134,59 @@ func TestItemsFromDocMapsFixtureItem(t *testing.T) {
 	}
 }
 
+func TestItemsFromDocParsesDescription(t *testing.T) {
+	// smart-lab отдаёт в description полный текст поста (HTML после разбора XML-сущностей) —
+	// ради этого колонка и заведена. Пин на живой фикстуре: пост /blog/1363355.php (разбор
+	// сентябрьской инфляции у spydell) обязан доехать до позиции целиком, а не анонсом.
+	doc := readFixtureDoc(t, "smartlab_spydell.rss")
+
+	items, _, err := itemsFromDoc("smartlab", doc)
+	if err != nil {
+		t.Fatalf("itemsFromDoc(smartlab_spydell) на живой фикстуре: %v", err)
+	}
+
+	var found bool
+	for _, it := range items {
+		if !strings.Contains(it.URL, "/blog/1363355.php") {
+			continue
+		}
+		found = true
+		if it.Description == "" {
+			t.Fatalf("позиция %s: Description пуст — текст поста не разобрался", it.URL)
+		}
+		// Краевые пробелы срезаются (pretty-print ленты вокруг текстового узла), а сам
+		// текст сохраняется как есть: витрина отдаёт агенту именно текст поста.
+		if it.Description != strings.TrimSpace(it.Description) {
+			t.Errorf("позиция %s: Description с краевыми пробелами (trim не сработал)", it.URL)
+		}
+		for _, want := range []string{"устойчивая инфляция", "Замедление обеспечили овощи и фрукты"} {
+			if !strings.Contains(it.Description, want) {
+				t.Errorf("позиция %s: Description не содержит %q (текст поста обрезан?)", it.URL, want)
+			}
+		}
+		if want := "По оценке Банка России"; !strings.HasPrefix(it.Description, want) {
+			head := []rune(it.Description)
+			if len(head) > 60 {
+				head = head[:60]
+			}
+			t.Errorf("позиция %s: Description = %q…, want префикс %q", it.URL, string(head), want)
+		}
+	}
+	if !found {
+		t.Fatalf("в фикстуре smartlab_spydell.rss нет позиции с url /blog/1363355.php — пин вакуумный")
+	}
+}
+
 func TestItemsFromDocSkipsInvalidItems(t *testing.T) {
 	// Синтетическая лента: три битые позиции (без pubDate, пробельный заголовок,
 	// нераспознанная дата) и одна валидная с «грязными» пробелами — она же проверяет
-	// нормализацию заголовка и trim ссылки.
+	// нормализацию заголовка, обрезку краёв ссылки и описания.
 	doc := decodeDoc(t, `<?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0"><channel>
   <item><title>Без даты</title><link>https://example.test/1</link></item>
   <item><title>   </title><link>https://example.test/2</link><pubDate>Mon, 12 Oct 2026 13:43:00 +0300</pubDate></item>
   <item><title>Битая дата</title><link>https://example.test/3</link><pubDate>12.10.2026</pubDate></item>
-  <item><title>  Валидная   позиция  </title><link> https://example.test/4 </link><pubDate>Mon, 12 Oct 2026 13:43:00 +0300</pubDate></item>
+  <item><title>  Валидная   позиция  </title><link> https://example.test/4 </link><description>  Текст описания  </description><pubDate>Mon, 12 Oct 2026 13:43:00 +0300</pubDate></item>
 </channel></rss>`)
 
 	items, skipped, err := itemsFromDoc("interfax", doc)
@@ -161,9 +205,13 @@ func TestItemsFromDocSkipsInvalidItems(t *testing.T) {
 	if want := "https://example.test/4"; items[0].URL != want {
 		t.Errorf("URL = %q, want %q (ссылка обрезается по краям)", items[0].URL, want)
 	}
+	if want := "Текст описания"; items[0].Description != want {
+		t.Errorf("Description = %q, want %q (края срезаются, текст описания сохраняется)", items[0].Description, want)
+	}
 
 	// Позиция без ссылки — не пропуск: пустой link сохраняется как есть, иначе
-	// лента с одним лишь заголовком теряла бы событие тезиса.
+	// лента с одним лишь заголовком теряла бы событие тезиса. Описания у неё нет —
+	// это тоже не пропуск и не ошибка: в колонку уходит пустая строка.
 	linkless := decodeDoc(t, `<rss><channel><item><title>Без ссылки</title><pubDate>Mon, 12 Oct 2026 13:43:00 +0300</pubDate></item></channel></rss>`)
 	items, skipped, err = itemsFromDoc("cbr", linkless)
 	if err != nil {
@@ -174,6 +222,9 @@ func TestItemsFromDocSkipsInvalidItems(t *testing.T) {
 	}
 	if items[0].URL != "" {
 		t.Errorf("URL позиции без link = %q, want пустую строку", items[0].URL)
+	}
+	if items[0].Description != "" {
+		t.Errorf("Description позиции без описания = %q, want пустую строку (позиция не пропущена)", items[0].Description)
 	}
 }
 
@@ -215,12 +266,13 @@ func TestItemsFromDocEmptyFeedFails(t *testing.T) {
 }
 
 func TestFixturesParse(t *testing.T) {
-	// Пять живых лент: обе ленты ЦБ пишутся под source «cbr» (различает их url),
-	// иначе витрина получила бы два источника там, где источник один — Банк России.
+	// Семь живых лент: парные ленты пишутся под общим source (оба фида ЦБ — «cbr»,
+	// обе ленты smart-lab — «smartlab»; различает их url), иначе витрина получила бы
+	// лишние источники там, где источник один — Банк России или smart-lab.
 	for _, tc := range []struct {
 		file   string
 		source string
-		// skipped — фактическое значение на закоммиченной фикстуре. Ноль у всех пяти:
+		// skipped — фактическое значение на закоммиченной фикстуре. Ноль у всех семи:
 		// у каждой позиции есть pubDate в одной из трёх раскладок и непустой заголовок.
 		// Если фикстура обновится и skipped станет ненулевым, тест укажет, где именно
 		// лента сменила форму, и причину надо будет разобрать (а не поднять значение).
@@ -231,6 +283,8 @@ func TestFixturesParse(t *testing.T) {
 		{"cbr_news.rss", "cbr", 0},
 		{"cbr_press.rss", "cbr", 0},
 		{"tass.rss", "tass", 0},
+		{"smartlab_lebedev.rss", "smartlab", 0},
+		{"smartlab_spydell.rss", "smartlab", 0},
 	} {
 		t.Run(tc.file, func(t *testing.T) {
 			doc := readFixtureDoc(t, tc.file)

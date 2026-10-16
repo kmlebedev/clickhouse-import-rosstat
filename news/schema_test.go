@@ -8,6 +8,7 @@ import (
 
 func TestNewsEventsDdlPinsCanonicalKey(t *testing.T) {
 	for _, want := range []string{
+		"description String",
 		"sentiment Nullable(Float32)      -- -1..1, заполняет LLM-сессия",
 		"ENGINE = ReplacingMergeTree ORDER BY (date, source, title)",
 	} {
@@ -15,6 +16,34 @@ func TestNewsEventsDdlPinsCanonicalKey(t *testing.T) {
 			t.Errorf("DDL news_events обязан содержать %q: без него копия расходится с каноном "+
 				"ARCHITECTURE.md §6.2, а дедупликация ReplacingMergeTree теряет ключ", want)
 		}
+	}
+}
+
+// TestNewsAlterStatementsPinMigration — пин миграции живой таблицы: ALTER выполняется каждым
+// прогоном (ADD COLUMN IF NOT EXISTS идемпотентен) и обязан совпадать с каноном посимвольно.
+// AFTER url держит порядок колонок как в DDL: без него description уехал бы в конец, и копия
+// разошлась бы с каноном. Образец пина — craw/gost_test.go.
+func TestNewsAlterStatementsPinMigration(t *testing.T) {
+	const want = "ALTER TABLE news_events ADD COLUMN IF NOT EXISTS description String AFTER url"
+	if len(newsAlterStatements) != 1 {
+		t.Fatalf("newsAlterStatements = %d стейтментов, want 1 (миграция колонки description): %q",
+			len(newsAlterStatements), newsAlterStatements)
+	}
+	if newsAlterStatements[0] != want {
+		t.Errorf("newsAlterStatements[0] = %q, want %q (дословно: порядок колонок — часть канона)",
+			newsAlterStatements[0], want)
+	}
+
+	stmts := newsSchemaStatements()
+	if len(stmts) != 2 {
+		t.Fatalf("newsSchemaStatements() = %d стейтментов, want 2 (CREATE + ALTER): %q", len(stmts), stmts)
+	}
+	if stmts[0] != newsEventsDdl {
+		t.Errorf("стейтмент 0 не равен newsEventsDdl: %q", stmts[0])
+	}
+	if stmts[1] != want {
+		t.Errorf("стейтмент 1 = %q, want %q (ALTER в хвосте: на чистой базе таблица сначала создаётся)",
+			stmts[1], want)
 	}
 }
 
@@ -60,9 +89,9 @@ func TestNewsFilterMatchesThesisStems(t *testing.T) {
 }
 
 func TestNewsViewStatementsShape(t *testing.T) {
-	if len(newsViewStatements) != 8 {
-		t.Fatalf("newsViewStatements = %d стейтментов, want 8 (VIEW + комментарий таблицы + "+
-			"6 комментариев колонок): витрина публикуется по порядку, и лишний/потерянный "+
+	if len(newsViewStatements) != 9 {
+		t.Fatalf("newsViewStatements = %d стейтментов, want 9 (VIEW + комментарий таблицы + "+
+			"7 комментариев колонок): витрина публикуется по порядку, и лишний/потерянный "+
 			"стейтмент ломает публикацию", len(newsViewStatements))
 	}
 
@@ -72,6 +101,9 @@ func TestNewsViewStatementsShape(t *testing.T) {
 		"DEFINER = default SQL SECURITY DEFINER",
 		"match(title, '" + newsFilter + "')",
 		"toDate(date, 'Europe/Moscow')",
+		// Порядок колонок — часть контракта витрины: описание стоит между url и sentiment,
+		// и сдвиг колонок в SELECT иначе не заметил бы ни один офлайн-тест.
+		"url, description, sentiment",
 		"ORDER BY date DESC",
 	} {
 		if !strings.Contains(view, want) {
@@ -86,7 +118,7 @@ func TestNewsViewStatementsShape(t *testing.T) {
 
 	// COMMENT COLUMN на каждую колонку витрины: смысл колонок агент читает только отсюда,
 	// а сырая news_events ему закрыта.
-	for _, col := range []string{"date", "date_msk", "source", "title", "url", "sentiment"} {
+	for _, col := range []string{"date", "date_msk", "source", "title", "url", "description", "sentiment"} {
 		want := "COMMENT COLUMN " + col + " '"
 		found := false
 		for _, stmt := range newsViewStatements[2:] {
@@ -101,7 +133,7 @@ func TestNewsViewStatementsShape(t *testing.T) {
 	}
 
 	// Литералы комментариев содержат одиночные кавычки внутри текста («Europe/Moscow»),
-	// а ClickHouse не примет незакрытый литерал: проверяем экранирование всех восьми
+	// а ClickHouse не примет незакрытый литерал: проверяем экранирование всех девяти
 	// стейтментов офлайн — живой базы в тестах нет.
 	for i, stmt := range newsViewStatements {
 		if !newsQuotesBalanced(stmt) {

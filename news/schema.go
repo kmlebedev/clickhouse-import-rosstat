@@ -12,9 +12,28 @@ const newsEventsDdl = `CREATE TABLE IF NOT EXISTS news_events (
 			, source LowCardinality(String)
 			, title String
 			, url String
+			, description String               -- текст позиции из ленты: у smart-lab — полный текст поста
+			                                   -- (HTML после разбора XML-сущностей); у новостных лент — краткое
+			                                   -- описание позиции; '' — описания нет
 			, sentiment Nullable(Float32)      -- -1..1, заполняет LLM-сессия
 		) ENGINE = ReplacingMergeTree ORDER BY (date, source, title);
 	`
+
+// newsAlterStatements — миграция живой пятиколоночной таблицы (схема до description): ADD COLUMN
+// IF NOT EXISTS идемпотентен, поэтому выполняется при каждом прогоне, а не «один раз». AFTER url —
+// позиция колонки как в DDL: иначе description уехал бы в конец таблицы, и копия разошлась бы с
+// каноном. Строки, записанные до миграции, получают пустой description: позиции, выпавшие из окна
+// ленты, задним числом не перечитываются (дефолт ADD COLUMN).
+var newsAlterStatements = []string{
+	`ALTER TABLE ` + newsTable + ` ADD COLUMN IF NOT EXISTS description String AFTER url`,
+}
+
+// newsSchemaStatements — DDL прогона по порядку: CREATE, затем ALTER-ы (образец —
+// gostSchemaStatements, craw/gost.go). Возвращается срез, а не переменная: вызывающий не должен
+// получить возможность переставить стейтменты местами.
+func newsSchemaStatements() []string {
+	return append([]string{newsEventsDdl}, newsAlterStatements...)
+}
 
 // newsFilter — широкий фильтр тезисов (RE2, регистронезависимо) из спеки §«Схема и витрина»,
 // дословно. Осознанно широкий: ложный пропуск события тезиса дороже ложного срабатывания —
@@ -30,13 +49,16 @@ const newsFilter = `(?i)дизел|бензин|керосин|дистилля�
 // (грант kimi_reader), а сырая news_events ему закрыта.
 var newsViewStatements = []string{
 	fmt.Sprintf(`CREATE OR REPLACE VIEW v_news_events DEFINER = default SQL SECURITY DEFINER AS
-		SELECT date, toDate(date, 'Europe/Moscow') AS date_msk, source, title, url, sentiment
+		SELECT date, toDate(date, 'Europe/Moscow') AS date_msk, source, title, url, description, sentiment
 		FROM news_events FINAL WHERE match(title, '%s') ORDER BY date DESC`, newsFilter),
-	`ALTER TABLE v_news_events MODIFY COMMENT 'Событийная лента РФ-канала: RSS «Интерфакс», РБК, ЦБ РФ, TASS (импортёр news_watch, каждые 30 минут). Показаны только события по стемам тезисов (широкий фильтр — в определении витрины); полная лента лежит в сырой news_events и агенту не выдаётся. История копится с первого прогона (окна лент 25–100 позиций). sentiment пока NULL — заполняет LLM-сессия (follow-up)'`,
+	`ALTER TABLE v_news_events MODIFY COMMENT 'Событийная лента РФ-канала: RSS «Интерфакс», РБК, ЦБ РФ, TASS, smart-lab (импортёр news_watch, каждые 30 минут). Показаны только события по стемам тезисов (широкий фильтр — в определении витрины); полная лента лежит в сырой news_events и агенту не выдаётся. История копится с первого прогона (окна лент 25–100 позиций). sentiment пока NULL — заполняет LLM-сессия (follow-up)'`,
 	`ALTER TABLE v_news_events COMMENT COLUMN date 'Момент публикации в ленте (pubDate источника со своим офсетом времени)'`,
 	`ALTER TABLE v_news_events COMMENT COLUMN date_msk 'День публикации по МСК (toDate(date, ''Europe/Moscow'')) — для группировок по дням'`,
-	`ALTER TABLE v_news_events COMMENT COLUMN source 'Лента-источник: interfax, rbc, cbr, tass; оба фида ЦБ пишутся под cbr и различаются url'`,
+	`ALTER TABLE v_news_events COMMENT COLUMN source 'Лента-источник: interfax, rbc, cbr, tass, smartlab; оба фида ЦБ пишутся под cbr, обе ленты smart-lab — под smartlab, различаются url'`,
 	`ALTER TABLE v_news_events COMMENT COLUMN title 'Заголовок новости из ленты (нормализован в одну строку)'`,
 	`ALTER TABLE v_news_events COMMENT COLUMN url 'Ссылка на публикацию'`,
+	// Маркер пустой строки '' записан четырьмя кавычками (''''): одиночная кавычка внутри
+	// SQL-литерала удваивается, и агент видит в комментарии именно пустую строку ''.
+	`ALTER TABLE v_news_events COMMENT COLUMN description 'Текст позиции из ленты: полный текст поста smart-lab (HTML) или краткое описание новости; '''' — описания нет; при цитировании — атрибуция автора и smart-lab'`,
 	`ALTER TABLE v_news_events COMMENT COLUMN sentiment 'Тональность −1..1; заполняет LLM-сессия (канал записи — follow-up; сейчас всегда NULL)'`,
 }

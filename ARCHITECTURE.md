@@ -562,6 +562,9 @@ CREATE TABLE IF NOT EXISTS news_events (
     source LowCardinality(String),
     title String,
     url String,
+    description String,              -- текст позиции из ленты: у smart-lab — полный текст поста
+                                     -- (HTML после разбора XML-сущностей); у новостных лент — краткое
+                                     -- описание позиции; '' — описания нет
     sentiment Nullable(Float32)      -- -1..1, заполняет LLM-сессия
 ) ENGINE = ReplacingMergeTree ORDER BY (date, source, title);
 

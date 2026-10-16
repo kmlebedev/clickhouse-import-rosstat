@@ -825,25 +825,26 @@ func (b *newsFakeBatch) Send() error { b.sent = true; return nil }
 func (b *newsFakeBatch) Abort() error { return nil }
 
 // newsInsertedRow — строка батча, разобранная по колонкам news_events в порядке
-// insertItems (date, source, title, url, sentiment).
+// insertItems (date, source, title, url, description, sentiment).
 type newsInsertedRow struct {
-	Date      time.Time
-	Source    string
-	Title     string
-	URL       string
-	Sentiment *float32
+	Date        time.Time
+	Source      string
+	Title       string
+	URL         string
+	Description string
+	Sentiment   *float32
 }
 
-// inserted разбирает записанные строки по именам колонок: порядок аргументов Append —
-// контракт (он же порядок колонок DDL), и перепутанные поля обязаны валить тест, а не
-// уезжать в базу. Типизированный nil в sentiment — ожидаемое состояние (канал LLM —
-// follow-up): непустой sentiment означал бы запись мимо канала.
+// inserted разбирает записанные строки по именам колонок: порядок аргументов Append — контракт
+// с явным списком колонок newsInsert (порядок — как в каноническом DDL), и перепутанные поля
+// обязаны валить тест, а не уезжать в базу. Типизированный nil в sentiment — ожидаемое
+// состояние (канал LLM — follow-up): непустой sentiment означал бы запись мимо канала.
 func (b *newsFakeBatch) inserted(t *testing.T) []newsInsertedRow {
 	t.Helper()
 	rows := make([]newsInsertedRow, 0, len(b.rows))
 	for i, v := range b.rows {
-		if len(v) != 5 {
-			t.Fatalf("строка батча %d: значений %d, want 5 (date, source, title, url, sentiment)", i, len(v))
+		if len(v) != 6 {
+			t.Fatalf("строка батча %d: значений %d, want 6 (date, source, title, url, description, sentiment)", i, len(v))
 		}
 		date, ok := v[0].(time.Time)
 		if !ok {
@@ -861,14 +862,20 @@ func (b *newsFakeBatch) inserted(t *testing.T) []newsInsertedRow {
 		if !ok {
 			t.Fatalf("строка батча %d: url = %T (want string)", i, v[3])
 		}
-		sentiment, ok := v[4].(*float32)
+		description, ok := v[4].(string)
 		if !ok {
-			t.Fatalf("строка батча %d: sentiment = %T (want *float32)", i, v[4])
+			t.Fatalf("строка батча %d: description = %T (want string)", i, v[4])
+		}
+		sentiment, ok := v[5].(*float32)
+		if !ok {
+			t.Fatalf("строка батча %d: sentiment = %T (want *float32)", i, v[5])
 		}
 		if sentiment != nil {
 			t.Errorf("строка батча %d: sentiment = %v, want NULL (канал заполнения — follow-up)", i, *sentiment)
 		}
-		rows = append(rows, newsInsertedRow{Date: date, Source: source, Title: title, URL: url, Sentiment: sentiment})
+		rows = append(rows, newsInsertedRow{
+			Date: date, Source: source, Title: title, URL: url, Description: description, Sentiment: sentiment,
+		})
 	}
 	return rows
 }
@@ -1063,10 +1070,12 @@ func TestImportAllModeWritesAllFeeds(t *testing.T) {
 	pointFeedsAt(t, serveFixtures(t, nil))
 
 	byKey, _ := fixtureInventory(t)
-	var want []string // source|title всех позиций окна — так сверяются и состав, и число
+	// Ключ включает url: url и description — обе строки, и перепутанные колонки ловит только
+	// значение (типы в inserted() их не различают).
+	var want []string // source|title|url всех позиций окна — так сверяются и состав, и число
 	for _, f := range feeds() {
 		for _, it := range byKey[f.Key] {
-			want = append(want, it.Source+"|"+it.Title)
+			want = append(want, it.Source+"|"+it.Title+"|"+it.URL)
 		}
 	}
 	if len(want) == 0 {
@@ -1098,8 +1107,13 @@ func TestImportAllModeWritesAllFeeds(t *testing.T) {
 	got := make([]string, 0, len(rows))
 	sources := make(map[string]bool, 5)
 	for _, row := range rows {
-		got = append(got, row.Source+"|"+row.Title)
+		got = append(got, row.Source+"|"+row.Title+"|"+row.URL)
 		sources[row.Source] = true
+		// У smart-lab описание — не анонс, а полный текст поста, и пустым он в батч попасть
+		// не может: потеря колонки на пути в Append иначе всплыла бы только на живом прогоне.
+		if row.Source == "smartlab" && row.Description == "" {
+			t.Errorf("позиция smartlab %q записана с пустым description: текст поста потерян по пути в батч", row.Title)
+		}
 	}
 	sort.Strings(got)
 	sort.Strings(want)
