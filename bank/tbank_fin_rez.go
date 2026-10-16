@@ -21,10 +21,11 @@ const (
 	tbIfrsUrl       = "https://cdn.tbank.ru/static/documents/a27e2a89-0871-4d87-9847-46bce3a0ad3f.pdf"
 	tbIfrsTable     = "tbank_group_ifrs"
 	tbIfrsDataField = "Новостройка"
-	// tbIfrsDataInsert — построчная вставка прежнего импортёра: своя константа вместо
-	// ВТБ-шной (vtbIfrsDataInsert удалён вместе с транспортом ВТБ — у каждой таблицы своя
-	// строка); перевод импортёра на шаблон заменит её батчем.
-	tbIfrsDataInsert = "INSERT INTO " + tbIfrsTable + " VALUES (?, ?, ?)"
+	// tbIfrsDataInsert — построчная вставка прежнего импортёра в общую таблицу ВТБ
+	// rus_vtb_group_ifrs: константа живёт здесь, потому что ВТБ-шная (vtbIfrsDataInsert) удалена
+	// вместе со своим транспортом. Целевая таблица — общая; развязка таблиц Т-Банка и ВТБ —
+	// задача T6.
+	tbIfrsDataInsert = "INSERT INTO " + vtbIfrsTable + " VALUES (?, ?, ?)"
 )
 
 type TbIfrs struct {
@@ -85,9 +86,10 @@ func (s *TbIfrs) export() (table *[][]string, err error) {
 }
 
 func (s *TbIfrs) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	// DDL — копия DDL ВТБ в %s-форме: имя таблицы подставляет вызывающий (у ВТБ это делает
-	// шаблон util.ClickHouseImport), а схема у Т-Банка до развязки таблиц та же.
-	if err = conn.Exec(ctx, fmt.Sprintf(vtbIfrsTableDdl, tbIfrsTable)); err != nil {
+	// DDL общей с ВТБ таблицы (vtbIfrsTableDdl в %s-форме): имя подставляем сами — у ВТБ это
+	// делает шаблон util.ClickHouseImport. На существующей таблице это no-op (IF NOT EXISTS);
+	// целевая таблица — общая rus_vtb_group_ifrs, развязка таблиц — задача T6.
+	if err = conn.Exec(ctx, fmt.Sprintf(vtbIfrsTableDdl, vtbIfrsTable)); err != nil {
 		return count, err
 	}
 	var table *[][]string
