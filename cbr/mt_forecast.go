@@ -258,15 +258,20 @@ func mtForecastNewReleases(releases []mtForecastRelease, known map[time.Time]boo
 }
 
 // mtForecastPageXlsxURL — ссылка на книгу выпуска с его страницы: util.FindLink по
-// mtForecastXlsxSel (стандарт §4.4, §4.5). Ошибка при отсутствии ссылки — не «0 точек»: страница
-// без xlsx значит, что ЦБ сменил вёрстку выпуска, и молчаливый пропуск оставил бы выпуск
-// неимпортированным (fail-fast, стандарт §6.4). href приходит относительным — префикс домена
-// навешивает Import (cbrUrl + href), как у mo_br. Страница выпуска здесь байтами, а не URL:
-// разбор чистый, тест подаёт живую фикстуру (стандарт §11.3).
-func mtForecastPageXlsxURL(page []byte) (string, error) {
+// mtForecastXlsxSel (стандарт §4.4, §4.5). Дата выпуска входит в текст ошибки ожидаемым именем
+// файла (commet_graph_<DDMMYYYY>.xlsx — опечатка «commet» настоящая, из источника, спека §2):
+// без имени файла оператор видел бы «ссылка не найдена» и не знал, что именно искать на
+// изменившейся странице (§4.4 требует домен и ожидаемое имя; домен даёт адрес страницы в
+// обёртке Import). Ошибка при отсутствии ссылки — не «0 точек»: страница без xlsx значит, что
+// ЦБ сменил вёрстку выпуска, и молчаливый пропуск оставил бы выпуск неимпортированным
+// (fail-fast, стандарт §6.4). href приходит относительным — префикс домена навешивает Import
+// (cbrUrl + href), как у mo_br. Страница выпуска здесь байтами, а не URL: разбор чистый, тест
+// подаёт живую фикстуру (стандарт §11.3).
+func mtForecastPageXlsxURL(page []byte, date time.Time) (string, error) {
 	href, err := util.FindLink(page, mtForecastXlsxSel)
 	if err != nil {
-		return "", fmt.Errorf("страница выпуска: не найдена ссылка на xlsx (селектор %q): %w", mtForecastXlsxSel, err)
+		return "", fmt.Errorf("страница выпуска: ожидался commet_graph_%s.xlsx (селектор %q): %w",
+			date.Format(mtForecastSlugLayout), mtForecastXlsxSel, err)
 	}
 	return href, nil
 }
@@ -354,7 +359,7 @@ func (s *mtForecastStat) Import(ctx context.Context, conn driver.Conn) (count in
 			errs = append(errs, fmt.Errorf("%s: %s: %w", mtForecastReleaseContext(release), release.URL, pageErr))
 			continue
 		}
-		href, linkErr := mtForecastPageXlsxURL(releasePage)
+		href, linkErr := mtForecastPageXlsxURL(releasePage, release.ReleaseDate)
 		if linkErr != nil {
 			errs = append(errs, fmt.Errorf("%s: %s: %w", mtForecastReleaseContext(release), release.URL, linkErr))
 			continue

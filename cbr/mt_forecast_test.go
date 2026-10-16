@@ -185,10 +185,13 @@ func TestMtForecastIndexReleases(t *testing.T) {
 // TestMtForecastPageXlsxURL — ссылка на книгу со страницы выпуска: util.FindLink по
 // mtForecastXlsxSel находит ровно тот xlsx, что лежит на живой странице 05.08.2026 (имя файла
 // «commet_graph» — опечатка источника; <id> меняется от выпуска к выпуску, поэтому ссылка
-// берётся со страницы, а не собирается). Страница без xlsx-ссылки — ошибка, а не пустой href.
+// берётся со страницы, а не собирается). Страница без xlsx-ссылки — ошибка, а не пустой href, и
+// ошибка называет ожидаемое имя файла (стандарт §4.4): «ссылка не найдена» без него не сказало бы
+// оператору, что именно искать на изменившейся странице.
 func TestMtForecastPageXlsxURL(t *testing.T) {
 	page := mtForecastFixture(t, mtForecastPageFixture)
-	href, err := mtForecastPageXlsxURL(page)
+	releaseDate := time.Date(2026, time.August, 5, 0, 0, 0, 0, time.UTC)
+	href, err := mtForecastPageXlsxURL(page, releaseDate)
 	if err != nil {
 		t.Fatalf("разбор живой страницы выпуска: %v", err)
 	}
@@ -201,8 +204,12 @@ func TestMtForecastPageXlsxURL(t *testing.T) {
 	// выпуск неимпортированным (fail-fast, стандарт §6.4). Мутация в памяти: оба вхождения
 	// имени файла (кнопка шапки и карточка материала) переименованы в PDF.
 	broken := bytes.ReplaceAll(page, []byte("commet_graph_05082026.xlsx"), []byte("commet_graph_05082026.pdf"))
-	if _, err := mtForecastPageXlsxURL(broken); err == nil {
-		t.Error("страница без ссылки на xlsx: ожидалась ошибка, а ссылка не найдена не была")
+	_, err = mtForecastPageXlsxURL(broken, releaseDate)
+	if err == nil {
+		t.Fatal("страница без ссылки на xlsx: ожидалась ошибка, а ссылка не найдена не была")
+	}
+	if !strings.Contains(err.Error(), "commet_graph_05082026.xlsx") {
+		t.Errorf("ошибка %q не называет ожидаемое имя файла: оператору не видно, что искать (стандарт §4.4)", err)
 	}
 }
 
