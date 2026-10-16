@@ -42,6 +42,8 @@ SELECT * FROM (
     
     UNION ALL SELECT 'rosstat_ipc_weeks', name, count(), min(date), max(date) FROM rosstat_ipc_weeks FINAL GROUP BY name
     
+    UNION ALL SELECT 'rosstat_ipc_weeks_bulletins', name, count(), min(date), max(date) FROM rosstat_ipc_weeks_bulletins FINAL GROUP BY name
+    
     UNION ALL SELECT 'rosstat_vvp_kvartal', name, count(), min(date), max(date) FROM rosstat_vvp_kvartal FINAL GROUP BY name
     
     UNION ALL SELECT 'rosstat_salaries_mes', name, count(), min(date), max(date) FROM rosstat_salaries_mes FINAL GROUP BY name
