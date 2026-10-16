@@ -102,11 +102,15 @@ type mtForecastColumn struct {
 
 // mtForecastRelease — выпуск источника: дата опорного заседания, дата публикации «Комментария» —
 // ключ винтажа (спека §3.1, §3.4) — и адрес страницы выпуска (провенанс). Разбор книги о выпуске
-// не знает; выпуск собирает импортёр из индексной страницы и передаёт в mtForecastAppendPoints.
+// не знает; выпуск собирает импортёр из индексной страницы (mtForecastIndexReleases,
+// cbr/mt_forecast.go) и передаёт в mtForecastAppendPoints. PDF — признак карточки без страницы и
+// машиночитаемого файла (9 из 11 выпусков на 2026-10-17, спека §2): такой выпуск пропускается со
+// счётчиком, MeetingDate у него не разобран, и в цикл импорта он не попадает.
 type mtForecastRelease struct {
 	MeetingDate time.Time
 	ReleaseDate time.Time
 	URL         string
+	PDF         bool
 }
 
 // mtForecastContext — общая часть сообщений разбора: таблица и лист. Выпуск в сообщение не входит
