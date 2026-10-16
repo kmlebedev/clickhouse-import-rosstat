@@ -179,7 +179,7 @@ git commit -m "cpi nowcast: CatBoost direct and bottom-up models"
 - Modify: `scripts/cpi_nowcast.py`, `scripts/cpi_nowcast_test.py`
 
 **Interfaces:**
-- Produces: `cpi_nowcast_forecast.json` (`{"forecast_date", "target_month", "data_asof", "catboost_direct", "catboost_bottomup", "bottomup_weights", "benchmarks", "sample_size", "note"}`), секция «Текущий nowcast» в отчёте; поведение «нет неопубликованного месяца» (все закрыты) — внятное сообщение, JSON не пишется, старые артефакты подчищаются.
+- Produces: `cpi_nowcast_forecast.json` (`{"forecast_date", "target_month", "data_asof", "catboost_direct", "catboost_bottomup", "bottomup_weights", "benchmarks", "sample_size", "note"}`), секция «Текущий nowcast» в отчёте; поведение «нет неопубликованного месяца» (все закрыты) — внятное сообщение, JSON не пишется, отчёт и CSV при этом перезаписываются, а подчищается только устаревший JSON (ветка «ничего не посчитано» — чистятся все три артефакта, спека §5).
 
 - [ ] **Step 1: Тесты (red)**
 

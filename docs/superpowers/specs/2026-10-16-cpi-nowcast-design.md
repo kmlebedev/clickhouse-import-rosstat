@@ -9,7 +9,7 @@
 
 ## 1. Зачем
 
-Контур ключевой ставки умеет оценивать устойчивую инфляцию только из месячных публикаций (в v0 — `cbr_indicators_cpd`, публикуется после Росстата). Между релизами есть **недельные** данные Росстата (131 позиция с 2022-01) — они позволяют выдать прогноз месячного ИПЦ **до официальной публикации**. Это и есть задача ML-трека: покомпонентный nowcast (CatBoost) с обязательными бенчмарками, честной схемой валидации (purging/embargo) и выводом «входит ли трек в ансамбль» ([KEY_RATE_MODEL.md](../../KEY_RATE_MODEL.md) §4: «без значимого выигрыша над бенчмарками ML-трек в ансамбль не входит»).
+Контур ключевой ставки умеет оценивать устойчивую инфляцию только из месячных публикаций (в v0 — `cbr_indicators_cpd`, публикуется после Росстата). Между релизами есть **недельные** данные Росстата (131 позиция с 2022-01) — они позволяют выдать прогноз месячного ИПЦ **до официальной публикации**. Это и есть задача ML-трека: покомпонентный nowcast (CatBoost) с обязательными бенчмарками, честной схемой валидации (purging/embargo) и выводом «входит ли трек в ансамбль» ([KEY_RATE_MODEL.md](../../KEY_RATE_MODEL.md) §4: «elastic net/LASSO и AR(1) идут обязательными бенчмарками, и без значимого выигрыша **над ними** ML-трек в ансамбль не входит»).
 
 Границы применимости зафиксированы докладом и здесь не пересматриваются: бустинг — только на **компонентах** данных, никогда на решении по ставке; обучение локальное, артефакты модели (набор признаков, окно) — рядом с прогнозом.
 
@@ -116,8 +116,8 @@
 | `scripts/cpi_nowcast.py` | выборка, признаки, модели, walk-forward, отчёт, CLI (`--export-fixtures`, `--start`, `--embargo-months`) |
 | `scripts/cpi_nowcast_test.py` | офлайн-тесты (stdlib `unittest`, транспорт мокается) |
 | `scripts/eval_utils.py` | общие `rmse`, `mae`, `diebold_mariano` (HLN), `block_bootstrap_rmse_diff` (перенос из `key_rate_model.py` + обёртки там же) |
-| `scripts/testdata/cpi_nowcast/` | малые фикстуры (weekly-срез 2022–2023 + свежий, ipc_mes, курсы, ОФЗ, FAO); регенерация — `make cpi-nowcast ARGS="--export-fixtures scripts/testdata/cpi_nowcast"` |
-| `Makefile` | цель `cpi-nowcast` (`uv run --with catboost --with scikit-learn --with pandas --with statsmodels>=0.15 --with scipy --python 3.12 python3 scripts/cpi_nowcast.py $(ARGS)`) |
+| `scripts/testdata/cpi_nowcast/` | малые фикстуры (weekly-срезы: окно экспорта 2021-12-01 … 2022-05-31, содержимое недельных рядов с 2022-01-10, плюс свежий 2026-09-14 … 2026-10-05; ipc_mes, курсы, ОФЗ, FAO); регенерация — `make cpi-nowcast ARGS="--export-fixtures scripts/testdata/cpi_nowcast"` |
+| `Makefile` | цель `cpi-nowcast` (`uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with statsmodels>=0.15 --with scipy --python 3.12 python3 scripts/cpi_nowcast.py $(ARGS)`) |
 | `cpi_nowcast_report.md`, `cpi_nowcast_predictions.csv`, `cpi_nowcast_forecast.json` | артефакты прогона (локальные, gitignored); JSON: `{"forecast_date", "target_month", "data_asof", "catboost_direct", "catboost_bottomup", "bottomup_weights", "benchmarks", "sample_size", "note"}` |
 | `.gitignore` | точные имена артефактов |
 | `README.md`, `ARCHITECTURE.md`, `docs/ROADMAP_KEY_RATE.md` | скрипт/цель/ограничения; статус подпункта ✅ (после приёмки) |
