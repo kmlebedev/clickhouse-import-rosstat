@@ -37,6 +37,7 @@
 import contextlib
 import csv
 import io
+import json
 import math
 import random
 import statistics
@@ -283,8 +284,28 @@ class TestConstants(unittest.TestCase):
         self.assertEqual(list(cm.BENCHMARKS), [cm.MODEL_LAST, cm.MODEL_AR1, cm.MODEL_ENET])
         self.assertIn("B1", cm.model_label(cm.MODEL_LAST))
         self.assertIn("ElasticNetCV", cm.model_label(cm.MODEL_ENET))
-        # Незарегистрированное имя (модели Task 4) не подменяется меткой бенчмарка.
-        self.assertEqual(cm.model_label("catboost_direct"), "catboost_direct")
+        # Модели Task 4 докладываются своими именами, а не меткой бенчмарка.
+        self.assertEqual(cm.model_label(cm.MODEL_CATBOOST_DIRECT), "catboost_direct")
+        self.assertEqual(cm.model_label(cm.MODEL_CATBOOST_BOTTOMUP), "catboost_bottomup")
+
+    def test_catboost_models_extend_the_registry_in_report_order(self):
+        # Порядок словаря моделей = строки таблиц отчёта и пары DM (§4): бенчмарки,
+        # затем CatBoost — «bottomup против direct» попадает в пары последней.
+        self.assertEqual(
+            (cm.MODEL_CATBOOST_DIRECT, cm.MODEL_CATBOOST_BOTTOMUP),
+            ("catboost_direct", "catboost_bottomup"),
+        )
+        self.assertEqual(
+            list(cm.MODELS),
+            [cm.MODEL_LAST, cm.MODEL_AR1, cm.MODEL_ENET,
+             cm.MODEL_CATBOOST_DIRECT, cm.MODEL_CATBOOST_BOTTOMUP],
+        )
+        self.assertIs(cm.MODELS[cm.MODEL_CATBOOST_DIRECT], cm.fit_catboost_direct)
+        self.assertIs(cm.MODELS[cm.MODEL_CATBOOST_BOTTOMUP], cm.fit_catboost_bottomup)
+        # Компоненты bottom-up (§3.2) — коды таргета, порядок весов и колонок отчёта.
+        self.assertEqual(cm.BOTTOMUP_COMPONENTS, ("cpi_food", "cpi_nonfood", "cpi_services"))
+        self.assertIn(cm.TARGET_ALL, cm.TARGET_SERIES)
+        self.assertNotIn(cm.TARGET_ALL, cm.BOTTOMUP_COMPONENTS)
 
     def test_significance_benchmark_and_artifact_constants(self):
         # Спека §4: блок 3 месяца, n=2000, seed=SEED; §5 — точные имена артефактов.
@@ -959,6 +980,26 @@ class TestSummaryFormat(unittest.TestCase):
 # --- Task 3: синтетика харнесса и бенчмарков ----------------------------------
 
 
+def synthetic_features(index: int, month: date, lag: float) -> dict:
+    """Признаки §2.3 для искусственной строки: все варьируют, `y_lag1` — заданный.
+
+    Одна формула признаков на всю синтетику (харнесс, сигнал CatBoost, компоненты
+    bottom-up): тесты отличаются таргетом, а не признаковым пространством.
+    """
+    return {
+        "share_rising_wk": 0.5 + 0.01 * (index % 7),
+        "median_wk": 0.2 + 0.001 * index,
+        "median_wk4": 0.25 + 0.001 * index,
+        "gasoline_4w": 0.4 + 0.002 * index,
+        "usd_20d": 1.0 + 0.01 * (index % 11),
+        "key_rate": 7.5 + 0.01 * (index % 5),
+        "ofz_1y": 8.0 + 0.01 * (index % 3),
+        "fao_mm": 0.1 + 0.001 * index,
+        "y_lag1": lag,
+        "month": month.month,
+    }
+
+
 def harness_rows(count: int = 61, effects: dict = None) -> list:
     """Строки харнесса: `y_t = 1 + 0.6·y_{t−1} + effect(месяц)`, признаки варьируют.
 
@@ -973,22 +1014,69 @@ def harness_rows(count: int = 61, effects: dict = None) -> list:
     for index in range(count):
         month = cm._month_shift(date(2020, 1, 1), index)
         y = 1.0 + 0.6 * lag + effects.get(month.month, 0.0)
-        features = {
-            "share_rising_wk": 0.5 + 0.01 * (index % 7),
-            "median_wk": 0.2 + 0.001 * index,
-            "median_wk4": 0.25 + 0.001 * index,
-            "gasoline_4w": 0.4 + 0.002 * index,
-            "usd_20d": 1.0 + 0.01 * (index % 11),
-            "key_rate": 7.5 + 0.01 * (index % 5),
-            "ofz_1y": 8.0 + 0.01 * (index % 3),
-            "fao_mm": 0.1 + 0.001 * index,
-            "y_lag1": lag,
-            "month": month.month,
-        }
+        rows.append(
+            cm.Row(
+                month=month,
+                y={code: y for code in cm.TARGET_SERIES},
+                features=synthetic_features(index, month, lag),
+            )
+        )
+        lag = y
+    return rows
+
+
+def signal_rows(count: int = 40, slope: float = 3.0) -> list:
+    """Строки с точным сигналом CatBoost: таргет равен `slope · share_rising_wk`.
+
+    Признак, у которого §3.1 фиксирует направление (`+1`), а таргет зависит только
+    от него: мутант-тест §2.4 п. 1 («подмена признака меняет прогноз») получает
+    однозначный ожидаемый масштаб реакции, а не «хоть какое-то изменение».
+    Остальные признаки — случайные (детерминированный генератор `SEED`) и с
+    таргетом не связаны: будь они функциями того же индекса, дерево нашло бы
+    сигнал в них (признаки коллинеарны) и реакция на подмену `share_rising_wk`
+    оказалась бы почти нулевой — тест проверял бы не то.
+    """
+    generator = random.Random(cm.SEED)
+    noise = (
+        "median_wk", "median_wk4", "gasoline_4w", "usd_20d", "key_rate", "ofz_1y",
+        "fao_mm", "y_lag1",
+    )
+    rows = []
+    for index in range(count):
+        month = cm._month_shift(date(2020, 1, 1), index)
+        share = round(0.1 + 0.01 * index, 6)
+        features = synthetic_features(index, month, lag=0.5 + 0.01 * index)
+        features["share_rising_wk"] = share
+        for name in noise:
+            features[name] = generator.uniform(-1.0, 1.0)
+        y = slope * share
         rows.append(
             cm.Row(month=month, y={code: y for code in cm.TARGET_SERIES}, features=features)
         )
-        lag = y
+    return rows
+
+
+def bottomup_rows(count: int = 40, weights: tuple = (0.4, 0.35, 0.25)) -> list:
+    """Строки с известной смесью компонент: `cpi_all = Σ w_j · компонента_j`.
+
+    Компоненты независимы и варьируют (у `harness_rows` все четыре метки равны —
+    на такой синтетике NNLS не идентифицирован), таргет общего ИПЦ собирается
+    ровно из `weights`: тест восстановления весов знает ответ заранее.
+    """
+    generator = random.Random(cm.SEED)
+    rows = []
+    for index in range(count):
+        month = cm._month_shift(date(2020, 1, 1), index)
+        components = [generator.uniform(-1.0, 2.0) for _ in cm.BOTTOMUP_COMPONENTS]
+        y = {code: value for code, value in zip(cm.BOTTOMUP_COMPONENTS, components)}
+        y[cm.TARGET_ALL] = sum(w * c for w, c in zip(weights, components))
+        rows.append(
+            cm.Row(
+                month=month,
+                y=y,
+                features=synthetic_features(index, month, lag=0.5 + 0.01 * index),
+            )
+        )
     return rows
 
 
@@ -1361,6 +1449,271 @@ class TestBenchmarkEnet(unittest.TestCase):
         self.assertTrue(math.isfinite(cm.fit_enet(rows[:12], rows[12])))
 
 
+# --- Task 4: CatBoost direct/bottom-up и NNLS-веса ----------------------------
+
+
+class TestCatBoostConfiguration(unittest.TestCase):
+    """Конфигурация CatBoost: пины §3.1 (loss/seed/monotone/cat) и дефолты библиотеки."""
+
+    def test_params_are_exactly_the_spec(self):
+        # Дословно §3.1 плюс флаг побочного эффекта: без `allow_writing_files=False`
+        # CatBoost пишет каталог catboost_info/ в рабочий каталог прогона.
+        self.assertEqual(cm.catboost_params(), {
+            "loss_function": "RMSE",
+            "random_seed": cm.SEED,
+            "verbose": False,
+            "monotone_constraints": [1, 0, 1, 1, 1, 0, 0, 0, 0, 0],
+            "cat_features": [9],
+            "allow_writing_files": False,
+        })
+
+    def test_get_params_of_the_built_model_matches_the_spec(self):
+        # Тест сверяет `get_params()` СОБРАННОЙ модели: конфигурация пинована по
+        # имени параметра, а не только по значению в словаре-константе.
+        params = cm.catboost_model().get_params()
+        self.assertEqual(params["loss_function"], "RMSE")
+        self.assertEqual(params["random_seed"], cm.SEED)
+        self.assertEqual(params["verbose"], False)
+        self.assertEqual(params["monotone_constraints"], [1, 0, 1, 1, 1, 0, 0, 0, 0, 0])
+        self.assertEqual(params["cat_features"], [9])
+        # Кроме перечисленного спека не задаёт ничего: любые другие ключи в
+        # `get_params()` означали бы подменённый дефолт библиотеки.
+        self.assertEqual(set(params), set(cm.catboost_params()))
+
+    def test_monotone_constraints_follow_feature_names(self):
+        # Знаки §3.1 заданы ИМЕНАМИ признаков, а CatBoost ждёт список по позициям
+        # `feature_names()`: сдвиг порядка признаков обязан быть виден тестом.
+        names = cm.feature_names()
+        constraints = cm.monotone_constraints()
+        self.assertEqual(len(constraints), len(names))
+        self.assertEqual(
+            {name for name, value in zip(names, constraints) if value},
+            {"share_rising_wk", "median_wk4", "gasoline_4w", "usd_20d"},
+        )
+        self.assertEqual(
+            {name: value for name, value in zip(names, constraints) if value},
+            cm.CATBOOST_MONOTONE,
+        )
+        # Категориальный месяц — 0: CatBoost допускает ограничения только на float.
+        self.assertEqual(constraints[names.index("month")], 0)
+        self.assertEqual(cm.CATBOOST_CAT_FEATURES, ("month",))
+        self.assertEqual(cm.CATBOOST_CAT_INDICES, (names.index("month"),))
+
+    def test_numeric_features_are_the_other_nine(self):
+        self.assertEqual(
+            cm.CATBOOST_NUMERIC_FEATURES,
+            tuple(name for name in cm.feature_names() if name != "month"),
+        )
+        self.assertEqual(len(cm.CATBOOST_NUMERIC_FEATURES), 9)
+
+    def test_library_defaults_match_the_metadata(self):
+        # Дефолты библиотеки — часть конфигурации (§3.1): метаданные прогона
+        # (`catboost_metadata`) печатают их, тест сверяет с `get_all_params()`
+        # ОБУЧЕННОЙ модели — расхождение версии CatBoost видно сразу.
+        rows = bottomup_rows(count=30)
+        cm.fit_catboost_direct(rows[:25], rows[25])
+        all_params = cm.fit_catboost_direct.last_fit.model.get_all_params()
+        for name, value in cm.CATBOOST_DEFAULTS.items():
+            self.assertEqual(all_params[name], value, f"дефолт {name}")
+
+    def test_metadata_is_json_ready_for_the_run_artifact(self):
+        # Task 5 кладёт эти метаданные в JSON прогона: словарь обязан быть
+        # сериализуемым как есть (имена признаков, а не индексы).
+        metadata = cm.catboost_metadata()
+        self.assertEqual(metadata["loss_function"], "RMSE")
+        self.assertEqual(metadata["random_seed"], cm.SEED)
+        self.assertEqual(metadata["cat_features"], ["month"])
+        self.assertEqual(metadata["num_features"], list(cm.CATBOOST_NUMERIC_FEATURES))
+        self.assertEqual(list(metadata["monotone_constraints"]), cm.feature_names())
+        self.assertEqual(metadata["monotone_constraints"]["median_wk4"], 1)
+        self.assertEqual(metadata["monotone_constraints"]["median_wk"], 0)
+        self.assertEqual(metadata["defaults"], cm.CATBOOST_DEFAULTS)
+        self.assertEqual(json.loads(json.dumps(metadata)), metadata)
+
+
+class TestCatBoostMatrix(unittest.TestCase):
+    """Матрица CatBoost: numpy, числовые float + int-коды месяца (§2.3 п. 10)."""
+
+    def test_matrix_is_numpy_object_with_integer_month_codes(self):
+        # `cat_features` требует НЕ float-матрицу (CatBoost: «'data' is numpy array
+        # of floating point numerical type»), а месяц обязан дойти кодом 1–12.
+        rows = bottomup_rows(count=5)
+        matrix = cm.catboost_matrix(rows)
+        self.assertIsInstance(matrix, np.ndarray)
+        self.assertEqual(matrix.shape, (5, len(cm.feature_names())))
+        self.assertEqual(matrix.dtype, np.dtype(object))
+        month_position = cm.feature_names().index("month")
+        for position, row in enumerate(rows):
+            for column, name in enumerate(cm.feature_names()):
+                value = matrix[position][column]
+                if name == "month":
+                    self.assertIsInstance(value, (int, np.integer))
+                    self.assertNotIsInstance(value, np.floating)
+                    self.assertEqual(int(value), row.features["month"])
+                else:
+                    self.assertIsInstance(value, float)
+                    self.assertAlmostEqual(
+                        float(value), float(row.features[name]), places=12
+                    )
+            self.assertEqual(int(matrix[position][month_position]), row.features["month"])
+
+    def test_nan_of_a_numeric_column_is_passed_through(self):
+        # NaN `ofz_1y` (G-curve без истории) идёт в CatBoost как есть — политика
+        # NaN отличается от B3, которая импутирует медианой обучающего окна.
+        rows = bottomup_rows(count=4)
+        rows[1].features["ofz_1y"] = float("nan")
+        matrix = cm.catboost_matrix(rows)
+        column = cm.feature_names().index("ofz_1y")
+        self.assertTrue(math.isnan(float(matrix[1][column])))
+        self.assertFalse(math.isnan(float(matrix[0][column])))
+
+    def test_matrix_of_an_empty_window_has_no_rows(self):
+        matrix = cm.catboost_matrix([])
+        self.assertEqual(matrix.shape, (0, len(cm.feature_names())))
+
+
+class TestCatBoostModels(unittest.TestCase):
+    """direct и bottom-up (§3.1–3.2): детерминизм, сверка Σw·ŷ, вырожденные окна."""
+
+    def test_direct_prediction_is_deterministic(self):
+        rows = bottomup_rows(count=30)
+        first = cm.fit_catboost_direct(rows[:25], rows[25])
+        second = cm.fit_catboost_direct(rows[:25], rows[25])
+        self.assertEqual(first, second)  # побитово: SEED и дефолты, без внешнего рандома
+        self.assertTrue(math.isfinite(first))
+
+    def test_direct_reads_the_monotone_feature(self):
+        # Мутант-тест §2.4 п. 1: подмена признака с направлением `+1` обязана
+        # сдвинуть прогноз в ту же сторону — и в ожидаемом масштабе (slope·Δx).
+        rows = signal_rows(count=80)
+        train, test = rows[:60], rows[60]
+        low = cm.fit_catboost_direct(train, row_like(test, share_rising_wk=0.15))
+        high = cm.fit_catboost_direct(train, row_like(test, share_rising_wk=0.35))
+        self.assertGreater(high, low)
+        self.assertAlmostEqual(high - low, 3.0 * (0.35 - 0.15), delta=0.3)
+
+    def test_bottomup_is_the_weighted_sum_of_component_forecasts(self):
+        # Ручная сверка §3.2 на заглушечных компонентах: агрегат — Σ w_j·ŷ_j с
+        # весами NNLS обучающего окна, без собственного «третьего» прогноза.
+        rows = bottomup_rows(count=30)
+        train, test = rows[:25], rows[25]
+        stubs = {"cpi_food": 1.5, "cpi_nonfood": -0.5, "cpi_services": 0.25}
+
+        def stub(train_rows, row, code):
+            return stubs[code]
+
+        weights = cm.nnls_weights(train)
+        with unittest.mock.patch.object(cm, "fit_catboost_component", stub):
+            value = cm.fit_catboost_bottomup(train, test)
+        expected = sum(w * stubs[code] for w, code in zip(weights, cm.BOTTOMUP_COMPONENTS))
+        self.assertAlmostEqual(value, expected, places=12)
+        # Веса последнего фолда остаются доступны отчёту (спека §3.2).
+        self.assertEqual(cm.fit_catboost_bottomup.last_weights, weights)
+        self.assertEqual(cm.fit_catboost_bottomup.last_components, (1.5, -0.5, 0.25))
+
+    def test_bottomup_prediction_is_deterministic(self):
+        rows = bottomup_rows(count=30)
+        first = cm.fit_catboost_bottomup(rows[:25], rows[25])
+        second = cm.fit_catboost_bottomup(rows[:25], rows[25])
+        self.assertEqual(first, second)
+        self.assertEqual(cm.fit_catboost_bottomup.last_weights, cm.nnls_weights(rows[:25]))
+
+    def test_two_walk_forward_runs_give_identical_numbers(self):
+        # Решение контроллера: при SEED два прогона дают одинаковые числа моделей.
+        rows = bottomup_rows(count=34)
+        models = {
+            cm.MODEL_CATBOOST_DIRECT: cm.fit_catboost_direct,
+            cm.MODEL_CATBOOST_BOTTOMUP: cm.fit_catboost_bottomup,
+        }
+        first = cm.walk_forward(rows, models, start=28, embargo=0)
+        second = cm.walk_forward(rows, models, start=28, embargo=0)
+        self.assertTrue(first)
+        self.assertEqual(first, second)
+
+    def test_degenerate_component_skips_the_whole_fold(self):
+        # §3.2: вырожденность ЛЮБОЙ компоненты — DegenerateWindowError всего фолда
+        # (walk-forward пропускает его со счётчиком, а не считает частичный агрегат).
+        rows = bottomup_rows(count=30)
+
+        def degenerate(train_rows, row, code):
+            if code == "cpi_nonfood":
+                raise cm.DegenerateWindowError("компонента вырождена")
+            return 0.1
+
+        with unittest.mock.patch.object(cm, "fit_catboost_component", degenerate):
+            with self.assertRaises(cm.DegenerateWindowError):
+                cm.fit_catboost_bottomup(rows[:25], rows[25])
+
+    def test_degenerate_weights_skip_the_whole_fold(self):
+        rows = bottomup_rows(count=30)
+        with unittest.mock.patch.object(
+            cm, "nnls_weights", side_effect=cm.DegenerateWindowError("веса не определены")
+        ):
+            with self.assertRaises(cm.DegenerateWindowError):
+                cm.fit_catboost_bottomup(rows[:25], rows[25])
+
+    def test_constant_target_window_is_degenerate(self):
+        # Окно с неизменным таргетом CatBoost не оценивает («All train targets are
+        # equal»): это вырожденное окно, а не порча данных.
+        rows = bottomup_rows(count=30)
+        for row in rows[:25]:
+            row.y[cm.TARGET_ALL] = 1.0
+        with self.assertRaises(cm.DegenerateWindowError):
+            cm.fit_catboost_direct(rows[:25], rows[25])
+
+    def test_empty_window_is_degenerate(self):
+        rows = bottomup_rows(count=5)
+        with self.assertRaises(cm.DegenerateWindowError):
+            cm.fit_catboost_direct([], rows[0])
+
+
+class TestBottomUpWeights(unittest.TestCase):
+    """NNLS-веса bottom-up (§3.2): синтетика, неотрицательность, обучающее окно."""
+
+    def test_recovers_the_known_mixture(self):
+        rows = bottomup_rows(count=40, weights=(0.4, 0.35, 0.25))
+        weights = cm.nnls_weights(rows[:30])
+        for value, expected in zip(weights, (0.4, 0.35, 0.25)):
+            self.assertAlmostEqual(value, expected, delta=1e-6)
+
+    def test_weights_are_non_negative_and_normalized(self):
+        # Целевой смеси с отрицательным весом неотрицательная регрессия не может
+        # соответствовать: ответ обязан остаться в симплексе (w ≥ 0, Σw = 1).
+        rows = bottomup_rows(count=40, weights=(0.9, 0.6, -0.5))
+        weights = cm.nnls_weights(rows[:30])
+        self.assertGreaterEqual(min(weights), 0.0)
+        self.assertAlmostEqual(sum(weights), 1.0, places=12)
+
+    def test_weights_use_only_the_training_window(self):
+        # Утечка через веса: мутация БУДУЩИХ месяцев не имеет права менять веса
+        # фолда (они считаются только по обучающему окну — §3.2).
+        rows = bottomup_rows(count=40)
+        before = cm.nnls_weights(rows[:30])
+        for row in rows[30:]:
+            for code in cm.BOTTOMUP_COMPONENTS:
+                row.y[code] = row.y[code] * 10.0 + 5.0
+            row.y[cm.TARGET_ALL] = -7.0
+        self.assertEqual(cm.nnls_weights(rows[:30]), before)
+        # ...и наоборот: подмена ОБУЧАЮЩЕЙ строки веса меняет (регрессия читается).
+        rows[29].y[cm.BOTTOMUP_COMPONENTS[0]] += 3.0
+        self.assertNotEqual(cm.nnls_weights(rows[:30]), before)
+
+    def test_empty_and_zero_windows_are_degenerate(self):
+        rows = bottomup_rows(count=10)
+        with self.assertRaises(cm.DegenerateWindowError):
+            cm.nnls_weights([])
+        zero = [
+            cm.Row(
+                month=row.month,
+                y={code: 0.0 for code in cm.TARGET_SERIES},
+                features=dict(row.features),
+            )
+            for row in rows[:5]
+        ]
+        with self.assertRaises(cm.DegenerateWindowError):
+            cm.nnls_weights(zero)
+
+
 class TestMetricsAndSignificance(unittest.TestCase):
     """Метрики в п.п. через `eval_utils` и парные тесты значимости (спека §4)."""
 
@@ -1419,6 +1772,35 @@ class TestMetricsAndSignificance(unittest.TestCase):
         second = self.predictions([0.1, 0.2, 0.3], model="b", first_month=date(2024, 1, 1))
         self.assertEqual(cm.pairwise_tests(first + second), [])
 
+    def test_pairwise_tests_cover_catboost_against_benchmarks_and_direct(self):
+        # Спека §4: catboost_direct и catboost_bottomup против КАЖДОГО бенчмарка,
+        # и bottomup против direct. Механизм пар не меняется — модели приходят
+        # общим списком прогнозов окна.
+        errors = {
+            cm.MODEL_LAST: 0.0,
+            cm.MODEL_AR1: 0.1,
+            cm.MODEL_ENET: -0.2,
+            cm.MODEL_CATBOOST_DIRECT: 0.3,
+            cm.MODEL_CATBOOST_BOTTOMUP: -0.35,
+        }
+        predictions = []
+        for model, error in errors.items():
+            predictions += self.predictions([error + 0.01 * i for i in range(24)], model=model)
+        pairs = {
+            (test.model_a, test.model_b) for test in cm.pairwise_tests(predictions)
+        }
+        expected = set()
+        names = list(errors)
+        for position, name_a in enumerate(names):
+            for name_b in names[position + 1:]:
+                expected.add((name_a, name_b))
+        self.assertEqual(pairs, expected)
+        # Порядок пары — порядок регистрации моделей: bottom-up против direct.
+        self.assertIn((cm.MODEL_CATBOOST_DIRECT, cm.MODEL_CATBOOST_BOTTOMUP), pairs)
+        for benchmark in (cm.MODEL_LAST, cm.MODEL_AR1, cm.MODEL_ENET):
+            self.assertIn((benchmark, cm.MODEL_CATBOOST_DIRECT), pairs)
+            self.assertIn((benchmark, cm.MODEL_CATBOOST_BOTTOMUP), pairs)
+
 
 class TestReportSkeleton(unittest.TestCase):
     """Скелет отчёта: «модель × окно», последние 12 фолдов, значимость, границы."""
@@ -1455,8 +1837,10 @@ class TestReportSkeleton(unittest.TestCase):
         for section in (
             "# CPI nowcast",
             "## Выборка",
+            "## Конфигурация CatBoost (§3.1)",
             "## Walk-forward",
             "## Метрики (RMSE / MAE, п.п.)",
+            "## Веса bottom-up (NNLS)",
             "## Последние 12 фолдов (основное окно start=24)",
             "## Тесты значимости между моделями (основное окно start=24)",
             "## Что не проверено",
@@ -1493,6 +1877,81 @@ class TestReportSkeleton(unittest.TestCase):
 
     def test_report_is_deterministic_for_a_fixed_date(self):
         self.assertEqual(self.render(), self.render())
+
+
+class TestBottomUpWeightsReport(unittest.TestCase):
+    """Блок весов NNLS в отчёте: по последнему фолду каждого окна (спека §3.2)."""
+
+    @staticmethod
+    def runs(rows):
+        # Заглушка bottom-up: отчёту важны только месяц последнего фолда и веса,
+        # которые он пересчитывает по тому же обучающему окну.
+        models = {
+            cm.MODEL_LAST: lambda train, row: row.y[cm.TARGET_ALL],
+            cm.MODEL_CATBOOST_BOTTOMUP: lambda train, row: 0.0,
+        }
+        return cm.evaluate_windows(rows, models, [(24, 0), (24, 1)])
+
+    def test_weights_are_the_last_fold_training_window_of_each_run(self):
+        rows = bottomup_rows(count=40)
+        runs = self.runs(rows)
+        weights = cm.bottomup_weight_reports(rows, runs)
+        self.assertEqual(len(weights), 2)
+        # Окно 24/0: последний фолд — последняя строка; обучение — все строки до неё.
+        first = weights[0]
+        self.assertEqual((first.start, first.embargo), (24, 0))
+        self.assertEqual(first.month, rows[-1].month)
+        self.assertEqual(first.train, len(rows) - 1)
+        self.assertEqual(first.weights, cm.nnls_weights(rows[: len(rows) - 1]))
+        # Окно 24/1: эмбарго выбрасывает месяц перед тестом — обучающее окно короче.
+        second = weights[1]
+        self.assertEqual((second.start, second.embargo), (24, 1))
+        self.assertEqual(second.train, len(rows) - 2)
+        self.assertEqual(second.weights, cm.nnls_weights(rows[: len(rows) - 2]))
+        self.assertNotEqual(first.weights, second.weights)
+
+    def test_report_row_shows_the_weights_and_their_sum(self):
+        rows = bottomup_rows(count=40)
+        runs = self.runs(rows)
+        weights = cm.bottomup_weight_reports(rows, runs)
+        report = cm.render_report(
+            rows, [], runs, nowcast=None, today=date(2026, 10, 16), weights=weights
+        )
+        last = weights[0]
+        row = (
+            f"| {cm.window_key(last.start, last.embargo)} | {last.month.isoformat()[:7]} "
+            f"| {last.train} | " + " | ".join(cm._fmt(w, 4) for w in last.weights)
+            + " | 1.0000 |"
+        )
+        self.assertIn(row, report)
+        self.assertIn("cpi_food", report)
+        self.assertIn("cpi_services", report)
+
+    def test_report_renders_the_block_without_weights(self):
+        rows = bottomup_rows(count=40)
+        report = cm.render_report(rows, [], self.runs(rows), today=date(2026, 10, 16))
+        self.assertIn("## Веса bottom-up (NNLS)", report)
+        self.assertIn("веса NNLS не считались", report)
+
+    def test_report_shows_the_catboost_configuration(self):
+        # Спека §3.1: «дефолты фиксируются в метаданных модели» — отчёт показывает
+        # конфигурацию из `catboost_metadata` (та же, что уйдёт в JSON прогона).
+        report = cm.render_report([], [], [], today=date(2026, 10, 16))
+        metadata = cm.catboost_metadata()
+        self.assertIn("## Конфигурация CatBoost (§3.1)", report)
+        self.assertIn(f"loss_function='{metadata['loss_function']}'", report)
+        self.assertIn(f"random_seed={metadata['random_seed']}", report)
+        self.assertIn("cat_features=['month']", report)
+        self.assertIn("`share_rising_wk` +1", report)
+        self.assertIn("остальные 0", report)
+        for name, value in metadata["defaults"].items():
+            self.assertIn(f"`{name}={value}`", report)
+
+    def test_runs_without_bottomup_forecasts_have_no_weights(self):
+        rows = bottomup_rows(count=40)
+        models = {cm.MODEL_LAST: lambda train, row: row.y[cm.TARGET_ALL]}
+        runs = cm.evaluate_windows(rows, models, [(24, 0)])
+        self.assertEqual(cm.bottomup_weight_reports(rows, runs), [])
 
 
 class TestArtifacts(unittest.TestCase):
@@ -1553,9 +2012,17 @@ class TestRunOffline(unittest.TestCase):
                 predictions = list(csv.DictReader(handle))
             self.assertTrue(predictions)
             # На пяти месяцах фолд B2/B3 вырожден (окно короче минимума) — пропуск
-            # со счётчиком, а не падение: в CSV остаются только прогнозы B1.
-            self.assertEqual({row["model"] for row in predictions}, {cm.MODEL_LAST})
+            # со счётчиком, а не падение. CatBoost и NNLS минимума не требуют:
+            # у короткого окна свои проверки (нет вариации таргета, нулевые веса),
+            # и на фикстурах модели считаются.
+            self.assertEqual(
+                {row["model"] for row in predictions},
+                {cm.MODEL_LAST, cm.MODEL_CATBOOST_DIRECT, cm.MODEL_CATBOOST_BOTTOMUP},
+            )
             self.assertIn("| B3 ElasticNetCV | start=3 (основное) | 0 | 2 |", report)
+            # Веса bottom-up посчитаны и показаны в отчёте офлайн-прогона.
+            self.assertIn("## Веса bottom-up (NNLS)", report)
+            self.assertIn(f"| {cm.window_key(3, 0)} |", report)
 
 
 if __name__ == "__main__":
