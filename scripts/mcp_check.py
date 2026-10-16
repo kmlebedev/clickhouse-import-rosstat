@@ -720,22 +720,23 @@ async def check(params, server_log):
 
             # Агрегатный ряд бюллетеней виден агенту и непуст: он есть ровно в каждом выпуске
             # импортёра — 52 недельные точки 2020-12-28…2021-12-27, 25 фрагментов 2017 (Wayback)
-            # и 3 найденных выпуска 2020 (2020-11-16/12-07/12-21; расширение 2026-10-16),
-            # поэтому ожидание точное — 80 точек. Меньшее число значит не доехавший прогон
-            # rosstat_ipc_weeks_bulletins (или ещё идущий: точки публикуются по мере разбора
-            # выпусков), поэтому detail печатает наблюдённое число; каталог этот разрыв не
-            # поймает — он полон и до первых точек.
+            # и 8 найденных выпусков 2020 (11-02, 11-09, 11-16, 11-23, 11-30, 12-07, 12-14, 12-21;
+            # расширения 2026-10-16 — приложение В спеки и систематическая разведка
+            # scripts/harvest.py), поэтому ожидание точное — 85 точек. Меньшее число значит не
+            # доехавший прогон rosstat_ipc_weeks_bulletins (или ещё идущий: точки публикуются по
+            # мере разбора выпусков), поэтому detail печатает наблюдённое число; каталог этот
+            # разрыв не поймает — он полон и до первых точек.
             rosstat_bulletins = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_rosstat_macro WHERE source = 'rosstat' AND series = 'Индекс потребительских цен (недельная оценка)'"}))
             rosstat_bulletins_rows = result_rows(rosstat_bulletins)
             rosstat_bulletins_n = rosstat_bulletins_rows[0].get("n") if rosstat_bulletins_rows else None
             if rosstat_bulletins_rows is None:
                 rosstat_bulletins_detail = f"ответ не распознан: {rosstat_bulletins[:200]}"
-            elif rosstat_bulletins_n == 80:
-                rosstat_bulletins_detail = "точек агрегатного ряда: 80 (52 недельные точки 2020-12-28…2021-12-27 + 25 фрагментов 2017 + 3 выпуска 2020)"
+            elif rosstat_bulletins_n == 85:
+                rosstat_bulletins_detail = "точек агрегатного ряда: 85 (52 недельные точки 2020-12-28…2021-12-27 + 25 фрагментов 2017 + 8 выпусков 2020)"
             else:
-                rosstat_bulletins_detail = (f"точек агрегатного ряда: {rosstat_bulletins_n}, want 80 — прогнать "
+                rosstat_bulletins_detail = (f"точек агрегатного ряда: {rosstat_bulletins_n}, want 85 — прогнать "
                                             "make import STAT=rosstat_ipc_weeks_bulletins")
-            failed += not expect("агрегатный ряд бюллетеней rosstat непуст", rosstat_bulletins_n == 80, rosstat_bulletins_detail)
+            failed += not expect("агрегатный ряд бюллетеней rosstat непуст", rosstat_bulletins_n == 85, rosstat_bulletins_detail)
 
             # Контур потребительских расходов Сбера (фаза 2 роадмапа «починка пустых рядов»,
             # импортёры sber_consumper_spending_index и sber_izmenenie_trat): общая витрина

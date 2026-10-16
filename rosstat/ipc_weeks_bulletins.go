@@ -126,17 +126,19 @@ type ipcWeeksBulletinsSource struct {
 	Date time.Time
 }
 
-// ipcWeeksBulletinsSources — все 80 выпусков (спека §2, приложения А и Б; расширение 2026-10-16 —
-// приложение В), отсортированные по дате точки. Литералы кода, а не разбор страницы-каталога:
-// источника-каталога у этого архива нет, а спасательный дамп зафиксировал точные адреса и даты
-// (тест-инварианты: 48 живых + 4 Wayback-2021 + 25 Wayback-2017 + 3 Wayback-2020, уникальные URL,
-// строго возрастающие даты). Форма id_ у Wayback-адресов обязательна: обычный режим вклеивает в
-// страницу свою панель и переписывает ссылки, а id_ отдаёт сырые байты документа. Первым
-// семейством идёт 2017 (ранние даты), в 2021 четыре февраля вклиниваются между живыми выпусками
-// января и марта — дат этих недель в живом буфере уже нет, их сохранил только Wayback (спека §2.2).
-// Девять выпусков расширения (2017×6, 2020×3) найдены разведкой Wayback-корпуса буфера (приложение
-// В спеки): их версии уже лежат в винтажном архиве, поэтому и живой импорт, и restore берут их
-// оттуда по этим же URL.
+// ipcWeeksBulletinsSources — все 85 выпусков (спека §2, приложения А и Б; расширения 2026-10-16 —
+// приложение В спеки и систематическая разведка scripts/harvest.py), отсортированные по дате
+// точки. Литералы кода, а не разбор страницы-каталога: источника-каталога у этого архива нет, а
+// спасательный дамп зафиксировал точные адреса и даты (тест-инварианты: 48 живых + 4 Wayback-2021 +
+// 25 Wayback-2017 + 8 Wayback-2020, уникальные URL, строго возрастающие даты). Форма id_ у
+// Wayback-адресов обязательна: обычный режим вклеивает в страницу свою панель и переписывает
+// ссылки, а id_ отдаёт сырые байты документа. Первым семейством идёт 2017 (ранние даты), в 2021
+// четыре февраля вклиниваются между живыми выпусками января и марта — дат этих недель в живом
+// буфере уже нет, их сохранил только Wayback (спека §2.2). Девять выпусков первого расширения
+// (2017×6, 2020×3) и пять второго (2020×5: 11-02, 11-09, 11-23, 11-30, 12-14) найдены разведкой
+// Wayback-корпуса буфера (scripts/harvest.py) — майские краулы 2021 г. на gks.ru удержали
+// документы ноября–декабря 2020 (снимки 20210526–20210527); версии всех выпусков лежат в
+// винтажном архиве, поэтому и живой импорт, и restore берут их оттуда по этим же URL.
 var ipcWeeksBulletinsSources = []ipcWeeksBulletinsSource{
 	{URL: "https://web.archive.org/web/20170325031428id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/56.htm", Date: time.Date(2017, time.March, 20, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://web.archive.org/web/20170403234555id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/61.htm", Date: time.Date(2017, time.March, 27, 0, 0, 0, 0, time.UTC)},
@@ -163,8 +165,13 @@ var ipcWeeksBulletinsSources = []ipcWeeksBulletinsSource{
 	{URL: "https://web.archive.org/web/20170916034320id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/182.htm", Date: time.Date(2017, time.September, 11, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://web.archive.org/web/20170923134535id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/190.htm", Date: time.Date(2017, time.September, 18, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://web.archive.org/web/20170929233425id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/198.htm", Date: time.Date(2017, time.September, 25, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20210526163217id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/206.htm", Date: time.Date(2020, time.November, 2, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20210526163243id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/209.htm", Date: time.Date(2020, time.November, 9, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://web.archive.org/web/20201124084711id_/https://rosstat.gov.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/213.htm", Date: time.Date(2020, time.November, 16, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20210526183711id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/218.htm", Date: time.Date(2020, time.November, 23, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20210527000515id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/225.htm", Date: time.Date(2020, time.November, 30, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://web.archive.org/web/20201211031227id_/https://rosstat.gov.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/228.htm", Date: time.Date(2020, time.December, 7, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20210527000625id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/234.htm", Date: time.Date(2020, time.December, 14, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://web.archive.org/web/20201224012041id_/https://rosstat.gov.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/237.htm", Date: time.Date(2020, time.December, 21, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://rosstat.gov.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/245.htm", Date: time.Date(2020, time.December, 28, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://rosstat.gov.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/2.htm", Date: time.Date(2021, time.January, 11, 0, 0, 0, 0, time.UTC)},
