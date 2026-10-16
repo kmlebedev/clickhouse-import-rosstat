@@ -3,6 +3,7 @@ package rosstat
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
@@ -26,16 +27,17 @@ func afterRosstatMacro(meta []util.SeriesMeta) func(context.Context, driver.Conn
 
 var rosstatMacroView = util.View{
 	Name:   "v_rosstat_macro",
-	Tables: []string{rosstatIPCMesTable, rosstatIPCWeeksTable, rosstatVVPKvartalTable, rosstatSalariesMesTable, rosstatLabourForceTable},
+	Tables: []string{rosstatIPCMesTable, rosstatIPCWeeksTable, rosstatIPCWeeksBulletinsTable, rosstatVVPKvartalTable, rosstatSalariesMesTable, rosstatLabourForceTable},
 	Select: `SELECT 'rosstat' AS source, name AS series, date, toFloat64(percent) AS value FROM rosstat_ipc_mes FINAL
 UNION ALL SELECT 'rosstat', name, date, toFloat64(percent) FROM rosstat_ipc_weeks FINAL
+UNION ALL SELECT 'rosstat', name, date, toFloat64(percent) FROM rosstat_ipc_weeks_bulletins FINAL
 UNION ALL SELECT 'rosstat', name, date, toFloat64(vvp) FROM rosstat_vvp_kvartal FINAL
 UNION ALL SELECT 'rosstat', name, date, toFloat64(salary) FROM rosstat_salaries_mes FINAL
 UNION ALL SELECT 'rosstat', name, date, toFloat64(value) FROM rosstat_labour_force_mes FINAL`,
-	Comment: "Ряды Росстата: ИПЦ по товарам и услугам (помесячно), еженедельные цены на отдельные товары и услуги, ВВП по кварталам, средняя номинальная зарплата по месяцам, рынок труда (рабочая сила, занятые, безработные и уровни участия, занятости и безработицы, помесячно). Единицы значения и привязка даты различаются между рядами: перед расчётом читать v_series_catalog по (source, series)",
+	Comment: "Ряды Росстата: ИПЦ по товарам и услугам (помесячно), еженедельные цены на отдельные товары и услуги (XLSX с 2022 и бюллетени «Оперативной информации» за 2021 и фрагменты 2017), ВВП по кварталам, средняя номинальная зарплата по месяцам, рынок труда (рабочая сила, занятые, безработные и уровни участия, занятости и безработицы, помесячно). Единицы значения и привязка даты различаются между рядами: перед расчётом читать v_series_catalog по (source, series)",
 	Columns: map[string]string{
 		"source": "Источник данных: всегда rosstat",
-		"series": "Название ряда; совпадает с series в v_series_catalog. У помесячного ИПЦ, квартального ВВП, зарплаты и рядов рынка труда имя закреплено в коде и при обновлении файла-источника не меняется. У недельных рядов имя берётся из файла — это название товара или услуги из товарного списка источника; каталог описывает текущий набор товаров, а товар, которого в v_series_catalog ещё нет, записывается в витрину с предупреждением в журнале, пока его описание не добавлено в код",
+		"series": "Название ряда; совпадает с series в v_series_catalog. У помесячного ИПЦ, квартального ВВП, зарплаты и рядов рынка труда имя закреплено в коде и при обновлении файла-источника не меняется. У недельных товарных рядов имя — название товара или услуги из товарного списка источника (в бюллетенях 2017/2021 канонизируется кодом к именам XLSX-выгрузки); каталог описывает текущий набор товаров, а товар, которого в v_series_catalog ещё нет, записывается в витрину с предупреждением в журнале, пока его описание не добавлено в код",
 		"date":   "Дата наблюдения (Date). Для месячных и недельных рядов — день из таблицы; для квартальных и зарплатных дат сдвинута — см. description ряда в v_series_catalog",
 		"value":  "Значение ряда (Float64). Единицы зависят от ряда: индекс цен (100 = без изменения), млрд руб., рубли — см. unit в v_series_catalog",
 	},
@@ -200,18 +202,86 @@ var labourForceSeriesMeta = []util.SeriesMeta{
 	},
 }
 
+// ipcWeeksProductMeta — мета одного недельного товара; её используют оба недельных импортёра
+// (rosstat_ipc_weeks и rosstat_ipc_weeks_bulletins). Текст для одного товара обязан совпадать
+// байт-в-байт у обоих: upsert каталога тогда идемпотентен и не зависит от порядка прогонов
+// (спека §3.2). Провенанс и глубина общие: XLSX Nedel_ipc*.xlsx (2022+) и бюллетени
+// «Оперативной информации» (2017 — фрагменты Wayback, 2021 — живые HTML-выпуски); непрерывного
+// ряда 2016–2020 нет, поэтому разрыв между фрагментами — отсутствие публикаций, а не пропуск
+// разбора. Единица измерения — процент к предыдущей дате регистрации (как было у недельных рядов).
+func ipcWeeksProductMeta(product string) util.SeriesMeta {
+	return util.SeriesMeta{
+		Source:      rosstatSource,
+		Series:      product,
+		Title:       product,
+		Unit:        "индекс, % к предыдущей дате регистрации (100 = без изменения)",
+		Frequency:   "W",
+		Origin:      "rosstat.gov.ru/statistics/price: еженедельные индексы из файла Nedel_ipc*.xlsx (2022+, лист = год, строка = товар/услуга, колонка «на DD месяца» — дата регистрации) и из бюллетеней «Оперативной информации» bgd/free/B04_03/IssWWW.exe/Stg/d02/<N>.htm (2021 — живые выпуски, 2017 — фрагменты Wayback); имена бюллетеней канонизируются кодом (ipcWeeksBulletinsSeriesBySourceName)",
+		Description: fmt.Sprintf("Еженедельный индекс цены «%s» по данным Росстата. Значение — изменение цены к предыдущей дате регистрации, в процентах: 100 — цена не изменилась, 100,58 — рост на 0,58%%. Дата — дата регистрации цен (последний день недели). Изменение за n недель: (Π index_i / 100^n − 1) × 100%%. Ряд покрыт фрагментарно: XLSX-выгрузка доступна с 2022, бюллетени «Оперативной информации» — за 2017 (19 недель, Wayback) и 2021 (52 недели: 2020-12-28…2021-12-27); непрерывного ряда 2016–2020 нет, поэтому разрывы между фрагментами — отсутствие публикаций, а не пропуск разбора.", product),
+	}
+}
+
 func ipcWeeksSeriesMeta() []util.SeriesMeta {
 	meta := make([]util.SeriesMeta, 0, len(ipcWeeksProducts))
 	for _, product := range ipcWeeksProducts {
-		meta = append(meta, util.SeriesMeta{
-			Source:      rosstatSource,
-			Series:      product,
-			Title:       product,
-			Unit:        "индекс, % к предыдущей дате регистрации (100 = без изменения)",
-			Frequency:   "W",
-			Origin:      "rosstat.gov.ru/statistics/price, еженедельные индексы (файл Nedel_ipc*.xlsx), лист = год, строка = товар/услуга, колонка «на DD месяца» (дата регистрации)",
-			Description: fmt.Sprintf("Еженедельный индекс цены «%s» по данным Росстата. Значение — изменение цены к предыдущей дате регистрации, в процентах: 100 — цена не изменилась, 100,58 — рост на 0,58%%. Дата — дата регистрации цен из колонки. Изменение за n недель: (Π index_i / 100^n − 1) × 100%%. Ряд доступен не за все годы: набор товаров меняется между выгрузками.", product),
-		})
+		meta = append(meta, ipcWeeksProductMeta(product))
+	}
+	return meta
+}
+
+// ipcWeeksBulletinsAggregateMeta — мета агрегатного недельного ряда ИПЦ (спека §3.2.1): строка
+// «Индекс потребительских цен (оценка)» шапки бюллетеня. Ряд существует только за 2017
+// (19 недель) и 2021 (52 недели): в XLSX 2022+ агрегатной строки нет — оговорка в description,
+// чтобы агент не ждал продолжения ряда за 2022+.
+var ipcWeeksBulletinsAggregateMeta = util.SeriesMeta{
+	Source:      rosstatSource,
+	Series:      ipcWeeksBulletinsAggregateSeries,
+	Title:       "Недельная оценка ИПЦ, РФ",
+	Unit:        "индекс, % к предыдущей дате регистрации (100 = без изменения)",
+	Frequency:   "W",
+	Origin:      "rosstat.gov.ru, бюллетени «Оперативной информации» (bgd/free/B04_03/IssWWW.exe/Stg/d02/<N>.htm; 2017 — фрагменты Wayback в форме id_): строка «Индекс потребительских цен (оценка)», колонка «К предыдущей дате регистрации цен»",
+	Description: "Недельная оценка индекса потребительских цен по РФ: 100 — цены не изменились, 100,58 — рост на 0,58% за неделю. Дата — последний день периода регистрации цен. Инфляция за n недель: (Π значений / 100^n − 1) × 100%. Ряд существует только за 2017 (19 недель: 2017-03-20…2017-09-25) и 2021 (52 недели: 2020-12-28…2021-12-27): до 2022 недельная оценка публиковалась HTML-бюллетенями, а в XLSX Nedel_ipc*.xlsx (2022+) агрегатной строки нет.",
+}
+
+// ipcWeeksBulletinsExtraMeta — мета extra-ряда импортёра бюллетеней: позиция есть только в
+// бюллетенях, в XLSX 2022+ её нет. И имя, и title — строка источника без правок: это стабильный
+// идентификатор ряда (§3.2), а не каноническое имя XLSX-выгрузки.
+func ipcWeeksBulletinsExtraMeta(series string) util.SeriesMeta {
+	return util.SeriesMeta{
+		Source:      rosstatSource,
+		Series:      series,
+		Title:       series,
+		Unit:        "индекс, % к предыдущей дате регистрации (100 = без изменения)",
+		Frequency:   "W",
+		Origin:      "rosstat.gov.ru, бюллетени «Оперативной информации» (bgd/free/B04_03/IssWWW.exe/Stg/d02/<N>.htm; 2017 — фрагменты Wayback в форме id_): строка детальной таблицы «Изменения цен»; имя ряда — как в источнике (в файле Nedel_ipc*.xlsx 2022+ позиции нет)",
+		Description: fmt.Sprintf("Еженедельный индекс цены «%s» по данным Росстата из бюллетеней «Оперативной информации»: 100 — цена не изменилась, 100,58 — рост на 0,58%% за неделю; дата — последний день периода регистрации цен. Ряд есть только в бюллетенях 2017/2021: в XLSX-выгрузке 2022+ эта позиция не публикуется, поэтому продолжения у ряда нет. Имя ряда объявлено кодом по строке источника.", series),
+	}
+}
+
+// ipcWeeksBulletinsSeriesMeta — каталог импортёра недельных бюллетеней: агрегат и товары,
+// которые встречаются в его источниках. Товары описаны общей с XLSX-импортёром функцией
+// ipcWeeksProductMeta — текст описания одного товара совпадает у обоих, и upsert каталога
+// идемпотентен вне зависимости от порядка прогонов. Канонические имена берутся из карты
+// канонизации (её значения), extra-ряды — из собственного списка импортёра; порядок среза
+// детерминирован (сортировка) ради повторяемости прогонов.
+func ipcWeeksBulletinsSeriesMeta() []util.SeriesMeta {
+	meta := make([]util.SeriesMeta, 0, 1+len(ipcWeeksBulletinsSeriesBySourceName)+len(ipcWeeksBulletinsExtraSeries))
+	meta = append(meta, ipcWeeksBulletinsAggregateMeta)
+	canonical := make([]string, 0, len(ipcWeeksBulletinsSeriesBySourceName))
+	seen := make(map[string]bool, len(ipcWeeksBulletinsSeriesBySourceName))
+	for _, product := range ipcWeeksBulletinsSeriesBySourceName {
+		if seen[product] {
+			continue
+		}
+		seen[product] = true
+		canonical = append(canonical, product)
+	}
+	sort.Strings(canonical)
+	for _, product := range canonical {
+		meta = append(meta, ipcWeeksProductMeta(product))
+	}
+	for _, series := range ipcWeeksBulletinsExtraSeries {
+		meta = append(meta, ipcWeeksBulletinsExtraMeta(series))
 	}
 	return meta
 }
