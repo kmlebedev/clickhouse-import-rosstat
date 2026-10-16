@@ -180,8 +180,8 @@
 
 ### Где смотреть
 
-- **Локальный стенд:** `make ch-up && make grafana-up` (ClickHouse + Grafana с провижинингом датасорса `ch-rosstat`, порт 3000) → `make grafana-build` (артефакты из кода) → `make grafana-deploy-test` (push **обоих** дашбордов контура на тест-стенд и smoke) → `make grafana-check` (только smoke: по каждому uid дашборд виден и первые панели отдают точки). Дашборд открывается по uid: `http://localhost:3000/d/key-rate-publications`.
-- **Staging:** тот же цикл через ssh-туннель `:3001` — `make grafana-deploy-staging` (провижининг датасорса → push обоих дашбордов → smoke по обоим). Прогон **owner-assisted**: токен сервис-аккаунта Editor, admin-reload провижининга датасорса и поднятый туннель — на стороне владельца; порядок — [deploy/staging/README.md](../deploy/staging/README.md).
+- **Локальный стенд:** `make ch-up && make grafana-up` (ClickHouse + Grafana с провижинингом датасорса `ch-rosstat`, порт 3000) → `make grafana-build` (артефакты из кода) → `make grafana-deploy-test` (push **всех** дашбордов контура на тест-стенд и smoke) → `make grafana-check` (только smoke: по каждому uid дашборд виден и первые панели отдают точки). Дашборд открывается по uid: `http://localhost:3000/d/key-rate-publications`.
+- **Staging:** тот же цикл через ssh-туннель `:3001` — `make grafana-deploy-staging` (провижининг датасорса → push всех дашбордов (`DASHBOARDS`) → smoke по каждому uid). Прогон **owner-assisted**: токен сервис-аккаунта Editor, admin-reload провижининга датасорса и поднятый туннель — на стороне владельца; порядок — [deploy/staging/README.md](../deploy/staging/README.md).
 - **Серверная проверка ресурса** (шаг ручной, нужны сервер, org-id и креды; по файлу на дашборд): `gcx resources validate dashboards --path dashboard/key-rate-publications.json`.
 - **PNG-рендер панелей для статьи — отдельный пункт позже** (как и у `gold-thesis`): в v1 снимки в репозиторий не коммитятся, для рендера нужен grafana-image-renderer.
 

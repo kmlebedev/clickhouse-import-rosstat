@@ -1,10 +1,11 @@
 // Command grafana генерирует артефакты Grafana как код.
 //
 // Каждый дашборд контура (gold-thesis — §4 золотого роадмапа, key-rate-publications — публикации
-// ключевой ставки) собирается в K8s-стиль манифест, который деплоится `gcx resources push`
-// (make grafana-deploy-test / -staging). Файл артефакта — <out-dir>/<uid>.json:
+// ключевой ставки, finance-polyus — финансы и прогноз Полюса) собирается в K8s-стиль манифест,
+// который деплоится `gcx resources push` (make grafana-deploy-test / -staging). Файл артефакта —
+// <out-dir>/<uid>.json:
 //
-//	cd grafana && go run .                                     # оба дашборда в ../dashboard
+//	cd grafana && go run .                                     # все дашборды в ../dashboard
 //	cd grafana && go run . -dashboard key-rate-publications    # только один дашборд
 package main
 
@@ -21,7 +22,7 @@ import (
 )
 
 func main() {
-	which := flag.String("dashboard", "all", "какой дашборд собрать: uid (gold-thesis, key-rate-publications) или all")
+	which := flag.String("dashboard", "all", "какой дашборд собрать: uid (gold-thesis, key-rate-publications, finance-polyus) или all")
 	outDir := flag.String("out-dir", "../dashboard", "каталог артефактов: в него пишется <uid>.json")
 	flag.Parse()
 
@@ -33,6 +34,7 @@ func main() {
 	}{
 		{GoldThesisUID, NewGoldThesis},
 		{KeyRatePublicationsUID, NewKeyRatePublications},
+		{FinancePolyusUID, NewFinancePolyus},
 	}
 
 	selected := dashboards

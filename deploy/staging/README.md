@@ -94,7 +94,7 @@ MCP с токеном отвечает.
 
 ## Grafana на staging: датасорс-провижининг и деплой дашбордов
 
-Оба дашборда контура — `gold-thesis` и `key-rate-publications` — едут на staging как код: артефакты
+Все дашборды контура — `gold-thesis`, `key-rate-publications` и `finance-polyus` — едут на staging как код: артефакты
 `dashboard/<uid>.json` пушутся в Grafana через ssh-туннель, а датасорс описывается шаблоном
 `grafana-datasource.yaml` в этом каталоге.
 
@@ -105,13 +105,13 @@ ssh -N -L 3001:127.0.0.1:3000 palmshell &
 # 2. Токен сервис-аккаунта Editor на staging — в ~/.config/rosstat/env, в репозиторий не попадает:
 #      GRAFANA_STAGING_TOKEN=<токен>
 
-# 3. Провижининг датасорса → push обоих дашбордов → smoke панелей
+# 3. Провижининг датасорса → push всех дашбордов → smoke панелей
 make grafana-deploy-staging
 ```
 
 Цель по шагам: проверяет непустой `GRAFANA_STAGING_TOKEN` → проверяет туннель
 (`curl $(GRAFANA_STAGING_URL)/api/health`, `GRAFANA_STAGING_URL ?= http://localhost:3001`) →
-идемпотентный провижининг датасорса → цикл по `DASHBOARDS` (`gold-thesis`, `key-rate-publications`):
+идемпотентный провижининг датасорса → цикл по `DASHBOARDS` (`gold-thesis`, `key-rate-publications`, `finance-polyus`):
 `gcx resources push dashboards --path dashboard/<uid>.json`
 против `GRAFANA_SERVER=$(GRAFANA_STAGING_URL)` → smoke `python3 scripts/grafana_check.py --uid <uid>`
 (дашборд виден по uid + первые панели отдают точки). Цикл останавливается на первой ошибке.
@@ -167,8 +167,8 @@ Grafana и systemd на хосте цель **не трогает**: тольк�
 - Пользователь ClickHouse `kimi_reader` уже есть на хосте (гранты readonly на витрины `v_*`).
 
 Приёмка полного прогона: `make grafana-deploy-staging` → по каждому uid из `DASHBOARDS`
-(`gold-thesis`, `key-rate-publications`) `OK   дашборд виден` и непустые точки по первым панелям,
-затем `gcx dashboards list` показывает оба дашборда (существующие на staging не затронуты).
+(`gold-thesis`, `key-rate-publications`, `finance-polyus`) `OK   дашборд виден` и непустые точки по первым панелям,
+затем `gcx dashboards list` показывает все дашборды из `DASHBOARDS` (существующие на staging не затронуты).
 
 ## Отладка и откат
 
