@@ -1,0 +1,67 @@
+# План: `rosstat_ipc_weeks_bulletins` — недельные ИПЦ Росстата до 2022 (буллетени «Оперативной информации»)
+
+**Спека:** [2026-10-16-rosstat-ipc-weeks-bulletins-design.md](../superpowers/specs/2026-10-16-rosstat-ipc-weeks-bulletins-design.md) (далее «спека §N»).
+**Пункт роадмапа:** [ROADMAP_KEY_RATE.md](ROADMAP_KEY_RATE.md) §6, подпункт фазы 4 (добавляется этим PR).
+**Спасательный дамп:** выполнен 2026-10-16 до кода — `build/ipc-pre2022-rescue/{live2021,wayback2021,wayback2017}` (71 файл, `MANIFEST.txt` с sha256, `coverage.json`). Фикстуры задач берутся отсюда.
+
+## Критерий приёмки пункта
+
+Стандарт §16.1 + спека §3: `make all`; живой прогон `make import STAT=rosstat_ipc_weeks_bulletins` (≈ 6–7 тыс. точек, 2020-12-28 … 2021-12-27 + 19 точек 2017); повтор — no-op по гейту без сети; 4 восстановленные недели (2021-02-01/08/15/24) в таблице; винтажный архив — 71 объект и 71 строка `registry.jsonl` (dev-хранилище `build/archive-dev`, зеркало `docs/archive/registry.jsonl`); `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА; `dagu validate dagu/rosstat.yaml`; протокол приёмки — комментарием в PR; ✅-коммит роадмапа до PR.
+
+## Задачи
+
+### Task 1: шаблон — `util.BodyFunc` (спека §3.7)
+Файлы: `util/clickhouse_import.go`, `docs/IMPORTER_PACKAGE_STANDARD.md` (§4 таблица транспорта, §5.1 таблица полей, §9.6 — второй прецедент гейта).
+Сделать: поле `BodyFunc func(body []byte, batch driver.Batch) error`; в `Import()` байты качает шаблон одинаково для `ImportFunc`/`BodyFunc`, различается вызов разбора (новый внутренний `importBody` рядом с `importXlsBody`); guard архивной проверки на no-op-пути — `s.ImportFunc != nil || s.BodyFunc != nil`; текст ошибки `default`-ветки упоминает `BodyFunc`. Логи: у body-ветки не писать «Get xlsx file».
+Готово: `go build ./...`, `go test ./util/` зелёные; комментарии объясняют семантику поля и guard’а (зачем BodyFunc попадает в архивную проверку, а CrawFunc — нет).
+Не делать: не трогать CrawFunc-ветку и поведение ImportFunc.
+
+### Task 2: ядро импортёра — `rosstat/ipc_weeks_bulletins.go` (спека §3.1–3.6, §3.10)
+Файлы: `rosstat/ipc_weeks_bulletins.go` (список 71 URL, парсер, канонизация, гейт, `Import()`), `rosstat/ipc_weeks_bulletins_test.go` (минимальный набор — полный в Task 5).
+Сделать:
+1. Список из 71 записи `{url, ожидаемая дата}` — приложения А/Б спеки; заголовки фикстур и дампа — источник проверки.
+2. Парсер `[]byte → точки` (спека §3.4): charset windows-1251 → goquery; агрегатная строка и детальная таблица по якорям; значение = первая колонка данных; сверка даты в шапке и в заголовке с ожидаемой датой; запятая; fail-fast; без `panic`.
+3. Карта канонизации `ipcWeeksBulletinsSeriesBySourceName` (имя бюллетеня → канонический ряд из `ipcWeeksProducts`; имена вне списка — собственный список импортёра); построить по РЕАЛЬНЫМ фикстурам (выгрузить имена из 144.htm, 19.htm, 100.htm), каждое незнакомое имя — warn.
+4. Цикл `Import()` по прецеденту `cbr_dip_bulletin` (спека §3.5): DDL → гейт `SELECT DISTINCT date … FINAL` → локальная копия шаблона (`DataUrl` + `BodyFunc`) на каждую недостающую дату → post-check дат → `errors.Join`; лог «все недели на месте».
+5. Константы: `rosstatIPCWEeksBulletinsTable`, DDL в `%s`-форме, `ipcWeeksBulletinsCountPoints = "SELECT count() FROM rosstat_ipc_weeks_bulletins FINAL"`, текст якорей.
+6. **Ранний живой прогон** (после компиляции, до Task 3–5): `make import STAT=rosstat_ipc_weeks_bulletins ARCHIVE_BACKEND=local ARCHIVE_LOCAL_DIR=build/archive-dev` — зафиксировать число строк, крайние даты, число объектов архива; отчёт контроллеру.
+Готово: прогон записал точки; повтор — no-op без сети; `go vet ./rosstat/`.
+Не делать: не править `rosstat_ipc_weeks`, `v_model_inputs`, не трогать `archive/`.
+
+### Task 3: каталог и витрина (спека §3.2, §3.8)
+Файлы: `rosstat/series_meta.go`.
+Сделать: общий генератор меты товара (используют оба недельных импортёра — текст для общих товаров обязан совпадать байт-в-байт); мета агрегата `Индекс потребительских цен (недельная оценка)` и товаров вне `ipcWeeksProducts`; дополнение `origin`/`description` товаров глубиной и провенансом (2021 бюллетени + Wayback-2017 + XLSX 2022+, оговорка про 2016–2020); ветка `UNION ALL … rosstat_ipc_weeks_bulletins FINAL` и имя таблицы в `rosstatMacroView.Tables`; комментарий витрины.
+Готово: `go test ./rosstat/` (существующие тесты каталога/меты не сломаны), каталог покрывает все разобранные имена.
+
+### Task 4: реестр, расписание, энфорсер (стандарт §8, §12)
+Файлы: `rosstat/importers.go`, `rosstat/importers_test.go`, `dagu/rosstat.yaml`.
+Сделать: 6-я запись реестра (литералы таблицы и countPoints); `expectedPublicationCountPoints` + комментарии «пять» → «шесть»; шаг `rosstat_ipc_weeks_bulletins` **последним** в цепочке (retry 3 × 300).
+Готово: `go test ./rosstat/ -run TestRosstatImportersPrefixedAndRegistered`, `dagu validate dagu/rosstat.yaml`.
+
+### Task 5: фикстуры и тесты (стандарт §11, спека §3.10)
+Файлы: `rosstat/testdata/ipc_weeks_bulletins_144.htm`, `…_19_wayback.htm`, `…_100_2017_wayback.htm`, `…_stub.htm` (копии из дампа), `rosstat/ipc_weeks_bulletins_test.go`.
+Сделать: число точек и дат по каждому семейству, spot-значения (агрегат 3–9.08.2021 = 100.00; «Сметана» = 100.5; значения 2017 и восстановленного выпуска), полнота карты канонизации против фикстур, двусторонний контракт каталога, fail-fast (заглушка, сдвиг даты, отсутствие якоря, нечисло, пустой разбор), инварианты списка URL (52+19, даты строго возрастают, URL уникальны), харнесс `appendRecorder` (без БД и сети).
+Готово: `go test -race -count=1 ./rosstat/`.
+
+### Task 6: MCP-проверки и покрытие (стандарт §10.4–10.5)
+Файлы: `scripts/mcp_check.py`, `sql/key_rate_coverage.sql`.
+Сделать: `rosstat_ipc_weeks_bulletins` в список «сырая таблица закрыта (497)»; обновить ожидаемое число рядов каталога `rosstat` (147 → фактическое; комментарий с раскладкой); проверка наличия точек 2021 в `v_rosstat_macro`; строка новой таблицы в снимок покрытия.
+Готово: `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА (после Task 2–4 на живой БД).
+
+### Task 7: документация (стандарт §13)
+Файлы: `ARCHITECTURE.md` (§2, §6.1, §6.2 — канонический DDL, §6.3, §7, §8 п. 13), `README.md` (таблица импортёров, эксплуатация), `docs/research/2026-10-16-cpi-weekly-pre2022-probe.md` (раздел «Результат — восстановлено»), `docs/archive/registry.jsonl` (`make archive-registry`).
+Готово: `make all` зелёный; зеркало реестра содержит 71 новую строку; проверить по skill `sync-readme-architecture`.
+
+### Task 8: живая приёмка (контроллер, не субагент)
+Команды и протокол — критерий приёмки выше: прогон, повтор, spot-сверки, архив (объекты + реестр), `make mcp-check`, `dagu validate`, `go test -race -count=1 ./rosstat/ ./util/`.
+
+### Task 9: статус роадмапа и PR (контроллер)
+Коммит ✅ с протоколом в теле → PR (описание: источник, схема, запуск, пример проверки) → приёмочный комментарий в PR → merge решает владелец.
+
+## Порядок диспатча
+
+Task 1 (GLM, мелкая правка одного файла) → Task 2 (deepseek: новый файл парсера + список; единичный артефакт > 16 КБ) → ранний живой прогон (контроллер) → Task 3 (deepseek) → Task 4 (GLM) → Task 5 (deepseek — крупный тест-файл и фикстуры) → Task 6 (GLM) → Task 7 (deepseek; мелкие механические правки роадмапов — допустимо xiaomimimo, если это один файл и ≤ 12 КБ) → Task 8–9 (контроллер). В каждый coder-промпт — блок про `mcp__jetbrains__*`/`mcp__clickhouse__*` из AGENTS.md; ревью задач — `anthropic/haiku` (не на модели автора), финальное ревью ветки — `deepseek/deepseek-flash`.
+
+## Чек-лист жёстких правил для ревью-промптов
+
+(1) секретов нет; (2) вставка — батчем шаблона, `conn.Exec` только DDL/reading-запросы; (3) нет сети в `init()`; (4) сеть — только через `util`; (5) DDL `IF NOT EXISTS` + ReplacingMergeTree, `LowCardinality(String)`, значения `Float64`; (6) ошибки не проглатываются (`ParseFloat`/`Append` — с проверкой); (7) пакет `rosstat` — по стандарту (реестр, каталожные меты, витрина, тесты, архив); (8) DDL — канонический (спека §3.1, ARCHITECTURE §6.2); (9) `make all` зелёный; (10) документация тем же PR; (11) правило 11 AGENTS.md — каталог на каждый ряд, витрина с комментариями, грант, MCP-проверка.
