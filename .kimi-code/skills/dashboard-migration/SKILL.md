@@ -18,19 +18,19 @@ whenToUse: When a Grafana dashboard is migrated from a legacy UI export to grafa
 1. **Пункт роадмапа.** Назвать или завести пункт (инфраструктурный — `ROADMAP_INFRA`, трековый — роадмап трека) и объявить его с критерием приёмки до старта; без пункта работа не начинается.
 2. **Инвентаризация источника.** Легаси: панели, таргеты, источники данных, юниты, анти-паттерны — по экспорту. Трек: перечень графиков прогноза и прогнозных точек от владельца.
 3. **Гэп-анализ «источник → витрина».** Каждая панель → существующая `v_*` + `series`/ключи. Недостающие слои не выдумывать: либо минимальный набор v1 на готовом, либо отдельный пункт-следствие.
-4. **Гранты.** Сверить `sql/mcp_kimi_reader.sql`: панель на невыданной витрине валит staging-smoke.
+4. **Гранты.** Сверить `sql/mcp_kimi_reader.sql`: панель на невыданной витрине валит staging-smoke; при отсутствии — добавить `GRANT SELECT` в `sql/mcp_kimi_reader.sql` и выполнить `make mcp-user` (AGENTS.md, правило 11в).
 5. **Маппинг «раздел статьи/трек → панели».** Таблица в спеке; для статьи со временем — её §«Иллюстрации» (образец — [docs/KEY_RATE_PUBLICATIONS.md](../../../docs/KEY_RATE_PUBLICATIONS.md) §11).
 6. **Спека + план** (`docs/superpowers/{specs,plans}`, первыми коммитами ветки): SQL — дословный контракт, серии сверены живыми запросами до фиксации.
 7. **Реализация.** Builder в `grafana/`, тесты (состав панелей и рядов, `FROM v_` в каждом таргете, юниты, точки и пороги, детерминизм), конвенции — по ссылкам ниже.
 8. **Регистрация.** Упорядоченный слайс в `grafana/main.go`, `DASHBOARDS` в `Makefile`, списки lint/upload в CI; артефакт `dashboard/<uid>.json` коммитится (при миграции заменяет легаси-экспорт, история — в git).
-9. **Приёмка и доки.** `make all`; живой SQL всех таргетов через MCP под `kimi_reader`; `make grafana-deploy-test` + `make grafana-check`; CI зелёный; протокол живой приёмки — комментарием в PR ([docs/IMPORTER_PACKAGE_STANDARD.md](../../../docs/IMPORTER_PACKAGE_STANDARD.md) §16.1 п. 8); синк доков скилом `sync-readme-architecture`; регистрация следствий и обновление очереди.
+9. **Приёмка и доки.** `make all`; живой SQL всех таргетов через MCP под `kimi_reader`; `make grafana-deploy-test` + `make grafana-check` (staging — owner-assisted); CI зелёный; протокол живой приёмки — комментарием в PR ([docs/IMPORTER_PACKAGE_STANDARD.md](../../../docs/IMPORTER_PACKAGE_STANDARD.md) §16.1 п. 8); синк доков скилом `sync-readme-architecture`; регистрация следствий и обновление очереди.
 
 **Конвенции** (нормативные формулировки не дублируются — только ссылки):
 
 - [ARCHITECTURE.md](../../../ARCHITECTURE.md) §6.7 — дашборд как код: модуль `grafana/`, детерминизм, `Validate`, провижининг датасорса, CI и деплой.
 - [Спека gold-thesis](../../../docs/superpowers/specs/2026-10-12-grafana-gold-thesis-design.md) §3 (архитектура) и §6 (runbook); [спека key-rate-publications](../../../docs/superpowers/specs/2026-10-16-grafana-key-rate-design.md) §6 (конвенции из UI-экспорта: что берём и что осознанно нет).
 
-Ссылки покрывают: запросы только к `v_*`; `$__timeFilter(date)`; YoY окном по полному ряду; юниты `percent`/`percentunit`/`currencyRUB`/`short`; точки для разрежённых серий; пороги со `ThresholdsStyle`; русские алиасы; детерминизм; описания панелей.
+Ссылки покрывают: запросы только к `v_*`; `$__timeFilter(date)`; YoY окном по полному ряду; юниты `percent`/`percentunit`/`currencyRUB`/`currencyUSD`/`short`; точки для разрежённых серий; пороги со `ThresholdsStyle`; русские алиасы; детерминизм; описания панелей.
 
 **Очередь миграции.** Живой список — в пункте `ROADMAP_INFRA` (Фаза 2, «Шаг 0: механизм миграции и добавления дашбордов»); состав на 2026-10-16:
 
