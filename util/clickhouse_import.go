@@ -21,6 +21,11 @@ type ClickHouseImport struct {
 	TimeLayout  string
 	CrawFunc    func(crawUrl string, conn driver.Conn) (count int64, err error)
 	ImportFunc  func(xlsx *excelize.File, batch driver.Batch) error
+	// BodyFunc — разбор скачанных шаблоном байтов источников, отдающих не книгу excelize,
+	// а документ другого формата (HTML бюллетеней Росстата): байты качает шаблон
+	// (GetFileBytes), и тот же срез уходит в разбор и в винтажный архив версии (§9.6) —
+	// в отличие от CrawFunc, который качает файл сам и в архив не попадает.
+	BodyFunc func(body []byte, batch driver.Batch) error
 	// BeforeImport вычисляет DataUrl во время Import(), а не в init():
 	// сетевые вызовы в init() запрещены (ARCHITECTURE.md §8.6).
 	BeforeImport func(ctx context.Context, conn driver.Conn) error
@@ -106,9 +111,28 @@ func (s *ClickHouseImport) importXlsBody(ctx context.Context, body []byte, conn 
 	return count, nil
 }
 
-// Import — общий цикл импортёра: DDL -> BeforeImport -> префлайт -> точки -> архив -> AfterImport
-// -> версия. Префлайт включается объявлением PublicationCountPoints: после no-op прогон
-// возвращает число точек известной версии, не скачивая файл (CrawFunc/ImportFunc не вызываются).
+// importBody разбирает байты разбором BodyFunc: PrepareBatch → BodyFunc → Send. Байты приходят
+// срезом от шаблона — тот же срез ушёл и в архив версии, поэтому восстановленная из архива
+// версия описывает ровно те точки, что разобраны.
+func (s *ClickHouseImport) importBody(ctx context.Context, body []byte, conn driver.Conn) (count int64, err error) {
+	batch, err := conn.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s", s.TableName))
+	if err != nil {
+		return count, err
+	}
+	if err = s.BodyFunc(body, batch); err != nil {
+		return count, err
+	}
+	count = int64(batch.Rows())
+	if err = batch.Send(); err != nil {
+		return count, err
+	}
+	return count, nil
+}
+
+// Import — общий цикл импортёра: DDL -> BeforeImport -> префлайт -> точки (CrawFunc, ImportFunc,
+// для HTML — BodyFunc) -> архив -> AfterImport -> версия. Префлайт включается объявлением
+// PublicationCountPoints: после no-op прогон возвращает число точек известной версии, не скачивая
+// файл (CrawFunc/ImportFunc/BodyFunc не вызываются).
 // Архив версий файлов включается парой «хранилище настроено (ARCHIVE_BACKEND) + объявлена точка
 // контроля»: он сохраняет ту же версию, по которой префлайт принимает решения, — объектом в
 // хранилище и строкой реестра, — и его сбой закрывает только запись версии (спека §3.3).
@@ -141,12 +165,15 @@ func (s *ClickHouseImport) Import(ctx context.Context, conn driver.Conn) (count 
 			// (спека §3.2). Проверка стоит один Store.Exists и включается теми же условиями, что и
 			// архивация: архива нет — лишних вызовов нет.
 			//
-			// s.ImportFunc — не украшение: архив покрывает только импортёров, чей файл качает шаблон
-			// (запись архива живёт в ветке ImportFunc, CrawFunc его байтов не видит). У CrawFunc-импортёра
+			// s.ImportFunc/s.BodyFunc — не украшение: архив покрывает только импортёров, чей файл
+			// качает шаблон (запись архива живёт в ветке ImportFunc/BodyFunc, CrawFunc его байтов не
+			// видит). BodyFunc-импортёр ходит тем же путём, что ImportFunc — байты качает шаблон и
+			// сохраняет их в архив, — поэтому «версия известна, но объекта нет» обязано давать полный
+			// импорт и у него. У CrawFunc-импортёра
 			// с точкой контроля (bank/sber_fin_rez.go) объекта в архиве нет и не будет, поэтому проверка
 			// на его no-op-пути была бы вечной деградацией: no-op не наступал бы ни разу, пока
 			// ARCHIVE_BACKEND настроен, — ежедневный полный краул. CrawFunc не трогается (спека §3.3).
-			if rt := activeArchive(); rt != nil && s.ImportFunc != nil {
+			if rt := activeArchive(); rt != nil && (s.ImportFunc != nil || s.BodyFunc != nil) {
 				if exists, archiveErr := rt.versionExists(ctx, s.PublicationKey(), s.DataUrl, fingerprint); archiveErr != nil {
 					log.Warnf("%s: версия %s известна, но проверка архива не удалась (%v) — полный импорт", s.PublicationKey(), fingerprint, archiveErr)
 					noop = false
@@ -167,15 +194,22 @@ func (s *ClickHouseImport) Import(ctx context.Context, conn driver.Conn) (count 
 	switch {
 	case s.CrawFunc != nil:
 		count, err = s.CrawFunc(s.DataUrl, conn)
-	case s.ImportFunc != nil:
+	case s.ImportFunc != nil || s.BodyFunc != nil:
 		// Байты качаются один раз: тот же срез идёт в разбор и в архив версии.
 		var body []byte
 		if body, err = GetFileBytes(s.DataUrl); err != nil {
 			return count, err
 		}
-		log.Infof("Get xlsx file %+v", s.DataUrl)
-		if count, err = s.importXlsBody(ctx, body, conn); err != nil {
-			return count, err
+		if s.BodyFunc != nil {
+			log.Infof("Get file %+v", s.DataUrl)
+			if count, err = s.importBody(ctx, body, conn); err != nil {
+				return count, err
+			}
+		} else {
+			log.Infof("Get xlsx file %+v", s.DataUrl)
+			if count, err = s.importXlsBody(ctx, body, conn); err != nil {
+				return count, err
+			}
 		}
 		// Архив — сразу после успешного Send: файл разобран и точки записаны, поэтому HTML-заглушка
 		// WAF и битый файл в архив не попадают. Ветка CrawFunc архива не получает: файл качает сам
@@ -187,7 +221,7 @@ func (s *ClickHouseImport) Import(ctx context.Context, conn driver.Conn) (count 
 			}
 		}
 	default:
-		return count, fmt.Errorf("%s: no CrawFunc or ImportFunc configured", s.TableName)
+		return count, fmt.Errorf("%s: no CrawFunc, ImportFunc or BodyFunc configured", s.TableName)
 	}
 	if err != nil {
 		return count, err
