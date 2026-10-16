@@ -120,7 +120,7 @@ func TestRosstatImportersPrefixedAndRegistered(t *testing.T) {
 
 		// (б)
 		if imp.table == sharedMacroSeriesTable {
-			t.Errorf("импортёр %q не объявил таблицу: общей таблицы вне префикса %q у пакета нет — все пять импортёров владеют своей", name, rosstatNamePrefix)
+			t.Errorf("импортёр %q не объявил таблицу: общей таблицы вне префикса %q у пакета нет — все шесть импортёров владеют своей", name, rosstatNamePrefix)
 			continue
 		}
 		if !strings.HasPrefix(imp.table, rosstatNamePrefix) {

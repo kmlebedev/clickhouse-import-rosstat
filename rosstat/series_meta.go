@@ -13,8 +13,10 @@ const rosstatSource = "rosstat"
 
 // afterRosstatMacro — производные импортёров пакета: каталог рядов и общая витрина
 // v_rosstat_macro. Публикуются шаблоном после Send точек и до записи строки версии
-// (ARCHITECTURE §8 п. 13): сбой публикации оставляет версию незаписанной, и следующий прогон
-// повторяет полный путь, а не уходит в no-op с устаревшим каталогом.
+// (ARCHITECTURE §8 п. 13): сбой публикации оставляет версию незаписанной, и обычный импортёр
+// следующим прогоном повторяет полный путь, а не уходит в no-op с устаревшим каталогом. У
+// гейт-импортёра (rosstat_ipc_weeks_bulletins) полный путь не повторяется — производные его
+// no-op-пути перепубликует собственный Import().
 func afterRosstatMacro(meta []util.SeriesMeta) func(context.Context, driver.Conn) error {
 	return func(ctx context.Context, conn driver.Conn) error {
 		if err := util.UpsertSeriesCatalog(ctx, conn, meta); err != nil {

@@ -42,7 +42,10 @@ type ClickHouseImport struct {
 	// AfterImport вызывается после успешного Send точек и до записи строки версии: здесь
 	// импортёр публикует производные (series_catalog, витрину). Ошибка отменяет запись версии —
 	// порядок «точки -> производные -> версия», иначе сбой публикации каталога заблокировал бы
-	// self-heal до следующей волны источника (ARCHITECTURE §8 п. 13).
+	// self-heal до следующей волны источника (ARCHITECTURE §8 п. 13). У импортёров с гейтом по
+	// своей таблице (cbr_dip_bulletin, rosstat_ipc_weeks_bulletins) шаблон на no-op-пути не
+	// вызывается вовсе: судьба производных там — за собственным Import() импортёра
+	// (rosstat_ipc_weeks_bulletins публикует их и при пустой дельте, cbr_dip_bulletin — нет).
 	AfterImport func(ctx context.Context, conn driver.Conn) error
 }
 
@@ -87,10 +90,13 @@ func (s *ClickHouseImport) Name() string {
 	return s.TableName
 }
 
-// abortBatch закрывает неотправленный батч на пути ошибки: соединение с открытым батчем
-// возвращается в пул драйвера только через Send или Abort, поэтому серия ошибок разбора
-// исчерпала бы пул и подвесила прогон в acquire() — найдено живым прогоном
+// abortBatch закрывает батч на пути ошибки ДО Send (ImportFunc/BodyFunc/Append): соединение с
+// открытым батчем возвращается в пул драйвера только через Send или Abort, поэтому серия
+// ошибок разбора исчерпала бы пул и подвесила прогон в acquire() — найдено живым прогоном
 // rosstat_ipc_weeks_bulletins (Wayback отдавал 429, каждый сбой оставлял батч открытым).
+// После Send абортить нельзя: драйвер возвращает соединение в пул дефером самого Send
+// независимо от исхода (clickhouse-go/v2, conn_batch.go), а Abort после Send отвечает
+// ErrBatchAlreadySent — это был бы ложный warn «не удалось закрыть батч», а не лечение утечки.
 // Ошибка Abort не проглатывается молча (`_ =` запрещён стилем пакета): она логируется warn,
 // но возвращаемой ошибкой вызывающего остаётся первопричина.
 func abortBatch(batch driver.Batch, what string) {
@@ -119,7 +125,6 @@ func (s *ClickHouseImport) importXlsBody(ctx context.Context, body []byte, conn 
 	}
 	count = int64(batch.Rows())
 	if err = batch.Send(); err != nil {
-		abortBatch(batch, s.TableName)
 		return count, err
 	}
 	return count, nil
@@ -139,7 +144,6 @@ func (s *ClickHouseImport) importBody(ctx context.Context, body []byte, conn dri
 	}
 	count = int64(batch.Rows())
 	if err = batch.Send(); err != nil {
-		abortBatch(batch, s.TableName)
 		return count, err
 	}
 	return count, nil
@@ -244,7 +248,10 @@ func (s *ClickHouseImport) Import(ctx context.Context, conn driver.Conn) (count 
 	}
 	// Производные — после точек и до строки версии: её ошибка оставляет версию незаписанной, и
 	// следующий прогон повторит полный путь (идемпотентный), а не уйдёт в no-op с отсутствующим
-	// у агента каталогом или витриной.
+	// у агента каталогом или витриной. У импортёров с гейтом по своей таблице полный путь не
+	// повторяется — гейт видит артефакт записанным и шаблон для него не зовёт: производные их
+	// no-op-пути публикует собственный Import() импортёра (rosstat_ipc_weeks_bulletins), а архив
+	// и строку версии у уже записанного артефакта лечит только ручной прогон (§8 п. 13).
 	if s.AfterImport != nil {
 		if err = s.AfterImport(ctx, conn); err != nil {
 			return count, err

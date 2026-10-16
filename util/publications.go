@@ -19,7 +19,7 @@ import (
 // версия артефакта источника. Механизм общий для источников, чьи файлы обновляются реже
 // прогонов, и включается полями шаблона util.ClickHouseImport (PublicationCountPoints /
 // PublicationSource); фактический список потребителей — ARCHITECTURE §8 п. 13
-// (девятнадцать импортёров: четырнадцать в cbr/ и пять вне него; у cbr_dip_bulletin
+// (двадцать импортёров: четырнадцать в cbr/ и шесть вне него; у cbr_dip_bulletin
 // объявление включает архив версий выпусков, а no-op держит гейт по release_id — §8 п. 13).
 // Таблица внутренняя: агенту (kimi_reader) не выдаётся.
 const PublicationsTable = "source_publications"
@@ -130,7 +130,6 @@ func SavePublication(ctx context.Context, conn driver.Conn, p Publication) error
 		return err
 	}
 	if err = batch.Send(); err != nil {
-		abortBatch(batch, PublicationsTable)
 		return err
 	}
 	return nil

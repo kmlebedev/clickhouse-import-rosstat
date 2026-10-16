@@ -15,14 +15,15 @@ import (
 )
 
 // Фикстуры — реальные артефакты спасательного дампа 2026-10-16 (спека §3.10): живой выпуск
-// 2021-08-09, восстановленная через Wayback неделя 2021-02-01 и фрагмент 2017-05-22. Тесты
-// офлайн: точки собирает appendRecorder, BodyFunc-замыкание вызывается напрямую — ни базы, ни
-// сети тесту не нужно (§11.6).
+// 2021-08-09, новогодний выпуск 2021-01-11 (у него своя шапка колонок), восстановленная через
+// Wayback неделя 2021-02-01 и фрагмент 2017-05-22. Тесты офлайн: точки собирает appendRecorder,
+// BodyFunc-замыкание вызывается напрямую — ни базы, ни сети тесту не нужно (§11.6).
 const (
-	ipcWeeksBulletinsLive2021Fixture  = "ipc_weeks_bulletins_144.htm"
-	ipcWeeksBulletinsWayback21Fixture = "ipc_weeks_bulletins_19_wayback.htm"
-	ipcWeeksBulletinsWayback17Fixture = "ipc_weeks_bulletins_100_2017_wayback.htm"
-	ipcWeeksBulletinsStubFixture      = "ipc_weeks_bulletins_stub.htm"
+	ipcWeeksBulletinsLive2021Fixture    = "ipc_weeks_bulletins_144.htm"
+	ipcWeeksBulletinsNewYear2021Fixture = "ipc_weeks_bulletins_2.htm"
+	ipcWeeksBulletinsWayback21Fixture   = "ipc_weeks_bulletins_19_wayback.htm"
+	ipcWeeksBulletinsWayback17Fixture   = "ipc_weeks_bulletins_100_2017_wayback.htm"
+	ipcWeeksBulletinsStubFixture        = "ipc_weeks_bulletins_stub.htm"
 )
 
 // importIpcWeeksBulletinsFixture прогоняет фикстуру через BodyFunc-замыкание выпуска и отдаёт
@@ -91,6 +92,47 @@ func TestIpcWeeksBulletinsReadsLive2021(t *testing.T) {
 	} {
 		if got := ipcWeeksBulletinsSpotValue(t, rows, series, date); got != want {
 			t.Errorf("ряд %q: значение %v, ожидалось %v", series, got, want)
+		}
+	}
+}
+
+// TestIpcWeeksBulletinsReadsNewYear2021 — разбор самого экзотического выпуска дампа: 2.htm
+// (2021-01-11, неделя 1–11 января). Шапка его детальной таблицы устроена иначе: первая колонка
+// данных — накопленная («11 января 2021 г. к концу декабря 2020 г.»), а недельное значение под
+// групповым якорем «к предыдущей дате регистрации» стоит во второй колонке («11 января 2021 г.»);
+// разбор берёт колонку по якорю, а не по индексу (ipcWeeksBulletinsValueColumn). Поэтому
+// spot-значения товаров закреплены по второй колонке и отличаются от первой: «Картофель» — 103,0
+// (накопленная 102,7; текст выпуска «картофель – на 2,7%» называет именно её), «Сметана» — 100,2
+// (100,1), «Баранина…» — 100,3 (100,2): сдвиг колонки на первую дал бы другие числа. Агрегат —
+// 100,4: в таблице «в процентах» этого выпуска колонки «к предыдущей дате регистрации» нет
+// (первая колонка — «С начала января 2021 г.»), разбор берёт первое число строки, а текст
+// выпуска называет эту оценку итогом периода: «За период с 1 по 11 января 2021 г. индекс
+// потребительских цен … составил 100,4%».
+func TestIpcWeeksBulletinsReadsNewYear2021(t *testing.T) {
+	date := time.Date(2021, time.January, 11, 0, 0, 0, 0, time.UTC)
+	rows := importIpcWeeksBulletinsFixture(t, ipcWeeksBulletinsNewYear2021Fixture, date)
+	if len(rows) != 103 {
+		t.Fatalf("точек %d, ожидалось 103 (102 товара + агрегат)", len(rows))
+	}
+	if counts := countBySeries(rows); len(counts) != 103 {
+		t.Fatalf("рядов %d, ожидалось 103", len(counts))
+	}
+	for _, row := range rows {
+		if row.valueType != "float64" {
+			t.Errorf("ряд %q записан как %s, ожидался float64", row.series, row.valueType)
+		}
+		if !row.date.Equal(date) {
+			t.Errorf("ряд %q: дата %s, ожидалась %s", row.series, row.date.Format("2006-01-02"), date.Format("2006-01-02"))
+		}
+	}
+	for series, want := range map[string]float64{
+		ipcWeeksBulletinsAggregateSeries: 100.4,
+		"Картофель, кг":                  103.0,
+		"Сметана, кг":                    100.2,
+		"Баранина (кроме бескостного мяса), кг": 100.3,
+	} {
+		if got := ipcWeeksBulletinsSpotValue(t, rows, series, date); got != want {
+			t.Errorf("ряд %q: значение %v, ожидалось %v (недельная колонка под якорем «к предыдущей дате регистрации»)", series, got, want)
 		}
 	}
 }
@@ -324,11 +366,13 @@ func TestIpcWeeksBulletinsUnknownProductWarns(t *testing.T) {
 }
 
 // TestIpcWeeksBulletinsSourcesInvariants — инварианты списка 71 выпуска (спека §3.5.1, §11):
-// 48 живых выпусков 2021, 4 восстановленные недели 2021 и 19 фрагментов 2017; URL уникальны;
-// даты строго возрастают; у Wayback-адресов — форма id_ (сырые байты документа, без панели
-// Wayback); недельный блок 2020-12-28…2021-12-27 покрыт без пропущенных недель (шаг больше 14
-// дней означал бы потерянный выпуск, а 2021-02-01/08/15/24 — те самые удалённые из живого
-// буфера недели, ради которых и снят дамп).
+// 48 живых недельных выпусков (47 недель 2021 + неделя 22–28.12.2020), 4 восстановленные недели
+// 2021 и 19 фрагментов 2017; URL уникальны; даты строго возрастают; у Wayback-адресов — форма
+// id_ (сырые байты документа, без панели Wayback); недельный блок 2020-12-28…2021-12-27 покрыт
+// всеми неделями: обычный шаг 6–9 дней, единственный 14-дневный шаг — новогодний
+// (2020-12-28 → 2021-01-11; неделя 1–11 января вышла одним выпуском 2.htm), а шаг больше 14
+// дней означал бы потерянный выпуск; 2021-02-01/08/15/24 — те самые удалённые из живого буфера
+// недели, ради которых и снят дамп.
 func TestIpcWeeksBulletinsSourcesInvariants(t *testing.T) {
 	if len(ipcWeeksBulletinsSources) != 71 {
 		t.Fatalf("выпусков %d, ожидался 71", len(ipcWeeksBulletinsSources))
@@ -373,10 +417,21 @@ func TestIpcWeeksBulletinsSourcesInvariants(t *testing.T) {
 	if first, last := weekly2021[0].Format("2006-01-02"), weekly2021[len(weekly2021)-1].Format("2006-01-02"); first != "2020-12-28" || last != "2021-12-27" {
 		t.Errorf("недельный блок покрывает %s…%s, ожидалось 2020-12-28…2021-12-27", first, last)
 	}
+	longGaps := 0
 	for i := 1; i < len(weekly2021); i++ {
-		if gap := weekly2021[i].Sub(weekly2021[i-1]); gap > 14*24*time.Hour {
+		gap := weekly2021[i].Sub(weekly2021[i-1])
+		if gap > 14*24*time.Hour {
 			t.Errorf("разрыв %v между %s и %s: выпуск потерян", gap, weekly2021[i-1].Format("2006-01-02"), weekly2021[i].Format("2006-01-02"))
 		}
+		if gap == 14*24*time.Hour {
+			longGaps++
+			if got := weekly2021[i-1].Format("2006-01-02") + " → " + weekly2021[i].Format("2006-01-02"); got != "2020-12-28 → 2021-01-11" {
+				t.Errorf("14-дневный шаг %s: ожидался единственный новогодний 2020-12-28 → 2021-01-11 (неделя 1–11 января одним выпуском)", got)
+			}
+		}
+	}
+	if longGaps != 1 {
+		t.Errorf("14-дневных шагов %d, ожидался один новогодний: неделя 1–11 января вышла одним выпуском 2.htm", longGaps)
 	}
 	got := make(map[string]bool, len(weekly2021))
 	for _, date := range weekly2021 {

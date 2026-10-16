@@ -718,10 +718,10 @@ async def check(params, server_log):
                                      f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
 
             # Агрегатный ряд бюллетеней виден агенту и непуст: он есть ровно в каждом выпуске
-            # импортёра — 52 недели 2021 и 19 фрагментов 2017 (Wayback), поэтому ожидание
-            # точное — 71 точка. Меньшее число значит не доехавший прогон
-            # rosstat_ipc_weeks_bulletins (или ещё идущий: точки публикуются по мере разбора
-            # выпусков), поэтому detail печатает наблюдённое число; каталог этот разрыв
+            # импортёра — 52 недельные точки 2020-12-28…2021-12-27 и 19 фрагментов 2017
+            # (Wayback), поэтому ожидание точное — 71 точка. Меньшее число значит не доехавший
+            # прогон rosstat_ipc_weeks_bulletins (или ещё идущий: точки публикуются по мере
+            # разбора выпусков), поэтому detail печатает наблюдённое число; каталог этот разрыв
             # не поймает — он полон и до первых точек.
             rosstat_bulletins = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_rosstat_macro WHERE source = 'rosstat' AND series = 'Индекс потребительских цен (недельная оценка)'"}))
             rosstat_bulletins_rows = result_rows(rosstat_bulletins)
@@ -729,7 +729,7 @@ async def check(params, server_log):
             if rosstat_bulletins_rows is None:
                 rosstat_bulletins_detail = f"ответ не распознан: {rosstat_bulletins[:200]}"
             elif rosstat_bulletins_n == 71:
-                rosstat_bulletins_detail = "точек агрегатного ряда: 71 (52 недели 2021 + 19 фрагментов 2017)"
+                rosstat_bulletins_detail = "точек агрегатного ряда: 71 (52 недельные точки 2020-12-28…2021-12-27 + 19 фрагментов 2017)"
             else:
                 rosstat_bulletins_detail = (f"точек агрегатного ряда: {rosstat_bulletins_n}, want 71 — прогнать "
                                             "make import STAT=rosstat_ipc_weeks_bulletins")
