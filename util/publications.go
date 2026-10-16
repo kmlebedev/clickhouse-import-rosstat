@@ -19,7 +19,7 @@ import (
 // версия артефакта источника. Механизм общий для источников, чьи файлы обновляются реже
 // прогонов, и включается полями шаблона util.ClickHouseImport (PublicationCountPoints /
 // PublicationSource); фактический список потребителей — ARCHITECTURE §8 п. 13
-// (девятнадцать импортёров: четырнадцать в cbr/ и пять вне него; у cbr_dip_bulletin
+// (двадцать импортёров: четырнадцать в cbr/ и шесть вне него; у cbr_dip_bulletin
 // объявление включает архив версий выпусков, а no-op держит гейт по release_id — §8 п. 13).
 // Таблица внутренняя: агенту (kimi_reader) не выдаётся.
 const PublicationsTable = "source_publications"
@@ -31,7 +31,7 @@ const PublicationsTable = "source_publications"
 const PublicationsDdl = `CREATE TABLE IF NOT EXISTS source_publications (
     source LowCardinality(String),  -- источник-потребитель: 'cbr_mo_br', 'rosstat_ipc_mes', … (ключ версии: PublicationSource импортёра или его TableName)
     name LowCardinality(String),    -- имя артефакта: 'full.xlsx'
-    fingerprint String,             -- md5 от (имя|ETag|Last-Modified|Content-Length) — отпечаток версии контента
+    fingerprint String,             -- md5 от (URL|имя|ETag|Last-Modified|Content-Length) — отпечаток версии контента
     first_seen DateTime,            -- когда конвейер впервые увидел эту версию
     points UInt64,                  -- число точек ряда в таблице на момент версии (запрос PublicationCountPoints импортёра)
     url String                      -- URL артефакта (аудит)
@@ -67,12 +67,20 @@ func EnsurePublications(ctx context.Context, conn driver.Conn) error {
 }
 
 // HeadFingerprint возвращает отпечаток версии артефакта по URL: md5hex от
-// «имя|ETag|Last-Modified|Content-Length». Content-MD5 источники (в частности ЦБ) не отдают,
+// «URL|имя|ETag|Last-Modified|Content-Length». URL обязателен: два разных документа на разных
+// URL с одним basename и без версионных заголовков иначе дали бы один отпечаток — прецедент
+// rosstat_ipc_weeks_bulletins: живой rosstat.gov.ru/…/87.htm и его Wayback-однофамилец
+// gks.ru/…/87.htm (оба HEAD — только статус-строка) склеились в одну версию, и сохранение
+// Wayback-копии перезаписало архивообъект живого документа. Basename остаётся в композите: смена
+// имени файла у источника — тоже новая версия. Content-MD5 источники (в частности ЦБ) не отдают,
 // но композит заголовков меняется ровно при смене файла; пропажа заголовка не ломает — компонент
 // остаётся пустым, а не выпадает из композита (иначе композит без ETag совпал бы с композитом с
 // ETag). Не-2xx и ошибка сети — ошибка: отпечаток «из пустых заголовков» превратил бы битую
 // ссылку в валидную версию, и импортёр счёл бы файл уже импортированным. Отпечаток — не секрет
 // и не защита от подмены: он лишь отвечает на вопрос «это тот же файл, что импортировали?».
+// Смена состава разовая: версии, записанные прежним композитом, не находятся, поэтому следующий
+// прогон каждого импортёра с точкой контроля — однократный полный импорт (идемпотентный, точки не
+// меняются; строки версий и архивообъекты лягут под новыми ключами).
 func HeadFingerprint(url string) (fingerprint string, err error) {
 	// Дедлайн — как у GetFile (util/xls.go): HttpClient создан без Timeout, и зависший ответ
 	// источника без дедлайна ошибки не даёт вовсе — импортёр ждал бы его вместо отчёта о сбое.
@@ -93,9 +101,11 @@ func HeadFingerprint(url string) (fingerprint string, err error) {
 		return "", fmt.Errorf("HEAD %s: статус %d", url, resp.StatusCode)
 	}
 	// Тела у HEAD нет — в отличие от GetFile, пустое тело здесь норма, проверять нечего.
-	// basename — из пути URL (как его считает и импортёр для name): смена имени файла меняет
-	// отпечаток, а значит и версию.
-	composite := path.Base(url) + "|" + resp.Header.Get("ETag") + "|" +
+	// URL — первым компонентом: без него однофамильцы на разных хостах (живой rosstat.gov.ru и
+	// Wayback gks.ru) с пустыми версионными заголовками получали один отпечаток и перезаписывали
+	// архивообъекты друг друга. basename — из пути URL (как его считает и импортёр для name):
+	// смена имени файла меняет отпечаток, а значит и версию.
+	composite := url + "|" + path.Base(url) + "|" + resp.Header.Get("ETag") + "|" +
 		resp.Header.Get("Last-Modified") + "|" + resp.Header.Get("Content-Length")
 	sum := md5.Sum([]byte(composite))
 	return hex.EncodeToString(sum[:]), nil
@@ -126,9 +136,13 @@ func SavePublication(ctx context.Context, conn driver.Conn, p Publication) error
 		return err
 	}
 	if err = batch.Append(p.Source, p.Name, p.Fingerprint, p.FirstSeen, p.Points, p.Url); err != nil {
+		abortBatch(batch, PublicationsTable)
 		return err
 	}
-	return batch.Send()
+	if err = batch.Send(); err != nil {
+		return err
+	}
+	return nil
 }
 
 // CountPoints выполняет countPoints-запрос импортёра и возвращает число точек его ряда. Один и

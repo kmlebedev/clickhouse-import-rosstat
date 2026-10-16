@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,30 +32,69 @@ var publicationCbrHeaders = publicationHeadHeaders{
 	contentLength: "301574",
 }
 
-// publicationHeadServer отвечает на HEAD заданными заголовками; тела нет — префлайт обязан
+// publicationServeHead — один HEAD-ответ выбранными заголовками; тела нет — префлайт обязан
 // решать по заголовкам, а не по содержимому (файл на 300 КБ качать незачем). Заодно пинним
 // метод и User-Agent: HTTP в проекте идёт только через util.HttpClient и со случайным UA.
+func publicationServeHead(t *testing.T, w http.ResponseWriter, r *http.Request, h publicationHeadHeaders) {
+	t.Helper()
+	if r.Method != http.MethodHead {
+		t.Errorf("метод %s, ожидался HEAD: префлайт не должен скачивать файл", r.Method)
+	}
+	if r.Header.Get("User-Agent") == "" {
+		t.Error("запрос ушёл без User-Agent: конвенция GetFile/GetXML/GetJSON — randomUA")
+	}
+	if h.etag != "" {
+		w.Header().Set("ETag", h.etag)
+	}
+	if h.lastModified != "" {
+		w.Header().Set("Last-Modified", h.lastModified)
+	}
+	if h.contentLength != "" {
+		w.Header().Set("Content-Length", h.contentLength)
+	}
+}
+
+// publicationHeadServer отвечает на HEAD неизменными заданными заголовками.
 func publicationHeadServer(t *testing.T, h publicationHeadHeaders) *httptest.Server {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodHead {
-			t.Errorf("метод %s, ожидался HEAD: префлайт не должен скачивать файл", r.Method)
-		}
-		if r.Header.Get("User-Agent") == "" {
-			t.Error("запрос ушёл без User-Agent: конвенция GetFile/GetXML/GetJSON — randomUA")
-		}
-		if h.etag != "" {
-			w.Header().Set("ETag", h.etag)
-		}
-		if h.lastModified != "" {
-			w.Header().Set("Last-Modified", h.lastModified)
-		}
-		if h.contentLength != "" {
-			w.Header().Set("Content-Length", h.contentLength)
-		}
+		publicationServeHead(t, w, r, h)
 	}))
 	t.Cleanup(server.Close)
 	return server
+}
+
+// publicationHeadSwitch — переключаемые заголовки HEAD-сервера: тесты чувствительности отпечатка
+// к заголовкам обязаны менять их на ОДНОМ И ТОМ ЖЕ URL — иначе отличие дал бы сам URL (он входит
+// в композит), и проверка перестала бы изолировать проверяемую переменную. Мьютекс обязателен:
+// хендлер живёт в чужой горутине, а тесты util гоняются с -race.
+type publicationHeadSwitch struct {
+	mu      sync.Mutex
+	headers publicationHeadHeaders
+}
+
+// Set — заголовки следующих HEAD-ответов.
+func (s *publicationHeadSwitch) Set(h publicationHeadHeaders) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.headers = h
+}
+
+func (s *publicationHeadSwitch) get() publicationHeadHeaders {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.headers
+}
+
+// publicationSwitchingHeadServer — HEAD-сервер, заголовки которого тест меняет между вызовами.
+func publicationSwitchingHeadServer(t *testing.T, initial publicationHeadHeaders) (*httptest.Server, *publicationHeadSwitch) {
+	t.Helper()
+	switcher := &publicationHeadSwitch{headers: initial}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		publicationServeHead(t, w, r, switcher.get())
+	}))
+	t.Cleanup(server.Close)
+	return server, switcher
 }
 
 // publicationFingerprint — отпечаток или фатальный провал теста.
@@ -99,6 +139,8 @@ func TestHeadFingerprintStable(t *testing.T) {
 
 // Композит меняется ровно при смене версии файла: правка любого из трёх заголовков обязана
 // дать другой отпечаток, иначе новая волна у ЦБ прошла бы мимо префлайта (no-op навсегда).
+// Заголовки меняются на ОДНОМ И ТОМ ЖЕ URL: после фикса 2026-10-16 URL входит в композит, и
+// смена сервера дала бы отличие сама по себе, а тест перестал бы изолировать заголовки.
 func TestHeadFingerprintChangesWithHeaders(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -122,8 +164,11 @@ func TestHeadFingerprintChangesWithHeaders(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			base := publicationFingerprint(t, publicationHeadServer(t, publicationCbrHeaders).URL+"/full.xlsx")
-			other := publicationFingerprint(t, publicationHeadServer(t, c.changed).URL+"/full.xlsx")
+			server, headers := publicationSwitchingHeadServer(t, publicationCbrHeaders)
+			url := server.URL + "/full.xlsx"
+			base := publicationFingerprint(t, url)
+			headers.Set(c.changed)
+			other := publicationFingerprint(t, url)
 			if base == other {
 				t.Errorf("смена %s не изменила отпечаток (%q): новая версия файла осталась бы незамеченной", c.name, base)
 			}
@@ -131,8 +176,10 @@ func TestHeadFingerprintChangesWithHeaders(t *testing.T) {
 	}
 }
 
-// Имя артефакта — часть композита: ЦБ может сменить и файл, и имя (id в URL нестабилен).
-// Одинаковые заголовки при разных basename — разные версии в source_publications.
+// Имя артефакта остаётся частью композита: ЦБ может сменить и файл, и имя (id в URL нестабилен).
+// Разные basename — разные версии в source_publications. Изолировать basename от URL больше
+// нельзя (имя берётся из URL, а URL с фикса 2026-10-16 входит в композит своим компонентом):
+// проверяется, что переименование не осталось незамеченным.
 func TestHeadFingerprintChangesWithName(t *testing.T) {
 	server := publicationHeadServer(t, publicationCbrHeaders)
 
@@ -144,28 +191,56 @@ func TestHeadFingerprintChangesWithName(t *testing.T) {
 }
 
 // Content-MD5 ЦБ не отдаёт, и ETag может пропасть: отпечаток обязан считаться и без него —
-// композит из остальных заголовков (спека §3.4). Важно, что это именно пустой компонент, а не
-// пропуск: иначе композит без ETag совпал бы с композитом с ETag.
+// композит из остальных компонентов (спека §3.4). Важно, что это именно пустой компонент, а не
+// пропуск: иначе композит без ETag совпал бы с композитом с ETag. Оба HEAD — по одному и тому же
+// URL: иначе отличие дал бы URL, а не наличие ETag (фикс 2026-10-16).
 func TestHeadFingerprintWithoutETag(t *testing.T) {
-	without := publicationHeadHeaders{
+	server, headers := publicationSwitchingHeadServer(t, publicationCbrHeaders)
+	url := server.URL + "/full.xlsx"
+	withETag := publicationFingerprint(t, url)
+	headers.Set(publicationHeadHeaders{
 		lastModified:  publicationCbrHeaders.lastModified,
 		contentLength: publicationCbrHeaders.contentLength,
-	}
-	serverWithout := publicationFingerprint(t, publicationHeadServer(t, without).URL+"/full.xlsx")
-	serverWith := publicationFingerprint(t, publicationHeadServer(t, publicationCbrHeaders).URL+"/full.xlsx")
+	})
+	withoutETag := publicationFingerprint(t, url)
 
-	publicationRequireMd5Hex(t, serverWithout)
-	if serverWithout == serverWith {
+	publicationRequireMd5Hex(t, withoutETag)
+	if withoutETag == withETag {
 		t.Error("композит без ETag совпал с композитом с ETag: пустой компонент подменён пропуском")
 	}
 }
 
-// Предельный случай той же ветки: сервер не отдал ни одного из трёх заголовков. Отпечаток
-// всё равно считается (композит "имя|||") — иначе недоступный по заголовкам сервер ломал бы
-// префлайт ошибкой вместо деградации до полного импорта без записи версии.
+// Предельный случай той же ветки: сервер не отдал ни одного из трёх версионных заголовков (тела
+// у HEAD нет, и httptest автоматически Content-Length не добавляет — композит «<url>|имя|||»).
+// Отпечаток всё равно считается и стабилен на одном URL — иначе недоступный по заголовкам сервер
+// ломал бы префлайт ошибкой вместо деградации до полного импорта без записи версии.
 func TestHeadFingerprintWithoutHeaders(t *testing.T) {
-	fp := publicationFingerprint(t, publicationHeadServer(t, publicationHeadHeaders{}).URL+"/full.xlsx")
-	publicationRequireMd5Hex(t, fp)
+	url := publicationHeadServer(t, publicationHeadHeaders{}).URL + "/full.xlsx"
+	first := publicationFingerprint(t, url)
+	second := publicationFingerprint(t, url)
+	publicationRequireMd5Hex(t, first)
+	if first != second {
+		t.Errorf("отпечаток без единого версионного заголовка не стабилен на одном URL: %q, затем %q", first, second)
+	}
+}
+
+// Регрессия дефекта 2026-10-16 (красная проба: на композите «имя|ETag|Last-Modified|Content-Length»
+// этот тест падает). Прецедент rosstat_ipc_weeks_bulletins: 71 документ, у шести пар один basename,
+// и живой rosstat.gov.ru, и Wayback-зеркало gks.ru отвечают на HEAD без ETag/Last-Modified/
+// Content-Length, поэтому композит «87.htm|||» совпадал у разных документов, и сохранение
+// Wayback-версии перезаписало архивообъект живого 87.htm (архив недосчитал 2 объекта из 71,
+// ошибок в логе не было). С URL в композите два хоста с одним basename — разные версии.
+func TestHeadFingerprintDiffersAcrossURLsSameBasename(t *testing.T) {
+	// Два сервера — два «хоста» (живой и Wayback): один basename и ни одного версионного
+	// заголовка, ровно как в прецеденте.
+	live := publicationHeadServer(t, publicationHeadHeaders{})
+	wayback := publicationHeadServer(t, publicationHeadHeaders{})
+
+	liveFingerprint := publicationFingerprint(t, live.URL+"/87.htm")
+	waybackFingerprint := publicationFingerprint(t, wayback.URL+"/87.htm")
+	if liveFingerprint == waybackFingerprint {
+		t.Errorf("разные URL с одним basename и без версионных заголовков дали один отпечаток %q: версии склеятся, и архив перезапишет объект живого документа", liveFingerprint)
+	}
 }
 
 // Не-2xx — ошибка, а не «отпечаток из пустых заголовков»: иначе 404/500 превратился бы в

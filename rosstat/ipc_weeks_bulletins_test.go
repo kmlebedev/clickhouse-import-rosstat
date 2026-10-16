@@ -1,0 +1,555 @@
+package rosstat
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
+	"sort"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+	log "github.com/sirupsen/logrus"
+)
+
+// Фикстуры — реальные артефакты спасательного дампа 2026-10-16 (спека §3.10): живой выпуск
+// 2021-08-09, новогодний выпуск 2021-01-11 (у него своя шапка колонок), восстановленная через
+// Wayback неделя 2021-02-01 и фрагмент 2017-05-22. Тесты офлайн: точки собирает appendRecorder,
+// BodyFunc-замыкание вызывается напрямую — ни базы, ни сети тесту не нужно (§11.6).
+const (
+	ipcWeeksBulletinsLive2021Fixture    = "ipc_weeks_bulletins_144.htm"
+	ipcWeeksBulletinsNewYear2021Fixture = "ipc_weeks_bulletins_2.htm"
+	ipcWeeksBulletinsWayback21Fixture   = "ipc_weeks_bulletins_19_wayback.htm"
+	ipcWeeksBulletinsWayback17Fixture   = "ipc_weeks_bulletins_100_2017_wayback.htm"
+	ipcWeeksBulletinsStubFixture        = "ipc_weeks_bulletins_stub.htm"
+)
+
+// importIpcWeeksBulletinsFixture прогоняет фикстуру через BodyFunc-замыкание выпуска и отдаёт
+// записанные точки: тот же путь, что у шаблона (байты HTML → ipcWeeksBulletinsParse → батч).
+func importIpcWeeksBulletinsFixture(t *testing.T, file string, date time.Time) []appendedRow {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join("testdata", file))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := &appendRecorder{}
+	source := ipcWeeksBulletinsSource{URL: "test://" + file, Date: date}
+	if err = ipcWeeksBulletinsAppend(source)(body, rec); err != nil {
+		t.Fatalf("ipcWeeksBulletinsAppend(%s): %v", file, err)
+	}
+	return rec.rows
+}
+
+// ipcWeeksBulletinsSpotValue ищет единственную точку ряда на дату выпуска и возвращает её
+// значение: spot-проверки ниже читаются одной строкой.
+func ipcWeeksBulletinsSpotValue(t *testing.T, rows []appendedRow, series string, date time.Time) float64 {
+	t.Helper()
+	found := 0
+	value := 0.0
+	for _, row := range rows {
+		if row.series != series || !row.date.Equal(date) {
+			continue
+		}
+		found++
+		value = row.value
+	}
+	if found != 1 {
+		t.Fatalf("ряд %q на %s: точек %d, ожидалась 1", series, date.Format("2006-01-02"), found)
+	}
+	return value
+}
+
+// TestIpcWeeksBulletinsReadsLive2021 — разбор живого выпуска 144.htm (2021-08-09): 103 строки
+// товаров и агрегат, 104 точки, каждая — под своим рядом (имён-дублей в выпуске нет). Значения
+// сверяются точками: агрегат 100,00, «Говядина…» 100,35, «Сметана» 100,48 (значения источника
+// без пробелов и в десятичной запятой). Тип записанного значения — float64: колонка таблицы
+// Float64 (спека §3.1; у legacy-соседа rosstat_ipc_weeks — Float32), и appendRecorder хранит
+// тип, чтобы схема колонки не осталась непроверенной.
+func TestIpcWeeksBulletinsReadsLive2021(t *testing.T) {
+	date := time.Date(2021, time.August, 9, 0, 0, 0, 0, time.UTC)
+	rows := importIpcWeeksBulletinsFixture(t, ipcWeeksBulletinsLive2021Fixture, date)
+	if len(rows) != 104 {
+		t.Fatalf("точек %d, ожидалось 104 (103 товара + агрегат)", len(rows))
+	}
+	counts := countBySeries(rows)
+	if len(counts) != 104 {
+		t.Fatalf("рядов %d, ожидалось 104", len(counts))
+	}
+	for _, row := range rows {
+		if row.valueType != "float64" {
+			t.Errorf("ряд %q записан как %s, ожидался float64", row.series, row.valueType)
+		}
+		if !row.date.Equal(date) {
+			t.Errorf("ряд %q: дата %s, ожидалась %s", row.series, row.date.Format("2006-01-02"), date.Format("2006-01-02"))
+		}
+	}
+	for series, want := range map[string]float64{
+		ipcWeeksBulletinsAggregateSeries:        100.00,
+		"Говядина (кроме бескостного мяса), кг": 100.35,
+		"Сметана, кг":                           100.48,
+	} {
+		if got := ipcWeeksBulletinsSpotValue(t, rows, series, date); got != want {
+			t.Errorf("ряд %q: значение %v, ожидалось %v", series, got, want)
+		}
+	}
+}
+
+// TestIpcWeeksBulletinsReadsNewYear2021 — разбор самого экзотического выпуска дампа: 2.htm
+// (2021-01-11, неделя 1–11 января). Шапка его детальной таблицы устроена иначе: первая колонка
+// данных — накопленная («11 января 2021 г. к концу декабря 2020 г.»), а недельное значение под
+// групповым якорем «к предыдущей дате регистрации» стоит во второй колонке («11 января 2021 г.»);
+// разбор берёт колонку по якорю, а не по индексу (ipcWeeksBulletinsValueColumn). Поэтому
+// spot-значения товаров закреплены по второй колонке и отличаются от первой: «Картофель» — 103,0
+// (накопленная 102,7; текст выпуска «картофель – на 2,7%» называет именно её), «Сметана» — 100,2
+// (100,1), «Баранина…» — 100,3 (100,2): сдвиг колонки на первую дал бы другие числа. Агрегат —
+// 100,4: в таблице «в процентах» этого выпуска колонки «к предыдущей дате регистрации» нет
+// (первая колонка — «С начала января 2021 г.»), разбор берёт первое число строки, а текст
+// выпуска называет эту оценку итогом периода: «За период с 1 по 11 января 2021 г. индекс
+// потребительских цен … составил 100,4%».
+func TestIpcWeeksBulletinsReadsNewYear2021(t *testing.T) {
+	date := time.Date(2021, time.January, 11, 0, 0, 0, 0, time.UTC)
+	rows := importIpcWeeksBulletinsFixture(t, ipcWeeksBulletinsNewYear2021Fixture, date)
+	if len(rows) != 103 {
+		t.Fatalf("точек %d, ожидалось 103 (102 товара + агрегат)", len(rows))
+	}
+	if counts := countBySeries(rows); len(counts) != 103 {
+		t.Fatalf("рядов %d, ожидалось 103", len(counts))
+	}
+	for _, row := range rows {
+		if row.valueType != "float64" {
+			t.Errorf("ряд %q записан как %s, ожидался float64", row.series, row.valueType)
+		}
+		if !row.date.Equal(date) {
+			t.Errorf("ряд %q: дата %s, ожидалась %s", row.series, row.date.Format("2006-01-02"), date.Format("2006-01-02"))
+		}
+	}
+	for series, want := range map[string]float64{
+		ipcWeeksBulletinsAggregateSeries: 100.4,
+		"Картофель, кг":                  103.0,
+		"Сметана, кг":                    100.2,
+		"Баранина (кроме бескостного мяса), кг": 100.3,
+	} {
+		if got := ipcWeeksBulletinsSpotValue(t, rows, series, date); got != want {
+			t.Errorf("ряд %q: значение %v, ожидалось %v (недельная колонка под якорем «к предыдущей дате регистрации»)", series, got, want)
+		}
+	}
+}
+
+// TestIpcWeeksBulletinsReadsWayback2021 — разбор восстановленной недели 19.htm (2021-02-01) из
+// Wayback: 102 товара и агрегат. Спот-значения: агрегат 100,0, «Говядина…» 100,2, «Сметана» 99,9
+// и extra-ряд «Консервы мясные» 100,0 — строка, которой в XLSX 2022+ нет и которую импортёр
+// описывает собственной метой.
+func TestIpcWeeksBulletinsReadsWayback2021(t *testing.T) {
+	date := time.Date(2021, time.February, 1, 0, 0, 0, 0, time.UTC)
+	rows := importIpcWeeksBulletinsFixture(t, ipcWeeksBulletinsWayback21Fixture, date)
+	if len(rows) != 103 {
+		t.Fatalf("точек %d, ожидалось 103 (102 товара + агрегат)", len(rows))
+	}
+	if counts := countBySeries(rows); len(counts) != 103 {
+		t.Fatalf("рядов %d, ожидалось 103", len(counts))
+	}
+	for series, want := range map[string]float64{
+		ipcWeeksBulletinsAggregateSeries:        100.0,
+		"Говядина (кроме бескостного мяса), кг": 100.2,
+		"Сметана, кг":                           99.9,
+		"Консервы мясные":                       100.0,
+	} {
+		if got := ipcWeeksBulletinsSpotValue(t, rows, series, date); got != want {
+			t.Errorf("ряд %q: значение %v, ожидалось %v", series, got, want)
+		}
+	}
+}
+
+// TestIpcWeeksBulletinsReadsWayback2017 — разбор фрагмента 100.htm (2017-05-22): 37 товаров и
+// агрегат. Спот-значения: агрегат 100,0, «Рыба мороженая неразделанная» 100,2, «Яйца куриные»
+// 97,4. Здесь же проверяется канонизация 2017 года: имена с единицами («Отопление, Гкал»)
+// приходят к тем же рядам, что имена без единиц 2021 года.
+func TestIpcWeeksBulletinsReadsWayback2017(t *testing.T) {
+	date := time.Date(2017, time.May, 22, 0, 0, 0, 0, time.UTC)
+	rows := importIpcWeeksBulletinsFixture(t, ipcWeeksBulletinsWayback17Fixture, date)
+	if len(rows) != 38 {
+		t.Fatalf("точек %d, ожидалось 38 (37 товаров + агрегат)", len(rows))
+	}
+	if counts := countBySeries(rows); len(counts) != 38 {
+		t.Fatalf("рядов %d, ожидалось 38", len(counts))
+	}
+	for series, want := range map[string]float64{
+		ipcWeeksBulletinsAggregateSeries:   100.0,
+		"Рыба мороженая неразделанная, кг": 100.2,
+		"Яйца куриные, 10 шт.":             97.4,
+		"Отопление, Гкал":                  100.0,
+	} {
+		if got := ipcWeeksBulletinsSpotValue(t, rows, series, date); got != want {
+			t.Errorf("ряд %q: значение %v, ожидалось %v", series, got, want)
+		}
+	}
+}
+
+// TestIpcWeeksBulletinsStubFails — страница-заглушка WAF (HTTP-статус у неё 502, а GetFile статус
+// не проверяет, поэтому заглушка обязана валиться по контенту): у неё нет титула периода, и
+// разбор обязан упасть, а не записать «0 точек». Это же — защита от подмены документа: заглушку
+// «Федеральная служба государственной статистики» живые выпуски однажды уже отдавали.
+func TestIpcWeeksBulletinsStubFails(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("testdata", ipcWeeksBulletinsStubFixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = ipcWeeksBulletinsParse(body)
+	if err == nil {
+		t.Fatal("заглушка: ожидалась ошибка, получен nil")
+	}
+	if !strings.Contains(err.Error(), "титул") {
+		t.Errorf("в ошибке нет разбора титула заглушки: %v", err)
+	}
+}
+
+// TestIpcWeeksBulletinsNoTableFails — битый мусор: титул периода есть, таблиц нет. Разбор
+// обязан упасть (нет агрегата/детальной таблицы), а не вернуть ноль точек молча (§6.4).
+func TestIpcWeeksBulletinsNoTableFails(t *testing.T) {
+	body := []byte("<!DOCTYPE html><html><head><title>Об оценке индекса потребительских цен с 3 по 9 августа 2021 года</title></head><body><p>нет таблиц</p></body></html>")
+	if _, err := ipcWeeksBulletinsParse(body); err == nil {
+		t.Fatal("документ без таблиц: ожидалась ошибка, получен nil")
+	}
+	if _, err := ipcWeeksBulletinsParse([]byte("совсем не html")); err == nil {
+		t.Fatal("мусор: ожидалась ошибка, получен nil")
+	}
+}
+
+// TestIpcWeeksBulletinsDateShiftFails — сдвиг даты: подменяем у выпуска ожидаемую дату точкой из
+// другого времени. Дата титула обязана совпасть с датой записи списка источников (§3.3): буфер
+// пере-нумеровался бы — и точки ушли бы не на свою дату, а молча.
+func TestIpcWeeksBulletinsDateShiftFails(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("testdata", ipcWeeksBulletinsLive2021Fixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := &appendRecorder{}
+	wrong := ipcWeeksBulletinsSource{URL: "test://144", Date: time.Date(2021, time.August, 16, 0, 0, 0, 0, time.UTC)}
+	err = ipcWeeksBulletinsAppend(wrong)(body, rec)
+	if err == nil {
+		t.Fatal("сдвиг даты: ожидалась ошибка, получен nil")
+	}
+	if !strings.Contains(err.Error(), "не совпала") {
+		t.Errorf("в ошибке нет причины «не совпала»: %v", err)
+	}
+	if len(rec.rows) != 0 {
+		t.Errorf("при ошибке записано %d строк, ожидалось 0", len(rec.rows))
+	}
+}
+
+// ipcWeeksBulletinsMiniAggregateRow — строка агрегата минимального выпуска (значение 100,00):
+// её подставляет в документ ветка «нет строки агрегата» или не подставляет вовсе.
+const ipcWeeksBulletinsMiniAggregateRow = "<tr><td>Индекс потребительских цен (оценка)</td><td>100,00</td><td>99,98</td></tr>"
+
+// ipcWeeksBulletinsMiniDoc — минимальный выпуск в разметке Word-HTML для веток отказа, которых
+// в полной фикстуре нет: титул, таблица с переданной строкой агрегата, детальная таблица с
+// шапкой (rowspan+colspan) и переданными строками товаров. Кодировка — UTF-8 без meta:
+// charset.NewReader распознаёт её sniffing'ом (живые выпуски приходят в cp1251, здесь важна не
+// кодировка, а разметка).
+func ipcWeeksBulletinsMiniDoc(title, aggregateRow, productRows string) string {
+	return fmt.Sprintf(`<!DOCTYPE html><html><head><title>%s</title></head><body>
+<table>%s</table>
+<table><thead>
+<tr><td></td><td>Изменения цен</td><td></td></tr>
+<tr><td rowspan="2"></td><td>9 августа</td><td>9 августа 2021 г. к концу</td></tr>
+<tr><td>к предыдущей дате регистрации</td><td>декабря 2020 г.</td></tr>
+</thead><tbody>
+%s
+</tbody></table></body></html>`, title, aggregateRow, productRows)
+}
+
+// TestIpcWeeksBulletinsNoDataCellNotPoint — «…» (подпись источника «данных не имеется») точкой
+// не становится (§6.7): строка «Сметана» пропускается, её соседи читаются как обычно. Ошибкой
+// такая ячейка тоже не является — пропуск данных у одного товара не конец таблицы.
+func TestIpcWeeksBulletinsNoDataCellNotPoint(t *testing.T) {
+	body := []byte(ipcWeeksBulletinsMiniDoc(
+		"Об оценке индекса потребительских цен с 3 по 9 августа 2021 года", ipcWeeksBulletinsMiniAggregateRow,
+		"<tr><td>Говядина (кроме бескостного мяса)</td><td>100,35</td><td>106,55</td></tr>\n"+
+			"<tr><td>Сметана</td><td>…</td><td>102,80</td></tr>\n"))
+	rec := &appendRecorder{}
+	if err := ipcWeeksBulletinsAppend(ipcWeeksBulletinsSource{URL: "test://mini", Date: time.Date(2021, time.August, 9, 0, 0, 0, 0, time.UTC)})(body, rec); err != nil {
+		t.Fatalf("«…» — подпись «данных не имеется», ошибки быть не должно: %v", err)
+	}
+	counts := countBySeries(rec.rows)
+	if len(rec.rows) != 2 || counts["Говядина (кроме бескостного мяса), кг"] != 1 {
+		t.Fatalf("точки %v: ожидался агрегат и «Говядина…», «Сметана» с «…» — не точка", counts)
+	}
+	if counts["Сметана, кг"] != 0 {
+		t.Errorf("«…» записана точкой: %v", counts)
+	}
+}
+
+// TestIpcWeeksBulletinsErrorBranches — ветки отказа разбора (§6.4), которых в полной фикстуре
+// нет: без них дрейф разметки дал бы «ноль точек» вместо внятной ошибки, а мусор в ячейке стал
+// бы точкой ряда. Точки в батч не пишутся: разбор идёт целиком до первой записи.
+func TestIpcWeeksBulletinsErrorBranches(t *testing.T) {
+	const title = "Об оценке индекса потребительских цен с 3 по 9 августа 2021 года"
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "значение не число",
+			body: ipcWeeksBulletinsMiniDoc(title, ipcWeeksBulletinsMiniAggregateRow,
+				"<tr><td>Говядина (кроме бескостного мяса)</td><td>нет</td><td>106,55</td></tr>"),
+			want: "не число",
+		},
+		{
+			name: "нет строки агрегата",
+			body: ipcWeeksBulletinsMiniDoc(title, "",
+				"<tr><td>Говядина (кроме бескостного мяса)</td><td>100,35</td><td>106,55</td></tr>"),
+			want: "не найдена",
+		},
+		{
+			name: "нет строк товаров",
+			body: ipcWeeksBulletinsMiniDoc(title, ipcWeeksBulletinsMiniAggregateRow, ""),
+			want: "строки данных не найдены",
+		},
+		{
+			name: "все ячейки значений без данных",
+			body: ipcWeeksBulletinsMiniDoc(title, ipcWeeksBulletinsMiniAggregateRow,
+				"<tr><td>Говядина (кроме бескостного мяса)</td><td>…</td><td>106,55</td></tr>"),
+			want: "нет ни одной строки товара",
+		},
+		{
+			name: "титул без периода",
+			body: ipcWeeksBulletinsMiniDoc("Об оценке индекса потребительских цен", ipcWeeksBulletinsMiniAggregateRow,
+				"<tr><td>Говядина (кроме бескостного мяса)</td><td>100,35</td><td>106,55</td></tr>"),
+			want: "период",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := &appendRecorder{}
+			err := ipcWeeksBulletinsAppend(ipcWeeksBulletinsSource{URL: "test://mini", Date: time.Date(2021, time.August, 9, 0, 0, 0, 0, time.UTC)})([]byte(tt.body), rec)
+			if err == nil {
+				t.Fatalf("ожидалась ошибка, получено %d строк", len(rec.rows))
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("в ошибке нет %q: %v", tt.want, err)
+			}
+			if len(rec.rows) != 0 {
+				t.Errorf("при ошибке записано %d строк, ожидалось 0", len(rec.rows))
+			}
+		})
+	}
+}
+
+// TestIpcWeeksBulletinsUnknownProductWarns — имя вне карты канонизации и вне extra-списка —
+// ожидаемое изменение источника (§6.6): предупреждение с именем товара, точка записывается под
+// исходным именем. Ошибкой это быть не может: источник заморожен, но его дрейф не должен
+// молча терять строки.
+func TestIpcWeeksBulletinsUnknownProductWarns(t *testing.T) {
+	var logged bytes.Buffer
+	prevOut := log.StandardLogger().Out
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(prevOut) })
+
+	const unknown = "Товар, которого нет в каталоге"
+	body := []byte(ipcWeeksBulletinsMiniDoc(
+		"Об оценке индекса потребительских цен с 3 по 9 августа 2021 года", ipcWeeksBulletinsMiniAggregateRow,
+		"<tr><td>"+unknown+"</td><td>100,35</td><td>106,55</td></tr>\n"+
+			"<tr><td>Сметана</td><td>100,48</td><td>102,80</td></tr>\n"))
+	rec := &appendRecorder{}
+	if err := ipcWeeksBulletinsAppend(ipcWeeksBulletinsSource{URL: "test://mini", Date: time.Date(2021, time.August, 9, 0, 0, 0, 0, time.UTC)})(body, rec); err != nil {
+		t.Fatalf("товар вне каталога — ожидаемое изменение источника, ошибки быть не должно: %v", err)
+	}
+	if !strings.Contains(logged.String(), unknown) {
+		t.Errorf("в предупреждении нет имени товара %q: %q", unknown, logged.String())
+	}
+	if counts := countBySeries(rec.rows); counts[unknown] != 1 || counts["Сметана, кг"] != 1 {
+		t.Errorf("точки товаров %v: неизвестный ряд должен быть записан под исходным именем", counts)
+	}
+}
+
+// TestIpcWeeksBulletinsSourcesInvariants — инварианты списка 80 выпусков (спека §3.5.1, §11;
+// расширение 2026-10-16 — приложение В): 48 живых недельных выпусков (47 недель 2021 + неделя
+// 22–28.12.2020), 4 восстановленные недели 2021, 25 фрагментов 2017 и 3 найденных выпуска 2020
+// (2020-11-16/12-07/12-21 — Wayback сохранил лишь эти недели до живого буфера); URL уникальны;
+// даты строго возрастают; у Wayback-адресов — форма
+// id_ (сырые байты документа, без панели Wayback); недельный блок 2020-12-28…2021-12-27 покрыт
+// всеми неделями: обычный шаг 6–8 дней (5 и 9 — стыки с Wayback-выпусками), единственный
+// 14-дневный шаг — новогодний
+// (2020-12-28 → 2021-01-11; неделя 1–11 января вышла одним выпуском 2.htm), а шаг больше 14
+// дней означал бы потерянный выпуск; 2021-02-01/08/15/24 — те самые удалённые из живого буфера
+// недели, ради которых и снят дамп.
+func TestIpcWeeksBulletinsSourcesInvariants(t *testing.T) {
+	if len(ipcWeeksBulletinsSources) != 80 {
+		t.Fatalf("выпусков %d, ожидалось 80", len(ipcWeeksBulletinsSources))
+	}
+	live, wayback2021, wayback2017, wayback2020 := 0, 0, 0, 0
+	urls := make(map[string]bool, len(ipcWeeksBulletinsSources))
+	prev := time.Time{}
+	weekly2021 := make([]time.Time, 0, 52)
+	pre2020Tail := make([]string, 0, 3)
+	for _, source := range ipcWeeksBulletinsSources {
+		switch {
+		case strings.HasPrefix(source.URL, "https://rosstat.gov.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/"):
+			live++
+		case strings.Contains(source.URL, "web.archive.org/web/2021"):
+			wayback2021++
+		case strings.Contains(source.URL, "web.archive.org/web/2020"):
+			wayback2020++
+		case strings.Contains(source.URL, "web.archive.org/web/2017"):
+			wayback2017++
+		}
+		if !strings.HasPrefix(source.URL, "http") {
+			t.Errorf("URL %q без схемы", source.URL)
+		}
+		if urls[source.URL] {
+			t.Errorf("URL %q встречается дважды", source.URL)
+		}
+		urls[source.URL] = true
+		if !prev.IsZero() && !source.Date.After(prev) {
+			t.Errorf("даты не возрастают: %s после %s", source.Date.Format("2006-01-02"), prev.Format("2006-01-02"))
+		}
+		prev = source.Date
+		if source.Date.Year() >= 2020 {
+			// Недельный блок 2020 до 2020-12-28 неполон по вине источника: Wayback сохранил
+			// лишь три недели ноября–декабря (остальные не были заархивированы ни разу) — они
+			// пинятся литералами отдельно, а сплошное покрытие проверяется от 2020-12-28, самого
+			// старого документа живого буфера.
+			if source.Date.Before(time.Date(2020, time.December, 28, 0, 0, 0, 0, time.UTC)) {
+				pre2020Tail = append(pre2020Tail, source.Date.Format("2006-01-02"))
+			} else {
+				weekly2021 = append(weekly2021, source.Date)
+			}
+		}
+		if strings.Contains(source.URL, "web.archive.org") && !strings.Contains(source.URL, "id_/") {
+			t.Errorf("у Wayback-адреса %q нет формы id_: панель Wayback переписала бы документ", source.URL)
+		}
+	}
+	if live != 48 || wayback2021 != 4 || wayback2017 != 25 || wayback2020 != 3 {
+		t.Errorf("состав списка: живых %d, Wayback-2021 %d, Wayback-2017 %d, Wayback-2020 %d; ожидалось 48 + 4 + 25 + 3 = 80", live, wayback2021, wayback2017, wayback2020)
+	}
+	if want := []string{"2020-11-16", "2020-12-07", "2020-12-21"}; !reflect.DeepEqual(pre2020Tail, want) {
+		t.Errorf("найденные недели 2020 до живого буфера: %v, ожидались %v (приложение В спеки)", pre2020Tail, want)
+	}
+	if len(weekly2021) != 52 {
+		t.Fatalf("недельный блок 2021: точек %d, ожидалось 52", len(weekly2021))
+	}
+	if first, last := weekly2021[0].Format("2006-01-02"), weekly2021[len(weekly2021)-1].Format("2006-01-02"); first != "2020-12-28" || last != "2021-12-27" {
+		t.Errorf("недельный блок покрывает %s…%s, ожидалось 2020-12-28…2021-12-27", first, last)
+	}
+	longGaps := 0
+	for i := 1; i < len(weekly2021); i++ {
+		gap := weekly2021[i].Sub(weekly2021[i-1])
+		if gap > 14*24*time.Hour {
+			t.Errorf("разрыв %v между %s и %s: выпуск потерян", gap, weekly2021[i-1].Format("2006-01-02"), weekly2021[i].Format("2006-01-02"))
+		}
+		if gap == 14*24*time.Hour {
+			longGaps++
+			if got := weekly2021[i-1].Format("2006-01-02") + " → " + weekly2021[i].Format("2006-01-02"); got != "2020-12-28 → 2021-01-11" {
+				t.Errorf("14-дневный шаг %s: ожидался единственный новогодний 2020-12-28 → 2021-01-11 (неделя 1–11 января одним выпуском)", got)
+			}
+		}
+	}
+	if longGaps != 1 {
+		t.Errorf("14-дневных шагов %d, ожидался один новогодний: неделя 1–11 января вышла одним выпуском 2.htm", longGaps)
+	}
+	got := make(map[string]bool, len(weekly2021))
+	for _, date := range weekly2021 {
+		got[date.Format("2006-01-02")] = true
+	}
+	for _, date := range []string{"2021-02-01", "2021-02-08", "2021-02-15", "2021-02-24"} {
+		if !got[date] {
+			t.Errorf("в списке нет восстановленной недели %s (живой буфер её не отдаёт)", date)
+		}
+	}
+}
+
+// TestIpcWeeksBulletinsNewSources — чистая функция гейта (§3.5 шаг 2): из списка и множества
+// известных дат вычисляются недостающие выпуски в хронологическом порядке. Сценарии «всё
+// известно» (пусто → прогон no-op) и «известно всё, кроме одной середины» пинятся здесь, а не
+// живым прогоном: без базы и без сети.
+func TestIpcWeeksBulletinsNewSources(t *testing.T) {
+	all := ipcWeeksBulletinsNewSources(ipcWeeksBulletinsSources, map[string]bool{})
+	if len(all) != len(ipcWeeksBulletinsSources) {
+		t.Fatalf("недостающих выпусков %d, ожидалось %d", len(all), len(ipcWeeksBulletinsSources))
+	}
+	if !sort.SliceIsSorted(all, func(i, j int) bool { return all[i].Date.Before(all[j].Date) }) {
+		t.Error("недостающие выпуски не в хронологическом порядке")
+	}
+
+	known := make(map[string]bool, len(ipcWeeksBulletinsSources))
+	for _, source := range ipcWeeksBulletinsSources {
+		known[source.Date.Format("2006-01-02")] = true
+	}
+	if fresh := ipcWeeksBulletinsNewSources(ipcWeeksBulletinsSources, known); len(fresh) != 0 {
+		t.Fatalf("все даты известны: недостающих %d, ожидалось 0", len(fresh))
+	}
+
+	delete(known, "2021-02-15")
+	fresh := ipcWeeksBulletinsNewSources(ipcWeeksBulletinsSources, known)
+	if len(fresh) != 1 {
+		t.Fatalf("пропала одна дата: недостающих %d, ожидалась 1", len(fresh))
+	}
+	if got := fresh[0].Date.Format("2006-01-02"); got != "2021-02-15" {
+		t.Errorf("недостающий выпуск %s, ожидался 2021-02-15", got)
+	}
+}
+
+// TestIpcWeeksBulletinsMetaMatchesFixtures — двусторонний контракт каталога на фикстурах
+// (спека §3.2.2): каждый разобранный ряд описан (describedSeries проверяет и заполненность, и
+// отсутствие дублей описаний), а описанное сверх разобранного — ровно extra-ряды, которых в
+// трёх фикстурах нет: их издания (245.htm и другие выпуски вне testdata) остаются за контрактом
+// и пин литералами ниже. Так контракт остаётся двусторонним, а extra-ряд не может пропасть из
+// каталога незамеченным.
+func TestIpcWeeksBulletinsMetaMatchesFixtures(t *testing.T) {
+	var parsed []string
+	seen := make(map[string]bool)
+	parsed = append(parsed, ipcWeeksBulletinsAggregateSeries)
+	seen[ipcWeeksBulletinsAggregateSeries] = true
+	for _, fixture := range []struct {
+		file string
+		date time.Time
+	}{
+		{ipcWeeksBulletinsLive2021Fixture, time.Date(2021, time.August, 9, 0, 0, 0, 0, time.UTC)},
+		{ipcWeeksBulletinsWayback21Fixture, time.Date(2021, time.February, 1, 0, 0, 0, 0, time.UTC)},
+		{ipcWeeksBulletinsWayback17Fixture, time.Date(2017, time.May, 22, 0, 0, 0, 0, time.UTC)},
+	} {
+		for _, row := range importIpcWeeksBulletinsFixture(t, fixture.file, fixture.date) {
+			if !seen[row.series] {
+				seen[row.series] = true
+				parsed = append(parsed, row.series)
+			}
+		}
+	}
+
+	described := describedSeries(t, ipcWeeksBulletinsSeriesMeta())
+	for _, series := range []string{"Проживание в гостинице", "Сорочка верхняя для мальчиков школьного возраста"} {
+		if !described[series] {
+			t.Errorf("extra-ряд %q не описан в каталоге", series)
+		}
+		delete(described, series)
+	}
+	requireParsedDescribed(t, parsed, described)
+}
+
+// TestIpcWeeksBulletinsProductMetaShared — текст меты общего товара у двух недельных импортёров
+// совпадает byte-в-byte (§3.2): иначе upsert каталога зависел бы от порядка прогонов, а
+// v_series_catalog показывал бы то одну, то другую редакцию описания.
+func TestIpcWeeksBulletinsProductMetaShared(t *testing.T) {
+	xlsx := make(map[string]util.SeriesMeta, len(ipcWeeksProducts))
+	for _, meta := range ipcWeeksSeriesMeta() {
+		xlsx[meta.Series] = meta
+	}
+	shared := 0
+	for _, meta := range ipcWeeksBulletinsSeriesMeta() {
+		other, ok := xlsx[meta.Series]
+		if !ok {
+			continue
+		}
+		shared++
+		if other != meta {
+			t.Errorf("описание товара %q разошлось между импортёрами:\nXLSX: %+v\nбюллетени: %+v", meta.Series, other, meta)
+		}
+	}
+	if shared == 0 {
+		t.Fatal("ни один товар недельных бюллетеней не описан XLSX-импортёром: сверять нечего")
+	}
+}

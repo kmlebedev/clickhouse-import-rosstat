@@ -43,3 +43,13 @@ steps:
       limit: 3
       interval_sec: 300
 
+  # Шестой шаг — последним: падение нового шага не лишает данных уже проверенные пять, а после
+  # первого прогона он всегда no-op по гейту, поэтому исчезновение живого буфера цепочку не ломает.
+  - id: rosstat_ipc_weeks_bulletins
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=rosstat_ipc_weeks_bulletins
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+

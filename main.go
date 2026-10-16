@@ -36,37 +36,59 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 )
 
 var (
 	ctx = context.Background()
 )
 
-// Режим одного действия ARCHIVE_ACTION: значение registry обновляет git-зеркало реестра
-// винтажного архива и завершает процесс — реестру ClickHouse не нужен, поэтому выход стоит
-// до ParseDSN (подключения к базе в этом режиме не происходит вовсе). Путь зеркала настраивается
-// (ARCHIVE_REGISTRY_OUT), но штатно он один: цель Makefile и README называют этот же файл.
+// Режимы ARCHIVE_ACTION: registry обновляет git-зеркало реестра винтажного архива, list печатает
+// версии и сверяет хранилище с реестром, restore не завершает процесс, а переключает обычный путь
+// импортёров на восстановление из архива (util.ArchiveRestoreMode). registry и list —
+// самостоятельные действия: сделали своё и вышли; реестру и листингу ClickHouse не нужен, поэтому
+// выход стоит до ParseDSN (подключения к базе в этих режимах не происходит вовсе). Имя переменной
+// и значения общие с util (util.EnvArchiveAction): вторая копия строки в шаблоне разошлась бы с
+// разбором в main молча, и restore пошёл бы обычным путём — с сетью и полным импортом. Путь
+// зеркала настраивается (ARCHIVE_REGISTRY_OUT), но штатно он один: цель Makefile и README
+// называют этот же файл; листинг настраивают ARCHIVE_LIST_SOURCE (фильтр источников) и
+// ARCHIVE_RECONCILE (сверка с содержимым хранилища).
 const (
-	archiveActionRegistry        = "registry"
 	envArchiveRegistryOut        = "ARCHIVE_REGISTRY_OUT"
 	envArchiveRegistryAllowEmpty = "ARCHIVE_REGISTRY_ALLOW_EMPTY"
 	defaultRegistryOut           = "docs/archive/registry.jsonl"
+	envArchiveListSource         = "ARCHIVE_LIST_SOURCE"
+	envArchiveReconcile          = "ARCHIVE_RECONCILE"
 )
 
 func main() {
 	if lvl, err := log.ParseLevel(os.Getenv("LOG_LEVEL")); err == nil {
 		log.SetLevel(lvl)
 	}
-	if action := os.Getenv("ARCHIVE_ACTION"); action != "" {
-		// Неизвестное действие — ошибка, а не «пусть прогонит импортёры»: иначе опечатка
-		// (ARCHIVE_ACTION=Registry) молча запускала бы полный импорт по расписанию dagu.
-		if action != archiveActionRegistry {
-			log.Fatalf("неизвестное ARCHIVE_ACTION (ожидается %s)", archiveActionRegistry)
-		}
+	// Неизвестное действие — ошибка, а не «пусть прогонит импортёры»: иначе опечатка
+	// (ARCHIVE_ACTION=Registry) молча запускала бы полный импорт по расписанию dagu.
+	switch action := os.Getenv(util.EnvArchiveAction); action {
+	case "":
+		// Обычный прогон импортёров — без архива и режимов.
+	case util.ArchiveActionRegistry:
 		if err := runArchiveRegistry(ctx); err != nil {
 			log.Fatal(err)
 		}
 		return
+	case util.ArchiveActionList:
+		if err := runArchiveList(ctx); err != nil {
+			log.Fatal(err)
+		}
+		return
+	case util.ArchiveActionRestore:
+		// restore процесс не завершает: ниже продолжается обычный путь импортёров, и каждый
+		// выбранный работает по архиву. Фильтр обязателен: пустой CLICKHOUSE_IMPORT_STAT означал бы
+		// «восстановить всё», а это не ручное действие на один импортёр, а случайный полный прогон.
+		if len(parseImportFilter(os.Getenv("CLICKHOUSE_IMPORT_STAT"))) == 0 {
+			log.Fatalf("режим восстановления (%s=%s) требует непустой CLICKHOUSE_IMPORT_STAT с именем импортёра", util.EnvArchiveAction, util.ArchiveActionRestore)
+		}
+	default:
+		log.Fatalf("неизвестное %s=%q (ожидается %s, %s или %s)", util.EnvArchiveAction, action, util.ArchiveActionRegistry, util.ArchiveActionList, util.ArchiveActionRestore)
 	}
 	clickhouseOptions, err := clickhouse.ParseDSN(os.Getenv("CLICKHOUSE_URL"))
 	if err != nil {
@@ -168,6 +190,121 @@ func runArchiveRegistry(ctx context.Context) error {
 	// Строк — по переводам строки: реестр пишется построчно с \n в конце, поэтому число
 	// завершённых строк и есть число записей (пустой файл — 0).
 	log.Infof("реестр архива: %d строк -> %s", bytes.Count(body, []byte("\n")), out)
+	return nil
+}
+
+// runArchiveList печатает версии реестра винтажного архива: «источник · имя · отпечаток(8) ·
+// размер · first_seen · url». ClickHouse не нужен — реестр лежит в хранилище и читается без базы
+// (как и у registry, выход стоит до ParseDSN). Строки с одинаковым sha256 помечаются дублем
+// содержимого: один файл может лежать под sha- и fingerprint-ключом, и это две записи об одном
+// содержимом, а не две версии (обязательный подпункт шага 1.2). ARCHIVE_LIST_SOURCE фильтрует
+// печать по источнику. ARCHIVE_RECONCILE=1 добавляет сверку с фактическим содержимым хранилища:
+// объекты без строк реестра — находка, и работа завершается ненулевым кодом возврата (молчаливое
+// «чистое зеркало» при расхождении недопустимо); реконсиляция возможна только у бэкендов с
+// листингом — у остальных это отсутствие возможности, а не находка (спека §3.2).
+func runArchiveList(ctx context.Context) error {
+	store, err := archive.FromEnv(util.HttpClient)
+	if err != nil {
+		return err
+	}
+	if store == nil {
+		// Пустой ARCHIVE_BACKEND штатно значит «архивации нет», но у листинга другого источника
+		// реестра нет: пустой вывод выглядел бы как пустой архив (как и у registry — ошибка).
+		return fmt.Errorf("%s не задан", archive.EnvBackend)
+	}
+	entries, err := archive.LoadEntries(ctx, store)
+	if err != nil {
+		return err
+	}
+	source := os.Getenv(envArchiveListSource)
+	// Дубли считаются по всему реестру, а не по печатаемой выборке: одинаковый sha256 — свойство
+	// содержимого, а фильтр лишь сокращает вывод.
+	sums := make(map[string]int, len(entries))
+	for _, e := range entries {
+		if e.SHA256 != "" {
+			sums[e.SHA256]++
+		}
+	}
+	printed := 0
+	for _, e := range entries {
+		if source != "" && e.Source != source {
+			continue
+		}
+		printed++
+		line := fmt.Sprintf("%s · %s · %s · %d · %s · %s",
+			e.Source, e.Name, fingerprintPrefix(e.Fingerprint), e.Size, e.FirstSeen.Format(time.RFC3339), e.URL)
+		if sums[e.SHA256] > 1 {
+			line += " · дубль содержимого"
+		}
+		log.Infof("%s", line)
+	}
+	if source != "" {
+		log.Infof("%s=%s: строк %d из %d", envArchiveListSource, source, printed, len(entries))
+	} else {
+		log.Infof("версий в реестре: %d", len(entries))
+	}
+	if os.Getenv(envArchiveReconcile) == "1" {
+		return reconcileArchive(ctx, store, entries, source)
+	}
+	return nil
+}
+
+// fingerprintPrefix — первые 8 символов отпечатка версии: по ним дежурный сверяет строку с ключом
+// объекта и записью source_publications, не читая 32 символа целиком (полный отпечаток — в
+// реестре). Пустой отпечаток (HEAD при архивации был недоступен, ключ по sha256) печатается
+// дефисом: пустое место в строке выглядело бы как потерянное поле.
+func fingerprintPrefix(fingerprint string) string {
+	switch {
+	case fingerprint == "":
+		return "-"
+	case len(fingerprint) > 8:
+		return fingerprint[:8]
+	default:
+		return fingerprint
+	}
+}
+
+// reconcileArchive сверяет объекты хранилища со строками реестра: «есть объект — нет строки» —
+// ровно то, что самолечение не лечит (no-op-путь до записи реестра не доходит), и находка должна
+// быть видна, а не растворяться в выводе листинга. Фильтр источника действует и здесь: с ним
+// проверяются только объекты выбранного источника, иначе чужие версии выглядели бы находками.
+// Бэкенд без листинга — не находка, а отсутствие возможности: явное сообщение в лог и нулевой код
+// возврата (листинг Яндекс.Диска — остаток пункта 1.2, спека §3.2).
+func reconcileArchive(ctx context.Context, store archive.Store, entries []archive.Entry, source string) error {
+	lister, ok := store.(archive.Lister)
+	if !ok {
+		log.Warnf("реконсиляция недоступна для бэкенда %s: листинг не реализован (остаток шага 1.2)", store.Name())
+		return nil
+	}
+	keys, err := lister.List(ctx)
+	if err != nil {
+		return err
+	}
+	known := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		if source == "" || e.Source == source {
+			known[e.Key] = true
+		}
+	}
+	prefix := ""
+	if source != "" {
+		prefix = source + "/"
+	}
+	checked, missing := 0, 0
+	for _, key := range keys {
+		if prefix != "" && !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		checked++
+		if !known[key] {
+			missing++
+			log.Warnf("объект без строки реестра: %s", key)
+		}
+	}
+	if missing > 0 {
+		return fmt.Errorf("объектов без строк реестра: %d из %d проверенных (залейте зеркало реестра или разберите объекты: потерянная строка при живом объекте сама не возвращается)", missing, checked)
+	}
+	log.Infof("реконсиляция: проверено объектов %d, все есть в реестре", checked)
 	return nil
 }
 

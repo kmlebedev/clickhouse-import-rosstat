@@ -62,8 +62,12 @@ func UpsertSeriesCatalog(ctx context.Context, conn driver.Conn, rows []SeriesMet
 	}
 	for _, r := range rows {
 		if err = batch.Append(r.Source, r.Series, r.Title, r.Unit, r.Frequency, r.Origin, r.Description); err != nil {
+			abortBatch(batch, seriesCatalogTable)
 			return err
 		}
 	}
-	return batch.Send()
+	if err = batch.Send(); err != nil {
+		return err
+	}
+	return nil
 }

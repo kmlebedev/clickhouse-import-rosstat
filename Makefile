@@ -65,7 +65,7 @@ STAGING_BIN_DIR  ?= /root/.local/bin
 STAGING_ENV_FILE ?= /etc/clickhouse-import-rosstat.env
 DAGU_VERSION     ?= v2.18.2
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import archive-registry mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model cpi-nowcast
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model cpi-nowcast
 
 all: lint test build build-ingest
 
@@ -178,6 +178,25 @@ archive-registry:
 	@mkdir -p $(BUILD_DIR)
 	go build -o $(BUILD_DIR)/$(BINARY)-native .
 	ARCHIVE_ACTION=registry ./$(BUILD_DIR)/$(BINARY)-native
+
+# Листинг версий винтажного архива (make archive-list [ARCHIVE_BACKEND=yandex]
+# [ARCHIVE_LIST_SOURCE=…] [ARCHIVE_RECONCILE=1]): печатает строки реестра, помечает дубли
+# содержимого, а с ARCHIVE_RECONCILE=1 сверяет хранилище с реестром (нужен бэкенд с листингом —
+# сегодня local) и завершается кодом 1 при объектах без строк. Значения env не печатаются.
+archive-list:
+	@mkdir -p $(BUILD_DIR)
+	go build -o $(BUILD_DIR)/$(BINARY)-native .
+	ARCHIVE_ACTION=list ./$(BUILD_DIR)/$(BINARY)-native
+
+# Восстановление БД из винтажного архива (make archive-restore STAT=<импортёр> [ARCHIVE_BACKEND=…]):
+# байты версии берутся из архива, префлайт и повторная архивация не выполняются — сеть источника
+# не вызывается вовсе (сам архив может быть сетевым: yandex). STAT обязателен: случайный
+# «восстановить всё» недопустим.
+archive-restore:
+	@test -n "$(STAT)" || { echo "укажите импортёр: make archive-restore STAT=rosstat_ipc_weeks_bulletins"; exit 1; }
+	@mkdir -p $(BUILD_DIR)
+	go build -o $(BUILD_DIR)/$(BINARY)-native .
+	ARCHIVE_ACTION=restore CLICKHOUSE_IMPORT_STAT=$(STAT) ./$(BUILD_DIR)/$(BINARY)-native
 
 # Ingest-сервис контура прогноза (единственный путь записи в model_runs/forecast_log/macro_series).
 # Нужны CLICKHOUSE_URL и INGEST_TOKEN из $(ROSSTAT_ENV); INGEST_ADDR по умолчанию :8081.

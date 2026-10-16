@@ -487,3 +487,53 @@ func TestRegistryConcurrentEnsure(t *testing.T) {
 		t.Errorf("уникальных ключей в реестре %d, ожидалось %d", len(seen), writers)
 	}
 }
+
+// LoadEntries — публичное чтение реестра (листинг ARCHIVE_ACTION=list и восстановление): round-trip
+// через Registry.Ensure обязан отдать ровно записанные строки, включая самую первую запись в
+// пустое хранилище — прогон на ненаполненном архиве заводит файл одной строкой, и «версий пока
+// нет» должно быть пустым списком, а не ошибкой чтения (Review Focus №1). Читает LoadEntries ту
+// же пару Store.Exists+Get+parseEntries, что и запись реестра, поэтому чужие версии видны из
+// нового процесса (второй Ensure идёт из нового Registry).
+func TestLoadEntriesRoundtrip(t *testing.T) {
+	dir := t.TempDir()
+	store := NewLocal(dir)
+	ctx := context.Background()
+	first := registryTestEntry("monetary_agg_SA.xlsx", sumHex("версия первая"), 583746)
+	second := registryTestEntry("other.xlsx", sumHex("другой файл"), 10)
+	second.FirstSeen = first.FirstSeen.Add(time.Hour)
+
+	got, err := LoadEntries(ctx, store)
+	if err != nil {
+		t.Fatalf("LoadEntries до первой записи: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("до первой записи LoadEntries вернул %d строк, ожидалось 0", len(got))
+	}
+
+	if err = NewRegistry(store).Ensure(ctx, first); err != nil {
+		t.Fatalf("Ensure первой версии: %v", err)
+	}
+	got, err = LoadEntries(ctx, store)
+	if err != nil {
+		t.Fatalf("LoadEntries после первой записи: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("после первой записи LoadEntries вернул %d строк, ожидалась 1", len(got))
+	}
+	assertRegistryEntry(t, got[0], first)
+
+	// Второй Ensure — из нового Registry: так выглядит следующий процесс, и его строка обязана
+	// читаться публичным чтением наравне с первой.
+	if err = NewRegistry(store).Ensure(ctx, second); err != nil {
+		t.Fatalf("Ensure второй версии: %v", err)
+	}
+	got, err = LoadEntries(ctx, store)
+	if err != nil {
+		t.Fatalf("LoadEntries после второй записи: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("строк %d, ожидалось 2", len(got))
+	}
+	assertRegistryEntry(t, got[0], first)
+	assertRegistryEntry(t, got[1], second)
+}
