@@ -132,7 +132,9 @@ func TestRestoreVersionBrokenSHA(t *testing.T) {
 // Архив не настроен (пустой ARCHIVE_BACKEND) — ошибка с именем переменной: восстановление без
 // архива невозможно, и это отказ, а не тихий полный импорт с сетью.
 func TestRestoreVersionNoArchive(t *testing.T) {
+	prevRT := archiveRuntimeForTests
 	archiveRuntimeForTests = nil
+	t.Cleanup(func() { archiveRuntimeForTests = prevRT })
 	t.Setenv(archive.EnvBackend, "")
 	t.Setenv(archive.EnvLocalDir, "")
 
@@ -348,5 +350,40 @@ func TestClickHouseImportRestoreRejectsCrawFunc(t *testing.T) {
 	}
 	if len(conn.calls) != 0 {
 		t.Errorf("обращения к БД %v, ожидалось ноль: отказ стоит до DDL", conn.calls)
+	}
+}
+
+// BeforeImport в режиме восстановления не вызывается: его смысл — вычислить DataUrl из страницы
+// источника, а restore источник не спрашивает вовсе (ветка restore в Import и комментарий там же).
+// Проба красная: взведённый здесь BeforeImport означал бы сетевой обход, которого в restore быть
+// не должно.
+func TestClickHouseImportRestoreSkipsBeforeImport(t *testing.T) {
+	rt, _ := archiveTestRuntime(t)
+	t.Setenv(EnvArchiveAction, ArchiveActionRestore)
+	ctx := context.Background()
+	body := []byte("<html>бюллетень</html>")
+	if err := rt.save(ctx, archiveTestSource, restoreTestURL, body, restoreTestFingerprint); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	beforeCalled := false
+	conn := &publicationFakeConn{rows: []driver.Row{&publicationFakeRow{points: 1}}}
+	importer := &ClickHouseImport{
+		TableName:              archiveTestSource,
+		CreateTable:            []string{"CREATE TABLE IF NOT EXISTS %s (source String) ENGINE = Memory"},
+		DataUrl:                restoreTestURL,
+		PublicationCountPoints: archiveTestCountPoints,
+		BeforeImport: func(context.Context, driver.Conn) error {
+			beforeCalled = true
+			return nil
+		},
+	}
+	importer.BodyFunc = func(_ []byte, batch driver.Batch) error { return batch.Append("точка") }
+
+	if _, err := importer.Import(ctx, conn); err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if beforeCalled {
+		t.Error("BeforeImport вызван в режиме восстановления: источник не должен спрашиваться вовсе")
 	}
 }

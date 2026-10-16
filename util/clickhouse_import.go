@@ -180,7 +180,11 @@ func (s *ClickHouseImport) Import(ctx context.Context, conn driver.Conn) (count 
 			return 0, err
 		}
 	}
-	if s.BeforeImport != nil {
+	// BeforeImport в режиме восстановления не вызывается: его смысл — вычислить DataUrl из
+	// страницы источника, а restore источник не спрашивает вовсе; импортёр с вычисляемой ссылкой
+	// в restore обязан иметь статический DataUrl (иначе отсутствие версии станет ошибкой резолва,
+	// а не сетевым вызовом).
+	if s.BeforeImport != nil && !restore {
 		if err = s.BeforeImport(ctx, conn); err != nil {
 			return 0, err
 		}

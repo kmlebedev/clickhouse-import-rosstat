@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -552,6 +553,11 @@ func TestClickHouseImportArchiveFailureKeepsVersionUnwritten(t *testing.T) {
 // №6: включение механизма не должно ничего стоить импортёрам, у которых архива нет.
 func TestClickHouseImportArchiveOffNoCalls(t *testing.T) {
 	archiveRuntimeForTests = nil // хук снят: идёт прод-путь activeArchive()
+	// Синглтон прод-пути кэширует хранилище: без сброса тест мог бы взять результат соседнего
+	// теста, уже прошедшего через activeArchive() с включённым бэкендом, и проверял бы не то.
+	prevOnce, prevRT := archiveOnce, archiveRT
+	archiveOnce, archiveRT = sync.Once{}, nil
+	t.Cleanup(func() { archiveOnce, archiveRT = prevOnce, prevRT })
 	t.Setenv(archive.EnvBackend, "")
 	t.Setenv(archive.EnvLocalDir, "")
 
