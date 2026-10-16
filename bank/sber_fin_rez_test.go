@@ -287,6 +287,18 @@ func TestParseSberFinBookFailFast(t *testing.T) {
 			mutate: func(t *testing.T, f *excelize.File) { sberSetCell(t, f, sberFinBalanceSheet, "B3", " ") },
 			want:   "без подписи",
 		},
+		"целое четырёхзначное без подписи ряда": {
+			mutate: func(t *testing.T, f *excelize.File) {
+				// B9 затёрт: строка «Кредитные карты и овердрафты » уезжает в ветку безымянной, а
+				// её первое значение — целое 1113, которое подпись-год шапки («2023») принимает за
+				// себя. Остальные ячейки строки очищены: их дробные значения дали бы ошибку сами
+				// (кейс «значения без подписи ряда»), и подмена года значением осталась бы
+				// незамеченной — а точка строки потерялась бы молча (§6.4).
+				sberSetCell(t, f, sberFinBalanceSheet, "B9", " ")
+				sberClearRow(t, f, sberFinBalanceSheet, 9, 4, 45)
+			},
+			want: "без подписи",
+		},
 		"значение не число": {
 			mutate: func(t *testing.T, f *excelize.File) { sberSetCell(t, f, sberFinBalanceSheet, "C3", "н/д") },
 			want:   "не число",

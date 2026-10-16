@@ -182,7 +182,7 @@ func parseSberFinSheet(xlsx *excelize.File, anchor string) (points []sberFinPoin
 	if header < 0 {
 		return nil, fmt.Errorf("лист %q: не найдена строка шапки (ячейка с подписью %q)", sheet, sberFinLabelAnchor)
 	}
-	head, err := sberFinHeadRow(sheet, header+1, rows[header], true) // серийные даты несёт шапка листа
+	head, err := sberFinHeadRow(sheet, header+1, rows[header], true) // шапка листа: серийные даты и годы
 	if err != nil {
 		return nil, err
 	}
@@ -194,8 +194,8 @@ func parseSberFinSheet(xlsx *excelize.File, anchor string) (points []sberFinPoin
 		label := sberFinRawCell(rows[i], sberFinLabelColumn)
 		if strings.TrimSpace(label) == "" {
 			// Строка без подписи ряда: шапка следующего блока («янв23»/«1М23»), служебная строка
-			// или значения без подписи — последнее ошибка (§6.4). Серийных дат в такой шапке не
-			// бывает (почему — sberFinHeadRow).
+			// или значения без подписи — последнее ошибка (§6.4). Серийных дат и колонок-годов в
+			// такой строке не бывает (почему — sberFinHeadRow).
 			next, err := sberFinHeadRow(sheet, i+1, rows[i], false) // шапка блока: только подписи-тексты
 			if err != nil {
 				return nil, err
@@ -235,13 +235,14 @@ func parseSberFinSheet(xlsx *excelize.File, anchor string) (points []sberFinPoin
 // И то и другое ошибка с координатой строки (§6.4), а не молчаливый пропуск: источник обновляется
 // вручную, и смену разметки надо видеть сразу.
 //
-// serials — считать ли датами серийные номера Excel. Первая шапка листа (её ячейка подписана
-// «Показатель…») их несёт на листах «Баланс» и «Капитал», а шапка следующего блока листа — только
-// подписи-тексты. Различать обязательно: остаток «40622.1» млрд ₽ и серийный номер 40622.1 —
-// одно и то же число, год 2011 у обоих в окне sberFinMinYear…sberFinMaxYear, и разрешить серийные
-// номера в безымянной строке значило бы принять строку значений за шапку и потерять её точки
-// молча (тест «значения без подписи ряда» — ровно этот случай).
-func sberFinHeadRow(sheet string, n int, row []string, serials bool) (head sberFinHead, err error) {
+// anchored — строка признана шапкой листа (её ячейка подписана «Показатель…»): только в ней законны
+// серийные номера дат и колонки-годы («2023»). У безымянной строки-кандидата в шапку блока
+// (anchored=false) законны только подписи-тексты («янв23», «1М23»): целое «1113» — не год, а
+// значение (первое число остатка строки «Кредитные карты и овердрафты»), и пропустить его как год
+// значило бы потерять точку молча; серийный номер в такой строке — та же ловушка (остаток
+// «40622.1» млрд ₽ и серийный номер 40622.1 — одно число, год 2011 в окне sberFinMinYear…
+// sberFinMaxYear), и принять за него строку значений значило бы потерять её точки без ошибки.
+func sberFinHeadRow(sheet string, n int, row []string, anchored bool) (head sberFinHead, err error) {
 	for col := sberFinLabelColumn + 1; col < len(row); col++ {
 		raw := sberFinCell(row, col)
 		if raw == "" {
@@ -251,7 +252,7 @@ func sberFinHeadRow(sheet string, n int, row []string, serials bool) (head sberF
 			head.cols = append(head.cols, sberFinColumn{col: col, date: date})
 			continue
 		}
-		if serials {
+		if anchored {
 			if date, ok := sberFinSerialDate(raw); ok {
 				head.cols = append(head.cols, sberFinColumn{col: col, date: date})
 				continue
@@ -261,8 +262,8 @@ func sberFinHeadRow(sheet string, n int, row []string, serials bool) (head sberF
 			head.cumulative++
 			continue
 		}
-		if sberFinYearRe.MatchString(raw) {
-			continue // колонка-год: агрегат, колонкой значений не является
+		if anchored && sberFinYearRe.MatchString(raw) {
+			continue // колонка-год шапки листа: агрегат, колонкой значений не является
 		}
 		if _, ferr := strconv.ParseFloat(raw, 64); ferr == nil {
 			return head, fmt.Errorf("лист %q, строка %d: значение %q без подписи ряда", sheet, n, raw)
