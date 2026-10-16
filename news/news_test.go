@@ -45,18 +45,22 @@ func TestImportRejectsUnknownModeBeforeDB(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	// Подмена пакетных URL — как в TestFetchFeedsUsesFixturesAndIsolatesFailure:
-	// feeds() читает их при каждом вызове, поэтому подменённый адрес подхватится.
-	oldInterfax, oldRBC, oldCBRNews, oldCBRPress, oldTASS :=
-		feedInterfaxURL, feedRBCURL, feedCBRNewsURL, feedCBRPressURL, feedTASSURL
+	// Подмена пакетных URL — как в pointFeedsAt (здесь свой сервер со счётчиком
+	// хитов): feeds() читает их при каждом вызове, поэтому подменённый адрес подхватится.
+	oldInterfax, oldRBC, oldCBRNews, oldCBRPress, oldTASS, oldSmartlabLebedev, oldSmartlabSpydell :=
+		feedInterfaxURL, feedRBCURL, feedCBRNewsURL, feedCBRPressURL, feedTASSURL,
+		feedSmartlabLebedevURL, feedSmartlabSpydellURL
 	feedInterfaxURL = srv.URL + "/interfax"
 	feedRBCURL = srv.URL + "/rbc"
 	feedCBRNewsURL = srv.URL + "/cbr_news"
 	feedCBRPressURL = srv.URL + "/cbr_press"
 	feedTASSURL = srv.URL + "/tass"
+	feedSmartlabLebedevURL = srv.URL + "/smartlab_lebedev"
+	feedSmartlabSpydellURL = srv.URL + "/smartlab_spydell"
 	t.Cleanup(func() {
-		feedInterfaxURL, feedRBCURL, feedCBRNewsURL, feedCBRPressURL, feedTASSURL =
-			oldInterfax, oldRBC, oldCBRNews, oldCBRPress, oldTASS
+		feedInterfaxURL, feedRBCURL, feedCBRNewsURL, feedCBRPressURL, feedTASSURL,
+			feedSmartlabLebedevURL, feedSmartlabSpydellURL =
+			oldInterfax, oldRBC, oldCBRNews, oldCBRPress, oldTASS, oldSmartlabLebedev, oldSmartlabSpydell
 	})
 
 	var s newsImport
@@ -122,7 +126,9 @@ func TestParseMode(t *testing.T) {
 }
 
 // serveFixtures поднимает httptest-сервер, отдающий закоммиченные фикстуры лент
-// по путям /<Key>. Настоящую сеть тест не трогает: прогон воспроизводим офлайн.
+// по путям /<Key> — по одной на каждую ленту feeds(). Настоящую сеть тест не трогает:
+// прогон воспроизводим офлайн. Фикстуры нет — 404: новая лента без снимка падает
+// сбоем ленты, а не подменяется заглушкой.
 func serveFixtures(t *testing.T, fail map[string]int) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -144,29 +150,15 @@ func serveFixtures(t *testing.T, fail map[string]int) *httptest.Server {
 }
 
 func TestFetchFeedsUsesFixturesAndIsolatesFailure(t *testing.T) {
-	// Сбойная одна лента: остальные четыре обязаны прочитаться. Иначе падение
-	// любого источника глушило бы весь прогон, а dagu-ретрай повторял бы четыре
-	// здоровые ленты ради одной больной.
+	// Сбойная одна лента: остальные шесть обязаны прочитаться. Иначе падение
+	// любого источника глушило бы весь прогон, а dagu-ретрай повторял бы шесть
+	// здоровых лент ради одной больной.
 	srv := serveFixtures(t, map[string]int{"cbr_news": http.StatusInternalServerError})
-
-	// feeds() собирает конфиг из пакетных переменных — подменяем их на адреса
-	// httptest и возвращаем исходные значения после теста, иначе подмена утечёт
-	// в другие тесты пакета.
-	oldInterfax, oldRBC, oldCBRNews, oldCBRPress, oldTASS :=
-		feedInterfaxURL, feedRBCURL, feedCBRNewsURL, feedCBRPressURL, feedTASSURL
-	feedInterfaxURL = srv.URL + "/interfax"
-	feedRBCURL = srv.URL + "/rbc"
-	feedCBRNewsURL = srv.URL + "/cbr_news"
-	feedCBRPressURL = srv.URL + "/cbr_press"
-	feedTASSURL = srv.URL + "/tass"
-	t.Cleanup(func() {
-		feedInterfaxURL, feedRBCURL, feedCBRNewsURL, feedCBRPressURL, feedTASSURL =
-			oldInterfax, oldRBC, oldCBRNews, oldCBRPress, oldTASS
-	})
+	pointFeedsAt(t, srv)
 
 	results := fetchFeeds(feeds())
-	if len(results) != 5 {
-		t.Fatalf("fetchFeeds вернул %d результатов, want 5 (по числу лент)", len(results))
+	if len(results) != 7 {
+		t.Fatalf("fetchFeeds вернул %d результатов, want 7 (по числу лент)", len(results))
 	}
 
 	var keys, sources []string
@@ -195,19 +187,20 @@ func TestFetchFeedsUsesFixturesAndIsolatesFailure(t *testing.T) {
 		}
 	}
 
-	if want := "interfax,rbc,cbr_news,cbr_press,tass"; strings.Join(keys, ",") != want {
+	if want := "interfax,rbc,cbr_news,cbr_press,tass,smartlab_lebedev,smartlab_spydell"; strings.Join(keys, ",") != want {
 		t.Errorf("порядок лент = %s, want %s (фиксированный, детерминированный лог)", strings.Join(keys, ","), want)
 	}
-	// Оба фида ЦБ пишутся под одним source=cbr: витрина различает их url, а не меткой.
-	if want := "interfax,rbc,cbr,cbr,tass"; strings.Join(sources, ",") != want {
+	// Оба фида ЦБ пишутся под одним source=cbr, обе ленты smart-lab — под smartlab:
+	// витрина различает их url, а не меткой.
+	if want := "interfax,rbc,cbr,cbr,tass,smartlab,smartlab"; strings.Join(sources, ",") != want {
 		t.Errorf("метки источников = %s, want %s", strings.Join(sources, ","), want)
 	}
 }
 
 func TestFeedsHaveFixtures(t *testing.T) {
 	configured := feeds()
-	if len(configured) != 5 {
-		t.Fatalf("feeds() = %d лент, want 5", len(configured))
+	if len(configured) != 7 {
+		t.Fatalf("feeds() = %d лент, want 7", len(configured))
 	}
 	keyOf := make(map[string]bool, len(configured))
 	for _, f := range configured {
@@ -619,21 +612,33 @@ func TestCoverageLinesReportsIncomplete(t *testing.T) {
 
 // --- офлайн-фейки контура news (паттерн — boldFakeConn, bold/bold_test.go) ---
 
-// pointFeedsAt заменяет URL-ы всех пяти лент на пути httptest-сервера и возвращает
+// pointFeedsAt заменяет URL-ы всех семи лент на пути httptest-сервера и возвращает
 // исходные значения после теста: feeds() читает пакетные переменные при каждом вызове,
 // поэтому подмена подхватывается, а t.Cleanup не даёт ей утечь в соседние тесты.
+//
+// Guard в конце — про новую ленту: неподменённый URL увёл бы офлайн-тест в настоящую
+// сеть, и тот падал бы (или, хуже, зеленел) по доступности живого сайта, а не по коду.
 func pointFeedsAt(t *testing.T, srv *httptest.Server) {
 	t.Helper()
-	old := [5]string{feedInterfaxURL, feedRBCURL, feedCBRNewsURL, feedCBRPressURL, feedTASSURL}
+	old := [7]string{feedInterfaxURL, feedRBCURL, feedCBRNewsURL, feedCBRPressURL, feedTASSURL,
+		feedSmartlabLebedevURL, feedSmartlabSpydellURL}
 	feedInterfaxURL = srv.URL + "/interfax"
 	feedRBCURL = srv.URL + "/rbc"
 	feedCBRNewsURL = srv.URL + "/cbr_news"
 	feedCBRPressURL = srv.URL + "/cbr_press"
 	feedTASSURL = srv.URL + "/tass"
+	feedSmartlabLebedevURL = srv.URL + "/smartlab_lebedev"
+	feedSmartlabSpydellURL = srv.URL + "/smartlab_spydell"
 	t.Cleanup(func() {
-		feedInterfaxURL, feedRBCURL, feedCBRNewsURL, feedCBRPressURL, feedTASSURL =
-			old[0], old[1], old[2], old[3], old[4]
+		feedInterfaxURL, feedRBCURL, feedCBRNewsURL, feedCBRPressURL, feedTASSURL,
+			feedSmartlabLebedevURL, feedSmartlabSpydellURL =
+			old[0], old[1], old[2], old[3], old[4], old[5], old[6]
 	})
+	for _, f := range feeds() {
+		if !strings.HasPrefix(f.URL, srv.URL) {
+			t.Fatalf("лента %s не подменена (%q): офлайн-тест ушёл бы в сеть", f.Key, f.URL)
+		}
+	}
 }
 
 // fixtureItems читает закоммиченную фикстуру ленты тем же путём, что и прогон
@@ -650,11 +655,12 @@ func fixtureItems(t *testing.T, key, source string) []newsItem {
 
 // fixtureInventory — позиции фикстур по ключам лент и максимум даты по источникам.
 // Максимумы — это то, что лежит в news_events после успешного прогона all: оба фида
-// ЦБ складываются в один источник cbr, как и в feedSpans.
+// ЦБ складываются в один источник cbr, обе ленты smart-lab — в один smartlab, как
+// и в feedSpans.
 func fixtureInventory(t *testing.T) (byKey map[string][]newsItem, maxBySource map[string]time.Time) {
 	t.Helper()
-	byKey = make(map[string][]newsItem, 5)
-	maxBySource = make(map[string]time.Time, 4)
+	byKey = make(map[string][]newsItem, 7)
+	maxBySource = make(map[string]time.Time, 5)
 	for _, f := range feeds() {
 		items := fixtureItems(t, f.Key, f.Source)
 		byKey[f.Key] = items
@@ -999,7 +1005,7 @@ func TestImportCheckModeWritesNothing(t *testing.T) {
 	var s newsImport
 
 	// Первый прогон: сохранённых окон нет (Query отдаёт пустую очередь) — дыр нет и
-	// ошибки нет. Отсутствие ошибки здесь же доказывает, что все пять лент прочитались:
+	// ошибки нет. Отсутствие ошибки здесь же доказывает, что все семь лент прочитались:
 	// сбой любой из них вернулся бы через feedErrs, а не остался незамеченным.
 	firstRun := newNewsFakeConn()
 	count, err := s.Import(context.Background(), firstRun)
@@ -1050,7 +1056,7 @@ func TestImportCheckModeWritesNothing(t *testing.T) {
 }
 
 func TestImportAllModeWritesAllFeeds(t *testing.T) {
-	// all — режим расписания: пишутся все позиции текущего окна всех пяти лент одним
+	// all — режим расписания: пишутся все позиции текущего окна всех семи лент одним
 	// батчем. Число строк считается из фикстур (readFixtureDoc + itemsFromDoc), а не
 	// хардкодится: обновление снимка лент не должно требовать правки числа в тесте.
 	t.Setenv(modeEnv, modeAll)
@@ -1090,7 +1096,7 @@ func TestImportAllModeWritesAllFeeds(t *testing.T) {
 	}
 
 	got := make([]string, 0, len(rows))
-	sources := make(map[string]bool, 4)
+	sources := make(map[string]bool, 5)
 	for _, row := range rows {
 		got = append(got, row.Source+"|"+row.Title)
 		sources[row.Source] = true
@@ -1106,13 +1112,14 @@ func TestImportAllModeWritesAllFeeds(t *testing.T) {
 		}
 	}
 
-	// Пять лент — четыре источника: оба фида ЦБ пишутся под source cbr.
+	// Семь лент — пять источников: оба фида ЦБ пишутся под source cbr, обе ленты
+	// smart-lab — под smartlab.
 	srcs := make([]string, 0, len(sources))
 	for src := range sources {
 		srcs = append(srcs, src)
 	}
 	sort.Strings(srcs)
-	if wantSrcs := "cbr,interfax,rbc,tass"; strings.Join(srcs, ",") != wantSrcs {
+	if wantSrcs := "cbr,interfax,rbc,smartlab,tass"; strings.Join(srcs, ",") != wantSrcs {
 		t.Errorf("источники батча = %s, want %s", strings.Join(srcs, ","), wantSrcs)
 	}
 }
@@ -1222,12 +1229,14 @@ func TestImportSinceModeCbrSecondFeedNoWatermark(t *testing.T) {
 	pointFeedsAt(t, serveSyntheticCbr(t, newsXML, pressXML))
 
 	byKey, _ := fixtureInventory(t)
-	// Ключи interfax/rbc/tass — все позиции фикстур: эти источники не пишутся, и
-	// внимание теста остаётся на cbr.
+	// Ключи interfax/rbc/tass/smartlab — все позиции фикстур: эти источники не пишутся,
+	// и внимание теста остаётся на cbr. Обе ленты smart-lab несут один source, поэтому
+	// ключи складываются, как в feedSpans.
 	keys := map[string][]newsKey{
 		"interfax": keysOf(byKey["interfax"]),
 		"rbc":      keysOf(byKey["rbc"]),
 		"tass":     keysOf(byKey["tass"]),
+		"smartlab": append(keysOf(byKey["smartlab_lebedev"]), keysOf(byKey["smartlab_spydell"])...),
 		"cbr":      {{date: storedAt.Unix(), title: "ЦБ: уже сохранённая позиция"}},
 	}
 
@@ -1270,7 +1279,7 @@ func TestImportSinceModeKeysReadErrorJoinsFeedErrors(t *testing.T) {
 	// на прогон, и в ней обязаны быть и сбой базы, и ключ упавшей ленты. Режим пишущий, но при
 	// ошибке выборки до батча дело не доходит — строк не пишется.
 	t.Setenv(modeEnv, modeSince)
-	// cbr_news падает (500), остальные четыре ленты — закоммиченные фикстуры.
+	// cbr_news падает (500), остальные шесть лент — закоммиченные фикстуры.
 	pointFeedsAt(t, serveFixtures(t, map[string]int{"cbr_news": http.StatusInternalServerError}))
 
 	conn := newNewsFakeConnWithKeys(nil)
@@ -1313,15 +1322,17 @@ func TestReadStoredKeysRowsError(t *testing.T) {
 }
 
 func TestImportSinceModeAllFeedsFailed(t *testing.T) {
-	// Все пять лент упали: items пуст, и в since до чтения ключей дело не доходит — ошибка
+	// Все семь лент упали: items пуст, и в since до чтения ключей дело не доходит — ошибка
 	// собирается из отказов лент (ключ каждой), строк не пишется.
 	t.Setenv(modeEnv, modeSince)
 	pointFeedsAt(t, serveFixtures(t, map[string]int{
-		"interfax":  http.StatusInternalServerError,
-		"rbc":       http.StatusInternalServerError,
-		"cbr_news":  http.StatusInternalServerError,
-		"cbr_press": http.StatusInternalServerError,
-		"tass":      http.StatusInternalServerError,
+		"interfax":         http.StatusInternalServerError,
+		"rbc":              http.StatusInternalServerError,
+		"cbr_news":         http.StatusInternalServerError,
+		"cbr_press":        http.StatusInternalServerError,
+		"tass":             http.StatusInternalServerError,
+		"smartlab_lebedev": http.StatusInternalServerError,
+		"smartlab_spydell": http.StatusInternalServerError,
 	}))
 
 	conn := newNewsFakeConn()
@@ -1333,7 +1344,7 @@ func TestImportSinceModeAllFeedsFailed(t *testing.T) {
 	if count != 0 {
 		t.Errorf("Import вернул %d строк при сбое всех лент, want 0", count)
 	}
-	for _, key := range []string{"interfax", "rbc", "cbr_news", "cbr_press", "tass"} {
+	for _, key := range []string{"interfax", "rbc", "cbr_news", "cbr_press", "tass", "smartlab_lebedev", "smartlab_spydell"} {
 		if !strings.Contains(err.Error(), key) {
 			t.Errorf("ошибка Import = %q, want ключ упавшей ленты %q", err, key)
 		}
@@ -1361,7 +1372,7 @@ type rssEntry struct {
 }
 
 // rssXML собирает минимальный RSS 2.0: формат pubDate — time.RFC1123Z, тот же, что у всех
-// пяти живых лент (с числовым офсетом), поэтому синтетическая лента проходит тот же разбор
+// семи живых лент (с числовым офсетом), поэтому синтетическая лента проходит тот же разбор
 // (readFixtureDoc + itemsFromDoc), что и фикстуры.
 func rssXML(entries ...rssEntry) string {
 	var b strings.Builder

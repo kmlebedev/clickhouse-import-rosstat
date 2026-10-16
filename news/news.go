@@ -31,12 +31,17 @@ var (
 	feedCBRNewsURL  = "https://www.cbr.ru/rss/RssNews"
 	feedCBRPressURL = "https://www.cbr.ru/rss/eventrss"
 	feedTASSURL     = "https://tass.ru/rss/v2.xml"
+	// Ленты smart-lab — персональные блоги; добавлены ради контура ключевой ставки
+	// (тексты про инфляцию и политику ЦБ).
+	feedSmartlabLebedevURL = "https://smart-lab.ru/rss/personal_blog/KonstantinLebedev/"
+	feedSmartlabSpydellURL = "https://smart-lab.ru/rss/personal_blog/spydell-telegram/"
 )
 
-// feeds собирает конфиг пяти лент в фиксированном порядке. Порядок — часть
+// feeds собирает конфиг семи лент в фиксированном порядке. Порядок — часть
 // контракта: лог прогона и отчёт check идут построчно, и разный порядок лент
-// от запуска к запуску сделал бы диффы лога нечитаемыми. Обе ленты ЦБ несут
-// Source «cbr»: источник один — Банк России, а различает их url в news_events.
+// от запуска к запуску сделал бы диффы лога нечитаемыми. Парные ленты несут общий
+// Source: у двух фидов ЦБ это «cbr» (источник один — Банк России), у двух лент
+// smart-lab — «smartlab»; в news_events такие ленты различаются url.
 func feeds() []feed {
 	return []feed{
 		{Key: "interfax", Source: "interfax", URL: feedInterfaxURL},
@@ -44,6 +49,8 @@ func feeds() []feed {
 		{Key: "cbr_news", Source: "cbr", URL: feedCBRNewsURL},
 		{Key: "cbr_press", Source: "cbr", URL: feedCBRPressURL},
 		{Key: "tass", Source: "tass", URL: feedTASSURL},
+		{Key: "smartlab_lebedev", Source: "smartlab", URL: feedSmartlabLebedevURL},
+		{Key: "smartlab_spydell", Source: "smartlab", URL: feedSmartlabSpydellURL},
 	}
 }
 
@@ -100,8 +107,8 @@ type feedResult struct {
 }
 
 // fetchFeeds читает ленты по очереди и возвращает результат на каждую. Ошибка
-// ленты попадает в её feedResult.Err, а цикл продолжается: пять лент независимы,
-// и обрыв одной (WAF, 500, таймаут) не повод не собрать четыре остальные.
+// ленты попадает в её feedResult.Err, а цикл продолжается: семь лент независимы,
+// и обрыв одной (WAF, 500, таймаут) не повод не собрать остальные шесть.
 // Агрегация ошибок — дело вызывающего (Import): он решает, чем отчитаться в dagu.
 func fetchFeeds(feeds []feed) []feedResult {
 	results := make([]feedResult, 0, len(feeds))
