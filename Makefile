@@ -65,7 +65,7 @@ STAGING_BIN_DIR  ?= /root/.local/bin
 STAGING_ENV_FILE ?= /etc/clickhouse-import-rosstat.env
 DAGU_VERSION     ?= v2.18.2
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import archive-registry mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import archive-registry mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model
 
 all: lint test build build-ingest
 
@@ -218,6 +218,19 @@ dcf-aisc:
 # make ch-sql FILE=sql/polyus_output_seed.sql
 polyus-output:
 	python3 scripts/polyus_output_model.py
+
+# Дополнительные аргументы цели key-rate-model (например, экспорт фикстур тестов).
+ARGS ?=
+
+# Первый срез модели ключевой ставки (фундаментальный контур v0): выборка решений,
+# бенчмарки, методы №2–3, walk-forward-бэктест. Читает ClickHouse, пишет локальные
+# артефакты; в ClickHouse НЕ пишет. Фикстуры офлайн-тестов: make key-rate-model ARGS="--export-fixtures scripts/testdata/key_rate"
+# --python 3.12 — не украшение: statsmodels>=0.15 требует Python>=3.10, а `python3` из
+# PATH не везде 3.10+ (на машине разработки системный /usr/bin/python3 — 3.9.6, и
+# без пина резолвер uv падает). Пин делает цель независимой от порядка PATH и
+# повторяет конвенцию репозитория для uv-прогонов (README/ARCHITECTURE: --python 3.12).
+key-rate-model:
+	uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/key_rate_model.py $(ARGS)
 
 # Smoke-проверка MCP end-to-end: поднимает сервер, вызывает list_tables и run_query по витринам,
 # проверяет, что сырая таблица закрыта. Нужен запущенный ClickHouse (make ch-up) и CLICKHOUSE_PASSWORD.
