@@ -315,6 +315,47 @@ func TestMtForecastIndicatorRegistry(t *testing.T) {
 	}
 }
 
+// TestMtForecastPeerCodes: набор кодов, согласованных с базовыми именами рядов макроэкономического
+// опроса ЦБ (cbr_mo_br, спека §3.2) — ровно шесть: cpi_dec, cpi_avg, key_rate_avg, gdp_yoy,
+// exports, imports. Литералы, а не ссылка на карту: соответствие имён — контракт с агентом
+// (сопоставление прогноза ЦБ с консенсусом аналитиков идёт по общим именам), и набор, разросшийся
+// «походя», оборвал бы этот контракт молча — комментарий реестра уже разошёлся с картой, назвав
+// соответствием первые шесть строк книги (ревью r1). Проверяются обе стороны: каждый код карты
+// ожидаем и объявлен реестром, и оговорка о соответствии стоит в описании ровно этих шести рядов.
+func TestMtForecastPeerCodes(t *testing.T) {
+	want := map[string]bool{
+		"cpi_dec": true, "cpi_avg": true, "key_rate_avg": true,
+		"gdp_yoy": true, "exports": true, "imports": true,
+	}
+	if len(mtForecastPeerCodes) != len(want) {
+		t.Fatalf("набор соответствий cbr_mo_br: %d кодов, want %d (спека §3.2)", len(mtForecastPeerCodes), len(want))
+	}
+	declared := make(map[string]bool, len(mtForecastIndicators))
+	for _, indicator := range mtForecastIndicators {
+		declared[indicator.Code] = true
+	}
+	for code := range mtForecastPeerCodes {
+		if !want[code] {
+			t.Errorf("код %q попал в набор соответствий cbr_mo_br — набор из шести кодов спеки §3.2 не пополняется походя", code)
+		}
+		if !declared[code] {
+			t.Errorf("код %q набора соответствий не объявлен в реестре показателей", code)
+		}
+	}
+	for code := range want {
+		if !mtForecastPeerCodes[code] {
+			t.Errorf("код %q ожидался в наборе соответствий cbr_mo_br", code)
+		}
+	}
+	for _, meta := range cbrMtForecastSeriesMeta {
+		inNote := strings.Contains(meta.Description, mtForecastPeerNote)
+		if inNote != want[meta.Series] {
+			t.Errorf("ряд %q: оговорка о соответствии cbr_mo_br в описании = %v, want %v",
+				meta.Series, inNote, want[meta.Series])
+		}
+	}
+}
+
 // TestMtForecastNormalizeCell: базовая нормализация (спека §3.3, слой 1) приводит ячейку к
 // сравнимому виду — пробелы-двойники (NBSP, EN SPACE, узкий и hair space) и переводы строк
 // становятся пробелом, soft hyphen удаляется, серии пробелов схлопываются, края обрезаются.
