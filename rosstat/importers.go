@@ -4,12 +4,13 @@ import "github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 
 // rosstatImporter — запись реестра импортёров пакета: сам импортёр, таблица, в которую
 // он пишет, и запрос количественного чека версии (префлайта). Регистрируется импортёр
-// пакета, а не отдельный тип-обёртка: все пять импортёров объявлены структурами с
+// пакета, а не отдельный тип-обёртка: все шесть импортёров объявлены структурами с
 // встроенным util.ClickHouseImport, поэтому Name(), Import() (цикл «DDL → префлайт →
 // точки → производные → версия») и публикация производных (каталог рядов и витрина
 // v_rosstat_macro — поле AfterImport шаблона) наследуются из шаблона, а не пишутся кодом
-// импортёра; свой Import() оставляет только тот, кому адрес артефакта нужно взять со
-// страницы. Полей table и countPoints не видит никто, кроме теста
+// импортёра; свой Import() оставляет тот, кому адрес артефакта нужно взять со страницы
+// (rosstat_ipc_weeks), либо у кого артефакт — не один файл, а набор выпусков
+// (rosstat_ipc_weeks_bulletins). Полей table и countPoints не видит никто, кроме теста
 // TestRosstatImportersPrefixedAndRegistered: по ним проверяется, что импортёр не занял
 // таблицу вне пространства rosstat_ и что объявленный в реестре префлайт совпадает с
 // объявлением самого импортёра (Publication()).
@@ -53,6 +54,7 @@ var rosstatImporters = []rosstatImporter{
 	{salariesMesImporter, "rosstat_salaries_mes", "SELECT count() FROM rosstat_salaries_mes FINAL"},
 	{vvpKvartalImporter, "rosstat_vvp_kvartal", "SELECT count() FROM rosstat_vvp_kvartal FINAL"},
 	{labourForceImporter, "rosstat_labour_force_mes", "SELECT count() FROM rosstat_labour_force_mes FINAL"},
+	{ipcWeeksBulletinsImporter, "rosstat_ipc_weeks_bulletins", "SELECT count() FROM rosstat_ipc_weeks_bulletins FINAL"},
 }
 
 // init — единственная регистрация импортёров Росстата в chimport.Stats. Порядок
