@@ -1096,6 +1096,11 @@ func TestImportAllModeWritesAllFeeds(t *testing.T) {
 	if !conn.anyCallHas("CREATE OR REPLACE VIEW") {
 		t.Errorf("all не опубликовал витрину, want публикацию: в отличие от check, режим записи обязан её пересоздать; вызовы: %v", conn.callList())
 	}
+	// Миграция живой пятиколоночной таблицы выполняется и этим режимом, а текст её пиньится
+	// дословно: расхождение с каноном (порядок колонок) иначе прошло бы незамеченным.
+	if wantAlter := "ALTER TABLE news_events ADD COLUMN IF NOT EXISTS description String AFTER url"; !conn.anyCallHas(wantAlter) {
+		t.Errorf("all не выполнил миграцию %q; вызовы: %v", wantAlter, conn.callList())
+	}
 	rows := batch.inserted(t)
 	if len(rows) != len(want) {
 		t.Errorf("в батч аппенднуто %d строк, want %d (Σ позиций фикстур)", len(rows), len(want))

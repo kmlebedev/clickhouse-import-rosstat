@@ -53,7 +53,7 @@ var newsViewStatements = []string{
 	fmt.Sprintf(`CREATE OR REPLACE VIEW v_news_events DEFINER = default SQL SECURITY DEFINER AS
 		SELECT date, toDate(date, 'Europe/Moscow') AS date_msk, source, title, url, description, sentiment
 		FROM news_events FINAL WHERE match(title, '%s') ORDER BY date DESC`, newsFilter),
-	`ALTER TABLE v_news_events MODIFY COMMENT 'Событийная лента РФ-канала: RSS «Интерфакс», РБК, ЦБ РФ, TASS, smart-lab (импортёр news_watch, каждые 30 минут). Показаны только события по стемам тезисов (широкий фильтр — в определении витрины); полная лента лежит в сырой news_events и агенту не выдаётся. История копится с первого прогона (окна лент 25–100 позиций). sentiment пока NULL — заполняет LLM-сессия (follow-up)'`,
+	`ALTER TABLE v_news_events MODIFY COMMENT 'Событийная лента РФ-канала: RSS «Интерфакс», РБК, ЦБ РФ, TASS, smart-lab (импортёр news_watch, каждые 30 минут). Показаны только события по стемам тезисов (широкий фильтр — в определении витрины); полная лента лежит в сырой news_events и агенту не выдаётся. История копится с первого прогона (окна лент 20–100 позиций). sentiment пока NULL — заполняет LLM-сессия (follow-up)'`,
 	`ALTER TABLE v_news_events COMMENT COLUMN date 'Момент публикации в ленте (pubDate источника со своим офсетом времени)'`,
 	`ALTER TABLE v_news_events COMMENT COLUMN date_msk 'День публикации по МСК (toDate(date, ''Europe/Moscow'')) — для группировок по дням'`,
 	`ALTER TABLE v_news_events COMMENT COLUMN source 'Лента-источник: interfax, rbc, cbr, tass, smartlab; оба фида ЦБ пишутся под cbr, обе ленты smart-lab — под smartlab, различаются url'`,
