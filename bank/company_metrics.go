@@ -519,19 +519,23 @@ func (s *BankCompanyMetrics) Name() string {
 // не починен, спека §3.5); подписи словаря нет в таблице — предупреждение и пропуск метрики
 // (Review Focus 4): сырьё уже импортировано, а маппинг — производное, и ронять из-за него прогон
 // незачем. Сбой чтения, записи или каталога — ошибка прогона.
+//
+// Порядок шагов принципиален: ВСЁ чтение (`Query`/`QueryRow`) идёт ДО `PrepareBatch`. Открытый батч
+// в clickhouse-go v2 держит слот соединения до `Send`/`Abort` — только они возвращают его в пул, —
+// поэтому ранний выход по ошибке чтения после `PrepareBatch` оставлял бы слот занятым до конца
+// процесса (раннер на ошибке одного импортёра продолжает работу остальных). Ошибка после
+// `PrepareBatch` и до `Send` обязана абортить батч (образец — `abortBatch` в
+// util/clickhouse_import.go).
 func (s *BankCompanyMetrics) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
 	if err = conn.Exec(ctx, bankCompanyMetricsDdl); err != nil {
 		return count, fmt.Errorf("%s: создание %s: %w", bankCompanyMetricsName, bankCompanyMetricsTable, err)
 	}
-	batch, err := conn.PrepareBatch(ctx, "INSERT INTO "+bankCompanyMetricsTable)
-	if err != nil {
-		return count, fmt.Errorf("%s: %w", bankCompanyMetricsName, err)
-	}
 
-	// Одна метка загрузки на весь прогон: строки одного прогона — одна версия в
-	// ReplacingMergeTree(loaded_at), поэтому повторный прогон не растит таблицу.
-	loadedAt := time.Now()
-
+	// Читаем и мапим все таблицы до открытия батча: строки собираются в память, зато ни один путь
+	// ошибки до Send не оставляет соединение занятым. Объём — столько же строк, сколько выбранных
+	// точек в сырых таблицах (сотни, не миллионы), так что держать их в срезе дешевле, чем слот
+	// соединения.
+	var rows []bankCompanyRow
 	for _, table := range bankCompanyTables {
 		if table == tbIfrsTable {
 			log.Warnf("%s: таблица %s пропущена — источник не починен (ссылка ведёт на PDF)", bankCompanyMetricsName, table)
@@ -549,17 +553,26 @@ func (s *BankCompanyMetrics) Import(ctx context.Context, conn driver.Conn) (coun
 		if pointsErr != nil {
 			return count, pointsErr
 		}
-		rows, missing := bankCompanyMapPoints(table, points)
+		mapped, missing := bankCompanyMapPoints(table, points)
 		for _, label := range missing {
 			log.Warnf("%s: %s: подписи %q (метрика %s) нет в таблице — метрика пропущена",
 				bankCompanyMetricsName, table, label, bankCompanyMetricMap[table][label].Metric)
 		}
-		if err = appendBankCompanyRows(batch, rows, loadedAt); err != nil {
-			_ = batch.Abort()
-			return count, err
-		}
+		rows = append(rows, mapped...)
 	}
 
+	// Одна метка загрузки на весь прогон: строки одного прогона — одна версия в
+	// ReplacingMergeTree(loaded_at), поэтому повторный прогон не растит таблицу.
+	loadedAt := time.Now()
+
+	batch, err := conn.PrepareBatch(ctx, "INSERT INTO "+bankCompanyMetricsTable)
+	if err != nil {
+		return count, fmt.Errorf("%s: %w", bankCompanyMetricsName, err)
+	}
+	if err = appendBankCompanyRows(batch, rows, loadedAt); err != nil {
+		_ = batch.Abort()
+		return count, err
+	}
 	if err = batch.Send(); err != nil {
 		return 0, fmt.Errorf("%s: %w", bankCompanyMetricsName, err)
 	}
