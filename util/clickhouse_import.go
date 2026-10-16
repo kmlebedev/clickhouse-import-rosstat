@@ -211,10 +211,14 @@ func (s *ClickHouseImport) Import(ctx context.Context, conn driver.Conn) (count 
 			// качает шаблон (запись архива живёт в ветке ImportFunc/BodyFunc, CrawFunc его байтов не
 			// видит). BodyFunc-импортёр ходит тем же путём, что ImportFunc — байты качает шаблон и
 			// сохраняет их в архив, — поэтому «версия известна, но объекта нет» обязано давать полный
-			// импорт и у него. У CrawFunc-импортёра
-			// с точкой контроля (bank/sber_fin_rez.go) объекта в архиве нет и не будет, поэтому проверка
-			// на его no-op-пути была бы вечной деградацией: no-op не наступал бы ни разу, пока
-			// ARCHIVE_BACKEND настроен, — ежедневный полный краул. CrawFunc не трогается (спека §3.3).
+			// импорт и у него. У CrawFunc-импортёра с точкой контроля объекта в архиве нет и не
+			// будет, поэтому проверка на его no-op-пути была бы вечной деградацией: no-op не
+			// наступал бы ни разу, пока ARCHIVE_BACKEND настроен, — ежедневный полный краул.
+			// Ветка-защита в условии ниже сохранена исторически: такого импортёра в репозитории
+			// больше нет — единственный пример (bank/sber_fin_rez.go, импортёр
+			// sber_finansovie_rezultaty) переведён на DataUrl + ImportFunc, и версия его файла
+			// теперь архивируется; новый CrawFunc-импортёр с точкой контроля обязан её получить
+			// заново (стандарт §9.6). CrawFunc не трогается (спека §3.3).
 			if rt := activeArchive(); rt != nil && (s.ImportFunc != nil || s.BodyFunc != nil) {
 				if exists, archiveErr := rt.versionExists(ctx, s.PublicationKey(), s.DataUrl, fingerprint); archiveErr != nil {
 					log.Warnf("%s: версия %s известна, но проверка архива не удалась (%v) — полный импорт", s.PublicationKey(), fingerprint, archiveErr)
