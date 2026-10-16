@@ -928,6 +928,107 @@ async def check(params, server_log):
             failed += not expect("сырая cbr_dip_bulletin закрыта", denied,
                                  "отказ ClickHouse 497 на cbr_dip_bulletin (ожидаемо)" if denied else raw[:200])
 
+            # Контур диапазонов среднесрочного прогноза ЦБ (пункт 4.2 №7 роадмапа KEY_RATE — эталон
+            # ЦБ, фаза 4; спека 2026-10-17 cbr-mt-forecast §3.7, импортёр cbr_mt_forecast): витрина
+            # v_cbr_mt_forecast читается агентом и НЕПУСТА, каталог описывает все 16 объявленных
+            # показателей, витрина винтажна (больше одного выпуска, даты выпуска и заседания
+            # заполнены), а сырая cbr_mt_forecast — источник витрины — агенту закрыта (как
+            # macro_series и cbr_dip_bulletin: читать контур агент обязан только через витрину,
+            # правило 11 AGENTS.md).
+            #
+            # Здесь, в отличие от v_dcf_assumptions, значение count проверяется: строки публикует
+            # импортёр cbr/, поэтому пустая витрина означает ни разу не отработавший шаг
+            # cbr_mt_forecast (выпуски импортируются циклом, каждый выпуск — своей строкой
+            # версии), а не отсутствие данных у источника. Существование витрины подтверждается
+            # ЗАПРОСОМ К НЕЙ, а не поиском имени в ответе list_tables: в том тексте лежат
+            # create_table_query с комментариями таблиц и колонок, и имя отсутствующей витрины
+            # попадало туда из COMMENT соседки (урок bold). Разобранный ответ run_query
+            # доказывает и существование, и право чтения; «нет витрины» и «нет прав» приходят
+            # ошибкой (UNKNOWN_TABLE / ACCESS_DENIED) и в result_rows не разбираются.
+            mt_view = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_cbr_mt_forecast"}))
+            mt_view_rows = result_rows(mt_view)
+            mt_view_n = mt_view_rows[0].get("count()") if mt_view_rows else None
+            if mt_view_rows is None:
+                mt_view_detail = (f"витрина не читается: {mt_view[:200]} — на пустой БД её создаёт "
+                                  "прогон импортёра (make import STAT=cbr_mt_forecast)")
+            elif (mt_view_n or 0) > 0:
+                mt_view_detail = f"строк: {mt_view_n}"
+            else:
+                mt_view_detail = ("строк: 0 — прогнать импортёр контура: make import "
+                                  "STAT=cbr_mt_forecast (витрину пересоздаёт прогон)")
+            failed += not expect("витрина v_cbr_mt_forecast существует и непуста", (mt_view_n or 0) > 0, mt_view_detail)
+
+            # Каталог обязан описывать все 16 объявленных показателей — точным равенством, а не
+            # «> 0» (односторонний контракт §11.4: каждый разобранный ряд обязан иметь описание).
+            # 16 — число строк «Табл 1», объявленных кодом (cbr/mt_forecast_meta.go): 3 core (ИПЦ
+            # дек. к дек., ИПЦ в среднем за год, среднегодовая ключевая ставка — те, ради которых
+            # пункт существует) + 13 остальных (ВВП ×2, расходы на потребление ×2, валовое
+            # накопление ×2, экспорт, импорт, М2, требования банковской системы ×4). Меньшее число
+            # значит ни разу не отработавший шаг cbr_mt_forecast (числа агент прочитает, а что
+            # измеряет ряд, в каких единицах и как читать пару lo/hi — нет); большее — ряд вне
+            # объявленного набора (нормализация подписи в реестр не свелась бы: чужая подпись —
+            # пропуск с предупреждением, а не новая запись каталога).
+            #
+            # Выборка по одному source, без origin: у контура один импортёр и одна книга выпуска,
+            # поэтому source уникален (как у cbr_dip_bulletin), а origin шестнадцати записей
+            # различается только строкой таблицы. Шесть кодов (cpi_dec, cpi_avg, key_rate_avg,
+            # gdp_yoy, exports, imports) совпадают с именами рядов макроопроса ЦБ (cbr_mo_br), но
+            # source у них другой — на этот счётчик консенсус аналитиков не влияет.
+            mt_catalog = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'cbr_mt_forecast'"}))
+            mt_catalog_rows = result_rows(mt_catalog)
+            mt_catalog_n = mt_catalog_rows[0].get("n") if mt_catalog_rows else None
+            if mt_catalog_rows is None:
+                mt_catalog_detail = f"ответ не распознан: {mt_catalog[:200]}"
+            elif mt_catalog_n == 16:
+                mt_catalog_detail = "рядов cbr_mt_forecast: 16 (3 core + 13 строк «Табл 1»)"
+            else:
+                mt_catalog_detail = (f"рядов cbr_mt_forecast: {mt_catalog_n}, want 16 (3 core + 13 "
+                                     "строк «Табл 1») — прогнать make import STAT=cbr_mt_forecast "
+                                     "(каталог перепубликовывается прогоном)")
+            failed += not expect("каталог cbr_mt_forecast полон", mt_catalog_n == 16, mt_catalog_detail)
+
+            # Винтажность — то, ради чего у витрины есть колонки release_date и meeting_date (спека
+            # §3.7): агент читает диапазон как «прогноз, каким его зафиксировал выпуск
+            # release_date», а без этих колонок ревизии выглядели бы фактами. Одной непустоты
+            # витрины выше мало: count() > 0 пройдёт и на срезе из одного выпуска. Поэтому
+            # проверяются обе стороны разом: выпусков больше одного (uniqExact(release_date) > 1)
+            # и винтажные даты заполнены. Пустая дата — 1970-01-01 (toDate(0)): настоящей датой
+            # публикации выпуска или датой заседания она быть не может, а обе даты импортёр считает
+            # fail-fast (дата в слаге и в карточке, дата заседания — в шапке блока индекса, спека
+            # §3.4), поэтому пустое значение здесь — не разобранный винтаж, а не свойство источника.
+            mt_vintage = text(await session.call_tool("run_query", {"query":
+                "SELECT uniqExact(release_date) AS releases, "
+                "countIf(release_date = toDate(0)) AS blank_release, "
+                "countIf(meeting_date = toDate(0)) AS blank_meeting "
+                "FROM v_cbr_mt_forecast"}))
+            mt_vintage_rows = result_rows(mt_vintage)
+            mt_releases_n = mt_vintage_rows[0].get("releases") if mt_vintage_rows else None
+            mt_blank_release_n = mt_vintage_rows[0].get("blank_release") if mt_vintage_rows else None
+            mt_blank_meeting_n = mt_vintage_rows[0].get("blank_meeting") if mt_vintage_rows else None
+            mt_vintage_ok = ((mt_releases_n or 0) > 1 and mt_blank_release_n == 0
+                             and mt_blank_meeting_n == 0)
+            if mt_vintage_rows is None:
+                mt_vintage_detail = f"витрина не читается: {mt_vintage[:200]}"
+            elif mt_vintage_ok:
+                mt_vintage_detail = (f"выпусков: {mt_releases_n}, пустых release_date: 0, "
+                                     "пустых meeting_date: 0")
+            else:
+                mt_vintage_detail = (f"выпусков: {mt_releases_n} (want > 1), пустых release_date: "
+                                     f"{mt_blank_release_n}, пустых meeting_date: "
+                                     f"{mt_blank_meeting_n} (want 0) — прогнать make import "
+                                     "STAT=cbr_mt_forecast (винтаж разбирается прогоном)")
+            failed += not expect("витрина v_cbr_mt_forecast винтажна", mt_vintage_ok, mt_vintage_detail)
+
+            # Сырая cbr_mt_forecast агенту не выдана — как macro_series и cbr_dip_bulletin: витрина —
+            # единственное место, где агент читает прогнозы контура (винтажные колонки release_date и
+            # meeting_date и комментарии есть только у неё, а ключ сырой таблицы — (indicator, year,
+            # release_date)). Таблицу создаёт DDL-прогон импортёра, поэтому UNKNOWN_TABLE здесь —
+            # провал, а не успех: таблица обязана существовать и быть закрытой.
+            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM cbr_mt_forecast"}))
+            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+            failed += not expect("сырая cbr_mt_forecast закрыта", denied,
+                                 "отказ ClickHouse 497 на cbr_mt_forecast (ожидаемо)" if denied else raw[:200])
+
     return failed
 
 
