@@ -955,6 +955,10 @@ class TestRunSummaryOffline(unittest.TestCase):
         world = synthetic_world(months=months, fao=[])
         output = io.StringIO()
         with tempfile.TemporaryDirectory() as tmp:
+            # Пустая выборка — ветка «ничего не посчитано вообще»: файлы прошлого
+            # прогона подчищаются, ничего не пишется.
+            for name in cm.ARTIFACT_NAMES:
+                (Path(tmp) / name).write_text("артефакт прошлого прогона", encoding="utf-8")
             with contextlib.ExitStack() as stack:
                 for loader, key in (
                     ("load_targets", "targets"), ("load_weekly", "weekly"), ("load_usd", "usd"),
@@ -970,6 +974,10 @@ class TestRunSummaryOffline(unittest.TestCase):
         self.assertEqual(summary_value(text, "выборка:"), "пусто, пропущено 15")
         self.assertIn("… и ещё 3 месяца", text)
         self.assertEqual(text.count(" — нет пары доступных точек FAO"), cm.MAX_SKIPPED_PRINTED)
+        self.assertIn("walk-forward не дал ни одного прогноза", text)
+        self.assertIn("устаревшие артефакты прошлого прогона удалены", text)
+        for name in cm.ARTIFACT_NAMES:
+            self.assertFalse((Path(tmp) / name).exists(), name)
 
 
 class TestSummaryFormat(unittest.TestCase):
@@ -2508,11 +2516,12 @@ class TestRunOffline(unittest.TestCase):
             paths.append(path)
         return paths
 
-    def test_run_without_target_cleans_stale_artifacts_and_writes_nothing(self):
+    def test_run_without_target_keeps_backtest_and_cleans_only_json(self):
         # Фикстуры: метки до 2022-12, недельные — до 2022-05; прогон 2026-10-16:
         # неопубликованного месяца нет (метка 2023-01 просрочена) — ветка «нет
-        # цели»: ни JSON, ни отчёт, ни CSV не пишутся, файлы прошлого прогона
-        # удаляются, прогон не падает. Walk-forward при этом печатается.
+        # цели живого nowcast'а» бэктест НЕ отменяет: отчёт и CSV перезаписаны
+        # текущим прогоном, подчищается только stale-JSON (прогноз прошлого
+        # прогона не должен читаться как актуальный); прогон не падает.
         with tempfile.TemporaryDirectory() as tmp:
             stale = self.plant_stale(tmp)
             output = io.StringIO()
@@ -2521,13 +2530,34 @@ class TestRunOffline(unittest.TestCase):
                     start=3, embargo_months=0, out_dir=Path(tmp), today=date(2026, 10, 16)
                 )
             self.assertEqual(code, 0)
-            for path in stale:
-                self.assertFalse(path.exists(), path.name)
+            report_path, predictions_path, forecast_path = stale
+            # stale-JSON удалён, отчёт и CSV — НЕ удалены, а перезаписаны.
+            self.assertFalse(forecast_path.exists())
+            self.assertTrue(report_path.exists())
+            self.assertTrue(predictions_path.exists())
+            self.assertNotEqual(
+                report_path.read_text(encoding="utf-8"), "артефакт прошлого прогона"
+            )
+            self.assertNotEqual(
+                predictions_path.read_text(encoding="utf-8"), "артефакт прошлого прогона"
+            )
+            report = report_path.read_text(encoding="utf-8")
+            self.assertIn("Дата прогона: 2026-10-16", report)
+            self.assertIn("walk-forward", report)
+            # Раздел называет причину отсутствия живого прогноза тем же текстом,
+            # что печатает консоль.
+            self.assertIn("## Текущий nowcast", report)
+            self.assertIn("не рассчитан", report)
+            self.assertIn("2023-01", report)
+            self.assertIn("Отчёт и CSV посчитаны", report)
+            with predictions_path.open(encoding="utf-8", newline="") as handle:
+                predictions = list(csv.DictReader(handle))
+            self.assertTrue(predictions)
             text = output.getvalue()
-            self.assertIn("walk-forward", text)
+            self.assertIn("текущий nowcast:", text)
             self.assertIn("не рассчитан", text)
             self.assertIn("2023-01", text)
-            self.assertIn("устаревшие артефакты прошлого прогона удалены", text)
+            self.assertIn("устаревший файл, если был, удалён", text)
 
     def test_live_nowcast_run_writes_all_three_artifacts(self):
         world = live_world(date(2023, 1, 15))
@@ -2574,7 +2604,10 @@ class TestRunOffline(unittest.TestCase):
             self.assertIn("текущий nowcast:", text)
             self.assertIn("прогноз (JSON):", text)
 
-    def test_run_without_a_single_computed_method_cleans_stale_artifacts(self):
+    def test_run_without_a_single_prediction_cleans_all_three_artifacts(self):
+        # «Ничего не посчитано вообще»: все модели вырождены — ни одного
+        # прогноза нет ни в одном окне: ничего не пишется, все три артефакта
+        # прошлого прогона удаляются (образец — Task 6 ветки v0).
         world = live_world(date(2023, 1, 15))
 
         def degenerate(train, row):
@@ -2601,8 +2634,12 @@ class TestRunOffline(unittest.TestCase):
             self.assertEqual(code, 0)
             for path in stale:
                 self.assertFalse(path.exists(), path.name)
+            # Ничего не перезаписано: у прогона нет ни одного прогноза.
+            for name in cm.ARTIFACT_NAMES:
+                self.assertFalse((Path(tmp) / name).exists(), name)
             text = output.getvalue()
             self.assertIn("ни один метод не посчитан", text)
+            self.assertIn("walk-forward не дал ни одного прогноза", text)
             self.assertIn("устаревшие артефакты прошлого прогона удалены", text)
 
 
