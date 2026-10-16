@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	log "github.com/sirupsen/logrus"
 )
@@ -95,7 +94,8 @@ func sberCSICraw(dataUrl string, conn driver.Conn) (count int64, err error) {
 	return count, nil
 }
 
-// sberCSIImporter — импортёр пакета; регистрируется init() ниже (реестр пакета — отдельная работа).
+// sberCSIImporter — импортёр пакета; регистрируется реестром пакета (bank/importers.go) —
+// единственной точкой append в chimport.Stats.
 var sberCSIImporter = &SberCSI{ClickHouseImport: util.ClickHouseImport{
 	TableName:   sberCSITable,
 	CreateTable: []string{sberCSIDdl},
@@ -107,7 +107,3 @@ var sberCSIImporter = &SberCSI{ClickHouseImport: util.ClickHouseImport{
 	// существует: каждый прогон идёт полным путём и пересоздаёт каталог с витриной после точек.
 	AfterImport: afterSberMacro(sberSeriesMeta),
 }}
-
-func init() {
-	chimport.Stats = append(chimport.Stats, sberCSIImporter)
-}

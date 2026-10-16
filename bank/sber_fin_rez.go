@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
 )
@@ -395,7 +394,8 @@ type SberFinRezStat struct {
 
 // sberFinRezImporter — импортёр sber_finansovie_rezultaty для шаблона и реестра: таблица, DDL в
 // %s-форме, статичный DataUrl, разбор книги (ImportFunc) и объявление точки контроля публикации
-// (sberRpbuCountPoints). Регистрация — персональным init() до задачи 8 (её снимает реестр).
+// (sberRpbuCountPoints). Регистрацию держит реестр пакета (bank/importers.go) — единственная точка
+// append в chimport.Stats.
 var sberFinRezImporter = &SberFinRezStat{ClickHouseImport: util.ClickHouseImport{
 	TableName:              sberRpbuDataUrlTable,
 	CreateTable:            []string{sberRpbuDataUrlDdl},
@@ -403,7 +403,3 @@ var sberFinRezImporter = &SberFinRezStat{ClickHouseImport: util.ClickHouseImport
 	ImportFunc:             sberFinImportFunc,
 	PublicationCountPoints: sberRpbuCountPoints,
 }}
-
-func init() {
-	chimport.Stats = append(chimport.Stats, sberFinRezImporter)
-}

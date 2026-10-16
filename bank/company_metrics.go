@@ -7,12 +7,11 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	log "github.com/sirupsen/logrus"
 )
 
-// bankCompanyMetricsName — имя импортёра в реестре chimport.Stats (и шаг dagu/bank.yaml, задача 8).
+// bankCompanyMetricsName — имя импортёра в реестре chimport.Stats (и шаг dagu/bank.yaml).
 // Имя и таблица у него разные: своей таблицы у импортёра нет — он публикует метрики в общую
 // company_financials (прецедент cbr_mo_br, пишущего в macro_series).
 const bankCompanyMetricsName = "bank_company_metrics"
@@ -587,9 +586,5 @@ func (s *BankCompanyMetrics) Import(ctx context.Context, conn driver.Conn) (coun
 	return count, nil
 }
 
-// bankCompanyMetricsImporter — импортёр для персонального init() (её снимет реестр задачи 8).
-var bankCompanyMetricsImporter = &BankCompanyMetrics{}
-
-func init() {
-	chimport.Stats = append(chimport.Stats, bankCompanyMetricsImporter)
-}
+// Регистрацию импортёра держит реестр пакета (bank/importers.go): запись
+// {&BankCompanyMetrics{}, "company_financials", ""} — единственная точка append в chimport.Stats.

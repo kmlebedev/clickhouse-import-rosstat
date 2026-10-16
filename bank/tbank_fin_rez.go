@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
 )
@@ -124,15 +123,12 @@ func tbIfrsImportFunc(xlsx *excelize.File, batch driver.Batch) error {
 }
 
 // tbIfrsImporter — импортёр tbank_group_ifrs для шаблона и реестра: своя таблица, DDL в %s-форме,
-// статичный DataUrl (текущий PDF) и разбор книги (ImportFunc). Регистрация — персональным init()
-// до задачи 8 (её снимает реестр).
+// статичный DataUrl (текущий PDF) и разбор книги (ImportFunc). Регистрацию держит реестр пакета
+// (bank/importers.go) — единственная точка append в chimport.Stats; шага в dagu/bank.yaml у
+// импортёра нет до починки источника (О2).
 var tbIfrsImporter = &TbIfrs{ClickHouseImport: util.ClickHouseImport{
 	TableName:   tbIfrsTable,
 	CreateTable: []string{tbIfrsDdl},
 	DataUrl:     tbIfrsUrl,
 	ImportFunc:  tbIfrsImportFunc,
 }}
-
-func init() {
-	chimport.Stats = append(chimport.Stats, tbIfrsImporter)
-}

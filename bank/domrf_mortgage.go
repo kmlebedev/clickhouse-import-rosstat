@@ -12,7 +12,6 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/PuerkitoBio/goquery"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
 )
@@ -362,14 +361,11 @@ func domrfImportFunc(xlsx *excelize.File, batch driver.Batch) error {
 // (domrfCountPoints) стоит в литерале, а не в Import(), — его читает тест реестра у
 // зарегистрированного импортёра, а префлайт шаблона включается самим полем. DataUrl в литерале
 // нет: он вычисляется в Import() и живёт в локальной копии, поэтому Publication().Url пуст (см.
-// util.PublicationDecl). Регистрацию держит персональный init() до задачи 8 — её снимет реестр.
+// util.PublicationDecl). Регистрацию держит реестр пакета (bank/importers.go) — единственная точка
+// append в chimport.Stats.
 var domrfImporter = &DomrfMortgageStat{ClickHouseImport: util.ClickHouseImport{
 	TableName:              domrfMortgageTable,
 	CreateTable:            []string{domrfMortgageDdl},
 	ImportFunc:             domrfImportFunc,
 	PublicationCountPoints: domrfCountPoints,
 }}
-
-func init() {
-	chimport.Stats = append(chimport.Stats, domrfImporter)
-}

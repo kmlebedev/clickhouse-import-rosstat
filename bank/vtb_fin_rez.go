@@ -15,7 +15,6 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/PuerkitoBio/goquery"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	log "github.com/sirupsen/logrus"
 	"github.com/xuri/excelize/v2"
@@ -651,15 +650,11 @@ func vtbIfrsImportFunc(xlsx *excelize.File, batch driver.Batch) error {
 // vtbImporter — импортёр rus_vtb_group_ifrs для шаблона и реестра: таблица, DDL в %s-форме,
 // разбор книги (ImportFunc) и объявление точки контроля публикации (vtbCountPoints). Оно
 // включает винтажный архив и строки source_publications — их пишет шаблон в цикле Import,
-// пофайлово. AfterImport пуст до задачи 9 (каталог и витрина) — Import терпит nil. Регистрация —
-// персональным init() до задачи 8 (её снимает реестр).
+// пофайлово. AfterImport пуст до задачи 9 (каталог и витрина) — Import терпит nil. Регистрацию
+// держит реестр пакета (bank/importers.go) — единственная точка append в chimport.Stats.
 var vtbImporter = &VtbIfrs{ClickHouseImport: util.ClickHouseImport{
 	TableName:              vtbIfrsTable,
 	CreateTable:            []string{vtbIfrsTableDdl},
 	ImportFunc:             vtbIfrsImportFunc,
 	PublicationCountPoints: vtbCountPoints,
 }}
-
-func init() {
-	chimport.Stats = append(chimport.Stats, vtbImporter)
-}

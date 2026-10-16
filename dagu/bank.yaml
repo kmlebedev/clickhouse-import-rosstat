@@ -3,14 +3,6 @@ schedule: "23 9 * * 1"
 overlap_policy: skip
 
 steps:
-  - id: domrf_mortgage
-    run: "$ROSSTAT_IMPORT_BIN"
-    env:
-      - CLICKHOUSE_IMPORT_STAT=domrf_mortgage
-    retry_policy:
-      limit: 3
-      interval_sec: 300
-
   - id: sber_finansovie_rezultaty
     run: "$ROSSTAT_IMPORT_BIN"
     env:
@@ -35,14 +27,10 @@ steps:
       limit: 3
       interval_sec: 300
 
-  - id: tbank_group_ifrs
-    run: "$ROSSTAT_IMPORT_BIN"
-    env:
-      - CLICKHOUSE_IMPORT_STAT=tbank_group_ifrs
-    retry_policy:
-      limit: 3
-      interval_sec: 300
-
+  # Шага tbank_group_ifrs здесь нет намеренно (О2): ссылка источника ведёт на PDF, и прогон падает
+  # до разбора, а упавший шаг останавливает всю цепочку. Условие возврата: источник починен (живая
+  # XLSX-ссылка) — тогда шаг вернуть на это место и обновить энфорсер bank/importers_test.go: он
+  # проверяет отсутствие шага явно.
   - id: rus_vtb_group_ifrs
     run: "$ROSSTAT_IMPORT_BIN"
     env:
@@ -51,3 +39,18 @@ steps:
       limit: 3
       interval_sec: 300
 
+  - id: domrf_mortgage
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=domrf_mortgage
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
+  - id: bank_company_metrics
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=bank_company_metrics
+    retry_policy:
+      limit: 3
+      interval_sec: 300
