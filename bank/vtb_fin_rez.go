@@ -253,8 +253,9 @@ func parseVtbPnlSheet(xlsx *excelize.File) (points []vtbPoint, err error) {
 // книги: ROE/ROA — на листе P&L, нормативы достаточности капитала — в блоке «Достаточность
 // капитала» балансового листа ниже vtbBalanceStop (рамка разбора — «как прежде», до «Итого
 // собственные средства»; блок достаточности ею не покрыт). Разметка всё равно проверяется
-// (§6.3, §6.4): заголовок листа и хотя бы одна строка «подпись — определение» обязаны быть на
-// месте — иначе таблица значений, появившаяся на этом листе, прошла бы разбор молча.
+// (§6.3, §6.4): заголовок листа, хотя бы одна строка «подпись — определение» и текстовые
+// определения — числовая ячейка в колонке B означает, что на листе появилась таблица значений,
+// и разбор обязан упасть, а не пропустить её молча.
 func parseVtbRatiosSheet(xlsx *excelize.File) error {
 	sheet, err := vtbSheet(xlsx, vtbRatiosSheet)
 	if err != nil {
@@ -265,12 +266,17 @@ func parseVtbRatiosSheet(xlsx *excelize.File) error {
 		return fmt.Errorf("лист %q: чтение строк: %w", sheet, err)
 	}
 	titled, definitions := false, 0
-	for _, row := range rows {
+	for i, row := range rows {
 		label := vtbSeriesName(vtbCell(row, 0))
+		definition := vtbCell(row, 1)
+		if _, err := strconv.ParseFloat(definition, 64); err == nil {
+			return fmt.Errorf("лист %q, строка %d (%q): значение %q — число, а на листе ожидается текст определения коэффициента",
+				sheet, i+1, label, definition)
+		}
 		switch {
 		case label == vtbRatiosSheet:
 			titled = true
-		case label != "" && vtbCell(row, 1) != "":
+		case label != "" && definition != "":
 			definitions++
 		}
 	}

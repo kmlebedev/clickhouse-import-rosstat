@@ -315,6 +315,10 @@ func TestParseVtbBookFailFast(t *testing.T) {
 			},
 			want: "определение",
 		},
+		"в глоссарии число вместо определения": {
+			mutate: func(t *testing.T, f *excelize.File) { vtbSetCell(t, f, vtbRatiosSheet, "B2", "0.202") },
+			want:   "ожидается текст определения",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := vtbOpenFixture(t)
