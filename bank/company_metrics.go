@@ -447,8 +447,14 @@ func bankCompanyTableExists(ctx context.Context, conn driver.Conn, table string)
 
 // bankCompanyRawPoints читает сырую таблицу целиком. FINAL обязателен (ReplacingMergeTree): без
 // него перезаписанные повторным импортом точки пришли бы по нескольку раз, и в батч уехали бы
-// дубли ключа. Колонка значения — balance (legacy-схема пакета): у Сбера и ВТБ она Float32, и
-// драйвер отдаёт её в float64.
+// дубли ключа.
+//
+// Колонка значения — balance (legacy-схема пакета): у Сбера и у ВТБ она Float32, поэтому и скан
+// идёт в float32, а к float64 значение приводит строку ниже. Прямой скан в *float64 драйвер
+// отклоняет (`converting Float32 to *float64 is unsupported` — дефект D1 живой приёмки T12), и это
+// правильно: молча сузить или расширить тип колонки он не имеет права, тип обязан повторить
+// читатель. Приведение float32 → float64 точное: значение приходит ровно таким, каким лежит в
+// сырой таблице.
 func bankCompanyRawPoints(ctx context.Context, conn driver.Conn, table string) ([]bankCompanyPoint, error) {
 	rows, err := conn.Query(ctx, "SELECT name, date, balance FROM "+table+" FINAL")
 	if err != nil {
@@ -458,10 +464,14 @@ func bankCompanyRawPoints(ctx context.Context, conn driver.Conn, table string) (
 
 	var points []bankCompanyPoint
 	for rows.Next() {
-		var p bankCompanyPoint
-		if err = rows.Scan(&p.Name, &p.Date, &p.Value); err != nil {
+		var (
+			p     bankCompanyPoint
+			value float32
+		)
+		if err = rows.Scan(&p.Name, &p.Date, &value); err != nil {
 			return nil, fmt.Errorf("%s: %s: строка не прочитана: %w", bankCompanyMetricsName, table, err)
 		}
+		p.Value = float64(value)
 		points = append(points, p)
 	}
 	if err = rows.Err(); err != nil {
