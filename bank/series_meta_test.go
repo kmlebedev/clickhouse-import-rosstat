@@ -56,7 +56,7 @@ func TestBankSeriesMetaCoversFixtures(t *testing.T) {
 			source:  vtbIfrsTable,
 			series:  36,
 			parsed: func(t *testing.T) []string {
-				points, err := parseVtbBook(vtbOpenFixture(t))
+				points, err := parseVtbBook(vtbOpenFixture(t, vtbBookFixture))
 				if err != nil {
 					t.Fatalf("parseVtbBook(%s): %v", vtbBookFixture, err)
 				}

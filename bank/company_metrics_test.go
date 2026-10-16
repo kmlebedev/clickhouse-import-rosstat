@@ -314,7 +314,7 @@ func TestBankCompanyLabelsExistInFixtures(t *testing.T) {
 		checkBankCompanyLabels(t, sberRpbuDataUrlTable, sberFinFixture, names)
 	})
 	t.Run(vtbIfrsTable, func(t *testing.T) {
-		points, err := parseVtbBook(vtbOpenFixture(t))
+		points, err := parseVtbBook(vtbOpenFixture(t, vtbBookFixture))
 		if err != nil {
 			t.Fatalf("разбор фикстуры %s: %v", vtbBookFixture, err)
 		}
@@ -388,7 +388,7 @@ func bankCompanySberPoints(t *testing.T) []bankCompanyPoint {
 // bankCompanyVtbPoints — точки разбора фикстуры ВТБ в форме строки сырой таблицы.
 func bankCompanyVtbPoints(t *testing.T) []bankCompanyPoint {
 	t.Helper()
-	points, err := parseVtbBook(vtbOpenFixture(t))
+	points, err := parseVtbBook(vtbOpenFixture(t, vtbBookFixture))
 	if err != nil {
 		t.Fatalf("разбор фикстуры %s: %v", vtbBookFixture, err)
 	}

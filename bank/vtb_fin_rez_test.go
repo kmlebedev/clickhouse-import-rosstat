@@ -13,23 +13,38 @@ import (
 	"time"
 
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+	log "github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus/hooks/test"
 	"github.com/xuri/excelize/v2"
 )
 
-// Фикстура — живой файл книги ВТБ «rus-vtb-group-ifrs-as-of-31-august-2026.xlsx» (скачан
-// 2026-10-17, 42 247 Б): коммитится как есть — стандарт §11.2 разрешает не урезать книги в
-// десятки килобайт, а урезание не должно менять разметку листов.
-const vtbBookFixture = "vtb_ifrs.xlsx"
+// Фикстуры — живые файлы книги ВТБ со страницы результатов (скачаны 2026-10-17): выпуск от
+// 31.08.2026 (42 247 Б, 90 точек — полный набор колонок) и два выпуска с нестандартной вёрсткой
+// P&L, найденные живой приёмкой T12 (§11.1 — артефакты коммитятся как есть, §11.2 — книги в
+// десятки килобайт не урезаются):
+//   - 30.04.2025 (44 509 Б): месячная колонка подписана сокращённо — «апр'2025»;
+//   - 28.02.2026 (41 140 Б): месячных колонок нет вовсе («2М'2026»/«2М'2025» — накопленный
+//     итог), и у балансового блока две колонки-даты вместо трёх.
+const (
+	vtbBookFixture          = "vtb_ifrs.xlsx"               // выпуск 31.08.2026: «август'2026»
+	vtbBookApril2025Fixture = "vtb_ifrs_april_2025.xlsx"    // выпуск 30.04.2025: «апр'2025»
+	vtbBookFeb2026Fixture   = "vtb_ifrs_february_2026.xlsx" // выпуск 28.02.2026: без месячных колонок
+)
 
 // Даты колонок книги (разведка 2026-10-17). Балансовый лист — колонки-остатки: август 2026 (B),
 // июль 2026 (C) и «с начала года» — декабрь 2025 (E); это сырые серийные номера Excel
 // 46265/46234/46022. Лист P&L — месячные колонки «август'2026» (B) и «август'2025» (C): дата
-// точки — последний день месяца.
+// точки — последний день месяца. Выпуск от 30.04.2025: колонки «апр'2025» (B) и «апр'2024» (C);
+// выпуск от 28.02.2026: балансовые даты февраля 2026 (B) и декабря 2025 (C) — месячных колонок
+// P&L у него нет.
 var (
 	vtbFixtureAug26 = time.Date(2026, time.August, 31, 0, 0, 0, 0, time.UTC)
 	vtbFixtureJul26 = time.Date(2026, time.July, 31, 0, 0, 0, 0, time.UTC)
 	vtbFixtureDec25 = time.Date(2025, time.December, 31, 0, 0, 0, 0, time.UTC)
 	vtbFixtureAug25 = time.Date(2025, time.August, 31, 0, 0, 0, 0, time.UTC)
+	vtbFixtureApr25 = time.Date(2025, time.April, 30, 0, 0, 0, 0, time.UTC)
+	vtbFixtureApr24 = time.Date(2024, time.April, 30, 0, 0, 0, 0, time.UTC)
+	vtbFixtureFeb26 = time.Date(2026, time.February, 28, 0, 0, 0, 0, time.UTC)
 )
 
 // vtbSpotEps — допуск сверки spot-значений: сырые числа источника в XML несут артефакты float64
@@ -88,11 +103,11 @@ var vtbFixturePnlSeries = []string{
 
 // vtbOpenFixture открывает книгу-фикстуру: разбор получает *excelize.File — тот же вход, что у
 // ImportFunc шаблона (стандарт §6.1), поэтому тест открывает файл сам и в сеть не ходит (§11.3).
-func vtbOpenFixture(t *testing.T) *excelize.File {
+func vtbOpenFixture(t *testing.T, fixture string) *excelize.File {
 	t.Helper()
-	f, err := excelize.OpenFile("testdata/" + vtbBookFixture)
+	f, err := excelize.OpenFile("testdata/" + fixture)
 	if err != nil {
-		t.Fatalf("открытие фикстуры %s: %v", vtbBookFixture, err)
+		t.Fatalf("открытие фикстуры %s: %v", fixture, err)
 	}
 	t.Cleanup(func() { _ = f.Close() })
 	return f
@@ -149,7 +164,7 @@ func vtbValue(t *testing.T, points []vtbPoint, series string, date time.Time) fl
 // «Показатели и коэффициенты» в живом файле — глоссарий без значений и дат, точек с него нет
 // (разбор прохода — parseVtbRatiosSheet).
 func TestParseVtbBook(t *testing.T) {
-	points, err := parseVtbBook(vtbOpenFixture(t))
+	points, err := parseVtbBook(vtbOpenFixture(t, vtbBookFixture))
 	if err != nil {
 		t.Fatalf("parseVtbBook: %v", err)
 	}
@@ -222,6 +237,101 @@ func fmtDates(dates []time.Time) []string {
 	return out
 }
 
+// TestParseVtbBookReleaseVariants — два живых выпуска с нестандартной вёрсткой P&L, на которых
+// падала живая приёмка T12 (дефект D2; фикстуры — файлы со страницы результатов, скачаны
+// 2026-10-17):
+//   - 30.04.2025: месячная колонка подписана сокращённо («апр'2025»/«апр'2024»), а словарь
+//     месяцев обязан знать сокращения (util.MonthsToNum, прецедент cbr/bop_parse.go) — разбор
+//     даёт обычные 90 точек, дата месячной колонки — 30 апреля;
+//   - 28.02.2026: месячных колонок нет вовсе (оба раздела подписаны накопительными
+//     «2М'2026»/«2М'2025»), и у балансового блока две колонки-даты вместо трёх — это законный
+//     вид выпуска (§6.6), разбор не падает: берёт балансовые точки, пропускает P&L и
+//     предупреждает оператора о пропуске.
+//
+// Числа ожиданий — из независимой выкладки листов (unzip, 2026-10-17), не из реализации.
+func TestParseVtbBookReleaseVariants(t *testing.T) {
+	t.Run("сокращённый месяц «апр'2025»", func(t *testing.T) {
+		points, err := parseVtbBook(vtbOpenFixture(t, vtbBookApril2025Fixture))
+		if err != nil {
+			t.Fatalf("parseVtbBook: %v", err)
+		}
+		if len(points) != 90 {
+			t.Errorf("точек %d, want 90 (54 баланса + 36 P&L; «апр'2025» — та же месячная колонка, что «апрель'2025»)", len(points))
+		}
+		want := append(slices.Clone(vtbFixtureBalanceSeries), vtbFixturePnlSeries...)
+		got := vtbSeriesNames(points)
+		slices.Sort(got)
+		slices.Sort(want)
+		if !slices.Equal(got, want) {
+			t.Errorf("ряды разбора %q, want %q", got, want)
+		}
+		// Spot-значения: баланс апреля 2025 и месячный P&L апреля — «Чистая прибыль» 24.3
+		// (а не накопленная с начала года 165.5 из колонки «4М'2025»).
+		for _, spot := range []struct {
+			series string
+			date   time.Time
+			want   float64
+		}{
+			{series: "Итого активы", date: vtbFixtureApr25, want: 35204.1},
+			{series: "Итого собственные средства", date: vtbFixtureApr25, want: 2809},
+			{series: "Чистая прибыль", date: vtbFixtureApr25, want: 24.3},
+			{series: "Чистая прибыль", date: vtbFixtureApr24, want: 81},
+			{series: "Возврат на капитал (ROE)", date: vtbFixtureApr25, want: 0.105},
+		} {
+			if got := vtbValue(t, points, spot.series, spot.date); math.Abs(got-spot.want) > vtbSpotEps {
+				t.Errorf("%q за %s = %v, want %v (значение ячейки листа)",
+					spot.series, spot.date.Format(vtbTimeLayout), got, spot.want)
+			}
+		}
+	})
+
+	t.Run("выпуск без месячных колонок P&L", func(t *testing.T) {
+		hook := test.NewGlobal()
+		t.Cleanup(func() { log.StandardLogger().ReplaceHooks(make(log.LevelHooks)) })
+		points, err := parseVtbBook(vtbOpenFixture(t, vtbBookFeb2026Fixture))
+		if err != nil {
+			t.Fatalf("выпуск без месячных колонок — ожидаемый вид источника, ошибки быть не должно: %v", err)
+		}
+		// 18 строк баланса × 2 колонки-даты (февраль 2026 и декабрь 2025): январь в этом выпуске
+		// не печатается вовсе, поэтому 36, а не 54. Ряды — только балансовые: накопительные
+		// «2М'2026»/«2М'2025» месячными колонками P&L не становятся.
+		if len(points) != 36 {
+			t.Errorf("точек %d, want 36 (18 строк баланса × 2 колонки-даты; P&L выпуска — накопительный)", len(points))
+		}
+		want := slices.Clone(vtbFixtureBalanceSeries)
+		got := vtbSeriesNames(points)
+		slices.Sort(got)
+		slices.Sort(want)
+		if !slices.Equal(got, want) {
+			t.Errorf("ряды разбора %q, want %q (только балансовые)", got, want)
+		}
+		for _, spot := range []struct {
+			series string
+			want   float64
+		}{
+			{series: "Итого активы", want: 37964.3},
+			{series: "Итого собственные средства", want: 2780.3},
+			{series: "Средства клиентов ФЛ", want: 13609.2},
+		} {
+			if got := vtbValue(t, points, spot.series, vtbFixtureFeb26); math.Abs(got-spot.want) > vtbSpotEps {
+				t.Errorf("%q за %s = %v, want %v (значение ячейки листа)",
+					spot.series, vtbFixtureFeb26.Format(vtbTimeLayout), got, spot.want)
+			}
+		}
+		// Пропуск P&L виден оператору: «Imported 0 rows» без предупреждения читался бы как
+		// «данных нет» (стандарт §6.6).
+		var warns []string
+		for _, entry := range hook.AllEntries() {
+			if entry.Level == log.WarnLevel {
+				warns = append(warns, entry.Message)
+			}
+		}
+		if !slices.ContainsFunc(warns, func(m string) bool { return strings.Contains(m, "нет месячных колонок") }) {
+			t.Errorf("нет предупреждения о пропуске P&L (сообщения уровня warn: %q)", warns)
+		}
+	})
+}
+
 // TestParseVtbBookFailFast: ветки, где разбор обязан вернуть ошибку, а не «0 точек»
 // (стандарт §6.4): нет любого из трёх листов, нет якоря разметки, значение не число, ячейка
 // «NaN»/«Inf» (ParseFloat принимает их без ошибки, а в Float32-колонку они уедут порчей),
@@ -282,9 +392,12 @@ func TestParseVtbBookFailFast(t *testing.T) {
 			},
 			want: "ни одной точки",
 		},
-		"в шапке P&L нет месячных колонок": {
+		"в шапке P&L нет подписей колонок": {
+			// Месячных и накопительных подписей нет вовсе: шапка не опознаётся, а это уже не
+			// «выпуск без месячных колонок» (тот опознаётся по накопительным «2М'2026» —
+			// TestParseVtbBookReleaseVariants), а сломанная разметка (§6.4).
 			mutate: func(t *testing.T, f *excelize.File) {
-				for _, cell := range []string{"B6", "C6", "B16", "C16"} {
+				for _, cell := range []string{"B6", "C6", "E6", "F6", "B16", "C16", "E16", "F16"} {
 					vtbSetCell(t, f, vtbPnlSheet, cell, "изменение")
 				}
 			},
@@ -326,7 +439,7 @@ func TestParseVtbBookFailFast(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			f := vtbOpenFixture(t)
+			f := vtbOpenFixture(t, vtbBookFixture)
 			tc.mutate(t, f)
 			_, err := parseVtbBook(f)
 			if err == nil {
