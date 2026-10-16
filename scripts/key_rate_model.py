@@ -87,6 +87,10 @@ point-in-time слой, запись в `forecast_log`, витрина, граф
 `polyus_output_model.py`); транспорт (`ch_query`) импортируется из
 `scripts/extrapolation_aisc.py`, а не копируется: там уже есть маскирование
 секретов в текстах ошибок, HTTP-порт 8123 и обработка обрывов соединения.
+Общие оценочные функции (RMSE/MAE, DM с поправкой HLN, блочный бутстрап
+разницы RMSE) вынесены в `scripts/eval_utils.py` (`§4` спеки
+`docs/superpowers/specs/2026-10-16-cpi-nowcast-design.md`): ниже от них
+остались обёртки с прежними именами и значениями по умолчанию.
 Секреты приходят только из окружения (их подставляет Makefile).
 
 Запуск — только через `make` (переменные окружения подключает Makefile):
@@ -108,7 +112,6 @@ import argparse
 import csv
 import json
 import math
-import random
 import sys
 import warnings
 from dataclasses import dataclass
@@ -127,6 +130,10 @@ ROOT = Path(__file__).resolve().parent.parent
 # (прецедент `polyus_output_model.py`).
 sys.path.insert(0, str(ROOT / "scripts"))
 
+# Скрипты-соседи: транспорт к ClickHouse и общие оценочные функции (RMSE/MAE,
+# DM с HLN, блочный бутстрап) — второй вынесен в `eval_utils.py`, его же
+# переиспользует ML-трек nowcast'а ИПЦ.
+import eval_utils as eu
 import extrapolation_aisc as aisc
 
 ch_query = aisc.ch_query
@@ -1318,17 +1325,17 @@ def _require_distribution(triple, what: str) -> None:
 
 
 def rmse_bp(errors: list) -> float:
-    """RMSE прогноза шага в б.п.; `errors` — ошибки (прогноз − факт)."""
-    if not errors:
-        raise ValueError("RMSE: пустой список ошибок")
-    return math.sqrt(sum(error * error for error in errors) / len(errors))
+    """RMSE прогноза шага в б.п.; `errors` — ошибки (прогноз − факт).
+
+    Обёртка над `eval_utils.rmse` (перенос один-в-один): имя, аргумент и
+    конвенция прежние, тесты `key_rate_model_test.py` не меняются.
+    """
+    return eu.rmse(errors)
 
 
 def mae_bp(errors: list) -> float:
     """MAE прогноза шага в б.п.; `errors` — ошибки (прогноз − факт)."""
-    if not errors:
-        raise ValueError("MAE: пустой список ошибок")
-    return sum(abs(error) for error in errors) / len(errors)
+    return eu.mae(errors)
 
 
 def hit_rate(predicted: list, actual: list) -> float:
@@ -1488,41 +1495,13 @@ def reliability_bins(probs: list, y_true: list, n_bins: int = 5) -> list:
 def diebold_mariano(err_a: list, err_b: list, h: int = 1) -> tuple:
     """DM-тест (поправка HLN) на равенство точности двух прогнозов (спека §7).
 
-    Путь — библиотечный: `statsmodels.tsa.stattools.diebold_mariano_test` с
-    `harvey_adj=True` (пин `statsmodels>=0.15`). Поправка HLN масштабирует
-    статистику и берёт p-value из распределения Стьюдента с `T − 1` степенями
-    свободы; лаги HAC — правило библиотеки `max(h − 1, ⌈T^{1/3}⌉)` (для окон
-    прогона это 5 лагов при T = 68…84). Путь назван и в отчёте.
-
-    Потери — квадраты ошибок (как у RMSE, головной метрики §7). В API
-    библиотеки подаются «факт» и два прогноза, а у нас на руках ошибки,
-    поэтому «фактом» идёт нулевой ряд: `(0 − err)² = err²`, и разница потерь
-    `d_t = err_a² − err_b²`. Положительная статистика значит, что ошибки
-    `err_a` БОЛЬШЕ, то есть метод хуже.
-
-    Соглашение о вырождении (нулевая дисперсия разницы потерь: t-статистике
-    нечем делиться): среднее 0 — в частности, одинаковые ошибки —
-    `(0.0, 1.0)`; среднее ≠ 0 — `(±inf, 0.0)`: преимущество бесспорно.
+    Тонкая обёртка над `eval_utils.diebold_mariano`: путь (statsmodels с
+    `harvey_adj=True`), соглашение о вырождении (одинаковые/нулевая дисперсия
+    разницы потерь — `(0.0, 1.0)` или `(±inf, 0.0)`) и docstring перенесены
+    туда целиком; здесь остались имя, аргументы, значение `h` по умолчанию и
+    поведение, которое проверяют тесты `key_rate_model_test.py`.
     """
-    if len(err_a) != len(err_b):
-        raise ValueError(f"DM: {len(err_a)} ошибок против {len(err_b)}")
-    if not err_a:
-        raise ValueError("DM: пустой список ошибок")
-    differences = [a * a - b * b for a, b in zip(err_a, err_b)]
-    if all(difference == differences[0] for difference in differences):
-        mean = differences[0]
-        if mean == 0.0:
-            return (0.0, 1.0)
-        return (math.copysign(math.inf, mean), 0.0)
-    result = sm.tsa.stattools.diebold_mariano_test(
-        [0.0] * len(err_a),
-        list(err_a),
-        list(err_b),
-        criterion="mse",
-        harvey_adj=True,
-        horizon=h,
-    )
-    return (float(result.statistic), float(result.pvalue))
+    return eu.diebold_mariano(err_a, err_b, h)
 
 
 def pesaran_timmermann(pred_sign: list, actual_sign: list) -> tuple:
@@ -1596,14 +1575,9 @@ def mincer_zarnowitz(actual: list, predicted: list) -> Optional[MincerZarnowitz]
     return MincerZarnowitz(intercept, slope, float(np.squeeze(joint.pvalue)))
 
 
-@dataclass(frozen=True)
-class BootstrapDiff:
-    """Блочный бутстрап разницы RMSE: точка, 95%-интервал и p-value."""
-
-    rmse_diff: float
-    low: float
-    high: float
-    p_value: float
+# Тип результата бутстрапа — тоже из общего модуля: `km.BootstrapDiff`
+# остаётся прежним именем (обёртка ниже возвращает именно его).
+BootstrapDiff = eu.BootstrapDiff
 
 
 def block_bootstrap_rmse_diff(
@@ -1611,56 +1585,12 @@ def block_bootstrap_rmse_diff(
 ) -> BootstrapDiff:
     """95%-интервал и p-value разницы RMSE двух рядов ошибок (спека §7).
 
-    Ресэмплируются пары ошибок ЦЕЛИКОМ: блок из `block` заседаний берётся
-    одними и теми же индексами из обоих рядов — иначе разница RMSE размылась
-    бы несвязанными точками, и интервал потерял бы парность сравнения. Блоки
-    движутся по кругу, поэтому и последний блок полон.
-
-    Квантили — по порядковым статистикам, без интерполяции: нижняя —
-    `⌊0.025·n⌋`, верхняя — `⌈0.975·n⌉ − 1`.
-
-    Конвенция p (зафиксирована до результатов): двусторонняя, по доле
-    ресэмплов по разные стороны нуля,
-    `p = min(1, 2·min(P(Δ* ≤ 0), P(Δ* ≥ 0)))`; нулевая разница во всех
-    ресэмплах даёт p = 1.0, точное преимущество — p = 0.0.
-
-    Генератор — собственный `random.Random(seed)`, а не глобальный `random`:
-    прогон детерминирован при одном сиде и не зависит (и не влияет) на
-    глобальное состояние ГПСЧ.
+    Тонкая обёртка над `eval_utils.block_bootstrap_rmse_diff`: реализация,
+    конвенция p и квантили перенесены туда целиком, а здесь остались прежнее
+    имя и значения по умолчанию `block=4, n=2000, seed=SEED` — они часть
+    спеки §7 этого прогона, а не общего модуля.
     """
-    if len(err_a) != len(err_b):
-        raise ValueError(f"бутстрап: {len(err_a)} ошибок против {len(err_b)}")
-    if not err_a:
-        raise ValueError("бутстрап: пустой список ошибок")
-    if block < 1:
-        raise ValueError(f"бутстрап: блок {block} — меньше одного заседания")
-    if n < 1:
-        raise ValueError(f"бутстрап: ресэмплов {n} — меньше одного")
-
-    size = len(err_a)
-    blocks_per_sample = -(-size // block)  # ⌈size/block⌉: блоков хватает на всю выборку
-    generator = random.Random(seed)
-    deltas = []
-    for _ in range(n):
-        indices = []
-        for _ in range(blocks_per_sample):
-            start = generator.randrange(size)
-            indices.extend((start + offset) % size for offset in range(block))
-        del indices[size:]
-        squared_a = sum(err_a[index] * err_a[index] for index in indices)
-        squared_b = sum(err_b[index] * err_b[index] for index in indices)
-        deltas.append(math.sqrt(squared_a / size) - math.sqrt(squared_b / size))
-    deltas.sort()
-    low = deltas[int(0.025 * n)]
-    high = deltas[min(n - 1, math.ceil(0.975 * n) - 1)]
-    below = sum(1 for delta in deltas if delta <= 0.0) / n
-    above = sum(1 for delta in deltas if delta >= 0.0) / n
-    return BootstrapDiff(
-        rmse_diff=rmse_bp(err_a) - rmse_bp(err_b),
-        low=low,
-        high=high,
-        p_value=min(1.0, 2.0 * min(below, above)),
-    )
+    return eu.block_bootstrap_rmse_diff(err_a, err_b, block, n, seed)
 
 
 # --- Отчёт и артефакты §8 -----------------------------------------------------
