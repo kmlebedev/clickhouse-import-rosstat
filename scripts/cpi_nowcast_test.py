@@ -49,6 +49,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
+from sklearn.exceptions import ConvergenceWarning
+from sklearn.linear_model import ElasticNetCV
 from sklearn.model_selection import TimeSeriesSplit
 
 # Модуль и тест лежат рядом, запуск прямой (`python3 scripts/...`), поэтому его
@@ -1106,14 +1108,39 @@ class TestWalkForwardHarness(unittest.TestCase):
     def test_window_specs_default_to_main_plus_robustness(self):
         self.assertEqual(cm.window_specs(), [(24, 0), (48, 0), (24, 1)])
 
+    def test_fold_notes_are_aggregated_per_model(self):
+        def noisy(train, row):
+            noisy.fold_notes = {cm.NON_CONVERGED: 1}
+            return 0.0
+
+        rows = harness_rows()
+        notes = {"noisy": {}, "quiet": {}}
+        cm.walk_forward(rows, {"noisy": noisy, "quiet": lambda train, row: 0.0},
+                        start=24, embargo=0, notes=notes)
+        # каждый фолд noisy сообщил недосход — счётчик фолдов, а не предупреждений
+        self.assertEqual(notes["noisy"], {cm.NON_CONVERGED: len(rows) - 24})
+        # у модели без протокола диагностики нет
+        self.assertEqual(notes["quiet"], {})
+
     def test_evaluate_windows_marks_main_and_collects_counters(self):
         runs = cm.evaluate_windows(self.rows, {"stub": lambda train, row: 0.0}, [(24, 0), (48, 0)])
         self.assertEqual([run.main for run in runs], [True, False])
         self.assertEqual([(run.start, run.embargo) for run in runs], [(24, 0), (48, 0)])
         self.assertEqual(runs[0].skipped, {"stub": 0})
+        self.assertEqual(runs[0].notes, {"stub": {}})
         self.assertEqual(runs[0].folds, len(self.rows) - 24)
         self.assertEqual(len(runs[0].predictions), len(self.rows) - 24)
         self.assertEqual(len(runs[1].predictions), len(self.rows) - 48)
+
+    def test_evaluate_windows_counts_non_converged_folds_per_window(self):
+        models = {cm.MODEL_ENET: cm.fit_enet}
+        runs = cm.evaluate_windows(self.rows, models, [(24, 0), (48, 0)])
+        self.assertEqual(len(runs), 2)
+        for run in runs:
+            # счётчик по окну не меньше нуля и не больше числа его фолдов
+            count = run.notes[cm.MODEL_ENET][cm.NON_CONVERGED]
+            self.assertLessEqual(count, len(run.predictions))
+            self.assertGreaterEqual(count, 0)
 
 
 class TestBenchmarkLastValue(unittest.TestCase):
@@ -1215,13 +1242,54 @@ class TestBenchmarkEnet(unittest.TestCase):
 
     def test_fit_emits_no_warnings(self):
         # Вывод тестов и прогона — только числа: недосчёт координатного спуска на
-        # малых alpha подавлен внутри `fit_enet` (конфигурация закреплена спекой
-        # §3.3), а не утекает в консоль.
+        # малых alpha не печатается (конфигурация закреплена спекой §3.3), а
+        # фиксируется диагностикой `fold_notes` последнего фолда.
         rows = enet_rows()
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             cm.fit_enet(rows[:30], rows[30])
         self.assertEqual([str(warning.message) for warning in caught], [])
+        # Чистое окно: недосход не зафиксирован, но ключ диагностики есть.
+        self.assertEqual(cm.fit_enet.fold_notes, {cm.NON_CONVERGED: 0})
+
+    def test_non_converged_fold_is_counted_and_does_not_leak(self):
+        # Подмена подгонки ElasticNetCV на предупреждающую: недосход обязан
+        # попасть в диагностику фолда, а предупреждение — не утечь в вывод.
+        rows = enet_rows()
+        real_fit = ElasticNetCV.fit
+        calls = []
+
+        def warning_fit(model, *args, **kwargs):
+            calls.append(1)
+            warnings.warn("тест: координатный спуск не сошёлся", ConvergenceWarning)
+            return real_fit(model, *args, **kwargs)
+
+        with unittest.mock.patch.object(ElasticNetCV, "fit", warning_fit):
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                cm.fit_enet(rows[:30], rows[30])
+        self.assertEqual(len(calls), 1)  # одна подгонка на фолд
+        self.assertEqual(cm.fit_enet.fold_notes, {cm.NON_CONVERGED: 1})
+        self.assertEqual([str(warning.message) for warning in caught], [])
+
+    def test_other_fit_warnings_are_not_swallowed(self):
+        # Диагностика считается только по ConvergenceWarning; чужие
+        # предупреждения подгонки не прячутся, а переиздаются.
+        rows = enet_rows()
+        real_fit = ElasticNetCV.fit
+
+        def noisy_fit(model, *args, **kwargs):
+            warnings.warn("тест: чужое предупреждение подгонки", UserWarning)
+            return real_fit(model, *args, **kwargs)
+
+        with unittest.mock.patch.object(ElasticNetCV, "fit", noisy_fit):
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                cm.fit_enet(rows[:30], rows[30])
+        self.assertEqual(
+            [str(warning.message) for warning in caught], ["тест: чужое предупреждение подгонки"]
+        )
+        self.assertEqual(cm.fit_enet.fold_notes, {cm.NON_CONVERGED: 0})
 
     def test_nan_in_train_is_imputed_with_column_median(self):
         rows = enet_rows()
@@ -1356,12 +1424,24 @@ class TestReportSkeleton(unittest.TestCase):
     """Скелет отчёта: «модель × окно», последние 12 фолдов, значимость, границы."""
 
     @staticmethod
-    def build_runs():
+    def biased(offset, notes=None):
+        """Заглушка FitPredict; `notes` (если задан) — диагностика каждого фолда."""
+
+        def fit_predict(train, row):
+            if notes is not None:
+                fit_predict.fold_notes = dict(notes)
+            return row.y[cm.TARGET_ALL] + offset
+
+        return fit_predict
+
+    @classmethod
+    def build_runs(cls):
         rows = harness_rows()
         models = {
-            cm.MODEL_LAST: lambda train, row: row.y[cm.TARGET_ALL],
-            cm.MODEL_AR1: lambda train, row: row.y[cm.TARGET_ALL] + 0.2,
-            cm.MODEL_ENET: lambda train, row: row.y[cm.TARGET_ALL] + 0.5,
+            cm.MODEL_LAST: cls.biased(0.0),
+            cm.MODEL_AR1: cls.biased(0.2),
+            # B3 «не сходится» на каждом фолде — строка диагностики обязана быть
+            cm.MODEL_ENET: cls.biased(0.5, notes={cm.NON_CONVERGED: 1}),
         }
         return rows, cm.evaluate_windows(rows, models, cm.window_specs())
 
@@ -1384,9 +1464,9 @@ class TestReportSkeleton(unittest.TestCase):
         ):
             self.assertIn(section, report)
         self.assertIn("Дата прогона: 2026-10-16", report)
-        # «модель × окно»: фолды и метрики по каждому окну
-        self.assertIn("| B1 last value | start=24 (основное) | 37 | 0 |", report)
-        self.assertIn("| B3 ElasticNetCV | start=48 (робастность) | 13 | 0 |", report)
+        # «модель × окно»: фолды, пропуски и недосход по каждому окну
+        self.assertIn("| B1 last value | start=24 (основное) | 37 | 0 | — |", report)
+        self.assertIn("| B3 ElasticNetCV | start=48 (робастность) | 13 | 0 | 13 из 13 |", report)
         self.assertIn("| B1 last value | start=24 (основное) | 37 | 0.000 | 0.000 |", report)
         self.assertIn("| B2 AR(1)+сезонные дамми | start=24 (основное) | 37 | 0.200 | 0.200 |", report)
         # блок «последние 12 фолдов» — тот же отрезок для всех моделей

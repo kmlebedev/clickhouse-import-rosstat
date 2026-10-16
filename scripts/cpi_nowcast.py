@@ -29,7 +29,10 @@ CatBoost — Task 4, текущий прогноз и JSON — Task 5.
 * **walk-forward** (`walk_forward`, §4) — расширяющееся окно: тест — строка
   `i`, обучение — `[0 … i−1−embargo]` (только прошлое; `embargo` выбрасывает
   месяцы перед тестом). `DegenerateWindowError` модели — пропуск фолда ЭТОЙ
-  модели со счётчиком (`skipped`), а не падение прогона. Окна прогона
+  модели со счётчиком (`skipped`), а не падение прогона; модель может сообщать
+  и диагностику фолда (`fold_notes`), которая агрегируется по окну и печатается
+  в отчёте — «недосход N из M» (у B3 `ConvergenceWarning` координатного спуска
+  считался по фолдам, а не терялся). Окна прогона
   (`window_specs`): основное (`--start`, `--embargo-months`) плюс робастность —
   второй старт 48 и эмбарго 1; консоль печатает основное окно подробно,
   робастные — компактно, полные таблицы идут в отчёт;
@@ -833,6 +836,14 @@ ROBUST_EMBARGO = 1
 # Контракт модели walk-forward: обучение на окне строк, прогноз тестовой строки.
 FitPredict = Callable[[list[Row], Row], float]
 
+# Ключ диагностики фолда в необязательном протоколе `fold_notes`: спуск модели
+# не сошёлся (у B3 — `ConvergenceWarning` координатного спуска). Модель,
+# выставляющая атрибут `fold_notes` (dict[str, int] о ПОСЛЕДНЕЙ подгонке),
+# отчитывается по фолдам; harness (`walk_forward`) накапливает значения по
+# модели, отчёт печатает «N из M» фолдов. У моделей без атрибута (B1, B2)
+# диагностики нет — в отчёте «—».
+NON_CONVERGED = "non_converged"
+
 
 @dataclass(frozen=True)
 class Prediction:
@@ -856,8 +867,10 @@ class WindowRun:
     `folds` — число тестовых месяцев окна (может быть больше числа прогнозов
     модели, если её окна вырождались); `skipped` — «модель → пропущено фолдов»
     по ВСЕМ моделям словаря (нулевые счётчики тоже: модель, вырожденная на всех
-    окнах, видна в отчёте строкой «0 фолдов», а не исчезает); `main` — основное
-    окно прогона (для блока «последние 12 фолдов» и тестов значимости).
+    окнах, видна в отчёте строкой «0 фолдов», а не исчезает); `notes` —
+    «модель → диагностика» (сумма `fold_notes` фолдов; у моделей без протокола
+    словарь пуст); `main` — основное окно прогона (для блока «последние 12
+    фолдов» и тестов значимости).
     """
 
     start: int
@@ -866,6 +879,7 @@ class WindowRun:
     folds: int
     predictions: list[Prediction]
     skipped: dict[str, int]
+    notes: dict[str, dict[str, int]]
 
 
 def window_key(start: int, embargo: int) -> str:
@@ -898,6 +912,7 @@ def walk_forward(
     start: int,
     embargo: int,
     skipped: Optional[dict[str, int]] = None,
+    notes: Optional[dict[str, dict[str, int]]] = None,
 ) -> list[Prediction]:
     """Walk-forward по словарю моделей и одному окну (спека §4).
 
@@ -910,9 +925,11 @@ def walk_forward(
     `DegenerateWindowError` модели — пропуск фолда ЭТОЙ модели со счётчиком, а
     не падение прогона: вырожденное окно — свойство окна, а не порча данных.
     Любое другое исключение пробрасывается: это баг или порча данных. Счётчики
-    собираются в необязательный словарь `skipped` («модель → пропущено»),
-    который заполняет вызывающий (`evaluate_windows`): сигнатура возврата —
-    список прогнозов (контракт Tasks 4–5), а счётчики нужны отчёту.
+    собираются в необязательные словари, которые заполняет вызывающий
+    (`evaluate_windows`): `skipped` («модель → пропущено фолдов») и `notes`
+    («модель → сумма `fold_notes` фолдов»; модель без атрибута `fold_notes` —
+    без диагностики). Сигнатура возврата — список прогнозов (контракт Tasks 4–5),
+    а счётчики нужны отчёту.
     """
     if start < 1:
         raise ValueError(f"walk-forward: start={start} — меньше одного месяца")
@@ -931,6 +948,12 @@ def walk_forward(
             except DegenerateWindowError:
                 counts[name] = counts.get(name, 0) + 1
                 continue
+            if notes is not None:
+                fold_notes = getattr(fit_predict, "fold_notes", None)
+                if fold_notes:
+                    totals = notes.setdefault(name, {})
+                    for key, count in fold_notes.items():
+                        totals[key] = totals.get(key, 0) + int(count)
             predictions.append(
                 Prediction(
                     month=row.month,
@@ -951,12 +974,15 @@ def evaluate_windows(
 
     Счётчики пропусков создаются по всем моделям словаря (нули тоже), поэтому
     `WindowRun.skipped` хранит порядок моделей `models` — от него зависят строки
-    таблиц отчёта, а не алфавит.
+    таблиц отчёта, а не алфавит. Диагностика `fold_notes` собирается по окну
+    заново (`WindowRun.notes`): число недосошедших фолдов относится к КОНКРЕТНОМУ
+    окну, а не к прогону целиком.
     """
     runs = []
     for position, (start, embargo) in enumerate(window_specs() if specs is None else specs):
         skipped = {name: 0 for name in models}
-        predictions = walk_forward(rows, models, start, embargo, skipped=skipped)
+        notes = {name: {} for name in models}
+        predictions = walk_forward(rows, models, start, embargo, skipped=skipped, notes=notes)
         runs.append(
             WindowRun(
                 start=start,
@@ -965,6 +991,7 @@ def evaluate_windows(
                 folds=max(0, len(rows) - start),
                 predictions=predictions,
                 skipped=skipped,
+                notes=notes,
             )
         )
     return runs
@@ -1167,9 +1194,12 @@ def fit_enet(train: list[Row], row: Row) -> float:
 
     Вырожденное окно — `DegenerateWindowError`; walk-forward пропускает фолд со
     счётчиком. `ConvergenceWarning` координатного спуска (малые `alpha` спеки на
-    коротких окнах) подавляется точечно: конфигурация `ElasticNetCV` закреплена
-    спекой §3.3, а прогноз конечен и взят у выбранной CV модели. Подобранный
-    пайплайн и матрицы остаются в `fit_enet.last_fit`.
+    коротких окнах) не печатается — конфигурация `ElasticNetCV` закреплена
+    спекой §3.3, а прогноз конечен и взят у выбранной CV модели, — но и не
+    теряется: фолд помечается диагностикой `fold_notes[NON_CONVERGED]`, отчёт
+    печатает «недосход: N из M» по каждому окну. Подобранный пайплайн и матрицы
+    остаются в `fit_enet.last_fit`, диагностика последнего фолда — в
+    `fit_enet.fold_notes` (протокол `walk_forward`).
     """
     matrix = enet_matrix(train)
     _assert_enet_window(matrix)
@@ -1190,23 +1220,34 @@ def fit_enet(train: list[Row], row: Row) -> float:
             ),
         ]
     )
-    with warnings.catch_warnings():
-        # Координатный спуск внутри CV на малых alpha и коротких окнах может не
-        # досчитать до допуска (Duality gap чуть выше tolerance) и напечатать
-        # ConvergenceWarning. Конфигурация (`alphas` до 1e-4, `max_iter` по
-        # умолчанию) закреплена спекой §3.3, менять её здесь нельзя; прогноз
-        # конечен и взят у выбранной CV модели. Поэтому предупреждение подавлено
-        # точечно (вывод прогона — только числа), а не превращено в пропуск
-        # фолда; чистый вывод `fit_enet` пинован отдельным тестом.
-        warnings.simplefilter("ignore", ConvergenceWarning)
+    with warnings.catch_warnings(record=True) as caught:
+        # Все предупреждения подгонки перехватываются, чтобы считать недосход по
+        # фолдам: координатный спуск внутри CV на малых alpha и коротких окнах
+        # может не досчитать до допуска (Duality gap чуть выше tolerance) и
+        # напечатать ConvergenceWarning. Конфигурация (`alphas` до 1e-4,
+        # `max_iter` по умолчанию) закреплена спекой §3.3 — менять её здесь
+        # нельзя, поэтому предупреждение не печатается, а фиксируется в
+        # диагностике `fold_notes` (walk-forward агрегирует её по окну, отчёт
+        # печатает «недосход: N из M»). Прочие предупреждения не прячутся:
+        # они переиздаются после фита.
+        warnings.simplefilter("always")
         model.fit(imputed, targets)
+    non_converged = any(
+        issubclass(warning.category, ConvergenceWarning) for warning in caught
+    )
+    for warning in caught:
+        if not issubclass(warning.category, ConvergenceWarning):
+            warnings.warn(str(warning.message), warning.category, stacklevel=2)
+    fit_enet.fold_notes = {NON_CONVERGED: int(non_converged)}
     fit_enet.last_fit = EnetFit(model=model, medians=medians, imputed=imputed)
     return float(model.predict(enet_impute(enet_matrix([row]), medians))[0])
 
 
-# Последний подобранный фолд B3: читают тесты (пины конфигурации и импутации),
-# отчёт — нет. Атрибут заполняется при каждом вызове `fit_enet`.
+# Последний подобранный фолд B3 и диагностика последнего фолда: читают тесты
+# (пины конфигурации и импутации) и harness (`fold_notes`); отчёт — нет.
+# Атрибуты заполняются при каждом вызове `fit_enet`.
 fit_enet.last_fit = None
+fit_enet.fold_notes = {}
 
 # Бенчмарки спеки §3.3 — порядок B1, B2, B3 задаёт строки таблиц отчёта.
 BENCHMARKS = {MODEL_LAST: predict_last, MODEL_AR1: fit_ar1, MODEL_ENET: fit_enet}
@@ -1291,8 +1332,8 @@ def pairwise_tests(predictions: list[Prediction]) -> list[PairTest]:
             months = sorted(set(by_month_a) & set(by_month_b))
             if len(months) < 2:
                 continue
-            err_a = [by_month_a[month].y_pred - by_month_a[month].y_true for month in months]
-            err_b = [by_month_b[month].y_pred - by_month_b[month].y_true for month in months]
+            err_a = errors([by_month_a[month] for month in months])
+            err_b = errors([by_month_b[month] for month in months])
             dm_stat, dm_p = diebold_mariano(err_a, err_b)
             bootstrap = block_bootstrap_rmse_diff(err_a, err_b)
             tests.append(
@@ -1382,13 +1423,24 @@ def _metrics_cells(group: list[Prediction]) -> str:
     return f"{len(group)} | {_fmt(rmse_pp(group))} | {_fmt(mae_pp(group))}"
 
 
+def _fold_note_cell(notes: dict, folds: int) -> str:
+    """Ячейка «недосход»: `N из M` у моделей с диагностикой, «—» у остальных.
+
+    `notes` — накопленная диагностика модели за окно (`WindowRun.notes`), `folds`
+    — число ЕЁ фолдов, по которым считался недосход (0 фолдов — «—»).
+    """
+    if NON_CONVERGED not in notes or folds == 0:
+        return "—"
+    return f"{notes[NON_CONVERGED]} из {folds}"
+
+
 _METRIC_HEADER = (
     "| модель | окно | n | RMSE, п.п. | MAE, п.п. |",
     "|---|---|---|---|---|",
 )
 _FOLD_SUMMARY_HEADER = (
-    "| модель | окно | фолдов | пропущено (вырожденное окно) |",
-    "|---|---|---|---|",
+    "| модель | окно | фолдов | пропущено (вырожденное окно) | недосход (ConvergenceWarning) |",
+    "|---|---|---|---|---|",
 )
 _LAST_FOLDS_HEADER = (
     "| модель | n | RMSE, п.п. | MAE, п.п. |",
@@ -1403,25 +1455,27 @@ _SIGNIFICANCE_HEADER = (
 def render_report(
     sample: list[Row],
     skipped: list,
-    predictions: list[WindowRun],
+    window_runs: list[WindowRun],
     nowcast: Optional[str] = None,
     today: Optional[date] = None,
 ) -> str:
     """Markdown-отчёт прогона: выборка, walk-forward, метрики, значимость (§4).
 
     `sample`/`skipped` — выборка `build_sample` (строки и месяцы без собранных
-    признаков); `predictions` — по одному `WindowRun` на окно walk-forward
-    (порядок окон задаёт строки таблиц, основное помечено `WindowRun.main`);
-    `nowcast` — готовый markdown-блок текущего прогноза (Task 5) или `None`;
-    `today` — дата прогона (по умолчанию системная).
+    признаков); `window_runs` — по одному `WindowRun` на окно walk-forward
+    (порядок окон задаёт строки таблиц, основное помечено `WindowRun.main`; имя
+    отражает и прогнозы, и счётчики окна); `nowcast` — готовый markdown-блок
+    текущего прогноза (Task 5) или `None`; `today` — дата прогона (по умолчанию
+    системная).
 
     «Модель × окно» — строки таблиц: перечень моделей берётся из счётчиков окон
     (модель, вырожденная на всех окнах, видна строкой «0 фолдов», а не
-    пропадает), метрики — из фолдов. Модели Task 4 (CatBoost) попадают в те же
-    таблицы теми же `Prediction` — правок отчёта не требуется.
+    пропадает), метрики — из фолдов, «недосход» — из `WindowRun.notes`. Модели
+    Task 4 (CatBoost) попадают в те же таблицы теми же `Prediction` — правок
+    отчёта не требуется.
     """
     today = today or date.today()
-    runs = list(predictions)
+    runs = list(window_runs)
     main_run = next((run for run in runs if run.main), runs[0] if runs else None)
     lines = [
         "# CPI nowcast — walk-forward бэктест бенчмарков",
@@ -1463,7 +1517,11 @@ def render_report(
         "`i`, обучение — строки `[0 … i−1−embargo]` (только прошлое; embargo > 0 "
         "выбрасывает месяц перед тестом). Единый train/test split не используется. "
         "Вырожденное обучающее окно (`DegenerateWindowError` любой модели) — "
-        "пропуск фолда ЭТОЙ модели со счётчиком, а не падение прогона.",
+        "пропуск фолда ЭТОЙ модели со счётчиком, а не падение прогона. "
+        "«Недосход» — фолды, где численный решатель модели не сошёлся "
+        "(`ConvergenceWarning`; для B3 это координатный спуск на малых `alpha` "
+        "спеки, `max_iter` не повышался), подсчёт — по предупреждениям вокруг "
+        "подгонки; у моделей без такой диагностики (B1, B2) — «—».",
         "",
     ]
     fold_rows, metric_rows = [], []
@@ -1471,7 +1529,8 @@ def render_report(
         for name, group in _run_groups(run).items():
             fold_rows.append(
                 f"| {model_label(name)} | {window_title(run)} | {len(group)} "
-                f"| {run.skipped.get(name, 0)} |"
+                f"| {run.skipped.get(name, 0)} "
+                f"| {_fold_note_cell(run.notes.get(name, {}), len(group))} |"
             )
             metric_rows.append(
                 f"| {model_label(name)} | {window_title(run)} | {_metrics_cells(group)} |"
@@ -1549,9 +1608,10 @@ def render_report(
         "- embargo 1 — только робастность: перекрытие окон признаков тестового и "
         "обучающих месяцев структурно исключено (purge-проверка), но границы "
         "доступности — консервативное правило §2.4, а не фактические даты.",
-        "- `ConvergenceWarning` координатного спуска B3 (малые `alpha` спеки на "
-        "коротких окнах) подавлен точечно внутри `fit_enet`: `max_iter` не "
-        "повышался, влияние недосчёта на прогноз не измерено.",
+        "- недосход B3 (`ConvergenceWarning` координатного спуска) считается по "
+        "фолдам и выводится в таблице Walk-forward, но влияние недосчёта на "
+        "прогноз не измерено: прогнозы с увеличенным `max_iter` не сравнивались "
+        "(конфигурация `ElasticNetCV` зафиксирована спекой §3.3).",
         "- бенчмарк «медиана макроопроса ЦБ» не берётся (годовой горизонт "
         "выпусков, месячного сопоставления нет — спека §7).",
         "",
@@ -1569,20 +1629,20 @@ def render_report(
     return "\n".join(lines).rstrip("\n") + "\n"
 
 
-def write_artifacts(out_dir: Path, report: str, predictions: list[WindowRun]) -> tuple:
+def write_artifacts(out_dir: Path, report: str, window_runs: list[WindowRun]) -> tuple:
     """Пишет markdown-отчёт и CSV фолдов в `out_dir` (LF; имена — константы).
 
-    CSV — «длинный» список фолдов всех окон: окно, модель, месяц, факт, прогноз,
-    ошибка (`прогноз − факт`, п.п.); порядок — окна прогона, модели как
-    зарегистрированы (у вырожденных строк нет), месяцы по возрастанию. Файлы
-    gitignored: числа прогона зависят от БД и фиксируются протоколом приёмки, а
-    не репозиторием.
+    `window_runs` — окна прогона (`evaluate_windows`); CSV — «длинный» список
+    фолдов всех окон: окно, модель, месяц, факт, прогноз, ошибка
+    (`прогноз − факт`, п.п.); порядок — окна прогона, модели как зарегистрированы
+    (у вырожденных строк нет), месяцы по возрастанию. Файлы gitignored: числа
+    прогона зависят от БД и фиксируются протоколом приёмки, а не репозиторием.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     report_path = out_dir / REPORT_NAME
     report_path.write_text(report.rstrip("\n") + "\n", encoding="utf-8")
     rows = []
-    for run in predictions:
+    for run in window_runs:
         for name, group in _run_groups(run).items():
             for prediction in sorted(group, key=lambda item: item.month):
                 rows.append(
@@ -1724,6 +1784,8 @@ def _print_walk_forward(runs: list[WindowRun]) -> None:
 
     Полные таблицы «модель × окно» — в `cpi_nowcast_report.md`; консоль не
     повторяет отчёт и печатает робастные окна компактно (RMSE по моделям).
+    Недосход (`fold_notes`, у B3 — `ConvergenceWarning`) печатается у тех
+    моделей, которые его сообщают, — «недосход N из M» в конце строки метрик.
     """
     print("walk-forward (обучающее окно expanding; тест — следующий месяц):")
     if not runs:
@@ -1739,19 +1801,25 @@ def _print_walk_forward(runs: list[WindowRun]) -> None:
             print(f"  {title}:")
             for name, group in groups.items():
                 skipped = run.skipped.get(name, 0)
+                note = _fold_note_cell(run.notes.get(name, {}), len(group))
+                note_suffix = f", недосход {note}" if note != "—" else ""
                 if group:
                     print(
                         f"    {model_label(name):<34} RMSE {rmse_pp(group):.3f}, "
-                        f"MAE {mae_pp(group):.3f} (n={len(group)}, пропущено {skipped})"
+                        f"MAE {mae_pp(group):.3f} (n={len(group)}, пропущено {skipped}"
+                        f"{note_suffix})"
                     )
                 else:
                     print(f"    {model_label(name):<34} фолдов нет (пропущено {skipped})")
         else:
-            cells = ", ".join(
-                f"{model_label(name)} {_fmt(rmse_pp(group)) if group else '—'}"
-                for name, group in groups.items()
-            )
-            print(f"  {title}: RMSE {cells}")
+            cells = []
+            for name, group in groups.items():
+                note = _fold_note_cell(run.notes.get(name, {}), len(group))
+                cell = f"{model_label(name)} {_fmt(rmse_pp(group)) if group else '—'}"
+                if note != "—":
+                    cell += f" (недосход {note})"
+                cells.append(cell)
+            print(f"  {title}: RMSE {', '.join(cells)}")
 
 
 def run_summary(
