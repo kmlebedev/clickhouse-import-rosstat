@@ -375,7 +375,7 @@ ORDER BY (company, metric, period, source_kind, source_url);
 
 -- LEGACY (не наполняется): прежняя таблица метрик Полюса. С 2026-10-16 дашборд
 -- finance-polyus переведён на витрины v_company_*/v_* и таблицу больше не читает;
--- удаление или консервация — отдельный пункт (docs/ROADMAP_DCF_METALS.md).
+-- удаление или консервация — отдельный пункт (docs/ROADMAP_DCF_POLYUS.md §7.3).
 -- Импортёр polyus_financial_metrics пишет в company_financials, двойной записи нет.
 CREATE TABLE IF NOT EXISTS polyus_financial_metrics
 (
@@ -997,7 +997,7 @@ uv run --with mcp-clickhouse==0.7.0 --python 3.12 mcp-clickhouse
 - **комментарии и провенанс:** у таблицы `company_financials` и всех трёх витрин есть комментарий таблицы и каждой колонки (`ALTER TABLE ... MODIFY COMMENT` / `COMMENT COLUMN`; `COMMENT ON` в ClickHouse 26.10 не работает);
 - **грант:** `GRANT SELECT` на `v_company_financials`, `v_company_metric_sources`, `v_company_operating` добавлен в `sql/mcp_kimi_reader.sql` (выдаётся вручную через `make mcp-user`).
 
-Поэтому ограничение «агент MCP не видит данные Полюса» **снято**: производительность, TCC, AISC, capex, выручка и операционка по активам читаются агентом через `v_company_*`. Сырые таблицы `databook_polyus`, `polyus_financial_metrics` и `company_financials` агенту по-прежнему **не выданы и не должны** — это сырые таблицы; доступ даёт только витрина. Проверено живым `make mcp-check` 2026-10-10 (ПРОВЕРКА ПРОЙДЕНА): три витрины видны в `list_tables`, `run_query` к ним читается, запрос к сырым таблицам даёт `ACCESS_DENIED`. С 2026-10-16 дашборд `finance-polyus` собран кодом (`grafana/`) и читает витрины `v_company_*`/`v_*`, поэтому legacy-таблица `polyus_financial_metrics` дашбордом **больше не читается** (она не тронута); её удаление или консервация — отдельный пункт (docs/ROADMAP_DCF_METALS.md).
+Поэтому ограничение «агент MCP не видит данные Полюса» **снято**: производительность, TCC, AISC, capex, выручка и операционка по активам читаются агентом через `v_company_*`. Сырые таблицы `databook_polyus`, `polyus_financial_metrics` и `company_financials` агенту по-прежнему **не выданы и не должны** — это сырые таблицы; доступ даёт только витрина. Проверено живым `make mcp-check` 2026-10-10 (ПРОВЕРКА ПРОЙДЕНА): три витрины видны в `list_tables`, `run_query` к ним читается, запрос к сырым таблицам даёт `ACCESS_DENIED`. С 2026-10-16 дашборд `finance-polyus` собран кодом (`grafana/`) и читает витрины `v_company_*`/`v_*`, поэтому legacy-таблица `polyus_financial_metrics` дашбордом **больше не читается** (она не тронута); её удаление или консервация — отдельный пункт (docs/ROADMAP_DCF_POLYUS.md §7.3).
 
 **Контур спроса фазы 3 (2026-10-11) правилу 11 удовлетворяет:** витрины `v_gold_forecasts` и `v_gold_etf_flows` созданы с комментариями таблицы и каждой колонки, `GRANT SELECT` на обе добавлен в `sql/mcp_kimi_reader.sql` (выдаётся вручную, `make mcp-user`); 20 рядов WGC (`source = 'webbridge'`) описаны каталогом-сидом `sql/wgc_etf_flows_catalog.sql` — у сессионных рядов нет импортёра, который вызвал бы `util.UpsertSeriesCatalog` (правило 11a). Обратная связь журнала прогнозов теперь автоматизирована: `actual`/`error_pct` в `forecast_log` заполняет импортёр `forecast_resolve` (§6.1), поэтому `v_forecast_accuracy` перестала быть вечно нерезолвленной. Сырая `gold_forecasts` агенту **не выдана**. Проверки этих артефактов добавлены в `scripts/mcp_check.py` (`make mcp-check`).
 
