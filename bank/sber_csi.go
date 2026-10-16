@@ -1,6 +1,7 @@
 package bank
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -28,6 +29,12 @@ const (
 		) ENGINE = ReplacingMergeTree ORDER BY (name, date);
     `
 )
+
+// ctx — фон для вставок: импорт не привязан к запросу пользователя, а CrawFunc получает только conn
+// (идиом cbr/currency_usd.go, customs/vneshn_torg_countries.go). Живёт здесь после задачи 5: прежний
+// дом переменной (bank/sber_fin_rez.go) переведён на шаблонный путь ImportFunc, а эти два импортёра
+// остаются CrawFunc-случаями — CSV-разбора в шаблоне нет.
+var ctx = context.TODO()
 
 // SberCSI — месячный индекс реальных потребительских расходов СберИндекса (100 = декабрь 2018),
 // 5 категорий, дата точки — первое число месяца. Импортёр построен на шаблоне
