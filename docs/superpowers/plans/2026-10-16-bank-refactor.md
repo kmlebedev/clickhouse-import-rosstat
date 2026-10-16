@@ -585,3 +585,52 @@ git commit -m "bank: refactor accepted — live runs, archive, mcp-check"
 - **Известное упрощение**: сетевые/БД-ветки (гейт ВТБ, `bank_company_metrics.Import`, чек-точка ДОМ.РФ) офлайн-тестами не воспроизводятся — их покрывает живая приёмка задачи 12; чистые части покрыты тестами задач.
 
 ## Протокол живой приёмки (заполняется в задаче 12)
+
+**Вердикт: приёмка НЕ пройдена (BLOCKED), ✅ не ставится.** Дата прогонов — **2026-10-17**, ветка
+`feat/bank-refactor` (голова при старте `266296f`), dev-ClickHouse (порт 8123, database `default`),
+все команды — через `make`. Дефекты **не чинились** (приёмка — не разработка); полный отчёт — `task-12-report.md`.
+
+**Зелёное.** `make all` — `0 issues` golangci-lint, `go vet` чисто, `go test -race ./...` все `ok`, обе сборки;
+`go test -race -count=1 ./bank/` — `ok … 5.452s`. Схема: `build/company_financials_period_type_m.sql` применён,
+живой тип `Enum8('Q'=1,'H'=2,'FY'=3,'LTM'=4,'M'=5)`, PLZL 347/265 на месте. Прогоны: `domrf_mortgage` — `Imported 15 rows`
+(15 банков «Новостройки», все 2026-08-31), повтор — no-op «версия `984b5398448d06092a62b481671f02a6` уже импортирована,
+15 точек на месте»; `sber_finansovie_rezultaty` (строка версии снята заранее — `build/sber_fin_version_delete.sql`,
+санкционированное лечение) — **`Imported 1279 rows`**, повтор — no-op с версией `d74f627b2d30f37d72a63d7dab83d986`;
+`sber_consumper_spending_index` — `Imported 470 rows` и `sber_izmenenie_trat` — `Imported 7038 rows` (`count() FINAL` —
+470/7038, как в базе T0); `tbank_group_ifrs` — ожидаемое падение на PDF (`excelize zip: not a valid zip file`,
+`Imported 0 rows`, код 1), DDL выполнен до скачивания — пустая таблица заведена (О2/О4). Винтажный архив
+(`ARCHIVE_BACKEND=local ARCHIVE_LOCAL_DIR=build/archive-dev`; строки версий трёх источников сняты — `build/t12_archive_remove_versions.sql`):
+domrf — 1 объект + 1 строка реестра, sber_fin — 1 + 1, ВТБ — 11 + 11 (`registry.jsonl` 357 → 370 строк).
+Чистота: `grep -rn "colly\|fmt.Print" bank/` пусто, единственный `init()` — `bank/importers.go:75`,
+`dagu validate dagu/bank.yaml` — код 0.
+
+**Сверка с базовой линией (§15.2).** `build/bank_refactor_baseline.sql` дополнен `domrf_mortgage` и `tbank_group_ifrs`
+(пять запросов T0 — дословно, снимок T0 — в комментарии файла). Расхождения поимённо: `rus_vtb_group_ifrs` 396/18 →
+**702/36** (баланс 396 = 18×22 без изменений, +306 точек новых рядов P&L, min-дата 2023-12-31 → 2023-10-31) — ожидаемое;
+`sber_finansovie_rezultaty` 559/13 → **1279/30** — ожидаемое (ровно по брифу); `sber_consumper_spending_index` 470/5 и
+`sber_izmenenie_trat` 7038/46 — без изменений; `domrf_mortgage` появилась (15/15/2026-08-31) — ожидаемое;
+`tbank_group_ifrs` заведена пустой (0/0) — ожидаемое; **`company_financials` — PLZL 347/265 без изменений, но
+банковских строк SBER/VTBR НЕТ (ожидалось +629)** — расхождение вне перечня брифа → остановка и разбор (дефект D1).
+
+**Красное (блокирует ✅).** **D1:** `make import STAT=bank_company_metrics` —
+`clickhouse [ScanRow]: (balance) converting Float32 to *float64 is unsupported. try using *float32`,
+`Imported 0 rows`, код 1, повтор — тот же отказ; `bank/company_metrics.go:462` сканирует legacy-`Float32` в `float64`.
+Следствия: 0 банковских строк в `company_financials`, каталог `bank_company_metrics` пуст, витрина не показывает метрик,
+три проверки MCP падают. **D2:** `make import STAT=rus_vtb_group_ifrs` — на странице 13 xlsx (и 6 pdf), 11 импортировано
+(990 точек), **2 упали**: `…as-of-30-april-2025_.xlsx` («подпись колонки „апр'2025“: месяц „апр“ не распознан» —
+источник сокращает имена месяцев) и `…as-of-28-february-2026.xlsx` («не найдена шапка с месячными колонками» —
+в шапке только накопленные `2М'2026`/`2М'2025`); код 1, повтор — 11 файлов пропущены гейтом, 2 падают снова,
+`Imported 0 rows` (ожидания «новых файлов нет» не выполнено). Шести месяцам P&L точек не достаётся
+(2023-12-31, 2024-09-30, 2024-12-31, 2025-03-31, 2025-06-30, 2026-02-28).
+
+**MCP.** `make mcp-user` — ✅ (в т.ч. грант `v_bank_macro`). `make mcp-check` — **92 OK, 4 FAIL** (`ПРОВАЛЕНО: 4`, код 1):
+три падения банковско-компанейского блока — следствие D1; четвёртое — rosstat (агрегатный ряд бюллетеней 288 точек
+против ожидаемых 80) — **вне `bank/`**: состояние dev-БД изменено другими работами, ветка `rosstat/` и его витрин не касалась.
+
+**Правки доков, сделанные при приёмке.** `docs/ROADMAP_INFRA.md:31` — пример `CrawFunc` → `customs/vneshn_torg_countries.go`;
+`docs/IMPORTER_PACKAGE_STANDARD.md` §18 — шапка «Состояние на 2026-10-17 (срез)»; `ARCHITECTURE.md` §6.1 — починена
+сломанная строка `dcf_engine` (5 разделителей `|` вместо 6 — не хватало колонки «Источник»).
+
+**Чего приёмка не сделала:** ✅ в `docs/ROADMAP_KEY_RATE.md` (фаза 3.1) и «✅ соответствует» в §18 стандарта не ставились;
+живые числа приёмки в строки четырёх импортёров `ARCHITECTURE.md` §6.1 не вписывались; пометка «(до рефакторинга)»
+у `sber_izmenenie_trat` не ставилась — всё это делается после устранения D1/D2 и повторного прогона шагов 3–6.
