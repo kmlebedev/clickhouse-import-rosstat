@@ -64,7 +64,7 @@
 ## 4. Каркас дашборда
 
 - uid / `metadata.name`: `finance-polyus`; артефакт: `dashboard/finance-polyus.json` (заменяет легаси-экспорт; прежний UI-дашборд остаётся на стенде под своим uid, новый деплой кладёт `finance-polyus`).
-- title «Полюс (PLZL) — финансы и прогноз»; tags `["polyus", "dcf", "article"]`; `Refresh("1h")`; `Time("now-5y","now")`; `Timezone(browser)`.
+- title «Полюс (PLZL) — финансы и прогноз»; tags `["polyus", "dcf", "article"]`; `Refresh("1h")`; `Time("now-5y","now+1y")`; `Timezone(browser)`. Правая граница окна — год вперёд: прогнозные точки панели 16 и бара 17 лежат НА ДАТАХ ГОРИЗОНТОВ (будущее), и с границей «now» Grafana отрезала бы их — панель открывалась бы без своего главного содержания.
 - Ряды: id 31–34. Панели 1–19 (Span 12; панели 2, 7, 8 — Span 24). У каждой панели — `Description` (источник, единицы, где читать вероятность/оговорки).
 
 ## 5. Панели и SQL-контракт (дословно; 19 панелей)
@@ -257,7 +257,7 @@ ORDER BY time
 
 ### Ряд 34 «Прогноз и точность» (панели 16–19)
 
-**16. «Золото, $/oz: факт и прогнозные точки (own-сценарии)»** (timeseries `currencyUSD`; A — факт линией; B/C/D — точки сценариев на дате горизонта; маппинг горизонта — по самому ярлыку, без хардкода годов: `Q#-YYYY`/`YE-YYYY` → 31 декабря года, голый `YYYY` → 31 декабря года; немэппируемые ярлыки (`12M`, `short`) отсекаются).
+**16. «Золото, $/oz: факт и прогнозные точки (own-сценарии)»** (timeseries `currencyUSD`; A — факт линией; B/C/D — точки сценариев на дате горизонта; маппинг горизонта — по самому ярлыку, без хардкода годов: `Q#-YYYY`/`YE-YYYY` → 31 декабря года, голый `YYYY` → 31 декабря года; немэппируемые ярлыки (`12M`, `short`) отсекаются; волна — последняя по `published`).
 ```sql
 -- A
 SELECT date AS time, value AS "COMEX-фронт, $/oz"
@@ -274,24 +274,26 @@ FROM (
             match(horizon, '^[0-9]{4}$'), toDate(concat(horizon, '-12-31')),
             NULL
         ) AS time,
-        midpoint, scenario, author
+        midpoint, scenario, author, published
     FROM v_gold_forecasts
 )
 WHERE author = 'own' AND scenario = 'bull' AND time IS NOT NULL
+  AND published = (SELECT max(published) FROM v_gold_forecasts)
 ORDER BY time
 -- C/D: scenario = 'base' («own: base») и 'bear' («own: bear») — тот же шаблон;
 -- B/C/D — overrides точек (lineWidth 0, showPoints always) + фикс-цвета (bull/base/bear)
 ```
-Description: вероятности сценариев и диапазоны — панель 17; горизонты `12M` и `short` точками не рисуются (нет календарного маппинга), их значения видны в баре 17.
+Description: вероятности сценариев и диапазоны — панель 17; горизонты `12M` и `short` точками не рисуются (нет календарного маппинга), их значения видны в баре 17, а горизонт — в подписи бара; прогноз читается из актуальной волны (последней по `published`), а не хардкодом даты волны; точки лежат в будущем, поэтому окно дашборда (§4) продлено на год вперёд.
 
-**17. «Прогноз цены золота: сценарии и консенсус (bar)»** (barchart через `tableQuery`; вероятность — в подписи; как gold-панель 8).
+**17. «Прогноз цены золота: сценарии и консенсус (bar)»** (barchart через `tableQuery`; вероятность — в подписи; горизонт — в подписи (в одной волне банки дают по два прогноза на разные сроки, и без горизонта строки неразличимы); волна — последняя по `published`; как gold-панель 8).
 ```sql
 SELECT
-    concat(author, ' / ', scenario, ' (', ifNull(toString(toInt32(probability)), '—'), '%)') AS "Прогноз",
+    concat(author, ' / ', scenario, ' [', horizon, '] (', ifNull(toString(toInt32(probability)), '—'), '%)') AS "Прогноз",
     midpoint AS "Середина, $/oz",
     low,
     high
 FROM v_gold_forecasts
+WHERE published = (SELECT max(published) FROM v_gold_forecasts)
 ORDER BY midpoint
 ```
 

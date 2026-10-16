@@ -17,7 +17,7 @@
     "graphTooltip": 0,
     "time": {
       "from": "now-5y",
-      "to": "now"
+      "to": "now+1y"
     },
     "fiscalYearStartMonth": 0,
     "refresh": "1h",
@@ -461,7 +461,7 @@
           }
         ],
         "title": "Глобальный контур: реальная ставка и ожидания",
-        "description": "Глобальный контур ставок (v_fred_macro, % годовых; уровни на дату, не темпы): DFII10 — реальная доходность TIPS 10 лет, DGS10 — номинальная доходность UST 10 лет, FEDFUNDS — эффективная ставка ФРС, T5YIE — 5-летние инфляционные ожидания рынка (breakeven). DGS10 − DFII10 ≈ T5YIE — разложение номинальной доходности на реальную ставку и ожидания. Единицы те же, что у панели 4 (% годовых), но контур другой: это ставки ФРС и рынка США против ключевой ставки ЦБ в рублях — разница уровней отражает разные режимы денежной политики, а не вменённую траекторию ставки ЦБ.",
+        "description": "Глобальный контур ставок (v_fred_macro, % годовых; уровни на дату, не темпы): DFII10 — реальная доходность TIPS 10 лет, DGS10 — номинальная доходность UST 10 лет, FEDFUNDS — эффективная ставка ФРС, T5YIE — 5-летние инфляционные ожидания рынка (breakeven). DGS10 − DFII10 ≈ T5YIE — разложение номинальной доходности на реальную ставку и ожидания. Единицы те же, что у панели 4 (% годовых), но контур другой: это ставки ФРС и рынка США против ключевой ставки ЦБ в рублях — другой контур ставки, а не вменённая траектория ставки ЦБ.",
         "transparent": false,
         "datasource": {
           "type": "grafana-clickhouse-datasource",
@@ -1231,7 +1231,7 @@
           }
         ],
         "title": "TCC на унцию, $/oz",
-        "description": "TCC (total cash costs) на унцию проданного золота (v_company_financials, metric = 'tcc_per_ounce'), $/oz, только отчётные полугодия (period_type = 'H'): в датапаке это 2025H1, 2025H2 и 2026H1 — три точки, поэтому серия нарисована точками, а не линией. Ось времени вычисляется из строки периода (`period`): '2026H1' → 1 января, '2025H2' → 1 июля; $__timeFilter в запросе не применяется осознанно — окно дашборда клипает вывод на клиенте. AISC в контуре считается вне витрин: в v_company_financials он не публикуется.",
+        "description": "TCC (total cash costs) на унцию проданного золота (v_company_financials, metric = 'tcc_per_ounce'), $/oz, только отчётные полугодия (period_type = 'H'): короткий ряд — по отчётным полугодиям, поэтому серия нарисована точками, а не линией; охват полугодий — в данных, панель его не фиксирует. Ось времени вычисляется из строки периода (`period`): 'YYYYH1' → 1 января, 'YYYYH2' → 1 июля; $__timeFilter в запросе не применяется осознанно — окно дашборда клипает вывод на клиенте. AISC в контуре считается вне витрин: в v_company_financials он не публикуется.",
         "transparent": false,
         "datasource": {
           "type": "grafana-clickhouse-datasource",
@@ -1320,7 +1320,7 @@
           },
           {
             "refId": "B",
-            "rawSql": "SELECT time, midpoint AS \"own: bull\"\nFROM (\n    SELECT\n        multiIf(\n            match(horizon, '^(Q[1-4]|YE)-[0-9]{4}$'),\n                toDate(concat(substring(horizon, length(horizon) - 3, 4), '-12-31')),\n            match(horizon, '^[0-9]{4}$'), toDate(concat(horizon, '-12-31')),\n            NULL\n        ) AS time,\n        midpoint, scenario, author\n    FROM v_gold_forecasts\n)\nWHERE author = 'own' AND scenario = 'bull' AND time IS NOT NULL\nORDER BY time\n",
+            "rawSql": "SELECT time, midpoint AS \"own: bull\"\nFROM (\n    SELECT\n        multiIf(\n            match(horizon, '^(Q[1-4]|YE)-[0-9]{4}$'),\n                toDate(concat(substring(horizon, length(horizon) - 3, 4), '-12-31')),\n            match(horizon, '^[0-9]{4}$'), toDate(concat(horizon, '-12-31')),\n            NULL\n        ) AS time,\n        midpoint, scenario, author, published\n    FROM v_gold_forecasts\n)\nWHERE author = 'own' AND scenario = 'bull' AND time IS NOT NULL\n  AND published = (SELECT max(published) FROM v_gold_forecasts)\nORDER BY time\n",
             "editorType": "sql",
             "format": 0,
             "queryType": "timeseries",
@@ -1328,7 +1328,7 @@
           },
           {
             "refId": "C",
-            "rawSql": "SELECT time, midpoint AS \"own: base\"\nFROM (\n    SELECT\n        multiIf(\n            match(horizon, '^(Q[1-4]|YE)-[0-9]{4}$'),\n                toDate(concat(substring(horizon, length(horizon) - 3, 4), '-12-31')),\n            match(horizon, '^[0-9]{4}$'), toDate(concat(horizon, '-12-31')),\n            NULL\n        ) AS time,\n        midpoint, scenario, author\n    FROM v_gold_forecasts\n)\nWHERE author = 'own' AND scenario = 'base' AND time IS NOT NULL\nORDER BY time\n",
+            "rawSql": "SELECT time, midpoint AS \"own: base\"\nFROM (\n    SELECT\n        multiIf(\n            match(horizon, '^(Q[1-4]|YE)-[0-9]{4}$'),\n                toDate(concat(substring(horizon, length(horizon) - 3, 4), '-12-31')),\n            match(horizon, '^[0-9]{4}$'), toDate(concat(horizon, '-12-31')),\n            NULL\n        ) AS time,\n        midpoint, scenario, author, published\n    FROM v_gold_forecasts\n)\nWHERE author = 'own' AND scenario = 'base' AND time IS NOT NULL\n  AND published = (SELECT max(published) FROM v_gold_forecasts)\nORDER BY time\n",
             "editorType": "sql",
             "format": 0,
             "queryType": "timeseries",
@@ -1336,7 +1336,7 @@
           },
           {
             "refId": "D",
-            "rawSql": "SELECT time, midpoint AS \"own: bear\"\nFROM (\n    SELECT\n        multiIf(\n            match(horizon, '^(Q[1-4]|YE)-[0-9]{4}$'),\n                toDate(concat(substring(horizon, length(horizon) - 3, 4), '-12-31')),\n            match(horizon, '^[0-9]{4}$'), toDate(concat(horizon, '-12-31')),\n            NULL\n        ) AS time,\n        midpoint, scenario, author\n    FROM v_gold_forecasts\n)\nWHERE author = 'own' AND scenario = 'bear' AND time IS NOT NULL\nORDER BY time\n",
+            "rawSql": "SELECT time, midpoint AS \"own: bear\"\nFROM (\n    SELECT\n        multiIf(\n            match(horizon, '^(Q[1-4]|YE)-[0-9]{4}$'),\n                toDate(concat(substring(horizon, length(horizon) - 3, 4), '-12-31')),\n            match(horizon, '^[0-9]{4}$'), toDate(concat(horizon, '-12-31')),\n            NULL\n        ) AS time,\n        midpoint, scenario, author, published\n    FROM v_gold_forecasts\n)\nWHERE author = 'own' AND scenario = 'bear' AND time IS NOT NULL\n  AND published = (SELECT max(published) FROM v_gold_forecasts)\nORDER BY time\n",
             "editorType": "sql",
             "format": 0,
             "queryType": "timeseries",
@@ -1344,7 +1344,7 @@
           }
         ],
         "title": "Золото, $/oz: факт и прогнозные точки (own-сценарии)",
-        "description": "Волна прогнозов 2026-10-07 (v_gold_forecasts, $/oz): A — факт, цена COMEX-фронта (v_gold_prices, series = 'comex_front'), дневным рядом; B/C/D — точки собственных сценариев (author = 'own'): bull («own: bull»), base и bear. Дата точки вычисляется из самого ярлыка горизонта, без хардкода годов: `Q#-YYYY` и `YE-YYYY` → 31 декабря года, голый `YYYY` → 31 декабря года; ярлыки `12M` и `short` в календарь не маппятся и точками не рисуются. Их заменяет панель 17: там видны и вероятности сценариев, и диапазоны low/high, и немэппируемые горизонты. Точка — уровень на дату горизонта, а не траектория: сети между точками нет. Значения — $/oz.",
+        "description": "Прогноз актуальной волны — последней по `published` (v_gold_forecasts, $/oz): A — факт, цена COMEX-фронта (v_gold_prices, series = 'comex_front'), дневным рядом; B/C/D — точки собственных сценариев той же волны (author = 'own'): bull («own: bull»), base и bear. Дата точки вычисляется из самого ярлыка горизонта, без хардкода годов: `Q#-YYYY` и `YE-YYYY` → 31 декабря года, голый `YYYY` → 31 декабря года; ярлыки `12M` и `short` в календарь не маппятся и точками не рисуются. Их заменяет панель 17: там видны и вероятности сценариев, и диапазоны low/high, и немэппируемые горизонты — горизонт стоит прямо в подписи бара. Точки лежат в будущем (даты горизонтов), поэтому окно дашборда продлено на год вперёд (`now+1y`) — иначе Grafana отрезала бы их. Точка — уровень на дату горизонта, а не траектория: сети между точками нет. Значения — $/oz.",
         "transparent": false,
         "datasource": {
           "type": "grafana-clickhouse-datasource",
@@ -1465,7 +1465,7 @@
         "targets": [
           {
             "refId": "A",
-            "rawSql": "SELECT\n    concat(author, ' / ', scenario, ' (', ifNull(toString(toInt32(probability)), '—'), '%)') AS \"Прогноз\",\n    midpoint AS \"Середина, $/oz\",\n    low,\n    high\nFROM v_gold_forecasts\nORDER BY midpoint\n",
+            "rawSql": "SELECT\n    concat(author, ' / ', scenario, ' [', horizon, '] (', ifNull(toString(toInt32(probability)), '—'), '%)') AS \"Прогноз\",\n    midpoint AS \"Середина, $/oz\",\n    low,\n    high\nFROM v_gold_forecasts\nWHERE published = (SELECT max(published) FROM v_gold_forecasts)\nORDER BY midpoint\n",
             "editorType": "sql",
             "format": 1,
             "queryType": "table",
@@ -1473,7 +1473,7 @@
           }
         ],
         "title": "Прогноз цены золота: сценарии и консенсус (bar)",
-        "description": "Прогноз цены золота одной волной 2026-10-07 (v_gold_forecasts, $/oz): бар по середине диапазона (midpoint) — у точки это сама точка, у банковского диапазона середина low/high, у единственной заданной границы сама граница. Сценарии собственной сетки (author = 'own': bull, base, bear) подписаны вместе с вероятностью (25/40/35%); у банковского консенсуса (citi, goldman, hsbc, jpm, ubs) вероятность не публикуется — в подписи прочерк. Горизонты `12M` и `short` видны здесь и точками на панели 16 не рисуются: у них нет календарного маппинга. low и high — справка к бару: у точечных прогнозов они пусты. Значения — $/oz.",
+        "description": "Прогноз цены золота актуальной волны — последней по `published` (v_gold_forecasts, $/oz): бар по середине диапазона (midpoint) — у точки это сама точка, у банковского диапазона середина low/high, у единственной заданной границы сама граница. Подпись бара собирается из автора, сценария, горизонта и вероятности: горизонт обязателен — в одной волне банки дают по два прогноза на разные сроки (например, «hsbc / point» на 2027 и на YE-2026), и без него строки были бы одинаковыми. Сценарии собственной сетки (author = 'own': bull, base, bear) подписаны вместе с вероятностью (25/40/35%); у банковского консенсуса (citi, goldman, hsbc, jpm, ubs) вероятность не публикуется — в подписи прочерк. Горизонты `12M` и `short` видны здесь в подписи и точками на панели 16 не рисуются: у них нет календарного маппинга. low и high — справка к бару: у точечных прогнозов они пусты. Значения — $/oz.",
         "transparent": false,
         "datasource": {
           "type": "grafana-clickhouse-datasource",

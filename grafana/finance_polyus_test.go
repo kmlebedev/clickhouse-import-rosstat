@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -219,14 +220,21 @@ func TestFinancePolyusDcfParityJoin(t *testing.T) {
 // TestFinancePolyusSparseSeriesPoints: теноры кривой ОФЗ (панель 4, B..E) сейчас — снимок по одному
 // наблюдению на тенор (история кривой наполняется), поэтому рисуются точками, а не линиями; цвет
 // фиксирован по тенору — палитра classic красит серии по порядку таргетов, и цвет кривой менялся бы
-// при добавлении ряда.
+// при добавлении ряда. Цвет сверяется ДОСЛОВНО по тенору (как цвета сценариев панели 16): оттенок
+// кодирует срок (синий темнеет с тенором), и перестановка оттенков местами прошла бы проверку
+// «fixed», а кривая читалась бы наоборот.
 func TestFinancePolyusSparseSeriesPoints(t *testing.T) {
 	panel := panelByID(t, builtFinancePolyus(t), 4)
-	for _, refID := range []string{"B", "C", "D", "E"} {
-		assertPointsOnly(t, panel, refID)
-		color, ok := overridePropByRefID(panel, refID, "color").(dashboard.FieldColor)
-		if !ok || color.Mode != dashboard.FieldColorModeIdFixed || color.FixedColor == nil {
-			t.Fatalf("панель 4: цвет серии %s = %#v, ожидался fixed (палитра classic красит по порядку таргетов)", refID, color)
+	for _, tc := range []struct{ refID, color string }{
+		{"B", "super-light-blue"},
+		{"C", "light-blue"},
+		{"D", "blue"},
+		{"E", "dark-blue"},
+	} {
+		assertPointsOnly(t, panel, tc.refID)
+		color, ok := overridePropByRefID(panel, tc.refID, "color").(dashboard.FieldColor)
+		if !ok || color.Mode != dashboard.FieldColorModeIdFixed || color.FixedColor == nil || *color.FixedColor != tc.color {
+			t.Fatalf("панель 4: цвет серии %s = %#v, ожидался fixed %q (оттенок кодирует тенор)", tc.refID, color, tc.color)
 		}
 	}
 }
@@ -366,10 +374,11 @@ func TestFinancePolyusNoTimeFilterOnDerivedAxis(t *testing.T) {
 	}
 }
 
-// TestFinancePolyusTccPanel: панель 15 — TCC на унцию, единственная серия ряда (полугодия, три
-// точки), поэтому нарисована точками: сплошная линия по трём точкам читается как непрерывный ряд.
-// Охват и AISC обязаны быть в Description: три точки — это весь охват метрики в датапаке, а AISC
-// здесь не публикуется вовсе — без оговорки его отсутствие читается как дефект дашборда.
+// TestFinancePolyusTccPanel: панель 15 — TCC на унцию, единственная серия ряда (отчётные полугодия),
+// поэтому нарисована точками: сплошная линия по короткому полугодовому ряду читается как непрерывный
+// ряд. Description обязан оговаривать и то, что охват полугодий — в данных, а не в панели (числа
+// точек в описании не фиксируются: при наполнении витрины они устаревают), и что AISC здесь не
+// публикуется вовсе — без оговорки его отсутствие читается как дефект дашборда.
 func TestFinancePolyusTccPanel(t *testing.T) {
 	panel := panelByID(t, builtFinancePolyus(t), 15)
 	if len(panel.Targets) != 1 {
@@ -377,7 +386,7 @@ func TestFinancePolyusTccPanel(t *testing.T) {
 	}
 	assertPointsOnly(t, panel, "A")
 	description := optionalString(panel.Description)
-	for _, want := range []string{"AISC", "полугод", "2025H1", "2026H1"} {
+	for _, want := range []string{"AISC", "полугод", "точками", "охват полугодий — в данных"} {
 		if !strings.Contains(description, want) {
 			t.Fatalf("Description панели 15 не оговаривает охват TCC (нет %q): %s", want, description)
 		}
@@ -727,10 +736,12 @@ func TestFinancePolyusForecastTargets(t *testing.T) {
 		}
 	}
 	// Оговорка об охвате обязана быть в Description: ярлыки 12M и short в календарь не маппятся и
-	// точками не рисуются, а вероятности сценариев и диапазоны low/high видны только в баре 17 —
-	// без этого отсутствие точек читается как дефект дашборда.
+	// точками не рисуются, вероятности сценариев и диапазоны low/high видны только в баре 17, а
+	// прогноз читается из актуальной волны (последней по published) — без этого отсутствие точек и
+	// «откуда волна» читаются как дефект дашборда. Окно дашборда обязано быть продлено вперёд
+	// (now+1y): точки лежат в будущем, и с правой границей «now» Grafana их отрезала бы.
 	description := optionalString(panel.Description)
-	for _, want := range []string{"v_gold_forecasts", "12M", "short", "31 декабря", "панель 17", "вероятност"} {
+	for _, want := range []string{"v_gold_forecasts", "12M", "short", "31 декабря", "панель 17", "вероятност", "published", "now+1y"} {
 		if !strings.Contains(description, want) {
 			t.Fatalf("Description панели 16 не оговаривает охват горизонтов (нет %q): %s", want, description)
 		}
@@ -755,6 +766,9 @@ func TestFinancePolyusHorizonMapping(t *testing.T) {
 			"NULL\n        ) AS time",
 			"scenario = '" + scenario.scenario + "'",
 			"time IS NOT NULL",
+			// Волна одна: подвыборка отдаёт published, а внешний предикат оставляет последнюю волну
+			// (max(published)) — иначе вторая волна поставила бы на ту же дату вторую точку.
+			"max(published)",
 		} {
 			if !strings.Contains(query.RawSql, want) {
 				t.Fatalf("панель 16: запрос %s: нет %q — горизонт маппится по ярлыку: %s", scenario.refID, want, query.RawSql)
@@ -797,9 +811,11 @@ func TestFinancePolyusForecastTables(t *testing.T) {
 		wants     []string
 	}{
 		{17, "barchart", "v_gold_forecasts", []string{
-			`concat(author, ' / ', scenario, ' (', ifNull(toString(toInt32(probability)), '—'), '%)') AS "Прогноз"`,
+			`concat(author, ' / ', scenario, ' [', horizon, '] (', ifNull(toString(toInt32(probability)), '—'), '%)') AS "Прогноз"`,
 			`midpoint AS "Середина, $/oz"`,
 			"low,\n    high",
+			// Волна одна — последняя по published: без предиката бар смешал бы волны прогнозов.
+			"WHERE published = (SELECT max(published) FROM v_gold_forecasts)",
 			"ORDER BY midpoint",
 		}},
 		{18, "table", "v_model_inputs", []string{
@@ -855,14 +871,15 @@ func TestFinancePolyusForecastTables(t *testing.T) {
 		t.Fatalf("панель 17: xField %v, ожидался \"Прогноз\" (подпись оси — ярлык прогноза, как у gold-панели 8)", options.XField)
 	}
 	// Оговорки панелей 17–19 — в Description: у 17 вероятности банковских строк не публикуются
-	// («—»), у 18 апсайд не считается (мост НАВ → цена акции — остаток фазы 3 роадмапа), у 19
-	// вторая строка ещё не разрешена: факт, ошибка и статус пусты, пока forecast_resolve не сверит
-	// цель с фактом.
+	// («—»), горизонт стоит в подписи бара (иначе повторяющиеся пары author/scenario неразличимы),
+	// прогноз читается из актуальной волны (последней по published), у 18 апсайд не считается (мост
+	// НАВ → цена акции — остаток фазы 3 роадмапа), у 19 вторая строка ещё не разрешена: факт,
+	// ошибка и статус пусты, пока forecast_resolve не сверит цель с фактом.
 	for _, tc := range []struct {
 		panelID uint32
 		wants   []string
 	}{
-		{17, []string{"v_gold_forecasts", "вероятност", "12M", "short", "панели 16"}},
+		{17, []string{"v_gold_forecasts", "вероятност", "12M", "short", "панели 16", "published", "горизонт"}},
 		{18, []string{"v_model_inputs", "апсайд", "НЕ считается", "фазы 3", "как записан"}},
 		{19, []string{"v_forecast_accuracy", "xau_q_avg", "не разрешённую", "знаков"}},
 	} {
@@ -875,10 +892,18 @@ func TestFinancePolyusForecastTables(t *testing.T) {
 	}
 }
 
+// fpInlineDateRe — дата-литерал нулевых годов, вшитая в SQL запроса: `toDate('2026-12-31')`,
+// `toDateTime('2026-12-30')` (с пробелами после скобки). Именно так легаси-экспорт подмешивал
+// прогнозные точки в панель; проверка идёт регулярным выражением, потому что `toDate('20…')` бывает
+// и «законной» формы — но ни одной такой в дашборде быть не должно.
+var fpInlineDateRe = regexp.MustCompile(`to(Date|DateTime)\(\s*'20[0-9]{2}-`)
+
 // TestFinancePolyusNoInlinePoints: анти-паттерн легаси-экспорта — прогнозные точки вшивались прямо
 // в SQL панели (`UNION ALL SELECT toDateTime('2026-12-30')` → 2500). Точки прогноза обязаны
 // приходить из витрины (v_gold_forecasts) и вычисляться из ярлыка горизонта: UNION с рукописными
-// строками и даты-литералы `toDateTime('20…')` в SQL дашборда не пишутся.
+// строками и даты-литералы `toDate('20…')`/`toDateTime('20…')` в SQL дашборда не пишутся. Литерал
+// ловится регулярным выражением (см. fpInlineDateRe), а не списком строк: пробелы после скобки и
+// год ловятся вместе с самой конструкцией.
 func TestFinancePolyusNoInlinePoints(t *testing.T) {
 	for _, p := range panelsOf(builtFinancePolyus(t)) {
 		for _, target := range p.Targets {
@@ -891,6 +916,10 @@ func TestFinancePolyusNoInlinePoints(t *testing.T) {
 					t.Fatalf("панель %d: запрос %q содержит %q — точки прогноза берутся из витрины, а не вшиваются в SQL: %s",
 						*p.Id, query.RefId, forbidden, query.RawSql)
 				}
+			}
+			if literal := fpInlineDateRe.FindString(query.RawSql); literal != "" {
+				t.Fatalf("панель %d: запрос %q содержит вшитую дату точки %q — прогнозные точки приходят из витрины, а не из литералов SQL: %s",
+					*p.Id, query.RefId, literal, query.RawSql)
 			}
 		}
 	}
