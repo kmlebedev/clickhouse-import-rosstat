@@ -54,6 +54,11 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual(harvest.classify("Об оценке индекса потребительских цен с 5 по ? 2021 года"),
                          "week:??")
 
+    def test_weekly_glued_after_s(self):
+        # Опечатка выпуска 2016 г.: «с15 по 21 ноября 2016 года» — без пробела после «с»
+        self.assertEqual(harvest.classify("Об оценке индекса потребительских цен с15 по 21 ноября 2016 года"),
+                         "week:2016-11-21")
+
 
 class DecodeTest(unittest.TestCase):
     def test_cp1251(self):
@@ -96,6 +101,13 @@ class DecodeTest(unittest.TestCase):
         body = (b"<html><head><style>" + b".x{}" * 4000 + b"</style></head><body>"
                 + "<p>О динамике цен на бензин автомобильный и ресурсах нефтепродуктов в феврале 2017 года</p>".encode("cp1251"))
         self.assertEqual(harvest.classify(harvest.headline_of(body)), "other")
+
+    def test_headline_skips_style_block_outside_head(self):
+        # Word-документы с блоком <style> ВНЕ <head>: «первая строка» — CSS, а не текст
+        body = (b"<html><head></head><body>"
+                + b"<style>v\\:* {behavior:url(#default#VML) } o\\:* {behavior:url(#default#VML) }</style>"
+                + "<p>Об оценке индекса потребительских цен с15 по 21 ноября 2016 года</p>".encode("cp1251"))
+        self.assertEqual(harvest.classify(harvest.headline_of(body)), "week:2016-11-21")
 
 
 class KeyTest(unittest.TestCase):

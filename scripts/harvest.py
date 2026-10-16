@@ -119,7 +119,7 @@ TITLE_READ_BYTES = 48000
 # «с 3 по 9 августа 2021», «со 2 по 9 марта 2021», «с 26 октября по 1 ноября 2017»,
 # а также опечатка Росстата «потребительских ценс 25 по 31 мая 2021» (буква «с» в «ценс»
 # служит предлогом) — поэтому возможно и `с` без пробела перед днём.
-RANGE_RE = re.compile(r"с[о]?\s+\d+\s+(?:[а-яё]+\s+)?по\s+(\d+)\s+([а-яё]+)\s+(\d{4})")
+RANGE_RE = re.compile(r"с[о]?\s*\d+\s+(?:[а-яё]+\s+)?по\s+(\d+)\s+([а-яё]+)\s+(\d{4})")
 GO_DATE_RE = re.compile(r"Date:\s+time\.Date\((\d+),\s+time\.(\w+),\s+(\d+),")
 GO_URL_RE = re.compile(r'URL:\s+"([^"]+)"')
 GO_MONTHS = {"January": 1, "February": 2, "March": 3, "April": 4, "May": 5, "June": 6,
@@ -212,6 +212,11 @@ def headline_of(body):
     idx = text.lower().find("<body")
     if idx >= 0:
         text = text[idx:]
+    # У части Word-документов блок <style> (а иногда <script>/<xml>) стоит ВНЕ <head>, и его
+    # содержимое — CSS, а не текст: без вырезания этих блоков «первая строка» оказывалась
+    # фрагментом стилей («v\:* {behavior:url(#default#VML)…», «window.RufflePlayer…»), и выпуск
+    # уходил в «other» мимо классификатора.
+    text = re.sub(r"(?is)<(style|script|xml)[^>]*>.*?</\1\s*>", " ", text)
     plain = " ".join(re.sub(r"<[^>]+>", " ", text).split())
     return plain[:300]
 
