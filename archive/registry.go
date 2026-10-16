@@ -111,24 +111,35 @@ func (r *Registry) Entries() []Entry {
 	return append([]Entry(nil), r.entries...)
 }
 
-// read перечитывает реестр целиком — на каждой записи, потому что состояние реестра в процессе
-// общее, а экземпляры могут быть разными (см. комментарий к registryMu). Отсутствие файла — не
-// ошибка: самый первый прогон заводит его сам, поэтому «нет файла» и «файл пуст» — пустой реестр
-// (Review Focus №1). Битая строка, наоборот, ошибка: реестр объявлен источником истины, и
-// пропустить строку молча значит потерять версию — следующий Put записал бы файл уже без неё.
-func (r *Registry) read(ctx context.Context) ([]Entry, error) {
-	exists, err := r.store.Exists(ctx, RegistryKey)
+// LoadEntries — публичное чтение реестра версий из хранилища: строки registry.jsonl для листинга
+// (ARCHIVE_ACTION=list) и восстановления (util.RestoreVersion). Разбор общий с записью реестра —
+// приватный read делегирует сюда: реестр обязан читаться одинаково, и вторая копия парсера
+// разошлась бы с первой на первой же правке формата (молча потерянная строка — потерянная версия).
+// Отсутствие файла — не ошибка (пустой список): самый первый прогон заводит реестр сам, поэтому
+// «нет файла» и «файл пуст» — пустой реестр (Review Focus №1), а не сбой чтения. Битая строка,
+// наоборот, ошибка с номером строки: реестр объявлен источником истины, и пропустить строку молча
+// значит потерять версию — следующий Put записал бы файл уже без неё.
+func LoadEntries(ctx context.Context, store Store) ([]Entry, error) {
+	exists, err := store.Exists(ctx, RegistryKey)
 	if err != nil {
 		return nil, fmt.Errorf("archive registry: проверка %s: %w", RegistryKey, err)
 	}
 	if !exists {
 		return nil, nil
 	}
-	body, err := r.store.Get(ctx, RegistryKey)
+	body, err := store.Get(ctx, RegistryKey)
 	if err != nil {
 		return nil, fmt.Errorf("archive registry: чтение %s: %w", RegistryKey, err)
 	}
 	return parseEntries(body)
+}
+
+// read перечитывает реестр целиком — на каждой записи, потому что состояние реестра в процессе
+// общее, а экземпляры могут быть разными (см. комментарий к registryMu). Поведение чтения —
+// общее с публичным LoadEntries (в т.ч. «нет файла = пустой реестр»): реестр один, и способы его
+// прочитать не могут расходиться.
+func (r *Registry) read(ctx context.Context) ([]Entry, error) {
+	return LoadEntries(ctx, r.store)
 }
 
 // parseEntries разбирает JSONL и нумерует строки с единицы — по номеру дежурный находит битую

@@ -19,9 +19,22 @@ type LocalStore struct {
 	Dir string
 }
 
+// Lister — бэкенд, умеющий перечислить объекты хранилища. Узкий интерфейс, а не метод Store:
+// листинг есть не у всех бэкендов, и по нему main.go отличает те, для которых возможна
+// реконсиляция «есть объект — нет строки реестра» (ARCHIVE_RECONCILE, спека §3.2). Сегодня его
+// реализует LocalStore; листинг Яндекс.Диска (resources) назван остатком пункта 1.2 — у Диска
+// это отдельная операция со страницами, а не обход каталога.
+type Lister interface {
+	List(ctx context.Context) ([]string, error)
+}
+
 // LocalStore обязан удовлетворять Store: бэкенды подставляются друг вместо друга (тесты util
 // берут local вместо Диска), и расхождение сигнатур должно ломать сборку, а не прогон.
 var _ Store = (*LocalStore)(nil)
+
+// LocalStore обязан удовлетворять и Lister: реконсиляция спрашивает листинг через type-assertion,
+// и сломанная сигнатура должна падать сборкой, а не тихо выключать сверку.
+var _ Lister = (*LocalStore)(nil)
 
 // NewLocal — хранилище в каталоге dir. Каталог здесь не создаётся: пустой каталог под архив ничего
 // не значит, а Put заводит и его, и подкаталог источника (MkdirAll родителя) — так dev-прогон и
@@ -121,6 +134,49 @@ func (s *LocalStore) Exists(ctx context.Context, key string) (bool, error) {
 		return false, fmt.Errorf("archive local: проверка %s: %w", key, err)
 	}
 	return true, nil
+}
+
+// List — ключи всех объектов хранилища («<источник>/<файл>») для реконсиляции «есть объект — нет
+// строки реестра». Реестр здесь не читается: листинг отвечает за фактическое содержимое
+// хранилища, а не за его описание, — иначе реконсиляция считала бы реестр полным по построению
+// (спека §3.2). Пропускаются `*.tmp` (временные файлы атомарной записи: объектом их не считает ни
+// реестр, ни приёмка, а осиротевший после SIGKILL файл иначе копился бы в выводе вечно) и сам
+// registry.jsonl (реестр лежит в корне хранилища рядом с каталогами источников, но объектом
+// версии не является). Отсутствующий корень — пустой список, не ошибка: архив мог ещё не
+// наполняться, и «объектов нет» — законный ответ. Обход лексикографический (filepath.WalkDir),
+// поэтому вывод реконсиляции воспроизводим. ctx не проверяется: у файловых вызовов отмены нет —
+// как и у остальных операций LocalStore.
+func (s *LocalStore) List(ctx context.Context) ([]string, error) {
+	root, err := filepath.Abs(s.Dir)
+	if err != nil {
+		return nil, fmt.Errorf("archive local: каталог %q: %w", s.Dir, err)
+	}
+	var keys []string
+	err = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || strings.HasSuffix(d.Name(), ".tmp") {
+			return nil
+		}
+		rel, relErr := filepath.Rel(root, p)
+		if relErr != nil {
+			return fmt.Errorf("путь %s: %w", p, relErr)
+		}
+		// Ключ — в той же форме, что у реестра и Store: «/»-разделители и относительный путь,
+		// поэтому строка реестра и объект сравниваются дословно.
+		if key := filepath.ToSlash(rel); key != RegistryKey {
+			keys = append(keys, key)
+		}
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("archive local: обход %s: %w", s.Dir, err)
+	}
+	return keys, nil
 }
 
 // path переводит ключ в путь внутри Dir и отвергает выход за каталог. Ключ относительный (его

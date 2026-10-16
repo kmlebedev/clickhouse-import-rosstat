@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -162,5 +163,63 @@ func assertNoTempLeftovers(t *testing.T, dir string) {
 	}
 	if len(leftovers) != 0 {
 		t.Errorf("после Put в %s остались временные файлы: %v", dir, leftovers)
+	}
+}
+
+// List — ключи объектов хранилища в той же форме, что у реестра и Store («<источник>/<файл>»):
+// листинг — вход реконсиляции «есть объект — нет строки реестра» (шаг 1.2), и сравнивать ключи она
+// обязана дословно. Пропускаются *.tmp (осиротевшие после SIGKILL файлы атомарной записи: ни
+// реестр, ни приёмка их объектами не считают) и сам registry.jsonl — он лежит в корне хранилища,
+// но версией файла источника не является.
+func TestLocalListSkipsTempAndRegistry(t *testing.T) {
+	dir := t.TempDir()
+	store := NewLocal(dir)
+	ctx := context.Background()
+
+	keys := []string{"cbr_m2/x_y.xlsx", "rosstat_ipc_weeks_bulletins/abcd1234_87.htm"}
+	for _, key := range keys {
+		if err := store.Put(ctx, key, []byte("тело")); err != nil {
+			t.Fatalf("Put %s: %v", key, err)
+		}
+	}
+	if err := store.Put(ctx, RegistryKey, []byte("{}\n")); err != nil {
+		t.Fatalf("Put %s: %v", RegistryKey, err)
+	}
+	// Осиротевший .tmp пишется мимо Put: так его оставляет убитый процесс — writeFileAtomic снимает
+	// временный файл сам, а SIGKILL снять его уже нечем.
+	tmp := filepath.Join(dir, "cbr_m2", "123456.tmp")
+	if err := os.WriteFile(tmp, []byte("половина объекта"), 0o644); err != nil {
+		t.Fatalf("подготовка %s: %v", tmp, err)
+	}
+
+	got, err := store.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if !slices.Equal(got, keys) {
+		t.Errorf("List() = %v, ожидалось %v (лексикографический порядок обхода)", got, keys)
+	}
+}
+
+// Отсутствующий корень — пустой список, не ошибка: архив мог ещё не наполняться, а реконсиляция на
+// пустом хранилище обязана быть чистой, а не падать. Пустой существующий каталог — то же самое.
+func TestLocalListEmptyOrMissingDir(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "нет-такого-каталога")
+	for _, tt := range []struct {
+		name string
+		dir  string
+	}{
+		{name: "несуществующий каталог", dir: missing},
+		{name: "пустой каталог", dir: t.TempDir()},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := NewLocal(tt.dir).List(context.Background())
+			if err != nil {
+				t.Fatalf("List %s: %v", tt.dir, err)
+			}
+			if len(got) != 0 {
+				t.Errorf("List() = %v, ожидался пустой список", got)
+			}
+		})
 	}
 }
