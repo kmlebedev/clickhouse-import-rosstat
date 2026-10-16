@@ -495,6 +495,16 @@ def cutoff_for(month: date) -> date:
     return _month_shift(month, 1).replace(day=8)
 
 
+def run_date(today: Optional[date] = None) -> date:
+    """Дата прогона: явная (тесты) или системная — ОДНА точка на модуль.
+
+    `date.today()` вызывается ровно здесь: и `run_summary`, и `render_report`
+    резолвят дату через этот хелпер, а не дублируют `today or date.today()`
+    (дубль мог бы разъехаться в полночь между двумя вызовами).
+    """
+    return today or date.today()
+
+
 # ---------------------------------------------------------------------------
 # As-of слой (спека §2.4)
 # ---------------------------------------------------------------------------
@@ -1247,10 +1257,13 @@ def fit_enet(train: list[Row], row: Row) -> float:
     счётчиком. `ConvergenceWarning` координатного спуска (малые `alpha` спеки на
     коротких окнах) не печатается — конфигурация `ElasticNetCV` закреплена
     спекой §3.3, а прогноз конечен и взят у выбранной CV модели, — но и не
-    теряется: фолд помечается диагностикой `fold_notes[NON_CONVERGED]`, отчёт
-    печатает «недосход: N из M» по каждому окну. Подобранный пайплайн и матрицы
-    остаются в `fit_enet.last_fit`, диагностика последнего фолда — в
-    `fit_enet.fold_notes` (протокол `walk_forward`).
+    теряется: фолд помечается диагностикой `fold_notes[NON_CONVERGED]`.
+    В БЭКТЕСТЕ harness агрегирует её по окну, и отчёт печатает «недосход: N из
+    M»; в ЖИВОМ пути (`current_nowcast`, Task 5) последний фит читается сразу
+    после вызова, и недосход называется в `note` артефакта («прогноз
+    индикативен») — здесь, в отличие от бэктеста, терять его нечем. Подобранный
+    пайплайн и матрицы остаются в `fit_enet.last_fit`, диагностика последнего
+    фолда — в `fit_enet.fold_notes` (протокол `walk_forward`).
     """
     matrix = enet_matrix(train)
     _assert_enet_window(matrix)
@@ -1704,22 +1717,39 @@ def nowcast_target_month(targets: dict, today: date) -> tuple[Optional[date], st
 
     Цель — месяц СЛЕДОМ за последним опубликованным: он и есть последний месяц,
     чей месячный ИПЦ не вышел к дате прогона (на 2026-10-16 при метках до
-    2026-09 — октябрь-2026, включая незакрытый текущий). Метка цели обязана быть
-    ещё не «просроченной» по консервативному расписанию §2.4: если её срок
-    (`available_from_mes` = конец M+1) прошёл, а точки в данных нет, это дыра
-    импорта, а не неопубликованный месяц, — цели нет, и прогноз не выдумывается.
+    2026-09 — октябрь-2026, включая незакрытый текущий).
+
+    «Публикация = наличие метки в `rosstat_ipc_mes`» (решение контроллера):
+    данные — источник истины, календарной проверки отбора цели нет. Возможное
+    отставание импорта (метка следующего месяца давно должна была выйти, а её
+    нет) отбор не отменяет, а смягчает — `import_lag_note` называет его в `note`.
+
+    `today` в отборе не участвует (признаки as-of считает `nowcast_features`):
+    параметр оставлен для сигнатуры контракта и будущего календарного слоя.
     """
     latest = latest_published_month(targets)
     if latest is None:
         return None, "в rosstat_ipc_mes нет ни одной метки общего ИПЦ — проверить импорт"
-    target = _month_shift(latest, 1)
-    if available_from_mes(month_end(target)) <= today:
-        return None, (
-            f"месячный ИПЦ {target.isoformat()[:7]} должен был быть опубликован к "
-            f"{today.isoformat()}, но его нет в данных: неопубликованного месяца нет — "
-            f"проверить импорт rosstat_ipc_mes"
-        )
-    return target, ""
+    return _month_shift(latest, 1), ""
+
+
+# Мягкое предупреждение о возможном отставании импорта: у выбранной цели истёк
+# календарный срок публикации (конец месяца цели + 30 дней ≈ конец M+1, когда
+# выпуск Росстата за M гарантированно вышел), а метки следующего месяца в данных
+# нет. Отбор цели не отменяется — наличие метки в rosstat_ipc_mes и есть
+# «опубликовано» (решение контроллера), — предупреждение идёт в `note`.
+IMPORT_LAG_DAYS = 30
+
+
+def import_lag_note(month: date, today: date) -> str:
+    """Пометка «возможное отставание импорта» или пустая строка (спека §5).
+
+    Граница — строгая: `month_end(month) + IMPORT_LAG_DAYS < today`. Ровно на
+    сроке (равенство) предупреждения нет: выпуск мог выйти в последний день.
+    """
+    if month_end(month) + IMPORT_LAG_DAYS * ONE_DAY < today:
+        return "возможное отставание импорта: календарный срок публикации прошёл"
+    return ""
 
 
 def nowcast_window(weekly: list, month: date, today: date) -> list:
@@ -1756,11 +1786,18 @@ def nowcast_features(
     * cutoff — дата прогона `today` (а не 8-е число M+1): признаки снимаются
       as-of даты прогона;
     * недельное окно передано готовым (`nowcast_window`): 1…4 недели вместо
-      строгих четырёх;
+      строгих четырёх; при неполном окне сумма бензина приводится к 4-недельному
+      масштабу (см. ниже);
     * `y_lag1` — метка M−1, ЕСТЬ в данных: месячный ИПЦ приходит в базу из
       релиза Росстата, поэтому наличие точки и есть публикация. Консервативное
       `available_from_mes` живому режиму не подходит: оно исключило бы уже
       вышедший лаг до конца M+1 (для цели-октября 2026-10-16 — до 31.10).
+
+    **Масштаб `gasoline_4w` при неполном окне** (решение контроллера): модели
+    обучены на сумме ЗА ЧЕТЫРЕ недели, поэтому сырая сумма за N недель
+    (~N/4 масштаба) умножается на `4/N`. Средние признаки (`median_wk4`,
+    `share_rising_wk`, `median_wk`) масштаба не требуют — они уже приведены к
+    одной неделе. Бэктест не трогается: там окно всегда четыре недели.
 
     Остальное совпадает с бэктестом: USD/ставка/FAO/ОФЗ — as-of правила §2.4 на
     `today`, отсутствие точки `ofz_1y` даёт NaN и месяц не выбрасывает.
@@ -1768,6 +1805,8 @@ def nowcast_features(
     weekly_part = weekly_window_features(window)
     if weekly_part is None:
         return None, "неполное недельное окно (нет бензина в одной из недель)"
+    if len(window) < WEEKLY_WINDOW_WEEKS:
+        weekly_part["gasoline_4w"] *= WEEKLY_WINDOW_WEEKS / len(window)
     usd_value = usd_features(usd, today)
     if usd_value is None:
         return None, "нет глубины USD (нужна 21 доступная точка)"
@@ -1812,12 +1851,16 @@ def partial_window_note(weeks: int) -> str:
     """Пометка частичного недельного окна живого nowcast (спека §5, рулинг).
 
     Текст общий для `note` JSON и раздела отчёта: «частичное окно: N из 4
-    недель» плюс оговорка, что режим генерации признаков отличается от
-    бэктеста (там строго четыре недели).
+    недель», оговорка, что режим генерации признаков отличается от бэктеста
+    (там строго четыре недели), и явное имя масштабирования `gasoline_4w`
+    (`nowcast_features` умножает сырую сумму на 4/N — модели обучены на
+    четырёхнедельной сумме).
     """
     return (
         f"частичное окно: {weeks} из {WEEKLY_WINDOW_WEEKS} недель — режим генерации "
-        f"признаков отличается от бэктеста (там строго {WEEKLY_WINDOW_WEEKS} недели)"
+        f"признаков отличается от бэктеста (там строго {WEEKLY_WINDOW_WEEKS} недели); "
+        f"gasoline_4w приведён к {WEEKLY_WINDOW_WEEKS}-недельному масштабу "
+        f"(множитель {WEEKLY_WINDOW_WEEKS}/{weeks})"
     )
 
 
@@ -1875,6 +1918,13 @@ def current_nowcast(
     отсутствие цели/окна — тоже `(None, причина)`; исключений здесь нет
     намеренно (прогон не падает, сообщение печатает вызывающий).
 
+    `note` собирается из пометок, которые иначе терялись бы на живом пути:
+    частичное окно (`partial_window_note`, включая масштаб `gasoline_4w`),
+    возможное отставание импорта (`import_lag_note`) и **недосход фита**
+    (`fold_notes` модели — у B3 `ConvergenceWarning` координатного спуска;
+    «прогноз индикативен»). Диагностика читается ПОСЛЕ вызова fit-функции:
+    `fit_enet` заполняет `fold_notes` на каждом фите.
+
     `rows` — выборка `build_sample` (`month`, метки, признаки); `targets` и ряды
     признаков — то, что читают загрузчики. Структуры, в которых нет ни цели, ни
     признаков, не додумываются: каждое отсутствие названо причиной.
@@ -1889,7 +1939,8 @@ def current_nowcast(
         boundary = month_end(previous_month(month))
         return None, (
             f"нет недель, опубликованных к {today.isoformat()} после конца M−1 "
-            f"({boundary.isoformat()}) — частичного недельного окна нет"
+            f"({boundary.isoformat()}) — цель {month.isoformat()[:7]}: частичного "
+            f"недельного окна нет"
         )
     features, reason = nowcast_features(
         month, target_index(targets), usd, key_rate, ofz, fao, window, today
@@ -1899,11 +1950,16 @@ def current_nowcast(
     row = nowcast_row(month, features)
     values: dict[str, float] = {}
     skipped: list[tuple[str, str]] = []
+    non_converged: list[str] = []
     for name in (MODEL_CATBOOST_DIRECT, MODEL_CATBOOST_BOTTOMUP, *BENCHMARKS):
         try:
             values[name] = float(MODELS[name](rows, row))
         except DegenerateWindowError as error:
             skipped.append((name, str(error)))
+            continue
+        fold_notes = getattr(MODELS[name], "fold_notes", None)
+        if fold_notes and int(fold_notes.get(NON_CONVERGED, 0)):
+            non_converged.append(name)
     if not values:
         return None, "ни один метод не посчитан: " + "; ".join(
             f"{model_label(name)} — {error}" for name, error in skipped
@@ -1915,6 +1971,15 @@ def current_nowcast(
     note = NOWCAST_NOTE
     if len(window) < WEEKLY_WINDOW_WEEKS:
         note += "; " + partial_window_note(len(window))
+    lag_note = import_lag_note(month, today)
+    if lag_note:
+        note += "; " + lag_note
+    if non_converged:
+        note += "; " + "; ".join(
+            f"{model_label(name)}: координатный спуск не сошёлся на живой выборке — "
+            f"прогноз индикативен"
+            for name in non_converged
+        )
     if skipped:
         note += "; не посчитаны: " + "; ".join(
             f"{model_label(name)} ({error})" for name, error in skipped
@@ -2160,7 +2225,7 @@ def render_report(
     CatBoost дают те же `Prediction`, поэтому попадают в таблицы и в пары DM
     (`pairwise_tests`) без правок отчёта.
     """
-    today = today or date.today()
+    today = run_date(today)
     runs = list(window_runs)
     main_run = next((run for run in runs if run.main), runs[0] if runs else None)
     lines = [
@@ -2315,7 +2380,10 @@ def render_report(
         "нет), состав позиций между неделями не проверяется.",
         "- `ofz_1y` без истории (NaN во всём бэктесте): вклад признака у B3 на "
         "бэктесте нулевой (импутация константой); CatBoost получает NaN как есть — "
-        "сравнение политик NaN моделей не проверено.",
+        "сравнение политик NaN моделей не проверено. В живом nowcast точка ОФЗ уже "
+        "есть, а у B3 z-оценка признака не ограничена (колонка обучения нулевой "
+        "дисперсии масштаб не задаёт): на 2026-10-16 коэффициент при `ofz_1y` "
+        "выбран нулевым (L1) и вклада нет, но гарантии спека не даёт.",
         "- CatBoost: гиперпараметры не тюнинговались (дефолты §3.1 — в метаданных "
         "модели `catboost_metadata`, они же в `" + FORECAST_NAME + "`); веса NNLS "
         "показаны по последнему фолду каждого окна (динамика весов по фолдам не "
@@ -2341,14 +2409,9 @@ def render_report(
     if nowcast:
         lines += [nowcast, ""]
     else:
-        lines += [
-            "Текущий nowcast не рассчитан в этом прогоне (нет неопубликованного "
-            "месяца, нет недельного окна или ни один метод не посчитан): `"
-            + FORECAST_NAME + "` не пишется. Живой прогон называет причину этим "
-            "разделом (`render_nowcast_absent`) и консолью; бэктест-отчёт и CSV "
-            "считаются как обычно — walk-forward валиден и без живого прогноза.",
-            "",
-        ]
+        # `nowcast=None` — вызывающий не передал блок: тот же единственный текст
+        # отсутствия прогноза с дефолтной причиной (`render_nowcast_absent`).
+        lines += [render_nowcast_absent(), ""]
     return "\n".join(lines).rstrip("\n") + "\n"
 
 
@@ -2428,14 +2491,24 @@ def render_nowcast(nowcast: Nowcast) -> str:
     return "\n".join(lines)
 
 
-def render_nowcast_absent(reason: str) -> str:
-    """Раздел отчёта, когда живого прогноза нет (спека §5).
+# Причина раздела «Текущий nowcast», когда вызывающий не передал её
+# (`render_report(nowcast=None)`): живой прогон (`run_summary`) всегда передаёт
+# блок — `render_nowcast` на успехе или `render_nowcast_absent(reason)` с
+# причиной `current_nowcast`.
+NOWCAST_REASON_UNKNOWN = "причина не передана вызывающим (см. консоль прогона)"
+
+
+def render_nowcast_absent(reason: str = NOWCAST_REASON_UNKNOWN) -> str:
+    """Раздел отчёта, когда живого прогноза нет (спека §5) — ОДИН текст на оба входа.
 
     Ветка «нет цели» бэктест не отменяет: отчёт и CSV пишутся как обычно
     (walk-forward валиден и без живого прогноза), поэтому причину отсутствия
     прогноза называет сам раздел — тем же `reason`, что печатает консоль
     (`current_nowcast`), — а stale-прогноз прошлого прогона удаляется
     (`write_nowcast_artifact`), чтобы не читался как актуальный.
+
+    Вызывается и из `run_summary` (с реальной причиной), и из `render_report`
+    при `nowcast=None` (дефолтная причина): формулировка не может разъехаться.
     """
     return (
         f"Текущий nowcast не рассчитан: {reason}. `{FORECAST_NAME}` не пишется; "
@@ -2760,7 +2833,7 @@ def run_summary(
     `cpi_nowcast_predictions.csv` и `cpi_nowcast_forecast.json`.
     """
     out_dir = Path(out_dir) if out_dir is not None else ARTIFACTS_DIR
-    today = today or date.today()
+    today = run_date(today)
     targets = load_targets()
     weekly = load_weekly()
     usd = load_usd()

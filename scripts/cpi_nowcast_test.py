@@ -2152,21 +2152,43 @@ class TestNowcastTargetMonth(unittest.TestCase):
         target, _ = cm.nowcast_target_month(targets, date(2026, 10, 16))
         self.assertEqual(target, date(2026, 11, 1))
 
-    def test_overdue_label_is_no_target(self):
-        # Метки до 2022-12, прогон 2026-10-16: метка 2023-01 давно должна была
-        # выйти — это дыра импорта, а не неопубликованный месяц: цели нет.
+    def test_present_label_defines_the_target_without_a_calendar_check(self):
+        # Решение контроллера (I-3): публикация = наличие метки — календарной
+        # проверки отбора нет. Метки до 2022-12 дают цель 2023-01 и на прогоне
+        # 2026-10-16: отставание импорта смягчается пометкой в note
+        # (`import_lag_note`), а не отменой цели.
         target, reason = cm.nowcast_target_month(
             nowcast_targets(date(2022, 12, 1)), date(2026, 10, 16)
         )
-        self.assertIsNone(target)
-        self.assertIn("2023-01", reason)
-        self.assertIn("проверить импорт", reason)
+        self.assertEqual(target, date(2023, 1, 1))
+        self.assertEqual(reason, "")
 
     def test_no_label_in_data_is_no_target(self):
         targets = {code: [] for code in cm.TARGET_SERIES}
         target, reason = cm.nowcast_target_month(targets, date(2026, 10, 16))
         self.assertIsNone(target)
         self.assertIn("нет ни одной метки", reason)
+
+
+class TestNowcastImportLag(unittest.TestCase):
+    """Мягкое предупреждение об отставании импорта (спека §5, решение I-3)."""
+
+    def test_warning_starts_strictly_after_the_calendar_deadline(self):
+        # month_end(2022-12) = 2022-12-31; срок = +30 дней = 2023-01-30.
+        month = date(2022, 12, 1)
+        self.assertEqual(cm.import_lag_note(month, date(2023, 1, 30)), "")
+        self.assertIn(
+            "возможное отставание импорта",
+            cm.import_lag_note(month, date(2023, 1, 31)),
+        )
+        self.assertIn(
+            "календарный срок публикации прошёл",
+            cm.import_lag_note(month, date(2023, 1, 31)),
+        )
+
+    def test_live_target_has_no_import_warning(self):
+        # Цель-октябрь 2026 на 2026-10-16: календарный срок (30.11) не прошёл.
+        self.assertEqual(cm.import_lag_note(date(2026, 10, 1), date(2026, 10, 16)), "")
 
 
 class TestNowcastWindow(unittest.TestCase):
@@ -2194,36 +2216,87 @@ class TestNowcastWindow(unittest.TestCase):
         self.assertEqual(cm.nowcast_window(weekly, date(2022, 1, 1), date(2022, 1, 9)), [])
 
 
+def world_features(world: dict, target: date, weekly: list = None) -> tuple:
+    """`(window, features, reason)` живых признаков по словарю мира.
+
+    Недельный ряд можно подменить (`weekly`) — как в тестах бензина, где недели
+    строятся вручную.
+    """
+    weekly = world["weekly"] if weekly is None else weekly
+    window = cm.nowcast_window(weekly, target, world["today"])
+    features, reason = cm.nowcast_features(
+        target,
+        cm.target_index(world["targets"]),
+        world["usd"],
+        world["key_rate"],
+        world["ofz"],
+        world["fao"],
+        window,
+        world["today"],
+    )
+    return window, features, reason
+
+
 class TestNowcastFeatures(unittest.TestCase):
     """Признаки живого nowcast: as-of даты прогона и частичное окно (спека §5)."""
 
     def test_partial_window_averages_and_sums_over_the_available_weeks(self):
         # Две недели: [A=100, B=99, бензин=100] и [A=101, B=100, бензин=100.5]:
         # share_rising — последняя неделя (2 из 3); median_wk — её медиана (0.5);
-        # median_wk4 — среднее медиан (0 и 0.5); gasoline_4w — сумма (0 + 0.5).
+        # median_wk4 — среднее медиан (0 и 0.5); gasoline_4w — сырая сумма
+        # (0 + 0.5), приведённая к 4-недельному масштабу ×4/2 → 1.0.
         world = nowcast_world(
             last_label_month=date(2026, 9, 1),
             weeks=[date(2026, 10, 5), date(2026, 10, 12)],
             today=date(2026, 10, 16),
         )
         target = date(2026, 10, 1)
-        window = cm.nowcast_window(world["weekly"], target, world["today"])
-        features, reason = cm.nowcast_features(
-            target,
-            cm.target_index(world["targets"]),
-            world["usd"],
-            world["key_rate"],
-            world["ofz"],
-            world["fao"],
-            window,
-            world["today"],
-        )
+        window, features, reason = world_features(world, target)
         self.assertEqual(reason, "")
+        self.assertEqual(len(window), 2)
         self.assertAlmostEqual(features["share_rising_wk"], 2 / 3, places=12)
         self.assertAlmostEqual(features["median_wk"], 0.5, places=12)
         self.assertAlmostEqual(features["median_wk4"], 0.25, places=12)
-        self.assertAlmostEqual(features["gasoline_4w"], 0.5, places=12)
+        self.assertAlmostEqual(features["gasoline_4w"], 1.0, places=12)
         self.assertEqual(features["month"], 10)
+
+    def test_single_week_window_scales_gasoline_by_four(self):
+        # N=1: сырая сумма бензина (0.5) умножается на 4/1 — модели обучены на
+        # 4-недельной сумме (решение контроллера, I-2). Средние не масштабируются.
+        week = date(2026, 10, 5)
+        weekly = [
+            ("Товар A", week, 101.0),
+            ("Товар B", week, 99.0),
+            (cm.WEEKLY_GASOLINE, week, 100.5),
+        ]
+        world = nowcast_world(
+            last_label_month=date(2026, 9, 1), weeks=[week], today=date(2026, 10, 16)
+        )
+        target = date(2026, 10, 1)
+        window, features, reason = world_features(world, target, weekly=weekly)
+        self.assertEqual(reason, "")
+        self.assertEqual(len(window), 1)
+        raw = cm.weekly_window_features(window)
+        self.assertAlmostEqual(raw["gasoline_4w"], 0.5, places=12)
+        self.assertAlmostEqual(features["gasoline_4w"], 4 * raw["gasoline_4w"], places=12)
+        self.assertAlmostEqual(features["median_wk4"], raw["median_wk4"], places=12)
+
+    def test_full_window_leaves_gasoline_unscaled(self):
+        # N=4: масштаб уже 4-недельный — сырая сумма не меняется (бэктестная семантика).
+        world = nowcast_world(
+            last_label_month=date(2026, 9, 1),
+            weeks=[date(2026, 10, 5), date(2026, 10, 12), date(2026, 10, 19), date(2026, 10, 26)],
+            today=date(2026, 10, 30),
+        )
+        target = date(2026, 10, 1)
+        window, features, reason = world_features(world, target)
+        self.assertEqual(reason, "")
+        self.assertEqual(len(window), 4)
+        self.assertAlmostEqual(
+            features["gasoline_4w"],
+            cm.weekly_window_features(window)["gasoline_4w"],
+            places=12,
+        )
 
     def test_features_use_the_run_date_as_of_not_the_canonical_cutoff(self):
         # Прогон 2026-10-10, цель — сентябрь-2026 (метки до августа): canonical
@@ -2236,17 +2309,7 @@ class TestNowcastFeatures(unittest.TestCase):
             ofz=[(date(2026, 10, 8), 8.0)],
         )
         target = date(2026, 9, 1)
-        window = cm.nowcast_window(world["weekly"], target, world["today"])
-        features, reason = cm.nowcast_features(
-            target,
-            cm.target_index(world["targets"]),
-            world["usd"],
-            world["key_rate"],
-            world["ofz"],
-            world["fao"],
-            window,
-            world["today"],
-        )
+        _, features, reason = world_features(world, target)
         self.assertEqual(reason, "")
         self.assertEqual(features["ofz_1y"], 8.0)
         self.assertEqual(cm.cutoff_for(target), date(2026, 10, 8))
@@ -2265,17 +2328,7 @@ class TestNowcastFeatures(unittest.TestCase):
         target = date(2026, 10, 1)
         lag_month_end = cm.month_end(cm.previous_month(target))
         self.assertGreater(cm.available_from_mes(lag_month_end), world["today"])
-        window = cm.nowcast_window(world["weekly"], target, world["today"])
-        features, reason = cm.nowcast_features(
-            target,
-            cm.target_index(world["targets"]),
-            world["usd"],
-            world["key_rate"],
-            world["ofz"],
-            world["fao"],
-            window,
-            world["today"],
-        )
+        _, features, reason = world_features(world, target)
         self.assertEqual(reason, "")
         self.assertEqual(
             features["y_lag1"],
@@ -2313,6 +2366,12 @@ class TestNowcastFeatures(unittest.TestCase):
 class TestCurrentNowcast(unittest.TestCase):
     """Живой nowcast целиком: полная выборка, бенчмарки B1–B3, веса, детерминизм."""
 
+    def setUp(self):
+        # Кэш `live_nowcast()` — на модуль: сбрасывается перед каждым тестом,
+        # иначе результат зависел бы от порядка тестов (патчи `MODELS` в соседних
+        # классах не должны «запечься» в кэше).
+        _LIVE_NOWCAST.clear()
+
     def test_target_sample_and_window_are_reported(self):
         _, rows, nowcast = live_nowcast()
         self.assertEqual(nowcast.target_month, date(2023, 1, 1))
@@ -2340,12 +2399,17 @@ class TestCurrentNowcast(unittest.TestCase):
         self.assertIsInstance(nowcast.bottomup, float)
 
     def test_partial_window_note_is_mandatory(self):
-        # Рулинг: при N < 4 в note обязательны и пометка, и оговорка о различии
-        # режима генерации признаков с бэктестом.
+        # Рулинг: при N < 4 в note обязательны пометка частичного окна, оговорка
+        # о различии режима генерации признаков с бэктестом и имя масштабирования
+        # `gasoline_4w` (I-2). Предупреждения об отставании импорта здесь нет:
+        # календарный срок цели 2023-01 (02.03) на 15.01 не прошёл.
         _, _, nowcast = live_nowcast()
         self.assertIn("частичное окно: 1 из 4 недель", nowcast.note)
         self.assertIn("отличается от бэктеста", nowcast.note)
         self.assertIn("строго 4 недели", nowcast.note)
+        self.assertIn("gasoline_4w приведён к 4-недельному масштабу", nowcast.note)
+        self.assertIn("множитель 4/1", nowcast.note)
+        self.assertNotIn("возможное отставание импорта", nowcast.note)
 
     def test_full_window_has_no_partial_note(self):
         world = live_world(date(2023, 2, 5), live_weeks=month_days([date(2023, 1, 1)]))
@@ -2353,6 +2417,7 @@ class TestCurrentNowcast(unittest.TestCase):
         self.assertEqual(reason, "")
         self.assertEqual(nowcast.window_weeks, 4)
         self.assertNotIn("частичное окно", nowcast.note)
+        self.assertNotIn("4-недельному масштабу", nowcast.note)
 
     def test_weights_and_bottomup_are_the_full_sample_fit(self):
         world, rows, nowcast = live_nowcast()
@@ -2416,11 +2481,49 @@ class TestCurrentNowcast(unittest.TestCase):
         self.assertIsNone(nowcast)
         self.assertIn("ни один метод не посчитан", reason)
 
-    def test_overdue_label_is_no_nowcast(self):
+    def test_non_converged_enet_is_named_in_the_note(self):
+        # I-1: недосход живого фита B3 не теряется — читается из `fold_notes`
+        # сразу после фита и называется в note (JSON и раздел отчёта).
+        world = live_world(date(2023, 1, 15))
+        original = cm.fit_enet
+
+        def unconverged(train, row):
+            unconverged.fold_notes = {cm.NON_CONVERGED: 1}
+            return original(train, row)
+
+        with unittest.mock.patch.object(
+            cm, "MODELS", {**cm.MODELS, cm.MODEL_ENET: unconverged}
+        ):
+            _, nowcast, reason = world_nowcast(world)
+        self.assertEqual(reason, "")
+        self.assertIn(
+            "B3 ElasticNetCV: координатный спуск не сошёлся на живой выборке",
+            nowcast.note,
+        )
+        self.assertIn("прогноз индикативен", nowcast.note)
+        self.assertIn("координатный спуск не сошёлся", cm.nowcast_json(nowcast))
+        self.assertIn("координатный спуск не сошёлся", cm.render_nowcast(nowcast))
+
+    def test_converged_enet_leaves_no_such_note(self):
+        # Обратная сторона: сошедшийся фит (штатный `fit_enet`) пометки не даёт.
+        world = live_world(date(2023, 1, 15))
+        with unittest.mock.patch.object(
+            cm, "MODELS", {**cm.MODELS, cm.MODEL_ENET: lambda train, row: 0.5}
+        ):
+            _, nowcast, reason = world_nowcast(world)
+        self.assertEqual(reason, "")
+        self.assertNotIn("координатный спуск не сошёлся", nowcast.note)
+
+    def test_stale_import_still_nowcasts_with_a_warning(self):
+        # I-3: календарной проверки отбора нет (наличие метки — источник истины),
+        # поэтому цель 2023-01 считается и на прогоне 2026-10-16 — с мягким
+        # предупреждением об отставании импорта в note (JSON и отчёт).
         world = live_world(date(2026, 10, 16))
         _, nowcast, reason = world_nowcast(world)
-        self.assertIsNone(nowcast)
-        self.assertIn("2023-01", reason)
+        self.assertEqual(reason, "")
+        self.assertEqual(nowcast.target_month, date(2023, 1, 1))
+        self.assertIn("возможное отставание импорта", nowcast.note)
+        self.assertIn("возможное отставание импорта", cm.nowcast_json(nowcast))
 
     def test_missing_weekly_window_is_no_nowcast(self):
         # 2023-01-03: первая публикация января (01-09 → доступна 01-11) ещё не вышла.
@@ -2447,6 +2550,10 @@ class TestCurrentNowcast(unittest.TestCase):
 
 class TestNowcastArtifacts(unittest.TestCase):
     """JSON текущего nowcast (спека §5): ключи, запись, подчистка устаревшего."""
+
+    def setUp(self):
+        # Порядконезависимость: кэш `live_nowcast()` — на модуль.
+        _LIVE_NOWCAST.clear()
 
     def test_json_follows_the_spec_keys_and_values(self):
         _, _, nowcast = live_nowcast()
@@ -2478,6 +2585,8 @@ class TestNowcastArtifacts(unittest.TestCase):
         )
         self.assertEqual(payload["sample_size"], nowcast.sample_size)
         self.assertIn("частичное окно: 1 из 4 недель", payload["note"])
+        # I-2: масштаб gasoline_4w назван и в JSON (note), и в отчёте.
+        self.assertIn("gasoline_4w приведён к 4-недельному масштабу", payload["note"])
         self.assertTrue(text.endswith("\n"))
         self.assertNotIn("\r", text)
 
