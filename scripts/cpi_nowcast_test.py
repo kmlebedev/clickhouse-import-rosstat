@@ -315,6 +315,13 @@ class TestConstants(unittest.TestCase):
         self.assertEqual(len(cm.AR1_DUMMY_MONTHS), 11)
         self.assertEqual(cm.REPORT_NAME, "cpi_nowcast_report.md")
         self.assertEqual(cm.PREDICTIONS_NAME, "cpi_nowcast_predictions.csv")
+        self.assertEqual(cm.FORECAST_NAME, "cpi_nowcast_forecast.json")
+        # Подчистка ветки «нет цели» (Task 5) идёт по этому списку — все три
+        # артефакта прошлого прогона, а не только JSON.
+        self.assertEqual(
+            cm.ARTIFACT_NAMES,
+            (cm.REPORT_NAME, cm.PREDICTIONS_NAME, cm.FORECAST_NAME),
+        )
 
     def test_enet_configuration_matches_the_spec(self):
         # Спека §3.3, дословно; конфигурация, подставленная в модель, пинуется
@@ -1865,10 +1872,17 @@ class TestReportSkeleton(unittest.TestCase):
         self.assertIn("StandardScaler", report)
         self.assertIn("ofz_1y", report)
 
-    def test_nowcast_block_is_a_placeholder_until_task5(self):
-        self.assertIn("Task 5", self.render())
+    def test_nowcast_block_is_rendered_and_its_absence_explained(self):
+        # Task 5: `nowcast` — готовый блок «Текущего nowcast» (render_nowcast);
+        # None — раздел обязан назвать причину, а не placeholder «Task 5».
         block = "**Октябрь-2026**: 0.55 п.п. (предварительно)"
-        self.assertIn(block, self.render(nowcast=block))
+        report = self.render(nowcast=block)
+        self.assertIn(block, report)
+        self.assertNotIn("Task 5", report)
+        empty = self.render()
+        self.assertIn("## Текущий nowcast", empty)
+        self.assertIn("не рассчитан", empty)
+        self.assertNotIn("Task 5", empty)
 
     def test_report_renders_without_sample_or_runs(self):
         report = cm.render_report([], [], [], nowcast=None, today=date(2026, 10, 16))
@@ -1993,36 +2007,603 @@ class TestArtifacts(unittest.TestCase):
             )
 
 
-class TestRunOffline(unittest.TestCase):
-    """Живой путь прогона офлайн: фикстуры, walk-forward, артефакты."""
+# --- Task 5: текущий nowcast --------------------------------------------------
 
-    def test_run_summary_writes_artifacts_on_fixtures(self):
+
+def month_span(first: date, last: date) -> list:
+    """Месяцы (первые числа) от `first` до `last` включительно, по возрастанию."""
+    months = []
+    month = first
+    while month <= last:
+        months.append(month)
+        month = cm._month_shift(month, 1)
+    return months
+
+
+def nowcast_targets(last_label_month: date, first: date = date(2021, 1, 1)) -> dict:
+    """Таргеты 4 рядов (значения — `synthetic_targets`) до `last_label_month`."""
+    return synthetic_targets(month_span(first, last_label_month))
+
+
+def nowcast_world(last_label_month: date, weeks: list, today: date, **overrides) -> dict:
+    """Мир живого nowcast: полные метки до `last_label_month`, недели `weeks`.
+
+    `weekly` — ровно переданные `weeks` (окно живого режима задаётся явно, а не
+    календарём месяца); таргеты — с месяца перед первым месяцем выборки (лаг
+    первой строки, как в `synthetic_world`). Глубины синтетических `usd`/`fao`
+    хватает для любой даты прогона: as-of возьмёт последнюю доступную точку.
+    """
+    months = month_span(date(2021, 1, 1), last_label_month)
+    world = {
+        "targets": synthetic_targets([cm.previous_month(months[0])] + months),
+        "weekly": synthetic_weekly(weeks),
+        "usd": synthetic_usd(),
+        "key_rate": fixture_key_rate(),
+        "ofz": [],
+        "fao": synthetic_fao(),
+        "today": today,
+    }
+    world.update(overrides)
+    return world
+
+
+def live_world(today: date, live_weeks: list = None) -> dict:
+    """Мир прогона с непустой выборкой (2022-й) и «живым» окном после 2022-12-31.
+
+    Недельные публикации покрывают месяцы выборки (иначе строки не собрать) и
+    добавляют окно января-2023: по умолчанию одна публикация (2023-01-09) —
+    цель 2023-01, окно частичное (1 из 4); для полного окна передайте
+    `live_weeks=month_days([date(2023, 1, 1)])`.
+    """
+    months = month_span(date(2022, 1, 1), date(2022, 12, 1))
+    live_weeks = [date(2023, 1, 9)] if live_weeks is None else live_weeks
+    return nowcast_world(
+        last_label_month=date(2022, 12, 1),
+        weeks=month_days(months) + live_weeks,
+        today=today,
+    )
+
+
+def long_live_world(today: date) -> dict:
+    """Мир с полной выборкой 24 месяца (2021–2022): B2 и B3 на ней оцениваются.
+
+    Синтетических `usd`/`fao` хватает только с 2021-11 (см. `nowcast_world`), а
+    выборке нужны признаки с января-2021 — ряды удлиняются здесь: это цена
+    проверки «бенчмарки B1–B3 в JSON присутствуют» на живой длине выборки, а не
+    на коротком окне, где B2 законно вырожден.
+    """
+    months = month_span(date(2021, 1, 1), date(2022, 12, 1))
+    usd = [
+        (date(2021, 1, 1) + ONE_DAY * offset, 70.0 + offset * 0.01)
+        for offset in range(700)
+    ]
+    fao = [(month, 110.0 + index) for index, month in enumerate(months)]
+    return nowcast_world(
+        last_label_month=date(2022, 12, 1),
+        weeks=month_days(months) + [date(2023, 1, 9)],
+        today=today,
+        usd=usd,
+        fao=fao,
+    )
+
+
+def world_nowcast(world: dict) -> tuple:
+    """`(rows, nowcast, reason)` живого прогона по словарю мира (как `build_world`)."""
+    rows, _ = build_world(world)
+    nowcast, reason = cm.current_nowcast(
+        rows,
+        world["targets"],
+        world["weekly"],
+        world["usd"],
+        world["key_rate"],
+        world["ofz"],
+        world["fao"],
+        world["today"],
+    )
+    return rows, nowcast, reason
+
+
+_LIVE_NOWCAST = []
+
+
+def live_nowcast() -> tuple:
+    """Кэшированный `(world, rows, nowcast)` живого мира: фиты CatBoost недёшевы."""
+    if not _LIVE_NOWCAST:
+        world = live_world(date(2023, 1, 15))
+        rows, nowcast, reason = world_nowcast(world)
+        assert reason == "", reason
+        _LIVE_NOWCAST.append((world, rows, nowcast))
+    return _LIVE_NOWCAST[0]
+
+
+class TestNowcastTargetMonth(unittest.TestCase):
+    """Целевой месяц живого nowcast: последний неопубликованный (спека §5)."""
+
+    def test_target_is_the_month_after_the_last_published_label(self):
+        # Рулинг контроллера: на 2026-10-16 (сентябрь опубликован 14.10) цель —
+        # октябрь-2026, а не сентябрь и не ноябрь.
+        target, reason = cm.nowcast_target_month(
+            nowcast_targets(date(2026, 9, 1)), date(2026, 10, 16)
+        )
+        self.assertEqual(target, date(2026, 10, 1))
+        self.assertEqual(reason, "")
+
+    def test_target_stays_while_the_month_is_unpublished(self):
+        # 2026-11-10: октябрь всё ещё не опубликован (выпуск 10–16.11) — цель та же.
+        target, reason = cm.nowcast_target_month(
+            nowcast_targets(date(2026, 9, 1)), date(2026, 11, 10)
+        )
+        self.assertEqual(target, date(2026, 10, 1))
+        self.assertEqual(reason, "")
+
+    def test_present_headline_label_moves_the_target_forward(self):
+        # Метка общего ИПЦ за октябрь уже есть → неопубликованный месяц — ноябрь.
+        # Компонентные ряды цель не двигают: y_lag1 — метка общего ИПЦ.
+        targets = nowcast_targets(date(2026, 9, 1))
+        targets[cm.TARGET_ALL].append((cm.month_end(date(2026, 10, 1)), 0.6))
+        target, _ = cm.nowcast_target_month(targets, date(2026, 10, 16))
+        self.assertEqual(target, date(2026, 11, 1))
+
+    def test_overdue_label_is_no_target(self):
+        # Метки до 2022-12, прогон 2026-10-16: метка 2023-01 давно должна была
+        # выйти — это дыра импорта, а не неопубликованный месяц: цели нет.
+        target, reason = cm.nowcast_target_month(
+            nowcast_targets(date(2022, 12, 1)), date(2026, 10, 16)
+        )
+        self.assertIsNone(target)
+        self.assertIn("2023-01", reason)
+        self.assertIn("проверить импорт", reason)
+
+    def test_no_label_in_data_is_no_target(self):
+        targets = {code: [] for code in cm.TARGET_SERIES}
+        target, reason = cm.nowcast_target_month(targets, date(2026, 10, 16))
+        self.assertIsNone(target)
+        self.assertIn("нет ни одной метки", reason)
+
+
+class TestNowcastWindow(unittest.TestCase):
+    """Недельное окно живого nowcast: 1…4 недели после конца M−1 (спека §5)."""
+
+    def test_window_keeps_only_weeks_after_the_previous_month_and_caps_at_four(self):
+        weekly = synthetic_weekly(
+            month_days([date(2021, 12, 1), date(2022, 1, 1), date(2022, 2, 1)])
+        )
+        window = cm.nowcast_window(weekly, date(2022, 1, 1), date(2022, 1, 28))
+        # Декабрьские публикации описывают M−1 и в окно цели не входят; февральская
+        # (публикация 02-07) к 01-28 ещё не вышла — остаются ровно четыре недели января.
+        self.assertEqual(
+            [week for week, _ in window],
+            [date(2022, 1, 5), date(2022, 1, 12), date(2022, 1, 19), date(2022, 1, 26)],
+        )
+
+    def test_partial_window_is_allowed_with_a_minimum_of_one_week(self):
+        weekly = synthetic_weekly([date(2022, 1, 10)])
+        window = cm.nowcast_window(weekly, date(2022, 1, 1), date(2022, 1, 15))
+        self.assertEqual([week for week, _ in window], [date(2022, 1, 10)])
+
+    def test_window_is_empty_before_the_first_publication_of_the_month(self):
+        weekly = synthetic_weekly([date(2022, 1, 10)])
+        self.assertEqual(cm.nowcast_window(weekly, date(2022, 1, 1), date(2022, 1, 9)), [])
+
+
+class TestNowcastFeatures(unittest.TestCase):
+    """Признаки живого nowcast: as-of даты прогона и частичное окно (спека §5)."""
+
+    def test_partial_window_averages_and_sums_over_the_available_weeks(self):
+        # Две недели: [A=100, B=99, бензин=100] и [A=101, B=100, бензин=100.5]:
+        # share_rising — последняя неделя (2 из 3); median_wk — её медиана (0.5);
+        # median_wk4 — среднее медиан (0 и 0.5); gasoline_4w — сумма (0 + 0.5).
+        world = nowcast_world(
+            last_label_month=date(2026, 9, 1),
+            weeks=[date(2026, 10, 5), date(2026, 10, 12)],
+            today=date(2026, 10, 16),
+        )
+        target = date(2026, 10, 1)
+        window = cm.nowcast_window(world["weekly"], target, world["today"])
+        features, reason = cm.nowcast_features(
+            target,
+            cm.target_index(world["targets"]),
+            world["usd"],
+            world["key_rate"],
+            world["ofz"],
+            world["fao"],
+            window,
+            world["today"],
+        )
+        self.assertEqual(reason, "")
+        self.assertAlmostEqual(features["share_rising_wk"], 2 / 3, places=12)
+        self.assertAlmostEqual(features["median_wk"], 0.5, places=12)
+        self.assertAlmostEqual(features["median_wk4"], 0.25, places=12)
+        self.assertAlmostEqual(features["gasoline_4w"], 0.5, places=12)
+        self.assertEqual(features["month"], 10)
+
+    def test_features_use_the_run_date_as_of_not_the_canonical_cutoff(self):
+        # Прогон 2026-10-10, цель — сентябрь-2026 (метки до августа): canonical
+        # cutoff(сентября) = 2026-10-08. Точка ОФЗ от 2026-10-08 доступна 10-09 —
+        # ПОЗЖЕ cutoff и к дате прогона: живой режим её использует.
+        world = nowcast_world(
+            last_label_month=date(2026, 8, 1),
+            weeks=[date(2026, 9, 7), date(2026, 9, 14), date(2026, 9, 21), date(2026, 9, 28)],
+            today=date(2026, 10, 10),
+            ofz=[(date(2026, 10, 8), 8.0)],
+        )
+        target = date(2026, 9, 1)
+        window = cm.nowcast_window(world["weekly"], target, world["today"])
+        features, reason = cm.nowcast_features(
+            target,
+            cm.target_index(world["targets"]),
+            world["usd"],
+            world["key_rate"],
+            world["ofz"],
+            world["fao"],
+            window,
+            world["today"],
+        )
+        self.assertEqual(reason, "")
+        self.assertEqual(features["ofz_1y"], 8.0)
+        self.assertEqual(cm.cutoff_for(target), date(2026, 10, 8))
+        self.assertIsNone(cm.ofz_feature(world["ofz"], cm.cutoff_for(target)))
+
+    def test_y_lag1_is_the_present_label_even_though_the_schedule_says_later(self):
+        # Живой режим: месячный ИПЦ импортируется из релиза Росстата, поэтому
+        # «метка есть» = «опубликована». Консервативное available_from_mes (§2.4,
+        # конец M+1) исключило бы вышедший 14.10 сентябрьский лаг — в живом
+        # режиме правило не применяется (в бэктесте — применяется).
+        world = nowcast_world(
+            last_label_month=date(2026, 9, 1),
+            weeks=[date(2026, 10, 5), date(2026, 10, 12)],
+            today=date(2026, 10, 16),
+        )
+        target = date(2026, 10, 1)
+        lag_month_end = cm.month_end(cm.previous_month(target))
+        self.assertGreater(cm.available_from_mes(lag_month_end), world["today"])
+        window = cm.nowcast_window(world["weekly"], target, world["today"])
+        features, reason = cm.nowcast_features(
+            target,
+            cm.target_index(world["targets"]),
+            world["usd"],
+            world["key_rate"],
+            world["ofz"],
+            world["fao"],
+            window,
+            world["today"],
+        )
+        self.assertEqual(reason, "")
+        self.assertEqual(
+            features["y_lag1"],
+            cm.target_index(world["targets"])[cm.TARGET_ALL][lag_month_end],
+        )
+
+    def test_missing_gasoline_in_the_window_is_a_reason_not_a_crash(self):
+        weekly = synthetic_weekly([date(2026, 10, 5), date(2026, 10, 12)])
+        weekly = [
+            point
+            for point in weekly
+            if point[0] != cm.WEEKLY_GASOLINE or point[1] != date(2026, 10, 12)
+        ]
+        world = nowcast_world(
+            last_label_month=date(2026, 9, 1),
+            weeks=[date(2026, 10, 5), date(2026, 10, 12)],
+            today=date(2026, 10, 16),
+        )
+        target = date(2026, 10, 1)
+        window = cm.nowcast_window(weekly, target, world["today"])
+        features, reason = cm.nowcast_features(
+            target,
+            cm.target_index(world["targets"]),
+            world["usd"],
+            world["key_rate"],
+            world["ofz"],
+            world["fao"],
+            window,
+            world["today"],
+        )
+        self.assertIsNone(features)
+        self.assertIn("бензин", reason)
+
+
+class TestCurrentNowcast(unittest.TestCase):
+    """Живой nowcast целиком: полная выборка, бенчмарки B1–B3, веса, детерминизм."""
+
+    def test_target_sample_and_window_are_reported(self):
+        _, rows, nowcast = live_nowcast()
+        self.assertEqual(nowcast.target_month, date(2023, 1, 1))
+        self.assertEqual(nowcast.data_asof, date(2023, 1, 15))
+        self.assertEqual(nowcast.sample_size, len(rows))
+        self.assertEqual(nowcast.window_weeks, 1)
+        self.assertEqual(nowcast.window_last, date(2023, 1, 9))
+
+    def test_benchmarks_cover_b1_to_b3_and_b1_is_the_lag(self):
+        # Полная выборка 24 месяца: B2 (≥ 14 строк) и B3 (≥ 12) на ней оцениваются —
+        # «бенчмарки B1–B3 в JSON» проверяются на живой длине выборки, а не на
+        # коротком окне, где они законно вырождены (`test_live_nowcast_run_…`).
+        world = long_live_world(date(2023, 1, 15))
+        _, nowcast, reason = world_nowcast(world)
+        self.assertEqual(reason, "")
+        self.assertEqual(nowcast.sample_size, 24)
+        self.assertEqual(list(nowcast.benchmarks), list(cm.BENCHMARKS))
+        lag = cm.target_index(world["targets"])[cm.TARGET_ALL][
+            cm.month_end(cm.previous_month(nowcast.target_month))
+        ]
+        self.assertAlmostEqual(nowcast.benchmarks[cm.MODEL_LAST], lag, places=12)
+        for name in (cm.MODEL_AR1, cm.MODEL_ENET):
+            self.assertIsInstance(nowcast.benchmarks[name], float, name)
+        self.assertIsInstance(nowcast.direct, float)
+        self.assertIsInstance(nowcast.bottomup, float)
+
+    def test_partial_window_note_is_mandatory(self):
+        # Рулинг: при N < 4 в note обязательны и пометка, и оговорка о различии
+        # режима генерации признаков с бэктестом.
+        _, _, nowcast = live_nowcast()
+        self.assertIn("частичное окно: 1 из 4 недель", nowcast.note)
+        self.assertIn("отличается от бэктеста", nowcast.note)
+        self.assertIn("строго 4 недели", nowcast.note)
+
+    def test_full_window_has_no_partial_note(self):
+        world = live_world(date(2023, 2, 5), live_weeks=month_days([date(2023, 1, 1)]))
+        _, nowcast, reason = world_nowcast(world)
+        self.assertEqual(reason, "")
+        self.assertEqual(nowcast.window_weeks, 4)
+        self.assertNotIn("частичное окно", nowcast.note)
+
+    def test_weights_and_bottomup_are_the_full_sample_fit(self):
+        world, rows, nowcast = live_nowcast()
+        self.assertEqual(nowcast.weights, cm.nnls_weights(rows))
+        stubs = {"cpi_food": 1.0, "cpi_nonfood": 2.0, "cpi_services": 3.0}
+        with unittest.mock.patch.object(
+            cm, "fit_catboost_component", lambda train, row, code: stubs[code]
+        ):
+            _, stubbed, reason = world_nowcast(world)
+        self.assertEqual(reason, "")
+        expected = sum(
+            weight * stubs[code]
+            for weight, code in zip(nowcast.weights, cm.BOTTOMUP_COMPONENTS)
+        )
+        self.assertAlmostEqual(stubbed.bottomup, expected, places=12)
+
+    def test_prediction_row_has_no_label_and_targets_the_month(self):
+        # Метки месяца цели не существует: строка прогноза несёт NaN-плейсхолдер
+        # (никто из моделей его не читает), а месяц — цель nowcast.
+        world = live_world(date(2023, 1, 15))
+        seen = []
+        original = cm.fit_catboost_direct
+
+        def spy(train, row):
+            seen.append(row)
+            return original(train, row)
+
+        with unittest.mock.patch.object(
+            cm, "MODELS", {**cm.MODELS, cm.MODEL_CATBOOST_DIRECT: spy}
+        ):
+            _, nowcast, reason = world_nowcast(world)
+        self.assertEqual(reason, "")
+        self.assertEqual(seen[0].month, date(2023, 1, 1))
+        self.assertTrue(all(math.isnan(value) for value in seen[0].y.values()))
+
+    def test_two_runs_are_byte_identical(self):
+        world = live_world(date(2023, 1, 15))
+        _, first, _ = world_nowcast(world)
+        _, second, _ = world_nowcast(world)
+        self.assertEqual(cm.nowcast_json(first), cm.nowcast_json(second))
+
+    def test_all_methods_degenerate_is_no_nowcast_with_reason(self):
+        world = live_world(date(2023, 1, 15))
+        rows, _ = build_world(world)
+
+        def degenerate(train, row):
+            raise cm.DegenerateWindowError("тест: окно вырождено")
+
+        models = {name: degenerate for name in cm.MODELS}
+        with unittest.mock.patch.object(cm, "MODELS", models):
+            nowcast, reason = cm.current_nowcast(
+                rows,
+                world["targets"],
+                world["weekly"],
+                world["usd"],
+                world["key_rate"],
+                world["ofz"],
+                world["fao"],
+                world["today"],
+            )
+        self.assertIsNone(nowcast)
+        self.assertIn("ни один метод не посчитан", reason)
+
+    def test_overdue_label_is_no_nowcast(self):
+        world = live_world(date(2026, 10, 16))
+        _, nowcast, reason = world_nowcast(world)
+        self.assertIsNone(nowcast)
+        self.assertIn("2023-01", reason)
+
+    def test_missing_weekly_window_is_no_nowcast(self):
+        # 2023-01-03: первая публикация января (01-09 → доступна 01-11) ещё не вышла.
+        world = live_world(date(2023, 1, 3))
+        _, nowcast, reason = world_nowcast(world)
+        self.assertIsNone(nowcast)
+        self.assertIn("недель", reason)
+
+    def test_empty_sample_is_no_nowcast(self):
+        world = live_world(date(2023, 1, 15))
+        nowcast, reason = cm.current_nowcast(
+            [],
+            world["targets"],
+            world["weekly"],
+            world["usd"],
+            world["key_rate"],
+            world["ofz"],
+            world["fao"],
+            world["today"],
+        )
+        self.assertIsNone(nowcast)
+        self.assertIn("выборка пуста", reason)
+
+
+class TestNowcastArtifacts(unittest.TestCase):
+    """JSON текущего nowcast (спека §5): ключи, запись, подчистка устаревшего."""
+
+    def test_json_follows_the_spec_keys_and_values(self):
+        _, _, nowcast = live_nowcast()
+        text = cm.nowcast_json(nowcast)
+        payload = json.loads(text)
+        self.assertEqual(
+            list(payload),
+            ["forecast_date", "target_month", "data_asof", "catboost_direct",
+             "catboost_bottomup", "bottomup_weights", "benchmarks", "sample_size", "note"],
+        )
+        self.assertEqual(payload["forecast_date"], "2023-01-15")
+        self.assertEqual(payload["data_asof"], "2023-01-15")
+        self.assertEqual(payload["target_month"], "2023-01-01")
+        # Метаданные CatBoost (§3.1: «дефолты фиксируются в метаданных модели») —
+        # в JSON прогона, как обещано Task 4.
+        self.assertEqual(payload["catboost_direct"]["metadata"], cm.catboost_metadata())
+        self.assertEqual(payload["catboost_bottomup"]["metadata"], cm.catboost_metadata())
+        self.assertIsInstance(payload["catboost_direct"]["forecast"], float)
+        self.assertIsInstance(payload["catboost_bottomup"]["forecast"], float)
+        self.assertEqual(list(payload["bottomup_weights"]), list(cm.BOTTOMUP_COMPONENTS))
+        self.assertAlmostEqual(sum(payload["bottomup_weights"].values()), 1.0, places=12)
+        self.assertEqual(list(payload["benchmarks"]), list(cm.BENCHMARKS))
+        self.assertAlmostEqual(
+            payload["benchmarks"][cm.MODEL_LAST],
+            cm.target_index(live_nowcast()[0]["targets"])[cm.TARGET_ALL][
+                cm.month_end(date(2022, 12, 1))
+            ],
+            places=12,
+        )
+        self.assertEqual(payload["sample_size"], nowcast.sample_size)
+        self.assertIn("частичное окно: 1 из 4 недель", payload["note"])
+        self.assertTrue(text.endswith("\n"))
+        self.assertNotIn("\r", text)
+
+    def test_write_nowcast_artifact_writes_then_unlinks(self):
+        _, _, nowcast = live_nowcast()
         with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / cm.FORECAST_NAME
+            self.assertTrue(cm.write_nowcast_artifact(path, nowcast))
+            self.assertEqual(path.read_text(encoding="utf-8"), cm.nowcast_json(nowcast))
+            self.assertFalse(cm.write_nowcast_artifact(path, None))
+            self.assertFalse(path.exists())
+
+    def test_clear_stale_artifacts_removes_all_three_and_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = []
+            for name in cm.ARTIFACT_NAMES:
+                path = Path(tmp) / name
+                path.write_text("артефакт прошлого прогона", encoding="utf-8")
+                paths.append(path)
+            self.assertEqual(cm.clear_stale_artifacts(Path(tmp)), list(cm.ARTIFACT_NAMES))
+            for path in paths:
+                self.assertFalse(path.exists(), path.name)
+            self.assertEqual(cm.clear_stale_artifacts(Path(tmp)), [])
+
+
+class TestRunOffline(unittest.TestCase):
+    """Живой путь прогона офлайн: фикстуры, walk-forward, артефакты, nowcast."""
+
+    @staticmethod
+    def plant_stale(tmp) -> list:
+        """Файлы «прошлого прогона» — все три артефакта: подчистка общая."""
+        paths = []
+        for name in cm.ARTIFACT_NAMES:
+            path = Path(tmp) / name
+            path.write_text("артефакт прошлого прогона", encoding="utf-8")
+            paths.append(path)
+        return paths
+
+    def test_run_without_target_cleans_stale_artifacts_and_writes_nothing(self):
+        # Фикстуры: метки до 2022-12, недельные — до 2022-05; прогон 2026-10-16:
+        # неопубликованного месяца нет (метка 2023-01 просрочена) — ветка «нет
+        # цели»: ни JSON, ни отчёт, ни CSV не пишутся, файлы прошлого прогона
+        # удаляются, прогон не падает. Walk-forward при этом печатается.
+        with tempfile.TemporaryDirectory() as tmp:
+            stale = self.plant_stale(tmp)
             output = io.StringIO()
             with fixture_transport(), contextlib.redirect_stdout(output):
                 code = cm.run_summary(
                     start=3, embargo_months=0, out_dir=Path(tmp), today=date(2026, 10, 16)
                 )
             self.assertEqual(code, 0)
-            self.assertIn("walk-forward", output.getvalue())
+            for path in stale:
+                self.assertFalse(path.exists(), path.name)
+            text = output.getvalue()
+            self.assertIn("walk-forward", text)
+            self.assertIn("не рассчитан", text)
+            self.assertIn("2023-01", text)
+            self.assertIn("устаревшие артефакты прошлого прогона удалены", text)
+
+    def test_live_nowcast_run_writes_all_three_artifacts(self):
+        world = live_world(date(2023, 1, 15))
+        with tempfile.TemporaryDirectory() as tmp:
+            output = io.StringIO()
+            with contextlib.ExitStack() as stack:
+                for loader, key in (
+                    ("load_targets", "targets"), ("load_weekly", "weekly"), ("load_usd", "usd"),
+                    ("load_key_rate", "key_rate"), ("load_ofz_1y", "ofz"), ("load_fao", "fao"),
+                ):
+                    stack.enter_context(
+                        unittest.mock.patch.object(cm, loader, lambda key=key: world[key])
+                    )
+                stack.enter_context(contextlib.redirect_stdout(output))
+                code = cm.run_summary(start=10, out_dir=Path(tmp), today=world["today"])
+            self.assertEqual(code, 0)
             report = (Path(tmp) / cm.REPORT_NAME).read_text(encoding="utf-8")
-            self.assertIn("2022-01 … 2022-05", report)
-            self.assertIn("Дата прогона: 2026-10-16", report)
+            self.assertIn("Дата прогона: 2023-01-15", report)
+            self.assertIn("## Текущий nowcast", report)
+            self.assertIn("**Целевой месяц: 2023-01**", report)
+            self.assertIn("частичное окно: 1 из 4 недель", report)
+            payload = json.loads((Path(tmp) / cm.FORECAST_NAME).read_text(encoding="utf-8"))
+            self.assertEqual(payload["target_month"], "2023-01-01")
+            self.assertEqual(payload["forecast_date"], "2023-01-15")
+            self.assertIsInstance(payload["catboost_direct"]["forecast"], float)
+            self.assertIsInstance(payload["catboost_bottomup"]["forecast"], float)
+            self.assertAlmostEqual(sum(payload["bottomup_weights"].values()), 1.0, places=12)
+            # B1 = метка 2022-12 (обучение не нужно); B3 на полной выборке
+            # (12 месяцев) оценивается, а B2 вырожден (12 < 14 строк) — null и
+            # причина в note, а не отказ прогона.
+            self.assertAlmostEqual(payload["benchmarks"][cm.MODEL_LAST], 2.9, places=12)
+            self.assertIsInstance(payload["benchmarks"][cm.MODEL_ENET], float)
+            self.assertIsNone(payload["benchmarks"][cm.MODEL_AR1])
+            self.assertIn("не посчитаны", payload["note"])
+            self.assertIn("B2 AR(1)+сезонные дамми", payload["note"])
             with (Path(tmp) / cm.PREDICTIONS_NAME).open(encoding="utf-8", newline="") as handle:
                 predictions = list(csv.DictReader(handle))
             self.assertTrue(predictions)
-            # На пяти месяцах фолд B2/B3 вырожден (окно короче минимума) — пропуск
-            # со счётчиком, а не падение. CatBoost и NNLS минимума не требуют:
-            # у короткого окна свои проверки (нет вариации таргета, нулевые веса),
-            # и на фикстурах модели считаются.
             self.assertEqual(
                 {row["model"] for row in predictions},
                 {cm.MODEL_LAST, cm.MODEL_CATBOOST_DIRECT, cm.MODEL_CATBOOST_BOTTOMUP},
             )
-            self.assertIn("| B3 ElasticNetCV | start=3 (основное) | 0 | 2 |", report)
-            # Веса bottom-up посчитаны и показаны в отчёте офлайн-прогона.
-            self.assertIn("## Веса bottom-up (NNLS)", report)
-            self.assertIn(f"| {cm.window_key(3, 0)} |", report)
+            text = output.getvalue()
+            self.assertIn("текущий nowcast:", text)
+            self.assertIn("прогноз (JSON):", text)
+
+    def test_run_without_a_single_computed_method_cleans_stale_artifacts(self):
+        world = live_world(date(2023, 1, 15))
+
+        def degenerate(train, row):
+            raise cm.DegenerateWindowError("тест: окно вырождено")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            stale = self.plant_stale(tmp)
+            output = io.StringIO()
+            with contextlib.ExitStack() as stack:
+                for loader, key in (
+                    ("load_targets", "targets"), ("load_weekly", "weekly"), ("load_usd", "usd"),
+                    ("load_key_rate", "key_rate"), ("load_ofz_1y", "ofz"), ("load_fao", "fao"),
+                ):
+                    stack.enter_context(
+                        unittest.mock.patch.object(cm, loader, lambda key=key: world[key])
+                    )
+                stack.enter_context(
+                    unittest.mock.patch.object(
+                        cm, "MODELS", {name: degenerate for name in cm.MODELS}
+                    )
+                )
+                stack.enter_context(contextlib.redirect_stdout(output))
+                code = cm.run_summary(start=10, out_dir=Path(tmp), today=world["today"])
+            self.assertEqual(code, 0)
+            for path in stale:
+                self.assertFalse(path.exists(), path.name)
+            text = output.getvalue()
+            self.assertIn("ни один метод не посчитан", text)
+            self.assertIn("устаревшие артефакты прошлого прогона удалены", text)
 
 
 if __name__ == "__main__":
