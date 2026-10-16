@@ -4,7 +4,9 @@
 Зачем этот скрипт
 -----------------
 Недельная оценка ИПЦ Росстата публиковалась до 2022 года HTML-бюллетенями «Оперативной
-информации» (`bgd/free/B04_03/IssWWW.exe/Stg/d02/<N>.htm`), которые нигде не собраны в один
+информации» (`bgd/free/B04_03/IssWWW.exe/Stg/dNN/<N>.htm`; каталог dNN у живого потока
+мигрирует по годам — 2017 — `d02`, 2018 — `d03`/`d01`, 2019 — `d04`, 2020 — `d05`,
+2021 — `d02`), которые нигде не собраны в один
 архив: живой буфер «плавающий» (Росстат может вычистить его в любой момент), а Wayback
 сохранил только часть выпусков. Ряд `rosstat_ipc_weeks_bulletins` собирался разовыми
 прогонами, артефакты которых остались в /tmp (`harvest.py`, `harvest_anchors.py`,
@@ -16,10 +18,10 @@
 
 Что делает (режим weeks, по умолчанию)
 --------------------------------------
-1. **CDX-энумерация** (источник `wayback`): для каждого семейства URL буфера запрашивает у
-   web.archive.org полный список снимков (с 2016 года — начала официальной недельной оценки;
-   дедуп по digest, только `statuscode:200`) и оставляет `.htm`-документы (вложенные ассеты
-   Word-экспорта `*.files/*` отбрасываются). CDX канонизирует регистр пути, поэтому вариантов
+1. **CDX-энумерация** (источник `wayback`): для каждого семейства URL (всё дерево `Stg/` обоих
+   хостов) запрашивает у web.archive.org полный список снимков (с 2016 года — начала официальной
+   недельной оценки; дедуп по digest, только `statuscode:200`) и оставляет `.htm`-документы
+   (вложенные ассеты Word-экспорта `*.files/*` отбрасываются). CDX канонизирует регистр пути, поэтому вариантов
    B04_03/b04_03/Isswww/Stg перечислять не нужно — одна запись на хост.
 2. **Классификация заголовков**: для несделанных снимков читаются первые 6 КБ документа
    (форма `id_` — сырые байты; если сырой плейбек Wayback ушёл в цикл редиректов — обычная
@@ -84,10 +86,13 @@ WAYBACK_DOC = "https://web.archive.org/web/{ts}id_/{url}"
 WAYBACK_REPLAY = "https://web.archive.org/web/{ts}/{url}"
 CDX_ENDPOINT = "http://web.archive.org/cdx/search/cdx"
 
-# Семейства URL буфера «Оперативной информации» (CDX канонизирует регистр пути и www-хост).
+# Семейства URL «Оперативной информации» (CDX канонизирует регистр пути и www-хост). Перечисляется
+# ВСЁ дерево Stg/, а не только d02: поток релизов мигрирует между каталогами по годам (2017 —
+# d02, 2018 — d03 и d01, 2019 — d04, 2020 — d05, 2021 — d02; проверено прогонами), и разведка
+# «только d02» находила недельные ИПЦ лишь тех лет, когда поток жил в d02.
 CDX_FAMILIES = [
-    "www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/",
-    "rosstat.gov.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/",
+    "www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/",
+    "rosstat.gov.ru/bgd/free/B04_03/IssWWW.exe/Stg/",
 ]
 CDX_FROM = "20160101"  # недельная оценка ИПЦ — с 01.01.2016 (приказ Росстата № 519 от 02.11.2015)
 
@@ -337,6 +342,23 @@ class Harvester:
         self.dry_run = args.dry_run
         self.sources = [s for s in args.sources.split(",") if s]
         self.go_sources = args.go_sources
+        # --dirs ограничивает семейства каталогами: параллельные прогоны по каталогам пишут каждый
+        # в свой state, а этот фильтр не даёт им классифицировать чужие пары.
+        dirs = [d.strip() for d in getattr(args, "dirs", "").split(",") if d.strip()]
+        if dirs:
+            families = []
+            for host in ("www.gks.ru", "rosstat.gov.ru"):
+                for d in dirs:
+                    families.append("%s/bgd/free/B04_03/IssWWW.exe/Stg/%s/" % (host, d))
+            self.families = families
+        else:
+            self.families = CDX_FAMILIES
+        self.no_fetch = getattr(args, "no_fetch", False)
+        self.fetch_only = getattr(args, "fetch_only", False)
+        # Общий на процесс откат при сбоях связи: Wayback режет TLS-соединения пачками
+        # (SSL_ERROR_SYSCALL после 4–8 запросов подряд) — после такого сбоя все потоки
+        # выдерживают паузу, иначе повторы только продлевают блокировку.
+        self.cooldown_until = 0.0
         os.makedirs(self.state, exist_ok=True)
         os.makedirs(self.archive, exist_ok=True)
         self.registry_path = os.path.join(self.archive, "registry.jsonl")
@@ -363,8 +385,11 @@ class Harvester:
 
     def _curl_capture(self, cmd, n):
         """curl с ранним обрывом чтения: прочитав n байт, процесс снимается (сервер отдаёт
-        остальное впустую, но соединение рвётся сразу). -m 60 в cmd ограничивает зависание."""
+        остальное впустую, но соединение рвётся сразу). -m 60 в cmd ограничивает зависание.
+        Возвращает (тело, текст ошибки curl) — причина сбоя (SSL_connect, 429, reset) нужна
+        вызывающему для лога и паузы-отката."""
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        data, err = b"", b""
         try:
             data = p.stdout.read(n) if n else p.stdout.read()
         finally:
@@ -374,25 +399,36 @@ class Harvester:
             except subprocess.TimeoutExpired:
                 pass
             p.stdout.close()
+            try:
+                err = p.stderr.read(400)
+            except Exception:  # noqa: BLE001 — диагностика не должна ронять вызов
+                err = b""
             p.stderr.close()
-        return data or b""
+        return data or b"", err.decode(errors="ignore").strip()
 
     def read(self, url, n=None, insecure=False, f=True, retries=3, what=""):
         """Первые n байт (или весь ответ) через curl: IPv4, редиректы ≤6 (Wayback иногда уходит
         в цикл «found capture at …» — с ограничением он падает быстро), дедлайн 60 с. Пустой
-        результат — ошибка с паузами и повторами: Wayback отдаёт сбои волнами."""
+        результат — ошибка с паузами и повторами; сбой связи (SSL-обрыв, 429, reset) дополнительно
+        взводит общий откат процесса, чтобы волна блокировки успела пройти."""
         for attempt in range(1, retries + 1):
-            cmd = ["curl", "-4", "-s", "-L", "--max-redirs", "6", "-m", "60"]
+            wait = self.cooldown_until - time.time()
+            if wait > 0:
+                time.sleep(min(wait, 120))
+            cmd = ["curl", "-4", "-s", "-S", "-L", "--max-redirs", "6", "-m", "60"]
             if f:
                 cmd.append("-f")
             if insecure:
                 cmd.append("-k")
             cmd += ["-A", UA, url]
-            data = self._curl_capture(cmd, n)
+            data, err = self._curl_capture(cmd, n)
             if data:
                 return data
+            if any(marker in err for marker in ("SSL_connect", "SSL_ERROR_SYSCALL", "Connection reset",
+                                                "429", "timed out", "Timeout")):
+                self.cooldown_until = time.time() + 45
             if attempt == retries:
-                log("FAIL %s %s" % (what, url))
+                log("FAIL %s %s: %s" % (what, url, err[:160] or "пустой ответ"))
                 return None
             time.sleep(20 * attempt if n is not None else 30 * attempt)
         return None
@@ -482,7 +518,7 @@ class Harvester:
     def phase_cdx(self):
         """Список снимков буфера: CDX по семействам → snapshots.tsv (только .htm-документы)."""
         all_rows = {}
-        for family in CDX_FAMILIES:
+        for family in self.families:
             rows = self.cdx(family, prefix=True)
             if rows is None:
                 log("CDX семейства %s не получен — пропуск" % family)
@@ -699,14 +735,25 @@ class Harvester:
         заголовок проверяется повторно."""
         candidates_path = os.path.join(self.state, "candidates.tsv")
         findings_path = os.path.join(self.state, "findings.tsv")
+        # URL, уже лежащие в реестре: повторные проходы (после слияния состояний и добора err)
+        # не должны заново качать и перезаписывать уже заархивированные версии — неделя считается
+        # закрытой, а каждое скачивание стоит против волн-лимитов Wayback.
+        archived_urls = {r.get("url") for r in self.registry}
         added = 0
         with open(candidates_path, "a", encoding="utf-8") as cand, \
                 open(findings_path, "a", encoding="utf-8") as find:
             for week in holes:
                 rows = sorted(found[week], key=lambda r: (r["ts"] != "live", r["ts"]))
+                if any((r["url"] if r["ts"] == "live" else WAYBACK_DOC.format(ts=r["ts"], url=r["url"]))
+                       in archived_urls for r in rows):
+                    log("неделя %s уже в архиве (кандидат заархивирован)" % week)
+                    continue
                 for row in rows:
                     ts, url = row["ts"], row["url"]
                     doc_url = url if ts == "live" else WAYBACK_DOC.format(ts=ts, url=url)
+                    if doc_url in archived_urls:
+                        log("неделя %s уже в архиве: %s" % (week, doc_url))
+                        break
                     body = self.read(doc_url, insecure=(ts == "live"), retries=4, what="doc")
                     if body is None:
                         continue
@@ -717,6 +764,7 @@ class Harvester:
                     if entry is None:
                         log("неделя %s уже в архиве: %s" % (week, doc_url))
                         break
+                    archived_urls.add(doc_url)
                     cand.write("%s\t%s\n" % (week, doc_url))
                     cand.flush()
                     find.write("%s\t%s\t%s\t%d\t%s\n" % (week, doc_url, entry["sha256"],
@@ -743,12 +791,19 @@ class Harvester:
         known, known_urls = known_weeks_from_go(self.go_sources)
         log("канонический список источников: %d недель, %d URL" % (len(known), len(known_urls)))
         self.load_titles()
-        snapshots = self.phase_cdx()
-        self.phase_titles([(ts, url, digest) for ts, url, digest in snapshots])
-        if "live" in self.sources:
-            self.phase_live()
+        if not self.fetch_only:
+            snapshots = self.phase_cdx()
+            self.phase_titles([(ts, url, digest) for ts, url, digest in snapshots])
+            if "live" in self.sources:
+                self.phase_live()
         holes, found = self.phase_gaps(known)
-        self.phase_fetch(holes, found)
+        if self.no_fetch:
+            # Параллельные прогоны по каталогам классифицируют каждый в своём state и не трогают
+            # архив: загрузка недель — один последовательный прогон по слитому состоянию (записи
+            # реестра — read-modify-write всего файла, конкурентные писатели потеряли бы строки).
+            log("no-fetch: загрузка пропущена; дыры (%d): %s" % (len(holes), ", ".join(holes)))
+        else:
+            self.phase_fetch(holes, found)
         objects = sum(len(files) for _, _, files in os.walk(os.path.join(self.archive, SOURCE)))
         log("итог: строк реестра %d, объектов в архиве %d" % (len(self.registry), objects))
 
@@ -829,6 +884,12 @@ def main():
                     help="канонический список недель импортёра (Go)")
     ap.add_argument("--threads", type=int, default=2)
     ap.add_argument("--pace", type=float, default=0.45, help="пауза потока после запроса, с")
+    ap.add_argument("--dirs", default="", help="ограничить семейства каталогами Stg/dNN через запятую "
+                                               "(параллельные прогоны по каталогам; пусто — всё дерево)")
+    ap.add_argument("--no-fetch", action="store_true",
+                    help="только классификация и отчёт о дырах, без загрузки документов в архив")
+    ap.add_argument("--fetch-only", action="store_true",
+                    help="только выгрузка найденных дыр из готового состояния (без CDX и классификации)")
     ap.add_argument("--dry-run", action="store_true", help="только поиск, без загрузки документов")
     args = ap.parse_args()
 
