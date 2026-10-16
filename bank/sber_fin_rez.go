@@ -394,12 +394,15 @@ type SberFinRezStat struct {
 
 // sberFinRezImporter — импортёр sber_finansovie_rezultaty для шаблона и реестра: таблица, DDL в
 // %s-форме, статичный DataUrl, разбор книги (ImportFunc) и объявление точки контроля публикации
-// (sberRpbuCountPoints). Регистрацию держит реестр пакета (bank/importers.go) — единственная точка
-// append в chimport.Stats.
+// (sberRpbuCountPoints). Производные — общий каталог рядов пакета и его витрины (afterBankMacro):
+// каждый прогон публикует каталог целиком, поэтому ряды Сбера по РСБУ описаны у агента и когда
+// остальные импортёры расписания в этом прогоне не работали. Регистрацию держит реестр пакета
+// (bank/importers.go) — единственная точка append в chimport.Stats.
 var sberFinRezImporter = &SberFinRezStat{ClickHouseImport: util.ClickHouseImport{
 	TableName:              sberRpbuDataUrlTable,
 	CreateTable:            []string{sberRpbuDataUrlDdl},
 	DataUrl:                sberRpbuXlsDataUrl,
 	ImportFunc:             sberFinImportFunc,
 	PublicationCountPoints: sberRpbuCountPoints,
+	AfterImport:            afterBankMacro(bankSeriesMeta),
 }}

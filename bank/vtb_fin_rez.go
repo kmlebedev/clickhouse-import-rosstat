@@ -541,9 +541,9 @@ func vtbIfrsXlsLinks(page []byte) ([]vtbLink, error) {
 }
 
 // VtbIfrs — импортёр rus_vtb_group_ifrs (МСФО группы ВТБ): встроенный util.ClickHouseImport
-// ведёт таблицу, DDL, точку контроля публикации и производные (каталог и витрину —
-// AfterImport появится в задаче 9), а Import переопределён: у импортёра не один артефакт, а
-// набор отчётных файлов по одному на дату отчётности (спека §3.3, отступление О3). Решение «что
+// ведёт таблицу, DDL, точку контроля публикации и производные (каталог и витрины — AfterImport,
+// afterBankMacro), а Import переопределён: у импортёра не один артефакт, а набор отчётных файлов
+// по одному на дату отчётности (спека §3.3, отступление О3). Решение «что
 // уже импортировано» принимает гейт пофайловых версий, а не префлайт шаблона: отпечаток одного
 // файла не отвечает на вопрос о наборе, а число точек всей таблицы не сойдётся ни с одним файлом
 // — префлайт пере-импортировал бы весь набор на каждом прогоне. Name() не переопределён: имя
@@ -650,11 +650,14 @@ func vtbIfrsImportFunc(xlsx *excelize.File, batch driver.Batch) error {
 // vtbImporter — импортёр rus_vtb_group_ifrs для шаблона и реестра: таблица, DDL в %s-форме,
 // разбор книги (ImportFunc) и объявление точки контроля публикации (vtbCountPoints). Оно
 // включает винтажный архив и строки source_publications — их пишет шаблон в цикле Import,
-// пофайлово. AfterImport пуст до задачи 9 (каталог и витрина) — Import терпит nil. Регистрацию
+// пофайлово. AfterImport — общий каталог рядов пакета и витрины (afterBankMacro): собственный
+// Import() зовёт тот же хелпер после цикла файлов, поэтому каталог и витрины публикуются и на
+// пустой дельте, когда гейт пропустил все файлы и шаблонный путь не выполнялся. Регистрацию
 // держит реестр пакета (bank/importers.go) — единственная точка append в chimport.Stats.
 var vtbImporter = &VtbIfrs{ClickHouseImport: util.ClickHouseImport{
 	TableName:              vtbIfrsTable,
 	CreateTable:            []string{vtbIfrsTableDdl},
 	ImportFunc:             vtbIfrsImportFunc,
 	PublicationCountPoints: vtbCountPoints,
+	AfterImport:            afterBankMacro(bankSeriesMeta),
 }}

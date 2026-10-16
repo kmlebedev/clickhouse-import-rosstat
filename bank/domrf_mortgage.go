@@ -361,11 +361,12 @@ func domrfImportFunc(xlsx *excelize.File, batch driver.Batch) error {
 // (domrfCountPoints) стоит в литерале, а не в Import(), — его читает тест реестра у
 // зарегистрированного импортёра, а префлайт шаблона включается самим полем. DataUrl в литерале
 // нет: он вычисляется в Import() и живёт в локальной копии, поэтому Publication().Url пуст (см.
-// util.PublicationDecl). Регистрацию держит реестр пакета (bank/importers.go) — единственная точка
-// append в chimport.Stats.
+// util.PublicationDecl). AfterImport — общий каталог рядов пакета и витрины (afterBankMacro).
+// Регистрацию держит реестр пакета (bank/importers.go) — единственная точка append в chimport.Stats.
 var domrfImporter = &DomrfMortgageStat{ClickHouseImport: util.ClickHouseImport{
 	TableName:              domrfMortgageTable,
 	CreateTable:            []string{domrfMortgageDdl},
 	ImportFunc:             domrfImportFunc,
 	PublicationCountPoints: domrfCountPoints,
+	AfterImport:            afterBankMacro(bankSeriesMeta),
 }}
