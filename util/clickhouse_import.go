@@ -87,6 +87,18 @@ func (s *ClickHouseImport) Name() string {
 	return s.TableName
 }
 
+// abortBatch закрывает неотправленный батч на пути ошибки: соединение с открытым батчем
+// возвращается в пул драйвера только через Send или Abort, поэтому серия ошибок разбора
+// исчерпала бы пул и подвесила прогон в acquire() — найдено живым прогоном
+// rosstat_ipc_weeks_bulletins (Wayback отдавал 429, каждый сбой оставлял батч открытым).
+// Ошибка Abort не проглатывается молча (`_ =` запрещён стилем пакета): она логируется warn,
+// но возвращаемой ошибкой вызывающего остаётся первопричина.
+func abortBatch(batch driver.Batch, what string) {
+	if aerr := batch.Abort(); aerr != nil {
+		log.Warnf("%s: не удалось закрыть батч после ошибки: %v", what, aerr)
+	}
+}
+
 // importXlsBody разбирает книгу из памяти и отправляет её батчем: PrepareBatch → ImportFunc →
 // Send. Байты вместо URL — ради архива версий: тот же срез уходит и в разбор, и в архив, а
 // повторный GET по DataUrl удвоил бы трафик и время прогона (GetFileBytes). Внутренняя рука
@@ -102,10 +114,12 @@ func (s *ClickHouseImport) importXlsBody(ctx context.Context, body []byte, conn 
 		return count, err
 	}
 	if err = s.ImportFunc(xlsx, batch); err != nil {
+		abortBatch(batch, s.TableName)
 		return count, err
 	}
 	count = int64(batch.Rows())
 	if err = batch.Send(); err != nil {
+		abortBatch(batch, s.TableName)
 		return count, err
 	}
 	return count, nil
@@ -120,10 +134,12 @@ func (s *ClickHouseImport) importBody(ctx context.Context, body []byte, conn dri
 		return count, err
 	}
 	if err = s.BodyFunc(body, batch); err != nil {
+		abortBatch(batch, s.TableName)
 		return count, err
 	}
 	count = int64(batch.Rows())
 	if err = batch.Send(); err != nil {
+		abortBatch(batch, s.TableName)
 		return count, err
 	}
 	return count, nil

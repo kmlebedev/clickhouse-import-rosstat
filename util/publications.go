@@ -126,9 +126,14 @@ func SavePublication(ctx context.Context, conn driver.Conn, p Publication) error
 		return err
 	}
 	if err = batch.Append(p.Source, p.Name, p.Fingerprint, p.FirstSeen, p.Points, p.Url); err != nil {
+		abortBatch(batch, PublicationsTable)
 		return err
 	}
-	return batch.Send()
+	if err = batch.Send(); err != nil {
+		abortBatch(batch, PublicationsTable)
+		return err
+	}
+	return nil
 }
 
 // CountPoints выполняет countPoints-запрос импортёра и возвращает число точек его ряда. Один и
