@@ -1,10 +1,10 @@
 name: Dashboards
 
-# Оба дашборда контура («Золотая теза» и публикации ключевой ставки) живут как код: grafana/ (Go +
-# Foundation SDK) генерирует dashboard/<uid>.json, артефакты коммитятся. CI проверяет три вещи: модуль
-# собирается и тесты зелёные, артефакты совпадают со свежей сборкой, и gcx пинаемой версии ставится и
-# линтит оба артефакта. Секретов и деплоя здесь нет: на стенд дашборды уезжают только вручную
-# (make grafana-deploy-test / grafana-deploy-staging).
+# Три дашборда контура («Золотая теза», публикации ключевой ставки, «Полюс (PLZL) — финансы и прогноз»)
+# живут как код: grafana/ (Go + Foundation SDK) генерирует dashboard/<uid>.json, артефакты коммитятся.
+# CI проверяет три вещи: модуль собирается и тесты зелёные, артефакты совпадают со свежей сборкой, и gcx
+# пинаемой версии ставится и линтит все три артефакта. Секретов и деплоя здесь нет: на стенд дашборды
+# уезжают только вручную (make grafana-deploy-test / grafana-deploy-staging).
 on:
   pull_request:
   push:
@@ -33,9 +33,9 @@ jobs:
         run: cd grafana && go vet ./... && go test ./...
       - name: build
         run: make grafana-build
-      # Артефакты обоих дашбордов коммитятся, поэтому «код и артефакт разъехались» — ошибка: тот же
+      # Артефакты всех дашбордов коммитятся, поэтому «код и артефакт разъехались» — ошибка: тот же
       # прогон заодно ловит недетерминированную генерацию. Сравнивается весь каталог dashboard/ (а не
-      # два файла поимённо): легаси-экспорты сборкой не трогаются, лишний diff по ним — тоже ошибка.
+      # три файла поимённо): легаси-экспорты сборкой не трогаются, лишний diff по ним — тоже ошибка.
       - name: artifact is in sync
         run: git diff --exit-code -- dashboard/
       - name: install gcx
@@ -50,11 +50,11 @@ jobs:
       # (server-side dry-run) и требует сервер, org-id и креды, которых в CI нет, — шаг падал бы всегда
       # («context references no stack with grafana config» без конфига). Офлайновая форма того же CLI —
       # Rego-линтер по файлам артефактов; `gcx dev lint run PATH...` принимает несколько путей (проверено
-      # локально на gcx 1.5.0: «2 files linted. No violations found.», exit 0), поэтому оба файла идут
+      # локально на gcx 1.5.0: «3 files linted. No violations found.», exit 0), поэтому все три файла идут
       # одним прогоном. Bug-правила включены, два idiomatic-предупреждения (editable-дашборд, отсутствие
       # описаний панелей) — осознанное состояние генератора, они дают exit 4 и уронили бы CI, поэтому
       # отключены по именам. Линтер не парсит структуру ресурса (сломанный файл он молча пропускает) —
-      # целостность обоих артефактов закрывает шаг artifact is in sync.
+      # целостность всех артефактов закрывает шаг artifact is in sync.
       # На инстансе с кредами та же проверка в серверной форме (на каждый файл):
       #   GRAFANA_SERVER=... GRAFANA_ORG_ID=... GRAFANA_TOKEN=... \
       #     gcx resources validate dashboards --path dashboard/<uid>.json
@@ -62,8 +62,8 @@ jobs:
         run: |
           gcx dev lint run \
             --disable uneditable-dashboard --disable panel-title-description \
-            dashboard/gold-thesis.json dashboard/key-rate-publications.json
-      # Один артефакт dashboards на оба файла: скачивают и смотрят их всё равно вместе, а «какой
+            dashboard/gold-thesis.json dashboard/key-rate-publications.json dashboard/finance-polyus.json
+      # Один артефакт dashboards на все файлы: скачивают и смотрят их всё равно вместе, а «какой
       # именно дашборд поехал» видно по имени файла внутри архива.
       - uses: actions/upload-artifact@v4
         with:
@@ -71,3 +71,4 @@ jobs:
           path: |
             dashboard/gold-thesis.json
             dashboard/key-rate-publications.json
+            dashboard/finance-polyus.json
