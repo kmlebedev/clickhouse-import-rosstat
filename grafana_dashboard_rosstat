@@ -754,6 +754,744 @@
             },
             "insertNulls": false,
             "lineInterpolation": "smooth",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "2024 ВВП индекс"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    10,
+                    10
+                  ],
+                  "fill": "dash"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byType",
+              "options": "number"
+            },
+            "properties": []
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "2023"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    10,
+                    10
+                  ],
+                  "fill": "dash"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 17
+      },
+      "id": 31,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "builderOptions": {
+            "aggregates": [],
+            "columns": [
+              {
+                "alias": "date",
+                "custom": false,
+                "name": "date",
+                "type": "Date"
+              },
+              {
+                "alias": "vvp",
+                "custom": false,
+                "name": "vvp",
+                "type": "Float32"
+              }
+            ],
+            "database": "default",
+            "filters": [
+              {
+                "condition": "AND",
+                "filterType": "custom",
+                "key": "name",
+                "label": "name",
+                "operator": "=",
+                "type": "LowCardinality(String)",
+                "value": "Индексы физического объема валового внутреннего продукта"
+              }
+            ],
+            "groupBy": [],
+            "limit": 1000,
+            "meta": {},
+            "mode": "list",
+            "orderBy": [],
+            "queryType": "table",
+            "table": "vvp_kvartal"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "bdx7lxrdelxq8b"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "hide": false,
+          "meta": {
+            "builderOptions": {
+              "aggregates": [],
+              "columns": [
+                {
+                  "alias": "date",
+                  "custom": false,
+                  "name": "date",
+                  "type": "Date"
+                },
+                {
+                  "alias": "vvp",
+                  "custom": false,
+                  "name": "vvp",
+                  "type": "Float32"
+                }
+              ],
+              "database": "default",
+              "filters": [
+                {
+                  "condition": "AND",
+                  "filterType": "custom",
+                  "key": "name",
+                  "label": "name",
+                  "operator": "=",
+                  "type": "LowCardinality(String)",
+                  "value": "Индексы физического объема валового внутреннего продукта"
+                }
+              ],
+              "groupBy": [],
+              "limit": 1000,
+              "meta": {},
+              "mode": "list",
+              "orderBy": [],
+              "queryType": "table",
+              "table": "vvp_kvartal"
+            }
+          },
+          "pluginVersion": "4.3.2",
+          "queryType": "table",
+          "rawSql": "SELECT date, \n(vvp/(lagInFrame(vvp, 4, vvp) OVER (ORDER BY date ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING))-1)*100 as \"ВВП индекс\" \nFROM \"default\".\"vvp_kvartal\" \nWHERE ( name = '9 Валовой внутрений продукт' ) AND (date_add(month,12,date) >= $__fromTime)\nORDER by date ASC\nLIMIT 10000",
+          "refId": "2025"
+        },
+        {
+          "builderOptions": {
+            "aggregates": [],
+            "columns": [
+              {
+                "alias": "date",
+                "custom": false,
+                "name": "date",
+                "type": "Date"
+              },
+              {
+                "alias": "vvp",
+                "custom": false,
+                "name": "vvp",
+                "type": "Float32"
+              }
+            ],
+            "database": "default",
+            "filters": [
+              {
+                "condition": "AND",
+                "filterType": "custom",
+                "key": "name",
+                "label": "name",
+                "operator": "=",
+                "type": "LowCardinality(String)",
+                "value": "Индексы физического объема валового внутреннего продукта"
+              }
+            ],
+            "groupBy": [],
+            "limit": 1000,
+            "meta": {},
+            "mode": "list",
+            "orderBy": [],
+            "queryType": "table",
+            "table": "vvp_kvartal"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "bdx7lxrdelxq8b"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "hide": false,
+          "meta": {
+            "builderOptions": {
+              "aggregates": [],
+              "columns": [
+                {
+                  "alias": "date",
+                  "custom": false,
+                  "name": "date",
+                  "type": "Date"
+                },
+                {
+                  "alias": "vvp",
+                  "custom": false,
+                  "name": "vvp",
+                  "type": "Float32"
+                }
+              ],
+              "database": "default",
+              "filters": [
+                {
+                  "condition": "AND",
+                  "filterType": "custom",
+                  "key": "name",
+                  "label": "name",
+                  "operator": "=",
+                  "type": "LowCardinality(String)",
+                  "value": "Индексы физического объема валового внутреннего продукта"
+                }
+              ],
+              "groupBy": [],
+              "limit": 1000,
+              "meta": {},
+              "mode": "list",
+              "orderBy": [],
+              "queryType": "table",
+              "table": "vvp_kvartal"
+            }
+          },
+          "pluginVersion": "4.3.2",
+          "queryType": "table",
+          "rawSql": "SELECT date_add(YEAR, 1, date) as time, \n(vvp/(lagInFrame(vvp, 4, vvp) OVER (ORDER BY time ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING))-1)*100 as \"ВВП индекс\" \nFROM \"default\".\"vvp_kvartal\" \nWHERE ( name = '9 Валовой внутрений продукт' ) \nAND (date_add(YEAR,1,time) >= $__fromTime AND time <= $__toTime)\nORDER by date ASC\nLIMIT 1000\n",
+          "refId": "2024"
+        },
+        {
+          "builderOptions": {
+            "aggregates": [],
+            "columns": [
+              {
+                "alias": "date",
+                "custom": false,
+                "name": "date",
+                "type": "Date"
+              },
+              {
+                "alias": "vvp",
+                "custom": false,
+                "name": "vvp",
+                "type": "Float32"
+              }
+            ],
+            "database": "default",
+            "filters": [
+              {
+                "condition": "AND",
+                "filterType": "custom",
+                "key": "name",
+                "label": "name",
+                "operator": "=",
+                "type": "LowCardinality(String)",
+                "value": "Индексы физического объема валового внутреннего продукта"
+              }
+            ],
+            "groupBy": [],
+            "limit": 1000,
+            "meta": {},
+            "mode": "list",
+            "orderBy": [],
+            "queryType": "table",
+            "table": "vvp_kvartal"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "bdx7lxrdelxq8b"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "hide": false,
+          "meta": {
+            "builderOptions": {
+              "aggregates": [],
+              "columns": [
+                {
+                  "alias": "date",
+                  "custom": false,
+                  "name": "date",
+                  "type": "Date"
+                },
+                {
+                  "alias": "vvp",
+                  "custom": false,
+                  "name": "vvp",
+                  "type": "Float32"
+                }
+              ],
+              "database": "default",
+              "filters": [
+                {
+                  "condition": "AND",
+                  "filterType": "custom",
+                  "key": "name",
+                  "label": "name",
+                  "operator": "=",
+                  "type": "LowCardinality(String)",
+                  "value": "Индексы физического объема валового внутреннего продукта"
+                }
+              ],
+              "groupBy": [],
+              "limit": 1000,
+              "meta": {},
+              "mode": "list",
+              "orderBy": [],
+              "queryType": "table",
+              "table": "vvp_kvartal"
+            }
+          },
+          "pluginVersion": "4.3.2",
+          "queryType": "timeseries",
+          "rawSql": "SELECT date_add(YEAR, 2, date) as time, \n(vvp/(lagInFrame(vvp, 4, vvp) OVER (ORDER BY time ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING))-1)*100 as \"ВВП индекс\" \nFROM \"default\".\"vvp_kvartal\" \nWHERE ( name = '9 Валовой внутрений продукт' ) \nAND (date_add(YEAR,1,time) >= $__fromTime AND time <= $__toTime)\nORDER by date ASC\nLIMIT 1000\n",
+          "refId": "2023"
+        },
+        {
+          "builderOptions": {
+            "aggregates": [],
+            "columns": [
+              {
+                "alias": "date",
+                "custom": false,
+                "name": "date",
+                "type": "Date"
+              },
+              {
+                "alias": "vvp",
+                "custom": false,
+                "name": "vvp",
+                "type": "Float32"
+              }
+            ],
+            "database": "default",
+            "filters": [
+              {
+                "condition": "AND",
+                "filterType": "custom",
+                "key": "name",
+                "label": "name",
+                "operator": "=",
+                "type": "LowCardinality(String)",
+                "value": "Индексы физического объема валового внутреннего продукта"
+              }
+            ],
+            "groupBy": [],
+            "limit": 1000,
+            "meta": {},
+            "mode": "list",
+            "orderBy": [],
+            "queryType": "table",
+            "table": "vvp_kvartal"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "bdx7lxrdelxq8b"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "hide": true,
+          "meta": {
+            "builderOptions": {
+              "aggregates": [],
+              "columns": [
+                {
+                  "alias": "date",
+                  "custom": false,
+                  "name": "date",
+                  "type": "Date"
+                },
+                {
+                  "alias": "vvp",
+                  "custom": false,
+                  "name": "vvp",
+                  "type": "Float32"
+                }
+              ],
+              "database": "default",
+              "filters": [
+                {
+                  "condition": "AND",
+                  "filterType": "custom",
+                  "key": "name",
+                  "label": "name",
+                  "operator": "=",
+                  "type": "LowCardinality(String)",
+                  "value": "Индексы физического объема валового внутреннего продукта"
+                }
+              ],
+              "groupBy": [],
+              "limit": 1000,
+              "meta": {},
+              "mode": "list",
+              "orderBy": [],
+              "queryType": "table",
+              "table": "vvp_kvartal"
+            }
+          },
+          "pluginVersion": "4.3.2",
+          "queryType": "timeseries",
+          "rawSql": "SELECT date, (vvp-100) as \"ВВП индекс\" \nFROM \"default\".\"vvp_kvartal\" \nWHERE ( name = '12 Индексы физического объема валового внутреннего продукта' ) AND (date >= $__fromTime AND date <= $__toTime)\nORDER by date ASC\nLIMIT 10000\n",
+          "refId": "B"
+        }
+      ],
+      "title": "ВВП индекс Индексы физического объема валового внутреннего продукта",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "grafana-clickhouse-datasource",
+        "uid": "bdx7lxrdelxq8b"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineStyle": {
+              "dash": [
+                10,
+                10
+              ],
+              "fill": "dash"
+            },
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "2017-2022"
+            },
+            "properties": []
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "годовой прирост"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "text",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "2025 годовой прирост"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineStyle"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "2024 годовой прирост"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "light-blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "2023 годовой прирост"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "light-orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 17
+      },
+      "id": 35,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "bdx7lxrdelxq8b"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "hide": false,
+          "meta": {
+            "builderOptions": {
+              "columns": [],
+              "database": "",
+              "limit": 1000,
+              "mode": "list",
+              "queryType": "table",
+              "table": ""
+            }
+          },
+          "pluginVersion": "4.3.2",
+          "queryType": "timeseries",
+          "rawSql": "SELECT $__timeInterval(date) as \"time\", \npow(value/(lagInFrame(value, 1, value) OVER (ORDER BY date ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)), 12)-1 AS \"годовой прирост\"\nFROM \"default\".\"cbr_credit_m2x\" \nWHERE name = 'Широкая денежная масса М2Х' and ( date_add(month,1,time) >= $__fromTime AND time <= $__toTime ) ORDER by time ASC",
+          "refId": "2025"
+        },
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "bdx7lxrdelxq8b"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "hide": false,
+          "meta": {
+            "builderOptions": {
+              "columns": [],
+              "database": "",
+              "limit": 1000,
+              "mode": "list",
+              "queryType": "table",
+              "table": ""
+            }
+          },
+          "pluginVersion": "4.3.2",
+          "queryType": "timeseries",
+          "rawSql": "SELECT $__timeInterval(date_add(YEAR, 1, date)) as \"time\", \npow(value/(lagInFrame(value, 1, value) OVER (ORDER BY date ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)), 12)-1 AS \"годовой прирост\"\nFROM \"default\".\"cbr_credit_m2x\" \nWHERE name = 'Широкая денежная масса М2Х' and ( date_add(month,1,time) >= $__fromTime AND time <= $__toTime ) ORDER by time ASC",
+          "refId": "2024"
+        },
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "bdx7lxrdelxq8b"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "hide": false,
+          "meta": {
+            "builderOptions": {
+              "columns": [],
+              "database": "",
+              "limit": 1000,
+              "mode": "list",
+              "queryType": "table",
+              "table": ""
+            }
+          },
+          "pluginVersion": "4.3.2",
+          "queryType": "timeseries",
+          "rawSql": "SELECT $__timeInterval(date_add(YEAR, 2, date)) as \"time\", \npow(value/(lagInFrame(value, 1, value) OVER (ORDER BY date ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)), 12)-1 AS \"годовой прирост\"\nFROM \"default\".\"cbr_credit_m2x\" \nWHERE name = 'Широкая денежная масса М2Х' and ( date_add(month,1,time) >= $__fromTime AND time <= $__toTime ) ORDER by time ASC",
+          "refId": "2023"
+        },
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "bdx7lxrdelxq8b"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "hide": false,
+          "meta": {
+            "builderOptions": {
+              "columns": [],
+              "database": "",
+              "limit": 1000,
+              "mode": "list",
+              "queryType": "table",
+              "table": ""
+            }
+          },
+          "pluginVersion": "4.3.2",
+          "queryType": "table",
+          "rawSql": "SELECT \n  makeDate(2025, toMonth(date), 1) as month,\n  quantileExact(grow) AS \"годовой прирост\"\nFROM (SELECT date, \n  pow(value/(lagInFrame(value, 1, value) OVER (ORDER BY date ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)), 12)-1 AS \"grow\"\n  FROM \"default\".\"cbr_credit_m2x\" \n  WHERE name = 'Широкая денежная масса М2Х' and toYear(date) BETWEEN 2017 AND 2021)\nGROUP BY month",
+          "refId": "2017-2021"
+        }
+      ],
+      "title": "Широкая денежная масса М2Х, месячные темпы прироста, % в годовом выражении",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "grafana-clickhouse-datasource",
+        "uid": "bdx7lxrdelxq8b"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
             "lineStyle": {
               "dash": [
                 10,
@@ -869,7 +1607,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 17
+        "y": 25
       },
       "id": 32,
       "options": {
@@ -977,10 +1715,526 @@
           "pluginVersion": "4.3.2",
           "queryType": "table",
           "rawSql": "SELECT \n  makeDate(2025, toMonth(date), 1) as month,\n  quantileExact(grow) AS \"годовой прирост\"\nFROM (SELECT date, \n  pow(value/(lagInFrame(value, 1, value) OVER (ORDER BY date ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)), 12)-1 AS \"grow\"\n  FROM \"default\".\"cbr_credit_m2x\" \n  WHERE name = 'Кредит экономике' and toYear(date) BETWEEN 2017 AND 2021)\nGROUP BY month",
-          "refId": "2017-2022"
+          "refId": "2017-2021"
         }
       ],
-      "title": "Кредит экономике, Месячные темпы прироста, % в годовом выражении",
+      "title": "Кредит экономике, месячные темпы прироста, % в годовом выражении",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "grafana-clickhouse-datasource",
+        "uid": "bdx7lxrdelxq8b"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineStyle": {
+              "dash": [
+                10,
+                10
+              ],
+              "fill": "dash"
+            },
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "2017-2022"
+            },
+            "properties": []
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "годовой прирост"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "text",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "2025 годовой прирост"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineStyle"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "2024 годовой прирост"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "light-blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "2023 годовой прирост"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "light-orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 25
+      },
+      "id": 34,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "bdx7lxrdelxq8b"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "hide": false,
+          "meta": {
+            "builderOptions": {
+              "columns": [],
+              "database": "",
+              "limit": 1000,
+              "mode": "list",
+              "queryType": "table",
+              "table": ""
+            }
+          },
+          "pluginVersion": "4.3.2",
+          "queryType": "timeseries",
+          "rawSql": "SELECT $__timeInterval(date) as \"time\", \nvalue/(lagInFrame(value, 12, value) OVER (ORDER BY date ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING))-1 AS \"годовой прирост\"\nFROM \"default\".\"cbr_credit_m2x\" \nWHERE name = 'Широкая денежная масса М2Х' and ( date_add(month,12,time) >= $__fromTime AND time <= $__toTime ) ORDER by time ASC",
+          "refId": "2025"
+        },
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "bdx7lxrdelxq8b"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "hide": false,
+          "meta": {
+            "builderOptions": {
+              "columns": [],
+              "database": "",
+              "limit": 1000,
+              "mode": "list",
+              "queryType": "table",
+              "table": ""
+            }
+          },
+          "pluginVersion": "4.3.2",
+          "queryType": "timeseries",
+          "rawSql": "SELECT $__timeInterval(date_add(YEAR, 1, date)) as \"time\", \nvalue/(lagInFrame(value, 12, value) OVER (ORDER BY date ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING))-1 AS \"годовой прирост\"\nFROM \"default\".\"cbr_credit_m2x\" \nWHERE name = 'Широкая денежная масса М2Х' and ( date_add(month,12,time) >= $__fromTime AND time <= $__toTime ) ORDER by time ASC",
+          "refId": "2024"
+        },
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "bdx7lxrdelxq8b"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "hide": false,
+          "meta": {
+            "builderOptions": {
+              "columns": [],
+              "database": "",
+              "limit": 1000,
+              "mode": "list",
+              "queryType": "table",
+              "table": ""
+            }
+          },
+          "pluginVersion": "4.3.2",
+          "queryType": "timeseries",
+          "rawSql": "SELECT $__timeInterval(date_add(YEAR, 2, date)) as \"time\", \nvalue/(lagInFrame(value, 12, value) OVER (ORDER BY date ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING))-1 AS \"годовой прирост\"\nFROM \"default\".\"cbr_credit_m2x\" \nWHERE name = 'Широкая денежная масса М2Х' and ( date_add(month,12,time) >= $__fromTime AND time <= $__toTime ) ORDER by time ASC",
+          "refId": "2023"
+        },
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "bdx7lxrdelxq8b"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "hide": false,
+          "meta": {
+            "builderOptions": {
+              "columns": [],
+              "database": "",
+              "limit": 1000,
+              "mode": "list",
+              "queryType": "table",
+              "table": ""
+            }
+          },
+          "pluginVersion": "4.3.2",
+          "queryType": "table",
+          "rawSql": "SELECT \n  makeDate(2025, toMonth(date), 1) as month,\n  quantileExact(grow) AS \"годовой прирост\"\nFROM (SELECT date, \n  value/(lagInFrame(value, 12, value) OVER (ORDER BY date ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING))-1 AS \"grow\"\n  FROM \"default\".\"cbr_credit_m2x\" \n  WHERE name = 'Широкая денежная масса М2Х' and toYear(date) BETWEEN 2017 AND 2021)\nGROUP BY month",
+          "refId": "2017-2021"
+        }
+      ],
+      "title": "Широкая денежная масса М2Х, годовые темпы прироста год к году",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "grafana-clickhouse-datasource",
+        "uid": "bdx7lxrdelxq8b"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineStyle": {
+              "dash": [
+                10,
+                10
+              ],
+              "fill": "dash"
+            },
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "2017-2022"
+            },
+            "properties": []
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "годовой прирост"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "text",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "2025 годовой прирост"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineStyle"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "2024 годовой прирост"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "light-blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "2023 годовой прирост"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "light-orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 33
+      },
+      "id": 33,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "bdx7lxrdelxq8b"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "hide": false,
+          "meta": {
+            "builderOptions": {
+              "columns": [],
+              "database": "",
+              "limit": 1000,
+              "mode": "list",
+              "queryType": "table",
+              "table": ""
+            }
+          },
+          "pluginVersion": "4.3.2",
+          "queryType": "timeseries",
+          "rawSql": "SELECT $__timeInterval(date) as \"time\", \nvalue/(lagInFrame(value, 12, value) OVER (ORDER BY date ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING))-1 AS \"годовой прирост\"\nFROM \"default\".\"cbr_credit_m2x\" \nWHERE name = 'Кредит экономике' and ( date_add(month,12,time) >= $__fromTime AND time <= $__toTime ) ORDER by time ASC",
+          "refId": "2025"
+        },
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "bdx7lxrdelxq8b"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "hide": false,
+          "meta": {
+            "builderOptions": {
+              "columns": [],
+              "database": "",
+              "limit": 1000,
+              "mode": "list",
+              "queryType": "table",
+              "table": ""
+            }
+          },
+          "pluginVersion": "4.3.2",
+          "queryType": "timeseries",
+          "rawSql": "SELECT $__timeInterval(date_add(YEAR, 1, date)) as \"time\", \nvalue/(lagInFrame(value, 12, value) OVER (ORDER BY date ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING))-1 AS \"годовой прирост\"\nFROM \"default\".\"cbr_credit_m2x\" \nWHERE name = 'Кредит экономике' and ( date_add(month,12,time) >= $__fromTime AND time <= $__toTime ) ORDER by time ASC",
+          "refId": "2024"
+        },
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "bdx7lxrdelxq8b"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "hide": false,
+          "meta": {
+            "builderOptions": {
+              "columns": [],
+              "database": "",
+              "limit": 1000,
+              "mode": "list",
+              "queryType": "table",
+              "table": ""
+            }
+          },
+          "pluginVersion": "4.3.2",
+          "queryType": "timeseries",
+          "rawSql": "SELECT $__timeInterval(date_add(YEAR, 2, date)) as \"time\", \nvalue/(lagInFrame(value, 12, value) OVER (ORDER BY date ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING))-1 AS \"годовой прирост\"\nFROM \"default\".\"cbr_credit_m2x\" \nWHERE name = 'Кредит экономике' and ( date_add(month,12,time) >= $__fromTime AND time <= $__toTime ) ORDER by time ASC",
+          "refId": "2023"
+        },
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "bdx7lxrdelxq8b"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "hide": false,
+          "meta": {
+            "builderOptions": {
+              "columns": [],
+              "database": "",
+              "limit": 1000,
+              "mode": "list",
+              "queryType": "table",
+              "table": ""
+            }
+          },
+          "pluginVersion": "4.3.2",
+          "queryType": "table",
+          "rawSql": "SELECT \n  makeDate(2025, toMonth(date), 1) as month,\n  quantileExact(grow) AS \"годовой прирост\"\nFROM (SELECT date, \n  value/(lagInFrame(value, 12, value) OVER (ORDER BY date ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING))-1 AS \"grow\"\n  FROM \"default\".\"cbr_credit_m2x\" \n  WHERE name = 'Кредит экономике' and toYear(date) BETWEEN 2017 AND 2021)\nGROUP BY month",
+          "refId": "2017-2021"
+        }
+      ],
+      "title": "Кредит экономике, годовые темпы прироста год к году",
       "type": "timeseries"
     },
     {
@@ -1024,10 +2278,9 @@
               "mode": "none"
             },
             "thresholdsStyle": {
-              "mode": "dashed"
+              "mode": "off"
             }
           },
-          "decimals": 1,
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
@@ -1038,27 +2291,33 @@
               },
               {
                 "color": "red",
-                "value": 0
+                "value": 80
               }
             ]
           },
-          "unit": "percentunit"
+          "unit": "percent"
         },
         "overrides": [
           {
+            "__systemRef": "hideSeriesFrom",
             "matcher": {
-              "id": "byName",
-              "options": "2024 ВВП индекс"
+              "id": "byNames",
+              "options": {
+                "mode": "exclude",
+                "names": [
+                  "Ставка от 181 дня до 1 года"
+                ],
+                "prefix": "All except:",
+                "readOnly": true
+              }
             },
             "properties": [
               {
-                "id": "custom.lineStyle",
+                "id": "custom.hideFrom",
                 "value": {
-                  "dash": [
-                    10,
-                    10
-                  ],
-                  "fill": "dash"
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": true
                 }
               }
             ]
@@ -1069,16 +2328,18 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 17
+        "y": 33
       },
-      "id": 31,
+      "id": 40,
       "options": {
         "legend": {
           "calcs": [
+            "min",
+            "max",
             "mean",
             "last"
           ],
-          "displayMode": "list",
+          "displayMode": "table",
           "placement": "bottom",
           "showLegend": true
         },
@@ -1093,16 +2354,21 @@
             "aggregates": [],
             "columns": [
               {
-                "alias": "date",
+                "alias": "name",
                 "custom": false,
-                "name": "date",
-                "type": "Date"
+                "name": "name",
+                "type": "LowCardinality(String)"
               },
               {
-                "alias": "vvp",
+                "alias": "rate",
                 "custom": false,
-                "name": "vvp",
+                "name": "rate",
                 "type": "Float32"
+              },
+              {
+                "hint": "time",
+                "name": "date",
+                "type": "Date"
               }
             ],
             "database": "default",
@@ -1110,43 +2376,53 @@
               {
                 "condition": "AND",
                 "filterType": "custom",
-                "key": "name",
-                "label": "name",
-                "operator": "=",
-                "type": "LowCardinality(String)",
-                "value": "Индексы физического объема валового внутреннего продукта"
+                "hint": "time",
+                "key": "",
+                "operator": "WITH IN DASHBOARD TIME RANGE",
+                "type": "datetime"
               }
             ],
             "groupBy": [],
             "limit": 1000,
             "meta": {},
-            "mode": "list",
-            "orderBy": [],
-            "queryType": "table",
-            "table": "vvp_kvartal"
+            "mode": "aggregate",
+            "orderBy": [
+              {
+                "default": true,
+                "dir": "ASC",
+                "hint": "time",
+                "name": ""
+              }
+            ],
+            "queryType": "timeseries",
+            "table": "cbr_bank_int_rate"
           },
           "datasource": {
             "type": "grafana-clickhouse-datasource",
             "uid": "bdx7lxrdelxq8b"
           },
           "editorType": "sql",
-          "format": 1,
-          "hide": false,
+          "format": 0,
           "meta": {
             "builderOptions": {
               "aggregates": [],
               "columns": [
                 {
-                  "alias": "date",
+                  "alias": "name",
                   "custom": false,
-                  "name": "date",
-                  "type": "Date"
+                  "name": "name",
+                  "type": "LowCardinality(String)"
                 },
                 {
-                  "alias": "vvp",
+                  "alias": "rate",
                   "custom": false,
-                  "name": "vvp",
+                  "name": "rate",
                   "type": "Float32"
+                },
+                {
+                  "hint": "time",
+                  "name": "date",
+                  "type": "Date"
                 }
               ],
               "database": "default",
@@ -1154,203 +2430,35 @@
                 {
                   "condition": "AND",
                   "filterType": "custom",
-                  "key": "name",
-                  "label": "name",
-                  "operator": "=",
-                  "type": "LowCardinality(String)",
-                  "value": "Индексы физического объема валового внутреннего продукта"
+                  "hint": "time",
+                  "key": "",
+                  "operator": "WITH IN DASHBOARD TIME RANGE",
+                  "type": "datetime"
                 }
               ],
               "groupBy": [],
               "limit": 1000,
               "meta": {},
-              "mode": "list",
-              "orderBy": [],
-              "queryType": "table",
-              "table": "vvp_kvartal"
+              "mode": "aggregate",
+              "orderBy": [
+                {
+                  "default": true,
+                  "dir": "ASC",
+                  "hint": "time",
+                  "name": ""
+                }
+              ],
+              "queryType": "timeseries",
+              "table": "cbr_bank_int_rate"
             }
           },
           "pluginVersion": "4.3.2",
-          "queryType": "table",
-          "rawSql": "SELECT date, pow(vvp/(lagInFrame(vvp, 1, vvp) OVER (ORDER BY date ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)), 4)-1 as \"ВВП индекс\" \nFROM \"default\".\"vvp_kvartal\" \nWHERE ( name = 'Индексы физического объема валового внутреннего продукта' ) AND (date >= $__fromTime AND date <= $__toTime)\nORDER by date ASC\nLIMIT 1000\n",
-          "refId": "2025"
-        },
-        {
-          "builderOptions": {
-            "aggregates": [],
-            "columns": [
-              {
-                "alias": "date",
-                "custom": false,
-                "name": "date",
-                "type": "Date"
-              },
-              {
-                "alias": "vvp",
-                "custom": false,
-                "name": "vvp",
-                "type": "Float32"
-              }
-            ],
-            "database": "default",
-            "filters": [
-              {
-                "condition": "AND",
-                "filterType": "custom",
-                "key": "name",
-                "label": "name",
-                "operator": "=",
-                "type": "LowCardinality(String)",
-                "value": "Индексы физического объема валового внутреннего продукта"
-              }
-            ],
-            "groupBy": [],
-            "limit": 1000,
-            "meta": {},
-            "mode": "list",
-            "orderBy": [],
-            "queryType": "table",
-            "table": "vvp_kvartal"
-          },
-          "datasource": {
-            "type": "grafana-clickhouse-datasource",
-            "uid": "bdx7lxrdelxq8b"
-          },
-          "editorType": "sql",
-          "format": 1,
-          "hide": false,
-          "meta": {
-            "builderOptions": {
-              "aggregates": [],
-              "columns": [
-                {
-                  "alias": "date",
-                  "custom": false,
-                  "name": "date",
-                  "type": "Date"
-                },
-                {
-                  "alias": "vvp",
-                  "custom": false,
-                  "name": "vvp",
-                  "type": "Float32"
-                }
-              ],
-              "database": "default",
-              "filters": [
-                {
-                  "condition": "AND",
-                  "filterType": "custom",
-                  "key": "name",
-                  "label": "name",
-                  "operator": "=",
-                  "type": "LowCardinality(String)",
-                  "value": "Индексы физического объема валового внутреннего продукта"
-                }
-              ],
-              "groupBy": [],
-              "limit": 1000,
-              "meta": {},
-              "mode": "list",
-              "orderBy": [],
-              "queryType": "table",
-              "table": "vvp_kvartal"
-            }
-          },
-          "pluginVersion": "4.3.2",
-          "queryType": "table",
-          "rawSql": "SELECT date_add(YEAR, 1, date), pow(vvp/(lagInFrame(vvp, 1, vvp) OVER (ORDER BY date ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)), 4)-1 as \"ВВП индекс\" \nFROM \"default\".\"vvp_kvartal\" \nWHERE ( name = 'Индексы физического объема валового внутреннего продукта' ) \nAND (date_add(month,1,date) >= date_sub(YEAR, 1, $__fromTime) AND date <= date_sub(YEAR, 1, $__toTime)) \nORDER by date ASC\nLIMIT 1000\n",
-          "refId": "2024"
-        },
-        {
-          "builderOptions": {
-            "aggregates": [],
-            "columns": [
-              {
-                "alias": "date",
-                "custom": false,
-                "name": "date",
-                "type": "Date"
-              },
-              {
-                "alias": "vvp",
-                "custom": false,
-                "name": "vvp",
-                "type": "Float32"
-              }
-            ],
-            "database": "default",
-            "filters": [
-              {
-                "condition": "AND",
-                "filterType": "custom",
-                "key": "name",
-                "label": "name",
-                "operator": "=",
-                "type": "LowCardinality(String)",
-                "value": "Индексы физического объема валового внутреннего продукта"
-              }
-            ],
-            "groupBy": [],
-            "limit": 1000,
-            "meta": {},
-            "mode": "list",
-            "orderBy": [],
-            "queryType": "table",
-            "table": "vvp_kvartal"
-          },
-          "datasource": {
-            "type": "grafana-clickhouse-datasource",
-            "uid": "bdx7lxrdelxq8b"
-          },
-          "editorType": "sql",
-          "format": 1,
-          "hide": true,
-          "meta": {
-            "builderOptions": {
-              "aggregates": [],
-              "columns": [
-                {
-                  "alias": "date",
-                  "custom": false,
-                  "name": "date",
-                  "type": "Date"
-                },
-                {
-                  "alias": "vvp",
-                  "custom": false,
-                  "name": "vvp",
-                  "type": "Float32"
-                }
-              ],
-              "database": "default",
-              "filters": [
-                {
-                  "condition": "AND",
-                  "filterType": "custom",
-                  "key": "name",
-                  "label": "name",
-                  "operator": "=",
-                  "type": "LowCardinality(String)",
-                  "value": "Индексы физического объема валового внутреннего продукта"
-                }
-              ],
-              "groupBy": [],
-              "limit": 1000,
-              "meta": {},
-              "mode": "list",
-              "orderBy": [],
-              "queryType": "table",
-              "table": "vvp_kvartal"
-            }
-          },
-          "pluginVersion": "4.3.2",
-          "queryType": "table",
-          "rawSql": "SELECT date, vvp/(lagInFrame(vvp, 1, vvp) OVER (ORDER BY date ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING))-1 as \"ВВП индекс\" \nFROM \"default\".\"vvp_kvartal\" \nWHERE ( name = 'Индексы физического объема валового внутреннего продукта' )\nORDER by date ASC\nLIMIT 10000\n",
+          "queryType": "timeseries",
+          "rawSql": "SELECT date as \"time\", name, rate as \"Ставка\" FROM \"default\".\"cbr_bank_int_rate\" WHERE ( time >= $__fromTime AND time <= $__toTime ) ORDER BY time ASC LIMIT 1000",
           "refId": "A"
         }
       ],
-      "title": "ВВП индекс Индексы физического объема валового внутреннего продукта",
+      "title": "Сведения о средних арифметических процентных ставках по вкладам физических лиц в рублях",
       "type": "timeseries"
     },
     {
@@ -1359,7 +2467,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 25
+        "y": 41
       },
       "id": 15,
       "panels": [],
@@ -1499,7 +2607,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 26
+        "y": 42
       },
       "id": 14,
       "options": {
@@ -1843,7 +2951,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 34
+        "y": 50
       },
       "id": 17,
       "options": {
@@ -2172,7 +3280,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 42
+        "y": 58
       },
       "id": 13,
       "options": {
@@ -2418,7 +3526,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "green",
+                "value": null
               },
               {
                 "color": "red",
@@ -2530,7 +3639,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 50
+        "y": 66
       },
       "id": 16,
       "options": {
@@ -2732,7 +3841,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 58
+        "y": 74
       },
       "id": 9,
       "panels": [],
@@ -2791,7 +3900,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "green",
+                "value": null
               },
               {
                 "color": "red",
@@ -2844,7 +3954,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 59
+        "y": 75
       },
       "id": 29,
       "options": {
@@ -2947,7 +4057,7 @@
           },
           "pluginVersion": "4.3.2",
           "queryType": "table",
-          "rawSql": "SELECT value as \"Расходы, всего\", date FROM \"default\".\"fed_bud_mes\" WHERE ( name = 'Расходы, всего' ) LIMIT 10000",
+          "rawSql": "SELECT value as \"Расходы, всего\", date FROM \"default\".\"minfin_fed_bud_mes\" WHERE ( name = 'Расходы, всего' ) LIMIT 10000",
           "refId": "2025"
         },
         {
@@ -3267,7 +4377,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "green",
+                "value": null
               },
               {
                 "color": "red",
@@ -3320,7 +4431,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 59
+        "y": 75
       },
       "id": 30,
       "options": {
@@ -3741,7 +4852,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "green",
+                "value": null
               },
               {
                 "color": "red",
@@ -3757,7 +4869,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 67
+        "y": 83
       },
       "id": 4,
       "options": {
@@ -3823,7 +4935,7 @@
               }
             ],
             "queryType": "timeseries",
-            "table": "cbr_households_b_mes"
+            "table": "households_b_mes"
           },
           "datasource": {
             "type": "grafana-clickhouse-datasource",
@@ -3877,7 +4989,7 @@
           },
           "pluginVersion": "4.3.2",
           "queryType": "timeseries",
-          "rawSql": "SELECT date as \"time\", balance FROM \"default\".\"cbr_households_b_mes\" WHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( name = 'Котируемые акции резидентов - всего' ) ORDER BY time ASC LIMIT 1000",
+          "rawSql": "SELECT date as \"time\", balance FROM \"default\".\"households_b_mes\" WHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( name = 'Котируемые акции резидентов - всего' ) ORDER BY time ASC LIMIT 1000",
           "refId": "Акции"
         },
         {
@@ -3929,7 +5041,7 @@
               }
             ],
             "queryType": "timeseries",
-            "table": "cbr_households_b_mes"
+            "table": "households_b_mes"
           },
           "datasource": {
             "type": "grafana-clickhouse-datasource",
@@ -3983,7 +5095,7 @@
           },
           "pluginVersion": "4.3.2",
           "queryType": "timeseries",
-          "rawSql": "SELECT date as \"time\", balance FROM \"default\".\"cbr_households_b_mes\" WHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( name = 'Паи и акции инвестиционных фондов - резидентов - всего' ) ORDER BY time ASC LIMIT 1000",
+          "rawSql": "SELECT date as \"time\", balance FROM \"default\".\"households_b_mes\" WHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( name = 'Паи и акции инвестиционных фондов - резидентов - всего' ) ORDER BY time ASC LIMIT 1000",
           "refId": "Паи"
         },
         {
@@ -4035,7 +5147,7 @@
               }
             ],
             "queryType": "timeseries",
-            "table": "cbr_households_b_mes"
+            "table": "households_b_mes"
           },
           "datasource": {
             "type": "grafana-clickhouse-datasource",
@@ -4089,7 +5201,7 @@
           },
           "pluginVersion": "4.3.2",
           "queryType": "timeseries",
-          "rawSql": "SELECT date as \"time\", balance FROM \"default\".\"cbr_households_b_mes\" WHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( name = 'Долговые ценные бумаги' ) ORDER BY time ASC LIMIT 1000",
+          "rawSql": "SELECT date as \"time\", balance FROM \"default\".\"households_b_mes\" WHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( name = 'Долговые ценные бумаги' ) ORDER BY time ASC LIMIT 1000",
           "refId": "Бонды"
         },
         {
@@ -4141,7 +5253,7 @@
               }
             ],
             "queryType": "timeseries",
-            "table": "cbr_households_b_mes"
+            "table": "households_b_mes"
           },
           "datasource": {
             "type": "grafana-clickhouse-datasource",
@@ -4195,7 +5307,7 @@
           },
           "pluginVersion": "4.3.2",
           "queryType": "timeseries",
-          "rawSql": "SELECT date as \"time\", balance FROM \"default\".\"cbr_households_b_mes\" WHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( name LIKE '%ИЖК, выкупленные ипотечными агентами, с учетом погашения%%' ) ORDER BY time ASC LIMIT 1000",
+          "rawSql": "SELECT date as \"time\", balance FROM \"default\".\"households_b_mes\" WHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( name LIKE '%ИЖК, выкупленные ипотечными агентами, с учетом погашения%%' ) ORDER BY time ASC LIMIT 1000",
           "refId": "ИЖК"
         }
       ],
@@ -4252,7 +5364,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "green",
+                "value": null
               },
               {
                 "color": "red",
@@ -4268,7 +5381,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 75
+        "y": 91
       },
       "id": 11,
       "options": {
@@ -4551,7 +5664,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 83
+        "y": 99
       },
       "id": 8,
       "panels": [],
@@ -4607,7 +5720,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "green",
+                "value": null
               },
               {
                 "color": "red",
@@ -4623,7 +5737,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 84
+        "y": 100
       },
       "id": 10,
       "options": {
@@ -4756,7 +5870,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "super-light-green"
+                "color": "super-light-green",
+                "value": null
               },
               {
                 "color": "super-light-red",
@@ -4816,7 +5931,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 92
+        "y": 108
       },
       "id": 1,
       "options": {
@@ -5173,7 +6288,7 @@
               "viz": false
             },
             "insertNulls": false,
-            "lineInterpolation": "linear",
+            "lineInterpolation": "smooth",
             "lineWidth": 1,
             "pointSize": 5,
             "scaleDistribution": {
@@ -5195,7 +6310,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "super-light-green"
+                "color": "super-light-green",
+                "value": null
               },
               {
                 "color": "super-light-red",
@@ -5265,33 +6381,6 @@
                 }
               }
             ]
-          },
-          {
-            "__systemRef": "hideSeriesFrom",
-            "matcher": {
-              "id": "byNames",
-              "options": {
-                "mode": "exclude",
-                "names": [
-                  "Индекс Бензин автомобильный марки АИ-92, л",
-                  "Индекс Бензин автомобильный марки АИ-95, л",
-                  "Индекс Бензин автомобильный",
-                  "Индекс Бензин автомобильный марки АИ-98 и выше, л"
-                ],
-                "prefix": "All except:",
-                "readOnly": true
-              }
-            },
-            "properties": [
-              {
-                "id": "custom.hideFrom",
-                "value": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": true
-                }
-              }
-            ]
           }
         ]
       },
@@ -5299,7 +6388,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 100
+        "y": 116
       },
       "id": 6,
       "options": {
@@ -5311,9 +6400,7 @@
           ],
           "displayMode": "table",
           "placement": "bottom",
-          "showLegend": true,
-          "sortBy": "Name",
-          "sortDesc": false
+          "showLegend": true
         },
         "tooltip": {
           "mode": "single",
@@ -5429,8 +6516,119 @@
           },
           "pluginVersion": "4.3.2",
           "queryType": "timeseries",
-          "rawSql": "SELECT date as \"time\", name, percent/100 as \"Индекс\" FROM \"default\".\"ipc_weeks\" final WHERE ( time >= $__fromTime AND time <= $__toTime ) ORDER BY time ASC LIMIT 100000 ",
+          "rawSql": "SELECT date as \"time\", name, percent/100 as \"Индекс\" FROM \"default\".\"ipc_weeks\" final \nWHERE (name like 'Бензин%' or name like 'Дизель%')\nand ( time >= $__fromTime AND time <= $__toTime ) ORDER BY time ASC LIMIT 100000 ",
           "refId": "A"
+        },
+        {
+          "builderOptions": {
+            "aggregates": [],
+            "columns": [
+              {
+                "alias": "name",
+                "custom": false,
+                "name": "name",
+                "type": "LowCardinality(String)"
+              },
+              {
+                "alias": "percent",
+                "custom": false,
+                "name": "percent",
+                "type": "Float32"
+              },
+              {
+                "alias": "date",
+                "hint": "time",
+                "name": "date",
+                "type": "Date"
+              }
+            ],
+            "database": "default",
+            "filters": [
+              {
+                "condition": "AND",
+                "filterType": "custom",
+                "hint": "time",
+                "key": "",
+                "operator": "WITH IN DASHBOARD TIME RANGE",
+                "type": "datetime"
+              }
+            ],
+            "groupBy": [],
+            "limit": 100000,
+            "meta": {},
+            "mode": "aggregate",
+            "orderBy": [
+              {
+                "default": true,
+                "dir": "ASC",
+                "hint": "time",
+                "name": ""
+              }
+            ],
+            "queryType": "timeseries",
+            "table": "ipc_weeks"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "bdx7lxrdelxq8b"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "hide": true,
+          "meta": {
+            "builderOptions": {
+              "aggregates": [],
+              "columns": [
+                {
+                  "alias": "name",
+                  "custom": false,
+                  "name": "name",
+                  "type": "LowCardinality(String)"
+                },
+                {
+                  "alias": "percent",
+                  "custom": false,
+                  "name": "percent",
+                  "type": "Float32"
+                },
+                {
+                  "alias": "date",
+                  "hint": "time",
+                  "name": "date",
+                  "type": "Date"
+                }
+              ],
+              "database": "default",
+              "filters": [
+                {
+                  "condition": "AND",
+                  "filterType": "custom",
+                  "hint": "time",
+                  "key": "",
+                  "operator": "WITH IN DASHBOARD TIME RANGE",
+                  "type": "datetime"
+                }
+              ],
+              "groupBy": [],
+              "limit": 100000,
+              "meta": {},
+              "mode": "aggregate",
+              "orderBy": [
+                {
+                  "default": true,
+                  "dir": "ASC",
+                  "hint": "time",
+                  "name": ""
+                }
+              ],
+              "queryType": "timeseries",
+              "table": "ipc_weeks"
+            }
+          },
+          "pluginVersion": "4.3.2",
+          "queryType": "timeseries",
+          "rawSql": "SELECT date as \"time\", name, percent/100 as \"Индекс\" \nFROM \"default\".\"ipc_weeks\" final \nWHERE ( time >= $__fromTime AND time <= $__toTime ) ORDER BY time ASC LIMIT 100000 ",
+          "refId": "B"
         }
       ],
       "title": "IPC week",
@@ -5486,7 +6684,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "transparent"
+                "color": "transparent",
+                "value": null
               }
             ]
           },
@@ -5542,7 +6741,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 108
+        "y": 124
       },
       "id": 5,
       "options": {
@@ -5950,7 +7149,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "green",
+                "value": null
               },
               {
                 "color": "red",
@@ -6017,7 +7217,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 116
+        "y": 132
       },
       "id": 2,
       "options": {
@@ -6244,29 +7444,6 @@
           "queryType": "timeseries",
           "rawSql": "SELECT date as \"time\", price as \"Курс долара\"  FROM \"default\".\"cbr_currency_usd\" WHERE ( time >= $__fromTime AND time <= $__toTime ) ORDER BY time ASC LIMIT 1000",
           "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "grafana-clickhouse-datasource",
-            "uid": "bdx7lxrdelxq8b"
-          },
-          "editorType": "sql",
-          "format": 1,
-          "hide": false,
-          "meta": {
-            "builderOptions": {
-              "columns": [],
-              "database": "",
-              "limit": 1000,
-              "mode": "list",
-              "queryType": "table",
-              "table": ""
-            }
-          },
-          "pluginVersion": "4.3.2",
-          "queryType": "table",
-          "rawSql": "SELECT date as \"time\", value/100 as \"Потребительские расходы по всем категориям г/г\"\nFROM \"default\".\"sber_izmenenie_trat\" final\nWHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( category = 'Все категории' ) ORDER BY time ASC\n",
-          "refId": "C"
         }
       ],
       "title": "ИПЦ недельный, ИПР год к году и ЦБ курс доллара",
@@ -6322,7 +7499,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "green",
+                "value": null
               },
               {
                 "color": "red",
@@ -6407,7 +7585,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 124
+        "y": 140
       },
       "id": 22,
       "options": {
@@ -7155,7 +8333,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "green",
+                "value": null
               },
               {
                 "color": "red",
@@ -7248,6 +8427,18 @@
                 "id": "unit"
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "USD цена"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyRUB"
+              }
+            ]
           }
         ]
       },
@@ -7255,7 +8446,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 132
+        "y": 148
       },
       "id": 7,
       "options": {
@@ -7724,6 +8915,29 @@
           "queryType": "table",
           "rawSql": "SELECT $__timeInterval(date) as \"time\", date, (round(pow(avg(percent)/100,52), 4)-1) as \"Индексы потребительских цен на товары и услуги\" FROM \"default\".\"ipc_weeks\" WHERE ( time >= $__fromTime AND time <= $__toTime ) GROUP BY date, time ORDER BY time ASC LIMIT 100000",
           "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "bdx7lxrdelxq8b"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "hide": false,
+          "meta": {
+            "builderOptions": {
+              "columns": [],
+              "database": "",
+              "limit": 1000,
+              "mode": "list",
+              "queryType": "table",
+              "table": ""
+            }
+          },
+          "pluginVersion": "4.3.2",
+          "queryType": "table",
+          "rawSql": "SELECT date as \"time\", price as \"цена\"  FROM \"default\".\"cbr_currency_usd\" WHERE ( time >= $__fromTime AND time <= $__toTime ) ORDER BY time ASC LIMIT 1000",
+          "refId": "USD"
         }
       ],
       "title": "ИПЦ на продовольственные товары в РФ и Food Price Index",
@@ -7778,7 +8992,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "red"
+                "color": "red",
+                "value": null
               },
               {
                 "color": "yellow",
@@ -7814,7 +9029,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 140
+        "y": 156
       },
       "id": 3,
       "options": {
@@ -7958,7 +9173,7 @@
           },
           "pluginVersion": "4.3.2",
           "queryType": "timeseries",
-          "rawSql": "SELECT date as \"time\", round(pow(percent/100,12), 4)-1 as \"процент в годовых\" FROM \"default\".\"ipc_mes\" WHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( name LIKE '%Индексы потребительских цен на товары и услуги1) по Российской Федерации в 1991-2024*)гг.%' ) ORDER BY time ASC LIMIT 1000",
+          "rawSql": "SELECT date as \"time\", round(pow(percent/100,12), 4)-1 as \"процент в годовых\" \nFROM \"default\".\"ipc_mes\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( name LIKE '%Индексы потребительских цен на товары и услуги1) по Российской Федерации в 1991-2024*)гг.%' ) ORDER BY time ASC LIMIT 1000",
           "refId": "A"
         },
         {
@@ -8098,7 +9313,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 148
+        "y": 164
       },
       "id": 26,
       "panels": [],
@@ -8154,11 +9369,12 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "super-light-green"
+                "color": "super-light-green",
+                "value": null
               }
             ]
           },
-          "unit": "percent"
+          "unit": "percentunit"
         },
         "overrides": [
           {
@@ -8197,7 +9413,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 149
+        "y": 165
       },
       "id": 27,
       "options": {
@@ -8269,7 +9485,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "hide": false,
+          "hide": true,
           "meta": {
             "builderOptions": {
               "aggregates": [
@@ -8340,7 +9556,7 @@
           },
           "pluginVersion": "4.3.2",
           "queryType": "table",
-          "rawSql": "SELECT $__timeInterval(date) as \"time\", date, value as \"Базовый ИПЦ\"\nFROM \"default\".\"cbr_indicators_cpd\" final\nWHERE name = 'Базовый ИПЦ' and ( time >= $__fromTime AND time <= $__toTime ) \nORDER BY time ASC",
+          "rawSql": "SELECT $__timeInterval(date) as \"time\", date, (round(pow(1+value/100,12), 4)-1) as \"Базовый ИПЦ\"\nFROM \"default\".\"cbr_indicators_cpd\" final\nWHERE name = 'Базовый ИПЦ' and ( time >= $__fromTime AND time <= $__toTime ) \nORDER BY time ASC",
           "refId": "A"
         },
         {
@@ -8363,11 +9579,34 @@
           },
           "pluginVersion": "4.3.2",
           "queryType": "table",
-          "rawSql": "SELECT date_add(YEAR, 1, $__timeInterval(date)) as \"time\", date, value as \"Базовый ИПЦ\"\nFROM \"default\".\"cbr_indicators_cpd\" final\nWHERE name = 'Базовый ИПЦ' and ( date >= date_sub(YEAR, 1, $__fromTime) AND date <= date_sub(YEAR, 1, $__toTime) )  \nORDER BY time ASC",
+          "rawSql": "SELECT date_add(YEAR, 1, $__timeInterval(date)) as \"time\", date, (round(pow(value/100+1,12), 4)-1) as \"Базовый ИПЦ\"\nFROM \"default\".\"cbr_indicators_cpd\" final\nWHERE name = 'Базовый ИПЦ' and ( date >= date_sub(YEAR, 1, $__fromTime) AND date <= date_sub(YEAR, 1, $__toTime) )  \nORDER BY time ASC",
           "refId": "2024"
+        },
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "bdx7lxrdelxq8b"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "hide": false,
+          "meta": {
+            "builderOptions": {
+              "columns": [],
+              "database": "",
+              "limit": 1000,
+              "mode": "list",
+              "queryType": "table",
+              "table": ""
+            }
+          },
+          "pluginVersion": "4.3.2",
+          "queryType": "table",
+          "rawSql": "SELECT date as \"time\", round(pow(percent/100,12), 4)-1 as \"ИПЦ\" \nFROM \"default\".\"ipc_mes\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( name LIKE 'Индексы потребительских цен на товары и услуги%' ) ORDER BY time ASC LIMIT 1000",
+          "refId": "B"
         }
       ],
-      "title": "Наблюдаемая и Базовая инфляция",
+      "title": "Базовая инфляция",
       "type": "timeseries"
     },
     {
@@ -8419,7 +9658,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "super-light-green"
+                "color": "super-light-green",
+                "value": null
               }
             ]
           },
@@ -8462,7 +9702,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 157
+        "y": 173
       },
       "id": 28,
       "options": {
@@ -8820,7 +10060,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 165
+        "y": 181
       },
       "id": 23,
       "panels": [],
@@ -8876,7 +10116,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "green",
+                "value": null
               },
               {
                 "color": "#EAB839",
@@ -8904,7 +10145,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 166
+        "y": 182
       },
       "id": 24,
       "options": {
@@ -9098,7 +10339,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "green",
+                "value": null
               }
             ]
           },
@@ -9152,6 +10394,25 @@
                 "value": "percentunit"
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Депозит Cтавка до 1 года"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "purple",
+                  "mode": "fixed"
+                }
+              }
+            ]
           }
         ]
       },
@@ -9159,7 +10420,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 166
+        "y": 182
       },
       "id": 25,
       "options": {
@@ -9201,7 +10462,7 @@
           },
           "pluginVersion": "4.3.2",
           "queryType": "table",
-          "rawSql": "SELECT date as \"time\", rate FROM \"default\".\"cbr_key_rate\" WHERE ( time >= $__fromTime AND time <= $__toTime ) ORDER BY time ASC LIMIT 1000",
+          "rawSql": "SELECT date as \"time\", rate FROM \"default\".\"cbr_key_rate\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) ORDER BY time ASC LIMIT 1000",
           "refId": "Ключь"
         },
         {
@@ -9298,7 +10559,7 @@
           },
           "pluginVersion": "4.3.2",
           "queryType": "timeseries",
-          "rawSql": "SELECT date as \"time\", price FROM \"default\".\"cbr_currency_usd\" WHERE ( time >= $__fromTime AND time <= $__toTime ) ORDER BY time ASC LIMIT 10000",
+          "rawSql": "SELECT date as \"time\", price FROM \"default\".\"cbr_currency_usd\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) ORDER BY time ASC LIMIT 10000",
           "refId": " Бакс"
         },
         {
@@ -9308,7 +10569,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "hide": false,
+          "hide": true,
           "meta": {
             "builderOptions": {
               "columns": [],
@@ -9321,7 +10582,7 @@
           },
           "pluginVersion": "4.3.2",
           "queryType": "timeseries",
-          "rawSql": "SELECT $__timeInterval(date) as \"time\", date, \nif(time = toDateTime('2025-01-05 23:00:00'), (round(pow(avg(percent)/100,26), 4)-1), (round(pow(avg(percent)/100,52), 4)-1)) as index \nFROM \"default\".\"ipc_weeks\"\nWHERE ( time >= $__fromTime AND time <= $__toTime ) \nGROUP BY date, time ORDER BY time ASC LIMIT 100000",
+          "rawSql": "SELECT $__timeInterval(date) as \"time\", date, \nif(time = toDateTime('2025-01-05 23:00:00'), (round(pow(avg(percent)/100,26), 4)-1), (round(pow(avg(percent)/100,52), 4)-1)) as index \nFROM \"default\".\"ipc_weeks\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) \nGROUP BY date, time ORDER BY time ASC LIMIT 100000",
           "refId": "ИПЦ"
         },
         {
@@ -9344,7 +10605,7 @@
           },
           "pluginVersion": "4.3.2",
           "queryType": "timeseries",
-          "rawSql": "SELECT date as \"time\", rate, name FROM \"default\".\"domrf_mortgage\" WHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( name = 'Вторичный рынок' ) ORDER BY time ASC LIMIT 1000",
+          "rawSql": "SELECT date as \"time\", rate, name FROM \"default\".\"domrf_mortgage\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) AND ( name = 'Вторичный рынок' ) ORDER BY time ASC LIMIT 1000",
           "refId": "Ипотека"
         },
         {
@@ -9354,7 +10615,7 @@
           },
           "editorType": "sql",
           "format": 0,
-          "hide": true,
+          "hide": false,
           "meta": {
             "builderOptions": {
               "columns": [],
@@ -9367,11 +10628,913 @@
           },
           "pluginVersion": "4.3.2",
           "queryType": "timeseries",
-          "rawSql": "SELECT $__timeInterval(date) as \"time\", date, value as idx\nFROM \"default\".\"cbr_indicators_cpd\" final\nWHERE name = 'Базовый ИПЦ' and ( time >= $__fromTime AND time <= $__toTime ) \nORDER BY time ASC",
+          "rawSql": "SELECT $__timeInterval(date) as \"time\", (round(pow(1+value/100,12), 4)-1) as idx\nFROM \"default\".\"cbr_indicators_cpd\" FINAL\nWHERE name = 'Базовый ИПЦ' and ( time >= $__fromTime AND time <= $__toTime ) \nORDER BY time ASC",
           "refId": "Базовый ИПЦ"
+        },
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "bdx7lxrdelxq8b"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "hide": false,
+          "meta": {
+            "builderOptions": {
+              "columns": [],
+              "database": "",
+              "limit": 1000,
+              "mode": "list",
+              "queryType": "table",
+              "table": ""
+            }
+          },
+          "pluginVersion": "4.3.2",
+          "queryType": "table",
+          "rawSql": "SELECT $__timeInterval(date) as \"time\", rate as \"Cтавка до 1 года\" \nFROM \"default\".\"cbr_bank_int_rate\" FINAL\nWHERE name = 'от 181 дня до 1 года' and ( time >= $__fromTime AND time <= $__toTime ) ORDER BY time ASC LIMIT 1000",
+          "refId": "Депозит"
         }
       ],
       "title": "Курс доллара и ключевая ставка ЦБ, руб.",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 190
+      },
+      "id": 37,
+      "panels": [],
+      "title": "Автостат",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "grafana-clickhouse-datasource",
+        "uid": "bdx7lxrdelxq8b"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "axisSoftMin": 0,
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineStyle": {
+              "fill": "solid"
+            },
+            "lineWidth": 1,
+            "pointSize": 3,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "always",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 191
+      },
+      "id": 36,
+      "options": {
+        "legend": {
+          "calcs": [
+            "min",
+            "max",
+            "mean",
+            "sum",
+            "lastNotNull"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "builderOptions": {
+            "aggregates": [
+              {
+                "aggregateType": "count",
+                "alias": "\"шт.\"",
+                "column": "certificate_number"
+              }
+            ],
+            "columns": [
+              {
+                "hint": "time",
+                "name": "date",
+                "type": "Date"
+              }
+            ],
+            "database": "default",
+            "filters": [
+              {
+                "condition": "AND",
+                "filterType": "custom",
+                "hint": "time",
+                "key": "",
+                "operator": "WITH IN DASHBOARD TIME RANGE",
+                "type": "datetime"
+              }
+            ],
+            "groupBy": [
+              "date"
+            ],
+            "limit": 1000,
+            "meta": {},
+            "mode": "trend",
+            "orderBy": [
+              {
+                "default": true,
+                "dir": "ASC",
+                "hint": "time",
+                "name": ""
+              }
+            ],
+            "queryType": "timeseries",
+            "table": "gost_vehicle_safety_certificate"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "bdx7lxrdelxq8b"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "hide": false,
+          "meta": {
+            "builderOptions": {
+              "aggregates": [
+                {
+                  "aggregateType": "count",
+                  "alias": "\"шт.\"",
+                  "column": "certificate_number"
+                }
+              ],
+              "columns": [
+                {
+                  "hint": "time",
+                  "name": "date",
+                  "type": "Date"
+                }
+              ],
+              "database": "default",
+              "filters": [
+                {
+                  "condition": "AND",
+                  "filterType": "custom",
+                  "hint": "time",
+                  "key": "",
+                  "operator": "WITH IN DASHBOARD TIME RANGE",
+                  "type": "datetime"
+                }
+              ],
+              "groupBy": [
+                "date"
+              ],
+              "limit": 1000,
+              "meta": {},
+              "mode": "trend",
+              "orderBy": [
+                {
+                  "default": true,
+                  "dir": "ASC",
+                  "hint": "time",
+                  "name": ""
+                }
+              ],
+              "queryType": "timeseries",
+              "table": "gost_vehicle_safety_certificate"
+            }
+          },
+          "pluginVersion": "4.3.2",
+          "queryType": "timeseries",
+          "rawSql": "SELECT toLastDayOfWeek($__timeInterval(date), 1) as \"time\", uniqExact(certificate_number) as \"шт.\" \nFROM \"default\".\"gost_vehicle_safety_certificate\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) GROUP BY time ORDER BY time ASC LIMIT 1000",
+          "refId": "A"
+        },
+        {
+          "builderOptions": {
+            "aggregates": [
+              {
+                "aggregateType": "count",
+                "alias": "\"шт.\"",
+                "column": "certificate_number"
+              }
+            ],
+            "columns": [
+              {
+                "hint": "time",
+                "name": "date",
+                "type": "Date"
+              }
+            ],
+            "database": "default",
+            "filters": [
+              {
+                "condition": "AND",
+                "filterType": "custom",
+                "hint": "time",
+                "key": "",
+                "operator": "WITH IN DASHBOARD TIME RANGE",
+                "type": "datetime"
+              }
+            ],
+            "groupBy": [
+              "date"
+            ],
+            "limit": 1000,
+            "meta": {},
+            "mode": "trend",
+            "orderBy": [
+              {
+                "default": true,
+                "dir": "ASC",
+                "hint": "time",
+                "name": ""
+              }
+            ],
+            "queryType": "timeseries",
+            "table": "gost_vehicle_safety_certificate"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "bdx7lxrdelxq8b"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "hide": true,
+          "meta": {
+            "builderOptions": {
+              "aggregates": [
+                {
+                  "aggregateType": "count",
+                  "alias": "\"шт.\"",
+                  "column": "certificate_number"
+                }
+              ],
+              "columns": [
+                {
+                  "hint": "time",
+                  "name": "date",
+                  "type": "Date"
+                }
+              ],
+              "database": "default",
+              "filters": [
+                {
+                  "condition": "AND",
+                  "filterType": "custom",
+                  "hint": "time",
+                  "key": "",
+                  "operator": "WITH IN DASHBOARD TIME RANGE",
+                  "type": "datetime"
+                }
+              ],
+              "groupBy": [
+                "date"
+              ],
+              "limit": 1000,
+              "meta": {},
+              "mode": "trend",
+              "orderBy": [
+                {
+                  "default": true,
+                  "dir": "ASC",
+                  "hint": "time",
+                  "name": ""
+                }
+              ],
+              "queryType": "timeseries",
+              "table": "gost_vehicle_safety_certificate"
+            }
+          },
+          "pluginVersion": "4.3.2",
+          "queryType": "timeseries",
+          "rawSql": "SELECT toLastDayOfWeek($__timeInterval(date), 1) as \"time\", uniqExact(certificate_number) as \"шт.\"\nFROM \"default\".\"gost_vehicle_safety_certificate\" FINAL\nWHERE ( time >= $__fromTime AND time <= $__toTime ) and type = 'HQ6471DCHEV04'\nGROUP BY time ORDER BY time ASC LIMIT 1000",
+          "refId": "C"
+        }
+      ],
+      "title": "Выдача cвидетельств о безопасности конструкции ТС за неделю",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "grafana-clickhouse-datasource",
+        "uid": "bdx7lxrdelxq8b"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 7,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 191
+      },
+      "id": 38,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "sortBy": "Mean",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "11.2.0",
+      "targets": [
+        {
+          "builderOptions": {
+            "aggregates": [
+              {
+                "aggregateType": "count",
+                "alias": "\"шт.\"",
+                "column": "certificate_number"
+              }
+            ],
+            "columns": [
+              {
+                "hint": "time",
+                "name": "date",
+                "type": "Date"
+              }
+            ],
+            "database": "default",
+            "filters": [
+              {
+                "condition": "AND",
+                "filterType": "custom",
+                "hint": "time",
+                "key": "",
+                "operator": "WITH IN DASHBOARD TIME RANGE",
+                "type": "datetime"
+              }
+            ],
+            "groupBy": [
+              "date"
+            ],
+            "limit": 1000,
+            "meta": {},
+            "mode": "trend",
+            "orderBy": [
+              {
+                "default": true,
+                "dir": "ASC",
+                "hint": "time",
+                "name": ""
+              }
+            ],
+            "queryType": "timeseries",
+            "table": "gost_vehicle_safety_certificate"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "bdx7lxrdelxq8b"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "meta": {
+            "builderOptions": {
+              "aggregates": [
+                {
+                  "aggregateType": "count",
+                  "alias": "\"шт.\"",
+                  "column": "certificate_number"
+                }
+              ],
+              "columns": [
+                {
+                  "hint": "time",
+                  "name": "date",
+                  "type": "Date"
+                }
+              ],
+              "database": "default",
+              "filters": [
+                {
+                  "condition": "AND",
+                  "filterType": "custom",
+                  "hint": "time",
+                  "key": "",
+                  "operator": "WITH IN DASHBOARD TIME RANGE",
+                  "type": "datetime"
+                }
+              ],
+              "groupBy": [
+                "date"
+              ],
+              "limit": 1000,
+              "meta": {},
+              "mode": "trend",
+              "orderBy": [
+                {
+                  "default": true,
+                  "dir": "ASC",
+                  "hint": "time",
+                  "name": ""
+                }
+              ],
+              "queryType": "timeseries",
+              "table": "gost_vehicle_safety_certificate"
+            }
+          },
+          "pluginVersion": "4.3.2",
+          "queryType": "timeseries",
+          "rawSql": "SELECT $__timeInterval(date) as \"time\", count(certificate_number) as \"шт.\",\nCASE \n  WHEN mark IN ['Toyota', 'HONDA', 'BMW', 'KIA', 'VOLKSWAGEN', 'Mercedes-Benz', 'HYUNDAI', 'GEELY', 'AUDI', 'MAZDA'] \n  THEN mark \n  ELSE 'Остальные' \nEND as brand_group\nFROM \"default\".\"gost_vehicle_safety_certificate\" \nWHERE ( time >= $__fromTime AND time <= $__toTime )\nGROUP BY time, mark\nORDER by time, brand_group ASC\n",
+          "refId": "A"
+        }
+      ],
+      "title": "Выдача Cвидетельств о безопасности конструкции ТС",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "grafana-clickhouse-datasource",
+        "uid": "bdx7lxrdelxq8b"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Difference percent"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "custom.transform"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": ""
+            },
+            "properties": []
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 199
+      },
+      "id": 39,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "builderOptions": {
+            "aggregates": [],
+            "columns": [
+              {
+                "alias": "date",
+                "custom": false,
+                "name": "date",
+                "type": "Date"
+              },
+              {
+                "alias": "value",
+                "custom": false,
+                "name": "value",
+                "type": "Float32"
+              },
+              {
+                "hint": "time",
+                "name": "date",
+                "type": "Date"
+              }
+            ],
+            "database": "default",
+            "filters": [
+              {
+                "condition": "AND",
+                "filterType": "custom",
+                "hint": "time",
+                "key": "",
+                "operator": "WITH IN DASHBOARD TIME RANGE",
+                "type": "datetime"
+              },
+              {
+                "condition": "AND",
+                "filterType": "custom",
+                "key": "name",
+                "label": "name",
+                "operator": "=",
+                "type": "LowCardinality(String)",
+                "value": "Импорт/Всего"
+              }
+            ],
+            "groupBy": [],
+            "limit": 1000,
+            "meta": {},
+            "mode": "aggregate",
+            "orderBy": [
+              {
+                "default": true,
+                "dir": "ASC",
+                "hint": "time",
+                "name": ""
+              }
+            ],
+            "queryType": "timeseries",
+            "table": "customs_vneshn_torg"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "bdx7lxrdelxq8b"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "hide": false,
+          "meta": {
+            "builderOptions": {
+              "aggregates": [],
+              "columns": [
+                {
+                  "alias": "date",
+                  "custom": false,
+                  "name": "date",
+                  "type": "Date"
+                },
+                {
+                  "alias": "value",
+                  "custom": false,
+                  "name": "value",
+                  "type": "Float32"
+                },
+                {
+                  "hint": "time",
+                  "name": "date",
+                  "type": "Date"
+                }
+              ],
+              "database": "default",
+              "filters": [
+                {
+                  "condition": "AND",
+                  "filterType": "custom",
+                  "hint": "time",
+                  "key": "",
+                  "operator": "WITH IN DASHBOARD TIME RANGE",
+                  "type": "datetime"
+                },
+                {
+                  "condition": "AND",
+                  "filterType": "custom",
+                  "key": "name",
+                  "label": "name",
+                  "operator": "=",
+                  "type": "LowCardinality(String)",
+                  "value": "Импорт/Всего"
+                }
+              ],
+              "groupBy": [],
+              "limit": 1000,
+              "meta": {},
+              "mode": "aggregate",
+              "orderBy": [
+                {
+                  "default": true,
+                  "dir": "ASC",
+                  "hint": "time",
+                  "name": ""
+                }
+              ],
+              "queryType": "timeseries",
+              "table": "customs_vneshn_torg"
+            }
+          },
+          "pluginVersion": "4.3.2",
+          "queryType": "timeseries",
+          "rawSql": "SELECT date as \"time\", date, \n (value - lagInFrame(value, 1, value) OVER (ORDER BY date ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)) as \"млрд. долл.\"  \nFROM \"default\".\"customs_vneshn_torg\" \nWHERE ( time >= date_sub(month, 2, $__fromTime) AND time <= $__toTime ) AND ( name = 'Импорт/Всего' ) ORDER BY time ASC LIMIT 1000",
+          "refId": "Импорт Всего"
+        },
+        {
+          "builderOptions": {
+            "aggregates": [],
+            "columns": [
+              {
+                "alias": "date",
+                "custom": false,
+                "name": "date",
+                "type": "Date"
+              },
+              {
+                "alias": "value",
+                "custom": false,
+                "name": "value",
+                "type": "Float32"
+              },
+              {
+                "hint": "time",
+                "name": "date",
+                "type": "Date"
+              }
+            ],
+            "database": "default",
+            "filters": [
+              {
+                "condition": "AND",
+                "filterType": "custom",
+                "hint": "time",
+                "key": "",
+                "operator": "WITH IN DASHBOARD TIME RANGE",
+                "type": "datetime"
+              },
+              {
+                "condition": "AND",
+                "filterType": "custom",
+                "key": "name",
+                "label": "name",
+                "operator": "LIKE",
+                "type": "LowCardinality(String)",
+                "value": "Импорт/68-70, 84-97-Машины%"
+              }
+            ],
+            "groupBy": [],
+            "limit": 1000,
+            "meta": {},
+            "mode": "aggregate",
+            "orderBy": [
+              {
+                "default": true,
+                "dir": "ASC",
+                "hint": "time",
+                "name": ""
+              }
+            ],
+            "queryType": "timeseries",
+            "table": "customs_vneshn_torg"
+          },
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "bdx7lxrdelxq8b"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "hide": false,
+          "meta": {
+            "builderOptions": {
+              "aggregates": [],
+              "columns": [
+                {
+                  "alias": "date",
+                  "custom": false,
+                  "name": "date",
+                  "type": "Date"
+                },
+                {
+                  "alias": "value",
+                  "custom": false,
+                  "name": "value",
+                  "type": "Float32"
+                },
+                {
+                  "hint": "time",
+                  "name": "date",
+                  "type": "Date"
+                }
+              ],
+              "database": "default",
+              "filters": [
+                {
+                  "condition": "AND",
+                  "filterType": "custom",
+                  "hint": "time",
+                  "key": "",
+                  "operator": "WITH IN DASHBOARD TIME RANGE",
+                  "type": "datetime"
+                },
+                {
+                  "condition": "AND",
+                  "filterType": "custom",
+                  "key": "name",
+                  "label": "name",
+                  "operator": "LIKE",
+                  "type": "LowCardinality(String)",
+                  "value": "Импорт/68-70, 84-97-Машины%"
+                }
+              ],
+              "groupBy": [],
+              "limit": 1000,
+              "meta": {},
+              "mode": "aggregate",
+              "orderBy": [
+                {
+                  "default": true,
+                  "dir": "ASC",
+                  "hint": "time",
+                  "name": ""
+                }
+              ],
+              "queryType": "timeseries",
+              "table": "customs_vneshn_torg"
+            }
+          },
+          "pluginVersion": "4.3.2",
+          "queryType": "timeseries",
+          "rawSql": "SELECT date as \"time\", date, \n (value - lagInFrame(value, 1, value) OVER (ORDER BY date ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)) as \"млрд. долл.\"  \nFROM \"default\".\"customs_vneshn_torg\" \nWHERE ( time >= date_sub(month, 2, $__fromTime) AND time <= $__toTime ) AND ( name LIKE '%Импорт/68-70, 84-97-Машины%%' )\nORDER BY time ASC LIMIT 1000",
+          "refId": "Авто"
+        }
+      ],
+      "title": "Импорт",
+      "transformations": [
+        {
+          "id": "calculateField",
+          "options": {
+            "mode": "reduceRow",
+            "reduce": {
+              "include": [
+                "млрд. долл. Авто",
+                "млрд. долл. Импорт Всего"
+              ],
+              "reducer": "diffperc"
+            }
+          }
+        }
+      ],
       "type": "timeseries"
     }
   ],
@@ -9382,13 +11545,13 @@
     "list": []
   },
   "time": {
-    "from": "now-1y",
+    "from": "now-2d",
     "to": "now"
   },
   "timepicker": {},
   "timezone": "browser",
   "title": "Rosstat",
   "uid": "cdx7m9l3amcqoe",
-  "version": 101,
+  "version": 127,
   "weekStart": ""
 }
