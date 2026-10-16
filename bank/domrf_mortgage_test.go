@@ -270,3 +270,18 @@ func TestAppendDomrfPoints(t *testing.T) {
 		t.Errorf("ошибка %q не называет точку, на которой запись остановилась", err)
 	}
 }
+
+// TestDomrfMortgageDdlShape: DDL — %s-форма (стандарт §5.1): шаблон исполняет её как
+// fmt.Sprintf(sql, TableName), поэтому имя таблицы в литерале обязано быть ровно одно и только
+// в позиции подстановки. Литерал без %s дал бы «%!(EXTRA string=domrf_mortgage)» и ошибку
+// ClickHouse про multi-statement (живой прецедент — cbr_mp_survey), а имя в литерале — двойное
+// имя таблицы в запросе; и то и другое тест отсекает.
+func TestDomrfMortgageDdlShape(t *testing.T) {
+	if got := strings.Count(domrfMortgageDdl, "%s"); got != 1 {
+		t.Errorf("в domrfMortgageDdl %d вхождений %%s, want 1 (имя таблицы подставляет шаблон):\n%s", got, domrfMortgageDdl)
+	}
+	if strings.Contains(domrfMortgageDdl, domrfMortgageTable) {
+		t.Errorf("domrfMortgageDdl содержит литерал имени таблицы %q — имя приходит подстановкой:\n%s",
+			domrfMortgageTable, domrfMortgageDdl)
+	}
+}

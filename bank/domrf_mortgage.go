@@ -19,13 +19,14 @@ import (
 
 const (
 
-	// Ипотека: ставки предложения топ-20 ипотечных банков по данным ДОМ.РФ. Разведка
-	// 2026-10-16: страница аналитики отвечает 200 обычным серверным HTML (127 710 Б), а данные
-	// её блоков лежат JSON-ом в атрибутах main#app — прежний комментарий про JS-challenge
-	// (ServicePipe) не подтвердился, и ссылку больше не обновляют вручную. Файл прежнего
-	// адреса (…/upload/iblock/aba/i34…xlsx) отдаёт 404; документ «Динамику ставок в разрезе
-	// месяцев» жив отдельным блоком той же страницы, но импортёр читает блок «Топ ипотечных
-	// банков» (спека §3.2): его книга даёт ставку каждого банка за отчётный месяц.
+	// Ипотека: ставка предложения топ-20 ипотечных банков по данным ДОМ.РФ. Импортёр читает блок
+	// «Топ ипотечных банков» страницы аналитики (спека §3.2) — месячный снимок: его книга даёт
+	// ставку каждого банка за отчётный месяц. Ссылка на файл берётся со страницы каждый прогон
+	// (имя файла несёт отчётный месяц и меняется), поэтому статичного адреса в коде нет: файл
+	// прежнего литерала (…/upload/iblock/aba/i34…xlsx) отдаёт 404.
+	//
+	// Данные блоков страницы лежат JSON-ом в атрибутах main#app (разбирает domrfXlsSrcFromPage),
+	// а сама страница отвечает обычным серверным HTML — JS-challenge у неё нет.
 
 	// domrfAnalyticsUrl — страница аналитики, с которой берётся ссылка на файл; шаг транспорта
 	// делает Import() импортёра (util.GetPage) — разбор обязан оставаться чистым (§6.1).
@@ -44,10 +45,10 @@ const (
 	// domrfBankAnchor — ячейка шапки листа с именами банков: её колонка — колонка имени ряда.
 	domrfBankAnchor = "Банк"
 	// domrfProductAnchor — продукт, ставка которого идёт в ряд банка: «Новостройки» —
-	// первичный рынок, тот же продукт читал прежний разбор (domrfMortgageField «Новостройка»).
-	// Ставки остальных продуктов листа (готовые квартиры, готовые жилые дома, ИЖС,
-	// рефинансирование, семейная ипотека) в таблицу не идут: ключ таблицы (name, date) хранит
-	// одну ставку банка за отчётный месяц, и вторая ставка того же банка затёрла бы первую.
+	// первичный рынок, тот же продукт читала и прежняя семантика таблицы. Ставки остальных пяти
+	// продуктов листа (рефинансирование, готовые квартиры, готовые жилые дома, ИЖС, семейная
+	// ипотека) в таблицу не идут: ключ таблицы (name, date) хранит одну ставку банка за отчётный
+	// месяц, и вторая ставка того же банка затёрла бы первую.
 	domrfProductAnchor = "Новостройки"
 	// domrfRateAnchor — подшапка колонки ставки («Ставка»); соседняя колонка группы —
 	// «∆ к пред, месяцу, п.п.», она разбору не нужна. Подшапка — и признак «ставка лежит в
@@ -65,20 +66,26 @@ const (
 	// серийного числа Excel в листе нет, конвертировать нечего.
 	domrfTimeLayout = "02.01.2006"
 
-	// Прежние константы импортёра: держатся до задачи 2, которая переписывает импортёр на
-	// шаблон. Адрес файла — литерал, а не domrfAnalyticsUrl + путь: domrfAnalyticsUrl теперь
-	// страница, а сам файл по этому адресу отдаёт 404 (разведка 2026-10-16).
-	domrfMortgageXlsDataUrl = "https://xn--d1aqf.xn--p1ai/upload/iblock/aba/i34cz49h4zukhzduo11wi2d361dbwgb4.xlsx"
-	domrfMortgageTable      = "domrf_mortgage"
-	domrfMortgageDdl        = `CREATE TABLE IF NOT EXISTS ` + domrfMortgageTable + ` (
+	// domrfMortgageTable — имя таблицы импортёра: TableName шаблона, его Name() и ключ версии
+	// точки контроля (PublicationKey). На неё опирается витрина v_bank_macro (Tables —
+	// константами пакета).
+	domrfMortgageTable = "domrf_mortgage"
+	// domrfMortgageDdl — DDL в %s-форме (стандарт §5.1): имя таблицы подставляет шаблон —
+	// fmt.Sprintf(sql, TableName) в util.ClickHouseImport.Import. Типы колонок — legacy-схема
+	// таблицы (ARCHITECTURE.md §6.2): name — банк источника, date — отчётная дата месяца,
+	// rate — сырая доля Float32 (0.187 = 18,7 % годовых).
+	domrfMortgageDdl = `CREATE TABLE IF NOT EXISTS %s (
 			  name LowCardinality(String)
 			, date Date
 			, rate Float32
 		) ENGINE = ReplacingMergeTree ORDER BY (name, date);
 	`
-	domrfMortgageInsert     = "INSERT INTO " + domrfMortgageTable + " VALUES (?, ?, ?)"
-	domrfMortgageField      = "Новостройка"
-	domrfMortgageTimeLayout = "01-02-06"
+	// domrfCountPoints — количественный чек точки контроля публикации (спека §3.2): число точек
+	// своей таблицы. Литерал, как и таблица: запрос — часть утверждения «эти точки мои». FINAL
+	// обязателен — без него count() считает несмёрженные части и растёт после каждого повторного
+	// импорта. Файл месячный при недельном шаге, поэтому известная версия принимается no-op'ом
+	// после HEAD, без скачивания книги.
+	domrfCountPoints = "SELECT count() FROM domrf_mortgage FINAL"
 )
 
 // domrfPoint — точка разбора: имя ряда (банк источника), отчётная дата листа и ставка в долях
@@ -301,96 +308,68 @@ func appendDomrfPoints(batch driver.Batch, points []domrfPoint) error {
 	return nil
 }
 
+// DomrfMortgageStat — импортёр domrf_mortgage: ставка предложения по ипотеке на новостройки
+// каждого банка блока «Топ ипотечных банков» страницы аналитики ДОМ.РФ за отчётный месяц (лист
+// «13 Ставки предложения» книги блока). Источник — месячный снимок: отчётная дата записана
+// строкой в заголовке листа («31.08.2026», одна на всю книгу), значение — сырая доля (0,187 =
+// 18,7 % годовых), ряд — банк источника. В таблицу идёт только продукт «Новостройки» —
+// историческая семантика таблицы; остальные пять продуктов листа этим пунктом не импортируются
+// (почему — в domrfProductAnchor). Своей Name() нет: шаблон отдаёт TableName.
+//
+// Смена семантики источника: прежний импортёр читал документ «Динамика ставок в разрезе месяцев»
+// того же раздела. Документ жив по новому адресу, но отвечает на другой вопрос — это недельные
+// рыночные средние по продуктам (ряд — продукт, дата — неделя), а не месячная ставка предложения
+// банка. У таблицы теперь ряд — банк, дата — отчётный месяц; смена названа, чтобы читатель не
+// ждал продолжения прежней раскладки.
+//
+// Транспорт — переопределённый Import() (образец cbr/mo_br.go): страница → ссылка из JSON блока →
+// локальная копия шаблона с DataUrl. Разбор — parseDomrfSheet, запись — appendDomrfPoints
+// (ImportFunc шаблона); точка контроля публикации объявлена в domrfImporter (domrfCountPoints).
 type DomrfMortgageStat struct {
+	util.ClickHouseImport
 }
 
-func (s *DomrfMortgageStat) Name() string {
-	return domrfMortgageTable
-}
-
-func (s *DomrfMortgageStat) export() (table *[][]string, err error) {
-	var xlsx *excelize.File
-	if xlsx, err = util.GetXlsx(domrfMortgageXlsDataUrl); err != nil {
-		return nil, err
-	}
-	defer func() { _ = xlsx.Close() }()
-	table = new([][]string)
-	var rows [][]string
-	if rows, err = xlsx.GetRows(xlsx.GetSheetList()[0]); err != nil {
-		return nil, err
-	}
-	fieldFound := 0
-	// Строки с годами
-	for i, row := range rows {
-		if len(row) < 2 {
-			continue
-		}
-		name := strings.TrimSpace(row[1])
-		if name == "" || name == "0" {
-			continue
-		}
-		fmt.Printf("name '%s'\n", name)
-		if name == domrfMortgageField {
-			fieldFound = i - 1
-		}
-		if fieldFound == 0 {
-			continue
-		}
-		if len(row) < 3 {
-			break
-		}
-		// Колонки с месяцами и пропуском кварталов
-		startColNum := 3
-		for j, cell := range row[startColNum:] {
-			rate := strings.TrimRight(strings.TrimSpace(cell), "%")
-			if rate == "" || rate == "-" {
-				continue
-			}
-			date := rows[fieldFound][j+startColNum]
-			if date == "изм. к пред. нед." {
-				continue
-			}
-			fmt.Printf("name %s date %v cell %s\n", name, date, cell)
-			if _, err = strconv.ParseFloat(rate, 32); err != nil {
-				return nil, err
-			}
-			//                                name           year
-			*table = append(*table, []string{name, date, rate})
-		}
-	}
-
-	return table, nil
-}
-
+// Import — транспорт импортёра (стандарт §5.4): страница → ссылка → локальная копия шаблона.
+// Ссылка вычисляется каждый прогон (имя файла несёт отчётный месяц), поэтому DataUrl живёт только
+// в копии: общую структуру импортёра мутировать нельзя — её читают тест реестра и объявление точки
+// контроля, а префлайт шаблона видит вычисленный адрес копии.
 func (s *DomrfMortgageStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	var table *[][]string
-	if table, err = s.export(); err != nil {
-		return count, err
-	}
-	if err = conn.Exec(ctx, domrfMortgageDdl); err != nil {
-		return count, err
-	}
-	batch, err := conn.PrepareBatch(ctx, domrfMortgageInsert)
+	page, err := util.GetPage(domrfAnalyticsUrl)
 	if err != nil {
-		return count, err
+		return count, fmt.Errorf("%s: %s: %w", domrfMortgageTable, domrfAnalyticsUrl, err)
 	}
-	for _, row := range *table {
-		date, err := time.Parse(domrfMortgageTimeLayout, row[1])
-		if err != nil {
-			return count, err
-		}
-		value, _ := strconv.ParseFloat(row[2], 32)
-		if err = batch.Append(row[0], date, float32(value)); err != nil {
-			return count, err
-		}
-		count++
+	src, err := domrfXlsSrcFromPage(page)
+	if err != nil {
+		return count, fmt.Errorf("%s: %s: %w", domrfMortgageTable, domrfAnalyticsUrl, err)
 	}
-	if err = batch.Send(); err != nil {
-		return count, err
-	}
-	return count, nil
+	imp := s.ClickHouseImport // локальная копия: общую структуру импортёра мутировать нельзя
+	imp.DataUrl = domrfDataUrlPrefix + src
+	return imp.Import(ctx, conn)
 }
+
+// domrfImportFunc — ImportFunc шаблона: книга из памяти → точки → батч. Ошибку разбора оборачивает
+// имя таблицы — контракт §6.4 (текст ошибки называет таблицу): ветки parseDomrfSheet тоже называют
+// её, но обёртка не даёт контракту зависеть от текста отдельной ветки.
+func domrfImportFunc(xlsx *excelize.File, batch driver.Batch) error {
+	points, err := parseDomrfSheet(xlsx)
+	if err != nil {
+		return fmt.Errorf("%s: %w", domrfMortgageTable, err)
+	}
+	return appendDomrfPoints(batch, points)
+}
+
+// domrfImporter — импортёр для шаблона и реестра: объявление точки контроля публикации
+// (domrfCountPoints) стоит в литерале, а не в Import(), — его читает тест реестра у
+// зарегистрированного импортёра, а префлайт шаблона включается самим полем. DataUrl в литерале
+// нет: он вычисляется в Import() и живёт в локальной копии, поэтому Publication().Url пуст (см.
+// util.PublicationDecl). Регистрацию держит персональный init() до задачи 8 — её снимет реестр.
+var domrfImporter = &DomrfMortgageStat{ClickHouseImport: util.ClickHouseImport{
+	TableName:              domrfMortgageTable,
+	CreateTable:            []string{domrfMortgageDdl},
+	ImportFunc:             domrfImportFunc,
+	PublicationCountPoints: domrfCountPoints,
+}}
 
 func init() {
-	chimport.Stats = append(chimport.Stats, &DomrfMortgageStat{})
+	chimport.Stats = append(chimport.Stats, domrfImporter)
 }
