@@ -126,20 +126,80 @@ type ipcWeeksBulletinsSource struct {
 	Date time.Time
 }
 
-// ipcWeeksBulletinsSources — все 85 выпусков (спека §2, приложения А и Б; расширения 2026-10-16 —
-// приложение В спеки и систематическая разведка scripts/harvest.py), отсортированные по дате
+// ipcWeeksBulletinsSources — все 287 выпусков (спека §2, приложения А–Г), отсортированные по дате
 // точки. Литералы кода, а не разбор страницы-каталога: источника-каталога у этого архива нет, а
-// спасательный дамп зафиксировал точные адреса и даты (тест-инварианты: 48 живых + 4 Wayback-2021 +
-// 25 Wayback-2017 + 8 Wayback-2020, уникальные URL, строго возрастающие даты). Форма id_ у
-// Wayback-адресов обязательна: обычный режим вклеивает в страницу свою панель и переписывает
-// ссылки, а id_ отдаёт сырые байты документа. Первым семейством идёт 2017 (ранние даты), в 2021
-// четыре февраля вклиниваются между живыми выпусками января и марта — дат этих недель в живом
-// буфере уже нет, их сохранил только Wayback (спека §2.2). Девять выпусков первого расширения
-// (2017×6, 2020×3) и пять второго (2020×5: 11-02, 11-09, 11-23, 11-30, 12-14) найдены разведкой
-// Wayback-корпуса буфера (scripts/harvest.py) — майские краулы 2021 г. на gks.ru удержали
-// документы ноября–декабря 2020 (снимки 20210526–20210527); версии всех выпусков лежат в
-// винтажном архиве, поэтому и живой импорт, и restore берут их оттуда по этим же URL.
+// спасательный дамп и систематическая разведка (scripts/harvest.py) зафиксировали точные адреса и
+// даты (тест-инварианты: 48 живых + 239 Wayback 2015–2021 по годам документа, уникальные URL,
+// строго возрастающие даты). Форма id_ у Wayback-адресов обязательна: обычный режим вклеивает в
+// страницу свою панель и переписывает ссылки, а id_ отдаёт сырые байты документа.
+// Каталог потока «Оперативной информации» мигрирует между Stg/dNN по годам: d06 (2015–2017,
+// файлы «NNNozenN»), d02 (2017 и 2021), d03→d01 (2018), d04 (2019), d05 (2020). Разведка «только
+// d02» поэтому находила недели лишь тех лет, когда поток жил в d02; полное дерево Stg/ (разведка
+// 2026-10-16/17) добавило 202 недели 2015–2020 — документы удержали снимки 2016–2024 гг., включая
+// майские краулы 2021 г. на gks.ru (2020-11-02…12-14). Девять выпусков первого расширения
+// (2017×6, 2020×3) и пять второго (2020×5) — оттуда же. Версии всех выпусков лежат в винтажном
+// архиве, поэтому и живой импорт, и restore берут их оттуда по этим же URL; в 2021 четыре февраля
+// вклиниваются между живыми выпусками января и марта — дат этих недель в живом буфере уже нет,
+// их сохранил только Wayback (спека §2.2).
 var ipcWeeksBulletinsSources = []ipcWeeksBulletinsSource{
+	{URL: "https://web.archive.org/web/20170723115244id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d06/134ozen8.htm", Date: time.Date(2015, time.July, 6, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20171217230705id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d06/138ozen15.htm", Date: time.Date(2015, time.July, 13, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20171026044006id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d06/146ozen22.htm", Date: time.Date(2015, time.July, 20, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180228012753id_/http://www.gks.ru:80/bgd/free/b04_03/IssWWW.exe/Stg/d06/153ozen29.htm", Date: time.Date(2015, time.July, 27, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160115102724id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d06/203ozen7.htm", Date: time.Date(2015, time.October, 5, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160115102916id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d06/227ozen11.htm", Date: time.Date(2015, time.November, 9, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160113022033id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d06/245ozen2.htm", Date: time.Date(2015, time.November, 30, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160122073052id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d06/263ozen23.htm", Date: time.Date(2015, time.December, 21, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160117115957id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d06/2ozen13.htm", Date: time.Date(2016, time.January, 11, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160125154154id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d06/5ozen20.htm", Date: time.Date(2016, time.January, 18, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160204114041id_/http://www.gks.ru:80/bgd/free/b04_03/IssWWW.exe/Stg/d06/12ozen27.htm", Date: time.Date(2016, time.January, 25, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160211021049id_/http://www.gks.ru:80/bgd/free/b04_03/IssWWW.exe/Stg/d06/21ozen3.htm", Date: time.Date(2016, time.February, 1, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160215003114id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d06/24ozen10.htm", Date: time.Date(2016, time.February, 8, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160320231953id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d06/40ozen2.htm", Date: time.Date(2016, time.February, 29, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160313170556id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d06/44ozen11.htm", Date: time.Date(2016, time.March, 9, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160428130203id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d06/46ozen16.htm", Date: time.Date(2016, time.March, 14, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160402200609id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d06/56ozen23.htm", Date: time.Date(2016, time.March, 21, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160404081956id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d06/62ozen30.htm", Date: time.Date(2016, time.March, 28, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160413171215id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d06/66ozen6.htm", Date: time.Date(2016, time.April, 4, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160729004241id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d06/75ozen20.htm", Date: time.Date(2016, time.April, 18, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160511175436id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d06/87ozen6.htm", Date: time.Date(2016, time.May, 4, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160521035753id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d06/89ozen12.htm", Date: time.Date(2016, time.May, 10, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160521035758id_/http://www.gks.ru:80/bgd/free/b04_03/IssWWW.exe/Stg/d06/91ozen18.htm", Date: time.Date(2016, time.May, 16, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160731184148id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d06/101ozen25.htm", Date: time.Date(2016, time.May, 23, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160606030627id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d06/107ozen1.htm", Date: time.Date(2016, time.May, 30, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160612182044id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d06/110ozen8.htm", Date: time.Date(2016, time.June, 6, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160622190747id_/http://www.gks.ru:80/bgd/free/b04_03/IssWWW.exe/Stg/d06/114ozen16.htm", Date: time.Date(2016, time.June, 14, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160707182527id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/134ozen6.htm", Date: time.Date(2016, time.July, 4, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160718030904id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/137ozen13.htm", Date: time.Date(2016, time.July, 11, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160721195349id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/144ozen20.htm", Date: time.Date(2016, time.July, 18, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160804031319id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/153ozen27.htm", Date: time.Date(2016, time.July, 25, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160806064238id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/155ozen3.htm", Date: time.Date(2016, time.August, 1, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160814194703id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/158ozen10.htm", Date: time.Date(2016, time.August, 8, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160915121545id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/164ozen17.htm", Date: time.Date(2016, time.August, 15, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160824193941id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d01/170ozen24.htm", Date: time.Date(2016, time.August, 22, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160903155726id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/176ozen31.htm", Date: time.Date(2016, time.August, 29, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160910164706id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/180ozen7.htm", Date: time.Date(2016, time.September, 5, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160917011641id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/183ozen14.htm", Date: time.Date(2016, time.September, 12, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20160924073349id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/192ozen21.htm", Date: time.Date(2016, time.September, 19, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20161001060128id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/199ozen28.htm", Date: time.Date(2016, time.September, 26, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20161008051816id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/203ozen5.htm", Date: time.Date(2016, time.October, 3, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20161015072310id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/206ozen12.htm", Date: time.Date(2016, time.October, 10, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20161022121129id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/213ozen19.htm", Date: time.Date(2016, time.October, 17, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20161029122900id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/221ozen26.htm", Date: time.Date(2016, time.October, 24, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20161105164614id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/224ozen2.htm", Date: time.Date(2016, time.October, 31, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20161112113451id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/227ozen9.htm", Date: time.Date(2016, time.November, 7, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20161119111200id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/229.htm", Date: time.Date(2016, time.November, 14, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20161202143303id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/245.htm", Date: time.Date(2016, time.November, 28, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20161209152424id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/248.htm", Date: time.Date(2016, time.December, 5, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20161216161346id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/252.htm", Date: time.Date(2016, time.December, 12, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20161223175739id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/259.htm", Date: time.Date(2016, time.December, 19, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20170113161721id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/2.htm", Date: time.Date(2017, time.January, 9, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20170127091043id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d01/9.htm", Date: time.Date(2017, time.January, 23, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20170210075711id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d01/24.htm", Date: time.Date(2017, time.February, 6, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20170218093422id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/26.htm", Date: time.Date(2017, time.February, 13, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20170224220713id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/33.htm", Date: time.Date(2017, time.February, 20, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20170303130809id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/40.htm", Date: time.Date(2017, time.February, 27, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20170312053714id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/45.htm", Date: time.Date(2017, time.March, 6, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://web.archive.org/web/20170325031428id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/56.htm", Date: time.Date(2017, time.March, 20, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://web.archive.org/web/20170403234555id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/61.htm", Date: time.Date(2017, time.March, 27, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://web.archive.org/web/20170429233711id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/82.htm", Date: time.Date(2017, time.April, 24, 0, 0, 0, 0, time.UTC)},
@@ -165,6 +225,150 @@ var ipcWeeksBulletinsSources = []ipcWeeksBulletinsSource{
 	{URL: "https://web.archive.org/web/20170916034320id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/182.htm", Date: time.Date(2017, time.September, 11, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://web.archive.org/web/20170923134535id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/190.htm", Date: time.Date(2017, time.September, 18, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://web.archive.org/web/20170929233425id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/198.htm", Date: time.Date(2017, time.September, 25, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20171006135819id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d03/201.htm", Date: time.Date(2017, time.October, 2, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20171013170329id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d03/205.htm", Date: time.Date(2017, time.October, 9, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20171018232933id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d03/211.htm", Date: time.Date(2017, time.October, 16, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20171026002012id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d03/218.htm", Date: time.Date(2017, time.October, 23, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20171101235228id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d03/223.htm", Date: time.Date(2017, time.October, 30, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20171112015539id_/http://www.gks.ru:80/bgd/free/b04_03/IssWWW.exe/Stg/d03/226.htm", Date: time.Date(2017, time.November, 7, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20171116000945id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d03/228.htm", Date: time.Date(2017, time.November, 13, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20171123004523id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d03/236.htm", Date: time.Date(2017, time.November, 20, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20171202084855id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d03/244.htm", Date: time.Date(2017, time.November, 27, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20171207042630id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d03/247.htm", Date: time.Date(2017, time.December, 4, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20171216014056id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d03/250.htm", Date: time.Date(2017, time.December, 11, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20171221174855id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d03/257.htm", Date: time.Date(2017, time.December, 18, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20171229062558id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d03/264.htm", Date: time.Date(2017, time.December, 25, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180111210906id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d03/2.htm", Date: time.Date(2018, time.January, 9, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180117192536id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d03/5.htm", Date: time.Date(2018, time.January, 15, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180125161644id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d03/9.htm", Date: time.Date(2018, time.January, 22, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180131212325id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d03/17.htm", Date: time.Date(2018, time.January, 29, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180208153148id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d03/24.htm", Date: time.Date(2018, time.February, 5, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180217175534id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d03/26.htm", Date: time.Date(2018, time.February, 12, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180221214241id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d03/33.htm", Date: time.Date(2018, time.February, 19, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180303082454id_/http://www.gks.ru:80/bgd/free/b04_03/IssWWW.exe/Stg/d03/40.htm", Date: time.Date(2018, time.February, 26, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180310211242id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d03/45.htm", Date: time.Date(2018, time.March, 5, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180315145351id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d03/46.htm", Date: time.Date(2018, time.March, 12, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180324163322id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d03/54.htm", Date: time.Date(2018, time.March, 19, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180330153136id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d03/60.htm", Date: time.Date(2018, time.March, 26, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180407023556id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d03/64.htm", Date: time.Date(2018, time.April, 2, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180414033045id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d03/68.htm", Date: time.Date(2018, time.April, 9, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180423064726id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d03/74.htm", Date: time.Date(2018, time.April, 16, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180425194235id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d03/80.htm", Date: time.Date(2018, time.April, 23, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180610032501id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d03/85.htm", Date: time.Date(2018, time.April, 28, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180514180117id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d03/88.htm", Date: time.Date(2018, time.May, 7, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180516201024id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d03/90.htm", Date: time.Date(2018, time.May, 14, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180528094655id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d03/98.htm", Date: time.Date(2018, time.May, 21, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180610024455id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d03/105.htm", Date: time.Date(2018, time.May, 28, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180610022851id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d03/109.htm", Date: time.Date(2018, time.June, 4, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180618174154id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d03/111.htm", Date: time.Date(2018, time.June, 9, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180623143057id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d03/118.htm", Date: time.Date(2018, time.June, 18, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180629161228id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d03/126.htm", Date: time.Date(2018, time.June, 25, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180707233604id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d03/129.htm", Date: time.Date(2018, time.July, 2, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180714085215id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d03/133.htm", Date: time.Date(2018, time.July, 9, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180722200009id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d03/138.htm", Date: time.Date(2018, time.July, 16, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180728234154id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d03/144.htm", Date: time.Date(2018, time.July, 23, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180803200308id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/150.htm", Date: time.Date(2018, time.July, 30, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180811102042id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/153.htm", Date: time.Date(2018, time.August, 6, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180818104535id_/http://www.gks.ru:80/bgd/free/b04_03/IssWWW.exe/Stg/d01/156.htm", Date: time.Date(2018, time.August, 13, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180826213849id_/http://www.gks.ru:80/bgd/free/b04_03/IssWWW.exe/Stg/d01/162.htm", Date: time.Date(2018, time.August, 20, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180902022255id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/170.htm", Date: time.Date(2018, time.August, 27, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180906192329id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/173.htm", Date: time.Date(2018, time.September, 3, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180915015205id_/http://www.gks.ru:80/bgd/free/b04_03/IssWWW.exe/Stg/d01/176.htm", Date: time.Date(2018, time.September, 10, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180921195009id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/183.htm", Date: time.Date(2018, time.September, 17, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20180930125811id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/191.htm", Date: time.Date(2018, time.September, 24, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20181007061210id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/194.htm", Date: time.Date(2018, time.October, 1, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20181013075137id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/198.htm", Date: time.Date(2018, time.October, 8, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20181020063640id_/http://www.gks.ru:80/bgd/free/b04_03/IssWWW.exe/Stg/d01/204.htm", Date: time.Date(2018, time.October, 15, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20181027113256id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/209.htm", Date: time.Date(2018, time.October, 22, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20181103063159id_/http://www.gks.ru:80/bgd/free/b04_03/IssWWW.exe/Stg/d01/215.htm", Date: time.Date(2018, time.October, 29, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20181111072253id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/218.htm", Date: time.Date(2018, time.November, 6, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20181116230338id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/220.htm", Date: time.Date(2018, time.November, 12, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20181123194955id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/227.htm", Date: time.Date(2018, time.November, 19, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20181201071346id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/235.htm", Date: time.Date(2018, time.November, 26, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20181209050542id_/http://www.gks.ru:80/bgd/free/b04_03/IssWWW.exe/Stg/d01/237.htm", Date: time.Date(2018, time.December, 3, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20181214030905id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/242.htm", Date: time.Date(2018, time.December, 10, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20181221181843id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/247.htm", Date: time.Date(2018, time.December, 17, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20181227195211id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d01/254.htm", Date: time.Date(2018, time.December, 24, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190114144059id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d04/2.htm", Date: time.Date(2019, time.January, 9, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190119005100id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d04/4.htm", Date: time.Date(2019, time.January, 14, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190126061654id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d04/8.htm", Date: time.Date(2019, time.January, 21, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190203083114id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d04/16.htm", Date: time.Date(2019, time.January, 28, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190209203722id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d04/23.htm", Date: time.Date(2019, time.February, 4, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190217012230id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d04/25.htm", Date: time.Date(2019, time.February, 11, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190224002358id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d04/30.htm", Date: time.Date(2019, time.February, 18, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190302030010id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d04/38.htm", Date: time.Date(2019, time.February, 25, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190308225047id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d04/42.htm", Date: time.Date(2019, time.March, 4, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190316145711id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d04/44.htm", Date: time.Date(2019, time.March, 11, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190323085637id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d04/49.htm", Date: time.Date(2019, time.March, 18, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190329195036id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d04/58.htm", Date: time.Date(2019, time.March, 25, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190405080229id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d04/62.htm", Date: time.Date(2019, time.April, 1, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190412230709id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d04/66.htm", Date: time.Date(2019, time.April, 8, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190420031844id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d04/71.htm", Date: time.Date(2019, time.April, 15, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190426235659id_/http://www.gks.ru:80/bgd/free/b04_03/IssWWW.exe/Stg/d04/74.htm", Date: time.Date(2019, time.April, 22, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190509072056id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d04/82.htm", Date: time.Date(2019, time.April, 29, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190511032511id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d04/85.htm", Date: time.Date(2019, time.May, 6, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190518143535id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d04/87.htm", Date: time.Date(2019, time.May, 13, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190526032203id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d04/91.htm", Date: time.Date(2019, time.May, 20, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190601222712id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d04/99.htm", Date: time.Date(2019, time.May, 27, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190609024134id_/http://www.gks.ru:80/bgd/free/b04_03/IssWWW.exe/Stg/d04/104.htm", Date: time.Date(2019, time.June, 3, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190616225335id_/http://www.gks.ru:80/bgd/free/b04_03/IssWWW.exe/Stg/d04/107.htm", Date: time.Date(2019, time.June, 10, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190622122406id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d04/113.htm", Date: time.Date(2019, time.June, 17, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190923151131id_/https://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d04/119.htm", Date: time.Date(2019, time.June, 24, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190705101407id_/http://www.gks.ru:80/bgd/free/b04_03/IssWWW.exe/Stg/d04/125.htm", Date: time.Date(2019, time.July, 1, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190713012734id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d04/129.htm", Date: time.Date(2019, time.July, 8, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190718194618id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d04/134.htm", Date: time.Date(2019, time.July, 15, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190727195147id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d04/137.htm", Date: time.Date(2019, time.July, 22, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190804055809id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d04/146.htm", Date: time.Date(2019, time.July, 29, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190809223854id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d04/149.htm", Date: time.Date(2019, time.August, 5, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190816235522id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d04/151.htm", Date: time.Date(2019, time.August, 12, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190824044944id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d04/158.htm", Date: time.Date(2019, time.August, 19, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190904204831id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d04/167.htm", Date: time.Date(2019, time.August, 26, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190912130427id_/http://www.gks.ru:80/bgd/free/B04_03/IssWWW.exe/Stg/d04/169.htm", Date: time.Date(2019, time.September, 2, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190923185743id_/https://www.gks.ru/bgd/free/b04_03/IssWWW.exe/Stg/d04/179.htm", Date: time.Date(2019, time.September, 16, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20190926174141id_/https://www.gks.ru/bgd/free/b04_03/IssWWW.exe/Stg/d04/185.htm", Date: time.Date(2019, time.September, 23, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20191117043927id_/https://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d04/189.htm", Date: time.Date(2019, time.September, 30, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20191114215717id_/https://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d04/194.htm", Date: time.Date(2019, time.October, 7, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20191017035404id_/https://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d04/197.htm", Date: time.Date(2019, time.October, 14, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20191215130043id_/https://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d04/211.htm", Date: time.Date(2019, time.October, 28, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20200925110605id_/https://rosstat.gov.ru/bgd/free/B04_03/IssWWW.exe/Stg/d04/214.htm", Date: time.Date(2019, time.November, 5, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20200418070911id_/https://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/2.htm", Date: time.Date(2020, time.January, 9, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20200414143630id_/https://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/4.htm", Date: time.Date(2020, time.January, 13, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20210118041528id_/https://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/14.htm", Date: time.Date(2020, time.January, 27, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20201202005441id_/https://rosstat.gov.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/22.htm", Date: time.Date(2020, time.February, 3, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20201024035733id_/https://rosstat.gov.ru/bgd/free/b04_03/IssWWW.exe/Stg/d05/25.htm", Date: time.Date(2020, time.February, 10, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20210118045641id_/https://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/37.htm", Date: time.Date(2020, time.February, 25, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20200329062422id_/https://gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/54.htm", Date: time.Date(2020, time.March, 23, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20200404024955id_/https://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/60.htm", Date: time.Date(2020, time.March, 30, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20200411111557id_/https://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/65.htm", Date: time.Date(2020, time.April, 6, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20200418233958id_/https://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/67.htm", Date: time.Date(2020, time.April, 13, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20200423093327id_/https://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/71.htm", Date: time.Date(2020, time.April, 20, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20200429184034id_/https://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/80.htm", Date: time.Date(2020, time.April, 27, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20200521185406id_/https://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/84.htm", Date: time.Date(2020, time.May, 6, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20200524075655id_/https://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/86.htm", Date: time.Date(2020, time.May, 12, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20200531215446id_/https://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/88.htm", Date: time.Date(2020, time.May, 18, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20200821224205id_/https://rosstat.gov.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/94.htm", Date: time.Date(2020, time.May, 25, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20200821224203id_/https://rosstat.gov.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/101.htm", Date: time.Date(2020, time.June, 1, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20200630081811id_/https://www.gks.ru/bgd/free/b04_03/IssWWW.exe/Stg/d05/104.htm", Date: time.Date(2020, time.June, 8, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20200821224200id_/https://rosstat.gov.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/107.htm", Date: time.Date(2020, time.June, 15, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20200628181530id_/https://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/113.htm", Date: time.Date(2020, time.June, 22, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20200702231501id_/https://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/120.htm", Date: time.Date(2020, time.June, 29, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20210523114907id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/125.htm", Date: time.Date(2020, time.July, 6, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20200716163456id_/https://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/127.htm", Date: time.Date(2020, time.July, 13, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20200921132931id_/https://rosstat.gov.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/133.htm", Date: time.Date(2020, time.July, 20, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20200801050939id_/https://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/142.htm", Date: time.Date(2020, time.July, 27, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20210525045836id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/144.htm", Date: time.Date(2020, time.August, 3, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20200812205748id_/https://rosstat.gov.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/147.htm", Date: time.Date(2020, time.August, 10, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20200821211359id_/https://rosstat.gov.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/152.htm", Date: time.Date(2020, time.August, 17, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20210525085929id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/158.htm", Date: time.Date(2020, time.August, 24, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20200903021523id_/https://rosstat.gov.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/163.htm", Date: time.Date(2020, time.August, 31, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20200918224527id_/https://rosstat.gov.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/166.htm", Date: time.Date(2020, time.September, 7, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20200920084312id_/https://rosstat.gov.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/171.htm", Date: time.Date(2020, time.September, 14, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20200925141419id_/https://rosstat.gov.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/176.htm", Date: time.Date(2020, time.September, 21, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20201005180559id_/https://rosstat.gov.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/183.htm", Date: time.Date(2020, time.September, 28, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20201013175057id_/https://rosstat.gov.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/188.htm", Date: time.Date(2020, time.October, 5, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20201028060612id_/https://rosstat.gov.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/190.htm", Date: time.Date(2020, time.October, 12, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20210526102612id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/195.htm", Date: time.Date(2020, time.October, 19, 0, 0, 0, 0, time.UTC)},
+	{URL: "https://web.archive.org/web/20201106154117id_/https://rosstat.gov.ru/bgd/free/B04_03/IssWWW.exe/Stg/d05/204.htm", Date: time.Date(2020, time.October, 26, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://web.archive.org/web/20210526163217id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/206.htm", Date: time.Date(2020, time.November, 2, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://web.archive.org/web/20210526163243id_/http://www.gks.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/209.htm", Date: time.Date(2020, time.November, 9, 0, 0, 0, 0, time.UTC)},
 	{URL: "https://web.archive.org/web/20201124084711id_/https://rosstat.gov.ru/bgd/free/B04_03/IssWWW.exe/Stg/d02/213.htm", Date: time.Date(2020, time.November, 16, 0, 0, 0, 0, time.UTC)},
@@ -257,6 +461,8 @@ type ipcWeeksBulletinsPoint struct {
 // разбор не видит: поиск идёт по ключу без пробелов (ipcWeeksBulletinsSeriesKeys).
 var ipcWeeksBulletinsSeriesBySourceName = map[string]string{
 	"Аллохол": "Аллохол, 50 таблеток",
+	// Выпуски 2016 г. пишут «Алмагель, суспензия»; канонический ряд тот же («Алмагель» — extra-ряд).
+	"Алмагель, суспензия":               "Алмагель",
 	"Баранина (кроме бескостного мяса)": "Баранина (кроме бескостного мяса), кг",
 	// Бензин: точное каноническое имя (без единицы) — агрегат по маркам, а не АИ-92/95/98.
 	"Бензин автомобильный":                                  "Бензин автомобильный",
@@ -320,6 +526,8 @@ var ipcWeeksBulletinsSeriesBySourceName = map[string]string{
 	"Нимесулид":          "Нимесулид, 100 мг, 10 таблеток",
 	"Носки мужские":      "Носки мужские, пара",
 	"Обед в столовой, кафе, закусочной (кроме столовой в организации)": "Обед в столовой, кафе, закусочной (кроме столовой в организации), на 1 человека",
+	// Вариант написания выпусков 2015–2016: «(кроме в столовой в организации)» — та же позиция.
+	"Обед в столовой, кафе, закусочной (кроме в столовой в организации)": "Обед в столовой, кафе, закусочной (кроме столовой в организации), на 1 человека",
 	"Огурцы свежие":             "Огурцы свежие, кг",
 	"Отопление":                 "Отопление, Гкал",
 	"Отопление, Гкал":           "Отопление, Гкал",
@@ -442,7 +650,13 @@ func ipcWeeksBulletinsText(text string) string {
 // live2021 есть даже склейка «ценс 25»), поэтому якоря, имена товаров и метки дат сравниваются
 // по склейке, а не по тексту как есть.
 func ipcWeeksBulletinsKey(text string) string {
-	return strings.Join(strings.Fields(text), "")
+	// Нижний регистр и снятие дефисных переносов Word: старые выпуски (2015–2017) писали
+	// «К предыдущей дате регистрации» с большой буквы и переносили слова дефисом в шапках и
+	// названиях товаров («19 сен-тября», «госу- дарственного») — из-за чего якоря и метки дат
+	// не совпадали. Нормализация общая для якорей, меток и названий товаров: ключи карты
+	// канонизации строятся тем же Key, поэтому имена источника и карты склеиваются одинаково
+	// («Сахар-песок» и «Сахар-песок» — один ключ, регистр не значим).
+	return strings.ReplaceAll(strings.ToLower(strings.Join(strings.Fields(text), "")), "-", "")
 }
 
 // ipcWeeksBulletinsTitleDate разбирает титул выпуска («Об оценке индекса потребительских цен с
@@ -622,6 +836,26 @@ func ipcWeeksBulletinsDetailTable(doc *goquery.Document) (*goquery.Selection, er
 		found = table
 		return false
 	})
+	if found == nil {
+		// Ранние выпуски 2016 г. (файлы «NNNozenN») подписи «Изменения цен» не печатают вовсе: их
+		// детальная таблица ищется как САМАЯ БОЛЬШАЯ таблица, в шапке которой (первые четыре
+		// строки) есть якорь «к предыдущей дате регистрации». Короткая агрегатная таблица того же
+		// выпуска несёт тот же якорь, но в ней строки «Индекс потребительских цен (оценка)» и
+		// «Среднесуточный прирост цен», а не сотня товаров, — счёт строк их различает.
+		doc.Find("table").Each(func(_ int, table *goquery.Selection) {
+			var head strings.Builder
+			table.Find("tr").EachWithBreak(func(i int, row *goquery.Selection) bool {
+				head.WriteString(ipcWeeksBulletinsKey(row.Text()))
+				return i < 3
+			})
+			if !strings.Contains(head.String(), ipcWeeksBulletinsKey(ipcWeeksBulletinsPreviousAnchor)) {
+				return
+			}
+			if found == nil || table.Find("tr").Length() > found.Find("tr").Length() {
+				found = table
+			}
+		})
+	}
 	if found == nil {
 		return nil, fmt.Errorf("таблица «%s» с якорем «%s» не найдена", ipcWeeksBulletinsChangesAnchor, ipcWeeksBulletinsPreviousAnchor)
 	}

@@ -283,6 +283,12 @@ func ipcWeeksBulletinsSeriesMeta() []util.SeriesMeta {
 		meta = append(meta, ipcWeeksProductMeta(product))
 	}
 	for _, series := range ipcWeeksBulletinsExtraSeries {
+		if seen[series] {
+			// Позиция уже описана как канонический ряд карты (алиас «Алмагель, суспензия» →
+			// «Алмагель»): второй записи в каталоге быть не должно.
+			continue
+		}
+		seen[series] = true
 		meta = append(meta, ipcWeeksBulletinsExtraMeta(series))
 	}
 	return meta
