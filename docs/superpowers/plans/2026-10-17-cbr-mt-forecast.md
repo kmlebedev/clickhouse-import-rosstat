@@ -46,18 +46,18 @@
 - Produces (нужны Task 2): `type mtForecastPoint struct { Indicator string; Year uint16; Lo, Hi float64 }`; `func mtForecastParseTabl1(xlsx *excelize.File) ([]mtForecastPoint, error)`; `var cbrMtForecastSeriesMeta []util.SeriesMeta` (16 записей, source `cbr_mt_forecast`, frequency `A`); `func mtForecastIndicatorByLabel(label string) (mtForecastIndicator, bool)`.
 - Шаблоны-эталоны: `cbr/dip_parse.go`/`dip_parse_test.go` (разбор книги + appendRecorder), `cbr/mo_br_meta.go` + `mo_br_series_meta_test.go` (реестр и каталог).
 
-- [ ] **Step 1: Фикстуры.** Из дерева: `python3 scripts/xlsx_trim.py trim build/recon-2026-10-17/dl_commet_graph_05082026.xlsx cbr/testdata/mt_forecast_05082026.xlsx --keep 'Табл 1'` (и то же для 07052026); затем `python3 scripts/xlsx_trim.py verify build/recon-2026-10-17/dl_commet_graph_05082026.xlsx cbr/testdata/mt_forecast_05082026.xlsx --keep 'Табл 1'` → PASS (и для второй пары). Убедиться, что excelize открывает фикстуры и «Табл 1» читается. Плюс страница выпуска: `cp build/recon-2026-10-17/page_05082026.html cbr/testdata/mt_forecast_page_05082026.html` и `grep -c commet_graph_05082026.xlsx cbr/testdata/mt_forecast_page_05082026.html` ≥ 1 (страницу коммитим как есть — живая разметка).
-- [ ] **Step 2: Тесты разбора (сначала падающие).** В `cbr/mt_forecast_parse_test.go`:
+- [x] **Step 1: Фикстуры.** Из дерева: `python3 scripts/xlsx_trim.py trim build/recon-2026-10-17/dl_commet_graph_05082026.xlsx cbr/testdata/mt_forecast_05082026.xlsx --keep 'Табл 1'` (и то же для 07052026); затем `python3 scripts/xlsx_trim.py verify build/recon-2026-10-17/dl_commet_graph_05082026.xlsx cbr/testdata/mt_forecast_05082026.xlsx --keep 'Табл 1'` → PASS (и для второй пары). Убедиться, что excelize открывает фикстуры и «Табл 1» читается. Плюс страница выпуска: `cp build/recon-2026-10-17/page_05082026.html cbr/testdata/mt_forecast_page_05082026.html` и `grep -c commet_graph_05082026.xlsx cbr/testdata/mt_forecast_page_05082026.html` ≥ 1 (страницу коммитим как есть — живая разметка).
+- [x] **Step 2: Тесты разбора (сначала падающие).** В `cbr/mt_forecast_parse_test.go`:
   - таблица спотов из спеки §3.9 (64 точки / 4 колонки у 05082026; `key_rate_avg` 2026 = (14.5, 14.6) — приклеенная сноска; `cpi_dec` 2028 = (4.0, 4.0); `gross_capital_formation` 2026 = (-3.5, -1.5); `fixed_capital_investment` 2026 = (-1.5, 0.5); `m2` 2026 = (7, 12); `bank_claims_mortgage` 2028 = (10, 15); и 48 точек у 07052026, `key_rate_avg` 2026 = (14.0, 14.5), `cpi_dec` 2026 = (4.5, 5.5); `year` и границы);
   - двусторонний контракт каталога (§11.4): каждая разобранная подпись есть в карте, каждый из 16 кодов — среди разобранных на объединении фикстур; `cbrMtForecastSeriesMeta` описывает ровно 16 кодов;
   - fail-fast: книга без листа «Табл 1»; лист без строки-показателя; шапка без годов; пустая прогнозная ячейка; `'5,0-4,0'` (lo > hi) → ошибка с адресом; неразбираемая ячейка (`'около 5'`);
   - warn-ветки: неизвестная подпись — пропуск (не ошибка); отсутствие core-строки в книге — ошибка; отсутствие не-core — предупреждение (последние два — на синтетически удалённой строке из настоящей книги через копию листа; допустимо `xlsx.SetCellValue` в тесте — разметку не менять);
   - харнесс `appendRecorder`: `mtForecastAppendPoints(release)` кладёт 64 строки для 05082026 с ожидаемым первым/последним (`sorted by row order` — зафиксировать фактический порядок).
-- [ ] **Step 3: Прогнать — падает** (`go test ./cbr/ -run 'MtForecast' -v` — компиляция не проходит: функций нет).
-- [ ] **Step 4: `cbr/mt_forecast_meta.go`.** Реестр `mtForecastIndicators` (16 записей: `Code`, `Label` — нормализованная подпись из спеки §3.2, `Title`, `Unit`, `Core`), `mtForecastIndicatorByLabel`, `var cbrMtForecastSeriesMeta = mtForecastMeta()` — описания из спеки §3.7 (origin: «ЦБ, „Комментарий к среднесрочному прогнозу“/„Среднесрочный прогноз“, таблица „Табл 1“, строка „…“»).
-- [ ] **Step 5: `cbr/mt_forecast_parse.go`.** Слоистая нормализация и разбор строго по спеке §3.3: базовая нормализация → подпись (тире→`-`, срез хвостовых цифр) → значение (юникод-надстрочные, точка/диапазон регулярками, сноска-приклейка только у ровно 2-знаковых дробей, `lo ≤ hi`); шапка — ближайшая строка выше первой строки-показателя с ≥2 годами; факт-колонки (`факт`/`оценка`) пропускаются; конец таблицы — `^\d+ `; fail-fast и warn по §3.3.
-- [ ] **Step 6: Прогнать — зелёный** (`go test -race -count=1 ./cbr/ -run 'MtForecast'`), затем весь пакет `go test -race -count=1 ./cbr/`.
-- [ ] **Step 7: Commit** — `cbr: mt_forecast parse — Табл 1, meta registry, fixtures`.
+- [x] **Step 3: Прогнать — падает** (`go test ./cbr/ -run 'MtForecast' -v` — компиляция не проходит: функций нет).
+- [x] **Step 4: `cbr/mt_forecast_meta.go`.** Реестр `mtForecastIndicators` (16 записей: `Code`, `Label` — нормализованная подпись из спеки §3.2, `Title`, `Unit`, `Core`), `mtForecastIndicatorByLabel`, `var cbrMtForecastSeriesMeta = mtForecastMeta()` — описания из спеки §3.7 (origin: «ЦБ, „Комментарий к среднесрочному прогнозу“/„Среднесрочный прогноз“, таблица „Табл 1“, строка „…“»).
+- [x] **Step 5: `cbr/mt_forecast_parse.go`.** Слоистая нормализация и разбор строго по спеке §3.3: базовая нормализация → подпись (тире→`-`, срез хвостовых цифр) → значение (юникод-надстрочные, точка/диапазон регулярками, сноска-приклейка только у ровно 2-знаковых дробей, `lo ≤ hi`); шапка — ближайшая строка выше первой строки-показателя с ≥2 годами; факт-колонки (`факт`/`оценка`) пропускаются; конец таблицы — `^\d+ `; fail-fast и warn по §3.3.
+- [x] **Step 6: Прогнать — зелёный** (`go test -race -count=1 ./cbr/ -run 'MtForecast'`), затем весь пакет `go test -race -count=1 ./cbr/`.
+- [x] **Step 7: Commit** — `cbr: mt_forecast parse — Табл 1, meta registry, fixtures`.
 
 ### Task 2: Импортёр (индекс → гейт → цикл выпусков), витрина, регистрация, расписание
 
@@ -72,17 +72,17 @@
 - Consumes (из Task 1): `mtForecastParseTabl1`, `cbrMtForecastSeriesMeta`, `mtForecastPoint`.
 - Produces: `cbr_mt_forecast` (таблица и `Name()`), `v_cbr_mt_forecast`, `afterCbrMtForecast([]util.SeriesMeta)`.
 
-- [ ] **Step 1: Тесты (сначала падающие).** В `cbr/mt_forecast_test.go`:
+- [x] **Step 1: Тесты (сначала падающие).** В `cbr/mt_forecast_test.go`:
   - `mtForecastIndexReleases` на `cbr/testdata/mp_summary_index.html`: 11 карточек «Комментарий к среднесрочному прогнозу Банка России» → 2 страничные (`release_date` 2026-05-07 с `meeting_date` 2026-04-24; 2026-08-05 с 2026-07-24) + 9 PDF-пропусков; расхождение даты карточки и слага → ошибка (проверка на копии фикстуры в памяти — дата карточки подменяется в байтах страницы, файл на диске не меняется); индекс без страничных карточек → ошибка;
   - `mtForecastPageXlsxURL` на `cbr/testdata/mt_forecast_page_05082026.html` (`util.FindLink` по `mtForecastXlsxSel`) → `/Content/Document/File/194307/commet_graph_05082026.xlsx` (отсутствие ссылки → ошибка);
   - `mtForecastNewReleases`: пустое множество известных → все (старые первыми), полное → пусто;
   - DDL-pin по прецеденту `TestMPSummaryDdlPins`: литерал `cbr_mt_forecast` внутри `mtForecastDdl` и колонки/ключ совпадают со спекой §3.1.
-- [ ] **Step 2: Прогнать — падает.**
-- [ ] **Step 3: `cbr/mt_forecast.go`.** Константы (`mtForecastIndexUrl`, `mtForecastCardTitle`, `mtForecastHrefMarker = "comment_"`, `mtForecastXlsxSel = a[href$=".xlsx"]`, `mtForecastDdl`, `mtForecastCountPoints = SELECT count() FROM cbr_mt_forecast FINAL`, `mtForecastKnownReleasesQuery`, `mtForecastReleaseCountQuery` с плейсхолдером); `mtForecastStat`/`Name()`; `Import()` — порядок по спеке §3.5 (DDL → `afterCbrMtForecast` → индекс → гейт → цикл: страница → `local := s.ClickHouseImport` + `DataUrl`+`ImportFunc` → поста-чек строк выпуска → `errors.Join`; no-op-сообщение со счётчиками); `mtForecastAppendPoints`. Комментарии — в стиле дипа (почему гейт, почему производные раньше, что не отслеживает подмена файла).
-- [ ] **Step 4: `cbr/views.go`.** `cbrMtForecastView` (Select и комментарии таблицы/колонок — спека §3.7) + `afterCbrMtForecast(meta)` (каталог + `CreateView`; прецедент `afterCbrDip`).
-- [ ] **Step 5: Регистрация + расписание.** Запись в `cbr/importers.go`: `{cbrMtForecastImporter, "cbr_mt_forecast", "SELECT count() FROM cbr_mt_forecast FINAL"}` (литералы); импортер-var с `TableName`, `CreateTable`, `PublicationCountPoints` (без `AfterImport` — производные публикует `Import()`); шаг `cbr_mt_forecast` в хвост `dagu/cbr.yaml` (retry_policy как у соседей); обновить ожидаемые наборы в `cbr/importers_test.go` (карта префлайтов, ключевые шаги, счётные комментарии — «20-я запись», «20-й шаг»).
-- [ ] **Step 6: Прогнать — зелёный.** `go test -race -count=1 ./cbr/` (включая энфорсер реестра), `dagu validate dagu/cbr.yaml` (если dagu доступен; иначе зафиксировать в отчёте), `gofmt`, `go vet ./cbr/`.
-- [ ] **Step 7: Commit** — `cbr: add mt_forecast importer (index, gate, per-release cycle)`.
+- [x] **Step 2: Прогнать — падает.**
+- [x] **Step 3: `cbr/mt_forecast.go`.** Константы (`mtForecastIndexUrl`, `mtForecastCardTitle`, `mtForecastHrefMarker = "comment_"`, `mtForecastXlsxSel = a[href$=".xlsx"]`, `mtForecastDdl`, `mtForecastCountPoints = SELECT count() FROM cbr_mt_forecast FINAL`, `mtForecastKnownReleasesQuery`, `mtForecastReleaseCountQuery` с плейсхолдером); `mtForecastStat`/`Name()`; `Import()` — порядок по спеке §3.5 (DDL → `afterCbrMtForecast` → индекс → гейт → цикл: страница → `local := s.ClickHouseImport` + `DataUrl`+`ImportFunc` → поста-чек строк выпуска → `errors.Join`; no-op-сообщение со счётчиками); `mtForecastAppendPoints`. Комментарии — в стиле дипа (почему гейт, почему производные раньше, что не отслеживает подмена файла).
+- [x] **Step 4: `cbr/views.go`.** `cbrMtForecastView` (Select и комментарии таблицы/колонок — спека §3.7) + `afterCbrMtForecast(meta)` (каталог + `CreateView`; прецедент `afterCbrDip`).
+- [x] **Step 5: Регистрация + расписание.** Запись в `cbr/importers.go`: `{cbrMtForecastImporter, "cbr_mt_forecast", "SELECT count() FROM cbr_mt_forecast FINAL"}` (литералы); импортер-var с `TableName`, `CreateTable`, `PublicationCountPoints` (без `AfterImport` — производные публикует `Import()`); шаг `cbr_mt_forecast` в хвост `dagu/cbr.yaml` (retry_policy как у соседей); обновить ожидаемые наборы в `cbr/importers_test.go` (карта префлайтов, ключевые шаги, счётные комментарии — «20-я запись», «20-й шаг»).
+- [x] **Step 6: Прогнать — зелёный.** `go test -race -count=1 ./cbr/` (включая энфорсер реестра), `dagu validate dagu/cbr.yaml` (если dagu доступен; иначе зафиксировать в отчёте), `gofmt`, `go vet ./cbr/`.
+- [x] **Step 7: Commit** — `cbr: add mt_forecast importer (index, gate, per-release cycle)`.
 
 ### Task 3: MCP-контур — проверки, грант, снимок покрытия
 
@@ -93,11 +93,11 @@
 
 **Interfaces:** Produces: проверки `make mcp-check` для витрины/каталога/винтажности/закрытости сырой таблицы; грант `kimi_reader`; ветка снимка покрытия для §4.1 роадмапа.
 
-- [ ] **Step 1: `sql/mcp_kimi_reader.sql`** — `GRANT SELECT ON default.v_cbr_mt_forecast TO kimi_reader;` (в конец списка).
-- [ ] **Step 2: `sql/key_rate_coverage.sql`** — ветка `cbr_mt_forecast`: группировка по `indicator`, `count()`, `min(release_date)`, `max(release_date)` + комментарий: даты — публикации выпусков (винтаж), само число точек умножается на число выпусков, число выпусков — отдельным запросом `uniqExact(release_date)` (стиль комментария дипа).
-- [ ] **Step 3: `scripts/mcp_check.py`** — блок по образцу дипа (строки ~832–929): витрина `v_cbr_mt_forecast` существует, читается и непуста; каталог — ровно 16 (`count() AS n … WHERE source = 'cbr_mt_forecast'`); винтажность — `uniqExact(release_date) > 1`, пустых `release_date`/`meeting_date` нет; сырая `cbr_mt_forecast` закрыта (`ACCESS_DENIED`/497, `UNKNOWN_TABLE` — провал). Комментарии — с причинно-следственной связью (как у дипа).
-- [ ] **Step 4: Проверка синтаксиса** — `python3 -c "import ast; ast.parse(open('scripts/mcp_check.py').read())"`; `python3 scripts/mcp_setup_user_test.py` (если есть офлайн-тест — зелёный).
-- [ ] **Step 5: Commit** — `cbr: mt_forecast MCP checks, grants, coverage snapshot`.
+- [x] **Step 1: `sql/mcp_kimi_reader.sql`** — `GRANT SELECT ON default.v_cbr_mt_forecast TO kimi_reader;` (в конец списка).
+- [x] **Step 2: `sql/key_rate_coverage.sql`** — ветка `cbr_mt_forecast`: группировка по `indicator`, `count()`, `min(release_date)`, `max(release_date)` + комментарий: даты — публикации выпусков (винтаж), само число точек умножается на число выпусков, число выпусков — отдельным запросом `uniqExact(release_date)` (стиль комментария дипа).
+- [x] **Step 3: `scripts/mcp_check.py`** — блок по образцу дипа (строки ~832–929): витрина `v_cbr_mt_forecast` существует, читается и непуста; каталог — ровно 16 (`count() AS n … WHERE source = 'cbr_mt_forecast'`); винтажность — `uniqExact(release_date) > 1`, пустых `release_date`/`meeting_date` нет; сырая `cbr_mt_forecast` закрыта (`ACCESS_DENIED`/497, `UNKNOWN_TABLE` — провал). Комментарии — с причинно-следственной связью (как у дипа).
+- [x] **Step 4: Проверка синтаксиса** — `python3 -c "import ast; ast.parse(open('scripts/mcp_check.py').read())"`; `python3 scripts/mcp_setup_user_test.py` (если есть офлайн-тест — зелёный).
+- [x] **Step 5: Commit** — `cbr: mt_forecast MCP checks, grants, coverage snapshot`.
 
 ### Task 4: Документация — ARCHITECTURE, README, роадмап, публикации
 
@@ -110,10 +110,10 @@
 
 **Interfaces:** Produces: документы, согласованные с кодом (skill `sync-readme-architecture`), включая названные отступления спеки §5 (витрина не long-форма — в приёмочном блоке роадмапа при закрытии пункта).
 
-- [ ] **Step 1: `ARCHITECTURE.md`** — по чек-листу skill'а `sync-readme-architecture` (вызвать его): §6.1/§6.2/§6.3/§8 п.13 + шапка.
-- [ ] **Step 2: `README.md`** — таблица импортёров + всё, что найдёт чек-лист.
-- [ ] **Step 3: `docs/ROADMAP_KEY_RATE.md` + `docs/KEY_RATE_PUBLICATIONS.md`** — по списку выше. Статус ✅ пишется со ссылкой на спеку/план без чисел прогона; там, где нужны числа (`§4.1` — строка покрытия; «приёмка …» в §4.2 №7), ставится формулировка «живая приёмка — отдельным коммитом» — реальные числа и дату дозаполняет контроллер после прогона (порядок стандарта §16.1 п. 8). Плейсхолдеры-маркеры в документе не оставлять.
-- [ ] **Step 4: Commit** — `cbr: mt_forecast docs — architecture, readme, roadmaps`.
+- [x] **Step 1: `ARCHITECTURE.md`** — по чек-листу skill'а `sync-readme-architecture` (вызвать его): §6.1/§6.2/§6.3/§8 п.13 + шапка.
+- [x] **Step 2: `README.md`** — таблица импортёров + всё, что найдёт чек-лист.
+- [x] **Step 3: `docs/ROADMAP_KEY_RATE.md` + `docs/KEY_RATE_PUBLICATIONS.md`** — по списку выше. Статус ✅ пишется со ссылкой на спеку/план без чисел прогона; там, где нужны числа (`§4.1` — строка покрытия; «приёмка …» в §4.2 №7), ставится формулировка «живая приёмка — отдельным коммитом» — реальные числа и дату дозаполняет контроллер после прогона (порядок стандарта §16.1 п. 8). Плейсхолдеры-маркеры в документе не оставлять.
+- [x] **Step 4: Commit** — `cbr: mt_forecast docs — architecture, readme, roadmaps`.
 
 ---
 
