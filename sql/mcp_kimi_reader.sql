@@ -42,3 +42,6 @@ GRANT SELECT ON default.v_bank_macro TO kimi_reader;
 GRANT SELECT ON default.v_cbr_bop TO kimi_reader;
 GRANT SELECT ON default.v_cbr_dip_bulletin TO kimi_reader;
 GRANT SELECT ON default.v_cbr_mt_forecast TO kimi_reader;
+GRANT SELECT ON default.v_bank_loan_portfolio_forward TO kimi_reader;
+GRANT SELECT ON default.v_cbr_form101 TO kimi_reader;
+GRANT SELECT ON default.v_cbr_form101_loans TO kimi_reader;

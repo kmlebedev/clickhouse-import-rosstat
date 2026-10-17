@@ -140,6 +140,126 @@ FROM (
 	},
 }
 
+// bankLoanPortfolioForwardView — секторная форвардная витрина кредитного
+// портфеля: помесячные ряды банков-эмитентов, дата публикации из календаря
+// bank_results и сравнение с агрегатом ЦБ «Кредит экономике».
+//
+// Источник значений — v_company_financials, а не сырая company_financials:
+// так витрина наследует правило разрешения документов (у Сбербанка РСБУ, у
+// группы ВТБ МСФО) и не повторяет его. Поэтому в companyViewsDDLViews она идёт
+// ПОСЛЕ v_company_financials — util.CreateView создаёт витрины в порядке списка,
+// и раньше этой витрины v_company_financials ещё не существует.
+//
+// Две поправки к данным, без которых цифры неверны:
+//
+//   - report_month ЦБ сдвинут на месяц назад (`subtractMonths(date, 1)`) по
+//     внутренней конвенции проекта: комментарий колонки `date` витрины
+//     `v_cbr_macro` (`cbr/views.go:40`) фиксирует «кредиты — на месяц вперёд»;
+//     первоисточник ЦБ для `credit_m2x` не сверен. Значение на 2026-07-01 по
+//     этой конвенции — июньский сток.
+//   - значение ЦБ переведено из млн руб. в млрд руб. (/ 1000) — в той же
+//     единице, что и портфель банков.
+//
+// Дата публикации из bank_results относится ко всему релизу банка, а не к
+// отдельной метрике: присоединение идёт по (bank, report_month), поэтому одна
+// дата применяется ко всем трём метрикам банка за месяц; metric в threshold —
+// ведущий ряд триггера (customer_loans).
+//
+// Базы РСБУ и МСФО не совпадают: уровни и темпы сравнимы только внутри ряда
+// одного банка (bank, metric), а bank_share_of_cbr_pct — справочная доля, а не
+// точная доля рынка.
+var bankLoanPortfolioForwardView = util.View{
+	Name:   "v_bank_loan_portfolio_forward",
+	Tables: []string{companyFinancialsTable, "events_calendar", "cbr_credit_m2x"},
+	Select: `WITH bank AS (
+    SELECT company AS bank,
+           toDate(concat(substring(period, 1, 4), '-', substring(period, 6, 2), '-01')) AS report_month,
+           metric, source_kind, value
+    FROM v_company_financials
+    WHERE period_type = 'M'
+      AND metric IN ('customer_loans', 'loans_corporations', 'loans_individuals')
+),
+cal AS (
+    SELECT JSONExtractString(threshold, 'bank') AS bank,
+           toDate(concat(JSONExtractString(threshold, 'report_month'), '-01')) AS report_month,
+           argMax(event_date, (status IN ('done', 'verified'), event_date)) AS publish_date,
+           argMax(status, (status IN ('done', 'verified'), event_date)) AS event_status,
+           argMax(JSONExtractString(threshold, 'date_status'),
+                  (status IN ('done', 'verified'), event_date)) AS date_status
+    FROM events_calendar FINAL
+    WHERE category = 'bank_results'
+      AND JSONExtractString(threshold, 'bank') != ''
+      AND JSONExtractString(threshold, 'report_month') != ''
+    GROUP BY bank, report_month
+),
+bank_prev AS (
+    SELECT b.bank AS bank, b.report_month AS report_month, b.metric AS metric,
+           b.source_kind AS source_kind, b.value AS value,
+           p1.value AS prev_value,
+           p12.value AS prev12_value
+    FROM bank b
+    LEFT JOIN bank p1 ON p1.bank = b.bank AND p1.metric = b.metric
+        AND p1.report_month = subtractMonths(b.report_month, 1)
+    LEFT JOIN bank p12 ON p12.bank = b.bank AND p12.metric = b.metric
+        AND p12.report_month = subtractMonths(b.report_month, 12)
+),
+cbr AS (
+    SELECT subtractMonths(date, 1) AS report_month,
+           toNullable(value / 1000) AS cbr_total
+    FROM cbr_credit_m2x FINAL
+    -- Имя ряда в сырой таблице — name; series — колонка витрины v_cbr_macro.
+    WHERE name = 'Кредит экономике'
+),
+cbr_prev AS (
+    SELECT c.report_month AS report_month, c.cbr_total AS cbr_total,
+           p1.cbr_total AS prev_cbr_total,
+           p12.cbr_total AS prev12_cbr_total
+    FROM cbr c
+    LEFT JOIN cbr p1 ON p1.report_month = subtractMonths(c.report_month, 1)
+    LEFT JOIN cbr p12 ON p12.report_month = subtractMonths(c.report_month, 12)
+)
+SELECT
+    b.bank AS bank,
+    b.report_month AS report_month,
+    b.metric AS metric,
+    b.source_kind AS source_kind,
+    b.value AS value_bln_rub,
+    if(isNull(b.prev_value) OR b.prev_value = 0, NULL,
+       round(b.value / b.prev_value - 1, 6)) AS mom_pct,
+    if(isNull(b.prev12_value) OR b.prev12_value = 0, NULL,
+       round(b.value / b.prev12_value - 1, 6)) AS yoy_pct,
+    if(c.bank = '', NULL, c.publish_date) AS publish_date,
+    if(c.bank = '', 'missing', c.event_status) AS event_status,
+    if(c.bank = '', 'missing', c.date_status) AS date_status,
+    r.cbr_total AS cbr_credit_total_bln_rub,
+    if(isNull(r.prev_cbr_total) OR r.prev_cbr_total = 0, NULL,
+       round(r.cbr_total / r.prev_cbr_total - 1, 6)) AS cbr_mom_pct,
+    if(isNull(r.prev12_cbr_total) OR r.prev12_cbr_total = 0, NULL,
+       round(r.cbr_total / r.prev12_cbr_total - 1, 6)) AS cbr_yoy_pct,
+    if(isNull(r.cbr_total) OR r.cbr_total = 0, NULL, round(b.value / r.cbr_total * 100, 2)) AS bank_share_of_cbr_pct
+FROM bank_prev b
+LEFT JOIN cal c ON b.bank = c.bank AND b.report_month = c.report_month
+LEFT JOIN cbr_prev r ON b.report_month = r.report_month
+ORDER BY b.report_month DESC, b.bank, b.metric`,
+	Comment: "Помесячный кредитный портфель банков-эмитентов с датой публикации из календаря `bank_results`: SBER (РСБУ) и VTBR (МСФО) — пилот; MoM/YoY, сравнение с «Кредитом экономике» ЦБ (млн руб. → млрд руб., дата ЦБ сдвинута на месяц назад), доля портфеля банка в агрегате ЦБ. Базы РСБУ/МСФО не совпадают — темпы считать внутри ряда. `publish_date` NULL — дата публикации не заведена в календарь",
+	Columns: map[string]string{
+		"bank":                     "Банк-эмитент: 'SBER' — Сбербанк (РСБУ), 'VTBR' — группа ВТБ (МСФО). Базы отчётности разные — уровни и темпы сравнивать только внутри ряда одного банка",
+		"report_month":             "Первый день отчётного месяца (Date). Поле ведёт ряд; отчётный месяц — не дата публикации, дата публикации лежит в publish_date",
+		"metric":                   "Показатель: 'customer_loans' — кредиты клиентам, 'loans_corporations' — корпоративные, 'loans_individuals' — розничные. Значение в млрд ₽",
+		"source_kind":              "Вид отчётности, из которой взято значение: 'ras' — РСБУ (Сбербанк), 'ifrs' — МСФО (группа ВТБ). Базы не совпадают, темпы считать внутри ряда",
+		"value_bln_rub":            "Кредитный портфель на отчётный месяц, млрд ₽; NULL — значение не прочиталось у источника",
+		"mom_pct":                  "Темп к предыдущему месяцу как доля (0,011 = 1,1 %); NULL при отсутствии предыдущей точки ряда",
+		"yoy_pct":                  "Темп к тому же месяцу прошлого года как доля (0,011 = 1,1 %); NULL, если точки год назад нет",
+		"publish_date":             "Дата публикации из events_calendar.category='bank_results' (event_date); относится ко всему релизу банка и применяется ко всем трём метрикам за отчётный месяц (metric в threshold — ведущий ряд триггера); NULL — дата публикации не заведена в календарь",
+		"event_status":             "Статус события публикации: 'pending' — ожидается, 'done' — состоялось, 'verified' — проверено, 'missing' — строки календаря нет",
+		"date_status":              "Статус даты публикации: 'confirmed' — подтверждена IR-календарём, 'expected' — оценка по прошлым датам, 'missing' — строки календаря нет",
+		"cbr_credit_total_bln_rub": "«Кредит экономике» ЦБ, млрд ₽ (cbr_credit_m2x, name = 'Кредит экономике'); дата ЦБ сдвинута на месяц назад (subtractMonths(date, 1)), значение переведено из млн в млрд (/ 1000)",
+		"cbr_mom_pct":              "Темп агрегата ЦБ «Кредит экономике» к предыдущему месяцу как доля (0,011 = 1,1 %); NULL при отсутствии предыдущей точки",
+		"cbr_yoy_pct":              "Темп агрегата ЦБ «Кредит экономике» к тому же месяцу прошлого года как доля (0,011 = 1,1 %); NULL, если точки год назад нет",
+		"bank_share_of_cbr_pct":    "Индикативная доля портфеля банка в агрегате ЦБ, %: value_bln_rub / cbr_credit_total_bln_rub * 100. Базы (РСБУ/МСФО и агрегат ЦБ) могут не совпадать — показатель справочный, не точная доля рынка",
+	},
+}
+
 // companyMetricSourcesView — аудит расхождений: ВСЕ версии значения, включая
 // проигравшие в v_company_financials.
 //
@@ -227,10 +347,17 @@ func companyViewsDDL() []string {
 // витрин создано из скольких. Разошедшись, эти два места дали бы лог, считающий
 // не то, что импортёр создаёт.
 func companyViewsDDLViews() []util.View {
-	return []util.View{companyFinancialsView, companyMetricSourcesView, companyOperatingView}
+	return []util.View{
+		companyFinancialsView,
+		// Форвардная витрина читает v_company_financials, поэтому идёт строго
+		// после неё: util.CreateView создаёт витрины в порядке списка.
+		bankLoanPortfolioForwardView,
+		companyMetricSourcesView,
+		companyOperatingView,
+	}
 }
 
-// companyViews создаёт таблицу метрик компаний, три витрины над ней и их
+// companyViews создаёт таблицу метрик компаний, четыре витрины над ней и их
 // комментарии, а описания рядов кладёт в общий series_catalog.
 //
 // Порядок внутри Import не переставлять:
@@ -286,7 +413,7 @@ func (s *companyViews) Import(ctx context.Context, conn driver.Conn) (count int6
 	// произвольный выбор: импортёр не пишет метрики компаний вообще, он создаёт
 	// таблицу, витрины и описания рядов. Раньше он возвращал голый ноль, и вывод
 	// "Imported 0 rows of company_views" читался как «ничего не сделано» — хотя
-	// прогон создал таблицу, три витрины и записал строки каталога.
+	// прогон создал таблицу, четыре витрины и записал строки каталога.
 	//
 	// Счётчик намеренно не разложен на «созданные» и «перезаписанные» витрины:
 	// CreateView идемпотентен и на повторном прогоне пересоздаёт все витрины, а
