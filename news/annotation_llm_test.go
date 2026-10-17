@@ -26,6 +26,7 @@ type newsTestLLMRequest struct {
 	Method      string
 	Path        string
 	APIKey      string
+	Auth        string // Authorization: Bearer … (OpenAI-путь); у Anthropic пусто
 	ContentType string
 	Body        string
 }
@@ -52,6 +53,7 @@ func newNewsTestLLMMock(t *testing.T, responses ...newsTestLLMResponse) *newsTes
 			Method:      r.Method,
 			Path:        r.URL.Path,
 			APIKey:      r.Header.Get("x-api-key"),
+			Auth:        r.Header.Get("Authorization"),
 			ContentType: r.Header.Get("Content-Type"),
 			Body:        string(body),
 		})
@@ -121,6 +123,21 @@ func newsTestEmptyContentBody(t *testing.T) string {
 	return newsTestEnvelope(t, nil)
 }
 
+// newsTestOpenAIBody — тело успешного OpenAI-совместимого ответа: content в
+// choices[0].message.content (путь GLM в профиле glm).
+func newsTestOpenAIBody(t *testing.T, content string) string {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"choices": []any{map[string]any{
+			"message": map[string]any{"content": content},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("сборка OpenAI-ответа: %v", err)
+	}
+	return string(body)
+}
+
 // newsTestPayloadBody — content ответа модели ({"messages":[…]}). Собирается json.Marshal-ом,
 // чтобы цитаты с кавычками и кириллицей не приходилось экранировать вручную.
 func newsTestPayloadBody(t *testing.T, messages ...newsAnnotationMessage) string {
@@ -172,8 +189,9 @@ func newsTestValidMessage(url string) newsAnnotationMessage {
 	}
 }
 
-// TestNewsLLMConfigFromEnv — конфигурация LLM-разметки: все три переменные заполнены → ok;
-// любая пустая → ok=false без ошибки (импорт деградирует, догон следующим прогоном).
+// TestNewsLLMConfigFromEnv — конфигурация LLM-разметки по профилю: default читает общие
+// LLM_* и идёт Anthropic-путём, glm — GLM_LLM_* и OpenAI-путём. Любая пустая переменная →
+// ok=false (импорт деградирует, догон следующим прогоном); неизвестный профиль — тоже false.
 // Окружающие пробелы обрезаются: env-файл легко приносит хвостовой перевод строки.
 func TestNewsLLMConfigFromEnv(t *testing.T) {
 	const (
@@ -181,45 +199,58 @@ func TestNewsLLMConfigFromEnv(t *testing.T) {
 		key   = "test-key"
 		model = "test-model"
 	)
-	cases := []struct {
-		name             string
-		base, key, model string
-		ok               bool
-	}{
-		{"все переменные заполнены", base, key, model, true},
-		{"нет LLM_BASE_URL", "", key, model, false},
-		{"нет LLM_API_KEY", base, "", model, false},
-		{"нет NEWS_LLM_MODEL", base, key, "", false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv(newsLLMBaseURLEnv, tc.base)
-			t.Setenv(newsLLMAPIKeyEnv, tc.key)
-			t.Setenv(newsLLMModelEnv, tc.model)
-			gotBase, gotKey, gotModel, ok := newsLLMConfigFromEnv()
-			if ok != tc.ok {
-				t.Fatalf("ok = %v, want %v", ok, tc.ok)
-			}
-			if !tc.ok {
-				return
-			}
-			if gotBase != base || gotKey != key || gotModel != model {
-				t.Errorf("конфигурация = (%q, %q, %q), want (%q, %q, %q)",
-					gotBase, gotKey, gotModel, base, key, model)
-			}
-		})
-	}
+	t.Run("default", func(t *testing.T) {
+		t.Setenv(newsLLMProfileEnv, "")
+		t.Setenv(newsLLMBaseURLEnv, base)
+		t.Setenv(newsLLMAPIKeyEnv, key)
+		t.Setenv(newsLLMModelEnv, model)
+		cfg, ok := newsLLMConfigFromEnv()
+		if !ok {
+			t.Fatal("ok = false, want true при полном default-профиле")
+		}
+		if cfg.BaseURL != base || cfg.APIKey != key || cfg.Model != model || cfg.API != "anthropic" {
+			t.Errorf("default-конфигурация = %+v, want base/key/model и api=anthropic", cfg)
+		}
+	})
+	t.Run("glm", func(t *testing.T) {
+		t.Setenv(newsLLMProfileEnv, "glm")
+		t.Setenv(newsLLMGLMBaseURLEnv, base)
+		t.Setenv(newsLLMGLMAPIKeyEnv, key)
+		t.Setenv(newsLLMGLMModelEnv, model)
+		cfg, ok := newsLLMConfigFromEnv()
+		if !ok {
+			t.Fatal("ok = false, want true при полном glm-профиле")
+		}
+		if cfg.BaseURL != base || cfg.APIKey != key || cfg.Model != model || cfg.API != "openai" {
+			t.Errorf("glm-конфигурация = %+v, want base/key/model и api=openai", cfg)
+		}
+	})
+	t.Run("glm без ключа", func(t *testing.T) {
+		t.Setenv(newsLLMProfileEnv, "glm")
+		t.Setenv(newsLLMGLMBaseURLEnv, base)
+		t.Setenv(newsLLMGLMAPIKeyEnv, "")
+		t.Setenv(newsLLMGLMModelEnv, model)
+		if _, ok := newsLLMConfigFromEnv(); ok {
+			t.Fatal("ok = true при пустом GLM_LLM_API_KEY, want false")
+		}
+	})
+	t.Run("неизвестный профиль", func(t *testing.T) {
+		t.Setenv(newsLLMProfileEnv, "mimo")
+		if _, ok := newsLLMConfigFromEnv(); ok {
+			t.Fatal("ok = true при неизвестном NEWS_LLM_PROFILE, want false")
+		}
+	})
 	t.Run("окружающие пробелы обрезаются", func(t *testing.T) {
+		t.Setenv(newsLLMProfileEnv, " default ")
 		t.Setenv(newsLLMBaseURLEnv, "  "+base+"\n")
 		t.Setenv(newsLLMAPIKeyEnv, "\t"+key)
 		t.Setenv(newsLLMModelEnv, model+" ")
-		gotBase, gotKey, gotModel, ok := newsLLMConfigFromEnv()
+		cfg, ok := newsLLMConfigFromEnv()
 		if !ok {
 			t.Fatal("ok = false, want true при непустых значениях в пробелах")
 		}
-		if gotBase != base || gotKey != key || gotModel != model {
-			t.Errorf("конфигурация = (%q, %q, %q), want (%q, %q, %q)",
-				gotBase, gotKey, gotModel, base, key, model)
+		if cfg.BaseURL != base || cfg.APIKey != key || cfg.Model != model || cfg.API != "anthropic" {
+			t.Errorf("конфигурация = %+v, want (%q, %q, %q, anthropic)", cfg, base, key, model)
 		}
 	})
 }
@@ -291,6 +322,129 @@ func TestNewsLLMAskOnceOK(t *testing.T) {
 		if !strings.Contains(req.Body, want) {
 			t.Errorf("в теле запроса нет %q", want)
 		}
+	}
+	if len(payload.Messages) != 1 || payload.Messages[0].URL != inputs[0].URL {
+		t.Errorf("payload = %+v, want одно сообщение %s", payload, inputs[0].URL)
+	}
+}
+
+// TestNewsLLMAskOnceOpenAI — профиль glm: запрос уходит на /v1/chat/completions с
+// Authorization: Bearer, response_format=json_object и reasoning_effort=none; ответ читается
+// из choices[0].message.content. Это транспорт, которым GLM размечивал резюме в сравнении 1.8.
+func TestNewsLLMAskOnceOpenAI(t *testing.T) {
+	inputs := newsTestLLMInputs(1)
+	payloadBody := newsTestPayloadBody(t, newsTestValidMessage(inputs[0].URL))
+	mock := newNewsTestLLMMock(t, newsTestLLMResponse{Body: newsTestOpenAIBody(t, payloadBody)})
+
+	payload, err := newsLLMAskOnce(context.Background(), newsLLMConfig{
+		BaseURL: mock.url, APIKey: "test-key", Model: "zai-org/GLM-5.3-Flash", API: "openai",
+	}, inputs)
+	if err != nil {
+		t.Fatalf("newsLLMAskOnce(openai): %v", err)
+	}
+	if mock.calls() != 1 {
+		t.Fatalf("запросов %d, want 1 (без ретрая при валидном ответе)", mock.calls())
+	}
+	req := mock.request(0)
+	if req.Method != http.MethodPost || req.Path != "/v1/chat/completions" {
+		t.Errorf("запрос = %s %s, want POST /v1/chat/completions", req.Method, req.Path)
+	}
+	if req.Auth != "Bearer test-key" {
+		t.Errorf("Authorization = %q, want %q", req.Auth, "Bearer test-key")
+	}
+	if req.APIKey != "" {
+		t.Errorf("x-api-key = %q, want пусто (OpenAI-путь шлёт ключ в Authorization)", req.APIKey)
+	}
+	for _, want := range []string{
+		`"model":"zai-org/GLM-5.3-Flash"`,
+		`"max_tokens":8192`,
+		`"temperature":0`,
+		`"response_format":{"type":"json_object"}`,
+		`"reasoning_effort":"none"`,
+		`"role":"system"`,
+		`"role":"user"`,
+		"Редакция инструкции: 1.",
+		inputs[0].URL,
+		inputs[0].Description,
+	} {
+		if !strings.Contains(req.Body, want) {
+			t.Errorf("в теле OpenAI-запроса нет %q", want)
+		}
+	}
+	if len(payload.Messages) != 1 || payload.Messages[0].URL != inputs[0].URL {
+		t.Errorf("payload = %+v, want одно сообщение %s", payload, inputs[0].URL)
+	}
+}
+
+// TestNewsLLMOpenAIURL — путь OpenAI-транспорта из base профиля: корень гейтвея, хвостовой
+// /v1 (не удваивать) и Anthropic-префикс /anthropic (снять).
+func TestNewsLLMOpenAIURL(t *testing.T) {
+	for _, tc := range []struct{ base, want string }{
+		{"https://gate.joingonka.ai", "https://gate.joingonka.ai/v1/chat/completions"},
+		{"https://gate.joingonka.ai/", "https://gate.joingonka.ai/v1/chat/completions"},
+		{"https://gate.joingonka.ai/v1", "https://gate.joingonka.ai/v1/chat/completions"},
+		{"https://api.example/anthropic", "https://api.example/v1/chat/completions"},
+	} {
+		if got := newsLLMOpenAIURL(tc.base); got != tc.want {
+			t.Errorf("newsLLMOpenAIURL(%q) = %q, want %q", tc.base, got, tc.want)
+		}
+	}
+}
+
+// TestNewsLLMAskOnceOpenAIErrors — отказ провайдера не ретраится, а пустой content и битый
+// конверт — ошибки формата (их повторяет newsLLMAsk, а не newsLLMAskOnce).
+func TestNewsLLMAskOnceOpenAIErrors(t *testing.T) {
+	inputs := newsTestLLMInputs(1)
+	cfg := func(url string) newsLLMConfig {
+		return newsLLMConfig{BaseURL: url, APIKey: "test-key", Model: "glm-test", API: "openai"}
+	}
+
+	t.Run("500", func(t *testing.T) {
+		mock := newNewsTestLLMMock(t, newsTestLLMResponse{Status: http.StatusInternalServerError, Body: `{"error":"boom"}`})
+		_, err := newsLLMAskOnce(context.Background(), cfg(mock.url), inputs)
+		if err == nil {
+			t.Fatal("newsLLMAskOnce(openai, 500) вернул nil-ошибку")
+		}
+		if newsIsFormatError(err) {
+			t.Errorf("500 классифицирован как формат: %v (ретрай не нужен)", err)
+		}
+		if mock.calls() != 1 {
+			t.Errorf("запросов %d, want 1 (500 не ретраится)", mock.calls())
+		}
+	})
+	t.Run("пустой content", func(t *testing.T) {
+		mock := newNewsTestLLMMock(t, newsTestLLMResponse{Body: `{"choices":[{"message":{"content":""}}]}`})
+		_, err := newsLLMAskOnce(context.Background(), cfg(mock.url), inputs)
+		if !newsIsFormatError(err) {
+			t.Fatalf("пустой content: err = %v, want ошибку формата", err)
+		}
+	})
+	t.Run("битый конверт", func(t *testing.T) {
+		mock := newNewsTestLLMMock(t, newsTestLLMResponse{Body: `{not-json`})
+		_, err := newsLLMAskOnce(context.Background(), cfg(mock.url), inputs)
+		if !newsIsFormatError(err) {
+			t.Fatalf("битый конверт: err = %v, want ошибку формата", err)
+		}
+	})
+}
+
+// TestNewsLLMAskOpenAIRetry — ошибка формата OpenAI-пути лечится одним повтором: первый ответ
+// с пустым content, второй валидный; newsLLMAsk делает два вызова и возвращает разметку.
+func TestNewsLLMAskOpenAIRetry(t *testing.T) {
+	inputs := newsTestLLMInputs(1)
+	payloadBody := newsTestPayloadBody(t, newsTestValidMessage(inputs[0].URL))
+	mock := newNewsTestLLMMock(t,
+		newsTestLLMResponse{Body: `{"choices":[{"message":{"content":""}}]}`},
+		newsTestLLMResponse{Body: newsTestOpenAIBody(t, payloadBody)})
+
+	payload, err := newsLLMAsk(context.Background(), newsLLMConfig{
+		BaseURL: mock.url, APIKey: "test-key", Model: "glm-test", API: "openai",
+	}, inputs)
+	if err != nil {
+		t.Fatalf("newsLLMAsk(openai): %v", err)
+	}
+	if mock.calls() != 2 {
+		t.Errorf("запросов %d, want 2 (пустой content + повтор)", mock.calls())
 	}
 	if len(payload.Messages) != 1 || payload.Messages[0].URL != inputs[0].URL {
 		t.Errorf("payload = %+v, want одно сообщение %s", payload, inputs[0].URL)

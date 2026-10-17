@@ -2307,9 +2307,13 @@ func setNewsLLMEnv(t *testing.T, baseURL, model string) {
 // clearNewsLLMEnv выключает LLM-шаг: пустая переменная — основание для деградации.
 func clearNewsLLMEnv(t *testing.T) {
 	t.Helper()
+	t.Setenv(newsLLMProfileEnv, "")
 	t.Setenv(newsLLMBaseURLEnv, "")
 	t.Setenv(newsLLMAPIKeyEnv, "")
 	t.Setenv(newsLLMModelEnv, "")
+	t.Setenv(newsLLMGLMBaseURLEnv, "")
+	t.Setenv(newsLLMGLMAPIKeyEnv, "")
+	t.Setenv(newsLLMGLMModelEnv, "")
 }
 
 // newsTestCandidate — кандидат разметки в том виде, в каком его отдаёт

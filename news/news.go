@@ -649,19 +649,16 @@ func (s *newsImport) Import(ctx context.Context, conn driver.Conn) (count int64,
 	// бэклог news_annotation, иначе после простоя разметка не догналась бы никогда.
 	// Любая ошибка LLM/валидации/записи — warn и продолжение: импорт остаётся зелёным,
 	// догон — следующим прогоном. check сюда не доходит (возврат выше).
-	baseURL, apiKey, model, llmOK := newsLLMConfigFromEnv()
-	if !llmOK {
-		// Один warn за прогон: без него отсутствие разметки выглядело бы тихим дефектом.
-		log.Warnf("news_watch: LLM-разметка пропущена (нет LLM_BASE_URL/LLM_API_KEY/NEWS_LLM_MODEL)")
-	} else {
-		candidates, readErr := readNewsAnnotationCandidates(ctx, conn, model, newsPromptVersion)
+	cfg, llmOK := newsLLMConfigFromEnv()
+	if llmOK {
+		candidates, readErr := readNewsAnnotationCandidates(ctx, conn, cfg.Model, newsPromptVersion)
 		switch {
 		case readErr != nil:
-			log.Warnf("news_watch: LLM-разметка (%s): %v", model, readErr)
+			log.Warnf("news_watch: LLM-разметка (%s): %v", cfg.Model, readErr)
 		case len(candidates) == 0:
 			// Бэклога нет — провайдер не вызывается.
 		default:
-			rows, tagErr := tagTelegramLLM(ctx, newsLLMConfig{BaseURL: baseURL, APIKey: apiKey, Model: model}, candidates)
+			rows, tagErr := tagTelegramLLM(ctx, cfg, candidates)
 			// Успешные батчи пишутся даже при ошибке следующего: tagTelegramLLM возвращает
 			// накопленные строки вместе с ошибкой, и следующий прогон не платит за них снова.
 			if len(rows) > 0 {
@@ -677,11 +674,11 @@ func (s *newsImport) Import(ctx context.Context, conn driver.Conn) (count int64,
 				if _, insErr := insertNewsAnnotations(ctx, conn, rows); insErr != nil {
 					log.Warnf("news_watch: LLM-разметка: запись %s: %v", newsAnnotationTable, insErr)
 				} else {
-					log.Infof("news_watch: LLM %s: размечено %d сообщений, тегов %d", model, docs, tags)
+					log.Infof("news_watch: LLM %s: размечено %d сообщений, тегов %d", cfg.Model, docs, tags)
 				}
 			}
 			if tagErr != nil {
-				log.Warnf("news_watch: LLM-разметка (%s): %v", model, tagErr)
+				log.Warnf("news_watch: LLM-разметка (%s): %v", cfg.Model, tagErr)
 			}
 		}
 	}
