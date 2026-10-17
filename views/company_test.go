@@ -82,7 +82,7 @@ func indexOfStatement(stmts []string, contains string) int {
 // key, and the comments must reach the agent: a view without comments is
 // documented nowhere the agent can look.
 func TestCompanyViewsAreDocumented(t *testing.T) {
-	for _, v := range []util.View{companyFinancialsView, companyMetricSourcesView, companyOperatingView} {
+	for _, v := range []util.View{companyFinancialsView, bankLoanPortfolioForwardView, companyMetricSourcesView, companyOperatingView} {
 		if v.Comment == "" {
 			t.Fatalf("view %s has no table comment", v.Name)
 		}
@@ -232,6 +232,7 @@ func TestCompanyViewsNameTheirSources(t *testing.T) {
 		tables []string
 	}{
 		{companyFinancialsView, []string{companyFinancialsTable}},
+		{bankLoanPortfolioForwardView, []string{"company_financials", "events_calendar", "cbr_credit_m2x"}},
 		{companyMetricSourcesView, []string{companyFinancialsTable}},
 		{companyOperatingView, []string{"databook_polyus"}},
 	}
