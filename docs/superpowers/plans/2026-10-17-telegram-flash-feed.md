@@ -25,10 +25,11 @@
 ## Предусловие и база
 
 - Ветка `feat/telegram-flash-feed` от `main`; первые коммиты — спека и этот план (до кода).
-- Пункты роадмапа — **1.9** (этот PR) и **1.10** (живой LLM-прогон после мерджа 1.8); 1.8 занят
-  веткой `feat/mp-summary-llm-models`, её файлы и статус не трогаем.
+- Пункты роадмапа — **1.9** (этот PR) и **1.10** ✅ (живой прогон 2026-10-17, профиль `glm`);
+  1.8 занят веткой `feat/mp-summary-llm-models`, её файлы и статус не трогаем.
 - Живой прогон 1.9: `make all`, `make import STAT=news_watch`, `NEWS_WATCH_MODE=since|check`,
-  MCP (`kimi_reader`), `make mcp-check`. LLM-переменные в живом окружении **не выставляются**.
+  MCP (`kimi_reader`), `make mcp-check`; LLM-переменные при приёмке 1.9 **не выставляются**.
+  1.10 — отдельный прогон профилем `glm` (2026-10-17).
 - Секреты — только `os.Getenv`; значения не печатать ни в логах, ни в ошибках, ни в отчёте.
 - Вставки — только батчами `PrepareBatch → Append(err!) → Send`; батч принадлежит одной таблице.
 - Сетевых вызовов в `init()` нет; HTTP — только `util.*`; DDL — канон `ARCHITECTURE.md` §6.2.
@@ -45,7 +46,7 @@
 5. **Безопасность:** сырые `news_message_version`/`news_annotation` агенту закрыты; гранты
    только на витрины; секреты не в логах.
 6. **Документы:** ARCHITECTURE/README/ROADMAP/KEY_RATE_CHANNELS/GOLD_THESIS синхронны; 1.8 не
-   затронут; 1.10 остаётся ⏳.
+   затронут; 1.10 ✅ после живой приёмки 2026-10-17.
 
 ---
 
@@ -236,10 +237,11 @@
 - [ ] **Step 4:** `NEWS_WATCH_MODE=check make import STAT=news_watch` — покрытие, дыр нет.
 - [ ] **Step 5:** MCP (`kimi_reader`): `v_news_flash`, `v_news_message_versions`, `v_news_tags`
   читаются; сырые таблицы → `ACCESS_DENIED`; `make mcp-check` — зелёный.
-- [ ] **Step 6:** Обновить статусы 1.9 ✅ / 1.10 ⏳ в роадмапе; протокол — комментарием в PR.
+- [ ] **Step 6:** Обновить статусы 1.9 ✅ / 1.10 ✅ (приёмка 2026-10-17) в роадмапе; протокол — комментарием в PR.
 - [ ] **Step 7:** Финальное ревью ветки (`deepseek/deepseek-flash`); PR.
-- [ ] **Step 8 (после мерджа `feat/mp-summary-llm-models`):** выбрать модель по отчёту
-  сравнения, выставить `NEWS_LLM_MODEL`, живой LLM-прогон, приёмка 1.10, статус ✅.
+- [x] **Step 8 (✅ выполнен 2026-10-17):** профиль `NEWS_LLM_PROFILE=glm`,
+  `zai-org/GLM-5.3-Flash`, 44/44 сообщения `v_news_flash`, 25 с тегами, 39 тегов;
+  статус 1.10 — ✅.
 
 **Модели субагентов:** T1–T4 — `deepseek/deepseek-flash`; task-review — `anthropic/haiku`;
 финальное ревью — `deepseek/deepseek-flash`. В каждый coder-промпт — блок AGENTS.md:
