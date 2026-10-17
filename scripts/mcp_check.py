@@ -1009,24 +1009,25 @@ async def check(params, server_log):
             failed += not expect("SBER customer_loans читается точкой", bool(loan_point_rows), loan_point_detail)
 
             # publish_date витрины берётся из календаря bank_results, а он живёт сидом:
-            # без сида дата всегда NULL, и агент не видит триггеров раскрытия. Семь строк —
-            # это засеянный Q4 2026 (SBER/VTBR по месяцам раскрытия); ноль называет сид,
-            # который надо применить.
+            # без сида дата всегда NULL, и агент не видит триггеров раскрытия. Не меньше
+            # семи строк — это засеянный Q4 2026 (SBER/VTBR по месяцам раскрытия); порог, а
+            # не равенство: новые банки будут добавлять строки, и проверка не должна ломаться.
+            # Ноль называет сид, который надо применить.
             bank_results = text(await session.call_tool("run_query", {"query":
                 "SELECT count() AS n FROM v_events_calendar WHERE category = 'bank_results'"}))
             bank_results_rows = result_rows(bank_results)
             bank_results_n = bank_results_rows[0].get("n") if bank_results_rows else None
             if bank_results_rows is None:
                 bank_results_detail = f"ответ не распознан: {bank_results[:200]}"
-            elif bank_results_n == 7:
+            elif (bank_results_n or 0) >= 7:
                 bank_results_detail = f"строк bank_results: {bank_results_n}"
             elif (bank_results_n or 0) == 0:
                 bank_results_detail = ("строк: 0 — применить сид "
                                        "make ch-sql FILE=sql/events_calendar_bank_results_q4_2026.sql")
             else:
-                bank_results_detail = (f"строк: {bank_results_n}, want 7 — проверить/применить сид "
+                bank_results_detail = (f"строк: {bank_results_n}, want >= 7 — проверить/применить сид "
                                        "make ch-sql FILE=sql/events_calendar_bank_results_q4_2026.sql")
-            failed += not expect("календарь bank_results засеян", bank_results_n == 7, bank_results_detail)
+            failed += not expect("календарь bank_results засеян", (bank_results_n or 0) >= 7, bank_results_detail)
 
             # Второй эмитент витрины: у VTBR (МСФО) ряд длиннее и содержит пропуски
             # месяцев, поэтому он же — точка поведенческой проверки ниже.

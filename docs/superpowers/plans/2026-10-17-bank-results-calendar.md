@@ -36,9 +36,9 @@
 - `scripts/mcp_check.py` — проверка витрины и конкретной точки.
 
 **Шаги:**
-1. SQL по §4 спеки: CTE `bank`/`cal`/`cbr`, `lagInFrame`, `JSONExtractString`, защита от non-Nullable LEFT JOIN.
+1. SQL по §4 спеки: CTE `bank`/`cbr`/`bank_prev`/`cbr_prev`/`cal`, self-join по `subtractMonths(report_month, 1|12)` (пропуск месяца даёт NULL, а не сдвиг на соседнюю строку), `JSONExtractString`, защита от non-Nullable LEFT JOIN.
 2. Комментарии таблицы и каждой выданной колонки.
-3. Тест: имя, `Tables`, источники в `SELECT`, `period_type='M'`, три метрики, `lagInFrame`, `JSONExtractString(threshold, 'bank')`, комментарии всех колонок.
+3. Тест: имя, `Tables`, источники в `SELECT`, `period_type='M'`, три метрики, self-join по `subtractMonths(report_month, 1|12)`, `JSONExtractString(threshold, 'bank')`, комментарии всех колонок.
 4. `make import STAT=company_views` на dev-БД; проверить `SELECT * FROM v_bank_loan_portfolio_forward WHERE bank='SBER' ORDER BY report_month DESC LIMIT 3`.
 5. MCP-проверка: `count() > 0` и последняя точка SBER `customer_loans` с `publish_date`.
 
