@@ -42,12 +42,12 @@
 
 - [x] **Step 1: Записать спеку**
 - [x] **Step 2: Записать план**
-- [ ] **Step 3: Проверить ссылки**
+- [x] **Step 3: Проверить ссылки**
 
 Run: `test -f docs/superpowers/specs/2026-10-17-github-tracker-design.md && test -f docs/superpowers/plans/2026-10-17-github-tracker.md`
 Expected: exit 0.
 
-- [ ] **Step 4: Коммит**
+- [x] **Step 4: Коммит**
 
 ```bash
 git add docs/superpowers/specs/2026-10-17-github-tracker-design.md docs/superpowers/plans/2026-10-17-github-tracker.md
@@ -60,13 +60,13 @@ git commit -m "docs: add github tracker design and plan"
 
 **Files:**
 - Create: `docs/ROADMAP_INDEX.md`
-- Modify: `docs/ROADMAP_INFRA.md` (шапка; новая фаза 3 после фазы 2; §4 — приёмка фазы 3)
+- Modify: `docs/ROADMAP_INFRA.md` (шапка; новая фаза 3 после фазы 2; §5 — приёмка фазы 3)
 
 **Interfaces:**
 - Produces: `docs/ROADMAP_INDEX.md` — таблица «слаг → файл → владение → схема ID», правило владения, составной ID, краткая карта статусов, ссылки на спеку и скил.
 - Produces: `docs/ROADMAP_INFRA.md` пункт `3.1` со статусом `✅ сделан этим PR (2026-10-17)` и пункт `3.2` «не начато».
 
-- [ ] **Step 1: Создать `docs/ROADMAP_INDEX.md`**
+- [x] **Step 1: Создать `docs/ROADMAP_INDEX.md`**
 
 Содержание:
 
@@ -78,12 +78,12 @@ git commit -m "docs: add github tracker design and plan"
 6. Ссылки: спека `docs/superpowers/specs/2026-10-17-github-tracker-design.md`, скил `.kimi-code/skills/github-tracker/SKILL.md`, `AGENTS.md` правило 12.
 7. Правило добавления нового пункта: сначала правка владеющего роадмапа, затем issue; новый роадмап — только решением владельца.
 
-- [ ] **Step 2: Добавить в `docs/ROADMAP_INFRA.md` фазу 3**
+- [x] **Step 2: Добавить в `docs/ROADMAP_INFRA.md` фазу 3**
 
-После таблицы фазы 2 и до `## 4. Приёмка и риски`:
+После таблицы фазы 2 и до `## 5. Приёмка и риски`:
 
 ```markdown
-## 3. Фаза 3 — Трекер пунктов и связи с GitHub
+## 4. Фаза 3 — Трекер пунктов и связи с GitHub
 
 | Шаг | Содержание | Статус | Критерий приёмки |
 |---|---|---|---|
@@ -91,16 +91,18 @@ git commit -m "docs: add github tracker design and plan"
 | 3.2 | **Живой GitHub Project V2 и бэкфилл**: scope `project`, toolset `projects`, создание проекта, поля/виды, бэкфилл открытого фронта и триаж существующих issue | не начато | Project виден через MCP; поля и виды соответствуют спеке; открытый фронт заведён; существующие issue разложены по `Roadmap`/`Inbox` |
 ```
 
-- [ ] **Step 3: Обновить шапку `ROADMAP_INFRA.md`**
+Ruling: нумерация разделов — `## 4` (фаза) и `## 5` (приёмка), потому что `## 3` занят фазой 2.
+
+- [x] **Step 3: Обновить шапку `ROADMAP_INFRA.md`**
 
 В строке «Роль документа» добавить «трекер пунктов и процесс приёмки»; в «Сопутствующие документы» добавить ссылку на `ROADMAP_INDEX.md`.
 
-- [ ] **Step 4: Проверить ссылки и таблицу**
+- [x] **Step 4: Проверить ссылки и таблицу**
 
 Run: `test -f docs/ROADMAP_INDEX.md && grep -q '3.1' docs/ROADMAP_INFRA.md && grep -q 'ROADMAP_INDEX.md' docs/ROADMAP_INFRA.md`
 Expected: exit 0.
 
-- [ ] **Step 5: Коммит**
+- [x] **Step 5: Коммит**
 
 ```bash
 git add docs/ROADMAP_INDEX.md docs/ROADMAP_INFRA.md
@@ -119,7 +121,7 @@ git commit -m "docs: add roadmap registry and tracker item"
 - Consumes: `docs/ROADMAP_INDEX.md` из задачи 2.
 - Produces: правило 12 — обязательная норма; скил — пошаговые операции.
 
-- [ ] **Step 1: Обновить `AGENTS.md`**
+- [x] **Step 1: Обновить `AGENTS.md`**
 
 1. В шапке (строка 3) добавить ссылку на `docs/ROADMAP_INDEX.md` рядом с планом.
 2. В «Обязательный порядок в начале сессии» добавить пункт: «Реестр роадмапов и правила ID — `docs/ROADMAP_INDEX.md`; трекер — правило 12».
@@ -133,7 +135,7 @@ git commit -m "docs: add roadmap registry and tracker item"
 
 6. В «Стиль коммитов и PR» добавить пункт: «В описании PR — роадмап и пункт (`<slug>/<item-id>`) и `Closes #N`; протокол живой приёмки — комментарием в PR (см. правило 12).»
 
-- [ ] **Step 2: Создать скил `.kimi-code/skills/github-tracker/SKILL.md`**
+- [x] **Step 2: Создать скил `.kimi-code/skills/github-tracker/SKILL.md`**
 
 Frontmatter:
 
@@ -159,12 +161,12 @@ whenToUse: When starting, updating, or closing a roadmap item; creating sub-issu
 9. Чего не делать: дубли, issue на historical `✅`, перенос спек в тело.
 10. До шага 3.2: если Project недоступен, вести issue и labels, не блокировать работу.
 
-- [ ] **Step 3: Проверить скил**
+- [x] **Step 3: Проверить скил**
 
 Run: `test -f .kimi-code/skills/github-tracker/SKILL.md && grep -q '^name: github-tracker' .kimi-code/skills/github-tracker/SKILL.md`
 Expected: exit 0.
 
-- [ ] **Step 4: Коммит**
+- [x] **Step 4: Коммит**
 
 ```bash
 git add AGENTS.md .kimi-code/skills/github-tracker/SKILL.md
@@ -186,30 +188,30 @@ git commit -m "docs: add roadmap tracker rule and skill"
 - Consumes: `docs/ROADMAP_INDEX.md`, `AGENTS.md` правило 12.
 - Produces: формы issue/PR и перекрёстные ссылки в обзорных документах.
 
-- [ ] **Step 1: Создать `.github/ISSUE_TEMPLATE/roadmap-item.yml`**
+- [x] **Step 1: Создать `.github/ISSUE_TEMPLATE/roadmap-item.yml`**
 
 Issue Form с полями: `roadmap` (dropdown, пять значений), `item-id` (input, required), `phase` (input), `acceptance` (textarea, required), `spec` (input), `plan` (input), `depends-on` (input), `context` (textarea). Заголовок — `[<slug>/<item-id>] `. Без обязательных labels, чтобы форма работала до шага 3.2.
 
-- [ ] **Step 2: Создать `.github/pull_request_template.md`**
+- [x] **Step 2: Создать `.github/pull_request_template.md`**
 
 Разделы: «Пункт роадмапа» (`<slug>/<item-id>`, `Closes #N`), «Что сделано», «Проверка» (чек-лист `make all`, живая приёмка, `make mcp-check` при схеме/грантах, статус в роадмапе, README/ARCHITECTURE), «Протокол живой приёмки».
 
-- [ ] **Step 3: Обновить `README.md`**
+- [x] **Step 3: Обновить `README.md`**
 
 1. Во вступлении (строка ~5) добавить: «Реестр всех роадмапов и правила трекера — в [docs/ROADMAP_INDEX.md](docs/ROADMAP_INDEX.md)».
 2. В «Структура репозитория» в строке `docs/` упомянуть `ROADMAP_INDEX.md`, спеки и планы; при необходимости добавить строку `.kimi-code/skills/`.
 3. В разделе «Разработка» после таблицы команд добавить абзац: «Пункт роадмапа ведётся через GitHub issue с составным ID; шаблоны — `.github/ISSUE_TEMPLATE/roadmap-item.yml` и `.github/pull_request_template.md`; операции — скил `github-tracker`; правила — `docs/ROADMAP_INDEX.md` и правило 12 `AGENTS.md`.»
 
-- [ ] **Step 4: Обновить `ARCHITECTURE.md`**
+- [x] **Step 4: Обновить `ARCHITECTURE.md`**
 
 1. В §2 в строке `docs/` добавить `ROADMAP_INDEX.md` и `superpowers/{specs,plans}`.
 2. В §8 добавить пункт 15: «Трекер пунктов роадмапа — `docs/ROADMAP_INDEX.md` + скил `github-tracker`; issue с составным ID, Project V2 — вид; источник истины — файлы роадмапов.»
 
-- [ ] **Step 5: Обновить `docs/IMPORTER_PACKAGE_STANDARD.md` §16.1 п. 8**
+- [x] **Step 5: Обновить `docs/IMPORTER_PACKAGE_STANDARD.md` §16.1 п. 8**
 
 Добавить в конец пункта: «Связь протокола с пунктом роадмапа — по `docs/ROADMAP_INDEX.md`: issue с ID `<slug>/<item-id>`, PR содержит `Closes #N`; после мержа статус пункта — `Done` в Project V2.»
 
-- [ ] **Step 6: Проверить ссылки и YAML**
+- [x] **Step 6: Проверить ссылки и YAML**
 
 Run: `test -f .github/ISSUE_TEMPLATE/roadmap-item.yml && test -f .github/pull_request_template.md && grep -q 'ROADMAP_INDEX.md' README.md && grep -q 'ROADMAP_INDEX.md' ARCHITECTURE.md`
 Expected: exit 0.
@@ -217,7 +219,7 @@ Expected: exit 0.
 Run: `python3 -c "import yaml,sys; yaml.safe_load(open('.github/ISSUE_TEMPLATE/roadmap-item.yml')); print('yaml ok')"`
 Expected: `yaml ok` (если PyYAML нет — `ruby -e "require 'yaml'; YAML.load_file('.github/ISSUE_TEMPLATE/roadmap-item.yml'); puts 'yaml ok'"`).
 
-- [ ] **Step 7: Коммит**
+- [x] **Step 7: Коммит**
 
 ```bash
 git add .github/ISSUE_TEMPLATE/roadmap-item.yml .github/pull_request_template.md README.md ARCHITECTURE.md docs/IMPORTER_PACKAGE_STANDARD.md
