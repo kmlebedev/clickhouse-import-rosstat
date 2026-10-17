@@ -1292,9 +1292,10 @@ func (c *newsFakeConn) Query(_ context.Context, query string, args ...any) (driv
 	c.record(label)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	// Кандидаты разметки — var, а не const (LIMIT строится из newsLLMBacklogLimit),
-	// поэтому сравнение идёт отдельно: в expression-switch Go требует константные case.
-	if query == newsAnnotationCandidatesQuery {
+	// Кандидаты разметки — запрос функции (LIMIT из NEWS_LLM_BACKLOG_LIMIT и newsFilter
+	// вшиты в SQL), поэтому сравнение идёт по префиксу отдельно: в expression-switch Go
+	// требует константные case.
+	if strings.HasPrefix(query, newsAnnotationCandidatesQueryPrefix) {
 		if c.candidatesErr != nil {
 			return nil, c.candidatesErr
 		}
@@ -1345,6 +1346,18 @@ func (c *newsFakeConn) batchList() []*newsFakeBatch {
 func (c *newsFakeConn) anyCallHas(fragment string) bool {
 	for _, call := range c.callList() {
 		if strings.Contains(call, fragment) {
+			return true
+		}
+	}
+	return false
+}
+
+// anyCallHasPrefix — был ли вызов Query, запрос которого начинается с префикса. Кандидаты
+// разметки строятся функцией (newsFilter и LIMIT вшиты в SQL), поэтому их вызов ищется по
+// префиксу запроса, а не по точному равенству. Записанный вызов начинается с "query: ".
+func (c *newsFakeConn) anyCallHasPrefix(prefix string) bool {
+	for _, call := range c.callList() {
+		if strings.HasPrefix(call, "query: "+prefix) {
 			return true
 		}
 	}
@@ -2357,7 +2370,7 @@ func TestImportWithoutLLMEnvSkipsAnnotation(t *testing.T) {
 	if _, err := s.Import(context.Background(), conn); err != nil {
 		t.Fatalf("Import(%s) без LLM env: %v (деградация обязана быть зелёной)", modeSince, err)
 	}
-	if conn.anyCallHas(newsAnnotationCandidatesQuery) {
+	if conn.anyCallHasPrefix(newsAnnotationCandidatesQueryPrefix) {
 		t.Errorf("без LLM env прочитаны кандидаты разметки; вызовы: %v", conn.callList())
 	}
 	if batch := newsFakeBatchByQuery(conn, newsAnnotationInsert); batch != nil {
@@ -2416,11 +2429,11 @@ func TestImportAnnotatesBacklogWithFakeLLM(t *testing.T) {
 	if _, err := s.Import(context.Background(), conn); err != nil {
 		t.Fatalf("Import(%s) с фейковым LLM: %v", modeSince, err)
 	}
-	if !conn.anyCallHas(newsAnnotationCandidatesQuery) {
-		t.Errorf("LLM-шаг не прочитал кандидатов запросом %q; вызовы: %v",
-			newsAnnotationCandidatesQuery, conn.callList())
+	if !conn.anyCallHasPrefix(newsAnnotationCandidatesQueryPrefix) {
+		t.Errorf("LLM-шаг не прочитал кандидатов запросом с префиксом %q; вызовы: %v",
+			newsAnnotationCandidatesQueryPrefix, conn.callList())
 	}
-	if want := "model=test-model prompt_version=1"; !conn.anyCallHas(want) {
+	if want := fmt.Sprintf("model=test-model prompt_version=%d", newsPromptVersion); !conn.anyCallHas(want) {
 		t.Errorf("запрос кандидатов не содержал %q (model и prompt_version — часть ключа); вызовы: %v",
 			want, conn.callList())
 	}
@@ -2594,7 +2607,7 @@ func TestImportCheckModeDoesNotCallLLM(t *testing.T) {
 	if _, err := s.Import(context.Background(), conn); err != nil {
 		t.Fatalf("Import(%s): %v", modeCheck, err)
 	}
-	if conn.anyCallHas(newsAnnotationCandidatesQuery) {
+	if conn.anyCallHasPrefix(newsAnnotationCandidatesQueryPrefix) {
 		t.Errorf("check прочитал кандидатов разметки; вызовы: %v", conn.callList())
 	}
 	if mock.calls() != 0 {
@@ -2602,5 +2615,68 @@ func TestImportCheckModeDoesNotCallLLM(t *testing.T) {
 	}
 	if batch := newsFakeBatchByQuery(conn, newsAnnotationInsert); batch != nil {
 		t.Errorf("check открыл батч разметки: %+v", batch.rows)
+	}
+}
+
+// TestNewsAnnotationCandidatesQueryCoversRSS — кандидаты разметки — весь видимый поток:
+// Telegram не сужен (url LIKE), RSS проходит тот же newsFilter, что и v_news_events, а окно
+// 35 дней снято осознанно — стоимость ограничивает LIMIT бэклога, а не возраст позиции.
+func TestNewsAnnotationCandidatesQueryCoversRSS(t *testing.T) {
+	query := newsAnnotationCandidatesQuery(50)
+	for _, want := range []string{
+		"match(title, '" + newsFilter + "')",
+		"match(description, '" + newsFilter + "')",
+		"url LIKE 'https://t.me/%'",
+		"content_hash != ''",
+		"LIMIT 50",
+	} {
+		if !strings.Contains(query, want) {
+			t.Errorf("кандидатный запрос не содержит %q:\n%s", want, query)
+		}
+	}
+	if strings.Contains(query, "INTERVAL 35 DAY") {
+		t.Errorf("кандидатный запрос сужен окном 35 дней, want весь видимый поток:\n%s", query)
+	}
+	// LIMIT — аргумент функции, а не константа: бэкфилл через NEWS_LLM_BACKLOG_LIMIT
+	// обязан менять запрос, иначе переменная была бы декоративной.
+	if other := newsAnnotationCandidatesQuery(123); !strings.Contains(other, "LIMIT 123") {
+		t.Errorf("newsAnnotationCandidatesQuery(123) не содержит LIMIT 123:\n%s", other)
+	}
+}
+
+// TestImportUsesBacklogLimit — NEWS_LLM_BACKLOG_LIMIT доезжает до SQL кандидатов: переменная
+// читается до запроса, а LIMIT вшивается в текст. Без этой проверки опечатка в имени
+// переменной оставила бы бэкфилл на штатных 50 позициях, и заметить это было бы нечем.
+func TestImportUsesBacklogLimit(t *testing.T) {
+	t.Setenv(modeEnv, modeSince)
+	t.Setenv(newsLLMBacklogLimitEnv, "123")
+	pointFeedsAt(t, serveFixtures(t, nil))
+
+	candidate := newsTestCandidate(1)
+	mock := newNewsTestLLMMock(t, newsTestLLMResponse{
+		Body: newsTestContentBody(t, newsTestPayloadBody(t, newsTestValidMessage(candidate.URL))),
+	})
+	setNewsLLMEnv(t, mock.url, "test-model")
+
+	conn := newNewsFakeConn()
+	conn.candidates = []newsItem{candidate}
+
+	var s newsImport
+	if _, err := s.Import(context.Background(), conn); err != nil {
+		t.Fatalf("Import(%s) с %s=123: %v", modeSince, newsLLMBacklogLimitEnv, err)
+	}
+	found := false
+	for _, call := range conn.callList() {
+		if !strings.HasPrefix(call, "query: "+newsAnnotationCandidatesQueryPrefix) {
+			continue
+		}
+		found = true
+		if !strings.Contains(call, "LIMIT 123") {
+			t.Errorf("кандидатный запрос не содержит LIMIT 123: %s", call)
+		}
+	}
+	if !found {
+		t.Errorf("LLM-шаг не прочитал кандидатов запросом с префиксом %q; вызовы: %v",
+			newsAnnotationCandidatesQueryPrefix, conn.callList())
 	}
 }

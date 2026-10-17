@@ -255,6 +255,33 @@ func TestNewsLLMConfigFromEnv(t *testing.T) {
 	})
 }
 
+// TestNewsLLMBacklogLimitFromEnv — NEWS_LLM_BACKLOG_LIMIT: пусто — штатные 50, валидное
+// значение — как есть, а 0/−1/1001/нечисло — warn и дефолт. Опечатка в переменной бэкфилла
+// не должна молча давать бюджет другого размера или LIMIT 0 (пустой кандидатный запрос).
+func TestNewsLLMBacklogLimitFromEnv(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want int
+	}{
+		{"пусто — штатные 50", "", 50},
+		{"валидное значение", "120", 120},
+		{"верхняя граница", "1000", 1000},
+		{"ноль", "0", 50},
+		{"отрицательное", "-1", 50},
+		{"выше предела", "1001", 50},
+		{"нечисло", "abc", 50},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(newsLLMBacklogLimitEnv, tc.raw)
+			if got := newsLLMBacklogLimitFromEnv(); got != tc.want {
+				t.Errorf("newsLLMBacklogLimitFromEnv() = %d при %s=%q, want %d",
+					got, newsLLMBacklogLimitEnv, tc.raw, tc.want)
+			}
+		})
+	}
+}
+
 // TestNewsPromptVersionAndRegistry — system-промпт несёт метку редакции и все слаги реестра:
 // смена newsPromptVersion или реестра обязана отражаться в запросе, иначе модель размечает
 // по устаревшей инструкции, а данные получают старый prompt_version.
