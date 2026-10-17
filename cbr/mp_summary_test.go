@@ -345,14 +345,13 @@ func TestMPSummaryLLMPendingDates(t *testing.T) {
 	}
 }
 
-// TestMPSummaryLLMDocs — сборка списка документов для модели: объединение скачанных этим
-// прогоном и отстающих МИНУС уже размеченные пары (model, prompt_version). Пинятся оба
-// подслучая, которые нашло scoped-ревью фикс-волны: (а) дата есть и в docs, и в pending →
-// документ уходит в LLM ОДИН раз (прежняя реализация добавляла его ещё раз через
-// justFetched-ветку mpFetchPending, и на одну дату получалось два вызова модели); (б) дата в
-// docs, но строки пары уже есть (документ перекачан из-за смены url) → в LLM не уходит вовсе.
-// Список, а не набор, поэтому дубль виден длиной — ровно так его и ловит проба ревьюера.
-func TestMPSummaryLLMDocs(t *testing.T) {
+// TestMPSummaryLLMTasks — сборка задач (документ, профиль) для новых документов: документ идёт
+// каждому профилю, у которого дата ещё не размечена, а fetch набирает отстающие даты
+// объединением по профилям. Пинятся оба подслучая, найденных ревью одномодельной проводки:
+// (а) дата есть и в docs, и в pending — задача на профиль одна (дата остаётся в ready и не
+// попадает в fetch); (б) дата в docs, но строки пары (model, prompt_version) уже есть — этот
+// профиль задачу не получает, остальные получают.
+func TestMPSummaryLLMTasks(t *testing.T) {
 	day := func(d int, m time.Month) time.Time { return time.Date(2025, m, d, 0, 0, 0, 0, time.UTC) }
 	fetched := func(d int, m time.Month, url string) mpFetchedSummary {
 		return mpFetchedSummary{
@@ -361,49 +360,128 @@ func TestMPSummaryLLMDocs(t *testing.T) {
 		}
 	}
 
+	profiles := []mpLLMProfile{
+		{Name: "a", Model: "model-a"},
+		{Name: "b", Model: "model-b"},
+	}
 	docs := []mpFetchedSummary{
-		fetched(14, time.February, "u1"), // и в docs, и в pending, и не размечена
+		fetched(14, time.February, "u1"), // и в docs, и в pending обоих профилей
 		fetched(21, time.March, "u2"),    // только в docs
-		fetched(25, time.April, "u3"),    // в docs, но пара уже размечена (смена url)
+		fetched(25, time.April, "u3"),    // в docs, но профиль a уже размечен
 	}
-	pending := map[time.Time]bool{
-		day(14, time.February): true, // тот же документ, что в docs
-		day(14, time.March):    true, // отстающий: в этом прогоне не скачивался
+	pendingByModel := map[string]map[time.Time]bool{
+		"model-a": {
+			day(14, time.February): true, // тот же документ, что в docs
+			day(14, time.March):    true, // отстающий: в этом прогоне не скачивался
+		},
+		"model-b": {
+			day(14, time.March): true, // тот же отстающий нужен и второму профилю
+		},
 	}
-	tagged := map[time.Time]bool{
-		day(25, time.April): true,
+	taggedByModel := map[string]map[time.Time]bool{
+		"model-a": {day(25, time.April): true},
+		"model-b": {},
 	}
 
-	ready, fetch := mpLLMDocs(docs, pending, tagged)
+	ready, fetch := mpLLMTasks(docs, pendingByModel, taggedByModel, profiles)
 
-	wantReady := []time.Time{day(14, time.February), day(21, time.March)}
+	wantReady := []struct {
+		date  time.Time
+		model string
+	}{
+		{day(14, time.February), "model-a"},
+		{day(14, time.February), "model-b"},
+		{day(21, time.March), "model-a"},
+		{day(21, time.March), "model-b"},
+		{day(25, time.April), "model-b"},
+	}
 	if len(ready) != len(wantReady) {
-		t.Errorf("ready: %d документов, want %d (2025-02-14 и 2025-03-21): лишний элемент — "+
-			"либо дубль даты, попавшей и в docs, и в pending (модель вызывается дважды на документ), "+
+		t.Fatalf("ready: %d задач, want %d: лишняя задача — либо дубль пары (документ, профиль), "+
 			"либо невычтенная размеченная пара", len(ready), len(wantReady))
 	}
+	seen := make(map[string]bool, len(ready))
 	for i, want := range wantReady {
-		if i >= len(ready) {
-			break
+		got := ready[i]
+		if !got.Doc.Date.Equal(want.date) || got.Profile.Model != want.model {
+			t.Errorf("ready[%d] = (%s, %s), want (%s, %s)", i,
+				got.Doc.Date.Format(mpSummaryDayLayout), got.Profile.Model,
+				want.date.Format(mpSummaryDayLayout), want.model)
 		}
-		if !ready[i].Date.Equal(want) {
-			t.Errorf("ready[%d] = %s, want %s", i, ready[i].Date.Format(mpSummaryDayLayout), want.Format(mpSummaryDayLayout))
+		key := got.Doc.Date.Format(mpSummaryDayLayout) + "/" + got.Profile.Model
+		if seen[key] {
+			t.Errorf("ready содержит дубль пары (%s): модель будет вызвана на документ дважды", key)
 		}
+		seen[key] = true
 	}
 	if len(fetch) != 1 || !fetch[day(14, time.March)] {
-		t.Errorf("fetch = %v, want только 2025-03-14: скачанный документ повторно не берётся, "+
-			"размеченная пара не догоняется", fetch)
+		t.Errorf("fetch = %v, want только 2025-03-14: отстающая дата скачивается один раз на все профили", fetch)
 	}
-	for _, d := range ready {
-		if d.Date.Equal(day(25, time.April)) {
-			t.Errorf("ready содержит 2025-04-25: у документа уже есть LLM-строки пары — повторная разметка лишняя")
+	if fetch[day(14, time.February)] {
+		t.Errorf("fetch содержит 2025-02-14: документ уже скачан этим прогоном и лежит в ready")
+	}
+	for _, task := range ready {
+		if task.Doc.Date.Equal(day(25, time.April)) && task.Profile.Model == "model-a" {
+			t.Errorf("ready содержит (2025-04-25, model-a): этот профиль уже размечен")
 		}
 	}
+}
 
-	// Ни pending, ни docs — размечать нечего; пустой вход не должен давать ни документов,
-	// ни загрузок (иначе прогон без новых и отстающих звал бы модель на пустом списке).
-	emptyReady, emptyFetch := mpLLMDocs(nil, nil, nil)
-	if len(emptyReady) != 0 || len(emptyFetch) != 0 {
-		t.Errorf("на пустом входе ready=%v fetch=%v, want оба пустыми", emptyReady, emptyFetch)
+// TestMpLLMPendingTasksFetchedOnce — скачанный отстающий документ получает задачу от каждого
+// профиля, у которого дата есть в pending: на уровне fetch страница скачивается один раз, а
+// вызовов модели — по числу профилей, которым нужна дата.
+func TestMpLLMPendingTasksFetchedOnce(t *testing.T) {
+	date := time.Date(2025, 3, 14, 0, 0, 0, 0, time.UTC)
+	profiles := []mpLLMProfile{
+		{Name: "a", Model: "model-a"},
+		{Name: "b", Model: "model-b"},
+	}
+	fetched := []mpLLMDoc{{Date: date, Url: "u1", Doc: mpSummaryDoc{MeetingDate: date}}}
+	pendingByModel := map[string]map[time.Time]bool{
+		"model-a": {date: true},
+		"model-b": {date: true},
+	}
+
+	tasks := mpLLMPendingTasks(fetched, pendingByModel, profiles)
+	if len(tasks) != 2 {
+		t.Fatalf("задач %d, want 2 (по одной на профиль): %+v", len(tasks), tasks)
+	}
+	for i, want := range profiles {
+		if tasks[i].Profile.Model != want.Model || !tasks[i].Doc.Date.Equal(date) {
+			t.Errorf("tasks[%d] = (%s, %s), want (%s, %s)", i,
+				tasks[i].Doc.Date.Format(mpSummaryDayLayout), tasks[i].Profile.Model,
+				date.Format(mpSummaryDayLayout), want.Model)
+		}
+	}
+}
+
+// TestMpLLMTasksOneTagged — документ размечен профилем a и не размечен b: задачу получает
+// только b, а fetch пуст — новых отстающих дат нет.
+func TestMpLLMTasksOneTagged(t *testing.T) {
+	date := time.Date(2025, 2, 14, 0, 0, 0, 0, time.UTC)
+	profiles := []mpLLMProfile{
+		{Name: "a", Model: "model-a"},
+		{Name: "b", Model: "model-b"},
+	}
+	docs := []mpFetchedSummary{{Url: "u1", Doc: mpSummaryDoc{MeetingDate: date}}}
+	taggedByModel := map[string]map[time.Time]bool{
+		"model-a": {date: true},
+		"model-b": {},
+	}
+
+	ready, fetch := mpLLMTasks(docs, nil, taggedByModel, profiles)
+	if len(ready) != 1 || ready[0].Profile.Model != "model-b" {
+		t.Fatalf("ready = %+v, want одна задача профиля b: профиль a уже размечен", ready)
+	}
+	if len(fetch) != 0 {
+		t.Errorf("fetch = %v, want пусто: отстающих дат нет", fetch)
+	}
+}
+
+// TestMpLLMTasksEmpty — пустой вход не даёт ни задач, ни загрузок: прогон без новых и
+// отстающих документов не должен звать модель на пустом списке.
+func TestMpLLMTasksEmpty(t *testing.T) {
+	ready, fetch := mpLLMTasks(nil, nil, nil, nil)
+	if len(ready) != 0 || len(fetch) != 0 {
+		t.Errorf("на пустом входе ready=%v fetch=%v, want оба пустыми", ready, fetch)
 	}
 }
