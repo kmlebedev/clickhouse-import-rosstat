@@ -9,12 +9,14 @@ import (
 
 // rssItem — позиция ленты в том подмножестве RSS, которое несёт news_events.
 // Теги — имена элементов без префиксов: раскладка RSS 2.0 отдаёт их в default
-// namespace, и лишние поля лент (description, category, rbc_news:*) нам не нужны —
-// описание позиции витрина не публикует, а качать его в память незачем.
+// namespace, и лишние поля лент (category, rbc_news:*) нам не нужны. description
+// разбирается: у smart-lab это полный текст поста, ради которого лента и добавлена
+// в контур ключевой ставки; у новостных лент — краткий анонс в том же элементе.
 type rssItem struct {
-	Title   string `xml:"title"`
-	Link    string `xml:"link"`
-	PubDate string `xml:"pubDate"`
+	Title       string `xml:"title"`
+	Link        string `xml:"link"`
+	PubDate     string `xml:"pubDate"`
+	Description string `xml:"description"`
 }
 
 // rssDoc — документ RSS. Поле XMLName с тегом «rss» обязательно и является
@@ -31,17 +33,18 @@ type rssDoc struct {
 }
 
 // newsItem — нормализованная позиция ленты, готовая к записи в news_events
-// (date, source, title, url). Дата хранит офсет источника: момент публикации
-// из ленты, а не пересчёт в МСК — день по МСК считает витрина (date_msk).
+// (date, source, title, url, description). Дата хранит офсет источника: момент
+// публикации из ленты, а не пересчёт в МСК — день по МСК считает витрина (date_msk).
 type newsItem struct {
-	Date   time.Time
-	Source string
-	Title  string
-	URL    string
+	Date        time.Time
+	Source      string
+	Title       string
+	URL         string
+	Description string
 }
 
 // pubDateLayouts — три раскладки pubDate в порядке проверки, от полной формы
-// к запасной: сначала форма с секундами и числовым офсетом (её отдают все пять
+// к запасной: сначала форма с секундами и числовым офсетом (её отдают все семь
 // наших лент), затем та же форма без секунд (старые фиды с минутной точностью),
 // затем RFC1123 с именованной зоной — эту раскладку принимает только parsePubDate,
 // и только для GMT/UTC. Берётся первая успешная: перечень идёт от самой
@@ -112,6 +115,10 @@ func itemsFromDoc(source string, doc rssDoc) (items []newsItem, skipped int, err
 			Title:  title,
 			// Пустой link — не пропуск: заголовок без ссылки всё ещё событие тезиса.
 			URL: strings.TrimSpace(it.Link),
+			// Описание тримится по краям, но берётся как есть — с разметкой и переводами
+			// строк: у smart-lab это полный текст поста. Пустое — не пропуск и не ошибка:
+			// у части позиций элемента description в ленте нет.
+			Description: strings.TrimSpace(it.Description),
 		})
 	}
 	if len(items) == 0 {

@@ -327,6 +327,25 @@ async def check(params, server_log):
             failed += not expect("сырая news_events закрыта", denied,
                                  "отказ ClickHouse 497 на news_events (ожидаемо)" if denied else raw[:200])
 
+            # Посты smart-lab — образцы публикаций и рыночный разбор для постов по ключевой
+            # ставке (docs/KEY_RATE_PUBLICATIONS.md §12), а полный текст поста лежит в
+            # description (у новостных лент там краткое описание). Проверка выше доказывает
+            # только читаемость витрины; здесь важен непустой count: ноль значит, что ленты
+            # smart-lab ещё не импортированы (или миграция description не прогнана на живой
+            # базе), а не «в лентах нет постов» — окно 20 постов конечно и само не догонится
+            # (урок eia: лента не должна молча стареть), поэтому подсказка — прогнать импорт.
+            smartlab_posts = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_news_events WHERE source = 'smartlab' AND description != ''"}))
+            smartlab_rows = result_rows(smartlab_posts)
+            smartlab_n = smartlab_rows[0].get("count()") if smartlab_rows else None
+            if smartlab_rows is None:
+                smartlab_detail = f"витрина не читается: {smartlab_posts[:200]}"
+            elif (smartlab_n or 0) > 0:
+                smartlab_detail = f"постов smartlab: {smartlab_n}"
+            else:
+                smartlab_detail = (f"постов smartlab: {smartlab_n} — прогнать make import STAT=news_watch "
+                                   "(витрина публикуется прогоном импортёра)")
+            failed += not expect("посты smart-lab с полным текстом", (smartlab_n or 0) > 0, smartlab_detail)
+
             # Контур СБКТС Росстандарта (правило 11): обе витрины читаются агентом, а сырая
             # gost_vehicle_safety_certificate — источник витрин — агенту закрыта (как macro_series
             # и news_events: читать реестр агент обязан только через витрины). Существование

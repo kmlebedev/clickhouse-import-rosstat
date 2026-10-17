@@ -31,12 +31,17 @@ var (
 	feedCBRNewsURL  = "https://www.cbr.ru/rss/RssNews"
 	feedCBRPressURL = "https://www.cbr.ru/rss/eventrss"
 	feedTASSURL     = "https://tass.ru/rss/v2.xml"
+	// Ленты smart-lab — персональные блоги; добавлены ради контура ключевой ставки
+	// (тексты про инфляцию и политику ЦБ).
+	feedSmartlabLebedevURL = "https://smart-lab.ru/rss/personal_blog/KonstantinLebedev/"
+	feedSmartlabSpydellURL = "https://smart-lab.ru/rss/personal_blog/spydell-telegram/"
 )
 
-// feeds собирает конфиг пяти лент в фиксированном порядке. Порядок — часть
+// feeds собирает конфиг семи лент в фиксированном порядке. Порядок — часть
 // контракта: лог прогона и отчёт check идут построчно, и разный порядок лент
-// от запуска к запуску сделал бы диффы лога нечитаемыми. Обе ленты ЦБ несут
-// Source «cbr»: источник один — Банк России, а различает их url в news_events.
+// от запуска к запуску сделал бы диффы лога нечитаемыми. Парные ленты несут общий
+// Source: у двух фидов ЦБ это «cbr» (источник один — Банк России), у двух лент
+// smart-lab — «smartlab»; в news_events такие ленты различаются url.
 func feeds() []feed {
 	return []feed{
 		{Key: "interfax", Source: "interfax", URL: feedInterfaxURL},
@@ -44,6 +49,8 @@ func feeds() []feed {
 		{Key: "cbr_news", Source: "cbr", URL: feedCBRNewsURL},
 		{Key: "cbr_press", Source: "cbr", URL: feedCBRPressURL},
 		{Key: "tass", Source: "tass", URL: feedTASSURL},
+		{Key: "smartlab_lebedev", Source: "smartlab", URL: feedSmartlabLebedevURL},
+		{Key: "smartlab_spydell", Source: "smartlab", URL: feedSmartlabSpydellURL},
 	}
 }
 
@@ -100,8 +107,8 @@ type feedResult struct {
 }
 
 // fetchFeeds читает ленты по очереди и возвращает результат на каждую. Ошибка
-// ленты попадает в её feedResult.Err, а цикл продолжается: пять лент независимы,
-// и обрыв одной (WAF, 500, таймаут) не повод не собрать четыре остальные.
+// ленты попадает в её feedResult.Err, а цикл продолжается: семь лент независимы,
+// и обрыв одной (WAF, 500, таймаут) не повод не собрать остальные шесть.
 // Агрегация ошибок — дело вызывающего (Import): он решает, чем отчитаться в dagu.
 func fetchFeeds(feeds []feed) []feedResult {
 	results := make([]feedResult, 0, len(feeds))
@@ -357,8 +364,12 @@ func (s *newsImport) Name() string {
 }
 
 const (
-	newsTable  = "news_events"
-	newsInsert = "INSERT INTO " + newsTable
+	newsTable = "news_events"
+	// newsInsert — запись позиции. Список колонок явный: на живой таблице description
+	// добавлен ALTER-ом в конец, и позиционный INSERT клал бы значения в порядке физических
+	// колонок (description после sentiment), а не в порядке DDL. Порядок колонок здесь —
+	// контракт с порядком аргументов Append в insertItems.
+	newsInsert = "INSERT INTO " + newsTable + " (date, source, title, url, description, sentiment)"
 	// storedSpansQuery читает сохранённые окна источников. FINAL обязателен:
 	// news_events — ReplacingMergeTree, и без него повторно записанные позиции
 	// (ключ date/source/title) считались бы дважды, а счётчик покрытия check
@@ -389,8 +400,12 @@ func (s *newsImport) Import(ctx context.Context, conn driver.Conn) (count int64,
 	if err != nil {
 		return 0, err
 	}
-	if err = conn.Exec(ctx, newsEventsDdl); err != nil {
-		return 0, err
+	// Схема — CREATE плюс идемпотентные ALTER-ы миграции (newsSchemaStatements), и в режиме
+	// check тоже: чтение обязано работать на живой таблице, дожившей до колонки description.
+	for _, stmt := range newsSchemaStatements() {
+		if err = conn.Exec(ctx, stmt); err != nil {
+			return 0, err
+		}
 	}
 	// check — режим чтения: он ходит только в сырую news_events и не публикует
 	// витрину, поэтому шаг пропускается, а не выполняется вхолостую.
@@ -512,6 +527,9 @@ func readStoredSpans(ctx context.Context, conn driver.Conn) (map[string]sourceSp
 // заполняет LLM-сессия (follow-up), и типизированный nil фиксирует, что поле
 // оставлено пустым осознанно. Ошибка Append прерывает батч через Abort: частично
 // собранный батч Send не отправляет, поэтому половина прогона в таблицу не уедет.
+//
+// Порядок аргументов Append — контракт с явным списком колонок newsInsert
+// (date, source, title, url, description, sentiment); менять его можно только вместе с ним.
 func insertItems(ctx context.Context, conn driver.Conn, items []newsItem) (int64, error) {
 	batch, err := conn.PrepareBatch(ctx, newsInsert)
 	if err != nil {
@@ -519,7 +537,7 @@ func insertItems(ctx context.Context, conn driver.Conn, items []newsItem) (int64
 	}
 	var count int64
 	for _, it := range items {
-		if err = batch.Append(it.Date, it.Source, it.Title, it.URL, (*float32)(nil)); err != nil {
+		if err = batch.Append(it.Date, it.Source, it.Title, it.URL, it.Description, (*float32)(nil)); err != nil {
 			_ = batch.Abort()
 			return count, err
 		}
