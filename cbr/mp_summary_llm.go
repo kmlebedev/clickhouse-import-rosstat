@@ -94,7 +94,7 @@ var mpLLMConcise bool
 
 // mpLLMConciseInstruction — текст harness-инструкции concise-режима. Отдельная константа,
 // чтобы тест пинил её в теле запроса и её нельзя было случайно потерять при правке промпта.
-const mpLLMConciseInstruction = "Сократи ответ: не более одной цитаты на канал, note — одно короткое предложение. Это критично: лимит вывода 8192 токена."
+const mpLLMConciseInstruction = "Сократи ответ: не более одной цитаты на канал, note — одно короткое предложение. Это критично: лимит вывода ограничен."
 
 // mpLLMProfile — один профиль разметки: имя (default/glm/mimo) нужно только для конфигурации и
 // логов, а в данные пишется фактическое имя модели API (Model) — по нему импортёр отличает,
@@ -386,10 +386,10 @@ func mpLLMCorpus(doc mpSummaryDoc) string {
 	return b.String()
 }
 
-// mpLLMJSONBody вырезает JSON-объект из content ответа модели: модель может обрамить его
-// ```-блоком или сопроводить фразой, и терять из-за этого разметку целого документа не
-// нужно. Берём всё от первой «{» до последней «}» — этого достаточно для одного объекта
-// схемы. ok = false, если скобок нет (content пуст или это не JSON): это ошибка формата,
+// mpLLMJSONBody вырезает первый JSON-объект из content ответа модели: модель может обрамить
+// его ```-блоком, сопроводить фразой или повторить объект, и терять из-за этого разметку
+// целого документа не нужно. Берём первое JSON-значение, начиная с первой «{» (json.Decoder),
+// а хвост/повтор игнорируем. ok = false, если объекта нет или он обрезан: это ошибка формата,
 // а не «разметки нет» — пустой ответ не должен выглядеть успешным вызовом.
 func mpLLMJSONBody(content string) (string, bool) {
 	s := strings.TrimSpace(content)
@@ -652,7 +652,12 @@ func mpLLMAskOnceOpenAI(doc mpSummaryDoc, baseURL, apiKey, model string) (mpLLMP
 	defer func() { _ = resp.Body.Close() }()
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return mpLLMPayload{}, mpLLMUsage{}, mpLLMFormatError{fmt.Errorf("тело ответа не прочитано: %w", err)}
+		// Как в Anthropic-пути: неполное тело (io.ErrUnexpectedEOF) — формат с одним
+		// повтором, а таймаут/обрыв транспорта — ошибка без повтора.
+		if mpIsJSONDecodeError(err) {
+			return mpLLMPayload{}, mpLLMUsage{}, mpLLMFormatError{fmt.Errorf("тело ответа не прочитано: %w", err)}
+		}
+		return mpLLMPayload{}, mpLLMUsage{}, fmt.Errorf("тело ответа не прочитано: %w", err)
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return mpLLMPayload{}, mpLLMUsage{}, fmt.Errorf("http status %d: %s", resp.StatusCode, util.ErrorSnippet(respBody))
@@ -672,9 +677,15 @@ func mpLLMAskOnceOpenAI(doc mpSummaryDoc, baseURL, apiKey, model string) (mpLLMP
 	choice := envelope.Choices[0]
 	content := strings.TrimSpace(choice.Message.Content)
 	if content == "" {
-		return mpLLMPayload{}, usage, mpLLMFormatError{fmt.Errorf(
+		emptyErr := fmt.Errorf(
 			"в ответе нет content (finish_reason: %q, in/out: %d/%d)",
-			choice.FinishReason, usage.InputTokens, usage.OutputTokens)}
+			choice.FinishReason, usage.InputTokens, usage.OutputTokens)
+		// Пустой content при finish_reason=length — тот же обрез по max_tokens: повтор
+		// с тем же лимитом бессмыслен, поэтому это не ошибка формата.
+		if choice.FinishReason == "length" {
+			return mpLLMPayload{}, usage, emptyErr
+		}
+		return mpLLMPayload{}, usage, mpLLMFormatError{emptyErr}
 	}
 	raw, ok := mpLLMJSONBody(content)
 	if !ok {

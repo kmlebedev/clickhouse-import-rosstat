@@ -173,6 +173,16 @@ func TestMPLLMEvalLive(t *testing.T) {
 	transport := mpEvalEnvTransport(t)
 	reasoning := mpEvalEnvReasoning(t)
 	concise := mpEvalEnvBool(t, mpEvalConciseEnv, false)
+	// Флаги относятся к разным транспортам; молчаливое игнорирование сделало бы отчёт
+	// неверным (в нём флаг выглядел бы применённым).
+	if transport == "openai" && (prefill || thinking == "disabled") {
+		t.Fatalf("%s=openai несовместим с %s/%s: prefill и thinking относятся к Anthropic-транспорту",
+			mpEvalTransportEnv, mpEvalPrefillEnv, mpEvalThinkingEnv)
+	}
+	if transport == "anthropic" && (reasoning != "" || concise) {
+		t.Fatalf("%s=anthropic несовместим с %s/%s: reasoning и concise относятся к OpenAI-транспорту",
+			mpEvalTransportEnv, mpEvalReasoningEnv, mpEvalConciseEnv)
+	}
 	docsFilter, docsFilterRaw := mpEvalEnvDates(t)
 	prices := mpEvalProfilePrices(t, profiles)
 

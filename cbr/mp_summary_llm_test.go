@@ -774,12 +774,6 @@ func TestTagMPChannelsLLMFencedJSON(t *testing.T) {
 	}
 }
 
-// TestTagMPChannelsLLM500 — отказ провайдера (500) возвращается ошибкой сразу, без ретрая:
-// повтором он не лечится, а импортёр по ошибке уходит в деградацию. Счётчик запросов пинит, что
-// запрос ровно один: повтор для SDK отключён (`option.WithMaxRetries(0)`), иначе SDK повторил бы
-// 500 своими ретраями (по умолчанию их два — тогда запросов было бы три). Ключ в текст ошибки не
-// попадает (он едет заголовком x-api-key), а тело ответа обрезается до фрагмента: *anthropic.Error
-// печатает его целиком, и сырое тело (десятки килобайт JSON) уехало бы в warn-лог импортёра.
 // TestTagMPChannelsLLMPrefill — harness-совместимость: последнее сообщение ассистента «{»
 // заставляет модель продолжать JSON, а не рассуждать в text-блоке. Ответ-продолжение без
 // начальной «{» должен быть склеен в целый объект, а запрос — нести assistant-сообщение.
@@ -825,6 +819,12 @@ func TestTagMPChannelsLLMThinkingDisabled(t *testing.T) {
 	}
 }
 
+// TestTagMPChannelsLLM500 — отказ провайдера (500) возвращается ошибкой сразу, без ретрая:
+// повтором он не лечится, а импортёр по ошибке уходит в деградацию. Счётчик запросов пинит, что
+// запрос ровно один: повтор для SDK отключён (`option.WithMaxRetries(0)`), иначе SDK повторил бы
+// 500 своими ретраями (по умолчанию их два — тогда запросов было бы три). Ключ в текст ошибки не
+// попадает (он едет заголовком x-api-key), а тело ответа обрезается до фрагмента: *anthropic.Error
+// печатает его целиком, и сырое тело (десятки килобайт JSON) уехало бы в warn-лог импортёра.
 func TestTagMPChannelsLLM500(t *testing.T) {
 	doc := mpLLMFixtureDoc(t)
 	// Тело заметно больше фрагмента (512 байт) и начинается с узнаваемой метки.
@@ -1274,6 +1274,46 @@ func TestTagMPChannelsLLMOpenAITransport(t *testing.T) {
 	}
 	if stats.Usage != (mpLLMUsage{InputTokens: 100, OutputTokens: 50, CacheReadInputTokens: 7}) {
 		t.Errorf("usage = %+v, ожидался 100/50/7", stats.Usage)
+	}
+}
+
+// TestTagMPChannelsLLMOpenAIDefaults — по умолчанию OpenAI-запрос не несёт reasoning_effort,
+// concise-инструкции, thinking и assistant-prefill: harness-флаги включаются только явно.
+func TestTagMPChannelsLLMOpenAIDefaults(t *testing.T) {
+	doc := mpLLMFixtureDoc(t)
+	quoted, err := json.Marshal(mpLLMPayloadBody(t, mpLLMValidChannels()...))
+	if err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	var gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		gotBody = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"stop","message":{"content":`+string(quoted)+`}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	oldTransport := mpLLMTransport
+	oldEffort, oldConcise := mpLLMReasoningEffort, mpLLMConcise
+	oldPrefill, oldThinking := mpLLMPrefillJSON, mpLLMThinkingDisabled
+	mpLLMTransport, mpLLMReasoningEffort, mpLLMConcise = "openai", "", false
+	mpLLMPrefillJSON, mpLLMThinkingDisabled = false, false
+	t.Cleanup(func() {
+		mpLLMTransport = oldTransport
+		mpLLMReasoningEffort = oldEffort
+		mpLLMConcise = oldConcise
+		mpLLMPrefillJSON = oldPrefill
+		mpLLMThinkingDisabled = oldThinking
+	})
+
+	if _, _, err := tagMPChannelsLLM(doc, mpLLMProfile{BaseURL: srv.URL, APIKey: "test-key", Model: "test-model"}); err != nil {
+		t.Fatalf("tagMPChannelsLLM: %v", err)
+	}
+	for _, unwanted := range []string{`"reasoning_effort"`, mpLLMConciseInstruction, `"thinking"`, `"role":"assistant"`} {
+		if strings.Contains(gotBody, unwanted) {
+			t.Errorf("в запросе по умолчанию есть %q: %s", unwanted, gotBody)
+		}
 	}
 }
 

@@ -19,7 +19,7 @@
 - `v_cbr_mp_summary_channels`, `method='llm'`: `model='deepseek-chat'`, 22 документа, 1089 строк (`note` 242, `prose` 550, `risk_dez` 53, `risk_pro` 244), `prompt_version=1`.
 - Импортёр читает одну модель из `LLM_BASE_URL`/`LLM_API_KEY`/`MP_SUMMARY_LLM_MODEL` (`cbr/mp_summary_llm.go`, `mpLLMConfigFromEnv`); схема `cbr_mp_summary_channel` уже включает `model` и `prompt_version` в ключ `ReplacingMergeTree`, поэтому разметка новых моделей ложится рядом без миграции.
 - Провайдеры `joingonka` (`https://gate.joingonka.ai`) и `xiaomimimo` (`https://api.xiaomimimo.com/anthropic`) в конфиге Kimi Code имеют тип `anthropic`, то есть совместимы с продовым SDK `anthropic-sdk-go` (`POST <base>/v1/messages`). Их ключи лежат в `~/.kimi-code/config.toml`, в `~/.config/rosstat/env` их нет.
-- Промпт (`mpLLMSystemPrompt`, редакция 1), валидация цитат (дословное вхождение в нормализованный корпус), `temperature=0`, `max_tokens=8192`, дедлайн 65 с — общие для всех моделей; менять их в этом пункте нельзя, иначе сравнение потеряет смысл.
+- Промпт (`mpLLMSystemPrompt`, редакция 1), валидация цитат (дословное вхождение в нормализованный корпус), `temperature=0`, `max_tokens=8192`, дедлайн 65 с — общие для всех моделей; **прод-путь** их не меняет, иначе сравнение потеряет смысл. Harness штатно подменяет `max_tokens`/дедлайн и добавляет OpenAI-режим, `reasoning_effort` и concise-инструкцию; каждое такое отличие фиксируется в отчёте.
 
 ## 3. Решения
 

@@ -726,6 +726,9 @@ func mpTagLLM(llmRows *mpBatch, d mpLLMDoc, profile mpLLMProfile) (mpLLMDocStats
 			return stats, err
 		}
 	}
+	log.Debugf("%s: LLM %s %s: %d цитат, %d заметок, %.1f с, in/out %d/%d",
+		mpSummaryName, profile.Model, d.Date.Format(mpSummaryDayLayout), stats.QuotesKept, stats.Notes,
+		stats.Duration.Seconds(), stats.Usage.InputTokens, stats.Usage.OutputTokens)
 	return stats, nil
 }
 
