@@ -780,6 +780,51 @@ func TestTagMPChannelsLLMFencedJSON(t *testing.T) {
 // 500 своими ретраями (по умолчанию их два — тогда запросов было бы три). Ключ в текст ошибки не
 // попадает (он едет заголовком x-api-key), а тело ответа обрезается до фрагмента: *anthropic.Error
 // печатает его целиком, и сырое тело (десятки килобайт JSON) уехало бы в warn-лог импортёра.
+// TestTagMPChannelsLLMPrefill — harness-совместимость: последнее сообщение ассистента «{»
+// заставляет модель продолжать JSON, а не рассуждать в text-блоке. Ответ-продолжение без
+// начальной «{» должен быть склеен в целый объект, а запрос — нести assistant-сообщение.
+func TestTagMPChannelsLLMPrefill(t *testing.T) {
+	doc := mpLLMFixtureDoc(t)
+	payload := strings.TrimPrefix(mpLLMPayloadBody(t, mpLLMValidChannels()...), "{")
+	mock := mpNewLLMMock(t, mpLLMMockResponse{Body: mpLLMContentBody(t, payload)})
+
+	old := mpLLMPrefillJSON
+	mpLLMPrefillJSON = true
+	t.Cleanup(func() { mpLLMPrefillJSON = old })
+
+	matches, stats, err := tagMPChannelsLLM(doc, mpLLMProfile{BaseURL: mock.url, APIKey: "test-key", Model: "test-model"})
+	if err != nil {
+		t.Fatalf("tagMPChannelsLLM: %v", err)
+	}
+	if len(matches) == 0 || stats.QuotesKept == 0 {
+		t.Fatalf("prefill-ответ не разобран: matches=%d quotes_kept=%d", len(matches), stats.QuotesKept)
+	}
+	req := mock.request(0)
+	if !strings.Contains(req.Body, `"role":"assistant"`) || !strings.Contains(req.Body, `"text":"{"`) {
+		t.Errorf("в запросе нет assistant-prefill «{»: %s", req.Body)
+	}
+}
+
+// TestTagMPChannelsLLMThinkingDisabled — harness-совместимость: поле Anthropic
+// `thinking: {type: disabled}` уходит в запрос только при включённом флаге и не ломает
+// разбор ответа. Прод-путь по умолчанию поле не отправляет.
+func TestTagMPChannelsLLMThinkingDisabled(t *testing.T) {
+	doc := mpLLMFixtureDoc(t)
+	mock := mpNewLLMMock(t, mpLLMMockResponse{Body: mpLLMContentBody(t, mpLLMPayloadBody(t, mpLLMValidChannels()...))})
+
+	old := mpLLMThinkingDisabled
+	mpLLMThinkingDisabled = true
+	t.Cleanup(func() { mpLLMThinkingDisabled = old })
+
+	if _, _, err := tagMPChannelsLLM(doc, mpLLMProfile{BaseURL: mock.url, APIKey: "test-key", Model: "test-model"}); err != nil {
+		t.Fatalf("tagMPChannelsLLM: %v", err)
+	}
+	req := mock.request(0)
+	if !strings.Contains(req.Body, `"thinking":{"type":"disabled"}`) {
+		t.Errorf("в запросе нет thinking disabled: %s", req.Body)
+	}
+}
+
 func TestTagMPChannelsLLM500(t *testing.T) {
 	doc := mpLLMFixtureDoc(t)
 	// Тело заметно больше фрагмента (512 байт) и начинается с узнаваемой метки.
@@ -1126,5 +1171,119 @@ func TestMpTagLLMReturnsError(t *testing.T) {
 	}
 	if rows.rows != 0 || rows.batch != nil {
 		t.Errorf("батч тронут при ошибке LLM: rows=%d, batch=%v", rows.rows, rows.batch)
+	}
+}
+
+// TestMpLLMJSONBodyFirstObject — разбор первого JSON-объекта: OpenAI-совместимые модели
+// иногда повторяют объект или добавляют хвост; LastIndex склеил бы их в невалидный JSON.
+func TestMpLLMJSONBodyFirstObject(t *testing.T) {
+	cases := []struct {
+		name, in, want string
+		ok             bool
+	}{
+		{"чистый объект", `{"a":1}`, `{"a":1}`, true},
+		{"повтор объекта", `{"a":1}{"b":2}`, `{"a":1}`, true},
+		{"хвост после объекта", `{"a":1} пояснение`, `{"a":1}`, true},
+		{"fenced json", "```json\n{\"a\":1}\n```", `{"a":1}`, true},
+		{"нет объекта", `просто текст`, "", false},
+		{"обрезанный объект", `{"a":`, "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := mpLLMJSONBody(tc.in)
+			if ok != tc.ok || got != tc.want {
+				t.Errorf("mpLLMJSONBody(%q) = (%q, %v), want (%q, %v)", tc.in, got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
+// TestMpLLMOpenAIURL — OpenAI-путь из Anthropic-base профилей: корень гейтвея GLM и
+// /anthropic-префикс MiMo дают /v1/chat/completions, хвостовой /v1 не дублируется.
+func TestMpLLMOpenAIURL(t *testing.T) {
+	cases := map[string]string{
+		"https://gate.joingonka.ai":            "https://gate.joingonka.ai/v1/chat/completions",
+		"https://api.xiaomimimo.com/anthropic": "https://api.xiaomimimo.com/v1/chat/completions",
+		"https://api.deepseek.com/anthropic":   "https://api.deepseek.com/v1/chat/completions",
+		"https://example.com/v1":               "https://example.com/v1/chat/completions",
+	}
+	for in, want := range cases {
+		if got := mpLLMOpenAIURL(in); got != want {
+			t.Errorf("mpLLMOpenAIURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestTagMPChannelsLLMOpenAITransport — harness-транспорт openai: POST /v1/chat/completions
+// с Authorization: Bearer, response_format=json_object и теми же промптами; usage из
+// prompt_tokens/completion_tokens; валидация цитат та же, что у Anthropic-пути.
+func TestTagMPChannelsLLMOpenAITransport(t *testing.T) {
+	doc := mpLLMFixtureDoc(t)
+	payload := mpLLMPayloadBody(t, mpLLMValidChannels()...)
+	quoted, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	var (
+		gotPath, gotAuth, gotBody string
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		gotPath, gotAuth, gotBody = r.URL.Path, r.Header.Get("Authorization"), string(body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"stop","message":{"content":`+string(quoted)+`}}],"usage":{"prompt_tokens":100,"completion_tokens":50,"prompt_tokens_details":{"cached_tokens":7}}}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	old := mpLLMTransport
+	mpLLMTransport = "openai"
+	t.Cleanup(func() { mpLLMTransport = old })
+
+	matches, stats, err := tagMPChannelsLLM(doc, mpLLMProfile{BaseURL: srv.URL, APIKey: "test-key", Model: "test-model"})
+	if err != nil {
+		t.Fatalf("tagMPChannelsLLM: %v", err)
+	}
+	if len(matches) == 0 || stats.QuotesKept == 0 {
+		t.Fatalf("openai-ответ не разобран: matches=%d quotes_kept=%d", len(matches), stats.QuotesKept)
+	}
+	if gotPath != "/v1/chat/completions" {
+		t.Errorf("путь %q, ожидался /v1/chat/completions", gotPath)
+	}
+	if gotAuth != "Bearer test-key" {
+		t.Errorf("Authorization = %q, ожидался Bearer test-key", gotAuth)
+	}
+	if !strings.Contains(gotBody, `"response_format":{"type":"json_object"}`) {
+		t.Errorf("в запросе нет response_format=json_object: %s", gotBody)
+	}
+	if !strings.Contains(gotBody, `"model":"test-model"`) {
+		t.Errorf("в запросе нет модели: %s", gotBody)
+	}
+	if stats.Usage != (mpLLMUsage{InputTokens: 100, OutputTokens: 50, CacheReadInputTokens: 7}) {
+		t.Errorf("usage = %+v, ожидался 100/50/7", stats.Usage)
+	}
+}
+
+// TestTagMPChannelsLLMOpenAIHTTPError — отказ OpenAI-совместимого провайдера не повторяется:
+// HTTP non-2xx не является ошибкой формата, поэтому попытка одна.
+func TestTagMPChannelsLLMOpenAIHTTPError(t *testing.T) {
+	doc := mpLLMFixtureDoc(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"boom"}`, http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+
+	old := mpLLMTransport
+	mpLLMTransport = "openai"
+	t.Cleanup(func() { mpLLMTransport = old })
+
+	_, stats, err := tagMPChannelsLLM(doc, mpLLMProfile{BaseURL: srv.URL, APIKey: "test-key", Model: "test-model"})
+	if err == nil {
+		t.Fatal("ошибка провайдера не вернулась")
+	}
+	if stats.Attempts != 1 {
+		t.Errorf("Attempts = %d, ожидалась 1: HTTP-ошибка не повторяется", stats.Attempts)
+	}
+	if stats.Usage != (mpLLMUsage{}) {
+		t.Errorf("Usage = %+v, ожидался нулевой", stats.Usage)
 	}
 }

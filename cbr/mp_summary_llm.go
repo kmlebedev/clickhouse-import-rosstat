@@ -1,11 +1,13 @@
 package cbr
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"regexp"
 	"strconv"
@@ -58,6 +60,25 @@ var mpLLMTimeout = 65 * time.Second
 // урежет сам). Переменная, а не константа: живой harness сравнения моделей подменяет лимит
 // (MP_LLM_EVAL_MAX_TOKENS) только на свой прогон, не меняя продовый дефолт.
 var mpLLMMaxTokens int64 = 8192
+
+// mpLLMPrefillJSON — предзаполнить ответ ассистента символом «{». Некоторые модели (GLM)
+// тратят весь max_tokens на рассуждение в text-блоке и не доходят до JSON: prefill заставляет
+// их продолжать уже начатый JSON-объект. Это совместимость harness-прогона, а не прод-дефолт:
+// system-промпт, temperature и схема ответа не меняются, но запрос получает лишнее сообщение
+// ассистента, поэтому в отчёте такой прогон помечается отдельно.
+var mpLLMPrefillJSON bool
+
+// mpLLMThinkingDisabled — отключить extended thinking в запросе (Anthropic `thinking:
+// {"type":"disabled"}`). Некоторые модели (GLM, MiMo) по умолчанию тратят весь max_tokens
+// на рассуждение и не доходят до JSON; harness включает disabled только на свой прогон,
+// продовый дефолт — не отправлять поле вовсе.
+var mpLLMThinkingDisabled bool
+
+// mpLLMTransport — транспорт LLM-слоя: "anthropic" (продовый, официальный SDK) или "openai"
+// (OpenAI-совместимый POST /chat/completions с response_format=json_object). Второй — только
+// для harness-сравнения: GLM и MiMo на Anthropic-эндпоинте уходят в reasoning и не доходят до
+// JSON, а их OpenAI-эндпоинты поддерживают JSON-режим. Прод-путь по умолчанию не меняется.
+var mpLLMTransport = "anthropic"
 
 // mpLLMProfile — один профиль разметки: имя (default/glm/mimo) нужно только для конфигурации и
 // логов, а в данные пишется фактическое имя модели API (Model) — по нему импортёр отличает,
@@ -357,11 +378,18 @@ func mpLLMCorpus(doc mpSummaryDoc) string {
 func mpLLMJSONBody(content string) (string, bool) {
 	s := strings.TrimSpace(content)
 	start := strings.Index(s, "{")
-	end := strings.LastIndex(s, "}")
-	if start < 0 || end < start {
+	if start < 0 {
 		return "", false
 	}
-	return s[start : end+1], true
+	// Decode первого значения, а не «первая { — последняя }»: OpenAI-совместимые модели
+	// иногда повторяют объект (`{"ok":true}!{"ok":true}!…`) или добавляют хвост после JSON;
+	// LastIndex склеил бы повтор в невалидный объект, а Decoder берёт ровно первый.
+	dec := json.NewDecoder(strings.NewReader(s[start:]))
+	var raw json.RawMessage
+	if err := dec.Decode(&raw); err != nil || len(raw) == 0 || raw[0] != '{' {
+		return "", false
+	}
+	return string(raw), true
 }
 
 // mpLLMText склеивает текстовые блоки ответа в порядке выдачи. Anthropic-конверт может нести
@@ -378,8 +406,31 @@ func mpLLMText(msg *anthropic.Message) string {
 	return b.String()
 }
 
+// mpLLMBlockTypes — типы блоков конверта в порядке ответа. Нужна диагностика отказа модели
+// (например, «thinking» без text-блока или ответ без JSON): типы уезжают в текст ошибки,
+// который пишется в warn и stats, и позволяют отличить отказ провайдера от нарушения схемы.
+func mpLLMBlockTypes(msg *anthropic.Message) string {
+	types := make([]string, 0, len(msg.Content))
+	for _, block := range msg.Content {
+		types = append(types, block.Type)
+	}
+	return strings.Join(types, ",")
+}
+
+// mpLLMSnippet — начало текста ответа для диагностики: ошибка не должна разрастаться до
+// размера конверта (49 КБ текста в GLM), а первых сотен символов хватает, чтобы увидеть,
+// проза это, обрезанный JSON или thinking.
+func mpLLMSnippet(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
+}
+
 // mpLLMAskOnce — один запрос к провайдеру официальным SDK (Anthropic Messages API:
-// POST <baseURL>/v1/messages) и разбор ответа до структуры. Ответ без text-блока, пустой или
+// POST <baseURL>/v1/messages) и разбор ответа до структуры. При mpLLMTransport == "openai"
+// вызов уходит в mpLLMAskOnceOpenAI: тот же промпт, но OpenAI-совместимый JSON-режим
+// (GLM/MiMo на Anthropic-эндпоинте уходят в reasoning и не доходят до JSON). Ответ без text-блока, пустой или
 // неразобранный content, не та схема JSON и не полученное целиком тело — ошибки формата
 // (mpLLMFormatError), их повторяет mpLLMAsk: максимум два вызова на документ. Отказ провайдера
 // (*anthropic.Error, не-2xx) и всё, что не опознано проверкой по типам, — ошибки без единого байта
@@ -411,6 +462,9 @@ func mpLLMText(msg *anthropic.Message) string {
 // не теряется и на ошибке формата ниже: провайдер токены потратил, и отчёт должен это видеть.
 // На отказе провайдера и транспортной ошибке конверта нет — usage нулевой.
 func mpLLMAskOnce(doc mpSummaryDoc, baseURL, apiKey, model string) (mpLLMPayload, mpLLMUsage, error) {
+	if mpLLMTransport == "openai" {
+		return mpLLMAskOnceOpenAI(doc, baseURL, apiKey, model)
+	}
 	client := anthropic.NewClient(
 		option.WithAPIKey(apiKey),
 		option.WithBaseURL(strings.TrimRight(baseURL, "/")),
@@ -419,14 +473,29 @@ func mpLLMAskOnce(doc mpSummaryDoc, baseURL, apiKey, model string) (mpLLMPayload
 	)
 	ctx, cancel := context.WithTimeout(context.Background(), mpLLMTimeout)
 	defer cancel()
+	messages := []anthropic.MessageParam{
+		anthropic.NewUserMessage(anthropic.NewTextBlock(mpLLMUserPrompt(doc))),
+	}
+	// Prefill (только harness): последнее сообщение ассистента «{» заставляет модель продолжать
+	// JSON-объект, а не тратить весь лимит на рассуждение в text-блоке (GLM).
+	prefill := mpLLMPrefillJSON
+	if prefill {
+		messages = append(messages, anthropic.NewAssistantMessage(anthropic.NewTextBlock("{")))
+	}
+	// Thinking disabled (только harness): GLM/MiMo по умолчанию тратят весь max_tokens на
+	// рассуждение в text-блоке. Пустая union-структура опускается SDK — прод-запрос не меняется.
+	thinking := anthropic.ThinkingConfigParamUnion{}
+	if mpLLMThinkingDisabled {
+		disabled := anthropic.NewThinkingConfigDisabledParam()
+		thinking = anthropic.ThinkingConfigParamUnion{OfDisabled: &disabled}
+	}
 	msg, err := client.Messages.New(ctx, anthropic.MessageNewParams{
 		Model:     model,
 		MaxTokens: mpLLMMaxTokens,
 		// System — отдельное поле Anthropic-конверта: системной роли в сообщениях там нет.
-		System: []anthropic.TextBlockParam{{Text: mpLLMSystemPrompt()}},
-		Messages: []anthropic.MessageParam{
-			anthropic.NewUserMessage(anthropic.NewTextBlock(mpLLMUserPrompt(doc))),
-		},
+		System:   []anthropic.TextBlockParam{{Text: mpLLMSystemPrompt()}},
+		Messages: messages,
+		Thinking: thinking,
 		// temperature = 0: разметка должна быть воспроизводимой, а не творческой (смена ответа
 		// при том же промпте ломала бы сверку «(model, prompt_version) уже размечен»).
 		// tools/response_format не используются — провайдер их поддержку не гарантирует,
@@ -452,16 +521,151 @@ func mpLLMAskOnce(doc mpSummaryDoc, baseURL, apiKey, model string) (mpLLMPayload
 		CacheCreationInputTokens: msg.Usage.CacheCreationInputTokens,
 	}
 	content := mpLLMText(msg)
+	// Ответ на prefill — продолжение объекта без начальной «{»: возвращаем её, чтобы
+	// mpLLMJSONBody увидел целый JSON. Если модель всё же начала с «{», не дублируем.
+	if prefill && content != "" && !strings.HasPrefix(strings.TrimSpace(content), "{") {
+		content = "{" + content
+	}
 	if content == "" {
-		return mpLLMPayload{}, usage, mpLLMFormatError{fmt.Errorf("в ответе нет text-блока")}
+		return mpLLMPayload{}, usage, mpLLMFormatError{fmt.Errorf(
+			"в ответе нет text-блока (блоки: %q, stop_reason: %q, in/out: %d/%d)",
+			mpLLMBlockTypes(msg), msg.StopReason, usage.InputTokens, usage.OutputTokens)}
 	}
 	body, ok := mpLLMJSONBody(content)
 	if !ok {
-		return mpLLMPayload{}, usage, mpLLMFormatError{fmt.Errorf("в content нет JSON-объекта (content: %d байт)", len(content))}
+		return mpLLMPayload{}, usage, mpLLMFormatError{fmt.Errorf(
+			"в content нет JSON-объекта (content: %d байт, блоки: %q, stop_reason: %q, начало: %q)",
+			len(content), mpLLMBlockTypes(msg), msg.StopReason, mpLLMSnippet(content, 300))}
 	}
 	var payload mpLLMPayload
 	if err := json.Unmarshal([]byte(body), &payload); err != nil {
-		return mpLLMPayload{}, usage, mpLLMFormatError{fmt.Errorf("content не разобран: %w", err)}
+		return mpLLMPayload{}, usage, mpLLMFormatError{fmt.Errorf(
+			"content не разобран: %w (блоки: %q, stop_reason: %q, начало: %q)",
+			err, mpLLMBlockTypes(msg), msg.StopReason, mpLLMSnippet(content, 300))}
+	}
+	return payload, usage, nil
+}
+
+// mpLLMOpenAIRequest/mpLLMOpenAIResponse — конверт OpenAI-совместимого /chat/completions:
+// JSON-режим (response_format=json_object) и usage в токенах. Thinking/prefill в этом
+// транспорте не используются: JSON-режим сам по себе является совместимостью для моделей,
+// которые на Anthropic-эндпоинте уходят в reasoning.
+type mpLLMOpenAIRequest struct {
+	Model          string                    `json:"model"`
+	Messages       []mpLLMOpenAIMessage      `json:"messages"`
+	MaxTokens      int64                     `json:"max_tokens"`
+	Temperature    float64                   `json:"temperature"`
+	ResponseFormat mpLLMOpenAIResponseFormat `json:"response_format"`
+}
+
+type mpLLMOpenAIMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type mpLLMOpenAIResponseFormat struct {
+	Type string `json:"type"`
+}
+
+type mpLLMOpenAIResponse struct {
+	Choices []struct {
+		FinishReason string `json:"finish_reason"`
+		Message      struct {
+			Content string `json:"content"`
+		} `json:"message"`
+	} `json:"choices"`
+	Usage struct {
+		PromptTokens        int64 `json:"prompt_tokens"`
+		CompletionTokens    int64 `json:"completion_tokens"`
+		PromptTokensDetails struct {
+			CachedTokens int64 `json:"cached_tokens"`
+		} `json:"prompt_tokens_details"`
+	} `json:"usage"`
+}
+
+// mpLLMOpenAIURL — OpenAI-совместимый путь из base профиля: у GLM base — корень гейтвея,
+// у MiMo — Anthropic-префикс /anthropic; обоим нужен /v1/chat/completions. Хвостовой /v1
+// не дублируется, если владелец уже указал его в base.
+func mpLLMOpenAIURL(baseURL string) string {
+	base := strings.TrimRight(baseURL, "/")
+	base = strings.TrimSuffix(base, "/anthropic")
+	if !strings.HasSuffix(base, "/v1") {
+		base += "/v1"
+	}
+	return base + "/chat/completions"
+}
+
+// mpLLMAskOnceOpenAI — один запрос OpenAI-совместимого транспорта (harness): тот же
+// system/user-промпт, temperature 0, response_format=json_object, max_tokens из mpLLMMaxTokens.
+// Ошибки классифицируются как в Anthropic-пути: отказ провайдера/транспорт — без повтора,
+// неполное или неразобранное тело, конверт без choices/content и content без JSON — формат
+// (mpLLMFormatError, один повтор в mpLLMAsk). Ключ уходит заголовком Authorization: Bearer и
+// в текст ошибки не попадает: тело отказа режется util.ErrorSnippet, как у Anthropic-пути.
+func mpLLMAskOnceOpenAI(doc mpSummaryDoc, baseURL, apiKey, model string) (mpLLMPayload, mpLLMUsage, error) {
+	request := mpLLMOpenAIRequest{
+		Model: model,
+		Messages: []mpLLMOpenAIMessage{
+			{Role: "system", Content: mpLLMSystemPrompt()},
+			{Role: "user", Content: mpLLMUserPrompt(doc)},
+		},
+		MaxTokens:      mpLLMMaxTokens,
+		Temperature:    0,
+		ResponseFormat: mpLLMOpenAIResponseFormat{Type: "json_object"},
+	}
+	body, err := json.Marshal(request)
+	if err != nil {
+		return mpLLMPayload{}, mpLLMUsage{}, fmt.Errorf("запрос не собран: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), mpLLMTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, mpLLMOpenAIURL(baseURL), bytes.NewReader(body))
+	if err != nil {
+		return mpLLMPayload{}, mpLLMUsage{}, err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := util.HttpClient.Do(req)
+	if err != nil {
+		return mpLLMPayload{}, mpLLMUsage{}, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return mpLLMPayload{}, mpLLMUsage{}, mpLLMFormatError{fmt.Errorf("тело ответа не прочитано: %w", err)}
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return mpLLMPayload{}, mpLLMUsage{}, fmt.Errorf("http status %d: %s", resp.StatusCode, util.ErrorSnippet(respBody))
+	}
+	var envelope mpLLMOpenAIResponse
+	if err := json.Unmarshal(respBody, &envelope); err != nil {
+		return mpLLMPayload{}, mpLLMUsage{}, mpLLMFormatError{fmt.Errorf("конверт не разобран: %w", err)}
+	}
+	usage := mpLLMUsage{
+		InputTokens:          envelope.Usage.PromptTokens,
+		OutputTokens:         envelope.Usage.CompletionTokens,
+		CacheReadInputTokens: envelope.Usage.PromptTokensDetails.CachedTokens,
+	}
+	if len(envelope.Choices) == 0 {
+		return mpLLMPayload{}, usage, mpLLMFormatError{fmt.Errorf("в конверте нет choices")}
+	}
+	choice := envelope.Choices[0]
+	content := strings.TrimSpace(choice.Message.Content)
+	if content == "" {
+		return mpLLMPayload{}, usage, mpLLMFormatError{fmt.Errorf(
+			"в ответе нет content (finish_reason: %q, in/out: %d/%d)",
+			choice.FinishReason, usage.InputTokens, usage.OutputTokens)}
+	}
+	raw, ok := mpLLMJSONBody(content)
+	if !ok {
+		return mpLLMPayload{}, usage, mpLLMFormatError{fmt.Errorf(
+			"в content нет JSON-объекта (content: %d байт, finish_reason: %q, начало: %q)",
+			len(content), choice.FinishReason, mpLLMSnippet(content, 300))}
+	}
+	var payload mpLLMPayload
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return mpLLMPayload{}, usage, mpLLMFormatError{fmt.Errorf(
+			"content не разобран: %w (finish_reason: %q, начало: %q)",
+			err, choice.FinishReason, mpLLMSnippet(content, 300))}
 	}
 	return payload, usage, nil
 }

@@ -40,6 +40,17 @@ const (
 	mpEvalTimeoutEnv   = "MP_LLM_EVAL_TIMEOUT"
 	mpEvalMaxTokensEnv = "MP_LLM_EVAL_MAX_TOKENS"
 	mpEvalDelayEnv     = "MP_LLM_EVAL_DELAY"
+	// mpEvalPrefillEnv — совместимость с моделями, которые тратят весь max_tokens на
+	// рассуждение в text-блоке (GLM): последнее сообщение ассистента «{» заставляет их
+	// продолжать JSON. Прод-путь по умолчанию prefill не использует.
+	mpEvalPrefillEnv = "MP_LLM_EVAL_PREFILL"
+	// mpEvalThinkingEnv — управление Anthropic-полем thinking: default (не отправлять) или
+	// disabled. GLM/MiMo по умолчанию тратят весь max_tokens на reasoning и не доходят до JSON.
+	mpEvalThinkingEnv = "MP_LLM_EVAL_THINKING"
+	// mpEvalTransportEnv — транспорт harness: anthropic (продовый SDK) или openai
+	// (OpenAI-совместимый JSON-режим; нужен GLM/MiMo, которые на Anthropic-эндпоинте
+	// уходят в reasoning и не доходят до JSON).
+	mpEvalTransportEnv = "MP_LLM_EVAL_TRANSPORT"
 
 	// mpEvalBaselineModel — модель, уже лежащая в ClickHouse: согласие с ней — одна из
 	// метрик качества (спека §3.5). Имя модели не секрет: оно же колонка model витрины.
@@ -111,6 +122,9 @@ type mpEvalReport struct {
 	Write      bool
 	Force      bool
 	Resume     bool
+	Prefill    bool
+	Thinking   string
+	Transport  string
 	OutDir     string
 	Records    []mpEvalRecord
 	Models     []string
@@ -145,18 +159,29 @@ func TestMPLLMEvalLive(t *testing.T) {
 	write := mpEvalEnvBool(t, mpEvalWriteEnv, true)
 	force := mpEvalEnvBool(t, mpEvalForceEnv, false)
 	resume := mpEvalEnvBool(t, mpEvalResumeEnv, true)
+	prefill := mpEvalEnvBool(t, mpEvalPrefillEnv, false)
+	thinking := mpEvalEnvThinking(t)
+	transport := mpEvalEnvTransport(t)
 	docsFilter, docsFilterRaw := mpEvalEnvDates(t)
 	prices := mpEvalProfilePrices(t, profiles)
 
-	// mpLLMTimeout/mpLLMMaxTokens — переменные, чтобы harness подменил лимиты только на
-	// этот прогон. Продовый дефолт возвращается в t.Cleanup: с -tags mpeval в том же
-	// процессе идут и обычные тесты пакета, которые пинят max_tokens=8192.
+	// mpLLMTimeout/mpLLMMaxTokens/mpLLMPrefillJSON/mpLLMThinkingDisabled/mpLLMTransport —
+	// переменные, чтобы harness подменил лимиты и режим запроса только на этот прогон.
+	// Продовый дефолт возвращается в t.Cleanup: с -tags mpeval в том же процессе идут и
+	// обычные тесты пакета, которые пинят max_tokens=8192 и отсутствие thinking/prefill.
 	oldTimeout, oldMaxTokens := mpLLMTimeout, mpLLMMaxTokens
+	oldPrefill, oldThinking, oldTransport := mpLLMPrefillJSON, mpLLMThinkingDisabled, mpLLMTransport
 	mpLLMTimeout = timeout
 	mpLLMMaxTokens = maxTokens
+	mpLLMPrefillJSON = prefill
+	mpLLMThinkingDisabled = thinking == "disabled"
+	mpLLMTransport = transport
 	t.Cleanup(func() {
 		mpLLMTimeout = oldTimeout
 		mpLLMMaxTokens = oldMaxTokens
+		mpLLMPrefillJSON = oldPrefill
+		mpLLMThinkingDisabled = oldThinking
+		mpLLMTransport = oldTransport
 	})
 
 	outDir := strings.TrimSpace(os.Getenv(mpEvalOutEnv))
@@ -235,8 +260,8 @@ func TestMPLLMEvalLive(t *testing.T) {
 			jobs = append(jobs, mpEvalJob{Doc: doc, Profile: profile})
 		}
 	}
-	t.Logf("harness: документов %d, профилей %d, вызовов %d (write=%t force=%t resume=%t, timeout=%s, max_tokens=%d, delay=%s)",
-		len(docs), len(profiles), len(jobs), write, force, resume, timeout, maxTokens, delay)
+	t.Logf("harness: документов %d, профилей %d, вызовов %d (write=%t force=%t resume=%t prefill=%t thinking=%s transport=%s, timeout=%s, max_tokens=%d, delay=%s)",
+		len(docs), len(profiles), len(jobs), write, force, resume, prefill, thinking, transport, timeout, maxTokens, delay)
 
 	for i, job := range jobs {
 		rec := mpEvalRunJob(t, ctx, conn, job, write)
@@ -296,6 +321,9 @@ func TestMPLLMEvalLive(t *testing.T) {
 		Write:      write,
 		Force:      force,
 		Resume:     resume,
+		Prefill:    prefill,
+		Thinking:   thinking,
+		Transport:  transport,
 		OutDir:     outDir,
 		Records:    records,
 		Models:     models,
@@ -634,7 +662,7 @@ func mpEvalWriteReport(t *testing.T, path string, rep mpEvalReport) {
 		len(rep.Docs), rep.Docs[0].DateKey, rep.Docs[len(rep.Docs)-1].DateKey, filter)
 	mpEvalWritef(&b, "- Записей в stats.jsonl: %d (скорость/цена — по всем записям, качество и summary.csv — по последней записи пары)\n", len(rep.Records))
 	mpEvalWritef(&b, "- timeout: %s, max_tokens: %d, delay: %s\n", rep.Timeout, rep.MaxTokens, rep.Delay)
-	mpEvalWritef(&b, "- write: %t, force: %t, resume: %t\n", rep.Write, rep.Force, rep.Resume)
+	mpEvalWritef(&b, "- write: %t, force: %t, resume: %t, prefill: %t, thinking: %s, transport: %s\n", rep.Write, rep.Force, rep.Resume, rep.Prefill, rep.Thinking, rep.Transport)
 	mpEvalWritef(&b, "- Артефакты: `%s` (`stats.jsonl`, `summary.csv`, `report.md`, `notes-sample.md`)\n", rep.OutDir)
 	mpEvalWritef(&b, "- Baseline для Jaccard: `%s`, prompt_version=%d\n\n", mpEvalBaselineModel, mpPromptVersion)
 
@@ -978,6 +1006,35 @@ func mpEvalEnvBool(t *testing.T, name string, def bool) bool {
 	default:
 		t.Fatalf("%s=%q: ожидается 0 или 1", name, raw)
 		return def
+	}
+}
+
+// mpEvalEnvThinking — режим Anthropic thinking: пусто/default → поле не отправляется,
+// disabled → thinking: {type: disabled}. Иное — ошибка теста.
+func mpEvalEnvThinking(t *testing.T) string {
+	t.Helper()
+	switch raw := strings.ToLower(strings.TrimSpace(os.Getenv(mpEvalThinkingEnv))); raw {
+	case "", "default":
+		return "default"
+	case "disabled":
+		return "disabled"
+	default:
+		t.Fatalf("%s=%q: ожидается default или disabled", mpEvalThinkingEnv, raw)
+		return "default"
+	}
+}
+
+// mpEvalEnvTransport — транспорт harness: пусто/anthropic → SDK, openai → JSON-режим.
+func mpEvalEnvTransport(t *testing.T) string {
+	t.Helper()
+	switch raw := strings.ToLower(strings.TrimSpace(os.Getenv(mpEvalTransportEnv))); raw {
+	case "", "anthropic":
+		return "anthropic"
+	case "openai":
+		return "openai"
+	default:
+		t.Fatalf("%s=%q: ожидается anthropic или openai", mpEvalTransportEnv, raw)
+		return "anthropic"
 	}
 }
 
