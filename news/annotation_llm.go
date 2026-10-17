@@ -464,6 +464,29 @@ func newsLLMAsk(ctx context.Context, cfg newsLLMConfig, inputs []newsItem) (news
 	return newsLLMAskOnce(ctx, cfg, inputs)
 }
 
+// newsUniqueByURL дедуплицирует вход разметки по URL: кандидатная выборка уникальна по паре
+// (url, content_hash), поэтому у одного URL может быть несколько версий текста. Валидация
+// индексирует вход по URL, и вторая версия в том же батче не получила бы doc-строки, навсегда
+// оставшись кандидатом и занимая слот бэклога. Остаётся первое вхождение: кандидаты идут
+// ORDER BY date DESC, то есть первой лежит самая свежая версия. Отложенная версия разметится
+// следующим прогоном: первая уже исключена из кандидатов, вторая останется.
+func newsUniqueByURL(inputs []newsItem) []newsItem {
+	if len(inputs) < 2 {
+		return inputs
+	}
+	seen := make(map[string]struct{}, len(inputs))
+	out := make([]newsItem, 0, len(inputs))
+	for _, it := range inputs {
+		if _, dup := seen[it.URL]; dup {
+			log.Infof("news_watch: LLM-разметка: URL %s уже в батче, версия отложена до следующего прогона", it.URL)
+			continue
+		}
+		seen[it.URL] = struct{}{}
+		out = append(out, it)
+	}
+	return out
+}
+
 // newsLLMBatches делит вход на батчи по двум пределам: не больше newsLLMBatchSize сообщений
 // и не больше newsLLMBatchBytes байт текста (len(title)+len(description)). Пост больше
 // бюджета становится батчем из одного элемента — он не теряется и не зацикливает деление.
@@ -491,17 +514,17 @@ func newsLLMBatches(inputs []newsItem) [][]newsItem {
 	return batches
 }
 
-// tagNewsLLM размечает видимый поток (Telegram и RSS) батчами: границы — newsLLMBatches
-// (10 сообщений и 40 КБ текста), на каждый батч — запрос с одним ретраем формата и валидация
-// против входа. Номер батча в логе нужен, чтобы длинный бэкфилл было видно по шагам. Ошибка
-// провайдера/формата останавливает LLM-шаг на этот прогон, чтобы не долбить упавшего
-// провайдера оставшимися батчами, но уже полученные строки возвращаются вместе с ошибкой:
-// вызывающий пишет их, и следующий прогон не платит за них повторно (кандидатная выборка
-// исключает размеченные пары). Ошибка остаётся ошибкой прогона для лога, но не отменяет
-// запись сообщений/версий.
+// tagNewsLLM размечает видимый поток (Telegram и RSS) батчами: вход дедуплицируется по URL
+// (newsUniqueByURL), границы — newsLLMBatches (10 сообщений и 40 КБ текста), на каждый батч —
+// запрос с одним ретраем формата и валидация против входа. Номер батча в логе нужен, чтобы
+// длинный бэкфилл было видно по шагам. Ошибка провайдера/формата останавливает LLM-шаг на этот
+// прогон, чтобы не долбить упавшего провайдера оставшимися батчами, но уже полученные строки
+// возвращаются вместе с ошибкой: вызывающий пишет их, и следующий прогон не платит за них
+// повторно (кандидатная выборка исключает размеченные пары). Ошибка остаётся ошибкой прогона
+// для лога, но не отменяет запись сообщений/версий.
 func tagNewsLLM(ctx context.Context, cfg newsLLMConfig, inputs []newsItem) ([]newsAnnotationRow, error) {
 	now := time.Now()
-	batches := newsLLMBatches(inputs)
+	batches := newsLLMBatches(newsUniqueByURL(inputs))
 	rows := make([]newsAnnotationRow, 0, len(inputs)*2)
 	for i, batch := range batches {
 		log.Infof("news_watch: LLM %s: батч %d/%d, сообщений %d", cfg.Model, i+1, len(batches), len(batch))

@@ -702,6 +702,56 @@ func TestTagNewsLLMBatches(t *testing.T) {
 	}
 }
 
+// TestTagNewsLLMDedupSameURL — у одного URL в кандидатах может быть две версии текста
+// (разные content_hash). Валидация индексирует вход по URL, поэтому вторая версия в том же
+// батче не получила бы doc-строки и навсегда осталась бы кандидатом. tagNewsLLM дедуплицирует
+// вход по URL, оставляя первое (самое свежее) вхождение; вторая версия догоняется следующим
+// прогоном.
+func TestTagNewsLLMDedupSameURL(t *testing.T) {
+	const url = "https://t.me/interfaxonline/1"
+	first := newsItem{
+		Date:        time.Date(2026, time.October, 17, 10, 0, 0, 0, time.UTC),
+		Source:      "interfax",
+		Title:       "Первая версия заголовка",
+		URL:         url,
+		Description: "Трамп объявил о новых пошлинах на импорт из Китая.",
+	}
+	first.ContentHash = contentHash(first.Title, first.Description)
+	second := newsItem{
+		Date:        time.Date(2026, time.October, 17, 9, 0, 0, 0, time.UTC),
+		Source:      first.Source,
+		Title:       "Вторая версия заголовка",
+		URL:         url,
+		Description: "Обновлённый текст сообщения после правки.",
+	}
+	second.ContentHash = contentHash(second.Title, second.Description)
+
+	mock := newNewsTestLLMMock(t,
+		newsTestLLMResponse{Body: newsTestContentBody(t, newsTestPayloadBody(t, newsTestValidMessage(url)))})
+
+	rows, err := tagNewsLLM(context.Background(),
+		newsLLMConfig{BaseURL: mock.url, APIKey: "test-key", Model: "test-model"}, []newsItem{first, second})
+	if err != nil {
+		t.Fatalf("tagNewsLLM: %v", err)
+	}
+	if mock.calls() != 1 {
+		t.Fatalf("запросов %d, want 1 (дубль URL не должен давать второй батч)", mock.calls())
+	}
+	body := mock.request(0).Body
+	if !strings.Contains(body, first.Title) {
+		t.Errorf("в теле запроса нет заголовка первой версии %q", first.Title)
+	}
+	if strings.Contains(body, second.Title) {
+		t.Errorf("в теле запроса есть заголовок отложенной версии %q", second.Title)
+	}
+	if docs := len(newsAnnotationKindRows(rows, newsKindDoc)); docs != 1 {
+		t.Errorf("doc-строк %d, want 1 (размечена первая версия)", docs)
+	}
+	if tags := len(newsAnnotationKindRows(rows, newsKindTag)); tags != 1 {
+		t.Errorf("tag-строк %d, want 1", tags)
+	}
+}
+
 // TestTagNewsLLMPartialRowsOnLaterBatchError — ошибка второго батча не выбрасывает
 // строки первого: tagNewsLLM возвращает накопленное вместе с ошибкой, и вызывающий
 // пишет успешные батчи (иначе за них пришлось бы платить повторно).
@@ -728,6 +778,30 @@ func TestTagNewsLLMPartialRowsOnLaterBatchError(t *testing.T) {
 	}
 	if mock.calls() != 2 {
 		t.Errorf("запросов %d, want 2 (первый батч + отказ второго; третий батч не шлётся)", mock.calls())
+	}
+}
+
+// TestNewsUniqueByURL — дубли URL схлопываются, остаётся первое вхождение (при кандидатном
+// ORDER BY date DESC — самое свежее); пустой и одиночный вход возвращаются как есть.
+func TestNewsUniqueByURL(t *testing.T) {
+	const url = "https://t.me/interfaxonline/1"
+	inputs := []newsItem{
+		{URL: url, Title: "Первая версия"},
+		{URL: url, Title: "Вторая версия"},
+		{URL: url, Title: "Третья версия"},
+	}
+	got := newsUniqueByURL(inputs)
+	if len(got) != 1 {
+		t.Fatalf("элементов %d, want 1 (дубли URL схлопываются): %+v", len(got), got)
+	}
+	if got[0].Title != inputs[0].Title {
+		t.Errorf("остался title %q, want %q (первое вхождение)", got[0].Title, inputs[0].Title)
+	}
+	if single := newsUniqueByURL(inputs[:1]); len(single) != 1 || single[0].Title != inputs[0].Title {
+		t.Errorf("один элемент: %+v, want как есть", single)
+	}
+	if empty := newsUniqueByURL(nil); len(empty) != 0 {
+		t.Errorf("пустой вход: %+v, want пусто", empty)
 	}
 }
 
