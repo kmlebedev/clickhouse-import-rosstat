@@ -752,6 +752,45 @@ func TestTagNewsLLMDedupSameURL(t *testing.T) {
 	}
 }
 
+// TestTagNewsLLMFormatErrorSkipsBatch — второй подряд сбой формата пропускает только свой
+// батч: 21 сообщение дают батчи 10/10/1, мок отдаёт валидный ответ на первый, два пустых
+// ответа на второй (исходный + повтор) и валидный на третий. Всего 4 запроса, третий батч
+// размечен, накопленные строки возвращаются вместе с ошибкой формата.
+func TestTagNewsLLMFormatErrorSkipsBatch(t *testing.T) {
+	inputs := newsTestLLMInputs(21)
+	first := make([]newsAnnotationMessage, 0, newsLLMBatchSize)
+	for _, it := range inputs[:newsLLMBatchSize] {
+		first = append(first, newsTestValidMessage(it.URL))
+	}
+	third := []newsAnnotationMessage{newsTestValidMessage(inputs[20].URL)}
+	mock := newNewsTestLLMMock(t,
+		newsTestLLMResponse{Body: newsTestContentBody(t, newsTestPayloadBody(t, first...))},
+		newsTestLLMResponse{Body: newsTestEmptyContentBody(t)},
+		newsTestLLMResponse{Body: newsTestEmptyContentBody(t)},
+		newsTestLLMResponse{Body: newsTestContentBody(t, newsTestPayloadBody(t, third...))})
+
+	rows, err := tagNewsLLM(context.Background(),
+		newsLLMConfig{BaseURL: mock.url, APIKey: "test-key", Model: "test-model"}, inputs)
+	if err == nil {
+		t.Fatal("tagNewsLLM после двух подряд ошибок формата вернул nil-ошибку")
+	}
+	if !newsIsFormatError(err) {
+		t.Errorf("ошибка %v не является ошибкой формата", err)
+	}
+	if mock.calls() != 4 {
+		t.Fatalf("запросов %d, want 4 (батч 1 + два запроса батча 2 + батч 3)", mock.calls())
+	}
+	if docs := len(newsAnnotationKindRows(rows, newsKindDoc)); docs != 11 {
+		t.Errorf("doc-строк %d, want 11 (батчи 1 и 3)", docs)
+	}
+	if tags := len(newsAnnotationKindRows(rows, newsKindTag)); tags != 11 {
+		t.Errorf("tag-строк %d, want 11 (батчи 1 и 3)", tags)
+	}
+	if body := mock.request(3).Body; !strings.Contains(body, inputs[20].URL) {
+		t.Errorf("четвёртый запрос не содержит URL третьего батча %s", inputs[20].URL)
+	}
+}
+
 // TestTagNewsLLMPartialRowsOnLaterBatchError — ошибка второго батча не выбрасывает
 // строки первого: tagNewsLLM возвращает накопленное вместе с ошибкой, и вызывающий
 // пишет успешные батчи (иначе за них пришлось бы платить повторно).
