@@ -83,5 +83,19 @@ SELECT * FROM (
     -- публикация того же id) перезаписывает точку — без FINAL вытесненные копии завысили бы
     -- count(). min/max date при этом остаются границами наблюдённого периода.
     UNION ALL SELECT 'cbr_dip_bulletin', series, count(), min(date), max(date) FROM cbr_dip_bulletin FINAL GROUP BY series
+    
+    -- Диапазоны среднесрочного прогноза ЦБ («Комментарий к среднесрочному прогнозу», спека
+    -- 2026-10-17 cbr-mt-forecast §3.7): ключ таблицы — (indicator, year, release_date), дата
+    -- выпуска входит в ключ винтажа, поэтому число точек на показатель здесь умножается на число
+    -- выпусков, в которых этот показатель напечатан: снимок отвечает «сколько точек набрано
+    -- всего», а не «на сколько лет прогноз» (один и тот же год, прочитанный из двух выпусков, —
+    -- две строки: следующий выпуск ревизует диапазон). min/max release_date — границы выпусков, а
+    -- не горизонт прогноза: горизонт лежит в колонке year. Число выпусков видно отдельным
+    -- запросом:
+    --     SELECT uniqExact(release_date) FROM cbr_mt_forecast FINAL;
+    -- FINAL обязателен: таблица — ReplacingMergeTree, и повторная публикация того же ключа
+    -- (indicator, year, release_date) перезаписывает точку — без FINAL вытесненные копии завысили
+    -- бы count().
+    UNION ALL SELECT 'cbr_mt_forecast', indicator, count(), min(release_date), max(release_date) FROM cbr_mt_forecast FINAL GROUP BY indicator
 )
 ORDER BY tbl, series;

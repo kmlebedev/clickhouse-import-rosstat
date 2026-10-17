@@ -1,0 +1,853 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    
+
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<meta name="format-detection" content="telephone=no" />
+<meta name="zoom:lang" content="ru" />
+    <meta name="zoom:last-modified" content="Wed, 05 Aug 2026 13:00:00 GMT" />
+<title>Комментарий к среднесрочному прогнозу Банка России | Банк России</title>
+
+
+
+    <meta property="og:image" content="/common/images/share-1.jpg" />
+
+    
+
+
+            <link rel="stylesheet" type="text/css" href="/common/libs/jquery-ui/jquery-ui.min.css?v=v478607061" media="all">
+
+            <!--[if IE 9]><link rel="stylesheet" type="text/css" href="/common/style/main-ie9.css?v=v1337212920" media="all"><![endif]-->
+
+            <!--[if gt IE 9]><!--><link rel="stylesheet" type="text/css" href="/common/style/main.min.css?v=v1337212920" media="all"><!--<![endif]-->
+
+
+        <script type="text/javascript" src="/common/libs/jquery-3.7.1.min.js?v=v735956814"></script>
+
+
+
+        <script type="text/javascript" src="/common/libs/jquery-ui/jquery-ui.min.js?v=v478607061"></script>
+
+        <script type="text/javascript" src="/common/libs/jquery.inputmask.min.js?v=v478607061"></script>
+
+
+        <script type="text/javascript" src="/common/scripts/vendor.js?v=v4270970564"></script>
+
+        <script type="text/javascript" src="/common/libs/jquery.floatThead.min.js?v=v478607061"></script>
+
+
+
+
+
+
+
+
+        <script type="text/javascript" src="/common/libs/popper.js?v=v478607061"></script>
+
+        <script type="text/javascript" src="/common/libs/tippy.js?v=v478607061"></script>
+
+        <script type="text/javascript" src="/common/scripts/main.min.js?v=v1337212920"></script>
+
+
+        <script type="text/javascript" src="/common/libs/localization-ru.js?v=v712023859"></script>
+        <script type="text/javascript" src="/js/jquery.ui.autocomplete-ru.js?v=v1043438991"></script>
+
+        <script type="text/javascript" src="/js/jquery.cookie.min.js?v=v4260771145"></script>
+
+        <script type="text/javascript" src="/js/site.js?v=v2848633841"></script>
+
+
+
+
+
+    <script type="text/javascript">
+        $(function () {
+            var $menu = $('[data-menu]'),
+                $menuItemBtn = $menu.find('[data-menu-item-btn]'),
+                $menuShow = $('[data-menu-show]'),
+                $menuClose = $('[data-menu-close]');
+            var config = $menu.data('config');
+
+            $menuShow.on('click.cms_loadwholesite mouseenter.cms_loadwholesite', function (event) {
+                loadWholeSite();
+            });
+
+            var xhr = null;
+            function loadWholeSite() {
+                if (xhr === null) {
+                    $('.menu_wrap .networks-circle').html($('.networks-circle.footer_networks').html());
+                    $('.menu_wrap .header_search').html($('.header .offsetMenu .header_search').html());
+
+                    $('[data-cms-wholesite-placeholder]').addClass('with-centered-loader').empty();
+                    xhr = $.ajax(config.url, {
+                        dataType: "html",
+                        method: "get",
+                        success: function (html) {
+                            $('[data-cms-wholesite-placeholder]').replaceWith(html);
+
+                            $menu.find('.menu_tab[data-tabs-tab]').each(function () {
+                                var tab = $(this).data('tabs-tab');
+                                $(this).toggle($menu.find('[data-tabs-content="' + tab + '"]').length != 0);
+                            });
+
+                            $menu.trigger('new-html');
+
+                            for (var i in config.catalogPath) {
+                                $menu.find('li[data-catalog-id="' + config.catalogPath[i] + '"]')
+                                    .addClass("_active");
+                                $menu.find('li[data-catalog-id="' + config.catalogPath[i] + '"]')
+                                    .closest('[data-tabs-content]')
+                                    .trigger('open-anchor');
+                            }
+
+                            $menuShow.off('click.cms_loadwholesite mouseenter.cms_loadwholesite');
+                        },
+                        error: function () {
+                            $('[data-cms-wholesite-placeholder]').removeClass('with-centered-loader')
+                                .append('<div class="menu_content offset-md-1">' +
+                                    '<span class="group-error field-validation-error">Не удалось загрузить карту сайта. <a href="#">Попробуйте еще раз.</a></span>' +
+                                    '</div>')
+                                .find('a')
+                                .on('click', function () { loadWholeSite(); });
+                        },
+                        complete: function () {
+                            xhr = null;
+                        }
+                    });
+                }
+            }
+        });
+    </script>
+
+
+<script>
+    if (window.localStorage) {
+        if (localStorage.getItem('vision-impaired'))
+            document.getElementsByTagName('html')[0].className += ' vision-impaired';
+    }
+</script>
+<script>
+    document.documentElement.style.setProperty('--scrollbar-width', '17px');
+    setTimeout(function () {
+        
+        var div = document.createElement('div');
+
+        div.style.overflowY = 'scroll';
+        div.style.width = '50px';
+        div.style.height = '50px';
+
+        
+        div.style.visibility = 'hidden';
+
+        document.body.appendChild(div);
+        var scrollWidth = Math.max(div.offsetWidth - div.clientWidth, 0.15); 
+        document.body.removeChild(div);
+        
+        document.documentElement.style.setProperty('--scrollbar-width', scrollWidth + 'px');
+    }, 0);
+</script>
+
+
+
+
+    
+</head>
+<body class="page-v3 page-v3-inside " id="">
+
+
+<!-- Yandex.Metrika counter -->
+<script type="text/javascript" >
+    (function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
+    m[i].l=1*new Date();
+    for (var j = 0; j < document.scripts.length; j++) {if (document.scripts[j].src === r) { return; }}
+    k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)})
+    (window, document, "script", "https://mc.yandex.ru/metrika/tag.js", "ym");
+
+    ym(5774506, "init", {
+        clickmap:true,
+        trackLinks:true,
+        accurateTrackBounce:true,
+        webvisor:true
+    });
+</script>
+<noscript><div><img src="https://mc.yandex.ru/watch/5774506" style="position:absolute; left:-9999px;" alt="" /></div></noscript>    
+<!-- /Yandex.Metrika counter -->
+        
+    <div class="header-print">
+    <div class="offsetMenu">
+        <div class="header-print_inner">
+            <img class="header-print_logo" alt="cbr" src="/common/images/logo.svg">
+            <ul class="header-print_contacts">
+<li>107016, Москва, ул. Неглинная, д.&nbsp;12, к. В, Банк России</li>
+<li><nobr class="phone">8 800 300-30-00</nobr></li>
+<li>www.cbr.ru</li>
+</ul>
+
+        </div>
+    </div>
+</div>
+
+        <div class="banner-header">
+            <header class="header" id="header" style="background-image: url(/StaticHtml/File/189910/an2.jpg);">
+                <div class="header-image"><img class="banner-header_image" src="/StaticHtml/File/189910/an2.jpg"></div>
+                <div class="top-line" data-top-line="">
+                    <div class="header_burger-big"></div>
+                    <div class="offsetMenu">
+                        <div class="col-md-23 header_margin-left">
+                            <div class="top-line_inner header_inner">
+                                
+
+<div class="row">
+    <div class="col-xl-4 col-md-6">
+        <div class="header_left pr-0">
+                <div class="header_menu" data-menu-show=""></div>
+            <a class="header_logo" href="/"></a>
+                <a class="header_search_btn d-flex d-md-none" href="#" data-search-form-show="" aria-label="Поиск по сайту"><div class="header_search_icon"></div></a>
+            <a class="d-flex d-md-none" href="#" data-tooltip="" data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide"><div class="header_visual-impaired_item"></div></a>
+        </div>
+    </div>
+    <div class="col-xl-17 col-md-13 offset-md-1 header_block">
+        <div class="d-none d-md-block">
+            <div class="header_right">
+                <div class="networks header_link header_networks"><a class="header_appeal-link" href="/contactBR/" data-tooltip="" data-tooltip-content="Обратиться в Банк России" data-tooltip-class="mobile-hide"></a></div>
+                <div class="networks header_networks header_visual-impaired header_visual-impaired_inner"><a href="#" data-tooltip="" data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide" aria-label="Версия для слабовидящих"><div class="header_visual-impaired_item"></div></a></div>
+                <div class="header_lang header_lang_inner header_networks">
+    <a href="/Localization/SwitchLanguage?url=%2Fdkp%2Fmp_dec%2Fdecision_key_rate%2Fcomment_05082026%2F&amp;from=ru-RU&amp;to=en-CB"><!--noindex-->EN<!--/noindex--></a>
+</div>
+                    <div class="header_networks header_search header_search_inner">
+                        <a class="header_search_btn" href="#" data-search-form-show="" aria-label="Поиск по сайту"><div class="header_search_icon"></div><span aria-hidden="true">Поиск по сайту</span></a>
+                    </div>
+            </div>
+        </div>
+    </div>
+</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="offsetMenu">
+                    <div class="col-md-23 offset-md-1 header_margin-left">
+                        <div class="header_inner">
+                            
+<div class="row">
+    <div class="col-xl-4 col-md-6">
+        <div class="header_left pr-0">
+            <div class="header_menu" data-menu-show=""></div>
+            <a class="header_logo" href="/"></a>
+            <a class="header_search_btn d-flex d-md-none" href="#" data-search-form-show="" aria-label="Поиск по сайту">
+                <div class="header_search_icon"></div>
+            </a>
+            <a class="d-flex d-md-none" href="#" data-tooltip data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide">
+                <div class="header_visual-impaired_item"></div>
+            </a>
+        </div>
+    </div>
+    <div class="col-xl-17 col-md-13 offset-md-1 header_block justify-content-end">
+        <div class="d-none d-md-block">
+            <div class="header_right">
+                <div class="networks header_link header_networks"><a class="header_appeal-link" href="/contactBR/" data-tooltip="" data-tooltip-content="Обратиться в Банк России" data-tooltip-class="mobile-hide"></a></div>
+                <div class="networks header_networks header_visual-impaired header_visual-impaired_inner">
+                    <a href="#" data-tooltip data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide" aria-label="Версия для слабовидящих">
+                        <div class="header_visual-impaired_item"></div>
+                    </a>
+                </div>
+                <div class="header_lang header_lang_inner header_networks">
+    <a href="/Localization/SwitchLanguage?url=%2Fdkp%2Fmp_dec%2Fdecision_key_rate%2Fcomment_05082026%2F&amp;from=ru-RU&amp;to=en-CB"><!--noindex-->EN<!--/noindex--></a>
+</div>
+                <div class="header_networks header_search header_search_inner">
+                    <a class="header_search_btn" href="#" data-search-form-show="" aria-label="Поиск по сайту">
+                        <div class="header_search_icon"></div><span aria-hidden="true">Поиск по сайту</span>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+                        </div>
+                    </div>
+                </div>
+            </header>
+            <div class="banner-header_main">
+                <div class="offsetMenu banner-header_breadcumbs">
+                    <div class="col-md-23 offset-md-1">
+                        <div class="breadcrumbs">
+    <div class="breadcrumbs_item"><a class="breadcrumbs_home" href="/"></a></div>
+        <div class="breadcrumbs_item">
+            <a href="/dkp/"><!--noindex-->Денежно-кредитная политика<!--/noindex--></a>
+        </div>
+        <div class="breadcrumbs_item">
+            <a href="/dkp/mp_dec/"><!--noindex-->Решения по&#160;денежно-кредитной политике<!--/noindex--></a>
+        </div>
+        <div class="breadcrumbs_item">
+            <a href="/dkp/mp_dec/decision_key_rate/"><!--noindex-->Материалы по&#160;итогам заседаний Совета директоров Банка России по&#160;ключевой ставке<!--/noindex--></a>
+        </div>
+    </div>
+
+                    </div>
+                </div>
+                <div class="offsetMenu">
+                    <div class="col-md-23 offset-md-1">
+                        <!--index-->
+                        <h1><span class="referenceable">Комментарий <br>к среднесрочному<br> прогнозу Банка России</span>
+</h1>
+
+                        <!--/index-->
+                    </div>
+                </div>
+            </div>
+            <div class="banner-header_bottom">
+<div class="offsetMenu"><div class="col-md-23 offset-md-1"><div class="banner-header_vestnik"><div class="banner-header_vestnik_subtitle"></div><div class="banner-header_vestnik_title"></div><div class="banner-header_vestnik_btn"><a class="b-btn _blue" href="/Content/Document/File/194306/comment_05082026.pdf">Скачать в формате PDF</a><a class="b-btn _blue" href="/Content/Document/File/194307/commet_graph_05082026.xlsx">Графики и таблицы в XLSX</a></div></div><div class="news-header_author"><!--	Фото:  copyright --></div><div class="news-info-line row news-info-line__dark"><div class="col-md-6 col-12 news-info-line_date">5 августа 2026 года</div><div class="col-md-11 col-13 news-info-line_type"></div><div class="col-md-6 d-none d-md-block news-info-line_share"><span class="news-info-line_share-btn" tabindex="0" data-share-btn="data-share-btn">Поделиться</span><div class="news-info-line_share-select _hide"><a class="news-info-line_share-vkontakte" target="_blank" href="https://vkontakte.ru/share.php?url=https%3a%2f%2fwww.cbr.ru%2fdkp%2fmp_dec%2fdecision_key_rate%2fcomment_05082026%2f">ВКонтакте</a><a class="news-info-line_share-telegram" target="_blank" href="https://telegam.me/share/url?url=https%3a%2f%2fwww.cbr.ru%2fdkp%2fmp_dec%2fdecision_key_rate%2fcomment_05082026%2f">Telegram</a><a class="news-info-line_share-max" target="_blank" href="https://max.ru/:share?text=https%3a%2f%2fwww.cbr.ru%2fdkp%2fmp_dec%2fdecision_key_rate%2fcomment_05082026%2f">Макс</a></div></div></div></div></div>            </div>
+        </div>
+    <form action="/search/" method="get" class="search-form" data-search-form=""
+      data-api-url="/Content/SearchSuggest/Suggest"
+      data-api-top-url="">
+    <div class="offsetMenu">
+        <div class="col-md-23 offset-md-1">
+            <div class="search-form_inner">
+                <div class="search-form_title">Что вы хотите найти?<img class="search-form_title-close" src="/common/images/icons/menu-close-dark-grey.svg"></div>
+                <div class="search-form_content">
+                    <div class="search-form_block">
+                        <div class="search-form_icon"></div>
+                        <div class="search-form_field">
+                            <input name="text" type="text" autocomplete="off" placeholder="Начните писать" data-search-form-input="" />
+                        </div>
+                    </div>
+                    <div class="search-form_clear" data-search-form-clear-btn=""><img src="/common/images/icons/menu-close-gray.svg"></div>
+                    <div class="search-form_btn">
+                        <button class="b-btn _blue" data-search-form-btn="">Искать</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</form>
+
+
+<div class="menu_wrap" data-menu="" data-config="{&quot;catalogPath&quot;:[27054,16446,15917],&quot;url&quot;:&quot;/Catalog/SiteMap/GetWholeSiteHtml?blockId=59191&quot;}">
+    <div class="offsetMenu">
+        <div class="header_menu _close menu_close d-none d-md-block" data-menu-close=""></div>
+        <div class="header_inner top-line_inner d-block d-md-none">
+            <div class="row">
+                <div class="col-xl-5 col-md-9">
+                    <div class="header_left pr-0">
+                        <div class="header_menu _close" role="button" tabindex="0" aria-label="Закрыть меню" data-menu-close=""></div>
+                        <a class="header_logo" href="/"></a>
+                        <a class="header_search_btn" href="#" data-search-form-show="data-search-form-show" aria-label="Поиск по сайту"><div class="header_search_icon"></div></a>
+                        <a href="#" data-tooltip="data-tooltip" data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide"><div class="header_visual-impaired_item"></div></a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="menu row" data-tabs="data-tabs">
+            <div class="menu_quick col-md-7">
+                <div role="tablist" class="menu_quick_tabs">
+    <a role="tab" id="menu_tab_Activity" aria-controls="menu_content_Activity" aria-selected="true" class="menu_tab _active" href="#" data-tabs-tab="Activity">Деятельность</a>
+    <a role="tab" id="menu_tab_FinancialMarkets" aria-controls="menu_content_FinancialMarkets" aria-selected="false" class="menu_tab" href="#" data-tabs-tab="FinancialMarkets">Финансовые рынки</a>
+    <a role="tab" id="menu_tab_Documents" aria-controls="menu_content_Documents" aria-selected="false" class="menu_tab" href="#" data-tabs-tab="Documents">Документы и данные</a>
+    <a role="tab" id="menu_tab_AboutBank" aria-controls="menu_content_AboutBank" aria-selected="false" class="menu_tab" href="#" data-tabs-tab="AboutBank">О Банке России</a>
+    <a role="tab" id="menu_tab_Services" aria-controls="menu_content_Services" aria-selected="false" class="menu_tab" href="#" data-tabs-tab="Services">Сервисы</a>
+</div>
+<div class="menu_quick_links">
+    <div class="inner_links"><a href="/support_measures/" title="Меры зашиты финансового рынка" style="color:red">Меры защиты финансового рынка</a>
+  </div>
+<div class="phones"><a class="menu_phone_val" href="tel:+74993003000">
+<div class="plus">+</div>7 499 300-30-00</a><a class="menu_phone_val" href="tel:88003003000">8 800 300-30-00</a><a class="menu_phone_val" href="tel:300">300</a><span>Бесплатно для звонков с мобильных телефонов</span></div>
+<div class="inner_links">
+  <a href="/news/" title="Новости">Новости</a>
+  <a href="/rbr/" title="Решения Банка России">Решения Банка России</a>
+  <a href="/contacts/" title="Контактная информация">Контактная информация</a>
+  <a href="/sitemap" title="Карта сайта">Карта сайта</a>
+  <a href="/about/" title="О сайте">О сайте</a>
+  </div>
+<div class="networks-circle">
+  <a class="networks-circle_item _vk" href="https://vk.com/cbr_official" title="ВКонтакте"></a>
+  <a class="networks-circle_item _yt" href="https://www.youtube.com/user/BankofRussia" title="Youtube"></a>
+  <a class="networks-circle_item _tg" href="https://telegram.me/centralbank_russia" title="Telegram"></a>
+  <a class="networks-circle_item _ydzen" href="https://zen.yandex.ru/id/622372d6a565892091994ea9" title="Яндекс Дзен"></a>
+  <a class="networks-circle_item _ok" href="https://ok.ru/group/68858679787580" title="Одноклассники"></a>
+  <a class="networks-circle_item _rt" href="https://rutube.ru/channel/23873201/" title="RUTUBE"></a>
+  <a class="networks-circle_item _max" href="https://max.ru/cbr_official" title="Макс"></a>
+</div>
+</div>
+            </div>
+            <div class="d-md-none link-above">
+                <div class="header_right">
+                    <div class="header_link"><a href="/contactBR/">Обратиться в&nbsp;Банк России</a></div>
+                    <div class="header_lang">
+            <div class="header_lang_item _active"><span><!--noindex-->RU<!--/noindex--></span></div>
+            <div class="header_lang_item"><a href="/Localization/SwitchLanguage?url=%2Fdkp%2Fmp_dec%2Fdecision_key_rate%2Fcomment_05082026%2F&amp;from=ru-RU&amp;to=en-CB"><!--noindex-->EN<!--/noindex--></a></div>
+</div>
+                </div>
+<div class="header_right"><div class="header_link"><a href="/about_br/">О Банке России</a></div></div>
+<div class="header_right"><div class="header_link"><a href="/finorg/">Проверить участника финансового рынка</a></div></div>
+<div class="header_right"><div class="header_link"><a href="/beware/">Осторожно: мошенники!</a></div></div>            </div>
+            <div class="menu_content_container col-md" data-cms-wholesite-placeholder="">
+            </div>
+        </div>
+    </div>
+</div>
+
+    <main id="content">
+        <div class="offsetMenu">
+            <div class="container-fluid">
+                <div class="col-md-23 offset-md-1">
+                    <!--index-->
+                                                                <div class="landing-text">
+                            <div class="title-container"><div class="block-title"><h2><span class="referenceable" id="a_194296"><div class="title-items"><img class="item_img" src="/StaticHtml/File/165988/Icon_1.svg"/> <span class="item_text">Основные изменения в прогнозе<p class="item_subtext">В прогнозе отражены следующие изменения по сравнению с прогнозом по итогам заседания по ключевой ставке 24 апреля 2026 года.</p></span></div></span></h2></div><div class="incut ">
+<div class="incut_element incut_border incut_border__mod">
+
+</div>
+</div><p><strong>Ключевая ставка.</strong><b> </b><b>Диапазон средней ключевой ставки пересмотрен вверх: до 14,5</b><b> </b><b>&ndash;</b><b> </b><b>14,6% на 2026 год, до 10,5</b><b> </b><b>&ndash;</b><b> </b><b>12,5% на 2027 год и до 8,0</b><b> </b><b>&ndash;</b><b> </b><b>9,0% на 2028 год</b> (по сравнению с 14,0 &ndash; 14,5; 8,0 &ndash; 10,0 и 7,5 &ndash; 8,5% соответственно в апрельском прогнозе). С учетом прямых и вторичных эффектов от временного сокращения производственных возможностей в отдельных отраслях и более стимулирующей бюджетной политики на трехлетнем горизонте, чем прогнозировалось в апреле, потребуется более плавное снижение ключевой ставки. В 2029 году прогнозируется возвращение ключевой ставки в диапазон 7,5 &ndash; 8,5% годовых, соответствующий оценкам долгосрочного уровня номинальной нейтральной ставки.</p>
+<p><strong>Инфляция.</strong><b> </b><b>Прогнозный диапазон по инфляции на этот год повышен до 6,0</b><b> </b><b>&ndash;</b><b> </b><b>7,0% </b>(по сравнению с 4,5 &ndash; 5,5% в апрельском прогнозе). По итогам 2к26 инфляция сложилась на уровне 6,0% г/г &ndash; вблизи апрельского прогноза (5,9%). Однако в июне &ndash; июле наблюдалось ускорение инфляции, главным образом за счет цен на нефтепродукты. В дальнейшем Банк России ожидает постепенной стабилизации ситуации на рынке топлива и замедления роста потребительских цен, в том числе под влиянием проводимой денежно-кредитной политики. Устойчивая инфляция останется в диапазоне 4 &ndash; 5% в 2п26 в пересчете на год. Годовая инфляция вернется на целевой уровень 4% в 2027 году.</p>
+<p><strong>ВВП.</strong><b> </b><b>В 2026 году прогноз темпа роста ВВП понижен на 0,5 п.п., до 0,0</b><b> </b><b>&ndash;</b><b> </b><b>1,0%</b>, в том числе ввиду временного снижения производственных мощностей в отдельных отраслях экономики. В дальнейшем рост ВВП будет соответствовать долгосрочным темпам роста потенциального выпуска: 1,5 &ndash; 2,5%.</p>
+<p>В 2к26<b> </b>динамика ВВП (+0,8% г/г) складывалась вблизи предыдущего прогноза Банка России (+0,9% г/г). Оперативные данные указывают на замедление экономической активности в июле 2026 года, в 3к26 закладывается более сдержанный рост экономики (+0,5% г/г).</p>
+<ul>
+<li><strong>Расходы на конечное потребление.</strong><b> </b><b>Прогнозный диапазон на 2026 год повышен</b> <b>на 1 п.п., до 1,5</b><b> </b><b>&ndash;</b><b> </b><b>2,5%</b>. Это обусловлено тем, что потребительская активность в 2к26 сложилась заметно выше ожиданий Банка России. Однако отчасти это было связано с разовыми факторами, в том числе с реализацией отложенного ранее спроса, и в 2п26 ожидается возвращение к более сдержанному росту. В 2027 &ndash; 2028 годах ожидается более умеренный темп роста потребления (1,0 &ndash; 2,0%) на фоне проводимой денежно-кредитной политики. В 2029 году предполагается возвращение к устойчивым темпам роста (1,5 &ndash; 2,5%).</li>
+<li><strong>Валовое накопление.</strong><b> </b><b>Прогнозный диапазон по валовому накоплению в 2026 году снижен до (-3,5)&ndash;(-1,5)% </b>(по сравнению с 1,0 &ndash; 3,0% в апрельском прогнозе). Изменение запасов внесло в рост ВВП в 1п26 более отрицательный вклад, чем предполагалось ранее, в условиях более значительного расширения внутреннего спроса. В дальнейшем ожидается постепенное восстановление уровня запасов на прогнозном горизонте.</li>
+<li><strong>Валовое накопление основного капитала.</strong><b> </b><b>Прогнозный диапазон темпов роста валового накопления основного капитала (ВНОК) в 2026 году сокращен до (-1,5)</b><b> </b><b>&ndash;</b><b> </b><b>0,5% </b>(по сравнению с 0,0 &ndash; 2,0% в апрельском прогнозе) с учетом более низкого, чем ожидалось, фактического показателя за 1к26. В 2к26 инвестиционная активность, по оценкам Банка России, перешла к секвенциальному росту. В дальнейшем Банк России по‑прежнему закладывает в прогноз расширение инвестиционной активности, в том числе под влиянием накопленных эффектов смягчения денежно-кредитной политики. Дополнительный вклад в рост инвестиций в 2п26 внесут расходы на восстановление производственных мощностей в отдельных отраслях. Прогнозный диапазон по ВНОК на 2027 &ndash; 2028 годы повышен до 2,0 &ndash; 4,0 и 1,5 &ndash; 3,5% соответственно. С 2029 года прогнозируется устойчивое расширение инвестиционного спроса темпами 1,0 &ndash; 3,0% в год.</li>
+<li><strong>Чистый экспорт.</strong><b> </b><b>Прогноз по экспорту на 2026 год снижен на 0,5 п.п., до 0,0</b><b> </b><b>&ndash;</b><b> </b><b>2,0%,</b> с учетом влияния временного выбытия мощностей в отдельных отраслях на экспортные возможности.<b> Прогноз по импорту повышен на 0,5 п.п., до 1,0</b><b> </b><b>&ndash;</b><b> </b><b>3,0%, </b>на фоне более высокого прогноза потребительского спроса. В 2027 году в условиях инфраструктурных и санкционных ограничений и замедления внутреннего спроса темпы роста физического объема экспорта и импорта сложатся несколько ниже, чем ожидалось в апреле. В 2028 &ndash; 2029 годах предполагается увеличение как экспорта, так и импорта сопоставимыми и сбалансированными темпами 1,0 &ndash; 3,0%.</li>
+</ul>
+<p><strong>Денежно-кредитные показатели.</strong><b> </b><b>Прогнозные интервалы приростов требований к экономике, организациям и населению на 2026 год сохранены без изменений.</b> При этом, учитывая более активное исполнение бюджетных расходов в 1п26,<b> прогнозный диапазон прироста денежной массы в 2026 году повышен до 7</b><b> </b><b>&ndash;</b><b> </b><b>12%</b> (по сравнению с 5 &ndash; 10% в апрельском прогнозе). С учетом прогнозируемых более жестких, чем ожидалось ранее, денежно-кредитных условий на 2027 год, прогноз по денежной массе и требованиям к экономике в 2027 году несколько понижен. В 2028 &ndash; 2029 годах все денежно-кредитные показатели будут расти устойчивыми темпами, соответствующими траектории сбалансированного роста экономики.</p>
+<p><strong>Цены на нефть.</strong><b> Цена на нефть для налогообложения снижена до 60 долларов США за баррель в 2026 году и до 50 долларов США за баррель среднесрочно </b>с учетом складывающихся трендов на мировом товарном рынке. Несмотря на временное повышательное давление на цены со стороны шока предложения, вызванного конфликтом на Ближнем Востоке и перекрытием Ормузского пролива, в дальнейшем ожидается возобновление снижения нефтяных цен по мере нормализации ситуации. В 2027 году из‑за возвращения рынка нефти к профициту и росту запасов цена на нефть для налогообложения снизится до 50 долларов США за баррель, где и стабилизируется в дальнейшем.</p>
+<p><strong>Платежный баланс.</strong><b> </b><b>Профицит счета текущих операций в 2026</b><b> </b><b>&ndash;</b><b> </b><b>2028 годах понижен до 48 млрд, 25 млрд и 15 млрд долларов США </b>соответственно.<b> </b>Это произошло преимущественно за счет <b>пересмотра вниз стоимостного объема экспорта</b> в связи с более низкими ценами на нефть и газ. Кроме того, сыграло роль снижение прогноза физического объема экспорта. Пересмотр вниз положительного сальдо торгового баланса был обусловлен и <b>повышением стоимостного объема импорта </b>в связи с увеличением внутреннего потребления, в том числе и импортных товаров. В то же время профицит текущего счета был понижен менее существенно, чем торгового баланса, так как <b>дефицит баланса первичных и вторичных доходов был пересмотрен в меньшую сторону. </b>Это было связано с учетом его более низкого, чем ожидалось, значения в 1п26. Кроме того, прогнозируется менее значительный объем дивидендов, начисленных к выплате нерезидентам. При этом по‑прежнему ожидается расширение дефицита баланса первичных и вторичных доходов в 2027 &ndash; 2028 годах. В 2029 году положительное сальдо текущего счета по прогнозу уменьшится до 10 млрд долларов США.</p>
+<p>Пересмотр вниз цен на энергоносители отразился в <b>уменьшении</b> <b>резервов на 5 млрд долларов США в 2026 году и более значительном их сокращении в 2027</b><b> </b><b>&ndash;</b><b> </b><b>2028 годах</b> (на 11 млрд и 9 млрд долларов США) за счет операций с Фондом национального благосостояния. Оценки изменения резервов в платежном балансе исходят из действующей базовой цены в бюджетном правиле, <span data-footnote="В соответствии с п. 4 ст. 96.6 Бюджетного кодекса Российской Федерации базовая цена нефти в 2026 году составляет 59 долларов США за баррель, в 2027 году &ndash; 58 долларов США за баррель, в 2028 году &ndash; 57 долларов США за баррель, в 2029 году &ndash; 56 долларов США за баррель." class="footnote">установленной Бюджетным кодексом Российской Федерации</span>.</p></div>
+                        </div>
+                    <div class="title-container"><div class="block-title"><h2><span class="referenceable" id="a_194309">Краткосрочная динамика инфляции и&nbsp;ВВП</span></h2></div><table class="table-grid " id="comment" style="width: 99.9826%;">
+<tbody>
+<tr>
+<td colspan="3" style="width: 19.2177%;"></td>
+<th class="table-grid__th" style="text-align: center; width: 33.4418%;" colspan="4"><strong><span class="data__english-title">Факт</span></strong></th>
+<th class="table-grid__th" style="text-align: center; width: 10.1578%;"><strong><span class="data__english-title">Факт/Оценка</span></strong></th>
+<th class="table-grid__th" style="text-align: center; width: 37.1988%;" colspan="5"><strong><span class="data__english-title">Прогноз</span></strong></th>
+</tr>
+<tr class="tr">
+<td width="30%" colspan="3" style="width: 19.2177%;"></td>
+<th class="table-grid__th" style="width: 8.44162%;"><strong><span class="data__english-title">2к25</span></strong></th>
+<th class="table-grid__th" style="width: 9.50842%;"><strong><span class="data__english-title">3к25</span></strong></th>
+<th class="table-grid__th" style="width: 8.25609%;"><strong><span class="data__english-title">4к25</span></strong></th>
+<th class="table-grid__th" style="width: 7.23567%;"><strong><span class="data__english-title">1к26</span></strong> <br /><br /></th>
+<th class="table-grid__th" style="width: 10.1578%;"><strong><span class="data__english-title">2к26<br /></span></strong></th>
+<th class="table-grid__th" style="width: 8.16332%;"><strong><span class="data__english-title">3к26<br /></span></strong></th>
+<th class="table-grid__th" style="width: 7.93141%;"><strong><span class="data__english-title">4к26<br /></span></strong></th>
+<th class="table-grid__th" style="width: 7.05014%;"><strong><span class="data__english-title">4к27<br /></span></strong></th>
+<th class="table-grid__th" style="width: 7.05049%;"><strong><span class="data__english-title">4к28<br /></span></strong></th>
+<th class="table-grid__th" style="width: 7.00341%;"><strong><span class="data__english-title">4к29<br /></span></strong></th>
+</tr>
+<tr class="tr">
+<td class="table-grid__td" colspan="3" style="width: 19.2177%;"><span class="data__english-title">Инфляция, <br />%&nbsp;г/г</span></td>
+<td class="table-grid__td table-grid__td_big" style="width: 8.44162%;">9,4<br /><span class="table-caption"></span></td>
+<td class="table-grid__td table-grid__td_big" style="width: 9.50842%;">8,0<br /><span class="table-caption"></span></td>
+<td class="table-grid__td table-grid__td_big" style="width: 8.25609%;">5,6<br /><span class="table-caption"></span></td>
+<td class="table-grid__td table-grid__td_big" style="width: 7.23567%;">5,9<br /><span class="table-caption"></span></td>
+<td class="table-grid__td table-grid__td_big" style="width: 10.1578%;">6,0<br /><span class="table-caption">5,9</span></td>
+<td class="table-grid__td table-grid__td_big" style="width: 8.16332%;">6,3<br /><span class="table-caption">-</span></td>
+<td class="table-grid__td table-grid__td_big" style="width: 7.93141%;"><nobr>6,0-7,0 
+<br /><span class="table-caption">4,5-5,5</span></nobr></td>
+<td class="table-grid__td table-grid__td_big" style="width: 7.05014%;">4,0<br /><span class="table-caption">4,0</span></td>
+<td class="table-grid__td table-grid__td_big" style="width: 7.05049%;">4,0<br /><span class="table-caption">4,0</span></td>
+<td class="table-grid__td table-grid__td_big" style="width: 7.00341%;">4,0<br /><span class="table-caption">4,0</span></td>
+</tr>
+<tr class="tr">
+<td class="table-grid__td" colspan="3" style="width: 19.2177%;"><span class="data__english-title">Инфляция, <br />%, кв/кв с.к.г.<sup>1</sup></span></td>
+<td class="table-grid__td table-grid__td_big" style="width: 8.44162%;">4,4<br /><span class="table-caption">4,1</span></td>
+<td class="table-grid__td table-grid__td_big" style="width: 9.50842%;">6,0<br /><span class="table-caption">6,5</span></td>
+<td class="table-grid__td table-grid__td_big" style="width: 8.25609%;">4,3<br /><span class="table-caption">4,4</span></td>
+<td class="table-grid__td table-grid__td_big" style="width: 7.23567%;">8,7<br /><nobr><span class="table-caption">8,7</span></nobr></td>
+<td class="table-grid__td table-grid__td_big" style="width: 10.1578%;">5,0<br /><span class="table-caption">4,1</span></td>
+<td class="table-grid__td table-grid__td_big" style="width: 8.16332%;">7,0<br /><span class="table-caption">-</span></td>
+<td class="table-grid__td table-grid__td_big" style="width: 7.93141%;"><nobr>4,0-6,4<br /><span class="table-caption">-</span></nobr></td>
+<td class="table-grid__td table-grid__td_big" style="width: 7.05014%;">-</td>
+<td class="table-grid__td table-grid__td_big" style="width: 7.05049%;">-</td>
+<td class="table-grid__td table-grid__td_big" style="width: 7.00341%;">-</td>
+</tr>
+<tr class="tr">
+<td class="table-grid__td" colspan="3" style="width: 19.2177%;"><span class="data__english-title">ВВП, <br />%&nbsp;г/г<sup>2</sup></span></td>
+<td class="table-grid__td table-grid__td_big" style="width: 8.44162%;">1,0</td>
+<td class="table-grid__td table-grid__td_big" style="width: 9.50842%;">0,8</td>
+<td class="table-grid__td table-grid__td_big" style="width: 8.25609%;">1,0</td>
+<td class="table-grid__td table-grid__td_big" style="width: 7.23567%;">-0,2<br /><span class="table-caption">-0,5</span></td>
+<td class="table-grid__td table-grid__td_big" style="width: 10.1578%;">0,8<br /><span class="table-caption">0,9</span></td>
+<td class="table-grid__td table-grid__td_big" style="width: 8.16332%;">0,5<br /><span class="table-caption">-</span></td>
+<td class="table-grid__td table-grid__td_big" style="width: 7.93141%;"><nobr>0,0-1,5 
+<br /><span class="table-caption">1,0-2,0</span></nobr></td>
+<td class="table-grid__td table-grid__td_big" style="width: 7.05014%;"><nobr>1,5-2,5 
+<br /><span class="table-caption">1,5-2,5</span></nobr></td>
+<td class="table-grid__td table-grid__td_big" style="width: 7.05049%;"><nobr>1,5-2,5 
+<br /><span class="table-caption">1,5-2,5</span></nobr></td>
+<td class="table-grid__td table-grid__td_big" style="width: 7.00341%;"><nobr>1,5-2,5 
+<br /><span class="table-caption">1,5-2,5</span></nobr></td>
+</tr>
+</tbody>
+</table><div class="comment"><sup>1</sup>&nbsp;Изменение фактических показателей инфляции отражает переоценку сезонных факторов в&nbsp;связи с&nbsp;поступлением дополнительных данных.<br /><sup>2</sup>&nbsp;Значение ВВП&nbsp;и&nbsp;инфляции в&nbsp;2-3к26  представлены справочно и&nbsp;отражают траекторию вблизи середины соответствующего прогнозного диапазона на&nbsp;2026&nbsp;год. Значения для&nbsp;4к26&ndash;4к29 являются прогнозом Банка России.<br /><span>Источники: Росстат, расчеты Банка России.</span></div></div><style type='text/css'>
+/*<![CDATA[*/
+.title-items {
+    display: flex;
+    align-items: center;
+}
+p>strong:first-child,li>strong:first-child {
+color:#08c;
+
+}
+.item_subtext {
+font-size: calc(10px + 10 * ((100vw - 320px) / 1043));
+font-weight:normal;
+    line-height: 1.6;
+}
+td:nth-child(5), td:nth-child(6) {
+ border-right: 1px solid #b6b6b8;
+}
+th:nth-child(5), th:nth-child(6) {
+ border-right: 1px solid #b6b6b8;
+}
+td:nth-child(6) {
+ padding-left: 10px;
+}
+.table-caption {
+color:#08c;
+
+font-size: calc( 10 * ((100vw - 320px) / 1043));
+}
+.data__english-text {
+font-size: calc(8px + 8 * ((100vw - 320px) / 1043));
+}
+.marker {
+background-color: #e6e6e6;
+}
+
+ul.custom_items>li::before {
+    content: '•';
+    font-size: 2.2em;
+    margin-top: -0.5em;
+    color: #08c;
+	margin-left: -1em;
+}
+
+.incut_border__mod {
+border-top: 4px solid #08c;
+}
+
+.constructor_img {
+height: 100px;
+width: auto;
+
+}
+.item_img {
+    height: 80px;
+    margin-right: 30px;
+    position: relative;
+    top: -0.1em;
+}
+
+
+
+@media (max-width:1200px) {
+.menu-sticky {
+margin-left:-35px;
+}
+}
+
+@media (max-width:1030px) {
+.constructor_img {
+height: 50px !important;
+width: auto;
+margin-bottom:10px;
+}
+}
+@media screen and (max-width: 1024px) {
+.table-caption {
+color:#08c;
+
+font-size: calc(5px + 10 * ((100vw - 320px) / 1043));
+}
+}
+
+@media screen and (max-width: 768px) {
+.table-caption {
+font-size: inherit;
+}
+}
+
+
+/*]]*/
+</style><script type='text/javascript'>
+//<![CDATA[
+
+
+let ol=document.querySelectorAll('.numbering');
+let cr=0;
+if (ol.length>0) {
+  for (i=1; i<ol.length;i++) {
+
+	cr+=(ol[i-1].children.length);
+	ol[i].style.counterReset=`a ${cr}`;
+  }
+}
+
+$(function(){
+  window.addEventListener('load', function() {
+
+
+	// Находим все div с классом "incut"
+	let incutDivs = document.querySelectorAll('.incut');
+
+	// Для каждого найденного div.incut находим следующий тег <p> и добавляем класс
+	incutDivs.forEach(div => {
+	  let nextParagraph = div.nextElementSibling;
+	  if (nextParagraph.tagName == 'P') {
+		nextParagraph.classList.add('clear-both');
+	  }
+	});
+
+	// Находим все теги ul и добавляем класс "custom_items"
+	let allUlElements = document.querySelectorAll('ul');
+	allUlElements.forEach(ul => {
+	  ul.classList.add('custom_items');
+	});
+  });
+//---------для мобильной версии---------
+    const element = document.querySelector('.table-grid');
+        const breakpoint = 1024;
+
+        function checkBreakpoint() {
+            if (window.innerWidth <= breakpoint) {
+                // Достигли брейкпоинта — меняем класс
+                if (!element.classList.contains('data')) {
+                    element.classList.remove('table-grid');
+                    element.classList.add('data');
+                   
+                }
+            } else {
+                // Вернулись обратно
+                if (!element.classList.contains('table-grid')) {
+                    element.classList.remove('data');
+                    element.classList.add('table-grid');
+                  
+                }
+            }
+        }
+
+        // Проверяем при загрузке
+        checkBreakpoint();
+
+        // Проверяем при ресайзе с debounce для производительности
+        let resizeTimer;
+        window.addEventListener('resize', function() {
+            clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(checkBreakpoint, 150);
+        });
+  
+  
+  //---------для мобильной версии---------
+});
+
+
+//]]
+</script><div class="landing-text"><div class="block-title"><h2><span class="referenceable" id="a_194301"><br><br><div class="title-items"><img class="item_img" src="/StaticHtml/File/165988/Icon_3.svg"/> <span  class="item_text">Ключевые предпосылки<p class="item_subtext">Предпосылки в прогнозе Банка России представляют собой предположения о средне- и долгосрочных трендах в российской и мировой экономике, которые значительно влияют на условия проведения денежно-кредитной политики.
+</p></span></div></span></h2></div><div class="incut ">
+<div class="incut_element incut_border incut_border__mod">
+
+</div>
+</div><p><strong>Мировая экономика.</strong><strong> </strong>Существенным фактором, оказывающим влияние на&nbsp;прогноз внешних условий, остается ситуация на&nbsp;Ближнем Востоке. На&nbsp;текущий момент влияние этих событий оказалось менее негативным, а&nbsp;ситуация в&nbsp;июне &ndash; середине июля сдвигается к&nbsp;более низкому уровню эскалации в&nbsp;сравнении с&nbsp;тем, что&nbsp;наблюдалось в&nbsp;марте &ndash; апреле. Мировая экономика пока демонстрирует устойчивость, несмотря на&nbsp;существенный шок&nbsp;поставок энергоносителей. Масштаб этого шока был&nbsp;отчасти компенсирован за&nbsp;счет использования резервов: так, США&nbsp;достаточно существенно сократили свои стратегические резервы, Китай также <span data-footnote="При этом происходила и подстройка в структуре выпуска выпавших нефтепродуктов: так, США существенно увеличили объем производства авиатоплива (часть производства которого приходилась на страны Персидского залива)." class="footnote">уменьшил объем</span> импорта нефти и&nbsp;использовал запасы. Соответственно, немного улучшен взгляд на&nbsp;перспективы мировой экономики, в&nbsp;большей степени для&nbsp;2026 &ndash; 2027&nbsp;годов. Базовый сценарий предполагает нормализацию ситуации на&nbsp;Ближнем Востоке к&nbsp;концу 2026&nbsp;года. При&nbsp;этом вероятность возвращения эскалации&nbsp;и, соответственно, ухудшения перспектив глобального роста сохраняется, что&nbsp;учтено в&nbsp;оценке баланса рисков.</p>
+<p>В&nbsp;то&nbsp;же время внешняя инфляция, в&nbsp;том&nbsp;числе базовая, складывается в&nbsp;США и&nbsp;еврозоне несколько выше, чем&nbsp;ожидалось ранее (в&nbsp;том&nbsp;числе за&nbsp;счет услуг, связанных с&nbsp;транспортировкой и&nbsp;поставками). При&nbsp;этом в&nbsp;США уточнение данных за&nbsp;1к26 позволяет предположить, что&nbsp;новые тарифы перенеслись в&nbsp;цены для&nbsp;конечных потребителей. Соответственно, Банк России ожидает по&nbsp;одному повышению ставки в&nbsp;США и&nbsp;еврозоне до&nbsp;конца года (в&nbsp;дополнение к&nbsp;уже&nbsp;произошедшему повышению&nbsp;ЕЦБ в&nbsp;июне). В&nbsp;Китае инфляция и&nbsp;денежно-кредитная политика остаются умеренными на&nbsp;фоне сдержанного внутреннего спроса.</p>
+<p><strong>Цены экспорта.</strong> Цены на&nbsp;российскую нефть в&nbsp;2026 году сложатся выше уровня 2025 года с&nbsp;учетом временного шока предложения, вызванного событиями на&nbsp;Ближнем Востоке и&nbsp;перекрытием Ормузского пролива. Однако после нормализации ситуации они&nbsp;стабилизируются в&nbsp;2027 &ndash; 2028 годах немного ниже уровней 2025 года и&nbsp;2019 &ndash; 2021 годов из‑за возвращения баланса рынка нефти к&nbsp;профициту в&nbsp;условиях роста добычи стран ОПЕК.</p>
+<p>Цены на&nbsp;прочие сырьевые товары, затронутые конфликтом на&nbsp;Ближнем Востоке, в&nbsp;том&nbsp;числе на&nbsp;газ, удобрения, алюминий, также сложатся выше в&nbsp;2026&nbsp;году, однако скорректируются в&nbsp;последующие годы.</p>
+<p>Цены на&nbsp;несырьевые товары российского экспорта на&nbsp;среднесрочном горизонте будут расти темпами, соответствующими мировой инфляции.</p>
+<p><strong>Геополитические условия. </strong>Для&nbsp;расчета базового сценария принимается предпосылка о&nbsp;неизменности геополитических условий для&nbsp;российской экономики на&nbsp;всем прогнозном горизонте. Предполагается, что&nbsp;послабления в&nbsp;части российской нефти будут носить краткосрочный характер и&nbsp;все&nbsp;действующие внешние ограничения на&nbsp;российский экспорт, импорт, инвестиционное и&nbsp;технологическое сотрудничество на&nbsp;среднесрочном горизонте сохранятся.</p>
+<p><strong>Бюджетная политика.</strong> Предпосылки базового сценария опираются на&nbsp;публичные комментарии представителей Минфина России о&nbsp;постепенном сокращении структурного первичного дефицита федерального бюджета с&nbsp;его&nbsp;выходом на&nbsp;нулевой уровень в&nbsp;2029&nbsp;году. В&nbsp;прогнозные расчеты заложена траектория, предполагающая структурный первичный дефицит в&nbsp;размере 2%&nbsp;ВВП&nbsp;в&nbsp;2026&nbsp;году, 1%&nbsp;ВВП&nbsp;в&nbsp;2027&nbsp;году, 0,5% ВВП&nbsp;в&nbsp;2028&nbsp;году. При&nbsp;этом в&nbsp;базовом сценарии Банк России исходит из&nbsp;действующей базовой цены в&nbsp;бюджетном правиле, установленной Бюджетным кодексом Российской Федерации.</p>
+<p><strong>Потенциальный выпуск.</strong> В&nbsp;базовом сценарии предполагается, что&nbsp;на&nbsp;горизонте прогноза долгосрочный темп роста российского потенциального&nbsp;ВВП будет находиться в&nbsp;диапазоне 1,5 &ndash; 2,5%. Траектория потенциального выпуска в&nbsp;среднесрочной перспективе определяется динамикой факторов производства и&nbsp;совокупной факторной производительности. В&nbsp;базовом сценарии учтены долгосрочные демографические тренды и&nbsp;заложено сохранение возросшей интенсивности инвестиций. Также ключевой предпосылкой выступает предположение о&nbsp;росте совокупной факторной производительности темпами, превышающими средние значения предыдущих&nbsp;лет (предшествовавших структурному сдвигу в&nbsp;экономике). Ускорение совокупной факторной производительности, поддерживаемое адаптацией производственных цепочек, объясняет значительную часть прироста потенциального&nbsp;ВВП на&nbsp;прогнозном горизонте.</p>
+<p>При&nbsp;этом возникшие шоки предложения, связанные с&nbsp;выбытием мощностей, носят временный характер. Они&nbsp;оказывают сдерживающее влияние на&nbsp;производственные возможности в&nbsp;текущем году, однако не&nbsp;изменяют оценку долгосрочных темпов роста российской экономики.</p>
+<p><strong>Нейтральная ставка.</strong><strong> </strong>В&nbsp;базовом сценарии долгосрочный уровень реальной нейтральной ставки для&nbsp;российской экономики <span data-footnote="Банк России ежегодно обновляет оценку нейтральной ставки и публикует ее в Основных направлениях единой государственной денежно-кредитной политики." class="footnote">оценивается</span> в&nbsp;3,5 &ndash; 4,5% годовых, что&nbsp;с&nbsp;учетом цели по&nbsp;инфляции предполагает номинальную ставку 7,5 &ndash; 8,5% годовых.</p></div>
+<h2><span class="referenceable" id="a_194305">Дополнительные материалы</span></h2>
+
+    <div class="document-regular">
+        <div class="document-regular_inner">
+            <div class="document-regular_top">
+                                    <div class="document-regular_format icon-pdf"></div>
+                                    <div class="document-regular_date">24.07.2026</div>
+            </div>
+            <div class="body-2 document-regular_main">
+                <div class="document-regular_texts">
+                    <div class="document-regular_name" data-toggle="">
+<a href="/Content/Document/File/194258/forecast_260724.pdf" target="_blank"><span class="document-regular_name_visible referenceable" id="a_194308">Среднесрочный прогноз Банка России</span>
+</a>
+                    </div>
+                    
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+
+    <div class="document-regular">
+        <div class="document-regular_inner">
+            <div class="document-regular_top">
+                                    <div class="document-regular_format icon-pdf"></div>
+                                    <div class="document-regular_date">05.08.2026</div>
+            </div>
+            <div class="body-2 document-regular_main">
+                <div class="document-regular_texts">
+                    <div class="document-regular_name" data-toggle="">
+<a href="/Content/Document/File/194306/comment_05082026.pdf" target="_blank"><span class="document-regular_name_visible referenceable" id="a_194306">Комментарий к среднесрочному прогнозу Банка России</span>
+</a>
+                    </div>
+                    
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+
+    <div class="document-regular">
+        <div class="document-regular_inner">
+            <div class="document-regular_top">
+                                    <div class="document-regular_format icon-xlsx"></div>
+                                    <div class="document-regular_date">05.08.2026</div>
+            </div>
+            <div class="body-2 document-regular_main">
+                <div class="document-regular_texts">
+                    <div class="document-regular_name" data-toggle="">
+<a href="/Content/Document/File/194307/commet_graph_05082026.xlsx"><span class="document-regular_name_visible referenceable" id="a_194307">Графики и таблицы к среднесрочному прогнозу Банка России</span>
+</a>
+                    </div>
+                    
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+<div class="responsible-unit">
+<div class="responsible-unit_text">Ответственное структурное подразделение: <a href="/about_br/bankstructute/ddkp/"> Департамент денежно-кредитной политики</a></div>
+</div>
+                    
+                    <!--/index-->
+                    
+    <div class="page-info">
+        <!--noindex-->
+        
+
+
+<div class="page-info_helpful"
+     data-page-feedback=""
+     data-feedback-url="/Content/PageInfo/RegisterFeedback">
+    <!--noindex-->
+    <div class="helpful" data-helpful="">
+        Страница была полезной?
+        <div class="helpful_btns">
+            <button class="helpful_btn _yes" data-helpful-btn="yes"><i class="helpful_icon"></i><span>Да</span></button>
+            <button class="helpful_btn _no" data-helpful-btn="no"><i class="helpful_icon"></i><span>Нет</span></button>
+        </div>
+    </div>
+    <!--/noindex-->
+</div>
+
+            <div class="page-info_last-update">Последнее обновление страницы: 05.08.2026</div>
+        <!--/noindex-->
+    </div>
+
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <footer class="footer" id="footer">
+    <div class="offsetMenu footer_margin-left">
+        <div class="footer_main">
+            <div class="col-md-23 col-xl-22 offset-md-1 offset-xl-2 footer-size">
+                <div class="footer_top">
+                    <a class="footer_logo" href="/"></a>
+                    <div class="footer_up gotoUp">
+                        <div class="footer_up_title">Наверх</div>
+                        <div class="footer_up_icon"></div>
+                    </div>
+                </div>
+                
+<div class="footer_contacts">
+<div class="footer_address">107016, Москва, ул. Неглинная, д.&nbsp;12, к. В, Банк
+России</div>
+<div class="footer_phones">
+<div class="footer_phone"><a class="footer_phone_val" href="tel:300">300</a><span>(круглосуточно, бесплатно для&nbsp;звонков с&nbsp;мобильных телефонов)</span></div>
+<div class="footer_phone"><a class="footer_phone_val" href="tel:88003003000">8&nbsp;800 300-30-00</a><span>(круглосуточно, бесплатно для&nbsp;звонков из&nbsp;регионов России)</span></div>
+<div class="footer_phone"><a class="footer_phone_val" href="tel:+74993003000">+7&nbsp;499 300-30-00</a><span>(круглосуточно, в&nbsp;соответствии с&nbsp;тарифами вашего оператора)</span></div>
+
+</div>
+</div>
+<div class="footer_main_block">
+<div class="footer_left-menu">
+<div class="footer_left-menu_item"><a href="/lk_uio/">Личный кабинет участника информационного обмена</a></div>
+<div class="footer_left-menu_item"><a href="/about_br/irp/">Отношения с&nbsp;инвесторами</a></div>
+<div class="footer_left-menu_item"><a href="/rbr/list_inside/">Перечень инсайдерской информации Банка России</a></div>
+<div class="footer_left-menu_item"><a href="/analytics/na_vr/">Официальное опубликование нормативных актов Банка России</a></div>
+<div class="footer_left-menu_item"><a href="/project_na/">Проекты нормативных актов Банка России</a></div>
+<div class="footer_left-menu_item"><a href="/other/holidays/">Перечень нерабочих праздничных дней и&nbsp;перенесенных выходных дней</a></div>
+</div>
+<div class="networks-circle footer_networks">
+<a class="networks-circle_item _vk" href="https://vk.com/cbr_official"></a>
+<a class="networks-circle_item _yt" href="https://www.youtube.com/user/BankofRussia"></a>
+<a class="networks-circle_item _tg" href="https://telegram.me/centralbank_russia" title="Telegram"></a>
+<a class="networks-circle_item _ydzen" href="https://dzen.ru/cbr" title="Яндекс Дзен"></a>
+<a class="networks-circle_item _ok" href="https://ok.ru/group/68858679787580" title="Одноклассники"></a>
+<a class="networks-circle_item _rt" href="https://rutube.ru/channel/23873201/" title="RUTUBE"></a>
+<a class="networks-circle_item _max" href="https://max.ru/cbr_official" title="Макс"></a>
+</div>
+</div>
+<div class="footer_menu">
+<div class="footer_menu_items">
+<div class="footer_menu_item"><a href="/about/">О&nbsp;сайте</a></div>
+<div class="footer_menu_item"><a href="/contacts/">Контакты</a></div>
+<div class="footer_menu_item"><a href="/about_br/anticor/">Противодействие коррупции</a></div>
+<div class="footer_menu_item"><a href="/development/">Технические ресурсы</a></div>
+</div>
+<a class="footer_menu_item _visually-impaired" href="#" title="Версия для слабовидящих">
+	<div class="footer_visually-impaired-icon"></div>
+	<div><span class="visually-impaired-on">Версия для&nbsp;слабовидящих</span><span class="visually-impaired-off">Обычная версия</span></div>
+</a>
+</div>
+
+            </div>
+        </div>
+        <div class="footer_bottom">
+            <div class="col-md-23 col-xl-23 offset-md-1 offset-xl-2 row footer_bottom-container">
+                <div class="footer_bottom_text col-md-11 col-xl-11">&#169; Банк России, 2000–2026.</div>
+<div class="footer_bottom_aic col-md-12 col-xl-11">Дизайн сайта — <a href="https://aic.ru" target="_blank"><img src="/common/images/icons/aic-logo.svg" /></a></div>
+
+            </div>
+        </div>
+    </div>
+</footer>
+
+    
+    
+
+        <div class="popup-cookies" data-popup-cookies>
+            <div class="popup-cookies_title">
+                На сайте Банка России используются файлы cookie
+            </div>
+            <div class="popup-cookies_subtitle">
+                Оставаясь на <a href="/">www.cbr.ru</a>, вы принимаете
+                <a href='/user_agreement/'>пользовательское соглашение</a>
+            </div>
+            <button class="btn _medium _blue " data-popup-cookies-btn>
+                Подтвердить
+            </button>
+        </div>
+
+    
+<!--[if IE 9]><script>$('body').addClass('ie9')</script><![endif]-->
+<script src="/Modules/Content/Scripts/PageInfo.js?v=v3116962712" type="text/javascript"></script>
+    <script type="text/javascript">
+        $(function () {
+            Content_PageInfo.init($('[data-page-feedback]'));
+        });
+    </script>
+
+
+
+</body>
+</html>
