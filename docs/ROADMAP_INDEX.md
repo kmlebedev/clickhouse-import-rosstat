@@ -76,4 +76,12 @@ Labels: `roadmap:<slug>` — группировка до появления Proj
 - Обязательная норма для ассистента — правило 12 [AGENTS.md](../AGENTS.md); шаблон PR — [`.github/pull_request_template.md`](../.github/pull_request_template.md).
 - Приёмка пункта и протокол живой приёмки — [IMPORTER_PACKAGE_STANDARD.md](IMPORTER_PACKAGE_STANDARD.md) §16.1 п. 8 и [ROADMAP_INFRA.md](ROADMAP_INFRA.md) §5.
 
-Живой GitHub Project V2 и бэкфилл открытого фронта — отдельный шаг `infra/3.2`. До него issue и labels работают без Project и не блокируют работу по пунктам.
+## 6. Живой Project V2
+
+- **Project:** [clickhouse-import-rosstat — Roadmap](https://github.com/users/kmlebedev/projects/11) (number 11), привязан к репозиторию.
+- **Items:** 75 — 57 новых issue открытого фронта (#109–#165) + 18 существующих; #105 (`infra/3.3`) и #47 (`gold-thesis/phase-5`) не дублируются.
+- **Inbox:** 11 issue без роадмапа — #90, #89, #88, #85, #81, #77, #76, #58, #52, #51, #48.
+- **Закрыты как принятые:** #86, #75, #74, #42; в Project отмечены `Done`.
+- **Поля и виды:** по спеке [2026-10-18-github-project-v2-design.md](superpowers/specs/2026-10-18-github-project-v2-design.md) §3–§4.
+
+До появления Project issue и labels работали без него; live-режим — шаг `infra/3.2`.
