@@ -774,7 +774,8 @@ async def check(params, server_log):
             # попадало туда из COMMENT соседки (урок bold). Разобранный ответ run_query
             # доказывает и существование, и право чтения; «нет витрины» и «нет прав» приходят
             # ошибкой (UNKNOWN_TABLE / ACCESS_DENIED) и в result_rows не разбираются.
-            sber_view = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_bank_sber_spending"}))
+            sber_view = text(await session.call_tool(
+                "run_query", {"query": "SELECT count() FROM v_bank_sber_spending"}))
             sber_view_rows = result_rows(sber_view)
             sber_view_n = sber_view_rows[0].get("count()") if sber_view_rows else None
             if sber_view_rows is None:
@@ -794,7 +795,10 @@ async def check(params, server_log):
             # поэлементно по source, который витрина штампует литералом, плюс uniqExact(source) = 2:
             # это разом доказывает и объединение наборов в одной витрине, и непустоту каждого из них.
             for sber_source in ("sber_consumper_spending_index", "sber_izmenenie_trat"):
-                sber_source_raw = text(await session.call_tool("run_query", {"query": f"SELECT count() AS n FROM v_bank_sber_spending WHERE source = '{sber_source}'"}))
+                sber_source_raw = text(await session.call_tool(
+                    "run_query",
+                    {"query": f"SELECT count() AS n FROM v_bank_sber_spending "
+                              f"WHERE source = '{sber_source}'"}))
                 sber_source_rows = result_rows(sber_source_raw)
                 sber_source_n = sber_source_rows[0].get("n") if sber_source_rows else None
                 if sber_source_rows is None:
@@ -806,7 +810,9 @@ async def check(params, server_log):
                                           f"make import STAT={sber_source}")
                 failed += not expect(f"набор {sber_source} есть в витрине", (sber_source_n or 0) > 0, sber_source_detail)
 
-            sber_sources_raw = text(await session.call_tool("run_query", {"query": "SELECT uniqExact(source) AS sources FROM v_bank_sber_spending"}))
+            sber_sources_raw = text(await session.call_tool(
+                "run_query",
+                {"query": "SELECT uniqExact(source) AS sources FROM v_bank_sber_spending"}))
             sber_sources_rows = result_rows(sber_sources_raw)
             sber_sources_n = sber_sources_rows[0].get("sources") if sber_sources_rows else None
             if sber_sources_rows is None:
@@ -823,7 +829,10 @@ async def check(params, server_log):
             # («Услуги», «Продовольственные товары»), и общий ключ каталога схлопнул бы разные
             # ряды в один.
             for sber_source, sber_want in (("sber_consumper_spending_index", 5), ("sber_izmenenie_trat", 46)):
-                sber_catalog = text(await session.call_tool("run_query", {"query": f"SELECT count() AS n FROM v_series_catalog WHERE source = '{sber_source}'"}))
+                sber_catalog = text(await session.call_tool(
+                    "run_query",
+                    {"query": f"SELECT count() AS n FROM v_series_catalog "
+                              f"WHERE source = '{sber_source}'"}))
                 sber_catalog_rows = result_rows(sber_catalog)
                 sber_catalog_n = sber_catalog_rows[0].get("n") if sber_catalog_rows else None
                 if sber_catalog_rows is None:
@@ -859,11 +868,12 @@ async def check(params, server_log):
             # create_table_query с комментариями таблиц и колонок, и имя отсутствующей витрины
             # попадало туда из COMMENT соседки (урок bold). «Нет витрины» (UNKNOWN_TABLE) и «нет
             # прав» (ACCESS_DENIED) приходят ошибкой и в result_rows не разбираются.
-            bank_view = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_bank_macro"}))
-            bank_view_rows = result_rows(bank_view)
+            bank_view_raw = text(await session.call_tool(
+                "run_query", {"query": "SELECT count() FROM v_bank_macro"}))
+            bank_view_rows = result_rows(bank_view_raw)
             bank_view_n = bank_view_rows[0].get("count()") if bank_view_rows else None
             if bank_view_rows is None:
-                bank_view_detail = f"витрина не читается: {bank_view[:200]}"
+                bank_view_detail = f"витрина не читается: {bank_view_raw[:200]}"
             elif (bank_view_n or 0) > 0:
                 bank_view_detail = f"строк: {bank_view_n}"
             else:
@@ -880,7 +890,10 @@ async def check(params, server_log):
             # литералов закреплён тестом контракта bank/series_meta_test.go): это разом доказывает
             # и объединение наборов в одной витрине, и непустоту каждого из них.
             for bank_source in ("domrf_mortgage", "rus_vtb_group_ifrs", "sber_finansovie_rezultaty"):
-                bank_source_raw = text(await session.call_tool("run_query", {"query": f"SELECT count() AS n FROM v_bank_macro WHERE source = '{bank_source}'"}))
+                bank_source_raw = text(await session.call_tool(
+                    "run_query",
+                    {"query": f"SELECT count() AS n FROM v_bank_macro "
+                              f"WHERE source = '{bank_source}'"}))
                 bank_source_rows = result_rows(bank_source_raw)
                 bank_source_n = bank_source_rows[0].get("n") if bank_source_rows else None
                 if bank_source_rows is None:
@@ -898,7 +911,10 @@ async def check(params, server_log):
             # единицах, нет. Число проверяется как «> 0», а не точным равенством: полноту словаря
             # (25 рядов: 14 SBER + 11 VTBR) держит TestBankCompanyMetricMapWellFormed, а здесь
             # доказывается доступность слоя агенту.
-            bank_catalog_raw = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'bank_company_metrics'"}))
+            bank_catalog_raw = text(await session.call_tool(
+                "run_query",
+                {"query": "SELECT count() AS n FROM v_series_catalog "
+                          "WHERE source = 'bank_company_metrics'"}))
             bank_catalog = result_rows(bank_catalog_raw)
             bank_catalog_n = bank_catalog[0].get("n") if bank_catalog else None
             if bank_catalog is None:
@@ -914,7 +930,10 @@ async def check(params, server_log):
             # company_financials рядом с метриками Полюса, и агент читает их через уже выданную
             # v_company_financials — новых грантов слой не требует. Ноль строк по обеим компаниям —
             # ни разу не отработавший маппер; ошибка запроса даёт detail сырым текстом.
-            bank_company_raw = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_company_financials WHERE company IN ('SBER', 'VTBR')"}))
+            bank_company_raw = text(await session.call_tool(
+                "run_query",
+                {"query": "SELECT count() AS n FROM v_company_financials "
+                          "WHERE company IN ('SBER', 'VTBR')"}))
             bank_company = result_rows(bank_company_raw)
             bank_company_n = bank_company[0].get("n") if bank_company else None
             if bank_company is None:
@@ -933,9 +952,10 @@ async def check(params, server_log):
             # читаются. Ноль здесь — или маппер не прогонялся, или витрина старше ALTER'а:
             # пересоздать витрины прогоном make import STAT=company_views (идемпотентен,
             # пересоздаёт все три v_company_*).
-            bank_month_raw = text(await session.call_tool("run_query", {"query":
-                "SELECT count() AS n FROM v_company_financials "
-                "WHERE company = 'SBER' AND period_type = 'M'"}))
+            bank_month_raw = text(await session.call_tool(
+                "run_query",
+                {"query": "SELECT count() AS n FROM v_company_financials "
+                          "WHERE company = 'SBER' AND period_type = 'M'"}))
             bank_month = result_rows(bank_month_raw)
             bank_month_n = bank_month[0].get("n") if bank_month else None
             if bank_month is None:
@@ -953,10 +973,11 @@ async def check(params, server_log):
             # DESC; период кодируется как YYYYMmm, поэтому лексикографический порядок совпадает с
             # хронологическим), detail печатает и период, и значение: пустой ответ — ни разу не
             # отработавший маппер, ошибка — сырым текстом.
-            bank_assets_raw = text(await session.call_tool("run_query", {"query":
-                "SELECT metric, period, value FROM v_company_financials "
-                "WHERE company = 'SBER' AND metric = 'total_assets' "
-                "ORDER BY period DESC LIMIT 1"}))
+            bank_assets_raw = text(await session.call_tool(
+                "run_query",
+                {"query": "SELECT metric, period, value FROM v_company_financials "
+                          "WHERE company = 'SBER' AND metric = 'total_assets' "
+                          "ORDER BY period DESC LIMIT 1"}))
             bank_assets = result_rows(bank_assets_raw)
             if bank_assets is None:
                 bank_assets_detail = f"ответ не распознан: {bank_assets_raw[:200]}"
