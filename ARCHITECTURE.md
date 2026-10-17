@@ -182,9 +182,13 @@ dashboard/         — артефакты дашбордов Grafana (плаги
                      2026-10-16) генерируются из `grafana/` и руками не правятся; легаси-экспорты
                      `rosstat.json`, `chmf.json` — вне миграции на код (очередь — `docs/ROADMAP_INFRA.md`)
 .kimi-code/skills/ — операционные скилы: github-tracker, dashboard-migration, sync-readme-architecture
-docs/              — аналитические статьи (прогнозы золота); реестр роадмапов и правил трекера — ROADMAP_INDEX.md; спеки и планы — superpowers/{specs,plans}
+docs/              — аналитические статьи (прогнозы золота); реестр роадмапов и правил трекера — ROADMAP_INDEX.md; спеки и планы — superpowers/{specs,plans}; манифест docs-портала — site-pages.json
+mkdocs.base.yml    — конфигурация docs-портала (Material for MkDocs)
+scripts/docs_build.py — генератор build/site-docs и build/mkdocs.yml из docs/site-pages.json (stdlib Python)
 *.crt              — национальные TLS CA РФ (для ГОСТ-шифрования gos-сайтов)
 ```
+
+**Публикация документации.** Docs-портал собирается из `README.md`, `ARCHITECTURE.md` и страниц из `docs/site-pages.json`: `scripts/docs_build.py` кладёт их в `build/site-docs`, добавляет баннер источника и переписывает ссылки (страницы сайта → `.md`, остальные файлы → GitHub), затем `mkdocs build -f build/mkdocs.yml --strict` (mkdocs-material 9.7.7) собирает `build/site`; workflow `.github/workflows/pages.yml` публикует его на GitHub Pages. Спеки, планы и `docs/archive/` на сайт не попадают; источник истины — файлы репозитория.
 
 ## 3. Ключевой паттерн: реестр импортёров
 
