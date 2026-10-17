@@ -86,6 +86,16 @@ var mpLLMTransport = "anthropic"
 // отправляется, прод-путь его не использует.
 var mpLLMReasoningEffort string
 
+// mpLLMConcise — harness-режим для моделей с жёстким лимитом вывода (GLM — 8192 токенов):
+// после пользовательского промпта добавляется инструкция «не более одной цитаты на канал,
+// note — одно короткое предложение». Применяется только к повторной разметке документов,
+// которые не влезли в лимит; обычный прогон и прод-путь его не используют.
+var mpLLMConcise bool
+
+// mpLLMConciseInstruction — текст harness-инструкции concise-режима. Отдельная константа,
+// чтобы тест пинил её в теле запроса и её нельзя было случайно потерять при правке промпта.
+const mpLLMConciseInstruction = "Сократи ответ: не более одной цитаты на канал, note — одно короткое предложение. Это критично: лимит вывода 8192 токена."
+
 // mpLLMProfile — один профиль разметки: имя (default/glm/mimo) нужно только для конфигурации и
 // логов, а в данные пишется фактическое имя модели API (Model) — по нему импортёр отличает,
 // какой моделью размечен документ.
@@ -619,6 +629,9 @@ func mpLLMAskOnceOpenAI(doc mpSummaryDoc, baseURL, apiKey, model string) (mpLLMP
 		Temperature:     0,
 		ResponseFormat:  mpLLMOpenAIResponseFormat{Type: "json_object"},
 		ReasoningEffort: mpLLMReasoningEffort,
+	}
+	if mpLLMConcise {
+		request.Messages = append(request.Messages, mpLLMOpenAIMessage{Role: "user", Content: mpLLMConciseInstruction})
 	}
 	body, err := json.Marshal(request)
 	if err != nil {

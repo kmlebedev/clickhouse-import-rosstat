@@ -80,6 +80,7 @@ Env harness:
 | `MP_LLM_EVAL_DELAY` | Пауза между вызовами; по умолчанию `1s` (rate limit). |
 | `MP_LLM_EVAL_TRANSPORT` | `anthropic` (продовый SDK, по умолчанию) или `openai` (OpenAI-совместимый `POST <base>/v1/chat/completions` с `response_format=json_object`). Второй нужен GLM/MiMo: на Anthropic-эндпоинте они тратят `max_tokens` на reasoning в text-блоке и не доходят до JSON. В отчёте транспорт каждой модели указан явно. |
 | `MP_LLM_EVAL_REASONING` | OpenAI-совместимый `reasoning_effort` (`none\|low\|medium\|high`, пусто — поле не отправляется). GLM с `none` перестаёт писать длинный анализ в `content` и доходит до JSON; для MiMo не требуется (у него reasoning вынесен в отдельное поле и не мешает). |
+| `MP_LLM_EVAL_CONCISE` | `0\|1` (по умолчанию 0): добавить в OpenAI-запрос инструкцию «не более одной цитаты на канал, note — одно короткое предложение». Нужен для повторной разметки GLM-документов, которые не влезли в лимит 8192; обычный прогон и прод-путь его не используют. |
 | `MP_LLM_EVAL_PREFILL` | `0\|1` (по умолчанию 0): последнее сообщение ассистента «{» — запасная совместимость Anthropic-транспорта; в финальном прогоне не используется, если работает `openai`. |
 | `MP_LLM_EVAL_THINKING` | `default\|disabled` (по умолчанию `default`): Anthropic-поле `thinking`; `disabled` — запасная совместимость, в финальном прогоне не используется. |
 | `<PROFILE>_LLM_PRICE_IN`, `<PROFILE>_LLM_PRICE_OUT` | Цена за 1М токенов, USD (необязательно; без них цена в отчёте «н/д»). |

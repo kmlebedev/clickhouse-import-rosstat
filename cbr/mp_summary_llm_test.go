@@ -1239,9 +1239,12 @@ func TestTagMPChannelsLLMOpenAITransport(t *testing.T) {
 	mpLLMTransport = "openai"
 	oldEffort := mpLLMReasoningEffort
 	mpLLMReasoningEffort = "none"
+	oldConcise := mpLLMConcise
+	mpLLMConcise = true
 	t.Cleanup(func() {
 		mpLLMTransport = old
 		mpLLMReasoningEffort = oldEffort
+		mpLLMConcise = oldConcise
 	})
 
 	matches, stats, err := tagMPChannelsLLM(doc, mpLLMProfile{BaseURL: srv.URL, APIKey: "test-key", Model: "test-model"})
@@ -1262,6 +1265,9 @@ func TestTagMPChannelsLLMOpenAITransport(t *testing.T) {
 	}
 	if !strings.Contains(gotBody, `"reasoning_effort":"none"`) {
 		t.Errorf("в запросе нет reasoning_effort=none: %s", gotBody)
+	}
+	if !strings.Contains(gotBody, mpLLMConciseInstruction) {
+		t.Errorf("в запросе нет concise-инструкции: %s", gotBody)
 	}
 	if !strings.Contains(gotBody, `"model":"test-model"`) {
 		t.Errorf("в запросе нет модели: %s", gotBody)
