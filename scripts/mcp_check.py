@@ -388,7 +388,7 @@ async def check(params, server_log):
                                       "STAT=news_watch (девятая лента, канал edisclosure)")
             failed += not expect("канал edisclosure в v_news_flash", (edisclosure_n or 0) > 0, edisclosure_detail)
 
-            # Реестр тегов — статическая витрина: 39 слагов, из них ровно 11 каналов ставки
+            # Реестр тегов — статическая витрина: 46 слагов, из них ровно 11 каналов ставки
             # (cb_channel). Меньшее число значит ни разу не отработавший прогон news_watch
             # (витрина публикуется вместе с остальными), расхождение — реестр разошёлся с
             # news/tags.go. Ключевые пары проверяются отдельно: по ним агент расшифровывает
@@ -448,6 +448,27 @@ async def check(params, server_log):
             else:
                 print("WARN LLM-теги: 0 (NEWS_LLM_MODEL не задан — штатная деградация; "
                       "живой прогон 1.10 после мерджа 1.8)")
+
+            # LLM-разметка RSS — тоже информационная строка: без NEWS_LLM_PROFILE=glm и
+            # ключей разметка штатно пропускается, поэтому ноль не увеличивает failed.
+            # Знаменатель — только аннотируемые позиции (content_hash != ''): строки до
+            # миграции 1.9 не размечены, остаются с model = '' и дефектом не считаются.
+            news_llm_raw = text(await session.call_tool("run_query", {"query":
+                "SELECT countIf(content_hash != '') AS n, "
+                "countIf(content_hash != '' AND model != '') AS annotated "
+                "FROM v_news_events WHERE transport = 'rss'"}))
+            news_llm = result_rows(news_llm_raw)
+            if news_llm is None:
+                print(f"WARN LLM-разметка RSS: витрина не читается: {news_llm_raw[:200]}")
+            else:
+                news_llm_n = news_llm[0].get("n") if news_llm else None
+                news_llm_annotated = news_llm[0].get("annotated") if news_llm else None
+                if (news_llm_annotated or 0) > 0:
+                    print(f"OK   LLM-разметка RSS: {news_llm_annotated} из {news_llm_n} позиций")
+                else:
+                    print(f"WARN LLM-разметка RSS: 0 из {news_llm_n} позиций — догон: "
+                          "NEWS_LLM_PROFILE=glm NEWS_LLM_BACKLOG_LIMIT=500 "
+                          "make import STAT=news_watch")
 
             # Контур СБКТС Росстандарта (правило 11): обе витрины читаются агентом, а сырая
             # gost_vehicle_safety_certificate — источник витрин — агенту закрыта (как macro_series
