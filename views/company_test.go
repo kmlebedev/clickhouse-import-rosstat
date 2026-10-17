@@ -115,17 +115,23 @@ func TestCompanyFinancialsResolutionPrefersIFRS(t *testing.T) {
 func TestCompanyFinancialsResolutionOrder(t *testing.T) {
 	selectText := collapseSpaces(companyFinancialsView.Select)
 
-	if !strings.Contains(selectText, "argMax(value, (source_kind = 'ifrs', loaded_at, source_url)) AS r_value") {
+	if !strings.Contains(selectText, "argMax(value, (source_kind = 'ifrs', source_kind = 'ras', loaded_at, source_url)) AS r_value") {
 		t.Fatalf(
-			"v_company_financials must resolve on (source_kind = 'ifrs', loaded_at, source_url), got: %s",
+			"v_company_financials must resolve on (source_kind = 'ifrs', source_kind = 'ras', loaded_at, source_url), got: %s",
 			selectText,
 		)
 	}
 	// ifrs в ключе, а не сравнение в WHERE: WHERE отбросил бы пресс-релиз вместо
 	// того, чтобы дать ему проиграть (и оставил бы период без строки, если
-	// аудированной версии у него нет).
+	// аудированной версии у него нет). РСБУ Сбера ('ras') — вторая ступень правила:
+	// она стоит после аудита, но до свежести загрузки, и порядок полей здесь и есть
+	// правило. У банковской компании вид отчётности ровно один, так что ступень
+	// нужна для полноты порядка, а не для спора внутри одной компании.
 	if !strings.Contains(selectText, "source_kind = 'ifrs'") {
 		t.Error("v_company_financials must compare source_kind = 'ifrs' inside the resolution key")
+	}
+	if !strings.Contains(selectText, "source_kind = 'ras'") {
+		t.Error("v_company_financials must keep source_kind = 'ras' in the resolution key (РСБУ Сбербанка)")
 	}
 	// Кортеж как второй аргумент argMax, а не отдельный row_number: витрина
 	// остаётся потоковой агрегацией над FINAL.

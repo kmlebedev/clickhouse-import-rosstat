@@ -829,6 +829,152 @@ async def check(params, server_log):
                 failed += not expect(f"сырая {table} закрыта ({label})", denied,
                                      f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
 
+            # Банковский пакет (спека §3.6): витрина v_bank_macro читается агентом и НЕПУСТА, и в
+            # ней есть точки каждого из трёх новых наборов — domrf_mortgage (ставка предложения по
+            # ипотеке банков, ДОМ.РФ), rus_vtb_group_ifrs (отчётность группы ВТБ по МСФО) и
+            # sber_finansovie_rezultaty (отчётность ПАО Сбербанк по РСБУ). Два набора СберИндекса
+            # входят в ту же витрину, но проверены выше по v_bank_sber_spending и здесь не
+            # повторяются. Ноль строк — не «нет данных у источника», а ни разу не отработавший
+            # прогон bank/: строки публикуют импортёры пакета. Существование витрины подтверждается
+            # ЗАПРОСОМ К НЕЙ, а не поиском имени в ответе list_tables: в том тексте лежат
+            # create_table_query с комментариями таблиц и колонок, и имя отсутствующей витрины
+            # попадало туда из COMMENT соседки (урок bold). «Нет витрины» (UNKNOWN_TABLE) и «нет
+            # прав» (ACCESS_DENIED) приходят ошибкой и в result_rows не разбираются.
+            bank_view = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_bank_macro"}))
+            bank_view_rows = result_rows(bank_view)
+            bank_view_n = bank_view_rows[0].get("count()") if bank_view_rows else None
+            if bank_view_rows is None:
+                bank_view_detail = f"витрина не читается: {bank_view[:200]}"
+            elif (bank_view_n or 0) > 0:
+                bank_view_detail = f"строк: {bank_view_n}"
+            else:
+                bank_view_detail = ("строк: 0 — прогнать импортёры пакета: make import "
+                                    "STAT=domrf_mortgage, STAT=rus_vtb_group_ifrs, "
+                                    "STAT=sber_finansovie_rezultaty (витрину пересоздаёт AfterImport "
+                                    "каждого прогона)")
+            failed += not expect("витрина v_bank_macro непуста", (bank_view_n or 0) > 0, bank_view_detail)
+
+            # Одного общего count() > 0 мало: витрину пересоздаёт AfterImport ЛЮБОГО из пяти
+            # импортёров, поэтому зелёная витрина могла бы держать точки одного набора — ровно
+            # исходный дефект §4.1 роадмапа, только у банковского пакета. Поэтому наборы
+            # проверяются поэлементно по source, который витрина штампует литералом (порядок
+            # литералов закреплён тестом контракта bank/series_meta_test.go): это разом доказывает
+            # и объединение наборов в одной витрине, и непустоту каждого из них.
+            for bank_source in ("domrf_mortgage", "rus_vtb_group_ifrs", "sber_finansovie_rezultaty"):
+                bank_source_raw = text(await session.call_tool("run_query", {"query": f"SELECT count() AS n FROM v_bank_macro WHERE source = '{bank_source}'"}))
+                bank_source_rows = result_rows(bank_source_raw)
+                bank_source_n = bank_source_rows[0].get("n") if bank_source_rows else None
+                if bank_source_rows is None:
+                    bank_source_detail = f"ответ не распознан: {bank_source_raw[:200]}"
+                elif (bank_source_n or 0) > 0:
+                    bank_source_detail = f"точек: {bank_source_n}"
+                else:
+                    bank_source_detail = (f"точек: {bank_source_n} — прогнать импортёр набора: "
+                                          f"make import STAT={bank_source}")
+                failed += not expect(f"набор {bank_source} есть в витрине", (bank_source_n or 0) > 0, bank_source_detail)
+
+            # Каталог маппера банковских метрик: описания рядов SBER_* и VTBR_* публикует сам
+            # прогон bank_company_metrics (util.UpsertSeriesCatalog), поэтому ноль строк означает
+            # ни разу не отработавший маппер — числа агент прочитает, а что измеряет ряд и в каких
+            # единицах, нет. Число проверяется как «> 0», а не точным равенством: полноту словаря
+            # (25 рядов: 14 SBER + 11 VTBR) держит TestBankCompanyMetricMapWellFormed, а здесь
+            # доказывается доступность слоя агенту.
+            bank_catalog_raw = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'bank_company_metrics'"}))
+            bank_catalog = result_rows(bank_catalog_raw)
+            bank_catalog_n = bank_catalog[0].get("n") if bank_catalog else None
+            if bank_catalog is None:
+                bank_catalog_detail = f"ответ не распознан: {bank_catalog_raw[:200]}"
+            elif (bank_catalog_n or 0) > 0:
+                bank_catalog_detail = f"рядов bank_company_metrics: {bank_catalog_n}"
+            else:
+                bank_catalog_detail = ("рядов: 0 — прогнать маппер: make import "
+                                       "STAT=bank_company_metrics (каталог публикует прогон)")
+            failed += not expect("каталог bank_company_metrics непуст", (bank_catalog_n or 0) > 0, bank_catalog_detail)
+
+            # Компанейский слой (спека §3.7): курированные метрики банков лежат в общей
+            # company_financials рядом с метриками Полюса, и агент читает их через уже выданную
+            # v_company_financials — новых грантов слой не требует. Ноль строк по обеим компаниям —
+            # ни разу не отработавший маппер; ошибка запроса даёт detail сырым текстом.
+            bank_company_raw = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_company_financials WHERE company IN ('SBER', 'VTBR')"}))
+            bank_company = result_rows(bank_company_raw)
+            bank_company_n = bank_company[0].get("n") if bank_company else None
+            if bank_company is None:
+                bank_company_detail = f"ответ не распознан: {bank_company_raw[:200]}"
+            elif (bank_company_n or 0) > 0:
+                bank_company_detail = f"строк SBER/VTBR: {bank_company_n}"
+            else:
+                bank_company_detail = "строк: 0 — прогнать маппер: make import STAT=bank_company_metrics"
+            failed += not expect("метрики банков видны в v_company_financials", (bank_company_n or 0) > 0, bank_company_detail)
+
+            # Фильтр по значению Enum доказывает больше, чем count() по company: тип колонки
+            # витрина фиксирует на момент CREATE VIEW, поэтому ALTER таблицы (добавление 'M'=5
+            # в приёмке фазы 3.1) без пересоздания витрин оставляет их на старом типе — фильтр
+            # period_type = 'M' молча отдаёт 0 строк, toString(period_type) падает на 'Unexpected
+            # value 5 in enum', и агент не видит банковских метрик, хотя строки по company
+            # читаются. Ноль здесь — или маппер не прогонялся, или витрина старше ALTER'а:
+            # пересоздать витрины прогоном make import STAT=company_views (идемпотентен,
+            # пересоздаёт все три v_company_*).
+            bank_month_raw = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_company_financials "
+                "WHERE company = 'SBER' AND period_type = 'M'"}))
+            bank_month = result_rows(bank_month_raw)
+            bank_month_n = bank_month[0].get("n") if bank_month else None
+            if bank_month is None:
+                bank_month_detail = f"ответ не распознан: {bank_month_raw[:200]}"
+            elif (bank_month_n or 0) > 0:
+                bank_month_detail = f"строк SBER с периодом 'M': {bank_month_n}"
+            else:
+                bank_month_detail = ("строк: 0 — или маппер не прогонялся, или витрина старше "
+                                     "ALTER'а period_type: пересоздать витрины прогоном "
+                                     "make import STAT=company_views")
+            failed += not expect("период 'M' читается через v_company_financials", (bank_month_n or 0) > 0, bank_month_detail)
+
+            # Одного count() > 0 мало: агенту нужен конкретный ряд с периодом и значением, а не
+            # факт наличия строк. Читается последний отчётный месяц актива Сбера (ORDER BY period
+            # DESC; период кодируется как YYYYMmm, поэтому лексикографический порядок совпадает с
+            # хронологическим), detail печатает и период, и значение: пустой ответ — ни разу не
+            # отработавший маппер, ошибка — сырым текстом.
+            bank_assets_raw = text(await session.call_tool("run_query", {"query":
+                "SELECT metric, period, value FROM v_company_financials "
+                "WHERE company = 'SBER' AND metric = 'total_assets' "
+                "ORDER BY period DESC LIMIT 1"}))
+            bank_assets = result_rows(bank_assets_raw)
+            if bank_assets is None:
+                bank_assets_detail = f"ответ не распознан: {bank_assets_raw[:200]}"
+            elif bank_assets:
+                bank_assets_detail = (f"total_assets за {bank_assets[0].get('period')}: "
+                                      f"{bank_assets[0].get('value')}")
+            else:
+                bank_assets_detail = "строк нет — прогнать маппер: make import STAT=bank_company_metrics"
+            failed += not expect("SBER total_assets читается точкой", bool(bank_assets), bank_assets_detail)
+
+            # Сырые таблицы банковского пакета агенту не выданы — как macro_series и
+            # polyus_financial_metrics: ряды банковских отчётностей агент читает через витрину
+            # v_bank_macro (сырые строки) и компанейский слой v_company_financials (курированные
+            # метрики), наборы СберИндекса — через v_bank_sber_spending (единицы значения и
+            # привязка даты описаны только в v_series_catalog). У трёх таблиц с шагом расписания
+            # UNKNOWN_TABLE — провал, а не успех: их создаёт DDL-прогон импортёра, и они обязаны
+            # существовать и быть закрытыми. `tbank_group_ifrs` — исключение: её импортёр убран
+            # из расписания (О2) и всегда падает на PDF (О4), таблицу заводит только ручной
+            # прогон `make import STAT=tbank_group_ifrs`, поэтому UNKNOWN_TABLE здесь —
+            # ожидаемое состояние с пометкой «таблица появится после ручного прогона (О2)»:
+            # иначе make mcp-check был бы красным на каждой БД без этого прогона. ACCESS_DENIED
+            # остаётся успехом и здесь (таблица есть и закрыта), любой иной ответ — провал.
+            for table, label in (("domrf_mortgage", "ставки по ипотеке ДОМ.РФ"),
+                                 ("rus_vtb_group_ifrs", "МСФО группы ВТБ"),
+                                 ("sber_finansovie_rezultaty", "РСБУ Сбера"),
+                                 ("tbank_group_ifrs", "МСФО Т-Банка, шага в расписании нет")):
+                raw = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {table}"}))
+                denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+                tbank_absent = table == "tbank_group_ifrs" and "UNKNOWN_TABLE" in raw
+                if denied:
+                    raw_detail = f"отказ ClickHouse 497 на {table} (ожидаемо)"
+                elif tbank_absent:
+                    raw_detail = f"{table} отсутствует — таблица появится после ручного прогона (О2)"
+                else:
+                    raw_detail = raw[:200]
+                failed += not expect(f"сырая {table} закрыта ({label})", denied or tbank_absent, raw_detail)
+
             # Контур приложений к бюллетеню ДИП ЦБ (пункт 4.2 №17 роадмапа — фаза 4, винтажный
             # слой; спека 2026-10-15 cbr-dip-bulletin §3.6, импортёр cbr_dip_bulletin): витрина
             # v_cbr_dip_bulletin читается агентом и НЕПУСТА, каталог описывает все 8 рядов
