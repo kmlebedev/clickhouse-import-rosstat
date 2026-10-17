@@ -106,7 +106,9 @@ var daguBankYAML = filepath.Join("..", "dagu", "bank.yaml")
 // daguStatRef вытаскивает имя из строки шага `- CLICKHOUSE_IMPORT_STAT=<name>`. Разбор —
 // регуляркой по всему файлу, без YAML-зависимости: тест не должен тянуть в пакетный go.mod
 // парсер ради одного ключа. Якоря ^…$ в режиме (?m) обязательны: без них закомментированный
-// шаг `# - CLICKHOUSE_IMPORT_STAT=…` считался бы шагом расписания.
+// шаг `# - CLICKHOUSE_IMPORT_STAT=…` считался бы шагом расписания. Хвостовой
+// inline-комментарий в строке шага не поддержан: таких строк в dagu/bank.yaml нет, а сам файл
+// проверяется `dagu validate`.
 var daguStatRef = regexp.MustCompile(`(?m)^[ \t]*-[ \t]+CLICKHOUSE_IMPORT_STAT=([A-Za-z0-9_]+)[ \t]*$`)
 
 // daguIDRef вытаскивает id шага из строки `- id: <name>` тем же разбором регуляркой по всему
@@ -134,16 +136,17 @@ func daguStepIDs(data []byte) []string {
 	return ids
 }
 
-// duplicateDaguStepIDs возвращает id, встретившиеся больше одного раза, в порядке второго и
-// последующих вхождений: dagu не различает шаги с одинаковым id, а проверка (г) ищет шаг по
-// имени.
+// duplicateDaguStepIDs возвращает уникальные id, встретившиеся больше одного раза, в порядке
+// первого повтора: dagu не различает шаги с одинаковым id, а проверка (г) ищет шаг по имени.
+// Один id — одна ошибка энфорсера, сколько бы раз он ни повторился.
 func duplicateDaguStepIDs(ids []string) []string {
 	seen := make(map[string]bool, len(ids))
+	duplicated := make(map[string]bool, len(ids))
 	var dups []string
 	for _, id := range ids {
-		if seen[id] {
+		if seen[id] && !duplicated[id] {
 			dups = append(dups, id)
-			continue
+			duplicated[id] = true
 		}
 		seen[id] = true
 	}
@@ -169,6 +172,10 @@ func TestDaguStepIDsDuplicate(t *testing.T) {
 	}
 	if dups := duplicateDaguStepIDs(got); !slices.Equal(dups, []string{"a"}) {
 		t.Fatalf("duplicateDaguStepIDs(%v) = %v, want [a]", got, dups)
+	}
+	// Тройной повтор — по-прежнему один элемент: энфорсер печатает одну ошибку на id.
+	if dups := duplicateDaguStepIDs([]string{"b", "b", "b"}); !slices.Equal(dups, []string{"b"}) {
+		t.Fatalf("duplicateDaguStepIDs([b b b]) = %v, want [b]: дубль должен возвращаться один раз", dups)
 	}
 }
 
