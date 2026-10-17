@@ -58,8 +58,8 @@ const newsMessageVersionDdl = `CREATE TABLE IF NOT EXISTS news_message_version (
 	`
 
 // newsAnnotationDdl — копия канонического DDL news_annotation из ARCHITECTURE.md §6.2
-// (спека §4.2, Task 3). Таблица generic по паре (url, content_hash): в этом пункте
-// заполняется только Telegram-молния, но ключ не привязан к транспорту. kind разделяет
+// (спека §4.2, Task 3). Таблица generic по паре (url, content_hash): news_watch
+// заполняет её для всего видимого потока (Telegram и RSS), ключ не привязан к транспорту. kind разделяет
 // doc-строку сообщения (sentiment/relevance/summary) и tag-строки (dimension/tag/direction/
 // confidence/evidence); model и prompt_version входят в ключ, поэтому смена модели или
 // редакции промпта добавляет разметку рядом со старой, а не затирает её.

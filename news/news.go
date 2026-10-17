@@ -461,9 +461,11 @@ const newsAnnotationCandidatesQueryPrefix = "SELECT date, source, title, url, de
 // ClickHouse считает КАЖДЫЙ ? позиционным плейсхолдером, включая ? внутри строкового литерала.
 // Литерал дал бы четыре ? вместо двух и ошибку «have no arg for param ?». Порядок аргументов
 // запроса — порядок ?: filter, filter, model, prompt_version.
+// Пустой url отбрасывается: модель возвращает url ключом ответа, и несколько позиций без ссылки
+// были бы неразличимы — такая позиция не аннотируется, а не занимает слот бэклога.
 func newsAnnotationCandidatesQuery(limit int) string {
 	return newsAnnotationCandidatesQueryPrefix +
-		" WHERE content_hash != ''" +
+		" WHERE content_hash != '' AND url != ''" +
 		" AND (url LIKE 'https://t.me/%' OR match(title, ?) OR match(description, ?))" +
 		" AND (url, content_hash) NOT IN (SELECT url, content_hash FROM " + newsAnnotationTable +
 		" FINAL WHERE method = 'llm' AND model = ? AND prompt_version = ?)" +
