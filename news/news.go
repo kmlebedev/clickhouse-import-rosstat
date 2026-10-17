@@ -409,11 +409,11 @@ func (s *newsImport) Name() string {
 
 const (
 	newsTable = "news_events"
-	// newsInsert — запись позиции. Список колонок явный: на живой таблице description
-	// добавлен ALTER-ом в конец, и позиционный INSERT клал бы значения в порядке физических
-	// колонок (description после sentiment), а не в порядке DDL. Порядок колонок здесь —
-	// контракт с порядком аргументов Append в insertItems.
-	newsInsert = "INSERT INTO " + newsTable + " (date, source, title, url, description, sentiment)"
+	// newsInsert — запись позиции. Список колонок явный: на живой таблице description и
+	// content_hash добавлены ALTER-ами, и позиционный INSERT клал бы значения в порядке
+	// физических колонок (миграции двигают только описание и hash), а не в порядке DDL.
+	// Порядок колонок здесь — контракт с порядком аргументов Append в insertItems.
+	newsInsert = "INSERT INTO " + newsTable + " (date, source, title, url, description, content_hash, sentiment)"
 	// storedSpansQuery читает сохранённые окна источников. FINAL обязателен:
 	// news_events — ReplacingMergeTree, и без него повторно записанные позиции
 	// (ключ date/source/title) считались бы дважды, а счётчик покрытия check
@@ -494,20 +494,106 @@ func (s *newsImport) Import(ctx context.Context, conn driver.Conn) (count int64,
 		return 0, errors.Join(feedErrs...)
 	}
 
-	var items []newsItem
-	for _, r := range results {
-		if r.Err == nil {
-			items = append(items, r.Items...)
-		}
+	// Слоты — позиции успешных лент в порядке feeds(). RSS-слот несёт окно ленты как есть,
+	// Telegram-слот — результат diffTelegram: текущий текст с зафиксированным title версии 1.
+	// Порядок слотов сохраняется до батча, поэтому лог и запись детерминированы.
+	type feedSlot struct {
+		kind  feedKind
+		items []newsItem
 	}
+	slots := make([]feedSlot, 0, len(results))
+	var newVersions []telegramVersion
+	now := time.Now()
+	for _, r := range results {
+		if r.Err != nil {
+			continue
+		}
+		if r.Feed.Kind != feedTelegram {
+			slots = append(slots, feedSlot{kind: feedRSS, items: r.Items})
+			continue
+		}
+		if len(r.Items) == 0 {
+			// Успешная Telegram-лента без позиций невозможна: parseTelegramPage считает
+			// пустое окно ошибкой. Страховка, а не штатная ветка.
+			continue
+		}
+		// Версии читаются до записи: без истории diffTelegram принял бы все текущие
+		// сообщения за v1 и затёр нумерацию. Чтение — строго по каналу и нижней границе
+		// окна этого прогона (минимум дат публикации).
+		channel := r.Items[0].Channel
+		windowMin, windowMax := r.Items[0].Date, r.Items[0].Date
+		for _, it := range r.Items[1:] {
+			if it.Date.Before(windowMin) {
+				windowMin = it.Date
+			}
+			if it.Date.After(windowMax) {
+				windowMax = it.Date
+			}
+		}
+		existing, readErr := readTelegramVersions(ctx, conn, channel, windowMin)
+		if readErr != nil {
+			// Ошибка чтения версий отменяет запись этого прогона: без истории версий
+			// текущий текст записался бы с неверным номером. Повтор идемпотентен.
+			return 0, errors.Join(readErr, errors.Join(feedErrs...))
+		}
+		telegramItems, versions, stats := diffTelegram(existing, r.Items, r.SeenIDs, windowMin, windowMax, now)
+		// Те же позиции, что печатает лог ленты выше, но с итогом версий: M — новые
+		// версии текущих сообщений, K — tombstone (удаления из окна).
+		log.Infof("news_watch: %s: позиций %d, новых версий %d, удалений %d",
+			r.Feed.Key, len(telegramItems), stats.NewVersions, stats.Deleted)
+		slots = append(slots, feedSlot{kind: feedTelegram, items: telegramItems})
+		newVersions = append(newVersions, versions...)
+	}
+
+	var items []newsItem
 	if mode == modeSince {
-		// since — «только отсутствующие»: пишутся позиции, которых нет в news_events
-		// по ключу (date, source, title), без опоры на порядок дат (см. selectNewItems).
-		items, err = selectNewItems(ctx, conn, items)
+		// since — «только отсутствующие» для RSS: пишутся позиции, которых нет в
+		// news_events по ключу (date, source, title), без опоры на порядок дат (см.
+		// selectNewItems). Telegram-текущие пишутся всегда: их ключ стабилен по title v1,
+		// а upsert держит в news_events свежий текст и кандидатов LLM-разметки.
+		var rss []newsItem
+		for _, s := range slots {
+			if s.kind == feedRSS {
+				rss = append(rss, s.items...)
+			}
+		}
+		filtered, err := selectNewItems(ctx, conn, rss)
 		if err != nil {
 			// Тот же полный диагноз, что и в check: отказ лент не должен теряться
 			// за ошибкой базы — иначе в dagu видно только её.
 			return 0, errors.Join(err, errors.Join(feedErrs...))
+		}
+		// selectNewItems сохраняет исходный порядок и выбрасывает уже сохранённые позиции;
+		// раскладываем результат обратно по слотам по ключу (source, date, title), чтобы
+		// батч шёл в порядке feeds(). Счётчик, а не set: дубль ключа внутри прогона
+		// selectNewItems уже схлопнул, и второй экземпляр писать нельзя.
+		type slotKey struct {
+			source string
+			key    newsKey
+		}
+		kept := make(map[slotKey]int, len(filtered))
+		for _, it := range filtered {
+			kept[slotKey{source: it.Source, key: newsKey{date: it.Date.Unix(), title: it.Title}}]++
+		}
+		items = make([]newsItem, 0, len(filtered)+len(newVersions))
+		for _, s := range slots {
+			for _, it := range s.items {
+				if s.kind == feedTelegram {
+					items = append(items, it)
+					continue
+				}
+				k := slotKey{source: it.Source, key: newsKey{date: it.Date.Unix(), title: it.Title}}
+				if kept[k] == 0 {
+					continue
+				}
+				kept[k]--
+				items = append(items, it)
+			}
+		}
+	} else {
+		// all — полный upsert окна: пишутся все позиции всех успешных лент.
+		for _, s := range slots {
+			items = append(items, s.items...)
 		}
 	}
 	if len(items) == 0 {
@@ -524,6 +610,11 @@ func (s *newsImport) Import(ctx context.Context, conn driver.Conn) (count int64,
 		// К ошибке батча добавляются отказы лент: иначе прогон в dagu отчитывается
 		// только «запись упала», и сбойные ленты этого прогона из вывода выпадают.
 		return count, errors.Join(err, errors.Join(feedErrs...))
+	}
+	// Версии пишутся после news_events: сбой второго батча не теряет текущий текст,
+	// а повтор прогона дописывает недостающие версии (ключ ReplacingMergeTree).
+	if _, verr := insertTelegramVersions(ctx, conn, newVersions); verr != nil {
+		return count, errors.Join(verr, errors.Join(feedErrs...))
 	}
 	// Успешные ленты записаны, сбойная видна в логе и в итоговой ошибке: dagu
 	// перезапустит прогон, а повторная запись тех же позиций безвредна.
@@ -567,13 +658,15 @@ func readStoredSpans(ctx context.Context, conn driver.Conn) (map[string]sourceSp
 }
 
 // insertItems пишет позиции одним батчем — построчный Exec в цикле запрещён
-// (правило 2 AGENTS.md). Sentiment передаётся явным (*float32)(nil): колонку
+// (правило 2 AGENTS.md). ContentHash заполняется у обеих лент (у RSS тоже: разметка
+// generic по url+content_hash). Sentiment передаётся явным (*float32)(nil): колонку
 // заполняет LLM-сессия (follow-up), и типизированный nil фиксирует, что поле
 // оставлено пустым осознанно. Ошибка Append прерывает батч через Abort: частично
 // собранный батч Send не отправляет, поэтому половина прогона в таблицу не уедет.
 //
 // Порядок аргументов Append — контракт с явным списком колонок newsInsert
-// (date, source, title, url, description, sentiment); менять его можно только вместе с ним.
+// (date, source, title, url, description, content_hash, sentiment); менять его можно
+// только вместе с ним.
 func insertItems(ctx context.Context, conn driver.Conn, items []newsItem) (int64, error) {
 	batch, err := conn.PrepareBatch(ctx, newsInsert)
 	if err != nil {
@@ -581,7 +674,8 @@ func insertItems(ctx context.Context, conn driver.Conn, items []newsItem) (int64
 	}
 	var count int64
 	for _, it := range items {
-		if err = batch.Append(it.Date, it.Source, it.Title, it.URL, it.Description, (*float32)(nil)); err != nil {
+		if err = batch.Append(it.Date, it.Source, it.Title, it.URL, it.Description,
+			it.ContentHash, (*float32)(nil)); err != nil {
 			_ = batch.Abort()
 			return count, err
 		}

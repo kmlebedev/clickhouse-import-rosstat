@@ -742,6 +742,21 @@ func fixtureInventory(t *testing.T) (byKey map[string][]newsItem, maxBySource ma
 	return byKey, maxBySource
 }
 
+// telegramFixtureWindow — границы окна Telegram-фикстуры по датам публикации: тот же
+// расчёт, что делает Import перед чтением версий (минимум и максимум по окну ленты).
+func telegramFixtureWindow(items []newsItem) (min, max time.Time) {
+	min, max = items[0].Date, items[0].Date
+	for _, it := range items[1:] {
+		if it.Date.Before(min) {
+			min = it.Date
+		}
+		if it.Date.After(max) {
+			max = it.Date
+		}
+	}
+	return min, max
+}
+
 // keyOf/keysOf переводят позиции в ключи наличия news_events: источник задаёт выборку
 // (WHERE source = ?), поэтому в newsKey его нет, и ключ — это пара (Unix-секунды, title).
 // Ожидания since-тестов считаются из фикстур тем же преобразованием, что и selectNewItems.
@@ -776,34 +791,40 @@ type newsStoredSpan struct {
 	Max    time.Time
 }
 
-// Виды строк, которые умеет отдавать newsFakeRows: покрытие источников (storedSpansQuery)
-// и ключи существующих позиций (storedKeysQuery).
+// Виды строк, которые умеет отдавать newsFakeRows: покрытие источников (storedSpansQuery),
+// ключи существующих позиций (storedKeysQuery) и версии Telegram (telegramVersionsQuery).
 const (
-	fakeRowsSpans = "spans"
-	fakeRowsKeys  = "keys"
+	fakeRowsSpans    = "spans"
+	fakeRowsKeys     = "keys"
+	fakeRowsVersions = "versions"
 )
 
 // newsFakeRows — фейковый driver.Rows контура news: вид строк выбирается в Query по
 // самому запросу, а не по числу вызовов, чтобы since-тесты держали разные наборы ключей
-// на источник. Реализованы только те методы, которые зовут readStoredSpans/readStoredKeys
-// (Next/Scan/Err/Close); остальные остаются nil от встраивания driver.Rows и паникуют,
-// если сценарий пойдёт дальше. Готового фейка driver.Rows в репозитории нет
-// (bold-фейк отдаёт driver.Row) — свой.
+// на источник. Реализованы только те методы, которые зовут readStoredSpans/readStoredKeys/
+// readTelegramVersions (Next/Scan/Err/Close); остальные остаются nil от встраивания
+// driver.Rows и паникуют, если сценарий пойдёт дальше. Готового фейка driver.Rows в
+// репозитории нет (bold-фейк отдаёт driver.Row) — свой.
 type newsFakeRows struct {
 	driver.Rows
-	kind  string // fakeRowsSpans или fakeRowsKeys
-	spans []newsStoredSpan
-	keys  []newsKey
-	err   error // отдать Err(): сценарий «обход строк упал на середине» (приходит из newsFakeConn)
-	i     int   // индекс следующей строки: Next двигает его, Scan читает i-1
+	kind     string // fakeRowsSpans, fakeRowsKeys или fakeRowsVersions
+	spans    []newsStoredSpan
+	keys     []newsKey
+	versions []telegramVersion
+	err      error // отдать Err(): сценарий «обход строк упал на середине» (приходит из newsFakeConn)
+	i        int   // индекс следующей строки: Next двигает его, Scan читает i-1
 }
 
 // n — число строк выбранного вида: Next и Scan не должны перепутать наборы.
 func (r *newsFakeRows) n() int {
-	if r.kind == fakeRowsKeys {
+	switch r.kind {
+	case fakeRowsKeys:
 		return len(r.keys)
+	case fakeRowsVersions:
+		return len(r.versions)
+	default:
+		return len(r.spans)
 	}
-	return len(r.spans)
 }
 
 func (r *newsFakeRows) Next() bool {
@@ -816,16 +837,78 @@ func (r *newsFakeRows) Next() bool {
 
 // Scan принимает приёмники того вида, которым создан фейк: для покрытия — *string,
 // *uint64 и два *time.Time (порядок source, count(), min(date), max(date)), для ключей —
-// *time.Time и *string (порядок date, title). Порядок колонок — часть контракта запроса,
-// и фейк его пинит: сдвиг колонок в SQL не должен остаться незамеченным.
+// *time.Time и *string (порядок date, title), для версий — колонки telegramVersionsQuery
+// в её порядке. Порядок колонок — часть контракта запроса, и фейк его пинит: сдвиг колонок
+// в SQL не должен остаться незамеченным.
 func (r *newsFakeRows) Scan(dest ...any) error {
 	if r.i == 0 || r.i > r.n() {
 		return fmt.Errorf("фейковая строка (%s): Scan без Next (i=%d, строк %d)", r.kind, r.i, r.n())
 	}
-	if r.kind == fakeRowsKeys {
+	switch r.kind {
+	case fakeRowsKeys:
 		return r.scanKey(dest)
+	case fakeRowsVersions:
+		return r.scanVersion(dest)
+	default:
+		return r.scanSpan(dest)
 	}
-	return r.scanSpan(dest)
+}
+
+// scanVersion пинит порядок Scan telegramVersionsQuery: channel, message_id, version, date,
+// source, title, url, description, content_hash, first_seen, deleted. Типы — как у колонок
+// канона (UInt64/UInt32/UInt8), иначе живой Scan разошёлся бы с фейком.
+func (r *newsFakeRows) scanVersion(dest []any) error {
+	if len(dest) != 11 {
+		return fmt.Errorf("фейковая строка версии: приёмников %d, want 11 (channel, message_id, version, date, source, title, url, description, content_hash, first_seen, deleted)", len(dest))
+	}
+	v := r.versions[r.i-1]
+	channel, ok := dest[0].(*string)
+	if !ok {
+		return fmt.Errorf("фейковая строка версии: приёмник channel %T (want *string)", dest[0])
+	}
+	messageID, ok := dest[1].(*uint64)
+	if !ok {
+		return fmt.Errorf("фейковая строка версии: приёмник message_id %T (want *uint64)", dest[1])
+	}
+	version, ok := dest[2].(*uint32)
+	if !ok {
+		return fmt.Errorf("фейковая строка версии: приёмник version %T (want *uint32)", dest[2])
+	}
+	date, ok := dest[3].(*time.Time)
+	if !ok {
+		return fmt.Errorf("фейковая строка версии: приёмник date %T (want *time.Time)", dest[3])
+	}
+	source, ok := dest[4].(*string)
+	if !ok {
+		return fmt.Errorf("фейковая строка версии: приёмник source %T (want *string)", dest[4])
+	}
+	title, ok := dest[5].(*string)
+	if !ok {
+		return fmt.Errorf("фейковая строка версии: приёмник title %T (want *string)", dest[5])
+	}
+	url, ok := dest[6].(*string)
+	if !ok {
+		return fmt.Errorf("фейковая строка версии: приёмник url %T (want *string)", dest[6])
+	}
+	description, ok := dest[7].(*string)
+	if !ok {
+		return fmt.Errorf("фейковая строка версии: приёмник description %T (want *string)", dest[7])
+	}
+	hash, ok := dest[8].(*string)
+	if !ok {
+		return fmt.Errorf("фейковая строка версии: приёмник content_hash %T (want *string)", dest[8])
+	}
+	firstSeen, ok := dest[9].(*time.Time)
+	if !ok {
+		return fmt.Errorf("фейковая строка версии: приёмник first_seen %T (want *time.Time)", dest[9])
+	}
+	deleted, ok := dest[10].(*uint8)
+	if !ok {
+		return fmt.Errorf("фейковая строка версии: приёмник deleted %T (want *uint8)", dest[10])
+	}
+	*channel, *messageID, *version, *date, *source, *title, *url, *description, *hash, *firstSeen, *deleted =
+		v.Channel, v.MessageID, v.Version, v.Date, v.Source, v.Title, v.URL, v.Description, v.ContentHash, v.FirstSeen, v.Deleted
+	return nil
 }
 
 func (r *newsFakeRows) scanKey(dest []any) error {
@@ -877,11 +960,13 @@ func (r *newsFakeRows) Err() error { return r.err }
 func (r *newsFakeRows) Close() error { return nil }
 
 // newsFakeBatch — батч в память: тест проверяет число и состав записанных строк.
+// sendErr задаёт сбой Send для сценария «вторая таблица упала, первая уже записана».
 type newsFakeBatch struct {
 	driver.Batch
-	query string
-	rows  [][]any
-	sent  bool
+	query   string
+	rows    [][]any
+	sent    bool
+	sendErr error
 }
 
 func (b *newsFakeBatch) Append(v ...any) error {
@@ -889,18 +974,25 @@ func (b *newsFakeBatch) Append(v ...any) error {
 	return nil
 }
 
-func (b *newsFakeBatch) Send() error { b.sent = true; return nil }
+func (b *newsFakeBatch) Send() error {
+	if b.sendErr != nil {
+		return b.sendErr
+	}
+	b.sent = true
+	return nil
+}
 
 func (b *newsFakeBatch) Abort() error { return nil }
 
 // newsInsertedRow — строка батча, разобранная по колонкам news_events в порядке
-// insertItems (date, source, title, url, description, sentiment).
+// insertItems (date, source, title, url, description, content_hash, sentiment).
 type newsInsertedRow struct {
 	Date        time.Time
 	Source      string
 	Title       string
 	URL         string
 	Description string
+	ContentHash string
 	Sentiment   *float32
 }
 
@@ -912,8 +1004,8 @@ func (b *newsFakeBatch) inserted(t *testing.T) []newsInsertedRow {
 	t.Helper()
 	rows := make([]newsInsertedRow, 0, len(b.rows))
 	for i, v := range b.rows {
-		if len(v) != 6 {
-			t.Fatalf("строка батча %d: значений %d, want 6 (date, source, title, url, description, sentiment)", i, len(v))
+		if len(v) != 7 {
+			t.Fatalf("строка батча %d: значений %d, want 7 (date, source, title, url, description, content_hash, sentiment)", i, len(v))
 		}
 		date, ok := v[0].(time.Time)
 		if !ok {
@@ -935,37 +1027,112 @@ func (b *newsFakeBatch) inserted(t *testing.T) []newsInsertedRow {
 		if !ok {
 			t.Fatalf("строка батча %d: description = %T (want string)", i, v[4])
 		}
-		sentiment, ok := v[5].(*float32)
+		hash, ok := v[5].(string)
 		if !ok {
-			t.Fatalf("строка батча %d: sentiment = %T (want *float32)", i, v[5])
+			t.Fatalf("строка батча %d: content_hash = %T (want string)", i, v[5])
+		}
+		sentiment, ok := v[6].(*float32)
+		if !ok {
+			t.Fatalf("строка батча %d: sentiment = %T (want *float32)", i, v[6])
 		}
 		if sentiment != nil {
 			t.Errorf("строка батча %d: sentiment = %v, want NULL (канал заполнения — follow-up)", i, *sentiment)
 		}
 		rows = append(rows, newsInsertedRow{
-			Date: date, Source: source, Title: title, URL: url, Description: description, Sentiment: sentiment,
+			Date: date, Source: source, Title: title, URL: url, Description: description,
+			ContentHash: hash, Sentiment: sentiment,
 		})
 	}
 	return rows
 }
 
+// insertedVersions разбирает строки батча news_message_version по именам колонок в порядке
+// telegramVersionInsert (channel, message_id, version, date, source, title, url, description,
+// content_hash, first_seen, deleted). Перепутанные поля обязаны валить тест, а не уезжать в базу.
+func (b *newsFakeBatch) insertedVersions(t *testing.T) []telegramVersion {
+	t.Helper()
+	out := make([]telegramVersion, 0, len(b.rows))
+	for i, v := range b.rows {
+		if len(v) != 11 {
+			t.Fatalf("строка версий %d: значений %d, want 11 (channel, message_id, version, date, source, title, url, description, content_hash, first_seen, deleted)",
+				i, len(v))
+		}
+		channel, ok := v[0].(string)
+		if !ok {
+			t.Fatalf("строка версий %d: channel = %T (want string)", i, v[0])
+		}
+		messageID, ok := v[1].(uint64)
+		if !ok {
+			t.Fatalf("строка версий %d: message_id = %T (want uint64)", i, v[1])
+		}
+		version, ok := v[2].(uint32)
+		if !ok {
+			t.Fatalf("строка версий %d: version = %T (want uint32)", i, v[2])
+		}
+		date, ok := v[3].(time.Time)
+		if !ok {
+			t.Fatalf("строка версий %d: date = %T (want time.Time)", i, v[3])
+		}
+		source, ok := v[4].(string)
+		if !ok {
+			t.Fatalf("строка версий %d: source = %T (want string)", i, v[4])
+		}
+		title, ok := v[5].(string)
+		if !ok {
+			t.Fatalf("строка версий %d: title = %T (want string)", i, v[5])
+		}
+		url, ok := v[6].(string)
+		if !ok {
+			t.Fatalf("строка версий %d: url = %T (want string)", i, v[6])
+		}
+		description, ok := v[7].(string)
+		if !ok {
+			t.Fatalf("строка версий %d: description = %T (want string)", i, v[7])
+		}
+		hash, ok := v[8].(string)
+		if !ok {
+			t.Fatalf("строка версий %d: content_hash = %T (want string)", i, v[8])
+		}
+		firstSeen, ok := v[9].(time.Time)
+		if !ok {
+			t.Fatalf("строка версий %d: first_seen = %T (want time.Time)", i, v[9])
+		}
+		deleted, ok := v[10].(uint8)
+		if !ok {
+			t.Fatalf("строка версий %d: deleted = %T (want uint8)", i, v[10])
+		}
+		out = append(out, telegramVersion{
+			Channel: channel, MessageID: messageID, Version: version, Date: date, Source: source,
+			Title: title, URL: url, Description: description, ContentHash: hash,
+			FirstSeen: firstSeen, Deleted: deleted,
+		})
+	}
+	return out
+}
+
 // newsFakeConn — фейковое соединение контура news: встраивание driver.Conn оставляет
 // неиспользуемые методы nil (паника, если тест зайдёт дальше сценария), а переопределены
 // ровно три метода, которыми пользуется Import: Exec (DDL и витрина), Query
-// (storedSpansQuery — readStoredSpans в check; storedKeysQuery — readStoredKeys в since)
-// и PrepareBatch (запись позиций). spans — очередь ответов на запрос покрытия; keys —
-// ключи существующих позиций по источникам. Пустые наборы означают «в news_events нет строк».
-// queryErr и rowsErr включают ошибочные пути чтения: первый — сам Query, второй — обход строк
-// (rows.Err уже после Next); оба задаются полями постфактум, чтобы не плодить конструкторы.
+// (storedSpansQuery — readStoredSpans в check; storedKeysQuery — readStoredKeys в since;
+// telegramVersionsQuery — readTelegramVersions в пишущих режимах) и PrepareBatch (запись
+// позиций и версий). spans — очередь ответов на запрос покрытия; keys — ключи существующих
+// позиций по источникам; versions — версии Telegram по каналам. Пустые наборы означают
+// «строк нет». versionsErr/keysErr включают ошибочные пути Query точечно (иначе сбой одного
+// чтения не дал бы проверить остальные), rowsErr — обход строк (rows.Err уже после Next);
+// sendErr — сбой Send выбранного батча по запросу. Всё задаётся полями постфактум, чтобы
+// не плодить конструкторы.
 type newsFakeConn struct {
 	driver.Conn
-	mu       sync.Mutex
-	calls    []string
-	spans    []newsStoredSpan
-	keys     map[string][]newsKey
-	queryErr error // Query вернёт её вместо строк
-	rowsErr  error // её отдаст rows.Err()
-	batches  []*newsFakeBatch
+	mu          sync.Mutex
+	calls       []string
+	spans       []newsStoredSpan
+	keys        map[string][]newsKey
+	versions    map[string][]telegramVersion
+	versionsErr error            // Query версий вернёт её вместо строк
+	keysErr     error            // Query ключей вернёт её вместо строк
+	rowsErr     error            // её отдаст rows.Err()
+	sendErr     map[string]error // сбой Send батча по тексту запроса
+	batches     []*newsFakeBatch
 }
 
 // newNewsFakeConn — соединение режима check: сохранённые окна есть, ключей нет.
@@ -991,40 +1158,46 @@ func (c *newsFakeConn) Exec(_ context.Context, query string, _ ...any) error {
 }
 
 // Query отвечает по виду запроса (а не по номеру вызова): покрытие — очередью spans,
-// ключи — набором запрошенного источника. Аргументы запроса ключей (source, since)
-// попадают в записанный вызов: тесты пинят и источник, и нижнюю границу окна.
+// ключи — набором запрошенного источника, версии — набором канала. Аргументы запроса
+// (source/channel, since) попадают в записанный вызов: тесты пинят и ключ, и нижнюю
+// границу окна.
 func (c *newsFakeConn) Query(_ context.Context, query string, args ...any) (driver.Rows, error) {
 	label := "query: " + query
-	var src string
+	var key string
 	if len(args) == 2 {
 		if s, ok := args[0].(string); ok {
-			src = s
+			key = s
 			if since, ok := args[1].(time.Time); ok {
-				label += fmt.Sprintf(" [source=%s since=%s]", src, since.Format(time.RFC3339))
+				label += fmt.Sprintf(" [source=%s since=%s]", key, since.Format(time.RFC3339))
 			}
 		}
 	}
 	c.record(label)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.queryErr != nil {
-		return nil, c.queryErr
-	}
 	switch query {
 	case storedSpansQuery:
 		rows := c.spans
 		c.spans = nil // очередь отдаётся один раз: повторный Query вернул бы уже пустое окно
 		return &newsFakeRows{kind: fakeRowsSpans, spans: rows, err: c.rowsErr}, nil
 	case storedKeysQuery:
-		return &newsFakeRows{kind: fakeRowsKeys, keys: c.keys[src], err: c.rowsErr}, nil
+		if c.keysErr != nil {
+			return nil, c.keysErr
+		}
+		return &newsFakeRows{kind: fakeRowsKeys, keys: c.keys[key], err: c.rowsErr}, nil
+	case telegramVersionsQuery:
+		if c.versionsErr != nil {
+			return nil, c.versionsErr
+		}
+		return &newsFakeRows{kind: fakeRowsVersions, versions: c.versions[key], err: c.rowsErr}, nil
 	}
 	return nil, fmt.Errorf("newsFakeConn: неожиданный запрос %q", query)
 }
 
 func (c *newsFakeConn) PrepareBatch(_ context.Context, query string, _ ...driver.PrepareBatchOption) (driver.Batch, error) {
 	c.record("preparebatch: " + query)
-	batch := &newsFakeBatch{query: query}
 	c.mu.Lock()
+	batch := &newsFakeBatch{query: query, sendErr: c.sendErr[query]}
 	c.batches = append(c.batches, batch)
 	c.mu.Unlock()
 	return batch, nil
@@ -1053,18 +1226,21 @@ func (c *newsFakeConn) anyCallHas(fragment string) bool {
 	return false
 }
 
-// onlyBatch возвращает единственный открытый батч: прогон пишет все позиции одним
-// батчем (правило 2 AGENTS.md), поэтому второй PrepareBatch — уже дефект.
-func (c *newsFakeConn) onlyBatch(t *testing.T, query string) *newsFakeBatch {
+// batchByQuery возвращает единственный батч, открытый указанным запросом: прогон пишет
+// каждую таблицу одним батчем (правило 2 AGENTS.md), поэтому второй PrepareBatch того же
+// запроса — уже дефект.
+func (c *newsFakeConn) batchByQuery(t *testing.T, query string) *newsFakeBatch {
 	t.Helper()
-	batches := c.batchList()
-	if len(batches) != 1 {
-		t.Fatalf("PrepareBatch вызван %d раз, want 1 (%s); вызовы: %v", len(batches), query, c.callList())
+	var found []*newsFakeBatch
+	for _, batch := range c.batchList() {
+		if batch.query == query {
+			found = append(found, batch)
+		}
 	}
-	if batches[0].query != query {
-		t.Fatalf("батч открыт запросом %q, want %q", batches[0].query, query)
+	if len(found) != 1 {
+		t.Fatalf("PrepareBatch с запросом %q вызван %d раз, want 1; вызовы: %v", query, len(found), c.callList())
 	}
-	return batches[0]
+	return found[0]
 }
 
 // --- композиция трёх режимов Import() ---
@@ -1100,6 +1276,12 @@ func TestImportCheckModeWritesNothing(t *testing.T) {
 	if !firstRun.anyCallHas(storedSpansQuery) {
 		t.Errorf("check не прочитал покрытие запросом %q; вызовы: %v", storedSpansQuery, firstRun.callList())
 	}
+	// check — режим чтения покрытия: версии Telegram он не читает (их чтение — часть
+	// пишущего прогона), иначе сбой news_message_version валил бы диагностику покрытия.
+	if firstRun.anyCallHas(telegramVersionsQuery) {
+		t.Errorf("check прочитал версии Telegram запросом %q, want чтение без версий: %v",
+			telegramVersionsQuery, firstRun.callList())
+	}
 	if firstRun.anyCallHas("CREATE OR REPLACE VIEW") {
 		t.Errorf("check публикует витрину (CREATE OR REPLACE VIEW в вызовах), want чтение без публикации: %v", firstRun.callList())
 	}
@@ -1132,9 +1314,10 @@ func TestImportCheckModeWritesNothing(t *testing.T) {
 }
 
 func TestImportAllModeWritesAllFeeds(t *testing.T) {
-	// all — режим расписания: пишутся все позиции текущего окна всех восьми лент одним
-	// батчем. Число строк считается из фикстур (readFixtureDoc + itemsFromDoc), а не
-	// хардкодится: обновление снимка лент не должно требовать правки числа в тесте.
+	// all — режим расписания: пишутся все позиции текущего окна всех восьми лент, затем
+	// версии Telegram отдельным батчем. Число строк считается из фикстур (readFixtureDoc +
+	// itemsFromDoc), а не хардкодится: обновление снимка лент не должно требовать правки
+	// числа в тесте.
 	t.Setenv(modeEnv, modeAll)
 	pointFeedsAt(t, serveFixtures(t, nil))
 
@@ -1161,14 +1344,25 @@ func TestImportAllModeWritesAllFeeds(t *testing.T) {
 		t.Errorf("Import вернул %d строк, want %d (Σ позиций фикстур)", count, len(want))
 	}
 
-	batch := conn.onlyBatch(t, newsInsert)
+	// Порядок батчей — часть контракта: сначала news_events, затем версии; сбой версий
+	// не должен отменять уже записанный текущий текст.
+	batches := conn.batchList()
+	if len(batches) != 2 || batches[0].query != newsInsert || batches[1].query != telegramVersionInsert {
+		t.Fatalf("батчи = %v, want [newsInsert, telegramVersionInsert]", conn.callList())
+	}
+	batch := conn.batchByQuery(t, newsInsert)
 	if !conn.anyCallHas("CREATE OR REPLACE VIEW") {
 		t.Errorf("all не опубликовал витрину, want публикацию: в отличие от check, режим записи обязан её пересоздать; вызовы: %v", conn.callList())
 	}
-	// Миграция живой пятиколоночной таблицы выполняется и этим режимом, а текст её пиньится
-	// дословно: расхождение с каноном (порядок колонок) иначе прошло бы незамеченным.
-	if wantAlter := "ALTER TABLE news_events ADD COLUMN IF NOT EXISTS description String AFTER url"; !conn.anyCallHas(wantAlter) {
-		t.Errorf("all не выполнил миграцию %q; вызовы: %v", wantAlter, conn.callList())
+	// Миграции живой таблицы выполняются и этим режимом, а тексты пиньются дословно:
+	// расхождение с каноном (порядок колонок) иначе прошло бы незамеченным.
+	for _, wantAlter := range []string{
+		"ALTER TABLE news_events ADD COLUMN IF NOT EXISTS description String AFTER url",
+		"ALTER TABLE news_events ADD COLUMN IF NOT EXISTS content_hash String AFTER description",
+	} {
+		if !conn.anyCallHas(wantAlter) {
+			t.Errorf("all не выполнил миграцию %q; вызовы: %v", wantAlter, conn.callList())
+		}
 	}
 	rows := batch.inserted(t)
 	if len(rows) != len(want) {
@@ -1176,6 +1370,44 @@ func TestImportAllModeWritesAllFeeds(t *testing.T) {
 	}
 	if !batch.sent {
 		t.Error("Send не вызван: батч в таблицу не уехал")
+	}
+
+	// Версии Telegram — второй батч: на пустой истории по v1 на сообщение.
+	versionBatch := conn.batchByQuery(t, telegramVersionInsert)
+	versionRows := versionBatch.insertedVersions(t)
+	tgItems := byKey["interfax_tg"]
+	if len(versionRows) != len(tgItems) {
+		t.Errorf("в батч версий аппенднуто %d строк, want %d (v1 на сообщение Telegram)", len(versionRows), len(tgItems))
+	}
+	if !versionBatch.sent {
+		t.Error("Send батча версий не вызван: версии в таблицу не уехали")
+	}
+	versionByID := make(map[uint64]telegramVersion, len(versionRows))
+	for _, v := range versionRows {
+		versionByID[v.MessageID] = v
+	}
+	for _, it := range tgItems {
+		v, ok := versionByID[it.MessageID]
+		if !ok {
+			t.Errorf("нет версии для сообщения %d", it.MessageID)
+			continue
+		}
+		if v.Channel != it.Channel || v.Source != it.Source || v.URL != it.URL {
+			t.Errorf("версия %d: channel/source/url = %q/%q/%q, want %q/%q/%q",
+				it.MessageID, v.Channel, v.Source, v.URL, it.Channel, it.Source, it.URL)
+		}
+		if v.Version != 1 || v.Deleted != 0 {
+			t.Errorf("версия %d = v%d deleted=%d, want v1 deleted=0", it.MessageID, v.Version, v.Deleted)
+		}
+		if v.Title != it.Title || v.Description != it.Description || v.ContentHash != it.ContentHash {
+			t.Errorf("версия %d = %+v, want текущий текст %+v", it.MessageID, v, it)
+		}
+		if !v.Date.Equal(it.Date) {
+			t.Errorf("версия %d: date = %v, want дату публикации %v", it.MessageID, v.Date, it.Date)
+		}
+		if v.FirstSeen.IsZero() {
+			t.Errorf("версия %d: first_seen нулевой, want время прогона", it.MessageID)
+		}
 	}
 
 	got := make([]string, 0, len(rows))
@@ -1187,6 +1419,11 @@ func TestImportAllModeWritesAllFeeds(t *testing.T) {
 		// не может: потеря колонки на пути в Append иначе всплыла бы только на живом прогоне.
 		if row.Source == "smartlab" && row.Description == "" {
 			t.Errorf("позиция smartlab %q записана с пустым description: текст поста потерян по пути в батч", row.Title)
+		}
+		// content_hash заполняют обе ленты — и RSS, и Telegram; пустое значение означало бы,
+		// что колонка потерялась по пути в Append (у LLM-разметки ключ generic).
+		if row.ContentHash == "" {
+			t.Errorf("позиция %q записана с пустым content_hash", row.Title)
 		}
 	}
 	sort.Strings(got)
@@ -1213,15 +1450,16 @@ func TestImportAllModeWritesAllFeeds(t *testing.T) {
 }
 
 func TestImportSinceModeWritesOnlyMissing(t *testing.T) {
-	// since — режим расписания: пишутся только отсутствующие в news_events позиции (ключ
-	// date/source/title), а не всё окно. Тест держит обе ветки — «часть ключей уже есть»
-	// (в батч уходит ровно остальное) и «все ключи на месте» (0 строк, PrepareBatch не
-	// вызывался). Вторая ловит правку, теряющую фильтр наличия: без него since
-	// переписывал бы окно целиком.
+	// since — режим расписания: для RSS пишутся только отсутствующие в news_events позиции
+	// (ключ date/source/title), а Telegram-текущие — upsert'ом всегда. Тест держит обе
+	// ветки — «часть ключей уже есть» (в батч уходит ровно остальное) и «все ключи на
+	// месте» (RSS писать нечего, но Telegram по-прежнему пишется). Вторая ловит правку,
+	// теряющую фильтр наличия RSS: без него since переписывал бы окно целиком.
 	t.Setenv(modeEnv, modeSince)
 	pointFeedsAt(t, serveFixtures(t, nil))
 
 	byKey, _ := fixtureInventory(t)
+	tgCount := len(byKey["interfax_tg"])
 
 	// Существующие ключи — по первой позиции tass и rbc. Остальные позиции этих лент и
 	// все позиции прочих обязаны уехать в батч.
@@ -1254,7 +1492,7 @@ func TestImportSinceModeWritesOnlyMissing(t *testing.T) {
 	if int(count) != len(want) {
 		t.Errorf("Import вернул %d строк, want %d (позиции, которых нет в news_events)", count, len(want))
 	}
-	batch := conn.onlyBatch(t, newsInsert)
+	batch := conn.batchByQuery(t, newsInsert)
 	if !batch.sent {
 		t.Error("Send не вызван: батч в таблицу не уехал")
 	}
@@ -1271,8 +1509,13 @@ func TestImportSinceModeWritesOnlyMissing(t *testing.T) {
 	if !conn.anyCallHas(storedKeysQuery) {
 		t.Errorf("since не прочитал ключи запросом %q; вызовы: %v", storedKeysQuery, conn.callList())
 	}
+	if got := conn.batchByQuery(t, telegramVersionInsert).insertedVersions(t); len(got) != tgCount {
+		t.Errorf("батч версий = %d строк, want %d (на пустой истории — v1 на сообщение)", len(got), tgCount)
+	}
 
-	// (б) все ключи фикстур на месте: писать нечего — 0 строк и ни одного батча.
+	// (б) все ключи фикстур на месте: RSS писать нечего, но Telegram-текущие пишутся
+	// всегда (upsert), поэтому батч news_events содержит ровно сообщения Telegram,
+	// а второй батч — их v1. Число строк Import — по-прежнему строки news_events.
 	allKeys := make(map[string][]newsKey, 4)
 	for _, f := range feeds() {
 		allKeys[f.Source] = append(allKeys[f.Source], keysOf(byKey[f.Key])...)
@@ -1280,13 +1523,23 @@ func TestImportSinceModeWritesOnlyMissing(t *testing.T) {
 	conn = newNewsFakeConnWithKeys(allKeys)
 	count, err = s.Import(context.Background(), conn)
 	if err != nil {
-		t.Fatalf("Import(%s) при полном покрытии: %v", modeSince, err)
+		t.Fatalf("Import(%s) при полном покрытии RSS: %v", modeSince, err)
 	}
-	if count != 0 {
-		t.Errorf("Import вернул %d строк, want 0 (все ключи фикстур уже в news_events)", count)
+	if int(count) != tgCount {
+		t.Errorf("Import вернул %d строк, want %d (Telegram-текущие пишутся upsert'ом всегда)", count, tgCount)
 	}
-	if got := conn.batchList(); len(got) != 0 {
-		t.Errorf("since открыл %d батчей, want 0: писать нечего", len(got))
+	newsRows := conn.batchByQuery(t, newsInsert).inserted(t)
+	if len(newsRows) != tgCount {
+		t.Errorf("батч news_events = %d строк, want %d (только Telegram)", len(newsRows), tgCount)
+	}
+	for _, row := range newsRows {
+		if !strings.HasPrefix(row.URL, "https://t.me/") {
+			t.Errorf("в since при полном покрытии записана RSS-позиция %q (%s), want только Telegram",
+				row.Title, row.URL)
+		}
+	}
+	if got := conn.batchByQuery(t, telegramVersionInsert).insertedVersions(t); len(got) != tgCount {
+		t.Errorf("батч версий = %d строк, want %d", len(got), tgCount)
 	}
 }
 
@@ -1317,10 +1570,11 @@ func TestImportSinceModeCbrSecondFeedNoWatermark(t *testing.T) {
 	pointFeedsAt(t, serveSyntheticCbr(t, newsXML, pressXML))
 
 	byKey, _ := fixtureInventory(t)
-	// Ключи interfax/rbc/tass/smartlab — все позиции фикстур: эти источники не пишутся,
-	// и внимание теста остаётся на cbr. Обе ленты smart-lab несут один source, поэтому
-	// ключи складываются, как в feedSpans; то же у Интерфакса: RSS и Telegram пишутся
-	// под source=interfax, и покрыты обязаны быть позиции обоих транспортов.
+	// Ключи RSS-лент interfax/rbc/tass/smartlab — все позиции фикстур: эти источники не
+	// пишутся, и внимание теста остаётся на cbr. Обе ленты smart-lab несут один source,
+	// поэтому ключи складываются, как в feedSpans; у Интерфакса в map лежат и ключи
+	// Telegram — в since-фильтр они не попадают (Telegram пишется upsert'ом), но лишними
+	// не мешают.
 	keys := map[string][]newsKey{
 		"interfax": append(keysOf(byKey["interfax"]), keysOf(byKey["interfax_tg"])...),
 		"rbc":      keysOf(byKey["rbc"]),
@@ -1335,20 +1589,34 @@ func TestImportSinceModeCbrSecondFeedNoWatermark(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Import(%s): %v", modeSince, err)
 	}
-	if count != 2 {
-		t.Errorf("Import вернул %d строк, want 2 (опоздавший пресс-релиз + свежая позиция фронта)", count)
+	// К двум новым позициям ЦБ добавляются Telegram-текущие: они пишутся upsert'ом всегда.
+	tgCount := len(byKey["interfax_tg"])
+	if int(count) != 2+tgCount {
+		t.Errorf("Import вернул %d строк, want %d (опоздавший пресс-релиз + свежая позиция фронта + Telegram upsert)",
+			count, 2+tgCount)
 	}
-	rows := conn.onlyBatch(t, newsInsert).inserted(t)
-	var got []string
+	if got := conn.batchByQuery(t, telegramVersionInsert).insertedVersions(t); len(got) != tgCount {
+		t.Errorf("батч версий = %d строк, want %d (v1 сообщений Telegram)", len(got), tgCount)
+	}
+	rows := conn.batchByQuery(t, newsInsert).inserted(t)
+	var got, tgGot []string
 	for _, row := range rows {
-		if row.Source != "cbr" {
-			t.Errorf("записан источник %q, want cbr (позиции остальных лент уже покрыты)", row.Source)
+		switch {
+		case row.Source == "cbr":
+			got = append(got, row.Title)
+			if row.Title == "ЦБ: опоздавший пресс-релиз" && !row.Date.Before(storedAt) {
+				t.Errorf("опоздавшая позиция записана с датой %s, want раньше сохранённого максимума %s",
+					row.Date.Format(time.RFC3339), storedAt.Format(time.RFC3339))
+			}
+		case row.Source == "interfax" && strings.HasPrefix(row.URL, "https://t.me/"):
+			tgGot = append(tgGot, row.Title)
+		default:
+			t.Errorf("записан источник %q (%s), want cbr или Telegram (позиции остальных RSS уже покрыты)",
+				row.Source, row.URL)
 		}
-		got = append(got, row.Title)
-		if row.Title == "ЦБ: опоздавший пресс-релиз" && !row.Date.Before(storedAt) {
-			t.Errorf("опоздавшая позиция записана с датой %s, want раньше сохранённого максимума %s",
-				row.Date.Format(time.RFC3339), storedAt.Format(time.RFC3339))
-		}
+	}
+	if len(tgGot) != tgCount {
+		t.Errorf("Telegram-позиций в батче = %d, want %d (upsert текущих)", len(tgGot), tgCount)
 	}
 	sort.Strings(got)
 	want := []string{"ЦБ: опоздавший пресс-релиз", "ЦБ: свежая позиция фронта"}
@@ -1372,7 +1640,9 @@ func TestImportSinceModeKeysReadErrorJoinsFeedErrors(t *testing.T) {
 	pointFeedsAt(t, serveFixtures(t, map[string]int{"cbr_news": http.StatusInternalServerError}))
 
 	conn := newNewsFakeConnWithKeys(nil)
-	conn.queryErr = errors.New("чтение ключей упало")
+	// Сбой точечно в ключах: чтение версий Telegram до него обязано пройти, иначе тест
+	// проверял бы не тот путь.
+	conn.keysErr = errors.New("чтение ключей упало")
 
 	var s newsImport
 	count, err := s.Import(context.Background(), conn)
@@ -1407,6 +1677,277 @@ func TestReadStoredKeysRowsError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "обрыв соединения на середине") {
 		t.Errorf("ошибка readStoredKeys = %q, want упоминание причины (rows.Err)", err)
+	}
+}
+
+func TestReadTelegramVersionsReadsChannelWindow(t *testing.T) {
+	since := time.Date(2026, time.October, 17, 9, 0, 0, 0, time.UTC)
+	date := since.Add(30 * time.Minute)
+	firstSeen := since.Add(time.Hour)
+	conn := newNewsFakeConn()
+	conn.versions = map[string][]telegramVersion{
+		"interfaxonline": {{
+			Channel: "interfaxonline", MessageID: 80244, Version: 2, Date: date,
+			Source: "interfax", Title: "Заголовок", URL: "https://t.me/interfaxonline/80244",
+			Description: "Текст", ContentHash: contentHash("Заголовок", "Текст"),
+			FirstSeen: firstSeen, Deleted: 0,
+		}},
+	}
+
+	versions, err := readTelegramVersions(context.Background(), conn, "interfaxonline", since)
+	if err != nil {
+		t.Fatalf("readTelegramVersions: %v", err)
+	}
+	if len(versions) != 1 {
+		t.Fatalf("versions = %d, want 1", len(versions))
+	}
+	got := versions[0]
+	want := conn.versions["interfaxonline"][0]
+	if got != want {
+		t.Errorf("версия = %+v, want %+v (порядок Scan — контракт telegramVersionsQuery)", got, want)
+	}
+	if wantCall := "source=interfaxonline since=" + since.Format(time.RFC3339); !conn.anyCallHas(wantCall) {
+		t.Errorf("запрос версий не содержал %q; вызовы: %v", wantCall, conn.callList())
+	}
+	if !conn.anyCallHas(telegramVersionsQuery) {
+		t.Errorf("readTelegramVersions не выполнил запрос %q; вызовы: %v", telegramVersionsQuery, conn.callList())
+	}
+}
+
+func TestReadTelegramVersionsRowsError(t *testing.T) {
+	// Ошибка обхода строк (обрыв соединения на середине) обязана вернуться: молча
+	// вернувшаяся половина истории дала бы повторные v1 и лишние tombstone.
+	conn := newNewsFakeConn()
+	conn.versions = map[string][]telegramVersion{
+		"interfaxonline": {{Channel: "interfaxonline", MessageID: 1, Version: 1}},
+	}
+	conn.rowsErr = errors.New("обрыв соединения на середине")
+
+	_, err := readTelegramVersions(context.Background(), conn, "interfaxonline", time.Now())
+	if err == nil {
+		t.Fatal("readTelegramVersions при rows.Err() != nil вернул nil-ошибку, want ошибку")
+	}
+	if !strings.Contains(err.Error(), "обрыв соединения на середине") {
+		t.Errorf("ошибка readTelegramVersions = %q, want упоминание причины (rows.Err)", err)
+	}
+}
+
+func TestImportSinceModeTelegramVersionsAndTombstone(t *testing.T) {
+	// Композиция since: RSS уже покрыты, Telegram-текущие пишутся upsert'ом; правка даёт v2,
+	// а известное сообщение окна, которого нет в SeenIDs, — tombstone v2. title в news_events
+	// остаётся от v1 (ключ date/source/title не разъезжается).
+	t.Setenv(modeEnv, modeSince)
+	pointFeedsAt(t, serveFixtures(t, nil))
+
+	byKey, _ := fixtureInventory(t)
+	tgItems := byKey["interfax_tg"]
+	if len(tgItems) < 2 {
+		t.Fatalf("Telegram-фикстура = %d сообщений, want ≥ 2 (нужны правка и живое сообщение)", len(tgItems))
+	}
+	windowMin, windowMax := telegramFixtureWindow(tgItems)
+
+	edited := tgItems[0]
+	const oldTitle, oldText = "Старая первая строка", "Старый текст сообщения"
+	tombID := uint64(999001)
+	tombDate := windowMin.Add(windowMax.Sub(windowMin) / 2)
+	oldFirstSeen := windowMin.Add(-24 * time.Hour)
+	// История соответствует прошлому прогону: у каждого текущего сообщения есть v1,
+	// кроме отредактированного — у него v1 со старым текстом.
+	existing := make([]telegramVersion, 0, len(tgItems)+1)
+	for i, it := range tgItems {
+		title, text := it.Title, it.Description
+		if i == 0 {
+			title, text = oldTitle, oldText
+		}
+		existing = append(existing, telegramVersion{
+			Channel: it.Channel, MessageID: it.MessageID, Version: 1, Date: it.Date,
+			Source: it.Source, Title: title, URL: it.URL, Description: text,
+			ContentHash: contentHash(title, text), FirstSeen: oldFirstSeen, Deleted: 0,
+		})
+	}
+	existing = append(existing, telegramVersion{
+		Channel: "interfaxonline", MessageID: tombID, Version: 1, Date: tombDate,
+		Source: "interfax", Title: "Удалённая молния", URL: fmt.Sprintf("https://t.me/interfaxonline/%d", tombID),
+		Description: "Текст удалённой", ContentHash: contentHash("Удалённая молния", "Текст удалённой"),
+		FirstSeen: oldFirstSeen, Deleted: 0,
+	})
+
+	// Все RSS-ключи фикстур на месте: в news_events едут только Telegram-текущие.
+	rssKeys := make(map[string][]newsKey, 4)
+	for _, f := range feeds() {
+		if f.Kind == feedRSS {
+			rssKeys[f.Source] = append(rssKeys[f.Source], keysOf(byKey[f.Key])...)
+		}
+	}
+	conn := newNewsFakeConnWithKeys(rssKeys)
+	conn.versions = map[string][]telegramVersion{"interfaxonline": existing}
+
+	var s newsImport
+	count, err := s.Import(context.Background(), conn)
+	if err != nil {
+		t.Fatalf("Import(%s): %v", modeSince, err)
+	}
+	if int(count) != len(tgItems) {
+		t.Errorf("Import вернул %d строк, want %d (Telegram upsert + ничего из покрытого RSS)", count, len(tgItems))
+	}
+
+	if wantCall := "source=interfaxonline since=" + windowMin.Format(time.RFC3339); !conn.anyCallHas(wantCall) {
+		t.Errorf("чтение версий не содержало %q; вызовы: %v", wantCall, conn.callList())
+	}
+
+	newsRows := conn.batchByQuery(t, newsInsert).inserted(t)
+	if len(newsRows) != len(tgItems) {
+		t.Fatalf("батч news_events = %d строк, want %d (Telegram-текущие)", len(newsRows), len(tgItems))
+	}
+	var editedRow *newsInsertedRow
+	for i := range newsRows {
+		if newsRows[i].URL == edited.URL {
+			editedRow = &newsRows[i]
+		}
+	}
+	if editedRow == nil {
+		t.Fatalf("в батче нет строки отредактированного сообщения %s", edited.URL)
+	}
+	if editedRow.Title != oldTitle {
+		t.Errorf("title отредактированной позиции = %q, want %q (title v1 — стабильный ключ news_events)",
+			editedRow.Title, oldTitle)
+	}
+	if editedRow.Description != edited.Description || editedRow.ContentHash != edited.ContentHash {
+		t.Errorf("отредактированная позиция записана не текущим текстом: %+v, want description/hash из %+v",
+			editedRow, edited)
+	}
+
+	verRows := conn.batchByQuery(t, telegramVersionInsert).insertedVersions(t)
+	if len(verRows) != 2 {
+		t.Fatalf("батч версий = %d строк, want 2 (правка v2 + tombstone v2): %+v", len(verRows), verRows)
+	}
+	editVer := findVersion(t, verRows, edited.MessageID, 2)
+	if editVer.Deleted != 0 || editVer.ContentHash != edited.ContentHash || editVer.Title != edited.Title {
+		t.Errorf("версия правки = %+v, want v2 текущего текста %+v", editVer, edited)
+	}
+	if !editVer.Date.Equal(edited.Date) {
+		t.Errorf("версия правки: date = %v, want дату публикации %v", editVer.Date, edited.Date)
+	}
+	tomb := findVersion(t, verRows, tombID, 2)
+	if tomb.Deleted != 1 || tomb.Description != "" || tomb.ContentHash != "" {
+		t.Errorf("tombstone = %+v, want deleted=1 с пустыми description/content_hash", tomb)
+	}
+	if tomb.Title != "Удалённая молния" || !tomb.Date.Equal(tombDate) || tomb.URL == "" {
+		t.Errorf("tombstone = %+v, want title/date/url из последней живой версии", tomb)
+	}
+	if tomb.FirstSeen.IsZero() {
+		t.Error("tombstone: first_seen нулевой, want время прогона")
+	}
+}
+
+func TestImportTelegramVersionReadErrorStopsBeforeWrite(t *testing.T) {
+	// Ошибка чтения версий — до батчей: без истории diffTelegram принял бы всё за v1,
+	// поэтому прогон отчитывается ошибкой и ничего не пишет.
+	t.Setenv(modeEnv, modeSince)
+	pointFeedsAt(t, serveFixtures(t, nil))
+
+	conn := newNewsFakeConn()
+	conn.versionsErr = errors.New("чтение версий упало")
+
+	var s newsImport
+	count, err := s.Import(context.Background(), conn)
+	if err == nil {
+		t.Fatalf("Import(%s) при ошибке чтения версий вернул %d строк без ошибки, want ошибку", modeSince, count)
+	}
+	if !strings.Contains(err.Error(), "чтение версий упало") {
+		t.Errorf("ошибка Import = %q, want упоминание причины", err)
+	}
+	if count != 0 {
+		t.Errorf("Import вернул %d строк при ошибке чтения версий, want 0 (до записи дело не дошло)", count)
+	}
+	if got := conn.batchList(); len(got) != 0 {
+		t.Errorf("Import открыл %d батчей при ошибке чтения версий, want 0", len(got))
+	}
+	if !conn.anyCallHas(telegramVersionsQuery) {
+		t.Errorf("Import не обратился к версиям запросом %q; вызовы: %v", telegramVersionsQuery, conn.callList())
+	}
+}
+
+func TestImportTelegramVersionWriteErrorKeepsCurrentRows(t *testing.T) {
+	// Сбой второго батча (версий) не отменяет уже записанный news_events: текущий текст
+	// остаётся в таблице, count — строки news_events, а ошибка видна в dagu; повтор
+	// идемпотентен по ключу ReplacingMergeTree.
+	t.Setenv(modeEnv, modeSince)
+	pointFeedsAt(t, serveFixtures(t, nil))
+
+	byKey, _ := fixtureInventory(t)
+	wantRows := totalItems(byKey) // since без ключей пишет всё окно: RSS + Telegram
+
+	conn := newNewsFakeConn()
+	conn.sendErr = map[string]error{telegramVersionInsert: errors.New("запись версий упала")}
+
+	var s newsImport
+	count, err := s.Import(context.Background(), conn)
+	if err == nil {
+		t.Fatalf("Import(%s) при сбое записи версий вернул %d строк без ошибки, want ошибку", modeSince, count)
+	}
+	if !strings.Contains(err.Error(), "запись версий упала") {
+		t.Errorf("ошибка Import = %q, want упоминание причины", err)
+	}
+	if int(count) != wantRows {
+		t.Errorf("Import вернул %d строк, want %d (news_events уже записаны до сбоя версий)", count, wantRows)
+	}
+	newsBatch := conn.batchByQuery(t, newsInsert)
+	if !newsBatch.sent {
+		t.Error("батч news_events не отправлен: сбой версий не должен отменять текущие строки")
+	}
+	if len(newsBatch.inserted(t)) != wantRows {
+		t.Errorf("в батче news_events %d строк, want %d", len(newsBatch.inserted(t)), wantRows)
+	}
+	if versionBatch := conn.batchByQuery(t, telegramVersionInsert); versionBatch.sent {
+		t.Error("батч версий помечен отправленным, хотя Send вернул ошибку")
+	}
+}
+
+func TestImportTelegramFeedFailureNoTombstone(t *testing.T) {
+	// Сбойная Telegram-лента не доходит до diffTelegram: её SeenIDs == nil, и трактовать
+	// это как пустое окно (tombstone всего канала) нельзя. Версии канала в этом прогоне
+	// не читаются и не пишутся.
+	t.Setenv(modeEnv, modeSince)
+	pointFeedsAt(t, serveFixtures(t, map[string]int{"interfax_tg": http.StatusInternalServerError}))
+
+	byKey, _ := fixtureInventory(t)
+	rssKeys := make(map[string][]newsKey, 4)
+	for _, f := range feeds() {
+		if f.Kind == feedRSS {
+			rssKeys[f.Source] = append(rssKeys[f.Source], keysOf(byKey[f.Key])...)
+		}
+	}
+	tgItems := byKey["interfax_tg"]
+	windowMin, windowMax := telegramFixtureWindow(tgItems)
+	conn := newNewsFakeConnWithKeys(rssKeys)
+	conn.versions = map[string][]telegramVersion{
+		"interfaxonline": {{
+			Channel: "interfaxonline", MessageID: tgItems[0].MessageID, Version: 1,
+			Date: windowMin.Add(windowMax.Sub(windowMin) / 2), Source: "interfax",
+			Title: tgItems[0].Title, URL: tgItems[0].URL,
+			Description: tgItems[0].Description, ContentHash: tgItems[0].ContentHash,
+			FirstSeen: windowMin, Deleted: 0,
+		}},
+	}
+
+	var s newsImport
+	count, err := s.Import(context.Background(), conn)
+	if err == nil {
+		t.Fatalf("Import(%s) при сбое interfax_tg вернул %d строк без ошибки, want ошибку ленты", modeSince, count)
+	}
+	if !strings.Contains(err.Error(), "interfax_tg") {
+		t.Errorf("ошибка Import = %q, want ключ упавшей ленты interfax_tg", err)
+	}
+	if count != 0 {
+		t.Errorf("Import вернул %d строк, want 0 (RSS покрыт, Telegram упал, tombstone нет)", count)
+	}
+	if conn.anyCallHas(telegramVersionsQuery) {
+		t.Errorf("сбойная лента дошла до чтения версий: SeenIDs == nil нельзя трактовать как пустое окно; вызовы: %v",
+			conn.callList())
+	}
+	if got := conn.batchList(); len(got) != 0 {
+		t.Errorf("Import открыл %d батчей при сбое Telegram и покрытом RSS, want 0", len(got))
 	}
 }
 

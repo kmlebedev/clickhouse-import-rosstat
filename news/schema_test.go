@@ -9,6 +9,10 @@ import (
 func TestNewsEventsDdlPinsCanonicalKey(t *testing.T) {
 	for _, want := range []string{
 		"description String",
+		"content_hash String",
+		// content_hash стоит между description и sentiment — порядок колонок канона.
+		"description String               -- текст позиции из ленты",
+		"content_hash String              -- sha256 нормализованного title+description",
 		"sentiment Nullable(Float32)      -- -1..1, заполняет LLM-сессия",
 		"ENGINE = ReplacingMergeTree ORDER BY (date, source, title)",
 	} {
@@ -17,33 +21,75 @@ func TestNewsEventsDdlPinsCanonicalKey(t *testing.T) {
 				"ARCHITECTURE.md §6.2, а дедупликация ReplacingMergeTree теряет ключ", want)
 		}
 	}
+	if strings.Index(newsEventsDdl, "content_hash String") > strings.Index(newsEventsDdl, "sentiment Nullable(Float32)") {
+		t.Error("content_hash в DDL news_events стоит после sentiment, want между description и sentiment")
+	}
 }
 
 // TestNewsAlterStatementsPinMigration — пин миграции живой таблицы: ALTER выполняется каждым
 // прогоном (ADD COLUMN IF NOT EXISTS идемпотентен) и обязан совпадать с каноном посимвольно.
-// AFTER url держит порядок колонок как в DDL: без него description уехал бы в конец, и копия
-// разошлась бы с каноном. Образец пина — craw/gost_test.go.
+// AFTER url/AFTER description держат порядок колонок как в DDL: без них description и
+// content_hash уехали бы в конец, и копия разошлась бы с каноном. Порядок стейтментов тоже
+// контракт: content_hash встаёт после description. Образец пина — craw/gost_test.go.
 func TestNewsAlterStatementsPinMigration(t *testing.T) {
-	const want = "ALTER TABLE news_events ADD COLUMN IF NOT EXISTS description String AFTER url"
-	if len(newsAlterStatements) != 1 {
-		t.Fatalf("newsAlterStatements = %d стейтментов, want 1 (миграция колонки description): %q",
-			len(newsAlterStatements), newsAlterStatements)
+	want := []string{
+		"ALTER TABLE news_events ADD COLUMN IF NOT EXISTS description String AFTER url",
+		"ALTER TABLE news_events ADD COLUMN IF NOT EXISTS content_hash String AFTER description",
 	}
-	if newsAlterStatements[0] != want {
-		t.Errorf("newsAlterStatements[0] = %q, want %q (дословно: порядок колонок — часть канона)",
-			newsAlterStatements[0], want)
+	if len(newsAlterStatements) != len(want) {
+		t.Fatalf("newsAlterStatements = %d стейтментов, want %d (миграции description и content_hash): %q",
+			len(newsAlterStatements), len(want), newsAlterStatements)
+	}
+	for i := range want {
+		if newsAlterStatements[i] != want[i] {
+			t.Errorf("newsAlterStatements[%d] = %q, want %q (дословно: порядок колонок — часть канона)",
+				i, newsAlterStatements[i], want[i])
+		}
 	}
 
 	stmts := newsSchemaStatements()
-	if len(stmts) != 2 {
-		t.Fatalf("newsSchemaStatements() = %d стейтментов, want 2 (CREATE + ALTER): %q", len(stmts), stmts)
+	if len(stmts) != 4 {
+		t.Fatalf("newsSchemaStatements() = %d стейтментов, want 4 (CREATE news_events + 2 ALTER + CREATE news_message_version): %q",
+			len(stmts), stmts)
 	}
 	if stmts[0] != newsEventsDdl {
 		t.Errorf("стейтмент 0 не равен newsEventsDdl: %q", stmts[0])
 	}
-	if stmts[1] != want {
-		t.Errorf("стейтмент 1 = %q, want %q (ALTER в хвосте: на чистой базе таблица сначала создаётся)",
-			stmts[1], want)
+	for i := range want {
+		if stmts[i+1] != want[i] {
+			t.Errorf("стейтмент %d = %q, want %q (ALTER-ы идут после CREATE, до таблицы версий)",
+				i+1, stmts[i+1], want[i])
+		}
+	}
+	if stmts[3] != newsMessageVersionDdl {
+		t.Errorf("стейтмент 3 = %q, want DDL news_message_version (таблица версий создаётся после миграции news_events)",
+			stmts[3])
+	}
+}
+
+// TestNewsMessageVersionDdlPinsCanon — пин винтажной таблицы Telegram: канон спеки §4.2.
+// Ключ ReplacingMergeTree (channel, message_id, version) — то, на чём держится no-op
+// повторной записи версии; сдвиг типов (UInt64 id, UInt32 version, UInt8 deleted) сломал бы
+// совместимость с живой таблицей.
+func TestNewsMessageVersionDdlPinsCanon(t *testing.T) {
+	for _, want := range []string{
+		"channel LowCardinality(String)",
+		"message_id UInt64",
+		"version UInt32",
+		"date DateTime",
+		"source LowCardinality(String)",
+		"title String",
+		"url String",
+		"description String",
+		"content_hash String",
+		"first_seen DateTime",
+		"deleted UInt8",
+		"ENGINE = ReplacingMergeTree ORDER BY (channel, message_id, version)",
+	} {
+		if !strings.Contains(newsMessageVersionDdl, want) {
+			t.Errorf("DDL news_message_version обязан содержать %q: копия обязана совпадать с каноном "+
+				"ARCHITECTURE.md §6.2 (спека §4.2)", want)
+		}
 	}
 }
 
