@@ -1,0 +1,188 @@
+[
+  {
+    "source": "README.md",
+    "page": "index.md",
+    "title": "Главная",
+    "section": "Обзор"
+  },
+  {
+    "source": "ARCHITECTURE.md",
+    "page": "architecture.md",
+    "title": "Архитектура",
+    "section": "Архитектура"
+  },
+  {
+    "source": "docs/IMPORTER_PACKAGE_STANDARD.md",
+    "page": "importer-standard.md",
+    "title": "Стандарт пакета импортёров",
+    "section": "Архитектура"
+  },
+  {
+    "source": "docs/IMPORTERS.md",
+    "page": "importers.md",
+    "title": "Импортёры и источники",
+    "section": "Импортёры"
+  },
+  {
+    "source": "docs/KEY_RATE_MODEL.md",
+    "page": "key-rate-model.md",
+    "title": "Модель ключевой ставки",
+    "section": "Контур ключевой ставки"
+  },
+  {
+    "source": "docs/KEY_RATE_CHANNELS.md",
+    "page": "key-rate-channels.md",
+    "title": "Каналы решения ЦБ",
+    "section": "Контур ключевой ставки"
+  },
+  {
+    "source": "docs/KEY_RATE_PUBLICATIONS.md",
+    "page": "key-rate-publications.md",
+    "title": "Публикации по ключевой ставке",
+    "section": "Контур ключевой ставки"
+  },
+  {
+    "source": "docs/DCF_DATA_COVERAGE.md",
+    "page": "dcf-data-coverage.md",
+    "title": "Полнота данных DCF",
+    "section": "DCF и золото"
+  },
+  {
+    "source": "docs/GOLD_CONTOUR.md",
+    "page": "gold-contour.md",
+    "title": "Контур прогноза золота",
+    "section": "DCF и золото"
+  },
+  {
+    "source": "docs/CONFIGURATION.md",
+    "page": "configuration.md",
+    "title": "Конфигурация и окружение",
+    "section": "Эксплуатация"
+  },
+  {
+    "source": "docs/OPERATIONS.md",
+    "page": "operations.md",
+    "title": "Эксплуатация",
+    "section": "Эксплуатация"
+  },
+  {
+    "source": "docs/GRAFANA.md",
+    "page": "grafana.md",
+    "title": "Grafana",
+    "section": "Эксплуатация"
+  },
+  {
+    "source": "docs/DEVELOPMENT.md",
+    "page": "development.md",
+    "title": "Разработка",
+    "section": "Разработка"
+  },
+  {
+    "source": "docs/LIMITATIONS.md",
+    "page": "limitations.md",
+    "title": "Ограничения",
+    "section": "Разработка"
+  },
+  {
+    "source": "docs/guides/README.md",
+    "page": "guides.md",
+    "title": "Практические гайды",
+    "section": "Справочники"
+  },
+  {
+    "source": "docs/guides/stat-ml-models.md",
+    "page": "stat-ml-models.md",
+    "title": "Статистические и ML-модели",
+    "section": "Справочники"
+  },
+  {
+    "source": "docs/ROADMAP_INDEX.md",
+    "page": "roadmap-index.md",
+    "title": "Реестр роадмапов",
+    "section": "Роадмапы"
+  },
+  {
+    "source": "docs/ROADMAP_DCF_POLYUS.md",
+    "page": "roadmap-dcf-polyus.md",
+    "title": "DCF-модель Полюса",
+    "section": "Роадмапы"
+  },
+  {
+    "source": "docs/GOLD_THESIS_DATA_ROADMAP.md",
+    "page": "roadmap-gold-thesis.md",
+    "title": "Тезисы по золоту",
+    "section": "Роадмапы"
+  },
+  {
+    "source": "docs/ROADMAP_KEY_RATE.md",
+    "page": "roadmap-key-rate.md",
+    "title": "Ключевая ставка",
+    "section": "Роадмапы"
+  },
+  {
+    "source": "docs/ROADMAP_DCF_METALS.md",
+    "page": "roadmap-dcf-metals.md",
+    "title": "Металлурги",
+    "section": "Роадмапы"
+  },
+  {
+    "source": "docs/ROADMAP_INFRA.md",
+    "page": "roadmap-infra.md",
+    "title": "Инфраструктура",
+    "section": "Роадмапы"
+  },
+  {
+    "source": "docs/research/2026-10-10-pdf-extractors-go.md",
+    "page": "research-2026-10-10-pdf-extractors-go.md",
+    "title": "PDF-экстракторы на Go",
+    "section": "Исследования"
+  },
+  {
+    "source": "docs/research/2026-10-13-tanker-freight-sources.md",
+    "page": "research-2026-10-13-tanker-freight-sources.md",
+    "title": "Фрахт нефтетанкеров",
+    "section": "Исследования"
+  },
+  {
+    "source": "docs/research/2026-10-16-cb-comp-vs-cpi-nowcast.md",
+    "page": "research-2026-10-16-cb-comp-vs-cpi-nowcast.md",
+    "title": "CB_COMP против nowcast ИПЦ",
+    "section": "Исследования"
+  },
+  {
+    "source": "docs/research/2026-10-16-cpi-monthly-depth-audit.md",
+    "page": "research-2026-10-16-cpi-monthly-depth-audit.md",
+    "title": "Глубина месячного ИПЦ",
+    "section": "Исследования"
+  },
+  {
+    "source": "docs/research/2026-10-16-cpi-weekly-pre2022-probe.md",
+    "page": "research-2026-10-16-cpi-weekly-pre2022-probe.md",
+    "title": "Недельный ИПЦ до 2022",
+    "section": "Исследования"
+  },
+  {
+    "source": "docs/research/2026-10-17-cbr-form101-mapping-methodology.md",
+    "page": "research-2026-10-17-cbr-form101-mapping-methodology.md",
+    "title": "Маппинг формы 101",
+    "section": "Исследования"
+  },
+  {
+    "source": "docs/research/2026-10-17-mp-summary-llm-comparison.md",
+    "page": "research-2026-10-17-mp-summary-llm-comparison.md",
+    "title": "Сравнение LLM для MP summary",
+    "section": "Исследования"
+  },
+  {
+    "source": "docs/Золото_Q3-2026_итоги_и_прогноз_Q4-2026.md",
+    "page": "article-gold-q3-2026.md",
+    "title": "Золото: итоги Q3 2026",
+    "section": "Статьи"
+  },
+  {
+    "source": "docs/Золото_сделка_по_дизелю_2026-10-12.md",
+    "page": "article-gold-diesel-2026-10-12.md",
+    "title": "Золото и сделка по дизелю",
+    "section": "Статьи"
+  }
+]
