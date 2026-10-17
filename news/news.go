@@ -779,7 +779,8 @@ func insertItems(ctx context.Context, conn driver.Conn, items []newsItem) (int64
 // readNewsAnnotationCandidates читает бэклог LLM-разметки: весь видимый поток (Telegram и RSS,
 // проходящий newsFilter), у которого нет doc/tag-строк этой пары (model, prompt_version).
 // limit — NEWS_LLM_BACKLOG_LIMIT (штатно 50, разовый бэкфилл — до 1000); он вшивается в SQL
-// литералом, потому что плейсхолдеры LIMIT ClickHouse не принимает. Пустой результат — не
+// литералом: предел — проверенное целое из ограниченного диапазона, а не внешний ввод, и
+// строковый запрос остаётся воспроизводимым в тестах. Пустой результат — не
 // ошибка: разметить нечего. Порядок Scan — порядок колонок newsAnnotationCandidatesQuery:
 // date, source, title, url, description, content_hash. Ошибка обхода проверяется: молча
 // вернувшаяся половина бэклога оставила бы часть сообщений без разметки до следующего прогона.

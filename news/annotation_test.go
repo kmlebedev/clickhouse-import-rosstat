@@ -261,7 +261,8 @@ func TestValidateNewsAnnotationsEvidence(t *testing.T) {
 }
 
 // TestValidateNewsAnnotationsDirections — направленные значения у не-cb_channel приводятся
-// к neutral с warn, neutral/mixed сохраняются, а у cb_channel направление остаётся как есть.
+// к neutral с warn, neutral/mixed сохраняются, а у cb_channel направление всегда берётся из
+// реестра: ответ модели с другим знаком не отбрасывает тег, а заменяется статическим знаком.
 func TestValidateNewsAnnotationsDirections(t *testing.T) {
 	input := newsAnnotationInput()
 	for _, tc := range []struct {
@@ -275,9 +276,10 @@ func TestValidateNewsAnnotationsDirections(t *testing.T) {
 		{"персона dez → neutral", newsDimPerson, "trump", newsDirectionDez, newsDirectionNeutral},
 		{"персона neutral", newsDimPerson, "trump", newsDirectionNeutral, newsDirectionNeutral},
 		{"страна mixed", newsDimCountry, "china", newsDirectionMixed, newsDirectionMixed},
-		{"канал pro", newsDimCBChannel, "current_inflation", newsDirectionPro, newsDirectionPro},
-		{"канал dez", newsDimCBChannel, "savings", newsDirectionDez, newsDirectionDez},
-		{"канал neutral", newsDimCBChannel, "money_supply", newsDirectionNeutral, newsDirectionNeutral},
+		{"канал: знак совпал с реестром", newsDimCBChannel, "current_inflation", newsDirectionPro, newsDirectionPro},
+		{"канал: pro у disinflationary-канала → реестровый dez", newsDimCBChannel, "savings", newsDirectionPro, newsDirectionDez},
+		{"канал: neutral у disinflationary-канала → реестровый dez", newsDimCBChannel, "savings", newsDirectionNeutral, newsDirectionDez},
+		{"канал: mixed у pro-канала → реестровый pro", newsDimCBChannel, "money_supply", newsDirectionMixed, newsDirectionPro},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			payload := newsAnnotationPayload{Messages: []newsAnnotationMessage{{
