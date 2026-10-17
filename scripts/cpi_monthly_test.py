@@ -962,6 +962,13 @@ class TestRunSummaryOffline(unittest.TestCase):
                 "start=3, embargo=1", {record["window"] for record in records}
             )
             self.assertIn(cm.MODEL_LAST, {record["model"] for record in records})
+            # JSON живого nowcast пишется тем же прогоном (спека §5.1).
+            forecast_path = Path(tmp) / cm.FORECAST_NAME
+            self.assertTrue(forecast_path.exists())
+            payload = json.loads(forecast_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["target_month"], "2015-01-01")
+            for name in cm.CATBOOST_MODELS:
+                self.assertEqual(set(payload[name]), {"forecast", "metadata"})
 
     def test_loaders_go_through_transport(self):
         with fixture_transport():
@@ -1868,8 +1875,8 @@ class TestReportAndArtifacts(unittest.TestCase):
         self.assertIn("## Конфигурация CatBoost", report)
         self.assertIn("`allow_writing_files`", report)
         self.assertIn("## Последние 12 фолдов (основное окно start=24)", report)
+        self.assertIn("## DM-HLN", report)
         self.assertIn("## Что не проверено", report)
-        self.assertIn("Task 4", report)
 
     def test_write_artifacts_predictions_csv(self):
         rows, run = self.make_run()
@@ -1899,6 +1906,513 @@ class TestReportAndArtifacts(unittest.TestCase):
     def test_embargo_window_key(self):
         self.assertEqual(cm.window_key(24, 0), "start=24")
         self.assertEqual(cm.window_key(24, 1), "start=24, embargo=1")
+
+
+# --- Task 4: DM-HLN, сплит статьи, «2022 исключён» и живой nowcast ------------
+
+
+def stub_models(values: dict = None) -> dict:
+    """Модели-заглушки: каждая возвращает фиксированное число.
+
+    Живой nowcast в проде обучает четыре CatBoost-варианта и четыре бенчмарка на
+    полной выборке; офлайн-тестам DM/JSON/пометок достаточно детерминированных
+    значений: проверяется обвязка (признаки, note, JSON), а не качество модели.
+    """
+    values = values or {}
+    return {
+        name: (lambda train, row, value=values.get(name, 0.5): value)
+        for name in cm.MODELS
+    }
+
+
+def prediction(model: str, month: date, error: float) -> cm.Prediction:
+    """`Prediction` с нулевым фактом: `y_pred` численно равен ошибке фолда."""
+    return cm.Prediction(month=month, model=model, y_true=0.0, y_pred=error)
+
+
+class TestPairTests(unittest.TestCase):
+    """DM-HLN и блочный бутстрап: пары, общие месяцы, знак и p-value (§4.3)."""
+
+    def test_dm_sign_and_pvalue(self):
+        months = month_range(date(2020, 1, 1), date(2020, 5, 1))
+        good = [0.1, -0.2, 0.3, -0.15, 0.2]
+        bad = [1.0, -0.9, 1.1, -1.2, 0.8]
+        predictions = []
+        for month, error_good, error_bad in zip(months, good, bad):
+            predictions.append(prediction("good", month, error_good))
+            predictions.append(prediction("bad", month, error_bad))
+        tests = cm.pairwise_tests(predictions, [("good", "bad")])
+        self.assertEqual(len(tests), 1)
+        test = tests[0]
+        self.assertEqual((test.model_a, test.model_b), ("good", "bad"))
+        self.assertLess(test.diff, 0.0)  # отрицательное — модель A точнее
+        self.assertLess(test.p_value, 0.05)
+        self.assertIn("good", test.note)
+        self.assertIn("значимо", test.note)
+        # Одинаковые ошибки: разницы нет, p = 1 (вырожденная дисперсия).
+        equal = [
+            prediction("a", month, 0.5) for month in months
+        ] + [
+            prediction("b", month, 0.5) for month in months
+        ]
+        test = cm.pairwise_tests(equal, [("a", "b")])[0]
+        self.assertEqual(test.diff, 0.0)
+        self.assertEqual(test.p_value, 1.0)
+        self.assertIn("не значимо", test.note)
+        self.assertIn("разницы RMSE нет", test.note)
+
+    def test_pairs_use_common_months(self):
+        months = month_range(date(2020, 1, 1), date(2020, 4, 1))
+        predictions = [
+            # A: январь — огромная ошибка, которой нет у B; в пару не попадёт.
+            prediction("a", months[0], 100.0),
+            prediction("a", months[1], 2.0),
+            prediction("a", months[2], 3.0),
+            prediction("b", months[1], 2.0),
+            prediction("b", months[2], 2.0),
+            prediction("b", months[3], 2.0),
+        ]
+        tests = cm.pairwise_tests(predictions, [("a", "b")])
+        self.assertEqual(len(tests), 1)
+        test = tests[0]
+        self.assertEqual(test.diff, math.sqrt(13.0 / 2.0) - 2.0)
+        # Пара без общих месяцев не строится вовсе.
+        self.assertEqual(
+            cm.pairwise_tests(predictions, [("a", "absent")]), []
+        )
+
+    def test_primary_pairs_are_mp_vs_base(self):
+        self.assertEqual(cm.PRIMARY_PAIRS, (
+            (cm.MODEL_CATBOOST_DIRECT_MP, cm.MODEL_CATBOOST_DIRECT),
+            (cm.MODEL_CATBOOST_BOTTOMUP_MP, cm.MODEL_CATBOOST_BOTTOMUP),
+            (cm.MODEL_ENET_MP, cm.MODEL_ENET_BASE),
+        ))
+
+    def test_secondary_pairs_context(self):
+        self.assertEqual(cm.SECONDARY_PAIRS, (
+            (cm.MODEL_CATBOOST_DIRECT_MP, cm.MODEL_LAST),
+            (cm.MODEL_CATBOOST_BOTTOMUP_MP, cm.MODEL_LAST),
+            (cm.MODEL_ENET_MP, cm.MODEL_LAST),
+            (cm.MODEL_CATBOOST_DIRECT_MP, cm.MODEL_ENET_MP),
+            (cm.MODEL_CATBOOST_BOTTOMUP_MP, cm.MODEL_ENET_MP),
+            (cm.MODEL_CATBOOST_DIRECT, cm.MODEL_CATBOOST_BOTTOMUP),
+        ))
+
+    def test_bootstrap_primary_pairs(self):
+        months = month_range(date(2019, 1, 1), date(2020, 12, 1))
+        predictions = []
+        for position, month in enumerate(months):
+            for name in {name for pair in cm.PRIMARY_PAIRS for name in pair}:
+                predictions.append(
+                    prediction(name, month, 0.1 + 0.01 * position)
+                )
+        results = cm.bootstrap_pairs(predictions, cm.PRIMARY_PAIRS)
+        self.assertEqual(len(results), len(cm.PRIMARY_PAIRS))
+        for (model_a, model_b), result in zip(cm.PRIMARY_PAIRS, results):
+            self.assertEqual((result.model_a, result.model_b), (model_a, model_b))
+            self.assertLessEqual(result.low, result.high)
+            self.assertGreaterEqual(result.p_value, 0.0)
+            self.assertLessEqual(result.p_value, 1.0)
+            self.assertAlmostEqual(result.rmse_diff, 0.0)
+
+
+class TestArticleSplit(unittest.TestCase):
+    """Фиксированный сплит статьи: train ≤ 2018-12, test 2019-01…2024-07 (§4.4)."""
+
+    def test_split_boundaries_and_no_future(self):
+        rows, _ = build_world(synthetic_world())
+        self.assertEqual(len(rows), 155)
+        calls = []
+
+        def model(train, row):
+            calls.append(
+                (
+                    len(train),
+                    train[0].month,
+                    train[-1].month,
+                    row.month,
+                )
+            )
+            return float(row.features["y_lag1"])
+
+        predictions = cm.fixed_split(rows, {"stub": model})
+        self.assertEqual(len(predictions), 67)
+        self.assertEqual(predictions[0].month, date(2019, 1, 1))
+        self.assertEqual(predictions[-1].month, date(2024, 7, 1))
+        self.assertEqual(len(calls), 67)
+        for train_size, first_train, last_train, _ in calls:
+            self.assertEqual(train_size, 63)
+            self.assertEqual(first_train, date(2013, 10, 1))
+            self.assertEqual(last_train, date(2018, 12, 1))
+        self.assertEqual(
+            {prediction.model for prediction in predictions}, {"stub"}
+        )
+
+    def test_degenerate_model_is_skipped(self):
+        rows, _ = build_world(synthetic_world())
+
+        def degenerate(train, row):
+            raise cm.DegenerateWindowError("окно вырождено")
+
+        def healthy(train, row):
+            return 0.5
+
+        predictions = cm.fixed_split(
+            rows, {"bad": degenerate, "good": healthy}
+        )
+        self.assertEqual(len(predictions), 67)
+        self.assertEqual(
+            {prediction.model for prediction in predictions}, {"good"}
+        )
+
+    def test_split_constants(self):
+        self.assertEqual(cm.ARTICLE_TRAIN_END, date(2018, 12, 1))
+        self.assertEqual(cm.ARTICLE_TEST_END, date(2024, 7, 1))
+
+
+class TestMetricsWithout2022(unittest.TestCase):
+    """Строка «2022 исключён»: отдельная метрика, не замена основной (§4.5)."""
+
+    def test_no_shock_excludes_2022(self):
+        predictions = [
+            prediction("m", date(2021, 12, 1), 0.1),
+            prediction("m", date(2022, 1, 1), 10.0),
+            prediction("m", date(2022, 12, 1), -10.0),
+            prediction("m", date(2023, 1, 1), 0.3),
+        ]
+        rmse, mae = cm.metrics_without_2022(predictions)
+        self.assertAlmostEqual(rmse, math.sqrt((0.01 + 0.09) / 2))
+        self.assertAlmostEqual(mae, (0.1 + 0.3) / 2)
+        with self.assertRaises(ValueError):
+            cm.metrics_without_2022([prediction("m", date(2022, 5, 1), 1.0)])
+
+
+class TestLiveNowcast(unittest.TestCase):
+    """Живой nowcast: цель по данным, признаки as-of run date, МП §2.6 (§5.3)."""
+
+    def test_live_target_is_month_after_last_published(self):
+        targets = cm.targets_from_rows(fixture_rows("ipc_mes_recent.csv"))
+        self.assertEqual(cm.latest_published_month(targets), date(2026, 9, 1))
+        month, reason = cm.nowcast_target_month(targets, date(2026, 10, 18))
+        self.assertEqual((month, reason), (date(2026, 10, 1), ""))
+
+    def test_no_target_reason(self):
+        self.assertIsNone(cm.latest_published_month({}))
+        month, reason = cm.nowcast_target_month(
+            {cm.TARGET_ALL: []}, date(2026, 10, 18)
+        )
+        self.assertIsNone(month)
+        self.assertIn("нет ни одной метки", reason)
+
+    def test_live_base_features_allow_published_lag(self):
+        world = synthetic_world()
+        index = cm.target_index(world["targets"])
+        month = date(2026, 9, 1)
+        today = date(2026, 9, 18)
+        strict, reason = cm.base_features(
+            month, index, world["usd"], world["key_rate"], world["fao"], today
+        )
+        self.assertIsNone(strict)
+        self.assertIn("y_lag1", reason)
+        live, reason = cm.base_features(
+            month, index, world["usd"], world["key_rate"], world["fao"], today,
+            live=True,
+        )
+        self.assertIsNotNone(live, reason)
+        labels = dict(world["targets"][cm.TARGET_ALL])
+        self.assertAlmostEqual(live["y_lag1"], labels[date(2026, 8, 31)])
+        self.assertAlmostEqual(live["y_lag2"], labels[date(2026, 7, 31)])
+
+    def test_live_mp_features_take_last_available(self):
+        world = synthetic_world()
+        month = date(2026, 9, 1)
+        today = date(2026, 9, 18)
+        strict, reason = cm.mp_features(month, world["survey"], today)
+        self.assertIsNone(strict)
+        self.assertIn("не опубликован", reason)
+        live, reason = cm.mp_features(
+            month, world["survey"], today, live=True
+        )
+        self.assertIsNotNone(live, reason)
+        points = dict(world["survey"]["price_expectations_sa"])
+        # Точка августа доступна с конца сентября, поэтому на 18.09 — июль.
+        self.assertAlmostEqual(
+            live["price_expectations_sa"], points[date(2026, 7, 1)]
+        )
+        self.assertAlmostEqual(
+            live["price_expectations_sa_chg"],
+            points[date(2026, 7, 1)] - points[date(2026, 6, 1)],
+        )
+
+    def test_live_mp_lag_note(self):
+        world = synthetic_world()
+        rows, _ = build_world(world)
+        today = date(2026, 9, 18)
+        with unittest.mock.patch.object(cm, "MODELS", stub_models()):
+            nowcast, reason = cm.current_nowcast(
+                rows,
+                world["targets"],
+                world["survey"],
+                world["usd"],
+                world["key_rate"],
+                world["fao"],
+                today,
+            )
+        self.assertIsNotNone(nowcast, reason)
+        self.assertEqual(nowcast.target_month, date(2026, 9, 1))
+        self.assertEqual(nowcast.forecast_date, today)
+        self.assertEqual(nowcast.data_asof, today)
+        self.assertIn("МП за 2026-07", nowcast.note)
+        self.assertIn("глубже бэктеста на 1 мес.", nowcast.note)
+        self.assertEqual(set(nowcast.models), set(cm.CATBOOST_MODELS))
+        self.assertEqual(set(nowcast.benchmarks), set(cm.BENCHMARKS))
+        self.assertEqual(len(nowcast.weights), len(cm.BOTTOMUP_COMPONENTS))
+        self.assertAlmostEqual(sum(nowcast.weights), 1.0)
+        self.assertEqual(nowcast.sample_size, len(rows))
+
+    def test_forecast_json_deterministic(self):
+        world = synthetic_world()
+        rows, _ = build_world(world)
+        today = date(2026, 9, 18)
+        values = {
+            cm.MODEL_CATBOOST_DIRECT: 0.41,
+            cm.MODEL_CATBOOST_BOTTOMUP: 0.42,
+            cm.MODEL_CATBOOST_DIRECT_MP: 0.43,
+            cm.MODEL_CATBOOST_BOTTOMUP_MP: 0.44,
+        }
+        with unittest.mock.patch.object(cm, "MODELS", stub_models(values)):
+            first, reason = cm.current_nowcast(
+                rows, world["targets"], world["survey"], world["usd"],
+                world["key_rate"], world["fao"], today,
+            )
+            second, _ = cm.current_nowcast(
+                rows, world["targets"], world["survey"], world["usd"],
+                world["key_rate"], world["fao"], today,
+            )
+        self.assertIsNotNone(first, reason)
+        self.assertEqual(cm.nowcast_json(first), cm.nowcast_json(second))
+        payload = json.loads(cm.nowcast_json(first))
+        self.assertEqual(
+            list(payload)[:3], ["forecast_date", "target_month", "data_asof"]
+        )
+        self.assertEqual(payload["forecast_date"], "2026-09-18")
+        self.assertEqual(payload["target_month"], "2026-09-01")
+        self.assertEqual(payload["data_asof"], "2026-09-18")
+        for name in cm.CATBOOST_MODELS:
+            self.assertEqual(set(payload[name]), {"forecast", "metadata"})
+            self.assertEqual(payload[name]["forecast"], values[name])
+        self.assertIn(
+            "price_expectations_sa",
+            payload[cm.MODEL_CATBOOST_DIRECT_MP]["metadata"]["num_features"],
+        )
+        self.assertNotIn(
+            "price_expectations_sa",
+            payload[cm.MODEL_CATBOOST_DIRECT]["metadata"]["num_features"],
+        )
+        self.assertEqual(set(payload["benchmarks"]), set(cm.BENCHMARKS))
+        self.assertEqual(set(payload["bottomup_weights"]), set(cm.BOTTOMUP_MODELS))
+        for name in cm.BOTTOMUP_MODELS:
+            weights = payload["bottomup_weights"][name]
+            self.assertEqual(set(weights), set(cm.BOTTOMUP_COMPONENTS))
+            self.assertAlmostEqual(sum(weights.values()), 1.0)
+        self.assertEqual(payload["sample_size"], len(rows))
+        self.assertIn("живой nowcast", payload["note"])
+        self.assertTrue(cm.nowcast_json(first).endswith("\n"))
+
+    def test_nowcast_without_models(self):
+        world = synthetic_world()
+        rows, _ = build_world(world)
+
+        def degenerate(train, row):
+            raise cm.DegenerateWindowError("окно вырождено")
+
+        with unittest.mock.patch.object(
+            cm, "MODELS", {name: degenerate for name in cm.MODELS}
+        ):
+            nowcast, reason = cm.current_nowcast(
+                rows, world["targets"], world["survey"], world["usd"],
+                world["key_rate"], world["fao"], date(2026, 9, 18),
+            )
+        self.assertIsNone(nowcast)
+        self.assertIn("ни один метод не посчитан", reason)
+
+    def test_write_and_remove_forecast_artifact(self):
+        today = date(2026, 10, 18)
+        nowcast = cm.Nowcast(
+            forecast_date=today,
+            target_month=date(2026, 10, 1),
+            data_asof=today,
+            models={name: 0.5 for name in cm.CATBOOST_MODELS},
+            benchmarks={name: 0.4 for name in cm.BENCHMARKS},
+            weights=(0.4, 0.35, 0.25),
+            sample_size=155,
+            note="тестовая пометка",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / cm.FORECAST_NAME
+            self.assertTrue(cm.write_nowcast_artifact(path, nowcast))
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["target_month"], "2026-10-01")
+            self.assertFalse(cm.write_nowcast_artifact(path, None))
+            self.assertFalse(path.exists())
+
+    def test_clear_stale_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            for name in cm.ARTIFACT_NAMES:
+                (directory / name).write_text("old", encoding="utf-8")
+            removed = cm.clear_stale_artifacts(directory)
+            self.assertEqual(set(removed), set(cm.ARTIFACT_NAMES))
+            for name in cm.ARTIFACT_NAMES:
+                self.assertFalse((directory / name).exists())
+
+    def test_render_nowcast_sections(self):
+        today = date(2026, 10, 18)
+        nowcast = cm.Nowcast(
+            forecast_date=today,
+            target_month=date(2026, 10, 1),
+            data_asof=today,
+            models={
+                cm.MODEL_CATBOOST_DIRECT: 0.4,
+                cm.MODEL_CATBOOST_BOTTOMUP: 0.35,
+                cm.MODEL_CATBOOST_DIRECT_MP: 0.3,
+                cm.MODEL_CATBOOST_BOTTOMUP_MP: None,
+            },
+            benchmarks={name: 0.5 for name in cm.BENCHMARKS},
+            weights=(0.4, 0.35, 0.25),
+            sample_size=155,
+            note="пометка",
+        )
+        text = cm.render_nowcast(nowcast)
+        self.assertIn("2026-10", text)
+        self.assertIn("CatBoost direct (с МП)", text)
+        self.assertIn("0.400", text)
+        self.assertIn("0.400", text)
+        self.assertIn("пометка", text)
+        absent = cm.render_nowcast_absent("нет цели (тест)")
+        self.assertIn("нет цели (тест)", absent)
+        self.assertIn(cm.FORECAST_NAME, absent)
+
+
+class TestReportTask4(unittest.TestCase):
+    """Полный отчёт: DM-блок, бутстрап, сплит статьи, «2022 исключён», nowcast."""
+
+    def full_run(self) -> cm.WindowRun:
+        months = month_range(date(2021, 1, 1), date(2023, 12, 1))
+        predictions = []
+        for position, month in enumerate(months):
+            for name in cm.MODELS:
+                bias = 0.01 if name.endswith("_mp") else 0.02
+                predictions.append(
+                    cm.Prediction(
+                        month=month,
+                        model=name,
+                        y_true=0.5 + 0.001 * position,
+                        y_pred=0.5 + 0.001 * position + bias,
+                    )
+                )
+        notes = {name: {} for name in cm.MODELS}
+        notes[cm.MODEL_ENET_MP] = {cm.NON_CONVERGED: 43}
+        return cm.WindowRun(
+            start=24,
+            embargo=0,
+            main=True,
+            folds=len(months),
+            predictions=predictions,
+            skipped={name: 0 for name in cm.MODELS},
+            notes=notes,
+            weights={
+                cm.MODEL_CATBOOST_BOTTOMUP: (0.4, 0.35, 0.25),
+                cm.MODEL_CATBOOST_BOTTOMUP_MP: (0.4, 0.35, 0.25),
+            },
+        )
+
+    def test_full_report_sections(self):
+        rows, _ = build_world(synthetic_world())
+        run = self.full_run()
+        split_predictions = cm.fixed_split(
+            rows, {name: (lambda train, row: 0.5) for name in cm.MODELS}
+        )
+        report = cm.render_report(
+            rows,
+            [],
+            [run],
+            today=date(2026, 10, 18),
+            split_predictions=split_predictions,
+        )
+        self.assertIn("## DM-HLN", report)
+        self.assertIn("primary", report)
+        self.assertIn("secondary", report)
+        self.assertIn("## Блочный бутстрап", report)
+        self.assertIn("| start=24 (основное) | primary |", report)
+        self.assertIn("43 из 36", report)
+        self.assertIn("не доказательство", report)
+        self.assertIn("## Сплит статьи", report)
+        self.assertIn("63", report)
+        self.assertIn("67", report)
+        self.assertIn("таблица сопоставимости", report)
+        self.assertIn("2022 исключён", report)
+        self.assertIn("## Текущий nowcast", report)
+        self.assertIn("Текущий nowcast не рассчитан", report)
+
+    def test_2022_row_is_a_separate_metric(self):
+        rows, _ = build_world(synthetic_world())
+        run = self.full_run()
+        report = cm.render_report(
+            rows, [], [run], today=date(2026, 10, 18)
+        )
+        # 36 тестовых месяцев 2021-01…2023-12, из них 2022 — 12: в строке 24.
+        self.assertIn(
+            "| B1 last value (2022 исключён) | start=24 (основное) | 24 |",
+            report,
+        )
+
+
+class TestRunSummaryTask4(unittest.TestCase):
+    """Ветки артефактов: нет цели → stale JSON удалён; нет прогнозов → все три."""
+
+    def test_no_predictions_clears_all(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            for name in cm.ARTIFACT_NAMES:
+                (directory / name).write_text("old", encoding="utf-8")
+            output = io.StringIO()
+            with unittest.mock.patch.object(cm, "ARTIFACTS_DIR", directory), \
+                    unittest.mock.patch.object(cm, "load_targets", return_value={}), \
+                    unittest.mock.patch.object(cm, "load_survey", return_value={}), \
+                    unittest.mock.patch.object(cm, "load_usd", return_value=[]), \
+                    unittest.mock.patch.object(cm, "load_key_rate", return_value=[]), \
+                    unittest.mock.patch.object(cm, "load_fao", return_value=[]), \
+                    contextlib.redirect_stdout(output):
+                code = cm.main([])
+            self.assertEqual(code, 0)
+            self.assertIn("не пишутся", output.getvalue())
+            for name in cm.ARTIFACT_NAMES:
+                self.assertFalse((directory / name).exists(), name)
+
+    def test_stale_forecast_removed_without_target(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            (directory / cm.FORECAST_NAME).write_text("{}", encoding="utf-8")
+            output = io.StringIO()
+            with unittest.mock.patch.object(cm, "ARTIFACTS_DIR", directory), \
+                    unittest.mock.patch.object(
+                        cm,
+                        "current_nowcast",
+                        return_value=(None, "нет цели (тест)"),
+                    ), \
+                    fixture_transport(), contextlib.redirect_stdout(output):
+                code = cm.main(["--start", "3"])
+            self.assertEqual(code, 0)
+            report_path = directory / cm.REPORT_NAME
+            predictions_path = directory / cm.PREDICTIONS_NAME
+            self.assertTrue(report_path.exists())
+            self.assertTrue(predictions_path.exists())
+            self.assertFalse((directory / cm.FORECAST_NAME).exists())
+            self.assertIn(
+                "Текущий nowcast не рассчитан: нет цели (тест)",
+                report_path.read_text(encoding="utf-8"),
+            )
 
 
 if __name__ == "__main__":
