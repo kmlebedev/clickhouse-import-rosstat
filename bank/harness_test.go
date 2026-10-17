@@ -23,24 +23,34 @@ type appendedRow struct {
 // вместо записи в ClickHouse. Append намеренно консервативен по вводу: импортёры пишут значение
 // то как float64, то как float32 (legacy-колонки пакета), то как строку (значение ячейки xlsx),
 // а формы бывают (date, value), (name, date, value) и широкая строка company_financials
-// (companyRow). Незнакомая форма или тип — не паника, а ошибка, которую Append возвращает и
-// запоминает в err: импортёр, пробрасывающий ошибку Append, донесёт её до теста сам, а если он
-// её проигнорирует, тест увидит err сам. Send, Flush и Abort — явные no-op: встроенный
-// driver.Batch — nil-интерфейс, и вызов любого его метода паниковал бы.
+// (companyRow), которую объявляет newCompanyRecorder. Незнакомая форма или тип — не паника, а
+// ошибка, которую Append возвращает и запоминает в err: импортёр, пробрасывающий ошибку Append,
+// донесёт её до теста сам, а если он её проигнорирует, тест увидит err сам. Send, Flush и Abort —
+// явные no-op: встроенный driver.Batch — nil-интерфейс, и вызов любого его метода паниковал бы.
 type appendRecorder struct {
 	driver.Batch
-	cols      []string // ожидаемые колонки в порядке DDL; пусто — форма не объявлена
-	rows      []appendedRow
-	company   []companyRow // строки company_financials: у них своя широкая форма (companyRow)
-	err       error        // первая ошибка формы/типа: сообщает тест, паники нет
-	appendErr error        // заданная ошибка Append: возвращается до нормализации, строка не пишется
+	cols        []string // ожидаемые колонки в порядке DDL; пусто — форма не объявлена
+	rows        []appendedRow
+	company     []companyRow // строки company_financials: у них своя широкая форма (companyRow)
+	companyForm bool         // форма объявлена как company_financials, а не угадана по длине строки
+	err         error        // первая ошибка формы/типа: сообщает тест, паники нет
+	appendErr   error        // заданная ошибка Append: возвращается до нормализации, строка не пишется
 }
 
 // newAppendRecorder — приёмник для тестовых разборов. cols — ожидаемые колонки в порядке DDL
-// (можно не объявлять: тогда принимаются формы (date, value), (name, date, value) и
-// company_financials).
+// (можно не объявлять: тогда принимаются формы (date, value) и (name, date, value); широкая
+// форма company_financials объявляется отдельно — newCompanyRecorder).
 func newAppendRecorder(cols ...string) *appendRecorder {
 	return &appendRecorder{cols: cols}
+}
+
+// newCompanyRecorder — приёмник широкой формы company_financials (десять колонок DDL). Форма
+// объявляется явно, а не угадывается по длине строки: иначе строка любой широкой таблицы пакета
+// с тем же числом колонок молча стала бы строкой company_financials (спека §2.4).
+func newCompanyRecorder(cols ...string) *appendRecorder {
+	rec := newAppendRecorder(cols...)
+	rec.companyForm = true
+	return rec
 }
 
 func (r *appendRecorder) Send() error  { return nil }
@@ -64,7 +74,11 @@ func (r *appendRecorder) normalize(v []any) error {
 	if len(r.cols) > 0 && len(v) != len(r.cols) {
 		return fmt.Errorf("строка из %d значений, а объявлена схема из %d (%v)", len(v), len(r.cols), r.cols)
 	}
-	if len(v) == len(companyFinancialsColumnNames) {
+	if r.companyForm {
+		if len(v) != len(companyFinancialsColumnNames) {
+			return fmt.Errorf("строка company_financials из %d значений, а форма объявлена на %d колонок (%v)",
+				len(v), len(companyFinancialsColumnNames), companyFinancialsColumnNames)
+		}
 		row, err := companyRowFrom(v)
 		if err != nil {
 			return err
@@ -82,8 +96,8 @@ func (r *appendRecorder) normalize(v []any) error {
 		}
 		row.name, v = name, v[1:]
 	default:
-		return fmt.Errorf("незнакомая форма строки: %d значений (ожидается (date, value), (name, date, value) или строка company_financials из %d)",
-			len(v), len(companyFinancialsColumnNames))
+		return fmt.Errorf("незнакомая форма строки: %d значений (ожидается (date, value), (name, date, value); широкая форма company_financials объявляется newCompanyRecorder)",
+			len(v))
 	}
 	date, ok := v[0].(time.Time)
 	if !ok {
@@ -125,9 +139,9 @@ func recorderFloat(v any) (float64, error) {
 	}
 }
 
-// companyFinancialsColumnNames — колонки company_financials в порядке DDL: их число — признак
-// широкой формы строки в normalize, а имена называет ошибка companyRowFrom. Число и список
-// держатся в одном месте: разойдясь, они проверяли бы не ту форму и молча.
+// companyFinancialsColumnNames — колонки company_financials в порядке DDL: их число — длина
+// широкой формы, которую объявляет newCompanyRecorder, а имена называет ошибка companyRowFrom.
+// Число и список держатся в одном месте: разойдясь, они проверяли бы не ту форму и молча.
 var companyFinancialsColumnNames = []string{
 	"company", "metric", "period", "period_type", "source_kind",
 	"value", "unit", "source_url", "source_page", "loaded_at",
@@ -191,6 +205,37 @@ func companyRowFrom(v []any) (companyRow, error) {
 	}
 	row.loadedAt = loadedAt
 	return row, nil
+}
+
+// Широкая форма company_financials объявляется явно — newCompanyRecorder: длина строки не признак
+// формы. Рекордер с теми же десятью колонками, но без company-формы, обязан отвергнуть
+// 10-значную строку как незнакомую: эвристика len(v)==10 молча принимала бы за строку
+// company_financials любую широкую таблицу пакета с десятью колонками (спека §2.4).
+func TestAppendRecorderCompanyFormExplicit(t *testing.T) {
+	row := []any{
+		"SBER", "total_assets", "2026M06", "M", "ras",
+		float64(65355.1), "млрд ₽", "https://example.test/sber.xlsx", uint16(0),
+		time.Date(2026, time.October, 17, 12, 0, 0, 0, time.UTC),
+	}
+
+	plain := newAppendRecorder(companyFinancialsColumnNames...)
+	if err := plain.Append(row...); err == nil {
+		t.Fatalf("рекордер без company-формы принял 10 значений за строку company_financials: %+v", plain.company)
+	}
+	if len(plain.company) != 0 {
+		t.Fatalf("рекордер без company-формы записал %d company-строк, want 0", len(plain.company))
+	}
+
+	rec := newCompanyRecorder(companyFinancialsColumnNames...)
+	if err := rec.Append(row...); err != nil {
+		t.Fatalf("company-рекордер отверг строку company_financials: %v", err)
+	}
+	if len(rec.company) != 1 {
+		t.Fatalf("company-рекордер записал %d company-строк, want 1", len(rec.company))
+	}
+	if got := rec.company[0]; got.company != "SBER" || got.metric != "total_assets" || got.period != "2026M06" {
+		t.Errorf("company-строка разобрана как %+v, want SBER/total_assets/2026M06", got)
+	}
 }
 
 func TestAppendRecorderBatchMethodsDoNotPanic(t *testing.T) {
