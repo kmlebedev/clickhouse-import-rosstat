@@ -389,8 +389,10 @@ func mpLLMCorpus(doc mpSummaryDoc) string {
 // mpLLMJSONBody вырезает первый JSON-объект из content ответа модели: модель может обрамить
 // его ```-блоком, сопроводить фразой или повторить объект, и терять из-за этого разметку
 // целого документа не нужно. Берём первое JSON-значение, начиная с первой «{» (json.Decoder),
-// а хвост/повтор игнорируем. ok = false, если объекта нет или он обрезан: это ошибка формата,
-// а не «разметки нет» — пустой ответ не должен выглядеть успешным вызовом.
+// а хвост/повтор игнорируем. Ограничение: если в преамбуле раньше объекта встретится «{»,
+// Decode первого значения упадёт и вернёт false — повтор один, и это осознанный компромисс.
+// ok = false, если объекта нет или он обрезан: это ошибка формата, а не «разметки нет» —
+// пустой ответ не должен выглядеть успешным вызовом.
 func mpLLMJSONBody(content string) (string, bool) {
 	s := strings.TrimSpace(content)
 	start := strings.Index(s, "{")
@@ -616,8 +618,10 @@ func mpLLMOpenAIURL(baseURL string) string {
 // system/user-промпт, temperature 0, response_format=json_object, max_tokens из mpLLMMaxTokens.
 // Ошибки классифицируются как в Anthropic-пути: отказ провайдера/транспорт — без повтора,
 // неполное или неразобранное тело, конверт без choices/content и content без JSON — формат
-// (mpLLMFormatError, один повтор в mpLLMAsk). Ключ уходит заголовком Authorization: Bearer и
-// в текст ошибки не попадает: тело отказа режется util.ErrorSnippet, как у Anthropic-пути.
+// (mpLLMFormatError, один повтор в mpLLMAsk). Исключение — finish_reason=length: обрезанный
+// или пустой content не повторяется (тот же max_tokens даст тот же обрез), такая ошибка уходит
+// вызывающему сразу. Ключ уходит заголовком Authorization: Bearer и в текст ошибки не попадает:
+// тело отказа режется util.ErrorSnippet, как у Anthropic-пути.
 func mpLLMAskOnceOpenAI(doc mpSummaryDoc, baseURL, apiKey, model string) (mpLLMPayload, mpLLMUsage, error) {
 	request := mpLLMOpenAIRequest{
 		Model: model,

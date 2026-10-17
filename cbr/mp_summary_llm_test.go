@@ -1377,3 +1377,39 @@ func TestTagMPChannelsLLMOpenAITruncated(t *testing.T) {
 		t.Errorf("Attempts = %d, ожидалась 1", stats.Attempts)
 	}
 }
+
+// TestTagMPChannelsLLMOpenAITruncatedEmpty — пустой content при finish_reason=length тоже
+// не повторяется: это тот же обрез по max_tokens, а не ошибка формата.
+func TestTagMPChannelsLLMOpenAITruncatedEmpty(t *testing.T) {
+	doc := mpLLMFixtureDoc(t)
+	var (
+		mu    sync.Mutex
+		calls int
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"length","message":{"content":""}}],"usage":{"prompt_tokens":100,"completion_tokens":8192}}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	old := mpLLMTransport
+	mpLLMTransport = "openai"
+	t.Cleanup(func() { mpLLMTransport = old })
+
+	_, stats, err := tagMPChannelsLLM(doc, mpLLMProfile{BaseURL: srv.URL, APIKey: "test-key", Model: "test-model"})
+	if err == nil {
+		t.Fatal("пустой content при finish_reason=length не вернул ошибку")
+	}
+	mu.Lock()
+	got := calls
+	mu.Unlock()
+	if got != 1 {
+		t.Errorf("запросов %d, ожидался 1: пустой content при length не повторяется", got)
+	}
+	if stats.Attempts != 1 {
+		t.Errorf("Attempts = %d, ожидалась 1", stats.Attempts)
+	}
+}
