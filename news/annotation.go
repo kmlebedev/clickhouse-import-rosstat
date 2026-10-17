@@ -84,8 +84,10 @@ type newsAnnotationRow struct {
 //   - sentiment clamp в [-1, 1], relevance — в [0, 1], summary trim и обрезка до 300 рун.
 //   - tag-строка требует пару (dimension, tag) из реестра, направление из четвёрки
 //     proinflationary|disinflationary|neutral|mixed и evidence — дословную подстроку
-//     нормализованного текста сообщения. У не-cb_channel направленные значения приводятся
-//     к neutral: знак задаёт канал ставки, а не персона или сектор.
+//     нормализованного текста сообщения. У cb_channel направление всегда берётся из реестра
+//     (статический знак канала; расхождение с ответом модели — warn), у остальных измерений
+//     proinflationary/disinflationary приводятся к neutral: знак задаёт канал ставки, а не
+//     персона или сектор.
 //   - дубли (dimension, tag) схлопываются (остаётся большая confidence), тегов не больше
 //     пяти — сортировка по confidence desc с детерминированным tie-break.
 //
@@ -154,8 +156,15 @@ func validateNewsAnnotationTags(it newsItem, tags []newsAnnotationTag, model str
 				dimension, slug, tag.Direction)
 			continue
 		}
-		if registered.Dimension != newsDimCBChannel &&
-			direction != newsDirectionNeutral && direction != newsDirectionMixed {
+		if registered.Dimension == newsDimCBChannel {
+			// Реестр — источник истины о знаке канала: модель вправе ошибиться в
+			// направлении, но тег не отбрасывается, а принимает статический знак.
+			if direction != registered.Direction {
+				log.Warnf("news_watch: тег %s:%s: направление %q не совпадает со знаком реестра %q, принят реестровый",
+					dimension, slug, direction, registered.Direction)
+			}
+			direction = registered.Direction
+		} else if direction != newsDirectionNeutral && direction != newsDirectionMixed {
 			log.Warnf("news_watch: тег %s:%s: направление %q допустимо только у cb_channel, приведено к %s",
 				dimension, slug, direction, newsDirectionNeutral)
 			direction = newsDirectionNeutral
