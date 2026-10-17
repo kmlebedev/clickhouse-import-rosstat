@@ -79,11 +79,12 @@ Env harness:
 | `MP_LLM_EVAL_MAX_TOKENS` | `max_tokens`; по умолчанию 8192; подменяет `mpLLMMaxTokens` только в harness. |
 | `MP_LLM_EVAL_DELAY` | Пауза между вызовами; по умолчанию `1s` (rate limit). |
 | `MP_LLM_EVAL_TRANSPORT` | `anthropic` (продовый SDK, по умолчанию) или `openai` (OpenAI-совместимый `POST <base>/v1/chat/completions` с `response_format=json_object`). Второй нужен GLM/MiMo: на Anthropic-эндпоинте они тратят `max_tokens` на reasoning в text-блоке и не доходят до JSON. В отчёте транспорт каждой модели указан явно. |
+| `MP_LLM_EVAL_REASONING` | OpenAI-совместимый `reasoning_effort` (`none\|low\|medium\|high`, пусто — поле не отправляется). GLM с `none` перестаёт писать длинный анализ в `content` и доходит до JSON; для MiMo не требуется (у него reasoning вынесен в отдельное поле и не мешает). |
 | `MP_LLM_EVAL_PREFILL` | `0\|1` (по умолчанию 0): последнее сообщение ассистента «{» — запасная совместимость Anthropic-транспорта; в финальном прогоне не используется, если работает `openai`. |
 | `MP_LLM_EVAL_THINKING` | `default\|disabled` (по умолчанию `default`): Anthropic-поле `thinking`; `disabled` — запасная совместимость, в финальном прогоне не используется. |
 | `<PROFILE>_LLM_PRICE_IN`, `<PROFILE>_LLM_PRICE_OUT` | Цена за 1М токенов, USD (необязательно; без них цена в отчёте «н/д»). |
 
-Проверка 2026-10-17: GLM на Anthropic-эндпоинте вернул 49 КБ reasoning в text-блоке с `stop_reason=max_tokens` (JSON не начат), MiMo — ответ без text-блока/обрезанный JSON; их OpenAI-эндпоинты с `response_format=json_object` отвечают валидным JSON за секунды. Поэтому GLM и MiMo размечиваются через `openai`, baseline `deepseek-chat` — через продовый `anthropic`; это единственное отличие условий, и оно фиксируется в отчёте.
+Проверка 2026-10-17: GLM на Anthropic-эндпоинте вернул 49 КБ reasoning в text-блоке с `stop_reason=max_tokens` (JSON не начат), MiMo — ответ без text-блока/обрезанный JSON; их OpenAI-эндпоинты с `response_format=json_object` отвечают валидным JSON, а GLM с `reasoning_effort=none` перестаёт писать анализ. Поэтому GLM и MiMo размечиваются через `openai` (GLM — с `reasoning_effort=none`), baseline `deepseek-chat` — через продовый `anthropic`; это единственное отличие условий, и оно фиксируется в отчёте.
 
 Логика теста:
 

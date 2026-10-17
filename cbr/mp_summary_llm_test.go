@@ -1237,7 +1237,12 @@ func TestTagMPChannelsLLMOpenAITransport(t *testing.T) {
 
 	old := mpLLMTransport
 	mpLLMTransport = "openai"
-	t.Cleanup(func() { mpLLMTransport = old })
+	oldEffort := mpLLMReasoningEffort
+	mpLLMReasoningEffort = "none"
+	t.Cleanup(func() {
+		mpLLMTransport = old
+		mpLLMReasoningEffort = oldEffort
+	})
 
 	matches, stats, err := tagMPChannelsLLM(doc, mpLLMProfile{BaseURL: srv.URL, APIKey: "test-key", Model: "test-model"})
 	if err != nil {
@@ -1254,6 +1259,9 @@ func TestTagMPChannelsLLMOpenAITransport(t *testing.T) {
 	}
 	if !strings.Contains(gotBody, `"response_format":{"type":"json_object"}`) {
 		t.Errorf("в запросе нет response_format=json_object: %s", gotBody)
+	}
+	if !strings.Contains(gotBody, `"reasoning_effort":"none"`) {
+		t.Errorf("в запросе нет reasoning_effort=none: %s", gotBody)
 	}
 	if !strings.Contains(gotBody, `"model":"test-model"`) {
 		t.Errorf("в запросе нет модели: %s", gotBody)
@@ -1285,5 +1293,41 @@ func TestTagMPChannelsLLMOpenAIHTTPError(t *testing.T) {
 	}
 	if stats.Usage != (mpLLMUsage{}) {
 		t.Errorf("Usage = %+v, ожидался нулевой", stats.Usage)
+	}
+}
+
+// TestTagMPChannelsLLMOpenAITruncated — finish_reason=length не повторяется: тот же
+// max_tokens даст тот же обрез, поэтому вызов один, а ошибка уходит вызывающему.
+func TestTagMPChannelsLLMOpenAITruncated(t *testing.T) {
+	doc := mpLLMFixtureDoc(t)
+	var (
+		mu    sync.Mutex
+		calls int
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"length","message":{"content":"{\"channels\":[{\"slug\":\"current_inflation\""}}],"usage":{"prompt_tokens":100,"completion_tokens":8192}}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	old := mpLLMTransport
+	mpLLMTransport = "openai"
+	t.Cleanup(func() { mpLLMTransport = old })
+
+	_, stats, err := tagMPChannelsLLM(doc, mpLLMProfile{BaseURL: srv.URL, APIKey: "test-key", Model: "test-model"})
+	if err == nil {
+		t.Fatal("обрезанный ответ не вернул ошибку")
+	}
+	mu.Lock()
+	got := calls
+	mu.Unlock()
+	if got != 1 {
+		t.Errorf("запросов %d, ожидался 1: finish_reason=length не повторяется", got)
+	}
+	if stats.Attempts != 1 {
+		t.Errorf("Attempts = %d, ожидалась 1", stats.Attempts)
 	}
 }

@@ -168,7 +168,7 @@
   - `DELAY` между вызовами;
   - агрегаты: mean/p50/p95, Jaccard с baseline (`deepseek-chat`) и regex, покрытие, цена по `<PROFILE>_LLM_PRICE_*`; `summary.csv` + `report.md` + `notes-sample.md` (3 даты × 11 каналов);
   - ошибки вызовов — в stats, прогон продолжается; инфраструктура — fail;
-  - транспорт: `MP_LLM_EVAL_TRANSPORT=anthropic|openai`; `openai` — JSON-режим `/chat/completions` для GLM/MiMo (на Anthropic-эндпоинте они уходят в reasoning); `MP_LLM_EVAL_PREFILL` и `MP_LLM_EVAL_THINKING` — запасные совместимости Anthropic-транспорта.
+  - транспорт: `MP_LLM_EVAL_TRANSPORT=anthropic|openai`; `openai` — JSON-режим `/chat/completions` для GLM/MiMo (на Anthropic-эндпоинте они уходят в reasoning); `MP_LLM_EVAL_REASONING=none` для GLM снимает длинный анализ в `content` (MiMo не требует); `MP_LLM_EVAL_PREFILL` и `MP_LLM_EVAL_THINKING` — запасные совместимости Anthropic-транспорта.
 
 - [ ] **Step 2: Прогнать — компиляция и SKIP**: `go test -tags mpeval ./cbr -run TestMPLLMEvalLive -count=1` без `MP_LLM_EVAL` → `SKIP`.
 
@@ -217,11 +217,13 @@ MIMO_LLM_MODEL=mimo-v2.6-flash
 
 - [ ] **Step 1: `make all`** — зелёный.
 - [ ] **Step 2: Smoke** (2 вызова, отдельные каталоги):
-  - `make mp-llm-eval MP_LLM_EVAL=1 MP_SUMMARY_LLM_MODELS=glm MP_LLM_EVAL_DOCS=2026-09-11 MP_LLM_EVAL_FORCE=1 MP_LLM_EVAL_WRITE=0 MP_LLM_EVAL_TRANSPORT=openai MP_LLM_EVAL_MAX_TOKENS=4096 MP_LLM_EVAL_TIMEOUT=600s MP_LLM_EVAL_OUT=$(pwd)/build/mp-llm-eval-smoke-glm`
-  - то же для `mimo`.
-  - Anthropic-эндпоинт GLM/MiMo: reasoning в text-блоке, `stop_reason=max_tokens`, JSON не начинается; OpenAI-режим с `response_format=json_object` — рабочий путь (проверено 2026-10-17). 404/400 → зафиксировать base/path; обрезка JSON → увеличить `MP_LLM_EVAL_MAX_TOKENS` (MiMo до 32768; у GLM предел модели 8192).
+  - GLM: `make mp-llm-eval MP_LLM_EVAL=1 MP_SUMMARY_LLM_MODELS=glm MP_LLM_EVAL_DOCS=2026-09-11 MP_LLM_EVAL_FORCE=1 MP_LLM_EVAL_WRITE=0 MP_LLM_EVAL_TRANSPORT=openai MP_LLM_EVAL_REASONING=none MP_LLM_EVAL_MAX_TOKENS=8192 MP_LLM_EVAL_TIMEOUT=600s MP_LLM_EVAL_OUT=$(pwd)/build/mp-llm-eval-smoke-glm`
+  - MiMo: то же с `MP_SUMMARY_LLM_MODELS=mimo`, `MP_LLM_EVAL_MAX_TOKENS=16384`, без `MP_LLM_EVAL_REASONING`.
+  - Anthropic-эндпоинт GLM/MiMo: reasoning в text-блоке, `stop_reason=max_tokens`, JSON не начинается; OpenAI-режим с `response_format=json_object` — рабочий путь, GLM дополнительно требует `reasoning_effort=none` (проверено 2026-10-17). 404/400 → зафиксировать base/path; обрезка JSON → увеличить `MP_LLM_EVAL_MAX_TOKENS` (MiMo до 32768; у GLM предел модели 8192).
 - [ ] **Step 3: Baseline dry-run** (22 вызова, без записи, продовый Anthropic-транспорт): `make mp-llm-eval MP_LLM_EVAL=1 MP_SUMMARY_LLM_MODELS=default MP_LLM_EVAL_FORCE=1 MP_LLM_EVAL_WRITE=0 MP_LLM_EVAL_OUT=$(pwd)/build/mp-llm-eval`.
-- [ ] **Step 4: Новые модели** (44 вызова, с записью, OpenAI JSON-режим): `make mp-llm-eval MP_LLM_EVAL=1 MP_SUMMARY_LLM_MODELS=glm,mimo MP_LLM_EVAL_WRITE=1 MP_LLM_EVAL_RESUME=1 MP_LLM_EVAL_TRANSPORT=openai MP_LLM_EVAL_MAX_TOKENS=4096 MP_LLM_EVAL_TIMEOUT=600s MP_LLM_EVAL_OUT=$(pwd)/build/mp-llm-eval`.
+- [ ] **Step 4: Новые модели** (44 вызова, с записью, OpenAI JSON-режим; общий каталог `build/mp-llm-eval`, `RESUME=1`):
+  - GLM: `make mp-llm-eval MP_LLM_EVAL=1 MP_SUMMARY_LLM_MODELS=glm MP_LLM_EVAL_WRITE=1 MP_LLM_EVAL_RESUME=1 MP_LLM_EVAL_TRANSPORT=openai MP_LLM_EVAL_REASONING=none MP_LLM_EVAL_MAX_TOKENS=8192 MP_LLM_EVAL_TIMEOUT=600s MP_LLM_EVAL_OUT=$(pwd)/build/mp-llm-eval GLM_LLM_PRICE_IN=0.0076 GLM_LLM_PRICE_OUT=0.023 DEFAULT_LLM_PRICE_IN=0.15 DEFAULT_LLM_PRICE_OUT=0.60`
+  - MiMo: `make mp-llm-eval MP_LLM_EVAL=1 MP_SUMMARY_LLM_MODELS=mimo MP_LLM_EVAL_WRITE=1 MP_LLM_EVAL_RESUME=1 MP_LLM_EVAL_TRANSPORT=openai MP_LLM_EVAL_MAX_TOKENS=16384 MP_LLM_EVAL_TIMEOUT=600s MP_LLM_EVAL_OUT=$(pwd)/build/mp-llm-eval MIMO_LLM_PRICE_IN=0.14 MIMO_LLM_PRICE_OUT=0.28 DEFAULT_LLM_PRICE_IN=0.15 DEFAULT_LLM_PRICE_OUT=0.60`.
 - [ ] **Step 5: Импортёр no-op**: `make import STAT=cbr_mp_summary MP_SUMMARY_LLM_MODELS=default,glm,mimo` → «no-op, все 22 резюме на месте».
 - [ ] **Step 6: Тарифы** — DeepSeek `deepseek-flash` (off-peak $0.15 input / $0.60 output за 1M; `deepseek-chat` в прайсе не указан — legacy-алиас, оценка по Flash), GLM через Joingonka ($0.0076/$0.023), MiMo `mimo-v2.6-flash` ($0.14/$0.28; cache hit $0.0028). Дата/источник — в отчёте; чего нет — «н/д».
 - [ ] **Step 7: Отчёт** `docs/research/2026-10-17-mp-summary-llm-comparison.md` по §3.5 спеки; сырые артефакты — `build/mp-llm-eval/`.

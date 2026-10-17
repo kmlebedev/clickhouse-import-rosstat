@@ -80,6 +80,12 @@ var mpLLMThinkingDisabled bool
 // JSON, а их OpenAI-эндпоинты поддерживают JSON-режим. Прод-путь по умолчанию не меняется.
 var mpLLMTransport = "anthropic"
 
+// mpLLMReasoningEffort — OpenAI-совместимое поле reasoning_effort (none|low|medium|high),
+// только harness: GLM по умолчанию уходит в длинный анализ и тратит весь max_tokens до JSON;
+// "none" отключает reasoning (проверено на гейтвее Joingonka 2026-10-17). Пусто — поле не
+// отправляется, прод-путь его не использует.
+var mpLLMReasoningEffort string
+
 // mpLLMProfile — один профиль разметки: имя (default/glm/mimo) нужно только для конфигурации и
 // логов, а в данные пишется фактическое имя модели API (Model) — по нему импортёр отличает,
 // какой моделью размечен документ.
@@ -551,11 +557,12 @@ func mpLLMAskOnce(doc mpSummaryDoc, baseURL, apiKey, model string) (mpLLMPayload
 // транспорте не используются: JSON-режим сам по себе является совместимостью для моделей,
 // которые на Anthropic-эндпоинте уходят в reasoning.
 type mpLLMOpenAIRequest struct {
-	Model          string                    `json:"model"`
-	Messages       []mpLLMOpenAIMessage      `json:"messages"`
-	MaxTokens      int64                     `json:"max_tokens"`
-	Temperature    float64                   `json:"temperature"`
-	ResponseFormat mpLLMOpenAIResponseFormat `json:"response_format"`
+	Model           string                    `json:"model"`
+	Messages        []mpLLMOpenAIMessage      `json:"messages"`
+	MaxTokens       int64                     `json:"max_tokens"`
+	Temperature     float64                   `json:"temperature"`
+	ResponseFormat  mpLLMOpenAIResponseFormat `json:"response_format"`
+	ReasoningEffort string                    `json:"reasoning_effort,omitempty"`
 }
 
 type mpLLMOpenAIMessage struct {
@@ -608,9 +615,10 @@ func mpLLMAskOnceOpenAI(doc mpSummaryDoc, baseURL, apiKey, model string) (mpLLMP
 			{Role: "system", Content: mpLLMSystemPrompt()},
 			{Role: "user", Content: mpLLMUserPrompt(doc)},
 		},
-		MaxTokens:      mpLLMMaxTokens,
-		Temperature:    0,
-		ResponseFormat: mpLLMOpenAIResponseFormat{Type: "json_object"},
+		MaxTokens:       mpLLMMaxTokens,
+		Temperature:     0,
+		ResponseFormat:  mpLLMOpenAIResponseFormat{Type: "json_object"},
+		ReasoningEffort: mpLLMReasoningEffort,
 	}
 	body, err := json.Marshal(request)
 	if err != nil {
@@ -657,15 +665,25 @@ func mpLLMAskOnceOpenAI(doc mpSummaryDoc, baseURL, apiKey, model string) (mpLLMP
 	}
 	raw, ok := mpLLMJSONBody(content)
 	if !ok {
-		return mpLLMPayload{}, usage, mpLLMFormatError{fmt.Errorf(
+		err := fmt.Errorf(
 			"в content нет JSON-объекта (content: %d байт, finish_reason: %q, начало: %q)",
-			len(content), choice.FinishReason, mpLLMSnippet(content, 300))}
+			len(content), choice.FinishReason, mpLLMSnippet(content, 300))
+		// finish_reason=length — ответ обрезан по max_tokens: повтор с тем же лимитом
+		// ничего не изменит, поэтому это не ошибка формата и mpLLMAsk его не повторяет.
+		if choice.FinishReason == "length" {
+			return mpLLMPayload{}, usage, err
+		}
+		return mpLLMPayload{}, usage, mpLLMFormatError{err}
 	}
 	var payload mpLLMPayload
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-		return mpLLMPayload{}, usage, mpLLMFormatError{fmt.Errorf(
+		parseErr := fmt.Errorf(
 			"content не разобран: %w (finish_reason: %q, начало: %q)",
-			err, choice.FinishReason, mpLLMSnippet(content, 300))}
+			err, choice.FinishReason, mpLLMSnippet(content, 300))
+		if choice.FinishReason == "length" {
+			return mpLLMPayload{}, usage, parseErr
+		}
+		return mpLLMPayload{}, usage, mpLLMFormatError{parseErr}
 	}
 	return payload, usage, nil
 }

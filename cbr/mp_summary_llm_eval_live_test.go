@@ -51,6 +51,10 @@ const (
 	// (OpenAI-совместимый JSON-режим; нужен GLM/MiMo, которые на Anthropic-эндпоинте
 	// уходят в reasoning и не доходят до JSON).
 	mpEvalTransportEnv = "MP_LLM_EVAL_TRANSPORT"
+	// mpEvalReasoningEnv — OpenAI-совместимый reasoning_effort: none|low|medium|high; пусто —
+	// поле не отправляется. Для GLM none снимает длинный анализ, который съедает max_tokens
+	// до начала JSON (проверено на гейтвее Joingonka).
+	mpEvalReasoningEnv = "MP_LLM_EVAL_REASONING"
 
 	// mpEvalBaselineModel — модель, уже лежащая в ClickHouse: согласие с ней — одна из
 	// метрик качества (спека §3.5). Имя модели не секрет: оно же колонка model витрины.
@@ -125,6 +129,7 @@ type mpEvalReport struct {
 	Prefill    bool
 	Thinking   string
 	Transport  string
+	Reasoning  string
 	OutDir     string
 	Records    []mpEvalRecord
 	Models     []string
@@ -162,26 +167,31 @@ func TestMPLLMEvalLive(t *testing.T) {
 	prefill := mpEvalEnvBool(t, mpEvalPrefillEnv, false)
 	thinking := mpEvalEnvThinking(t)
 	transport := mpEvalEnvTransport(t)
+	reasoning := mpEvalEnvReasoning(t)
 	docsFilter, docsFilterRaw := mpEvalEnvDates(t)
 	prices := mpEvalProfilePrices(t, profiles)
 
-	// mpLLMTimeout/mpLLMMaxTokens/mpLLMPrefillJSON/mpLLMThinkingDisabled/mpLLMTransport —
-	// переменные, чтобы harness подменил лимиты и режим запроса только на этот прогон.
-	// Продовый дефолт возвращается в t.Cleanup: с -tags mpeval в том же процессе идут и
-	// обычные тесты пакета, которые пинят max_tokens=8192 и отсутствие thinking/prefill.
+	// mpLLMTimeout/mpLLMMaxTokens/mpLLMPrefillJSON/mpLLMThinkingDisabled/mpLLMTransport/
+	// mpLLMReasoningEffort — переменные, чтобы harness подменил лимиты и режим запроса только
+	// на этот прогон. Продовый дефолт возвращается в t.Cleanup: с -tags mpeval в том же
+	// процессе идут и обычные тесты пакета, которые пинят max_tokens=8192 и отсутствие
+	// thinking/prefill/reasoning в запросе.
 	oldTimeout, oldMaxTokens := mpLLMTimeout, mpLLMMaxTokens
 	oldPrefill, oldThinking, oldTransport := mpLLMPrefillJSON, mpLLMThinkingDisabled, mpLLMTransport
+	oldReasoning := mpLLMReasoningEffort
 	mpLLMTimeout = timeout
 	mpLLMMaxTokens = maxTokens
 	mpLLMPrefillJSON = prefill
 	mpLLMThinkingDisabled = thinking == "disabled"
 	mpLLMTransport = transport
+	mpLLMReasoningEffort = reasoning
 	t.Cleanup(func() {
 		mpLLMTimeout = oldTimeout
 		mpLLMMaxTokens = oldMaxTokens
 		mpLLMPrefillJSON = oldPrefill
 		mpLLMThinkingDisabled = oldThinking
 		mpLLMTransport = oldTransport
+		mpLLMReasoningEffort = oldReasoning
 	})
 
 	outDir := strings.TrimSpace(os.Getenv(mpEvalOutEnv))
@@ -260,8 +270,8 @@ func TestMPLLMEvalLive(t *testing.T) {
 			jobs = append(jobs, mpEvalJob{Doc: doc, Profile: profile})
 		}
 	}
-	t.Logf("harness: документов %d, профилей %d, вызовов %d (write=%t force=%t resume=%t prefill=%t thinking=%s transport=%s, timeout=%s, max_tokens=%d, delay=%s)",
-		len(docs), len(profiles), len(jobs), write, force, resume, prefill, thinking, transport, timeout, maxTokens, delay)
+	t.Logf("harness: документов %d, профилей %d, вызовов %d (write=%t force=%t resume=%t prefill=%t thinking=%s transport=%s reasoning=%s, timeout=%s, max_tokens=%d, delay=%s)",
+		len(docs), len(profiles), len(jobs), write, force, resume, prefill, thinking, transport, reasoning, timeout, maxTokens, delay)
 
 	for i, job := range jobs {
 		rec := mpEvalRunJob(t, ctx, conn, job, write)
@@ -324,6 +334,7 @@ func TestMPLLMEvalLive(t *testing.T) {
 		Prefill:    prefill,
 		Thinking:   thinking,
 		Transport:  transport,
+		Reasoning:  reasoning,
 		OutDir:     outDir,
 		Records:    records,
 		Models:     models,
@@ -662,7 +673,7 @@ func mpEvalWriteReport(t *testing.T, path string, rep mpEvalReport) {
 		len(rep.Docs), rep.Docs[0].DateKey, rep.Docs[len(rep.Docs)-1].DateKey, filter)
 	mpEvalWritef(&b, "- Записей в stats.jsonl: %d (скорость/цена — по всем записям, качество и summary.csv — по последней записи пары)\n", len(rep.Records))
 	mpEvalWritef(&b, "- timeout: %s, max_tokens: %d, delay: %s\n", rep.Timeout, rep.MaxTokens, rep.Delay)
-	mpEvalWritef(&b, "- write: %t, force: %t, resume: %t, prefill: %t, thinking: %s, transport: %s\n", rep.Write, rep.Force, rep.Resume, rep.Prefill, rep.Thinking, rep.Transport)
+	mpEvalWritef(&b, "- write: %t, force: %t, resume: %t, prefill: %t, thinking: %s, transport: %s, reasoning: %s\n", rep.Write, rep.Force, rep.Resume, rep.Prefill, rep.Thinking, rep.Transport, rep.Reasoning)
 	mpEvalWritef(&b, "- Артефакты: `%s` (`stats.jsonl`, `summary.csv`, `report.md`, `notes-sample.md`)\n", rep.OutDir)
 	mpEvalWritef(&b, "- Baseline для Jaccard: `%s`, prompt_version=%d\n\n", mpEvalBaselineModel, mpPromptVersion)
 
@@ -1035,6 +1046,19 @@ func mpEvalEnvTransport(t *testing.T) string {
 	default:
 		t.Fatalf("%s=%q: ожидается anthropic или openai", mpEvalTransportEnv, raw)
 		return "anthropic"
+	}
+}
+
+// mpEvalEnvReasoning — OpenAI reasoning_effort: пусто → поле не отправляется, иначе
+// none|low|medium|high. Влияет только на harness-транспорт openai.
+func mpEvalEnvReasoning(t *testing.T) string {
+	t.Helper()
+	switch raw := strings.ToLower(strings.TrimSpace(os.Getenv(mpEvalReasoningEnv))); raw {
+	case "", "none", "low", "medium", "high":
+		return raw
+	default:
+		t.Fatalf("%s=%q: ожидается none|low|medium|high", mpEvalReasoningEnv, raw)
+		return ""
 	}
 }
 
