@@ -1,10 +1,10 @@
 package bank
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	log "github.com/sirupsen/logrus"
 )
@@ -28,6 +28,12 @@ const (
 		) ENGINE = ReplacingMergeTree ORDER BY (name, date);
     `
 )
+
+// ctx — фон для вставок: импорт не привязан к запросу пользователя, а CrawFunc получает только conn
+// (идиом cbr/currency_usd.go, customs/vneshn_torg_countries.go). Живёт здесь после задачи 5: прежний
+// дом переменной (bank/sber_fin_rez.go) переведён на шаблонный путь ImportFunc, а эти два импортёра
+// остаются CrawFunc-случаями — CSV-разбора в шаблоне нет.
+var ctx = context.TODO()
 
 // SberCSI — месячный индекс реальных потребительских расходов СберИндекса (100 = декабрь 2018),
 // 5 категорий, дата точки — первое число месяца. Импортёр построен на шаблоне
@@ -88,19 +94,17 @@ func sberCSICraw(dataUrl string, conn driver.Conn) (count int64, err error) {
 	return count, nil
 }
 
-// sberCSIImporter — импортёр пакета; регистрируется init() ниже (реестр пакета — отдельная работа).
+// sberCSIImporter — импортёр пакета; регистрируется реестром пакета (bank/importers.go) —
+// единственной точкой append в chimport.Stats.
 var sberCSIImporter = &SberCSI{ClickHouseImport: util.ClickHouseImport{
 	TableName:   sberCSITable,
 	CreateTable: []string{sberCSIDdl},
 	DataUrl:     sberCSIDataUrl,
 	CrawFunc:    sberCSICraw,
-	// Производные (каталог рядов и витрина) публикует шаблон после Send точек (стандарт §5.2,
-	// §10.2). Точки контроля публикации у этого импортёра нет (спека §4.2) — версия файла не
-	// пишется, а no-op-пути, на котором производные могли бы остаться неопубликованными, не
-	// существует: каждый прогон идёт полным путём и пересоздаёт каталог с витриной после точек.
-	AfterImport: afterSberMacro(sberSeriesMeta),
+	// Производные (каталог рядов пакета и обе витрины) публикует шаблон после Send точек
+	// (стандарт §5.2, §10.2). Точки контроля публикации у этого импортёра нет (спека §4.2) —
+	// версия файла не пишется, а no-op-пути, на котором производные могли бы остаться
+	// неопубликованными, не существует: каждый прогон идёт полным путём и пересоздаёт каталог
+	// пакета с витринами после точек.
+	AfterImport: afterBankMacro(bankSeriesMeta),
 }}
-
-func init() {
-	chimport.Stats = append(chimport.Stats, sberCSIImporter)
-}

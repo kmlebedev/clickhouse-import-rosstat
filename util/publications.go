@@ -19,7 +19,7 @@ import (
 // версия артефакта источника. Механизм общий для источников, чьи файлы обновляются реже
 // прогонов, и включается полями шаблона util.ClickHouseImport (PublicationCountPoints /
 // PublicationSource); фактический список потребителей — ARCHITECTURE §8 п. 13
-// (двадцать один импортёр: пятнадцать в cbr/ и шесть вне него; у cbr_dip_bulletin
+// (двадцать три импортёра: пятнадцать в cbr/ и восемь вне него; у cbr_dip_bulletin
 // объявление включает архив версий выпусков, а no-op держит гейт по release_id — §8 п. 13).
 // Таблица внутренняя: агенту (kimi_reader) не выдаётся.
 const PublicationsTable = "source_publications"
