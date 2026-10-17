@@ -82,6 +82,8 @@ git commit -m "docs: add github tracker design and plan"
 
 После таблицы фазы 2 и до `## 5. Приёмка и риски`:
 
+Шаблон для вставки в `docs/ROADMAP_INFRA.md`; пути в ссылках относительны `docs/` — в плане это code block, а не кликабельные ссылки.
+
 ```markdown
 ## 4. Фаза 3 — Трекер пунктов и связи с GitHub
 
