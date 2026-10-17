@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS cbr_form101 (
     balance_total Float64,
     loaded_at DateTime DEFAULT now()
 ) ENGINE = ReplacingMergeTree(loaded_at)
-ORDER BY (report_date, regnum, account, active_passive);
+ORDER BY (report_date, regnum, account, active_passive, plan);
 ```
 
 - `report_date` — дата из имени файла (`2026-09-01`), не отчётный месяц.
