@@ -15,24 +15,53 @@ const newsEventsDdl = `CREATE TABLE IF NOT EXISTS news_events (
 			, description String               -- текст позиции из ленты: у smart-lab — полный текст поста
 			                                   -- (HTML после разбора XML-сущностей); у новостных лент — краткое
 			                                   -- описание позиции; '' — описания нет
+			, content_hash String              -- sha256 нормализованного title+description; ключ версии
+			                                   -- для LLM-разметки (generic по url+content_hash)
 			, sentiment Nullable(Float32)      -- -1..1, заполняет LLM-сессия
 		) ENGINE = ReplacingMergeTree ORDER BY (date, source, title);
 	`
 
-// newsAlterStatements — миграция живой пятиколоночной таблицы (схема до description): ADD COLUMN
-// IF NOT EXISTS идемпотентен, поэтому выполняется при каждом прогоне, а не «один раз». AFTER url —
-// позиция колонки как в DDL: иначе description уехал бы в конец таблицы, и копия разошлась бы с
-// каноном. Строки, записанные до миграции, получают пустой description: позиции, выпавшие из окна
-// ленты, задним числом не перечитываются (дефолт ADD COLUMN).
+// newsAlterStatements — миграция живой таблицы до колонок description и content_hash: ADD COLUMN
+// IF NOT EXISTS идемпотентен, поэтому выполняется при каждом прогоне, а не «один раз». AFTER url и
+// AFTER description — позиции колонок как в DDL: иначе они уехали бы в конец таблицы, и копия
+// разошлась бы с каноном. Порядок стейтментов важен: content_hash встаёт после description,
+// поэтому сначала должна появиться сама description. Строки, записанные до миграции, получают
+// пустые значения: позиции, выпавшие из окна ленты, задним числом не перечитываются (дефолт
+// ADD COLUMN).
 var newsAlterStatements = []string{
 	`ALTER TABLE ` + newsTable + ` ADD COLUMN IF NOT EXISTS description String AFTER url`,
+	`ALTER TABLE ` + newsTable + ` ADD COLUMN IF NOT EXISTS content_hash String AFTER description`,
 }
 
-// newsSchemaStatements — DDL прогона по порядку: CREATE, затем ALTER-ы (образец —
-// gostSchemaStatements, craw/gost.go). Возвращается срез, а не переменная: вызывающий не должен
-// получить возможность переставить стейтменты местами.
+// newsMessageVersionDdl — копия канонического DDL news_message_version из ARCHITECTURE.md §6.2
+// (спека §4.2, Task 2). Таблица — винтажный слой Telegram: каждая правка или удаление сообщения
+// оставляет строку, а ключ ReplacingMergeTree (channel, message_id, version) делает повторную
+// запись той же версии no-op. date — момент публикации и не меняется; first_seen — время прогона,
+// впервые увидевшего версию; у tombstone description/content_hash пустые, deleted = 1.
+const newsMessageVersionDdl = `CREATE TABLE IF NOT EXISTS news_message_version (
+			  channel LowCardinality(String)   -- interfaxonline
+			, message_id UInt64
+			, version UInt32                   -- 1..N; растёт при правке/удалении
+			, date DateTime                    -- момент публикации (не меняется)
+			, source LowCardinality(String)    -- interfax
+			, title String                     -- первая строка версии
+			, url String                       -- https://t.me/<channel>/<id>
+			, description String               -- полный текст версии; '' у tombstone
+			, content_hash String              -- sha256; '' у tombstone
+			, first_seen DateTime              -- когда версия впервые увидена
+			, deleted UInt8                    -- 1 — сообщение исчезло из окна канала
+		) ENGINE = ReplacingMergeTree ORDER BY (channel, message_id, version);
+	`
+
+// newsSchemaStatements — DDL прогона по порядку: CREATE news_events, ALTER-ы миграции (образец —
+// gostSchemaStatements, craw/gost.go), затем CREATE news_message_version. Схема выполняется до
+// чтения лент, поэтому версии и news_events готовы к записи в любом режиме. Возвращается срез, а
+// не переменная: вызывающий не должен получить возможность переставить стейтменты местами.
 func newsSchemaStatements() []string {
-	return append([]string{newsEventsDdl}, newsAlterStatements...)
+	stmts := make([]string, 0, 2+len(newsAlterStatements))
+	stmts = append(stmts, newsEventsDdl)
+	stmts = append(stmts, newsAlterStatements...)
+	return append(stmts, newsMessageVersionDdl)
 }
 
 // newsFilter — широкий фильтр тезисов (RE2, регистронезависимо): список из спеки §«Схема и
