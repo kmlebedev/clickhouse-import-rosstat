@@ -36,7 +36,7 @@ const (
 	sberRpbuCountPoints = "SELECT count() FROM sber_finansovie_rezultaty FINAL"
 )
 
-// Константы разбора книги (задача 5). Разведка живого файла 2026-10-17 (56 947 Б): четыре листа —
+// Константы разбора книги. Разведка живого файла 2026-10-17 (56 947 Б): четыре листа —
 // «Баланс», «Отчет о прибылях и убытках», «Капитал», «Показатели»; фикстура —
 // bank/testdata/sber_finansovie_rezultaty.xlsx (коммитится как есть, §11.2).
 const (
@@ -128,16 +128,18 @@ type sberFinHead struct {
 // РСБУ): четыре листа — четырьмя проходами. Разбор чистый (§6.1): на входе открытая книга, ни
 // сети, ни БД, поэтому тесты офлайн на живой фикстуре (§11.3); значения — сырые ячейки (§6.2);
 // текст ошибки называет таблицу и причину (§6.4). Прежний разбор читал только «Баланс» и
-// форматированные ячейки; листы отчёта о прибылях, капитала и показателей добавлены задачей 5 —
-// из их подписей собирается словарь метрик задачи 7 (net_profit, roe, roa, Н1.0/Н1.1/Н1.2).
-func parseSberFinBook(xlsx *excelize.File) (points []sberFinPoint, err error) {
+// форматированные ячейки; листы отчёта о прибылях, капитала и показателей добавлены в объём
+// импортёра — из их подписей собирается помесячный словарь метрик (§3.7: net_profit, roe, roa,
+// Н1.0/Н1.1/Н1.2).
+func parseSberFinBook(xlsx *excelize.File) ([]sberFinPoint, error) {
+	var points []sberFinPoint
 	for _, anchor := range []string{sberFinBalanceSheet, sberFinPnlSheet, sberFinCapitalSheet, sberFinRatiosSheet} {
-		part, err := parseSberFinSheet(xlsx, anchor)
-		if err != nil {
+		part, perr := parseSberFinSheet(xlsx, anchor)
+		if perr != nil {
 			// Имя таблицы добавляется здесь один раз: ветки parseSberFinSheet называют лист и
-			// строку, но не импортёра (контракт §6.4). Второй префикс в sberFinImportFunc дал бы
-			// дубль (урок ревью domrf_mortgage, задача 4).
-			return nil, fmt.Errorf("%s: %w", sberRpbuDataUrlTable, err)
+			// строку, но не импортёра (контракт §6.4). Второй префикс в sberFinImportFunc повторил
+			// бы имя таблицы в тексте ошибки.
+			return nil, fmt.Errorf("%s: %w", sberRpbuDataUrlTable, perr)
 		}
 		points = append(points, part...)
 	}
@@ -151,8 +153,8 @@ func parseSberFinBook(xlsx *excelize.File) (points []sberFinPoint, err error) {
 // Точками становятся только месячные значения: на листах P&L и показателей шапка несёт, кроме
 // месячных подписей, накопительные колонки («6М25»/«6М26») и колонки-годы («2023»–«2025») — они
 // агрегаты, и в ключ (name, date) не идут: накопительный итог за тот же месяц затёр бы месячное
-// значение, а помесячный словарь метрик (задача 7) читает именно месячные точки (решение задачи 3
-// по листу P&L ВТБ). По той же причине не идёт в точки и блок накопительных значений листа
+// значение, а помесячный словарь метрик (§3.7) читает именно месячные точки (та же конвенция,
+// что у листа P&L ВТБ). По той же причине не идёт в точки и блок накопительных значений листа
 // «Показатели»: его шапка (строка с подписями «1М23»…«6М26») переключает проход на блок без
 // колонок-дат, и строки под ней пропускаются — их значения считаются с начала года, а не за месяц
 // (строка 11 источника, «Стоимость кредитного риска…»; метрики словаря §3.7 в этом блоке нет).
@@ -357,20 +359,22 @@ func sberFinFloat(raw string) (float64, error) {
 
 // appendSberFinPoints пишет точки по одному Append на точку с проверкой ошибки (§5.3, §5.5): форма
 // строки — (name, date, balance) схемы таблицы, значение приводится к точности Float32-колонки
-// (legacy-схема, спека §4.5), ошибка возвращается вызывающему с именем точки.
+// (legacy-схема, спека §4.5), ошибка возвращается вызывающему с именем точки. Дата в ошибке —
+// в ISO-форме 2006-01-02: формат шапки 01-02-06 («06-30-26») читается неоднозначно, а дата —
+// часть контракта ошибки (§6.4).
 func appendSberFinPoints(batch driver.Batch, points []sberFinPoint) error {
 	for _, p := range points {
 		if err := batch.Append(p.Series, p.Date, float32(p.Value)); err != nil {
 			return fmt.Errorf("%s: запись точки %q за %s: %w",
-				sberRpbuDataUrlTable, p.Series, p.Date.Format(sberFinTimeLayout), err)
+				sberRpbuDataUrlTable, p.Series, p.Date.Format("2006-01-02"), err)
 		}
 	}
 	return nil
 }
 
 // sberFinImportFunc — ImportFunc шаблона: книга из памяти → точки → батч. Ошибку разбора не
-// оборачивает: parseSberFinBook уже называет таблицу, второй префикс дал бы дубль (урок ревью
-// domrf_mortgage).
+// оборачивает: parseSberFinBook уже называет таблицу, второй префикс повторил бы её имя в тексте
+// ошибки.
 func sberFinImportFunc(xlsx *excelize.File, batch driver.Batch) error {
 	points, err := parseSberFinBook(xlsx)
 	if err != nil {

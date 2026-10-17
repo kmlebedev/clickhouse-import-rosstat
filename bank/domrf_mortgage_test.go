@@ -14,7 +14,7 @@ import (
 )
 
 // Фикстуры — живые артефакты источника (стандарт §11.1): страница раздела аналитики ДОМ.РФ как
-// есть (127 710 Б, разведка 2026-10-16) и книга блока «Топ ипотечных банков» после хирургии zip
+// есть и книга блока «Топ ипотечных банков» после хирургии zip
 // (§11.2: оставлен лист-анкор с шапкой, строками банков, заметками и числовыми форматами).
 const (
 	domrfPageFixture = "domrf_mortgage_page.html"
@@ -125,24 +125,45 @@ func TestDomrfXlsSrcFromPage(t *testing.T) {
 // пустой src (стандарт §4.4, §6.4). Пустая ссылка ушла бы в GetXlsx(""), и вызывающий увидел
 // бы только ошибку разбора книги, в которой ни причины, ни источника.
 func TestDomrfXlsSrcFromPageNoBlock(t *testing.T) {
-	for name, page := range map[string][]byte{
-		"минимальная страница": []byte(`<html><body><main id="app"></main></body></html>`),
-		"пустое тело":          nil,
+	const blockPage = `<html><body><main id="app" data-props='{"props":{"title":"Топ ипотечных банков","file2":{"src":%s}}}'></main></body></html>`
+	for name, tc := range map[string]struct {
+		page []byte
+		want string
+	}{
+		"минимальная страница": {
+			page: []byte(`<html><body><main id="app"></main></body></html>`),
+			want: "Топ ипотечных банков",
+		},
+		"пустое тело": {
+			page: nil,
+			want: "Топ ипотечных банков",
+		},
+		"file2:null": {
+			page: []byte(fmt.Sprintf(blockPage, "null")),
+			want: "file2.src",
+		},
+		"пустой file2.src": {
+			page: []byte(fmt.Sprintf(blockPage, `""`)),
+			want: "file2.src",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := domrfXlsSrcFromPage(page)
+			_, err := domrfXlsSrcFromPage(tc.page)
 			if err == nil {
 				t.Fatal("ожидалась ошибка, а src найден")
 			}
-			if !strings.Contains(err.Error(), "Топ ипотечных банков") {
-				t.Errorf("ошибка %q не называет блок «Топ ипотечных банков»", err)
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("ошибка %q не называет %q", err, tc.want)
+			}
+			if strings.Contains(err.Error(), domrfMortgageTable) {
+				t.Errorf("ошибка страницы %q называет таблицу %q: префикс добавляет Import()", err, domrfMortgageTable)
 			}
 		})
 	}
 }
 
-// TestParseDomrfSheet — разбор листа «13 Ставки предложения» книги блока «Топ ипотечных банков»
-// (разведка 2026-10-16): шапка — строки 3 (продукты) и 5 («Ставка»/«∆»), строки 6–23 — банки,
+// TestParseDomrfSheet — разбор листа «13 Ставки предложения» книги блока «Топ ипотечных банков»:
+// шапка — строки 3 (продукты) и 5 («Ставка»/«∆»), строки 6–23 — банки,
 // 24 — средневзвешенная ставка по банкам (агрегат, не ряд), ниже — заметки. Ставка ряда —
 // колонка продукта «Новостройки» (первичный рынок: тот же продукт читал прежний разбор),
 // отчётная дата — из заголовка листа. Точек 15 из 18 строк блока: три ячейки без ставки
@@ -201,7 +222,7 @@ func TestParseDomrfSheetFailFast(t *testing.T) {
 		},
 		"нет шапки таблицы": {
 			mutate: func(t *testing.T, f *excelize.File) { domrfSetCell(t, f, "A3", "Банки") },
-			want:   "Банк",
+			want:   "не найдена шапка таблицы",
 		},
 		"нет отчётной даты в заголовке": {
 			mutate: func(t *testing.T, f *excelize.File) {
@@ -211,7 +232,7 @@ func TestParseDomrfSheetFailFast(t *testing.T) {
 		},
 		"нет подшапки ставки": {
 			mutate: func(t *testing.T, f *excelize.File) { domrfSetCell(t, f, "B5", "Предложение") },
-			want:   "Ставка",
+			want:   "не найдена подшапка",
 		},
 		"ставок нет ни у одного банка": {
 			mutate: func(t *testing.T, f *excelize.File) {
@@ -229,10 +250,11 @@ func TestParseDomrfSheetFailFast(t *testing.T) {
 			if err == nil {
 				t.Fatal("ожидалась ошибка, а разбор прошёл")
 			}
-			for _, want := range []string{"domrf_mortgage", tc.want} {
-				if !strings.Contains(err.Error(), want) {
-					t.Errorf("ошибка %q не называет %q", err, want)
-				}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("ошибка %q не называет %q", err, tc.want)
+			}
+			if got := strings.Count(err.Error(), domrfMortgageTable); got != 1 {
+				t.Errorf("имя таблицы %q встречается %d раз, want 1: %q", domrfMortgageTable, got, err)
 			}
 		})
 	}
@@ -283,5 +305,12 @@ func TestDomrfMortgageDdlShape(t *testing.T) {
 	if strings.Contains(domrfMortgageDdl, domrfMortgageTable) {
 		t.Errorf("domrfMortgageDdl содержит литерал имени таблицы %q — имя приходит подстановкой:\n%s",
 			domrfMortgageTable, domrfMortgageDdl)
+	}
+	rendered := fmt.Sprintf(domrfMortgageDdl, domrfMortgageTable)
+	if strings.Contains(rendered, "%!") {
+		t.Errorf("DDL не отрендерился:\n%s", rendered)
+	}
+	if got := strings.Count(rendered, domrfMortgageTable); got != 1 {
+		t.Errorf("имя таблицы в SQL %d раз, want 1:\n%s", got, rendered)
 	}
 }
