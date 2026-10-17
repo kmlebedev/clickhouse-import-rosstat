@@ -23,7 +23,7 @@ type cbrImporter struct {
 }
 
 // cbrImporters — единственная точка регистрации импортёров ЦБ: персональных
-// init()-append по файлам импортёров больше нет (20 записей в одном месте вместо
+// init()-append по файлам импортёров больше нет (21 запись в одном месте вместо
 // 13 прежних). Порядок повторяет dagu/cbr.yaml; в chimport.Stats порядок значения
 // не имеет.
 //
@@ -66,6 +66,12 @@ type cbrImporter struct {
 // но <id> файла меняется от выпуска к выпуску, спека §3.4). Следствие названо в спеке §3.6:
 // подмена файла под тем же release_date гейтом не отслеживается (лечение — удалить строки
 // выпуска и повторить прогон), а «выпуск пропал из таблицы» самолечится.
+//
+// У cbr_form101 объявление тоже есть, но Import() свой (RAR → DBF, прецедент cbr_dip_bulletin),
+// и no-op держит гейт по max(report_date): форма 101 выходит раз в месяц при ежедневном шаге,
+// а известность выпуска — его отчётная дата из имени файла 101-YYYYMMDD.rar. Шаблонный цикл
+// здесь не вызывается вовсе, поэтому объявление участвует только как points версии и как
+// предмет сверки с реестром (тест-энфорсер).
 var cbrImporters = []cbrImporter{
 	{cbrCurrencyUSDImporter, "cbr_currency_usd", ""},
 	{householdsBMesImporter, "cbr_households_b_mes", "SELECT count() FROM cbr_households_b_mes FINAL"},
@@ -87,6 +93,7 @@ var cbrImporters = []cbrImporter{
 	{cbrBopStandardImporter, "cbr_bop_standard", "SELECT count() FROM cbr_bop_standard FINAL"},
 	{cbrDipBulletinImporter, "cbr_dip_bulletin", "SELECT count() FROM cbr_dip_bulletin FINAL"},
 	{cbrMtForecastImporter, "cbr_mt_forecast", "SELECT count() FROM cbr_mt_forecast FINAL"},
+	{cbrForm101Importer, "cbr_form101", "SELECT count() FROM cbr_form101 FINAL"},
 }
 
 // init — единственная регистрация импортёров ЦБ в chimport.Stats. Порядок

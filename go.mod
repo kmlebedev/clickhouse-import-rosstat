@@ -10,6 +10,7 @@ require (
 	github.com/gocolly/colly/v2 v2.2.0
 	github.com/golang/glog v1.2.4
 	github.com/google/uuid v1.6.0
+	github.com/nwaples/rardecode/v2 v2.4.5
 	github.com/shakinm/xlsReader v0.9.12
 	github.com/sirupsen/logrus v1.9.3
 	github.com/xuri/excelize/v2 v2.11.0

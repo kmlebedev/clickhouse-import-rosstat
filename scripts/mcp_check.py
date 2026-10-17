@@ -1314,6 +1314,51 @@ async def check(params, server_log):
             failed += not expect("сырая cbr_mt_forecast закрыта", denied,
                                  "отказ ClickHouse 497 на cbr_mt_forecast (ожидаемо)" if denied else raw[:200])
 
+            # Сырые остатки формы 101 ЦБ (первый срез — Сбер, REGN=1481, пункт 4.2 №21;
+            # спека docs/superpowers/specs/2026-10-17-cbr-form101-design.md §6). Проверки —
+            # по витрине, а не по list_tables: имя читается запросом к самой витрине
+            # (урок bold-блока), вторая проверка пинит, что первый срез — именно строки
+            # Сбера за 2026-09-01, а не любая непустота (схема готова к другим regnum).
+            form101_view = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_cbr_form101"}))
+            form101_view_rows = result_rows(form101_view)
+            form101_view_n = form101_view_rows[0].get("n") if form101_view_rows else None
+            if form101_view_rows is None:
+                form101_view_detail = f"ответ не распознан: {form101_view[:200]}"
+            elif (form101_view_n or 0) > 0:
+                form101_view_detail = f"строк: {form101_view_n}"
+            else:
+                form101_view_detail = ("строк: 0 — прогнать импортёр: make import "
+                                       "STAT=cbr_form101 (витрину пересоздаёт прогон)")
+            failed += not expect("витрина v_cbr_form101 существует и непуста",
+                                 (form101_view_n or 0) > 0, form101_view_detail)
+
+            # Строки Сбера за отчётную дату первого среза: regnum=1481 и report_date
+            # '2026-09-01' (дата из имени файла 101-20260901.rar, а не месяц публикации).
+            # Ноль строк значит, что витрина наполнена другим банком или другой датой, —
+            # для приёмки пункта это провал, а не «данные есть».
+            form101_sber = text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n FROM v_cbr_form101 WHERE regnum = 1481 AND report_date = '2026-09-01'"}))
+            form101_sber_rows = result_rows(form101_sber)
+            form101_sber_n = form101_sber_rows[0].get("n") if form101_sber_rows else None
+            if form101_sber_rows is None:
+                form101_sber_detail = f"ответ не распознан: {form101_sber[:200]}"
+            elif (form101_sber_n or 0) > 0:
+                form101_sber_detail = f"строк Сбера за 2026-09-01: {form101_sber_n}"
+            else:
+                form101_sber_detail = ("строк Сбера за 2026-09-01: 0 — прогнать make import "
+                                       "STAT=cbr_form101 (первый срез — REGN=1481)")
+            failed += not expect("витрина v_cbr_form101 содержит строки Сбера за 2026-09-01",
+                                 (form101_sber_n or 0) > 0, form101_sber_detail)
+
+            # Сырая cbr_form101 агенту не выдана — как macro_series и cbr_dip_bulletin:
+            # витрина — единственное место, где агент читает остатки по счетам (комментарии
+            # таблицы и каждой колонки есть только у неё). Таблицу создаёт DDL-прогон
+            # импортёра, поэтому UNKNOWN_TABLE здесь — провал, а не успех.
+            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM cbr_form101"}))
+            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+            failed += not expect("сырая cbr_form101 закрыта", denied,
+                                 "отказ ClickHouse 497 на cbr_form101 (ожидаемо)" if denied else raw[:200])
+
     return failed
 
 
