@@ -24,6 +24,7 @@ const (
 	ipcWeeksBulletinsNewYear2021Fixture = "ipc_weeks_bulletins_2.htm"
 	ipcWeeksBulletinsWayback21Fixture   = "ipc_weeks_bulletins_19_wayback.htm"
 	ipcWeeksBulletinsWayback17Fixture   = "ipc_weeks_bulletins_100_2017_wayback.htm"
+	ipcWeeksBulletinsWayback09Fixture   = "ipc_weeks_bulletins_2009_04_06.htm"
 	ipcWeeksBulletinsStubFixture        = "ipc_weeks_bulletins_stub.htm"
 
 	// Фикстуры старого формата 2016–2017 (каталоги d06/d01 «Оперативной информации», разведка
@@ -241,6 +242,32 @@ func TestIpcWeeksBulletinsReadsOld2016To2017(t *testing.T) {
 	ipcWeeksBulletinsSpotValue(t, rows, "Плата за жилье в домах государственного и муниципального жилищных фондов, м2 общей площади", date)
 }
 
+// TestIpcWeeksBulletinsReadsOld2009 — разбор формата 2009 г., первого года недельного ряда: в
+// шапке детальной таблицы нет группового якоря «к предыдущей дате регистрации» — стоят сравнения
+// дат («6 апреля к 30 марта»), и недельная колонка определяется меткой последнего дня периода.
+// Проверяются: разбор без ошибки, агрегат 100,2, товарные значения 101,6 / 100,8 / 100,2 / 99,9
+// и extra-ряд «Говядина тушеная» (старого имени в XLSX 2022+ нет).
+func TestIpcWeeksBulletinsReadsOld2009(t *testing.T) {
+	date := time.Date(2009, time.April, 6, 0, 0, 0, 0, time.UTC)
+	rows := importIpcWeeksBulletinsFixture(t, ipcWeeksBulletinsWayback09Fixture, date)
+	if len(rows) != 11 {
+		t.Fatalf("точек %d, ожидалось 11 (агрегат + 10 товаров)", len(rows))
+	}
+	if got := ipcWeeksBulletinsSpotValue(t, rows, ipcWeeksBulletinsAggregateSeries, date); got != 100.2 {
+		t.Errorf("агрегат 2009-04-06: %v, ожидалось 100,2", got)
+	}
+	for series, want := range map[string]float64{
+		"Яйца куриные, 10 шт.":    101.6,
+		"Чай черный байховый, кг": 100.8,
+		"Говядина тушеная":        100.2,
+		"Хлеб и булочные изделия из пшеничной муки различных сортов, кг": 99.9,
+	} {
+		if got := ipcWeeksBulletinsSpotValue(t, rows, series, date); got != want {
+			t.Errorf("ряд %q 2009-04-06: %v, ожидалось %v", series, got, want)
+		}
+	}
+}
+
 // TestIpcWeeksBulletinsStubFails — страница-заглушка WAF (HTTP-статус у неё 502, а GetFile статус
 // не проверяет, поэтому заглушка обязана валиться по контенту): у неё нет титула периода, и
 // разбор обязан упасть, а не записать «0 точек». Это же — защита от подмены документа: заглушку
@@ -419,14 +446,16 @@ func TestIpcWeeksBulletinsUnknownProductWarns(t *testing.T) {
 	}
 }
 
-// TestIpcWeeksBulletinsSourcesInvariants — инварианты списка 288 выпусков (спека §2, приложения
+// TestIpcWeeksBulletinsSourcesInvariants — инварианты списка 502 выпусков (спека §2, приложения
 // А–Д; расширения 2026-10-16/17 — приложения В и Д спеки и систематическая разведка
 // scripts/harvest.py): 48 живых недельных выпусков (47 недель 2021 + неделя 22–28.12.2020) и
-// 240 Wayback-выпусков 2015–2021. Поток «Оперативной информации» мигрирует между каталогами
+// 454 Wayback-выпуска 2009–2021. Поток «Оперативной информации» мигрирует между каталогами
 // Stg/dNN по годам (d02 в 2017/2021, d03→d01 в 2018, d04 в 2019, d05 в 2020, d06 в 2015–2017),
 // поэтому разведка «только d02» находила недели лишь тех лет, когда поток жил в d02, а полное
 // дерево Stg/ добавило 202 недели 2015–2020, аудит пропусков (2026-10-17) — ещё одну
-// (2016-11-21: в титуле выпуска опечатка «с15 по 21», классификатор её не разбирал). Бакеты ниже —
+// (2016-11-21: в титуле выпуска опечатка «с15 по 21», классификатор её не разбирал), а проверка
+// «с самого дня существования буфера» (2026-10-17) сняла фильтр CDX from=2016 и нашла 214 недель
+// 2009–2015 — ряд недельной оценки начинается в апреле 2009-го. Бакеты ниже —
 // по году ДОКУМЕНТА (дате точки), не снимка. URL уникальны;
 // даты строго возрастают; у Wayback-адресов — форма id_ (сырые байты документа, без панели
 // Wayback); недельный блок 2020-12-28…2021-12-27 покрыт всеми неделями: обычный шаг 6–8 дней
@@ -435,8 +464,8 @@ func TestIpcWeeksBulletinsUnknownProductWarns(t *testing.T) {
 // означал бы потерянный выпуск; 2021-02-01/08/15/24 — те самые удалённые из живого буфера недели,
 // ради которых и снят дамп.
 func TestIpcWeeksBulletinsSourcesInvariants(t *testing.T) {
-	if len(ipcWeeksBulletinsSources) != 288 {
-		t.Fatalf("выпусков %d, ожидалось 288", len(ipcWeeksBulletinsSources))
+	if len(ipcWeeksBulletinsSources) != 502 {
+		t.Fatalf("выпусков %d, ожидалось 502", len(ipcWeeksBulletinsSources))
 	}
 	live := 0
 	waybackByYear := map[int]int{}
@@ -478,7 +507,7 @@ func TestIpcWeeksBulletinsSourcesInvariants(t *testing.T) {
 			t.Errorf("у Wayback-адреса %q нет формы id_: панель Wayback переписала бы документ", source.URL)
 		}
 	}
-	if want := map[int]int{2015: 8, 2016: 44, 2017: 45, 2018: 51, 2019: 42, 2020: 46, 2021: 4}; !reflect.DeepEqual(waybackByYear, want) {
+	if want := map[int]int{2009: 30, 2010: 30, 2011: 33, 2012: 32, 2013: 27, 2014: 24, 2015: 46, 2016: 44, 2017: 45, 2018: 51, 2019: 42, 2020: 46, 2021: 4}; !reflect.DeepEqual(waybackByYear, want) {
 		t.Errorf("состав Wayback по годам документа: %v, ожидалось %v", waybackByYear, want)
 	}
 	if live != 48 {
@@ -558,9 +587,9 @@ func TestIpcWeeksBulletinsNewSources(t *testing.T) {
 // TestIpcWeeksBulletinsMetaMatchesFixtures — двусторонний контракт каталога на фикстурах
 // (спека §3.2.2): каждый разобранный ряд описан (describedSeries проверяет и заполненность, и
 // отсутствие дублей описаний), а описанное сверх разобранного — ровно extra-ряды, которых в
-// трёх фикстурах нет: их издания (245.htm и другие выпуски вне testdata) остаются за контрактом
-// и пин литералами ниже. Так контракт остаётся двусторонним, а extra-ряд не может пропасть из
-// каталога незамеченным.
+// четырёх фикстурах нет: их издания (245.htm и другие выпуски вне testdata) остаются за
+// контрактом и пин литералами ниже. Так контракт остаётся двусторонним, а extra-ряд не может
+// пропасть из каталога незамеченным.
 func TestIpcWeeksBulletinsMetaMatchesFixtures(t *testing.T) {
 	var parsed []string
 	seen := make(map[string]bool)
@@ -573,6 +602,9 @@ func TestIpcWeeksBulletinsMetaMatchesFixtures(t *testing.T) {
 		{ipcWeeksBulletinsLive2021Fixture, time.Date(2021, time.August, 9, 0, 0, 0, 0, time.UTC)},
 		{ipcWeeksBulletinsWayback21Fixture, time.Date(2021, time.February, 1, 0, 0, 0, 0, time.UTC)},
 		{ipcWeeksBulletinsWayback17Fixture, time.Date(2017, time.May, 22, 0, 0, 0, 0, time.UTC)},
+		// Старый формат 2009 г.: шапка детальной таблицы «6 апреля к 30 марта», группового якоря
+		// «к предыдущей дате регистрации» нет; даёт extra-ряд «Говядина тушеная».
+		{ipcWeeksBulletinsWayback09Fixture, time.Date(2009, time.April, 6, 0, 0, 0, 0, time.UTC)},
 	} {
 		for _, row := range importIpcWeeksBulletinsFixture(t, fixture.file, fixture.date) {
 			if !seen[row.series] {
