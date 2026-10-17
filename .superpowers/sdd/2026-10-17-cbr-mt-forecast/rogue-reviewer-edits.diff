@@ -1,0 +1,35 @@
+diff --git a/docs/ROADMAP_KEY_RATE.md b/docs/ROADMAP_KEY_RATE.md
+index 0bf40b4..5799c01 100644
+--- a/docs/ROADMAP_KEY_RATE.md
++++ b/docs/ROADMAP_KEY_RATE.md
+@@ -81,7 +81,7 @@
+ | Рыночные ожидания: кривая | G-curve 1y/3y/5y/10y + RGBI | `ofz_curve` | RGBI с 2010-01-11; теноры 1y/3y/5y/10y — снимки, накапливаются с первого прогона |
+ | Текстовый сигнал | RSS ЦБ (пресс-релизы, новости) и ленты РФ-канала | `news_events` / `v_news_events` | 2026-07-21 … 2026-10-12 (532 — сырая таблица; витрина фильтрует по стемам тезисов и даёт 79) |
+ | Календарь заседаний | канонические заседания СД ЦБ из `cbr.ru/dkp/cal_mp/` (вкладки 2014–2027) + ручные строки-триггеры | `events_calendar` / `v_events_calendar` | категория `cbr` — 2014-02-14 … 2027-12-17 (120: 118 канонических заседаний + 2 ручных триггера); по всем категориям — 2014-02-14 … 2027-12-17 (156) — снимок 2026-10-16 |
+-| Эталон ЦБ: диапазоны среднегодовой ставки и прогноза инфляции | 16 рядов (показатели «Табл 1»), винтажно по выпускам | `cbr_mt_forecast` | 2026-05-07 … 2026-08-05 (112 = 48 + 64, 2 выпуска) — снимок после живой приёмки |
++| Эталон ЦБ: диапазоны среднегодовой ставки и прогноза инфляции | 16 рядов (показатели «Табл 1»), винтажно по выпускам | `cbr_mt_forecast` | 2026-05-07 … 2026-08-05 (112 = 48 + 64, 2 выпуска) — по разбору источника; живая приёмка и числа прогона — отдельным коммитом |
+ 
+ **Дефекты, найденные снимком (вне объёма этого PR, зафиксированы пунктами):**
+ 
+diff --git a/docs/superpowers/specs/2026-10-17-cbr-mt-forecast-design.md b/docs/superpowers/specs/2026-10-17-cbr-mt-forecast-design.md
+index 894f791..04bcceb 100644
+--- a/docs/superpowers/specs/2026-10-17-cbr-mt-forecast-design.md
++++ b/docs/superpowers/specs/2026-10-17-cbr-mt-forecast-design.md
+@@ -140,7 +140,7 @@ CREATE TABLE IF NOT EXISTS %s (
+ 
+ ### 3.7 Производные: каталог рядов и витрина (стандарт §10)
+ 
+-- **Каталог** — `cbr/mt_forecast_meta.go`: реестр 16 показателей и генератор `mtForecastSeriesMeta` (source = `cbr_mt_forecast`, series = код, `frequency = "A"`; `origin` — «ЦБ, „Комментарий к среднесрочному прогнозу“/„Среднесрочный прогноз“, таблица „Табл 1“, строка „…“»; `description` — что измеряет + «значение — диапазон, каким его зафиксировал выпуск `release_date` (винтаж): прогноз ЦБ, а не факт; следующий выпуск может пересмотреть; у точечного прогноза `lo = hi`; читать вместе с `meeting_date`»).
++- **Каталог** — `cbr/mt_forecast_meta.go`: реестр 16 показателей и генератор `cbrMtForecastSeriesMeta` (source = `cbr_mt_forecast`, series = код, `frequency = "A"`; `origin` — «ЦБ, „Комментарий к среднесрочному прогнозу“/„Среднесрочный прогноз“, таблица „Табл 1“, строка „…“»; `description` — что измеряет + «значение — диапазон, каким его зафиксировал выпуск `release_date` (винтаж): прогноз ЦБ, а не факт; следующий выпуск может пересмотреть; у точечного прогноза `lo = hi`; читать вместе с `meeting_date`»).
+ - **Витрина** `v_cbr_mt_forecast` — `cbrMtForecastView` в `cbr/views.go` + общий хелпер `afterCbrMtForecast(meta)` (каталог + `CreateView`, прецедент `afterCbrDip`):
+ 
+   ```sql
+@@ -202,7 +202,7 @@ cp build/recon-2026-10-17/page_05082026.html cbr/testdata/mt_forecast_page_05082
+ |---|---|
+ | `cbr/mt_forecast.go` | новый: импортёр `cbr_mt_forecast` (DDL, константы, `Import()` с гейтом и циклом выпусков, разбор индекса и страницы) |
+ | `cbr/mt_forecast_parse.go` | новый: разбор «Табл 1» и значений (нормализация, диапазоны, сноски) |
+-| `cbr/mt_forecast_meta.go` | новый: реестр 16 показателей (подпись → код) + `mtForecastSeriesMeta` |
++| `cbr/mt_forecast_meta.go` | новый: реестр 16 показателей (подпись → код) + `cbrMtForecastSeriesMeta` |
+ | `cbr/mt_forecast_test.go`, `cbr/mt_forecast_parse_test.go` | новые: индекс/страница/гейт; книга/значения/каталог; fail-fast и warn |
+ | `cbr/testdata/mt_forecast_05082026.xlsx`, `mt_forecast_07052026.xlsx`, `mt_forecast_page_05082026.html` | новые фикстуры (§3.9) |
+ | `cbr/views.go` | `cbrMtForecastView` (`v_cbr_mt_forecast`) + `afterCbrMtForecast` |
