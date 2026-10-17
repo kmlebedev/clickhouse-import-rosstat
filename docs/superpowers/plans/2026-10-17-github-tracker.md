@@ -264,9 +264,9 @@ Expected: exit 0.
 
 Dispatch: `anthropic/haiku` — task review; `deepseek/deepseek-flash` — final whole-branch review (по правилам AGENTS.md).
 
-- [ ] **Step 5: Открыть PR**
+- [x] **Step 5: Открыть PR**
 
-Issue пункта — [#106](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/106).
+Issue пункта — [#106](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/106); PR — [#107](https://github.com/kmlebedev/clickhouse-import-rosstat/pull/107).
 
 Заголовок: `docs: add multi-roadmap GitHub tracker model`
 
