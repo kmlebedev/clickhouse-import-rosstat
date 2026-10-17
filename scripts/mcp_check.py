@@ -449,6 +449,27 @@ async def check(params, server_log):
                 print("WARN LLM-теги: 0 (NEWS_LLM_MODEL не задан — штатная деградация; "
                       "живой прогон 1.10 после мерджа 1.8)")
 
+            # LLM-разметка RSS — тоже информационная строка: без NEWS_LLM_PROFILE=glm и
+            # ключей разметка штатно пропускается, поэтому ноль не увеличивает failed.
+            # Знаменатель — только аннотируемые позиции (content_hash != ''): строки до
+            # миграции 1.9 не размечены, остаются с model = '' и дефектом не считаются.
+            news_llm_raw = text(await session.call_tool("run_query", {"query":
+                "SELECT countIf(content_hash != '') AS n, "
+                "countIf(content_hash != '' AND model != '') AS annotated "
+                "FROM v_news_events WHERE transport = 'rss'"}))
+            news_llm = result_rows(news_llm_raw)
+            if news_llm is None:
+                print(f"WARN LLM-разметка RSS: витрина не читается: {news_llm_raw[:200]}")
+            else:
+                news_llm_n = news_llm[0].get("n") if news_llm else None
+                news_llm_annotated = news_llm[0].get("annotated") if news_llm else None
+                if (news_llm_annotated or 0) > 0:
+                    print(f"OK   LLM-разметка RSS: {news_llm_annotated} из {news_llm_n} позиций")
+                else:
+                    print(f"WARN LLM-разметка RSS: 0 из {news_llm_n} позиций — догон: "
+                          "NEWS_LLM_PROFILE=glm NEWS_LLM_BACKLOG_LIMIT=500 "
+                          "make import STAT=news_watch")
+
             # Контур СБКТС Росстандарта (правило 11): обе витрины читаются агентом, а сырая
             # gost_vehicle_safety_certificate — источник витрин — агенту закрыта (как macro_series
             # и news_events: читать реестр агент обязан только через витрины). Существование
