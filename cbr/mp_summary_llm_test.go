@@ -394,6 +394,23 @@ func TestMpLLMProfilesFromEnv(t *testing.T) {
 		})
 	})
 
+	t.Run("пустые элементы списка пропускаются молча", func(t *testing.T) {
+		mpClearLLMEnv(t)
+		// Хвостовая и двойная запятая — не профиль: warn про пустое имя заставил бы оператора
+		// искать несуществующую переменную, а список от этого не становится неполным.
+		t.Setenv("MP_SUMMARY_LLM_MODELS", "glm,,mimo,")
+		mpLLMSetProfile(t, "glm", glmBase, glmKey, glmModel)
+		mpLLMSetProfile(t, "mimo", mimoBase, mimoKey, mimoModel)
+		hook := mpLLMWarnHook(t)
+		mpLLMProfilesCheck(t, mpLLMProfilesFromEnv(), []mpLLMProfile{
+			{Name: "glm", BaseURL: glmBase, APIKey: glmKey, Model: glmModel},
+			{Name: "mimo", BaseURL: mimoBase, APIKey: mimoKey, Model: mimoModel},
+		})
+		if warns := mpLLMWarnText(hook); warns != "" {
+			t.Errorf("пустые элементы списка дали warn: %q", warns)
+		}
+	})
+
 	t.Run("невалидное имя пропущено, остальные работают", func(t *testing.T) {
 		mpClearLLMEnv(t)
 		t.Setenv("MP_SUMMARY_LLM_MODELS", "glm-x,glm")

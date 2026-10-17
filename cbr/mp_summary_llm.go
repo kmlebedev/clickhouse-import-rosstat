@@ -94,6 +94,12 @@ func mpLLMProfilesFromEnv() []mpLLMProfile {
 	modelOwner := make(map[string]string, len(names))
 	for _, raw := range names {
 		name := strings.ToLower(strings.TrimSpace(raw))
+		// Пустой элемент списка (`glm,,mimo`, хвостовая запятая) — не профиль: молча
+		// пропускаем, иначе warn про пустое имя отправил бы оператора искать несуществующую
+		// переменную, хотя список просто содержит лишнюю запятую.
+		if name == "" {
+			continue
+		}
 		if !mpLLMProfileNameRe.MatchString(name) {
 			log.Warnf("cbr_mp_summary: LLM-профиль %q пропущен: имя должно соответствовать %s",
 				name, mpLLMProfileNameRe)

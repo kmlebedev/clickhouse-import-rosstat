@@ -158,6 +158,27 @@ type mpLLMDoc struct {
 	Doc  mpSummaryDoc
 }
 
+// mpLLMTask — одна пара (документ, профиль): вызов модели для документа этим профилем. Задачи
+// собираются чистыми функциями mpLLMTasks/mpLLMPendingTasks, поэтому пересечение нового
+// документа и отстающей даты не даёт дубля, а страница скачивается один раз.
+type mpLLMTask struct {
+	Doc     mpLLMDoc
+	Profile mpLLMProfile
+}
+
+// mpLLMRunStats — итог прогона по одному профилю: Docs — успешно размеченные документы,
+// Rows — записанные строки (цитаты и заметки), Dropped — отброшенные цитаты, Failed —
+// документы, на которых модель ответила ошибкой. Duration и Usage копятся по всем задачам,
+// включая сбои: время и токены потрачены и на неудачный вызов.
+type mpLLMRunStats struct {
+	Docs     int
+	Rows     int
+	Dropped  int
+	Failed   int
+	Duration time.Duration
+	Usage    mpLLMUsage
+}
+
 // Import — полный прогон импортёра (спека §3.1, §3.8). Порядок шагов — часть контракта:
 //  1. DDL трёх таблиц;
 //  2. три витрины v_cbr_mp_summary* — зависят только от своих таблиц (шаг 1), поэтому
@@ -168,15 +189,16 @@ type mpLLMDoc struct {
 //  4. дельта по таблицам: новые документы (адреса нет в шапке ИЛИ нет блоков по дате его
 //     заседания ИЛИ нет regex-строк каналов — недописанный документ слоя 1);
 //  5. прошлые решения таблицы: ставки для дельты и адреса для LLM-догона;
-//  6. отстающие LLM-документы — известные заседания, у которых нет LLM-строк текущей пары
-//     (model, prompt_version);
-//  7. no-op, если ни новых, ни отстающих нет (витрины к этому моменту уже созданы — шаг 2);
+//  6. отстающие LLM-документы по каждому профилю — известные заседания, у которых нет
+//     LLM-строк его пары (model, prompt_version);
+//  7. no-op, если ни новых, ни отстающих ни у одного профиля нет (витрины к этому моменту
+//     уже созданы — шаг 2);
 //  8. скачивание и разбор новых резюме — fail-fast: ошибка до записи, иначе
 //     decision_delta_bp посчитался бы по неполному ряду заседаний;
 //  9. батчи по таблицам (шапка, блоки, regex-каналы), Send каждого — ошибка наверх;
-//  10. LLM-догон: разметка новых документов и документов без строк текущей пары
-//     (model, prompt_version): ошибка одного документа — warn и продолжение
-//     (деградация до regex-слоя), ошибка базы — наверх.
+//  10. LLM-догон: задачи (документ, профиль) по новым документам и отстающим, одним батчем
+//     каналов; ошибка LLM одного документа — warn и продолжение (деградация до regex-слоя),
+//     ошибка базы — наверх.
 //
 // Префлайта (PublicationCountPoints/PublicationSource) и AfterImport у импортёра нет
 // сознательно: дельта считается по индексу и полноте документа в таблицах, а не по
@@ -232,30 +254,26 @@ func (s *mpSummaryStat) Import(ctx context.Context, conn driver.Conn) (count int
 		return 0, err
 	}
 
-	// 6. Отстающие — известные заседания, у которых нет LLM-строк текущей пары
-	// (model, prompt_version). Множество известных заседаний берётся из шапки: где строка
-	// есть, там LLM-разметка должна быть, а новых документов в прошлых решениях ещё нет
-	// (они размечаются шагом 10 как новые). Пусто → догонять нечего. Набор «размечено»
-	// остаётся нужен и на шаге 10: он же вычитается при сборке списка документов для модели.
+	// 6. Отстающие считаются по каждому профилю: известные заседания, у которых нет LLM-строк
+	// его пары (model, prompt_version). Множество известных заседаний берётся из шапки: где
+	// строка есть, там LLM-разметка должна быть, а новых документов в прошлых решениях ещё нет
+	// (они размечаются шагом 10 как новые). Наборы «размечено» и «отстаёт» нужны и на шаге 10:
+	// по ним собираются задачи (документ, профиль). Пусто по всем профилям → догонять нечего.
 	profiles := mpLLMProfilesFromEnv()
 	llmOK := len(profiles) > 0
-	var (
-		baseURL, apiKey, model string
-		pending                map[time.Time]bool
-		tagged                 map[time.Time]bool
-	)
-	if llmOK {
-		// Импортёр пока одномодельный: размечает первым профилем списка.
-		baseURL, apiKey, model = profiles[0].BaseURL, profiles[0].APIKey, profiles[0].Model
-		var taggedErr error
-		if tagged, taggedErr = mpLLMTagged(ctx, conn, model, mpPromptVersion); taggedErr != nil {
+	taggedByModel := make(map[string]map[time.Time]bool, len(profiles))
+	pendingByModel := make(map[string]map[time.Time]bool, len(profiles))
+	for _, profile := range profiles {
+		tagged, taggedErr := mpLLMTagged(ctx, conn, profile.Model, mpPromptVersion)
+		if taggedErr != nil {
 			return 0, taggedErr
 		}
-		pending = mpLLMPendingDates(past, tagged)
+		taggedByModel[profile.Model] = tagged
+		pendingByModel[profile.Model] = mpLLMPendingDates(past, tagged)
 	}
 
 	// 7.
-	if len(missing) == 0 && len(pending) == 0 {
+	if len(missing) == 0 && !mpAnyPending(pendingByModel) {
 		var knownCount uint64
 		if err = conn.QueryRow(ctx, mpSummaryCountQuery).Scan(&knownCount); err != nil {
 			return 0, fmt.Errorf("%s: число резюме таблицы не прочитано: %w", mpSummaryName, err)
@@ -324,40 +342,64 @@ func (s *mpSummaryStat) Import(ctx context.Context, conn driver.Conn) (count int
 	// 10.
 	var llmCount int64
 	if !llmOK {
-		log.Warnf("%s: LLM-разметка пропущена (нет %s/%s/%s)", mpSummaryName,
-			mpLLMBaseURLEnv, mpLLMAPIKeyEnv, mpLLMModelEnv)
+		log.Warnf("%s: LLM-разметка пропущена (нет ни одного полного LLM-профиля: %s/%s/%s или <PROFILE>_LLM_*)",
+			mpSummaryName, mpLLMBaseURLEnv, mpLLMAPIKeyEnv, mpLLMModelEnv)
 	} else {
-		// Размечать надо объединение «скачанные этим прогоном + отстающие» минус уже
-		// размеченные пары (model, prompt_version): иначе документ, попавший и в docs, и в
-		// pending (неполный слой 1 без LLM-строк), ушёл бы в LLM дважды, а документ с готовыми
-		// строками пары, перекачанный из-за смены url, — лишний раз. Сборка разложения —
-		// чистая функция mpLLMDocs, отстающие дочитываются из таблицы (mpFetchPending).
-		ready, toFetch := mpLLMDocs(docs, pending, tagged)
-		llmDocs := make([]mpLLMDoc, 0, len(ready)+len(toFetch))
-		llmDocs = append(llmDocs, ready...)
-		llmDocs = append(llmDocs, mpFetchPending(past, toFetch)...)
+		// Задачи (документ, профиль) собираются чистыми функциями: mpLLMTasks — по новым
+		// документам, mpLLMPendingTasks — по скачанным отстающим. Дата, попавшая и в docs, и в
+		// pending, даёт задачу только в ready (страница уже скачана), а размеченная профилем
+		// пара задачи этому профилю не даёт. Страница отстающего документа скачивается один
+		// раз на прогон (mpFetchPending) и размечается всеми профилями, которым нужна.
+		ready, toFetch := mpLLMTasks(docs, pendingByModel, taggedByModel, profiles)
+		fetched := mpFetchPending(past, toFetch)
+		tasks := make([]mpLLMTask, 0, len(ready)+len(fetched))
+		tasks = append(tasks, ready...)
+		tasks = append(tasks, mpLLMPendingTasks(fetched, pendingByModel, profiles)...)
 
 		llmRows := &mpBatch{ctx: ctx, conn: conn, table: mpSummaryChannelTable, insert: mpSummaryChannelInsert}
-		// Импортёр пока одномодельный: разметка идёт первым профилем списка.
-		profile := mpLLMProfile{BaseURL: baseURL, APIKey: apiKey, Model: model}
-		for _, d := range llmDocs {
-			_, tagErr := mpTagLLM(llmRows, d, profile)
-			if tagErr == nil {
+		runStats := make(map[string]*mpLLMRunStats, len(profiles))
+		for _, task := range tasks {
+			stats, tagErr := mpTagLLM(llmRows, task.Doc, task.Profile)
+			run := runStats[task.Profile.Model]
+			if run == nil {
+				run = &mpLLMRunStats{}
+				runStats[task.Profile.Model] = run
+			}
+			// Время и токены потрачены и на сбойный вызов: копим их до разбора ошибки.
+			run.Duration += stats.Duration
+			run.Usage = run.Usage.add(stats.Usage)
+			if tagErr != nil {
+				// Ошибка LLM — деградация одного документа до regex-слоя: warn и продолжение.
+				// Ошибка батча (БД) — сбой прогона, как и прежде.
+				if !mpIsLLMTagError(tagErr) {
+					return 0, tagErr
+				}
+				run.Failed++
+				log.Warnf("%s: LLM-разметка %s (%s, модель %s) пропущена, документ остаётся с regex-слоем: %v",
+					mpSummaryName, task.Doc.Date.Format(mpSummaryDayLayout), task.Doc.Url, task.Profile.Model, tagErr)
 				continue
 			}
-			// Ошибка LLM — деградация одного документа до regex-слоя: warn и продолжение.
-			// Ошибка батча (БД) — сбой прогона, как и прежде.
-			if !mpIsLLMTagError(tagErr) {
-				return 0, tagErr
-			}
-			log.Warnf("%s: LLM-разметка %s (%s, модель %s) пропущена, документ остаётся с regex-слоем: %v",
-				mpSummaryName, d.Date.Format(mpSummaryDayLayout), d.Url, profile.Model, tagErr)
+			run.Docs++
+			run.Rows += stats.QuotesKept + stats.Notes
+			run.Dropped += stats.QuotesDropped
 		}
 		if err = llmRows.send(); err != nil {
 			return 0, err
 		}
 		llmCount = llmRows.rows
 		count += llmCount
+		// Итог по профилю — только там, где были задачи: профиль без задач в этом прогоне не
+		// работал, и нулевая строка о нём ничего не сообщает.
+		for _, profile := range profiles {
+			run := runStats[profile.Model]
+			if run == nil {
+				continue
+			}
+			log.Infof("%s: LLM %s: документов %d, строк %d, отброшено %d, сбоев %d, %.1f с, in/out %d/%d, cache %d/%d",
+				mpSummaryName, profile.Model, run.Docs, run.Rows, run.Dropped, run.Failed,
+				run.Duration.Seconds(), run.Usage.InputTokens, run.Usage.OutputTokens,
+				run.Usage.CacheReadInputTokens, run.Usage.CacheCreationInputTokens)
+		}
 	}
 
 	log.Infof("%s: резюме %d новых, блоков %d, каналов regex %d, LLM %d", mpSummaryName,
@@ -554,45 +596,93 @@ func mpDecisionDeltas(past []mpPastSummary, docs []mpFetchedSummary) map[time.Ti
 	return deltas
 }
 
-// mpLLMDocs — разложение работы модели на два списка: документы, уже разобранные в этом
-// прогоне (можно звать модель сразу), и даты, которые надо дочитать из таблицы. Даты, у
-// которых строки пары (model, prompt_version) уже есть, не попадают никуда: повторная
-// разметка тех же данных — лишний вызов LLM, а не обновление (ключ пары в ключе таблицы).
+// mpAnyPending — есть ли хоть у одного профиля отстающие даты: no-op возможен, только когда
+// догонять некого ни одной моделью.
+func mpAnyPending(pendingByModel map[string]map[time.Time]bool) bool {
+	for _, pending := range pendingByModel {
+		if len(pending) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// mpLLMTasks — задачи (документ, профиль) по новым документам и даты отстающих документов,
+// которые надо дочитать из таблицы. Новый документ получает задачу от каждого профиля, у
+// которого его дата ещё не размечена: размеченная пара (model, prompt_version) повторной
+// разметки не требует — это лишний вызов модели, а не обновление (ключ пары в ключе таблицы).
 //
-// Списком (а не набором) результат отдаётся сознательно: контракт «один документ — один
-// вызов модели за прогон» проверяется длиной списка, и дубль даты (она и в docs, и в
-// pending) тестом виден (находка ревью фикс-волны: дата из justFetched добавлялась второй
-// раз — модель вызывалась дважды на документ).
+// fetch — объединение отстающих дат всех профилей, которых нет среди дат новых документов:
+// страница отстающего документа скачивается один раз на прогон, а mpLLMPendingTasks затем
+// отдаёт её каждому профилю, которому дата нужна. Дата, попавшая и в docs, и в pending,
+// остаётся только в ready — иначе один документ ушёл бы в LLM дважды.
 //
 // Чистая функция без обращений к БД и сети: оба подслучая — «дата и в docs, и в pending» и
 // «дата в docs, но пара уже размечена (документ перекачан из-за смены url)» — пинятся тестом.
-func mpLLMDocs(docs []mpFetchedSummary, pending, tagged map[time.Time]bool) (ready []mpLLMDoc, fetch map[time.Time]bool) {
+func mpLLMTasks(docs []mpFetchedSummary, pendingByModel map[string]map[time.Time]bool,
+	taggedByModel map[string]map[time.Time]bool, profiles []mpLLMProfile) (ready []mpLLMTask, fetch map[time.Time]bool) {
+	newDates := make(map[time.Time]bool, len(docs))
 	seen := make(map[time.Time]bool, len(docs))
-	ready = make([]mpLLMDoc, 0, len(docs))
+	ready = make([]mpLLMTask, 0, len(docs)*len(profiles))
 	for _, d := range docs {
 		date := mpDay(d.Doc.MeetingDate)
+		newDates[date] = true
+		// Один документ — не более одной задачи на профиль: повтор даты в docs (две карточки
+		// с одной датой заседания) не должен звать модель дважды.
+		if seen[date] {
+			continue
+		}
 		seen[date] = true
-		if tagged[date] {
-			continue
+		doc := mpLLMDoc{Date: date, Url: d.Url, Doc: d.Doc}
+		for _, profile := range profiles {
+			if taggedByModel[profile.Model][date] {
+				continue
+			}
+			ready = append(ready, mpLLMTask{Doc: doc, Profile: profile})
 		}
-		ready = append(ready, mpLLMDoc{Date: date, Url: d.Url, Doc: d.Doc})
 	}
-	fetch = make(map[time.Time]bool, len(pending))
-	for date := range pending {
-		// Дату, уже отданную модели как новый документ, второй раз не берём: её текст
-		// разобран и лежит в ready (иначе один вызов LLM на документ стал бы двумя).
-		if seen[date] || tagged[date] {
-			continue
+	fetch = make(map[time.Time]bool)
+	for _, profile := range profiles {
+		for date := range pendingByModel[profile.Model] {
+			// Дату, уже отданную модели как новый документ, второй раз не берём: её текст
+			// разобран и лежит в ready (иначе один вызов LLM на документ стал бы двумя).
+			if newDates[date] {
+				continue
+			}
+			fetch[date] = true
 		}
-		fetch[date] = true
 	}
 	return ready, fetch
 }
 
+// mpLLMPendingTasks — задачи (документ, профиль) по скачанным отстающим документам: дата идёт
+// профилю, только если она есть в его pending. pendingByModel уже вычтен из размеченных пар
+// (mpLLMPendingDates), поэтому повторной разметки здесь нет. Чистая функция: сценарий «одна
+// страница нужна двум профилям» пинится тестом без драйвера и сети.
+func mpLLMPendingTasks(fetched []mpLLMDoc, pendingByModel map[string]map[time.Time]bool,
+	profiles []mpLLMProfile) []mpLLMTask {
+	var tasks []mpLLMTask
+	seen := make(map[time.Time]bool, len(fetched))
+	for _, doc := range fetched {
+		// Один документ — не более одной задачи на профиль, даже если дата пришла дважды.
+		if seen[doc.Date] {
+			continue
+		}
+		seen[doc.Date] = true
+		for _, profile := range profiles {
+			if !pendingByModel[profile.Model][doc.Date] {
+				continue
+			}
+			tasks = append(tasks, mpLLMTask{Doc: doc, Profile: profile})
+		}
+	}
+	return tasks
+}
+
 // mpFetchPending — документы отстающих резюме для LLM-догона. Адрес страницы берётся из
 // таблицы: дата заседания известна, а url карточки записан шапкой при импорте. На вход идёт
-// уже вычтенный набор (mpLLMDocs): ни новых документов этого прогона, ни размеченных пар в нём
-// нет, поэтому повторного вызова модели на документ здесь быть не может.
+// набор fetch из mpLLMTasks: дат новых документов этого прогона в нём нет (их страницы уже
+// скачаны), а профили, которым дата уже размечена, отсеивает mpLLMPendingTasks.
 // Недоступная или неразобранная страница — warn и продолжение: это деградация одного документа
 // до regex-слоя (спека §3.5), а не сбой прогона; следующий прогон повторит догон.
 func mpFetchPending(past []mpPastSummary, pending map[time.Time]bool) []mpLLMDoc {
