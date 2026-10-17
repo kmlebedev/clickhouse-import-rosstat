@@ -683,8 +683,8 @@ func (s *newsImport) Import(ctx context.Context, conn driver.Conn) (count int64,
 		case len(candidates) == 0:
 			// Бэклога нет — провайдер не вызывается.
 		default:
-			rows, tagErr := tagTelegramLLM(ctx, cfg, candidates)
-			// Успешные батчи пишутся даже при ошибке следующего: tagTelegramLLM возвращает
+			rows, tagErr := tagNewsLLM(ctx, cfg, candidates)
+			// Успешные батчи пишутся даже при ошибке следующего: tagNewsLLM возвращает
 			// накопленные строки вместе с ошибкой, и следующий прогон не платит за них снова.
 			if len(rows) > 0 {
 				var docs, tags int

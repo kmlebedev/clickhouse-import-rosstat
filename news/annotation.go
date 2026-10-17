@@ -11,7 +11,8 @@ import (
 
 const (
 	// newsAnnotationTable — generic-таблица LLM-разметки по паре (url, content_hash).
-	// В этом пункте заполняется только Telegram-молния, но ключ не привязан к транспорту.
+	// news_watch заполняет её для всего видимого потока (Telegram и RSS), но ключ не
+	// привязан к транспорту: смена ленты не меняет схему.
 	newsAnnotationTable = "news_annotation"
 
 	// Виды строк: doc — одна строка на сообщение (тональность, релевантность, резюме),
@@ -20,7 +21,10 @@ const (
 	newsKindTag   = "tag"
 	newsMethodLLM = "llm"
 	// newsSummaryMax — предел summary в рунах: одно предложение, длиннее модель не пишет.
-	newsSummaryMax        = 300
+	newsSummaryMax = 300
+	// newsEvidenceMax — предел цитаты-обоснования в рунах: длинная цитата обрезается до
+	// проверки подстроки, иначе тег отбрасывался бы из-за хвоста, а не из-за пересказа.
+	newsEvidenceMax       = 300
 	newsMaxTagsPerMessage = 5
 )
 
@@ -157,7 +161,10 @@ func validateNewsAnnotationTags(it newsItem, tags []newsAnnotationTag, model str
 			direction = newsDirectionNeutral
 		}
 
-		evidence := normNewsText(tag.Evidence)
+		// Цитата нормализуется и обрезается до newsEvidenceMax рун: модель вправе вернуть
+		// длинный фрагмент, но evidence — обоснование тега, а не пересказ. После обрезки
+		// пустая цитата отбрасывается тем же drop, что и пустая из ответа.
+		evidence := truncateNewsRunes(normNewsText(tag.Evidence), newsEvidenceMax)
 		if evidence == "" {
 			log.Warnf("news_watch: тег %s:%s: пустая цитата, тег пропущен", dimension, slug)
 			continue

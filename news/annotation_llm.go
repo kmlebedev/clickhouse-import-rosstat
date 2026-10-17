@@ -37,9 +37,13 @@ const (
 	newsLLMGLMAPIKeyEnv  = "GLM_LLM_API_KEY"
 	newsLLMGLMModelEnv   = "GLM_LLM_MODEL"
 
-	// newsLLMBatchSize — сообщений в одном запросе к провайдеру: 10 коротких молний
+	// newsLLMBatchSize — сообщений в одном запросе к провайдеру: 10 коротких сообщений
 	// укладываются в контекст и дают приемлемую цену за прогон.
 	newsLLMBatchSize = 10
+	// newsLLMBatchBytes — бюджет текста батча (title+description в байтах): длинный пост
+	// smart-lab (до ≈31 КБ) не должен раздувать запрос; пост больше бюджета становится
+	// батчем из одного элемента, а не теряется.
+	newsLLMBatchBytes = 40_000
 	// newsLLMBacklogLimitEnv — операционный рычаг бэклога: штатно 50 позиций за прогон
 	// (5 батчей, стоимость LLM ограничена даже после долгого простоя), разовый бэкфилл —
 	// значение до newsLLMBacklogLimitMax. Переменная, а не константа: после простоя или
@@ -175,7 +179,7 @@ func newsIsJSONDecodeError(err error) bool {
 func newsLLMSystemPrompt() string {
 	var b strings.Builder
 	b.WriteString("Редакция инструкции: " + strconv.Itoa(newsPromptVersion) + ".\n")
-	b.WriteString("Ты размечаешь короткие новости для контура ключевой ставки и DCF.\n")
+	b.WriteString("Ты размечаешь новости и аналитические посты для контура ключевой ставки и DCF.\n")
 	b.WriteString("Для каждого сообщения определи тональность, релевантность, краткое резюме и теги влияния на инфляцию.\n\n")
 	b.WriteString("Реестр тегов (dimension:slug — расшифровка; у cb_channel в скобках статический знак канала):\n")
 	for _, tag := range newsTags {
@@ -190,13 +194,15 @@ func newsLLMSystemPrompt() string {
 	b.WriteString("\nПравила:\n")
 	b.WriteString("- url копируй из запроса без изменений; на каждое сообщение запроса — один элемент messages;\n")
 	b.WriteString("- используй только dimension и tag из реестра; тег вне реестра будет отброшен;\n")
-	b.WriteString("- evidence — дословная подстрока текста сообщения, без пересказа, сокращений и многоточий; пустая или неточная цитата отбрасывает тег;\n")
+	b.WriteString("- evidence — дословная подстрока текста сообщения не длиннее 300 символов, без пересказа, сокращений и многоточий; пустая или неточная цитата отбрасывает тег;\n")
 	b.WriteString("- не более 5 тегов на сообщение; если подходящих тегов нет, верни пустой массив tags;\n")
 	b.WriteString("- person, country и event тегируй только при действии, заявлении или влиянии, а не при случайном упоминании;\n")
 	b.WriteString("- direction — влияние на инфляцию: proinflationary ускоряет рост цен, disinflationary замедляет, neutral/mixed — влияния нет или оно смешанное; у cb_channel направление — знак канала;\n")
 	b.WriteString("- у person, country, sector и event допустимы только neutral или mixed; proinflationary и disinflationary — лишь у cb_channel;\n")
-	b.WriteString("- sentiment — тональность новости от -1 до 1; relevance — важность для контура ставки и DCF от 0 до 1;\n")
-	b.WriteString("- summary — одно короткое предложение по-русски, без выдумок и оценок сверх текста.\n")
+	b.WriteString("- sentiment — тональность новости от -1 до 1;\n")
+	b.WriteString("- relevance — важность для контура ставки и DCF от 0 до 1; у общих новостей (спорт, происшествия, культура) она низкая;\n")
+	b.WriteString("- summary — одно короткое предложение по-русски, без выдумок и оценок сверх текста; у длинного поста — одно короткое предложение резюме, без пересказа всего текста;\n")
+	b.WriteString("- если text пуст, опирайся на title: заголовка достаточно для summary и тегов.\n")
 	return b.String()
 }
 
@@ -319,6 +325,10 @@ func newsLLMAskOnceAnthropic(ctx context.Context, cfg newsLLMConfig, inputs []ne
 		// doc-строки не будет ни на одно сообщение, поэтому это формат и один повтор.
 		return newsAnnotationPayload{}, newsLLMFormatError{fmt.Errorf("в ответе нет messages")}
 	}
+	// Токены — единственная метрика стоимости прогона: в лог идут только числа. Ретраи видны
+	// отдельными строками, и это честный расход: каждый запрос оплачивается отдельно.
+	log.Infof("news_watch: LLM %s: prompt %d, completion %d",
+		cfg.Model, int64(msg.Usage.InputTokens), int64(msg.Usage.OutputTokens))
 	return payload, nil
 }
 
@@ -349,6 +359,12 @@ type newsLLMOpenAIResponse struct {
 			Content string `json:"content"`
 		} `json:"message"`
 	} `json:"choices"`
+	// Usage — расход токенов запроса: GLM отдаёт его в каждом ответе. Поля нужны только
+	// для лога стоимости, к разметке отношения не имеют.
+	Usage struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+	} `json:"usage"`
 }
 
 // newsLLMOpenAIURL — OpenAI-совместимый путь из base профиля: у GLM base — корень гейтвея,
@@ -430,6 +446,10 @@ func newsLLMAskOnceOpenAI(ctx context.Context, cfg newsLLMConfig, inputs []newsI
 	if len(inputs) > 0 && len(payload.Messages) == 0 {
 		return newsAnnotationPayload{}, newsLLMFormatError{fmt.Errorf("в ответе нет messages")}
 	}
+	// Расход токенов — в лог каждой успешной попытки: ретрай формата оплачивается отдельно,
+	// и по этим строкам считается стоимость прогона (ключ и промпт не печатаются).
+	log.Infof("news_watch: LLM %s: prompt %d, completion %d",
+		cfg.Model, envelope.Usage.PromptTokens, envelope.Usage.CompletionTokens)
 	return payload, nil
 }
 
@@ -444,21 +464,47 @@ func newsLLMAsk(ctx context.Context, cfg newsLLMConfig, inputs []newsItem) (news
 	return newsLLMAskOnce(ctx, cfg, inputs)
 }
 
-// tagTelegramLLM размечает батч Telegram-сообщений: батчи по newsLLMBatchSize, на каждый —
-// запрос с одним ретраем формата и валидация против входа. Ошибка провайдера/формата
-// останавливает LLM-шаг на этот прогон, чтобы не долбить упавшего провайдера оставшимися
-// батчами, но уже полученные строки возвращаются вместе с ошибкой: вызывающий пишет их,
-// и следующий прогон не платит за них повторно (кандидатная выборка исключает размеченные
-// пары). Ошибка остаётся ошибкой прогона для лога, но не отменяет запись сообщений/версий.
-func tagTelegramLLM(ctx context.Context, cfg newsLLMConfig, inputs []newsItem) ([]newsAnnotationRow, error) {
-	now := time.Now()
-	rows := make([]newsAnnotationRow, 0, len(inputs)*2)
-	for start := 0; start < len(inputs); start += newsLLMBatchSize {
-		end := start + newsLLMBatchSize
-		if end > len(inputs) {
-			end = len(inputs)
+// newsLLMBatches делит вход на батчи по двум пределам: не больше newsLLMBatchSize сообщений
+// и не больше newsLLMBatchBytes байт текста (len(title)+len(description)). Пост больше
+// бюджета становится батчем из одного элемента — он не теряется и не зацикливает деление.
+// Пустой вход даёт пустой срез: провайдер не вызывается.
+func newsLLMBatches(inputs []newsItem) [][]newsItem {
+	if len(inputs) == 0 {
+		return nil
+	}
+	batches := make([][]newsItem, 0, (len(inputs)+newsLLMBatchSize-1)/newsLLMBatchSize)
+	for start := 0; start < len(inputs); {
+		end, size := start, 0
+		for end < len(inputs) && end-start < newsLLMBatchSize {
+			itemSize := len(inputs[end].Title) + len(inputs[end].Description)
+			// Первый элемент батча берётся всегда: иначе пост больше бюджета зациклил бы
+			// деление, а не ушёл отдельным запросом.
+			if end > start && size+itemSize > newsLLMBatchBytes {
+				break
+			}
+			size += itemSize
+			end++
 		}
-		batch := inputs[start:end]
+		batches = append(batches, inputs[start:end])
+		start = end
+	}
+	return batches
+}
+
+// tagNewsLLM размечает видимый поток (Telegram и RSS) батчами: границы — newsLLMBatches
+// (10 сообщений и 40 КБ текста), на каждый батч — запрос с одним ретраем формата и валидация
+// против входа. Номер батча в логе нужен, чтобы длинный бэкфилл было видно по шагам. Ошибка
+// провайдера/формата останавливает LLM-шаг на этот прогон, чтобы не долбить упавшего
+// провайдера оставшимися батчами, но уже полученные строки возвращаются вместе с ошибкой:
+// вызывающий пишет их, и следующий прогон не платит за них повторно (кандидатная выборка
+// исключает размеченные пары). Ошибка остаётся ошибкой прогона для лога, но не отменяет
+// запись сообщений/версий.
+func tagNewsLLM(ctx context.Context, cfg newsLLMConfig, inputs []newsItem) ([]newsAnnotationRow, error) {
+	now := time.Now()
+	batches := newsLLMBatches(inputs)
+	rows := make([]newsAnnotationRow, 0, len(inputs)*2)
+	for i, batch := range batches {
+		log.Infof("news_watch: LLM %s: батч %d/%d, сообщений %d", cfg.Model, i+1, len(batches), len(batch))
 		payload, err := newsLLMAsk(ctx, cfg, batch)
 		if err != nil {
 			return rows, fmt.Errorf("news_watch: LLM-разметка (%s): %w", cfg.Model, err)
