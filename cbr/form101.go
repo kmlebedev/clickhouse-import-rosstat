@@ -101,6 +101,66 @@ ORDER BY report_date DESC, regnum, account, active_passive`,
 	},
 }
 
+// cbrForm101LoansView — pilot-витрина маппинга счетов формы 101 на кредиты ЮЛ/ФЛ
+// (issue #98). Это не финальная метрика и не замена v_company_financials: наборы
+// счетов подобраны по калибровке на август 2026 и помечены mapping_version, а
+// разница с пресс-релизом видна рядом. 45.0/45.1/45.2 — синтетические группы
+// формы 101; 442/445/446/447/448/449/450/451/453/454 — детальные счета кредитов
+// ЮЛ; 45.2 — кредиты ФЛ. 458/459 (просрочка) показаны отдельно и не прибавлены:
+// без методологии ЦБ нельзя утверждать, что они не входят в группы.
+var cbrForm101LoansView = util.View{
+	Name:   "v_cbr_form101_loans",
+	Tables: []string{cbrForm101Table, "v_company_financials"},
+	Select: `WITH f AS (
+    SELECT report_date, regnum,
+           round(sumIf(balance_total, active_passive = '1' AND account IN
+               ('45.0', '451', '446', '442', '445', '448', '449', '447', '450', '453', '454')) / 1e6, 2)
+         + round(sumIf(balance_total, active_passive = '2' AND account = '45.1') / 1e6, 2) AS corporate_loans_bln_rub,
+           round(sumIf(balance_total, account = '45.2') / 1e6, 2) AS retail_loans_bln_rub,
+           round(sumIf(balance_total, active_passive = '1' AND account = '458') / 1e6, 2) AS overdue_bln_rub,
+           round(sumIf(balance_total, active_passive = '1' AND account = '459') / 1e6, 2) AS overdue_interest_bln_rub
+    FROM cbr_form101 FINAL
+    WHERE regnum = 1481
+    GROUP BY report_date, regnum
+),
+pr AS (
+    SELECT toDate(concat(substring(period, 1, 4), '-', substring(period, 6, 2), '-01')) AS report_month,
+           maxIf(value, metric = 'loans_corporations') AS corporate,
+           maxIf(value, metric = 'loans_individuals') AS retail
+    FROM v_company_financials
+    WHERE company = 'SBER' AND period_type = 'M'
+    GROUP BY report_month
+)
+SELECT f.report_date, f.regnum, f.corporate_loans_bln_rub, f.retail_loans_bln_rub,
+       f.overdue_bln_rub, f.overdue_interest_bln_rub,
+       pr.corporate AS press_release_corporate_bln_rub,
+       pr.retail AS press_release_retail_bln_rub,
+       if(pr.corporate = 0, NULL, round(f.corporate_loans_bln_rub / pr.corporate - 1, 4)) AS corporate_diff_pct,
+       if(pr.retail = 0, NULL, round(f.retail_loans_bln_rub / pr.retail - 1, 4)) AS retail_diff_pct,
+       'pilot-1' AS mapping_version
+FROM f
+LEFT JOIN pr ON pr.report_month = subtractMonths(f.report_date, 1)
+ORDER BY f.report_date DESC`,
+	Comment: "Pilot-маппинг формы 101 на кредиты ЮЛ/ФЛ (issue #98): кандидатные суммы по синтетическим группам " +
+		"45.0/45.1/45.2 и детальным счетам, рядом — эталон пресс-релиза Сбера за тот же отчётный месяц и разница. " +
+		"Не финальная метрика: набор счетов откалиброван на август 2026 (32 002,6 / 20 126,3 против 32 512 / 20 200, " +
+		"−1,57 % / −0,36 %), mapping_version='pilot-1'; 458/459 — просрочка, показана отдельно и не прибавлена. " +
+		"Точный маппинг требует методологии ЦБ; до этого не писать эти значения в company_financials как ras",
+	Columns: map[string]string{
+		"report_date":                     "Дата отчёта формы 101 (из имени файла), для 2026-09-01 — остатки на конец августа",
+		"regnum":                          "Регистрационный номер банка (REGN); первый срез — 1481 (ПАО Сбербанк)",
+		"corporate_loans_bln_rub":         "Кандидатные кредиты ЮЛ, млрд ₽: 45.0 + 45.1 (A_P=2) + 451/446/442/445/448/449/447/450/453/454 (A_P=1), делённые на 1e6; пилотный набор, не финальная метрика",
+		"retail_loans_bln_rub":            "Кандидатные кредиты ФЛ, млрд ₽: 45.2 (A_P=1 + A_P=2), делённые на 1e6; пилотный набор",
+		"overdue_bln_rub":                 "Просроченная задолженность 458 (A_P=1), млрд ₽; показана отдельно и не прибавлена к кредитам — возможно, уже входит в группы 45.x",
+		"overdue_interest_bln_rub":        "Просроченные проценты 459 (A_P=1), млрд ₽; показаны отдельно и не прибавлены",
+		"press_release_corporate_bln_rub": "Эталон пресс-релиза Сбера за тот же отчётный месяц (loans_corporations, source_kind='kpi'), млрд ₽; NULL — сида за месяц нет",
+		"press_release_retail_bln_rub":    "Эталон пресс-релиза Сбера за тот же отчётный месяц (loans_individuals, source_kind='kpi'), млрд ₽; NULL — сида за месяц нет",
+		"corporate_diff_pct":              "Разница кандидатных кредитов ЮЛ с пресс-релизом как доля (−0,0157 = −1,57 %); NULL — эталона нет",
+		"retail_diff_pct":                 "Разница кандидатных кредитов ФЛ с пресс-релизом как доля (−0,0036 = −0,36 %); NULL — эталона нет",
+		"mapping_version":                 "Версия пилотного набора счетов: 'pilot-1'; смена набора — новая версия, чтобы сравнение между прогонами не смешивалось",
+	},
+}
+
 // cbrForm101Stat — импортёр cbr_form101. Встроенный util.ClickHouseImport даёт
 // Name(), TableName и объявление точки контроля публикации; Import переопределён
 // целиком: страница → RAR → DBF — путь, которого у шаблона (XLSX/HTML) нет.
@@ -126,6 +186,12 @@ func (s *cbrForm101Stat) Import(ctx context.Context, conn driver.Conn) (count in
 	// следующего выпуска формы (раз в месяц).
 	if _, err = util.CreateView(ctx, conn, cbrForm101View); err != nil {
 		return 0, fmt.Errorf("%s: витрина %s: %w", cbrForm101Table, cbrForm101View.Name, err)
+	}
+	// Pilot-витрина маппинга гейтится по v_company_financials: пока её нет,
+	// util.CreateView вернёт created=false без ошибки, и следующий прогон
+	// (или company_views) создаст её. Это не повод ронять импорт сырья.
+	if _, err = util.CreateView(ctx, conn, cbrForm101LoansView); err != nil {
+		return 0, fmt.Errorf("%s: витрина %s: %w", cbrForm101Table, cbrForm101LoansView.Name, err)
 	}
 
 	// 3. Страница ЦБ и ссылка на самый свежий архив. Ноль ссылок — ошибка
