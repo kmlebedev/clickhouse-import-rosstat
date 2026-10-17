@@ -440,6 +440,22 @@ func TestMpLLMProfilesFromEnv(t *testing.T) {
 		}
 	})
 
+	t.Run("имя переменной ключа не попадает в warn", func(t *testing.T) {
+		mpClearLLMEnv(t)
+		mpLLMSetProfile(t, "default", deepseekBase, "", deepseekModel)
+		hook := mpLLMWarnHook(t)
+		if got := mpLLMProfilesFromEnv(); got != nil {
+			t.Fatalf("профили = %+v, ожидался nil", got)
+		}
+		warns := mpLLMWarnText(hook)
+		if !strings.Contains(warns, "ключ API") {
+			t.Errorf("warn не сообщает, что ключ профиля не задан: %q", warns)
+		}
+		if strings.Contains(warns, "LLM_API_KEY") {
+			t.Errorf("в warn попало имя переменной ключа (go/clear-text-logging): %q", warns)
+		}
+	})
+
 	t.Run("legacy: любая пустая переменная → nil", func(t *testing.T) {
 		for _, missing := range []string{"LLM_BASE_URL", "LLM_API_KEY", "MP_SUMMARY_LLM_MODEL"} {
 			t.Run(missing, func(t *testing.T) {

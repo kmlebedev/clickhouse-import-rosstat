@@ -114,8 +114,9 @@ var mpLLMProfileNameRe = regexp.MustCompile(`^[a-z0-9_]+$`)
 // имён через запятую; пусто → один default на прежних LLM_BASE_URL/LLM_API_KEY/
 // MP_SUMMARY_LLM_MODEL. Профиль p читает <P>_LLM_BASE_URL/<P>_LLM_API_KEY/<P>_LLM_MODEL.
 //
-// Неполный профиль не роняет прогон: warn с именами недостающих переменных (значения не
-// печатаются — в них ключи) и пропуск, остальные профили работают. Имя нормализуется
+// Неполный профиль не роняет прогон: warn называет недостающие base/model, а имя переменной
+// ключа заменено безопасной меткой (go/clear-text-logging; значения и имена ключей не печатаются),
+// профиль пропускается, остальные работают. Имя нормализуется
 // (TrimSpace, ToLower) и обязано быть [a-z0-9_]+. Дубликат модели пропускается: model входит
 // в ключ ReplacingMergeTree, и строки одинаковой пары (model, prompt_version) перетирали бы
 // друг друга, поэтому остаётся первый профиль с этой моделью. Ни одного полного профиля → nil:
@@ -167,10 +168,11 @@ func mpLLMProfilesFromEnv() []mpLLMProfile {
 	return profiles
 }
 
-// mpLLMProfileFromEnv читает профиль name и перечисляет имена незаполненных переменных:
-// значения в warn не попадают, а пустое имя переменной — единственное, что нужно оператору.
-// Окружающие пробелы обрезаются (env-файл приносит хвостовой перевод строки), а хвостовой слэш
-// baseURL — иначе SDK получил бы «//v1/messages».
+// mpLLMProfileFromEnv читает профиль name и перечисляет незаполненные переменные: имена
+// base/model и безопасную метку для ключа (имя переменной ключа в лог не попадает —
+// go/clear-text-logging), значения не печатаются. Окружающие пробелы обрезаются (env-файл
+// приносит хвостовой перевод строки), а хвостовой слэш baseURL — иначе SDK получил бы
+// «//v1/messages».
 func mpLLMProfileFromEnv(name string) (mpLLMProfile, []string) {
 	baseURLEnv, apiKeyEnv, modelEnv := mpLLMBaseURLEnv, mpLLMAPIKeyEnv, mpLLMModelEnv
 	if name != mpLLMProfileDefault {
@@ -188,7 +190,10 @@ func mpLLMProfileFromEnv(name string) (mpLLMProfile, []string) {
 		missing = append(missing, baseURLEnv)
 	}
 	if profile.APIKey == "" {
-		missing = append(missing, apiKeyEnv)
+		// Имя переменной ключа в лог не выводим: go/clear-text-logging (CodeQL alert #5)
+		// считает его чувствительным. Оператору достаточно знать, что ключ профиля не задан,
+		// а имя он знает из конвенции <PROFILE>_LLM_API_KEY.
+		missing = append(missing, "ключ API (переменная профиля)")
 	}
 	if profile.Model == "" {
 		missing = append(missing, modelEnv)
