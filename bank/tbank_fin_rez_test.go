@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/xuri/excelize/v2"
 )
 
 // TestTbIfrsDdlShape: DDL импортёра Т-Банка — своя %s-форма (стандарт §5.1): шаблон исполняет её
@@ -33,9 +35,10 @@ func TestTbIfrsDdlShape(t *testing.T) {
 	}
 }
 
-// TestTbIfrsPointBounds: tbIfrsPoint — единственное место ручной индексации срезов разбора
-// Т-Банка, поэтому его границы проверяются синтетическими строками: фикстуры источника нет,
-// полный разбор не верифицирован (О4). Каждый кейс — значение или ошибка, но не паника (§6.5).
+// TestTbIfrsPointBounds: tbIfrsPoint владеет извлечением точки (границы шапки, строки данных и
+// колонки, значение, дата), поэтому его границы проверяются синтетическими строками: фикстуры
+// источника нет, полный разбор не верифицирован (О4). Каждый кейс — значение или ошибка, но не
+// паника (§6.5).
 func TestTbIfrsPointBounds(t *testing.T) {
 	// Шапка — строка 0, данные — строка 1: значение лежит в той же колонке, что и дата шапки.
 	rows := [][]string{
@@ -118,4 +121,93 @@ func TestTbIfrsPointBounds(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestTbIfrsValueBeyondHeader: непустая ячейка правее шапки дат — ошибка с таблицей, листом,
+// строкой, колонкой и значением, а не молчаливый обрыв (T6). Фикстуры источника нет, поэтому
+// книга строится в памяти — полный разбор остаётся неверифицированным (О4). Разметка выведена из
+// цикла tbIfrsImportFunc: строка 1 — заголовок (короче трёх ячеек — пропуск); строка 2 — шапка
+// (даты с C2); строка 3 — якорь «Новостройка» в C3 и литеральный «0» в D3 (страж литерального нуля
+// пропускает строку якоря — иначе «Новостройка» ушла бы в разбор значения); строка 4 — данные
+// (значения с C4). Основной кейс: шапка покрывает только C — первую колонку цикла row[2:] (j=0), а
+// значение лежит в D (j=1), за шапкой.
+func TestTbIfrsValueBeyondHeader(t *testing.T) {
+	t.Run("значение за шапкой — ошибка", func(t *testing.T) {
+		rec := newAppendRecorder("name", "date", "balance")
+		err := tbIfrsImportFunc(tbIfrsBeyondHeaderBook(t,
+			[]string{"01-02-25"}, // шапка: только колонка C (row[2], j=0)
+			[]string{"", "999"},  // данные: C4 пуста, D4 — за шапкой (j=1)
+		), rec)
+		if err == nil {
+			t.Fatal("значение правее шапки: ожидалась ошибка, а разбор прошёл")
+		}
+		// Ожидания — литералами (§8.5): ссылка на константы импортёра сделала бы проверку
+		// тавтологичной и прошла бы на подмене, от которой обязана падать.
+		for _, want := range []string{
+			"tbank_group_ifrs", "Interest", "строка 4", "колонка 4", `"999"`, "без даты в шапке",
+		} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("ошибка %q не называет %q", err, want)
+			}
+		}
+		if len(rec.rows) != 0 {
+			t.Errorf("до ошибки записано строк %d, want 0", len(rec.rows))
+		}
+	})
+	// Пробельная ячейка — не значение: она не должна давать «значение "" без даты в шапке» и не
+	// мешать уже записанной покрытой точке D4.
+	t.Run("пробельная ячейка за шапкой — пропуск", func(t *testing.T) {
+		rec := newAppendRecorder("name", "date", "balance")
+		err := tbIfrsImportFunc(tbIfrsBeyondHeaderBook(t,
+			[]string{"01-02-25", "01-03-25"}, // шапка: C и D
+			[]string{"", "100", " "},         // D4 покрыта шапкой, E4 — пробел за шапкой (j=2)
+		), rec)
+		if err != nil {
+			t.Fatalf("пробельная ячейка — не значение: %v", err)
+		}
+		if len(rec.rows) != 1 {
+			t.Errorf("записано строк %d, want 1 (покрытая точка D4 до пробельной ячейки)", len(rec.rows))
+		}
+	})
+}
+
+// tbIfrsBeyondHeaderBook — книга в памяти для TestTbIfrsValueBeyondHeader. header пишется с C2,
+// data — с C4 (индекс ячейки 2 — колонка C); пустые значения пропускаются, чтобы GetRows не тянул
+// хвост. Строки 1, 3 и колонка B — служебная разметка, описанная в докблоке теста.
+func tbIfrsBeyondHeaderBook(t *testing.T, header, data []string) *excelize.File {
+	t.Helper()
+	f := excelize.NewFile()
+	t.Cleanup(func() { _ = f.Close() })
+	if err := f.SetSheetName("Sheet1", tbIfrsSheet); err != nil {
+		t.Fatalf("SetSheetName(%q): %v", tbIfrsSheet, err)
+	}
+	for cell, cellValue := range map[string]any{
+		"A1": "Т-Банк, МСФО",
+		"B3": "Ряд",
+		"C3": tbIfrsDataField,
+		"D3": "0",
+		"B4": "Ряд",
+	} {
+		if err := f.SetCellValue(tbIfrsSheet, cell, cellValue); err != nil {
+			t.Fatalf("SetCellValue(%s!%s): %v", tbIfrsSheet, cell, err)
+		}
+	}
+	for _, row := range []struct {
+		n     int
+		cells []string
+	}{{2, header}, {4, data}} {
+		for i, value := range row.cells {
+			if value == "" {
+				continue
+			}
+			cell, err := excelize.CoordinatesToCellName(i+3, row.n) // индекс ячейки 2 — колонка C
+			if err != nil {
+				t.Fatalf("CoordinatesToCellName(%d, %d): %v", i+3, row.n, err)
+			}
+			if err := f.SetCellValue(tbIfrsSheet, cell, value); err != nil {
+				t.Fatalf("SetCellValue(%s!%s): %v", tbIfrsSheet, cell, err)
+			}
+		}
+	}
+	return f
 }
