@@ -338,10 +338,20 @@ func (s *mpSummaryStat) Import(ctx context.Context, conn driver.Conn) (count int
 		llmDocs = append(llmDocs, mpFetchPending(past, toFetch)...)
 
 		llmRows := &mpBatch{ctx: ctx, conn: conn, table: mpSummaryChannelTable, insert: mpSummaryChannelInsert}
+		// Импортёр пока одномодельный: разметка идёт первым профилем списка.
+		profile := mpLLMProfile{BaseURL: baseURL, APIKey: apiKey, Model: model}
 		for _, d := range llmDocs {
-			if err = mpTagLLM(llmRows, d, baseURL, apiKey, model); err != nil {
-				return 0, err
+			_, tagErr := mpTagLLM(llmRows, d, profile)
+			if tagErr == nil {
+				continue
 			}
+			// Ошибка LLM — деградация одного документа до regex-слоя: warn и продолжение.
+			// Ошибка батча (БД) — сбой прогона, как и прежде.
+			if !mpIsLLMTagError(tagErr) {
+				return 0, tagErr
+			}
+			log.Warnf("%s: LLM-разметка %s (%s, модель %s) пропущена, документ остаётся с regex-слоем: %v",
+				mpSummaryName, d.Date.Format(mpSummaryDayLayout), d.Url, profile.Model, tagErr)
 		}
 		if err = llmRows.send(); err != nil {
 			return 0, err
@@ -608,26 +618,25 @@ func mpFetchPending(past []mpPastSummary, pending map[time.Time]bool) []mpLLMDoc
 	return out
 }
 
-// mpTagLLM размечает один документ моделью и складывает матчи в батч каналов. Ошибка
-// документа (отказ провайдера, неразобранный ответ после ретрая) — warn и продолжение:
-// документ остаётся с regex-слоем, догон повторится (спека §3.5). Ошибка батча (БД) —
-// наверх: прогон обязан узнать, что разметка не записана.
-func mpTagLLM(llmRows *mpBatch, d mpLLMDoc, baseURL, apiKey, model string) error {
-	matches, err := tagMPChannelsLLM(d.Doc, baseURL, apiKey, model)
+// mpTagLLM размечает один документ моделью и складывает матчи в батч каналов. Возвращает
+// статистику разметки и ошибку, которую вызывающий обрабатывает сам: ошибка LLM
+// (mpLLMTagError: отказ провайдера, неразобранный ответ после ретрая, транспорт) — деградация
+// одного документа до regex-слоя, warn и продолжение (спека §3.5); ошибка батча (БД) — сбой
+// прогона, наверх, разметка не записана. Сама функция ошибку не логирует и не глотает.
+func mpTagLLM(llmRows *mpBatch, d mpLLMDoc, profile mpLLMProfile) (mpLLMDocStats, error) {
+	matches, stats, err := tagMPChannelsLLM(d.Doc, profile)
 	if err != nil {
-		log.Warnf("%s: LLM-разметка %s (%s) пропущена, документ остаётся с regex-слоем: %v",
-			mpSummaryName, d.Date.Format(mpSummaryDayLayout), d.Url, err)
-		return nil
+		return stats, mpLLMTagError{err}
 	}
 	for _, m := range matches {
 		// Model и PromptVersion — часть ключа ReplacingMergeTree: разметка другой модели
 		// или редакции промпта ложится рядом со старой, а не затирает её.
-		if err = llmRows.append(d.Date, m.Channel, m.Kind, mpMethodLLM, model,
+		if err = llmRows.append(d.Date, m.Channel, m.Kind, mpMethodLLM, profile.Model,
 			uint16(mpPromptVersion), uint16(m.Seq), m.Text); err != nil {
-			return err
+			return stats, err
 		}
 	}
-	return nil
+	return stats, nil
 }
 
 // mpBatch — ленивый батч одной таблицы: открывается на первой строке и не открывается

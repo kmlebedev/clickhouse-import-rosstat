@@ -152,6 +152,44 @@ func mpLLMProfileFromEnv(name string) (mpLLMProfile, []string) {
 	return profile, missing
 }
 
+// mpLLMUsage — расход токенов вызова модели (msg.Usage SDK): вход, выход и кэш. Попытки
+// одного документа суммируются: отчёт сравнивает модели по фактической цене, включая повтор
+// после ошибки формата.
+type mpLLMUsage struct {
+	InputTokens              int64
+	OutputTokens             int64
+	CacheReadInputTokens     int64
+	CacheCreationInputTokens int64
+}
+
+// add складывает расход двух вызовов (попыток одного документа).
+func (u mpLLMUsage) add(v mpLLMUsage) mpLLMUsage {
+	return mpLLMUsage{
+		InputTokens:              u.InputTokens + v.InputTokens,
+		OutputTokens:             u.OutputTokens + v.OutputTokens,
+		CacheReadInputTokens:     u.CacheReadInputTokens + v.CacheReadInputTokens,
+		CacheCreationInputTokens: u.CacheCreationInputTokens + v.CacheCreationInputTokens,
+	}
+}
+
+// mpLLMDocStats — результат разметки одного документа одной моделью: кто отвечал и сколько
+// раз, сколько занял документ целиком (включая ретрай) и что вышло по качеству. QuotesTotal —
+// всё, что прислала модель (неизвестный slug, пустая цитата и цитата, которой нет в корпусе,
+// тоже считаются), QuotesKept — сохранённое в результате, QuotesDropped = QuotesTotal −
+// QuotesKept. Notes — записи kind='note', ChannelsWithQuotes — уникальные slug'и реестра,
+// у которых есть хотя бы одна сохранённая цитата.
+type mpLLMDocStats struct {
+	Model              string
+	Attempts           int
+	Duration           time.Duration
+	Usage              mpLLMUsage
+	QuotesTotal        int
+	QuotesKept         int
+	QuotesDropped      int
+	Notes              int
+	ChannelsWithQuotes int
+}
+
 // mpLLMQuote — цитата канала в ответе модели: вид (risk_pro|risk_dez|prose) и дословный
 // фрагмент документа.
 type mpLLMQuote struct {
@@ -218,6 +256,20 @@ func mpIsJSONDecodeError(err error) bool {
 	var syntax *json.SyntaxError
 	var typeErr *json.UnmarshalTypeError
 	return errors.As(err, &syntax) || errors.As(err, &typeErr) || errors.Is(err, io.ErrUnexpectedEOF)
+}
+
+// mpLLMTagError — ошибка LLM-разметки документа (провайдер, формат, транспорт): вызывающий
+// (импортёр, harness) обрабатывает её как деградацию одного документа до regex-слоя, а не
+// сбой прогона, — в отличие от ошибки записи батча, которая идёт наверх.
+type mpLLMTagError struct{ err error }
+
+func (e mpLLMTagError) Error() string { return e.err.Error() }
+func (e mpLLMTagError) Unwrap() error { return e.err }
+
+// mpIsLLMTagError — ошибка пришла от LLM, а не от батча БД.
+func mpIsLLMTagError(err error) bool {
+	var te mpLLMTagError
+	return errors.As(err, &te)
 }
 
 // mpLLMQuoteKind — вид цитаты из разрешённой тройки risk_pro|risk_dez|prose.
@@ -347,7 +399,11 @@ func mpLLMText(msg *anthropic.Message) string {
 // возвращается компактной ошибкой «http status <код>: <фрагмент тела ≤512 байт>» — как в старом
 // util.PostJSON: *anthropic.Error несёт тело ответа целиком (сотни байт в JSON), а ошибка уезжает
 // в warn-лог импортёра (конвенция §3: код и начало тела, без URL).
-func mpLLMAskOnce(doc mpSummaryDoc, baseURL, apiKey, model string) (mpLLMPayload, error) {
+//
+// Usage — из msg.Usage SDK (input/output и кэш). Конверт уже получен, поэтому расход токенов
+// не теряется и на ошибке формата ниже: провайдер токены потратил, и отчёт должен это видеть.
+// На отказе провайдера и транспортной ошибке конверта нет — usage нулевой.
+func mpLLMAskOnce(doc mpSummaryDoc, baseURL, apiKey, model string) (mpLLMPayload, mpLLMUsage, error) {
 	client := anthropic.NewClient(
 		option.WithAPIKey(apiKey),
 		option.WithBaseURL(strings.TrimRight(baseURL, "/")),
@@ -375,39 +431,47 @@ func mpLLMAskOnce(doc mpSummaryDoc, baseURL, apiKey, model string) (mpLLMPayload
 		if errors.As(err, &apiErr) {
 			// Тело — из RawJSON() (SDK v1.80.0): сам Error печатает его целиком, а в лог ему
 			// место только нарезкой. Ключа в теле нет — он едет заголовком.
-			return mpLLMPayload{}, fmt.Errorf("http status %d: %s", apiErr.StatusCode, util.ErrorSnippet([]byte(apiErr.RawJSON())))
+			return mpLLMPayload{}, mpLLMUsage{}, fmt.Errorf("http status %d: %s", apiErr.StatusCode, util.ErrorSnippet([]byte(apiErr.RawJSON())))
 		}
 		if mpIsJSONDecodeError(err) {
-			return mpLLMPayload{}, mpLLMFormatError{err}
+			return mpLLMPayload{}, mpLLMUsage{}, mpLLMFormatError{err}
 		}
-		return mpLLMPayload{}, err
+		return mpLLMPayload{}, mpLLMUsage{}, err
+	}
+	usage := mpLLMUsage{
+		InputTokens:              msg.Usage.InputTokens,
+		OutputTokens:             msg.Usage.OutputTokens,
+		CacheReadInputTokens:     msg.Usage.CacheReadInputTokens,
+		CacheCreationInputTokens: msg.Usage.CacheCreationInputTokens,
 	}
 	content := mpLLMText(msg)
 	if content == "" {
-		return mpLLMPayload{}, mpLLMFormatError{fmt.Errorf("в ответе нет text-блока")}
+		return mpLLMPayload{}, usage, mpLLMFormatError{fmt.Errorf("в ответе нет text-блока")}
 	}
 	body, ok := mpLLMJSONBody(content)
 	if !ok {
-		return mpLLMPayload{}, mpLLMFormatError{fmt.Errorf("в content нет JSON-объекта (content: %d байт)", len(content))}
+		return mpLLMPayload{}, usage, mpLLMFormatError{fmt.Errorf("в content нет JSON-объекта (content: %d байт)", len(content))}
 	}
 	var payload mpLLMPayload
 	if err := json.Unmarshal([]byte(body), &payload); err != nil {
-		return mpLLMPayload{}, mpLLMFormatError{fmt.Errorf("content не разобран: %w", err)}
+		return mpLLMPayload{}, usage, mpLLMFormatError{fmt.Errorf("content не разобран: %w", err)}
 	}
-	return payload, nil
+	return payload, usage, nil
 }
 
 // mpLLMAsk — запрос с одним ретраем на ошибку формата. Второй подряд провал формата
 // возвращается вызывающему: спека §3.5 — разметка документа пропускается (документ остаётся
 // с regex-слоем), догон следующим прогоном. Имя модели в warn не секрет: оно же пишется
-// в колонку model.
-func mpLLMAsk(doc mpSummaryDoc, baseURL, apiKey, model string) (mpLLMPayload, error) {
-	payload, err := mpLLMAskOnce(doc, baseURL, apiKey, model)
+// в колонку model. Usage суммируется по попыткам, attempts — фактическое число вызовов
+// (1 или 2): повтор разрешён только на ошибку формата.
+func mpLLMAsk(doc mpSummaryDoc, baseURL, apiKey, model string) (mpLLMPayload, mpLLMUsage, int, error) {
+	payload, usage, err := mpLLMAskOnce(doc, baseURL, apiKey, model)
 	if err == nil || !mpIsFormatError(err) {
-		return payload, err
+		return payload, usage, 1, err
 	}
 	log.Warnf("cbr_mp_summary: ответ LLM (%s) не разобран (%v), повтор запроса", model, err)
-	return mpLLMAskOnce(doc, baseURL, apiKey, model)
+	payload, retryUsage, err := mpLLMAskOnce(doc, baseURL, apiKey, model)
+	return payload, usage.add(retryUsage), 2, err
 }
 
 // tagMPChannelsLLM размечает документ резюме по 11 каналам моделью LLM (слой 2, спека §3.5):
@@ -423,15 +487,28 @@ func mpLLMAsk(doc mpSummaryDoc, baseURL, apiKey, model string) (mpLLMPayload, er
 // на каждый канал с непустой note; Seq — сквозной с 1 в порядке выдачи (первое поле ключа
 // строк в таблице). Возвращаются только матчи: Method, Model и PromptVersion проставляет
 // вызывающий (импортёр) — здесь они неизвестны.
-func tagMPChannelsLLM(doc mpSummaryDoc, baseURL, apiKey, model string) ([]mpChannelMatch, error) {
-	payload, err := mpLLMAsk(doc, baseURL, apiKey, model)
+//
+// stats заполняется по ходу: Model/Attempts/Usage — из вызова (usage суммирован по попыткам),
+// Duration — полное время документа, включая ретрай. QuotesTotal считается до валидации:
+// в нём и каналы вне реестра, и пустые цитаты, и цитаты, которых нет в корпусе; QuotesKept —
+// сохранённые, QuotesDropped — их разность. Notes — записи kind='note', ChannelsWithQuotes —
+// slug'и реестра с сохранённой цитатой. На ошибке LLM stats несёт Model/Attempts/Usage/
+// Duration, а счётчики нулевые: разметки нет.
+func tagMPChannelsLLM(doc mpSummaryDoc, profile mpLLMProfile) ([]mpChannelMatch, mpLLMDocStats, error) {
+	start := time.Now()
+	payload, usage, attempts, err := mpLLMAsk(doc, profile.BaseURL, profile.APIKey, profile.Model)
+	stats := mpLLMDocStats{Model: profile.Model, Attempts: attempts, Usage: usage}
 	if err != nil {
-		return nil, err
+		stats.Duration = time.Since(start)
+		return nil, stats, err
 	}
 	corpus := mpLLMCorpus(doc)
 	known := make(map[string]bool, len(mpChannels))
 	for _, ch := range mpChannels {
 		known[ch.Slug] = true
+	}
+	for _, ch := range payload.Channels {
+		stats.QuotesTotal += len(ch.Quotes)
 	}
 	channels := make([]mpLLMChannel, 0, len(payload.Channels))
 	for _, ch := range payload.Channels {
@@ -443,8 +520,9 @@ func tagMPChannelsLLM(doc mpSummaryDoc, baseURL, apiKey, model string) ([]mpChan
 	}
 
 	var (
-		out  []mpChannelMatch
-		seen = make(map[mpChannelMatchKey]bool)
+		out         []mpChannelMatch
+		seen        = make(map[mpChannelMatchKey]bool)
+		quotedSlugs = make(map[string]bool, len(channels))
 	)
 	for _, ch := range channels {
 		for _, q := range ch.Quotes {
@@ -469,6 +547,8 @@ func tagMPChannelsLLM(doc mpSummaryDoc, baseURL, apiKey, model string) ([]mpChan
 			}
 			seen[key] = true
 			out = append(out, mpChannelMatch{Channel: ch.Slug, Kind: kind, Text: text})
+			stats.QuotesKept++
+			quotedSlugs[ch.Slug] = true
 		}
 	}
 	noted := make(map[string]bool, len(channels))
@@ -479,9 +559,13 @@ func tagMPChannelsLLM(doc mpSummaryDoc, baseURL, apiKey, model string) ([]mpChan
 		}
 		noted[ch.Slug] = true
 		out = append(out, mpChannelMatch{Channel: ch.Slug, Kind: mpKindNote, Text: note})
+		stats.Notes++
 	}
 	for i := range out {
 		out[i].Seq = i + 1
 	}
-	return out, nil
+	stats.QuotesDropped = stats.QuotesTotal - stats.QuotesKept
+	stats.ChannelsWithQuotes = len(quotedSlugs)
+	stats.Duration = time.Since(start)
+	return out, stats, nil
 }

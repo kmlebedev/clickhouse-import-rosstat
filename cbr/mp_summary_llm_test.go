@@ -470,7 +470,7 @@ func TestTagMPChannelsLLMOK(t *testing.T) {
 	mock := mpNewLLMMock(t, mpLLMMockResponse{Body: mpLLMContentBody(t, mpLLMPayloadBody(t, channels...))})
 
 	// baseURL с хвостовым слэшем: путь запроса не должен получиться «//v1/messages».
-	matches, err := tagMPChannelsLLM(doc, mock.url+"/", "test-key", "test-model")
+	matches, _, err := mpTagTest(doc, mock.url+"/", "test-key", "test-model")
 	if err != nil {
 		t.Fatalf("tagMPChannelsLLM: %v", err)
 	}
@@ -586,7 +586,7 @@ func TestTagMPChannelsLLMDropsHallucination(t *testing.T) {
 	}
 	mock := mpNewLLMMock(t, mpLLMMockResponse{Body: mpLLMContentBody(t, mpLLMPayloadBody(t, channels...))})
 
-	matches, err := tagMPChannelsLLM(doc, mock.url, "test-key", "test-model")
+	matches, _, err := mpTagTest(doc, mock.url, "test-key", "test-model")
 	if err != nil {
 		t.Fatalf("tagMPChannelsLLM: %v", err)
 	}
@@ -619,7 +619,7 @@ func TestTagMPChannelsLLMValidatesSlugAndKind(t *testing.T) {
 	}
 	mock := mpNewLLMMock(t, mpLLMMockResponse{Body: mpLLMContentBody(t, mpLLMPayloadBody(t, channels...))})
 
-	matches, err := tagMPChannelsLLM(doc, mock.url, "test-key", "test-model")
+	matches, _, err := mpTagTest(doc, mock.url, "test-key", "test-model")
 	if err != nil {
 		t.Fatalf("tagMPChannelsLLM: %v", err)
 	}
@@ -682,7 +682,7 @@ func TestTagMPChannelsLLMBrokenJSON(t *testing.T) {
 			mock := mpNewLLMMock(t,
 				mpLLMMockResponse{Body: tc.first},
 				mpLLMMockResponse{Body: valid})
-			matches, err := tagMPChannelsLLM(doc, mock.url, "test-key", "test-model")
+			matches, _, err := mpTagTest(doc, mock.url, "test-key", "test-model")
 			mpLLMCheckRetryToLaborMatch(t, mock, matches, err)
 		})
 	}
@@ -690,7 +690,7 @@ func TestTagMPChannelsLLMBrokenJSON(t *testing.T) {
 		mock := mpNewLLMMock(t,
 			mpLLMMockResponse{Body: mpLLMContentBody(t, truncatedContent)},
 			mpLLMMockResponse{Body: mpLLMContentBody(t, truncatedContent)})
-		matches, err := tagMPChannelsLLM(doc, mock.url, "test-key", "test-model")
+		matches, _, err := mpTagTest(doc, mock.url, "test-key", "test-model")
 		if err == nil {
 			t.Fatalf("ожидалась ошибка после двух битых ответов, получены матчи %+v", matches)
 		}
@@ -710,7 +710,7 @@ func TestTagMPChannelsLLMNoTextBlock(t *testing.T) {
 
 	t.Run("один вызов без text-блока → ошибка формата", func(t *testing.T) {
 		mock := mpNewLLMMock(t, mpLLMMockResponse{Body: mpLLMEmptyContentBody(t)})
-		_, err := mpLLMAskOnce(doc, mock.url, "test-key", "test-model")
+		_, _, err := mpLLMAskOnce(doc, mock.url, "test-key", "test-model")
 		if err == nil {
 			t.Fatal("ответ без text-блока: ожидалась ошибка")
 		}
@@ -728,7 +728,7 @@ func TestTagMPChannelsLLMNoTextBlock(t *testing.T) {
 		mock := mpNewLLMMock(t,
 			mpLLMMockResponse{Body: mpLLMEmptyContentBody(t)},
 			mpLLMMockResponse{Body: valid})
-		matches, err := tagMPChannelsLLM(doc, mock.url, "test-key", "test-model")
+		matches, _, err := mpTagTest(doc, mock.url, "test-key", "test-model")
 		mpLLMCheckRetryToLaborMatch(t, mock, matches, err)
 	})
 }
@@ -744,7 +744,7 @@ func TestTagMPChannelsLLMFencedJSON(t *testing.T) {
 	content := "```json\n" + payload + "\n```\nНадеюсь, разметка полезна."
 	mock := mpNewLLMMock(t, mpLLMMockResponse{Body: mpLLMContentBody(t, content)})
 
-	matches, err := tagMPChannelsLLM(doc, mock.url, "test-key", "test-model")
+	matches, _, err := mpTagTest(doc, mock.url, "test-key", "test-model")
 	if err != nil {
 		t.Fatalf("tagMPChannelsLLM: %v", err)
 	}
@@ -769,7 +769,7 @@ func TestTagMPChannelsLLM500(t *testing.T) {
 	body := `{"error":{"type":"api_error","message":"` + strings.Repeat("провайдер упал; ", 300) + `"}}`
 	mock := mpNewLLMMock(t, mpLLMMockResponse{Status: http.StatusInternalServerError, Body: body})
 
-	matches, err := tagMPChannelsLLM(doc, mock.url, "test-key", "test-model")
+	matches, _, err := mpTagTest(doc, mock.url, "test-key", "test-model")
 	if err == nil {
 		t.Fatalf("500: ожидалась ошибка, получены матчи %+v", matches)
 	}
@@ -802,7 +802,7 @@ func TestTagMPChannelsLLMTransportError(t *testing.T) {
 	url := srv.URL
 	srv.Close()
 
-	_, err := tagMPChannelsLLM(doc, url, "test-key", "test-model")
+	_, _, err := mpTagTest(doc, url, "test-key", "test-model")
 	if err == nil {
 		t.Fatal("недоступный провайдер: ожидалась ошибка")
 	}
@@ -832,7 +832,7 @@ func TestTagMPChannelsLLMTimeout(t *testing.T) {
 	mpLLMTimeout = time.Second
 	t.Cleanup(func() { mpLLMTimeout = old })
 
-	_, err := tagMPChannelsLLM(doc, srv.URL, "test-key", "test-model")
+	_, _, err := mpTagTest(doc, srv.URL, "test-key", "test-model")
 	if err == nil {
 		t.Fatal("зависший провайдер: ожидалась ошибка дедлайна")
 	}
@@ -879,7 +879,7 @@ func TestTagMPChannelsLLMBodyReadBroken(t *testing.T) {
 	defer srv.Close()
 
 	t.Run("mpLLMAskOnce классифицирует обрыв как формат", func(t *testing.T) {
-		_, err := mpLLMAskOnce(doc, srv.URL, "test-key", "test-model")
+		_, _, err := mpLLMAskOnce(doc, srv.URL, "test-key", "test-model")
 		if err == nil {
 			t.Fatal("обрыв чтения тела: ожидалась ошибка")
 		}
@@ -895,7 +895,7 @@ func TestTagMPChannelsLLMBodyReadBroken(t *testing.T) {
 		mu.Lock()
 		before := calls
 		mu.Unlock()
-		matches, err := tagMPChannelsLLM(doc, srv.URL, "test-key", "test-model")
+		matches, _, err := mpTagTest(doc, srv.URL, "test-key", "test-model")
 		if err == nil {
 			t.Fatalf("обрыв чтения тела: ожидалась ошибка, получены матчи %+v", matches)
 		}
@@ -912,4 +912,202 @@ func TestTagMPChannelsLLMBodyReadBroken(t *testing.T) {
 			t.Errorf("в текст ошибки утёк ключ API: %v", err)
 		}
 	})
+}
+
+// mpTagTest — tagMPChannelsLLM с тестовым профилем: продовый вызов принимает профиль, а
+// тестам важно лишь, что base/api/model доехали до запроса.
+func mpTagTest(doc mpSummaryDoc, baseURL, apiKey, model string) ([]mpChannelMatch, mpLLMDocStats, error) {
+	return tagMPChannelsLLM(doc, mpLLMProfile{Name: "test", BaseURL: baseURL, APIKey: apiKey, Model: model})
+}
+
+// TestTagMPChannelsLLMStats — валидный ответ: usage из конверта (мок отдаёт 1/1), одна
+// попытка, положительная длительность и счётчики качества на полном наборе 11 каналов.
+// money_supply приходит без note — заметок 10, а не 11; каждая цитата сохранена, поэтому
+// dropped = 0, а каналов с цитатами — все 11.
+func TestTagMPChannelsLLMStats(t *testing.T) {
+	doc := mpLLMFixtureDoc(t)
+	channels := mpLLMValidChannels()
+	mock := mpNewLLMMock(t, mpLLMMockResponse{Body: mpLLMContentBody(t, mpLLMPayloadBody(t, channels...))})
+
+	matches, stats, err := mpTagTest(doc, mock.url, "test-key", "test-model")
+	if err != nil {
+		t.Fatalf("tagMPChannelsLLM: %v", err)
+	}
+	if stats.Model != "test-model" {
+		t.Errorf("Model = %q, ожидалось %q", stats.Model, "test-model")
+	}
+	if stats.Attempts != 1 {
+		t.Errorf("Attempts = %d, ожидалась 1 попытка", stats.Attempts)
+	}
+	if stats.Duration <= 0 {
+		t.Errorf("Duration = %v, ожидалась положительная длительность", stats.Duration)
+	}
+	if want := (mpLLMUsage{InputTokens: 1, OutputTokens: 1}); stats.Usage != want {
+		t.Errorf("Usage = %+v, ожидалось %+v (usage конверта мока)", stats.Usage, want)
+	}
+	const wantQuotes = 11
+	if stats.QuotesTotal != wantQuotes {
+		t.Errorf("QuotesTotal = %d, ожидалось %d", stats.QuotesTotal, wantQuotes)
+	}
+	if stats.QuotesKept != wantQuotes {
+		t.Errorf("QuotesKept = %d, ожидалось %d", stats.QuotesKept, wantQuotes)
+	}
+	if stats.QuotesDropped != 0 {
+		t.Errorf("QuotesDropped = %d, ожидалось 0", stats.QuotesDropped)
+	}
+	const wantNotes = 10 // money_supply в валидном ответе без note
+	if stats.Notes != wantNotes {
+		t.Errorf("Notes = %d, ожидалось %d", stats.Notes, wantNotes)
+	}
+	if stats.ChannelsWithQuotes != len(mpChannels) {
+		t.Errorf("ChannelsWithQuotes = %d, ожидалось %d (все каналы реестра)", stats.ChannelsWithQuotes, len(mpChannels))
+	}
+	if len(matches) != wantQuotes+wantNotes {
+		t.Errorf("матчей %d, ожидалось %d (цитаты + заметки)", len(matches), wantQuotes+wantNotes)
+	}
+}
+
+// TestTagMPChannelsLLMStatsHallucination — цитата, которой нет в тексте, увеличивает
+// QuotesTotal и QuotesDropped, но не QuotesKept: доля отброшенного в отчёте считается от
+// всего, что прислала модель, включая галлюцинации.
+func TestTagMPChannelsLLMStatsHallucination(t *testing.T) {
+	const hallucination = "Совет директоров допускает повышение ключевой ставки до 25,00% годовых на ближайшем заседании."
+
+	doc := mpLLMFixtureDoc(t)
+	if strings.Contains(mpLLMCorpus(doc), hallucination) {
+		t.Fatalf("цитата-галлюцинация случайно встречается в документе: %q", hallucination)
+	}
+	base := []mpLLMChannelSpec{
+		{Slug: "output_gap", Quotes: []mpLLMQuoteSpec{{Kind: mpKindRiskPro, Text: mpLLMRiskProPin}},
+			Note: "Дисбаланс спроса и предложения."},
+		{Slug: "labor_market", Quotes: []mpLLMQuoteSpec{{Kind: mpKindProse, Text: mpLLMLaborPin}},
+			Note: "Рынок труда смягчается."},
+	}
+	withHallucination := []mpLLMChannelSpec{
+		{Slug: "output_gap", Quotes: []mpLLMQuoteSpec{
+			{Kind: mpKindRiskPro, Text: mpLLMRiskProPin},
+			{Kind: mpKindRiskPro, Text: hallucination},
+		}, Note: "Дисбаланс спроса и предложения."},
+		base[1],
+	}
+
+	baseMock := mpNewLLMMock(t, mpLLMMockResponse{Body: mpLLMContentBody(t, mpLLMPayloadBody(t, base...))})
+	_, baseStats, err := mpTagTest(doc, baseMock.url, "test-key", "test-model")
+	if err != nil {
+		t.Fatalf("tagMPChannelsLLM (без галлюцинации): %v", err)
+	}
+	mock := mpNewLLMMock(t, mpLLMMockResponse{Body: mpLLMContentBody(t, mpLLMPayloadBody(t, withHallucination...))})
+	_, stats, err := mpTagTest(doc, mock.url, "test-key", "test-model")
+	if err != nil {
+		t.Fatalf("tagMPChannelsLLM (с галлюцинацией): %v", err)
+	}
+	if stats.QuotesTotal != baseStats.QuotesTotal+1 {
+		t.Errorf("QuotesTotal = %d, ожидалось %d (галлюцинация входит в общий счёт)",
+			stats.QuotesTotal, baseStats.QuotesTotal+1)
+	}
+	if stats.QuotesKept != baseStats.QuotesKept {
+		t.Errorf("QuotesKept = %d, ожидалось %d (отброшенная цитата не сохраняется)",
+			stats.QuotesKept, baseStats.QuotesKept)
+	}
+	if stats.QuotesDropped != baseStats.QuotesDropped+1 {
+		t.Errorf("QuotesDropped = %d, ожидалось %d", stats.QuotesDropped, baseStats.QuotesDropped+1)
+	}
+}
+
+// TestTagMPChannelsLLMStatsRetry — битый первый ответ лечится ретраем: попыток две, usage
+// суммируется по обоим вызовам (мок отдаёт 1/1 в каждом конверте), длительность покрывает
+// оба вызова.
+func TestTagMPChannelsLLMStatsRetry(t *testing.T) {
+	doc := mpLLMFixtureDoc(t)
+	const truncatedContent = `{"channels":[{"slug":"labor_market","quotes":[{"kind":"prose","text":"Дефицит работников`
+	valid := mpLLMContentBody(t, mpLLMPayloadBody(t,
+		mpLLMChannelSpec{Slug: "labor_market", Quotes: []mpLLMQuoteSpec{{Kind: mpKindProse, Text: mpLLMLaborPin}}}))
+	mock := mpNewLLMMock(t,
+		mpLLMMockResponse{Body: mpLLMContentBody(t, truncatedContent)},
+		mpLLMMockResponse{Body: valid})
+
+	matches, stats, err := mpTagTest(doc, mock.url, "test-key", "test-model")
+	if err != nil {
+		t.Fatalf("tagMPChannelsLLM: %v (ретрай должен был вылечить формат)", err)
+	}
+	if mock.calls() != 2 {
+		t.Errorf("запросов %d, ожидалось 2 (первый + ретрай)", mock.calls())
+	}
+	if stats.Attempts != 2 {
+		t.Errorf("Attempts = %d, ожидалось 2", stats.Attempts)
+	}
+	if want := (mpLLMUsage{InputTokens: 2, OutputTokens: 2}); stats.Usage != want {
+		t.Errorf("Usage = %+v, ожидалось %+v (сумма двух попыток)", stats.Usage, want)
+	}
+	if stats.Duration <= 0 {
+		t.Errorf("Duration = %v, ожидалась положительная длительность", stats.Duration)
+	}
+	if len(matches) != 1 || !mpHasMatchKindText(matches, "labor_market", mpKindProse, mpLLMLaborPin) {
+		t.Errorf("матчи = %+v, ожидался один дословный матч labor_market", matches)
+	}
+	if stats.QuotesTotal != 1 || stats.QuotesKept != 1 || stats.QuotesDropped != 0 {
+		t.Errorf("счётчики после ретрая = total %d, kept %d, dropped %d, ожидалось 1/1/0",
+			stats.QuotesTotal, stats.QuotesKept, stats.QuotesDropped)
+	}
+}
+
+// TestTagMPChannelsLLMStats500 — отказ провайдера: ошибка наверх, попытка одна (500 не
+// повторяется), usage нулевой — конверта с расходом токенов провайдер не прислал.
+func TestTagMPChannelsLLMStats500(t *testing.T) {
+	doc := mpLLMFixtureDoc(t)
+	mock := mpNewLLMMock(t, mpLLMMockResponse{
+		Status: http.StatusInternalServerError,
+		Body:   `{"error":{"type":"api_error","message":"провайдер упал"}}`,
+	})
+
+	matches, stats, err := mpTagTest(doc, mock.url, "test-key", "test-model")
+	if err == nil {
+		t.Fatalf("500: ожидалась ошибка, получены матчи %+v", matches)
+	}
+	if mock.calls() != 1 {
+		t.Errorf("запросов %d, ожидался 1 (500 не повторяется)", mock.calls())
+	}
+	if stats.Attempts != 1 {
+		t.Errorf("Attempts = %d, ожидалась 1 попытка", stats.Attempts)
+	}
+	if stats.Usage != (mpLLMUsage{}) {
+		t.Errorf("Usage = %+v, ожидался нулевой", stats.Usage)
+	}
+	if stats.Model != "test-model" {
+		t.Errorf("Model = %q, ожидалось %q", stats.Model, "test-model")
+	}
+}
+
+// TestMpTagLLMReturnsError — ошибка LLM не глотается внутри mpTagLLM: она доходит до
+// вызывающего (тот решает, что это деградация одного документа), батч при этом не трогается.
+func TestMpTagLLMReturnsError(t *testing.T) {
+	doc := mpLLMFixtureDoc(t)
+	mock := mpNewLLMMock(t, mpLLMMockResponse{
+		Status: http.StatusInternalServerError,
+		Body:   `{"error":{"type":"api_error","message":"провайдер упал"}}`,
+	})
+	// Батч без соединения: ошибка LLM обязана вернуться до первой записи, иначе append
+	// упал бы на nil-соединении.
+	rows := &mpBatch{}
+	d := mpLLMDoc{
+		Date: time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC),
+		Url:  "https://www.cbr.ru/example",
+		Doc:  doc,
+	}
+	stats, err := mpTagLLM(rows, d, mpLLMProfile{BaseURL: mock.url, APIKey: "test-key", Model: "test-model"})
+	if err == nil {
+		t.Fatalf("ошибка LLM не дошла до вызывающего, stats = %+v", stats)
+	}
+	if mock.calls() != 1 {
+		t.Errorf("запросов %d, ожидался 1 (500 не повторяется)", mock.calls())
+	}
+	if !mpIsLLMTagError(err) {
+		t.Errorf("ошибка %v не опознана как ошибка LLM (а не батча)", err)
+	}
+	if stats.Attempts != 1 || stats.Usage != (mpLLMUsage{}) {
+		t.Errorf("stats = %+v, ожидались Attempts=1 и нулевой Usage", stats)
+	}
+	if rows.rows != 0 || rows.batch != nil {
+		t.Errorf("батч тронут при ошибке LLM: rows=%d, batch=%v", rows.rows, rows.batch)
+	}
 }
