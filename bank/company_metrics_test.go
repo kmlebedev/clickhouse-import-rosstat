@@ -145,7 +145,7 @@ func TestBankCompanyPeriod(t *testing.T) {
 // на прогон (она делает повторный прогон версией ReplacingMergeTree, а не ростом таблицы), а
 // ключ (company, metric, period, source_kind, source_url) в одном прогоне не повторяется — иначе
 // батч вёз бы строки, которые ClickHouse потом схлопнул бы молча. Строки собираются из обеих
-// живых фикстур (задачи 3 и 5) тем же маппингом, что и Import.
+// живых фикстур (разведка живых книг) тем же маппингом, что и Import.
 func TestBankCompanyAppend(t *testing.T) {
 	rows := bankCompanyFixtureRows(t)
 	if len(rows) != 629 {
@@ -153,7 +153,7 @@ func TestBankCompanyAppend(t *testing.T) {
 	}
 
 	loadedAt := time.Date(2026, time.October, 17, 12, 0, 0, 0, time.UTC)
-	rec := newAppendRecorder(companyFinancialsColumnNames...)
+	rec := newCompanyRecorder(companyFinancialsColumnNames...)
 	if err := appendBankCompanyRows(rec, rows, loadedAt); err != nil {
 		t.Fatalf("запись строк company_financials: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestBankCompanyAppend(t *testing.T) {
 		}
 	}
 
-	// Spot-значения (разведка задач 3 и 5): числа книги, единицы словаря и период из даты вместе
+	// Spot-значения (разведка живых книг): числа книги, единицы словаря и период из даты вместе
 	// ловят и не ту метрику, и не ту единицу, и не тот месяц. Процентные метрики проверяются по
 	// проценту (0.146 книги = 14,6 строки): иначе единица '%' в колонке unit врала бы.
 	byKey := make(map[string]float64, len(rec.company))
@@ -256,29 +256,79 @@ func TestBankCompanyAppend(t *testing.T) {
 	}
 }
 
+// Дубль (metric, period) в одном прогоне — ошибка, а не молчаливая запись: у двух таких точек
+// совпал бы ключ company_financials (company, metric, period, source_kind, source_url), и
+// ReplacingMergeTree схлопнул бы строки молча (спека §2.4). Текст обязан назвать таблицу,
+// метрику, период и обе даты — по ним оператор найдёт исходные строки сырой таблицы. Точки
+// разных месяцев той же метрики дублем не являются.
+func TestBankCompanyMapPointsDuplicatePeriod(t *testing.T) {
+	table := sberRpbuDataUrlTable
+	june := time.Date(2026, time.June, 30, 0, 0, 0, 0, time.UTC)
+	rows, missing, err := bankCompanyMapPoints(table, []bankCompanyPoint{
+		{Name: "Активы", Date: june, Value: 65355.1},
+		{Name: "Активы", Date: time.Date(2026, time.June, 15, 0, 0, 0, 0, time.UTC), Value: 65000},
+	})
+	if err == nil {
+		t.Fatalf("две точки total_assets за 2026M06 приняты без ошибки: rows=%+v missing=%v", rows, missing)
+	}
+	for _, want := range []string{table, "total_assets", "2026M06", "2026-06-30", "2026-06-15"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("ошибка %q не называет %q — оператор не найдёт строки сырой таблицы", err, want)
+		}
+	}
+
+	if _, _, err := bankCompanyMapPoints(table, []bankCompanyPoint{
+		{Name: "Активы", Date: june, Value: 65355.1},
+		{Name: "Активы", Date: time.Date(2026, time.May, 31, 0, 0, 0, 0, time.UTC), Value: 64000},
+	}); err != nil {
+		t.Errorf("точки разных месяцев ошибочно приняты за дубль: %v", err)
+	}
+}
+
 // Строка сырой таблицы вне словаря — не ошибка прогона (сырьё уже импортировано, маппинг —
 // производное, спека §3.7): она пропускается. А подпись словаря, которой в таблице не нашлось,
-// обязана быть названа вызывающему — иначе метрика исчезла бы из company_financials молча, и
-// заметить это можно было бы только по витрине (Review Focus 4).
+// обязана быть названа вызывающему спекой словаря — иначе метрика исчезла бы из
+// company_financials молча, и заметить это можно было бы только по витрине. Спека, а не голая
+// подпись: warn обязан назвать и метрику (spec.Metric).
 func TestBankCompanyMapPointsSkipsUnknownLabels(t *testing.T) {
 	date := time.Date(2026, time.June, 30, 0, 0, 0, 0, time.UTC)
-	rows, missing := bankCompanyMapPoints(sberRpbuDataUrlTable, []bankCompanyPoint{
+	rows, missing, err := bankCompanyMapPoints(sberRpbuDataUrlTable, []bankCompanyPoint{
 		{Name: "Жилищное кредитование", Date: date, Value: 1113}, // сырьевой ряд вне словаря
 		{Name: "Активы", Date: date, Value: 65355.1},             // подпись словаря
 	})
+	if err != nil {
+		t.Fatalf("маппинг известных подписей: %v", err)
+	}
 
 	if len(rows) != 1 || rows[0].Metric != "total_assets" || rows[0].Period != "2026M06" {
 		t.Errorf("маппинг дал %+v, want одну строку SBER/total_assets за 2026M06", rows)
 	}
-	if want := len(bankCompanyMetricSpecs[sberRpbuDataUrlTable]) - 1; len(missing) != want {
-		t.Errorf("не найденных подписей словаря %d, want %d: %v", len(missing), want, missing)
+	// Порядок — словарный: missing собирается обходом bankCompanyMetricSpecs, и warn читается в
+	// том же порядке, что и словарь.
+	var wantMissing []string
+	for _, spec := range bankCompanyMetricSpecs[sberRpbuDataUrlTable] {
+		if spec.Label != "Активы" {
+			wantMissing = append(wantMissing, spec.Metric)
+		}
 	}
-	if slices.Contains(missing, "Активы") {
+	var gotMissing []string
+	for _, spec := range missing {
+		gotMissing = append(gotMissing, spec.Metric)
+	}
+	if !slices.Equal(gotMissing, wantMissing) {
+		t.Errorf("не найденные спеки словаря %v, want %v", gotMissing, wantMissing)
+	}
+	if slices.ContainsFunc(missing, func(spec bankCompanyMetricSpec) bool { return spec.Label == "Активы" }) {
 		t.Error("подпись «Активы» в таблице есть, а маппинг назвал её не найденной")
 	}
 	for _, label := range []string{"Достаточность общего капитала Н1.0", "Рентабельность капитала"} {
-		if !slices.Contains(missing, label) {
+		if !slices.ContainsFunc(missing, func(spec bankCompanyMetricSpec) bool { return spec.Label == label }) {
 			t.Errorf("подписи %q нет в таблице, а маппинг её не назвал: %v", label, missing)
+		}
+	}
+	for _, spec := range missing {
+		if spec.Metric == "" {
+			t.Errorf("missing содержит спеку %+v без метрики — warn не сможет назвать метрику", spec)
 		}
 	}
 }
@@ -297,7 +347,7 @@ func TestBankCompanyDdlHasMonthEnum(t *testing.T) {
 	}
 }
 
-// Контракт «словарь ↔ живые файлы» (Review Focus 4): каждая подпись словаря обязана реально
+// Контракт «словарь ↔ живые файлы» (спека §3.7): каждая подпись словаря обязана реально
 // извлекаться разбором своей фикстуры. Опечатка в подписи иначе не всплыла бы нигде: маппинг
 // пропускает неизвестные подписи с предупреждением в журнале, и метрика просто не появилась бы
 // в company_financials.
@@ -349,9 +399,9 @@ func TestBankCompanyDdlMatchesPolyusTemplate(t *testing.T) {
 	}
 }
 
-// bankCompanyFixtureRows — строки company_financials из обеих живых фикстур: разборы задач 3 и 5
-// на книгах, значения приведены к точности Float32-колонки balance сырой таблицы — ровно так, как
-// их отдал бы SELECT из неё.
+// bankCompanyFixtureRows — строки company_financials из обеих живых фикстур (разведка живых книг):
+// значения приведены к точности Float32-колонки balance сырой таблицы — ровно так, как их отдал бы
+// SELECT из неё.
 func bankCompanyFixtureRows(t *testing.T) []bankCompanyRow {
 	t.Helper()
 	var rows []bankCompanyRow
@@ -362,7 +412,10 @@ func bankCompanyFixtureRows(t *testing.T) []bankCompanyRow {
 		{sberRpbuDataUrlTable, bankCompanySberPoints(t)},
 		{vtbIfrsTable, bankCompanyVtbPoints(t)},
 	} {
-		mapped, missing := bankCompanyMapPoints(src.table, src.points)
+		mapped, missing, err := bankCompanyMapPoints(src.table, src.points)
+		if err != nil {
+			t.Fatalf("%s: маппинг точек фикстуры: %v", src.table, err)
+		}
 		if len(missing) > 0 {
 			t.Errorf("%s: подписи словаря не найдены в разборе фикстуры: %v — метрики пропущены", src.table, missing)
 		}
