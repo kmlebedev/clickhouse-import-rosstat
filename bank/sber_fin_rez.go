@@ -137,8 +137,8 @@ func parseSberFinBook(xlsx *excelize.File) ([]sberFinPoint, error) {
 		part, perr := parseSberFinSheet(xlsx, anchor)
 		if perr != nil {
 			// Имя таблицы добавляется здесь один раз: ветки parseSberFinSheet называют лист и
-			// строку, но не импортёра (контракт §6.4). Второй префикс в sberFinImportFunc дал бы
-			// дубль (урок ревью domrf_mortgage).
+			// строку, но не импортёра (контракт §6.4). Второй префикс в sberFinImportFunc повторил
+			// бы имя таблицы в тексте ошибки.
 			return nil, fmt.Errorf("%s: %w", sberRpbuDataUrlTable, perr)
 		}
 		points = append(points, part...)
@@ -373,8 +373,8 @@ func appendSberFinPoints(batch driver.Batch, points []sberFinPoint) error {
 }
 
 // sberFinImportFunc — ImportFunc шаблона: книга из памяти → точки → батч. Ошибку разбора не
-// оборачивает: parseSberFinBook уже называет таблицу, второй префикс дал бы дубль (урок ревью
-// domrf_mortgage).
+// оборачивает: parseSberFinBook уже называет таблицу, второй префикс повторил бы её имя в тексте
+// ошибки.
 func sberFinImportFunc(xlsx *excelize.File, batch driver.Batch) error {
 	points, err := parseSberFinBook(xlsx)
 	if err != nil {
