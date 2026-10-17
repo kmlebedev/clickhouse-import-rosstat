@@ -442,8 +442,8 @@ const (
 )
 
 // newsAnnotationCandidatesQueryPrefix — начало кандидатного запроса. Тесты фейкового
-// соединения различают вызов по префиксу, а не по точному равенству: LIMIT и newsFilter
-// вшиты в SQL функцией newsAnnotationCandidatesQuery, поэтому полный текст каждый раз свой.
+// соединения различают вызов по префиксу, а не по точному равенству: LIMIT вшит в SQL
+// функцией newsAnnotationCandidatesQuery, поэтому полный текст каждый раз свой.
 const newsAnnotationCandidatesQueryPrefix = "SELECT date, source, title, url, description, content_hash FROM " + newsTable + " FINAL"
 
 // newsAnnotationCandidatesQuery читает бэклог разметки: весь видимый поток — все Telegram-
@@ -456,12 +456,15 @@ const newsAnnotationCandidatesQueryPrefix = "SELECT date, source, title, url, de
 // Окно date >= now() - INTERVAL 35 DAY снято осознанно: охват — вся история видимого потока
 // (иначе старые раскрытия edisclosure и RSS оставались бы без разметки), а стоимость ограничивает
 // LIMIT — NEWS_LLM_BACKLOG_LIMIT (штатно 50, разовый бэкфилл — до 1000), а не возраст позиции.
-// newsFilter — код-константа, а не пользовательский ввод, поэтому подставляется литералом;
-// повторный прогон не платит за уже размеченные пары.
+//
+// newsFilter передаётся параметром, а не литералом: шаблон начинается с (?i), а драйвер
+// ClickHouse считает КАЖДЫЙ ? позиционным плейсхолдером, включая ? внутри строкового литерала.
+// Литерал дал бы четыре ? вместо двух и ошибку «have no arg for param ?». Порядок аргументов
+// запроса — порядок ?: filter, filter, model, prompt_version.
 func newsAnnotationCandidatesQuery(limit int) string {
 	return newsAnnotationCandidatesQueryPrefix +
 		" WHERE content_hash != ''" +
-		" AND (url LIKE 'https://t.me/%' OR match(title, '" + newsFilter + "') OR match(description, '" + newsFilter + "'))" +
+		" AND (url LIKE 'https://t.me/%' OR match(title, ?) OR match(description, ?))" +
 		" AND (url, content_hash) NOT IN (SELECT url, content_hash FROM " + newsAnnotationTable +
 		" FINAL WHERE method = 'llm' AND model = ? AND prompt_version = ?)" +
 		" ORDER BY date DESC LIMIT " + strconv.Itoa(limit)
@@ -780,12 +783,15 @@ func insertItems(ctx context.Context, conn driver.Conn, items []newsItem) (int64
 // проходящий newsFilter), у которого нет doc/tag-строк этой пары (model, prompt_version).
 // limit — NEWS_LLM_BACKLOG_LIMIT (штатно 50, разовый бэкфилл — до 1000); он вшивается в SQL
 // литералом: предел — проверенное целое из ограниченного диапазона, а не внешний ввод, и
-// строковый запрос остаётся воспроизводимым в тестах. Пустой результат — не
-// ошибка: разметить нечего. Порядок Scan — порядок колонок newsAnnotationCandidatesQuery:
-// date, source, title, url, description, content_hash. Ошибка обхода проверяется: молча
-// вернувшаяся половина бэклога оставила бы часть сообщений без разметки до следующего прогона.
+// строковый запрос остаётся воспроизводимым в тестах. newsFilter передаётся дважды — под
+// match(title) и match(description); иначе (?i) дал бы драйверу лишние `?` (см.
+// newsAnnotationCandidatesQuery). Порядок аргументов запроса — порядок `?` в SQL. Пустой
+// результат — не ошибка: разметить нечего. Порядок Scan — порядок колонок
+// newsAnnotationCandidatesQuery: date, source, title, url, description, content_hash.
+// Ошибка обхода проверяется: молча вернувшаяся половина бэклога оставила бы часть сообщений
+// без разметки до следующего прогона.
 func readNewsAnnotationCandidates(ctx context.Context, conn driver.Conn, model string, promptVersion uint16, limit int) ([]newsItem, error) {
-	rows, err := conn.Query(ctx, newsAnnotationCandidatesQuery(limit), model, promptVersion)
+	rows, err := conn.Query(ctx, newsAnnotationCandidatesQuery(limit), newsFilter, newsFilter, model, promptVersion)
 	if err != nil {
 		return nil, fmt.Errorf("news_watch: читать кандидатов %s (model=%s, prompt_version=%d): %w",
 			newsAnnotationTable, model, promptVersion, err)
