@@ -120,6 +120,9 @@ func parseForm101DBF(data []byte) ([]form101Row, error) {
 		if length == 0 {
 			return nil, fmt.Errorf("DBF формы 101: поле %q нулевой длины", name)
 		}
+		if _, exists := fields[name]; exists {
+			return nil, fmt.Errorf("DBF формы 101: поле %q встречается дважды", name)
+		}
 		fields[name] = form101Field{name: name, offset: offset, length: length}
 		offset += length
 		pos += dbfFieldDescLen
@@ -136,6 +139,11 @@ func parseForm101DBF(data []byte) ([]form101Row, error) {
 		}
 	}
 
+	// До аллокации: испорченный record count (0xFFFFFFFF) иначе заказал бы
+	// гигантский срез до первой проверки границ.
+	if uint64(headerLen)+uint64(records)*uint64(recordLen) > uint64(len(data)) {
+		return nil, fmt.Errorf("DBF формы 101: записей %d × %d байт не помещаются в файл %d байт", records, recordLen, len(data))
+	}
 	rows := make([]form101Row, 0, records)
 	for i := uint32(0); i < records; i++ {
 		start := headerLen + int(i)*recordLen
@@ -196,8 +204,7 @@ func parseForm101DBF(data []byte) ([]form101Row, error) {
 // а не пробелами, и без снятия NUL счёт стал бы непечатаемой строкой.
 func form101FieldText(rec []byte, field form101Field) (string, error) {
 	raw := rec[field.offset : field.offset+field.length]
-	raw = bytes.TrimRight(raw, "\x00")
-	raw = bytes.TrimSpace(raw)
+	raw = bytes.Trim(raw, "\x00 ")
 	if len(raw) == 0 {
 		return "", nil
 	}
