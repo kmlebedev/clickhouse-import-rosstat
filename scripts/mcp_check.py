@@ -991,6 +991,102 @@ async def check(params, server_log):
                 bank_assets_detail = "строк нет — прогнать маппер: make import STAT=bank_company_metrics"
             failed += not expect("SBER total_assets читается точкой", bool(bank_assets), bank_assets_detail)
 
+            # Форвардная витрина кредитного портфеля (пункт 4.2 №20 роадмапа, спека
+            # 2026-10-17 §4): помесячные ряды SBER/VTBR из v_company_financials, дата
+            # публикации из календаря bank_results и сравнение с «Кредитом экономике» ЦБ.
+            # Строки публикует импортёр bank_company_metrics, а витрину создаёт
+            # company_views, поэтому ноль означает, что не отработал хотя бы один из
+            # прогонов, — detail называет тот, что создаёт саму витрину.
+            loan_view = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_bank_loan_portfolio_forward"}))
+            loan_view_rows = result_rows(loan_view)
+            loan_view_n = loan_view_rows[0].get("n") if loan_view_rows else None
+            if loan_view_rows is None:
+                loan_view_detail = f"витрина не читается: {loan_view[:200]}"
+            elif (loan_view_n or 0) > 0:
+                loan_view_detail = f"строк: {loan_view_n}"
+            else:
+                loan_view_detail = "строк: 0 — прогнать make import STAT=company_views"
+            failed += not expect("витрина v_bank_loan_portfolio_forward читается и непуста", (loan_view_n or 0) > 0, loan_view_detail)
+
+            # Одного count() > 0 мало: агенту нужна конкретная точка с датой публикации,
+            # ради которой витрина и заведена (опережающий срез до агрегата ЦБ). detail
+            # печатает период, значение и publish_date; NULL здесь — не ошибка: история
+            # дат публикации заводится постепенно, поэтому проверяется наличие строки,
+            # а не заполненность publish_date.
+            loan_point = text(await session.call_tool("run_query", {"query":
+                "SELECT bank, metric, report_month, value_bln_rub, publish_date "
+                "FROM v_bank_loan_portfolio_forward "
+                "WHERE bank = 'SBER' AND metric = 'customer_loans' "
+                "ORDER BY report_month DESC LIMIT 1"}))
+            loan_point_rows = result_rows(loan_point)
+            if loan_point_rows is None:
+                loan_point_detail = f"ответ не распознан: {loan_point[:200]}"
+            elif loan_point_rows:
+                loan_point_detail = (f"SBER customer_loans за {loan_point_rows[0].get('report_month')}: "
+                                     f"{loan_point_rows[0].get('value_bln_rub')}, "
+                                     f"publish_date={loan_point_rows[0].get('publish_date')}")
+            else:
+                loan_point_detail = "строк нет — прогнать make import STAT=company_views"
+            failed += not expect("SBER customer_loans читается точкой", bool(loan_point_rows), loan_point_detail)
+
+            # publish_date витрины берётся из календаря bank_results, а он живёт сидом:
+            # без сида дата всегда NULL, и агент не видит триггеров раскрытия. Не меньше
+            # семи строк — это засеянный Q4 2026 (SBER/VTBR по месяцам раскрытия); порог, а
+            # не равенство: новые банки будут добавлять строки, и проверка не должна ломаться.
+            # Ноль называет сид, который надо применить.
+            bank_results = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_events_calendar WHERE category = 'bank_results'"}))
+            bank_results_rows = result_rows(bank_results)
+            bank_results_n = bank_results_rows[0].get("n") if bank_results_rows else None
+            if bank_results_rows is None:
+                bank_results_detail = f"ответ не распознан: {bank_results[:200]}"
+            elif (bank_results_n or 0) >= 7:
+                bank_results_detail = f"строк bank_results: {bank_results_n}"
+            elif (bank_results_n or 0) == 0:
+                bank_results_detail = ("строк: 0 — применить сид "
+                                       "make ch-sql FILE=sql/events_calendar_bank_results_q4_2026.sql")
+            else:
+                bank_results_detail = (f"строк: {bank_results_n}, want >= 7 — проверить/применить сид "
+                                       "make ch-sql FILE=sql/events_calendar_bank_results_q4_2026.sql")
+            failed += not expect("календарь bank_results засеян", (bank_results_n or 0) >= 7, bank_results_detail)
+
+            # Второй эмитент витрины: у VTBR (МСФО) ряд длиннее и содержит пропуски
+            # месяцев, поэтому он же — точка поведенческой проверки ниже.
+            vtb_point = text(await session.call_tool("run_query", {"query":
+                "SELECT bank, metric, report_month, value_bln_rub, publish_date "
+                "FROM v_bank_loan_portfolio_forward "
+                "WHERE bank = 'VTBR' AND metric = 'customer_loans' "
+                "ORDER BY report_month DESC LIMIT 1"}))
+            vtb_point_rows = result_rows(vtb_point)
+            if vtb_point_rows is None:
+                vtb_point_detail = f"ответ не распознан: {vtb_point[:200]}"
+            elif vtb_point_rows:
+                vtb_point_detail = (f"VTBR customer_loans за {vtb_point_rows[0].get('report_month')}: "
+                                    f"{vtb_point_rows[0].get('value_bln_rub')}, "
+                                    f"publish_date={vtb_point_rows[0].get('publish_date')}")
+            else:
+                vtb_point_detail = "строк нет — прогнать make import STAT=company_views"
+            failed += not expect("VTBR customer_loans читается точкой", bool(vtb_point_rows), vtb_point_detail)
+
+            # Темпы считаются self-join по календарным месяцам, а не lagInFrame по строкам:
+            # у VTBR нет 2025-02, поэтому YoY за 2026-02 обязан быть NULL. Старый lagInFrame
+            # брал 12-ю строку назад и на пропуске месяца давал не NULL — эта проверка ловит
+            # именно такую регрессию.
+            skip_yoy = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_bank_loan_portfolio_forward "
+                "WHERE bank = 'VTBR' AND metric = 'customer_loans' "
+                "AND report_month = '2026-02-01' AND yoy_pct IS NULL"}))
+            skip_yoy_rows = result_rows(skip_yoy)
+            skip_yoy_n = skip_yoy_rows[0].get("n") if skip_yoy_rows else None
+            if skip_yoy_rows is None:
+                skip_yoy_detail = f"ответ не распознан: {skip_yoy[:200]}"
+            elif skip_yoy_n == 1:
+                skip_yoy_detail = "yoy_pct за 2026-02 NULL при пропуске 2025-02 (self-join по месяцам)"
+            else:
+                skip_yoy_detail = ("строк: 0 — yoy_pct посчитан по строкам, а не по календарным "
+                                   "месяцам; пересоздать витрину: make import STAT=company_views")
+            failed += not expect("VTBR: пропуск месяца даёт NULL YoY", skip_yoy_n == 1, skip_yoy_detail)
+
             # Сырые таблицы банковского пакета агенту не выданы — как macro_series и
             # polyus_financial_metrics: ряды банковских отчётностей агент читает через витрину
             # v_bank_macro (сырые строки) и компанейский слой v_company_financials (курированные
