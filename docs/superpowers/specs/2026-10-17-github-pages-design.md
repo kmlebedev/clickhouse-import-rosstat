@@ -3,7 +3,7 @@
 **Дата:** 17 октября 2026 г.
 **Статус:** спека на исполнение (пункт `infra/3.3`).
 **Основание:** владелец выбрал GitHub Pages вместо Wiki. В GitHub MCP нет wiki-инструментов, а вики — отдельный git-репозиторий, не покрытый REST/GraphQL; Pages собирается из канонического `docs/` и не требует второй копии документов.
-**Связанные документы:** [ROADMAP_INFRA.md](../ROADMAP_INFRA.md) §4, [ROADMAP_INDEX.md](../ROADMAP_INDEX.md), [README.md](../../README.md), [ARCHITECTURE.md](../../ARCHITECTURE.md), скил `sync-readme-architecture`, спека трекера [2026-10-17-github-tracker-design.md](2026-10-17-github-tracker-design.md).
+**Связанные документы:** [ROADMAP_INFRA.md](../../ROADMAP_INFRA.md) §4, [ROADMAP_INDEX.md](../../ROADMAP_INDEX.md), [README.md](../../../README.md), [ARCHITECTURE.md](../../../ARCHITECTURE.md), скил `sync-readme-architecture`, спека трекера [2026-10-17-github-tracker-design.md](2026-10-17-github-tracker-design.md).
 
 ---
 
@@ -132,7 +132,7 @@ Workflow `.github/workflows/pages.yml`:
 
 - триггеры: `pull_request`, `push` в `main` (пути: `README.md`, `ARCHITECTURE.md`, `mkdocs.base.yml`, `docs/**`, `scripts/docs_build.py`, `scripts/docs_build_test.py`, `.github/workflows/pages.yml`), `workflow_dispatch`;
 - `permissions: contents: read`; у job `deploy` — `pages: write`, `id-token: write`;
-- job `build`: checkout → setup-python 3.12 → `pip install mkdocs-material==9.7.7` → `docs_build.py --check` → `docs_build_test.py` → `docs_build.py --out build/site-docs` → `mkdocs build -f build/mkdocs.yml --strict` → `actions/configure-pages@v5` → `actions/upload-pages-artifact@v3` (`build/site`);
+- job `build`: checkout → setup-python 3.12 → `pip install mkdocs-material==9.7.7` → `docs_build.py --check` → `docs_build_test.py` → `docs_build.py --out build/site-docs` → `mkdocs build -f build/mkdocs.yml --strict` → `actions/upload-pages-artifact@v3` (`build/site`); шага `actions/configure-pages` нет — PR-сборка должна быть зелёной до включения Pages;
 - job `deploy`: только не на PR, `environment: github-pages`, `actions/deploy-pages@v4`;
 - `concurrency: group: pages`, `cancel-in-progress: false`.
 

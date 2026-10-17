@@ -316,7 +316,6 @@ jobs:
       - run: python3 scripts/docs_build_test.py
       - run: python3 scripts/docs_build.py --out build/site-docs
       - run: mkdocs build -f build/mkdocs.yml --strict
-      - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
           path: build/site
@@ -335,6 +334,8 @@ jobs:
       - id: deployment
         uses: actions/deploy-pages@v4
 ```
+
+Шага `actions/configure-pages` в build-job нет: PR-сборка должна оставаться зелёной до включения Pages.
 
 - [ ] **Step 4: Локальная проверка**
 
