@@ -18,8 +18,9 @@ const newsEventsDdl = `CREATE TABLE IF NOT EXISTS news_events (
 			, description String               -- текст позиции из ленты: у smart-lab — полный текст поста
 			                                   -- (HTML после разбора XML-сущностей); у новостных лент — краткое
 			                                   -- описание позиции; '' — описания нет
-			, content_hash String              -- sha256 нормализованного title+description; ключ версии
-			                                   -- для LLM-разметки (generic по url+content_hash)
+			, content_hash String              -- sha256 текущей версии title+description; у Telegram title в
+			                                   -- news_events может быть от v1, а hash — от текущей версии;
+			                                   -- ключ LLM-разметки (generic по url+content_hash)
 			, sentiment Nullable(Float32)      -- -1..1, заполняет LLM-сессия
 		) ENGINE = ReplacingMergeTree ORDER BY (date, source, title);
 	`
@@ -71,7 +72,8 @@ const newsAnnotationDdl = `CREATE TABLE IF NOT EXISTS news_annotation (
 			, prompt_version UInt16
 			, dimension LowCardinality(String)  -- '' у doc; person|country|sector|event|theme|cb_channel
 			, tag LowCardinality(String)        -- '' у doc; slug реестра
-			, direction LowCardinality(String)  -- '' у doc/не-канальных; proinflationary|disinflationary|neutral|mixed
+			, direction LowCardinality(String)  -- '' у doc; у tag — proinflationary|disinflationary|neutral|mixed
+			                                   -- (у не-cb_channel только neutral|mixed)
 			, confidence Float32
 			, evidence String                   -- дословная цитата; '' у doc
 			, sentiment Float32                 -- -1..1, только doc

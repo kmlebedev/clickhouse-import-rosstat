@@ -162,6 +162,10 @@ func fetchFeeds(feeds []feed) []feedResult {
 				res.Err = err
 				break
 			}
+			if err = checkTelegramChannel(telegramChannelFromURL(f.URL), parsed.Messages); err != nil {
+				res.Err = fmt.Errorf("%s: %w", f.Key, err)
+				break
+			}
 			res.Items = telegramItems(f.Source, parsed)
 			res.SeenIDs, res.Skipped = parsed.SeenIDs, parsed.Skipped
 		default:
@@ -545,9 +549,14 @@ func (s *newsImport) Import(ctx context.Context, conn driver.Conn) (count int64,
 		}
 		existing, readErr := readTelegramVersions(ctx, conn, channel, windowMin)
 		if readErr != nil {
-			// Ошибка чтения версий отменяет запись этого прогона: без истории версий
-			// текущий текст записался бы с неверным номером. Повтор идемпотентен.
-			return 0, errors.Join(readErr, errors.Join(feedErrs...))
+			// Сбой чтения версий изолируется этой лентой: без истории diffTelegram
+			// принял бы текущий текст за v1 и затёр нумерацию, поэтому Telegram-позиции
+			// этого прогона не пишутся вовсе (их догонит следующий успешный прогон).
+			// Остальные ленты — в том числе семь RSS — пишутся: сбой истории одной
+			// ленты не должен отменять уже собранные данные.
+			log.Errorf("news_watch: %s: %v", r.Feed.Key, readErr)
+			feedErrs = append(feedErrs, fmt.Errorf("%s: %w", r.Feed.Key, readErr))
+			continue
 		}
 		telegramItems, versions, stats := diffTelegram(existing, r.Items, r.SeenIDs, windowMin, windowMax, now)
 		// Те же позиции, что печатает лог ленты выше, но с итогом версий: M — новые
@@ -565,9 +574,9 @@ func (s *newsImport) Import(ctx context.Context, conn driver.Conn) (count int64,
 		// selectNewItems). Telegram-текущие пишутся всегда: их ключ стабилен по title v1,
 		// а upsert держит в news_events свежий текст и кандидатов LLM-разметки.
 		var rss []newsItem
-		for _, s := range slots {
-			if s.kind == feedRSS {
-				rss = append(rss, s.items...)
+		for _, slot := range slots {
+			if slot.kind == feedRSS {
+				rss = append(rss, slot.items...)
 			}
 		}
 		filtered, err := selectNewItems(ctx, conn, rss)
@@ -589,9 +598,9 @@ func (s *newsImport) Import(ctx context.Context, conn driver.Conn) (count int64,
 			kept[slotKey{source: it.Source, key: newsKey{date: it.Date.Unix(), title: it.Title}}]++
 		}
 		items = make([]newsItem, 0, len(filtered)+len(newVersions))
-		for _, s := range slots {
-			for _, it := range s.items {
-				if s.kind == feedTelegram {
+		for _, slot := range slots {
+			for _, it := range slot.items {
+				if slot.kind == feedTelegram {
 					items = append(items, it)
 					continue
 				}
@@ -605,8 +614,8 @@ func (s *newsImport) Import(ctx context.Context, conn driver.Conn) (count int64,
 		}
 	} else {
 		// all — полный upsert окна: пишутся все позиции всех успешных лент.
-		for _, s := range slots {
-			items = append(items, s.items...)
+		for _, slot := range slots {
+			items = append(items, slot.items...)
 		}
 	}
 	if len(items) == 0 {
@@ -647,24 +656,27 @@ func (s *newsImport) Import(ctx context.Context, conn driver.Conn) (count int64,
 			// Бэклога нет — провайдер не вызывается.
 		default:
 			rows, tagErr := tagTelegramLLM(ctx, newsLLMConfig{BaseURL: baseURL, APIKey: apiKey, Model: model}, candidates)
-			if tagErr != nil {
-				log.Warnf("news_watch: LLM-разметка (%s): %v", model, tagErr)
-				break
-			}
-			var docs, tags int
-			for _, row := range rows {
-				switch row.Kind {
-				case newsKindDoc:
-					docs++
-				case newsKindTag:
-					tags++
+			// Успешные батчи пишутся даже при ошибке следующего: tagTelegramLLM возвращает
+			// накопленные строки вместе с ошибкой, и следующий прогон не платит за них снова.
+			if len(rows) > 0 {
+				var docs, tags int
+				for _, row := range rows {
+					switch row.Kind {
+					case newsKindDoc:
+						docs++
+					case newsKindTag:
+						tags++
+					}
+				}
+				if _, insErr := insertNewsAnnotations(ctx, conn, rows); insErr != nil {
+					log.Warnf("news_watch: LLM-разметка: запись %s: %v", newsAnnotationTable, insErr)
+				} else {
+					log.Infof("news_watch: LLM %s: размечено %d сообщений, тегов %d", model, docs, tags)
 				}
 			}
-			if _, insErr := insertNewsAnnotations(ctx, conn, rows); insErr != nil {
-				log.Warnf("news_watch: LLM-разметка: запись %s: %v", newsAnnotationTable, insErr)
-				break
+			if tagErr != nil {
+				log.Warnf("news_watch: LLM-разметка (%s): %v", model, tagErr)
 			}
-			log.Infof("news_watch: LLM %s: размечено %d сообщений, тегов %d", model, docs, tags)
 		}
 	}
 	// Успешные ленты записаны, сбойная видна в логе и в итоговой ошибке: dagu

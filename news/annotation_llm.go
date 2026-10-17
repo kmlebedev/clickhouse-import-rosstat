@@ -245,8 +245,10 @@ func newsLLMAsk(ctx context.Context, cfg newsLLMConfig, inputs []newsItem) (news
 
 // tagTelegramLLM размечает батч Telegram-сообщений: батчи по newsLLMBatchSize, на каждый —
 // запрос с одним ретраем формата и валидация против входа. Ошибка провайдера/формата
-// возвращается наверх без продолжения: вызывающий предупреждает и останавливает LLM-шаг на
-// этот прогон, чтобы не долбить упавшего провайдера оставшимися батчами.
+// останавливает LLM-шаг на этот прогон, чтобы не долбить упавшего провайдера оставшимися
+// батчами, но уже полученные строки возвращаются вместе с ошибкой: вызывающий пишет их,
+// и следующий прогон не платит за них повторно (кандидатная выборка исключает размеченные
+// пары). Ошибка остаётся ошибкой прогона для лога, но не отменяет запись сообщений/версий.
 func tagTelegramLLM(ctx context.Context, cfg newsLLMConfig, inputs []newsItem) ([]newsAnnotationRow, error) {
 	now := time.Now()
 	rows := make([]newsAnnotationRow, 0, len(inputs)*2)
@@ -258,11 +260,11 @@ func tagTelegramLLM(ctx context.Context, cfg newsLLMConfig, inputs []newsItem) (
 		batch := inputs[start:end]
 		payload, err := newsLLMAsk(ctx, cfg, batch)
 		if err != nil {
-			return nil, fmt.Errorf("news_watch: LLM-разметка (%s): %w", cfg.Model, err)
+			return rows, fmt.Errorf("news_watch: LLM-разметка (%s): %w", cfg.Model, err)
 		}
 		batchRows, err := validateNewsAnnotations(payload, batch, cfg.Model, newsPromptVersion, now)
 		if err != nil {
-			return nil, err
+			return rows, err
 		}
 		rows = append(rows, batchRows...)
 	}
