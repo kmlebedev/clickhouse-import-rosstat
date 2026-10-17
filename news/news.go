@@ -43,27 +43,33 @@ var (
 	// Окно — последние 20 сообщений, поэтому 30-минутный опрос перекрывает его
 	// с запасом, а простой дольше окна теряет позиции (check покажет дыру).
 	feedInterfaxTelegramURL = "https://t.me/s/interfaxonline"
-	feedRBCURL              = "https://rssexport.rbc.ru/rbcnews/news/30/full.rss"
-	feedCBRNewsURL          = "https://www.cbr.ru/rss/RssNews"
-	feedCBRPressURL         = "https://www.cbr.ru/rss/eventrss"
-	feedTASSURL             = "https://tass.ru/rss/v2.xml"
+	// Корпоративные раскрытия «Интерфакс-ЦРКИ»: второй канал того же транспорта.
+	// Окно тоже 20 сообщений; тексты длиннее молнии, и окно покрывает около месяца.
+	feedEdisclosureURL = "https://t.me/s/edisclosure"
+	feedRBCURL         = "https://rssexport.rbc.ru/rbcnews/news/30/full.rss"
+	feedCBRNewsURL     = "https://www.cbr.ru/rss/RssNews"
+	feedCBRPressURL    = "https://www.cbr.ru/rss/eventrss"
+	feedTASSURL        = "https://tass.ru/rss/v2.xml"
 	// Ленты smart-lab — персональные блоги; добавлены ради контура ключевой ставки
 	// (тексты про инфляцию и политику ЦБ).
 	feedSmartlabLebedevURL = "https://smart-lab.ru/rss/personal_blog/KonstantinLebedev/"
 	feedSmartlabSpydellURL = "https://smart-lab.ru/rss/personal_blog/spydell-telegram/"
 )
 
-// feeds собирает конфиг восьми лент в фиксированном порядке. Порядок — часть
+// feeds собирает конфиг девяти лент в фиксированном порядке. Порядок — часть
 // контракта: лог прогона и отчёт check идут построчно, и разный порядок лент
 // от запуска к запуску сделал бы диффы лога нечитаемыми. Парные ленты несут общий
 // Source: у двух фидов ЦБ это «cbr» (источник один — Банк России), у двух лент
 // smart-lab — «smartlab», у RSS и Telegram Интерфакса — «interfax»; в news_events
 // такие ленты различаются url. interfax_tg идёт сразу после interfax: это второй
 // транспорт того же источника, и в отчёте покрытия их окна складываются.
+// edisclosure_tg — отдельный source «edisclosure»: это другой канал и другая
+// редакция корпоративного контура, его окно с молнией Интерфакса не сливается.
 func feeds() []feed {
 	return []feed{
 		{Key: "interfax", Source: "interfax", URL: feedInterfaxURL, Kind: feedRSS},
 		{Key: "interfax_tg", Source: "interfax", URL: feedInterfaxTelegramURL, Kind: feedTelegram},
+		{Key: "edisclosure_tg", Source: "edisclosure", URL: feedEdisclosureURL, Kind: feedTelegram},
 		{Key: "rbc", Source: "rbc", URL: feedRBCURL, Kind: feedRSS},
 		{Key: "cbr_news", Source: "cbr", URL: feedCBRNewsURL, Kind: feedRSS},
 		{Key: "cbr_press", Source: "cbr", URL: feedCBRPressURL, Kind: feedRSS},
@@ -130,8 +136,8 @@ type feedResult struct {
 }
 
 // fetchFeeds читает ленты по очереди и возвращает результат на каждую. Ошибка
-// ленты попадает в её feedResult.Err, а цикл продолжается: восемь лент независимы,
-// и обрыв одной (WAF, 500, таймаут) не повод не собрать остальные семь.
+// ленты попадает в её feedResult.Err, а цикл продолжается: девять лент независимы,
+// и обрыв одной (WAF, 500, таймаут) не повод не собрать остальные восемь.
 // Агрегация ошибок — дело вызывающего (Import): он решает, чем отчитаться в dagu.
 //
 // Транспорт выбирается по Kind, а не по виду URL: RSS разбирается в rssDoc,
@@ -552,8 +558,8 @@ func (s *newsImport) Import(ctx context.Context, conn driver.Conn) (count int64,
 			// Сбой чтения версий изолируется этой лентой: без истории diffTelegram
 			// принял бы текущий текст за v1 и затёр нумерацию, поэтому Telegram-позиции
 			// этого прогона не пишутся вовсе (их догонит следующий успешный прогон).
-			// Остальные ленты — в том числе семь RSS — пишутся: сбой истории одной
-			// ленты не должен отменять уже собранные данные.
+			// Остальные ленты — семь RSS и второй Telegram-канал — пишутся: сбой
+			// истории одной ленты не должен отменять уже собранные данные.
 			log.Errorf("news_watch: %s: %v", r.Feed.Key, readErr)
 			feedErrs = append(feedErrs, fmt.Errorf("%s: %w", r.Feed.Key, readErr))
 			continue
