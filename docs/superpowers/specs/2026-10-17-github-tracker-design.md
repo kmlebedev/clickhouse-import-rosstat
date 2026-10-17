@@ -1,9 +1,9 @@
 # GitHub-трекер роадмапов: модель для нескольких ROADMAP
 
 **Дата:** 2026-10-17
-**Статус:** спека (реализация — пункт 3.1 [ROADMAP_INFRA.md](../ROADMAP_INFRA.md))
+**Статус:** спека (реализация — пункт 3.1 [ROADMAP_INFRA.md](../../ROADMAP_INFRA.md))
 **Основание:** issue [#90](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/90) «Процессы superpowers интегрировать в трекер на гитхаб».
-**Связанные документы:** [ROADMAP_INDEX.md](../ROADMAP_INDEX.md) (реестр роадмапов и правила ID), [AGENTS.md](../../AGENTS.md) правило 12, скил [`.kimi-code/skills/github-tracker/SKILL.md`](../../.kimi-code/skills/github-tracker/SKILL.md).
+**Связанные документы:** [ROADMAP_INDEX.md](../../ROADMAP_INDEX.md) (реестр роадмапов и правила ID), [AGENTS.md](../../../AGENTS.md) правило 12, скил [`.kimi-code/skills/github-tracker/SKILL.md`](../../../.kimi-code/skills/github-tracker/SKILL.md).
 
 ---
 
@@ -74,12 +74,12 @@
 
 Канонический ключ пункта: `<slug>/<item-id>`.
 
-Примеры:
+Примеры формата:
 
 - `infra/1.1`, `key-rate/1.9`, `dcf-polyus/7.3`, `dcf-metals/step-4`;
 - `gold-thesis/phase-3-followup-2`;
 - `gold-thesis/analytics-v-gold-floor`;
-- `dcf-polyus/phase-3-remaining-reserves-peers`.
+- `dcf-polyus/7.1`.
 
 Заголовок issue: `[<slug>/<item-id>] <короткое имя пункта>`.
 
@@ -183,6 +183,8 @@ Depends on: #...
 **Обоснование:** ...
 ```
 
+Labels: `roadmap:<slug>` — группировка до появления Project V2; `needs-answer` — пока в issue есть открытый вопрос Q&A.
+
 - Пока вопрос открыт — label `needs-answer`.
 - После ответа — резолюция в тот же комментарий, label снимается.
 - Если ответ меняет состав или порядок фаз — правка роадмапа тем же PR, ссылка на issue в правке.
@@ -248,8 +250,8 @@ Depends on: #...
 
 ## 17. Ссылки
 
-- [ROADMAP_INDEX.md](../ROADMAP_INDEX.md)
-- [ROADMAP_INFRA.md](../ROADMAP_INFRA.md), пункт 3.1
-- [AGENTS.md](../../AGENTS.md), правило 12
-- [.kimi-code/skills/github-tracker/SKILL.md](../../.kimi-code/skills/github-tracker/SKILL.md)
+- [ROADMAP_INDEX.md](../../ROADMAP_INDEX.md)
+- [ROADMAP_INFRA.md](../../ROADMAP_INFRA.md), пункт 3.1
+- [AGENTS.md](../../../AGENTS.md), правило 12
+- [.kimi-code/skills/github-tracker/SKILL.md](../../../.kimi-code/skills/github-tracker/SKILL.md)
 - [план реализации](../plans/2026-10-17-github-tracker.md)

@@ -93,13 +93,13 @@
     - (в) добавить `GRANT SELECT` пользователю `kimi_reader` на новую витрину в `sql/mcp_kimi_reader.sql`; `macro_series` и другие сырые таблицы агенту не выдавать;
     - (г) проверить через MCP (`list_tables`, `run_query` на витрину), что агент видит ряд и комментарии;
     - (д) обновить `ARCHITECTURE.md` (§6.2/§6.3) и `README.md`.
-12. **Трекер пунктов роадмапа — GitHub.** Каждый пункт роадмапа имеет issue с составным ID `<slug>/<item-id>`; заголовок — `[<slug>/<item-id>] <короткое имя>`; поля Project V2 (`Roadmap`, `Phase`, `Item`, `Status`, `Branch`, `PR`, `Spec / Plan`, `Acceptance`, `Depends on`) — по `docs/ROADMAP_INDEX.md`. Пункт живёт ровно в одном роадмапе; в других файлах — ссылка. Q&A дублируется в issue комментарием (label `needs-answer`), PR содержит `Closes #N`, статус `Done` — только после мержа и протокола приёмки. Операции — скил `.kimi-code/skills/github-tracker/SKILL.md`, модель — спека `docs/superpowers/specs/2026-10-17-github-tracker-design.md`.
+12. **Трекер пунктов роадмапа — GitHub.** Каждый открытый пункт роадмапа (и каждый новый) имеет issue с составным ID `<slug>/<item-id>`; исторические `✅`-пункты issue не получают — вместо них ссылка на PR/протокол в роадмапе; заголовок — `[<slug>/<item-id>] <короткое имя>`; поля Project V2 (`Roadmap`, `Phase`, `Item`, `Status`, `Branch`, `PR`, `Spec / Plan`, `Acceptance`, `Depends on`) — по `docs/ROADMAP_INDEX.md`. Пункт живёт ровно в одном роадмапе; в других файлах — ссылка. Q&A дублируется в issue комментарием (label `needs-answer`), PR содержит `Closes #N`, статус `Done` — только после мержа и протокола приёмки. Операции — скил `.kimi-code/skills/github-tracker/SKILL.md`, модель — спека `docs/superpowers/specs/2026-10-17-github-tracker-design.md`.
 
 ## Стиль коммитов и PR
 
 - Коммиты: кратко, по-английски, в духе истории репозитория (`add fred importer`, `fix batch insert cbr_queries`).
 - PR: одна фича = один импортёр/таблица; в описании — источник данных, схема таблицы, как запускать (`CLICKHOUSE_IMPORT_STAT=<name>`), пример проверки (`SELECT ... FROM <table> FINAL LIMIT 5`).
-- В описании PR — роадмап и пункт (`<slug>/<item-id>`) и `Closes #N`; протокол живой приёмки — комментарием в PR (см. правило 12).
+- В описании PR — роадмап и пункт (`<slug>/<item-id>`) и `Closes #N`; протокол живой приёмки — комментарием в PR (состав и порядок — `docs/IMPORTER_PACKAGE_STANDARD.md` §16.1 п. 8; связь с пунктом — правило 12).
 - Протокол живой приёмки — **комментарием в PR** того же пункта: состав, источник протокола и порядок — `docs/IMPORTER_PACKAGE_STANDARD.md` §16.1 п. 8 (первое применение — PR #66, `cbr_int_rate_loans`).
 - Логирование — logrus (`log.Infof("Imported %d rows of %s", ...)`), без fmt.Print в прод-коде импортёров.
 
