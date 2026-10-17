@@ -8,8 +8,9 @@
 мониторинга предприятий ЦБ из `cbr_survey`). Task 2 добавляет harness
 walk-forward, обязательные бенчмарки B1–B3 (B3 — в двух пространствах),
 метрики RMSE/MAE и отчёт-скелет; Task 3 — четыре варианта CatBoost
-(direct/bottom-up × без МП/с МП) и NNLS-веса bottom-up; DM-пары/сплит
-статьи/живой nowcast — Task 4.
+(direct/bottom-up × без МП/с МП) и NNLS-веса bottom-up; Task 4 — DM-HLN
+«с МП vs без МП», фиксированный сплит статьи, строку «2022 исключён»,
+живой nowcast и JSON-артефакт.
 
 Что делает срез:
 
@@ -66,11 +67,27 @@ walk-forward, обязательные бенчмарки B1–B3 (B3 — в д�
   (фолд пропускается), как у B2/B3. Веса и компонентные прогнозы последнего
   успешного фолда — в `last_weights`/`last_components`; отчёт печатает веса
   каждого окна и блок конфигурации;
+* **DM-HLN и сплит статьи** (§4.3–4.5) — `pairwise_tests` на ОБЩИХ тестовых
+  месяцах (DM с поправкой HLN, `h=1`; `diff = RMSE(A) − RMSE(B)`, отрицательное
+  — A точнее): primary-пары — каждый `_mp`-вариант против своей базовой модели
+  (direct, bottom-up, B3), secondary — `_mp`-модели против B1 и `b3_elastic_net_mp`
+  плюс direct против bottom-up. Блочный бутстрап разницы RMSE — `block=3`,
+  `n=2000`, `seed=SEED` — для primary-пар. `fixed_split` — вспомогательная
+  таблица сопоставимости со статьёй (train ≤ 2018-12, test 2019-01…2024-07,
+  без walk-forward), `metrics_without_2022` — отдельная строка «2022 исключён»;
+* **живой nowcast** (§5.3) — `current_nowcast`: цель — месяц за последним
+  опубликованным общим ИПЦ, признаки as-of даты прогона (а не `cutoff_for`),
+  МП — последняя доступная по правилу §2.6 (может быть глубже `M−1`, пометка в
+  `note`), модели и NNLS — на полной выборке. Артефакт
+  `cpi_monthly_forecast.json` (§5.1): `forecast_date`, `target_month`,
+  `data_asof`, 4 CatBoost-модели с `metadata`, `benchmarks`, `bottomup_weights`,
+  `sample_size`, `note`; stale-cleanup как в v1;
 * **метрики и отчёт** (§4.2, §5.1) — RMSE/MAE в п.п. через общие функции
   `scripts/eval_utils.py`, блок «последние 12 фолдов»; отчёт
-  `cpi_monthly_report.md` (выборка, «модель × окно», веса NNLS, конфигурация
-  CatBoost, последние 12 фолдов, «что не проверено») и CSV
-  `cpi_monthly_predictions.csv` (`month, window, model, y_true, y_pred`).
+  `cpi_monthly_report.md` (выборка, «модель × окно», последние 12 фолдов,
+  DM-HLN primary/secondary, блочный бутстрап, веса NNLS, конфигурация
+  CatBoost, сплит статьи, «2022 исключён», живой nowcast, «что не проверено»)
+  и CSV `cpi_monthly_predictions.csv` (`month, window, model, y_true, y_pred`).
 
 **NaN-политика:** в признаках этого среза NaN не возникает — отсутствие любой
 обязательной точки выбрасывает месяц с причиной. B3 на всякий случай импутирует
@@ -101,6 +118,7 @@ CatBoost получает NaN как есть.
 
 import argparse
 import csv
+import json
 import math
 import statistics
 import sys
@@ -217,6 +235,17 @@ ROBUST_START = 48
 ROBUST_EMBARGO = 1
 
 ONE_DAY = timedelta(days=1)
+
+# Сплит статьи (§4.4): train 2013-10…2018-12 (63 месяца), test 2019-01…2024-07
+# (67 месяцев). Вспомогательная таблица сопоставимости, не выбор модели.
+ARTICLE_TRAIN_END = date(2018, 12, 1)
+ARTICLE_TEST_END = date(2024, 7, 1)
+
+# DM-HLN (§4.3): двусторонний уровень 5% фиксирован до результатов; блочный
+# бутстрап разницы RMSE — блок 3 месяца, 2000 ресэмплов, сид прогона.
+ALPHA = 0.05
+BOOTSTRAP_BLOCK = 3
+BOOTSTRAP_N = 2000
 
 # ---------------------------------------------------------------------------
 # SQL: колонки те же, что у фикстурных запросов ниже; суффикс FINAL обязателен
@@ -632,6 +661,7 @@ def base_features(
     key_rate: list,
     fao: list,
     cutoff: date,
+    live: bool = False,
 ) -> tuple[Optional[dict[str, float | int]], str]:
     """Базовые признаки месяца `M` (§2.4) или `(None, причина пропуска)`.
 
@@ -641,6 +671,12 @@ def base_features(
     `available_from_mes ≤ cutoff`; `usd_mm` — средние за `M−1`/`M−2`;
     `key_rate` — последняя точка ≤ cutoff (`asof`); `fao_mm` — последняя пара
     доступных точек. Отсутствие любой обязательной точки — причина пропуска.
+
+    `live=True` — живой режим (§5.3): наличие метки `M−1` в `rosstat_ipc_mes`
+    и есть её публикация (месячный ИПЦ приходит в базу из релиза Росстата),
+    поэтому консервативная проверка `available_from_mes ≤ cutoff` для лагов НЕ
+    применяется — иначе уже вышедшая метка была бы исключена до конца `M+1`.
+    Прочие признаки (USD/ставка/FAO) по-прежнему снимаются as-of `cutoff`.
     """
     lag1_month = previous_month(month)
     lag2_month = previous_month(lag1_month)
@@ -648,12 +684,12 @@ def base_features(
     lag1 = values.get(month_end(lag1_month))
     if lag1 is None:
         return None, "нет метки общего ИПЦ за M−1 (y_lag1)"
-    if available_from_mes(month_end(lag1_month)) > cutoff:
+    if not live and available_from_mes(month_end(lag1_month)) > cutoff:
         return None, "метка M−1 не опубликована к cutoff (y_lag1)"
     lag2 = values.get(month_end(lag2_month))
     if lag2 is None:
         return None, "нет метки общего ИПЦ за M−2 (y_lag2)"
-    if available_from_mes(month_end(lag2_month)) > cutoff:
+    if not live and available_from_mes(month_end(lag2_month)) > cutoff:
         return None, "метка M−2 не опубликована к cutoff (y_lag2)"
     usd_value = usd_mm(month, usd)
     if usd_value is None:
@@ -675,19 +711,57 @@ def base_features(
 
 
 def mp_features(
-    month: date, survey: dict, cutoff: date
+    month: date, survey: dict, cutoff: date, live: bool = False
 ) -> tuple[Optional[dict[str, float]], str]:
     """Признаки МП месяца `M` (§2.5) или `(None, причина пропуска)`.
 
-    Месячные ряды: уровень — ровно точка `M−1`, изменение — `M−1 − M−2`; обе
-    точки обязательны и проверяются на `available_from_survey ≤ cutoff`.
-    Квартальные: последняя опубликованная точка ≤ cutoff, перенос вперёд до
-    следующей опубликованной (точка месяца `M` на cutoff `M+1` не участвует:
-    её доступность — конец `M+1`, позже cutoff). Отсутствие любой обязательной
-    точки — причина пропуска (не NaN: молчаливое заполнение сместило бы
-    информационное множество).
+    Бэктест (`live=False`): месячные ряды — уровень ровно за `M−1`, изменение —
+    `M−1 − M−2`; обе точки обязательны и проверяются на
+    `available_from_survey ≤ cutoff`. Квартальные — последняя опубликованная
+    точка ≤ cutoff, перенос вперёд до следующей опубликованной (точка месяца `M`
+    на cutoff `M+1` не участвует: её доступность — конец `M+1`, позже cutoff).
+    Отсутствие любой обязательной точки — причина пропуска (не NaN: молчаливое
+    заполнение сместило бы информационное множество).
+
+    `live=True` — живой режим (§5.3): «МП — последняя доступная по правилу
+    §2.6», а не строго `M−1`. Если свежая точка ещё не опубликована (на
+    2026-10-18 сентябрьский опрос не вышел), берётся последняя доступная, а
+    глубина отставания называется в `note` артефакта. Изменение — разность двух
+    последних ДОСТУПНЫХ точек ряда; квартальные — как в бэктесте. Точка `M`
+    живого режима тоже не участвует (конец `M+1` > даты прогона).
     """
     levels: dict[str, float] = {}
+    if live:
+        for series in MP_MONTHLY:
+            eligible = sorted(
+                (
+                    point
+                    for point in survey.get(series, [])
+                    if available_from_survey(point[0]) <= cutoff
+                ),
+                key=lambda point: point[0],
+            )
+            if not eligible:
+                return None, f"нет опубликованной точки МП {series} к дате прогона"
+            levels[series] = eligible[-1][1]
+            change = MP_CHANGES.get(series)
+            if change is not None:
+                if len(eligible) < 2:
+                    return None, (
+                        f"нет пары опубликованных точек МП {series} для {change} "
+                        f"к дате прогона"
+                    )
+                levels[change] = eligible[-1][1] - eligible[-2][1]
+        for series in MP_QUARTERLY:
+            eligible = [
+                point
+                for point in survey.get(series, [])
+                if available_from_survey(point[0]) <= cutoff
+            ]
+            if not eligible:
+                return None, f"нет опубликованной квартальной точки {series}"
+            levels[series] = max(eligible, key=lambda point: point[0])[1]
+        return {name: levels[name] for name in MP_SERIES}, ""
     for series in MP_MONTHLY:
         points = dict(survey.get(series, []))
         level_date = previous_month(month)
@@ -1105,7 +1179,9 @@ def ar1_design(rows: list[Row]) -> tuple:
     «11 дамми месяца». Значения берутся из признаков строки (`y_lag1`, `month`)
     — тот же источник, что у моделей; одна и та же функция строит дизайн
     обучения и тестовой строки, поэтому сдвиг месяцев в дамми не может
-    возникнуть «только на предсказании».
+    возникнуть «только на предсказании». У прогнозной строки живого nowcast
+    (`Row.y` пуст — таргета месяца ещё нет) `y` не заполняется: дизайн от неё
+    не зависит, и подстановка выдуманного таргета была бы ложью.
     """
     design, targets = [], []
     for row in rows:
@@ -1114,7 +1190,8 @@ def ar1_design(rows: list[Row]) -> tuple:
             [1.0, float(row.features["y_lag1"])]
             + [1.0 if month == dummy else 0.0 for dummy in AR1_DUMMY_MONTHS]
         )
-        targets.append(float(row.y[TARGET_ALL]))
+        if TARGET_ALL in row.y:
+            targets.append(float(row.y[TARGET_ALL]))
     return np.asarray(design, dtype=float), np.asarray(targets, dtype=float)
 
 
@@ -1657,11 +1734,592 @@ def last_fold_months(predictions: list[Prediction], count: int = LAST_FOLDS) -> 
 
 
 # ---------------------------------------------------------------------------
+# DM-HLN, блочный бутстрап и сплит статьи (спека §4.3–4.5)
+# ---------------------------------------------------------------------------
+
+# Primary-пары — эффект МП: каждый `_mp`-вариант против своей базовой модели на
+# тех же фолдах. Порядок — direct, bottom-up, B3 (как в спеке §4.3).
+PRIMARY_PAIRS = (
+    (MODEL_CATBOOST_DIRECT_MP, MODEL_CATBOOST_DIRECT),
+    (MODEL_CATBOOST_BOTTOMUP_MP, MODEL_CATBOOST_BOTTOMUP),
+    (MODEL_ENET_MP, MODEL_ENET_BASE),
+)
+
+# Secondary-пары — контекст: `_mp`-модели против B1 и B3-mp (у B3-mp сама с
+# собой пара не строится), direct против bottom-up.
+SECONDARY_PAIRS = (
+    (MODEL_CATBOOST_DIRECT_MP, MODEL_LAST),
+    (MODEL_CATBOOST_BOTTOMUP_MP, MODEL_LAST),
+    (MODEL_ENET_MP, MODEL_LAST),
+    (MODEL_CATBOOST_DIRECT_MP, MODEL_ENET_MP),
+    (MODEL_CATBOOST_BOTTOMUP_MP, MODEL_ENET_MP),
+    (MODEL_CATBOOST_DIRECT, MODEL_CATBOOST_BOTTOMUP),
+)
+
+
+@dataclass(frozen=True)
+class PairTest:
+    """DM-HLN двух моделей на ОБЩИХ тестовых месяцах (спека §4.3).
+
+    `diff = RMSE(A) − RMSE(B)` в п.п.: отрицательное значение значит, что модель
+    A точнее. `p_value` — двусторонний p-value DM с поправкой HLN (`h=1`);
+    `note` — кто точнее и значима ли разница на 5% (без подгонки формулировок).
+    """
+
+    model_a: str
+    model_b: str
+    p_value: float
+    diff: float
+    note: str
+
+
+@dataclass(frozen=True)
+class PairBootstrap:
+    """95%-интервал и p-value блочного бутстрапа разницы RMSE пары (§4.2–4.3)."""
+
+    model_a: str
+    model_b: str
+    rmse_diff: float
+    low: float
+    high: float
+    p_value: float
+
+
+def _pair_common_errors(
+    predictions: list[Prediction], model_a: str, model_b: str
+) -> tuple[list, list, list]:
+    """Общие месяцы пары и ошибки обеих моделей на них.
+
+    Пара строится ТОЛЬКО по месяцам, где обе модели дали прогноз: пропущенный
+    фолд одной модели не сдвигает ошибки другой и не подменяется соседним
+    месяцем. Порядок месяцев — возрастающий (нужен блочному бутстрапу).
+    """
+    by_model: dict[str, dict] = {}
+    for item in predictions:
+        by_model.setdefault(item.model, {})[item.month] = item
+    months_a = by_model.get(model_a, {})
+    months_b = by_model.get(model_b, {})
+    months = sorted(set(months_a) & set(months_b))
+    err_a = [months_a[month].y_pred - months_a[month].y_true for month in months]
+    err_b = [months_b[month].y_pred - months_b[month].y_true for month in months]
+    return months, err_a, err_b
+
+
+def pair_note(model_a: str, model_b: str, diff: float, p_value: float) -> str:
+    """Вывод пары: кто точнее и значима ли разница (DM, 5%) — без подгонки."""
+    if diff == 0.0:
+        verdict = "разницы RMSE нет"
+    elif diff < 0.0:
+        verdict = f"точнее {model_label(model_a)}"
+    else:
+        verdict = f"точнее {model_label(model_b)}"
+    significance = "значимо" if p_value < ALPHA else "не значимо"
+    return f"{verdict}; {significance} на 5% (p={_fmt_p(p_value)})"
+
+
+def pairwise_tests(
+    predictions: list[Prediction], pairs: tuple
+) -> list[PairTest]:
+    """DM-HLN по заданным парам моделей на общих месяцах (спека §4.3).
+
+    Пары — в порядке `pairs` (primary, затем secondary); пара с менее чем двумя
+    общими месяцами пропускается: тест значимости на одной точке не определён.
+    `diff = RMSE(A) − RMSE(B)`, p-value — `eval_utils.diebold_mariano(h=1)`.
+    """
+    tests = []
+    for model_a, model_b in pairs:
+        months, err_a, err_b = _pair_common_errors(
+            predictions, model_a, model_b
+        )
+        if len(months) < 2:
+            continue
+        _, p_value = eu.diebold_mariano(err_a, err_b, h=1)
+        diff = eu.rmse(err_a) - eu.rmse(err_b)
+        tests.append(
+            PairTest(
+                model_a=model_a,
+                model_b=model_b,
+                p_value=float(p_value),
+                diff=float(diff),
+                note=pair_note(model_a, model_b, float(diff), float(p_value)),
+            )
+        )
+    return tests
+
+
+def bootstrap_pairs(
+    predictions: list[Prediction],
+    pairs: tuple,
+    block: int = BOOTSTRAP_BLOCK,
+    n: int = BOOTSTRAP_N,
+    seed: int = SEED,
+) -> list[PairBootstrap]:
+    """Блочный бутстрап разницы RMSE для пар (primary) на общих месяцах (§4.2).
+
+    Конфигурация зафиксирована спекой: блок 3 месяца, 2000 ресэмплов,
+    `seed=SEED`; ресэмплируются пары ошибок целиком (см.
+    `eval_utils.block_bootstrap_rmse_diff`). Пара без двух общих месяцев
+    пропускается, как и в `pairwise_tests`.
+    """
+    results = []
+    for model_a, model_b in pairs:
+        months, err_a, err_b = _pair_common_errors(
+            predictions, model_a, model_b
+        )
+        if len(months) < 2:
+            continue
+        bootstrap = eu.block_bootstrap_rmse_diff(
+            err_a, err_b, block=block, n=n, seed=seed
+        )
+        results.append(
+            PairBootstrap(
+                model_a=model_a,
+                model_b=model_b,
+                rmse_diff=float(bootstrap.rmse_diff),
+                low=float(bootstrap.low),
+                high=float(bootstrap.high),
+                p_value=float(bootstrap.p_value),
+            )
+        )
+    return results
+
+
+def fixed_split(
+    rows: list[Row],
+    models: dict[str, FitPredict],
+    train_end: date = ARTICLE_TRAIN_END,
+    test_end: date = ARTICLE_TEST_END,
+) -> list[Prediction]:
+    """Фиксированный сплит статьи (§4.4): train ≤ 2018-12, test 2019-01…2024-07.
+
+    Вспомогательная таблица сопоставимости с первоисточником, НЕ выбор модели:
+    walk-forward остаётся основной оценкой. Train — месяцы `rows` не позже
+    `train_end` (на живой выборке 63), test — строго после `train_end` и не
+    позже `test_end` (67). Каждая модель фитится на всём train и прогнозирует
+    каждый test-месяц (без переобучения по ходу теста); `DegenerateWindowError`
+    модели пропускает её фолд, как в walk-forward. Пустой train или test — пустой
+    список: на короткой выборке сплит не определён.
+    """
+    train = [row for row in rows if month_of(row.month) <= train_end]
+    test = [
+        row
+        for row in rows
+        if train_end < month_of(row.month) <= test_end
+    ]
+    if not train or not test:
+        return []
+    predictions = []
+    for row in test:
+        for name, fit_predict in models.items():
+            try:
+                value = fit_predict(train, row)
+            except DegenerateWindowError:
+                continue
+            predictions.append(
+                Prediction(
+                    month=row.month,
+                    model=name,
+                    y_true=float(row.y[TARGET_ALL]),
+                    y_pred=float(value),
+                )
+            )
+    return predictions
+
+
+def metrics_without_2022(
+    predictions: list[Prediction],
+) -> tuple[float, float]:
+    """RMSE/MAE без тестовых месяцев 2022 года — строка «2022 исключён» (§4.5).
+
+    Отдельная метрика, НЕ замена основной: показывает вклад шока читателю.
+    Пустой остаток (все фолды — 2022) — `ValueError`: метрика не определена.
+    """
+    rest = [
+        prediction for prediction in predictions
+        if prediction.month.year != 2022
+    ]
+    if not rest:
+        raise ValueError("2022 исключён: не осталось ни одного тестового месяца")
+    return rmse_pp(rest), mae_pp(rest)
+
+
+# ---------------------------------------------------------------------------
+# Живой nowcast (спека §5.3)
+# ---------------------------------------------------------------------------
+
+# Мягкое предупреждение о возможном отставании импорта: календарный срок
+# публикации месячного ИПЦ за M (конец M + 30 дней) прошёл, а цель всё ещё за
+# M. Отбор цели не отменяется (наличие метки в данных и есть публикация), но
+# пометка идёт в `note`.
+IMPORT_LAG_DAYS = 30
+
+# Базовая оговорка артефакта: чем живой прогноз отличается от бэктеста.
+NOWCAST_NOTE = (
+    "живой nowcast v2 (спека §5.3): признаки — as-of даты прогона, а не "
+    "канонического cutoff; as-of — приближение, не point-in-time слой (§2.6); "
+    "модели и веса NNLS обучены на полной выборке месяцев (не фолд walk-forward)"
+)
+
+
+def latest_published_month(targets: dict) -> Optional[date]:
+    """Последний месяц, чья метка ОБЩЕГО ИПЦ уже опубликована (есть в данных).
+
+    «Публикация = наличие метки в `rosstat_ipc_mes`»: месячный ИПЦ приходит в
+    базу из релиза Росстата, поэтому наличие точки месяца и есть публикация.
+    Бэктест так делать не может — там собственная метка месяца не должна
+    попадать в признаки, и `available_from_mes` отсекает свежие точки.
+    """
+    points = targets.get(TARGET_ALL, [])
+    if not points:
+        return None
+    return max(month_of(day) for day, _ in points)
+
+
+def nowcast_target_month(
+    targets: dict, today: date
+) -> tuple[Optional[date], str]:
+    """Целевой месяц живого nowcast (спека §5.3) или причина, почему его нет.
+
+    Цель — месяц СЛЕДОМ за последним опубликованным: он и есть последний месяц,
+    чей месячный ИПЦ не вышел к дате прогона. `today` в отборе не участвует
+    (признаки as-of считает `current_nowcast`); параметр оставлен для сигнатуры
+    контракта и будущего календарного слоя. Возможное отставание импорта
+    отбор не отменяет, а смягчает — пометка в `note`.
+    """
+    latest = latest_published_month(targets)
+    if latest is None:
+        return None, (
+            "в rosstat_ipc_mes нет ни одной метки общего ИПЦ — проверить импорт"
+        )
+    return _month_shift(latest, 1), ""
+
+
+def latest_mp_month(survey: dict, cutoff: date) -> Optional[date]:
+    """Месяц самой старой из последних доступных месячных точек МП (или None).
+
+    Для пометки о глубине: если ряды разъехались, называется ХУДШИЙ из них —
+    читатель видит консервативную границу информационного множества. Ряды без
+    единой доступной точки игнорируются: `mp_features(live=True)` тогда сам
+    откажет с причиной.
+    """
+    months = []
+    for series in MP_MONTHLY:
+        eligible = [
+            day
+            for day, _ in survey.get(series, [])
+            if available_from_survey(day) <= cutoff
+        ]
+        if eligible:
+            months.append(max(eligible))
+    if not months:
+        return None
+    return min(months)
+
+
+def mp_lag_note(survey: dict, month: date, cutoff: date) -> str:
+    """Пометка «МП за <месяц>, глубже бэктеста на N мес.» или пустая строка.
+
+    В бэктесте признаки МП берутся строго за `M−1`; живой режим — последнюю
+    доступную точку. Если она старше `M−1`, глубина называется числом месяцев.
+    """
+    mp_month = latest_mp_month(survey, cutoff)
+    expected = previous_month(month)
+    if mp_month is None or mp_month >= expected:
+        return ""
+    deeper = (
+        (expected.year * 12 + expected.month)
+        - (mp_month.year * 12 + mp_month.month)
+    )
+    return (
+        f"МП за {mp_month.isoformat()[:7]}, глубже бэктеста на {deeper} мес."
+    )
+
+
+def import_lag_note(month: date, today: date) -> str:
+    """Пометка «возможное отставание импорта» или пустая строка (спека §5.3).
+
+    Граница строгая: `month_end(month) + 30 дней < today`; ровно на сроке
+    предупреждения нет — выпуск мог выйти в последний день.
+    """
+    if month_end(month) + IMPORT_LAG_DAYS * ONE_DAY < today:
+        return (
+            "возможное отставание импорта: календарный срок публикации прошёл"
+        )
+    return ""
+
+
+@dataclass(frozen=True)
+class Nowcast:
+    """Текущий nowcast (спека §5.3): цель, прогнозы моделей и бенчмарков.
+
+    `forecast_date`/`data_asof` в этой версии совпадают (признаки снимаются
+    as-of даты прогона; поля разделены под будущий PIT-слой); `models` — четыре
+    CatBoost-варианта (значение или `None`, если метод вырожден), `benchmarks` —
+    B1–B3 в двух пространствах B3; `weights` — NNLS-веса компонент по полной
+    выборке (пустой кортеж, если веса не определены), порядок —
+    `BOTTOMUP_COMPONENTS`; `note` — оговорка артефакта (включая глубину МП и
+    возможное отставание импорта).
+    """
+
+    forecast_date: date
+    target_month: date
+    data_asof: date
+    models: dict
+    benchmarks: dict
+    weights: tuple
+    sample_size: int
+    note: str
+
+
+def current_nowcast(
+    rows: list[Row],
+    targets: dict,
+    survey: dict,
+    usd: list,
+    key_rate: list,
+    fao: list,
+    today: date,
+) -> tuple[Optional[Nowcast], str]:
+    """Текущий nowcast (спека §5.3) или `(None, причина)`.
+
+    Цель — `nowcast_target_month`; признаки — `base_features`/`mp_features` с
+    cutoff = `today` (НЕ `cutoff_for(цели)`), МП — последняя доступная по
+    правилу §2.6. `Row(month=target, y={}, features=...)`: модели читают только
+    `features`, таргета месяца к дате прогноза не существует. Модели и веса
+    NNLS обучаются на ПОЛНОЙ выборке `rows` — это не фолд walk-forward.
+
+    `DegenerateWindowError` метода — пропуск ЭТОГО метода (причина в `note`), а
+    не падение: на короткой выборке B2/B3 вырождены законно. Если не посчитан
+    НИ ОДИН метод, прогноза нет — `(None, причина)`. Исключений здесь нет
+    намеренно: прогон не падает.
+    """
+    if not rows:
+        return None, "выборка пуста — модели nowcast обучить не на чем"
+    month, reason = nowcast_target_month(targets, today)
+    if month is None:
+        return None, reason
+    features, reason = base_features(
+        month, target_index(targets), usd, key_rate, fao, today, live=True
+    )
+    if features is None:
+        return None, reason
+    mp_part, reason = mp_features(month, survey, today, live=True)
+    if mp_part is None:
+        return None, reason
+    row = Row(month=month, y={}, features={**features, **mp_part})
+    values: dict[str, float] = {}
+    skipped: list[tuple[str, str]] = []
+    non_converged: list[str] = []
+    for name in MODELS:
+        try:
+            values[name] = float(MODELS[name](rows, row))
+        except DegenerateWindowError as error:
+            skipped.append((name, str(error)))
+            continue
+        fold_notes = getattr(MODELS[name], "fold_notes", None)
+        if fold_notes and int(fold_notes.get(NON_CONVERGED, 0)):
+            non_converged.append(name)
+    if not values:
+        return None, "ни один метод не посчитан: " + "; ".join(
+            f"{model_label(name)} — {error}" for name, error in skipped
+        )
+    try:
+        weights = tuple(float(weight) for weight in nnls_weights(rows))
+    except DegenerateWindowError:
+        weights = ()
+    note = NOWCAST_NOTE
+    lag_note = mp_lag_note(survey, month, today)
+    if lag_note:
+        note += "; " + lag_note
+    import_note = import_lag_note(month, today)
+    if import_note:
+        note += "; " + import_note
+    if non_converged:
+        note += "; " + "; ".join(
+            f"{model_label(name)}: координатный спуск не сошёлся на живой "
+            f"выборке — прогноз индикативен"
+            for name in non_converged
+        )
+    if skipped:
+        note += "; не посчитаны: " + "; ".join(
+            f"{model_label(name)} ({error})" for name, error in skipped
+        )
+    return (
+        Nowcast(
+            forecast_date=today,
+            target_month=month,
+            data_asof=today,
+            models={name: values.get(name) for name in CATBOOST_MODELS},
+            benchmarks={name: values.get(name) for name in BENCHMARKS},
+            weights=weights,
+            sample_size=len(rows),
+            note=note,
+        ),
+        "",
+    )
+
+
+def forecast_payload(nowcast: Nowcast) -> dict:
+    """Тело JSON текущего nowcast (спека §5.1) — ключи в порядке спеки.
+
+    Четыре CatBoost-варианта уходят как `{"forecast", "metadata"}` (метаданные
+    §3.1 «дефолты фиксируются в метаданных модели» — тем же словарём
+    `catboost_metadata`); `benchmarks` — B1–B3 (B3 в двух пространствах);
+    `bottomup_weights` — веса NNLS ПО МОДЕЛЯМ (`catboost_bottomup` и
+    `catboost_bottomup_mp` используют один и тот же NNLS-фит полной выборки).
+    Wall-clock-полей сверх дат нет: JSON детерминирован при (данные, дата).
+    """
+    metadata = {
+        False: catboost_metadata(with_mp=False),
+        True: catboost_metadata(with_mp=True),
+    }
+    payload: dict = {
+        "forecast_date": nowcast.forecast_date.isoformat(),
+        "target_month": nowcast.target_month.isoformat(),
+        "data_asof": nowcast.data_asof.isoformat(),
+    }
+    for name, with_mp in (
+        (MODEL_CATBOOST_DIRECT, False),
+        (MODEL_CATBOOST_BOTTOMUP, False),
+        (MODEL_CATBOOST_DIRECT_MP, True),
+        (MODEL_CATBOOST_BOTTOMUP_MP, True),
+    ):
+        payload[name] = {
+            "forecast": nowcast.models.get(name),
+            "metadata": metadata[with_mp],
+        }
+    payload["benchmarks"] = {
+        name: nowcast.benchmarks.get(name) for name in BENCHMARKS
+    }
+    if nowcast.weights:
+        weights = {
+            code: float(weight)
+            for code, weight in zip(BOTTOMUP_COMPONENTS, nowcast.weights)
+        }
+        payload["bottomup_weights"] = {
+            name: dict(weights) for name in BOTTOMUP_MODELS
+        }
+    else:
+        payload["bottomup_weights"] = {
+            name: None for name in BOTTOMUP_MODELS
+        }
+    payload["sample_size"] = nowcast.sample_size
+    payload["note"] = nowcast.note
+    return payload
+
+
+def nowcast_json(nowcast: Nowcast) -> str:
+    """JSON текущего nowcast: UTF-8 как есть, отступ 2, LF в конце (спека §5.1)."""
+    return json.dumps(
+        forecast_payload(nowcast), ensure_ascii=False, indent=2
+    ) + "\n"
+
+
+def write_nowcast_artifact(path: Path, nowcast: Optional[Nowcast]) -> bool:
+    """Пишет JSON nowcast или УБИРАЕТ устаревший артефакт; `False` — писать нечего.
+
+    Ветка «nowcast не посчитан» (нет цели, признаки не собраны, ни один метод
+    не посчитан) обязана удалить файл прошлого прогона: оставленный, он был бы
+    прочитан как текущий прогноз. Возврат: `True` — файл записан, `False` —
+    файла нет (в том числе удалён только что).
+    """
+    if nowcast is None:
+        path.unlink(missing_ok=True)
+        return False
+    path.write_text(nowcast_json(nowcast), encoding="utf-8")
+    return True
+
+
+def clear_stale_artifacts(out_dir: Path) -> list:
+    """Убирает ВСЕ артефакты прошлого прогона; возвращает имена удалённых файлов.
+
+    Только для ветки «ни одного прогноза вообще» (пустая выборка или выборка
+    короче старта walk-forward): она не пишет НИЧЕГО, но файлы предыдущего
+    прогона лежали бы в каталоге и читались бы как результат ЭТОГО. Ветка «нет
+    цели живого nowcast'а» сюда НЕ ходит: там бэктест валиден, отчёт и CSV
+    перезаписываются, а подчищается только stale-JSON
+    (`write_nowcast_artifact`). Отсутствие файлов — не ошибка.
+    """
+    removed = []
+    for name in ARTIFACT_NAMES:
+        path = out_dir / name
+        if path.exists():
+            path.unlink()
+            removed.append(name)
+    return removed
+
+
+# Причина раздела «Текущий nowcast», когда вызывающий не передал её
+# (`render_report(nowcast=None)`): живой прогон всегда передаёт реальную.
+NOWCAST_REASON_UNKNOWN = "причина не передана вызывающим (см. консоль прогона)"
+
+
+def render_nowcast(nowcast: Nowcast) -> str:
+    """Markdown-блок «Текущий nowcast» (спека §5.3) — раздел отчёта.
+
+    Числа округлены до разрядов таблицы (`_fmt`): полная точность — в JSON.
+    `note` печатается тем же текстом, что уходит в JSON, — пометки не могут
+    разъехаться между артефактами.
+    """
+    lines = [
+        f"**Целевой месяц: {nowcast.target_month.isoformat()[:7]}** — месячный "
+        f"ИПЦ не опубликован на {nowcast.data_asof.isoformat()}; признаки "
+        f"собраны as-of даты прогона (не канонического cutoff, спека §5.3).",
+        "",
+        "| метод | прогноз, п.п. |",
+        "|---|---|",
+    ]
+    lines += [
+        f"| {model_label(name)} | {_fmt(value)} |"
+        for name, value in nowcast.models.items()
+    ]
+    lines += [
+        f"| {model_label(name)} | {_fmt(value)} |"
+        for name, value in nowcast.benchmarks.items()
+    ]
+    lines += [""]
+    if nowcast.weights:
+        cells = ", ".join(
+            f"`{code}` {_fmt(weight, 4)}"
+            for code, weight in zip(BOTTOMUP_COMPONENTS, nowcast.weights)
+        )
+        lines.append(
+            f"Веса bottom-up (NNLS, полная выборка): {cells} "
+            f"(Σ {_fmt(sum(nowcast.weights), 4)})."
+        )
+    else:
+        lines.append("Веса bottom-up (NNLS) не посчитаны.")
+    lines += ["", f"Примечание: {nowcast.note}"]
+    return "\n".join(lines)
+
+
+def render_nowcast_absent(reason: str = NOWCAST_REASON_UNKNOWN) -> str:
+    """Раздел отчёта, когда живого прогноза нет (спека §5.3) — один текст.
+
+    Ветка «нет цели» бэктест не отменяет: отчёт и CSV пишутся как обычно,
+    поэтому причину отсутствия прогноза называет сам раздел — тем же `reason`,
+    что печатает консоль, — а stale-прогноз прошлого прогона удаляется
+    (`write_nowcast_artifact`), чтобы не читался как актуальный.
+    """
+    return (
+        f"Текущий nowcast не рассчитан: {reason}. `{FORECAST_NAME}` не пишется; "
+        f"устаревший файл прогноза, если был, удалён. Отчёт и CSV посчитаны "
+        f"текущим прогоном: walk-forward валиден и без живого прогноза."
+    )
+
+
+# ---------------------------------------------------------------------------
 # Отчёт-скелет и артефакты (спека §5.1)
 # ---------------------------------------------------------------------------
 
 REPORT_NAME = "cpi_monthly_report.md"
 PREDICTIONS_NAME = "cpi_monthly_predictions.csv"
+FORECAST_NAME = "cpi_monthly_forecast.json"
+
+# Артефакты прогона: отчёт, CSV фолдов и JSON текущего nowcast. Подчистка ветки
+# «ни одного прогноза вообще» идёт по этому списку — прошлый прогон мог оставить
+# любой из них, а дат в именах нет: файл читался бы как результат ЭТОГО прогона.
+ARTIFACT_NAMES = (REPORT_NAME, PREDICTIONS_NAME, FORECAST_NAME)
 
 # Колонки CSV прогнозов — контракт Tasks 3–4 и приёмки (порядок из спеки §5.1).
 PREDICTIONS_COLUMNS = ("month", "window", "model", "y_true", "y_pred")
@@ -1679,6 +2337,15 @@ def _fmt(value: Optional[float], places: int = 3) -> str:
     if float(formatted) == 0.0:
         return formatted.lstrip("-")
     return formatted
+
+
+def _fmt_p(pvalue: float) -> str:
+    """p-value для таблицы: менее 1e-4 — «<0.0001» (разряды не нужны)."""
+    if math.isinf(pvalue):
+        return "0.0000"
+    if pvalue < 0.0001:
+        return "<0.0001"
+    return f"{pvalue:.4f}"
 
 
 def _months_suffix(months: list, limit: int = 6) -> str:
@@ -1729,6 +2396,18 @@ _WEIGHTS_HEADER = (
     "| окно | модель | w(cpi_food) | w(cpi_nonfood) | w(cpi_services) | Σ |",
     "|---|---|---|---|---|---|",
 )
+_DM_HEADER = (
+    "| окно | тип | пара | ΔRMSE, п.п. | p-value (DM-HLN) | вывод |",
+    "|---|---|---|---|---|---|",
+)
+_BOOTSTRAP_HEADER = (
+    "| окно | пара | ΔRMSE, п.п. | 95% CI | p (бутстрап) |",
+    "|---|---|---|---|---|",
+)
+_SPLIT_HEADER = (
+    "| модель | n | RMSE, п.п. | MAE, п.п. |",
+    "|---|---|---|---|",
+)
 
 
 def _weights_rows(runs: list[WindowRun]) -> list:
@@ -1767,25 +2446,79 @@ def _defaults_cell(metadata: dict) -> str:
     )
 
 
+def _pair_test_rows(predictions: list[Prediction], window_cell: str) -> list:
+    """Строки DM-таблицы: primary, затем secondary (§4.3), на общих месяцах."""
+    rows = []
+    for kind, pairs in (
+        ("primary", PRIMARY_PAIRS),
+        ("secondary", SECONDARY_PAIRS),
+    ):
+        for test in pairwise_tests(predictions, pairs):
+            rows.append(
+                f"| {window_cell} | {kind} | "
+                f"{model_label(test.model_a)} vs {model_label(test.model_b)} | "
+                f"{_fmt(test.diff)} | {_fmt_p(test.p_value)} | {test.note} |"
+            )
+    return rows
+
+
+def _bootstrap_rows(runs: list[WindowRun]) -> list:
+    """Строки блочного бутстрапа primary-пар по окнам walk-forward."""
+    rows = []
+    for run in runs:
+        for result in bootstrap_pairs(run.predictions, PRIMARY_PAIRS):
+            rows.append(
+                f"| {window_title(run)} | "
+                f"{model_label(result.model_a)} vs {model_label(result.model_b)} | "
+                f"{_fmt(result.rmse_diff)} | "
+                f"[{_fmt(result.low)}; {_fmt(result.high)}] | "
+                f"{_fmt_p(result.p_value)} |"
+            )
+    return rows
+
+
+def _split_metric_rows(predictions: list[Prediction]) -> list:
+    """RMSE/MAE моделей на фиксированном test-окне статьи (§4.4)."""
+    groups: dict[str, list[Prediction]] = {}
+    for prediction in predictions:
+        groups.setdefault(prediction.model, []).append(prediction)
+    rows = []
+    for name in MODELS:
+        group = groups.get(name, [])
+        if group:
+            rows.append(
+                f"| {model_label(name)} | {len(group)} | {_fmt(rmse_pp(group))} | "
+                f"{_fmt(mae_pp(group))} |"
+            )
+        else:
+            rows.append(f"| {model_label(name)} | 0 фолдов | — | — |")
+    return rows
+
+
 def render_report(
     sample: list[Row],
     skipped: list,
     window_runs: list[WindowRun],
     today: Optional[date] = None,
+    split_predictions: Optional[list[Prediction]] = None,
+    nowcast: Optional[Nowcast] = None,
+    nowcast_reason: str = NOWCAST_REASON_UNKNOWN,
 ) -> str:
-    """Markdown-отчёт Task 3: выборка, «модель × окно», веса NNLS, конфигурация.
+    """Полный markdown-отчёт Task 4 (спека §4.3–4.5, §5.1, §5.3).
 
     `sample`/`skipped` — выборка `build_sample` (строки и месяцы без собранных
     признаков); `window_runs` — по одному `WindowRun` на окно walk-forward
     (порядок окон задаёт строки таблиц, основное помечено `WindowRun.main`);
-    `today` — дата прогона (по умолчанию системная).
+    `today` — дата прогона (по умолчанию системная); `split_predictions` —
+    прогнозы `fixed_split` (вспомогательный сплит статьи); `nowcast` — живой
+    прогноз или `None` (тогда раздел называет `nowcast_reason`).
 
-    Таблица «модель × окно» перечисляет ВСЕ модели из счётчиков окон (модель,
-    вырожденная на всех окнах, видна строкой «0 фолдов», а не пропадает);
-    метрики — из фолдов, «недосход» — из `WindowRun.notes`, веса bottom-up — из
-    `WindowRun.weights`, конфигурация CatBoost — из `catboost_metadata`.
-    DM-пары, сплит статьи и живой nowcast — Task 4; раздел «Что не проверено»
-    называет это прямо, чтобы отчёт не читался как полный результат.
+    Состав: выборка; «модель × окно» с отдельными строками «2022 исключён»;
+    последние 12 фолдов; главный блок DM-HLN primary/secondary (p-value,
+    ΔRMSE, вывод) с оговоркой о недосходе B3-mp; блочный бутстрап primary-пар;
+    веса NNLS; конфигурация CatBoost; сплит статьи 2019-01…2024-07 с DM;
+    живой nowcast; «что не проверено». Числа без p-value не подаются как
+    доказательство: DM/бутстрап — единственные тесты значимости здесь.
     """
     today = today or date.today()
     runs = list(window_runs)
@@ -1796,13 +2529,15 @@ def render_report(
         if first_run is not None
         else "—"
     )
+    split = list(split_predictions or [])
     lines = [
-        "# CPI monthly (ML-трек v2) — walk-forward, бенчмарки B1–B3, CatBoost и метрики",
+        "# CPI monthly (ML-трек v2) — walk-forward, DM-HLN, сплит статьи и живой nowcast",
         "",
         f"Дата прогона: {today.isoformat()}; сид прогона `SEED={SEED}`. Спека: "
         "`docs/superpowers/specs/2026-10-18-cpi-monthly-mp-design.md` (§2 — данные и "
-        "признаки, §3.1–3.4 — CatBoost и бенчмарки, §4.1–4.2 — walk-forward и "
-        "метрики); план: `docs/superpowers/plans/2026-10-18-cpi-monthly-mp.md`.",
+        "признаки, §3.1–3.4 — CatBoost и бенчмарки, §4.1–4.5 — walk-forward, DM, "
+        "сплит статьи и «2022 исключён», §5.3 — живой nowcast); план: "
+        "`docs/superpowers/plans/2026-10-18-cpi-monthly-mp.md`.",
         "",
         "## Выборка",
         "",
@@ -1848,7 +2583,8 @@ def render_report(
         "набора признаков не зависят; B3 и CatBoost считаются в двух "
         "пространствах (без МП и с МП), чтобы отделить эффект МП от эффекта "
         "алгоритма; CatBoost дополнительно в двух схемах агрегации — direct и "
-        "bottom-up (§3.2–3.3).",
+        "bottom-up (§3.2–3.3). Строки «2022 исключён» — отдельная метрика без "
+        "тестовых месяцев 2022 года (§4.5), не замена основной.",
         "",
     ]
     metric_rows = []
@@ -1866,7 +2602,98 @@ def render_report(
                 f"{rmse_cell} | {mae_cell} | {run.skipped.get(name, 0)} | "
                 f"{_fold_note_cell(run.notes.get(name, {}), len(group))} |"
             )
+            if group and any(item.month.year == 2022 for item in group):
+                rest = [
+                    item for item in group if item.month.year != 2022
+                ]
+                if rest:
+                    rest_rmse, rest_mae = metrics_without_2022(group)
+                    metric_rows.append(
+                        f"| {model_label(name)} (2022 исключён) | "
+                        f"{window_title(run)} | {len(rest)} | {_fmt(rest_rmse)} | "
+                        f"{_fmt(rest_mae)} | — | справочно, не замена метрики |"
+                    )
     lines += _table(_METRIC_HEADER, metric_rows)
+    lines += [""]
+    if main_run is not None:
+        tail_months = last_fold_months(main_run.predictions)
+        last_rows = []
+        for name, group in _run_groups(main_run).items():
+            tail = [prediction for prediction in group if prediction.month in tail_months]
+            last_rows.append(
+                f"| {model_label(name)} | {len(tail)} | "
+                f"{_fmt(rmse_pp(tail)) if tail else '—'} | "
+                f"{_fmt(mae_pp(tail)) if tail else '—'} |"
+            )
+        lines += [
+            f"## Последние {LAST_FOLDS} фолдов (основное окно "
+            f"{window_key(main_run.start, main_run.embargo)})",
+            "",
+            f"Последние {LAST_FOLDS} тестовых месяцев основного окна: блок "
+            "показывает, что метрики не держатся одним спокойным периодом.",
+            "",
+        ]
+        lines += _table(_LAST_FOLDS_HEADER, last_rows)
+        lines += [""]
+    dm_rows = []
+    for run in runs:
+        dm_rows.extend(_pair_test_rows(run.predictions, window_title(run)))
+    lines += [
+        "## DM-HLN: с МП vs без МП",
+        "",
+        "Diebold–Mariano с поправкой HLN (`statsmodels`, критерий MSE), `h=1`, "
+        "на ОБЩИХ тестовых месяцах пары; p двусторонний, уровень 5% "
+        f"(`ALPHA={ALPHA}`) зафиксирован до результатов. "
+        "ΔRMSE = RMSE(A) − RMSE(B): отрицательное значит, что A точнее. "
+        "**Primary** — эффект МП (каждый `_mp`-вариант против своей базовой "
+        "модели на тех же фолдах), **secondary** — контекст (`_mp` против B1 и "
+        "`b3_elastic_net_mp`, direct против bottom-up). Формулировки не "
+        "подгоняются: `note` — кто точнее и значима ли разница. Пара без двух "
+        "общих месяцев не строится.",
+        "",
+    ]
+    lines += _table(
+        _DM_HEADER,
+        dm_rows,
+        empty="_(нет пар: меньше двух общих месяцев у моделей.)_",
+    )
+    non_converged = []
+    for run in runs:
+        group = _run_groups(run).get(MODEL_ENET_MP, [])
+        count = run.notes.get(MODEL_ENET_MP, {}).get(NON_CONVERGED, 0)
+        if group:
+            non_converged.append(
+                f"{window_key(run.start, run.embargo)} — {count} из {len(group)}"
+            )
+    lines += [""]
+    if non_converged:
+        lines.append(
+            "Оговорка: недосход B3-mp (`ConvergenceWarning` координатного спуска) — "
+            + "; ".join(non_converged)
+            + ". Числа B3-mp читать с этой оговоркой; без p-value сравнение RMSE "
+            "— не доказательство."
+        )
+    else:
+        lines.append(
+            "Оговорка: без p-value сравнение RMSE — не доказательство; в этом "
+            "прогоне недосхода B3-mp нет."
+        )
+    lines += [""]
+    lines += [
+        "## Блочный бутстрап разницы RMSE (primary)",
+        "",
+        f"Ресэмплирование пар ошибок целиком: блок {BOOTSTRAP_BLOCK} месяца, "
+        f"n={BOOTSTRAP_N} ресэмплов, `seed=SEED`. Интервал — 95% по порядковым "
+        "статистикам; p — двусторонний по доле ресэмплов по разные стороны нуля "
+        "(`eval_utils.block_bootstrap_rmse_diff`). ΔRMSE — та же разница "
+        "RMSE(A) − RMSE(B), что в DM-таблице.",
+        "",
+    ]
+    lines += _table(
+        _BOOTSTRAP_HEADER,
+        _bootstrap_rows(runs),
+        empty="_(primary-пар с двумя общими месяцами нет.)_",
+    )
     lines += [""]
     lines += [
         "## Веса NNLS (bottom-up)",
@@ -1915,32 +2742,57 @@ def render_report(
         f"{_defaults_cell(base_metadata)}.",
         "",
     ]
-    if main_run is not None:
-        tail_months = last_fold_months(main_run.predictions)
-        last_rows = []
-        for name, group in _run_groups(main_run).items():
-            tail = [prediction for prediction in group if prediction.month in tail_months]
-            last_rows.append(
-                f"| {model_label(name)} | {len(tail)} | "
-                f"{_fmt(rmse_pp(tail)) if tail else '—'} | "
-                f"{_fmt(mae_pp(tail)) if tail else '—'} |"
-            )
-        lines += [
-            f"## Последние {LAST_FOLDS} фолдов (основное окно "
-            f"{window_key(main_run.start, main_run.embargo)})",
-            "",
-            f"Последние {LAST_FOLDS} тестовых месяцев основного окна: блок "
-            "показывает, что метрики не держатся одним спокойным периодом.",
-            "",
-        ]
-        lines += _table(_LAST_FOLDS_HEADER, last_rows)
-        lines += [""]
+    train_months = [
+        row.month for row in sample if month_of(row.month) <= ARTICLE_TRAIN_END
+    ]
+    test_months = [
+        row.month
+        for row in sample
+        if ARTICLE_TRAIN_END < month_of(row.month) <= ARTICLE_TEST_END
+    ]
+    lines += [
+        "## Сплит статьи (сопоставимость, не выбор модели)",
+        "",
+        f"Фиксированный сплит §4.4: train ≤ {ARTICLE_TRAIN_END.isoformat()[:7]} "
+        f"({len(train_months)} мес.), test "
+        f"{test_months[0].isoformat()[:7] if test_months else '—'} … "
+        f"{test_months[-1].isoformat()[:7] if test_months else '—'} "
+        f"({len(test_months)} мес.). На train обучаются все модели, на test "
+        "считаются RMSE/MAE и DM для тех же primary/secondary-пар. Это "
+        "**вспомогательная таблица сопоставимости**, а не выбор модели: train "
+        "короче статьи (63 против 120 месяцев), таргет другой (несглаженный м/м "
+        "с КУ, а не SA ИПЦ без КУ), выбросы не исключены — числа статьи напрямую "
+        "не сравнимы.",
+        "",
+    ]
+    lines += _table(
+        _SPLIT_HEADER,
+        _split_metric_rows(split) if split else [],
+        empty="_(нет тестовых месяцев 2019-01…2024-07 в выборке.)_",
+    )
+    lines += [""]
+    split_dm = _pair_test_rows(split, "split статьи")
+    lines += [
+        "DM на фиксированном test-окне статьи (те же пары, общие месяцы):",
+        "",
+    ]
+    lines += _table(
+        _DM_HEADER,
+        split_dm,
+        empty="_(нет пар на test-окне статьи.)_",
+    )
+    lines += [""]
+    lines += [
+        "## Текущий nowcast (live)",
+        "",
+    ]
+    if nowcast is not None:
+        lines += [render_nowcast(nowcast), ""]
+    else:
+        lines += [render_nowcast_absent(nowcast_reason), ""]
     lines += [
         "## Что не проверено",
         "",
-        "- DM-HLN «с МП vs без МП» и secondary-пары, фиксированный сплит статьи "
-        "2019-01…2024-07, строка «2022 исключён» и живой nowcast — Task 4. Числа "
-        "CatBoost в таблицах выше — не вывод о значимости: DM-тестов здесь нет.",
         "- as-of — приближение, а не point-in-time слой: точные даты публикаций и "
         "ревизии рядов не учтены; PIT — отдельный пункт фазы 4.",
         "- гиперпараметры не тюнинговались: CatBoost — дефолты библиотеки (§3.1), "
@@ -1949,13 +2801,22 @@ def render_report(
         "cv=TimeSeriesSplit(3), random_state=SEED)`, минимум 12 строк) "
         "зафиксированы спекой §3.4 до результатов.",
         "- недосход B3 (`ConvergenceWarning` координатного спуска) считается по "
-        "фолдам, но влияние недосчёта на прогноз не измерено: конфигурация "
-        "`ElasticNetCV` зафиксирована спекой.",
+        "фолдам; его влияние на прогноз не измерено — конфигурация "
+        "`ElasticNetCV` зафиксирована спекой, B3-mp недосходил чаще базового.",
+        "- множественные сравнения (DM/бутстрап по парам) — без поправки на "
+        "множественность; p-value — описательные, не подтверждающая статистика "
+        "в смысле заранее объявленной единственной гипотезы.",
         "- embargo 1 — только робастность: перекрытие окон признаков тестового и "
         "обучающих месяцев структурно исключено purge-проверкой, но границы "
         "доступности — консервативное правило §2.6, а не фактические даты.",
-        "- режимы отдельно не тестируются: 2022 год (шок) входит в общую выборку, "
-        "блок «последние 12 фолдов» — описательный, не тест.",
+        "- сплит статьи — вспомогательная таблица сопоставимости: train короче "
+        "статьи, таргет другой, выбросы не исключены; модель по нему не "
+        "выбирается.",
+        "- «2022 исключён» — описательная строка: вклад шока назван, но режимы "
+        "отдельно не тестируются, блок «последние 12 фолдов» — не тест.",
+        "- живой nowcast: МП может быть глубже `M−1` (пометка в `note`), признаки "
+        "сняты as-of даты прогона, а не PIT; недельный трек v1 не менялся и "
+        "здесь не сравнивается.",
         "- числа статьи напрямую не сравнимы: другой таргет, длина train и "
         "обработка выбросов.",
         "",
@@ -2154,28 +3015,118 @@ def _print_walk_forward(runs: list[WindowRun]) -> None:
             print(f"  {title}: RMSE {', '.join(cells)}")
 
 
+def _print_pair_tests(runs: list[WindowRun]) -> None:
+    """Консольный блок DM-HLN primary-пар: ΔRMSE и p-value по окнам (§4.3)."""
+    print("DM-HLN (h=1; primary: с МП vs без МП):")
+    for run in runs:
+        tests = pairwise_tests(run.predictions, PRIMARY_PAIRS)
+        if not tests:
+            print(f"  {window_title(run)}: primary-пар нет")
+            continue
+        cells = "; ".join(
+            f"{model_label(test.model_a)} vs {model_label(test.model_b)}: "
+            f"ΔRMSE {test.diff:+.3f}, p={_fmt_p(test.p_value)}"
+            for test in tests
+        )
+        print(f"  {window_title(run)}: {cells}")
+
+
+def _print_split(
+    split_predictions: list[Prediction], sample: list[Row]
+) -> None:
+    """Консольный блок сплита статьи: границы, RMSE моделей и DM primary (§4.4)."""
+    train = [
+        row for row in sample if month_of(row.month) <= ARTICLE_TRAIN_END
+    ]
+    test = [
+        row
+        for row in sample
+        if ARTICLE_TRAIN_END < month_of(row.month) <= ARTICLE_TEST_END
+    ]
+    print("сплит статьи (сопоставимость, не выбор модели):")
+    if not train or not test:
+        print(
+            f"  train {len(train)} мес., test {len(test)} мес. — сплит не определён"
+        )
+        return
+    groups: dict[str, list[Prediction]] = {}
+    for prediction in split_predictions:
+        groups.setdefault(prediction.model, []).append(prediction)
+    cells = ", ".join(
+        f"{model_label(name)} {_fmt(rmse_pp(groups[name]))}"
+        for name in MODELS
+        if name in groups
+    )
+    print(
+        f"  train ≤ {ARTICLE_TRAIN_END.isoformat()[:7]} ({len(train)} мес.), "
+        f"test {test[0].month.isoformat()[:7]} … {test[-1].month.isoformat()[:7]} "
+        f"({len(test)} мес.); RMSE: {cells}"
+    )
+    tests = pairwise_tests(split_predictions, PRIMARY_PAIRS)
+    if tests:
+        print(
+            "  DM primary на test: "
+            + "; ".join(
+                f"{model_label(test.model_a)} vs {model_label(test.model_b)}: "
+                f"ΔRMSE {test.diff:+.3f}, p={_fmt_p(test.p_value)}"
+                for test in tests
+            )
+        )
+
+
+def _print_nowcast(nowcast: Nowcast) -> None:
+    """Консольный блок живого nowcast: модели, бенчмарки и веса (§5.3)."""
+    for name, value in (*nowcast.models.items(), *nowcast.benchmarks.items()):
+        print(f"    {model_label(name):<34} {_fmt(value, 4)} п.п.")
+    if nowcast.weights:
+        cells = ", ".join(
+            f"{code} {_fmt(weight, 4)}"
+            for code, weight in zip(BOTTOMUP_COMPONENTS, nowcast.weights)
+        )
+        print(
+            f"    {'веса NNLS (полная выборка)':<34} {cells}, "
+            f"Σ {_fmt(sum(nowcast.weights), 3)}"
+        )
+    print(f"    {'note':<34} {nowcast.note}")
+
+
+def _print_removed_artifacts(removed: list) -> None:
+    """Строка консоли об удалённых артефактах прошлого прогона (пусто — нет строки)."""
+    if removed:
+        print(f"  устаревшие артефакты прошлого прогона удалены: {', '.join(removed)}")
+
+
 def run_summary(
     start: int = DEFAULT_START,
     embargo_months: int = DEFAULT_EMBARGO,
     out_dir: Optional[Path] = None,
     today: Optional[date] = None,
 ) -> int:
-    """Полный прогон Task 3: выборка, walk-forward B1–B3 и CatBoost, артефакты.
+    """Полный прогон Task 4: выборка, walk-forward, DM, сплит, nowcast, артефакты.
 
     `start`/`embargo_months` — основное окно walk-forward (`--start`,
     `--embargo-months`); робастные окна (второй старт 48 и эмбарго 1) добавляет
     `window_specs`. Загрузка рядов, `build_sample` и `assert_months_purged` —
     контракт Task 1; walk-forward считает бенчмарки B1–B3 и четыре
-    CatBoost-варианта (`MODELS`) на одних фолдах, отчёт
-    (`cpi_monthly_report.md`: таблицы «модель × окно», веса NNLS, конфигурация
-    CatBoost) и CSV прогнозов (`cpi_monthly_predictions.csv`) пишутся в
-    `out_dir` (по умолчанию корень worktree; файлы gitignored).
+    CatBoost-варианта (`MODELS`) на одних фолдах; отчёт
+    (`cpi_monthly_report.md`: «модель × окно», DM-HLN primary/secondary,
+    блочный бутстрап, веса NNLS, конфигурация CatBoost, сплит статьи,
+    «2022 исключён», живой nowcast) и CSV прогнозов
+    (`cpi_monthly_predictions.csv`) пишутся в `out_dir` (по умолчанию корень
+    worktree; файлы gitignored). JSON текущего nowcast
+    (`cpi_monthly_forecast.json`, §5.1) пишется на полной выборке; при
+    отсутствии цели stale-JSON удаляется, а отчёт/CSV остаются.
 
     Ветка «walk-forward не дал ни одного прогноза» (пустая/короткая выборка)
-    ничего не пишет и называет это в консоли. Скрипт ничего не пишет в
-    ClickHouse: только читает и кладёт локальные артефакты.
+    ничего не пишет и подчищает ВСЕ три артефакта прошлого прогона. Прогон не
+    падает ни в одной из веток. Скрипт ничего не пишет в ClickHouse: только
+    читает и кладёт локальные артефакты.
+
+    `today` — дата прогона (по умолчанию системная): она же дата среза живого
+    nowcast и `forecast_date` JSON; резолвится один раз на прогон.
     """
     out_dir = Path(out_dir) if out_dir is not None else ARTIFACTS_DIR
+    today = today or date.today()
     targets = load_targets()
     survey = load_survey()
     usd = load_usd()
@@ -2188,7 +3139,9 @@ def run_summary(
     survey_points = sorted(
         point for points in survey.values() for point in points
     )
-    print("CPI monthly (ML-трек v2) — выборка, walk-forward, бенчмарки B1–B3 и CatBoost")
+    print(
+        "CPI monthly (ML-трек v2) — walk-forward, DM-HLN, сплит статьи и nowcast"
+    )
     _field(
         "таргет rosstat_ipc_mes:",
         f"{len(TARGET_SERIES)} {_plural(len(TARGET_SERIES), 'ряд', 'ряда', 'рядов')}, "
@@ -2231,19 +3184,53 @@ def run_summary(
     runs = evaluate_windows(rows, MODELS, window_specs(start, embargo_months))
     _print_walk_forward(runs)
     if not any(run.predictions for run in runs):
-        _field("отчёт/CSV:", "не пишутся (walk-forward не дал ни одного прогноза)")
+        _field("отчёт/CSV/JSON:", "не пишутся (walk-forward не дал ни одного прогноза)")
+        _print_removed_artifacts(clear_stale_artifacts(out_dir))
         return 0
-    report = render_report(rows, skipped, runs, today=today)
+    _print_pair_tests(runs)
+    split_predictions = fixed_split(rows, MODELS)
+    _print_split(split_predictions, rows)
+    nowcast, nowcast_reason = current_nowcast(
+        rows, targets, survey, usd, key_rate, fao, today
+    )
+    if nowcast is None:
+        _field("текущий nowcast:", f"не рассчитан — {nowcast_reason}")
+    else:
+        _field(
+            "текущий nowcast:",
+            f"{nowcast.target_month.isoformat()[:7]} — as-of "
+            f"{nowcast.data_asof.isoformat()}",
+        )
+        _print_nowcast(nowcast)
+    report = render_report(
+        rows,
+        skipped,
+        runs,
+        today=today,
+        split_predictions=split_predictions,
+        nowcast=nowcast,
+        nowcast_reason=nowcast_reason,
+    )
     report_path, predictions_path = write_artifacts(out_dir, report, runs)
+    forecast_path = out_dir / FORECAST_NAME
+    forecast_written = write_nowcast_artifact(forecast_path, nowcast)
     _field("отчёт:", str(report_path))
     _field("прогнозы (CSV):", str(predictions_path))
+    if forecast_written:
+        _field("прогноз (JSON):", str(forecast_path))
+    else:
+        _field(
+            "прогноз (JSON):",
+            f"не пишется ({nowcast_reason}); устаревший файл, если был, удалён",
+        )
     return 0
 
 
 def main(argv: Optional[list] = None) -> int:
     parser = argparse.ArgumentParser(
         description="CPI monthly (ML-трек v2): выборка, as-of, признаки, "
-                    "walk-forward, бенчмарки B1–B3 и CatBoost, метрики и отчёт."
+                    "walk-forward, бенчмарки B1–B3 и CatBoost, DM-HLN, сплит "
+                    "статьи, живой nowcast, метрики и отчёт."
     )
     parser.add_argument(
         "--export-fixtures",
