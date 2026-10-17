@@ -441,13 +441,15 @@ const (
 	newsAnnotationInsert = "INSERT INTO " + newsAnnotationTable + " (url, content_hash, kind, method, model, prompt_version, dimension, tag, direction, confidence, evidence, sentiment, relevance, summary, annotated_at)"
 )
 
-// newsAnnotationCandidatesQuery читает бэклог разметки: Telegram-сообщения за 7 дней, для
+// newsAnnotationCandidatesQuery читает бэклог разметки: Telegram-сообщения за 30 дней, для
 // которых ещё нет строки method='llm' этой пары (model, prompt_version). Пара входит в ключ
 // ReplacingMergeTree, поэтому смена модели/промпта автоматически делает старые сообщения
 // кандидатами, не затирая прежнюю разметку. FINAL обязателен: news_events и news_annotation —
 // ReplacingMergeTree, и без него вытесненные копии дали бы дубли кандидатов / ложные пропуски.
-// LIMIT — из newsLLMBacklogLimit: стоимость LLM ограничена и после долгого простоя.
-var newsAnnotationCandidatesQuery = `SELECT date, source, title, url, description, content_hash FROM ` + newsTable + ` FINAL WHERE url LIKE 'https://t.me/%' AND content_hash != '' AND date >= now() - INTERVAL 7 DAY AND (url, content_hash) NOT IN (SELECT url, content_hash FROM ` + newsAnnotationTable + ` FINAL WHERE method = 'llm' AND model = ? AND prompt_version = ?) ORDER BY date DESC LIMIT ` + strconv.Itoa(newsLLMBacklogLimit)
+// 30 дней — окно корпоративных раскрытий edisclosure (20 сообщений ≈30 дней): при 7-дневном
+// окне старые сообщения канала оставались бы без разметки. LIMIT — из newsLLMBacklogLimit:
+// стоимость LLM ограничена и после долгого простоя.
+var newsAnnotationCandidatesQuery = `SELECT date, source, title, url, description, content_hash FROM ` + newsTable + ` FINAL WHERE url LIKE 'https://t.me/%' AND content_hash != '' AND date >= now() - INTERVAL 30 DAY AND (url, content_hash) NOT IN (SELECT url, content_hash FROM ` + newsAnnotationTable + ` FINAL WHERE method = 'llm' AND model = ? AND prompt_version = ?) ORDER BY date DESC LIMIT ` + strconv.Itoa(newsLLMBacklogLimit)
 
 // Import выполняет прогон контура новостей: DDL → витрина → ленты → батч.
 // Порядок шагов — часть контракта, а не стиль.
@@ -751,7 +753,7 @@ func insertItems(ctx context.Context, conn driver.Conn, items []newsItem) (int64
 	return count, err
 }
 
-// readNewsAnnotationCandidates читает бэклог LLM-разметки: Telegram-сообщения за 7 дней,
+// readNewsAnnotationCandidates читает бэклог LLM-разметки: Telegram-сообщения за 30 дней,
 // у которых нет doc/tag-строк этой пары (model, prompt_version). Пустой результат — не
 // ошибка: разметить нечего. Порядок Scan — порядок колонок newsAnnotationCandidatesQuery:
 // date, source, title, url, description, content_hash. Ошибка обхода проверяется: молча
