@@ -53,15 +53,43 @@ const newsMessageVersionDdl = `CREATE TABLE IF NOT EXISTS news_message_version (
 		) ENGINE = ReplacingMergeTree ORDER BY (channel, message_id, version);
 	`
 
+// newsAnnotationDdl — копия канонического DDL news_annotation из ARCHITECTURE.md §6.2
+// (спека §4.2, Task 3). Таблица generic по паре (url, content_hash): в этом пункте
+// заполняется только Telegram-молния, но ключ не привязан к транспорту. kind разделяет
+// doc-строку сообщения (sentiment/relevance/summary) и tag-строки (dimension/tag/direction/
+// confidence/evidence); model и prompt_version входят в ключ, поэтому смена модели или
+// редакции промпта добавляет разметку рядом со старой, а не затирает её.
+const newsAnnotationDdl = `CREATE TABLE IF NOT EXISTS news_annotation (
+			  url String
+			, content_hash String
+			, kind LowCardinality(String)       -- 'doc' | 'tag'
+			, method LowCardinality(String)     -- 'llm'
+			, model LowCardinality(String)      -- фактическое имя модели
+			, prompt_version UInt16
+			, dimension LowCardinality(String)  -- '' у doc; person|country|sector|event|theme|cb_channel
+			, tag LowCardinality(String)        -- '' у doc; slug реестра
+			, direction LowCardinality(String)  -- '' у doc/не-канальных; proinflationary|disinflationary|neutral|mixed
+			, confidence Float32
+			, evidence String                   -- дословная цитата; '' у doc
+			, sentiment Float32                 -- -1..1, только doc
+			, relevance Float32                 -- 0..1, только doc
+			, summary String                    -- 1 предложение, только doc
+			, annotated_at DateTime
+		) ENGINE = ReplacingMergeTree
+		ORDER BY (url, content_hash, kind, method, model, prompt_version, dimension, tag);
+	`
+
 // newsSchemaStatements — DDL прогона по порядку: CREATE news_events, ALTER-ы миграции (образец —
-// gostSchemaStatements, craw/gost.go), затем CREATE news_message_version. Схема выполняется до
-// чтения лент, поэтому версии и news_events готовы к записи в любом режиме. Возвращается срез, а
-// не переменная: вызывающий не должен получить возможность переставить стейтменты местами.
+// gostSchemaStatements, craw/gost.go), затем CREATE news_message_version и CREATE news_annotation.
+// Схема выполняется до чтения лент, поэтому таблицы версий и разметки готовы к записи в любом
+// режиме. Возвращается срез, а не переменная: вызывающий не должен получить возможность
+// переставить стейтменты местами.
 func newsSchemaStatements() []string {
-	stmts := make([]string, 0, 2+len(newsAlterStatements))
+	stmts := make([]string, 0, 3+len(newsAlterStatements))
 	stmts = append(stmts, newsEventsDdl)
 	stmts = append(stmts, newsAlterStatements...)
-	return append(stmts, newsMessageVersionDdl)
+	stmts = append(stmts, newsMessageVersionDdl)
+	return append(stmts, newsAnnotationDdl)
 }
 
 // newsFilter — широкий фильтр тезисов (RE2, регистронезависимо): список из спеки §«Схема и
