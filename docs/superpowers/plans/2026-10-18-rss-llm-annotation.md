@@ -284,3 +284,24 @@ dagu validate dagu/news.yaml
 - Новые витрины (расширяем `v_news_events`).
 - Provider Batch API (`/v1/batches`): используется существующий синхронный `/v1/chat/completions`, «батч» — несколько сообщений в одном запросе.
 - Изменение расписания `dagu/news.yaml`, перевод иноязычных текстов, торговые сигналы.
+
+## Протокол живой приёмки (2026-10-18)
+
+**Команды и результаты:**
+
+- `make all` — exit 0: golangci-lint `0 issues`, `go vet` чисто, `go test -race ./...` — все `ok` (`news` 12,155 с), обе сборки.
+- `go test -race -count=1 ./news/` — `ok` (после фикса `86a6350`).
+- `NEWS_LLM_PROFILE=glm NEWS_LLM_BACKLOG_LIMIT=500 make import STAT=news_watch` (основной прогон) — 32 батча, `размечено 239 сообщений, тегов 276`, `Imported 435 rows of news_watch`; 21 мин 16 с.
+- Догон тем же приказом — 1 батч, `размечено 3 сообщений, тегов 3`; 21 с.
+- Повторный прогон (no-op) — ни одной строки LLM-батча, провайдер не вызывался, `Imported 435 rows` (upsert Telegram); 4 с.
+- `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА; `OK LLM-разметка RSS: 191 из 191 позиций`, `OK реестр v_news_tags полон: слагов 46`, `OK витрина v_news_events ... строк: 339`.
+- `dagu validate dagu/news.yaml` — exit 0.
+
+**Данные после приёмки:**
+
+- `v_news_events`: 339 строк; аннотируемых 221, размечено 221; RSS 191/191, Telegram 30/30.
+- `news_annotation` v2: 242 doc + 279 tag; v1 (1.10): 44 doc + 39 tag; `news_events.sentiment` — 0 непустых.
+- `v_news_tags`: 46 (11 `cb_channel`); `v_news_flash`: 95 строк.
+- Стоимость: 33 батча, 175 620 prompt + 29 325 completion токенов → **$0,0020** по тарифу (≈$0,0023 с наценкой шлюза).
+
+**Найденный и исправленный дефект:** `newsFilter` начинается с `(?i)`, и драйвер ClickHouse считал `?` внутри регулярки позиционным плейсхолдером (4 `?` при 2 аргументах). Исправлено коммитом `86a6350`: фильтр передаётся SQL-параметром (`match(title, ?)`, `match(description, ?)`), после чего прогон прошёл штатно.
