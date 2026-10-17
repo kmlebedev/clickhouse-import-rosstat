@@ -47,10 +47,11 @@ func TestImportRejectsUnknownModeBeforeDB(t *testing.T) {
 
 	// Подмена пакетных URL — как в pointFeedsAt (здесь свой сервер со счётчиком
 	// хитов): feeds() читает их при каждом вызове, поэтому подменённый адрес подхватится.
-	oldInterfax, oldRBC, oldCBRNews, oldCBRPress, oldTASS, oldSmartlabLebedev, oldSmartlabSpydell :=
-		feedInterfaxURL, feedRBCURL, feedCBRNewsURL, feedCBRPressURL, feedTASSURL,
+	oldInterfax, oldInterfaxTelegram, oldRBC, oldCBRNews, oldCBRPress, oldTASS, oldSmartlabLebedev, oldSmartlabSpydell :=
+		feedInterfaxURL, feedInterfaxTelegramURL, feedRBCURL, feedCBRNewsURL, feedCBRPressURL, feedTASSURL,
 		feedSmartlabLebedevURL, feedSmartlabSpydellURL
 	feedInterfaxURL = srv.URL + "/interfax"
+	feedInterfaxTelegramURL = srv.URL + "/interfax_tg"
 	feedRBCURL = srv.URL + "/rbc"
 	feedCBRNewsURL = srv.URL + "/cbr_news"
 	feedCBRPressURL = srv.URL + "/cbr_press"
@@ -58,9 +59,9 @@ func TestImportRejectsUnknownModeBeforeDB(t *testing.T) {
 	feedSmartlabLebedevURL = srv.URL + "/smartlab_lebedev"
 	feedSmartlabSpydellURL = srv.URL + "/smartlab_spydell"
 	t.Cleanup(func() {
-		feedInterfaxURL, feedRBCURL, feedCBRNewsURL, feedCBRPressURL, feedTASSURL,
+		feedInterfaxURL, feedInterfaxTelegramURL, feedRBCURL, feedCBRNewsURL, feedCBRPressURL, feedTASSURL,
 			feedSmartlabLebedevURL, feedSmartlabSpydellURL =
-			oldInterfax, oldRBC, oldCBRNews, oldCBRPress, oldTASS, oldSmartlabLebedev, oldSmartlabSpydell
+			oldInterfax, oldInterfaxTelegram, oldRBC, oldCBRNews, oldCBRPress, oldTASS, oldSmartlabLebedev, oldSmartlabSpydell
 	})
 
 	var s newsImport
@@ -125,10 +126,28 @@ func TestParseMode(t *testing.T) {
 	}
 }
 
+// fixtureName возвращает имя закоммиченной фикстуры ленты и её content-type:
+// RSS-лента хранится как .rss, Telegram-превью — как .html. Ключ без ленты
+// остаётся .rss путём: сервер отдаст 404, и фикстура не подменится заглушкой.
+func fixtureName(key string) (name, contentType string) {
+	for _, f := range feeds() {
+		if f.Key != key {
+			continue
+		}
+		if f.Kind == feedTelegram {
+			return key + ".html", "text/html; charset=utf-8"
+		}
+		break
+	}
+	return key + ".rss", "application/rss+xml; charset=utf-8"
+}
+
 // serveFixtures поднимает httptest-сервер, отдающий закоммиченные фикстуры лент
 // по путям /<Key> — по одной на каждую ленту feeds(). Настоящую сеть тест не трогает:
 // прогон воспроизводим офлайн. Фикстуры нет — 404: новая лента без снимка падает
-// сбоем ленты, а не подменяется заглушкой.
+// сбоем ленты, а не подменяется заглушкой. Telegram-превью отдаётся как text/html:
+// парсер выбирает транспорт по Kind, но неверный content-type скрыл бы подмену
+// живого HTML RSS-заглушкой.
 func serveFixtures(t *testing.T, fail map[string]int) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -137,12 +156,13 @@ func serveFixtures(t *testing.T, fail map[string]int) *httptest.Server {
 			http.Error(w, "лента недоступна", code)
 			return
 		}
-		body, err := os.ReadFile(filepath.Join("testdata", key+".rss"))
+		name, contentType := fixtureName(key)
+		body, err := os.ReadFile(filepath.Join("testdata", name))
 		if err != nil {
 			http.NotFound(w, r)
 			return
 		}
-		w.Header().Set("Content-Type", "application/rss+xml; charset=utf-8")
+		w.Header().Set("Content-Type", contentType)
 		_, _ = w.Write(body)
 	}))
 	t.Cleanup(srv.Close)
@@ -150,15 +170,15 @@ func serveFixtures(t *testing.T, fail map[string]int) *httptest.Server {
 }
 
 func TestFetchFeedsUsesFixturesAndIsolatesFailure(t *testing.T) {
-	// Сбойная одна лента: остальные шесть обязаны прочитаться. Иначе падение
-	// любого источника глушило бы весь прогон, а dagu-ретрай повторял бы шесть
+	// Сбойная одна лента: остальные семь обязаны прочитаться. Иначе падение
+	// любого источника глушило бы весь прогон, а dagu-ретрай повторял бы семь
 	// здоровых лент ради одной больной.
 	srv := serveFixtures(t, map[string]int{"cbr_news": http.StatusInternalServerError})
 	pointFeedsAt(t, srv)
 
 	results := fetchFeeds(feeds())
-	if len(results) != 7 {
-		t.Fatalf("fetchFeeds вернул %d результатов, want 7 (по числу лент)", len(results))
+	if len(results) != 8 {
+		t.Fatalf("fetchFeeds вернул %d результатов, want 8 (по числу лент)", len(results))
 	}
 
 	var keys, sources []string
@@ -185,67 +205,111 @@ func TestFetchFeedsUsesFixturesAndIsolatesFailure(t *testing.T) {
 				t.Errorf("лента %s: позиция %d: Source = %q, want %q (метка источника, не имя фикстуры)", r.Feed.Key, j, it.Source, r.Feed.Source)
 			}
 		}
+		if r.Feed.Kind == feedTelegram {
+			// SeenIDs — вход T2: без него медиа без текста выглядело бы удалённым.
+			if len(r.SeenIDs) == 0 {
+				t.Errorf("Telegram-лента %s: SeenIDs пуст, want ID окна", r.Feed.Key)
+			}
+			for j, it := range r.Items {
+				if it.Channel == "" || it.MessageID == 0 {
+					t.Errorf("Telegram-лента %s: позиция %d: Channel=%q MessageID=%d, want поля из data-post",
+						r.Feed.Key, j, it.Channel, it.MessageID)
+				}
+				if want := "https://t.me/" + it.Channel + "/"; !strings.HasPrefix(it.URL, want) {
+					t.Errorf("Telegram-лента %s: позиция %d: URL = %q, want префикс %q", r.Feed.Key, j, it.URL, want)
+				}
+			}
+		}
 	}
 
-	if want := "interfax,rbc,cbr_news,cbr_press,tass,smartlab_lebedev,smartlab_spydell"; strings.Join(keys, ",") != want {
+	if want := "interfax,interfax_tg,rbc,cbr_news,cbr_press,tass,smartlab_lebedev,smartlab_spydell"; strings.Join(keys, ",") != want {
 		t.Errorf("порядок лент = %s, want %s (фиксированный, детерминированный лог)", strings.Join(keys, ","), want)
 	}
-	// Оба фида ЦБ пишутся под одним source=cbr, обе ленты smart-lab — под smartlab:
-	// витрина различает их url, а не меткой.
-	if want := "interfax,rbc,cbr,cbr,tass,smartlab,smartlab"; strings.Join(sources, ",") != want {
+	// Оба Интерфакса (RSS+Telegram) пишутся под source=interfax, оба фида ЦБ — под cbr,
+	// обе ленты smart-lab — под smartlab: витрина различает их url, а не меткой.
+	if want := "interfax,interfax,rbc,cbr,cbr,tass,smartlab,smartlab"; strings.Join(sources, ",") != want {
 		t.Errorf("метки источников = %s, want %s", strings.Join(sources, ","), want)
 	}
 }
 
 func TestFeedsHaveFixtures(t *testing.T) {
 	configured := feeds()
-	if len(configured) != 7 {
-		t.Fatalf("feeds() = %d лент, want 7", len(configured))
+	if len(configured) != 8 {
+		t.Fatalf("feeds() = %d лент, want 8", len(configured))
 	}
-	keyOf := make(map[string]bool, len(configured))
+	keyOf := make(map[string]feedKind, len(configured))
 	for _, f := range configured {
-		keyOf[f.Key] = true
+		keyOf[f.Key] = f.Kind
 
-		path := filepath.Join("testdata", f.Key+".rss")
-		body, err := os.ReadFile(path)
-		if err != nil {
-			t.Errorf("лента %s: нет фикстуры %s: %v", f.Key, path, err)
-			continue
-		}
-		if len(body) == 0 {
-			t.Errorf("фикстура %s пуста", path)
-			continue
-		}
-		// Фикстура обязана быть настоящей лентой: она — источник пинов парсинга
-		// (Task 3) и вход офлайн-прогонов, а не заглушка.
-		var doc rssDoc
-		if err := xml.Unmarshal(body, &doc); err != nil {
-			t.Errorf("разбор фикстуры %s: %v", path, err)
-			continue
-		}
-		items, _, err := itemsFromDoc(f.Source, doc)
-		if err != nil {
-			t.Errorf("itemsFromDoc(%s) на фикстуре %s: %v", f.Source, path, err)
-			continue
-		}
-		if len(items) == 0 {
-			t.Errorf("фикстура %s разобралась в 0 позиций", path)
+		switch f.Kind {
+		case feedRSS:
+			path := filepath.Join("testdata", f.Key+".rss")
+			body, err := os.ReadFile(path)
+			if err != nil {
+				t.Errorf("лента %s: нет фикстуры %s: %v", f.Key, path, err)
+				continue
+			}
+			if len(body) == 0 {
+				t.Errorf("фикстура %s пуста", path)
+				continue
+			}
+			// Фикстура обязана быть настоящей лентой: она — источник пинов парсинга
+			// (Task 3) и вход офлайн-прогонов, а не заглушка.
+			var doc rssDoc
+			if err := xml.Unmarshal(body, &doc); err != nil {
+				t.Errorf("разбор фикстуры %s: %v", path, err)
+				continue
+			}
+			items, _, err := itemsFromDoc(f.Source, doc)
+			if err != nil {
+				t.Errorf("itemsFromDoc(%s) на фикстуре %s: %v", f.Source, path, err)
+				continue
+			}
+			if len(items) == 0 {
+				t.Errorf("фикстура %s разобралась в 0 позиций", path)
+			}
+		case feedTelegram:
+			path := filepath.Join("testdata", f.Key+".html")
+			body, err := os.ReadFile(path)
+			if err != nil {
+				t.Errorf("Telegram-лента %s: нет фикстуры %s: %v", f.Key, path, err)
+				continue
+			}
+			page, err := parseTelegramPage(f.Key, body)
+			if err != nil {
+				t.Errorf("parseTelegramPage(%s) на фикстуре %s: %v", f.Key, path, err)
+				continue
+			}
+			if len(page.Messages) == 0 {
+				t.Errorf("фикстура %s разобралась в 0 сообщений", path)
+			}
+		default:
+			t.Errorf("лента %s: неизвестный вид %d (нет ветки проверки фикстуры)", f.Key, f.Kind)
 		}
 	}
 
 	// Обратная проверка: фикстура без ленты — мёртвый снимок, который никто
 	// не читает; он переживёт смену конфига и будет вводить в заблуждение.
-	files, err := filepath.Glob(filepath.Join("testdata", "*.rss"))
-	if err != nil {
-		t.Fatalf("glob testdata/*.rss: %v", err)
-	}
-	if len(files) == 0 {
-		t.Fatal("в testdata нет ни одной фикстуры *.rss")
-	}
-	for _, path := range files {
-		key := strings.TrimSuffix(filepath.Base(path), ".rss")
-		if !keyOf[key] {
-			t.Errorf("фикстура %s: ленты с Key=%q нет в feeds()", path, key)
+	// Расширение обязано соответствовать транспорту: .rss для RSS, .html для Telegram.
+	for _, pattern := range []string{"*.rss", "*.html"} {
+		files, err := filepath.Glob(filepath.Join("testdata", pattern))
+		if err != nil {
+			t.Fatalf("glob testdata/%s: %v", pattern, err)
+		}
+		for _, path := range files {
+			key := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+			kind, ok := keyOf[key]
+			if !ok {
+				t.Errorf("фикстура %s: ленты с Key=%q нет в feeds()", path, key)
+				continue
+			}
+			wantExt := ".rss"
+			if kind == feedTelegram {
+				wantExt = ".html"
+			}
+			if ext := filepath.Ext(path); ext != wantExt {
+				t.Errorf("фикстура %s: расширение %s не соответствует транспорту (want %s)", path, ext, wantExt)
+			}
 		}
 	}
 }
@@ -612,7 +676,7 @@ func TestCoverageLinesReportsIncomplete(t *testing.T) {
 
 // --- офлайн-фейки контура news (паттерн — boldFakeConn, bold/bold_test.go) ---
 
-// pointFeedsAt заменяет URL-ы всех семи лент на пути httptest-сервера и возвращает
+// pointFeedsAt заменяет URL-ы всех восьми лент на пути httptest-сервера и возвращает
 // исходные значения после теста: feeds() читает пакетные переменные при каждом вызове,
 // поэтому подмена подхватывается, а t.Cleanup не даёт ей утечь в соседние тесты.
 //
@@ -620,9 +684,10 @@ func TestCoverageLinesReportsIncomplete(t *testing.T) {
 // сеть, и тот падал бы (или, хуже, зеленел) по доступности живого сайта, а не по коду.
 func pointFeedsAt(t *testing.T, srv *httptest.Server) {
 	t.Helper()
-	old := [7]string{feedInterfaxURL, feedRBCURL, feedCBRNewsURL, feedCBRPressURL, feedTASSURL,
-		feedSmartlabLebedevURL, feedSmartlabSpydellURL}
+	old := [8]string{feedInterfaxURL, feedInterfaxTelegramURL, feedRBCURL, feedCBRNewsURL,
+		feedCBRPressURL, feedTASSURL, feedSmartlabLebedevURL, feedSmartlabSpydellURL}
 	feedInterfaxURL = srv.URL + "/interfax"
+	feedInterfaxTelegramURL = srv.URL + "/interfax_tg"
 	feedRBCURL = srv.URL + "/rbc"
 	feedCBRNewsURL = srv.URL + "/cbr_news"
 	feedCBRPressURL = srv.URL + "/cbr_press"
@@ -630,9 +695,9 @@ func pointFeedsAt(t *testing.T, srv *httptest.Server) {
 	feedSmartlabLebedevURL = srv.URL + "/smartlab_lebedev"
 	feedSmartlabSpydellURL = srv.URL + "/smartlab_spydell"
 	t.Cleanup(func() {
-		feedInterfaxURL, feedRBCURL, feedCBRNewsURL, feedCBRPressURL, feedTASSURL,
-			feedSmartlabLebedevURL, feedSmartlabSpydellURL =
-			old[0], old[1], old[2], old[3], old[4], old[5], old[6]
+		feedInterfaxURL, feedInterfaxTelegramURL, feedRBCURL, feedCBRNewsURL,
+			feedCBRPressURL, feedTASSURL, feedSmartlabLebedevURL, feedSmartlabSpydellURL =
+			old[0], old[1], old[2], old[3], old[4], old[5], old[6], old[7]
 	})
 	for _, f := range feeds() {
 		if !strings.HasPrefix(f.URL, srv.URL) {
@@ -642,13 +707,17 @@ func pointFeedsAt(t *testing.T, srv *httptest.Server) {
 }
 
 // fixtureItems читает закоммиченную фикстуру ленты тем же путём, что и прогон
-// (readFixtureDoc + itemsFromDoc): ожидания тестов считаются из фикстур, а не
-// хардкодятся — обновление снимка лент не должно требовать правки чисел в тестах.
-func fixtureItems(t *testing.T, key, source string) []newsItem {
+// (readFixtureDoc + itemsFromDoc или readTelegramFixture + telegramItems): ожидания
+// тестов считаются из фикстур, а не хардкодятся — обновление снимка лент не должно
+// требовать правки чисел в тестах.
+func fixtureItems(t *testing.T, f feed) []newsItem {
 	t.Helper()
-	items, _, err := itemsFromDoc(source, readFixtureDoc(t, key+".rss"))
+	if f.Kind == feedTelegram {
+		return telegramItems(f.Source, readTelegramFixture(t, f.Key+".html"))
+	}
+	items, _, err := itemsFromDoc(f.Source, readFixtureDoc(t, f.Key+".rss"))
 	if err != nil {
-		t.Fatalf("itemsFromDoc(%s) на фикстуре %s.rss: %v", source, key, err)
+		t.Fatalf("itemsFromDoc(%s) на фикстуре %s.rss: %v", f.Source, f.Key, err)
 	}
 	return items
 }
@@ -659,10 +728,10 @@ func fixtureItems(t *testing.T, key, source string) []newsItem {
 // и в feedSpans.
 func fixtureInventory(t *testing.T) (byKey map[string][]newsItem, maxBySource map[string]time.Time) {
 	t.Helper()
-	byKey = make(map[string][]newsItem, 7)
+	byKey = make(map[string][]newsItem, 8)
 	maxBySource = make(map[string]time.Time, 5)
 	for _, f := range feeds() {
-		items := fixtureItems(t, f.Key, f.Source)
+		items := fixtureItems(t, f)
 		byKey[f.Key] = items
 		for _, it := range items {
 			if it.Date.After(maxBySource[f.Source]) {
@@ -1012,7 +1081,7 @@ func TestImportCheckModeWritesNothing(t *testing.T) {
 	var s newsImport
 
 	// Первый прогон: сохранённых окон нет (Query отдаёт пустую очередь) — дыр нет и
-	// ошибки нет. Отсутствие ошибки здесь же доказывает, что все семь лент прочитались:
+	// ошибки нет. Отсутствие ошибки здесь же доказывает, что все восемь лент прочитались:
 	// сбой любой из них вернулся бы через feedErrs, а не остался незамеченным.
 	firstRun := newNewsFakeConn()
 	count, err := s.Import(context.Background(), firstRun)
@@ -1063,7 +1132,7 @@ func TestImportCheckModeWritesNothing(t *testing.T) {
 }
 
 func TestImportAllModeWritesAllFeeds(t *testing.T) {
-	// all — режим расписания: пишутся все позиции текущего окна всех семи лент одним
+	// all — режим расписания: пишутся все позиции текущего окна всех восьми лент одним
 	// батчем. Число строк считается из фикстур (readFixtureDoc + itemsFromDoc), а не
 	// хардкодится: обновление снимка лент не должно требовать правки числа в тесте.
 	t.Setenv(modeEnv, modeAll)
@@ -1250,9 +1319,10 @@ func TestImportSinceModeCbrSecondFeedNoWatermark(t *testing.T) {
 	byKey, _ := fixtureInventory(t)
 	// Ключи interfax/rbc/tass/smartlab — все позиции фикстур: эти источники не пишутся,
 	// и внимание теста остаётся на cbr. Обе ленты smart-lab несут один source, поэтому
-	// ключи складываются, как в feedSpans.
+	// ключи складываются, как в feedSpans; то же у Интерфакса: RSS и Telegram пишутся
+	// под source=interfax, и покрыты обязаны быть позиции обоих транспортов.
 	keys := map[string][]newsKey{
-		"interfax": keysOf(byKey["interfax"]),
+		"interfax": append(keysOf(byKey["interfax"]), keysOf(byKey["interfax_tg"])...),
 		"rbc":      keysOf(byKey["rbc"]),
 		"tass":     keysOf(byKey["tass"]),
 		"smartlab": append(keysOf(byKey["smartlab_lebedev"]), keysOf(byKey["smartlab_spydell"])...),
@@ -1298,7 +1368,7 @@ func TestImportSinceModeKeysReadErrorJoinsFeedErrors(t *testing.T) {
 	// на прогон, и в ней обязаны быть и сбой базы, и ключ упавшей ленты. Режим пишущий, но при
 	// ошибке выборки до батча дело не доходит — строк не пишется.
 	t.Setenv(modeEnv, modeSince)
-	// cbr_news падает (500), остальные шесть лент — закоммиченные фикстуры.
+	// cbr_news падает (500), остальные семь лент — закоммиченные фикстуры.
 	pointFeedsAt(t, serveFixtures(t, map[string]int{"cbr_news": http.StatusInternalServerError}))
 
 	conn := newNewsFakeConnWithKeys(nil)
@@ -1341,11 +1411,12 @@ func TestReadStoredKeysRowsError(t *testing.T) {
 }
 
 func TestImportSinceModeAllFeedsFailed(t *testing.T) {
-	// Все семь лент упали: items пуст, и в since до чтения ключей дело не доходит — ошибка
+	// Все восемь лент упали: items пуст, и в since до чтения ключей дело не доходит — ошибка
 	// собирается из отказов лент (ключ каждой), строк не пишется.
 	t.Setenv(modeEnv, modeSince)
 	pointFeedsAt(t, serveFixtures(t, map[string]int{
 		"interfax":         http.StatusInternalServerError,
+		"interfax_tg":      http.StatusInternalServerError,
 		"rbc":              http.StatusInternalServerError,
 		"cbr_news":         http.StatusInternalServerError,
 		"cbr_press":        http.StatusInternalServerError,
@@ -1363,7 +1434,7 @@ func TestImportSinceModeAllFeedsFailed(t *testing.T) {
 	if count != 0 {
 		t.Errorf("Import вернул %d строк при сбое всех лент, want 0", count)
 	}
-	for _, key := range []string{"interfax", "rbc", "cbr_news", "cbr_press", "tass", "smartlab_lebedev", "smartlab_spydell"} {
+	for _, key := range []string{"interfax", "interfax_tg", "rbc", "cbr_news", "cbr_press", "tass", "smartlab_lebedev", "smartlab_spydell"} {
 		if !strings.Contains(err.Error(), key) {
 			t.Errorf("ошибка Import = %q, want ключ упавшей ленты %q", err, key)
 		}
@@ -1391,7 +1462,7 @@ type rssEntry struct {
 }
 
 // rssXML собирает минимальный RSS 2.0: формат pubDate — time.RFC1123Z, тот же, что у всех
-// семи живых лент (с числовым офсетом), поэтому синтетическая лента проходит тот же разбор
+// живых RSS-лент (с числовым офсетом), поэтому синтетическая лента проходит тот же разбор
 // (readFixtureDoc + itemsFromDoc), что и фикстуры.
 func rssXML(entries ...rssEntry) string {
 	var b strings.Builder
@@ -1405,27 +1476,32 @@ func rssXML(entries ...rssEntry) string {
 }
 
 // serveSyntheticCbr поднимает httptest-сервер, где два фида ЦБ отдают синтетические ленты,
-// а остальные три — закоммиченные фикстуры: тест держит под контролем окно именно ЦБ, не
+// а остальные шесть — закоммиченные фикстуры: тест держит под контролем окно именно ЦБ, не
 // переписывая testdata.
 func serveSyntheticCbr(t *testing.T, newsXML, pressXML string) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := strings.TrimPrefix(r.URL.Path, "/")
-		var body []byte
+		var (
+			body        []byte
+			contentType = "application/rss+xml; charset=utf-8"
+		)
 		switch key {
 		case "cbr_news":
 			body = []byte(newsXML)
 		case "cbr_press":
 			body = []byte(pressXML)
 		default:
-			b, err := os.ReadFile(filepath.Join("testdata", key+".rss"))
+			var name string
+			name, contentType = fixtureName(key)
+			b, err := os.ReadFile(filepath.Join("testdata", name))
 			if err != nil {
 				http.NotFound(w, r)
 				return
 			}
 			body = b
 		}
-		w.Header().Set("Content-Type", "application/rss+xml; charset=utf-8")
+		w.Header().Set("Content-Type", contentType)
 		_, _ = w.Write(body)
 	}))
 	t.Cleanup(srv.Close)
