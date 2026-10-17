@@ -145,7 +145,7 @@ DDL не меняется. Новые колонки — только в вит�
 | `summary` | `Nullable(String)` | одно предложение; NULL — не размечено |
 | `model` | `LowCardinality(String)` | модель последней разметки; `''` — разметки нет |
 | `prompt_version` | `UInt16` | редакция промпта; 0 — разметки нет |
-| `tags` | `Array(Tuple(LowCardinality(String), LowCardinality(String), LowCardinality(String)))` | `(dimension, tag, direction)`; `[]` — тегов нет/не размечено |
+| `tags` | `Array(Tuple(String, String, String))` | `(dimension, tag, direction)`; `[]` — тегов нет/не размечено |
 
 ## 6. Тесты
 
@@ -161,7 +161,7 @@ DDL не меняется. Новые колонки — только в вит�
 ## 7. Критерий приёмки
 
 1. `make all` — зелёный; `go test -race -count=1 ./news/` — `ok`.
-2. Живой прогон `NEWS_LLM_PROFILE=glm NEWS_LLM_BACKLOG_LIMIT=500 make import STAT=news_watch` размечает все аннотируемые позиции `v_news_events` (`content_hash != ''`) для `prompt_version=2`: `countIf(content_hash != '' AND model != '') = countIf(content_hash != '')`, по RSS — то же; строки с `content_hash = ''` остаются `model = ''`; число строк витрины не меняется.
+2. Живой прогон `NEWS_LLM_PROFILE=glm NEWS_LLM_BACKLOG_LIMIT=500 make import STAT=news_watch` размечает все аннотируемые позиции `v_news_events` (`content_hash != ''`) для `prompt_version=2`: `countIf(content_hash != '' AND model != '') = countIf(content_hash != '')`, по RSS — то же; строки с `content_hash = ''` остаются `model = ''`; витрина остаётся «одна строка на позицию» (дублей `(date, source, title)` нет), а её число может вырасти за счёт новых видимых позиций ingestion.
 3. `v_news_tags` — 46 тегов; `news_annotation` содержит doc- и tag-строки `model='zai-org/GLM-5.3-Flash'`, `prompt_version=2`.
 4. Повторный прогон — no-op: кандидатов 0, провайдер не вызывается, строки не растут.
 5. `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА; `dagu validate dagu/news.yaml` — exit 0.

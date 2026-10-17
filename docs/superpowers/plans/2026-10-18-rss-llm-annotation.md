@@ -257,7 +257,7 @@ dagu validate dagu/news.yaml
 ## Критерий приёмки (фиксируется в issue #122)
 
 1. `make all` — зелёный; `go test -race -count=1 ./news/` — `ok`.
-2. Живой прогон `NEWS_LLM_PROFILE=glm NEWS_LLM_BACKLOG_LIMIT=500 make import STAT=news_watch` размечает все **аннотируемые** позиции `v_news_events` для `prompt_version=2` (`content_hash != ''`): `countIf(content_hash != '' AND model != '') = countIf(content_hash != '')`, по RSS — то же; строки с `content_hash = ''` (до миграции) остаются `model = ''` и в критерий не входят; число строк `v_news_events` не меняется.
+2. Живой прогон `NEWS_LLM_PROFILE=glm NEWS_LLM_BACKLOG_LIMIT=500 make import STAT=news_watch` размечает все **аннотируемые** позиции `v_news_events` для `prompt_version=2` (`content_hash != ''`): `countIf(content_hash != '' AND model != '') = countIf(content_hash != '')`, по RSS — то же; строки с `content_hash = ''` (до миграции) остаются `model = ''` и в критерий не входят; витрина остаётся «одна строка на позицию» (дублей нет), число строк может вырасти за счёт новых видимых позиций.
 3. `v_news_tags` — 46 тегов, новые слаги видны; `news_annotation` содержит doc- и tag-строки `model='zai-org/GLM-5.3-Flash'`, `prompt_version=2`.
 4. Повторный прогон — no-op: кандидатов 0, провайдер не вызывается, строки не растут.
 5. `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА, `LLM-разметка RSS` — OK; `dagu validate dagu/news.yaml` — exit 0.
