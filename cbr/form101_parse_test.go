@@ -192,11 +192,11 @@ func TestForm101Newer(t *testing.T) {
 	}
 }
 
-// TestCbrForm101LoansViewContract — pilot-витрина маппинга: имя, гейт по
-// cbr_form101 + company_financials, кандидатные группы 45.x/44x/45x/458/459,
-// kpi-эталон пресс-релиза, версия набора и 11 прокомментированных колонок.
-// Сам расчёт живёт в SQL и проверяется живым прогоном; тест ловит случайную
-// правку набора счетов.
+// TestCbrForm101LoansViewContract — витрина маппинга по методологии ЦБ: имя,
+// гейт по cbr_form101 + company_financials, счета 45.0/45.1/45.2/44x/45x/46x,
+// 458/459, kpi-эталон пресс-релиза, версия набора и 11 прокомментированных
+// колонок. Сам расчёт живёт в SQL и проверяется живым прогоном; тест ловит
+// случайную правку набора счетов.
 func TestCbrForm101LoansViewContract(t *testing.T) {
 	v := cbrForm101LoansView
 	if v.Name != "v_cbr_form101_loans" {
@@ -214,14 +214,17 @@ func TestCbrForm101LoansViewContract(t *testing.T) {
 		}
 	}
 	for _, marker := range []string{
-		"'45.0'", "'45.1'", "'45.2'", "'451'", "'446'", "'458'", "'459'",
-		"mapping_version", "'pilot-1'", "press_release_corporate_bln_rub",
-		"subtractMonths(f.report_date, 1)", "company_financials FINAL",
+		"'45.0'", "'45.2'", "'451'", "'446'", "'460'", "'47.1'", "'477'", "'458'", "'459'",
+		"mapping_version", "'cbr-809p-sber-1'", "press_release_corporate_bln_rub",
+		"subtractMonths(m.report_date, 1)", "company_financials FINAL",
 		"source_kind = 'kpi'",
 	} {
 		if !strings.Contains(v.Select, marker) {
 			t.Errorf("SELECT не содержит %q", marker)
 		}
+	}
+	if strings.Contains(v.Select, "'45.1'") {
+		t.Error("SELECT не должен включать резервный агрегат '45.1'")
 	}
 	if len(v.Columns) != 11 {
 		t.Errorf("Columns = %d, want 11", len(v.Columns))
@@ -231,25 +234,33 @@ func TestCbrForm101LoansViewContract(t *testing.T) {
 	}
 }
 
-// TestForm101LoanTotals — pilot-1 набор: 45.0 (A_P=1) + 45.1 (A_P=2) +
-// детальные 451/446/442/445/448/449/447/450/453/454 (A_P=1) — кредиты ЮЛ;
-// 45.2 (A_P=1 и 2) — кредиты ФЛ; 458 (просрочка) не прибавляется.
+// TestForm101LoanTotals — набор cbr-809p-sber-1: 45.0 (A_P=1) + детальные
+// 441–454 (A_P=1, кроме 452/456) + прочие размещённые средства 460–470/472,
+// 47.1, 477 — кредиты ЮЛ; 45.2 (A_P=1) — кредиты ФЛ; 458 (A_P=1) распределяется
+// пропорционально; пассивные 45.1/45.2 (резервы), 459 (проценты) и 478
+// (приобретённые права) не входят.
 func TestForm101LoanTotals(t *testing.T) {
 	rows := []form101Row{
 		{Account: "45.0", ActivePassive: "1", BalanceTotal: 25_000_000_000},
-		{Account: "45.1", ActivePassive: "2", BalanceTotal: 1_000_000_000},
+		{Account: "45.1", ActivePassive: "2", BalanceTotal: 1_000_000_000}, // резервы — не кредит
 		{Account: "451", ActivePassive: "1", BalanceTotal: 3_000_000_000},
 		{Account: "446", ActivePassive: "1", BalanceTotal: 1_000_000_000},
-		{Account: "451", ActivePassive: "2", BalanceTotal: 999_000_000}, // пассив — не кредит
-		{Account: "45.2", ActivePassive: "1", BalanceTotal: 19_000_000_000},
-		{Account: "45.2", ActivePassive: "2", BalanceTotal: 1_000_000_000},
-		{Account: "458", ActivePassive: "1", BalanceTotal: 9_000_000_000}, // просрочка — отдельно
+		{Account: "460", ActivePassive: "1", BalanceTotal: 500_000_000},  // прочие размещённые средства
+		{Account: "47.1", ActivePassive: "1", BalanceTotal: 300_000_000}, // агрегат 471+473
+		{Account: "477", ActivePassive: "1", BalanceTotal: 200_000_000},  // лизинг
+		{Account: "451", ActivePassive: "2", BalanceTotal: 999_000_000},  // пассив — не кредит
+		{Account: "45.2", ActivePassive: "1", BalanceTotal: 20_000_000_000},
+		{Account: "45.2", ActivePassive: "2", BalanceTotal: 1_000_000_000}, // резервы ФЛ
+		{Account: "458", ActivePassive: "1", BalanceTotal: 5_000_000_000},  // просрочка — в портфель
+		{Account: "459", ActivePassive: "1", BalanceTotal: 1_000_000_000},  // проценты — не входят
+		{Account: "478", ActivePassive: "1", BalanceTotal: 5_000_000_000},  // приобретённые права — не входят
 	}
 	corporate, retail := form101LoanTotals(rows)
-	if corporate != 30_000 {
-		t.Errorf("corporate = %v, want 30 000 млрд ₽", corporate)
+	// ЮЛ: 30 000 текущих + 5 000 * 30 000/50 000 = 33 000; ФЛ: 20 000 + 2 000 = 22 000.
+	if corporate < 32_999.999 || corporate > 33_000.001 {
+		t.Errorf("corporate = %v, want 33 000 млрд ₽", corporate)
 	}
-	if retail != 20_000 {
-		t.Errorf("retail = %v, want 20 000 млрд ₽", retail)
+	if retail < 21_999.999 || retail > 22_000.001 {
+		t.Errorf("retail = %v, want 22 000 млрд ₽", retail)
 	}
 }
