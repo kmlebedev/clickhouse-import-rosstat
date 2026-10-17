@@ -3,6 +3,7 @@ package cbr
 import (
 	"encoding/binary"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -188,5 +189,42 @@ func TestForm101Newer(t *testing.T) {
 			t.Errorf("%s: form101Newer(%s, %s) = %v, want %v", tc.name,
 				latest.Format(form101DayLayout), tc.known.Format(form101DayLayout), got, tc.want)
 		}
+	}
+}
+
+// TestCbrForm101LoansViewContract — pilot-витрина маппинга: имя, гейт по
+// cbr_form101 + v_company_financials, кандидатные группы 45.x/44x/45x/458/459,
+// версия набора и 11 прокомментированных колонок. Сам расчёт живёт в SQL и
+// проверяется живым прогоном; тест ловит случайную правку набора счетов.
+func TestCbrForm101LoansViewContract(t *testing.T) {
+	v := cbrForm101LoansView
+	if v.Name != "v_cbr_form101_loans" {
+		t.Fatalf("Name = %q, want v_cbr_form101_loans", v.Name)
+	}
+	for _, table := range []string{"cbr_form101", "v_company_financials"} {
+		found := false
+		for _, got := range v.Tables {
+			if got == table {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("Tables = %v, want %s", v.Tables, table)
+		}
+	}
+	for _, marker := range []string{
+		"'45.0'", "'45.1'", "'45.2'", "'451'", "'446'", "'458'", "'459'",
+		"mapping_version", "'pilot-1'", "press_release_corporate_bln_rub",
+		"subtractMonths(f.report_date, 1)", "v_company_financials",
+	} {
+		if !strings.Contains(v.Select, marker) {
+			t.Errorf("SELECT не содержит %q", marker)
+		}
+	}
+	if len(v.Columns) != 11 {
+		t.Errorf("Columns = %d, want 11", len(v.Columns))
+	}
+	if v.Comment == "" {
+		t.Error("пустой Comment")
 	}
 }
