@@ -7,8 +7,9 @@
 ЖЕ строках — «без МП» (5 числовых + `month`) и «с МП» (плюс 7 признаков
 мониторинга предприятий ЦБ из `cbr_survey`). Task 2 добавляет harness
 walk-forward, обязательные бенчмарки B1–B3 (B3 — в двух пространствах),
-метрики RMSE/MAE и отчёт-скелет; CatBoost — Task 3, DM-пары/сплит статьи/
-живой nowcast — Task 4.
+метрики RMSE/MAE и отчёт-скелет; Task 3 — четыре варианта CatBoost
+(direct/bottom-up × без МП/с МП) и NNLS-веса bottom-up; DM-пары/сплит
+статьи/живой nowcast — Task 4.
 
 Что делает срез:
 
@@ -52,11 +53,24 @@ walk-forward, обязательные бенчмарки B1–B3 (B3 — в д�
   (`ElasticNetCV` на стандартизованных признаках без `month`, импутация NaN
   медианой train, минимум 12 строк; `ConvergenceWarning` — в `fold_notes`, не
   вырождение). Два пространства B3 отделяют эффект МП от эффекта алгоритма;
+* **CatBoost, четыре варианта** (§3.1–3.3) — `catboost_direct` (CatBoost на
+  таргет `cpi_all`), `catboost_bottomup` (три компонентных CatBoost и агрегат
+  `Σ w_j·ŷ_j` с весами NNLS по обучающему окну фолда, нормированными к 1),
+  плюс `_mp`-версии на расширенном наборе признаков. Конфигурация §3.1 —
+  `loss_function='RMSE'`, `random_seed=SEED`, `verbose=False`,
+  `cat_features=['month']`, monotone-ограничения (`+1` только `usd_mm`,
+  `price_expectations_sa`, `price_expectations_sa_chg`),
+  `allow_writing_files=False`; остальное — дефолты библиотеки
+  (`catboost_metadata`). Пустое окно
+  или неизменный таргет ЛЮБОЙ компоненты/весов — `DegenerateWindowError`
+  (фолд пропускается), как у B2/B3. Веса и компонентные прогнозы последнего
+  успешного фолда — в `last_weights`/`last_components`; отчёт печатает веса
+  каждого окна и блок конфигурации;
 * **метрики и отчёт** (§4.2, §5.1) — RMSE/MAE в п.п. через общие функции
-  `scripts/eval_utils.py`, блок «последние 12 фолдов»; отчёт-скелет
-  `cpi_monthly_report.md` (выборка, «модель × окно», последние 12 фолдов, «что
-  не проверено») и CSV `cpi_monthly_predictions.csv`
-  (`month, window, model, y_true, y_pred`).
+  `scripts/eval_utils.py`, блок «последние 12 фолдов»; отчёт
+  `cpi_monthly_report.md` (выборка, «модель × окно», веса NNLS, конфигурация
+  CatBoost, последние 12 фолдов, «что не проверено») и CSV
+  `cpi_monthly_predictions.csv` (`month, window, model, y_true, y_pred`).
 
 **NaN-политика:** в признаках этого среза NaN не возникает — отсутствие любой
 обязательной точки выбрасывает месяц с причиной. B3 на всякий случай импутирует
@@ -77,8 +91,9 @@ CatBoost (Task 3) получит NaN как есть.
 приходят только из окружения (их подставляет Makefile). Запуск — через `make`:
 
 * `make cpi-monthly` — сводка выборки (155 месяцев 2013-10…2026-08, пропусков
-  0), walk-forward B1–B3 по окнам 24/48/embargo 1, RMSE/MAE и артефакты
-  `cpi_monthly_report.md` и `cpi_monthly_predictions.csv` в корне worktree;
+  0), walk-forward B1–B3 и четырёх CatBoost-вариантов по окнам
+  24/48/embargo 1, RMSE/MAE, веса NNLS и артефакты `cpi_monthly_report.md`
+  и `cpi_monthly_predictions.csv` в корне worktree;
 * `make cpi-monthly ARGS="--start N --embargo-months K"` — основное окно
   walk-forward задаётся явно (робастность остаётся от спеки §4.1);
 * `make cpi-monthly ARGS="--export-fixtures DIR"` — пересборка CSV-фикстур.
@@ -90,13 +105,15 @@ import math
 import statistics
 import sys
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Callable, Optional
 
 import numpy as np
 import statsmodels.api as sm
+from catboost import CatBoostRegressor
+from scipy.optimize import nnls
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.linear_model import ElasticNetCV
 from sklearn.model_selection import TimeSeriesSplit
@@ -856,8 +873,10 @@ class WindowRun:
     по ВСЕМ моделям словаря (нулевые счётчики тоже: модель, вырожденная на всех
     окнах, видна в отчёте строкой «0 фолдов», а не исчезает); `notes` —
     «модель → диагностика» (сумма `fold_notes` фолдов; у моделей без протокола
-    словарь пуст); `main` — основное окно прогона (для блока «последние 12
-    фолдов»).
+    словарь пуст); `weights` — «модель → веса NNLS» последнего успешного фолда
+    ЭТОГО окна (bottom-up; у моделей без весов ключа нет — иначе веса одного
+    окна приписались бы другому); `main` — основное окно прогона (для блока
+    «последние 12 фолдов»).
     """
 
     start: int
@@ -867,6 +886,7 @@ class WindowRun:
     predictions: list[Prediction]
     skipped: dict[str, int]
     notes: dict[str, dict[str, int]]
+    weights: dict[str, tuple] = field(default_factory=dict)
 
 
 def window_key(start: int, embargo: int) -> str:
@@ -953,6 +973,36 @@ def walk_forward(
     return predictions
 
 
+def _reset_fold_weights(models: dict[str, FitPredict]) -> None:
+    """Сбрасывает диагностику весов моделей перед окном walk-forward.
+
+    `last_weights`/`last_components` — атрибуты функции-модели, а не результата
+    фолда: без сброса окно, все фолды которого вырождены, отчиталось бы весами
+    ПРЕДЫДУЩЕГО окна. Сброс — только у моделей, которые такой протокол
+    объявляют; у остальных атрибутов нет, и трогать их нечего.
+    """
+    for fit_predict in models.values():
+        if hasattr(fit_predict, "last_weights"):
+            fit_predict.last_weights = ()
+        if hasattr(fit_predict, "last_components"):
+            fit_predict.last_components = ()
+
+
+def _window_weights(models: dict[str, FitPredict]) -> dict[str, tuple]:
+    """«Модель → веса» последнего успешного фолда окна (диагностика bottom-up).
+
+    Читается ПОСЛЕ `walk_forward`: функция модели хранит веса последнего
+    успешного вызова. Модели без весов (direct, бенчмарки) в словарь не
+    попадают — отчёт печатает только реально посчитанные веса.
+    """
+    weights = {}
+    for name, fit_predict in models.items():
+        last = getattr(fit_predict, "last_weights", ())
+        if last:
+            weights[name] = tuple(float(value) for value in last)
+    return weights
+
+
 def evaluate_windows(
     rows: list[Row],
     models: dict[str, FitPredict],
@@ -964,7 +1014,9 @@ def evaluate_windows(
     `WindowRun.skipped` хранит порядок моделей `models` — от него зависят строки
     таблиц отчёта, а не алфавит. Диагностика `fold_notes` собирается по окну
     заново (`WindowRun.notes`): число недосошедших фолдов относится к
-    КОНКРЕТНОМУ окну, а не к прогону целиком.
+    КОНКРЕТНОМУ окну, а не к прогону целиком. Веса NNLS (`WindowRun.weights`)
+    снимаются с модели после каждого окна — тоже по окну, а не по всему
+    прогону.
     """
     runs = []
     for position, (start, embargo) in enumerate(
@@ -972,6 +1024,7 @@ def evaluate_windows(
     ):
         skipped = {name: 0 for name in models}
         notes = {name: {} for name in models}
+        _reset_fold_weights(models)
         predictions = walk_forward(rows, models, start, embargo, skipped=skipped, notes=notes)
         runs.append(
             WindowRun(
@@ -982,6 +1035,7 @@ def evaluate_windows(
                 predictions=predictions,
                 skipped=skipped,
                 notes=notes,
+                weights=_window_weights(models),
             )
         )
     return runs
@@ -995,14 +1049,27 @@ MODEL_LAST = "b1_last_value"
 MODEL_AR1 = "b2_ar1_seasonal"
 MODEL_ENET_BASE = "b3_elastic_net"
 MODEL_ENET_MP = "b3_elastic_net_mp"
+MODEL_CATBOOST_DIRECT = "catboost_direct"
+MODEL_CATBOOST_BOTTOMUP = "catboost_bottomup"
+MODEL_CATBOOST_DIRECT_MP = "catboost_direct_mp"
+MODEL_CATBOOST_BOTTOMUP_MP = "catboost_bottomup_mp"
 
-# Метки моделей для отчёта: бенчмарки названы номерами спеки §3.4. B3 идёт
-# двумя пространствами — эффект МП отделяется от эффекта алгоритма.
+# Bottom-up модели: только у них есть веса NNLS, которые отчёт печатает по
+# окнам (порядок — как в `CATBOOST_MODELS`).
+BOTTOMUP_MODELS = (MODEL_CATBOOST_BOTTOMUP, MODEL_CATBOOST_BOTTOMUP_MP)
+
+# Метки моделей для отчёта: бенчмарки названы номерами спеки §3.4, CatBoost —
+# схемой агрегации §3.3. B3 и CatBoost идут двумя пространствами признаков —
+# эффект МП отделяется от эффекта алгоритма.
 MODEL_LABELS = {
     MODEL_LAST: "B1 last value",
     MODEL_AR1: "B2 AR(1)+сезонные дамми",
     MODEL_ENET_BASE: "B3 ElasticNetCV (без МП)",
     MODEL_ENET_MP: "B3 ElasticNetCV (с МП)",
+    MODEL_CATBOOST_DIRECT: "CatBoost direct (без МП)",
+    MODEL_CATBOOST_BOTTOMUP: "CatBoost bottom-up (без МП)",
+    MODEL_CATBOOST_DIRECT_MP: "CatBoost direct (с МП)",
+    MODEL_CATBOOST_BOTTOMUP_MP: "CatBoost bottom-up (с МП)",
 }
 
 
@@ -1231,6 +1298,315 @@ for _function in (_fit_enet, fit_enet_base, fit_enet_mp):
     _function.fold_notes = {}
 
 
+# ---------------------------------------------------------------------------
+# CatBoost: direct и покомпонентный bottom-up (спека §3.1–3.3)
+# ---------------------------------------------------------------------------
+
+# Конфигурация CatBoost (§3.1): заданы `loss_function`, `random_seed`, `verbose`
+# (дословно из спеки), monotone-ограничения и категориальный месяц. Остальные
+# гиперпараметры НЕ задаются — дефолты библиотеки; `CATBOOST_DEFAULTS` фиксирует
+# их значения для метаданных прогона («конфигурация пишется в метаданные
+# модели»), тест сверяет их с `get_all_params()` обученной модели.
+CATBOOST_LOSS = "RMSE"
+CATBOOST_CAT_FEATURES = ("month",)
+CATBOOST_MONOTONE = {
+    "usd_mm": 1,
+    "price_expectations_sa": 1,
+    "price_expectations_sa_chg": 1,
+}
+CATBOOST_DEFAULTS = {
+    "iterations": 1000,
+    "depth": 6,
+    "l2_leaf_reg": 3,
+    "random_strength": 1,
+    "bootstrap_type": "MVS",
+    "nan_mode": "Min",
+    "leaf_estimation_method": "Newton",
+    "one_hot_max_size": 2,
+}
+
+
+def catboost_numeric_features(with_mp: bool) -> list[str]:
+    """Числовые признаки матрицы CatBoost: `feature_names` без `month`.
+
+    Порядок колонок — контракт с `monotone_constraints` и `catboost_matrix`;
+    `month` идёт последней колонкой и передаётся в `cat_features`.
+    """
+    return [name for name in feature_names(with_mp) if name not in CATBOOST_CAT_FEATURES]
+
+
+def catboost_cat_indices(with_mp: bool) -> list[int]:
+    """Позиции категориальных признаков в матрице (`cat_features` конструктора).
+
+    CatBoost на numpy-матрице ждёт ИНДЕКСЫ, а не имена (имена — для DataFrame);
+    индекс берётся из `feature_names`, а не из литерала, поэтому сдвиг порядка
+    признаков не разъедет колонки и ограничения.
+    """
+    names = feature_names(with_mp)
+    return [names.index(name) for name in CATBOOST_CAT_FEATURES]
+
+
+def monotone_constraints(with_mp: bool) -> list[int]:
+    """`monotone_constraints` §3.1: `+1` трём признакам, остальным 0.
+
+    Ограничения заданы ИМЕНАМИ признаков, а возвращаются позиционно (индекс
+    столбца матрицы — так их читает CatBoost): сдвиг порядка
+    `feature_names(with_mp)` не может молча перенести «+1» на другой признак.
+    У категориального `month` — 0: CatBoost допускает ограничения только на
+    float-признаках. В базовом наборе из трёх имён присутствует только
+    `usd_mm`; `_mp`-набор добавляет ценовые ожидания.
+    """
+    return [CATBOOST_MONOTONE.get(name, 0) for name in feature_names(with_mp)]
+
+
+def catboost_params(with_mp: bool) -> dict:
+    """Параметры конструктора CatBoost (§3.1) — единственные заданные, дословно.
+
+    Словарь — ровно то, что уходит в `CatBoostRegressor`; он же сверяется с
+    `get_params()` собранной модели, поэтому любое добавленное поле означало бы
+    подменённый дефолт библиотеки. `allow_writing_files=False` — флаг побочного
+    эффекта, а не гиперпараметр: без него CatBoost пишет каталог
+    `catboost_info/` в рабочий каталог прогона.
+    """
+    return {
+        "loss_function": CATBOOST_LOSS,
+        "random_seed": SEED,
+        "verbose": False,
+        "monotone_constraints": monotone_constraints(with_mp),
+        "cat_features": catboost_cat_indices(with_mp),
+        "allow_writing_files": False,
+    }
+
+
+def catboost_model(with_mp: bool) -> CatBoostRegressor:
+    """Новый (необученный) `CatBoostRegressor` с конфигурацией §3.1."""
+    return CatBoostRegressor(**catboost_params(with_mp))
+
+
+def catboost_metadata(with_mp: bool) -> dict:
+    """Метаданные модели CatBoost для отчёта/артефактов (§3.1).
+
+    Заданная конфигурация — по ИМЕНАМ признаков (индекс сдвинется при правке
+    `feature_names`, имя нет) плюс дефолты библиотеки, которые код не
+    подменяет. Словарь сериализуется в JSON как есть (Task 4 кладёт его рядом
+    с прогнозом модели).
+    """
+    names = feature_names(with_mp)
+    constraints = monotone_constraints(with_mp)
+    return {
+        "loss_function": CATBOOST_LOSS,
+        "random_seed": SEED,
+        "cat_features": list(CATBOOST_CAT_FEATURES),
+        "num_features": catboost_numeric_features(with_mp),
+        "monotone_constraints": {
+            name: value for name, value in zip(names, constraints)
+        },
+        "allow_writing_files": False,
+        "defaults": dict(CATBOOST_DEFAULTS),
+    }
+
+
+def catboost_matrix(rows: list[Row], with_mp: bool) -> np.ndarray:
+    """Матрица признаков CatBoost: числовые float + целые коды месяца (§3.1).
+
+    Тип — `object`, и это не украшение: `cat_features` требует не-float матрицу
+    (CatBoost отказывает: «'data' is numpy array of floating point numerical
+    type, it means no categorical features»), а код месяца обязан дойти целым —
+    «10» и «10.0» для категориального признака разные значения. Порядок
+    колонок: `catboost_numeric_features(with_mp)`, затем `month`. NaN числовых
+    колонок передаётся как есть: библиотека обрабатывает пропуски нативно
+    (`nan_mode` по умолчанию `Min`), в отличие от B3, которая импутирует.
+    """
+    names = catboost_numeric_features(with_mp)
+    matrix = np.empty(
+        (len(rows), len(names) + len(CATBOOST_CAT_FEATURES)), dtype=object
+    )
+    for position, name in enumerate(names):
+        matrix[:, position] = [float(row.features[name]) for row in rows]
+    for offset, name in enumerate(CATBOOST_CAT_FEATURES):
+        matrix[:, len(names) + offset] = [int(row.features[name]) for row in rows]
+    return matrix
+
+
+@dataclass(frozen=True)
+class CatBoostFit:
+    """Подобранный фолд CatBoost: модель, матрица, таргет и набор признаков.
+
+    `target` — код таргета §2.1, на который обучалась модель (`TARGET_ALL` у
+    direct, код компоненты у bottom-up); `targets` — значения этого таргета на
+    обучающем окне; `with_mp` — пространство признаков (матрица тестовой строки
+    строится в том же пространстве). Отчёт читает только метаданные модели;
+    остальное — пины тестов.
+    """
+
+    model: CatBoostRegressor
+    matrix: np.ndarray
+    target: str
+    targets: np.ndarray
+    with_mp: bool
+
+
+def _catboost_targets(train: list[Row], target: str) -> np.ndarray:
+    """Значения таргета обучающего окна (float) — общий ИПЦ или компонента §2.1."""
+    return np.asarray([float(row.y[target]) for row in train], dtype=float)
+
+
+def _assert_catboost_window(matrix: np.ndarray, targets: np.ndarray, target: str) -> None:
+    """Вырожденное окно CatBoost: пустое или с неизменным таргетом.
+
+    Неизменный таргет — это отказ библиотеки («All train targets are equal»), а
+    не порча данных: окно вырождено, и walk-forward пропускает фолд этой модели
+    со счётчиком (`DegenerateWindowError`), как B2/B3 на коротком окне.
+    """
+    if matrix.shape[0] == 0:
+        raise DegenerateWindowError(
+            f"CatBoost ({target}): пустое обучающее окно — модель не оценивается"
+        )
+    if len(set(targets.tolist())) < 2:
+        raise DegenerateWindowError(
+            f"CatBoost ({target}): таргет обучающего окна не меняется — модель "
+            f"не оценивается (CatBoost: «All train targets are equal»)"
+        )
+
+
+def _fit_catboost(train: list[Row], target: str, with_mp: bool) -> CatBoostFit:
+    """Обучает CatBoost §3.1 на окне `train` для таргета `target`.
+
+    Обучение только на переданном окне (никаких обращений к выборке целиком):
+    фолд walk-forward передаёт сюда исключительно прошлые месяцы.
+    """
+    matrix = catboost_matrix(train, with_mp)
+    targets = _catboost_targets(train, target)
+    _assert_catboost_window(matrix, targets, target)
+    model = catboost_model(with_mp)
+    model.fit(matrix, targets)
+    return CatBoostFit(
+        model=model, matrix=matrix, target=target, targets=targets, with_mp=with_mp
+    )
+
+
+def catboost_forecast(fit: CatBoostFit, row: Row) -> float:
+    """Прогноз обученной модели для тестовой строки (та же матрица признаков)."""
+    return float(fit.model.predict(catboost_matrix([row], fit.with_mp))[0])
+
+
+def fit_catboost_direct(train: list[Row], row: Row, with_mp: bool = False) -> float:
+    """`catboost_direct` (§3.2): CatBoost на таргет `cpi_all`, прогноз в п.п.
+
+    Агрегация не применяется: модель прогнозирует общий ИПЦ напрямую. Подгонка —
+    на каждом фолде заново, только по обучающему окну; подобранная модель
+    последнего фолда остаётся в `fit_catboost_direct.last_fit` (пины конфигурации
+    и метаданные отчёта). `with_mp` — пространство признаков (по умолчанию
+    базовое, §2.4).
+    """
+    fit = _fit_catboost(train, TARGET_ALL, with_mp)
+    fit_catboost_direct.last_fit = fit
+    return catboost_forecast(fit, row)
+
+
+def fit_catboost_direct_mp(train: list[Row], row: Row) -> float:
+    """`catboost_direct_mp` (§3.3): direct на базовых признаках + 7 признаках МП."""
+    value = fit_catboost_direct(train, row, with_mp=True)
+    fit_catboost_direct_mp.last_fit = fit_catboost_direct.last_fit
+    return value
+
+
+# Диагностика последнего фолда direct: читают тесты (пины параметров и дефолтов)
+# и метаданные отчёта; атрибуты заполняются при каждом вызове.
+for _function in (fit_catboost_direct, fit_catboost_direct_mp):
+    _function.last_fit = None
+
+
+def nnls_weights(train: list[Row]) -> tuple[float, float, float]:
+    """NNLS-веса компонент bottom-up по обучающему окну фолда (спека §3.2).
+
+    Неотрицательная регрессия (`scipy.optimize.nnls`) общего ИПЦ на метки трёх
+    компонент ТОЛЬКО обучающего окна: тестовый месяц и будущие месяцы в подгонку
+    не попадают (утечки нет), веса нормируются к сумме 1 (`w / Σw`), порядок —
+    `BOTTOMUP_COMPONENTS`. Вырожденное окно — `DegenerateWindowError`: пустое
+    окно или нулевое решение (Σw = 0 — веса не определены, например все метки
+    компонент окна нулевые); walk-forward пропускает такой фолд со счётчиком.
+    """
+    if not train:
+        raise DegenerateWindowError("NNLS: пустое обучающее окно — веса не определены")
+    design = np.asarray(
+        [[float(row.y[code]) for code in BOTTOMUP_COMPONENTS] for row in train],
+        dtype=float,
+    )
+    target = np.asarray([float(row.y[TARGET_ALL]) for row in train], dtype=float)
+    weights, _ = nnls(design, target)
+    total = float(weights.sum())
+    if not total > 0.0:
+        raise DegenerateWindowError(
+            "NNLS: нулевое решение — сумма весов 0 (регрессия на компоненты "
+            "обучающего окна не определена)"
+        )
+    return tuple(float(weight / total) for weight in weights)
+
+
+def fit_catboost_component(
+    train: list[Row], row: Row, code: str, with_mp: bool = False
+) -> float:
+    """Один компонентный CatBoost (§3.2): таргет — метка компоненты `code`.
+
+    Отдельная функция, а не цикл внутри bottom-up, — точка подмены для тестов:
+    сверка агрегата `Σ w·ŷ` на заглушечных компонентных прогнозах. Вырожденное
+    окно компоненты (пустое или неизменный таргет) — `DegenerateWindowError`
+    всего фолда bottom-up.
+    """
+    return catboost_forecast(_fit_catboost(train, code, with_mp), row)
+
+
+def fit_catboost_bottomup(
+    train: list[Row], row: Row, with_mp: bool = False
+) -> float:
+    """`catboost_bottomup` (§3.2): `Σ w_j · ŷ_j` — компоненты и веса NNLS.
+
+    Веса считаются по ТОМУ ЖЕ обучающему окну фолда, что и компонентные модели
+    (утечки нет), и нормированы к 1. Вырожденность ЛЮБОГО компонентного фита или
+    весов (`DegenerateWindowError`) пропускает фолд целиком: частичный агрегат
+    («два компонента из трёх») прогнозом общего ИПЦ не является. Веса и
+    компонентные прогнозы последнего успешного фолда остаются в `last_weights` и
+    `last_components` (читают тесты и отчёт — блок весов NNLS).
+    """
+    weights = nnls_weights(train)
+    components = tuple(
+        fit_catboost_component(train, row, code, with_mp)
+        for code in BOTTOMUP_COMPONENTS
+    )
+    fit_catboost_bottomup.last_weights = tuple(weights)
+    fit_catboost_bottomup.last_components = components
+    return float(
+        sum(weight * value for weight, value in zip(weights, components))
+    )
+
+
+def fit_catboost_bottomup_mp(train: list[Row], row: Row) -> float:
+    """`catboost_bottomup_mp` (§3.3): bottom-up на базовых признаках + МП."""
+    value = fit_catboost_bottomup(train, row, with_mp=True)
+    fit_catboost_bottomup_mp.last_weights = fit_catboost_bottomup.last_weights
+    fit_catboost_bottomup_mp.last_components = fit_catboost_bottomup.last_components
+    return value
+
+
+# Веса и компонентные прогнозы последнего успешного фолда bottom-up: читают
+# тесты и `evaluate_windows` (веса каждого окна — в `WindowRun.weights`); не
+# часть контракта `FitPredict`, а диагностика фолда.
+for _function in (fit_catboost_bottomup, fit_catboost_bottomup_mp):
+    _function.last_weights = ()
+    _function.last_components = ()
+
+
+# CatBoost-варианты §3.3: direct/bottom-up × без МП/с МП. Порядок — как в
+# спеке; он же задаёт строки таблиц отчёта и порядок пар DM (Task 4).
+CATBOOST_MODELS = {
+    MODEL_CATBOOST_DIRECT: fit_catboost_direct,
+    MODEL_CATBOOST_BOTTOMUP: fit_catboost_bottomup,
+    MODEL_CATBOOST_DIRECT_MP: fit_catboost_direct_mp,
+    MODEL_CATBOOST_BOTTOMUP_MP: fit_catboost_bottomup_mp,
+}
+
+
 # Бенчмарки спеки §3.4 — порядок B1, B2, B3-base, B3-mp задаёт строки таблиц
 # отчёта и порядок пар будущих DM-тестов (Task 4).
 BENCHMARKS = {
@@ -1240,8 +1616,9 @@ BENCHMARKS = {
     MODEL_ENET_MP: fit_enet_mp,
 }
 
-# Модели Task 2 — бенчмарки; CatBoost добавится в Task 3 тем же словарём.
-MODELS = dict(BENCHMARKS)
+# Модели прогона: бенчмарки, затем четыре CatBoost-варианта (Task 3). Порядок
+# словаря — порядок строк таблиц отчёта и пары DM (Task 4).
+MODELS = {**BENCHMARKS, **CATBOOST_MODELS}
 
 
 # ---------------------------------------------------------------------------
@@ -1344,6 +1721,46 @@ _LAST_FOLDS_HEADER = (
     "| модель | n | RMSE, п.п. | MAE, п.п. |",
     "|---|---|---|---|",
 )
+_WEIGHTS_HEADER = (
+    "| окно | модель | w(cpi_food) | w(cpi_nonfood) | w(cpi_services) | Σ |",
+    "|---|---|---|---|---|---|",
+)
+
+
+def _weights_rows(runs: list[WindowRun]) -> list:
+    """Строки весов NNLS: последний успешный фолд каждого окна (§3.2).
+
+    Печатаются только окна, где bottom-up дал хотя бы один фолд: веса
+    вырожденного окна не определены, а переносить сюда веса соседнего окна
+    нельзя (`evaluate_windows` сбрасывает диагностику перед каждым окном).
+    """
+    rows = []
+    for run in runs:
+        for name in BOTTOMUP_MODELS:
+            weights = run.weights.get(name)
+            if not weights:
+                continue
+            cells = " | ".join(_fmt(float(weight)) for weight in weights[:3])
+            rows.append(
+                f"| {window_title(run)} | {model_label(name)} | {cells} | "
+                f"{_fmt(float(sum(weights)))} |"
+            )
+    return rows
+
+
+def _monotone_names(metadata: dict) -> str:
+    """Имена признаков с `+1` из метаданных CatBoost (для блока конфигурации)."""
+    names = [
+        name for name, value in metadata["monotone_constraints"].items() if value
+    ]
+    return ", ".join(names) if names else "—"
+
+
+def _defaults_cell(metadata: dict) -> str:
+    """Дефолты библиотеки строкой `имя=значение` (метаданные `defaults`)."""
+    return ", ".join(
+        f"`{name}={value}`" for name, value in metadata["defaults"].items()
+    )
 
 
 def render_report(
@@ -1352,7 +1769,7 @@ def render_report(
     window_runs: list[WindowRun],
     today: Optional[date] = None,
 ) -> str:
-    """Markdown-отчёт-скелет Task 2: выборка, «модель × окно», последние 12 фолдов.
+    """Markdown-отчёт Task 3: выборка, «модель × окно», веса NNLS, конфигурация.
 
     `sample`/`skipped` — выборка `build_sample` (строки и месяцы без собранных
     признаков); `window_runs` — по одному `WindowRun` на окно walk-forward
@@ -1361,8 +1778,9 @@ def render_report(
 
     Таблица «модель × окно» перечисляет ВСЕ модели из счётчиков окон (модель,
     вырожденная на всех окнах, видна строкой «0 фолдов», а не пропадает);
-    метрики — из фолдов, «недосход» — из `WindowRun.notes`. CatBoost, DM-пары,
-    сплит статьи и живой nowcast появятся в Tasks 3–4; раздел «Что не проверено»
+    метрики — из фолдов, «недосход» — из `WindowRun.notes`, веса bottom-up — из
+    `WindowRun.weights`, конфигурация CatBoost — из `catboost_metadata`.
+    DM-пары, сплит статьи и живой nowcast — Task 4; раздел «Что не проверено»
     называет это прямо, чтобы отчёт не читался как полный результат.
     """
     today = today or date.today()
@@ -1375,12 +1793,12 @@ def render_report(
         else "—"
     )
     lines = [
-        "# CPI monthly (ML-трек v2) — walk-forward, бенчмарки B1–B3 и метрики",
+        "# CPI monthly (ML-трек v2) — walk-forward, бенчмарки B1–B3, CatBoost и метрики",
         "",
         f"Дата прогона: {today.isoformat()}; сид прогона `SEED={SEED}`. Спека: "
         "`docs/superpowers/specs/2026-10-18-cpi-monthly-mp-design.md` (§2 — данные и "
-        "признаки, §3.4 — бенчмарки, §4.1–4.2 — walk-forward и метрики); план: "
-        "`docs/superpowers/plans/2026-10-18-cpi-monthly-mp.md`.",
+        "признаки, §3.1–3.4 — CatBoost и бенчмарки, §4.1–4.2 — walk-forward и "
+        "метрики); план: `docs/superpowers/plans/2026-10-18-cpi-monthly-mp.md`.",
         "",
         "## Выборка",
         "",
@@ -1413,17 +1831,20 @@ def render_report(
         "выбрасывает месяц перед тестом). Единый train/test split не используется "
         f"(спека §4.1). Основное окно — {main_window}; робастность — второй старт "
         f"{ROBUST_START} и embargo {ROBUST_EMBARGO}. Вырожденное обучающее окно "
-        "(`DegenerateWindowError` модели) — пропуск фолда ЭТОЙ модели со счётчиком, "
-        "а не падение прогона. «Недосход» — фолды, где координатный спуск B3 не "
-        "сошёлся (`ConvergenceWarning`), вырождением не считается и публикуется "
-        "числом.",
+        "(`DegenerateWindowError` модели: короткое окно B2/B3, пустое окно или "
+        "неизменный таргет компоненты CatBoost) — пропуск фолда ЭТОЙ модели со "
+        "счётчиком, а не падение прогона. «Недосход» — фолды, где координатный "
+        "спуск B3 не сошёлся (`ConvergenceWarning`), вырождением не считается и "
+        "публикуется числом.",
         "",
         "## Модель × окно",
         "",
         "Ошибка фолда — `прогноз − факт` (п.п., м/м); `n` — число фолдов под "
         "метрикой. RMSE/MAE — общие функции `scripts/eval_utils.py`. B1 и B2 от "
-        "набора признаков не зависят; B3 считается в двух пространствах "
-        "(без МП и с МП), чтобы отделить эффект МП от эффекта алгоритма.",
+        "набора признаков не зависят; B3 и CatBoost считаются в двух "
+        "пространствах (без МП и с МП), чтобы отделить эффект МП от эффекта "
+        "алгоритма; CatBoost дополнительно в двух схемах агрегации — direct и "
+        "bottom-up (§3.2–3.3).",
         "",
     ]
     metric_rows = []
@@ -1443,6 +1864,50 @@ def render_report(
             )
     lines += _table(_METRIC_HEADER, metric_rows)
     lines += [""]
+    lines += [
+        "## Веса NNLS (bottom-up)",
+        "",
+        "Веса `w` — неотрицательная регрессия (`scipy.optimize.nnls`) общего ИПЦ "
+        "на метки трёх компонент ТОЛЬКО обучающего окна последнего успешного "
+        "фолда окна; нормированы к 1 (§3.2). Агрегат bottom-up — `Σ w_j·ŷ_j`; "
+        "вырожденные фолды весов не дают.",
+        "",
+    ]
+    lines += _table(
+        _WEIGHTS_HEADER,
+        _weights_rows(runs),
+        empty="_(весов нет: bottom-up не дал ни одного фолда.)_",
+    )
+    lines += [""]
+    base_metadata = catboost_metadata(with_mp=False)
+    mp_metadata = catboost_metadata(with_mp=True)
+    lines += [
+        "## Конфигурация CatBoost",
+        "",
+        "Четыре варианта §3.3 (direct/bottom-up × без МП/с МП) обучаются на одних "
+        "и тех же фолдах; `_mp`-варианты отличаются ТОЛЬКО набором признаков. "
+        "Гиперпараметры — дефолты библиотеки, кроме перечисленных; "
+        "`allow_writing_files=False` — запрет побочного каталога `catboost_info/`.",
+        "",
+        "| параметр | без МП | с МП |",
+        "|---|---|---|",
+        f"| `loss_function` | `{base_metadata['loss_function']}` | "
+        f"`{mp_metadata['loss_function']}` |",
+        f"| `random_seed` | `{base_metadata['random_seed']}` | "
+        f"`{mp_metadata['random_seed']}` |",
+        f"| `cat_features` | `{', '.join(base_metadata['cat_features'])}` | "
+        f"`{', '.join(mp_metadata['cat_features'])}` |",
+        f"| `allow_writing_files` | `{base_metadata['allow_writing_files']}` | "
+        f"`{mp_metadata['allow_writing_files']}` |",
+        f"| `monotone_constraints` `+1` | {_monotone_names(base_metadata)} | "
+        f"{_monotone_names(mp_metadata)} |",
+        f"| `num_features` | {', '.join(base_metadata['num_features'])} | "
+        f"{', '.join(mp_metadata['num_features'])} |",
+        "",
+        "Дефолты библиотеки (`defaults` в `catboost_metadata`): "
+        f"{_defaults_cell(base_metadata)}.",
+        "",
+    ]
     if main_run is not None:
         tail_months = last_fold_months(main_run.predictions)
         last_rows = []
@@ -1466,16 +1931,14 @@ def render_report(
     lines += [
         "## Что не проверено",
         "",
-        "- CatBoost: четыре варианта (`catboost_direct`, `catboost_bottomup`, "
-        "`catboost_direct_mp`, `catboost_bottomup_mp`) и веса NNLS — Task 3; здесь "
-        "только бенчмарки B1–B3.",
         "- DM-HLN «с МП vs без МП» и secondary-пары, фиксированный сплит статьи "
-        "2019-01…2024-07, строка «2022 исключён» и живой nowcast — Task 4; "
-        "таблицы значимости в этом скелете нет.",
+        "2019-01…2024-07, строка «2022 исключён» и живой nowcast — Task 4. Числа "
+        "CatBoost в таблицах выше — не вывод о значимости: DM-тестов здесь нет.",
         "- as-of — приближение, а не point-in-time слой: точные даты публикаций и "
         "ревизии рядов не учтены; PIT — отдельный пункт фазы 4.",
-        "- гиперпараметры не тюнинговались: B2 (HAC, 11 дамми, минимум 14 строк) "
-        "и B3 (`ElasticNetCV(alphas=logspace(−4,1,20), l1_ratio=[0.1,0.5,0.9], "
+        "- гиперпараметры не тюнинговались: CatBoost — дефолты библиотеки (§3.1), "
+        "B2 (HAC, 11 дамми, минимум 14 строк) и B3 "
+        "(`ElasticNetCV(alphas=logspace(−4,1,20), l1_ratio=[0.1,0.5,0.9], "
         "cv=TimeSeriesSplit(3), random_state=SEED)`, минимум 12 строк) "
         "зафиксированы спекой §3.4 до результатов.",
         "- недосход B3 (`ConvergenceWarning` координатного спуска) считается по "
@@ -1690,15 +2153,16 @@ def run_summary(
     out_dir: Optional[Path] = None,
     today: Optional[date] = None,
 ) -> int:
-    """Полный прогон Task 2: выборка, walk-forward B1–B3, метрики и артефакты.
+    """Полный прогон Task 3: выборка, walk-forward B1–B3 и CatBoost, артефакты.
 
     `start`/`embargo_months` — основное окно walk-forward (`--start`,
     `--embargo-months`); робастные окна (второй старт 48 и эмбарго 1) добавляет
     `window_specs`. Загрузка рядов, `build_sample` и `assert_months_purged` —
-    контракт Task 1; walk-forward считает бенчмарки B1–B3 (`MODELS`) на одних
-    фолдах, отчёт-скелет (`cpi_monthly_report.md`) и CSV прогнозов
-    (`cpi_monthly_predictions.csv`) пишутся в `out_dir` (по умолчанию корень
-    worktree; файлы gitignored).
+    контракт Task 1; walk-forward считает бенчмарки B1–B3 и четыре
+    CatBoost-варианта (`MODELS`) на одних фолдах, отчёт
+    (`cpi_monthly_report.md`: таблицы «модель × окно», веса NNLS, конфигурация
+    CatBoost) и CSV прогнозов (`cpi_monthly_predictions.csv`) пишутся в
+    `out_dir` (по умолчанию корень worktree; файлы gitignored).
 
     Ветка «walk-forward не дал ни одного прогноза» (пустая/короткая выборка)
     ничего не пишет и называет это в консоли. Скрипт ничего не пишет в
@@ -1717,7 +2181,7 @@ def run_summary(
     survey_points = sorted(
         point for points in survey.values() for point in points
     )
-    print("CPI monthly (ML-трек v2) — выборка, walk-forward и бенчмарки B1–B3")
+    print("CPI monthly (ML-трек v2) — выборка, walk-forward, бенчмарки B1–B3 и CatBoost")
     _field(
         "таргет rosstat_ipc_mes:",
         f"{len(TARGET_SERIES)} {_plural(len(TARGET_SERIES), 'ряд', 'ряда', 'рядов')}, "
@@ -1772,7 +2236,7 @@ def run_summary(
 def main(argv: Optional[list] = None) -> int:
     parser = argparse.ArgumentParser(
         description="CPI monthly (ML-трек v2): выборка, as-of, признаки, "
-                    "walk-forward, бенчмарки B1–B3, метрики и отчёт."
+                    "walk-forward, бенчмарки B1–B3 и CatBoost, метрики и отчёт."
     )
     parser.add_argument(
         "--export-fixtures",
