@@ -369,6 +369,25 @@ async def check(params, server_log):
                 failed += not expect(f"витрина {view} существует и непуста ({label})",
                                      (flash_view_n or 0) > 0, flash_view_detail)
 
+            # Корпоративный Telegram-канал edisclosure (пункт 1.11): девятая лента
+            # news_watch пишет в ту же таблицу версий и витрину v_news_flash, поэтому
+            # общая проверка выше проходит и на одних сообщениях молнии. Ноль здесь
+            # означает ни разу не отработавший прогон с новой лентой, а не пустой
+            # канал, — detail подсказывает команду импорта.
+            edisclosure_raw = text(await session.call_tool(
+                "run_query",
+                {"query": "SELECT count() AS n FROM v_news_flash WHERE channel = 'edisclosure'"}))
+            edisclosure = result_rows(edisclosure_raw)
+            edisclosure_n = edisclosure[0].get("n") if edisclosure else None
+            if edisclosure is None:
+                edisclosure_detail = f"ответ не распознан: {edisclosure_raw[:200]}"
+            elif (edisclosure_n or 0) > 0:
+                edisclosure_detail = f"сообщений edisclosure: {edisclosure_n}"
+            else:
+                edisclosure_detail = (f"сообщений edisclosure: {edisclosure_n or 0} — прогнать make import "
+                                      "STAT=news_watch (девятая лента, канал edisclosure)")
+            failed += not expect("канал edisclosure в v_news_flash", (edisclosure_n or 0) > 0, edisclosure_detail)
+
             # Реестр тегов — статическая витрина: 39 слагов, из них ровно 11 каналов ставки
             # (cb_channel). Меньшее число значит ни разу не отработавший прогон news_watch
             # (витрина публикуется вместе с остальными), расхождение — реестр разошёлся с
