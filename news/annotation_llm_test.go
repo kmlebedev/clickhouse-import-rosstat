@@ -845,8 +845,10 @@ func TestNewsUniqueByURL(t *testing.T) {
 }
 
 // TestNewsLLMBatches — деление на батчи по двум пределам: 10 сообщений и 40 КБ текста.
-// 11 коротких дают [10,1] (хвост не теряется); три по 30 КБ вдвоём не влезают (60 КБ > 40 КБ)
-// и идут по одному; пост больше бюджета — батч из одного элемента, а не потеря и не зацикливание.
+// 11 коротких дают [10,1] (хвост не теряется); три по 30 КБ — каждый меньше бюджета,
+// но два вместе больше 40 КБ, поэтому [1,1,1]; два по 15 КБ влезают вдвоём — [2];
+// пост больше бюджета — батч из одного элемента, а не потеря и не зацикливание.
+// Повторы ASCII: «я» в UTF-8 — два байта, и строки из рун дали бы вдвое больший бюджет.
 func TestNewsLLMBatches(t *testing.T) {
 	sizes := func(batches [][]newsItem) []int {
 		out := make([]int, 0, len(batches))
@@ -878,9 +880,14 @@ func TestNewsLLMBatches(t *testing.T) {
 
 	long := make([]newsItem, 3)
 	for i := range long {
-		long[i] = newsItem{Title: "Длинный пост", Description: strings.Repeat("я", 30_000)}
+		long[i] = newsItem{Title: "Длинный пост", Description: strings.Repeat("x", 30_000)}
 	}
 	check("три по 30 КБ", long, []int{1, 1, 1})
 
-	check("один 100 КБ", []newsItem{{Title: "Сверхбюджетный пост", Description: strings.Repeat("я", 100_000)}}, []int{1})
+	check("два по 15 КБ", []newsItem{
+		{Title: "Пост 1", Description: strings.Repeat("x", 15_000)},
+		{Title: "Пост 2", Description: strings.Repeat("x", 15_000)},
+	}, []int{2})
+
+	check("один 100 КБ", []newsItem{{Title: "Сверхбюджетный пост", Description: strings.Repeat("x", 100_000)}}, []int{1})
 }

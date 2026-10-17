@@ -2655,6 +2655,7 @@ func TestNewsAnnotationCandidatesQueryCoversRSS(t *testing.T) {
 		"match(description, ?)",
 		"url LIKE 'https://t.me/%'",
 		"content_hash != ''",
+		"url != ''",
 		"LIMIT 50",
 	} {
 		if !strings.Contains(query, want) {
