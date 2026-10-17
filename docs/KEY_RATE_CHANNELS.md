@@ -149,6 +149,46 @@
 | Эталон ЦБ (диапазоны ставки) | — | **нет** — фаза 2 |
 | Консенсус аналитиков | `macro_series` (`source='cbr_mo_br'`), витрина `v_cbr_mo_br` | ✅ есть — фаза 1.5 |
 
+## 9. Быстрый новостной слой: Telegram и реестр тегов
+
+Пункт **1.9** добавляет в `news_watch` восьмую ленту — публичное Telegram-превью Интерфакса `https://t.me/s/interfaxonline` (`interfax_tg`, `source='interfax'`): окно 20 последних сообщений (≈17 ч) перекрывается 30-минутным опросом, поэтому короткая «молния» попадает в контур быстрее RSS. Каждая правка и удаление сообщения оставляют версию в `news_message_version`, текущее состояние — витрина `v_news_flash`, история — `v_news_message_versions`. Пункт **1.10** размечает молнию моделью (`news_annotation`, `method='llm'`): `sentiment`, `relevance`, `summary` и до пяти тегов; модель и `prompt_version` входят в ключ, поэтому смена модели или промпта не затирает старую разметку. Статусы 1.9/1.10 — ⏳ до приёмки (живой LLM-прогон — после мерджа `feat/mp-summary-llm-models`, пункт 1.8).
+
+**Как молния ложится на 11 каналов §3.** Измерение `cb_channel` — это те же каналы решения ЦБ; направление у них статическое (свойство канала), у `person`/`country`/`sector`/`event` — `neutral`/`mixed` (знак задаёт конкретная новость):
+
+| `cb_channel` (слаг) | Канал §3 | Знак |
+|---|---|---|
+| `current_inflation` | Текущий рост цен | proinflationary |
+| `core_inflation` | Устойчивая («базовая») инфляция | proinflationary |
+| `expectations` | Инфляционные и ценовые ожидания | proinflationary |
+| `labor_market` | Рынок труда | proinflationary |
+| `credit_transmission` | Кредитование и трансмиссия ДКП | disinflationary |
+| `output_gap` | Разрыв выпуска / перегрев спроса | proinflationary |
+| `budget_impulse` | Бюджетный импульс | proinflationary |
+| `money_supply` | Денежная масса | proinflationary |
+| `external_conditions` | Внешние условия и курс | proinflationary |
+| `savings` | Сберегательное поведение | disinflationary |
+| `macroprudential` | Макропруденциальные требования | disinflationary |
+
+**Реестр 39 тегов** (`v_news_tags`, единственный источник правды — `news/tags.go`): `person` — 6 (`trump`, `putin`, `xi_jinping`, `powell`, `lagarde`, `nabiullina`), `country` — 5 (`china`, `usa`, `eu`, `russia`, `india`), `sector` — 7 (`oil_gas`, `metals`, `gold`, `banks`, `tech`, `real_estate`, `agriculture`), `event` — 10 (`energy_transition`, `deglobalization`, `sanctions`, `tariffs`, `energy_prices`, `budget_impulse`, `labor_market`, `inflation_expectations`, `credit`, `key_rate`), `cb_channel` — 11 (таблица выше). Измерение `theme` объявлено, но в стартовом наборе не заполнено: сюжеты энергоперехода и деглобализации пока живут в `event`.
+
+**Примеры запросов** (пользователь `kimi_reader`; сырые `news_message_version`/`news_annotation` агенту не выданы):
+
+```sql
+-- последние сообщения молнии с разметкой
+SELECT date, title, sentiment, relevance, summary, tags
+FROM v_news_flash ORDER BY date DESC LIMIT 10;
+
+-- сообщения, где LLM увидела бюджетный импульс
+SELECT date, title, tags FROM v_news_flash
+WHERE arrayExists(x -> x.1 = 'cb_channel' AND x.2 = 'budget_impulse', tags)
+ORDER BY date DESC LIMIT 20;
+
+-- расшифровка слагов и статических знаков каналов
+SELECT * FROM v_news_tags WHERE dimension = 'cb_channel';
+```
+
+**Оговорка.** Теги — **подсказка LLM, а не позиция ЦБ**: `confidence` и дословная `evidence` сохраняются в строке `tag` сырой `news_annotation` (агенту она закрыта — в витрине видны только `dimension`/`tag`/`direction`), цитата при записи проверяется как подстрока текста, но сама модель может ошибиться в интерпретации. Без `LLM_BASE_URL`/`LLM_API_KEY`/`NEWS_LLM_MODEL` разметки нет вовсе (warn, импорт зелёный, догон следующим прогоном): пустые `tags` и нулевой `sentiment` означают «не размечено», а не «нейтрально».
+
 ---
 
 *Документ описывает, как устроена логика решения ЦБ по доступным публикациям, и не является инвестиционной рекомендацией. Веса каналов — качественная оценка автора проекта на основе частоты и места упоминания в резюме, а не официальная позиция Банка России.*
