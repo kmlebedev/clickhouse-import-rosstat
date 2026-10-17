@@ -115,11 +115,12 @@ type domrfPageBlock struct {
 // и в меню страницы, а у меню нет ни props, ни файла. Признак — заголовок, а не имя блока: имя
 // несёт отчётный месяц («Топ ипотечных банков Август 2026 г.») и меняется с каждым файлом.
 // Пустой src — ошибка: без неё импортёр пошёл бы в GetXlsx("") и упал бы разбором книги, в
-// котором не видно причины (§4.4, §6.4).
+// котором не видно причины (§4.4, §6.4). Ошибки называют страницу и блок, а не таблицу: префикс
+// «domrf_mortgage: <url>:» добавляет Import() — один раз на всю ветку страницы.
 func domrfXlsSrcFromPage(page []byte) (src string, err error) {
 	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(page))
 	if err != nil {
-		return "", fmt.Errorf("domrf_mortgage: страница %s: не разбирается как HTML: %w", domrfAnalyticsUrl, err)
+		return "", fmt.Errorf("страница %s: не разбирается как HTML: %w", domrfAnalyticsUrl, err)
 	}
 	var block domrfPageBlock
 	found := false
@@ -144,12 +145,12 @@ func domrfXlsSrcFromPage(page []byte) (src string, err error) {
 		return true
 	})
 	if !found {
-		return "", fmt.Errorf("domrf_mortgage: страница %s: не найден блок «%s» (JSON блока в атрибутах страницы)",
+		return "", fmt.Errorf("страница %s: не найден блок «%s» (JSON блока в атрибутах страницы)",
 			domrfAnalyticsUrl, domrfPageBlockAnchor)
 	}
 	src = strings.TrimSpace(block.Props.File2.Src)
 	if src == "" {
-		return "", fmt.Errorf("domrf_mortgage: страница %s: у блока «%s» нет файла (пустое поле file2.src)",
+		return "", fmt.Errorf("страница %s: у блока «%s» нет файла (пустое поле file2.src)",
 			domrfAnalyticsUrl, domrfPageBlockAnchor)
 	}
 	return src, nil
@@ -346,13 +347,13 @@ func (s *DomrfMortgageStat) Import(ctx context.Context, conn driver.Conn) (count
 	return imp.Import(ctx, conn)
 }
 
-// domrfImportFunc — ImportFunc шаблона: книга из памяти → точки → батч. Ошибку разбора оборачивает
-// имя таблицы — контракт §6.4 (текст ошибки называет таблицу): ветки parseDomrfSheet тоже называют
-// её, но обёртка не даёт контракту зависеть от текста отдельной ветки.
+// domrfImportFunc — ImportFunc шаблона: книга из памяти → точки → батч. Ошибки разбора и записи
+// возвращаются без обёртки: имя таблицы называют сами parseDomrfSheet и appendDomrfPoints (§6.4),
+// и второй префикс назвал бы её дважды.
 func domrfImportFunc(xlsx *excelize.File, batch driver.Batch) error {
 	points, err := parseDomrfSheet(xlsx)
 	if err != nil {
-		return fmt.Errorf("%s: %w", domrfMortgageTable, err)
+		return err
 	}
 	return appendDomrfPoints(batch, points)
 }

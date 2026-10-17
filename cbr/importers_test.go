@@ -77,10 +77,21 @@ type publicationDeclarer interface {
 // каталога пакета (тесты идут с cwd=cbr/): так же читают фикстуры другие пакеты.
 var daguCbrYAML = filepath.Join("..", "dagu", "cbr.yaml")
 
-// daguStatRef вытаскивает имя из строки шага `- CLICKHOUSE_IMPORT_STAT=<name>`.
-// Разбор построчный и регуляркой, без YAML-зависимости: тест не должен тянуть в
-// пакетный go.mod парсер ради одного ключа.
-var daguStatRef = regexp.MustCompile(`CLICKHOUSE_IMPORT_STAT=([A-Za-z0-9_]+)`)
+// daguStatRef вытаскивает имя из строки шага `- CLICKHOUSE_IMPORT_STAT=<name>`. Разбор —
+// регуляркой по всему файлу, без YAML-зависимости: тест не должен тянуть в пакетный go.mod
+// парсер ради одного ключа. Якоря ^…$ в режиме (?m) обязательны: без них закомментированный
+// шаг `# - CLICKHOUSE_IMPORT_STAT=…` считался бы шагом расписания.
+var daguStatRef = regexp.MustCompile(`(?m)^[ \t]*-[ \t]+CLICKHOUSE_IMPORT_STAT=([A-Za-z0-9_]+)[ \t]*$`)
+
+// TestDaguStatsIgnoreComments — закомментированный шаг не считается шагом расписания: разбор идёт
+// регуляркой по всему файлу, а `# - CLICKHOUSE_IMPORT_STAT=…` — не шаг dagu.
+func TestDaguStatsIgnoreComments(t *testing.T) {
+	data := []byte("- id: a\n  env:\n    - CLICKHOUSE_IMPORT_STAT=a\n# - CLICKHOUSE_IMPORT_STAT=commented\n")
+	got := daguStatRef.FindAllStringSubmatch(string(data), -1)
+	if len(got) != 1 || got[0][1] != "a" {
+		t.Fatalf("разбор %q дал %v, want один шаг [a]: закомментированный шаг не должен считаться расписанием", data, got)
+	}
+}
 
 // TestCbrImportersPrefixedAndRegistered держит инварианты реестра cbrImporters —
 // единственной точки, из которой импортёры пакета попадают в chimport.Stats.
