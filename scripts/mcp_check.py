@@ -1357,27 +1357,38 @@ async def check(params, server_log):
             form101_loans = text(await session.call_tool("run_query", {
                 "query": "SELECT corporate_loans_bln_rub, retail_loans_bln_rub, "
                          "press_release_corporate_bln_rub, press_release_retail_bln_rub, "
-                         "corporate_diff_pct, retail_diff_pct "
+                         "corporate_diff_pct, retail_diff_pct, mapping_version "
                          "FROM v_cbr_form101_loans WHERE report_date = '2026-09-01' LIMIT 1"}))
             form101_loans_rows = result_rows(form101_loans)
+            form101_loans_ok = False
             if form101_loans_rows is None:
                 form101_loans_detail = f"ответ не распознан: {form101_loans[:200]}"
             elif form101_loans_rows:
                 row = form101_loans_rows[0]
+                try:
+                    corp_diff = float(row.get("corporate_diff_pct"))
+                    ret_diff = float(row.get("retail_diff_pct"))
+                except (TypeError, ValueError):
+                    corp_diff = ret_diff = None
+                form101_loans_ok = (
+                    row.get("mapping_version") == "cbr-809p-sber-1"
+                    and corp_diff is not None and abs(corp_diff) <= 0.01
+                    and ret_diff is not None and abs(ret_diff) <= 0.01)
                 form101_loans_detail = (
                     f"ЮЛ {row.get('corporate_loans_bln_rub')} / "
                     f"{row.get('press_release_corporate_bln_rub')} "
                     f"({row.get('corporate_diff_pct')}), ФЛ "
                     f"{row.get('retail_loans_bln_rub')} / "
                     f"{row.get('press_release_retail_bln_rub')} "
-                    f"({row.get('retail_diff_pct')})")
+                    f"({row.get('retail_diff_pct')}), "
+                    f"{row.get('mapping_version')}")
             else:
                 form101_loans_detail = ("строк нет — прогнать make import "
-                                        "STAT=cbr_form101 и сид 2026M08")
-            failed += not expect("v_cbr_form101_loans отдаёт pilot-калибровку",
-                                 bool(form101_loans_rows), form101_loans_detail)
+                                        "STAT=cbr_form101 и сид 2026M07")
+            failed += not expect("v_cbr_form101_loans отдаёт cbr-809p-sber-1",
+                                 form101_loans_ok, form101_loans_detail)
 
-            # Pilot-1 ras-метрики формы 101 должны доезжать до форвардной витрины:
+            # Ras-метрики cbr-809p-sber-1 формы 101 должны доезжать до форвардной витрины:
             # июль и август SBER — source_kind='ras' (июль — сид, август — импортёр).
             form101_fwd = text(await session.call_tool("run_query", {
                 "query": "SELECT count() AS n FROM v_bank_loan_portfolio_forward "
@@ -1393,7 +1404,7 @@ async def check(params, server_log):
             else:
                 form101_fwd_detail = ("строк: 0/1 — применить сид 2026-07 и прогнать "
                                       "make import STAT=cbr_form101")
-            failed += not expect("pilot-1 ras виден в v_bank_loan_portfolio_forward",
+            failed += not expect("cbr-809p-sber-1 ras виден в v_bank_loan_portfolio_forward",
                                  (form101_fwd_n or 0) >= 2, form101_fwd_detail)
 
             # Сырая cbr_form101 агенту не выдана — как macro_series и cbr_dip_bulletin:
