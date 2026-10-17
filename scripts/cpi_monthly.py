@@ -76,7 +76,7 @@ walk-forward, обязательные бенчмарки B1–B3 (B3 — в д�
 обязательной точки выбрасывает месяц с причиной. B3 на всякий случай импутирует
 NaN медианой ОБУЧАЮЩЕГО окна (колонка без наблюдений — 0.0: после
 стандартизации вклада не даёт), `StandardScaler` подгоняется только на train.
-CatBoost (Task 3) получит NaN как есть.
+CatBoost получает NaN как есть.
 
 **As-of — приближение, а не point-in-time слой** (спека §2.6): точные даты
 публикаций и ревизии рядов не учтены; PIT-слой — отдельный пункт фазы 4.
@@ -1388,8 +1388,11 @@ def catboost_metadata(with_mp: bool) -> dict:
 
     Заданная конфигурация — по ИМЕНАМ признаков (индекс сдвинется при правке
     `feature_names`, имя нет) плюс дефолты библиотеки, которые код не
-    подменяет. Словарь сериализуется в JSON как есть (Task 4 кладёт его рядом
-    с прогнозом модели).
+    подменяет. `cat_features` — имена (человекочитаемые, JSON), а
+    `cat_feature_indices` — позиции тех же признаков в numpy-матрице:
+    CatBoost на numpy принимает ТОЛЬКО индексы, поэтому в `catboost_params`
+    уходят позиции, а имена остаются в метаданных. Словарь сериализуется в
+    JSON как есть (Task 4 кладёт его рядом с прогнозом модели).
     """
     names = feature_names(with_mp)
     constraints = monotone_constraints(with_mp)
@@ -1397,6 +1400,7 @@ def catboost_metadata(with_mp: bool) -> dict:
         "loss_function": CATBOOST_LOSS,
         "random_seed": SEED,
         "cat_features": list(CATBOOST_CAT_FEATURES),
+        "cat_feature_indices": catboost_cat_indices(with_mp),
         "num_features": catboost_numeric_features(with_mp),
         "monotone_constraints": {
             name: value for name, value in zip(names, constraints)
@@ -1870,7 +1874,10 @@ def render_report(
         "Веса `w` — неотрицательная регрессия (`scipy.optimize.nnls`) общего ИПЦ "
         "на метки трёх компонент ТОЛЬКО обучающего окна последнего успешного "
         "фолда окна; нормированы к 1 (§3.2). Агрегат bottom-up — `Σ w_j·ŷ_j`; "
-        "вырожденные фолды весов не дают.",
+        "вырожденные фолды весов не дают. Совпадение весов на трёх знаках у "
+        "разных окон не означает переиспользование: каждое окно снимает веса "
+        "со своего последнего успешного фолда, а под embargo=1 обучающий хвост "
+        "на месяц короче (полные значения различаются).",
         "",
     ]
     lines += _table(
