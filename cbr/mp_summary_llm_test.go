@@ -7,10 +7,14 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	log "github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus/hooks/test"
 )
 
 // Пины-цитаты — дословные предложения фикстуры 23.09.2026 (hold), те же, что в
@@ -255,54 +259,221 @@ func mpLLMValidChannels() []mpLLMChannelSpec {
 	}
 }
 
-// TestMpLLMConfigFromEnv — конфигурация LLM-слоя: все три переменные заполнены → ok; любая
-// пустая → ok=false без ошибки (импортёр деградирует до regex-слоя). Окружающие пробелы
-// обрезаются: env-файл легко приносит хвостовой перевод строки.
-func TestMpLLMConfigFromEnv(t *testing.T) {
-	const (
-		base  = "https://api.example/v1"
-		key   = "secret-key"
-		model = "deepseek-chat"
-	)
-	cases := []struct {
-		name             string
-		base, key, model string
-		ok               bool
-	}{
-		{"все переменные заполнены", base, key, model, true},
-		{"нет LLM_BASE_URL", "", key, model, false},
-		{"нет LLM_API_KEY", base, "", model, false},
-		{"нет MP_SUMMARY_LLM_MODEL", base, key, "", false},
+// mpClearLLMEnv очищает все переменные, которые читает mpLLMProfilesFromEnv: профили в
+// тестах задаются явно, и окружение разработчика не должно подмешивать свои значения.
+func mpClearLLMEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{
+		"MP_SUMMARY_LLM_MODELS",
+		"LLM_BASE_URL", "LLM_API_KEY", "MP_SUMMARY_LLM_MODEL",
+		"GLM_LLM_BASE_URL", "GLM_LLM_API_KEY", "GLM_LLM_MODEL",
+		"MIMO_LLM_BASE_URL", "MIMO_LLM_API_KEY", "MIMO_LLM_MODEL",
+	} {
+		t.Setenv(name, "")
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("LLM_BASE_URL", tc.base)
-			t.Setenv("LLM_API_KEY", tc.key)
-			t.Setenv("MP_SUMMARY_LLM_MODEL", tc.model)
-			gotBase, gotKey, gotModel, ok := mpLLMConfigFromEnv()
-			if ok != tc.ok {
-				t.Fatalf("ok = %v, ожидалось %v", ok, tc.ok)
-			}
-			if !tc.ok {
-				return
-			}
-			if gotBase != base || gotKey != key || gotModel != model {
-				t.Errorf("конфигурация = (%q, %q, %q), ожидалось (%q, %q, %q)",
-					gotBase, gotKey, gotModel, base, key, model)
-			}
-		})
+}
+
+// mpLLMSetProfile заполняет переменные профиля name: default читает прежние LLM_*, остальные —
+// <NAME>_LLM_*.
+func mpLLMSetProfile(t *testing.T, name, base, key, model string) {
+	t.Helper()
+	if name == "default" {
+		t.Setenv("LLM_BASE_URL", base)
+		t.Setenv("LLM_API_KEY", key)
+		t.Setenv("MP_SUMMARY_LLM_MODEL", model)
+		return
 	}
-	t.Run("окружающие пробелы обрезаются", func(t *testing.T) {
-		t.Setenv("LLM_BASE_URL", "  "+base+"\n")
-		t.Setenv("LLM_API_KEY", "\t"+key)
-		t.Setenv("MP_SUMMARY_LLM_MODEL", model+" ")
-		gotBase, gotKey, gotModel, ok := mpLLMConfigFromEnv()
-		if !ok {
-			t.Fatal("ok = false, ожидалось true при непустых значениях в пробелах")
+	prefix := strings.ToUpper(name) + "_LLM_"
+	t.Setenv(prefix+"BASE_URL", base)
+	t.Setenv(prefix+"API_KEY", key)
+	t.Setenv(prefix+"MODEL", model)
+}
+
+// mpLLMWarnHook перехватывает предупреждения logrus: правила профилей — «предупредить и
+// пропустить», и тест обязан видеть, что причина названа.
+func mpLLMWarnHook(t *testing.T) *test.Hook {
+	t.Helper()
+	hook := test.NewGlobal()
+	t.Cleanup(func() { log.StandardLogger().ReplaceHooks(make(log.LevelHooks)) })
+	return hook
+}
+
+// mpLLMWarnText — все warn-сообщения хука одной строкой.
+func mpLLMWarnText(hook *test.Hook) string {
+	var messages []string
+	for _, entry := range hook.AllEntries() {
+		if entry.Level == log.WarnLevel {
+			messages = append(messages, entry.Message)
 		}
-		if gotBase != base || gotKey != key || gotModel != model {
-			t.Errorf("конфигурация = (%q, %q, %q), ожидалось (%q, %q, %q)",
-				gotBase, gotKey, gotModel, base, key, model)
+	}
+	return strings.Join(messages, "\n")
+}
+
+// mpLLMProfilesCheck — профили совпадают полностью: имена, порядок и значения.
+func mpLLMProfilesCheck(t *testing.T, got, want []mpLLMProfile) {
+	t.Helper()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("профили = %+v, ожидалось %+v", got, want)
+	}
+}
+
+// TestMpLLMProfilesFromEnv — конфигурация LLM-профилей (спека §3.1): пустой
+// MP_SUMMARY_LLM_MODELS даёт один default на прежних переменных; список перечисляет профили в
+// порядке; неполный, невалидно названный и дублирующий модель профиль пропускается с warn, а
+// остальные работают.
+func TestMpLLMProfilesFromEnv(t *testing.T) {
+	const (
+		deepseekBase  = "https://api.deepseek.com/anthropic"
+		deepseekKey   = "test-key-default"
+		deepseekModel = "deepseek-chat"
+
+		glmBase  = "https://gate.joingonka.ai"
+		glmKey   = "test-key-glm"
+		glmModel = "zai-org/GLM-5.3-Flash"
+
+		mimoBase  = "https://api.xiaomimimo.com/anthropic"
+		mimoKey   = "test-key-mimo"
+		mimoModel = "mimo-v2.6-flash"
+	)
+
+	t.Run("legacy env → один профиль default", func(t *testing.T) {
+		mpClearLLMEnv(t)
+		// Пробелы и хвостовой слэш: env-файл приносит перевод строки, а слэш в base дал бы
+		// «//v1/messages».
+		mpLLMSetProfile(t, "default", " "+deepseekBase+"/\n", " "+deepseekKey+" ", " "+deepseekModel+" ")
+		mpLLMProfilesCheck(t, mpLLMProfilesFromEnv(), []mpLLMProfile{
+			{Name: "default", BaseURL: deepseekBase, APIKey: deepseekKey, Model: deepseekModel},
+		})
+	})
+
+	t.Run("явный список default,glm,mimo → три профиля в порядке списка", func(t *testing.T) {
+		mpClearLLMEnv(t)
+		t.Setenv("MP_SUMMARY_LLM_MODELS", "default,glm,mimo")
+		mpLLMSetProfile(t, "default", deepseekBase, deepseekKey, deepseekModel)
+		mpLLMSetProfile(t, "glm", glmBase, glmKey, glmModel)
+		mpLLMSetProfile(t, "mimo", mimoBase, mimoKey, mimoModel)
+		mpLLMProfilesCheck(t, mpLLMProfilesFromEnv(), []mpLLMProfile{
+			{Name: "default", BaseURL: deepseekBase, APIKey: deepseekKey, Model: deepseekModel},
+			{Name: "glm", BaseURL: glmBase, APIKey: glmKey, Model: glmModel},
+			{Name: "mimo", BaseURL: mimoBase, APIKey: mimoKey, Model: mimoModel},
+		})
+	})
+
+	t.Run("неполный glm пропущен, default остался", func(t *testing.T) {
+		mpClearLLMEnv(t)
+		t.Setenv("MP_SUMMARY_LLM_MODELS", "default,glm")
+		mpLLMSetProfile(t, "default", deepseekBase, deepseekKey, deepseekModel)
+		t.Setenv("GLM_LLM_BASE_URL", glmBase)
+		t.Setenv("GLM_LLM_API_KEY", glmKey)
+		hook := mpLLMWarnHook(t)
+		mpLLMProfilesCheck(t, mpLLMProfilesFromEnv(), []mpLLMProfile{
+			{Name: "default", BaseURL: deepseekBase, APIKey: deepseekKey, Model: deepseekModel},
+		})
+		warns := mpLLMWarnText(hook)
+		if !strings.Contains(warns, "GLM_LLM_MODEL") {
+			t.Errorf("warn не называет недостающую переменную GLM_LLM_MODEL: %q", warns)
+		}
+		if !strings.Contains(warns, "glm") {
+			t.Errorf("warn не называет профиль glm: %q", warns)
+		}
+		for _, key := range []string{glmKey, deepseekKey} {
+			if strings.Contains(warns, key) {
+				t.Errorf("в warn утёк ключ API: %q", warns)
+			}
+		}
+	})
+
+	t.Run("пробелы и регистр нормализуются", func(t *testing.T) {
+		mpClearLLMEnv(t)
+		t.Setenv("MP_SUMMARY_LLM_MODELS", " GLM , MIMO ")
+		mpLLMSetProfile(t, "glm", glmBase+"/", glmKey, glmModel)
+		mpLLMSetProfile(t, "mimo", mimoBase, mimoKey, mimoModel)
+		mpLLMProfilesCheck(t, mpLLMProfilesFromEnv(), []mpLLMProfile{
+			{Name: "glm", BaseURL: glmBase, APIKey: glmKey, Model: glmModel},
+			{Name: "mimo", BaseURL: mimoBase, APIKey: mimoKey, Model: mimoModel},
+		})
+	})
+
+	t.Run("пустые элементы списка пропускаются молча", func(t *testing.T) {
+		mpClearLLMEnv(t)
+		// Хвостовая и двойная запятая — не профиль: warn про пустое имя заставил бы оператора
+		// искать несуществующую переменную, а список от этого не становится неполным.
+		t.Setenv("MP_SUMMARY_LLM_MODELS", "glm,,mimo,")
+		mpLLMSetProfile(t, "glm", glmBase, glmKey, glmModel)
+		mpLLMSetProfile(t, "mimo", mimoBase, mimoKey, mimoModel)
+		hook := mpLLMWarnHook(t)
+		mpLLMProfilesCheck(t, mpLLMProfilesFromEnv(), []mpLLMProfile{
+			{Name: "glm", BaseURL: glmBase, APIKey: glmKey, Model: glmModel},
+			{Name: "mimo", BaseURL: mimoBase, APIKey: mimoKey, Model: mimoModel},
+		})
+		if warns := mpLLMWarnText(hook); warns != "" {
+			t.Errorf("пустые элементы списка дали warn: %q", warns)
+		}
+	})
+
+	t.Run("невалидное имя пропущено, остальные работают", func(t *testing.T) {
+		mpClearLLMEnv(t)
+		t.Setenv("MP_SUMMARY_LLM_MODELS", "glm-x,glm")
+		mpLLMSetProfile(t, "glm", glmBase, glmKey, glmModel)
+		hook := mpLLMWarnHook(t)
+		mpLLMProfilesCheck(t, mpLLMProfilesFromEnv(), []mpLLMProfile{
+			{Name: "glm", BaseURL: glmBase, APIKey: glmKey, Model: glmModel},
+		})
+		if warns := mpLLMWarnText(hook); !strings.Contains(warns, "glm-x") {
+			t.Errorf("warn не называет невалидное имя glm-x: %q", warns)
+		}
+	})
+
+	t.Run("дубликат модели пропущен, остаётся первый", func(t *testing.T) {
+		mpClearLLMEnv(t)
+		t.Setenv("MP_SUMMARY_LLM_MODELS", "glm,mimo")
+		mpLLMSetProfile(t, "glm", glmBase, glmKey, glmModel)
+		// mimo отдаёт ту же модель, что glm: строки перетирались бы по ключу (model, prompt_version).
+		mpLLMSetProfile(t, "mimo", mimoBase, mimoKey, glmModel)
+		hook := mpLLMWarnHook(t)
+		mpLLMProfilesCheck(t, mpLLMProfilesFromEnv(), []mpLLMProfile{
+			{Name: "glm", BaseURL: glmBase, APIKey: glmKey, Model: glmModel},
+		})
+		warns := mpLLMWarnText(hook)
+		if !strings.Contains(warns, "mimo") || !strings.Contains(warns, glmModel) {
+			t.Errorf("warn не называет пропущенный профиль mimo и дубликат модели: %q", warns)
+		}
+	})
+
+	t.Run("имя переменной ключа не попадает в warn", func(t *testing.T) {
+		mpClearLLMEnv(t)
+		mpLLMSetProfile(t, "default", deepseekBase, "", deepseekModel)
+		hook := mpLLMWarnHook(t)
+		if got := mpLLMProfilesFromEnv(); got != nil {
+			t.Fatalf("профили = %+v, ожидался nil", got)
+		}
+		warns := mpLLMWarnText(hook)
+		if !strings.Contains(warns, "ключ API") {
+			t.Errorf("warn не сообщает, что ключ профиля не задан: %q", warns)
+		}
+		if strings.Contains(warns, "LLM_API_KEY") {
+			t.Errorf("в warn попало имя переменной ключа (go/clear-text-logging): %q", warns)
+		}
+	})
+
+	t.Run("legacy: любая пустая переменная → nil", func(t *testing.T) {
+		for _, missing := range []string{"LLM_BASE_URL", "LLM_API_KEY", "MP_SUMMARY_LLM_MODEL"} {
+			t.Run(missing, func(t *testing.T) {
+				mpClearLLMEnv(t)
+				mpLLMSetProfile(t, "default", deepseekBase, deepseekKey, deepseekModel)
+				t.Setenv(missing, "")
+				if got := mpLLMProfilesFromEnv(); got != nil {
+					t.Fatalf("профили = %+v, ожидался nil", got)
+				}
+			})
+		}
+	})
+
+	t.Run("ни одного полного профиля → nil", func(t *testing.T) {
+		mpClearLLMEnv(t)
+		t.Setenv("MP_SUMMARY_LLM_MODELS", "glm")
+		if got := mpLLMProfilesFromEnv(); got != nil {
+			t.Fatalf("профили = %+v, ожидался nil", got)
 		}
 	})
 }
@@ -332,7 +503,7 @@ func TestTagMPChannelsLLMOK(t *testing.T) {
 	mock := mpNewLLMMock(t, mpLLMMockResponse{Body: mpLLMContentBody(t, mpLLMPayloadBody(t, channels...))})
 
 	// baseURL с хвостовым слэшем: путь запроса не должен получиться «//v1/messages».
-	matches, err := tagMPChannelsLLM(doc, mock.url+"/", "test-key", "test-model")
+	matches, _, err := mpTagTest(doc, mock.url+"/", "test-key", "test-model")
 	if err != nil {
 		t.Fatalf("tagMPChannelsLLM: %v", err)
 	}
@@ -448,7 +619,7 @@ func TestTagMPChannelsLLMDropsHallucination(t *testing.T) {
 	}
 	mock := mpNewLLMMock(t, mpLLMMockResponse{Body: mpLLMContentBody(t, mpLLMPayloadBody(t, channels...))})
 
-	matches, err := tagMPChannelsLLM(doc, mock.url, "test-key", "test-model")
+	matches, _, err := mpTagTest(doc, mock.url, "test-key", "test-model")
 	if err != nil {
 		t.Fatalf("tagMPChannelsLLM: %v", err)
 	}
@@ -481,7 +652,7 @@ func TestTagMPChannelsLLMValidatesSlugAndKind(t *testing.T) {
 	}
 	mock := mpNewLLMMock(t, mpLLMMockResponse{Body: mpLLMContentBody(t, mpLLMPayloadBody(t, channels...))})
 
-	matches, err := tagMPChannelsLLM(doc, mock.url, "test-key", "test-model")
+	matches, _, err := mpTagTest(doc, mock.url, "test-key", "test-model")
 	if err != nil {
 		t.Fatalf("tagMPChannelsLLM: %v", err)
 	}
@@ -544,7 +715,7 @@ func TestTagMPChannelsLLMBrokenJSON(t *testing.T) {
 			mock := mpNewLLMMock(t,
 				mpLLMMockResponse{Body: tc.first},
 				mpLLMMockResponse{Body: valid})
-			matches, err := tagMPChannelsLLM(doc, mock.url, "test-key", "test-model")
+			matches, _, err := mpTagTest(doc, mock.url, "test-key", "test-model")
 			mpLLMCheckRetryToLaborMatch(t, mock, matches, err)
 		})
 	}
@@ -552,7 +723,7 @@ func TestTagMPChannelsLLMBrokenJSON(t *testing.T) {
 		mock := mpNewLLMMock(t,
 			mpLLMMockResponse{Body: mpLLMContentBody(t, truncatedContent)},
 			mpLLMMockResponse{Body: mpLLMContentBody(t, truncatedContent)})
-		matches, err := tagMPChannelsLLM(doc, mock.url, "test-key", "test-model")
+		matches, _, err := mpTagTest(doc, mock.url, "test-key", "test-model")
 		if err == nil {
 			t.Fatalf("ожидалась ошибка после двух битых ответов, получены матчи %+v", matches)
 		}
@@ -572,7 +743,7 @@ func TestTagMPChannelsLLMNoTextBlock(t *testing.T) {
 
 	t.Run("один вызов без text-блока → ошибка формата", func(t *testing.T) {
 		mock := mpNewLLMMock(t, mpLLMMockResponse{Body: mpLLMEmptyContentBody(t)})
-		_, err := mpLLMAskOnce(doc, mock.url, "test-key", "test-model")
+		_, _, err := mpLLMAskOnce(doc, mock.url, "test-key", "test-model")
 		if err == nil {
 			t.Fatal("ответ без text-блока: ожидалась ошибка")
 		}
@@ -590,7 +761,7 @@ func TestTagMPChannelsLLMNoTextBlock(t *testing.T) {
 		mock := mpNewLLMMock(t,
 			mpLLMMockResponse{Body: mpLLMEmptyContentBody(t)},
 			mpLLMMockResponse{Body: valid})
-		matches, err := tagMPChannelsLLM(doc, mock.url, "test-key", "test-model")
+		matches, _, err := mpTagTest(doc, mock.url, "test-key", "test-model")
 		mpLLMCheckRetryToLaborMatch(t, mock, matches, err)
 	})
 }
@@ -606,7 +777,7 @@ func TestTagMPChannelsLLMFencedJSON(t *testing.T) {
 	content := "```json\n" + payload + "\n```\nНадеюсь, разметка полезна."
 	mock := mpNewLLMMock(t, mpLLMMockResponse{Body: mpLLMContentBody(t, content)})
 
-	matches, err := tagMPChannelsLLM(doc, mock.url, "test-key", "test-model")
+	matches, _, err := mpTagTest(doc, mock.url, "test-key", "test-model")
 	if err != nil {
 		t.Fatalf("tagMPChannelsLLM: %v", err)
 	}
@@ -616,6 +787,51 @@ func TestTagMPChannelsLLMFencedJSON(t *testing.T) {
 	mpLLMCheckMatches(t, doc, matches)
 	if len(matches) != 2 || !mpHasMatchKindText(matches, "labor_market", mpKindProse, mpLLMLaborPin) {
 		t.Errorf("матчи = %+v, ожидались цитата и заметка labor_market", matches)
+	}
+}
+
+// TestTagMPChannelsLLMPrefill — harness-совместимость: последнее сообщение ассистента «{»
+// заставляет модель продолжать JSON, а не рассуждать в text-блоке. Ответ-продолжение без
+// начальной «{» должен быть склеен в целый объект, а запрос — нести assistant-сообщение.
+func TestTagMPChannelsLLMPrefill(t *testing.T) {
+	doc := mpLLMFixtureDoc(t)
+	payload := strings.TrimPrefix(mpLLMPayloadBody(t, mpLLMValidChannels()...), "{")
+	mock := mpNewLLMMock(t, mpLLMMockResponse{Body: mpLLMContentBody(t, payload)})
+
+	old := mpLLMPrefillJSON
+	mpLLMPrefillJSON = true
+	t.Cleanup(func() { mpLLMPrefillJSON = old })
+
+	matches, stats, err := tagMPChannelsLLM(doc, mpLLMProfile{BaseURL: mock.url, APIKey: "test-key", Model: "test-model"})
+	if err != nil {
+		t.Fatalf("tagMPChannelsLLM: %v", err)
+	}
+	if len(matches) == 0 || stats.QuotesKept == 0 {
+		t.Fatalf("prefill-ответ не разобран: matches=%d quotes_kept=%d", len(matches), stats.QuotesKept)
+	}
+	req := mock.request(0)
+	if !strings.Contains(req.Body, `"role":"assistant"`) || !strings.Contains(req.Body, `"text":"{"`) {
+		t.Errorf("в запросе нет assistant-prefill «{»: %s", req.Body)
+	}
+}
+
+// TestTagMPChannelsLLMThinkingDisabled — harness-совместимость: поле Anthropic
+// `thinking: {type: disabled}` уходит в запрос только при включённом флаге и не ломает
+// разбор ответа. Прод-путь по умолчанию поле не отправляет.
+func TestTagMPChannelsLLMThinkingDisabled(t *testing.T) {
+	doc := mpLLMFixtureDoc(t)
+	mock := mpNewLLMMock(t, mpLLMMockResponse{Body: mpLLMContentBody(t, mpLLMPayloadBody(t, mpLLMValidChannels()...))})
+
+	old := mpLLMThinkingDisabled
+	mpLLMThinkingDisabled = true
+	t.Cleanup(func() { mpLLMThinkingDisabled = old })
+
+	if _, _, err := tagMPChannelsLLM(doc, mpLLMProfile{BaseURL: mock.url, APIKey: "test-key", Model: "test-model"}); err != nil {
+		t.Fatalf("tagMPChannelsLLM: %v", err)
+	}
+	req := mock.request(0)
+	if !strings.Contains(req.Body, `"thinking":{"type":"disabled"}`) {
+		t.Errorf("в запросе нет thinking disabled: %s", req.Body)
 	}
 }
 
@@ -631,7 +847,7 @@ func TestTagMPChannelsLLM500(t *testing.T) {
 	body := `{"error":{"type":"api_error","message":"` + strings.Repeat("провайдер упал; ", 300) + `"}}`
 	mock := mpNewLLMMock(t, mpLLMMockResponse{Status: http.StatusInternalServerError, Body: body})
 
-	matches, err := tagMPChannelsLLM(doc, mock.url, "test-key", "test-model")
+	matches, _, err := mpTagTest(doc, mock.url, "test-key", "test-model")
 	if err == nil {
 		t.Fatalf("500: ожидалась ошибка, получены матчи %+v", matches)
 	}
@@ -664,7 +880,7 @@ func TestTagMPChannelsLLMTransportError(t *testing.T) {
 	url := srv.URL
 	srv.Close()
 
-	_, err := tagMPChannelsLLM(doc, url, "test-key", "test-model")
+	_, _, err := mpTagTest(doc, url, "test-key", "test-model")
 	if err == nil {
 		t.Fatal("недоступный провайдер: ожидалась ошибка")
 	}
@@ -694,7 +910,7 @@ func TestTagMPChannelsLLMTimeout(t *testing.T) {
 	mpLLMTimeout = time.Second
 	t.Cleanup(func() { mpLLMTimeout = old })
 
-	_, err := tagMPChannelsLLM(doc, srv.URL, "test-key", "test-model")
+	_, _, err := mpTagTest(doc, srv.URL, "test-key", "test-model")
 	if err == nil {
 		t.Fatal("зависший провайдер: ожидалась ошибка дедлайна")
 	}
@@ -741,7 +957,7 @@ func TestTagMPChannelsLLMBodyReadBroken(t *testing.T) {
 	defer srv.Close()
 
 	t.Run("mpLLMAskOnce классифицирует обрыв как формат", func(t *testing.T) {
-		_, err := mpLLMAskOnce(doc, srv.URL, "test-key", "test-model")
+		_, _, err := mpLLMAskOnce(doc, srv.URL, "test-key", "test-model")
 		if err == nil {
 			t.Fatal("обрыв чтения тела: ожидалась ошибка")
 		}
@@ -757,7 +973,7 @@ func TestTagMPChannelsLLMBodyReadBroken(t *testing.T) {
 		mu.Lock()
 		before := calls
 		mu.Unlock()
-		matches, err := tagMPChannelsLLM(doc, srv.URL, "test-key", "test-model")
+		matches, _, err := mpTagTest(doc, srv.URL, "test-key", "test-model")
 		if err == nil {
 			t.Fatalf("обрыв чтения тела: ожидалась ошибка, получены матчи %+v", matches)
 		}
@@ -774,4 +990,442 @@ func TestTagMPChannelsLLMBodyReadBroken(t *testing.T) {
 			t.Errorf("в текст ошибки утёк ключ API: %v", err)
 		}
 	})
+}
+
+// mpTagTest — tagMPChannelsLLM с тестовым профилем: продовый вызов принимает профиль, а
+// тестам важно лишь, что base/api/model доехали до запроса.
+func mpTagTest(doc mpSummaryDoc, baseURL, apiKey, model string) ([]mpChannelMatch, mpLLMDocStats, error) {
+	return tagMPChannelsLLM(doc, mpLLMProfile{Name: "test", BaseURL: baseURL, APIKey: apiKey, Model: model})
+}
+
+// TestTagMPChannelsLLMStats — валидный ответ: usage из конверта (мок отдаёт 1/1), одна
+// попытка, положительная длительность и счётчики качества на полном наборе 11 каналов.
+// money_supply приходит без note — заметок 10, а не 11; каждая цитата сохранена, поэтому
+// dropped = 0, а каналов с цитатами — все 11.
+func TestTagMPChannelsLLMStats(t *testing.T) {
+	doc := mpLLMFixtureDoc(t)
+	channels := mpLLMValidChannels()
+	mock := mpNewLLMMock(t, mpLLMMockResponse{Body: mpLLMContentBody(t, mpLLMPayloadBody(t, channels...))})
+
+	matches, stats, err := mpTagTest(doc, mock.url, "test-key", "test-model")
+	if err != nil {
+		t.Fatalf("tagMPChannelsLLM: %v", err)
+	}
+	if stats.Model != "test-model" {
+		t.Errorf("Model = %q, ожидалось %q", stats.Model, "test-model")
+	}
+	if stats.Attempts != 1 {
+		t.Errorf("Attempts = %d, ожидалась 1 попытка", stats.Attempts)
+	}
+	if stats.Duration <= 0 {
+		t.Errorf("Duration = %v, ожидалась положительная длительность", stats.Duration)
+	}
+	if want := (mpLLMUsage{InputTokens: 1, OutputTokens: 1}); stats.Usage != want {
+		t.Errorf("Usage = %+v, ожидалось %+v (usage конверта мока)", stats.Usage, want)
+	}
+	const wantQuotes = 11
+	if stats.QuotesTotal != wantQuotes {
+		t.Errorf("QuotesTotal = %d, ожидалось %d", stats.QuotesTotal, wantQuotes)
+	}
+	if stats.QuotesKept != wantQuotes {
+		t.Errorf("QuotesKept = %d, ожидалось %d", stats.QuotesKept, wantQuotes)
+	}
+	if stats.QuotesDropped != 0 {
+		t.Errorf("QuotesDropped = %d, ожидалось 0", stats.QuotesDropped)
+	}
+	const wantNotes = 10 // money_supply в валидном ответе без note
+	if stats.Notes != wantNotes {
+		t.Errorf("Notes = %d, ожидалось %d", stats.Notes, wantNotes)
+	}
+	if stats.ChannelsWithQuotes != len(mpChannels) {
+		t.Errorf("ChannelsWithQuotes = %d, ожидалось %d (все каналы реестра)", stats.ChannelsWithQuotes, len(mpChannels))
+	}
+	if len(matches) != wantQuotes+wantNotes {
+		t.Errorf("матчей %d, ожидалось %d (цитаты + заметки)", len(matches), wantQuotes+wantNotes)
+	}
+}
+
+// TestTagMPChannelsLLMStatsHallucination — цитата, которой нет в тексте, увеличивает
+// QuotesTotal и QuotesDropped, но не QuotesKept: доля отброшенного в отчёте считается от
+// всего, что прислала модель, включая галлюцинации.
+func TestTagMPChannelsLLMStatsHallucination(t *testing.T) {
+	const hallucination = "Совет директоров допускает повышение ключевой ставки до 25,00% годовых на ближайшем заседании."
+
+	doc := mpLLMFixtureDoc(t)
+	if strings.Contains(mpLLMCorpus(doc), hallucination) {
+		t.Fatalf("цитата-галлюцинация случайно встречается в документе: %q", hallucination)
+	}
+	base := []mpLLMChannelSpec{
+		{Slug: "output_gap", Quotes: []mpLLMQuoteSpec{{Kind: mpKindRiskPro, Text: mpLLMRiskProPin}},
+			Note: "Дисбаланс спроса и предложения."},
+		{Slug: "labor_market", Quotes: []mpLLMQuoteSpec{{Kind: mpKindProse, Text: mpLLMLaborPin}},
+			Note: "Рынок труда смягчается."},
+	}
+	withHallucination := []mpLLMChannelSpec{
+		{Slug: "output_gap", Quotes: []mpLLMQuoteSpec{
+			{Kind: mpKindRiskPro, Text: mpLLMRiskProPin},
+			{Kind: mpKindRiskPro, Text: hallucination},
+		}, Note: "Дисбаланс спроса и предложения."},
+		base[1],
+	}
+
+	baseMock := mpNewLLMMock(t, mpLLMMockResponse{Body: mpLLMContentBody(t, mpLLMPayloadBody(t, base...))})
+	_, baseStats, err := mpTagTest(doc, baseMock.url, "test-key", "test-model")
+	if err != nil {
+		t.Fatalf("tagMPChannelsLLM (без галлюцинации): %v", err)
+	}
+	mock := mpNewLLMMock(t, mpLLMMockResponse{Body: mpLLMContentBody(t, mpLLMPayloadBody(t, withHallucination...))})
+	_, stats, err := mpTagTest(doc, mock.url, "test-key", "test-model")
+	if err != nil {
+		t.Fatalf("tagMPChannelsLLM (с галлюцинацией): %v", err)
+	}
+	if stats.QuotesTotal != baseStats.QuotesTotal+1 {
+		t.Errorf("QuotesTotal = %d, ожидалось %d (галлюцинация входит в общий счёт)",
+			stats.QuotesTotal, baseStats.QuotesTotal+1)
+	}
+	if stats.QuotesKept != baseStats.QuotesKept {
+		t.Errorf("QuotesKept = %d, ожидалось %d (отброшенная цитата не сохраняется)",
+			stats.QuotesKept, baseStats.QuotesKept)
+	}
+	if stats.QuotesDropped != baseStats.QuotesDropped+1 {
+		t.Errorf("QuotesDropped = %d, ожидалось %d", stats.QuotesDropped, baseStats.QuotesDropped+1)
+	}
+}
+
+// TestTagMPChannelsLLMStatsRetry — битый первый ответ лечится ретраем: попыток две, usage
+// суммируется по обоим вызовам (мок отдаёт 1/1 в каждом конверте), длительность покрывает
+// оба вызова.
+func TestTagMPChannelsLLMStatsRetry(t *testing.T) {
+	doc := mpLLMFixtureDoc(t)
+	const truncatedContent = `{"channels":[{"slug":"labor_market","quotes":[{"kind":"prose","text":"Дефицит работников`
+	valid := mpLLMContentBody(t, mpLLMPayloadBody(t,
+		mpLLMChannelSpec{Slug: "labor_market", Quotes: []mpLLMQuoteSpec{{Kind: mpKindProse, Text: mpLLMLaborPin}}}))
+	mock := mpNewLLMMock(t,
+		mpLLMMockResponse{Body: mpLLMContentBody(t, truncatedContent)},
+		mpLLMMockResponse{Body: valid})
+
+	matches, stats, err := mpTagTest(doc, mock.url, "test-key", "test-model")
+	if err != nil {
+		t.Fatalf("tagMPChannelsLLM: %v (ретрай должен был вылечить формат)", err)
+	}
+	if mock.calls() != 2 {
+		t.Errorf("запросов %d, ожидалось 2 (первый + ретрай)", mock.calls())
+	}
+	if stats.Attempts != 2 {
+		t.Errorf("Attempts = %d, ожидалось 2", stats.Attempts)
+	}
+	if want := (mpLLMUsage{InputTokens: 2, OutputTokens: 2}); stats.Usage != want {
+		t.Errorf("Usage = %+v, ожидалось %+v (сумма двух попыток)", stats.Usage, want)
+	}
+	if stats.Duration <= 0 {
+		t.Errorf("Duration = %v, ожидалась положительная длительность", stats.Duration)
+	}
+	if len(matches) != 1 || !mpHasMatchKindText(matches, "labor_market", mpKindProse, mpLLMLaborPin) {
+		t.Errorf("матчи = %+v, ожидался один дословный матч labor_market", matches)
+	}
+	if stats.QuotesTotal != 1 || stats.QuotesKept != 1 || stats.QuotesDropped != 0 {
+		t.Errorf("счётчики после ретрая = total %d, kept %d, dropped %d, ожидалось 1/1/0",
+			stats.QuotesTotal, stats.QuotesKept, stats.QuotesDropped)
+	}
+}
+
+// TestTagMPChannelsLLMStats500 — отказ провайдера: ошибка наверх, попытка одна (500 не
+// повторяется), usage нулевой — конверта с расходом токенов провайдер не прислал.
+func TestTagMPChannelsLLMStats500(t *testing.T) {
+	doc := mpLLMFixtureDoc(t)
+	mock := mpNewLLMMock(t, mpLLMMockResponse{
+		Status: http.StatusInternalServerError,
+		Body:   `{"error":{"type":"api_error","message":"провайдер упал"}}`,
+	})
+
+	matches, stats, err := mpTagTest(doc, mock.url, "test-key", "test-model")
+	if err == nil {
+		t.Fatalf("500: ожидалась ошибка, получены матчи %+v", matches)
+	}
+	if mock.calls() != 1 {
+		t.Errorf("запросов %d, ожидался 1 (500 не повторяется)", mock.calls())
+	}
+	if stats.Attempts != 1 {
+		t.Errorf("Attempts = %d, ожидалась 1 попытка", stats.Attempts)
+	}
+	if stats.Usage != (mpLLMUsage{}) {
+		t.Errorf("Usage = %+v, ожидался нулевой", stats.Usage)
+	}
+	if stats.Model != "test-model" {
+		t.Errorf("Model = %q, ожидалось %q", stats.Model, "test-model")
+	}
+}
+
+// TestMpTagLLMReturnsError — ошибка LLM не глотается внутри mpTagLLM: она доходит до
+// вызывающего (тот решает, что это деградация одного документа), батч при этом не трогается.
+func TestMpTagLLMReturnsError(t *testing.T) {
+	doc := mpLLMFixtureDoc(t)
+	mock := mpNewLLMMock(t, mpLLMMockResponse{
+		Status: http.StatusInternalServerError,
+		Body:   `{"error":{"type":"api_error","message":"провайдер упал"}}`,
+	})
+	// Батч без соединения: ошибка LLM обязана вернуться до первой записи, иначе append
+	// упал бы на nil-соединении.
+	rows := &mpBatch{}
+	d := mpLLMDoc{
+		Date: time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC),
+		Url:  "https://www.cbr.ru/example",
+		Doc:  doc,
+	}
+	stats, err := mpTagLLM(rows, d, mpLLMProfile{BaseURL: mock.url, APIKey: "test-key", Model: "test-model"})
+	if err == nil {
+		t.Fatalf("ошибка LLM не дошла до вызывающего, stats = %+v", stats)
+	}
+	if mock.calls() != 1 {
+		t.Errorf("запросов %d, ожидался 1 (500 не повторяется)", mock.calls())
+	}
+	if !mpIsLLMTagError(err) {
+		t.Errorf("ошибка %v не опознана как ошибка LLM (а не батча)", err)
+	}
+	if stats.Attempts != 1 || stats.Usage != (mpLLMUsage{}) {
+		t.Errorf("stats = %+v, ожидались Attempts=1 и нулевой Usage", stats)
+	}
+	if rows.rows != 0 || rows.batch != nil {
+		t.Errorf("батч тронут при ошибке LLM: rows=%d, batch=%v", rows.rows, rows.batch)
+	}
+}
+
+// TestMpLLMJSONBodyFirstObject — разбор первого JSON-объекта: OpenAI-совместимые модели
+// иногда повторяют объект или добавляют хвост; LastIndex склеил бы их в невалидный JSON.
+func TestMpLLMJSONBodyFirstObject(t *testing.T) {
+	cases := []struct {
+		name, in, want string
+		ok             bool
+	}{
+		{"чистый объект", `{"a":1}`, `{"a":1}`, true},
+		{"повтор объекта", `{"a":1}{"b":2}`, `{"a":1}`, true},
+		{"хвост после объекта", `{"a":1} пояснение`, `{"a":1}`, true},
+		{"fenced json", "```json\n{\"a\":1}\n```", `{"a":1}`, true},
+		{"нет объекта", `просто текст`, "", false},
+		{"обрезанный объект", `{"a":`, "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := mpLLMJSONBody(tc.in)
+			if ok != tc.ok || got != tc.want {
+				t.Errorf("mpLLMJSONBody(%q) = (%q, %v), want (%q, %v)", tc.in, got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
+// TestMpLLMOpenAIURL — OpenAI-путь из Anthropic-base профилей: корень гейтвея GLM и
+// /anthropic-префикс MiMo дают /v1/chat/completions, хвостовой /v1 не дублируется.
+func TestMpLLMOpenAIURL(t *testing.T) {
+	cases := map[string]string{
+		"https://gate.joingonka.ai":            "https://gate.joingonka.ai/v1/chat/completions",
+		"https://api.xiaomimimo.com/anthropic": "https://api.xiaomimimo.com/v1/chat/completions",
+		"https://api.deepseek.com/anthropic":   "https://api.deepseek.com/v1/chat/completions",
+		"https://example.com/v1":               "https://example.com/v1/chat/completions",
+	}
+	for in, want := range cases {
+		if got := mpLLMOpenAIURL(in); got != want {
+			t.Errorf("mpLLMOpenAIURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestTagMPChannelsLLMOpenAITransport — harness-транспорт openai: POST /v1/chat/completions
+// с Authorization: Bearer, response_format=json_object и теми же промптами; usage из
+// prompt_tokens/completion_tokens; валидация цитат та же, что у Anthropic-пути.
+func TestTagMPChannelsLLMOpenAITransport(t *testing.T) {
+	doc := mpLLMFixtureDoc(t)
+	payload := mpLLMPayloadBody(t, mpLLMValidChannels()...)
+	quoted, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	var (
+		gotPath, gotAuth, gotBody string
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		gotPath, gotAuth, gotBody = r.URL.Path, r.Header.Get("Authorization"), string(body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"stop","message":{"content":`+string(quoted)+`}}],"usage":{"prompt_tokens":100,"completion_tokens":50,"prompt_tokens_details":{"cached_tokens":7}}}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	old := mpLLMTransport
+	mpLLMTransport = "openai"
+	oldEffort := mpLLMReasoningEffort
+	mpLLMReasoningEffort = "none"
+	oldConcise := mpLLMConcise
+	mpLLMConcise = true
+	t.Cleanup(func() {
+		mpLLMTransport = old
+		mpLLMReasoningEffort = oldEffort
+		mpLLMConcise = oldConcise
+	})
+
+	matches, stats, err := tagMPChannelsLLM(doc, mpLLMProfile{BaseURL: srv.URL, APIKey: "test-key", Model: "test-model"})
+	if err != nil {
+		t.Fatalf("tagMPChannelsLLM: %v", err)
+	}
+	if len(matches) == 0 || stats.QuotesKept == 0 {
+		t.Fatalf("openai-ответ не разобран: matches=%d quotes_kept=%d", len(matches), stats.QuotesKept)
+	}
+	if gotPath != "/v1/chat/completions" {
+		t.Errorf("путь %q, ожидался /v1/chat/completions", gotPath)
+	}
+	if gotAuth != "Bearer test-key" {
+		t.Errorf("Authorization = %q, ожидался Bearer test-key", gotAuth)
+	}
+	if !strings.Contains(gotBody, `"response_format":{"type":"json_object"}`) {
+		t.Errorf("в запросе нет response_format=json_object: %s", gotBody)
+	}
+	if !strings.Contains(gotBody, `"reasoning_effort":"none"`) {
+		t.Errorf("в запросе нет reasoning_effort=none: %s", gotBody)
+	}
+	if !strings.Contains(gotBody, mpLLMConciseInstruction) {
+		t.Errorf("в запросе нет concise-инструкции: %s", gotBody)
+	}
+	if !strings.Contains(gotBody, `"model":"test-model"`) {
+		t.Errorf("в запросе нет модели: %s", gotBody)
+	}
+	if stats.Usage != (mpLLMUsage{InputTokens: 100, OutputTokens: 50, CacheReadInputTokens: 7}) {
+		t.Errorf("usage = %+v, ожидался 100/50/7", stats.Usage)
+	}
+}
+
+// TestTagMPChannelsLLMOpenAIDefaults — по умолчанию OpenAI-запрос не несёт reasoning_effort,
+// concise-инструкции, thinking и assistant-prefill: harness-флаги включаются только явно.
+func TestTagMPChannelsLLMOpenAIDefaults(t *testing.T) {
+	doc := mpLLMFixtureDoc(t)
+	quoted, err := json.Marshal(mpLLMPayloadBody(t, mpLLMValidChannels()...))
+	if err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	var gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		gotBody = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"stop","message":{"content":`+string(quoted)+`}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	oldTransport := mpLLMTransport
+	oldEffort, oldConcise := mpLLMReasoningEffort, mpLLMConcise
+	oldPrefill, oldThinking := mpLLMPrefillJSON, mpLLMThinkingDisabled
+	mpLLMTransport, mpLLMReasoningEffort, mpLLMConcise = "openai", "", false
+	mpLLMPrefillJSON, mpLLMThinkingDisabled = false, false
+	t.Cleanup(func() {
+		mpLLMTransport = oldTransport
+		mpLLMReasoningEffort = oldEffort
+		mpLLMConcise = oldConcise
+		mpLLMPrefillJSON = oldPrefill
+		mpLLMThinkingDisabled = oldThinking
+	})
+
+	if _, _, err := tagMPChannelsLLM(doc, mpLLMProfile{BaseURL: srv.URL, APIKey: "test-key", Model: "test-model"}); err != nil {
+		t.Fatalf("tagMPChannelsLLM: %v", err)
+	}
+	for _, unwanted := range []string{`"reasoning_effort"`, mpLLMConciseInstruction, `"thinking"`, `"role":"assistant"`} {
+		if strings.Contains(gotBody, unwanted) {
+			t.Errorf("в запросе по умолчанию есть %q: %s", unwanted, gotBody)
+		}
+	}
+}
+
+// TestTagMPChannelsLLMOpenAIHTTPError — отказ OpenAI-совместимого провайдера не повторяется:
+// HTTP non-2xx не является ошибкой формата, поэтому попытка одна.
+func TestTagMPChannelsLLMOpenAIHTTPError(t *testing.T) {
+	doc := mpLLMFixtureDoc(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"boom"}`, http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+
+	old := mpLLMTransport
+	mpLLMTransport = "openai"
+	t.Cleanup(func() { mpLLMTransport = old })
+
+	_, stats, err := tagMPChannelsLLM(doc, mpLLMProfile{BaseURL: srv.URL, APIKey: "test-key", Model: "test-model"})
+	if err == nil {
+		t.Fatal("ошибка провайдера не вернулась")
+	}
+	if stats.Attempts != 1 {
+		t.Errorf("Attempts = %d, ожидалась 1: HTTP-ошибка не повторяется", stats.Attempts)
+	}
+	if stats.Usage != (mpLLMUsage{}) {
+		t.Errorf("Usage = %+v, ожидался нулевой", stats.Usage)
+	}
+}
+
+// TestTagMPChannelsLLMOpenAITruncated — finish_reason=length не повторяется: тот же
+// max_tokens даст тот же обрез, поэтому вызов один, а ошибка уходит вызывающему.
+func TestTagMPChannelsLLMOpenAITruncated(t *testing.T) {
+	doc := mpLLMFixtureDoc(t)
+	var (
+		mu    sync.Mutex
+		calls int
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"length","message":{"content":"{\"channels\":[{\"slug\":\"current_inflation\""}}],"usage":{"prompt_tokens":100,"completion_tokens":8192}}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	old := mpLLMTransport
+	mpLLMTransport = "openai"
+	t.Cleanup(func() { mpLLMTransport = old })
+
+	_, stats, err := tagMPChannelsLLM(doc, mpLLMProfile{BaseURL: srv.URL, APIKey: "test-key", Model: "test-model"})
+	if err == nil {
+		t.Fatal("обрезанный ответ не вернул ошибку")
+	}
+	mu.Lock()
+	got := calls
+	mu.Unlock()
+	if got != 1 {
+		t.Errorf("запросов %d, ожидался 1: finish_reason=length не повторяется", got)
+	}
+	if stats.Attempts != 1 {
+		t.Errorf("Attempts = %d, ожидалась 1", stats.Attempts)
+	}
+}
+
+// TestTagMPChannelsLLMOpenAITruncatedEmpty — пустой content при finish_reason=length тоже
+// не повторяется: это тот же обрез по max_tokens, а не ошибка формата.
+func TestTagMPChannelsLLMOpenAITruncatedEmpty(t *testing.T) {
+	doc := mpLLMFixtureDoc(t)
+	var (
+		mu    sync.Mutex
+		calls int
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"length","message":{"content":""}}],"usage":{"prompt_tokens":100,"completion_tokens":8192}}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	old := mpLLMTransport
+	mpLLMTransport = "openai"
+	t.Cleanup(func() { mpLLMTransport = old })
+
+	_, stats, err := tagMPChannelsLLM(doc, mpLLMProfile{BaseURL: srv.URL, APIKey: "test-key", Model: "test-model"})
+	if err == nil {
+		t.Fatal("пустой content при finish_reason=length не вернул ошибку")
+	}
+	mu.Lock()
+	got := calls
+	mu.Unlock()
+	if got != 1 {
+		t.Errorf("запросов %d, ожидался 1: пустой content при length не повторяется", got)
+	}
+	if stats.Attempts != 1 {
+		t.Errorf("Attempts = %d, ожидалась 1", stats.Attempts)
+	}
 }
