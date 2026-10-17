@@ -168,7 +168,7 @@
   - `DELAY` между вызовами;
   - агрегаты: mean/p50/p95, Jaccard с baseline (`deepseek-chat`) и regex, покрытие, цена по `<PROFILE>_LLM_PRICE_*`; `summary.csv` + `report.md` + `notes-sample.md` (3 даты × 11 каналов);
   - ошибки вызовов — в stats, прогон продолжается; инфраструктура — fail;
-  - транспорт: `MP_LLM_EVAL_TRANSPORT=anthropic|openai`; `openai` — JSON-режим `/chat/completions` для GLM/MiMo (на Anthropic-эндпоинте они уходят в reasoning); `MP_LLM_EVAL_REASONING=none` для GLM снимает длинный анализ в `content` (MiMo не требует); `MP_LLM_EVAL_CONCISE=1` — повторная разметка GLM-документов, не влезших в 8192 (одна цитата на канал, короткая note); `MP_LLM_EVAL_PREFILL` и `MP_LLM_EVAL_THINKING` — запасные совместимости Anthropic-транспорта.
+  - транспорт: `MP_LLM_EVAL_TRANSPORT=anthropic|openai`; `openai` — JSON-режим `/chat/completions` для GLM/MiMo (на Anthropic-эндпоинте они уходят в reasoning); `MP_LLM_EVAL_REASONING=none` для GLM снимает длинный анализ в `content` (MiMo не требует); `MP_LLM_EVAL_CONCISE=1` — повторная разметка GLM-документов, не влезших в 8192 (одна цитата на канал, короткая note); `MP_LLM_EVAL_REPORT_ONLY=1` — сводный отчёт по готовому `stats.jsonl` без вызовов; `MP_LLM_EVAL_PREFILL` и `MP_LLM_EVAL_THINKING` — запасные совместимости Anthropic-транспорта.
 
 - [ ] **Step 2: Прогнать — компиляция и SKIP**: `go test -tags mpeval ./cbr -run TestMPLLMEvalLive -count=1` без `MP_LLM_EVAL` → `SKIP`.
 
@@ -227,7 +227,7 @@ MIMO_LLM_MODEL=mimo-v2.6-flash
   - После первого прохода: пары с `error != ""` повторить (тот же каталог, `RESUME=1` пропускает успешные) — GLM с `MP_LLM_EVAL_CONCISE=1`, MiMo с `MP_LLM_EVAL_MAX_TOKENS=32768`; это добирает документы, не влезшие в лимит.
 - [ ] **Step 5: Импортёр no-op**: `make import STAT=cbr_mp_summary MP_SUMMARY_LLM_MODELS=default,glm,mimo` → «no-op, все 22 резюме на месте».
 - [ ] **Step 6: Тарифы** — DeepSeek `deepseek-flash` (off-peak $0.15 input / $0.60 output за 1M; `deepseek-chat` в прайсе не указан — legacy-алиас, оценка по Flash), GLM через Joingonka ($0.0076/$0.023), MiMo `mimo-v2.6-flash` ($0.14/$0.28; cache hit $0.0028). Дата/источник — в отчёте; чего нет — «н/д».
-- [ ] **Step 7: Отчёт** `docs/research/2026-10-17-mp-summary-llm-comparison.md` по §3.5 спеки; сырые артефакты — `build/mp-llm-eval/`.
+- [ ] **Step 7: Отчёт** — свести `stats.jsonl` прогонов (baseline, GLM, MiMo, догоны) в `build/mp-llm-eval-all/`, запустить harness с `MP_LLM_EVAL_REPORT_ONLY=1` и `MP_SUMMARY_LLM_MODELS=default,glm,mimo` (общий report без новых вызовов); затем `docs/research/2026-10-17-mp-summary-llm-comparison.md` по §3.5 спеки; сырые артефакты — `build/mp-llm-eval*/`.
 - [ ] **Step 8: SQL-сверка**:
   ```sql
   SELECT model, count() rows, uniqExact(meeting_date) docs

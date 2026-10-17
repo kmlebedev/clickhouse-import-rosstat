@@ -58,6 +58,9 @@ const (
 	// mpEvalConciseEnv — harness-режим concise: не более одной цитаты на канал и короткая
 	// note; нужен для повторной разметки GLM-документов, которые не влезли в 8192 токена.
 	mpEvalConciseEnv = "MP_LLM_EVAL_CONCISE"
+	// mpEvalReportOnlyEnv — сгенерировать отчёт по существующему stats.jsonl без вызовов
+	// моделей: нужно для сведения прогонов, сделанных с разными транспортами/лимитами.
+	mpEvalReportOnlyEnv = "MP_LLM_EVAL_REPORT_ONLY"
 
 	// mpEvalBaselineModel — модель, уже лежащая в ClickHouse: согласие с ней — одна из
 	// метрик качества (спека §3.5). Имя модели не секрет: оно же колонка model витрины.
@@ -134,6 +137,7 @@ type mpEvalReport struct {
 	Transport  string
 	Reasoning  string
 	Concise    bool
+	ReportOnly bool
 	OutDir     string
 	Records    []mpEvalRecord
 	Models     []string
@@ -173,6 +177,7 @@ func TestMPLLMEvalLive(t *testing.T) {
 	transport := mpEvalEnvTransport(t)
 	reasoning := mpEvalEnvReasoning(t)
 	concise := mpEvalEnvBool(t, mpEvalConciseEnv, false)
+	reportOnly := mpEvalEnvBool(t, mpEvalReportOnlyEnv, false)
 	// Флаги относятся к разным транспортам; молчаливое игнорирование сделало бы отчёт
 	// неверным (в нём флаг выглядел бы применённым).
 	if transport == "openai" && (prefill || thinking == "disabled") {
@@ -287,8 +292,12 @@ func TestMPLLMEvalLive(t *testing.T) {
 			jobs = append(jobs, mpEvalJob{Doc: doc, Profile: profile})
 		}
 	}
-	t.Logf("harness: документов %d, профилей %d, вызовов %d (write=%t force=%t resume=%t prefill=%t thinking=%s transport=%s reasoning=%s concise=%t, timeout=%s, max_tokens=%d, delay=%s)",
-		len(docs), len(profiles), len(jobs), write, force, resume, prefill, thinking, transport, reasoning, concise, timeout, maxTokens, delay)
+	if reportOnly {
+		t.Logf("report-only: вызовы моделей пропущены, отчёт по %d записям stats.jsonl", len(records))
+		jobs = nil
+	}
+	t.Logf("harness: документов %d, профилей %d, вызовов %d (write=%t force=%t resume=%t report_only=%t prefill=%t thinking=%s transport=%s reasoning=%s concise=%t, timeout=%s, max_tokens=%d, delay=%s)",
+		len(docs), len(profiles), len(jobs), write, force, resume, reportOnly, prefill, thinking, transport, reasoning, concise, timeout, maxTokens, delay)
 
 	for i, job := range jobs {
 		rec := mpEvalRunJob(t, ctx, conn, job, write)
@@ -353,6 +362,7 @@ func TestMPLLMEvalLive(t *testing.T) {
 		Transport:  transport,
 		Reasoning:  reasoning,
 		Concise:    concise,
+		ReportOnly: reportOnly,
 		OutDir:     outDir,
 		Records:    records,
 		Models:     models,
@@ -691,7 +701,7 @@ func mpEvalWriteReport(t *testing.T, path string, rep mpEvalReport) {
 		len(rep.Docs), rep.Docs[0].DateKey, rep.Docs[len(rep.Docs)-1].DateKey, filter)
 	mpEvalWritef(&b, "- Записей в stats.jsonl: %d (скорость/цена — по всем записям, качество и summary.csv — по последней записи пары)\n", len(rep.Records))
 	mpEvalWritef(&b, "- timeout: %s, max_tokens: %d, delay: %s\n", rep.Timeout, rep.MaxTokens, rep.Delay)
-	mpEvalWritef(&b, "- write: %t, force: %t, resume: %t, prefill: %t, thinking: %s, transport: %s, reasoning: %s, concise: %t\n", rep.Write, rep.Force, rep.Resume, rep.Prefill, rep.Thinking, rep.Transport, rep.Reasoning, rep.Concise)
+	mpEvalWritef(&b, "- write: %t, force: %t, resume: %t, report_only: %t, prefill: %t, thinking: %s, transport: %s, reasoning: %s, concise: %t\n", rep.Write, rep.Force, rep.Resume, rep.ReportOnly, rep.Prefill, rep.Thinking, rep.Transport, rep.Reasoning, rep.Concise)
 	mpEvalWritef(&b, "- Артефакты: `%s` (`stats.jsonl`, `summary.csv`, `report.md`, `notes-sample.md`)\n", rep.OutDir)
 	mpEvalWritef(&b, "- Baseline для Jaccard: `%s`, prompt_version=%d\n\n", mpEvalBaselineModel, mpPromptVersion)
 
