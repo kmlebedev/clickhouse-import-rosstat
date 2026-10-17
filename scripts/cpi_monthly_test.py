@@ -1457,6 +1457,16 @@ class TestCatBoostConfiguration(unittest.TestCase):
             self.assertEqual(metadata["loss_function"], "RMSE")
             self.assertEqual(metadata["random_seed"], cm.SEED)
             self.assertEqual(metadata["cat_features"], ["month"])
+            # Имена — для JSON, индексы — представление в numpy-матрице
+            # (CatBoost на numpy принимает только позиции).
+            self.assertEqual(
+                metadata["cat_feature_indices"],
+                cm.catboost_cat_indices(with_mp),
+            )
+            self.assertEqual(
+                metadata["cat_feature_indices"],
+                [len(cm.feature_names(with_mp)) - 1],
+            )
             self.assertEqual(
                 metadata["num_features"],
                 [name for name in cm.feature_names(with_mp) if name != "month"],
@@ -1681,6 +1691,46 @@ class TestCatBoostModels(unittest.TestCase):
         ):
             with self.assertRaises(cm.DegenerateWindowError):
                 cm.fit_catboost_bottomup(rows[:25], rows[25])
+
+    def test_degenerate_bottomup_fold_produces_no_prediction(self):
+        # Вырожденный фолд — не частичный агрегат: walk-forward не создаёт
+        # Prediction модели вовсе и увеличивает счётчик пропусков; диагностика
+        # весов последнего успешного фолда не перезаписывается.
+        rows = catboost_rows(20)
+
+        def degenerate(train_rows, row, code, with_mp=False):
+            if code == "cpi_nonfood":
+                raise cm.DegenerateWindowError("компонента вырождена")
+            return 0.1
+
+        cm.fit_catboost_bottomup.last_weights = ()
+        skipped = {}
+        with unittest.mock.patch.object(cm, "fit_catboost_component", degenerate):
+            predictions = cm.walk_forward(
+                rows,
+                {cm.MODEL_CATBOOST_BOTTOMUP: cm.fit_catboost_bottomup},
+                start=15,
+                embargo=0,
+                skipped=skipped,
+            )
+        self.assertEqual(predictions, [])
+        self.assertEqual(skipped, {cm.MODEL_CATBOOST_BOTTOMUP: 5})
+        self.assertEqual(cm.fit_catboost_bottomup.last_weights, ())
+
+    def test_degenerate_direct_fold_produces_no_prediction(self):
+        rows = catboost_rows(20)
+        for row in rows:
+            row.y[cm.TARGET_ALL] = 1.0
+        skipped = {}
+        predictions = cm.walk_forward(
+            rows,
+            {cm.MODEL_CATBOOST_DIRECT: cm.fit_catboost_direct},
+            start=15,
+            embargo=0,
+            skipped=skipped,
+        )
+        self.assertEqual(predictions, [])
+        self.assertEqual(skipped, {cm.MODEL_CATBOOST_DIRECT: 5})
 
     def test_constant_target_window_is_degenerate(self):
         # Окно с неизменным таргетом CatBoost не оценивает («All train targets
