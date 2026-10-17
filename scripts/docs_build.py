@@ -52,6 +52,16 @@ _INLINE_LINK_RE = re.compile(
     r"(?<!!)\[([^\]]*)\]\(([^)\s]+)(\s+(?:\"[^\"]*\"|'[^']*'))?\)"
 )
 
+# Code-регионы: fenced-блоки (``` / ~~~), indented code (4 пробела или таб)
+# и inline-code spans (одинарные/двойные/тройные обратные кавычки).
+_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+
+_INLINE_CODE_RE = re.compile(r"(`+)(.+?)\1")
+
+_MASK_PREFIX = "\x00DOCS_MASK_"
+
+_MASK_SUFFIX = ";\x00"
+
 
 @dataclass(frozen=True)
 class Page:
@@ -255,6 +265,67 @@ def _rewrite_inline_links(
     return _INLINE_LINK_RE.sub(replace, line)
 
 
+def _mask_region(fragment: str, restore: dict[str, str]) -> str:
+    placeholder = f"{_MASK_PREFIX}{len(restore)}{_MASK_SUFFIX}"
+    restore[placeholder] = fragment
+    return placeholder
+
+
+def _mask_inline_code(line: str, restore: dict[str, str]) -> str:
+    def replace(match: re.Match) -> str:
+        return _mask_region(match.group(0), restore)
+
+    return _INLINE_CODE_RE.sub(replace, line)
+
+
+def _mask_code_regions(text: str) -> tuple[str, dict[str, str]]:
+    """Заменить code-регионы placeholder'ами, сохранив число строк.
+
+    Маскируются fenced-блоки (````` ``` ````` и ``~~~``), строки indented code
+    (4 пробела или таб) и inline-code spans. Внутри placeholder'ов нет
+    Markdown/HTML-ссылок, поэтому проходы ниже их не трогают.
+    """
+    restore: dict[str, str] = {}
+    output_lines = []
+    fence = None  # (символ, длина) открытого fence
+
+    for line in text.splitlines(keepends=True):
+        content = line.rstrip("\r\n")
+        newline = line[len(content):]
+
+        if fence is not None:
+            output_lines.append(_mask_region(content, restore) + newline)
+            match = _FENCE_RE.match(content)
+            if (
+                match is not None
+                and match.group(1)[0] == fence[0]
+                and len(match.group(1)) >= fence[1]
+                and not match.group(2).strip()
+            ):
+                fence = None
+            continue
+
+        match = _FENCE_RE.match(content)
+        if match is not None:
+            fence = (match.group(1)[0], len(match.group(1)))
+            output_lines.append(_mask_region(content, restore) + newline)
+            continue
+
+        if content.startswith("    ") or content.startswith("\t"):
+            output_lines.append(_mask_region(content, restore) + newline)
+            continue
+
+        output_lines.append(_mask_inline_code(content, restore) + newline)
+
+    return "".join(output_lines), restore
+
+
+def _restore_code_regions(text: str, restore: dict[str, str]) -> str:
+    for placeholder, original in restore.items():
+        text = text.replace(placeholder, original)
+    return text
+
+
 def rewrite_links(
     text: str,
     source: str,
@@ -266,11 +337,13 @@ def rewrite_links(
 
     Обрабатываются reference-определения, HTML ``href``/``src`` и inline-ссылки.
     Markdown-изображения (``![…](…)``) не трогаются: их обрабатывает
-    :func:`copy_images`.
+    :func:`copy_images`. Ссылки внутри code-регионов не переписываются и не
+    проверяются.
     """
     errors: list[str] = []
     output_lines = []
-    for lineno, line in enumerate(text.splitlines(keepends=True), start=1):
+    masked_text, restore = _mask_code_regions(text)
+    for lineno, line in enumerate(masked_text.splitlines(keepends=True), start=1):
         line = _rewrite_reference_definitions(
             line, source, page_map, repo_root, repo_url, lineno, errors
         )
@@ -281,7 +354,7 @@ def rewrite_links(
             line, source, page_map, repo_root, repo_url, lineno, errors
         )
         output_lines.append(line)
-    return "".join(output_lines), errors
+    return _restore_code_regions("".join(output_lines), restore), errors
 
 
 _IMAGE_RE = re.compile(
@@ -384,10 +457,10 @@ def render_page(
     repo_url: str,
     page_map: Optional[dict[str, str]] = None,
 ) -> tuple[str, list[str]]:
-    """Прочитать источник, переписать ссылки, вставить баннер и картинки.
+    """Прочитать источник, скопировать картинки, переписать ссылки, вставить баннер.
 
-    Ссылки переписываются до вставки баннера, чтобы ошибки ``файл:строка``
-    указывали на строки исходного документа.
+    ``copy_images`` и ``rewrite_links`` работают до вставки баннера, чтобы
+    ошибки ``файл:строка`` указывали на строки исходного документа.
     """
     repo_root = Path(repo_root)
     out_dir = Path(out_dir)
@@ -400,11 +473,11 @@ def render_page(
         else:
             page_map = {page.source: page.page}
 
+    text, image_errors = copy_images(text, page.source, out_dir, repo_root)
     text, link_errors = rewrite_links(
         text, page.source, page_map, repo_root, repo_url
     )
     text = insert_banner(text, page.source, repo_url)
-    text, image_errors = copy_images(text, page.source, out_dir, repo_root)
     return text, image_errors + link_errors
 
 
@@ -442,6 +515,12 @@ def write_site(
 ) -> list[str]:
     """Собрать страницы сайта; вернуть список ошибок."""
     out_dir = Path(out_dir)
+    repo_root = Path(repo_root)
+    out_resolved = out_dir.resolve()
+    repo_resolved = repo_root.resolve()
+    if out_resolved == repo_resolved or out_resolved in repo_resolved.parents:
+        return [f"{out_dir}: refusing to clean repository root"]
+
     shutil.rmtree(str(out_dir), ignore_errors=True)
     out_dir.mkdir(parents=True, exist_ok=True)
 

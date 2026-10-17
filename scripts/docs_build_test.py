@@ -13,6 +13,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import re
 import sys
 import tempfile
@@ -319,6 +320,68 @@ class RewriteTests(unittest.TestCase):
         self.assertIn("docs/ROADMAP_INDEX.md:3:", errors[0])
         self.assertIn("link target not found: nope.md", errors[0])
 
+    def test_rewrite_skips_fenced_code(self) -> None:
+        for fence in ("```", "~~~"):
+            with self.subTest(fence=fence):
+                text = (
+                    fence
+                    + "\n[x](docs/ROADMAP_INDEX.md)\n"
+                    + "[id]: docs/ROADMAP_INDEX.md\n"
+                    + fence
+                    + "\n"
+                )
+
+                rewritten, errors = db.rewrite_links(
+                    text,
+                    "README.md",
+                    self.page_map,
+                    self.repo,
+                    db.REPO_URL,
+                )
+
+                self.assertEqual(rewritten, text)
+                self.assertEqual(errors, [])
+
+    def test_rewrite_skips_indented_code(self) -> None:
+        text = "    [x](missing.md)\n\t[y](docs/ROADMAP_INDEX.md)\n"
+
+        rewritten, errors = db.rewrite_links(
+            text, "README.md", self.page_map, self.repo, db.REPO_URL
+        )
+
+        self.assertEqual(rewritten, text)
+        self.assertEqual(errors, [])
+
+    def test_rewrite_skips_inline_code(self) -> None:
+        text = (
+            "`[a](missing.md)` ``[b](missing2.md)`` "
+            "```[c](missing3.md)```\n"
+        )
+
+        rewritten, errors = db.rewrite_links(
+            text, "README.md", self.page_map, self.repo, db.REPO_URL
+        )
+
+        self.assertEqual(rewritten, text)
+        self.assertEqual(errors, [])
+
+    def test_rewrite_processes_link_next_to_code(self) -> None:
+        text = (
+            "`[broken](missing.md)` [ok](docs/ROADMAP_INDEX.md)\n"
+            "```\n[inside](missing2.md)\n```\n"
+            "    [indented](missing3.md)\n"
+        )
+
+        rewritten, errors = db.rewrite_links(
+            text, "README.md", self.page_map, self.repo, db.REPO_URL
+        )
+
+        self.assertEqual(errors, [])
+        self.assertIn("`[broken](missing.md)`", rewritten)
+        self.assertIn("[ok](roadmap-index.md)", rewritten)
+        self.assertIn("```\n[inside](missing2.md)\n```", rewritten)
+        self.assertIn("    [indented](missing3.md)", rewritten)
+
 
 class BannerTests(unittest.TestCase):
     def banner(self, source: str) -> str:
@@ -530,6 +593,27 @@ class RenderPageTests(unittest.TestCase):
         self.assertIn("> **Источник:** [README.md](", text)
         self.assertIn("[архитектуру](architecture.md)", text)
 
+    def test_render_page_image_error_uses_source_line(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            repo = make_repo(root)
+            write_text(
+                repo / "docs/broken-image.md",
+                "# Битое\n\nТекст\n\nТекст\n\n![pic](img/missing.png)\n",
+            )
+            page = db.Page(
+                "docs/broken-image.md", "broken-image.md", "Битое", "Обзор"
+            )
+            out = root / "site-docs"
+
+            text, errors = db.render_page(page, repo, out, db.REPO_URL)
+
+        self.assertEqual(len(errors), 1)
+        self.assertIn("docs/broken-image.md:7:", errors[0])
+        self.assertNotIn(":9:", errors[0])
+        self.assertNotIn(":10:", errors[0])
+        self.assertIn("> **Источник:**", text)
+
 
 class MainTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -591,6 +675,20 @@ class MainTests(unittest.TestCase):
         self.assertIn(
             "INHERIT: ../mkdocs.base.yml", config.read_text(encoding="utf-8")
         )
+
+    def test_main_out_refuses_repository_root(self) -> None:
+        old_cwd = Path.cwd()
+        self.addCleanup(os.chdir, str(old_cwd))
+        os.chdir(str(self.repo))
+        before = snapshot(self.repo)
+
+        code, stdout, stderr = self.run_main(
+            ["--out", ".", "--repo-root", str(self.repo)]
+        )
+
+        self.assertEqual(code, 1)
+        self.assertIn("refusing to clean repository root", stderr)
+        self.assertEqual(snapshot(self.repo), before)
 
 
 if __name__ == "__main__":
