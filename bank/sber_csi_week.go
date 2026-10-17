@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	log "github.com/sirupsen/logrus"
 )
@@ -87,19 +86,16 @@ func sberCSIWeekCraw(dataUrl string, conn driver.Conn) (count int64, err error) 
 	return count, nil
 }
 
-// sberCSIWeekImporter — импортёр пакета; регистрируется init() ниже (реестр пакета — отдельная работа).
+// sberCSIWeekImporter — импортёр пакета; регистрируется реестром пакета (bank/importers.go) —
+// единственной точкой append в chimport.Stats.
 var sberCSIWeekImporter = &SberCSIWeek{ClickHouseImport: util.ClickHouseImport{
 	TableName:   sberCSIWeekTable,
 	CreateTable: []string{sberCSIWeekDdl},
 	DataUrl:     sberCSIWeekDataUrl,
 	CrawFunc:    sberCSIWeekCraw,
-	// Производные (каталог рядов и витрина) публикует шаблон после Send точек (стандарт §5.2,
-	// §10.2) — тем же хелпером, что месячный импортёр. Точки контроля публикации у набора нет
-	// (спека §4.2) — версия не пишется; каталог и витрина общие на оба набора, поэтому каждый
-	// прогон перезаписывает все 51 описание и витрину целиком.
-	AfterImport: afterSberMacro(sberSeriesMeta),
+	// Производные (каталог рядов пакета и обе витрины) публикует шаблон после Send точек
+	// (стандарт §5.2, §10.2) — тем же хелпером, что месячный импортёр. Точки контроля публикации у
+	// набора нет (спека §4.2) — версия не пишется; каталог и витрины общие на весь пакет, поэтому
+	// каждый прогон перезаписывает каталог целиком и пересобирает витрины.
+	AfterImport: afterBankMacro(bankSeriesMeta),
 }}
-
-func init() {
-	chimport.Stats = append(chimport.Stats, sberCSIWeekImporter)
-}

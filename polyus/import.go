@@ -57,6 +57,12 @@ const financialMetricsCompany = "PLZL"
 // (строки, перенесённые из polyus_financial_metrics) зарезервировано — код его
 // пока не пишет.
 //
+// Кроме документов Полюса, в таблицу пишет банковские метрики внутренний импортёр
+// bank_company_metrics (SBER, VTBR): его ряды помесячные и несут period_type 'M'.
+// Из этого импортёра 'M' не пишется никогда — у него только Q/H/FY/LTM, — а сама
+// буква в enum нужна потому, что месячный ряд иначе нечем было бы отличить от
+// квартального при одной и той же строке периода.
+//
 // Порядок колонок не произвольный: source_kind стоит между period_type и value —
 // ровно там, где его передаёт batch.Append.
 const financialMetricsCreateTable = `CREATE TABLE IF NOT EXISTS %s
@@ -64,7 +70,7 @@ const financialMetricsCreateTable = `CREATE TABLE IF NOT EXISTS %s
     company     LowCardinality(String),
     metric      LowCardinality(String),
     period      String,
-    period_type Enum8('Q' = 1, 'H' = 2, 'FY' = 3, 'LTM' = 4),
+    period_type Enum8('Q' = 1, 'H' = 2, 'FY' = 3, 'LTM' = 4, 'M' = 5),
     source_kind LowCardinality(String),
     value       Nullable(Float64),
     unit        LowCardinality(String),

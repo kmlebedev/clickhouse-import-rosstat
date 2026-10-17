@@ -34,7 +34,7 @@ const companyFinancialsCreateTable = `CREATE TABLE IF NOT EXISTS ` + companyFina
     company     LowCardinality(String),
     metric      LowCardinality(String),
     period      String,
-    period_type Enum8('Q' = 1, 'H' = 2, 'FY' = 3, 'LTM' = 4),
+    period_type Enum8('Q' = 1, 'H' = 2, 'FY' = 3, 'LTM' = 4, 'M' = 5),
     source_kind LowCardinality(String),
     value       Nullable(Float64),
     unit        LowCardinality(String),
@@ -51,13 +51,17 @@ ORDER BY (company, metric, period, source_kind, source_url)`
 // Разрешение идёт по ключу ПЕРВИЧНОГО индекса: argMax выбирает строку с
 // наибольшим кортежем
 //
-//	(source_kind = 'ifrs', loaded_at, source_url)
+//	(source_kind = 'ifrs', source_kind = 'ras', loaded_at, source_url)
 //
 // и вместе с ней возвращает значение и провенанс. Порядок полей кортежа — и есть
 // правило: сначала аудированная отчётность (ifrs = 1) перебивает пресс-релиз
-// (kpi = 0), затем побеждает более поздняя загрузка, а source_url стоит третьим
-// только затем, чтобы выдача не «плавала» между прогонами при равных первых двух
-// ключах.
+// (kpi = 0), затем РСБУ-отчётность (ras = 1) перебивает тот же пресс-релиз, затем
+// побеждает более поздняя загрузка, а source_url стоит последним только затем,
+// чтобы выдача не «плавала» между прогонами при равных первых трёх ключах.
+//
+// Ступени ras в споре банковских метрик не видно: у каждой банковской компании
+// вид отчётности ровно один (у SBER 'ras', у VTBR 'ifrs'), и правило нужно ей
+// для полноты порядка, а не для выбора между двумя её документами.
 //
 // Возрастающий источник source_url — тай-брейк, а не предпочтение документа:
 // сортировка идёт по сырым строкам URL, и «меньше» здесь не значит «достовернее»
@@ -111,25 +115,25 @@ FROM (
         company,
         metric,
         period,
-        argMax(period_type, (source_kind = 'ifrs', loaded_at, source_url)) AS r_period_type,
-        argMax(source_kind, (source_kind = 'ifrs', loaded_at, source_url)) AS r_source_kind,
-        argMax(value, (source_kind = 'ifrs', loaded_at, source_url)) AS r_value,
-        argMax(unit, (source_kind = 'ifrs', loaded_at, source_url)) AS r_unit,
-        argMax(source_url, (source_kind = 'ifrs', loaded_at, source_url)) AS r_source_url,
-        argMax(source_page, (source_kind = 'ifrs', loaded_at, source_url)) AS r_source_page,
-        argMax(loaded_at, (source_kind = 'ifrs', loaded_at, source_url)) AS r_loaded_at
+        argMax(period_type, (source_kind = 'ifrs', source_kind = 'ras', loaded_at, source_url)) AS r_period_type,
+        argMax(source_kind, (source_kind = 'ifrs', source_kind = 'ras', loaded_at, source_url)) AS r_source_kind,
+        argMax(value, (source_kind = 'ifrs', source_kind = 'ras', loaded_at, source_url)) AS r_value,
+        argMax(unit, (source_kind = 'ifrs', source_kind = 'ras', loaded_at, source_url)) AS r_unit,
+        argMax(source_url, (source_kind = 'ifrs', source_kind = 'ras', loaded_at, source_url)) AS r_source_url,
+        argMax(source_page, (source_kind = 'ifrs', source_kind = 'ras', loaded_at, source_url)) AS r_source_page,
+        argMax(loaded_at, (source_kind = 'ifrs', source_kind = 'ras', loaded_at, source_url)) AS r_loaded_at
     FROM ` + companyFinancialsTable + ` FINAL
     GROUP BY company, metric, period
 )`,
-	Comment: "Разрешённые метрики компаний по документам: одна строка на (company, metric, period). Приоритет источника: ifrs (аудит) > kpi (пресс-релиз), затем свежесть loaded_at, затем source_url — детерминированный тай-брейк. source_kind и source_url указывают, из какого документа взято значение. Проигравшие значения видны в v_company_metric_sources",
+	Comment: "Разрешённые метрики компаний по документам: одна строка на (company, metric, period). Приоритет источника: ifrs (аудит) > ras (РСБУ Сбербанка) > kpi (пресс-релиз), затем свежесть loaded_at, затем source_url — детерминированный тай-брейк. source_kind и source_url указывают, из какого документа взято значение. Проигравшие значения видны в v_company_metric_sources",
 	Columns: map[string]string{
-		"company":     "Компания-эмитент: 'PLZL' — Полюс. Пока заполняется только она; схема заводилась общей для сектора",
-		"metric":      "Показатель: 'gold_output' — производство золота, koz; 'revenue' — выручка, USD млн, и др. Словарь метрик — polyus/metrics.go",
+		"company":     "Компания-эмитент: 'PLZL' — Полюс (метрики релизов и датапака); 'SBER' — Сбербанк и 'VTBR' — группа ВТБ (отчётные метрики импортёра bank_company_metrics, помесячные); 'T' — Т-Банк: тикер зарезервирован, строк пока нет — источник не починен. Схема заводилась общей для сектора",
+		"metric":      "Показатель: 'gold_output' — производство золота, koz; 'revenue' — выручка, USD млн, и др. Словарь метрик Полюса — polyus/metrics.go; банковские метрики ('total_assets', 'net_profit', 'roe', …) публикует bank_company_metrics — их описания ищутся в v_series_catalog по source = 'bank_company_metrics' и series = '<TICKER>_<metric>'",
 		"period":      "Отчётный период в канонической форме: '2026H1', '2024FY', '2024Q4'. Формируется из шапки страницы документа, сравнивать периоды между собой нужно как строки одного словаря",
-		"period_type": "Тип периода: Q — квартал, H — полугодие, FY — год, LTM — скользящие 12 месяцев. Берётся из документа, а не выводится из period",
-		"source_kind": "Вид документа, из которого взято значение: 'ifrs' — аудированная отчётность (побеждает), 'kpi' — пресс-релиз ('legacy' зарезервировано для строк, перенесённых из polyus_financial_metrics, — код его пока не пишет). Идентифицирует документ-победитель вместе с source_url",
+		"period_type": "Тип периода: Q — квартал, H — полугодие, FY — год, LTM — скользящие 12 месяцев, M — месяц (банковские метрики). Берётся из документа, а не выводится из period",
+		"source_kind": "Вид документа, из которого взято значение: 'ifrs' — аудированная отчётность (побеждает), 'ras' — отчётность по РСБУ (Сбербанк; в правиле разрешения стоит второй ступенью — после аудита, до свежести загрузки), 'kpi' — пресс-релиз ('legacy' зарезервировано для строк, перенесённых из polyus_financial_metrics, — код его пока не пишет). Идентифицирует документ-победитель вместе с source_url",
 		"value":       "Значение показателя в единицах колонки unit; NULL — документ печатал прочерк или значение не прочиталось",
-		"unit":        "Единица значения: 'koz' (тыс. тройских унций), 'USD million', 'USD/share', 'x' (коэффициент), '%'. Из словаря метрик",
+		"unit":        "Единица значения: 'koz' (тыс. тройских унций), 'USD million', 'USD/share', 'x' (коэффициент), '%'; у банковских метрик — 'млрд ₽' и '%'. Из словаря метрик",
 		"source_url":  "URL документа, из которого взято значение (PDF релиза или отчёта). Вместе с source_kind и source_page задаёт провенанс документа-победителя",
 		"source_page": "Номер страницы PDF, на которой напечатано значение; 0 — страница не донесена. Может быть на единицу больше номера в PDF: адрес страницы и номер листа считаются по-разному",
 		"loaded_at":   "Момент загрузки строки в ClickHouse (UTC). Одно время на весь батч импортёра; позже побеждает — свежесть загрузки стоит вторым ключом разрешения",
@@ -162,13 +166,13 @@ FROM ` + companyFinancialsTable + ` FINAL
 ORDER BY company, metric, period, source_kind, source_url`,
 	Comment: "Аудит расхождений company_financials: все версии метрики за период, включая проигравшую в v_company_financials, — сравнение документов. Правило приоритета не применяется: витрина нужна затем, чтобы расхождение документов (сравнительная база одного релиза против другого) оставалось видимым. source_kind и source_url идентифицируют документ каждой строки",
 	Columns: map[string]string{
-		"company":     "Компания-эмитент: 'PLZL' — Полюс. Пока заполняется только она; схема заводилась общей для сектора",
-		"metric":      "Показатель: 'gold_output' — производство золота, koz; 'revenue' — выручка, USD млн, и др. Словарь метрик — polyus/metrics.go",
+		"company":     "Компания-эмитент: 'PLZL' — Полюс (метрики релизов и датапака); 'SBER' — Сбербанк и 'VTBR' — группа ВТБ (отчётные метрики импортёра bank_company_metrics, помесячные); 'T' — Т-Банк: тикер зарезервирован, строк пока нет — источник не починен. Схема заводилась общей для сектора",
+		"metric":      "Показатель: 'gold_output' — производство золота, koz; 'revenue' — выручка, USD млн, и др. Словарь метрик Полюса — polyus/metrics.go; банковские метрики ('total_assets', 'net_profit', 'roe', …) публикует bank_company_metrics — их описания ищутся в v_series_catalog по source = 'bank_company_metrics' и series = '<TICKER>_<metric>'",
 		"period":      "Отчётный период в канонической форме: '2026H1', '2024FY', '2024Q4'. Один период встречается в нескольких документах — это и есть предмет сверки",
-		"period_type": "Тип периода: Q — квартал, H — полугодие, FY — год, LTM — скользящие 12 месяцев. Берётся из документа, а не выводится из period",
-		"source_kind": "Вид документа, из которого пришла строка: 'ifrs' — аудированная отчётность, 'kpi' — пресс-релиз ('legacy' зарезервировано для строк, перенесённых из polyus_financial_metrics, — код его пока не пишет). Идентифицирует документ вместе с source_url; по нему видно, чья версия победила в v_company_financials",
+		"period_type": "Тип периода: Q — квартал, H — полугодие, FY — год, LTM — скользящие 12 месяцев, M — месяц (банковские метрики). Берётся из документа, а не выводится из period",
+		"source_kind": "Вид документа, из которого пришла строка: 'ifrs' — аудированная отчётность, 'ras' — отчётность по РСБУ (Сбербанк), 'kpi' — пресс-релиз ('legacy' зарезервировано для строк, перенесённых из polyus_financial_metrics, — код его пока не пишет). Идентифицирует документ вместе с source_url; по нему видно, чья версия победила в v_company_financials",
 		"value":       "Значение показателя в единицах колонки unit у ЭТОГО документа; NULL — документ печатал прочерк или значение не прочиталось",
-		"unit":        "Единица значения: 'koz' (тыс. тройских унций), 'USD million', 'USD/share', 'x' (коэффициент), '%'. Из словаря метрик",
+		"unit":        "Единица значения: 'koz' (тыс. тройских унций), 'USD million', 'USD/share', 'x' (коэффициент), '%'; у банковских метрик — 'млрд ₽' и '%'. Из словаря метрик",
 		"source_url":  "URL документа, из которого пришла строка (PDF релиза или отчёта). Именно по нему видно, что сравниваются два разных документа, а не дубликат одной строки",
 		"source_page": "Номер страницы PDF, на которой напечатано значение; 0 — страница не донесена. Может быть на единицу больше номера в PDF: адрес страницы и номер листа считаются по-разному",
 		"loaded_at":   "Момент загрузки строки в ClickHouse (UTC); у двух документов за один период метки обычно разные — по ним видно, какая версия загружена позже",
