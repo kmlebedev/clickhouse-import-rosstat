@@ -1350,6 +1350,33 @@ async def check(params, server_log):
             failed += not expect("витрина v_cbr_form101 содержит строки Сбера за 2026-09-01",
                                  (form101_sber_n or 0) > 0, form101_sber_detail)
 
+            # Pilot-маппинг формы 101 на кредиты ЮЛ/ФЛ (issue #98): витрина должна
+            # отдавать калибровку за август 2026 (report_date 2026-09-01) и
+            # эталон пресс-релиза из company_financials. Ноль строк — не
+            # «нет данных», а не отработавший импортёр/сид.
+            form101_loans = text(await session.call_tool("run_query", {
+                "query": "SELECT corporate_loans_bln_rub, retail_loans_bln_rub, "
+                         "press_release_corporate_bln_rub, press_release_retail_bln_rub, "
+                         "corporate_diff_pct, retail_diff_pct "
+                         "FROM v_cbr_form101_loans WHERE report_date = '2026-09-01' LIMIT 1"}))
+            form101_loans_rows = result_rows(form101_loans)
+            if form101_loans_rows is None:
+                form101_loans_detail = f"ответ не распознан: {form101_loans[:200]}"
+            elif form101_loans_rows:
+                row = form101_loans_rows[0]
+                form101_loans_detail = (
+                    f"ЮЛ {row.get('corporate_loans_bln_rub')} / "
+                    f"{row.get('press_release_corporate_bln_rub')} "
+                    f"({row.get('corporate_diff_pct')}), ФЛ "
+                    f"{row.get('retail_loans_bln_rub')} / "
+                    f"{row.get('press_release_retail_bln_rub')} "
+                    f"({row.get('retail_diff_pct')})")
+            else:
+                form101_loans_detail = ("строк нет — прогнать make import "
+                                        "STAT=cbr_form101 и сид 2026M08")
+            failed += not expect("v_cbr_form101_loans отдаёт pilot-калибровку",
+                                 bool(form101_loans_rows), form101_loans_detail)
+
             # Сырая cbr_form101 агенту не выдана — как macro_series и cbr_dip_bulletin:
             # витрина — единственное место, где агент читает остатки по счетам (комментарии
             # таблицы и каждой колонки есть только у неё). Таблицу создаёт DDL-прогон
