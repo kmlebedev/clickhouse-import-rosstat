@@ -374,7 +374,9 @@ async def check(params, server_log):
             # общая проверка выше проходит и на одних сообщениях молнии. Ноль здесь
             # означает ни разу не отработавший прогон с новой лентой, а не пустой
             # канал, — detail подсказывает команду импорта.
-            edisclosure_raw = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_news_flash WHERE channel = 'edisclosure'"}))
+            edisclosure_raw = text(await session.call_tool(
+                "run_query",
+                {"query": "SELECT count() AS n FROM v_news_flash WHERE channel = 'edisclosure'"}))
             edisclosure = result_rows(edisclosure_raw)
             edisclosure_n = edisclosure[0].get("n") if edisclosure else None
             if edisclosure is None:
@@ -382,7 +384,7 @@ async def check(params, server_log):
             elif (edisclosure_n or 0) > 0:
                 edisclosure_detail = f"сообщений edisclosure: {edisclosure_n}"
             else:
-                edisclosure_detail = (f"сообщений edisclosure: {edisclosure_n} — прогнать make import "
+                edisclosure_detail = (f"сообщений edisclosure: {edisclosure_n or 0} — прогнать make import "
                                       "STAT=news_watch (девятая лента, канал edisclosure)")
             failed += not expect("канал edisclosure в v_news_flash", (edisclosure_n or 0) > 0, edisclosure_detail)
 

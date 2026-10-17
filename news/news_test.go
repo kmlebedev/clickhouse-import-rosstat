@@ -2120,6 +2120,80 @@ func TestImportTelegramFeedFailureNoTombstone(t *testing.T) {
 	}
 }
 
+func TestImportOneTelegramFeedFailureIsolated(t *testing.T) {
+	// Сбой одной Telegram-ленты не должен задевать вторую: здоровая лента пишет текущие
+	// сообщения и свои версии, упавшая — не читает историю и не даёт tombstone. Оба
+	// направления проверяются отдельно: падение interfax_tg при живом edisclosure_tg
+	// и зеркально.
+	for _, tc := range []struct {
+		name    string
+		failed  string
+		healthy string
+		channel string
+		history bool
+	}{
+		{name: "interfax_tg down", failed: "interfax_tg", healthy: "edisclosure_tg", channel: "edisclosure"},
+		{name: "edisclosure_tg down", failed: "edisclosure_tg", healthy: "interfax_tg", channel: "interfaxonline", history: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(modeEnv, modeSince)
+			pointFeedsAt(t, serveFixtures(t, map[string]int{tc.failed: http.StatusInternalServerError}))
+
+			byKey, _ := fixtureInventory(t)
+			rssKeys := make(map[string][]newsKey, 6)
+			for _, f := range feeds() {
+				if f.Kind == feedRSS {
+					rssKeys[f.Source] = append(rssKeys[f.Source], keysOf(byKey[f.Key])...)
+				}
+			}
+			conn := newNewsFakeConnWithKeys(rssKeys)
+			if tc.history {
+				tgItems := byKey["interfax_tg"]
+				windowMin, windowMax := telegramFixtureWindow(tgItems)
+				conn.versions = map[string][]telegramVersion{
+					"interfaxonline": {{
+						Channel: "interfaxonline", MessageID: tgItems[0].MessageID, Version: 1,
+						Date: windowMin.Add(windowMax.Sub(windowMin) / 2), Source: "interfax",
+						Title: tgItems[0].Title, URL: tgItems[0].URL,
+						Description: tgItems[0].Description, ContentHash: tgItems[0].ContentHash,
+						FirstSeen: windowMin, Deleted: 0,
+					}},
+				}
+			}
+
+			var s newsImport
+			count, err := s.Import(context.Background(), conn)
+			if err == nil || !strings.Contains(err.Error(), tc.failed) {
+				t.Fatalf("Import(%s) при сбое %s: count=%d err=%v, want ошибку с ключом упавшей ленты",
+					modeSince, tc.failed, count, err)
+			}
+			if strings.Contains(err.Error(), tc.healthy) {
+				t.Errorf("ошибка Import = %q содержит ключ здоровой ленты %s: сбой одной ленты задел другую",
+					err, tc.healthy)
+			}
+			if want := len(byKey[tc.healthy]); int(count) != want {
+				t.Errorf("Import вернул %d строк, want %d (текущие позиции здоровой ленты %s)", count, want, tc.healthy)
+			}
+			if !conn.anyCallHas("source=" + tc.channel) {
+				t.Errorf("версии здоровой ленты %s не читались; вызовы: %v", tc.channel, conn.callList())
+			}
+			versionBatch := conn.batchByQuery(t, telegramVersionInsert)
+			versions := versionBatch.insertedVersions(t)
+			if len(versions) == 0 {
+				t.Fatalf("батч версий здоровой ленты %s пуст", tc.channel)
+			}
+			for _, v := range versions {
+				if v.Channel != tc.channel {
+					t.Errorf("в батче версий строка чужого канала %q, want только %q", v.Channel, tc.channel)
+				}
+				if v.Deleted != 0 {
+					t.Errorf("здоровая лента %s дала tombstone %+v при сбое другой ленты", tc.channel, v)
+				}
+			}
+		})
+	}
+}
+
 func TestImportSinceModeAllFeedsFailed(t *testing.T) {
 	// Все девять лент упали: items пуст, и в since до чтения ключей дело не доходит — ошибка
 	// собирается из отказов лент (ключ каждой), строк не пишется.
