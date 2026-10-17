@@ -40,9 +40,13 @@ const (
 	// newsLLMBatchSize — сообщений в одном запросе к провайдеру: 10 коротких молний
 	// укладываются в контекст и дают приемлемую цену за прогон.
 	newsLLMBatchSize = 10
-	// newsLLMBacklogLimit — предел кандидатов за прогон (LIMIT в newsAnnotationCandidatesQuery):
-	// 50 сообщений = 5 батчей, стоимость LLM ограничена даже после долгого простоя.
-	newsLLMBacklogLimit = 50
+	// newsLLMBacklogLimitEnv — операционный рычаг бэклога: штатно 50 позиций за прогон
+	// (5 батчей, стоимость LLM ограничена даже после долгого простоя), разовый бэкфилл —
+	// значение до newsLLMBacklogLimitMax. Переменная, а не константа: после простоя или
+	// смены prompt_version догон иначе растянулся бы на много прогонов.
+	newsLLMBacklogLimitEnv     = "NEWS_LLM_BACKLOG_LIMIT"
+	newsLLMBacklogLimitDefault = 50
+	newsLLMBacklogLimitMax     = 1000
 	// newsLLMMaxTokens — предел вывода Anthropic-пути: запас на 10 сообщений с резюме и цитатами.
 	// В Anthropic Messages API max_tokens обязателен — без него запрос отвергается.
 	newsLLMMaxTokens = 4096
@@ -50,6 +54,23 @@ const (
 	// 8192; 10 сообщений с резюме и до пяти цитат в 4096 не гарантированно влезают.
 	newsLLMOpenAIMaxTokens = 8192
 )
+
+// newsLLMBacklogLimitFromEnv читает предел кандидатов разметки за прогон. Пусто — штатные 50.
+// Нечисло или значение вне 1..1000 — warn с именем переменной и значением (секретов здесь нет)
+// и дефолт: опечатка в переменной бэкфилла не должна молча размечать бюджет другого размера.
+func newsLLMBacklogLimitFromEnv() int {
+	raw := strings.TrimSpace(os.Getenv(newsLLMBacklogLimitEnv))
+	if raw == "" {
+		return newsLLMBacklogLimitDefault
+	}
+	limit, err := strconv.Atoi(raw)
+	if err != nil || limit < 1 || limit > newsLLMBacklogLimitMax {
+		log.Warnf("news_watch: %s=%q вне 1..%d, используется %d",
+			newsLLMBacklogLimitEnv, raw, newsLLMBacklogLimitMax, newsLLMBacklogLimitDefault)
+		return newsLLMBacklogLimitDefault
+	}
+	return limit
+}
 
 // newsLLMTimeout — дедлайн одного запроса к Anthropic-провайдеру. Переменная, а не константа:
 // тест подставляет короткий дедлайн вместо минутного. Зависший провайдер обязан дать ошибку, по
