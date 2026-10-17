@@ -54,3 +54,14 @@ steps:
     retry_policy:
       limit: 3
       interval_sec: 300
+
+  # company_views (пакет views/) пересоздаёт v_company_* сразу после банковского маппера:
+  # порядок выкатки «ALTER period_type → company_views» — README; в dagu/financial.yaml шаг
+  # остаётся (идемпотентен, нужен контуру Полюса).
+  - id: company_views
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=company_views
+    retry_policy:
+      limit: 3
+      interval_sec: 300

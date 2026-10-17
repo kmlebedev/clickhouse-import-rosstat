@@ -61,6 +61,18 @@ var sharedCompanyFinancialsOwners = map[string]bool{
 // явная, и она же страхует обратное направление (г), которое иначе пропускало бы этот импортёр.
 const unscheduledTBank = "tbank_group_ifrs"
 
+// foreignDaguSteps — шаги dagu/bank.yaml, которых нет в реестре bankImporters, но стоят в
+// банк-цепочке осознанно. company_views принадлежит пакету views/ и пересоздаёт общие витрины
+// v_company_* сразу после банковского маппера bank_company_metrics: ALTER period_type расширил
+// таблицу, а CREATE VIEW фиксирует тип колонки на момент создания — без прогона company_views
+// витрины отдают period_type старого enum. Импортёр в реестр пакета не входит и не должен,
+// поэтому проверка (г) пропускает шаг по allowlist'у; в dagu/financial.yaml шаг остаётся
+// (идемпотентен, нужен контуру Полюса). Набор литеральный и намеренно узкий: он разрешает
+// ровно известный чужой шаг, а не любой шаг вне реестра (опечатка в имени по-прежнему падает).
+var foreignDaguSteps = map[string]bool{
+	"company_views": true,
+}
+
 // expectedPublicationCountPoints — запросы количественного чека (спека §3.1) для импортёров,
 // объявивших точку контроля публикации. Литералами, а не ссылкой на константу импортёра: проверка
 // «колонка countPoints реестра == объявление самого импортёра» падает ровно на расхождении запросов,
@@ -111,11 +123,14 @@ var daguStatRef = regexp.MustCompile(`CLICKHOUSE_IMPORT_STAT=([A-Za-z0-9_]+)`)
 //     company_financials затёр бы метрики Полюса;
 //   - (в) имена уникальны и лежат в chimport.Stats: дубль имени в фильтре `make import STAT=...`
 //     выбрал бы произвольный из двух импортёров;
-//   - (г) состав шагов dagu/bank.yaml и состав реестра совпадают в обе стороны (шесть шагов: пять
-//     импортёров и bank_company_metrics), плюс явная проверка «шага tbank_group_ifrs в расписании
-//     нет» (О2): пропавший шаг не заметил бы больше ни один тест — реестр верен сам по себе, а
-//     витрина v_bank_macro и метрики банков в company_financials просто перестали бы обновляться;
-//     вернувшийся же шаг Т-Банка уронил бы цепочку на PDF-ссылке до починки источника;
+//   - (г) шесть банковских шагов dagu/bank.yaml (пять импортёров и bank_company_metrics) есть в
+//     реестре, а каждый импортёр реестра — в расписании (кроме tbank_group_ifrs, О2); единственный
+//     чужой шаг company_views пропускается литеральным allowlist'ом foreignDaguSteps: он пересоздаёт
+//     общие витрины v_company_* сразу после банковского маппера; плюс явная проверка «шага
+//     tbank_group_ifrs в расписании нет» (О2): пропавший шаг не заметил бы больше ни один тест —
+//     реестр верен сам по себе, а витрина v_bank_macro и метрики банков в company_financials просто
+//     перестали бы обновляться; вернувшийся же шаг Т-Банка уронил бы цепочку на PDF-ссылке до
+//     починки источника;
 //   - (д) точка контроля публикации (префлайт) объявлена ровно у ожидаемых трёх импортёров и
 //     запросом из expectedPublicationCountPoints: колонка countPoints реестра сверяется с
 //     объявлением самого импортёра (метод Publication() встроенного util.ClickHouseImport), а у
@@ -254,7 +269,7 @@ func TestBankImportersNamedAndRegistered(t *testing.T) {
 	for _, step := range steps {
 		name := step[1]
 		scheduled[name] = true
-		if !seen[name] {
+		if !seen[name] && !foreignDaguSteps[name] {
 			t.Errorf("шаг dagu/bank.yaml CLICKHOUSE_IMPORT_STAT=%s не найден в реестре bankImporters: расписание позовёт импортёр, которого нет", name)
 		}
 	}
