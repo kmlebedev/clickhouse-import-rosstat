@@ -1,6 +1,8 @@
 package news
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/xml"
 	"fmt"
 	"strings"
@@ -41,6 +43,21 @@ type newsItem struct {
 	Title       string
 	URL         string
 	Description string
+	// ContentHash — sha256 от title+"\n"+description; ключ версии для LLM-разметки.
+	// У RSS он тоже заполняется: разметка generic по url+content_hash.
+	ContentHash string
+	// Channel и MessageID несут только Telegram-позиции (channel/id из data-post);
+	// у RSS они пустые/нулевые — адрес позиции задаёт URL.
+	Channel   string
+	MessageID uint64
+}
+
+// contentHash считает версионный ключ текста: смена заголовка или описания меняет
+// hash, а перечитывание того же текста — нет. Разделитель "\n" исключает склейку
+// разных пар ("ab","c" и "a","bc") в один ключ.
+func contentHash(title, description string) string {
+	sum := sha256.Sum256([]byte(title + "\n" + description))
+	return hex.EncodeToString(sum[:])
 }
 
 // pubDateLayouts — три раскладки pubDate в порядке проверки, от полной формы
@@ -109,16 +126,18 @@ func itemsFromDoc(source string, doc rssDoc) (items []newsItem, skipped int, err
 			skipped++
 			continue
 		}
+		// Описание тримится по краям, но берётся как есть — с разметкой и переводами
+		// строк: у smart-lab это полный текст поста. Пустое — не пропуск и не ошибка:
+		// у части позиций элемента description в ленте нет.
+		description := strings.TrimSpace(it.Description)
 		items = append(items, newsItem{
 			Date:   date,
 			Source: source,
 			Title:  title,
 			// Пустой link — не пропуск: заголовок без ссылки всё ещё событие тезиса.
-			URL: strings.TrimSpace(it.Link),
-			// Описание тримится по краям, но берётся как есть — с разметкой и переводами
-			// строк: у smart-lab это полный текст поста. Пустое — не пропуск и не ошибка:
-			// у части позиций элемента description в ленте нет.
-			Description: strings.TrimSpace(it.Description),
+			URL:         strings.TrimSpace(it.Link),
+			Description: description,
+			ContentHash: contentHash(title, description),
 		})
 	}
 	if len(items) == 0 {
