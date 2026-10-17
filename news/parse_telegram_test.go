@@ -96,6 +96,49 @@ func TestParseTelegramFixture(t *testing.T) {
 	}
 }
 
+// TestParseTelegramEdisclosureFixture — второй канал того же транспорта: фикстура
+// несёт четыре подряд идущих настоящих сообщения окна edisclosure (1659…1662).
+// Пин первого сообщения ловит перепутанные селекторы и разъезд канала из data-post
+// с конфигом ленты (edisclosure_tg) — на живых данных это молчаливая подмена полей.
+func TestParseTelegramEdisclosureFixture(t *testing.T) {
+	page := readTelegramFixture(t, "edisclosure_tg.html")
+	if len(page.Messages) != 4 {
+		t.Fatalf("сообщений = %d, want 4 (фикстура — четыре настоящих поста)", len(page.Messages))
+	}
+	if page.Skipped != 0 {
+		t.Errorf("Skipped = %d, want 0 (все сообщения фикстуры валидны)", page.Skipped)
+	}
+
+	first := page.Messages[0]
+	if want := "edisclosure"; first.Channel != want {
+		t.Errorf("Channel = %q, want %q", first.Channel, want)
+	}
+	if want := uint64(1659); first.MessageID != want {
+		t.Errorf("MessageID = %d, want %d", first.MessageID, want)
+	}
+	if want := time.Date(2026, time.September, 16, 9, 18, 47, 0, time.UTC); !first.Date.Equal(want) {
+		t.Errorf("Date = %v, want %v (UTC из time[datetime])", first.Date, want)
+	}
+	if want := "https://t.me/edisclosure/1659"; first.URL != want {
+		t.Errorf("URL = %q, want %q (собирается из data-post)", first.URL, want)
+	}
+	if !strings.Contains(first.Title, "Минфин") {
+		t.Errorf("Title = %q, want упоминание Минфина (первая строка поста)", first.Title)
+	}
+	for _, want := range []string{"IPO", "регион"} {
+		if !strings.Contains(first.Text, want) {
+			t.Errorf("Text первого сообщения не содержит %q: %q", want, first.Text)
+		}
+	}
+	// &quot; в живом HTML раскрывается при разборе: в тексте должны остаться кавычки.
+	if strings.Contains(first.Text, "&quot;") {
+		t.Errorf("Text = %q: HTML-сущность &quot; не раскрыта", first.Text)
+	}
+	if !strings.Contains(first.Text, `"Региональные правительства`) {
+		t.Errorf("Text не содержит раскрытой цитаты о региональных правительствах: %q", first.Text)
+	}
+}
+
 func TestTelegramItemsMapFields(t *testing.T) {
 	page := readTelegramFixture(t, "interfax_tg.html")
 
