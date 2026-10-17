@@ -240,17 +240,17 @@ git commit -m "docs: add roadmap issue and PR templates"
 - Consumes: все предыдущие задачи.
 - Produces: зелёный `make all`, отчёт проверки, PR.
 
-- [ ] **Step 1: Прогнать `make all`**
+- [x] **Step 1: Прогнать `make all`**
 
 Run: `make all`
 Expected: gofmt, golangci-lint, `go vet`, `go test -race`, обе сборки — зелёные; изменений кода нет, но проверка обязательна.
 
-- [ ] **Step 2: Проверить ссылки и отсутствие секретов**
+- [x] **Step 2: Проверить ссылки и отсутствие секретов**
 
 Run: `git diff --check && ! git diff --name-only | grep -E '(^|/)\.env$'`
 Expected: exit 0.
 
-- [ ] **Step 3: Проверить полноту модели**
+- [x] **Step 3: Проверить полноту модели**
 
 Вручную сверить:
 
@@ -260,15 +260,17 @@ Expected: exit 0.
 - правило владения разрешает EIA/WGC, ставку, металлургов, infra;
 - шаблоны issue/PR ссылаются на `ROADMAP_INDEX.md`.
 
-- [ ] **Step 4: Финальное ревью ветки**
+- [x] **Step 4: Финальное ревью ветки**
 
 Dispatch: `anthropic/haiku` — task review; `deepseek/deepseek-flash` — final whole-branch review (по правилам AGENTS.md).
 
 - [ ] **Step 5: Открыть PR**
 
+Issue пункта — [#106](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/106).
+
 Заголовок: `docs: add multi-roadmap GitHub tracker model`
 
-В описании: пункт `infra/3.1`, ссылка на issue, что зафиксировано, проверка `make all`, ссылка на спеку/план, `Closes #<issue>`.
+В описании: пункт `infra/3.1`, ссылка на issue, что зафиксировано, проверка `make all`, ссылка на спеку/план, `Closes #106`.
 
 ---
 
