@@ -48,22 +48,26 @@ func TestNewsAlterStatementsPinMigration(t *testing.T) {
 	}
 
 	stmts := newsSchemaStatements()
-	if len(stmts) != 4 {
-		t.Fatalf("newsSchemaStatements() = %d стейтментов, want 4 (CREATE news_events + 2 ALTER + CREATE news_message_version): %q",
-			len(stmts), stmts)
+	if len(stmts) != 5 {
+		t.Fatalf("newsSchemaStatements() = %d стейтментов, want 5 (CREATE news_events + 2 ALTER + "+
+			"CREATE news_message_version + CREATE news_annotation): %q", len(stmts), stmts)
 	}
 	if stmts[0] != newsEventsDdl {
 		t.Errorf("стейтмент 0 не равен newsEventsDdl: %q", stmts[0])
 	}
 	for i := range want {
 		if stmts[i+1] != want[i] {
-			t.Errorf("стейтмент %d = %q, want %q (ALTER-ы идут после CREATE, до таблицы версий)",
+			t.Errorf("стейтмент %d = %q, want %q (ALTER-ы идут после CREATE, до таблиц версий)",
 				i+1, stmts[i+1], want[i])
 		}
 	}
 	if stmts[3] != newsMessageVersionDdl {
 		t.Errorf("стейтмент 3 = %q, want DDL news_message_version (таблица версий создаётся после миграции news_events)",
 			stmts[3])
+	}
+	if stmts[4] != newsAnnotationDdl {
+		t.Errorf("стейтмент 4 = %q, want DDL news_annotation (таблица разметки создаётся после таблицы версий)",
+			stmts[4])
 	}
 }
 
@@ -88,6 +92,37 @@ func TestNewsMessageVersionDdlPinsCanon(t *testing.T) {
 	} {
 		if !strings.Contains(newsMessageVersionDdl, want) {
 			t.Errorf("DDL news_message_version обязан содержать %q: копия обязана совпадать с каноном "+
+				"ARCHITECTURE.md §6.2 (спека §4.2)", want)
+		}
+	}
+}
+
+// TestNewsAnnotationDdlPinsCanon — пин таблицы LLM-разметки: канон спеки §4.2. Ключ
+// ReplacingMergeTree (url, content_hash, kind, method, model, prompt_version, dimension, tag)
+// держит смену модели/промпта как новые строки, а не затирание; типы (UInt16 prompt_version,
+// Float32 confidence/sentiment/relevance) обязаны совпадать с живой таблицей.
+func TestNewsAnnotationDdlPinsCanon(t *testing.T) {
+	for _, want := range []string{
+		"url String",
+		"content_hash String",
+		"kind LowCardinality(String)",
+		"method LowCardinality(String)",
+		"model LowCardinality(String)",
+		"prompt_version UInt16",
+		"dimension LowCardinality(String)",
+		"tag LowCardinality(String)",
+		"direction LowCardinality(String)",
+		"confidence Float32",
+		"evidence String",
+		"sentiment Float32",
+		"relevance Float32",
+		"summary String",
+		"annotated_at DateTime",
+		"ENGINE = ReplacingMergeTree",
+		"ORDER BY (url, content_hash, kind, method, model, prompt_version, dimension, tag)",
+	} {
+		if !strings.Contains(newsAnnotationDdl, want) {
+			t.Errorf("DDL news_annotation обязан содержать %q: копия обязана совпадать с каноном "+
 				"ARCHITECTURE.md §6.2 (спека §4.2)", want)
 		}
 	}

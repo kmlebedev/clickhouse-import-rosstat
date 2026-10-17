@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -424,7 +425,19 @@ const (
 	// причине, что и у storedSpansQuery. Плейсхолдеры позиционные: ? #1 — source,
 	// ? #2 — граница (time.Time); clickhouse-go биндит аргументы по порядку.
 	storedKeysQuery = "SELECT date, title FROM " + newsTable + " FINAL WHERE source = ? AND date >= ?"
+
+	// newsAnnotationInsert — запись LLM-разметки. Список колонок явный, и его порядок —
+	// контракт с порядком аргументов Append в insertNewsAnnotations (порядок канонического DDL).
+	newsAnnotationInsert = "INSERT INTO " + newsAnnotationTable + " (url, content_hash, kind, method, model, prompt_version, dimension, tag, direction, confidence, evidence, sentiment, relevance, summary, annotated_at)"
 )
+
+// newsAnnotationCandidatesQuery читает бэклог разметки: Telegram-сообщения за 7 дней, для
+// которых ещё нет строки method='llm' этой пары (model, prompt_version). Пара входит в ключ
+// ReplacingMergeTree, поэтому смена модели/промпта автоматически делает старые сообщения
+// кандидатами, не затирая прежнюю разметку. FINAL обязателен: news_events и news_annotation —
+// ReplacingMergeTree, и без него вытесненные копии дали бы дубли кандидатов / ложные пропуски.
+// LIMIT — из newsLLMBacklogLimit: стоимость LLM ограничена и после долгого простоя.
+var newsAnnotationCandidatesQuery = `SELECT date, source, title, url, description, content_hash FROM ` + newsTable + ` FINAL WHERE url LIKE 'https://t.me/%' AND content_hash != '' AND date >= now() - INTERVAL 7 DAY AND (url, content_hash) NOT IN (SELECT url, content_hash FROM ` + newsAnnotationTable + ` FINAL WHERE method = 'llm' AND model = ? AND prompt_version = ?) ORDER BY date DESC LIMIT ` + strconv.Itoa(newsLLMBacklogLimit)
 
 // Import выполняет прогон контура новостей: DDL → витрина → ленты → батч.
 // Порядок шагов — часть контракта, а не стиль.
@@ -603,18 +616,56 @@ func (s *newsImport) Import(ctx context.Context, conn driver.Conn) (count int64,
 		if mode == modeSince {
 			log.Infof("news_watch: новых позиций нет — нечего обновлять (0 строк)")
 		}
-		return 0, errors.Join(feedErrs...)
-	}
-
-	if count, err = insertItems(ctx, conn, items); err != nil {
-		// К ошибке батча добавляются отказы лент: иначе прогон в dagu отчитывается
-		// только «запись упала», и сбойные ленты этого прогона из вывода выпадают.
-		return count, errors.Join(err, errors.Join(feedErrs...))
+	} else {
+		if count, err = insertItems(ctx, conn, items); err != nil {
+			// К ошибке батча добавляются отказы лент: иначе прогон в dagu отчитывается
+			// только «запись упала», и сбойные ленты этого прогона из вывода выпадают.
+			return count, errors.Join(err, errors.Join(feedErrs...))
+		}
 	}
 	// Версии пишутся после news_events: сбой второго батча не теряет текущий текст,
 	// а повтор прогона дописывает недостающие версии (ключ ReplacingMergeTree).
 	if _, verr := insertTelegramVersions(ctx, conn, newVersions); verr != nil {
 		return count, errors.Join(verr, errors.Join(feedErrs...))
+	}
+
+	// LLM-разметка — после записи текущего текста и версий, но до выхода из прогона:
+	// пустой items (since при покрытом окне или упавшая Telegram-лента) не повод пропускать
+	// бэклог news_annotation, иначе после простоя разметка не догналась бы никогда.
+	// Любая ошибка LLM/валидации/записи — warn и продолжение: импорт остаётся зелёным,
+	// догон — следующим прогоном. check сюда не доходит (возврат выше).
+	baseURL, apiKey, model, llmOK := newsLLMConfigFromEnv()
+	if !llmOK {
+		// Один warn за прогон: без него отсутствие разметки выглядело бы тихим дефектом.
+		log.Warnf("news_watch: LLM-разметка пропущена (нет LLM_BASE_URL/LLM_API_KEY/NEWS_LLM_MODEL)")
+	} else {
+		candidates, readErr := readNewsAnnotationCandidates(ctx, conn, model, newsPromptVersion)
+		switch {
+		case readErr != nil:
+			log.Warnf("news_watch: LLM-разметка (%s): %v", model, readErr)
+		case len(candidates) == 0:
+			// Бэклога нет — провайдер не вызывается.
+		default:
+			rows, tagErr := tagTelegramLLM(ctx, newsLLMConfig{BaseURL: baseURL, APIKey: apiKey, Model: model}, candidates)
+			if tagErr != nil {
+				log.Warnf("news_watch: LLM-разметка (%s): %v", model, tagErr)
+				break
+			}
+			var docs, tags int
+			for _, row := range rows {
+				switch row.Kind {
+				case newsKindDoc:
+					docs++
+				case newsKindTag:
+					tags++
+				}
+			}
+			if _, insErr := insertNewsAnnotations(ctx, conn, rows); insErr != nil {
+				log.Warnf("news_watch: LLM-разметка: запись %s: %v", newsAnnotationTable, insErr)
+				break
+			}
+			log.Infof("news_watch: LLM %s: размечено %d сообщений, тегов %d", model, docs, tags)
+		}
 	}
 	// Успешные ленты записаны, сбойная видна в логе и в итоговой ошибке: dagu
 	// перезапустит прогон, а повторная запись тех же позиций безвредна.
@@ -676,6 +727,64 @@ func insertItems(ctx context.Context, conn driver.Conn, items []newsItem) (int64
 	for _, it := range items {
 		if err = batch.Append(it.Date, it.Source, it.Title, it.URL, it.Description,
 			it.ContentHash, (*float32)(nil)); err != nil {
+			_ = batch.Abort()
+			return count, err
+		}
+		count++
+	}
+	err = batch.Send()
+	return count, err
+}
+
+// readNewsAnnotationCandidates читает бэклог LLM-разметки: Telegram-сообщения за 7 дней,
+// у которых нет doc/tag-строк этой пары (model, prompt_version). Пустой результат — не
+// ошибка: разметить нечего. Порядок Scan — порядок колонок newsAnnotationCandidatesQuery:
+// date, source, title, url, description, content_hash. Ошибка обхода проверяется: молча
+// вернувшаяся половина бэклога оставила бы часть сообщений без разметки до следующего прогона.
+func readNewsAnnotationCandidates(ctx context.Context, conn driver.Conn, model string, promptVersion uint16) ([]newsItem, error) {
+	rows, err := conn.Query(ctx, newsAnnotationCandidatesQuery, model, promptVersion)
+	if err != nil {
+		return nil, fmt.Errorf("news_watch: читать кандидатов %s (model=%s, prompt_version=%d): %w",
+			newsAnnotationTable, model, promptVersion, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var candidates []newsItem
+	for rows.Next() {
+		var it newsItem
+		if err = rows.Scan(&it.Date, &it.Source, &it.Title, &it.URL, &it.Description, &it.ContentHash); err != nil {
+			return nil, fmt.Errorf("news_watch: читать кандидата %s (model=%s): %w",
+				newsAnnotationTable, model, err)
+		}
+		candidates = append(candidates, it)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("news_watch: читать кандидатов %s (model=%s): %w", newsAnnotationTable, model, err)
+	}
+	return candidates, nil
+}
+
+// insertNewsAnnotations пишет разметку одним батчем: построчный Exec в цикле запрещён
+// (правило 2 AGENTS.md). Пустой список не открывает батч вовсе — прогон без кандидатов не
+// должен слать пустой Send. Ошибка Append прерывает батч через Abort: частично собранный
+// батч Send не отправляет, поэтому половина разметки в таблицу не уедет.
+//
+// Порядок аргументов Append — контракт с явным списком колонок newsAnnotationInsert
+// (url, content_hash, kind, method, model, prompt_version, dimension, tag, direction,
+// confidence, evidence, sentiment, relevance, summary, annotated_at).
+func insertNewsAnnotations(ctx context.Context, conn driver.Conn, rows []newsAnnotationRow) (int64, error) {
+	if len(rows) == 0 {
+		return 0, nil
+	}
+	batch, err := conn.PrepareBatch(ctx, newsAnnotationInsert)
+	if err != nil {
+		return 0, err
+	}
+	var count int64
+	for _, row := range rows {
+		if err = batch.Append(row.URL, row.ContentHash, row.Kind, row.Method, row.Model,
+			row.PromptVersion, row.Dimension, row.Tag, row.Direction, row.Confidence,
+			row.Evidence, row.Sentiment, row.Relevance, row.Summary, row.AnnotatedAt); err != nil {
 			_ = batch.Abort()
 			return count, err
 		}

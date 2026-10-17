@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	log "github.com/sirupsen/logrus"
+	logtest "github.com/sirupsen/logrus/hooks/test"
 )
 
 // TestMain глушит логи импортёра: Import печатает Infof на каждую прочитанную ленту
@@ -26,6 +28,13 @@ import (
 // строк лога, к предмету проверки отношения не имеющих, и падение теста в них тонуло бы.
 func TestMain(m *testing.M) {
 	log.SetLevel(log.PanicLevel)
+
+	// Офлайн-тесты не должны зависеть от env разработчика: с живыми LLM_* тестовый
+	// прогон ушёл бы к настоящему провайдеру. Тесты, которым нужна конфигурация,
+	// выставляют её через t.Setenv и получают исходное (пустое) значение назад.
+	for _, key := range []string{newsLLMBaseURLEnv, newsLLMAPIKeyEnv, newsLLMModelEnv} {
+		_ = os.Unsetenv(key)
+	}
 
 	os.Exit(m.Run())
 }
@@ -792,11 +801,13 @@ type newsStoredSpan struct {
 }
 
 // Виды строк, которые умеет отдавать newsFakeRows: покрытие источников (storedSpansQuery),
-// ключи существующих позиций (storedKeysQuery) и версии Telegram (telegramVersionsQuery).
+// ключи существующих позиций (storedKeysQuery), версии Telegram (telegramVersionsQuery) и
+// кандидаты LLM-разметки (newsAnnotationCandidatesQuery).
 const (
-	fakeRowsSpans    = "spans"
-	fakeRowsKeys     = "keys"
-	fakeRowsVersions = "versions"
+	fakeRowsSpans      = "spans"
+	fakeRowsKeys       = "keys"
+	fakeRowsVersions   = "versions"
+	fakeRowsCandidates = "candidates"
 )
 
 // newsFakeRows — фейковый driver.Rows контура news: вид строк выбирается в Query по
@@ -807,12 +818,13 @@ const (
 // репозитории нет (bold-фейк отдаёт driver.Row) — свой.
 type newsFakeRows struct {
 	driver.Rows
-	kind     string // fakeRowsSpans, fakeRowsKeys или fakeRowsVersions
-	spans    []newsStoredSpan
-	keys     []newsKey
-	versions []telegramVersion
-	err      error // отдать Err(): сценарий «обход строк упал на середине» (приходит из newsFakeConn)
-	i        int   // индекс следующей строки: Next двигает его, Scan читает i-1
+	kind       string // fakeRowsSpans, fakeRowsKeys, fakeRowsVersions или fakeRowsCandidates
+	spans      []newsStoredSpan
+	keys       []newsKey
+	versions   []telegramVersion
+	candidates []newsItem
+	err        error // отдать Err(): сценарий «обход строк упал на середине» (приходит из newsFakeConn)
+	i          int   // индекс следующей строки: Next двигает его, Scan читает i-1
 }
 
 // n — число строк выбранного вида: Next и Scan не должны перепутать наборы.
@@ -822,6 +834,8 @@ func (r *newsFakeRows) n() int {
 		return len(r.keys)
 	case fakeRowsVersions:
 		return len(r.versions)
+	case fakeRowsCandidates:
+		return len(r.candidates)
 	default:
 		return len(r.spans)
 	}
@@ -849,9 +863,48 @@ func (r *newsFakeRows) Scan(dest ...any) error {
 		return r.scanKey(dest)
 	case fakeRowsVersions:
 		return r.scanVersion(dest)
+	case fakeRowsCandidates:
+		return r.scanCandidate(dest)
 	default:
 		return r.scanSpan(dest)
 	}
+}
+
+// scanCandidate пинит порядок Scan newsAnnotationCandidatesQuery: date, source, title, url,
+// description, content_hash. Порядок колонок — часть контракта запроса: сдвиг в SQL или
+// в разборе кандидатов не должен остаться незамеченным.
+func (r *newsFakeRows) scanCandidate(dest []any) error {
+	if len(dest) != 6 {
+		return fmt.Errorf("фейковый кандидат разметки: приёмников %d, want 6 (date, source, title, url, description, content_hash)", len(dest))
+	}
+	it := r.candidates[r.i-1]
+	date, ok := dest[0].(*time.Time)
+	if !ok {
+		return fmt.Errorf("фейковый кандидат: приёмник date %T (want *time.Time)", dest[0])
+	}
+	source, ok := dest[1].(*string)
+	if !ok {
+		return fmt.Errorf("фейковый кандидат: приёмник source %T (want *string)", dest[1])
+	}
+	title, ok := dest[2].(*string)
+	if !ok {
+		return fmt.Errorf("фейковый кандидат: приёмник title %T (want *string)", dest[2])
+	}
+	url, ok := dest[3].(*string)
+	if !ok {
+		return fmt.Errorf("фейковый кандидат: приёмник url %T (want *string)", dest[3])
+	}
+	description, ok := dest[4].(*string)
+	if !ok {
+		return fmt.Errorf("фейковый кандидат: приёмник description %T (want *string)", dest[4])
+	}
+	hash, ok := dest[5].(*string)
+	if !ok {
+		return fmt.Errorf("фейковый кандидат: приёмник content_hash %T (want *string)", dest[5])
+	}
+	*date, *source, *title, *url, *description, *hash =
+		it.Date, it.Source, it.Title, it.URL, it.Description, it.ContentHash
+	return nil
 }
 
 // scanVersion пинит порядок Scan telegramVersionsQuery: channel, message_id, version, date,
@@ -1110,29 +1163,87 @@ func (b *newsFakeBatch) insertedVersions(t *testing.T) []telegramVersion {
 	return out
 }
 
+// insertedAnnotations разбирает строки батча news_annotation по именам колонок в порядке
+// newsAnnotationInsert (url, content_hash, kind, method, model, prompt_version, dimension,
+// tag, direction, confidence, evidence, sentiment, relevance, summary, annotated_at).
+// Перепутанные поля обязаны валить тест, а не уезжать в базу.
+func (b *newsFakeBatch) insertedAnnotations(t *testing.T) []newsAnnotationRow {
+	t.Helper()
+	out := make([]newsAnnotationRow, 0, len(b.rows))
+	for i, v := range b.rows {
+		if len(v) != 15 {
+			t.Fatalf("строка разметки %d: значений %d, want 15 (url, content_hash, kind, method, model, "+
+				"prompt_version, dimension, tag, direction, confidence, evidence, sentiment, relevance, "+
+				"summary, annotated_at)", i, len(v))
+		}
+		row := newsAnnotationRow{}
+		strDsts := []*string{
+			&row.URL, &row.ContentHash, &row.Kind, &row.Method, &row.Model,
+			&row.Dimension, &row.Tag, &row.Direction, &row.Evidence, &row.Summary,
+		}
+		// Позиции строковых колонок в порядке Append; числовые и время разбираются отдельно.
+		strIdx := []int{0, 1, 2, 3, 4, 6, 7, 8, 10, 13}
+		for j, dst := range strDsts {
+			got, ok := v[strIdx[j]].(string)
+			if !ok {
+				t.Fatalf("строка разметки %d: колонка %d = %T (want string)", i, strIdx[j], v[strIdx[j]])
+			}
+			*dst = got
+		}
+		promptVersion, ok := v[5].(uint16)
+		if !ok {
+			t.Fatalf("строка разметки %d: prompt_version = %T (want uint16)", i, v[5])
+		}
+		confidence, ok := v[9].(float32)
+		if !ok {
+			t.Fatalf("строка разметки %d: confidence = %T (want float32)", i, v[9])
+		}
+		sentiment, ok := v[11].(float32)
+		if !ok {
+			t.Fatalf("строка разметки %d: sentiment = %T (want float32)", i, v[11])
+		}
+		relevance, ok := v[12].(float32)
+		if !ok {
+			t.Fatalf("строка разметки %d: relevance = %T (want float32)", i, v[12])
+		}
+		annotatedAt, ok := v[14].(time.Time)
+		if !ok {
+			t.Fatalf("строка разметки %d: annotated_at = %T (want time.Time)", i, v[14])
+		}
+		row.PromptVersion, row.Confidence, row.Sentiment, row.Relevance, row.AnnotatedAt =
+			promptVersion, confidence, sentiment, relevance, annotatedAt
+		out = append(out, row)
+	}
+	return out
+}
+
 // newsFakeConn — фейковое соединение контура news: встраивание driver.Conn оставляет
 // неиспользуемые методы nil (паника, если тест зайдёт дальше сценария), а переопределены
 // ровно три метода, которыми пользуется Import: Exec (DDL и витрина), Query
 // (storedSpansQuery — readStoredSpans в check; storedKeysQuery — readStoredKeys в since;
-// telegramVersionsQuery — readTelegramVersions в пишущих режимах) и PrepareBatch (запись
-// позиций и версий). spans — очередь ответов на запрос покрытия; keys — ключи существующих
-// позиций по источникам; versions — версии Telegram по каналам. Пустые наборы означают
-// «строк нет». versionsErr/keysErr включают ошибочные пути Query точечно (иначе сбой одного
+// telegramVersionsQuery — readTelegramVersions в пишущих режимах;
+// newsAnnotationCandidatesQuery — readNewsAnnotationCandidates в LLM-шаге) и PrepareBatch
+// (запись позиций, версий и разметки). spans — очередь ответов на запрос покрытия; keys —
+// ключи существующих позиций по источникам; versions — версии Telegram по каналам;
+// candidates — бэклог LLM-разметки. Пустые наборы означают «строк нет».
+// versionsErr/keysErr/candidatesErr включают ошибочные пути Query точечно (иначе сбой одного
 // чтения не дал бы проверить остальные), rowsErr — обход строк (rows.Err уже после Next);
 // sendErr — сбой Send выбранного батча по запросу. Всё задаётся полями постфактум, чтобы
 // не плодить конструкторы.
 type newsFakeConn struct {
 	driver.Conn
-	mu          sync.Mutex
-	calls       []string
-	spans       []newsStoredSpan
-	keys        map[string][]newsKey
-	versions    map[string][]telegramVersion
-	versionsErr error            // Query версий вернёт её вместо строк
-	keysErr     error            // Query ключей вернёт её вместо строк
-	rowsErr     error            // её отдаст rows.Err()
-	sendErr     map[string]error // сбой Send батча по тексту запроса
-	batches     []*newsFakeBatch
+	mu            sync.Mutex
+	calls         []string
+	spans         []newsStoredSpan
+	keys          map[string][]newsKey
+	versions      map[string][]telegramVersion
+	candidates    []newsItem
+	versionsErr   error            // Query версий вернёт её вместо строк
+	keysErr       error            // Query ключей вернёт её вместо строк
+	candidatesErr error            // Query кандидатов разметки вернёт её вместо строк
+	rowsErr       error            // её отдаст rows.Err()
+	sendErr       map[string]error // сбой Send батча по тексту запроса
+	batches       []*newsFakeBatch
 }
 
 // newNewsFakeConn — соединение режима check: сохранённые окна есть, ключей нет.
@@ -1170,11 +1281,22 @@ func (c *newsFakeConn) Query(_ context.Context, query string, args ...any) (driv
 			if since, ok := args[1].(time.Time); ok {
 				label += fmt.Sprintf(" [source=%s since=%s]", key, since.Format(time.RFC3339))
 			}
+			if promptVersion, ok := args[1].(uint16); ok {
+				label += fmt.Sprintf(" [model=%s prompt_version=%d]", key, promptVersion)
+			}
 		}
 	}
 	c.record(label)
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// Кандидаты разметки — var, а не const (LIMIT строится из newsLLMBacklogLimit),
+	// поэтому сравнение идёт отдельно: в expression-switch Go требует константные case.
+	if query == newsAnnotationCandidatesQuery {
+		if c.candidatesErr != nil {
+			return nil, c.candidatesErr
+		}
+		return &newsFakeRows{kind: fakeRowsCandidates, candidates: c.candidates, err: c.rowsErr}, nil
+	}
 	switch query {
 	case storedSpansQuery:
 		rows := c.spans
@@ -2047,4 +2169,309 @@ func serveSyntheticCbr(t *testing.T, newsXML, pressXML string) *httptest.Server 
 	}))
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+// --- композиция LLM-разметки в Import() ---
+
+// setNewsLLMEnv выставляет конфигурацию разметки на время теста: значения фейковые,
+// ключ — test-key; t.Setenv возвращает исходное (пустое) состояние после теста.
+func setNewsLLMEnv(t *testing.T, baseURL, model string) {
+	t.Helper()
+	t.Setenv(newsLLMBaseURLEnv, baseURL)
+	t.Setenv(newsLLMAPIKeyEnv, "test-key")
+	t.Setenv(newsLLMModelEnv, model)
+}
+
+// clearNewsLLMEnv выключает LLM-шаг: пустая переменная — основание для деградации.
+func clearNewsLLMEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv(newsLLMBaseURLEnv, "")
+	t.Setenv(newsLLMAPIKeyEnv, "")
+	t.Setenv(newsLLMModelEnv, "")
+}
+
+// newsTestCandidate — кандидат разметки в том виде, в каком его отдаёт
+// newsAnnotationCandidatesQuery: Telegram-сообщение с непустым content_hash.
+func newsTestCandidate(n int) newsItem {
+	const title = "Трамп объявил о пошлинах"
+	const text = "Трамп объявил о новых пошлинах на импорт из Китая."
+	return newsItem{
+		Date:        time.Date(2026, time.October, 17, 9, n, 0, 0, time.UTC),
+		Source:      "interfax",
+		Title:       title,
+		URL:         fmt.Sprintf("https://t.me/interfaxonline/%d", 80000+n),
+		Description: text,
+		ContentHash: contentHash(title, text),
+	}
+}
+
+// newsFakeBatchByQuery ищет единственный батч по запросу, но, в отличие от batchByQuery,
+// не валит тест при отсутствии: сценарии «батча быть не должно» проверяют именно это.
+func newsFakeBatchByQuery(conn *newsFakeConn, query string) *newsFakeBatch {
+	for _, batch := range conn.batchList() {
+		if batch.query == query {
+			return batch
+		}
+	}
+	return nil
+}
+
+// TestImportWithoutLLMEnvSkipsAnnotation — без LLM_BASE_URL/LLM_API_KEY/NEWS_LLM_MODEL шаг
+// разметки пропускается: кандидаты не читаются, батч news_annotation не открывается,
+// а импорт остаётся зелёным (деградация, догон следующим прогоном).
+func TestImportWithoutLLMEnvSkipsAnnotation(t *testing.T) {
+	t.Setenv(modeEnv, modeSince)
+	clearNewsLLMEnv(t)
+	pointFeedsAt(t, serveFixtures(t, nil))
+
+	conn := newNewsFakeConn()
+	conn.candidates = []newsItem{newsTestCandidate(1)}
+
+	var s newsImport
+	if _, err := s.Import(context.Background(), conn); err != nil {
+		t.Fatalf("Import(%s) без LLM env: %v (деградация обязана быть зелёной)", modeSince, err)
+	}
+	if conn.anyCallHas(newsAnnotationCandidatesQuery) {
+		t.Errorf("без LLM env прочитаны кандидаты разметки; вызовы: %v", conn.callList())
+	}
+	if batch := newsFakeBatchByQuery(conn, newsAnnotationInsert); batch != nil {
+		t.Errorf("без LLM env открыт батч %s: %+v", newsAnnotationTable, batch.rows)
+	}
+}
+
+// TestImportWithoutLLMEnvWarns — отсутствие env не молчит: в лог уходит один warn с именами
+// переменных, иначе отсутствие разметки выглядело бы тихим дефектом. Уровень логирования
+// поднимается на время теста и возвращается к Panic из TestMain.
+func TestImportWithoutLLMEnvWarns(t *testing.T) {
+	t.Setenv(modeEnv, modeSince)
+	clearNewsLLMEnv(t)
+	pointFeedsAt(t, serveFixtures(t, nil))
+
+	prevLevel := log.GetLevel()
+	hook := logtest.NewGlobal()
+	log.SetLevel(log.WarnLevel)
+	log.SetOutput(io.Discard)
+	t.Cleanup(func() {
+		hook.Reset()
+		log.SetOutput(os.Stderr)
+		log.SetLevel(prevLevel)
+	})
+
+	var s newsImport
+	if _, err := s.Import(context.Background(), newNewsFakeConn()); err != nil {
+		t.Fatalf("Import(%s) без LLM env: %v (деградация обязана быть зелёной)", modeSince, err)
+	}
+	for _, entry := range hook.AllEntries() {
+		if strings.Contains(entry.Message, "LLM-разметка пропущена") &&
+			strings.Contains(entry.Message, "NEWS_LLM_MODEL") {
+			return
+		}
+	}
+	t.Errorf("в логе нет warn об отсутствии LLM env; записи: %+v", hook.AllEntries())
+}
+
+// TestImportAnnotatesBacklogWithFakeLLM — с фейковым провайдером LLM-шаг читает кандидатов,
+// размечает их батчем и пишет doc+tag строки с model/prompt_version прогона.
+func TestImportAnnotatesBacklogWithFakeLLM(t *testing.T) {
+	t.Setenv(modeEnv, modeSince)
+	pointFeedsAt(t, serveFixtures(t, nil))
+
+	candidates := []newsItem{newsTestCandidate(1), newsTestCandidate(2)}
+	payload := newsTestPayloadBody(t,
+		newsTestValidMessage(candidates[0].URL),
+		newsTestValidMessage(candidates[1].URL))
+	mock := newNewsTestLLMMock(t, newsTestLLMResponse{Body: newsTestContentBody(t, payload)})
+	setNewsLLMEnv(t, mock.url, "test-model")
+
+	conn := newNewsFakeConn()
+	conn.candidates = candidates
+
+	var s newsImport
+	if _, err := s.Import(context.Background(), conn); err != nil {
+		t.Fatalf("Import(%s) с фейковым LLM: %v", modeSince, err)
+	}
+	if !conn.anyCallHas(newsAnnotationCandidatesQuery) {
+		t.Errorf("LLM-шаг не прочитал кандидатов запросом %q; вызовы: %v",
+			newsAnnotationCandidatesQuery, conn.callList())
+	}
+	if want := "model=test-model prompt_version=1"; !conn.anyCallHas(want) {
+		t.Errorf("запрос кандидатов не содержал %q (model и prompt_version — часть ключа); вызовы: %v",
+			want, conn.callList())
+	}
+
+	batch := newsFakeBatchByQuery(conn, newsAnnotationInsert)
+	if batch == nil {
+		t.Fatalf("батч %s не открыт; вызовы: %v", newsAnnotationTable, conn.callList())
+	}
+	if !batch.sent {
+		t.Error("Send батча разметки не вызван: строки не уехали в таблицу")
+	}
+	rows := batch.insertedAnnotations(t)
+	docs := newsAnnotationKindRows(rows, newsKindDoc)
+	tags := newsAnnotationKindRows(rows, newsKindTag)
+	if len(docs) != len(candidates) {
+		t.Errorf("doc-строк %d, want %d (по одной на кандидата)", len(docs), len(candidates))
+	}
+	if len(tags) != len(candidates) {
+		t.Errorf("tag-строк %d, want %d (по тегу на кандидата)", len(tags), len(candidates))
+	}
+	byURL := make(map[string]newsAnnotationRow, len(docs))
+	for _, row := range rows {
+		if row.Model != "test-model" || row.PromptVersion != newsPromptVersion || row.Method != newsMethodLLM {
+			t.Errorf("строка разметки %+v: model/prompt_version/method не из прогона", row)
+		}
+		if row.AnnotatedAt.IsZero() {
+			t.Errorf("строка разметки %+v: annotated_at нулевой", row)
+		}
+		if row.Kind == newsKindDoc {
+			byURL[row.URL] = row
+		}
+	}
+	for _, candidate := range candidates {
+		if _, ok := byURL[candidate.URL]; !ok {
+			t.Errorf("нет doc-строки для кандидата %s", candidate.URL)
+		}
+	}
+}
+
+// TestImportLLMProviderErrorKeepsMessages — ошибка провайдера не отменяет запись
+// news_events и версий: LLM-шаг лишь предупреждает, импорт остаётся зелёным, а батч
+// разметки не открывается; догон — следующим прогоном.
+func TestImportLLMProviderErrorKeepsMessages(t *testing.T) {
+	t.Setenv(modeEnv, modeSince)
+	pointFeedsAt(t, serveFixtures(t, nil))
+
+	mock := newNewsTestLLMMock(t, newsTestLLMResponse{
+		Status: http.StatusInternalServerError,
+		Body:   `{"error":{"type":"api_error","message":"провайдер упал"}}`,
+	})
+	setNewsLLMEnv(t, mock.url, "test-model")
+
+	conn := newNewsFakeConn()
+	conn.candidates = []newsItem{newsTestCandidate(1)}
+
+	byKey, _ := fixtureInventory(t)
+	wantRows := totalItems(byKey)
+
+	var s newsImport
+	count, err := s.Import(context.Background(), conn)
+	if err != nil {
+		t.Fatalf("Import(%s) при отказе LLM: %v (ошибка провайдера — warn, не ошибка импорта)", modeSince, err)
+	}
+	if int(count) != wantRows {
+		t.Errorf("Import вернул %d строк, want %d (сообщения обязаны записаться)", count, wantRows)
+	}
+	if batch := conn.batchByQuery(t, newsInsert); !batch.sent {
+		t.Error("батч news_events не отправлен: отказ LLM не должен отменять запись сообщений")
+	}
+	if batch := conn.batchByQuery(t, telegramVersionInsert); !batch.sent {
+		t.Error("батч версий не отправлен: отказ LLM не должен отменять запись версий")
+	}
+	if batch := newsFakeBatchByQuery(conn, newsAnnotationInsert); batch != nil {
+		t.Errorf("при отказе провайдера открыт батч разметки: %+v", batch.rows)
+	}
+	if mock.calls() != 1 {
+		t.Errorf("запросов к LLM %d, want 1 (отказ не повторяется)", mock.calls())
+	}
+}
+
+// TestImportAnnotationWriteErrorIsWarning — сбой записи news_annotation не делает Import
+// красным и не отменяет уже записанные сообщения: dagu не должен ретраить весь прогон
+// из-за разметки, догон — следующим прогоном.
+func TestImportAnnotationWriteErrorIsWarning(t *testing.T) {
+	t.Setenv(modeEnv, modeSince)
+	pointFeedsAt(t, serveFixtures(t, nil))
+
+	candidate := newsTestCandidate(1)
+	mock := newNewsTestLLMMock(t, newsTestLLMResponse{
+		Body: newsTestContentBody(t, newsTestPayloadBody(t, newsTestValidMessage(candidate.URL))),
+	})
+	setNewsLLMEnv(t, mock.url, "test-model")
+
+	conn := newNewsFakeConn()
+	conn.candidates = []newsItem{candidate}
+	conn.sendErr = map[string]error{newsAnnotationInsert: errors.New("запись разметки упала")}
+
+	var s newsImport
+	if _, err := s.Import(context.Background(), conn); err != nil {
+		t.Fatalf("Import(%s) при сбое записи разметки: %v (сбой разметки — warn, не ошибка импорта)", modeSince, err)
+	}
+	if batch := conn.batchByQuery(t, newsInsert); !batch.sent {
+		t.Error("батч news_events не отправлен: сбой разметки не должен отменять сообщения")
+	}
+	batch := newsFakeBatchByQuery(conn, newsAnnotationInsert)
+	if batch == nil {
+		t.Fatal("батч разметки не открыт")
+	}
+	if batch.sent {
+		t.Error("батч разметки помечен отправленным, хотя Send вернул ошибку")
+	}
+}
+
+// TestImportNoopRunAnnotatesBacklog — бэклог разметки догоняется и тогда, когда писать в
+// news_events нечего: в since покрытое RSS и упавшая Telegram-лента дают len(items)==0,
+// но LLM-шаг стоит до выхода из прогона и обязан разметить накопленное.
+func TestImportNoopRunAnnotatesBacklog(t *testing.T) {
+	t.Setenv(modeEnv, modeSince)
+	pointFeedsAt(t, serveFixtures(t, map[string]int{"interfax_tg": http.StatusInternalServerError}))
+
+	candidate := newsTestCandidate(1)
+	mock := newNewsTestLLMMock(t, newsTestLLMResponse{
+		Body: newsTestContentBody(t, newsTestPayloadBody(t, newsTestValidMessage(candidate.URL))),
+	})
+	setNewsLLMEnv(t, mock.url, "test-model")
+
+	byKey, _ := fixtureInventory(t)
+	rssKeys := make(map[string][]newsKey, 4)
+	for _, f := range feeds() {
+		if f.Kind == feedRSS {
+			rssKeys[f.Source] = append(rssKeys[f.Source], keysOf(byKey[f.Key])...)
+		}
+	}
+	conn := newNewsFakeConnWithKeys(rssKeys)
+	conn.candidates = []newsItem{candidate}
+
+	var s newsImport
+	count, err := s.Import(context.Background(), conn)
+	if err == nil {
+		t.Fatalf("Import(%s) при сбое interfax_tg вернул %d строк без ошибки, want ошибку ленты", modeSince, count)
+	}
+	if count != 0 {
+		t.Errorf("Import вернул %d строк, want 0 (RSS покрыт, Telegram упал)", count)
+	}
+	if conn.anyCallHas(newsInsert) {
+		t.Errorf("no-op-прогон открыл батч news_events; вызовы: %v", conn.callList())
+	}
+	batch := newsFakeBatchByQuery(conn, newsAnnotationInsert)
+	if batch == nil || !batch.sent {
+		t.Fatalf("бэклог не размечен при len(items)==0: батч %v; вызовы: %v", batch, conn.callList())
+	}
+	if docs := newsAnnotationKindRows(batch.insertedAnnotations(t), newsKindDoc); len(docs) != 1 {
+		t.Errorf("doc-строк %d, want 1 (бэклог догоняется на no-op-прогоне)", len(docs))
+	}
+}
+
+// TestImportCheckModeDoesNotCallLLM — check — режим чтения покрытия: LLM не вызывается
+// даже при заполненном env, иначе диагностика ходила бы к провайдеру и тратила деньги.
+func TestImportCheckModeDoesNotCallLLM(t *testing.T) {
+	t.Setenv(modeEnv, modeCheck)
+	pointFeedsAt(t, serveFixtures(t, nil))
+
+	mock := newNewsTestLLMMock(t)
+	setNewsLLMEnv(t, mock.url, "test-model")
+
+	conn := newNewsFakeConn()
+	var s newsImport
+	if _, err := s.Import(context.Background(), conn); err != nil {
+		t.Fatalf("Import(%s): %v", modeCheck, err)
+	}
+	if conn.anyCallHas(newsAnnotationCandidatesQuery) {
+		t.Errorf("check прочитал кандидатов разметки; вызовы: %v", conn.callList())
+	}
+	if mock.calls() != 0 {
+		t.Errorf("check обратился к LLM %d раз, want 0", mock.calls())
+	}
+	if batch := newsFakeBatchByQuery(conn, newsAnnotationInsert); batch != nil {
+		t.Errorf("check открыл батч разметки: %+v", batch.rows)
+	}
 }
