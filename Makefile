@@ -65,7 +65,7 @@ STAGING_BIN_DIR  ?= /root/.local/bin
 STAGING_ENV_FILE ?= /etc/clickhouse-import-rosstat.env
 DAGU_VERSION     ?= v2.18.2
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model cpi-nowcast
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model cpi-nowcast
 
 all: lint test build build-ingest
 
@@ -171,6 +171,14 @@ import:
 	@mkdir -p $(BUILD_DIR)
 	go build -o $(BUILD_DIR)/$(BINARY)-native .
 	CLICKHOUSE_IMPORT_STAT=$(STAT) ./$(BUILD_DIR)/$(BINARY)-native
+
+# Живой harness сравнения LLM-моделей разметки cbr_mp_summary (спека §3.4): читает документы
+# ЦБ и ClickHouse, пишет артефакты в $(CURDIR)/build/mp-llm-eval (MP_LLM_EVAL_OUT).
+# Требует MP_LLM_EVAL=1 и MP_SUMMARY_LLM_MODELS в командной строке make; без первого тест
+# пропускается. Ключи провайдеров — из $(ROSSTAT_ENV) (в командной строке их не передают).
+mp-llm-eval:
+	MP_LLM_EVAL_OUT=$(or $(MP_LLM_EVAL_OUT),$(CURDIR)/build/mp-llm-eval) \
+	go test -tags mpeval ./cbr -run TestMPLLMEvalLive -v -count=1 -timeout 3h
 
 # Git-зеркало реестра винтажного архива (make archive-registry [ARCHIVE_BACKEND=yandex]):
 # скачивает registry.jsonl из хранилища в docs/archive/; коммит — ручной/периодический.
