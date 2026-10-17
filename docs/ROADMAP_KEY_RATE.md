@@ -2,6 +2,7 @@
 
 **Дата:** 14 октября 2026 г.
 **Сопутствующие документы:** [ARCHITECTURE.md](../ARCHITECTURE.md) (паттерны и схемы БД), [AGENTS.md](../AGENTS.md) (инструкции для AI-ассистентов), [KEY_RATE_CHANNELS.md](KEY_RATE_CHANNELS.md) (каналы решения ЦБ по итогам 22 резюме обсуждения), [KEY_RATE_MODEL.md](KEY_RATE_MODEL.md) (архитектура прогнозной модели, инструментарий — включая ML-трек на компонентах, — мировой опыт, методология бэктеста), [KEY_RATE_PUBLICATIONS.md](KEY_RATE_PUBLICATIONS.md) (тезисы и техническое задание на регулярные публикации), [ROADMAP_DCF_POLYUS.md](ROADMAP_DCF_POLYUS.md) (контур золота → DCF → NAV PLZL, где ставка — **вход** в модель).
+**Реестр и трекер:** [ROADMAP_INDEX.md](ROADMAP_INDEX.md) — слаги, владение пунктами, составной ID и правила GitHub-трекера.
 
 ---
 

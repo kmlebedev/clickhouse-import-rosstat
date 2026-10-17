@@ -1,0 +1,67 @@
+name: "Пункт роадмапа"
+description: "Issue для пункта роадмапа: составной ID <slug>/<item-id>, критерий приёмки и ссылки"
+title: "[<slug>/<item-id>] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Заголовок issue: `[<slug>/<item-id>] <короткое имя>`. Реестр роадмапов и правила трекера — `docs/ROADMAP_INDEX.md`, обязательная норма — правило 12 `AGENTS.md`. Пункт живёт ровно в одном роадмапе.
+  - type: dropdown
+    id: roadmap
+    attributes:
+      label: "Роадмап"
+      description: "Владелец пункта; в других роадмапах — только ссылка"
+      options:
+        - dcf-polyus
+        - gold-thesis
+        - dcf-metals
+        - key-rate
+        - infra
+    validations:
+      required: true
+  - type: input
+    id: item-id
+    attributes:
+      label: "Item ID"
+      description: "Номер или слаг пункта внутри роадмапа, без слага (например, 1.1, step-4, phase-3-followup-2)"
+      placeholder: "1.1"
+    validations:
+      required: true
+  - type: input
+    id: phase
+    attributes:
+      label: "Фаза"
+      description: "Фаза роадмапа или «follow-up N»"
+      placeholder: "3"
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: "Критерий приёмки"
+      description: "Дословно из роадмапа: что проверяется, какой командой и с каким результатом"
+      placeholder: "Команда, ожидаемый результат, крайние даты или число строк"
+    validations:
+      required: true
+  - type: input
+    id: spec
+    attributes:
+      label: "Спека"
+      description: "Путь к файлу в docs/superpowers/specs/, если спека есть"
+      placeholder: "docs/superpowers/specs/YYYY-MM-DD-<тема>-design.md"
+  - type: input
+    id: plan
+    attributes:
+      label: "План"
+      description: "Путь к файлу в docs/superpowers/plans/, если план есть"
+      placeholder: "docs/superpowers/plans/YYYY-MM-DD-<тема>.md"
+  - type: input
+    id: depends-on
+    attributes:
+      label: "Зависимости"
+      description: "Issue или пункты, без которых работа не начинается"
+      placeholder: "#N, <slug>/<item-id>"
+  - type: textarea
+    id: context
+    attributes:
+      label: "Контекст"
+      description: "Цель пункта, границы и всё, что не уместилось в критерий приёмки; спеки и планы сюда не копировать"
+      placeholder: "Цель, границы, известные ограничения"

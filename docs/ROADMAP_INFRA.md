@@ -1,9 +1,10 @@
 # Дорожная карта: инфраструктура конвейера
 
-**Дата:** 14 октября 2026 г.
-**Роль документа:** инфраструктурные пункты конвейера — надёжность данных, хранение и восстановление входов, деплой, наблюдаемость. Это работы, которые обслуживают все треки сразу и не принадлежат ни одному из них.
-**Сопутствующие документы:** трековые роадмапы — [ROADMAP_DCF_POLYUS.md](ROADMAP_DCF_POLYUS.md) (контур золота → DCF → NAV PLZL), [GOLD_THESIS_DATA_ROADMAP.md](GOLD_THESIS_DATA_ROADMAP.md) (данные и витрины для обновления тезисов по золоту), [ROADMAP_DCF_METALS.md](ROADMAP_DCF_METALS.md) (металлурги CHMF/MAGN/NLMK), [ROADMAP_KEY_RATE.md](ROADMAP_KEY_RATE.md) (контур прогноза ключевой ставки); архитектура и правила — [ARCHITECTURE.md](../ARCHITECTURE.md), [AGENTS.md](../AGENTS.md), [docs/IMPORTER_PACKAGE_STANDARD.md](IMPORTER_PACKAGE_STANDARD.md).
+**Дата:** 17 октября 2026 г.
+**Роль документа:** инфраструктурные пункты конвейера — надёжность данных, хранение и восстановление входов, деплой, наблюдаемость, трекер пунктов и процесс приёмки. Это работы, которые обслуживают все треки сразу и не принадлежат ни одному из них.
+**Сопутствующие документы:** трековые роадмапы — [ROADMAP_DCF_POLYUS.md](ROADMAP_DCF_POLYUS.md) (контур золота → DCF → NAV PLZL), [GOLD_THESIS_DATA_ROADMAP.md](GOLD_THESIS_DATA_ROADMAP.md) (данные и витрины для обновления тезисов по золоту), [ROADMAP_DCF_METALS.md](ROADMAP_DCF_METALS.md) (металлурги CHMF/MAGN/NLMK), [ROADMAP_KEY_RATE.md](ROADMAP_KEY_RATE.md) (контур прогноза ключевой ставки); реестр всех роадмапов, слаги и правила трекера — [ROADMAP_INDEX.md](ROADMAP_INDEX.md); архитектура и правила — [ARCHITECTURE.md](../ARCHITECTURE.md), [AGENTS.md](../AGENTS.md), [docs/IMPORTER_PACKAGE_STANDARD.md](IMPORTER_PACKAGE_STANDARD.md).
 **Правило:** разработка идёт по одному пункту этого документа за раз (AGENTS.md, правило 1); порядок и состав фаз меняются только через этот документ.
+**Реестр и трекер:** [ROADMAP_INDEX.md](ROADMAP_INDEX.md) — слаги, владение пунктами, составной ID и правила GitHub-трекера.
 
 ---
 
@@ -48,7 +49,14 @@
 | **2.1** | **Протокол живой приёмки — комментарием в PR**: правило, состав протокола, источник и порядок — [IMPORTER_PACKAGE_STANDARD.md](IMPORTER_PACKAGE_STANDARD.md) §16.1 п. 8; `AGENTS.md` и [ROADMAP_KEY_RATE.md](ROADMAP_KEY_RATE.md) §8 на него ссылаются. Первое применение — PR #66 (`cbr_int_rate_loans`, [приёмочный комментарий](https://github.com/kmlebedev/clickhouse-import-rosstat/pull/66#issuecomment-6189228092)); этот пункт закрывается приёмочным комментарием в своём PR | ✅ сделан этим PR (ветка `infra-pr-acceptance-comment`, 2026-10-15) | Приёмочный комментарий есть в PR этого пункта; ссылки в `AGENTS.md`, стандарте (§13.2, §16.1 п. 8) и §8 роадмапа КС ведут на одно нормативное место |
 | **2.2** | **Шаг 0: механизм миграции и добавления дашбордов** — скил [`.kimi-code/skills/dashboard-migration/SKILL.md`](../.kimi-code/skills/dashboard-migration/SKILL.md): три режима (миграция легаси-экспорта UI, новый дашборд трека, ревизия существующего к стандарту), 9-шаговый чек-лист от пункта роадмапа до приёмки и доков, ссылки на нормативные конвенции; живая очередь миграции ведётся этим пунктом: `finance-polyus` — мигрирован 2026-10-16 (артефакт `dashboard/finance-polyus.json`) → `chmf.json` (шаг 6 [ROADMAP_DCF_METALS.md](ROADMAP_DCF_METALS.md)) → `rosstat.json` и корневой `grafana_dashboard_rosstat` → дашборды новых треков (банки, металлургия и др.) по скилу. Спека и план — [2026-10-16-grafana-finance-polyus-design.md](superpowers/specs/2026-10-16-grafana-finance-polyus-design.md) §3, [план](superpowers/plans/2026-10-16-grafana-finance-polyus.md) | ✅ 2026-10-16 (статус финализируется после мержа PR; приёмка — протоколом в PR: `make all`, живые SQL-проверки таргетов через MCP, deploy+smoke трёх uid) | Скил создан и применён на первом дашборде очереди: `finance-polyus` собран кодом (19 панелей в 4 рядах; артефакт `dashboard/finance-polyus.json`, спека и план — по ссылкам выше), очередь обновляется тем же PR при каждом следующем дашборде (следующий — `chmf.json`) |
 
-## 4. Приёмка и риски
+## 4. Фаза 3 — Трекер пунктов и связи с GitHub
+
+| Шаг | Содержание | Статус | Критерий приёмки |
+|---|---|---|---|
+| **3.1** | **Модель трекера зафиксирована в репозитории**: `docs/ROADMAP_INDEX.md` (реестр пяти роадмапов, слаги, владение, составной ID), правило 12 `AGENTS.md`, скил `.kimi-code/skills/github-tracker/SKILL.md`, шаблоны `.github/ISSUE_TEMPLATE/roadmap-item.yml` и `.github/pull_request_template.md`; спека [2026-10-17-github-tracker-design.md](superpowers/specs/2026-10-17-github-tracker-design.md), план [2026-10-17-github-tracker.md](superpowers/plans/2026-10-17-github-tracker.md), issue [#106](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/106). Живой Project V2 и бэкфилл — шаг 3.2 | ✅ сделан этим PR (2026-10-17) | Все пять роадмапов описаны в индексе; правило AGENTS.md ссылается на индекс и скил; шаблоны существуют; `make all` зелёный; ссылки в README/ARCHITECTURE синхронны |
+| 3.2 | **Живой GitHub Project V2 и бэкфилл**: scope `project`, toolset `projects`, создание проекта, поля/виды, бэкфилл открытого фронта и триаж существующих issue | не начато | Project виден через MCP; поля и виды соответствуют спеке; открытый фронт заведён; существующие issue разложены по `Roadmap`/`Inbox` |
+
+## 5. Приёмка и риски
 
 Пункт считается закрытым только по живой приёмке, и порядок один (AGENTS.md, правила 3–5 и раздел «Стиль коммитов и PR»; стандарт §16.1):
 
