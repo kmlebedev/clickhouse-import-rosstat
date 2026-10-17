@@ -13,11 +13,12 @@ import (
 
 // Импортёр сырых остатков формы 101 ЦБ (первый срез — ПАО Сбербанк, REGN=1481):
 // помесячная оборотная ведомость по счетам бухгалтерского учёта. Таблица
-// cbr_form101 — сырые строки «счёт → остаток», без маппинга на метрики
-// кредитования: маппинг счетов на loans_corporations/loans_individuals и запись
-// в company_financials — следующий шаг (спека docs/superpowers/specs/
-// 2026-10-17-cbr-form101-design.md §7). Артефакт — не XLSX, а RAR с DBF, поэтому
-// у импортёра свой Import() (прецедент — cbr_dip_bulletin): шаблон
+// cbr_form101 — сырые строки «счёт → остаток»; поверх них pilot-1 маппинг
+// (form101LoanTotals) пишет ras-метрики loans_corporations/loans_individuals
+// в company_financials — с августа 2026 из текущего выпуска, июль 2026 — сид
+// sql/sber_ras_form101_mapped_2026_07.sql (issue #98, спека docs/superpowers/
+// specs/2026-10-17-cbr-form101-design.md §7). Артефакт — не XLSX, а RAR с DBF,
+// поэтому у импортёра свой Import() (прецедент — cbr_dip_bulletin): шаблон
 // util.ClickHouseImport ведёт таблицу, DDL и объявление точки контроля, но файл
 // качает и разбирает этот Import.
 
@@ -67,6 +68,15 @@ ORDER BY (report_date, regnum, account, active_passive, plan);
 	// cbrForm101Insert — один батч на прогон; колонки перечислены явно, чтобы
 	// состав не зависел от порядка полей DDL (loaded_at заполняет now()).
 	cbrForm101Insert = "INSERT INTO cbr_form101 (report_date, regnum, account, plan, active_passive, balance_total)"
+
+	// cbrForm101CompanyTable / cbrForm101MappedInsert — производные ras-метрики
+	// (pilot-1) в общую company_financials. Пишем только если таблица уже есть:
+	// в цепочке ЦБ (09:17) она создаётся банковским пакетом (понедельник 09:23),
+	// и на чистой БД первый прогон ЦБ может её не застать — тогда пропуск с warn,
+	// а следующий прогон запишет. DDL здесь не дублируется намеренно.
+	cbrForm101CompanyTable = "company_financials"
+	cbrForm101MappedInsert = "INSERT INTO company_financials " +
+		"(company, metric, period, period_type, source_kind, value, unit, source_url, source_page)"
 )
 
 // cbrForm101View — витрина сырых остатков формы 101: long-форма с датой отчёта,
@@ -86,10 +96,10 @@ ORDER BY report_date DESC, regnum, account, active_passive`,
 		"источнике (не пересчитан в рубли и не сверен с пресс-релизом Сбера). report_date — дата отчёта из " +
 		"имени файла 101-YYYYMMDD.rar, а не месяц публикации. Ключ таблицы включает plan, поэтому все " +
 		"строки Сбера (включая 8 строк группы ITGAP четырёх планов А/Б/В/Г) сохраняются. " +
-		"Это не готовая метрика кредитования: " +
-		"маппинг счетов (44x/45x, группы 45.0/45.2) на кредиты юрлицам и физлицам — следующий шаг, " +
-		"поэтому не складывать строки витрины и не сравнивать их с loans_corporations/loans_individuals " +
-		"без явного отбора счетов",
+		"Это не готовая метрика кредитования: pilot-1 маппинг счетов (44x/45x, группы 45.0/45.2) на " +
+		"кредиты юрлицам и физлицам показывает отдельная витрина v_cbr_form101_loans, а те же значения " +
+		"импортёр пишет ras в company_financials; поэтому не складывать строки этой витрины и не " +
+		"сравнивать их с loans_corporations/loans_individuals без явного отбора счетов",
 	Columns: map[string]string{
 		"report_date":    "Дата отчёта из имени файла источника (101-YYYYMMDD.rar → YYYY-MM-DD), например 2026-09-01. Не месяц публикации и не период накопления: форма 101 — срез на первое число",
 		"regnum":         "Регистрационный номер кредитной организации в справочнике ЦБ (REGN). Первый срез — 1481 (ПАО Сбербанк); схема готова к другим банкам",
@@ -102,15 +112,17 @@ ORDER BY report_date DESC, regnum, account, active_passive`,
 }
 
 // cbrForm101LoansView — pilot-витрина маппинга счетов формы 101 на кредиты ЮЛ/ФЛ
-// (issue #98). Это не финальная метрика и не замена v_company_financials: наборы
-// счетов подобраны по калибровке на август 2026 и помечены mapping_version, а
-// разница с пресс-релизом видна рядом. 45.0/45.1/45.2 — синтетические группы
+// (issue #98). Это не замена v_company_financials: наборы счетов подобраны по
+// калибровке на июль/август 2026 и помечены mapping_version, а разница с
+// kpi-сидом пресс-релиза видна рядом. Импортёр пишет те же pilot-1 значения
+// ras в company_financials (см. Import), поэтому форвардная витрина видит их
+// через v_company_financials. 45.0/45.1/45.2 — синтетические группы
 // формы 101; 442/445/446/447/448/449/450/451/453/454 — детальные счета кредитов
 // ЮЛ; 45.2 — кредиты ФЛ. 458/459 (просрочка) показаны отдельно и не прибавлены:
 // без методологии ЦБ нельзя утверждать, что они не входят в группы.
 var cbrForm101LoansView = util.View{
 	Name:   "v_cbr_form101_loans",
-	Tables: []string{cbrForm101Table, "v_company_financials"},
+	Tables: []string{cbrForm101Table, "company_financials"},
 	Select: `WITH f AS (
     SELECT report_date, regnum,
            round(sumIf(balance_total, active_passive = '1' AND account IN
@@ -127,8 +139,8 @@ pr AS (
     SELECT toDate(concat(substring(period, 1, 4), '-', substring(period, 6, 2), '-01')) AS report_month,
            maxIf(value, metric = 'loans_corporations') AS corporate,
            maxIf(value, metric = 'loans_individuals') AS retail
-    FROM v_company_financials
-    WHERE company = 'SBER' AND period_type = 'M'
+    FROM company_financials FINAL
+    WHERE company = 'SBER' AND period_type = 'M' AND source_kind = 'kpi'
     GROUP BY report_month
 )
 SELECT f.report_date, f.regnum, f.corporate_loans_bln_rub, f.retail_loans_bln_rub,
@@ -143,9 +155,10 @@ LEFT JOIN pr ON pr.report_month = subtractMonths(f.report_date, 1)
 ORDER BY f.report_date DESC`,
 	Comment: "Pilot-маппинг формы 101 на кредиты ЮЛ/ФЛ (issue #98): кандидатные суммы по синтетическим группам " +
 		"45.0/45.1/45.2 и детальным счетам, рядом — эталон пресс-релиза Сбера за тот же отчётный месяц и разница. " +
-		"Не финальная метрика: набор счетов откалиброван на август 2026 (32 002,6 / 20 126,3 против 32 512 / 20 200, " +
-		"−1,57 % / −0,36 %), mapping_version='pilot-1'; 458/459 — просрочка, показана отдельно и не прибавлена. " +
-		"Точный маппинг требует методологии ЦБ; до этого не писать эти значения в company_financials как ras",
+		"Набор счетов откалиброван на июль/август 2026: июль — 31 301,4 / 19 999,3 против 31 771 / 19 942, " +
+		"август — 32 002,6 / 20 126,3 против 32 512 / 20 200, mapping_version='pilot-1'; 458/459 — просрочка, " +
+		"показана отдельно и не прибавлена. Импортёр пишет те же pilot-1 значения ras в company_financials; " +
+		"точный маппинг требует методологии ЦБ",
 	Columns: map[string]string{
 		"report_date":                     "Дата отчёта формы 101 (из имени файла), для 2026-09-01 — остатки на конец августа",
 		"regnum":                          "Регистрационный номер банка (REGN); первый срез — 1481 (ПАО Сбербанк)",
@@ -159,6 +172,34 @@ ORDER BY f.report_date DESC`,
 		"retail_diff_pct":                 "Разница кандидатных кредитов ФЛ с пресс-релизом как доля (−0,0036 = −0,36 %); NULL — эталона нет",
 		"mapping_version":                 "Версия пилотного набора счетов: 'pilot-1'; смена набора — новая версия, чтобы сравнение между прогонами не смешивалось",
 	},
+}
+
+// cbrForm101CorporateAccounts — детальные счета кредитов ЮЛ в pilot-1
+// (451/446/442/445/448/449/447/450/453/454). Синтетические группы 45.0/45.1
+// обрабатываются отдельно: 45.0 — A_P=1, 45.1 — A_P=2; 45.2 — кредиты ФЛ
+// (A_P=1 и A_P=2). Набор откалиброван на июль/август 2026: ЮЛ −1,5 %,
+// ФЛ ±0,4 % к пресс-релизу; менять только вместе с mapping_version.
+var cbrForm101CorporateAccounts = map[string]bool{
+	"451": true, "446": true, "442": true, "445": true, "448": true,
+	"449": true, "447": true, "450": true, "453": true, "454": true,
+}
+
+// form101LoanTotals — pilot-маппинг строк Сбера в кредиты ЮЛ/ФЛ, млрд ₽
+// (остатки формы 101 — тыс. руб., поэтому /1e6). 458/459 (просрочка) не
+// прибавляются: без методологии ЦБ нельзя утверждать, что они не входят в
+// группы 45.x; витрина v_cbr_form101_loans показывает их отдельно.
+func form101LoanTotals(rows []form101Row) (corporate, retail float64) {
+	for _, row := range rows {
+		switch {
+		case row.Account == "45.0" && row.ActivePassive == "1",
+			row.Account == "45.1" && row.ActivePassive == "2",
+			cbrForm101CorporateAccounts[row.Account] && row.ActivePassive == "1":
+			corporate += row.BalanceTotal
+		case row.Account == "45.2":
+			retail += row.BalanceTotal
+		}
+	}
+	return corporate / 1e6, retail / 1e6
 }
 
 // cbrForm101Stat — импортёр cbr_form101. Встроенный util.ClickHouseImport даёт
@@ -215,6 +256,17 @@ func (s *cbrForm101Stat) Import(ctx context.Context, conn driver.Conn) (count in
 	if !form101Newer(latest, known) {
 		log.Infof("%s: отчётная дата %s уже импортирована (max=%s) — скачивание не требуется",
 			cbrForm101Table, latest.Format(form101DayLayout), form101Day(known).Format(form101DayLayout))
+		// Производные ras-метрики пересобираются и на no-op-пути: raw-строки уже
+		// лежат в таблице, а company_financials могла появиться после первого
+		// прогона (или её запись могла не удаться). Читаем сохранённые строки
+		// Сбера и пишем те же pilot-1 значения; сеть не нужна.
+		stored, storedErr := form101StoredSber(ctx, conn, latest)
+		if storedErr != nil {
+			return 0, storedErr
+		}
+		if err = writeForm101Loans(ctx, conn, latest, link, stored); err != nil {
+			return 0, err
+		}
 		return 0, nil
 	}
 
@@ -276,14 +328,96 @@ func (s *cbrForm101Stat) Import(ctx context.Context, conn driver.Conn) (count in
 		return count, fmt.Errorf("%s: отправка батча: %w", cbrForm101Table, err)
 	}
 	log.Infof("Imported %d rows of cbr_form101 for %s", count, latest.Format(form101DayLayout))
+
+	// 8. Производные ras-метрики pilot-1: отчётная дата формы — первое число
+	// следующего месяца, поэтому период company_financials — предыдущий месяц
+	// (2026-09-01 → 2026M08). Набор счетов — тот же, что в v_cbr_form101_loans.
+	if err = writeForm101Loans(ctx, conn, latest, link, sber); err != nil {
+		return count, err
+	}
+
 	return count, nil
+}
+
+// form101StoredSber читает уже записанные строки Сбера за отчётную дату —
+// для no-op-пути, когда ras-метрики нужно пересобрать без скачивания RAR.
+func form101StoredSber(ctx context.Context, conn driver.Conn, reportDate time.Time) ([]form101Row, error) {
+	rows, err := conn.Query(ctx,
+		"SELECT regnum, account, plan, active_passive, balance_total FROM cbr_form101 FINAL WHERE report_date = ? AND regnum = ?",
+		reportDate, cbrForm101SberRegnum)
+	if err != nil {
+		return nil, fmt.Errorf("%s: чтение сохранённых строк за %s: %w", cbrForm101Table, reportDate.Format(form101DayLayout), err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var stored []form101Row
+	for rows.Next() {
+		var row form101Row
+		if err = rows.Scan(&row.Regnum, &row.Account, &row.Plan, &row.ActivePassive, &row.BalanceTotal); err != nil {
+			return nil, fmt.Errorf("%s: сохранённая строка за %s: %w", cbrForm101Table, reportDate.Format(form101DayLayout), err)
+		}
+		stored = append(stored, row)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("%s: сохранённые строки за %s не дочитаны: %w", cbrForm101Table, reportDate.Format(form101DayLayout), err)
+	}
+	return stored, nil
+}
+
+// writeForm101Loans пишет pilot-1 ras-метрики в company_financials. Вызывается
+// и после импорта raw-строк, и на no-op-пути (пересборка производных). Если
+// company_financials в БД ещё нет — warn и nil: raw-импорт не должен падать из-за
+// отсутствия таблицы банковского пакета (следующий прогон после неё запишет).
+func writeForm101Loans(ctx context.Context, conn driver.Conn, reportDate time.Time, link string, sber []form101Row) error {
+	corporate, retail := form101LoanTotals(sber)
+	if corporate <= 0 || retail <= 0 {
+		return fmt.Errorf("%s: pilot-маппинг дал ЮЛ=%v, ФЛ=%v — набор счетов разошёлся",
+			cbrForm101Table, corporate, retail)
+	}
+	var hasCompany uint64
+	if err := conn.QueryRow(ctx,
+		"SELECT count() FROM system.tables WHERE database = currentDatabase() AND name = ?",
+		cbrForm101CompanyTable).Scan(&hasCompany); err != nil {
+		return fmt.Errorf("%s: проверка %s: %w", cbrForm101Table, cbrForm101CompanyTable, err)
+	}
+	if hasCompany == 0 {
+		log.Warnf("%s: таблицы %s нет — ras-метрики SBER за %s не записаны (следующий прогон после bank_company_metrics)",
+			cbrForm101Table, cbrForm101CompanyTable, reportDate.AddDate(0, -1, 0).Format("2006M01"))
+		return nil
+	}
+	period := reportDate.AddDate(0, -1, 0).Format("2006M01")
+	mapped, err := conn.PrepareBatch(ctx, cbrForm101MappedInsert)
+	if err != nil {
+		return fmt.Errorf("%s: батч %s: %w", cbrForm101Table, cbrForm101CompanyTable, err)
+	}
+	for _, metric := range []struct {
+		name  string
+		value float64
+	}{
+		{"loans_corporations", corporate},
+		{"loans_individuals", retail},
+	} {
+		if err = mapped.Append("SBER", metric.name, period, "M", "ras", metric.value, "млрд ₽", link, uint16(0)); err != nil {
+			if abortErr := mapped.Abort(); abortErr != nil {
+				log.Warnf("%s: не удалось закрыть батч %s после ошибки: %v", cbrForm101Table, cbrForm101CompanyTable, abortErr)
+			}
+			return fmt.Errorf("%s: %s %s за %s: %w", cbrForm101Table, "SBER", metric.name, period, err)
+		}
+	}
+	if err = mapped.Send(); err != nil {
+		return fmt.Errorf("%s: отправка %s: %w", cbrForm101Table, cbrForm101CompanyTable, err)
+	}
+	log.Infof("Mapped SBER %s: loans_corporations=%.2f, loans_individuals=%.2f (ras, pilot-1)",
+		period, corporate, retail)
+	return nil
 }
 
 // cbrForm101Importer — регистрация импортёра: Name() = TableName = cbr_form101,
 // DDL, объявление точки контроля публикации (запрос совпадает с колонкой
 // countPoints реестра — это сверяет тест-энфорсер) и свой Import. Каталог
 // series_catalog не публикуется: это сырые строки счетов, а не series; метрики
-// появятся на следующем шаге (спека §4.8). Сетевых вызовов в init() нет.
+// кредитования идут ras в company_financials и описываются каталогом банковского
+// пакета (bank_company_metrics). Сетевых вызовов в init() нет.
 var cbrForm101Importer = &cbrForm101Stat{ClickHouseImport: util.ClickHouseImport{
 	TableName:              cbrForm101Table,
 	CreateTable:            []string{cbrForm101Ddl},
