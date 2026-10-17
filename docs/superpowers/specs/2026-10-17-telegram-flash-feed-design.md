@@ -175,11 +175,15 @@ ORDER BY (url, content_hash, kind, method, model, prompt_version, dimension, tag
   API, `LLM_BASE_URL` без `/v1`, ключ заголовком `x-api-key`, `WithMaxRetries(0)`, дедлайн 65 с).
   `cbr/` не рефакторим: там свои промпт/валидация/тесты; дублирование транспорта ~100 строк
   осознанное, с комментарием «третий потребитель → вынос в util».
-- Конфиг: `LLM_BASE_URL`, `LLM_API_KEY`, `NEWS_LLM_MODEL`; любая пустая → warn и пропуск
-  LLM-шага (импорт зелёный, догон следующим прогоном). Модель пишется в `model`, версия
-  промпта `newsPromptVersion = 1` — в `prompt_version`; обе входят в ключ таблицы.
+- Конфиг: профиль `default` — `LLM_BASE_URL`, `LLM_API_KEY`, `NEWS_LLM_MODEL` (Anthropic SDK);
+  профиль `glm` — `NEWS_LLM_PROFILE=glm` и `GLM_LLM_BASE_URL`/`GLM_LLM_API_KEY`/`GLM_LLM_MODEL`
+  (OpenAI-совместимый `/v1/chat/completions`, `response_format=json_object`,
+  `reasoning_effort=none`). Любая пустая → warn и пропуск LLM-шага (импорт зелёный, догон
+  следующим прогоном). Модель пишется в `model`, версия промпта `newsPromptVersion = 1` — в
+  `prompt_version`; обе входят в ключ таблицы.
 - Кандидаты: `news_events FINAL` с `url LIKE 'https://t.me/%'`, `content_hash != ''`,
-  `date >= now() - INTERVAL 7 DAY`, которых нет в `news_annotation` для пары
+  `date >= now() - INTERVAL 30 DAY` (окно покрывает и корпоративные раскрытия edisclosure),
+  которых нет в `news_annotation` для пары
   `(model, prompt_version)`, `ORDER BY date DESC LIMIT 50`. Батч — 10 сообщений; при ошибке
   провайдера — warn и остановка LLM-шага на этот прогон (без долбёжки).
 - Валидация: неизвестный URL/тег/направление — drop с warn; `evidence` не подстрока — drop;
