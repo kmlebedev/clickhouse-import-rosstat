@@ -40,10 +40,10 @@ gh issue create \
 Шапка тела — машинно-читаемая:
 
 ```text
-Roadmap: docs/ROADMAP_KEY_RATE.md
+Roadmap: key-rate
+File: docs/ROADMAP_KEY_RATE.md
 Item: 1.9
 Phase: 1
-Contour: key-rate
 Acceptance: <критерий из роадмапа>
 Spec: docs/superpowers/specs/...
 Plan: docs/superpowers/plans/...
@@ -71,6 +71,8 @@ Labels: `roadmap:<slug>` — группировка до появления Proj
 | `Spec / Plan` | пути к файлам |
 | `Acceptance` | короткий критерий + ссылка на протокол |
 | `Depends on` | номера issue |
+| `Priority` | `P0` / `P1` / `P2` (опционально) |
+| `Target date` | дата (опционально) |
 
 Отображение статусов: `❌`/«не начато»/нет маркера → `Todo`; `⏳`/`🔶`/«срез»/«остаток» → `In Progress`; открытый PR → `In Review`; `✅` + протокол + мерж → `Done`; внешний блокер → `Blocked`. `✅ сделан этим PR` до мержа — это `In Review`, не `Done`; `✅` с оговоркой «статус финализируется после мержа PR» до мержа читается так же — `In Review`.
 

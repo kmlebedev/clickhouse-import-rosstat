@@ -198,7 +198,7 @@ Issue Form с полями: `roadmap` (dropdown, пять значений), `it
 
 - [x] **Step 3: Обновить `README.md`**
 
-1. Во вступлении (строка ~5) добавить: «Реестр всех роадмапов и правила трекера — в [docs/ROADMAP_INDEX.md](docs/ROADMAP_INDEX.md)».
+1. Во вступлении (строка ~5) добавить: «Реестр всех роадмапов и правила трекера — в `docs/ROADMAP_INDEX.md`».
 2. В «Структура репозитория» в строке `docs/` упомянуть `ROADMAP_INDEX.md`, спеки и планы; при необходимости добавить строку `.kimi-code/skills/`.
 3. В разделе «Разработка» после таблицы команд добавить абзац: «Пункт роадмапа ведётся через GitHub issue с составным ID; шаблоны — `.github/ISSUE_TEMPLATE/roadmap-item.yml` и `.github/pull_request_template.md`; операции — скил `github-tracker`; правила — `docs/ROADMAP_INDEX.md` и правило 12 `AGENTS.md`.»
 

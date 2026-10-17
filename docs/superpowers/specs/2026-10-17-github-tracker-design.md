@@ -94,10 +94,10 @@
 Шапка issue — машинно-читаемая:
 
 ```text
-Roadmap: docs/ROADMAP_KEY_RATE.md
+Roadmap: key-rate
+File: docs/ROADMAP_KEY_RATE.md
 Item: 1.9
 Phase: 1
-Contour: key-rate
 Acceptance: <критерий из роадмапа>
 Spec: docs/superpowers/specs/...
 Plan: docs/superpowers/plans/...
