@@ -65,7 +65,11 @@ STAGING_BIN_DIR  ?= /root/.local/bin
 STAGING_ENV_FILE ?= /etc/clickhouse-import-rosstat.env
 DAGU_VERSION     ?= v2.18.2
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model cpi-nowcast
+# Docs-портал GitHub Pages: версия mkdocs-material общая с .github/workflows/pages.yml.
+MKDOCS_VERSION ?= 9.7.7
+MKDOCS := uv run --with mkdocs-material==$(MKDOCS_VERSION) --python 3.12 mkdocs
+
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model cpi-nowcast docs-check docs-build docs-serve
 
 all: lint test build build-ingest
 
@@ -623,3 +627,18 @@ info:
 	@echo "GOOS      = linux"
 	@echo "GOARCH    = amd64"
 	@echo "CGO_ENABLED = 0"
+
+# Docs-портал: генератор (stdlib) собирает build/site-docs и build/mkdocs.yml,
+# mkdocs-material строит статический сайт. Сеть нужна только для скачивания mkdocs-material через uv.
+docs-check:
+	python3 scripts/docs_build.py --check
+	python3 scripts/docs_build_test.py
+
+docs-build:
+	python3 scripts/docs_build.py --out build/site-docs
+	$(MKDOCS) build -f build/mkdocs.yml --strict
+
+docs-serve:
+	python3 scripts/docs_build.py --out build/site-docs
+	$(MKDOCS) serve -f build/mkdocs.yml
+
