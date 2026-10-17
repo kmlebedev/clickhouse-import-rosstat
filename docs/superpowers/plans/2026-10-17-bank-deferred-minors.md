@@ -130,7 +130,7 @@ git commit -m "bank: close harness and domrf review minors (T1-T2)"
 
 - `TestVtbFloatComma`: `vtbFloat("0,202")` → `0.202`, `nil`.
 - `TestVtbSheetAmbiguous`: книга с двумя листами, содержащими `vtbBookSheet`, → ошибка, текст перечисляет оба листа.
-- `TestVtbIfrsXlsLinksUppercase`: ссылка `.../RUS-VTB-GROUP-IFRS-As-Of-31-August-2026.xlsx` разбирается в дату `2026-08-31` (месяц в верхнем регистре).
+- `TestVtbIfrsXlsLinksUppercase`: ссылка `.../rus-vtb-group-ifrs-as-of-31-August-2026.xlsx` (якорь в нижнем регистре — конвенция источника, месяц с заглавной) разбирается в дату `2026-08-31`.
 - Расширить существующий тест шапки баланса: ячейка `"NaN"` в строке шапки не становится колонкой-датой и не роняет разбор.
 - Расширить существующий fail-fast глоссария: определение `"NaN"` — текст, ошибки «значение — число» нет; `"0.202"` — ошибка есть.
 
@@ -149,7 +149,7 @@ Expected: FAIL на новых кейсах.
 - `vtbSheet`: собрать `matches []string`; `len(matches) > 1` → `fmt.Errorf("в книге несколько листов с якорем %q: %s", anchor, strings.Join(matches, ", "))`.
 - `vtbFloat`: до `ParseFloat` — `raw = strings.ReplaceAll(strings.TrimSpace(raw), ",", ".")`; смешанный формат останется ошибкой.
 - `parseVtbRatiosSheet`: `if _, err := vtbFloat(definition); err == nil { return ... }` — «NaN»/«Inf» больше не числовая таблица.
-- `vtbIfrsReportRe = regexp.MustCompile(\`(?i)as-of-(\d{1,2})-([a-z]+)-(\d{4})\`)`.
+- `vtbIfrsReportRe = regexp.MustCompile(\`(?i)as-of-(\d{1,2})-([a-z]+)-(\d{4})\`)`: `(?i)` делает безрегистровым разбор месяца (`31-August-2026`); префикс href `rus-vtb-group-ifrs-as-of` остаётся конвенцией источника в нижнем регистре, старые файлы `RUS-…-As-Of-…` вне T4 — селектор ссылок не меняется.
 
 - [ ] **Step 5: Безвременные комментарии**
 

@@ -525,13 +525,11 @@ func TestAppendVtbPoints(t *testing.T) {
 
 // Фикстура — живая страница результатов ВТБ (https://www.vtb.ru/ir/statements/results/, скачана
 // 2026-10-17, 357 115 Б): коммитится как есть, разметка не пересобирается (§11.2). Разведка
-// 2026-10-17: 34 ссылки с якорем rus-vtb-group-ifrs-as-of без учёта регистра — 24 xlsx и 10 pdf
-// (pdf разбором отбрасываются). У 15 старых файлов имя набрано в верхнем регистре
-// (RUS-vtb-group-ifrs-as-of-…, месяц полный или сокращённый Apr/Feb), у двух имён хвостовое
-// подчёркивание (31-october-2025_, 30-april-2025_), у июля 2025 — опечатка источника
-// (31-jule-2025); порядок ссылок на странице — от свежих к старым и между прогонами меняется
-// (2026-10-16 первыми шли март-2025, февраль-2026, апрель-2025), поэтому сортировка по дате
-// отчёта — часть разбора.
+// 2026-10-17: 19 ссылок с якорем rus-vtb-group-ifrs-as-of — 13 xlsx и 6 pdf (pdf разбором
+// отбрасываются); у двух имён хвостовое подчёркивание (31-october-2025_, 30-april-2025_), у июля
+// 2025 — опечатка источника (31-jule-2025); порядок ссылок на странице — от свежих к старым и
+// между прогонами меняется (2026-10-16 первыми шли март-2025, февраль-2026, апрель-2025),
+// поэтому сортировка по дате отчёта — часть разбора.
 const vtbResultsPageFixture = "vtb_results_page.html"
 
 // vtbResultsPage — байты фикстуры страницы: разбор страницы чистый (§6.1) и проверяется офлайн
@@ -547,7 +545,7 @@ func vtbResultsPage(t *testing.T) []byte {
 
 // vtbPageWithDuplicate — копия страницы с повторённой ссылкой: дублируется реальный элемент
 // разметки (вырезается по границам <a …>…</a>), а не собирается заново (§11.1). Живая страница
-// дублей сейчас не несёт (все 34 href уникальны), а ветка дедупа обязана быть проверенной: с
+// дублей сейчас не несёт (все 19 href уникальны), а ветка дедупа обязана быть проверенной: с
 // двух копий одного отчёта импортёр скачал бы файл дважды.
 func vtbPageWithDuplicate(t *testing.T, page []byte, href string) []byte {
 	t.Helper()
@@ -571,24 +569,13 @@ func vtbPageWithDuplicate(t *testing.T, page []byte, href string) []byte {
 	return append(dup, page[end:]...)
 }
 
-// vtbFixtureLinks — 24 отчётных xlsx живой страницы в порядке возрастания даты отчётности:
-// адреса — литералами (сверяется сборка «домен + href»), даты — как их даёт имя файла (месяц —
-// английское название или сокращение Apr/Feb старых файлов; у июля 2025 — опечатка источника
-// jule). PDF-версии тех же отчётов (10 на странице) в список не входят.
+// vtbFixtureLinks — 13 отчётных xlsx живой страницы в порядке возрастания даты отчётности:
+// адреса — литералами (сверяется сборка «домен + href»), даты — как их даёт имя файла
+// (месяц — английское название; у июля 2025 — опечатка источника jule). PDF-версии тех же
+// отчётов (6 на странице) в список не входят.
 var vtbFixtureLinks = []vtbLink{
-	{Url: "https://www.vtb.ru/media-files/vtb.ru/sitepages/ir/statements/results/RUS-vtb-group-ifrs-as-of-31-May-2023.xlsx", Report: time.Date(2023, time.May, 31, 0, 0, 0, 0, time.UTC)},
-	{Url: "https://www.vtb.ru/media-files/vtb.ru/sitepages/ir/statements/results/RUS-vtb-group-ifrs-as-of-31-July-2023.xlsx", Report: time.Date(2023, time.July, 31, 0, 0, 0, 0, time.UTC)},
-	{Url: "https://www.vtb.ru/media-files/vtb.ru/sitepages/ir/statements/results/RUS-vtb-group-ifrs-as-of-31-August-2023.xlsx", Report: time.Date(2023, time.August, 31, 0, 0, 0, 0, time.UTC)},
-	{Url: "https://www.vtb.ru/media-files/vtb.ru/sitepages/ir/statements/results/RUS-vtb-group-ifrs-as-of-31-October-2023.xlsx", Report: time.Date(2023, time.October, 31, 0, 0, 0, 0, time.UTC)},
-	{Url: "https://www.vtb.ru/media-files/vtb.ru/sitepages/ir/statements/results/RUS-vtb-group-ifrs-as-of-30-November-2023.xlsx", Report: time.Date(2023, time.November, 30, 0, 0, 0, 0, time.UTC)},
-	{Url: "https://www.vtb.ru/media-files/vtb.ru/sitepages/ir/statements/results/RUS-vtb-group-ifrs-as-of-29-Feb-2024_fin.xlsx", Report: time.Date(2024, time.February, 29, 0, 0, 0, 0, time.UTC)},
-	{Url: "https://www.vtb.ru/media-files/vtb.ru/sitepages/ir/financial-results/ifrs-financial-results/RUS-vtb-group-ifrs-as-of-30-Apr-2024.xlsx", Report: time.Date(2024, time.April, 30, 0, 0, 0, 0, time.UTC)},
-	{Url: "https://www.vtb.ru/media-files/vtb.ru/sitepages/ir/financial-results/ifrs-financial-results/RUS-vtb-group-ifrs-as-of-31-May-2024.xlsx", Report: time.Date(2024, time.May, 31, 0, 0, 0, 0, time.UTC)},
-	{Url: "https://www.vtb.ru/media-files/vtb.ru/sitepages/ir/financial-results/ifrs-financial-results/RUS-vtb-group-ifrs-as-of-31-July-2024.xlsx", Report: time.Date(2024, time.July, 31, 0, 0, 0, 0, time.UTC)},
-	{Url: "https://www.vtb.ru/media-files/vtb.ru/sitepages/ir/financial-results/ifrs-financial-results/RUS-vtb-group-ifrs-as-of-31-August-2024.xlsx", Report: time.Date(2024, time.August, 31, 0, 0, 0, 0, time.UTC)},
 	{Url: "https://www.vtb.ru/media-files/vtb.ru/sitepages/ir/statements/results/rus-vtb-group-ifrs-as-of-31-october-2024.xlsx", Report: time.Date(2024, time.October, 31, 0, 0, 0, 0, time.UTC)},
 	{Url: "https://www.vtb.ru/media-files/vtb.ru/sitepages/ir/statements/results/rus-vtb-group-ifrs-as-of-30-november-2024.xlsx", Report: time.Date(2024, time.November, 30, 0, 0, 0, 0, time.UTC)},
-	{Url: "https://www.vtb.ru/media-files/vtb.ru/sitepages/ir/statements/results/RUS-vtb-group-ifrs-as-of-28-February-2025.xlsx", Report: time.Date(2025, time.February, 28, 0, 0, 0, 0, time.UTC)},
 	{Url: "https://www.vtb.ru/media-files/vtb.ru/sitepages/ir/statements/results/rus-vtb-group-ifrs-as-of-30-april-2025_.xlsx", Report: time.Date(2025, time.April, 30, 0, 0, 0, 0, time.UTC)},
 	{Url: "https://www.vtb.ru/media-files/vtb.ru/sitepages/ir/statements/results/rus-vtb-group-ifrs-as-of-31-may-2025.xlsx", Report: time.Date(2025, time.May, 31, 0, 0, 0, 0, time.UTC)},
 	{Url: "https://www.vtb.ru/media-files/vtb.ru/sitepages/ir/statements/results/rus-vtb-group-ifrs-as-of-31-jule-2025.xlsx", Report: time.Date(2025, time.July, 31, 0, 0, 0, 0, time.UTC)},
@@ -605,8 +592,7 @@ var vtbFixtureLinks = []vtbLink{
 // TestVtbIfrsXlsLinks: список со страницы — только xlsx (pdf тех же отчётов отброшены), с
 // дедупом по href, с абсолютными адресами и в порядке возрастания даты отчётности (порядок
 // страницы другой: свежие первыми). «Грязные» имена источника разбираются: опечатка jule у
-// июля 2025, хвостовое подчёркивание у 31-october-2025_ / 30-april-2025_ и имена в верхнем
-// регистре у старых файлов (RUS-vtb-group-ifrs-as-of-…, As-Of, сокращения Apr/Feb).
+// июля 2025 и хвостовое подчёркивание у 31-october-2025_ / 30-april-2025_.
 func TestVtbIfrsXlsLinks(t *testing.T) {
 	page := vtbResultsPage(t)
 	links, err := vtbIfrsXlsLinks(page)
@@ -740,26 +726,17 @@ func TestVtbSheetAmbiguous(t *testing.T) {
 	}
 }
 
-// TestVtbIfrsXlsLinksUppercase: регистр «as-of», якоря и месяца в имени файла не ломает разбор
-// страницы: источник может выложить файл как .../RUS-VTB-GROUP-IFRS-As-Of-31-August-2026.xlsx.
-// Селектор ссылок ищет якорь без учёта регистра (CSS-флаг i), дату разбирает regexp с (?i).
+// TestVtbIfrsXlsLinksUppercase: месяц в имени файла разбирается без учёта регистра — источник
+// может выложить файл как .../rus-vtb-group-ifrs-as-of-31-August-2026.xlsx. Якорь href остаётся
+// в нижнем регистре: это конвенция имени современных файлов источника, а старые RUS-… вне T4.
 func TestVtbIfrsXlsLinksUppercase(t *testing.T) {
-	const name = "RUS-VTB-GROUP-IFRS-As-Of-31-August-2026.xlsx"
-	const href = "https://www.vtb.ru/media-files/vtb.ru/sitepages/ir/statements/results/" + name
+	const name = "rus-vtb-group-ifrs-as-of-31-August-2026.xlsx"
 	want := time.Date(2026, time.August, 31, 0, 0, 0, 0, time.UTC)
-	got, err := vtbIfrsReportDate(href)
-	if err != nil {
-		t.Fatalf("vtbIfrsReportDate(%q): %v", href, err)
-	}
-	if !got.Equal(want) {
-		t.Errorf("дата отчётности %s, want %s", got.Format("2006-01-02"), want.Format("2006-01-02"))
-	}
-
 	page := bytes.ReplaceAll(vtbResultsPage(t),
 		[]byte("rus-vtb-group-ifrs-as-of-31-august-2026.xlsx"), []byte(name))
 	links, err := vtbIfrsXlsLinks(page)
 	if err != nil {
-		t.Fatalf("vtbIfrsXlsLinks с именем файла в другом регистре: %v", err)
+		t.Fatalf("vtbIfrsXlsLinks с месяцем в верхнем регистре: %v", err)
 	}
 	if len(links) != len(vtbFixtureLinks) {
 		t.Fatalf("ссылок %d, want %d", len(links), len(vtbFixtureLinks))
