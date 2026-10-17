@@ -13,7 +13,7 @@ import (
 
 // Импортёр сырых остатков формы 101 ЦБ (первый срез — ПАО Сбербанк, REGN=1481):
 // помесячная оборотная ведомость по счетам бухгалтерского учёта. Таблица
-// cbr_form101 — сырые строки «счёт → остаток»; поверх них pilot-1 маппинг
+// cbr_form101 — сырые строки «счёт → остаток»; поверх них cbr-809p-sber-1 маппинг
 // (form101LoanTotals) пишет ras-метрики loans_corporations/loans_individuals
 // в company_financials — с августа 2026 из текущего выпуска, июль 2026 — сид
 // sql/sber_ras_form101_mapped_2026_07.sql (issue #98, спека docs/superpowers/
@@ -70,7 +70,7 @@ ORDER BY (report_date, regnum, account, active_passive, plan);
 	cbrForm101Insert = "INSERT INTO cbr_form101 (report_date, regnum, account, plan, active_passive, balance_total)"
 
 	// cbrForm101CompanyTable / cbrForm101MappedInsert — производные ras-метрики
-	// (pilot-1) в общую company_financials. Пишем только если таблица уже есть:
+	// (cbr-809p-sber-1) в общую company_financials. Пишем только если таблица уже есть:
 	// в цепочке ЦБ (09:17) она создаётся банковским пакетом (понедельник 09:23),
 	// и на чистой БД первый прогон ЦБ может её не застать — тогда пропуск с warn,
 	// а следующий прогон запишет. DDL здесь не дублируется намеренно.
@@ -96,7 +96,7 @@ ORDER BY report_date DESC, regnum, account, active_passive`,
 		"источнике (не пересчитан в рубли и не сверен с пресс-релизом Сбера). report_date — дата отчёта из " +
 		"имени файла 101-YYYYMMDD.rar, а не месяц публикации. Ключ таблицы включает plan, поэтому все " +
 		"строки Сбера (включая 8 строк группы ITGAP четырёх планов А/Б/В/Г) сохраняются. " +
-		"Это не готовая метрика кредитования: pilot-1 маппинг счетов (44x/45x, группы 45.0/45.2) на " +
+		"Это не готовая метрика кредитования: cbr-809p-sber-1 маппинг счетов (44x/45x, группы 45.0/45.2) на " +
 		"кредиты юрлицам и физлицам показывает отдельная витрина v_cbr_form101_loans, а те же значения " +
 		"импортёр пишет ras в company_financials; поэтому не складывать строки этой витрины и не " +
 		"сравнивать их с loans_corporations/loans_individuals без явного отбора счетов",
@@ -111,29 +111,39 @@ ORDER BY report_date DESC, regnum, account, active_passive`,
 	},
 }
 
-// cbrForm101LoansView — pilot-витрина маппинга счетов формы 101 на кредиты ЮЛ/ФЛ
-// (issue #98). Это не замена v_company_financials: наборы счетов подобраны по
-// калибровке на июль/август 2026 и помечены mapping_version, а разница с
-// kpi-сидом пресс-релиза видна рядом. Импортёр пишет те же pilot-1 значения
-// ras в company_financials (см. Import), поэтому форвардная витрина видит их
-// через v_company_financials. 45.0/45.1/45.2 — синтетические группы
-// формы 101; 442/445/446/447/448/449/450/451/453/454 — детальные счета кредитов
-// ЮЛ; 45.2 — кредиты ФЛ. 458/459 (просрочка) показаны отдельно и не прибавлены:
-// без методологии ЦБ нельзя утверждать, что они не входят в группы.
+// cbrForm101LoansView — витрина маппинга формы 101 на кредиты ЮЛ/ФЛ по
+// методологии ЦБ (issue #103; research docs/research/2026-10-17-cbr-form101-
+// mapping-methodology.md). Набор счетов — cbr-809p-sber-1: 45.0 (452+456) +
+// активные 441–451,453,454 + прочие размещённые средства 460–470,472,47.1,477;
+// 45.2 (455+457) — ФЛ; 458 (просроченный основной долг) распределяется
+// пропорционально портфелям, 459 (проценты) и пассивные 45.1/45.2 (резервы)
+// исключены. Ряд — «до резервов», как в пресс-релизе Сбера.
 var cbrForm101LoansView = util.View{
 	Name:   "v_cbr_form101_loans",
 	Tables: []string{cbrForm101Table, "company_financials"},
 	Select: `WITH f AS (
     SELECT report_date, regnum,
            round(sumIf(balance_total, active_passive = '1' AND account IN
-               ('45.0', '451', '446', '442', '445', '448', '449', '447', '450', '453', '454')) / 1e6, 2)
-         + round(sumIf(balance_total, active_passive = '2' AND account = '45.1') / 1e6, 2) AS corporate_loans_bln_rub,
-           round(sumIf(balance_total, account = '45.2') / 1e6, 2) AS retail_loans_bln_rub,
-           round(sumIf(balance_total, active_passive = '1' AND account = '458') / 1e6, 2) AS overdue_bln_rub,
-           round(sumIf(balance_total, active_passive = '1' AND account = '459') / 1e6, 2) AS overdue_interest_bln_rub
+               ('45.0', '441', '442', '443', '444', '445', '446', '447', '448', '449', '450', '451', '453', '454',
+                '460', '461', '462', '463', '464', '465', '466', '467', '468', '469', '470', '472', '47.1', '477')) / 1e6, 6)
+         AS corporate_performing_bln_rub,
+           round(sumIf(balance_total, active_passive = '1' AND account = '45.2') / 1e6, 6) AS retail_performing_bln_rub,
+           round(sumIf(balance_total, active_passive = '1' AND account = '458') / 1e6, 6) AS overdue_bln_rub,
+           round(sumIf(balance_total, active_passive = '1' AND account = '459') / 1e6, 6) AS overdue_interest_bln_rub
     FROM cbr_form101 FINAL
     WHERE regnum = 1481
     GROUP BY report_date, regnum
+),
+m AS (
+    SELECT *,
+           corporate_performing_bln_rub / (corporate_performing_bln_rub + retail_performing_bln_rub) AS corporate_share,
+           round(corporate_performing_bln_rub
+               + overdue_bln_rub * corporate_performing_bln_rub
+                 / (corporate_performing_bln_rub + retail_performing_bln_rub), 2) AS corporate_loans_bln_rub,
+           round(retail_performing_bln_rub
+               + overdue_bln_rub * retail_performing_bln_rub
+                 / (corporate_performing_bln_rub + retail_performing_bln_rub), 2) AS retail_loans_bln_rub
+    FROM f
 ),
 pr AS (
     SELECT toDate(concat(substring(period, 1, 4), '-', substring(period, 6, 2), '-01')) AS report_month,
@@ -143,63 +153,88 @@ pr AS (
     WHERE company = 'SBER' AND period_type = 'M' AND source_kind = 'kpi'
     GROUP BY report_month
 )
-SELECT f.report_date, f.regnum, f.corporate_loans_bln_rub, f.retail_loans_bln_rub,
-       f.overdue_bln_rub, f.overdue_interest_bln_rub,
+SELECT m.report_date, m.regnum, m.corporate_loans_bln_rub, m.retail_loans_bln_rub,
+       m.overdue_bln_rub, m.overdue_interest_bln_rub,
        pr.corporate AS press_release_corporate_bln_rub,
        pr.retail AS press_release_retail_bln_rub,
-       if(pr.corporate = 0, NULL, round(f.corporate_loans_bln_rub / pr.corporate - 1, 4)) AS corporate_diff_pct,
-       if(pr.retail = 0, NULL, round(f.retail_loans_bln_rub / pr.retail - 1, 4)) AS retail_diff_pct,
-       'pilot-1' AS mapping_version
-FROM f
-LEFT JOIN pr ON pr.report_month = subtractMonths(f.report_date, 1)
-ORDER BY f.report_date DESC`,
-	Comment: "Pilot-маппинг формы 101 на кредиты ЮЛ/ФЛ (issue #98): кандидатные суммы по синтетическим группам " +
-		"45.0/45.1/45.2 и детальным счетам, рядом — эталон пресс-релиза Сбера за тот же отчётный месяц и разница. " +
-		"Набор счетов откалиброван на июль/август 2026: июль — 31 301,4 / 19 999,3 против 31 771 / 19 942, " +
-		"август — 32 002,6 / 20 126,3 против 32 512 / 20 200, mapping_version='pilot-1'; 458/459 — просрочка, " +
-		"показана отдельно и не прибавлена. Импортёр пишет те же pilot-1 значения ras в company_financials; " +
-		"точный маппинг требует методологии ЦБ",
+       if(pr.corporate = 0, NULL, round(m.corporate_loans_bln_rub / pr.corporate - 1, 4)) AS corporate_diff_pct,
+       if(pr.retail = 0, NULL, round(m.retail_loans_bln_rub / pr.retail - 1, 4)) AS retail_diff_pct,
+       'cbr-809p-sber-1' AS mapping_version
+FROM m
+LEFT JOIN pr ON pr.report_month = subtractMonths(m.report_date, 1)
+ORDER BY m.report_date DESC`,
+	Comment: "Маппинг формы 101 на кредиты ЮЛ/ФЛ по методологии ЦБ (issue #103): 45.0 (452+456) + активные " +
+		"441–451,453,454 + прочие размещённые средства 460–470,472,47.1,477; ФЛ — 45.2 (455+457); 458 " +
+		"(просроченный основной долг) распределён пропорционально портфелям, 459 (проценты) и пассивные " +
+		"45.1/45.2 (резервы) исключены. mapping_version='cbr-809p-sber-1'; калибровка: июль 31 756,3 / " +
+		"19 963,3 против 31 771 / 19 942 (−0,05 % / +0,11 %), август 32 455,7 / 20 075,2 против 32 512 / " +
+		"20 200 (−0,17 % / −0,62 %). Ряд — до резервов, как в пресс-релизе Сбера",
 	Columns: map[string]string{
 		"report_date":                     "Дата отчёта формы 101 (из имени файла), для 2026-09-01 — остатки на конец августа",
 		"regnum":                          "Регистрационный номер банка (REGN); первый срез — 1481 (ПАО Сбербанк)",
-		"corporate_loans_bln_rub":         "Кандидатные кредиты ЮЛ, млрд ₽: 45.0 + 45.1 (A_P=2) + 451/446/442/445/448/449/447/450/453/454 (A_P=1), делённые на 1e6; пилотный набор, не финальная метрика",
-		"retail_loans_bln_rub":            "Кандидатные кредиты ФЛ, млрд ₽: 45.2 (A_P=1 + A_P=2), делённые на 1e6; пилотный набор",
-		"overdue_bln_rub":                 "Просроченная задолженность 458 (A_P=1), млрд ₽; показана отдельно и не прибавлена к кредитам — возможно, уже входит в группы 45.x",
-		"overdue_interest_bln_rub":        "Просроченные проценты 459 (A_P=1), млрд ₽; показаны отдельно и не прибавлены",
+		"corporate_loans_bln_rub":         "Кредиты ЮЛ, млрд ₽: 45.0 (A_P=1, = 452+456) + активные 441–451,453,454 + 460–470,472,47.1,477 + доля 458 (A_P=1) пропорционально портфелям; резервы (45.1), 459 и 474+ исключены",
+		"retail_loans_bln_rub":            "Кредиты ФЛ, млрд ₽: 45.2 (A_P=1, = 455+457) + доля 458 (A_P=1) пропорционально портфелям; резервы (пассивный 45.2) исключены",
+		"overdue_bln_rub":                 "Просроченный основной долг 458 (A_P=1), млрд ₽; распределён между ЮЛ/ФЛ пропорционально текущим портфелям — точного разреза в форме 101 нет",
+		"overdue_interest_bln_rub":        "Просроченные проценты 459 (A_P=1), млрд ₽; в кредиты не входят",
 		"press_release_corporate_bln_rub": "Эталон пресс-релиза Сбера за тот же отчётный месяц (loans_corporations, source_kind='kpi'), млрд ₽; NULL — сида за месяц нет",
 		"press_release_retail_bln_rub":    "Эталон пресс-релиза Сбера за тот же отчётный месяц (loans_individuals, source_kind='kpi'), млрд ₽; NULL — сида за месяц нет",
-		"corporate_diff_pct":              "Разница кандидатных кредитов ЮЛ с пресс-релизом как доля (−0,0157 = −1,57 %); NULL — эталона нет",
-		"retail_diff_pct":                 "Разница кандидатных кредитов ФЛ с пресс-релизом как доля (−0,0036 = −0,36 %); NULL — эталона нет",
-		"mapping_version":                 "Версия пилотного набора счетов: 'pilot-1'; смена набора — новая версия, чтобы сравнение между прогонами не смешивалось",
+		"corporate_diff_pct":              "Разница кредитов ЮЛ с пресс-релизом как доля (−0,0017 = −0,17 %); NULL — эталона нет",
+		"retail_diff_pct":                 "Разница кредитов ФЛ с пресс-релизом как доля (−0,0062 = −0,62 %); NULL — эталона нет",
+		"mapping_version":                 "Версия набора счетов: 'cbr-809p-sber-1' — 809-П и формат DBF 0409101; смена набора — новая версия, чтобы сравнение между прогонами не смешивалось",
 	},
 }
 
-// cbrForm101CorporateAccounts — детальные счета кредитов ЮЛ в pilot-1
-// (451/446/442/445/448/449/447/450/453/454). Синтетические группы 45.0/45.1
-// обрабатываются отдельно: 45.0 — A_P=1, 45.1 — A_P=2; 45.2 — кредиты ФЛ
-// (A_P=1 и A_P=2). Набор откалиброван на июль/август 2026: ЮЛ −1,5 %,
-// ФЛ ±0,4 % к пресс-релизу; менять только вместе с mapping_version.
-var cbrForm101CorporateAccounts = map[string]bool{
-	"451": true, "446": true, "442": true, "445": true, "448": true,
-	"449": true, "447": true, "450": true, "453": true, "454": true,
+// cbrForm101CorporateDirect — детальные счета кредитов ЮЛ, которые не входят
+// в агрегат 45.0 (45.0 = 452 + 456 по формату DBF 0409101). 452/456 поэтому
+// здесь отсутствуют: иначе двойной счёт. 454 — кредиты индивидуальным
+// предпринимателям; по порядку 0409115 ИП классифицируются как ЮЛ.
+var cbrForm101CorporateDirect = map[string]bool{
+	"441": true, "442": true, "443": true, "444": true, "445": true,
+	"446": true, "447": true, "448": true, "449": true, "450": true,
+	"451": true, "453": true, "454": true,
 }
 
-// form101LoanTotals — pilot-маппинг строк Сбера в кредиты ЮЛ/ФЛ, млрд ₽
-// (остатки формы 101 — тыс. руб., поэтому /1e6). 458/459 (просрочка) не
-// прибавляются: без методологии ЦБ нельзя утверждать, что они не входят в
-// группы 45.x; витрина v_cbr_form101_loans показывает их отдельно.
+// cbrForm101CorporateOther — «прочие размещённые средства» (460–473) и лизинг
+// (477). По 809-П это не «кредиты предоставленные», но калибровка показывает,
+// что Сбер включает их во внутренний корпоративный портфель: без них ряд
+// систематически ниже пресс-релиза на ~2,7 %, с ними — в пределах 0,2 %.
+// 47.1 — агрегат 471 + 473 по формату DBF; 471/473 отдельно не прибавляются.
+var cbrForm101CorporateOther = map[string]bool{
+	"460": true, "461": true, "462": true, "463": true, "464": true,
+	"465": true, "466": true, "467": true, "468": true, "469": true,
+	"470": true, "472": true, "47.1": true, "477": true,
+}
+
+// form101LoanTotals — маппинг строк Сбера в кредиты ЮЛ/ФЛ по методологии ЦБ
+// (809-П + формат DBF 0409101), млрд ₽. Остатки — тыс. руб., поэтому /1e6.
+// Ряд «до резервов»: пассивные 45.1/45.2 (резервы), 459 (проценты), 474+
+// (расчёты) и 478 (приобретённые права) не входят. 458 — просроченный основной
+// долг; его разреза по ЮЛ/ФЛ в форме 101 нет, поэтому он распределяется
+// пропорционально текущим портфелям (допущение, см. research-документ).
 func form101LoanTotals(rows []form101Row) (corporate, retail float64) {
+	var corporatePerforming, retailPerforming, overdue float64
 	for _, row := range rows {
+		if row.ActivePassive != "1" {
+			continue
+		}
 		switch {
-		case row.Account == "45.0" && row.ActivePassive == "1",
-			row.Account == "45.1" && row.ActivePassive == "2",
-			cbrForm101CorporateAccounts[row.Account] && row.ActivePassive == "1":
-			corporate += row.BalanceTotal
+		case row.Account == "45.0",
+			cbrForm101CorporateDirect[row.Account],
+			cbrForm101CorporateOther[row.Account]:
+			corporatePerforming += row.BalanceTotal
 		case row.Account == "45.2":
-			retail += row.BalanceTotal
+			retailPerforming += row.BalanceTotal
+		case row.Account == "458":
+			overdue += row.BalanceTotal
 		}
 	}
-	return corporate / 1e6, retail / 1e6
+	total := corporatePerforming + retailPerforming
+	if total == 0 {
+		return 0, 0
+	}
+	corporate = (corporatePerforming + overdue*corporatePerforming/total) / 1e6
+	retail = (retailPerforming + overdue*retailPerforming/total) / 1e6
+	return corporate, retail
 }
 
 // cbrForm101Stat — импортёр cbr_form101. Встроенный util.ClickHouseImport даёт
@@ -259,7 +294,7 @@ func (s *cbrForm101Stat) Import(ctx context.Context, conn driver.Conn) (count in
 		// Производные ras-метрики пересобираются и на no-op-пути: raw-строки уже
 		// лежат в таблице, а company_financials могла появиться после первого
 		// прогона (или её запись могла не удаться). Читаем сохранённые строки
-		// Сбера и пишем те же pilot-1 значения; сеть не нужна.
+		// Сбера и пишем те же cbr-809p-sber-1 значения; сеть не нужна.
 		stored, storedErr := form101StoredSber(ctx, conn, latest)
 		if storedErr != nil {
 			return 0, storedErr
@@ -329,7 +364,7 @@ func (s *cbrForm101Stat) Import(ctx context.Context, conn driver.Conn) (count in
 	}
 	log.Infof("Imported %d rows of cbr_form101 for %s", count, latest.Format(form101DayLayout))
 
-	// 8. Производные ras-метрики pilot-1: отчётная дата формы — первое число
+	// 8. Производные ras-метрики cbr-809p-sber-1: отчётная дата формы — первое число
 	// следующего месяца, поэтому период company_financials — предыдущий месяц
 	// (2026-09-01 → 2026M08). Набор счетов — тот же, что в v_cbr_form101_loans.
 	if err = writeForm101Loans(ctx, conn, latest, link, sber); err != nil {
@@ -364,14 +399,14 @@ func form101StoredSber(ctx context.Context, conn driver.Conn, reportDate time.Ti
 	return stored, nil
 }
 
-// writeForm101Loans пишет pilot-1 ras-метрики в company_financials. Вызывается
+// writeForm101Loans пишет cbr-809p-sber-1 ras-метрики в company_financials. Вызывается
 // и после импорта raw-строк, и на no-op-пути (пересборка производных). Если
 // company_financials в БД ещё нет — warn и nil: raw-импорт не должен падать из-за
 // отсутствия таблицы банковского пакета (следующий прогон после неё запишет).
 func writeForm101Loans(ctx context.Context, conn driver.Conn, reportDate time.Time, link string, sber []form101Row) error {
 	corporate, retail := form101LoanTotals(sber)
 	if corporate <= 0 || retail <= 0 {
-		return fmt.Errorf("%s: pilot-маппинг дал ЮЛ=%v, ФЛ=%v — набор счетов разошёлся",
+		return fmt.Errorf("%s: маппинг cbr-809p-sber-1 дал ЮЛ=%v, ФЛ=%v — набор счетов разошёлся",
 			cbrForm101Table, corporate, retail)
 	}
 	var hasCompany uint64
@@ -407,7 +442,7 @@ func writeForm101Loans(ctx context.Context, conn driver.Conn, reportDate time.Ti
 	if err = mapped.Send(); err != nil {
 		return fmt.Errorf("%s: отправка %s: %w", cbrForm101Table, cbrForm101CompanyTable, err)
 	}
-	log.Infof("Mapped SBER %s: loans_corporations=%.2f, loans_individuals=%.2f (ras, pilot-1)",
+	log.Infof("Mapped SBER %s: loans_corporations=%.2f, loans_individuals=%.2f (ras, cbr-809p-sber-1)",
 		period, corporate, retail)
 	return nil
 }
