@@ -4,14 +4,15 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"testing"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
 // appendedRow — строка, которую разбор импортёра пишет в таблицу. У таблиц пакета с колонкой
-// name (domrf_mortgage, rus_vtb_group_ifrs, …) name — имя ряда из разбора; у однорядных таблиц
-// колонки name нет, и имя ряда задаёт тест через appendRecorder.series.
+// name (domrf_mortgage, rus_vtb_group_ifrs, …) name — имя ряда из формы Append (name, date,
+// value); у однорядных таблиц колонки name нет, и поле остаётся пустым.
 type appendedRow struct {
 	name  string
 	date  time.Time
@@ -24,13 +25,11 @@ type appendedRow struct {
 // а формы бывают (date, value), (name, date, value) и широкая строка company_financials
 // (companyRow). Незнакомая форма или тип — не паника, а ошибка, которую Append возвращает и
 // запоминает в err: импортёр, пробрасывающий ошибку Append, донесёт её до теста сам, а если он
-// её проигнорирует, тест увидит err сам. Сырые строки остаются в raw — ими проверяют форму
-// строки целиком, когда приведённого вида мало.
+// её проигнорирует, тест увидит err сам. Send, Flush и Abort — явные no-op: встроенный
+// driver.Batch — nil-интерфейс, и вызов любого его метода паниковал бы.
 type appendRecorder struct {
 	driver.Batch
-	series  string   // имя ряда однорядной таблицы: у неё в таблице нет колонки name
 	cols    []string // ожидаемые колонки в порядке DDL; пусто — форма не объявлена
-	raw     [][]any  // строки в том виде, в каком их передал импортёр
 	rows    []appendedRow
 	company []companyRow // строки company_financials: у них своя широкая форма (companyRow)
 	err     error        // первая ошибка формы/типа: сообщает тест, паники нет
@@ -43,8 +42,11 @@ func newAppendRecorder(cols ...string) *appendRecorder {
 	return &appendRecorder{cols: cols}
 }
 
+func (r *appendRecorder) Send() error  { return nil }
+func (r *appendRecorder) Flush() error { return nil }
+func (r *appendRecorder) Abort() error { return nil }
+
 func (r *appendRecorder) Append(v ...any) error {
-	r.raw = append(r.raw, v)
 	if r.err == nil {
 		r.err = r.normalize(v)
 	}
@@ -66,7 +68,7 @@ func (r *appendRecorder) normalize(v []any) error {
 		r.company = append(r.company, row)
 		return nil
 	}
-	row := appendedRow{name: r.series}
+	row := appendedRow{}
 	switch len(v) {
 	case 2: // (date, value)
 	case 3: // (name, date, value)
@@ -185,4 +187,17 @@ func companyRowFrom(v []any) (companyRow, error) {
 	}
 	row.loadedAt = loadedAt
 	return row, nil
+}
+
+func TestAppendRecorderBatchMethodsDoNotPanic(t *testing.T) {
+	rec := newAppendRecorder("name", "date", "balance")
+	if err := rec.Send(); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if err := rec.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	if err := rec.Abort(); err != nil {
+		t.Fatalf("Abort: %v", err)
+	}
 }
