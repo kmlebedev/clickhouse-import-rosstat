@@ -388,12 +388,12 @@ ALTER TABLE default.company_financials MODIFY COLUMN period_type Enum8('Q' = 1, 
 
 - [ ] **Step 2: Словарь, карты и мета**
 
-14 метрик спеки §3.7 (SBER — все 14, VTBR — 12: без `capital_adequacy_base`/`capital_adequacy_core`). Подписи — литералами из отчётов разведки задач 3 и 5. `bankCompanyMetricsMeta`: `Source: bankCompanyMetricsName`, `Series: "<TICKER>_<metric>"`, `Frequency: "M"`, `Unit` из словаря, `origin` — таблица/лист источника, `description` — что измеряет, как читать темпы + оговорка про базы (РСБУ против МСФО: уровни сопоставимы как порядок, приросты — с осторожностью). Существующие 51 описание Сбера не трогаются.
+14 метрик спеки §3.7 (SBER — все 14, VTBR — 11: без блока капиталовых коэффициентов `capital_adequacy`/`capital_adequacy_base`/`capital_adequacy_core` — блок «Достаточность капитала» (Н20.x) ВТБ лежит ниже рамки разбора, решение контроллера; follow-up «блок коэффициентов ВТБ»). Подписи — литералами из отчётов разведки задач 3 и 5. `bankCompanyMetricsMeta`: `Source: bankCompanyMetricsName`, `Series: "<TICKER>_<metric>"`, `Frequency: "M"`, `Unit` из словаря, `origin` — таблица/лист источника, `description` — что измеряет, как читать темпы + оговорка про базы (РСБУ против МСФО: уровни сопоставимы как порядок, приросты — с осторожностью). Существующие 51 описание Сбера не трогаются.
 
 - [ ] **Step 3: Падающие тесты (`bank/company_metrics_test.go`)**
 
 ```go
-func TestBankCompanyMetricMapWellFormed(t *testing.T)   // каждая метрика ∈ словаря 14; unit ∈ {"млрд ₽","%"}; SBER покрывает 14, VTBR — 12; каждая (company, metric) описана в bankCompanyMetricsMeta; подписи уникальны внутри источника
+func TestBankCompanyMetricMapWellFormed(t *testing.T)   // каждая метрика ∈ словаря 14; unit ∈ {"млрд ₽","%"}; SBER покрывает 14, VTBR — 11; каждая (company, metric) описана в bankCompanyMetricsMeta; подписи уникальны внутри источника
 func TestBankCompanyPeriod(t *testing.T)                // таблица: 2026-08-31 → "2026M08", 2026-01-01 → "2026M01"
 func TestBankCompanyAppend(t *testing.T)                // appendRecorder: форма (company, metric, period, "M", source_kind, value, unit, source_url, 0, loadedAt); дублей ключа в одном прогоне нет
 func TestBankCompanyDdlHasMonthEnum(t *testing.T)       // литерал DDL содержит "'M' = 5"
@@ -602,8 +602,12 @@ Float32 to *float64 is unsupported`, 0 строк вместо банковск�
 `go test -race ./...` — все пакеты `ok`, обе сборки; `go test -race -count=1 ./bank/` — `ok … 5.452s`.
 
 **Шаг 2 (схема).** `make ch-sql FILE=build/company_financials_period_type_m.sql` применён; живой тип
-`period_type` — `Enum8('Q'=1,'H'=2,'FY'=3,'LTM'=4,'M'=5)` (элемент `'M'` есть — запрос с `period_type = 'M'`
-выполняется), PLZL 347/265 на месте.
+`period_type` — `Enum8('Q'=1,'H'=2,'FY'=3,'LTM'=4,'M'=5)`, PLZL 347/265 на месте. **Поправка фикс-волны
+(2026-10-17):** запрос с `period_type = 'M'` выполнялся к **таблице**; витрины `v_company_*` при этом
+остались старой версии — `CREATE VIEW` фиксирует тип колонки на момент создания, и через витрину
+`period_type = 'M'` молча давал 0 (спот-проверка брала `metric/period/value` без `period_type` — пропуск
+не увидела). Обязательный порядок: **ALTER → пересоздать `v_company_*`** (`make import STAT=company_views`) —
+подробности и числа в «Фикс-волне финального ревью» ниже.
 
 **Шаг 3 (прогоны).**
 
@@ -630,11 +634,12 @@ Float32 to *float64 is unsupported`, 0 строк вместо банковск�
 - `tbank_group_ifrs` — ожидаемое падение на PDF: `excelize zip: not a valid zip file`, `Imported 0 rows`, код 1;
   DDL выполнен до скачивания — пустая таблица заведена (О2/О4), в `v_bank_macro` не входит.
 
-**Шаг 4 (винтажный архив).** `ARCHIVE_BACKEND=local ARCHIVE_LOCAL_DIR=build/archive-dev` — **13 объектов и 13 строк
+**Шаг 4 (винтажный архив).** `ARCHIVE_BACKEND=local ARCHIVE_LOCAL_DIR=build/archive-dev` — **15 объектов и 15 строк
 реестра**: `domrf_mortgage` — 1 + 1 (`984b5398448d0609_135272296`, 259 366 Б, sha256 `d9d30275…`),
 `sber_finansovie_rezultaty` — 1 + 1 (`d74f627b2d30f37d_…xlsx`, 56 947 Б, sha256 `475acf53…`),
-`rus_vtb_group_ifrs` — **13 + 13** пофайлово (39 652…45 485 Б). `registry.jsonl` — 370 → **372 строки**
-(357 было до приёмки). Записи шли через документированное лечение гейта (снять строки версий и повторить прогон):
+`rus_vtb_group_ifrs` — **13 + 13** пофайлово (39 652…45 485 Б). `registry.jsonl` — 357 → **372 строки**
+(два этапа: архивный прогон дал 13 записей — domrf 1, sber_fin 1, ВТБ 11 — плюс дозапись двух файлов ВТБ
+после фикса D2, +2, дала 15). Записи шли через документированное лечение гейта (снять строки версий и повторить прогон):
 `build/t12_archive_remove_versions.sql` — для трёх источников перед архивным прогоном,
 `build/t12r_archive_fix2.sql` — дозапись двух файлов ВТБ, разобранных после фикса D2 (их импортёр видел
 уже архивными, а объектов не было). Повтор `domrf_mortgage` после архивного прогона — снова чистый no-op с той же версией.
@@ -672,3 +677,19 @@ Float32 to *float64 is unsupported`, 0 строк вместо банковск�
 **Статусы.** `docs/ROADMAP_KEY_RATE.md` §6 — фаза 3.1 → ✅ «сделан этим PR» (приёмка 2026-10-17); §8 — строка
 техдолга `bank/` → ✅ «устранён рефакторингом `bank/` (фаза 3.1; приёмка 2026-10-17)». Приёмка — задача 12 плана;
 коммит статусов и протокола — `bank: refactor accepted — live runs, archive, mcp-check`.
+
+**Фикс-волна финального ревью (2026-10-17).** Финальное ревью ветки нашло пропуск приёмки (**C1**): шаг 2 расширил
+таблицу `company_financials`, но витрины `v_company_*` зафиксировали тип колонки на момент `CREATE VIEW` и остались
+старой версии — через витрину `WHERE period_type = 'M'` молча давал 0 строк, `toString(period_type)` падал
+(`Unexpected value 5 in enum`), и агент банковских метрик через витрину не видел. Лечение — `make import
+STAT=company_views` (идемпотентен): пересозданы `v_company_financials`, `v_company_metric_sources`,
+`v_company_operating` (лог: `View … created: true` ×3, `Imported 37 rows`). Контроль после фикса:
+`count() … WHERE company = 'SBER' AND period_type = 'M'` = **599**, `toString(period_type)` по SBER/VTBR = `M`
+(599/230), всего SBER+VTBR **829** — числа приёмки не изменились. В `scripts/mcp_check.py` добавлена проверка
+«период 'M' читается через v_company_financials» (её отсутствие дало пропуск; при нуле detail указывает пересоздать
+витрины), а проверка закрытости `tbank_group_ifrs` стала толерантной к `UNKNOWN_TABLE` (пометка «таблица появится
+после ручного прогона (О2)» — иначе `make mcp-check` был бы красным на каждой БД без ручного прогона). Синхронизированы
+доки: `IMPORTER_PACKAGE_STANDARD.md` §18 — строка `bank` → «✅ соответствует» (фаза 3.1; приёмка 2026-10-17), архив —
+15 объектов (13 + 2 дозаписи после фикса D2); ВТБ — 11 метрик (спека §3.7 и T7 плана; было «12»); `ARCHITECTURE.md` —
+«живая приёмка пройдена 2026-10-17». `make mcp-check` после фикса — **96 OK, 1 FAIL** (bank-блок зелёный, включая
+новый 'M'-чек и пометку о T-Банке; единственное падение — прежнее, rosstat вне `bank/`).

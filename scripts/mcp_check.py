@@ -906,6 +906,29 @@ async def check(params, server_log):
                 bank_company_detail = "строк: 0 — прогнать маппер: make import STAT=bank_company_metrics"
             failed += not expect("метрики банков видны в v_company_financials", (bank_company_n or 0) > 0, bank_company_detail)
 
+            # Фильтр по значению Enum доказывает больше, чем count() по company: тип колонки
+            # витрина фиксирует на момент CREATE VIEW, поэтому ALTER таблицы (добавление 'M'=5
+            # в приёмке фазы 3.1) без пересоздания витрин оставляет их на старом типе — фильтр
+            # period_type = 'M' молча отдаёт 0 строк, toString(period_type) падает на 'Unexpected
+            # value 5 in enum', и агент не видит банковских метрик, хотя строки по company
+            # читаются. Ноль здесь — или маппер не прогонялся, или витрина старше ALTER'а:
+            # пересоздать витрины прогоном make import STAT=company_views (идемпотентен,
+            # пересоздаёт все три v_company_*).
+            bank_month_raw = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_company_financials "
+                "WHERE company = 'SBER' AND period_type = 'M'"}))
+            bank_month = result_rows(bank_month_raw)
+            bank_month_n = bank_month[0].get("n") if bank_month else None
+            if bank_month is None:
+                bank_month_detail = f"ответ не распознан: {bank_month_raw[:200]}"
+            elif (bank_month_n or 0) > 0:
+                bank_month_detail = f"строк SBER с периодом 'M': {bank_month_n}"
+            else:
+                bank_month_detail = ("строк: 0 — или маппер не прогонялся, или витрина старше "
+                                     "ALTER'а period_type: пересоздать витрины прогоном "
+                                     "make import STAT=company_views")
+            failed += not expect("период 'M' читается через v_company_financials", (bank_month_n or 0) > 0, bank_month_detail)
+
             # Одного count() > 0 мало: агенту нужен конкретный ряд с периодом и значением, а не
             # факт наличия строк. Читается последний отчётный месяц актива Сбера (ORDER BY period
             # DESC; период кодируется как YYYYMmm, поэтому лексикографический порядок совпадает с
@@ -929,18 +952,28 @@ async def check(params, server_log):
             # polyus_financial_metrics: ряды банковских отчётностей агент читает через витрину
             # v_bank_macro (сырые строки) и компанейский слой v_company_financials (курированные
             # метрики), наборы СберИндекса — через v_bank_sber_spending (единицы значения и
-            # привязка даты описаны только в v_series_catalog). Таблица tbank_group_ifrs заведена и
-            # пуста: её импортёр убран из расписания (О2), источник не починен (О4), но гранта у неё
-            # всё равно нет. Таблицы создаёт DDL-прогон импортёра, поэтому UNKNOWN_TABLE здесь
-            # провал, а не успех: таблица обязана существовать и быть закрытой.
+            # привязка даты описаны только в v_series_catalog). У трёх таблиц с шагом расписания
+            # UNKNOWN_TABLE — провал, а не успех: их создаёт DDL-прогон импортёра, и они обязаны
+            # существовать и быть закрытыми. `tbank_group_ifrs` — исключение: её импортёр убран
+            # из расписания (О2) и всегда падает на PDF (О4), таблицу заводит только ручной
+            # прогон `make import STAT=tbank_group_ifrs`, поэтому UNKNOWN_TABLE здесь —
+            # ожидаемое состояние с пометкой «таблица появится после ручного прогона (О2)»:
+            # иначе make mcp-check был бы красным на каждой БД без этого прогона. ACCESS_DENIED
+            # остаётся успехом и здесь (таблица есть и закрыта), любой иной ответ — провал.
             for table, label in (("domrf_mortgage", "ставки по ипотеке ДОМ.РФ"),
                                  ("rus_vtb_group_ifrs", "МСФО группы ВТБ"),
                                  ("sber_finansovie_rezultaty", "РСБУ Сбера"),
                                  ("tbank_group_ifrs", "МСФО Т-Банка, шага в расписании нет")):
                 raw = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {table}"}))
                 denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
-                failed += not expect(f"сырая {table} закрыта ({label})", denied,
-                                     f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
+                tbank_absent = table == "tbank_group_ifrs" and "UNKNOWN_TABLE" in raw
+                if denied:
+                    raw_detail = f"отказ ClickHouse 497 на {table} (ожидаемо)"
+                elif tbank_absent:
+                    raw_detail = f"{table} отсутствует — таблица появится после ручного прогона (О2)"
+                else:
+                    raw_detail = raw[:200]
+                failed += not expect(f"сырая {table} закрыта ({label})", denied or tbank_absent, raw_detail)
 
             # Контур приложений к бюллетеню ДИП ЦБ (пункт 4.2 №17 роадмапа — фаза 4, винтажный
             # слой; спека 2026-10-15 cbr-dip-bulletin §3.6, импортёр cbr_dip_bulletin): витрина
