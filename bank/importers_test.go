@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"testing"
 
 	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
@@ -102,10 +103,74 @@ type publicationDeclarer interface {
 // (тесты идут с cwd=bank/): так же читают фикстуры другие пакеты.
 var daguBankYAML = filepath.Join("..", "dagu", "bank.yaml")
 
-// daguStatRef вытаскивает имя из строки шага `- CLICKHOUSE_IMPORT_STAT=<name>`.
-// Разбор построчный и регуляркой, без YAML-зависимости: тест не должен тянуть в пакетный go.mod
-// парсер ради одного ключа.
-var daguStatRef = regexp.MustCompile(`CLICKHOUSE_IMPORT_STAT=([A-Za-z0-9_]+)`)
+// daguStatRef вытаскивает имя из строки шага `- CLICKHOUSE_IMPORT_STAT=<name>`. Разбор —
+// регуляркой по всему файлу, без YAML-зависимости: тест не должен тянуть в пакетный go.mod
+// парсер ради одного ключа. Якоря ^…$ в режиме (?m) обязательны: без них закомментированный
+// шаг `# - CLICKHOUSE_IMPORT_STAT=…` считался бы шагом расписания.
+var daguStatRef = regexp.MustCompile(`(?m)^[ \t]*-[ \t]+CLICKHOUSE_IMPORT_STAT=([A-Za-z0-9_]+)[ \t]*$`)
+
+// daguIDRef вытаскивает id шага из строки `- id: <name>` тем же разбором регуляркой по всему
+// файлу: id — контракт dagu и энфорсера, и закомментированный пример шага не должен попадать
+// в проверку уникальности.
+var daguIDRef = regexp.MustCompile(`(?m)^[ \t]*-[ \t]+id:[ \t]*([A-Za-z0-9_]+)[ \t]*$`)
+
+// daguStats возвращает имена из строк `- CLICKHOUSE_IMPORT_STAT=…` в порядке файла.
+func daguStats(data []byte) []string {
+	matches := daguStatRef.FindAllStringSubmatch(string(data), -1)
+	names := make([]string, 0, len(matches))
+	for _, m := range matches {
+		names = append(names, m[1])
+	}
+	return names
+}
+
+// daguStepIDs возвращает значения `- id: …` в порядке файла.
+func daguStepIDs(data []byte) []string {
+	matches := daguIDRef.FindAllStringSubmatch(string(data), -1)
+	ids := make([]string, 0, len(matches))
+	for _, m := range matches {
+		ids = append(ids, m[1])
+	}
+	return ids
+}
+
+// duplicateDaguStepIDs возвращает id, встретившиеся больше одного раза, в порядке второго и
+// последующих вхождений: dagu не различает шаги с одинаковым id, а проверка (г) ищет шаг по
+// имени.
+func duplicateDaguStepIDs(ids []string) []string {
+	seen := make(map[string]bool, len(ids))
+	var dups []string
+	for _, id := range ids {
+		if seen[id] {
+			dups = append(dups, id)
+			continue
+		}
+		seen[id] = true
+	}
+	return dups
+}
+
+// TestDaguStatsIgnoreComments — закомментированный шаг не считается шагом расписания: разбор идёт
+// регуляркой по всему файлу, а `# - CLICKHOUSE_IMPORT_STAT=…` — не шаг dagu.
+func TestDaguStatsIgnoreComments(t *testing.T) {
+	data := []byte("- id: a\n  env:\n    - CLICKHOUSE_IMPORT_STAT=a\n# - CLICKHOUSE_IMPORT_STAT=commented\n")
+	if got := daguStats(data); !slices.Equal(got, []string{"a"}) {
+		t.Fatalf("daguStats(%q) = %v, want [a]: закомментированный шаг не должен считаться расписанием", data, got)
+	}
+}
+
+// TestDaguStepIDsDuplicate — парсер отдаёт оба вхождения id в порядке файла, а duplicateDaguStepIDs
+// находит дубль: id — контракт dagu и энфорсера, и одинаковые id делают шаги неразличимыми.
+func TestDaguStepIDsDuplicate(t *testing.T) {
+	data := []byte("- id: a\n- id: a\n")
+	got := daguStepIDs(data)
+	if !slices.Equal(got, []string{"a", "a"}) {
+		t.Fatalf("daguStepIDs(%q) = %v, want [a a]", data, got)
+	}
+	if dups := duplicateDaguStepIDs(got); !slices.Equal(dups, []string{"a"}) {
+		t.Fatalf("duplicateDaguStepIDs(%v) = %v, want [a]", got, dups)
+	}
+}
 
 // TestBankImportersNamedAndRegistered держит инварианты реестра bankImporters — единственной точки,
 // из которой импортёры пакета попадают в chimport.Stats.
@@ -130,7 +195,8 @@ var daguStatRef = regexp.MustCompile(`CLICKHOUSE_IMPORT_STAT=([A-Za-z0-9_]+)`)
 //     tbank_group_ifrs в расписании нет» (О2): пропавший шаг не заметил бы больше ни один тест —
 //     реестр верен сам по себе, а витрина v_bank_macro и метрики банков в company_financials просто
 //     перестали бы обновляться; вернувшийся же шаг Т-Банка уронил бы цепочку на PDF-ссылке до
-//     починки источника;
+//     починки источника; заодно проверяется уникальность id шагов: дубль делает шаги неразличимыми
+//     для dagu, а проверка (г) ищет шаг по id;
 //   - (д) точка контроля публикации (префлайт) объявлена ровно у ожидаемых трёх импортёров и
 //     запросом из expectedPublicationCountPoints: колонка countPoints реестра сверяется с
 //     объявлением самого импортёра (метод Publication() встроенного util.ClickHouseImport), а у
@@ -261,13 +327,19 @@ func TestBankImportersNamedAndRegistered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("чтение %s: %v", daguBankYAML, err)
 	}
-	steps := daguStatRef.FindAllStringSubmatch(string(data), -1)
-	if len(steps) == 0 {
+	ids := daguStepIDs(data)
+	if len(ids) == 0 {
+		t.Fatalf("в dagu/bank.yaml не найдено ни одной строки `- id:`: разбор сломан или шаги переписаны")
+	}
+	for _, dup := range duplicateDaguStepIDs(ids) {
+		t.Errorf("id шага dagu/bank.yaml %q встречается дважды: dagu не различает шаги с одинаковым id", dup)
+	}
+	stats := daguStats(data)
+	if len(stats) == 0 {
 		t.Fatalf("в dagu/bank.yaml не найдено ни одной строки CLICKHOUSE_IMPORT_STAT=: разбор сломан или шаги переписаны")
 	}
-	scheduled := make(map[string]bool, len(steps))
-	for _, step := range steps {
-		name := step[1]
+	scheduled := make(map[string]bool, len(stats))
+	for _, name := range stats {
 		scheduled[name] = true
 		if !seen[name] && !foreignDaguSteps[name] {
 			t.Errorf("шаг dagu/bank.yaml CLICKHOUSE_IMPORT_STAT=%s не найден в реестре bankImporters: расписание позовёт импортёр, которого нет", name)
