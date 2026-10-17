@@ -29,10 +29,11 @@ type appendedRow struct {
 // driver.Batch — nil-интерфейс, и вызов любого его метода паниковал бы.
 type appendRecorder struct {
 	driver.Batch
-	cols    []string // ожидаемые колонки в порядке DDL; пусто — форма не объявлена
-	rows    []appendedRow
-	company []companyRow // строки company_financials: у них своя широкая форма (companyRow)
-	err     error        // первая ошибка формы/типа: сообщает тест, паники нет
+	cols      []string // ожидаемые колонки в порядке DDL; пусто — форма не объявлена
+	rows      []appendedRow
+	company   []companyRow // строки company_financials: у них своя широкая форма (companyRow)
+	err       error        // первая ошибка формы/типа: сообщает тест, паники нет
+	appendErr error        // заданная ошибка Append: возвращается до нормализации, строка не пишется
 }
 
 // newAppendRecorder — приёмник для тестовых разборов. cols — ожидаемые колонки в порядке DDL
@@ -47,6 +48,9 @@ func (r *appendRecorder) Flush() error { return nil }
 func (r *appendRecorder) Abort() error { return nil }
 
 func (r *appendRecorder) Append(v ...any) error {
+	if r.appendErr != nil {
+		return r.appendErr
+	}
 	if r.err == nil {
 		r.err = r.normalize(v)
 	}

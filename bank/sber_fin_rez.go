@@ -132,12 +132,12 @@ type sberFinHead struct {
 // из их подписей собирается словарь метрик задачи 7 (net_profit, roe, roa, Н1.0/Н1.1/Н1.2).
 func parseSberFinBook(xlsx *excelize.File) (points []sberFinPoint, err error) {
 	for _, anchor := range []string{sberFinBalanceSheet, sberFinPnlSheet, sberFinCapitalSheet, sberFinRatiosSheet} {
-		part, err := parseSberFinSheet(xlsx, anchor)
-		if err != nil {
+		part, perr := parseSberFinSheet(xlsx, anchor)
+		if perr != nil {
 			// Имя таблицы добавляется здесь один раз: ветки parseSberFinSheet называют лист и
 			// строку, но не импортёра (контракт §6.4). Второй префикс в sberFinImportFunc дал бы
 			// дубль (урок ревью domrf_mortgage, задача 4).
-			return nil, fmt.Errorf("%s: %w", sberRpbuDataUrlTable, err)
+			return nil, fmt.Errorf("%s: %w", sberRpbuDataUrlTable, perr)
 		}
 		points = append(points, part...)
 	}
@@ -357,12 +357,14 @@ func sberFinFloat(raw string) (float64, error) {
 
 // appendSberFinPoints пишет точки по одному Append на точку с проверкой ошибки (§5.3, §5.5): форма
 // строки — (name, date, balance) схемы таблицы, значение приводится к точности Float32-колонки
-// (legacy-схема, спека §4.5), ошибка возвращается вызывающему с именем точки.
+// (legacy-схема, спека §4.5), ошибка возвращается вызывающему с именем точки. Дата в ошибке —
+// в ISO-форме 2006-01-02: формат шапки 01-02-06 («06-30-26») читается неоднозначно, а дата —
+// часть контракта ошибки (§6.4).
 func appendSberFinPoints(batch driver.Batch, points []sberFinPoint) error {
 	for _, p := range points {
 		if err := batch.Append(p.Series, p.Date, float32(p.Value)); err != nil {
 			return fmt.Errorf("%s: запись точки %q за %s: %w",
-				sberRpbuDataUrlTable, p.Series, p.Date.Format(sberFinTimeLayout), err)
+				sberRpbuDataUrlTable, p.Series, p.Date.Format("2006-01-02"), err)
 		}
 	}
 	return nil
