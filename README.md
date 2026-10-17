@@ -195,8 +195,10 @@ scripts/                 проверки MCP (mcp_setup_user.py, mcp_check.py),
 grafana/                 дашборды как код: отдельный Go-модуль на grafana-foundation-sdk — gold-thesis (9 панелей, 5 рядов), key-rate-publications (19 панелей, 4 ряда) и finance-polyus (19 панелей, 4 ряда, «Полюс (PLZL) — финансы и прогноз»); цель make grafana-build генерирует все артефакты dashboard/<uid>.json из кода (CLI: go run . -dashboard <uid>|all -out-dir ../dashboard), процесс миграции/добавления/ревизии дашбордов — скил .kimi-code/skills/dashboard-migration/SKILL.md; тесты состава панелей и валидации; провижининг датасорса локального стенда (grafana/provisioning/datasources/clickhouse.yaml)
 dashboard/               артефакты дашбордов Grafana: gold-thesis.json, key-rate-publications.json и finance-polyus.json коммитятся и генерируются из grafana/ (руками не правятся; finance-polyus.json — кодовая замена легаси-экспорта); легаси-экспорты rosstat.json, chmf.json остаются как есть — миграция на код отдельным пунктом (очередь — docs/ROADMAP_INFRA.md)
 deploy/staging/           артефакты деплоя на staging: юниты dagu и mcp-clickhouse, образец env
-docs/                    аналитические статьи, дорожные карты (реестр — ROADMAP_INDEX.md) и спеки/планы (superpowers/{specs,plans})
-.github/workflows/       CI (go.yml, dashboards.yml) и релиз по тегу v* (release.yml)
+docs/                    аналитические статьи, дорожные карты (реестр — ROADMAP_INDEX.md), спеки/планы (superpowers/{specs,plans}) и манифест docs-портала site-pages.json
+mkdocs.base.yml          конфигурация docs-портала (Material for MkDocs); сайт собирается генератором scripts/docs_build.py
+scripts/docs_build.py    генератор build/site-docs + build/mkdocs.yml из docs/site-pages.json (цели make docs-check/docs-build/docs-serve)
+.github/workflows/       CI (go.yml, dashboards.yml, pages.yml), публикация docs-портала на GitHub Pages и релиз по тегу v* (release.yml)
 .kimi-code/skills/       операционные скилы: github-tracker (трекер роадмапов), dashboard-migration, sync-readme-architecture
 ```
 
@@ -218,6 +220,10 @@ CLICKHOUSE_IMPORT_STAT=fred,gold_prices ./build/clickhouse-import-rosstat
 SELECT series, count(), max(date) FROM macro_series FINAL GROUP BY series;
 SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 ```
+
+## Документация
+
+Docs-портал — [kmlebedev.github.io/clickhouse-import-rosstat](https://kmlebedev.github.io/clickhouse-import-rosstat/), собирается из `README.md`, `ARCHITECTURE.md` и выбранных `docs/*.md` по манифесту `docs/site-pages.json` (цели `make docs-check`, `make docs-build`, `make docs-serve`). Источник истины — файлы репозитория; спеки, планы и `docs/archive/` на сайт не публикуются.
 
 ## Конфигурация
 
@@ -314,6 +320,9 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 | `make key-rate-model` | первый срез модели ключевой ставки (фундаментальный контур v0): выборка решений, бенчмарки B1–B3, методы №2–3 (правило Тейлора, упорядоченная логит) и walk-forward-бэктест; **в ClickHouse НЕ пишет** — артефакты локальные (`key_rate_model_report.md`, `key_rate_model_predictions.csv`, `key_rate_model_forecast.json`, в git не коммитятся). Нужны env-переменные ClickHouse и живая БД (читает `events_calendar`, `cbr_key_rate`, `cbr_indicators_cpd`, `macro_series`, `cbr_mp_summary`); зависимости Python поднимает `uv`. `ARGS=` — доп. аргументы цели, например `make key-rate-model ARGS="--export-fixtures scripts/testdata/key_rate"` (перегенерация офлайн-фикстур) |
 | `make cpi-nowcast` | ML-трек контура ключевой ставки: nowcast месячного ИПЦ до публикации Росстата — выборка 2022-01…2026-09 (57 месяцев, пропусков нет), признаки недельного ИПЦ Росстата, курса USD, ключевой ставки, ОФЗ и FAO, walk-forward (старт 24 — основной, 48 — робастность, `--embargo-months`), бенчмарки B1–B3 (last value, AR(1) с HAC, ElasticNetCV) и CatBoost direct/bottom-up (веса NNLS); **в ClickHouse НЕ пишет** — артефакты локальные (`cpi_nowcast_report.md`, `cpi_nowcast_predictions.csv`, `cpi_nowcast_forecast.json`, в git не коммитятся). Нужны env-переменные ClickHouse и живая БД (читает `rosstat_ipc_mes`, `rosstat_ipc_weeks`, `cbr_currency_usd`, `cbr_key_rate`, `ofz_curve`, `fao_food_price_Indices_monthly`); зависимости Python поднимает `uv` (`catboost>=1.2`, `scikit-learn`, `pandas`, `statsmodels>=0.15`, `scipy`). `ARGS=` — доп. аргументы цели, например `make cpi-nowcast ARGS="--export-fixtures scripts/testdata/cpi_nowcast"` (перегенерация офлайн-фикстур) или `ARGS="--embargo-months 1"` |
 | `make dev-check` | проверить наличие `go`, `gofmt`, `golangci-lint`, `uv`, `curl`, `clickhouse` |
+| `make docs-check` | проверить манифест docs-портала и прогнать офлайн-тесты генератора (`scripts/docs_build_test.py`) |
+| `make docs-build` | собрать docs-портал в `build/site` (генератор + `mkdocs build --strict`, mkdocs-material 9.7.7 через `uv`) |
+| `make docs-serve` | локальный просмотр docs-портала (`mkdocs serve`, http://localhost:8000) |
 | `make mcp-run` | запустить MCP-сервер `mcp-clickhouse` в stdio вручную (нужен `CLICKHOUSE_PASSWORD`) |
 | `make mcp-user` | создать пользователя `kimi_reader` и выдать `GRANT SELECT` на витрины из `sql/mcp_kimi_reader.sql` (нужен `CLICKHOUSE_PASSWORD`, запущенный ClickHouse) |
 | `make mcp-check` | smoke-проверка MCP: инструменты, витрины, отказ на сырые таблицы; отдельно — артефакты фаз 3 и wgc-контура: витрины `v_gold_forecasts`, `v_gold_etf_flows` и `v_cb_gold_dynamics`, каталоги `webbridge` (20 рядов) и `wgc` (34 ряда), резолв `v_forecast_accuracy` и запрет сырой `gold_forecasts` (нужен `CLICKHOUSE_PASSWORD`, запущенный ClickHouse). Адрес переопределяется: `MCP_CHECK_HOST`/`MCP_CHECK_PORT` — для проверки staging через туннель |
@@ -563,6 +572,8 @@ MCP GoLand (опционально, ускоряет работу Kimi Code с �
 Все задания используют Go `1.27.x`: `govulncheck` проверяет стандартную библиотеку тулчейном, которым запущен, и на go1.27.1 находил уязвимости `net/http` и `crypto/tls`, исправленные в go1.27.2.
 
 `.github/workflows/dashboards.yml` (`dashboards`) на каждый push в `main` и на pull request проверяет все три дашборда контура (`gold-thesis`, `key-rate-publications`, `finance-polyus`) как код: `go vet` и `go test` модуля `grafana/`, `make grafana-build`, `git diff --exit-code -- dashboard/` (все три артефакта совпадают со свежей сборкой — заодно ловит недетерминированную генерацию; легаси-экспорты сборкой не трогаются), установка пинуемой `gcx` v1.5.0 и офлайновый `gcx dev lint run` одним прогоном по всем трём файлам артефактов (два idiomatic-предупреждения генератора — `editable`-дашборд и отсутствие описаний панелей — отключены по именам, иначе был бы exit 4), затем upload всех трёх артефактов. Секретов и деплоя в workflow нет: на стенд дашборды уезжают только вручную (`make grafana-deploy-test` / `make grafana-deploy-staging`), серверная `gcx resources validate` остаётся ручной проверкой (нужны сервер, org-id и креды).
+
+`.github/workflows/pages.yml` (`Pages`) на pull request собирает docs-портал без деплоя, а на push в `main` и `workflow_dispatch` публикует его на GitHub Pages: `python3 scripts/docs_build.py --check`, офлайн-тесты генератора, `mkdocs build -f build/mkdocs.yml --strict` (mkdocs-material 9.7.7), затем `actions/deploy-pages`. Pages включается один раз: Settings → Pages → Source: GitHub Actions. Сайт — производный артефакт: источник истины остаётся в `docs/`, спеки/планы/архив на сайт не публикуются.
 
 `.github/workflows/release.yml` на тег `v*` запускает тесты и `goreleaser` (архив `linux/amd64`, `SHA256SUMS`, файлы `README.md` и `dagu/*.yaml`). Конфиг — `.goreleaser.yaml`; проверка: `goreleaser check`. В релиз входит только основной бинарник импорта; `cmd/ingest` собирается локально через `make build-ingest`.
 
