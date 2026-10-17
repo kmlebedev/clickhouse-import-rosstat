@@ -193,15 +193,16 @@ func TestForm101Newer(t *testing.T) {
 }
 
 // TestCbrForm101LoansViewContract — pilot-витрина маппинга: имя, гейт по
-// cbr_form101 + v_company_financials, кандидатные группы 45.x/44x/45x/458/459,
-// версия набора и 11 прокомментированных колонок. Сам расчёт живёт в SQL и
-// проверяется живым прогоном; тест ловит случайную правку набора счетов.
+// cbr_form101 + company_financials, кандидатные группы 45.x/44x/45x/458/459,
+// kpi-эталон пресс-релиза, версия набора и 11 прокомментированных колонок.
+// Сам расчёт живёт в SQL и проверяется живым прогоном; тест ловит случайную
+// правку набора счетов.
 func TestCbrForm101LoansViewContract(t *testing.T) {
 	v := cbrForm101LoansView
 	if v.Name != "v_cbr_form101_loans" {
 		t.Fatalf("Name = %q, want v_cbr_form101_loans", v.Name)
 	}
-	for _, table := range []string{"cbr_form101", "v_company_financials"} {
+	for _, table := range []string{"cbr_form101", "company_financials"} {
 		found := false
 		for _, got := range v.Tables {
 			if got == table {
@@ -215,7 +216,8 @@ func TestCbrForm101LoansViewContract(t *testing.T) {
 	for _, marker := range []string{
 		"'45.0'", "'45.1'", "'45.2'", "'451'", "'446'", "'458'", "'459'",
 		"mapping_version", "'pilot-1'", "press_release_corporate_bln_rub",
-		"subtractMonths(f.report_date, 1)", "v_company_financials",
+		"subtractMonths(f.report_date, 1)", "company_financials FINAL",
+		"source_kind = 'kpi'",
 	} {
 		if !strings.Contains(v.Select, marker) {
 			t.Errorf("SELECT не содержит %q", marker)
@@ -226,5 +228,28 @@ func TestCbrForm101LoansViewContract(t *testing.T) {
 	}
 	if v.Comment == "" {
 		t.Error("пустой Comment")
+	}
+}
+
+// TestForm101LoanTotals — pilot-1 набор: 45.0 (A_P=1) + 45.1 (A_P=2) +
+// детальные 451/446/442/445/448/449/447/450/453/454 (A_P=1) — кредиты ЮЛ;
+// 45.2 (A_P=1 и 2) — кредиты ФЛ; 458 (просрочка) не прибавляется.
+func TestForm101LoanTotals(t *testing.T) {
+	rows := []form101Row{
+		{Account: "45.0", ActivePassive: "1", BalanceTotal: 25_000_000_000},
+		{Account: "45.1", ActivePassive: "2", BalanceTotal: 1_000_000_000},
+		{Account: "451", ActivePassive: "1", BalanceTotal: 3_000_000_000},
+		{Account: "446", ActivePassive: "1", BalanceTotal: 1_000_000_000},
+		{Account: "451", ActivePassive: "2", BalanceTotal: 999_000_000}, // пассив — не кредит
+		{Account: "45.2", ActivePassive: "1", BalanceTotal: 19_000_000_000},
+		{Account: "45.2", ActivePassive: "2", BalanceTotal: 1_000_000_000},
+		{Account: "458", ActivePassive: "1", BalanceTotal: 9_000_000_000}, // просрочка — отдельно
+	}
+	corporate, retail := form101LoanTotals(rows)
+	if corporate != 30_000 {
+		t.Errorf("corporate = %v, want 30 000 млрд ₽", corporate)
+	}
+	if retail != 20_000 {
+		t.Errorf("retail = %v, want 20 000 млрд ₽", retail)
 	}
 }

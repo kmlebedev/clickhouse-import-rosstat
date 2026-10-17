@@ -1377,6 +1377,25 @@ async def check(params, server_log):
             failed += not expect("v_cbr_form101_loans отдаёт pilot-калибровку",
                                  bool(form101_loans_rows), form101_loans_detail)
 
+            # Pilot-1 ras-метрики формы 101 должны доезжать до форвардной витрины:
+            # июль и август SBER — source_kind='ras' (июль — сид, август — импортёр).
+            form101_fwd = text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n FROM v_bank_loan_portfolio_forward "
+                         "WHERE bank = 'SBER' AND source_kind = 'ras' "
+                         "AND report_month IN ('2026-07-01', '2026-08-01') "
+                         "AND metric = 'loans_corporations'"}))
+            form101_fwd_rows = result_rows(form101_fwd)
+            form101_fwd_n = form101_fwd_rows[0].get("n") if form101_fwd_rows else None
+            if form101_fwd_rows is None:
+                form101_fwd_detail = f"ответ не распознан: {form101_fwd[:200]}"
+            elif (form101_fwd_n or 0) >= 2:
+                form101_fwd_detail = f"строк SBER ras за июль/август: {form101_fwd_n}"
+            else:
+                form101_fwd_detail = ("строк: 0/1 — применить сид 2026-07 и прогнать "
+                                      "make import STAT=cbr_form101")
+            failed += not expect("pilot-1 ras виден в v_bank_loan_portfolio_forward",
+                                 (form101_fwd_n or 0) >= 2, form101_fwd_detail)
+
             # Сырая cbr_form101 агенту не выдана — как macro_series и cbr_dip_bulletin:
             # витрина — единственное место, где агент читает остатки по счетам (комментарии
             # таблицы и каждой колонки есть только у неё). Таблицу создаёт DDL-прогон
