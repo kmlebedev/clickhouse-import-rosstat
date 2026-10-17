@@ -20,8 +20,8 @@ import (
 
 // Фикстуры — живые файлы книги ВТБ со страницы результатов (скачаны 2026-10-17): выпуск от
 // 31.08.2026 (42 247 Б, 90 точек — полный набор колонок) и два выпуска с нестандартной вёрсткой
-// P&L, найденные живой приёмкой T12 (§11.1 — артефакты коммитятся как есть, §11.2 — книги в
-// десятки килобайт не урезаются):
+// P&L, которую разбор обязан принимать как законный вид источника (§11.1 — артефакты коммитятся
+// как есть, §11.2 — книги в десятки килобайт не урезаются):
 //   - 30.04.2025 (44 509 Б): месячная колонка подписана сокращённо — «апр'2025»;
 //   - 28.02.2026 (41 140 Б): месячных колонок нет вовсе («2М'2026»/«2М'2025» — накопленный
 //     итог), и у балансового блока две колонки-даты вместо трёх.
@@ -123,7 +123,7 @@ func vtbRenameSheet(t *testing.T, f *excelize.File, from, to string) {
 }
 
 // vtbSetCell — правка ячейки копии фикстуры для негативных веток: ошибку excelize глотать
-// нельзя, иначе тест проверит немутнутый лист.
+// нельзя, иначе тест проверит нетронутый лист.
 func vtbSetCell(t *testing.T, f *excelize.File, sheet, cell string, value any) {
 	t.Helper()
 	if err := f.SetCellValue(sheet, cell, value); err != nil {
@@ -237,9 +237,8 @@ func fmtDates(dates []time.Time) []string {
 	return out
 }
 
-// TestParseVtbBookReleaseVariants — два живых выпуска с нестандартной вёрсткой P&L, на которых
-// падала живая приёмка T12 (дефект D2; фикстуры — файлы со страницы результатов, скачаны
-// 2026-10-17):
+// TestParseVtbBookReleaseVariants — два живых выпуска с нестандартной вёрсткой P&L (фикстуры —
+// файлы со страницы результатов, скачаны 2026-10-17):
 //   - 30.04.2025: месячная колонка подписана сокращённо («апр'2025»/«апр'2024»), а словарь
 //     месяцев обязан знать сокращения (util.MonthsToNum, прецедент cbr/bop_parse.go) — разбор
 //     даёт обычные 90 точек, дата месячной колонки — 30 апреля;
@@ -337,6 +336,8 @@ func TestParseVtbBookReleaseVariants(t *testing.T) {
 // «NaN»/«Inf» (ParseFloat принимает их без ошибки, а в Float32-колонку они уедут порчей),
 // значения без подписи ряда и пустой разбор. Мутации — на копии живой фикстуры в памяти
 // (синтетика кодировала бы допущения автора, §11.1), а текст ошибки обязан называть таблицу.
+// Подтесты «NaN — не колонка-дата» и «определение NaN/Inf — текст» — обратная сторона: в шапке
+// и глоссарии такие ячейки разбор ронять не должны.
 func TestParseVtbBookFailFast(t *testing.T) {
 	for name, tc := range map[string]struct {
 		mutate func(t *testing.T, f *excelize.File)
@@ -452,6 +453,38 @@ func TestParseVtbBookFailFast(t *testing.T) {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("ошибка %q не называет %q", err, want)
 				}
+			}
+		})
+	}
+
+	// «NaN» в шапке баланса — не колонка-дата: ParseFloat принимает такое значение, но датой
+	// серийный номер не является, а колонка без даты точек не даёт. Разбор не падает.
+	t.Run("в шапке баланса NaN — не колонка-дата", func(t *testing.T) {
+		f := vtbOpenFixture(t, vtbBookFixture)
+		vtbSetCell(t, f, vtbBookSheet, "B2", "NaN")
+		points, err := parseVtbBook(f)
+		if err != nil {
+			t.Fatalf("NaN в шапке баланса — не дата, ошибки быть не должно: %v", err)
+		}
+		if want := 90 - len(vtbFixtureBalanceSeries); len(points) != want {
+			t.Errorf("точек %d, want %d (колонка с шапкой NaN отброшена)", len(points), want)
+		}
+		for _, p := range points {
+			if slices.Contains(vtbFixtureBalanceSeries, p.Series) && p.Date.Equal(vtbFixtureAug26) {
+				t.Errorf("ряд %q: точка за %s из колонки, шапка которой «NaN»",
+					p.Series, p.Date.Format(vtbTimeLayout))
+			}
+		}
+	})
+
+	// «NaN»/«Inf» в колонке определений — текст, а не числовая таблица: vtbFloat отвергает их как
+	// нечисловое значение, поэтому строка остаётся определением, а разбор не падает.
+	for _, definition := range []string{"NaN", "Inf"} {
+		t.Run("в глоссарии определение "+definition+" — текст", func(t *testing.T) {
+			f := vtbOpenFixture(t, vtbBookFixture)
+			vtbSetCell(t, f, vtbRatiosSheet, "B2", definition)
+			if _, err := parseVtbBook(f); err != nil {
+				t.Fatalf("определение %q — текст, ошибки быть не должно: %v", definition, err)
 			}
 		})
 	}
@@ -654,5 +687,70 @@ func TestVtbIfrsImportRestoreMode(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("ошибка %q не называет %q", err, want)
 		}
+	}
+}
+
+// TestVtbFloatComma: запятая — десятичный разделитель (русская локаль Excel), а смешанная
+// запись «1,234.56» числом не становится: запятая не тысячное разделение.
+func TestVtbFloatComma(t *testing.T) {
+	got, err := vtbFloat("0,202")
+	if err != nil {
+		t.Fatalf("vtbFloat(\"0,202\"): %v", err)
+	}
+	if math.Abs(got-0.202) > vtbSpotEps {
+		t.Errorf("vtbFloat(\"0,202\") = %v, want 0.202", got)
+	}
+	if _, err = vtbFloat("1,234.56"); err == nil {
+		t.Fatal("vtbFloat(\"1,234.56\"): смешанная запись, ожидалась ошибка")
+	}
+}
+
+// TestVtbSheetAmbiguous: два листа с якорем — ошибка со списком обоих. Молча выбранный первый
+// лист мог бы оказаться не тем, что разбирает проход.
+func TestVtbSheetAmbiguous(t *testing.T) {
+	f := excelize.NewFile()
+	t.Cleanup(func() { _ = f.Close() })
+	vtbRenameSheet(t, f, "Sheet1", vtbBookSheet)
+	second := vtbBookSheet + "2" // 31 символ — предел excelize; якорь входит целиком
+	if _, err := f.NewSheet(second); err != nil {
+		t.Fatalf("NewSheet(%q): %v", second, err)
+	}
+	_, err := vtbSheet(f, vtbBookSheet)
+	if err == nil {
+		t.Fatal("два листа с якорем: ожидалась ошибка, а выбран первый")
+	}
+	for _, want := range []string{vtbBookSheet, second} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("ошибка %q не перечисляет лист %q", err, want)
+		}
+	}
+}
+
+// TestVtbIfrsXlsLinksUppercase: регистр «as-of» и месяца в имени файла не ломает дату отчётности:
+// источник может выложить файл как .../RUS-VTB-GROUP-IFRS-As-Of-31-August-2026.xlsx. Селектор
+// ссылок регистрозависим, поэтому в разметке меняется регистр только месяца — его разбирает
+// regexp; «As-Of» проверяется прямой веткой разбора имени.
+func TestVtbIfrsXlsLinksUppercase(t *testing.T) {
+	const href = "https://www.vtb.ru/media-files/vtb.ru/sitepages/ir/statements/results/RUS-VTB-GROUP-IFRS-As-Of-31-August-2026.xlsx"
+	want := time.Date(2026, time.August, 31, 0, 0, 0, 0, time.UTC)
+	got, err := vtbIfrsReportDate(href)
+	if err != nil {
+		t.Fatalf("vtbIfrsReportDate(%q): %v", href, err)
+	}
+	if !got.Equal(want) {
+		t.Errorf("дата отчётности %s, want %s", got.Format("2006-01-02"), want.Format("2006-01-02"))
+	}
+
+	page := bytes.ReplaceAll(vtbResultsPage(t), []byte("as-of-31-august-2026"), []byte("as-of-31-August-2026"))
+	links, err := vtbIfrsXlsLinks(page)
+	if err != nil {
+		t.Fatalf("vtbIfrsXlsLinks с месяцем в верхнем регистре: %v", err)
+	}
+	if len(links) != len(vtbFixtureLinks) {
+		t.Fatalf("ссылок %d, want %d", len(links), len(vtbFixtureLinks))
+	}
+	if last := links[len(links)-1]; !last.Report.Equal(want) {
+		t.Errorf("последняя ссылка %s (%s), want %s",
+			last.Url, last.Report.Format("2006-01-02"), want.Format("2006-01-02"))
 	}
 }
