@@ -970,6 +970,44 @@ async def check(params, server_log):
                 bank_assets_detail = "строк нет — прогнать маппер: make import STAT=bank_company_metrics"
             failed += not expect("SBER total_assets читается точкой", bool(bank_assets), bank_assets_detail)
 
+            # Форвардная витрина кредитного портфеля (пункт 4.2 №20 роадмапа, спека
+            # 2026-10-17 §4): помесячные ряды SBER/VTBR из v_company_financials, дата
+            # публикации из календаря bank_results и сравнение с «Кредитом экономике» ЦБ.
+            # Строки публикует импортёр bank_company_metrics, а витрину создаёт
+            # company_views, поэтому ноль означает, что не отработал хотя бы один из
+            # прогонов, — detail называет тот, что создаёт саму витрину.
+            loan_view = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_bank_loan_portfolio_forward"}))
+            loan_view_rows = result_rows(loan_view)
+            loan_view_n = loan_view_rows[0].get("n") if loan_view_rows else None
+            if loan_view_rows is None:
+                loan_view_detail = f"витрина не читается: {loan_view[:200]}"
+            elif (loan_view_n or 0) > 0:
+                loan_view_detail = f"строк: {loan_view_n}"
+            else:
+                loan_view_detail = "строк: 0 — прогнать make import STAT=company_views"
+            failed += not expect("витрина v_bank_loan_portfolio_forward читается и непуста", (loan_view_n or 0) > 0, loan_view_detail)
+
+            # Одного count() > 0 мало: агенту нужна конкретная точка с датой публикации,
+            # ради которой витрина и заведена (опережающий срез до агрегата ЦБ). detail
+            # печатает период, значение и publish_date; NULL здесь — не ошибка: история
+            # дат публикации заводится постепенно, поэтому проверяется наличие строки,
+            # а не заполненность publish_date.
+            loan_point = text(await session.call_tool("run_query", {"query":
+                "SELECT bank, metric, report_month, value_bln_rub, publish_date "
+                "FROM v_bank_loan_portfolio_forward "
+                "WHERE bank = 'SBER' AND metric = 'customer_loans' "
+                "ORDER BY report_month DESC LIMIT 1"}))
+            loan_point_rows = result_rows(loan_point)
+            if loan_point_rows is None:
+                loan_point_detail = f"ответ не распознан: {loan_point[:200]}"
+            elif loan_point_rows:
+                loan_point_detail = (f"SBER customer_loans за {loan_point_rows[0].get('report_month')}: "
+                                     f"{loan_point_rows[0].get('value_bln_rub')}, "
+                                     f"publish_date={loan_point_rows[0].get('publish_date')}")
+            else:
+                loan_point_detail = "строк нет — прогнать make import STAT=company_views"
+            failed += not expect("SBER customer_loans читается точкой", bool(loan_point_rows), loan_point_detail)
+
             # Сырые таблицы банковского пакета агенту не выданы — как macro_series и
             # polyus_financial_metrics: ряды банковских отчётностей агент читает через витрину
             # v_bank_macro (сырые строки) и компанейский слой v_company_financials (курированные
