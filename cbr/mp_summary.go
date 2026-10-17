@@ -237,12 +237,16 @@ func (s *mpSummaryStat) Import(ctx context.Context, conn driver.Conn) (count int
 	// есть, там LLM-разметка должна быть, а новых документов в прошлых решениях ещё нет
 	// (они размечаются шагом 10 как новые). Пусто → догонять нечего. Набор «размечено»
 	// остаётся нужен и на шаге 10: он же вычитается при сборке списка документов для модели.
-	baseURL, apiKey, model, llmOK := mpLLMConfigFromEnv()
+	profiles := mpLLMProfilesFromEnv()
+	llmOK := len(profiles) > 0
 	var (
-		pending map[time.Time]bool
-		tagged  map[time.Time]bool
+		baseURL, apiKey, model string
+		pending                map[time.Time]bool
+		tagged                 map[time.Time]bool
 	)
 	if llmOK {
+		// Импортёр пока одномодельный: размечает первым профилем списка.
+		baseURL, apiKey, model = profiles[0].BaseURL, profiles[0].APIKey, profiles[0].Model
 		var taggedErr error
 		if tagged, taggedErr = mpLLMTagged(ctx, conn, model, mpPromptVersion); taggedErr != nil {
 			return 0, taggedErr

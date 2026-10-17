@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -35,11 +36,18 @@ const (
 	// урежет сам).
 	mpLLMMaxTokens = 8192
 
-	// Переменные окружения LLM-слоя (все — обязательные; значения ключа не печатаются ни
-	// в логах, ни в ошибках: SDK шлёт ключ заголовком x-api-key, а не в query).
+	// Переменные окружения профиля default (прежний контракт; значения ключа не печатаются
+	// ни в логах, ни в ошибках: SDK шлёт ключ заголовком x-api-key, а не в query).
 	mpLLMBaseURLEnv = "LLM_BASE_URL"
 	mpLLMAPIKeyEnv  = "LLM_API_KEY"
 	mpLLMModelEnv   = "MP_SUMMARY_LLM_MODEL"
+
+	// mpLLMModelsEnv — список профилей LLM-слоя через запятую; пусто/не задано → один default.
+	mpLLMModelsEnv = "MP_SUMMARY_LLM_MODELS"
+
+	// mpLLMProfileDefault — профиль, читающий прежние LLM_*: без mpLLMModelsEnv поведение
+	// импортёра остаётся одномодельным.
+	mpLLMProfileDefault = "default"
 )
 
 // mpLLMTimeout — дедлайн одного запроса к провайдеру (преемник util.postJSONTimeout, удалённого
@@ -50,16 +58,98 @@ const (
 // шаг dagu повис бы вместе с провайдером.
 var mpLLMTimeout = 65 * time.Second
 
-// mpLLMConfigFromEnv читает конфигурацию LLM-слоя (спека §3.5). Любая пустая переменная →
-// ok = false: это не ошибка, а основание для деградации — документ остаётся с regex-слоем, а
-// LLM догоняется следующим прогоном, когда владелец дополнит env-файл. Окружающие пробелы
-// обрезаются: env-файл приносит хвостовой перевод строки, а лишний пробел в baseURL — молча
-// битый URL.
-func mpLLMConfigFromEnv() (baseURL, apiKey, model string, ok bool) {
-	baseURL = strings.TrimSpace(os.Getenv(mpLLMBaseURLEnv))
-	apiKey = strings.TrimSpace(os.Getenv(mpLLMAPIKeyEnv))
-	model = strings.TrimSpace(os.Getenv(mpLLMModelEnv))
-	return baseURL, apiKey, model, baseURL != "" && apiKey != "" && model != ""
+// mpLLMProfile — один профиль разметки: имя (default/glm/mimo) нужно только для конфигурации и
+// логов, а в данные пишется фактическое имя модели API (Model) — по нему импортёр отличает,
+// какой моделью размечен документ.
+type mpLLMProfile struct {
+	Name    string
+	BaseURL string
+	APIKey  string
+	Model   string
+}
+
+// mpLLMProfileNameRe — допустимое имя профиля: имя становится префиксом env-переменных
+// (<NAME>_LLM_*), поэтому вне [a-z0-9_] его нельзя собрать однозначно.
+var mpLLMProfileNameRe = regexp.MustCompile(`^[a-z0-9_]+$`)
+
+// mpLLMProfilesFromEnv читает профили LLM-слоя (спека §3.1). MP_SUMMARY_LLM_MODELS — список
+// имён через запятую; пусто → один default на прежних LLM_BASE_URL/LLM_API_KEY/
+// MP_SUMMARY_LLM_MODEL. Профиль p читает <P>_LLM_BASE_URL/<P>_LLM_API_KEY/<P>_LLM_MODEL.
+//
+// Неполный профиль не роняет прогон: warn с именами недостающих переменных (значения не
+// печатаются — в них ключи) и пропуск, остальные профили работают. Имя нормализуется
+// (TrimSpace, ToLower) и обязано быть [a-z0-9_]+. Дубликат модели пропускается: model входит
+// в ключ ReplacingMergeTree, и строки одинаковой пары (model, prompt_version) перетирали бы
+// друг друга, поэтому остаётся первый профиль с этой моделью. Ни одного полного профиля → nil:
+// импортёр деградирует до regex-слоя, а LLM догоняется следующим прогоном, когда владелец
+// дополнит env-файл.
+func mpLLMProfilesFromEnv() []mpLLMProfile {
+	list := strings.TrimSpace(os.Getenv(mpLLMModelsEnv))
+	names := []string{mpLLMProfileDefault}
+	if list != "" {
+		names = strings.Split(list, ",")
+	}
+	profiles := make([]mpLLMProfile, 0, len(names))
+	seenNames := make(map[string]bool, len(names))
+	modelOwner := make(map[string]string, len(names))
+	for _, raw := range names {
+		name := strings.ToLower(strings.TrimSpace(raw))
+		if !mpLLMProfileNameRe.MatchString(name) {
+			log.Warnf("cbr_mp_summary: LLM-профиль %q пропущен: имя должно соответствовать %s",
+				name, mpLLMProfileNameRe)
+			continue
+		}
+		if seenNames[name] {
+			continue
+		}
+		seenNames[name] = true
+		profile, missing := mpLLMProfileFromEnv(name)
+		if len(missing) > 0 {
+			log.Warnf("cbr_mp_summary: LLM-профиль %q пропущен: не заданы %s",
+				name, strings.Join(missing, ", "))
+			continue
+		}
+		if owner, ok := modelOwner[profile.Model]; ok {
+			log.Warnf("cbr_mp_summary: LLM-профиль %q пропущен: модель %q уже задана у профиля %q",
+				name, profile.Model, owner)
+			continue
+		}
+		modelOwner[profile.Model] = name
+		profiles = append(profiles, profile)
+	}
+	if len(profiles) == 0 {
+		return nil
+	}
+	return profiles
+}
+
+// mpLLMProfileFromEnv читает профиль name и перечисляет имена незаполненных переменных:
+// значения в warn не попадают, а пустое имя переменной — единственное, что нужно оператору.
+// Окружающие пробелы обрезаются (env-файл приносит хвостовой перевод строки), а хвостовой слэш
+// baseURL — иначе SDK получил бы «//v1/messages».
+func mpLLMProfileFromEnv(name string) (mpLLMProfile, []string) {
+	baseURLEnv, apiKeyEnv, modelEnv := mpLLMBaseURLEnv, mpLLMAPIKeyEnv, mpLLMModelEnv
+	if name != mpLLMProfileDefault {
+		prefix := strings.ToUpper(name) + "_LLM_"
+		baseURLEnv, apiKeyEnv, modelEnv = prefix+"BASE_URL", prefix+"API_KEY", prefix+"MODEL"
+	}
+	profile := mpLLMProfile{
+		Name:    name,
+		BaseURL: strings.TrimRight(strings.TrimSpace(os.Getenv(baseURLEnv)), "/"),
+		APIKey:  strings.TrimSpace(os.Getenv(apiKeyEnv)),
+		Model:   strings.TrimSpace(os.Getenv(modelEnv)),
+	}
+	var missing []string
+	if profile.BaseURL == "" {
+		missing = append(missing, baseURLEnv)
+	}
+	if profile.APIKey == "" {
+		missing = append(missing, apiKeyEnv)
+	}
+	if profile.Model == "" {
+		missing = append(missing, modelEnv)
+	}
+	return profile, missing
 }
 
 // mpLLMQuote — цитата канала в ответе модели: вид (risk_pro|risk_dez|prose) и дословный

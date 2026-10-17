@@ -7,10 +7,14 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	log "github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus/hooks/test"
 )
 
 // Пины-цитаты — дословные предложения фикстуры 23.09.2026 (hold), те же, что в
@@ -255,54 +259,188 @@ func mpLLMValidChannels() []mpLLMChannelSpec {
 	}
 }
 
-// TestMpLLMConfigFromEnv — конфигурация LLM-слоя: все три переменные заполнены → ok; любая
-// пустая → ok=false без ошибки (импортёр деградирует до regex-слоя). Окружающие пробелы
-// обрезаются: env-файл легко приносит хвостовой перевод строки.
-func TestMpLLMConfigFromEnv(t *testing.T) {
-	const (
-		base  = "https://api.example/v1"
-		key   = "secret-key"
-		model = "deepseek-chat"
-	)
-	cases := []struct {
-		name             string
-		base, key, model string
-		ok               bool
-	}{
-		{"все переменные заполнены", base, key, model, true},
-		{"нет LLM_BASE_URL", "", key, model, false},
-		{"нет LLM_API_KEY", base, "", model, false},
-		{"нет MP_SUMMARY_LLM_MODEL", base, key, "", false},
+// mpClearLLMEnv очищает все переменные, которые читает mpLLMProfilesFromEnv: профили в
+// тестах задаются явно, и окружение разработчика не должно подмешивать свои значения.
+func mpClearLLMEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{
+		"MP_SUMMARY_LLM_MODELS",
+		"LLM_BASE_URL", "LLM_API_KEY", "MP_SUMMARY_LLM_MODEL",
+		"GLM_LLM_BASE_URL", "GLM_LLM_API_KEY", "GLM_LLM_MODEL",
+		"MIMO_LLM_BASE_URL", "MIMO_LLM_API_KEY", "MIMO_LLM_MODEL",
+	} {
+		t.Setenv(name, "")
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("LLM_BASE_URL", tc.base)
-			t.Setenv("LLM_API_KEY", tc.key)
-			t.Setenv("MP_SUMMARY_LLM_MODEL", tc.model)
-			gotBase, gotKey, gotModel, ok := mpLLMConfigFromEnv()
-			if ok != tc.ok {
-				t.Fatalf("ok = %v, ожидалось %v", ok, tc.ok)
-			}
-			if !tc.ok {
-				return
-			}
-			if gotBase != base || gotKey != key || gotModel != model {
-				t.Errorf("конфигурация = (%q, %q, %q), ожидалось (%q, %q, %q)",
-					gotBase, gotKey, gotModel, base, key, model)
-			}
-		})
+}
+
+// mpLLMSetProfile заполняет переменные профиля name: default читает прежние LLM_*, остальные —
+// <NAME>_LLM_*.
+func mpLLMSetProfile(t *testing.T, name, base, key, model string) {
+	t.Helper()
+	if name == "default" {
+		t.Setenv("LLM_BASE_URL", base)
+		t.Setenv("LLM_API_KEY", key)
+		t.Setenv("MP_SUMMARY_LLM_MODEL", model)
+		return
 	}
-	t.Run("окружающие пробелы обрезаются", func(t *testing.T) {
-		t.Setenv("LLM_BASE_URL", "  "+base+"\n")
-		t.Setenv("LLM_API_KEY", "\t"+key)
-		t.Setenv("MP_SUMMARY_LLM_MODEL", model+" ")
-		gotBase, gotKey, gotModel, ok := mpLLMConfigFromEnv()
-		if !ok {
-			t.Fatal("ok = false, ожидалось true при непустых значениях в пробелах")
+	prefix := strings.ToUpper(name) + "_LLM_"
+	t.Setenv(prefix+"BASE_URL", base)
+	t.Setenv(prefix+"API_KEY", key)
+	t.Setenv(prefix+"MODEL", model)
+}
+
+// mpLLMWarnHook перехватывает предупреждения logrus: правила профилей — «предупредить и
+// пропустить», и тест обязан видеть, что причина названа.
+func mpLLMWarnHook(t *testing.T) *test.Hook {
+	t.Helper()
+	hook := test.NewGlobal()
+	t.Cleanup(func() { log.StandardLogger().ReplaceHooks(make(log.LevelHooks)) })
+	return hook
+}
+
+// mpLLMWarnText — все warn-сообщения хука одной строкой.
+func mpLLMWarnText(hook *test.Hook) string {
+	var messages []string
+	for _, entry := range hook.AllEntries() {
+		if entry.Level == log.WarnLevel {
+			messages = append(messages, entry.Message)
 		}
-		if gotBase != base || gotKey != key || gotModel != model {
-			t.Errorf("конфигурация = (%q, %q, %q), ожидалось (%q, %q, %q)",
-				gotBase, gotKey, gotModel, base, key, model)
+	}
+	return strings.Join(messages, "\n")
+}
+
+// mpLLMProfilesCheck — профили совпадают полностью: имена, порядок и значения.
+func mpLLMProfilesCheck(t *testing.T, got, want []mpLLMProfile) {
+	t.Helper()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("профили = %+v, ожидалось %+v", got, want)
+	}
+}
+
+// TestMpLLMProfilesFromEnv — конфигурация LLM-профилей (спека §3.1): пустой
+// MP_SUMMARY_LLM_MODELS даёт один default на прежних переменных; список перечисляет профили в
+// порядке; неполный, невалидно названный и дублирующий модель профиль пропускается с warn, а
+// остальные работают.
+func TestMpLLMProfilesFromEnv(t *testing.T) {
+	const (
+		deepseekBase  = "https://api.deepseek.com/anthropic"
+		deepseekKey   = "test-key-default"
+		deepseekModel = "deepseek-chat"
+
+		glmBase  = "https://gate.joingonka.ai"
+		glmKey   = "test-key-glm"
+		glmModel = "zai-org/GLM-5.3-Flash"
+
+		mimoBase  = "https://api.xiaomimimo.com/anthropic"
+		mimoKey   = "test-key-mimo"
+		mimoModel = "mimo-v2.6-flash"
+	)
+
+	t.Run("legacy env → один профиль default", func(t *testing.T) {
+		mpClearLLMEnv(t)
+		// Пробелы и хвостовой слэш: env-файл приносит перевод строки, а слэш в base дал бы
+		// «//v1/messages».
+		mpLLMSetProfile(t, "default", " "+deepseekBase+"/\n", " "+deepseekKey+" ", " "+deepseekModel+" ")
+		mpLLMProfilesCheck(t, mpLLMProfilesFromEnv(), []mpLLMProfile{
+			{Name: "default", BaseURL: deepseekBase, APIKey: deepseekKey, Model: deepseekModel},
+		})
+	})
+
+	t.Run("явный список default,glm,mimo → три профиля в порядке списка", func(t *testing.T) {
+		mpClearLLMEnv(t)
+		t.Setenv("MP_SUMMARY_LLM_MODELS", "default,glm,mimo")
+		mpLLMSetProfile(t, "default", deepseekBase, deepseekKey, deepseekModel)
+		mpLLMSetProfile(t, "glm", glmBase, glmKey, glmModel)
+		mpLLMSetProfile(t, "mimo", mimoBase, mimoKey, mimoModel)
+		mpLLMProfilesCheck(t, mpLLMProfilesFromEnv(), []mpLLMProfile{
+			{Name: "default", BaseURL: deepseekBase, APIKey: deepseekKey, Model: deepseekModel},
+			{Name: "glm", BaseURL: glmBase, APIKey: glmKey, Model: glmModel},
+			{Name: "mimo", BaseURL: mimoBase, APIKey: mimoKey, Model: mimoModel},
+		})
+	})
+
+	t.Run("неполный glm пропущен, default остался", func(t *testing.T) {
+		mpClearLLMEnv(t)
+		t.Setenv("MP_SUMMARY_LLM_MODELS", "default,glm")
+		mpLLMSetProfile(t, "default", deepseekBase, deepseekKey, deepseekModel)
+		t.Setenv("GLM_LLM_BASE_URL", glmBase)
+		t.Setenv("GLM_LLM_API_KEY", glmKey)
+		hook := mpLLMWarnHook(t)
+		mpLLMProfilesCheck(t, mpLLMProfilesFromEnv(), []mpLLMProfile{
+			{Name: "default", BaseURL: deepseekBase, APIKey: deepseekKey, Model: deepseekModel},
+		})
+		warns := mpLLMWarnText(hook)
+		if !strings.Contains(warns, "GLM_LLM_MODEL") {
+			t.Errorf("warn не называет недостающую переменную GLM_LLM_MODEL: %q", warns)
+		}
+		if !strings.Contains(warns, "glm") {
+			t.Errorf("warn не называет профиль glm: %q", warns)
+		}
+		for _, key := range []string{glmKey, deepseekKey} {
+			if strings.Contains(warns, key) {
+				t.Errorf("в warn утёк ключ API: %q", warns)
+			}
+		}
+	})
+
+	t.Run("пробелы и регистр нормализуются", func(t *testing.T) {
+		mpClearLLMEnv(t)
+		t.Setenv("MP_SUMMARY_LLM_MODELS", " GLM , MIMO ")
+		mpLLMSetProfile(t, "glm", glmBase+"/", glmKey, glmModel)
+		mpLLMSetProfile(t, "mimo", mimoBase, mimoKey, mimoModel)
+		mpLLMProfilesCheck(t, mpLLMProfilesFromEnv(), []mpLLMProfile{
+			{Name: "glm", BaseURL: glmBase, APIKey: glmKey, Model: glmModel},
+			{Name: "mimo", BaseURL: mimoBase, APIKey: mimoKey, Model: mimoModel},
+		})
+	})
+
+	t.Run("невалидное имя пропущено, остальные работают", func(t *testing.T) {
+		mpClearLLMEnv(t)
+		t.Setenv("MP_SUMMARY_LLM_MODELS", "glm-x,glm")
+		mpLLMSetProfile(t, "glm", glmBase, glmKey, glmModel)
+		hook := mpLLMWarnHook(t)
+		mpLLMProfilesCheck(t, mpLLMProfilesFromEnv(), []mpLLMProfile{
+			{Name: "glm", BaseURL: glmBase, APIKey: glmKey, Model: glmModel},
+		})
+		if warns := mpLLMWarnText(hook); !strings.Contains(warns, "glm-x") {
+			t.Errorf("warn не называет невалидное имя glm-x: %q", warns)
+		}
+	})
+
+	t.Run("дубликат модели пропущен, остаётся первый", func(t *testing.T) {
+		mpClearLLMEnv(t)
+		t.Setenv("MP_SUMMARY_LLM_MODELS", "glm,mimo")
+		mpLLMSetProfile(t, "glm", glmBase, glmKey, glmModel)
+		// mimo отдаёт ту же модель, что glm: строки перетирались бы по ключу (model, prompt_version).
+		mpLLMSetProfile(t, "mimo", mimoBase, mimoKey, glmModel)
+		hook := mpLLMWarnHook(t)
+		mpLLMProfilesCheck(t, mpLLMProfilesFromEnv(), []mpLLMProfile{
+			{Name: "glm", BaseURL: glmBase, APIKey: glmKey, Model: glmModel},
+		})
+		warns := mpLLMWarnText(hook)
+		if !strings.Contains(warns, "mimo") || !strings.Contains(warns, glmModel) {
+			t.Errorf("warn не называет пропущенный профиль mimo и дубликат модели: %q", warns)
+		}
+	})
+
+	t.Run("legacy: любая пустая переменная → nil", func(t *testing.T) {
+		for _, missing := range []string{"LLM_BASE_URL", "LLM_API_KEY", "MP_SUMMARY_LLM_MODEL"} {
+			t.Run(missing, func(t *testing.T) {
+				mpClearLLMEnv(t)
+				mpLLMSetProfile(t, "default", deepseekBase, deepseekKey, deepseekModel)
+				t.Setenv(missing, "")
+				if got := mpLLMProfilesFromEnv(); got != nil {
+					t.Fatalf("профили = %+v, ожидался nil", got)
+				}
+			})
+		}
+	})
+
+	t.Run("ни одного полного профиля → nil", func(t *testing.T) {
+		mpClearLLMEnv(t)
+		t.Setenv("MP_SUMMARY_LLM_MODELS", "glm")
+		if got := mpLLMProfilesFromEnv(); got != nil {
+			t.Fatalf("профили = %+v, ожидался nil", got)
 		}
 	})
 }
