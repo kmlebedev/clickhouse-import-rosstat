@@ -182,7 +182,7 @@ ORDER BY (url, content_hash, kind, method, model, prompt_version, dimension, tag
   следующим прогоном). Модель пишется в `model`, версия промпта `newsPromptVersion = 1` — в
   `prompt_version`; обе входят в ключ таблицы.
 - Кандидаты: `news_events FINAL` с `url LIKE 'https://t.me/%'`, `content_hash != ''`,
-  `date >= now() - INTERVAL 30 DAY` (окно покрывает и корпоративные раскрытия edisclosure),
+  `date >= now() - INTERVAL 35 DAY` (окно покрывает и корпоративные раскрытия edisclosure),
   которых нет в `news_annotation` для пары
   `(model, prompt_version)`, `ORDER BY date DESC LIMIT 50`. Батч — 10 сообщений; при ошибке
   провайдера — warn и остановка LLM-шага на этот прогон (без долбёжки).

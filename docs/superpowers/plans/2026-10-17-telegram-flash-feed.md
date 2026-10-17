@@ -180,7 +180,7 @@
   (base без `/v1`, `x-api-key`, `WithMaxRetries(0)`, 65 с), один ретрай формата.
 - [ ] **Step 6: Схема + запись.** DDL `news_annotation` — копия канона; `newsAnnotationInsert`
   (явный список колонок); батч после `news_events`/версий; кандидаты — SQL из спеки §4.4
-  (`url LIKE 'https://t.me/%'`, `content_hash != ''`, 30 дней — окно покрывает edisclosure,
+  (`url LIKE 'https://t.me/%'`, `content_hash != ''`, 35 дней — окно покрывает edisclosure,
   `NOT IN` по паре model/prompt, limit 50); батч 10; ошибка провайдера — warn и остановка
   LLM-шага.
 - [ ] **Step 7: Композиция Import.** Без env — warn и зелёный; с фейковым LLM — батч разметки;
