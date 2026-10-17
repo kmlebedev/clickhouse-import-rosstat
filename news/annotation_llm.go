@@ -517,19 +517,30 @@ func newsLLMBatches(inputs []newsItem) [][]newsItem {
 // tagNewsLLM размечает видимый поток (Telegram и RSS) батчами: вход дедуплицируется по URL
 // (newsUniqueByURL), границы — newsLLMBatches (10 сообщений и 40 КБ текста), на каждый батч —
 // запрос с одним ретраем формата и валидация против входа. Номер батча в логе нужен, чтобы
-// длинный бэкфилл было видно по шагам. Ошибка провайдера/формата останавливает LLM-шаг на этот
-// прогон, чтобы не долбить упавшего провайдера оставшимися батчами, но уже полученные строки
-// возвращаются вместе с ошибкой: вызывающий пишет их, и следующий прогон не платит за них
-// повторно (кандидатная выборка исключает размеченные пары). Ошибка остаётся ошибкой прогона
-// для лога, но не отменяет запись сообщений/версий.
+// длинный бэкфилл было видно по шагам. Ошибка провайдера/транспорта/дедлайна останавливает
+// LLM-шаг на этот прогон, чтобы не долбить упавшего провайдера оставшимися батчами. Ошибка
+// формата после повтора батч пропускает: остальные батчи размечаются, а пропущенный догоняется
+// следующим прогоном. Накопленные строки возвращаются вместе с последней ошибкой формата:
+// вызывающий пишет их, логирует ошибку, и следующий прогон не платит за них повторно
+// (кандидатная выборка исключает размеченные пары). Ошибка остаётся ошибкой прогона для лога,
+// но не отменяет запись сообщений/версий.
 func tagNewsLLM(ctx context.Context, cfg newsLLMConfig, inputs []newsItem) ([]newsAnnotationRow, error) {
 	now := time.Now()
 	batches := newsLLMBatches(newsUniqueByURL(inputs))
 	rows := make([]newsAnnotationRow, 0, len(inputs)*2)
+	var formatErr error
 	for i, batch := range batches {
 		log.Infof("news_watch: LLM %s: батч %d/%d, сообщений %d", cfg.Model, i+1, len(batches), len(batch))
 		payload, err := newsLLMAsk(ctx, cfg, batch)
 		if err != nil {
+			if newsIsFormatError(err) {
+				// Второй подряд сбой формата — не отказ провайдера: батч пропускается,
+				// остальные батчи размечаются, догон — следующим прогоном.
+				log.Warnf("news_watch: LLM %s: батч %d/%d пропущен: ошибка формата: %v",
+					cfg.Model, i+1, len(batches), err)
+				formatErr = err
+				continue
+			}
 			return rows, fmt.Errorf("news_watch: LLM-разметка (%s): %w", cfg.Model, err)
 		}
 		batchRows, err := validateNewsAnnotations(payload, batch, cfg.Model, newsPromptVersion, now)
@@ -537,6 +548,10 @@ func tagNewsLLM(ctx context.Context, cfg newsLLMConfig, inputs []newsItem) ([]ne
 			return rows, err
 		}
 		rows = append(rows, batchRows...)
+	}
+	if formatErr != nil {
+		return rows, fmt.Errorf("news_watch: LLM-разметка (%s): батчи с ошибкой формата пропущены, догон следующим прогоном: %w",
+			cfg.Model, formatErr)
 	}
 	return rows, nil
 }
