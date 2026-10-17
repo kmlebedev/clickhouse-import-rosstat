@@ -20,7 +20,7 @@ type cbrImporter struct {
 }
 
 // cbrImporters — единственная точка регистрации импортёров ЦБ: персональных
-// init()-append по файлам импортёров больше нет (19 записей в одном месте вместо
+// init()-append по файлам импортёров больше нет (20 записей в одном месте вместо
 // 13 прежних). Порядок повторяет dagu/cbr.yaml; в chimport.Stats порядок значения
 // не имеет.
 //
@@ -56,6 +56,13 @@ type cbrImporter struct {
 // (каждый прогон пере-импортировал бы все файлы). Гейт — SELECT DISTINCT release_id по своей
 // таблице: отвечает на тот же вопрос («этот выпуск уже импортирован?») одним запросом и не
 // делает ни одного HEAD на повторном прогоне (спека §3.5, §5.2).
+//
+// У cbr_mt_forecast — то же решение по той же причине: артефакт — набор выпусков (4 в год),
+// и чек известной версии по счёту всей таблицы не сходился бы ни разу. Гейт — SELECT DISTINCT
+// release_date: известность выпуска — его дата публикации, а не имя файла (в имени дата есть,
+// но <id> файла меняется от выпуска к выпуску, спека §3.4). Следствие названо в спеке §3.6:
+// подмена файла под тем же release_date гейтом не отслеживается (лечение — удалить строки
+// выпуска и повторить прогон), а «выпуск пропал из таблицы» самолечится.
 var cbrImporters = []cbrImporter{
 	{cbrCurrencyUSDImporter, "cbr_currency_usd", ""},
 	{householdsBMesImporter, "cbr_households_b_mes", "SELECT count() FROM cbr_households_b_mes FINAL"},
@@ -76,6 +83,7 @@ var cbrImporters = []cbrImporter{
 	{cbrBopEstImporter, "cbr_bop_est", "SELECT count() FROM cbr_bop_est FINAL"},
 	{cbrBopStandardImporter, "cbr_bop_standard", "SELECT count() FROM cbr_bop_standard FINAL"},
 	{cbrDipBulletinImporter, "cbr_dip_bulletin", "SELECT count() FROM cbr_dip_bulletin FINAL"},
+	{cbrMtForecastImporter, "cbr_mt_forecast", "SELECT count() FROM cbr_mt_forecast FINAL"},
 }
 
 // init — единственная регистрация импортёров ЦБ в chimport.Stats. Порядок
