@@ -2,7 +2,7 @@
 
 Go-конвейер импорта российской макроэкономической и финансовой статистики в ClickHouse. Данные используются дашбордами Grafana и аналитическими моделями (сценарный прогноз золота, DCF и NAV акций ПАО «Полюс»). Один бинарник, конфигурация только через переменные окружения.
 
-Подробная архитектура, схемы таблиц и конвенции — в [ARCHITECTURE.md](ARCHITECTURE.md). План развития — в [docs/ROADMAP_DCF_POLYUS.md](docs/ROADMAP_DCF_POLYUS.md). Правила для AI-ассистентов — в [AGENTS.md](AGENTS.md). Контур прогноза золота (витрины, календарь, ingest-endpoint, плагин `gold-nav`) — в разделе «Контур прогноза золота» и в [спецификации](docs/superpowers/specs/2026-10-10-gold-nav-plugin-design.md).
+Подробная архитектура, схемы таблиц и конвенции — в [ARCHITECTURE.md](ARCHITECTURE.md). План развития — в [docs/ROADMAP_DCF_POLYUS.md](docs/ROADMAP_DCF_POLYUS.md). Реестр всех роадмапов и правила трекера — в [docs/ROADMAP_INDEX.md](docs/ROADMAP_INDEX.md). Правила для AI-ассистентов — в [AGENTS.md](AGENTS.md). Контур прогноза золота (витрины, календарь, ingest-endpoint, плагин `gold-nav`) — в разделе «Контур прогноза золота» и в [спецификации](docs/superpowers/specs/2026-10-10-gold-nav-plugin-design.md).
 
 ## Что импортируется
 
@@ -195,8 +195,9 @@ scripts/                 проверки MCP (mcp_setup_user.py, mcp_check.py),
 grafana/                 дашборды как код: отдельный Go-модуль на grafana-foundation-sdk — gold-thesis (9 панелей, 5 рядов), key-rate-publications (19 панелей, 4 ряда) и finance-polyus (19 панелей, 4 ряда, «Полюс (PLZL) — финансы и прогноз»); цель make grafana-build генерирует все артефакты dashboard/<uid>.json из кода (CLI: go run . -dashboard <uid>|all -out-dir ../dashboard), процесс миграции/добавления/ревизии дашбордов — скил .kimi-code/skills/dashboard-migration/SKILL.md; тесты состава панелей и валидации; провижининг датасорса локального стенда (grafana/provisioning/datasources/clickhouse.yaml)
 dashboard/               артефакты дашбордов Grafana: gold-thesis.json, key-rate-publications.json и finance-polyus.json коммитятся и генерируются из grafana/ (руками не правятся; finance-polyus.json — кодовая замена легаси-экспорта); легаси-экспорты rosstat.json, chmf.json остаются как есть — миграция на код отдельным пунктом (очередь — docs/ROADMAP_INFRA.md)
 deploy/staging/           артефакты деплоя на staging: юниты dagu и mcp-clickhouse, образец env
-docs/                    аналитические статьи и дорожная карта
+docs/                    аналитические статьи, дорожные карты (реестр — ROADMAP_INDEX.md) и спеки/планы (superpowers/{specs,plans})
 .github/workflows/       CI (go.yml, dashboards.yml) и релиз по тегу v* (release.yml)
+.kimi-code/skills/       операционные скилы: github-tracker (трекер роадмапов), dashboard-migration, sync-readme-architecture
 ```
 
 ## Быстрый старт
@@ -328,6 +329,8 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 | `make grafana-deploy-test` | выгрузить все три дашборда на тест-стенд (`gcx resources push dashboards --path dashboard/<uid>.json` по списку `DASHBOARDS`) и прогнать `grafana-check`. Идемпотентна: повторный push не создаёт дубль, растёт только `version` |
 | `make grafana-provision-staging` | идемпотентно разложить провижининг датасорса на staging: шаблон `deploy/staging/grafana-datasource.yaml`, пароль подставляется на хосте из env-файла, результат — `root:grafana 640`, переустановка только при отличии sha256 |
 | `make grafana-deploy-staging` | staging-деплой через туннель `:3001`: проверка токена → доступность → `grafana-provision-staging` → push всех трёх дашбордов → smoke по всем трём uid. Нужен `GRAFANA_STAGING_TOKEN` |
+
+Пункт роадмапа ведётся через GitHub issue с составным ID `<slug>/<item-id>`: шаблоны — [`.github/ISSUE_TEMPLATE/roadmap-item.yml`](.github/ISSUE_TEMPLATE/roadmap-item.yml) и [`.github/pull_request_template.md`](.github/pull_request_template.md); операции — скил `github-tracker` ([`.kimi-code/skills/github-tracker/SKILL.md`](.kimi-code/skills/github-tracker/SKILL.md)); правила — [docs/ROADMAP_INDEX.md](docs/ROADMAP_INDEX.md) и правило 12 [AGENTS.md](AGENTS.md).
 
 Тесты Python-скриптов идут вручную (в CI только Go-проверки, см. «Ограничения»). Наборы модели ключевой ставки и ML-трека (nowcast ИПЦ) — офлайн: транспорт ClickHouse мокается, поэтому живая БД и env-переменные не нужны; `--python 3.12` — тот же пин, что в целях `make key-rate-model` и `make cpi-nowcast`. Офлайн-набор добычи недельных ИПЦ до 2022 (`scripts/harvest_test.py`) сети не касается вовсе и идёт системным python3:
 

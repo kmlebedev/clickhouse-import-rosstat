@@ -4,6 +4,7 @@
 **Статус:** план, не начато
 **Основание:** [дизайн общей витрины `company_financials`](superpowers/specs/2026-10-10-company-financials-views-design.md). Схема заводится с расчётом на металлургов, но в первой итерации наполняется только Полюсом.
 **Связанные документы:** [ROADMAP_DCF_POLYUS.md](ROADMAP_DCF_POLYUS.md) §12 (peers), [ARCHITECTURE.md](../ARCHITECTURE.md) §6.2–§6.3, [AGENTS.md](../AGENTS.md) правила 8 и 10
+**Реестр и трекер:** [ROADMAP_INDEX.md](ROADMAP_INDEX.md) — слаги, владение пунктами, составной ID и правила GitHub-трекера.
 
 ---
 
