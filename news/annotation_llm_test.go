@@ -513,3 +513,32 @@ func TestTagTelegramLLMBatches(t *testing.T) {
 		t.Errorf("во втором батче нет URL хвостового сообщения %s", inputs[newsLLMBatchSize].URL)
 	}
 }
+
+// TestTagTelegramLLMPartialRowsOnLaterBatchError — ошибка второго батча не выбрасывает
+// строки первого: tagTelegramLLM возвращает накопленное вместе с ошибкой, и вызывающий
+// пишет успешные батчи (иначе за них пришлось бы платить повторно).
+func TestTagTelegramLLMPartialRowsOnLaterBatchError(t *testing.T) {
+	inputs := newsTestLLMInputs(11)
+	first := make([]newsAnnotationMessage, 0, newsLLMBatchSize)
+	for _, it := range inputs[:newsLLMBatchSize] {
+		first = append(first, newsTestValidMessage(it.URL))
+	}
+	mock := newNewsTestLLMMock(t,
+		newsTestLLMResponse{Body: newsTestContentBody(t, newsTestPayloadBody(t, first...))},
+		newsTestLLMResponse{Status: http.StatusInternalServerError, Body: `{"error":"boom"}`})
+
+	rows, err := tagTelegramLLM(context.Background(),
+		newsLLMConfig{BaseURL: mock.url, APIKey: "test-key", Model: "test-model"}, inputs)
+	if err == nil {
+		t.Fatal("tagTelegramLLM при отказе второго батча вернул nil-ошибку")
+	}
+	if got := len(newsAnnotationKindRows(rows, newsKindDoc)); got != newsLLMBatchSize {
+		t.Errorf("doc-строк %d, want %d (успешный первый батч не должен теряться)", got, newsLLMBatchSize)
+	}
+	if got := len(newsAnnotationKindRows(rows, newsKindTag)); got != newsLLMBatchSize {
+		t.Errorf("tag-строк %d, want %d (успешный первый батч не должен теряться)", got, newsLLMBatchSize)
+	}
+	if mock.calls() != 2 {
+		t.Errorf("запросов %d, want 2 (первый батч + отказ второго; третий батч не шлётся)", mock.calls())
+	}
+}

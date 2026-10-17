@@ -1962,11 +1962,21 @@ func TestImportSinceModeTelegramVersionsAndTombstone(t *testing.T) {
 	}
 }
 
-func TestImportTelegramVersionReadErrorStopsBeforeWrite(t *testing.T) {
-	// Ошибка чтения версий — до батчей: без истории diffTelegram принял бы всё за v1,
-	// поэтому прогон отчитывается ошибкой и ничего не пишет.
+func TestImportTelegramVersionReadErrorWritesRSSOnly(t *testing.T) {
+	// Ошибка чтения версий изолируется Telegram-лентой: без истории diffTelegram принял бы
+	// её сообщения за v1 и затёр нумерацию, поэтому Telegram-позиции этого прогона не
+	// пишутся, а семь RSS-лент пишутся как обычно. Прогон отчитывается ошибкой (dagu
+	// краснеет), но уже собранные данные не теряет.
 	t.Setenv(modeEnv, modeSince)
 	pointFeedsAt(t, serveFixtures(t, nil))
+
+	byKey, _ := fixtureInventory(t)
+	wantRSS := 0
+	for key, items := range byKey {
+		if key != "interfax_tg" {
+			wantRSS += len(items)
+		}
+	}
 
 	conn := newNewsFakeConn()
 	conn.versionsErr = errors.New("чтение версий упало")
@@ -1979,11 +1989,26 @@ func TestImportTelegramVersionReadErrorStopsBeforeWrite(t *testing.T) {
 	if !strings.Contains(err.Error(), "чтение версий упало") {
 		t.Errorf("ошибка Import = %q, want упоминание причины", err)
 	}
-	if count != 0 {
-		t.Errorf("Import вернул %d строк при ошибке чтения версий, want 0 (до записи дело не дошло)", count)
+	if int(count) != wantRSS {
+		t.Errorf("Import вернул %d строк, want %d (RSS пишутся, Telegram-лента пропущена)", count, wantRSS)
 	}
-	if got := conn.batchList(); len(got) != 0 {
-		t.Errorf("Import открыл %d батчей при ошибке чтения версий, want 0", len(got))
+	newsBatch := conn.batchByQuery(t, newsInsert)
+	if !newsBatch.sent {
+		t.Fatal("батч news_events не отправлен: сбой версий Telegram не должен отменять RSS")
+	}
+	rows := newsBatch.inserted(t)
+	if len(rows) != wantRSS {
+		t.Errorf("в батче news_events %d строк, want %d (только RSS)", len(rows), wantRSS)
+	}
+	for _, row := range rows {
+		if strings.HasPrefix(row.URL, "https://t.me/") {
+			t.Errorf("в батч попала Telegram-позиция %q при сбое чтения версий", row.URL)
+		}
+	}
+	for _, batch := range conn.batchList() {
+		if batch.query == telegramVersionInsert {
+			t.Error("батч версий открыт при сбое чтения истории: версии нельзя писать вслепую")
+		}
 	}
 	if !conn.anyCallHas(telegramVersionsQuery) {
 		t.Errorf("Import не обратился к версиям запросом %q; вызовы: %v", telegramVersionsQuery, conn.callList())

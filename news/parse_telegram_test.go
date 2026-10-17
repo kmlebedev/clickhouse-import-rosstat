@@ -308,3 +308,39 @@ func TestContentHashStableAndChanges(t *testing.T) {
 		t.Errorf("contentHash не изменился при изменении title")
 	}
 }
+
+// TestTelegramChannelFromURL — имя канала из адреса публичного превью: проверка канала
+// держится на этой форме, и смена конфига на другой URL не должна молча отключать сверку.
+func TestTelegramChannelFromURL(t *testing.T) {
+	for _, tc := range []struct {
+		url  string
+		want string
+	}{
+		{"https://t.me/s/interfaxonline", "interfaxonline"},
+		{"https://t.me/s/interfaxonline/", "interfaxonline"},
+		{"https://t.me/interfaxonline", ""},
+		{"https://example.com/other", ""},
+	} {
+		if got := telegramChannelFromURL(tc.url); got != tc.want {
+			t.Errorf("telegramChannelFromURL(%q) = %q, want %q", tc.url, got, tc.want)
+		}
+	}
+}
+
+// TestCheckTelegramChannel — data-post обязан совпадать с каналом конфига: иначе редирект
+// превью или смена разметки писали бы в версии и витрину чужой канал.
+func TestCheckTelegramChannel(t *testing.T) {
+	msgs := []telegramMessage{{Channel: "interfaxonline", MessageID: 1}}
+	if err := checkTelegramChannel("interfaxonline", msgs); err != nil {
+		t.Errorf("checkTelegramChannel(совпадает) = %v, want nil", err)
+	}
+	if err := checkTelegramChannel("", msgs); err != nil {
+		t.Errorf("checkTelegramChannel(пустой want) = %v, want nil (проверка отключена)", err)
+	}
+	if err := checkTelegramChannel("interfaxonline", nil); err != nil {
+		t.Errorf("checkTelegramChannel(пустой список) = %v, want nil", err)
+	}
+	if err := checkTelegramChannel("other", msgs); err == nil {
+		t.Error("checkTelegramChannel(чужой канал) = nil, want ошибку")
+	}
+}

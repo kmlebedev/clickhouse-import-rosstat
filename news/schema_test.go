@@ -12,7 +12,7 @@ func TestNewsEventsDdlPinsCanonicalKey(t *testing.T) {
 		"content_hash String",
 		// content_hash стоит между description и sentiment — порядок колонок канона.
 		"description String               -- текст позиции из ленты",
-		"content_hash String              -- sha256 нормализованного title+description",
+		"content_hash String              -- sha256 текущей версии title+description",
 		"sentiment Nullable(Float32)      -- -1..1, заполняет LLM-сессия",
 		"ENGINE = ReplacingMergeTree ORDER BY (date, source, title)",
 	} {

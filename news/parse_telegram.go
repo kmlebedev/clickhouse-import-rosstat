@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	stdhtml "html"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -241,4 +242,36 @@ func telegramItems(source string, page telegramPage) []newsItem {
 		})
 	}
 	return items
+}
+
+// telegramChannelFromURL достаёт имя канала из адреса публичного превью
+// https://t.me/s/<channel>. Пустой результат — адрес не в форме превью: проверка канала
+// тогда пропускается (конфиг ленты — часть кода, а не пользовательский ввод).
+func telegramChannelFromURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) == 2 && parts[0] == "s" {
+		return parts[1]
+	}
+	return ""
+}
+
+// checkTelegramChannel сверяет канал из data-post с каналом, который ожидает конфиг ленты.
+// Без проверки редирект превью или смена разметки молча писали бы в news_message_version
+// и v_news_flash чужой канал: URL поста собирается из data-post, а не из конфига. Пустой
+// want — проверка отключена (URL не в форме /s/<channel>); пустой список сообщений сюда не
+// приходит: parseTelegramPage считает пустое окно ошибкой.
+func checkTelegramChannel(want string, messages []telegramMessage) error {
+	if want == "" {
+		return nil
+	}
+	for _, m := range messages {
+		if m.Channel != want {
+			return fmt.Errorf("канал в data-post %q не совпадает с ожидаемым %q", m.Channel, want)
+		}
+	}
+	return nil
 }
