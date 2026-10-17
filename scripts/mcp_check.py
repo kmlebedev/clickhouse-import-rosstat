@@ -346,6 +346,109 @@ async def check(params, server_log):
                                    "(витрина публикуется прогоном импортёра)")
             failed += not expect("посты smart-lab с полным текстом", (smartlab_n or 0) > 0, smartlab_detail)
 
+            # Контур Telegram-молнии Интерфакса (пункт 1.9 роадмапа): витрины текущего
+            # состояния и всех версий читаются агентом и НЕПУСТЫ — строки публикует прогон
+            # news_watch (фид interfax_tg), поэтому ноль означает ни разу не отработавший
+            # прогон, а не отсутствие сообщений в канале. Существование витрины
+            # подтверждается ЗАПРОСОМ К НЕЙ, а не поиском имени в ответе list_tables
+            # (урок bold: в том тексте имя попадает из COMMENT соседки); «нет витрины»
+            # (UNKNOWN_TABLE) и «нет прав» (ACCESS_DENIED) приходят ошибкой и в
+            # result_rows не разбираются.
+            for view, label in (("v_news_flash", "текущее состояние Telegram-молнии"),
+                                ("v_news_message_versions", "все версии, включая удаления")):
+                flash_view = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {view}"}))
+                flash_view_rows = result_rows(flash_view)
+                flash_view_n = flash_view_rows[0].get("count()") if flash_view_rows else None
+                if flash_view_rows is None:
+                    flash_view_detail = f"витрина не читается: {flash_view[:200]}"
+                elif (flash_view_n or 0) > 0:
+                    flash_view_detail = f"строк: {flash_view_n}"
+                else:
+                    flash_view_detail = (f"строк: {flash_view_n} — прогнать make import STAT=news_watch "
+                                         "(витрину публикует прогон импортёра)")
+                failed += not expect(f"витрина {view} существует и непуста ({label})",
+                                     (flash_view_n or 0) > 0, flash_view_detail)
+
+            # Корпоративный Telegram-канал edisclosure (пункт 1.11): девятая лента
+            # news_watch пишет в ту же таблицу версий и витрину v_news_flash, поэтому
+            # общая проверка выше проходит и на одних сообщениях молнии. Ноль здесь
+            # означает ни разу не отработавший прогон с новой лентой, а не пустой
+            # канал, — detail подсказывает команду импорта.
+            edisclosure_raw = text(await session.call_tool(
+                "run_query",
+                {"query": "SELECT count() AS n FROM v_news_flash WHERE channel = 'edisclosure'"}))
+            edisclosure = result_rows(edisclosure_raw)
+            edisclosure_n = edisclosure[0].get("n") if edisclosure else None
+            if edisclosure is None:
+                edisclosure_detail = f"ответ не распознан: {edisclosure_raw[:200]}"
+            elif (edisclosure_n or 0) > 0:
+                edisclosure_detail = f"сообщений edisclosure: {edisclosure_n}"
+            else:
+                edisclosure_detail = (f"сообщений edisclosure: {edisclosure_n or 0} — прогнать make import "
+                                      "STAT=news_watch (девятая лента, канал edisclosure)")
+            failed += not expect("канал edisclosure в v_news_flash", (edisclosure_n or 0) > 0, edisclosure_detail)
+
+            # Реестр тегов — статическая витрина: 39 слагов, из них ровно 11 каналов ставки
+            # (cb_channel). Меньшее число значит ни разу не отработавший прогон news_watch
+            # (витрина публикуется вместе с остальными), расхождение — реестр разошёлся с
+            # news/tags.go. Ключевые пары проверяются отдельно: по ним агент расшифровывает
+            # теги из v_news_flash.tags.
+            tags_raw = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n, countIf(dimension = 'cb_channel') AS channels FROM v_news_tags"}))
+            tags = result_rows(tags_raw)
+            tags_n = tags[0].get("n") if tags else None
+            tags_channels_n = tags[0].get("channels") if tags else None
+            if tags is None:
+                tags_detail = f"ответ не распознан: {tags_raw[:200]}"
+            else:
+                tags_detail = f"слагов: {tags_n} (want >= 30), cb_channel: {tags_channels_n} (want 11)"
+            failed += not expect("реестр v_news_tags полон",
+                                 (tags_n or 0) >= 30 and tags_channels_n == 11, tags_detail)
+
+            # Ключевые пары реестра — контракт промпта и валидации (news/tags.go,
+            # news/annotation.go): пропавшая пара сломала бы расшифровку тега агентом,
+            # а не только число строк.
+            tags_keys_raw = text(await session.call_tool("run_query", {"query": "SELECT dimension, tag FROM v_news_tags"}))
+            tags_keys = result_rows(tags_keys_raw)
+            expected_tags = {("person", "trump"), ("country", "china"),
+                             ("event", "energy_transition"), ("event", "deglobalization"),
+                             ("cb_channel", "budget_impulse")}
+            present_tags = {(row.get("dimension"), row.get("tag")) for row in (tags_keys or [])}
+            missing_tags = sorted(expected_tags - present_tags)
+            if tags_keys is None:
+                tags_keys_detail = f"ответ не распознан: {tags_keys_raw[:200]}"
+            else:
+                tags_keys_detail = (f"нет пар: {missing_tags}" if missing_tags
+                                    else f"все {len(expected_tags)} пар на месте")
+            failed += not expect("реестр v_news_tags содержит ключевые пары",
+                                 not missing_tags, tags_keys_detail)
+
+            # Сырые таблицы контура агенту не выданы — как macro_series и news_events:
+            # версии и разметку агент читает только через витрины. Таблицы создаёт
+            # DDL-прогон news_watch, поэтому UNKNOWN_TABLE здесь — провал, а не успех:
+            # таблица обязана существовать и быть закрытой.
+            for table, label in (("news_message_version", "версии Telegram-молнии"),
+                                 ("news_annotation", "LLM-разметка Telegram-молнии")):
+                raw = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {table}"}))
+                denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+                failed += not expect(f"сырая {table} закрыта ({label})", denied,
+                                     f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
+
+            # LLM-теги — информационная строка, а не проверка: без NEWS_LLM_MODEL разметка
+            # штатно пропускается (warn импортёра), и живой прогон 1.10 ждёт мерджа 1.8.
+            # Ноль тегов не увеличивает failed — иначе make mcp-check был бы красным
+            # на каждой БД без LLM-переменных.
+            llm_tags_raw = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_news_flash WHERE length(tags) > 0"}))
+            llm_tags = result_rows(llm_tags_raw)
+            llm_tags_n = llm_tags[0].get("n") if llm_tags else None
+            if llm_tags is None:
+                print(f"WARN LLM-теги: витрина не читается: {llm_tags_raw[:200]}")
+            elif (llm_tags_n or 0) > 0:
+                print(f"OK   LLM-теги: {llm_tags_n} сообщений с тегами")
+            else:
+                print("WARN LLM-теги: 0 (NEWS_LLM_MODEL не задан — штатная деградация; "
+                      "живой прогон 1.10 после мерджа 1.8)")
+
             # Контур СБКТС Росстандарта (правило 11): обе витрины читаются агентом, а сырая
             # gost_vehicle_safety_certificate — источник витрин — агенту закрыта (как macro_series
             # и news_events: читать реестр агент обязан только через витрины). Существование

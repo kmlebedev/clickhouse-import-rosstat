@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,42 +16,66 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// feedKind — транспорт ленты. RSS и Telegram различаются и получением (XML против
+// HTML-превью), и разбором (itemsFromDoc против parseTelegramPage), поэтому Kind
+// диспетчеризует fetchFeeds, а не угадывается по URL.
+type feedKind int
+
+const (
+	feedRSS feedKind = iota
+	feedTelegram
+)
+
 // feed — одна лента конфига: Key — имя фикстуры в testdata (офлайн-прогоны),
-// Source — метка источника в news_events, URL — адрес ленты.
+// Source — метка источника в news_events, URL — адрес ленты, Kind — транспорт.
 type feed struct {
 	Key    string
 	Source string
 	URL    string
+	Kind   feedKind
 }
 
 // URL-ы лент — переменные (а не константы) ради подмены в тестах: httptest
 // подставляет свой адрес, и TestFetchFeeds проверяет изоляцию сбоя, не выходя в сеть.
 var (
 	feedInterfaxURL = "https://www.interfax.ru/rss"
-	feedRBCURL      = "https://rssexport.rbc.ru/rbcnews/news/30/full.rss"
-	feedCBRNewsURL  = "https://www.cbr.ru/rss/RssNews"
-	feedCBRPressURL = "https://www.cbr.ru/rss/eventrss"
-	feedTASSURL     = "https://tass.ru/rss/v2.xml"
+	// Публичное веб-превью Telegram-канала Интерфакса: без авторизации и ключей.
+	// Окно — последние 20 сообщений, поэтому 30-минутный опрос перекрывает его
+	// с запасом, а простой дольше окна теряет позиции (check покажет дыру).
+	feedInterfaxTelegramURL = "https://t.me/s/interfaxonline"
+	// Корпоративные раскрытия «Интерфакс-ЦРКИ»: второй канал того же транспорта.
+	// Окно тоже 20 сообщений; тексты длиннее молнии, и окно покрывает около месяца.
+	feedEdisclosureURL = "https://t.me/s/edisclosure"
+	feedRBCURL         = "https://rssexport.rbc.ru/rbcnews/news/30/full.rss"
+	feedCBRNewsURL     = "https://www.cbr.ru/rss/RssNews"
+	feedCBRPressURL    = "https://www.cbr.ru/rss/eventrss"
+	feedTASSURL        = "https://tass.ru/rss/v2.xml"
 	// Ленты smart-lab — персональные блоги; добавлены ради контура ключевой ставки
 	// (тексты про инфляцию и политику ЦБ).
 	feedSmartlabLebedevURL = "https://smart-lab.ru/rss/personal_blog/KonstantinLebedev/"
 	feedSmartlabSpydellURL = "https://smart-lab.ru/rss/personal_blog/spydell-telegram/"
 )
 
-// feeds собирает конфиг семи лент в фиксированном порядке. Порядок — часть
+// feeds собирает конфиг девяти лент в фиксированном порядке. Порядок — часть
 // контракта: лог прогона и отчёт check идут построчно, и разный порядок лент
 // от запуска к запуску сделал бы диффы лога нечитаемыми. Парные ленты несут общий
 // Source: у двух фидов ЦБ это «cbr» (источник один — Банк России), у двух лент
-// smart-lab — «smartlab»; в news_events такие ленты различаются url.
+// smart-lab — «smartlab», у RSS и Telegram Интерфакса — «interfax»; в news_events
+// такие ленты различаются url. interfax_tg идёт сразу после interfax: это второй
+// транспорт того же источника, и в отчёте покрытия их окна складываются.
+// edisclosure_tg — отдельный source «edisclosure»: это другой канал и другая
+// редакция корпоративного контура, его окно с молнией Интерфакса не сливается.
 func feeds() []feed {
 	return []feed{
-		{Key: "interfax", Source: "interfax", URL: feedInterfaxURL},
-		{Key: "rbc", Source: "rbc", URL: feedRBCURL},
-		{Key: "cbr_news", Source: "cbr", URL: feedCBRNewsURL},
-		{Key: "cbr_press", Source: "cbr", URL: feedCBRPressURL},
-		{Key: "tass", Source: "tass", URL: feedTASSURL},
-		{Key: "smartlab_lebedev", Source: "smartlab", URL: feedSmartlabLebedevURL},
-		{Key: "smartlab_spydell", Source: "smartlab", URL: feedSmartlabSpydellURL},
+		{Key: "interfax", Source: "interfax", URL: feedInterfaxURL, Kind: feedRSS},
+		{Key: "interfax_tg", Source: "interfax", URL: feedInterfaxTelegramURL, Kind: feedTelegram},
+		{Key: "edisclosure_tg", Source: "edisclosure", URL: feedEdisclosureURL, Kind: feedTelegram},
+		{Key: "rbc", Source: "rbc", URL: feedRBCURL, Kind: feedRSS},
+		{Key: "cbr_news", Source: "cbr", URL: feedCBRNewsURL, Kind: feedRSS},
+		{Key: "cbr_press", Source: "cbr", URL: feedCBRPressURL, Kind: feedRSS},
+		{Key: "tass", Source: "tass", URL: feedTASSURL, Kind: feedRSS},
+		{Key: "smartlab_lebedev", Source: "smartlab", URL: feedSmartlabLebedevURL, Kind: feedRSS},
+		{Key: "smartlab_spydell", Source: "smartlab", URL: feedSmartlabSpydellURL, Kind: feedRSS},
 	}
 }
 
@@ -103,27 +128,57 @@ type feedResult struct {
 	Feed    feed
 	Items   []newsItem
 	Skipped int
+	// SeenIDs — ID сообщений Telegram-окна, включая медиа без текста. Заполняется
+	// только Telegram-лентой; T2 отличает по нему вышедшее из окна сообщение
+	// от сообщения, у которого просто нет текста.
+	SeenIDs map[uint64]struct{}
 	Err     error
 }
 
 // fetchFeeds читает ленты по очереди и возвращает результат на каждую. Ошибка
-// ленты попадает в её feedResult.Err, а цикл продолжается: семь лент независимы,
-// и обрыв одной (WAF, 500, таймаут) не повод не собрать остальные шесть.
+// ленты попадает в её feedResult.Err, а цикл продолжается: девять лент независимы,
+// и обрыв одной (WAF, 500, таймаут) не повод не собрать остальные восемь.
 // Агрегация ошибок — дело вызывающего (Import): он решает, чем отчитаться в dagu.
+//
+// Транспорт выбирается по Kind, а не по виду URL: RSS разбирается в rssDoc,
+// Telegram-превью — в telegramPage. Ошибка разбора Telegram (чужая страница,
+// сменившиеся селекторы) так же локальна, как ошибка RSS.
 func fetchFeeds(feeds []feed) []feedResult {
 	results := make([]feedResult, 0, len(feeds))
 	for _, f := range feeds {
-		var doc rssDoc
 		res := feedResult{Feed: f}
-		// URL в ошибке транспорта (util.GetXML его не маскирует) — здесь ключей
-		// в query нет, ленты публичные, поэтому ошибка уезжает в лог как есть.
-		if err := util.GetXML(f.URL, &doc); err != nil {
-			res.Err = err
-			results = append(results, res)
-			continue
+		switch f.Kind {
+		case feedRSS:
+			var doc rssDoc
+			// URL в ошибке транспорта (util.GetXML его не маскирует) — здесь ключей
+			// в query нет, ленты публичные, поэтому ошибка уезжает в лог как есть.
+			if err := util.GetXML(f.URL, &doc); err != nil {
+				res.Err = err
+				break
+			}
+			res.Items, res.Skipped, res.Err = itemsFromDoc(f.Source, doc)
+		case feedTelegram:
+			page, err := util.GetPage(f.URL)
+			if err != nil {
+				res.Err = err
+				break
+			}
+			parsed, err := parseTelegramPage(f.Key, page)
+			if err != nil {
+				res.Err = err
+				break
+			}
+			if err = checkTelegramChannel(telegramChannelFromURL(f.URL), parsed.Messages); err != nil {
+				res.Err = fmt.Errorf("%s: %w", f.Key, err)
+				break
+			}
+			res.Items = telegramItems(f.Source, parsed)
+			res.SeenIDs, res.Skipped = parsed.SeenIDs, parsed.Skipped
+		default:
+			// Новая лента без транспорта — ошибка ленты, а не пропуск: иначе она
+			// молча выпала бы из прогона, и check не увидел бы дыру.
+			res.Err = fmt.Errorf("%s: неизвестный вид ленты %d", f.Key, f.Kind)
 		}
-		items, skipped, err := itemsFromDoc(f.Source, doc)
-		res.Items, res.Skipped, res.Err = items, skipped, err
 		results = append(results, res)
 	}
 	return results
@@ -365,11 +420,11 @@ func (s *newsImport) Name() string {
 
 const (
 	newsTable = "news_events"
-	// newsInsert — запись позиции. Список колонок явный: на живой таблице description
-	// добавлен ALTER-ом в конец, и позиционный INSERT клал бы значения в порядке физических
-	// колонок (description после sentiment), а не в порядке DDL. Порядок колонок здесь —
-	// контракт с порядком аргументов Append в insertItems.
-	newsInsert = "INSERT INTO " + newsTable + " (date, source, title, url, description, sentiment)"
+	// newsInsert — запись позиции. Список колонок явный: на живой таблице description и
+	// content_hash добавлены ALTER-ами, и позиционный INSERT клал бы значения в порядке
+	// физических колонок (миграции двигают только описание и hash), а не в порядке DDL.
+	// Порядок колонок здесь — контракт с порядком аргументов Append в insertItems.
+	newsInsert = "INSERT INTO " + newsTable + " (date, source, title, url, description, content_hash, sentiment)"
 	// storedSpansQuery читает сохранённые окна источников. FINAL обязателен:
 	// news_events — ReplacingMergeTree, и без него повторно записанные позиции
 	// (ключ date/source/title) считались бы дважды, а счётчик покрытия check
@@ -380,7 +435,21 @@ const (
 	// причине, что и у storedSpansQuery. Плейсхолдеры позиционные: ? #1 — source,
 	// ? #2 — граница (time.Time); clickhouse-go биндит аргументы по порядку.
 	storedKeysQuery = "SELECT date, title FROM " + newsTable + " FINAL WHERE source = ? AND date >= ?"
+
+	// newsAnnotationInsert — запись LLM-разметки. Список колонок явный, и его порядок —
+	// контракт с порядком аргументов Append в insertNewsAnnotations (порядок канонического DDL).
+	newsAnnotationInsert = "INSERT INTO " + newsAnnotationTable + " (url, content_hash, kind, method, model, prompt_version, dimension, tag, direction, confidence, evidence, sentiment, relevance, summary, annotated_at)"
 )
+
+// newsAnnotationCandidatesQuery читает бэклог разметки: Telegram-сообщения за 35 дней, для
+// которых ещё нет строки method='llm' этой пары (model, prompt_version). Пара входит в ключ
+// ReplacingMergeTree, поэтому смена модели/промпта автоматически делает старые сообщения
+// кандидатами, не затирая прежнюю разметку. FINAL обязателен: news_events и news_annotation —
+// ReplacingMergeTree, и без него вытесненные копии дали бы дубли кандидатов / ложные пропуски.
+// 35 дней — окно корпоративных раскрытий edisclosure (20 сообщений ≈30 дней плюс запас):
+// при 7-дневном окне старые сообщения канала оставались бы без разметки. LIMIT — из newsLLMBacklogLimit:
+// стоимость LLM ограничена и после долгого простоя.
+var newsAnnotationCandidatesQuery = `SELECT date, source, title, url, description, content_hash FROM ` + newsTable + ` FINAL WHERE url LIKE 'https://t.me/%' AND content_hash != '' AND date >= now() - INTERVAL 35 DAY AND (url, content_hash) NOT IN (SELECT url, content_hash FROM ` + newsAnnotationTable + ` FINAL WHERE method = 'llm' AND model = ? AND prompt_version = ?) ORDER BY date DESC LIMIT ` + strconv.Itoa(newsLLMBacklogLimit)
 
 // Import выполняет прогон контура новостей: DDL → витрина → ленты → батч.
 // Порядок шагов — часть контракта, а не стиль.
@@ -450,20 +519,111 @@ func (s *newsImport) Import(ctx context.Context, conn driver.Conn) (count int64,
 		return 0, errors.Join(feedErrs...)
 	}
 
-	var items []newsItem
-	for _, r := range results {
-		if r.Err == nil {
-			items = append(items, r.Items...)
-		}
+	// Слоты — позиции успешных лент в порядке feeds(). RSS-слот несёт окно ленты как есть,
+	// Telegram-слот — результат diffTelegram: текущий текст с зафиксированным title версии 1.
+	// Порядок слотов сохраняется до батча, поэтому лог и запись детерминированы.
+	type feedSlot struct {
+		kind  feedKind
+		items []newsItem
 	}
+	slots := make([]feedSlot, 0, len(results))
+	var newVersions []telegramVersion
+	now := time.Now()
+	for _, r := range results {
+		if r.Err != nil {
+			continue
+		}
+		if r.Feed.Kind != feedTelegram {
+			slots = append(slots, feedSlot{kind: feedRSS, items: r.Items})
+			continue
+		}
+		if len(r.Items) == 0 {
+			// Успешная Telegram-лента без позиций невозможна: parseTelegramPage считает
+			// пустое окно ошибкой. Страховка, а не штатная ветка.
+			continue
+		}
+		// Версии читаются до записи: без истории diffTelegram принял бы все текущие
+		// сообщения за v1 и затёр нумерацию. Чтение — строго по каналу и нижней границе
+		// окна этого прогона (минимум дат публикации).
+		channel := r.Items[0].Channel
+		windowMin, windowMax := r.Items[0].Date, r.Items[0].Date
+		for _, it := range r.Items[1:] {
+			if it.Date.Before(windowMin) {
+				windowMin = it.Date
+			}
+			if it.Date.After(windowMax) {
+				windowMax = it.Date
+			}
+		}
+		existing, readErr := readTelegramVersions(ctx, conn, channel, windowMin)
+		if readErr != nil {
+			// Сбой чтения версий изолируется этой лентой: без истории diffTelegram
+			// принял бы текущий текст за v1 и затёр нумерацию, поэтому Telegram-позиции
+			// этого прогона не пишутся вовсе (их догонит следующий успешный прогон).
+			// Остальные ленты — семь RSS и второй Telegram-канал — пишутся: сбой
+			// истории одной ленты не должен отменять уже собранные данные.
+			log.Errorf("news_watch: %s: %v", r.Feed.Key, readErr)
+			feedErrs = append(feedErrs, fmt.Errorf("%s: %w", r.Feed.Key, readErr))
+			continue
+		}
+		telegramItems, versions, stats := diffTelegram(existing, r.Items, r.SeenIDs, windowMin, windowMax, now)
+		// Те же позиции, что печатает лог ленты выше, но с итогом версий: M — новые
+		// версии текущих сообщений, K — tombstone (удаления из окна).
+		log.Infof("news_watch: %s: позиций %d, новых версий %d, удалений %d",
+			r.Feed.Key, len(telegramItems), stats.NewVersions, stats.Deleted)
+		slots = append(slots, feedSlot{kind: feedTelegram, items: telegramItems})
+		newVersions = append(newVersions, versions...)
+	}
+
+	var items []newsItem
 	if mode == modeSince {
-		// since — «только отсутствующие»: пишутся позиции, которых нет в news_events
-		// по ключу (date, source, title), без опоры на порядок дат (см. selectNewItems).
-		items, err = selectNewItems(ctx, conn, items)
+		// since — «только отсутствующие» для RSS: пишутся позиции, которых нет в
+		// news_events по ключу (date, source, title), без опоры на порядок дат (см.
+		// selectNewItems). Telegram-текущие пишутся всегда: их ключ стабилен по title v1,
+		// а upsert держит в news_events свежий текст и кандидатов LLM-разметки.
+		var rss []newsItem
+		for _, slot := range slots {
+			if slot.kind == feedRSS {
+				rss = append(rss, slot.items...)
+			}
+		}
+		filtered, err := selectNewItems(ctx, conn, rss)
 		if err != nil {
 			// Тот же полный диагноз, что и в check: отказ лент не должен теряться
 			// за ошибкой базы — иначе в dagu видно только её.
 			return 0, errors.Join(err, errors.Join(feedErrs...))
+		}
+		// selectNewItems сохраняет исходный порядок и выбрасывает уже сохранённые позиции;
+		// раскладываем результат обратно по слотам по ключу (source, date, title), чтобы
+		// батч шёл в порядке feeds(). Счётчик, а не set: дубль ключа внутри прогона
+		// selectNewItems уже схлопнул, и второй экземпляр писать нельзя.
+		type slotKey struct {
+			source string
+			key    newsKey
+		}
+		kept := make(map[slotKey]int, len(filtered))
+		for _, it := range filtered {
+			kept[slotKey{source: it.Source, key: newsKey{date: it.Date.Unix(), title: it.Title}}]++
+		}
+		items = make([]newsItem, 0, len(filtered)+len(newVersions))
+		for _, slot := range slots {
+			for _, it := range slot.items {
+				if slot.kind == feedTelegram {
+					items = append(items, it)
+					continue
+				}
+				k := slotKey{source: it.Source, key: newsKey{date: it.Date.Unix(), title: it.Title}}
+				if kept[k] == 0 {
+					continue
+				}
+				kept[k]--
+				items = append(items, it)
+			}
+		}
+	} else {
+		// all — полный upsert окна: пишутся все позиции всех успешных лент.
+		for _, slot := range slots {
+			items = append(items, slot.items...)
 		}
 	}
 	if len(items) == 0 {
@@ -473,13 +633,56 @@ func (s *newsImport) Import(ctx context.Context, conn driver.Conn) (count int64,
 		if mode == modeSince {
 			log.Infof("news_watch: новых позиций нет — нечего обновлять (0 строк)")
 		}
-		return 0, errors.Join(feedErrs...)
+	} else {
+		if count, err = insertItems(ctx, conn, items); err != nil {
+			// К ошибке батча добавляются отказы лент: иначе прогон в dagu отчитывается
+			// только «запись упала», и сбойные ленты этого прогона из вывода выпадают.
+			return count, errors.Join(err, errors.Join(feedErrs...))
+		}
+	}
+	// Версии пишутся после news_events: сбой второго батча не теряет текущий текст,
+	// а повтор прогона дописывает недостающие версии (ключ ReplacingMergeTree).
+	if _, verr := insertTelegramVersions(ctx, conn, newVersions); verr != nil {
+		return count, errors.Join(verr, errors.Join(feedErrs...))
 	}
 
-	if count, err = insertItems(ctx, conn, items); err != nil {
-		// К ошибке батча добавляются отказы лент: иначе прогон в dagu отчитывается
-		// только «запись упала», и сбойные ленты этого прогона из вывода выпадают.
-		return count, errors.Join(err, errors.Join(feedErrs...))
+	// LLM-разметка — после записи текущего текста и версий, но до выхода из прогона:
+	// пустой items (since при покрытом окне или упавшая Telegram-лента) не повод пропускать
+	// бэклог news_annotation, иначе после простоя разметка не догналась бы никогда.
+	// Любая ошибка LLM/валидации/записи — warn и продолжение: импорт остаётся зелёным,
+	// догон — следующим прогоном. check сюда не доходит (возврат выше).
+	cfg, llmOK := newsLLMConfigFromEnv()
+	if llmOK {
+		candidates, readErr := readNewsAnnotationCandidates(ctx, conn, cfg.Model, newsPromptVersion)
+		switch {
+		case readErr != nil:
+			log.Warnf("news_watch: LLM-разметка (%s): %v", cfg.Model, readErr)
+		case len(candidates) == 0:
+			// Бэклога нет — провайдер не вызывается.
+		default:
+			rows, tagErr := tagTelegramLLM(ctx, cfg, candidates)
+			// Успешные батчи пишутся даже при ошибке следующего: tagTelegramLLM возвращает
+			// накопленные строки вместе с ошибкой, и следующий прогон не платит за них снова.
+			if len(rows) > 0 {
+				var docs, tags int
+				for _, row := range rows {
+					switch row.Kind {
+					case newsKindDoc:
+						docs++
+					case newsKindTag:
+						tags++
+					}
+				}
+				if _, insErr := insertNewsAnnotations(ctx, conn, rows); insErr != nil {
+					log.Warnf("news_watch: LLM-разметка: запись %s: %v", newsAnnotationTable, insErr)
+				} else {
+					log.Infof("news_watch: LLM %s: размечено %d сообщений, тегов %d", cfg.Model, docs, tags)
+				}
+			}
+			if tagErr != nil {
+				log.Warnf("news_watch: LLM-разметка (%s): %v", cfg.Model, tagErr)
+			}
+		}
 	}
 	// Успешные ленты записаны, сбойная видна в логе и в итоговой ошибке: dagu
 	// перезапустит прогон, а повторная запись тех же позиций безвредна.
@@ -523,13 +726,15 @@ func readStoredSpans(ctx context.Context, conn driver.Conn) (map[string]sourceSp
 }
 
 // insertItems пишет позиции одним батчем — построчный Exec в цикле запрещён
-// (правило 2 AGENTS.md). Sentiment передаётся явным (*float32)(nil): колонку
+// (правило 2 AGENTS.md). ContentHash заполняется у обеих лент (у RSS тоже: разметка
+// generic по url+content_hash). Sentiment передаётся явным (*float32)(nil): колонку
 // заполняет LLM-сессия (follow-up), и типизированный nil фиксирует, что поле
 // оставлено пустым осознанно. Ошибка Append прерывает батч через Abort: частично
 // собранный батч Send не отправляет, поэтому половина прогона в таблицу не уедет.
 //
 // Порядок аргументов Append — контракт с явным списком колонок newsInsert
-// (date, source, title, url, description, sentiment); менять его можно только вместе с ним.
+// (date, source, title, url, description, content_hash, sentiment); менять его можно
+// только вместе с ним.
 func insertItems(ctx context.Context, conn driver.Conn, items []newsItem) (int64, error) {
 	batch, err := conn.PrepareBatch(ctx, newsInsert)
 	if err != nil {
@@ -537,7 +742,66 @@ func insertItems(ctx context.Context, conn driver.Conn, items []newsItem) (int64
 	}
 	var count int64
 	for _, it := range items {
-		if err = batch.Append(it.Date, it.Source, it.Title, it.URL, it.Description, (*float32)(nil)); err != nil {
+		if err = batch.Append(it.Date, it.Source, it.Title, it.URL, it.Description,
+			it.ContentHash, (*float32)(nil)); err != nil {
+			_ = batch.Abort()
+			return count, err
+		}
+		count++
+	}
+	err = batch.Send()
+	return count, err
+}
+
+// readNewsAnnotationCandidates читает бэклог LLM-разметки: Telegram-сообщения за 35 дней,
+// у которых нет doc/tag-строк этой пары (model, prompt_version). Пустой результат — не
+// ошибка: разметить нечего. Порядок Scan — порядок колонок newsAnnotationCandidatesQuery:
+// date, source, title, url, description, content_hash. Ошибка обхода проверяется: молча
+// вернувшаяся половина бэклога оставила бы часть сообщений без разметки до следующего прогона.
+func readNewsAnnotationCandidates(ctx context.Context, conn driver.Conn, model string, promptVersion uint16) ([]newsItem, error) {
+	rows, err := conn.Query(ctx, newsAnnotationCandidatesQuery, model, promptVersion)
+	if err != nil {
+		return nil, fmt.Errorf("news_watch: читать кандидатов %s (model=%s, prompt_version=%d): %w",
+			newsAnnotationTable, model, promptVersion, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var candidates []newsItem
+	for rows.Next() {
+		var it newsItem
+		if err = rows.Scan(&it.Date, &it.Source, &it.Title, &it.URL, &it.Description, &it.ContentHash); err != nil {
+			return nil, fmt.Errorf("news_watch: читать кандидата %s (model=%s): %w",
+				newsAnnotationTable, model, err)
+		}
+		candidates = append(candidates, it)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("news_watch: читать кандидатов %s (model=%s): %w", newsAnnotationTable, model, err)
+	}
+	return candidates, nil
+}
+
+// insertNewsAnnotations пишет разметку одним батчем: построчный Exec в цикле запрещён
+// (правило 2 AGENTS.md). Пустой список не открывает батч вовсе — прогон без кандидатов не
+// должен слать пустой Send. Ошибка Append прерывает батч через Abort: частично собранный
+// батч Send не отправляет, поэтому половина разметки в таблицу не уедет.
+//
+// Порядок аргументов Append — контракт с явным списком колонок newsAnnotationInsert
+// (url, content_hash, kind, method, model, prompt_version, dimension, tag, direction,
+// confidence, evidence, sentiment, relevance, summary, annotated_at).
+func insertNewsAnnotations(ctx context.Context, conn driver.Conn, rows []newsAnnotationRow) (int64, error) {
+	if len(rows) == 0 {
+		return 0, nil
+	}
+	batch, err := conn.PrepareBatch(ctx, newsAnnotationInsert)
+	if err != nil {
+		return 0, err
+	}
+	var count int64
+	for _, row := range rows {
+		if err = batch.Append(row.URL, row.ContentHash, row.Kind, row.Method, row.Model,
+			row.PromptVersion, row.Dimension, row.Tag, row.Direction, row.Confidence,
+			row.Evidence, row.Sentiment, row.Relevance, row.Summary, row.AnnotatedAt); err != nil {
 			_ = batch.Abort()
 			return count, err
 		}

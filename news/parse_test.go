@@ -132,6 +132,15 @@ func TestItemsFromDocMapsFixtureItem(t *testing.T) {
 	if want := time.Date(2026, time.October, 12, 14, 22, 0, 0, time.FixedZone("", mskOffset)); !first.Date.Equal(want) {
 		t.Errorf("Date первой позиции = %v, want %v", first.Date, want)
 	}
+	// ContentHash заполняется и у RSS: разметка generic по url+content_hash, и пустой
+	// hash у RSS означал бы, что версионный ключ есть только у Telegram.
+	if want := contentHash(first.Title, first.Description); first.ContentHash != want {
+		t.Errorf("ContentHash первой позиции = %q, want %q (sha256 title+description)", first.ContentHash, want)
+	}
+	if first.Channel != "" || first.MessageID != 0 {
+		t.Errorf("RSS-позиция несёт Channel=%q MessageID=%d, want пустые (это поля Telegram)",
+			first.Channel, first.MessageID)
+	}
 }
 
 func TestItemsFromDocParsesDescription(t *testing.T) {
