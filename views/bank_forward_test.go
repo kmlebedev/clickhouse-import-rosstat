@@ -7,7 +7,7 @@ import (
 
 // selectedBankForwardAliases — явный список колонок выдачи
 // v_bank_loan_portfolio_forward. selectedColumns здесь не годится: он разбирает
-// только простой SELECT, а витрина начинается с WITH и содержит три CTE, которые
+// только простой SELECT, а витрина начинается с WITH и содержит пять CTE, которые
 // он принял бы за несколько верхних SELECT'ов. Поэтому список alias'ов задан
 // руками и сверяется с SQL точечно.
 var selectedBankForwardAliases = []string{
@@ -57,15 +57,24 @@ func TestBankLoanPortfolioForwardViewContract(t *testing.T) {
 		"'customer_loans'",
 		"'loans_corporations'",
 		"'loans_individuals'",
-		"lagInFrame",
 		"JSONExtractString(threshold, 'bank')",
 		"subtractMonths(date, 1)",
+		"subtractMonths(b.report_month, 1)",
+		"subtractMonths(b.report_month, 12)",
+		"LEFT JOIN bank p1",
+		"LEFT JOIN cbr p1",
 		"/ 1000",
-		"WINDOW w",
 	} {
 		if !strings.Contains(selectText, marker) {
 			t.Errorf("SELECT does not contain %q", marker)
 		}
+	}
+
+	// lagInFrame по строкам врёт при пропусках месяцев (у VTBR нет 2024-08,
+	// 2025-01, 2025-02, 2026-01): lag 12 берёт 12-ю строку назад, а не тот же
+	// месяц годом раньше. Темпы обязаны считаться self-join по календарным месяцам.
+	if strings.Contains(selectText, "lagInFrame") {
+		t.Error("SELECT must not use lagInFrame: MoM/YoY are computed by self-join on calendar months, not by row offset")
 	}
 
 	if len(selectedBankForwardAliases) != 14 {

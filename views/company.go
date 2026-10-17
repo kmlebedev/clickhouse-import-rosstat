@@ -153,16 +153,21 @@ FROM (
 // Две поправки к данным, без которых цифры неверны:
 //
 //   - report_month ЦБ сдвинут на месяц назад (subtractMonths(date, 1)):
-//     cbr_credit_m2x помечает точку датой, сдвинутой на месяц вперёд от
-//     отчётного месяца (та же конвенция, что у кредитных выдач —
-//     cbr/new_loans_corp.go:39), а report_month витрины — первым днём
-//     отчётного месяца, и без сдвига сравнение шло бы с чужим месяцем;
+//     v_cbr_macro в комментарии колонки date прямо фиксирует сдвиг кредитов на
+//     месяц вперёд (cbr/views.go:40); значение ЦБ на 2026-07-01 — это июньский
+//     сток, а report_month витрины — первым днём отчётного месяца, и без
+//     сдвига сравнение шло бы с чужим месяцем;
 //   - значение ЦБ переведено из млн руб. в млрд руб. (/ 1000) — в той же
 //     единице, что и портфель банков.
 //
+// Дата публикации из bank_results относится ко всему релизу банка, а не к
+// отдельной метрике: присоединение идёт по (bank, report_month), поэтому одна
+// дата применяется ко всем трём метрикам банка за месяц; metric в threshold —
+// ведущий ряд триггера (customer_loans).
+//
 // Базы РСБУ и МСФО не совпадают: уровни и темпы сравнимы только внутри ряда
-// одного банка (PARTITION BY bank, metric), а bank_share_of_cbr_pct — справочная
-// доля, а не точная доля рынка.
+// одного банка (bank, metric), а bank_share_of_cbr_pct — справочная доля, а не
+// точная доля рынка.
 var bankLoanPortfolioForwardView = util.View{
 	Name:   "v_bank_loan_portfolio_forward",
 	Tables: []string{companyFinancialsTable, "events_calendar", "cbr_credit_m2x"},
@@ -187,13 +192,31 @@ cal AS (
       AND JSONExtractString(threshold, 'report_month') != ''
     GROUP BY bank, report_month
 ),
+bank_prev AS (
+    SELECT b.bank AS bank, b.report_month AS report_month, b.metric AS metric,
+           b.source_kind AS source_kind, b.value AS value,
+           p1.value AS prev_value,
+           p12.value AS prev12_value
+    FROM bank b
+    LEFT JOIN bank p1 ON p1.bank = b.bank AND p1.metric = b.metric
+        AND p1.report_month = subtractMonths(b.report_month, 1)
+    LEFT JOIN bank p12 ON p12.bank = b.bank AND p12.metric = b.metric
+        AND p12.report_month = subtractMonths(b.report_month, 12)
+),
 cbr AS (
     SELECT subtractMonths(date, 1) AS report_month,
            toNullable(value / 1000) AS cbr_total
     FROM cbr_credit_m2x FINAL
-    -- Имя ряда в сырой таблице — name; series — колонка витрины v_cbr_macro,
-    -- которая переименовывает name при UNION ALL (cbr/views.go).
+    -- Имя ряда в сырой таблице — name; series — колонка витрины v_cbr_macro.
     WHERE name = 'Кредит экономике'
+),
+cbr_prev AS (
+    SELECT c.report_month AS report_month, c.cbr_total AS cbr_total,
+           p1.cbr_total AS prev_cbr_total,
+           p12.cbr_total AS prev12_cbr_total
+    FROM cbr c
+    LEFT JOIN cbr p1 ON p1.report_month = subtractMonths(c.report_month, 1)
+    LEFT JOIN cbr p12 ON p12.report_month = subtractMonths(c.report_month, 12)
 )
 SELECT
     b.bank AS bank,
@@ -201,23 +224,22 @@ SELECT
     b.metric AS metric,
     b.source_kind AS source_kind,
     b.value AS value_bln_rub,
-    if(isNull(lagInFrame(b.value, 1) OVER w) OR lagInFrame(b.value, 1) OVER w = 0, NULL,
-       round(b.value / lagInFrame(b.value, 1) OVER w - 1, 6)) AS mom_pct,
-    if(isNull(lagInFrame(b.value, 12) OVER w) OR lagInFrame(b.value, 12) OVER w = 0, NULL,
-       round(b.value / lagInFrame(b.value, 12) OVER w - 1, 6)) AS yoy_pct,
+    if(isNull(b.prev_value) OR b.prev_value = 0, NULL,
+       round(b.value / b.prev_value - 1, 6)) AS mom_pct,
+    if(isNull(b.prev12_value) OR b.prev12_value = 0, NULL,
+       round(b.value / b.prev12_value - 1, 6)) AS yoy_pct,
     if(c.bank = '', NULL, c.publish_date) AS publish_date,
     if(c.bank = '', 'missing', c.event_status) AS event_status,
     if(c.bank = '', 'missing', c.date_status) AS date_status,
     r.cbr_total AS cbr_credit_total_bln_rub,
-    if(isNull(lagInFrame(r.cbr_total, 1) OVER w) OR lagInFrame(r.cbr_total, 1) OVER w = 0, NULL,
-       round(r.cbr_total / lagInFrame(r.cbr_total, 1) OVER w - 1, 6)) AS cbr_mom_pct,
-    if(isNull(lagInFrame(r.cbr_total, 12) OVER w) OR lagInFrame(r.cbr_total, 12) OVER w = 0, NULL,
-       round(r.cbr_total / lagInFrame(r.cbr_total, 12) OVER w - 1, 6)) AS cbr_yoy_pct,
+    if(isNull(r.prev_cbr_total) OR r.prev_cbr_total = 0, NULL,
+       round(r.cbr_total / r.prev_cbr_total - 1, 6)) AS cbr_mom_pct,
+    if(isNull(r.prev12_cbr_total) OR r.prev12_cbr_total = 0, NULL,
+       round(r.cbr_total / r.prev12_cbr_total - 1, 6)) AS cbr_yoy_pct,
     if(isNull(r.cbr_total) OR r.cbr_total = 0, NULL, round(b.value / r.cbr_total * 100, 2)) AS bank_share_of_cbr_pct
-FROM bank b
+FROM bank_prev b
 LEFT JOIN cal c ON b.bank = c.bank AND b.report_month = c.report_month
-LEFT JOIN cbr r ON b.report_month = r.report_month
-WINDOW w AS (PARTITION BY b.bank, b.metric ORDER BY b.report_month)
+LEFT JOIN cbr_prev r ON b.report_month = r.report_month
 ORDER BY b.report_month DESC, b.bank, b.metric`,
 	Comment: "Помесячный кредитный портфель банков-эмитентов с датой публикации из календаря `bank_results`: SBER (РСБУ) и VTBR (МСФО) — пилот; MoM/YoY, сравнение с «Кредитом экономике» ЦБ (млн руб. → млрд руб., дата ЦБ сдвинута на месяц назад), доля портфеля банка в агрегате ЦБ. Базы РСБУ/МСФО не совпадают — темпы считать внутри ряда. `publish_date` NULL — дата публикации не заведена в календарь",
 	Columns: map[string]string{
@@ -228,7 +250,7 @@ ORDER BY b.report_month DESC, b.bank, b.metric`,
 		"value_bln_rub":            "Кредитный портфель на отчётный месяц, млрд ₽; NULL — значение не прочиталось у источника",
 		"mom_pct":                  "Темп к предыдущему месяцу как доля (0,011 = 1,1 %); NULL при отсутствии предыдущей точки ряда",
 		"yoy_pct":                  "Темп к тому же месяцу прошлого года как доля (0,011 = 1,1 %); NULL, если точки год назад нет",
-		"publish_date":             "Дата публикации из events_calendar.category='bank_results' (event_date); NULL — дата публикации не заведена в календарь",
+		"publish_date":             "Дата публикации из events_calendar.category='bank_results' (event_date); относится ко всему релизу банка и применяется ко всем трём метрикам за отчётный месяц (metric в threshold — ведущий ряд триггера); NULL — дата публикации не заведена в календарь",
 		"event_status":             "Статус события публикации: 'pending' — ожидается, 'done' — состоялось, 'verified' — проверено, 'missing' — строки календаря нет",
 		"date_status":              "Статус даты публикации: 'confirmed' — подтверждена IR-календарём, 'expected' — оценка по прошлым датам, 'missing' — строки календаря нет",
 		"cbr_credit_total_bln_rub": "«Кредит экономике» ЦБ, млрд ₽ (cbr_credit_m2x, name = 'Кредит экономике'); дата ЦБ сдвинута на месяц назад (subtractMonths(date, 1)), значение переведено из млн в млрд (/ 1000)",

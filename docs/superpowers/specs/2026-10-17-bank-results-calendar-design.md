@@ -32,13 +32,13 @@
 ### 3.2 Правила дат
 
 1. Сначала ищется опубликованная будущая дата в IR-календаре банка. Если есть — `date_status=confirmed`, `source` — URL.
-2. Если будущей даты нет — собираются не менее шести последних фактических дат публикаций; берётся медиана дня публикации, в `basis` перечисляются использованные даты, в `rule` — правило. `date_status=expected`.
+2. Если будущей даты нет — собираются не менее трёх последних фактических дат: для ВТБ — тот же месяц в трёх предыдущих годах, для Сбера — три последние публикации 2026 года (публичный ряд дат ограничен текущим годом); медиана дня публикации берётся по этим датам, в `basis` перечисляются использованные даты, в `rule` — правило. `date_status=expected`.
 3. Если нет ни будущей даты, ни ряда фактических дат — строка не создаётся; банк остаётся кандидатом в issue.
 4. Даты не «округляются» до красивых; выходные/праздники — ближайший рабочий день по фактическому календарю публикаций банка.
 
 ### 3.3 Идемпотентность
 
-Сид `sql/events_calendar_bank_results_q4_2026.sql` — обычный `INSERT` в `ReplacingMergeTree(event_date, category, title)`. Повторный прогон с теми же значениями — no-op. Если ожидаемая дата уточнилась, добавляется строка с новым `title`; старая остаётся историей. Витрина выбирает строку по `argMax(event_date, (status IN ('done','verified'), event_date))`, то есть подтверждённую/позднюю.
+Сид `sql/events_calendar_bank_results_q4_2026.sql` — обычный `INSERT` в `events_calendar` (`ENGINE = ReplacingMergeTree ORDER BY (event_date, category, title)`). Повторный прогон с теми же значениями — no-op. Если ожидаемая дата уточнилась, добавляется строка с новым `title`; старая остаётся историей. Витрина выбирает строку по `argMax(event_date, (status IN ('done','verified'), event_date))`, то есть подтверждённую/позднюю.
 
 ## 4. Витрина `v_bank_loan_portfolio_forward`
 
@@ -52,9 +52,11 @@
 
 **Расчёт:**
 - `report_month = toDate(concat(substring(period,1,4), '-', substring(period,6,2), '-01'))`;
-- MoM/YoY — `lagInFrame(value, 1|12) OVER (PARTITION BY bank, metric ORDER BY report_month)`;
+- MoM/YoY — self-join по календарным месяцам: `LEFT JOIN bank p1 ON p1.report_month = subtractMonths(b.report_month, 1)` и `p12 … 12`; при пропуске месяца значение NULL, а не сдвиг на соседнюю строку. Для ЦБ — такой же self-join в CTE `cbr_prev`;
 - календарь — `JSONExtractString(threshold, 'bank'|'report_month'|'date_status')`, `argMax` как в §3.3;
-- ЦБ — `cbr_credit_m2x FINAL WHERE series = 'Кредит экономике'`, те же окна.
+- ЦБ — `cbr_credit_m2x FINAL WHERE name = 'Кредит экономике'`; сырая `cbr_credit_m2x` хранит ряд в колонке `name` (не `series`); дата сдвинута на месяц вперёд — это прямо зафиксировано в комментарии колонки `date` витрины `v_cbr_macro` (`cbr/views.go:40`: «кредиты — на месяц вперёд»), поэтому `subtractMonths(date, 1)`; значение на 2026-07-01 — июньский сток. Значение переводится из млн в млрд (`/ 1000`).
+
+**Дата публикации — атрибут релиза.** Дата публикации из `events_calendar.category='bank_results'` относится ко всему релизу банка: join идёт по `(bank, report_month)`, а `metric` в `threshold` — ведущий ряд триггера (`customer_loans`); поэтому `publish_date`/`date_status`/`event_status` применяются ко всем трём метрикам банка за месяц. Это осознанно: банк публикует портфель одним релизом.
 
 **Ловушка LEFT JOIN:** ClickHouse не отдаёт `NULL` для не-Nullable `Date`/`String` при отсутствии совпадения. В финальном `SELECT` — `if(...='', NULL, ...)` / `if(...='', 'missing', ...)`; для ЦБ — `toNullable` или проверка на `toDate(0)`.
 
