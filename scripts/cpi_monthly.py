@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""CPI monthly (ML-трек v2): данные, as-of, выборка и признаки с МП.
+"""CPI monthly (ML-трек v2): данные, as-of, выборка, walk-forward и бенчмарки.
 
-Первый срез месячного nowcast ИПЦ РФ (спека
-`docs/superpowers/specs/2026-10-18-cpi-monthly-mp-design.md`, §2): выборка
+Срез месячного nowcast ИПЦ РФ (спека
+`docs/superpowers/specs/2026-10-18-cpi-monthly-mp-design.md`, §2–§5.1): выборка
 **155 месяцев 2013-10…2026-08** и два информационных множества на ОДНИХ И ТЕХ
 ЖЕ строках — «без МП» (5 числовых + `month`) и «с МП» (плюс 7 признаков
-мониторинга предприятий ЦБ из `cbr_survey`). Модели, walk-forward и отчёт —
-следующие задачи; здесь только данные, as-of-правила, признаки, экспорт фикстур
-и сводка выборки.
+мониторинга предприятий ЦБ из `cbr_survey`). Task 2 добавляет harness
+walk-forward, обязательные бенчмарки B1–B3 (B3 — в двух пространствах),
+метрики RMSE/MAE и отчёт-скелет; CatBoost — Task 3, DM-пары/сплит статьи/
+живой nowcast — Task 4.
 
 Что делает срез:
 
@@ -37,11 +38,31 @@
   любого обязательного признака (включая МП) попадает в «пропущенные» с
   причиной и отсутствует в списке целиком — иначе «с МП» и «без МП»
   сравнивались бы на разных фолдах. `feature_names(with_mp=False)` выбирает
-  базовые признаки, `feature_names(with_mp=True)` — базовые + 7 МП.
+  базовые признаки, `feature_names(with_mp=True)` — базовые + 7 МП;
+* **walk-forward** (`walk_forward`, §4.1) — расширяющееся окно: тест — строка
+  `i`, обучение — `[0 … i−1−embargo]` (только прошлое). Первый тест — строка
+  `start` (при 24 — 25-й месяц). `DegenerateWindowError` модели — пропуск фолда
+  ЭТОЙ модели со счётчиком, а не падение прогона; `fold_notes` модели
+  агрегируется по окну («недосход N из M»). Окна прогона (`window_specs`):
+  основное (`--start`, `--embargo-months`) плюс робастность — старт 48 и
+  эмбарго 1;
+* **бенчмарки** (§3.4, фиксируются до результатов) — B1 `predict_last`
+  (`y_lag1`), B2 `fit_ar1` (OLS `y_M` на `y_{M−1}` + 11 дамми месяца, HAC
+  `maxlags=3`, минимум 14 строк) и B3 `fit_enet_base`/`fit_enet_mp`
+  (`ElasticNetCV` на стандартизованных признаках без `month`, импутация NaN
+  медианой train, минимум 12 строк; `ConvergenceWarning` — в `fold_notes`, не
+  вырождение). Два пространства B3 отделяют эффект МП от эффекта алгоритма;
+* **метрики и отчёт** (§4.2, §5.1) — RMSE/MAE в п.п. через общие функции
+  `scripts/eval_utils.py`, блок «последние 12 фолдов»; отчёт-скелет
+  `cpi_monthly_report.md` (выборка, «модель × окно», последние 12 фолдов, «что
+  не проверено») и CSV `cpi_monthly_predictions.csv`
+  (`month, window, model, y_true, y_pred`).
 
-**NaN-политика:** в этом срезе NaN не используется — отсутствие любой
-обязательной точки выбрасывает месяц с причиной. Решение о NaN для моделей
-(если понадобится) принимается в следующих задачах.
+**NaN-политика:** в признаках этого среза NaN не возникает — отсутствие любой
+обязательной точки выбрасывает месяц с причиной. B3 на всякий случай импутирует
+NaN медианой ОБУЧАЮЩЕГО окна (колонка без наблюдений — 0.0: после
+стандартизации вклада не даёт), `StandardScaler` подгоняется только на train.
+CatBoost (Task 3) получит NaN как есть.
 
 **As-of — приближение, а не point-in-time слой** (спека §2.6): точные даты
 публикаций и ревизии рядов не учтены; PIT-слой — отдельный пункт фазы 4.
@@ -55,10 +76,11 @@
 переиспользуется из `scripts/extrapolation_aisc.py`, а не копируется. Секреты
 приходят только из окружения (их подставляет Makefile). Запуск — через `make`:
 
-* `make cpi-monthly` — сводка выборки: 155 месяцев 2013-10…2026-08, пропусков 0,
-  диапазоны рядов (модели — Task 2+);
-* `make cpi-monthly ARGS="--start N --embargo-months K"` — параметры окна
-  walk-forward принимаются и печатаются; пока не используются (моделей нет);
+* `make cpi-monthly` — сводка выборки (155 месяцев 2013-10…2026-08, пропусков
+  0), walk-forward B1–B3 по окнам 24/48/embargo 1, RMSE/MAE и артефакты
+  `cpi_monthly_report.md` и `cpi_monthly_predictions.csv` в корне worktree;
+* `make cpi-monthly ARGS="--start N --embargo-months K"` — основное окно
+  walk-forward задаётся явно (робастность остаётся от спеки §4.1);
 * `make cpi-monthly ARGS="--export-fixtures DIR"` — пересборка CSV-фикстур.
 """
 
@@ -67,19 +89,34 @@ import csv
 import math
 import statistics
 import sys
+import warnings
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
+
+import numpy as np
+import statsmodels.api as sm
+from sklearn.exceptions import ConvergenceWarning
+from sklearn.linear_model import ElasticNetCV
+from sklearn.model_selection import TimeSeriesSplit
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 
 ROOT = Path(__file__).resolve().parent.parent
 
 # Скрипт-сосед: переиспользуем транспорт к ClickHouse, а не копируем его.
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import eval_utils as eu
 import extrapolation_aisc as aisc
 
 ch_query = aisc.ch_query
+
+# Каталог артефактов живого прогона — корень worktree (файлы gitignored: точные
+# имена в `.gitignore`). Тесты подменяют его временным каталогом, поэтому
+# `run_summary` берёт значение в момент вызова, а не связывает по умолчанию.
+ARTIFACTS_DIR = ROOT
 
 # ---------------------------------------------------------------------------
 # Константы (контракт с Tasks 2–4; значения пинуются тестами)
@@ -154,10 +191,13 @@ SAMPLE_LAST = date(2026, 8, 1)
 FIXTURE_MAIN = (date(2013, 1, 1), date(2014, 12, 31))
 FIXTURE_RECENT = (date(2026, 7, 1), date(2026, 9, 30))
 
-# Окно walk-forward по умолчанию (спека §4.1: старт 24); Task 1 флаги только
-# принимает и печатает — модели появятся в Task 2.
+# Основное окно walk-forward (спека §4.1: старт 24) и робастность: второй старт
+# 48 (как в докладе) и эмбарго 1. Флаги `--start`/`--embargo-months` управляют
+# ОСНОВНЫМ окном, робастные добавляет `window_specs`.
 DEFAULT_START = 24
 DEFAULT_EMBARGO = 0
+ROBUST_START = 48
+ROBUST_EMBARGO = 1
 
 ONE_DAY = timedelta(days=1)
 
@@ -766,6 +806,726 @@ def assert_months_purged(rows: list[Row]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Walk-forward harness (спека §4.1)
+# ---------------------------------------------------------------------------
+
+# Контракт модели walk-forward: обучение на окне строк, прогноз тестовой строки.
+FitPredict = Callable[[list[Row], Row], float]
+
+# Ключ диагностики фолда в необязательном протоколе `fold_notes`: численный
+# решатель модели не сошёлся (у B3 — `ConvergenceWarning` координатного спуска).
+# Модель, выставляющая атрибут `fold_notes` (dict[str, int] о ПОСЛЕДНЕЙ
+# подгонке), отчитывается по фолдам; harness накапливает значения по модели, а
+# отчёт печатает «N из M» фолдов. У моделей без атрибута (B1, B2) диагностики
+# нет — в отчёте «—».
+NON_CONVERGED = "non_converged"
+
+
+class DegenerateWindowError(ValueError):
+    """Обучающее окно фолда вырождено: модель не оценивается, фолд пропускается.
+
+    Поднимается моделями (B2/B3, позже CatBoost) там, где окно не позволяет
+    оценить параметры: пустое или слишком короткое окно, нет вариации нужного
+    ряда, неидентифицируемый дизайн. `walk_forward` пропускает фолд ЭТОЙ модели
+    со счётчиком, а не роняет прогон: вырожденное окно — свойство окна, а не
+    порча данных. Любое другое исключение пробрасывается — это баг.
+    """
+
+
+@dataclass(frozen=True)
+class Prediction:
+    """Фолд walk-forward: месяц, модель, факт и прогноз (п.п., м/м).
+
+    Единицы — пункты процента, как у таргета §2.1: у бенчмарков, моделей Tasks
+    3–4 и метрик одна шкала. `model` — имя из словаря `models` (у бенчмарков —
+    константы `MODEL_*`); по нему отчёт собирает таблицы «модель × окно».
+    """
+
+    month: date
+    model: str
+    y_true: float
+    y_pred: float
+
+
+@dataclass(frozen=True)
+class WindowRun:
+    """Прогон одного окна walk-forward: фолды, счётчики пропусков, метки.
+
+    `folds` — число тестовых месяцев окна (может быть больше числа прогнозов
+    модели, если её окна вырождались); `skipped` — «модель → пропущено фолдов»
+    по ВСЕМ моделям словаря (нулевые счётчики тоже: модель, вырожденная на всех
+    окнах, видна в отчёте строкой «0 фолдов», а не исчезает); `notes` —
+    «модель → диагностика» (сумма `fold_notes` фолдов; у моделей без протокола
+    словарь пуст); `main` — основное окно прогона (для блока «последние 12
+    фолдов»).
+    """
+
+    start: int
+    embargo: int
+    main: bool
+    folds: int
+    predictions: list[Prediction]
+    skipped: dict[str, int]
+    notes: dict[str, dict[str, int]]
+
+
+def window_key(start: int, embargo: int) -> str:
+    """Метка окна для CSV и таблиц: `start=N` и `, embargo=K` при K > 0."""
+    return f"start={start}" + (f", embargo={embargo}" if embargo else "")
+
+
+def window_title(run: WindowRun) -> str:
+    """Метка окна в отчёте: ключ плюс роль (основное/робастность)."""
+    return f"{window_key(run.start, run.embargo)} ({'основное' if run.main else 'робастность'})"
+
+
+def window_specs(
+    start: int = DEFAULT_START, embargo: int = DEFAULT_EMBARGO
+) -> list[tuple[int, int]]:
+    """Окна прогона: основное (`start`/`embargo`) и робастность спеки §4.1.
+
+    Робастность — второй старт (`ROBUST_START`) и эмбарго 1; дубликаты и
+    несовместимые окна (`embargo ≥ start` — обучать не на чем) отбрасываются,
+    поэтому `--embargo-months 1` не даёт основное окно дважды.
+    """
+    specs = [(start, embargo)]
+    for candidate in ((ROBUST_START, embargo), (start, ROBUST_EMBARGO)):
+        if candidate not in specs and 0 <= candidate[1] < candidate[0]:
+            specs.append(candidate)
+    return specs
+
+
+def walk_forward(
+    rows: list[Row],
+    models: dict[str, FitPredict],
+    start: int,
+    embargo: int,
+    skipped: Optional[dict[str, int]] = None,
+    notes: Optional[dict[str, dict[str, int]]] = None,
+) -> list[Prediction]:
+    """Walk-forward по словарю моделей и одному окну (спека §4.1).
+
+    Фолд `i` (нумерация строк `rows`) обучается на `[0 … i−1−embargo]` и
+    прогнозирует `rows[i]`; первый фолд — строка `start` (минимальное обучающее
+    окно, поэтому при `start=24` первый тест — 25-й месяц). Единый train/test
+    split спекой запрещён и здесь не выражается вовсе; `embargo > 0` выбрасывает
+    месяцы ПЕРЕД тестом — метки обучения не перекрывают тестовый месяц.
+
+    `DegenerateWindowError` модели — пропуск фолда ЭТОЙ модели со счётчиком, а
+    не падение прогона: вырожденное окно — свойство окна, а не порча данных.
+    Любое другое исключение пробрасывается: это баг или порча данных. Счётчики
+    собираются в необязательные словари, которые заполняет вызывающий
+    (`evaluate_windows`): `skipped` («модель → пропущено фолдов») и `notes`
+    («модель → сумма `fold_notes` фолдов»; модель без атрибута `fold_notes` —
+    без диагностики). Возврат — список прогнозов; счётчики нужны отчёту.
+    """
+    if start < 1:
+        raise ValueError(f"walk-forward: start={start} — меньше одного месяца")
+    if embargo < 0 or embargo >= start:
+        raise ValueError(
+            f"walk-forward: embargo={embargo} при start={start} — обучающего окна нет"
+        )
+    counts = skipped if skipped is not None else {}
+    predictions = []
+    for index in range(start, len(rows)):
+        train = rows[: index - embargo]
+        row = rows[index]
+        for name, fit_predict in models.items():
+            try:
+                value = fit_predict(train, row)
+            except DegenerateWindowError:
+                counts[name] = counts.get(name, 0) + 1
+                continue
+            if notes is not None:
+                fold_notes = getattr(fit_predict, "fold_notes", None)
+                if fold_notes:
+                    totals = notes.setdefault(name, {})
+                    for key, count in fold_notes.items():
+                        totals[key] = totals.get(key, 0) + int(count)
+            predictions.append(
+                Prediction(
+                    month=row.month,
+                    model=name,
+                    y_true=float(row.y[TARGET_ALL]),
+                    y_pred=float(value),
+                )
+            )
+    return predictions
+
+
+def evaluate_windows(
+    rows: list[Row],
+    models: dict[str, FitPredict],
+    specs: Optional[list[tuple[int, int]]] = None,
+) -> list[WindowRun]:
+    """Walk-forward по всем окнам прогона; основное — первое окно списка.
+
+    Счётчики пропусков создаются по всем моделям словаря (нули тоже), поэтому
+    `WindowRun.skipped` хранит порядок моделей `models` — от него зависят строки
+    таблиц отчёта, а не алфавит. Диагностика `fold_notes` собирается по окну
+    заново (`WindowRun.notes`): число недосошедших фолдов относится к
+    КОНКРЕТНОМУ окну, а не к прогону целиком.
+    """
+    runs = []
+    for position, (start, embargo) in enumerate(
+        window_specs() if specs is None else specs
+    ):
+        skipped = {name: 0 for name in models}
+        notes = {name: {} for name in models}
+        predictions = walk_forward(rows, models, start, embargo, skipped=skipped, notes=notes)
+        runs.append(
+            WindowRun(
+                start=start,
+                embargo=embargo,
+                main=position == 0,
+                folds=max(0, len(rows) - start),
+                predictions=predictions,
+                skipped=skipped,
+                notes=notes,
+            )
+        )
+    return runs
+
+
+# ---------------------------------------------------------------------------
+# Бенчмарки B1–B3 (спека §3.4; фиксируются до результатов)
+# ---------------------------------------------------------------------------
+
+MODEL_LAST = "b1_last_value"
+MODEL_AR1 = "b2_ar1_seasonal"
+MODEL_ENET_BASE = "b3_elastic_net"
+MODEL_ENET_MP = "b3_elastic_net_mp"
+
+# Метки моделей для отчёта: бенчмарки названы номерами спеки §3.4. B3 идёт
+# двумя пространствами — эффект МП отделяется от эффекта алгоритма.
+MODEL_LABELS = {
+    MODEL_LAST: "B1 last value",
+    MODEL_AR1: "B2 AR(1)+сезонные дамми",
+    MODEL_ENET_BASE: "B3 ElasticNetCV (без МП)",
+    MODEL_ENET_MP: "B3 ElasticNetCV (с МП)",
+}
+
+
+def model_label(model: str) -> str:
+    """Метка модели для отчёта: у бенчмарков — номер спеки, у прочих — имя."""
+    return MODEL_LABELS.get(model, model)
+
+
+def predict_last(train: list[Row], row: Row) -> float:
+    """B1 «прошлый месяц» (спека §3.4): прогноз — `y_{M−1}`.
+
+    Источник лага — тот же, что у моделей: `row.features['y_lag1']` — значение
+    метки `M−1`, проверенное as-of-правилами §2.6. Брать `train[-1].y` нельзя:
+    при `embargo > 0` последняя строка обучения — не месяц `M−1`, и бенчмарк
+    перестал бы быть «прошлым месяцем». Обучающее окно не используется вовсе
+    (параметр — часть контракта `FitPredict`).
+    """
+    return float(row.features["y_lag1"])
+
+
+# --- B2: AR(1) с сезонными дамми ---------------------------------------------
+
+HAC_MAXLAGS = 3  # спека §3.4: HAC (Ньюи–Уэст) с maxlags=3
+AR1_DUMMY_MONTHS = tuple(range(2, 13))  # 11 дамми; январь — база
+AR1_PARAMS = 2 + len(AR1_DUMMY_MONTHS)  # const + y_lag1 + дамми
+AR1_MIN_TRAIN = 14  # спека §3.4: минимум 14 строк (не меньше, чем у v1)
+
+
+def ar1_design(rows: list[Row]) -> tuple:
+    """Дизайн B2: `[1, y_lag1, d_2 … d_12]` → `(X, y)`; `y` — таргет `cpi_all`.
+
+    Дамми — ровно 11 (`AR1_DUMMY_MONTHS`), январь — база: спека §3.4 называет
+    «11 дамми месяца». Значения берутся из признаков строки (`y_lag1`, `month`)
+    — тот же источник, что у моделей; одна и та же функция строит дизайн
+    обучения и тестовой строки, поэтому сдвиг месяцев в дамми не может
+    возникнуть «только на предсказании».
+    """
+    design, targets = [], []
+    for row in rows:
+        month = int(row.features["month"])
+        design.append(
+            [1.0, float(row.features["y_lag1"])]
+            + [1.0 if month == dummy else 0.0 for dummy in AR1_DUMMY_MONTHS]
+        )
+        targets.append(float(row.y[TARGET_ALL]))
+    return np.asarray(design, dtype=float), np.asarray(targets, dtype=float)
+
+
+def fit_ar1(train: list[Row], row: Row) -> float:
+    """B2: OLS `y_M` на `y_{M−1}` + 11 дамми месяца, ковариация HAC (спека §3.4).
+
+    Конфигурация HAC (`maxlags=3`, `use_correction=True`) — часть спеки; она
+    пинована тестом по АТРИБУТАМ результата (`fit_ar1.last_result`), а не по
+    подменённому statsmodels: от ковариации зависят p-value будущих таблиц.
+
+    Вырожденное окно — `DegenerateWindowError` (walk-forward пропускает фолд со
+    счётчиком): строк меньше `AR1_MIN_TRAIN` (спека §3.4: ≥ 14) или `y_lag1`
+    без вариации (наклон φ не идентифицирован).
+    """
+    if len(train) < AR1_MIN_TRAIN:
+        raise DegenerateWindowError(
+            f"B2 (AR(1)): обучающее окно {len(train)} месяцев короче "
+            f"{AR1_MIN_TRAIN} — спека §3.4 требует минимум {AR1_MIN_TRAIN}"
+        )
+    if len({float(item.features["y_lag1"]) for item in train}) < 2:
+        raise DegenerateWindowError(
+            "B2 (AR(1)): y_lag1 в обучающем окне не меняется — φ не идентифицирован"
+        )
+    design, targets = ar1_design(train)
+    result = sm.OLS(targets, design).fit(
+        cov_type="HAC", cov_kwds={"maxlags": HAC_MAXLAGS, "use_correction": True}
+    )
+    fit_ar1.last_result = result
+    row_design, _ = ar1_design([row])
+    return float(np.dot(row_design[0], np.asarray(result.params)))
+
+
+# Последний подогнанный результат statsmodels: читают тесты (пины HAC), отчёт —
+# нет. Атрибут заполняется при каждом вызове `fit_ar1`.
+fit_ar1.last_result = None
+
+
+# --- B3: ElasticNetCV в двух пространствах -----------------------------------
+
+ENET_ALPHAS = np.logspace(-4, 1, 20)  # спека §3.4, дословно
+ENET_L1_RATIOS = (0.1, 0.5, 0.9)  # спека §3.4, дословно
+ENET_CV_SPLITS = 3  # TimeSeriesSplit(3) внутри train-окна фолда
+ENET_MIN_TRAIN = 12  # спека §3.4: минимум 12 строк
+ENET_MEDIAN_FALLBACK = 0.0  # колонка без наблюдений: нейтральная константа
+
+
+def enet_features(with_mp: bool) -> list[str]:
+    """Признаки B3: `feature_names(with_mp)` без `month` (как в v1 B3).
+
+    `month` у B3 не участвует — сезонность там не моделируется (в отличие от
+    CatBoost с `cat_features`), поэтому два пространства различаются только
+    7 признаками МП.
+    """
+    return [name for name in feature_names(with_mp) if name != "month"]
+
+
+def enet_matrix(rows: list[Row], with_mp: bool) -> np.ndarray:
+    """Матрица признаков B3; NaN сохраняется — импутация позже (по train)."""
+    names = enet_features(with_mp)
+    return np.asarray(
+        [[float(row.features[name]) for name in names] for row in rows],
+        dtype=float,
+    )
+
+
+def enet_medians(matrix: np.ndarray) -> np.ndarray:
+    """Медианы колонок train-окна; колонка без наблюдений — `ENET_MEDIAN_FALLBACK`.
+
+    `np.nanmedian` на полностью NaN-колонке возвращает NaN и пишет
+    `RuntimeWarning`; медиана здесь не определена, и колонка получает
+    нейтральный ноль: после `StandardScaler` она нулевая и вклада в прогноз не
+    даёт.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        medians = np.nanmedian(matrix, axis=0)
+    return np.where(np.isnan(medians), ENET_MEDIAN_FALLBACK, medians)
+
+
+@dataclass(frozen=True)
+class EnetFit:
+    """Подобранный фолд B3: пайплайн, медианы и матрица train (для тестов-пинов).
+
+    `model` — `Pipeline` (StandardScaler → ElasticNetCV) на импутированной
+    train-матрице; `medians` — медианы импутации окна; `imputed` — train-матрица
+    после импутации (до стандартизации); `features` — имена колонок (base или
+    base+МП). Отчёт ничего из этого не читает.
+    """
+
+    model: Pipeline
+    medians: np.ndarray
+    imputed: np.ndarray
+    features: tuple
+
+
+def _fit_enet(train: list[Row], row: Row, with_mp: bool) -> float:
+    """Общий фит B3 для двух пространств (base и с МП).
+
+    Конфигурация — дословно из спеки §3.4: `alphas=logspace(−4, 1, 20)`,
+    `l1_ratio=[0.1, 0.5, 0.9]`, `cv=TimeSeriesSplit(3)`, `random_state=SEED`;
+    сплит — ВНУТРИ train-окна фолда, тест в подбор гиперпараметров не попадает.
+
+    NaN (в месячной выборке их нет, но политика зафиксирована) импутируется
+    медианой ОБУЧАЮЩЕГО окна; `StandardScaler` подгоняется ТОЛЬКО на train
+    (`fit` только на train, `transform` — train и тест): статистика теста в
+    предобработку не попадает.
+
+    Вырожденное окно (короче `ENET_MIN_TRAIN`) — `DegenerateWindowError`;
+    `ConvergenceWarning` координатного спуска не вырождение: прогноз конечен и
+    взят у выбранной CV-модели, а факт недосхода фиксируется в
+    `fold_notes[NON_CONVERGED]` (harness агрегирует по окну, отчёт печатает
+    «N из M»).
+    """
+    matrix = enet_matrix(train, with_mp)
+    if matrix.shape[0] < ENET_MIN_TRAIN:
+        raise DegenerateWindowError(
+            f"B3 (ElasticNetCV): обучающее окно {matrix.shape[0]} месяцев короче "
+            f"{ENET_MIN_TRAIN} — признаковое пространство не оценивается"
+        )
+    medians = enet_medians(matrix)
+    imputed = np.where(np.isnan(matrix), medians, matrix)
+    targets = np.asarray([float(item.y[TARGET_ALL]) for item in train])
+    model = Pipeline(
+        [
+            ("scaler", StandardScaler()),
+            (
+                "enet",
+                ElasticNetCV(
+                    alphas=ENET_ALPHAS,
+                    l1_ratio=list(ENET_L1_RATIOS),
+                    cv=TimeSeriesSplit(ENET_CV_SPLITS),
+                    random_state=SEED,
+                ),
+            ),
+        ]
+    )
+    with warnings.catch_warnings(record=True) as caught:
+        # Конфигурация (alphas до 1e-4, max_iter по умолчанию) закреплена спекой
+        # §3.4 — менять её нельзя, поэтому недосход не печатается, а считается.
+        # Прочие предупреждения не прячутся: они переиздаются после фита.
+        warnings.simplefilter("always")
+        model.fit(imputed, targets)
+    non_converged = any(
+        issubclass(warning.category, ConvergenceWarning) for warning in caught
+    )
+    for warning in caught:
+        if not issubclass(warning.category, ConvergenceWarning):
+            warnings.warn(str(warning.message), warning.category, stacklevel=2)
+    _fit_enet.fold_notes = {NON_CONVERGED: int(non_converged)}
+    _fit_enet.last_fit = EnetFit(
+        model=model,
+        medians=medians,
+        imputed=imputed,
+        features=tuple(enet_features(with_mp)),
+    )
+    test_matrix = enet_matrix([row], with_mp)
+    imputed_test = np.where(np.isnan(test_matrix), medians, test_matrix)
+    return float(model.predict(imputed_test)[0])
+
+
+def fit_enet_base(train: list[Row], row: Row) -> float:
+    """B3 без МП: ElasticNetCV на базовых признаках §2.4 (5 числовых)."""
+    value = _fit_enet(train, row, with_mp=False)
+    fit_enet_base.last_fit = _fit_enet.last_fit
+    fit_enet_base.fold_notes = dict(_fit_enet.fold_notes)
+    return value
+
+
+def fit_enet_mp(train: list[Row], row: Row) -> float:
+    """B3 с МП: ElasticNetCV на базовых признаках §2.4 + 7 признаках §2.5."""
+    value = _fit_enet(train, row, with_mp=True)
+    fit_enet_mp.last_fit = _fit_enet.last_fit
+    fit_enet_mp.fold_notes = dict(_fit_enet.fold_notes)
+    return value
+
+
+# Диагностика последнего фолда B3 (и общий фит): читают тесты и harness; отчёт —
+# нет. Атрибуты заполняются при каждом вызове.
+for _function in (_fit_enet, fit_enet_base, fit_enet_mp):
+    _function.last_fit = None
+    _function.fold_notes = {}
+
+
+# Бенчмарки спеки §3.4 — порядок B1, B2, B3-base, B3-mp задаёт строки таблиц
+# отчёта и порядок пар будущих DM-тестов (Task 4).
+BENCHMARKS = {
+    MODEL_LAST: predict_last,
+    MODEL_AR1: fit_ar1,
+    MODEL_ENET_BASE: fit_enet_base,
+    MODEL_ENET_MP: fit_enet_mp,
+}
+
+# Модели Task 2 — бенчмарки; CatBoost добавится в Task 3 тем же словарём.
+MODELS = dict(BENCHMARKS)
+
+
+# ---------------------------------------------------------------------------
+# Метрики (спека §4.2)
+# ---------------------------------------------------------------------------
+
+LAST_FOLDS = 12  # блок «последние 12 фолдов»
+
+
+def errors(predictions: list[Prediction]) -> list[float]:
+    """Ошибки фолдов (прогноз − факт, п.п.) — вход общих функций `eval_utils`."""
+    return [prediction.y_pred - prediction.y_true for prediction in predictions]
+
+
+def rmse_pp(predictions: list[Prediction]) -> float:
+    """RMSE фолдов в п.п. — тонкая обёртка над `eval_utils.rmse`."""
+    return eu.rmse(errors(predictions))
+
+
+def mae_pp(predictions: list[Prediction]) -> float:
+    """MAE фолдов в п.п. — тонкая обёртка над `eval_utils.mae`."""
+    return eu.mae(errors(predictions))
+
+
+def last_fold_months(predictions: list[Prediction], count: int = LAST_FOLDS) -> set:
+    """Месяцы последних `count` фолдов списка — общий отрезок для всех моделей.
+
+    Блок «последние 12 фолдов» описывает один и тот же отрезок выборки: если
+    модель пропустила фолд, у неё в таблице меньше строк, а не другой отрезок.
+    """
+    return set(sorted({prediction.month for prediction in predictions})[-count:])
+
+
+# ---------------------------------------------------------------------------
+# Отчёт-скелет и артефакты (спека §5.1)
+# ---------------------------------------------------------------------------
+
+REPORT_NAME = "cpi_monthly_report.md"
+PREDICTIONS_NAME = "cpi_monthly_predictions.csv"
+
+# Колонки CSV прогнозов — контракт Tasks 3–4 и приёмки (порядок из спеки §5.1).
+PREDICTIONS_COLUMNS = ("month", "window", "model", "y_true", "y_pred")
+
+
+def _fmt(value: Optional[float], places: int = 3) -> str:
+    """Число метрики для таблицы: `None` — «—», бесконечность — «±inf»."""
+    if value is None:
+        return "—"
+    if math.isinf(value):
+        return "+inf" if value > 0 else "−inf"
+    formatted = f"{value:.{places}f}"
+    # «-0.000» — артефакт округления малой отрицательной величины: знака в
+    # разрядах таблицы нет, и минус читался бы как ошибка знака.
+    if float(formatted) == 0.0:
+        return formatted.lstrip("-")
+    return formatted
+
+
+def _months_suffix(months: list, limit: int = 6) -> str:
+    """Список месяцев `(2013-10, …)` — для строки о пропущенных месяцах."""
+    if not months:
+        return ""
+    shown = ", ".join(month.isoformat()[:7] for month in months[:limit])
+    if len(months) > limit:
+        shown += f", … (+{len(months) - limit})"
+    return f" ({shown})"
+
+
+def _table(header: tuple, rows: list, empty: str = "_(нет строк.)_") -> list:
+    """Строки markdown-таблицы; без строк — явная пометка, а не пустое место."""
+    if not rows:
+        return [empty]
+    return list(header) + list(rows)
+
+
+def _run_groups(run: WindowRun) -> dict[str, list[Prediction]]:
+    """«Модель → фолды» окна в порядке словаря прогона (включая вырожденные)."""
+    groups: dict[str, list[Prediction]] = {name: [] for name in run.skipped}
+    for prediction in run.predictions:
+        groups.setdefault(prediction.model, []).append(prediction)
+    return groups
+
+
+def _fold_note_cell(notes: dict, folds: int) -> str:
+    """Ячейка «недосход»: `N из M` у моделей с диагностикой, «—» у остальных.
+
+    `notes` — накопленная диагностика модели за окно (`WindowRun.notes`),
+    `folds` — число ЕЁ фолдов, по которым считался недосход (0 фолдов — «—»).
+    """
+    if NON_CONVERGED not in notes or folds == 0:
+        return "—"
+    return f"{notes[NON_CONVERGED]} из {folds}"
+
+
+_METRIC_HEADER = (
+    "| модель | окно | n | RMSE, п.п. | MAE, п.п. | пропущено (вырожденное окно) | примечания |",
+    "|---|---|---|---|---|---|---|",
+)
+_LAST_FOLDS_HEADER = (
+    "| модель | n | RMSE, п.п. | MAE, п.п. |",
+    "|---|---|---|---|",
+)
+
+
+def render_report(
+    sample: list[Row],
+    skipped: list,
+    window_runs: list[WindowRun],
+    today: Optional[date] = None,
+) -> str:
+    """Markdown-отчёт-скелет Task 2: выборка, «модель × окно», последние 12 фолдов.
+
+    `sample`/`skipped` — выборка `build_sample` (строки и месяцы без собранных
+    признаков); `window_runs` — по одному `WindowRun` на окно walk-forward
+    (порядок окон задаёт строки таблиц, основное помечено `WindowRun.main`);
+    `today` — дата прогона (по умолчанию системная).
+
+    Таблица «модель × окно» перечисляет ВСЕ модели из счётчиков окон (модель,
+    вырожденная на всех окнах, видна строкой «0 фолдов», а не пропадает);
+    метрики — из фолдов, «недосход» — из `WindowRun.notes`. CatBoost, DM-пары,
+    сплит статьи и живой nowcast появятся в Tasks 3–4; раздел «Что не проверено»
+    называет это прямо, чтобы отчёт не читался как полный результат.
+    """
+    today = today or date.today()
+    runs = list(window_runs)
+    main_run = next((run for run in runs if run.main), runs[0] if runs else None)
+    first_run = runs[0] if runs else None
+    main_window = (
+        f"`{window_key(first_run.start, first_run.embargo)}`"
+        if first_run is not None
+        else "—"
+    )
+    lines = [
+        "# CPI monthly (ML-трек v2) — walk-forward, бенчмарки B1–B3 и метрики",
+        "",
+        f"Дата прогона: {today.isoformat()}; сид прогона `SEED={SEED}`. Спека: "
+        "`docs/superpowers/specs/2026-10-18-cpi-monthly-mp-design.md` (§2 — данные и "
+        "признаки, §3.4 — бенчмарки, §4.1–4.2 — walk-forward и метрики); план: "
+        "`docs/superpowers/plans/2026-10-18-cpi-monthly-mp.md`.",
+        "",
+        "## Выборка",
+        "",
+        "| состав | значение |",
+        "|---|---|",
+    ]
+    span = (
+        f"{sample[0].month.isoformat()[:7]} … {sample[-1].month.isoformat()[:7]}"
+        if sample
+        else "—"
+    )
+    skipped_months = [month for month, _ in skipped]
+    lines += [
+        f"| месяцев в выборке | {len(sample)} ({span}) |",
+        f"| пропущено (признак не собран) | {len(skipped)}{_months_suffix(skipped_months)} |",
+        "| purge-проверка (структурная) | OK |",
+        f"| признаки «без МП» | {', '.join(feature_names(with_mp=False))} |",
+        f"| признаки «с МП» | {', '.join(feature_names(with_mp=True))} |",
+        "",
+        "Строки выборки ОБЩИЕ для наборов «без МП» и «с МП»: месяц без любого "
+        "обязательного признака отсутствует в обоих, поэтому фолды наборов "
+        "совпадают. As-of — консервативные правила §2.6: собственный таргет "
+        "месяца и точка МП месяца `M` в признаки не попадают; точка после "
+        "cutoff — тоже.",
+        "",
+        "## Walk-forward",
+        "",
+        "Расширяющееся обучающее окно, переобучение на каждом фолде: тест — месяц "
+        "`i`, обучение — строки `[0 … i−1−embargo]` (только прошлое; embargo > 0 "
+        "выбрасывает месяц перед тестом). Единый train/test split не используется "
+        f"(спека §4.1). Основное окно — {main_window}; робастность — второй старт "
+        f"{ROBUST_START} и embargo {ROBUST_EMBARGO}. Вырожденное обучающее окно "
+        "(`DegenerateWindowError` модели) — пропуск фолда ЭТОЙ модели со счётчиком, "
+        "а не падение прогона. «Недосход» — фолды, где координатный спуск B3 не "
+        "сошёлся (`ConvergenceWarning`), вырождением не считается и публикуется "
+        "числом.",
+        "",
+        "## Модель × окно",
+        "",
+        "Ошибка фолда — `прогноз − факт` (п.п., м/м); `n` — число фолдов под "
+        "метрикой. RMSE/MAE — общие функции `scripts/eval_utils.py`. B1 и B2 от "
+        "набора признаков не зависят; B3 считается в двух пространствах "
+        "(без МП и с МП), чтобы отделить эффект МП от эффекта алгоритма.",
+        "",
+    ]
+    metric_rows = []
+    for run in runs:
+        for name, group in _run_groups(run).items():
+            if group:
+                n_cell = str(len(group))
+                rmse_cell = _fmt(rmse_pp(group))
+                mae_cell = _fmt(mae_pp(group))
+            else:
+                n_cell = "0 фолдов"
+                rmse_cell = mae_cell = "—"
+            metric_rows.append(
+                f"| {model_label(name)} | {window_title(run)} | {n_cell} | "
+                f"{rmse_cell} | {mae_cell} | {run.skipped.get(name, 0)} | "
+                f"{_fold_note_cell(run.notes.get(name, {}), len(group))} |"
+            )
+    lines += _table(_METRIC_HEADER, metric_rows)
+    lines += [""]
+    if main_run is not None:
+        tail_months = last_fold_months(main_run.predictions)
+        last_rows = []
+        for name, group in _run_groups(main_run).items():
+            tail = [prediction for prediction in group if prediction.month in tail_months]
+            last_rows.append(
+                f"| {model_label(name)} | {len(tail)} | "
+                f"{_fmt(rmse_pp(tail)) if tail else '—'} | "
+                f"{_fmt(mae_pp(tail)) if tail else '—'} |"
+            )
+        lines += [
+            f"## Последние {LAST_FOLDS} фолдов (основное окно "
+            f"{window_key(main_run.start, main_run.embargo)})",
+            "",
+            f"Последние {LAST_FOLDS} тестовых месяцев основного окна: блок "
+            "показывает, что метрики не держатся одним спокойным периодом.",
+            "",
+        ]
+        lines += _table(_LAST_FOLDS_HEADER, last_rows)
+        lines += [""]
+    lines += [
+        "## Что не проверено",
+        "",
+        "- CatBoost: четыре варианта (`catboost_direct`, `catboost_bottomup`, "
+        "`catboost_direct_mp`, `catboost_bottomup_mp`) и веса NNLS — Task 3; здесь "
+        "только бенчмарки B1–B3.",
+        "- DM-HLN «с МП vs без МП» и secondary-пары, фиксированный сплит статьи "
+        "2019-01…2024-07, строка «2022 исключён» и живой nowcast — Task 4; "
+        "таблицы значимости в этом скелете нет.",
+        "- as-of — приближение, а не point-in-time слой: точные даты публикаций и "
+        "ревизии рядов не учтены; PIT — отдельный пункт фазы 4.",
+        "- гиперпараметры не тюнинговались: B2 (HAC, 11 дамми, минимум 14 строк) "
+        "и B3 (`ElasticNetCV(alphas=logspace(−4,1,20), l1_ratio=[0.1,0.5,0.9], "
+        "cv=TimeSeriesSplit(3), random_state=SEED)`, минимум 12 строк) "
+        "зафиксированы спекой §3.4 до результатов.",
+        "- недосход B3 (`ConvergenceWarning` координатного спуска) считается по "
+        "фолдам, но влияние недосчёта на прогноз не измерено: конфигурация "
+        "`ElasticNetCV` зафиксирована спекой.",
+        "- embargo 1 — только робастность: перекрытие окон признаков тестового и "
+        "обучающих месяцев структурно исключено purge-проверкой, но границы "
+        "доступности — консервативное правило §2.6, а не фактические даты.",
+        "- режимы отдельно не тестируются: 2022 год (шок) входит в общую выборку, "
+        "блок «последние 12 фолдов» — описательный, не тест.",
+        "- числа статьи напрямую не сравнимы: другой таргет, длина train и "
+        "обработка выбросов.",
+        "",
+    ]
+    return "\n".join(lines).rstrip("\n") + "\n"
+
+
+def write_artifacts(
+    out_dir: Path, report: str, window_runs: list[WindowRun]
+) -> tuple:
+    """Пишет markdown-отчёт и CSV фолдов в `out_dir` (LF; имена — константы).
+
+    CSV — «длинный» список фолдов всех окон: месяц, окно, модель, факт,
+    прогноз (порядок колонок — `PREDICTIONS_COLUMNS`); порядок строк — окна
+    прогона, модели как зарегистрированы (у вырожденных строк нет), месяцы по
+    возрастанию. Файлы gitignored: числа прогона зависят от БД и фиксируются
+    протоколом приёмки, а не репозиторием.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    report_path = out_dir / REPORT_NAME
+    report_path.write_text(report.rstrip("\n") + "\n", encoding="utf-8")
+    rows = []
+    for run in window_runs:
+        for name, group in _run_groups(run).items():
+            for prediction in sorted(group, key=lambda item: item.month):
+                rows.append(
+                    {
+                        "month": prediction.month.isoformat(),
+                        "window": window_key(run.start, run.embargo),
+                        "model": name,
+                        "y_true": prediction.y_true,
+                        "y_pred": prediction.y_pred,
+                    }
+                )
+    predictions_path = out_dir / PREDICTIONS_NAME
+    _write_csv(predictions_path, PREDICTIONS_COLUMNS, rows)
+    return report_path, predictions_path
+
+
+# ---------------------------------------------------------------------------
 # Экспорт фикстур
 # ---------------------------------------------------------------------------
 
@@ -881,14 +1641,70 @@ def _range(points: list) -> str:
 MAX_SKIPPED_PRINTED = 12
 
 
-def run_summary(start: int = DEFAULT_START, embargo_months: int = DEFAULT_EMBARGO) -> int:
-    """Сводка Task 1: диапазоны рядов, выборка, пропуски, признаки, purge.
+def _print_walk_forward(runs: list[WindowRun]) -> None:
+    """Консольный блок walk-forward: основное окно подробно, робастность — строкой.
 
-    `start`/`embargo_months` — параметры окна walk-forward (`--start`,
-    `--embargo-months`): в Task 1 они принимаются и печатаются, но модели
-    появятся в Task 2. Скрипт ничего не пишет в ClickHouse и не создаёт
-    артефактов прогона.
+    Полные таблицы «модель × окно» — в `cpi_monthly_report.md`; консоль не
+    повторяет отчёт и печатает робастные окна компактно (RMSE по моделям).
+    Недосход (`fold_notes`, у B3 — `ConvergenceWarning`) печатается у тех
+    моделей, которые его сообщают, — «недосход N из M» в конце строки метрик.
     """
+    print("walk-forward (обучающее окно expanding; тест — следующий месяц):")
+    if not runs:
+        print("  окон нет")
+        return
+    for run in runs:
+        title = (
+            f"{window_title(run)}, {run.folds} "
+            f"{_plural(run.folds, 'фолд', 'фолда', 'фолдов')}"
+        )
+        groups = _run_groups(run)
+        if run.main:
+            print(f"  {title}:")
+            for name, group in groups.items():
+                skipped = run.skipped.get(name, 0)
+                note = _fold_note_cell(run.notes.get(name, {}), len(group))
+                note_suffix = f", недосход {note}" if note != "—" else ""
+                if group:
+                    print(
+                        f"    {model_label(name):<34} RMSE {rmse_pp(group):.3f}, "
+                        f"MAE {mae_pp(group):.3f} (n={len(group)}, пропущено {skipped}"
+                        f"{note_suffix})"
+                    )
+                else:
+                    print(f"    {model_label(name):<34} фолдов нет (пропущено {skipped})")
+        else:
+            cells = []
+            for name, group in groups.items():
+                note = _fold_note_cell(run.notes.get(name, {}), len(group))
+                cell = f"{model_label(name)} {_fmt(rmse_pp(group)) if group else '—'}"
+                if note != "—":
+                    cell += f" (недосход {note})"
+                cells.append(cell)
+            print(f"  {title}: RMSE {', '.join(cells)}")
+
+
+def run_summary(
+    start: int = DEFAULT_START,
+    embargo_months: int = DEFAULT_EMBARGO,
+    out_dir: Optional[Path] = None,
+    today: Optional[date] = None,
+) -> int:
+    """Полный прогон Task 2: выборка, walk-forward B1–B3, метрики и артефакты.
+
+    `start`/`embargo_months` — основное окно walk-forward (`--start`,
+    `--embargo-months`); робастные окна (второй старт 48 и эмбарго 1) добавляет
+    `window_specs`. Загрузка рядов, `build_sample` и `assert_months_purged` —
+    контракт Task 1; walk-forward считает бенчмарки B1–B3 (`MODELS`) на одних
+    фолдах, отчёт-скелет (`cpi_monthly_report.md`) и CSV прогнозов
+    (`cpi_monthly_predictions.csv`) пишутся в `out_dir` (по умолчанию корень
+    worktree; файлы gitignored).
+
+    Ветка «walk-forward не дал ни одного прогноза» (пустая/короткая выборка)
+    ничего не пишет и называет это в консоли. Скрипт ничего не пишет в
+    ClickHouse: только читает и кладёт локальные артефакты.
+    """
+    out_dir = Path(out_dir) if out_dir is not None else ARTIFACTS_DIR
     targets = load_targets()
     survey = load_survey()
     usd = load_usd()
@@ -901,7 +1717,7 @@ def run_summary(start: int = DEFAULT_START, embargo_months: int = DEFAULT_EMBARG
     survey_points = sorted(
         point for points in survey.values() for point in points
     )
-    print("CPI monthly (ML-трек v2) — данные, as-of, выборка и признаки")
+    print("CPI monthly (ML-трек v2) — выборка, walk-forward и бенчмарки B1–B3")
     _field(
         "таргет rosstat_ipc_mes:",
         f"{len(TARGET_SERIES)} {_plural(len(TARGET_SERIES), 'ряд', 'ряда', 'рядов')}, "
@@ -929,6 +1745,7 @@ def run_summary(start: int = DEFAULT_START, embargo_months: int = DEFAULT_EMBARG
         _field("выборка:", f"пусто, пропущено {len(skipped)}")
     _field("признаки (без МП):", ", ".join(feature_names(with_mp=False)))
     _field("признаки (с МП):", ", ".join(feature_names(with_mp=True)))
+    _field("модели:", ", ".join(model_label(name) for name in MODELS))
     _field("purge-проверка (структурная):", "OK")
     if skipped:
         print("  пропущенные месяцы и причины:")
@@ -937,15 +1754,25 @@ def run_summary(start: int = DEFAULT_START, embargo_months: int = DEFAULT_EMBARG
         hidden = len(skipped) - MAX_SKIPPED_PRINTED
         if hidden > 0:
             print(f"    … и ещё {hidden} {_plural(hidden, 'месяц', 'месяца', 'месяцев')}")
-    _field("--start:", f"{start} (принят; walk-forward — Task 2)")
-    _field("--embargo-months:", f"{embargo_months} (принят; walk-forward — Task 2)")
+    _field("--start:", f"{start} (основное окно walk-forward)")
+    _field("--embargo-months:", f"{embargo_months} (эмбарго основного окна)")
+
+    runs = evaluate_windows(rows, MODELS, window_specs(start, embargo_months))
+    _print_walk_forward(runs)
+    if not any(run.predictions for run in runs):
+        _field("отчёт/CSV:", "не пишутся (walk-forward не дал ни одного прогноза)")
+        return 0
+    report = render_report(rows, skipped, runs, today=today)
+    report_path, predictions_path = write_artifacts(out_dir, report, runs)
+    _field("отчёт:", str(report_path))
+    _field("прогнозы (CSV):", str(predictions_path))
     return 0
 
 
 def main(argv: Optional[list] = None) -> int:
     parser = argparse.ArgumentParser(
-        description="CPI monthly (ML-трек v2): выборка, as-of, базовые и МП "
-                    "признаки месячного ИПЦ; модели — Task 2+."
+        description="CPI monthly (ML-трек v2): выборка, as-of, признаки, "
+                    "walk-forward, бенчмарки B1–B3, метрики и отчёт."
     )
     parser.add_argument(
         "--export-fixtures",
@@ -959,15 +1786,17 @@ def main(argv: Optional[list] = None) -> int:
         metavar="N",
         default=DEFAULT_START,
         help=f"минимальное обучающее окно walk-forward в месяцах (по умолчанию "
-             f"{DEFAULT_START}; в Task 1 принимается, но не используется)",
+             f"{DEFAULT_START}); робастное окно старта {ROBUST_START} считается в "
+             f"том же прогоне (спека §4.1)",
     )
     parser.add_argument(
         "--embargo-months",
         type=int,
         metavar="K",
         default=DEFAULT_EMBARGO,
-        help=f"эмбарго walk-forward в месяцах (по умолчанию {DEFAULT_EMBARGO}; в "
-             f"Task 1 принимается, но не используется)",
+        help=f"эмбарго основного окна walk-forward в месяцах (по умолчанию "
+             f"{DEFAULT_EMBARGO}); прогон с embargo {ROBUST_EMBARGO} считается "
+             f"робастностью",
     )
     args = parser.parse_args(argv)
     if args.export_fixtures:
