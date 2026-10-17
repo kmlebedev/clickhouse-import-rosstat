@@ -15,7 +15,7 @@
 | `gold-thesis` | [GOLD_THESIS_DATA_ROADMAP.md](GOLD_THESIS_DATA_ROADMAP.md) | данные и витрины тезисов по золоту; WGC/EIA/bold/news/фрахт/аналитические витрины | `phase-N`, `phase-N-followup-M`, `analytics-<витрина>` |
 | `dcf-metals` | [ROADMAP_DCF_METALS.md](ROADMAP_DCF_METALS.md) | CHMF/MAGN/NLMK в `company_financials`; металлурги и `dashboard/chmf.json` | `step-1`–`step-8` |
 | `key-rate` | [ROADMAP_KEY_RATE.md](ROADMAP_KEY_RATE.md) | контур прогноза ключевой ставки; ЦБ-источники, модель ставки, news-ленты контура | `1.1`–`1.11`, `phase-2-<тема>`, `phase-4-<тема>` |
-| `infra` | [ROADMAP_INFRA.md](ROADMAP_INFRA.md) | общая инфраструктура, не принадлежит ни одному треку | `1.1`–`1.5`, `2.1`–`2.2`, `3.1`–`3.2` |
+| `infra` | [ROADMAP_INFRA.md](ROADMAP_INFRA.md) | общая инфраструктура, не принадлежит ни одному треку | `1.1`–`1.5`, `2.1`–`2.2`, `3.1`–`3.3` |
 
 Слаг выведен из имени файла (у `GOLD_THESIS_DATA_ROADMAP.md` — `gold-thesis`). Шестой роадмап не заводится без решения владельца.
 
