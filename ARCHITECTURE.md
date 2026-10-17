@@ -183,10 +183,19 @@ dashboard/         — артефакты дашбордов Grafana (плаги
                      `rosstat.json`, `chmf.json` — вне миграции на код (очередь — `docs/ROADMAP_INFRA.md`)
 .kimi-code/skills/ — операционные скилы: github-tracker, dashboard-migration, sync-readme-architecture
 docs/              — аналитические статьи (прогнозы золота); реестр роадмапов и правил трекера — ROADMAP_INDEX.md; спеки и планы — superpowers/{specs,plans}; манифест docs-портала — site-pages.json
+docs/IMPORTERS.md  — полные спецификации импортёров и источников
+docs/CONFIGURATION.md — переменные окружения, ключи, MCP-конфигурация
+docs/OPERATIONS.md — Dagu, деплой на staging, винтажный архив
+docs/DEVELOPMENT.md — сборка, тесты, Python-инструменты, CI и релизы
+docs/LIMITATIONS.md — ограничения и известные проблемы
+docs/GRAFANA.md    — дашборды как код, стенды и приёмка
+docs/GOLD_CONTOUR.md — контур прогноза золота, ingest-endpoint, плагин
 mkdocs.base.yml    — конфигурация docs-портала (Material for MkDocs)
 scripts/docs_build.py — генератор build/site-docs и build/mkdocs.yml из docs/site-pages.json (stdlib Python)
 *.crt              — национальные TLS CA РФ (для ГОСТ-шифрования gos-сайтов)
 ```
+
+**Карта документации.** Входная точка — `README.md`; полные спецификации импортёров — `docs/IMPORTERS.md`; конфигурация и ключи — `docs/CONFIGURATION.md`; эксплуатация — `docs/OPERATIONS.md`; разработка и CI — `docs/DEVELOPMENT.md`; ограничения — `docs/LIMITATIONS.md`; Grafana — `docs/GRAFANA.md`; контур прогноза золота — `docs/GOLD_CONTOUR.md`. Docs-портал собирается из этих файлов по манифесту `docs/site-pages.json`.
 
 **Публикация документации.** Docs-портал собирается из `README.md`, `ARCHITECTURE.md` и страниц из `docs/site-pages.json`: `scripts/docs_build.py` кладёт их в `build/site-docs`, добавляет баннер источника и переписывает ссылки (страницы сайта → `.md`, остальные файлы → GitHub), затем `mkdocs build -f build/mkdocs.yml --strict` (mkdocs-material 9.7.7) собирает `build/site`; workflow `.github/workflows/pages.yml` публикует его на GitHub Pages. Спеки, планы и `docs/archive/` на сайт не попадают; источник истины — файлы репозитория.
 
