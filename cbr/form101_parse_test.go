@@ -1,6 +1,7 @@
 package cbr
 
 import (
+	"encoding/binary"
 	"os"
 	"testing"
 	"time"
@@ -79,6 +80,27 @@ func TestParseForm101DBFTruncated(t *testing.T) {
 	// Отрезаем хвост последней записи: record count в заголовке её всё ещё ждёт.
 	if _, err := parseForm101DBF(data[:len(data)-10]); err == nil {
 		t.Fatal("parseForm101DBF на обрезанном файле вернул успех, want ошибку обрыва записи")
+	}
+}
+
+// TestParseForm101DBFRejectsHugeRecordCount — испорченный record count не должен
+// приводить к аллокации среза на 0xFFFFFFFF записей: границы проверяются до make.
+func TestParseForm101DBFRejectsHugeRecordCount(t *testing.T) {
+	data := readForm101Fixture(t, form101DbfFixture)
+	binary.LittleEndian.PutUint32(data[4:8], 0xFFFFFFFF)
+	if _, err := parseForm101DBF(data); err == nil {
+		t.Fatal("parseForm101DBF с record count 0xFFFFFFFF вернул успех, want ошибку границ")
+	}
+}
+
+// TestParseForm101DBFRejectsDuplicateField — два дескриптора с одним именем
+// не должны молча перезаписывать поле: адрес остатка стал бы неоднозначным.
+func TestParseForm101DBFRejectsDuplicateField(t *testing.T) {
+	data := readForm101Fixture(t, form101DbfFixture)
+	// Имя первого дескриптора (32..43) копируется во второй (64..75).
+	copy(data[64:75], data[32:43])
+	if _, err := parseForm101DBF(data); err == nil {
+		t.Fatal("parseForm101DBF с дублем имени поля вернул успех, want ошибку")
 	}
 }
 
