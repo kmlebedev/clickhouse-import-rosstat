@@ -24,7 +24,7 @@
 - **Владелец:** `@me` (kmlebedev).
 - **Название:** `clickhouse-import-rosstat — Roadmap`.
 - **Репозиторий:** `kmlebedev/clickhouse-import-rosstat`, проект привязан к репозиторию.
-- **Ссылка:** записывается в `docs/ROADMAP_INDEX.md` и `docs/ROADMAP_INFRA.md` после создания.
+- **Ссылка:** [https://github.com/users/kmlebedev/projects/11](https://github.com/users/kmlebedev/projects/11) (number 11, id `PVT_kwHOAJDr984BnhTT`).
 
 ## 3. Поля
 
@@ -100,7 +100,7 @@
 | Issue | Решение |
 |---|---|
 | #105 | `infra/3.3`, `In Progress` (ветка `infra-github-pages`, до мержа) |
-| #90 | `infra/3.2`, `In Progress` (основание трекера) |
+| #90 | `Inbox`, `Todo` — основание трекера; работа 3.2 ведётся в #112 |
 | #86 | `key-rate`, `Done`; закрыть с ссылкой на приёмку пункта |
 | #75 | `key-rate`, `Done`; закрыть с ссылкой на `rosstat_ipc_weeks_bulletins` |
 | #74 | `key-rate/3.1`, `Done`; закрыть с ссылкой на PR #87 |
@@ -114,7 +114,7 @@
 ## 7. Критерий приёмки
 
 1. `mcp__github__projects_list` видит проект; `projects_get` отдаёт поля и views.
-2. Поля совпадают с §3, включая `Status` с пятью значениями; дефолтный `Status` заменён.
+2. Поля совпадают с §3, включая `Status` с пятью значениями; опции встроенного `Status` расширены до пяти (удалить встроенное поле GitHub не даёт).
 3. Views из §4 созданы (кроме тех, чей фильтр отклонён API; отклонения названы).
 4. В проекте 75 items: 57 новых issue + 18 существующих.
 5. Открытый фронт заведён: по каждому роадмапу есть issue с составным ID; #105/#47 не дублируются.
