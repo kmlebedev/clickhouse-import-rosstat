@@ -15,42 +15,60 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// feedKind — транспорт ленты. RSS и Telegram различаются и получением (XML против
+// HTML-превью), и разбором (itemsFromDoc против parseTelegramPage), поэтому Kind
+// диспетчеризует fetchFeeds, а не угадывается по URL.
+type feedKind int
+
+const (
+	feedRSS feedKind = iota
+	feedTelegram
+)
+
 // feed — одна лента конфига: Key — имя фикстуры в testdata (офлайн-прогоны),
-// Source — метка источника в news_events, URL — адрес ленты.
+// Source — метка источника в news_events, URL — адрес ленты, Kind — транспорт.
 type feed struct {
 	Key    string
 	Source string
 	URL    string
+	Kind   feedKind
 }
 
 // URL-ы лент — переменные (а не константы) ради подмены в тестах: httptest
 // подставляет свой адрес, и TestFetchFeeds проверяет изоляцию сбоя, не выходя в сеть.
 var (
 	feedInterfaxURL = "https://www.interfax.ru/rss"
-	feedRBCURL      = "https://rssexport.rbc.ru/rbcnews/news/30/full.rss"
-	feedCBRNewsURL  = "https://www.cbr.ru/rss/RssNews"
-	feedCBRPressURL = "https://www.cbr.ru/rss/eventrss"
-	feedTASSURL     = "https://tass.ru/rss/v2.xml"
+	// Публичное веб-превью Telegram-канала Интерфакса: без авторизации и ключей.
+	// Окно — последние 20 сообщений, поэтому 30-минутный опрос перекрывает его
+	// с запасом, а простой дольше окна теряет позиции (check покажет дыру).
+	feedInterfaxTelegramURL = "https://t.me/s/interfaxonline"
+	feedRBCURL              = "https://rssexport.rbc.ru/rbcnews/news/30/full.rss"
+	feedCBRNewsURL          = "https://www.cbr.ru/rss/RssNews"
+	feedCBRPressURL         = "https://www.cbr.ru/rss/eventrss"
+	feedTASSURL             = "https://tass.ru/rss/v2.xml"
 	// Ленты smart-lab — персональные блоги; добавлены ради контура ключевой ставки
 	// (тексты про инфляцию и политику ЦБ).
 	feedSmartlabLebedevURL = "https://smart-lab.ru/rss/personal_blog/KonstantinLebedev/"
 	feedSmartlabSpydellURL = "https://smart-lab.ru/rss/personal_blog/spydell-telegram/"
 )
 
-// feeds собирает конфиг семи лент в фиксированном порядке. Порядок — часть
+// feeds собирает конфиг восьми лент в фиксированном порядке. Порядок — часть
 // контракта: лог прогона и отчёт check идут построчно, и разный порядок лент
 // от запуска к запуску сделал бы диффы лога нечитаемыми. Парные ленты несут общий
 // Source: у двух фидов ЦБ это «cbr» (источник один — Банк России), у двух лент
-// smart-lab — «smartlab»; в news_events такие ленты различаются url.
+// smart-lab — «smartlab», у RSS и Telegram Интерфакса — «interfax»; в news_events
+// такие ленты различаются url. interfax_tg идёт сразу после interfax: это второй
+// транспорт того же источника, и в отчёте покрытия их окна складываются.
 func feeds() []feed {
 	return []feed{
-		{Key: "interfax", Source: "interfax", URL: feedInterfaxURL},
-		{Key: "rbc", Source: "rbc", URL: feedRBCURL},
-		{Key: "cbr_news", Source: "cbr", URL: feedCBRNewsURL},
-		{Key: "cbr_press", Source: "cbr", URL: feedCBRPressURL},
-		{Key: "tass", Source: "tass", URL: feedTASSURL},
-		{Key: "smartlab_lebedev", Source: "smartlab", URL: feedSmartlabLebedevURL},
-		{Key: "smartlab_spydell", Source: "smartlab", URL: feedSmartlabSpydellURL},
+		{Key: "interfax", Source: "interfax", URL: feedInterfaxURL, Kind: feedRSS},
+		{Key: "interfax_tg", Source: "interfax", URL: feedInterfaxTelegramURL, Kind: feedTelegram},
+		{Key: "rbc", Source: "rbc", URL: feedRBCURL, Kind: feedRSS},
+		{Key: "cbr_news", Source: "cbr", URL: feedCBRNewsURL, Kind: feedRSS},
+		{Key: "cbr_press", Source: "cbr", URL: feedCBRPressURL, Kind: feedRSS},
+		{Key: "tass", Source: "tass", URL: feedTASSURL, Kind: feedRSS},
+		{Key: "smartlab_lebedev", Source: "smartlab", URL: feedSmartlabLebedevURL, Kind: feedRSS},
+		{Key: "smartlab_spydell", Source: "smartlab", URL: feedSmartlabSpydellURL, Kind: feedRSS},
 	}
 }
 
@@ -103,27 +121,53 @@ type feedResult struct {
 	Feed    feed
 	Items   []newsItem
 	Skipped int
+	// SeenIDs — ID сообщений Telegram-окна, включая медиа без текста. Заполняется
+	// только Telegram-лентой; T2 отличает по нему вышедшее из окна сообщение
+	// от сообщения, у которого просто нет текста.
+	SeenIDs map[uint64]struct{}
 	Err     error
 }
 
 // fetchFeeds читает ленты по очереди и возвращает результат на каждую. Ошибка
-// ленты попадает в её feedResult.Err, а цикл продолжается: семь лент независимы,
-// и обрыв одной (WAF, 500, таймаут) не повод не собрать остальные шесть.
+// ленты попадает в её feedResult.Err, а цикл продолжается: восемь лент независимы,
+// и обрыв одной (WAF, 500, таймаут) не повод не собрать остальные семь.
 // Агрегация ошибок — дело вызывающего (Import): он решает, чем отчитаться в dagu.
+//
+// Транспорт выбирается по Kind, а не по виду URL: RSS разбирается в rssDoc,
+// Telegram-превью — в telegramPage. Ошибка разбора Telegram (чужая страница,
+// сменившиеся селекторы) так же локальна, как ошибка RSS.
 func fetchFeeds(feeds []feed) []feedResult {
 	results := make([]feedResult, 0, len(feeds))
 	for _, f := range feeds {
-		var doc rssDoc
 		res := feedResult{Feed: f}
-		// URL в ошибке транспорта (util.GetXML его не маскирует) — здесь ключей
-		// в query нет, ленты публичные, поэтому ошибка уезжает в лог как есть.
-		if err := util.GetXML(f.URL, &doc); err != nil {
-			res.Err = err
-			results = append(results, res)
-			continue
+		switch f.Kind {
+		case feedRSS:
+			var doc rssDoc
+			// URL в ошибке транспорта (util.GetXML его не маскирует) — здесь ключей
+			// в query нет, ленты публичные, поэтому ошибка уезжает в лог как есть.
+			if err := util.GetXML(f.URL, &doc); err != nil {
+				res.Err = err
+				break
+			}
+			res.Items, res.Skipped, res.Err = itemsFromDoc(f.Source, doc)
+		case feedTelegram:
+			page, err := util.GetPage(f.URL)
+			if err != nil {
+				res.Err = err
+				break
+			}
+			parsed, err := parseTelegramPage(f.Key, page)
+			if err != nil {
+				res.Err = err
+				break
+			}
+			res.Items = telegramItems(f.Source, parsed)
+			res.SeenIDs, res.Skipped = parsed.SeenIDs, parsed.Skipped
+		default:
+			// Новая лента без транспорта — ошибка ленты, а не пропуск: иначе она
+			// молча выпала бы из прогона, и check не увидел бы дыру.
+			res.Err = fmt.Errorf("%s: неизвестный вид ленты %d", f.Key, f.Kind)
 		}
-		items, skipped, err := itemsFromDoc(f.Source, doc)
-		res.Items, res.Skipped, res.Err = items, skipped, err
 		results = append(results, res)
 	}
 	return results
