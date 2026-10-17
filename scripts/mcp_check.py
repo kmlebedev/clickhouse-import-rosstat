@@ -880,7 +880,8 @@ async def check(params, server_log):
             # попадало туда из COMMENT соседки (урок bold). Разобранный ответ run_query
             # доказывает и существование, и право чтения; «нет витрины» и «нет прав» приходят
             # ошибкой (UNKNOWN_TABLE / ACCESS_DENIED) и в result_rows не разбираются.
-            sber_view = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_bank_sber_spending"}))
+            sber_view = text(await session.call_tool(
+                "run_query", {"query": "SELECT count() FROM v_bank_sber_spending"}))
             sber_view_rows = result_rows(sber_view)
             sber_view_n = sber_view_rows[0].get("count()") if sber_view_rows else None
             if sber_view_rows is None:
@@ -900,7 +901,10 @@ async def check(params, server_log):
             # поэлементно по source, который витрина штампует литералом, плюс uniqExact(source) = 2:
             # это разом доказывает и объединение наборов в одной витрине, и непустоту каждого из них.
             for sber_source in ("sber_consumper_spending_index", "sber_izmenenie_trat"):
-                sber_source_raw = text(await session.call_tool("run_query", {"query": f"SELECT count() AS n FROM v_bank_sber_spending WHERE source = '{sber_source}'"}))
+                sber_source_raw = text(await session.call_tool(
+                    "run_query",
+                    {"query": f"SELECT count() AS n FROM v_bank_sber_spending "
+                              f"WHERE source = '{sber_source}'"}))
                 sber_source_rows = result_rows(sber_source_raw)
                 sber_source_n = sber_source_rows[0].get("n") if sber_source_rows else None
                 if sber_source_rows is None:
@@ -912,7 +916,9 @@ async def check(params, server_log):
                                           f"make import STAT={sber_source}")
                 failed += not expect(f"набор {sber_source} есть в витрине", (sber_source_n or 0) > 0, sber_source_detail)
 
-            sber_sources_raw = text(await session.call_tool("run_query", {"query": "SELECT uniqExact(source) AS sources FROM v_bank_sber_spending"}))
+            sber_sources_raw = text(await session.call_tool(
+                "run_query",
+                {"query": "SELECT uniqExact(source) AS sources FROM v_bank_sber_spending"}))
             sber_sources_rows = result_rows(sber_sources_raw)
             sber_sources_n = sber_sources_rows[0].get("sources") if sber_sources_rows else None
             if sber_sources_rows is None:
@@ -929,7 +935,10 @@ async def check(params, server_log):
             # («Услуги», «Продовольственные товары»), и общий ключ каталога схлопнул бы разные
             # ряды в один.
             for sber_source, sber_want in (("sber_consumper_spending_index", 5), ("sber_izmenenie_trat", 46)):
-                sber_catalog = text(await session.call_tool("run_query", {"query": f"SELECT count() AS n FROM v_series_catalog WHERE source = '{sber_source}'"}))
+                sber_catalog = text(await session.call_tool(
+                    "run_query",
+                    {"query": f"SELECT count() AS n FROM v_series_catalog "
+                              f"WHERE source = '{sber_source}'"}))
                 sber_catalog_rows = result_rows(sber_catalog)
                 sber_catalog_n = sber_catalog_rows[0].get("n") if sber_catalog_rows else None
                 if sber_catalog_rows is None:
@@ -965,11 +974,12 @@ async def check(params, server_log):
             # create_table_query с комментариями таблиц и колонок, и имя отсутствующей витрины
             # попадало туда из COMMENT соседки (урок bold). «Нет витрины» (UNKNOWN_TABLE) и «нет
             # прав» (ACCESS_DENIED) приходят ошибкой и в result_rows не разбираются.
-            bank_view = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_bank_macro"}))
-            bank_view_rows = result_rows(bank_view)
+            bank_view_raw = text(await session.call_tool(
+                "run_query", {"query": "SELECT count() FROM v_bank_macro"}))
+            bank_view_rows = result_rows(bank_view_raw)
             bank_view_n = bank_view_rows[0].get("count()") if bank_view_rows else None
             if bank_view_rows is None:
-                bank_view_detail = f"витрина не читается: {bank_view[:200]}"
+                bank_view_detail = f"витрина не читается: {bank_view_raw[:200]}"
             elif (bank_view_n or 0) > 0:
                 bank_view_detail = f"строк: {bank_view_n}"
             else:
@@ -986,7 +996,10 @@ async def check(params, server_log):
             # литералов закреплён тестом контракта bank/series_meta_test.go): это разом доказывает
             # и объединение наборов в одной витрине, и непустоту каждого из них.
             for bank_source in ("domrf_mortgage", "rus_vtb_group_ifrs", "sber_finansovie_rezultaty"):
-                bank_source_raw = text(await session.call_tool("run_query", {"query": f"SELECT count() AS n FROM v_bank_macro WHERE source = '{bank_source}'"}))
+                bank_source_raw = text(await session.call_tool(
+                    "run_query",
+                    {"query": f"SELECT count() AS n FROM v_bank_macro "
+                              f"WHERE source = '{bank_source}'"}))
                 bank_source_rows = result_rows(bank_source_raw)
                 bank_source_n = bank_source_rows[0].get("n") if bank_source_rows else None
                 if bank_source_rows is None:
@@ -1004,7 +1017,10 @@ async def check(params, server_log):
             # единицах, нет. Число проверяется как «> 0», а не точным равенством: полноту словаря
             # (25 рядов: 14 SBER + 11 VTBR) держит TestBankCompanyMetricMapWellFormed, а здесь
             # доказывается доступность слоя агенту.
-            bank_catalog_raw = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'bank_company_metrics'"}))
+            bank_catalog_raw = text(await session.call_tool(
+                "run_query",
+                {"query": "SELECT count() AS n FROM v_series_catalog "
+                          "WHERE source = 'bank_company_metrics'"}))
             bank_catalog = result_rows(bank_catalog_raw)
             bank_catalog_n = bank_catalog[0].get("n") if bank_catalog else None
             if bank_catalog is None:
@@ -1020,7 +1036,10 @@ async def check(params, server_log):
             # company_financials рядом с метриками Полюса, и агент читает их через уже выданную
             # v_company_financials — новых грантов слой не требует. Ноль строк по обеим компаниям —
             # ни разу не отработавший маппер; ошибка запроса даёт detail сырым текстом.
-            bank_company_raw = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_company_financials WHERE company IN ('SBER', 'VTBR')"}))
+            bank_company_raw = text(await session.call_tool(
+                "run_query",
+                {"query": "SELECT count() AS n FROM v_company_financials "
+                          "WHERE company IN ('SBER', 'VTBR')"}))
             bank_company = result_rows(bank_company_raw)
             bank_company_n = bank_company[0].get("n") if bank_company else None
             if bank_company is None:
@@ -1039,9 +1058,10 @@ async def check(params, server_log):
             # читаются. Ноль здесь — или маппер не прогонялся, или витрина старше ALTER'а:
             # пересоздать витрины прогоном make import STAT=company_views (идемпотентен,
             # пересоздаёт все три v_company_*).
-            bank_month_raw = text(await session.call_tool("run_query", {"query":
-                "SELECT count() AS n FROM v_company_financials "
-                "WHERE company = 'SBER' AND period_type = 'M'"}))
+            bank_month_raw = text(await session.call_tool(
+                "run_query",
+                {"query": "SELECT count() AS n FROM v_company_financials "
+                          "WHERE company = 'SBER' AND period_type = 'M'"}))
             bank_month = result_rows(bank_month_raw)
             bank_month_n = bank_month[0].get("n") if bank_month else None
             if bank_month is None:
@@ -1059,10 +1079,11 @@ async def check(params, server_log):
             # DESC; период кодируется как YYYYMmm, поэтому лексикографический порядок совпадает с
             # хронологическим), detail печатает и период, и значение: пустой ответ — ни разу не
             # отработавший маппер, ошибка — сырым текстом.
-            bank_assets_raw = text(await session.call_tool("run_query", {"query":
-                "SELECT metric, period, value FROM v_company_financials "
-                "WHERE company = 'SBER' AND metric = 'total_assets' "
-                "ORDER BY period DESC LIMIT 1"}))
+            bank_assets_raw = text(await session.call_tool(
+                "run_query",
+                {"query": "SELECT metric, period, value FROM v_company_financials "
+                          "WHERE company = 'SBER' AND metric = 'total_assets' "
+                          "ORDER BY period DESC LIMIT 1"}))
             bank_assets = result_rows(bank_assets_raw)
             if bank_assets is None:
                 bank_assets_detail = f"ответ не распознан: {bank_assets_raw[:200]}"
@@ -1072,6 +1093,102 @@ async def check(params, server_log):
             else:
                 bank_assets_detail = "строк нет — прогнать маппер: make import STAT=bank_company_metrics"
             failed += not expect("SBER total_assets читается точкой", bool(bank_assets), bank_assets_detail)
+
+            # Форвардная витрина кредитного портфеля (пункт 4.2 №20 роадмапа, спека
+            # 2026-10-17 §4): помесячные ряды SBER/VTBR из v_company_financials, дата
+            # публикации из календаря bank_results и сравнение с «Кредитом экономике» ЦБ.
+            # Строки публикует импортёр bank_company_metrics, а витрину создаёт
+            # company_views, поэтому ноль означает, что не отработал хотя бы один из
+            # прогонов, — detail называет тот, что создаёт саму витрину.
+            loan_view = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_bank_loan_portfolio_forward"}))
+            loan_view_rows = result_rows(loan_view)
+            loan_view_n = loan_view_rows[0].get("n") if loan_view_rows else None
+            if loan_view_rows is None:
+                loan_view_detail = f"витрина не читается: {loan_view[:200]}"
+            elif (loan_view_n or 0) > 0:
+                loan_view_detail = f"строк: {loan_view_n}"
+            else:
+                loan_view_detail = "строк: 0 — прогнать make import STAT=company_views"
+            failed += not expect("витрина v_bank_loan_portfolio_forward читается и непуста", (loan_view_n or 0) > 0, loan_view_detail)
+
+            # Одного count() > 0 мало: агенту нужна конкретная точка с датой публикации,
+            # ради которой витрина и заведена (опережающий срез до агрегата ЦБ). detail
+            # печатает период, значение и publish_date; NULL здесь — не ошибка: история
+            # дат публикации заводится постепенно, поэтому проверяется наличие строки,
+            # а не заполненность publish_date.
+            loan_point = text(await session.call_tool("run_query", {"query":
+                "SELECT bank, metric, report_month, value_bln_rub, publish_date "
+                "FROM v_bank_loan_portfolio_forward "
+                "WHERE bank = 'SBER' AND metric = 'customer_loans' "
+                "ORDER BY report_month DESC LIMIT 1"}))
+            loan_point_rows = result_rows(loan_point)
+            if loan_point_rows is None:
+                loan_point_detail = f"ответ не распознан: {loan_point[:200]}"
+            elif loan_point_rows:
+                loan_point_detail = (f"SBER customer_loans за {loan_point_rows[0].get('report_month')}: "
+                                     f"{loan_point_rows[0].get('value_bln_rub')}, "
+                                     f"publish_date={loan_point_rows[0].get('publish_date')}")
+            else:
+                loan_point_detail = "строк нет — прогнать make import STAT=company_views"
+            failed += not expect("SBER customer_loans читается точкой", bool(loan_point_rows), loan_point_detail)
+
+            # publish_date витрины берётся из календаря bank_results, а он живёт сидом:
+            # без сида дата всегда NULL, и агент не видит триггеров раскрытия. Не меньше
+            # семи строк — это засеянный Q4 2026 (SBER/VTBR по месяцам раскрытия); порог, а
+            # не равенство: новые банки будут добавлять строки, и проверка не должна ломаться.
+            # Ноль называет сид, который надо применить.
+            bank_results = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_events_calendar WHERE category = 'bank_results'"}))
+            bank_results_rows = result_rows(bank_results)
+            bank_results_n = bank_results_rows[0].get("n") if bank_results_rows else None
+            if bank_results_rows is None:
+                bank_results_detail = f"ответ не распознан: {bank_results[:200]}"
+            elif (bank_results_n or 0) >= 7:
+                bank_results_detail = f"строк bank_results: {bank_results_n}"
+            elif (bank_results_n or 0) == 0:
+                bank_results_detail = ("строк: 0 — применить сид "
+                                       "make ch-sql FILE=sql/events_calendar_bank_results_q4_2026.sql")
+            else:
+                bank_results_detail = (f"строк: {bank_results_n}, want >= 7 — проверить/применить сид "
+                                       "make ch-sql FILE=sql/events_calendar_bank_results_q4_2026.sql")
+            failed += not expect("календарь bank_results засеян", (bank_results_n or 0) >= 7, bank_results_detail)
+
+            # Второй эмитент витрины: у VTBR (МСФО) ряд длиннее и содержит пропуски
+            # месяцев, поэтому он же — точка поведенческой проверки ниже.
+            vtb_point = text(await session.call_tool("run_query", {"query":
+                "SELECT bank, metric, report_month, value_bln_rub, publish_date "
+                "FROM v_bank_loan_portfolio_forward "
+                "WHERE bank = 'VTBR' AND metric = 'customer_loans' "
+                "ORDER BY report_month DESC LIMIT 1"}))
+            vtb_point_rows = result_rows(vtb_point)
+            if vtb_point_rows is None:
+                vtb_point_detail = f"ответ не распознан: {vtb_point[:200]}"
+            elif vtb_point_rows:
+                vtb_point_detail = (f"VTBR customer_loans за {vtb_point_rows[0].get('report_month')}: "
+                                    f"{vtb_point_rows[0].get('value_bln_rub')}, "
+                                    f"publish_date={vtb_point_rows[0].get('publish_date')}")
+            else:
+                vtb_point_detail = "строк нет — прогнать make import STAT=company_views"
+            failed += not expect("VTBR customer_loans читается точкой", bool(vtb_point_rows), vtb_point_detail)
+
+            # Темпы считаются self-join по календарным месяцам, а не lagInFrame по строкам:
+            # у VTBR нет 2025-02, поэтому YoY за 2026-02 обязан быть NULL. Старый lagInFrame
+            # брал 12-ю строку назад и на пропуске месяца давал не NULL — эта проверка ловит
+            # именно такую регрессию.
+            skip_yoy = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_bank_loan_portfolio_forward "
+                "WHERE bank = 'VTBR' AND metric = 'customer_loans' "
+                "AND report_month = '2026-02-01' AND yoy_pct IS NULL"}))
+            skip_yoy_rows = result_rows(skip_yoy)
+            skip_yoy_n = skip_yoy_rows[0].get("n") if skip_yoy_rows else None
+            if skip_yoy_rows is None:
+                skip_yoy_detail = f"ответ не распознан: {skip_yoy[:200]}"
+            elif skip_yoy_n == 1:
+                skip_yoy_detail = "yoy_pct за 2026-02 NULL при пропуске 2025-02 (self-join по месяцам)"
+            else:
+                skip_yoy_detail = ("строк: 0 — yoy_pct посчитан по строкам, а не по календарным "
+                                   "месяцам; пересоздать витрину: make import STAT=company_views")
+            failed += not expect("VTBR: пропуск месяца даёт NULL YoY", skip_yoy_n == 1, skip_yoy_detail)
 
             # Сырые таблицы банковского пакета агенту не выданы — как macro_series и
             # polyus_financial_metrics: ряды банковских отчётностей агент читает через витрину
@@ -1299,6 +1416,108 @@ async def check(params, server_log):
             denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
             failed += not expect("сырая cbr_mt_forecast закрыта", denied,
                                  "отказ ClickHouse 497 на cbr_mt_forecast (ожидаемо)" if denied else raw[:200])
+
+            # Сырые остатки формы 101 ЦБ (первый срез — Сбер, REGN=1481, пункт 4.2 №21;
+            # спека docs/superpowers/specs/2026-10-17-cbr-form101-design.md §6). Проверки —
+            # по витрине, а не по list_tables: имя читается запросом к самой витрине
+            # (урок bold-блока), вторая проверка пинит, что первый срез — именно строки
+            # Сбера за 2026-09-01, а не любая непустота (схема готова к другим regnum).
+            form101_view = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_cbr_form101"}))
+            form101_view_rows = result_rows(form101_view)
+            form101_view_n = form101_view_rows[0].get("n") if form101_view_rows else None
+            if form101_view_rows is None:
+                form101_view_detail = f"ответ не распознан: {form101_view[:200]}"
+            elif (form101_view_n or 0) > 0:
+                form101_view_detail = f"строк: {form101_view_n}"
+            else:
+                form101_view_detail = ("строк: 0 — прогнать импортёр: make import "
+                                       "STAT=cbr_form101 (витрину пересоздаёт прогон)")
+            failed += not expect("витрина v_cbr_form101 существует и непуста",
+                                 (form101_view_n or 0) > 0, form101_view_detail)
+
+            # Строки Сбера за отчётную дату первого среза: regnum=1481 и report_date
+            # '2026-09-01' (дата из имени файла 101-20260901.rar, а не месяц публикации).
+            # Ноль строк значит, что витрина наполнена другим банком или другой датой, —
+            # для приёмки пункта это провал, а не «данные есть».
+            form101_sber = text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n FROM v_cbr_form101 WHERE regnum = 1481 AND report_date = '2026-09-01'"}))
+            form101_sber_rows = result_rows(form101_sber)
+            form101_sber_n = form101_sber_rows[0].get("n") if form101_sber_rows else None
+            if form101_sber_rows is None:
+                form101_sber_detail = f"ответ не распознан: {form101_sber[:200]}"
+            elif (form101_sber_n or 0) > 0:
+                form101_sber_detail = f"строк Сбера за 2026-09-01: {form101_sber_n}"
+            else:
+                form101_sber_detail = ("строк Сбера за 2026-09-01: 0 — прогнать make import "
+                                       "STAT=cbr_form101 (первый срез — REGN=1481)")
+            failed += not expect("витрина v_cbr_form101 содержит строки Сбера за 2026-09-01",
+                                 (form101_sber_n or 0) > 0, form101_sber_detail)
+
+            # Pilot-маппинг формы 101 на кредиты ЮЛ/ФЛ (issue #98): витрина должна
+            # отдавать калибровку за август 2026 (report_date 2026-09-01) и
+            # эталон пресс-релиза из company_financials. Ноль строк — не
+            # «нет данных», а не отработавший импортёр/сид.
+            form101_loans = text(await session.call_tool("run_query", {
+                "query": "SELECT corporate_loans_bln_rub, retail_loans_bln_rub, "
+                         "press_release_corporate_bln_rub, press_release_retail_bln_rub, "
+                         "corporate_diff_pct, retail_diff_pct, mapping_version "
+                         "FROM v_cbr_form101_loans WHERE report_date = '2026-09-01' LIMIT 1"}))
+            form101_loans_rows = result_rows(form101_loans)
+            form101_loans_ok = False
+            if form101_loans_rows is None:
+                form101_loans_detail = f"ответ не распознан: {form101_loans[:200]}"
+            elif form101_loans_rows:
+                row = form101_loans_rows[0]
+                try:
+                    corp_diff = float(row.get("corporate_diff_pct"))
+                    ret_diff = float(row.get("retail_diff_pct"))
+                except (TypeError, ValueError):
+                    corp_diff = ret_diff = None
+                form101_loans_ok = (
+                    row.get("mapping_version") == "cbr-809p-sber-1"
+                    and corp_diff is not None and abs(corp_diff) <= 0.01
+                    and ret_diff is not None and abs(ret_diff) <= 0.01)
+                form101_loans_detail = (
+                    f"ЮЛ {row.get('corporate_loans_bln_rub')} / "
+                    f"{row.get('press_release_corporate_bln_rub')} "
+                    f"({row.get('corporate_diff_pct')}), ФЛ "
+                    f"{row.get('retail_loans_bln_rub')} / "
+                    f"{row.get('press_release_retail_bln_rub')} "
+                    f"({row.get('retail_diff_pct')}), "
+                    f"{row.get('mapping_version')}")
+            else:
+                form101_loans_detail = ("строк нет — прогнать make import "
+                                        "STAT=cbr_form101 и сид 2026M07")
+            failed += not expect("v_cbr_form101_loans отдаёт cbr-809p-sber-1",
+                                 form101_loans_ok, form101_loans_detail)
+
+            # Ras-метрики cbr-809p-sber-1 формы 101 должны доезжать до форвардной витрины:
+            # июль и август SBER — source_kind='ras' (июль — сид, август — импортёр).
+            form101_fwd = text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n FROM v_bank_loan_portfolio_forward "
+                         "WHERE bank = 'SBER' AND source_kind = 'ras' "
+                         "AND report_month IN ('2026-07-01', '2026-08-01') "
+                         "AND metric = 'loans_corporations'"}))
+            form101_fwd_rows = result_rows(form101_fwd)
+            form101_fwd_n = form101_fwd_rows[0].get("n") if form101_fwd_rows else None
+            if form101_fwd_rows is None:
+                form101_fwd_detail = f"ответ не распознан: {form101_fwd[:200]}"
+            elif (form101_fwd_n or 0) >= 2:
+                form101_fwd_detail = f"строк SBER ras за июль/август: {form101_fwd_n}"
+            else:
+                form101_fwd_detail = ("строк: 0/1 — применить сид 2026-07 и прогнать "
+                                      "make import STAT=cbr_form101")
+            failed += not expect("cbr-809p-sber-1 ras виден в v_bank_loan_portfolio_forward",
+                                 (form101_fwd_n or 0) >= 2, form101_fwd_detail)
+
+            # Сырая cbr_form101 агенту не выдана — как macro_series и cbr_dip_bulletin:
+            # витрина — единственное место, где агент читает остатки по счетам (комментарии
+            # таблицы и каждой колонки есть только у неё). Таблицу создаёт DDL-прогон
+            # импортёра, поэтому UNKNOWN_TABLE здесь — провал, а не успех.
+            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM cbr_form101"}))
+            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+            failed += not expect("сырая cbr_form101 закрыта", denied,
+                                 "отказ ClickHouse 497 на cbr_form101 (ожидаемо)" if denied else raw[:200])
 
     return failed
 

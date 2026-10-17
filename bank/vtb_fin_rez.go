@@ -56,7 +56,7 @@ const (
 	vtbIfrsDataField = "Денежные средства и краткосрочные активы"
 )
 
-// Константы разбора книги (задача 3). Разведка живого файла 2026-10-17:
+// Константы разбора книги. Разведка живого файла 2026-10-17:
 // rus-vtb-group-ifrs-as-of-31-august-2026.xlsx, 42 247 Б, четыре листа — «Ключевые показатели
 // P&L», «Ключевые балансовые показатели», «Сегментный анализ_31.08.26», «Показатели и
 // коэффициенты»; фикстура — bank/testdata/vtb_ifrs.xlsx (коммитится как есть, §11.2).
@@ -175,17 +175,11 @@ func parseVtbBookSheet(xlsx *excelize.File) (points []vtbPoint, err error) {
 			}
 			continue
 		}
-		for _, c := range cols {
-			raw := vtbCell(rows[i], c.col)
-			if raw == "" {
-				continue // пустая ячейка — не точка ряда (§6.7)
-			}
-			value, err := vtbFloat(raw)
-			if err != nil {
-				return nil, fmt.Errorf("лист %q, строка %d (%q): %w", sheet, i+1, label, err)
-			}
-			points = append(points, vtbPoint{Series: label, Date: c.date, Value: value})
+		rowPoints, err := vtbRowPoints(sheet, i+1, label, rows[i], cols)
+		if err != nil {
+			return nil, err
 		}
+		points = append(points, rowPoints...)
 		if label == vtbBalanceStop {
 			if len(points) == 0 {
 				return nil, fmt.Errorf("лист %q: балансовый блок не дал ни одной точки", sheet)
@@ -249,17 +243,11 @@ func parseVtbPnlSheet(xlsx *excelize.File) (points []vtbPoint, err error) {
 			}
 			continue
 		}
-		for _, c := range cols {
-			raw := vtbCell(row, c.col)
-			if raw == "" {
-				continue // пустая ячейка — не точка ряда (§6.7)
-			}
-			value, err := vtbFloat(raw)
-			if err != nil {
-				return nil, fmt.Errorf("лист %q, строка %d (%q): %w", sheet, i+1, label, err)
-			}
-			points = append(points, vtbPoint{Series: label, Date: c.date, Value: value})
+		rowPoints, err := vtbRowPoints(sheet, i+1, label, row, cols)
+		if err != nil {
+			return nil, err
 		}
+		points = append(points, rowPoints...)
 	}
 	if sections == 0 {
 		return nil, fmt.Errorf("лист %q: не найдена шапка раздела (ни месячных, ни накопительных подписей колонок)", sheet)
@@ -299,7 +287,7 @@ func parseVtbRatiosSheet(xlsx *excelize.File) error {
 	for i, row := range rows {
 		label := vtbSeriesName(vtbCell(row, 0))
 		definition := vtbCell(row, 1)
-		if _, err := strconv.ParseFloat(definition, 64); err == nil {
+		if _, err := vtbFloat(definition); err == nil {
 			return fmt.Errorf("лист %q, строка %d (%q): значение %q — число, а на листе ожидается текст определения коэффициента",
 				sheet, i+1, label, definition)
 		}
@@ -317,6 +305,25 @@ func parseVtbRatiosSheet(xlsx *excelize.File) error {
 		return fmt.Errorf("лист %q: не найдено ни одной строки «подпись — определение»", sheet)
 	}
 	return nil
+}
+
+// vtbRowPoints — точки ряда: значения колонок-дат строки листа. Пустая ячейка точкой не
+// становится (§6.7); значение читается через vtbFloat. Ошибка называет лист, строку и подпись
+// ряда — без них нечисловая ячейка неотличима от соседних строк листа.
+func vtbRowPoints(sheet string, n int, label string, row []string, cols []vtbColumn) ([]vtbPoint, error) {
+	var points []vtbPoint
+	for _, c := range cols {
+		raw := vtbCell(row, c.col)
+		if raw == "" {
+			continue // пустая ячейка — не точка ряда (§6.7)
+		}
+		value, err := vtbFloat(raw)
+		if err != nil {
+			return nil, fmt.Errorf("лист %q, строка %d (%q): %w", sheet, n, label, err)
+		}
+		points = append(points, vtbPoint{Series: label, Date: c.date, Value: value})
+	}
+	return points, nil
 }
 
 // vtbPnlHeader — шапка раздела листа P&L: колонки-периоды ряда и признак «это шапка». Шапкой
@@ -355,13 +362,22 @@ func vtbPnlHeader(sheet string, row []string) (cols []vtbColumn, isHeader bool, 
 }
 
 // vtbSheet — имя листа книги по якорю (§6.3): лист ищется по вхождению якоря в имя, а не по
-// номеру — добавленный источником лист сдвинул бы номер. Ошибка перечисляет листы книги.
+// номеру — добавленный источником лист сдвинул бы номер. Якорь обязан указывать ровно на один
+// лист: несколько совпадений — ошибка со списком (молча выбранный первый мог бы оказаться не тем
+// листом), ни одного — ошибка со списком листов книги.
 func vtbSheet(xlsx *excelize.File, anchor string) (string, error) {
 	sheets := xlsx.GetSheetList()
+	var matches []string
 	for _, name := range sheets {
 		if strings.Contains(name, anchor) {
-			return name, nil
+			matches = append(matches, name)
 		}
+	}
+	if len(matches) == 1 {
+		return matches[0], nil
+	}
+	if len(matches) > 1 {
+		return "", fmt.Errorf("в книге несколько листов с якорем %q: %s", anchor, strings.Join(matches, ", "))
 	}
 	return "", fmt.Errorf("в книге нет листа с якорем %q (листы: %s)", anchor, strings.Join(sheets, ", "))
 }
@@ -392,13 +408,17 @@ func vtbSeriesName(cell string) string {
 // vtbSerialColumns — колонки значений шапки баланса: ячейки с серийными номерами дат Excel.
 // Датой считается только номер, дающий год в окне vtbMinYear…vtbMaxYear: проценты изменения
 // (0–100) дают 1900 год и отличаются от дат без отдельного признака формата (идиома
-// cbr/mo_br_parse.go).
+// cbr/mo_br_parse.go). Не конечные числа («NaN»/«Inf») — не даты: серийным номером они не
+// являются, и колонка точек не даёт.
 func vtbSerialColumns(header []string) []vtbColumn {
 	var cols []vtbColumn
 	for col := 1; col < len(header); col++ {
 		serial, err := strconv.ParseFloat(vtbCell(header, col), 64)
 		if err != nil {
 			continue // текстовая колонка («изменение за месяц») — не колонка значений
+		}
+		if math.IsNaN(serial) || math.IsInf(serial, 0) {
+			continue // «NaN»/«Inf» ParseFloat принимает, но датой такой номер не становится
 		}
 		date, err := excelize.ExcelDateToTime(serial, false)
 		if err != nil || date.Year() < vtbMinYear || date.Year() > vtbMaxYear {
@@ -420,11 +440,18 @@ func vtbRowHasValues(row []string, cols []vtbColumn) bool {
 	return false
 }
 
-// vtbFloat — число ячейки. «NaN»/«Inf» strconv.ParseFloat принимает без ошибки, но в
-// Float32-колонку таблицы такое значение уехало бы порчей, которую видно только в витрине
-// (прецедент — domrf_mortgage): это ошибка разбора (§6.4).
+// vtbFloat — число ячейки. Запятая — десятичный разделитель (0,202 = 0.202): в русской локали
+// Excel пишет дроби так; смешанная запись (1,234.56) остаётся ошибкой — тысячным разделением
+// запятая не считается. Обратная сторона неоднозначности: тысячную запись 1,234 разбор прочитает
+// как 1.234. По наблюдению разведки живой книги ВТБ (2026-10-17) сырые числовые ячейки приходят с
+// точкой, а не с запятой, — это конвенция источника, а не попиксельная проверка ячеек. Живой
+// прогон 2026-10-17 (Imported 0: все 13 файлов «уже импортирован — пропуск») переразбора не
+// делал, поэтому он доказывает лишь неизменность таблицы (720 строк / 36 рядов), а не разбор
+// ячеек. «NaN»/«Inf» strconv.ParseFloat принимает без ошибки, но в Float32-колонку таблицы
+// такое значение уехало бы порчей, которую видно только в витрине (прецедент — domrf_mortgage):
+// это ошибка разбора (§6.4).
 func vtbFloat(raw string) (float64, error) {
-	value, err := strconv.ParseFloat(raw, 64)
+	value, err := strconv.ParseFloat(strings.ReplaceAll(strings.TrimSpace(raw), ",", "."), 64)
 	if err != nil {
 		return 0, fmt.Errorf("значение %q не число: %w", raw, err)
 	}
@@ -459,10 +486,11 @@ type vtbLink struct {
 	Report time.Time
 }
 
-// vtbIfrsReportRe — дата отчётности в имени файла: «as-of-31-august-2026». Совпадение ищется по
-// всему href, поэтому хвостовое подчёркивание источника (31-october-2025_.xlsx) и его опечатка
-// месяца (31-jule-2025.xlsx) форме не мешают.
-var vtbIfrsReportRe = regexp.MustCompile(`as-of-(\d{1,2})-([a-z]+)-(\d{4})`)
+// vtbIfrsReportRe — дата отчётности в имени файла: «as-of-31-august-2026». Форма без учёта
+// регистра: источник может выложить файл с «As-Of» и «August». Совпадение ищется по всему href,
+// поэтому хвостовое подчёркивание источника (31-october-2025_.xlsx) и его опечатка месяца
+// (31-jule-2025.xlsx) форме не мешают.
+var vtbIfrsReportRe = regexp.MustCompile(`(?i)as-of-(\d{1,2})-([a-z]+)-(\d{4})`)
 
 // vtbIfrsMonthNames — английские названия месяцев в имени файла, как их пишет источник; ключи — в
 // нижнем регистре. «jule» — опечатка источника для июля (31-jule-2025.xlsx): без неё живой отчёт
@@ -597,7 +625,7 @@ type VtbIfrs struct {
 // цепочку дальше. Архив и строки версий уже записанных файлов гейт не лечит — как у
 // cbr_dip_bulletin, лечение ручное: удалить строку файла из source_publications и повторить
 // прогон (ARCHITECTURE §8 п. 13). Ошибки разбора не оборачиваются именем таблицы второй раз:
-// parseVtbBook уже называет её (урок ревью domrf_mortgage).
+// parseVtbBook уже называет её, и второй префикс дал бы дубль в тексте ошибки.
 func (s *VtbIfrs) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
 	// Режим читается один раз на прогон: значение не меняется посреди импорта, а env читается в
 	// момент действия, не в init() (ARCHITECTURE §8.6).
@@ -661,8 +689,7 @@ func (s *VtbIfrs) Import(ctx context.Context, conn driver.Conn) (count int64, er
 }
 
 // vtbIfrsImportFunc — ImportFunc шаблона: книга из памяти → точки → батч. Ошибку разбора не
-// оборачивает: parseVtbBook уже называет таблицу, второй префикс дал бы дубль (урок ревью
-// domrf_mortgage).
+// оборачивает: parseVtbBook уже называет таблицу, и второй префикс дал бы дубль в тексте ошибки.
 func vtbIfrsImportFunc(xlsx *excelize.File, batch driver.Batch) error {
 	points, err := parseVtbBook(xlsx)
 	if err != nil {

@@ -5,7 +5,7 @@
 CREATE TABLE IF NOT EXISTS events_calendar (
     event_date Date,
     event_time Nullable(String),
-    category LowCardinality(String), -- 'fomc','cpi','nfp','eia','wgc','cbr','polyus_ir','moex_rebalance','gov_rf'
+    category LowCardinality(String), -- 'fomc','cpi','nfp','eia','wgc','cbr','polyus_ir','moex_rebalance','gov_rf','bank_results'
     title String,
     threshold String,                -- JSON, напр. '{"crack":">50"}'
     status LowCardinality(String) DEFAULT 'pending'  -- pending|done|verified

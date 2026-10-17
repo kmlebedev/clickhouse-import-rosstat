@@ -23,7 +23,7 @@ const (
 	eventsDdl   = `CREATE TABLE IF NOT EXISTS ` + eventsTable + ` (
 	    event_date Date,
 	    event_time Nullable(String),
-	    category LowCardinality(String), -- 'fomc','cpi','nfp','eia','wgc','cbr','polyus_ir','moex_rebalance','gov_rf'
+	    category LowCardinality(String), -- 'fomc','cpi','nfp','eia','wgc','cbr','polyus_ir','moex_rebalance','gov_rf','bank_results'
 	    title String,
 	    threshold String,                -- JSON, напр. '{"crack":">50"}'
 	    status LowCardinality(String) DEFAULT 'pending'  -- pending|done|verified
@@ -52,11 +52,11 @@ var eventsView = util.View{
 	Name:    "v_events_calendar",
 	Tables:  []string{eventsTable},
 	Select:  `SELECT * FROM ` + eventsTable + ` FINAL`,
-	Comment: "Календарь событий-триггеров прогноза золота/NAV и дат заседаний СД ЦБ по ключевой ставке (category='cbr', канонические строки — из cbr.ru/dkp/cal_mp/, их читает агент контура ставки; рядом ручные строки-триггеры с другим title); status: pending|done|verified",
+	Comment: "Календарь событий-триггеров прогноза золота/NAV, дат заседаний СД ЦБ по ключевой ставке (category='cbr', канонические строки — из cbr.ru/dkp/cal_mp/, их читает агент контура ставки; рядом ручные строки-триггеры с другим title) и дат раскрытия банковских результатов (category='bank_results', подтверждённые/ожидаемые даты публикаций Сбера и ВТБ); status: pending|done|verified",
 	Columns: map[string]string{
 		"event_date": "Дата события (Date)",
 		"event_time": "Время события (местное/UTC, строка; NULL — время не фиксировано)",
-		"category":   "Категория триггера: fomc/cpi/nfp/eia/wgc/cbr/polyus_ir/moex_rebalance/gov_rf",
+		"category":   "Категория триггера: fomc/cpi/nfp/eia/wgc/cbr/polyus_ir/moex_rebalance/gov_rf; bank_results — даты раскрытия банковских результатов (Сбер, ВТБ)",
 		"title":      "Название события и действие модели при его наступлении",
 		"threshold":  "Пороги срабатывания в формате JSON, напр. '{\"crack\":\">50\"}'",
 		"status":     "Статус отработки: pending — ожидается, done — обработано, verified — сверено с фактом",

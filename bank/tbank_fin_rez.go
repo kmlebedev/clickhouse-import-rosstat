@@ -53,15 +53,53 @@ type TbIfrs struct {
 	util.ClickHouseImport
 }
 
+// tbIfrsPoint — извлечение точки Т-Банка по индексам строк: значение из строки данных и дата из
+// колонки шапки. Хелпер владеет именно извлечением точки: проверяет границы шапки, строки данных и
+// колонки, разбирает значение и дату. Поиск якоря и границы строк/шапки остаются стражами цикла
+// tbIfrsImportFunc — сюда они не переезжают. Значение — как прежде: запятая удаляется как тысячный
+// разделитель; дата разбирается форматом tbIfrsTimeLayout. Ошибки не называют таблицу, лист,
+// строку и колонку: этот контекст добавляет вызывающий, иначе он дублировался бы. Границы
+// проверяются у шапки, строки данных и колонки (§6.5): выход за срез — ошибка, а не паника.
+func tbIfrsPoint(rows [][]string, headerRow, dataRow, col int) (value float64, date time.Time, err error) {
+	if headerRow < 0 || headerRow >= len(rows) {
+		return 0, time.Time{}, fmt.Errorf("строка шапки вне книги")
+	}
+	if dataRow < 0 || dataRow >= len(rows) {
+		return 0, time.Time{}, fmt.Errorf("строка данных вне книги")
+	}
+	header := rows[headerRow]
+	if col < 0 || col >= len(header) {
+		return 0, time.Time{}, fmt.Errorf("колонка вне шапки (%d ячеек)", len(header))
+	}
+	row := rows[dataRow]
+	if col >= len(row) {
+		return 0, time.Time{}, fmt.Errorf("колонка вне строки данных (%d ячеек)", len(row))
+	}
+	balance := strings.ReplaceAll(strings.TrimSpace(row[col]), ",", "")
+	value, err = strconv.ParseFloat(balance, 64)
+	if err != nil {
+		return 0, time.Time{}, fmt.Errorf("значение %q не число: %w", balance, err)
+	}
+	date, err = time.Parse(tbIfrsTimeLayout, header[col])
+	if err != nil {
+		return 0, time.Time{}, fmt.Errorf("дата колонки %q: %w", header[col], err)
+	}
+	return value, date, nil
+}
+
 // tbIfrsImportFunc — ImportFunc шаблона: книга из памяти → точки → батч. Разбор — механический
-// перенос прежней семантики (тот же лист, тот же якорь, те же пропуски строк), поэтому ни тестов
-// разбора, ни фикстуры у него нет — источника-книги нет, разбор не верифицирован (отступление О4
-// спеки). Значение пишется в Float64-колонку новой таблицы (спека §3.5): число разбирается как
-// float64, без приведения к точности Float32 legacy-таблиц. Ошибки называют таблицу, лист и строку
-// (§6.4); все обращения к срезам, выходившие за границу в прежнем разборе, превращены в проверки —
-// страж длины строки под колонку якоря (row[2]) и под значение (row[3]), индекс якоря (-1) и стража
-// колонки шапки (j+2 — прежний страж «j+1» был off-by-one и падал на шапке; найден ревью T6).
-// Точек такие случаи не давали и прежде, а паника в разборе запрещена (§6.5).
+// перенос прежней семантики (тот же лист, тот же якорь, те же пропуски строк): источника-книги нет,
+// фикстуры нет, поэтому полный разбор книги не верифицирован (отступление О4 спеки); тестами
+// покрыты tbIfrsPoint (синтетические строки) и страж ячейки правее шапки (книга в памяти).
+// tbIfrsPoint владеет извлечением точки: проверяет границы шапки, строки данных и колонки,
+// разбирает значение и дату. Цикл держит собственные границы и пропуски: row[2] — поиск якоря,
+// row[3] — страж значения (пусто, «0» и «-» источника — не точка ряда), row[1] — имя ряда для
+// Append, j+2 против len(rows[fieldFound]) — граница колонки шапки. Страж fieldFound < 1 отсекает
+// два состояния: 0 — якорь не найден, -1 — якорь в первой строке книги, где шапки колонок-дат над
+// ним нет. Значение пишется в Float64-колонку новой таблицы (спека §3.5): число разбирается как
+// float64, без приведения к точности Float32 legacy-таблиц. Ошибки называют таблицу, лист, строку
+// и колонку (§6.4). Непустая ячейка правее шапки дат — ошибка, а не молчаливый обрыв: точка без
+// даты терялась бы незаметно (§6.4). Паника в разборе запрещена (§6.5).
 func tbIfrsImportFunc(xlsx *excelize.File, batch driver.Batch) error {
 	rows, err := xlsx.GetRows(tbIfrsSheet)
 	if err != nil {
@@ -84,8 +122,10 @@ func tbIfrsImportFunc(xlsx *excelize.File, batch driver.Batch) error {
 			continue
 		}
 		if len(row) < 4 {
-			// Значение читается из row[3]: прежний страж (len < 3) читал его без проверки (§6.5);
-			// короткая строка, как и прежде, обрывает разбор — точек такой ряд не даёт.
+			// Сюда доходит только строка ровно из трёх ячеек при уже найденном якоре (fieldFound ≥ 1),
+			// в которой нет колонки значения row[3], — это конец таблицы, разбор обрывается, как и
+			// прежде. Строки из одной-двух ячеек страж len(row) < 3 выше пропускает и до, и после
+			// якоря, поэтому обрывать таблицу они не могут.
 			break
 		}
 		if v := strings.TrimSpace(row[3]); v == "" || v == "0" || v == "-" {
@@ -93,25 +133,21 @@ func tbIfrsImportFunc(xlsx *excelize.File, batch driver.Batch) error {
 		}
 		// Колонки с месяцами и пропуском кварталов
 		for j, cell := range row[2:] {
-			if cell == "" {
-				continue
+			if strings.TrimSpace(cell) == "" {
+				continue // пустая и пробельная ячейка — не значение (и не «значение без даты»)
 			}
 			if j+2 >= len(rows[fieldFound]) {
-				// Граница — по фактически читаемому индексу j+2 (ячейка данных лежит в row[j+2],
-				// дата — в rows[fieldFound][j+2]): прежний страж «j+1 >= len» пропускал j+2 == len и
-				// падал на доступе к шапке — off-by-one, найденный ревью T6 (§6.5).
-				break
+				// Дата колонки лежит в rows[fieldFound][j+2], ячейка значения — в row[j+2]: ячейка
+				// правее конца шапки — точка без даты. Прежний страж «j+1» пропускал j+2 == len и
+				// падал на доступе к шапке (off-by-one, §6.5), а непустая ячейка за шапкой терялась
+				// молча (break).
+				return fmt.Errorf("%s: лист %q, строка %d, колонка %d: значение %q без даты в шапке",
+					tbIfrsTable, tbIfrsSheet, i+1, j+3, strings.TrimSpace(cell))
 			}
-			balance := strings.ReplaceAll(strings.TrimSpace(cell), ",", "")
-			value, err := strconv.ParseFloat(balance, 64)
+			value, date, err := tbIfrsPoint(rows, fieldFound, i, j+2)
 			if err != nil {
-				return fmt.Errorf("%s: лист %q, строка %d: значение %q не число: %w",
-					tbIfrsTable, tbIfrsSheet, i+1, balance, err)
-			}
-			date, err := time.Parse(tbIfrsTimeLayout, rows[fieldFound][j+2])
-			if err != nil {
-				return fmt.Errorf("%s: лист %q, строка %d: дата колонки %q: %w",
-					tbIfrsTable, tbIfrsSheet, i+1, rows[fieldFound][j+2], err)
+				return fmt.Errorf("%s: лист %q, строка %d, колонка %d: %w",
+					tbIfrsTable, tbIfrsSheet, i+1, j+3, err)
 			}
 			if err = batch.Append(row[1], date, value); err != nil {
 				return fmt.Errorf("%s: запись точки %q за %s: %w",

@@ -34,7 +34,7 @@ const (
 // сырым conn.Exec (прецедент companyFinancialsCreateTable в views/company.go). Копий DDL теперь
 // три (polyus/import.go, views/company.go, этот файл), и они обязаны совпадать колонка в колонку.
 // CREATE TABLE IF NOT EXISTS существующую таблицу не меняет, поэтому enum на живой БД расширяет
-// ALTER (build/company_financials_period_type_m.sql; прогон — задача 12).
+// отдельный ALTER-скрипт build/company_financials_period_type_m.sql.
 const bankCompanyMetricsDdl = `CREATE TABLE IF NOT EXISTS ` + bankCompanyMetricsTable + `
 (
     company     LowCardinality(String),
@@ -110,21 +110,27 @@ type bankCompanyMetricSpec struct {
 }
 
 // bankCompanyMetricSpecs — словарь метрик по сырым таблицам (спека §3.7): у Сбера — все 14, у ВТБ
-// — 11. Подписи — дословно из разведки живых книг (отчёты задач 3 и 5, §4), и каждая обязана
+// — 11. Подписи — дословно из разведки живых книг (спека §3.7, §4), и каждая обязана
 // находиться разбором своей фикстуры (TestBankCompanyLabelsExistInFixtures): это контракт
 // «словарь ↔ живые файлы», и при опечатке в подписи прогон молча терял бы метрику.
 //
 // Метрик ВТБ одиннадцать, а не двенадцать: достаточность капитала (Н20.0/Н20.1/Н20.2) источник
 // публикует в блоке «Достаточность капитала», который лежит НИЖЕ границы разбора балансового
-// листа («Итого собственные средства», рамка задачи 3), а лист «Показатели и коэффициенты» в
-// живом файле — глоссарий без значений. Раздельных Н1.1/Н1.2 ВТБ не публикует вовсе, поэтому
-// capital_adequacy_core и capital_adequacy_base есть только у Сбера. Расхождение с буквой спеки
-// §3.7 («у ВТБ применимы 12») названо в отчёте задачи 3 (§7 п. 3) и решено контроллером: словарь
-// ВТБ — 11 метрик, capital_adequacy у него отсутствует.
+// листа («Итого собственные средства», рамка разбора живого файла), а лист «Показатели и
+// коэффициенты» в живом файле — глоссарий без значений. Раздельных Н1.1/Н1.2 ВТБ не публикует
+// вовсе, поэтому capital_adequacy_core и capital_adequacy_base есть только у Сбера. Расхождение
+// с буквой спеки §3.7 («у ВТБ применимы 12») зафиксировано в разведке живых книг (§4) и решено
+// контроллером: словарь ВТБ — 11 метрик, capital_adequacy у него отсутствует.
 var bankCompanyMetricSpecs = map[string][]bankCompanyMetricSpec{
 	sberRpbuDataUrlTable: {
-		{Label: "Активы", Metric: "total_assets", Unit: bankCompanyUnitBln, Sheet: sberFinBalanceSheet},
-		{Label: "Собственные средства", Metric: "equity", Unit: bankCompanyUnitBln, Sheet: sberFinBalanceSheet},
+		{
+			Label: "Активы", Metric: "total_assets", Unit: bankCompanyUnitBln,
+			Sheet: sberFinBalanceSheet,
+		},
+		{
+			Label: "Собственные средства", Metric: "equity", Unit: bankCompanyUnitBln,
+			Sheet: sberFinBalanceSheet,
+		},
 		{
 			Label: "Кредиты и авансы клиентам (нетто)", Metric: "customer_loans", Unit: bankCompanyUnitBln,
 			Sheet: sberFinBalanceSheet,
@@ -132,21 +138,60 @@ var bankCompanyMetricSpecs = map[string][]bankCompanyMetricSpec{
 				"и loans_individuals — гросс (до резервов), поэтому их сумма больше этого ряда на " +
 				"величину резервов; у ВТБ, наоборот, ряд «до резервов» — базы двух компаний не сходятся.",
 		},
-		{Label: "Кредиты корпоративным клиентам (гросс)", Metric: "loans_corporations", Unit: bankCompanyUnitBln, Sheet: sberFinBalanceSheet},
-		{Label: "Кредиты физическим лицам (гросс)", Metric: "loans_individuals", Unit: bankCompanyUnitBln, Sheet: sberFinBalanceSheet},
-		{Label: "Средства клиентов", Metric: "customer_deposits", Unit: bankCompanyUnitBln, Sheet: sberFinBalanceSheet},
-		{Label: "Средства корпоративных клиентов", Metric: "deposits_corporations", Unit: bankCompanyUnitBln, Sheet: sberFinBalanceSheet},
-		{Label: "Средства физических лиц", Metric: "deposits_individuals", Unit: bankCompanyUnitBln, Sheet: sberFinBalanceSheet},
-		{Label: "Прибыль за период", Metric: "net_profit", Unit: bankCompanyUnitBln, Sheet: sberFinPnlSheet},
-		{Label: "Рентабельность капитала", Metric: "roe", Unit: bankCompanyUnitPercent, Sheet: sberFinRatiosSheet},
-		{Label: "Рентабельность активов", Metric: "roa", Unit: bankCompanyUnitPercent, Sheet: sberFinRatiosSheet},
-		{Label: "Достаточность общего капитала Н1.0", Metric: "capital_adequacy", Unit: bankCompanyUnitPercent, Sheet: sberFinCapitalSheet},
-		{Label: "Достаточность основного капитала Н1.2", Metric: "capital_adequacy_core", Unit: bankCompanyUnitPercent, Sheet: sberFinCapitalSheet},
-		{Label: "Достаточность базового капитала Н1.1", Metric: "capital_adequacy_base", Unit: bankCompanyUnitPercent, Sheet: sberFinCapitalSheet},
+		{
+			Label: "Кредиты корпоративным клиентам (гросс)", Metric: "loans_corporations", Unit: bankCompanyUnitBln,
+			Sheet: sberFinBalanceSheet,
+		},
+		{
+			Label: "Кредиты физическим лицам (гросс)", Metric: "loans_individuals", Unit: bankCompanyUnitBln,
+			Sheet: sberFinBalanceSheet,
+		},
+		{
+			Label: "Средства клиентов", Metric: "customer_deposits", Unit: bankCompanyUnitBln,
+			Sheet: sberFinBalanceSheet,
+		},
+		{
+			Label: "Средства корпоративных клиентов", Metric: "deposits_corporations", Unit: bankCompanyUnitBln,
+			Sheet: sberFinBalanceSheet,
+		},
+		{
+			Label: "Средства физических лиц", Metric: "deposits_individuals", Unit: bankCompanyUnitBln,
+			Sheet: sberFinBalanceSheet,
+		},
+		{
+			Label: "Прибыль за период", Metric: "net_profit", Unit: bankCompanyUnitBln,
+			Sheet: sberFinPnlSheet,
+		},
+		{
+			Label: "Рентабельность капитала", Metric: "roe", Unit: bankCompanyUnitPercent,
+			Sheet: sberFinRatiosSheet,
+		},
+		{
+			Label: "Рентабельность активов", Metric: "roa", Unit: bankCompanyUnitPercent,
+			Sheet: sberFinRatiosSheet,
+		},
+		{
+			Label: "Достаточность общего капитала Н1.0", Metric: "capital_adequacy", Unit: bankCompanyUnitPercent,
+			Sheet: sberFinCapitalSheet,
+		},
+		{
+			Label: "Достаточность основного капитала Н1.2", Metric: "capital_adequacy_core", Unit: bankCompanyUnitPercent,
+			Sheet: sberFinCapitalSheet,
+		},
+		{
+			Label: "Достаточность базового капитала Н1.1", Metric: "capital_adequacy_base", Unit: bankCompanyUnitPercent,
+			Sheet: sberFinCapitalSheet,
+		},
 	},
 	vtbIfrsTable: {
-		{Label: "Итого активы", Metric: "total_assets", Unit: bankCompanyUnitBln, Sheet: vtbBookSheet},
-		{Label: "Итого собственные средства", Metric: "equity", Unit: bankCompanyUnitBln, Sheet: vtbBookSheet},
+		{
+			Label: "Итого активы", Metric: "total_assets", Unit: bankCompanyUnitBln,
+			Sheet: vtbBookSheet,
+		},
+		{
+			Label: "Итого собственные средства", Metric: "equity", Unit: bankCompanyUnitBln,
+			Sheet: vtbBookSheet,
+		},
 		{
 			Label: "Кредиты и авансы клиентам (до резервов)", Metric: "customer_loans", Unit: bankCompanyUnitBln,
 			Sheet: vtbBookSheet,
@@ -155,14 +200,38 @@ var bankCompanyMetricSpecs = map[string][]bankCompanyMetricSpec{
 				"разбирает, поэтому этот ряд не равен чистому кредитному портфелю (у Сбера " +
 				"соответствующий ряд — «нетто»).",
 		},
-		{Label: "Кредиты ЮЛ", Metric: "loans_corporations", Unit: bankCompanyUnitBln, Sheet: vtbBookSheet},
-		{Label: "Кредиты ФЛ", Metric: "loans_individuals", Unit: bankCompanyUnitBln, Sheet: vtbBookSheet},
-		{Label: "Средства клиентов", Metric: "customer_deposits", Unit: bankCompanyUnitBln, Sheet: vtbBookSheet},
-		{Label: "Средства клиентов ЮЛ", Metric: "deposits_corporations", Unit: bankCompanyUnitBln, Sheet: vtbBookSheet},
-		{Label: "Средства клиентов ФЛ", Metric: "deposits_individuals", Unit: bankCompanyUnitBln, Sheet: vtbBookSheet},
-		{Label: "Чистая прибыль", Metric: "net_profit", Unit: bankCompanyUnitBln, Sheet: vtbPnlSheet},
-		{Label: "Возврат на капитал (ROE)", Metric: "roe", Unit: bankCompanyUnitPercent, Sheet: vtbPnlSheet},
-		{Label: "Возврат на активы (ROA)", Metric: "roa", Unit: bankCompanyUnitPercent, Sheet: vtbPnlSheet},
+		{
+			Label: "Кредиты ЮЛ", Metric: "loans_corporations", Unit: bankCompanyUnitBln,
+			Sheet: vtbBookSheet,
+		},
+		{
+			Label: "Кредиты ФЛ", Metric: "loans_individuals", Unit: bankCompanyUnitBln,
+			Sheet: vtbBookSheet,
+		},
+		{
+			Label: "Средства клиентов", Metric: "customer_deposits", Unit: bankCompanyUnitBln,
+			Sheet: vtbBookSheet,
+		},
+		{
+			Label: "Средства клиентов ЮЛ", Metric: "deposits_corporations", Unit: bankCompanyUnitBln,
+			Sheet: vtbBookSheet,
+		},
+		{
+			Label: "Средства клиентов ФЛ", Metric: "deposits_individuals", Unit: bankCompanyUnitBln,
+			Sheet: vtbBookSheet,
+		},
+		{
+			Label: "Чистая прибыль", Metric: "net_profit", Unit: bankCompanyUnitBln,
+			Sheet: vtbPnlSheet,
+		},
+		{
+			Label: "Возврат на капитал (ROE)", Metric: "roe", Unit: bankCompanyUnitPercent,
+			Sheet: vtbPnlSheet,
+		},
+		{
+			Label: "Возврат на активы (ROA)", Metric: "roa", Unit: bankCompanyUnitPercent,
+			Sheet: vtbPnlSheet,
+		},
 	},
 }
 
@@ -400,23 +469,36 @@ func bankCompanyValue(unit string, value float64) float64 {
 
 // bankCompanyMapPoints переводит точки сырой таблицы в строки company_financials: метрика и единица
 // — из словаря (bankCompanyMetricMap), период — из даты, значение приводится к единице ряда.
-// Второй результат — подписи словаря, которых в таблице не нашлось, в порядке словаря: для прогона
+// Второй результат — спеки словаря, которых в таблице не нашлось, в порядке словаря: для прогона
 // это не ошибка (сырьё уже импортировано, маппинг — производное, спека §3.7), но каждая — след в
-// журнале (Review Focus 4). Точки с подписями вне словаря пропускаются молча: их в сырой таблице
-// большинство, и метриками они не являются.
-func bankCompanyMapPoints(table string, points []bankCompanyPoint) (rows []bankCompanyRow, missing []string) {
+// журнале, и warn называет подпись и метрику спеки. Точки с подписями вне словаря пропускаются
+// молча: их в сырой таблице большинство, и метриками они не являются.
+//
+// Дубль (metric, period) в одном прогоне — ошибка (спека §2.4): у двух таких точек совпадает ключ
+// company_financials (company, metric, period, source_kind, source_url), и ReplacingMergeTree
+// схлопнул бы строки молча — одна из точек исчезла бы из ряда без следа. Текст ошибки называет
+// таблицу, метрику, период и обе даты, чтобы оператор нашёл исходные строки сырой таблицы.
+func bankCompanyMapPoints(table string, points []bankCompanyPoint) (rows []bankCompanyRow, missing []bankCompanyMetricSpec, err error) {
 	byLabel := bankCompanyMetricMap[table]
-	seen := make(map[string]bool, len(points))
+	seenLabels := make(map[string]bool, len(points))
+	seenPeriods := make(map[string]bankCompanyPoint, len(points))
 	for _, p := range points {
-		seen[p.Name] = true
+		seenLabels[p.Name] = true
 		metric, ok := byLabel[p.Name]
 		if !ok {
 			continue
 		}
+		period := bankCompanyPeriod(p.Date)
+		key := metric.Metric + "\x00" + period
+		if first, dup := seenPeriods[key]; dup {
+			return nil, nil, fmt.Errorf("%s: метрика %s за период %s встречается дважды (даты %s и %s)",
+				table, metric.Metric, period, first.Date.Format("2006-01-02"), p.Date.Format("2006-01-02"))
+		}
+		seenPeriods[key] = p
 		rows = append(rows, bankCompanyRow{
 			Company:    bankCompanySourceCompany[table],
 			Metric:     metric.Metric,
-			Period:     bankCompanyPeriod(p.Date),
+			Period:     period,
 			SourceKind: bankCompanySourceKind[table],
 			Value:      bankCompanyValue(metric.Unit, p.Value),
 			Unit:       metric.Unit,
@@ -424,11 +506,11 @@ func bankCompanyMapPoints(table string, points []bankCompanyPoint) (rows []bankC
 		})
 	}
 	for _, spec := range bankCompanyMetricSpecs[table] {
-		if !seen[spec.Label] {
-			missing = append(missing, spec.Label)
+		if !seenLabels[spec.Label] {
+			missing = append(missing, spec)
 		}
 	}
-	return rows, missing
+	return rows, missing, nil
 }
 
 // bankCompanyTableExistsQuery — есть ли сырая таблица в текущей БД: импортёр обязан пропускать
@@ -526,8 +608,9 @@ func (s *BankCompanyMetrics) Name() string {
 //
 // Пропуски — не ошибки: нет сырой таблицы — пропуск; tbank_group_ifrs — пропуск с логом (источник
 // не починен, спека §3.5); подписи словаря нет в таблице — предупреждение и пропуск метрики
-// (Review Focus 4): сырьё уже импортировано, а маппинг — производное, и ронять из-за него прогон
-// незачем. Сбой чтения, записи или каталога — ошибка прогона.
+// (спека §3.7): сырьё уже импортировано, а маппинг — производное, и ронять из-за него прогон
+// незачем. Дубль (metric, period) в одном прогоне — ошибка: ReplacingMergeTree схлопнул бы строки
+// молча (спека §2.4). Сбой чтения, записи или каталога — ошибка прогона.
 //
 // Порядок шагов принципиален: ВСЁ чтение (`Query`/`QueryRow`) идёт ДО `PrepareBatch`. Открытый батч
 // в clickhouse-go v2 держит слот соединения до `Send`/`Abort` — только они возвращают его в пул, —
@@ -562,10 +645,13 @@ func (s *BankCompanyMetrics) Import(ctx context.Context, conn driver.Conn) (coun
 		if pointsErr != nil {
 			return count, pointsErr
 		}
-		mapped, missing := bankCompanyMapPoints(table, points)
-		for _, label := range missing {
+		mapped, missing, mapErr := bankCompanyMapPoints(table, points)
+		if mapErr != nil {
+			return count, mapErr
+		}
+		for _, spec := range missing {
 			log.Warnf("%s: %s: подписи %q (метрика %s) нет в таблице — метрика пропущена",
-				bankCompanyMetricsName, table, label, bankCompanyMetricMap[table][label].Metric)
+				bankCompanyMetricsName, table, spec.Label, spec.Metric)
 		}
 		rows = append(rows, mapped...)
 	}

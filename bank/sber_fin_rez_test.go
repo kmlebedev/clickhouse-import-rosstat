@@ -253,19 +253,19 @@ func TestParseSberFinBookFailFast(t *testing.T) {
 			mutate: func(t *testing.T, f *excelize.File) {
 				sberRenameSheet(t, f, sberFinBalanceSheet, "Активы и пассивы")
 			},
-			want: sberFinBalanceSheet,
+			want: "Баланс",
 		},
 		"нет листа «Отчет о прибылях и убытках»": {
 			mutate: func(t *testing.T, f *excelize.File) { sberRenameSheet(t, f, sberFinPnlSheet, "ОПиУ") },
-			want:   sberFinPnlSheet,
+			want:   "Отчет о прибылях и убытках",
 		},
 		"нет листа «Капитал»": {
 			mutate: func(t *testing.T, f *excelize.File) { sberRenameSheet(t, f, sberFinCapitalSheet, "Нормативы") },
-			want:   sberFinCapitalSheet,
+			want:   "Капитал",
 		},
 		"нет листа «Показатели»": {
 			mutate: func(t *testing.T, f *excelize.File) { sberRenameSheet(t, f, sberFinRatiosSheet, "Метрики") },
-			want:   sberFinRatiosSheet,
+			want:   "Показатели",
 		},
 		"нет шапки листа": {
 			mutate: func(t *testing.T, f *excelize.File) { sberSetCell(t, f, sberFinBalanceSheet, "B2", "Статья") },
@@ -378,6 +378,25 @@ func TestAppendSberFinPoints(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Прибыль за период") {
 		t.Errorf("ошибка %q не называет точку, на которой запись остановилась", err)
+	}
+	// Ошибка Append называет дату в ISO-форме 2006-01-02, а не по формату шапки 01-02-06:
+	// «06-30-26» читается неоднозначно, а дата в тексте ошибки — часть контракта §6.4.
+	failed := newAppendRecorder("name", "date", "balance")
+	failed.appendErr = fmt.Errorf("батч закрыт")
+	err = appendSberFinPoints(failed, []sberFinPoint{
+		{Series: "Прибыль за период", Date: sberFixtureJun26, Value: 168.1},
+	})
+	if err == nil {
+		t.Fatal("Append с ошибкой: ошибка проглочена")
+	}
+	if !strings.Contains(err.Error(), "2026-06-30") {
+		t.Errorf("ошибка %q не называет дату в формате 2006-01-02 (2026-06-30)", err)
+	}
+	if strings.Contains(err.Error(), "06-30-26") {
+		t.Errorf("ошибка %q печатает дату форматом шапки 01-02-06 — читается неоднозначно", err)
+	}
+	if len(failed.rows) != 0 {
+		t.Errorf("после ошибки Append записано строк %d, want 0", len(failed.rows))
 	}
 }
 

@@ -61,6 +61,7 @@ var expectedPublicationCountPoints = map[string]string{
 	"cbr_bop_standard":          "SELECT count() FROM cbr_bop_standard FINAL",
 	"cbr_dip_bulletin":          "SELECT count() FROM cbr_dip_bulletin FINAL",
 	"cbr_mt_forecast":           "SELECT count() FROM cbr_mt_forecast FINAL",
+	"cbr_form101":               "SELECT count() FROM cbr_form101 FINAL",
 }
 
 // publicationDeclarer — то, как тест достаёт объявление импортёра из реестра:
@@ -77,10 +78,21 @@ type publicationDeclarer interface {
 // каталога пакета (тесты идут с cwd=cbr/): так же читают фикстуры другие пакеты.
 var daguCbrYAML = filepath.Join("..", "dagu", "cbr.yaml")
 
-// daguStatRef вытаскивает имя из строки шага `- CLICKHOUSE_IMPORT_STAT=<name>`.
-// Разбор построчный и регуляркой, без YAML-зависимости: тест не должен тянуть в
-// пакетный go.mod парсер ради одного ключа.
-var daguStatRef = regexp.MustCompile(`CLICKHOUSE_IMPORT_STAT=([A-Za-z0-9_]+)`)
+// daguStatRef вытаскивает имя из строки шага `- CLICKHOUSE_IMPORT_STAT=<name>`. Разбор —
+// регуляркой по всему файлу, без YAML-зависимости: тест не должен тянуть в пакетный go.mod
+// парсер ради одного ключа. Якоря ^…$ в режиме (?m) обязательны: без них закомментированный
+// шаг `# - CLICKHOUSE_IMPORT_STAT=…` считался бы шагом расписания.
+var daguStatRef = regexp.MustCompile(`(?m)^[ \t]*-[ \t]+CLICKHOUSE_IMPORT_STAT=([A-Za-z0-9_]+)[ \t]*$`)
+
+// TestDaguStatsIgnoreComments — закомментированный шаг не считается шагом расписания: разбор идёт
+// регуляркой по всему файлу, а `# - CLICKHOUSE_IMPORT_STAT=…` — не шаг dagu.
+func TestDaguStatsIgnoreComments(t *testing.T) {
+	data := []byte("- id: a\n  env:\n    - CLICKHOUSE_IMPORT_STAT=a\n# - CLICKHOUSE_IMPORT_STAT=commented\n")
+	got := daguStatRef.FindAllStringSubmatch(string(data), -1)
+	if len(got) != 1 || got[0][1] != "a" {
+		t.Fatalf("разбор %q дал %v, want один шаг [a]: закомментированный шаг не должен считаться расписанием", data, got)
+	}
+}
 
 // TestCbrImportersPrefixedAndRegistered держит инварианты реестра cbrImporters —
 // единственной точки, из которой импортёры пакета попадают в chimport.Stats.
@@ -104,7 +116,7 @@ var daguStatRef = regexp.MustCompile(`CLICKHOUSE_IMPORT_STAT=([A-Za-z0-9_]+)`)
 //     dagu не заметил бы ни один тест: реестр остаётся верным сам по себе), как и
 //     шаг контура резюме обсуждений (cbr_mp_summary: пропавший шаг оставил бы
 //     витрины v_cbr_mp_summary* пустыми при всех зелёных тестах);
-//   - (д) точка контроля публикации (префлайт) объявлена ровно у ожидаемых пятнадцати
+//   - (д) точка контроля публикации (префлайт) объявлена ровно у ожидаемых шестнадцати
 //     импортёров и запросом из expectedPublicationCountPoints: колонка countPoints
 //     реестра сверяется с объявлением самого импортёра (метод Publication()
 //     встроенного util.ClickHouseImport), а у импортёров вне ожидаемого набора
@@ -253,7 +265,7 @@ func TestCbrImportersPrefixedAndRegistered(t *testing.T) {
 	// v_cbr_mp_summary* остались бы пустыми, а у платёжного баланса витрина v_cbr_bop, у приложений
 	// ДИП витрина v_cbr_dip_bulletin и у «Комментария» витрина v_cbr_mt_forecast остались бы
 	// непустыми и просто перестали бы обновляться; последнего не замечает и mcp_check (он проверяет
-	// непустоту витрины и полноту каталога, а не свежесть точек), поэтому все пять шагов
+	// непустоту витрины и полноту каталога, а не свежесть точек), поэтому все шесть шагов
 	// перечислены здесь явно.
 	keyScheduled := map[string]string{
 		"cbr_mp_summary":   "контур резюме обсуждений не запускается по расписанию, а витрины v_cbr_mp_summary* остаются пустыми",
@@ -261,6 +273,7 @@ func TestCbrImportersPrefixedAndRegistered(t *testing.T) {
 		"cbr_bop_standard": "стандартная презентация платёжного баланса не обновляется, а витрина v_cbr_bop тихо стареет",
 		"cbr_dip_bulletin": "сезонно сглаженные ряды приложений ДИП не обновляются по расписанию, а витрина v_cbr_dip_bulletin тихо стареет",
 		"cbr_mt_forecast":  "диапазоны среднесрочного прогноза ЦБ не обновляются по расписанию, а витрина v_cbr_mt_forecast тихо стареет",
+		"cbr_form101":      "сырые остатки формы 101 ЦБ не пополняются по расписанию, а витрина v_cbr_form101 тихо стареет",
 	}
 	for step, why := range keyScheduled {
 		if !scheduled[step] {
