@@ -66,6 +66,19 @@
   неидентифицируемый дизайн, несошедшийся MLE, сингулярная информация) —
   `DegenerateWindowError`, и walk-forward пропускает фолд со счётчиком.
 
+**Веса наблюдений (флаг `--shock-weights PATH`).** CSV `meeting_date,weight`
+(лишние колонки игнорируются; `0 < w ≤ 1`) задаёт вес заседания в обучении:
+правило Тейлора оценивается `WLS` на тех же регрессорах и с той же HAC-
+ковариацией, упорядоченный логит — подклассом `WeightedOrderedModel`, который
+умножает вклад наблюдения в `loglikeobs`. Бенчмарки B1–B3 (эталоны) и
+`climatology` не взвешиваются; отсутствующая в CSV дата получает вес 1.0 со
+счётчиком покрытия. Без флага путь прежний байт-в-байт (OLS/`OrderedModel` и
+те же артефакты); с флагом в отчёт добавляется раздел «Веса шоков»
+(покрытие, распределение, weighted vs unweighted RMSE/MAE, DM-HLN, топ-10
+пониженных заседаний), а в CSV прогнозов — колонка `weight` (пустая у
+невзвешенных методов). Спека §7:
+`docs/superpowers/specs/2026-10-19-key-rate-shock-classifier-design.md`.
+
 **Текущий прогноз (Task 6).** Ближайшее заседание — первая дата строго позже
 даты прогона (`current_forecast`); признаки прогнозной строки снимаются as-of
 даты прогона по правилам §4 (`forecast_row`), а факты будущего заседания в неё
@@ -103,6 +116,9 @@ point-in-time слой, витрина, графики и консенсус-б�
 * `make key-rate-model ARGS="--rolling"` — то же, но консольная таблица
   метрик печатается по скользящему окну 40 (в отчёт и CSV оба окна идут
   всегда);
+* `make key-rate-model ARGS="--shock-weights shock_classifier_weights.csv"` —
+  взвешенные `taylor`/`ordered_logit`, раздел «Веса шоков» и колонка `weight`
+  в CSV (бенчмарки B1–B3 не взвешиваются);
 * `make key-rate-model ARGS="--export-fixtures scripts/testdata/key_rate"` —
   пересборка CSV-фикстур офлайн-тестов `scripts/key_rate_model_test.py`.
 
@@ -275,6 +291,11 @@ PREDICTION_COLUMNS = (
     "step_bp",
     "probs",
 )
+
+# Колонка веса в CSV при `--shock-weights`: добавляется В КОНЕЦ, прежний
+# порядок колонок не меняется. Пустая ячейка — метод веса не использует
+# (бенчмарки B1–B3 и базлайн `climatology`).
+SHOCK_WEIGHT_COLUMN = "weight"
 
 # --- Константы запросов -------------------------------------------------------
 
@@ -691,6 +712,135 @@ def build_rows(decisions: list, cpd: list, ibk: list) -> tuple:
     return rows, missing
 
 
+# --- Веса наблюдений: CSV и покрытие (спека §7) -------------------------------
+
+# Колонки CSV весов. Лишние колонки (`emergency`, `explicit_shock`, признаки и
+# т.п. из `shock_classifier_weights.csv`) игнорируются: модель читает только
+# дату и вес, а формат файла принадлежит классификатору.
+SHOCK_WEIGHTS_DATE_COLUMN = "meeting_date"
+SHOCK_WEIGHTS_VALUE_COLUMN = "weight"
+
+
+def load_shock_weights(path: Path) -> dict:
+    """Веса заседаний из CSV `meeting_date,weight` (спека §7).
+
+    Файл — артефакт `shock_classifier.py` (`shock_classifier_weights.csv`), но
+    формат намеренно минимальный: модели нужны только дата и вес, остальные
+    колонки игнорируются. Правила валидации — спека §7:
+
+    * дата — ISO `YYYY-MM-DD` (`date.fromisoformat`);
+    * дата уникальна: дубль сделал бы вес неоднозначным;
+    * `0 < w ≤ 1`: вес мягко ПОНИЖАЕТ вклад наблюдения, а не исключает его
+      (ноль был бы выбрасыванием строки, вес > 1 — усилением шока).
+
+    Любое нарушение — `ValueError` с номером строки и значением: файл весов
+    задаёт вход модели, и молчаливая правка здесь исказила бы бэктест.
+    Отсутствие даты в файле ошибкой НЕ является — `weights_for_rows` даёт
+    такому заседанию вес 1.0 и считает его в покрытии.
+    """
+    path = Path(path)
+    with path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        columns = reader.fieldnames or []
+        missing_columns = [
+            name
+            for name in (SHOCK_WEIGHTS_DATE_COLUMN, SHOCK_WEIGHTS_VALUE_COLUMN)
+            if name not in columns
+        ]
+        if missing_columns:
+            raise ValueError(
+                f"{path}: в CSV нет обязательных колонок {', '.join(missing_columns)} "
+                f"(ожидаются {SHOCK_WEIGHTS_DATE_COLUMN},{SHOCK_WEIGHTS_VALUE_COLUMN}; "
+                f"лишние колонки игнорируются)"
+            )
+        weights = {}
+        for line_number, row in enumerate(reader, start=2):
+            raw_date = str(row.get(SHOCK_WEIGHTS_DATE_COLUMN) or "").strip()
+            raw_weight = str(row.get(SHOCK_WEIGHTS_VALUE_COLUMN) or "").strip()
+            if not raw_date:
+                raise ValueError(
+                    f"{path}: строка {line_number}: пустая дата заседания "
+                    f"({SHOCK_WEIGHTS_DATE_COLUMN})"
+                )
+            try:
+                meeting = date.fromisoformat(raw_date)
+            except ValueError as error:
+                raise ValueError(
+                    f"{path}: строка {line_number}: дата {raw_date!r} не ISO "
+                    f"YYYY-MM-DD"
+                ) from error
+            if meeting in weights:
+                raise ValueError(
+                    f"{path}: дата {meeting.isoformat()} встречается дважды — "
+                    f"вес заседания неоднозначен"
+                )
+            try:
+                weight = float(raw_weight)
+            except ValueError as error:
+                raise ValueError(
+                    f"{path}: строка {line_number}: вес {raw_weight!r} не число"
+                ) from error
+            if not math.isfinite(weight) or not 0.0 < weight <= 1.0:
+                raise ValueError(
+                    f"{path}: строка {line_number}: вес {weight!r} вне (0, 1] — "
+                    f"наблюдение можно мягко понизить, но не исключить"
+                )
+            weights[meeting] = weight
+    if not weights:
+        raise ValueError(f"{path}: нет ни одной строки с весами")
+    return weights
+
+
+# Сколько дат пропущенных весов печатать в предупреждении. Полный список на
+# живом прогоне — сотня дат в каждом из четырёх walk-forward-вызовов: счётчик
+# остаётся в сообщении, а хвост списка не нужен.
+WEIGHT_WARNING_DATES = 10
+
+
+def _missing_weight_note(missing: list) -> str:
+    """Первые `WEIGHT_WARNING_DATES` отсутствующих дат плюс остаток счётчиком."""
+    shown = ", ".join(day.isoformat() for day in missing[:WEIGHT_WARNING_DATES])
+    if len(missing) > WEIGHT_WARNING_DATES:
+        shown += f", … (ещё {len(missing) - WEIGHT_WARNING_DATES})"
+    return shown
+
+
+def weights_for_rows(
+    rows: list, weights: Optional[dict], warn: bool = True
+) -> tuple:
+    """Веса строк выборки по дате заседания; отсутствующая дата — 1.0.
+
+    Возврат `(значения, отсутствующие даты)`: значения выровнены по `rows` и
+    пригодны для WLS/`freq_weights`, список отсутствующих — счётчик покрытия
+    для отчёта. Дата, которой нет в CSV, НЕ ошибка: ранние заседания и
+    заседания вне среза классификатора не измерены, и вес 1.0 — нейтральное
+    значение («не понижаем»), а не выдуманная аномальность.
+
+    Предупреждение (один раз на вызов) называет число и даты: молчаливое
+    заполнение скрыло бы, что часть весов не пришла. `warn=False` — для
+    walk-forward, где один и тот же пропуск повторяется в каждом фолде: там
+    предупреждение агрегируется вызывающим.
+    """
+    if weights is None:
+        return [1.0] * len(rows), []
+    values = []
+    missing = []
+    for row in rows:
+        meeting = row.decision.meeting_date
+        if meeting in weights:
+            values.append(float(weights[meeting]))
+        else:
+            values.append(1.0)
+            missing.append(meeting)
+    if missing and warn:
+        log.warning(
+            "веса шоков: %d заседаний без веса — принят вес 1.0: %s",
+            len(missing),
+            _missing_weight_note(missing),
+        )
+    return values, missing
+
+
 # --- Walk-forward и бенчмарки B1–B3 (спека §5, §7) ----------------------------
 
 
@@ -726,7 +876,9 @@ class Forecast:
 
 
 # Контракт метода walk-forward: обучение на окне строк, прогноз следующей.
-FitPredict = Callable[[list, Row], Forecast]
+# Взвешиваемые методы (WEIGHTED_METHODS) получают третьим аргументом вектор
+# весов наблюдений; остальные вызываются с двумя, как раньше.
+FitPredict = Callable[..., Forecast]
 
 
 @dataclass(frozen=True)
@@ -821,8 +973,29 @@ def fit_ar1(train: list, row: Row) -> Forecast:
     return Forecast(step_percent * 100.0, None)
 
 
-def _taylor_fit(train: list) -> RegressionResultsWrapper:
-    """Оценка правила Тейлора на обучающем окне: OLS с HAC (спека §6).
+def _as_weights(weights, expected: int, what: str) -> np.ndarray:
+    """Валидирует вектор весов наблюдений обучающего окна.
+
+    Веса приходят из `weights_for_rows`/`load_shock_weights` (там `0 < w ≤ 1`),
+    но `_taylor_fit`/`_ordered_fit` — публичные точки входа, и молча
+    несогласованный вектор (не та длина, NaN, ноль) дал бы либо исключение
+    statsmodels в середине фолда, либо выброшенное наблюдение. Поэтому длина,
+    конечность и положительность проверяются ЗДЕСЬ; `ValueError` — ошибка
+    вызывающего, а не вырожденное окно.
+    """
+    array = np.asarray(weights, dtype=float)
+    if array.ndim != 1 or array.shape[0] != expected:
+        size = array.shape[0] if array.ndim == 1 else str(array.shape)
+        raise ValueError(
+            f"{what}: весов {size} на {expected} наблюдений обучающего окна"
+        )
+    if not np.all(np.isfinite(array)) or np.any(array <= 0.0):
+        raise ValueError(f"{what}: веса должны быть конечными и положительными")
+    return array
+
+
+def _taylor_fit(train: list, weights=None) -> RegressionResultsWrapper:
+    """Оценка правила Тейлора на обучающем окне: OLS/WLS с HAC (спека §6).
 
     Дизайн — `[1, rate_before, pi_saar, gap]`: константа добавляется явно
     (`has_constant="add"`), и проверка ранга идёт по ТЕМ ЖЕ столбцам, что и
@@ -836,6 +1009,12 @@ def _taylor_fit(train: list) -> RegressionResultsWrapper:
     Отклик — уровень после решения `i_t`; ковариация — HAC с конфигурацией
     `_hac_fit` (та же, что у B3 и Mincer–Zarnowitz): p-value строк отчёта
     обязаны считаться на одной ковариации.
+
+    `weights` — опциональные веса наблюдений (спека §7). При них оценка —
+    `sm.WLS` на том же дизайне с ТОЙ ЖЕ конфигурацией HAC; без них — прежний
+    `OLS` (`_hac_fit`) байт-в-байт, поэтому официальный путь без
+    `--shock-weights` не меняется. Единичные веса дают те же коэффициенты,
+    что OLS (пиновано тестом).
 
     Вырожденное окно — `DegenerateWindowError` с причиной, а не исключение
     statsmodels: окно короче `MIN_TAYLOR_OBS` (у четырёхпараметрической
@@ -861,10 +1040,19 @@ def _taylor_fit(train: list) -> RegressionResultsWrapper:
             "коллинеарен свободному члену (в окне не меняется), коэффициенты "
             "не идентифицированы"
         )
-    return _hac_fit([sample.decision.rate_after for sample in train], design)
+    response = np.asarray(
+        [sample.decision.rate_after for sample in train], dtype=float
+    )
+    if weights is None:
+        return _hac_fit(response, design)
+    array = _as_weights(weights, len(train), "Тейлор (метод №2)")
+    model = sm.WLS(response, design, weights=array)
+    return model.fit(
+        cov_type="HAC", cov_kwds={"maxlags": HAC_MAXLAGS, "use_correction": True}
+    )
 
 
-def fit_taylor(train: list, row: Row) -> Forecast:
+def fit_taylor(train: list, row: Row, weights=None) -> Forecast:
     """Метод №2: инерционное правило Тейлора (спека §6).
 
     `i_t = c + ρ·i_{t−1} + a·π + b·gap` — OLS на `[1, rate_before, pi_saar,
@@ -880,8 +1068,11 @@ def fit_taylor(train: list, row: Row) -> Forecast:
 
     `probs` — `None`: правило даёт точечный шаг, а не распределение классов
     (как бенчмарки B1–B3); вероятностные метрики — у метода №3 (Task 5).
+
+    `weights` — веса обучающих наблюдений по датам заседаний (спека §7,
+    `--shock-weights`); без них вызов и результат прежние.
     """
-    result = _taylor_fit(train)
+    result = _taylor_fit(train, weights)
     predicted_level = float(np.dot(result.params, [1.0] + list(row.x)))
     return Forecast((predicted_level - row.decision.rate_before) * 100.0, None)
 
@@ -1022,7 +1213,53 @@ def _expected_step(probs: tuple, means: tuple) -> float:
     return sum(probability * mean for probability, mean in zip(probs, means))
 
 
-def _ordered_fit(train: list):
+class WeightedOrderedModel(OrderedModel):
+    """Упорядоченный логит с весами наблюдений (`freq_weights`, спека §7).
+
+    Наследник `OrderedModel`, у которого вклад наблюдения в логарифм
+    правдоподобия умножается на вес: `loglike(θ) = Σ_i w_i · log p(y_i | x_i)`.
+    Это ровно взвешенная MLE: вес 1 — обычная модель, вес < 1 мягко понижает
+    вклад заседания-шока, не выбрасывая его из выборки.
+
+    Почему подкласс, а не параметр `fit`: `OrderedModel` не знает `freq_weights`
+    (в statsmodels 0.15 его нет ни у модели, ни у `GenericLikelihoodModel`).
+    Численные `score`/`hessian` базового класса дифференцируют `self.loglike`,
+    а `GenericLikelihoodModel.loglike` суммирует `loglikeobs` — поэтому
+    переопределения одного `loglikeobs` достаточно, чтобы оптимизатор
+    `method="newton"` видел взвешенную цель, а не только взвешенное значение.
+
+    `freq_weights=None` — поведение базовой модели один-в-один; вектор весов
+    выровнен по `endog` и проверяется по длине сразу: несогласованный вектор
+    иначе дал бы broadcast-ошибку или неверное произведение в недрах
+    оптимизатора.
+    """
+
+    def __init__(self, endog, exog, freq_weights=None, **kwds):
+        self.freq_weights = (
+            None if freq_weights is None else np.asarray(freq_weights, dtype=float)
+        )
+        if self.freq_weights is not None:
+            expected = np.asarray(endog).shape[0]
+            if self.freq_weights.ndim != 1 or self.freq_weights.shape[0] != expected:
+                size = (
+                    self.freq_weights.shape[0]
+                    if self.freq_weights.ndim == 1
+                    else str(self.freq_weights.shape)
+                )
+                raise ValueError(
+                    f"WeightedOrderedModel: весов {size} на {expected} наблюдений"
+                )
+        super().__init__(endog, exog, **kwds)
+
+    def loglikeobs(self, params):
+        """Логарифм правдоподобия наблюдений, умноженный на их веса."""
+        loglike = super().loglikeobs(params)
+        if self.freq_weights is None:
+            return loglike
+        return loglike * self.freq_weights
+
+
+def _ordered_fit(train: list, weights=None):
     """Оценка ordered-модели на обучающем окне: (модель, результат) — спека §6.
 
     statsmodels `OrderedModel(distr='logit')` на регрессорах `[rate_before,
@@ -1054,6 +1291,13 @@ def _ordered_fit(train: list):
     спека: обычные окна оцениваются, вырожденные (в том числе разделимые) —
     `DegenerateWindowError`.
 
+    `weights` — опциональные веса наблюдений (спека §7). При них модель —
+    `WeightedOrderedModel` с `freq_weights` (взвешенная MLE); без них — прежний
+    `OrderedModel` байт-в-байт, поэтому официальный путь без `--shock-weights`
+    не меняется. Все проверки вырожденности, `ORDERED_MAXITER`,
+    `method="newton"` и превращение предупреждений в `DegenerateWindowError`
+    общие для обеих веток.
+
     Возврат — модель и результат подгонки: вызывающему нужны и вероятности
     (`result.predict`), и `model.labels` (отображение столбцов на классы).
     """
@@ -1072,7 +1316,13 @@ def _ordered_fit(train: list):
             "регрессор постоянен в окне или коллинеарен остальным: линейный "
             "индекс xβ не идентифицирован (β сдвигает пороги)"
         )
-    model = OrderedModel(endog, exog, distr="logit")
+    if weights is None:
+        model = OrderedModel(endog, exog, distr="logit")
+    else:
+        array = _as_weights(weights, len(train), "метод №3 (ordered logit)")
+        model = WeightedOrderedModel(
+            endog, exog, freq_weights=array, distr="logit"
+        )
     try:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
@@ -1103,7 +1353,7 @@ def _ordered_fit(train: list):
     return model, result
 
 
-def fit_ordered_logit(train: list, row: Row) -> Forecast:
+def fit_ordered_logit(train: list, row: Row, weights=None) -> Forecast:
     """Метод №3: упорядоченная логит-модель решения — вероятности и точка (§6).
 
     Модель — `OrderedModel(distr='logit')` на регрессорах `[rate_before,
@@ -1131,8 +1381,13 @@ def fit_ordered_logit(train: list, row: Row) -> Forecast:
     вероятность (NaN/inf) — `ValueError` на выходе метода, а не nan в `E[step]`,
     Brier и log loss отчёта (и не пропуск фолда: это дефект кода, а не свойство
     окна).
+
+    `weights` — веса обучающих наблюдений по датам заседаний (спека §7,
+    `--shock-weights`); без них вызов и результат прежние, с ними — взвешенная
+    MLE (`WeightedOrderedModel`), а средние шагов классов остаются
+    невзвешенными: это описание фактов окна, а не правдоподобие.
     """
-    model, result = _ordered_fit(train)
+    model, result = _ordered_fit(train, weights)
     row_probs = result.predict(exog=np.asarray([row.x], dtype=float))[0]
     probs = [0.0] * len(_CLASS_ORDER)
     for label, probability in zip(model.labels, row_probs):
@@ -1194,6 +1449,11 @@ METHODS = BENCHMARKS + (
 # Имена бенчмарков без меток — для сравнений DM («против каждого бенчмарка»).
 BENCHMARK_METHODS = tuple(method for method, _ in BENCHMARKS)
 
+# Методы, которые умеют взвешивать наблюдения (спека §7). Бенчмарки B1–B3 и
+# базлайн `climatology` — эталоны без весов: их прогноз не зависит от того,
+# какие наблюдения модель «слушает тише», иначе сравнение потеряло бы опору.
+WEIGHTED_METHODS = ("taylor", "ordered_logit")
+
 # Метки методов в отчёте: бенчмарки названы номерами спеки (§5), имена
 # методов №2–3 (Tasks 4–5) идут в отчёт как есть.
 METHOD_LABELS = {"hold": "B1 hold", "repeat": "B2 repeat", "ar1": "B3 AR(1)"}
@@ -1210,6 +1470,7 @@ def walk_forward(
     fit_predict: FitPredict,
     min_train: int = MIN_TRAIN,
     rolling: Optional[int] = None,
+    weights: Optional[dict] = None,
 ) -> tuple:
     """Walk-forward по одному методу и одному окну (спека §7).
 
@@ -1229,6 +1490,17 @@ def walk_forward(
     не ошибка данных. Любое другое исключение метода пробрасывается: это баг
     кода или порча данных, и молча пропускать его нельзя.
 
+    `weights` — веса наблюдений по дате заседания (спека §7). Взвешиваются
+    ТОЛЬКО методы из `WEIGHTED_METHODS` (`taylor`, `ordered_logit`): каждому
+    фолду строится вектор весов обучающего окна по `row.decision.meeting_date`,
+    а отсутствующая дата получает 1.0. Бенчмарки B1–B3 и `climatology`
+    вызываются с двумя аргументами, как раньше, — их прогноз от весов не
+    зависит. `weights=None` — прежний путь байт-в-байт.
+
+    Пропуски весов считаются здесь: одна и та же дата повторяется в обучающих
+    окнах многих фолдов, поэтому предупреждение агрегируется по уникальным
+    датам (иначе счётчик раздулся бы числом окон).
+
     Возврат — `(фолды, пропущено)`: фолды по возрастанию даты
     (`Prediction.window` несёт метку окна, по которой отчёт группирует строки
     «метод × окно»), и число пропущенных фолдов — оно попадает в сводку отчёта
@@ -1236,12 +1508,19 @@ def walk_forward(
     """
     start = min_train if rolling is None else max(min_train, rolling)
     window = window_label(rolling)
+    weighted = weights is not None and method in WEIGHTED_METHODS
+    missing_weights = set()
     predictions = []
     skipped = 0
     for index in range(start, len(rows)):
         train = rows[:index] if rolling is None else rows[index - rolling:index]
         try:
-            forecast = fit_predict(train, rows[index])
+            if weighted:
+                train_weights, missing = weights_for_rows(train, weights, warn=False)
+                missing_weights.update(missing)
+                forecast = fit_predict(train, rows[index], train_weights)
+            else:
+                forecast = fit_predict(train, rows[index])
         except DegenerateWindowError:
             skipped += 1
             continue
@@ -1257,16 +1536,31 @@ def walk_forward(
                 probs=forecast.probs,
             )
         )
+    if missing_weights:
+        log.warning(
+            "веса шоков (%s, %s): %d заседаний обучающих окон без веса — "
+            "принят вес 1.0: %s",
+            method,
+            window,
+            len(missing_weights),
+            _missing_weight_note(sorted(missing_weights)),
+        )
     return predictions, skipped
 
 
-def method_predictions(rows: list, min_train: int = MIN_TRAIN) -> tuple:
+def method_predictions(
+    rows: list, min_train: int = MIN_TRAIN, weights: Optional[dict] = None
+) -> tuple:
     """Бенчмарки B1–B3 и методы §6 по обоим окнам — строки «метод × окно».
 
     Оба окна считаются всегда (спека §7): отчёт показывает их рядом, а выбор
     окна по ошибке не делается. Порядок обхода — окно, затем метод; от него
     зависит порядок строк в отчёте и в CSV, и он же задаёт группировку.
     Список строк — `METHODS` (бенчмарки §5, затем методы §6).
+
+    `weights` — веса наблюдений для взвешиваемых методов (`WEIGHTED_METHODS`,
+    спека §7); бенчмарки и `climatology` их не получают. `None` — прежний
+    путь без весов байт-в-байт.
 
     Возврат — `(фолды, пропущено)`: счётчик вырожденных окон по ключу
     «(метод, окно)» для сводки отчёта. У B1 и B2 он нулевой по построению, у
@@ -1279,11 +1573,36 @@ def method_predictions(rows: list, min_train: int = MIN_TRAIN) -> tuple:
     for window in (None, ROLLING_WINDOW):
         for method, fit_predict in METHODS:
             folds, skipped = walk_forward(
-                rows, method, fit_predict, min_train=min_train, rolling=window
+                rows,
+                method,
+                fit_predict,
+                min_train=min_train,
+                rolling=window,
+                weights=weights,
             )
             predictions.extend(folds)
             fold_skips[(method, window_label(window))] = skipped
     return predictions, fold_skips
+
+
+def weighted_method_predictions(rows: list, min_train: int = MIN_TRAIN) -> list:
+    """Фолды ТОЛЬКО взвешиваемых методов БЕЗ весов — база сравнения (спека §7).
+
+    Отчёт с `--shock-weights` показывает weighted vs unweighted RMSE/MAE и
+    DM-HLN по `taylor`/`ordered_logit`. Невзвешенная база — тот же walk-forward
+    на тех же окнах, но с прежним OLS/`OrderedModel`; бенчмарки в сравнение не
+    входят: они и так не взвешиваются, и их числа уже есть в основной таблице.
+    """
+    predictions = []
+    for window in (None, ROLLING_WINDOW):
+        for method, fit_predict in METHODS:
+            if method not in WEIGHTED_METHODS:
+                continue
+            folds, _ = walk_forward(
+                rows, method, fit_predict, min_train=min_train, rolling=window
+            )
+            predictions.extend(folds)
+    return predictions
 
 
 # --- Метрики §7 ----------------------------------------------------------------
@@ -1880,6 +2199,140 @@ def _reliability_rows(groups: dict) -> list:
     return rows
 
 
+_SHOCK_WEIGHTS_HEADER = (
+    "| Состав | Значение |",
+    "|---|---|",
+)
+_SHOCK_COMPARISON_HEADER = (
+    "| метод | окно | n | RMSE без весов, б.п. | RMSE с весами, б.п. "
+    "| MAE без весов, б.п. | MAE с весами, б.п. | DM (HLN) | DM p |",
+    "|---|---|---|---|---|---|---|---|---|",
+)
+_SHOCK_LOWERED_HEADER = (
+    "| заседание | вес | фактический шаг, б.п. |",
+    "|---|---|---|",
+)
+
+
+def _shock_weights_section(
+    sample: list,
+    predictions: list,
+    unweighted_predictions: list,
+    weights: dict,
+    source: Optional[str],
+) -> list:
+    """Раздел «Веса шоков» отчёта при `--shock-weights` (спека §7).
+
+    Состав — по требованию шага: источник и покрытие, распределение весов,
+    weighted vs unweighted RMSE/MAE по `WEIGHTED_METHODS` и DM-HLN (h=1) через
+    `eval_utils.diebold_mariano`, топ-10 пониженных заседаний.
+
+    Сравнение — на ОБЩИХ фолдах метода и окна: взвешенная и невзвешенная
+    подгонки могут пропустить разные вырожденные окна, и усреднение по разным
+    наборам заседаний сделало бы DM недействительным. Распределение — по
+    ПРИМЕНЁННЫМ весам выборки (включая 1.0 для дат, которых нет в CSV): так
+    видно и пониженные заседания, и фактический вес обучения.
+    """
+    values, missing = weights_for_rows(sample, weights, warn=False)
+    explicit = len(sample) - len(missing)
+    if values:
+        distribution = (
+            f"{_fmt(min(values), 4)} / {_fmt(float(np.median(values)), 4)} / "
+            f"{_fmt(max(values), 4)}"
+        )
+    else:
+        distribution = "—"
+    lowered = sorted(
+        ((value, row) for row, value in zip(sample, values) if value < 1.0),
+        key=lambda pair: (pair[0], pair[1].decision.meeting_date),
+    )
+    weighted_groups = _predictions_by_group(predictions)
+    unweighted_groups = _predictions_by_group(unweighted_predictions)
+    comparison_rows = []
+    for method in WEIGHTED_METHODS:
+        for window in (WINDOW_EXPANDING, window_label(ROLLING_WINDOW)):
+            weighted_errors = {
+                prediction.meeting_date: prediction.step_bp - prediction.actual_step_bp
+                for prediction in weighted_groups.get((method, window), [])
+            }
+            unweighted_errors = {
+                prediction.meeting_date: prediction.step_bp - prediction.actual_step_bp
+                for prediction in unweighted_groups.get((method, window), [])
+            }
+            shared = sorted(
+                day for day in weighted_errors if day in unweighted_errors
+            )
+            if not shared:
+                comparison_rows.append(
+                    f"| {method_label(method)} | {window} | 0 "
+                    f"| — | — | — | — | — | — |"
+                )
+                continue
+            errors_weighted = [weighted_errors[day] for day in shared]
+            errors_unweighted = [unweighted_errors[day] for day in shared]
+            statistic, pvalue = eu.diebold_mariano(
+                errors_weighted, errors_unweighted, h=1
+            )
+            comparison_rows.append(
+                f"| {method_label(method)} | {window} | {len(shared)} "
+                f"| {_fmt(rmse_bp(errors_unweighted))} "
+                f"| {_fmt(rmse_bp(errors_weighted))} "
+                f"| {_fmt(mae_bp(errors_unweighted))} "
+                f"| {_fmt(mae_bp(errors_weighted))} "
+                f"| {_fmt(statistic)} | {_fmt_p(pvalue)} |"
+            )
+    lines = [
+        "",
+        "## Веса шоков",
+        "",
+        "Веса наблюдений из CSV `meeting_date,weight` (спека §7): правило "
+        "Тейлора оценивается WLS, упорядоченный логит — взвешенной MLE; "
+        "бенчмарки B1–B3 и `climatology` весов не получают. Отсутствующая в "
+        "CSV дата получает нейтральный вес 1.0 и входит в счётчик покрытия. "
+        "Текущий прогноз обучается на полной выборке без весов — флаг меняет "
+        "walk-forward.",
+        "",
+    ]
+    lines += _table(
+        _SHOCK_WEIGHTS_HEADER,
+        [
+            f"| источник | {source or '—'} |",
+            f"| весов в файле | {len(weights)} |",
+            f"| заседаний в выборке | {len(sample)} |",
+            f"| покрыто явным весом | {explicit} |",
+            f"| по умолчанию 1.0 (нет в CSV) | {len(missing)} |",
+            f"| распределение w: min / median / max | {distribution} |",
+            f"| пониженных (w < 1) | {len(lowered)} |",
+        ],
+    )
+    lines += [
+        "",
+        "Weighted vs unweighted на ОБЩИХ фолдах метода и окна: RMSE/MAE "
+        "считаются по одним и тем же заседаниям, DM-HLN (h=1) сравнивает "
+        "квадраты ошибок (положительная статистика — взвешенная подгонка хуже).",
+        "",
+    ]
+    lines += _table(_SHOCK_COMPARISON_HEADER, comparison_rows)
+    lines += ["", "Топ-10 пониженных заседаний (наименьший вес первым):", ""]
+    if lowered:
+        lines += _table(
+            _SHOCK_LOWERED_HEADER,
+            [
+                f"| {row.decision.meeting_date.isoformat()} | {_fmt(value, 4)} "
+                f"| {_fmt(float(row.decision.step_bp))} |"
+                for value, row in lowered[:10]
+            ],
+        )
+        if len(lowered) > 10:
+            lines += [
+                "",
+                f"_Показаны 10 из {len(lowered)} пониженных заседаний._",
+            ]
+    else:
+        lines.append("_Пониженных заседаний нет: все веса равны 1.0._")
+    return lines
+
+
 def render_report(
     sample: list,
     skipped: Skipped,
@@ -1887,6 +2340,9 @@ def render_report(
     forecast: Optional[str] = None,
     today: Optional[date] = None,
     fold_skips: Optional[dict] = None,
+    shock_weights: Optional[dict] = None,
+    shock_weights_source: Optional[str] = None,
+    unweighted_predictions: Optional[list] = None,
 ) -> str:
     """Markdown-отчёт прогона (спека §8).
 
@@ -1911,7 +2367,11 @@ def render_report(
     зависит только строка версии набора данных; `fold_skips` — счётчики
     вырожденных окон по ключу «(метод, окно)» (`method_predictions`), без
     них сводка показывает нули — так отчёт не приписывает методу пропусков,
-    которых не считали.
+    которых не считали. `shock_weights` — веса из `--shock-weights`
+    (`None` — раздела «Веса шоков» нет и отчёт прежний), `shock_weights_source`
+    — путь источника для раздела, `unweighted_predictions` — фолды
+    взвешиваемых методов БЕЗ весов (`weighted_method_predictions`) для
+    weighted vs unweighted RMSE/MAE и DM-HLN.
     """
     today = today or date.today()
     fold_skips = fold_skips or {}
@@ -2017,6 +2477,15 @@ def render_report(
         "",
     ]
     lines += _table(_LONG_RUN_HEADER, _long_run_rows(sample))
+
+    if shock_weights is not None:
+        lines += _shock_weights_section(
+            sample,
+            predictions,
+            unweighted_predictions or [],
+            shock_weights,
+            shock_weights_source,
+        )
 
     lines += [
         "",
@@ -2124,15 +2593,30 @@ def _probs_cell(probs) -> str:
     return "|".join(_csv_cell(probability) for probability in probs)
 
 
-def write_predictions(path: Path, predictions: list) -> None:
+def write_predictions(
+    path: Path, predictions: list, weights: Optional[dict] = None
+) -> None:
     """Пишет построчный CSV прогнозов (артефакт §8).
 
     Одна строка — один фолд (метод × окно × заседание); вероятности — одной
     ячейкой в порядке классов (−1, 0, +1), чтобы CSV читался и глазами, и
     pandas без разбора вложенных структур.
+
+    `weights` — веса шоков из CSV `--shock-weights`: при них в КОНЕЦ колонок
+    добавляется `weight` — вес ПРОГНОЗИРУЕМОГО заседания из CSV
+    (отсутствующая дата — 1.0). В обучении СОБСТВЕННОГО фолда этой строки он
+    не участвует: фолд `i` учится только на прошлых заседаниях, и вес строки
+    `i` применяется лишь в последующих фолдах, где она попадает в обучение.
+    У невзвешенных методов (бенчмарки B1–B3, `climatology`) ячейка пустая:
+    колонка не должна приписывать им вес, которого они не используют.
+    `weights=None` — прежний набор колонок и тот же файл байт-в-байт.
     """
-    rows = [
-        {
+    columns = PREDICTION_COLUMNS
+    if weights is not None:
+        columns = PREDICTION_COLUMNS + (SHOCK_WEIGHT_COLUMN,)
+    rows = []
+    for prediction in predictions:
+        row = {
             "meeting_date": prediction.meeting_date.isoformat(),
             "method": prediction.method,
             "window": prediction.window,
@@ -2141,9 +2625,15 @@ def write_predictions(path: Path, predictions: list) -> None:
             "step_bp": prediction.step_bp,
             "probs": _probs_cell(prediction.probs),
         }
-        for prediction in predictions
-    ]
-    _write_csv(path, PREDICTION_COLUMNS, rows)
+        if weights is not None:
+            if prediction.method in WEIGHTED_METHODS:
+                row[SHOCK_WEIGHT_COLUMN] = float(
+                    weights.get(prediction.meeting_date, 1.0)
+                )
+            else:
+                row[SHOCK_WEIGHT_COLUMN] = ""
+        rows.append(row)
+    _write_csv(path, columns, rows)
 
 
 def clear_stale_artifacts(out_dir: Path) -> list:
@@ -2605,6 +3095,8 @@ def run_summary(
     ml_log: Optional[bool] = None,
     logger: Optional[object] = None,
     run_name: Optional[str] = None,
+    shock_weights: Optional[dict] = None,
+    shock_weights_source: Optional[str] = None,
 ) -> int:
     """Полный прогон: выборка, walk-forward, текущий прогноз, артефакты (§7/§8).
 
@@ -2648,6 +3140,11 @@ def run_summary(
     fold-предсказаниями в базисных пунктах и артефактами; явный `logger`
     используется как есть (duck typing). По умолчанию (`ML_LOG` не задан) в
     ClickHouse ничего не пишется — только чтение и локальные артефакты.
+
+    `shock_weights` — веса заседаний из `--shock-weights` (`load_shock_weights`)
+    или `None`: при них walk-forward `taylor`/`ordered_logit` взвешивается,
+    отчёт получает раздел «Веса шоков», а CSV — колонку `weight`. Без них
+    отчёт/CSV/JSON прежние байт-в-байт.
     """
     today = today or date.today()
     if ml_log is None:
@@ -2659,6 +3156,11 @@ def run_summary(
         "methods": [method for method, _ in METHODS],
         "forecast_methods": [method for method, _ in FORECAST_METHODS],
     }
+    if shock_weights is not None:
+        # Конфиг журнала меняется ТОЛЬКО при флаге: официальный прогон без
+        # весов обязан остаться прежним и в паспорте эксперимента.
+        config["shock_weights"] = shock_weights_source or "argument"
+        config["shock_weights_dates"] = len(shock_weights)
 
     def start_run(sample_meta, sample):
         """Создаёт прогон журнала: имя по окну, общий конфиг и дата среза."""
@@ -2719,7 +3221,12 @@ def run_summary(
     rows, missing_features = build_rows(decisions, cpd, ibk)
     # Walk-forward считается до проверки «выборка пуста»: счётчик вырожденных
     # окон входит в sample_meta паспорта, а на пустой выборке он нулевой.
-    predictions, fold_skips = method_predictions(rows)
+    # С `--shock-weights` основная таблица — взвешенная; невзвешенная база
+    # считается отдельно и только для взвешиваемых методов (раздел «Веса шоков»).
+    predictions, fold_skips = method_predictions(rows, weights=shock_weights)
+    unweighted_predictions = (
+        weighted_method_predictions(rows) if shock_weights is not None else None
+    )
     sample_meta = {
         "rows": len(rows),
         "first": rows[0].decision.meeting_date.isoformat() if rows else None,
@@ -2769,10 +3276,13 @@ def run_summary(
                 render_forecast(forecast) if forecast is not None else None,
                 today=today,
                 fold_skips=fold_skips,
+                shock_weights=shock_weights,
+                shock_weights_source=shock_weights_source,
+                unweighted_predictions=unweighted_predictions,
             ),
             encoding="utf-8",
         )
-        write_predictions(predictions_path, predictions)
+        write_predictions(predictions_path, predictions, weights=shock_weights)
         forecast_written = write_forecast_artifact(forecast_path, forecast)
 
         print(f"Модель ключевой ставки v0 — выборка решений (дата прогона {today.isoformat()})")
@@ -2797,6 +3307,14 @@ def run_summary(
         print(f"  фолдов (скользящее окно, {ROLLING_WINDOW}):               "
               f"{counts.get(window_label(ROLLING_WINDOW), 0)}")
         print(f"  пропущено фолдов (вырожденное окно):         {sum(fold_skips.values())}")
+        if shock_weights is not None:
+            applied, missing = weights_for_rows(rows, shock_weights, warn=False)
+            lowered = sum(1 for value in applied if value < 1.0)
+            print(f"  веса шоков ({shock_weights_source or 'аргумент'}): "
+                  f"покрыто {len(rows) - len(missing)} из {len(rows)} заседаний, "
+                  f"w min/median/max = {min(applied):.4f}/"
+                  f"{float(np.median(applied)):.4f}/{max(applied):.4f}, "
+                  f"пониженных {lowered}")
 
         selected = window_label(ROLLING_WINDOW if rolling else None)
         print(f"  метрики окна «{selected}» (в отчёте и CSV — оба окна):")
@@ -2967,13 +3485,35 @@ def main(argv: Optional[list] = None) -> int:
         help="метрики консольной сводки по скользящему окну 40 (по умолчанию — "
              "по расширяющемуся); в отчёт и CSV идут оба окна",
     )
+    parser.add_argument(
+        "--shock-weights",
+        metavar="PATH",
+        default=None,
+        help="CSV meeting_date,weight с весами наблюдений для taylor/ordered_logit "
+             "(0 < w <= 1; спека классификатора шоков §7); без флага артефакты "
+             "и числа не меняются",
+    )
     args = parser.parse_args(argv)
     try:
         if args.export_fixtures:
             return export_fixtures(Path(args.export_fixtures))
+        shock_weights = None
+        if args.shock_weights:
+            try:
+                shock_weights = load_shock_weights(Path(args.shock_weights))
+            except (OSError, ValueError) as exc:
+                # Файл весов — вход модели: битая дата/вес или отсутствующий
+                # файл останавливают прогон понятным сообщением, а не
+                # трейсбеком и не молчаливым весом 1.0.
+                print(f"ошибка весов шоков: {exc}", file=sys.stderr)
+                return 2
         # ML_LOG/ML_RUN_NAME читаются внутри run_summary (`ml_log=None`): явный
         # параметр здесь не нужен, и без переменной поведение прогона прежнее.
-        return run_summary(rolling=args.rolling)
+        return run_summary(
+            rolling=args.rolling,
+            shock_weights=shock_weights,
+            shock_weights_source=args.shock_weights,
+        )
     except SampleError as exc:
         # Расхождение ярлыка со сводкой ЦБ — ожидаемая диагностируемая ошибка
         # прогона: у неё уже есть готовый текст (заседание и оба числа), и ей

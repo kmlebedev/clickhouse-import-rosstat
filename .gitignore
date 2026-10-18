@@ -30,6 +30,13 @@ coverage.out
 /key_rate_model_predictions.csv
 /key_rate_model_forecast.json
 
+# Артефакты классификатора шоков (issue #200): отчёт, as-of веса и запись
+# следующего заседания. Локальные и детерминированные при фиксированном сиде
+# и одной БД; имена точные.
+/shock_classifier_report.md
+/shock_classifier_weights.csv
+/shock_classifier_forecast.json
+
 # Артефакты экспериментального LLM-трека ключевой ставки (issue #189): JSON
 # прогноза, markdown-отчёт и payload для ingest #127. Локальные, содержат ответ
 # конкретного провайдера и не коммитятся; имена точные.

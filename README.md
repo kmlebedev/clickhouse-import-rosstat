@@ -148,6 +148,7 @@ make mlflow-down
 | `make import STAT=<имя>` | локальный прогон импортёра |
 | `make cpi-nowcast` | nowcast ИПЦ; `ML_LOG=1 MLFLOW=1` включает журнал и MLflow |
 | `make key-rate-model` / `make key-rate-forecast-log` | прогноз ставки (локальные артефакты) / запись прогноза в `forecast_log` через ingest; `ML_LOG=1 MLFLOW=1` включает журнал и MLflow |
+| `make shock-classifier` / `make shock-classifier-test` | классификатор шоков ключевой ставки: явные метки `emergency ∧ step_bp ≠ 0`, причинные as-of веса и описательный логистический слой; локальные артефакты `shock_classifier_report.md`, `shock_classifier_weights.csv`, `shock_classifier_forecast.json`; **в ClickHouse напрямую не пишет** (`ML_LOG=1` или `ARGS="--log"` — журнал через `ml_experiment`) / офлайн-тесты без ClickHouse и сети |
 | `make cpi-monthly` | месячный nowcast ИПЦ с МП (ML-трек v2); долгая выборка — `ARGS="--sample long"`; журнал — `ML_LOG=1`; быстрый экспериментальный режим — `ARGS="--quick"` и `ARGS="--quick --jobs N"` (в разы быстрее; **quick-числа неофициальные**, полный прогон без флагов не меняется) |
 | `make key-rate-llm-forecast` | экспериментальный LLM-прогноз ключевой ставки: as-of снимок, три повтора, медиана/разброс, локальные артефакты; в ClickHouse не пишет; `ARGS="--log"` готовит payload для #127 |
 | `make mlflow-up` / `make mlflow-down` / `make mlflow-status` | локальный MLflow-сервер (SQLite + артефакты, `127.0.0.1:5000`) |
@@ -156,6 +157,8 @@ make mlflow-down
 | `make mcp-check` | MCP end-to-end |
 | `make cb-comp-parity` / `make cb-comp-parity-test` | паритет nowcast с CB_COMP (direct + bottom-up, архив авторов) / офлайн-тесты parity-скриптов |
 | `make docs-check` / `make docs-build` | проверка и сборка docs-портала |
+
+`make shock-classifier` пишет три локальных артефакта в каталог прогона (по умолчанию текущий, переопределяется `ARGS="--out-dir DIR"`): отчёт с разделами «Явные шоки», «Покрытие каналов», «Метрики классификатора», «Веса», «С весами / без», «Ограничения»; CSV as-of весов `meeting_date, emergency, explicit_shock, step_bp, y3, anomaly_score, weight, shock_prob, missing_count` + признаки; JSON as-of среза следующего заседания. Прямых вставок в ClickHouse нет: журнал включается только `ML_LOG=1` (или `ARGS="--log"`) и идёт через `scripts/ml_experiment.py` (`ml_runs`/`ml_predictions`). Офлайн-фикстуры — `ARGS="--export-fixtures scripts/testdata/shock_classifier"`.
 
 Пункт роадмапа ведётся через GitHub issue с составным ID `<slug>/<item-id>`: шаблоны — [`.github/ISSUE_TEMPLATE/roadmap-item.yml`](.github/ISSUE_TEMPLATE/roadmap-item.yml) и [`.github/pull_request_template.md`](.github/pull_request_template.md); операции — скил `github-tracker` ([`.kimi-code/skills/github-tracker/SKILL.md`](.kimi-code/skills/github-tracker/SKILL.md)); правила — [docs/ROADMAP_INDEX.md](docs/ROADMAP_INDEX.md) и правило 12 [AGENTS.md](AGENTS.md). Живой проект — [clickhouse-import-rosstat — Roadmap](https://github.com/users/kmlebedev/projects/11).
 

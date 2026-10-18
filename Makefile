@@ -88,7 +88,7 @@ DAGU_VERSION     ?= v2.18.2
 MKDOCS_VERSION ?= 9.7.7
 MKDOCS := uv run --with mkdocs-material==$(MKDOCS_VERSION) --python 3.12 mkdocs
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-register mlflow-promote mlflow-models dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model key-rate-llm-forecast key-rate-forecast-log cpi-nowcast cpi-monthly cb-comp-parity cb-comp-parity-test cb-comp-proxy edisclosure-login edisclosure-collect docs-check docs-build docs-serve
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-register mlflow-promote mlflow-models dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model shock-classifier shock-classifier-test key-rate-llm-forecast key-rate-forecast-log cpi-nowcast cpi-monthly cb-comp-parity cb-comp-parity-test cb-comp-proxy edisclosure-login edisclosure-collect docs-check docs-build docs-serve
 
 all: lint test build build-ingest
 
@@ -385,6 +385,22 @@ ARGS ?=
 # повторяет конвенцию репозитория для uv-прогонов (README/ARCHITECTURE: --python 3.12).
 key-rate-model:
 	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/key_rate_model.py $(ARGS)
+
+# Классификатор шоков ключевой ставки (спека 2026-10-19, §8): панель заседаний,
+# as-of каналы, причинные веса (Махаланобис + Ledoit–Wolf) и описательный
+# логистический классификатор явных шоков. Читает ClickHouse, пишет ЛОКАЛЬНЫЕ
+# артефакты в каталог прогона (по умолчанию текущий): shock_classifier_report.md,
+# shock_classifier_weights.csv, shock_classifier_forecast.json. В ClickHouse
+# напрямую не пишет; ML_LOG=1 (или ARGS="--log") — паспорт, метрики и
+# предсказания через ml_experiment (ml_runs/ml_predictions).
+# ARGS="--features core|all --min-train N --out-dir DIR"; фикстуры:
+# make shock-classifier ARGS="--export-fixtures scripts/testdata/shock_classifier"
+shock-classifier:
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/shock_classifier.py $(ARGS)
+
+# Офлайн-тесты классификатора шоков: без ClickHouse и сети.
+shock-classifier-test:
+	uv run --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/shock_classifier_test.py -v
 
 # Запись текущего прогноза ставки в forecast_log через ingest (POST /v1/key_rate_forecast).
 # Читает локальные артефакты key_rate_model_forecast.json (и, при наличии,

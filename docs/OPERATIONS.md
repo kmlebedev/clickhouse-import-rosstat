@@ -16,6 +16,7 @@
 make import STAT=ml_registry              # ml_runs, ml_predictions, v_ml_runs/v_ml_leaderboard/v_ml_error_by_fold; повтор идемпотентен (безопасен)
 ML_LOG=1 make cpi-nowcast                 # паспорт прогона + fold-предсказания (unit='pp')
 ML_LOG=1 make key-rate-model              # паспорт прогона + fold-предсказания (unit='bp')
+ML_LOG=1 make shock-classifier            # веса шоков: предсказания unit='weight' и unit='probability'
 ML_LOG=1 make cpi-monthly                 # месячный nowcast v2, short: 155 месяцев, unit='pp'
 ML_LOG=1 make cpi-monthly ARGS="--sample long"   # long-sample: 292 месяца 2002-05…2026-08, старт 48
 # экспериментальный быстрый режим (числа неофициальные, см. ниже)
@@ -24,6 +25,8 @@ ML_LOG=1 make cpi-monthly ARGS="--sample long --quick --jobs 8"
 ```
 
 `ML_LOG=1` включает запись; без переменной скрипты в ClickHouse не пишут. **`ml_registry` должен отработать до первого `ML_LOG=1`-прогона** — он создаёт таблицы `ml_runs`/`ml_predictions` и витрины; в расписании он уже есть (`dagu/ml.yaml`, ежедневно 06:07 МСК). Если ClickHouse недоступен, прогон не падает: паспорт и предсказания сохраняются локально в `build/ml-runs/<run_id>/` (`run.json` + `predictions.jsonl`, каталог переопределяется `ML_LOCAL_DIR`). Имя прогона — `ML_RUN_NAME`. Чтение агентом — только через витрины `v_ml_runs`, `v_ml_leaderboard`, `v_ml_error_by_fold` (сырые таблицы закрыты, проверка — `make mcp-check`).
+
+**Классификатор шоков ставки — ручной прогон, в Dagu его нет.** `make shock-classifier` (спека `docs/superpowers/specs/2026-10-19-key-rate-shock-classifier-design.md` §8) читает ClickHouse и пишет три локальных артефакта в каталог прогона (по умолчанию текущий; `ARGS="--out-dir DIR"`): `shock_classifier_report.md` (явные шоки, покрытие каналов, метрики классификатора, веса, «с весами / без», ограничения), `shock_classifier_weights.csv` (as-of веса и признаки) и `shock_classifier_forecast.json` (as-of срез следующего заседания). **Прямых вставок в ClickHouse нет:** `ML_LOG=1` (или `ARGS="--log"`) создаёт прогон `key_rate_shock_classifier` и пишет паспорт, метрики и два вида предсказаний (`explicit_shock`, unit `probability`; `anomaly_weight`, unit `weight`) через `scripts/ml_experiment.py`; сбой журнала — warning и не меняет код возврата. При отсутствии ClickHouse/данных прогон завершается кодом 1, а артефакты прошлого прогона удаляются. `make shock-classifier ARGS="--export-fixtures scripts/testdata/shock_classifier"` обновляет офлайн-фикстуры без ClickHouse.
 
 **Быстрый режим `cpi_monthly` (`--quick`, `--jobs N`) — экспериментальный.** `--quick` считает только основное окно walk-forward (без robustness-окон и без фиксированного сплита статьи), `--jobs N` распределяет фолды по процессам (`CatBoost thread_count=1`); `--jobs` допустим только с `--quick`, `0`/`1` — последовательно, `N>1` — пул. В паспорте `ML_LOG` видны `config_json.quick` и `config_json.jobs`, в `run_name` — сегменты `quick`/`jobsN` (например, `cpi_monthly__long__quick__jobs8__start48__embargo0`). Quick-числа **неофициальные** и не сравнимы с полными прогонами; официальные short/long — только `make cpi-monthly` без флагов, и этот полный default не меняется (`--jobs` без `--quick` отвергается).
 
