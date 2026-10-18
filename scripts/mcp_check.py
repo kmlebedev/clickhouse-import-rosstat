@@ -1540,6 +1540,56 @@ async def check(params, server_log):
             failed += not expect("сырая cbr_form101 закрыта", denied,
                                  "отказ ClickHouse 497 на cbr_form101 (ожидаемо)" if denied else raw[:200])
 
+            # Реестр ML-экспериментов (infra/4.1): агенту выданы три витрины, а сырые
+            # ml_runs/ml_predictions закрыты (как macro_series и bold_fund_snapshot:
+            # паспорт прогона и fold-предсказания читаются только через витрины).
+            # Существование витрины подтверждается ЗАПРОСОМ К НЕЙ, а не только поиском
+            # имени в list_tables: в том тексте лежат create_table_query с комментариями
+            # таблиц и колонок, и имя отсутствующей витрины попадало туда из COMMENT
+            # соседки (урок bold). «Нет витрины» (UNKNOWN_TABLE) и «нет прав»
+            # (ACCESS_DENIED) приходят ошибкой и в result_rows не разбираются.
+            for view in ("v_ml_runs", "v_ml_leaderboard", "v_ml_error_by_fold"):
+                failed += not expect(f"витрина {view} видна", view in tables, "list_tables default")
+
+            for view, label in (("v_ml_runs", "паспорт прогона"),
+                                ("v_ml_error_by_fold", "fold-предсказания")):
+                ml_view = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {view}"}))
+                ml_view_rows = result_rows(ml_view)
+                ml_view_n = ml_view_rows[0].get("count()") if ml_view_rows else None
+                if ml_view_rows is None:
+                    ml_view_detail = f"витрина не читается: {ml_view[:200]}"
+                else:
+                    ml_view_detail = f"строк: {ml_view_n}"
+                failed += not expect(f"витрина {view} существует и читается ({label})",
+                                     bool(ml_view_rows), ml_view_detail)
+
+            # Пустой реестр — информационная строка, а не FAIL: до первого прогона
+            # ML_LOG=1 make cpi-nowcast (или ML_LOG=1 make key-rate-model) таблицы
+            # ml_runs/ml_predictions пусты, и make mcp-check на чистой БД не должен
+            # краснеть. Нечитаемая витрина — провал: значит нет ни вида, ни гранта.
+            ml_board = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_ml_leaderboard"}))
+            ml_board_rows = result_rows(ml_board)
+            if ml_board_rows is None:
+                failed += not expect("витрина v_ml_leaderboard существует и читается", False,
+                                     f"витрина не читается: {ml_board[:200]}")
+            elif (ml_board_rows[0].get("n") or 0) > 0:
+                print(f"OK   реестр ML: строк лидерборда: {ml_board_rows[0].get('n')}")
+            else:
+                print("WARN реестр ML пуст — прогонов с ML_LOG=1 ещё не было "
+                      "(ML_LOG=1 make cpi-nowcast / ML_LOG=1 make key-rate-model)")
+
+            # Сырые таблицы реестра агенту не выданы — как macro_series и news_events:
+            # паспорт прогона и fold-предсказания читаются только через витрины.
+            # Таблицы создаёт schema-only прогон ml_registry (make import STAT=ml_registry),
+            # поэтому UNKNOWN_TABLE здесь — провал, а не успех: таблица обязана
+            # существовать и быть закрытой.
+            for table, label in (("ml_runs", "паспорт прогона"),
+                                 ("ml_predictions", "fold-предсказания")):
+                raw = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {table}"}))
+                denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+                failed += not expect(f"сырая {table} закрыта ({label})", denied,
+                                     f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
+
     return failed
 
 
