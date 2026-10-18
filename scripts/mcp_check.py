@@ -1373,26 +1373,26 @@ async def check(params, server_log):
 
             # Документы e-disclosure.ru (пункт dcf-polyus/phase-3-remaining-edisclosure-documents,
             # спека 2026-10-18 §6, импортёр edisclosure_documents): витрина v_edisclosure_documents
-            # читается агентом, сырая edisclosure_documents агенту закрыта (как macro_series и
-            # cbr_dip_bulletin: документы агент читает только через витрину, правило 11 AGENTS.md).
-            # Непустота витрины — мягкая проверка (WARN, как пустой реестр ML): документы собирает
-            # полуавтоматический коллектор (headed Chrome + ручная капча), и на базе без
-            # доставленного снапшота витрина пуста; красный make mcp-check из-за не запускавшегося
-            # сбора недопустим. Нечитаемая витрина — провал: значит нет ни вида, ни гранта.
+            # читается агентом и НЕПУСТА, сырая edisclosure_documents агенту закрыта (как
+            # macro_series и cbr_dip_bulletin: документы агент читает только через витрину,
+            # правило 11 AGENTS.md). Строки публикует импортёр, поэтому пустая витрина — провал:
+            # это ни разу не отработавший приёмочный прогон (снапшот коллектора не импортирован),
+            # а не отсутствие данных у источника. Нечитаемая витрина — тоже провал: нет вида/гранта.
             edisclosure_view = text(await session.call_tool("run_query", {"query":
                 "SELECT count() AS n FROM v_edisclosure_documents"}))
             edisclosure_view_rows = result_rows(edisclosure_view)
             edisclosure_view_n = edisclosure_view_rows[0].get("n") if edisclosure_view_rows else None
             if edisclosure_view_rows is None:
-                failed += not expect("витрина v_edisclosure_documents читается", False,
-                                     f"витрина не читается: {edisclosure_view[:200]} — на пустой БД её "
-                                     "создаёт прогон импортёра (make import STAT=edisclosure_documents)")
+                edisclosure_view_detail = (f"витрина не читается: {edisclosure_view[:200]} — на пустой БД её "
+                                           "создаёт прогон импортёра (make import STAT=edisclosure_documents)")
             elif (edisclosure_view_n or 0) > 0:
-                print(f"OK   витрина v_edisclosure_documents: строк: {edisclosure_view_n}")
+                edisclosure_view_detail = f"строк: {edisclosure_view_n}"
             else:
-                print("WARN витрина v_edisclosure_documents пуста — снапшот коллектора ещё не импортирован "
-                      "(make edisclosure-login / make edisclosure-collect, затем make import "
-                      "STAT=edisclosure_documents)")
+                edisclosure_view_detail = ("строк: 0 — снапшот коллектора не импортирован: "
+                                           "make edisclosure-login / make edisclosure-collect, затем "
+                                           "make import STAT=edisclosure_documents")
+            failed += not expect("витрина v_edisclosure_documents существует и непуста",
+                                 (edisclosure_view_n or 0) > 0, edisclosure_view_detail)
 
             # Сырую таблицу создаёт DDL-прогон импортёра, поэтому UNKNOWN_TABLE здесь — провал,
             # а не успех: таблица обязана существовать и быть закрытой.
@@ -1430,10 +1430,10 @@ async def check(params, server_log):
                 failed += not expect("комментарии витрины v_edisclosure_documents",
                                      edisclosure_comments_ok, edisclosure_comments_detail)
 
-            # Выборочная точка контура: строка PLZL/IFRS с непустыми sha256 и archive_key. Пустая
-            # витрина — WARN (снапшот не импортирован), а не провал; но если строки в витрине
-            # есть, а PLZL/IFRS нет — снапшот неполный (коллектор запускали с подмножеством
-            # компаний/разделов), и это провал.
+            # Выборочная точка контура: строка PLZL/IFRS с непустыми sha256 и archive_key.
+            # Строка обязательна после живого импорта — снапшот приёмки включает все три компании
+            # и все четыре раздела, поэтому её отсутствие (как и пустая витрина) — провал: это
+            # неполный снапшот, а не отсутствие данных у источника.
             if edisclosure_view_rows is not None:
                 edisclosure_point = text(await session.call_tool("run_query", {"query":
                     "SELECT ticker, section, fileid, sha256, archive_key FROM v_edisclosure_documents "
@@ -1453,12 +1453,11 @@ async def check(params, server_log):
                                          bool(point_sha) and bool(point_key),
                                          f"fileid={point_fileid}, sha256={point_sha_detail}, "
                                          f"archive_key={point_key_detail}")
-                elif not (edisclosure_view_n or 0):
-                    print("WARN строка PLZL IFRS: витрина пуста — снапшот коллектора ещё не импортирован")
                 else:
                     failed += not expect("документ PLZL IFRS с версией и архивом", False,
-                                         "строки PLZL/IFRS нет в непустой витрине — неполный снапшот "
-                                         "(собрать PLZL и раздел IFRS: make edisclosure-collect)")
+                                         "строки PLZL/IFRS нет — неполный снапшот: собрать PLZL и "
+                                         "раздел IFRS (make edisclosure-collect) и прогнать "
+                                         "make import STAT=edisclosure_documents")
 
             # Контур диапазонов среднесрочного прогноза ЦБ (пункт 4.2 №7 роадмапа KEY_RATE — эталон
             # ЦБ, фаза 2; спека 2026-10-17 cbr-mt-forecast §3.7, импортёр cbr_mt_forecast): витрина
