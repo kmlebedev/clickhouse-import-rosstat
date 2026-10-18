@@ -2901,6 +2901,20 @@ class TestQuickMode(unittest.TestCase):
         self.assertNotIn("(quick)", report)
         self.assertIn("## Сплит статьи (сопоставимость, не выбор модели)", report)
 
+    def test_quick_default_specs_only_main(self):
+        # API без явных specs: quick не должен подхватывать полный набор окон.
+        rows = catboost_rows(30)
+        models = {"stub": lambda train, row: float(len(train))}
+        quick = cm.evaluate_windows(rows, models, quick=True, jobs=1)
+        self.assertEqual(len(quick), 1)
+        self.assertEqual((quick[0].start, quick[0].embargo), (24, 0))
+        self.assertTrue(quick[0].main)
+        full = cm.evaluate_windows(rows, models, quick=False, jobs=0)
+        self.assertEqual(
+            [(run.start, run.embargo) for run in full],
+            [(24, 0), (48, 0), (24, 1)],
+        )
+
     def main_run_with_2022(self) -> cm.WindowRun:
         """Main-окно с тестовыми месяцами 2021–2023 (включая 2022)."""
         months = month_range(date(2021, 1, 1), date(2023, 12, 1))
