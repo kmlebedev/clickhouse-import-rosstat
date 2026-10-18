@@ -1714,6 +1714,30 @@ async def check(params, server_log):
             failed += not expect("витрина v_ofz_signal существует и непуста",
                                  (ofz_signal_n or 0) > 0, ofz_signal_detail)
 
+            # key_rate до 2013-09-17 обязан быть NULL: истории ключевой ставки раньше
+            # этой даты нет. Проверка пинит именно семантику NULL в ASOF LEFT JOIN:
+            # при join_use_nulls=0 (значение по умолчанию) промах join подставляет в
+            # не-Nullable правую колонку 0, и тогда key_rate=0, а спреды равны
+            # доходности ОФЗ. Витрина оборачивает правые колонки в toNullable;
+            # nulls < n здесь значит, что обёртка потерялась и агент прочитает нули
+            # вместо «ставки ещё не было».
+            ofz_null = text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n, countIf(key_rate IS NULL) AS nulls "
+                         "FROM v_ofz_signal WHERE date < '2013-09-17'"}))
+            ofz_null_rows = result_rows(ofz_null)
+            ofz_null_n = ofz_null_rows[0].get("n") if ofz_null_rows else None
+            ofz_nulls = ofz_null_rows[0].get("nulls") if ofz_null_rows else None
+            if ofz_null_rows is None:
+                ofz_null_detail = f"ответ не распознан: {ofz_null[:200]}"
+            else:
+                ofz_null_detail = (f"строк до 2013-09-17: {ofz_null_n}, "
+                                   f"из них key_rate IS NULL: {ofz_nulls}")
+                if (ofz_null_n or 0) == 0:
+                    ofz_null_detail += " — прогнать make import STAT=cbr_zcyc"
+            failed += not expect("v_ofz_signal: key_rate до 2013-09-17 — NULL",
+                                 (ofz_null_n or 0) > 0 and ofz_nulls == ofz_null_n,
+                                 ofz_null_detail)
+
             # Каталог обязан описывать все 12 теноров КБД (0.25…30) — точным равенством, а не
             # «> 0»: 12 = набор колонок «Срок до погашения, лет» источника, который код
             # объявляет сам (стандарт §6.8). Выборка по origin, а не по source: у source='cbr'

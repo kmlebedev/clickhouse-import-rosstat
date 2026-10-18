@@ -236,7 +236,7 @@ var cbrZcycCompareView = util.View{
 	Select: `SELECT date, tenor,
         maxIf(toNullable(yield), source = 'cbr')  AS cbr_yield,
         maxIf(toNullable(yield), source = 'moex') AS moex_yield,
-        maxIf(toNullable(yield), source = 'moex') - maxIf(toNullable(yield), source = 'cbr') AS spread_pp
+        round(maxIf(toNullable(yield), source = 'moex') - maxIf(toNullable(yield), source = 'cbr'), 2) AS spread_pp
     FROM (
         SELECT 'cbr' AS source, date, tenor, yield FROM cbr_zcyc FINAL
         UNION ALL
@@ -267,6 +267,14 @@ var cbrZcycCompareView = util.View{
 // cbrZcycSignalView — сигналы долгового рынка по КБД ЦБ: одна строка на дату
 // публикации кривой. Dedicated-форма, а не long-форма §10.3: производные колонки
 // одной строкой (прецеденты — v_keyrate_expectations, v_cbr_mt_forecast).
+//
+// Правая сторона обоих ASOF LEFT JOIN обёрнута в toNullable: при настройке
+// ClickHouse join_use_nulls=0 (значение по умолчанию) промах join подставляет в
+// не-Nullable колонку значение по умолчанию — 0 для ставки и ИПЦ, — и обещание
+// NULL в комментарии витрины было бы ложью: до 2013-09-17 key_rate стал бы нулём,
+// а спред — самой доходностью ОФЗ. Совпавшая строка остаётся числом, промах —
+// NULL. count() = 12 в окне ИПЦ — та же защита от частичного г/г на первых 11
+// строках ряда.
 var cbrZcycSignalView = util.View{
 	Name:   "v_ofz_signal",
 	Tables: []string{cbrZcycTable, "cbr_key_rate", "rosstat_ipc_mes"},
@@ -286,13 +294,17 @@ var cbrZcycSignalView = util.View{
                1 AS _one
         FROM cbr_zcyc FINAL GROUP BY date
     ) AS c
-    ASOF LEFT JOIN (SELECT date, rate, 1 AS _one FROM cbr_key_rate FINAL ORDER BY date) AS k
+    ASOF LEFT JOIN (
+        SELECT date, toNullable(rate) AS rate, 1 AS _one FROM cbr_key_rate FINAL ORDER BY date
+    ) AS k
       ON c._one = k._one AND c.date >= k.date
     ASOF LEFT JOIN (
-        SELECT date, cpi_yoy, 1 AS _one FROM (
+        SELECT date, toNullable(cpi_yoy) AS cpi_yoy, 1 AS _one FROM (
             SELECT date,
-                   (exp(sum(log(toFloat64(percent) / 100)) OVER (
-                       ORDER BY date ROWS BETWEEN 11 PRECEDING AND CURRENT ROW)) - 1) * 100 AS cpi_yoy
+                   if(count() OVER (ORDER BY date ROWS BETWEEN 11 PRECEDING AND CURRENT ROW) = 12,
+                      (exp(sum(log(toFloat64(percent) / 100)) OVER (
+                          ORDER BY date ROWS BETWEEN 11 PRECEDING AND CURRENT ROW)) - 1) * 100,
+                      NULL) AS cpi_yoy
             FROM rosstat_ipc_mes FINAL
             WHERE name = 'Индексы потребительских цен на товары и услуги по Российской Федерации'
             ORDER BY date
@@ -306,7 +318,9 @@ var cbrZcycSignalView = util.View{
 		"ofz − key_rate, п.п.: положительное значение значит «ОФЗ выше ключевой» (рынок требует " +
 		"премию к ставке), отрицательное — «ОФЗ ниже ключевой». slope_10y_1y_pp — наклон кривой " +
 		"10y − 1y, п.п. (отрицательный — инверсия). inflation_yoy — ИПЦ Росстата г/г, %: " +
-		"произведение 12 месячных индексов rosstat_ipc_mes к отчётному месяцу; дата ИПЦ — конец " +
+		"произведение 12 месячных индексов rosstat_ipc_mes к отчётному месяцу (первые 11 строк " +
+		"ряда — NULL, незаконченный год не считается; окно берёт 12 строк, а не 12 календарных " +
+		"месяцев, поэтому пропуск месяца в источнике оконная функция не ловит); дата ИПЦ — конец " +
 		"отчётного месяца, а лаг публикации ~2 недели не моделируется (для point-in-time " +
 		"расчётов дату ИПЦ сдвигать отдельно). real_yield_10y_pp = ofz_10y − inflation_yoy, п.п. " +
 		"(ex post, без инфляционных ожиданий). Спреды, наклон и реальная доходность округлены " +
@@ -321,7 +335,7 @@ var cbrZcycSignalView = util.View{
 		"ofz_10y_minus_key_rate_pp": "Спред ofz_10y − key_rate, п.п.: положительный — «ОФЗ выше ключевой», отрицательный — ниже. NULL, если нет ставки или точки",
 		"ofz_2y_minus_key_rate_pp":  "Спред ofz_2y − key_rate, п.п.: короткий конец кривой против ключевой ставки. NULL, если нет ставки или точки",
 		"slope_10y_1y_pp":           "Наклон кривой 10y − 1y, п.п.: положительный — нормальная форма, отрицательный — инверсия. NULL, если нет одной из точек",
-		"inflation_yoy":             "ИПЦ Росстата г/г, %: произведение 12 месячных индексов rosstat_ipc_mes к отчётному месяцу. Дата — конец отчётного месяца; лаг публикации ~2 недели не моделируется, для point-in-time расчётов сдвигать отдельно. NULL — нет точки ИПЦ, а не ноль",
+		"inflation_yoy":             "ИПЦ Росстата г/г, %: произведение 12 месячных индексов rosstat_ipc_mes к отчётному месяцу; первые 11 строк ряда — NULL (незаконченный год не считается), но окно берёт 12 строк, а не 12 календарных месяцев — пропуск месяца в источнике оконная функция не ловит. Дата — конец отчётного месяца; лаг публикации ~2 недели не моделируется, для point-in-time расчётов сдвигать отдельно. NULL — нет точки ИПЦ, а не ноль",
 		"real_yield_10y_pp":         "Реальная доходность ofz_10y − inflation_yoy, п.п. (ex post, без инфляционных ожиданий). NULL, если нет точки или ИПЦ",
 	},
 }
