@@ -617,7 +617,9 @@ async def check(params, server_log):
                 kr_meeting_detail = (f"dashboard={kr_meeting[0].get('dashboard_date')}, "
                                      f"calendar={kr_meeting[0].get('calendar_date')}")
             failed += not expect("next_meeting.target_date совпадает с ближайшим заседанием ЦБ",
-                                 bool(kr_meeting) and kr_meeting[0].get("dashboard_date") == kr_meeting[0].get("calendar_date"),
+                                 bool(kr_meeting)
+                                 and kr_meeting[0].get("dashboard_date") is not None
+                                 and kr_meeting[0].get("dashboard_date") == kr_meeting[0].get("calendar_date"),
                                  kr_meeting_detail)
 
             kr_fixed_raw = text(await session.call_tool("run_query", {"query":
@@ -661,8 +663,15 @@ async def check(params, server_log):
                 kr_track_detail = "строки cbr_rate:ordered_logit нет — прогнать make key-rate-forecast-log (информационно)"
                 kr_track_ok = True
             else:
-                kr_track_ok = (kr_track[0].get("probabilities") or "") != "" and (kr_track[0].get("model") or "") != ""
-                kr_track_detail = (f"probabilities={'есть' if (kr_track[0].get('probabilities') or '') != '' else 'пусто'}, "
+                probabilities = kr_track[0].get("probabilities") or ""
+                try:
+                    distribution = json.loads(probabilities)
+                except ValueError:
+                    distribution = {}
+                kr_track_ok = (isinstance(distribution, dict)
+                               and {"cut", "hold", "hike"} <= set(distribution)
+                               and (kr_track[0].get("model") or "") != "")
+                kr_track_detail = (f"probabilities={'есть' if kr_track_ok else 'пусто/неполно'}, "
                                    f"model={kr_track[0].get('model')!r}")
             failed += not expect("probabilities/model у cbr_rate:ordered_logit непусты", kr_track_ok, kr_track_detail)
 
@@ -936,8 +945,10 @@ async def check(params, server_log):
             # run_query доказывает и существование, и право чтения; «нет витрины» и «нет
             # прав» приходят ошибкой (UNKNOWN_TABLE / ACCESS_DENIED) и в result_rows не
             # разбираются.
-            failed += not expect("витрина v_rosstat_macro видна", "v_rosstat_macro" in tables, "list_tables default")
-
+            # Отдельная проверка «имя есть в list_tables» здесь снята: list_tables
+            # пагинируется, и после добавления v_key_rate_dashboard имя v_rosstat_macro
+            # перестало попадать в первую страницу. Существование и право чтения ниже
+            # доказывает запрос к самой витрине — это и есть конвенция проекта.
             rosstat_view = text(await session.call_tool("run_query", {"query": "SELECT count() AS rows, uniqExact(series) AS series FROM v_rosstat_macro"}))
             rosstat_view_rows = result_rows(rosstat_view)
             rosstat_points_n = rosstat_view_rows[0].get("rows") if rosstat_view_rows else None

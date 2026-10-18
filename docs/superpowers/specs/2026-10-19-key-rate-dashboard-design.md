@@ -35,10 +35,10 @@
 
 | Колонка | Тип | Смысл |
 |---|---|---|
-| `contour` | `LowCardinality(String)` | `spot` — текущая ставка; `fundamental` — макро-контур; `market` — рыночный; `divergence` — расхождение контуров; `forecast` — журнал прогнозов; `calendar` — ближайшее заседание |
-| `indicator` | `LowCardinality(String)` | код сигнала; у `forecast` — `metric` из `forecast_log` (`cbr_rate:taylor`, `cbr_rate:ordered_logit`, `cbr_rate:llm`, будущий `cbr_rate:ml`) |
+| `contour` | `String` | `spot` — текущая ставка; `fundamental` — макро-контур; `market` — рыночный; `divergence` — расхождение контуров; `forecast` — журнал прогнозов; `calendar` — ближайшее заседание |
+| `indicator` | `String` | код сигнала; у `forecast` — `metric` из `forecast_log` (`cbr_rate:taylor`, `cbr_rate:ordered_logit`, `cbr_rate:llm`, будущий `cbr_rate:ml`) |
 | `value` | `Nullable(Float64)` | значение в `unit`; у `next_meeting` — дней до заседания; NULL — данных нет |
-| `unit` | `LowCardinality(String)` | `% годовых`, `% г/г`, `% г/г (SAAR)`, `%`, `пункты`, `б.п.`, `контрактов`, `дней` |
+| `unit` | `String` | `% годовых`, `% г/г`, `% г/г (SAAR)`, `%`, `пункты`, `б.п.`, `контрактов`, `дней` |
 | `as_of` | `Nullable(Date)` | дата значения (последнее наблюдение/сделка/дата прогноза; у `next_meeting` — `today()`) |
 | `target_date` | `Nullable(Date)` | дата заседания для `forecast`/`divergence`/`calendar`; у `market` — дата экспирации ближайшей будущей серии KEYRATE (она же дата заседания, по ней биржа рассчитывает индекс); NULL у остальных |
 | `threshold` | `String` | текст порога/условия; `—` — числового порога нет |
@@ -46,7 +46,7 @@
 | `stale` | `UInt8` | 1 — значения нет или оно старше естественного цикла (daily 7 дней, monthly 45 дней; прогноз не свёрено после `target_date` или старше 45 дней; календарь без будущего заседания) |
 | `error_bp` | `Nullable(Float64)` | ошибка прогноза в б.п. из `forecast_log.error_bp` (`(predicted − actual) × 100`); NULL — не свёрено или не forecast-строка |
 | `probabilities` | `String` | JSON `cut/hold/hike` из `forecast_log`; `''` — не forecast-строка |
-| `model` | `LowCardinality(String)` | модель/трек из `forecast_log`; `''` — не forecast-строка |
+| `model` | `String` | модель/трек из `forecast_log`; `''` — не forecast-строка |
 | `data_version` | `String` | версия набора данных из `forecast_log`; `''` — не forecast-строка |
 | `prompt_version` | `UInt16` | редакция промпта LLM-трека из `forecast_log`; 0 — не forecast-строка |
 
