@@ -381,6 +381,41 @@ class PanelTest(unittest.TestCase):
         )
         self.assertEqual(without, with_future)
 
+    def test_build_panel_order_independent(self):
+        # Порядок строк входов не влияет на панель: решения сортируются по
+        # дате (`krm.build_decisions`), а as-of перебирает все точки ряда.
+        generator = random.Random(sc.SEED)
+        meetings = list(sc.FIXTURE_CANONICAL_MEETINGS)
+        key_rate = list(sc.FIXTURE_KEY_RATE_POINTS)
+        generator.shuffle(meetings)
+        generator.shuffle(key_rate)
+        channels = sc.fixture_channel_points()
+        shuffled_channels = {}
+        for name, points in channels.items():
+            shuffled_points = list(points)
+            generator.shuffle(shuffled_points)
+            shuffled_channels[name] = shuffled_points
+        # Перемешивание действительно изменило порядок (тест не вакуумный).
+        self.assertNotEqual(meetings, list(sc.FIXTURE_CANONICAL_MEETINGS))
+        self.assertNotEqual(key_rate, list(sc.FIXTURE_KEY_RATE_POINTS))
+
+        def fields(rows):
+            return [
+                (
+                    row.decision.meeting_date,
+                    row.emergency,
+                    row.explicit_shock,
+                    row.features,
+                    row.missing_count,
+                )
+                for row in rows
+            ]
+
+        self.assertEqual(
+            fields(sc.build_panel(meetings, key_rate, shuffled_channels, [])),
+            fields(fixture_panel()),
+        )
+
 
 class ChannelTransformTest(unittest.TestCase):
     """Преобразования каналов: as-of, г/г, суммы, курс и спред RUONIA."""
@@ -602,16 +637,37 @@ class AnomalyWeightsTest(unittest.TestCase):
         self.assertEqual(weights[:24], [1.0] * 24)
         self.assertEqual(len(weights), len(rows))
 
+    def test_walk_forward_order_independent(self):
+        # Обучение идёт в хронологическом порядке, а результат выровнен по
+        # входу: обратный порядок строк даёт те же значения после разворота.
+        rows = synthetic_panel(44, set(range(20, 32)), consistent_shocks=True)
+        reverse = rows[::-1]
+        self.assertEqual(
+            sc.walk_forward_weights(rows, 24, sc.FEATURES_CORE),
+            sc.walk_forward_weights(reverse, 24, sc.FEATURES_CORE)[::-1],
+        )
+        probabilities = sc.walk_forward_classifier(rows, 24, sc.FEATURES_CORE)
+        self.assertEqual(
+            probabilities,
+            sc.walk_forward_classifier(reverse, 24, sc.FEATURES_CORE)[::-1],
+        )
+        # Проверка не вакуумна: после min_train есть хотя бы один прогноз.
+        self.assertTrue(
+            any(probability is not None for probability in probabilities)
+        )
+
     def test_test_row_does_not_change_training_statistics(self):
         rows = synthetic_panel(48, {30, 34, 38, 42})
         before = sc.walk_forward_weights(rows, 24, sc.FEATURES_CORE)
-        mutated = with_feature(rows[-1], "pi_saar", 1e6)
+        # Мутируется СРЕДНЯЯ строка: прошлые веса не меняются, а последующие
+        # фолды обучаются уже на другой строке — эффект обязан быть непустым.
+        index = len(rows) // 2
+        mutated = with_feature(rows[index], "pi_saar", 1e6)
         after = sc.walk_forward_weights(
-            rows[:-1] + [mutated], 24, sc.FEATURES_CORE
+            rows[:index] + [mutated] + rows[index + 1 :], 24, sc.FEATURES_CORE
         )
-        # Своя строка влияет только на свой вес: статистики прошлых строк
-        # считаются по тем же прошлым заседаниям.
-        self.assertEqual(before[:-1], after[:-1])
+        self.assertEqual(before[:index], after[:index])
+        self.assertNotEqual(before[index + 1 :], after[index + 1 :])
 
     def test_explicit_shocks_are_downweighted(self):
         rows = synthetic_panel(48, {30, 34, 38, 42})
@@ -666,6 +722,22 @@ class ShockClassifierTest(unittest.TestCase):
         self.assertGreater(metrics["roc_auc"], 0.9)
         self.assertGreater(metrics["pr_auc"], 0.9)
         self.assertGreater(metrics["recall"], 0.5)
+
+    def test_test_label_does_not_affect_own_prediction(self):
+        # Метка тестовой строки не участвует в её собственном обучении: фолд
+        # для неё обучается на прошлых строках, а не на ней самой.
+        rows = synthetic_panel(48, {30, 34, 38, 42})
+        before = sc.walk_forward_classifier(rows, 24, sc.FEATURES_CORE)
+        mutated = dataclasses.replace(
+            rows[-1], explicit_shock=not rows[-1].explicit_shock
+        )
+        self.assertNotEqual(mutated.explicit_shock, rows[-1].explicit_shock)
+        after = sc.walk_forward_classifier(
+            rows[:-1] + [mutated], 24, sc.FEATURES_CORE
+        )
+        self.assertEqual(before[:-1], after[:-1])
+        self.assertIsNotNone(before[-1])
+        self.assertEqual(before[-1], after[-1])
 
     def test_degenerate_classifier_fold_is_skipped(self):
         no_positive = synthetic_panel(30, set())
