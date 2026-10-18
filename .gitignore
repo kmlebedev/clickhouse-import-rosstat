@@ -58,6 +58,13 @@ coverage.out
 /cb_comp_parity_predictions.csv
 /cb_comp_parity_result.json
 
+# Артефакты прокси-прогона CB_COMP (issue #190): отчёт, метрики и JSON.
+# Локальные и детерминированные при фиксированном сиде и одной БД; числа
+# фиксируются отчётом docs/research/2026-10-18-cb-comp-proxy.md и протоколом PR.
+/cb_comp_proxy_report.md
+/cb_comp_proxy_metrics.csv
+/cb_comp_proxy_results.json
+
 # Python-байткод от запусков скриптов (например `make key-rate-model` или тестов):
 # артефакт интерпретатора, в репозитории не хранится. Маска здесь безопасна —
 # под `__pycache__` коммитируемого не бывает (в отличие от артефактов прогона
