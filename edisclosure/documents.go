@@ -202,13 +202,28 @@ type existingDoc struct {
 // metadataMatches — совпали ли метаданные карточки (doc_type, period,
 // publication_date, url): ровно они, по спеке §5.3 п. 4, делают документ
 // изменившимся. Ticker/section/fileid — ключ, по которому строка найдена, их
-// сравнивать не нужно. Даты сравниваются как моменты (Equal): zero time равен
-// zero time, поэтому пустая дата в карточке не выглядит изменением.
+// сравнивать не нужно. publication_date — календарная дата (Date в ClickHouse),
+// поэтому сравнивается день в собственной локации значения, а не инстант:
+// драйвер возвращает Date в таймзоне сессии, а разбор карточки даёт UTC, и один
+// и тот же день иначе выглядел бы изменением (и гейт скачивал бы всё заново).
 func (d doc) metadataMatches(e existingDoc) bool {
 	return d.DocType == e.DocType &&
 		d.Period == e.Period &&
 		d.URL == e.URL &&
-		d.PublicationDate.Equal(e.PublicationDate)
+		sameCalendarDate(d.PublicationDate, e.PublicationDate)
+}
+
+// sameCalendarDate — совпадают ли календарные дни двух дат. Нулевое время
+// означает «даты нет» и совпадает только с нулевым; непустые даты сравниваются
+// по году/месяцу/дню в их собственных локациях (t.Date()), а не как инстанты:
+// ClickHouse Date и карточка источника несут календарный день, а не момент.
+func sameCalendarDate(a, b time.Time) bool {
+	if a.IsZero() || b.IsZero() {
+		return a.IsZero() && b.IsZero()
+	}
+	aYear, aMonth, aDay := a.Date()
+	bYear, bMonth, bDay := b.Date()
+	return aYear == bYear && aMonth == bMonth && aDay == bDay
 }
 
 // planFetches — план скачивания: документы, для которых нужен сетевой запрос.

@@ -73,9 +73,32 @@ func TestPlanFetchesKeepsOrder(t *testing.T) {
 	}
 }
 
+// TestPlanFetchesSameCalendarDateDifferentZone — существующая строка с тем же
+// днём, но в локации драйвера ClickHouse, и непустым archive_key не требует
+// сети: гейт сравнивает календарный день, а не инстант.
+func TestPlanFetchesSameCalendarDateDifferentZone(t *testing.T) {
+	msk := time.FixedZone("MSK", 3*60*60)
+	d := doc{Ticker: "PLZL", Section: "IFRS", FileID: "1943701", DocType: "x",
+		Period:          "2025",
+		URL:             "https://e-disclosure.ru/portal/FileLoad.ashx?Fileid=1943701",
+		PublicationDate: time.Date(2026, time.August, 31, 0, 0, 0, 0, time.UTC)}
+	existing := map[string]existingDoc{docKey(d): {
+		DocType:         d.DocType,
+		Period:          d.Period,
+		URL:             d.URL,
+		PublicationDate: time.Date(2026, time.August, 31, 0, 0, 0, 0, msk),
+		SHA256:          "abc",
+		ArchiveKey:      "edisclosure_documents/abc_x.zip",
+	}}
+	plan := planFetches([]doc{d}, existing, false, true)
+	if len(plan) != 0 {
+		t.Fatalf("planFetches = %d документов, want 0 (тот же день в другой локации)", len(plan))
+	}
+}
+
 // TestMetadataMatches — сравнение метаданных карточки: doc_type, period, url и
-// publication_date. Даты сравниваются как моменты, а zero time равен zero time:
-// пустая дата в карточке не должна выглядеть изменением.
+// publication_date. Даты сравниваются по календарному дню, а zero time равен
+// zero time: пустая дата в карточке не должна выглядеть изменением.
 func TestMetadataMatches(t *testing.T) {
 	pub := time.Date(2026, time.August, 31, 0, 0, 0, 0, time.UTC)
 	d := doc{DocType: "x", Period: "2025",
@@ -102,6 +125,39 @@ func TestMetadataMatches(t *testing.T) {
 		if d.metadataMatches(changed) {
 			t.Errorf("%s: изменение не замечено", name)
 		}
+	}
+}
+
+// TestMetadataMatchesSameCalendarDateDifferentZones — ClickHouse Date приходит
+// в локации драйвера, а карточка разбирается в UTC: один календарный день в
+// разных зонах обязан совпадать, иначе второй прогон скачивает всё заново.
+func TestMetadataMatchesSameCalendarDateDifferentZones(t *testing.T) {
+	msk := time.FixedZone("MSK", 3*60*60)
+	utcDay := time.Date(2026, time.August, 31, 0, 0, 0, 0, time.UTC)
+	mskDay := time.Date(2026, time.August, 31, 0, 0, 0, 0, msk)
+	d := doc{DocType: "x", Period: "2025",
+		URL:             "https://e-disclosure.ru/portal/FileLoad.ashx?Fileid=1943701",
+		PublicationDate: utcDay}
+
+	e := existingDoc{DocType: "x", Period: "2025", URL: d.URL, PublicationDate: mskDay}
+	if !d.metadataMatches(e) {
+		t.Error("один календарный день в разных локациях признан изменением")
+	}
+
+	e.PublicationDate = mskDay.AddDate(0, 0, 1)
+	if d.metadataMatches(e) {
+		t.Error("разные календарные дни признаны совпадением")
+	}
+
+	d.PublicationDate = time.Time{}
+	e.PublicationDate = time.Time{}
+	if !d.metadataMatches(e) {
+		t.Error("zero time не совпал с zero time")
+	}
+
+	e.PublicationDate = utcDay
+	if d.metadataMatches(e) {
+		t.Error("zero time совпал с непустой датой")
 	}
 }
 
