@@ -70,7 +70,7 @@
 **Files:** Modify `README.md`, `docs/DEVELOPMENT.md`, `docs/OPERATIONS.md`, `docs/LIMITATIONS.md`, `docs/ROADMAP_INFRA.md`.
 
 - [x] **Step 1: Документация.** README/DEVELOPMENT — `--quick`/`--jobs` и предупреждение «quick-числа не официальные»; OPERATIONS — `ML_LOG=1 make cpi-monthly ARGS="--sample long --quick --jobs 8"`; LIMITATIONS — quick не заменяет полный прогон; ROADMAP_INFRA §5 — статус `4.4` ✅ с числами бенчмарка.
-- [x] **Step 2: Приёмка.** `make all`; 4 Python-набора; `make docs-check`; быстрый long/short прогоны (jobs 8) с числами/временем; повтор (sha256); `--jobs 1` vs 8; полный без флагов — инварианты/прежние числа; `ML_LOG=1 --quick` виден в `v_ml_*`.
+- [x] **Step 2: Приёмка.** `make all`; 3 модельных набора (`cpi_monthly`/`cpi_nowcast`/`key_rate_model`) + docs-тесты (`make docs-check`); быстрый long/short прогоны с числами/временем; повтор (sha256); `--jobs 1` vs 8; полный без флагов — инварианты/прежние числа; `ML_LOG=1 --quick` виден в `v_ml_*`.
 - [x] **Step 3: Commit** `docs: cpi monthly quick runs`.
 
 ## Self-Review
