@@ -67,6 +67,23 @@ DOCUMENT_FIELDS = (
     "table_num",
 )
 
+# Поля содержания документа: по ним дубликат ключа либо схлопывается, либо
+# признаётся конфликтом. `size` и `table_num` — аудит источника (человекочитаемая
+# метка размера и номер строки таблицы), а не содержание, поэтому в сравнение не
+# входят.
+DEDUPE_FIELDS = (
+    "doc_type",
+    "period",
+    "basis_date",
+    "publication_date",
+    "url",
+    "company_id",
+    "fileid",
+)
+
+DATE_PATTERN = re.compile(r"[0-9]{2}\.[0-9]{2}\.[0-9]{4}")
+DATE_FORMAT = "%d.%m.%Y"
+
 
 def log(message: str) -> None:
     print(message, flush=True)
@@ -191,6 +208,9 @@ def validate_document(row: dict[str, str], companies: dict[str, str]) -> None:
     if re.fullmatch(r"[0-9]+", fileid) is None:
         raise ValueError(f"fileid {fileid!r}: только цифры")
 
+    _validate_date_field(row, "basis_date")
+    _validate_date_field(row, "publication_date")
+
     url = row.get("url", "")
     parsed = urlparse(url)
     if parsed.scheme != "https":
@@ -218,6 +238,24 @@ def validate_document(row: dict[str, str], companies: dict[str, str]) -> None:
         )
 
 
+def _validate_date_field(row: dict[str, str], field: str) -> None:
+    """Непустая дата карточки — строго существующая дата ``DD.MM.YYYY``.
+
+    Пустая строка — отсутствие даты (в таблицу уходит NULL). ``strptime`` один
+    не гарантирует двузначные день и месяц, поэтому формат проверяется
+    отдельным шаблоном, а существование даты (``31.02.2026``) — разбором.
+    """
+    value = row.get(field, "")
+    if value == "":
+        return
+    if DATE_PATTERN.fullmatch(value) is None:
+        raise ValueError(f"{field} {value!r}: ожидается формат ДД.ММ.ГГГГ")
+    try:
+        datetime.strptime(value, DATE_FORMAT)
+    except ValueError:
+        raise ValueError(f"{field} {value!r}: несуществующая дата") from None
+
+
 def document_key(row: dict[str, str]) -> tuple[str, str, str]:
     """Идентичность документа: ``(ticker, section, fileid)``."""
     return (
@@ -227,18 +265,30 @@ def document_key(row: dict[str, str]) -> tuple[str, str, str]:
     )
 
 
+def _document_content(row: dict[str, str]) -> tuple[str, ...]:
+    """Поля содержания документа — без аудита ``size``/``table_num``."""
+    return tuple(row.get(field, "") for field in DEDUPE_FIELDS)
+
+
 def dedupe_documents(rows: list[dict[str, str]]) -> list[dict[str, str]]:
-    """Схлопнуть одинаковые строки; расхождение полей при том же ключе — ошибка."""
+    """Схлопнуть одинаковые строки; расхождение содержания при том же ключе — ошибка.
+
+    ``size`` и ``table_num`` — аудит источника: одинаковые документы с разными
+    метками размера или номера строки обязаны схлопываться, а не падать.
+    """
     seen: dict[tuple[str, str, str], dict[str, str]] = {}
     result: list[dict[str, str]] = []
     for row in rows:
         key = document_key(row)
         previous = seen.get(key)
         if previous is not None:
-            if previous == row:
+            if _document_content(previous) == _document_content(row):
                 continue
-            fields = sorted(set(previous) | set(row))
-            different = [name for name in fields if previous.get(name) != row.get(name)]
+            different = [
+                name
+                for name in DEDUPE_FIELDS
+                if previous.get(name, "") != row.get(name, "")
+            ]
             raise ValueError(
                 f"конфликт документа {key}: различаются поля "
                 f"{', '.join(different)}"
@@ -248,27 +298,42 @@ def dedupe_documents(rows: list[dict[str, str]]) -> list[dict[str, str]]:
     return result
 
 
-def empty_sections_by_company(
+def ensure_section_has_documents(
+    section: str, rows: list[dict[str, str]]
+) -> None:
+    """Страница с ``files-table`` обязана дать хотя бы один документ.
+
+    Пустой раздел e-disclosure — это редирект на карточку компании
+    (``classify_section_page`` → ``empty``), а не таблица без строк. Ноль строк
+    при найденной ``files-table`` означает сломанную разметку или неполную
+    загрузку: записать такой раздел как «пустой» нельзя, иначе сломанный сбор
+    выглядел бы как пустой источник.
+    """
+    if not rows:
+        raise ValueError(
+            f"раздел {section}: страница с files-table не содержит документов — "
+            "сломанная разметка или неполная загрузка"
+        )
+
+
+def empty_sections_audit(
     companies: list[dict[str, str]],
     sections: list[str],
-    documents: list[dict[str, str]],
+    empty_pages: set[tuple[str, str]],
 ) -> list[dict[str, Any]]:
-    """Пустые разделы по компаниям — для аудита манифеста.
+    """Пустые разделы — только реальные редиректы на карточку компании.
 
-    Порядок компаний и разделов сохраняется; компании без пустых разделов
-    в результат не попадают.
+    ``empty_pages`` — пары ``(ticker, section)``, для которых
+    ``classify_section_page`` вернул ``empty``. Отсутствие документов в
+    найденной ``files-table`` сюда не попадает: это ошибка
+    ``ensure_section_has_documents``, а не пустой раздел.
     """
-    present: dict[str, set[str]] = {
-        company.get("ticker", ""): set() for company in companies
-    }
-    for row in documents:
-        ticker = row.get("ticker", "")
-        if ticker in present:
-            present[ticker].add(row.get("section", ""))
     result: list[dict[str, Any]] = []
     for company in companies:
         ticker = company.get("ticker", "")
-        empty = [section for section in sections if section not in present[ticker]]
+        empty = [
+            section for section in sections if (ticker, section) in empty_pages
+        ]
         if empty:
             result.append({"ticker": ticker, "sections": empty})
     return result
@@ -418,79 +483,95 @@ def run_collect(
 ) -> None:
     companies: list[dict[str, str]] = []
     documents: list[dict[str, str]] = []
-    with sync_playwright() as playwright:
-        context = launch_context(playwright)
-        try:
-            page = _first_page(context)
-            for ticker in tickers:
-                company_id = COMPANIES[ticker]
-                url = company_url(company_id)
-                log(f"компания {ticker} (id={company_id})")
-                page.goto(url, wait_until="domcontentloaded", timeout=60_000)
-                html = wait_for_markers(page, CONTENT_MARKERS, wait_seconds, url)
-                name = parse_company_name(html)
-                if not name:
-                    log("  не удалось прочитать название компании")
-                companies.append(
-                    {
-                        "ticker": ticker,
-                        "company_id": company_id,
-                        "name": name,
-                        "url": url,
-                    }
-                )
-                company_document_count = 0
-                for section in sections:
-                    section_url = files_url(company_id, section)
-                    log(f"  раздел {section}: {section_url}")
-                    page.goto(
-                        section_url, wait_until="domcontentloaded", timeout=60_000
+    # empty_pages — только реальные редиректы на карточку компании (classify →
+    # empty). Отсутствие строк в найденной files-table сюда не попадает: это
+    # ошибка ensure_section_has_documents, а не пустой раздел.
+    empty_pages: set[tuple[str, str]] = set()
+    try:
+        with sync_playwright() as playwright:
+            context = launch_context(playwright)
+            try:
+                page = _first_page(context)
+                for ticker in tickers:
+                    company_id = COMPANIES[ticker]
+                    url = company_url(company_id)
+                    log(f"компания {ticker} (id={company_id})")
+                    page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+                    html = wait_for_markers(page, CONTENT_MARKERS, wait_seconds, url)
+                    name = parse_company_name(html)
+                    if not name:
+                        log("  не удалось прочитать название компании")
+                    companies.append(
+                        {
+                            "ticker": ticker,
+                            "company_id": company_id,
+                            "name": name,
+                            "url": url,
+                        }
                     )
-                    html = wait_for_markers(
-                        page,
-                        (FILES_TABLE_MARKER, COMPANY_CARD_MARKER),
-                        wait_seconds,
-                        section_url,
-                        timeout_error=(
-                            f"неизвестная страница {section_url}: нет ни "
-                            "files-table, ни карточки компании "
-                            f"за {wait_seconds} с (возможно, капча не решена) — "
-                            "манифест не записан"
-                        ),
-                    )
-                    try:
-                        kind = classify_section_page(html)
-                    except ValueError as exc:
-                        raise SystemExit(
-                            f"{exc}: {section_url}; манифест не записан"
-                        ) from None
-                    if kind == "empty":
-                        # Пустой раздел e-disclosure редиректит на карточку компании.
-                        log("    документов нет (пустой раздел)")
-                        continue
-                    rows = parse_documents_table(html, section, ticker)
-                    for row in rows:
-                        row["company_id"] = company_id
-                        validate_document(row, COMPANIES)
-                    log(f"    документов: {len(rows)}")
-                    documents.extend(rows)
-                    company_document_count += len(rows)
-                try:
+                    company_document_count = 0
+                    for section in sections:
+                        section_url = files_url(company_id, section)
+                        log(f"  раздел {section}: {section_url}")
+                        page.goto(
+                            section_url,
+                            wait_until="domcontentloaded",
+                            timeout=60_000,
+                        )
+                        html = wait_for_markers(
+                            page,
+                            (FILES_TABLE_MARKER, COMPANY_CARD_MARKER),
+                            wait_seconds,
+                            section_url,
+                            timeout_error=(
+                                f"неизвестная страница {section_url}: нет ни "
+                                "files-table, ни карточки компании "
+                                f"за {wait_seconds} с (возможно, капча не решена) — "
+                                "манифест не записан"
+                            ),
+                        )
+                        try:
+                            kind = classify_section_page(html)
+                        except ValueError as exc:
+                            raise SystemExit(
+                                f"{exc}: {section_url}; манифест не записан"
+                            ) from None
+                        if kind == "empty":
+                            # Пустой раздел e-disclosure редиректит на карточку
+                            # компании; только этот случай попадает в аудит.
+                            log("    документов нет (пустой раздел)")
+                            empty_pages.add((ticker, section))
+                            continue
+                        try:
+                            rows = parse_documents_table(html, section, ticker)
+                            ensure_section_has_documents(section, rows)
+                        except ValueError as exc:
+                            raise SystemExit(
+                                f"{exc}: {section_url}; манифест не записан"
+                            ) from None
+                        for row in rows:
+                            row["company_id"] = company_id
+                            validate_document(row, COMPANIES)
+                        log(f"    документов: {len(rows)}")
+                        documents.extend(rows)
+                        company_document_count += len(rows)
                     ensure_company_has_documents({ticker: company_document_count})
-                except ValueError as exc:
-                    raise SystemExit(f"{exc}; манифест не записан") from None
-        finally:
-            context.close()
+            finally:
+                context.close()
 
-    unique = dedupe_documents(documents)
-    if len(unique) != len(documents):
-        log(f"схлопнуто дубликатов: {len(documents) - len(unique)}")
-    generated_at = datetime.now().astimezone().isoformat(timespec="seconds")
-    manifest = build_manifest(companies, sections, unique, generated_at)
-    manifest["empty_sections"] = empty_sections_by_company(
-        companies, sections, unique
-    )
-    write_output(out_dir, manifest, unique)
+        unique = dedupe_documents(documents)
+        if len(unique) != len(documents):
+            log(f"схлопнуто дубликатов: {len(documents) - len(unique)}")
+        generated_at = datetime.now().astimezone().isoformat(timespec="seconds")
+        manifest = build_manifest(companies, sections, unique, generated_at)
+        manifest["empty_sections"] = empty_sections_audit(
+            companies, sections, empty_pages
+        )
+        write_output(out_dir, manifest, unique)
+    except ValueError as exc:
+        # Сломанный files-table, невалидная строка, конфликт дубликатов или
+        # пустая компания — чистый выход без traceback: манифест не записан.
+        raise SystemExit(f"{exc}; манифест не записан") from None
     log(f"готово: документов {len(unique)} -> {out_dir}")
 
 

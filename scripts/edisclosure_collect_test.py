@@ -88,6 +88,29 @@ class ValidationTest(unittest.TestCase):
     def test_valid_row_accepted(self):
         ec.validate_document(self._row(), ec.COMPANIES)
 
+    def test_valid_dates_accepted(self):
+        ec.validate_document(
+            self._row(basis_date="28.08.2026", publication_date="31.08.2026"),
+            ec.COMPANIES,
+        )
+
+    def test_empty_dates_accepted(self):
+        ec.validate_document(
+            self._row(basis_date="", publication_date=""), ec.COMPANIES
+        )
+
+    def test_slash_date_rejected(self):
+        with self.assertRaisesRegex(ValueError, "basis_date"):
+            ec.validate_document(
+                self._row(basis_date="31/08/2026"), ec.COMPANIES
+            )
+
+    def test_nonexistent_date_rejected(self):
+        with self.assertRaisesRegex(ValueError, "publication_date"):
+            ec.validate_document(
+                self._row(publication_date="32.13.2026"), ec.COMPANIES
+            )
+
     def test_wrong_host_rejected(self):
         row = {"ticker": "PLZL", "section": "IFRS", "fileid": "1", "doc_type": "x",
                "period": "", "basis_date": "", "publication_date": "",
@@ -148,6 +171,24 @@ class ValidationTest(unittest.TestCase):
         rows = ec.dedupe_documents([a, dict(a)])
         self.assertEqual(rows, [a])
 
+    def test_dedupe_ignores_size_and_table_num(self):
+        # size и table_num — аудит источника, а не содержание документа.
+        a = {"ticker": "PLZL", "section": "IFRS", "fileid": "1943701",
+             "doc_type": "A", "period": "2025", "basis_date": "",
+             "publication_date": "", "size": "zip, 1 КБ", "table_num": "1",
+             "url": "https://e-disclosure.ru/portal/FileLoad.ashx?Fileid=1943701"}
+        b = dict(a, size="zip, 2 КБ", table_num="7")
+        self.assertEqual(ec.dedupe_documents([a, b]), [a])
+
+    def test_dedupe_rejects_content_conflict(self):
+        a = {"ticker": "PLZL", "section": "IFRS", "fileid": "1943701",
+             "doc_type": "A", "period": "2025", "basis_date": "",
+             "publication_date": "", "size": "zip, 1 КБ", "table_num": "1",
+             "url": "https://e-disclosure.ru/portal/FileLoad.ashx?Fileid=1943701"}
+        b = dict(a, size="zip, 2 КБ", table_num="2", period="2024")
+        with self.assertRaisesRegex(ValueError, "period"):
+            ec.dedupe_documents([a, b])
+
     def test_manifest_count(self):
         row = {"ticker": "PLZL", "section": "IFRS", "fileid": "1943701",
                "doc_type": "A", "period": "2025", "basis_date": "",
@@ -166,21 +207,21 @@ class ValidationTest(unittest.TestCase):
         self.assertEqual(m["sections"], list(ec.SECTIONS))
         self.assertEqual(m["companies"][0]["company_id"], "7832")
 
-    def test_empty_sections_by_company(self):
+    def test_empty_sections_audit_only_redirects(self):
         companies = [{"ticker": "PLZL"}, {"ticker": "SBER"}]
-        docs = [{"ticker": "PLZL", "section": "IFRS"}]
-        got = ec.empty_sections_by_company(companies, list(ec.SECTIONS), docs)
-        self.assertEqual(got, [{"ticker": "PLZL", "sections": ["RAS", "AFFILIATES", "AGM"]},
-                               {"ticker": "SBER", "sections": list(ec.SECTIONS)}])
-
-    def test_empty_sections_omit_complete_company(self):
-        companies = [{"ticker": "PLZL"}, {"ticker": "SBER"}]
-        docs = [{"ticker": "PLZL", "section": section} for section in ec.SECTIONS]
-        docs.append({"ticker": "SBER", "section": "IFRS"})
-        got = ec.empty_sections_by_company(companies, list(ec.SECTIONS), docs)
+        empty_pages = {("PLZL", "RAS"), ("PLZL", "AFFILIATES"), ("PLZL", "AGM")}
+        got = ec.empty_sections_audit(companies, list(ec.SECTIONS), empty_pages)
         self.assertEqual(
             got,
-            [{"ticker": "SBER", "sections": ["RAS", "AFFILIATES", "AGM"]}],
+            [{"ticker": "PLZL", "sections": ["RAS", "AFFILIATES", "AGM"]}],
+        )
+
+    def test_empty_sections_audit_omits_company_without_redirects(self):
+        # Отсутствие документов не выводится из данных: пустой аудит — пустой
+        # список, а не «все разделы, где нет строк».
+        companies = [{"ticker": "PLZL"}]
+        self.assertEqual(
+            ec.empty_sections_audit(companies, list(ec.SECTIONS), set()), []
         )
 
     def test_company_without_documents_rejected(self):
@@ -203,6 +244,42 @@ class ValidationTest(unittest.TestCase):
             "documents",
         )
 
+    def test_files_table_without_links_rejected(self):
+        # files-table есть, но строк со ссылкой нет: это сломанная разметка,
+        # а не пустой раздел.
+        html = (
+            '<table class="files-table"><tr><th>№</th><th>Тип</th></tr>'
+            "<tr><td>1</td><td>a</td><td>b</td><td>c</td><td>d</td>"
+            "<td>без ссылки</td></tr></table>"
+        )
+        rows = ec.parse_documents_table(html, "IFRS", "PLZL")
+        self.assertEqual(rows, [])
+        with self.assertRaisesRegex(ValueError, "files-table"):
+            ec.ensure_section_has_documents("IFRS", rows)
+
+    def test_header_only_table_rejected(self):
+        html = (
+            '<table class="files-table"><tr><th>№</th><th>Тип</th>'
+            "<th>Период</th><th>Дата</th><th>Публикация</th><th>Файл</th>"
+            "</tr></table>"
+        )
+        rows = ec.parse_documents_table(html, "IFRS", "PLZL")
+        self.assertEqual(rows, [])
+        with self.assertRaisesRegex(ValueError, "IFRS"):
+            ec.ensure_section_has_documents("IFRS", rows)
+
+    def test_nonempty_section_accepted(self):
+        ec.ensure_section_has_documents("IFRS", [{"fileid": "1"}])
+
+    def test_company_card_is_empty_not_error(self):
+        # Редирект на карточку компании — пустой раздел: строки не разбираются
+        # и ensure_section_has_documents не вызывается.
+        html = (
+            '<table class="company-table"><tr><td>Полное наименование компании'
+            "</td><td>ПАО «Полюс»</td></tr></table>"
+        )
+        self.assertEqual(ec.classify_section_page(html), "empty")
+
     def test_unknown_section_page_rejected(self):
         with self.assertRaisesRegex(ValueError, "неизвестная страница"):
             ec.classify_section_page("<html><body>challenge</body></html>")
@@ -216,8 +293,9 @@ class ValidationTest(unittest.TestCase):
             [{"ticker": "PLZL", "company_id": "7832", "name": "ПАО «Полюс»",
               "url": "https://e-disclosure.ru/portal/company.aspx?id=7832"}],
             list(ec.SECTIONS), [row], "2026-10-18T12:00:00+03:00")
-        manifest["empty_sections"] = ec.empty_sections_by_company(
-            [{"ticker": "PLZL"}], list(ec.SECTIONS), [row]
+        manifest["empty_sections"] = ec.empty_sections_audit(
+            [{"ticker": "PLZL"}], list(ec.SECTIONS),
+            {("PLZL", "RAS"), ("PLZL", "AFFILIATES"), ("PLZL", "AGM")},
         )
         with tempfile.TemporaryDirectory() as tmp:
             out_dir = pathlib.Path(tmp) / "nested" / "edisclosure"

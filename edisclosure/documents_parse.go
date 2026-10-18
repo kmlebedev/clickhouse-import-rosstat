@@ -148,10 +148,12 @@ func parseManifest(data []byte) (manifest, error) {
 
 // parseDocuments разбирает documents.jsonl и валидирует каждую строку по
 // контракту спеки §4.2. Ошибки называют номер строки файла (1-based). Дубликаты
-// ключа (ticker, section, fileid) схлопываются только при полном совпадении
-// разобранных полей; расхождение — ошибка: какая из версий документа настоящая,
-// разбор не знает. document_count манифеста сверяется с числом уникальных
-// документов — ровно так его считает коллектор после дедупликации.
+// ключа (ticker, section, fileid) схлопываются при совпадении содержания
+// (doc_type, period, basis_date, publication_date, url, company_id, fileid);
+// `size` и `table_num` — аудит источника и на схлопывание не влияют. Расхождение
+// содержания — ошибка: какая из версий документа настоящая, разбор не знает.
+// document_count манифеста сверяется с числом уникальных документов — ровно так
+// его считает коллектор после дедупликации.
 func parseDocuments(data []byte, m manifest) ([]doc, error) {
 	companies := make(map[string]company, len(m.Companies))
 	for _, c := range m.Companies {
@@ -276,7 +278,7 @@ func validateDocumentURL(fileID, rawURL string) error {
 	if u.User != nil {
 		return fmt.Errorf("url %q: userinfo в URL запрещён", rawURL)
 	}
-	if u.Host != edisclosureDocumentHost {
+	if !strings.EqualFold(u.Host, edisclosureDocumentHost) {
 		return fmt.Errorf("url %q: host должен быть %s", rawURL, edisclosureDocumentHost)
 	}
 	if u.Path != edisclosureDocumentPath {
@@ -295,19 +297,18 @@ func docKey(d doc) string {
 	return d.Ticker + "\x00" + d.Section + "\x00" + d.FileID
 }
 
-// sameDoc — полное совпадение разобранных документов, кроме размера из карточки
-// (Size импортёр игнорирует). Даты сравниваются как моменты времени.
+// sameDoc — совпадение содержания документа: только поля карточки, а не аудит.
+// `size` и `table_num` — метки источника (человекочитаемый размер и номер
+// строки таблицы); они не содержание документа, и одинаковые строки с разными
+// метками обязаны схлопываться. Даты сравниваются как моменты времени.
 func sameDoc(a, b doc) bool {
-	return a.Ticker == b.Ticker &&
-		a.CompanyID == b.CompanyID &&
-		a.Section == b.Section &&
+	return a.CompanyID == b.CompanyID &&
 		a.DocType == b.DocType &&
 		a.Period == b.Period &&
 		a.BasisDate.Equal(b.BasisDate) &&
 		a.PublicationDate.Equal(b.PublicationDate) &&
-		a.FileID == b.FileID &&
 		a.URL == b.URL &&
-		a.TableNum == b.TableNum
+		a.FileID == b.FileID
 }
 
 // allowedSection — входит ли раздел в объявленный набор спеки §4.2.

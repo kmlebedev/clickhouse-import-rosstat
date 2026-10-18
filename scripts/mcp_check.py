@@ -1406,8 +1406,14 @@ async def check(params, server_log):
             # их колонок (урок bold), и «sha256 где-то в ответе» дало бы ложное OK. Имя витрины
             # уже подтверждено запросом к ней выше, поэтому отсутствие карточки здесь — неполный
             # ответ list_tables (или выключенные detailed columns), а не «витрины нет».
+            # list_tables запрашивается отдельно с фильтром like: общий вызов выше отдаёт
+            # первую страницу (50 объектов), и карточка витрины могла не попасть в неё —
+            # фильтр по имени и page_size=500 убирают зависимость от пагинации.
+            edisclosure_tables_raw = text(await session.call_tool(
+                "list_tables", {"database": "default", "like": "v_edisclosure_documents",
+                                "page_size": 500}))
             try:
-                listed_tables = json.loads(tables)
+                listed_tables = json.loads(edisclosure_tables_raw)
             except ValueError:
                 listed_tables = None
             edisclosure_listed = None

@@ -223,6 +223,19 @@ func TestParseDocumentsDuplicates(t *testing.T) {
 			}
 		}
 	})
+	t.Run("разные size и table_num схлопываются", func(t *testing.T) {
+		// size и table_num — аудит источника, а не содержание документа: две
+		// строки одного fileid с разными метками обязаны схлопнуться.
+		sameContent := strings.Replace(validDocumentJSON, `"fileid":"1943701"`,
+			`"fileid":"1943701","size":"zip, 1 КБ","table_num":"7"`, 1)
+		docs, err := parseDocuments([]byte(validDocumentJSON+"\n"+sameContent+"\n"), testManifest(t))
+		if err != nil {
+			t.Fatalf("parseDocuments: %v", err)
+		}
+		if len(docs) != 1 {
+			t.Errorf("документов %d, want 1 (аудит-поля не различают документ)", len(docs))
+		}
+	})
 }
 
 // TestValidateDocumentURL — строгая форма ссылки на файл (спека §4.2): только
@@ -237,12 +250,19 @@ func TestValidateDocumentURL(t *testing.T) {
 		"валидный": {
 			url: "https://e-disclosure.ru/portal/FileLoad.ashx?Fileid=1943701",
 		},
+		"верхний регистр host": {
+			url: "https://E-DISCLOSURE.RU/portal/FileLoad.ashx?Fileid=1943701",
+		},
 		"http": {
 			url:     "http://e-disclosure.ru/portal/FileLoad.ashx?Fileid=1943701",
 			wantErr: "https",
 		},
 		"порт": {
 			url:     "https://e-disclosure.ru:8443/portal/FileLoad.ashx?Fileid=1943701",
+			wantErr: "e-disclosure.ru",
+		},
+		"порт 443": {
+			url:     "https://e-disclosure.ru:443/portal/FileLoad.ashx?Fileid=1943701",
 			wantErr: "e-disclosure.ru",
 		},
 		"пустой порт": {

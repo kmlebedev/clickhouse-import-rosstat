@@ -39,6 +39,16 @@ func TestImportersRegistry(t *testing.T) {
 	if len(steps) != 1 || steps[0][1] != "edisclosure_documents" {
 		t.Fatalf("шаги dagu = %v, want один edisclosure_documents", steps)
 	}
+	// Шаг расписания читает снапшот по абсолютному пути (dagu запускает шаг не
+	// из корня репозитория) и мягко пропускает не доставленный каталог.
+	for _, want := range []string{
+		"EDISCLOSURE_INPUT_DIR=/root/dagu/build/edisclosure",
+		"EDISCLOSURE_ALLOW_MISSING=1",
+	} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("dagu/edisclosure.yaml не содержит %q", want)
+		}
+	}
 }
 
 // TestEdisclosureDdlShape держит дословную копию спеки §5.2: движок с версией

@@ -148,6 +148,13 @@ func TestValidateBody(t *testing.T) {
 		{"только пробелы", []byte(" \n\t\r"), true},
 		{"HTML с пробелами", []byte("  <!DOCTYPE html><html><body>"), true},
 		{"HTML без пробелов", []byte("<html>"), true},
+		{"BOM + HTML", []byte("\xef\xbb\xbf<html>"), true},
+		{"пробелы + BOM + HTML", []byte(" \n\xef\xbb\xbf  <html>"), true},
+		{"только BOM", []byte("\xef\xbb\xbf"), true},
+		{"UTF-16 LE BOM", []byte{0xFF, 0xFE, '<', 0x00, 'h', 0x00}, true},
+		{"UTF-16 BE BOM", []byte{0xFE, 0xFF, 0x00, '<', 0x00, 'h'}, true},
+		{"BOM + zip", []byte("\xef\xbb\xbfPK\x03\x04data"), false},
+		{"BOM + пробелы + zip", []byte("\xef\xbb\xbf \nPK\x03\x04data"), false},
 		{"zip", []byte("PK\x03\x04data"), false},
 		{"rar", []byte("Rar!\x1a\x07data"), false},
 		{"pdf", []byte("%PDF-1.7"), false},
@@ -166,5 +173,8 @@ func TestValidateBody(t *testing.T) {
 	}
 	if err := validateBody([]byte(" <html>")); err == nil || !strings.Contains(err.Error(), "HTML") {
 		t.Fatalf("ошибка %v не называет HTML", err)
+	}
+	if err := validateBody([]byte{0xFF, 0xFE, '<', 0x00}); err == nil || !strings.Contains(err.Error(), "UTF-16") {
+		t.Fatalf("ошибка %v не называет UTF-16", err)
 	}
 }
