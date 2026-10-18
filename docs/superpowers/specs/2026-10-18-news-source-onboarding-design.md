@@ -124,6 +124,10 @@ DDL не меняется. Обновляются только коммента�
 
 `scripts/mcp_check.py` получает один агрегированный чек по шести новым каналам: сообщения есть и хотя бы одна строка размечена. `v_news_flash` уже выдан `kimi_reader`; `sql/mcp_kimi_reader.sql` не меняется. Docs — по `sync-readme-architecture`: ARCHITECTURE §2/§6.1/§6.3/§7, README, IMPORTERS, OPERATIONS, LIMITATIONS; роадмапы `infra/2.3` и follow-up 4.
 
+### 4.9 RED baseline скила (2026-10-18)
+
+Read-only `plan`-субагент без скила составил план добавления `markettwits` и нашёл базовые шаги, но часть важного вынес только в «что легко пропустить»: явную проверку `scripts/mcp_check.py`, правило `Closes` только для полного пакета, `uniqExact` вместо `count()` в `v_news_flash`, семантику `0` vs `NULL` между витринами, inline-комментарии DDL, docs `DEVELOPMENT.md`/`ROADMAP_KEY_RATE.md`, точный предикат bootstrap по транспорту, актуальную модель из разметки, `fixtureInventory`, `make mcp-user` не нужен, tombstone/title v1 в ограничениях. Скил делает эти пункты обязательными шагами; GREEN-прогон с текстом скила назвал все 11 шагов и bootstrap.
+
 ## 5. Критерий приёмки
 
 1. Скил существует, виден в project skills, проверен RED/GREEN-сценарием; bootstrap-разметки — обязательный пункт.
