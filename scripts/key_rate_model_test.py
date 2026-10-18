@@ -951,24 +951,25 @@ class TestConsensusBenchmark(unittest.TestCase):
         self.assertIsNone(aggregate.dm_stat)
         self.assertIsNone(aggregate.dm_p)
 
-    def test_aggregate_consensus_zero_variance_uses_dm_convention(self):
-        # Одинаковые ошибки: различию потерь нечем делиться — конвенция
-        # `eval_utils` `(0.0, 1.0)`, а не None и не исключение.
+    def test_aggregate_consensus_zero_variance_has_no_dm(self):
+        # Одинаковые ошибки: различию потерь нечем делиться — DM не определён.
         same = [
             self.observation("7-9", 10.0, 10.0),
             self.observation("7-9", -20.0, -20.0),
         ]
         aggregate = km.aggregate_consensus(same, "7-9")
-        self.assertEqual((aggregate.dm_stat, aggregate.dm_p), (0.0, 1.0))
-        # Постоянная ненулевая разница потерь — преимущество бесспорно:
-        # `(−inf, 0.0)` (hold-ошибка 12 против консенсусной 10).
+        self.assertIsNone(aggregate.dm_stat)
+        self.assertIsNone(aggregate.dm_p)
+        # Постоянная ненулевая разница потерь (hold-ошибка 12 против
+        # консенсусной 10) — тоже `None`: p=0.0 при ±inf заявлял бы
+        # доказанное превосходство, которого малая выборка не подтверждает.
         shifted = [
             self.observation("7-9", 10.0, 12.0),
             self.observation("7-9", 10.0, 12.0),
         ]
         aggregate = km.aggregate_consensus(shifted, "7-9")
-        self.assertEqual(aggregate.dm_stat, -math.inf)
-        self.assertEqual(aggregate.dm_p, 0.0)
+        self.assertIsNone(aggregate.dm_stat)
+        self.assertIsNone(aggregate.dm_p)
 
 
 class TestRows(unittest.TestCase):
