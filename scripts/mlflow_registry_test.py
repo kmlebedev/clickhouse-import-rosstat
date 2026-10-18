@@ -127,16 +127,26 @@ class FakeClient:
         return [call for call in self.calls if call[0] == name]
 
 
-def _fake_mlflow(client):
-    """`sys.modules`-двойник пакета mlflow с работоспособным `MlflowClient`."""
+def _patch_mlflow(make_client):
+    """`sys.modules`-двойник mlflow: клиент и `exceptions.MlflowException`."""
     module = types.ModuleType("mlflow")
+    exceptions = types.ModuleType("mlflow.exceptions")
+    exceptions.MlflowException = FakeMlflowException
+    module.MlflowClient = make_client
+    module.exceptions = exceptions
+    return patch.dict(
+        sys.modules, {"mlflow": module, "mlflow.exceptions": exceptions}
+    )
+
+
+def _fake_mlflow(client):
+    """Двойник mlflow с клиентом, запоминающим tracking URI."""
 
     def make_client(tracking_uri=None):
         client.tracking_uri = tracking_uri
         return client
 
-    module.MlflowClient = make_client
-    return patch.dict(sys.modules, {"mlflow": module})
+    return _patch_mlflow(make_client)
 
 
 def _seed(client, name, versions):
@@ -154,27 +164,30 @@ class RegisterVersionTest(unittest.TestCase):
             version = mr.register_version(client, "cpi_nowcast", RUN_ID)
 
         self.assertEqual(version.version, "1")
-        self.assertIn(("get_registered_model", "cpi_nowcast"), client.calls)
-        self.assertIn(("create_registered_model", "cpi_nowcast"), client.calls)
-        self.assertIn(
-            (
-                "create_model_version",
-                "cpi_nowcast",
-                f"runs:/{RUN_ID}/model",
-                RUN_ID,
-            ),
+        # Точный порядок: отсутствующая модель создаётся, затем версия, и
+        # только после неё выставляется `challenger`.
+        self.assertEqual(
             client.calls,
+            [
+                ("get_registered_model", "cpi_nowcast"),
+                ("create_registered_model", "cpi_nowcast"),
+                (
+                    "create_model_version",
+                    "cpi_nowcast",
+                    f"runs:/{RUN_ID}/model",
+                    RUN_ID,
+                ),
+                (
+                    "set_registered_model_alias",
+                    "cpi_nowcast",
+                    "challenger",
+                    "1",
+                ),
+            ],
         )
-        self.assertIn(
-            (
-                "set_registered_model_alias",
-                "cpi_nowcast",
-                "challenger",
-                "1",
-            ),
-            client.calls,
+        self.assertEqual(
+            client.aliases[("cpi_nowcast", "challenger")], version.version
         )
-        self.assertEqual(client.aliases[("cpi_nowcast", "challenger")], "1")
         self.assertEqual(
             stdout.getvalue().strip(),
             "registered cpi_nowcast v1; alias challenger -> v1",
@@ -197,7 +210,24 @@ class RegisterVersionTest(unittest.TestCase):
             version = mr.register_version(client, "cpi_nowcast", OTHER_RUN_ID)
 
         self.assertEqual(version.version, "2")
-        self.assertEqual(client.calls_named("create_registered_model"), [])
+        self.assertEqual(
+            client.calls,
+            [
+                ("get_registered_model", "cpi_nowcast"),
+                (
+                    "create_model_version",
+                    "cpi_nowcast",
+                    f"runs:/{OTHER_RUN_ID}/model",
+                    OTHER_RUN_ID,
+                ),
+                (
+                    "set_registered_model_alias",
+                    "cpi_nowcast",
+                    "challenger",
+                    "2",
+                ),
+            ],
+        )
         self.assertEqual(client.aliases[("cpi_nowcast", "challenger")], "2")
 
     def test_missing_model_detected_by_error_code(self):
@@ -210,19 +240,23 @@ class RegisterVersionTest(unittest.TestCase):
             [("create_registered_model", "model")],
         )
 
-    def test_missing_model_detected_by_message(self):
+    def test_message_only_not_found_is_not_treated_as_missing(self):
+        # «Not Found» от прокси/HTTP без `RESOURCE_DOES_NOT_EXIST` — не повод
+        # создавать модель: ошибка должна проброситься, а не притвориться
+        # отсутствующим объектом registry.
         class MessageOnlyClient(FakeClient):
             def get_registered_model(self, name):
                 self._record("get_registered_model", name)
                 raise FakeMlflowException(
-                    f"Registered model {name!r} does not exist"
+                    f"Registered model {name!r} not found"
                 )
 
         client = MessageOnlyClient()
-        with redirect_stdout(io.StringIO()):
+        with redirect_stdout(io.StringIO()), \
+                self.assertRaises(FakeMlflowException):
             mr.register_version(client, "model", RUN_ID)
 
-        self.assertEqual(len(client.calls_named("create_registered_model")), 1)
+        self.assertEqual(client.calls_named("create_registered_model"), [])
 
     def test_unexpected_lookup_error_is_not_treated_as_missing(self):
         class BrokenClient(FakeClient):
@@ -338,9 +372,10 @@ class ListModelsTest(unittest.TestCase):
             out,
         )
 
-    def test_falls_back_to_get_model_version_by_alias(self):
+    def test_falls_back_only_when_aliases_attribute_is_absent(self):
         client = FakeClient()
-        # Старая схема: атрибута `aliases` нет вовсе; у второй версии он пуст.
+        # Старая схема: у первой версии атрибута `aliases` нет вовсе.
+        # MLflow 3.x у версии без алиасов отдаёт `[]` — fallback не нужен.
         _seed(
             client,
             "cpi_nowcast",
@@ -355,17 +390,29 @@ class ListModelsTest(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             rows = mr.list_models(client)
 
-        self.assertEqual([row["aliases"] for row in rows], [
-            ["champion"], ["challenger"],
-        ])
-        self.assertIn(
-            ("get_model_version_by_alias", "cpi_nowcast", "champion"),
-            client.calls,
+        self.assertEqual([row["aliases"] for row in rows], [["champion"], []])
+        # Fallback — только для версии 1 (атрибут отсутствует), по одному
+        # запросу на алиас; версия 2 с `aliases=[]` лишних запросов не делает.
+        self.assertEqual(
+            client.calls_named("get_model_version_by_alias"),
+            [
+                ("get_model_version_by_alias", "cpi_nowcast", "champion"),
+                ("get_model_version_by_alias", "cpi_nowcast", "challenger"),
+            ],
         )
-        self.assertIn(
-            ("get_model_version_by_alias", "cpi_nowcast", "challenger"),
-            client.calls,
-        )
+
+    def test_empty_aliases_do_not_trigger_fallback(self):
+        client = FakeClient()
+        _seed(client, "model", [FakeVersion(1, run_id=RUN_ID, aliases=[])])
+        # Даже если сервер умеет отдать версию по алиасу, пустой список
+        # `aliases` — это ответ MLflow 3.x «алиасов нет», а не повод для N+1.
+        client.aliases[("model", "champion")] = "1"
+
+        with redirect_stdout(io.StringIO()):
+            rows = mr.list_models(client)
+
+        self.assertEqual(rows[0]["aliases"], [])
+        self.assertEqual(client.calls_named("get_model_version_by_alias"), [])
 
     def test_missing_alias_in_fallback_is_ignored(self):
         client = FakeClient()
@@ -375,6 +422,20 @@ class ListModelsTest(unittest.TestCase):
             rows = mr.list_models(client)
 
         self.assertEqual(rows[0]["aliases"], [])
+
+    def test_filter_string_escapes_quotes_and_backslashes(self):
+        name = "weird'name\\path"
+        client = FakeClient()
+        _seed(client, name, [])
+        seen = []
+        client.search_model_versions = (
+            lambda filter_string: seen.append(filter_string) or []
+        )
+
+        with redirect_stdout(io.StringIO()):
+            mr.list_models(client, name=name)
+
+        self.assertEqual(seen, ["name='weird\\'name\\\\path'"])
 
     def test_filter_by_name_uses_get_registered_model(self):
         client = FakeClient()
@@ -572,16 +633,54 @@ class MainTest(unittest.TestCase):
         self.assertIn("does not exist", err)
         self.assertNotIn("Traceback", err)
 
+    def test_register_error_exits_one_with_concise_message(self):
+        class BrokenVersionClient(FakeClient):
+            def create_model_version(self, name, source, run_id=None):
+                self._record("create_model_version", name, source, run_id)
+                raise FakeMlflowException("cannot register version")
+
+        client = BrokenVersionClient()
+
+        code, out, err = self._run(
+            client,
+            ["register", "--run-id", RUN_ID, "--name", "cpi_nowcast"],
+        )
+
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("cannot register version", err)
+        self.assertNotIn("Traceback", err)
+        self.assertEqual(client.calls_named("set_registered_model_alias"), [])
+
+    def test_os_error_exits_one(self):
+        class OfflineClient(FakeClient):
+            def search_registered_models(self):
+                raise ConnectionError("connection refused")
+
+        code, out, err = self._run(OfflineClient(), ["list"])
+
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("connection refused", err)
+
+    def test_programming_error_is_not_swallowed(self):
+        class BuggyClient(FakeClient):
+            def search_registered_models(self):
+                raise TypeError("bug")
+
+        client = BuggyClient()
+        with _fake_mlflow(client), redirect_stdout(io.StringIO()), \
+                redirect_stderr(io.StringIO()), self.assertRaises(TypeError):
+            mr.main(["list"])
+
     def test_client_creation_error_exits_one(self):
         def broken_factory(tracking_uri=None):
-            raise RuntimeError("cannot connect")
+            raise ConnectionError("cannot connect")
 
-        module = types.ModuleType("mlflow")
-        module.MlflowClient = broken_factory
         stdout = io.StringIO()
         stderr = io.StringIO()
-        with patch.dict(sys.modules, {"mlflow": module}), \
-                redirect_stdout(stdout), redirect_stderr(stderr):
+        with _patch_mlflow(broken_factory), redirect_stdout(stdout), \
+                redirect_stderr(stderr):
             code = mr.main(["list"])
 
         self.assertEqual(code, 1)

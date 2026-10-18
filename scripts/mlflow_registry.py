@@ -31,26 +31,31 @@ CHALLENGER_ALIAS = "challenger"
 CHAMPION_ALIAS = "champion"
 FALLBACK_ALIASES = (CHAMPION_ALIAS, CHALLENGER_ALIAS)
 
-# Код MLflow для отсутствующего объекта. Только он (или консервативный
-# текстовый маркер) означает «модели/алиаса нет», а не сбой сервера/сети.
+# Код MLflow для отсутствующего объекта. Только он означает «модели/алиаса
+# нет»: текст «not found» может прийти от прокси/HTTP 404 и не должен
+# превращаться в отсутствующий объект registry.
 NOT_FOUND_ERROR_CODE = "RESOURCE_DOES_NOT_EXIST"
 
 MODEL_COLUMNS = ("name", "version", "status", "aliases", "run_id")
 
 
 def _is_not_found(exc: Exception) -> bool:
-    """`True` только для «объект не найден», не для прочих ошибок MLflow.
+    """`True` только для «объект не найден» по коду ошибки MLflow.
 
     `get_registered_model` и `get_model_version_by_alias` поднимают
-    `MlflowException` и при отсутствии объекта, и при HTTP-ошибке. Различаем
-    их по `error_code`; запасная проверка текста узкая, чтобы сетевая ошибка
-    не превратилась в «модели нет».
+    `MlflowException` и при отсутствии объекта, и при HTTP-ошибке. Признак
+    отсутствия — только `error_code == RESOURCE_DOES_NOT_EXIST`; свободный
+    текст ошибки (например, «Not Found» от прокси) отсутствием не считается.
     """
     code = getattr(exc, "error_code", None)
-    if code is not None and NOT_FOUND_ERROR_CODE in str(code):
-        return True
-    text = str(exc).lower()
-    return "does not exist" in text or "not found" in text
+    if code is None:
+        return False
+    # MLflow может отдать строку или ErrorCode.RESOURCE_DOES_NOT_EXIST.
+    text = str(code)
+    return (
+        text == NOT_FOUND_ERROR_CODE
+        or text.endswith("." + NOT_FOUND_ERROR_CODE)
+    )
 
 
 def register_version(client, name: str, run_id: str):
@@ -104,9 +109,13 @@ def _version_sort_key(version):
 
 
 def _version_aliases(client, name: str, version) -> list:
-    """Алиасы версии: `version.aliases` (MLflow 3.x) или fallback по одному."""
+    """Алиасы версии из `version.aliases`; fallback — только для старого API.
+
+    В MLflow 3.x атрибут есть всегда, у версии без алиасов он равен `[]`;
+    запросы `get_model_version_by_alias` в этом случае не нужны (N+1).
+    """
     aliases = getattr(version, "aliases", None)
-    if aliases:
+    if aliases is not None:
         return list(aliases)
 
     found = []
@@ -141,6 +150,16 @@ def format_models(rows: list) -> str:
     return "\n".join(lines)
 
 
+def _model_versions_filter(name: str) -> str:
+    """`filter_string` MLflow с экранированием имени модели.
+
+    Обратный слэш и одинарная кавычка экранируются, иначе имя вида
+    `it's` разрывает `name='...'`.
+    """
+    escaped = name.replace("\\", "\\\\").replace("'", "\\'")
+    return f"name='{escaped}'"
+
+
 def list_models(client, name=None) -> list:
     """Печатает и возвращает версии моделей с их алиасами.
 
@@ -158,7 +177,9 @@ def list_models(client, name=None) -> list:
 
     rows = []
     for model_name in names:
-        versions = client.search_model_versions(f"name='{model_name}'")
+        versions = client.search_model_versions(
+            _model_versions_filter(model_name)
+        )
         for version in sorted(versions, key=_version_sort_key):
             rows.append(
                 {
@@ -222,20 +243,28 @@ def _parse_args(argv=None) -> argparse.Namespace:
 
 
 def main(argv=None) -> int:
-    """CLI; 0 — успех, 1 — ошибка MLflow/импорта (кратко, без traceback)."""
+    """CLI; 0 — успех, 1 — ожидаемая ошибка MLflow/сети/импорта.
+
+    Перехватываются только `MlflowException` и `OSError` (в него входят
+    сетевые `requests`-ошибки). Ошибки программирования (TypeError,
+    AttributeError) пробрасываются traceback-ом, а не маскируются под
+    нормальный отказ MLflow.
+    """
     args = _parse_args(argv)
 
     # Ленивый импорт: модуль и чистые функции работают без установленного
-    # mlflow, тесты подменяют пакет через sys.modules.
+    # mlflow, тесты подменяют пакет через sys.modules. Это граница
+    # зависимости, поэтому здесь допустим широкий `except`.
     try:
         from mlflow import MlflowClient
+        from mlflow.exceptions import MlflowException
     except Exception as exc:
         print(f"mlflow недоступен: {exc}", file=sys.stderr)
         return 1
 
     try:
         client = MlflowClient(tracking_uri=args.tracking_uri)
-    except Exception as exc:
+    except (MlflowException, OSError) as exc:
         print(f"MLflow-клиент не создан: {exc}", file=sys.stderr)
         return 1
 
@@ -246,7 +275,7 @@ def main(argv=None) -> int:
             promote_version(client, args.name, args.version, args.alias)
         else:
             list_models(client, args.name)
-    except Exception as exc:
+    except (MlflowException, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
