@@ -516,7 +516,7 @@ ML_LOG=1 make cpi-nowcast
 ML_LOG=1 make key-rate-model
 ```
 Expected:
-- `ml_registry` creates/ensures tables and 3 views; repeat is a no-op.
+- `ml_registry` creates/ensures tables and 3 views; a repeat is idempotent (safe; views are recreated, data is unchanged).
 - `cpi-nowcast` writes one `ml_runs` row and `2 952`-style `ml_predictions` rows (actual count from the run); `unit='pp'`.
 - `key-rate-model` writes one `ml_runs` row and fold rows; `unit='bp'`.
 - `v_ml_runs`/`v_ml_leaderboard`/`v_ml_error_by_fold` show the runs; raw tables deny `kimi_reader`.
@@ -536,7 +536,7 @@ Expected: `ПРОВЕРКА ПРОЙДЕНА`.
 
 - [ ] **Step 7: Update roadmap status and write the acceptance protocol**
 
-In `docs/ROADMAP_INFRA.md`, set `4.1` to `✅ сделан этим PR` with the commands/results from Step 6 (numbers, run IDs, view counts, no-op repeat). Add the plan link back to the row. Keep the status as `In Review` semantics until merge.
+In `docs/ROADMAP_INFRA.md`, set `4.1` to `✅ сделан этим PR` with the commands/results from Step 6 (numbers, run IDs, view counts, idempotent repeat). Add the plan link back to the row. Keep the status as `In Review` semantics until merge.
 
 - [ ] **Step 8: Commit**
 
