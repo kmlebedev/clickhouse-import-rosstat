@@ -133,9 +133,9 @@ walk-forward, обязательные бенчмарки B1–B3 (B3 — в д�
   статьи; отчёт и `ML_LOG` помечены `quick`, числа не официальные (спека
   `2026-10-18-ml-quick-runs`);
 * `make cpi-monthly ARGS="--quick --jobs 8"` — тот же quick с пулом процессов
-  по фолдам (`ProcessPoolExecutor`, CatBoost `thread_count=1`); `--jobs 0/1` —
-  последовательно, `N>1` без `--quick` отвергается, полный прогон не
-  параллелится;
+  по фолдам (`ProcessPoolExecutor`, CatBoost `thread_count=1`); `--jobs`
+  допустим только с `--quick` (`0/1` — последовательно, `N>1` — пул), полный
+  прогон без флагов не параллелится и остаётся байт-в-байт прежним;
 * `make cpi-monthly ARGS="--export-fixtures DIR"` — пересборка CSV-фикстур.
 """
 
@@ -150,7 +150,7 @@ import os
 import statistics
 import sys
 import warnings
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -1231,8 +1231,19 @@ def walk_forward_parallel(
     фолда (спека quick §2.2). `jobs > 1` — `ProcessPoolExecutor` со `spawn`
     (macOS без глобального состояния), `max_workers=min(jobs, cpu_count())`;
     `jobs == 1` — последовательный `walk_forward` (эквивалент для тестов).
-    Результаты собираются в порядке фолдов и `models`, поэтому порядок
-    `Prediction` детерминирован. `skipped`/`notes`/`weights` — необязательные
+
+    Параллельный путь поддерживает ТОЛЬКО глобальный `MODELS`: воркер получает
+    имена, а функции резолвит в дочернем процессе (spawn не может pickle'ить
+    произвольные замыкания). Поэтому каждая пара `имя → функция` сверяется с
+    `MODELS` ДО создания пула: несовпадение — `ValueError`, а не молчаливая
+    подмена модели или `KeyError` в воркере.
+
+    Задачи отправляются через `submit`, результаты собираются `as_completed` и
+    раскладываются по `index`; сборка `Prediction` идёт по возрастанию индекса,
+    поэтому порядок фолдов/моделей детерминирован независимо от порядка
+    завершения процессов. При исключении пул гасится с
+    `cancel_futures=True` (ещё не начатые задачи отменяются), а исходное
+    исключение пробрасывается. `skipped`/`notes`/`weights` — необязательные
     словари, которые заполняет вызывающий (как у `walk_forward`).
     """
     _check_walk_forward_window(start, embargo)
@@ -1247,40 +1258,65 @@ def walk_forward_parallel(
             weights.update(_window_weights(models))
         return predictions
 
+    for name, fit_predict in models.items():
+        if MODELS.get(name) is not fit_predict:
+            raise ValueError(
+                f"walk-forward parallel: модель {name!r} не совпадает с "
+                f"глобальной MODELS — параллельный путь поддерживает только "
+                f"глобальный MODELS (воркер получает имена и резолвит функции "
+                f"в дочернем процессе)"
+            )
+
     model_names = list(models)
     counts = skipped if skipped is not None else {}
     note_totals = notes if notes is not None else {}
     last_weights = weights if weights is not None else {}
-    tasks = (
-        (index, rows[: index - embargo], rows[index], model_names)
-        for index in range(start, len(rows))
-    )
     worker_count = min(int(jobs), os.cpu_count() or 1)
-    predictions = []
+    folds: dict[int, dict] = {}
     context = multiprocessing.get_context("spawn")
-    with ProcessPoolExecutor(
-        max_workers=worker_count, mp_context=context
-    ) as pool:
-        for index, fold in pool.map(_run_fold_worker, tasks):
-            row = rows[index]
-            for name in model_names:
-                result = fold[name]
-                if result["skipped"]:
-                    counts[name] = counts.get(name, 0) + 1
-                    continue
-                for key, count in result["notes"].items():
-                    totals = note_totals.setdefault(name, {})
-                    totals[key] = totals.get(key, 0) + int(count)
-                if result["weights"]:
-                    last_weights[name] = tuple(result["weights"])
-                predictions.append(
-                    Prediction(
-                        month=row.month,
-                        model=name,
-                        y_true=float(row.y[TARGET_ALL]),
-                        y_pred=float(result["pred"]),
-                    )
+    pool = ProcessPoolExecutor(max_workers=worker_count, mp_context=context)
+    try:
+        futures = {
+            pool.submit(
+                _run_fold_worker,
+                (index, rows[: index - embargo], rows[index], model_names),
+            ): index
+            for index in range(start, len(rows))
+        }
+        for future in as_completed(futures):
+            index, fold = future.result()
+            folds[index] = fold
+    except BaseException:
+        # Ошибка фолда не должна ждать всю очередь: отменяем ещё не начатые
+        # задачи и пробрасываем исходное исключение (не подменяя его ошибкой
+        # shutdown).
+        pool.shutdown(wait=False, cancel_futures=True)
+        raise
+    else:
+        pool.shutdown(wait=True)
+
+    predictions = []
+    for index in sorted(folds):
+        row = rows[index]
+        fold = folds[index]
+        for name in model_names:
+            result = fold[name]
+            if result["skipped"]:
+                counts[name] = counts.get(name, 0) + 1
+                continue
+            for key, count in result["notes"].items():
+                totals = note_totals.setdefault(name, {})
+                totals[key] = totals.get(key, 0) + int(count)
+            if result["weights"]:
+                last_weights[name] = tuple(result["weights"])
+            predictions.append(
+                Prediction(
+                    month=row.month,
+                    model=name,
+                    y_true=float(row.y[TARGET_ALL]),
+                    y_pred=float(result["pred"]),
                 )
+            )
     return predictions
 
 
@@ -1334,12 +1370,13 @@ def evaluate_windows(
     `quick=True, jobs>1` — пул процессов по фолдам (`walk_forward_parallel`,
     спека `2026-10-18-ml-quick-runs` §2.2); иначе — прежний последовательный
     `walk_forward`. Quick-путь фиксирует `thread_count=1` у CatBoost (один fit —
-    один поток), полный путь без флагов `thread_count` не задаёт. Полный режим
-    пул не использует: `jobs>1` без `quick` — ошибка.
+    один поток), полный путь без флагов `thread_count` не задаёт. `jobs` вне
+    quick допустим только как `0`: `jobs != 0` без `quick` — ошибка (флаг
+    `--jobs` существует только для quick), полный прогон не параллелится.
     """
     if jobs < 0:
         raise ValueError(f"evaluate_windows: jobs={jobs} — отрицательное число процессов")
-    if jobs > 1 and not quick:
+    if jobs != 0 and not quick:
         raise ValueError(
             f"evaluate_windows: jobs={jobs} без quick — полный прогон не параллелится"
         )
@@ -3551,12 +3588,13 @@ def run_summary(
     `fixed_split` не вызывается (`split_predictions=None`), отчёт и `ML_LOG`
     помечают quick. Модели, признаки, seed и полный путь без флага не меняются.
 
-    `jobs` — число процессов пула фолдов (только с `quick`): `0/1` —
-    последовательно, `N>1` — `ProcessPoolExecutor(max_workers=min(N,
+    `jobs` — число процессов пула фолдов (флаг существует только с `quick`):
+    `0/1` — последовательно, `N>1` — `ProcessPoolExecutor(max_workers=min(N,
     cpu_count()))` со `spawn`; в quick CatBoost строится с `thread_count=1`
-    (и последовательно, и в воркерах). `jobs>1` без quick — ошибка: полный
+    (и последовательно, и в воркерах). `jobs != 0` без quick — ошибка: полный
     прогон не параллелится и остаётся байт-в-байт прежним. `ML_LOG` пишет
-    `config.jobs`, а `run_name` при `jobs>1` получает сегмент `jobsN`.
+    фактическое `config.jobs`, а `run_name` при `jobs>1` получает сегмент
+    `jobsN`.
 
     Загрузка рядов, `build_sample` и `assert_months_purged` — контракт Task 1;
     walk-forward считает бенчмарки B1–B3 и четыре CatBoost-варианта (`MODELS`)
@@ -3588,8 +3626,8 @@ def run_summary(
     start = resolve_start(sample, start)
     if jobs < 0:
         raise ValueError(f"--jobs {jobs}: отрицательное число процессов")
-    if jobs > 1 and not quick:
-        raise ValueError("--jobs N>1 требует --quick: полный прогон не параллелится")
+    if jobs != 0 and not quick:
+        raise ValueError("--jobs требует --quick: полный прогон не параллелится")
     out_dir = Path(out_dir) if out_dir is not None else ARTIFACTS_DIR
     today = today or date.today()
     targets = load_targets()
@@ -3731,7 +3769,7 @@ def run_summary(
             "только основное окно; robustness и фиксированный сплит статьи "
             "не считаются",
         )
-        if jobs:
+        if jobs > 1:
             _field(
                 "--jobs:",
                 f"{jobs} (пул фолдов, CatBoost thread_count="
@@ -3997,17 +4035,17 @@ def main(argv: Optional[list] = None) -> int:
         "--jobs",
         type=int,
         metavar="N",
-        default=0,
-        help="число процессов пула фолдов: 0/1 — последовательно, N>1 — только "
-             "с --quick (ProcessPoolExecutor по фолдам, CatBoost "
-             "thread_count=1); без --quick N>1 отвергается, полный прогон не "
-             "параллелится (спека 2026-10-18-ml-quick-runs §2.2)",
+        default=None,
+        help="число процессов пула фолдов (флаг допустим только с --quick): "
+             "0/1 — последовательно, N>1 — ProcessPoolExecutor по фолдам с "
+             "CatBoost thread_count=1; без --quick флаг отвергается, полный "
+             "прогон не параллелится (спека 2026-10-18-ml-quick-runs §2.2)",
     )
     args = parser.parse_args(argv)
-    if args.jobs < 0:
+    if args.jobs is not None and args.jobs < 0:
         parser.error(f"--jobs {args.jobs}: число процессов не может быть отрицательным")
-    if args.jobs > 1 and not args.quick:
-        parser.error("--jobs N>1 требует --quick: полный прогон не параллелится")
+    if args.jobs is not None and not args.quick:
+        parser.error("--jobs требует --quick: полный прогон не параллелится")
     if args.export_fixtures:
         return export_fixtures(Path(args.export_fixtures))
     return run_summary(
@@ -4015,7 +4053,7 @@ def main(argv: Optional[list] = None) -> int:
         embargo_months=args.embargo_months,
         sample=args.sample,
         quick=args.quick,
-        jobs=args.jobs,
+        jobs=args.jobs or 0,
     )
 
 
