@@ -147,7 +147,7 @@ make mlflow-down
 | `make build` | бинарник `linux/amd64` в `build/` |
 | `make import STAT=<имя>` | локальный прогон импортёра |
 | `make cpi-nowcast` | nowcast ИПЦ; `ML_LOG=1 MLFLOW=1` включает журнал и MLflow |
-| `make key-rate-model` / `make key-rate-forecast-log` | прогноз ставки (локальные артефакты) / запись прогноза в `forecast_log` через ingest; `ML_LOG=1 MLFLOW=1` включает журнал и MLflow |
+| `make key-rate-model` / `make key-rate-forecast-log` | прогноз ставки (локальные артефакты; консенсус-бенчмарк №4 — годовая средняя + B4-проекция) / запись прогноза в `forecast_log` через ingest; `ML_LOG=1 MLFLOW=1` включает журнал и MLflow |
 | `make cpi-monthly` | месячный nowcast ИПЦ с МП (ML-трек v2); долгая выборка — `ARGS="--sample long"`; журнал — `ML_LOG=1`; быстрый экспериментальный режим — `ARGS="--quick"` и `ARGS="--quick --jobs N"` (в разы быстрее; **quick-числа неофициальные**, полный прогон без флагов не меняется) |
 | `make key-rate-llm-forecast` | экспериментальный LLM-прогноз ключевой ставки: as-of снимок, три повтора, медиана/разброс, локальные артефакты; в ClickHouse не пишет; `ARGS="--log"` готовит payload для #127 |
 | `make mlflow-up` / `make mlflow-down` / `make mlflow-status` | локальный MLflow-сервер (SQLite + артефакты, `127.0.0.1:5000`) |
