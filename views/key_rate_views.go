@@ -82,7 +82,8 @@ var keyRateDashboardView = util.View{
     ),
     ipc AS (
         SELECT
-            if(count() = 12, (exp(sum(log(toFloat64(percent) / 100))) - 1) * 100,
+            if(count() = 12 AND uniqExact(toStartOfMonth(date)) = 12,
+               (exp(sum(log(toFloat64(percent) / 100))) - 1) * 100,
                CAST(NULL AS Nullable(Float64))) AS ipc_yoy,
             maxOrNull(date) AS as_of
         FROM (
@@ -197,7 +198,7 @@ SELECT * FROM (
         CAST(NULL AS Nullable(Date)) AS target_date,
         'таргет ЦБ 4 %: значение выше — проинфляционно' AS threshold,
         toUInt8(coalesce(ipc.ipc_yoy > 4, 0)) AS flag,
-        toUInt8OrDefault(if(ipc.as_of IS NULL, 1, ipc.as_of < today() - 45), 1) AS stale,
+        toUInt8OrDefault(if(ipc.ipc_yoy IS NULL OR ipc.as_of IS NULL, 1, ipc.as_of < today() - 45), 1) AS stale,
         CAST(NULL AS Nullable(Float64)) AS error_bp,
         '' AS probabilities,
         '' AS model,
@@ -415,7 +416,8 @@ SELECT * FROM (
         'ofz_slope_10y_1y_bp' AS indicator,
         round((ofz.ofz_10y - ofz.ofz_1y) * 100, 1) AS value,
         'б.п.' AS unit,
-        least(ofz.as_1y, ofz.as_10y) AS as_of,
+        if(ofz.as_1y IS NULL OR ofz.as_10y IS NULL, CAST(NULL AS Nullable(Date)),
+           least(ofz.as_1y, ofz.as_10y)) AS as_of,
         CAST(NULL AS Nullable(Date)) AS target_date,
         '< 0 — инверсия кривой' AS threshold,
         toUInt8(coalesce(ofz.ofz_10y - ofz.ofz_1y < 0, 0)) AS flag,
@@ -465,13 +467,17 @@ SELECT * FROM (
     SELECT
         'divergence' AS contour,
         if(d.track = 'cbr_rate:taylor', 'taylor_vs_market_bp', 'ordered_logit_vs_market_bp') AS indicator,
-        if(d.target_date = d.next_date, round((d.predicted - d.market) * 100, 2), CAST(NULL AS Nullable(Float64))) AS value,
+        if(d.target_date = d.next_date AND d.market_date = d.next_date,
+           round((d.predicted - d.market) * 100, 2), CAST(NULL AS Nullable(Float64))) AS value,
         'б.п.' AS unit,
         d.as_of AS as_of,
         d.target_date AS target_date,
         '|расхождение| ≥ 25 б.п. — контуры расходятся на шаг' AS threshold,
-        toUInt8(coalesce(d.target_date = d.next_date AND abs(round((d.predicted - d.market) * 100, 2)) >= 25, 0)) AS flag,
-        toUInt8OrDefault(d.predicted IS NULL OR d.market IS NULL OR d.target_date IS NULL OR d.next_date IS NULL OR d.target_date != d.next_date, 1) AS stale,
+        toUInt8(coalesce(d.target_date = d.next_date AND d.market_date = d.next_date
+                         AND abs(round((d.predicted - d.market) * 100, 2)) >= 25, 0)) AS flag,
+        toUInt8OrDefault(d.predicted IS NULL OR d.market IS NULL OR d.target_date IS NULL
+                         OR d.next_date IS NULL OR d.market_date IS NULL
+                         OR d.target_date != d.next_date OR d.market_date != d.next_date, 1) AS stale,
         CAST(NULL AS Nullable(Float64)) AS error_bp,
         '' AS probabilities,
         '' AS model,
@@ -484,6 +490,7 @@ SELECT * FROM (
             if(fl.metric = '', CAST(NULL AS Nullable(Date)), toNullable(fl.target_date)) AS target_date,
             if(fl.metric = '', CAST(NULL AS Nullable(Date)), toNullable(fl.forecast_date)) AS as_of,
             kf.settle AS market,
+            kf.last_trade AS market_date,
             ct.next_date AS next_date
         FROM (
             SELECT arrayJoin(['cbr_rate:taylor', 'cbr_rate:ordered_logit']) AS track
@@ -572,12 +579,12 @@ SELECT * FROM (
 	Columns: map[string]string{
 		"contour":        "Контур сигнала: spot — текущая ключевая ставка; fundamental — макро-контур (ИПЦ, базовая SAAR-инфляция, инфляционные и ценовые ожидания, деловой климат); market — рыночный контур (вменённая ставка KEYRATE, кривая ОФЗ, RUONIA); divergence — расхождение прогноза и рынка; forecast — журнал прогнозов cbr_rate:*; calendar — ближайшее заседание Совета директоров ЦБ",
 		"indicator":      "Код сигнала внутри контура; у forecast — metric из forecast_log (cbr_rate:taylor, cbr_rate:ordered_logit, cbr_rate:llm, будущий cbr_rate:ml), у divergence — taylor_vs_market_bp или ordered_logit_vs_market_bp, у calendar — next_meeting",
-		"value":          "Значение сигнала в unit; у next_meeting — сколько календарных дней осталось до заседания; NULL — данных нет (пустая таблица-источник, отсутствующий тенор ОФЗ, нет прогноза или рынка); у divergence — NULL, если target_date прогноза не совпадает с ближайшим заседанием: число против чужой серии не показывается",
+		"value":          "Значение сигнала в unit; у next_meeting — сколько календарных дней осталось до заседания; NULL — данных нет (пустая таблица-источник, отсутствующий тенор ОФЗ, нет прогноза или рынка); у divergence — NULL, если target_date прогноза или дата экспирации серии не совпадают с ближайшим заседанием: число против чужой серии не показывается",
 		"unit":           "Единица значения: % годовых (ставка, вменённая ставка, ОФЗ, RUONIA, прогноз), % г/г (ИПЦ), % г/г (SAAR) (базовая инфляция), % (инфляционные ожидания), пункты (мониторинг предприятий), б.п. (изменения и расхождения), контрактов (объём и открытые позиции KEYRATE), дней (до заседания)",
 		"as_of":          "Дата значения: последнее наблюдение, торговый день или дата прогноза; у next_meeting — today(), потому что значение пересчитывается в момент запроса; NULL — данных нет",
 		"target_date":    "Дата заседания Совета директоров ЦБ: для market — экспирация ближайшей будущей серии KEYRATE, для forecast — target_date прогноза, для divergence — target_date прогноза, для calendar — ближайшее будущее заседание; NULL у spot и fundamental",
 		"threshold":      "Текст порога или условия; — (длинное тире) — числового порога нет. flag читать вместе с threshold: он значит «условие выполнено», а не «хорошо»",
-		"flag":           "1 — условие threshold выполнено; 0 — не выполнено или порога нет: ipc_yoy > 4 %; base_ipc_saar > 4 % два месяца подряд (SAAR); infl_exp_expected выросла к прошлой волне; keyrate_volume = 0 (сделок не было); ofz_slope_10y_1y_bp < 0 (инверсия кривой); |divergence| ≥ 25 б.п. (только когда target_date прогноза совпадает с ближайшим заседанием); next_meeting ≤ 3 дней",
+		"flag":           "1 — условие threshold выполнено; 0 — не выполнено или порога нет: ipc_yoy > 4 %; base_ipc_saar > 4 % два месяца подряд (SAAR); infl_exp_expected выросла к прошлой волне; keyrate_volume = 0 (сделок не было); ofz_slope_10y_1y_bp < 0 (инверсия кривой); |divergence| ≥ 25 б.п. (только когда и target_date прогноза, и дата экспирации серии совпадают с ближайшим заседанием); next_meeting ≤ 3 дней",
 		"stale":          "1 — значения нет или оно устарело по естественному циклу: daily-ряды (ставка, KEYRATE, ОФЗ, RUONIA) — старше 7 дней; monthly-ряды (ИПЦ, базовая инфляция, ожидания, мониторинг) — старше 45 дней; forecast — target_date в прошлом и actual IS NULL либо forecast_date старше 45 дней; calendar — нет будущего заседания; divergence — нет прогноза или рынка либо target_date прогноза не совпадает с ближайшим заседанием. У ofz_curve stale = 1 может означать разрыв импорта, а не отсутствие кривой",
 		"error_bp":       "Ошибка прогноза в базисных пунктах из forecast_log.error_bp = (predicted − actual) × 100; NULL — прогноз ещё не свёрён с фактом или строка не forecast-контура",
 		"probabilities":  "JSON распределения cut/hold/hike из forecast_log.probabilities; пустая строка — не forecast-строка",
