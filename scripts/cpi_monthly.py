@@ -34,20 +34,25 @@ walk-forward, обязательные бенчмарки B1–B3 (B3 — в д�
   `price_expectations_sa_chg`/`business_climate_sa_chg` = `M−1 − M−2`;
   квартальные `capacity_utilization_sa`/`headcount_expectations_sa` — последняя
   опубликованная точка ≤ cutoff, перенос вперёд;
-* **выборка** (`build_sample`) — кандидаты только внутри `SAMPLE_FIRST`…
-  `SAMPLE_LAST` (2013-10…2026-08; старт задаёт ключевая ставка — 2013-09-17,
-  конец — последний месяц с МП). Строки ОБЩИЕ для обоих наборов: месяц без
-  любого обязательного признака (включая МП) попадает в «пропущенные» с
-  причиной и отсутствует в списке целиком — иначе «с МП» и «без МП»
-  сравнивались бы на разных фолдах. `feature_names(with_mp=False)` выбирает
-  базовые признаки, `feature_names(with_mp=True)` — базовые + 7 МП;
+* **выборка** (`build_sample`) — кандидаты только внутри `SAMPLE_BOUNDS[sample]`
+  (`--sample short|long`, default short). `short` — 155 месяцев 2013-10…2026-08:
+  старт задаёт ключевая ставка — 2013-09-17, конец — последний месяц с МП.
+  `long` (§8.2) — кандидаты 2002-02…2026-08 (295 месяцев; фактические строки
+  начинаются с первого месяца, где собраны МП и FAO): старт на месяц позже
+  начала МП, а `usd_mm`/`key_rate` до глубины своих рядов получают NaN, а не
+  пропуск.
+  Строки ОБЩИЕ для обоих наборов: месяц без любого обязательного признака
+  (включая МП) попадает в «пропущенные» с причиной и отсутствует в списке
+  целиком — иначе «с МП» и «без МП» сравнивались бы на разных фолдах.
+  `feature_names(with_mp=False)` выбирает базовые признаки,
+  `feature_names(with_mp=True)` — базовые + 7 МП;
 * **walk-forward** (`walk_forward`, §4.1) — расширяющееся окно: тест — строка
   `i`, обучение — `[0 … i−1−embargo]` (только прошлое). Первый тест — строка
-  `start` (при 24 — 25-й месяц). `DegenerateWindowError` модели — пропуск фолда
-  ЭТОЙ модели со счётчиком, а не падение прогона; `fold_notes` модели
-  агрегируется по окну («недосход N из M»). Окна прогона (`window_specs`):
-  основное (`--start`, `--embargo-months`) плюс робастность — старт 48 и
-  эмбарго 1;
+  `start` (при 24 — 25-й месяц; long по умолчанию стартует с 48, §8.2).
+  `DegenerateWindowError` модели — пропуск фолда ЭТОЙ модели со счётчиком, а не
+  падение прогона; `fold_notes` модели агрегируется по окну («недосход N из M»).
+  Окна прогона (`window_specs`): основное (`--start`, `--embargo-months`) плюс
+  робастность — старт 48 и эмбарго 1;
 * **бенчмарки** (§3.4, фиксируются до результатов) — B1 `predict_last`
   (`y_lag1`), B2 `fit_ar1` (OLS `y_M` на `y_{M−1}` + 11 дамми месяца, HAC
   `maxlags=3`, минимум 14 строк) и B3 `fit_enet_base`/`fit_enet_mp`
@@ -89,11 +94,13 @@ walk-forward, обязательные бенчмарки B1–B3 (B3 — в д�
   CatBoost, сплит статьи, «2022 исключён», живой nowcast, «что не проверено»)
   и CSV `cpi_monthly_predictions.csv` (`month, window, model, y_true, y_pred`).
 
-**NaN-политика:** в признаках этого среза NaN не возникает — отсутствие любой
-обязательной точки выбрасывает месяц с причиной. B3 на всякий случай импутирует
-NaN медианой ОБУЧАЮЩЕГО окна (колонка без наблюдений — 0.0: после
-стандартизации вклада не даёт), `StandardScaler` подгоняется только на train.
-CatBoost получает NaN как есть.
+**NaN-политика:** обязательны `y_lag1`, `y_lag2`, `fao_mm` и признаки МП —
+отсутствие любой такой точки выбрасывает месяц с причиной. Контрольные
+`usd_mm`/`key_rate` в long-sample до глубины рядов — NaN (§8.2), а не причина
+пропуска: B3 импутирует NaN медианой ОБУЧАЮЩЕГО окна (колонка без наблюдений —
+0.0: после стандартизации вклада не даёт), `StandardScaler` подгоняется только
+на train; CatBoost получает NaN как есть. В short-выборке NaN в этих двух
+колонках не возникает — число NaN печатается в консоли и отчёте (0/0).
 
 **As-of — приближение, а не point-in-time слой** (спека §2.6): точные даты
 публикаций и ревизии рядов не учтены; PIT-слой — отдельный пункт фазы 4.
@@ -111,8 +118,12 @@ CatBoost получает NaN как есть.
   0), walk-forward B1–B3 и четырёх CatBoost-вариантов по окнам
   24/48/embargo 1, RMSE/MAE, веса NNLS и артефакты `cpi_monthly_report.md`
   и `cpi_monthly_predictions.csv` в корне worktree;
+* `make cpi-monthly ARGS="--sample long"` — long-sample §8.2 (295 месяцев
+  2002-02…2026-08, старт 48, NaN-контроли до 2013) — отдельный эксперимент на
+  репрезентативность; short-числа этим прогоном не меняются;
 * `make cpi-monthly ARGS="--start N --embargo-months K"` — основное окно
-  walk-forward задаётся явно (робастность остаётся от спеки §4.1);
+  walk-forward задаётся явно (робастность остаётся от спеки §4.1; `--start`
+  переопределяет sample-дефолт 24/48);
 * `make cpi-monthly ARGS="--export-fixtures DIR"` — пересборка CSV-фикстур.
 """
 
@@ -214,12 +225,24 @@ MP_CHANGES = {
 # значение — индекс за предыдущий месяц.
 FAO_SERIES = "Food Price Index"
 
-# Границы выборки (спека §2.3): старт — max(старты рядов)+1 месяц (позже всех
-# начинается ключевая ставка, 2013-09-17), конец — последний месяц с МП
-# (2026-08). Граница ОБЩАЯ для наборов «с МП» и «без МП»: иначе они
-# сравнивались бы на разных фолдах.
-SAMPLE_FIRST = date(2013, 10, 1)
-SAMPLE_LAST = date(2026, 8, 1)
+# Границы выборок (спека §2.3 и §8.2). `short` — принятая выборка 155 месяцев:
+# старт — max(старты рядов)+1 месяц (позже всех начинается ключевая ставка,
+# 2013-09-17), конец — последний месяц с МП (2026-08). `long` — эксперимент на
+# репрезентативность, 295 месяцев: старт на месяц позже начала МП (2002-01) —
+# первым строкам нужны `y_lag1`/`y_lag2` и МП за M−1/M−2; `usd_mm`/`key_rate`
+# до глубины своих рядов — NaN, а не причина пропуска месяца (§8.2). Граница
+# ОБЩАЯ для наборов «с МП» и «без МП»: иначе они сравнивались бы на разных
+# фолдах.
+SAMPLE_BOUNDS = {
+    "short": (date(2013, 10, 1), date(2026, 8, 1)),
+    "long": (date(2002, 2, 1), date(2026, 8, 1)),
+}
+# Имена выборок — порядок для справки CLI; значения границ пинуются тестами.
+SAMPLE_NAMES = tuple(SAMPLE_BOUNDS)
+DEFAULT_SAMPLE = "short"
+# Совместимость: прежние константы — границы short-выборки (их пинуют тесты
+# Tasks 1–4 и на них опираются офлайн-фикстуры).
+SAMPLE_FIRST, SAMPLE_LAST = SAMPLE_BOUNDS["short"]
 
 # Окна срезов-фикстур офлайн-тестов: 2013-01…2014-12 — горизонт начала выборки
 # (2013-10 требует 2013-08/2013-09), 2026-07…2026-09 — свежая граница.
@@ -233,6 +256,35 @@ DEFAULT_START = 24
 DEFAULT_EMBARGO = 0
 ROBUST_START = 48
 ROBUST_EMBARGO = 1
+
+# Старт основного окна long-sample (спека §8.2): 48 месяцев — первый тест
+# 2006-02, окно статьи 2009–2018 целиком внутри обучающей части. Для short
+# дефолт остаётся 24 (§4.1); явный `--start` переопределяет оба.
+DEFAULT_LONG_START = 48
+
+
+def validate_sample(sample: str) -> str:
+    """Имя выборки `short`/`long` или ValueError (границы — `SAMPLE_BOUNDS`)."""
+    if sample not in SAMPLE_BOUNDS:
+        raise ValueError(
+            f"неизвестная выборка {sample!r}: ожидается одна из "
+            f"{', '.join(SAMPLE_NAMES)}"
+        )
+    return sample
+
+
+def resolve_start(sample: str = DEFAULT_SAMPLE, start: Optional[int] = None) -> int:
+    """Старт основного walk-forward: явный `start` или дефолт выборки.
+
+    `None` — не «ноль», а «не задан»: short стартует с 24 (§4.1), long — с 48
+    (§8.2). Явное число (в том числе меньше дефолта) уважается как есть —
+    `--start` переопределяет sample-дефолт.
+    """
+    validate_sample(sample)
+    if start is not None:
+        return start
+    return DEFAULT_LONG_START if sample == "long" else DEFAULT_START
+
 
 ONE_DAY = timedelta(days=1)
 
@@ -670,7 +722,14 @@ def base_features(
     `y_lag1`/`y_lag2` — метки общего ИПЦ за `M−1`/`M−2` с проверкой
     `available_from_mes ≤ cutoff`; `usd_mm` — средние за `M−1`/`M−2`;
     `key_rate` — последняя точка ≤ cutoff (`asof`); `fao_mm` — последняя пара
-    доступных точек. Отсутствие любой обязательной точки — причина пропуска.
+    доступных точек.
+
+    **NaN-политика long-sample (§8.2):** отсутствие `usd_mm`/`key_rate`
+    (ряды начинаются позже старта long — USD с 2013-01, ставка с 2013-09-17)
+    даёт `float("nan")`, а НЕ причину пропуска: месяц остаётся в выборке,
+    CatBoost обрабатывает NaN нативно, B3 импутирует медианой train-окна.
+    Обязательными остаются `y_lag1`, `y_lag2` и `fao_mm` — без них строка не
+    собирается (и в short, и в long).
 
     `live=True` — живой режим (§5.3): наличие метки `M−1` в `rosstat_ipc_mes`
     и есть её публикация (месячный ИПЦ приходит в базу из релиза Росстата),
@@ -693,10 +752,10 @@ def base_features(
         return None, "метка M−2 не опубликована к cutoff (y_lag2)"
     usd_value = usd_mm(month, usd)
     if usd_value is None:
-        return None, "нет месячных средних USD за M−1 и M−2 (usd_mm)"
+        usd_value = float("nan")
     rate = asof(key_rate, available_from_rate, cutoff)
     if rate is None:
-        return None, "нет доступной ключевой ставки на cutoff (key_rate)"
+        rate = float("nan")
     fao_value = fao_mm(fao, cutoff)
     if fao_value is None:
         return None, "нет пары доступных точек FAO (fao_mm)"
@@ -806,25 +865,36 @@ def feature_names(with_mp: bool) -> list[str]:
 
 
 def build_sample(
-    targets: dict, survey: dict, usd: list, key_rate: list, fao: list
+    targets: dict,
+    survey: dict,
+    usd: list,
+    key_rate: list,
+    fao: list,
+    sample: str = DEFAULT_SAMPLE,
 ) -> tuple[list[Row], list[tuple[date, str]]]:
-    """Собирает выборку `([Row], [(месяц, причина)])` (спека §2.3–2.6).
+    """Собирает выборку `([Row], [(месяц, причина)])` (спека §2.3–2.6, §8.2).
 
     Кандидаты — месяцы с полной меткой (`sample_months`), только внутри
-    `SAMPLE_FIRST`…`SAMPLE_LAST`. Месяц, у которого не собирается ЛЮБОЙ
-    обязательный признак (базовый или МП), попадает в «пропущенные» с причиной,
-    а прогон не падает.
+    `SAMPLE_BOUNDS[sample]`: `short` — 155 месяцев 2013-10…2026-08 (дефолт,
+    прежняя выборка), `long` — 295 месяцев 2002-02…2026-08 (эксперимент на
+    репрезентативность). Неизвестное имя выборки — `ValueError`.
+
+    Месяц, у которого не собирается ЛЮБОЙ обязательный признак (базовый или
+    МП), попадает в «пропущенные» с причиной, а прогон не падает. В long
+    отсутствие `usd_mm`/`key_rate` пропуском НЕ является: признак получает NaN
+    (`base_features`, §8.2), строка остаётся.
 
     Строки ОБЩИЕ для наборов «с МП» и «без МП»: у месяца без МП нет строки
     вовсе, а не «строка только в базовом наборе» — иначе фолды разъехались бы.
     `y` — все четыре метки §2.1; собственный таргет месяца в признаки не
     попадает (cutoff(M) строго раньше публикации метки M).
     """
+    first, last = SAMPLE_BOUNDS[validate_sample(sample)]
     index = target_index(targets)
     rows: list[Row] = []
     skipped: list[tuple[date, str]] = []
     for month in sample_months(targets):
-        if month < SAMPLE_FIRST or month > SAMPLE_LAST:
+        if month < first or month > last:
             continue
         cutoff = cutoff_for(month)
         features, reason = base_features(month, index, usd, key_rate, fao, cutoff)
@@ -838,6 +908,20 @@ def build_sample(
         y = {code: values[month_end(month)] for code, values in index.items()}
         rows.append(Row(month=month, y=y, features={**features, **mp_part}))
     return rows, skipped
+
+
+def nan_control_counts(sample: list[Row]) -> tuple[int, int]:
+    """Сколько строк с NaN в `usd_mm` и `key_rate` (контроли long-sample, §8.2).
+
+    В short-выборке оба контроля заполнены всегда (0/0). В long NaN стоит до
+    глубины ряда (USD — 2013-01, ставка — 2013-09-17): число печатается в
+    консоли и отчёте, чтобы отсутствие контролей было видно, а не пряталось за
+    «0 пропусков».
+    """
+    def count(name: str) -> int:
+        return sum(1 for row in sample if math.isnan(float(row.features[name])))
+
+    return count("usd_mm"), count("key_rate")
 
 
 def assert_months_purged(rows: list[Row]) -> None:
@@ -2496,22 +2580,26 @@ def _split_metric_rows(predictions: list[Prediction]) -> list:
 
 
 def render_report(
-    sample: list[Row],
+    rows: list[Row],
     skipped: list,
     window_runs: list[WindowRun],
     today: Optional[date] = None,
     split_predictions: Optional[list[Prediction]] = None,
     nowcast: Optional[Nowcast] = None,
     nowcast_reason: str = NOWCAST_REASON_UNKNOWN,
+    sample: str = DEFAULT_SAMPLE,
 ) -> str:
-    """Полный markdown-отчёт Task 4 (спека §4.3–4.5, §5.1, §5.3).
+    """Полный markdown-отчёт Task 4 (спека §4.3–4.5, §5.1, §5.3, §8.2).
 
-    `sample`/`skipped` — выборка `build_sample` (строки и месяцы без собранных
+    `rows`/`skipped` — выборка `build_sample` (строки и месяцы без собранных
     признаков); `window_runs` — по одному `WindowRun` на окно walk-forward
     (порядок окон задаёт строки таблиц, основное помечено `WindowRun.main`);
     `today` — дата прогона (по умолчанию системная); `split_predictions` —
     прогнозы `fixed_split` (вспомогательный сплит статьи); `nowcast` — живой
-    прогноз или `None` (тогда раздел называет `nowcast_reason`).
+    прогноз или `None` (тогда раздел называет `nowcast_reason`); `sample` —
+    `short`/`long`: печатается в шапке и строке выборки, а для long добавляет
+    оговорку о NaN-контролях до 2013 и длинном сплите статьи. Short-таблицы и
+    числа от этого не меняются.
 
     Состав: выборка; «модель × окно» с отдельными строками «2022 исключён»;
     последние 12 фолдов; главный блок DM-HLN primary/secondary (p-value,
@@ -2520,6 +2608,8 @@ def render_report(
     живой nowcast; «что не проверено». Числа без p-value не подаются как
     доказательство: DM/бутстрап — единственные тесты значимости здесь.
     """
+    sample = validate_sample(sample)
+    bounds_first, bounds_last = SAMPLE_BOUNDS[sample]
     today = today or date.today()
     runs = list(window_runs)
     main_run = next((run for run in runs if run.main), runs[0] if runs else None)
@@ -2530,13 +2620,19 @@ def render_report(
         else "—"
     )
     split = list(split_predictions or [])
+    title = "# CPI monthly (ML-трек v2) — walk-forward, DM-HLN, сплит статьи и живой nowcast"
+    if sample == "long":
+        title += " (long-sample)"
     lines = [
-        "# CPI monthly (ML-трек v2) — walk-forward, DM-HLN, сплит статьи и живой nowcast",
+        title,
         "",
-        f"Дата прогона: {today.isoformat()}; сид прогона `SEED={SEED}`. Спека: "
+        f"Дата прогона: {today.isoformat()}; выборка `{sample}` "
+        f"({bounds_first.isoformat()[:7]} … {bounds_last.isoformat()[:7]}); "
+        f"сид прогона `SEED={SEED}`. Спека: "
         "`docs/superpowers/specs/2026-10-18-cpi-monthly-mp-design.md` (§2 — данные и "
         "признаки, §3.1–3.4 — CatBoost и бенчмарки, §4.1–4.5 — walk-forward, DM, "
-        "сплит статьи и «2022 исключён», §5.3 — живой nowcast); план: "
+        "сплит статьи и «2022 исключён», §5.3 — живой nowcast, §8.2 — "
+        "long-sample); план: "
         "`docs/superpowers/plans/2026-10-18-cpi-monthly-mp.md`.",
         "",
         "## Выборка",
@@ -2545,14 +2641,18 @@ def render_report(
         "|---|---|",
     ]
     span = (
-        f"{sample[0].month.isoformat()[:7]} … {sample[-1].month.isoformat()[:7]}"
-        if sample
+        f"{rows[0].month.isoformat()[:7]} … {rows[-1].month.isoformat()[:7]}"
+        if rows
         else "—"
     )
     skipped_months = [month for month, _ in skipped]
+    nan_usd, nan_rate = nan_control_counts(rows)
     lines += [
-        f"| месяцев в выборке | {len(sample)} ({span}) |",
+        f"| sample | {sample} "
+        f"({bounds_first.isoformat()[:7]} … {bounds_last.isoformat()[:7]}) |",
+        f"| месяцев в выборке | {len(rows)} ({span}) |",
         f"| пропущено (признак не собран) | {len(skipped)}{_months_suffix(skipped_months)} |",
+        f"| NaN-контроли (`usd_mm` / `key_rate`) | {nan_usd} / {nan_rate} |",
         "| purge-проверка (структурная) | OK |",
         f"| признаки «без МП» | {', '.join(feature_names(with_mp=False))} |",
         f"| признаки «с МП» | {', '.join(feature_names(with_mp=True))} |",
@@ -2563,6 +2663,25 @@ def render_report(
         "месяца и точка МП месяца `M` в признаки не попадают; точка после "
         "cutoff — тоже.",
         "",
+    ]
+    if sample == "long":
+        lines += [
+            "**Long-sample (§8.2) — эксперимент на репрезентативность.** "
+            f"{len(rows)} {_plural(len(rows), 'месяц', 'месяца', 'месяцев')} "
+            f"{bounds_first.isoformat()[:7]} … "
+            f"{bounds_last.isoformat()[:7]}: МП непрерывен с 2002-01, а "
+            "`cbr_currency_usd` (2013-01) и `cbr_key_rate` (2013-09-17) "
+            "начинаются позже, поэтому до глубины этих рядов `usd_mm`/`key_rate` "
+            f"— NaN, а не пропуск месяца (NaN здесь: `usd_mm` — {nan_usd}, "
+            f"`key_rate` — {nan_rate}). CatBoost обрабатывает NaN нативно, B3 "
+            "импутирует медианой train-окна (пустая колонка → 0.0). Long-sample "
+            "отвечает на вопрос «работает ли МП на длинной истории», а не "
+            "«работает ли МП при полном наборе контролей все 24 года»; "
+            "сравнение DM primary с short — по знаку, величине и p-value обеих "
+            "выборок, без подгонки.",
+            "",
+        ]
+    lines += [
         "## Walk-forward",
         "",
         "Расширяющееся обучающее окно, переобучение на каждом фолде: тест — месяц "
@@ -2743,13 +2862,17 @@ def render_report(
         "",
     ]
     train_months = [
-        row.month for row in sample if month_of(row.month) <= ARTICLE_TRAIN_END
+        row.month for row in rows if month_of(row.month) <= ARTICLE_TRAIN_END
     ]
     test_months = [
         row.month
-        for row in sample
+        for row in rows
         if ARTICLE_TRAIN_END < month_of(row.month) <= ARTICLE_TEST_END
     ]
+    if len(train_months) < 120:
+        train_note = f"train короче статьи ({len(train_months)} против 120 месяцев)"
+    else:
+        train_note = f"train длиннее статьи ({len(train_months)} против 120 месяцев)"
     lines += [
         "## Сплит статьи (сопоставимость, не выбор модели)",
         "",
@@ -2759,8 +2882,8 @@ def render_report(
         f"{test_months[-1].isoformat()[:7] if test_months else '—'} "
         f"({len(test_months)} мес.). На train обучаются все модели, на test "
         "считаются RMSE/MAE и DM для тех же primary/secondary-пар. Это "
-        "**вспомогательная таблица сопоставимости**, а не выбор модели: train "
-        "короче статьи (63 против 120 месяцев), таргет другой (несглаженный м/м "
+        f"**вспомогательная таблица сопоставимости**, а не выбор модели: "
+        f"{train_note}, таргет другой (несглаженный м/м "
         "с КУ, а не SA ИПЦ без КУ), выбросы не исключены — числа статьи напрямую "
         "не сравнимы.",
         "",
@@ -2809,7 +2932,8 @@ def render_report(
         "- embargo 1 — только робастность: перекрытие окон признаков тестового и "
         "обучающих месяцев структурно исключено purge-проверкой, но границы "
         "доступности — консервативное правило §2.6, а не фактические даты.",
-        "- сплит статьи — вспомогательная таблица сопоставимости: train короче "
+        f"- сплит статьи — вспомогательная таблица сопоставимости: "
+        f"{'train короче' if len(train_months) < 120 else 'train длиннее'} "
         "статьи, таргет другой, выбросы не исключены; модель по нему не "
         "выбирается.",
         "- «2022 исключён» — описательная строка: вклад шока назван, но режимы "
@@ -2819,6 +2943,15 @@ def render_report(
         "здесь не сравнивается.",
         "- числа статьи напрямую не сравнимы: другой таргет, длина train и "
         "обработка выбросов.",
+    ]
+    if sample == "long":
+        lines.append(
+            "- long-sample: `usd_mm`/`key_rate` до глубины рядов (2013) — NaN; "
+            "ранние фолды проверяют МП без этих контролей, поэтому вывод о "
+            "репрезентативности не равен выводу при полном наборе контролей все "
+            "24 года."
+        )
+    lines += [
         "",
     ]
     return "\n".join(lines).rstrip("\n") + "\n"
@@ -3097,21 +3230,27 @@ def _print_removed_artifacts(removed: list) -> None:
 
 
 def run_summary(
-    start: int = DEFAULT_START,
+    start: Optional[int] = None,
     embargo_months: int = DEFAULT_EMBARGO,
     out_dir: Optional[Path] = None,
     today: Optional[date] = None,
+    sample: str = DEFAULT_SAMPLE,
 ) -> int:
     """Полный прогон Task 4: выборка, walk-forward, DM, сплит, nowcast, артефакты.
 
-    `start`/`embargo_months` — основное окно walk-forward (`--start`,
-    `--embargo-months`); робастные окна (второй старт 48 и эмбарго 1) добавляет
-    `window_specs`. Загрузка рядов, `build_sample` и `assert_months_purged` —
-    контракт Task 1; walk-forward считает бенчмарки B1–B3 и четыре
-    CatBoost-варианта (`MODELS`) на одних фолдах; отчёт
-    (`cpi_monthly_report.md`: «модель × окно», DM-HLN primary/secondary,
-    блочный бутстрап, веса NNLS, конфигурация CatBoost, сплит статьи,
-    «2022 исключён», живой nowcast) и CSV прогнозов
+    `sample` — `short` (155 месяцев 2013-10…2026-08, дефолт) или `long`
+    (295 месяцев 2002-02…2026-08, §8.2); границы берёт `build_sample`, а
+    NaN-контроли `usd_mm`/`key_rate` печатаются числом. `start=None` — «не
+    задан»: short стартует с 24, long — с 48 (`resolve_start`); явное число
+    переопределяет sample-дефолт. `embargo_months` — эмбарго основного окна;
+    робастные окна (второй старт 48 и эмбарго 1) добавляет `window_specs`
+    (у long основное окно 48/0 и робастность 48/1 — дубликат отбрасывается).
+
+    Загрузка рядов, `build_sample` и `assert_months_purged` — контракт Task 1;
+    walk-forward считает бенчмарки B1–B3 и четыре CatBoost-варианта (`MODELS`)
+    на одних фолдах; отчёт (`cpi_monthly_report.md`: «модель × окно», DM-HLN
+    primary/secondary, блочный бутстрап, веса NNLS, конфигурация CatBoost,
+    сплит статьи, «2022 исключён», живой nowcast) и CSV прогнозов
     (`cpi_monthly_predictions.csv`) пишутся в `out_dir` (по умолчанию корень
     worktree; файлы gitignored). JSON текущего nowcast
     (`cpi_monthly_forecast.json`, §5.1) пишется на полной выборке; при
@@ -3125,6 +3264,8 @@ def run_summary(
     `today` — дата прогона (по умолчанию системная): она же дата среза живого
     nowcast и `forecast_date` JSON; резолвится один раз на прогон.
     """
+    sample = validate_sample(sample)
+    start = resolve_start(sample, start)
     out_dir = Path(out_dir) if out_dir is not None else ARTIFACTS_DIR
     today = today or date.today()
     targets = load_targets()
@@ -3132,7 +3273,9 @@ def run_summary(
     usd = load_usd()
     key_rate = load_key_rate()
     fao = load_fao()
-    rows, skipped = build_sample(targets, survey, usd, key_rate, fao)
+    rows, skipped = build_sample(
+        targets, survey, usd, key_rate, fao, sample=sample
+    )
     assert_months_purged(rows)
 
     months = sample_months(targets)
@@ -3141,6 +3284,11 @@ def run_summary(
     )
     print(
         "CPI monthly (ML-трек v2) — walk-forward, DM-HLN, сплит статьи и nowcast"
+    )
+    bounds_first, bounds_last = SAMPLE_BOUNDS[sample]
+    _field(
+        "sample:",
+        f"{sample} ({bounds_first.isoformat()[:7]} … {bounds_last.isoformat()[:7]})",
     )
     _field(
         "таргет rosstat_ipc_mes:",
@@ -3167,6 +3315,8 @@ def run_summary(
         )
     else:
         _field("выборка:", f"пусто, пропущено {len(skipped)}")
+    nan_usd, nan_rate = nan_control_counts(rows)
+    _field("NaN usd_mm / key_rate:", f"{nan_usd} / {nan_rate}")
     _field("признаки (без МП):", ", ".join(feature_names(with_mp=False)))
     _field("признаки (с МП):", ", ".join(feature_names(with_mp=True)))
     _field("модели:", ", ".join(model_label(name) for name in MODELS))
@@ -3210,6 +3360,7 @@ def run_summary(
         split_predictions=split_predictions,
         nowcast=nowcast,
         nowcast_reason=nowcast_reason,
+        sample=sample,
     )
     report_path, predictions_path = write_artifacts(out_dir, report, runs)
     forecast_path = out_dir / FORECAST_NAME
@@ -3239,13 +3390,22 @@ def main(argv: Optional[list] = None) -> int:
         help="записать CSV-фикстуры офлайн-тестов в каталог DIR и выйти",
     )
     parser.add_argument(
+        "--sample",
+        choices=SAMPLE_NAMES,
+        default=DEFAULT_SAMPLE,
+        help="выборка: short — 155 месяцев 2013-10…2026-08 (по умолчанию), "
+             "long — 295 месяцев 2002-02…2026-08 (эксперимент §8.2; "
+             "NaN-контроли до 2013)",
+    )
+    parser.add_argument(
         "--start",
         type=int,
         metavar="N",
-        default=DEFAULT_START,
+        default=None,
         help=f"минимальное обучающее окно walk-forward в месяцах (по умолчанию "
-             f"{DEFAULT_START}); робастное окно старта {ROBUST_START} считается в "
-             f"том же прогоне (спека §4.1)",
+             f"{DEFAULT_START} для short и {DEFAULT_LONG_START} для long; явное "
+             f"значение переопределяет sample-дефолт); робастное окно старта "
+             f"{ROBUST_START} считается в том же прогоне (спека §4.1)",
     )
     parser.add_argument(
         "--embargo-months",
@@ -3259,7 +3419,9 @@ def main(argv: Optional[list] = None) -> int:
     args = parser.parse_args(argv)
     if args.export_fixtures:
         return export_fixtures(Path(args.export_fixtures))
-    return run_summary(start=args.start, embargo_months=args.embargo_months)
+    return run_summary(
+        start=args.start, embargo_months=args.embargo_months, sample=args.sample
+    )
 
 
 if __name__ == "__main__":
