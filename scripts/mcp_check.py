@@ -78,7 +78,11 @@ async def check(params, server_log):
             tools = sorted(t.name for t in (await session.list_tools()).tools)
             failed += not expect("инструменты", {"list_databases", "list_tables", "run_query"} <= set(tools), ", ".join(tools))
 
-            tables = text(await session.call_tool("list_tables", {"database": "default"}))
+            # page_size: у list_tables страница по умолчанию — 50 записей; после добавления
+            # трёх витрин point-in-time слоя v_rosstat_macro ушла на вторую страницу, и
+            # проверки вида «имя есть в ответе» ложно падали. Одна страница на 1000 записей
+            # покрывает схему dev-БД с запасом.
+            tables = text(await session.call_tool("list_tables", {"database": "default", "page_size": 1000}))
             failed += not expect("витрина v_bea_pce видна", "v_bea_pce" in tables, "list_tables default")
 
             catalog = text(await session.call_tool("run_query", {"query": "SELECT series, unit FROM v_series_catalog WHERE source = 'bea' ORDER BY series"}))
