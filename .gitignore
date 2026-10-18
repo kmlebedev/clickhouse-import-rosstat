@@ -39,6 +39,12 @@ coverage.out
 /cpi_nowcast_predictions.csv
 /cpi_nowcast_forecast.json
 
+# Артефакты месячного трека v2 (спека 2026-10-18, §5.1): те же правила, что у v1.
+# Имена — точные: фикстуры scripts/testdata/cpi_monthly/ обязаны коммититься.
+/cpi_monthly_report.md
+/cpi_monthly_predictions.csv
+/cpi_monthly_forecast.json
+
 # Python-байткод от запусков скриптов (например `make key-rate-model` или тестов):
 # артефакт интерпретатора, в репозитории не хранится. Маска здесь безопасна —
 # под `__pycache__` коммитируемого не бывает (в отличие от артефактов прогона
