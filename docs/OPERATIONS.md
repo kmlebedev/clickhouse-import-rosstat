@@ -16,9 +16,11 @@
 make import STAT=ml_registry              # ml_runs, ml_predictions, v_ml_runs/v_ml_leaderboard/v_ml_error_by_fold; повтор идемпотентен (безопасен)
 ML_LOG=1 make cpi-nowcast                 # паспорт прогона + fold-предсказания (unit='pp')
 ML_LOG=1 make key-rate-model              # паспорт прогона + fold-предсказания (unit='bp')
+ML_LOG=1 make cpi-monthly                 # месячный nowcast v2, short: 155 месяцев, unit='pp'
+ML_LOG=1 make cpi-monthly ARGS="--sample long"   # long-sample: 292 месяца 2002-05…2026-08, старт 48
 ```
 
-`ML_LOG=1` включает запись; без переменной скрипты в ClickHouse не пишут. Если ClickHouse недоступен, прогон не падает: паспорт и предсказания сохраняются локально в `build/ml-runs/<run_id>/` (`run.json` + `predictions.jsonl`, каталог переопределяется `ML_LOCAL_DIR`). Имя прогона — `ML_RUN_NAME`. Импортёр `ml_registry` стоит в `dagu/ml.yaml` (ежедневно 06:07 МСК) и должен отработать до первого ML-прогона; чтение агентом — только через витрины `v_ml_runs`, `v_ml_leaderboard`, `v_ml_error_by_fold` (сырые таблицы закрыты, проверка — `make mcp-check`).
+`ML_LOG=1` включает запись; без переменной скрипты в ClickHouse не пишут. **`ml_registry` должен отработать до первого `ML_LOG=1`-прогона** — он создаёт таблицы `ml_runs`/`ml_predictions` и витрины; в расписании он уже есть (`dagu/ml.yaml`, ежедневно 06:07 МСК). Если ClickHouse недоступен, прогон не падает: паспорт и предсказания сохраняются локально в `build/ml-runs/<run_id>/` (`run.json` + `predictions.jsonl`, каталог переопределяется `ML_LOCAL_DIR`). Имя прогона — `ML_RUN_NAME`. Чтение агентом — только через витрины `v_ml_runs`, `v_ml_leaderboard`, `v_ml_error_by_fold` (сырые таблицы закрыты, проверка — `make mcp-check`).
 
 ### MLflow (control plane, `infra/4.2`)
 
