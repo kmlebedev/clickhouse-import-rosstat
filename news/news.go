@@ -441,15 +441,36 @@ const (
 	newsAnnotationInsert = "INSERT INTO " + newsAnnotationTable + " (url, content_hash, kind, method, model, prompt_version, dimension, tag, direction, confidence, evidence, sentiment, relevance, summary, annotated_at)"
 )
 
-// newsAnnotationCandidatesQuery читает бэклог разметки: Telegram-сообщения за 35 дней, для
-// которых ещё нет строки method='llm' этой пары (model, prompt_version). Пара входит в ключ
+// newsAnnotationCandidatesQueryPrefix — начало кандидатного запроса. Тесты фейкового
+// соединения различают вызов по префиксу, а не по точному равенству: LIMIT вшит в SQL
+// функцией newsAnnotationCandidatesQuery, поэтому полный текст каждый раз свой.
+const newsAnnotationCandidatesQueryPrefix = "SELECT date, source, title, url, description, content_hash FROM " + newsTable + " FINAL"
+
+// newsAnnotationCandidatesQuery читает бэклог разметки: весь видимый поток — все Telegram-
+// сообщения и RSS-позиции, проходящие тот же newsFilter, что и v_news_events, — для которых
+// ещё нет строки method='llm' этой пары (model, prompt_version). Пара входит в ключ
 // ReplacingMergeTree, поэтому смена модели/промпта автоматически делает старые сообщения
 // кандидатами, не затирая прежнюю разметку. FINAL обязателен: news_events и news_annotation —
 // ReplacingMergeTree, и без него вытесненные копии дали бы дубли кандидатов / ложные пропуски.
-// 35 дней — окно корпоративных раскрытий edisclosure (20 сообщений ≈30 дней плюс запас):
-// при 7-дневном окне старые сообщения канала оставались бы без разметки. LIMIT — из newsLLMBacklogLimit:
-// стоимость LLM ограничена и после долгого простоя.
-var newsAnnotationCandidatesQuery = `SELECT date, source, title, url, description, content_hash FROM ` + newsTable + ` FINAL WHERE url LIKE 'https://t.me/%' AND content_hash != '' AND date >= now() - INTERVAL 35 DAY AND (url, content_hash) NOT IN (SELECT url, content_hash FROM ` + newsAnnotationTable + ` FINAL WHERE method = 'llm' AND model = ? AND prompt_version = ?) ORDER BY date DESC LIMIT ` + strconv.Itoa(newsLLMBacklogLimit)
+//
+// Окно date >= now() - INTERVAL 35 DAY снято осознанно: охват — вся история видимого потока
+// (иначе старые раскрытия edisclosure и RSS оставались бы без разметки), а стоимость ограничивает
+// LIMIT — NEWS_LLM_BACKLOG_LIMIT (штатно 50, разовый бэкфилл — до 1000), а не возраст позиции.
+//
+// newsFilter передаётся параметром, а не литералом: шаблон начинается с (?i), а драйвер
+// ClickHouse считает КАЖДЫЙ ? позиционным плейсхолдером, включая ? внутри строкового литерала.
+// Литерал дал бы четыре ? вместо двух и ошибку «have no arg for param ?». Порядок аргументов
+// запроса — порядок ?: filter, filter, model, prompt_version.
+// Пустой url отбрасывается: модель возвращает url ключом ответа, и несколько позиций без ссылки
+// были бы неразличимы — такая позиция не аннотируется, а не занимает слот бэклога.
+func newsAnnotationCandidatesQuery(limit int) string {
+	return newsAnnotationCandidatesQueryPrefix +
+		" WHERE content_hash != '' AND url != ''" +
+		" AND (url LIKE 'https://t.me/%' OR match(title, ?) OR match(description, ?))" +
+		" AND (url, content_hash) NOT IN (SELECT url, content_hash FROM " + newsAnnotationTable +
+		" FINAL WHERE method = 'llm' AND model = ? AND prompt_version = ?)" +
+		" ORDER BY date DESC LIMIT " + strconv.Itoa(limit)
+}
 
 // Import выполняет прогон контура новостей: DDL → витрина → ленты → батч.
 // Порядок шагов — часть контракта, а не стиль.
@@ -653,15 +674,22 @@ func (s *newsImport) Import(ctx context.Context, conn driver.Conn) (count int64,
 	// догон — следующим прогоном. check сюда не доходит (возврат выше).
 	cfg, llmOK := newsLLMConfigFromEnv()
 	if llmOK {
-		candidates, readErr := readNewsAnnotationCandidates(ctx, conn, cfg.Model, newsPromptVersion)
+		// Предел бэклога читается до кандидатов: LIMIT вшит в SQL, поэтому переменная обязана
+		// быть разобрана раньше запроса. Не-дефолт печатается — иначе разовый бэкфилл через
+		// NEWS_LLM_BACKLOG_LIMIT выглядел бы в логе штатным прогоном.
+		limit := newsLLMBacklogLimitFromEnv()
+		if limit != newsLLMBacklogLimitDefault {
+			log.Infof("news_watch: LLM backlog limit %d", limit)
+		}
+		candidates, readErr := readNewsAnnotationCandidates(ctx, conn, cfg.Model, newsPromptVersion, limit)
 		switch {
 		case readErr != nil:
 			log.Warnf("news_watch: LLM-разметка (%s): %v", cfg.Model, readErr)
 		case len(candidates) == 0:
 			// Бэклога нет — провайдер не вызывается.
 		default:
-			rows, tagErr := tagTelegramLLM(ctx, cfg, candidates)
-			// Успешные батчи пишутся даже при ошибке следующего: tagTelegramLLM возвращает
+			rows, tagErr := tagNewsLLM(ctx, cfg, candidates)
+			// Успешные батчи пишутся даже при ошибке следующего: tagNewsLLM возвращает
 			// накопленные строки вместе с ошибкой, и следующий прогон не платит за них снова.
 			if len(rows) > 0 {
 				var docs, tags int
@@ -753,13 +781,19 @@ func insertItems(ctx context.Context, conn driver.Conn, items []newsItem) (int64
 	return count, err
 }
 
-// readNewsAnnotationCandidates читает бэклог LLM-разметки: Telegram-сообщения за 35 дней,
-// у которых нет doc/tag-строк этой пары (model, prompt_version). Пустой результат — не
-// ошибка: разметить нечего. Порядок Scan — порядок колонок newsAnnotationCandidatesQuery:
-// date, source, title, url, description, content_hash. Ошибка обхода проверяется: молча
-// вернувшаяся половина бэклога оставила бы часть сообщений без разметки до следующего прогона.
-func readNewsAnnotationCandidates(ctx context.Context, conn driver.Conn, model string, promptVersion uint16) ([]newsItem, error) {
-	rows, err := conn.Query(ctx, newsAnnotationCandidatesQuery, model, promptVersion)
+// readNewsAnnotationCandidates читает бэклог LLM-разметки: весь видимый поток (Telegram и RSS,
+// проходящий newsFilter), у которого нет doc/tag-строк этой пары (model, prompt_version).
+// limit — NEWS_LLM_BACKLOG_LIMIT (штатно 50, разовый бэкфилл — до 1000); он вшивается в SQL
+// литералом: предел — проверенное целое из ограниченного диапазона, а не внешний ввод, и
+// строковый запрос остаётся воспроизводимым в тестах. newsFilter передаётся дважды — под
+// match(title) и match(description); иначе (?i) дал бы драйверу лишние `?` (см.
+// newsAnnotationCandidatesQuery). Порядок аргументов запроса — порядок `?` в SQL. Пустой
+// результат — не ошибка: разметить нечего. Порядок Scan — порядок колонок
+// newsAnnotationCandidatesQuery: date, source, title, url, description, content_hash.
+// Ошибка обхода проверяется: молча вернувшаяся половина бэклога оставила бы часть сообщений
+// без разметки до следующего прогона.
+func readNewsAnnotationCandidates(ctx context.Context, conn driver.Conn, model string, promptVersion uint16, limit int) ([]newsItem, error) {
+	rows, err := conn.Query(ctx, newsAnnotationCandidatesQuery(limit), newsFilter, newsFilter, model, promptVersion)
 	if err != nil {
 		return nil, fmt.Errorf("news_watch: читать кандидатов %s (model=%s, prompt_version=%d): %w",
 			newsAnnotationTable, model, promptVersion, err)

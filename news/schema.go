@@ -58,8 +58,8 @@ const newsMessageVersionDdl = `CREATE TABLE IF NOT EXISTS news_message_version (
 	`
 
 // newsAnnotationDdl — копия канонического DDL news_annotation из ARCHITECTURE.md §6.2
-// (спека §4.2, Task 3). Таблица generic по паре (url, content_hash): в этом пункте
-// заполняется только Telegram-молния, но ключ не привязан к транспорту. kind разделяет
+// (спека §4.2, Task 3). Таблица generic по паре (url, content_hash): news_watch
+// заполняет её для всего видимого потока (Telegram и RSS), ключ не привязан к транспорту. kind разделяет
 // doc-строку сообщения (sentiment/relevance/summary) и tag-строки (dimension/tag/direction/
 // confidence/evidence); model и prompt_version входят в ключ, поэтому смена модели или
 // редакции промпта добавляет разметку рядом со старой, а не затирает её.
@@ -116,22 +116,61 @@ const newsFilter = `(?i)дизел|бензин|керосин|дистилля�
 // образец eia/eiaViews). Стейтменты выполняются по порядку; фильтр тезисов живёт именно здесь,
 // потому что читает витрину агент (грант kimi_reader), а сырая news_events ему закрыта.
 //
-// v_news_events — плоская лента с фильтром тезисов и transport (RSS/Telegram);
+// v_news_events — плоская лента с фильтром тезисов, transport (RSS/Telegram) и LLM-разметкой
+// видимого потока (sentiment/relevance/summary/model/prompt_version/tags);
 // v_news_flash — слой всех Telegram-каналов (молния interfaxonline и корпоративные
 // раскрытия edisclosure) с LLM-разметкой; v_news_message_versions —
 // винтажный слой правок и удалений; v_news_tags — статический реестр слагов. Число стейтментов —
 // контракт (VIEW + комментарий таблицы + комментарий каждой колонки): пропущенный комментарий
 // оставляет агента без смысла колонки, лишний — ломает публикацию.
 var newsViewStatements = []string{
-	// v_news_events: VIEW + комментарий таблицы + 8 комментариев колонок.
+	// v_news_events: VIEW + комментарий таблицы + 14 комментариев колонок.
 	// Литеральный % в LIKE записан как %%: строка — формат fmt.Sprintf, и одиночный %
 	// перед кавычкой go vet принял бы за глагол форматирования.
+	//
+	// Разметка присоединяется к сырой ленте по паре (url, content_hash). Doc-подзапрос
+	// сворачивается LIMIT 1 BY: у пары может быть несколько doc-строк (модели/редакции
+	// промпта), и витрине нужна последняя — по annotated_at, затем model и prompt_version
+	// (детерминированный tie-break). Пустой content_hash в JOIN не участвует: такие строки
+	// записаны до миграции 1.9 и не аннотируемы. NULL у sentiment/relevance/summary означает
+	// «не размечено», а не «нейтрально»; tag-строки собираются groupArrayIf той же модели и
+	// редакции, поэтому теги чужой разметки к doc-строке не прилипают.
 	fmt.Sprintf(`CREATE OR REPLACE VIEW v_news_events DEFINER = default SQL SECURITY DEFINER AS
-		SELECT date, toDate(date, 'Europe/Moscow') AS date_msk, source,
-			multiIf(url LIKE 'https://t.me/%%', 'telegram', 'rss') AS transport,
-			title, url, description, sentiment
-		FROM news_events FINAL WHERE match(title, '%s') OR match(description, '%s') ORDER BY date DESC`, newsFilter, newsFilter),
-	`ALTER TABLE v_news_events MODIFY COMMENT 'Событийная лента РФ-канала: RSS «Интерфакс», РБК, ЦБ РФ, TASS, smart-lab и Telegram-каналы — молния «Интерфакса» (interfaxonline) и корпоративные раскрытия «Интерфакс-ЦРКИ» (edisclosure; импортёр news_watch, каждые 30 минут). transport различает RSS и публичное Telegram-превью; показаны только события по стемам тезисов (широкий фильтр — в определении витрины); полная лента лежит в сырой news_events и агенту не выдаётся. История копится с первого прогона (окна лент 20–100 позиций). sentiment в этой витрине пока NULL; тональность Telegram-сообщений — в v_news_flash.sentiment'`,
+		SELECT e.date AS date,
+			toDate(e.date, 'Europe/Moscow') AS date_msk,
+			e.source AS source,
+			multiIf(e.url LIKE 'https://t.me/%%', 'telegram', 'rss') AS transport,
+			e.title AS title,
+			e.url AS url,
+			e.description AS description,
+			e.content_hash AS content_hash,
+			if(d.model = '', NULL, d.sentiment) AS sentiment,
+			if(d.model = '', NULL, d.relevance) AS relevance,
+			if(d.model = '', NULL, d.summary) AS summary,
+			d.model AS model,
+			d.prompt_version AS prompt_version,
+			groupArrayIf(tuple(t.dimension, t.tag, t.direction), t.tag != '') AS tags
+		FROM (SELECT * FROM news_events FINAL) AS e
+		LEFT JOIN (
+			SELECT url, content_hash, sentiment, relevance, summary, model, prompt_version
+			FROM news_annotation FINAL
+			WHERE kind = 'doc' AND method = 'llm' AND content_hash != ''
+			ORDER BY annotated_at DESC, model DESC, prompt_version DESC
+			LIMIT 1 BY url, content_hash
+		) AS d ON d.url = e.url AND d.content_hash = e.content_hash
+		LEFT JOIN (
+			SELECT url, content_hash, model, prompt_version, dimension, tag, direction
+			FROM news_annotation FINAL
+			WHERE kind = 'tag' AND method = 'llm' AND content_hash != ''
+		) AS t ON t.url = d.url AND t.content_hash = d.content_hash
+			AND t.model = d.model AND t.prompt_version = d.prompt_version
+		WHERE match(e.title, '%s') OR match(e.description, '%s')
+		GROUP BY e.date, toDate(e.date, 'Europe/Moscow'), e.source,
+			multiIf(e.url LIKE 'https://t.me/%%', 'telegram', 'rss'),
+			e.title, e.url, e.description, e.content_hash,
+			d.sentiment, d.relevance, d.summary, d.model, d.prompt_version
+		ORDER BY date DESC`, newsFilter, newsFilter),
+	`ALTER TABLE v_news_events MODIFY COMMENT 'Событийная лента РФ-канала: RSS «Интерфакс», РБК, ЦБ РФ, TASS, smart-lab и Telegram-каналы — молния «Интерфакса» (interfaxonline) и корпоративные раскрытия «Интерфакс-ЦРКИ» (edisclosure; импортёр news_watch, каждые 30 минут). transport различает RSS и публичное Telegram-превью; показаны только события по стемам тезисов (широкий фильтр — в определении витрины); полная лента лежит в сырой news_events и агенту не выдаётся. История копится с первого прогона (окна лент 20–100 позиций). sentiment/relevance/summary/tags — LLM-разметка видимых позиций (news_annotation, method=''llm''); NULL/пусто — позиция не размечена, а не «нейтрально»; content_hash — ключ разметки, '''' — строка до миграции и не аннотируема. Тональность Telegram также в v_news_flash.sentiment'`,
 	`ALTER TABLE v_news_events COMMENT COLUMN date 'Момент публикации в ленте (pubDate источника со своим офсетом времени; у Telegram — time сообщения)'`,
 	`ALTER TABLE v_news_events COMMENT COLUMN date_msk 'День публикации по МСК (toDate(date, ''Europe/Moscow'')) — для группировок по дням'`,
 	`ALTER TABLE v_news_events COMMENT COLUMN source 'Лента-источник: interfax, rbc, cbr, tass, smartlab, edisclosure; оба фида ЦБ пишутся под cbr, обе ленты smart-lab — под smartlab, RSS и Telegram Интерфакса — под interfax, корпоративные раскрытия — под edisclosure; различаются transport и url'`,
@@ -141,7 +180,13 @@ var newsViewStatements = []string{
 	// Маркер пустой строки '' записан четырьмя кавычками (''''): одиночная кавычка внутри
 	// SQL-литерала удваивается, и агент видит в комментарии именно пустую строку ''.
 	`ALTER TABLE v_news_events COMMENT COLUMN description 'Текст позиции из ленты: полный текст поста smart-lab (HTML) или текст Telegram-молнии; '''' — описания нет; при цитировании — атрибуция автора и smart-lab'`,
-	`ALTER TABLE v_news_events COMMENT COLUMN sentiment 'Тональность −1..1; в news_events пока NULL; sentiment Telegram-молнии — v_news_flash.sentiment'`,
+	`ALTER TABLE v_news_events COMMENT COLUMN content_hash 'sha256 текущей версии title+description; ключ LLM-разметки; '''' — строка записана до миграции 1.9 и не аннотируема'`,
+	`ALTER TABLE v_news_events COMMENT COLUMN sentiment 'Тональность −1..1 из LLM-разметки (news_annotation, method=''llm''); NULL — позиция ещё не размечена (не «нейтрально»); тональность Telegram также в v_news_flash.sentiment'`,
+	`ALTER TABLE v_news_events COMMENT COLUMN relevance 'Важность для контура ставки и DCF 0..1 из LLM-разметки; NULL — позиция ещё не размечена'`,
+	`ALTER TABLE v_news_events COMMENT COLUMN summary 'Краткое резюме (одно предложение) из LLM-разметки; NULL — позиция ещё не размечена'`,
+	`ALTER TABLE v_news_events COMMENT COLUMN model 'LLM-модель последней doc-строки разметки; '''' — разметки нет'`,
+	`ALTER TABLE v_news_events COMMENT COLUMN prompt_version 'Редакция промпта последней doc-строки разметки (newsPromptVersion); 0 — разметки нет'`,
+	`ALTER TABLE v_news_events COMMENT COLUMN tags 'Теги LLM последней doc-строки: Array(Tuple(dimension, tag, direction)); dimension — person|country|sector|event|theme|cb_channel, tag — слаг реестра (расшифровка — v_news_tags), direction — влияние на инфляцию (proinflationary|disinflationary|neutral|mixed); [] — тегов нет или позиция не размечена'`,
 
 	// v_news_flash: VIEW + комментарий таблицы + 17 комментариев колонок.
 	// Последняя версия — argMax(field, version) в подзапросе по (channel, message_id); tombstone

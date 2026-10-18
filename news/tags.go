@@ -1,6 +1,6 @@
 package news
 
-// Реестр тегов LLM-разметки Telegram-молнии (спека §4.4). Реестр — единственный источник
+// Реестр тегов LLM-разметки видимого потока новостей (Telegram и RSS, спека §4.3). Реестр — единственный источник
 // правды о допустимых тегах: промпт перечисляет его модели, а validateNewsAnnotations
 // отбрасывает всё, чего в нём нет. Поэтому новый тег появляется здесь, а не в промпте.
 //
@@ -40,11 +40,11 @@ const (
 // (prompt_version), поэтому новая редакция добавляет строки рядом со старой, а не затирает
 // её. Значение дублируется меткой в system-промпте и закреплено тестом: менять только
 // сознательно, вместе с правкой инструкции.
-const newsPromptVersion = 1
+const newsPromptVersion = 2
 
-// newsTags — стартовый набор реестра из спеки §4.4: персоны, страны, секторы, события и
-// 11 каналов ключевой ставки из docs/KEY_RATE_CHANNELS.md §3. Порядок — порядок вывода в
-// промпте; он фиксирован, чтобы текст system-промпта был воспроизводим.
+// newsTags — реестр из спеки §4.3: 8 персон, 7 стран, 8 секторов, 12 событий и
+// 11 каналов ключевой ставки из docs/KEY_RATE_CHANNELS.md §3 (всего 46). Порядок — порядок
+// вывода в промпте; он фиксирован, чтобы текст system-промпта был воспроизводим.
 var newsTags = []newsTag{
 	// Персоны: тег ставится на действие или заявление, а не на случайное упоминание.
 	{Dimension: newsDimPerson, Slug: "trump", Title: "Дональд Трамп"},
@@ -53,6 +53,8 @@ var newsTags = []newsTag{
 	{Dimension: newsDimPerson, Slug: "powell", Title: "Джером Пауэлл"},
 	{Dimension: newsDimPerson, Slug: "lagarde", Title: "Кристин Лагард"},
 	{Dimension: newsDimPerson, Slug: "nabiullina", Title: "Эльвира Набиуллина"},
+	{Dimension: newsDimPerson, Slug: "siluanov", Title: "Антон Силуанов"},
+	{Dimension: newsDimPerson, Slug: "mishustin", Title: "Михаил Мишустин"},
 
 	// Страны и экономические блоки.
 	{Dimension: newsDimCountry, Slug: "china", Title: "Китай"},
@@ -60,6 +62,8 @@ var newsTags = []newsTag{
 	{Dimension: newsDimCountry, Slug: "eu", Title: "Евросоюз"},
 	{Dimension: newsDimCountry, Slug: "russia", Title: "Россия"},
 	{Dimension: newsDimCountry, Slug: "india", Title: "Индия"},
+	{Dimension: newsDimCountry, Slug: "iran", Title: "Иран"},
+	{Dimension: newsDimCountry, Slug: "turkey", Title: "Турция"},
 
 	// Секторы, чувствительные к ставке, сырью и внешним условиям.
 	{Dimension: newsDimSector, Slug: "oil_gas", Title: "Нефть и газ"},
@@ -69,6 +73,7 @@ var newsTags = []newsTag{
 	{Dimension: newsDimSector, Slug: "tech", Title: "Технологии"},
 	{Dimension: newsDimSector, Slug: "real_estate", Title: "Недвижимость"},
 	{Dimension: newsDimSector, Slug: "agriculture", Title: "Сельское хозяйство"},
+	{Dimension: newsDimSector, Slug: "utilities", Title: "Электроэнергетика и тарифы"},
 
 	// Событийные сюжеты, которые двигают инфляцию и оценки DCF.
 	{Dimension: newsDimEvent, Slug: "energy_transition", Title: "Энергопереход"},
@@ -81,6 +86,8 @@ var newsTags = []newsTag{
 	{Dimension: newsDimEvent, Slug: "inflation_expectations", Title: "Инфляционные ожидания"},
 	{Dimension: newsDimEvent, Slug: "credit", Title: "Кредитование"},
 	{Dimension: newsDimEvent, Slug: "key_rate", Title: "Ключевая ставка"},
+	{Dimension: newsDimEvent, Slug: "opec", Title: "ОПЕК+"},
+	{Dimension: newsDimEvent, Slug: "ofz_auctions", Title: "Аукционы ОФЗ и госдолг"},
 
 	// Каналы решения ЦБ: определения и направления — KEY_RATE_CHANNELS.md §3.
 	{Dimension: newsDimCBChannel, Slug: "current_inflation", Title: "Текущий рост цен", Direction: newsDirectionPro},
@@ -97,7 +104,7 @@ var newsTags = []newsTag{
 }
 
 // newsTagByKey ищет тег по паре (dimension, slug). Вторая величина — признак наличия:
-// validateNewsAnnotations по ней отбрасывает теги вне реестра. Линейный поиск по 39 записям
+// validateNewsAnnotations по ней отбрасывает теги вне реестра. Линейный поиск по 46 записям
 // дешевле карты и не требует init().
 func newsTagByKey(dimension, slug string) (newsTag, bool) {
 	for _, tag := range newsTags {

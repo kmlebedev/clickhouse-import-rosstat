@@ -37,14 +37,14 @@ func TestNewsTagsRegistry(t *testing.T) {
 		}
 	}
 
-	if len(newsTags) != 39 {
-		t.Errorf("newsTags = %d тегов, want 39 (6 персон + 5 стран + 7 секторов + 10 событий + 11 каналов)", len(newsTags))
+	if len(newsTags) != 46 {
+		t.Errorf("newsTags = %d тегов, want 46 (8 персон + 7 стран + 8 секторов + 12 событий + 11 каналов)", len(newsTags))
 	}
 	for dim, want := range map[string]int{
-		newsDimPerson:    6,
-		newsDimCountry:   5,
-		newsDimSector:    7,
-		newsDimEvent:     10,
+		newsDimPerson:    8,
+		newsDimCountry:   7,
+		newsDimSector:    8,
+		newsDimEvent:     12,
 		newsDimCBChannel: 11,
 	} {
 		if counts[dim] != want {
