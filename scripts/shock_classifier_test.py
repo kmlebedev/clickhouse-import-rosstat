@@ -770,6 +770,35 @@ class ShockClassifierTest(unittest.TestCase):
         self.assertIsNone(empty["brier"])
 
 
+class ComparisonTest(unittest.TestCase):
+    """Сравнение weighted/unweighted: ошибки данных vs баги кода."""
+
+    def test_compare_weighted_methods_rejects_length_mismatch(self):
+        rows = fixture_panel()
+        with self.assertRaises(ValueError):
+            sc.compare_weighted_methods(
+                rows,
+                sc.fixture_channel_points(),
+                [1.0] * (len(rows) - 1),
+                2,
+            )
+
+    def test_compare_weighted_methods_propagates_unexpected_error(self):
+        rows = fixture_panel()
+        with unittest.mock.patch.object(
+            sc.krm,
+            "walk_forward",
+            side_effect=RuntimeError("неожиданный сбой walk-forward"),
+        ):
+            with self.assertRaises(RuntimeError):
+                sc.compare_weighted_methods(
+                    rows,
+                    sc.fixture_channel_points(),
+                    [1.0] * len(rows),
+                    2,
+                )
+
+
 class FakeLogger:
     """Duck-typed журнал `ml_experiment`: ловит payload без ClickHouse."""
 
@@ -908,6 +937,35 @@ class ArtifactsTest(unittest.TestCase):
         self.assertEqual(payload["dataset"]["spec"], sc.SPEC_PATH)
         self.assertGreater(payload["dataset"]["n_train"], 0)
 
+    def test_next_meeting_forecast_order_independent(self):
+        rows = fixture_panel()
+        shuffled = list(rows)
+        random.Random(sc.SEED).shuffle(shuffled)
+        # Перемешивание действительно изменило порядок (тест не вакуумный).
+        self.assertNotEqual(
+            [row.decision.meeting_date for row in shuffled],
+            [row.decision.meeting_date for row in rows],
+        )
+        arguments = (
+            sc.FIXTURE_CANONICAL_MEETINGS,
+            sc.FIXTURE_KEY_RATE_POINTS,
+            sc.fixture_channel_points(),
+            date(2022, 3, 1),
+            "all",
+            sc.MIN_TRAIN,
+        )
+        expected = sc.next_meeting_forecast(rows, *arguments)
+        actual = sc.next_meeting_forecast(shuffled, *arguments)
+        self.assertIsNotNone(expected)
+        self.assertIsNotNone(actual)
+        self.assertEqual(actual.meeting_date, expected.meeting_date)
+        self.assertEqual(actual.score, expected.score)
+        self.assertEqual(actual.weight, expected.weight)
+        self.assertEqual(actual.shock_prob, expected.shock_prob)
+        self.assertEqual(actual.features, expected.features)
+        self.assertEqual(actual.train_first, expected.train_first)
+        self.assertEqual(actual.train_last, expected.train_last)
+
     def test_ml_log_payload_contains_metrics_and_predictions(self):
         logger = FakeLogger()
         with tempfile.TemporaryDirectory() as directory:
@@ -1006,6 +1064,74 @@ class ArtifactsTest(unittest.TestCase):
                 self.assertTrue((Path(directory) / name).is_file())
         query.assert_not_called()
         start_run.assert_not_called()
+
+    def test_run_creates_out_dir(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out_dir = Path(directory) / "nested" / "run"
+            self.assertFalse(out_dir.exists())
+            self.assertEqual(run_fixture(out_dir), 0)
+            self.assertTrue(out_dir.is_dir())
+            for name in sc.ARTIFACT_NAMES:
+                self.assertTrue((out_dir / name).is_file(), name)
+
+    def test_run_empty_calendar(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out_dir = Path(directory)
+            for name in sc.ARTIFACT_NAMES:
+                (out_dir / name).write_text("stale", encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                code = sc.run(
+                    features_name="core",
+                    min_train=2,
+                    out_dir=out_dir,
+                    today=FIXTURE_TODAY,
+                    data=(
+                        [],
+                        sc.FIXTURE_KEY_RATE_POINTS,
+                        sc.fixture_channel_points(),
+                        [],
+                    ),
+                )
+            self.assertEqual(code, 1)
+            for name in sc.ARTIFACT_NAMES:
+                self.assertFalse((out_dir / name).exists(), name)
+
+    def test_run_no_future_meeting(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out_dir = Path(directory)
+            self.assertEqual(run_fixture(out_dir), 0)
+            self.assertTrue((out_dir / sc.FORECAST_NAME).is_file())
+            with contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                code = sc.run(
+                    features_name="core",
+                    min_train=2,
+                    out_dir=out_dir,
+                    today=FIXTURE_TODAY,
+                    data=(
+                        sc.FIXTURE_CANONICAL_MEETINGS,
+                        sc.FIXTURE_KEY_RATE_POINTS,
+                        sc.fixture_channel_points(),
+                        [],
+                    ),
+                )
+            self.assertEqual(code, 0)
+            self.assertFalse((out_dir / sc.FORECAST_NAME).exists())
+            self.assertTrue((out_dir / sc.REPORT_NAME).is_file())
+            self.assertTrue((out_dir / sc.WEIGHTS_NAME).is_file())
+
+    def test_run_artifacts_deterministic(self):
+        with tempfile.TemporaryDirectory() as first, \
+                tempfile.TemporaryDirectory() as second:
+            self.assertEqual(run_fixture(first), 0)
+            self.assertEqual(run_fixture(second), 0)
+            for name in sc.ARTIFACT_NAMES:
+                self.assertEqual(
+                    (Path(first) / name).read_bytes(),
+                    (Path(second) / name).read_bytes(),
+                    f"{name}: два прогона обязаны давать те же байты",
+                )
 
     def test_missing_clickhouse_exits_one_and_clears_artifacts(self):
         with tempfile.TemporaryDirectory() as directory, \

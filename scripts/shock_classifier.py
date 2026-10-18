@@ -1671,10 +1671,19 @@ def compare_weighted_methods(
     OLS/`OrderedModel`; DM-HLN (h=1) сравнивает квадраты ошибок на ОБЩИХ
     фолдах, поэтому вырожденные окна не сравнивают разные наборы заседаний.
 
-    Возврат: `{"rows": n, "methods": {method: {...}}}`; сбой одного метода
-    (например, несовместимая выборка) не роняет прогон — причина попадает в
-    `error` строки отчёта.
+    Возврат: `{"rows": n, "methods": {method: {...}}, "error": None|str}`.
+    Сбой данных (`krm.SampleError`, `ValueError`) и вырожденные окна
+    (`krm.DegenerateWindowError`) не роняют прогон — причина попадает в
+    `error`; неожиданные исключения пробрасываются: зелёный прогон с
+    «не рассчитано» вместо бага недопустим. Если после цикла ни один метод не
+    дал общих фолдов при непустой панели, `error` объясняет это, и `run`
+    завершается кодом 1, не выдавая отчёт за успешный.
     """
+    if len(panel_rows) != len(weights):
+        raise ValueError(
+            "сравнение методов: длины панели и весов не совпадают "
+            f"({len(panel_rows)} против {len(weights)})"
+        )
     result = {"rows": 0, "methods": {}, "error": None}
     try:
         kr_rows, _ = krm.build_rows(
@@ -1682,7 +1691,7 @@ def compare_weighted_methods(
             channel_points.get("pi", []),
             channel_points.get("business_climate", []),
         )
-    except Exception as exc:  # pragma: no cover - защита от порчи данных
+    except (krm.SampleError, ValueError) as exc:
         result["error"] = f"{type(exc).__name__}: {exc}"
         return result
     result["rows"] = len(kr_rows)
@@ -1707,7 +1716,9 @@ def compare_weighted_methods(
             unweighted, _ = krm.walk_forward(
                 kr_rows, method, fit_predict, min_train=min_train
             )
-        except Exception as exc:  # pragma: no cover - защита от порчи данных
+        except krm.DegenerateWindowError as exc:
+            # walk_forward пропускает вырожденные фолды сам; сюда попадает
+            # только вырожденность, которую он не смог изолировать.
             result["methods"][method] = {
                 "n": 0,
                 "error": f"{type(exc).__name__}: {exc}",
@@ -1751,6 +1762,13 @@ def compare_weighted_methods(
             entry["dm_stat"] = float(statistic)
             entry["dm_p"] = float(pvalue)
         result["methods"][method] = entry
+    if not result["methods"] or all(
+        entry.get("n", 0) == 0 for entry in result["methods"].values()
+    ):
+        result["error"] = (
+            "walk-forward не дал ни одного общего фолда ни для одного метода "
+            "(недостаточно заседаний или вырожденные окна)"
+        )
     return result
 
 
@@ -1808,6 +1826,9 @@ def next_meeting_forecast(
     ]
     if not train_rows:
         return None
+    # Порядок входа не должен влиять на прогноз: дельта считается к последнему
+    # по ДАТЕ заседанию, и границы обучающего окна — тоже даты.
+    train_rows.sort(key=lambda row: row.decision.meeting_date)
     feature_names = FEATURE_SETS[features_name]
     rate_before = krm.asof(key_rate, _available_on_the_day, today)
     # Признаки снимаются as-of ДАТЫ ПРОГОНА: подставляем её в дату решения,
@@ -2137,6 +2158,15 @@ def render_report(
         "оцениваются, а вырожденные фолды без положительных в обучении "
         "пропускаются._",
     ]
+    roc_auc = metrics.get("roc_auc")
+    if roc_auc is not None and roc_auc < 0.5:
+        lines += [
+            "",
+            f"- **ROC-AUC {_fmt(roc_auc, 3)} ниже 0.5**: ранжирование хуже "
+            "случайного; описательный классификатор не доказал отделимость "
+            "явных шоков. Веса берутся из аномального скора, а не из "
+            "классификатора.",
+        ]
 
     lines += [
         "",
@@ -2241,6 +2271,18 @@ def render_report(
                 f"| {_fmt(entry['mae_weighted'])} "
                 f"| {_fmt(entry['dm_stat'])} | {_fmt_p(entry['dm_p'])} |"
             )
+        insignificant = [
+            method
+            for method in ("taylor", "ordered_logit")
+            if (methods.get(method) or {}).get("dm_p") is not None
+            and methods[method]["dm_p"] > 0.05
+        ]
+        if insignificant:
+            lines += [
+                "",
+                "_DM-HLN: различие weighted/unweighted не значимо "
+                f"(p > 0.05) для методов: {', '.join(insignificant)}._",
+            ]
 
     lines += [
         "",
@@ -2305,7 +2347,6 @@ def experiment_metrics(
     labels: list,
     metrics: dict,
     weights: list,
-    probabilities: list,
     comparison: dict,
     forecast: Optional[NextMeetingForecast],
     features: Sequence[str],
@@ -2574,6 +2615,15 @@ def run(
         raise ValueError(f"min_train = {min_train} < 1")
     today = today or date.today()
     out_dir = Path.cwd() if out_dir is None else Path(out_dir)
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        print(
+            f"не удалось создать каталог артефактов {out_dir}: "
+            f"{type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        return 1
     features = FEATURE_SETS[features_name]
     if ml_log is None:
         ml_log = os.environ.get("ML_LOG") == "1"
@@ -2629,6 +2679,15 @@ def run(
     labels = [int(row.explicit_shock) for row in rows]
     metrics = classifier_metrics(labels, probabilities)
     comparison = compare_weighted_methods(rows, channels, weights, min_train)
+    if comparison.get("error"):
+        removed = clear_stale_artifacts(out_dir)
+        print(
+            "сравнение weighted/unweighted не рассчитано: "
+            f"{comparison['error']}",
+            file=sys.stderr,
+        )
+        _print_removed_artifacts(removed)
+        return 1
     forecast = next_meeting_forecast(
         rows,
         meetings,
@@ -2763,7 +2822,6 @@ def run(
                 labels,
                 metrics,
                 weights,
-                probabilities,
                 comparison,
                 forecast,
                 features,
