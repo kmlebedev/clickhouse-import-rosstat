@@ -88,7 +88,7 @@ DAGU_VERSION     ?= v2.18.2
 MKDOCS_VERSION ?= 9.7.7
 MKDOCS := uv run --with mkdocs-material==$(MKDOCS_VERSION) --python 3.12 mkdocs
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-register mlflow-promote mlflow-models dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model cpi-nowcast edisclosure-login edisclosure-collect docs-check docs-build docs-serve
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-register mlflow-promote mlflow-models dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model key-rate-llm-forecast key-rate-forecast-log cpi-nowcast cpi-monthly cb-comp-parity cb-comp-parity-test cb-comp-proxy edisclosure-login edisclosure-collect docs-check docs-build docs-serve
 
 all: lint test build build-ingest
 
@@ -386,12 +386,55 @@ ARGS ?=
 key-rate-model:
 	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/key_rate_model.py $(ARGS)
 
+# Запись текущего прогноза ставки в forecast_log через ingest (POST /v1/key_rate_forecast).
+# Читает локальные артефакты key_rate_model_forecast.json (и, при наличии,
+# key_rate_llm_forecast.json), в ClickHouse напрямую не пишет. Нужны INGEST_URL и
+# INGEST_TOKEN из $(ROSSTAT_ENV); ingest-сервис — make run-ingest.
+# Отладка: make key-rate-forecast-log ARGS="--dry-run"
+key-rate-forecast-log:
+	uv run --python 3.12 python3 scripts/key_rate_forecast_log.py $(ARGS)
+
+# Экспериментальный LLM-трек контура ставки (issue #189): as-of снимок витрин,
+# промпт v1, три OpenAI-совместимых повтора, медиана и разброс, артефакты
+# key_rate_llm_forecast.json / key_rate_llm_forecast_report.md (gitignored).
+# Зависимостей вне stdlib нет; нужны ClickHouse env и LLM_BASE_URL/LLM_API_KEY/
+# LLM_MODEL (последние — только в ~/.config/rosstat/env). В ClickHouse скрипт
+# НЕ пишет; ARGS="--log" готовит payload для ingest #127 и печатает его.
+key-rate-llm-forecast:
+	uv run --python 3.12 python3 scripts/key_rate_llm_forecast.py $(ARGS)
 # ML-трек контура ставки: nowcast месячного ИПЦ до публикации Росстата (CatBoost + бенчмарки).
 # Читает ClickHouse, пишет локальные артефакты; в ClickHouse по умолчанию не пишет;
 # с ML_LOG=1 пишет паспорт и fold-предсказания.
 # Фикстуры: make cpi-nowcast ARGS="--export-fixtures scripts/testdata/cpi_nowcast"
 cpi-nowcast:
 	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_nowcast.py $(ARGS)
+
+# ML-трек v2: месячный nowcast ИПЦ с мониторингом предприятий ЦБ (с МП vs без МП).
+# Читает ClickHouse, пишет локальные артефакты; по умолчанию в ClickHouse НЕ пишет;
+# с ML_LOG=1 пишет паспорт и fold-предсказания в ml_runs/ml_predictions.
+# Фикстуры: make cpi-monthly ARGS="--export-fixtures scripts/testdata/cpi_monthly"
+cpi-monthly:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_monthly.py $(ARGS)
+
+# Паритет ML-трека с CB_COMP (issue #190): таргет TARGET_FULL из архива авторов,
+# архивные per-period прогнозы CB_COMP, две CatBoost-direct модели (с МП/без МП),
+# DM-HLN, TOST с margin 10% RMSE CB_COMP, RMSE ratio. Архив не скачивается:
+# путь — --archive или CB_COMP_ARCHIVE (по умолчанию worktree-сосед cb-comp-archive).
+# Читает ClickHouse (ряды v2), пишет локальные артефакты; в ClickHouse не пишет.
+cb-comp-parity:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cb_comp_parity.py $(ARGS)
+
+# Офлайн-тесты parity-скрипта: без ClickHouse и без архива.
+cb-comp-parity-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cb_comp_parity_test.py -v
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cb_comp_bottomup_test.py -v
+
+# Прокси-путь CB_COMP (issue #190): SA ИПЦ без КУ из публичных рядов ЦБ/Росстата
+# и RMSE нашего месячного nowcast на окне статьи 2019-01…2024-07. Читает ClickHouse,
+# в ClickHouse не пишет. Нужен CSV месячного трека v2 (--nowcast-csv), который
+# создаётся `make cpi-monthly ARGS="--sample long"` в ветке feat/key-rate-ml-v2.
+cb-comp-proxy:
+	uv run --with pandas --with scipy --with "statsmodels>=0.15" --python 3.12 python3 scripts/cb_comp_proxy.py $(ARGS)
 
 # Документы e-disclosure.ru: headed Chrome с постоянным профилем build/edisclosure-profile
 # (gitignored, 0700). Капчу решает владелец вручную; коллектор только ждёт её --wait секунд.
