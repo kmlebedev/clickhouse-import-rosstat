@@ -518,6 +518,24 @@ class ConsensusForecast:
     answers: Optional[int]
 
 
+def _consensus_stat(value, wave_date: date, year: int, stat: str) -> float:
+    """Число статистики консенсуса: пустое, NaN и inf — ошибка данных.
+
+    `row_float` отсекает только NULL и пустую ячейку, но NaN/inf прошли бы
+    `float()` и попали в прогноз как «измеренное» значение: NaN заразил бы
+    медиану и метрики, inf — деление на остаток года. Конечность проверяется
+    здесь, с именем волны, года и статистики — в том числе для `answers`,
+    чтобы `int(inf)` не дал `OverflowError`, а `int(nan)` — текст «не целое».
+    """
+    number = row_float(value)
+    if not math.isfinite(number):
+        raise ValueError(
+            f"консенсус: {stat}={number} у волны {wave_date.isoformat()} "
+            f"за {year} — не конечное число"
+        )
+    return number
+
+
 def consensus_from_rows(rows: list) -> list:
     """Волны консенсуса из строк `v_cbr_mo_br`: `(волна, год) → прогноз`.
 
@@ -527,7 +545,8 @@ def consensus_from_rows(rows: list) -> list:
     не консенсус, а огрызок. Дубль статистики в паре — потерянный `FINAL` или
     неверный ключ витрины, поэтому отказ, а не «последний победил»: иначе
     значение молча зависело бы от порядка строк ответа ClickHouse. `answers`
-    приводится к целому; нецелое значение — дефект источника.
+    приводится к целому; нецелое значение — дефект источника, а NaN/inf —
+    отказ ещё до `int()`.
     """
     grouped = {}
     for row in rows:
@@ -543,7 +562,7 @@ def consensus_from_rows(rows: list) -> list:
                 f"консенсус: дубль {stat} у волны {wave_date.isoformat()} "
                 f"за {year} — повторная строка исказила бы прогноз"
             )
-        stats[stat] = row_float(row["value"])
+        stats[stat] = _consensus_stat(row["value"], wave_date, year, stat)
 
     waves = []
     for (wave_date, year), stats in sorted(grouped.items()):
