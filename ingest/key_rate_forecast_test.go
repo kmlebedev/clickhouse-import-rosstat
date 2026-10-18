@@ -248,14 +248,32 @@ func TestKeyRateForecastWriterError(t *testing.T) {
 
 var _ BatchWriter = (*mockBatchWriter)(nil)
 
-// TestForecastLogDdlAndMigrationHaveErrorBp — канонический DDL и идемпотентная
-// миграция обязаны совпадать: CREATE IF NOT EXISTS не добавит колонку живой
-// таблице, и без ALTER резолвер cbr_rate упал бы на вставке в проде.
-func TestForecastLogDdlAndMigrationHaveErrorBp(t *testing.T) {
-	if !strings.Contains(forecastLogDdl, "error_bp Nullable(Float64)") {
-		t.Fatalf("forecastLogDdl has no error_bp: %s", forecastLogDdl)
+// TestForecastLogDdlAndMigrations — канонический DDL и идемпотентные миграции
+// обязаны совпадать: CREATE IF NOT EXISTS не добавит колонки живой таблице, и
+// без ALTER резолвер cbr_rate упал бы на вставке в проде, а метаданные прогноза
+// (probabilities/model/data_version/prompt_version) потерялись бы.
+func TestForecastLogDdlAndMigrations(t *testing.T) {
+	for _, want := range []string{
+		"error_bp Nullable(Float64)",
+		"probabilities String DEFAULT '{}'",
+		"model LowCardinality(String) DEFAULT ''",
+		"data_version String DEFAULT ''",
+		"prompt_version UInt16 DEFAULT 0",
+	} {
+		if !strings.Contains(forecastLogDdl, want) {
+			t.Errorf("forecastLogDdl не содержит %q: %s", want, forecastLogDdl)
+		}
 	}
-	if !strings.Contains(forecastLogAddErrorBp, "ADD COLUMN IF NOT EXISTS error_bp Nullable(Float64)") {
-		t.Fatalf("forecastLogAddErrorBp is not an idempotent ALTER: %s", forecastLogAddErrorBp)
+	joined := strings.Join(forecastLogMigrations, "\n")
+	for _, want := range []string{
+		"ADD COLUMN IF NOT EXISTS error_bp Nullable(Float64)",
+		"ADD COLUMN IF NOT EXISTS probabilities String DEFAULT '{}'",
+		"ADD COLUMN IF NOT EXISTS model LowCardinality(String) DEFAULT ''",
+		"ADD COLUMN IF NOT EXISTS data_version String DEFAULT ''",
+		"ADD COLUMN IF NOT EXISTS prompt_version UInt16 DEFAULT 0",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("forecastLogMigrations не содержат %q: %s", want, joined)
+		}
 	}
 }

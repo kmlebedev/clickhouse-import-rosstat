@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"sort"
@@ -145,29 +146,11 @@ func validateKeyRateProbabilities(probabilities map[string]float64) error {
 	if len(probabilities) == 0 {
 		return nil
 	}
-
-	keys := make([]string, 0, len(probabilities))
-	for key := range probabilities {
-		keys = append(keys, key)
+	canonical, err := canonicalKeyRateProbabilities(probabilities)
+	if err != nil {
+		return err
 	}
-	sort.Strings(keys)
-
-	canonical := make(map[string]float64, len(probabilities))
-	for _, key := range keys {
-		class, ok := keyRateProbabilityAliases[key]
-		if !ok {
-			return fmt.Errorf("probability key %q must be one of: -1, 0, +1, cut, hold, hike", key)
-		}
-		if _, duplicate := canonical[class]; duplicate {
-			return fmt.Errorf("probability class %q is set twice (aliases -1/0/+1 and cut/hold/hike)", class)
-		}
-		value := probabilities[key]
-		if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || value > 100 {
-			return fmt.Errorf("probability %q = %v must be within 0..100", key, value)
-		}
-		canonical[class] = value
-	}
-	if len(canonical) != len(keyRateProbabilityAliases)/2 {
+	if len(canonical) != len(keyRateProbabilityClasses) {
 		return fmt.Errorf("probabilities must contain all three classes: cut, hold, hike")
 	}
 
@@ -181,4 +164,59 @@ func validateKeyRateProbabilities(probabilities map[string]float64) error {
 	}
 
 	return nil
+}
+
+// keyRateProbabilityClasses — канонические имена классов в порядке отчёта.
+var keyRateProbabilityClasses = []string{"cut", "hold", "hike"}
+
+// canonicalKeyRateProbabilities нормализует ключи распределения к cut/hold/hike
+// (алиасы -1/0/+1) и проверяет значения/дубли. Пустой вход возвращает пустую
+// карту: «распределения нет» — валидное состояние точечного прогноза.
+func canonicalKeyRateProbabilities(probabilities map[string]float64) (map[string]float64, error) {
+	if len(probabilities) == 0 {
+		return map[string]float64{}, nil
+	}
+
+	keys := make([]string, 0, len(probabilities))
+	for key := range probabilities {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	canonical := make(map[string]float64, len(probabilities))
+	for _, key := range keys {
+		class, ok := keyRateProbabilityAliases[key]
+		if !ok {
+			return nil, fmt.Errorf("probability key %q must be one of: -1, 0, +1, cut, hold, hike", key)
+		}
+		if _, duplicate := canonical[class]; duplicate {
+			return nil, fmt.Errorf("probability class %q is set twice (aliases -1/0/+1 and cut/hold/hike)", class)
+		}
+		value := probabilities[key]
+		if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || value > 100 {
+			return nil, fmt.Errorf("probability %q = %v must be within 0..100", key, value)
+		}
+		canonical[class] = value
+	}
+
+	return canonical, nil
+}
+
+// keyRateProbabilitiesJSON — распределение для колонки forecast_log.probabilities:
+// канонический JSON {"cut":..,"hold":..,"hike":..}; пустое распределение — '{}'.
+// encoding/json сортирует ключи карты, поэтому текст детерминирован и повторная
+// запись той же строки не меняет журнал.
+func keyRateProbabilitiesJSON(probabilities map[string]float64) (string, error) {
+	canonical, err := canonicalKeyRateProbabilities(probabilities)
+	if err != nil {
+		return "", err
+	}
+	if len(canonical) == 0 {
+		return "{}", nil
+	}
+	encoded, err := json.Marshal(canonical)
+	if err != nil {
+		return "", fmt.Errorf("probabilities: %w", err)
+	}
+	return string(encoded), nil
 }
