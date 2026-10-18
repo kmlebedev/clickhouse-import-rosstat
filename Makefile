@@ -176,19 +176,26 @@ ch-sql:
 mlflow-up:
 	@if curl -sf -m 2 http://127.0.0.1:$(MLFLOW_PORT)/health >/dev/null 2>&1; then \
 		echo "MLflow уже отвечает на порту $(MLFLOW_PORT)"; \
+	elif [ -f "$(MLFLOW_PID)" ] && kill -0 $$(cat "$(MLFLOW_PID)") 2>/dev/null; then \
+		echo "MLflow уже запускается/запущен (PID $$(cat "$(MLFLOW_PID)")), второй сервер не поднимается"; \
 	else \
 		mkdir -p "$(MLFLOW_HOME)" "$(MLFLOW_ARTIFACTS)"; \
 		echo "прогрев uv-окружения mlflow==$(MLFLOW_VERSION) (первый запуск скачивает пакет)..."; \
 		uv run --with "mlflow==$(MLFLOW_VERSION)" --python 3.12 python -c "pass" || exit 1; \
 		nohup uv run --with "mlflow==$(MLFLOW_VERSION)" --python 3.12 mlflow server \
 			--host 127.0.0.1 --port $(MLFLOW_PORT) --workers 1 \
-			--backend-store-uri sqlite:///$(MLFLOW_DB) \
+			--backend-store-uri "sqlite:///$(MLFLOW_DB)" \
 			--default-artifact-root "$(MLFLOW_ARTIFACTS)" --serve-artifacts >"$(MLFLOW_LOG)" 2>&1 & \
 		echo $$! > "$(MLFLOW_PID)"; \
 		for i in $$(seq 1 60); do kill -0 $$(cat "$(MLFLOW_PID)") 2>/dev/null || break; curl -sf -m 1 http://127.0.0.1:$(MLFLOW_PORT)/health >/dev/null 2>&1 && break; sleep 1; done; \
 		if kill -0 $$(cat "$(MLFLOW_PID)") 2>/dev/null && curl -sf -m 2 http://127.0.0.1:$(MLFLOW_PORT)/health >/dev/null 2>&1; then \
 			echo "MLflow запущен на порту $(MLFLOW_PORT), PID $$(cat "$(MLFLOW_PID)"), лог $(MLFLOW_LOG)"; \
 		else \
+			pid=$$(cat "$(MLFLOW_PID)"); \
+			kill $$pid 2>/dev/null || true; \
+			for i in $$(seq 1 10); do kill -0 $$pid 2>/dev/null || break; sleep 1; done; \
+			kill -9 $$pid 2>/dev/null || true; \
+			rm -f "$(MLFLOW_PID)"; \
 			echo "MLflow не поднялся, хвост $(MLFLOW_LOG):"; tail -30 "$(MLFLOW_LOG)"; exit 1; \
 		fi; \
 	fi
