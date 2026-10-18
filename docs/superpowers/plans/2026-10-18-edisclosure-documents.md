@@ -825,3 +825,20 @@ gh pr create --title "add edisclosure documents importer" \
 ```
 
 После открытия PR — комментарий с протоколом живой приёмки (спека §9, стандарт §16.1 п. 8). Merge решает владелец.
+
+---
+
+## Протокол живой приёмки — 2026-10-18
+
+**Окружение:** dev-ClickHouse 26.10.1, ветка `feat/edisclosure-documents`; архив — локальный (`ARCHIVE_BACKEND=local`, `ARCHIVE_LOCAL_DIR=build/edisclosure-archive`). Переменные архива переданы **make-переменными**: `~/.config/rosstat/env` задаёт `ARCHIVE_BACKEND=yandex` и перекрывает shell-окружение через `-include`. Первый запуск импорта случайно ушёл в yandex и был остановлен; строк в ClickHouse он не отправил, загруженные версии идемпотентны по `sha256` и не удалялись.
+
+1. **Сбор.** `make edisclosure-login` — профиль Chrome сохранён (`build/edisclosure-profile`), капча решена владельцем. `make edisclosure-collect` (повтор с `--wait 600`) — **290 документов**, `manifest.document_count = 290`, `documents_file = documents.jsonl`; пустые разделы: `SBER [AFFILIATES, AGM]`, `CHMF [AFFILIATES, AGM]`.
+2. **Первый импорт.** `make import STAT=edisclosure_documents ARCHIVE_BACKEND=local ARCHIVE_LOCAL_DIR="$PWD/build/edisclosure-archive"` → `Imported 290 rows of edisclosure_documents`. Таблица `edisclosure_documents FINAL` — **290 строк**, пустых `archive_key` — **0**; `publication_date` — **2012-08-22 … 2026-08-31**. По тикерам/разделам: PLZL IFRS 45, RAS 74, AFFILIATES 89, AGM 3; SBER IFRS 8, RAS 15; CHMF IFRS 31, RAS 25. Архив: **290 объектов + `registry.jsonl`**, 414 МБ; `make archive-list ARCHIVE_LIST_SOURCE=edisclosure_documents ARCHIVE_BACKEND=local ARCHIVE_LOCAL_DIR=...` — **290 из 290**.
+3. **Повторный прогон — no-op.** Та же команда → `документов в манифесте 290, к загрузке 0, пропущено 290: no-op`; `Imported 0 rows`; таблица и `registry.jsonl` не изменились (mtime registry — 13:46:20).
+4. **Глубокий прогон.** `EDISCLOSURE_RECHECK=1 make import STAT=edisclosure_documents ...` → 290 документов скачано, `Imported 0 rows`, `sha256` не изменились, `registry.jsonl` — те же 290 строк; таблица — 290.
+5. **MCP.** `make mcp-user` — грант `v_edisclosure_documents` применён; `make mcp-check` — **ПРОВЕРКА ПРОЙДЕНА**, в том числе: витрина 290 строк, сырая `edisclosure_documents` закрыта (497), комментарии таблицы и всех колонок, строка PLZL IFRS с непустыми `sha256`/`archive_key`.
+6. **Сборка и расписание.** `make all` — exit 0 (gofmt, lint 0 issues, `go vet`, `go test -race`, обе сборки); `dagu validate dagu/edisclosure.yaml` — exit 0.
+
+**Исправлено в ходе приёмки:** прочерк `-`/`—`/`–` в датах источника нормализуется в NULL (иначе PLZL AGM ронял сбор); no-op-гейт сравнивает `Date` по календарному дню, а не по моменту времени (иначе второй прогон перекачивал все 290 документов). Оба фикса покрыты тестами и прошли scoped re-review.
+
+**Ограничение MVP:** капча решается владельцем вручную; коллектор в расписание не входит, снапшот доставляется на staging в `/root/dagu/build/edisclosure`.
