@@ -43,11 +43,11 @@ var newsAlterStatements = []string{
 // запись той же версии no-op. date — момент публикации и не меняется; first_seen — время прогона,
 // впервые увидевшего версию; у tombstone description/content_hash пустые, deleted = 1.
 const newsMessageVersionDdl = `CREATE TABLE IF NOT EXISTS news_message_version (
-			  channel LowCardinality(String)   -- interfaxonline | edisclosure
+			  channel LowCardinality(String)   -- interfaxonline | ifax_go | edisclosure | newssmartlab | markettwits | russianmacro | MarketOverview | mozgovikresearch
 			, message_id UInt64
 			, version UInt32                   -- 1..N; растёт при правке/удалении
 			, date DateTime                    -- момент публикации (не меняется)
-			, source LowCardinality(String)    -- interfax | edisclosure
+			, source LowCardinality(String)    -- interfax | edisclosure | smartlab | markettwits | russianmacro | marketoverview | mozgovikresearch
 			, title String                     -- первая строка версии
 			, url String                       -- https://t.me/<channel>/<id>
 			, description String               -- полный текст версии; '' у tombstone
@@ -118,8 +118,9 @@ const newsFilter = `(?i)дизел|бензин|керосин|дистилля�
 //
 // v_news_events — плоская лента с фильтром тезисов, transport (RSS/Telegram) и LLM-разметкой
 // видимого потока (sentiment/relevance/summary/model/prompt_version/tags);
-// v_news_flash — слой всех Telegram-каналов (молния interfaxonline и корпоративные
-// раскрытия edisclosure) с LLM-разметкой; v_news_message_versions —
+// v_news_flash — слой всех Telegram-каналов (молния interfaxonline/ifax_go,
+// корпоративные раскрытия edisclosure, newssmartlab и рыночные каналы) с LLM-разметкой;
+// v_news_message_versions —
 // винтажный слой правок и удалений; v_news_tags — статический реестр слагов. Число стейтментов —
 // контракт (VIEW + комментарий таблицы + комментарий каждой колонки): пропущенный комментарий
 // оставляет агента без смысла колонки, лишний — ломает публикацию.
@@ -170,11 +171,11 @@ var newsViewStatements = []string{
 			e.title, e.url, e.description, e.content_hash,
 			d.sentiment, d.relevance, d.summary, d.model, d.prompt_version
 		ORDER BY date DESC`, newsFilter, newsFilter),
-	`ALTER TABLE v_news_events MODIFY COMMENT 'Событийная лента РФ-канала: RSS «Интерфакс», РБК, ЦБ РФ, TASS, smart-lab и Telegram-каналы — молния «Интерфакса» (interfaxonline) и корпоративные раскрытия «Интерфакс-ЦРКИ» (edisclosure; импортёр news_watch, каждые 30 минут). transport различает RSS и публичное Telegram-превью; показаны только события по стемам тезисов (широкий фильтр — в определении витрины); полная лента лежит в сырой news_events и агенту не выдаётся. История копится с первого прогона (окна лент 20–100 позиций). sentiment/relevance/summary/tags — LLM-разметка видимых позиций (news_annotation, method=''llm''); NULL/пусто — позиция не размечена, а не «нейтрально»; content_hash — ключ разметки, '''' — строка до миграции и не аннотируема. Тональность Telegram также в v_news_flash.sentiment'`,
+	`ALTER TABLE v_news_events MODIFY COMMENT 'Событийная лента РФ-канала: RSS «Интерфакс», РБК, ЦБ РФ ×2, TASS, общий smart-lab и два блога, а также Telegram-каналы — молния «Интерфакса» (interfaxonline, ifax_go), корпоративные раскрытия «Интерфакс-ЦРКИ» (edisclosure), новостная лента Смартлаба (newssmartlab) и рыночные каналы markettwits, russianmacro, MarketOverview, mozgovikresearch (импортёр news_watch, каждые 30 минут). transport различает RSS и публичное Telegram-превью; показаны только события по стемам тезисов (широкий фильтр — в определении витрины); полная лента лежит в сырой news_events и агенту не выдаётся. История копится с первого прогона (окна лент 20–100 позиций). sentiment/relevance/summary/tags — LLM-разметка видимых позиций (news_annotation, method=''llm''); NULL/пусто — позиция не размечена, а не «нейтрально»; content_hash — ключ разметки, '''' — строка до миграции и не аннотируема. Тональность Telegram также в v_news_flash.sentiment'`,
 	`ALTER TABLE v_news_events COMMENT COLUMN date 'Момент публикации в ленте (pubDate источника со своим офсетом времени; у Telegram — time сообщения)'`,
 	`ALTER TABLE v_news_events COMMENT COLUMN date_msk 'День публикации по МСК (toDate(date, ''Europe/Moscow'')) — для группировок по дням'`,
-	`ALTER TABLE v_news_events COMMENT COLUMN source 'Лента-источник: interfax, rbc, cbr, tass, smartlab, edisclosure; оба фида ЦБ пишутся под cbr, обе ленты smart-lab — под smartlab, RSS и Telegram Интерфакса — под interfax, корпоративные раскрытия — под edisclosure; различаются transport и url'`,
-	`ALTER TABLE v_news_events COMMENT COLUMN transport 'Транспорт позиции: telegram — публичное превью Telegram-канала (t.me/s/interfaxonline, t.me/s/edisclosure), rss — RSS-ленты'`,
+	`ALTER TABLE v_news_events COMMENT COLUMN source 'Лента-источник: interfax, rbc, cbr, tass, smartlab, edisclosure, markettwits, russianmacro, marketoverview, mozgovikresearch; оба фида ЦБ — cbr, четыре ленты smart-lab (общий RSS, два блога и newssmartlab_tg) — smartlab, три ленты Интерфакса (RSS, interfaxonline, ifax_go) — interfax, корпоративные раскрытия — edisclosure; различаются transport, url и (для Telegram) channel'`,
+	`ALTER TABLE v_news_events COMMENT COLUMN transport 'Транспорт позиции: telegram — публичное превью Telegram-канала (interfaxonline, ifax_go, edisclosure, newssmartlab, markettwits, russianmacro, MarketOverview, mozgovikresearch), rss — RSS-ленты'`,
 	`ALTER TABLE v_news_events COMMENT COLUMN title 'Заголовок новости из ленты (нормализован в одну строку); у Telegram — первая строка первой версии сообщения'`,
 	`ALTER TABLE v_news_events COMMENT COLUMN url 'Ссылка на публикацию'`,
 	// Маркер пустой строки '' записан четырьмя кавычками (''''): одиночная кавычка внутри
@@ -240,11 +241,11 @@ var newsViewStatements = []string{
 			v.first_seen, v.title, v.url, v.description, v.content_hash,
 			d.sentiment, d.relevance, d.summary, d.model, d.prompt_version
 		ORDER BY date DESC, message_id DESC, model, prompt_version`,
-	`ALTER TABLE v_news_flash MODIFY COMMENT 'Telegram-каналы: interfaxonline (молния Интерфакса) и edisclosure (корпоративные раскрытия «Интерфакс-ЦРКИ»): последняя версия каждого сообщения из news_message_version без tombstone (deleted=0) и LLM-разметка из news_annotation (method=''llm''). Одна строка на сообщение × model/prompt_version; без doc-строки значения разметки нулевые, tags пуст. Правки и удаления — в v_news_message_versions, расшифровка тегов — в v_news_tags; полный корпоративный поток — WHERE channel = ''edisclosure'''`,
+	`ALTER TABLE v_news_flash MODIFY COMMENT 'Telegram-каналы: interfaxonline и ifax_go (молния Интерфакса), edisclosure (корпоративные раскрытия «Интерфакс-ЦРКИ»), newssmartlab (новостная лента Смартлаба), markettwits, russianmacro, MarketOverview, mozgovikresearch: последняя версия каждого сообщения из news_message_version без tombstone (deleted=0) и LLM-разметка из news_annotation (method=''llm''). Одна строка на сообщение × model/prompt_version; без doc-строки значения разметки нулевые, tags пуст. Правки и удаления — в v_news_message_versions, расшифровка тегов — в v_news_tags; полный поток канала — например, WHERE channel = ''edisclosure'''`,
 	`ALTER TABLE v_news_flash COMMENT COLUMN date 'Момент публикации сообщения (UTC источника); между версиями не меняется'`,
 	`ALTER TABLE v_news_flash COMMENT COLUMN date_msk 'День публикации по МСК (toDate(date, ''Europe/Moscow'')) — для группировок по дням'`,
-	`ALTER TABLE v_news_flash COMMENT COLUMN source 'Источник: interfax (Telegram-фид interfax_tg, молния) или edisclosure (Telegram-фид edisclosure_tg, корпоративные раскрытия)'`,
-	`ALTER TABLE v_news_flash COMMENT COLUMN channel 'Канал Telegram: interfaxonline (молния) или edisclosure (корпоративные раскрытия)'`,
+	`ALTER TABLE v_news_flash COMMENT COLUMN source 'Источник: interfax (Telegram-фиды interfax_tg и ifax_go_tg), edisclosure, smartlab (newssmartlab_tg), markettwits, russianmacro, marketoverview, mozgovikresearch'`,
+	`ALTER TABLE v_news_flash COMMENT COLUMN channel 'Канал Telegram: interfaxonline, ifax_go, edisclosure, newssmartlab, markettwits, russianmacro, MarketOverview, mozgovikresearch'`,
 	`ALTER TABLE v_news_flash COMMENT COLUMN message_id 'ID сообщения в канале (из data-post превью t.me/s/<channel>)'`,
 	`ALTER TABLE v_news_flash COMMENT COLUMN version 'Номер последней версии сообщения; правка текста и возврат удалённого растят версию'`,
 	`ALTER TABLE v_news_flash COMMENT COLUMN first_seen 'Когда последняя версия впервые увидена прогоном'`,
@@ -265,13 +266,13 @@ var newsViewStatements = []string{
 			title, url, description, content_hash, first_seen, deleted
 		FROM news_message_version FINAL
 		ORDER BY date DESC, message_id DESC, version DESC`,
-	`ALTER TABLE v_news_message_versions MODIFY COMMENT 'Все версии Telegram-каналов (interfaxonline — молния Интерфакса, edisclosure — корпоративные раскрытия «Интерфакс-ЦРКИ»), включая tombstone: история правок и удалений сообщений. deleted=1 — сообщение исчезло из окна канала (description и content_hash пустые, title/url/date — из последней живой версии). Текущее состояние без удалённых — v_news_flash'`,
-	`ALTER TABLE v_news_message_versions COMMENT COLUMN channel 'Канал Telegram: interfaxonline (молния) или edisclosure (корпоративные раскрытия)'`,
+	`ALTER TABLE v_news_message_versions MODIFY COMMENT 'Все версии Telegram-каналов (interfaxonline и ifax_go — молния Интерфакса, edisclosure — корпоративные раскрытия «Интерфакс-ЦРКИ», newssmartlab — новостная лента Смартлаба, markettwits, russianmacro, MarketOverview, mozgovikresearch), включая tombstone: история правок и удалений сообщений. deleted=1 — сообщение исчезло из окна канала (description и content_hash пустые, title/url/date — из последней живой версии). Текущее состояние без удалённых — v_news_flash'`,
+	`ALTER TABLE v_news_message_versions COMMENT COLUMN channel 'Канал Telegram: interfaxonline, ifax_go, edisclosure, newssmartlab, markettwits, russianmacro, MarketOverview, mozgovikresearch'`,
 	`ALTER TABLE v_news_message_versions COMMENT COLUMN message_id 'ID сообщения в канале'`,
 	`ALTER TABLE v_news_message_versions COMMENT COLUMN version 'Номер версии: 1 — первая запись, +1 на правку и на удаление (tombstone)'`,
 	`ALTER TABLE v_news_message_versions COMMENT COLUMN date 'Момент публикации (UTC источника); не меняется между версиями'`,
 	`ALTER TABLE v_news_message_versions COMMENT COLUMN date_msk 'День публикации по МСК (toDate(date, ''Europe/Moscow''))'`,
-	`ALTER TABLE v_news_message_versions COMMENT COLUMN source 'Источник: interfax или edisclosure'`,
+	`ALTER TABLE v_news_message_versions COMMENT COLUMN source 'Источник: interfax, edisclosure, smartlab, markettwits, russianmacro, marketoverview, mozgovikresearch'`,
 	`ALTER TABLE v_news_message_versions COMMENT COLUMN title 'Первая строка версии (у tombstone — из последней живой версии)'`,
 	`ALTER TABLE v_news_message_versions COMMENT COLUMN url 'Ссылка на сообщение: https://t.me/<channel>/<id>'`,
 	`ALTER TABLE v_news_message_versions COMMENT COLUMN description 'Полный текст версии; пусто у tombstone'`,

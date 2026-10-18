@@ -388,6 +388,29 @@ async def check(params, server_log):
                                       "STAT=news_watch (девятая лента, канал edisclosure)")
             failed += not expect("канал edisclosure в v_news_flash", (edisclosure_n or 0) > 0, edisclosure_detail)
 
+            # Новые Telegram-каналы пакета #46 (infra/2.3): v_news_flash — единственное место,
+            # где видны все каналы (v_news_events фильтрует по newsFilter и может не показать
+            # канал целиком). Проверка агрегированная: шесть каналов должны присутствовать,
+            # а bootstrap-разметка — дать хотя бы одну doc-строку. Полное покрытие
+            # (annotated = messages) проверяется протоколом приёмки, а не smoke-тестом.
+            new_channels = ("('ifax_go', 'markettwits', 'newssmartlab', 'russianmacro', "
+                            "'MarketOverview', 'mozgovikresearch')")
+            new_channels_raw = text(await session.call_tool("run_query", {"query":
+                f"SELECT uniqExact(channel) AS channels, countIf(model != '') AS annotated "
+                f"FROM v_news_flash WHERE channel IN {new_channels}"}))
+            new_channels_rows = result_rows(new_channels_raw)
+            new_channels_n = new_channels_rows[0].get("channels") if new_channels_rows else None
+            annotated_n = new_channels_rows[0].get("annotated") if new_channels_rows else None
+            if new_channels_rows is None:
+                new_channels_detail = f"ответ не распознан: {new_channels_raw[:200]}"
+            else:
+                new_channels_detail = f"каналов: {new_channels_n}, размеченных строк: {annotated_n}"
+            failed += not expect("новые Telegram-каналы #46 в v_news_flash",
+                                 (new_channels_n or 0) >= 6, new_channels_detail)
+            failed += not expect("bootstrap-разметка новых каналов", (annotated_n or 0) > 0,
+                                 new_channels_detail + " — прогнать bootstrap-разметку "
+                                 "(NEWS_LLM_BACKLOG_LIMIT=500)")
+
             # Реестр тегов — статическая витрина: 46 слагов, из них ровно 11 каналов ставки
             # (cb_channel). Меньшее число значит ни разу не отработавший прогон news_watch
             # (витрина публикуется вместе с остальными), расхождение — реестр разошёлся с
