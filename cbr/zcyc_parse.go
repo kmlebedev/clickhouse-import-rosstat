@@ -3,6 +3,7 @@ package cbr
 import (
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -69,6 +70,9 @@ func zcycRows(body []byte) ([]zcycPoint, error) {
 	}
 	header := table.Headers[len(table.Headers)-1]
 	columns := make([]tenorColumn, 0, len(header))
+	// seen — нормализованный тенор → исходный заголовок первой колонки: две
+	// колонки одного тенора (1 и 1,00) — ошибка разметки, а не дубли точек.
+	seen := make(map[string]string, len(header))
 	for col, cell := range header {
 		label := strings.TrimSpace(cell)
 		number, err := strconv.ParseFloat(strings.ReplaceAll(label, ",", "."), 64)
@@ -82,6 +86,10 @@ func zcycRows(body []byte) ([]zcycPoint, error) {
 			log.Warnf("cbr_zcyc: колонка заголовка %q (нормализованный тенор %q) не входит в канонический список — колонка пропущена", label, tenor)
 			continue
 		}
+		if first, ok := seen[tenor]; ok {
+			return nil, fmt.Errorf("cbr_zcyc: тенор %q встречается в заголовке дважды (колонки %q и %q) — разметка изменилась", tenor, first, label)
+		}
+		seen[tenor] = label
 		columns = append(columns, tenorColumn{col: col, tenor: tenor})
 	}
 	if len(columns) == 0 {
@@ -114,6 +122,11 @@ func zcycRows(body []byte) ([]zcycPoint, error) {
 			value, err := strconv.ParseFloat(strings.ReplaceAll(rawValue, ",", "."), 64)
 			if err != nil {
 				return nil, fmt.Errorf("cbr_zcyc: значение %q (дата %s, тенор %s): %w", rawValue, rawDate, column.tenor, err)
+			}
+			// ParseFloat принимает NaN/Inf без ошибки, но доходность ими быть не может:
+			// это битая страница, и она не должна попасть в ряд (как любое нечисло).
+			if math.IsNaN(value) || math.IsInf(value, 0) {
+				return nil, fmt.Errorf("cbr_zcyc: значение %q (дата %s, тенор %s) не является конечным числом (NaN/Inf) — разметка или страница битая", rawValue, rawDate, column.tenor)
 			}
 			points = append(points, zcycPoint{tenor: column.tenor, date: date, value: value})
 		}
