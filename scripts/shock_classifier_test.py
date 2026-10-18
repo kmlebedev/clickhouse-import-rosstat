@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Офлайн-тесты `scripts/shock_classifier.py` (Task 2).
+"""Офлайн-тесты `scripts/shock_classifier.py` (Tasks 2–3).
 
 Запуск из корня репозитория:
 
@@ -16,18 +16,28 @@
 * пропуск канала — `None`, а не 0; `missing_count` его считает;
 * дельта — к предыдущему ЗАСЕДАНИЮ панели, а не к предыдущему месяцу;
 * в панель попадают только решения `key_rate_model`;
-* экспорт фикстур детерминирован и читается обратно теми же строками.
+* экспорт фикстур детерминирован и читается обратно теми же строками;
+* причинные веса: клип `[0.05, 1]`, монотонность, первые `MIN_TRAIN` = 1,
+  тестовая строка не меняет статистики прошлых, явные шоки понижены;
+* пропуски заполняются медианой ОБУЧЕНИЯ (в стандартизованном виде 0);
+* классификатор: AUC > 0.9 на разделимой синтетике, вырожденные фолды —
+  `None`, метрики без положительных — явные `None`.
 """
 
 import contextlib
 import csv
+import dataclasses
 import io
+import random
+import statistics
 import sys
 import tempfile
 import unittest
 import unittest.mock
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
+
+import numpy as np
 
 # Модуль и тест лежат рядом, запуск прямой (`python3 scripts/...`), поэтому его
 # каталог добавляется в sys.path до импорта.
@@ -51,6 +61,63 @@ def fixture_rows(name: str, directory: Path) -> list:
     with (directory / name).open(newline="", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
     return rows
+
+
+def synthetic_panel(
+    count: int,
+    shock_indices=(),
+    *,
+    consistent_shocks: bool = False,
+    seed: int = sc.SEED,
+) -> list:
+    """Детерминированная панель для тестов Task 3 (без ClickHouse и сети).
+
+    Обычные строки — компактное облако вокруг `10..17`; явные шоки — выбросы.
+    `consistent_shocks=True` сдвигает все шоки в ОДНУ сторону (классы линейно
+    отделимы — проверка AUC), `False` — у каждого шока своя случайная
+    комбинация знаков (ковариация обучения не «выучивает» направление —
+    проверка весов). Генератор — собственный `random.Random(seed)`: тест не
+    зависит от глобального ГПСЧ и повторяется побитово.
+    """
+    shock_indices = set(shock_indices)
+    generator = random.Random(seed)
+    start = date(2014, 1, 1)
+    rows = []
+    for index in range(count):
+        shock = index in shock_indices
+        features = {}
+        for offset, name in enumerate(sc.FEATURES_CORE):
+            value = 10.0 + offset + generator.gauss(0.0, 0.2)
+            if shock:
+                if consistent_shocks:
+                    value += 100.0
+                else:
+                    value += generator.choice((-1.0, 1.0)) * (50.0 + 5.0 * offset)
+            features[name] = value
+        decision = sc.krm.Decision(
+            meeting_date=start + timedelta(days=30 * index),
+            rate_before=7.5,
+            rate_after=7.5,
+            step_bp=-100 if shock else 0,
+            y3=-1 if shock else 0,
+        )
+        rows.append(
+            sc.PanelRow(
+                decision=decision,
+                emergency=shock,
+                explicit_shock=shock,
+                features=features,
+                missing_count=0,
+            )
+        )
+    return rows
+
+
+def with_feature(row, name: str, value):
+    """Копия строки панели с заменённым значением одного признака."""
+    features = dict(row.features)
+    features[name] = value
+    return dataclasses.replace(row, features=features)
 
 
 class LabelTest(unittest.TestCase):
@@ -380,6 +447,131 @@ class LoaderTest(unittest.TestCase):
     def test_points_from_rows_rejects_null_value(self):
         with self.assertRaises(ValueError):
             sc.points_from_rows([{"date": "2022-01-31", "value": ""}], "тест")
+
+
+class AnomalyWeightsTest(unittest.TestCase):
+    def test_weights_are_bounded_and_monotone(self):
+        rows = synthetic_panel(48, {30, 34, 38, 42})
+        weights = sc.walk_forward_weights(rows, 24, sc.FEATURES_CORE)
+        self.assertEqual(len(weights), len(rows))
+        for weight in weights:
+            self.assertGreaterEqual(weight, sc.WEIGHT_MIN)
+            self.assertLessEqual(weight, sc.WEIGHT_MAX)
+        # Синтетика содержит выбросы: проверка не должна быть вакуумной.
+        self.assertLess(min(weights), 1.0)
+        self.assertLessEqual(
+            sc.weight_from_score(10.0, 1.0),
+            sc.weight_from_score(2.0, 1.0),
+        )
+        self.assertLessEqual(
+            sc.weight_from_score(2.0, 1.0),
+            sc.weight_from_score(1.0, 1.0),
+        )
+        self.assertEqual(sc.weight_from_score(1.0, 1.0), 1.0)
+        self.assertEqual(sc.weight_from_score(10.0, 1.0), sc.WEIGHT_MIN)
+        # Неизмеримый скор не понижает наблюдение.
+        self.assertEqual(sc.weight_from_score(float("nan"), 1.0), 1.0)
+        self.assertEqual(sc.weight_from_score(10.0, 0.0), 1.0)
+
+    def test_first_min_train_weights_are_one(self):
+        rows = synthetic_panel(30, {26, 27})
+        weights = sc.walk_forward_weights(rows, 24, sc.FEATURES_CORE)
+        self.assertEqual(weights[:24], [1.0] * 24)
+        self.assertEqual(len(weights), len(rows))
+
+    def test_test_row_does_not_change_training_statistics(self):
+        rows = synthetic_panel(48, {30, 34, 38, 42})
+        before = sc.walk_forward_weights(rows, 24, sc.FEATURES_CORE)
+        mutated = with_feature(rows[-1], "pi_saar", 1e6)
+        after = sc.walk_forward_weights(
+            rows[:-1] + [mutated], 24, sc.FEATURES_CORE
+        )
+        # Своя строка влияет только на свой вес: статистики прошлых строк
+        # считаются по тем же прошлым заседаниям.
+        self.assertEqual(before[:-1], after[:-1])
+
+    def test_explicit_shocks_are_downweighted(self):
+        rows = synthetic_panel(48, {30, 34, 38, 42})
+        weights = sc.walk_forward_weights(rows, 24, sc.FEATURES_CORE)
+        shock = [w for row, w in zip(rows, weights) if row.explicit_shock]
+        normal = [w for row, w in zip(rows, weights) if not row.explicit_shock]
+        self.assertTrue(shock)
+        self.assertLess(statistics.median(shock), statistics.median(normal))
+
+    def test_missing_values_are_imputed_from_train_only(self):
+        rows = synthetic_panel(32, {28, 29}, consistent_shocks=True)
+        train = rows[:28]
+        model = sc.fit_anomaly(train, sc.FEATURES_CORE)
+        column = sc.FEATURES_CORE.index("pi_saar")
+        missing = with_feature(rows[28], "pi_saar", None)
+        matrix = sc._feature_matrix([missing], sc.FEATURES_CORE)
+        standardized = sc._standardize(matrix, model.median, model.scale)
+        # Пропуск заполнен медианой ОБУЧЕНИЯ → в стандартизованном виде ровно 0.
+        self.assertEqual(float(standardized[0, column]), 0.0)
+        observed = [
+            row.features["pi_saar"]
+            for row in train
+            if row.features["pi_saar"] is not None
+        ]
+        self.assertAlmostEqual(
+            float(model.median[column]), statistics.median(observed)
+        )
+        # Статистики зависят только от обучения: повторная подгонка совпадает,
+        # а значение в тестовой строке на них не влияет.
+        again = sc.fit_anomaly(train, sc.FEATURES_CORE)
+        np.testing.assert_array_equal(model.median, again.median)
+        np.testing.assert_array_equal(model.scale, again.scale)
+        np.testing.assert_array_equal(model.precision, again.precision)
+        self.assertEqual(model.median_distance, again.median_distance)
+        filled = with_feature(rows[28], "pi_saar", 123456.0)
+        filled_matrix = sc._feature_matrix([filled], sc.FEATURES_CORE)
+        filled_standardized = sc._standardize(
+            filled_matrix, model.median, model.scale
+        )
+        # Заполненное значение — это значение тестовой строки, а не статистика:
+        # оно не совпадает с импутированным нулём.
+        self.assertNotEqual(float(filled_standardized[0, column]), 0.0)
+
+
+class ShockClassifierTest(unittest.TestCase):
+    def test_classifier_separates_synthetic_shocks(self):
+        rows = synthetic_panel(44, set(range(20, 32)), consistent_shocks=True)
+        probabilities = sc.walk_forward_classifier(rows, 24, sc.FEATURES_CORE)
+        labels = [int(row.explicit_shock) for row in rows]
+        metrics = sc.classifier_metrics(labels, probabilities)
+        self.assertIsNotNone(metrics["roc_auc"])
+        self.assertGreater(metrics["roc_auc"], 0.9)
+        self.assertGreater(metrics["pr_auc"], 0.9)
+        self.assertGreater(metrics["recall"], 0.5)
+
+    def test_degenerate_classifier_fold_is_skipped(self):
+        no_positive = synthetic_panel(30, set())
+        self.assertEqual(
+            sc.walk_forward_classifier(no_positive, 24, sc.FEATURES_CORE),
+            [None] * len(no_positive),
+        )
+        # Один класс — не только «нет шоков»: окно из одних шоков вырождено так
+        # же и обязано пропускаться, а не отдавать вероятность 1.
+        all_positive = synthetic_panel(
+            30, set(range(30)), consistent_shocks=True
+        )
+        self.assertEqual(
+            sc.walk_forward_classifier(all_positive, 24, sc.FEATURES_CORE),
+            [None] * len(all_positive),
+        )
+
+    def test_metrics_without_positives_are_explicit_none(self):
+        metrics = sc.classifier_metrics([0, 0, 0], [0.1, 0.2, 0.3])
+        self.assertEqual(metrics["n"], 3)
+        self.assertEqual(metrics["positives"], 0)
+        self.assertIsNone(metrics["roc_auc"])
+        self.assertIsNone(metrics["pr_auc"])
+        self.assertIsNone(metrics["recall"])
+        self.assertAlmostEqual(metrics["brier"], (0.01 + 0.04 + 0.09) / 3)
+        self.assertEqual(metrics["confusion"], [[3, 0], [0, 0]])
+        empty = sc.classifier_metrics([], [])
+        self.assertEqual(empty["n"], 0)
+        self.assertIsNone(empty["brier"])
 
 
 if __name__ == "__main__":

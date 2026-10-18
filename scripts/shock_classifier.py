@@ -60,6 +60,32 @@ SQL-константы переименовывают их в общий `value`
 «сальдо» нет — `budget_balance` считается из «Доходы, всего» и
 «Расходы, всего» (значения — месячные потоки, не накопление).
 
+**Task 3 — причинные веса и слой валидации (спека §5–6).** На каждом
+заседании `t` статистики аномальной модели оцениваются ТОЛЬКО по прошлым
+заседаниям:
+
+1. признаки стандартизуются по медиане/IQR обучающего окна (`IQR=0` → std,
+   затем 1; пропуск → 0 после стандартизации);
+2. `LedoitWolf` даёт сжатую ковариацию, по ней считается расстояние
+   Махаланобиса `d_t`;
+3. `r_t = d_t / median(d_train)`, вес `w_t = 1/(1 + max(0, r_t − 1)²)`,
+   клип `[0.05, 1]`;
+4. первые `MIN_TRAIN` заседаний получают `w = 1`: статистик ещё нет.
+
+`walk_forward_weights(rows, min_train)` возвращает as-of веса в порядке строк;
+строка `t` не участвует в оценке своих статистик. `FEATURES_ALL` — основной
+набор §4.2, `FEATURES_CORE` — проверка робастности на каналах, покрывающих
+2014+.
+
+Описательный supervised-слой — `LogisticRegression` (L2, `C=1.0`,
+`class_weight='balanced'`, `max_iter=1000`) на ТЕХ ЖЕ стандартизованных
+признаках, walk-forward с `MIN_TRAIN`: фолд без двух классов (в частности, без
+положительных) пропускается как `None` и считается вызывающим. Метрики —
+`classifier_metrics`: ROC-AUC, PR-AUC, Brier, precision/recall при пороге 0.5 и
+матрица ошибок; при отсутствии положительных неопределённые метрики — явные
+`None`, а не исключение. Веса НЕ берутся из классификатора: при горстке явных
+шоков он описательный и служит проверкой отделимости (спека §6, §11).
+
 Офлайн-тесты (`shock_classifier_test.py`) работают на синтетических CSV
 `scripts/testdata/shock_classifier/`: `export_fixtures(directory)` пишет
 детерминированный набор (8 заседаний 2021–2022, 2 внеочередных, разные даты
@@ -82,7 +108,12 @@ import sys
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
+
+import numpy as np
+from sklearn.covariance import LedoitWolf
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import average_precision_score, roc_auc_score
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -103,6 +134,21 @@ MIN_TRAIN = 24
 
 # Сид воспроизводимости (бутстрап/перестановки) и версия набора Task 3–4.
 SEED = 20261019
+
+# --- Константы аномальной модели и классификатора (спека §5–6) ---------------
+
+# Клип причинного веса: ниже 0.05 наблюдение не опускается — вес мягко
+# понижает вклад, а не исключает заседание (спека §5, §11).
+WEIGHT_MIN = 0.05
+WEIGHT_MAX = 1.0
+
+# Гиперпараметры описательного классификатора фиксированы спекой §6; они не
+# подбираются ни на какой выборке. L2 — умолчание `LogisticRegression` во всех
+# поддерживаемых версиях scikit-learn (в 1.8+ явный `penalty='l2'` уже
+# предупреждает об устаревании, а `l1_ratio=0` — та же L2).
+CLASSIFIER_C = 1.0
+CLASSIFIER_MAX_ITER = 1000
+CLASSIFIER_THRESHOLD = 0.5
 
 # Спека прогона — путь от корня репозитория для паспорта журнала (Task 5).
 SPEC_PATH = "docs/superpowers/specs/2026-10-19-key-rate-shock-classifier-design.md"
@@ -797,6 +843,353 @@ def build_panel(
     return rows
 
 
+# --- Аномальная модель и причинные веса (спека §5) ----------------------------
+
+
+@dataclass(frozen=True)
+class AnomalyModel:
+    """Статистики аномальной модели, оценённые на одном обучающем окне.
+
+    Все поля — ТОЛЬКО по обучающему окну (`rows[:t]` для строки `t`): медиана
+    и масштаб стандартизации, среднее (`location`) и точность (`precision`)
+    сжатой ковариации Ledoit–Wolf, а также медиана расстояний Махаланобиса
+    обучающих строк — знаменатель `r_t` (спека §5). Тестовая строка не
+    участвует ни в одном из них.
+
+    `features` — порядок столбцов: он один для подгонки и для `anomaly_score`,
+    иначе признаки перепутались бы местами.
+    """
+
+    features: tuple
+    median: np.ndarray
+    scale: np.ndarray
+    location: np.ndarray
+    precision: np.ndarray
+    median_distance: float
+
+
+def _feature_matrix(rows: list, features: Sequence[str]) -> np.ndarray:
+    """Матрица признаков `rows × features`; пропуск — `NaN`, а не ноль.
+
+    Ноль на месте пропуска выглядел бы измеренным значением и исказил бы и
+    медиану, и ковариацию. `NaN` до стандартизации означает «точки нет», а
+    после (`_standardize`) — «заполнено медианой обучающего окна».
+    """
+    matrix = np.empty((len(rows), len(features)), dtype=float)
+    for row_index, row in enumerate(rows):
+        for column_index, name in enumerate(features):
+            value = row.features.get(name)
+            matrix[row_index, column_index] = (
+                np.nan if value is None else float(value)
+            )
+    return matrix
+
+
+def _robust_center_scale(
+    matrix: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Медиана и IQR каждого столбца по ОБУЧАЮЩЕМУ окну (спека §5).
+
+    `IQR = 0` (константа, мало точек) → стандартное отклонение, затем 1:
+    делить на ноль нельзя, а масштаб 1 оставляет признак как есть. Столбец
+    без единого наблюдения получает медиану 0 и масштаб 1 — стандартизация
+    такого столбца всё равно даст нули (все значения пропущены).
+    """
+    center = np.zeros(matrix.shape[1], dtype=float)
+    scale = np.ones(matrix.shape[1], dtype=float)
+    for column_index in range(matrix.shape[1]):
+        observed = matrix[:, column_index]
+        observed = observed[np.isfinite(observed)]
+        if observed.size == 0:
+            continue
+        center[column_index] = float(np.median(observed))
+        q25, q75 = np.percentile(observed, [25, 75])
+        spread = float(q75 - q25)
+        if not math.isfinite(spread) or spread == 0.0:
+            spread = float(np.std(observed, ddof=0))
+        if not math.isfinite(spread) or spread == 0.0:
+            spread = 1.0
+        scale[column_index] = spread
+    return center, scale
+
+
+def _standardize(
+    matrix: np.ndarray, center: np.ndarray, scale: np.ndarray
+) -> np.ndarray:
+    """Стандартизация и заполнение пропусков: `NaN` → 0 (спека §5).
+
+    После вычитания медианы и деления на IQR пропуск становится ровно нулём —
+    то есть медианой обучающего окна в стандартизованном пространстве. Это и
+    есть «медианная импутация», не создающая измеренного значения.
+    """
+    standardized = (matrix - center) / scale
+    return np.where(np.isfinite(standardized), standardized, 0.0)
+
+
+def _mahalanobis(
+    matrix: np.ndarray, location: np.ndarray, precision: np.ndarray
+) -> np.ndarray:
+    """Расстояния Махаланобиса строк до `location` с точностью `precision`.
+
+    Квадратичная форма может оказаться чуть отрицательной из-за округления у
+    почти сингулярной точности; `max(·, 0)` не даёт `sqrt` вернуть `NaN`.
+    """
+    differences = matrix - location
+    squared = np.einsum("ij,jk,ik->i", differences, precision, differences)
+    return np.sqrt(np.maximum(squared, 0.0))
+
+
+def fit_anomaly(
+    train_rows: list, features: Sequence[str] = FEATURES_ALL
+) -> AnomalyModel:
+    """Оценивает аномальную модель на обучающем окне (спека §5).
+
+    Порядок — как в спеке: медиана/IQR → стандартизация с заполнением
+    пропусков нулём → `LedoitWolf` на стандартизованных строках → медиана
+    расстояний Махаланобиса обучающих строк. Сжатие Ledoit–Wolf нужно, потому
+    что признаки коррелированы, а наблюдений немного; обычная выборочная
+    ковариация была бы сингулярной.
+
+    Окно из одной строки не даёт ковариации: используется единичная точность,
+    и все расстояния (включая медиану) нулевые — вес такой строки будет 1.
+    Пустое окно — ошибка вызывающего: статистик нет вовсе.
+    """
+    if not train_rows:
+        raise ValueError("аномальная модель: пустое обучающее окно")
+    matrix = _feature_matrix(train_rows, features)
+    center, scale = _robust_center_scale(matrix)
+    standardized = _standardize(matrix, center, scale)
+    if standardized.shape[0] < 2:
+        location = np.zeros(standardized.shape[1], dtype=float)
+        precision = np.eye(standardized.shape[1], dtype=float)
+    else:
+        estimator = LedoitWolf().fit(standardized)
+        location = np.asarray(estimator.location_, dtype=float)
+        precision = np.asarray(estimator.precision_, dtype=float)
+    distances = _mahalanobis(standardized, location, precision)
+    return AnomalyModel(
+        features=tuple(features),
+        median=center,
+        scale=scale,
+        location=location,
+        precision=precision,
+        median_distance=float(np.median(distances)),
+    )
+
+
+def anomaly_score(model: AnomalyModel, row: PanelRow) -> float:
+    """Расстояние Махаланобиса строки `row` до статистик `model` (спека §5).
+
+    Строка стандартизуется медианой/IQR ОБУЧАЮЩЕГО окна (`model`), поэтому её
+    пропуски заполняются медианой обучения, а не её собственными значениями.
+    """
+    matrix = _feature_matrix([row], model.features)
+    standardized = _standardize(matrix, model.median, model.scale)
+    return float(_mahalanobis(standardized, model.location, model.precision)[0])
+
+
+def weight_from_score(score: float, median_train: float) -> float:
+    """Причинный вес по аномальному скору (спека §5).
+
+    `r = d_t / median(d_train)`; `w = 1/(1 + max(0, r − 1)²)`, клип
+    `[WEIGHT_MIN, WEIGHT_MAX]`. Вес монотонно убывает с аномальностью без
+    жёсткого порога: `r ≤ 1` — вес 1, дальше плавное «естественное
+    понижение». Неизмеримый скор (NaN/inf) или нулевая медиана обучения —
+    вес 1: понижать наблюдение не за что.
+    """
+    if (
+        not math.isfinite(score)
+        or not math.isfinite(median_train)
+        or median_train <= 0.0
+    ):
+        return WEIGHT_MAX
+    ratio = score / median_train
+    excess = max(0.0, ratio - 1.0)
+    weight = 1.0 / (1.0 + excess * excess)
+    return min(WEIGHT_MAX, max(WEIGHT_MIN, weight))
+
+
+def walk_forward_weights(
+    rows: list,
+    min_train: int = MIN_TRAIN,
+    features: Sequence[str] = FEATURES_ALL,
+) -> list[float]:
+    """As-of веса всех заседаний: `t` не участвует в своих статистиках (§5).
+
+    Для строки `t ≥ min_train` модель обучается на `rows[:t]` — строго прошлых
+    заседаниях; строка `t` подаётся только в `anomaly_score`. Первые
+    `min_train` строк получают `1.0`: статистик ещё нет. Возврат — веса в
+    порядке входа, поэтому `weights[t]` принадлежит `rows[t]`.
+    """
+    if min_train < 1:
+        raise ValueError(f"walk-forward весов: min_train = {min_train} < 1")
+    weights = []
+    for index, row in enumerate(rows):
+        if index < min_train:
+            weights.append(WEIGHT_MAX)
+            continue
+        model = fit_anomaly(rows[:index], features)
+        weights.append(
+            weight_from_score(anomaly_score(model, row), model.median_distance)
+        )
+    return weights
+
+
+# --- Описательный классификатор шоков (спека §6) ------------------------------
+
+
+def fit_shock_classifier(
+    train_rows: list, features: Sequence[str] = FEATURES_ALL
+) -> LogisticRegression:
+    """Логистическая регрессия явного шока на обучающем окне (спека §6).
+
+    L2, `C=CLASSIFIER_C`, `class_weight='balanced'`, `max_iter=...`; `random_state`
+    фиксирован, хотя lbfgs детерминирован и без него. Признаки стандартизуются
+    ровно теми же медианой/IQR, что у аномальной модели (пропуск → 0):
+    коэффициенты тогда сравнимы между признаками, а не измеряются в их
+    исходных единицах.
+
+    Окно без двух классов (в частности, без единого положительного шока)
+    вырождено: `LogisticRegression` описал бы один класс, и вероятности шока
+    были бы фикцией. Это свойство окна, а не ошибка данных, поэтому
+    поднимается `DegenerateWindowError` — `walk_forward_classifier` пропускает
+    фолд как `None`.
+
+    Статистики стандартизации кладутся в fitted-атрибуты
+    `feature_median_`/`feature_scale_`/`feature_names_`: вызывающему нужно
+    преобразовать тестовую строку теми же числами, а не переоценивать их на
+    тесте.
+    """
+    if not train_rows:
+        raise krm.DegenerateWindowError(
+            "классификатор шоков: пустое обучающее окно — классы не оценены"
+        )
+    labels = np.asarray(
+        [1 if row.explicit_shock else 0 for row in train_rows], dtype=int
+    )
+    if labels.min() == labels.max():
+        raise krm.DegenerateWindowError(
+            f"классификатор шоков: в обучающем окне один класс "
+            f"({int(labels[0])}) — положительных шоков "
+            f"{int(labels.sum())} из {len(labels)}, распределение не оценено"
+        )
+    matrix = _feature_matrix(train_rows, features)
+    center, scale = _robust_center_scale(matrix)
+    standardized = _standardize(matrix, center, scale)
+    model = LogisticRegression(
+        C=CLASSIFIER_C,
+        class_weight="balanced",
+        max_iter=CLASSIFIER_MAX_ITER,
+        random_state=SEED,
+    )
+    model.fit(standardized, labels)
+    model.feature_median_ = center
+    model.feature_scale_ = scale
+    model.feature_names_ = tuple(features)
+    return model
+
+
+def shock_probability(model: LogisticRegression, row: PanelRow) -> float:
+    """Вероятность явного шока для одной строки по fitted-модели (спека §6).
+
+    Строка стандартизуется статистиками ОБУЧАЮЩЕГО окна, сохранёнными в
+    `fit_shock_classifier` (`feature_median_`/`feature_scale_`): тестовая
+    строка не переоценивает их на себе. Пропуск заполняется медианой обучения
+    (→ 0), как и у аномальной модели.
+    """
+    matrix = _feature_matrix([row], model.feature_names_)
+    standardized = _standardize(
+        matrix, model.feature_median_, model.feature_scale_
+    )
+    positive_column = list(model.classes_).index(1)
+    return float(model.predict_proba(standardized)[0, positive_column])
+
+
+def walk_forward_classifier(
+    rows: list,
+    min_train: int = MIN_TRAIN,
+    features: Sequence[str] = FEATURES_ALL,
+) -> list[Optional[float]]:
+    """Walk-forward вероятность явного шока для каждого заседания (спека §6).
+
+    Фолд `t` обучается на `rows[:t]` (только прошлое) и предсказывает
+    вероятность `explicit_shock` строки `t`. Первые `min_train` строк и
+    вырожденные фолды (один класс в обучении) — `None`: вызывающий считает их
+    число как `sum(probability is None for probability in result)`. Возврат —
+    список длины `len(rows)`, выровненный по строкам.
+    """
+    if min_train < 1:
+        raise ValueError(f"walk-forward классификатора: min_train = {min_train} < 1")
+    probabilities: list[Optional[float]] = [None] * len(rows)
+    for index in range(min_train, len(rows)):
+        try:
+            model = fit_shock_classifier(rows[:index], features)
+        except krm.DegenerateWindowError:
+            continue
+        probabilities[index] = shock_probability(model, rows[index])
+    return probabilities
+
+
+def classifier_metrics(labels: list, probs: list) -> dict:
+    """Метрики вероятностного классификатора шоков (спека §6).
+
+    `labels` — 0/1, `probs` — вероятность класса 1; `None` в `probs` (фолд
+    пропущен) исключается из метрик и считается в `skipped`. ROC-AUC
+    не определён без обоих классов, PR-AUC — без положительных; в этих
+    случаях возвращается явный `None`, а не исключение и не NaN. Brier
+    определён всегда (при непустой выборке), precision/recall — из матрицы
+    ошибок при пороге `CLASSIFIER_THRESHOLD`; нулевой знаменатель даёт `None`.
+
+    `confusion` — строки «факт 0/1», столбцы «прогноз 0/1»:
+    `[[TN, FP], [FN, TP]]`.
+    """
+    if len(labels) != len(probs):
+        raise ValueError(
+            f"метрики классификатора: {len(labels)} меток против {len(probs)} вероятностей"
+        )
+    pairs = [
+        (int(bool(label)), float(probability))
+        for label, probability in zip(labels, probs)
+        if probability is not None
+    ]
+    result = {
+        "n": len(pairs),
+        "skipped": len(labels) - len(pairs),
+        "positives": sum(label for label, _ in pairs),
+        "threshold": CLASSIFIER_THRESHOLD,
+        "roc_auc": None,
+        "pr_auc": None,
+        "brier": None,
+        "precision": None,
+        "recall": None,
+        "confusion": [[0, 0], [0, 0]],
+    }
+    if not pairs:
+        return result
+    outcomes = [label for label, _ in pairs]
+    probabilities = [probability for _, probability in pairs]
+    result["brier"] = sum(
+        (probability - label) ** 2 for label, probability in pairs
+    ) / len(pairs)
+    confusion = [[0, 0], [0, 0]]
+    for label, probability in pairs:
+        predicted = 1 if probability >= CLASSIFIER_THRESHOLD else 0
+        confusion[label][predicted] += 1
+    result["confusion"] = confusion
+    _, false_positive = confusion[0]
+    false_negative, true_positive = confusion[1]
+    if true_positive + false_positive > 0:
+        result["precision"] = true_positive / (true_positive + false_positive)
+    if true_positive + false_negative > 0:
+        result["recall"] = true_positive / (true_positive + false_negative)
+    positives = result["positives"]
+    if 0 < positives < len(pairs):
+        result["roc_auc"] = float(roc_auc_score(outcomes, probabilities))
+    if positives > 0:
+        result["pr_auc"] = float(average_precision_score(outcomes, probabilities))
+    return result
+
+
 # --- Синтетические фикстуры и их чтение ---------------------------------------
 
 
@@ -1082,13 +1475,14 @@ def read_fixtures(
 def main(argv: Optional[list] = None) -> int:
     """CLI среза: Task 2 умеет только писать офлайн-фикстуры.
 
-    Полный CLI (артефакты, `--features`, `--min-train`, `ML_LOG`) — Task 5;
-    здесь ранний каркас, чтобы фикстуры регенерировались той же командой, что
-    у `key_rate_model`.
+    Веса и классификатор Task 3 — библиотечный слой (`walk_forward_weights`,
+    `walk_forward_classifier`, `classifier_metrics`); полный CLI (артефакты,
+    `--features`, `--min-train`, `ML_LOG`) — Task 5. Здесь ранний каркас,
+    чтобы фикстуры регенерировались той же командой, что у `key_rate_model`.
     """
     parser = argparse.ArgumentParser(
-        description="Классификатор шоков ключевой ставки: панель заседаний и "
-        "as-of каналы (Task 2)."
+        description="Классификатор шоков ключевой ставки: панель заседаний, "
+        "as-of каналы, причинные веса и классификатор (Tasks 2–3)."
     )
     parser.add_argument(
         "--export-fixtures",
