@@ -3323,6 +3323,9 @@ def run_summary(
         "skipped": len(skipped),
         "months": len(months),
     }
+    # Явный `logger` — контракт duck typing: используется как есть, даже если
+    # `ML_LOG` выключен (иначе тестам и вызывающему коду пришлось бы трогать
+    # env). `ML_LOG` решает только, создавать ли прогон самостоятельно.
     if logger is None and ml_log:
         # Журнал создаётся ПОСЛЕ выборки: пустая/короткая выборка — тоже прогон,
         # и её паспорт должен нести фактические rows/first/last/skipped.
@@ -3339,6 +3342,13 @@ def run_summary(
                 "sample_last": SAMPLE_BOUNDS[sample][1].isoformat(),
                 "start": start,
                 "embargo_months": embargo_months,
+                # Окна прогона: основное и робастность, ровно те, что считает
+                # `evaluate_windows` (спека §4.1/§8.2), — по ним паспорт
+                # воспроизводим без чтения кода.
+                "windows": [
+                    list(spec)
+                    for spec in window_specs(start, embargo_months)
+                ],
                 "seed": SEED,
                 "models": list(MODELS),
                 "features_base": feature_names(with_mp=False),

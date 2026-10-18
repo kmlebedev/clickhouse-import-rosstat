@@ -2902,6 +2902,10 @@ class TestRunSummaryMlLog(unittest.TestCase):
         self.assertEqual(captured["config"]["sample"], "short")
         self.assertEqual(captured["config"]["start"], 3)
         self.assertEqual(captured["config"]["embargo_months"], 1)
+        # Окна прогона — в паспорте, а не только в metrics.
+        self.assertEqual(
+            captured["config"]["windows"], [[3, 1], [48, 1]]
+        )
         self.assertEqual(captured["config"]["models"], list(cm.MODELS))
         self.assertEqual(
             captured["config"]["features_base"], cm.feature_names(False)
@@ -2992,6 +2996,7 @@ class TestRunSummaryMlLog(unittest.TestCase):
         self.assertEqual(captured["config"]["sample"], "long")
         self.assertEqual(captured["config"]["start"], 48)
         self.assertEqual(captured["config"]["embargo_months"], 0)
+        self.assertEqual(captured["config"]["windows"], [[48, 0], [48, 1]])
         self.assertEqual(captured["sample_meta"]["rows"], 292)
         self.assertEqual(captured["sample_meta"]["first"], "2002-05-01")
         self.assertEqual(captured["sample_meta"]["last"], "2026-08-01")
@@ -3009,6 +3014,55 @@ class TestRunSummaryMlLog(unittest.TestCase):
         )
         self.assertTrue(all(row.meta["sample"] == "long" for row in fake.predictions))
         self.assertEqual(fake.finished[0][0], "finished")
+
+    def test_ml_log_finishes_empty_run(self):
+        # Явный logger используется и при выключенном ML_LOG: env чистый, но
+        # прогон всё равно получает статус empty.
+        fake = FakeLogger()
+
+        def empty_windows(rows, models, specs):
+            return []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            for name in cm.ARTIFACT_NAMES:
+                (directory / name).write_text("old", encoding="utf-8")
+            with unittest.mock.patch.dict(
+                    os.environ, clean_ml_env(), clear=True
+            ), unittest.mock.patch.object(
+                    cm, "evaluate_windows", empty_windows
+            ), fixture_transport(), contextlib.redirect_stdout(io.StringIO()):
+                code = cm.run_summary(
+                    out_dir=directory,
+                    today=date(2026, 10, 18),
+                    logger=fake,
+                )
+            self.assertEqual(code, 0)
+            self.assertEqual(fake.finished[0][0], "empty")
+            self.assertIn("ни одного прогноза", fake.finished[0][1])
+            # Ветка empty по-прежнему подчищает все три stale-артефакта.
+            for name in cm.ARTIFACT_NAMES:
+                self.assertFalse((directory / name).exists(), name)
+
+    def test_ml_log_failed_run_reraises(self):
+        fake = FakeLogger()
+
+        def broken_windows(rows, models, specs):
+            raise RuntimeError("walk-forward сломан (тест)")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with unittest.mock.patch.object(
+                    cm, "evaluate_windows", broken_windows
+            ), fixture_transport(), contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaises(RuntimeError):
+                    cm.run_summary(
+                        out_dir=Path(tmp),
+                        today=date(2026, 10, 18),
+                        logger=fake,
+                    )
+        self.assertEqual(fake.finished[0][0], "failed")
+        self.assertIn("RuntimeError", fake.finished[0][1])
+        self.assertIn("walk-forward сломан (тест)", fake.finished[0][1])
 
     def test_ml_log_does_not_change_artifacts(self):
 
