@@ -96,19 +96,41 @@ func TestCbrPitViewsContract(t *testing.T) {
 	if len(cbrPitView.Columns) != 7 {
 		t.Errorf("v_point_in_time: колонковых комментариев %d, want 7", len(cbrPitView.Columns))
 	}
-	if !strings.Contains(cbrPitAsOfView.Select, "publication_date < {as_of:Date}") ||
-		!strings.Contains(cbrPitAsOfView.Select, "argMax(p.value, (p.published_at, p.vintage))") ||
-		!strings.Contains(cbrPitAsOfView.Select, "GROUP BY p.source, p.series, p.period_date") ||
-		!strings.Contains(cbrPitAsOfView.Select, ") AS p") {
-		t.Errorf("v_point_in_time_asof: не та семантика среза: %s", cbrPitAsOfView.Select)
-	}
-	if len(cbrPitAsOfView.Columns) != 0 {
-		t.Errorf("v_point_in_time_asof: у параметризованной витрины не может быть колонковых комментариев, got %d", len(cbrPitAsOfView.Columns))
-	}
 	if !strings.Contains(cbrPitVersionView.Select, "groupBitXor(cityHash64(") ||
 		!strings.Contains(cbrPitVersionView.Select, "hex(") ||
 		!strings.Contains(cbrPitVersionView.Select, "GROUP BY source") {
 		t.Errorf("v_point_in_time_version: не та версия набора: %s", cbrPitVersionView.Select)
+	}
+	if len(cbrPitVersionView.Columns) != 6 {
+		t.Errorf("v_point_in_time_version: колонковых комментариев %d, want 6", len(cbrPitVersionView.Columns))
+	}
+}
+
+// TestCbrPitAsOfViewContract — семантика среза: строгая граница по дате публикации, тай-брейк
+// версий во всех argMax, группировка по (source, series, period_date) и отсутствие фильтров
+// «только последний выпуск» — HAVING или условия по period_date скрыли бы последнюю известную
+// версию ряда, исчезнувшего из нового выпуска (спека §2.3).
+func TestCbrPitAsOfViewContract(t *testing.T) {
+	sel := cbrPitAsOfView.Select
+	if !strings.Contains(sel, "publication_date < {as_of:Date}") {
+		t.Errorf("as-of: нет строгой границы: %s", sel)
+	}
+	if !strings.Contains(sel, "argMax(p.value, (p.published_at, p.vintage))") ||
+		!strings.Contains(sel, "argMax(p.vintage, (p.published_at, p.vintage))") ||
+		!strings.Contains(sel, "argMax(p.vintage_label, (p.published_at, p.vintage))") {
+		t.Errorf("as-of: нет тай-брейка (published_at, vintage) во всех argMax: %s", sel)
+	}
+	if !strings.Contains(sel, "GROUP BY p.source, p.series, p.period_date") {
+		t.Errorf("as-of: группировка не по (source, series, period_date): %s", sel)
+	}
+	if strings.Contains(sel, "HAVING") {
+		t.Errorf("as-of: HAVING ограничил бы срез последним выпуском: %s", sel)
+	}
+	if strings.Count(sel, "WHERE") != 1 || strings.Contains(sel, "period_date <") || strings.Contains(sel, "period_date >") {
+		t.Errorf("as-of: единственный WHERE должен быть publication_date < as_of, без фильтра period_date: %s", sel)
+	}
+	if len(cbrPitAsOfView.Columns) != 0 {
+		t.Errorf("as-of: у параметризованной витрины не может быть колонковых комментариев, got %d", len(cbrPitAsOfView.Columns))
 	}
 }
 ```
@@ -129,7 +151,7 @@ Expected: FAIL — `undefined: cbrPitViews` (и `undefined: cbrPitView`).
 
 - [ ] **Step 4: Убедиться, что тест проходит**
 
-Run: `go test ./cbr -run TestCbrPitViewsContract -count=1`
+Run: `go test ./cbr -run 'TestCbrPitViewsContract|TestCbrPitAsOfViewContract' -count=1`
 Expected: PASS.
 
 - [ ] **Step 5: Коммит**
@@ -347,7 +369,7 @@ Expected: gofmt, golangci-lint `0 issues`, `go vet` чисто, `go test -race .
 - [ ] **Step 2: Создать/пересоздать витрины**
 
 Run: `make import STAT=cbr_dip_bulletin`
-Expected: в логе три `created: true` (или `false` на повторе), `Imported 0 rows` без скачиваний; повтор — то же.
+Expected: в логе три `created: true` — `util.CreateView` пересоздаёт витрину на каждом прогоне и возвращает true, когда исходная таблица есть; `Imported 0 rows` без скачиваний; повтор — то же.
 
 - [ ] **Step 3: Гранты и MCP**
 

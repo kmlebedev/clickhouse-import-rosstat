@@ -3,6 +3,7 @@ package cbr
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
@@ -125,6 +126,10 @@ func ensurePitViews(ctx context.Context, conn driver.Conn) error {
 	for _, v := range cbrPitViews {
 		created, err := util.CreateView(ctx, conn, v)
 		if err != nil {
+			// util.CreateView уже оборачивает ошибки Exec как «<view>: …»; не дублируем имя.
+			if strings.Contains(err.Error(), v.Name) {
+				return err
+			}
 			return fmt.Errorf("%s: %w", v.Name, err)
 		}
 		log.Infof("%s created: %t", v.Name, created)
