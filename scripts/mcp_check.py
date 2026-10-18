@@ -570,6 +570,125 @@ async def check(params, server_log):
                 failed += not expect(f"сырая {table} закрыта ({label})", denied,
                                      f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
 
+            # Сводный дашборд контура ключевой ставки (пункт key-rate/phase-4-dashboard,
+            # issue #128): одна витрина на оба контура, пороги, ближайшее заседание и
+            # последний прогноз с ошибкой в б.п. Проверяется не только право чтения, но и
+            # состав: 5 фиксированных контуров обязаны быть (spot, fundamental, market,
+            # divergence, calendar), forecast — информационная строка: без прогонов writer'а
+            # треков нет, и это не FAIL. next_meeting.target_date сверяется с минимумом
+            # будущих заседаний из v_events_calendar — так проверяется сам расчёт, а не
+            # только наличие строки. error_bp — колонка, которой нет ни в одной другой
+            # витрине; запрос к ней доказывает, что контракт ошибки доступен агенту.
+            kr_dash_raw = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_key_rate_dashboard"}))
+            kr_dash = result_rows(kr_dash_raw)
+            kr_dash_n = kr_dash[0].get("n") if kr_dash else None
+            if kr_dash is None:
+                kr_dash_detail = f"витрина не читается: {kr_dash_raw[:200]}"
+            elif (kr_dash_n or 0) > 0:
+                kr_dash_detail = f"строк: {kr_dash_n}"
+            else:
+                kr_dash_detail = "строк: 0 — прогнать make import STAT=key_rate_views"
+            failed += not expect("витрина v_key_rate_dashboard существует и непуста", (kr_dash_n or 0) > 0, kr_dash_detail)
+
+            kr_contours_raw = text(await session.call_tool("run_query", {"query":
+                "SELECT count(DISTINCT contour) AS n, groupUniqArray(contour) AS contours FROM v_key_rate_dashboard"}))
+            kr_contours = result_rows(kr_contours_raw)
+            kr_contours_n = kr_contours[0].get("n") if kr_contours else None
+            kr_contours_list = kr_contours[0].get("contours") if kr_contours else None
+            kr_fixed_contours = {"spot", "fundamental", "market", "divergence", "calendar"}
+            kr_contours_ok = isinstance(kr_contours_list, list) and kr_fixed_contours.issubset(set(kr_contours_list))
+            if kr_contours is None:
+                kr_contours_detail = f"ответ не распознан: {kr_contours_raw[:200]}"
+            else:
+                kr_contours_detail = f"контуров: {kr_contours_n} {kr_contours_list}"
+            # 5 фиксированных контуров обязательны по ИМЕНАМ, а не по числу: набор из пяти
+            # чужих контуров не должен проходить проверку. forecast — информационная строка.
+            failed += not expect("витрина v_key_rate_dashboard содержит 5 фиксированных контуров",
+                                 kr_contours_ok, kr_contours_detail)
+
+            kr_meeting_raw = text(await session.call_tool("run_query", {"query":
+                "SELECT d.target_date AS dashboard_date, e.next_date AS calendar_date "
+                "FROM v_key_rate_dashboard d "
+                "CROSS JOIN (SELECT min(event_date) AS next_date FROM v_events_calendar "
+                "WHERE category = 'cbr' AND event_date >= today()) e "
+                "WHERE d.indicator = 'next_meeting'"}))
+            kr_meeting = result_rows(kr_meeting_raw)
+            if kr_meeting is None:
+                kr_meeting_detail = f"ответ не распознан: {kr_meeting_raw[:200]}"
+            elif not kr_meeting:
+                kr_meeting_detail = "строки next_meeting нет"
+            else:
+                kr_meeting_detail = (f"dashboard={kr_meeting[0].get('dashboard_date')}, "
+                                     f"calendar={kr_meeting[0].get('calendar_date')}")
+            failed += not expect("next_meeting.target_date совпадает с ближайшим заседанием ЦБ",
+                                 bool(kr_meeting)
+                                 and kr_meeting[0].get("dashboard_date") is not None
+                                 and kr_meeting[0].get("dashboard_date") == kr_meeting[0].get("calendar_date"),
+                                 kr_meeting_detail)
+
+            kr_fixed_raw = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_key_rate_dashboard "
+                "WHERE indicator IN ('base_ipc_saar', 'keyrate_implied_change_bp')"}))
+            kr_fixed = result_rows(kr_fixed_raw)
+            kr_fixed_n = kr_fixed[0].get("n") if kr_fixed else None
+            failed += not expect("пороговые строки base_ipc_saar и keyrate_implied_change_bp на месте",
+                                 kr_fixed_n == 2,
+                                 f"строк: {kr_fixed_n}" if kr_fixed is not None else f"ответ не распознан: {kr_fixed_raw[:200]}")
+
+            kr_error_raw = text(await session.call_tool("run_query", {"query":
+                "SELECT error_bp FROM v_key_rate_dashboard WHERE contour = 'forecast' LIMIT 1"}))
+            kr_error = result_rows(kr_error_raw)
+            kr_forecast_raw = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_key_rate_dashboard WHERE contour = 'forecast'"}))
+            kr_forecast = result_rows(kr_forecast_raw)
+            kr_forecast_n = kr_forecast[0].get("n") if kr_forecast else None
+            if kr_forecast is None:
+                kr_forecast_detail = f"ответ не распознан: {kr_forecast_raw[:200]}"
+            elif (kr_forecast_n or 0) > 0:
+                kr_forecast_detail = f"треков: {kr_forecast_n}"
+            else:
+                kr_forecast_detail = ("треков: 0 — прогнать make key-rate-forecast-log (информационно; "
+                                      "без журнала витрина живёт без строк forecast)")
+            print(f"OK   forecast-треки в v_key_rate_dashboard: {kr_forecast_detail}" if (kr_forecast_n or 0) > 0
+                  else f"WARN forecast-треки в v_key_rate_dashboard: {kr_forecast_detail}")
+
+            # Контракт публикации (§7, §8): у статистического трека ordered_logit в витрине
+            # обязаны быть непустые probabilities и model. Строки нет — проверка проходит
+            # информационно (без прогонов writer'а журнала витрина живёт без forecast), но
+            # если строка есть, пустые метаданные — провал.
+            kr_track_raw = text(await session.call_tool("run_query", {"query":
+                "SELECT probabilities, model FROM v_key_rate_dashboard "
+                "WHERE contour = 'forecast' AND indicator = 'cbr_rate:ordered_logit' LIMIT 1"}))
+            kr_track = result_rows(kr_track_raw)
+            if kr_track is None:
+                kr_track_detail = f"ответ не распознан: {kr_track_raw[:200]}"
+                kr_track_ok = False
+            elif not kr_track:
+                kr_track_detail = "строки cbr_rate:ordered_logit нет — прогнать make key-rate-forecast-log (информационно)"
+                kr_track_ok = True
+            else:
+                probabilities = kr_track[0].get("probabilities") or ""
+                try:
+                    distribution = json.loads(probabilities)
+                except ValueError:
+                    distribution = {}
+                kr_track_ok = (isinstance(distribution, dict)
+                               and {"cut", "hold", "hike"} <= set(distribution)
+                               and (kr_track[0].get("model") or "") != "")
+                kr_track_detail = (f"probabilities={'есть' if kr_track_ok else 'пусто/неполно'}, "
+                                   f"model={kr_track[0].get('model')!r}")
+            failed += not expect("probabilities/model у cbr_rate:ordered_logit непусты", kr_track_ok, kr_track_detail)
+
+            # error_bp — часть контракта ошибки в б.п. (#127); запрос к колонке обязан
+            # проходить, даже если сейчас все прогнозы ещё не свёрены и значения NULL.
+            failed += not expect("колонка error_bp читается агентом", kr_error is not None,
+                                 "SELECT error_bp FROM v_key_rate_dashboard" if kr_error is not None else kr_error_raw[:200])
+
+            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM forecast_log"}))
+            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+            failed += not expect("сырой forecast_log закрыт", denied,
+                                 "отказ ClickHouse 497 на forecast_log (ожидаемо)" if denied else raw[:200])
+
             # Контур мониторинга предприятий ЦБ (правило 11, пункт 1.3 роадмапа): витрина
             # v_cbr_survey читается агентом, сырая macro_series закрыта (проверка выше).
             # Существование витрины подтверждается запросом к ней, а не поиском имени в
@@ -830,8 +949,10 @@ async def check(params, server_log):
             # run_query доказывает и существование, и право чтения; «нет витрины» и «нет
             # прав» приходят ошибкой (UNKNOWN_TABLE / ACCESS_DENIED) и в result_rows не
             # разбираются.
-            failed += not expect("витрина v_rosstat_macro видна", "v_rosstat_macro" in tables, "list_tables default")
-
+            # Отдельная проверка «имя есть в list_tables» здесь снята: list_tables
+            # пагинируется, и после добавления v_key_rate_dashboard имя v_rosstat_macro
+            # перестало попадать в первую страницу. Существование и право чтения ниже
+            # доказывает запрос к самой витрине — это и есть конвенция проекта.
             rosstat_view = text(await session.call_tool("run_query", {"query": "SELECT count() AS rows, uniqExact(series) AS series FROM v_rosstat_macro"}))
             rosstat_view_rows = result_rows(rosstat_view)
             rosstat_points_n = rosstat_view_rows[0].get("rows") if rosstat_view_rows else None
