@@ -16,6 +16,12 @@ func TestImportersRegistry(t *testing.T) {
 	if got := edisclosureImporter.Name(); got != "edisclosure_documents" {
 		t.Fatalf("Name() = %q, want edisclosure_documents", got)
 	}
+	// source винтажного архива равен имени импортёра и таблицы (спека §5.5):
+	// ключи archive.Key начинаются с edisclosure_documents/. Проверка литералом,
+	// а не ссылкой на edisclosureTable: иначе расхождение констант было бы не видно.
+	if got := edisclosureArchiveSource; got != "edisclosure_documents" {
+		t.Fatalf("archive source = %q, want edisclosure_documents", got)
+	}
 	found := false
 	for _, stat := range chimport.Stats {
 		if stat.Name() == "edisclosure_documents" {
