@@ -22,7 +22,9 @@ import json
 import logging
 import math
 import os
+import platform
 import subprocess
+import sys
 import uuid
 from datetime import date, datetime
 from pathlib import Path
@@ -306,6 +308,11 @@ class ExperimentRun:
             "git_dirty": self.git["git_dirty"],
             "config_hash": sha256_text(config_json),
             "config_json": config_json,
+            "env_json": canonical_json({
+                "python": sys.version,
+                "platform": platform.platform(),
+                "packages": self.packages,
+            }),
             "data_asof": self.data_asof,
             "sample_hash": sha256_text(canonical_json(self.sample)),
             "sample_meta_json": canonical_json(self.sample_meta),
@@ -358,11 +365,13 @@ class ExperimentRun:
             )
 
     def finish(self, status: str = "finished", notes: str = "") -> str:
-        """Пишет паспорт и предсказания; возвращает `clickhouse`/`local`/`disabled`.
+        """Пишет предсказания и паспорт; возвращает `clickhouse`/`local`/`disabled`.
 
-        Сначала `ml_runs`, затем одним batch `ml_predictions`. Ошибка
-        ClickHouse не роняет прогон: строка паспорта и предсказания
-        сохраняются локально, а вызывающий получает `"local"`.
+        Сначала одним batch `ml_predictions` (если они есть), затем `ml_runs`.
+        Паспорт пишется ПОСЛЕДНИМ, поэтому сбой вставки предсказаний не может
+        оставить `finished`-паспорт без фолдов: в этом случае паспорт не
+        пишется вовсе. Ошибка ClickHouse не роняет прогон — строка паспорта и
+        предсказания сохраняются локально, а вызывающий получает `"local"`.
         """
         if self._finished:
             return self._result
@@ -376,9 +385,9 @@ class ExperimentRun:
         run_row = self._run_row(status, notes, finished_at)
         prediction_rows = self._prediction_rows(finished_at)
         try:
-            ch_exec(insert_sql("ml_runs", [run_row]))
             if prediction_rows:
                 ch_exec(insert_sql("ml_predictions", prediction_rows))
+            ch_exec(insert_sql("ml_runs", [run_row]))
         except (ClickHouseError, OSError) as exc:
             self._write_local(run_row, prediction_rows, exc)
             self._result = "local"
