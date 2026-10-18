@@ -59,7 +59,7 @@
 - [x] `make import STAT=key_rate_views` — `View v_key_rate_dashboard created: true`; повтор — те же строки.
 - [x] MCP `kimi_reader`: `SELECT count() FROM v_key_rate_dashboard` = 23; `count(DISTINCT contour)` = 6; значения/флаги — по спеке §10; `SELECT count() FROM forecast_log` → `ACCESS_DENIED`.
 - [x] `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА.
-- [ ] Протокол — комментарием в PR и issue #128 (после открытия PR).
+- [x] Протокол — комментарием в PR #203 и issue #128.
 
 ## Порядок коммитов
 
