@@ -45,10 +45,10 @@
   - `run_summary(..., quick: bool = False, jobs: int = 0)`.
   - `render_report(..., quick: bool = False)` — заголовок/строка quick; `article_split` не печатается.
   - CLI `--quick` (`store_true`), `--jobs` (`int`, default 0) с валидацией «jobs требует quick»/`jobs>=0`.
-- [ ] **Step 1: Тесты (red).** `test_quick_window_specs_only_main`; `test_quick_skips_fixed_split` (мок `fixed_split` не вызван); `test_full_window_specs_unchanged` (short 3, long 2); `test_quick_report_marks_quick_and_no_split`; `test_jobs_requires_quick` (`SystemExit`); `test_negative_jobs_rejected`.
-- [ ] **Step 2: Реализация.** `window_specs(..., quick)`; `run_summary` пропускает `fixed_split` при quick (`split_predictions=None`); `render_report` — quick-заголовок и «сплит не рассчитан»; `main` — флаги/валидация; `ML_LOG config.quick/jobs`, `run_name` с `quick`.
-- [ ] **Step 3: Тесты/живой smoke.** `cpi_monthly_test.py` зелёный; `make cpi-monthly ARGS="--quick"` — одно окно, отчёт quick; полный без флагов — прежние окна (не запускать целиком, если дорого; проверить `--quick` на фикстурах).
-- [ ] **Step 4: Commit** `cpi monthly: add quick main-window mode`.
+- [x] **Step 1: Тесты (red).** `test_quick_window_specs_only_main`; `test_quick_skips_fixed_split` (мок `fixed_split` не вызван); `test_full_window_specs_unchanged` (short 3, long 2); `test_quick_report_marks_quick_and_no_split`; `test_jobs_requires_quick` (`SystemExit`); `test_negative_jobs_rejected`.
+- [x] **Step 2: Реализация.** `window_specs(..., quick)`; `run_summary` пропускает `fixed_split` при quick (`split_predictions=None`); `render_report` — quick-заголовок и «сплит не рассчитан»; `main` — флаги/валидация; `ML_LOG config.quick/jobs`, `run_name` с `quick`.
+- [x] **Step 3: Тесты/живой smoke.** `cpi_monthly_test.py` зелёный; `make cpi-monthly ARGS="--quick"` — одно окно, отчёт quick; полный без флагов — прежние окна (не запускать целиком, если дорого; проверить `--quick` на фикстурах).
+- [x] **Step 4: Commit** `cpi monthly: add quick main-window mode`.
 
 ### Task 2: `--jobs N` — параллельные фолды
 
@@ -60,18 +60,18 @@
   - `walk_forward_parallel(rows, models, start, embargo, jobs, skipped=None, notes=None) -> list[Prediction]` (или эквивалент, собирающий `WindowRun`): один `ProcessPoolExecutor(max_workers=min(jobs, cpu_count()))`; воркер `_run_fold_worker(train, row, model_names)` возвращает `{model: {"pred":..., "skipped":bool, "notes":..., "weights":...}}`.
   - `catboost_params`/`_fit_catboost` получают `thread_count=1` в quick (через явный параметр/контекст; полный путь — без изменений).
   - `evaluate_windows(..., quick=False, jobs=0)`; `run_summary` передаёт quick/jobs.
-- [ ] **Step 1: Тесты (red).** `test_quick_parallel_matches_sequential` на фикстуре (jobs 1 vs 2/4, одинаковые предсказания); `test_quick_parallel_repeat_deterministic` (два прогона — одинаковые sha256); `test_parallel_worker_picklable` (top-level, не замыкание); `test_parallel_skipped_and_notes` (вырожденный фолд/`ConvergenceWarning` не теряются); `test_parallel_does_not_touch_full_mode` (jobs без quick — ошибка).
-- [ ] **Step 2: Реализация.** `ProcessPoolExecutor` (spawn на macOS), воркер считает все модели фолда; главный собирает `Prediction` в порядке фолдов/моделей, агрегирует `skipped`/`notes`/веса; `thread_count=1` только в quick; полный путь — прежний `walk_forward`.
-- [ ] **Step 3: Живой бенчмарк.** `time make cpi-monthly ARGS="--sample long --quick --jobs 8"` — ожидание ≤30 мин (≥3× против 90); short quick — аналогично; два повтора — sha256; `--jobs 1` vs `--jobs 8` — одинаковые прогнозы (на коротком окне/фикстуре).
-- [ ] **Step 4: Commit** `cpi monthly: parallel quick runs`.
+- [x] **Step 1: Тесты (red).** `test_quick_parallel_matches_sequential` на фикстуре (jobs 1 vs 2/4, одинаковые предсказания); `test_quick_parallel_repeat_deterministic` (два прогона — одинаковые sha256); `test_parallel_worker_picklable` (top-level, не замыкание); `test_parallel_skipped_and_notes` (вырожденный фолд/`ConvergenceWarning` не теряются); `test_parallel_does_not_touch_full_mode` (jobs без quick — ошибка).
+- [x] **Step 2: Реализация.** `ProcessPoolExecutor` (spawn на macOS), воркер считает все модели фолда; главный собирает `Prediction` в порядке фолдов/моделей, агрегирует `skipped`/`notes`/веса; `thread_count=1` только в quick; полный путь — прежний `walk_forward`.
+- [x] **Step 3: Живой бенчмарк.** `time make cpi-monthly ARGS="--sample long --quick --jobs 8"` — ожидание ≤30 мин (≥3× против 90); short quick — аналогично; два повтора — sha256; `--jobs 1` vs `--jobs 8` — одинаковые прогнозы (на коротком окне/фикстуре).
+- [x] **Step 4: Commit** `cpi monthly: parallel quick runs`.
 
 ### Task 3: Документация и приёмка
 
 **Files:** Modify `README.md`, `docs/DEVELOPMENT.md`, `docs/OPERATIONS.md`, `docs/LIMITATIONS.md`, `docs/ROADMAP_INFRA.md`.
 
-- [ ] **Step 1: Документация.** README/DEVELOPMENT — `--quick`/`--jobs` и предупреждение «quick-числа не официальные»; OPERATIONS — `ML_LOG=1 make cpi-monthly ARGS="--sample long --quick --jobs 8"`; LIMITATIONS — quick не заменяет полный прогон; ROADMAP_INFRA §5 — статус `4.4` ✅ с числами бенчмарка.
-- [ ] **Step 2: Приёмка.** `make all`; 4 Python-набора; `make docs-check`; быстрый long/short прогоны (jobs 8) с числами/временем; повтор (sha256); `--jobs 1` vs 8; полный без флагов — инварианты/прежние числа; `ML_LOG=1 --quick` виден в `v_ml_*`.
-- [ ] **Step 3: Commit** `docs: cpi monthly quick runs`.
+- [x] **Step 1: Документация.** README/DEVELOPMENT — `--quick`/`--jobs` и предупреждение «quick-числа не официальные»; OPERATIONS — `ML_LOG=1 make cpi-monthly ARGS="--sample long --quick --jobs 8"`; LIMITATIONS — quick не заменяет полный прогон; ROADMAP_INFRA §5 — статус `4.4` ✅ с числами бенчмарка.
+- [x] **Step 2: Приёмка.** `make all`; 4 Python-набора; `make docs-check`; быстрый long/short прогоны (jobs 8) с числами/временем; повтор (sha256); `--jobs 1` vs 8; полный без флагов — инварианты/прежние числа; `ML_LOG=1 --quick` виден в `v_ml_*`.
+- [x] **Step 3: Commit** `docs: cpi monthly quick runs`.
 
 ## Self-Review
 
