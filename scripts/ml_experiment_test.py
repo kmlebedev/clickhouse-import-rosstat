@@ -11,6 +11,7 @@
 
 import hashlib
 import http.client
+import importlib.machinery
 import json
 import os
 import sys
@@ -125,14 +126,16 @@ class FakeMlflow:
 
     Устанавливается через `patch.dict(sys.modules, {"mlflow": fake})`:
     `_start_mlflow` делает ленивый `import mlflow` и получает этот объект.
-    Ошибки (`start_error`, `log_text_error`, `model_error`) позволяют
-    проверить, что сбой приёмника не меняет результат прогона.
+    Ошибки (`start_error`, `log_params_error`, `log_text_error`,
+    `model_error`) позволяют проверить, что сбой приёмника не меняет
+    результат прогона.
     """
 
     def __init__(self, run_id=MLFLOW_RUN_ID, start_error=None,
-                 log_text_error=None, model_error=None):
+                 log_params_error=None, log_text_error=None, model_error=None):
         self.run_id = run_id
         self.start_error = start_error
+        self.log_params_error = log_params_error
         self.log_text_error = log_text_error
         self.model_error = model_error
         self.tracking_uri = None
@@ -170,6 +173,8 @@ class FakeMlflow:
 
     def log_params(self, params):
         self._record("log_params", params)
+        if self.log_params_error is not None:
+            raise self.log_params_error
 
     def log_tags(self, tags):
         self._record("log_tags", tags)
@@ -182,6 +187,29 @@ class FakeMlflow:
 
     def calls_of(self, name):
         return [call for call in self.calls if call[0] == name]
+
+
+class _BrokenMlflowLoader:
+    """Loader, который при импорте падает не-ImportError'ом.
+
+    Конфликт protobuf/pydantic в транзитивных зависимостях MLflow всплывает
+    уже на `import mlflow`, а не только как ImportError.
+    """
+
+    def create_module(self, spec):
+        return None
+
+    def exec_module(self, module):
+        raise TypeError("protobuf version conflict")
+
+
+class _BrokenMlflowFinder:
+    """Ставится первым в `sys.meta_path` и ломает именно `import mlflow`."""
+
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname != "mlflow":
+            return None
+        return importlib.machinery.ModuleSpec(fullname, _BrokenMlflowLoader())
 
 
 def _mlflow_env(**extra):
@@ -670,6 +698,14 @@ class FlattenMetricsTest(unittest.TestCase):
             "ok-key.name": 3.0,
         })
 
+    def test_sanitized_key_collision_gets_suffix(self):
+        # `cv rmse` и `cv_rmse` после санитизации неразличимы: вторая
+        # метрика обязана получить суффикс, а не молча перезаписать первую.
+        with self.assertLogs("ml_experiment", level="WARNING") as logs:
+            flat = me.flatten_metrics({"cv rmse": 1.0, "cv_rmse": 2.0})
+        self.assertEqual(flat, {"cv_rmse": 1.0, "cv_rmse_2": 2.0})
+        self.assertIn("cv_rmse_2", "\n".join(logs.output))
+
     def test_item_scalars_are_unwrapped(self):
         self.assertEqual(me.flatten_metrics({"n": _ItemScalar(2)}), {"n": 2.0})
 
@@ -861,6 +897,100 @@ class MlflowSinkTest(unittest.TestCase):
             [call[2]["status"] for call in fake.calls_of("end_run")],
             ["FINISHED"],
         )
+
+    def test_import_type_error_does_not_break_start_run(self):
+        # Конфликт protobuf/pydantic всплывает уже на `import mlflow`:
+        # не-ImportError не имеет права уронить `start_run`.
+        with _mlflow_env(), patch.dict(sys.modules) as modules, \
+                patch.object(
+                    sys, "meta_path",
+                    [_BrokenMlflowFinder(), *sys.meta_path],
+                ), patch.object(me, "ch_exec") as ch_exec:
+            modules.pop("mlflow", None)
+            with self.assertLogs("ml_experiment", level="WARNING") as logs:
+                run = start_run("exp", "run", {}, date(2026, 10, 18), {}, [])
+            self.assertEqual(run.finish(), "clickhouse")
+
+        ch_exec.assert_called_once()
+        self.assertIn("protobuf version conflict", "\n".join(logs.output))
+        # Локальный UUID 4.1: MLflow-приёмник так и не включился.
+        self.assertEqual(str(uuid.UUID(run.run_id)), run.run_id)
+        self.assertNotEqual(run.run_id, CANONICAL_MLFLOW_RUN_ID)
+
+    def test_missing_mlflow_package_warns_and_keeps_local_run(self):
+        # `None` в sys.modules — детерминированный ImportError, даже если
+        # mlflow установлен в окружении разработчика.
+        with _mlflow_env(), patch.dict(sys.modules, {"mlflow": None}), \
+                patch.object(me, "ch_exec") as ch_exec:
+            with self.assertLogs("ml_experiment", level="WARNING") as logs:
+                run = start_run("exp", "run", {}, date(2026, 10, 18), {}, [])
+            self.assertEqual(run.finish(), "clickhouse")
+
+        ch_exec.assert_called_once()
+        self.assertIn("mlflow", "\n".join(logs.output))
+        self.assertEqual(str(uuid.UUID(run.run_id)), run.run_id)
+        self.assertNotEqual(run.run_id, CANONICAL_MLFLOW_RUN_ID)
+
+    def test_long_string_param_is_skipped_with_warning(self):
+        fake = FakeMlflow()
+        with _mlflow_env(), patch.dict(sys.modules, {"mlflow": fake}), \
+                patch.object(me, "ch_exec"):
+            with self.assertLogs("ml_experiment", level="WARNING") as logs:
+                run = start_run(
+                    "exp", "run", {"huge": "x" * 6001, "alpha": 0.5},
+                    date(2026, 10, 18), {}, [],
+                )
+            self.assertEqual(run.finish(), "clickhouse")
+
+        self.assertEqual(fake.calls_of("log_params")[0][1][0], {"alpha": 0.5})
+        self.assertIn("huge", "\n".join(logs.output))
+
+    def test_log_params_failure_after_start_ends_failed(self):
+        # Run уже создан, но log_params упал: его нужно закрыть FAILED,
+        # а прогон продолжается по ClickHouse/local-пути без log_text.
+        fake = FakeMlflow(log_params_error=RuntimeError("bad param"))
+        with _mlflow_env(), patch.dict(sys.modules, {"mlflow": fake}), \
+                patch.object(me, "ch_exec") as ch_exec:
+            with self.assertLogs("ml_experiment", level="WARNING") as logs:
+                run = start_run(
+                    "exp", "run", {"alpha": 0.5}, date(2026, 10, 18), {}, []
+                )
+            self.assertEqual(run.finish(), "clickhouse")
+
+        ch_exec.assert_called_once()
+        self.assertIn("bad param", "\n".join(logs.output))
+        self.assertEqual(run.run_id, CANONICAL_MLFLOW_RUN_ID)
+        self.assertEqual(
+            [call[2]["status"] for call in fake.calls_of("end_run")],
+            ["FAILED"],
+        )
+        self.assertEqual(fake.calls_of("log_text"), [])
+
+    def test_serialization_failure_ends_mlflow_failed(self):
+        fake = FakeMlflow()
+        with tempfile.TemporaryDirectory() as tmp:
+            with _mlflow_env(ML_LOCAL_DIR=tmp), \
+                    patch.dict(sys.modules, {"mlflow": fake}):
+                # `sample_meta` не участвует в тегах/params, поэтому старт
+                # проходит, а сериализация паспорта в finish — нет.
+                run = start_run(
+                    "exp", "run", {}, date(2026, 10, 18),
+                    {"bad": object()}, [], enabled=True,
+                )
+                with patch.object(me, "ch_exec") as ch_exec:
+                    with self.assertLogs("ml_experiment", level="WARNING"):
+                        self.assertEqual(run.finish(), "local")
+                ch_exec.assert_not_called()
+
+            self.assertEqual(
+                [call[2]["status"] for call in fake.calls_of("end_run")],
+                ["FAILED"],
+            )
+            self.assertEqual(fake.calls_of("log_text"), [])
+            payload = json.loads(
+                (Path(tmp) / run.run_id / "run.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(payload["status"], "failed")
 
 
 class StartRunEnvTest(unittest.TestCase):
