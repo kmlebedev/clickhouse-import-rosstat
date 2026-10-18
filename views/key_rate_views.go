@@ -39,9 +39,12 @@ var keyRateDashboardView = util.View{
 	//   - последний прогноз трека — row_number() OVER (PARTITION BY metric ORDER BY
 	//     forecast_date DESC) = 1 поверх forecast_log FINAL;
 	//   - base_ipc_saar переводит месячный темп в годовой для ОБОИХ месяцев: flag
-	//     сравнивает с 4 % годовые значения, а не месячный процент;
+	//     сравнивает с 4 % годовые значения, а не месячный процент, и требует, чтобы
+	//     месяцы были соседними (dateDiff('month', prev_date, as_of) = 1);
 	//   - ipc_yoy — произведение 12 последних индексов rosstat_ipc_mes (100 = без
-	//     изменения), а не сумма процентов: exp(sum(log(percent / 100))) − 1.
+	//     изменения), а не сумма процентов: exp(sum(log(percent / 100))) − 1; в окне
+	//     обязаны быть ровно 12 последовательных месяцев, иначе NULL (не «12 точек за
+	//     произвольный период»).
 	Select: `WITH
     kr AS (
         SELECT
@@ -52,7 +55,8 @@ var keyRateDashboardView = util.View{
         SELECT
             maxIfOrNull(saar, rn = 1) AS last_saar,
             maxIfOrNull(saar, rn = 2) AS prev_saar,
-            maxIfOrNull(date, rn = 1) AS as_of
+            maxIfOrNull(date, rn = 1) AS as_of,
+            maxIfOrNull(date, rn = 2) AS prev_date
         FROM (
             SELECT
                 (pow(1 + toFloat64(value) / 100, 12) - 1) * 100 AS saar,
@@ -78,15 +82,18 @@ var keyRateDashboardView = util.View{
     ),
     ipc AS (
         SELECT
-            if(count() = 0, CAST(NULL AS Nullable(Float64)),
-               (exp(sum(log(toFloat64(percent) / 100))) - 1) * 100) AS ipc_yoy,
+            if(count() = 12, (exp(sum(log(toFloat64(percent) / 100))) - 1) * 100,
+               CAST(NULL AS Nullable(Float64))) AS ipc_yoy,
             maxOrNull(date) AS as_of
         FROM (
             SELECT percent, date
             FROM rosstat_ipc_mes FINAL
             WHERE name = 'Индексы потребительских цен на товары и услуги по Российской Федерации'
-            ORDER BY date DESC
-            LIMIT 12
+              AND percent > 0
+              AND date >= subtractMonths(
+                  toStartOfMonth((SELECT max(date) FROM rosstat_ipc_mes FINAL
+                                  WHERE name = 'Индексы потребительских цен на товары и услуги по Российской Федерации')),
+                  11)
         )
     ),
     ofz AS (
@@ -206,7 +213,7 @@ SELECT * FROM (
         cpd.as_of AS as_of,
         CAST(NULL AS Nullable(Date)) AS target_date,
         '> 4 % два месяца подряд (SAAR; в источнике — две недели подряд; недельного базового ИПЦ в БД нет)' AS threshold,
-        toUInt8(coalesce(cpd.last_saar > 4 AND cpd.prev_saar > 4, 0)) AS flag,
+        toUInt8(coalesce(cpd.last_saar > 4 AND cpd.prev_saar > 4 AND dateDiff('month', cpd.prev_date, cpd.as_of) = 1, 0)) AS flag,
         toUInt8OrDefault(if(cpd.as_of IS NULL, 1, cpd.as_of < today() - 45), 1) AS stale,
         CAST(NULL AS Nullable(Float64)) AS error_bp,
         '' AS probabilities,

@@ -55,8 +55,8 @@
 | contour | indicator | значение | unit | threshold / flag |
 |---|---|---|---|---|
 | `spot` | `key_rate` | `argMax(rate, date)` из `cbr_key_rate` | % годовых | `—` / 0 |
-| `fundamental` | `ipc_yoy` | `(exp(sum(log(percent/100))) − 1) × 100` за 12 последних месяцев `rosstat_ipc_mes` | % г/г | таргет ЦБ 4 %: выше — проинфляционно / `value > 4` |
-| `fundamental` | `base_ipc_saar` | `((1 + v/100)^12 − 1) × 100` по последнему и предыдущему `Базовый ИПЦ` (`cbr_indicators_cpd`, м/м SA) | % г/г (SAAR) | `> 4 %` два месяца подряд — прокси условия «две недели подряд» (недельного базового ИПЦ в БД нет) / оба месяца > 4 |
+| `fundamental` | `ipc_yoy` | `(exp(sum(log(percent/100))) − 1) × 100` за 12 последних месяцев `rosstat_ipc_mes`; ровно 12 последовательных точек, иначе NULL | % г/г | таргет ЦБ 4 %: выше — проинфляционно / `value > 4` |
+| `fundamental` | `base_ipc_saar` | `((1 + v/100)^12 − 1) × 100` по двум соседним месяцам `Базовый ИПЦ` (`cbr_indicators_cpd`, м/м SA); соседство проверяется `dateDiff('month', prev_date, as_of) = 1` | % г/г (SAAR) | `> 4 %` два месяца подряд — прокси условия «две недели подряд» (недельного базового ИПЦ в БД нет) / оба месяца > 4 и месяцы соседние |
 | `fundamental` | `infl_exp_expected` | последняя волна `ожидаемая инфляция` (`cbr_infl_exp`) | % | рост к прошлой волне — проинфляционный разворот / `last > prev` |
 | `fundamental` | `price_expectations_sa` | `macro_series` (`source='cbr_survey'`, `series='price_expectations_sa'`) | пункты | `—` / 0 |
 | `fundamental` | `business_climate_sa` | `macro_series` (`cbr_survey`, `business_climate_sa`) | пункты | `—` / 0 |
