@@ -94,7 +94,7 @@ class ParseDocumentsTableTest(unittest.TestCase):
 
 - [ ] **Step 3: Убедиться, что тест падает**
 
-Run: `python3 scripts/edisclosure_collect_test.py -v`
+Run: `uv run --with playwright --with beautifulsoup4 --with lxml --with requests --python 3.12 python3 scripts/edisclosure_collect_test.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'edisclosure_collect'`.
 
 - [ ] **Step 4: Реализовать разбор в `scripts/edisclosure_collect.py`**
@@ -103,7 +103,7 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'edisclosure_collect'`.
 
 - [ ] **Step 5: Убедиться, что тест проходит**
 
-Run: `python3 scripts/edisclosure_collect_test.py -v`
+Run: `uv run --with playwright --with beautifulsoup4 --with lxml --with requests --python 3.12 python3 scripts/edisclosure_collect_test.py -v`
 Expected: PASS.
 
 - [ ] **Step 6: Написать падающие тесты валидации, дедупликации и манифеста**
@@ -172,7 +172,7 @@ edisclosure-collect:
 
 - [ ] **Step 10: Прогнать тесты и закоммитить**
 
-Run: `python3 scripts/edisclosure_collect_test.py -v`
+Run: `uv run --with playwright --with beautifulsoup4 --with lxml --with requests --python 3.12 python3 scripts/edisclosure_collect_test.py -v`
 Expected: PASS (все тесты).
 
 ```bash
