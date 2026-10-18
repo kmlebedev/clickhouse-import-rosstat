@@ -2836,7 +2836,10 @@ def run_summary(
             # failed и идём дальше.
             try:
                 grouped = _predictions_by_group(predictions)
-                windows = {}
+                # Спека §3.1: `windows` — СПИСОК; у каждого окна своё число
+                # фолдов и вложенный словарь моделей, а `models` — общий
+                # список методов прогона.
+                windows = []
                 for window in (WINDOW_EXPANDING, window_label(ROLLING_WINDOW)):
                     per_method = {}
                     for method, _ in METHODS:
@@ -2852,16 +2855,33 @@ def run_summary(
                             }
                         else:
                             values = {"rmse": None, "mae": None, "hit": None, "n": 0}
-                        values["fold_skips"] = int(
-                            fold_skips.get((method, window), 0)
-                        )
                         per_method[method] = values
-                    windows[window] = per_method
+                    windows.append(
+                        {
+                            "window": window,
+                            # «Фолды окна» — максимум по методам: у метода с
+                            # вырожденными окнами фолдов меньше, и число окна
+                            # не должно зависеть от выбранного метода.
+                            "folds": max(
+                                (values["n"] for values in per_method.values()),
+                                default=0,
+                            ),
+                            "models": per_method,
+                        }
+                    )
+                # Пропуски фолдов — отдельный словарь «окно → метод → N»:
+                # ключи-кортежи `fold_skips` в JSON стали бы строками вида
+                # "('hold', 'expanding')".
+                skips = {}
+                for (method, window), skipped in fold_skips.items():
+                    skips.setdefault(window, {})[method] = int(skipped)
                 logger.log_metrics(
                     {
                         "primary_metric": "rmse_bp",
                         "sample": sample_meta,
+                        "models": [method for method, _ in METHODS],
                         "windows": windows,
+                        "fold_skips": skips,
                     }
                 )
                 logger.log_predictions(

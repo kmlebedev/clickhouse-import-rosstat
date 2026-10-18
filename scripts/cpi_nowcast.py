@@ -3012,23 +3012,33 @@ def run_summary(
                     {
                         "primary_metric": "rmse_pp",
                         "sample": sample_meta,
-                        "windows": {
-                            window_key(run.start, run.embargo): {
-                                name: {
-                                    "rmse": rmse_pp(group) if group else None,
-                                    "mae": mae_pp(group) if group else None,
-                                    "n": len(group),
-                                    "skipped": int(run.skipped.get(name, 0)),
-                                    "notes": dict(run.notes.get(name, {})),
-                                }
-                                for name, group in _run_groups(run).items()
+                        # Спека §3.1: общие ключи паспорта — `models` и
+                        # `windows`; список моделей — те же имена, что у
+                        # fold-предсказаний и в CSV.
+                        "models": list(MODELS),
+                        "windows": [
+                            {
+                                "window": window_key(run.start, run.embargo),
+                                "folds": run.folds,
+                                "models": {
+                                    name: {
+                                        "rmse": rmse_pp(group) if group else None,
+                                        "mae": mae_pp(group) if group else None,
+                                        "n": len(group),
+                                        "skipped": int(run.skipped.get(name, 0)),
+                                        "notes": dict(run.notes.get(name, {})),
+                                    }
+                                    for name, group in _run_groups(run).items()
+                                },
                             }
                             for run in runs
-                        },
+                        ],
+                        # Спека §7.1: у каждой строки весов есть метка окна —
+                        # без неё строки разных окон с тем же месяцем
+                        # неразличимы.
                         "weights": [
                             {
-                                "start": item.start,
-                                "embargo": item.embargo,
+                                "window": window_key(item.start, item.embargo),
                                 "month": item.month.isoformat(),
                                 "train": item.train,
                                 "weights": dict(zip(BOTTOMUP_COMPONENTS, item.weights)),
@@ -3082,7 +3092,16 @@ def run_summary(
         return 0
     except Exception as exc:
         if logger is not None:
-            logger.finish("failed", f"{type(exc).__name__}: {exc}")
+            # Журнал — побочный слой и здесь: сбой `finish` не должен заменять
+            # исходное исключение эксперимента собственным (вызывающий увидел
+            # бы ошибку логирования вместо настоящей причины падения).
+            try:
+                logger.finish("failed", f"{type(exc).__name__}: {exc}")
+            except Exception as finish_exc:
+                log.warning(
+                    "не удалось пометить прогон failed: %s: %s",
+                    type(finish_exc).__name__, finish_exc,
+                )
         raise
 
 
