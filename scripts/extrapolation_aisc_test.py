@@ -1173,6 +1173,81 @@ class TestQueryTransport(unittest.TestCase):
         self.assertIn("***", message)
 
 
+class TestExecTransport(unittest.TestCase):
+    """Инварианты пишущего транспорта `ch_exec`.
+
+    `ch_exec` — двойник `ch_query` без разбора ответа: успешное тело INSERT
+    (пустая строка или `Ok.`) не является JSON и не должно парситься.
+    Все тесты офлайновые, `urlopen` подменяется.
+    """
+
+    def _capture_request(self, body="Ok.\n"):
+        captured = {}
+
+        def fake_urlopen(request, timeout=None):
+            captured["request"] = request
+            captured["timeout"] = timeout
+            return _FakeResponse(body)
+
+        with _isolated_env():
+            with unittest.mock.patch(
+                "extrapolation_aisc.urllib.request.urlopen", fake_urlopen
+            ):
+                ex.ch_exec("INSERT INTO ml_runs FORMAT JSONEachRow\n{}")
+        return captured
+
+    def test_posts_sql_to_http_port_and_ignores_body(self):
+        # Не-JSON тело успешного ответа НЕ ошибка: INSERT отвечает `Ok.`.
+        captured = self._capture_request("Ok.\n")
+        request = captured["request"]
+        self.assertEqual(request.method, "POST")
+        self.assertEqual(
+            request.data, b"INSERT INTO ml_runs FORMAT JSONEachRow\n{}"
+        )
+        self.assertEqual(captured["timeout"], ex.CH_QUERY_TIMEOUT_SECONDS)
+        self.assertIn(":8123/", request.full_url)
+        self.assertNotIn(":9000/", request.full_url)
+
+    def test_http_error_is_clickhouse_error_and_masks_password(self):
+        secret = "exec-http-secret"
+
+        def fake_urlopen(request, timeout=None):
+            raise urllib.error.HTTPError(
+                "http://localhost:8123/", 500, "Internal Server Error", {},
+                io.BytesIO(f"Code: 62. DB::Exception: {secret}".encode("utf-8")),
+            )
+
+        with _isolated_env(CH_IMPORT_PASSWORD=secret):
+            with unittest.mock.patch(
+                "extrapolation_aisc.urllib.request.urlopen", fake_urlopen
+            ):
+                with self.assertRaises(ex.ClickHouseError) as ctx:
+                    ex.ch_exec("INSERT INTO ml_runs FORMAT JSONEachRow\n{}")
+
+        message = str(ctx.exception)
+        self.assertIn("500", message)
+        self.assertIn("DB::Exception", message)
+        self.assertNotIn(secret, message)
+        self.assertIn("***", message)
+
+    def test_os_error_is_clickhouse_error_and_masks_password(self):
+        secret = "exec-os-secret"
+        for boom in (TimeoutError("timed out"), ConnectionResetError("reset"),
+                     urllib.error.URLError(f"refused for {secret}")):
+            with self.subTest(boom=type(boom).__name__):
+                def fake_urlopen(request, timeout=None, _boom=boom):
+                    raise _boom
+
+                with _isolated_env(CH_IMPORT_PASSWORD=secret):
+                    with unittest.mock.patch(
+                        "extrapolation_aisc.urllib.request.urlopen", fake_urlopen
+                    ):
+                        with self.assertRaises(ex.ClickHouseError) as ctx:
+                            ex.ch_exec("INSERT INTO ml_runs FORMAT JSONEachRow\n{}")
+                self.assertNotIn(secret, str(ctx.exception))
+                self.assertIn("ClickHouse недоступен", str(ctx.exception))
+
+
 class TestPlanRows(unittest.TestCase):
     """Плановые строки 2025–LOM: эскалация, увязка по годам, аллокация capex.
 
