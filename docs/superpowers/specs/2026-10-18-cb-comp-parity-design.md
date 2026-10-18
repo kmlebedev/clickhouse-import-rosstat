@@ -3,7 +3,7 @@
 **Дата:** 2026-10-18
 **Пункт роадмапа:** `key-rate/phase-4-ml-cb-comp-parity` (issue [#190](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/190))
 **Владеющий роадмап:** [docs/ROADMAP_KEY_RATE.md](../../ROADMAP_KEY_RATE.md), фаза 4
-**Источники:** [2026-10-18-cb-comp-archive.md](../../research/2026-10-18-cb-comp-archive.md) (разбор архива CB_COMP), [2026-10-16-cb-comp-vs-cpi-nowcast.md](../../research/2026-10-16-cb-comp-vs-cpi-nowcast.md) (сверка методологии), [2026-10-18-cpi-monthly-mp-design.md](2026-10-18-cpi-monthly-mp-design.md) (ML-трек v2)
+**Источники:** [2026-10-18-cb-comp-archive.md](../../research/2026-10-18-cb-comp-archive.md) (разбор архива CB_COMP), [2026-10-16-cb-comp-vs-cpi-nowcast.md](../../research/2026-10-16-cb-comp-vs-cpi-nowcast.md) (сверка методологии), ML-трек v2 (спека в PR [#177](https://github.com/kmlebedev/clickhouse-import-rosstat/pull/177))
 **Ветка:** `feat/cb-comp-parity` (от `origin/feat/cb-comp-archive`, PR #193)
 
 ---
