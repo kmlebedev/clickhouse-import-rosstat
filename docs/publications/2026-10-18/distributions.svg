@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="540" viewBox="0 0 1000 540" role="img" aria-labelledby="title desc">
+<title id="title">Три распределения прогноза ключевой ставки на 23.10.2026</title>
+<desc id="desc">Сравнение вероятностей классов снижение/сохранить/повышение по статистическому треку, LLM и индикативу KEYRATE.</desc>
+<rect x="0" y="0" width="1000" height="540" fill="#ffffff"/>
+<text x="80.0" y="32.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="22" text-anchor="start" font-weight="bold" fill="#222222">Три распределения: статистика, LLM, рынок</text>
+<text x="80.0" y="56.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="14" text-anchor="start" font-weight="normal" fill="#555555">Вероятности классов на 23.10.2026, %</text>
+<line x1="80.0" y1="410.0" x2="920.0" y2="410.0" stroke="#e3e3e3" stroke-width="1"/>
+<text x="70.0" y="415.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="end" font-weight="normal" fill="#666666">0</text>
+<line x1="80.0" y1="357.7" x2="920.0" y2="357.7" stroke="#e3e3e3" stroke-width="1"/>
+<text x="70.0" y="362.7" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="end" font-weight="normal" fill="#666666">15</text>
+<line x1="80.0" y1="305.3" x2="920.0" y2="305.3" stroke="#e3e3e3" stroke-width="1"/>
+<text x="70.0" y="310.3" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="end" font-weight="normal" fill="#666666">30</text>
+<line x1="80.0" y1="253.0" x2="920.0" y2="253.0" stroke="#e3e3e3" stroke-width="1"/>
+<text x="70.0" y="258.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="end" font-weight="normal" fill="#666666">45</text>
+<line x1="80.0" y1="200.7" x2="920.0" y2="200.7" stroke="#e3e3e3" stroke-width="1"/>
+<text x="70.0" y="205.7" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="end" font-weight="normal" fill="#666666">60</text>
+<line x1="80.0" y1="148.3" x2="920.0" y2="148.3" stroke="#e3e3e3" stroke-width="1"/>
+<text x="70.0" y="153.3" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="end" font-weight="normal" fill="#666666">75</text>
+<line x1="80.0" y1="96.0" x2="920.0" y2="96.0" stroke="#e3e3e3" stroke-width="1"/>
+<text x="70.0" y="101.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="end" font-weight="normal" fill="#666666">90</text>
+<rect x="115.0" y="125.1" width="57.4" height="284.9" fill="#c45a1a" opacity="0.88"/>
+<text x="143.7" y="117.1" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="middle" font-weight="bold" fill="#c45a1a">81,6</text>
+<rect x="185.0" y="368.1" width="57.4" height="41.9" fill="#2f6db3" opacity="0.88"/>
+<text x="213.7" y="360.1" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="middle" font-weight="bold" fill="#2f6db3">12,0</text>
+<rect x="255.0" y="340.2" width="57.4" height="69.8" fill="#1f6f5c" opacity="0.88"/>
+<text x="283.7" y="332.2" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="middle" font-weight="bold" fill="#1f6f5c">20,0</text>
+<text x="220.0" y="438.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="15" text-anchor="middle" font-weight="bold" fill="#222222">снижение</text>
+<rect x="395.0" y="353.3" width="57.4" height="56.7" fill="#c45a1a" opacity="0.88"/>
+<text x="423.7" y="345.3" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="middle" font-weight="bold" fill="#c45a1a">16,2</text>
+<rect x="465.0" y="120.4" width="57.4" height="289.6" fill="#2f6db3" opacity="0.88"/>
+<text x="493.7" y="112.4" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="middle" font-weight="bold" fill="#2f6db3">83,0</text>
+<rect x="535.0" y="130.9" width="57.4" height="279.1" fill="#1f6f5c" opacity="0.88"/>
+<text x="563.7" y="122.9" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="middle" font-weight="bold" fill="#1f6f5c">80,0</text>
+<text x="500.0" y="438.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="15" text-anchor="middle" font-weight="bold" fill="#222222">сохранить</text>
+<rect x="675.0" y="402.6" width="57.4" height="7.4" fill="#c45a1a" opacity="0.88"/>
+<text x="703.7" y="394.6" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="middle" font-weight="bold" fill="#c45a1a">2,1</text>
+<rect x="745.0" y="392.6" width="57.4" height="17.4" fill="#2f6db3" opacity="0.88"/>
+<text x="773.7" y="384.6" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="middle" font-weight="bold" fill="#2f6db3">5,0</text>
+<rect x="815.0" y="410.0" width="57.4" height="0.0" fill="#1f6f5c" opacity="0.88"/>
+<text x="843.7" y="402.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="middle" font-weight="bold" fill="#1f6f5c">0,0</text>
+<text x="780.0" y="438.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="15" text-anchor="middle" font-weight="bold" fill="#222222">повышение</text>
+<rect x="80.0" y="454" width="14" height="14" fill="#c45a1a"/>
+<text x="100.0" y="466.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="start" font-weight="normal" fill="#222222">статистика (ordered logit)</text>
+<rect x="370.0" y="454" width="14" height="14" fill="#2f6db3"/>
+<text x="390.0" y="466.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="start" font-weight="normal" fill="#222222">LLM (deepseek-flash)</text>
+<rect x="660.0" y="454" width="14" height="14" fill="#1f6f5c"/>
+<text x="680.0" y="466.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="start" font-weight="normal" fill="#222222">рынок (KEYRATE, индикатив)</text>
+<text x="80.0" y="496.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11" text-anchor="start" font-weight="normal" fill="#666666">Статистика: ordered_logit; LLM: deepseek-flash, prompt v1.</text>
+<text x="80.0" y="516.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11" text-anchor="start" font-weight="normal" fill="#666666">Рынок: P(−25) ≈ 20 % из KEYRATE 13,95 — индикатив, не полное распределение.</text>
+</svg>
