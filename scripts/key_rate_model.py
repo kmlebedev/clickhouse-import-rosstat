@@ -76,12 +76,13 @@
 прогноза с пометкой в `note`, прогон не падает. Нет будущих заседаний — прогноз
 не делается, JSON не пишется, прогон не падает. Артефакт —
 `key_rate_model_forecast.json` (`FORECAST_NAME`), раздел «Текущий прогноз» —
-в отчёте. В `forecast_log` прогноз НЕ пишется: запись прогнозов (с правкой
-ошибки в б.п. и резолвером `cbr_rate`) — отдельный пункт фазы 4 (спека §1/§8).
+в отчёте. В `forecast_log` сам скрипт прогноз НЕ пишет: запись выполняет
+отдельный writer `scripts/key_rate_forecast_log.py` (`make key-rate-forecast-log`)
+через ingest-контур (`POST /v1/key_rate_forecast`).
 
 Что остаётся за пределами среза — спека §11: метод №1 (рыночные вероятности из
 KEYRATE) и ансамбль, байесовские priors и «inflated»-версия, ML-трек,
-point-in-time слой, запись в `forecast_log`, витрина, графики и консенсус-бенчмарк.
+point-in-time слой, витрина, графики и консенсус-бенчмарк.
 
 **По умолчанию скрипт в ClickHouse не пишет** — только читает (прецедент
 `polyus_output_model.py`); с `ML_LOG=1` пишет паспорт и fold-предсказания
@@ -2103,10 +2104,10 @@ def render_report(
         "- **Метод №2 распределения не даёт** (точечный шаг): вероятностные "
         "метрики к строке `taylor` не применяются — они у вероятностных строк "
         "`climatology` и `ordered_logit` (спека §6/§7).",
-        "- **В журнал (`forecast_log`) прогноз не пишется**: текущий прогноз — "
-        "локальный артефакт `key_rate_model_forecast.json`; запись прогнозов "
-        "(с правкой ошибки в б.п. и резолвером `cbr_rate`) — отдельный пункт "
-        "фазы 4 (спека §1/§8).",
+        "- **Сам скрипт в журнал (`forecast_log`) не пишет**: текущий прогноз — "
+        "локальный артефакт `key_rate_model_forecast.json`; запись выполняет "
+        "отдельный writer `scripts/key_rate_forecast_log.py` через ingest "
+        "(пункт `key-rate/phase-4-forecast-log`).",
         "- **Гиперпараметры не подбираются**: ни на полной выборке, ни на "
         "режимном блоке 2024–2026; обе схемы окна — проверка робастности, а "
         "не выбор лучшей (спека §7).",
@@ -2185,8 +2186,9 @@ def _print_removed_artifacts(removed: list) -> None:
 # Оговорка прогноза (поле `note` JSON и раздел отчёта): артефакт локальный,
 # в журнал прогнозов он НЕ пишется — это отдельный пункт фазы 4 (спека §8).
 FORECAST_NOTE = (
-    "текущий прогноз v0 (as-of — приближение, спека §4): в журнал не пишем — "
-    "запись в forecast_log отдельным пунктом фазы 4"
+    "текущий прогноз v0 (as-of — приближение, спека §4): сам скрипт в журнал "
+    "не пишет — запись в forecast_log выполняет отдельный writer "
+    "scripts/key_rate_forecast_log.py"
 )
 
 # Методы текущего прогноза (спека §1: выход первого среза — методы №2 и №3):
@@ -2228,6 +2230,9 @@ class CurrentForecast:
     `meeting_date` — ближайшее заседание строго позже даты прогона, `data_asof`
     — дата среза данных (она же дата прогноза: в v0 прогноз считается на живых
     данных в момент прогона, и раздельные поля оставлены под будущий PIT-слой).
+    `rate_before` — ставка на дату среза (уровень, % годовых): writer журнала
+    прогнозов переводит шаг методов (`step_bp`) в ожидаемую ставку
+    `rate_before + step_bp/100` и не читает ClickHouse повторно.
     `sample_size`/`sample_first`/`sample_last` — размер выборки обучения и срок
     наблюдения (они же «версия набора данных v0» вместе с датой прогноза).
     `methods` — тело методов для JSON (`forecast_payload`), `skipped` — методы,
@@ -2237,6 +2242,7 @@ class CurrentForecast:
 
     meeting_date: date
     data_asof: date
+    rate_before: Optional[float]
     sample_size: int
     sample_first: date
     sample_last: date
@@ -2392,6 +2398,7 @@ def current_forecast(
     return CurrentForecast(
         meeting_date=meeting,
         data_asof=today,
+        rate_before=inputs[0],
         sample_size=len(rows),
         sample_first=rows[0].decision.meeting_date,
         sample_last=rows[-1].decision.meeting_date,
@@ -2447,12 +2454,14 @@ def render_forecast(forecast: CurrentForecast) -> str:
 def forecast_json(forecast: CurrentForecast) -> str:
     """Текст JSON-артефакта `key_rate_model_forecast.json` (спека §8).
 
-    Формат: `forecast_date`, `meeting_date`, `data_asof`, `methods`,
-    `sample_size`, `note`. `forecast_date` — дата прогноза, она же в v0 дата
-    среза данных `data_asof` (прогноз считается на живых данных в дату прогона);
-    поля разделены под будущий PIT-слой. Других полей нет: ни отметок времени,
-    ни путей — JSON детерминирован при (данные, дата прогона), и это пиновано
-    тестом двух прогонов.
+    Формат: `forecast_date`, `meeting_date`, `data_asof`, `rate_before`,
+    `methods`, `sample_size`, `note`. `forecast_date` — дата прогноза, она же в
+    v0 дата среза данных `data_asof` (прогноз считается на живых данных в дату
+    прогона); поля разделены под будущий PIT-слой. `rate_before` — ставка на
+    дату среза: writer журнала (`scripts/key_rate_forecast_log.py`) переводит
+    шаги методов в ожидаемую ставку без повторного чтения ClickHouse. Других
+    полей нет: ни отметок времени, ни путей — JSON детерминирован при (данные,
+    дата прогона), и это пиновано тестом двух прогонов.
 
     `methods` — методы §6 (`FORECAST_METHODS`): у каждого либо тело
     (`forecast_payload`), либо его нет вовсе — пропуск с причиной виден в
@@ -2463,6 +2472,7 @@ def forecast_json(forecast: CurrentForecast) -> str:
         "forecast_date": forecast.data_asof.isoformat(),
         "meeting_date": forecast.meeting_date.isoformat(),
         "data_asof": forecast.data_asof.isoformat(),
+        "rate_before": forecast.rate_before,
         "methods": forecast.methods,
         "sample_size": forecast.sample_size,
         "note": forecast.note,
