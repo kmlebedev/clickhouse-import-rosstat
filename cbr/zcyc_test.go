@@ -2,6 +2,7 @@ package cbr
 
 import (
 	"math"
+	"strings"
 	"testing"
 	"time"
 )
@@ -82,16 +83,56 @@ func TestZcycRowsBrokenPage(t *testing.T) {
 }
 
 // TestZcycRowsBadValue — минимальная валидная разметка с нечисловым значением:
-// непустая непарсящаяся ячейка — ошибка (пустая была бы пропуском).
+// непустая непарсящаяся ячейка — ошибка (пустая была бы пропуском). ParseFloat
+// принимает NaN/Inf без ошибки, поэтому они проверяются отдельно: доходность
+// не может быть не конечным числом.
 func TestZcycRowsBadValue(t *testing.T) {
-	const page = `<div class="table-wrapper"><table class="data">` +
+	const head = `<div class="table-wrapper"><table class="data">` +
 		`<tr><th rowspan="2">Дата</th><th colspan="12">Срок до погашения, лет</th></tr>` +
 		`<tr><th>0,25</th><th>0,5</th><th>0,75</th><th>1</th><th>2</th><th>3</th>` +
-		`<th>5</th><th>7</th><th>10</th><th>15</th><th>20</th><th>30</th></tr>` +
-		`<tr><td>16.10.2026</td><td>не-число</td></tr>` +
+		`<th>5</th><th>7</th><th>10</th><th>15</th><th>20</th><th>30</th></tr>`
+	const tail = `</table></div>`
+	for _, tc := range []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{"не число", "не-число", "cbr_zcyc"},
+		{"NaN", "NaN", "не является конечным числом"},
+		{"Inf", "Inf", "не является конечным числом"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			page := head + `<tr><td>16.10.2026</td><td>` + tc.value + `</td></tr>` + tail
+			_, err := zcycRows([]byte(page))
+			if err == nil {
+				t.Fatalf("ожидалась ошибка на значении %q", tc.value)
+			}
+			if !strings.Contains(err.Error(), "cbr_zcyc") {
+				t.Errorf("текст ошибки не называет таблицу cbr_zcyc: %v", err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("текст ошибки не содержит %q: %v", tc.want, err)
+			}
+		})
+	}
+}
+
+// TestZcycRowsDuplicateTenor — две колонки заголовка нормализуются в один
+// канонический тенор (1 и 1,00): это ошибка разметки, а не дублирование точек.
+func TestZcycRowsDuplicateTenor(t *testing.T) {
+	const page = `<div class="table-wrapper"><table class="data">` +
+		`<tr><th rowspan="2">Дата</th><th colspan="2">Срок до погашения, лет</th></tr>` +
+		`<tr><th>1</th><th>1,00</th></tr>` +
+		`<tr><td>16.10.2026</td><td>12,30</td><td>12,40</td></tr>` +
 		`</table></div>`
-	if _, err := zcycRows([]byte(page)); err == nil {
-		t.Fatal("ожидалась ошибка на нечисловом значении")
+	_, err := zcycRows([]byte(page))
+	if err == nil {
+		t.Fatal("ожидалась ошибка: тенор 1 встречается в заголовке дважды")
+	}
+	for _, want := range []string{`"1"`, `"1,00"`, "дважды"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("текст ошибки не содержит %q (нужны оба заголовка и причина): %v", want, err)
+		}
 	}
 }
 
