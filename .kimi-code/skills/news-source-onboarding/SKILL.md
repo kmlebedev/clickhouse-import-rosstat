@@ -43,8 +43,8 @@ whenToUse: When a roadmap item or issue asks to add a news source, Telegram chan
 
 ## 5. Фикстуры и тесты
 
-- Снять реальную фикстуру: `news/testdata/<key>.rss` или `.html` (3–4 сообщения для Telegram). Разметку не собирать руками; `TestFeedsHaveFixtures` ловит и отсутствие, и «мёртвую» фикстуру.
-- Обновить `pointFeedsAt` (подмена URL на `httptest`) и save/restore URL в `TestImportRejectsUnknownModeBeforeDB` — это разные места.
+- Снять реальную фикстуру: `news/testdata/<key>.rss` или `.html` (3–4 сообщения или полное живое окно; для полного окна пинить `len(Messages)` и `Skipped`). Разметку не собирать руками; `TestFeedsHaveFixtures` ловит и отсутствие, и «мёртвую» фикстуру.
+- Обновить `pointFeedsAt` — единую таблицу «переменная → путь» (подмена и восстановление всех URL на `httptest`); отдельный save/restore в `TestImportRejectsUnknownModeBeforeDB` не нужен, если тест использует helper.
 - `TestFetchFeeds...`: число лент и фиксированный порядок ключей/источников. `TestFeedsHaveFixtures`: число лент. `fixtureInventory`: capacities/comments.
 - Тесты, где перечислены Telegram-каналы, перевести на helper по `Kind == feedTelegram` (или дополнить все ключи); тест «все ленты упали» — на helper по `feeds()`. Не ослаблять assertions.
 - Имена, которые ломаются чаще всего: `TestImportAllModeWritesAllFeeds` (версионный батч из двух ключей), `TestImportSinceModeWritesOnlyMissing` (`tgCount`), `TestImportSinceModeCbrSecondFeedNoWatermark` (switch по `source`), `TestImportSinceModeTelegramVersionsAndTombstone` (`wantVersions` из `edisclosureItems`), `TestImportTelegramFeedFailureNoTombstone` и `TestImportNoopRunAnnotatesBacklog` (валят только два канала), `TestImportOneTelegramFeedFailureIsolated` (предполагает ровно два канала).
@@ -104,7 +104,7 @@ NEWS_WATCH_MODE=check make import STAT=news_watch
 - новые источники в `v_news_events` — `countIf(content_hash != '' AND model != '') = countIf(content_hash != '')`; если канал не проходит `newsFilter`, 0 строк там — не ошибка, полный поток в `v_news_flash`;
 - `v_news_message_versions` — версии есть, tombstone не обязателен (эвристика: закреплённое/скрытое сообщение может дать ложный tombstone; title в `news_events` фиксируется по v1 — это ограничение, а не баг);
 - сырые `news_events`/`news_message_version`/`news_annotation` — `ACCESS_DENIED`;
-- `scripts/mcp_check.py`: добавить явную проверку нового канала (`uniqExact(message_id) > 0`) и информационную (`uniqExactIf(message_id, model != '')`); без неё `make mcp-check` останется зелёным при пустом канале;
+- `scripts/mcp_check.py`: добавить per-channel проверку нового канала — `uniqExact(message_id) = uniqExactIf(message_id, model != '')`; иначе `make mcp-check` зеленеет от одной размеченной строки в одном канале;
 - `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА; `dagu validate dagu/news.yaml` — exit 0. `make mcp-user` не нужен: новых витрин/грантов нет.
 
 ## 11. Docs и PR
@@ -119,7 +119,7 @@ NEWS_WATCH_MODE=check make import STAT=news_watch
 |---|---|---|---|
 | `interfax` | RSS | `interfax` | 25 |
 | `interfax_tg` | TG | `interfax` | 20, ≈17 ч |
-| `ifax_go_tg` | TG | `interfax` | 20, ≈36 ч |
+| `ifax_go_tg` | TG | `interfax` | 20, ≈12–36 ч |
 | `edisclosure_tg` | TG | `edisclosure` | 20, ≈30 дн |
 | `rbc` | RSS | `rbc` | 30 |
 | `cbr_news` | RSS | `cbr` | 100 |
@@ -141,7 +141,7 @@ NEWS_WATCH_MODE=check make import STAT=news_watch
 - Не считать `0 items` успехом: пустая лента — ошибка, `skipped` — сигнал смены формы.
 - Не менять расписание только в комментарии и не подменять `schedule` «на глаз».
 - Не смешивать несвязанные редакции под одним `source` и не делать `source` из имени фикстуры.
-- Не ослаблять тесты вместо обновления пинов; `pointFeedsAt` и save/restore URL — разные места.
+- Не ослаблять тесты вместо обновления пинов; `pointFeedsAt` — единая таблица подмены и восстановления всех URL.
 - Не расширять `newsFilter`/реестр тегов без живого примера и отдельного решения.
 - Не закрывать источник без bootstrap-разметки; без LLM env — follow-up, а не «принято».
 - Не закрывать пакет issue одним каналом (`Closes` только для полного пакета).

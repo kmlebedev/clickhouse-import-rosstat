@@ -369,8 +369,8 @@ async def check(params, server_log):
                 failed += not expect(f"витрина {view} существует и непуста ({label})",
                                      (flash_view_n or 0) > 0, flash_view_detail)
 
-            # Корпоративный Telegram-канал edisclosure (пункт 1.11): девятая лента
-            # news_watch пишет в ту же таблицу версий и витрину v_news_flash, поэтому
+            # Корпоративный Telegram-канал edisclosure (пункт 1.11): лента news_watch
+            # пишет в ту же таблицу версий и витрину v_news_flash, поэтому
             # общая проверка выше проходит и на одних сообщениях молнии. Ноль здесь
             # означает ни разу не отработавший прогон с новой лентой, а не пустой
             # канал, — detail подсказывает команду импорта.
@@ -385,31 +385,42 @@ async def check(params, server_log):
                 edisclosure_detail = f"сообщений edisclosure: {edisclosure_n}"
             else:
                 edisclosure_detail = (f"сообщений edisclosure: {edisclosure_n or 0} — прогнать make import "
-                                      "STAT=news_watch (девятая лента, канал edisclosure)")
+                                      "STAT=news_watch (канал edisclosure)")
             failed += not expect("канал edisclosure в v_news_flash", (edisclosure_n or 0) > 0, edisclosure_detail)
 
             # Новые Telegram-каналы пакета #46 (infra/2.3): v_news_flash — единственное место,
             # где видны все каналы (v_news_events фильтрует по newsFilter и может не показать
-            # канал целиком). Проверка агрегированная: шесть каналов должны присутствовать,
-            # а bootstrap-разметка — дать хотя бы одну doc-строку. Полное покрытие
-            # (annotated = messages) проверяется протоколом приёмки, а не smoke-тестом.
+            # канал целиком). Проверка per-channel: каждый из шести каналов присутствует и
+            # каждое его сообщение получило doc-строку (annotated = messages). Так smoke-тест
+            # не зеленеет от одной размеченной строки в одном канале; полное покрытие RSS
+            # в v_news_events по-прежнему проверяет протокол приёмки.
             new_channels = ("('ifax_go', 'markettwits', 'newssmartlab', 'russianmacro', "
                             "'MarketOverview', 'mozgovikresearch')")
             new_channels_raw = text(await session.call_tool("run_query", {"query":
-                f"SELECT uniqExact(channel) AS channels, countIf(model != '') AS annotated "
-                f"FROM v_news_flash WHERE channel IN {new_channels}"}))
+                f"SELECT channel, uniqExact(message_id) AS messages, "
+                f"uniqExactIf(message_id, model != '') AS annotated "
+                f"FROM v_news_flash WHERE channel IN {new_channels} GROUP BY channel"}))
             new_channels_rows = result_rows(new_channels_raw)
-            new_channels_n = new_channels_rows[0].get("channels") if new_channels_rows else None
-            annotated_n = new_channels_rows[0].get("annotated") if new_channels_rows else None
+            required_channels = ("ifax_go", "markettwits", "newssmartlab",
+                                 "russianmacro", "MarketOverview", "mozgovikresearch")
+            by_channel = {}
+            for row in new_channels_rows or []:
+                by_channel[row.get("channel")] = (row.get("messages") or 0, row.get("annotated") or 0)
+            missing = [c for c in required_channels if c not in by_channel]
+            incomplete = [f"{c}: {by_channel[c][1]}/{by_channel[c][0]}"
+                          for c in required_channels
+                          if c in by_channel and by_channel[c][1] != by_channel[c][0]]
             if new_channels_rows is None:
                 new_channels_detail = f"ответ не распознан: {new_channels_raw[:200]}"
             else:
-                new_channels_detail = f"каналов: {new_channels_n}, размеченных строк: {annotated_n}"
+                new_channels_detail = f"каналов: {len(by_channel)}/6, неполно: {incomplete or '—'}"
             failed += not expect("новые Telegram-каналы #46 в v_news_flash",
-                                 (new_channels_n or 0) >= 6, new_channels_detail)
-            failed += not expect("bootstrap-разметка новых каналов", (annotated_n or 0) > 0,
-                                 new_channels_detail + " — прогнать bootstrap-разметку "
-                                 "(NEWS_LLM_BACKLOG_LIMIT=500)")
+                                 not missing, f"нет каналов: {missing or '—'}")
+            annotation_ok = bool(new_channels_rows) and not missing and not incomplete
+            bootstrap_hint = (" — прогнать NEWS_LLM_PROFILE=glm NEWS_LLM_BACKLOG_LIMIT=500 "
+                              "make import STAT=news_watch")
+            failed += not expect("bootstrap-разметка новых каналов", annotation_ok,
+                                 new_channels_detail if annotation_ok else new_channels_detail + bootstrap_hint)
 
             # Реестр тегов — статическая витрина: 46 слагов, из них ровно 11 каналов ставки
             # (cb_channel). Меньшее число значит ни разу не отработавший прогон news_watch

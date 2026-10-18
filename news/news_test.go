@@ -224,7 +224,7 @@ func TestFetchFeedsUsesFixturesAndIsolatesFailure(t *testing.T) {
 	// Три ленты Интерфакса (RSS, interfaxonline, ifax_go) пишутся под source=interfax,
 	// edisclosure_tg — под отдельным source=edisclosure (другой канал), оба фида ЦБ — под
 	// cbr, четыре ленты smart-lab (общий RSS, два блога и newssmartlab_tg) — под smartlab:
-	// витрина различает их url, а Telegram-каналы ещё и полем channel.
+	// витрина различает их url, а Telegram-каналы — полем channel в v_news_flash.
 	if want := "interfax,interfax,interfax,edisclosure,rbc,cbr,cbr,tass,smartlab,smartlab,smartlab,smartlab,markettwits,russianmacro,marketoverview,mozgovikresearch"; strings.Join(sources, ",") != want {
 		t.Errorf("метки источников = %s, want %s", strings.Join(sources, ","), want)
 	}
@@ -1583,7 +1583,7 @@ func TestImportAllModeWritesAllFeeds(t *testing.T) {
 	if !versionBatch.sent {
 		t.Error("Send батча версий не вызван: версии в таблицу не уехали")
 	}
-	// Ключ — канал и ID: у двух каналов свои нумерации, и совпадение ID не должно
+	// Ключ — канал и ID: у разных каналов свои нумерации, и совпадение ID не должно
 	// склеить версии разных каналов.
 	versionByChannelID := make(map[string]telegramVersion, len(versionRows))
 	for _, v := range versionRows {
