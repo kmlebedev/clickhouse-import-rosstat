@@ -1,6 +1,13 @@
 package cbr
 
-import "github.com/kmlebedev/clickhouse-import-rosstat/util"
+import (
+	"context"
+	"fmt"
+
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/kmlebedev/clickhouse-import-rosstat/util"
+	log "github.com/sirupsen/logrus"
+)
 
 // cbrPitView — нормализованный long-слой point-in-time над винтажной cbr_dip_bulletin
 // (source = имя таблицы, единственный источник): одна строка = одна версия значения.
@@ -107,3 +114,18 @@ GROUP BY source`,
 // cbrPitViews — определения слоя в порядке публикации: нормализованная витрина, срез as-of
 // и версия набора.
 var cbrPitViews = []util.View{cbrPitView, cbrPitAsOfView, cbrPitVersionView}
+
+// ensurePitViews создаёт или пересоздаёт все витрины слоя (порядок cbrPitViews). Вызывается
+// прогоном cbr_dip_bulletin после цикла выпусков и на no-op-пути: витрины — производная
+// существующей таблицы, и самолечение работает без новых выпусков. Ошибка останавливает слой,
+// но не откатывает уже записанные выпуски — Import присоединяет её к общим ошибкам прогона.
+func ensurePitViews(ctx context.Context, conn driver.Conn) error {
+	for _, v := range cbrPitViews {
+		created, err := util.CreateView(ctx, conn, v)
+		if err != nil {
+			return fmt.Errorf("%s: %w", v.Name, err)
+		}
+		log.Infof("%s created: %t", v.Name, created)
+	}
+	return nil
+}
