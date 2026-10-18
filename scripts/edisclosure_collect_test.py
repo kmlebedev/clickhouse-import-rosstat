@@ -44,6 +44,17 @@ class ParseDocumentsTableTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "files-table"):
             ec.parse_documents_table("<html><body></body></html>", "IFRS", "PLZL")
 
+    def test_parse_normalizes_empty_date_markers(self):
+        html = (
+            '<table class="files-table"><tr>'
+            "<td>1</td><td>Тип</td><td>2025</td><td>-</td><td>—</td>"
+            '<td><a href="/portal/FileLoad.ashx?Fileid=1">zip</a></td>'
+            "</tr></table>"
+        )
+        rows = ec.parse_documents_table(html, "IFRS", "PLZL")
+        self.assertEqual(rows[0]["basis_date"], "")
+        self.assertEqual(rows[0]["publication_date"], "")
+
 
 class FixtureSecurityTest(unittest.TestCase):
     def test_anti_forgery_tokens_redacted(self):
@@ -98,6 +109,26 @@ class ValidationTest(unittest.TestCase):
         ec.validate_document(
             self._row(basis_date="", publication_date=""), ec.COMPANIES
         )
+
+    def test_normalize_date_empty_markers(self):
+        for value in ("", "-", "—", "–", "  ", " \n— "):
+            with self.subTest(value=value):
+                self.assertEqual(ec.normalize_date(value), "")
+
+    def test_normalize_date_trims_and_keeps_valid(self):
+        self.assertEqual(ec.normalize_date(" 31.08.2026 "), "31.08.2026")
+
+    def test_normalize_date_rejects_invalid(self):
+        for value in ("31/08/2026", "32.13.2026", "31.02.2026"):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    ec.normalize_date(value)
+
+    def test_document_with_empty_date_markers_accepted(self):
+        row = self._row(basis_date="-", publication_date=" — ")
+        ec.validate_document(row, ec.COMPANIES)
+        self.assertEqual(row["basis_date"], "")
+        self.assertEqual(row["publication_date"], "")
 
     def test_slash_date_rejected(self):
         with self.assertRaisesRegex(ValueError, "basis_date"):

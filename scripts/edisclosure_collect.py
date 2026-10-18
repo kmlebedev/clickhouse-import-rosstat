@@ -84,6 +84,11 @@ DEDUPE_FIELDS = (
 DATE_PATTERN = re.compile(r"[0-9]{2}\.[0-9]{2}\.[0-9]{4}")
 DATE_FORMAT = "%d.%m.%Y"
 
+# Источник обозначает отсутствие даты не только пустой ячейкой, но и прочерком:
+# ASCII '-' и типографские '—'/'–'. Это аудиторская метка «даты нет», поэтому
+# она нормализуется в пустую строку, а не валидируется как дата.
+EMPTY_DATE_MARKERS = frozenset({"", "-", "—", "–"})
+
 
 def log(message: str) -> None:
     print(message, flush=True)
@@ -132,8 +137,10 @@ def parse_documents_table(
                 "section": section,
                 "doc_type": _cell_text(cells[1]),
                 "period": _cell_text(cells[2]),
-                "basis_date": _cell_text(cells[3]),
-                "publication_date": _cell_text(cells[4]),
+                "basis_date": normalize_date(_cell_text(cells[3]), "basis_date"),
+                "publication_date": normalize_date(
+                    _cell_text(cells[4]), "publication_date"
+                ),
                 "size": link.get_text(" ", strip=True),
                 "fileid": query.get("Fileid", [""])[0],
                 "url": href,
@@ -238,22 +245,31 @@ def validate_document(row: dict[str, str], companies: dict[str, str]) -> None:
         )
 
 
-def _validate_date_field(row: dict[str, str], field: str) -> None:
-    """Непустая дата карточки — строго существующая дата ``DD.MM.YYYY``.
+def normalize_date(value: str, field: str = "date") -> str:
+    """Нормализовать дату карточки к ``DD.MM.YYYY`` или пустой строке.
 
-    Пустая строка — отсутствие даты (в таблицу уходит NULL). ``strptime`` один
-    не гарантирует двузначные день и месяц, поэтому формат проверяется
-    отдельным шаблоном, а существование даты (``31.02.2026``) — разбором.
+    Ячейка сначала обрезается по краям. Пустая строка и прочерки ``-``, ``—``,
+    ``–`` — отсутствие даты (в таблицу уходит NULL), поэтому дают ``""``.
+    Остальное обязано быть строго существующей датой ``DD.MM.YYYY``:
+    ``strptime`` один не гарантирует двузначные день и месяц, поэтому формат
+    проверяется отдельным шаблоном, а существование даты (``31.02.2026``) —
+    разбором.
     """
-    value = row.get(field, "")
-    if value == "":
-        return
+    value = value.strip()
+    if value in EMPTY_DATE_MARKERS:
+        return ""
     if DATE_PATTERN.fullmatch(value) is None:
         raise ValueError(f"{field} {value!r}: ожидается формат ДД.ММ.ГГГГ")
     try:
         datetime.strptime(value, DATE_FORMAT)
     except ValueError:
         raise ValueError(f"{field} {value!r}: несуществующая дата") from None
+    return value
+
+
+def _validate_date_field(row: dict[str, str], field: str) -> None:
+    """Проверить и нормализовать дату строки: прочерк становится пустой строкой."""
+    row[field] = normalize_date(row.get(field, ""), field)
 
 
 def document_key(row: dict[str, str]) -> tuple[str, str, str]:
