@@ -26,15 +26,20 @@ const (
 	    category LowCardinality(String), -- 'fomc','cpi','nfp','eia','wgc','cbr','polyus_ir','moex_rebalance','gov_rf','bank_results'
 	    title String,
 	    threshold String,                -- JSON, напр. '{"crack":">50"}'
-	    status LowCardinality(String) DEFAULT 'pending'  -- pending|done|verified
+	    status LowCardinality(String) DEFAULT 'pending',  -- pending|done|verified
+	    emergency UInt8 DEFAULT 0        -- 1 — внеочередное заседание СД ЦБ, 0 — плановое
 	) ENGINE = ReplacingMergeTree ORDER BY (event_date, category, title);
 	`
+
+	// eventsEmergencyAlter — идемпотентная миграция уже существующей таблицы: eventsDdl
+	// выполняется с IF NOT EXISTS и колонку в живой таблице не добавляет.
+	eventsEmergencyAlter = "ALTER TABLE " + eventsTable + " ADD COLUMN IF NOT EXISTS emergency UInt8 DEFAULT 0"
 
 	// calMPUrl — страница календаря заседаний Совета директоров ЦБ по ключевой ставке.
 	calMPUrl = "https://www.cbr.ru/dkp/cal_mp/"
 	// calMPInsert — колонки перечислены явно: так строка батча не зависит от порядка
 	// и DEFAULT-ов DDL.
-	calMPInsert = "INSERT INTO " + eventsTable + " (event_date, event_time, category, title, threshold, status)"
+	calMPInsert = "INSERT INTO " + eventsTable + " (event_date, event_time, category, title, threshold, status, emergency)"
 	// Канонические значения строк-заседаний: время публикации пресс-релиза — 13:30 МСК
 	// (в карточках календаря указано дословно), порог не задан.
 	calMPCategory  = "cbr"
@@ -52,7 +57,7 @@ var eventsView = util.View{
 	Name:    "v_events_calendar",
 	Tables:  []string{eventsTable},
 	Select:  `SELECT * FROM ` + eventsTable + ` FINAL`,
-	Comment: "Календарь событий-триггеров прогноза золота/NAV, дат заседаний СД ЦБ по ключевой ставке (category='cbr', канонические строки — из cbr.ru/dkp/cal_mp/, их читает агент контура ставки; рядом ручные строки-триггеры с другим title) и дат раскрытия банковских результатов (category='bank_results', подтверждённые/ожидаемые даты публикаций Сбера и ВТБ); status: pending|done|verified",
+	Comment: "Календарь событий-триггеров прогноза золота/NAV, дат заседаний СД ЦБ по ключевой ставке (category='cbr', канонические строки — из cbr.ru/dkp/cal_mp/, их читает агент контура ставки; рядом ручные строки-триггеры с другим title) и дат раскрытия банковских результатов (category='bank_results', подтверждённые/ожидаемые даты публикаций Сбера и ВТБ); status: pending|done|verified; emergency: 1 — внеочередное заседание Совета директоров ЦБ, 0 — плановое",
 	Columns: map[string]string{
 		"event_date": "Дата события (Date)",
 		"event_time": "Время события (местное/UTC, строка; NULL — время не фиксировано)",
@@ -60,6 +65,7 @@ var eventsView = util.View{
 		"title":      "Название события и действие модели при его наступлении",
 		"threshold":  "Пороги срабатывания в формате JSON, напр. '{\"crack\":\">50\"}'",
 		"status":     "Статус отработки: pending — ожидается, done — обработано, verified — сверено с фактом",
+		"emergency":  "1 — внеочередное заседание Совета директоров ЦБ, 0 — плановое",
 	},
 }
 
@@ -72,6 +78,9 @@ func (s *eventsCalendar) Name() string {
 
 func (s *eventsCalendar) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
 	if err = conn.Exec(ctx, eventsDdl); err != nil {
+		return count, err
+	}
+	if err = conn.Exec(ctx, eventsEmergencyAlter); err != nil {
 		return count, err
 	}
 	created, err := util.CreateView(ctx, conn, eventsView)
@@ -87,7 +96,7 @@ func (s *eventsCalendar) Import(ctx context.Context, conn driver.Conn) (count in
 		log.Warnf("Календарь заседаний ЦБ (%s) недоступен, события не обновлены: %v", calMPUrl, err)
 		return count, nil
 	}
-	dates, err := parseCalMP(page)
+	meetings, err := parseCalMP(page)
 	if err != nil {
 		// Ошибка разбора (в т.ч. 0 заседаний) — ошибка прогона: молчаливый «0 rows»
 		// на смене разметки выглядел бы зелёным прогоном с потерянным календарём.
@@ -98,8 +107,12 @@ func (s *eventsCalendar) Import(ctx context.Context, conn driver.Conn) (count in
 	if err != nil {
 		return count, err
 	}
-	for _, date := range dates {
-		if err = batch.Append(date, calMPEventTime, calMPCategory, calMPTitle, calMPThreshold, calMPStatus); err != nil {
+	for _, meeting := range meetings {
+		emergency := uint8(0)
+		if meeting.Emergency {
+			emergency = 1
+		}
+		if err = batch.Append(meeting.Date, calMPEventTime, calMPCategory, calMPTitle, calMPThreshold, calMPStatus, emergency); err != nil {
 			_ = batch.Abort()
 			return count, err
 		}
@@ -262,11 +275,24 @@ func calMPCardYear(day *goquery.Selection, years map[string]int) (int, bool) {
 	return year, ok
 }
 
+// calMPMeeting — заседание календаря ЦБ: дата и признак внеочередного заседания. Флаг
+// снимается с текста страницы (подстрока «внеочередн»), даты не хардкодятся.
+type calMPMeeting struct {
+	Date      time.Time
+	Emergency bool
+}
+
+// calMPEmergency — признак внеочередного заседания: регистронезависимая подстрока
+// «внеочередн» в нормализованном тексте карточки/строки таблицы.
+func calMPEmergency(text string) bool {
+	return strings.Contains(strings.ToLower(calMPText(text)), "внеочередн")
+}
+
 // calMPTableDates разбирает таблицу старой эры (2014–2018): дата — из первой ячейки строки
 // («14 февраля», без года), событие — из второй; пустая или отсутствующая ячейка даты
 // (эффект rowspan) означает, что действует предыдущая дата, а непустая нераспознанная —
 // что строка своей даты не получила (дата сбрасывается). year — год вкладки панели.
-func calMPTableDates(table *goquery.Selection, year int, add func(time.Time)) {
+func calMPTableDates(table *goquery.Selection, year int, add func(time.Time, bool)) {
 	var current time.Time
 	table.Find("tr").Each(func(_ int, tr *goquery.Selection) {
 		cells := tr.Find("td")
@@ -295,40 +321,45 @@ func calMPTableDates(table *goquery.Selection, year int, add func(time.Time)) {
 		if current.IsZero() || !calMPIsMeetingTable(eventCell.Text()) {
 			return
 		}
-		add(current)
+		add(current, calMPEmergency(eventCell.Text()))
 	})
 }
 
 // parseCalMP разбирает страницу календаря заседаний ЦБ по трём разметкам: карточки с полной
 // датой (2020+), карточки без года (2019) и таблицы старой эры (2014–2018); у двух последних
-// год берётся из лейбла вкладки панели. Возвращает дедуплицированные отсортированные даты;
-// 0 заседаний — ошибка (признак смены разметки, а не пустого календаря).
-func parseCalMP(page []byte) ([]time.Time, error) {
+// год берётся из лейбла вкладки панели. Возвращает дедуплицированные отсортированные
+// заседания с признаком «внеочередное»; 0 заседаний — ошибка (признак смены разметки,
+// а не пустого календаря).
+func parseCalMP(page []byte) ([]calMPMeeting, error) {
 	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(page))
 	if err != nil {
 		return nil, fmt.Errorf("cal_mp: разбор HTML: %w", err)
 	}
-	seen := make(map[string]bool)
-	var dates []time.Time
-	add := func(date time.Time) {
+	index := make(map[string]int)
+	var meetings []calMPMeeting
+	add := func(date time.Time, emergency bool) {
 		key := date.Format("2006-01-02")
-		if seen[key] {
+		if i, ok := index[key]; ok {
+			// Дубль даты (например, карточка и таблица одной вкладки): флаг не теряется.
+			meetings[i].Emergency = meetings[i].Emergency || emergency
 			return
 		}
-		seen[key] = true
-		dates = append(dates, date)
+		index[key] = len(meetings)
+		meetings = append(meetings, calMPMeeting{Date: date, Emergency: emergency})
 	}
 	years := calMPTabYears(doc)
 
 	// Карточки-заседания: полная дата — как и раньше, в любой части страницы; без года
 	// (2019) — год из вкладки панели, карточки вне панели с вкладкой года не получают.
 	doc.Find("div.main-events_day").Each(func(_ int, day *goquery.Selection) {
-		if !calMPIsMeeting(day.Text()) {
+		text := day.Text()
+		if !calMPIsMeeting(text) {
 			return
 		}
+		emergency := calMPEmergency(text)
 		raw := day.Find("div.date").First().Text()
 		if date, ok := parseCalMPDate(raw); ok {
-			add(date)
+			add(date, emergency)
 			return
 		}
 		year, ok := calMPCardYear(day, years)
@@ -336,7 +367,7 @@ func parseCalMP(page []byte) ([]time.Time, error) {
 			return
 		}
 		if date, ok := parseCalMPPanelDate(raw, year); ok {
-			add(date)
+			add(date, emergency)
 		}
 	})
 
@@ -352,11 +383,11 @@ func parseCalMP(page []byte) ([]time.Time, error) {
 		})
 	})
 
-	if len(dates) == 0 {
+	if len(meetings) == 0 {
 		return nil, fmt.Errorf("cal_mp: ни одного заседания не найдено (%s)", calMPUrl)
 	}
-	sort.Slice(dates, func(i, j int) bool { return dates[i].Before(dates[j]) })
-	return dates, nil
+	sort.Slice(meetings, func(i, j int) bool { return meetings[i].Date.Before(meetings[j].Date) })
+	return meetings, nil
 }
 
 func init() {
