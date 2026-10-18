@@ -1371,6 +1371,95 @@ async def check(params, server_log):
             failed += not expect("сырая cbr_dip_bulletin закрыта", denied,
                                  "отказ ClickHouse 497 на cbr_dip_bulletin (ожидаемо)" if denied else raw[:200])
 
+            # Документы e-disclosure.ru (пункт dcf-polyus/phase-3-remaining-edisclosure-documents,
+            # спека 2026-10-18 §6, импортёр edisclosure_documents): витрина v_edisclosure_documents
+            # читается агентом, сырая edisclosure_documents агенту закрыта (как macro_series и
+            # cbr_dip_bulletin: документы агент читает только через витрину, правило 11 AGENTS.md).
+            # Непустота витрины — мягкая проверка (WARN, как пустой реестр ML): документы собирает
+            # полуавтоматический коллектор (headed Chrome + ручная капча), и на базе без
+            # доставленного снапшота витрина пуста; красный make mcp-check из-за не запускавшегося
+            # сбора недопустим. Нечитаемая витрина — провал: значит нет ни вида, ни гранта.
+            edisclosure_view = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_edisclosure_documents"}))
+            edisclosure_view_rows = result_rows(edisclosure_view)
+            edisclosure_view_n = edisclosure_view_rows[0].get("n") if edisclosure_view_rows else None
+            if edisclosure_view_rows is None:
+                failed += not expect("витрина v_edisclosure_documents читается", False,
+                                     f"витрина не читается: {edisclosure_view[:200]} — на пустой БД её "
+                                     "создаёт прогон импортёра (make import STAT=edisclosure_documents)")
+            elif (edisclosure_view_n or 0) > 0:
+                print(f"OK   витрина v_edisclosure_documents: строк: {edisclosure_view_n}")
+            else:
+                print("WARN витрина v_edisclosure_documents пуста — снапшот коллектора ещё не импортирован "
+                      "(make edisclosure-login / make edisclosure-collect, затем make import "
+                      "STAT=edisclosure_documents)")
+
+            # Сырую таблицу создаёт DDL-прогон импортёра, поэтому UNKNOWN_TABLE здесь — провал,
+            # а не успех: таблица обязана существовать и быть закрытой.
+            raw = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM edisclosure_documents"}))
+            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+            failed += not expect("сырая edisclosure_documents закрыта", denied,
+                                 "отказ ClickHouse 497 на edisclosure_documents (ожидаемо)" if denied else raw[:200])
+
+            # Комментарии проверяются по карточке самой витрины в разобранном list_tables, а не
+            # вхождением строки в общий текст ответа: в тексте соседних витрин лежат комментарии
+            # их колонок (урок bold), и «sha256 где-то в ответе» дало бы ложное OK. Имя витрины
+            # уже подтверждено запросом к ней выше, поэтому отсутствие карточки здесь — неполный
+            # ответ list_tables (или выключенные detailed columns), а не «витрины нет».
+            try:
+                listed_tables = json.loads(tables)
+            except ValueError:
+                listed_tables = None
+            edisclosure_listed = None
+            if isinstance(listed_tables, dict):
+                edisclosure_listed = next((t for t in listed_tables.get("tables", [])
+                                           if t.get("name") == "v_edisclosure_documents"), None)
+            if edisclosure_listed is None:
+                failed += not expect("комментарии витрины v_edisclosure_documents", False,
+                                     "list_tables не отдал карточку витрины с комментариями")
+            else:
+                edisclosure_comment = edisclosure_listed.get("comment") or ""
+                edisclosure_columns = {c.get("name"): (c.get("comment") or "")
+                                       for c in edisclosure_listed.get("columns", [])}
+                edisclosure_missing = [col for col in ("sha256", "archive_key", "publication_date")
+                                       if not edisclosure_columns.get(col)]
+                edisclosure_comments_ok = "e-disclosure" in edisclosure_comment and not edisclosure_missing
+                edisclosure_comments_detail = (
+                    f"комментарий таблицы: {'e-disclosure' if 'e-disclosure' in edisclosure_comment else 'без e-disclosure'}, "
+                    f"колонки без комментария: {', '.join(edisclosure_missing) if edisclosure_missing else 'нет'}")
+                failed += not expect("комментарии витрины v_edisclosure_documents",
+                                     edisclosure_comments_ok, edisclosure_comments_detail)
+
+            # Выборочная точка контура: строка PLZL/IFRS с непустыми sha256 и archive_key. Пустая
+            # витрина — WARN (снапшот не импортирован), а не провал; но если строки в витрине
+            # есть, а PLZL/IFRS нет — снапшот неполный (коллектор запускали с подмножеством
+            # компаний/разделов), и это провал.
+            if edisclosure_view_rows is not None:
+                edisclosure_point = text(await session.call_tool("run_query", {"query":
+                    "SELECT ticker, section, fileid, sha256, archive_key FROM v_edisclosure_documents "
+                    "WHERE ticker = 'PLZL' AND section = 'IFRS' LIMIT 1"}))
+                edisclosure_point_rows = result_rows(edisclosure_point)
+                if edisclosure_point_rows is None:
+                    failed += not expect("документ PLZL IFRS с версией и архивом", False,
+                                         f"ответ не распознан: {edisclosure_point[:200]}")
+                elif edisclosure_point_rows:
+                    point = edisclosure_point_rows[0]
+                    point_fileid = point.get("fileid")
+                    point_sha = point.get("sha256") or ""
+                    point_key = point.get("archive_key") or ""
+                    point_sha_detail = (point_sha[:16] + "…") if point_sha else "пусто"
+                    point_key_detail = (point_key[:80] + "…") if point_key else "пусто"
+                    failed += not expect("документ PLZL IFRS с версией и архивом",
+                                         bool(point_sha) and bool(point_key),
+                                         f"fileid={point_fileid}, sha256={point_sha_detail}, "
+                                         f"archive_key={point_key_detail}")
+                elif not (edisclosure_view_n or 0):
+                    print("WARN строка PLZL IFRS: витрина пуста — снапшот коллектора ещё не импортирован")
+                else:
+                    failed += not expect("документ PLZL IFRS с версией и архивом", False,
+                                         "строки PLZL/IFRS нет в непустой витрине — неполный снапшот "
+                                         "(собрать PLZL и раздел IFRS: make edisclosure-collect)")
+
             # Контур диапазонов среднесрочного прогноза ЦБ (пункт 4.2 №7 роадмапа KEY_RATE — эталон
             # ЦБ, фаза 2; спека 2026-10-17 cbr-mt-forecast §3.7, импортёр cbr_mt_forecast): витрина
             # v_cbr_mt_forecast читается агентом и НЕПУСТА, каталог описывает все 16 объявленных
