@@ -712,6 +712,65 @@ class FlattenMetricsTest(unittest.TestCase):
     def test_item_scalars_are_unwrapped(self):
         self.assertEqual(me.flatten_metrics({"n": _ItemScalar(2)}), {"n": 2.0})
 
+    def test_nested_dicts_and_lists_become_dotted_keys(self):
+        # Форма метрик `cpi_nowcast`: sample — dict, models — список строк,
+        # windows/weights — списки dict'ов. Строки списка метриками не станут.
+        flat = me.flatten_metrics({
+            "sample": {"rows": 10, "skipped": 2},
+            "models": ["B1", "B2"],
+            "windows": [{"models": {"B1": {"rmse": 0.1, "mae": 0.2}}}],
+            "weights": [{"weights": {"cpi_food": 0.4}}],
+            "pair": (5, 6),
+        })
+        self.assertEqual(flat, {
+            "sample.rows": 10.0,
+            "sample.skipped": 2.0,
+            "windows.0.models.B1.rmse": 0.1,
+            "windows.0.models.B1.mae": 0.2,
+            "weights.0.weights.cpi_food": 0.4,
+            "pair.0": 5.0,
+            "pair.1": 6.0,
+        })
+
+    def test_primary_metric_is_skipped_at_any_level(self):
+        flat = me.flatten_metrics({
+            "primary_metric": "rmse",
+            "nested": {"primary_metric": "x", "value": 1},
+            "windows": [{"primary_metric": "y", "rmse": 2}],
+        })
+        self.assertEqual(flat, {"nested.value": 1.0, "windows.0.rmse": 2.0})
+
+    def test_nested_none_nan_bools_and_strings_are_skipped(self):
+        flat = me.flatten_metrics({
+            "a": {
+                "none": None,
+                "nan": float("nan"),
+                "inf": float("inf"),
+                "flag": True,
+                "text": "1.0",
+                "ok": 1,
+            },
+            "b": [None, False, "s", 2],
+        })
+        self.assertEqual(flat, {"a.ok": 1.0, "b.3": 2.0})
+
+    def test_collision_suffix_works_on_flattened_keys(self):
+        # `a b.c` и `a_b.c` после санитизации неразличимы: суффикс обязан
+        # работать и на составных ключах, а не только на верхнем уровне.
+        with self.assertLogs("ml_experiment", level="WARNING") as logs:
+            flat = me.flatten_metrics({
+                "a b": {"c": 1.0},
+                "a_b": {"c": 2.0},
+            })
+        self.assertEqual(flat, {"a_b.c": 1.0, "a_b.c_2": 2.0})
+        self.assertIn("a_b.c_2", "\n".join(logs.output))
+
+    def test_depth_is_bounded_for_cyclic_structures(self):
+        # Циклический dict не должен уходить в бесконечную рекурсию.
+        node = {}
+        node["self"] = node
+        self.assertEqual(me.flatten_metrics(node), {})
+
     def test_empty_metrics(self):
         self.assertEqual(me.flatten_metrics({}), {})
 
