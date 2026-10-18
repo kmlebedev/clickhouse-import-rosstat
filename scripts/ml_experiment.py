@@ -549,7 +549,7 @@ class ExperimentRun:
                 mlflow.log_metrics(metrics)
             primary = self.metrics.get("primary_metric")
             if primary is not None:
-                mlflow.log_tags({"primary_metric": str(primary)})
+                mlflow.set_tags({"primary_metric": str(primary)})
             self._end_mlflow(
                 "FINISHED" if status == "finished" else "FAILED"
             )

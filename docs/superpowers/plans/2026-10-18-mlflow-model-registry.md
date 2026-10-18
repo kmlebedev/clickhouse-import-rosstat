@@ -116,7 +116,7 @@ git commit -m "add mlflow server lifecycle targets"
 
 In `scripts/ml_experiment_test.py`, add a fake module installed with `unittest.mock.patch.dict(sys.modules, {"mlflow": fake})` and a `FakeMlflow` object that records:
 - `set_tracking_uri(uri)`, `set_experiment(name)`, `start_run(run_name=…, tags=…)` returning an object with `info.run_id`;
-- `log_text(text, artifact_file)`, `log_artifact(path)`, `log_metrics(dict)`, `log_params(dict)`, `log_tags(dict)`, `end_run(status=…)`;
+- `log_text(text, artifact_file)`, `log_artifact(path)`, `log_metrics(dict)`, `log_params(dict)`, `set_tags(dict)`, `end_run(status=…)`;
 - a fake `mlflow.catboost.log_model(model, name=…)`.
 
 Cover:
