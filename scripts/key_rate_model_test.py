@@ -395,6 +395,52 @@ class TestLoaders(unittest.TestCase):
             km.consensus_from_rows(rows)
         self.assertIn("не целое", str(caught.exception))
 
+    def test_consensus_non_finite_stats_are_rejected(self):
+        # NaN/inf прошли бы float() и попали в прогноз как «измеренные»:
+        # NaN заразил бы медиану и метрики, inf — деление на остаток года.
+        cases = (
+            ("median", float("nan")),
+            ("median", float("inf")),
+            ("p10", float("nan")),
+            ("p90", float("-inf")),
+        )
+        for stat, value in cases:
+            rows = [
+                {"date": "2026-09-01", "series": "key_rate_avg_2026_median", "value": 14.5},
+            ]
+            if stat == "median":
+                rows[0]["value"] = value
+            else:
+                rows.append(
+                    {
+                        "date": "2026-09-01",
+                        "series": f"key_rate_avg_2026_{stat}",
+                        "value": value,
+                    }
+                )
+            with self.subTest(stat=stat, value=value):
+                with self.assertRaises(ValueError) as caught:
+                    km.consensus_from_rows(rows)
+                message = str(caught.exception)
+                self.assertIn(stat, message)
+                self.assertIn("не конечное", message)
+
+    def test_consensus_non_finite_answers_is_rejected(self):
+        # int(inf) дал бы OverflowError, int(nan) — ValueError с неверным
+        # текстом «не целое»: бесконечность и NaN отсекаются до int().
+        for value in (float("inf"), float("nan")):
+            rows = [
+                {"date": "2026-09-01", "series": "key_rate_avg_2026_median", "value": 14.5},
+                {"date": "2026-09-01", "series": "key_rate_avg_2026_answers", "value": value},
+            ]
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError) as caught:
+                    km.consensus_from_rows(rows)
+                message = str(caught.exception)
+                self.assertIn("answers", message)
+                self.assertIn("не конечное", message)
+                self.assertNotIn("не целое", message)
+
     def test_consensus_sql_reads_the_view(self):
         # Источник — витрина, а не сырая macro_series: грант у kimi_reader
         # есть только на v_cbr_mo_br, и парсер обязан читать тот же срез.
