@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-10-18T12:00:00+03:00",
+  "collector": {"name": "edisclosure_collect.py", "version": "1"},
+  "sections": ["IFRS", "RAS", "AFFILIATES", "AGM"],
+  "companies": [
+    {"ticker": "PLZL", "company_id": "7832", "name": "ПАО «Полюс»",
+     "url": "https://e-disclosure.ru/portal/company.aspx?id=7832"},
+    {"ticker": "SBER", "company_id": "3043", "name": "Сбербанк",
+     "url": "https://e-disclosure.ru/portal/company.aspx?id=3043"},
+    {"ticker": "CHMF", "company_id": "30", "name": "Северсталь",
+     "url": "https://e-disclosure.ru/portal/company.aspx?id=30"}
+  ],
+  "document_count": 6,
+  "documents_file": "documents.jsonl"
+}
