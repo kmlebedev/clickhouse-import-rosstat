@@ -40,7 +40,7 @@
 | `value` | `Nullable(Float64)` | значение в `unit`; у `next_meeting` — дней до заседания; NULL — данных нет |
 | `unit` | `LowCardinality(String)` | `% годовых`, `% г/г`, `% г/г (SAAR)`, `%`, `пункты`, `б.п.`, `контрактов`, `дней` |
 | `as_of` | `Nullable(Date)` | дата значения (последнее наблюдение/сделка/дата прогноза; у `next_meeting` — `today()`) |
-| `target_date` | `Nullable(Date)` | дата заседания для `market`/`forecast`/`divergence`/`calendar`; NULL у остальных |
+| `target_date` | `Nullable(Date)` | дата заседания для `forecast`/`divergence`/`calendar`; у `market` — дата экспирации ближайшей будущей серии KEYRATE (она же дата заседания, по ней биржа рассчитывает индекс); NULL у остальных |
 | `threshold` | `String` | текст порога/условия; `—` — числового порога нет |
 | `flag` | `UInt8` | 1 — условие `threshold` выполнено; 0 — нет или порога нет |
 | `stale` | `UInt8` | 1 — значения нет или оно старше естественного цикла (daily 7 дней, monthly 45 дней; прогноз не свёрено после `target_date` или старше 45 дней; календарь без будущего заседания) |
