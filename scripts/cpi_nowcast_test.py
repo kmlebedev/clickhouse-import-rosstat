@@ -90,7 +90,7 @@ ONE_DAY = timedelta(days=1)
 # Модульные хуки убирают переменные на время набора и возвращают их после;
 # тесты, которые сами выставляют `ML_LOG` (через `patch.dict`), работают как
 # раньше.
-_ML_ENV_VARS = ("ML_LOG", "ML_RUN_NAME", "ML_LOCAL_DIR")
+_ML_ENV_VARS = ("ML_LOG", "ML_RUN_NAME", "ML_LOCAL_DIR", "MLFLOW_TRACKING_URI")
 _SAVED_ML_ENV = {}
 
 

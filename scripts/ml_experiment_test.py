@@ -16,6 +16,7 @@ import os
 import sys
 import tempfile
 import unittest
+import uuid
 from datetime import date, datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -37,9 +38,10 @@ from ml_experiment import (
 )
 
 # Переменные, которые читает хелпер. Тесты, трогающие поведение по умолчанию,
-# обязаны изолировать все три: иначе `ML_LOG=1` из окружения разработчика
-# включал бы запись там, где тест ждёт «выключено».
-_ML_ENV_VARS = ("ML_LOG", "ML_RUN_NAME", "ML_LOCAL_DIR")
+# обязаны изолировать все: иначе `ML_LOG=1` из окружения разработчика
+# включал бы запись там, где тест ждёт «выключено», а `MLFLOW_TRACKING_URI`
+# уводил бы прогон в живой MLflow вместо фейка.
+_ML_ENV_VARS = ("ML_LOG", "ML_RUN_NAME", "ML_LOCAL_DIR", "MLFLOW_TRACKING_URI")
 
 
 class _env:
@@ -88,6 +90,105 @@ class _ItemScalar:
 
     def item(self):
         return self._value
+
+
+# Идентификатор, который вернёт фейковый MLflow: 32 hex-символа, как у
+# настоящего `run.info.run_id`.
+MLFLOW_RUN_ID = "0123456789abcdef0123456789abcdef"
+CANONICAL_MLFLOW_RUN_ID = "01234567-89ab-cdef-0123-456789abcdef"
+
+
+class _FakeInfo:
+    def __init__(self, run_id):
+        self.run_id = run_id
+
+
+class _FakeStartedRun:
+    def __init__(self, run_id):
+        self.info = _FakeInfo(run_id)
+
+
+class _FakeCatboost:
+    """Двойник `mlflow.catboost`: `log_model(model, name=...)`."""
+
+    def __init__(self, owner):
+        self._owner = owner
+
+    def log_model(self, model, name=None):
+        self._owner.calls.append(("catboost.log_model", (model,), {"name": name}))
+        if self._owner.model_error is not None:
+            raise self._owner.model_error
+
+
+class FakeMlflow:
+    """Офлайн-двойник модуля `mlflow`: записывает вызовы, никуда не ходит.
+
+    Устанавливается через `patch.dict(sys.modules, {"mlflow": fake})`:
+    `_start_mlflow` делает ленивый `import mlflow` и получает этот объект.
+    Ошибки (`start_error`, `log_text_error`, `model_error`) позволяют
+    проверить, что сбой приёмника не меняет результат прогона.
+    """
+
+    def __init__(self, run_id=MLFLOW_RUN_ID, start_error=None,
+                 log_text_error=None, model_error=None):
+        self.run_id = run_id
+        self.start_error = start_error
+        self.log_text_error = log_text_error
+        self.model_error = model_error
+        self.tracking_uri = None
+        self.experiment = None
+        self.calls = []
+        self.catboost = _FakeCatboost(self)
+
+    def _record(self, method, *args, **kwargs):
+        self.calls.append((method, args, kwargs))
+
+    def set_tracking_uri(self, uri):
+        self.tracking_uri = uri
+        self._record("set_tracking_uri", uri)
+
+    def set_experiment(self, name):
+        self.experiment = name
+        self._record("set_experiment", name)
+
+    def start_run(self, run_name=None, tags=None):
+        self._record("start_run", run_name=run_name, tags=tags)
+        if self.start_error is not None:
+            raise self.start_error
+        return _FakeStartedRun(self.run_id)
+
+    def log_text(self, text, artifact_file):
+        self._record("log_text", text, artifact_file)
+        if self.log_text_error is not None:
+            raise self.log_text_error
+
+    def log_artifact(self, path):
+        self._record("log_artifact", path)
+
+    def log_metrics(self, metrics):
+        self._record("log_metrics", metrics)
+
+    def log_params(self, params):
+        self._record("log_params", params)
+
+    def log_tags(self, tags):
+        self._record("log_tags", tags)
+
+    def end_run(self, status="FINISHED"):
+        self._record("end_run", status=status)
+
+    def names(self):
+        return [name for name, _args, _kwargs in self.calls]
+
+    def calls_of(self, name):
+        return [call for call in self.calls if call[0] == name]
+
+
+def _mlflow_env(**extra):
+    """`ML_LOG=1` и Tracking URI по умолчанию — окружение MLflow-тестов."""
+    values = {"ML_LOG": "1", "MLFLOW_TRACKING_URI": "http://mlflow:5000"}
+    values.update(extra)
+    return _env(**values)
 
 
 # Колонки таблиц дословно из `mlregistry/schema.go`. JSONEachRow разбирает
@@ -511,6 +612,255 @@ class FinishTest(unittest.TestCase):
             "sha256": hashlib.sha256(payload).hexdigest(),
             "bytes": len(payload),
         }])
+
+
+class CanonicalRunIdTest(unittest.TestCase):
+    def test_hex_becomes_dashed_uuid(self):
+        self.assertEqual(
+            me.canonical_run_id(MLFLOW_RUN_ID), CANONICAL_MLFLOW_RUN_ID
+        )
+
+    def test_dashed_uuid_is_kept(self):
+        self.assertEqual(
+            me.canonical_run_id(CANONICAL_MLFLOW_RUN_ID),
+            CANONICAL_MLFLOW_RUN_ID,
+        )
+
+    def test_invalid_id_falls_back_to_deterministic_uuid5(self):
+        expected = str(uuid.uuid5(uuid.NAMESPACE_URL, "mlflow:not-a-run"))
+        self.assertEqual(me.canonical_run_id("not-a-run"), expected)
+        self.assertEqual(me.canonical_run_id("not-a-run"), expected)
+        self.assertNotEqual(
+            me.canonical_run_id("not-a-run"), me.canonical_run_id("other")
+        )
+
+    def test_none_falls_back_instead_of_raising(self):
+        self.assertEqual(
+            me.canonical_run_id(None),
+            str(uuid.uuid5(uuid.NAMESPACE_URL, "mlflow:None")),
+        )
+
+
+class FlattenMetricsTest(unittest.TestCase):
+    def test_skips_none_non_numeric_and_non_finite(self):
+        flat = me.flatten_metrics({
+            "rmse": 0.5,
+            "n": 2,
+            "missing": None,
+            "nan": float("nan"),
+            "inf": float("inf"),
+            "text": "not-a-metric",
+        })
+        self.assertEqual(flat, {"rmse": 0.5, "n": 2.0})
+        self.assertIsInstance(flat["n"], float)
+
+    def test_primary_metric_is_not_emitted_as_metric(self):
+        flat = me.flatten_metrics({"primary_metric": "rmse", "rmse": 0.5})
+        self.assertEqual(flat, {"rmse": 0.5})
+
+    def test_keys_are_sanitized(self):
+        flat = me.flatten_metrics({
+            "cv rmse": 1.0,
+            "model/a:b": 2.0,
+            "ok-key.name": 3.0,
+        })
+        self.assertEqual(flat, {
+            "cv_rmse": 1.0,
+            "model_a_b": 2.0,
+            "ok-key.name": 3.0,
+        })
+
+    def test_item_scalars_are_unwrapped(self):
+        self.assertEqual(me.flatten_metrics({"n": _ItemScalar(2)}), {"n": 2.0})
+
+    def test_empty_metrics(self):
+        self.assertEqual(me.flatten_metrics({}), {})
+
+
+class MlflowSinkTest(unittest.TestCase):
+    def test_start_logs_tags_params_artifacts_and_finishes(self):
+        fake = FakeMlflow()
+        model = object()
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact = Path(tmp) / "report.csv"
+            artifact.write_text("a,b\n", encoding="utf-8")
+            with _mlflow_env(), patch.dict(sys.modules, {"mlflow": fake}), \
+                    patch.object(me, "ch_exec") as ch_exec:
+                run = start_run(
+                    "cpi_nowcast", "run", {"alpha": 0.5, "models": ["m"]},
+                    date(2026, 10, 18), {"rows": 2}, [{"y": 1}],
+                    spec_path="spec §3",
+                )
+                # Канонический UUID появляется сразу после старта run'а и
+                # попадает и в MLflow-артефакты, и в строки ClickHouse.
+                self.assertEqual(run.run_id, CANONICAL_MLFLOW_RUN_ID)
+                run.log_metrics({"rmse": 0.5, "primary_metric": "rmse"})
+                run.log_predictions([
+                    PredictionRow("m", "w", date(2026, 9, 30), 0.7, 0.5, "pp"),
+                ])
+                run.log_artifacts([artifact])
+                run.log_model("model", model)
+                self.assertEqual(run.finish("finished", "ok"), "clickhouse")
+
+            self.assertEqual(fake.tracking_uri, "http://mlflow:5000")
+            self.assertEqual(fake.experiment, "cpi_nowcast")
+
+            start = fake.calls_of("start_run")[0][2]
+            self.assertEqual(start["run_name"], "run")
+            tags = start["tags"]
+            self.assertEqual(tags["experiment"], "cpi_nowcast")
+            self.assertEqual(tags["author"], run.git["author"])
+            self.assertEqual(tags["git_sha"], run.git["git_sha"])
+            self.assertEqual(tags["git_branch"], run.git["git_branch"])
+            self.assertEqual(tags["git_dirty"], str(run.git["git_dirty"]))
+            self.assertEqual(
+                tags["config_hash"],
+                sha256_text(canonical_json({"alpha": 0.5, "models": ["m"]})),
+            )
+            self.assertEqual(
+                tags["sample_hash"], sha256_text(canonical_json([{"y": 1}]))
+            )
+            self.assertEqual(tags["data_asof"], "2026-10-18")
+            self.assertEqual(tags["spec_path"], "spec §3")
+            for value in tags.values():
+                self.assertIsInstance(value, str)
+
+            # В params попадают только скаляры: nested-конфиг не влезает
+            # в лимит длины param и остаётся в run.json.
+            self.assertEqual(fake.calls_of("log_params")[0][1][0], {"alpha": 0.5})
+
+            texts = {call[1][1]: call[1][0] for call in fake.calls_of("log_text")}
+            self.assertEqual(set(texts), {"run.json", "predictions.jsonl"})
+            run_row = json.loads(texts["run.json"])
+            self.assertEqual(run_row["run_id"], CANONICAL_MLFLOW_RUN_ID)
+            self.assertEqual(run_row["status"], "finished")
+            predictions = [
+                json.loads(line)
+                for line in texts["predictions.jsonl"].splitlines()
+            ]
+            self.assertEqual(len(predictions), 1)
+            self.assertEqual(predictions[0]["run_id"], CANONICAL_MLFLOW_RUN_ID)
+
+            self.assertEqual(
+                [call[1][0] for call in fake.calls_of("log_artifact")],
+                [str(artifact)],
+            )
+
+            model_calls = fake.calls_of("catboost.log_model")
+            self.assertEqual(len(model_calls), 1)
+            self.assertIs(model_calls[0][1][0], model)
+            self.assertEqual(model_calls[0][2], {"name": "model"})
+
+            # primary_metric — tag, а не числовая метрика.
+            self.assertEqual(
+                fake.calls_of("log_metrics")[0][1][0], {"rmse": 0.5}
+            )
+            self.assertEqual(
+                [call[2]["status"] for call in fake.calls_of("end_run")],
+                ["FINISHED"],
+            )
+
+            runs_sql = ch_exec.call_args_list[-1].args[0]
+            _, rows = _sql_payload(runs_sql)
+            self.assertEqual(rows[0]["run_id"], CANONICAL_MLFLOW_RUN_ID)
+
+    def test_failed_status_ends_run_failed(self):
+        fake = FakeMlflow()
+        with _mlflow_env(), patch.dict(sys.modules, {"mlflow": fake}), \
+                patch.object(me, "ch_exec"):
+            run = start_run("exp", "run", {}, date(2026, 10, 18), {}, [])
+            self.assertEqual(run.finish("failed", "boom"), "clickhouse")
+
+        self.assertEqual(
+            [call[2]["status"] for call in fake.calls_of("end_run")],
+            ["FAILED"],
+        )
+
+    def test_empty_tracking_uri_makes_no_mlflow_calls(self):
+        fake = FakeMlflow()
+        with _env(ML_LOG="1", MLFLOW_TRACKING_URI=""), \
+                patch.dict(sys.modules, {"mlflow": fake}), \
+                patch.object(me, "ch_exec"):
+            run = start_run("exp", "run", {}, date(2026, 10, 18), {}, [])
+            self.assertEqual(run.finish(), "clickhouse")
+
+        self.assertEqual(fake.calls, [])
+        # Без MLflow остаётся локальный UUID версии 4.1.
+        self.assertEqual(str(uuid.UUID(run.run_id)), run.run_id)
+        self.assertNotEqual(run.run_id, CANONICAL_MLFLOW_RUN_ID)
+
+    def test_ml_log_unset_makes_no_mlflow_calls(self):
+        fake = FakeMlflow()
+        with _env(MLFLOW_TRACKING_URI="http://mlflow:5000"), \
+                patch.dict(sys.modules, {"mlflow": fake}), \
+                patch.object(me, "ch_exec"):
+            run = start_run("exp", "run", {}, date(2026, 10, 18), {}, [])
+            self.assertFalse(run.enabled)
+            self.assertEqual(run.finish(), "disabled")
+
+        self.assertEqual(fake.calls, [])
+
+    def test_start_failure_warns_and_keeps_local_run_id(self):
+        fake = FakeMlflow(start_error=RuntimeError("tracking down"))
+        with _mlflow_env(), patch.dict(sys.modules, {"mlflow": fake}), \
+                patch.object(me, "ch_exec") as ch_exec:
+            with self.assertLogs("ml_experiment", level="WARNING") as logs:
+                run = start_run("exp", "run", {}, date(2026, 10, 18), {}, [])
+            self.assertEqual(run.finish(), "clickhouse")
+
+        ch_exec.assert_called_once()
+        self.assertIn("tracking down", "\n".join(logs.output))
+        self.assertEqual(str(uuid.UUID(run.run_id)), run.run_id)
+        self.assertNotEqual(run.run_id, CANONICAL_MLFLOW_RUN_ID)
+        self.assertEqual(
+            fake.names(), ["set_tracking_uri", "set_experiment", "start_run"]
+        )
+
+    def test_log_text_failure_warns_ends_failed_and_keeps_result(self):
+        fake = FakeMlflow(log_text_error=RuntimeError("artifact store down"))
+        with _mlflow_env(), patch.dict(sys.modules, {"mlflow": fake}), \
+                patch.object(me, "ch_exec") as ch_exec:
+            run = start_run("exp", "run", {}, date(2026, 10, 18), {}, [])
+            with self.assertLogs("ml_experiment", level="WARNING") as logs:
+                self.assertEqual(run.finish("finished"), "clickhouse")
+
+        ch_exec.assert_called_once()
+        self.assertIn("artifact store down", "\n".join(logs.output))
+        self.assertEqual(
+            [call[2]["status"] for call in fake.calls_of("end_run")],
+            ["FAILED"],
+        )
+
+    def test_mlflow_failure_does_not_break_local_fallback(self):
+        fake = FakeMlflow(log_text_error=RuntimeError("artifact store down"))
+        with tempfile.TemporaryDirectory() as tmp:
+            with _mlflow_env(ML_LOCAL_DIR=tmp), \
+                    patch.dict(sys.modules, {"mlflow": fake}):
+                run = start_run("exp", "run", {}, date(2026, 10, 18), {}, [])
+                with patch.object(
+                    me, "ch_exec", side_effect=ClickHouseError("ch down")
+                ):
+                    with self.assertLogs("ml_experiment", level="WARNING"):
+                        self.assertEqual(run.finish(), "local")
+
+                self.assertTrue(
+                    (Path(tmp) / run.run_id / "run.json").is_file()
+                )
+
+    def test_model_logging_failure_warns_but_run_finishes(self):
+        fake = FakeMlflow(model_error=RuntimeError("catboost missing"))
+        with _mlflow_env(), patch.dict(sys.modules, {"mlflow": fake}), \
+                patch.object(me, "ch_exec"):
+            run = start_run("exp", "run", {}, date(2026, 10, 18), {}, [])
+            run.log_model("model", object())
+            with self.assertLogs("ml_experiment", level="WARNING") as logs:
+                self.assertEqual(run.finish(), "clickhouse")
+
+        self.assertIn("catboost missing", "\n".join(logs.output))
+        self.assertEqual(
+            [call[2]["status"] for call in fake.calls_of("end_run")],
+            ["FINISHED"],
+        )
 
 
 class StartRunEnvTest(unittest.TestCase):
