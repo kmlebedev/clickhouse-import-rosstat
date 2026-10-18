@@ -69,7 +69,7 @@ DAGU_VERSION     ?= v2.18.2
 MKDOCS_VERSION ?= 9.7.7
 MKDOCS := uv run --with mkdocs-material==$(MKDOCS_VERSION) --python 3.12 mkdocs
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model cpi-nowcast cpi-monthly docs-check docs-build docs-serve
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model cpi-nowcast cpi-monthly edisclosure-login edisclosure-collect docs-check docs-build docs-serve
 
 all: lint test build build-ingest
 
@@ -272,10 +272,23 @@ cpi-nowcast:
 	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_nowcast.py $(ARGS)
 
 # ML-трек v2: месячный nowcast ИПЦ с мониторингом предприятий ЦБ (с МП vs без МП).
-# Читает ClickHouse, пишет локальные артефакты; в ClickHouse НЕ пишет.
+# Читает ClickHouse, пишет локальные артефакты; по умолчанию в ClickHouse НЕ пишет;
+# с ML_LOG=1 пишет паспорт и fold-предсказания в ml_runs/ml_predictions.
 # Фикстуры: make cpi-monthly ARGS="--export-fixtures scripts/testdata/cpi_monthly"
 cpi-monthly:
 	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_monthly.py $(ARGS)
+
+# Документы e-disclosure.ru: headed Chrome с постоянным профилем build/edisclosure-profile
+# (gitignored, 0700). Капчу решает владелец вручную; коллектор только ждёт её --wait секунд.
+# login — сохранить профиль; collect — собрать build/edisclosure/{manifest.json,documents.jsonl}
+# (каталог переопределяется EDISCLOSURE_OUT или ARGS="--out ..."). Секреты не печатаются.
+edisclosure-login:
+	uv run --with playwright --with beautifulsoup4 --with lxml --with requests --python 3.12 \
+		python3 scripts/edisclosure_collect.py login
+
+edisclosure-collect:
+	uv run --with playwright --with beautifulsoup4 --with lxml --with requests --python 3.12 \
+		python3 scripts/edisclosure_collect.py collect $(ARGS)
 
 # Smoke-проверка MCP end-to-end: поднимает сервер, вызывает list_tables и run_query по витринам,
 # проверяет, что сырая таблица закрыта. Нужен запущенный ClickHouse (make ch-up) и CLICKHOUSE_PASSWORD.
