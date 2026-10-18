@@ -34,6 +34,8 @@
 
 ### Task 1: `--quick` — main-окно без robustness и сплита
 
+> **Отклонение:** в Task 1 реализуется только `--quick`; `--jobs`, его тесты и валидация перенесены в Task 2 (так и сделано; см. ledger).
+
 **Files:** Modify `scripts/cpi_monthly.py`, `scripts/cpi_monthly_test.py`.
 
 **Interfaces:**
