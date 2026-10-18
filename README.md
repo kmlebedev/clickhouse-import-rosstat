@@ -99,6 +99,7 @@ deploy/staging/      артефакты staging
 | `LLM_BASE_URL`, `LLM_API_KEY`, `MP_SUMMARY_LLM_MODEL` | LLM-разметка резюме ДКП |
 | `NEWS_LLM_PROFILE`, `NEWS_LLM_MODEL`, `GLM_LLM_*`, `NEWS_LLM_BACKLOG_LIMIT` | LLM-разметка видимого потока новостей (Telegram и RSS): профиль, модель, ключи и предел бэклога за прогон |
 | `INGEST_TOKEN` | Bearer-токен ingest-endpoint |
+| `INGEST_URL` | Базовый URL ingest-endpoint для `scripts/key_rate_forecast_log.py` (например, `http://127.0.0.1:8081`); обязательна вместе с `INGEST_TOKEN` |
 | `EDISCLOSURE_INPUT_DIR`, `EDISCLOSURE_RECHECK`, `EDISCLOSURE_ALLOW_MISSING`, `EDISCLOSURE_OUT` | документы e-disclosure: каталог снапшота коллектора (по умолчанию `build/edisclosure`), глубокий прогон (`1`; переписывает строку при смене `sha256`/метаданных **или** при пустом `archive_key` и включённом архиве — самолечение), мягкий пропуск отсутствующего снапшота в dagu (`1`) и каталог выхода коллектора |
 
 Полный список, `ARCHIVE_*`, MCP-конфигурация и работа с ключами — [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
@@ -113,6 +114,8 @@ deploy/staging/      артефакты staging
 
 Витрины `v_model_inputs`, `v_gold_dashboard`, `v_forecast_accuracy`, `v_gold_forecasts`, `v_gold_etf_flows*`, `v_news_*`, `v_events_calendar`, `v_dcf_assumptions` читаются агентом через MCP (`kimi_reader`, только `v_*`). Ingest-endpoint (`cmd/ingest`) — единственный путь записи прогонов модели, ручных рядов, цен COMEX и консенсус-прогнозов; плагин `gold-nav` — отдельный репозиторий.
 
+Журнал прогнозов ключевой ставки пишется тем же ingest: `POST /v1/key_rate_forecast` (единственный путь, MCP read-only) принимает одну строку `forecast_log` с треком в `metric` (`cbr_rate:taylor`, `cbr_rate:ordered_logit`, `cbr_rate:ml`, `cbr_rate:llm`). Прогноз отправляет `make key-rate-forecast-log` (`scripts/key_rate_forecast_log.py`) из локальных артефактов `key_rate_model_forecast.json` и, при наличии, `key_rate_llm_forecast.json`; `forecast_resolve` заполняет факт из `cbr_key_rate` и ошибку в базисных пунктах (`error_bp`). Спека/план — `docs/superpowers/{specs,plans}/2026-10-18-key-rate-forecast-log*`.
+
 Состав, эндпоинты и запуск — [docs/GOLD_CONTOUR.md](docs/GOLD_CONTOUR.md); схемы — [ARCHITECTURE.md](ARCHITECTURE.md) §6.3/§6.5.
 
 ## Разработка
@@ -123,6 +126,7 @@ deploy/staging/      артефакты staging
 | `make test` / `make lint` | тесты / линт |
 | `make build` | бинарник `linux/amd64` в `build/` |
 | `make import STAT=<имя>` | локальный прогон импортёра |
+| `make key-rate-model` / `make key-rate-forecast-log` | прогноз ставки (локальные артефакты) / запись прогноза в `forecast_log` через ingest |
 | `make mcp-check` | MCP end-to-end |
 | `make docs-check` / `make docs-build` | проверка и сборка docs-портала |
 
