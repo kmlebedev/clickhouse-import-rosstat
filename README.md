@@ -97,6 +97,7 @@ deploy/staging/      артефакты staging
 | `CERT_FILES` | PEM-сертификаты нац. УЦ РФ |
 | `BEA_API_KEY`, `EIA_API_KEY`, `BLS_API_KEY` | ключи источников (BLS необязателен) |
 | `LLM_BASE_URL`, `LLM_API_KEY`, `MP_SUMMARY_LLM_MODEL` | LLM-разметка резюме ДКП |
+| `LLM_MODEL` | модель экспериментального LLM-прогноза ключевой ставки (`make key-rate-llm-forecast`); работает с общими `LLM_BASE_URL`/`LLM_API_KEY` |
 | `NEWS_LLM_PROFILE`, `NEWS_LLM_MODEL`, `GLM_LLM_*`, `NEWS_LLM_BACKLOG_LIMIT` | LLM-разметка видимого потока новостей (Telegram и RSS): профиль, модель, ключи и предел бэклога за прогон |
 | `INGEST_TOKEN` | Bearer-токен ingest-endpoint |
 | `EDISCLOSURE_INPUT_DIR`, `EDISCLOSURE_RECHECK`, `EDISCLOSURE_ALLOW_MISSING`, `EDISCLOSURE_OUT` | документы e-disclosure: каталог снапшота коллектора (по умолчанию `build/edisclosure`), глубокий прогон (`1`; переписывает строку при смене `sha256`/метаданных **или** при пустом `archive_key` и включённом архиве — самолечение), мягкий пропуск отсутствующего снапшота в dagu (`1`) и каталог выхода коллектора |
@@ -123,6 +124,7 @@ deploy/staging/      артефакты staging
 | `make test` / `make lint` | тесты / линт |
 | `make build` | бинарник `linux/amd64` в `build/` |
 | `make import STAT=<имя>` | локальный прогон импортёра |
+| `make key-rate-llm-forecast` | экспериментальный LLM-прогноз ключевой ставки: as-of снимок, три повтора, медиана/разброс, локальные артефакты; в ClickHouse не пишет; `ARGS="--log"` готовит payload для #127 |
 | `make mcp-check` | MCP end-to-end |
 | `make docs-check` / `make docs-build` | проверка и сборка docs-портала |
 

@@ -30,6 +30,13 @@ coverage.out
 /key_rate_model_predictions.csv
 /key_rate_model_forecast.json
 
+# Артефакты экспериментального LLM-трека ключевой ставки (issue #189): JSON
+# прогноза, markdown-отчёт и payload для ingest #127. Локальные, содержат ответ
+# конкретного провайдера и не коммитятся; имена точные.
+/key_rate_llm_forecast.json
+/key_rate_llm_forecast_report.md
+/key_rate_llm_forecast_log_payload.json
+
 # Артефакты прогона CPI-nowcast (спека §5): отчёт, построчные прогнозы и запись
 # текущего nowcast. Локальные и детерминированные при фиксированном сиде и одной
 # БД (числа прогона фиксируются протоколом приёмки в PR), поэтому в репозитории
