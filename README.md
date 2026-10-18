@@ -127,6 +127,7 @@ deploy/staging/      артефакты staging
 | `make build` | бинарник `linux/amd64` в `build/` |
 | `make import STAT=<имя>` | локальный прогон импортёра |
 | `make key-rate-model` / `make key-rate-forecast-log` | прогноз ставки (локальные артефакты) / запись прогноза в `forecast_log` через ingest |
+| `make cpi-monthly` | месячный nowcast ИПЦ с МП (ML-трек v2); долгая выборка — `ARGS="--sample long"`; журнал — `ML_LOG=1` |
 | `make mcp-check` | MCP end-to-end |
 | `make docs-check` / `make docs-build` | проверка и сборка docs-портала |
 
