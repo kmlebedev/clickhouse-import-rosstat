@@ -18,19 +18,20 @@
   базовые `y_lag1`, `y_lag2`, `usd_mm`, `key_rate`, `fao_mm`, `month` и 7
   МП-признаков `cbr_survey`; cutoff месяца — 8-е число M+1, собственный
   таргет месяца в признаки не попадает;
-* **модели** — CatBoost direct на h-таргете, две конфигурации на горизонт:
-  `nowcast_v2_mp` (с МП) и `nowcast_v2_nomp` (без МП); дефолты библиотеки,
-  seed 20261018, `month` категориальным. Bottom-up не строится: таргет
-  статьи — SA ИПЦ без КУ, его компоненты в публичном архиве не собираются
-  без весов СПР и 92 компонентных моделей (спека §4);
+* **модели** — две архитектуры на одном таргете/окне: (1) CatBoost **direct**
+  на h-таргете, `nowcast_v2_mp`/`nowcast_v2_nomp`; (2) **bottom-up** —
+  88 компонентных CatBoost-моделей и агрегат `Σ w·ŷ/Σ w` по весам СПР с лагом
+  год (`cb_comp_bottomup.py`, спека §4.1). Дефолты библиотеки, seed 20261018,
+  `month` категориальным;
 * **сравнение** — на общих 54 normal-месяцах 2019-01…2024-07 (исключены
   2020-04 и 2022): RMSE, MAE, DM-HLN (h=1 — конвенция авторов; h=h —
   робастность), TOST с margin δ = 10% RMSE CB_COMP (зафиксирован в спеке до
   прогона), RMSE ratio с 90% CI, парный блочный бутстрап (блок 3, n=2000,
   seed 20261018);
-* **вердикт** — «близок» только если все четыре основных горизонта (1/2/3/6)
-  дают DM p > 0.05 И 90% CI разницы RMSE внутри ±δ; иначе «не близок»
-  (поимённо по горизонтам). «Не близок» — законный результат issue;
+* **вердикт** — «близок» только если bottom-up `bottomup_mp` даёт DM p > 0.05
+  И 90% CI разницы RMSE внутри ±δ на всех четырёх горизонтах (1/2/3/6);
+  иначе «не близок», и в отчёте сказано, закрыл ли bottom-up разрыв.
+  «Не близок» — законный результат issue;
 * **артефакты** — `cb_comp_parity_report.md`, `cb_comp_parity_predictions.csv`,
   `cb_comp_parity_result.json` в корне worktree (gitignored).
 
@@ -38,15 +39,15 @@
 Запуск — через `make cb-comp-parity` (env подключает Makefile), тесты —
 `make cb-comp-parity-test` (офлайн, без ClickHouse и без архива).
 
-Границы, названные до прогона (спека §6): train — 2010-03…2018-12 (106 месяцев,
-предзарегистрированное окно). Признаки `key_rate` и `usd_mm` до 2013 г. — NaN:
-вендоренный `cpi_monthly.py` (long-sample политика v2, §8.2) не выбрасывает
-такие месяцы, и CatBoost обрабатывает NaN нативно; short-sample v2 отсекал бы
-2013-10, но parity использует long-sample, чтобы окно совпало с CB_COMP.
-Retrain CB_COMP не выполняется; наш DM-HLN считается по квадратам ошибок, а
-архивные p-value авторов — по четвёртым степеням (в `dm.test` подаются уже
-квадраты ошибок), поэтому архивные p-value воспроизводятся отдельной
-кросс-проверкой, но не заменяют наш тест.
+Границы, названные до прогона (спека §6): train — 2010-03…2018-12 (102 месяца,
+предзарегистрированное окно; 2014-12…2015-03 исключены, как в статье).
+Признаки `key_rate` и `usd_mm` до 2013 г. — NaN: вендоренный
+`cpi_monthly.py` (long-sample политика v2, §8.2) не выбрасывает такие месяцы,
+и CatBoost обрабатывает NaN нативно. Retrain CB_COMP не выполняется; наш
+DM-HLN считается по квадратам ошибок, а архивные p-value авторов — по
+четвёртым степеням (в `dm.test` подаются уже квадраты ошибок), поэтому
+архивные p-value воспроизводятся отдельной кросс-проверкой, но не заменяют
+наш тест.
 """
 
 import argparse
@@ -73,6 +74,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import cpi_monthly as cm
+import cb_comp_bottomup as bu
 import eval_utils as eu
 
 # ---------------------------------------------------------------------------
@@ -193,6 +195,23 @@ def month_range(first: date, last: date) -> list:
         if month == 13:
             year, month = year + 1, 1
     return months
+
+
+def shift_month(day: date, months: int) -> date:
+    """Первое число месяца, сдвинутого на `months` от месяца дня `day`."""
+    index = day.year * 12 + (day.month - 1) + months
+    return date(index // 12, index % 12 + 1, 1)
+
+
+def forecast_origin(target_month: date, horizon: int) -> date:
+    """Начало окна накопленного таргета: `M − (h−1)`.
+
+    CB_COMP строит direct h-step модель как `frollsum(h)` + `shift(h−1, lead)`:
+    строка с датой M (конец окна) несёт признаки месяца `M−h+1`. Parity
+    повторяет этот origin, иначе h>1 получал бы более свежие данные, чем
+    CB_COMP, и сравнение было бы не строгим (спека §3.2).
+    """
+    return shift_month(target_month, -(horizon - 1))
 
 
 def archive_candidates() -> list:
@@ -679,6 +698,47 @@ def split_rows(rows: list) -> tuple:
     return train, test
 
 
+def rows_for_horizon(rows: list, feature_by_month: dict, horizon: int) -> list:
+    """Строки цели M с признаками из начала окна `M−h+1` (origin CB_COMP).
+
+    `rows` — строки-таргеты (месяц M и все h-таргеты). Признаки берутся из
+    `feature_by_month[origin]`; если origin нет в выборке (начало истории),
+    строка пропускается. Для h=1 origin = M и поведение прежнее.
+    """
+    horizon_rows = []
+    for row in rows:
+        origin = forecast_origin(row.month, horizon)
+        features = feature_by_month.get(origin)
+        if features is None:
+            continue
+        horizon_rows.append(
+            ParityRow(
+                month=row.month,
+                features=features,
+                targets={horizon: row.targets[horizon]},
+            )
+        )
+    return horizon_rows
+
+
+def assert_no_leakage_origin(rows: list, horizon: int) -> None:
+    """Проверка «признаки не позже origin и origin раньше публикации цели».
+
+    Для каждой строки цели M: origin = M−(h−1), cutoff(origin) строго раньше
+    публикации метки M; origin не позже M; таргета в признаках нет.
+    """
+    for row in rows:
+        origin = forecast_origin(row.month, horizon)
+        if origin > row.month:
+            raise AssertionError(f"утечка h{horizon}: origin {origin} позже цели {row.month}")
+        if cm.cutoff_for(origin) >= cm.available_from_mes(cm.month_end(row.month)):
+            raise AssertionError(
+                f"утечка h{horizon}: cutoff origin {origin} не раньше публикации цели {row.month}"
+            )
+        if "y" in row.features:
+            raise AssertionError("утечка: таргет попал в признаки под ключом 'y'")
+
+
 # ---------------------------------------------------------------------------
 # Модели
 # ---------------------------------------------------------------------------
@@ -960,6 +1020,14 @@ def write_report(path: Path, payload: dict) -> None:
         + ", ".join(sample["train_outliers_excluded"])
         + " (у CB_COMP факт train — 102 месяца)"
     )
+    if sample.get("train_by_horizon"):
+        lines.append(
+            "- Train по горизонтам (origin `M−(h−1)`, как у CB_COMP): "
+            + ", ".join(
+                f"h{horizon}={count}"
+                for horizon, count in sample["train_by_horizon"].items()
+            )
+        )
     lines.append(f"- Пропущено при сборке признаков: {sample['n_skipped']} мес.")
     if sample["skipped_reasons"]:
         lines.append("")
@@ -990,6 +1058,102 @@ def write_report(path: Path, payload: dict) -> None:
         lines.append("")
         lines.append(f"**Вердикт по модели: {payload['overall'][model]}**")
         lines.append("")
+    bottomup = payload.get("bottomup", {})
+    lines.append("## 4.3. Bottom-up: компонентные модели и агрегат СПР")
+    lines.append("")
+    if bottomup.get("status") != "ok":
+        lines.append(f"**Не собран:** {bottomup.get('reason') or 'причина не записана'}")
+        lines.append("")
+    else:
+        meta = bottomup.get("metadata", {})
+        reconstruction = meta.get("reconstruction", {})
+        lines.append(
+            f"- Групп: {meta.get('n_groups')} (с BSU {meta.get('n_with_bsu')}, "
+            f"без BSU {meta.get('n_without_bsu')}); обучено моделей: {meta.get('n_models')}"
+        )
+        lines.append(
+            f"- Веса: годы {meta.get('weights_years')} (лаг 1 год), "
+            f"ЖКУ `9470` вне компонент; вес ЖКУ: {meta.get('utilities_weight')}"
+        )
+        lines.append(
+            f"- Покрытие весов (среднее): {meta.get('coverage_mean', float('nan')):.3f}"
+        )
+        lines.append("")
+        lines.append("| h | Сборка: RMSE | Сборка: max abs | Сборка: bias |")
+        lines.append("|---|---:|---:|---:|")
+        for horizon in HORIZONS:
+            item = reconstruction.get(horizon, reconstruction.get(str(horizon), {}))
+            lines.append(
+                f"| {horizon} | {_format(item.get('rmse', float('nan')), 4)} | "
+                f"{_format(item.get('max_abs', float('nan')), 4)} | "
+                f"{_format(item.get('bias', float('nan')), 4)} |"
+            )
+        lines.append("")
+        for variant, title in ((bu.MODEL_MP, "MP для групп с BSU"), (bu.MODEL_NOMP, "без МП")):
+            primary = [
+                item for item in results if item["model"] == variant and item["horizon"] in HORIZONS
+            ]
+            lines.append(f"### {variant} ({title})")
+            lines.append("")
+            lines.append(
+                "| h | RMSE ours | RMSE CB | ratio | ratio 90% CI | Δ | Δ 90% CI | "
+                "DM p (h=1) | TOST | вердикт |"
+            )
+            lines.append("|---|---:|---:|---:|---|---:|---|---:|---|---|")
+            for item in primary:
+                ratio_ci = (
+                    f"[{_format(item['ratio_ci90'][0], 3)}; "
+                    f"{_format(item['ratio_ci90'][1], 3)}]"
+                )
+                delta_ci = (
+                    f"[{_format(item['delta_ci90'][0], 4)}; "
+                    f"{_format(item['delta_ci90'][1], 4)}]"
+                )
+                lines.append(
+                    f"| {item['horizon']} | {_format(item['rmse_ours'], 6)} | "
+                    f"{_format(item['rmse_cb'], 6)} | {_format(item['ratio'], 3)} | {ratio_ci} | "
+                    f"{_format(item['delta'], 4)} | {delta_ci} | "
+                    f"{_format(item['dm_p_h1'], 4)} | "
+                    f"{'да' if item['tost_equivalent'] else 'нет'} | {item['verdict']} |"
+                )
+            lines.append("")
+            lines.append(f"**Вердикт по модели: {payload['overall'].get(variant)}**")
+            lines.append("")
+        lines.append("### Direct vs bottom-up (h=1/2/3/6)")
+        lines.append("")
+        lines.append(
+            "| h | direct mp RMSE | bottomup mp RMSE | RMSE CB | direct ratio | "
+            "bottomup ratio | bottomup DM p | bottomup TOST | bottomup verdict |"
+        )
+        lines.append("|---|---:|---:|---:|---:|---:|---:|---|---|")
+        for horizon in HORIZONS:
+            direct = next(
+                (
+                    item
+                    for item in results
+                    if item["model"] == MODEL_MP and item["horizon"] == horizon
+                ),
+                None,
+            )
+            bottom = next(
+                (
+                    item
+                    for item in results
+                    if item["model"] == bu.MODEL_MP and item["horizon"] == horizon
+                ),
+                None,
+            )
+            if direct is None or bottom is None:
+                lines.append(f"| {horizon} | — | — | — | — | — | — | — | — |")
+                continue
+            lines.append(
+                f"| {horizon} | {_format(direct['rmse_ours'], 6)} | "
+                f"{_format(bottom['rmse_ours'], 6)} | {_format(bottom['rmse_cb'], 6)} | "
+                f"{_format(direct['ratio'], 3)} | {_format(bottom['ratio'], 3)} | "
+                f"{_format(bottom['dm_p_h1'], 4)} | "
+                f"{'да' if bottom['tost_equivalent'] else 'нет'} | {bottom['verdict']} |"
+            )
+        lines.append("")
     extras = [item for item in results if item["horizon"] in HORIZONS_EXTRA]
     if extras:
         lines.append("## 5. Дополнительные горизонты (h4/h5)")
@@ -1014,7 +1178,16 @@ def write_report(path: Path, payload: dict) -> None:
         "NaN нативно; окно не расширялось прокси и не сокращалось по результату."
     )
     lines.append("- CB_COMP не переобучался: использованы архивные per-period прогнозы.")
-    lines.append("- Наша модель — direct, не bottom-up (таргет SA ИПЦ без КУ не собирается из публичных компонент).")
+    if payload.get("bottomup", {}).get("status") == "ok":
+        lines.append(
+            "- Bottom-up собран: 88 компонентных групп, веса СПР с лагом год; "
+            "direct остаётся второй архитектурой для сравнения."
+        )
+    else:
+        lines.append(
+            "- Bottom-up не собран: "
+            + (payload.get("bottomup", {}).get("reason") or "причина не записана")
+        )
     lines.append(
         "- Наш DM-HLN — на квадратах ошибок; архивные p-value авторов — на четвёртых "
         "степенях (особенность их `dm.test`); p-value напрямую не сравниваются."
@@ -1107,20 +1280,28 @@ def run(archive: Path, out_dir: Path, train_start: date = TRAIN_START, test_end:
 
     results = []
     prediction_rows = []
+    normal_rows = [test_by_month[month] for month in normal]
+    feature_by_month = {row.month: row.features for row in parity_rows}
+    train_by_horizon = {}
     for horizon in ALL_HORIZONS:
+        # CB_COMP direct h-step: цель M, признаки origin = M−(h−1) (спека §3.2).
+        train_h = rows_for_horizon(train_rows, feature_by_month, horizon)
+        test_h = rows_for_horizon(test_rows, feature_by_month, horizon)
+        assert_no_leakage_origin(train_h, horizon)
+        assert_no_leakage_origin(test_h, horizon)
+        train_by_horizon[horizon] = len(train_h)
         cb_forecasts = archive_data["sheet"] if horizon in HORIZONS else archive_data["xlsx"]
         cb_errors = _cb_errors(cb_forecasts, archive_data["target"], horizon, normal)
         margin = archive_data["margins"][horizon]
 
         for model_name, with_mp in ((MODEL_MP, True), (MODEL_NOMP, False)):
             names = cm.feature_names(with_mp=with_mp)
-            model = fit_direct(train_rows, names, horizon)
-            train_predictions = predict_direct(model, train_rows, names)
-            test_predictions = predict_direct(model, test_rows, names)
-            normal_rows = [test_by_month[month] for month in normal]
+            model = fit_direct(train_h, names, horizon)
+            train_predictions = predict_direct(model, train_h, names)
+            test_predictions = predict_direct(model, test_h, names)
             normal_predictions = [
                 prediction
-                for row, prediction in zip(test_rows, test_predictions)
+                for row, prediction in zip(test_h, test_predictions)
                 if row.month in normal_set
             ]
             result = evaluate_horizon(
@@ -1134,7 +1315,7 @@ def run(archive: Path, out_dir: Path, train_start: date = TRAIN_START, test_end:
                 flush=True,
             )
 
-            for row, prediction in zip(train_rows, train_predictions):
+            for row, prediction in zip(train_h, train_predictions):
                 prediction_rows.append(
                     {
                         "month": row.month.isoformat(),
@@ -1147,7 +1328,7 @@ def run(archive: Path, out_dir: Path, train_start: date = TRAIN_START, test_end:
                         "error": prediction - row.targets[horizon],
                     }
                 )
-            for row, prediction in zip(test_rows, test_predictions):
+            for row, prediction in zip(test_h, test_predictions):
                 prediction_rows.append(
                     {
                         "month": row.month.isoformat(),
@@ -1175,7 +1356,72 @@ def run(archive: Path, out_dir: Path, train_start: date = TRAIN_START, test_end:
                 }
             )
 
-    overall = {model: overall_verdict(results, model) for model in (MODEL_MP, MODEL_NOMP)}
+    # Bottom-up: предзарегистрированный вариант (спека §4.1). Ошибки/маргин
+    # считаются теми же функциями; при несобранном агрегате результаты не
+    # подменяются — причина идёт в отчёт и JSON.
+    macro = {row.month: row.features for row in feature_rows}
+    try:
+        bottomup = bu.run_bottomup(
+            archive=archive,
+            target_full=archive_data["target"],
+            macro=macro,
+            normal_months=normal,
+            train_months=[row.month for row in train_rows],
+            test_months=[row.month for row in test_rows],
+            train_outliers=TRAIN_OUTLIER_MONTHS,
+        )
+    except (RuntimeError, ValueError, FileNotFoundError) as error:
+        bottomup = bu.BottomUpResult(
+            status="not_assembled",
+            reason=f"{type(error).__name__}: {error}",
+            metadata={},
+        )
+    if bottomup.status == "ok":
+        for variant in (bu.MODEL_MP, bu.MODEL_NOMP):
+            for horizon in bu.HORIZONS:
+                values = bottomup.predictions[variant][horizon]["values"]
+                predictions = [values[month] for month in normal]
+                cb_errors = _cb_errors(
+                    archive_data["sheet"], archive_data["target"], horizon, normal
+                )
+                margin = archive_data["margins"][horizon]
+                result = evaluate_horizon(
+                    normal_rows, predictions, cb_errors, horizon, margin, variant
+                )
+                results.append(result)
+                print(
+                    f"  {variant} h{horizon}: RMSE {result['rmse_ours']:.6f} vs CB "
+                    f"{result['rmse_cb']:.6f}, DM p={result['dm_p_h1']:.4f}, "
+                    f"TOST {'да' if result['tost_equivalent'] else 'нет'} → {result['verdict']}",
+                    flush=True,
+                )
+                for month in [row.month for row in test_rows]:
+                    if month not in values or pd.isna(values[month]):
+                        continue
+                    row = test_by_month[month]
+                    prediction_rows.append(
+                        {
+                            "month": month.isoformat(),
+                            "horizon": horizon,
+                            "model": variant,
+                            "sample": "test",
+                            "normal": 1 if month in normal_set else 0,
+                            "y_true": row.targets[horizon],
+                            "y_pred": values[month],
+                            "error": values[month] - row.targets[horizon],
+                        }
+                    )
+    else:
+        print(f"Bottom-up не собран: {bottomup.reason}", flush=True)
+
+    direct_models = (MODEL_MP, MODEL_NOMP)
+    overall = {model: overall_verdict(results, model) for model in direct_models}
+    if bottomup.status == "ok":
+        overall[bu.MODEL_MP] = overall_verdict(results, bu.MODEL_MP)
+        overall[bu.MODEL_NOMP] = overall_verdict(results, bu.MODEL_NOMP)
+    else:
+        overall[bu.MODEL_MP] = "не собран"
+        overall[bu.MODEL_NOMP] = "не собран"
     skipped_reasons = {}
     for _, reason in skipped + missing:
         skipped_reasons[reason] = skipped_reasons.get(reason, 0) + 1
@@ -1218,6 +1464,14 @@ def run(archive: Path, out_dir: Path, train_start: date = TRAIN_START, test_end:
             "train_outliers_excluded": [
                 month.isoformat() for month in sorted(TRAIN_OUTLIER_MONTHS)
             ],
+            "train_by_horizon": {
+                str(horizon): count for horizon, count in train_by_horizon.items()
+            },
+        },
+        "bottomup": {
+            "status": bottomup.status,
+            "reason": bottomup.reason,
+            "metadata": bottomup.metadata,
         },
         "results": results,
         "overall": overall,
@@ -1228,7 +1482,8 @@ def run(archive: Path, out_dir: Path, train_start: date = TRAIN_START, test_end:
     write_predictions_csv(out_dir / ARTIFACT_PREDICTIONS, prediction_rows)
     write_result_json(out_dir / ARTIFACT_RESULT, payload)
     print(
-        f"Вердикт: {MODEL_MP} — {overall[MODEL_MP]}; {MODEL_NOMP} — {overall[MODEL_NOMP]}",
+        f"Вердикт: {MODEL_MP} — {overall[MODEL_MP]}; {MODEL_NOMP} — {overall[MODEL_NOMP]}; "
+        f"{bu.MODEL_MP} — {overall[bu.MODEL_MP]}",
         flush=True,
     )
     print(f"Артефакты: {out_dir / ARTIFACT_REPORT}, {out_dir / ARTIFACT_PREDICTIONS}, {out_dir / ARTIFACT_RESULT}", flush=True)
