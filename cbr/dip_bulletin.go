@@ -79,7 +79,10 @@ type cbrDipStat struct {
 // одного выпуска не отменяет остальные: ошибки копятся errors.Join с названием выпуска в
 // тексте, прогон завершается ошибкой — dagu видит сбой и не пускает цепочку дальше (спека §3.5,
 // шаг 5). Если новых выпусков нет — 0 строк и ни одного сетевого обращения к файлам, кроме
-// страницы (её чтение — цена обнаружения нового выпуска, ≈140 КБ).
+// страницы (её чтение — цена обнаружения нового выпуска, ≈140 КБ). После цикла выпусков и на
+// no-op-пути создаётся point-in-time слой (ensurePitViews): витрины — производная таблицы, и
+// самолечение работает без новых выпусков; их сбой не откатывает записанные выпуски, а
+// возвращается агрегированной ошибкой прогона (спека §2.5).
 func (s *cbrDipStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
 	// 1. DDL — до сети: шаблонный DDL внутри цикла отработал бы только при непустом списке
 	// новых выпусков, а гейт уже обращается к таблице.
@@ -114,6 +117,11 @@ func (s *cbrDipStat) Import(ctx context.Context, conn driver.Conn) (count int64,
 	fresh := cbrDipNewReleases(releases, known)
 	if len(fresh) == 0 {
 		log.Infof("%s: новых выпусков нет (на странице %d, в таблице %d выпусков)", cbrDipTable, len(releases), len(known))
+		// Слой создаётся и на no-op-пути: витрины — производная таблицы, и пропущенный при
+		// прошлом сбое CreateView обязан вылечиться без нового выпуска (спека §2.5).
+		if err = ensurePitViews(ctx, conn); err != nil {
+			return 0, err
+		}
 		return 0, nil
 	}
 
@@ -147,6 +155,11 @@ func (s *cbrDipStat) Import(ctx context.Context, conn driver.Conn) (count int64,
 		count += points
 		log.Infof("%s: выпуск %s (id %s, опубликован %s): импортировано %d точек",
 			cbrDipTable, release.Release, release.ID, release.PublicationDate.Format("2006-01-02"), points)
+	}
+	// 5. Слой point-in-time создаётся после цикла, чтобы витрины видели записанные выпуски.
+	// Сбой витрин не откатывает данные — ошибка идёт в общий Join прогона (спека §2.5).
+	if err = ensurePitViews(ctx, conn); err != nil {
+		errs = append(errs, err)
 	}
 	// Итог: число точек записанных выпусков и агрегированная ошибка (errors.Join без ошибок —
 	// nil, то есть успешный прогон).

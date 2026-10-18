@@ -78,7 +78,11 @@ async def check(params, server_log):
             tools = sorted(t.name for t in (await session.list_tools()).tools)
             failed += not expect("инструменты", {"list_databases", "list_tables", "run_query"} <= set(tools), ", ".join(tools))
 
-            tables = text(await session.call_tool("list_tables", {"database": "default"}))
+            # page_size: у list_tables страница по умолчанию — 50 записей; после добавления
+            # трёх витрин point-in-time слоя v_rosstat_macro ушла на вторую страницу, и
+            # проверки вида «имя есть в ответе» ложно падали. Одна страница на 1000 записей
+            # покрывает схему dev-БД с запасом.
+            tables = text(await session.call_tool("list_tables", {"database": "default", "page_size": 1000}))
             failed += not expect("витрина v_bea_pce видна", "v_bea_pce" in tables, "list_tables default")
 
             catalog = text(await session.call_tool("run_query", {"query": "SELECT series, unit FROM v_series_catalog WHERE source = 'bea' ORDER BY series"}))
@@ -1480,6 +1484,154 @@ async def check(params, server_log):
                                       f"{dip_blank_publication_n} (want 0) — прогнать make import "
                                       "STAT=cbr_dip_bulletin (винтаж разбирается прогоном)")
             failed += not expect("витрина v_cbr_dip_bulletin винтажна", dip_vintage_ok, dip_vintage_detail)
+
+            # Point-in-time слой над cbr_dip_bulletin (пункт key-rate/phase-4-point-in-time,
+            # спека 2026-10-19 §2): три витрины создаёт прогон cbr_dip_bulletin (ensurePitViews
+            # после цикла выпусков и на no-op-пути), а сырая таблица агенту по-прежнему
+            # закрыта. Проверки идут от общего к частному: непустота слоя, инвариант периода,
+            # строгая граница as-of на известной ревизии SA-безработицы и версия набора.
+            pit_view = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS points, uniqExact(vintage) AS vintages, "
+                "uniqExact(series) AS series FROM v_point_in_time"}))
+            pit_view_rows = result_rows(pit_view)
+            pit_points_n = pit_view_rows[0].get("points") if pit_view_rows else None
+            pit_vintages_n = pit_view_rows[0].get("vintages") if pit_view_rows else None
+            pit_series_n = pit_view_rows[0].get("series") if pit_view_rows else None
+            # Одной непустоты мало: count() > 0 прошёл бы и на срезе из одного выпуска.
+            # 49 версий и 8 рядов — состояние приёмки спеки §4 (18 000 точек).
+            pit_view_ok = ((pit_points_n or 0) > 0 and (pit_vintages_n or 0) >= 49
+                           and pit_series_n == 8)
+            if pit_view_rows is None:
+                pit_view_detail = f"ответ не распознан: {pit_view[:200]}"
+            elif not pit_view_rows:
+                pit_view_detail = ("строк 0 — прогнать make import STAT=cbr_dip_bulletin "
+                                   "(слой создаётся прогоном)")
+            else:
+                pit_view_detail = (f"точек: {pit_points_n}, версий: {pit_vintages_n} "
+                                   f"(want >= 49), рядов: {pit_series_n} (want 8)")
+            failed += not expect("слой v_point_in_time непуст", pit_view_ok, pit_view_detail)
+
+            # Инвариант слоя: отчётный период не позже публикации. Срез не фильтрует периоды
+            # по дате публикации (отвечает на вопрос «что опубликовано строго до D»), поэтому
+            # нарушение означало бы поломку нормализации period_date/published_at.
+            pit_period = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_point_in_time WHERE period_date > published_at"}))
+            pit_period_rows = result_rows(pit_period)
+            pit_period_n = pit_period_rows[0].get("n") if pit_period_rows else None
+            if pit_period_rows is None:
+                pit_period_detail = f"ответ не распознан: {pit_period[:200]}"
+            elif not pit_period_rows:
+                pit_period_detail = "строк 0 в ответе — ожидалась одна строка со счётчиком"
+            else:
+                pit_period_detail = f"строк с period_date > published_at: {pit_period_n} (want 0)"
+            failed += not expect("период не позже публикации", pit_period_n == 0, pit_period_detail)
+
+            # Строгая граница среза: значение, опубликованное ровно в дату as_of, в срез не
+            # входит. SA-безработица за 2023-11-30 впервые опубликована 2024-02-06 (выпуск
+            # 24-01), поэтому as_of на день публикации обязан дать пусто (<, а не <=).
+            pit_asof_boundary = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_point_in_time_asof(as_of='2024-02-06') "
+                "WHERE source='cbr_dip_bulletin' AND series='unemployment_sa' "
+                "AND period_date='2023-11-30'"}))
+            pit_asof_boundary_rows = result_rows(pit_asof_boundary)
+            pit_asof_boundary_n = pit_asof_boundary_rows[0].get("n") if pit_asof_boundary_rows else None
+            if pit_asof_boundary_rows is None:
+                pit_asof_boundary_detail = f"ответ не распознан: {pit_asof_boundary[:200]}"
+            elif not pit_asof_boundary_rows:
+                pit_asof_boundary_detail = "строк 0 в ответе — ожидалась одна строка со счётчиком"
+            else:
+                pit_asof_boundary_detail = (f"строк на as_of='2024-02-06': {pit_asof_boundary_n} "
+                                            "(want 0: граница строгая)")
+            failed += not expect("строгая граница среза", pit_asof_boundary_n == 0,
+                                 pit_asof_boundary_detail)
+
+            # Ревизия одного периода: 2023-11-30 равно 2.885274 в выпуске 24-01 и 2.916127 в
+            # 26-06. Слой обязан вернуть версию, известную строго до as_of, вместе с её
+            # винтажом — иначе ревизии SA-рядов выглядели бы фактами.
+            for pit_as_of, pit_want in (
+                ("2024-02-07", {"value": 2.885274, "vintage": "47847", "vintage_label": "24-01"}),
+                ("2026-09-02", {"value": 2.916127, "vintage": "62343", "vintage_label": "26-06"}),
+            ):
+                pit_asof = text(await session.call_tool("run_query", {"query":
+                    f"SELECT value, vintage, vintage_label FROM v_point_in_time_asof(as_of='{pit_as_of}') "
+                    "WHERE source='cbr_dip_bulletin' AND series='unemployment_sa' "
+                    "AND period_date='2023-11-30'"}))
+                pit_asof_rows = result_rows(pit_asof)
+                pit_asof_row = pit_asof_rows[0] if pit_asof_rows else None
+                pit_asof_ok = (pit_asof_rows is not None and len(pit_asof_rows) == 1
+                               and pit_asof_row.get("value") == pit_want["value"]
+                               and pit_asof_row.get("vintage") == pit_want["vintage"]
+                               and pit_asof_row.get("vintage_label") == pit_want["vintage_label"])
+                if pit_asof_rows is None:
+                    pit_asof_detail = f"ответ не распознан: {pit_asof[:200]}"
+                elif pit_asof_row is None:
+                    pit_asof_detail = ("строк 0, want одна версия — проверить создание витрины "
+                                       "и грант kimi_reader")
+                else:
+                    pit_asof_detail = (f"value={pit_asof_row.get('value')}, "
+                                       f"vintage={pit_asof_row.get('vintage')}, "
+                                       f"vintage_label={pit_asof_row.get('vintage_label')}")
+                failed += not expect(
+                    f"срез as_of='{pit_as_of}' отдаёт выпуск {pit_want['vintage_label']}",
+                    pit_asof_ok, pit_asof_detail)
+
+            # Ряд, исчезнувший из нового выпуска: 26-07 (2026-10-14) заменил безработицу
+            # занятостью. Слой обязан сохранить последнюю известную версию unemployment_sa
+            # (26-06) и одновременно отдать employment_sa уже из 26-07 — отсутствие ряда
+            # значит «выпуск его не показывает», а не «ряд удалён» (спека §2.3).
+            for pit_series, pit_want in (
+                ("unemployment_sa", {"value": 2.239751, "vintage": "62343", "vintage_label": "26-06"}),
+                ("employment_sa", {"value": 61.5059577839148, "vintage": "62444", "vintage_label": "26-07"}),
+            ):
+                pit_missing = text(await session.call_tool("run_query", {"query":
+                    "SELECT value, vintage, vintage_label FROM v_point_in_time_asof(as_of='2026-10-15') "
+                    f"WHERE source='cbr_dip_bulletin' AND series='{pit_series}' "
+                    "AND period_date='2026-06-30'"}))
+                pit_missing_rows = result_rows(pit_missing)
+                pit_missing_row = pit_missing_rows[0] if pit_missing_rows else None
+                pit_missing_ok = (pit_missing_rows is not None and len(pit_missing_rows) == 1
+                                  and pit_missing_row.get("value") == pit_want["value"]
+                                  and pit_missing_row.get("vintage") == pit_want["vintage"]
+                                  and pit_missing_row.get("vintage_label") == pit_want["vintage_label"])
+                if pit_missing_rows is None:
+                    pit_missing_detail = f"{pit_series}: ответ не распознан: {pit_missing[:200]}"
+                elif pit_missing_row is None:
+                    pit_missing_detail = (f"{pit_series}: строк 0, want одна — последняя известная "
+                                          "версия потеряна (проверить отсутствие HAVING/фильтра "
+                                          "period_date в витрине)")
+                else:
+                    pit_missing_detail = (f"{pit_series}: value={pit_missing_row.get('value')}, "
+                                          f"vintage={pit_missing_row.get('vintage')}, "
+                                          f"vintage_label={pit_missing_row.get('vintage_label')}")
+                failed += not expect(
+                    "ряд, исчезнувший из нового выпуска, сохраняет последнюю версию",
+                    pit_missing_ok, pit_missing_detail)
+
+            # Версия набора для forecast_log.data_version: одна строка на source, не меньше
+            # 18 000 точек и 49 версий, data_version — 16 hex-символов. Пустая или короткая
+            # версия — провал: по ней прогноз сопоставляется с точным состоянием слоя (спека §2.4).
+            pit_version = text(await session.call_tool("run_query", {"query":
+                "SELECT points, vintages, data_version FROM v_point_in_time_version "
+                "WHERE source='cbr_dip_bulletin'"}))
+            pit_version_rows = result_rows(pit_version)
+            pit_version_row = pit_version_rows[0] if pit_version_rows else None
+            pit_version_ok = (pit_version_rows is not None and len(pit_version_rows) == 1
+                              and (pit_version_row.get("points") or 0) >= 18000
+                              and (pit_version_row.get("vintages") or 0) >= 49
+                              and isinstance(pit_version_row.get("data_version"), str)
+                              and len(pit_version_row.get("data_version")) == 16)
+            if pit_version_rows is None:
+                pit_version_detail = f"ответ не распознан: {pit_version[:200]}"
+            elif pit_version_row is None:
+                pit_version_detail = ("строк 0, want одна — прогнать make import "
+                                      "STAT=cbr_dip_bulletin (витрину создаёт прогон)")
+            else:
+                pit_version_detail = (f"строк: {len(pit_version_rows)} (want 1), точек: "
+                                      f"{pit_version_row.get('points')} (want >= 18000), версий: "
+                                      f"{pit_version_row.get('vintages')} (want >= 49), "
+                                      f"data_version: {pit_version_row.get('data_version')}")
+            failed += not expect("версия набора v_point_in_time_version полна",
+                                 pit_version_ok, pit_version_detail)
 
             # Сырая cbr_dip_bulletin агенту не выдана — как macro_series и cbr_bop_est: витрина —
             # единственное место, где агент читает точки контура (винтажные колонки
