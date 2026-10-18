@@ -97,8 +97,9 @@ func TestCbrPitViewsContract(t *testing.T) {
 		t.Errorf("v_point_in_time: колонковых комментариев %d, want 7", len(cbrPitView.Columns))
 	}
 	if !strings.Contains(cbrPitAsOfView.Select, "publication_date < {as_of:Date}") ||
-		!strings.Contains(cbrPitAsOfView.Select, "argMax(value, (published_at, vintage))") ||
-		!strings.Contains(cbrPitAsOfView.Select, "GROUP BY source, series, period_date") {
+		!strings.Contains(cbrPitAsOfView.Select, "argMax(p.value, (p.published_at, p.vintage))") ||
+		!strings.Contains(cbrPitAsOfView.Select, "GROUP BY p.source, p.series, p.period_date") ||
+		!strings.Contains(cbrPitAsOfView.Select, ") AS p") {
 		t.Errorf("v_point_in_time_asof: не та семантика среза: %s", cbrPitAsOfView.Select)
 	}
 	if len(cbrPitAsOfView.Columns) != 0 {

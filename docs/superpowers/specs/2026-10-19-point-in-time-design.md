@@ -54,19 +54,21 @@ FROM cbr_dip_bulletin FINAL
 `v_point_in_time_asof` — параметризованная витрина ClickHouse (`{as_of:Date}`), вызов `SELECT … FROM v_point_in_time_asof(as_of='2024-02-07')`:
 
 ```sql
-SELECT source, series, period_date,
-       argMax(value, (published_at, vintage))         AS value,
-       max(published_at)                              AS published_at,
-       argMax(vintage, (published_at, vintage))       AS vintage,
-       argMax(vintage_label, (published_at, vintage)) AS vintage_label
+SELECT p.source, p.series, p.period_date,
+       argMax(p.value, (p.published_at, p.vintage))         AS value,
+       max(p.published_at)                                  AS published_at,
+       argMax(p.vintage, (p.published_at, p.vintage))       AS vintage,
+       argMax(p.vintage_label, (p.published_at, p.vintage)) AS vintage_label
 FROM (
     SELECT 'cbr_dip_bulletin' AS source, series, date AS period_date, value,
            publication_date AS published_at, release_id AS vintage, release AS vintage_label
     FROM cbr_dip_bulletin FINAL
     WHERE publication_date < {as_of:Date}
-)
-GROUP BY source, series, period_date
+) AS p
+GROUP BY p.source, p.series, p.period_date
 ```
+
+Почему `p.`: без квалификации алиас aggregate-колонки `published_at` перекрывает имя столбца подзапроса, и ClickHouse 26.10 возвращает `ILLEGAL_AGGREGATION` (агрегат внутри агрегата).
 
 `v_point_in_time_version`:
 
