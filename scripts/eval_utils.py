@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Общие оценочные функции бэктестов: RMSE/MAE, DM (HLN) и блочный бутстрап.
 
-Дом для функций, которые нужны сразу двум контурам: модели ключевой ставки
-(`key_rate_model.py`) и ML-трека nowcast'а ИПЦ (`cpi_nowcast.py`, спека
-`docs/superpowers/specs/2026-10-16-cpi-nowcast-design.md` §4). Реализация
+Дом для функций, которые нужны сразу трём скриптам: модели ключевой ставки
+(`key_rate_model.py`), ML-треку nowcast'а ИПЦ v1 (`cpi_nowcast.py`, спека
+`docs/superpowers/specs/2026-10-16-cpi-nowcast-design.md` §4) и его месячному
+v2 с МП (`cpi_monthly.py`, спека
+`docs/superpowers/specs/2026-10-18-cpi-monthly-mp-design.md` §4). Реализация
 перенесена из `key_rate_model.py` один-в-один (включая формулировки
 docstring'ов и конвенции вырожденных входов); там же остались тонкие обёртки
 `rmse_bp`/`mae_bp`/`diebold_mariano`/`block_bootstrap_rmse_diff` с прежними
