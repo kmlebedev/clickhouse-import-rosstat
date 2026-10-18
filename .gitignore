@@ -30,9 +30,11 @@ coverage.out
 /key_rate_model_predictions.csv
 /key_rate_model_forecast.json
 
-# Артефакт LLM-трека (issue #189): JSON прогноза и payload режима --log —
-# локальные снимки прогона, в репозиторий не коммитятся (gitignored по спеке #189).
+# Артефакты экспериментального LLM-трека ключевой ставки (issue #189): JSON
+# прогноза, markdown-отчёт и payload для ingest #127. Локальные, содержат ответ
+# конкретного провайдера и не коммитятся; имена точные.
 /key_rate_llm_forecast.json
+/key_rate_llm_forecast_report.md
 /key_rate_llm_forecast_log_payload.json
 
 # Артефакты прогона CPI-nowcast (спека §5): отчёт, построчные прогнозы и запись
@@ -49,6 +51,21 @@ coverage.out
 /cpi_monthly_report.md
 /cpi_monthly_predictions.csv
 /cpi_monthly_forecast.json
+
+# Артефакты parity-прогона с CB_COMP (issue #190, спека §7): отчёт, построчные
+# прогнозы и машинный результат. Локальные и детерминированные при фиксированном
+# сиде и одном архиве; числа прогона фиксируются протоколом приёмки в PR,
+# поэтому в репозитории не хранятся. Имена — точные (не маска).
+/cb_comp_parity_report.md
+/cb_comp_parity_predictions.csv
+/cb_comp_parity_result.json
+
+# Артефакты прокси-прогона CB_COMP (issue #190): отчёт, метрики и JSON.
+# Локальные и детерминированные при фиксированном сиде и одной БД; числа
+# фиксируются отчётом docs/research/2026-10-18-cb-comp-proxy.md и протоколом PR.
+/cb_comp_proxy_report.md
+/cb_comp_proxy_metrics.csv
+/cb_comp_proxy_results.json
 
 # Python-байткод от запусков скриптов (например `make key-rate-model` или тестов):
 # артефакт интерпретатора, в репозитории не хранится. Маска здесь безопасна —
