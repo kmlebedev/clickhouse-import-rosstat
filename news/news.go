@@ -43,6 +43,9 @@ var (
 	// Окно — последние 20 сообщений, поэтому 30-минутный опрос перекрывает его
 	// с запасом, а простой дольше окна теряет позиции (check покажет дыру).
 	feedInterfaxTelegramURL = "https://t.me/s/interfaxonline"
+	// ifax_go — молния Интерфакса: третий транспорт того же source='interfax'.
+	// Окно тоже 20 сообщений, у активной молнии это около 12 часов.
+	feedIfaxGoTelegramURL = "https://t.me/s/ifax_go"
 	// Корпоративные раскрытия «Интерфакс-ЦРКИ»: второй канал того же транспорта.
 	// Окно тоже 20 сообщений; тексты длиннее молнии, и окно покрывает около месяца.
 	feedEdisclosureURL = "https://t.me/s/edisclosure"
@@ -50,32 +53,54 @@ var (
 	feedCBRNewsURL     = "https://www.cbr.ru/rss/RssNews"
 	feedCBRPressURL    = "https://www.cbr.ru/rss/eventrss"
 	feedTASSURL        = "https://tass.ru/rss/v2.xml"
+	// Общий RSS Смартлаба: 20 позиций покрывают около 14,5 часов.
+	feedSmartlabURL = "https://smart-lab.ru/rss/"
 	// Ленты smart-lab — персональные блоги; добавлены ради контура ключевой ставки
 	// (тексты про инфляцию и политику ЦБ).
 	feedSmartlabLebedevURL = "https://smart-lab.ru/rss/personal_blog/KonstantinLebedev/"
 	feedSmartlabSpydellURL = "https://smart-lab.ru/rss/personal_blog/spydell-telegram/"
+	// newssmartlab — новостная лента Смартлаба: отдельный канал, но source='smartlab'
+	// (тот же источник), поэтому различаются ленты полем channel/url.
+	feedNewsSmartlabTelegramURL = "https://t.me/s/newssmartlab"
+	// Рыночные Telegram-каналы: окно 20 сообщений покрывает от ≈12 часов у самых
+	// активных до ≈14 суток у редких; 30-минутный опрос перекрывает его с запасом.
+	feedMarkettwitsTelegramURL      = "https://t.me/s/markettwits"
+	feedRussianMacroTelegramURL     = "https://t.me/s/russianmacro"
+	feedMarketOverviewTelegramURL   = "https://t.me/s/MarketOverview"
+	feedMozgovikResearchTelegramURL = "https://t.me/s/mozgovikresearch"
 )
 
-// feeds собирает конфиг девяти лент в фиксированном порядке. Порядок — часть
+// feeds собирает конфиг 16 лент в фиксированном порядке. Порядок — часть
 // контракта: лог прогона и отчёт check идут построчно, и разный порядок лент
 // от запуска к запуску сделал бы диффы лога нечитаемыми. Парные ленты несут общий
-// Source: у двух фидов ЦБ это «cbr» (источник один — Банк России), у двух лент
-// smart-lab — «smartlab», у RSS и Telegram Интерфакса — «interfax»; в news_events
-// такие ленты различаются url. interfax_tg идёт сразу после interfax: это второй
-// транспорт того же источника, и в отчёте покрытия их окна складываются.
+// Source: у двух фидов ЦБ это «cbr» (источник один — Банк России), у четырёх лент
+// smart-lab (общий RSS, два персональных блога и newssmartlab_tg) — «smartlab»,
+// у трёх лент Интерфакса (RSS, interfaxonline и ifax_go) — «interfax»; в news_events
+// такие ленты различаются url, а Telegram-каналы — ещё и полем channel.
+// newssmartlab_tg — это source='smartlab': канал новостной ленты Смартлаба, а не
+// отдельный источник, поэтому его окно складывается с окном общего RSS.
+// interfax_tg и ifax_go_tg идут сразу после interfax: это другие транспорты того же
+// источника, и в отчёте покрытия их окна складываются.
 // edisclosure_tg — отдельный source «edisclosure»: это другой канал и другая
 // редакция корпоративного контура, его окно с молнией Интерфакса не сливается.
 func feeds() []feed {
 	return []feed{
 		{Key: "interfax", Source: "interfax", URL: feedInterfaxURL, Kind: feedRSS},
 		{Key: "interfax_tg", Source: "interfax", URL: feedInterfaxTelegramURL, Kind: feedTelegram},
+		{Key: "ifax_go_tg", Source: "interfax", URL: feedIfaxGoTelegramURL, Kind: feedTelegram},
 		{Key: "edisclosure_tg", Source: "edisclosure", URL: feedEdisclosureURL, Kind: feedTelegram},
 		{Key: "rbc", Source: "rbc", URL: feedRBCURL, Kind: feedRSS},
 		{Key: "cbr_news", Source: "cbr", URL: feedCBRNewsURL, Kind: feedRSS},
 		{Key: "cbr_press", Source: "cbr", URL: feedCBRPressURL, Kind: feedRSS},
 		{Key: "tass", Source: "tass", URL: feedTASSURL, Kind: feedRSS},
+		{Key: "smartlab", Source: "smartlab", URL: feedSmartlabURL, Kind: feedRSS},
 		{Key: "smartlab_lebedev", Source: "smartlab", URL: feedSmartlabLebedevURL, Kind: feedRSS},
 		{Key: "smartlab_spydell", Source: "smartlab", URL: feedSmartlabSpydellURL, Kind: feedRSS},
+		{Key: "newssmartlab_tg", Source: "smartlab", URL: feedNewsSmartlabTelegramURL, Kind: feedTelegram},
+		{Key: "markettwits_tg", Source: "markettwits", URL: feedMarkettwitsTelegramURL, Kind: feedTelegram},
+		{Key: "russianmacro_tg", Source: "russianmacro", URL: feedRussianMacroTelegramURL, Kind: feedTelegram},
+		{Key: "marketoverview_tg", Source: "marketoverview", URL: feedMarketOverviewTelegramURL, Kind: feedTelegram},
+		{Key: "mozgovikresearch_tg", Source: "mozgovikresearch", URL: feedMozgovikResearchTelegramURL, Kind: feedTelegram},
 	}
 }
 
@@ -136,8 +161,8 @@ type feedResult struct {
 }
 
 // fetchFeeds читает ленты по очереди и возвращает результат на каждую. Ошибка
-// ленты попадает в её feedResult.Err, а цикл продолжается: девять лент независимы,
-// и обрыв одной (WAF, 500, таймаут) не повод не собрать остальные восемь.
+// ленты попадает в её feedResult.Err, а цикл продолжается: 16 лент независимы,
+// и обрыв одной (WAF, 500, таймаут) не повод не собрать остальные пятнадцать.
 // Агрегация ошибок — дело вызывающего (Import): он решает, чем отчитаться в dagu.
 //
 // Транспорт выбирается по Kind, а не по виду URL: RSS разбирается в rssDoc,

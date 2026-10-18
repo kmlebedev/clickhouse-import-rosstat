@@ -275,13 +275,13 @@ func TestItemsFromDocEmptyFeedFails(t *testing.T) {
 }
 
 func TestFixturesParse(t *testing.T) {
-	// Семь живых лент: парные ленты пишутся под общим source (оба фида ЦБ — «cbr»,
-	// обе ленты smart-lab — «smartlab»; различает их url), иначе витрина получила бы
+	// Восемь живых лент: парные ленты пишутся под общим source (оба фида ЦБ — «cbr»,
+	// четыре ленты smart-lab — «smartlab»; различает их url), иначе витрина получила бы
 	// лишние источники там, где источник один — Банк России или smart-lab.
 	for _, tc := range []struct {
 		file   string
 		source string
-		// skipped — фактическое значение на закоммиченной фикстуре. Ноль у всех семи:
+		// skipped — фактическое значение на закоммиченной фикстуре. Ноль у всех восьми:
 		// у каждой позиции есть pubDate в одной из трёх раскладок и непустой заголовок.
 		// Если фикстура обновится и skipped станет ненулевым, тест укажет, где именно
 		// лента сменила форму, и причину надо будет разобрать (а не поднять значение).
@@ -292,6 +292,7 @@ func TestFixturesParse(t *testing.T) {
 		{"cbr_news.rss", "cbr", 0},
 		{"cbr_press.rss", "cbr", 0},
 		{"tass.rss", "tass", 0},
+		{"smartlab.rss", "smartlab", 0},
 		{"smartlab_lebedev.rss", "smartlab", 0},
 		{"smartlab_spydell.rss", "smartlab", 0},
 	} {
