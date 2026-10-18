@@ -69,7 +69,7 @@ DAGU_VERSION     ?= v2.18.2
 MKDOCS_VERSION ?= 9.7.7
 MKDOCS := uv run --with mkdocs-material==$(MKDOCS_VERSION) --python 3.12 mkdocs
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model cpi-nowcast edisclosure-login edisclosure-collect docs-check docs-build docs-serve
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model cpi-nowcast cb-comp-parity cb-comp-parity-test edisclosure-login edisclosure-collect docs-check docs-build docs-serve
 
 all: lint test build build-ingest
 
@@ -270,6 +270,18 @@ key-rate-model:
 # Фикстуры: make cpi-nowcast ARGS="--export-fixtures scripts/testdata/cpi_nowcast"
 cpi-nowcast:
 	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_nowcast.py $(ARGS)
+
+# Паритет ML-трека с CB_COMP (issue #190): таргет TARGET_FULL из архива авторов,
+# архивные per-period прогнозы CB_COMP, две CatBoost-direct модели (с МП/без МП),
+# DM-HLN, TOST с margin 10% RMSE CB_COMP, RMSE ratio. Архив не скачивается:
+# путь — --archive или CB_COMP_ARCHIVE (по умолчанию worktree-сосед cb-comp-archive).
+# Читает ClickHouse (ряды v2), пишет локальные артефакты; в ClickHouse не пишет.
+cb-comp-parity:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cb_comp_parity.py $(ARGS)
+
+# Офлайн-тесты parity-скрипта: без ClickHouse и без архива.
+cb-comp-parity-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cb_comp_parity_test.py -v
 
 # Документы e-disclosure.ru: headed Chrome с постоянным профилем build/edisclosure-profile
 # (gitignored, 0700). Капчу решает владелец вручную; коллектор только ждёт её --wait секунд.
