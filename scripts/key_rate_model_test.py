@@ -972,6 +972,288 @@ class TestConsensusBenchmark(unittest.TestCase):
         self.assertIsNone(aggregate.dm_p)
 
 
+class TestConsensusPath(unittest.TestCase):
+    """B4: проекция годовой медианы на шаг заседания (спека §3.2)."""
+
+    @staticmethod
+    def wave(wave_date, year, median=10.0):
+        """Волна с консервативной доступностью `wave_date + 6` (как парсер)."""
+        return km.ConsensusForecast(
+            wave_date=wave_date,
+            available_from=wave_date
+            + timedelta(days=km.CONSENSUS_PUBLICATION_LAG_DAYS),
+            year=year,
+            median=median,
+            p10=None,
+            p90=None,
+            answers=None,
+        )
+
+    @staticmethod
+    def prediction(meeting_date, method, window, step_bp, actual_step_bp=0.0):
+        """Фолд с заданным шагом; факт по умолчанию нулевой (ошибка = шаг)."""
+        return km.Prediction(
+            meeting_date=meeting_date,
+            actual_step_bp=actual_step_bp,
+            actual_y3=(actual_step_bp > 0) - (actual_step_bp < 0),
+            method=method,
+            window=window,
+            step_bp=step_bp,
+            probs=None,
+        )
+
+    def test_projects_annual_median_onto_meeting_step(self):
+        # 2023 (365 дней): ставка 10 % до 31 марта, 12 % с 1 апреля; последняя
+        # волна на 2023 доступна 1 июля (A). R_known = 90·10 + 92·12 = 2004,
+        # N_rem = 183, r_implied = (9·365 − 2004)/183 = 7 %.
+        key_rate = [
+            (date(2023, 1, 1), 10.0),
+            (date(2023, 4, 1), 12.0),
+            (date(2023, 12, 31), 12.0),
+        ]
+        consensus = [
+            self.wave(date(2023, 5, 1), 2023, median=99.0),  # раньше — не последняя
+            self.wave(date(2023, 6, 25), 2023, median=9.0),  # A = 1 июля
+            self.wave(date(2023, 6, 1), 2022, median=99.0),  # другой год
+        ]
+        path = km.consensus_path(consensus, key_rate, date(2023, 7, 21), 10.0)
+        self.assertIsNotNone(path)
+        self.assertEqual(path.meeting_date, date(2023, 7, 21))
+        self.assertEqual(path.wave_date, date(2023, 6, 25))
+        self.assertEqual(path.available_from, date(2023, 7, 1))
+        self.assertEqual(path.year, 2023)
+        self.assertEqual(path.annual_median, 9.0)
+        self.assertEqual(path.rate_before, 10.0)
+        self.assertAlmostEqual(path.implied_level, 7.0, places=12)
+        self.assertAlmostEqual(path.step_bp, -300.0, places=12)
+        self.assertEqual(path.days_remaining, 183)
+
+    def test_january_meeting_projects_the_median_itself(self):
+        # A = 7 декабря 2023 < 1 января 2024: известного пути в году нет,
+        # R_known = 0, N_rem = 366, проекция равна медиане.
+        key_rate = [(date(2023, 1, 1), 10.0), (date(2024, 12, 31), 10.0)]
+        consensus = [self.wave(date(2023, 12, 1), 2024, median=12.5)]
+        path = km.consensus_path(consensus, key_rate, date(2024, 1, 26), 10.0)
+        self.assertIsNotNone(path)
+        self.assertEqual(path.available_from, date(2023, 12, 7))
+        self.assertEqual(path.year, 2024)
+        self.assertEqual(path.annual_median, 12.5)
+        self.assertAlmostEqual(path.implied_level, 12.5, places=12)
+        self.assertAlmostEqual(path.step_bp, 250.0, places=12)
+        self.assertEqual(path.days_remaining, 366)
+
+    def test_short_remaining_year_is_skipped(self):
+        # Декабрьская волна (A = 7 декабря) оставляет 24 дня — меньше guard 30.
+        key_rate = [(date(2024, 1, 1), 10.0), (date(2024, 12, 31), 10.0)]
+        consensus = [self.wave(date(2024, 12, 1), 2024, median=10.0)]
+        self.assertIsNone(
+            km.consensus_path(consensus, key_rate, date(2024, 12, 20), 10.0)
+        )
+        # Граница проходит включительно: A = 1 декабря оставляет 30 дней.
+        boundary = [self.wave(date(2024, 11, 25), 2024, median=10.0)]
+        path = km.consensus_path(boundary, key_rate, date(2024, 12, 20), 10.0)
+        self.assertIsNotNone(path)
+        self.assertEqual(path.days_remaining, 30)
+
+    def test_missing_wave_is_none(self):
+        key_rate = [(date(2024, 1, 1), 10.0), (date(2024, 12, 31), 10.0)]
+        self.assertIsNone(km.consensus_path([], key_rate, date(2024, 7, 26), 10.0))
+        # Волна на другой год не подходит: медиана должна быть на год заседания.
+        other_year = [self.wave(date(2024, 6, 1), 2023, median=10.0)]
+        self.assertIsNone(
+            km.consensus_path(other_year, key_rate, date(2024, 7, 26), 10.0)
+        )
+        # Доступность ровно в день заседания — уже не строго до события.
+        same_day = [self.wave(date(2024, 7, 20), 2024, median=10.0)]
+        self.assertIsNone(
+            km.consensus_path(same_day, key_rate, date(2024, 7, 26), 10.0)
+        )
+
+    def test_missing_rate_coverage_is_none(self):
+        consensus = [self.wave(date(2024, 6, 1), 2024, median=10.0)]  # A = 7 июня
+        self.assertIsNone(km.consensus_path(consensus, [], date(2024, 7, 26), 10.0))
+        # Ряд начинается после A — ставки на дату волны нет.
+        late = [(date(2024, 6, 8), 10.0), (date(2024, 12, 31), 10.0)]
+        self.assertIsNone(km.consensus_path(consensus, late, date(2024, 7, 26), 10.0))
+        # Ряд покрывает A, но не 1 января: R_known не из чего собрать.
+        midyear = [(date(2024, 2, 1), 10.0), (date(2024, 12, 31), 10.0)]
+        self.assertIsNone(
+            km.consensus_path(consensus, midyear, date(2024, 7, 26), 10.0)
+        )
+        # Январское заседание тоже требует покрытия A — guard общий.
+        january = [self.wave(date(2023, 12, 1), 2024, median=12.5)]
+        self.assertIsNone(
+            km.consensus_path(
+                january, [(date(2023, 12, 8), 10.0)], date(2024, 1, 26), 10.0
+            )
+        )
+
+    def test_out_of_range_projection_is_none(self):
+        # Guard `-100 < r_implied < 100`: медиана 100.5 % — уже не ставка.
+        key_rate = [(date(2023, 1, 1), 10.0), (date(2024, 12, 31), 10.0)]
+        consensus = [self.wave(date(2023, 12, 1), 2024, median=100.5)]
+        self.assertIsNone(
+            km.consensus_path(consensus, key_rate, date(2024, 1, 26), 10.0)
+        )
+
+    def test_rate_before_comes_from_the_row(self):
+        # Ряд ставки на M−1 даёт 10 %, но B4 обязан взять rate_before из Row
+        # (12.5 %): иначе шаг был бы 0 вместо −250 б.п.
+        key_rate = [(date(2024, 1, 1), 10.0), (date(2024, 12, 31), 10.0)]
+        consensus = [self.wave(date(2024, 6, 1), 2024, median=10.0)]
+        row = km.Row(
+            decision=km.Decision(
+                meeting_date=date(2024, 7, 26),
+                rate_before=12.5,
+                rate_after=12.5,
+                step_bp=0,
+                y3=0,
+            ),
+            pi_saar=4.0,
+            gap=0.0,
+        )
+        # Заседание 2025 не имеет волны на свой год — фолда не будет.
+        later = km.Row(
+            decision=km.Decision(
+                meeting_date=date(2025, 2, 14),
+                rate_before=10.0,
+                rate_after=10.0,
+                step_bp=0,
+                y3=0,
+            ),
+            pi_saar=4.0,
+            gap=0.0,
+        )
+        predictions = km.consensus_path_predictions([row, later], consensus, key_rate)
+        self.assertEqual(len(predictions), 1)
+        prediction = predictions[0]
+        self.assertEqual(prediction.meeting_date, date(2024, 7, 26))
+        self.assertEqual(prediction.actual_step_bp, 0.0)
+        self.assertEqual(prediction.actual_y3, 0)
+        self.assertEqual(prediction.method, "consensus")
+        self.assertEqual(prediction.window, km.CONSENSUS_WINDOW)
+        self.assertIsNone(prediction.probs)
+        self.assertAlmostEqual(prediction.step_bp, -250.0, places=12)
+
+    def test_b4_metrics_on_synthetic_predictions(self):
+        predictions = [
+            self.prediction(
+                date(2024, 1, 1), "consensus", km.CONSENSUS_WINDOW, 10.0, 10.0
+            ),
+            self.prediction(
+                date(2024, 2, 1), "consensus", km.CONSENSUS_WINDOW, -10.0, -10.0
+            ),
+            self.prediction(
+                date(2024, 3, 1), "consensus", km.CONSENSUS_WINDOW, 20.0, -20.0
+            ),
+            self.prediction(
+                date(2024, 4, 1), "consensus", km.CONSENSUS_WINDOW, -20.0, 20.0
+            ),
+        ]
+        metrics = km.b4_metrics(predictions)
+        self.assertIsNotNone(metrics)
+        self.assertEqual(metrics.n, 4)
+        # Ошибки [0, 0, 40, −40]: RMSE = √800, MAE = 20.
+        self.assertAlmostEqual(metrics.rmse_bp, math.sqrt(800.0), places=12)
+        self.assertAlmostEqual(metrics.mae_bp, 20.0, places=12)
+        # Совпали два направления из четырёх; QWK — 0 (маргиналы совпадают,
+        # но прогноз и факт согласованы лишь наполовину).
+        self.assertAlmostEqual(metrics.hit_rate, 0.5, places=12)
+        self.assertAlmostEqual(metrics.qwk, 0.0, places=12)
+        self.assertIsNone(km.b4_metrics([]))
+
+    def test_b4_significance_uses_shared_dates_and_method_order(self):
+        d1, d2 = date(2024, 1, 1), date(2024, 2, 1)
+        d3, d4 = date(2024, 3, 1), date(2024, 4, 1)
+        b4 = [
+            self.prediction(d1, "consensus", km.CONSENSUS_WINDOW, 10.0),
+            self.prediction(d2, "consensus", km.CONSENSUS_WINDOW, -10.0),
+            self.prediction(d3, "consensus", km.CONSENSUS_WINDOW, 20.0),
+            self.prediction(d4, "consensus", km.CONSENSUS_WINDOW, -20.0),
+        ]
+        expanding = km.WINDOW_EXPANDING
+        rolling = km.window_label(km.ROLLING_WINDOW)
+        predictions = [
+            # hold: ошибки вчетверо меньше B4 на всех четырёх датах.
+            self.prediction(d1, "hold", expanding, 4.0),
+            self.prediction(d2, "hold", expanding, -4.0),
+            self.prediction(d3, "hold", expanding, 8.0),
+            self.prediction(d4, "hold", expanding, -8.0),
+            # ar1: только две общие даты — DM обязан взять пересечение.
+            self.prediction(d2, "ar1", expanding, 5.0),
+            self.prediction(d3, "ar1", expanding, -8.0),
+            # repeat: другое окно.
+            self.prediction(d1, "repeat", rolling, 1.0),
+            self.prediction(d2, "repeat", rolling, 1.0),
+            self.prediction(d3, "repeat", rolling, 1.0),
+            self.prediction(d4, "repeat", rolling, 1.0),
+            # taylor: общих дат нет — строка не выводится.
+            self.prediction(date(2024, 5, 1), "taylor", expanding, 1.0),
+            # Группа самого B4 в перебор не входит (окна нет в METHODS).
+            self.prediction(d1, "consensus", km.CONSENSUS_WINDOW, 1.0),
+        ]
+        comparisons = km.b4_significance(b4, predictions)
+        self.assertEqual(
+            [(comparison.against, comparison.window) for comparison in comparisons],
+            [("hold", expanding), ("ar1", expanding), ("repeat", rolling)],
+        )
+        hold, ar1, repeat = comparisons
+        self.assertEqual(hold.n, 4)
+        self.assertAlmostEqual(
+            hold.delta_rmse_bp, math.sqrt(250.0) - math.sqrt(40.0), places=12
+        )
+        self.assertIsNotNone(hold.dm_stat)
+        # err_a = B4: положительная статистика значит «B4 хуже».
+        self.assertGreater(hold.dm_stat, 0.0)
+        self.assertGreaterEqual(hold.dm_p, 0.0)
+        self.assertLessEqual(hold.dm_p, 1.0)
+        # ar1 сравнивается только на d2/d3: RMSE(B4) = √250, RMSE(ar1) = √44.5.
+        self.assertEqual(ar1.n, 2)
+        self.assertAlmostEqual(
+            ar1.delta_rmse_bp, math.sqrt(250.0) - math.sqrt(44.5), places=12
+        )
+        self.assertIsNotNone(ar1.dm_stat)
+        self.assertGreater(ar1.dm_stat, 0.0)
+        self.assertEqual(repeat.n, 4)
+        self.assertAlmostEqual(repeat.delta_rmse_bp, math.sqrt(250.0) - 1.0, places=12)
+        self.assertIsNotNone(repeat.dm_stat)
+
+    def test_b4_significance_zero_variance_has_no_dm(self):
+        d1, d2 = date(2024, 1, 1), date(2024, 2, 1)
+        b4 = [
+            self.prediction(d1, "consensus", km.CONSENSUS_WINDOW, 10.0),
+            self.prediction(d2, "consensus", km.CONSENSUS_WINDOW, -10.0),
+        ]
+        # Разница квадратов потерь постоянна (100 − 25 = 75): DM не определён.
+        predictions = [
+            self.prediction(d1, "hold", km.WINDOW_EXPANDING, 5.0),
+            self.prediction(d2, "hold", km.WINDOW_EXPANDING, 5.0),
+        ]
+        comparisons = km.b4_significance(b4, predictions)
+        self.assertEqual(len(comparisons), 1)
+        self.assertEqual(comparisons[0].n, 2)
+        self.assertAlmostEqual(comparisons[0].delta_rmse_bp, 5.0, places=12)
+        self.assertIsNone(comparisons[0].dm_stat)
+        self.assertIsNone(comparisons[0].dm_p)
+        # Нет общих дат — нет и строки сравнения.
+        elsewhere = [
+            self.prediction(date(2024, 5, 1), "hold", km.WINDOW_EXPANDING, 1.0)
+        ]
+        self.assertEqual(km.b4_significance(b4, elsewhere), [])
+
+    def test_b4_is_not_a_forecast_method(self):
+        # B4 — механическая проекция, а не метод прогноза (спека §3.2): он не
+        # входит в METHODS/FORECAST_METHODS и живёт в своём окне.
+        self.assertEqual(km.CONSENSUS_WINDOW, "consensus")
+        self.assertNotIn("consensus", [method for method, _ in km.METHODS])
+        self.assertNotIn("consensus", [method for method, _ in km.FORECAST_METHODS])
+        self.assertNotIn("consensus", km.BENCHMARK_METHODS)
+        self.assertNotEqual(km.CONSENSUS_WINDOW, km.WINDOW_EXPANDING)
+        self.assertNotEqual(
+            km.CONSENSUS_WINDOW, km.window_label(km.ROLLING_WINDOW)
+        )
+
+
 class TestRows(unittest.TestCase):
     """Признаки pi_saar и gap (спека §4)."""
 

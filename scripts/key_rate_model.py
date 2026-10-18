@@ -187,6 +187,11 @@ CONSENSUS_BUCKETS = ("ex-ante", "10-12", "7-9", "4-6", "1-3")
 # 30 дней, иначе `r_implied` делится на короткий хвост и становится шумом.
 CONSENSUS_MIN_DAYS_REMAINING = 30
 
+# Метка окна B4 в `Prediction` (Task 4): механическая проекция не обучается и
+# от окна walk-forward не зависит — у неё одно «окно», и оно не входит в
+# общий перебор `METHODS × (expanding, rolling40)`.
+CONSENSUS_WINDOW = "consensus"
+
 # Сид для бутстрапа (Task 3+) и «версии набора данных»: воспроизводимость
 # прогона считается от одного числа, названного здесь и больше нигде.
 SEED = 20261015
@@ -821,6 +826,24 @@ class ConsensusAggregate:
     dm_p: Optional[float]
 
 
+def _dm_or_none(err_a: list, err_b: list) -> tuple:
+    """DM (HLN, `h=1`) на парных ошибках; `(None, None)`, если тест не определён.
+
+    Общее соглашение годового бенчмарка §3.1 и B4 §3.2: при `n < 2` (включая
+    пустой список) тест не определён, а при нулевой дисперсии разницы потерь
+    (`err_a² − err_b²` постоянна — одинаковые ошибки или постоянный сдвиг)
+    t-статистике нечем делиться, и `p = 0.0` при `±inf` читался бы как
+    доказанное превосходство, которого малая выборка не подтверждает. Длины
+    рядов должны совпадать — это контракт вызывающего.
+    """
+    if len(err_a) < 2:
+        return (None, None)
+    differences = [a * a - b * b for a, b in zip(err_a, err_b)]
+    if all(difference == differences[0] for difference in differences):
+        return (None, None)
+    return diebold_mariano(err_a, err_b, h=1)
+
+
 def aggregate_consensus(observations: list, bucket: str) -> Optional[ConsensusAggregate]:
     """Метрики одного бакета годового бенчмарка (спека §3.1), или None.
 
@@ -830,7 +853,8 @@ def aggregate_consensus(observations: list, bucket: str) -> Optional[ConsensusAg
     `err_cons² − err_hold²` равны — одинаковые ошибки или постоянная
     ненулевая разница) тоже даёт `None`: t-статистике нечем делиться, а
     `p = 0.0` при `±inf` читался бы как доказанное превосходство, которого
-    малая выборка не подтверждает. Исключения DM не перехватываются.
+    малая выборка не подтверждает. Guard вынесен в `_dm_or_none` — то же
+    правило применяет B4 (§3.2); исключения DM не перехватываются.
     """
     selected = [
         observation for observation in observations if observation.bucket == bucket
@@ -839,15 +863,7 @@ def aggregate_consensus(observations: list, bucket: str) -> Optional[ConsensusAg
         return None
     consensus_errors = [observation.consensus_error_bp for observation in selected]
     hold_errors = [observation.hold_error_bp for observation in selected]
-    dm_stat = None
-    dm_p = None
-    if len(selected) >= 2:
-        differences = [
-            consensus_error * consensus_error - hold_error * hold_error
-            for consensus_error, hold_error in zip(consensus_errors, hold_errors)
-        ]
-        if any(difference != differences[0] for difference in differences):
-            dm_stat, dm_p = eu.diebold_mariano(consensus_errors, hold_errors, h=1)
+    dm_stat, dm_p = _dm_or_none(consensus_errors, hold_errors)
     return ConsensusAggregate(
         bucket=bucket,
         n=len(selected),
@@ -860,6 +876,235 @@ def aggregate_consensus(observations: list, bucket: str) -> Optional[ConsensusAg
         dm_stat=dm_stat,
         dm_p=dm_p,
     )
+
+
+# --- B4: проекция годовой медианы на шаг заседания (спека §3.2) ---------------
+
+
+@dataclass(frozen=True)
+class ConsensusPath:
+    """B4-проекция годовой медианы на шаг одного заседания (спека §3.2).
+
+    Это МЕХАНИЧЕСКАЯ проекция, а не прогноз заседания: остаток года
+    заполняется одной постоянной ставкой `implied_level`, при которой годовая
+    средняя совпала бы с медианой консенсуса. `step_bp` — разница между этой
+    проекцией и фактическим уровнем `rate_before` на `M−1`, в базисных
+    пунктах. `days_remaining` — `N_rem`: число дней года с `A+1` до 31 декабря
+    (для январского заседания — весь год `N_Y`).
+    """
+
+    meeting_date: date
+    wave_date: date
+    available_from: date
+    year: int
+    annual_median: float
+    rate_before: float
+    implied_level: float
+    step_bp: float
+    days_remaining: int
+
+
+def consensus_path(
+    consensus: list, key_rate: list, meeting: date, rate_before: float
+) -> Optional[ConsensusPath]:
+    """B4-проекция остатка года `Y = year(meeting)` на шаг заседания (§3.2).
+
+    Волна — последняя с медианой на `Y`, доступная строго до заседания
+    (`available_from < meeting`; при равенстве `available_from` порядок
+    задаёт `wave_date`). Доступность `A = available_from`.
+
+    Если `A < 1 января Y` (январское заседание, последняя волна — декабрьская),
+    известного пути в году нет: `R_known = 0`, `N_rem = N_Y`, проекция равна
+    медиане. Иначе `R_known` — сумма фактических ставок с 1 января по `A`
+    включительно (fill-forward по календарным дням), а остаток года даёт
+    `r_implied = (median·N_Y − R_known)/N_rem`.
+
+    `None` — проекция не определена: нет подходящей волны; ряд ставки не
+    покрывает `A` (а в формуле — ещё и 1 января); на остаток года меньше
+    `CONSENSUS_MIN_DAYS_REMAINING` дней; `r_implied` вне `(−100, 100)`
+    процента (деление на короткий хвост или порча данных). Это guard
+    бенчмарка, а не ошибка: заседание просто выпадает из B4-выборки.
+    """
+    year = meeting.year
+    candidates = [
+        wave
+        for wave in consensus
+        if wave.year == year and wave.available_from < meeting
+    ]
+    if not candidates:
+        return None
+    wave = max(candidates, key=lambda wave: (wave.available_from, wave.wave_date))
+    available = wave.available_from
+    if _rate_asof(key_rate, available) is None:
+        return None
+    first_day = date(year, 1, 1)
+    last_day = date(year, 12, 31)
+    days_in_year = (last_day - first_day).days + 1
+    if available < first_day:
+        implied = wave.median
+        days_remaining = days_in_year
+    else:
+        days_remaining = (last_day - available).days
+        if days_remaining < CONSENSUS_MIN_DAYS_REMAINING:
+            return None
+        # R_known начинается 1 января: без точки на эту дату сумму не собрать,
+        # и `sum_rates_between` поднял бы ValueError. Для B4 это guard, а не
+        # ошибка прогона — как и отсутствие ставки на `A`.
+        if _rate_asof(key_rate, first_day) is None:
+            return None
+        known = sum_rates_between(key_rate, first_day, available)
+        implied = (wave.median * days_in_year - known) / days_remaining
+    if not (-100.0 < implied < 100.0):
+        return None
+    return ConsensusPath(
+        meeting_date=meeting,
+        wave_date=wave.wave_date,
+        available_from=available,
+        year=year,
+        annual_median=wave.median,
+        rate_before=float(rate_before),
+        implied_level=implied,
+        step_bp=(implied - rate_before) * 100.0,
+        days_remaining=days_remaining,
+    )
+
+
+def consensus_path_predictions(rows: list, consensus: list, key_rate: list) -> list:
+    """Фолды B4 по строкам выборки: только заседания с определённой проекцией.
+
+    `rate_before` берётся из `Row` (ставка на `M−1`), а не из ряда на дату
+    волны: шаг B4 — разница между проекцией остатка года и фактическим
+    уровнем перед заседанием. Заседание, для которого `consensus_path`
+    вернула `None`, пропускается, а не получает фолд с догадкой.
+
+    B4 не обучается и не зависит от окна walk-forward: `probs=None`, окно —
+    `CONSENSUS_WINDOW`. В `METHODS`/`FORECAST_METHODS` он не входит (§3.2):
+    потребитель — отдельный раздел отчёта и отдельная таблица метрик.
+    """
+    predictions = []
+    for row in rows:
+        decision = row.decision
+        path = consensus_path(
+            consensus, key_rate, decision.meeting_date, decision.rate_before
+        )
+        if path is None:
+            continue
+        predictions.append(
+            Prediction(
+                meeting_date=decision.meeting_date,
+                actual_step_bp=float(decision.step_bp),
+                actual_y3=decision.y3,
+                method="consensus",
+                window=CONSENSUS_WINDOW,
+                step_bp=path.step_bp,
+                probs=None,
+            )
+        )
+    return predictions
+
+
+@dataclass(frozen=True)
+class B4Metrics:
+    """Метрики B4 по фолдам: RMSE/MAE в б.п., hit rate и QWK (§3.2)."""
+
+    n: int
+    rmse_bp: float
+    mae_bp: float
+    hit_rate: float
+    qwk: float
+
+
+def b4_metrics(predictions: list) -> Optional[B4Metrics]:
+    """Метрики B4 по фолдам (спека §3.2), или `None` на пустом списке.
+
+    Формулы — существующие функции §7: RMSE/MAE по ошибкам шага в б.п.,
+    hit rate и QWK по направлениям. Пустой список — «B4 не определено ни на
+    одном заседании», а не нулевые метрики: ноль RMSE читался бы как
+    идеальная точность.
+    """
+    if not predictions:
+        return None
+    errors = _group_errors(predictions)
+    predicted, actual = _group_steps(predictions)
+    return B4Metrics(
+        n=len(predictions),
+        rmse_bp=rmse_bp(errors),
+        mae_bp=mae_bp(errors),
+        hit_rate=hit_rate(predicted, actual),
+        qwk=qwk(predicted, actual),
+    )
+
+
+@dataclass(frozen=True)
+class B4Comparison:
+    """Сравнение B4 с одной строкой «метод × окно» на общих заседаниях (§3.2).
+
+    `against` — имя метода, `window` — его окно walk-forward. `n` — число
+    общих заседаний. `delta_rmse_bp = RMSE(B4) − RMSE(other)` на этих же
+    датах: положительная значит, что B4 ХУЖЕ (его ошибки больше). DM (HLN,
+    `h=1`) подаётся как `err_a = B4`, `err_b = other`, поэтому положительная
+    статистика тоже значит «B4 хуже». `dm_stat`/`dm_p` — `None`, когда тест
+    не определён (`n < 2` или нулевая дисперсия разницы потерь, см.
+    `_dm_or_none`).
+    """
+
+    against: str
+    window: str
+    n: int
+    delta_rmse_bp: float
+    dm_stat: Optional[float]
+    dm_p: Optional[float]
+
+
+def b4_significance(b4: list, predictions: list) -> list:
+    """DM B4 против каждой строки «метод × окно» на общих заседаниях (§3.2).
+
+    Сравниваются только общие даты: у B4 guard пропускает заседания без
+    волны/покрытия/запаса дней, у методов walk-forward — вырожденные окна,
+    и DM по разным наборам смешал бы точность с составом выборки. Группа без
+    общих дат пропускается (в отличие от `_significance_rows`, где пустое
+    пересечение — ошибка: там строки методов посчитаны на одной выборке, а
+    B4 живёт по своему guard).
+
+    Порядок строк — как у `method_predictions`: окно (`expanding`, затем
+    `rolling40`), внутри — `METHODS`; группы с окном `CONSENSUS_WINDOW` в
+    перебор не входят.
+    """
+    b4_errors = {
+        prediction.meeting_date: prediction.step_bp - prediction.actual_step_bp
+        for prediction in b4
+    }
+    groups = _predictions_by_group(predictions)
+    comparisons = []
+    for window in (WINDOW_EXPANDING, window_label(ROLLING_WINDOW)):
+        for method, _ in METHODS:
+            group = groups.get((method, window))
+            if group is None:
+                continue
+            other_errors = {
+                prediction.meeting_date: prediction.step_bp
+                - prediction.actual_step_bp
+                for prediction in group
+            }
+            # Общие заседания — в календарном порядке, чтобы DM не зависел от
+            # порядка строк ответа/выборки.
+            shared = sorted(day for day in b4_errors if day in other_errors)
+            if not shared:
+                continue
+            errors_a = [b4_errors[day] for day in shared]
+            errors_b = [other_errors[day] for day in shared]
+            dm_stat, dm_p = _dm_or_none(errors_a, errors_b)
+            comparisons.append(
+                B4Comparison(
+                    against=method,
+                    window=window,
+                    n=len(shared),
+                    delta_rmse_bp=rmse_bp(errors_a) - rmse_bp(errors_b),
+                    dm_stat=dm_stat,
+                    dm_p=dm_p,
+                )
+            )
+    return comparisons
 
 
 # --- Загрузчики: SQL + транспорт + разбор ------------------------------------
