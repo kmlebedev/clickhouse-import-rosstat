@@ -1,6 +1,11 @@
-// Package forecast резолвит журнал прогнозов золотого контура: заполняет
-// forecast_log.actual и error_pct сверкой прогноза с фактом из gold_prices.
-// Единственный импортёр пакета — forecast_resolve.
+// Package forecast резолвит журнал прогнозов: заполняет forecast_log.actual и
+// ошибку сверкой прогноза с фактом. Две ветки:
+//
+//   - xau_q_avg — среднее gold_prices за квартал target_date, error_pct;
+//   - cbr_rate* — ставка после заседания из cbr_key_rate, error_bp (базисные
+//     пункты), error_pct = NULL: относительная ошибка ставки зависит от уровня
+//     (100 б.п. — это ≈7 % при 14 % и ≈25 % при 4 %), поэтому шкала несопоставима
+//     между режимами.
 //
 // ПОЧЕМУ `nav` НЕ РЕЗОЛВИТСЯ. Факта для NAV на акцию не существует. Расчётный
 // NAV sum-of-parts и рыночная цена PLZL — разные величины (цена — мнение рынка о
@@ -8,11 +13,12 @@
 // подстановка market_price в actual записала бы в журнал «ошибку прогноза» там,
 // где прогноз вообще не этой величиной проверяется. Ровно это зафиксировано в
 // verify.md плагина gold-nav: «nav — факт не определён, оставь actual пустым».
-// Поэтому выборка строк идёт по metric = 'xau_q_avg', а прочие метрики (nav и
-// будущие) остаются нетронутыми — не ошибкой и не warn'ом, а состоянием журнала.
+// Поэтому выборки строк идут по metric = 'xau_q_avg' и metric LIKE 'cbr_rate%',
+// а прочие метрики (nav и будущие) остаются нетронутыми — не ошибкой и не warn'ом,
+// а состоянием журнала.
 //
-// ПОЧЕМУ ОКНО СВЕРКИ — КВАРТАЛ, СОДЕРЖАЩИЙ target_date. Прогноз xau_q_avg — это
-// СРЕДНЯЯ цена золота за квартал горизонта, а не цена на дату (ingest/clickhouse.go:
+// ПОЧЕМУ ОКНО СВЕРКИ xau_q_avg — КВАРТАЛ, СОДЕРЖАЩИЙ target_date. Прогноз xau_q_avg —
+// это СРЕДНЯЯ цена золота за квартал горизонта, а не цена на дату (ingest/clickhouse.go:
 // target_date — конец горизонта сценария, «Q4-2026» → 31.12.2026), поэтому и факт
 // берётся средним за тот же квартал: verify.md плагина gold-nav — «факт xau_q_avg
 // — среднее GC=F за квартал target_date». Фактически читается среднее
@@ -23,10 +29,19 @@
 // ручного ввода target_date бывает серединой квартала (2026-07-15), где среднее
 // «по кварталу целиком» означало бы факт из будущего. У штатных target_date =
 // последний день квартала окно и так равно кварталу целиком.
+//
+// ПОЧЕМУ ФАКТ cbr_rate — ПЕРВАЯ ТОЧКА ПОСЛЕ target_date. Заседание объявляет
+// ставку, действующую со следующего дня; ряд cbr_key_rate дневной с пропусками
+// выходных, поэтому первая точка строго после даты заседания — и есть ставка
+// сразу после решения (пятничное заседание → понедельник). Окно d+7 из
+// key_rate_model.py здесь не нужно: оно служит ярлыку выборки и могло бы
+// захватить следующее заседание.
 package forecast
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -43,9 +58,15 @@ const (
 	// именем таблицы нельзя (прецедент — polyus/financialMetricsStatName).
 	forecastResolveStat = "forecast_resolve"
 
-	// forecastMetric — метрика, которую резолвер сверяет с фактом: единственная,
-	// у которой факт в этом контуре определён (см. комментарий пакета про nav).
+	// forecastMetric — метрика золотого контура: единственная, у которой факт —
+	// среднее gold_prices (см. комментарий пакета про nav).
 	forecastMetric = "xau_q_avg"
+
+	// rateMetricPrefix — префикс метрик контура ключевой ставки. Треки
+	// различаются суффиксом (`cbr_rate:taylor`, `cbr_rate:ordered_logit`, ...),
+	// и резолвер переносит metric строки в батч как есть, чтобы треки не
+	// схлопнулись ключом (metric, forecast_date).
+	rateMetricPrefix = "cbr_rate"
 
 	// comexVenue, moexVenue — площадки gold_prices, из которых берётся факт.
 	// Порядок приоритета задан pickActual: comex_front — целевой ряд verify.md
@@ -58,9 +79,10 @@ const (
 
 	// forecastLogInsert — вставка резолвленных строк. Порядок колонок — как в
 	// forecastLogDdl (ingest/schema.go): forecast_date, target_date, metric,
-	// predicted, actual, error_pct. Сверять глазами обязательно: ClickHouse примет
-	// перестановку однотипных Date/Float64 и молча запишет actual в error_pct.
-	forecastLogInsert = "INSERT INTO forecast_log (forecast_date, target_date, metric, predicted, actual, error_pct)"
+	// predicted, actual, error_pct, error_bp. Сверять глазами обязательно:
+	// ClickHouse примет перестановку однотипных Date/Float64 и молча запишет
+	// actual в error_pct.
+	forecastLogInsert = "INSERT INTO forecast_log (forecast_date, target_date, metric, predicted, actual, error_pct, error_bp)"
 )
 
 // resolvableSelect — строки журнала, которым факт уже можно посчитать: только
@@ -75,6 +97,22 @@ const (
 // у coalesce-нуля и у настоящего нуля фактической цены один и тот же вид, и
 // различать их обязан признак, а не значение.
 const resolvableSelect = `SELECT forecast_date, target_date, predicted, if(actual IS NULL, 1, 0) AS actual_is_null, coalesce(actual, 0) AS actual FROM forecast_log FINAL WHERE metric = '` + forecastMetric + `' AND target_date <= today() ORDER BY forecast_date`
+
+// rateResolvableSelect — строки контура ключевой ставки. metric читается в
+// выборку: трек (`cbr_rate:taylor` и т.п.) обязан вернуться в батч тем же
+// значением, иначе строки разных треков одной даты схлопнулись бы ключом
+// (metric, forecast_date).
+//
+// actual_is_null/coalesce — тот же приём, что у resolvableSelect: драйвер
+// строго типизирован, а признак NULL надёжнее отдельной ветки сканирования.
+const rateResolvableSelect = `SELECT forecast_date, target_date, metric, predicted, if(actual IS NULL, 1, 0) AS actual_is_null, coalesce(actual, 0) AS actual FROM forecast_log FINAL WHERE metric LIKE '` + rateMetricPrefix + `%' AND target_date <= today() ORDER BY metric, forecast_date`
+
+// rateAfterSelect — ставка сразу после заседания: первая точка cbr_key_rate
+// строго позже target_date. FINAL обязателен (ReplacingMergeTree по (date)): без
+// него перезаписанная точка дня могла бы прийти дважды, и «первая» зависела бы
+// от порядка строк. Параметр — строка в формате Date (клиент принимает в
+// NamedValue для {name:Date} только string).
+const rateAfterSelect = `SELECT rate FROM cbr_key_rate FINAL WHERE date > {target:Date} ORDER BY date LIMIT 1`
 
 // windowStatsSelect — статистика окна сверки по площадкам gold_prices.
 //
@@ -98,10 +136,12 @@ const resolvableSelect = `SELECT forecast_date, target_date, predicted, if(actua
 const windowStatsSelect = `SELECT countIf(venue = '` + comexVenue + `') AS comex_n, if(comex_n > 0, avgIf(usd, venue = '` + comexVenue + `'), 0) AS comex_avg, countIf(venue = '` + moexVenue + `') AS moex_n, if(moex_n > 0, avgIf(usd, venue = '` + moexVenue + `'), 0) AS moex_avg FROM gold_prices FINAL WHERE date >= {start:Date} AND date <= {end:Date}`
 
 // forecastRow — строка forecast_log, которую предстоит сверить с фактом.
+// Metric заполнен у строк cbr_rate* (у xau_q_avg он известен константой).
 // Actual == nil означает, что факт ещё не записан (в SQL это actual IS NULL).
 type forecastRow struct {
 	ForecastDate time.Time
 	TargetDate   time.Time
+	Metric       string
 	Predicted    float64
 	Actual       *float64
 }
@@ -117,21 +157,27 @@ type windowStats struct {
 }
 
 // forecastResolution — строка forecast_log с посчитанным фактом: то, что уходит в
-// батч. Actual и ErrorPct здесь не указатели: резолвленная строка всегда имеет оба
-// значения, а «пусто» в этой структуре выражается отсутствием элемента в срезе.
+// батч. Actual не указатель: резолвленная строка всегда имеет факт, а «пусто» в
+// этой структуре выражается отсутствием элемента в срезе. ErrorPct и ErrorBp —
+// взаимоисключающие: у xau_q_avg заполнена относительная ошибка, у cbr_rate* —
+// ошибка в базисных пунктах; вторая остаётся nil и пишется в NULL.
 type forecastResolution struct {
 	ForecastDate time.Time
 	TargetDate   time.Time
+	Metric       string
 	Predicted    float64
 	Actual       float64
-	ErrorPct     float64
+	ErrorPct     *float64
+	ErrorBp      *float64
 }
 
 // resolveStore — узкий срез стора, который нужен оркестрации Import; в тестах
 // подменяется фейком (паттерн chStore из ingest/clickhouse.go).
 type resolveStore interface {
 	resolvable(ctx context.Context) ([]forecastRow, error)
+	rateResolvable(ctx context.Context) ([]forecastRow, error)
 	windowStats(ctx context.Context, start, end time.Time) (windowStats, error)
+	rateAfter(ctx context.Context, target time.Time) (float64, bool, error)
 	writeResolutions(ctx context.Context, rows []forecastResolution) error
 }
 
@@ -172,6 +218,15 @@ func errorPct(predicted, actual float64) float64 {
 	return (predicted - actual) / actual * 100
 }
 
+// errorBp — ошибка прогноза ставки в базисных пунктах: (predicted − actual) × 100.
+// predicted и actual — уровни ставки в % годовых, поэтому 14.35 против 14.00 даёт
+// +35 б.п. Знак сохраняется (прогноз ниже факта — отрицательная ошибка). Деления
+// нет: нулевой/отрицательный факт здесь не ломает формулу, но вызывающий всё равно
+// отсекает actual <= 0 как порчу ряда.
+func errorBp(predicted, actual float64) float64 {
+	return (predicted - actual) * 100
+}
+
 // needsWrite — нужна ли перезапись строки: факта нет или он отличается от
 // посчитанного. Совпадение заканчивается молчанием вызывающего (log.Debugf):
 // прогон DAG-а идёт ежедневно, и перезапись того же значения — это 365 лишних
@@ -193,27 +248,92 @@ type resolver struct{}
 
 func (r *resolver) Name() string { return forecastResolveStat }
 
-// Import читает нерезолвленные прогнозы xau_q_avg, считает факт по золоту за
-// квартал каждого target_date и записывает ОДНИМ батчем только изменившиеся
-// строки. Возвращает число записанных строк: 0 — норма (менять нечего), а не сбой;
-// main.go печатает его сам.
+// Import читает нерезолвленные прогнозы xau_q_avg и cbr_rate*, считает факт по
+// золоту за квартал target_date и по ставке после заседания соответственно и
+// записывает ОДНИМ батчем только изменившиеся строки. Возвращает число записанных
+// строк: 0 — норма (менять нечего), а не сбой; main.go печатает его сам.
 func (r *resolver) Import(ctx context.Context, conn driver.Conn) (int64, error) {
 	return resolveForecasts(ctx, connStore{conn: conn})
 }
 
-// resolveForecasts — оркестрация: выборка → окно → статистика → решение →
-// батч. Вынесена из Import, чтобы проверяться офлайн на фейковом сторе.
+// resolveForecasts — оркестрация: выборки → факт → решение → батч. Вынесена из
+// Import, чтобы проверяться офлайн на фейковом сторе.
+//
+// Две ветки не пересекаются по метрикам: cbr_rate* резолвится ставкой из
+// cbr_key_rate (error_bp, error_pct = NULL), xau_q_avg — средним gold_prices за
+// квартал (error_pct, error_bp = NULL). Оба набора строк уходят одним батчем.
 //
 // Пустая выборка и «все строки уже сходятся» — не ошибки: и то и другое
 // возвращает 0 строк (журнал прогнозов заполняется ingest'ом, и на свежей БД
-// строк xau_q_avg с наступившей target_date может не быть вовсе).
+// строк с наступившей target_date может не быть вовсе).
 func resolveForecasts(ctx context.Context, store resolveStore) (int64, error) {
+	rateRows, err := store.rateResolvable(ctx)
+	if err != nil {
+		return 0, err
+	}
+
 	rows, err := store.resolvable(ctx)
 	if err != nil {
 		return 0, err
 	}
 
 	var resolutions []forecastResolution
+
+	for _, row := range rateRows {
+		actual, ok, err := store.rateAfter(ctx, row.TargetDate)
+		if err != nil {
+			return 0, err
+		}
+		if !ok {
+			// Точки после заседания ещё нет — штатное состояние: решение объявлено,
+			// ставка вступает в силу со следующего дня, и ряд cbr_key_rate пополнится
+			// завтра. Строку не пишем, actual остаётся NULL, прогон не падает.
+			log.Warnf("forecast_resolve: прогноз %s на %s (%s) — в cbr_key_rate нет точки после %s, "+
+				"факт не записан, строка остаётся нерезолвленной",
+				row.ForecastDate.Format(dateLayout), row.TargetDate.Format(dateLayout), row.Metric,
+				row.TargetDate.Format(dateLayout))
+
+			continue
+		}
+
+		if actual <= 0 {
+			// Ставка <= 0 — не измерение, а признак испорченного ряда: error_bp
+			// посчитался бы, но сверять не с чем. Пропуск с warn, как у золота.
+			log.Warnf("forecast_resolve: прогноз %s на %s (%s) — ставка после заседания %v, "+
+				"факт не записан (ставка должна быть положительной)",
+				row.ForecastDate.Format(dateLayout), row.TargetDate.Format(dateLayout), row.Metric, actual)
+
+			continue
+		}
+
+		if !needsWrite(row, actual) {
+			log.Debugf("forecast_resolve: прогноз %s на %s (%s) уже сверен (%v), записи нет",
+				row.ForecastDate.Format(dateLayout), row.TargetDate.Format(dateLayout), row.Metric, actual)
+
+			continue
+		}
+
+		// error_bp — единственная причина перезаписи строки cbr_rate*: actual сам по
+		// себе мог бы быть витриной, но публикуется именно ошибка в б.п. (KEY_RATE_
+		// PUBLICATIONS §8), и держать формулу в SQL значило бы иметь две реализации
+		// одного правила. error_pct здесь NULL — относительная ошибка ставки
+		// несопоставима между режимами.
+		bp := errorBp(row.Predicted, actual)
+		resolution := forecastResolution{
+			ForecastDate: row.ForecastDate,
+			TargetDate:   row.TargetDate,
+			Metric:       row.Metric,
+			Predicted:    row.Predicted,
+			Actual:       actual,
+			ErrorBp:      &bp,
+		}
+
+		log.Infof("forecast_resolve: прогноз %s на %s (%s) — ставка после заседания %.4f, predicted %.4f, error_bp %.4f",
+			row.ForecastDate.Format(dateLayout), row.TargetDate.Format(dateLayout), row.Metric,
+			actual, row.Predicted, bp)
+
+		resolutions = append(resolutions, resolution)
+	}
 
 	for _, row := range rows {
 		start, end := quarterWindow(row.TargetDate)
@@ -268,17 +388,19 @@ func resolveForecasts(ctx context.Context, store resolveStore) (int64, error) {
 		// витриной), и держать формулу в SQL значило бы иметь две реализации одного
 		// правила — в резолвере и в v_forecast_accuracy (error_pct = (predicted −
 		// actual) / actual × 100).
+		pct := errorPct(row.Predicted, actual)
 		resolution := forecastResolution{
 			ForecastDate: row.ForecastDate,
 			TargetDate:   row.TargetDate,
+			Metric:       forecastMetric,
 			Predicted:    row.Predicted,
 			Actual:       actual,
-			ErrorPct:     errorPct(row.Predicted, actual),
+			ErrorPct:     &pct,
 		}
 
 		log.Infof("forecast_resolve: прогноз %s на %s — %s, точек %d, actual %.4f, error_pct %.4f",
 			row.ForecastDate.Format(dateLayout), row.TargetDate.Format(dateLayout), venue,
-			points, actual, resolution.ErrorPct)
+			points, actual, pct)
 
 		resolutions = append(resolutions, resolution)
 	}
@@ -330,6 +452,7 @@ func (s connStore) resolvable(ctx context.Context) ([]forecastRow, error) {
 		row := forecastRow{
 			ForecastDate: utcDate(forecastDate),
 			TargetDate:   utcDate(targetDate),
+			Metric:       forecastMetric,
 			Predicted:    predicted,
 		}
 		if actualIsNull == 0 {
@@ -348,6 +471,79 @@ func (s connStore) resolvable(ctx context.Context) ([]forecastRow, error) {
 	}
 
 	return forecasts, nil
+}
+
+// rateResolvable — строки cbr_rate*: тот же разбор, что у resolvable, плюс
+// metric (трек возвращается в батч как есть). Ошибки обёрнуты отдельно, чтобы
+// в логе прогона было видно, какая из двух выборок упала.
+func (s connStore) rateResolvable(ctx context.Context) ([]forecastRow, error) {
+	rows, err := s.conn.Query(ctx, rateResolvableSelect)
+	if err != nil {
+		return nil, fmt.Errorf("резолв прогнозов: читать forecast_log cbr_rate*: %w", err)
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	var forecasts []forecastRow
+
+	for rows.Next() {
+		var (
+			forecastDate time.Time
+			targetDate   time.Time
+			metric       string
+			predicted    float64
+			actualIsNull uint8
+			actual       float64
+		)
+
+		// Порядок Scan — порядок колонок rateResolvableSelect.
+		if err = rows.Scan(&forecastDate, &targetDate, &metric, &predicted, &actualIsNull, &actual); err != nil {
+			return nil, fmt.Errorf("резолв прогнозов: читать строку forecast_log cbr_rate*: %w", err)
+		}
+
+		row := forecastRow{
+			ForecastDate: utcDate(forecastDate),
+			TargetDate:   utcDate(targetDate),
+			Metric:       metric,
+			Predicted:    predicted,
+		}
+		if actualIsNull == 0 {
+			row.Actual = &actual
+		}
+
+		forecasts = append(forecasts, row)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("резолв прогнозов: читать forecast_log cbr_rate*: %w", err)
+	}
+
+	return forecasts, nil
+}
+
+// rateAfter — ставка сразу после заседания: первая точка cbr_key_rate строго
+// позже target_date. «Нет строки» — не ошибка, а ненаблюдённый исход (заседание
+// сегодня, ставка вступает в силу завтра): возвращается ok = false, вызывающий
+// пропускает строку с warn. Прочие ошибки — ошибка прогона.
+func (s connStore) rateAfter(ctx context.Context, target time.Time) (float64, bool, error) {
+	// cbr_key_rate.rate — legacy Float32: драйвер строго типизирован и отказывает
+	// «converting Float32 to *float64 is unsupported» (поймано живым прогоном
+	// приёмки). Сканируем в float32 и расширяем; точность ставки (шаг 0.25 п.п.)
+	// Float32 хранит без потерь.
+	var rate float32
+
+	err := s.conn.QueryRow(ctx, rateAfterSelect,
+		clickhouse.Named("target", target.Format(dateLayout)),
+	).Scan(&rate)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("резолв прогнозов: ставка после %s из cbr_key_rate: %w",
+			target.Format(dateLayout), err)
+	}
+
+	return float64(rate), true, nil
 }
 
 func (s connStore) windowStats(ctx context.Context, start, end time.Time) (windowStats, error) {
@@ -379,10 +575,18 @@ func (s connStore) writeResolutions(ctx context.Context, rows []forecastResoluti
 	}
 
 	for _, row := range rows {
-		// Порядок позиций — порядок колонок forecastLogInsert. actual и error_pct
-		// уходят как float64: в DDL они Nullable, но резолвленная строка всегда
-		// имеет оба значения, и NULL в резолве — это отсутствие строки в батче.
-		if err = batch.Append(row.ForecastDate, row.TargetDate, forecastMetric, row.Predicted, row.Actual, row.ErrorPct); err != nil {
+		// Порядок позиций — порядок колонок forecastLogInsert. В DDL actual,
+		// error_pct и error_bp Nullable; nil в интерфейсе даёт NULL (у xau_q_avg
+		// error_bp пуст, у cbr_rate* — error_pct). Передаём float64 или nil, а не
+		// указатель: драйверу так не нужно выбирать ветку Nullable-скана.
+		var errorPct, errorBp any
+		if row.ErrorPct != nil {
+			errorPct = *row.ErrorPct
+		}
+		if row.ErrorBp != nil {
+			errorBp = *row.ErrorBp
+		}
+		if err = batch.Append(row.ForecastDate, row.TargetDate, row.Metric, row.Predicted, row.Actual, errorPct, errorBp); err != nil {
 			abortBatch(batch, "резолв прогнозов")
 
 			return fmt.Errorf("резолв прогнозов %s на %s: %w",
