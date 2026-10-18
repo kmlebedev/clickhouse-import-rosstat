@@ -10,9 +10,9 @@
 
 Файлы: `ingest/schema.go`.
 
-- [ ] `forecastLogDdl` дополнить `error_bp Nullable(Float64)` (после `error_pct`); комментарий `metric` — `'cbr_rate:<track>'`.
-- [ ] Добавить константу `forecastLogAddErrorBp = "ALTER TABLE forecast_log ADD COLUMN IF NOT EXISTS error_bp Nullable(Float64)"` с комментарием, почему `CREATE TABLE IF NOT EXISTS` недостаточно.
-- [ ] `ensureTables`: после `CREATE` выполнить `ALTER` (идемпотентно).
+- [ ] `forecastLogDdl` дополнить `error_bp Nullable(Float64)`, `probabilities String DEFAULT '{}'`, `model LowCardinality(String) DEFAULT ''`, `data_version String DEFAULT ''`, `prompt_version UInt16 DEFAULT 0`; комментарий `metric` — `'cbr_rate:<track>'`.
+- [ ] Добавить `forecastLogMigrations` — идемпотентные `ALTER TABLE forecast_log ADD COLUMN IF NOT EXISTS …` для всех новых колонок с комментарием, почему `CREATE TABLE IF NOT EXISTS` недостаточно.
+- [ ] `ensureTables`: после `CREATE` выполнить все `ALTER` (идемпотентно).
 - [ ] Проверка: `go test ./ingest/` (тест DDL/миграции — шаг 5).
 
 ## 2. Резолвер `cbr_rate`
@@ -34,8 +34,9 @@
 
 - [ ] `KeyRateForecast` — поля `forecast_date`, `target_date`, `metric`, `predicted`, `probabilities`, `data_version`, `model`, `prompt_version`; `ValidateKeyRateForecast` по спеке §4 (даты/диапазон `Date`, whitelist `cbr_rate[:track]`, `predicted` конечный 0..1000, вероятности 0–100 сумма 100 ±0.1, непустые `data_version`/`model`, `prompt_version > 0` для LLM).
 - [ ] `forecastLogInsert` в `ingest/clickhouse.go` — добавить `error_bp`; `InsertModelRun` шлёт `nil` в новую колонку.
-- [ ] `InsertKeyRateForecast(ctx, f)` — одна строка, `PrepareBatch → Append → Send`, `Abort` на ошибке `Append`; даты парсит из строк; `actual`/`error_pct`/`error_bp` = nil.
-- [ ] `BatchWriter` — новый метод; `Server` — маршрут `POST /v1/key_rate_forecast`, обработчик: decode → validate → insert → `{"inserted": 1}`; метаданные — `log.Infof` (не терять молча).
+- [ ] `InsertKeyRateForecast(ctx, f)` — одна строка, `PrepareBatch → Append → Send`, `Abort` на ошибке `Append`; даты парсит из строк; `actual`/`error_pct`/`error_bp` = nil; `probabilities` — канонический JSON `{"cut","hold","hike"}` (`'{}'` при пустом), `model`/`data_version`/`prompt_version` пишутся в колонки.
+- [ ] `BatchWriter` — новый метод; `Server` — маршрут `POST /v1/key_rate_forecast`, обработчик: decode → validate → insert → `{"inserted": 1}`.
+- [ ] Резолвер читает метаданные вместе с прогнозом и переносит их в новую версию строки (иначе ReplacingMergeTree теряет probabilities/model/data_version/prompt_version).
 - [ ] Тесты: `ingest/key_rate_forecast_test.go` — валидация таблицей; `server_test.go` — `401`, `400` (неизвестное поле, плохая метрика, пустой `data_version`, LLM без `prompt_version`), `200` и вызов writer'а; `clickhouse_test.go` — строка батча, `Abort` на `Append`.
 - [ ] Проверка: `go test -race ./ingest/`.
 
@@ -53,20 +54,20 @@
 
 Файлы: `scripts/key_rate_forecast_log.py` (новый), `scripts/key_rate_forecast_log_test.py` (новый), `Makefile`, `.gitignore`.
 
-- [ ] Чистые функции разбора: `model_rows(artifact)` → две строки (`taylor`, `ordered_logit`), `llm_rows(artifact)`, `data_version(model_artifact)`, преобразование шага в уровень, вероятности ×100 и ключи `-1/0/+1` → `cut/hold/hike`.
-- [ ] Ошибки: нет `rate_before`/`forecast_date`/`meeting_date`/`methods` — понятный текст; нет методов — код 1; отсутствующий метод — `warn`; LLM-артефакт без обязательных полей — ошибка.
+- [ ] Чистые функции разбора: `model_rows(artifact)` → две строки (`taylor`, `ordered_logit`), `llm_rows(artifact)`, `llm_payload_row(payload)` (#189, `{"row"}`/bare, `cbr_rate` → `cbr_rate:llm`), `data_version(model_artifact)`, преобразование шага в уровень, вероятности ×100 и ключи `-1/0/+1` → `cut/hold/hike`.
+- [ ] Ошибки: нет `rate_before`/`forecast_date`/`meeting_date`/`methods` — понятный текст; нет методов — код 1; отсутствующий метод — `warn`; LLM-артефакт/payload без обязательных полей — ошибка; явно заданный отсутствующий payload — ошибка.
 - [ ] Env `INGEST_URL`/`INGEST_TOKEN`: проверка до сети, имена в ошибке, значения не печатаются.
 - [ ] HTTP POST JSON, `Authorization: Bearer`, таймаут, non-2xx → ошибка с телом ≤512 байт; токен не попадает в текст.
-- [ ] CLI: `--model-artifact` (по умолчанию `key_rate_model_forecast.json`), `--llm-artifact` (по умолчанию `key_rate_llm_forecast.json`, отсутствие — штатно), `--dry-run`.
-- [ ] `Makefile`: цель `key-rate-forecast-log` (`python3 scripts/key_rate_forecast_log.py $(ARGS)`), в `.PHONY`; `.gitignore` — `/key_rate_llm_forecast.json`.
-- [ ] Тесты (stdlib `unittest`, HTTP замокан): разбор артефакта, шаг → уровень, вероятности, LLM, ошибки env/полей, non-2xx, `--dry-run` без HTTP, нет методов.
+- [ ] CLI: `--model-artifact` (по умолчанию `key_rate_model_forecast.json`), `--llm-artifact` (по умолчанию `key_rate_llm_forecast.json`, отсутствие — штатно), `--llm-payload` (приоритет над артефактом), `--dry-run`.
+- [ ] `Makefile`: цель `key-rate-forecast-log` (`python3 scripts/key_rate_forecast_log.py $(ARGS)`), в `.PHONY`; `.gitignore` — `/key_rate_llm_forecast.json`, `/key_rate_llm_forecast_log_payload.json`.
+- [ ] Тесты (stdlib `unittest`, HTTP замокан): разбор артефакта, шаг → уровень, вероятности, LLM-артефакт, LLM-payload, ошибки env/полей, non-2xx, `--dry-run` без HTTP, нет методов.
 - [ ] Проверка: `python3 scripts/key_rate_forecast_log_test.py -v`.
 
 ## 6. Документы
 
 Файлы: `ARCHITECTURE.md`, `README.md`, `docs/ROADMAP_KEY_RATE.md`.
 
-- [ ] §6.2 — DDL `forecast_log` с `error_bp` и комментарием `cbr_rate:<track>`; §6.1 `forecast_resolve` — ветка `cbr_rate`, формула `error_bp`; ingest-раздел — `POST /v1/key_rate_forecast` и поля.
+- [ ] §6.2 — DDL `forecast_log` с `error_bp`, `probabilities`, `model`, `data_version`, `prompt_version` и комментарием `cbr_rate:<track>`; §6.1 `forecast_resolve` — ветка `cbr_rate`, формула `error_bp`, перенос метаданных; ingest-раздел — `POST /v1/key_rate_forecast`, поля и запись метаданных в колонки.
 - [ ] §5 env — `INGEST_URL` (клиент) рядом с `INGEST_TOKEN`.
 - [ ] README — env-таблица `INGEST_URL`, контур прогноза: endpoint и `make key-rate-forecast-log`.
 - [ ] ROADMAP §5: строка `forecast_log` — суффиксы `metric`, `error_bp`; «Известное расхождение» — закрыто. §6, фаза 4: пункт `❌ запись прогноза…` → `✅ сделан этим PR` с числами приёмки.
@@ -77,9 +78,10 @@
 - [ ] `make all` — зелёный.
 - [ ] `make key-rate-model` — артефакт с `rate_before`.
 - [ ] `make ch-status` — ClickHouse отвечает (иначе зафиксировать и не поднимать).
-- [ ] `make run-ingest INGEST_ADDR=:18081` (фон), `INGEST_URL=http://127.0.0.1:18081 make key-rate-forecast-log` — строки в `forecast_log`.
-- [ ] Живой резолвер: временный артефакт на прошедшее заседание (2026-09-11, `predicted=13.0`) → `make key-rate-forecast-log` → `make import STAT=forecast_resolve` → `actual=14.0`, `error_bp=−100`, `error_pct=NULL`; затем удалить тестовую строку (или использовать отдельную `forecast_date` и назвать её в протоколе).
-- [ ] `make ch-sql FILE=...` — `SELECT … FROM forecast_log FINAL WHERE metric LIKE 'cbr_rate%'`.
+- [ ] `make run-ingest INGEST_ADDR=:18081` (фон), `INGEST_URL=http://127.0.0.1:18081 make key-rate-forecast-log ARGS="--llm-payload <путь к payload #189>"` — строки `cbr_rate:taylor`, `cbr_rate:ordered_logit`, `cbr_rate:llm` с вероятностями и метаданными в `forecast_log`.
+- [ ] `SELECT metric, predicted, probabilities, model, data_version, prompt_version FROM forecast_log FINAL WHERE metric LIKE 'cbr_rate%'` — все поля на месте.
+- [ ] Живой резолвер: временный артефакт на прошедшее заседание (2026-09-11, `predicted=13.0`) → `make key-rate-forecast-log` → `make import STAT=forecast_resolve` → `actual=14.0`, `error_bp=−100`, `error_pct=NULL`, метаданные сохранены; затем удалить тестовую строку (или использовать отдельную `forecast_date` и назвать её в протоколе).
+- [ ] `make ch-sql FILE=...` — `xau_q_avg` после резолва: `probabilities='{}'`, `model=''`, `data_version=''`, `prompt_version=0`, `error_pct` заполнен, `error_bp=NULL`.
 - [ ] `make mcp-check` — зелёный.
 - [ ] Python-тесты: `key_rate_model_test.py`, `key_rate_forecast_log_test.py`.
 - [ ] Commit/push, PR с `Closes #127`, протокол приёмки — комментарием в PR.

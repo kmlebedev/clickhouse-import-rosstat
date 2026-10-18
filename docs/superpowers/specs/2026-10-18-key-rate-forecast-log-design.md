@@ -38,14 +38,18 @@ CREATE TABLE IF NOT EXISTS forecast_log (
     metric LowCardinality(String),   -- 'xau_q_avg','fed_decision','nav','cbr_rate:<track>'
     predicted Float64, actual Nullable(Float64),
     error_pct Nullable(Float64),
-    error_bp Nullable(Float64)       -- ошибка в базисных пунктах (только cbr_rate*)
+    error_bp Nullable(Float64),      -- ошибка в базисных пунктах (только cbr_rate*)
+    probabilities String DEFAULT '{}',       -- JSON: {"cut":..,"hold":..,"hike":..}
+    model LowCardinality(String) DEFAULT '', -- трек/модель прогноза
+    data_version String DEFAULT '',          -- версия набора данных
+    prompt_version UInt16 DEFAULT 0          -- редакция промпта LLM-трека
 ) ENGINE = ReplacingMergeTree ORDER BY (metric, forecast_date);
 ```
 
-`CREATE TABLE IF NOT EXISTS` не добавляет колонку в уже существующую таблицу, поэтому `ingest.ensureTables` после DDL выполняет идемпотентный
-`ALTER TABLE forecast_log ADD COLUMN IF NOT EXISTS error_bp Nullable(Float64)` — прецедент: идемпотентные `ALTER` в `news_watch` и `craw/gost.go`.
+`CREATE TABLE IF NOT EXISTS` не добавляет колонки в уже существующую таблицу, поэтому `ingest.ensureTables` после DDL выполняет идемпотентные
+`ALTER TABLE forecast_log ADD COLUMN IF NOT EXISTS …` для `error_bp`, `probabilities`, `model`, `data_version`, `prompt_version` — прецедент: идемпотентные `ALTER` в `news_watch` и `craw/gost.go`.
 
-**Ключ и версии.** `ORDER BY (metric, forecast_date)` не меняется: треки различаются значением `metric`, а повторная запись того же трека на ту же `forecast_date` заменяет строку (ReplacingMergeTree). Пересчёт прогноза другим числом в тот же день — та же строка; перенос прогноза на другую дату — новая строка. Отдельного измерения «версия модели» в ключе нет — это ограничение follow-up вместе с колонкой `model`.
+**Ключ и версии.** `ORDER BY (metric, forecast_date)` не меняется: треки различаются значением `metric`, а повторная запись того же трека на ту же `forecast_date` заменяет строку (ReplacingMergeTree). Пересчёт прогноза другим числом в тот же день — та же строка; перенос прогноза на другую дату — новая строка. Отдельного измерения «версия модели» в ключе нет — это ограничение follow-up; сами метаданные версии (`model`, `data_version`, `prompt_version`) уже хранятся в строке.
 
 ## 4. Контракт ingest-endpoint
 
@@ -79,9 +83,9 @@ CREATE TABLE IF NOT EXISTS forecast_log (
 
 Неизвестные поля — `400` (`DisallowUnknownFields`, как у остальных endpoint'ов). Ответ — `200 {"inserted": 1}`; ошибка записи — `500 insert failed` с деталями в логе. Пустой `metric`/чужой префикс, `NaN`/`Inf` в `predicted` и вероятностях — `400`.
 
-**Запись.** `InsertKeyRateForecast` пишет **одну строку** батчем `PrepareBatch → Append (err checked) → Send`: `forecast_date`, `target_date`, `metric`, `predicted`, `actual = NULL`, `error_pct = NULL`, `error_bp = NULL`. `Abort` — только в ветке ошибки `Append`.
+**Запись.** `InsertKeyRateForecast` пишет **одну строку** батчем `PrepareBatch → Append (err checked) → Send`: `forecast_date`, `target_date`, `metric`, `predicted`, `actual = NULL`, `error_pct = NULL`, `error_bp = NULL`, `probabilities` (канонический JSON `{"cut","hold","hike"}`, у точечного прогноза `'{}'`), `model`, `data_version`, `prompt_version`. `Abort` — только в ветке ошибки `Append`.
 
-**Что не хранится сейчас.** `probabilities`, `data_version`, `model`, `prompt_version` принимаются и валидируются контрактом, но колонок под них в `forecast_log` пока нет: по решению владельца в этом пункте схема меняется только на `error_bp`, а `model` — отдельный follow-up. Endpoint пишет их в лог ingest-сервера (info) и не теряет молча: writer и #189 уже шлют полный контракт, поэтому добавление колонок позже не потребует менять writer. Ограничение названо в §7 и в статусе роадмапа.
+**Что хранится.** Все поля контракта публикации пишутся в одноимённые колонки `forecast_log`: распределение вероятностей, модель, версия набора данных и редакция промпта — это требование [KEY_RATE_PUBLICATIONS.md](../../KEY_RATE_PUBLICATIONS.md) §7 п. 5 и §8, а не метаданные «на будущее». У строк золотого контура (`xau_q_avg`/`nav`) колонки получают значения по умолчанию (`'{}'`, `''`, `''`, `0`); резолвер читает их вместе с прогнозом и переносит в новую версию строки, чтобы ReplacingMergeTree не потерял метаданные после первого резолва.
 
 ## 5. Резолвер `cbr_rate`
 
@@ -113,7 +117,7 @@ WHERE date > {target:Date} ORDER BY date LIMIT 1
 - `metric` строки переносится в батч как есть: `cbr_rate:taylor`, `cbr_rate:ordered_logit`, `cbr_rate:ml`, `cbr_rate:llm` не схлопываются и не теряют трек.
 - Сбой любой из выборок/записей — ошибка прогона (не «0 строк»); частичный батч не отправляется.
 
-Ветка `xau_q_avg` остаётся прежней: квартальное окно, `comex_front > moex_fix_usd`, `error_pct`, `error_bp = NULL`. Оба набора строк собираются в один батч.
+Ветка `xau_q_avg` остаётся прежней: квартальное окно, `comex_front > moex_fix_usd`, `error_pct`, `error_bp = NULL`, метаданные по умолчанию. Оба набора строк собираются в один батч. Резолвер читает `probabilities`/`model`/`data_version`/`prompt_version` вместе с прогнозом и переносит их в новую версию строки: иначе ReplacingMergeTree заменил бы строку версией без распределения и версии данных.
 
 ## 6. Писатель `scripts/key_rate_forecast_log.py`
 
@@ -138,8 +142,7 @@ WHERE date > {target:Date} ORDER BY date LIMIT 1
 
 ## 7. Ограничения и follow-up
 
-- **Колонки метаданных.** `probabilities`, `data_version`, `model`, `prompt_version` пока не хранятся в `forecast_log` (см. §4). Это осознанно ограничивает проверяемость журнала: версия данных и распределение видны только в артефактах и логе ingest. Follow-up: добавить колонки (в первую очередь `model` для #189) и писать их из endpoint; контракт endpoint уже готов.
-- **Версионирование прогноза в тот же день.** Ключ `(metric, forecast_date)` заменяет строку при пересчёте; «изменение прогноза = новая запись» из [KEY_RATE_PUBLICATIONS.md](../../KEY_RATE_PUBLICATIONS.md) §8 в этом пункте выполняется переносом `forecast_date`, а не версией в ключе. Follow-up — вместе с колонкой `model`.
+- **Версионирование прогноза в тот же день.** Ключ `(metric, forecast_date)` заменяет строку при пересчёте; «изменение прогноза = новая запись» из [KEY_RATE_PUBLICATIONS.md](../../KEY_RATE_PUBLICATIONS.md) §8 обеспечивается разными `forecast_date`/`metric` и полем `data_version`, но не отдельной версией в ключе. Отдельное измерение версии — follow-up.
 - **ML-трек** (`cbr_rate:ml`) зарезервирован, но артефакта ML-прогноза ставки ещё нет; writer его не читает.
 - **`v_key_rate_dashboard`** и публикационный прогон — отдельные пункты фазы 4.
 
@@ -147,20 +150,20 @@ WHERE date > {target:Date} ORDER BY date LIMIT 1
 
 **Go.**
 
-- `forecast/resolve_test.go`: факт и `error_bp` (predicted 14.35, actual 14.00 → +35 б.п.), `error_pct = NULL`, метрика трека сохраняется; отсутствие точки после заседания — пропуск без ошибки; `xau_q_avg` не затронут (прежние окно/`error_pct`); сбой выборки/записи — ошибка; тексты запросов фильтруют `metric LIKE 'cbr_rate%'` и `target_date <= today()`.
+- `forecast/resolve_test.go`: факт и `error_bp` (predicted 14.35, actual 14.00 → +35 б.п.), `error_pct = NULL`, метрика трека и метаданные (`probabilities`/`model`/`data_version`/`prompt_version`) сохраняются; отсутствие точки после заседания — пропуск без ошибки; `xau_q_avg` не затронут (прежние окно/`error_pct`, метаданные по умолчанию); сбой выборки/записи — ошибка; тексты запросов фильтруют `metric LIKE 'cbr_rate%'` и `target_date <= today()`.
 - `ingest/key_rate_forecast_test.go` / `server_test.go`: валидация (даты, префикс и whitelist `metric`, `predicted`, вероятности, `data_version`, `prompt_version` для LLM, неизвестное поле), авторизация (`401`), запись (`200 {"inserted": 1}`), ошибка writer'а (`500`).
-- `ingest/clickhouse_test.go`: строка батча (метрика/даты/predicted, `actual`/`error_pct`/`error_bp` = nil), `Abort` на ошибке `Append`; DDL содержит `error_bp`, миграция — `ADD COLUMN IF NOT EXISTS`.
+- `ingest/clickhouse_test.go`: строка батча (метрика/даты/predicted, `actual`/`error_pct`/`error_bp` = nil, `probabilities` = канонический JSON, `model`/`data_version`/`prompt_version`), `Abort` на ошибке `Append`; DDL и миграции содержат все новые колонки.
 
 **Python.**
 
-- `scripts/key_rate_forecast_log_test.py`: разбор артефакта модели (шаг → уровень, вероятности ×100, `data_version`), LLM-артефакт при наличии, отсутствие `rate_before` — ошибка, нет env — ошибка с именами, non-2xx — ошибка без токена в тексте, `--dry-run` не делает HTTP, нет методов — код 1.
+- `scripts/key_rate_forecast_log_test.py`: разбор артефакта модели (шаг → уровень, вероятности ×100, `data_version`), LLM-артефакт при наличии, LLM-payload #189 (`{"row"}` и bare row, нормализация `cbr_rate` → `cbr_rate:llm`), отсутствие `rate_before` — ошибка, нет env — ошибка с именами, non-2xx — ошибка без токена в тексте, `--dry-run` не делает HTTP, нет методов — код 1.
 - `scripts/key_rate_model_test.py`: `rate_before` в JSON-артефакте и в списке ключей.
 
 ## 9. Критерий приёмки
 
 - `make all` — зелёный (gofmt, golangci-lint, `go vet`, `go test -race`, обе сборки).
-- `make key-rate-model` — артефакт с `rate_before`; `make key-rate-forecast-log` при запущенном ingest — строки `cbr_rate:taylor` и `cbr_rate:ordered_logit` в `forecast_log` (FINAL), `actual`/`error_pct`/`error_bp` = NULL; повтор — те же значения (ReplacingMergeTree).
-- Живой резолвер: строка `cbr_rate:taylor` на прошедшее заседание (например, 2026-09-11) после `make import STAT=forecast_resolve` получает `actual` (ставка после заседания), `error_bp = (predicted − actual) × 100`, `error_pct = NULL`; `xau_q_avg`-строки резолвятся как раньше.
+- `make key-rate-model` — артефакт с `rate_before`; `make key-rate-forecast-log` при запущенном ingest — строки `cbr_rate:taylor`, `cbr_rate:ordered_logit` и `cbr_rate:llm` (из LLM-payload #189) в `forecast_log` (FINAL); `SELECT metric, predicted, probabilities, model, data_version, prompt_version FROM forecast_log FINAL WHERE metric LIKE 'cbr_rate%'` показывает все поля; `actual`/`error_pct`/`error_bp` = NULL; повтор — те же значения (ReplacingMergeTree).
+- Живой резолвер: строка `cbr_rate:taylor` на прошедшее заседание (например, 2026-09-11) после `make import STAT=forecast_resolve` получает `actual` (ставка после заседания), `error_bp = (predicted − actual) × 100`, `error_pct = NULL`, а `probabilities`/`model`/`data_version`/`prompt_version` остаются на месте; `xau_q_avg`-строки резолвятся как раньше (`probabilities='{}'`, `model=''`, `data_version=''`, `prompt_version=0`).
 - `POST /v1/key_rate_forecast` без токена — `401`, с неверным `metric`/`data_version` — `400`, с корректным телом — `200 {"inserted": 1}`.
 - `make mcp-check` — зелёный (схема ingest не затронула витрины; `forecast_log` агенту не выдана).
 - ARCHITECTURE §6.1/§6.2, README, статус пункта в ROADMAP — обновлены; `Closes #127` в PR.
