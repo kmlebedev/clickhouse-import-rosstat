@@ -369,8 +369,8 @@ async def check(params, server_log):
                 failed += not expect(f"витрина {view} существует и непуста ({label})",
                                      (flash_view_n or 0) > 0, flash_view_detail)
 
-            # Корпоративный Telegram-канал edisclosure (пункт 1.11): девятая лента
-            # news_watch пишет в ту же таблицу версий и витрину v_news_flash, поэтому
+            # Корпоративный Telegram-канал edisclosure (пункт 1.11): лента news_watch
+            # пишет в ту же таблицу версий и витрину v_news_flash, поэтому
             # общая проверка выше проходит и на одних сообщениях молнии. Ноль здесь
             # означает ни разу не отработавший прогон с новой лентой, а не пустой
             # канал, — detail подсказывает команду импорта.
@@ -385,10 +385,44 @@ async def check(params, server_log):
                 edisclosure_detail = f"сообщений edisclosure: {edisclosure_n}"
             else:
                 edisclosure_detail = (f"сообщений edisclosure: {edisclosure_n or 0} — прогнать make import "
-                                      "STAT=news_watch (девятая лента, канал edisclosure)")
+                                      "STAT=news_watch (канал edisclosure)")
             failed += not expect("канал edisclosure в v_news_flash", (edisclosure_n or 0) > 0, edisclosure_detail)
 
-            # Реестр тегов — статическая витрина: 39 слагов, из них ровно 11 каналов ставки
+            # Новые Telegram-каналы пакета #46 (infra/2.3): v_news_flash — единственное место,
+            # где видны все каналы (v_news_events фильтрует по newsFilter и может не показать
+            # канал целиком). Проверка per-channel: каждый из шести каналов присутствует и
+            # каждое его сообщение получило doc-строку (annotated = messages). Так smoke-тест
+            # не зеленеет от одной размеченной строки в одном канале; полное покрытие RSS
+            # в v_news_events по-прежнему проверяет протокол приёмки.
+            new_channels = ("('ifax_go', 'markettwits', 'newssmartlab', 'russianmacro', "
+                            "'MarketOverview', 'mozgovikresearch')")
+            new_channels_raw = text(await session.call_tool("run_query", {"query":
+                f"SELECT channel, uniqExact(message_id) AS messages, "
+                f"uniqExactIf(message_id, model != '') AS annotated "
+                f"FROM v_news_flash WHERE channel IN {new_channels} GROUP BY channel"}))
+            new_channels_rows = result_rows(new_channels_raw)
+            required_channels = ("ifax_go", "markettwits", "newssmartlab",
+                                 "russianmacro", "MarketOverview", "mozgovikresearch")
+            by_channel = {}
+            for row in new_channels_rows or []:
+                by_channel[row.get("channel")] = (row.get("messages") or 0, row.get("annotated") or 0)
+            missing = [c for c in required_channels if c not in by_channel]
+            incomplete = [f"{c}: {by_channel[c][1]}/{by_channel[c][0]}"
+                          for c in required_channels
+                          if c in by_channel and by_channel[c][1] != by_channel[c][0]]
+            if new_channels_rows is None:
+                new_channels_detail = f"ответ не распознан: {new_channels_raw[:200]}"
+            else:
+                new_channels_detail = f"каналов: {len(by_channel)}/6, неполно: {incomplete or '—'}"
+            failed += not expect("новые Telegram-каналы #46 в v_news_flash",
+                                 not missing, f"нет каналов: {missing or '—'}")
+            annotation_ok = bool(new_channels_rows) and not missing and not incomplete
+            bootstrap_hint = (" — прогнать NEWS_LLM_PROFILE=glm NEWS_LLM_BACKLOG_LIMIT=500 "
+                              "make import STAT=news_watch")
+            failed += not expect("bootstrap-разметка новых каналов", annotation_ok,
+                                 new_channels_detail if annotation_ok else new_channels_detail + bootstrap_hint)
+
+            # Реестр тегов — статическая витрина: 46 слагов, из них ровно 11 каналов ставки
             # (cb_channel). Меньшее число значит ни разу не отработавший прогон news_watch
             # (витрина публикуется вместе с остальными), расхождение — реестр разошёлся с
             # news/tags.go. Ключевые пары проверяются отдельно: по ним агент расшифровывает
@@ -448,6 +482,27 @@ async def check(params, server_log):
             else:
                 print("WARN LLM-теги: 0 (NEWS_LLM_MODEL не задан — штатная деградация; "
                       "живой прогон 1.10 после мерджа 1.8)")
+
+            # LLM-разметка RSS — тоже информационная строка: без NEWS_LLM_PROFILE=glm и
+            # ключей разметка штатно пропускается, поэтому ноль не увеличивает failed.
+            # Знаменатель — только аннотируемые позиции (content_hash != ''): строки до
+            # миграции 1.9 не размечены, остаются с model = '' и дефектом не считаются.
+            news_llm_raw = text(await session.call_tool("run_query", {"query":
+                "SELECT countIf(content_hash != '') AS n, "
+                "countIf(content_hash != '' AND model != '') AS annotated "
+                "FROM v_news_events WHERE transport = 'rss'"}))
+            news_llm = result_rows(news_llm_raw)
+            if news_llm is None:
+                print(f"WARN LLM-разметка RSS: витрина не читается: {news_llm_raw[:200]}")
+            else:
+                news_llm_n = news_llm[0].get("n") if news_llm else None
+                news_llm_annotated = news_llm[0].get("annotated") if news_llm else None
+                if (news_llm_annotated or 0) > 0:
+                    print(f"OK   LLM-разметка RSS: {news_llm_annotated} из {news_llm_n} позиций")
+                else:
+                    print(f"WARN LLM-разметка RSS: 0 из {news_llm_n} позиций — догон: "
+                          "NEWS_LLM_PROFILE=glm NEWS_LLM_BACKLOG_LIMIT=500 "
+                          "make import STAT=news_watch")
 
             # Контур СБКТС Росстандарта (правило 11): обе витрины читаются агентом, а сырая
             # gost_vehicle_safety_certificate — источник витрин — агенту закрыта (как macro_series
@@ -1518,6 +1573,56 @@ async def check(params, server_log):
             denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
             failed += not expect("сырая cbr_form101 закрыта", denied,
                                  "отказ ClickHouse 497 на cbr_form101 (ожидаемо)" if denied else raw[:200])
+
+            # Реестр ML-экспериментов (infra/4.1): агенту выданы три витрины, а сырые
+            # ml_runs/ml_predictions закрыты (как macro_series и bold_fund_snapshot:
+            # паспорт прогона и fold-предсказания читаются только через витрины).
+            # Существование витрины подтверждается ЗАПРОСОМ К НЕЙ, а не только поиском
+            # имени в list_tables: в том тексте лежат create_table_query с комментариями
+            # таблиц и колонок, и имя отсутствующей витрины попадало туда из COMMENT
+            # соседки (урок bold). «Нет витрины» (UNKNOWN_TABLE) и «нет прав»
+            # (ACCESS_DENIED) приходят ошибкой и в result_rows не разбираются.
+            for view in ("v_ml_runs", "v_ml_leaderboard", "v_ml_error_by_fold"):
+                failed += not expect(f"витрина {view} видна", view in tables, "list_tables default")
+
+            for view, label in (("v_ml_runs", "паспорт прогона"),
+                                ("v_ml_error_by_fold", "fold-предсказания")):
+                ml_view = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {view}"}))
+                ml_view_rows = result_rows(ml_view)
+                ml_view_n = ml_view_rows[0].get("count()") if ml_view_rows else None
+                if ml_view_rows is None:
+                    ml_view_detail = f"витрина не читается: {ml_view[:200]}"
+                else:
+                    ml_view_detail = f"строк: {ml_view_n}"
+                failed += not expect(f"витрина {view} существует и читается ({label})",
+                                     bool(ml_view_rows), ml_view_detail)
+
+            # Пустой реестр — информационная строка, а не FAIL: до первого прогона
+            # ML_LOG=1 make cpi-nowcast (или ML_LOG=1 make key-rate-model) таблицы
+            # ml_runs/ml_predictions пусты, и make mcp-check на чистой БД не должен
+            # краснеть. Нечитаемая витрина — провал: значит нет ни вида, ни гранта.
+            ml_board = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_ml_leaderboard"}))
+            ml_board_rows = result_rows(ml_board)
+            if ml_board_rows is None:
+                failed += not expect("витрина v_ml_leaderboard существует и читается", False,
+                                     f"витрина не читается: {ml_board[:200]}")
+            elif (ml_board_rows[0].get("n") or 0) > 0:
+                print(f"OK   реестр ML: строк лидерборда: {ml_board_rows[0].get('n')}")
+            else:
+                print("WARN реестр ML пуст — прогонов с ML_LOG=1 ещё не было "
+                      "(ML_LOG=1 make cpi-nowcast / ML_LOG=1 make key-rate-model)")
+
+            # Сырые таблицы реестра агенту не выданы — как macro_series и news_events:
+            # паспорт прогона и fold-предсказания читаются только через витрины.
+            # Таблицы создаёт schema-only прогон ml_registry (make import STAT=ml_registry),
+            # поэтому UNKNOWN_TABLE здесь — провал, а не успех: таблица обязана
+            # существовать и быть закрытой.
+            for table, label in (("ml_runs", "паспорт прогона"),
+                                 ("ml_predictions", "fold-предсказания")):
+                raw = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {table}"}))
+                denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+                failed += not expect(f"сырая {table} закрыта ({label})", denied,
+                                     f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
 
     return failed
 

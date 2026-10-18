@@ -11,7 +11,8 @@ import (
 
 const (
 	// newsAnnotationTable — generic-таблица LLM-разметки по паре (url, content_hash).
-	// В этом пункте заполняется только Telegram-молния, но ключ не привязан к транспорту.
+	// news_watch заполняет её для всего видимого потока (Telegram и RSS), но ключ не
+	// привязан к транспорту: смена ленты не меняет схему.
 	newsAnnotationTable = "news_annotation"
 
 	// Виды строк: doc — одна строка на сообщение (тональность, релевантность, резюме),
@@ -20,7 +21,10 @@ const (
 	newsKindTag   = "tag"
 	newsMethodLLM = "llm"
 	// newsSummaryMax — предел summary в рунах: одно предложение, длиннее модель не пишет.
-	newsSummaryMax        = 300
+	newsSummaryMax = 300
+	// newsEvidenceMax — предел цитаты-обоснования в рунах: длинная цитата обрезается до
+	// проверки подстроки, иначе тег отбрасывался бы из-за хвоста, а не из-за пересказа.
+	newsEvidenceMax       = 300
 	newsMaxTagsPerMessage = 5
 )
 
@@ -80,8 +84,10 @@ type newsAnnotationRow struct {
 //   - sentiment clamp в [-1, 1], relevance — в [0, 1], summary trim и обрезка до 300 рун.
 //   - tag-строка требует пару (dimension, tag) из реестра, направление из четвёрки
 //     proinflationary|disinflationary|neutral|mixed и evidence — дословную подстроку
-//     нормализованного текста сообщения. У не-cb_channel направленные значения приводятся
-//     к neutral: знак задаёт канал ставки, а не персона или сектор.
+//     нормализованного текста сообщения. У cb_channel направление всегда берётся из реестра
+//     (статический знак канала; расхождение с ответом модели — warn), у остальных измерений
+//     proinflationary/disinflationary приводятся к neutral: знак задаёт канал ставки, а не
+//     персона или сектор.
 //   - дубли (dimension, tag) схлопываются (остаётся большая confidence), тегов не больше
 //     пяти — сортировка по confidence desc с детерминированным tie-break.
 //
@@ -150,14 +156,24 @@ func validateNewsAnnotationTags(it newsItem, tags []newsAnnotationTag, model str
 				dimension, slug, tag.Direction)
 			continue
 		}
-		if registered.Dimension != newsDimCBChannel &&
-			direction != newsDirectionNeutral && direction != newsDirectionMixed {
+		if registered.Dimension == newsDimCBChannel {
+			// Реестр — источник истины о знаке канала: модель вправе ошибиться в
+			// направлении, но тег не отбрасывается, а принимает статический знак.
+			if direction != registered.Direction {
+				log.Warnf("news_watch: тег %s:%s: направление %q не совпадает со знаком реестра %q, принят реестровый",
+					dimension, slug, direction, registered.Direction)
+			}
+			direction = registered.Direction
+		} else if direction != newsDirectionNeutral && direction != newsDirectionMixed {
 			log.Warnf("news_watch: тег %s:%s: направление %q допустимо только у cb_channel, приведено к %s",
 				dimension, slug, direction, newsDirectionNeutral)
 			direction = newsDirectionNeutral
 		}
 
-		evidence := normNewsText(tag.Evidence)
+		// Цитата нормализуется и обрезается до newsEvidenceMax рун: модель вправе вернуть
+		// длинный фрагмент, но evidence — обоснование тега, а не пересказ. После обрезки
+		// пустая цитата отбрасывается тем же drop, что и пустая из ответа.
+		evidence := truncateNewsRunes(normNewsText(tag.Evidence), newsEvidenceMax)
 		if evidence == "" {
 			log.Warnf("news_watch: тег %s:%s: пустая цитата, тег пропущен", dimension, slug)
 			continue

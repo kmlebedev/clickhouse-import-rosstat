@@ -57,10 +57,11 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 | [`craw`](docs/IMPORTERS.md) | реестр СБКТС Росстандарта | `gost_vehicle_safety_certificate` | ежечасно :17 |
 | [`fred`](docs/IMPORTERS.md), [`bls`](docs/IMPORTERS.md), [`bea`](docs/IMPORTERS.md), [`eia`](docs/IMPORTERS.md) | US macro: ставки, CPI, PCE, NFP, запасы нефти | `macro_series` | ежедневно / среда |
 | [`wgc`](docs/IMPORTERS.md), [`bold`](docs/IMPORTERS.md) | золотые ETF и резервы ЦБ, цена дня | `macro_series`, `bold_fund_snapshot`, `gold_prices` | ежедневно |
-| [`news`](docs/IMPORTERS.md) | 9 лент RSS/Telegram | `news_events`, `news_message_version`, `news_annotation` | каждые 30 мин |
+| [`news`](docs/IMPORTERS.md) | 16 лент RSS/Telegram | `news_events`, `news_message_version`, `news_annotation` | каждые 30 мин |
 | [`gold`](docs/IMPORTERS.md), [`moex`](docs/IMPORTERS.md) | цена золота, PLZL, ОФЗ, KEYRATE | `gold_prices`, `stock_prices`, `ofz_curve`, `keyrate_*` | ежедневно 18:47/19:13 |
 | [`calendar`](docs/IMPORTERS.md), [`forecast`](docs/IMPORTERS.md) | календарь событий, резолвер прогнозов | `events_calendar`, `forecast_log` | ежедневно |
 | [`views`](docs/IMPORTERS.md) | витрины контура и метрик компаний | `v_*`, `company_financials` | понедельник / вручную |
+| [`mlregistry`](docs/IMPORTERS.md) | реестр ML-экспериментов: DDL и витрины (schema-only, внешнего источника нет) | `ml_runs`, `ml_predictions`, `v_ml_*` | ежедневно 06:07 |
 | [`dcf`](docs/IMPORTERS.md), [`polyus`](docs/IMPORTERS.md), [`financial`](docs/IMPORTERS.md) | LOM-планы/NAV, отчётность Полюса, legacy | `mine_plans`, `price_decks`, `nav_by_asset`, `databook_polyus`, `company_financials` | понедельник |
 
 Полные спецификации — [docs/IMPORTERS.md](docs/IMPORTERS.md): источник, транспорт, разбор, точка контроля публикации, таблицы, расписание и живая приёмка по каждому импортёру.
@@ -93,7 +94,7 @@ deploy/staging/      артефакты staging
 | `CERT_FILES` | PEM-сертификаты нац. УЦ РФ |
 | `BEA_API_KEY`, `EIA_API_KEY`, `BLS_API_KEY` | ключи источников (BLS необязателен) |
 | `LLM_BASE_URL`, `LLM_API_KEY`, `MP_SUMMARY_LLM_MODEL` | LLM-разметка резюме ДКП |
-| `NEWS_LLM_PROFILE`, `NEWS_LLM_MODEL`, `GLM_LLM_*` | LLM-разметка Telegram |
+| `NEWS_LLM_PROFILE`, `NEWS_LLM_MODEL`, `GLM_LLM_*`, `NEWS_LLM_BACKLOG_LIMIT` | LLM-разметка видимого потока новостей (Telegram и RSS): профиль, модель, ключи и предел бэклога за прогон |
 | `INGEST_TOKEN` | Bearer-токен ingest-endpoint |
 
 Полный список, `ARCHIVE_*`, MCP-конфигурация и работа с ключами — [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
@@ -121,6 +122,8 @@ deploy/staging/      артефакты staging
 | `make cpi-monthly` | месячный nowcast ИПЦ с МП (ML-трек v2) |
 | `make mcp-check` | MCP end-to-end |
 | `make docs-check` / `make docs-build` | проверка и сборка docs-портала |
+
+Пункт роадмапа ведётся через GitHub issue с составным ID `<slug>/<item-id>`: шаблоны — [`.github/ISSUE_TEMPLATE/roadmap-item.yml`](.github/ISSUE_TEMPLATE/roadmap-item.yml) и [`.github/pull_request_template.md`](.github/pull_request_template.md); операции — скил `github-tracker` ([`.kimi-code/skills/github-tracker/SKILL.md`](.kimi-code/skills/github-tracker/SKILL.md)); правила — [docs/ROADMAP_INDEX.md](docs/ROADMAP_INDEX.md) и правило 12 [AGENTS.md](AGENTS.md). Живой проект — [clickhouse-import-rosstat — Roadmap](https://github.com/users/kmlebedev/projects/11).
 
 Полный набор целей, Python-тесты, зависимости и CI — [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
