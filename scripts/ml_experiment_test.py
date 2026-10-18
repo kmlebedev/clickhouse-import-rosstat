@@ -179,8 +179,8 @@ class FakeMlflow:
         if self.log_params_error is not None:
             raise self.log_params_error
 
-    def log_tags(self, tags):
-        self._record("log_tags", tags)
+    def set_tags(self, tags):
+        self._record("set_tags", tags)
 
     def end_run(self, status="FINISHED"):
         self._record("end_run", status=status)
@@ -795,6 +795,10 @@ class MlflowSinkTest(unittest.TestCase):
                 fake.calls_of("log_metrics")[0][1][0], {"rmse": 0.5}
             )
             self.assertEqual(
+                [call[1][0] for call in fake.calls_of("set_tags")],
+                [{"primary_metric": "rmse"}],
+            )
+            self.assertEqual(
                 [call[2]["status"] for call in fake.calls_of("end_run")],
                 ["FINISHED"],
             )
@@ -802,6 +806,28 @@ class MlflowSinkTest(unittest.TestCase):
             runs_sql = ch_exec.call_args_list[-1].args[0]
             _, rows = _sql_payload(runs_sql)
             self.assertEqual(rows[0]["run_id"], CANONICAL_MLFLOW_RUN_ID)
+
+    def test_primary_metric_uses_public_set_tags_api(self):
+        # Регрессия live-приёмки #183: `mlflow.log_tags` нет в публичном API
+        # MLflow. Двойник намеренно НЕ определяет log_tags — обращение к
+        # несуществующему методу уронило бы приёмник и закрыло run FAILED.
+        fake = FakeMlflow()
+        self.assertFalse(hasattr(fake, "log_tags"))
+        with _mlflow_env(), patch.dict(sys.modules, {"mlflow": fake}), \
+                patch.object(me, "ch_exec") as ch_exec:
+            run = start_run("exp", "run", {}, date(2026, 10, 18), {}, [])
+            run.log_metrics({"primary_metric": "rmse", "rmse": 0.5})
+            self.assertEqual(run.finish("finished"), "clickhouse")
+
+        ch_exec.assert_called_once()
+        self.assertEqual(
+            [call[1][0] for call in fake.calls_of("set_tags")],
+            [{"primary_metric": "rmse"}],
+        )
+        self.assertEqual(
+            [call[2]["status"] for call in fake.calls_of("end_run")],
+            ["FINISHED"],
+        )
 
     def test_direct_run_sets_http_timeout_defaults(self):
         # M10: прямой запуск скрипта (без make) получает те же короткие
