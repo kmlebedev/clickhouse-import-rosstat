@@ -19,6 +19,7 @@ type mockBatchWriter struct {
 	series        [][]ManualSeriesPoint
 	goldPrices    [][]GoldPricePoint
 	goldForecasts [][]GoldForecast
+	keyRate       []KeyRateForecast
 	err           error
 }
 
@@ -43,6 +44,11 @@ func (m *mockBatchWriter) InsertGoldPrices(_ context.Context, points []GoldPrice
 
 func (m *mockBatchWriter) InsertGoldForecasts(_ context.Context, forecasts []GoldForecast) error {
 	m.goldForecasts = append(m.goldForecasts, forecasts)
+	return m.err
+}
+
+func (m *mockBatchWriter) InsertKeyRateForecast(_ context.Context, forecast KeyRateForecast) error {
+	m.keyRate = append(m.keyRate, forecast)
 	return m.err
 }
 
