@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Паспорт ML-прогона и fold-предсказания в ClickHouse.
 
-Хелпер для скриптов `cpi_nowcast.py` и `key_rate_model.py`: собирает
+Хелпер для скриптов `cpi_nowcast.py`, `key_rate_model.py` и `cpi_monthly.py`: собирает
 метаданные прогона (git, конфигурация, выборка, версии пакетов), пишет одну
 строку в `ml_runs` и один batch в `ml_predictions` через HTTP-транспорт
 `extrapolation_aisc.ch_exec` и падает обратно в локальные `run.json` /
