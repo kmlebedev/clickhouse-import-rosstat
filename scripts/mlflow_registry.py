@@ -16,6 +16,10 @@
 Промоушен в infra/4.2 ручной (гейт качества — infra/4.3): скрипт не проверяет
 метрики и только двигает алиас `champion`, не снимая `challenger`.
 
+Имя модели (`--name` у `register`/`list`) ограничено набором `[A-Za-z0-9._-]`:
+парсер `filter_string` MLflow не разэкранирует `\'`/`\\`, поэтому имена с
+кавычкой или обратным слэшем отвергаются с кодом 1 до вызова MLflow.
+
 Тесты — stdlib-only, без пакета mlflow и без сети:
 
     python3 scripts/mlflow_registry_test.py -v
@@ -23,6 +27,7 @@
 
 import argparse
 import os
+import re
 import sys
 
 DEFAULT_TRACKING_URI = "http://127.0.0.1:5000"
@@ -37,6 +42,24 @@ FALLBACK_ALIASES = (CHAMPION_ALIAS, CHALLENGER_ALIAS)
 NOT_FOUND_ERROR_CODE = "RESOURCE_DOES_NOT_EXIST"
 
 MODEL_COLUMNS = ("name", "version", "status", "aliases", "run_id")
+
+# Консервативный allowlist: имя модели подставляется в `filter_string`
+# MLflow, парсер которого не разэкранирует `\'` и `\\`.
+MODEL_NAME_RE = re.compile(r"[A-Za-z0-9._-]+")
+
+
+class UnsafeModelNameError(ValueError):
+    """Имя модели содержит символы, ломающие `filter_string` MLflow."""
+
+
+def _validate_model_name(name: str) -> str:
+    """Проверяет имя модели до вызова MLflow и возвращает его же."""
+    if not MODEL_NAME_RE.fullmatch(name):
+        raise UnsafeModelNameError(
+            f"invalid model name {name!r}: allowed characters are "
+            "[A-Za-z0-9._-]"
+        )
+    return name
 
 
 def _is_not_found(exc: Exception) -> bool:
@@ -62,8 +85,10 @@ def register_version(client, name: str, run_id: str):
     """Регистрирует версию из `runs:/<run_id>/model` и ставит `challenger`.
 
     Зарегистрированная модель создаётся, если её ещё нет. Возвращает объект
-    версии MLflow (`version.version` — номер строкой).
+    версии MLflow (`version.version` — номер строкой). Имя модели обязано
+    проходить allowlist `[A-Za-z0-9._-]` (проверяется до вызова клиента).
     """
+    _validate_model_name(name)
     try:
         existing = client.get_registered_model(name)
     except Exception as exc:
@@ -150,23 +175,16 @@ def format_models(rows: list) -> str:
     return "\n".join(lines)
 
 
-def _model_versions_filter(name: str) -> str:
-    """`filter_string` MLflow с экранированием имени модели.
-
-    Обратный слэш и одинарная кавычка экранируются, иначе имя вида
-    `it's` разрывает `name='...'`.
-    """
-    escaped = name.replace("\\", "\\\\").replace("'", "\\'")
-    return f"name='{escaped}'"
-
-
 def list_models(client, name=None) -> list:
     """Печатает и возвращает версии моделей с их алиасами.
 
     Без `name` обходит все зарегистрированные модели; с `name` — только её
     (отсутствующая модель даёт `MlflowException`, CLI завершается кодом 1).
+    Имена проверяются allowlist-ом `[A-Za-z0-9._-]` до подстановки в
+    `filter_string`.
     """
     if name is not None:
+        _validate_model_name(name)
         client.get_registered_model(name)
         names = [name]
     else:
@@ -177,9 +195,8 @@ def list_models(client, name=None) -> list:
 
     rows = []
     for model_name in names:
-        versions = client.search_model_versions(
-            _model_versions_filter(model_name)
-        )
+        _validate_model_name(model_name)
+        versions = client.search_model_versions(f"name='{model_name}'")
         for version in sorted(versions, key=_version_sort_key):
             rows.append(
                 {
@@ -219,7 +236,11 @@ def _parse_args(argv=None) -> argparse.Namespace:
         "register", help="зарегистрировать версию из runs:/<run_id>/model"
     )
     register.add_argument("--run-id", required=True, help="MLflow run id")
-    register.add_argument("--name", required=True, help="имя модели")
+    register.add_argument(
+        "--name",
+        required=True,
+        help="имя модели (только A-Za-z0-9._-)",
+    )
 
     promote = commands.add_parser(
         "promote", help="перевести алиас champion на версию"
@@ -236,21 +257,31 @@ def _parse_args(argv=None) -> argparse.Namespace:
         "list", help="показать версии и алиасы моделей"
     )
     listing.add_argument(
-        "--name", help="только указанная модель (по умолчанию все)"
+        "--name",
+        help="только указанная модель (только A-Za-z0-9._-; по умолчанию все)",
     )
 
     return parser.parse_args(argv)
 
 
 def main(argv=None) -> int:
-    """CLI; 0 — успех, 1 — ожидаемая ошибка MLflow/сети/импорта.
+    """CLI; 0 — успех, 1 — ожидаемая ошибка MLflow/сети/импорта или имени.
 
-    Перехватываются только `MlflowException` и `OSError` (в него входят
-    сетевые `requests`-ошибки). Ошибки программирования (TypeError,
-    AttributeError) пробрасываются traceback-ом, а не маскируются под
-    нормальный отказ MLflow.
+    Имена для `register`/`list` проверяются allowlist-ом `[A-Za-z0-9._-]`
+    до ленивого импорта mlflow, потому что они подставляются в
+    `filter_string`. Перехватываются только `MlflowException` и `OSError`
+    (в него входят сетевые `requests`-ошибки). Ошибки программирования
+    (TypeError, AttributeError) пробрасываются traceback-ом, а не
+    маскируются под нормальный отказ MLflow.
     """
     args = _parse_args(argv)
+
+    if args.command in ("register", "list") and args.name is not None:
+        try:
+            _validate_model_name(args.name)
+        except UnsafeModelNameError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
 
     # Ленивый импорт: модуль и чистые функции работают без установленного
     # mlflow, тесты подменяют пакет через sys.modules. Это граница
@@ -275,7 +306,7 @@ def main(argv=None) -> int:
             promote_version(client, args.name, args.version, args.alias)
         else:
             list_models(client, args.name)
-    except (MlflowException, OSError) as exc:
+    except (MlflowException, OSError, UnsafeModelNameError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
