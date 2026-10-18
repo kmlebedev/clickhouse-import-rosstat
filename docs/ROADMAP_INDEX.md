@@ -74,7 +74,7 @@ Labels: `roadmap:<slug>` — группировка до появления Proj
 - Модель трекера, поля и виды Project V2 — спека [2026-10-17-github-tracker-design.md](superpowers/specs/2026-10-17-github-tracker-design.md) (§6–§7 — поля и виды).
 - Пошаговые операции: issue, Project V2, sub-issues, Q&A, PR, аудит — скил [`.kimi-code/skills/github-tracker/SKILL.md`](../.kimi-code/skills/github-tracker/SKILL.md).
 - Обязательная норма для ассистента — правило 12 [AGENTS.md](../AGENTS.md); шаблон PR — [`.github/pull_request_template.md`](../.github/pull_request_template.md).
-- Приёмка пункта и протокол живой приёмки — [IMPORTER_PACKAGE_STANDARD.md](IMPORTER_PACKAGE_STANDARD.md) §16.1 п. 8 и [ROADMAP_INFRA.md](ROADMAP_INFRA.md) §5.
+- Приёмка пункта и протокол живой приёмки — [IMPORTER_PACKAGE_STANDARD.md](IMPORTER_PACKAGE_STANDARD.md) §16.1 п. 8 и [ROADMAP_INFRA.md](ROADMAP_INFRA.md) §6.
 
 ## 6. Живой Project V2
 
