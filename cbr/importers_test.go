@@ -274,6 +274,7 @@ func TestCbrImportersPrefixedAndRegistered(t *testing.T) {
 		"cbr_dip_bulletin": "сезонно сглаженные ряды приложений ДИП не обновляются по расписанию, а витрина v_cbr_dip_bulletin тихо стареет",
 		"cbr_mt_forecast":  "диапазоны среднесрочного прогноза ЦБ не обновляются по расписанию, а витрина v_cbr_mt_forecast тихо стареет",
 		"cbr_form101":      "сырые остатки формы 101 ЦБ не пополняются по расписанию, а витрина v_cbr_form101 тихо стареет",
+		"cbr_zcyc":         "история КБД ЦБ не обновляется по расписанию, а витрины v_ofz_* тихо стареют",
 	}
 	for step, why := range keyScheduled {
 		if !scheduled[step] {
