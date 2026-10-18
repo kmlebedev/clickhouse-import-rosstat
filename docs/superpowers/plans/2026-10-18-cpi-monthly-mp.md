@@ -285,21 +285,21 @@ git commit -m "docs: cpi monthly mp — readme, architecture, roadmap"
 **Спека:** §8 ([2026-10-18-cpi-monthly-mp-design.md](../specs/2026-10-18-cpi-monthly-mp-design.md#8-расширение-2026-10-18-репрезентативность-long-sample-и-журнал-ml-экспериментов)).
 **Практики:** `infra/4.1` ([issue #178](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/178), `scripts/ml_experiment.py`, таблицы `ml_runs`/`ml_predictions`, витрины `v_ml_*`).
 
-### Task 6: Long-sample 2002-02…2026-08
+### Task 6: Long-sample 2002-05…2026-08 (292 месяца)
 
 **Files:** Modify `scripts/cpi_monthly.py`, `scripts/cpi_monthly_test.py`.
 
 **Interfaces:**
 - Consumes: текущие `Row`, `base_features`, `build_sample`, `run_summary`, `render_report`.
 - Produces:
-  - `SAMPLE_BOUNDS: dict[str, tuple[date, date]]` = `{"short": (date(2013,10,1), date(2026,8,1)), "long": (date(2002,2,1), date(2026,8,1))}`.
+  - `SAMPLE_BOUNDS: dict[str, tuple[date, date]]` = `{"short": (date(2013,10,1), date(2026,8,1)), "long": (date(2002,5,1), date(2026,8,1))}`; старт long 2002-05 задан глубиной живого МП (`_chg` месяца 2002-02 требует 2001-12, квартальные Q1-2002 доступны 2002-05-31).
   - `build_sample(targets, survey, usd, key_rate, fao, sample: str = "short")`.
   - `run_summary(start=None, embargo_months=DEFAULT_EMBARGO, out_dir=None, today=None, sample: str = "short", ml_log=None, logger=None, run_name=None)`; `start=None` → 24 для short, 48 для long.
   - `render_report(..., sample: str = "short")`.
   - CLI `--sample {short,long}` (default short); `--start` default `None`.
-- [ ] **Step 1: Тесты (red).** `test_short_sample_is_unchanged` (155, 2013-10…2026-08); `test_long_sample_covers_295_months` (2002-02…2026-08, 0 skips на синтетике и живом smoke); `test_long_sample_nan_controls_before_2013` (`usd_mm` NaN до 2013-03, `key_rate` NaN до 2013-09-17, месяц не пропущен); `test_long_sample_controls_after_2013_are_filled`; `test_long_default_start_is_48`; `test_long_article_split_is_203_67`; `test_long_sample_deterministic`.
-- [ ] **Step 2: Реализация.** `base_features`: при отсутствии `usd_mm`/`key_rate` вернуть `float("nan")`, а не причину пропуска; `y_lag1`/`y_lag2`/`fao_mm` остаются обязательными. `build_sample` берёт границы из `SAMPLE_BOUNDS[sample]`. `run_summary` печатает sample/границы и число NaN-контролей; long по умолчанию стартует с 48. `render_report` — заголовок и оговорка sample, long-сплит 203/67.
-- [ ] **Step 3: Живой smoke.** `make cpi-monthly` — short 155/0 без изменений; `make cpi-monthly ARGS="--sample long"` — 295 месяцев, 0 пропусков, старт 48, long DM/сплит (один прогон; ~1.5–2 ч — запускать в фоне).
+- [ ] **Step 1: Тесты (red).** `test_short_sample_is_unchanged` (155, 2013-10…2026-08); `test_long_sample_covers_292_months` (2002-05…2026-08, 0 skips на синтетике и живом smoke); `test_long_sample_nan_controls_before_2013` (`usd_mm` NaN до 2013-03, `key_rate` NaN до 2013-09-17, месяц не пропущен); `test_long_sample_controls_after_2013_are_filled`; `test_long_default_start_is_48`; `test_long_article_split_is_200_67`; `test_long_sample_deterministic`.
+- [ ] **Step 2: Реализация.** `base_features`: при отсутствии `usd_mm`/`key_rate` вернуть `float("nan")`, а не причину пропуска; `y_lag1`/`y_lag2`/`fao_mm` остаются обязательными. `build_sample` берёт границы из `SAMPLE_BOUNDS[sample]`. `run_summary` печатает sample/границы и число NaN-контролей; long по умолчанию стартует с 48. `render_report` — заголовок и оговорка sample, long-сплит 200/67.
+- [ ] **Step 3: Живой smoke.** `make cpi-monthly` — short 155/0 без изменений; `make cpi-monthly ARGS="--sample long"` — 292 месяца, 0 пропусков, старт 48, long DM/сплит (один прогон; ~1.5–2 ч — запускать в фоне).
 - [ ] **Step 4: Commit** `cpi monthly: add long representativeness sample`.
 
 ### Task 7: Журнал ML-экспериментов (`ML_LOG=1`)
@@ -309,7 +309,7 @@ git commit -m "docs: cpi monthly mp — readme, architecture, roadmap"
 **Interfaces:**
 - Consumes: `scripts/ml_experiment.py` (`start_run`, `PredictionRow`, `json_safe`), `scripts/extrapolation_aisc.py` (`ch_exec` — внутри хелпера).
 - Produces: `run_summary(..., ml_log=None, logger=None, run_name=None)`; один `ExperimentRun` на прогон; `experiment="cpi_monthly"`, `unit="pp"`; `config` включает sample/границы/признаки/seed/окна/модели; `sample_meta` — rows/first/last/skipped/months; `metrics` — `primary_metric="rmse_pp"`, `sample`, `models`, `windows`, `weights`; `predictions` — все fold'ы всех окон (`window=window_key`, `meta={start,embargo,main,sample}`); `artifacts` — report/CSV/JSON; `finish("finished")`, на исключении — `finish("failed")`; без `ML_LOG` — ни одного `ch_exec`, артефакты байт-в-байт прежние.
-- [ ] **Step 1: Тесты (red).** `test_ml_log_disabled_does_not_touch_ch_exec`; `FakeLogger`-тест: окно/модели/unit `pp`, число предсказаний = числу fold'ов × моделей, `sample` в config/metrics, `run_name` содержит sample; `test_ml_log_long_sample` (config.sample=long, sample_meta.rows=295); `test_ml_log_does_not_change_artifacts` (sha256 отчёта/CSV/JSON без и с FakeLogger).
+- [ ] **Step 1: Тесты (red).** `test_ml_log_disabled_does_not_touch_ch_exec`; `FakeLogger`-тест: окно/модели/unit `pp`, число предсказаний = числу fold'ов × моделей, `sample` в config/metrics, `run_name` содержит sample; `test_ml_log_long_sample` (config.sample=long, sample_meta.rows=292); `test_ml_log_does_not_change_artifacts` (sha256 отчёта/CSV/JSON без и с FakeLogger).
 - [ ] **Step 2: Реализация.** Импорт `ml_experiment as mlx`; создание logger после `build_sample`; `logger.log_metrics/log_predictions/log_artifacts/finish` в try/except (сбой журнала не меняет код возврата); `ML_RUN_NAME`/`ML_LOCAL_DIR` — из хелпера. `--sample` попадает в `config` и `run_name`.
 - [ ] **Step 3: Живой прогон.** `make import STAT=ml_registry` (DDL+витрины); `ML_LOG=1 make cpi-monthly` (short) и `ML_LOG=1 make cpi-monthly ARGS="--sample long"`; MCP: `v_ml_runs`/`v_ml_leaderboard`/`v_ml_error_by_fold` видят оба, `ml_runs`/`ml_predictions` — `ACCESS_DENIED`; повтор — новый `run_id`, те же метрики/sha256.
 - [ ] **Step 4: Commit** `cpi monthly: log experiments to ml registry`.
@@ -325,4 +325,4 @@ git commit -m "docs: cpi monthly mp — readme, architecture, roadmap"
 
 - **Покрытие:** §8.2 → Task 6; §8.3 → Task 7; §8.4 → Task 8.
 - **Согласованность:** `sample` проходит через `build_sample → run_summary → config/sample_meta/metrics`; `unit="pp"`; `window=window_key`; short-поведение без `ML_LOG` и без `--sample long` не меняется.
-- **Review Focus:** NaN-контроли не выбрасывают месяц; long-границы и старт 48; article split 203/67; `ML_LOG` off — ноль записей; fallback не роняет прогон; артефакты byte-identical.
+- **Review Focus:** NaN-контроли не выбрасывают месяц; long-границы (2002-05) и старт 48; article split 200/67; `ML_LOG` off — ноль записей; fallback не роняет прогон; артефакты byte-identical.
