@@ -98,9 +98,12 @@ uv run ... python3 scripts/edisclosure_collect.py collect
      "url": "https://e-disclosure.ru/portal/company.aspx?id=7832"}
   ],
   "document_count": 290,
-  "documents_file": "documents.jsonl"
+  "documents_file": "documents.jsonl",
+  "empty_sections": [{"ticker": "SBER", "sections": ["AGM"]}]
 }
 ```
+
+`empty_sections` — разделы, страница которых редиректит на карточку компании (пустой раздел у этого эмитента); импортёр поле игнорирует, оно для аудита. Если у компании **все** запрошенные разделы пусты, коллектор завершается ошибкой и манифест не пишет: пустая компания — признак сломанного сбора, а не пустого источника.
 
 `documents.jsonl` — одна строка = один документ (реальная строка пилота):
 

@@ -51,6 +51,8 @@
   - `document_key(row: dict[str, str]) -> tuple[str, str, str]`
   - `dedupe_documents(rows: list[dict[str, str]]) -> list[dict[str, str]]`
   - `build_manifest(companies: list[dict[str, str]], sections: list[str], documents: list[dict[str, str]], generated_at: str) -> dict`
+  - `empty_sections_by_company(companies: list[dict[str, str]], sections: list[str], documents: list[dict[str, str]]) -> list[dict]` — разделы, где не нашлось документов, для аудита
+  - `ensure_company_has_documents(counts: dict[str, int]) -> None` — падает, если у компании ноль документов во всех разделах
   - `write_output(out_dir: pathlib.Path, manifest: dict, documents: list[dict[str, str]]) -> None`
   - CLI: `login` и `collect` (флаги `--companies`, `--sections`, `--out`, `--wait`).
 
@@ -59,9 +61,17 @@
 ```bash
 mkdir -p scripts/testdata/edisclosure
 cp build/edisclosure-probe/raw/collect/PLZL_IFRS.html scripts/testdata/edisclosure/PLZL_IFRS.html
+python3 - <<'PY'
+import pathlib, re
+p = pathlib.Path("scripts/testdata/edisclosure/PLZL_IFRS.html")
+html = p.read_text(encoding="utf-8")
+html = re.sub(r'(name="token"\s+value=")[^"]*(")', r'\1REDACTED\2', html)
+html = re.sub(r'(name="__RequestVerificationToken"[^>]*value=")[^"]*(")', r'\1REDACTED\2', html)
+p.write_text(html, encoding="utf-8")
+PY
 ```
 
-Фикстура — настоящая страница раздела IFRS (112 КБ), не синтетическая.
+Фикстура — настоящая страница раздела IFRS (112 КБ), не синтетическая. Антифорджери-токены обезличены (значения заменены на `REDACTED`), потому что они могут быть привязаны к сессии; разметка и ссылки не меняются.
 
 - [ ] **Step 2: Написать падающий тест разбора**
 
@@ -145,16 +155,27 @@ class ValidationTest(unittest.TestCase):
         self.assertEqual(m["document_count"], 1)
         self.assertEqual(m["documents_file"], "documents.jsonl")
         self.assertEqual(m["schema_version"], 1)
+
+    def test_empty_sections_by_company(self):
+        companies = [{"ticker": "PLZL"}, {"ticker": "SBER"}]
+        docs = [{"ticker": "PLZL", "section": "IFRS"}]
+        got = ec.empty_sections_by_company(companies, list(ec.SECTIONS), docs)
+        self.assertEqual(got, [{"ticker": "PLZL", "sections": ["RAS", "AFFILIATES", "AGM"]},
+                               {"ticker": "SBER", "sections": list(ec.SECTIONS)}])
+
+    def test_company_without_documents_rejected(self):
+        with self.assertRaisesRegex(ValueError, "SBER"):
+            ec.ensure_company_has_documents({"PLZL": 211, "SBER": 0, "CHMF": 56})
 ```
 
 - [ ] **Step 7: Реализовать валидацию, дедупликацию и сборку манифеста**
 
-`validate_document` проверяет: ticker в `companies`; `section` из `SECTIONS`; `doc_type` непустой; `fileid` только цифры; URL — `https`, host `e-disclosure.ru`, path `/portal/FileLoad.ashx`, query `Fileid` совпадает. `dedupe_documents` схлопывает одинаковые ключи и падает на расхождении любого поля. `build_manifest` ставит `schema_version: 1`, `document_count = len(documents)`, `documents_file: "documents.jsonl"`.
+`validate_document` проверяет: ticker в `companies`; `section` из `SECTIONS`; `doc_type` непустой; `fileid` только цифры; URL — `https`, host `e-disclosure.ru` (без порта и userinfo), path `/portal/FileLoad.ashx`, query `Fileid` совпадает. `dedupe_documents` схлопывает одинаковые ключи и падает на расхождении любого поля. `build_manifest` ставит `schema_version: 1`, `document_count = len(documents)`, `documents_file: "documents.jsonl"`. `empty_sections_by_company` возвращает пустые разделы по компаниям (в порядке компаний и разделов), `ensure_company_has_documents` падает, если у компании ноль документов во всех запрошенных разделах.
 
 - [ ] **Step 8: Реализовать CLI и атомарную запись**
 
 - `login`: `sync_playwright().chromium.launch_persistent_context(user_data_dir="build/edisclosure-profile", channel="chrome", headless=False, args=["--disable-blink-features=AutomationControlled"])`, открыть карточку PLZL, ждать маркер контента, при капче ждать `--wait` секунд.
-- `collect`: тот же профиль; для каждой компании открыть `https://e-disclosure.ru/portal/company.aspx?id=<id>`, взять `name` из `h1`/`table.company-table`; для каждого раздела открыть `https://e-disclosure.ru/portal/files.aspx?id=<id>&type=<type_id>`, ждать `files-table`, разобрать, добавить `ticker` и `company_id`; дедуплицировать; `write_output`.
+- `collect`: тот же профиль; для каждой компании открыть `https://e-disclosure.ru/portal/company.aspx?id=<id>`, взять `name` из `h1`/`table.company-table`; для каждого раздела открыть `https://e-disclosure.ru/portal/files.aspx?id=<id>&type=<type_id>`. Если страница содержит `files-table` — разобрать и добавить `ticker`/`company_id`. Если вместо таблицы карточка компании (редирект на пустой раздел) — записать раздел в `empty_sections` и продолжить. Если нет ни таблицы, ни карточки — ошибка (неизвестная страница), манифест не писать. После обхода компании вызвать `ensure_company_has_documents`; дедуплицировать; `manifest["empty_sections"] = empty_sections_by_company(...)`; `write_output`.
 - `write_output`: `documents.jsonl.tmp` → `documents.jsonl`, затем `manifest.json.tmp` → `manifest.json` (манифест последним). Каталог выхода создаётся, профиль — `build/edisclosure-profile` с режимом 0700.
 - Капча: если маркер капчи на странице — писать инструкцию и ждать; по таймауту — `SystemExit` с ошибкой, манифест не перезаписывать.
 
