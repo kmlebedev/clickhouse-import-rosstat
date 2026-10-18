@@ -75,8 +75,9 @@ def json_safe(value):
     """Рекурсивно приводит значение к JSON-совместимому виду.
 
     `date`/`datetime` → `isoformat()`, `Path`/`UUID` → `str`, tuple → list,
-    `NaN`/`±Inf` → `None`. Последнее важно для метрик: `rmse=NaN` не должен
-    ронять запись паспорта, но и невалидный JSON в колонку попадать не должен.
+    `NaN`/`±Inf` → `None`, объекты с `.item()` (numpy-скаляры) — рекурсивно
+    через `.item()`. `NaN` в метриках не должен ронять запись паспорта, но и
+    невалидный JSON в колонку попадать не должен.
     """
     if isinstance(value, dict):
         return {str(key): json_safe(item) for key, item in value.items()}
@@ -88,6 +89,15 @@ def json_safe(value):
         return str(value)
     if isinstance(value, float) and not math.isfinite(value):
         return None
+    # numpy-скаляры (`np.int64`, `np.float32`, `np.bool_`, ...) не знают
+    # json.dumps, но отдают питоновский примитив через `.item()`. Проверка по
+    # протоколу, а не по типу: numpy остаётся необязательной зависимостью
+    # (`np.float64` — подкласс float и сюда не доходит, а `np.float32` — да).
+    item = getattr(value, "item", None)
+    if callable(item):
+        converted = item()
+        if converted is not value:  # защита от `.item() -> self`
+            return json_safe(converted)
     return value
 
 
@@ -109,6 +119,13 @@ def _ch_safe(value):
         return value.isoformat()
     if isinstance(value, (Path, uuid.UUID)):
         return str(value)
+    # numpy-скаляры (`np.int64`, `np.float32`, ...): в JSONEachRow они обязаны
+    # уйти примитивом, иначе json.dumps поднимет TypeError.
+    item = getattr(value, "item", None)
+    if callable(item):
+        converted = item()
+        if converted is not value:
+            return _ch_safe(converted)
     # NaN/±Inf НЕ заменяются на None: колонки Float64 в ClickHouse не
     # Nullable, и молчаливая подмена скрыла бы дефект. `json.dumps(...,
     # allow_nan=False)` ниже поднимет ValueError — как требует контракт
@@ -343,9 +360,41 @@ class ExperimentRun:
             })
         return rows
 
+    def _local_dir(self) -> Path:
+        """Каталог локального fallback: `ML_LOCAL_DIR` или `build/ml-runs`."""
+        return Path(os.environ.get("ML_LOCAL_DIR") or DEFAULT_LOCAL_DIR) / self.run_id
+
+    def _write_minimal_run(self, notes: str, finished_at: datetime) -> None:
+        """Пишет минимальный безопасный паспорт без пользовательских данных.
+
+        Используется, когда полный `run_row` не удалось даже сериализовать
+        (или записать): поля берутся только из самой обвязки прогона, поэтому
+        сбой `json.dumps` здесь невозможен, и паспорт не теряется.
+        """
+        directory = self._local_dir()
+        payload = {
+            "run_id": self.run_id,
+            "experiment": self.experiment,
+            "run_name": self.run_name,
+            "status": "failed",
+            "started_at": self.started_at,
+            "finished_at": finished_at,
+            "notes": notes,
+        }
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / "run.json").write_text(
+                canonical_json(payload), encoding="utf-8"
+            )
+        except OSError as local_exc:
+            log.warning(
+                "минимальный паспорт прогона %s тоже не записался: %s",
+                self.run_id, local_exc,
+            )
+
     def _write_local(self, run_row: dict, prediction_rows: list, exc: Exception) -> None:
         """Fallback: run.json и predictions.jsonl рядом, без падения наружу."""
-        directory = Path(os.environ.get("ML_LOCAL_DIR") or DEFAULT_LOCAL_DIR) / self.run_id
+        directory = self._local_dir()
         log.warning(
             "запись прогона %s в ClickHouse не удалась (%s); локальная копия: %s",
             self.run_id, exc, directory,
@@ -358,10 +407,15 @@ class ExperimentRun:
             (directory / "predictions.jsonl").write_text(
                 json_each_row(prediction_rows), encoding="utf-8"
             )
-        except OSError as local_exc:
+        except (OSError, TypeError, ValueError) as local_exc:
             log.warning(
-                "локальная копия прогона %s тоже не записалась: %s",
+                "локальная копия прогона %s не записалась (%s); "
+                "пишу минимальный паспорт",
                 self.run_id, local_exc,
+            )
+            self._write_minimal_run(
+                f"local fallback failed: {type(local_exc).__name__}: {local_exc}",
+                datetime.now(),
             )
 
     def finish(self, status: str = "finished", notes: str = "") -> str:
@@ -370,8 +424,9 @@ class ExperimentRun:
         Сначала одним batch `ml_predictions` (если они есть), затем `ml_runs`.
         Паспорт пишется ПОСЛЕДНИМ, поэтому сбой вставки предсказаний не может
         оставить `finished`-паспорт без фолдов: в этом случае паспорт не
-        пишется вовсе. Ошибка ClickHouse не роняет прогон — строка паспорта и
-        предсказания сохраняются локально, а вызывающий получает `"local"`.
+        пишется вовсе. Ни ошибка ClickHouse, ни ошибка сериализации конфига
+        или метрик не роняют прогон: полный (или минимальный безопасный)
+        паспорт сохраняется локально, а вызывающий получает `"local"`.
         """
         if self._finished:
             return self._result
@@ -382,14 +437,34 @@ class ExperimentRun:
             return self._result
 
         finished_at = datetime.now()
-        run_row = self._run_row(status, notes, finished_at)
-        prediction_rows = self._prediction_rows(finished_at)
+        run_row = None
+        prediction_rows: list = []
         try:
+            run_row = self._run_row(status, notes, finished_at)
+            prediction_rows = self._prediction_rows(finished_at)
             if prediction_rows:
                 ch_exec(insert_sql("ml_predictions", prediction_rows))
             ch_exec(insert_sql("ml_runs", [run_row]))
+        except (TypeError, ValueError) as exc:
+            # Конфиг/метрики могут содержать объект, который не умеет
+            # сериализовать даже `json_safe` (например, произвольный класс).
+            # Полный паспорт построить нельзя, но минимальный — можно:
+            # пользовательских значений в нём нет, поэтому сбой не повторится.
+            note = f"serialization failed: {type(exc).__name__}: {exc}"
+            log.warning(
+                "прогон %s не сериализован (%s); минимальный локальный паспорт",
+                self.run_id, note,
+            )
+            self._write_minimal_run(note, finished_at)
+            self._result = "local"
+            return self._result
         except (ClickHouseError, OSError) as exc:
-            self._write_local(run_row, prediction_rows, exc)
+            if run_row is None:
+                self._write_minimal_run(
+                    f"{type(exc).__name__}: {exc}", finished_at
+                )
+            else:
+                self._write_local(run_row, prediction_rows, exc)
             self._result = "local"
             return self._result
 
