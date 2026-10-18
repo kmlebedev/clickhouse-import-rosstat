@@ -1,8 +1,9 @@
 # Деплой на staging (Фаза 1)
 
-Артефакты деплоя на хост `palmshell` (Ubuntu 24.04, x86_64, вход `root`). Разворачивает три
+Артефакты деплоя на хост `palmshell` (Ubuntu 24.04, x86_64, вход `root`). Разворачивает четыре
 компонента: бинарник `clickhouse-import-rosstat`, планировщик `dagu`, MCP-сервер
-`mcp-clickhouse` (HTTP, read-only). ClickHouse на хосте **не трогается**; у Grafana — только
+`mcp-clickhouse` (HTTP, read-only) и MLflow (SQLite + локальные артефакты). ClickHouse на хосте
+**не трогается**; у Grafana — только
 файл провижининга датасорса для дашбордов `gold-thesis` и `key-rate-publications` (раздел
 [«Grafana на staging»](#grafana-на-staging-датасорс-провижининг-и-деплой-дашбордов)),
 сам сервис не перезапускается.
@@ -17,6 +18,8 @@
 | `/root/.local/bin/dagu` | планировщик (+ `.bak` для отката) |
 | `/etc/systemd/system/dagu.service` | юнит dagu (копия из этого каталога) |
 | `/etc/systemd/system/mcp-clickhouse.service` | юнит MCP (копия из этого каталога) |
+| `/etc/systemd/system/mlflow.service` | юнит MLflow (копия из этого каталога) |
+| `/var/lib/mlflow/` | SQLite `mlflow.db` и артефакты MLflow (бэкап — см. «MLflow на staging») |
 | `/etc/clickhouse-import-rosstat.env` | секреты, права `600`, **вне git** |
 | `/root/dagu/` | DAG-файлы из `dagu/` репозитория |
 
@@ -75,7 +78,7 @@ README репозитория).
 ## Обновление
 
 ```bash
-make upgrade-staging     # только dagu и mcp-clickhouse, до версий из репозитория
+make upgrade-staging     # dagu, mcp-clickhouse и mlflow, до версий из репозитория
 ```
 
 `apt upgrade` сюда **не входит**: ClickHouse (данные) и Grafana обновляются вручную.
@@ -90,7 +93,43 @@ CLICKHOUSE_PASSWORD=<пароль kimi_reader> make mcp-check MCP_CHECK_HOST=127
 
 Smoke-проверки внутри `deploy-staging`: наличие бинарей и DAG-файлов, непустой токен (до
 включения сервисов), затем `dagu` отвечает, MCP `/health` = 200, MCP **без токена → 401**,
-MCP с токеном отвечает.
+MCP с токеном отвечает, MLflow `/health` = 200.
+
+## MLflow на staging
+
+Трекер экспериментов и реестр моделей (infra/4.2). Хранилище — SQLite
+`sqlite:////var/lib/mlflow/mlflow.db` и локальный каталог артефактов `/var/lib/mlflow/artifacts`;
+`--workers 1`, потому что у SQLite один писатель. Сервер слушает только `127.0.0.1:5000`,
+**аутентификации нет** — наружу порт не выставляется, доступ только через ssh-туннель.
+
+```bash
+# туннель; UI и REST API — http://localhost:5000
+ssh -N -L 5000:127.0.0.1:5000 palmshell
+
+# состояние и логи
+ssh palmshell 'systemctl status mlflow'
+ssh palmshell 'journalctl -u mlflow -n 50 --no-pager'
+```
+
+Бэкап (обязателен до обновления версии). `.backup` — корректный онлайн-бэкап SQLite:
+копирование файла живой БД `cp`/`scp` может дать битую копию.
+
+```bash
+ssh palmshell "sqlite3 /var/lib/mlflow/mlflow.db \".backup '/root/mlflow-$(date +%F).db'\""
+ssh palmshell 'tar czf /root/mlflow-artifacts-$(date +%F).tgz -C /var/lib/mlflow artifacts'
+```
+
+Обновление версии: бэкап → поменять версию **в двух местах** — `ExecStart` в
+`deploy/staging/mlflow.service` и `MLFLOW_VERSION` в Makefile (они обязаны совпадать) →
+`make deploy-staging-mlflow` → при необходимости миграции схемы выполнить
+
+```bash
+ssh palmshell '/root/.local/bin/uv run --with mlflow==<версия> --python 3.12 \
+  mlflow db upgrade sqlite:////var/lib/mlflow/mlflow.db'
+```
+
+Dev-сервер (`make mlflow-up`) хранит БД и артефакты в `build/mlflow/`; staging и dev
+независимы — переносить данные между ними не нужно.
 
 ## Grafana на staging: датасорс-провижининг и деплой дашбордов
 
@@ -175,15 +214,19 @@ Grafana и systemd на хосте цель **не трогает**: тольк�
 ```bash
 ssh palmshell 'journalctl -u dagu -n 50 --no-pager'
 ssh palmshell 'journalctl -u mcp-clickhouse -n 50 --no-pager'
+ssh palmshell 'journalctl -u mlflow -n 50 --no-pager'
 
 # откат dagu на предыдущую версию
 ssh palmshell 'mv /root/.local/bin/dagu.bak /root/.local/bin/dagu && systemctl restart dagu'
 
 # откат mcp-clickhouse: вернуть прежний MCP_VERSION в Makefile и повторить make deploy-staging-mcp
+
+# откат mlflow: бэкап (см. «MLflow на staging»), вернуть прежнюю версию в юните и Makefile,
+# повторить make deploy-staging-mlflow; откат схемы SQLite не автоматизирован
 ```
 
 ## Что осознанно не делается
 
 Юнит `clickhouse-import-rosstat.service` не создаётся: импортёр — короткоживущий процесс,
-его запускают DAG'и. Публикация наружу (Caddy, TLS) — следующая фаза; сейчас оба сервиса
+его запускают DAG'и. Публикация наружу (Caddy, TLS) — следующая фаза; сейчас все сервисы
 слушают только `127.0.0.1`.
