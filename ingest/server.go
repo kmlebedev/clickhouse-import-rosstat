@@ -156,10 +156,9 @@ func (s *Server) handleGoldForecasts(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleKeyRateForecast — единственный путь записи прогноза ключевой ставки:
-// одна строка журнала за запрос. Метаданные (probabilities/data_version/model/
-// prompt_version) пока не имеют колонок в forecast_log (спека §4/§7), поэтому
-// пишутся в лог ingest: молча их терять нельзя, а контракт writer'а и #189 уже
-// полный — добавление колонок follow-up'ом не потребует менять клиента.
+// одна строка журнала за запрос. probabilities/data_version/model/prompt_version
+// пишутся в одноимённые колонки forecast_log: это контракт публикации
+// (KEY_RATE_PUBLICATIONS §7 п. 5, §8), а не метаданные «на будущее».
 func (s *Server) handleKeyRateForecast(w http.ResponseWriter, r *http.Request) {
 	var forecast KeyRateForecast
 	if status, err := decodeBody(w, r, &forecast); err != nil {

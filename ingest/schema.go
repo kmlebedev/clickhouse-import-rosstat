@@ -33,13 +33,26 @@ const forecastLogDdl = `CREATE TABLE IF NOT EXISTS forecast_log (
     metric LowCardinality(String),   -- 'xau_q_avg','fed_decision','nav','cbr_rate:<track>'
     predicted Float64, actual Nullable(Float64),
     error_pct Nullable(Float64),
-    error_bp Nullable(Float64)       -- ошибка в базисных пунктах (только cbr_rate*)
+    error_bp Nullable(Float64),      -- ошибка в базисных пунктах (только cbr_rate*)
+    probabilities String DEFAULT '{}',      -- JSON распределения: {"cut":..,"hold":..,"hike":..}
+    model LowCardinality(String) DEFAULT '', -- трек/модель прогноза (taylor, ordered_logit, llm, ...)
+    data_version String DEFAULT '',         -- версия набора данных прогноза
+    prompt_version UInt16 DEFAULT 0         -- редакция промпта LLM-трека
 ) ENGINE = ReplacingMergeTree ORDER BY (metric, forecast_date);`
 
-// forecastLogAddErrorBp — миграция живой таблицы: CREATE TABLE IF NOT EXISTS уже
-// созданную таблицу не меняет, поэтому колонка error_bp добавляется отдельным
-// идемпотентным ALTER при каждом старте ingest (прецедент — news_watch/craw/gost.go).
-const forecastLogAddErrorBp = `ALTER TABLE forecast_log ADD COLUMN IF NOT EXISTS error_bp Nullable(Float64)`
+// forecastLogMigrations — миграции живой таблицы: CREATE TABLE IF NOT EXISTS уже
+// созданную таблицу не меняет, поэтому новые колонки добавляются идемпотентными
+// ALTER при каждом старте ingest (прецедент — news_watch/craw/gost.go).
+// Метаданные прогноза (probabilities/model/data_version/prompt_version) входят в
+// контракт публикации (KEY_RATE_PUBLICATIONS.md §7 п. 5, §8), а error_bp — в
+// контракт ошибки ставки; старые строки получают значения по умолчанию.
+var forecastLogMigrations = []string{
+	`ALTER TABLE forecast_log ADD COLUMN IF NOT EXISTS error_bp Nullable(Float64)`,
+	`ALTER TABLE forecast_log ADD COLUMN IF NOT EXISTS probabilities String DEFAULT '{}'`,
+	`ALTER TABLE forecast_log ADD COLUMN IF NOT EXISTS model LowCardinality(String) DEFAULT ''`,
+	`ALTER TABLE forecast_log ADD COLUMN IF NOT EXISTS data_version String DEFAULT ''`,
+	`ALTER TABLE forecast_log ADD COLUMN IF NOT EXISTS prompt_version UInt16 DEFAULT 0`,
+}
 
 const macroSeriesDdl = `CREATE TABLE IF NOT EXISTS macro_series (
     source LowCardinality(String),   -- 'fred','bls','bea','eia','manual','webbridge','imf','wgc','bold','cbr_survey','cbr_mo_br'
@@ -72,16 +85,18 @@ const goldForecastsDdl = `CREATE TABLE IF NOT EXISTS gold_forecasts (
 
 // ensureTables создаёт таблицы контура прогноза (идемпотентно):
 // четыре канонические из ARCHITECTURE.md §6.2 и gold_prices (копия из gold/gold.go).
-// После CREATE выполняется идемпотентный ALTER: forecast_log.error_bp появился позже
-// самой таблицы, и на живой БД CREATE IF NOT EXISTS его не добавит.
+// После CREATE выполняются идемпотентные ALTER'ы: колонки forecast_log появлялись
+// позже самой таблицы, и на живой БД CREATE IF NOT EXISTS их не добавит.
 func ensureTables(ctx context.Context, conn driver.Conn) error {
 	for _, ddl := range []string{modelRunsDdl, forecastLogDdl, macroSeriesDdl, goldPricesDdl, goldForecastsDdl} {
 		if err := conn.Exec(ctx, ddl); err != nil {
 			return err
 		}
 	}
-	if err := conn.Exec(ctx, forecastLogAddErrorBp); err != nil {
-		return err
+	for _, migration := range forecastLogMigrations {
+		if err := conn.Exec(ctx, migration); err != nil {
+			return err
+		}
 	}
 	return nil
 }
