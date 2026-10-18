@@ -85,6 +85,10 @@ def sha256_text(text: str) -> str:
 # заменяется подчёркиванием, чтобы метрика не потерялась из-за имени.
 _METRIC_KEY_RE = re.compile(r"[^A-Za-z0-9_.-]")
 
+# Ограничение MLflow на длину значения param: длинную строку сервер отвергнет,
+# а исключение на старте закрыло бы весь приёмник (и оставило orphan-run).
+_MLFLOW_PARAM_MAX = 6000
+
 
 def _sanitize_key(key: str) -> str:
     """Имя метрики/параметра в алфавите MLflow."""
@@ -132,8 +136,22 @@ def flatten_metrics(metrics: dict) -> dict:
         if not math.isfinite(value):
             continue
         name = _sanitize_key(key)
-        if name:
-            flat[name] = float(value)
+        if not name:
+            continue
+        if name in flat:
+            # `cv rmse` и `cv_rmse` после санитизации неразличимы; вторую
+            # метрику нельзя молча перезаписать — суффикс сохраняет обе.
+            base = name
+            suffix = 2
+            while name in flat:
+                name = f"{base}_{suffix}"
+                suffix += 1
+            log.warning(
+                "mlflow: ключ метрики %r совпал после санитизации; "
+                "записан как %r",
+                key, name,
+            )
+        flat[name] = float(value)
     return flat
 
 
@@ -412,7 +430,9 @@ class ExperimentRun:
 
         Лимит длины param (6000 символов) и требование скалярности не
         позволяют отправить конфиг целиком; списки/словари и `None`
-        пропускаются, неконечные числа — тоже.
+        пропускаются, неконечные числа — тоже. Строка длиннее лимита
+        пропускается с warning: `log_params` на ней поднял бы исключение и
+        закрыл бы весь приёмник на старте.
         """
         if not isinstance(self.config, dict):
             return {}
@@ -425,8 +445,15 @@ class ExperimentRun:
             if isinstance(value, float) and not math.isfinite(value):
                 continue
             name = _sanitize_key(key)
-            if name:
-                params[name] = value
+            if not name:
+                continue
+            if isinstance(value, str) and len(value) > _MLFLOW_PARAM_MAX:
+                log.warning(
+                    "mlflow: параметр %s длиннее %d символов — пропущен",
+                    name, _MLFLOW_PARAM_MAX,
+                )
+                continue
+            params[name] = value
         return params
 
     def _start_mlflow(self) -> None:
@@ -442,7 +469,10 @@ class ExperimentRun:
             return
         try:
             import mlflow
-        except ImportError as exc:
+        except Exception as exc:
+            # Не только ImportError: конфликт protobuf/pydantic в транзитивных
+            # зависимостях всплывает TypeError/AttributeError уже при импорте.
+            # Любая такая ошибка отключает приёмник, а не роняет эксперимент.
             log.warning("mlflow недоступен: %s", exc)
             return
 
