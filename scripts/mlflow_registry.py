@@ -18,7 +18,9 @@
 
 Имя модели (`--name` у `register`/`list`) ограничено набором `[A-Za-z0-9._-]`:
 парсер `filter_string` MLflow не разэкранирует `\'`/`\\`, поэтому имена с
-кавычкой или обратным слэшем отвергаются с кодом 1 до вызова MLflow.
+кавычкой или обратным слэшем отвергаются с кодом 1 до вызова MLflow. При
+листинге без `--name` посторонние имена из реестра не подставляются в
+`filter_string`, а пропускаются с warning.
 
 Тесты — stdlib-only, без пакета mlflow и без сети:
 
@@ -26,11 +28,14 @@
 """
 
 import argparse
+import logging
 import os
 import re
 import sys
 
 DEFAULT_TRACKING_URI = "http://127.0.0.1:5000"
+
+log = logging.getLogger(__name__)
 
 CHALLENGER_ALIAS = "challenger"
 CHAMPION_ALIAS = "champion"
@@ -180,8 +185,10 @@ def list_models(client, name=None) -> list:
 
     Без `name` обходит все зарегистрированные модели; с `name` — только её
     (отсутствующая модель даёт `MlflowException`, CLI завершается кодом 1).
-    Имена проверяются allowlist-ом `[A-Za-z0-9._-]` до подстановки в
-    `filter_string`.
+    Allowlist `[A-Za-z0-9._-]` проверяет только имя, заданное пользователем:
+    чужие имена из реестра не подставляются в `filter_string`, а
+    пропускаются с warning — одна посторонняя модель не должна ломать
+    `make mlflow-models` для всех остальных.
     """
     if name is not None:
         _validate_model_name(name)
@@ -189,13 +196,22 @@ def list_models(client, name=None) -> list:
         names = [name]
     else:
         models = client.search_registered_models()
-        names = sorted(
-            getattr(model, "name", str(model)) for model in models
-        )
+        names = []
+        for model in models:
+            model_name = getattr(model, "name", str(model))
+            if not MODEL_NAME_RE.fullmatch(model_name):
+                log.warning(
+                    "registry: модель %r пропущена — имя вне allowlist "
+                    "[A-Za-z0-9._-] и не может быть подставлено в "
+                    "filter_string",
+                    model_name,
+                )
+                continue
+            names.append(model_name)
+        names.sort()
 
     rows = []
     for model_name in names:
-        _validate_model_name(model_name)
         versions = client.search_model_versions(f"name='{model_name}'")
         for version in sorted(versions, key=_version_sort_key):
             rows.append(

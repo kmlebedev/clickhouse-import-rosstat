@@ -88,6 +88,9 @@ def ch_datetime(value) -> str:
 
     `T` заменяется пробелом, суффикс таймзоны (`Z`, `+03:00`, `-0500`)
     отбрасывается, дробная часть секунд отсекается первыми 19 символами.
+    Таймзона **не конвертируется**: `10:00:00Z` и `10:00:00+03:00` дают одно
+    и то же настенное время `10:00:00` — так требует схема `DateTime`
+    ClickHouse (спека §6.4); третьи стороны с `Z`/`+03:00` теряют смещение.
     `None` и пустая строка возвращаются как есть: `ml_experiment` может не
     заполнить необязательное поле, и подставлять выдуманную дату нельзя.
     """
@@ -407,16 +410,29 @@ def main(argv=None) -> int:
             if since_ms is not None else ""
         )
         try:
+            # DESC — чтобы при упоре в --limit повторные экспорты сходились на
+            # самых новых прогонах, а не вечно отдавали один и тот же старый
+            # батч. `limit` с сервера остаётся ограничением выборки.
             runs = client.search_runs(
                 [registered.experiment_id],
                 filter_string=filter_string,
-                order_by=["attributes.start_time ASC"],
+                order_by=["attributes.start_time DESC"],
                 max_results=args.limit,
             )
         except Exception as exc:
             log.error("эксперимент %s: search_runs: %s", experiment, exc)
             failed += 1
             continue
+
+        if len(runs) == args.limit:
+            # Сервер не отдаёт признак «есть ещё»: ровно limit строк — это
+            # либо точное попадание, либо усечение. Предупреждаем всегда,
+            # чтобы «exported N runs» не выглядел полным экспортом.
+            log.warning(
+                "эксперимент %s: выбрано %d прогонов = --limit, выборка может "
+                "быть обрезана (увеличьте --limit или используйте --since)",
+                experiment, len(runs),
+            )
 
         for run in runs:
             info = run.info

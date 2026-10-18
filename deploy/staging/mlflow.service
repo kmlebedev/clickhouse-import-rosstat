@@ -5,13 +5,17 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-# MLFLOW_VERSION must match Makefile MLFLOW_VERSION.
+# MLFLOW_VERSION must match Makefile MLFLOW_VERSION (deploy-staging-mlflow greps it).
 StateDirectory=mlflow
+# Artifact store: --artifacts-destination is the directory the server proxies uploads
+# into; --default-artifact-root is intentionally NOT set, so new experiments get the
+# proxied root mlflow-artifacts:/ (with an explicit local root --serve-artifacts would
+# not proxy, and a remote client would write to a path that does not exist on its host).
 ExecStartPre=/bin/mkdir -p /var/lib/mlflow/artifacts
 ExecStart=/root/.local/bin/uv run --with mlflow==3.17.1 --python 3.12 \
   mlflow server --host 127.0.0.1 --port 5000 --workers 1 \
   --backend-store-uri sqlite:////var/lib/mlflow/mlflow.db \
-  --default-artifact-root /var/lib/mlflow/artifacts --serve-artifacts
+  --artifacts-destination /var/lib/mlflow/artifacts --serve-artifacts
 Restart=always
 RestartSec=10
 StandardOutput=journal

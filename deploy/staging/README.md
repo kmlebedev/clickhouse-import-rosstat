@@ -98,8 +98,15 @@ MCP с токеном отвечает, MLflow `/health` = 200.
 ## MLflow на staging
 
 Трекер экспериментов и реестр моделей (infra/4.2). Хранилище — SQLite
-`sqlite:////var/lib/mlflow/mlflow.db` и локальный каталог артефактов `/var/lib/mlflow/artifacts`;
-`--workers 1`, потому что у SQLite один писатель. Сервер слушает только `127.0.0.1:5000`,
+`sqlite:////var/lib/mlflow/mlflow.db` и каталог артефактов `/var/lib/mlflow/artifacts`,
+который сервер проксирует: юнит запускает `mlflow server` с
+`--artifacts-destination /var/lib/mlflow/artifacts --serve-artifacts` и **без**
+`--default-artifact-root` (новый эксперимент получает корень `mlflow-artifacts:/`,
+и upload идёт через сервер — это единственный корректный режим для клиента,
+подключённого по SSH-туннелю). Если БД создана раньше со старым локальным
+artifact root, у default experiment остался локальный `artifact_location` —
+сбросьте/пересоздайте default experiment или заведите новый. `--workers 1`,
+потому что у SQLite один писатель. Сервер слушает только `127.0.0.1:5000`,
 **аутентификации нет** — наружу порт не выставляется, доступ только через ssh-туннель.
 
 ```bash
@@ -121,10 +128,11 @@ ssh palmshell "tar czf /root/mlflow-artifacts-$STAMP.tgz -C /var/lib/mlflow arti
 ```
 
 Обновление версии: бэкап → поменять версию **в двух местах** — `ExecStart` в
-`deploy/staging/mlflow.service` и `MLFLOW_VERSION` в Makefile (они обязаны совпадать) →
-`make deploy-staging-mlflow` (он копирует юнит и греет кэш uv, но **не перезапускает** уже
-работающий сервис) → остановить сервис, выполнить миграцию на остановленной БД, запустить
-сервис заново и прогнать smoke:
+`deploy/staging/mlflow.service` и `MLFLOW_VERSION` в Makefile (они обязаны совпадать;
+`make deploy-staging-mlflow` перед `scp` проверяет это `grep`-ом и падает при
+расхождении) → `make deploy-staging-mlflow` (он копирует юнит и греет кэш uv, но
+**не перезапускает** уже работающий сервис) → остановить сервис, выполнить миграцию
+на остановленной БД, запустить сервис заново и прогнать smoke:
 
 ```bash
 make deploy-staging-mlflow
@@ -137,7 +145,9 @@ make deploy-staging-smoke
 
 `systemctl enable --now` (его выполняет `deploy-staging`) не перезапускает уже запущенный
 сервис: без stop/start новый юнит не вступит в силу, а `mlflow db upgrade` под живым сервером
-трогает ту же SQLite, которой владеет процесс (один писатель).
+трогает ту же SQLite, которой владеет процесс (один писатель). `make upgrade-staging`
+для смены версии MLflow **недостаточно** — он только копирует юнит и перезапускает сервис;
+всегда используйте последовательность stop → `db upgrade` → start выше.
 
 Dev-сервер (`make mlflow-up`) хранит БД и артефакты в `build/mlflow/`; staging и dev
 независимы — переносить данные между ними не нужно.

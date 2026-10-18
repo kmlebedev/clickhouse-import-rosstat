@@ -467,6 +467,12 @@ class ExperimentRun:
         uri = os.environ.get("MLFLOW_TRACKING_URI")
         if not self.enabled or not uri:
             return
+        # Прямой запуск скрипта (без make) не получает MLFLOW_HTTP_ENV из
+        # Makefile: те же короткие таймауты ставятся здесь, чтобы недоступный
+        # сервер не подвешивал прогон. setdefault не перекрывает явные
+        # настройки пользователя/`make`.
+        os.environ.setdefault("MLFLOW_HTTP_REQUEST_TIMEOUT", "10")
+        os.environ.setdefault("MLFLOW_HTTP_REQUEST_MAX_RETRIES", "2")
         try:
             import mlflow
         except Exception as exc:

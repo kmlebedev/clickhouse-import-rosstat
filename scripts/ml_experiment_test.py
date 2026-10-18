@@ -42,7 +42,10 @@ from ml_experiment import (
 # обязаны изолировать все: иначе `ML_LOG=1` из окружения разработчика
 # включал бы запись там, где тест ждёт «выключено», а `MLFLOW_TRACKING_URI`
 # уводил бы прогон в живой MLflow вместо фейка.
-_ML_ENV_VARS = ("ML_LOG", "ML_RUN_NAME", "ML_LOCAL_DIR", "MLFLOW_TRACKING_URI")
+_ML_ENV_VARS = (
+    "ML_LOG", "ML_RUN_NAME", "ML_LOCAL_DIR", "MLFLOW_TRACKING_URI",
+    "MLFLOW_HTTP_REQUEST_TIMEOUT", "MLFLOW_HTTP_REQUEST_MAX_RETRIES",
+)
 
 
 class _env:
@@ -799,6 +802,69 @@ class MlflowSinkTest(unittest.TestCase):
             runs_sql = ch_exec.call_args_list[-1].args[0]
             _, rows = _sql_payload(runs_sql)
             self.assertEqual(rows[0]["run_id"], CANONICAL_MLFLOW_RUN_ID)
+
+    def test_direct_run_sets_http_timeout_defaults(self):
+        # M10: прямой запуск скрипта (без make) получает те же короткие
+        # таймауты, что MLFLOW_HTTP_ENV; недоступный сервер не подвешивает
+        # прогон на дефолтных ретраях MLflow.
+        fake = FakeMlflow()
+        with _mlflow_env(), patch.dict(sys.modules, {"mlflow": fake}), \
+                patch.object(me, "ch_exec"):
+            start_run("exp", "run", {}, date(2026, 10, 18), {}, [])
+            self.assertEqual(
+                os.environ.get("MLFLOW_HTTP_REQUEST_TIMEOUT"), "10"
+            )
+            self.assertEqual(
+                os.environ.get("MLFLOW_HTTP_REQUEST_MAX_RETRIES"), "2"
+            )
+
+    def test_http_timeout_env_is_not_overridden(self):
+        # setdefault, а не присваивание: явные настройки пользователя/`make`
+        # (и MLFLOW_HTTP_ENV) остаются в силе.
+        fake = FakeMlflow()
+        with _mlflow_env(
+                MLFLOW_HTTP_REQUEST_TIMEOUT="30",
+                MLFLOW_HTTP_REQUEST_MAX_RETRIES="5"), \
+                patch.dict(sys.modules, {"mlflow": fake}), \
+                patch.object(me, "ch_exec"):
+            start_run("exp", "run", {}, date(2026, 10, 18), {}, [])
+            self.assertEqual(
+                os.environ.get("MLFLOW_HTTP_REQUEST_TIMEOUT"), "30"
+            )
+            self.assertEqual(
+                os.environ.get("MLFLOW_HTTP_REQUEST_MAX_RETRIES"), "5"
+            )
+
+    def test_clickhouse_password_sentinel_never_reaches_mlflow(self):
+        # M8 (спека §8): пароль из окружения не попадает ни в env_json
+        # паспорта, ни в теги/params MLflow. Полный конфиг намеренно лежит в
+        # run.json, поэтому sentinel в config не кладём — проверяем утечку env.
+        sentinel = "sentinel-password-do-not-leak"
+        fake = FakeMlflow()
+        with _mlflow_env(), \
+                patch.dict(os.environ, {"CLICKHOUSE_PASSWORD": sentinel}), \
+                patch.dict(sys.modules, {"mlflow": fake}), \
+                patch.object(me, "ch_exec"):
+            run = start_run(
+                "cpi_nowcast", "run", {"alpha": 1},
+                date(2026, 10, 18), {}, [],
+            )
+            self.assertEqual(run.finish("finished"), "clickhouse")
+
+        tags = fake.calls_of("start_run")[0][2]["tags"]
+        for tag, value in tags.items():
+            self.assertNotIn(sentinel, value, f"tag {tag}")
+        for call in fake.calls_of("log_params"):
+            self.assertNotIn(sentinel, json.dumps(call[1][0]))
+
+        texts = {call[1][1]: call[1][0] for call in fake.calls_of("log_text")}
+        self.assertNotIn(sentinel, texts["run.json"])
+        run_row = json.loads(texts["run.json"])
+        self.assertNotIn(sentinel, run_row["env_json"])
+        self.assertEqual(
+            set(json.loads(run_row["env_json"])),
+            {"python", "platform", "packages"},
+        )
 
     def test_failed_status_ends_run_failed(self):
         fake = FakeMlflow()
