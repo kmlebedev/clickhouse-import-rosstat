@@ -396,7 +396,7 @@ key-rate-model:
 # ARGS="--features core|all --min-train N --out-dir DIR"; фикстуры:
 # make shock-classifier ARGS="--export-fixtures scripts/testdata/shock_classifier"
 shock-classifier:
-	uv run --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/shock_classifier.py $(ARGS)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/shock_classifier.py $(ARGS)
 
 # Офлайн-тесты классификатора шоков: без ClickHouse и сети.
 shock-classifier-test:
