@@ -99,7 +99,7 @@ uv run ... python3 scripts/edisclosure_collect.py collect
   ],
   "document_count": 290,
   "documents_file": "documents.jsonl",
-  "empty_sections": [{"ticker": "SBER", "sections": ["AGM"]}]
+  "empty_sections": [{"ticker": "SBER", "sections": ["AFFILIATES", "AGM"]}]
 }
 ```
 

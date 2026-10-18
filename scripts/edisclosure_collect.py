@@ -203,6 +203,10 @@ def validate_document(row: dict[str, str], companies: dict[str, str]) -> None:
         raise ValueError(f"url {url!r}: некорректный порт") from None
     if port is not None:
         raise ValueError(f"url {url!r}: порт в URL запрещён")
+    if ":" in parsed.netloc:
+        # Пустой порт (`host:`) urlparse отдаёт как port=None, но netloc с ':';
+        # userinfo и явный порт уже отвергнуты выше.
+        raise ValueError(f"url {url!r}: порт в URL запрещён")
     if parsed.hostname != "e-disclosure.ru":
         raise ValueError(f"url {url!r}: host должен быть e-disclosure.ru")
     if parsed.path != "/portal/FileLoad.ashx":
@@ -471,7 +475,10 @@ def run_collect(
                     log(f"    документов: {len(rows)}")
                     documents.extend(rows)
                     company_document_count += len(rows)
-                ensure_company_has_documents({ticker: company_document_count})
+                try:
+                    ensure_company_has_documents({ticker: company_document_count})
+                except ValueError as exc:
+                    raise SystemExit(f"{exc}; манифест не записан") from None
         finally:
             context.close()
 
