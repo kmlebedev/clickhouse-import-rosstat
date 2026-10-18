@@ -110,9 +110,13 @@ walk-forward, обязательные бенчмарки B1–B3 (B3 — в д�
 
     make cpi-monthly ARGS="--export-fixtures scripts/testdata/cpi_monthly"
 
-**Скрипт ничего не пишет в ClickHouse** — только читает; транспорт (`ch_query`)
-переиспользуется из `scripts/extrapolation_aisc.py`, а не копируется. Секреты
-приходят только из окружения (их подставляет Makefile). Запуск — через `make`:
+**По умолчанию скрипт только читает ClickHouse**; с `ML_LOG=1` он пишет паспорт
+прогона и fold-предсказания в `ml_runs`/`ml_predictions` через
+`scripts/ml_experiment.py` (спека §8.3), а при недоступном ClickHouse хелпер
+падает обратно в локальный `build/ml-runs` (`ML_LOCAL_DIR`). Без переменной
+артефакты побайтно прежние. Транспорт (`ch_query`) переиспользуется из
+`scripts/extrapolation_aisc.py`, а не копируется. Секреты приходят только из
+окружения (их подставляет Makefile). Запуск — через `make`:
 
 * `make cpi-monthly` — сводка выборки (155 месяцев 2013-10…2026-08, пропусков
   0), walk-forward B1–B3 и четырёх CatBoost-вариантов по окнам
@@ -130,7 +134,9 @@ walk-forward, обязательные бенчмарки B1–B3 (B3 — в д�
 import argparse
 import csv
 import json
+import logging
 import math
+import os
 import statistics
 import sys
 import warnings
@@ -151,11 +157,14 @@ from sklearn.preprocessing import StandardScaler
 
 ROOT = Path(__file__).resolve().parent.parent
 
+log = logging.getLogger(__name__)
+
 # Скрипт-сосед: переиспользуем транспорт к ClickHouse, а не копируем его.
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import eval_utils as eu
 import extrapolation_aisc as aisc
+import ml_experiment as mlx
 
 ch_query = aisc.ch_query
 
@@ -3250,6 +3259,9 @@ def run_summary(
     out_dir: Optional[Path] = None,
     today: Optional[date] = None,
     sample: str = DEFAULT_SAMPLE,
+    ml_log: Optional[bool] = None,
+    logger: Optional[object] = None,
+    run_name: Optional[str] = None,
 ) -> int:
     """Полный прогон Task 4: выборка, walk-forward, DM, сплит, nowcast, артефакты.
 
@@ -3273,8 +3285,16 @@ def run_summary(
 
     Ветка «walk-forward не дал ни одного прогноза» (пустая/короткая выборка)
     ничего не пишет и подчищает ВСЕ три артефакта прошлого прогона. Прогон не
-    падает ни в одной из веток. Скрипт ничего не пишет в ClickHouse: только
-    читает и кладёт локальные артефакты.
+    падает ни в одной из веток. По умолчанию скрипт только читает ClickHouse и
+    кладёт локальные артефакты; журнал эксперимента — опт-ин.
+
+    `ml_log`/`logger`/`run_name` — журнал эксперимента
+    (`scripts/ml_experiment.py`): при `ml_log=True` (или `ML_LOG=1`, если
+    параметр не задан) после `build_sample` создаётся прогон `cpi_monthly` с
+    паспортом, fold-предсказаниями в п.п. и артефактами; явный `logger`
+    используется как есть (duck typing), и `ml_log` тогда игнорируется. Сбой
+    журнала не меняет код возврата и не портит артефакты: отчёт и CSV остаются
+    основным результатом.
 
     `today` — дата прогона (по умолчанию системная): она же дата среза живого
     nowcast и `forecast_date` JSON; резолвится один раз на прогон.
@@ -3293,7 +3313,60 @@ def run_summary(
     )
     assert_months_purged(rows)
 
+    if ml_log is None:
+        ml_log = os.environ.get("ML_LOG") == "1"
     months = sample_months(targets)
+    sample_meta = {
+        "rows": len(rows),
+        "first": rows[0].month.isoformat() if rows else None,
+        "last": rows[-1].month.isoformat() if rows else None,
+        "skipped": len(skipped),
+        "months": len(months),
+    }
+    if logger is None and ml_log:
+        # Журнал создаётся ПОСЛЕ выборки: пустая/короткая выборка — тоже прогон,
+        # и её паспорт должен нести фактические rows/first/last/skipped.
+        logger = mlx.start_run(
+            experiment="cpi_monthly",
+            run_name=(
+                os.environ.get("ML_RUN_NAME")
+                or run_name
+                or f"cpi_monthly__{sample}__start{start}__embargo{embargo_months}"
+            ),
+            config={
+                "sample": sample,
+                "sample_first": SAMPLE_BOUNDS[sample][0].isoformat(),
+                "sample_last": SAMPLE_BOUNDS[sample][1].isoformat(),
+                "start": start,
+                "embargo_months": embargo_months,
+                "seed": SEED,
+                "models": list(MODELS),
+                "features_base": feature_names(with_mp=False),
+                "features_mp": feature_names(with_mp=True),
+                "target_series": TARGET_SERIES,
+                "article_split": {
+                    "train_end": ARTICLE_TRAIN_END.isoformat(),
+                    "test_end": ARTICLE_TEST_END.isoformat(),
+                },
+                "nan_policy": (
+                    "usd_mm/key_rate NaN before availability; "
+                    "CatBoost native; B3 train-median"
+                ),
+            },
+            data_asof=today,
+            sample_meta=sample_meta,
+            sample=[
+                {
+                    "month": row.month.isoformat(),
+                    "y": mlx.json_safe(row.y),
+                    "features": mlx.json_safe(row.features),
+                }
+                for row in rows
+            ],
+            spec_path="docs/superpowers/specs/2026-10-18-cpi-monthly-mp-design.md",
+            enabled=True,
+        )
+
     survey_points = sorted(
         point for points in survey.values() for point in points
     )
@@ -3346,50 +3419,183 @@ def run_summary(
     _field("--start:", f"{start} (основное окно walk-forward)")
     _field("--embargo-months:", f"{embargo_months} (эмбарго основного окна)")
 
-    runs = evaluate_windows(rows, MODELS, window_specs(start, embargo_months))
-    _print_walk_forward(runs)
-    if not any(run.predictions for run in runs):
-        _field("отчёт/CSV/JSON:", "не пишутся (walk-forward не дал ни одного прогноза)")
-        _print_removed_artifacts(clear_stale_artifacts(out_dir))
+    try:
+        runs = evaluate_windows(rows, MODELS, window_specs(start, embargo_months))
+        _print_walk_forward(runs)
+        if not any(run.predictions for run in runs):
+            # Ветка «ничего не посчитано вообще»: пустая/короткая выборка или все
+            # модели вырождены. У этого прогона нет ни одного прогноза, поэтому
+            # не пишется ничего, а три артефакта прошлого прогона удаляются.
+            _field(
+                "отчёт/CSV/JSON:",
+                "не пишутся (walk-forward не дал ни одного прогноза)",
+            )
+            _print_removed_artifacts(clear_stale_artifacts(out_dir))
+            if logger is not None:
+                # Журнал не меняет код возврата: сбой `finish` — предупреждение.
+                try:
+                    logger.finish("empty", "walk-forward не дал ни одного прогноза")
+                except Exception as finish_exc:
+                    log.warning(
+                        "не удалось пометить прогон empty: %s: %s",
+                        type(finish_exc).__name__, finish_exc,
+                    )
+            return 0
+        _print_pair_tests(runs)
+        split_predictions = fixed_split(rows, MODELS)
+        _print_split(split_predictions, rows)
+        nowcast, nowcast_reason = current_nowcast(
+            rows, targets, survey, usd, key_rate, fao, today
+        )
+        if nowcast is None:
+            _field("текущий nowcast:", f"не рассчитан — {nowcast_reason}")
+        else:
+            _field(
+                "текущий nowcast:",
+                f"{nowcast.target_month.isoformat()[:7]} — as-of "
+                f"{nowcast.data_asof.isoformat()}",
+            )
+            _print_nowcast(nowcast)
+        report = render_report(
+            rows,
+            skipped,
+            runs,
+            today=today,
+            split_predictions=split_predictions,
+            nowcast=nowcast,
+            nowcast_reason=nowcast_reason,
+            sample=sample,
+        )
+        report_path, predictions_path = write_artifacts(out_dir, report, runs)
+        forecast_path = out_dir / FORECAST_NAME
+        forecast_written = write_nowcast_artifact(forecast_path, nowcast)
+        _field("отчёт:", str(report_path))
+        _field("прогнозы (CSV):", str(predictions_path))
+        if forecast_written:
+            _field("прогноз (JSON):", str(forecast_path))
+        else:
+            _field(
+                "прогноз (JSON):",
+                f"не пишется ({nowcast_reason}); устаревший файл, если был, удалён",
+            )
+        if logger is not None:
+            # Журнал эксперимента — побочный слой: его сбой НЕ меняет код
+            # возврата. Артефакты к этому моменту уже записаны, поэтому
+            # ValueError `PredictionRow` (например, на NaN-прогнозе) не должен
+            # превращать успешный прогон в non-zero exit: помечаем run failed
+            # и идём дальше.
+            try:
+                # Веса NNLS — по окнам и моделям; окна без весов не попадают,
+                # поэтому у прогона без bottom-up моделей словарь пуст (`{}`).
+                weights_by_window = {}
+                for run in runs:
+                    if run.weights:
+                        weights_by_window[window_key(run.start, run.embargo)] = {
+                            name: dict(zip(BOTTOMUP_COMPONENTS, values))
+                            for name, values in run.weights.items()
+                        }
+                # Сплит статьи — вспомогательная метрика сопоставимости, не
+                # выбор модели; модели без фолдов сплита в словарь не входят.
+                split_groups: dict[str, list[Prediction]] = {}
+                for prediction in split_predictions:
+                    split_groups.setdefault(prediction.model, []).append(prediction)
+                article_split = {
+                    name: {
+                        "rmse": rmse_pp(group),
+                        "mae": mae_pp(group),
+                        "n": len(group),
+                    }
+                    for name, group in split_groups.items()
+                }
+                logger.log_metrics(
+                    {
+                        "primary_metric": "rmse_pp",
+                        "sample": sample,
+                        # Спека §8.3: общие ключи паспорта — `models` и
+                        # `windows`; форма окон та же, что у v1.
+                        "models": list(MODELS),
+                        "windows": [
+                            {
+                                "window": window_key(run.start, run.embargo),
+                                "folds": run.folds,
+                                "models": {
+                                    name: {
+                                        "rmse": rmse_pp(group) if group else None,
+                                        "mae": mae_pp(group) if group else None,
+                                        "n": len(group),
+                                        "skipped": int(run.skipped.get(name, 0)),
+                                        "notes": dict(run.notes.get(name, {})),
+                                    }
+                                    for name, group in _run_groups(run).items()
+                                },
+                            }
+                            for run in runs
+                        ],
+                        "weights": weights_by_window,
+                        "article_split": article_split,
+                    }
+                )
+                logger.log_predictions(
+                    [
+                        mlx.PredictionRow(
+                            model=prediction.model,
+                            window=window_key(run.start, run.embargo),
+                            target_date=prediction.month,
+                            predicted=prediction.y_pred,
+                            actual=prediction.y_true,
+                            unit="pp",
+                            meta={
+                                "start": run.start,
+                                "embargo": run.embargo,
+                                "main": run.main,
+                                "sample": sample,
+                            },
+                        )
+                        for run in runs
+                        for prediction in run.predictions
+                    ]
+                )
+                logger.log_artifacts(
+                    [
+                        report_path,
+                        predictions_path,
+                        forecast_path if forecast_written else None,
+                    ]
+                )
+                logger.finish(
+                    "finished",
+                    f"walk-forward: {len(runs)} окон, "
+                    f"{sum(len(run.predictions) for run in runs)} фолдов; "
+                    f"nowcast: {'рассчитан' if nowcast is not None else 'не рассчитан'}",
+                )
+            except Exception as exc:
+                log.warning(
+                    "журнал эксперимента не записан: %s: %s",
+                    type(exc).__name__, exc,
+                )
+                try:
+                    logger.finish(
+                        "failed", f"logging: {type(exc).__name__}: {exc}"
+                    )
+                except Exception as finish_exc:
+                    log.warning(
+                        "не удалось пометить прогон failed: %s: %s",
+                        type(finish_exc).__name__, finish_exc,
+                    )
         return 0
-    _print_pair_tests(runs)
-    split_predictions = fixed_split(rows, MODELS)
-    _print_split(split_predictions, rows)
-    nowcast, nowcast_reason = current_nowcast(
-        rows, targets, survey, usd, key_rate, fao, today
-    )
-    if nowcast is None:
-        _field("текущий nowcast:", f"не рассчитан — {nowcast_reason}")
-    else:
-        _field(
-            "текущий nowcast:",
-            f"{nowcast.target_month.isoformat()[:7]} — as-of "
-            f"{nowcast.data_asof.isoformat()}",
-        )
-        _print_nowcast(nowcast)
-    report = render_report(
-        rows,
-        skipped,
-        runs,
-        today=today,
-        split_predictions=split_predictions,
-        nowcast=nowcast,
-        nowcast_reason=nowcast_reason,
-        sample=sample,
-    )
-    report_path, predictions_path = write_artifacts(out_dir, report, runs)
-    forecast_path = out_dir / FORECAST_NAME
-    forecast_written = write_nowcast_artifact(forecast_path, nowcast)
-    _field("отчёт:", str(report_path))
-    _field("прогнозы (CSV):", str(predictions_path))
-    if forecast_written:
-        _field("прогноз (JSON):", str(forecast_path))
-    else:
-        _field(
-            "прогноз (JSON):",
-            f"не пишется ({nowcast_reason}); устаревший файл, если был, удалён",
-        )
-    return 0
+    except Exception as exc:
+        if logger is not None:
+            # Журнал — побочный слой и здесь: сбой `finish` не должен заменять
+            # исходное исключение эксперимента собственным (вызывающий увидел
+            # бы ошибку логирования вместо настоящей причины падения).
+            try:
+                logger.finish("failed", f"{type(exc).__name__}: {exc}")
+            except Exception as finish_exc:
+                log.warning(
+                    "не удалось пометить прогон failed: %s: %s",
+                    type(finish_exc).__name__, finish_exc,
+                )
+        raise
 
 
 def main(argv: Optional[list] = None) -> int:
