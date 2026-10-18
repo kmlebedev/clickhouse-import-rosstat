@@ -154,6 +154,14 @@ class FakeClient:
         runs = []
         for experiment_id in experiment_ids:
             runs.extend(self.runs.get(experiment_id, []))
+        # Сервер MLflow применяет order_by/max_results; двойник повторяет это,
+        # иначе тест на --limit видел бы больше строк, чем реальный клиент.
+        if order_by:
+            descending = any("DESC" in str(item) for item in order_by)
+            runs.sort(key=lambda run: run.info.start_time or 0,
+                      reverse=descending)
+        if max_results is not None:
+            runs = runs[:max_results]
         return runs
 
     def download_artifacts(self, run_id, artifact_path, dst_path):
@@ -554,7 +562,7 @@ class FilterTest(ExportTestBase):
         self.assertEqual(
             filter_string, f"attributes.start_time >= {expected_ms}"
         )
-        self.assertEqual(order_by, ["attributes.start_time ASC"])
+        self.assertEqual(order_by, ["attributes.start_time DESC"])
         self.assertEqual(limit, 100)
 
     def test_search_uses_order_by_and_limit(self):
@@ -565,8 +573,42 @@ class FilterTest(ExportTestBase):
         self.assertEqual(code, 0)
         self.assertEqual(
             client.search_calls,
-            [(["exp-1"], "", ["attributes.start_time ASC"], 7)],
+            [(["exp-1"], "", ["attributes.start_time DESC"], 7)],
         )
+
+    def test_limit_truncation_warns_and_keeps_newest_run(self):
+        # I2: DESC + предупреждение при len(runs) == --limit. Два прогона,
+        # --limit 1: экспортируется самый новый, а stderr сообщает, что
+        # выборка могла быть обрезана (иначе повторный экспорт навсегда
+        # застревал бы на старом батче).
+        self._write_artifact("run.json", json.dumps(RUN_JSON),
+                             run_id=OTHER_MLFLOW_RUN_ID)
+        self._write_artifact("predictions.jsonl", "",
+                             run_id=OTHER_MLFLOW_RUN_ID)
+        info_old = FakeInfo(
+            MLFLOW_RUN_ID, start_time=BEFORE_SINCE_MS
+        )
+        info_new = FakeInfo(
+            OTHER_MLFLOW_RUN_ID, start_time=AFTER_SINCE_MS
+        )
+        client = FakeClient(
+            experiments={"cpi_nowcast": FakeExperiment("exp-1")},
+            runs={"exp-1": [FakeRun(info_old), FakeRun(info_new)]},
+            artifacts={
+                MLFLOW_RUN_ID: str(self.run_dir),
+                OTHER_MLFLOW_RUN_ID: str(self.artifacts / OTHER_MLFLOW_RUN_ID),
+            },
+        )
+        code, out, err = self._main(
+            client,
+            ["--experiment", "cpi_nowcast", "--limit", "1", "--dry-run"],
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("--limit", err)
+        self.assertIn("может быть обрезана", err)
+        self.assertIn("would export 1 runs", out)
+        self.assertIn(OTHER_MLFLOW_RUN_ID, out)
+        self.assertNotIn(MLFLOW_RUN_ID, out)
 
     def test_unknown_experiment_is_skipped_with_message(self):
         client = self._client(experiments={})

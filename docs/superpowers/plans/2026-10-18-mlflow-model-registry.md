@@ -4,7 +4,7 @@
 
 **Goal:** Add a self-hosted MLflow control plane (SQLite backend, local artifacts) with a model registry (`champion`/`challenger` aliases) and an idempotent export of MLflow runs into ClickHouse `ml_runs`/`ml_predictions`, without adding PostgreSQL, MySQL, MinIO or S3 to dev/staging.
 
-**Architecture:** MLflow runs on `127.0.0.1:5000` with `--backend-store-uri sqlite:///…`, `--default-artifact-root build/mlflow/artifacts`, `--serve-artifacts`, `--workers 1`. `scripts/ml_experiment.py` keeps its ClickHouse/local behavior and optionally logs the same run into MLflow (lazy import, best-effort). Each run logs `run.json`, `predictions.jsonl` and, for `cpi_nowcast`, a CatBoost model. `scripts/mlflow_export.py` replays MLflow runs into ClickHouse idempotently under a canonical UUID derived from the MLflow run id. `scripts/mlflow_registry.py` registers model versions and moves the `challenger`/`champion` aliases.
+**Architecture:** MLflow runs on `127.0.0.1:5000` with `--backend-store-uri sqlite:///…`, `--artifacts-destination build/mlflow/artifacts`, `--serve-artifacts`, `--workers 1`; `--default-artifact-root` is intentionally omitted so new experiments get the proxied root `mlflow-artifacts:/`. `scripts/ml_experiment.py` keeps its ClickHouse/local behavior and optionally logs the same run into MLflow (lazy import, best-effort). Each run logs `run.json`, `predictions.jsonl` and, for `cpi_nowcast`, a CatBoost model. `scripts/mlflow_export.py` replays MLflow runs into ClickHouse idempotently under a canonical UUID derived from the MLflow run id. `scripts/mlflow_registry.py` registers model versions and moves the `challenger`/`champion` aliases.
 
 **Tech Stack:** Python 3.12, MLflow 3.17.1 (opt-in via `uv run --with`), SQLite, MLflow REST/client, ClickHouse HTTP (`ch_exec`), Makefile, systemd (staging), `unittest`/`unittest.mock`.
 
@@ -67,7 +67,7 @@ MLFLOW_HTTP_ENV := MLFLOW_HTTP_REQUEST_TIMEOUT=10 MLFLOW_HTTP_REQUEST_MAX_RETRIE
 
 Behavior:
 - if `curl -sf http://127.0.0.1:$(MLFLOW_PORT)/health` succeeds → `MLflow уже отвечает…`;
-- else `mkdir -p $(MLFLOW_HOME) $(MLFLOW_ARTIFACTS)`; `nohup uv run --with mlflow==$(MLFLOW_VERSION) --python 3.12 mlflow server --host 127.0.0.1 --port $(MLFLOW_PORT) --workers 1 --backend-store-uri sqlite:///$(MLFLOW_DB) --default-artifact-root $(MLFLOW_ARTIFACTS) --serve-artifacts >$(MLFLOW_LOG) 2>&1 &`; write `$!` to `$(MLFLOW_PID)`; loop up to 60 s on `/health`; on failure print `$(MLFLOW_LOG)` and exit 1.
+- else `mkdir -p $(MLFLOW_HOME) $(MLFLOW_ARTIFACTS)`; `nohup uv run --with mlflow==$(MLFLOW_VERSION) --python 3.12 mlflow server --host 127.0.0.1 --port $(MLFLOW_PORT) --workers 1 --backend-store-uri sqlite:///$(MLFLOW_DB) --artifacts-destination $(MLFLOW_ARTIFACTS) --serve-artifacts >$(MLFLOW_LOG) 2>&1 &` (no `--default-artifact-root`: an explicit local root defeats proxy uploads); write `$!` to `$(MLFLOW_PID)`; loop up to 60 s on `/health`; on failure print `$(MLFLOW_LOG)` and exit 1.
 - `sqlite:///` + absolute path means four slashes. Do not quote away the slashes.
 
 - [ ] **Step 3: Add `mlflow-down` and `mlflow-status`**
@@ -295,7 +295,7 @@ Expected: FAIL before implementation.
 
 - `import mlflow` inside `main`; `from mlflow import MlflowClient`.
 - `client.get_experiment_by_name`; skip unknown with a message.
-- `client.search_runs([exp_id], order_by=["attributes.start_time ASC"], max_results=limit)`.
+- `client.search_runs([exp_id], order_by=["attributes.start_time DESC"], max_results=limit)`; if `len(runs) == limit`, warn that the result may be truncated.
 - client-side filters: status in `FINISHED`/`FAILED`; `--since` compares `run.info.start_time` (ms) to the date; `RUNNING` → warning + skip.
 - `client.download_artifacts(run_id, "run.json", tmpdir)`; `MlflowException` → warning + skip. `predictions.jsonl` → optional.
 - For each run: build rows, `ch_exec(insert_sql("ml_predictions", preds))` if preds, then `ch_exec(insert_sql("ml_runs", [row]))`.
@@ -553,6 +553,8 @@ Expected: all exit 0.
 - [ ] **Step 3: Live dev acceptance**
 
 Ask the owner to ensure ClickHouse is up (`make ch-up`); the assistant does not run it.
+
+The existing `build/mlflow/mlflow.db` predates the `--artifacts-destination` switch: its default experiment still has a local `artifact_location`, so proxied uploads would not apply to it. Before acceptance reset/recreate the default experiment (or use a fresh `MLFLOW_HOME`); do not delete the DB wholesale — it contains only the default experiment and no runs.
 
 ```bash
 make mlflow-up

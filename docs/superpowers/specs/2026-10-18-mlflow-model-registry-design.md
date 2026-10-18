@@ -62,12 +62,12 @@ ClickHouse остаётся аналитической плоскостью; MLf
 
 **Решение:** dev и staging — `sqlite:///…` + локальный каталог артефактов, сервер с `--serve-artifacts`. Переход на MySQL позже — смена `--backend-store-uri` и `MLFLOW_TRACKING_URI`, без правок экспорта/реестра.
 
-**Почему `--serve-artifacts`:** клиент загружает артефакты через HTTP сервера, а не пишет в чужой filesystem; это единственный корректный режим, когда прогон и сервер — разные процессы/машины. S3/MinIO не нужен.
+**Почему `--serve-artifacts`:** клиент загружает артефакты через HTTP сервера, а не пишет в чужой filesystem; это единственный корректный режим, когда прогон и сервер — разные процессы/машины. S3/MinIO не нужен. Чтобы проксирование действительно включилось, сервер запускается с `--artifacts-destination <каталог>` и **без** `--default-artifact-root`: явно заданный локальный root MLflow возвращает эксперименту как `artifact_location`, и тогда `--serve-artifacts` не проксирует upload — удалённый клиент (staging через SSH-туннель) пытался бы писать в несуществующий у него путь. Без явного root новый эксперимент получает `mlflow-artifacts:/`, и upload идёт через сервер.
 
 Источники:
 
 - [MLflow Backend Stores](https://mlflow.org/docs/latest/self-hosting/architecture/backend-store/) — диалекты `sqlite`, `postgresql`, `mysql`, `mssql`; model registry требует database-backed store.
-- [MLflow Artifact Stores](https://mlflow.org/docs/latest/self-hosting/architecture/artifact-store/) — локальный filesystem, `--default-artifact-root`, проксирование артефактов.
+- [MLflow Artifact Stores](https://mlflow.org/docs/latest/self-hosting/architecture/artifact-store/) — локальный filesystem, `--artifacts-destination`, `--serve-artifacts`, проксирование артефактов.
 - [ClickHouse MySQL database engine](https://clickhouse.com/docs/en/engines/database-engines/mysql) — обмен запросами с внешним MySQL.
 - [ClickHouse MySQL table engine](https://clickhouse.com/docs/en/engines/table-engines/integrations/mysql) — `SELECT`/`INSERT` к внешнему MySQL.
 
@@ -145,12 +145,14 @@ MLFLOW_HTTP_ENV     := MLFLOW_HTTP_REQUEST_TIMEOUT=10 MLFLOW_HTTP_REQUEST_MAX_RE
 uv run --with mlflow==$(MLFLOW_VERSION) --python 3.12 \
   mlflow server --host 127.0.0.1 --port $(MLFLOW_PORT) --workers 1 \
   --backend-store-uri sqlite:///$(MLFLOW_DB) \
-  --default-artifact-root $(MLFLOW_ARTIFACTS) --serve-artifacts
+  --artifacts-destination $(MLFLOW_ARTIFACTS) --serve-artifacts
 ```
 
-в фоне (`nohup`), PID в `$(MLFLOW_PID)`, ожидание `/health` до 60 с. `sqlite:///` + абсолютный путь даёт четыре слэша. `--workers 1` — потому что SQLite допускает одного писателя.
+в фоне (`nohup`), PID в `$(MLFLOW_PID)`, ожидание `/health` до 60 с. `sqlite:///` + абсолютный путь даёт четыре слэша. `--workers 1` — потому что SQLite допускает одного писателя. `--default-artifact-root` не передаётся: новый эксперимент получает корень `mlflow-artifacts:/`, и `--serve-artifacts` проксирует upload через сервер.
 
-`make mlflow-down` останавливает процесс и удаляет PID; `make mlflow-status` проверяет `/health`.
+⚠️ **Уже созданный default experiment** хранит `artifact_location` в SQLite: если он создан со старым локальным root, проксирование для него не включится — default experiment нужно сбросить/пересоздать (или использовать новый эксперимент). Живой сброс существующей `build/mlflow/mlflow.db` — шаг 9 плана; удалять БД в общем случае не нужно (у нас в ней только default experiment и нет run'ов).
+
+`make mlflow-down` останавливает процесс и удаляет PID; `make mlflow-status` проверяет `/health`. PID-файл проверяется по идентичности (`ps -p PID -o command=` содержит `mlflow`): устаревший/чужой PID не считается сервером и удаляется, а `mlflow-down` не убивает чужой процесс.
 
 Артефакты: `build/mlflow/artifacts` (gitignored, `build/` уже в `.gitignore`). БД: `build/mlflow/mlflow.db`.
 
@@ -161,11 +163,12 @@ uv run --with mlflow==$(MLFLOW_VERSION) --python 3.12 \
 - `ExperimentRun.__init__` сохраняет `self._artifact_paths`, `self._models`, `self._mlflow = None` и вызывает `_start_mlflow()`.
 - `_start_mlflow()`:
   - `uri = os.environ.get("MLFLOW_TRACKING_URI")`; если `not self.enabled or not uri` — выход;
+  - при включённом приёмнике `os.environ.setdefault("MLFLOW_HTTP_REQUEST_TIMEOUT", "10")` и `..._MAX_RETRIES, "2"` — те же короткие таймауты, что `MLFLOW_HTTP_ENV` в Makefile, действуют и при прямом запуске скрипта (явные значения не перекрываются);
   - `import mlflow`; `ImportError` → warning, MLflow выключен;
   - `mlflow.set_tracking_uri(uri)`, `mlflow.set_experiment(self.experiment)`, `mlflow.start_run(run_name=self.run_name, tags={...})`;
   - `self.run_id = canonical_run_id(run.info.run_id)`;
   - tags: `experiment`, `git_sha`, `git_branch`, `git_dirty`, `config_hash`, `sample_hash`, `data_asof`, `spec_path`, `author`;
-  - params: скалярные ключи `config`; `config.json` — артефактом (лимит длины param);
+  - params: скалярные ключи `config`; полный конфиг живёт в `run.json` (поле `config_json`), отдельного артефакта `config.json` нет — лимит длины param не позволяет отправить конфиг целиком;
   - любая ошибка запуска — warning, `self._mlflow = None`, прогон продолжается.
 - `log_model(name, model)` — опциональный метод: `self._models.append((name, model))`.
 - `log_artifacts(paths)` — дополнительно сохраняет реальные `Path` для upload.
@@ -203,12 +206,14 @@ python3 scripts/mlflow_export.py \
 ```
 
 - `mlflow` импортируется лениво в `main()`; чистые функции (`canonical_run_id`, `build_run_row`, `build_prediction_rows`, `parse_jsonl`, `ch_datetime`) тестируются без MLflow.
-- Для каждого эксперимента: `client.get_experiment_by_name`; `client.search_runs([exp_id], order_by=["attributes.start_time ASC"], max_results=limit)`. Фильтр статуса — клиентский (FINISHED/FAILED; RUNNING пропускается с warning). `--since` при наличии уходит **на сервер** как `filter_string` по `attributes.start_time >= <epoch-ms>` (иначе `--limit` отсёк бы старые прогоны до клиентского фильтра), а клиентская проверка `start_time` остаётся страховкой поверх серверного фильтра.
+- Для каждого эксперимента: `client.get_experiment_by_name`; `client.search_runs([exp_id], order_by=["attributes.start_time DESC"], max_results=limit)` — новые прогоны первыми, чтобы повторные экспорты при упоре в `--limit` сходились на актуальных данных, а не вечно отдавали старейший батч. Фильтр статуса — клиентский (FINISHED/FAILED; RUNNING пропускается с warning). `--since` при наличии уходит **на сервер** как `filter_string` по `attributes.start_time >= <epoch-ms>` (иначе `--limit` отсёк бы старые прогоны до клиентского фильтра), а клиентская проверка `start_time` остаётся страховкой поверх серверного фильтра.
+- Если число полученных прогонов равно `--limit`, печатается warning «выборка может быть обрезана»: сервер не отдаёт признак «есть ещё», поэтому попадание ровно в лимит не должно выглядеть полным экспортом. Пагинации нет — при необходимости увеличивают `--limit` или сужают `--since`.
+- `--dry-run` — только печать `experiment run_id folds` и проверка артефактов.
+- RUNNING-прогоны пропускаются: артефактов у них ещё нет (или они неполные). Если прогон был жёстко убит и остался RUNNING, его нужно закрыть вручную (MLflow UI/`mlflow.end_run`), иначе экспорт его никогда не увидит.
+- `finished_at`/`created_at` нормализуются в `YYYY-MM-DD HH:MM:SS` (ClickHouse `DateTime`); `T` убирается, а суффикс таймзоны (`Z`, `+03:00`) **отбрасывается без конвертации**: `10:00:00Z` и `10:00:00+03:00` дают одно и то же настенное время. Для третьих сторон с timezone designator это осознанная потеря смещения (схема `DateTime` не хранит зону).
 - Для каждого run: скачать `run.json` через `client.download_artifacts(run_id, "run.json", tmpdir)`; отсутствие артефакта распознаётся по коду ошибки MLflow `RESOURCE_DOES_NOT_EXIST` (запасная проверка текста узкая — «no such artifact»; произвольное «not found», HTTP 500/таймаут/авторизация отсутствием не считаются) — warning + skip (run создан не нашим хелпером). `predictions.jsonl` — если есть.
 - `run_id` перезаписывается каноническим UUID в `run_row` и во всех предсказаниях.
-- `finished_at`/`created_at` нормализуются в `YYYY-MM-DD HH:MM:SS` (ClickHouse `DateTime`); `T` и таймзона убираются.
 - Вставка: `ch_exec(insert_sql("ml_predictions", rows))`, затем `ch_exec(insert_sql("ml_runs", [row]))` — тот же порядок, что в `ml_experiment.finish`.
-- `--dry-run` — только печать `experiment run_id folds` и проверка артефактов.
 - Идемпотентность: те же строки при повторе; `ReplacingMergeTree` схлопывает по `(experiment, run_id)` и `(experiment, run_id, model, window, target_date)`.
 - Код возврата 0 — все ок **включая пропуски**: отсутствие `run.json` — warning + skip (run создан не нашим хелпером), и команда завершается 0, если других сбоев не было. Код 1 — хотя бы один run не экспортирован из-за ошибки: битый `run.json`/`predictions.jsonl`, ошибка скачивания артефакта, ошибка MLflow-клиента или вставки в ClickHouse. Отсутствие `predictions.jsonl` — warning и 0 фолдов, не ошибка.
 
@@ -225,6 +230,7 @@ python3 scripts/mlflow_registry.py list     --name cpi_nowcast_catboost_direct
 - `register`: `client.create_registered_model(name)` (если нет), `client.create_model_version(name, source=f"runs:/{run_id}/model", run_id=run_id)`, затем `client.set_registered_model_alias(name, "challenger", version.version)`. Печать `registered name vN; alias challenger -> vN`.
 - `promote`: `client.set_registered_model_alias(name, "champion", version)`; печать `alias champion -> vN`.
 - `list`: `client.search_registered_models()` / `search_model_versions`; таблица `name version status aliases run_id`; aliases из `version.aliases` с fallback на `client.get_model_version_by_alias`.
+- Allowlist имени `[A-Za-z0-9._-]` проверяет только имя, заданное пользователем (`register --name`, `list --name`). При листинге без `--name` посторонние имена из реестра не подставляются в `filter_string`, а пропускаются с warning: одна чужая модель не должна ломать `make mlflow-models` для остальных.
 - `--tracking-uri` по умолчанию `MLFLOW_TRACKING_URI` или `http://127.0.0.1:5000`.
 - Функции принимают `client` параметром — тесты используют fake-клиент.
 - Промоушен в 4.2 ручной (gate — 4.3); скрипт не проверяет метрики.
@@ -234,6 +240,7 @@ python3 scripts/mlflow_registry.py list     --name cpi_nowcast_catboost_direct
 - `mlflow-up`, `mlflow-down`, `mlflow-status`;
 - `mlflow-export` — `uv run --with mlflow==$(MLFLOW_VERSION) --python 3.12 python3 scripts/mlflow_export.py $(ARGS)`;
 - `mlflow-register`, `mlflow-promote`, `mlflow-models` — обёртки над `scripts/mlflow_registry.py` с `ARGS`;
+- `mlflow-export`/`mlflow-register`/`mlflow-promote`/`mlflow-models` получают `$(MLFLOW_HTTP_ENV)` (короткие таймауты и ретраи) так же, как `cpi-nowcast`/`key-rate-model`;
 - `cpi-nowcast` и `key-rate-model` получают `$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) …`; при `MLFLOW=0` передаётся пустой `MLFLOW_TRACKING_URI`, чтобы переменная из `~/.config/rosstat/env` не включала MLflow случайно;
 - все новые цели — в `.PHONY`.
 
@@ -254,7 +261,7 @@ ExecStartPre=/bin/mkdir -p /var/lib/mlflow/artifacts
 ExecStart=/root/.local/bin/uv run --with mlflow==3.17.1 --python 3.12 \
   mlflow server --host 127.0.0.1 --port 5000 --workers 1 \
   --backend-store-uri sqlite:////var/lib/mlflow/mlflow.db \
-  --default-artifact-root /var/lib/mlflow/artifacts --serve-artifacts
+  --artifacts-destination /var/lib/mlflow/artifacts --serve-artifacts
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -264,22 +271,22 @@ StandardError=journal
 WantedBy=multi-user.target
 ```
 
-Версия в юните синхронизируется с `MLFLOW_VERSION` в Makefile (комментарий в файле).
+Версия в юните синхронизируется с `MLFLOW_VERSION` в Makefile: `deploy-staging-mlflow` перед `scp` проверяет `grep -qF "mlflow==$(MLFLOW_VERSION)" deploy/staging/mlflow.service` и падает при расхождении. `--default-artifact-root` не передаётся (см. §3/§6.1): иначе `--serve-artifacts` не проксирует upload.
 
 Makefile:
 
-- `deploy-staging-mlflow`: `staging-precheck` → scp юнита → `systemctl daemon-reload` → `install -d -m 755 /var/lib/mlflow /var/lib/mlflow/artifacts` → прогрев `uv run --with mlflow==$(MLFLOW_VERSION) python -c "pass"`;
+- `deploy-staging-mlflow`: проверка версии в юните → `staging-precheck` → scp юнита → `systemctl daemon-reload` → `install -d -m 755 /var/lib/mlflow /var/lib/mlflow/artifacts` → прогрев `uv run --with mlflow==$(MLFLOW_VERSION) python -c "pass"`;
 - `deploy-staging-mlflow` входит в `deploy-staging` (после `deploy-staging-mcp`), в `systemctl enable --now dagu mcp-clickhouse mlflow`, в `upgrade-staging` (рестарт `mlflow`);
 - `deploy-staging-smoke`: `systemctl is-active --quiet mlflow` + `curl` `/health` с ограниченным ретраем (10 попыток × 2 с: холодный старт `uv run` может не ответить с первого раза);
 - `deploy/staging/README.md`: `/var/lib/mlflow`, туннель `ssh -N -L 5000:127.0.0.1:5000 palmshell`, UI, бэкап (sqlite backup + tar artifacts с общей меткой даты), отсутствие auth (только localhost);
-- обновление версии: бэкап → правка версии в юните и `MLFLOW_VERSION` → `make deploy-staging-mlflow` → `systemctl stop mlflow` → `mlflow db upgrade sqlite:////var/lib/mlflow/mlflow.db` → `systemctl start mlflow` → `make deploy-staging-smoke`. `systemctl enable --now` не перезапускает уже запущенный сервис, поэтому без stop/start новая версия не вступит в силу, а `db upgrade` под живым сервером трогает SQLite, которой владеет процесс.
+- обновление версии: бэкап → правка версии в юните и `MLFLOW_VERSION` → `make deploy-staging-mlflow` → `systemctl stop mlflow` → `mlflow db upgrade sqlite:////var/lib/mlflow/mlflow.db` → `systemctl start mlflow` → `make deploy-staging-smoke`. `systemctl enable --now` не перезапускает уже запущенный сервис, поэтому без stop/start новая версия не вступит в силу, а `db upgrade` под живым сервером трогает SQLite, которой владеет процесс. `make upgrade-staging` для смены версии MLflow **недостаточно**: он только копирует юнит и перезапускает сервис, поэтому цель печатает предупреждение о последовательности stop → `db upgrade` → start.
 
 ---
 
 ## 7. Операции и безопасность
 
 - MLflow слушает только `127.0.0.1`; доступ — SSH-туннель. Наружу не выставляется.
-- Паролей/токенов в MLflow нет; `run.json`/`predictions.jsonl` не содержат секретов (config — только CLI/дефолты; env — Python/пакеты/OS).
+- Паролей/токенов в MLflow нет; `run.json`/`predictions.jsonl` не содержат секретов (config — только CLI/дефолты; env — Python/пакеты/OS). Полный конфиг намеренно лежит в `run.json` (`config_json`), отдельного `config.json` нет; тест с sentinel `CLICKHOUSE_PASSWORD` проверяет, что пароль окружения не попадает в `env_json` и MLflow-теги.
 - Бэкап dev/staging: `sqlite3 mlflow.db ".backup ..."` + `tar` каталога артефактов; при обновлении версии — бэкап до `mlflow db upgrade`. Миграция выполняется на **остановленном** сервере (SQLite — один писатель), после чего сервис запускается заново; `systemctl enable --now` уже работающий сервис не перезапускает.
 - SQLite — один писатель; `--workers 1`; конкурентные прогоны сериализуются. При росте — MySQL (URI change).
 
@@ -287,18 +294,18 @@ Makefile:
 
 ## 8. Тесты
 
-- `scripts/ml_experiment_test.py` — новые тесты с fake `mlflow` в `sys.modules`: run создан, tags/params записаны, `run.json`/`predictions.jsonl`/artifacts/model залогированы, `end_run` вызван; при пустом `MLFLOW_TRACKING_URI` — ни одного вызова; при исключении MLflow — warning и продолжение; `run_id` — UUID. `MLFLOW_TRACKING_URI` добавить в `_ML_ENV_VARS` в `ml_experiment_test.py`, `cpi_nowcast_test.py`, `key_rate_model_test.py`.
-- `scripts/mlflow_export_test.py` — canonical UUID, парсинг `run.json`/`predictions.jsonl`, нормализация `DateTime`, dry-run без `ch_exec`, отсутствующий `run.json` → skip, идентичная форма SQL при повторе.
-- `scripts/mlflow_registry_test.py` — fake client: register → challenger, promote → champion, list.
+- `scripts/ml_experiment_test.py` — новые тесты с fake `mlflow` в `sys.modules`: run создан, tags/params записаны, `run.json`/`predictions.jsonl`/artifacts/model залогированы, `end_run` вызван; при пустом `MLFLOW_TRACKING_URI` — ни одного вызова; при исключении MLflow — warning и продолжение; `run_id` — UUID; при включённом приёмнике выставлены `MLFLOW_HTTP_REQUEST_TIMEOUT=10`/`MAX_RETRIES=2` (явные значения не перекрываются); sentinel `CLICKHOUSE_PASSWORD` отсутствует в `env_json` и тегах. `MLFLOW_TRACKING_URI` добавить в `_ML_ENV_VARS` в `ml_experiment_test.py`, `cpi_nowcast_test.py`, `key_rate_model_test.py`.
+- `scripts/mlflow_export_test.py` — canonical UUID, парсинг `run.json`/`predictions.jsonl`, нормализация `DateTime` (timezone designator отбрасывается, не конвертируется), dry-run без `ch_exec`, отсутствующий `run.json` → skip, идентичная форма SQL при повторе; `order_by` — `attributes.start_time DESC`, и при `len(runs) == --limit` печатается предупреждение о возможном усечении (тест: два прогона, `--limit 1`, экспортируется новый).
+- `scripts/mlflow_registry_test.py` — fake client: register → challenger, promote → champion, list; при листинге без `--name` постороннее имя вне allowlist пропускается с warning, а не роняет команду.
 - `scripts/cpi_nowcast_test.py`, `scripts/key_rate_model_test.py` — без регрессий.
 - `make all`, `make docs-check`, `make docs-build`, `make mcp-check`.
-- Секреты: assert, что в `run.json`/`predictions.jsonl` нет `password`/`token`/`secret`.
+- Секреты: assert, что sentinel `CLICKHOUSE_PASSWORD` не попадает в `env_json` и теги MLflow (полный конфиг намеренно пишется в `run.json`, поэтому sentinel в config тест не кладёт).
 
 ---
 
 ## 9. Живая приёмка
 
-1. `make mlflow-up` → `make mlflow-status` = `/health` 200; UI `http://127.0.0.1:5000`.
+1. `make mlflow-up` → `make mlflow-status` = `/health` 200; UI `http://127.0.0.1:5000`. Если БД создана до перехода на `--artifacts-destination`, default experiment хранит старый локальный `artifact_location` — его нужно сбросить/пересоздать (или использовать новый эксперимент), иначе upload не пойдёт через прокси (шаг 9 плана).
 2. `ML_LOG=1 MLFLOW=1 make cpi-nowcast` → run `cpi_nowcast` в MLflow, артефакты `run.json`, `predictions.jsonl`, `model/`.
 3. `make mlflow-export` → `v_ml_runs`/`v_ml_leaderboard`/`v_ml_error_by_fold` видят run; `count() FINAL` = 1; число fold-строк совпадает.
 4. Повторный `make mlflow-export` → те же counts через `FINAL`; идемпотентно.

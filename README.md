@@ -113,7 +113,7 @@ deploy/staging/      артефакты staging
 
 ## MLflow (ML-инфраструктура)
 
-MLflow — control plane ML-экспериментов (`cpi_nowcast`, `key_rate_model`): UI, сравнение run'ов и реестр моделей. Хранилище — SQLite `build/mlflow/mlflow.db` и локальные артефакты `build/mlflow/artifacts` (Postgres/MinIO не нужны); сервер слушает только `127.0.0.1:5000`, доступ — localhost или SSH-туннель. ClickHouse остаётся аналитической репликой: run'ы экспортируются в `ml_runs`/`ml_predictions`, схема не меняется.
+MLflow — control plane ML-экспериментов (`cpi_nowcast`, `key_rate_model`): UI, сравнение run'ов и реестр моделей. Хранилище — SQLite `build/mlflow/mlflow.db` и артефакты `build/mlflow/artifacts` (Postgres/MinIO не нужны); сервер запускается с `--artifacts-destination` + `--serve-artifacts` и проксирует upload, слушает только `127.0.0.1:5000`, доступ — localhost или SSH-туннель. ClickHouse остаётся аналитической репликой: run'ы экспортируются в `ml_runs`/`ml_predictions`, схема не меняется.
 
 ```bash
 make mlflow-up                             # сервер и /health; UI http://127.0.0.1:5000

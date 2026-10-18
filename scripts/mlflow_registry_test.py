@@ -439,14 +439,23 @@ class ListModelsTest(unittest.TestCase):
                     mr.list_models(client, name=name)
                 self.assertEqual(client.calls, [])
 
-    def test_unsafe_registered_name_is_rejected_before_filter(self):
+    def test_unsafe_registered_name_is_skipped_when_listing_all(self):
+        # M3: чужая модель из реестра не должна ломать листинг всех моделей:
+        # её имя не подставляется в filter_string, а пропускается с warning.
         client = FakeClient()
         _seed(client, "weird'name", [FakeVersion(1, run_id=RUN_ID)])
+        _seed(client, "good_model", [FakeVersion(2, run_id=OTHER_RUN_ID)])
 
-        with self.assertRaises(mr.UnsafeModelNameError):
-            mr.list_models(client)
+        with redirect_stdout(io.StringIO()), \
+                self.assertLogs("mlflow_registry", level="WARNING") as logs:
+            rows = mr.list_models(client)
 
-        self.assertEqual(client.calls_named("search_model_versions"), [])
+        self.assertEqual([row["name"] for row in rows], ["good_model"])
+        self.assertIn("weird'name", "\n".join(logs.output))
+        self.assertEqual(
+            client.calls_named("search_model_versions"),
+            [("search_model_versions", "name='good_model'")],
+        )
 
     def test_filter_by_name_uses_get_registered_model(self):
         client = FakeClient()
