@@ -72,7 +72,8 @@ SQL-константы переименовывают их в общий `value`
    клип `[0.05, 1]`;
 4. первые `MIN_TRAIN` заседаний получают `w = 1`: статистик ещё нет.
 
-`walk_forward_weights(rows, min_train)` возвращает as-of веса в порядке строк;
+`walk_forward_weights(rows, min_train)` возвращает as-of веса, выровненные по
+входу; порядок строк не важен — внутри они сортируются хронологически, и
 строка `t` не участвует в оценке своих статистик. `FEATURES_ALL` — основной
 набор §4.2, `FEATURES_CORE` — проверка робастности на каналах, покрывающих
 2014+.
@@ -1029,21 +1030,30 @@ def walk_forward_weights(
 ) -> list[float]:
     """As-of веса всех заседаний: `t` не участвует в своих статистиках (§5).
 
-    Для строки `t ≥ min_train` модель обучается на `rows[:t]` — строго прошлых
-    заседаниях; строка `t` подаётся только в `anomaly_score`. Первые
-    `min_train` строк получают `1.0`: статистик ещё нет. Возврат — веса в
-    порядке входа, поэтому `weights[t]` принадлежит `rows[t]`.
+    Порядок `rows` не важен: индексы сортируются по
+    `rows[i].decision.meeting_date`, и статистики для позиции `t` в этом
+    хронологическом порядке оцениваются только по предыдущим позициям —
+    строго прошлым заседаниям. Сама строка подаётся только в
+    `anomaly_score`. Первые `min_train` хронологических строк получают
+    `1.0`: статистик ещё нет.
+
+    Возврат выровнен по ВХОДУ: `weights[i]` принадлежит `rows[i]`, даже если
+    строки переданы не в хронологическом порядке.
     """
     if min_train < 1:
         raise ValueError(f"walk-forward весов: min_train = {min_train} < 1")
-    weights = []
-    for index, row in enumerate(rows):
-        if index < min_train:
-            weights.append(WEIGHT_MAX)
+    order = sorted(
+        range(len(rows)),
+        key=lambda index: rows[index].decision.meeting_date,
+    )
+    weights = [WEIGHT_MAX] * len(rows)
+    for position, index in enumerate(order):
+        if position < min_train:
             continue
-        model = fit_anomaly(rows[:index], features)
-        weights.append(
-            weight_from_score(anomaly_score(model, row), model.median_distance)
+        train_rows = [rows[prior] for prior in order[:position]]
+        model = fit_anomaly(train_rows, features)
+        weights[index] = weight_from_score(
+            anomaly_score(model, rows[index]), model.median_distance
         )
     return weights
 
@@ -1125,18 +1135,30 @@ def walk_forward_classifier(
 ) -> list[Optional[float]]:
     """Walk-forward вероятность явного шока для каждого заседания (спека §6).
 
-    Фолд `t` обучается на `rows[:t]` (только прошлое) и предсказывает
-    вероятность `explicit_shock` строки `t`. Первые `min_train` строк и
-    вырожденные фолды (один класс в обучении) — `None`: вызывающий считает их
-    число как `sum(probability is None for probability in result)`. Возврат —
-    список длины `len(rows)`, выровненный по строкам.
+    Порядок `rows` не важен: индексы сортируются по
+    `rows[i].decision.meeting_date`, фолд на позиции `t` в этом
+    хронологическом порядке обучается на предыдущих позициях (только
+    прошлое) и предсказывает вероятность `explicit_shock` строки на позиции
+    `t`. Первые `min_train` хронологических строк и вырожденные фолды (один
+    класс в обучении) — `None`: вызывающий считает их число как
+    `sum(probability is None for probability in result)`.
+
+    Возврат выровнен по ВХОДУ: список длины `len(rows)`, где `result[i]`
+    относится к `rows[i]`, в каком бы порядке строки ни были переданы.
     """
     if min_train < 1:
         raise ValueError(f"walk-forward классификатора: min_train = {min_train} < 1")
+    order = sorted(
+        range(len(rows)),
+        key=lambda index: rows[index].decision.meeting_date,
+    )
     probabilities: list[Optional[float]] = [None] * len(rows)
-    for index in range(min_train, len(rows)):
+    for position, index in enumerate(order):
+        if position < min_train:
+            continue
+        train_rows = [rows[prior] for prior in order[:position]]
         try:
-            model = fit_shock_classifier(rows[:index], features)
+            model = fit_shock_classifier(train_rows, features)
         except krm.DegenerateWindowError:
             continue
         probabilities[index] = shock_probability(model, rows[index])
