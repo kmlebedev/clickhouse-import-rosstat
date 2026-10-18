@@ -49,18 +49,18 @@ FROM cbr_dip_bulletin FINAL`,
 var cbrPitAsOfView = util.View{
 	Name:   "v_point_in_time_asof",
 	Tables: []string{cbrDipTable},
-	Select: `SELECT source, series, period_date,
-       argMax(value, (published_at, vintage))         AS value,
-       max(published_at)                              AS published_at,
-       argMax(vintage, (published_at, vintage))       AS vintage,
-       argMax(vintage_label, (published_at, vintage)) AS vintage_label
+	Select: `SELECT p.source, p.series, p.period_date,
+       argMax(p.value, (p.published_at, p.vintage))         AS value,
+       max(p.published_at)                                  AS published_at,
+       argMax(p.vintage, (p.published_at, p.vintage))       AS vintage,
+       argMax(p.vintage_label, (p.published_at, p.vintage)) AS vintage_label
 FROM (
     SELECT 'cbr_dip_bulletin' AS source, series, date AS period_date, value,
            publication_date AS published_at, release_id AS vintage, release AS vintage_label
     FROM cbr_dip_bulletin FINAL
     WHERE publication_date < {as_of:Date}
-)
-GROUP BY source, series, period_date`,
+) AS p
+GROUP BY p.source, p.series, p.period_date`,
 	Comment: "Срез point-in-time: что было известно строго до даты as_of. Форма вызова — " +
 		"v_point_in_time_asof(as_of='YYYY-MM-DD'). Граница строгая: publication_date < as_of, " +
 		"поэтому значение, опубликованное ровно в дату as_of, в срез не входит (решение ЦБ " +
@@ -68,6 +68,8 @@ GROUP BY source, series, period_date`,
 		"period_date) берётся последняя версия по тай-брейку (published_at, vintage): два " +
 		"выпуска одной даты не дают произвольную строку, а отсутствие ряда в новом выпуске " +
 		"значит «этот выпуск его не показывает» — последняя известная версия остаётся видимой. " +
+		"Колонки подзапроса квалифицированы алиасом p: иначе алиас aggregate-колонки published_at " +
+		"перекрывает имя столбца подзапроса и ClickHouse 26.10 возвращает ILLEGAL_AGGREGATION. " +
 		"Пример ревизии unemployment_sa за 2023-11-30: as_of='2024-02-07' → 2.885274 (выпуск " +
 		"24-01), as_of='2026-09-02' → 2.916127 (выпуск 26-06). У параметризованной витрины нет " +
 		"схемы без аргументов, поэтому колонковых комментариев у неё нет — смысл колонок " +
