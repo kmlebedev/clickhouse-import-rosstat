@@ -402,8 +402,15 @@ func TestResolveRateWritesErrorBp(t *testing.T) {
 	target := date(2026, time.September, 11)
 	store := &fakeResolveStore{
 		rateRows: []forecastRow{
-			{ForecastDate: date(2026, time.September, 1), TargetDate: target, Metric: "cbr_rate:taylor", Predicted: 14.35},
-			{ForecastDate: date(2026, time.September, 1), TargetDate: target, Metric: "cbr_rate:ordered_logit", Predicted: 13.00},
+			{
+				ForecastDate: date(2026, time.September, 1), TargetDate: target, Metric: "cbr_rate:taylor",
+				Predicted: 14.35, Probabilities: "{}", Model: "taylor", DataVersion: "v-taylor", PromptVersion: 0,
+			},
+			{
+				ForecastDate: date(2026, time.September, 1), TargetDate: target, Metric: "cbr_rate:ordered_logit",
+				Predicted: 13.00, Probabilities: `{"cut":80,"hike":5,"hold":15}`,
+				Model: "ordered_logit", DataVersion: "v-logit", PromptVersion: 0,
+			},
 		},
 		rates: map[string]float64{"2026-09-11": 14.00},
 	}
@@ -428,11 +435,15 @@ func TestResolveRateWritesErrorBp(t *testing.T) {
 	}
 
 	want := []struct {
-		metric string
-		bp     float64
+		metric        string
+		bp            float64
+		probabilities string
+		model         string
+		dataVersion   string
+		promptVersion uint16
 	}{
-		{"cbr_rate:taylor", 35},
-		{"cbr_rate:ordered_logit", -100},
+		{"cbr_rate:taylor", 35, "{}", "taylor", "v-taylor", 0},
+		{"cbr_rate:ordered_logit", -100, `{"cut":80,"hike":5,"hold":15}`, "ordered_logit", "v-logit", 0},
 	}
 	for index, resolution := range store.writes[0] {
 		if index >= len(want) {
@@ -449,6 +460,15 @@ func TestResolveRateWritesErrorBp(t *testing.T) {
 		}
 		if resolution.ErrorBp == nil || math.Abs(*resolution.ErrorBp-want[index].bp) > 1e-9 {
 			t.Fatalf("строка %d: error_bp = %v, want %v", index, resolution.ErrorBp, want[index].bp)
+		}
+		// Резолвер переписывает строку целиком: метаданные публикации обязаны
+		// переехать в новую версию, иначе ReplacingMergeTree потеряет распределение
+		// и версию данных после первого же резолва.
+		if resolution.Probabilities != want[index].probabilities || resolution.Model != want[index].model ||
+			resolution.DataVersion != want[index].dataVersion || resolution.PromptVersion != want[index].promptVersion {
+			t.Fatalf("строка %d: metadata = (%q, %q, %q, %d), want (%q, %q, %q, %d)", index,
+				resolution.Probabilities, resolution.Model, resolution.DataVersion, resolution.PromptVersion,
+				want[index].probabilities, want[index].model, want[index].dataVersion, want[index].promptVersion)
 		}
 	}
 }
@@ -512,6 +532,8 @@ func TestResolveKeepsXauBehaviour(t *testing.T) {
 		rateRows: []forecastRow{{
 			ForecastDate: date(2026, time.September, 1), TargetDate: target,
 			Metric: "cbr_rate:ordered_logit", Predicted: 13.00,
+			Probabilities: `{"cut":80,"hike":5,"hold":15}`, Model: "ordered_logit",
+			DataVersion: "v-logit", PromptVersion: 0,
 		}},
 		stats: windowStats{ComexCount: 64, ComexAvg: xauActual},
 		rates: map[string]float64{"2026-09-30": 14.00},
@@ -548,8 +570,13 @@ func TestResolveKeepsXauBehaviour(t *testing.T) {
 	if rate.ErrorPct != nil {
 		t.Fatalf("rate error_pct = %v, want nil", *rate.ErrorPct)
 	}
-	if rate.ErrorBp == nil || *rate.ErrorBp != -100 {
+	if rate.ErrorBp == nil || math.Abs(*rate.ErrorBp-(-100)) > 1e-9 {
 		t.Fatalf("rate error_bp = %v, want -100", rate.ErrorBp)
+	}
+	if rate.Probabilities != `{"cut":80,"hike":5,"hold":15}` || rate.Model != "ordered_logit" ||
+		rate.DataVersion != "v-logit" || rate.PromptVersion != 0 {
+		t.Fatalf("rate metadata = (%q, %q, %q, %d), want probabilities/model/data_version preserved", rate.Probabilities,
+			rate.Model, rate.DataVersion, rate.PromptVersion)
 	}
 }
 
