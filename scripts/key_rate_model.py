@@ -112,6 +112,7 @@ point-in-time слой, витрина, графики и консенсус-б�
 """
 
 import argparse
+import bisect
 import csv
 import json
 import logging
@@ -175,6 +176,12 @@ IBK_SERIES = "business_climate_sa"
 # `wave_date + 6 дней` — консервативно и без заглядывания вперёд.
 CONSENSUS_SOURCE = "cbr_mo_br"
 CONSENSUS_PUBLICATION_LAG_DAYS = 6
+
+# Порядок бакетов годового бенчмарка в отчёте (спека §3.1): сначала экс-анте
+# (волна опубликована до начала года), затем внутригодовые — от дальнего
+# горизонта к ближнему. Имена — контракт таблицы отчёта, поэтому порядок задан
+# здесь, а не в рендерере.
+CONSENSUS_BUCKETS = ("ex-ante", "10-12", "7-9", "4-6", "1-3")
 
 # Guard B4 (Task 4, спека §3.2): на остаток года должно оставаться не меньше
 # 30 дней, иначе `r_implied` делится на короткий хвост и становится шумом.
@@ -591,6 +598,262 @@ def consensus_from_rows(rows: list) -> list:
             )
         )
     return waves
+
+
+# --- Годовой бенчмарк: средняя, наивный hold и наблюдения (спека §3.1) --------
+
+
+def _rate_asof(points: list, day: date) -> Optional[float]:
+    """Последняя точка ряда ставки с датой `<= day` (fill-forward), или None.
+
+    Контракт входа: `points` отсортированы по дате (так их отдают
+    `key_rate_from_rows`/`load_key_rate`). Ряд ставки — ступенчатая функция:
+    до первой точки значения нет (`None`), после точки действует её значение
+    до следующего изменения. `bisect` по ключу-дате — O(log n) без среза
+    ряда на каждый календарный день.
+    """
+    index = bisect.bisect_right(points, day, key=lambda point: point[0])
+    if index == 0:
+        return None
+    return points[index - 1][1]
+
+
+def sum_rates_between(points: list, start: date, end: date) -> float:
+    """Сумма ставок по КАЛЕНДАРНЫМ дням `[start, end]` включительно.
+
+    Fill-forward: каждый день берёт последнюю точку с датой `<= дня` (спека
+    §3.1: «с учётом выходных дней»). Отсутствие ставки на `start` — это
+    `ValueError`, а не ноль: ноль молча занизил бы `R_known` и среднегодовую
+    и выглядел бы как измеренное значение.
+
+    Сумма считается отрезками между точками, а не 365–366 вызовами as-of:
+    результат тот же, но на длинном ряду это O(точек), а не O(дней·log n).
+    """
+    if end < start:
+        raise ValueError(
+            f"ставка: конец интервала {end.isoformat()} раньше начала {start.isoformat()}"
+        )
+    index = bisect.bisect_right(points, start, key=lambda point: point[0])
+    if index == 0:
+        raise ValueError(
+            f"ставка: нет точки на {start.isoformat()} — сумму не из чего собрать"
+        )
+    day = start
+    rate = points[index - 1][1]
+    total = 0.0
+    while index < len(points) and points[index][0] <= end:
+        next_day = points[index][0]
+        total += rate * (next_day - day).days
+        day = next_day
+        rate = points[index][1]
+        index += 1
+    total += rate * ((end - day).days + 1)
+    return total
+
+
+def annual_average_rate(points: list, year: int) -> Optional[float]:
+    """Фактическая среднегодовая ставка года `year` по календарным дням.
+
+    `None`, если ряд не покрывает год: первая точка позже 1 января или
+    последняя раньше 31 декабря (спека §3.1). Так неполный текущий год не
+    выдаёт «среднюю с начала года» за факт. Число дней — календарное (366 в
+    високосном году): формулировка опроса — «с учётом выходных дней».
+    """
+    first_day = date(year, 1, 1)
+    last_day = date(year, 12, 31)
+    if not points or points[0][0] > first_day or points[-1][0] < last_day:
+        return None
+    days = (last_day - first_day).days + 1
+    return sum_rates_between(points, first_day, last_day) / days
+
+
+def _consensus_bucket(available_from: date, year: int) -> str:
+    """Бакет волны по горизонту до конца года `year` (спека §3.1).
+
+    Горизонт — число календарных месяцев от месяца публикации до декабря
+    включительно: январь–март — 12–10 месяцев (`10-12`), апрель–июнь — 9–7,
+    июль–сентябрь — 6–4, октябрь–декабрь — 3–1. Волна, опубликованная до
+    1 января, — `ex-ante`. Границы проверяются по `available_from`, а не по
+    `wave_date`: в выборку волна входит датой публикации.
+    """
+    if available_from < date(year, 1, 1):
+        return "ex-ante"
+    months = 12 - available_from.month + 1
+    if months >= 10:
+        return "10-12"
+    if months >= 7:
+        return "7-9"
+    if months >= 4:
+        return "4-6"
+    return "1-3"
+
+
+def hold_forecast(points: list, year: int, available_from: date) -> Optional[float]:
+    """Наивный прогноз «ставка не меняется» для среднегодовой года `year`.
+
+    Формула спеки §3.1. Если волна доступна до 1 января, известного пути в
+    году нет: hold равен ставке на `available_from` на весь год. Иначе
+    известная часть `[1 января, A]` суммируется фактическим путём, а остаток
+    года `A+1 … 31 декабря` — ставкой на `A`. `None` — на `available_from`
+    нет ставки (ряд начинается позже): вызывающий решает, что это значит.
+    """
+    first_day = date(year, 1, 1)
+    last_day = date(year, 12, 31)
+    rate = _rate_asof(points, available_from)
+    if rate is None:
+        return None
+    if available_from < first_day:
+        return rate
+    if available_from > last_day:
+        raise ValueError(
+            f"hold: available_from {available_from.isoformat()} позже конца {year} года"
+        )
+    known = sum_rates_between(points, first_day, available_from)
+    days = (last_day - first_day).days + 1
+    remaining = (last_day - available_from).days
+    return (known + rate * remaining) / days
+
+
+@dataclass(frozen=True)
+class ConsensusObservation:
+    """Годовая пара «волна консенсуса — факт» (спека §3.1).
+
+    `actual` — фактическая среднегодовая ставка года `year`; ошибки — в
+    БАЗИСНЫХ пунктах, `(прогноз − факт) × 100`, положительная — прогноз
+    завысил. `bucket` — горизонт волны: `ex-ante` (публикация до 1 января
+    года) или число месяцев до конца года (`10-12` … `1-3`). `p10`/`p90` и
+    `answers` переносятся из волны для аудита, в метрики не входят.
+    """
+
+    year: int
+    wave_date: date
+    available_from: date
+    bucket: str
+    median: float
+    p10: Optional[float]
+    p90: Optional[float]
+    answers: Optional[int]
+    actual: float
+    consensus_error_bp: float
+    hold_error_bp: float
+
+
+def consensus_observations(consensus: list, key_rate: list) -> list:
+    """Пары «волна — факт» завершённых лет (спека §3.1), по `(год, доступность)`.
+
+    Год считается завершённым, если `annual_average_rate` вернула факт (ряд
+    покрывает 1 января и 31 декабря). Для каждого такого года берутся:
+
+    * **экс-анте** — последняя волна с медианой на год, опубликованная строго
+      до 1 января (`available_from < 1 января Y`); для 2021 её нет — опрос
+      начинается с 2021-05;
+    * **внутригодовые** — все волны с `1 января Y <= available_from <
+      1 января Y+1`.
+
+    Медиана вне этого окна (волна на будущий год, опубликованная посреди
+    текущего) в выборку не попадает. Hold считается по §3.1; отсутствие
+    ставки на дату доступности в завершённом году — `ValueError`: это разрыв
+    ряда, а не норма, и молча выбросить пару значило бы сузить выборку.
+    """
+    observations = []
+    for year in sorted({wave.year for wave in consensus}):
+        actual = annual_average_rate(key_rate, year)
+        if actual is None:
+            continue
+        first_day = date(year, 1, 1)
+        next_first_day = date(year + 1, 1, 1)
+        waves = [wave for wave in consensus if wave.year == year]
+        ex_ante = [wave for wave in waves if wave.available_from < first_day]
+        selected = []
+        if ex_ante:
+            selected.append(max(ex_ante, key=lambda wave: wave.available_from))
+        selected.extend(
+            wave for wave in waves if first_day <= wave.available_from < next_first_day
+        )
+        for wave in selected:
+            hold = hold_forecast(key_rate, year, wave.available_from)
+            if hold is None:
+                raise ValueError(
+                    f"консенсус: нет ставки на {wave.available_from.isoformat()} "
+                    f"(волна {wave.wave_date.isoformat()} за {year})"
+                )
+            observations.append(
+                ConsensusObservation(
+                    year=year,
+                    wave_date=wave.wave_date,
+                    available_from=wave.available_from,
+                    bucket=_consensus_bucket(wave.available_from, year),
+                    median=wave.median,
+                    p10=wave.p10,
+                    p90=wave.p90,
+                    answers=wave.answers,
+                    actual=actual,
+                    consensus_error_bp=(wave.median - actual) * 100.0,
+                    hold_error_bp=(hold - actual) * 100.0,
+                )
+            )
+    return sorted(
+        observations,
+        key=lambda observation: (observation.year, observation.available_from),
+    )
+
+
+@dataclass(frozen=True)
+class ConsensusAggregate:
+    """Метрики бакета: консенсус против наивного hold (спека §3.1).
+
+    `n` — число пар; RMSE/MAE/bias — в базисных пунктах. Bias — средняя
+    знаковая ошибка: положительная значит систематическое завышение.
+    `dm_stat`/`dm_p` — Diebold–Mariano (HLN, `h=1`) на парных ошибках:
+    положительная статистика значит, что консенсус ХУЖЕ hold (его ошибки
+    больше). При `n < 2` тест не определён — `None`.
+    """
+
+    bucket: str
+    n: int
+    consensus_rmse_bp: float
+    consensus_mae_bp: float
+    consensus_bias_bp: float
+    hold_rmse_bp: float
+    hold_mae_bp: float
+    hold_bias_bp: float
+    dm_stat: Optional[float]
+    dm_p: Optional[float]
+
+
+def aggregate_consensus(observations: list, bucket: str) -> Optional[ConsensusAggregate]:
+    """Метрики одного бакета годового бенчмарка (спека §3.1), или None.
+
+    `None` — в бакете нет наблюдений. DM считается при `n >= 2`; при `n = 1`
+    тест не определён и остаётся `None`, а RMSE/MAE/bias всё ещё считаются
+    (в отчётности это одна пара). Вырожденную дисперсию разницы потерь
+    обрабатывает `eval_utils.diebold_mariano` своей конвенцией (`(0.0, 1.0)`
+    для одинаковых ошибок, `(±inf, 0.0)` для постоянной ненулевой разницы);
+    исключения DM не перехватываются.
+    """
+    selected = [
+        observation for observation in observations if observation.bucket == bucket
+    ]
+    if not selected:
+        return None
+    consensus_errors = [observation.consensus_error_bp for observation in selected]
+    hold_errors = [observation.hold_error_bp for observation in selected]
+    dm_stat = None
+    dm_p = None
+    if len(selected) >= 2:
+        dm_stat, dm_p = eu.diebold_mariano(consensus_errors, hold_errors, h=1)
+    return ConsensusAggregate(
+        bucket=bucket,
+        n=len(selected),
+        consensus_rmse_bp=rmse_bp(consensus_errors),
+        consensus_mae_bp=mae_bp(consensus_errors),
+        consensus_bias_bp=sum(consensus_errors) / len(consensus_errors),
+        hold_rmse_bp=rmse_bp(hold_errors),
+        hold_mae_bp=mae_bp(hold_errors),
+        hold_bias_bp=sum(hold_errors) / len(hold_errors),
+        dm_stat=dm_stat,
+        dm_p=dm_p,
+    )
 
 
 # --- Загрузчики: SQL + транспорт + разбор ------------------------------------
