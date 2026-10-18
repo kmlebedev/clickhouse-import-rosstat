@@ -245,7 +245,7 @@ def build_world(world: dict) -> tuple:
 
 
 def long_month_span() -> list:
-    """Месяцы long-выборки: 2002-02…2026-08 (295 месяцев)."""
+    """Месяцы long-выборки: 2002-05…2026-08 (292 месяца)."""
     first, last = cm.SAMPLE_BOUNDS["long"]
     return month_range(first, last)
 
@@ -280,10 +280,11 @@ def synthetic_long_key_rate() -> list:
 
 
 def synthetic_long_world() -> dict:
-    """Полный синтетический long-мир: 295 месяцев, 0 пропусков.
+    """Полный синтетический long-мир: 292 месяца, 0 пропусков.
 
-    Таргет и МП начинаются за два месяца до старта long (2001-12), FAO — с
-    2001-10 (первому cutoff нужна пара точек), квартальные МП — с 2001-10.
+    Таргет и МП начинаются за два месяца до старта long (2002-03), FAO — с
+    2001-10 (первому cutoff нужна пара точек), квартальные МП — с 2001-10
+    (Q1-2002 доступна 2002-05-31, то есть ровно к cutoff первого месяца).
     Контроли `usd`/`key_rate` намеренно короткие (2013), как живые ряды: их
     отсутствие даёт NaN, а не пропуск месяца.
     """
@@ -837,7 +838,7 @@ class TestBuildSample(unittest.TestCase):
 
 
 class TestLongSample(unittest.TestCase):
-    """Long-sample §8.2: 295 месяцев, NaN-контроли до 2013, сплит 203/67."""
+    """Long-sample §8.2: 292 месяца, NaN-контроли до 2013, сплит 200/67."""
 
     def test_short_sample_is_unchanged(self):
         # Принятая выборка 155 месяцев не меняется от появления long-sample.
@@ -854,14 +855,14 @@ class TestLongSample(unittest.TestCase):
         # В short-выборке оба контроля заполнены всегда.
         self.assertEqual(cm.nan_control_counts(rows), (0, 0))
 
-    def test_long_sample_covers_295_months(self):
+    def test_long_sample_covers_292_months(self):
         self.assertEqual(
-            cm.SAMPLE_BOUNDS["long"], (date(2002, 2, 1), date(2026, 8, 1))
+            cm.SAMPLE_BOUNDS["long"], (date(2002, 5, 1), date(2026, 8, 1))
         )
         rows, skipped = build_long_world()
         self.assertEqual(skipped, [])
-        self.assertEqual(len(rows), 295)
-        self.assertEqual(rows[0].month, date(2002, 2, 1))
+        self.assertEqual(len(rows), 292)
+        self.assertEqual(rows[0].month, date(2002, 5, 1))
         self.assertEqual(rows[-1].month, date(2026, 8, 1))
         self.assertEqual([row.month for row in rows], long_month_span())
         cm.assert_months_purged(rows)
@@ -902,8 +903,8 @@ class TestLongSample(unittest.TestCase):
                 math.isnan(by_month[month].features["key_rate"]),
                 f"key_rate месяца {month.isoformat()}",
             )
-        # NaN ровно в префиксах: 2002-02…2013-02 (133) и 2002-02…2013-08 (139).
-        self.assertEqual(cm.nan_control_counts(rows), (133, 139))
+        # NaN ровно в префиксах: 2002-05…2013-02 (130) и 2002-05…2013-08 (136).
+        self.assertEqual(cm.nan_control_counts(rows), (130, 136))
 
     def test_long_enet_imputes_empty_control_columns(self):
         # Раннее long-окно (train до 2013): usd_mm и key_rate в train целиком
@@ -934,7 +935,7 @@ class TestLongSample(unittest.TestCase):
         with self.assertRaises(ValueError):
             cm.validate_sample("bogus")
 
-    def test_long_article_split_is_203_67(self):
+    def test_long_article_split_is_200_67(self):
         rows, _ = build_long_world()
         train = [
             row for row in rows if cm.month_of(row.month) <= cm.ARTICLE_TRAIN_END
@@ -944,9 +945,9 @@ class TestLongSample(unittest.TestCase):
             for row in rows
             if cm.ARTICLE_TRAIN_END < cm.month_of(row.month) <= cm.ARTICLE_TEST_END
         ]
-        self.assertEqual(len(train), 203)
+        self.assertEqual(len(train), 200)
         self.assertEqual(len(test), 67)
-        self.assertEqual(train[0].month, date(2002, 2, 1))
+        self.assertEqual(train[0].month, date(2002, 5, 1))
         self.assertEqual(train[-1].month, date(2018, 12, 1))
         self.assertEqual(test[0].month, date(2019, 1, 1))
         self.assertEqual(test[-1].month, date(2024, 7, 1))
@@ -989,11 +990,11 @@ class TestLongSample(unittest.TestCase):
             rows, skipped, [], today=date(2026, 10, 18), sample="long"
         )
         self.assertIn("(long-sample)", report)
-        self.assertIn("| sample | long (2002-02 … 2026-08) |", report)
+        self.assertIn("| sample | long (2002-05 … 2026-08) |", report)
         self.assertIn(
-            "| NaN-контроли (`usd_mm` / `key_rate`) | 133 / 139 |", report
+            "| NaN-контроли (`usd_mm` / `key_rate`) | 130 / 136 |", report
         )
-        self.assertIn("203 мес.", report)
+        self.assertIn("200 мес.", report)
         self.assertIn("67 мес.", report)
         self.assertIn("NaN", report)
         # Short-отчёт остаётся прежним: другие строка sample/NaN и оговорка.
@@ -1236,7 +1237,7 @@ class TestRunSummaryOffline(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             code, text = self.run_summary(["--sample", "long"], out_dir=tmp)
         self.assertEqual(code, 0)
-        self.assertTrue(summary_value(text, "sample:").startswith("long (2002-02 … 2026-08)"))
+        self.assertTrue(summary_value(text, "sample:").startswith("long (2002-05 … 2026-08)"))
         self.assertTrue(summary_value(text, "--start:").startswith("48 "))
         self.assertIn("не пишутся", text)
 
