@@ -28,6 +28,7 @@ import hashlib
 import io
 import json
 import math
+import multiprocessing
 import os
 import pickle
 import random
@@ -37,6 +38,7 @@ import tempfile
 import unittest
 import unittest.mock
 import warnings
+from concurrent.futures import ProcessPoolExecutor
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -3095,6 +3097,11 @@ class TestQuickParallelJobs(unittest.TestCase):
         self.assertEqual(cm._run_fold_worker.__module__, cm.__name__)
         # Не замыкание: `spawn` pickle'ит ссылку, а не замыкание теста.
         self.assertIsNone(cm._run_fold_worker.__closure__)
+        # Сама функция тоже обязана пережить pickle (ссылка module.qualname).
+        restored_worker = pickle.loads(pickle.dumps(cm._run_fold_worker))
+        self.assertIs(restored_worker, cm._run_fold_worker)
+        self.assertEqual(restored_worker.__module__, cm.__name__)
+        self.assertEqual(restored_worker.__name__, "_run_fold_worker")
         rows = catboost_rows(20)
         task = (7, rows[:5], rows[7], list(cm.MODELS))
         restored = pickle.loads(pickle.dumps(task))
@@ -3104,6 +3111,24 @@ class TestQuickParallelJobs(unittest.TestCase):
             [row.month for row in restored[1]], [row.month for row in rows[:5]]
         )
         self.assertEqual(restored[2].month, rows[7].month)
+
+    def test_spawn_worker_resolves_global_model(self):
+        # Не in-process: настоящий spawn-воркер импортирует cpi_monthly заново
+        # и обязан сам найти модель в глобальном MODELS.
+        rows = catboost_rows(6)
+        task = (2, rows[:2], rows[2], [cm.MODEL_LAST])
+        context = multiprocessing.get_context("spawn")
+        with ProcessPoolExecutor(max_workers=1, mp_context=context) as pool:
+            index, fold = pool.submit(cm._run_fold_worker, task).result(
+                timeout=180
+            )
+        self.assertEqual(index, 2)
+        result = fold[cm.MODEL_LAST]
+        self.assertFalse(result["skipped"])
+        # B1 = y_lag1 тестовой строки (признак, а не y предыдущей строки).
+        self.assertAlmostEqual(
+            result["pred"], rows[2].features["y_lag1"], places=12
+        )
 
     def test_parallel_skipped_and_notes(self):
         rows = catboost_rows(12)
@@ -3146,11 +3171,35 @@ class TestQuickParallelJobs(unittest.TestCase):
             [(p.month, p.model, p.y_pred) for p in parallel.predictions],
         )
 
+    def test_parallel_rejects_non_global_models(self):
+        # Воркер получает только имена и резолвит их в глобальном MODELS:
+        # произвольный словарь функций обязан дать ValueError ДО пула, а не
+        # KeyError/подмену модели в дочернем процессе.
+        with self.assertRaisesRegex(ValueError, "глобальной MODELS"):
+            cm.evaluate_windows(
+                catboost_rows(20),
+                {"stub": lambda train, row: 0.0},
+                specs=[(10, 0)],
+                quick=True,
+                jobs=2,
+            )
+        # Даже имя реальной модели с ДРУГОЙ функцией — ошибка, а не тихая
+        # подмена на глобальную.
+        with self.assertRaisesRegex(ValueError, "b1_last_value"):
+            cm.walk_forward_parallel(
+                catboost_rows(20),
+                {cm.MODEL_LAST: lambda train, row: 0.0},
+                start=10,
+                embargo=0,
+                jobs=2,
+            )
+
     def test_jobs_requires_quick(self):
-        with contextlib.redirect_stderr(io.StringIO()) as stderr:
-            with self.assertRaises(SystemExit):
-                cm.main(["--jobs", "2"])
-        self.assertIn("--quick", stderr.getvalue())
+        for jobs in ("2", "1", "0"):
+            with contextlib.redirect_stderr(io.StringIO()) as stderr:
+                with self.assertRaises(SystemExit):
+                    cm.main(["--jobs", jobs])
+            self.assertIn("--quick", stderr.getvalue(), jobs)
 
     def test_negative_jobs_rejected(self):
         with contextlib.redirect_stderr(io.StringIO()):
@@ -3192,17 +3241,26 @@ class TestQuickParallelJobs(unittest.TestCase):
         self.assertNotIn("thread_count", cm.catboost_metadata(False))
 
     def test_full_mode_unchanged_after_jobs(self):
-        # `jobs>1` без quick отвергается и CLI, и API: полный путь не меняется.
-        with contextlib.redirect_stderr(io.StringIO()):
-            with self.assertRaises(SystemExit):
-                cm.main(["--jobs", "4"])
-        with self.assertRaises(ValueError):
-            cm.evaluate_windows(
-                catboost_rows(20),
-                {"stub": lambda train, row: 0.0},
-                specs=[(10, 0)],
-                jobs=4,
-            )
+        # `--jobs` без quick отвергается и CLI, и API (любое значение, 0/1/4):
+        # полный путь не меняется и не параллелится.
+        for jobs in ("0", "1", "4"):
+            with contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    cm.main(["--jobs", jobs])
+        for jobs in (1, 4):
+            with self.assertRaises(ValueError):
+                cm.evaluate_windows(
+                    catboost_rows(20),
+                    {"stub": lambda train, row: 0.0},
+                    specs=[(10, 0)],
+                    quick=False,
+                    jobs=jobs,
+                )
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                cm.run_summary(
+                    out_dir=Path(tmp), jobs=1, quick=False, start=3
+                )
         self.assertEqual(cm.window_specs(), [(24, 0), (48, 0), (24, 1)])
         self.assertEqual(cm.window_specs(48, 0), [(48, 0), (48, 1)])
         self.assertNotIn("thread_count", cm.catboost_params(False))
@@ -3217,7 +3275,7 @@ class TestQuickParallelJobs(unittest.TestCase):
                 {"stub": lambda train, row: 0.0},
                 specs=[(10, 0)],
                 quick=False,
-                jobs=1,
+                jobs=0,
             )
         self.assertEqual(len(runs[0].predictions), 10)
 
@@ -3227,12 +3285,23 @@ class TestQuickParallelJobs(unittest.TestCase):
         ) as summary:
             self.assertEqual(cm.main(["--quick", "--jobs", "8"]), 0)
         self.assertEqual(summary.call_args.kwargs["jobs"], 8)
-        # jobs 0/1 допустимы и без quick — это последовательный полный путь.
+        # `--jobs 1` и `--jobs 0` с quick — последовательный quick.
+        for jobs in ("1", "0"):
+            with unittest.mock.patch.object(
+                    cm, "run_summary", return_value=0
+            ) as summary:
+                self.assertEqual(cm.main(["--quick", "--jobs", jobs]), 0)
+            self.assertEqual(summary.call_args.kwargs["jobs"], int(jobs))
+        # Без флага и без quick — штатный полный прогон с jobs=0.
         with unittest.mock.patch.object(
                 cm, "run_summary", return_value=0
         ) as summary:
-            self.assertEqual(cm.main(["--jobs", "1"]), 0)
-        self.assertEqual(summary.call_args.kwargs["jobs"], 1)
+            self.assertEqual(cm.main([]), 0)
+        self.assertEqual(summary.call_args.kwargs["jobs"], 0)
+        # Сам флаг --jobs без quick отвергается (в том числе 0 и 1).
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                cm.main(["--jobs", "1"])
 
     def test_quick_ml_log_jobs_config_and_run_name(self):
         fake = FakeLogger()
@@ -3275,6 +3344,54 @@ class TestQuickParallelJobs(unittest.TestCase):
             captured["run_name"],
             "cpi_monthly__short__quick__jobs8__start3__embargo0",
         )
+
+    def test_quick_jobs_1_ml_log_and_report_no_pool(self):
+        # `jobs=1` — последовательный quick: фактическое значение в паспорте,
+        # без сегмента jobs1 в run_name и без строки про пул в отчёте.
+        fake = FakeLogger()
+        captured = {}
+
+        def start_run(**kwargs):
+            captured.update(kwargs)
+            return fake
+
+        def fake_evaluate(rows, models, specs, **kwargs):
+            captured["evaluate"] = dict(kwargs)
+            return fake_window_runs(specs)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            with unittest.mock.patch.dict(
+                    os.environ, clean_ml_env(ML_LOG="1"), clear=True
+            ), unittest.mock.patch.object(
+                    cm.mlx, "start_run", start_run
+            ), unittest.mock.patch.object(
+                    cm, "evaluate_windows", fake_evaluate
+            ), unittest.mock.patch.object(
+                    cm, "fixed_split",
+                    side_effect=AssertionError("quick не вызывает fixed_split"),
+            ), unittest.mock.patch.object(
+                    cm, "current_nowcast",
+                    return_value=(None, "нет цели (тест)"),
+            ), fixture_transport(), contextlib.redirect_stdout(io.StringIO()):
+                code = cm.run_summary(
+                    out_dir=directory,
+                    today=date(2026, 10, 18),
+                    start=3,
+                    quick=True,
+                    jobs=1,
+                )
+            report = (directory / cm.REPORT_NAME).read_text(encoding="utf-8")
+        self.assertEqual(code, 0)
+        self.assertTrue(captured["config"]["quick"])
+        self.assertEqual(captured["config"]["jobs"], 1)
+        self.assertEqual(captured["evaluate"], {"quick": True, "jobs": 1})
+        self.assertEqual(
+            captured["run_name"],
+            "cpi_monthly__short__quick__start3__embargo0",
+        )
+        self.assertNotIn("пул фолдов", report)
+        self.assertNotIn("--jobs:", report)
 
 
 class TestRunSummaryMlLog(unittest.TestCase):
