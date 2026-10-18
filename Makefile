@@ -88,7 +88,7 @@ DAGU_VERSION     ?= v2.18.2
 MKDOCS_VERSION ?= 9.7.7
 MKDOCS := uv run --with mkdocs-material==$(MKDOCS_VERSION) --python 3.12 mkdocs
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-register mlflow-promote mlflow-models dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model cpi-nowcast edisclosure-login edisclosure-collect docs-check docs-build docs-serve
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-register mlflow-promote mlflow-models dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model cpi-nowcast edisclosure-login edisclosure-collect docs-check docs-build docs-serve
 
 all: lint test build build-ingest
 
@@ -446,12 +446,22 @@ deploy-staging-mcp: staging-precheck
 	@echo "прогрев кэша uv (скачивание mcp-clickhouse==$(MCP_VERSION))..."
 	@ssh $(STAGING_HOST) '$(STAGING_BIN_DIR)/uv tool run --from mcp-clickhouse==$(MCP_VERSION) python -c "pass" >/dev/null 2>&1 || true'
 
-# Полный деплой: бинарь → dagu → mcp → DAG'и → проверка ДО включения → включение → smoke.
+# MLflow: юнит + каталоги состояния + прогрев кэша uv. Версия в юните обязана совпадать
+# с MLFLOW_VERSION (комментарий в deploy/staging/mlflow.service); расхождение ловится ревью,
+# а не рантаймом. Прогрев не роняет деплой: пакет всё равно разрешится при старте сервиса.
+deploy-staging-mlflow: staging-precheck
+	scp deploy/staging/mlflow.service $(STAGING_HOST):/etc/systemd/system/mlflow.service
+	ssh $(STAGING_HOST) 'systemctl daemon-reload'
+	ssh $(STAGING_HOST) 'install -d -m 755 /var/lib/mlflow /var/lib/mlflow/artifacts'
+	@echo "прогрев кэша uv (скачивание mlflow==$(MLFLOW_VERSION))..."
+	@ssh $(STAGING_HOST) '$(STAGING_BIN_DIR)/uv run --with mlflow==$(MLFLOW_VERSION) --python 3.12 python -c "pass" >/dev/null 2>&1 || true'
+
+# Полный деплой: бинарь → dagu → mcp → mlflow → DAG'и → проверка ДО включения → включение → smoke.
 #
 # Порядок критичен. Сервисы включаются последними: dagu после `enable --now` немедленно
 # начинает выполнять DAG'и по расписанию, поэтому сначала проверяется, что бинарь и
 # DAG-файлы на месте (deploy-staging-preflight), и только потом сервисы запускаются.
-deploy-staging: deploy-staging-binary deploy-staging-dagu deploy-staging-mcp
+deploy-staging: deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow
 	ssh $(STAGING_HOST) 'install -d -m 755 /root/dagu'
 	scp dagu/*.yaml $(STAGING_HOST):/root/dagu/
 	# scp копирует, но не удаляет: снятый с репозитория DAG остался бы на хосте и продолжил бы
@@ -460,11 +470,11 @@ deploy-staging: deploy-staging-binary deploy-staging-dagu deploy-staging-mcp
 	# его в 09:47). Список пополнять при каждом удалении DAG из dagu/, иначе прунинг неполон.
 	ssh $(STAGING_HOST) 'rm -f /root/dagu/surveys.yaml'
 	@$(MAKE) deploy-staging-preflight --no-print-directory
-	ssh $(STAGING_HOST) 'systemctl enable --now dagu mcp-clickhouse'
+	ssh $(STAGING_HOST) 'systemctl enable --now dagu mcp-clickhouse mlflow'
 	@$(MAKE) deploy-staging-smoke --no-print-directory || { \
 		echo ""; \
 		echo "Сервисы оставлены ВКЛЮЧЁННЫМИ, а dagu выполняет DAG-и по расписанию."; \
-		echo "Чтобы остановить: ssh $(STAGING_HOST) 'systemctl disable --now dagu mcp-clickhouse'"; \
+		echo "Чтобы остановить: ssh $(STAGING_HOST) 'systemctl disable --now dagu mcp-clickhouse mlflow'"; \
 		echo "После исправления повторите: make deploy-staging"; exit 1; }
 	@echo "Готово. Далее: make mcp-user-staging (если kimi_reader ещё не создан)."
 
@@ -496,12 +506,16 @@ deploy-staging-smoke:
 	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; \
 		body=$$(curl -s -m 10 -X POST http://127.0.0.1:8000/mcp -H "Content-Type: application/json" -H "Authorization: Bearer $$CLICKHOUSE_MCP_AUTH_TOKEN" -H "Accept: application/json, text/event-stream" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}"); \
 		echo "$$body" | grep -q "Missing session ID" && echo "OK   MCP отвечает с токеном" || { echo "FAIL MCP с токеном ответил: $$body"; exit 1; }'
+	@echo "--- smoke: mlflow /health ---"
+	@ssh $(STAGING_HOST) 'systemctl is-active --quiet mlflow && curl -sf -m 5 -o /dev/null http://127.0.0.1:5000/health && echo "OK   MLflow /health = 200"' || { \
+		echo "FAIL mlflow /health — сервис не отвечает."; \
+		echo "  Проверьте: systemctl status mlflow; journalctl -u mlflow -n 50"; exit 1; }
 
-# Обновление ТОЛЬКО dagu и mcp-clickhouse до версий из репозитория.
+# Обновление ТОЛЬКО dagu, mcp-clickhouse и mlflow до версий из репозитория.
 # apt upgrade сюда НЕ входит: ClickHouse (данные) и Grafana обновляются вручную.
-upgrade-staging: deploy-staging-dagu deploy-staging-mcp
-	ssh $(STAGING_HOST) 'systemctl restart dagu mcp-clickhouse'
-	@echo "сервисы перезапущены на версиях: dagu $(DAGU_VERSION), mcp-clickhouse $(MCP_VERSION)"
+upgrade-staging: deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow
+	ssh $(STAGING_HOST) 'systemctl restart dagu mcp-clickhouse mlflow'
+	@echo "сервисы перезапущены на версиях: dagu $(DAGU_VERSION), mcp-clickhouse $(MCP_VERSION), mlflow $(MLFLOW_VERSION)"
 	@$(MAKE) deploy-staging-smoke --no-print-directory
 
 # Создание kimi_reader на staging. Пароль исполнителя (default) и пароль создаваемого
