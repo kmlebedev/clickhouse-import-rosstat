@@ -537,3 +537,56 @@ func TestInsertGoldForecastsEmptySkipsBatch(t *testing.T) {
 		t.Fatalf("empty slice must not trigger a batch, got %d", len(store.sent))
 	}
 }
+
+// TestInsertKeyRateForecastAppendsRow — строка журнала прогноза ключевой ставки:
+// метрика с суффиксом трека, predicted — уровень ставки, а actual/error_pct/
+// error_bp пусты до резолвера. Порядок позиций пинуется по DDL: перестановка
+// Date/Float64 прошла бы молча и записала бы predicted в error_pct.
+func TestInsertKeyRateForecastAppendsRow(t *testing.T) {
+	store := newFakeStore()
+	forecast := validKeyRateForecast()
+
+	if err := newTestWriter(store).InsertKeyRateForecast(context.Background(), forecast); err != nil {
+		t.Fatalf("InsertKeyRateForecast: %v", err)
+	}
+	if n := store.batchesFor(forecastLogInsert); n != 1 {
+		t.Fatalf("forecast_log batches: %d, want 1", n)
+	}
+	if len(store.sent) != 1 || len(store.sent[0].rows) != 1 {
+		t.Fatalf("sent %+v, want one batch with one row", store.sent)
+	}
+	row := store.sent[0].rows[0]
+	if len(row) != 7 {
+		t.Fatalf("row has %d columns, want 7 (forecast_date, target_date, metric, predicted, actual, error_pct, error_bp)", len(row))
+	}
+	forecastDate, _ := row[0].(time.Time)
+	targetDate, _ := row[1].(time.Time)
+	metric, _ := row[2].(string)
+	predicted, _ := row[3].(float64)
+	if forecastDate.Format(manualSeriesDateLayout) != "2026-10-18" ||
+		targetDate.Format(manualSeriesDateLayout) != "2026-10-23" ||
+		metric != "cbr_rate:ordered_logit" || predicted != 13.3665 {
+		t.Fatalf("row = %v", row)
+	}
+	for index, name := range map[int]string{4: "actual", 5: "error_pct", 6: "error_bp"} {
+		if row[index] != nil {
+			t.Fatalf("%s = %v, want nil until forecast_resolve", name, row[index])
+		}
+	}
+}
+
+func TestInsertKeyRateForecastAppendErrorAborts(t *testing.T) {
+	store := newFakeStore()
+	store.failAppend[forecastLogInsert] = errors.New("append rejected")
+
+	err := newTestWriter(store).InsertKeyRateForecast(context.Background(), validKeyRateForecast())
+	if err == nil {
+		t.Fatal("expected error from failed append")
+	}
+	if n := store.abortedFor(forecastLogInsert); n != 1 {
+		t.Fatalf("Abort calls for %s: %d, want 1", forecastLogInsert, n)
+	}
+	if n := store.batchesFor(forecastLogInsert); n != 0 {
+		t.Fatalf("%s sent %d times after append failure, want 0", forecastLogInsert, n)
+	}
+}
