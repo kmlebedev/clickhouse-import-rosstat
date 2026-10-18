@@ -1,0 +1,16 @@
+type: chain
+schedule: "17 21 5 * *"
+overlap_policy: skip
+
+steps:
+  - id: edisclosure_documents
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=edisclosure_documents
+      # Абсолютный путь: dagu запускает шаг в своём рабочем каталоге, а не в корне репозитория.
+      # Сюда оператор доставляет снапшот коллектора (локальный build/edisclosure).
+      - EDISCLOSURE_INPUT_DIR=/root/dagu/build/edisclosure
+      - EDISCLOSURE_ALLOW_MISSING=1
+    retry_policy:
+      limit: 3
+      interval_sec: 300
