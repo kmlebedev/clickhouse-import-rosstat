@@ -59,6 +59,25 @@ MCP_CMD      := uv run --with mcp-clickhouse==$(MCP_VERSION) --python $(MCP_PY) 
 MCP_CHECK_HOST ?= localhost
 MCP_CHECK_PORT ?= $(CH_HTTP_PORT)
 
+# MLflow (infra/4.2): сервер на 127.0.0.1:$(MLFLOW_PORT), SQLite-бэкенд и локальные артефакты
+# в $(MLFLOW_HOME) (build/ gitignored) — без PostgreSQL, MinIO, S3 и Docker.
+MLFLOW_VERSION      ?= 3.17.1
+MLFLOW_HOME         ?= $(BUILD_DIR)/mlflow
+MLFLOW_PORT         ?= 5000
+MLFLOW_TRACKING_URI ?= http://127.0.0.1:$(MLFLOW_PORT)
+MLFLOW_DB           := $(abspath $(MLFLOW_HOME)/mlflow.db)
+MLFLOW_ARTIFACTS    := $(abspath $(MLFLOW_HOME)/artifacts)
+MLFLOW_PID          := $(MLFLOW_HOME)/mlflow.pid
+MLFLOW_LOG          := $(MLFLOW_HOME)/mlflow.log
+
+# 1 — добавить mlflow в uv-окружение прогона и включить MLflow-приёмник.
+# При MLFLOW=0 MLFLOW_ENV передаёт пустой MLFLOW_TRACKING_URI: переменная из $(ROSSTAT_ENV)
+# экспортируется, но приёмник остаётся выключенным.
+MLFLOW ?= 0
+MLFLOW_PKG    := $(if $(filter 1,$(MLFLOW)),--with "mlflow==$(MLFLOW_VERSION)",)
+MLFLOW_ENV    := $(if $(filter 1,$(MLFLOW)),MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI),MLFLOW_TRACKING_URI=)
+MLFLOW_HTTP_ENV := MLFLOW_HTTP_REQUEST_TIMEOUT=10 MLFLOW_HTTP_REQUEST_MAX_RETRIES=2
+
 # Деплой на staging (см. deploy/staging/README.md). Хост задаётся без правок Makefile.
 STAGING_HOST     ?= palmshell
 STAGING_BIN_DIR  ?= /root/.local/bin
@@ -69,7 +88,7 @@ DAGU_VERSION     ?= v2.18.2
 MKDOCS_VERSION ?= 9.7.7
 MKDOCS := uv run --with mkdocs-material==$(MKDOCS_VERSION) --python 3.12 mkdocs
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model cpi-nowcast edisclosure-login edisclosure-collect docs-check docs-build docs-serve
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model cpi-nowcast edisclosure-login edisclosure-collect docs-check docs-build docs-serve
 
 all: lint test build build-ingest
 
@@ -150,6 +169,47 @@ ch-sql:
 	@test -n "$(CH_BIN)" || { echo "clickhouse не найден: задайте CH_BIN=/путь/к/clickhouse"; exit 1; }
 	@curl -sf -m 2 http://localhost:$(CH_HTTP_PORT)/ping >/dev/null 2>&1 || { echo "ClickHouse не отвечает: make ch-up"; exit 1; }
 	"$(CH_BIN)" client --user "$(CH_USER)" --password "$(CH_USER_PASSWORD)" --multiquery < "$(FILE)"
+
+# Локальный MLflow (infra/4.2). Сервер запускается через uv run --with: mlflow не попадает
+# в зависимости репозитория. Окружение прогревается до старта, чтобы 60-секундный цикл
+# готовности не тратился на первое скачивание пакета.
+mlflow-up:
+	@if curl -sf -m 2 http://127.0.0.1:$(MLFLOW_PORT)/health >/dev/null 2>&1; then \
+		echo "MLflow уже отвечает на порту $(MLFLOW_PORT)"; \
+	else \
+		mkdir -p "$(MLFLOW_HOME)" "$(MLFLOW_ARTIFACTS)"; \
+		echo "прогрев uv-окружения mlflow==$(MLFLOW_VERSION) (первый запуск скачивает пакет)..."; \
+		uv run --with "mlflow==$(MLFLOW_VERSION)" --python 3.12 python -c "pass" || exit 1; \
+		nohup uv run --with "mlflow==$(MLFLOW_VERSION)" --python 3.12 mlflow server \
+			--host 127.0.0.1 --port $(MLFLOW_PORT) --workers 1 \
+			--backend-store-uri sqlite:///$(MLFLOW_DB) \
+			--default-artifact-root "$(MLFLOW_ARTIFACTS)" --serve-artifacts >"$(MLFLOW_LOG)" 2>&1 & \
+		echo $$! > "$(MLFLOW_PID)"; \
+		for i in $$(seq 1 60); do kill -0 $$(cat "$(MLFLOW_PID)") 2>/dev/null || break; curl -sf -m 1 http://127.0.0.1:$(MLFLOW_PORT)/health >/dev/null 2>&1 && break; sleep 1; done; \
+		if kill -0 $$(cat "$(MLFLOW_PID)") 2>/dev/null && curl -sf -m 2 http://127.0.0.1:$(MLFLOW_PORT)/health >/dev/null 2>&1; then \
+			echo "MLflow запущен на порту $(MLFLOW_PORT), PID $$(cat "$(MLFLOW_PID)"), лог $(MLFLOW_LOG)"; \
+		else \
+			echo "MLflow не поднялся, хвост $(MLFLOW_LOG):"; tail -30 "$(MLFLOW_LOG)"; exit 1; \
+		fi; \
+	fi
+
+# Останавливает сервер и ждёт завершения до 60 с. PID-файл удаляется только после
+# фактического завершения; БД и артефакты не трогаются.
+mlflow-down:
+	@if [ -f "$(MLFLOW_PID)" ] && kill -0 $$(cat "$(MLFLOW_PID)") 2>/dev/null; then \
+		kill $$(cat "$(MLFLOW_PID)"); \
+		for i in $$(seq 1 60); do kill -0 $$(cat "$(MLFLOW_PID)") 2>/dev/null || break; sleep 1; done; \
+		if kill -0 $$(cat "$(MLFLOW_PID)") 2>/dev/null; then \
+			echo "MLflow не завершился за 60 с, PID-файл $(MLFLOW_PID) сохранён: повторите make mlflow-down"; \
+		else \
+			rm -f "$(MLFLOW_PID)"; echo "MLflow остановлен"; \
+		fi; \
+	else \
+		echo "PID-файл $(MLFLOW_PID) не найден или процесс не запущен (сервер, поднятый вне make, не останавливается)"; \
+	fi
+
+mlflow-status:
+	@curl -sf -m 2 http://127.0.0.1:$(MLFLOW_PORT)/health >/dev/null 2>&1 && echo "MLflow отвечает на порту $(MLFLOW_PORT)" || echo "MLflow не отвечает на порту $(MLFLOW_PORT)"
 
 # Проверка окружения разработчика: наличие инструментов и версий.
 dev-check:
