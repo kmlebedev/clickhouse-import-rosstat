@@ -69,7 +69,7 @@ DAGU_VERSION     ?= v2.18.2
 MKDOCS_VERSION ?= 9.7.7
 MKDOCS := uv run --with mkdocs-material==$(MKDOCS_VERSION) --python 3.12 mkdocs
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model cpi-nowcast edisclosure-login edisclosure-collect docs-check docs-build docs-serve
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model key-rate-llm-forecast cpi-nowcast edisclosure-login edisclosure-collect docs-check docs-build docs-serve
 
 all: lint test build build-ingest
 
@@ -263,6 +263,15 @@ ARGS ?=
 # повторяет конвенцию репозитория для uv-прогонов (README/ARCHITECTURE: --python 3.12).
 key-rate-model:
 	uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/key_rate_model.py $(ARGS)
+
+# Экспериментальный LLM-трек контура ставки (issue #189): as-of снимок витрин,
+# промпт v1, три OpenAI-совместимых повтора, медиана и разброс, артефакты
+# key_rate_llm_forecast.json / key_rate_llm_forecast_report.md (gitignored).
+# Зависимостей вне stdlib нет; нужны ClickHouse env и LLM_BASE_URL/LLM_API_KEY/
+# LLM_MODEL (последние — только в ~/.config/rosstat/env). В ClickHouse скрипт
+# НЕ пишет; ARGS="--log" готовит payload для ingest #127 и печатает его.
+key-rate-llm-forecast:
+	uv run --python 3.12 python3 scripts/key_rate_llm_forecast.py $(ARGS)
 
 # ML-трек контура ставки: nowcast месячного ИПЦ до публикации Росстата (CatBoost + бенчмарки).
 # Читает ClickHouse, пишет локальные артефакты; в ClickHouse по умолчанию не пишет;
