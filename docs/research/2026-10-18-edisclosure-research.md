@@ -373,6 +373,8 @@ dagu validate dagu/edisclosure.yaml
 | `build/edisclosure-probe/archive/EVENTS_VINTAGE.md` | схема event-версий (API/FTP/опрос вперёд) |
 | `build/edisclosure-probe/run.log` | протокол антибот-проверок |
 
+Небольшие артефакты сохранены в репозитории: [docs/research/edisclosure/2026-10-18/](edisclosure/2026-10-18/README.md) — pilot report, accuracy report, `facts.csv`, `baseline.json`, `event-summary.csv`, `companies.jsonl`, `documents-full.csv` (290), `documents-curated.csv` (20), `events-curated.csv`, `antibot-run.log`, `EVENTS_VINTAGE.md`, `pilot-archive-README.md`. PDF/ZIP-объекты (52 МБ), сырые HTML (8,8 МБ), полные event-дампы (≈6 МБ) и профиль Chrome/cookies остаются в `build/` (gitignored).
+
 ---
 
 ## 14. Итог
