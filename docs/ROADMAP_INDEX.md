@@ -15,7 +15,7 @@
 | `gold-thesis` | [GOLD_THESIS_DATA_ROADMAP.md](GOLD_THESIS_DATA_ROADMAP.md) | данные и витрины тезисов по золоту; WGC/EIA/bold/news/фрахт/аналитические витрины | `phase-N`, `phase-N-followup-M`, `analytics-<витрина>` |
 | `dcf-metals` | [ROADMAP_DCF_METALS.md](ROADMAP_DCF_METALS.md) | CHMF/MAGN/NLMK в `company_financials`; металлурги и `dashboard/chmf.json` | `step-1`–`step-8` |
 | `key-rate` | [ROADMAP_KEY_RATE.md](ROADMAP_KEY_RATE.md) | контур прогноза ключевой ставки; ЦБ-источники, модель ставки, news-ленты контура | `1.1`–`1.11`, `phase-2-<тема>`, `phase-4-<тема>` |
-| `infra` | [ROADMAP_INFRA.md](ROADMAP_INFRA.md) | общая инфраструктура, не принадлежит ни одному треку | `1.1`–`1.5`, `2.1`–`2.2`, `3.1`–`3.4`, `4.1`–`4.3` |
+| `infra` | [ROADMAP_INFRA.md](ROADMAP_INFRA.md) | общая инфраструктура, не принадлежит ни одному треку | `1.1`–`1.5`, `2.1`–`2.2`, `3.1`–`3.5`, `4.1`–`4.3` |
 
 Слаг выведен из имени файла (у `GOLD_THESIS_DATA_ROADMAP.md` — `gold-thesis`). Шестой роадмап не заводится без решения владельца.
 
@@ -66,13 +66,14 @@ Labels: `roadmap:<slug>` — группировка до появления Proj
 1. **Сначала правка владеющего роадмапа**: пункт, его критерий приёмки и место в фазах появляются в файле.
 2. **Затем issue** с составным ID и заголовком `[<slug>/<item-id>] <короткое имя>` (шаблон — [`.github/ISSUE_TEMPLATE/roadmap-item.yml`](../.github/ISSUE_TEMPLATE/roadmap-item.yml)).
 3. **Новый роадмап** — только решением владельца: сначала он попадает в этот реестр строкой (слаг, файл, граница владения, схема ID), потом в нём появляются пункты.
+4. **После мержа PR, изменившего этот реестр или владеющий роадмап, — синхронизация.** Агент сверяет открытые пункты с issue, создаёт отсутствующие, обновляет заголовок/тело/поля Project V2; issue автоматически не закрывает, расхождения и кандидатов на закрытие выносит в отчёт. Запуск — в той же сессии; если мерж был вне сессии, при следующем старте по merge-коммиту. Повторный запуск идемпотентен; операции — скил `github-tracker` §10, GitHub-вызовы — через MCP `mcp__github__*` (`gh` CLI — фолбэк).
 
 Незапланированная работа не делается «попутно»: она становится пунктом владеющего роадмапа, а уже потом — issue.
 
 ## 5. Где лежат правила и операции
 
 - Модель трекера, поля и виды Project V2 — спека [2026-10-17-github-tracker-design.md](superpowers/specs/2026-10-17-github-tracker-design.md) (§6–§7 — поля и виды).
-- Пошаговые операции: issue, Project V2, sub-issues, Q&A, PR, аудит — скил [`.kimi-code/skills/github-tracker/SKILL.md`](../.kimi-code/skills/github-tracker/SKILL.md).
+- Пошаговые операции: issue, Project V2, sub-issues, Q&A, PR, аудит — скил [`.kimi-code/skills/github-tracker/SKILL.md`](../.kimi-code/skills/github-tracker/SKILL.md). GitHub-вызовы — через MCP `mcp__github__*` (`issue_read`/`issue_write`, `search_issues`/`list_issues`, `projects_list`/`projects_write`, `pull_request_read`); `gh` CLI — фолбэк, если MCP-инструменты недоступны.
 - Обязательная норма для ассистента — правило 12 [AGENTS.md](../AGENTS.md); шаблон PR — [`.github/pull_request_template.md`](../.github/pull_request_template.md).
 - Приёмка пункта и протокол живой приёмки — [IMPORTER_PACKAGE_STANDARD.md](IMPORTER_PACKAGE_STANDARD.md) §16.1 п. 8 и [ROADMAP_INFRA.md](ROADMAP_INFRA.md) §6.
 
