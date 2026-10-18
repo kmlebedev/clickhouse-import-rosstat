@@ -18,6 +18,12 @@
     "section": "Архитектура"
   },
   {
+    "source": "docs/IMPORTERS.md",
+    "page": "importers.md",
+    "title": "Импортёры и источники",
+    "section": "Импортёры"
+  },
+  {
     "source": "docs/KEY_RATE_MODEL.md",
     "page": "key-rate-model.md",
     "title": "Модель ключевой ставки",
@@ -40,6 +46,42 @@
     "page": "dcf-data-coverage.md",
     "title": "Полнота данных DCF",
     "section": "DCF и золото"
+  },
+  {
+    "source": "docs/GOLD_CONTOUR.md",
+    "page": "gold-contour.md",
+    "title": "Контур прогноза золота",
+    "section": "DCF и золото"
+  },
+  {
+    "source": "docs/CONFIGURATION.md",
+    "page": "configuration.md",
+    "title": "Конфигурация и окружение",
+    "section": "Эксплуатация"
+  },
+  {
+    "source": "docs/OPERATIONS.md",
+    "page": "operations.md",
+    "title": "Эксплуатация",
+    "section": "Эксплуатация"
+  },
+  {
+    "source": "docs/GRAFANA.md",
+    "page": "grafana.md",
+    "title": "Grafana",
+    "section": "Эксплуатация"
+  },
+  {
+    "source": "docs/DEVELOPMENT.md",
+    "page": "development.md",
+    "title": "Разработка",
+    "section": "Разработка"
+  },
+  {
+    "source": "docs/LIMITATIONS.md",
+    "page": "limitations.md",
+    "title": "Ограничения",
+    "section": "Разработка"
   },
   {
     "source": "docs/guides/README.md",
