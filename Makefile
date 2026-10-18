@@ -88,7 +88,7 @@ DAGU_VERSION     ?= v2.18.2
 MKDOCS_VERSION ?= 9.7.7
 MKDOCS := uv run --with mkdocs-material==$(MKDOCS_VERSION) --python 3.12 mkdocs
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model cpi-nowcast edisclosure-login edisclosure-collect docs-check docs-build docs-serve
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-register mlflow-promote mlflow-models dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model cpi-nowcast edisclosure-login edisclosure-collect docs-check docs-build docs-serve
 
 all: lint test build build-ingest
 
@@ -218,6 +218,29 @@ mlflow-down:
 mlflow-status:
 	@curl -sf -m 2 http://127.0.0.1:$(MLFLOW_PORT)/health >/dev/null 2>&1 && echo "MLflow отвечает на порту $(MLFLOW_PORT)" || echo "MLflow не отвечает на порту $(MLFLOW_PORT)"
 
+# Экспорт прогонов MLflow в ClickHouse (ml_runs/ml_predictions): make mlflow-export
+# [ARGS="--since 2026-10-01 --limit 20 --dry-run"]. mlflow ставится через uv --with,
+# в зависимости репозитория не попадает.
+mlflow-export:
+	MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) uv run --with "mlflow==$(MLFLOW_VERSION)" --python 3.12 \
+		python3 scripts/mlflow_export.py --tracking-uri $(MLFLOW_TRACKING_URI) $(ARGS)
+
+# Реестр моделей MLflow: register/promote/list. Аргументы подкоманды передаются через ARGS:
+# make mlflow-register ARGS="--run-id <id> --name cpi_nowcast_catboost_direct"
+# make mlflow-promote ARGS="--name cpi_nowcast_catboost_direct --version 1 [--alias challenger]"
+# make mlflow-models [ARGS="--name cpi_nowcast_catboost_direct"]
+mlflow-register:
+	uv run --with "mlflow==$(MLFLOW_VERSION)" --python 3.12 \
+		python3 scripts/mlflow_registry.py --tracking-uri $(MLFLOW_TRACKING_URI) register $(ARGS)
+
+mlflow-promote:
+	uv run --with "mlflow==$(MLFLOW_VERSION)" --python 3.12 \
+		python3 scripts/mlflow_registry.py --tracking-uri $(MLFLOW_TRACKING_URI) promote $(ARGS)
+
+mlflow-models:
+	uv run --with "mlflow==$(MLFLOW_VERSION)" --python 3.12 \
+		python3 scripts/mlflow_registry.py --tracking-uri $(MLFLOW_TRACKING_URI) list $(ARGS)
+
 # Проверка окружения разработчика: наличие инструментов и версий.
 dev-check:
 	@for t in go gofmt golangci-lint uv curl; do \
@@ -329,14 +352,14 @@ ARGS ?=
 # без пина резолвер uv падает). Пин делает цель независимой от порядка PATH и
 # повторяет конвенцию репозитория для uv-прогонов (README/ARCHITECTURE: --python 3.12).
 key-rate-model:
-	uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/key_rate_model.py $(ARGS)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/key_rate_model.py $(ARGS)
 
 # ML-трек контура ставки: nowcast месячного ИПЦ до публикации Росстата (CatBoost + бенчмарки).
 # Читает ClickHouse, пишет локальные артефакты; в ClickHouse по умолчанию не пишет;
 # с ML_LOG=1 пишет паспорт и fold-предсказания.
 # Фикстуры: make cpi-nowcast ARGS="--export-fixtures scripts/testdata/cpi_nowcast"
 cpi-nowcast:
-	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_nowcast.py $(ARGS)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_nowcast.py $(ARGS)
 
 # Документы e-disclosure.ru: headed Chrome с постоянным профилем build/edisclosure-profile
 # (gitignored, 0700). Капчу решает владелец вручную; коллектор только ждёт её --wait секунд.
