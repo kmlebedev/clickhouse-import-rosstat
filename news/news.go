@@ -43,39 +43,64 @@ var (
 	// Окно — последние 20 сообщений, поэтому 30-минутный опрос перекрывает его
 	// с запасом, а простой дольше окна теряет позиции (check покажет дыру).
 	feedInterfaxTelegramURL = "https://t.me/s/interfaxonline"
-	// Корпоративные раскрытия «Интерфакс-ЦРКИ»: второй канал того же транспорта.
+	// ifax_go — ещё одна лента того же source='interfax' (тот же транспорт — Telegram).
+	// Окно 20 сообщений: ≈12 ч на активной ленте, до ≈36 ч в спокойные дни.
+	feedIfaxGoTelegramURL = "https://t.me/s/ifax_go"
+	// Корпоративные раскрытия «Интерфакс-ЦРКИ»: ещё один канал того же транспорта.
 	// Окно тоже 20 сообщений; тексты длиннее молнии, и окно покрывает около месяца.
 	feedEdisclosureURL = "https://t.me/s/edisclosure"
 	feedRBCURL         = "https://rssexport.rbc.ru/rbcnews/news/30/full.rss"
 	feedCBRNewsURL     = "https://www.cbr.ru/rss/RssNews"
 	feedCBRPressURL    = "https://www.cbr.ru/rss/eventrss"
 	feedTASSURL        = "https://tass.ru/rss/v2.xml"
+	// Общий RSS Смартлаба: 20 позиций покрывают около 14,5 часов.
+	feedSmartlabURL = "https://smart-lab.ru/rss/"
 	// Ленты smart-lab — персональные блоги; добавлены ради контура ключевой ставки
 	// (тексты про инфляцию и политику ЦБ).
 	feedSmartlabLebedevURL = "https://smart-lab.ru/rss/personal_blog/KonstantinLebedev/"
 	feedSmartlabSpydellURL = "https://smart-lab.ru/rss/personal_blog/spydell-telegram/"
+	// newssmartlab — новостная лента Смартлаба: отдельный канал, но source='smartlab'
+	// (тот же источник), поэтому различаются ленты полем channel/url.
+	feedNewsSmartlabTelegramURL = "https://t.me/s/newssmartlab"
+	// Рыночные Telegram-каналы: окно 20 сообщений покрывает от ≈12 часов у самых
+	// активных до ≈14 суток у редких; 30-минутный опрос перекрывает его с запасом.
+	feedMarkettwitsTelegramURL      = "https://t.me/s/markettwits"
+	feedRussianMacroTelegramURL     = "https://t.me/s/russianmacro"
+	feedMarketOverviewTelegramURL   = "https://t.me/s/MarketOverview"
+	feedMozgovikResearchTelegramURL = "https://t.me/s/mozgovikresearch"
 )
 
-// feeds собирает конфиг девяти лент в фиксированном порядке. Порядок — часть
+// feeds собирает конфиг 16 лент в фиксированном порядке. Порядок — часть
 // контракта: лог прогона и отчёт check идут построчно, и разный порядок лент
 // от запуска к запуску сделал бы диффы лога нечитаемыми. Парные ленты несут общий
-// Source: у двух фидов ЦБ это «cbr» (источник один — Банк России), у двух лент
-// smart-lab — «smartlab», у RSS и Telegram Интерфакса — «interfax»; в news_events
-// такие ленты различаются url. interfax_tg идёт сразу после interfax: это второй
-// транспорт того же источника, и в отчёте покрытия их окна складываются.
+// Source: у двух фидов ЦБ это «cbr» (источник один — Банк России), у четырёх лент
+// smart-lab (общий RSS, два персональных блога и newssmartlab_tg) — «smartlab»,
+// у трёх лент Интерфакса (RSS, interfaxonline и ifax_go) — «interfax»; в news_events
+// такие ленты различаются url, а Telegram-каналы — ещё и полем channel в v_news_flash.
+// newssmartlab_tg — это source='smartlab': канал новостной ленты Смартлаба, а не
+// отдельный источник, поэтому его окно складывается с окном общего RSS.
+// interfax_tg и ifax_go_tg идут сразу после interfax: это ещё две ленты того же
+// источника (Telegram), и в отчёте покрытия их окна складываются.
 // edisclosure_tg — отдельный source «edisclosure»: это другой канал и другая
 // редакция корпоративного контура, его окно с молнией Интерфакса не сливается.
 func feeds() []feed {
 	return []feed{
 		{Key: "interfax", Source: "interfax", URL: feedInterfaxURL, Kind: feedRSS},
 		{Key: "interfax_tg", Source: "interfax", URL: feedInterfaxTelegramURL, Kind: feedTelegram},
+		{Key: "ifax_go_tg", Source: "interfax", URL: feedIfaxGoTelegramURL, Kind: feedTelegram},
 		{Key: "edisclosure_tg", Source: "edisclosure", URL: feedEdisclosureURL, Kind: feedTelegram},
 		{Key: "rbc", Source: "rbc", URL: feedRBCURL, Kind: feedRSS},
 		{Key: "cbr_news", Source: "cbr", URL: feedCBRNewsURL, Kind: feedRSS},
 		{Key: "cbr_press", Source: "cbr", URL: feedCBRPressURL, Kind: feedRSS},
 		{Key: "tass", Source: "tass", URL: feedTASSURL, Kind: feedRSS},
+		{Key: "smartlab", Source: "smartlab", URL: feedSmartlabURL, Kind: feedRSS},
 		{Key: "smartlab_lebedev", Source: "smartlab", URL: feedSmartlabLebedevURL, Kind: feedRSS},
 		{Key: "smartlab_spydell", Source: "smartlab", URL: feedSmartlabSpydellURL, Kind: feedRSS},
+		{Key: "newssmartlab_tg", Source: "smartlab", URL: feedNewsSmartlabTelegramURL, Kind: feedTelegram},
+		{Key: "markettwits_tg", Source: "markettwits", URL: feedMarkettwitsTelegramURL, Kind: feedTelegram},
+		{Key: "russianmacro_tg", Source: "russianmacro", URL: feedRussianMacroTelegramURL, Kind: feedTelegram},
+		{Key: "marketoverview_tg", Source: "marketoverview", URL: feedMarketOverviewTelegramURL, Kind: feedTelegram},
+		{Key: "mozgovikresearch_tg", Source: "mozgovikresearch", URL: feedMozgovikResearchTelegramURL, Kind: feedTelegram},
 	}
 }
 
@@ -136,8 +161,8 @@ type feedResult struct {
 }
 
 // fetchFeeds читает ленты по очереди и возвращает результат на каждую. Ошибка
-// ленты попадает в её feedResult.Err, а цикл продолжается: девять лент независимы,
-// и обрыв одной (WAF, 500, таймаут) не повод не собрать остальные восемь.
+// ленты попадает в её feedResult.Err, а цикл продолжается: 16 лент независимы,
+// и обрыв одной (WAF, 500, таймаут) не повод не собрать остальные пятнадцать.
 // Агрегация ошибок — дело вызывающего (Import): он решает, чем отчитаться в dagu.
 //
 // Транспорт выбирается по Kind, а не по виду URL: RSS разбирается в rssDoc,
@@ -441,15 +466,36 @@ const (
 	newsAnnotationInsert = "INSERT INTO " + newsAnnotationTable + " (url, content_hash, kind, method, model, prompt_version, dimension, tag, direction, confidence, evidence, sentiment, relevance, summary, annotated_at)"
 )
 
-// newsAnnotationCandidatesQuery читает бэклог разметки: Telegram-сообщения за 35 дней, для
-// которых ещё нет строки method='llm' этой пары (model, prompt_version). Пара входит в ключ
+// newsAnnotationCandidatesQueryPrefix — начало кандидатного запроса. Тесты фейкового
+// соединения различают вызов по префиксу, а не по точному равенству: LIMIT вшит в SQL
+// функцией newsAnnotationCandidatesQuery, поэтому полный текст каждый раз свой.
+const newsAnnotationCandidatesQueryPrefix = "SELECT date, source, title, url, description, content_hash FROM " + newsTable + " FINAL"
+
+// newsAnnotationCandidatesQuery читает бэклог разметки: весь видимый поток — все Telegram-
+// сообщения и RSS-позиции, проходящие тот же newsFilter, что и v_news_events, — для которых
+// ещё нет строки method='llm' этой пары (model, prompt_version). Пара входит в ключ
 // ReplacingMergeTree, поэтому смена модели/промпта автоматически делает старые сообщения
 // кандидатами, не затирая прежнюю разметку. FINAL обязателен: news_events и news_annotation —
 // ReplacingMergeTree, и без него вытесненные копии дали бы дубли кандидатов / ложные пропуски.
-// 35 дней — окно корпоративных раскрытий edisclosure (20 сообщений ≈30 дней плюс запас):
-// при 7-дневном окне старые сообщения канала оставались бы без разметки. LIMIT — из newsLLMBacklogLimit:
-// стоимость LLM ограничена и после долгого простоя.
-var newsAnnotationCandidatesQuery = `SELECT date, source, title, url, description, content_hash FROM ` + newsTable + ` FINAL WHERE url LIKE 'https://t.me/%' AND content_hash != '' AND date >= now() - INTERVAL 35 DAY AND (url, content_hash) NOT IN (SELECT url, content_hash FROM ` + newsAnnotationTable + ` FINAL WHERE method = 'llm' AND model = ? AND prompt_version = ?) ORDER BY date DESC LIMIT ` + strconv.Itoa(newsLLMBacklogLimit)
+//
+// Окно date >= now() - INTERVAL 35 DAY снято осознанно: охват — вся история видимого потока
+// (иначе старые раскрытия edisclosure и RSS оставались бы без разметки), а стоимость ограничивает
+// LIMIT — NEWS_LLM_BACKLOG_LIMIT (штатно 50, разовый бэкфилл — до 1000), а не возраст позиции.
+//
+// newsFilter передаётся параметром, а не литералом: шаблон начинается с (?i), а драйвер
+// ClickHouse считает КАЖДЫЙ ? позиционным плейсхолдером, включая ? внутри строкового литерала.
+// Литерал дал бы четыре ? вместо двух и ошибку «have no arg for param ?». Порядок аргументов
+// запроса — порядок ?: filter, filter, model, prompt_version.
+// Пустой url отбрасывается: модель возвращает url ключом ответа, и несколько позиций без ссылки
+// были бы неразличимы — такая позиция не аннотируется, а не занимает слот бэклога.
+func newsAnnotationCandidatesQuery(limit int) string {
+	return newsAnnotationCandidatesQueryPrefix +
+		" WHERE content_hash != '' AND url != ''" +
+		" AND (url LIKE 'https://t.me/%' OR match(title, ?) OR match(description, ?))" +
+		" AND (url, content_hash) NOT IN (SELECT url, content_hash FROM " + newsAnnotationTable +
+		" FINAL WHERE method = 'llm' AND model = ? AND prompt_version = ?)" +
+		" ORDER BY date DESC LIMIT " + strconv.Itoa(limit)
+}
 
 // Import выполняет прогон контура новостей: DDL → витрина → ленты → батч.
 // Порядок шагов — часть контракта, а не стиль.
@@ -560,8 +606,8 @@ func (s *newsImport) Import(ctx context.Context, conn driver.Conn) (count int64,
 			// Сбой чтения версий изолируется этой лентой: без истории diffTelegram
 			// принял бы текущий текст за v1 и затёр нумерацию, поэтому Telegram-позиции
 			// этого прогона не пишутся вовсе (их догонит следующий успешный прогон).
-			// Остальные ленты — семь RSS и второй Telegram-канал — пишутся: сбой
-			// истории одной ленты не должен отменять уже собранные данные.
+			// Остальные ленты — восемь RSS и все прочие Telegram-каналы — пишутся:
+			// сбой истории одной ленты не должен отменять уже собранные данные.
 			log.Errorf("news_watch: %s: %v", r.Feed.Key, readErr)
 			feedErrs = append(feedErrs, fmt.Errorf("%s: %w", r.Feed.Key, readErr))
 			continue
@@ -653,15 +699,22 @@ func (s *newsImport) Import(ctx context.Context, conn driver.Conn) (count int64,
 	// догон — следующим прогоном. check сюда не доходит (возврат выше).
 	cfg, llmOK := newsLLMConfigFromEnv()
 	if llmOK {
-		candidates, readErr := readNewsAnnotationCandidates(ctx, conn, cfg.Model, newsPromptVersion)
+		// Предел бэклога читается до кандидатов: LIMIT вшит в SQL, поэтому переменная обязана
+		// быть разобрана раньше запроса. Не-дефолт печатается — иначе разовый бэкфилл через
+		// NEWS_LLM_BACKLOG_LIMIT выглядел бы в логе штатным прогоном.
+		limit := newsLLMBacklogLimitFromEnv()
+		if limit != newsLLMBacklogLimitDefault {
+			log.Infof("news_watch: LLM backlog limit %d", limit)
+		}
+		candidates, readErr := readNewsAnnotationCandidates(ctx, conn, cfg.Model, newsPromptVersion, limit)
 		switch {
 		case readErr != nil:
 			log.Warnf("news_watch: LLM-разметка (%s): %v", cfg.Model, readErr)
 		case len(candidates) == 0:
 			// Бэклога нет — провайдер не вызывается.
 		default:
-			rows, tagErr := tagTelegramLLM(ctx, cfg, candidates)
-			// Успешные батчи пишутся даже при ошибке следующего: tagTelegramLLM возвращает
+			rows, tagErr := tagNewsLLM(ctx, cfg, candidates)
+			// Успешные батчи пишутся даже при ошибке следующего: tagNewsLLM возвращает
 			// накопленные строки вместе с ошибкой, и следующий прогон не платит за них снова.
 			if len(rows) > 0 {
 				var docs, tags int
@@ -753,13 +806,19 @@ func insertItems(ctx context.Context, conn driver.Conn, items []newsItem) (int64
 	return count, err
 }
 
-// readNewsAnnotationCandidates читает бэклог LLM-разметки: Telegram-сообщения за 35 дней,
-// у которых нет doc/tag-строк этой пары (model, prompt_version). Пустой результат — не
-// ошибка: разметить нечего. Порядок Scan — порядок колонок newsAnnotationCandidatesQuery:
-// date, source, title, url, description, content_hash. Ошибка обхода проверяется: молча
-// вернувшаяся половина бэклога оставила бы часть сообщений без разметки до следующего прогона.
-func readNewsAnnotationCandidates(ctx context.Context, conn driver.Conn, model string, promptVersion uint16) ([]newsItem, error) {
-	rows, err := conn.Query(ctx, newsAnnotationCandidatesQuery, model, promptVersion)
+// readNewsAnnotationCandidates читает бэклог LLM-разметки: весь видимый поток (Telegram и RSS,
+// проходящий newsFilter), у которого нет doc/tag-строк этой пары (model, prompt_version).
+// limit — NEWS_LLM_BACKLOG_LIMIT (штатно 50, разовый бэкфилл — до 1000); он вшивается в SQL
+// литералом: предел — проверенное целое из ограниченного диапазона, а не внешний ввод, и
+// строковый запрос остаётся воспроизводимым в тестах. newsFilter передаётся дважды — под
+// match(title) и match(description); иначе (?i) дал бы драйверу лишние `?` (см.
+// newsAnnotationCandidatesQuery). Порядок аргументов запроса — порядок `?` в SQL. Пустой
+// результат — не ошибка: разметить нечего. Порядок Scan — порядок колонок
+// newsAnnotationCandidatesQuery: date, source, title, url, description, content_hash.
+// Ошибка обхода проверяется: молча вернувшаяся половина бэклога оставила бы часть сообщений
+// без разметки до следующего прогона.
+func readNewsAnnotationCandidates(ctx context.Context, conn driver.Conn, model string, promptVersion uint16, limit int) ([]newsItem, error) {
+	rows, err := conn.Query(ctx, newsAnnotationCandidatesQuery(limit), newsFilter, newsFilter, model, promptVersion)
 	if err != nil {
 		return nil, fmt.Errorf("news_watch: читать кандидатов %s (model=%s, prompt_version=%d): %w",
 			newsAnnotationTable, model, promptVersion, err)

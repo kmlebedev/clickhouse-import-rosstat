@@ -54,25 +54,11 @@ func TestImportRejectsUnknownModeBeforeDB(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	// Подмена пакетных URL — как в pointFeedsAt (здесь свой сервер со счётчиком
+	// Подмена пакетных URL — общий pointFeedsAt (здесь свой сервер со счётчиком
 	// хитов): feeds() читает их при каждом вызове, поэтому подменённый адрес подхватится.
-	oldInterfax, oldInterfaxTelegram, oldEdisclosure, oldRBC, oldCBRNews, oldCBRPress, oldTASS, oldSmartlabLebedev, oldSmartlabSpydell :=
-		feedInterfaxURL, feedInterfaxTelegramURL, feedEdisclosureURL, feedRBCURL, feedCBRNewsURL, feedCBRPressURL, feedTASSURL,
-		feedSmartlabLebedevURL, feedSmartlabSpydellURL
-	feedInterfaxURL = srv.URL + "/interfax"
-	feedInterfaxTelegramURL = srv.URL + "/interfax_tg"
-	feedEdisclosureURL = srv.URL + "/edisclosure_tg"
-	feedRBCURL = srv.URL + "/rbc"
-	feedCBRNewsURL = srv.URL + "/cbr_news"
-	feedCBRPressURL = srv.URL + "/cbr_press"
-	feedTASSURL = srv.URL + "/tass"
-	feedSmartlabLebedevURL = srv.URL + "/smartlab_lebedev"
-	feedSmartlabSpydellURL = srv.URL + "/smartlab_spydell"
-	t.Cleanup(func() {
-		feedInterfaxURL, feedInterfaxTelegramURL, feedEdisclosureURL, feedRBCURL, feedCBRNewsURL, feedCBRPressURL, feedTASSURL,
-			feedSmartlabLebedevURL, feedSmartlabSpydellURL =
-			oldInterfax, oldInterfaxTelegram, oldEdisclosure, oldRBC, oldCBRNews, oldCBRPress, oldTASS, oldSmartlabLebedev, oldSmartlabSpydell
-	})
+	// Хелпер хранит и восстанавливает все 16 переменных — новая лента не может выпасть
+	// из подмены и увести этот тест в настоящую сеть.
+	pointFeedsAt(t, srv)
 
 	var s newsImport
 	count, err := s.Import(context.Background(), nil)
@@ -180,15 +166,15 @@ func serveFixtures(t *testing.T, fail map[string]int) *httptest.Server {
 }
 
 func TestFetchFeedsUsesFixturesAndIsolatesFailure(t *testing.T) {
-	// Сбойная одна лента: остальные восемь обязаны прочитаться. Иначе падение
-	// любого источника глушило бы весь прогон, а dagu-ретрай повторял бы восемь
+	// Сбойная одна лента: остальные пятнадцать обязаны прочитаться. Иначе падение
+	// любого источника глушило бы весь прогон, а dagu-ретрай повторял бы пятнадцать
 	// здоровых лент ради одной больной.
 	srv := serveFixtures(t, map[string]int{"cbr_news": http.StatusInternalServerError})
 	pointFeedsAt(t, srv)
 
 	results := fetchFeeds(feeds())
-	if len(results) != 9 {
-		t.Fatalf("fetchFeeds вернул %d результатов, want 9 (по числу лент)", len(results))
+	if len(results) != 16 {
+		t.Fatalf("fetchFeeds вернул %d результатов, want 16 (по числу лент)", len(results))
 	}
 
 	var keys, sources []string
@@ -232,21 +218,22 @@ func TestFetchFeedsUsesFixturesAndIsolatesFailure(t *testing.T) {
 		}
 	}
 
-	if want := "interfax,interfax_tg,edisclosure_tg,rbc,cbr_news,cbr_press,tass,smartlab_lebedev,smartlab_spydell"; strings.Join(keys, ",") != want {
+	if want := "interfax,interfax_tg,ifax_go_tg,edisclosure_tg,rbc,cbr_news,cbr_press,tass,smartlab,smartlab_lebedev,smartlab_spydell,newssmartlab_tg,markettwits_tg,russianmacro_tg,marketoverview_tg,mozgovikresearch_tg"; strings.Join(keys, ",") != want {
 		t.Errorf("порядок лент = %s, want %s (фиксированный, детерминированный лог)", strings.Join(keys, ","), want)
 	}
-	// Оба Интерфакса (RSS+Telegram) пишутся под source=interfax, edisclosure_tg — под
-	// отдельным source=edisclosure (другой канал), оба фида ЦБ — под cbr, обе ленты
-	// smart-lab — под smartlab: витрина различает их url, а не меткой.
-	if want := "interfax,interfax,edisclosure,rbc,cbr,cbr,tass,smartlab,smartlab"; strings.Join(sources, ",") != want {
+	// Три ленты Интерфакса (RSS, interfaxonline, ifax_go) пишутся под source=interfax,
+	// edisclosure_tg — под отдельным source=edisclosure (другой канал), оба фида ЦБ — под
+	// cbr, четыре ленты smart-lab (общий RSS, два блога и newssmartlab_tg) — под smartlab:
+	// витрина различает их url, а Telegram-каналы — полем channel в v_news_flash.
+	if want := "interfax,interfax,interfax,edisclosure,rbc,cbr,cbr,tass,smartlab,smartlab,smartlab,smartlab,markettwits,russianmacro,marketoverview,mozgovikresearch"; strings.Join(sources, ",") != want {
 		t.Errorf("метки источников = %s, want %s", strings.Join(sources, ","), want)
 	}
 }
 
 func TestFeedsHaveFixtures(t *testing.T) {
 	configured := feeds()
-	if len(configured) != 9 {
-		t.Fatalf("feeds() = %d лент, want 9", len(configured))
+	if len(configured) != 16 {
+		t.Fatalf("feeds() = %d лент, want 16", len(configured))
 	}
 	keyOf := make(map[string]feedKind, len(configured))
 	for _, f := range configured {
@@ -687,35 +674,83 @@ func TestCoverageLinesReportsIncomplete(t *testing.T) {
 
 // --- офлайн-фейки контура news (паттерн — boldFakeConn, bold/bold_test.go) ---
 
-// pointFeedsAt заменяет URL-ы всех девяти лент на пути httptest-сервера и возвращает
+// pointFeedsAt заменяет URL-ы всех 16 лент на пути httptest-сервера и возвращает
 // исходные значения после теста: feeds() читает пакетные переменные при каждом вызове,
 // поэтому подмена подхватывается, а t.Cleanup не даёт ей утечь в соседние тесты.
 //
 // Guard в конце — про новую ленту: неподменённый URL увёл бы офлайн-тест в настоящую
 // сеть, и тот падал бы (или, хуже, зеленел) по доступности живого сайта, а не по коду.
+// Таблица «переменная → путь» держит подмену и восстановление в одном месте: новая
+// лента добавляется одной строкой, и обе половины не могут разъехаться.
 func pointFeedsAt(t *testing.T, srv *httptest.Server) {
 	t.Helper()
-	old := [9]string{feedInterfaxURL, feedInterfaxTelegramURL, feedEdisclosureURL, feedRBCURL,
-		feedCBRNewsURL, feedCBRPressURL, feedTASSURL, feedSmartlabLebedevURL, feedSmartlabSpydellURL}
-	feedInterfaxURL = srv.URL + "/interfax"
-	feedInterfaxTelegramURL = srv.URL + "/interfax_tg"
-	feedEdisclosureURL = srv.URL + "/edisclosure_tg"
-	feedRBCURL = srv.URL + "/rbc"
-	feedCBRNewsURL = srv.URL + "/cbr_news"
-	feedCBRPressURL = srv.URL + "/cbr_press"
-	feedTASSURL = srv.URL + "/tass"
-	feedSmartlabLebedevURL = srv.URL + "/smartlab_lebedev"
-	feedSmartlabSpydellURL = srv.URL + "/smartlab_spydell"
+	urls := []struct {
+		ptr *string
+		key string
+	}{
+		{&feedInterfaxURL, "interfax"},
+		{&feedInterfaxTelegramURL, "interfax_tg"},
+		{&feedIfaxGoTelegramURL, "ifax_go_tg"},
+		{&feedEdisclosureURL, "edisclosure_tg"},
+		{&feedRBCURL, "rbc"},
+		{&feedCBRNewsURL, "cbr_news"},
+		{&feedCBRPressURL, "cbr_press"},
+		{&feedTASSURL, "tass"},
+		{&feedSmartlabURL, "smartlab"},
+		{&feedSmartlabLebedevURL, "smartlab_lebedev"},
+		{&feedSmartlabSpydellURL, "smartlab_spydell"},
+		{&feedNewsSmartlabTelegramURL, "newssmartlab_tg"},
+		{&feedMarkettwitsTelegramURL, "markettwits_tg"},
+		{&feedRussianMacroTelegramURL, "russianmacro_tg"},
+		{&feedMarketOverviewTelegramURL, "marketoverview_tg"},
+		{&feedMozgovikResearchTelegramURL, "mozgovikresearch_tg"},
+	}
+	old := make([]string, len(urls))
+	for i, u := range urls {
+		old[i] = *u.ptr
+		*u.ptr = srv.URL + "/" + u.key
+	}
 	t.Cleanup(func() {
-		feedInterfaxURL, feedInterfaxTelegramURL, feedEdisclosureURL, feedRBCURL,
-			feedCBRNewsURL, feedCBRPressURL, feedTASSURL, feedSmartlabLebedevURL, feedSmartlabSpydellURL =
-			old[0], old[1], old[2], old[3], old[4], old[5], old[6], old[7], old[8]
+		for i, u := range urls {
+			*u.ptr = old[i]
+		}
 	})
 	for _, f := range feeds() {
 		if !strings.HasPrefix(f.URL, srv.URL) {
 			t.Fatalf("лента %s не подменена (%q): офлайн-тест ушёл бы в сеть", f.Key, f.URL)
 		}
 	}
+}
+
+// feedsOfKind — ленты заданного транспорта в порядке feeds(). Telegram-сценарии
+// (все каналы падают, все пишут версии) считают ожидания по этому срезу, а не по
+// историческому списку из двух каналов: новая Telegram-лента попадает в них сама.
+func feedsOfKind(kind feedKind) []feed {
+	var out []feed
+	for _, f := range feeds() {
+		if f.Kind == kind {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// failFeedsOfKind — карта сбоев для serveFixtures: падают все ленты транспорта.
+func failFeedsOfKind(kind feedKind) map[string]int {
+	fail := make(map[string]int)
+	for _, f := range feedsOfKind(kind) {
+		fail[f.Key] = http.StatusInternalServerError
+	}
+	return fail
+}
+
+// itemsOfKind — позиции фикстур всех лент транспорта в порядке feeds().
+func itemsOfKind(byKey map[string][]newsItem, kind feedKind) []newsItem {
+	var out []newsItem
+	for _, f := range feedsOfKind(kind) {
+		out = append(out, byKey[f.Key]...)
+	}
+	return out
 }
 
 // fixtureItems читает закоммиченную фикстуру ленты тем же путём, что и прогон
@@ -736,12 +771,12 @@ func fixtureItems(t *testing.T, f feed) []newsItem {
 
 // fixtureInventory — позиции фикстур по ключам лент и максимум даты по источникам.
 // Максимумы — это то, что лежит в news_events после успешного прогона all: оба фида
-// ЦБ складываются в один источник cbr, обе ленты smart-lab — в один smartlab, как
-// и в feedSpans.
+// ЦБ складываются в один источник cbr, все четыре ленты smart-lab — в один smartlab,
+// как и в feedSpans.
 func fixtureInventory(t *testing.T) (byKey map[string][]newsItem, maxBySource map[string]time.Time) {
 	t.Helper()
-	byKey = make(map[string][]newsItem, 9)
-	maxBySource = make(map[string]time.Time, 6)
+	byKey = make(map[string][]newsItem, 16)
+	maxBySource = make(map[string]time.Time, 10)
 	for _, f := range feeds() {
 		items := fixtureItems(t, f)
 		byKey[f.Key] = items
@@ -1235,12 +1270,15 @@ func (b *newsFakeBatch) insertedAnnotations(t *testing.T) []newsAnnotationRow {
 // не плодить конструкторы.
 type newsFakeConn struct {
 	driver.Conn
-	mu            sync.Mutex
-	calls         []string
-	spans         []newsStoredSpan
-	keys          map[string][]newsKey
-	versions      map[string][]telegramVersion
-	candidates    []newsItem
+	mu         sync.Mutex
+	calls      []string
+	spans      []newsStoredSpan
+	keys       map[string][]newsKey
+	versions   map[string][]telegramVersion
+	candidates []newsItem
+	// candidateArgs — аргументы последнего запроса кандидатов в порядке `?`: filter, filter,
+	// model, prompt_version. Фейк SQL не разбирает, поэтому порядок аргументов проверяется здесь.
+	candidateArgs []any
 	versionsErr   error            // Query версий вернёт её вместо строк
 	keysErr       error            // Query ключей вернёт её вместо строк
 	candidatesErr error            // Query кандидатов разметки вернёт её вместо строк
@@ -1275,6 +1313,10 @@ func (c *newsFakeConn) Exec(_ context.Context, query string, _ ...any) error {
 // ключи — набором запрошенного источника, версии — набором канала. Аргументы запроса
 // (source/channel, since) попадают в записанный вызов: тесты пинят и ключ, и нижнюю
 // границу окна.
+//
+// У кандидатов разметки четыре аргумента в порядке `?`: filter, filter, model, prompt_version.
+// Фейк не разбирает SQL, поэтому дополнительно запоминает их в candidateArgs: тест пинит
+// именно порядок (дефект «have no arg for param ?» вылез только на живой базе).
 func (c *newsFakeConn) Query(_ context.Context, query string, args ...any) (driver.Rows, error) {
 	label := "query: " + query
 	var key string
@@ -1289,12 +1331,25 @@ func (c *newsFakeConn) Query(_ context.Context, query string, args ...any) (driv
 			}
 		}
 	}
+	if len(args) == 4 {
+		if _, ok := args[0].(string); ok {
+			if _, ok := args[1].(string); ok {
+				if model, ok := args[2].(string); ok {
+					if promptVersion, ok := args[3].(uint16); ok {
+						label += fmt.Sprintf(" [model=%s prompt_version=%d]", model, promptVersion)
+					}
+				}
+			}
+		}
+	}
 	c.record(label)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	// Кандидаты разметки — var, а не const (LIMIT строится из newsLLMBacklogLimit),
-	// поэтому сравнение идёт отдельно: в expression-switch Go требует константные case.
-	if query == newsAnnotationCandidatesQuery {
+	// Кандидаты разметки — запрос функции (LIMIT из NEWS_LLM_BACKLOG_LIMIT вшит в SQL),
+	// поэтому сравнение идёт по префиксу отдельно: в expression-switch Go требует
+	// константные case.
+	if strings.HasPrefix(query, newsAnnotationCandidatesQueryPrefix) {
+		c.candidateArgs = append([]any(nil), args...)
 		if c.candidatesErr != nil {
 			return nil, c.candidatesErr
 		}
@@ -1334,6 +1389,14 @@ func (c *newsFakeConn) callList() []string {
 	return append([]string(nil), c.calls...)
 }
 
+// candidateArgsList — аргументы последнего запроса кандидатов в порядке `?` (filter, filter,
+// model, prompt_version): фейк SQL не разбирает, поэтому порядок пинится отдельным тестом.
+func (c *newsFakeConn) candidateArgsList() []any {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]any(nil), c.candidateArgs...)
+}
+
 func (c *newsFakeConn) batchList() []*newsFakeBatch {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -1345,6 +1408,18 @@ func (c *newsFakeConn) batchList() []*newsFakeBatch {
 func (c *newsFakeConn) anyCallHas(fragment string) bool {
 	for _, call := range c.callList() {
 		if strings.Contains(call, fragment) {
+			return true
+		}
+	}
+	return false
+}
+
+// anyCallHasPrefix — был ли вызов Query, запрос которого начинается с префикса. Кандидаты
+// разметки строятся функцией (LIMIT вшит в SQL), поэтому их вызов ищется по префиксу
+// запроса, а не по точному равенству. Записанный вызов начинается с "query: ".
+func (c *newsFakeConn) anyCallHasPrefix(prefix string) bool {
+	for _, call := range c.callList() {
+		if strings.HasPrefix(call, "query: "+prefix) {
 			return true
 		}
 	}
@@ -1382,7 +1457,7 @@ func TestImportCheckModeWritesNothing(t *testing.T) {
 	var s newsImport
 
 	// Первый прогон: сохранённых окон нет (Query отдаёт пустую очередь) — дыр нет и
-	// ошибки нет. Отсутствие ошибки здесь же доказывает, что все девять лент прочитались:
+	// ошибки нет. Отсутствие ошибки здесь же доказывает, что все 16 лент прочитались:
 	// сбой любой из них вернулся бы через feedErrs, а не остался незамеченным.
 	firstRun := newNewsFakeConn()
 	count, err := s.Import(context.Background(), firstRun)
@@ -1439,7 +1514,7 @@ func TestImportCheckModeWritesNothing(t *testing.T) {
 }
 
 func TestImportAllModeWritesAllFeeds(t *testing.T) {
-	// all — режим расписания: пишутся все позиции текущего окна всех девяти лент, затем
+	// all — режим расписания: пишутся все позиции текущего окна всех 16 лент, затем
 	// версии Telegram отдельным батчем. Число строк считается из фикстур (readFixtureDoc +
 	// itemsFromDoc), а не хардкодится: обновление снимка лент не должно требовать правки
 	// числа в тесте.
@@ -1498,20 +1573,17 @@ func TestImportAllModeWritesAllFeeds(t *testing.T) {
 	}
 
 	// Версии Telegram — второй батч: на пустой истории по v1 на сообщение, и это
-	// относится к обоим каналам транспорта (interfaxonline и edisclosure).
+	// относится ко всем Telegram-каналам транспорта, а не к паре исторических.
 	versionBatch := conn.batchByQuery(t, telegramVersionInsert)
 	versionRows := versionBatch.insertedVersions(t)
-	var tgItems []newsItem
-	for _, key := range []string{"interfax_tg", "edisclosure_tg"} {
-		tgItems = append(tgItems, byKey[key]...)
-	}
+	tgItems := itemsOfKind(byKey, feedTelegram)
 	if len(versionRows) != len(tgItems) {
 		t.Errorf("в батч версий аппенднуто %d строк, want %d (v1 на сообщение Telegram)", len(versionRows), len(tgItems))
 	}
 	if !versionBatch.sent {
 		t.Error("Send батча версий не вызван: версии в таблицу не уехали")
 	}
-	// Ключ — канал и ID: у двух каналов свои нумерации, и совпадение ID не должно
+	// Ключ — канал и ID: у разных каналов свои нумерации, и совпадение ID не должно
 	// склеить версии разных каналов.
 	versionByChannelID := make(map[string]telegramVersion, len(versionRows))
 	for _, v := range versionRows {
@@ -1542,7 +1614,7 @@ func TestImportAllModeWritesAllFeeds(t *testing.T) {
 	}
 
 	got := make([]string, 0, len(rows))
-	sources := make(map[string]bool, 6)
+	sources := make(map[string]bool, 10)
 	for _, row := range rows {
 		got = append(got, row.Source+"|"+row.Title+"|"+row.URL)
 		sources[row.Source] = true
@@ -1568,14 +1640,15 @@ func TestImportAllModeWritesAllFeeds(t *testing.T) {
 		}
 	}
 
-	// Девять лент — шесть источников: оба фида ЦБ пишутся под source cbr, обе ленты
-	// smart-lab — под smartlab, edisclosure_tg — под отдельным edisclosure.
+	// 16 лент — 10 источников: оба фида ЦБ пишутся под source cbr, все четыре ленты
+	// smart-lab — под smartlab, edisclosure_tg — под отдельным edisclosure, а каждый
+	// новый Telegram-канал — под своей меткой (interfax у трёх лент Интерфакса).
 	srcs := make([]string, 0, len(sources))
 	for src := range sources {
 		srcs = append(srcs, src)
 	}
 	sort.Strings(srcs)
-	if wantSrcs := "cbr,edisclosure,interfax,rbc,smartlab,tass"; strings.Join(srcs, ",") != wantSrcs {
+	if wantSrcs := "cbr,edisclosure,interfax,marketoverview,markettwits,mozgovikresearch,rbc,russianmacro,smartlab,tass"; strings.Join(srcs, ",") != wantSrcs {
 		t.Errorf("источники батча = %s, want %s", strings.Join(srcs, ","), wantSrcs)
 	}
 }
@@ -1590,8 +1663,8 @@ func TestImportSinceModeWritesOnlyMissing(t *testing.T) {
 	pointFeedsAt(t, serveFixtures(t, nil))
 
 	byKey, _ := fixtureInventory(t)
-	// Оба Telegram-канала (interfaxonline и edisclosure) пишутся upsert'ом в любом случае.
-	tgCount := len(byKey["interfax_tg"]) + len(byKey["edisclosure_tg"])
+	// Все Telegram-каналы пишутся upsert'ом в любом случае.
+	tgCount := len(itemsOfKind(byKey, feedTelegram))
 
 	// Существующие ключи — по первой позиции tass и rbc. Остальные позиции этих лент и
 	// все позиции прочих обязаны уехать в батч.
@@ -1648,7 +1721,7 @@ func TestImportSinceModeWritesOnlyMissing(t *testing.T) {
 	// (б) все ключи фикстур на месте: RSS писать нечего, но Telegram-текущие пишутся
 	// всегда (upsert), поэтому батч news_events содержит ровно сообщения Telegram,
 	// а второй батч — их v1. Число строк Import — по-прежнему строки news_events.
-	allKeys := make(map[string][]newsKey, 6)
+	allKeys := make(map[string][]newsKey, 10)
 	for _, f := range feeds() {
 		allKeys[f.Source] = append(allKeys[f.Source], keysOf(byKey[f.Key])...)
 	}
@@ -1702,18 +1775,19 @@ func TestImportSinceModeCbrSecondFeedNoWatermark(t *testing.T) {
 	pointFeedsAt(t, serveSyntheticCbr(t, newsXML, pressXML))
 
 	byKey, _ := fixtureInventory(t)
-	// Ключи RSS-лент interfax/rbc/tass/smartlab — все позиции фикстур: эти источники не
-	// пишутся, и внимание теста остаётся на cbr. Обе ленты smart-lab несут один source,
-	// поэтому ключи складываются, как в feedSpans; у Интерфакса в map лежат и ключи
-	// Telegram — в since-фильтр они не попадают (Telegram пишется upsert'ом), но лишними
-	// не мешают.
-	keys := map[string][]newsKey{
-		"interfax": append(keysOf(byKey["interfax"]), keysOf(byKey["interfax_tg"])...),
-		"rbc":      keysOf(byKey["rbc"]),
-		"tass":     keysOf(byKey["tass"]),
-		"smartlab": append(keysOf(byKey["smartlab_lebedev"]), keysOf(byKey["smartlab_spydell"])...),
-		"cbr":      {{date: storedAt.Unix(), title: "ЦБ: уже сохранённая позиция"}},
+	// Ключи всех RSS-лент (interfax/rbc/tass/smartlab) — все позиции фикстур: эти
+	// источники не пишутся, и внимание теста остаётся на cbr. Ленты одного source
+	// складываются, как в feedSpans; Telegram-ключи в since-фильтр не попадают
+	// (Telegram пишется upsert'ом), но лишними не мешают — поэтому набор строится
+	// одним обходом feeds(), а не перечислением лент руками.
+	keys := make(map[string][]newsKey, 10)
+	for _, f := range feeds() {
+		if f.Source == "cbr" {
+			continue
+		}
+		keys[f.Source] = append(keys[f.Source], keysOf(byKey[f.Key])...)
 	}
+	keys["cbr"] = []newsKey{{date: storedAt.Unix(), title: "ЦБ: уже сохранённая позиция"}}
 
 	conn := newNewsFakeConnWithKeys(keys)
 	var s newsImport
@@ -1721,9 +1795,9 @@ func TestImportSinceModeCbrSecondFeedNoWatermark(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Import(%s): %v", modeSince, err)
 	}
-	// К двум новым позициям ЦБ добавляются Telegram-текущие обоих каналов: они пишутся
+	// К двум новым позициям ЦБ добавляются Telegram-текущие всех каналов: они пишутся
 	// upsert'ом всегда.
-	tgCount := len(byKey["interfax_tg"]) + len(byKey["edisclosure_tg"])
+	tgCount := len(itemsOfKind(byKey, feedTelegram))
 	if int(count) != 2+tgCount {
 		t.Errorf("Import вернул %d строк, want %d (опоздавший пресс-релиз + свежая позиция фронта + Telegram upsert)",
 			count, 2+tgCount)
@@ -1741,7 +1815,7 @@ func TestImportSinceModeCbrSecondFeedNoWatermark(t *testing.T) {
 				t.Errorf("опоздавшая позиция записана с датой %s, want раньше сохранённого максимума %s",
 					row.Date.Format(time.RFC3339), storedAt.Format(time.RFC3339))
 			}
-		case (row.Source == "interfax" || row.Source == "edisclosure") && strings.HasPrefix(row.URL, "https://t.me/"):
+		case strings.HasPrefix(row.URL, "https://t.me/"):
 			tgGot = append(tgGot, row.Title)
 		default:
 			t.Errorf("записан источник %q (%s), want cbr или Telegram (позиции остальных RSS уже покрыты)",
@@ -1769,7 +1843,7 @@ func TestImportSinceModeKeysReadErrorJoinsFeedErrors(t *testing.T) {
 	// на прогон, и в ней обязаны быть и сбой базы, и ключ упавшей ленты. Режим пишущий, но при
 	// ошибке выборки до батча дело не доходит — строк не пишется.
 	t.Setenv(modeEnv, modeSince)
-	// cbr_news падает (500), остальные восемь лент — закоммиченные фикстуры.
+	// cbr_news падает (500), остальные пятнадцать лент — закоммиченные фикстуры.
 	pointFeedsAt(t, serveFixtures(t, map[string]int{"cbr_news": http.StatusInternalServerError}))
 
 	conn := newNewsFakeConnWithKeys(nil)
@@ -1877,10 +1951,9 @@ func TestImportSinceModeTelegramVersionsAndTombstone(t *testing.T) {
 	if len(tgItems) < 2 {
 		t.Fatalf("Telegram-фикстура = %d сообщений, want ≥ 2 (нужны правка и живое сообщение)", len(tgItems))
 	}
-	// edisclosure_tg пишется тем же путём, но на пустой истории: он даёт по v1 на
-	// сообщение, и его позиции обязаны попасть в те же батчи.
-	edisclosureItems := byKey["edisclosure_tg"]
-	telegramTotal := len(tgItems) + len(edisclosureItems)
+	// Остальные Telegram-каналы пишутся тем же путём, но на пустой истории: каждый
+	// даёт по v1 на сообщение, и их позиции обязаны попасть в те же батчи.
+	telegramTotal := len(itemsOfKind(byKey, feedTelegram))
 	windowMin, windowMax := telegramFixtureWindow(tgItems)
 
 	edited := tgItems[0]
@@ -1910,7 +1983,7 @@ func TestImportSinceModeTelegramVersionsAndTombstone(t *testing.T) {
 	})
 
 	// Все RSS-ключи фикстур на месте: в news_events едут только Telegram-текущие.
-	rssKeys := make(map[string][]newsKey, 6)
+	rssKeys := make(map[string][]newsKey, 10)
 	for _, f := range feeds() {
 		if f.Kind == feedRSS {
 			rssKeys[f.Source] = append(rssKeys[f.Source], keysOf(byKey[f.Key])...)
@@ -1925,7 +1998,7 @@ func TestImportSinceModeTelegramVersionsAndTombstone(t *testing.T) {
 		t.Fatalf("Import(%s): %v", modeSince, err)
 	}
 	if int(count) != telegramTotal {
-		t.Errorf("Import вернул %d строк, want %d (Telegram upsert обоих каналов + ничего из покрытого RSS)", count, telegramTotal)
+		t.Errorf("Import вернул %d строк, want %d (Telegram upsert всех каналов + ничего из покрытого RSS)", count, telegramTotal)
 	}
 
 	if wantCall := "source=interfaxonline since=" + windowMin.Format(time.RFC3339); !conn.anyCallHas(wantCall) {
@@ -1934,7 +2007,7 @@ func TestImportSinceModeTelegramVersionsAndTombstone(t *testing.T) {
 
 	newsRows := conn.batchByQuery(t, newsInsert).inserted(t)
 	if len(newsRows) != telegramTotal {
-		t.Fatalf("батч news_events = %d строк, want %d (Telegram-текущие обоих каналов)", len(newsRows), telegramTotal)
+		t.Fatalf("батч news_events = %d строк, want %d (Telegram-текущие всех каналов)", len(newsRows), telegramTotal)
 	}
 	var editedRow *newsInsertedRow
 	for i := range newsRows {
@@ -1955,9 +2028,11 @@ func TestImportSinceModeTelegramVersionsAndTombstone(t *testing.T) {
 	}
 
 	verRows := conn.batchByQuery(t, telegramVersionInsert).insertedVersions(t)
-	wantVersions := 2 + len(edisclosureItems) // правка v2 + tombstone v2 + v1 каждого edisclosure
+	// Правка v2 + tombstone v2 у interfaxonline; остальные его текущие сообщения
+	// неизменны, а у прочих каналов истории нет — по v1 на каждое сообщение.
+	wantVersions := 2 + (telegramTotal - len(tgItems))
 	if len(verRows) != wantVersions {
-		t.Fatalf("батч версий = %d строк, want %d (правка v2, tombstone v2 и v1 edisclosure): %+v",
+		t.Fatalf("батч версий = %d строк, want %d (правка v2, tombstone v2 и v1 остальных каналов): %+v",
 			len(verRows), wantVersions, verRows)
 	}
 	editVer := findVersion(t, verRows, edited.MessageID, 2)
@@ -1982,7 +2057,7 @@ func TestImportSinceModeTelegramVersionsAndTombstone(t *testing.T) {
 func TestImportTelegramVersionReadErrorWritesRSSOnly(t *testing.T) {
 	// Ошибка чтения версий изолируется Telegram-лентой: без истории diffTelegram принял бы
 	// её сообщения за v1 и затёр нумерацию, поэтому Telegram-позиции этого прогона не
-	// пишутся, а семь RSS-лент пишутся как обычно. Прогон отчитывается ошибкой (dagu
+	// пишутся, а восемь RSS-лент пишутся как обычно. Прогон отчитывается ошибкой (dagu
 	// краснеет), но уже собранные данные не теряет.
 	t.Setenv(modeEnv, modeSince)
 	pointFeedsAt(t, serveFixtures(t, nil))
@@ -2070,16 +2145,13 @@ func TestImportTelegramVersionWriteErrorKeepsCurrentRows(t *testing.T) {
 
 func TestImportTelegramFeedFailureNoTombstone(t *testing.T) {
 	// Сбойные Telegram-ленты не доходят до diffTelegram: у них SeenIDs == nil, и трактовать
-	// это как пустое окно (tombstone всего канала) нельзя. Версии обоих каналов в этом
-	// прогоне не читаются и не пишутся, хотя история interfaxonline в фейке есть.
+	// это как пустое окно (tombstone всего канала) нельзя. Версии всех Telegram-каналов
+	// в этом прогоне не читаются и не пишутся, хотя история interfaxonline в фейке есть.
 	t.Setenv(modeEnv, modeSince)
-	pointFeedsAt(t, serveFixtures(t, map[string]int{
-		"interfax_tg":    http.StatusInternalServerError,
-		"edisclosure_tg": http.StatusInternalServerError,
-	}))
+	pointFeedsAt(t, serveFixtures(t, failFeedsOfKind(feedTelegram)))
 
 	byKey, _ := fixtureInventory(t)
-	rssKeys := make(map[string][]newsKey, 6)
+	rssKeys := make(map[string][]newsKey, 10)
 	for _, f := range feeds() {
 		if f.Kind == feedRSS {
 			rssKeys[f.Source] = append(rssKeys[f.Source], keysOf(byKey[f.Key])...)
@@ -2103,9 +2175,9 @@ func TestImportTelegramFeedFailureNoTombstone(t *testing.T) {
 	if err == nil {
 		t.Fatalf("Import(%s) при сбое Telegram-лент вернул %d строк без ошибки, want ошибку ленты", modeSince, count)
 	}
-	for _, key := range []string{"interfax_tg", "edisclosure_tg"} {
-		if !strings.Contains(err.Error(), key) {
-			t.Errorf("ошибка Import = %q, want ключ упавшей ленты %s", err, key)
+	for _, f := range feedsOfKind(feedTelegram) {
+		if !strings.Contains(err.Error(), f.Key) {
+			t.Errorf("ошибка Import = %q, want ключ упавшей ленты %s", err, f.Key)
 		}
 	}
 	if count != 0 {
@@ -2121,26 +2193,24 @@ func TestImportTelegramFeedFailureNoTombstone(t *testing.T) {
 }
 
 func TestImportOneTelegramFeedFailureIsolated(t *testing.T) {
-	// Сбой одной Telegram-ленты не должен задевать вторую: здоровая лента пишет текущие
-	// сообщения и свои версии, упавшая — не читает историю и не даёт tombstone. Оба
-	// направления проверяются отдельно: падение interfax_tg при живом edisclosure_tg
-	// и зеркально.
+	// Сбой одной Telegram-ленты не должен задевать остальные: здоровые ленты пишут
+	// текущие сообщения и свои версии, упавшая — не читает историю и не даёт tombstone.
+	// Два направления проверяются отдельно: падение interfax_tg и падение edisclosure_tg.
 	for _, tc := range []struct {
-		name    string
-		failed  string
-		healthy string
-		channel string
-		history bool
+		name          string
+		failed        string
+		failedChannel string
+		history       bool
 	}{
-		{name: "interfax_tg down", failed: "interfax_tg", healthy: "edisclosure_tg", channel: "edisclosure"},
-		{name: "edisclosure_tg down", failed: "edisclosure_tg", healthy: "interfax_tg", channel: "interfaxonline", history: true},
+		{name: "interfax_tg down", failed: "interfax_tg", failedChannel: "interfaxonline"},
+		{name: "edisclosure_tg down", failed: "edisclosure_tg", failedChannel: "edisclosure", history: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv(modeEnv, modeSince)
 			pointFeedsAt(t, serveFixtures(t, map[string]int{tc.failed: http.StatusInternalServerError}))
 
 			byKey, _ := fixtureInventory(t)
-			rssKeys := make(map[string][]newsKey, 6)
+			rssKeys := make(map[string][]newsKey, 10)
 			for _, f := range feeds() {
 				if f.Kind == feedRSS {
 					rssKeys[f.Source] = append(rssKeys[f.Source], keysOf(byKey[f.Key])...)
@@ -2167,27 +2237,57 @@ func TestImportOneTelegramFeedFailureIsolated(t *testing.T) {
 				t.Fatalf("Import(%s) при сбое %s: count=%d err=%v, want ошибку с ключом упавшей ленты",
 					modeSince, tc.failed, count, err)
 			}
-			if strings.Contains(err.Error(), tc.healthy) {
-				t.Errorf("ошибка Import = %q содержит ключ здоровой ленты %s: сбой одной ленты задел другую",
-					err, tc.healthy)
+			// Здоровые каналы: сумма их текущих позиций и полный набор их каналов.
+			healthyChannels := make(map[string]bool, len(feedsOfKind(feedTelegram)))
+			want := 0
+			for _, f := range feedsOfKind(feedTelegram) {
+				if f.Key == tc.failed {
+					continue
+				}
+				if strings.Contains(err.Error(), f.Key) {
+					t.Errorf("ошибка Import = %q содержит ключ здоровой ленты %s: сбой одной ленты задел другую",
+						err, f.Key)
+				}
+				healthyChannels[readTelegramFixture(t, f.Key+".html").Messages[0].Channel] = true
+				want += len(byKey[f.Key])
 			}
-			if want := len(byKey[tc.healthy]); int(count) != want {
-				t.Errorf("Import вернул %d строк, want %d (текущие позиции здоровой ленты %s)", count, want, tc.healthy)
+			if int(count) != want {
+				t.Errorf("Import вернул %d строк, want %d (текущие позиции здоровых Telegram-лент)", count, want)
 			}
-			if !conn.anyCallHas("source=" + tc.channel) {
-				t.Errorf("версии здоровой ленты %s не читались; вызовы: %v", tc.channel, conn.callList())
+			if conn.anyCallHas("source=" + tc.failedChannel) {
+				t.Errorf("упавшая лента %s читала версии канала %s; вызовы: %v",
+					tc.failed, tc.failedChannel, conn.callList())
 			}
-			versionBatch := conn.batchByQuery(t, telegramVersionInsert)
-			versions := versionBatch.insertedVersions(t)
-			if len(versions) == 0 {
-				t.Fatalf("батч версий здоровой ленты %s пуст", tc.channel)
+			for channel := range healthyChannels {
+				if !conn.anyCallHas("source=" + channel) {
+					t.Errorf("версии здорового канала %s не читались; вызовы: %v", channel, conn.callList())
+				}
 			}
+
+			versions := conn.batchByQuery(t, telegramVersionInsert).insertedVersions(t)
+			// На пустой истории каждая позиция даёт v1; в сценарии с историей первое
+			// сообщение interfaxonline не изменилось и новой версии не даёт.
+			wantVersions := want
+			if tc.history {
+				wantVersions--
+			}
+			if len(versions) != wantVersions {
+				t.Fatalf("батч версий = %d строк, want %d (v1 здоровых каналов)", len(versions), wantVersions)
+			}
+			seenChannels := make(map[string]bool, len(healthyChannels))
 			for _, v := range versions {
-				if v.Channel != tc.channel {
-					t.Errorf("в батче версий строка чужого канала %q, want только %q", v.Channel, tc.channel)
+				seenChannels[v.Channel] = true
+				if !healthyChannels[v.Channel] {
+					t.Errorf("в батче версий строка канала %q (упавший %s или чужой): %+v",
+						v.Channel, tc.failed, v)
 				}
 				if v.Deleted != 0 {
-					t.Errorf("здоровая лента %s дала tombstone %+v при сбое другой ленты", tc.channel, v)
+					t.Errorf("здоровая лента %s дала tombstone %+v при сбое другой ленты", v.Channel, v)
+				}
+			}
+			for channel := range healthyChannels {
+				if !seenChannels[channel] {
+					t.Errorf("в батче версий нет здорового канала %s", channel)
 				}
 			}
 		})
@@ -2195,20 +2295,14 @@ func TestImportOneTelegramFeedFailureIsolated(t *testing.T) {
 }
 
 func TestImportSinceModeAllFeedsFailed(t *testing.T) {
-	// Все девять лент упали: items пуст, и в since до чтения ключей дело не доходит — ошибка
+	// Все 16 лент упали: items пуст, и в since до чтения ключей дело не доходит — ошибка
 	// собирается из отказов лент (ключ каждой), строк не пишется.
 	t.Setenv(modeEnv, modeSince)
-	pointFeedsAt(t, serveFixtures(t, map[string]int{
-		"interfax":         http.StatusInternalServerError,
-		"interfax_tg":      http.StatusInternalServerError,
-		"edisclosure_tg":   http.StatusInternalServerError,
-		"rbc":              http.StatusInternalServerError,
-		"cbr_news":         http.StatusInternalServerError,
-		"cbr_press":        http.StatusInternalServerError,
-		"tass":             http.StatusInternalServerError,
-		"smartlab_lebedev": http.StatusInternalServerError,
-		"smartlab_spydell": http.StatusInternalServerError,
-	}))
+	fail := make(map[string]int, len(feeds()))
+	for _, f := range feeds() {
+		fail[f.Key] = http.StatusInternalServerError
+	}
+	pointFeedsAt(t, serveFixtures(t, fail))
 
 	conn := newNewsFakeConn()
 	var s newsImport
@@ -2219,9 +2313,9 @@ func TestImportSinceModeAllFeedsFailed(t *testing.T) {
 	if count != 0 {
 		t.Errorf("Import вернул %d строк при сбое всех лент, want 0", count)
 	}
-	for _, key := range []string{"interfax", "interfax_tg", "edisclosure_tg", "rbc", "cbr_news", "cbr_press", "tass", "smartlab_lebedev", "smartlab_spydell"} {
-		if !strings.Contains(err.Error(), key) {
-			t.Errorf("ошибка Import = %q, want ключ упавшей ленты %q", err, key)
+	for _, f := range feeds() {
+		if !strings.Contains(err.Error(), f.Key) {
+			t.Errorf("ошибка Import = %q, want ключ упавшей ленты %q", err, f.Key)
 		}
 	}
 	if got := conn.batchList(); len(got) != 0 {
@@ -2261,8 +2355,8 @@ func rssXML(entries ...rssEntry) string {
 }
 
 // serveSyntheticCbr поднимает httptest-сервер, где два фида ЦБ отдают синтетические ленты,
-// а остальные семь — закоммиченные фикстуры: тест держит под контролем окно именно ЦБ, не
-// переписывая testdata.
+// а остальные четырнадцать — закоммиченные фикстуры: тест держит под контролем окно именно
+// ЦБ, не переписывая testdata.
 func serveSyntheticCbr(t *testing.T, newsXML, pressXML string) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2357,7 +2451,7 @@ func TestImportWithoutLLMEnvSkipsAnnotation(t *testing.T) {
 	if _, err := s.Import(context.Background(), conn); err != nil {
 		t.Fatalf("Import(%s) без LLM env: %v (деградация обязана быть зелёной)", modeSince, err)
 	}
-	if conn.anyCallHas(newsAnnotationCandidatesQuery) {
+	if conn.anyCallHasPrefix(newsAnnotationCandidatesQueryPrefix) {
 		t.Errorf("без LLM env прочитаны кандидаты разметки; вызовы: %v", conn.callList())
 	}
 	if batch := newsFakeBatchByQuery(conn, newsAnnotationInsert); batch != nil {
@@ -2416,11 +2510,11 @@ func TestImportAnnotatesBacklogWithFakeLLM(t *testing.T) {
 	if _, err := s.Import(context.Background(), conn); err != nil {
 		t.Fatalf("Import(%s) с фейковым LLM: %v", modeSince, err)
 	}
-	if !conn.anyCallHas(newsAnnotationCandidatesQuery) {
-		t.Errorf("LLM-шаг не прочитал кандидатов запросом %q; вызовы: %v",
-			newsAnnotationCandidatesQuery, conn.callList())
+	if !conn.anyCallHasPrefix(newsAnnotationCandidatesQueryPrefix) {
+		t.Errorf("LLM-шаг не прочитал кандидатов запросом с префиксом %q; вызовы: %v",
+			newsAnnotationCandidatesQueryPrefix, conn.callList())
 	}
-	if want := "model=test-model prompt_version=1"; !conn.anyCallHas(want) {
+	if want := fmt.Sprintf("model=test-model prompt_version=%d", newsPromptVersion); !conn.anyCallHas(want) {
 		t.Errorf("запрос кандидатов не содержал %q (model и prompt_version — часть ключа); вызовы: %v",
 			want, conn.callList())
 	}
@@ -2539,10 +2633,7 @@ func TestImportAnnotationWriteErrorIsWarning(t *testing.T) {
 // но LLM-шаг стоит до выхода из прогона и обязан разметить накопленное.
 func TestImportNoopRunAnnotatesBacklog(t *testing.T) {
 	t.Setenv(modeEnv, modeSince)
-	pointFeedsAt(t, serveFixtures(t, map[string]int{
-		"interfax_tg":    http.StatusInternalServerError,
-		"edisclosure_tg": http.StatusInternalServerError,
-	}))
+	pointFeedsAt(t, serveFixtures(t, failFeedsOfKind(feedTelegram)))
 
 	candidate := newsTestCandidate(1)
 	mock := newNewsTestLLMMock(t, newsTestLLMResponse{
@@ -2551,7 +2642,7 @@ func TestImportNoopRunAnnotatesBacklog(t *testing.T) {
 	setNewsLLMEnv(t, mock.url, "test-model")
 
 	byKey, _ := fixtureInventory(t)
-	rssKeys := make(map[string][]newsKey, 6)
+	rssKeys := make(map[string][]newsKey, 10)
 	for _, f := range feeds() {
 		if f.Kind == feedRSS {
 			rssKeys[f.Source] = append(rssKeys[f.Source], keysOf(byKey[f.Key])...)
@@ -2594,7 +2685,7 @@ func TestImportCheckModeDoesNotCallLLM(t *testing.T) {
 	if _, err := s.Import(context.Background(), conn); err != nil {
 		t.Fatalf("Import(%s): %v", modeCheck, err)
 	}
-	if conn.anyCallHas(newsAnnotationCandidatesQuery) {
+	if conn.anyCallHasPrefix(newsAnnotationCandidatesQueryPrefix) {
 		t.Errorf("check прочитал кандидатов разметки; вызовы: %v", conn.callList())
 	}
 	if mock.calls() != 0 {
@@ -2602,5 +2693,109 @@ func TestImportCheckModeDoesNotCallLLM(t *testing.T) {
 	}
 	if batch := newsFakeBatchByQuery(conn, newsAnnotationInsert); batch != nil {
 		t.Errorf("check открыл батч разметки: %+v", batch.rows)
+	}
+}
+
+// TestNewsAnnotationCandidatesQueryCoversRSS — кандидаты разметки — весь видимый поток:
+// Telegram не сужен (url LIKE), RSS проходит тот же newsFilter, что и v_news_events, а окно
+// 35 дней снято осознанно — стоимость ограничивает LIMIT бэклога, а не возраст позиции.
+func TestNewsAnnotationCandidatesQueryCoversRSS(t *testing.T) {
+	query := newsAnnotationCandidatesQuery(50)
+	for _, want := range []string{
+		"match(title, ?)",
+		"match(description, ?)",
+		"url LIKE 'https://t.me/%'",
+		"content_hash != ''",
+		"url != ''",
+		"LIMIT 50",
+	} {
+		if !strings.Contains(query, want) {
+			t.Errorf("кандидатный запрос не содержит %q:\n%s", want, query)
+		}
+	}
+	// Ровно четыре ? — filter, filter, model, prompt_version. newsFilter литералом дал бы
+	// ещё два ? внутри (?i), и драйвер ClickHouse ответил бы «have no arg for param ?».
+	// Счётчик ловит именно этот класс дефекта: живой прогон его вскрыл, фейк — нет.
+	if got := strings.Count(query, "?"); got != 4 {
+		t.Errorf("в кандидатном запросе %d плейсхолдеров ?, want 4 (filter, filter, model, prompt_version):\n%s",
+			got, query)
+	}
+	if strings.Contains(query, newsFilter) {
+		t.Errorf("кандидатный запрос содержит newsFilter литералом: (?i) даст драйверу лишние ?:\n%s", query)
+	}
+	if strings.Contains(query, "INTERVAL 35 DAY") {
+		t.Errorf("кандидатный запрос сужен окном 35 дней, want весь видимый поток:\n%s", query)
+	}
+	// LIMIT — аргумент функции, а не константа: бэкфилл через NEWS_LLM_BACKLOG_LIMIT
+	// обязан менять запрос, иначе переменная была бы декоративной.
+	if other := newsAnnotationCandidatesQuery(123); !strings.Contains(other, "LIMIT 123") {
+		t.Errorf("newsAnnotationCandidatesQuery(123) не содержит LIMIT 123:\n%s", other)
+	}
+}
+
+// TestReadNewsAnnotationCandidatesBindsFilter — readNewsAnnotationCandidates передаёт в SQL
+// четыре аргумента в порядке `?`: filter, filter, model, prompt_version. Фейковое соединение
+// SQL не разбирает, поэтому порядок проверяется по записанным candidateArgs: именно
+// расхождение числа ? и аргументов дало «have no arg for param ?» на живой базе.
+func TestReadNewsAnnotationCandidatesBindsFilter(t *testing.T) {
+	conn := newNewsFakeConn()
+	conn.candidates = []newsItem{newsTestCandidate(1)}
+
+	candidates, err := readNewsAnnotationCandidates(context.Background(), conn, "test-model", newsPromptVersion, 50)
+	if err != nil {
+		t.Fatalf("readNewsAnnotationCandidates: %v", err)
+	}
+	if len(candidates) != 1 {
+		t.Fatalf("кандидатов %d, want 1", len(candidates))
+	}
+	// prompt_version — uint16: без явного приведения untyped-константа стала бы int,
+	// и сравнение с аргументом драйвера падало бы по типу, а не по значению.
+	want := []any{newsFilter, newsFilter, "test-model", uint16(newsPromptVersion)}
+	args := conn.candidateArgsList()
+	if len(args) != len(want) {
+		t.Fatalf("аргументов запроса %d, want %d (filter, filter, model, prompt_version): %v",
+			len(args), len(want), args)
+	}
+	for i := range want {
+		if args[i] != want[i] {
+			t.Errorf("аргумент %d = %#v, want %#v (порядок — порядок ? в SQL)", i, args[i], want[i])
+		}
+	}
+}
+
+// TestImportUsesBacklogLimit — NEWS_LLM_BACKLOG_LIMIT доезжает до SQL кандидатов: переменная
+// читается до запроса, а LIMIT вшивается в текст. Без этой проверки опечатка в имени
+// переменной оставила бы бэкфилл на штатных 50 позициях, и заметить это было бы нечем.
+func TestImportUsesBacklogLimit(t *testing.T) {
+	t.Setenv(modeEnv, modeSince)
+	t.Setenv(newsLLMBacklogLimitEnv, "123")
+	pointFeedsAt(t, serveFixtures(t, nil))
+
+	candidate := newsTestCandidate(1)
+	mock := newNewsTestLLMMock(t, newsTestLLMResponse{
+		Body: newsTestContentBody(t, newsTestPayloadBody(t, newsTestValidMessage(candidate.URL))),
+	})
+	setNewsLLMEnv(t, mock.url, "test-model")
+
+	conn := newNewsFakeConn()
+	conn.candidates = []newsItem{candidate}
+
+	var s newsImport
+	if _, err := s.Import(context.Background(), conn); err != nil {
+		t.Fatalf("Import(%s) с %s=123: %v", modeSince, newsLLMBacklogLimitEnv, err)
+	}
+	found := false
+	for _, call := range conn.callList() {
+		if !strings.HasPrefix(call, "query: "+newsAnnotationCandidatesQueryPrefix) {
+			continue
+		}
+		found = true
+		if !strings.Contains(call, "LIMIT 123") {
+			t.Errorf("кандидатный запрос не содержит LIMIT 123: %s", call)
+		}
+	}
+	if !found {
+		t.Errorf("LLM-шаг не прочитал кандидатов запросом с префиксом %q; вызовы: %v",
+			newsAnnotationCandidatesQueryPrefix, conn.callList())
 	}
 }

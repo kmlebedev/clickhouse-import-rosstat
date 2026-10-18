@@ -255,7 +255,8 @@ ARGS ?=
 
 # Первый срез модели ключевой ставки (фундаментальный контур v0): выборка решений,
 # бенчмарки, методы №2–3, walk-forward-бэктест. Читает ClickHouse, пишет локальные
-# артефакты; в ClickHouse НЕ пишет. Фикстуры офлайн-тестов: make key-rate-model ARGS="--export-fixtures scripts/testdata/key_rate"
+# артефакты; в ClickHouse по умолчанию не пишет; с ML_LOG=1 пишет паспорт
+# и fold-предсказания. Фикстуры офлайн-тестов: make key-rate-model ARGS="--export-fixtures scripts/testdata/key_rate"
 # --python 3.12 — не украшение: statsmodels>=0.15 требует Python>=3.10, а `python3` из
 # PATH не везде 3.10+ (на машине разработки системный /usr/bin/python3 — 3.9.6, и
 # без пина резолвер uv падает). Пин делает цель независимой от порядка PATH и
@@ -264,7 +265,8 @@ key-rate-model:
 	uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/key_rate_model.py $(ARGS)
 
 # ML-трек контура ставки: nowcast месячного ИПЦ до публикации Росстата (CatBoost + бенчмарки).
-# Читает ClickHouse, пишет локальные артефакты; в ClickHouse НЕ пишет.
+# Читает ClickHouse, пишет локальные артефакты; в ClickHouse по умолчанию не пишет;
+# с ML_LOG=1 пишет паспорт и fold-предсказания.
 # Фикстуры: make cpi-nowcast ARGS="--export-fixtures scripts/testdata/cpi_nowcast"
 cpi-nowcast:
 	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_nowcast.py $(ARGS)
