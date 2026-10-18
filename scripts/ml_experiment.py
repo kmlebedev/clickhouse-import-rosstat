@@ -110,34 +110,32 @@ def canonical_run_id(mlflow_run_id: str) -> str:
         return str(uuid.uuid5(uuid.NAMESPACE_URL, f"mlflow:{mlflow_run_id}"))
 
 
-def flatten_metrics(metrics: dict) -> dict:
-    """Числовые метрики для `mlflow.log_metrics`.
+# Предел вложенности структур метрик — защита от патологических и циклических
+# dict/list. Реальные метрики `cpi_nowcast`/`key_rate_model` мельче (≤4 уровня).
+_MAX_METRIC_DEPTH = 8
 
-    `None`, нечисловые значения и неконечные `NaN`/`±Inf` отбрасываются:
-    MLflow принимает только конечные числа. `primary_metric` — это имя
-    главной метрики (строка), а не число, поэтому метрикой оно не становится
-    (в MLflow уходит тегом). Ключи санитизируются в алфавит MLflow.
+
+def flatten_metrics(metrics: dict) -> dict[str, float]:
+    """Числовые метрики для `mlflow.log_metrics` (в том числе вложенные).
+
+    Значение разворачивается рекурсивно: dict даёт `prefix.key`, list/tuple —
+    `prefix.<index>` (например, `windows.0.models.B1.rmse`). Глубина ограничена
+    `_MAX_METRIC_DEPTH`, чтобы циклическая или патологическая структура не
+    уронила приёмник. `None`, bool, строки и неконечные `NaN`/`±Inf`
+    отбрасываются: MLflow принимает только конечные числа. `primary_metric` —
+    это имя главной метрики (строка), а не число, поэтому метрикой оно не
+    становится на любом уровне вложенности (в MLflow уходит тегом). Ключи
+    санитизируются в алфавит MLflow; совпадение после санитизации получает
+    суффикс `_2`, `_3`, ... .
     """
-    flat = {}
+    flat: dict[str, float] = {}
     if not isinstance(metrics, dict):
         return flat
-    for key, value in metrics.items():
-        if key == "primary_metric":
-            continue
-        # numpy-скаляры (`np.float32`, ...): приводим по тому же протоколу,
-        # что и `json_safe`, не делая numpy обязательной зависимостью.
-        item = getattr(value, "item", None)
-        if callable(item):
-            converted = item()
-            if converted is not value:
-                value = converted
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            continue
-        if not math.isfinite(value):
-            continue
-        name = _sanitize_key(key)
+
+    def emit(raw_name: str, number: float) -> None:
+        name = _sanitize_key(raw_name)
         if not name:
-            continue
+            return
         if name in flat:
             # `cv rmse` и `cv_rmse` после санитизации неразличимы; вторую
             # метрику нельзя молча перезаписать — суффикс сохраняет обе.
@@ -149,9 +147,49 @@ def flatten_metrics(metrics: dict) -> dict:
             log.warning(
                 "mlflow: ключ метрики %r совпал после санитизации; "
                 "записан как %r",
-                key, name,
+                raw_name, name,
             )
-        flat[name] = float(value)
+        flat[name] = number
+
+    def scalar(value):
+        # numpy-скаляры (`np.float32`, ...): приводим по тому же протоколу,
+        # что и `json_safe`, не делая numpy обязательной зависимостью.
+        item = getattr(value, "item", None)
+        if callable(item):
+            converted = item()
+            if converted is not value:  # защита от `.item() -> self`
+                return converted
+        return value
+
+    def walk(node, prefix: str, depth: int) -> None:
+        if depth > _MAX_METRIC_DEPTH:
+            return
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == "primary_metric":
+                    continue
+                key = str(key)
+                if not key:
+                    continue
+                walk(value, f"{prefix}.{key}" if prefix else key, depth + 1)
+            return
+        if isinstance(node, (list, tuple)):
+            for index, value in enumerate(node):
+                part = str(index)
+                walk(value, f"{prefix}.{part}" if prefix else part, depth + 1)
+            return
+        value = scalar(node)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return
+        try:
+            number = float(value)
+        except (OverflowError, ValueError):
+            return
+        if not math.isfinite(number):
+            return
+        emit(prefix, number)
+
+    walk(metrics, "", 0)
     return flat
 
 
