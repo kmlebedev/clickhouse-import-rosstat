@@ -102,6 +102,8 @@ deploy/staging/      артефакты staging
 | `INGEST_TOKEN` | Bearer-токен ingest-endpoint |
 | `INGEST_URL` | Базовый URL ingest-endpoint для `scripts/key_rate_forecast_log.py` (например, `http://127.0.0.1:8081`); обязательна вместе с `INGEST_TOKEN` |
 | `EDISCLOSURE_INPUT_DIR`, `EDISCLOSURE_RECHECK`, `EDISCLOSURE_ALLOW_MISSING`, `EDISCLOSURE_OUT` | документы e-disclosure: каталог снапшота коллектора (по умолчанию `build/edisclosure`), глубокий прогон (`1`; переписывает строку при смене `sha256`/метаданных **или** при пустом `archive_key` и включённом архиве — самолечение), мягкий пропуск отсутствующего снапшота в dagu (`1`) и каталог выхода коллектора |
+| `ML_LOG`, `ML_RUN_NAME`, `ML_LOCAL_DIR` | журнал ML-эксперимента: `ML_LOG=1` — мастер-выключатель записи в ClickHouse и включения MLflow-приёмника; имя прогона и каталог локального fallback (по умолчанию `build/ml-runs`) |
+| `MLFLOW`, `MLFLOW_TRACKING_URI`, `MLFLOW_HOME`, `MLFLOW_PORT`, `MLFLOW_VERSION` | make-уровень MLflow: `MLFLOW=1` добавляет `mlflow==3.17.1` в uv-окружение `cpi-nowcast`/`key-rate-model` и подставляет `MLFLOW_TRACKING_URI` (`http://127.0.0.1:5000`); `MLFLOW_HOME`/`MLFLOW_PORT`/`MLFLOW_VERSION` — каталог `build/mlflow`, порт и пин пакета |
 
 Полный список, `ARCHIVE_*`, MCP-конфигурация и работа с ключами — [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
@@ -110,6 +112,23 @@ deploy/staging/      артефакты staging
 Расписания — `dagu/*.yaml`: `type: chain`, `overlap_policy: skip`, ретраи 3 × 300 с; путь к бинарнику (`ROSSTAT_IMPORT_BIN`) и `CLICKHOUSE_URL` — в `base.yaml`; секреты — в `/etc/dagu/secrets/`. Запуск одного DAG: `dagu start dagu/gold.yaml`.
 
 Зависимости, staging и винтажный архив — [docs/OPERATIONS.md](docs/OPERATIONS.md).
+
+## MLflow (ML-инфраструктура)
+
+MLflow — control plane ML-экспериментов (`cpi_nowcast`, `key_rate_model`): UI, сравнение run'ов и реестр моделей. Хранилище — SQLite `build/mlflow/mlflow.db` и артефакты `build/mlflow/artifacts` (Postgres/MinIO не нужны); сервер запускается с `--artifacts-destination` + `--serve-artifacts` и проксирует upload, слушает только `127.0.0.1:5000`, доступ — localhost или SSH-туннель. ClickHouse остаётся аналитической репликой: run'ы экспортируются в `ml_runs`/`ml_predictions`, схема не меняется.
+
+```bash
+make mlflow-up                             # сервер и /health; UI http://127.0.0.1:5000
+ML_LOG=1 MLFLOW=1 make cpi-nowcast         # run в MLflow + паспорт/fold'ы в ClickHouse
+ML_LOG=1 MLFLOW=1 make key-rate-model
+make mlflow-export                         # MLflow → ml_runs/ml_predictions (идемпотентно)
+make mlflow-register ARGS="--run-id <mlflow-run-id> --name cpi_nowcast_catboost_direct"
+make mlflow-promote  ARGS="--name cpi_nowcast_catboost_direct --version 1"
+make mlflow-models   ARGS="--name cpi_nowcast_catboost_direct"
+make mlflow-down
+```
+
+`ML_LOG=1` — мастер-выключатель журнала; без `MLFLOW_TRACKING_URI`/`MLFLOW=1` MLflow не включается. Если MLflow остановлен, прогон не падает: паспорт и предсказания по-прежнему пишутся в ClickHouse или в локальный fallback `build/ml-runs/`, а `make mlflow-export` догоняет run'ы позже — это отдельный шаг, в DAG его нет. На staging MLflow развёрнут юнитом `deploy/staging/mlflow.service`, доступ — через туннель `ssh -N -L 5000:127.0.0.1:5000 palmshell` (операции — [docs/OPERATIONS.md](docs/OPERATIONS.md), бэкап и upgrade — `deploy/staging/README.md`). Устройство и реестр моделей — [ARCHITECTURE.md](ARCHITECTURE.md) §6.8.
 
 ## Контур прогноза золота
 
@@ -127,9 +146,13 @@ deploy/staging/      артефакты staging
 | `make test` / `make lint` | тесты / линт |
 | `make build` | бинарник `linux/amd64` в `build/` |
 | `make import STAT=<имя>` | локальный прогон импортёра |
-| `make key-rate-model` / `make key-rate-forecast-log` | прогноз ставки (локальные артефакты) / запись прогноза в `forecast_log` через ingest |
+| `make cpi-nowcast` | nowcast ИПЦ; `ML_LOG=1 MLFLOW=1` включает журнал и MLflow |
+| `make key-rate-model` / `make key-rate-forecast-log` | прогноз ставки (локальные артефакты) / запись прогноза в `forecast_log` через ingest; `ML_LOG=1 MLFLOW=1` включает журнал и MLflow |
 | `make cpi-monthly` | месячный nowcast ИПЦ с МП (ML-трек v2); долгая выборка — `ARGS="--sample long"`; журнал — `ML_LOG=1` |
 | `make key-rate-llm-forecast` | экспериментальный LLM-прогноз ключевой ставки: as-of снимок, три повтора, медиана/разброс, локальные артефакты; в ClickHouse не пишет; `ARGS="--log"` готовит payload для #127 |
+| `make mlflow-up` / `make mlflow-down` / `make mlflow-status` | локальный MLflow-сервер (SQLite + артефакты, `127.0.0.1:5000`) |
+| `make mlflow-export` | экспорт run'ов MLflow в `ml_runs`/`ml_predictions` (`ARGS` — `--since/--limit/--dry-run`) |
+| `make mlflow-register` / `make mlflow-promote` / `make mlflow-models` | реестр моделей и алиасы `challenger`/`champion` (аргументы — в `ARGS`) |
 | `make mcp-check` | MCP end-to-end |
 | `make cb-comp-parity` / `make cb-comp-parity-test` | паритет nowcast с CB_COMP (direct + bottom-up, архив авторов) / офлайн-тесты parity-скриптов |
 | `make docs-check` / `make docs-build` | проверка и сборка docs-портала |

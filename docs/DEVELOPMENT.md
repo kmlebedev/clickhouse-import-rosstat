@@ -50,12 +50,17 @@
 
 Пункт роадмапа ведётся через GitHub issue с составным ID `<slug>/<item-id>`: шаблоны — [`.github/ISSUE_TEMPLATE/roadmap-item.yml`](../.github/ISSUE_TEMPLATE/roadmap-item.yml) и [`.github/pull_request_template.md`](../.github/pull_request_template.md); операции — скил `github-tracker` ([`.kimi-code/skills/github-tracker/SKILL.md`](../.kimi-code/skills/github-tracker/SKILL.md)); правила — [docs/ROADMAP_INDEX.md](ROADMAP_INDEX.md) и правило 12 [AGENTS.md](../AGENTS.md).
 
-Тесты Python-скриптов идут вручную (в CI только Go-проверки, см. «Ограничения»). Наборы модели ключевой ставки, ML-треков (nowcast ИПЦ v1 и v2) — офлайн: транспорт ClickHouse и HTTP-вызов провайдера мокаются, поэтому живая БД и env-переменные не нужны; набор v2 (`scripts/cpi_monthly_test.py`) — **152 теста**; `--python 3.12` — тот же пин, что в целях `make key-rate-model`, `make cpi-nowcast`, `make cpi-monthly` и `make key-rate-llm-forecast`. Офлайн-набор добычи недельных ИПЦ до 2022 (`scripts/harvest_test.py`) сети не касается вовсе и идёт системным python3:
+Тесты Python-скриптов идут вручную (в CI только Go-проверки, см. «Ограничения»). Наборы модели ключевой ставки, ML-треков (nowcast ИПЦ v1 и v2) — офлайн: транспорт ClickHouse и HTTP-вызов провайдера мокаются, поэтому живая БД и env-переменные не нужны; набор v2 (`scripts/cpi_monthly_test.py`) — **152 теста**; `--python 3.12` — тот же пин, что в целях `make key-rate-model`, `make cpi-nowcast`, `make cpi-monthly` и `make key-rate-llm-forecast`. Офлайн-наборы MLflow (`infra/4.2`) — stdlib-only: fake `mlflow` подменяется через `sys.modules`, сеть не используется. Офлайн-набор добычи недельных ИПЦ до 2022 (`scripts/harvest_test.py`) сети не касается вовсе и идёт системным python3:
+
 ```bash
 uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/key_rate_model_test.py
 uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_nowcast_test.py
 uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_monthly_test.py
-python3 scripts/key_rate_llm_forecast_test.pypython3 scripts/harvest_test.py
+python3 scripts/key_rate_llm_forecast_test.py
+python3 scripts/ml_experiment_test.py -v
+python3 scripts/mlflow_export_test.py -v
+python3 scripts/mlflow_registry_test.py -v
+python3 scripts/harvest_test.py
 ```
 
 ## Зависимости для разработки

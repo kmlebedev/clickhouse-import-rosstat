@@ -22,9 +22,49 @@ ML_LOG=1 make cpi-monthly ARGS="--sample long"   # long-sample: 292 месяца
 
 `ML_LOG=1` включает запись; без переменной скрипты в ClickHouse не пишут. **`ml_registry` должен отработать до первого `ML_LOG=1`-прогона** — он создаёт таблицы `ml_runs`/`ml_predictions` и витрины; в расписании он уже есть (`dagu/ml.yaml`, ежедневно 06:07 МСК). Если ClickHouse недоступен, прогон не падает: паспорт и предсказания сохраняются локально в `build/ml-runs/<run_id>/` (`run.json` + `predictions.jsonl`, каталог переопределяется `ML_LOCAL_DIR`). Имя прогона — `ML_RUN_NAME`. Чтение агентом — только через витрины `v_ml_runs`, `v_ml_leaderboard`, `v_ml_error_by_fold` (сырые таблицы закрыты, проверка — `make mcp-check`).
 
+### MLflow (control plane, `infra/4.2`)
+
+Локальный MLflow хранит историю экспериментов и реестр моделей: SQLite `build/mlflow/mlflow.db`, артефакты `build/mlflow/artifacts`, `127.0.0.1:5000`. Сервер запускается с `--artifacts-destination build/mlflow/artifacts --serve-artifacts` и без `--default-artifact-root`: новый эксперимент получает корень `mlflow-artifacts:/`, и клиент загружает артефакты через сервер (это важно и для staging через SSH-туннель). Если БД создана раньше, со старым локальным artifact root, у default experiment в SQLite остался локальный `artifact_location` — его нужно сбросить/пересоздать (или использовать новый эксперимент), иначе upload для него не будет проксироваться. Аутентификации нет, порт наружу не публикуется; на staging доступ — только через SSH-туннель. MLflow — ручной сервис: шага в `dagu/` нет, экспорт в ClickHouse — отдельная команда.
+
+```bash
+make mlflow-up                  # поднять сервер и дождаться /health; UI http://127.0.0.1:5000
+make mlflow-status              # «MLflow отвечает на порту 5000» либо «не отвечает»
+ML_LOG=1 MLFLOW=1 make cpi-nowcast        # run + run.json/predictions.jsonl/model
+ML_LOG=1 MLFLOW=1 make key-rate-model
+make mlflow-export              # MLflow → ml_runs/ml_predictions
+make mlflow-export ARGS="--since 2026-10-18 --limit 20 --dry-run"   # предпросмотр без записи
+make mlflow-register ARGS="--run-id <mlflow-run-id> --name cpi_nowcast_catboost_direct"
+make mlflow-promote  ARGS="--name cpi_nowcast_catboost_direct --version 1"
+make mlflow-models   ARGS="--name cpi_nowcast_catboost_direct"
+make mlflow-down
+```
+
+Ожидаемое поведение:
+
+- `make mlflow-up` печатает порт, PID и путь к логу `build/mlflow/mlflow.log`; повторный вызов при живом сервере второй сервер не поднимает. PID-файл проверяется по идентичности процесса (`ps -p PID -o command=` содержит `mlflow`): устаревший или чужой PID удаляется, а не считается работающим сервером. `make mlflow-down` останавливает только сервер, поднятый make (по PID-файлу), и не трогает процесс, запущенный вне make; чужой PID из файла он тоже удаляет, не убивая процесс.
+- `ML_LOG=1 MLFLOW=1 make cpi-nowcast` создаёт run эксперимента `cpi_nowcast` с артефактами `run.json`, `predictions.jsonl`, `model/`; в ClickHouse при доступной БД появляются та же строка `ml_runs` и fold-строки `ml_predictions`. Полный конфиг лежит в `run.json` (`config_json`), отдельного артефакта `config.json` нет. Прямой запуск скрипта без make выставляет те же короткие HTTP-таймауты MLflow (`MLFLOW_HTTP_REQUEST_TIMEOUT=10`, `MLFLOW_HTTP_REQUEST_MAX_RETRIES=2`), что и `MLFLOW_HTTP_ENV` в Makefile.
+- `make mlflow-export` печатает `exported N runs, M predictions; skipped K`. Run без `run.json` (создан не нашим хелпером) пропускается с warning и команду не роняет; битый `run.json`/`predictions.jsonl`, ошибка скачивания артефакта или вставки в ClickHouse — код 1.
+- `make mlflow-export` берёт прогоны **новыми первыми** (`start_time DESC`): при упоре в `--limit` повторный экспорт не застревает на старейшем батче. Если число выбранных прогонов равно `--limit`, печатается warning, что выборка может быть обрезана — увеличьте `--limit` или сузьте `--since`.
+- RUNNING-прогоны экспорт пропускает: артефактов у них ещё нет. Если прогон был жёстко убит и остался RUNNING, закройте его вручную в MLflow UI (или `mlflow.end_run`), иначе `make mlflow-export` его никогда не увидит.
+- Таймстемпы в `ml_runs`/`ml_predictions` хранятся как настенное время `YYYY-MM-DD HH:MM:SS`: суффикс таймзоны (`Z`, `+03:00`) отбрасывается **без конвертации** — `10:00:00Z` и `10:00:00+03:00` дают одно и то же значение.
+- `make mlflow-register` печатает `registered <name> vN; alias challenger -> vN`, `make mlflow-promote` — `alias champion -> vN`, `make mlflow-models` — таблицу `name version status aliases run_id`. Промоушен ручной: скрипт не проверяет метрики (gate — `infra/4.3`). При листинге без `--name` посторонние имена моделей вне allowlist `[A-Za-z0-9._-]` пропускаются с warning, а не ломают вывод остальных.
+
+**MLflow недоступен — прогон не падает.** `ml_experiment.py` пишет warning, а паспорт и предсказания по-прежнему идут в ClickHouse или в локальный fallback `build/ml-runs/<run_id>/`; `make mlflow-export` — отдельный ручной шаг и догоняет run'ы, когда сервер поднят. Если недоступен ClickHouse, export завершается кодом 1 — это не тихий no-op.
+
+**`FINISHED` в MLflow не гарантирует строк в ClickHouse.** `finish()` логирует run в MLflow до вставки в ClickHouse: если вставка затем падает, MLflow-run уже закрыт `FINISHED`, а паспорт и fold-предсказания сохраняются в локальном fallback `build/ml-runs/<run_id>/` (паспорт пишется последним, поэтому fold-строки без паспорта — законное состояние сбоя). Повторный `make mlflow-export` проигрывает `run.json`/`predictions.jsonl` из артефактов и идемпотентно дописывает недостающие строки.
+
+Проверка идемпотентности (повторный экспорт не должен менять числа):
+
+```sql
+SELECT count() FROM ml_runs FINAL;
+SELECT count() FROM ml_predictions FINAL;
+```
+
+Staging: `make deploy-staging-mlflow`, туннель `ssh -N -L 5000:127.0.0.1:5000 palmshell`, UI `http://localhost:5000`; бэкап (`sqlite3 … ".backup"` + `tar` артефактов) и обновление версии (бэкап → `systemctl stop mlflow` → `mlflow db upgrade` → `systemctl start mlflow` → `make deploy-staging-smoke`) — `deploy/staging/README.md`. `make upgrade-staging` версию MLflow **не мигрирует**: он только копирует юнит и перезапускает сервис, поэтому смена версии — всегда последовательность stop → `db upgrade` → start.
+
 ## Деплой на staging
 
-Разворачивает три компонента на хост `palmshell`: бинарник `clickhouse-import-rosstat`, планировщик `dagu` v2.18.2 и MCP-сервер `mcp-clickhouse` 0.7.0 (HTTP, read-only). ClickHouse и Grafana на хосте не трогаются. Артефакты — `deploy/staging/`, порядок и отладка — `deploy/staging/README.md`.
+Разворачивает четыре компонента на хост `palmshell`: бинарник `clickhouse-import-rosstat`, планировщик `dagu` v2.18.2, MCP-сервер `mcp-clickhouse` 0.7.0 (HTTP, read-only) и MLflow (`127.0.0.1:5000`, SQLite + локальные артефакты). ClickHouse и Grafana на хосте не трогаются. Артефакты — `deploy/staging/`, порядок и отладка — `deploy/staging/README.md`.
 
 ```bash
 # 1. Файл секретов на хосте (один раз; значения задаёт владелец). Токен: openssl rand -hex 32
