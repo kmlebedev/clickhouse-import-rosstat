@@ -107,6 +107,10 @@ def ch_query_from_fixtures(sql: str) -> list:
         return fixture_rows("ibk_2013_2016.csv")
     if "FROM cbr_mp_summary" in sql:
         return fixture_rows("mp_summary.csv")
+    # Объём Task 2: парсер и загрузчик есть, консенсус в отчёт пойдёт Task 5.
+    # Пустая витрина — штатный случай («данных нет»), а не ошибка.
+    if "FROM v_cbr_mo_br" in sql:
+        return []
     raise AssertionError(f"неизвестный SQL: {sql}")
 
 
@@ -306,6 +310,97 @@ class TestLoaders(unittest.TestCase):
         self.assertIn("Базовый ИПЦ", km.CPD_CORE_SQL)
         self.assertIn("source = 'cbr_survey'", km.IBK_SQL)
         self.assertIn("series = 'business_climate_sa'", km.IBK_SQL)
+
+    def test_load_consensus_parses_stats_and_lag(self):
+        # Ответ нарочно не отсортирован и содержит чужой ряд витрины: парсер
+        # обязан сгруппировать статистики по (волна, год), пропустить не-ставку
+        # и вернуть волны по возрастанию (волна, год).
+        rows = [
+            {"date": "2026-09-01", "series": "key_rate_avg_2027_median", "value": 12.43},
+            {"date": "2026-09-01", "series": "key_rate_avg_2026_median", "value": 14.5},
+            {"date": "2026-09-01", "series": "key_rate_avg_2026_p10", "value": 14.3},
+            {"date": "2026-09-01", "series": "key_rate_avg_2026_p90", "value": 14.6},
+            {"date": "2026-09-01", "series": "key_rate_avg_2026_answers", "value": "32"},
+            {"date": "2026-06-01", "series": "key_rate_avg_2027_median", "value": 13.0},
+            {"date": "2026-09-01", "series": "cpi_dec_2026_median", "value": 5.0},
+        ]
+        with unittest.mock.patch.object(km, "ch_query", return_value=rows) as query:
+            waves = km.load_consensus()
+        self.assertIn("v_cbr_mo_br", query.call_args.args[0])
+        self.assertEqual(
+            waves,
+            [
+                km.ConsensusForecast(
+                    wave_date=date(2026, 6, 1),
+                    available_from=date(2026, 6, 7),
+                    year=2027,
+                    median=13.0,
+                    p10=None,
+                    p90=None,
+                    answers=None,
+                ),
+                km.ConsensusForecast(
+                    wave_date=date(2026, 9, 1),
+                    available_from=date(2026, 9, 7),
+                    year=2026,
+                    median=14.5,
+                    p10=14.3,
+                    p90=14.6,
+                    answers=32,
+                ),
+                km.ConsensusForecast(
+                    wave_date=date(2026, 9, 1),
+                    available_from=date(2026, 9, 7),
+                    year=2027,
+                    median=12.43,
+                    p10=None,
+                    p90=None,
+                    answers=None,
+                ),
+            ],
+        )
+
+    def test_consensus_without_median_is_rejected(self):
+        # Волна без медианы — не консенсус: p10/p90/answers сами по себе
+        # не дают точечного прогноза, и тихо выбросить группу нельзя.
+        rows = [
+            {"date": "2026-09-01", "series": "key_rate_avg_2026_p10", "value": 14.3},
+            {"date": "2026-09-01", "series": "key_rate_avg_2026_answers", "value": 32},
+        ]
+        with self.assertRaises(ValueError) as caught:
+            km.consensus_from_rows(rows)
+        self.assertIn("нет медианы", str(caught.exception))
+        self.assertIn("2026-09-01", str(caught.exception))
+
+    def test_consensus_duplicate_stat_is_rejected(self):
+        # Дубль (волна, год, статистика) — потерянный FINAL или неверный ключ
+        # витрины: «последний победил» сделал бы прогноз зависимым от порядка.
+        rows = [
+            {"date": "2026-09-01", "series": "key_rate_avg_2026_median", "value": 14.5},
+            {"date": "2026-09-01", "series": "key_rate_avg_2026_median", "value": 14.6},
+        ]
+        with self.assertRaises(ValueError) as caught:
+            km.consensus_from_rows(rows)
+        self.assertIn("дубль median", str(caught.exception))
+        self.assertIn("2026-09-01", str(caught.exception))
+
+    def test_consensus_non_integer_answers_is_rejected(self):
+        # Число ответов — счётчик участников; 32.5 — дефект источника, а не
+        # повод молча округлить.
+        rows = [
+            {"date": "2026-09-01", "series": "key_rate_avg_2026_median", "value": 14.5},
+            {"date": "2026-09-01", "series": "key_rate_avg_2026_answers", "value": 32.5},
+        ]
+        with self.assertRaises(ValueError) as caught:
+            km.consensus_from_rows(rows)
+        self.assertIn("не целое", str(caught.exception))
+
+    def test_consensus_sql_reads_the_view(self):
+        # Источник — витрина, а не сырая macro_series: грант у kimi_reader
+        # есть только на v_cbr_mo_br, и парсер обязан читать тот же срез.
+        self.assertIn("v_cbr_mo_br", km.CONSENSUS_SQL)
+        self.assertIn("key_rate_avg_%", km.CONSENSUS_SQL)
+        self.assertIn("FORMAT JSON", km.CONSENSUS_SQL)
 
     def test_fixture_queries_are_windowed(self):
         # Срезы фикстур — окно [2013-01-01, 2016-12-31] (имя файлов = окну).
