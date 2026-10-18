@@ -121,6 +121,11 @@ class ValidationTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "порт"):
             ec.validate_document(self._row(url=url), ec.COMPANIES)
 
+    def test_empty_port_rejected(self):
+        url = "https://e-disclosure.ru:/portal/FileLoad.ashx?Fileid=1"
+        with self.assertRaisesRegex(ValueError, "порт"):
+            ec.validate_document(self._row(url=url), ec.COMPANIES)
+
     def test_invalid_port_rejected(self):
         url = "https://e-disclosure.ru:port/portal/FileLoad.ashx?Fileid=1"
         with self.assertRaisesRegex(ValueError, "порт"):
