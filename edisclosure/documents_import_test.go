@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -33,6 +35,7 @@ type fakeExisting struct {
 type fakeConn struct {
 	driver.Conn
 	execs    []string
+	queries  []string
 	existing []fakeExisting
 	batch    *appendRecorder
 }
@@ -42,7 +45,8 @@ func (c *fakeConn) Exec(_ context.Context, query string, _ ...any) error {
 	return nil
 }
 
-func (c *fakeConn) Query(_ context.Context, _ string, _ ...any) (driver.Rows, error) {
+func (c *fakeConn) Query(_ context.Context, query string, _ ...any) (driver.Rows, error) {
+	c.queries = append(c.queries, query)
 	return &fakeRows{rows: c.existing}, nil
 }
 
@@ -179,6 +183,52 @@ func (b *appendRecorder) Abort() error {
 
 func (b *appendRecorder) Rows() int { return len(b.rows) }
 
+// TestAppendDocumentTypes — порядок и типы 13 значений Append: даты уходят как
+// time.Time или nil (Nullable(Date)), size_bytes — uint64, first_seen —
+// time.Time. Ошибка здесь означала бы не тот столбец или 1970-01-01 вместо NULL.
+func TestAppendDocumentTypes(t *testing.T) {
+	basis := time.Date(2026, time.August, 28, 0, 0, 0, 0, time.UTC)
+	firstSeen := time.Date(2026, time.October, 18, 12, 0, 0, 0, time.UTC)
+	d := doc{
+		Ticker: "PLZL", CompanyID: "7832", Section: "IFRS", DocType: "x", Period: "2025",
+		BasisDate: basis, PublicationDate: time.Time{}, FileID: "1943701",
+		URL: "https://e-disclosure.ru/portal/FileLoad.ashx?Fileid=1943701",
+	}
+	batch := &appendRecorder{}
+	if err := appendDocument(batch, d, 42, "sha", "key", firstSeen); err != nil {
+		t.Fatalf("appendDocument: %v", err)
+	}
+	if len(batch.rows) != 1 {
+		t.Fatalf("строк батча %d, want 1", len(batch.rows))
+	}
+	row := batch.rows[0]
+	if len(row) != 13 {
+		t.Fatalf("значений %d, want 13", len(row))
+	}
+	for i, want := range []string{"PLZL", "7832", "IFRS", "x", "2025"} {
+		if got, ok := row[i].(string); !ok || got != want {
+			t.Errorf("значение[%d] = %#v, want %q", i, row[i], want)
+		}
+	}
+	if got, ok := row[5].(time.Time); !ok || !got.Equal(basis) {
+		t.Errorf("basis_date = %#v, want %v", row[5], basis)
+	}
+	if row[6] != nil {
+		t.Errorf("publication_date = %#v, want nil для пустой даты", row[6])
+	}
+	for i, want := range map[int]string{7: "1943701", 8: d.URL, 10: "sha", 11: "key"} {
+		if got, ok := row[i].(string); !ok || got != want {
+			t.Errorf("значение[%d] = %#v, want %q", i, row[i], want)
+		}
+	}
+	if got, ok := row[9].(uint64); !ok || got != 42 {
+		t.Errorf("size_bytes = %#v, want uint64(42)", row[9])
+	}
+	if got, ok := row[12].(time.Time); !ok || !got.Equal(firstSeen) {
+		t.Errorf("first_seen = %#v, want %v", row[12], firstSeen)
+	}
+}
+
 // TestImportOfflineWritesRowsAndArchive — полный офлайн-прогон: DDL, витрина,
 // гейт по пустой таблице, шесть скачиваний, шесть строк батча и шесть версий в
 // локальном архиве с реестром (спека §5.3, §5.5).
@@ -212,6 +262,34 @@ func TestImportOfflineWritesRowsAndArchive(t *testing.T) {
 	}
 	if !executed(conn, "ALTER TABLE v_edisclosure_documents MODIFY COMMENT") {
 		t.Error("комментарий витрины не записан")
+	}
+	if !queried(conn, "FROM edisclosure_documents FINAL") {
+		t.Errorf("гейт читает таблицу без FINAL: %q", conn.queries)
+	}
+	for i, row := range conn.batch.rows {
+		if len(row) != 13 {
+			t.Fatalf("строка %d: значений %d, want 13", i, len(row))
+		}
+		if _, ok := row[9].(uint64); !ok {
+			t.Errorf("строка %d: size_bytes %T, want uint64", i, row[9])
+		}
+		if _, ok := row[12].(time.Time); !ok {
+			t.Errorf("строка %d: first_seen %T, want time.Time", i, row[12])
+		}
+		for _, dateIndex := range []int{5, 6} {
+			switch row[dateIndex].(type) {
+			case nil, time.Time:
+			default:
+				t.Errorf("строка %d: дата[%d] %T, want nil или time.Time", i, dateIndex, row[dateIndex])
+			}
+		}
+	}
+	// Первая строка фикстуры (Fileid 1943701) содержит обе даты карточки.
+	if _, ok := conn.batch.rows[0][5].(time.Time); !ok {
+		t.Errorf("basis_date первой строки %T, want time.Time", conn.batch.rows[0][5])
+	}
+	if _, ok := conn.batch.rows[0][6].(time.Time); !ok {
+		t.Errorf("publication_date первой строки %T, want time.Time", conn.batch.rows[0][6])
 	}
 
 	store := archive.NewLocal(archiveDir)
@@ -276,6 +354,17 @@ func stubArchiveFromEnv(t *testing.T, fn func(*http.Client) (archive.Store, erro
 // executed — выполнялся ли Exec, содержащий подстроку.
 func executed(conn *fakeConn, substr string) bool {
 	for _, query := range conn.execs {
+		if strings.Contains(query, substr) {
+			return true
+		}
+	}
+	return false
+}
+
+// queried — выполнялся ли Query, содержащий подстроку: так проверяется, что
+// гейт читает ReplacingMergeTree с FINAL, а не сырые несмёрженные версии.
+func queried(conn *fakeConn, substr string) bool {
+	for _, query := range conn.queries {
 		if strings.Contains(query, substr) {
 			return true
 		}
@@ -435,12 +524,12 @@ func TestImportArchiveDisabledWritesEmptyKey(t *testing.T) {
 // TestImportMissingInputHonoursAllowMissing — отсутствие каталога входа: без
 // флага прогон падает до БД, с EDISCLOSURE_ALLOW_MISSING=1 — 0 и nil.
 func TestImportMissingInputHonoursAllowMissing(t *testing.T) {
-	empty := t.TempDir()
+	missing := filepath.Join(t.TempDir(), "not-delivered")
 	t.Setenv(archive.EnvBackend, "")
 	t.Setenv(envRecheck, "")
 
 	t.Run("без флага ошибка", func(t *testing.T) {
-		t.Setenv(envInputDir, empty)
+		t.Setenv(envInputDir, missing)
 		t.Setenv(envAllowMissing, "")
 		conn := &fakeConn{}
 		n, err := (documentsImporter{}).Import(context.Background(), conn)
@@ -456,7 +545,7 @@ func TestImportMissingInputHonoursAllowMissing(t *testing.T) {
 	})
 
 	t.Run("с флагом пропуск", func(t *testing.T) {
-		t.Setenv(envInputDir, empty)
+		t.Setenv(envInputDir, missing)
 		t.Setenv(envAllowMissing, "1")
 		conn := &fakeConn{}
 		n, err := (documentsImporter{}).Import(context.Background(), conn)
@@ -470,6 +559,69 @@ func TestImportMissingInputHonoursAllowMissing(t *testing.T) {
 			t.Fatalf("пропущенный прогон ходил в БД: %q", conn.execs)
 		}
 	})
+}
+
+// TestImportExistingInputBrokenIsFatal — ALLOW_MISSING лечит только отсутствие
+// каталога. Если каталог есть, а снапшот неполный или битый, прогон обязан
+// упасть до БД: иначе частичный снапшот выглядел бы как пустой источник.
+func TestImportExistingInputBrokenIsFatal(t *testing.T) {
+	t.Setenv(envAllowMissing, "1")
+	t.Setenv(archive.EnvBackend, "")
+	t.Setenv(envRecheck, "")
+
+	cases := []struct {
+		name  string
+		setup func(t *testing.T, dir string)
+		want  string
+	}{
+		{
+			name: "нет documents.jsonl",
+			setup: func(t *testing.T, dir string) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(dir, "manifest.json"),
+					[]byte(validManifestJSON), 0o600); err != nil {
+					t.Fatalf("запись manifest.json: %v", err)
+				}
+			},
+			want: "documents.jsonl",
+		},
+		{
+			name: "битый manifest.json",
+			setup: func(t *testing.T, dir string) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(dir, "manifest.json"),
+					[]byte("{"), 0o600); err != nil {
+					t.Fatalf("запись manifest.json: %v", err)
+				}
+			},
+			want: "manifest.json",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tc.setup(t, dir)
+			t.Setenv(envInputDir, dir)
+
+			conn := &fakeConn{}
+			n, err := (documentsImporter{}).Import(context.Background(), conn)
+			if err == nil {
+				t.Fatal("частичный снапшот принят, ожидалась ошибка")
+			}
+			if n != 0 {
+				t.Fatalf("Import вернул %d, want 0", n)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("ошибка %v не содержит %q", err, tc.want)
+			}
+			if len(conn.execs) != 0 {
+				t.Fatalf("до ошибки дошли до БД: %q", conn.execs)
+			}
+			if conn.batch != nil {
+				t.Fatal("до ошибки открыли батч")
+			}
+		})
+	}
 }
 
 // TestImportAbortsBatchOnDownloadError — сбой скачивания откатывает батч:

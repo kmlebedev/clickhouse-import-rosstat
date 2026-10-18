@@ -71,16 +71,20 @@ func (documentsImporter) Import(ctx context.Context, conn driver.Conn) (int64, e
 	recheck := os.Getenv(envRecheck) == "1"
 
 	// 1. Снапшот читается и валидируется до сети и БД: ошибка любой строки —
-	// fail-fast, ни одного запроса и ни одной записи.
-	_, docs, err := readInput(inputDir)
-	if err != nil {
-		// errors.Is, а не os.IsNotExist: readInput оборачивает ошибку файла
-		// через %w, и предикат os не разворачивает произвольную обёртку.
-		if errors.Is(err, os.ErrNotExist) && os.Getenv(envAllowMissing) == "1" {
+	// fail-fast, ни одного запроса и ни одной записи. ALLOW_MISSING применяется
+	// только к отсутствию каталога: существующий каталог без manifest.json или
+	// documents.jsonl — это не «снапшот ещё не доставили», а частичный или
+	// сломанный снапшот, и глотать его нельзя.
+	if _, statErr := os.Stat(inputDir); statErr != nil {
+		if errors.Is(statErr, os.ErrNotExist) && os.Getenv(envAllowMissing) == "1" {
 			log.Warnf("%s: снапшот %s не найден (%v), прогон пропущен: %s=1",
-				edisclosureTable, inputDir, err, envAllowMissing)
+				edisclosureTable, inputDir, statErr, envAllowMissing)
 			return 0, nil
 		}
+		return 0, fmt.Errorf("%s: вход %s: %w", edisclosureTable, inputDir, statErr)
+	}
+	_, docs, err := readInput(inputDir)
+	if err != nil {
 		return 0, fmt.Errorf("%s: вход %s: %w", edisclosureTable, inputDir, err)
 	}
 
@@ -250,13 +254,31 @@ func needsWrite(d doc, e existingDoc, sha, archiveKey string, archiveEnabled boo
 	return false
 }
 
+// BOM-префиксы скачанного тела. UTF-8 BOM снимается: HTML-заглушка источника
+// может начинаться с него, и без снятия первый видимый байт был бы не '<'.
+// UTF-16 BOM означает текст в неподдерживаемой кодировке — такой документ
+// нельзя ни проверить по сигнатуре, ни сохранить как файл.
+var (
+	utf8BOM    = []byte{0xEF, 0xBB, 0xBF}
+	utf16LEBOM = []byte{0xFF, 0xFE}
+	utf16BEBOM = []byte{0xFE, 0xFF}
+)
+
 // validateBody — проверка скачанного тела до sha256 и архива: пустое тело и
 // HTML вместо файла означают, что FileLoad.ashx ответил страницей ошибки или
 // заглушкой, а не документом. Проверяется первый непробельный байт: HTML может
-// начинаться с пробелов, поэтому смотреть на body[0] недостаточно. Zip, rar,
-// pdf и прочие бинарные тела допустимы — расширение определит bodyExt.
+// начинаться с пробелов или BOM, поэтому смотреть на body[0] недостаточно.
+// UTF-8 BOM снимается до проверки (в том числе после ведущих пробелов), тело с
+// UTF-16 BOM отвергается: это текст в кодировке, которую импортёр не
+// поддерживает. Zip, rar, pdf и прочие бинарные тела допустимы — расширение
+// определит bodyExt.
 func validateBody(body []byte) error {
 	trimmed := bytes.TrimSpace(body)
+	if bytes.HasPrefix(trimmed, utf16LEBOM) || bytes.HasPrefix(trimmed, utf16BEBOM) {
+		return errors.New("тело ответа: UTF-16 не поддерживается")
+	}
+	trimmed = bytes.TrimPrefix(trimmed, utf8BOM)
+	trimmed = bytes.TrimSpace(trimmed)
 	if len(trimmed) == 0 {
 		return errors.New("тело ответа пусто: документ не скачан")
 	}
