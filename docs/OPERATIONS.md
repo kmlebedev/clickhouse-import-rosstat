@@ -18,9 +18,14 @@ ML_LOG=1 make cpi-nowcast                 # паспорт прогона + fold
 ML_LOG=1 make key-rate-model              # паспорт прогона + fold-предсказания (unit='bp')
 ML_LOG=1 make cpi-monthly                 # месячный nowcast v2, short: 155 месяцев, unit='pp'
 ML_LOG=1 make cpi-monthly ARGS="--sample long"   # long-sample: 292 месяца 2002-05…2026-08, старт 48
+# экспериментальный быстрый режим (числа неофициальные, см. ниже)
+ML_LOG=1 make cpi-monthly ARGS="--sample short --quick --jobs 4"
+ML_LOG=1 make cpi-monthly ARGS="--sample long --quick --jobs 8"
 ```
 
 `ML_LOG=1` включает запись; без переменной скрипты в ClickHouse не пишут. **`ml_registry` должен отработать до первого `ML_LOG=1`-прогона** — он создаёт таблицы `ml_runs`/`ml_predictions` и витрины; в расписании он уже есть (`dagu/ml.yaml`, ежедневно 06:07 МСК). Если ClickHouse недоступен, прогон не падает: паспорт и предсказания сохраняются локально в `build/ml-runs/<run_id>/` (`run.json` + `predictions.jsonl`, каталог переопределяется `ML_LOCAL_DIR`). Имя прогона — `ML_RUN_NAME`. Чтение агентом — только через витрины `v_ml_runs`, `v_ml_leaderboard`, `v_ml_error_by_fold` (сырые таблицы закрыты, проверка — `make mcp-check`).
+
+**Быстрый режим `cpi_monthly` (`--quick`, `--jobs N`) — экспериментальный.** `--quick` считает только основное окно walk-forward (без robustness-окон и без фиксированного сплита статьи), `--jobs N` распределяет фолды по процессам (`CatBoost thread_count=1`); `--jobs` допустим только с `--quick`, `0`/`1` — последовательно, `N>1` — пул. В паспорте `ML_LOG` видны `config_json.quick` и `config_json.jobs`, в `run_name` — сегменты `quick`/`jobsN` (например, `cpi_monthly__long__quick__jobs8__start48__embargo0`). Quick-числа **неофициальные** и не сравнимы с полными прогонами; официальные short/long — только `make cpi-monthly` без флагов, и этот полный default не меняется (`--jobs` без `--quick` отвергается).
 
 ### MLflow (control plane, `infra/4.2`)
 
