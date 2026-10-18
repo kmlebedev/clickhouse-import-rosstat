@@ -58,7 +58,15 @@
 | **3.3** | **Публичный docs-портал на GitHub Pages**: манифест `docs/site-pages.json`, генератор `scripts/docs_build.py`, `mkdocs-material` 9.7.7, workflow `pages.yml`; спеки/планы/архив не публикуются | ✅ сделан этим PR (2026-10-17) | `make docs-check` и `make docs-build` зелёные; PR-сборка сайта зелёная; после мержа deploy на `main` публикует URL, страницы и меню открываются; `make all` зелёный |
 | **3.4** | **README как точка входа, спецификации — в `docs/`**: `docs/IMPORTERS.md` (полные спецификации импортёров), `CONFIGURATION.md`, `OPERATIONS.md`, `DEVELOPMENT.md`, `LIMITATIONS.md`, `GRAFANA.md`, `GOLD_CONTOUR.md`; README — компактная landing page с картой документации | ✅ сделан этим PR (2026-10-18) | README ≤ ~300 строк; 7 новых файлов; перенос дословный, контрольные строки совпадают; `make docs-check`/`docs-build` зелёные; сайт содержит новые страницы; `make all` зелёный |
 
-## 5. Приёмка и риски
+## 5. Фаза 4 — ML-инфраструктура
+
+| Шаг | Содержание | Статус | Критерий приёмки |
+|---|---|---|---|
+| **4.1** | **Реестр ML-экспериментов и паспорт run** — ClickHouse-таблицы `ml_runs`/`ml_predictions`, Go-импортёр `ml_registry` (DDL + витрины `v_ml_runs`, `v_ml_leaderboard`, `v_ml_error_by_fold`), Python-хелпер `scripts/ml_experiment.py` (git SHA, config/sample hash, артефакты, fallback), интеграция `cpi_nowcast` и `key_rate_model` через `ML_LOG=1`; MLflow и model registry — шаг 4.2, промоушен и live-мониторинг — шаг 4.3. Спека — [2026-10-18-ml-experiment-registry-design.md](superpowers/specs/2026-10-18-ml-experiment-registry-design.md); план будет добавлен после утверждения спеки | ❌ не начато | `make import STAT=ml_registry` создаёт таблицы и витрины; `ML_LOG=1 make cpi-nowcast` и `ML_LOG=1 make key-rate-model` пишут `run_id` + fold-предсказания; `v_ml_runs`/`v_ml_leaderboard` видны через MCP, сырые таблицы закрыты; повтор с тем же конфигом даёт те же метрики и артефакты (sha256), новый `run_id`; `make all`, `make mcp-check`, `make docs-check` зелёные |
+| 4.2 | **MLflow и model registry** — self-hosted MLflow (Postgres + MinIO/S3 на staging), `champion`/`challenger`, экспорт run'ов в ClickHouse; спека и план — после приёмки 4.1 | ❌ не начато | Run виден в MLflow UI; алиасы работают; экспорт идемпотентен; `make all` зелёный |
+| 4.3 | **Промоушен и live-мониторинг** — gate по DM/MCS, shadow/canary, запись live-прогноза в `forecast_log`, `v_ml_live_accuracy`, алерты Grafana | ❌ не начато | Live-прогноз записан до публикации; факт резолвится; алерт срабатывает на деградации; `make mcp-check` зелёный |
+
+## 6. Приёмка и риски
 
 Пункт считается закрытым только по живой приёмке, и порядок один (AGENTS.md, правила 3–5 и раздел «Стиль коммитов и PR»; стандарт §16.1):
 
