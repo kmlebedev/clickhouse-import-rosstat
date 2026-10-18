@@ -591,13 +591,16 @@ async def check(params, server_log):
             kr_contours = result_rows(kr_contours_raw)
             kr_contours_n = kr_contours[0].get("n") if kr_contours else None
             kr_contours_list = kr_contours[0].get("contours") if kr_contours else None
+            kr_fixed_contours = {"spot", "fundamental", "market", "divergence", "calendar"}
+            kr_contours_ok = isinstance(kr_contours_list, list) and kr_fixed_contours.issubset(set(kr_contours_list))
             if kr_contours is None:
                 kr_contours_detail = f"ответ не распознан: {kr_contours_raw[:200]}"
             else:
                 kr_contours_detail = f"контуров: {kr_contours_n} {kr_contours_list}"
-            # 5 фиксированных контуров обязательны; forecast — информационная строка.
+            # 5 фиксированных контуров обязательны по ИМЕНАМ, а не по числу: набор из пяти
+            # чужих контуров не должен проходить проверку. forecast — информационная строка.
             failed += not expect("витрина v_key_rate_dashboard содержит 5 фиксированных контуров",
-                                 (kr_contours_n or 0) >= 5, kr_contours_detail)
+                                 kr_contours_ok, kr_contours_detail)
 
             kr_meeting_raw = text(await session.call_tool("run_query", {"query":
                 "SELECT d.target_date AS dashboard_date, e.next_date AS calendar_date "
@@ -642,6 +645,27 @@ async def check(params, server_log):
                                       "без журнала витрина живёт без строк forecast)")
             print(f"OK   forecast-треки в v_key_rate_dashboard: {kr_forecast_detail}" if (kr_forecast_n or 0) > 0
                   else f"WARN forecast-треки в v_key_rate_dashboard: {kr_forecast_detail}")
+
+            # Контракт публикации (§7, §8): у статистического трека ordered_logit в витрине
+            # обязаны быть непустые probabilities и model. Строки нет — проверка проходит
+            # информационно (без прогонов writer'а журнала витрина живёт без forecast), но
+            # если строка есть, пустые метаданные — провал.
+            kr_track_raw = text(await session.call_tool("run_query", {"query":
+                "SELECT probabilities, model FROM v_key_rate_dashboard "
+                "WHERE contour = 'forecast' AND indicator = 'cbr_rate:ordered_logit' LIMIT 1"}))
+            kr_track = result_rows(kr_track_raw)
+            if kr_track is None:
+                kr_track_detail = f"ответ не распознан: {kr_track_raw[:200]}"
+                kr_track_ok = False
+            elif not kr_track:
+                kr_track_detail = "строки cbr_rate:ordered_logit нет — прогнать make key-rate-forecast-log (информационно)"
+                kr_track_ok = True
+            else:
+                kr_track_ok = (kr_track[0].get("probabilities") or "") != "" and (kr_track[0].get("model") or "") != ""
+                kr_track_detail = (f"probabilities={'есть' if (kr_track[0].get('probabilities') or '') != '' else 'пусто'}, "
+                                   f"model={kr_track[0].get('model')!r}")
+            failed += not expect("probabilities/model у cbr_rate:ordered_logit непусты", kr_track_ok, kr_track_detail)
+
             # error_bp — часть контракта ошибки в б.п. (#127); запрос к колонке обязан
             # проходить, даже если сейчас все прогнозы ещё не свёрены и значения NULL.
             failed += not expect("колонка error_bp читается агентом", kr_error is not None,

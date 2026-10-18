@@ -1,6 +1,7 @@
 package views
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -75,6 +76,11 @@ func TestKeyRateDashboardViewContract(t *testing.T) {
 		"'base_ipc_saar'",
 		"'keyrate_implied_change_bp'",
 		"'ofz_slope_10y_1y_bp'",
+		"as_1y",
+		"as_3y",
+		"as_5y",
+		"as_10y",
+		"least(",
 		"'next_meeting'",
 		"error_bp",
 		"LIKE 'cbr_rate:%'",
@@ -107,7 +113,11 @@ func TestKeyRateDashboardViewContract(t *testing.T) {
 		}
 		// Каждая ветка UNION ALL подписывает колонки явно, поэтому alias обязан
 		// встречаться либо как AS <alias>, либо как SELECT <alias> (первая колонка).
-		if !strings.Contains(selectText, " AS "+alias) && !strings.Contains(selectText, "SELECT "+alias) {
+		// Проверка по границам слова, а не подстрокой: « AS flag » не должно
+		// засчитываться за « AS flagged », а « AS value » — за « AS value_x ».
+		aliasPattern := regexp.MustCompile(`(?i)\bAS\s+` + regexp.QuoteMeta(alias) + `\b`)
+		selectPattern := regexp.MustCompile(`(?i)\bSELECT\s+` + regexp.QuoteMeta(alias) + `\b`)
+		if !aliasPattern.MatchString(selectText) && !selectPattern.MatchString(selectText) {
 			t.Errorf("SELECT does not alias a column AS %s", alias)
 		}
 	}
