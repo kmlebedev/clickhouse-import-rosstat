@@ -64,6 +64,24 @@ RUN_ROW_DEFAULTS = {
 # ISO-8601 timezone designator в конце строки: `Z`, `+03:00`, `-0500`.
 _TZ_SUFFIX_RE = re.compile(r"(?:Z|[+-]\d{2}:?\d{2})$")
 
+# Код MLflow для отсутствующего артефакта. Только он (или консервативный
+# текстовый маркер «No such artifact») означает «артефакта нет», а не сбой
+# сервера/сети, который обязан провалить экспорт, а не притвориться пустым.
+MISSING_ARTIFACT_ERROR_CODE = "RESOURCE_DOES_NOT_EXIST"
+
+
+def _is_missing_artifact(exc: Exception) -> bool:
+    """`True` только для «артефакт не найден», не для прочих ошибок MLflow.
+
+    `download_artifacts` поднимает `MlflowException` и при отсутствии
+    артефакта, и при HTTP-ошибке/таймауте/сбое авторизации. Различаем их по
+    `error_code`; запасная проверка текста узкая («no such artifact»), чтобы
+    не спутать сетевую ошибку с отсутствующим файлом.
+    """
+    if getattr(exc, "error_code", None) == MISSING_ARTIFACT_ERROR_CODE:
+        return True
+    return "no such artifact" in str(exc).lower()
+
 
 def ch_datetime(value) -> str:
     """Приводит таймстемп к виду ClickHouse `YYYY-MM-DD HH:MM:SS`.
@@ -174,7 +192,11 @@ def _read_json_object(path) -> dict:
 
 
 def _parse_args(argv=None) -> argparse.Namespace:
-    """Разбирает CLI; `--since` проверяется до похода в MLflow."""
+    """Разбирает CLI; `--since` проверяется до похода в MLflow.
+
+    `--limit` меньше 1 отвергается argparse-ошибкой: `max_results=0` у MLflow
+    вернул бы пустой список молча, что выглядело бы как «прогонов нет».
+    """
     parser = argparse.ArgumentParser(
         description=(
             "Экспортирует завершённые прогоны MLflow в ClickHouse "
@@ -212,7 +234,10 @@ def _parse_args(argv=None) -> argparse.Namespace:
         type=int,
         default=100,
         metavar="N",
-        help="максимум прогонов на эксперимент (по умолчанию 100)",
+        help=(
+            "максимум прогонов на эксперимент, положительное число "
+            "(по умолчанию 100)"
+        ),
     )
     parser.add_argument(
         "--dry-run",
@@ -248,7 +273,7 @@ def _export_run(client, mlflow_exception, experiment: str,
                 mlflow_run_id: str, dry_run: bool):
     """Экспортирует один run; возвращает `(outcome, folds, detail)`.
 
-    `outcome`: `exported` (в dry-run — был бы экспортирован), `skipped`
+    `outcome`: `exported`, `would-export` (dry-run), `skipped`
     (нет `run.json` — артефакт создан не нашим хелпером) или `failed`
     (порча артефакта, ошибка MLflow/ClickHouse). Решение — по ruling SDD:
     отсутствующий `run.json` не фатален, битый JSON и ошибка вставки — да.
@@ -259,8 +284,15 @@ def _export_run(client, mlflow_exception, experiment: str,
                 mlflow_run_id, "run.json", tmpdir
             )
         except mlflow_exception as exc:
-            return "skipped", 0, f"run.json отсутствует: {exc}"
+            # Только «артефакта нет» — это skip. Прочие MlflowException
+            # (HTTP 500, таймаут, авторизация) — сбой прогона, exit 1.
+            if _is_missing_artifact(exc):
+                return "skipped", 0, f"run.json отсутствует: {exc}"
+            return "failed", 0, f"run.json не скачан: {exc}"
         except Exception as exc:
+            # Осознанная граница изоляции на один прогон: любой неожиданный
+            # сбой скачивания помечает failed, но не обрывает экспорт
+            # остальных прогонов (итоговый код возврата всё равно 1).
             return "failed", 0, f"run.json не скачан: {exc}"
 
         try:
@@ -273,10 +305,20 @@ def _export_run(client, mlflow_exception, experiment: str,
             predictions_path = client.download_artifacts(
                 mlflow_run_id, "predictions.jsonl", tmpdir
             )
-        except mlflow_exception:
-            # Предсказания необязательны: паспорт без фолдов — валидный run.
-            predictions_path = None
+        except mlflow_exception as exc:
+            if _is_missing_artifact(exc):
+                # Предсказания необязательны: паспорт без фолдов — валидный
+                # run. Но это именно отсутствие артефакта, а не сбой сервера.
+                log.warning(
+                    "%s/%s: predictions.jsonl отсутствует — 0 фолдов",
+                    experiment, mlflow_run_id,
+                )
+                predictions_path = None
+            else:
+                return "failed", 0, f"predictions.jsonl не скачан: {exc}"
         except Exception as exc:
+            # Та же граница изоляции, что и для run.json: сбой одного
+            # прогона не должен останавливать остальные.
             return "failed", 0, f"predictions.jsonl не скачан: {exc}"
         if predictions_path is not None:
             try:
@@ -303,7 +345,7 @@ def _export_run(client, mlflow_exception, experiment: str,
             print(
                 f"{experiment} {mlflow_run_id} {len(prediction_rows)}"
             )
-            return "exported", len(prediction_rows), ""
+            return "would-export", len(prediction_rows), ""
 
         try:
             # Порядок как в `ml_experiment.finish`: сначала предсказания,
@@ -312,6 +354,10 @@ def _export_run(client, mlflow_exception, experiment: str,
                 ch_exec(predictions_sql)
             ch_exec(run_sql)
         except Exception as exc:
+            # Осознанная граница: ch_exec контрактно поднимает ClickHouseError,
+            # транспорт может прийти как OSError/HTTPException, а тестовый
+            # двойник — как угодно. Любой сбой = failed для этого прогона,
+            # остальные прогоны продолжают экспортироваться.
             return "failed", 0, f"вставка в ClickHouse не удалась: {exc}"
         return "exported", len(prediction_rows), ""
 
@@ -351,11 +397,19 @@ def main(argv=None) -> int:
             continue
         if registered is None:
             log.warning("эксперимент %s не найден — пропущен", experiment)
+            skipped += 1
             continue
 
+        # `--since` уходит и на сервер: без filter_string `--limit` отрезал бы
+        # старые прогоны ДО клиентского фильтра, и выборка оказалась бы пустой.
+        filter_string = (
+            f"attributes.start_time >= {since_ms}"
+            if since_ms is not None else ""
+        )
         try:
             runs = client.search_runs(
                 [registered.experiment_id],
+                filter_string=filter_string,
                 order_by=["attributes.start_time ASC"],
                 max_results=args.limit,
             )
@@ -374,16 +428,21 @@ def main(argv=None) -> int:
                 )
                 skipped += 1
                 continue
-            # `--since` фильтруется клиентски: MLflow-фильтры по датам
-            # оперируют epoch-ms и хрупки в переносимом виде.
+            # Страховка поверх серверного filter_string: клиент мог его
+            # проигнорировать (фейк/старая версия) — тогда skip считаем явно.
             if since_ms is not None and int(info.start_time or 0) < since_ms:
+                log.info(
+                    "%s/%s: start_time %s раньше --since — пропущен",
+                    experiment, mlflow_run_id, info.start_time,
+                )
+                skipped += 1
                 continue
 
             outcome, folds, detail = _export_run(
                 client, MlflowException, experiment, mlflow_run_id,
                 args.dry_run,
             )
-            if outcome == "exported":
+            if outcome in ("exported", "would-export"):
                 exported += 1
                 exported_predictions += folds
             elif outcome == "skipped":
@@ -397,10 +456,18 @@ def main(argv=None) -> int:
                 )
                 failed += 1
 
-    print(
-        f"exported {exported} runs, {exported_predictions} predictions; "
-        f"skipped {skipped}"
-    )
+    if args.dry_run:
+        # В dry-run ничего не записано: отдельная формулировка, чтобы строка
+        # «exported N runs» не выдавала предпросмотр за реальный экспорт.
+        print(
+            f"would export {exported} runs, {exported_predictions} "
+            f"predictions; skipped {skipped}"
+        )
+    else:
+        print(
+            f"exported {exported} runs, {exported_predictions} predictions; "
+            f"skipped {skipped}"
+        )
     if failed:
         print(f"не экспортировано прогонов: {failed}", file=sys.stderr)
         return 1

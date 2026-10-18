@@ -98,7 +98,11 @@ AFTER_SINCE_MS = int(datetime(2026, 10, 18, 0, 1).timestamp() * 1000)
 
 
 class FakeMlflowException(Exception):
-    """Двойник `mlflow.exceptions.MlflowException`."""
+    """Двойник `mlflow.exceptions.MlflowException` с `error_code`."""
+
+    def __init__(self, message, error_code=None):
+        super().__init__(message)
+        self.error_code = error_code
 
 
 class FakeInfo:
@@ -125,13 +129,14 @@ class FakeClient:
     """Офлайн-двойник `MlflowClient`: артефакты копирует из `artifacts`."""
 
     def __init__(self, experiments=None, runs=None, artifacts=None,
-                 missing=(), download_error=None):
+                 missing=(), errors=None):
         self.experiments = experiments or {}
         self.runs = runs or {}
         self.artifacts = artifacts or {}
-        # `(run_id, artifact_path)` → скачивание падает `MlflowException`.
+        # `(run_id, artifact_path)` → `MlflowException` «артефакта нет».
         self.missing = set(missing)
-        self.download_error = download_error
+        # `(run_id, artifact_path)` → произвольное исключение скачивания.
+        self.errors = errors or {}
         self.tracking_uri = None
         self.names = []
         self.search_calls = []
@@ -141,8 +146,11 @@ class FakeClient:
         self.names.append(name)
         return self.experiments.get(name)
 
-    def search_runs(self, experiment_ids, order_by=None, max_results=None):
-        self.search_calls.append((list(experiment_ids), order_by, max_results))
+    def search_runs(self, experiment_ids, filter_string="", order_by=None,
+                    max_results=None):
+        self.search_calls.append((
+            list(experiment_ids), filter_string, order_by, max_results,
+        ))
         runs = []
         for experiment_id in experiment_ids:
             runs.extend(self.runs.get(experiment_id, []))
@@ -150,11 +158,13 @@ class FakeClient:
 
     def download_artifacts(self, run_id, artifact_path, dst_path):
         self.download_calls.append((run_id, artifact_path, dst_path))
-        if self.download_error is not None:
-            raise self.download_error
-        if (run_id, artifact_path) in self.missing:
+        key = (run_id, artifact_path)
+        if key in self.errors:
+            raise self.errors[key]
+        if key in self.missing:
             raise FakeMlflowException(
-                f"artifact {artifact_path!r} not found for run {run_id}"
+                f"No such artifact: {artifact_path!r} for run {run_id}",
+                error_code="RESOURCE_DOES_NOT_EXIST",
             )
         source = Path(self.artifacts[run_id]) / artifact_path
         target = Path(dst_path) / artifact_path
@@ -383,7 +393,7 @@ class DryRunTest(ExportTestBase):
             f"cpi_nowcast {MLFLOW_RUN_ID} 2", out.splitlines()
         )
         self.assertIn(
-            "exported 1 runs, 2 predictions; skipped 0", out
+            "would export 1 runs, 2 predictions; skipped 0", out
         )
 
     def test_dry_run_still_downloads_and_validates_artifacts(self):
@@ -514,7 +524,7 @@ class FilterTest(ExportTestBase):
             },
         )
         calls = []
-        code, _out, _err = self._main(
+        code, out, _err = self._main(
             client,
             ["--experiment", "cpi_nowcast", "--since", "2026-10-18"],
             ch_exec=calls.append,
@@ -525,6 +535,27 @@ class FilterTest(ExportTestBase):
         self.assertEqual(len(calls), 1)
         run_row = json.loads(calls[0].partition("\n")[2])
         self.assertEqual(run_row["run_id"], OTHER_CANONICAL_RUN_ID)
+        # Клиентский skip старого прогона обязан попасть в summary (M1).
+        self.assertIn("skipped 1", out)
+
+    def test_since_passes_server_side_filter_string(self):
+        # I3: --since обязан уйти в search_runs, иначе --limit отрежет
+        # старые прогоны до клиентского фильтра и выборка будет пустой.
+        client = self._client()
+        code, _out, _err = self._main(
+            client,
+            ["--experiment", "cpi_nowcast", "--since", "2026-10-18",
+             "--dry-run"],
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(len(client.search_calls), 1)
+        _ids, filter_string, order_by, limit = client.search_calls[0]
+        expected_ms = int(datetime(2026, 10, 18).timestamp() * 1000)
+        self.assertEqual(
+            filter_string, f"attributes.start_time >= {expected_ms}"
+        )
+        self.assertEqual(order_by, ["attributes.start_time ASC"])
+        self.assertEqual(limit, 100)
 
     def test_search_uses_order_by_and_limit(self):
         client = self._client()
@@ -534,17 +565,19 @@ class FilterTest(ExportTestBase):
         self.assertEqual(code, 0)
         self.assertEqual(
             client.search_calls,
-            [(["exp-1"], ["attributes.start_time ASC"], 7)],
+            [(["exp-1"], "", ["attributes.start_time ASC"], 7)],
         )
 
     def test_unknown_experiment_is_skipped_with_message(self):
         client = self._client(experiments={})
-        code, _out, err = self._main(
+        code, out, err = self._main(
             client, ["--experiment", "missing_experiment", "--dry-run"]
         )
         self.assertEqual(code, 0)
         self.assertEqual(client.search_calls, [])
         self.assertIn("missing_experiment", err)
+        # M2: неизвестный эксперимент учитывается в skipped.
+        self.assertIn("skipped 1", out)
 
 
 class DefaultsTest(ExportTestBase):
@@ -563,7 +596,7 @@ class DefaultsTest(ExportTestBase):
         self.assertEqual(client.tracking_uri, "http://127.0.0.1:5000")
         # --limit по умолчанию — 100 прогонов на эксперимент.
         self.assertEqual(
-            [call[2] for call in client.search_calls], [100, 100]
+            [call[3] for call in client.search_calls], [100, 100]
         )
 
     def test_tracking_uri_env_default_and_flag_override(self):
@@ -595,6 +628,82 @@ class ErrorHandlingTest(ExportTestBase):
         self.assertIn("run.json", err)
         self.assertIn("exported 0 runs, 0 predictions; skipped 1", out)
 
+    def test_missing_run_json_by_message_only_is_also_skipped(self):
+        # error_code нет, но текст «No such artifact» — консервативный
+        # запасной признак отсутствующего артефакта (I2).
+        client = self._client(errors={
+            (MLFLOW_RUN_ID, "run.json"): FakeMlflowException(
+                "No such artifact: run.json"
+            ),
+        })
+        ch_exec = unittest.mock.Mock()
+        code, out, _err = self._main(
+            client, ["--experiment", "cpi_nowcast"],
+            ch_exec=ch_exec,
+        )
+        self.assertEqual(code, 0)
+        self.assertFalse(ch_exec.called)
+        self.assertIn("skipped 1", out)
+
+    def test_mlflow_server_error_on_run_json_is_fatal(self):
+        # I2: HTTP/connection-ошибка MLflow не должна маскироваться под
+        # «артефакта нет» и давать exit 0.
+        client = self._client(errors={
+            (MLFLOW_RUN_ID, "run.json"): FakeMlflowException(
+                "HTTP 500: internal error", error_code="INTERNAL_ERROR"
+            ),
+        })
+        ch_exec = unittest.mock.Mock()
+        code, _out, err = self._main(
+            client, ["--experiment", "cpi_nowcast"],
+            ch_exec=ch_exec,
+        )
+        self.assertEqual(code, 1)
+        self.assertFalse(ch_exec.called)
+        self.assertIn("run.json", err)
+
+    def test_generic_exception_on_run_json_is_fatal(self):
+        client = self._client(errors={
+            (MLFLOW_RUN_ID, "run.json"): RuntimeError("connection reset"),
+        })
+        ch_exec = unittest.mock.Mock()
+        code, _out, err = self._main(
+            client, ["--experiment", "cpi_nowcast"],
+            ch_exec=ch_exec,
+        )
+        self.assertEqual(code, 1)
+        self.assertFalse(ch_exec.called)
+        self.assertIn("run.json", err)
+
+    def test_mlflow_server_error_on_predictions_is_fatal(self):
+        # I1: сбой сервера при скачивании predictions.jsonl — не «0 фолдов».
+        client = self._client(errors={
+            (MLFLOW_RUN_ID, "predictions.jsonl"): FakeMlflowException(
+                "HTTP 502: bad gateway", error_code="INTERNAL_ERROR"
+            ),
+        })
+        ch_exec = unittest.mock.Mock()
+        code, _out, err = self._main(
+            client, ["--experiment", "cpi_nowcast"],
+            ch_exec=ch_exec,
+        )
+        self.assertEqual(code, 1)
+        self.assertFalse(ch_exec.called)
+        self.assertIn("predictions.jsonl", err)
+
+    def test_generic_exception_on_predictions_is_fatal(self):
+        client = self._client(errors={
+            (MLFLOW_RUN_ID, "predictions.jsonl"): RuntimeError("timed out"),
+        })
+        ch_exec = unittest.mock.Mock()
+        code, _out, err = self._main(
+            client, ["--experiment", "cpi_nowcast"],
+            ch_exec=ch_exec,
+        )
+        self.assertEqual(code, 1)
+        self.assertFalse(ch_exec.called)
+        self.assertIn("predictions.jsonl", err)
+
     def test_malformed_run_json_exits_one(self):
         self._write_artifact("run.json", "{not json")
         client = self._client()
@@ -621,15 +730,44 @@ class ErrorHandlingTest(ExportTestBase):
 
     def test_clickhouse_insert_error_exits_one(self):
         client = self._client()
+        calls = []
 
-        def boom(_sql):
-            raise RuntimeError("clickhouse is down")
+        def boom(sql):
+            calls.append(sql)
+            if len(calls) == 2:
+                raise RuntimeError("clickhouse is down")
 
         code, _out, err = self._main(
             client, ["--experiment", "cpi_nowcast"], ch_exec=boom
         )
         self.assertEqual(code, 1)
+        # Порядок как в ml_experiment.finish: предсказания, затем паспорт.
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(
+            calls[0].startswith("INSERT INTO ml_predictions FORMAT JSONEachRow\n")
+        )
+        self.assertTrue(
+            calls[1].startswith("INSERT INTO ml_runs FORMAT JSONEachRow\n")
+        )
         self.assertIn("ClickHouse", err)
+
+    def test_invalid_since_is_rejected(self):
+        stderr = io.StringIO()
+        with redirect_stderr(stderr), self.assertRaises(SystemExit) as ctx:
+            mx.main(["--since", "18.10.2026"])
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertIn("--since", stderr.getvalue())
+
+    def test_non_positive_limit_is_rejected(self):
+        # max_results=0 у MLflow вернул бы пустой список молча — CLI
+        # отвергает 0 и отрицательные значения до похода в MLflow.
+        for value in ("0", "-1"):
+            stderr = io.StringIO()
+            with redirect_stderr(stderr), \
+                    self.assertRaises(SystemExit) as ctx:
+                mx.main(["--limit", value])
+            self.assertEqual(ctx.exception.code, 2)
+            self.assertIn("--limit", stderr.getvalue())
 
     def test_missing_mlflow_package_exits_one(self):
         with patch.dict(sys.modules, {"mlflow": None}), \
