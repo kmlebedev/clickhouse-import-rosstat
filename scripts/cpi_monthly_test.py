@@ -2689,7 +2689,7 @@ class TestReportTask4(unittest.TestCase):
             split_predictions=split_predictions,
         )
         self.assertIn("## DM-HLN", report)
-        self.assertIn("primary", report)
+        self.assertIn("## DM-HLN: с МП vs без МП", report)
         self.assertIn("secondary", report)
         self.assertIn("## Блочный бутстрап", report)
         self.assertIn("| start=24 (основное) | primary |", report)
@@ -2940,7 +2940,7 @@ class TestQuickMode(unittest.TestCase):
         self.assertNotIn("таблица сопоставимости", report)
         # DM primary main-окна, «2022 исключён» и живой nowcast остаются.
         self.assertIn("## DM-HLN", report)
-        self.assertIn("primary", report)
+        self.assertIn("## DM-HLN: с МП vs без МП", report)
         self.assertIn("2022 исключён", report)
         self.assertIn("## Текущий nowcast (live)", report)
 
