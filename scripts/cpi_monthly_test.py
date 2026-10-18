@@ -24,9 +24,11 @@
 
 import contextlib
 import csv
+import hashlib
 import io
 import json
 import math
+import os
 import random
 import statistics
 import sys
@@ -2745,6 +2747,333 @@ class TestRunSummaryTask4(unittest.TestCase):
                 "Текущий nowcast не рассчитан: нет цели (тест)",
                 report_path.read_text(encoding="utf-8"),
             )
+
+
+# --- Task 7: журнал ML-экспериментов (ML_LOG=1) -------------------------------
+
+
+class FakeLogger:
+    """Журнал-заглушка: запоминает вызовы и умеет падать по требованию.
+
+    Контракт — duck typing `ExperimentRun`: тест читает `metrics`/`predictions`/
+    `artifacts`, а `finish` фиксирует вызов ДО возможного сбоя, чтобы проверка
+    `finish("failed")` работала и на сломанном журнале.
+    """
+
+    def __init__(self, fail_on=()):
+        self.fail_on = set(fail_on)
+        self.metrics = None
+        self.predictions = []
+        self.artifacts = []
+        self.finished = []
+
+    def _fail(self, name: str) -> None:
+        if name in self.fail_on:
+            raise RuntimeError(f"{name} сломан (тест)")
+
+    def log_metrics(self, metrics: dict) -> None:
+        self.metrics = metrics
+        self._fail("log_metrics")
+
+    def log_predictions(self, rows) -> None:
+        self.predictions.extend(rows)
+        self._fail("log_predictions")
+
+    def log_artifacts(self, paths) -> None:
+        self.artifacts.extend(paths)
+        self._fail("log_artifacts")
+
+    def finish(self, status: str = "finished", notes: str = "") -> None:
+        self.finished.append((status, notes))
+        self._fail("finish")
+
+
+def fake_window_runs(specs, folds: int = 4) -> list:
+    """Детерминированные окна walk-forward: `folds` месяцев × все `MODELS`.
+
+    Тесты журнала не должны зависеть от скорости CatBoost: `evaluate_windows`
+    подменяется этими окнами с той же формой `WindowRun` (метки окон, счётчики
+    пропусков, веса NNLS). Bias зависит от модели, чтобы DM-пары в отчёте не
+    были вырожденными.
+    """
+    runs = []
+    for position, (start, embargo) in enumerate(specs):
+        predictions = [
+            cm.Prediction(
+                month=cm._month_shift(date(2013, 1, 1), offset),
+                model=name,
+                y_true=0.5 + 0.001 * offset,
+                y_pred=0.6 + 0.01 * model_index + 0.001 * offset,
+            )
+            for offset in range(folds)
+            for model_index, name in enumerate(cm.MODELS)
+        ]
+        runs.append(
+            cm.WindowRun(
+                start=start,
+                embargo=embargo,
+                main=position == 0,
+                folds=folds,
+                predictions=predictions,
+                skipped={name: 0 for name in cm.MODELS},
+                notes={name: {} for name in cm.MODELS},
+                weights={cm.MODEL_CATBOOST_BOTTOMUP: (0.4, 0.35, 0.25)},
+            )
+        )
+    return runs
+
+
+def clean_ml_env(**extra) -> dict:
+    """Окружение без `ML_LOG`/`ML_RUN_NAME`: тест не зависит от shell."""
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in ("ML_LOG", "ML_RUN_NAME")
+    }
+    env.update(extra)
+    return env
+
+
+class TestRunSummaryMlLog(unittest.TestCase):
+    """Task 7: журнал `ml_runs`/`ml_predictions` — опт-ин и не меняет артефакты."""
+
+    def test_ml_log_disabled_does_not_touch_ch_exec(self):
+        calls = []
+
+        def forbidden(*args, **kwargs):
+            calls.append((args, kwargs))
+            raise AssertionError("ch_exec вызван без ML_LOG")
+
+        def empty_windows(rows, models, specs):
+            return []
+
+        # Два пути «журнал выключен»: явный ml_log=False и env без ML_LOG.
+        for explicit in (False, None):
+            with tempfile.TemporaryDirectory() as tmp:
+                with unittest.mock.patch.dict(
+                        os.environ, clean_ml_env(), clear=True
+                ), unittest.mock.patch.object(
+                        cm.mlx, "ch_exec", forbidden
+                ), unittest.mock.patch.object(
+                        cm, "evaluate_windows", empty_windows
+                ), fixture_transport(), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    code = cm.run_summary(
+                        ml_log=explicit,
+                        out_dir=Path(tmp),
+                        today=date(2026, 10, 18),
+                    )
+            self.assertEqual(code, 0)
+        self.assertEqual(calls, [])
+
+    def test_ml_log_logs_short_run(self):
+        fake = FakeLogger()
+        captured = {}
+
+        def start_run(**kwargs):
+            captured.update(kwargs)
+            return fake
+
+        def fake_evaluate(rows, models, specs):
+            return fake_window_runs(specs)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with unittest.mock.patch.dict(
+                    os.environ, clean_ml_env(ML_LOG="1"), clear=True
+            ), unittest.mock.patch.object(
+                    cm.mlx, "start_run", start_run
+            ), unittest.mock.patch.object(
+                    cm, "evaluate_windows", fake_evaluate
+            ), unittest.mock.patch.object(
+                    cm, "current_nowcast",
+                    return_value=(None, "нет цели (тест)"),
+            ), fixture_transport(), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                code = cm.run_summary(
+                    out_dir=Path(tmp),
+                    today=date(2026, 10, 18),
+                    start=3,
+                    embargo_months=1,
+                    sample="short",
+                )
+        self.assertEqual(code, 0)
+        self.assertEqual(captured["experiment"], "cpi_monthly")
+        self.assertIn("short", captured["run_name"])
+        self.assertEqual(captured["config"]["sample"], "short")
+        self.assertEqual(captured["config"]["start"], 3)
+        self.assertEqual(captured["config"]["embargo_months"], 1)
+        self.assertEqual(captured["config"]["models"], list(cm.MODELS))
+        self.assertEqual(
+            captured["config"]["features_base"], cm.feature_names(False)
+        )
+        self.assertEqual(
+            captured["config"]["features_mp"], cm.feature_names(True)
+        )
+        self.assertEqual(captured["sample_meta"]["rows"], 15)
+        self.assertEqual(captured["sample_meta"]["first"], "2013-10-01")
+        self.assertEqual(captured["sample_meta"]["last"], "2014-12-01")
+        self.assertEqual(captured["sample_meta"]["months"], 24)
+        self.assertEqual(captured["data_asof"], date(2026, 10, 18))
+        self.assertTrue(
+            captured["spec_path"].endswith("cpi-monthly-mp-design.md")
+        )
+
+        self.assertEqual(fake.metrics["primary_metric"], "rmse_pp")
+        self.assertEqual(fake.metrics["sample"], "short")
+        self.assertEqual(fake.metrics["models"], list(cm.MODELS))
+        self.assertEqual(
+            [window["window"] for window in fake.metrics["windows"]],
+            ["start=3, embargo=1", "start=48, embargo=1"],
+        )
+        self.assertEqual(
+            fake.metrics["weights"]["start=3, embargo=1"][
+                cm.MODEL_CATBOOST_BOTTOMUP
+            ],
+            dict(zip(cm.BOTTOMUP_COMPONENTS, (0.4, 0.35, 0.25))),
+        )
+        # На фикстурах нет test-месяцев статьи 2019–2024 — сплит пуст.
+        self.assertEqual(fake.metrics["article_split"], {})
+
+        folds = 4
+        self.assertEqual(
+            len(fake.predictions), len(cm.MODELS) * folds * 2
+        )
+        for row in fake.predictions:
+            self.assertEqual(row.unit, "pp")
+            self.assertEqual(row.meta["sample"], "short")
+            self.assertIn(
+                row.window, {"start=3, embargo=1", "start=48, embargo=1"}
+            )
+            self.assertIn(row.meta["start"], (3, 48))
+        self.assertEqual(fake.finished[0][0], "finished")
+        self.assertTrue(fake.finished[0][1].startswith("walk-forward:"))
+
+    def test_ml_log_logs_long_run(self):
+        world = synthetic_long_world()
+        fake = FakeLogger()
+        captured = {}
+
+        def start_run(**kwargs):
+            captured.update(kwargs)
+            return fake
+
+        def fake_evaluate(rows, models, specs):
+            return fake_window_runs(specs)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with unittest.mock.patch.dict(
+                    os.environ, clean_ml_env(ML_LOG="1"), clear=True
+            ), unittest.mock.patch.object(
+                    cm, "load_targets", return_value=world["targets"]
+            ), unittest.mock.patch.object(
+                    cm, "load_survey", return_value=world["survey"]
+            ), unittest.mock.patch.object(
+                    cm, "load_usd", return_value=world["usd"]
+            ), unittest.mock.patch.object(
+                    cm, "load_key_rate", return_value=world["key_rate"]
+            ), unittest.mock.patch.object(
+                    cm, "load_fao", return_value=world["fao"]
+            ), unittest.mock.patch.object(
+                    cm.mlx, "start_run", start_run
+            ), unittest.mock.patch.object(
+                    cm, "evaluate_windows", fake_evaluate
+            ), unittest.mock.patch.object(
+                    cm, "fixed_split", return_value=[]
+            ), unittest.mock.patch.object(
+                    cm, "current_nowcast",
+                    return_value=(None, "нет цели (тест)"),
+            ), contextlib.redirect_stdout(io.StringIO()):
+                code = cm.run_summary(
+                    out_dir=Path(tmp),
+                    today=date(2026, 10, 18),
+                    sample="long",
+                )
+        self.assertEqual(code, 0)
+        self.assertEqual(captured["config"]["sample"], "long")
+        self.assertEqual(captured["config"]["start"], 48)
+        self.assertEqual(captured["config"]["embargo_months"], 0)
+        self.assertEqual(captured["sample_meta"]["rows"], 292)
+        self.assertEqual(captured["sample_meta"]["first"], "2002-05-01")
+        self.assertEqual(captured["sample_meta"]["last"], "2026-08-01")
+        self.assertIn("long", captured["run_name"])
+        self.assertIn("start48", captured["run_name"])
+        # Основное окно long — 48/0, робастность — 48/1 (спека §8.2).
+        self.assertEqual(
+            [window["window"] for window in fake.metrics["windows"]],
+            ["start=48", "start=48, embargo=1"],
+        )
+        self.assertEqual(fake.metrics["sample"], "long")
+        self.assertEqual(
+            {row.window for row in fake.predictions},
+            {"start=48", "start=48, embargo=1"},
+        )
+        self.assertTrue(all(row.meta["sample"] == "long" for row in fake.predictions))
+        self.assertEqual(fake.finished[0][0], "finished")
+
+    def test_ml_log_does_not_change_artifacts(self):
+
+        def run_once(directory: Path, logger) -> int:
+            with unittest.mock.patch.dict(
+                    os.environ, clean_ml_env(), clear=True
+            ), unittest.mock.patch.object(
+                    cm, "ARTIFACTS_DIR", directory
+            ), fixture_transport(), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                return cm.run_summary(
+                    out_dir=directory,
+                    today=date(2026, 10, 18),
+                    start=3,
+                    embargo_months=1,
+                    sample="short",
+                    logger=logger,
+                )
+
+        with tempfile.TemporaryDirectory() as left_tmp, \
+                tempfile.TemporaryDirectory() as right_tmp:
+            left, right = Path(left_tmp), Path(right_tmp)
+            self.assertEqual(run_once(left, None), 0)
+            self.assertEqual(run_once(right, FakeLogger()), 0)
+            self.assertTrue((right / cm.FORECAST_NAME).exists())
+            for name in (cm.REPORT_NAME, cm.PREDICTIONS_NAME, cm.FORECAST_NAME):
+                left_hash = hashlib.sha256((left / name).read_bytes()).hexdigest()
+                right_hash = hashlib.sha256((right / name).read_bytes()).hexdigest()
+                self.assertEqual(left_hash, right_hash, name)
+
+    def test_ml_log_error_falls_back(self):
+        def fake_evaluate(rows, models, specs):
+            return fake_window_runs(specs)
+
+        # log_predictions падает → журнал помечается failed, прогон успешен.
+        # Второй вариант — сломан и сам finish: код возврата тоже не меняется.
+        for fail_on in (("log_predictions",), ("log_predictions", "finish")):
+            with tempfile.TemporaryDirectory() as tmp:
+                directory = Path(tmp)
+                fake = FakeLogger(fail_on=fail_on)
+                with unittest.mock.patch.object(
+                        cm, "ARTIFACTS_DIR", directory
+                ), fixture_transport(), unittest.mock.patch.object(
+                        cm, "evaluate_windows", fake_evaluate
+                ), unittest.mock.patch.object(
+                        cm, "current_nowcast",
+                        return_value=(None, "нет цели (тест)"),
+                ), contextlib.redirect_stdout(io.StringIO()):
+                    code = cm.run_summary(
+                        out_dir=directory,
+                        today=date(2026, 10, 18),
+                        start=3,
+                        embargo_months=1,
+                        sample="short",
+                        logger=fake,
+                    )
+                self.assertEqual(code, 0, fail_on)
+                self.assertTrue((directory / cm.REPORT_NAME).exists(), fail_on)
+                self.assertTrue(
+                    (directory / cm.PREDICTIONS_NAME).exists(), fail_on
+                )
+                self.assertEqual(
+                    [status for status, _ in fake.finished], ["failed"], fail_on
+                )
+                self.assertIn("log_predictions", fake.finished[0][1], fail_on)
 
 
 if __name__ == "__main__":
