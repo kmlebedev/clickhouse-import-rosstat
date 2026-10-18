@@ -91,7 +91,7 @@ explicit_shock    = emergency_meeting AND step_bp != 0
 | `m2_yoy` | `cbr_m2`, `М2 SA` | г/г, % | 2001+ |
 | `budget_balance` | `minfin_fed_bud_mes` | сальдо за 12 мес. / доходы за 12 мес., % | 2011+ |
 | `usdrub_3m` | `cbr_currency_usd` | лог-изменение за 3 мес. | 2013+ |
-| `ruania_spread` | `cbr_ruonia` | RUONIA − ключевая ставка, п.п. | 2019+ |
+| `ruania_spread` | `cbr_ruania` | RUONIA − ключевая ставка, п.п. | 2019+ |
 | `price_expectations` | `macro_series`, `source='cbr_survey'`, `price_expectations_sa` | уровень, п. | 2013+ |
 | `business_climate` | `macro_series`, `source='cbr_survey'`, `business_climate_sa` | уровень, п. | 2013+ |
 
