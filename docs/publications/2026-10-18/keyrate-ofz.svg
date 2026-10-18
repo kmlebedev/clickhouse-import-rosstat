@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="540" viewBox="0 0 1180 540" role="img" aria-labelledby="title desc">
+<title id="title">KEYRATE и кривая ОФЗ перед заседанием 23.10.2026</title>
+<desc id="desc">Слева — расчётная цена KEYRATE KKV6 и открытый интерес; справа — кривая ОФЗ на 09.10.2026 и ключевая ставка.</desc>
+<rect x="0" y="0" width="1180" height="540" fill="#ffffff"/>
+<text x="40.0" y="30.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="22" text-anchor="start" font-weight="bold" fill="#222222">KEYRATE и кривая ОФЗ</text>
+<text x="40.0" y="52.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="14" text-anchor="start" font-weight="normal" fill="#555555">Рыночный контур; ликвидность — рядом со значением</text>
+<line x1="40.0" y1="76.0" x2="60.0" y2="76.0" stroke="#1f6f5c" stroke-width="3"/>
+<text x="66.0" y="81.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="start" font-weight="normal" fill="#222222">KEYRATE KKV6, settle</text>
+<line x1="230.0" y1="76.0" x2="250.0" y2="76.0" stroke="#2f6db3" stroke-width="3"/>
+<text x="256.0" y="81.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="start" font-weight="normal" fill="#222222">ОФЗ, % годовых</text>
+<text x="70.0" y="100.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="14" text-anchor="start" font-weight="bold" fill="#222222">KEYRATE KKV6 (23.10), пункты</text>
+<line x1="70.0" y1="428.0" x2="670.0" y2="428.0" stroke="#e3e3e3" stroke-width="1"/>
+<text x="60.0" y="433.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="end" font-weight="normal" fill="#666666">13,85</text>
+<line x1="70.0" y1="324.7" x2="670.0" y2="324.7" stroke="#e3e3e3" stroke-width="1"/>
+<text x="60.0" y="329.7" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="end" font-weight="normal" fill="#666666">13,90</text>
+<line x1="70.0" y1="221.3" x2="670.0" y2="221.3" stroke="#e3e3e3" stroke-width="1"/>
+<text x="60.0" y="226.3" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="end" font-weight="normal" fill="#666666">13,95</text>
+<line x1="70.0" y1="118.0" x2="670.0" y2="118.0" stroke="#e3e3e3" stroke-width="1"/>
+<text x="60.0" y="123.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="end" font-weight="normal" fill="#666666">14,00</text>
+<text x="70.0" y="450.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="middle" font-weight="normal" fill="#666666">09-29</text>
+<text x="203.3" y="450.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="middle" font-weight="normal" fill="#666666">10-01</text>
+<text x="336.7" y="450.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="middle" font-weight="normal" fill="#666666">10-05</text>
+<text x="470.0" y="450.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="middle" font-weight="normal" fill="#666666">10-07</text>
+<text x="670.0" y="450.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="middle" font-weight="normal" fill="#666666">10-12</text>
+<polyline points="70.0,242.0 136.7,221.3 203.3,200.7 270.0,304.0 336.7,180.0 403.3,200.7 470.0,180.0 536.7,200.7 603.3,283.3 670.0,221.3" fill="none" stroke="#1f6f5c" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="70.0" cy="242.0" r="4.0" fill="#1f6f5c"/>
+<text x="70.0" y="232.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="middle" font-weight="normal" fill="#1f6f5c">13,94</text>
+<circle cx="136.7" cy="221.3" r="4.0" fill="#1f6f5c"/>
+<circle cx="203.3" cy="200.7" r="4.0" fill="#1f6f5c"/>
+<circle cx="270.0" cy="304.0" r="4.0" fill="#1f6f5c"/>
+<circle cx="336.7" cy="180.0" r="4.0" fill="#1f6f5c"/>
+<text x="336.7" y="170.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="middle" font-weight="normal" fill="#1f6f5c">13,97</text>
+<circle cx="403.3" cy="200.7" r="4.0" fill="#1f6f5c"/>
+<circle cx="470.0" cy="180.0" r="4.0" fill="#1f6f5c"/>
+<circle cx="536.7" cy="200.7" r="4.0" fill="#1f6f5c"/>
+<circle cx="603.3" cy="283.3" r="4.0" fill="#1f6f5c"/>
+<circle cx="670.0" cy="221.3" r="4.0" fill="#1f6f5c"/>
+<text x="670.0" y="211.3" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="middle" font-weight="normal" fill="#1f6f5c">13,95</text>
+<rect x="65.0" y="423.3" width="10" height="4.7" fill="#9bc7bc" opacity="0.75"/>
+<rect x="131.7" y="416.5" width="10" height="11.5" fill="#9bc7bc" opacity="0.75"/>
+<rect x="198.3" y="408.4" width="10" height="19.6" fill="#9bc7bc" opacity="0.75"/>
+<rect x="265.0" y="389.4" width="10" height="38.6" fill="#9bc7bc" opacity="0.75"/>
+<rect x="331.7" y="412.1" width="10" height="15.9" fill="#9bc7bc" opacity="0.75"/>
+<rect x="398.3" y="412.1" width="10" height="15.9" fill="#9bc7bc" opacity="0.75"/>
+<rect x="465.0" y="411.8" width="10" height="16.2" fill="#9bc7bc" opacity="0.75"/>
+<rect x="531.7" y="407.0" width="10" height="21.0" fill="#9bc7bc" opacity="0.75"/>
+<rect x="598.3" y="407.0" width="10" height="21.0" fill="#9bc7bc" opacity="0.75"/>
+<rect x="665.0" y="407.0" width="10" height="21.0" fill="#9bc7bc" opacity="0.75"/>
+<text x="70.0" y="476.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11" text-anchor="start" font-weight="normal" fill="#666666">столбики — открытый интерес, контракты (max 260)</text>
+<text x="70.0" y="496.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="start" font-weight="normal" fill="#333333">12.10.2026: settle 13.95, объём 3, ОИ 124; вменённый шаг −5 б.п.</text>
+<text x="740.0" y="100.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="14" text-anchor="start" font-weight="bold" fill="#222222">Кривая ОФЗ, 09.10.2026</text>
+<line x1="740.0" y1="428.0" x2="1130.0" y2="428.0" stroke="#e3e3e3" stroke-width="1"/>
+<text x="730.0" y="433.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="end" font-weight="normal" fill="#666666">13.0</text>
+<line x1="740.0" y1="359.1" x2="1130.0" y2="359.1" stroke="#e3e3e3" stroke-width="1"/>
+<text x="730.0" y="364.1" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="end" font-weight="normal" fill="#666666">14.0</text>
+<line x1="740.0" y1="290.2" x2="1130.0" y2="290.2" stroke="#e3e3e3" stroke-width="1"/>
+<text x="730.0" y="295.2" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="end" font-weight="normal" fill="#666666">15.0</text>
+<line x1="740.0" y1="221.3" x2="1130.0" y2="221.3" stroke="#e3e3e3" stroke-width="1"/>
+<text x="730.0" y="226.3" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="end" font-weight="normal" fill="#666666">16.0</text>
+<line x1="740.0" y1="152.4" x2="1130.0" y2="152.4" stroke="#e3e3e3" stroke-width="1"/>
+<text x="730.0" y="157.4" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="end" font-weight="normal" fill="#666666">17.0</text>
+<line x1="740.0" y1="359.1" x2="1130.0" y2="359.1" stroke="#c45a1a" stroke-width="1.5" stroke-dasharray="6 4"/>
+<text x="1126.0" y="352.1" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="end" font-weight="normal" fill="#c45a1a">ключевая 14,00</text>
+<circle cx="740.0" cy="375.7" r="4.5" fill="#2f6db3"/>
+<text x="740.0" y="452.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="13" text-anchor="middle" font-weight="normal" fill="#222222">1y</text>
+<text x="740.0" y="365.7" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11" text-anchor="middle" font-weight="normal" fill="#2f6db3">13.76</text>
+<circle cx="870.0" cy="223.5" r="4.5" fill="#2f6db3"/>
+<text x="870.0" y="452.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="13" text-anchor="middle" font-weight="normal" fill="#222222">3y</text>
+<text x="870.0" y="213.5" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11" text-anchor="middle" font-weight="normal" fill="#2f6db3">15.97</text>
+<circle cx="1000.0" cy="182.2" r="4.5" fill="#2f6db3"/>
+<text x="1000.0" y="452.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="13" text-anchor="middle" font-weight="normal" fill="#222222">5y</text>
+<text x="1000.0" y="172.2" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11" text-anchor="middle" font-weight="normal" fill="#2f6db3">16.57</text>
+<circle cx="1130.0" cy="162.9" r="4.5" fill="#2f6db3"/>
+<text x="1130.0" y="452.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="13" text-anchor="middle" font-weight="normal" fill="#222222">10y</text>
+<text x="1130.0" y="152.9" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11" text-anchor="middle" font-weight="normal" fill="#2f6db3">16.85</text>
+<polyline points="740.0,375.7 870.0,223.5 1000.0,182.2 1130.0,162.9" fill="none" stroke="#2f6db3" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="740.0" y="478.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="start" font-weight="normal" fill="#333333">10y − ключевая = +2,85 п.п.; 1y − ключевая = −0,24 п.п.</text>
+<text x="740.0" y="498.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="start" font-weight="normal" fill="#333333">RGBI 110,55</text>
+<text x="40.0" y="524.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="start" font-weight="normal" fill="#666666">Источник: MOEX (v_keyrate_expectations, v_ofz_curve). KEYRATE — индикатив: объём 3, ОИ 124.</text>
+</svg>
