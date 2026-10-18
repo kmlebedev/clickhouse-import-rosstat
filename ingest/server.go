@@ -21,6 +21,7 @@ type BatchWriter interface {
 	InsertManualSeries(ctx context.Context, points []ManualSeriesPoint) error
 	InsertGoldPrices(ctx context.Context, points []GoldPricePoint) error
 	InsertGoldForecasts(ctx context.Context, forecasts []GoldForecast) error
+	InsertKeyRateForecast(ctx context.Context, forecast KeyRateForecast) error
 }
 
 // Server — HTTP-сервер ingest-контура: единственный путь записи в model_runs/forecast_log/macro_series/gold_prices/gold_forecasts.
@@ -42,6 +43,7 @@ func newServer(writer BatchWriter, token string, limiter *tokenBucket) *Server {
 	s.mux.HandleFunc("POST /v1/manual_series", s.handleManualSeries)
 	s.mux.HandleFunc("POST /v1/gold_prices", s.handleGoldPrices)
 	s.mux.HandleFunc("POST /v1/gold_forecasts", s.handleGoldForecasts)
+	s.mux.HandleFunc("POST /v1/key_rate_forecast", s.handleKeyRateForecast)
 	return s
 }
 
@@ -151,6 +153,31 @@ func (s *Server) handleGoldForecasts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeInserted(w, len(forecasts))
+}
+
+// handleKeyRateForecast — единственный путь записи прогноза ключевой ставки:
+// одна строка журнала за запрос. probabilities/data_version/model/prompt_version
+// пишутся в одноимённые колонки forecast_log: это контракт публикации
+// (KEY_RATE_PUBLICATIONS §7 п. 5, §8), а не метаданные «на будущее».
+func (s *Server) handleKeyRateForecast(w http.ResponseWriter, r *http.Request) {
+	var forecast KeyRateForecast
+	if status, err := decodeBody(w, r, &forecast); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), status)
+		return
+	}
+	if err := ValidateKeyRateForecast(forecast); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.writer.InsertKeyRateForecast(r.Context(), forecast); err != nil {
+		log.Errorf("ingest: insert key_rate_forecast %s on %s: %v", forecast.Metric, forecast.TargetDate, err)
+		http.Error(w, "insert failed", http.StatusInternalServerError)
+		return
+	}
+	log.Infof("ingest: key_rate_forecast %s on %s predicted %.4f (model=%s, prompt_version=%d, data_version=%s, probabilities=%v)",
+		forecast.Metric, forecast.TargetDate, forecast.Predicted, forecast.Model, forecast.PromptVersion,
+		forecast.DataVersion, forecast.Probabilities)
+	writeInserted(w, 1)
 }
 
 func writeInserted(w http.ResponseWriter, inserted int) {
