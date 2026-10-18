@@ -30,6 +30,11 @@ coverage.out
 /key_rate_model_predictions.csv
 /key_rate_model_forecast.json
 
+# Артефакт LLM-трека (issue #189): JSON прогноза и payload режима --log —
+# локальные снимки прогона, в репозиторий не коммитятся (gitignored по спеке #189).
+/key_rate_llm_forecast.json
+/key_rate_llm_forecast_log_payload.json
+
 # Артефакты прогона CPI-nowcast (спека §5): отчёт, построчные прогнозы и запись
 # текущего nowcast. Локальные и детерминированные при фиксированном сиде и одной
 # БД (числа прогона фиксируются протоколом приёмки в PR), поэтому в репозитории
@@ -38,6 +43,12 @@ coverage.out
 /cpi_nowcast_report.md
 /cpi_nowcast_predictions.csv
 /cpi_nowcast_forecast.json
+
+# Артефакты месячного трека v2 (спека 2026-10-18, §5.1): те же правила, что у v1.
+# Имена — точные: фикстуры scripts/testdata/cpi_monthly/ обязаны коммититься.
+/cpi_monthly_report.md
+/cpi_monthly_predictions.csv
+/cpi_monthly_forecast.json
 
 # Артефакты parity-прогона с CB_COMP (issue #190, спека §7): отчёт, построчные
 # прогнозы и машинный результат. Локальные и детерминированные при фиксированном
