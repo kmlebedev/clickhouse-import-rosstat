@@ -216,6 +216,7 @@ type dipFakeConn struct {
 	queryErr error       // ошибка Query: сценарий «гейт не прочитан»
 	queries  []string    // тексты запросов Query и QueryRow: тест пинит сами запросы
 	execs    []string    // тексты запросов Exec: тест пинит создание витрин point-in-time слоя
+	execErr  error       // ошибка Exec: сценарий сбоя витрин слоя
 	row      driver.Row  // ответ QueryRow, когда ошибки нет
 	rowArgs  [][]any     // аргументы QueryRow: тест пинит, что id выпуска уходит плейсхолдером
 }
@@ -239,11 +240,11 @@ func (c *dipFakeConn) QueryRow(_ context.Context, query string, args ...any) dri
 }
 
 // Exec — приёмник CREATE OR REPLACE VIEW и ALTER TABLE витрин point-in-time слоя
-// (ensurePitViews): тексты запросов копятся в execs, а успех не моделируется — сценарий
-// сбоя витрин проверяется живой приёмкой. Необъявленный Exec унаследовал бы nil-заглушку.
+// (ensurePitViews): тексты запросов копятся в execs, а сбой моделируется полем execErr
+// (TestEnsurePitViewsError). Необъявленный Exec унаследовал бы nil-заглушку.
 func (c *dipFakeConn) Exec(_ context.Context, query string, _ ...any) error {
 	c.execs = append(c.execs, query)
-	return nil
+	return c.execErr
 }
 
 // dipFakeRows — ответ гейта: строки release_id. Объявлены только методы, которые вызывает
@@ -464,6 +465,23 @@ func TestEnsurePitViewsCreatesAll(t *testing.T) {
 	// У параметризованной витрины колонковых комментариев быть не может: 7 (base) + 6 (version).
 	if got := strings.Count(joined, "COMMENT COLUMN"); got != 13 {
 		t.Errorf("COMMENT COLUMN: %d, want 13 (7 base + 6 version)", got)
+	}
+}
+
+// TestEnsurePitViewsError — сбой CreateView не проглатывается и не теряет имя витрины: прогон
+// обязан увидеть ошибку слоя (Import присоединяет её к errors.Join), а диагноз — назвать
+// витрину и причину. util.CreateView уже оборачивает ошибку Exec как «<view>: …», поэтому
+// ensurePitViews не должен дублировать префикс.
+func TestEnsurePitViewsError(t *testing.T) {
+	conn := &dipFakeConn{row: &dipFakeRow{written: 1}, execErr: errors.New("boom")}
+	err := ensurePitViews(context.Background(), conn)
+	if err == nil {
+		t.Fatal("ожидалась ошибка: сбой CreateView не должен проглатываться")
+	}
+	for _, want := range []string{"v_point_in_time", "boom"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("ошибка %q не содержит %q", err, want)
+		}
 	}
 }
 
