@@ -51,8 +51,11 @@ class FakeVersion:
 
 
 class FakeRegisteredModel:
-    def __init__(self, name):
+    def __init__(self, name, aliases=None):
         self.name = name
+        # Атрибут `aliases` есть только в MLflow 3.x; `None` — старый API.
+        if aliases is not None:
+            self.aliases = list(aliases)
 
 
 class FakeClient:
@@ -149,9 +152,9 @@ def _fake_mlflow(client):
     return _patch_mlflow(make_client)
 
 
-def _seed(client, name, versions):
+def _seed(client, name, versions, aliases=None):
     """Добавляет зарегистрированную модель и её версии."""
-    client.models[name] = FakeRegisteredModel(name)
+    client.models[name] = FakeRegisteredModel(name, aliases=aliases)
     client.versions[name] = versions
 
 
@@ -421,6 +424,55 @@ class ListModelsTest(unittest.TestCase):
 
         self.assertEqual(rows[0]["aliases"], [])
         self.assertEqual(client.calls_named("get_model_version_by_alias"), [])
+
+    def test_aliases_resolved_from_registered_model(self):
+        # MLflow 3.17.1: `search_model_versions` отдаёт `aliases=[]` даже
+        # когда версии назначены `challenger`/`champion`; имена алиасов
+        # приходят в `RegisteredModel.aliases` и разрешаются в версию.
+        for list_name in ("cpi_nowcast", None):
+            with self.subTest(list_name=list_name):
+                client = FakeClient()
+                _seed(
+                    client,
+                    "cpi_nowcast",
+                    [
+                        FakeVersion(
+                            1, status="READY", run_id=RUN_ID, aliases=[]
+                        )
+                    ],
+                    aliases=["challenger", "champion"],
+                )
+                client.aliases[("cpi_nowcast", "challenger")] = "1"
+                client.aliases[("cpi_nowcast", "champion")] = "1"
+                stdout = io.StringIO()
+
+                with redirect_stdout(stdout):
+                    rows = mr.list_models(client, name=list_name)
+
+                self.assertEqual(
+                    [row["aliases"] for row in rows],
+                    [["challenger", "champion"]],
+                )
+                self.assertIn(
+                    f"cpi_nowcast\t1\tREADY\t"
+                    f"challenger,champion\t{RUN_ID}",
+                    stdout.getvalue(),
+                )
+                self.assertEqual(
+                    client.calls_named("get_model_version_by_alias"),
+                    [
+                        (
+                            "get_model_version_by_alias",
+                            "cpi_nowcast",
+                            "challenger",
+                        ),
+                        (
+                            "get_model_version_by_alias",
+                            "cpi_nowcast",
+                            "champion",
+                        ),
+                    ],
+                )
 
     def test_missing_alias_in_fallback_is_ignored(self):
         client = FakeClient()

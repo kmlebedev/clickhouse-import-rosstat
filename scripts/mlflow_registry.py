@@ -138,16 +138,42 @@ def _version_sort_key(version):
         return (1, text)
 
 
-def _version_aliases(client, name: str, version) -> list:
-    """Алиасы версии из `version.aliases`; fallback — только для старого API.
+def _alias_version_map(client, name: str, model):
+    """Строит `version -> [aliases]` по именам алиасов registered model.
 
-    В MLflow 3.x атрибут есть всегда, у версии без алиасов он равен `[]`;
-    запросы `get_model_version_by_alias` в этом случае не нужны (N+1).
+    В MLflow 3.17.1 `search_model_versions` возвращает `aliases=[]` даже
+    когда алиасы назначены, поэтому имена алиасов берутся у самой
+    зарегистрированной модели (`RegisteredModel.aliases`), а версия для
+    каждого имени разрешается через `get_model_version_by_alias`.
+
+    Возвращает `None`, если у модели нет атрибута `aliases` (старый API):
+    тогда работает прежний fallback `_fallback_version_aliases`. Алиас,
+    которого уже нет в registry, пропускается; прочие ошибки — наружу.
     """
-    aliases = getattr(version, "aliases", None)
-    if aliases is not None:
-        return list(aliases)
+    aliases = getattr(model, "aliases", None)
+    if aliases is None:
+        return None
 
+    mapping = {}
+    for alias in aliases:
+        alias = str(alias)
+        try:
+            aliased = client.get_model_version_by_alias(name, alias)
+        except Exception as exc:
+            if not _is_not_found(exc):
+                raise
+            continue
+        version = str(getattr(aliased, "version", ""))
+        mapping.setdefault(version, []).append(alias)
+    return mapping
+
+
+def _fallback_version_aliases(client, name: str, version) -> list:
+    """Fallback для старого API без `RegisteredModel.aliases`.
+
+    Запрашивает известные константы `champion`/`challenger`; используется
+    только когда у версии тоже нет атрибута `aliases`.
+    """
     found = []
     for alias in FALLBACK_ALIASES:
         try:
@@ -158,6 +184,31 @@ def _version_aliases(client, name: str, version) -> list:
             continue
         if str(getattr(aliased, "version", "")) == str(version.version):
             found.append(alias)
+    return found
+
+
+def _version_aliases(client, name: str, version, alias_map=None) -> list:
+    """Алиасы версии: map из registered model плюс `version.aliases`.
+
+    Основной источник — `alias_map` (см. `_alias_version_map`). Непустой
+    `version.aliases` добавляется к нему, чтобы не терять алиасы, которые
+    клиент всё же вернул. Если атрибута `aliases` нет ни у модели, ни у
+    версии (старый API), сохраняется прежний fallback по константам.
+    """
+    aliases = getattr(version, "aliases", None)
+    if aliases is None:
+        found = []
+    else:
+        found = [str(alias) for alias in aliases]
+
+    if alias_map is not None:
+        for alias in alias_map.get(str(version.version), []):
+            if alias not in found:
+                found.append(alias)
+        return found
+
+    if aliases is None:
+        return _fallback_version_aliases(client, name, version)
     return found
 
 
@@ -189,15 +240,18 @@ def list_models(client, name=None) -> list:
     чужие имена из реестра не подставляются в `filter_string`, а
     пропускаются с warning — одна посторонняя модель не должна ломать
     `make mlflow-models` для всех остальных.
+
+    Алиасы берутся из `RegisteredModel.aliases` и разрешаются в версии
+    через `get_model_version_by_alias`: в MLflow 3.17.1
+    `search_model_versions` отдаёт `aliases=[]` даже при назначенных
+    алиасах. Непустой `version.aliases` дополнительно мержится.
     """
+    models = {}
     if name is not None:
         _validate_model_name(name)
-        client.get_registered_model(name)
-        names = [name]
+        models[name] = client.get_registered_model(name)
     else:
-        models = client.search_registered_models()
-        names = []
-        for model in models:
+        for model in client.search_registered_models():
             model_name = getattr(model, "name", str(model))
             if not MODEL_NAME_RE.fullmatch(model_name):
                 log.warning(
@@ -207,11 +261,12 @@ def list_models(client, name=None) -> list:
                     model_name,
                 )
                 continue
-            names.append(model_name)
-        names.sort()
+            models[model_name] = model
+    names = sorted(models)
 
     rows = []
     for model_name in names:
+        alias_map = _alias_version_map(client, model_name, models[model_name])
         versions = client.search_model_versions(f"name='{model_name}'")
         for version in sorted(versions, key=_version_sort_key):
             rows.append(
@@ -219,7 +274,9 @@ def list_models(client, name=None) -> list:
                     "name": model_name,
                     "version": str(version.version),
                     "status": str(getattr(version, "status", "")),
-                    "aliases": _version_aliases(client, model_name, version),
+                    "aliases": _version_aliases(
+                        client, model_name, version, alias_map
+                    ),
                     "run_id": str(getattr(version, "run_id", "") or ""),
                 }
             )
