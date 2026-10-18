@@ -20,9 +20,44 @@ ML_LOG=1 make key-rate-model              # паспорт прогона + fold
 
 `ML_LOG=1` включает запись; без переменной скрипты в ClickHouse не пишут. Если ClickHouse недоступен, прогон не падает: паспорт и предсказания сохраняются локально в `build/ml-runs/<run_id>/` (`run.json` + `predictions.jsonl`, каталог переопределяется `ML_LOCAL_DIR`). Имя прогона — `ML_RUN_NAME`. Импортёр `ml_registry` стоит в `dagu/ml.yaml` (ежедневно 06:07 МСК) и должен отработать до первого ML-прогона; чтение агентом — только через витрины `v_ml_runs`, `v_ml_leaderboard`, `v_ml_error_by_fold` (сырые таблицы закрыты, проверка — `make mcp-check`).
 
+### MLflow (control plane, `infra/4.2`)
+
+Локальный MLflow хранит историю экспериментов и реестр моделей: SQLite `build/mlflow/mlflow.db`, артефакты `build/mlflow/artifacts`, `127.0.0.1:5000`, `--serve-artifacts`. Аутентификации нет, порт наружу не публикуется; на staging доступ — только через SSH-туннель. MLflow — ручной сервис: шага в `dagu/` нет, экспорт в ClickHouse — отдельная команда.
+
+```bash
+make mlflow-up                  # поднять сервер и дождаться /health; UI http://127.0.0.1:5000
+make mlflow-status              # «MLflow отвечает на порту 5000» либо «не отвечает»
+ML_LOG=1 MLFLOW=1 make cpi-nowcast        # run + run.json/predictions.jsonl/model
+ML_LOG=1 MLFLOW=1 make key-rate-model
+make mlflow-export              # MLflow → ml_runs/ml_predictions
+make mlflow-export ARGS="--since 2026-10-18 --limit 20 --dry-run"   # предпросмотр без записи
+make mlflow-register ARGS="--run-id <mlflow-run-id> --name cpi_nowcast_catboost_direct"
+make mlflow-promote  ARGS="--name cpi_nowcast_catboost_direct --version 1"
+make mlflow-models   ARGS="--name cpi_nowcast_catboost_direct"
+make mlflow-down
+```
+
+Ожидаемое поведение:
+
+- `make mlflow-up` печатает порт, PID и путь к логу `build/mlflow/mlflow.log`; повторный вызов при живом сервере второй сервер не поднимает. `make mlflow-down` останавливает только сервер, поднятый make (по PID-файлу), и не трогает процесс, запущенный вне make.
+- `ML_LOG=1 MLFLOW=1 make cpi-nowcast` создаёт run эксперимента `cpi_nowcast` с артефактами `run.json`, `predictions.jsonl`, `model/`; в ClickHouse при доступной БД появляются та же строка `ml_runs` и fold-строки `ml_predictions`.
+- `make mlflow-export` печатает `exported N runs, M predictions; skipped K`. Run без `run.json` (создан не нашим хелпером) пропускается с warning и команду не роняет; битый `run.json`/`predictions.jsonl`, ошибка скачивания артефакта или вставки в ClickHouse — код 1.
+- `make mlflow-register` печатает `registered <name> vN; alias challenger -> vN`, `make mlflow-promote` — `alias champion -> vN`, `make mlflow-models` — таблицу `name version status aliases run_id`. Промоушен ручной: скрипт не проверяет метрики (gate — `infra/4.3`).
+
+**MLflow недоступен — прогон не падает.** `ml_experiment.py` пишет warning, а паспорт и предсказания по-прежнему идут в ClickHouse или в локальный fallback `build/ml-runs/<run_id>/`; `make mlflow-export` — отдельный ручной шаг и догоняет run'ы, когда сервер поднят. Если недоступен ClickHouse, export завершается кодом 1 — это не тихий no-op.
+
+Проверка идемпотентности (повторный экспорт не должен менять числа):
+
+```sql
+SELECT count() FROM ml_runs FINAL;
+SELECT count() FROM ml_predictions FINAL;
+```
+
+Staging: `make deploy-staging-mlflow`, туннель `ssh -N -L 5000:127.0.0.1:5000 palmshell`, UI `http://localhost:5000`; бэкап (`sqlite3 … ".backup"` + `tar` артефактов) и обновление версии (бэкап → `systemctl stop mlflow` → `mlflow db upgrade` → `systemctl start mlflow` → `make deploy-staging-smoke`) — `deploy/staging/README.md`.
+
 ## Деплой на staging
 
-Разворачивает три компонента на хост `palmshell`: бинарник `clickhouse-import-rosstat`, планировщик `dagu` v2.18.2 и MCP-сервер `mcp-clickhouse` 0.7.0 (HTTP, read-only). ClickHouse и Grafana на хосте не трогаются. Артефакты — `deploy/staging/`, порядок и отладка — `deploy/staging/README.md`.
+Разворачивает четыре компонента на хост `palmshell`: бинарник `clickhouse-import-rosstat`, планировщик `dagu` v2.18.2, MCP-сервер `mcp-clickhouse` 0.7.0 (HTTP, read-only) и MLflow (`127.0.0.1:5000`, SQLite + локальные артефакты). ClickHouse и Grafana на хосте не трогаются. Артефакты — `deploy/staging/`, порядок и отладка — `deploy/staging/README.md`.
 
 ```bash
 # 1. Файл секретов на хосте (один раз; значения задаёт владелец). Токен: openssl rand -hex 32

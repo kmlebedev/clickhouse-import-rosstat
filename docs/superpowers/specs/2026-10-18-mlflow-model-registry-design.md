@@ -210,7 +210,7 @@ python3 scripts/mlflow_export.py \
 - Вставка: `ch_exec(insert_sql("ml_predictions", rows))`, затем `ch_exec(insert_sql("ml_runs", [row]))` — тот же порядок, что в `ml_experiment.finish`.
 - `--dry-run` — только печать `experiment run_id folds` и проверка артефактов.
 - Идемпотентность: те же строки при повторе; `ReplacingMergeTree` схлопывает по `(experiment, run_id)` и `(experiment, run_id, model, window, target_date)`.
-- Код возврата 0 — все ок; 1 — хотя бы один run не экспортирован (нет `run.json`, ошибка ClickHouse).
+- Код возврата 0 — все ок **включая пропуски**: отсутствие `run.json` — warning + skip (run создан не нашим хелпером), и команда завершается 0, если других сбоев не было. Код 1 — хотя бы один run не экспортирован из-за ошибки: битый `run.json`/`predictions.jsonl`, ошибка скачивания артефакта, ошибка MLflow-клиента или вставки в ClickHouse. Отсутствие `predictions.jsonl` — warning и 0 фолдов, не ошибка.
 
 ### 6.5 `scripts/mlflow_registry.py`
 
@@ -302,10 +302,10 @@ Makefile:
 2. `ML_LOG=1 MLFLOW=1 make cpi-nowcast` → run `cpi_nowcast` в MLflow, артефакты `run.json`, `predictions.jsonl`, `model/`.
 3. `make mlflow-export` → `v_ml_runs`/`v_ml_leaderboard`/`v_ml_error_by_fold` видят run; `count() FINAL` = 1; число fold-строк совпадает.
 4. Повторный `make mlflow-export` → те же counts через `FINAL`; идемпотентно.
-5. `make mlflow-register RUN_ID=<id> NAME=cpi_nowcast_catboost_direct` → `challenger -> v1`; `make mlflow-promote NAME=… VERSION=1` → `champion -> v1`; `make mlflow-models` показывает оба; `get_model_version_by_alias` возвращает v1.
+5. `make mlflow-register ARGS="--run-id <mlflow-run-id> --name cpi_nowcast_catboost_direct"` → `challenger -> v1`; `make mlflow-promote ARGS="--name cpi_nowcast_catboost_direct --version 1"` → `champion -> v1`; `make mlflow-models ARGS="--name cpi_nowcast_catboost_direct"` показывает оба; `get_model_version_by_alias` возвращает v1.
 6. `ML_LOG=1 MLFLOW=1 make key-rate-model` → run в MLflow; экспорт → `unit='bp'`.
 7. `make all`, `make mcp-check`, `make docs-check`, `make docs-build` — зелёные.
-8. Staging: `make deploy-staging-mlflow`, туннель, `/health` 200, `make upgrade-staging` smoke.
+8. Staging: `make deploy-staging-mlflow`, туннель `ssh -N -L 5000:127.0.0.1:5000 palmshell`, `/health` 200, `make deploy-staging-smoke`. Обновление версии — бэкап (SQLite `.backup` + `tar` артефактов) → правка версии в `mlflow.service` и `MLFLOW_VERSION` → `make deploy-staging-mlflow` → `systemctl stop mlflow` → `mlflow db upgrade sqlite:////var/lib/mlflow/mlflow.db` на остановленной БД → `systemctl start mlflow` → `make deploy-staging-smoke` (§6.7, `deploy/staging/README.md`).
 9. `make mlflow-down` — dev-сервер остановлен.
 
 ---
