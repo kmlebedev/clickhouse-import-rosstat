@@ -69,7 +69,7 @@ DAGU_VERSION     ?= v2.18.2
 MKDOCS_VERSION ?= 9.7.7
 MKDOCS := uv run --with mkdocs-material==$(MKDOCS_VERSION) --python 3.12 mkdocs
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model cpi-nowcast edisclosure-login edisclosure-collect docs-check docs-build docs-serve
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model key-rate-forecast-log cpi-nowcast cpi-monthly edisclosure-login edisclosure-collect docs-check docs-build docs-serve
 
 all: lint test build build-ingest
 
@@ -264,12 +264,27 @@ ARGS ?=
 key-rate-model:
 	uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/key_rate_model.py $(ARGS)
 
+# Запись текущего прогноза ставки в forecast_log через ingest (POST /v1/key_rate_forecast).
+# Читает локальные артефакты key_rate_model_forecast.json (и, при наличии,
+# key_rate_llm_forecast.json), в ClickHouse напрямую не пишет. Нужны INGEST_URL и
+# INGEST_TOKEN из $(ROSSTAT_ENV); ingest-сервис — make run-ingest.
+# Отладка: make key-rate-forecast-log ARGS="--dry-run"
+key-rate-forecast-log:
+	uv run --python 3.12 python3 scripts/key_rate_forecast_log.py $(ARGS)
+
 # ML-трек контура ставки: nowcast месячного ИПЦ до публикации Росстата (CatBoost + бенчмарки).
 # Читает ClickHouse, пишет локальные артефакты; в ClickHouse по умолчанию не пишет;
 # с ML_LOG=1 пишет паспорт и fold-предсказания.
 # Фикстуры: make cpi-nowcast ARGS="--export-fixtures scripts/testdata/cpi_nowcast"
 cpi-nowcast:
 	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_nowcast.py $(ARGS)
+
+# ML-трек v2: месячный nowcast ИПЦ с мониторингом предприятий ЦБ (с МП vs без МП).
+# Читает ClickHouse, пишет локальные артефакты; по умолчанию в ClickHouse НЕ пишет;
+# с ML_LOG=1 пишет паспорт и fold-предсказания в ml_runs/ml_predictions.
+# Фикстуры: make cpi-monthly ARGS="--export-fixtures scripts/testdata/cpi_monthly"
+cpi-monthly:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_monthly.py $(ARGS)
 
 # Документы e-disclosure.ru: headed Chrome с постоянным профилем build/edisclosure-profile
 # (gitignored, 0700). Капчу решает владелец вручную; коллектор только ждёт её --wait секунд.

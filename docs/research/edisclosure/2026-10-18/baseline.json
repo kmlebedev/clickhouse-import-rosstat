@@ -1,0 +1,53 @@
+{
+  "shares_mln": 949.217,
+  "pre_split_shares_mln": 94.9217,
+  "usd_rub_now": 83.9153,
+  "usd_rub_2025": 78.2267,
+  "net_debt_2024_usd_mln": 6233.0,
+  "net_debt_2025_usd_mln": 7088.68,
+  "market_price_rub": 1006.8,
+  "rows": [
+    {
+      "deck_contour": "own_scenario/industrial",
+      "nav_total_usd_mln": 124539.45,
+      "net_debt_2025_usd_mln": 7088.68,
+      "equity_usd_mln": 117450.77,
+      "shares_mln": 949.217,
+      "nav_per_share_rub_official": 10383.21,
+      "nav_per_share_rub_baseline_nd2024": 10458.85,
+      "delta_nd_rub": -75.65,
+      "nav_per_share_pre_split": 103832.07,
+      "market_price_rub": 1006.8,
+      "p_nav": 0.097,
+      "gap_pct": 931.31
+    },
+    {
+      "deck_contour": "spot_flat/industrial",
+      "nav_total_usd_mln": 103347.78,
+      "net_debt_2025_usd_mln": 7088.68,
+      "equity_usd_mln": 96259.1,
+      "shares_mln": 949.217,
+      "nav_per_share_rub_official": 8509.76,
+      "nav_per_share_rub_baseline_nd2024": 8585.41,
+      "delta_nd_rub": -75.65,
+      "nav_per_share_pre_split": 85097.63,
+      "market_price_rub": 1006.8,
+      "p_nav": 0.1183,
+      "gap_pct": 745.23
+    },
+    {
+      "deck_contour": "consensus_lt/industrial",
+      "nav_total_usd_mln": 52954.65,
+      "net_debt_2025_usd_mln": 7088.68,
+      "equity_usd_mln": 45865.97,
+      "shares_mln": 949.217,
+      "nav_per_share_rub_official": 4054.77,
+      "nav_per_share_rub_baseline_nd2024": 4130.42,
+      "delta_nd_rub": -75.65,
+      "nav_per_share_pre_split": 40547.7,
+      "market_price_rub": 1006.8,
+      "p_nav": 0.2483,
+      "gap_pct": 302.74
+    }
+  ]
+}
