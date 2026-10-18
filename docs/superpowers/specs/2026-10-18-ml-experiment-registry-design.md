@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS ml_runs (
     git_dirty UInt8,                     -- 1 — рабочее дерево было грязным
     config_hash String,                  -- sha256 канонического JSON конфигурации
     config_json String,                  -- полный конфиг прогона (CLI + дефолты)
+    env_json String,                     -- Python/пакеты/OS, в которых шёл прогон
     data_asof Date,                      -- дата среза данных
     sample_hash String,                  -- sha256 канонического JSON выборки
     sample_meta_json String,             -- rows/first/last/skipped, без сырых строк
@@ -80,6 +81,7 @@ ORDER BY (experiment, run_id);
 - одна строка — один завершённый (или пустой/упавший) прогон; `run_id` — UUID, генерируется на старте;
 - `status='finished'` — прогон дошёл до артефактов; `'empty'` — данных/фолдов нет, но прогон диагностирован; `'failed'` — исключение (хелпер пишет его при наличии контекста);
 - `config_json` содержит все CLI-аргументы и дефолты, включая seed; `config_hash` — от канонического JSON;
+- `env_json` содержит Python, версии пакетов и OS/CPU; это часть паспорта, потому что без неё прогон не воспроизводится;
 - `sample_meta_json` — только описание (`rows`, `first`, `last`, `skipped`, `months`), не сырые признаки; сырьё восстанавливается из ClickHouse по `data_asof`;
 - `metrics_json` — вложенный словарь, схема зависит от эксперимента; общие ключи: `primary_metric`, `models`, `windows`;
 - `artifacts_json` — пути относительно корня репозитория, sha256 и размер;
