@@ -473,16 +473,35 @@ func TestEnsurePitViewsCreatesAll(t *testing.T) {
 // витрину и причину. util.CreateView уже оборачивает ошибку Exec как «<view>: …», поэтому
 // ensurePitViews не должен дублировать префикс.
 func TestEnsurePitViewsError(t *testing.T) {
-	conn := &dipFakeConn{row: &dipFakeRow{written: 1}, execErr: errors.New("boom")}
-	err := ensurePitViews(context.Background(), conn)
-	if err == nil {
-		t.Fatal("ожидалась ошибка: сбой CreateView не должен проглатываться")
-	}
-	for _, want := range []string{"v_point_in_time", "boom"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("ошибка %q не содержит %q", err, want)
+	t.Run("exec", func(t *testing.T) {
+		conn := &dipFakeConn{row: &dipFakeRow{written: 1}, execErr: errors.New("boom")}
+		err := ensurePitViews(context.Background(), conn)
+		if err == nil {
+			t.Fatal("ожидалась ошибка: сбой CreateView не должен проглатываться")
 		}
-	}
+		for _, want := range []string{"v_point_in_time", "boom"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("ошибка %q не содержит %q", err, want)
+			}
+		}
+		if got := strings.Count(err.Error(), "v_point_in_time"); got != 1 {
+			t.Errorf("имя витрины встречается %d раз, want 1 (двойной префикс): %q", got, err)
+		}
+	})
+	t.Run("metadata", func(t *testing.T) {
+		// Ошибка проверки system.tables приходит из Scan и не обёрнута util.CreateView:
+		// имя витрины обязан добавить ensurePitViews.
+		conn := &dipFakeConn{row: &dipFakeRow{scanErr: errors.New("meta boom")}}
+		err := ensurePitViews(context.Background(), conn)
+		if err == nil {
+			t.Fatal("ожидалась ошибка: сбой проверки таблицы не должен проглатываться")
+		}
+		for _, want := range []string{"v_point_in_time", "meta boom"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("ошибка %q не содержит %q", err, want)
+			}
+		}
+	})
 }
 
 // dipReleaseIDs — id выпусков в порядке среза: проверяется порядок и состав выпусков, а поля
