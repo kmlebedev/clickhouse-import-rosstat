@@ -131,18 +131,17 @@ Labels: `roadmap:<slug>` — группировка до появления Proj
 
 ## 10. Синхронизация после мержа `ROADMAP_INDEX.md`
 
+**Транспорт.** Все GitHub-вызовы — через MCP `mcp__github__*`; `gh` CLI — фолбэк, если MCP-инструменты недоступны.
+
 **Когда.** После мержа PR, в котором менялся `docs/ROADMAP_INDEX.md` или владеющий файл роадмапа. В той же сессии; если мерж был вне сессии — при следующем старте, обнаружив merge-коммит. Это обязательный шаг, а не только периодический аудит §7.
 
 **Порядок.**
 
-1. Определить изменённые файлы: `gh pr view <N> --json files,mergedAt` или `git log --merges --name-only -1 <sha>`. Если среди них нет `docs/ROADMAP_INDEX.md` и ни одного файла роадмапа — синхронизация не нужна, зафиксировать это в отчёте.
+1. Определить изменённые файлы: `mcp__github__pull_request_read` (method `get_files`, `pullNumber`) или `gh pr view <N> --json files,mergedAt` как фолбэк; дополнительно `git log --merges --name-only -1 <sha>`. Если среди них нет `docs/ROADMAP_INDEX.md` и ни одного файла роадмапа — синхронизация не нужна, зафиксировать это в отчёте.
 2. Выписать из изменённых роадмапов **открытые** пункты: строки таблиц без `✅`, а также пункты с `⏳`/`🔶`/открытым PR. Исторические `✅` issue не получают.
-3. Для каждого пункта найти issue по точному префиксу заголовка:
-   ```bash
-   gh issue list --state all --search '"[<slug>/<item-id>]" in:title' --json number,title,state,labels,url
-   ```
-4. **Нет issue** — создать по шаблону `.github/ISSUE_TEMPLATE/roadmap-item.yml`: заголовок `[<slug>/<item-id>] <короткое имя>`, шапка `Roadmap / File / Item / Phase / Acceptance / Spec / Plan / Depends on`, label `roadmap:<slug>`. Добавить в Project и заполнить поля.
-5. **Issue есть** — обновить заголовок, шапку тела и поля Project (`Roadmap`, `Phase`, `Item`, `Status`, `Spec / Plan`, `Acceptance`, `Depends on`); `Branch`/`PR` заполнять только если они известны. Комментарии и Q&A не переписывать.
+3. Для каждого пункта найти issue по точному префиксу заголовка: `mcp__github__search_issues` (query `[<slug>/<item-id>]`) с проверкой точного заголовка; если поиск не даёт точного совпадения — `mcp__github__list_issues` (label `roadmap:<slug>`, state all) и фильтрация по `title`; `gh issue list --search` — фолбэк.
+4. **Нет issue** — `mcp__github__issue_write` (method `create`, title/body/labels) по шаблону `.github/ISSUE_TEMPLATE/roadmap-item.yml`: заголовок `[<slug>/<item-id>] <короткое имя>`, шапка `Roadmap / File / Item / Phase / Acceptance / Spec / Plan / Depends on`, label `roadmap:<slug>`. Добавить в Project через `mcp__github__projects_write` (`add_project_item`) и заполнить поля; `gh issue create` — фолбэк.
+5. **Issue есть** — `mcp__github__issue_write` (method `update`) для заголовка/тела; поля Project — `mcp__github__projects_write` (`update_project_item`): `Roadmap`, `Phase`, `Item`, `Status`, `Spec / Plan`, `Acceptance`, `Depends on`; `Branch`/`PR` заполнять только если они известны. Комментарии и Q&A не переписывать; `gh` — фолбэк.
 6. **Issue без пункта в роадмапе, дубль или расхождение статуса** — не закрывать автоматически; вынести в отчёт владельцу.
 7. Повторный запуск должен быть идемпотентен: ни одного нового issue, ни одного изменённого поля, если роадмап и GitHub уже согласованы.
 
