@@ -11,7 +11,14 @@
 ничего не пишет и возвращает `"disabled"`, поэтому поведение вызывающих
 скриптов без переменной остаётся прежним.
 
-Зависимости — только стандартная библиотека. Запуск тестов:
+MLflow — необязательный приёмник: `ML_LOG=1` включает журнал, непустой
+`MLFLOW_TRACKING_URI` дополнительно отправляет прогон в MLflow (run.json,
+predictions.jsonl, артефакты, модели и числовые метрики). Сбой MLflow — это
+только warning: результат `finish` (`clickhouse`/`local`/`disabled`) и код
+возврата вызывающего скрипта не меняются.
+
+Зависимости — только стандартная библиотека; `mlflow` импортируется лениво
+и только при включённом журнале с непустым Tracking URI. Запуск тестов:
 
     python3 scripts/ml_experiment_test.py -v
 """
@@ -24,6 +31,7 @@ import logging
 import math
 import os
 import platform
+import re
 import subprocess
 import sys
 import uuid
@@ -70,6 +78,119 @@ def canonical_json(value) -> str:
 def sha256_text(text: str) -> str:
     """SHA-256 строки в hex; используется для config/sample/artifact hash."""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+# MLflow разрешает в именах метрик только `[A-Za-z0-9_.-]` (плюс пробелы и
+# слэши в новых версиях, но канонический вид — без них). Всё остальное
+# заменяется подчёркиванием, чтобы метрика не потерялась из-за имени.
+_METRIC_KEY_RE = re.compile(r"[^A-Za-z0-9_.-]")
+
+# Ограничение MLflow на длину значения param: длинную строку сервер отвергнет,
+# а исключение на старте закрыло бы весь приёмник (и оставило orphan-run).
+_MLFLOW_PARAM_MAX = 6000
+
+
+def _sanitize_key(key: str) -> str:
+    """Имя метрики/параметра в алфавите MLflow."""
+    return _METRIC_KEY_RE.sub("_", str(key))
+
+
+def canonical_run_id(mlflow_run_id: str) -> str:
+    """UUID прогона из идентификатора MLflow.
+
+    MLflow отдаёт 32 hex-символа без дефисов; в ClickHouse `run_id` —
+    `UUID`, поэтому id приводится к каноническому виду. Невалидный или
+    отсутствующий id (например, старый локальный UUID) не роняет прогон:
+    из него детерминированно выводится UUIDv5, так что повторный экспорт
+    того же прогона даёт тот же `run_id`.
+    """
+    try:
+        return str(uuid.UUID(hex=mlflow_run_id))
+    except (ValueError, AttributeError, TypeError):
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, f"mlflow:{mlflow_run_id}"))
+
+
+# Предел вложенности структур метрик — защита от патологических и циклических
+# dict/list. Реальные метрики `cpi_nowcast`/`key_rate_model` мельче (≤4 уровня).
+_MAX_METRIC_DEPTH = 8
+
+
+def flatten_metrics(metrics: dict) -> dict[str, float]:
+    """Числовые метрики для `mlflow.log_metrics` (в том числе вложенные).
+
+    Значение разворачивается рекурсивно: dict даёт `prefix.key`, list/tuple —
+    `prefix.<index>` (например, `windows.0.models.B1.rmse`). Глубина ограничена
+    `_MAX_METRIC_DEPTH`, чтобы циклическая или патологическая структура не
+    уронила приёмник. `None`, bool, строки и неконечные `NaN`/`±Inf`
+    отбрасываются: MLflow принимает только конечные числа. `primary_metric` —
+    это имя главной метрики (строка), а не число, поэтому метрикой оно не
+    становится на любом уровне вложенности (в MLflow уходит тегом). Ключи
+    санитизируются в алфавит MLflow; совпадение после санитизации получает
+    суффикс `_2`, `_3`, ... .
+    """
+    flat: dict[str, float] = {}
+    if not isinstance(metrics, dict):
+        return flat
+
+    def emit(raw_name: str, number: float) -> None:
+        name = _sanitize_key(raw_name)
+        if not name:
+            return
+        if name in flat:
+            # `cv rmse` и `cv_rmse` после санитизации неразличимы; вторую
+            # метрику нельзя молча перезаписать — суффикс сохраняет обе.
+            base = name
+            suffix = 2
+            while name in flat:
+                name = f"{base}_{suffix}"
+                suffix += 1
+            log.warning(
+                "mlflow: ключ метрики %r совпал после санитизации; "
+                "записан как %r",
+                raw_name, name,
+            )
+        flat[name] = number
+
+    def scalar(value):
+        # numpy-скаляры (`np.float32`, ...): приводим по тому же протоколу,
+        # что и `json_safe`, не делая numpy обязательной зависимостью.
+        item = getattr(value, "item", None)
+        if callable(item):
+            converted = item()
+            if converted is not value:  # защита от `.item() -> self`
+                return converted
+        return value
+
+    def walk(node, prefix: str, depth: int) -> None:
+        if depth > _MAX_METRIC_DEPTH:
+            return
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == "primary_metric":
+                    continue
+                key = str(key)
+                if not key:
+                    continue
+                walk(value, f"{prefix}.{key}" if prefix else key, depth + 1)
+            return
+        if isinstance(node, (list, tuple)):
+            for index, value in enumerate(node):
+                part = str(index)
+                walk(value, f"{prefix}.{part}" if prefix else part, depth + 1)
+            return
+        value = scalar(node)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return
+        try:
+            number = float(value)
+        except (OverflowError, ValueError):
+            return
+        if not math.isfinite(number):
+            return
+        emit(prefix, number)
+
+    walk(metrics, "", 0)
+    return flat
 
 
 def json_safe(value):
@@ -292,8 +413,12 @@ class ExperimentRun:
         self.metrics = {}
         self.predictions = []
         self.artifacts = []
+        self._mlflow = None
+        self._models = []
+        self._artifact_paths = []
         self._finished = False
         self._result = ""
+        self._start_mlflow()
 
     def log_metrics(self, metrics: dict) -> None:
         """Добавляет/перезаписывает агрегированные метрики прогона."""
@@ -304,13 +429,171 @@ class ExperimentRun:
         self.predictions.extend(rows)
 
     def log_artifacts(self, paths) -> None:
-        """Добавляет паспорта файлов; `None` и не-файлы пропускаются."""
+        """Добавляет паспорта файлов; `None` и не-файлы пропускаются.
+
+        Существующие файлы дополнительно запоминаются как реальные `Path`
+        для загрузки в MLflow: паспорт нужен ClickHouse, а upload — путь.
+        """
         for path in paths:
             if path is None:
                 continue
             entry = _artifact(path)
             if entry is not None:
                 self.artifacts.append(entry)
+                self._artifact_paths.append(Path(path))
+
+    def log_model(self, name: str, model) -> None:
+        """Запоминает модель для `mlflow.catboost.log_model` в `finish`."""
+        self._models.append((name, model))
+
+    def _mlflow_tags(self) -> dict:
+        """Теги MLflow: хеши и git-снимок, без содержимого конфига/выборки."""
+        data_asof = self.data_asof
+        if isinstance(data_asof, (date, datetime)):
+            data_asof = data_asof.isoformat()
+        return {
+            "experiment": str(self.experiment),
+            "author": str(self.git.get("author", "")),
+            "git_sha": str(self.git.get("git_sha", "")),
+            "git_branch": str(self.git.get("git_branch", "")),
+            "git_dirty": str(self.git.get("git_dirty", 0)),
+            "config_hash": sha256_text(canonical_json(self.config)),
+            "sample_hash": sha256_text(canonical_json(self.sample)),
+            "data_asof": str(data_asof),
+            "spec_path": str(self.spec_path),
+        }
+
+    def _mlflow_params(self) -> dict:
+        """Скалярные ключи конфига; вложенные структуры остаются в run.json.
+
+        Лимит длины param (6000 символов) и требование скалярности не
+        позволяют отправить конфиг целиком; списки/словари и `None`
+        пропускаются, неконечные числа — тоже. Строка длиннее лимита
+        пропускается с warning: `log_params` на ней поднял бы исключение и
+        закрыл бы весь приёмник на старте.
+        """
+        if not isinstance(self.config, dict):
+            return {}
+        params = {}
+        for key, value in self.config.items():
+            if isinstance(value, bool):
+                value = str(value)
+            if not isinstance(value, (str, int, float)):
+                continue
+            if isinstance(value, float) and not math.isfinite(value):
+                continue
+            name = _sanitize_key(key)
+            if not name:
+                continue
+            if isinstance(value, str) and len(value) > _MLFLOW_PARAM_MAX:
+                log.warning(
+                    "mlflow: параметр %s длиннее %d символов — пропущен",
+                    name, _MLFLOW_PARAM_MAX,
+                )
+                continue
+            params[name] = value
+        return params
+
+    def _start_mlflow(self) -> None:
+        """Лениво подключает MLflow, если он включён и задан Tracking URI.
+
+        Любая ошибка (нет пакета, сервер недоступен, битый конфиг) — только
+        warning: прогон продолжается с локальным UUID версии 4.1. Успешный
+        старт заменяет `run_id` каноническим UUID MLflow-run'а, поэтому
+        ClickHouse, локальный fallback и MLflow-артефакты несут один id.
+        """
+        uri = os.environ.get("MLFLOW_TRACKING_URI")
+        if not self.enabled or not uri:
+            return
+        # Прямой запуск скрипта (без make) не получает MLFLOW_HTTP_ENV из
+        # Makefile: те же короткие таймауты ставятся здесь, чтобы недоступный
+        # сервер не подвешивал прогон. setdefault не перекрывает явные
+        # настройки пользователя/`make`.
+        os.environ.setdefault("MLFLOW_HTTP_REQUEST_TIMEOUT", "10")
+        os.environ.setdefault("MLFLOW_HTTP_REQUEST_MAX_RETRIES", "2")
+        try:
+            import mlflow
+        except Exception as exc:
+            # Не только ImportError: конфликт protobuf/pydantic в транзитивных
+            # зависимостях всплывает TypeError/AttributeError уже при импорте.
+            # Любая такая ошибка отключает приёмник, а не роняет эксперимент.
+            log.warning("mlflow недоступен: %s", exc)
+            return
+
+        started = None
+        try:
+            mlflow.set_tracking_uri(uri)
+            mlflow.set_experiment(self.experiment)
+            started = mlflow.start_run(
+                run_name=self.run_name, tags=self._mlflow_tags()
+            )
+            self.run_id = canonical_run_id(started.info.run_id)
+            params = self._mlflow_params()
+            if params:
+                mlflow.log_params(params)
+            self._mlflow = mlflow
+        except Exception as exc:
+            log.warning("mlflow: %s", exc)
+            if started is not None:
+                # Run уже создан на сервере: закрываем его FAILED, чтобы он
+                # не остался вечно RUNNING из-за сбоя логирования параметров.
+                self._mlflow = mlflow
+                self._end_mlflow("FAILED")
+            else:
+                self._mlflow = None
+
+    def _end_mlflow(self, status: str) -> None:
+        """`end_run` ровно один раз; повторный вызов — no-op."""
+        mlflow = self._mlflow
+        if mlflow is None:
+            return
+        try:
+            mlflow.end_run(status=status)
+        except Exception as exc:
+            log.warning("mlflow: %s", exc)
+        finally:
+            self._mlflow = None
+
+    def _log_mlflow(self, run_row: dict, prediction_rows: list,
+                    status: str) -> None:
+        """Best-effort отправка прогона в MLflow; сбой — только warning.
+
+        Вызывается после сборки `run_row`/`prediction_rows`, поэтому в
+        артефактах лежит та же строка (с каноническим `run_id`), что уйдёт
+        в ClickHouse. Сбой любого шага не меняет результат `finish`:
+        run закрывается `FAILED`, исключение наружу не выходит.
+        """
+        mlflow = self._mlflow
+        if mlflow is None:
+            return
+        try:
+            mlflow.log_text(canonical_json(run_row), "run.json")
+            if prediction_rows:
+                mlflow.log_text(
+                    json_each_row(prediction_rows), "predictions.jsonl"
+                )
+            for path in self._artifact_paths:
+                mlflow.log_artifact(str(path))
+            for name, model in self._models:
+                try:
+                    mlflow.catboost.log_model(model, name=name)
+                except Exception as exc:
+                    # Сломанная модель не должна уносить весь прогон.
+                    log.warning(
+                        "mlflow: модель %s не залогирована: %s", name, exc
+                    )
+            metrics = flatten_metrics(self.metrics)
+            if metrics:
+                mlflow.log_metrics(metrics)
+            primary = self.metrics.get("primary_metric")
+            if primary is not None:
+                mlflow.set_tags({"primary_metric": str(primary)})
+            self._end_mlflow(
+                "FINISHED" if status == "finished" else "FAILED"
+            )
+        except Exception as exc:
+            log.warning("mlflow: %s", exc)
+            self._end_mlflow("FAILED")
 
     def _run_row(self, status: str, notes: str, finished_at: datetime) -> dict:
         config_json = canonical_json(self.config)
@@ -423,6 +706,8 @@ class ExperimentRun:
         """Пишет предсказания и паспорт; возвращает `clickhouse`/`local`/`disabled`.
 
         Сначала одним batch `ml_predictions` (если они есть), затем `ml_runs`.
+        Перед записью в ClickHouse тот же прогон best-effort уходит в MLflow
+        (если включён); сбой приёмника — только warning и не меняет результат.
         Паспорт пишется ПОСЛЕДНИМ, поэтому сбой вставки предсказаний не может
         оставить `finished`-паспорт без фолдов: в этом случае паспорт не
         пишется вовсе. Ни ошибка ClickHouse (`ClickHouseError`, `OSError`,
@@ -445,6 +730,9 @@ class ExperimentRun:
         try:
             run_row = self._run_row(status, notes, finished_at)
             prediction_rows = self._prediction_rows(finished_at)
+            # MLflow пишется до ClickHouse: артефакты несут тот же run_row,
+            # что уйдёт в таблицу, а сбой приёмника ничего не меняет.
+            self._log_mlflow(run_row, prediction_rows, status)
             if prediction_rows:
                 ch_exec(insert_sql("ml_predictions", prediction_rows))
             ch_exec(insert_sql("ml_runs", [run_row]))
@@ -458,10 +746,12 @@ class ExperimentRun:
                 "прогон %s не сериализован (%s); минимальный локальный паспорт",
                 self.run_id, note,
             )
+            self._end_mlflow("FAILED")
             self._write_minimal_run(note, finished_at)
             self._result = "local"
             return self._result
         except (ClickHouseError, OSError, http.client.HTTPException) as exc:
+            self._end_mlflow("FAILED")
             if run_row is None:
                 self._write_minimal_run(
                     f"{type(exc).__name__}: {exc}", finished_at

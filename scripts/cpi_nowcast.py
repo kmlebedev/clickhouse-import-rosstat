@@ -2953,6 +2953,24 @@ def run_summary(
             ))
             _print_nowcast(nowcast)
 
+        # Модель полной выборки — тот фит, что сделал `current_nowcast`; читаем
+        # его сразу, до walk-forward: `evaluate_windows` перезапишет `last_fit`
+        # моделью последнего фолда, а это уже не full-sample fit. `nowcast.direct`
+        # — провенанс: если direct-модель в этом прогоне вырождена и пропущена,
+        # `last_fit` может хранить фит прошлого вызова, логировать его нельзя.
+        if (
+            logger is not None
+            and getattr(logger, "log_model", None)
+            and nowcast is not None
+            and nowcast.direct is not None
+        ):
+            fit = fit_catboost_direct.last_fit
+            if fit is not None:
+                try:
+                    logger.log_model("model", fit.model)
+                except Exception as exc:
+                    log.warning("модель не залогирована: %s: %s", type(exc).__name__, exc)
+
         runs = evaluate_windows(rows, MODELS, window_specs(start, embargo_months))
         _print_walk_forward(runs)
         weights = bottomup_weight_reports(rows, runs)

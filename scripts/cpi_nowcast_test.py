@@ -44,6 +44,7 @@ import random
 import statistics
 import sys
 import tempfile
+import types
 import unittest
 import unittest.mock
 import warnings
@@ -90,7 +91,7 @@ ONE_DAY = timedelta(days=1)
 # Модульные хуки убирают переменные на время набора и возвращают их после;
 # тесты, которые сами выставляют `ML_LOG` (через `patch.dict`), работают как
 # раньше.
-_ML_ENV_VARS = ("ML_LOG", "ML_RUN_NAME", "ML_LOCAL_DIR")
+_ML_ENV_VARS = ("ML_LOG", "ML_RUN_NAME", "ML_LOCAL_DIR", "MLFLOW_TRACKING_URI")
 _SAVED_ML_ENV = {}
 
 
@@ -209,6 +210,29 @@ class FakeLogger:
         self.finished = status
         self.notes = notes
         return "fake"
+
+
+class RecordingLogger(FakeLogger):
+    """FakeLogger с `log_model`: запоминает имена и модели артефактов (Task 3).
+
+    `FakeLogger` намеренно остаётся БЕЗ `log_model`: `run_summary` обязан
+    пропускать журнал без этого метода (duck typing), и это проверяют все
+    существующие тесты на `FakeLogger`.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.models = []
+
+    def log_model(self, name, model):
+        self.models.append((name, model))
+
+
+class FailingModelLogger(RecordingLogger):
+    """Журнал, у которого `log_model` падает: предупреждение, а не падение run'а."""
+
+    def log_model(self, name, model):
+        raise RuntimeError("хранилище моделей недоступно")
 
 
 def summary_value(text: str, label: str) -> str:
@@ -1078,6 +1102,31 @@ def cheap_models() -> dict:
     }
 
 
+def provenance_models(rows: list) -> tuple[dict, list, list]:
+    """`cheap_models` с настоящим побочным эффектом `fit_catboost_direct`.
+
+    Каждый вызов direct-модели (сначала полная выборка в `current_nowcast`, затем
+    фолды walk-forward) кладёт НОВЫЙ фит в `fit_catboost_direct.last_fit`; список
+    `direct_calls` хранит все модели по порядку, `full_sample` — только фиты на
+    всей выборке. Так тест отличает full-sample фит от последнего фолда: перенос
+    `log_model` за `evaluate_windows` залогировал бы чужую (fold) модель.
+    """
+    models = cheap_models()
+    direct_calls = []
+    full_sample = []
+
+    def catboost_direct(train, row):
+        model = f"direct-{len(direct_calls)}"
+        direct_calls.append(model)
+        if len(train) == len(rows):
+            full_sample.append(model)
+        cm.fit_catboost_direct.last_fit = types.SimpleNamespace(model=model)
+        return float(row.features["y_lag1"])
+
+    models[cm.MODEL_CATBOOST_DIRECT] = catboost_direct
+    return models, direct_calls, full_sample
+
+
 class TestRunSummaryExperimentLog(unittest.TestCase):
     """Task 3: паспорт run'а, fold-предсказания, метрики и артефакты."""
 
@@ -1165,6 +1214,145 @@ class TestRunSummaryExperimentLog(unittest.TestCase):
             {path.name for path in fake.artifacts},
             {cm.REPORT_NAME, cm.PREDICTIONS_NAME, cm.FORECAST_NAME},
         )
+
+    def test_run_summary_logs_catboost_direct_model(self):
+        # Task 3: полная выборка — модель фита `current_nowcast` уходит в журнал
+        # как артефакт "model" (имя зарегистрированной модели позже задаёт CLI
+        # реестра). Stub direct-модели воспроизводит настоящий побочный эффект:
+        # каждый вызов (полная выборка, затем walk-forward) перезаписывает
+        # `last_fit`. Журнал обязан получить full-sample модель: перенос вызова
+        # за `evaluate_windows` залогировал бы модель последнего фолда.
+        world = experiment_world()
+        rows, _ = build_world(world)
+        models, direct_calls, full_sample = provenance_models(rows)
+        fake = RecordingLogger()
+        previous_fit = cm.fit_catboost_direct.last_fit
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                with self.patched_world(world, models), contextlib.redirect_stdout(io.StringIO()):
+                    code = cm.run_summary(
+                        start=24,
+                        embargo_months=1,
+                        out_dir=Path(tmp),
+                        today=world["today"],
+                        ml_log=True,
+                        logger=fake,
+                    )
+        finally:
+            cm.fit_catboost_direct.last_fit = previous_fit
+        self.assertEqual(code, 0)
+        # Direct-модель зовётся и на полной выборке, и на фолдах — иначе тест
+        # не отличил бы full-sample фит от последнего фолда.
+        self.assertEqual(len(full_sample), 1)
+        self.assertGreater(len(direct_calls), len(full_sample))
+        self.assertEqual(fake.models, [("model", full_sample[0])])
+        self.assertNotEqual(fake.models[0][1], direct_calls[-1])
+        self.assertEqual(fake.finished, "finished")
+
+    def test_run_summary_without_nowcast_does_not_log_model(self):
+        # Нет живого nowcast'а — нет и модели полной выборки. Сентинел в
+        # `last_fit` делает проверку адресной: без клаузы `nowcast is not None`
+        # guard залогировал бы устаревший фит, и тест упал бы (а не проходил
+        # из-за случайно пустого модульного глобала).
+        months = [date(2022, m, 1) for m in range(1, 13)]
+        world = synthetic_world(months=months, fao=[])  # пустая выборка
+        fake = RecordingLogger()
+        sentinel_fit = types.SimpleNamespace(model=object())
+        previous_fit = cm.fit_catboost_direct.last_fit
+        cm.fit_catboost_direct.last_fit = sentinel_fit
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                with self.patched_world(world), contextlib.redirect_stdout(io.StringIO()):
+                    code = cm.run_summary(
+                        out_dir=Path(tmp),
+                        today=date(2026, 10, 16),
+                        ml_log=True,
+                        logger=fake,
+                    )
+        finally:
+            cm.fit_catboost_direct.last_fit = previous_fit
+        self.assertEqual(code, 0)
+        self.assertEqual(fake.models, [])
+        self.assertEqual(fake.finished, "empty")
+
+    def test_run_summary_skipped_direct_does_not_log_stale_fit(self):
+        # Провенанс: `current_nowcast` может вернуть прогноз БЕЗ direct-модели
+        # (`DegenerateWindowError` → `direct=None`), а `last_fit` при этом
+        # хранит фит прошлого вызова. Гейт по `nowcast.direct` не должен
+        # логировать чужую модель.
+        world = experiment_world()
+        models = cheap_models()
+        rows, _ = build_world(world)
+        nowcast = cm.Nowcast(
+            target_month=date(2026, 1, 1),
+            data_asof=world["today"],
+            window_weeks=1,
+            window_last=date(2026, 1, 9),
+            direct=None,
+            bottomup=0.1,
+            weights=None,
+            benchmarks={},
+            sample_size=len(rows),
+            note="direct-модель вырождена",
+        )
+        fake = RecordingLogger()
+        stale_fit = types.SimpleNamespace(model=object())
+        previous_fit = cm.fit_catboost_direct.last_fit
+        cm.fit_catboost_direct.last_fit = stale_fit
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                with (
+                    self.patched_world(world, models),
+                    unittest.mock.patch.object(
+                        cm, "current_nowcast", return_value=(nowcast, "")
+                    ),
+                    contextlib.redirect_stdout(io.StringIO()),
+                ):
+                    code = cm.run_summary(
+                        start=24,
+                        embargo_months=1,
+                        out_dir=Path(tmp),
+                        today=world["today"],
+                        ml_log=True,
+                        logger=fake,
+                    )
+        finally:
+            cm.fit_catboost_direct.last_fit = previous_fit
+        self.assertEqual(code, 0)
+        self.assertEqual(fake.models, [])
+        self.assertEqual(fake.finished, "finished")
+
+    def test_log_model_failure_warns_and_keeps_exit_code(self):
+        # Журнал — побочный слой: сбой `log_model` даёт предупреждение, но не
+        # меняет код возврата и не мешает `finish("finished")`.
+        world = experiment_world()
+        models = cheap_models()
+        fake = FailingModelLogger()
+        sentinel_fit = types.SimpleNamespace(model=object())
+        previous_fit = cm.fit_catboost_direct.last_fit
+        cm.fit_catboost_direct.last_fit = sentinel_fit
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                with (
+                    self.patched_world(world, models),
+                    contextlib.redirect_stdout(io.StringIO()),
+                    self.assertLogs(cm.log, level="WARNING") as captured,
+                ):
+                    code = cm.run_summary(
+                        start=24,
+                        embargo_months=1,
+                        out_dir=Path(tmp),
+                        today=world["today"],
+                        ml_log=True,
+                        logger=fake,
+                    )
+        finally:
+            cm.fit_catboost_direct.last_fit = previous_fit
+        self.assertEqual(code, 0)
+        self.assertEqual(fake.finished, "finished")
+        self.assertEqual(fake.models, [])
+        self.assertIn("модель не залогирована", "\n".join(captured.output))
+        self.assertIn("RuntimeError", "\n".join(captured.output))
 
     def test_logging_failure_does_not_change_the_exit_code(self):
         # Журнал — побочный слой: ValueError сборки PredictionRow (например, на

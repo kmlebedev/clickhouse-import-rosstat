@@ -59,6 +59,25 @@ MCP_CMD      := uv run --with mcp-clickhouse==$(MCP_VERSION) --python $(MCP_PY) 
 MCP_CHECK_HOST ?= localhost
 MCP_CHECK_PORT ?= $(CH_HTTP_PORT)
 
+# MLflow (infra/4.2): сервер на 127.0.0.1:$(MLFLOW_PORT), SQLite-бэкенд и локальные артефакты
+# в $(MLFLOW_HOME) (build/ gitignored) — без PostgreSQL, MinIO, S3 и Docker.
+MLFLOW_VERSION      ?= 3.17.1
+MLFLOW_HOME         ?= $(BUILD_DIR)/mlflow
+MLFLOW_PORT         ?= 5000
+MLFLOW_TRACKING_URI ?= http://127.0.0.1:$(MLFLOW_PORT)
+MLFLOW_DB           := $(abspath $(MLFLOW_HOME)/mlflow.db)
+MLFLOW_ARTIFACTS    := $(abspath $(MLFLOW_HOME)/artifacts)
+MLFLOW_PID          := $(MLFLOW_HOME)/mlflow.pid
+MLFLOW_LOG          := $(MLFLOW_HOME)/mlflow.log
+
+# 1 — добавить mlflow в uv-окружение прогона и включить MLflow-приёмник.
+# При MLFLOW=0 MLFLOW_ENV передаёт пустой MLFLOW_TRACKING_URI: переменная из $(ROSSTAT_ENV)
+# экспортируется, но приёмник остаётся выключенным.
+MLFLOW ?= 0
+MLFLOW_PKG    := $(if $(filter 1,$(MLFLOW)),--with "mlflow==$(MLFLOW_VERSION)",)
+MLFLOW_ENV    := $(if $(filter 1,$(MLFLOW)),MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI),MLFLOW_TRACKING_URI=)
+MLFLOW_HTTP_ENV := MLFLOW_HTTP_REQUEST_TIMEOUT=10 MLFLOW_HTTP_REQUEST_MAX_RETRIES=2
+
 # Деплой на staging (см. deploy/staging/README.md). Хост задаётся без правок Makefile.
 STAGING_HOST     ?= palmshell
 STAGING_BIN_DIR  ?= /root/.local/bin
@@ -69,7 +88,7 @@ DAGU_VERSION     ?= v2.18.2
 MKDOCS_VERSION ?= 9.7.7
 MKDOCS := uv run --with mkdocs-material==$(MKDOCS_VERSION) --python 3.12 mkdocs
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model key-rate-llm-forecast key-rate-forecast-log cpi-nowcast cpi-monthly cb-comp-parity cb-comp-parity-test cb-comp-proxy edisclosure-login edisclosure-collect docs-check docs-build docs-serve
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-register mlflow-promote mlflow-models dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model key-rate-llm-forecast key-rate-forecast-log cpi-nowcast cpi-monthly cb-comp-parity cb-comp-parity-test cb-comp-proxy edisclosure-login edisclosure-collect docs-check docs-build docs-serve
 
 all: lint test build build-ingest
 
@@ -150,6 +169,109 @@ ch-sql:
 	@test -n "$(CH_BIN)" || { echo "clickhouse не найден: задайте CH_BIN=/путь/к/clickhouse"; exit 1; }
 	@curl -sf -m 2 http://localhost:$(CH_HTTP_PORT)/ping >/dev/null 2>&1 || { echo "ClickHouse не отвечает: make ch-up"; exit 1; }
 	"$(CH_BIN)" client --user "$(CH_USER)" --password "$(CH_USER_PASSWORD)" --multiquery < "$(FILE)"
+
+# Локальный MLflow (infra/4.2). Сервер запускается через uv run --with: mlflow не попадает
+# в зависимости репозитория. Окружение прогревается до старта, чтобы 60-секундный цикл
+# готовности не тратился на первое скачивание пакета.
+#
+# Артефакты — через прокси сервера: --artifacts-destination задаёт каталог хранения, а
+# --default-artifact-root НЕ передаётся, чтобы новый эксперимент получил корень
+# mlflow-artifacts:/ и --serve-artifacts действительно проксировал upload с клиента.
+# С --default-artifact-root <локальный путь> MLflow возвращает его как artifact_location,
+# и удалённый клиент (staging через SSH-туннель) писал бы в несуществующий локальный путь.
+# ⚠️ Уже созданный default experiment хранит старый artifact_location в SQLite: его нужно
+# сбросить/пересоздать (или завести новый эксперимент) — иначе проксирование не включится.
+#
+# PID-файл проверяется по идентичности процесса (`ps -p PID -o command=` содержит mlflow):
+# устаревший/чужой PID не считается работающим сервером.
+mlflow-up:
+	@if curl -sf -m 2 http://127.0.0.1:$(MLFLOW_PORT)/health >/dev/null 2>&1; then \
+		echo "MLflow уже отвечает на порту $(MLFLOW_PORT)"; \
+	else \
+		if [ -f "$(MLFLOW_PID)" ]; then \
+			pid=$$(cat "$(MLFLOW_PID)"); \
+			if kill -0 $$pid 2>/dev/null && ps -p $$pid -o command= | grep -q mlflow; then \
+				echo "MLflow уже запускается/запущен (PID $$pid), второй сервер не поднимается"; \
+				exit 0; \
+			fi; \
+			if kill -0 $$pid 2>/dev/null; then \
+				echo "PID-файл $(MLFLOW_PID) устарел: PID $$pid принадлежит не MLflow — файл удалён, процесс не тронут"; \
+			else \
+				echo "PID-файл $(MLFLOW_PID) устарел: процесс $$pid не запущен — файл удалён"; \
+			fi; \
+			rm -f "$(MLFLOW_PID)"; \
+		fi; \
+		mkdir -p "$(MLFLOW_HOME)" "$(MLFLOW_ARTIFACTS)"; \
+		echo "прогрев uv-окружения mlflow==$(MLFLOW_VERSION) (первый запуск скачивает пакет)..."; \
+		uv run --with "mlflow==$(MLFLOW_VERSION)" --python 3.12 python -c "pass" || exit 1; \
+		nohup uv run --with "mlflow==$(MLFLOW_VERSION)" --python 3.12 mlflow server \
+			--host 127.0.0.1 --port $(MLFLOW_PORT) --workers 1 \
+			--backend-store-uri "sqlite:///$(MLFLOW_DB)" \
+			--artifacts-destination "$(MLFLOW_ARTIFACTS)" --serve-artifacts >"$(MLFLOW_LOG)" 2>&1 & \
+		echo $$! > "$(MLFLOW_PID)"; \
+		for i in $$(seq 1 60); do kill -0 $$(cat "$(MLFLOW_PID)") 2>/dev/null || break; curl -sf -m 1 http://127.0.0.1:$(MLFLOW_PORT)/health >/dev/null 2>&1 && break; sleep 1; done; \
+		if kill -0 $$(cat "$(MLFLOW_PID)") 2>/dev/null && curl -sf -m 2 http://127.0.0.1:$(MLFLOW_PORT)/health >/dev/null 2>&1; then \
+			echo "MLflow запущен на порту $(MLFLOW_PORT), PID $$(cat "$(MLFLOW_PID)"), лог $(MLFLOW_LOG)"; \
+		else \
+			pid=$$(cat "$(MLFLOW_PID)"); \
+			kill $$pid 2>/dev/null || true; \
+			for i in $$(seq 1 10); do kill -0 $$pid 2>/dev/null || break; sleep 1; done; \
+			kill -9 $$pid 2>/dev/null || true; \
+			rm -f "$(MLFLOW_PID)"; \
+			echo "MLflow не поднялся, хвост $(MLFLOW_LOG):"; tail -30 "$(MLFLOW_LOG)"; exit 1; \
+		fi; \
+	fi
+
+# Останавливает сервер и ждёт завершения до 60 с. PID-файл удаляется только после
+# фактического завершения; БД и артефакты не трогаются. Процесс из PID-файла
+# проверяется по идентичности: чужой/устаревший PID не убивается, файл удаляется.
+mlflow-down:
+	@if [ -f "$(MLFLOW_PID)" ]; then \
+		pid=$$(cat "$(MLFLOW_PID)"); \
+		if ! kill -0 $$pid 2>/dev/null; then \
+			echo "PID-файл $(MLFLOW_PID) устарел: процесс $$pid не запущен — файл удалён"; \
+			rm -f "$(MLFLOW_PID)"; \
+		elif ! ps -p $$pid -o command= | grep -q mlflow; then \
+			echo "PID $$pid из $(MLFLOW_PID) принадлежит не MLflow — файл удалён, процесс не тронут"; \
+			rm -f "$(MLFLOW_PID)"; \
+		else \
+			kill $$pid; \
+			for i in $$(seq 1 60); do kill -0 $$pid 2>/dev/null || break; sleep 1; done; \
+			if kill -0 $$pid 2>/dev/null; then \
+				echo "MLflow не завершился за 60 с, PID-файл $(MLFLOW_PID) сохранён: повторите make mlflow-down"; \
+			else \
+				rm -f "$(MLFLOW_PID)"; echo "MLflow остановлен"; \
+			fi; \
+		fi; \
+	else \
+		echo "PID-файл $(MLFLOW_PID) не найден или процесс не запущен (сервер, поднятый вне make, не останавливается)"; \
+	fi
+
+mlflow-status:
+	@curl -sf -m 2 http://127.0.0.1:$(MLFLOW_PORT)/health >/dev/null 2>&1 && echo "MLflow отвечает на порту $(MLFLOW_PORT)" || echo "MLflow не отвечает на порту $(MLFLOW_PORT)"
+
+# Экспорт прогонов MLflow в ClickHouse (ml_runs/ml_predictions): make mlflow-export
+# [ARGS="--since 2026-10-01 --limit 20 --dry-run"]. mlflow ставится через uv --with,
+# в зависимости репозитория не попадает.
+mlflow-export:
+	MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) $(MLFLOW_HTTP_ENV) uv run --with "mlflow==$(MLFLOW_VERSION)" --python 3.12 \
+		python3 scripts/mlflow_export.py --tracking-uri $(MLFLOW_TRACKING_URI) $(ARGS)
+
+# Реестр моделей MLflow: register/promote/list. Аргументы подкоманды передаются через ARGS:
+# make mlflow-register ARGS="--run-id <id> --name cpi_nowcast_catboost_direct"
+# make mlflow-promote ARGS="--name cpi_nowcast_catboost_direct --version 1 [--alias challenger]"
+# make mlflow-models [ARGS="--name cpi_nowcast_catboost_direct"]
+mlflow-register:
+	$(MLFLOW_HTTP_ENV) uv run --with "mlflow==$(MLFLOW_VERSION)" --python 3.12 \
+		python3 scripts/mlflow_registry.py --tracking-uri $(MLFLOW_TRACKING_URI) register $(ARGS)
+
+mlflow-promote:
+	$(MLFLOW_HTTP_ENV) uv run --with "mlflow==$(MLFLOW_VERSION)" --python 3.12 \
+		python3 scripts/mlflow_registry.py --tracking-uri $(MLFLOW_TRACKING_URI) promote $(ARGS)
+
+mlflow-models:
+	$(MLFLOW_HTTP_ENV) uv run --with "mlflow==$(MLFLOW_VERSION)" --python 3.12 \
+		python3 scripts/mlflow_registry.py --tracking-uri $(MLFLOW_TRACKING_URI) list $(ARGS)
 
 # Проверка окружения разработчика: наличие инструментов и версий.
 dev-check:
@@ -262,7 +384,7 @@ ARGS ?=
 # без пина резолвер uv падает). Пин делает цель независимой от порядка PATH и
 # повторяет конвенцию репозитория для uv-прогонов (README/ARCHITECTURE: --python 3.12).
 key-rate-model:
-	uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/key_rate_model.py $(ARGS)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/key_rate_model.py $(ARGS)
 
 # Запись текущего прогноза ставки в forecast_log через ingest (POST /v1/key_rate_forecast).
 # Читает локальные артефакты key_rate_model_forecast.json (и, при наличии,
@@ -285,7 +407,7 @@ key-rate-llm-forecast:
 # с ML_LOG=1 пишет паспорт и fold-предсказания.
 # Фикстуры: make cpi-nowcast ARGS="--export-fixtures scripts/testdata/cpi_nowcast"
 cpi-nowcast:
-	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_nowcast.py $(ARGS)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_nowcast.py $(ARGS)
 
 # ML-трек v2: месячный nowcast ИПЦ с мониторингом предприятий ЦБ (с МП vs без МП).
 # Читает ClickHouse, пишет локальные артефакты; по умолчанию в ClickHouse НЕ пишет;
@@ -399,12 +521,26 @@ deploy-staging-mcp: staging-precheck
 	@echo "прогрев кэша uv (скачивание mcp-clickhouse==$(MCP_VERSION))..."
 	@ssh $(STAGING_HOST) '$(STAGING_BIN_DIR)/uv tool run --from mcp-clickhouse==$(MCP_VERSION) python -c "pass" >/dev/null 2>&1 || true'
 
-# Полный деплой: бинарь → dagu → mcp → DAG'и → проверка ДО включения → включение → smoke.
+# MLflow: юнит + каталоги состояния + прогрев кэша uv. Версия в юните обязана совпадать
+# с MLFLOW_VERSION: расхождение — ошибка деплоя (grep ниже), иначе сервис молча
+# поднялся бы на другой версии, чем Makefile/бэкап-инструкция.
+# Прогрев не роняет деплой: пакет всё равно разрешится при старте сервиса.
+deploy-staging-mlflow: staging-precheck
+	@grep -qF "mlflow==$(MLFLOW_VERSION)" deploy/staging/mlflow.service || { \
+		echo "deploy/staging/mlflow.service: ExecStart не содержит mlflow==$(MLFLOW_VERSION)"; \
+		echo "обновите версию в юните (она обязана совпадать с MLFLOW_VERSION) и повторите"; exit 1; }
+	scp deploy/staging/mlflow.service $(STAGING_HOST):/etc/systemd/system/mlflow.service
+	ssh $(STAGING_HOST) 'systemctl daemon-reload'
+	ssh $(STAGING_HOST) 'install -d -m 755 /var/lib/mlflow /var/lib/mlflow/artifacts'
+	@echo "прогрев кэша uv (скачивание mlflow==$(MLFLOW_VERSION))..."
+	@ssh $(STAGING_HOST) '$(STAGING_BIN_DIR)/uv run --with mlflow==$(MLFLOW_VERSION) --python 3.12 python -c "pass" >/dev/null 2>&1 || true'
+
+# Полный деплой: бинарь → dagu → mcp → mlflow → DAG'и → проверка ДО включения → включение → smoke.
 #
 # Порядок критичен. Сервисы включаются последними: dagu после `enable --now` немедленно
 # начинает выполнять DAG'и по расписанию, поэтому сначала проверяется, что бинарь и
 # DAG-файлы на месте (deploy-staging-preflight), и только потом сервисы запускаются.
-deploy-staging: deploy-staging-binary deploy-staging-dagu deploy-staging-mcp
+deploy-staging: deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow
 	ssh $(STAGING_HOST) 'install -d -m 755 /root/dagu'
 	scp dagu/*.yaml $(STAGING_HOST):/root/dagu/
 	# scp копирует, но не удаляет: снятый с репозитория DAG остался бы на хосте и продолжил бы
@@ -413,11 +549,11 @@ deploy-staging: deploy-staging-binary deploy-staging-dagu deploy-staging-mcp
 	# его в 09:47). Список пополнять при каждом удалении DAG из dagu/, иначе прунинг неполон.
 	ssh $(STAGING_HOST) 'rm -f /root/dagu/surveys.yaml'
 	@$(MAKE) deploy-staging-preflight --no-print-directory
-	ssh $(STAGING_HOST) 'systemctl enable --now dagu mcp-clickhouse'
+	ssh $(STAGING_HOST) 'systemctl enable --now dagu mcp-clickhouse mlflow'
 	@$(MAKE) deploy-staging-smoke --no-print-directory || { \
 		echo ""; \
 		echo "Сервисы оставлены ВКЛЮЧЁННЫМИ, а dagu выполняет DAG-и по расписанию."; \
-		echo "Чтобы остановить: ssh $(STAGING_HOST) 'systemctl disable --now dagu mcp-clickhouse'"; \
+		echo "Чтобы остановить: ssh $(STAGING_HOST) 'systemctl disable --now dagu mcp-clickhouse mlflow'"; \
 		echo "После исправления повторите: make deploy-staging"; exit 1; }
 	@echo "Готово. Далее: make mcp-user-staging (если kimi_reader ещё не создан)."
 
@@ -449,12 +585,29 @@ deploy-staging-smoke:
 	@ssh $(STAGING_HOST) 'set -a; . $(STAGING_ENV_FILE); set +a; \
 		body=$$(curl -s -m 10 -X POST http://127.0.0.1:8000/mcp -H "Content-Type: application/json" -H "Authorization: Bearer $$CLICKHOUSE_MCP_AUTH_TOKEN" -H "Accept: application/json, text/event-stream" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}"); \
 		echo "$$body" | grep -q "Missing session ID" && echo "OK   MCP отвечает с токеном" || { echo "FAIL MCP с токеном ответил: $$body"; exit 1; }'
+	@echo "--- smoke: mlflow /health ---"
+	@ssh $(STAGING_HOST) 'systemctl is-active --quiet mlflow || { \
+		echo "FAIL mlflow не запущен: systemctl status mlflow; journalctl -u mlflow -n 50"; exit 1; }; \
+		code=000; \
+		for i in $$(seq 1 10); do \
+			code=$$(curl -s -o /dev/null -w "%{http_code}" -m 5 http://127.0.0.1:5000/health); \
+			[ "$$code" = "200" ] && { echo "OK   MLflow /health = 200"; exit 0; }; \
+			sleep 2; \
+		done; \
+		echo "FAIL mlflow /health: последний ответ HTTP $$code после 10 попыток — смотрите journalctl -u mlflow -n 50"; exit 1'
 
-# Обновление ТОЛЬКО dagu и mcp-clickhouse до версий из репозитория.
+# Обновление ТОЛЬКО dagu, mcp-clickhouse и mlflow до версий из репозитория.
 # apt upgrade сюда НЕ входит: ClickHouse (данные) и Grafana обновляются вручную.
-upgrade-staging: deploy-staging-dagu deploy-staging-mcp
-	ssh $(STAGING_HOST) 'systemctl restart dagu mcp-clickhouse'
-	@echo "сервисы перезапущены на версиях: dagu $(DAGU_VERSION), mcp-clickhouse $(MCP_VERSION)"
+#
+# ⚠️ MLflow: этот таргет только копирует юнит и перезапускает сервис. Обновление
+# ВЕРСИИ MLflow обязано идти документированной последовательностью
+# stop → `mlflow db upgrade` → start (deploy/staging/README.md, «MLflow на staging»):
+# новая версия на непромигрированной SQLite не поднимется, а `db upgrade` под живым
+# сервером трогает БД, которой владеет процесс (SQLite — один писатель).
+upgrade-staging: deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow
+	@echo "⚠️  MLflow: смена версии — только stop → mlflow db upgrade → start (deploy/staging/README.md); upgrade-staging версию не мигрирует"
+	ssh $(STAGING_HOST) 'systemctl restart dagu mcp-clickhouse mlflow'
+	@echo "сервисы перезапущены на версиях: dagu $(DAGU_VERSION), mcp-clickhouse $(MCP_VERSION), mlflow $(MLFLOW_VERSION)"
 	@$(MAKE) deploy-staging-smoke --no-print-directory
 
 # Создание kimi_reader на staging. Пароль исполнителя (default) и пароль создаваемого
