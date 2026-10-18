@@ -115,18 +115,29 @@ ssh palmshell 'journalctl -u mlflow -n 50 --no-pager'
 копирование файла живой БД `cp`/`scp` может дать битую копию.
 
 ```bash
-ssh palmshell "sqlite3 /var/lib/mlflow/mlflow.db \".backup '/root/mlflow-$(date +%F).db'\""
-ssh palmshell 'tar czf /root/mlflow-artifacts-$(date +%F).tgz -C /var/lib/mlflow artifacts'
+STAMP=$(date +%F)   # одна метка на оба бэкапа: часы локальной машины и хоста могут расходиться
+ssh palmshell "sqlite3 /var/lib/mlflow/mlflow.db \".backup '/root/mlflow-$STAMP.db'\""
+ssh palmshell "tar czf /root/mlflow-artifacts-$STAMP.tgz -C /var/lib/mlflow artifacts"
 ```
 
 Обновление версии: бэкап → поменять версию **в двух местах** — `ExecStart` в
 `deploy/staging/mlflow.service` и `MLFLOW_VERSION` в Makefile (они обязаны совпадать) →
-`make deploy-staging-mlflow` → при необходимости миграции схемы выполнить
+`make deploy-staging-mlflow` (он копирует юнит и греет кэш uv, но **не перезапускает** уже
+работающий сервис) → остановить сервис, выполнить миграцию на остановленной БД, запустить
+сервис заново и прогнать smoke:
 
 ```bash
+make deploy-staging-mlflow
+ssh palmshell 'systemctl stop mlflow'
 ssh palmshell '/root/.local/bin/uv run --with mlflow==<версия> --python 3.12 \
   mlflow db upgrade sqlite:////var/lib/mlflow/mlflow.db'
+ssh palmshell 'systemctl start mlflow'
+make deploy-staging-smoke
 ```
+
+`systemctl enable --now` (его выполняет `deploy-staging`) не перезапускает уже запущенный
+сервис: без stop/start новый юнит не вступит в силу, а `mlflow db upgrade` под живым сервером
+трогает ту же SQLite, которой владеет процесс (один писатель).
 
 Dev-сервер (`make mlflow-up`) хранит БД и артефакты в `build/mlflow/`; staging и dev
 независимы — переносить данные между ними не нужно.
