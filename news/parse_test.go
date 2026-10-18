@@ -143,6 +143,42 @@ func TestItemsFromDocMapsFixtureItem(t *testing.T) {
 	}
 }
 
+func TestItemsFromDocMapsSmartlabFirstItem(t *testing.T) {
+	// Пин первой позиции общего RSS Смартлаба: значения прочитаны из
+	// news/testdata/smartlab.rss, а не выдуманы. Пин ловит перепутанные теги
+	// (title/link/pubDate) и подтверждает, что общий RSS — полноценная лента,
+	// а не только источник для TestFixturesParse.
+	doc := readFixtureDoc(t, "smartlab.rss")
+
+	items, skipped, err := itemsFromDoc("smartlab", doc)
+	if err != nil {
+		t.Fatalf("itemsFromDoc(smartlab) на живой фикстуре: %v", err)
+	}
+	if skipped != 0 {
+		t.Fatalf("skipped = %d, want 0 (в фикстуре нет битых позиций)", skipped)
+	}
+	if len(items) == 0 {
+		t.Fatal("0 позиций при живой фикстуре")
+	}
+
+	first := items[0]
+	if first.Source != "smartlab" {
+		t.Errorf("Source = %q, want %q", first.Source, "smartlab")
+	}
+	if wantTitle := "Согласно западной доктрине мы сейчас должны поддержать французких студентов"; first.Title != wantTitle {
+		t.Errorf("Title первой позиции = %q, want %q", first.Title, wantTitle)
+	}
+	if wantURL := "https://smart-lab.ru/blog/1363847.php"; first.URL != wantURL {
+		t.Errorf("URL первой позиции = %q, want %q", first.URL, wantURL)
+	}
+	if want := time.Date(2026, time.October, 18, 2, 0, 26, 0, time.FixedZone("", mskOffset)); !first.Date.Equal(want) {
+		t.Errorf("Date первой позиции = %v, want %v", first.Date, want)
+	}
+	if first.Description == "" {
+		t.Error("Description первой позиции пуст — полный текст поста не разобрался")
+	}
+}
+
 func TestItemsFromDocParsesDescription(t *testing.T) {
 	// smart-lab отдаёт в description полный текст поста (HTML после разбора XML-сущностей) —
 	// ради этого колонка и заведена. Пин на живой фикстуре: пост /blog/1363355.php (разбор
@@ -275,9 +311,9 @@ func TestItemsFromDocEmptyFeedFails(t *testing.T) {
 }
 
 func TestFixturesParse(t *testing.T) {
-	// Восемь живых лент: парные ленты пишутся под общим source (оба фида ЦБ — «cbr»,
-	// четыре ленты smart-lab — «smartlab»; различает их url), иначе витрина получила бы
-	// лишние источники там, где источник один — Банк России или smart-lab.
+	// Восемь живых RSS-лент: парные ленты пишутся под общим source (оба фида ЦБ — «cbr»,
+	// три RSS-ленты smart-lab в этой таблице — «smartlab»; различает их url), иначе
+	// витрина получила бы лишние источники там, где источник один — Банк России или smart-lab.
 	for _, tc := range []struct {
 		file   string
 		source string

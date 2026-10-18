@@ -39,7 +39,7 @@ Issue #46 просит добавить шесть новых Telegram-кана�
 |---|---|---|---|---|
 | `interfax` | RSS | `interfax` | `https://www.interfax.ru/rss` | 25 |
 | `interfax_tg` | TG | `interfax` | `https://t.me/s/interfaxonline` | 20, уже есть |
-| `ifax_go_tg` | TG | `interfax` | `https://t.me/s/ifax_go` | 20, ≈36 ч |
+| `ifax_go_tg` | TG | `interfax` | `https://t.me/s/ifax_go` | 20, ≈12–36 ч |
 | `edisclosure_tg` | TG | `edisclosure` | `https://t.me/s/edisclosure` | 20, уже есть |
 | `rbc` | RSS | `rbc` | `https://rssexport.rbc.ru/rbcnews/news/30/full.rss` | 30 |
 | `cbr_news` | RSS | `cbr` | `https://www.cbr.ru/rss/RssNews` | 100 |
@@ -83,7 +83,7 @@ Issue #46 просит добавить шесть новых Telegram-кана�
 
 ### 4.3 Транспорт и парсинг
 
-Новых парсеров нет: RSS идёт через `util.GetXML`/`rssDoc`, Telegram — через `util.GetPage`/`parseTelegramPage`. Для каждого нового Telegram-канала добавляется реальная HTML-фикстура (3–4 сообщения) и пин `Channel`/`MessageID`/`Date`/`Title`/`URL`. `checkTelegramChannel` защищает от редиректа/подмены канала. Пустая лента — ошибка, `skipped` — сигнал смены формы.
+Новых парсеров нет: RSS идёт через `util.GetXML`/`rssDoc`, Telegram — через `util.GetPage`/`parseTelegramPage`. Для каждого нового Telegram-канала добавляется реальная HTML-фикстура (3–4 сообщения или полное живое окно; для полного окна пин `len(Messages)` и `Skipped`) и пин `Channel`/`MessageID`/`Date`/`Title`/`URL`. `checkTelegramChannel` защищает от редиректа/подмены канала. Пустая лента — ошибка, `skipped` — сигнал смены формы.
 
 ### 4.4 Расписание и фильтр
 
@@ -122,7 +122,7 @@ DDL не меняется. Обновляются только коммента�
 
 ### 4.8 MCP и docs
 
-`scripts/mcp_check.py` получает один агрегированный чек по шести новым каналам: сообщения есть и хотя бы одна строка размечена. `v_news_flash` уже выдан `kimi_reader`; `sql/mcp_kimi_reader.sql` не меняется. Docs — по `sync-readme-architecture`: ARCHITECTURE §2/§6.1/§6.3/§7, README, IMPORTERS, OPERATIONS, LIMITATIONS; роадмапы `infra/2.3` и follow-up 4.
+`scripts/mcp_check.py` получает per-channel чек по шести новым каналам: каждый канал присутствует и `uniqExactIf(message_id, model != '') = uniqExact(message_id)` (bootstrap покрыл все сообщения), а не только «одна строка размечена». `v_news_flash` уже выдан `kimi_reader`; `sql/mcp_kimi_reader.sql` не меняется. Docs — по `sync-readme-architecture`: ARCHITECTURE §2/§6.1/§6.3/§7, README, IMPORTERS, LIMITATIONS, DEVELOPMENT, ROADMAP_KEY_RATE, GOLD_THESIS (текущие таблицы; OPERATIONS — только если там есть числа лент); роадмапы `infra/2.3` и follow-up 4.
 
 ### 4.9 RED baseline скила (2026-10-18)
 

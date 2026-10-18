@@ -49,7 +49,7 @@
 - [ ] **Step 3 (GREEN):** повторить промпт с текстом скила; проверить, что названы все 11 шагов и bootstrap; пробелы закрыть.
 - [ ] **Step 4:** commit skill + spec baseline.
 
-**Acceptance:** скил виден в project skills; `wc -c` ≤ ≈16 КБ; GREEN-прогон покрывает чек-лист.
+**Acceptance:** скил виден в project skills; `wc -c` ≤ ≈18 КБ (больше — диспатч на `deepseek/deepseek-flash`, не GLM); GREEN-прогон покрывает чек-лист.
 
 ---
 
@@ -59,7 +59,7 @@
 - Modify: `news/news.go`, `news/news_test.go`, `news/schema.go`, `dagu/news.yaml`
 - Create: `news/testdata/ifax_go_tg.html`, `markettwits_tg.html`, `newssmartlab_tg.html`, `russianmacro_tg.html`, `marketoverview_tg.html`, `mozgovikresearch_tg.html`
 
-- [ ] **Step 1:** снять живые HTML-фикстуры (3–4 сообщения), сохранить разметку.
+- [ ] **Step 1:** снять живые HTML-фикстуры (3–4 сообщения или полное окно; для полного окна пинить `len(Messages)` и `Skipped`), сохранить разметку.
 - [ ] **Step 2:** добавить URL-переменные и `feeds()` в порядке: `interfax, interfax_tg, ifax_go_tg, edisclosure_tg, rbc, cbr_news, cbr_press, tass, smartlab, smartlab_lebedev, smartlab_spydell, newssmartlab_tg, markettwits_tg, russianmacro_tg, marketoverview_tg, mozgovikresearch_tg`.
 - [ ] **Step 3:** обновить `pointFeedsAt`, `TestFetchFeeds...` (9→16), `TestFeedsHaveFixtures` (9→16), тесты «все Telegram-ленты»/«все упали», добавить пины новых фикстур.
 - [ ] **Step 4:** обновить комментарии `v_news_events`/`v_news_flash`/`v_news_message_versions`; `dagu/news.yaml` — состав и окна, расписание не менять.
@@ -91,8 +91,8 @@
 - Modify: `news/schema_test.go` (если пины), `scripts/mcp_check.py`, `ARCHITECTURE.md`, `README.md`, `docs/IMPORTERS.md`, `docs/OPERATIONS.md`, `docs/LIMITATIONS.md`, `docs/ROADMAP_INFRA.md`, `docs/GOLD_THESIS_DATA_ROADMAP.md`
 
 - [ ] **Step 1:** `news/schema_test.go` — обновить пины комментариев/состава, если есть.
-- [ ] **Step 2:** `scripts/mcp_check.py` — агрегированный чек новых каналов: `count()` и `countIf(model != '')`; подсказка про `make import` и bootstrap.
-- [ ] **Step 3:** docs по `sync-readme-architecture`: §2/§6.1/§6.3/§7, README, IMPORTERS, OPERATIONS, LIMITATIONS (окна, дубли, bootstrap).
+- [ ] **Step 2:** `scripts/mcp_check.py` — per-channel чек новых каналов: `uniqExact(message_id) = uniqExactIf(message_id, model != '')`; подсказка с полной командой bootstrap.
+- [ ] **Step 3:** docs по `sync-readme-architecture`: §2/§6.1/§6.3/§7, README, IMPORTERS, LIMITATIONS, DEVELOPMENT, ROADMAP_KEY_RATE, GOLD_THESIS (текущие таблицы; OPERATIONS — только если там есть числа лент); окна, дубли, bootstrap.
 - [ ] **Step 4:** `dagu validate dagu/news.yaml`.
 - [ ] **Step 5:** commit.
 
@@ -133,3 +133,13 @@
 - [ ] **Step 6:** финальное ревью `superpowers:requesting-code-review` на `deepseek/deepseek-flash`.
 
 **Acceptance:** PR открыт, протокол есть, статусы сходятся с роадмапом.
+
+## Приёмка 2026-10-18
+
+- `make all` — зелёный: golangci-lint `0 issues`, `go vet`, `go test -race`, обе сборки; `make docs-check` — 31 page, 33 теста OK.
+- `make import STAT=news_watch` (режим `all`) — 16 лент, `Imported 555 rows`; новые каналы: `ifax_go` 20, `markettwits` 19, `newssmartlab` 19 (+1 медиа), `russianmacro` 5 (+2 медиа), `marketoverview` 17, `mozgovikresearch` 20; общий RSS Смартлаба — 20.
+- `NEWS_WATCH_MODE=since` — 140 текущих Telegram-сообщений upsert, у всех Telegram-лент `новых версий 0`; `NEWS_WATCH_MODE=check` — 16 лент, дыр нет (`interfax` 226/65, `smartlab` 79/79, новые каналы 1:1).
+- Bootstrap: `NEWS_LLM_PROFILE=glm NEWS_LLM_BACKLOG_LIMIT=500 make import STAT=news_watch` — 17 батчей, 156 сообщений / 187 тегов; догон 3 сообщения / 4 тега; повтор — кандидатов 0, провайдер не вызывается. Токены: 86 668 prompt + 18 982 completion ≈ $0,0011 по тарифу (≈$0,0013 с наценкой шлюза).
+- MCP (`kimi_reader`): у новых каналов `annotated = messages` (`ifax_go` 20/20, `markettwits` 19/19, `newssmartlab` 19/19, `russianmacro` 5/5, `MarketOverview` 17/17, `mozgovikresearch` 20/20); `v_news_message_versions` — 100 версий (v1, tombstone 0); в `v_news_events` `annotated = annotatable` по всем новым источникам; сырая `news_events` — `ACCESS_DENIED`.
+- Дубли Смартлаба по `(date, title)` в `v_news_events` — 0; `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА; `dagu validate dagu/news.yaml` — exit 0.
+- Ревью ветки: findings исправлены (redaction CDN-токенов/email, комментарий `v_news_events.source`, окно `ifax_go` ≈12–36 ч, per-channel MCP-чек, пины `len(Messages)`/первой позиции `smartlab.rss`).

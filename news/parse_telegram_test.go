@@ -151,6 +151,9 @@ func TestParseTelegramNewChannelsFixtures(t *testing.T) {
 		id      uint64
 		date    time.Time
 		title   string
+		// messages — число распознанных сообщений полного живого окна: пин ловит
+		// селектор, который перестал матчить часть узлов, даже когда Skipped не вырос.
+		messages int
 		// skipped — фактическое число медиа-постов без подписи в полном живом окне:
 		// у newssmartlab один (134122), у russianmacro два (23588, 23605). Окно не
 		// обрезалось, поэтому это ожидаемое значение, а не ноль: ноль означал бы
@@ -159,35 +162,41 @@ func TestParseTelegramNewChannelsFixtures(t *testing.T) {
 	}{
 		{
 			file: "ifax_go_tg.html", channel: "ifax_go", id: 25937,
-			date:  time.Date(2026, time.October, 16, 9, 14, 15, 0, time.UTC),
-			title: "🇪🇺Инфляция в еврозоне в сентябре ускорилась до 3,8%",
+			date:     time.Date(2026, time.October, 16, 9, 14, 15, 0, time.UTC),
+			title:    "🇪🇺Инфляция в еврозоне в сентябре ускорилась до 3,8%",
+			messages: 20,
 		},
 		{
 			file: "markettwits_tg.html", channel: "markettwits", id: 389275,
-			date:  time.Date(2026, time.October, 17, 8, 8, 59, 0, time.UTC),
-			title: "⚠️🇺🇸#акции #сша #CRWV",
+			date:     time.Date(2026, time.October, 17, 8, 8, 59, 0, time.UTC),
+			title:    "⚠️🇺🇸#акции #сша #CRWV",
+			messages: 19,
 		},
 		{
 			file: "newssmartlab_tg.html", channel: "newssmartlab", id: 134111,
-			date:    time.Date(2026, time.October, 16, 14, 42, 34, 0, time.UTC),
-			title:   "Официальные курсы валют на 17 октября: ¥ — ₽12,4950, $ — ₽83,6177, € — ₽93,7187",
-			skipped: 1,
+			date:     time.Date(2026, time.October, 16, 14, 42, 34, 0, time.UTC),
+			title:    "Официальные курсы валют на 17 октября: ¥ — ₽12,4950, $ — ₽83,6177, € — ₽93,7187",
+			messages: 19,
+			skipped:  1,
 		},
 		{
 			file: "russianmacro_tg.html", channel: "russianmacro", id: 23580,
-			date:    time.Date(2026, time.October, 14, 17, 36, 25, 0, time.UTC),
-			title:   "‼️🔥 КАРТИНА ИНФЛЯЦИИ ГЛАЗАМИ ЦБ: УСТОЙЧИВАЯ ИНФЛЯЦИЯ ОСТАЁТСЯ НА 6% SAAR",
-			skipped: 2,
+			date:     time.Date(2026, time.October, 14, 17, 36, 25, 0, time.UTC),
+			title:    "‼️🔥 КАРТИНА ИНФЛЯЦИИ ГЛАЗАМИ ЦБ: УСТОЙЧИВАЯ ИНФЛЯЦИЯ ОСТАЁТСЯ НА 6% SAAR",
+			messages: 5,
+			skipped:  2,
 		},
 		{
 			file: "marketoverview_tg.html", channel: "MarketOverview", id: 19391,
-			date:  time.Date(2026, time.October, 14, 11, 8, 27, 0, time.UTC),
-			title: "💳 АКРА подтвердило рейтинг Московского Кредитного Банка на уровне А+(RU), прогноз стабильный. Агентство отмечает, что банк сохраняет устойчивые рыночные позиции, системную значимость для страны и вовлечен в реализацию приоритетных для российской экономики проектов.",
+			date:     time.Date(2026, time.October, 14, 11, 8, 27, 0, time.UTC),
+			title:    "💳 АКРА подтвердило рейтинг Московского Кредитного Банка на уровне А+(RU), прогноз стабильный. Агентство отмечает, что банк сохраняет устойчивые рыночные позиции, системную значимость для страны и вовлечен в реализацию приоритетных для российской экономики проектов.",
+			messages: 17,
 		},
 		{
 			file: "mozgovikresearch_tg.html", channel: "mozgovikresearch", id: 3914,
-			date:  time.Date(2026, time.October, 2, 4, 32, 50, 0, time.UTC),
-			title: "Какие облигации 2-го эшелона могут резко вырасти по доходности, как бумаги Самолета или Балтийского лизинга?",
+			date:     time.Date(2026, time.October, 2, 4, 32, 50, 0, time.UTC),
+			title:    "Какие облигации 2-го эшелона могут резко вырасти по доходности, как бумаги Самолета или Балтийского лизинга?",
+			messages: 20,
 		},
 	} {
 		t.Run(tc.file, func(t *testing.T) {
@@ -195,8 +204,8 @@ func TestParseTelegramNewChannelsFixtures(t *testing.T) {
 			if page.Skipped != tc.skipped {
 				t.Errorf("Skipped = %d, want %d (медиа без подписи в полном живом окне)", page.Skipped, tc.skipped)
 			}
-			if len(page.Messages) == 0 {
-				t.Fatal("Messages пуст при живой фикстуре")
+			if len(page.Messages) != tc.messages {
+				t.Fatalf("Messages = %d, want %d (полное живое окно)", len(page.Messages), tc.messages)
 			}
 			first := page.Messages[0]
 			if first.Channel != tc.channel {
