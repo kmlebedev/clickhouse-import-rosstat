@@ -826,10 +826,11 @@ def aggregate_consensus(observations: list, bucket: str) -> Optional[ConsensusAg
 
     `None` — в бакете нет наблюдений. DM считается при `n >= 2`; при `n = 1`
     тест не определён и остаётся `None`, а RMSE/MAE/bias всё ещё считаются
-    (в отчётности это одна пара). Вырожденную дисперсию разницы потерь
-    обрабатывает `eval_utils.diebold_mariano` своей конвенцией (`(0.0, 1.0)`
-    для одинаковых ошибок, `(±inf, 0.0)` для постоянной ненулевой разницы);
-    исключения DM не перехватываются.
+    (в отчётности это одна пара). Вырожденная дисперсия разницы потерь (все
+    `err_cons² − err_hold²` равны — одинаковые ошибки или постоянная
+    ненулевая разница) тоже даёт `None`: t-статистике нечем делиться, а
+    `p = 0.0` при `±inf` читался бы как доказанное превосходство, которого
+    малая выборка не подтверждает. Исключения DM не перехватываются.
     """
     selected = [
         observation for observation in observations if observation.bucket == bucket
@@ -841,7 +842,12 @@ def aggregate_consensus(observations: list, bucket: str) -> Optional[ConsensusAg
     dm_stat = None
     dm_p = None
     if len(selected) >= 2:
-        dm_stat, dm_p = eu.diebold_mariano(consensus_errors, hold_errors, h=1)
+        differences = [
+            consensus_error * consensus_error - hold_error * hold_error
+            for consensus_error, hold_error in zip(consensus_errors, hold_errors)
+        ]
+        if any(difference != differences[0] for difference in differences):
+            dm_stat, dm_p = eu.diebold_mariano(consensus_errors, hold_errors, h=1)
     return ConsensusAggregate(
         bucket=bucket,
         n=len(selected),
