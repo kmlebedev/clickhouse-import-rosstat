@@ -102,3 +102,19 @@
 - `phase-2-ofz-debt-stress` (#170), Grafana, публикационные артефакты.
 - Изменение `v_ofz_curve` (MOEX) и `cbr_key_rate`.
 - Ветка `point-in-time` и её файлы.
+
+## 5. Протокол приёмки (2026-10-19)
+
+- `make all` — зелёный (после `a3e291b`; `bfca4f1` меняет только `scripts/mcp_check.py`, `python3 -m py_compile` OK).
+- `go test -race -count=1 ./cbr/ ./util/` — ok.
+- `dagu validate dagu/cbr.yaml` — exit 0.
+- `make import STAT=cbr_zcyc` — первый прогон: `cbr_zcyc: 72468 точек`, `Imported 72468 rows of cbr_zcyc`.
+- `v_ofz_curve_compare`: **72 468** строк, **2003-01-04 … 2026-10-16**, **12** теноров.
+- `v_ofz_signal`: **6 039** строк; до 2013-09-17 `key_rate IS NULL` — **2 748 из 2 748**.
+- Споты:
+  - `v_ofz_curve_compare` 2026-10-09, tenor 10: КБД **16,85**, MOEX G-curve **16,8486**, `spread_pp ≈ 0`;
+  - `v_ofz_signal` 2026-10-16: `ofz_10y=16.51`, `key_rate=14.00`, `ofz_10y_minus_key_rate_pp=2.51`, `ofz_2y_minus_key_rate_pp=1.03`, `slope_10y_1y_pp=2.74`, `inflation_yoy=6.35`, `real_yield_10y_pp=10.16`;
+  - `v_ofz_signal` 2026-10-09: `16.85 / 13.76`, ключевая 14.00, спред 2.85, наклон 3.09, реальная 10.50.
+- Повтор после фильтра: `cbr_zcyc: новых данных нет`, `Imported 0 rows of cbr_zcyc`; `count()` не изменился (72 468).
+- `make mcp-check` — **ПРОВЕРКА ПРОЙДЕНА**, 0 провалов; блок ОФЗ — 5 OK (72 468; 6 039; 2 748/2 748; каталог 12; сырая 497).
+- Коммиты ветки: `0d48b3c` спека+план, `ec342f4` фикстуры, `5b71ec6` util, `7d29568` парсер+каталог, `4bc6fd9` NaN/Inf, `52467cd` импортёр+витрины+mcp, `6f21489` null-семантика, `a3e291b` фильтр окна, `bfca4f1` list_tables.
