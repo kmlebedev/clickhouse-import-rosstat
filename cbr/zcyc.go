@@ -77,7 +77,7 @@ func cbrZcycCraw(crawUrl string, conn driver.Conn) (count int64, err error) {
 		return 0, nil
 	}
 
-	var points []zcycPoint
+	var allPoints []zcycPoint
 	for i, chunk := range chunks {
 		if i > 0 {
 			time.Sleep(cbrZcycChunkPause)
@@ -92,21 +92,24 @@ func cbrZcycCraw(crawUrl string, conn driver.Conn) (count int64, err error) {
 		if err != nil {
 			return 0, fmt.Errorf("%s: окно %s, %s: %w", cbrZcycTable, window, url, err)
 		}
-		rows, err := zcycRows(page)
+		points, err := zcycRows(page)
 		if err != nil {
 			return 0, fmt.Errorf("%s: окно %s, %s: %w", cbrZcycTable, window, url, err)
 		}
-		if len(rows) == 0 && i < len(chunks)-1 {
+		// ЦБ игнорирует пустой/будущий диапазон и отдаёт последнюю доступную
+		// строку — вне окна она точкой этого импорта не является.
+		points = zcycPointsInRange(points, start, end)
+		if len(points) == 0 && i < len(chunks)-1 {
 			return 0, fmt.Errorf("%s: пустое историческое окно %s (%s): ЦБ не отдал таблицу, хотя диапазон не последний", cbrZcycTable, window, url)
 		}
-		points = append(points, rows...)
+		allPoints = append(allPoints, points...)
 	}
 
-	if firstRun && len(points) == 0 {
+	if firstRun && len(allPoints) == 0 {
 		return 0, fmt.Errorf("%s: пустой бэкфилл: за %s..%s ЦБ не отдал ни одной точки", cbrZcycTable,
 			chunks[0][0].Format("2006-01-02"), chunks[len(chunks)-1][1].Format("2006-01-02"))
 	}
-	if len(points) == 0 {
+	if len(allPoints) == 0 {
 		log.Infof("%s: новых данных нет", cbrZcycTable)
 		return 0, nil
 	}
@@ -115,7 +118,7 @@ func cbrZcycCraw(crawUrl string, conn driver.Conn) (count int64, err error) {
 	if err != nil {
 		return 0, err
 	}
-	for _, p := range points {
+	for _, p := range allPoints {
 		if err = batch.Append(p.tenor, p.date, p.value); err != nil {
 			return 0, err
 		}

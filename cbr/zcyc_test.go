@@ -212,3 +212,38 @@ func TestZcycChunks(t *testing.T) {
 			day.Format("2006-01-02"), day.Format("2006-01-02"))
 	}
 }
+
+// TestZcycPointsInRange — фильтр окна: ЦБ игнорирует диапазон, когда он пуст или
+// лежит в будущем, и отдаёт таблицу с последней доступной строкой. Точки вне
+// [from, to] отбрасываются (на границе from — остаются), порядок сохраняется;
+// пустой вход и перевёрнутый диапазон дают пустой результат.
+func TestZcycPointsInRange(t *testing.T) {
+	date := func(day int) time.Time { return time.Date(2026, time.October, day, 0, 0, 0, 0, time.UTC) }
+	from, to := date(17), date(19)
+	points := []zcycPoint{
+		{tenor: "10", date: date(15), value: 1}, // до окна
+		{tenor: "10", date: from, value: 2},     // граница from — включается
+		{tenor: "10", date: date(18), value: 3}, // внутри
+		{tenor: "10", date: date(20), value: 4}, // после to
+	}
+
+	got := zcycPointsInRange(points, from, to)
+	if len(got) != 2 {
+		t.Fatalf("точек в окне %d, want 2 (граница from и внутри)", len(got))
+	}
+	if !got[0].date.Equal(from) || got[0].value != 2 {
+		t.Errorf("первая точка = (%s, %v), want (%s, 2)",
+			got[0].date.Format("2006-01-02"), got[0].value, from.Format("2006-01-02"))
+	}
+	if !got[1].date.Equal(date(18)) || got[1].value != 3 {
+		t.Errorf("вторая точка = (%s, %v), want (%s, 3)",
+			got[1].date.Format("2006-01-02"), got[1].value, date(18).Format("2006-01-02"))
+	}
+
+	if got := zcycPointsInRange(nil, from, to); len(got) != 0 {
+		t.Errorf("пустой вход: точек %d, want 0", len(got))
+	}
+	if got := zcycPointsInRange(points, to, from); len(got) != 0 {
+		t.Errorf("from > to: точек %d, want 0", len(got))
+	}
+}
