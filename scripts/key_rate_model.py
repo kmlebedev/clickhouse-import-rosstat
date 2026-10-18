@@ -117,6 +117,7 @@ import json
 import logging
 import math
 import os
+import re
 import sys
 import warnings
 from dataclasses import dataclass
@@ -166,6 +167,18 @@ CPD_CORE_SERIES = "Базовый ИПЦ"
 # `source='cbr_survey'`; дата точки — 1-е число отчётного месяца).
 SURVEY_SOURCE = "cbr_survey"
 IBK_SERIES = "business_climate_sa"
+
+# Консенсус-бенчмарк №4 — медиана макроэкономического опроса ЦБ (спека
+# `2026-10-19-key-rate-consensus-benchmark-design.md` §2). `CONSENSUS_SOURCE` —
+# источник рядов в `macro_series`; публикация волны наступает через 2–6 дней
+# после полевого периода, поэтому точка волны считается доступной только на
+# `wave_date + 6 дней` — консервативно и без заглядывания вперёд.
+CONSENSUS_SOURCE = "cbr_mo_br"
+CONSENSUS_PUBLICATION_LAG_DAYS = 6
+
+# Guard B4 (Task 4, спека §3.2): на остаток года должно оставаться не меньше
+# 30 дней, иначе `r_implied` делится на короткий хвост и становится шумом.
+CONSENSUS_MIN_DAYS_REMAINING = 30
 
 # Сид для бутстрапа (Task 3+) и «версии набора данных»: воспроизводимость
 # прогона считается от одного числа, названного здесь и больше нигде.
@@ -313,6 +326,16 @@ MP_SUMMARY_SQL = """
 SELECT meeting_date, decision_rate, decision_delta_bp
 FROM cbr_mp_summary FINAL
 ORDER BY meeting_date
+FORMAT JSON
+"""
+
+# `FINAL` здесь не ставится: `v_cbr_mo_br` — витрина, и `FINAL` уже стоит в её
+# определении (`macro_series FINAL WHERE source = 'cbr_mo_br'`).
+CONSENSUS_SQL = """
+SELECT date, series, value
+FROM v_cbr_mo_br
+WHERE series LIKE 'key_rate_avg_%'
+ORDER BY date, series
 FORMAT JSON
 """
 
@@ -472,6 +495,85 @@ def mp_deltas_from_rows(rows: list) -> list:
     return sorted(_unique_dates(points, "cbr_mp_summary"))
 
 
+# Имена рядов консенсуса: `key_rate_avg_<год>_<статистика>`; прочие ряды
+# витрины (ИПЦ, ВВП и т.п.) парсер пропускает.
+CONSENSUS_SERIES_RE = re.compile(r"^key_rate_avg_(\d{4})_(median|p10|p90|answers)$")
+
+
+@dataclass(frozen=True)
+class ConsensusForecast:
+    """Волна консенсуса по одному году: медиана, интервал и число ответов.
+
+    `wave_date` — дата волны опроса (1-е число месяца), `available_from` —
+    консервативная дата публикации (`wave_date + 6 дней`): раньше неё волна в
+    выборку не попадает. `answers` — число ответов участников, а не прогноз.
+    """
+
+    wave_date: date
+    available_from: date
+    year: int
+    median: float
+    p10: Optional[float]
+    p90: Optional[float]
+    answers: Optional[int]
+
+
+def consensus_from_rows(rows: list) -> list:
+    """Волны консенсуса из строк `v_cbr_mo_br`: `(волна, год) → прогноз`.
+
+    Берутся только ряды `key_rate_avg_<год>_<статистика>`; прочие ряды витрины
+    (ИПЦ, ВВП и др.) пропускаются — запрос уже сужен `LIKE`, но парсер не
+    обязан верить фильтру вызывающего. `median` обязательна: волна без неё —
+    не консенсус, а огрызок. Дубль статистики в паре — потерянный `FINAL` или
+    неверный ключ витрины, поэтому отказ, а не «последний победил»: иначе
+    значение молча зависело бы от порядка строк ответа ClickHouse. `answers`
+    приводится к целому; нецелое значение — дефект источника.
+    """
+    grouped = {}
+    for row in rows:
+        match = CONSENSUS_SERIES_RE.match(str(row.get("series", "")))
+        if match is None:
+            continue
+        wave_date = row_date(row["date"])
+        year = int(match.group(1))
+        stat = match.group(2)
+        stats = grouped.setdefault((wave_date, year), {})
+        if stat in stats:
+            raise ValueError(
+                f"консенсус: дубль {stat} у волны {wave_date.isoformat()} "
+                f"за {year} — повторная строка исказила бы прогноз"
+            )
+        stats[stat] = row_float(row["value"])
+
+    waves = []
+    for (wave_date, year), stats in sorted(grouped.items()):
+        if "median" not in stats:
+            raise ValueError(
+                f"консенсус: у волны {wave_date.isoformat()} за {year} нет медианы"
+            )
+        answers = stats.get("answers")
+        if answers is not None:
+            if answers != int(answers):
+                raise ValueError(
+                    f"консенсус: answers={answers} у волны {wave_date.isoformat()} "
+                    f"за {year} — не целое число ответов"
+                )
+            answers = int(answers)
+        waves.append(
+            ConsensusForecast(
+                wave_date=wave_date,
+                available_from=wave_date
+                + timedelta(days=CONSENSUS_PUBLICATION_LAG_DAYS),
+                year=year,
+                median=stats["median"],
+                p10=stats.get("p10"),
+                p90=stats.get("p90"),
+                answers=answers,
+            )
+        )
+    return waves
+
+
 # --- Загрузчики: SQL + транспорт + разбор ------------------------------------
 
 
@@ -498,6 +600,11 @@ def load_ibk() -> list:
 def load_mp_summary_deltas() -> list:
     """Шаги решений из резюме ЦБ (`cbr_mp_summary`, 22 резюме с 2024-02)."""
     return mp_deltas_from_rows(ch_query(MP_SUMMARY_SQL))
+
+
+def load_consensus() -> list:
+    """Волны консенсуса по годам из витрины макроопроса ЦБ (`v_cbr_mo_br`)."""
+    return consensus_from_rows(ch_query(CONSENSUS_SQL))
 
 
 # --- As-of слой (спека §4) ----------------------------------------------------
