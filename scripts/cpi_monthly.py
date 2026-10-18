@@ -128,18 +128,30 @@ walk-forward, обязательные бенчмарки B1–B3 (B3 — в д�
 * `make cpi-monthly ARGS="--start N --embargo-months K"` — основное окно
   walk-forward задаётся явно (робастность остаётся от спеки §4.1; `--start`
   переопределяет sample-дефолт 24/48);
+* `make cpi-monthly ARGS="--quick"` — быстрый экспериментальный режим: только
+  основное окно walk-forward, без robustness-окон и фиксированного сплита
+  статьи; отчёт и `ML_LOG` помечены `quick`, числа не официальные (спека
+  `2026-10-18-ml-quick-runs`);
+* `make cpi-monthly ARGS="--quick --jobs 8"` — тот же quick с пулом процессов
+  по фолдам (`ProcessPoolExecutor`, CatBoost `thread_count=1`); `--jobs`
+  допустим только с `--quick` (`0/1` — последовательно, `N>1` — пул), полный
+  прогон без флагов не параллелится и остаётся байт-в-байт прежним;
 * `make cpi-monthly ARGS="--export-fixtures DIR"` — пересборка CSV-фикстур.
 """
 
 import argparse
+import contextlib
 import csv
 import json
 import logging
 import math
+import multiprocessing
 import os
 import statistics
 import sys
 import warnings
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -1074,19 +1086,37 @@ def window_title(run: WindowRun) -> str:
 
 
 def window_specs(
-    start: int = DEFAULT_START, embargo: int = DEFAULT_EMBARGO
+    start: int = DEFAULT_START,
+    embargo: int = DEFAULT_EMBARGO,
+    quick: bool = False,
 ) -> list[tuple[int, int]]:
     """Окна прогона: основное (`start`/`embargo`) и робастность спеки §4.1.
 
     Робастность — второй старт (`ROBUST_START`) и эмбарго 1; дубликаты и
     несовместимые окна (`embargo ≥ start` — обучать не на чем) отбрасываются,
     поэтому `--embargo-months 1` не даёт основное окно дважды.
+
+    `quick=True` — быстрый экспериментальный режим (спека `2026-10-18-ml-quick-runs`):
+    считается ТОЛЬКО основное окно, robustness-окна не добавляются. Полный
+    прогон (`quick=False`) не меняется.
     """
     specs = [(start, embargo)]
+    if quick:
+        return specs
     for candidate in ((ROBUST_START, embargo), (start, ROBUST_EMBARGO)):
         if candidate not in specs and 0 <= candidate[1] < candidate[0]:
             specs.append(candidate)
     return specs
+
+
+def _check_walk_forward_window(start: int, embargo: int) -> None:
+    """Окно walk-forward обязано иметь обучающий префикс (start ≥ 1, embargo < start)."""
+    if start < 1:
+        raise ValueError(f"walk-forward: start={start} — меньше одного месяца")
+    if embargo < 0 or embargo >= start:
+        raise ValueError(
+            f"walk-forward: embargo={embargo} при start={start} — обучающего окна нет"
+        )
 
 
 def walk_forward(
@@ -1113,12 +1143,7 @@ def walk_forward(
     («модель → сумма `fold_notes` фолдов»; модель без атрибута `fold_notes` —
     без диагностики). Возврат — список прогнозов; счётчики нужны отчёту.
     """
-    if start < 1:
-        raise ValueError(f"walk-forward: start={start} — меньше одного месяца")
-    if embargo < 0 or embargo >= start:
-        raise ValueError(
-            f"walk-forward: embargo={embargo} при start={start} — обучающего окна нет"
-        )
+    _check_walk_forward_window(start, embargo)
     counts = skipped if skipped is not None else {}
     predictions = []
     for index in range(start, len(rows)):
@@ -1142,6 +1167,154 @@ def walk_forward(
                     model=name,
                     y_true=float(row.y[TARGET_ALL]),
                     y_pred=float(value),
+                )
+            )
+    return predictions
+
+
+def _run_fold_worker(task: tuple) -> tuple:
+    """Воркер пула: все модели ОДНОГО фолда (top-level, picklable, spawn-safe).
+
+    Задача — `(index, train, row, model_names)`; модели берутся из глобального
+    `MODELS` (имена сериализуемы, функции — нет). Возврат — `(index, {model:
+    {"pred", "skipped", "notes", "weights"}})`: главный процесс собирает
+    `Prediction` в порядке фолдов и моделей, суммирует `skipped`/`notes` и берёт
+    веса последнего успешного bottom-up-фолда. `DegenerateWindowError` — пропуск
+    фолда этой модели; прочие исключения пробрасываются, как в `walk_forward`.
+
+    `thread_count=1`: параллельный путь существует только в quick (спека
+    `2026-10-18-ml-quick-runs` §2.2), поэтому каждый воркер фиксирует один поток
+    на fit — иначе N процессов × дефолтные потоки oversubscribe'или бы CPU.
+    Функция обязана оставаться top-level: `spawn` на macOS pickle'ит ссылку, а
+    не замыкание.
+    """
+    index, train, row, model_names = task
+    result = {}
+    with catboost_thread_count(QUICK_CATBOOST_THREAD_COUNT):
+        for name in model_names:
+            fit_predict = MODELS[name]
+            try:
+                value = float(fit_predict(train, row))
+            except DegenerateWindowError:
+                result[name] = {
+                    "pred": None,
+                    "skipped": True,
+                    "notes": {},
+                    "weights": None,
+                }
+                continue
+            fold_notes = getattr(fit_predict, "fold_notes", None) or {}
+            last_weights = getattr(fit_predict, "last_weights", None) or ()
+            result[name] = {
+                "pred": value,
+                "skipped": False,
+                "notes": {key: int(count) for key, count in fold_notes.items()},
+                "weights": tuple(float(weight) for weight in last_weights) or None,
+            }
+    return index, result
+
+
+def walk_forward_parallel(
+    rows: list[Row],
+    models: dict[str, FitPredict],
+    start: int,
+    embargo: int,
+    jobs: int,
+    skipped: Optional[dict[str, int]] = None,
+    notes: Optional[dict[str, dict[str, int]]] = None,
+    weights: Optional[dict[str, tuple]] = None,
+) -> list[Prediction]:
+    """Параллельный walk-forward одного окна: один пул процессов на фолды.
+
+    Единица параллелизма — фолд, а не отдельный fit: воркер получает префикс
+    `rows[:i−embargo]`, тестовую строку и имена моделей, а считает все модели
+    фолда (спека quick §2.2). `jobs > 1` — `ProcessPoolExecutor` со `spawn`
+    (macOS без глобального состояния), `max_workers=min(jobs, cpu_count())`;
+    `jobs == 1` — последовательный `walk_forward` (эквивалент для тестов).
+
+    Параллельный путь поддерживает ТОЛЬКО глобальный `MODELS`: воркер получает
+    имена, а функции резолвит в дочернем процессе (spawn не может pickle'ить
+    произвольные замыкания). Поэтому каждая пара `имя → функция` сверяется с
+    `MODELS` ДО создания пула: несовпадение — `ValueError`, а не молчаливая
+    подмена модели или `KeyError` в воркере.
+
+    Задачи отправляются через `submit`, результаты собираются `as_completed` и
+    раскладываются по `index`; сборка `Prediction` идёт по возрастанию индекса,
+    поэтому порядок фолдов/моделей детерминирован независимо от порядка
+    завершения процессов. При исключении пул гасится с
+    `cancel_futures=True` (ещё не начатые задачи отменяются), а исходное
+    исключение пробрасывается. `skipped`/`notes`/`weights` — необязательные
+    словари, которые заполняет вызывающий (как у `walk_forward`).
+    """
+    _check_walk_forward_window(start, embargo)
+    if jobs < 1:
+        raise ValueError(f"walk-forward parallel: jobs={jobs} — меньше одного процесса")
+    if jobs == 1:
+        with catboost_thread_count(QUICK_CATBOOST_THREAD_COUNT):
+            predictions = walk_forward(
+                rows, models, start, embargo, skipped=skipped, notes=notes
+            )
+        if weights is not None:
+            weights.update(_window_weights(models))
+        return predictions
+
+    for name, fit_predict in models.items():
+        if MODELS.get(name) is not fit_predict:
+            raise ValueError(
+                f"walk-forward parallel: модель {name!r} не совпадает с "
+                f"глобальной MODELS — параллельный путь поддерживает только "
+                f"глобальный MODELS (воркер получает имена и резолвит функции "
+                f"в дочернем процессе)"
+            )
+
+    model_names = list(models)
+    counts = skipped if skipped is not None else {}
+    note_totals = notes if notes is not None else {}
+    last_weights = weights if weights is not None else {}
+    worker_count = min(int(jobs), os.cpu_count() or 1)
+    folds: dict[int, dict] = {}
+    context = multiprocessing.get_context("spawn")
+    pool = ProcessPoolExecutor(max_workers=worker_count, mp_context=context)
+    try:
+        futures = {
+            pool.submit(
+                _run_fold_worker,
+                (index, rows[: index - embargo], rows[index], model_names),
+            ): index
+            for index in range(start, len(rows))
+        }
+        for future in as_completed(futures):
+            index, fold = future.result()
+            folds[index] = fold
+    except BaseException:
+        # Ошибка фолда не должна ждать всю очередь: отменяем ещё не начатые
+        # задачи и пробрасываем исходное исключение (не подменяя его ошибкой
+        # shutdown).
+        pool.shutdown(wait=False, cancel_futures=True)
+        raise
+    else:
+        pool.shutdown(wait=True)
+
+    predictions = []
+    for index in sorted(folds):
+        row = rows[index]
+        fold = folds[index]
+        for name in model_names:
+            result = fold[name]
+            if result["skipped"]:
+                counts[name] = counts.get(name, 0) + 1
+                continue
+            for key, count in result["notes"].items():
+                totals = note_totals.setdefault(name, {})
+                totals[key] = totals.get(key, 0) + int(count)
+            if result["weights"]:
+                last_weights[name] = tuple(result["weights"])
+            predictions.append(
+                Prediction(
+                    month=row.month,
+                    model=name,
+                    y_true=float(row.y[TARGET_ALL]),
+                    y_pred=float(result["pred"]),
                 )
             )
     return predictions
@@ -1181,6 +1354,8 @@ def evaluate_windows(
     rows: list[Row],
     models: dict[str, FitPredict],
     specs: Optional[list[tuple[int, int]]] = None,
+    quick: bool = False,
+    jobs: int = 0,
 ) -> list[WindowRun]:
     """Walk-forward по всем окнам прогона; основное — первое окно списка.
 
@@ -1191,15 +1366,45 @@ def evaluate_windows(
     КОНКРЕТНОМУ окну, а не к прогону целиком. Веса NNLS (`WindowRun.weights`)
     снимаются с модели после каждого окна — тоже по окну, а не по всему
     прогону.
+
+    `quick=True, jobs>1` — пул процессов по фолдам (`walk_forward_parallel`,
+    спека `2026-10-18-ml-quick-runs` §2.2); иначе — прежний последовательный
+    `walk_forward`. Quick-путь фиксирует `thread_count=1` у CatBoost (один fit —
+    один поток), полный путь без флагов `thread_count` не задаёт. `jobs` вне
+    quick допустим только как `0`: `jobs != 0` без `quick` — ошибка (флаг
+    `--jobs` существует только для quick), полный прогон не параллелится.
     """
+    if jobs < 0:
+        raise ValueError(f"evaluate_windows: jobs={jobs} — отрицательное число процессов")
+    if jobs != 0 and not quick:
+        raise ValueError(
+            f"evaluate_windows: jobs={jobs} без quick — полный прогон не параллелится"
+        )
     runs = []
     for position, (start, embargo) in enumerate(
-        window_specs() if specs is None else specs
+        window_specs(quick=quick) if specs is None else specs
     ):
         skipped = {name: 0 for name in models}
         notes = {name: {} for name in models}
         _reset_fold_weights(models)
-        predictions = walk_forward(rows, models, start, embargo, skipped=skipped, notes=notes)
+        if quick and jobs > 1:
+            weights: dict[str, tuple] = {}
+            predictions = walk_forward_parallel(
+                rows,
+                models,
+                start,
+                embargo,
+                jobs,
+                skipped=skipped,
+                notes=notes,
+                weights=weights,
+            )
+        else:
+            with catboost_thread_count(QUICK_CATBOOST_THREAD_COUNT if quick else None):
+                predictions = walk_forward(
+                    rows, models, start, embargo, skipped=skipped, notes=notes
+                )
+            weights = _window_weights(models)
         runs.append(
             WindowRun(
                 start=start,
@@ -1209,7 +1414,7 @@ def evaluate_windows(
                 predictions=predictions,
                 skipped=skipped,
                 notes=notes,
-                weights=_window_weights(models),
+                weights=weights,
             )
         )
     return runs
@@ -1536,7 +1741,33 @@ def monotone_constraints(with_mp: bool) -> list[int]:
     return [CATBOOST_MONOTONE.get(name, 0) for name in feature_names(with_mp)]
 
 
-def catboost_params(with_mp: bool) -> dict:
+# Quick-режим: один fit — один поток (спека `2026-10-18-ml-quick-runs` §2.2).
+# Полный путь контекст не включает и `thread_count` не задаёт.
+QUICK_CATBOOST_THREAD_COUNT = 1
+
+# Контекст `thread_count` CatBoost: выставляется на quick-прогон (последовательно
+# или в воркере пула) и читается конструктором/метаданными. ContextVar, а не
+# глобал, — чтобы значение гарантированно снималось после блока и не протекало
+# в полный путь (в том числе в тестах, идущих следом).
+_CATBOOST_THREAD_COUNT: ContextVar[Optional[int]] = ContextVar(
+    "cpi_monthly_catboost_thread_count", default=None
+)
+
+
+@contextlib.contextmanager
+def catboost_thread_count(count: Optional[int]):
+    """Временно фиксирует `thread_count` CatBoost (`None` — ничего не меняет)."""
+    if count is None:
+        yield
+        return
+    token = _CATBOOST_THREAD_COUNT.set(int(count))
+    try:
+        yield
+    finally:
+        _CATBOOST_THREAD_COUNT.reset(token)
+
+
+def catboost_params(with_mp: bool, thread_count: Optional[int] = None) -> dict:
     """Параметры конструктора CatBoost (§3.1) — единственные заданные, дословно.
 
     Словарь — ровно то, что уходит в `CatBoostRegressor`; он же сверяется с
@@ -1544,8 +1775,14 @@ def catboost_params(with_mp: bool) -> dict:
     подменённый дефолт библиотеки. `allow_writing_files=False` — флаг побочного
     эффекта, а не гиперпараметр: без него CatBoost пишет каталог
     `catboost_info/` в рабочий каталог прогона.
+
+    `thread_count` добавляется ТОЛЬКО когда он задан (quick-режим: 1 поток на
+    fit, чтобы процессный параллелизм не oversubscribe'ил CPU; спека
+    `2026-10-18-ml-quick-runs` §2.2). Полный путь не задаёт `thread_count` —
+    словарь и дефолт библиотеки прежние. Явный аргумент важнее контекста
+    `catboost_thread_count`.
     """
-    return {
+    params = {
         "loss_function": CATBOOST_LOSS,
         "random_seed": SEED,
         "verbose": False,
@@ -1553,14 +1790,20 @@ def catboost_params(with_mp: bool) -> dict:
         "cat_features": catboost_cat_indices(with_mp),
         "allow_writing_files": False,
     }
+    count = _CATBOOST_THREAD_COUNT.get() if thread_count is None else thread_count
+    if count is not None:
+        params["thread_count"] = int(count)
+    return params
 
 
-def catboost_model(with_mp: bool) -> CatBoostRegressor:
+def catboost_model(
+    with_mp: bool, thread_count: Optional[int] = None
+) -> CatBoostRegressor:
     """Новый (необученный) `CatBoostRegressor` с конфигурацией §3.1."""
-    return CatBoostRegressor(**catboost_params(with_mp))
+    return CatBoostRegressor(**catboost_params(with_mp, thread_count=thread_count))
 
 
-def catboost_metadata(with_mp: bool) -> dict:
+def catboost_metadata(with_mp: bool, thread_count: Optional[int] = None) -> dict:
     """Метаданные модели CatBoost для отчёта/артефактов (§3.1).
 
     Заданная конфигурация — по ИМЕНАМ признаков (индекс сдвинется при правке
@@ -1570,10 +1813,13 @@ def catboost_metadata(with_mp: bool) -> dict:
     CatBoost на numpy принимает ТОЛЬКО индексы, поэтому в `catboost_params`
     уходят позиции, а имена остаются в метаданных. Словарь сериализуется в
     JSON как есть (Task 4 кладёт его рядом с прогнозом модели).
+
+    `thread_count` попадает в метаданные только когда он задан (quick: 1) —
+    конфигурация паспорта обязана соответствовать конструктору.
     """
     names = feature_names(with_mp)
     constraints = monotone_constraints(with_mp)
-    return {
+    metadata = {
         "loss_function": CATBOOST_LOSS,
         "random_seed": SEED,
         "cat_features": list(CATBOOST_CAT_FEATURES),
@@ -1585,6 +1831,10 @@ def catboost_metadata(with_mp: bool) -> dict:
         "allow_writing_files": False,
         "defaults": dict(CATBOOST_DEFAULTS),
     }
+    count = _CATBOOST_THREAD_COUNT.get() if thread_count is None else thread_count
+    if count is not None:
+        metadata["thread_count"] = int(count)
+    return metadata
 
 
 def catboost_matrix(rows: list[Row], with_mp: bool) -> np.ndarray:
@@ -1650,16 +1900,23 @@ def _assert_catboost_window(matrix: np.ndarray, targets: np.ndarray, target: str
         )
 
 
-def _fit_catboost(train: list[Row], target: str, with_mp: bool) -> CatBoostFit:
+def _fit_catboost(
+    train: list[Row],
+    target: str,
+    with_mp: bool,
+    thread_count: Optional[int] = None,
+) -> CatBoostFit:
     """Обучает CatBoost §3.1 на окне `train` для таргета `target`.
 
     Обучение только на переданном окне (никаких обращений к выборке целиком):
-    фолд walk-forward передаёт сюда исключительно прошлые месяцы.
+    фолд walk-forward передаёт сюда исключительно прошлые месяцы. `thread_count`
+    (quick: 1) пробрасывается в конструктор; по умолчанию берётся из контекста
+    `catboost_thread_count`, а вне quick-контекста не задаётся.
     """
     matrix = catboost_matrix(train, with_mp)
     targets = _catboost_targets(train, target)
     _assert_catboost_window(matrix, targets, target)
-    model = catboost_model(with_mp)
+    model = catboost_model(with_mp, thread_count=thread_count)
     model.fit(matrix, targets)
     return CatBoostFit(
         model=model, matrix=matrix, target=target, targets=targets, with_mp=with_mp
@@ -2179,6 +2436,7 @@ def current_nowcast(
     key_rate: list,
     fao: list,
     today: date,
+    thread_count: Optional[int] = None,
 ) -> tuple[Optional[Nowcast], str]:
     """Текущий nowcast (спека §5.3) или `(None, причина)`.
 
@@ -2210,15 +2468,16 @@ def current_nowcast(
     values: dict[str, float] = {}
     skipped: list[tuple[str, str]] = []
     non_converged: list[str] = []
-    for name in MODELS:
-        try:
-            values[name] = float(MODELS[name](rows, row))
-        except DegenerateWindowError as error:
-            skipped.append((name, str(error)))
-            continue
-        fold_notes = getattr(MODELS[name], "fold_notes", None)
-        if fold_notes and int(fold_notes.get(NON_CONVERGED, 0)):
-            non_converged.append(name)
+    with catboost_thread_count(thread_count):
+        for name in MODELS:
+            try:
+                values[name] = float(MODELS[name](rows, row))
+            except DegenerateWindowError as error:
+                skipped.append((name, str(error)))
+                continue
+            fold_notes = getattr(MODELS[name], "fold_notes", None)
+            if fold_notes and int(fold_notes.get(NON_CONVERGED, 0)):
+                non_converged.append(name)
     if not values:
         return None, "ни один метод не посчитан: " + "; ".join(
             f"{model_label(name)} — {error}" for name, error in skipped
@@ -2259,7 +2518,7 @@ def current_nowcast(
     )
 
 
-def forecast_payload(nowcast: Nowcast) -> dict:
+def forecast_payload(nowcast: Nowcast, thread_count: Optional[int] = None) -> dict:
     """Тело JSON текущего nowcast (спека §5.1) — ключи в порядке спеки.
 
     Четыре CatBoost-варианта уходят как `{"forecast", "metadata"}` (метаданные
@@ -2270,8 +2529,8 @@ def forecast_payload(nowcast: Nowcast) -> dict:
     Wall-clock-полей сверх дат нет: JSON детерминирован при (данные, дата).
     """
     metadata = {
-        False: catboost_metadata(with_mp=False),
-        True: catboost_metadata(with_mp=True),
+        False: catboost_metadata(with_mp=False, thread_count=thread_count),
+        True: catboost_metadata(with_mp=True, thread_count=thread_count),
     }
     payload: dict = {
         "forecast_date": nowcast.forecast_date.isoformat(),
@@ -2308,14 +2567,18 @@ def forecast_payload(nowcast: Nowcast) -> dict:
     return payload
 
 
-def nowcast_json(nowcast: Nowcast) -> str:
+def nowcast_json(nowcast: Nowcast, thread_count: Optional[int] = None) -> str:
     """JSON текущего nowcast: UTF-8 как есть, отступ 2, LF в конце (спека §5.1)."""
     return json.dumps(
-        forecast_payload(nowcast), ensure_ascii=False, indent=2
+        forecast_payload(nowcast, thread_count=thread_count),
+        ensure_ascii=False,
+        indent=2,
     ) + "\n"
 
 
-def write_nowcast_artifact(path: Path, nowcast: Optional[Nowcast]) -> bool:
+def write_nowcast_artifact(
+    path: Path, nowcast: Optional[Nowcast], thread_count: Optional[int] = None
+) -> bool:
     """Пишет JSON nowcast или УБИРАЕТ устаревший артефакт; `False` — писать нечего.
 
     Ветка «nowcast не посчитан» (нет цели, признаки не собраны, ни один метод
@@ -2326,7 +2589,7 @@ def write_nowcast_artifact(path: Path, nowcast: Optional[Nowcast]) -> bool:
     if nowcast is None:
         path.unlink(missing_ok=True)
         return False
-    path.write_text(nowcast_json(nowcast), encoding="utf-8")
+    path.write_text(nowcast_json(nowcast, thread_count=thread_count), encoding="utf-8")
     return True
 
 
@@ -2604,6 +2867,7 @@ def render_report(
     nowcast: Optional[Nowcast] = None,
     nowcast_reason: str = NOWCAST_REASON_UNKNOWN,
     sample: str = DEFAULT_SAMPLE,
+    quick: bool = False,
 ) -> str:
     """Полный markdown-отчёт Task 4 (спека §4.3–4.5, §5.1, §5.3, §8.2).
 
@@ -2615,7 +2879,10 @@ def render_report(
     прогноз или `None` (тогда раздел называет `nowcast_reason`); `sample` —
     `short`/`long`: печатается в шапке и строке выборки, а для long добавляет
     оговорку о NaN-контролях до 2013 и длинном сплите статьи. Short-таблицы и
-    числа от этого не меняются.
+    числа от этого не меняются. `quick=True` — экспериментальный прогон только
+    основного окна (спека `2026-10-18-ml-quick-runs`): заголовок и строка
+    помечают quick, robustness и фиксированный сплит статьи не считались
+    (раздел сплита заменён пометкой), DM primary и живой nowcast остаются.
 
     Состав: выборка; «модель × окно» с отдельными строками «2022 исключён»;
     последние 12 фолдов; главный блок DM-HLN primary/secondary (p-value,
@@ -2639,6 +2906,8 @@ def render_report(
     title = "# CPI monthly (ML-трек v2) — walk-forward, DM-HLN, сплит статьи и живой nowcast"
     if sample == "long":
         title += " (long-sample)"
+    if quick:
+        title += " (quick)"
     lines = [
         title,
         "",
@@ -2680,6 +2949,13 @@ def render_report(
         "cutoff — тоже.",
         "",
     ]
+    if quick:
+        lines += [
+            "quick: только основное окно; robustness/сплит не считались. "
+            "Числа quick — экспериментальные, не замена полного прогона "
+            "без флагов.",
+            "",
+        ]
     if sample == "long":
         lines += [
             "**Long-sample (§8.2) — эксперимент на репрезентативность.** "
@@ -2699,14 +2975,22 @@ def render_report(
             "выборок, без подгонки.",
             "",
         ]
+    robustness_note = (
+        "robustness-окна не считаются (quick)."
+        if quick
+        else (
+            f"робастность — второй старт {ROBUST_START} и embargo "
+            f"{ROBUST_EMBARGO}."
+        )
+    )
     lines += [
         "## Walk-forward",
         "",
         "Расширяющееся обучающее окно, переобучение на каждом фолде: тест — месяц "
         "`i`, обучение — строки `[0 … i−1−embargo]` (только прошлое; embargo > 0 "
         "выбрасывает месяц перед тестом). Единый train/test split не используется "
-        f"(спека §4.1). Основное окно — {main_window}; робастность — второй старт "
-        f"{ROBUST_START} и embargo {ROBUST_EMBARGO}. Вырожденное обучающее окно "
+        f"(спека §4.1). Основное окно — {main_window}; {robustness_note} "
+        "Вырожденное обучающее окно "
         "(`DegenerateWindowError` модели: короткое окно B2/B3, пустое окно или "
         "неизменный таргет компоненты CatBoost) — пропуск фолда ЭТОЙ модели со "
         "счётчиком, а не падение прогона. «Недосход» — фолды, где координатный "
@@ -2850,8 +3134,14 @@ def render_report(
         empty="_(весов нет: bottom-up не дал ни одного фолда.)_",
     )
     lines += [""]
-    base_metadata = catboost_metadata(with_mp=False)
-    mp_metadata = catboost_metadata(with_mp=True)
+    base_metadata = catboost_metadata(
+        with_mp=False,
+        thread_count=QUICK_CATBOOST_THREAD_COUNT if quick else None,
+    )
+    mp_metadata = catboost_metadata(
+        with_mp=True,
+        thread_count=QUICK_CATBOOST_THREAD_COUNT if quick else None,
+    )
     lines += [
         "## Конфигурация CatBoost",
         "",
@@ -2897,38 +3187,47 @@ def render_report(
             f"train длиннее статьи ({len(train_months)} против "
             f"{ARTICLE_TRAIN_MONTHS} месяцев)"
         )
-    lines += [
-        "## Сплит статьи (сопоставимость, не выбор модели)",
-        "",
-        f"Фиксированный сплит §4.4: train ≤ {ARTICLE_TRAIN_END.isoformat()[:7]} "
-        f"({len(train_months)} мес.), test "
-        f"{test_months[0].isoformat()[:7] if test_months else '—'} … "
-        f"{test_months[-1].isoformat()[:7] if test_months else '—'} "
-        f"({len(test_months)} мес.). На train обучаются все модели, на test "
-        "считаются RMSE/MAE и DM для тех же primary/secondary-пар. Это "
-        f"**вспомогательная таблица сопоставимости**, а не выбор модели: "
-        f"{train_note}, таргет другой (несглаженный м/м "
-        "с КУ, а не SA ИПЦ без КУ), выбросы не исключены — числа статьи напрямую "
-        "не сравнимы.",
-        "",
-    ]
-    lines += _table(
-        _SPLIT_HEADER,
-        _split_metric_rows(split) if split else [],
-        empty="_(нет тестовых месяцев 2019-01…2024-07 в выборке.)_",
-    )
-    lines += [""]
-    split_dm = _pair_test_rows(split, "split статьи")
-    lines += [
-        "DM на фиксированном test-окне статьи (те же пары, общие месяцы):",
-        "",
-    ]
-    lines += _table(
-        _DM_HEADER,
-        split_dm,
-        empty="_(нет пар на test-окне статьи.)_",
-    )
-    lines += [""]
+    if quick:
+        lines += [
+            "## Сплит статьи (quick: не рассчитывался)",
+            "",
+            "quick: фиксированный сплит не считался — сопоставимость со статьёй "
+            "даёт только полный прогон без флагов.",
+            "",
+        ]
+    else:
+        lines += [
+            "## Сплит статьи (сопоставимость, не выбор модели)",
+            "",
+            f"Фиксированный сплит §4.4: train ≤ {ARTICLE_TRAIN_END.isoformat()[:7]} "
+            f"({len(train_months)} мес.), test "
+            f"{test_months[0].isoformat()[:7] if test_months else '—'} … "
+            f"{test_months[-1].isoformat()[:7] if test_months else '—'} "
+            f"({len(test_months)} мес.). На train обучаются все модели, на test "
+            "считаются RMSE/MAE и DM для тех же primary/secondary-пар. Это "
+            f"**вспомогательная таблица сопоставимости**, а не выбор модели: "
+            f"{train_note}, таргет другой (несглаженный м/м "
+            "с КУ, а не SA ИПЦ без КУ), выбросы не исключены — числа статьи напрямую "
+            "не сравнимы.",
+            "",
+        ]
+        lines += _table(
+            _SPLIT_HEADER,
+            _split_metric_rows(split) if split else [],
+            empty="_(нет тестовых месяцев 2019-01…2024-07 в выборке.)_",
+        )
+        lines += [""]
+        split_dm = _pair_test_rows(split, "split статьи")
+        lines += [
+            "DM на фиксированном test-окне статьи (те же пары, общие месяцы):",
+            "",
+        ]
+        lines += _table(
+            _DM_HEADER,
+            split_dm,
+            empty="_(нет пар на test-окне статьи.)_",
+        )
+        lines += [""]
     lines += [
         "## Текущий nowcast (live)",
         "",
@@ -2937,6 +3236,31 @@ def render_report(
         lines += [render_nowcast(nowcast), ""]
     else:
         lines += [render_nowcast_absent(nowcast_reason), ""]
+    split_bullet = (
+        "- quick: robustness-окна и фиксированный сплит статьи не считались; "
+        "числа quick экспериментальные, официальные — только полный прогон без "
+        "--quick."
+        if quick
+        else (
+            f"- сплит статьи — вспомогательная таблица сопоставимости: "
+            f"{'train короче' if len(train_months) < ARTICLE_TRAIN_MONTHS else 'train длиннее'} "
+            "статьи, таргет другой, выбросы не исключены; модель по нему не "
+            "выбирается."
+        )
+    )
+    embargo_bullet = (
+        "- embargo: в quick embargo 1 — основное окно, если задан "
+        "`--embargo-months 1`. Перекрытие окон признаков тестового и обучающих "
+        "месяцев структурно исключено purge-проверкой, но границы доступности — "
+        "консервативное правило §2.6, а не фактические даты."
+        if quick
+        else (
+            "- embargo 1 — только робастность: перекрытие окон признаков "
+            "тестового и обучающих месяцев структурно исключено purge-проверкой, "
+            "но границы доступности — консервативное правило §2.6, а не "
+            "фактические даты."
+        )
+    )
     lines += [
         "## Что не проверено",
         "",
@@ -2953,13 +3277,8 @@ def render_report(
         "- множественные сравнения (DM/бутстрап по парам) — без поправки на "
         "множественность; p-value — описательные, не подтверждающая статистика "
         "в смысле заранее объявленной единственной гипотезы.",
-        "- embargo 1 — только робастность: перекрытие окон признаков тестового и "
-        "обучающих месяцев структурно исключено purge-проверкой, но границы "
-        "доступности — консервативное правило §2.6, а не фактические даты.",
-        f"- сплит статьи — вспомогательная таблица сопоставимости: "
-        f"{'train короче' if len(train_months) < ARTICLE_TRAIN_MONTHS else 'train длиннее'} "
-        "статьи, таргет другой, выбросы не исключены; модель по нему не "
-        "выбирается.",
+        embargo_bullet,
+        split_bullet,
         "- «2022 исключён» — описательная строка: вклад шока назван, но режимы "
         "отдельно не тестируются, блок «последние 12 фолдов» — не тест.",
         "- живой nowcast: МП может быть глубже `M−1` (пометка в `note`), признаки "
@@ -3259,6 +3578,8 @@ def run_summary(
     out_dir: Optional[Path] = None,
     today: Optional[date] = None,
     sample: str = DEFAULT_SAMPLE,
+    quick: bool = False,
+    jobs: int = 0,
     ml_log: Optional[bool] = None,
     logger: Optional[object] = None,
     run_name: Optional[str] = None,
@@ -3272,6 +3593,19 @@ def run_summary(
     переопределяет sample-дефолт. `embargo_months` — эмбарго основного окна;
     робастные окна (второй старт 48 и эмбарго 1) добавляет `window_specs`
     (у long основное окно 48/0 и робастность 48/1 — дубликат отбрасывается).
+
+    `quick=True` — быстрый экспериментальный режим (спека
+    `2026-10-18-ml-quick-runs`): `window_specs` сужается до основного окна,
+    `fixed_split` не вызывается (`split_predictions=None`), отчёт и `ML_LOG`
+    помечают quick. Модели, признаки, seed и полный путь без флага не меняются.
+
+    `jobs` — число процессов пула фолдов (флаг существует только с `quick`):
+    `0/1` — последовательно, `N>1` — `ProcessPoolExecutor(max_workers=min(N,
+    cpu_count()))` со `spawn`; в quick CatBoost строится с `thread_count=1`
+    (и последовательно, и в воркерах). `jobs != 0` без quick — ошибка: полный
+    прогон не параллелится и остаётся байт-в-байт прежним. `ML_LOG` пишет
+    фактическое `config.jobs`, а `run_name` при `jobs>1` получает сегмент
+    `jobsN`.
 
     Загрузка рядов, `build_sample` и `assert_months_purged` — контракт Task 1;
     walk-forward считает бенчмарки B1–B3 и четыре CatBoost-варианта (`MODELS`)
@@ -3301,6 +3635,10 @@ def run_summary(
     """
     sample = validate_sample(sample)
     start = resolve_start(sample, start)
+    if jobs < 0:
+        raise ValueError(f"--jobs {jobs}: отрицательное число процессов")
+    if jobs != 0 and not quick:
+        raise ValueError("--jobs требует --quick: полный прогон не параллелится")
     out_dir = Path(out_dir) if out_dir is not None else ARTIFACTS_DIR
     today = today or date.today()
     targets = load_targets()
@@ -3334,7 +3672,10 @@ def run_summary(
             run_name=(
                 os.environ.get("ML_RUN_NAME")
                 or run_name
-                or f"cpi_monthly__{sample}__start{start}__embargo{embargo_months}"
+                or f"cpi_monthly__{sample}__"
+                f"{'quick__' if quick else ''}"
+                f"{f'jobs{jobs}__' if jobs > 1 else ''}"
+                f"start{start}__embargo{embargo_months}"
             ),
             config={
                 "sample": sample,
@@ -3342,12 +3683,16 @@ def run_summary(
                 "sample_last": SAMPLE_BOUNDS[sample][1].isoformat(),
                 "start": start,
                 "embargo_months": embargo_months,
+                "quick": quick,
+                # Число процессов пула фолдов (0/1 — последовательно). В полном
+                # режиме всегда 0: `--jobs N>1` без quick отвергается выше.
+                "jobs": jobs,
                 # Окна прогона: основное и робастность, ровно те, что считает
                 # `evaluate_windows` (спека §4.1/§8.2), — по ним паспорт
-                # воспроизводим без чтения кода.
+                # воспроизводим без чтения кода. В quick — только основное.
                 "windows": [
                     list(spec)
-                    for spec in window_specs(start, embargo_months)
+                    for spec in window_specs(start, embargo_months, quick)
                 ],
                 "seed": SEED,
                 "models": list(MODELS),
@@ -3382,6 +3727,7 @@ def run_summary(
     )
     print(
         "CPI monthly (ML-трек v2) — walk-forward, DM-HLN, сплит статьи и nowcast"
+        + (" (quick)" if quick else "")
     )
     bounds_first, bounds_last = SAMPLE_BOUNDS[sample]
     _field(
@@ -3428,9 +3774,27 @@ def run_summary(
             print(f"    … и ещё {hidden} {_plural(hidden, 'месяц', 'месяца', 'месяцев')}")
     _field("--start:", f"{start} (основное окно walk-forward)")
     _field("--embargo-months:", f"{embargo_months} (эмбарго основного окна)")
+    if quick:
+        _field(
+            "--quick:",
+            "только основное окно; robustness и фиксированный сплит статьи "
+            "не считаются",
+        )
+        if jobs > 1:
+            _field(
+                "--jobs:",
+                f"{jobs} (пул фолдов, CatBoost thread_count="
+                f"{QUICK_CATBOOST_THREAD_COUNT})",
+            )
 
     try:
-        runs = evaluate_windows(rows, MODELS, window_specs(start, embargo_months))
+        runs = evaluate_windows(
+            rows,
+            MODELS,
+            window_specs(start, embargo_months, quick),
+            quick=quick,
+            jobs=jobs,
+        )
         _print_walk_forward(runs)
         if not any(run.predictions for run in runs):
             # Ветка «ничего не посчитано вообще»: пустая/короткая выборка или все
@@ -3452,10 +3816,23 @@ def run_summary(
                     )
             return 0
         _print_pair_tests(runs)
-        split_predictions = fixed_split(rows, MODELS)
-        _print_split(split_predictions, rows)
+        if quick:
+            # Спека quick §2.1: фиксированный сплит статьи не считается —
+            # сопоставимость со статьёй даёт только полный прогон.
+            split_predictions = None
+            _field("сплит статьи:", "quick — не рассчитывался")
+        else:
+            split_predictions = fixed_split(rows, MODELS)
+            _print_split(split_predictions, rows)
         nowcast, nowcast_reason = current_nowcast(
-            rows, targets, survey, usd, key_rate, fao, today
+            rows,
+            targets,
+            survey,
+            usd,
+            key_rate,
+            fao,
+            today,
+            thread_count=QUICK_CATBOOST_THREAD_COUNT if quick else None,
         )
         if nowcast is None:
             _field("текущий nowcast:", f"не рассчитан — {nowcast_reason}")
@@ -3475,10 +3852,15 @@ def run_summary(
             nowcast=nowcast,
             nowcast_reason=nowcast_reason,
             sample=sample,
+            quick=quick,
         )
         report_path, predictions_path = write_artifacts(out_dir, report, runs)
         forecast_path = out_dir / FORECAST_NAME
-        forecast_written = write_nowcast_artifact(forecast_path, nowcast)
+        forecast_written = write_nowcast_artifact(
+            forecast_path,
+            nowcast,
+            thread_count=QUICK_CATBOOST_THREAD_COUNT if quick else None,
+        )
         _field("отчёт:", str(report_path))
         _field("прогнозы (CSV):", str(predictions_path))
         if forecast_written:
@@ -3506,17 +3888,22 @@ def run_summary(
                         }
                 # Сплит статьи — вспомогательная метрика сопоставимости, не
                 # выбор модели; модели без фолдов сплита в словарь не входят.
-                split_groups: dict[str, list[Prediction]] = {}
-                for prediction in split_predictions:
-                    split_groups.setdefault(prediction.model, []).append(prediction)
-                article_split = {
-                    name: {
-                        "rmse": rmse_pp(group),
-                        "mae": mae_pp(group),
-                        "n": len(group),
+                # В quick `fixed_split` не вызывался: article_split — null
+                # (спека quick §2.1), а не пустая таблица.
+                if split_predictions is None:
+                    article_split = None
+                else:
+                    split_groups: dict[str, list[Prediction]] = {}
+                    for prediction in split_predictions:
+                        split_groups.setdefault(prediction.model, []).append(prediction)
+                    article_split = {
+                        name: {
+                            "rmse": rmse_pp(group),
+                            "mae": mae_pp(group),
+                            "n": len(group),
+                        }
+                        for name, group in split_groups.items()
                     }
-                    for name, group in split_groups.items()
-                }
                 logger.log_metrics(
                     {
                         "primary_metric": "rmse_pp",
@@ -3647,11 +4034,37 @@ def main(argv: Optional[list] = None) -> int:
              f"{DEFAULT_EMBARGO}); прогон с embargo {ROBUST_EMBARGO} считается "
              f"робастностью",
     )
+    parser.add_argument(
+        "--quick",
+        action="store_true",
+        help="быстрый экспериментальный режим: только основное окно walk-forward, "
+             "без robustness-окон и фиксированного сплита статьи; числа quick "
+             "не официальные и не заменяют полный прогон без флага (спека "
+             "2026-10-18-ml-quick-runs)",
+    )
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        metavar="N",
+        default=None,
+        help="число процессов пула фолдов (флаг допустим только с --quick): "
+             "0/1 — последовательно, N>1 — ProcessPoolExecutor по фолдам с "
+             "CatBoost thread_count=1; без --quick флаг отвергается, полный "
+             "прогон не параллелится (спека 2026-10-18-ml-quick-runs §2.2)",
+    )
     args = parser.parse_args(argv)
+    if args.jobs is not None and args.jobs < 0:
+        parser.error(f"--jobs {args.jobs}: число процессов не может быть отрицательным")
+    if args.jobs is not None and not args.quick:
+        parser.error("--jobs требует --quick: полный прогон не параллелится")
     if args.export_fixtures:
         return export_fixtures(Path(args.export_fixtures))
     return run_summary(
-        start=args.start, embargo_months=args.embargo_months, sample=args.sample
+        start=args.start,
+        embargo_months=args.embargo_months,
+        sample=args.sample,
+        quick=args.quick,
+        jobs=args.jobs or 0,
     )
 
 

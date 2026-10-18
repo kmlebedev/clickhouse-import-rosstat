@@ -28,7 +28,9 @@ import hashlib
 import io
 import json
 import math
+import multiprocessing
 import os
+import pickle
 import random
 import statistics
 import sys
@@ -36,6 +38,7 @@ import tempfile
 import unittest
 import unittest.mock
 import warnings
+from concurrent.futures import ProcessPoolExecutor
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -1246,7 +1249,7 @@ class TestRunSummaryOffline(unittest.TestCase):
     def test_run_summary_long_specs_use_start_48(self):
         captured = {}
 
-        def fake_evaluate(rows, models, specs):
+        def fake_evaluate(rows, models, specs, **kwargs):
             captured["specs"] = list(specs)
             captured["rows"] = list(rows)
             return []
@@ -1390,6 +1393,20 @@ class TestWindowSpecs(unittest.TestCase):
 
     def test_custom_start_and_embargo_are_first(self):
         self.assertEqual(cm.window_specs(30, 2), [(30, 2), (48, 2), (30, 1)])
+
+    def test_quick_window_specs_only_main(self):
+        # Спека quick §2.1: quick — ровно основное окно, robustness нет.
+        self.assertEqual(cm.window_specs(24, 0, quick=True), [(24, 0)])
+        self.assertEqual(cm.window_specs(48, 0, True), [(48, 0)])
+        self.assertEqual(cm.window_specs(24, 1, True), [(24, 1)])
+
+    def test_full_window_specs_unchanged(self):
+        # Без флага окна прежние: short 3 (24/0, 48/0, 24/1), long 2 (48/0, 48/1).
+        self.assertEqual(cm.window_specs(24, 0), [(24, 0), (48, 0), (24, 1)])
+        self.assertEqual(cm.window_specs(48, 0), [(48, 0), (48, 1)])
+        self.assertEqual(
+            cm.window_specs(24, 0, quick=False), [(24, 0), (48, 0), (24, 1)]
+        )
 
 
 class TestWalkForward(unittest.TestCase):
@@ -2675,7 +2692,7 @@ class TestReportTask4(unittest.TestCase):
             split_predictions=split_predictions,
         )
         self.assertIn("## DM-HLN", report)
-        self.assertIn("primary", report)
+        self.assertIn("## DM-HLN: с МП vs без МП", report)
         self.assertIn("secondary", report)
         self.assertIn("## Блочный бутстрап", report)
         self.assertIn("| start=24 (основное) | primary |", report)
@@ -2834,6 +2851,563 @@ def clean_ml_env(**extra) -> dict:
     return env
 
 
+class TestQuickMode(unittest.TestCase):
+    """`--quick`: только основное окно, без robustness и фиксированного сплита."""
+
+    def run_summary(self, quick: bool, directory: Path) -> tuple:
+        """Офлайн-прогон сводки с подменённым walk-forward и nowcast."""
+        split_mock = unittest.mock.Mock(return_value=[])
+        captured = {}
+
+        def fake_evaluate(rows, models, specs, **kwargs):
+            captured["specs"] = list(specs)
+            return fake_window_runs(specs)
+
+        with unittest.mock.patch.dict(
+                os.environ, clean_ml_env(), clear=True
+        ), unittest.mock.patch.object(
+                cm, "evaluate_windows", fake_evaluate
+        ), unittest.mock.patch.object(
+                cm, "fixed_split", split_mock
+        ), unittest.mock.patch.object(
+                cm, "current_nowcast", return_value=(None, "нет цели (тест)")
+        ), fixture_transport(), contextlib.redirect_stdout(io.StringIO()):
+            code = cm.run_summary(
+                out_dir=directory,
+                today=date(2026, 10, 18),
+                start=3,
+                quick=quick,
+            )
+        report = (directory / cm.REPORT_NAME).read_text(encoding="utf-8")
+        return code, split_mock, captured["specs"], report
+
+    def test_quick_skips_fixed_split(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code, split_mock, specs, report = self.run_summary(True, Path(tmp))
+        self.assertEqual(code, 0)
+        # quick: одно основное окно и ни одного вызова fixed_split.
+        self.assertEqual(specs, [(3, 0)])
+        split_mock.assert_not_called()
+        self.assertIn("(quick)", report)
+        self.assertIn("quick: фиксированный сплит не считался", report)
+
+    def test_full_run_still_calls_fixed_split(self):
+        # Регрессия полного пути: без --quick окна и сплит прежние.
+        with tempfile.TemporaryDirectory() as tmp:
+            code, split_mock, specs, report = self.run_summary(False, Path(tmp))
+        self.assertEqual(code, 0)
+        self.assertEqual(specs, [(3, 0), (48, 0), (3, 1)])
+        split_mock.assert_called_once()
+        self.assertNotIn("(quick)", report)
+        self.assertIn("## Сплит статьи (сопоставимость, не выбор модели)", report)
+
+    def test_quick_default_specs_only_main(self):
+        # API без явных specs: quick не должен подхватывать полный набор окон.
+        rows = catboost_rows(30)
+        models = {"stub": lambda train, row: float(len(train))}
+        quick = cm.evaluate_windows(rows, models, quick=True, jobs=1)
+        self.assertEqual(len(quick), 1)
+        self.assertEqual((quick[0].start, quick[0].embargo), (24, 0))
+        self.assertTrue(quick[0].main)
+        full = cm.evaluate_windows(rows, models, quick=False, jobs=0)
+        self.assertEqual(
+            [(run.start, run.embargo) for run in full],
+            [(24, 0), (48, 0), (24, 1)],
+        )
+
+    def main_run_with_2022(self) -> cm.WindowRun:
+        """Main-окно с тестовыми месяцами 2021–2023 (включая 2022)."""
+        months = month_range(date(2021, 1, 1), date(2023, 12, 1))
+        predictions = [
+            cm.Prediction(
+                month=month,
+                model=name,
+                y_true=0.5 + 0.001 * offset,
+                y_pred=0.5 + 0.001 * offset + 0.01 * model_index,
+            )
+            for offset, month in enumerate(months)
+            for model_index, name in enumerate(cm.MODELS)
+        ]
+        return cm.WindowRun(
+            start=24,
+            embargo=0,
+            main=True,
+            folds=len(months),
+            predictions=predictions,
+            skipped={name: 0 for name in cm.MODELS},
+            notes={name: {} for name in cm.MODELS},
+        )
+
+    def test_quick_report_marks_quick_and_no_split(self):
+        rows, _ = build_world(synthetic_world())
+        report = cm.render_report(
+            rows,
+            [],
+            [self.main_run_with_2022()],
+            today=date(2026, 10, 18),
+            quick=True,
+        )
+        self.assertIn("(quick)", report)
+        self.assertIn(
+            "quick: только основное окно; robustness/сплит не считались", report
+        )
+        self.assertIn("## Сплит статьи (quick: не рассчитывался)", report)
+        self.assertIn("quick: фиксированный сплит не считался", report)
+        self.assertNotIn("## Сплит статьи (сопоставимость", report)
+        self.assertNotIn("таблица сопоставимости", report)
+        # DM primary main-окна, «2022 исключён» и живой nowcast остаются.
+        self.assertIn("## DM-HLN", report)
+        self.assertIn("## DM-HLN: с МП vs без МП", report)
+        self.assertIn("2022 исключён", report)
+        self.assertIn("## Текущий nowcast (live)", report)
+
+    def test_full_report_has_split(self):
+        rows, _ = build_world(synthetic_world())
+        split_predictions = cm.fixed_split(
+            rows, {name: (lambda train, row: 0.5) for name in cm.MODELS}
+        )
+        report = cm.render_report(
+            rows,
+            [],
+            [self.main_run_with_2022()],
+            today=date(2026, 10, 18),
+            split_predictions=split_predictions,
+        )
+        self.assertIn("## Сплит статьи (сопоставимость, не выбор модели)", report)
+        self.assertIn("таблица сопоставимости", report)
+        self.assertNotIn("(quick)", report)
+        self.assertNotIn("quick: фиксированный сплит не считался", report)
+
+    def test_quick_ml_log_config_and_run_name(self):
+        fake = FakeLogger()
+        captured = {}
+
+        def start_run(**kwargs):
+            captured.update(kwargs)
+            return fake
+
+        def fake_evaluate(rows, models, specs, **kwargs):
+            captured["specs"] = list(specs)
+            return fake_window_runs(specs)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with unittest.mock.patch.dict(
+                    os.environ, clean_ml_env(ML_LOG="1"), clear=True
+            ), unittest.mock.patch.object(
+                    cm.mlx, "start_run", start_run
+            ), unittest.mock.patch.object(
+                    cm, "evaluate_windows", fake_evaluate
+            ), unittest.mock.patch.object(
+                    cm, "fixed_split",
+                    side_effect=AssertionError("quick не вызывает fixed_split"),
+            ), unittest.mock.patch.object(
+                    cm, "current_nowcast", return_value=(None, "нет цели (тест)")
+            ), fixture_transport(), contextlib.redirect_stdout(io.StringIO()):
+                code = cm.run_summary(
+                    out_dir=Path(tmp),
+                    today=date(2026, 10, 18),
+                    start=3,
+                    quick=True,
+                )
+        self.assertEqual(code, 0)
+        self.assertEqual(captured["specs"], [(3, 0)])
+        self.assertTrue(captured["config"]["quick"])
+        self.assertEqual(captured["config"]["windows"], [[3, 0]])
+        self.assertEqual(
+            captured["run_name"], "cpi_monthly__short__quick__start3__embargo0"
+        )
+        # metrics/predictions — только main-окно; сплит не рассчитан (null).
+        self.assertEqual(
+            [window["window"] for window in fake.metrics["windows"]],
+            ["start=3"],
+        )
+        self.assertIsNone(fake.metrics["article_split"])
+        self.assertEqual({row.window for row in fake.predictions}, {"start=3"})
+        self.assertTrue(all(row.meta["main"] for row in fake.predictions))
+        self.assertEqual(fake.finished[0][0], "finished")
+
+    def test_quick_cli_flag(self):
+        with unittest.mock.patch.object(
+                cm, "run_summary", return_value=0
+        ) as summary:
+            code = cm.main(
+                ["--quick", "--sample", "long", "--start", "48",
+                 "--embargo-months", "1"]
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            summary.call_args.kwargs,
+            {"start": 48, "embargo_months": 1, "sample": "long", "quick": True,
+             "jobs": 0},
+        )
+        # Без флага quick выключен: полный путь не меняется.
+        with unittest.mock.patch.object(
+                cm, "run_summary", return_value=0
+        ) as summary:
+            self.assertEqual(cm.main([]), 0)
+        self.assertFalse(summary.call_args.kwargs["quick"])
+
+
+class TestQuickParallelJobs(unittest.TestCase):
+    """Task 2: `--jobs N` — пул фолдов quick, детерминизм и полный путь.
+
+    Пул использует `spawn` (macOS), поэтому задачи несут только данные
+    (`Row`) и имена моделей: функции берутся из `MODELS` в воркере. Тест на
+    фикстурах сравнивает `jobs 1` и `jobs 2/4` — прогнозы обязаны совпасть
+    побитно (CatBoost `thread_count=1` в обоих путях).
+    """
+
+    def test_quick_parallel_matches_sequential(self):
+        rows = catboost_rows(22)
+        specs = [(15, 0)]
+        sequential = cm.evaluate_windows(
+            rows, cm.MODELS, specs=specs, quick=True, jobs=1
+        )[0]
+        self.assertTrue(sequential.predictions)
+        for jobs in (2, 4):
+            parallel = cm.evaluate_windows(
+                rows, cm.MODELS, specs=specs, quick=True, jobs=jobs
+            )[0]
+            self.assertEqual(
+                [(p.month, p.model, p.y_pred) for p in sequential.predictions],
+                [(p.month, p.model, p.y_pred) for p in parallel.predictions],
+                f"jobs={jobs}",
+            )
+            # Счётчики, диагностика и веса NNLS — тоже фолд-в-фолд.
+            self.assertEqual(sequential.skipped, parallel.skipped, f"jobs={jobs}")
+            self.assertEqual(sequential.notes, parallel.notes, f"jobs={jobs}")
+            self.assertEqual(sequential.weights, parallel.weights, f"jobs={jobs}")
+
+    def test_quick_parallel_repeat_deterministic(self):
+        # Два полных quick-прогона с пулом: артефакты обязаны совпасть sha256.
+        digests = []
+        for _ in range(2):
+            with tempfile.TemporaryDirectory() as tmp:
+                directory = Path(tmp)
+                with unittest.mock.patch.dict(
+                        os.environ, clean_ml_env(), clear=True
+                ), fixture_transport(), contextlib.redirect_stdout(io.StringIO()):
+                    code = cm.run_summary(
+                        out_dir=directory,
+                        today=date(2026, 10, 18),
+                        start=3,
+                        quick=True,
+                        jobs=2,
+                    )
+                self.assertEqual(code, 0)
+                digests.append({
+                    name: hashlib.sha256(
+                        (directory / name).read_bytes()
+                    ).hexdigest()
+                    for name in (
+                        cm.REPORT_NAME,
+                        cm.PREDICTIONS_NAME,
+                        cm.FORECAST_NAME,
+                    )
+                })
+        self.assertEqual(digests[0], digests[1])
+
+    def test_parallel_worker_picklable(self):
+        self.assertEqual(cm._run_fold_worker.__module__, cm.__name__)
+        # Не замыкание: `spawn` pickle'ит ссылку, а не замыкание теста.
+        self.assertIsNone(cm._run_fold_worker.__closure__)
+        # Сама функция тоже обязана пережить pickle (ссылка module.qualname).
+        restored_worker = pickle.loads(pickle.dumps(cm._run_fold_worker))
+        self.assertIs(restored_worker, cm._run_fold_worker)
+        self.assertEqual(restored_worker.__module__, cm.__name__)
+        self.assertEqual(restored_worker.__name__, "_run_fold_worker")
+        rows = catboost_rows(20)
+        task = (7, rows[:5], rows[7], list(cm.MODELS))
+        restored = pickle.loads(pickle.dumps(task))
+        self.assertEqual(restored[0], 7)
+        self.assertEqual(restored[3], list(cm.MODELS))
+        self.assertEqual(
+            [row.month for row in restored[1]], [row.month for row in rows[:5]]
+        )
+        self.assertEqual(restored[2].month, rows[7].month)
+
+    def test_spawn_worker_resolves_global_model(self):
+        # Не in-process: настоящий spawn-воркер импортирует cpi_monthly заново
+        # и обязан сам найти модель в глобальном MODELS.
+        rows = catboost_rows(6)
+        task = (2, rows[:2], rows[2], [cm.MODEL_LAST])
+        context = multiprocessing.get_context("spawn")
+        with ProcessPoolExecutor(max_workers=1, mp_context=context) as pool:
+            index, fold = pool.submit(cm._run_fold_worker, task).result(
+                timeout=180
+            )
+        self.assertEqual(index, 2)
+        result = fold[cm.MODEL_LAST]
+        self.assertFalse(result["skipped"])
+        # B1 = y_lag1 тестовой строки (признак, а не y предыдущей строки).
+        self.assertAlmostEqual(
+            result["pred"], rows[2].features["y_lag1"], places=12
+        )
+
+    def test_parallel_skipped_and_notes(self):
+        rows = catboost_rows(12)
+
+        def degenerate(train, row):
+            raise cm.DegenerateWindowError("окно вырождено (тест)")
+
+        def noted(train, row):
+            noted.fold_notes = {cm.NON_CONVERGED: 1}
+            return 0.5
+
+        models = {"degenerate": degenerate, "noted": noted}
+        with unittest.mock.patch.object(cm, "MODELS", models):
+            index, fold = cm._run_fold_worker(
+                (0, rows[:5], rows[5], list(models))
+            )
+        self.assertEqual(index, 0)
+        self.assertTrue(fold["degenerate"]["skipped"])
+        self.assertIsNone(fold["degenerate"]["pred"])
+        self.assertFalse(fold["noted"]["skipped"])
+        self.assertEqual(fold["noted"]["pred"], 0.5)
+        self.assertEqual(fold["noted"]["notes"], {cm.NON_CONVERGED: 1})
+
+    def test_parallel_skipped_matches_sequential(self):
+        # Короткие окна — реальные вырожденные фолды B2/B3: счётчики и notes
+        # пула обязаны совпасть с последовательным путём.
+        rows = catboost_rows(18)
+        specs = [(10, 0)]
+        sequential = cm.evaluate_windows(
+            rows, cm.MODELS, specs=specs, quick=True, jobs=1
+        )[0]
+        parallel = cm.evaluate_windows(
+            rows, cm.MODELS, specs=specs, quick=True, jobs=2
+        )[0]
+        self.assertGreater(sum(sequential.skipped.values()), 0)
+        self.assertEqual(sequential.skipped, parallel.skipped)
+        self.assertEqual(sequential.notes, parallel.notes)
+        self.assertEqual(
+            [(p.month, p.model, p.y_pred) for p in sequential.predictions],
+            [(p.month, p.model, p.y_pred) for p in parallel.predictions],
+        )
+
+    def test_parallel_rejects_non_global_models(self):
+        # Воркер получает только имена и резолвит их в глобальном MODELS:
+        # произвольный словарь функций обязан дать ValueError ДО пула, а не
+        # KeyError/подмену модели в дочернем процессе.
+        with self.assertRaisesRegex(ValueError, "глобальной MODELS"):
+            cm.evaluate_windows(
+                catboost_rows(20),
+                {"stub": lambda train, row: 0.0},
+                specs=[(10, 0)],
+                quick=True,
+                jobs=2,
+            )
+        # Даже имя реальной модели с ДРУГОЙ функцией — ошибка, а не тихая
+        # подмена на глобальную.
+        with self.assertRaisesRegex(ValueError, "b1_last_value"):
+            cm.walk_forward_parallel(
+                catboost_rows(20),
+                {cm.MODEL_LAST: lambda train, row: 0.0},
+                start=10,
+                embargo=0,
+                jobs=2,
+            )
+
+    def test_jobs_requires_quick(self):
+        for jobs in ("2", "1", "0"):
+            with contextlib.redirect_stderr(io.StringIO()) as stderr:
+                with self.assertRaises(SystemExit):
+                    cm.main(["--jobs", jobs])
+            self.assertIn("--quick", stderr.getvalue(), jobs)
+
+    def test_negative_jobs_rejected(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                cm.main(["--quick", "--jobs", "-1"])
+        with self.assertRaises(ValueError):
+            cm.evaluate_windows(
+                catboost_rows(20),
+                {"stub": lambda train, row: 0.0},
+                specs=[(10, 0)],
+                quick=True,
+                jobs=-1,
+            )
+
+    def test_jobs_0_1_sequential(self):
+        rows = catboost_rows(20)
+        models = {"stub": lambda train, row: float(len(train))}
+        with unittest.mock.patch.object(
+                cm,
+                "walk_forward_parallel",
+                side_effect=AssertionError("jobs 0/1 не поднимают пул"),
+        ):
+            for jobs in (0, 1):
+                runs = cm.evaluate_windows(
+                    rows, models, specs=[(10, 0)], quick=True, jobs=jobs
+                )
+                self.assertEqual(len(runs[0].predictions), 10)
+
+    def test_quick_thread_count_only_in_quick_context(self):
+        with cm.catboost_thread_count(cm.QUICK_CATBOOST_THREAD_COUNT):
+            params = cm.catboost_params(False)
+            metadata = cm.catboost_metadata(True)
+            model = cm.catboost_model(False)
+        self.assertEqual(params["thread_count"], 1)
+        self.assertEqual(metadata["thread_count"], 1)
+        self.assertEqual(model.get_params()["thread_count"], 1)
+        # Контекст снят: полный путь снова не задаёт thread_count.
+        self.assertNotIn("thread_count", cm.catboost_params(False))
+        self.assertNotIn("thread_count", cm.catboost_metadata(False))
+
+    def test_full_mode_unchanged_after_jobs(self):
+        # `--jobs` без quick отвергается и CLI, и API (любое значение, 0/1/4):
+        # полный путь не меняется и не параллелится.
+        for jobs in ("0", "1", "4"):
+            with contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    cm.main(["--jobs", jobs])
+        for jobs in (1, 4):
+            with self.assertRaises(ValueError):
+                cm.evaluate_windows(
+                    catboost_rows(20),
+                    {"stub": lambda train, row: 0.0},
+                    specs=[(10, 0)],
+                    quick=False,
+                    jobs=jobs,
+                )
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                cm.run_summary(
+                    out_dir=Path(tmp), jobs=1, quick=False, start=3
+                )
+        self.assertEqual(cm.window_specs(), [(24, 0), (48, 0), (24, 1)])
+        self.assertEqual(cm.window_specs(48, 0), [(48, 0), (48, 1)])
+        self.assertNotIn("thread_count", cm.catboost_params(False))
+        self.assertNotIn("thread_count", cm.catboost_params(True))
+        with unittest.mock.patch.object(
+                cm,
+                "walk_forward_parallel",
+                side_effect=AssertionError("полный путь не использует пул"),
+        ):
+            runs = cm.evaluate_windows(
+                catboost_rows(20),
+                {"stub": lambda train, row: 0.0},
+                specs=[(10, 0)],
+                quick=False,
+                jobs=0,
+            )
+        self.assertEqual(len(runs[0].predictions), 10)
+
+    def test_jobs_cli_flag_passes_jobs(self):
+        with unittest.mock.patch.object(
+                cm, "run_summary", return_value=0
+        ) as summary:
+            self.assertEqual(cm.main(["--quick", "--jobs", "8"]), 0)
+        self.assertEqual(summary.call_args.kwargs["jobs"], 8)
+        # `--jobs 1` и `--jobs 0` с quick — последовательный quick.
+        for jobs in ("1", "0"):
+            with unittest.mock.patch.object(
+                    cm, "run_summary", return_value=0
+            ) as summary:
+                self.assertEqual(cm.main(["--quick", "--jobs", jobs]), 0)
+            self.assertEqual(summary.call_args.kwargs["jobs"], int(jobs))
+        # Без флага и без quick — штатный полный прогон с jobs=0.
+        with unittest.mock.patch.object(
+                cm, "run_summary", return_value=0
+        ) as summary:
+            self.assertEqual(cm.main([]), 0)
+        self.assertEqual(summary.call_args.kwargs["jobs"], 0)
+        # Сам флаг --jobs без quick отвергается (в том числе 0 и 1).
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                cm.main(["--jobs", "1"])
+
+    def test_quick_ml_log_jobs_config_and_run_name(self):
+        fake = FakeLogger()
+        captured = {}
+
+        def start_run(**kwargs):
+            captured.update(kwargs)
+            return fake
+
+        def fake_evaluate(rows, models, specs, **kwargs):
+            captured["evaluate"] = dict(kwargs)
+            return fake_window_runs(specs)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with unittest.mock.patch.dict(
+                    os.environ, clean_ml_env(ML_LOG="1"), clear=True
+            ), unittest.mock.patch.object(
+                    cm.mlx, "start_run", start_run
+            ), unittest.mock.patch.object(
+                    cm, "evaluate_windows", fake_evaluate
+            ), unittest.mock.patch.object(
+                    cm, "fixed_split",
+                    side_effect=AssertionError("quick не вызывает fixed_split"),
+            ), unittest.mock.patch.object(
+                    cm, "current_nowcast",
+                    return_value=(None, "нет цели (тест)"),
+            ), fixture_transport(), contextlib.redirect_stdout(io.StringIO()):
+                code = cm.run_summary(
+                    out_dir=Path(tmp),
+                    today=date(2026, 10, 18),
+                    start=3,
+                    quick=True,
+                    jobs=8,
+                )
+        self.assertEqual(code, 0)
+        self.assertTrue(captured["config"]["quick"])
+        self.assertEqual(captured["config"]["jobs"], 8)
+        self.assertEqual(captured["evaluate"], {"quick": True, "jobs": 8})
+        self.assertEqual(
+            captured["run_name"],
+            "cpi_monthly__short__quick__jobs8__start3__embargo0",
+        )
+
+    def test_quick_jobs_1_ml_log_and_report_no_pool(self):
+        # `jobs=1` — последовательный quick: фактическое значение в паспорте,
+        # без сегмента jobs1 в run_name и без строки про пул в отчёте.
+        fake = FakeLogger()
+        captured = {}
+
+        def start_run(**kwargs):
+            captured.update(kwargs)
+            return fake
+
+        def fake_evaluate(rows, models, specs, **kwargs):
+            captured["evaluate"] = dict(kwargs)
+            return fake_window_runs(specs)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            with unittest.mock.patch.dict(
+                    os.environ, clean_ml_env(ML_LOG="1"), clear=True
+            ), unittest.mock.patch.object(
+                    cm.mlx, "start_run", start_run
+            ), unittest.mock.patch.object(
+                    cm, "evaluate_windows", fake_evaluate
+            ), unittest.mock.patch.object(
+                    cm, "fixed_split",
+                    side_effect=AssertionError("quick не вызывает fixed_split"),
+            ), unittest.mock.patch.object(
+                    cm, "current_nowcast",
+                    return_value=(None, "нет цели (тест)"),
+            ), fixture_transport(), contextlib.redirect_stdout(io.StringIO()):
+                code = cm.run_summary(
+                    out_dir=directory,
+                    today=date(2026, 10, 18),
+                    start=3,
+                    quick=True,
+                    jobs=1,
+                )
+            report = (directory / cm.REPORT_NAME).read_text(encoding="utf-8")
+        self.assertEqual(code, 0)
+        self.assertTrue(captured["config"]["quick"])
+        self.assertEqual(captured["config"]["jobs"], 1)
+        self.assertEqual(captured["evaluate"], {"quick": True, "jobs": 1})
+        self.assertEqual(
+            captured["run_name"],
+            "cpi_monthly__short__quick__start3__embargo0",
+        )
+        self.assertNotIn("пул фолдов", report)
+        self.assertNotIn("--jobs:", report)
+
+
 class TestRunSummaryMlLog(unittest.TestCase):
     """Task 7: журнал `ml_runs`/`ml_predictions` — опт-ин и не меняет артефакты."""
 
@@ -2844,7 +3418,7 @@ class TestRunSummaryMlLog(unittest.TestCase):
             calls.append((args, kwargs))
             raise AssertionError("ch_exec вызван без ML_LOG")
 
-        def empty_windows(rows, models, specs):
+        def empty_windows(rows, models, specs, **kwargs):
             return []
 
         # Два пути «журнал выключен»: явный ml_log=False и env без ML_LOG.
@@ -2874,7 +3448,7 @@ class TestRunSummaryMlLog(unittest.TestCase):
             captured.update(kwargs)
             return fake
 
-        def fake_evaluate(rows, models, specs):
+        def fake_evaluate(rows, models, specs, **kwargs):
             return fake_window_runs(specs)
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -2961,7 +3535,7 @@ class TestRunSummaryMlLog(unittest.TestCase):
             captured.update(kwargs)
             return fake
 
-        def fake_evaluate(rows, models, specs):
+        def fake_evaluate(rows, models, specs, **kwargs):
             return fake_window_runs(specs)
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -3020,7 +3594,7 @@ class TestRunSummaryMlLog(unittest.TestCase):
         # прогон всё равно получает статус empty.
         fake = FakeLogger()
 
-        def empty_windows(rows, models, specs):
+        def empty_windows(rows, models, specs, **kwargs):
             return []
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -3047,7 +3621,7 @@ class TestRunSummaryMlLog(unittest.TestCase):
     def test_ml_log_failed_run_reraises(self):
         fake = FakeLogger()
 
-        def broken_windows(rows, models, specs):
+        def broken_windows(rows, models, specs, **kwargs):
             raise RuntimeError("walk-forward сломан (тест)")
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -3094,7 +3668,7 @@ class TestRunSummaryMlLog(unittest.TestCase):
                 self.assertEqual(left_hash, right_hash, name)
 
     def test_ml_log_error_falls_back(self):
-        def fake_evaluate(rows, models, specs):
+        def fake_evaluate(rows, models, specs, **kwargs):
             return fake_window_runs(specs)
 
         # log_predictions падает → журнал помечается failed, прогон успешен.
