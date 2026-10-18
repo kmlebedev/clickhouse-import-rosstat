@@ -40,7 +40,7 @@
 ``m2_yoy``                  ``cbr_m2`` «М2 SA»                         % г/г
 ``budget_balance``          ``minfin_fed_bud_mes``                     % доходов
 ``usdrub_3m``               ``cbr_currency_usd``                       % (лог)
-``ruania_spread``           ``cbr_ruonia.ruo``                         п.п.
+``ruania_spread``           ``cbr_ruania.ruo``                         п.п.
 ``price_expectations``      ``macro_series``/``cbr_survey``            п.
 ``business_climate``        ``macro_series``/``cbr_survey``            п.
 ==========================  =========================================  =========
@@ -55,7 +55,7 @@
 СЛЕДУЮЩЕГО за отчётным месяца (`salariesMesPoint.date`), поэтому загрузчик
 приводит её к отчётному месяцу (`normalize_salary_points`). У `cbr_m2`
 значение лежит в колонке `balance`, у `cbr_currency_usd` — в `price`, у
-`cbr_ruonia` — в `ruo` (не `rui`): имена колонок взяты из DDL импортёров, а
+`cbr_ruania` — в `ruo` (не `rui`): имена колонок взяты из DDL импортёров, а
 SQL-константы переименовывают их в общий `value`. У Минфина отдельного ряда
 «сальдо» нет — `budget_balance` считается из «Доходы, всего» и
 «Расходы, всего» (значения — месячные потоки, не накопление).
@@ -298,7 +298,7 @@ FORMAT JSON
 # (переменная разбора `rui` — не имя колонки).
 RUONIA_SQL = """
 SELECT date, ruo AS value
-FROM cbr_ruonia FINAL
+FROM cbr_ruania FINAL
 ORDER BY date
 FORMAT JSON
 """
@@ -532,22 +532,35 @@ def normalize_salary_points(points: list) -> list[tuple[date, float]]:
     return sorted(krm._unique_dates(normalized, "rosstat_salaries_mes"))
 
 
+def normalize_channel_points(
+    channels: dict[str, list[tuple[date, float]]],
+) -> dict[str, list[tuple[date, float]]]:
+    """Приводит каналы к конвенции панели: зарплата — отчётный месяц.
+
+    Общий путь для живого `load_channels` и для `read_fixtures`: фикстуры
+    проходят ту же нормализацию, что и ответы ClickHouse. Иначе round-trip
+    сравнивал бы источник с ним же и не заметил бы ошибку в
+    `normalize_salary_points`.
+    """
+    normalized = dict(channels)
+    if "wage" in normalized:
+        normalized["wage"] = normalize_salary_points(normalized["wage"])
+    return normalized
+
+
 def load_channels() -> dict[str, list[tuple[date, float]]]:
     """Все каналы панели: по одному SQL на ряд, даты — период наблюдения.
 
     У зарплаты дата нормализуется к отчётному месяцу
-    (`normalize_salary_points`); остальные ряды отдают период как в источнике
+    (`normalize_channel_points`); остальные ряды отдают период как в источнике
     (месячные — дата отчётного месяца/последний день, дневные — дата
     наблюдения).
     """
     channels = {}
     for name, sql in CHANNEL_SQL.items():
-        points = points_from_rows(krm.ch_query(sql), name)
-        if name == "wage":
-            points = normalize_salary_points(points)
-        channels[name] = points
-        log.info("канал %s: %d точек", name, len(points))
-    return channels
+        channels[name] = points_from_rows(krm.ch_query(sql), name)
+        log.info("канал %s: %d точек", name, len(channels[name]))
+    return normalize_channel_points(channels)
 
 
 def load_key_rate() -> list[tuple[date, float]]:
@@ -1381,13 +1394,22 @@ def _fixture_channel_rows() -> list:
 
     CPD лежит отдельным `cpd.csv` в форме ответа своего SQL (имя ряда +
     значение); `read_fixtures` складывает оба источника.
+
+    Зарплата пишется в конвенции ИСТОЧНИКА — 1-е число следующего за
+    отчётным месяца (`rosstat_salaries_mes`/`salariesMesPoint.date`), а не в
+    конвенции панели: так чтение фикстур обязано прогнать
+    `normalize_salary_points`, как и живой `load_channels`.
     """
-    rows = [
-        {"channel": key, "date": day.isoformat(), "value": value}
-        for key, points in fixture_channel_points().items()
-        if key not in ("pi", "cpi")
-        for day, value in points
-    ]
+    rows = []
+    for key, points in fixture_channel_points().items():
+        if key in ("pi", "cpi"):
+            continue
+        if key == "wage":
+            points = [(_shift_months(day, 1), value) for day, value in points]
+        rows.extend(
+            {"channel": key, "date": day.isoformat(), "value": value}
+            for day, value in points
+        )
     return sorted(rows, key=lambda row: (row["channel"], row["date"]))
 
 
@@ -1458,6 +1480,9 @@ def read_fixtures(
     Возврат — `(meetings, key_rate, channel_points)`: ровно те же формы, что
     отдают `load_meetings_with_emergency`, `load_key_rate` и `load_channels`,
     поэтому тесты гоняют `build_panel` тем же путём, что и живой прогон.
+    Зарплата в `channels.csv` записана в конвенции источника (1-е число
+    следующего месяца) и здесь нормализуется к отчётному месяцу
+    (`normalize_channel_points`) — как в `load_channels`.
     """
     directory = Path(directory)
     meetings = meetings_with_emergency_from_rows(
@@ -1467,7 +1492,9 @@ def read_fixtures(
     # CPD лежит отдельным файлом, а `channels_from_rows` возвращает все ключи
     # (отсутствующие — пустыми). Поэтому CPD накладывается ПОСЛЕ: иначе пустые
     # `pi`/`cpi` из channels.csv затёрли бы реальные точки cpd.csv.
-    channels = channels_from_rows(_read_csv(directory / FIXTURE_CHANNELS))
+    channels = normalize_channel_points(
+        channels_from_rows(_read_csv(directory / FIXTURE_CHANNELS))
+    )
     channels.update(cpd_channels_from_rows(_read_csv(directory / FIXTURE_CPD)))
     return meetings, key_rate, channels
 

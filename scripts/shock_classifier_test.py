@@ -28,6 +28,7 @@ import contextlib
 import csv
 import dataclasses
 import io
+import math
 import random
 import statistics
 import sys
@@ -261,10 +262,19 @@ class PanelTest(unittest.TestCase):
                          [25, 25, 25, 50, 100, 1350, 0, -300])
 
     def test_missing_channel_is_none_not_zero(self):
-        row = fixture_panel()[0]
-        self.assertIsNone(row.features["infl_exp_expected"])
-        self.assertIsNone(row.features["infl_exp_observed"])
-        self.assertGreaterEqual(row.missing_count, 1)
+        rows = fixture_panel()
+        first, second = rows[0], rows[1]
+        self.assertIsNone(first.features["infl_exp_expected"])
+        self.assertIsNone(first.features["infl_exp_observed"])
+        self.assertGreaterEqual(first.missing_count, 2)
+        # На следующем заседании январские точки уже опубликованы (доступны в
+        # конце февраля): канал появился, и пропусков стало на два меньше.
+        self.assertIsNotNone(second.features["infl_exp_expected"])
+        self.assertIsNotNone(second.features["infl_exp_observed"])
+        self.assertNotEqual(second.features["infl_exp_expected"], 0.0)
+        self.assertNotEqual(second.features["infl_exp_observed"], 0.0)
+        self.assertEqual(second.missing_count, first.missing_count - 2)
+        self.assertEqual(second.missing_count, 0)
 
     def test_missing_count_counts_base_features_only(self):
         row = fixture_panel()[0]
@@ -275,16 +285,29 @@ class PanelTest(unittest.TestCase):
 
     def test_delta_is_to_previous_meeting(self):
         rows = fixture_panel()
-        self.assertIsNotNone(rows[0].features["pi_saar"])
-        self.assertIsNotNone(rows[1].features["pi_saar"])
+        monthly = {
+            sc._month_key(day): value
+            for day, value in sc.fixture_cpd_points()["pi"]
+        }
+        # As-of: первое заседание (2021-02-12) видит декабрь 2020, второе
+        # (2021-03-19) — январь 2021 (февраль доступен только в конце марта).
+        first = sc.krm.annualize_saar(monthly[(2020, 12)])
+        second = sc.krm.annualize_saar(monthly[(2021, 1)])
+        self.assertAlmostEqual(rows[0].features["pi_saar"], first, places=9)
+        self.assertAlmostEqual(rows[1].features["pi_saar"], second, places=9)
+        expected = second - first
+        self.assertNotEqual(expected, 0.0)
         self.assertAlmostEqual(
-            rows[1].features["pi_saar_chg"],
-            rows[1].features["pi_saar"] - rows[0].features["pi_saar"],
-            places=9,
+            rows[1].features["pi_saar_chg"], expected, places=9
         )
-        # И это именно сдвиг между заседаниями: дельта второго заседания не
-        # равна разнице текущего и прошлого МЕСЯЧНЫХ значений.
-        self.assertNotEqual(rows[1].features["pi_saar_chg"], 0.0)
+        # Это сдвиг МЕЖДУ ЗАСЕДАНИЯМИ, а не разность месячных темпов: годовой
+        # пересчёт разности m/m дал бы совсем другое число.
+        monthly_difference = sc.krm.annualize_saar(
+            monthly[(2021, 1)] - monthly[(2020, 12)]
+        )
+        self.assertNotAlmostEqual(
+            rows[1].features["pi_saar_chg"], monthly_difference, places=6
+        )
 
     def test_first_row_deltas_are_none(self):
         row = fixture_panel()[0]
@@ -359,6 +382,86 @@ class PanelTest(unittest.TestCase):
         self.assertEqual(without, with_future)
 
 
+class ChannelTransformTest(unittest.TestCase):
+    """Преобразования каналов: as-of, г/г, суммы, курс и спред RUONIA."""
+
+    def test_usdrub_3m_uses_asof_and_log_change(self):
+        points = [
+            (date(2022, 1, 7), 70.0),
+            (date(2022, 4, 7), 75.5),
+            (date(2022, 4, 8), 77.0),
+            (date(2022, 4, 9), 99.0),  # после заседания не участвует
+        ]
+        expected = 100.0 * math.log(77.0 / 70.0)
+        self.assertAlmostEqual(
+            sc._usdrub_3m(points, date(2022, 4, 8)), expected, places=9
+        )
+
+    def test_usdrub_3m_none_on_nonpositive_rate(self):
+        points = [(date(2022, 1, 7), 0.0), (date(2022, 4, 8), 77.0)]
+        self.assertIsNone(sc._usdrub_3m(points, date(2022, 4, 8)))
+        self.assertIsNone(sc._usdrub_3m([], date(2022, 4, 8)))
+
+    def test_ruania_spread_is_ruonia_minus_rate_before(self):
+        row = fixture_panel()[0]
+        ruonia = sc.feature_asof(
+            sc.fixture_channel_points()["ruonia"],
+            row.decision.meeting_date,
+            monthly=False,
+        )
+        self.assertIsNotNone(ruonia)
+        self.assertAlmostEqual(
+            row.features["ruania_spread"],
+            ruonia - row.decision.rate_before,
+            places=9,
+        )
+
+    def test_credit_and_m2_yoy_use_same_month_last_year(self):
+        rows = fixture_panel()
+        channels = sc.fixture_channel_points()
+        for feature, channel in (("credit_yoy", "credit"), ("m2_yoy", "m2")):
+            levels = dict(channels[channel])
+            expected = (
+                levels[date(2020, 12, 1)] / levels[date(2019, 12, 1)] - 1.0
+            ) * 100.0
+            self.assertAlmostEqual(
+                rows[0].features[feature], expected, places=9, msg=feature
+            )
+
+    def test_price_expectations_is_asof_level(self):
+        row = fixture_panel()[0]
+        points = dict(sc.fixture_channel_points()["price_expectations"])
+        # Первое заседание видит декабрьскую точку: январская становится
+        # доступна только в конце февраля.
+        self.assertEqual(
+            row.features["price_expectations"], points[date(2020, 12, 1)]
+        )
+        self.assertNotEqual(row.features["price_expectations"], 0.0)
+
+    def test_trailing_sum_none_on_hole_in_window(self):
+        # Январь–декабрь 2021; at as-of 2022-01-31 декабрь уже доступен.
+        points = [(date(2021, month, 1), float(month)) for month in range(1, 13)]
+        meeting = date(2022, 1, 31)
+        self.assertEqual(
+            sc._trailing_sum(points, meeting, "ряд"),
+            float(sum(range(1, 13))),
+        )
+        with_hole = [point for point in points if point[0] != date(2021, 6, 1)]
+        self.assertIsNone(sc._trailing_sum(with_hole, meeting, "ряд"))
+
+    def test_yoy_none_on_zero_base(self):
+        points = [(date(2020, 12, 1), 0.0), (date(2021, 12, 1), 10.0)]
+        self.assertIsNone(
+            sc._yoy_percent(points, date(2022, 1, 31), "ряд")
+        )
+        # Нет точки того же месяца годом ранее — тоже None, без исключения.
+        self.assertIsNone(
+            sc._yoy_percent(
+                [(date(2021, 12, 1), 10.0)], date(2022, 1, 31), "ряд"
+            )
+        )
+
+
 class FixturesTest(unittest.TestCase):
     def test_export_fixtures_is_deterministic(self):
         with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
@@ -377,6 +480,26 @@ class FixturesTest(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 sc.export_fixtures(Path(directory))
             meetings, key_rate, channels = sc.read_fixtures(Path(directory))
+
+            # Зарплата в channels.csv хранится в конвенции ИСТОЧНИКА — 1-е
+            # число следующего за отчётным месяца. Чтение фикстур обязано
+            # прогнать нормализацию, иначе round-trip сравнивал бы источник
+            # сам с собой и не заметил бы ошибку в отчётном месяце.
+            source_wage = sc.channels_from_rows(
+                fixture_rows(sc.FIXTURE_CHANNELS, Path(directory))
+            )["wage"]
+            in_memory_wage = sc.fixture_channel_points()["wage"]
+            self.assertTrue(source_wage)
+            self.assertNotEqual(source_wage[0][0], in_memory_wage[0][0])
+            self.assertEqual(
+                [sc._shift_months(day, -1) for day, _ in source_wage],
+                [day for day, _ in in_memory_wage],
+            )
+            self.assertEqual(
+                sc.normalize_salary_points(source_wage), in_memory_wage
+            )
+            self.assertEqual(channels["wage"], in_memory_wage)
+
             exported = sc.build_panel(meetings, key_rate, channels, [])
             expected = fixture_panel()
             self.assertEqual(exported, expected)
