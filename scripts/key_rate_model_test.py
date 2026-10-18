@@ -2231,12 +2231,19 @@ class TestCurrentForecast(unittest.TestCase):
         payload = json.loads(km.forecast_json(forecast))
         self.assertEqual(
             sorted(payload),
-            ["data_asof", "forecast_date", "meeting_date", "methods", "note", "sample_size"],
+            ["data_asof", "forecast_date", "meeting_date", "methods", "note", "rate_before", "sample_size"],
         )
         self.assertEqual(payload["forecast_date"], today.isoformat())
         self.assertEqual(payload["data_asof"], today.isoformat())
         self.assertEqual(payload["meeting_date"], "2016-03-20")
         self.assertEqual(payload["sample_size"], len(self.ROWS))
+        # rate_before — уровень ставки на дату среза: writer журнала переводит
+        # шаг метода в ожидаемую ставку (rate_before + step_bp/100) и не читает
+        # ClickHouse повторно.
+        self.assertEqual(
+            payload["rate_before"],
+            self.row(today, date(2016, 3, 20)).decision.rate_before,
+        )
         # Методы §6 в фиксированном порядке: №2 (точечный шаг) и №3
         # (вероятности классов и E[step]).
         self.assertEqual(list(payload["methods"]), list(self.FORECAST_METHODS))
@@ -2350,8 +2357,9 @@ class TestCurrentForecast(unittest.TestCase):
             "P(-1)", "P(0)", "P(+1)",  # вероятности классов…
             "%",  # …в процентах
             "E[step]", "б.п.",  # E[step]/шаг в базисных пунктах
-            "в журнал не пишем",  # оговорка про forecast_log
-            "отдельным пунктом фазы 4",
+            "сам скрипт в журнал",  # оговорка про forecast_log
+            "не пишет",
+            "scripts/key_rate_forecast_log.py",
         ):
             self.assertIn(text, block)
         # Раздел отчёта собирается из этого блока тем же путём, что и прогон.

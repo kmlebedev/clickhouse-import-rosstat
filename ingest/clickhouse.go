@@ -16,7 +16,7 @@ import (
 
 const (
 	modelRunsInsert     = "INSERT INTO model_runs (run_id, run_date, trigger_type, trigger_ref, gold_scenario, usdrub_path, price_deck, discount_rate, wacc, nav_per_share, nav_bull, nav_base, nav_bear, market_price, upside_pct, nav_beta_gold, comment)"
-	forecastLogInsert   = "INSERT INTO forecast_log (forecast_date, target_date, metric, predicted, actual, error_pct)"
+	forecastLogInsert   = "INSERT INTO forecast_log (forecast_date, target_date, metric, predicted, actual, error_pct, error_bp, probabilities, model, data_version, prompt_version)"
 	macroSeriesInsert   = "INSERT INTO macro_series (source, series, date, value)"
 	goldPricesInsert    = "INSERT INTO gold_prices (venue, date, usd)"
 	goldForecastsInsert = "INSERT INTO gold_forecasts (author, published, horizon, scenario, low, high, point, probability)"
@@ -128,7 +128,7 @@ func (w *ClickHouseWriter) InsertModelRun(ctx context.Context, r ModelRun) error
 		{"nav", r.NavPerShare},
 		{"xau_q_avg", xauAvg},
 	} {
-		if err = forecastBatch.Append(forecastDate, targetDate, row.metric, row.predicted, nil, nil); err != nil {
+		if err = forecastBatch.Append(forecastDate, targetDate, row.metric, row.predicted, nil, nil, nil, "{}", "", "", uint16(0)); err != nil {
 			_ = forecastBatch.Abort()
 			return err
 		}
@@ -146,6 +146,43 @@ func (w *ClickHouseWriter) InsertModelRun(ctx context.Context, r ModelRun) error
 		r.PriceDeck, r.DiscountRate, r.Wacc, r.NavPerShare, r.NavBull, r.NavBase, r.NavBear,
 		r.MarketPrice, r.UpsidePct, nil, r.Comment,
 	); err != nil {
+		_ = batch.Abort()
+		return err
+	}
+	return batch.Send()
+}
+
+// InsertKeyRateForecast пишет одну строку прогноза ключевой ставки в
+// forecast_log: actual/error_pct/error_bp = NULL — их заполнит резолвер
+// (метрики cbr_rate* — по ставке после заседания, ошибка в базисных пунктах).
+// Метаданные прогноза (probabilities/model/data_version/prompt_version) входят в
+// контракт публикации (KEY_RATE_PUBLICATIONS §7 п. 5, §8) и пишутся в те же
+// колонки: probabilities — канонический JSON {"cut","hold","hike"} (алиасы
+// -1/0/+1 нормализуются), пустое распределение — '{}'.
+// Метрика приходит с суффиксом трека (`cbr_rate:taylor` и т.п.), поэтому строки
+// разных треков одной даты не схлопываются ключом (metric, forecast_date).
+// Валидацию входа выполняет ValidateKeyRateForecast до вызова writer'а; здесь
+// только разбор дат и сериализация, чтобы прямая запись не могла молча
+// подставить чужой день или потерять распределение.
+func (w *ClickHouseWriter) InsertKeyRateForecast(ctx context.Context, f KeyRateForecast) error {
+	forecastDate, err := time.Parse(manualSeriesDateLayout, f.ForecastDate)
+	if err != nil {
+		return fmt.Errorf("forecast_date %q: %w", f.ForecastDate, err)
+	}
+	targetDate, err := time.Parse(manualSeriesDateLayout, f.TargetDate)
+	if err != nil {
+		return fmt.Errorf("target_date %q: %w", f.TargetDate, err)
+	}
+	probabilities, err := keyRateProbabilitiesJSON(f.Probabilities)
+	if err != nil {
+		return err
+	}
+	batch, err := w.store.prepareBatch(ctx, forecastLogInsert)
+	if err != nil {
+		return err
+	}
+	if err = batch.Append(forecastDate, targetDate, f.Metric, f.Predicted, nil, nil, nil,
+		probabilities, f.Model, f.DataVersion, f.PromptVersion); err != nil {
 		_ = batch.Abort()
 		return err
 	}
