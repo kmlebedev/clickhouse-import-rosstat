@@ -103,8 +103,10 @@ from __future__ import annotations
 import argparse
 import calendar
 import csv
+import json
 import logging
 import math
+import os
 import sys
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -123,6 +125,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import key_rate_model as krm
+import ml_experiment as mlx
 
 log = logging.getLogger(__name__)
 
@@ -775,6 +778,11 @@ def _base_features(
         budget_balance = (income - expenses) / income * 100.0
 
     ruania = level("ruonia", monthly=False)
+    ruania_spread = (
+        None
+        if ruania is None or decision.rate_before is None
+        else ruania - decision.rate_before
+    )
 
     features = {
         "rate_before": decision.rate_before,
@@ -796,7 +804,7 @@ def _base_features(
         "usdrub_3m": _usdrub_3m(
             channel_points.get("usdrub", []), decision.meeting_date
         ),
-        "ruania_spread": None if ruania is None else ruania - decision.rate_before,
+        "ruania_spread": ruania_spread,
         "price_expectations": level("price_expectations"),
         "business_climate": level("business_climate"),
     }
@@ -1023,6 +1031,44 @@ def weight_from_score(score: float, median_train: float) -> float:
     return min(WEIGHT_MAX, max(WEIGHT_MIN, weight))
 
 
+def walk_forward_anomalies(
+    rows: list,
+    min_train: int = MIN_TRAIN,
+    features: Sequence[str] = FEATURES_ALL,
+) -> list[tuple[Optional[float], float]]:
+    """As-of anomaly score и вес каждого заседания (спека §5).
+
+    Порядок `rows` не важен: индексы сортируются по
+    `rows[i].decision.meeting_date`, и статистики для позиции `t` в этом
+    хронологическом порядке оцениваются только по предыдущим позициям —
+    строго прошлым заседаниям. Сама строка подаётся только в
+    `anomaly_score`.
+
+    Возврат выровнен по ВХОДУ: `result[i] = (score, weight)` относится к
+    `rows[i]`. Первые `min_train` хронологических строк получают
+    `(None, 1.0)`: статистик ещё нет, и «измеренного» скора у них тоже нет —
+    пустая ячейка честнее нуля. Вес при этом нейтральный (1.0), как требует
+    спека §5.
+    """
+    if min_train < 1:
+        raise ValueError(f"walk-forward аномалий: min_train = {min_train} < 1")
+    order = sorted(
+        range(len(rows)),
+        key=lambda index: rows[index].decision.meeting_date,
+    )
+    result: list[tuple[Optional[float], float]] = [
+        (None, WEIGHT_MAX) for _ in rows
+    ]
+    for position, index in enumerate(order):
+        if position < min_train:
+            continue
+        train_rows = [rows[prior] for prior in order[:position]]
+        model = fit_anomaly(train_rows, features)
+        score = anomaly_score(model, rows[index])
+        result[index] = (score, weight_from_score(score, model.median_distance))
+    return result
+
+
 def walk_forward_weights(
     rows: list,
     min_train: int = MIN_TRAIN,
@@ -1038,24 +1084,14 @@ def walk_forward_weights(
     `1.0`: статистик ещё нет.
 
     Возврат выровнен по ВХОДУ: `weights[i]` принадлежит `rows[i]`, даже если
-    строки переданы не в хронологическом порядке.
+    строки переданы не в хронологическом порядке. Тонкая обёртка над
+    `walk_forward_anomalies`: отчёт и CSV дополнительно публикуют сам скор,
+    и оба среза обязаны считаться одним и тем же проходом.
     """
-    if min_train < 1:
-        raise ValueError(f"walk-forward весов: min_train = {min_train} < 1")
-    order = sorted(
-        range(len(rows)),
-        key=lambda index: rows[index].decision.meeting_date,
-    )
-    weights = [WEIGHT_MAX] * len(rows)
-    for position, index in enumerate(order):
-        if position < min_train:
-            continue
-        train_rows = [rows[prior] for prior in order[:position]]
-        model = fit_anomaly(train_rows, features)
-        weights[index] = weight_from_score(
-            anomaly_score(model, rows[index]), model.median_distance
-        )
-    return weights
+    return [
+        weight
+        for _, weight in walk_forward_anomalies(rows, min_train, features)
+    ]
 
 
 # --- Описательный классификатор шоков (спека §6) ------------------------------
@@ -1521,29 +1557,1328 @@ def read_fixtures(
     return meetings, key_rate, channels
 
 
-def main(argv: Optional[list] = None) -> int:
-    """CLI среза: Task 2 умеет только писать офлайн-фикстуры.
+# --- Артефакты прогона, журнал и CLI (спека §8) -------------------------------
 
-    Веса и классификатор Task 3 — библиотечный слой (`walk_forward_weights`,
-    `walk_forward_classifier`, `classifier_metrics`); полный CLI (артефакты,
-    `--features`, `--min-train`, `ML_LOG`) — Task 5. Здесь ранний каркас,
-    чтобы фикстуры регенерировались той же командой, что у `key_rate_model`.
+# Базовые колонки CSV весов в порядке контракта спеки §8. Признаки набора
+# добавляются ПОСЛЕ них; порядок фиксирован, потому что CSV читается и глазом,
+# и `key_rate_model.load_shock_weights` (ему нужны только дата и вес).
+WEIGHTS_COLUMNS = (
+    "meeting_date",
+    "emergency",
+    "explicit_shock",
+    "step_bp",
+    "y3",
+    "anomaly_score",
+    "weight",
+    "shock_prob",
+    "missing_count",
+)
+
+
+def clear_stale_artifacts(out_dir) -> list:
+    """Убирает артефакты ПРОШЛОГО прогона; возвращает имена удалённых файлов.
+
+    Ранние выходы (нет ClickHouse, пустой календарь, пустая панель) не пишут
+    ничего, но файлы прошлого прогона лежали бы в каталоге и читались бы как
+    результат ЭТОГО: даты в именах нет. Убираются ВСЕ три артефакта — отчёт и
+    CSV тоже снимок прошлого прогона, а не «частично текущий». Отсутствие
+    файлов — не ошибка.
     """
+    out_dir = Path(out_dir)
+    removed = []
+    for name in ARTIFACT_NAMES:
+        path = out_dir / name
+        if path.exists():
+            path.unlink()
+            removed.append(name)
+    return removed
+
+
+def _print_removed_artifacts(removed: list) -> None:
+    """Строка консоли об удалённых артефактах (пусто — строки нет)."""
+    if removed:
+        print(
+            "  устаревшие артефакты прошлого прогона удалены: "
+            + ", ".join(removed)
+        )
+
+
+def _fmt(value: Optional[float], places: int = 2) -> str:
+    """Число для отчёта: `None` — «—»; «-0.00» не печатается."""
+    if value is None:
+        return "—"
+    if isinstance(value, float) and math.isinf(value):
+        return "+inf" if value > 0 else "−inf"
+    formatted = f"{value:.{places}f}"
+    if float(formatted) == 0.0:
+        return formatted.lstrip("-")
+    return formatted
+
+
+def _fmt_p(value: Optional[float]) -> str:
+    """p-value: менее 1e-4 — «<0.0001», `None` — «—»."""
+    if value is None:
+        return "—"
+    if value < 0.0001:
+        return "<0.0001"
+    return f"{value:.4f}"
+
+
+def weight_distribution(weights: list) -> dict:
+    """min/median/max причинных весов; пустой список — все `None`."""
+    if not weights:
+        return {"min": None, "median": None, "max": None}
+    return {
+        "min": float(min(weights)),
+        "median": float(np.median(weights)),
+        "max": float(max(weights)),
+    }
+
+
+def feature_coverage(rows: list, features: Sequence[str]) -> dict:
+    """Покрытие признаков: число наблюдённых значений и их доля (спека §4.2).
+
+    `None` — пропуск, а не ноль: доля считается по непустым значениям.
+    Покрытие публикуется и по признакам, и по вариантам набора — так видно,
+    не держится ли результат на медианной импутации.
+    """
+    total = len(rows)
+    coverage = {}
+    for name in features:
+        observed = sum(
+            1 for row in rows if row.features.get(name) is not None
+        )
+        coverage[name] = {
+            "observed": observed,
+            "share": observed / total if total else 0.0,
+        }
+    return coverage
+
+
+def compare_weighted_methods(
+    panel_rows: list,
+    channel_points: dict,
+    weights: list,
+    min_train: int,
+) -> dict:
+    """Weighted vs unweighted walk-forward `taylor`/`ordered_logit` (спека §8).
+
+    Панель классификатора шире модели v0: у неё 14+ каналов, а методы
+    `key_rate_model` используют `pi_saar` и `gap`. Для сравнения строится
+    выборка v0 (`krm.build_rows`) на тех же решениях и каналах
+    («Базовый ИПЦ» и «бизнес-климат»), а веса передаются по дате заседания.
+    Взвешенная подгонка — WLS/`WeightedOrderedModel`, невзвешенная — прежние
+    OLS/`OrderedModel`; DM-HLN (h=1) сравнивает квадраты ошибок на ОБЩИХ
+    фолдах, поэтому вырожденные окна не сравнивают разные наборы заседаний.
+
+    Возврат: `{"rows": n, "methods": {method: {...}}}`; сбой одного метода
+    (например, несовместимая выборка) не роняет прогон — причина попадает в
+    `error` строки отчёта.
+    """
+    result = {"rows": 0, "methods": {}, "error": None}
+    try:
+        kr_rows, _ = krm.build_rows(
+            [row.decision for row in panel_rows],
+            channel_points.get("pi", []),
+            channel_points.get("business_climate", []),
+        )
+    except Exception as exc:  # pragma: no cover - защита от порчи данных
+        result["error"] = f"{type(exc).__name__}: {exc}"
+        return result
+    result["rows"] = len(kr_rows)
+    if not kr_rows:
+        return result
+    weight_map = {
+        row.decision.meeting_date: float(weight)
+        for row, weight in zip(panel_rows, weights)
+    }
+    for method, fit_predict in (
+        ("taylor", krm.fit_taylor),
+        ("ordered_logit", krm.fit_ordered_logit),
+    ):
+        try:
+            weighted, _ = krm.walk_forward(
+                kr_rows,
+                method,
+                fit_predict,
+                min_train=min_train,
+                weights=weight_map,
+            )
+            unweighted, _ = krm.walk_forward(
+                kr_rows, method, fit_predict, min_train=min_train
+            )
+        except Exception as exc:  # pragma: no cover - защита от порчи данных
+            result["methods"][method] = {
+                "n": 0,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+            continue
+        weighted_errors = {
+            prediction.meeting_date: (
+                prediction.step_bp - prediction.actual_step_bp
+            )
+            for prediction in weighted
+        }
+        unweighted_errors = {
+            prediction.meeting_date: (
+                prediction.step_bp - prediction.actual_step_bp
+            )
+            for prediction in unweighted
+        }
+        shared = sorted(
+            day for day in weighted_errors if day in unweighted_errors
+        )
+        entry = {
+            "n": len(shared),
+            "rmse_weighted": None,
+            "rmse_unweighted": None,
+            "mae_weighted": None,
+            "mae_unweighted": None,
+            "dm_stat": None,
+            "dm_p": None,
+            "error": None,
+        }
+        if shared:
+            errors_weighted = [weighted_errors[day] for day in shared]
+            errors_unweighted = [unweighted_errors[day] for day in shared]
+            entry["rmse_weighted"] = krm.rmse_bp(errors_weighted)
+            entry["rmse_unweighted"] = krm.rmse_bp(errors_unweighted)
+            entry["mae_weighted"] = krm.mae_bp(errors_weighted)
+            entry["mae_unweighted"] = krm.mae_bp(errors_unweighted)
+            statistic, pvalue = krm.diebold_mariano(
+                errors_weighted, errors_unweighted, h=1
+            )
+            entry["dm_stat"] = float(statistic)
+            entry["dm_p"] = float(pvalue)
+        result["methods"][method] = entry
+    return result
+
+
+@dataclass(frozen=True)
+class NextMeetingForecast:
+    """As-of срез следующего заседания (спека §8, `forecast.json`).
+
+    `data_asof` — дата прогона: признаки сняты на неё, а не на дату
+    заседания. `score`/`weight` — причинные: статистики аномальной модели
+    оценены только по прошлым заседаниям. `shock_prob` — вероятность
+    описательного классификатора (`None`, если окно вырождено).
+    """
+
+    meeting_date: date
+    data_asof: date
+    score: float
+    weight: float
+    shock_prob: Optional[float]
+    features: dict
+    missing_count: int
+    features_name: str
+    feature_names: tuple
+    min_train: int
+    sample_size: int
+    train_first: date
+    train_last: date
+
+
+def next_meeting_forecast(
+    rows: list,
+    meetings: list,
+    key_rate: list,
+    channel_points: dict,
+    today: date,
+    features_name: str = "all",
+    min_train: int = MIN_TRAIN,
+) -> Optional[NextMeetingForecast]:
+    """As-of срез следующего заседания; `None` — будущих заседаний нет (§8).
+
+    Ближайшее заседание — первая дата СТРОГО позже `today`; порядок входа не
+    важен. Признаки снимаются на `today` (не на дату заседания): прогноз
+    делается на дату прогона, а не задним числом. Дельты `*_chg` — к
+    предыдущему ПРОШЕДШЕМУ заседанию. Статистики аномальной модели и
+    классификатора обучаются только на заседаниях строго раньше
+    прогнозируемого и, следовательно, только на прошлом относительно среза.
+    """
+    upcoming = sorted(
+        {day for day, _ in _meeting_pairs(meetings) if day > today}
+    )
+    if not upcoming:
+        return None
+    meeting = upcoming[0]
+    train_rows = [
+        row for row in rows if row.decision.meeting_date < meeting
+    ]
+    if not train_rows:
+        return None
+    feature_names = FEATURE_SETS[features_name]
+    rate_before = krm.asof(key_rate, _available_on_the_day, today)
+    # Признаки снимаются as-of ДАТЫ ПРОГОНА: подставляем её в дату решения,
+    # потому что `_base_features` читает именно `decision.meeting_date`.
+    feature_decision = krm.Decision(
+        meeting_date=today,
+        rate_before=rate_before,
+        rate_after=float("nan"),
+        step_bp=0,
+        y3=0,
+    )
+    values = _base_features(feature_decision, channel_points)
+    previous = train_rows[-1]
+    for name in DELTA_FEATURES:
+        current = values.get(name)
+        prior = previous.features.get(name)
+        values[f"{name}_chg"] = (
+            None if current is None or prior is None else current - prior
+        )
+    missing_count = sum(
+        1 for name in BASE_FEATURES if values[name] is None
+    )
+    decision = krm.Decision(
+        meeting_date=meeting,
+        rate_before=rate_before,
+        rate_after=float("nan"),
+        step_bp=0,
+        y3=0,
+    )
+    row = PanelRow(
+        decision=decision,
+        emergency=False,
+        explicit_shock=False,
+        features=values,
+        missing_count=missing_count,
+    )
+    anomaly = fit_anomaly(train_rows, feature_names)
+    score = anomaly_score(anomaly, row)
+    weight = weight_from_score(score, anomaly.median_distance)
+    try:
+        shock_prob = shock_probability(
+            fit_shock_classifier(train_rows, feature_names), row
+        )
+    except krm.DegenerateWindowError:
+        shock_prob = None
+    return NextMeetingForecast(
+        meeting_date=meeting,
+        data_asof=today,
+        score=score,
+        weight=weight,
+        shock_prob=shock_prob,
+        features=values,
+        missing_count=missing_count,
+        features_name=features_name,
+        feature_names=tuple(feature_names),
+        min_train=min_train,
+        sample_size=len(train_rows),
+        train_first=train_rows[0].decision.meeting_date,
+        train_last=train_rows[-1].decision.meeting_date,
+    )
+
+
+def forecast_json(forecast: NextMeetingForecast) -> str:
+    """Текст `shock_classifier_forecast.json` (спека §8).
+
+    Формат: `meeting_date`, `as_of`, `score`, `weight`, `shock_prob`,
+    `features`, `missing_count` и `dataset` — версия набора: вариант
+    (`features`), `min_train`, путь спеки и срок обучения. JSON
+    детерминирован при (данные, дата прогона): ни времени, ни случайных
+    полей.
+    """
+    payload = {
+        "meeting_date": forecast.meeting_date.isoformat(),
+        "as_of": forecast.data_asof.isoformat(),
+        "score": forecast.score,
+        "weight": forecast.weight,
+        "shock_prob": forecast.shock_prob,
+        "features": {
+            name: forecast.features.get(name) for name in forecast.feature_names
+        },
+        "missing_count": forecast.missing_count,
+        "dataset": {
+            "features": forecast.features_name,
+            "feature_names": list(forecast.feature_names),
+            "min_train": forecast.min_train,
+            "spec": SPEC_PATH,
+            "n_train": forecast.sample_size,
+            "train_first": forecast.train_first.isoformat(),
+            "train_last": forecast.train_last.isoformat(),
+        },
+        "note": (
+            "as-of — приближение, не point-in-time; вес причинный: статистики "
+            "аномальной модели оценены только по прошлым заседаниям, признаки "
+            "сняты на дату среза"
+        ),
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+
+
+def write_forecast_json(path, forecast: Optional[NextMeetingForecast]) -> bool:
+    """Пишет JSON прогноза или удаляет устаревший файл; `False` — нечего писать.
+
+    Нет будущего заседания — прогноза нет, и оставленный файл прошлого
+    прогона читался бы как текущий. Ветка «нет прогноза» УДАЛЯЕТ артефакт.
+    """
+    path = Path(path)
+    if forecast is None:
+        path.unlink(missing_ok=True)
+        return False
+    path.write_text(forecast_json(forecast), encoding="utf-8")
+    return True
+
+
+def write_weights_csv(
+    path,
+    rows: list,
+    scores: list,
+    weights: list,
+    probabilities: list,
+    features: Sequence[str],
+) -> None:
+    """Пишет `shock_classifier_weights.csv` (спека §8).
+
+    Одна строка — заседание панели; базовые колонки идут в порядке
+    `WEIGHTS_COLUMNS`, затем — признаки выбранного набора. `anomaly_score` и
+    `shock_prob` пусты там, где срез их не даёт (первые `min_train` строк и
+    вырожденные фолды классификатора): пустая ячейка честнее нуля. Веса —
+    ТОЛЬКО as-of: строка `t` не участвовала в статистиках своего веса.
+    """
+    if not (len(rows) == len(scores) == len(weights) == len(probabilities)):
+        raise ValueError(
+            "CSV весов: длины rows/scores/weights/probabilities не совпадают "
+            f"({len(rows)}/{len(scores)}/{len(weights)}/{len(probabilities)})"
+        )
+    columns = WEIGHTS_COLUMNS + tuple(features)
+    writes = []
+    for row, score, weight, probability in zip(
+        rows, scores, weights, probabilities
+    ):
+        item = {
+            "meeting_date": row.decision.meeting_date.isoformat(),
+            "emergency": int(row.emergency),
+            "explicit_shock": int(row.explicit_shock),
+            "step_bp": row.decision.step_bp,
+            "y3": row.decision.y3,
+            "anomaly_score": score,
+            "weight": float(weight),
+            "shock_prob": probability,
+            "missing_count": row.missing_count,
+        }
+        for name in features:
+            item[name] = row.features.get(name)
+        writes.append(item)
+    _write_csv(path, columns, writes)
+
+
+def render_report(
+    rows: list,
+    scores: list,
+    weights: list,
+    probabilities: list,
+    metrics: dict,
+    comparison: dict,
+    forecast: Optional[NextMeetingForecast],
+    features_name: str,
+    features: Sequence[str],
+    min_train: int,
+    today: date,
+) -> str:
+    """Markdown-отчёт классификатора шоков (спека §8).
+
+    Обязательные разделы: «Явные шоки», «Покрытие каналов», «Метрики
+    классификатора», «Веса», «С весами / без», «Ограничения». Числа берутся
+    из тех же срезов, что CSV и `ML_LOG`, поэтому отчёт, артефакты и паспорт
+    не расходятся.
+    """
+    n = len(rows)
+    explicit = [
+        (row, weight, score, probability)
+        for row, weight, score, probability in zip(
+            rows, weights, scores, probabilities
+        )
+        if row.explicit_shock
+    ]
+    emergency_hold = [
+        row for row in rows if row.emergency and not row.explicit_shock
+    ]
+    span = (
+        f" ({rows[0].decision.meeting_date} … "
+        f"{rows[-1].decision.meeting_date})"
+        if rows
+        else ""
+    )
+    distribution = weight_distribution(weights)
+    lowered = sorted(
+        (
+            (weight, row, score)
+            for row, weight, score in zip(rows, weights, scores)
+            if weight < 1.0
+        ),
+        key=lambda item: (item[0], item[1].decision.meeting_date),
+    )
+    coverage = feature_coverage(rows, features)
+    missing_mean = (
+        sum(row.missing_count for row in rows) / n if n else 0.0
+    )
+    normal_weights = [
+        weight
+        for row, weight in zip(rows, weights)
+        if not row.explicit_shock
+    ]
+    shock_weights = [weight for _, weight, _, _ in explicit]
+    lines = [
+        "# Классификатор шоков ключевой ставки",
+        "",
+        f"Дата прогона: {today.isoformat()}. Заседаний в панели: {n}{span}. "
+        f"Набор признаков: `{features_name}` ({len(features)}), "
+        f"min_train = {min_train}. Спека: `{SPEC_PATH}` (§8).",
+        "",
+        "## Явные шоки",
+        "",
+        "Явный шок — внеочередное заседание **и** изменение ставки "
+        "(спека §3.2). Внеочередное без изменения ставки остаётся "
+        "`emergency=True`, `explicit_shock=False` и перечисляется отдельно: "
+        "правило не должно молча превращать hold в шок.",
+        "",
+        f"* явных шоков: **{len(explicit)}**;",
+        f"* внеочередных без изменения ставки: **{len(emergency_hold)}**.",
+        "",
+    ]
+    if explicit:
+        lines += [
+            "| заседание | шаг, б.п. | y3 | вес | anomaly score |",
+            "|---|---|---|---|---|",
+        ]
+        for row, weight, score, _ in explicit:
+            lines.append(
+                f"| {row.decision.meeting_date.isoformat()} "
+                f"| {row.decision.step_bp:+d} | {row.decision.y3:+d} "
+                f"| {_fmt(weight, 4)} | {_fmt(score, 4)} |"
+            )
+    else:
+        lines.append("_Явных шоков в панели нет._")
+    if emergency_hold:
+        lines += [
+            "",
+            "Внеочередные заседания без изменения ставки: "
+            + ", ".join(
+                row.decision.meeting_date.isoformat()
+                for row in emergency_hold
+            )
+            + ".",
+        ]
+
+    lines += [
+        "",
+        "## Покрытие каналов",
+        "",
+        "Покрытие — доля заседаний панели с наблюдённым (непустым) "
+        "значением признака. Пропуск — `None`, а не ноль; аномальная модель "
+        "заполняет его медианой обучающего окна, но это не создаёт "
+        "измеренного значения.",
+        "",
+        "| признак | покрыто | доля |",
+        "|---|---|---|",
+    ]
+    for name in features:
+        item = coverage[name]
+        lines.append(
+            f"| `{name}` | {item['observed']} из {n} "
+            f"| {_fmt(item['share'], 3)} |"
+        )
+    lines += [
+        "",
+        "Покрытие вариантов набора (доля непустых значений по всем признакам):",
+        "",
+        "| вариант | признаков | покрытие |",
+        "|---|---|---|",
+    ]
+    for variant, variant_features in FEATURE_SETS.items():
+        variant_coverage = feature_coverage(rows, variant_features)
+        observed = sum(
+            item["observed"] for item in variant_coverage.values()
+        )
+        total = n * len(variant_features)
+        lines.append(
+            f"| `{variant}` | {len(variant_features)} "
+            f"| {_fmt(observed / total if total else 0.0, 3)} |"
+        )
+    lines += [
+        "",
+        f"Заседаний без пропусков базовых признаков: "
+        f"{sum(1 for row in rows if row.missing_count == 0)} из {n}; "
+        f"среднее `missing_count` = {_fmt(missing_mean)}.",
+    ]
+
+    lines += [
+        "",
+        "## Метрики классификатора",
+        "",
+        "Walk-forward `LogisticRegression` (L2, `C=1.0`, "
+        "`class_weight='balanced'`, `max_iter=1000`) на тех же "
+        "стандартизованных признаках; фолды без двух классов пропускаются. "
+        "Веса НЕ берутся из классификатора: при малом числе явных шоков он "
+        "описательный слой валидации (спека §6).",
+        "",
+        "| метрика | значение |",
+        "|---|---|",
+        f"| n (фолдов с прогнозом) | {metrics.get('n', 0)} |",
+        f"| положительных в оценке | {metrics.get('positives', 0)} |",
+        f"| пропущено фолдов | {metrics.get('skipped', 0)} |",
+        f"| порог precision/recall | {_fmt(metrics.get('threshold'), 2)} |",
+        f"| ROC-AUC | {_fmt(metrics.get('roc_auc'), 3)} |",
+        f"| PR-AUC | {_fmt(metrics.get('pr_auc'), 3)} |",
+        f"| Brier | {_fmt(metrics.get('brier'), 4)} |",
+        f"| precision | {_fmt(metrics.get('precision'), 3)} |",
+        f"| recall | {_fmt(metrics.get('recall'), 3)} |",
+    ]
+    confusion = metrics.get("confusion") or [[0, 0], [0, 0]]
+    lines += [
+        f"| матрица ошибок (факт 0/1 × прогноз 0/1) "
+        f"| [[{confusion[0][0]}, {confusion[0][1]}], "
+        f"[{confusion[1][0]}, {confusion[1][1]}]] |",
+        "",
+        f"_В walk-forward оценку попадают {metrics.get('positives', 0)} из "
+        f"{len(explicit)} явных шоков: первые `min_train` заседаний не "
+        "оцениваются, а вырожденные фолды без положительных в обучении "
+        "пропускаются._",
+    ]
+
+    lines += [
+        "",
+        "## Веса",
+        "",
+        "`w = 1 / (1 + max(0, r − 1)²)`, `r = d_t / median(d_train)`, клип "
+        f"[{WEIGHT_MIN}, {WEIGHT_MAX}]; первые `min_train` заседаний "
+        "получают 1.0. Веса причинные: статистики строки `t` оценены только "
+        "по прошлым заседаниям (спека §5).",
+        "",
+        "| состав | значение |",
+        "|---|---|",
+        f"| весов | {n} |",
+        f"| min / median / max | {_fmt(distribution['min'], 4)} / "
+        f"{_fmt(distribution['median'], 4)} / "
+        f"{_fmt(distribution['max'], 4)} |",
+        f"| пониженных (`w < 1`) | {len(lowered)} |",
+        f"| медиана веса явных шоков | {_fmt(float(np.median(shock_weights)) if shock_weights else None, 4)} |",
+        f"| медиана веса остальных | {_fmt(float(np.median(normal_weights)) if normal_weights else None, 4)} |",
+    ]
+    lines += ["", "Топ-10 пониженных заседаний (наименьший вес первым):", ""]
+    if lowered:
+        lines += [
+            "| заседание | вес | anomaly score | шаг, б.п. | явный шок |",
+            "|---|---|---|---|---|",
+        ]
+        for weight, row, score in lowered[:10]:
+            lines.append(
+                f"| {row.decision.meeting_date.isoformat()} "
+                f"| {_fmt(weight, 4)} | {_fmt(score, 4)} "
+                f"| {row.decision.step_bp:+d} "
+                f"| {'да' if row.explicit_shock else 'нет'} |"
+            )
+        if len(lowered) > 10:
+            lines += [
+                "",
+                f"_Показаны 10 из {len(lowered)} пониженных заседаний._",
+            ]
+    else:
+        lines.append(
+            "_Пониженных заседаний нет: все веса равны 1.0._"
+        )
+
+    lines += ["", "### Следующее заседание", ""]
+    if forecast is None:
+        lines.append(
+            "_Заседаний позже даты прогона нет — as-of срез не считается._"
+        )
+    else:
+        lines += [
+            f"Ближайшее заседание — **{forecast.meeting_date.isoformat()}**; "
+            f"признаки сняты as-of **{forecast.data_asof.isoformat()}** "
+            "(приближение, не point-in-time). "
+            f"anomaly score {_fmt(forecast.score, 4)}, "
+            f"вес **{_fmt(forecast.weight, 4)}**, "
+            f"вероятность явного шока {_fmt(forecast.shock_prob, 3)}; "
+            f"пропусков базовых признаков {forecast.missing_count}.",
+        ]
+
+    lines += [
+        "",
+        "## С весами / без",
+        "",
+        "Walk-forward `key_rate_model` на тех же решениях и каналах "
+        "(`pi_saar`, `gap`): взвешенная подгонка (WLS и "
+        "`WeightedOrderedModel`) против прежней (OLS и `OrderedModel`). "
+        "DM-HLN (h=1) сравнивает квадраты ошибок на ОБЩИХ фолдах; "
+        "положительная статистика — взвешенная подгонка хуже.",
+        "",
+    ]
+    methods = comparison.get("methods") or {}
+    if comparison.get("error"):
+        lines.append(
+            f"_Не рассчитано: {comparison['error']}._"
+        )
+    elif not methods:
+        lines.append(
+            "_Не рассчитано: выборка `key_rate_model` пуста "
+            "(нет общих каналов `pi_saar`/`gap`)._"
+        )
+    else:
+        lines += [
+            "| метод | n | RMSE без весов, б.п. | RMSE с весами, б.п. "
+            "| MAE без весов, б.п. | MAE с весами, б.п. | DM (HLN) | DM p |",
+            "|---|---|---|---|---|---|---|---|",
+        ]
+        for method in ("taylor", "ordered_logit"):
+            entry = methods.get(method)
+            if entry is None:
+                continue
+            if entry.get("error"):
+                lines.append(
+                    f"| {method} | 0 | — | — | — | — | — "
+                    f"| не рассчитано: {entry['error']} |"
+                )
+                continue
+            lines.append(
+                f"| {method} | {entry['n']} "
+                f"| {_fmt(entry['rmse_unweighted'])} "
+                f"| {_fmt(entry['rmse_weighted'])} "
+                f"| {_fmt(entry['mae_unweighted'])} "
+                f"| {_fmt(entry['mae_weighted'])} "
+                f"| {_fmt(entry['dm_stat'])} | {_fmt_p(entry['dm_p'])} |"
+            )
+
+    lines += [
+        "",
+        "## Ограничения",
+        "",
+        f"- **{len(explicit)} положительных меток** — supervised-классификатор "
+        "описательный: его метрики (ROC-AUC/PR-AUC) нестабильны, а веса даёт "
+        "неконтролируемый аномальный скор (спека §6, §11).",
+        "- **As-of — приближение, а не point-in-time слой**: ревизии рядов и "
+        "точные даты публикаций не учтены; месячная точка отчётного месяца M "
+        "доступна в конце M+1 (консервативная конвенция v0).",
+        "- **Пропуски каналов**: отсутствующая точка — `None`, а не ноль; "
+        "аномальная модель заполняет пропуск медианой обучающего окна, но "
+        "это не создаёт измеренного значения. Покрытие и `missing_count` "
+        "опубликованы выше, `core` — проверка робастности.",
+        "- **Веса не исключают наблюдения**, а мягко понижают вклад: клип "
+        f"[{WEIGHT_MIN}, {WEIGHT_MAX}].",
+        "- **Скрипт не пишет в ClickHouse напрямую**: артефакты локальные; "
+        "`ML_LOG=1` (или `--log`) включает журнал `ml_runs`/`ml_predictions` "
+        "через `ml_experiment`.",
+        "- **Классификатор не используется для весов**: это слой валидации, "
+        "а не источник весов; сравнение «с весами / без» показывает эффект "
+        "именно причинных весов.",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def write_report(
+    path,
+    rows: list,
+    scores: list,
+    weights: list,
+    probabilities: list,
+    metrics: dict,
+    comparison: dict,
+    forecast: Optional[NextMeetingForecast],
+    features_name: str,
+    features: Sequence[str],
+    min_train: int,
+    today: date,
+) -> str:
+    """Пишет `shock_classifier_report.md`; возвращает текст отчёта."""
+    text = render_report(
+        rows,
+        scores,
+        weights,
+        probabilities,
+        metrics,
+        comparison,
+        forecast,
+        features_name,
+        features,
+        min_train,
+        today,
+    )
+    Path(path).write_text(text, encoding="utf-8")
+    return text
+
+
+def experiment_metrics(
+    rows: list,
+    labels: list,
+    metrics: dict,
+    weights: list,
+    probabilities: list,
+    comparison: dict,
+    forecast: Optional[NextMeetingForecast],
+    features: Sequence[str],
+) -> dict:
+    """Метрики паспорта `ML_LOG` (спека §8).
+
+    Словарь плоский там, где это числа, и вложенный там, где сравнение по
+    методам: `flatten_metrics` `ml_experiment` развернёт вложенные ключи
+    (`weighted.taylor.rmse`) сам. `None` неопределённых метрик остаётся
+    `None` — это честнее выдуманного нуля.
+    """
+    coverage = feature_coverage(rows, features)
+    n = len(rows)
+    distribution = weight_distribution(weights)
+    payload = {
+        "primary_metric": "auc",
+        "n": n,
+        "n_explicit_shocks": int(sum(labels)),
+        "n_emergency_hold": sum(
+            1 for row in rows if row.emergency and not row.explicit_shock
+        ),
+        "feature_count": len(features),
+        "coverage": {
+            name: item["share"] for name, item in coverage.items()
+        },
+        "auc": metrics.get("roc_auc"),
+        "pr_auc": metrics.get("pr_auc"),
+        "brier": metrics.get("brier"),
+        "precision": metrics.get("precision"),
+        "recall": metrics.get("recall"),
+        "classifier_n": metrics.get("n"),
+        "classifier_skipped": metrics.get("skipped"),
+        "weight_min": distribution["min"],
+        "weight_median": distribution["median"],
+        "weight_max": distribution["max"],
+        "lowered_weights": sum(1 for weight in weights if weight < 1.0),
+        "weighted": {},
+        "unweighted": {},
+        "dm_p": {},
+        "next_weight": forecast.weight if forecast is not None else None,
+        "next_meeting": (
+            forecast.meeting_date.isoformat()
+            if forecast is not None
+            else None
+        ),
+    }
+    for method, entry in (comparison.get("methods") or {}).items():
+        payload["weighted"][method] = {
+            "rmse": entry.get("rmse_weighted"),
+            "mae": entry.get("mae_weighted"),
+        }
+        payload["unweighted"][method] = {
+            "rmse": entry.get("rmse_unweighted"),
+            "mae": entry.get("mae_unweighted"),
+        }
+        payload["dm_p"][method] = entry.get("dm_p")
+    return payload
+
+
+def experiment_predictions(
+    rows: list,
+    scores: list,
+    weights: list,
+    probabilities: list,
+    features_name: str,
+) -> list:
+    """Два вида fold-предсказаний для `ml_predictions` (спека §8).
+
+    * `explicit_shock` — `predicted=shock_prob`, `actual=label`,
+      `unit='probability'`; фолды без вероятности (первые `min_train` и
+      вырожденные окна) не пишутся, чтобы не выдавать `None` за 0;
+    * `anomaly_weight` — `predicted=weight`, `actual=1.0`,
+      `unit='weight'`; пишется для каждого заседания, включая первые
+      `min_train` (там вес нейтральный).
+    """
+    predictions = []
+    for row, score, weight, probability in zip(
+        rows, scores, weights, probabilities
+    ):
+        if probability is not None:
+            predictions.append(
+                mlx.PredictionRow(
+                    model="explicit_shock",
+                    window="walk_forward",
+                    target_date=row.decision.meeting_date,
+                    predicted=float(probability),
+                    actual=float(row.explicit_shock),
+                    unit="probability",
+                    meta={
+                        "features": features_name,
+                        "emergency": row.emergency,
+                        "step_bp": row.decision.step_bp,
+                    },
+                )
+            )
+        predictions.append(
+            mlx.PredictionRow(
+                model="anomaly_weight",
+                window="walk_forward",
+                target_date=row.decision.meeting_date,
+                predicted=float(weight),
+                actual=1.0,
+                unit="weight",
+                meta={
+                    "features": features_name,
+                    "anomaly_score": score,
+                    "explicit_shock": row.explicit_shock,
+                },
+            )
+        )
+    return predictions
+
+
+def _log_experiment(
+    logger,
+    rows: list,
+    scores: list,
+    weights: list,
+    probabilities: list,
+    metrics_payload: dict,
+    features_name: str,
+    report_path: Path,
+    weights_path: Path,
+    forecast_path: Path,
+    forecast_written: bool,
+    notes: str,
+) -> None:
+    """Пишет паспорт, метрики, оба вида предсказаний и артефакты."""
+    logger.log_metrics(metrics_payload)
+    logger.log_predictions(
+        experiment_predictions(
+            rows, scores, weights, probabilities, features_name
+        )
+    )
+    logger.log_artifacts(
+        [
+            report_path,
+            weights_path,
+            forecast_path if forecast_written else None,
+        ]
+    )
+    logger.finish("ok", notes)
+
+
+def _print_summary(
+    rows: list,
+    weights: list,
+    metrics: dict,
+    comparison: dict,
+    forecast: Optional[NextMeetingForecast],
+    features_name: str,
+    features: Sequence[str],
+    min_train: int,
+    today: date,
+    report_path: Path,
+    weights_path: Path,
+    forecast_path: Path,
+    forecast_written: bool,
+) -> None:
+    """Краткая консольная сводка прогона (числа — те же, что в отчёте)."""
+    n = len(rows)
+    span = (
+        f" ({rows[0].decision.meeting_date} … "
+        f"{rows[-1].decision.meeting_date})"
+        if rows
+        else ""
+    )
+    distribution = weight_distribution(weights)
+    explicit = sum(1 for row in rows if row.explicit_shock)
+    emergency_hold = sum(
+        1 for row in rows if row.emergency and not row.explicit_shock
+    )
+    print(
+        "Классификатор шоков ключевой ставки "
+        f"(дата прогона {today.isoformat()})"
+    )
+    print(f"  заседаний в панели:                  {n}{span}")
+    print(f"  явных шоков:                         {explicit}")
+    print(f"  внеочередных без изменения:          {emergency_hold}")
+    print(
+        f"  набор признаков:                     {features_name} "
+        f"({len(features)}), min_train = {min_train}"
+    )
+    print(
+        "  ROC-AUC / PR-AUC / Brier:            "
+        f"{_fmt(metrics.get('roc_auc'), 3)} / "
+        f"{_fmt(metrics.get('pr_auc'), 3)} / "
+        f"{_fmt(metrics.get('brier'), 4)}"
+    )
+    print(
+        "  веса min / median / max:             "
+        f"{_fmt(distribution['min'], 4)} / "
+        f"{_fmt(distribution['median'], 4)} / "
+        f"{_fmt(distribution['max'], 4)}"
+    )
+    print(
+        "  пониженных (w < 1):                  "
+        f"{sum(1 for weight in weights if weight < 1.0)}"
+    )
+    if forecast is None:
+        print(
+            "  следующее заседание:                 нет будущих заседаний"
+        )
+    else:
+        print(
+            f"  следующее заседание:                 "
+            f"{forecast.meeting_date.isoformat()} — вес "
+            f"{_fmt(forecast.weight, 4)}, score "
+            f"{_fmt(forecast.score, 4)}, P(shock) "
+            f"{_fmt(forecast.shock_prob, 3)}"
+        )
+    for method in ("taylor", "ordered_logit"):
+        entry = (comparison.get("methods") or {}).get(method)
+        if entry and entry.get("n"):
+            print(
+                f"  {method}: RMSE без/с весами "
+                f"{_fmt(entry['rmse_unweighted'])}/"
+                f"{_fmt(entry['rmse_weighted'])}, MAE "
+                f"{_fmt(entry['mae_unweighted'])}/"
+                f"{_fmt(entry['mae_weighted'])}, DM p "
+                f"{_fmt_p(entry['dm_p'])}"
+            )
+        else:
+            print(f"  {method}: сравнение не рассчитано")
+    print(f"  отчёт:                               {report_path}")
+    print(f"  веса (CSV):                          {weights_path}")
+    if forecast_written:
+        print(f"  прогноз (JSON):                      {forecast_path}")
+    else:
+        print(
+            f"  прогноз (JSON):                      не пишется "
+            "(нет будущего заседания); устаревший файл, если был, удалён"
+        )
+
+
+def run(
+    features_name: str = "all",
+    min_train: int = MIN_TRAIN,
+    out_dir=None,
+    today: Optional[date] = None,
+    ml_log: Optional[bool] = None,
+    logger=None,
+    data=None,
+) -> int:
+    """Полный прогон классификатора шоков: панель, веса, артефакты, журнал.
+
+    `data` — опциональная четвёрка `(meetings, key_rate, channel_points,
+    mp_deltas)`; `None` означает живое чтение ClickHouse. Явная передача
+    данных нужна офлайн-тестам идемпотентного прогона без сети.
+
+    `out_dir` — каталог артефактов (по умолчанию текущий каталог, как у
+    `key_rate_model`). `today` — дата среза: в панель попадают только
+    заседания не позже неё, а следующий прогноз — первая дата строго позже.
+
+    Ранние выходы (нет ClickHouse, пустой календарь, пустая панель) не пишут
+    артефактов и УДАЛЯЮТ файлы прошлого прогона, иначе они читались бы как
+    результат этого. Журнал (`ml_log`/`ML_LOG=1`) — побочный слой: его сбой
+    не меняет код возврата.
+    """
+    if features_name not in FEATURE_SETS:
+        raise ValueError(
+            f"неизвестный набор признаков {features_name!r}; "
+            f"ожидался один из {sorted(FEATURE_SETS)}"
+        )
+    if min_train < 1:
+        raise ValueError(f"min_train = {min_train} < 1")
+    today = today or date.today()
+    out_dir = Path.cwd() if out_dir is None else Path(out_dir)
+    features = FEATURE_SETS[features_name]
+    if ml_log is None:
+        ml_log = os.environ.get("ML_LOG") == "1"
+
+    if data is None:
+        try:
+            meetings = load_meetings_with_emergency()
+            key_rate = load_key_rate()
+            channels = load_channels()
+            mp_deltas = load_mp_summary_deltas()
+        except Exception as exc:
+            removed = clear_stale_artifacts(out_dir)
+            print(
+                "ошибка чтения ClickHouse: "
+                f"{type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            _print_removed_artifacts(removed)
+            return 1
+    else:
+        meetings, key_rate, channels, mp_deltas = data
+
+    if not meetings:
+        removed = clear_stale_artifacts(out_dir)
+        print(
+            "events_calendar: канонических заседаний нет — "
+            "проверить импорт календаря",
+            file=sys.stderr,
+        )
+        _print_removed_artifacts(removed)
+        return 1
+
+    past_meetings = [
+        (day, emergency)
+        for day, emergency in _meeting_pairs(meetings)
+        if day <= today
+    ]
+    rows = build_panel(past_meetings, key_rate, channels, mp_deltas)
+    if not rows:
+        removed = clear_stale_artifacts(out_dir)
+        print(
+            "выборка пуста: ни одного решения с наблюдаемым исходом "
+            "и признаками",
+            file=sys.stderr,
+        )
+        _print_removed_artifacts(removed)
+        return 1
+
+    anomalies = walk_forward_anomalies(rows, min_train, features)
+    scores = [score for score, _ in anomalies]
+    weights = [weight for _, weight in anomalies]
+    probabilities = walk_forward_classifier(rows, min_train, features)
+    labels = [int(row.explicit_shock) for row in rows]
+    metrics = classifier_metrics(labels, probabilities)
+    comparison = compare_weighted_methods(rows, channels, weights, min_train)
+    forecast = next_meeting_forecast(
+        rows,
+        meetings,
+        key_rate,
+        channels,
+        today,
+        features_name,
+        min_train,
+    )
+
+    report_path = out_dir / REPORT_NAME
+    weights_path = out_dir / WEIGHTS_NAME
+    forecast_path = out_dir / FORECAST_NAME
+
+    if logger is None and ml_log:
+        try:
+            sample_meta = {
+                "rows": len(rows),
+                "first": rows[0].decision.meeting_date.isoformat(),
+                "last": rows[-1].decision.meeting_date.isoformat(),
+                "explicit_shocks": int(sum(labels)),
+                "emergency_hold": sum(
+                    1
+                    for row in rows
+                    if row.emergency and not row.explicit_shock
+                ),
+                "lowered_weights": sum(
+                    1 for weight in weights if weight < 1.0
+                ),
+                "feature_set": features_name,
+                "next_meeting": (
+                    forecast.meeting_date.isoformat()
+                    if forecast is not None
+                    else None
+                ),
+            }
+            sample = [
+                {
+                    "meeting_date": row.decision.meeting_date.isoformat(),
+                    "emergency": row.emergency,
+                    "explicit_shock": row.explicit_shock,
+                    "step_bp": row.decision.step_bp,
+                    "y3": row.decision.y3,
+                    "missing_count": row.missing_count,
+                    "anomaly_score": score,
+                    "weight": weight,
+                    "shock_prob": probability,
+                    **{
+                        name: row.features.get(name)
+                        for name in features
+                    },
+                }
+                for row, score, weight, probability in zip(
+                    rows, scores, weights, probabilities
+                )
+            ]
+            logger = mlx.start_run(
+                experiment="key_rate_shock_classifier",
+                run_name=(
+                    f"shock_classifier__{features_name}__start{min_train}"
+                ),
+                config={
+                    "features": features_name,
+                    "feature_names": list(features),
+                    "min_train": min_train,
+                    "classifier": {
+                        "C": CLASSIFIER_C,
+                        "class_weight": "balanced",
+                        "max_iter": CLASSIFIER_MAX_ITER,
+                        "threshold": CLASSIFIER_THRESHOLD,
+                    },
+                    "weight_min": WEIGHT_MIN,
+                    "weight_max": WEIGHT_MAX,
+                    "seed": SEED,
+                },
+                data_asof=today,
+                sample_meta=mlx.json_safe(sample_meta),
+                sample=mlx.json_safe(sample),
+                spec_path=SPEC_PATH,
+                enabled=True,
+            )
+        except Exception as exc:
+            log.warning(
+                "журнал эксперимента не создан: %s: %s",
+                type(exc).__name__,
+                exc,
+            )
+            logger = None
+
+    try:
+        write_report(
+            report_path,
+            rows,
+            scores,
+            weights,
+            probabilities,
+            metrics,
+            comparison,
+            forecast,
+            features_name,
+            features,
+            min_train,
+            today,
+        )
+        write_weights_csv(
+            weights_path,
+            rows,
+            scores,
+            weights,
+            probabilities,
+            features,
+        )
+        forecast_written = write_forecast_json(forecast_path, forecast)
+        _print_summary(
+            rows,
+            weights,
+            metrics,
+            comparison,
+            forecast,
+            features_name,
+            features,
+            min_train,
+            today,
+            report_path,
+            weights_path,
+            forecast_path,
+            forecast_written,
+        )
+        if logger is not None:
+            metrics_payload = experiment_metrics(
+                rows,
+                labels,
+                metrics,
+                weights,
+                probabilities,
+                comparison,
+                forecast,
+                features,
+            )
+            try:
+                _log_experiment(
+                    logger,
+                    rows,
+                    scores,
+                    weights,
+                    probabilities,
+                    metrics_payload,
+                    features_name,
+                    report_path,
+                    weights_path,
+                    forecast_path,
+                    forecast_written,
+                    (
+                        f"walk-forward: {len(rows)} заседаний, "
+                        f"{int(sum(labels))} явных шоков; прогноз: "
+                        f"{'рассчитан' if forecast is not None else 'нет'}"
+                    ),
+                )
+            except Exception as exc:
+                log.warning(
+                    "журнал эксперимента не записан: %s: %s",
+                    type(exc).__name__,
+                    exc,
+                )
+                try:
+                    logger.finish(
+                        "failed",
+                        f"logging: {type(exc).__name__}: {exc}",
+                    )
+                except Exception as finish_exc:
+                    log.warning(
+                        "не удалось пометить прогон failed: %s: %s",
+                        type(finish_exc).__name__,
+                        finish_exc,
+                    )
+        return 0
+    except Exception as exc:
+        clear_stale_artifacts(out_dir)
+        if logger is not None:
+            try:
+                logger.finish(
+                    "failed", f"{type(exc).__name__}: {exc}"
+                )
+            except Exception as finish_exc:
+                log.warning(
+                    "не удалось пометить прогон failed: %s: %s",
+                    type(finish_exc).__name__,
+                    finish_exc,
+                )
+        raise
+
+
+def main(argv: Optional[list] = None) -> int:
+    """CLI классификатора шоков: артефакты, журнал, фикстуры (спека §8)."""
     parser = argparse.ArgumentParser(
         description="Классификатор шоков ключевой ставки: панель заседаний, "
-        "as-of каналы, причинные веса и классификатор (Tasks 2–3)."
+        "as-of каналы, причинные веса, описательный классификатор и "
+        "артефакты прогона."
+    )
+    parser.add_argument(
+        "--features",
+        choices=tuple(FEATURE_SETS),
+        default="all",
+        help="набор признаков: all (основной) или core (проверка робастности)",
+    )
+    parser.add_argument(
+        "--min-train",
+        type=int,
+        default=MIN_TRAIN,
+        metavar="N",
+        help=f"минимум заседаний в обучении (по умолчанию {MIN_TRAIN})",
     )
     parser.add_argument(
         "--export-fixtures",
         metavar="DIR",
         default=None,
-        help="записать синтетические CSV-фикстуры офлайн-тестов в каталог DIR",
+        help="записать синтетические CSV-фикстуры офлайн-тестов в каталог DIR "
+        "и выйти (ClickHouse не нужен)",
+    )
+    parser.add_argument(
+        "--out-dir",
+        metavar="DIR",
+        default=None,
+        help="каталог артефактов прогона (по умолчанию текущий каталог)",
+    )
+    parser.add_argument(
+        "--log",
+        action="store_true",
+        help="включить журнал эксперимента (то же, что ML_LOG=1): "
+        "ml_runs/ml_predictions через ml_experiment",
     )
     args = parser.parse_args(argv)
     if args.export_fixtures:
         return export_fixtures(Path(args.export_fixtures))
-    parser.print_help()
-    return 0
+    if args.min_train < 1:
+        print("--min-train должен быть >= 1", file=sys.stderr)
+        return 2
+    try:
+        return run(
+            features_name=args.features,
+            min_train=args.min_train,
+            out_dir=Path(args.out_dir) if args.out_dir else None,
+            ml_log=True if args.log else None,
+        )
+    except Exception as exc:
+        print(
+            f"ошибка классификатора шоков: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        return 1
 
 
 if __name__ == "__main__":

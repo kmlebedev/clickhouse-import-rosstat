@@ -28,6 +28,7 @@ import contextlib
 import csv
 import dataclasses
 import io
+import json
 import math
 import random
 import statistics
@@ -767,6 +768,260 @@ class ShockClassifierTest(unittest.TestCase):
         empty = sc.classifier_metrics([], [])
         self.assertEqual(empty["n"], 0)
         self.assertIsNone(empty["brier"])
+
+
+class FakeLogger:
+    """Duck-typed журнал `ml_experiment`: ловит payload без ClickHouse."""
+
+    def __init__(self):
+        self.metrics = None
+        self.predictions = []
+        self.artifacts = []
+        self.status = None
+        self.notes = ""
+
+    def log_metrics(self, metrics):
+        self.metrics = metrics
+
+    def log_predictions(self, rows):
+        self.predictions.extend(rows)
+
+    def log_artifacts(self, paths):
+        self.artifacts.extend(paths)
+
+    def finish(self, status, notes=""):
+        self.status = status
+        self.notes = notes
+
+
+# Будущее заседание к фикстуре: даёт as-of срез следующего заседания, не
+# добавляя решения (окно исхода выходит за ряд ставки и `build_panel` его не
+# видит).
+FUTURE_MEETING = (date(2022, 6, 30), False)
+
+# Дата среза офлайн-прогона: все 8 фикстурных заседаний уже прошли, а
+# следующее (FUTURE_MEETING) — ещё нет.
+FIXTURE_TODAY = date(2022, 5, 1)
+
+
+def run_fixture(directory, logger=None, features="core", min_train=2):
+    """Полный прогон на фикстурах: без ClickHouse, сети и журнала по умолчанию."""
+    meetings = list(sc.FIXTURE_CANONICAL_MEETINGS) + [FUTURE_MEETING]
+    # Консольная сводка прогона — не предмет теста; держим вывод unittest чистым.
+    with contextlib.redirect_stdout(io.StringIO()):
+        return sc.run(
+            features_name=features,
+            min_train=min_train,
+            out_dir=Path(directory),
+            today=FIXTURE_TODAY,
+            logger=logger,
+            data=(
+                meetings,
+                sc.FIXTURE_KEY_RATE_POINTS,
+                sc.fixture_channel_points(),
+                [],
+            ),
+        )
+
+
+class ArtifactsTest(unittest.TestCase):
+    """Артефакты, CLI и `ML_LOG`-payload (спека §8, Task 5)."""
+
+    def test_weights_csv_has_causal_columns(self):
+        rows = fixture_panel()
+        anomalies = sc.walk_forward_anomalies(
+            rows, 2, sc.FEATURES_CORE
+        )
+        scores = [score for score, _ in anomalies]
+        weights = [weight for _, weight in anomalies]
+        probabilities = sc.walk_forward_classifier(
+            rows, 2, sc.FEATURES_CORE
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / sc.WEIGHTS_NAME
+            sc.write_weights_csv(
+                path,
+                rows,
+                scores,
+                weights,
+                probabilities,
+                sc.FEATURES_CORE,
+            )
+            with path.open(newline="", encoding="utf-8") as handle:
+                reader = csv.DictReader(handle)
+                header = tuple(reader.fieldnames or ())
+                data = list(reader)
+        # Базовые колонки — ровно контракт спеки и в том же порядке; признаки
+        # идут после них в порядке набора.
+        self.assertEqual(header, sc.WEIGHTS_COLUMNS + sc.FEATURES_CORE)
+        self.assertEqual(len(data), len(rows))
+        first = data[0]
+        self.assertEqual(first["meeting_date"], "2021-02-12")
+        self.assertEqual(first["emergency"], "0")
+        self.assertEqual(first["explicit_shock"], "0")
+        self.assertEqual(first["step_bp"], "25")
+        self.assertEqual(first["y3"], "1")
+        # Первые min_train строк статистик не имеют: скор пуст, вес 1.0.
+        self.assertEqual(first["anomaly_score"], "")
+        self.assertEqual(first["weight"], "1.0")
+        self.assertEqual(first["shock_prob"], "")
+        self.assertIn("pi_saar", header)
+        # Поздняя строка — as-of скор измерен (не пустая ячейка).
+        self.assertNotEqual(data[-1]["anomaly_score"], "")
+        self.assertGreaterEqual(
+            float(data[-1]["weight"]), sc.WEIGHT_MIN
+        )
+        self.assertLessEqual(float(data[-1]["weight"]), sc.WEIGHT_MAX)
+
+    def test_forecast_json_is_written_for_next_meeting(self):
+        forecast = sc.next_meeting_forecast(
+            fixture_panel(),
+            sc.FIXTURE_CANONICAL_MEETINGS,
+            sc.FIXTURE_KEY_RATE_POINTS,
+            sc.fixture_channel_points(),
+            date(2022, 3, 1),
+            "all",
+            sc.MIN_TRAIN,
+        )
+        self.assertIsNotNone(forecast)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / sc.FORECAST_NAME
+            self.assertTrue(sc.write_forecast_json(path, forecast))
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            # Ветка «прогноза нет» удаляет устаревший артефакт.
+            self.assertFalse(sc.write_forecast_json(path, None))
+            self.assertFalse(path.exists())
+        self.assertEqual(payload["meeting_date"], "2022-03-18")
+        self.assertEqual(payload["as_of"], "2022-03-01")
+        self.assertIsInstance(payload["score"], float)
+        self.assertGreaterEqual(payload["weight"], sc.WEIGHT_MIN)
+        self.assertLessEqual(payload["weight"], sc.WEIGHT_MAX)
+        self.assertEqual(
+            set(payload["features"]), set(sc.FEATURES_ALL)
+        )
+        self.assertIsNotNone(payload["features"]["pi_saar"])
+        self.assertEqual(payload["dataset"]["features"], "all")
+        self.assertEqual(
+            payload["dataset"]["feature_names"], list(sc.FEATURES_ALL)
+        )
+        self.assertEqual(payload["dataset"]["min_train"], sc.MIN_TRAIN)
+        self.assertEqual(payload["dataset"]["spec"], sc.SPEC_PATH)
+        self.assertGreater(payload["dataset"]["n_train"], 0)
+
+    def test_ml_log_payload_contains_metrics_and_predictions(self):
+        logger = FakeLogger()
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(run_fixture(directory, logger=logger), 0)
+        self.assertEqual(logger.status, "ok")
+        metrics = logger.metrics
+        for key in (
+            "n",
+            "n_explicit_shocks",
+            "n_emergency_hold",
+            "feature_count",
+            "coverage",
+            "auc",
+            "pr_auc",
+            "brier",
+            "precision",
+            "recall",
+            "weight_min",
+            "weight_median",
+            "weight_max",
+            "weighted",
+            "unweighted",
+            "dm_p",
+            "next_weight",
+        ):
+            self.assertIn(key, metrics)
+        self.assertEqual(metrics["n"], 8)
+        self.assertEqual(metrics["n_explicit_shocks"], 2)
+        self.assertEqual(metrics["feature_count"], len(sc.FEATURES_CORE))
+        self.assertEqual(
+            set(metrics["coverage"]), set(sc.FEATURES_CORE)
+        )
+        self.assertEqual(
+            set(metrics["weighted"]), {"taylor", "ordered_logit"}
+        )
+        self.assertEqual(
+            set(metrics["unweighted"]), {"taylor", "ordered_logit"}
+        )
+        self.assertEqual(
+            set(metrics["dm_p"]), {"taylor", "ordered_logit"}
+        )
+        self.assertIsNotNone(metrics["next_weight"])
+        # Два вида предсказаний: вероятность шока и причинный вес.
+        models = {row.model for row in logger.predictions}
+        self.assertIn("explicit_shock", models)
+        self.assertIn("anomaly_weight", models)
+        for row in logger.predictions:
+            if row.model == "explicit_shock":
+                self.assertEqual(row.unit, "probability")
+                self.assertIn(row.actual, (0.0, 1.0))
+                self.assertGreaterEqual(row.predicted, 0.0)
+                self.assertLessEqual(row.predicted, 1.0)
+            else:
+                self.assertEqual(row.model, "anomaly_weight")
+                self.assertEqual(row.unit, "weight")
+                self.assertEqual(row.actual, 1.0)
+                self.assertGreaterEqual(row.predicted, sc.WEIGHT_MIN)
+                self.assertLessEqual(row.predicted, sc.WEIGHT_MAX)
+        # Три артефакта: отчёт, CSV весов, JSON прогноза.
+        self.assertEqual(len(logger.artifacts), 3)
+
+    def test_report_contains_required_sections(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(run_fixture(directory), 0)
+            report = (Path(directory) / sc.REPORT_NAME).read_text(
+                encoding="utf-8"
+            )
+        for section in (
+            "## Явные шоки",
+            "## Покрытие каналов",
+            "## Метрики классификатора",
+            "## Веса",
+            "## С весами / без",
+            "## Ограничения",
+        ):
+            self.assertIn(section, report)
+        self.assertIn("ROC-AUC", report)
+        self.assertIn("DM (HLN)", report)
+        self.assertIn("### Следующее заседание", report)
+
+    def test_export_fixtures_does_not_touch_clickhouse(self):
+        query = unittest.mock.Mock(
+            side_effect=AssertionError("ClickHouse не должен вызываться")
+        )
+        start_run = unittest.mock.Mock(
+            side_effect=AssertionError("журнал не должен создаваться")
+        )
+        with tempfile.TemporaryDirectory() as directory, \
+                unittest.mock.patch.object(sc.krm, "ch_query", query), \
+                unittest.mock.patch.object(sc.mlx, "start_run", start_run), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                sc.main(["--export-fixtures", directory]), 0
+            )
+            for name in sc.FIXTURE_COLUMNS:
+                self.assertTrue((Path(directory) / name).is_file())
+        query.assert_not_called()
+        start_run.assert_not_called()
+
+    def test_missing_clickhouse_exits_one_and_clears_artifacts(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                unittest.mock.patch.object(
+                    sc,
+                    "load_meetings_with_emergency",
+                    side_effect=OSError("ClickHouse недоступен"),
+                ), contextlib.redirect_stderr(io.StringIO()), \
+                contextlib.redirect_stdout(io.StringIO()):
+            out_dir = Path(directory)
+            for name in sc.ARTIFACT_NAMES:
+                (out_dir / name).write_text("stale", encoding="utf-8")
+            code = sc.main(["--out-dir", directory])
+            self.assertEqual(code, 1)
+            for name in sc.ARTIFACT_NAMES:
+                self.assertFalse((out_dir / name).exists())
 
 
 if __name__ == "__main__":
