@@ -79,10 +79,10 @@ const (
 
 	// forecastLogInsert — вставка резолвленных строк. Порядок колонок — как в
 	// forecastLogDdl (ingest/schema.go): forecast_date, target_date, metric,
-	// predicted, actual, error_pct, error_bp. Сверять глазами обязательно:
-	// ClickHouse примет перестановку однотипных Date/Float64 и молча запишет
-	// actual в error_pct.
-	forecastLogInsert = "INSERT INTO forecast_log (forecast_date, target_date, metric, predicted, actual, error_pct, error_bp)"
+	// predicted, actual, error_pct, error_bp, probabilities, model, data_version,
+	// prompt_version. Сверять глазами обязательно: ClickHouse примет перестановку
+	// однотипных Date/Float64 и молча запишет actual в error_pct.
+	forecastLogInsert = "INSERT INTO forecast_log (forecast_date, target_date, metric, predicted, actual, error_pct, error_bp, probabilities, model, data_version, prompt_version)"
 )
 
 // resolvableSelect — строки журнала, которым факт уже можно посчитать: только
@@ -96,7 +96,7 @@ const (
 // превращается в *float64 уже в Go (connStore.resolvable):
 // у coalesce-нуля и у настоящего нуля фактической цены один и тот же вид, и
 // различать их обязан признак, а не значение.
-const resolvableSelect = `SELECT forecast_date, target_date, predicted, if(actual IS NULL, 1, 0) AS actual_is_null, coalesce(actual, 0) AS actual FROM forecast_log FINAL WHERE metric = '` + forecastMetric + `' AND target_date <= today() ORDER BY forecast_date`
+const resolvableSelect = `SELECT forecast_date, target_date, predicted, if(actual IS NULL, 1, 0) AS actual_is_null, coalesce(actual, 0) AS actual, probabilities, model, data_version, prompt_version FROM forecast_log FINAL WHERE metric = '` + forecastMetric + `' AND target_date <= today() ORDER BY forecast_date`
 
 // rateResolvableSelect — строки контура ключевой ставки. metric читается в
 // выборку: трек (`cbr_rate:taylor` и т.п.) обязан вернуться в батч тем же
@@ -105,7 +105,7 @@ const resolvableSelect = `SELECT forecast_date, target_date, predicted, if(actua
 //
 // actual_is_null/coalesce — тот же приём, что у resolvableSelect: драйвер
 // строго типизирован, а признак NULL надёжнее отдельной ветки сканирования.
-const rateResolvableSelect = `SELECT forecast_date, target_date, metric, predicted, if(actual IS NULL, 1, 0) AS actual_is_null, coalesce(actual, 0) AS actual FROM forecast_log FINAL WHERE metric LIKE '` + rateMetricPrefix + `%' AND target_date <= today() ORDER BY metric, forecast_date`
+const rateResolvableSelect = `SELECT forecast_date, target_date, metric, predicted, if(actual IS NULL, 1, 0) AS actual_is_null, coalesce(actual, 0) AS actual, probabilities, model, data_version, prompt_version FROM forecast_log FINAL WHERE metric LIKE '` + rateMetricPrefix + `%' AND target_date <= today() ORDER BY metric, forecast_date`
 
 // rateAfterSelect — ставка сразу после заседания: первая точка cbr_key_rate
 // строго позже target_date. FINAL обязателен (ReplacingMergeTree по (date)): без
@@ -139,11 +139,15 @@ const windowStatsSelect = `SELECT countIf(venue = '` + comexVenue + `') AS comex
 // Metric заполнен у строк cbr_rate* (у xau_q_avg он известен константой).
 // Actual == nil означает, что факт ещё не записан (в SQL это actual IS NULL).
 type forecastRow struct {
-	ForecastDate time.Time
-	TargetDate   time.Time
-	Metric       string
-	Predicted    float64
-	Actual       *float64
+	ForecastDate  time.Time
+	TargetDate    time.Time
+	Metric        string
+	Predicted     float64
+	Actual        *float64
+	Probabilities string
+	Model         string
+	DataVersion   string
+	PromptVersion uint16
 }
 
 // windowStats — статистика окна сверки по площадкам: количество точек и их
@@ -161,14 +165,23 @@ type windowStats struct {
 // этой структуре выражается отсутствием элемента в срезе. ErrorPct и ErrorBp —
 // взаимоисключающие: у xau_q_avg заполнена относительная ошибка, у cbr_rate* —
 // ошибка в базисных пунктах; вторая остаётся nil и пишется в NULL.
+//
+// Метаданные прогноза (probabilities/model/data_version/prompt_version) входят в
+// ключ строки журнала и в контракт публикации: резолвер обязан перенести их в
+// батч как есть, иначе ReplacingMergeTree заменит строку версией без распределения
+// и версии данных.
 type forecastResolution struct {
-	ForecastDate time.Time
-	TargetDate   time.Time
-	Metric       string
-	Predicted    float64
-	Actual       float64
-	ErrorPct     *float64
-	ErrorBp      *float64
+	ForecastDate  time.Time
+	TargetDate    time.Time
+	Metric        string
+	Predicted     float64
+	Actual        float64
+	ErrorPct      *float64
+	ErrorBp       *float64
+	Probabilities string
+	Model         string
+	DataVersion   string
+	PromptVersion uint16
 }
 
 // resolveStore — узкий срез стора, который нужен оркестрации Import; в тестах
@@ -320,12 +333,16 @@ func resolveForecasts(ctx context.Context, store resolveStore) (int64, error) {
 		// несопоставима между режимами.
 		bp := errorBp(row.Predicted, actual)
 		resolution := forecastResolution{
-			ForecastDate: row.ForecastDate,
-			TargetDate:   row.TargetDate,
-			Metric:       row.Metric,
-			Predicted:    row.Predicted,
-			Actual:       actual,
-			ErrorBp:      &bp,
+			ForecastDate:  row.ForecastDate,
+			TargetDate:    row.TargetDate,
+			Metric:        row.Metric,
+			Predicted:     row.Predicted,
+			Actual:        actual,
+			ErrorBp:       &bp,
+			Probabilities: row.Probabilities,
+			Model:         row.Model,
+			DataVersion:   row.DataVersion,
+			PromptVersion: row.PromptVersion,
 		}
 
 		log.Infof("forecast_resolve: прогноз %s на %s (%s) — ставка после заседания %.4f, predicted %.4f, error_bp %.4f",
@@ -390,12 +407,16 @@ func resolveForecasts(ctx context.Context, store resolveStore) (int64, error) {
 		// actual) / actual × 100).
 		pct := errorPct(row.Predicted, actual)
 		resolution := forecastResolution{
-			ForecastDate: row.ForecastDate,
-			TargetDate:   row.TargetDate,
-			Metric:       forecastMetric,
-			Predicted:    row.Predicted,
-			Actual:       actual,
-			ErrorPct:     &pct,
+			ForecastDate:  row.ForecastDate,
+			TargetDate:    row.TargetDate,
+			Metric:        forecastMetric,
+			Predicted:     row.Predicted,
+			Actual:        actual,
+			ErrorPct:      &pct,
+			Probabilities: row.Probabilities,
+			Model:         row.Model,
+			DataVersion:   row.DataVersion,
+			PromptVersion: row.PromptVersion,
 		}
 
 		log.Infof("forecast_resolve: прогноз %s на %s — %s, точек %d, actual %.4f, error_pct %.4f",
@@ -436,24 +457,34 @@ func (s connStore) resolvable(ctx context.Context) ([]forecastRow, error) {
 
 	for rows.Next() {
 		var (
-			forecastDate time.Time
-			targetDate   time.Time
-			predicted    float64
-			actualIsNull uint8
-			actual       float64
+			forecastDate  time.Time
+			targetDate    time.Time
+			predicted     float64
+			actualIsNull  uint8
+			actual        float64
+			probabilities string
+			model         string
+			dataVersion   string
+			promptVersion uint16
 		)
 
 		// Порядок Scan — порядок колонок resolvableSelect. actual_is_null читается
-		// в uint8 (if(...) имеет тип UInt8), actual — во float64 (coalesce(Float64)).
-		if err = rows.Scan(&forecastDate, &targetDate, &predicted, &actualIsNull, &actual); err != nil {
+		// в uint8 (if(...) имеет тип UInt8), actual — во float64 (coalesce(Float64)),
+		// prompt_version — в uint16 (UInt16).
+		if err = rows.Scan(&forecastDate, &targetDate, &predicted, &actualIsNull, &actual,
+			&probabilities, &model, &dataVersion, &promptVersion); err != nil {
 			return nil, fmt.Errorf("резолв прогнозов: читать строку forecast_log: %w", err)
 		}
 
 		row := forecastRow{
-			ForecastDate: utcDate(forecastDate),
-			TargetDate:   utcDate(targetDate),
-			Metric:       forecastMetric,
-			Predicted:    predicted,
+			ForecastDate:  utcDate(forecastDate),
+			TargetDate:    utcDate(targetDate),
+			Metric:        forecastMetric,
+			Predicted:     predicted,
+			Probabilities: probabilities,
+			Model:         model,
+			DataVersion:   dataVersion,
+			PromptVersion: promptVersion,
 		}
 		if actualIsNull == 0 {
 			row.Actual = &actual
@@ -488,24 +519,33 @@ func (s connStore) rateResolvable(ctx context.Context) ([]forecastRow, error) {
 
 	for rows.Next() {
 		var (
-			forecastDate time.Time
-			targetDate   time.Time
-			metric       string
-			predicted    float64
-			actualIsNull uint8
-			actual       float64
+			forecastDate  time.Time
+			targetDate    time.Time
+			metric        string
+			predicted     float64
+			actualIsNull  uint8
+			actual        float64
+			probabilities string
+			model         string
+			dataVersion   string
+			promptVersion uint16
 		)
 
 		// Порядок Scan — порядок колонок rateResolvableSelect.
-		if err = rows.Scan(&forecastDate, &targetDate, &metric, &predicted, &actualIsNull, &actual); err != nil {
+		if err = rows.Scan(&forecastDate, &targetDate, &metric, &predicted, &actualIsNull, &actual,
+			&probabilities, &model, &dataVersion, &promptVersion); err != nil {
 			return nil, fmt.Errorf("резолв прогнозов: читать строку forecast_log cbr_rate*: %w", err)
 		}
 
 		row := forecastRow{
-			ForecastDate: utcDate(forecastDate),
-			TargetDate:   utcDate(targetDate),
-			Metric:       metric,
-			Predicted:    predicted,
+			ForecastDate:  utcDate(forecastDate),
+			TargetDate:    utcDate(targetDate),
+			Metric:        metric,
+			Predicted:     predicted,
+			Probabilities: probabilities,
+			Model:         model,
+			DataVersion:   dataVersion,
+			PromptVersion: promptVersion,
 		}
 		if actualIsNull == 0 {
 			row.Actual = &actual
@@ -586,7 +626,12 @@ func (s connStore) writeResolutions(ctx context.Context, rows []forecastResoluti
 		if row.ErrorBp != nil {
 			errorBp = *row.ErrorBp
 		}
-		if err = batch.Append(row.ForecastDate, row.TargetDate, row.Metric, row.Predicted, row.Actual, errorPct, errorBp); err != nil {
+		// Порядок позиций — порядок колонок forecastLogInsert. Метаданные прогноза
+		// переносятся из прочитанной строки как есть: ReplacingMergeTree заменит
+		// строку этой версией, и распределение/модель/версия данных не должны
+		// исчезнуть после резолва.
+		if err = batch.Append(row.ForecastDate, row.TargetDate, row.Metric, row.Predicted, row.Actual,
+			errorPct, errorBp, row.Probabilities, row.Model, row.DataVersion, row.PromptVersion); err != nil {
 			abortBatch(batch, "резолв прогнозов")
 
 			return fmt.Errorf("резолв прогнозов %s на %s: %w",
