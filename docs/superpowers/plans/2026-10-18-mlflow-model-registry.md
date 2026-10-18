@@ -560,8 +560,8 @@ make mlflow-status
 ML_LOG=1 MLFLOW=1 make cpi-nowcast
 make mlflow-export
 make mlflow-export          # second run: same FINAL counts
-make mlflow-register RUN_ID=<id> NAME=cpi_nowcast_catboost_direct
-make mlflow-promote NAME=cpi_nowcast_catboost_direct VERSION=1
+make mlflow-register ARGS='--run-id <id> --name cpi_nowcast_catboost_direct'
+make mlflow-promote ARGS='--name cpi_nowcast_catboost_direct --version 1'
 make mlflow-models
 ML_LOG=1 MLFLOW=1 make key-rate-model
 make mlflow-export

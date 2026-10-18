@@ -203,8 +203,8 @@ python3 scripts/mlflow_export.py \
 ```
 
 - `mlflow` импортируется лениво в `main()`; чистые функции (`canonical_run_id`, `build_run_row`, `build_prediction_rows`, `parse_jsonl`, `ch_datetime`) тестируются без MLflow.
-- Для каждого эксперимента: `client.get_experiment_by_name`; `client.search_runs([exp_id], order_by=["attributes.start_time ASC"], max_results=limit)`; фильтр статуса и `--since` — клиентский (FINISHED/FAILED; RUNNING пропускается с warning).
-- Для каждого run: скачать `run.json` через `client.download_artifacts(run_id, "run.json", tmpdir)`; нет файла — warning + skip (run создан не нашим хелпером). `predictions.jsonl` — если есть.
+- Для каждого эксперимента: `client.get_experiment_by_name`; `client.search_runs([exp_id], order_by=["attributes.start_time ASC"], max_results=limit)`. Фильтр статуса — клиентский (FINISHED/FAILED; RUNNING пропускается с warning). `--since` при наличии уходит **на сервер** как `filter_string` по `attributes.start_time >= <epoch-ms>` (иначе `--limit` отсёк бы старые прогоны до клиентского фильтра), а клиентская проверка `start_time` остаётся страховкой поверх серверного фильтра.
+- Для каждого run: скачать `run.json` через `client.download_artifacts(run_id, "run.json", tmpdir)`; отсутствие артефакта распознаётся по коду ошибки MLflow `RESOURCE_DOES_NOT_EXIST` (запасная проверка текста узкая — «no such artifact»; произвольное «not found», HTTP 500/таймаут/авторизация отсутствием не считаются) — warning + skip (run создан не нашим хелпером). `predictions.jsonl` — если есть.
 - `run_id` перезаписывается каноническим UUID в `run_row` и во всех предсказаниях.
 - `finished_at`/`created_at` нормализуются в `YYYY-MM-DD HH:MM:SS` (ClickHouse `DateTime`); `T` и таймзона убираются.
 - Вставка: `ch_exec(insert_sql("ml_predictions", rows))`, затем `ch_exec(insert_sql("ml_runs", [row]))` — тот же порядок, что в `ml_experiment.finish`.
