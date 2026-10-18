@@ -78,7 +78,13 @@ async def check(params, server_log):
             tools = sorted(t.name for t in (await session.list_tools()).tools)
             failed += not expect("инструменты", {"list_databases", "list_tables", "run_query"} <= set(tools), ", ".join(tools))
 
-            tables = text(await session.call_tool("list_tables", {"database": "default"}))
+            # page_size=100, а не дефолтные 50: число объектов в default растёт
+            # (cbr_zcyc и витрины v_ofz_* добавили три), и 51-я таблица —
+            # v_rosstat_macro — уезжала на вторую страницу list_tables. Проверки
+            # "view in tables" ищут имя в тексте ответа, поэтому видели ложный
+            # провал. page_size=100 покрывает текущие 55 объектов одним ответом;
+            # при дальнейшем росте нужна пагинация по next_page_token.
+            tables = text(await session.call_tool("list_tables", {"database": "default", "page_size": 100}))
             failed += not expect("витрина v_bea_pce видна", "v_bea_pce" in tables, "list_tables default")
 
             catalog = text(await session.call_tool("run_query", {"query": "SELECT series, unit FROM v_series_catalog WHERE source = 'bea' ORDER BY series"}))
