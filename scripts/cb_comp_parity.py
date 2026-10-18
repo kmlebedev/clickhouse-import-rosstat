@@ -119,6 +119,9 @@ BOOTSTRAP_N = 2000
 CB_RMSE_PINNED = {1: 0.158805, 2: 0.296655, 3: 0.443623, 6: 0.971459}
 CB_RMSE_TOLERANCE = 1e-6
 CB_SOURCE_TOLERANCE = 1e-9
+# `TARGET_FULL[h]` обязан быть накопленным произведением `TARGET_FULL[1]`:
+# проверка ловит сдвиг/подмену колонки таргета до обучения.
+TARGET_CONSISTENCY_TOLERANCE = 1e-9
 
 # DM-конвенция авторов: `forecast::dm.test` по умолчанию `h=1`, `power=2`, а на
 # вход ему подаются уже квадраты ошибок, поэтому фактически тест идёт на
@@ -350,6 +353,35 @@ def cumulative_growth(levels, horizons=ALL_HORIZONS) -> pd.DataFrame:
     return out
 
 
+def target_consistency(target: pd.DataFrame) -> float:
+    """Max |TARGET_FULL[h] − накопленный прирост из TARGET_FULL[1]| по h2…h6.
+
+    `TARGET_FULL[1]` — месячный прирост; уровень `100·(1+y/100) = 100 + y`.
+    Накопленный h-прирост обязан совпасть с `cumulative_growth`, иначе колонки
+    таргета сдвинуты/подменены — и сравнение шло бы не с тем таргетом.
+    Первые h−1 NaN пропускаются: истории для окна нет.
+    """
+    if 1 not in target.columns:
+        raise ValueError("TARGET_FULL: нет колонки h1 для проверки накопления")
+    levels = 100.0 + target[1]
+    horizons = tuple(sorted(horizon for horizon in ALL_HORIZONS if horizon != 1))
+    derived = cumulative_growth(levels, horizons=horizons)
+    max_diff = 0.0
+    for horizon in horizons:
+        for month in target.index:
+            expected = target.at[month, horizon]
+            if pd.isna(expected):
+                continue
+            actual = derived.at[month, horizon]
+            if pd.isna(actual):
+                raise ValueError(
+                    f"TARGET_FULL h{horizon} {month}: нет истории для накопления, "
+                    "но значение есть"
+                )
+            max_diff = max(max_diff, abs(float(actual) - float(expected)))
+    return max_diff
+
+
 def normal_months() -> list:
     """54 normal-месяца: test 2019-01…2024-07 минус 2020-04 и весь 2022."""
     return [month for month in month_range(TEST_START, TEST_END) if month not in OUTLIER_MONTHS]
@@ -424,17 +456,25 @@ def source_max_diff(sheet: pd.DataFrame, xlsx: pd.DataFrame, normal: list) -> fl
 def check_archive(archive: Path) -> dict:
     """Жёсткие проверки архива; расхождение — исключение, не предупреждение.
 
-    1. RMSE CB_COMP на 54 normal-месяцах совпадает с константами статьи;
-    2. `StfCpiCB` и `catboostVCB_IBK.xlsx` совпадают на общих normal-месяцах
+    1. `TARGET_FULL[h]` — накопленный прирост из `TARGET_FULL[1]` (h2…h6);
+    2. RMSE CB_COMP на 54 normal-месяцах совпадает с константами статьи;
+    3. `StfCpiCB` и `catboostVCB_IBK.xlsx` совпадают на общих normal-месяцах
        для h1/h2/h3/h6;
-    3. normal-набор по правилу статьи совпадает с флагом `Учитывать`;
-    4. архивные DM p-value воспроизводятся формулой авторов.
+    4. normal-набор по правилу статьи совпадает с флагом `Учитывать`;
+    5. архивные DM p-value воспроизводятся формулой авторов.
     """
     target = read_target_full(archive)
     sheet = read_cb_sheet(archive)
     no_mp_sheet = read_cb_sheet(archive, CB_NOMP_SHEET)
     xlsx = read_cb_xlsx(archive)
     normal = normal_months()
+
+    target_max_diff = target_consistency(target)
+    if target_max_diff > TARGET_CONSISTENCY_TOLERANCE:
+        raise ValueError(
+            f"TARGET_FULL h2…h6 не совпадают с накоплением h1: "
+            f"max |diff| = {target_max_diff}"
+        )
 
     assert_normal_flags(normal_flag_months(sheet), normal)
 
@@ -489,6 +529,7 @@ def check_archive(archive: Path) -> dict:
         "extra_rmse_cb": extra_rmse,
         "margins": margins,
         "max_source_diff": max_source_diff,
+        "target_max_diff": target_max_diff,
         "archive_dm": reproduced,
     }
 
@@ -893,6 +934,10 @@ def write_report(path: Path, payload: dict) -> None:
         )
     lines.append("")
     lines.append(
+        f"- `TARGET_FULL[h]` vs накопление `TARGET_FULL[1]` (h2…h6): "
+        f"max |diff| = {archive['target_max_diff']:.1e}"
+    )
+    lines.append(
         f"- `StfCpiCB` vs `catboostVCB_IBK.xlsx`: max |diff| = {archive['max_source_diff']:.1e}"
     )
     lines.append("- Normal-флаг `Учитывать` совпал с правилом статьи (54 месяца)")
@@ -1158,6 +1203,7 @@ def run(archive: Path, out_dir: Path, train_start: date = TRAIN_START, test_end:
             },
             "margins": {str(key): value for key, value in archive_data["margins"].items()},
             "max_source_diff": archive_data["max_source_diff"],
+            "target_max_diff": archive_data["target_max_diff"],
             "archive_dm": {
                 str(key): value for key, value in archive_data["archive_dm"].items()
             },

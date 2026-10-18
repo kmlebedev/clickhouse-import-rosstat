@@ -58,20 +58,24 @@ def _write_book(path: Path, sheets: dict) -> None:
 
 
 def _make_target(months: list) -> pd.DataFrame:
-    """Синтетический TARGET_FULL: h-колонки — детерминированная функция месяца."""
+    """Синтетический TARGET_FULL: h-колонки — накопление из месячного уровня.
+
+    Колонки строятся из одного SA-уровня (100 = предыдущий месяц), поэтому
+    `target_consistency` на такой книге обязан дать ~0.
+    """
+    levels = np.array([100.5 + 0.1 * math.sin(index / 2) for index in range(len(months))])
+    log_levels = np.log(levels / 100.0)
     rows = []
     for index, month in enumerate(months):
-        rows.append(
-            {
-                "дата": pd.Timestamp(month),
-                1: 0.5 + 0.1 * math.sin(index),
-                2: 1.0 + 0.2 * math.sin(index / 2),
-                3: 1.5 + 0.3 * math.cos(index / 3),
-                4: 2.0 + 0.4 * math.sin(index / 4),
-                5: 2.5 + 0.5 * math.cos(index / 5),
-                6: 3.0 + 0.6 * math.sin(index / 6),
-            }
-        )
+        row = {"дата": pd.Timestamp(month)}
+        for horizon in parity.ALL_HORIZONS:
+            if index < horizon - 1:
+                row[horizon] = np.nan
+            else:
+                row[horizon] = (
+                    math.exp(float(log_levels[index - horizon + 1 : index + 1].sum())) - 1.0
+                ) * 100.0
+        rows.append(row)
     return pd.DataFrame(rows)
 
 
@@ -120,26 +124,27 @@ def _make_archive(root: Path, with_dm: bool = False) -> Path:
     archive.mkdir(parents=True)
     months = _month_range(parity.TEST_START, parity.TEST_END)
     normal = set(parity.normal_months())
-    target = _make_target(months)
+    # TARGET_FULL начинается раньше теста: h2…h6 на 2019-01 должны иметь
+    # историю, иначе синтетический архив не воспроизводит форму настоящего.
+    target_months = _month_range(date(2018, 1, 1), parity.TEST_END)
+    target = _make_target(target_months)
+    target_test = target[target["дата"].isin([pd.Timestamp(month) for month in months])].reset_index(drop=True)
     errors_mp = [0.05 * math.sin(index) + 0.02 * math.cos(index / 3) for index in range(len(months))]
     errors_nomp = [0.10 * math.cos(index) + 0.03 * math.sin(index / 2) for index in range(len(months))]
 
     sheets = {
         "TARGET_FULL": target,
         "StfCpiCB": _make_cb_sheet(
-            months, target, errors_mp, normal, "PREDICTION (Все товары и услуги без коммунальных услуг)"
+            months, target_test, errors_mp, normal, "PREDICTION (Все товары и услуги без коммунальных услуг)"
         ),
         "StfCpiCB_nomp": _make_cb_sheet(
-            months, target, errors_nomp, normal, "PREDICTION (Все товары и услуги без коммунальных услуг)"
+            months, target_test, errors_nomp, normal, "PREDICTION (Все товары и услуги без коммунальных услуг)"
         ),
     }
     if with_dm:
         dm_values = {}
         for horizon in parity.HORIZONS:
-            errors_a = [
-                target.iloc[index][horizon] + errors_mp[index] - target.iloc[index][horizon]
-                for index in range(len(months))
-            ]
+            errors_a = [errors_mp[index] for index in range(len(months))]
             errors_b = [errors_nomp[index] for index in range(len(months))]
             # В DM-таблицу пишем воспроизведение формулы авторов на нормальных
             # месяцах — именно это проверяет `check_archive`.
@@ -156,7 +161,7 @@ def _make_archive(root: Path, with_dm: bool = False) -> Path:
     _write_book(archive / parity.TARGET_XLSX, sheets)
     _write_book(
         archive / parity.CB_XLSX,
-        {"Sheet1": _make_cb_xlsx(months, target, errors_mp)},
+        {"Sheet1": _make_cb_xlsx(months, target_test, errors_mp)},
     )
     return archive
 
@@ -272,6 +277,23 @@ class TestCumulativeGrowth(unittest.TestCase):
             parity.cumulative_growth(pd.Series([100.0, 0.0]), horizons=(1,))
 
 
+class TestTargetConsistency(unittest.TestCase):
+    """`TARGET_FULL[h]` — накопление `TARGET_FULL[1]` (проверка до обучения)."""
+
+    def test_consistent_target(self):
+        months = parity.month_range(date(2024, 1, 1), date(2024, 8, 1))
+        target = _make_target(months).set_index("дата")
+        target.index = [parity.month_start(value) for value in target.index]
+        self.assertLess(parity.target_consistency(target), 1e-12)
+
+    def test_broken_column_detected(self):
+        months = parity.month_range(date(2024, 1, 1), date(2024, 8, 1))
+        target = _make_target(months).set_index("дата")
+        target.index = [parity.month_start(value) for value in target.index]
+        target[3] = target[3] + 1.0
+        self.assertGreater(parity.target_consistency(target), 1e-3)
+
+
 class TestArchiveReaders(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -286,7 +308,8 @@ class TestArchiveReaders(unittest.TestCase):
         self.assertIn(date(2019, 1, 1), target.index)
         self.assertIn(date(2024, 7, 1), target.index)
         self.assertEqual(list(target.columns), [1, 2, 3, 4, 5, 6])
-        self.assertAlmostEqual(target.loc[date(2019, 1, 1), 1], 0.5, places=10)
+        self.assertGreater(float(target.loc[date(2019, 1, 1), 1]), 0.0)
+        self.assertFalse(pd.isna(target.loc[date(2019, 1, 1), 2]))
 
     def test_read_cb_sheet_and_flags(self):
         sheet = parity.read_cb_sheet(self.archive)
