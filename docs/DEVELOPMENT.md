@@ -89,6 +89,7 @@ make import STAT=wgc_cb_reserves     # WGC золотые резервы ЦБ (C
 make import STAT=bold_gold_price     # bold.report: цена дня (JSON API без ключа; полный путь — вся история)
 make import STAT=bold_etf_flows      # bold.report: 7 дневных рядов ETF-агрегата 73 фондов + пер-фондовый срез
 make import STAT=gold_views          # витрины контура, включая v_gold_etf_flows_daily и v_gold_etf_funds_daily (после первого прогона bold_etf_flows)
+make import STAT=key_rate_views      # сводный дашборд контура ключевой ставки v_key_rate_dashboard (после первого make run-ingest и импортёров контура)
 make import STAT=dcf_mine_plans      # сид mine_plans из отчётности Полюса (идёт до движка)
 make dcf-aisc                        # (опционально) уточнённый поактивный AISC → sql/dcf_mine_plans_seed.sql
 make ch-sql FILE=sql/dcf_mine_plans_seed.sql   # (опционально) применить сид AISC поверх Go-сида
