@@ -1,6 +1,6 @@
 # CB_COMP proxy Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Собрать из публичных рядов приближение таргета CB_COMP (SA ИПЦ без КУ, накопленный прирост h = 1/2/3/6) и посчитать RMSE/MAE нашего месячного nowcast на окне статьи 2019-01…2024-07; сравнить агрегатные числа с опубликованными CB_COMP и честно назвать расхождение.
 
@@ -60,9 +60,9 @@
 - `cumulative(points, month, h) -> Optional[float]`; `article_excluded(month)`, `window_excluded(months)`.
 - CLI: `--nowcast-csv`, `--window`, `--utilities-weight`, `--utilities-annual-growth`, `--train-start/end`, `--test-start/end`, `--out-dir`.
 
-- [ ] **Step 1: Тесты парсинга/календаря/таргета (red).**
-- [ ] **Step 2: Реализация, зелёные тесты.**
-- [ ] **Step 3: Commit:** `cb comp proxy: data and proxy target`.
+- [x] **Step 1: Тесты парсинга/календаря/таргета (red).**
+- [x] **Step 2: Реализация, зелёные тесты.**
+- [x] **Step 3: Commit:** `cb comp proxy: data and proxy target`.
 
 ---
 
@@ -78,9 +78,9 @@
 - `bootstrap_rmse_ci(errors, block=3, n=2000, seed=SEED)`.
 - `render_report(results) -> str`; `write_artifacts(...)`.
 
-- [ ] **Step 1: Тесты (red):** калибровка на синтетике восстанавливает коэффициенты; h-step сумма; исключения; RMSE на ручных числах; дубли CSV — ошибка; детерминизм.
-- [ ] **Step 2: Реализация, зелёные тесты.**
-- [ ] **Step 3: Commit:** `cb comp proxy: calibration, h-step and metrics`.
+- [x] **Step 1: Тесты (red):** калибровка на синтетике восстанавливает коэффициенты; h-step сумма; исключения; RMSE на ручных числах; дубли CSV — ошибка; детерминизм.
+- [x] **Step 2: Реализация, зелёные тесты.**
+- [x] **Step 3: Commit:** `cb comp proxy: calibration, h-step and metrics`.
 
 ---
 
@@ -91,20 +91,20 @@
 - Modify: `docs/ROADMAP_KEY_RATE.md` (строка прокси-пути)
 - Modify: `scripts/cb_comp_proxy_test.py` (если живой прогон вскрыл дефект)
 
-- [ ] **Step 1:** `make cb-comp-proxy ARGS="--nowcast-csv /tmp/cpi_monthly_predictions_long.csv"` — таблица RMSE/MAE по h, sensitivity, JSON/CSV.
-- [ ] **Step 2:** Сверить числа с CB_COMP (0.16/0.30/0.44/0.97 и 0.20/0.39/0.59/1.05), записать отношения и вывод «не паритет».
-- [ ] **Step 3:** Отчёт: данные, формула, веса, допущения, числа, бенчмарки, чувствительность, почему прокси слабый.
-- [ ] **Step 4: Commit:** `docs: cb comp proxy report and roadmap`.
+- [x] **Step 1:** `make cb-comp-proxy ARGS="--nowcast-csv /tmp/cpi_monthly_predictions_long.csv"` — таблица RMSE/MAE по h, sensitivity, JSON/CSV.
+- [x] **Step 2:** Сверить числа с CB_COMP (0.16/0.30/0.44/0.97 и 0.20/0.39/0.59/1.05), записать отношения и вывод «не паритет».
+- [x] **Step 3:** Отчёт: данные, формула, веса, допущения, числа, бенчмарки, чувствительность, почему прокси слабый.
+- [x] **Step 4: Commit:** `docs: cb comp proxy report and roadmap`.
 
 ---
 
 ### Task 5: Приёмка
 
-- [ ] `make all` — зелёный.
-- [ ] `uv run --with pandas --with scipy --python 3.12 python3 scripts/cb_comp_proxy_test.py -v` — зелёный офлайн.
-- [ ] Повторный `make cb-comp-proxy` — те же числа/JSON.
-- [ ] `git status` — артефакты не в индексе; в ClickHouse ничего не записано.
-- [ ] Commit/push, PR с `Refs #190`; протокол приёмки — комментарием в PR.
+- [x] `make all` — зелёный.
+- [x] `uv run --with pandas --with scipy --python 3.12 python3 scripts/cb_comp_proxy_test.py -v` — зелёный офлайн.
+- [x] Повторный `make cb-comp-proxy` — те же числа/JSON.
+- [x] `git status` — артефакты не в индексе; в ClickHouse ничего не записано.
+- [x] Commit/push, PR с `Refs #190`; протокол приёмки — комментарием в PR.
 
 ## Self-Review
 
