@@ -20,6 +20,14 @@
 * `key_rate_llm_forecast.json` (необязателен) — артефакт LLM-трека (issue #189,
   спека `2026-10-18-llm-rate-forecast-design.md` §7). Отсутствие файла —
   штатно: трек `llm` просто не пишется, о чём скрипт сообщает строкой.
+* `key_rate_llm_forecast_log_payload.json` (`--llm-payload`, необязателен) — готовый
+  payload режима `--log` #189 (`{"status", "row"}`); имеет приоритет над
+  LLM-артефактом. Метрика `cbr_rate` из payload нормализуется к `cbr_rate:llm`.
+
+Все метаданные прогноза (распределение вероятностей, модель, версия набора данных
+и `prompt_version`) уходят в endpoint и пишутся в одноимённые колонки
+`forecast_log` — это контракт публикации (KEY_RATE_PUBLICATIONS §7 п. 5, §8),
+а не локальная пометка.
 
 Env (подключает Makefile; без них — понятная ошибка, не молчаливый пропуск):
 
@@ -31,6 +39,7 @@ Env (подключает Makefile; без них — понятная ошиб�
     make key-rate-forecast-log
     make key-rate-forecast-log ARGS="--dry-run"
     make key-rate-forecast-log ARGS="--llm-artifact PATH"
+    make key-rate-forecast-log ARGS="--llm-payload PATH"
 
 Повтор идемпотентен на стороне ClickHouse: ключ `forecast_log` —
 `(metric, forecast_date)`, поэтому повторная запись того же трека заменяет
@@ -53,6 +62,12 @@ ROOT = Path(__file__).resolve().parent.parent
 # LLM-трек; оба gitignored.
 MODEL_ARTIFACT_NAME = "key_rate_model_forecast.json"
 LLM_ARTIFACT_NAME = "key_rate_llm_forecast.json"
+
+# Готовый payload записи LLM-трека (режим `--log` #189): обёртка {"status","row"}.
+LLM_PAYLOAD_NAME = "key_rate_llm_forecast_log_payload.json"
+
+# Базовая метрика журнала; треки различаются суффиксом.
+key_rate_metric = "cbr_rate"
 
 # Путь ingest-endpoint'а (единственный путь записи прогноза ставки).
 INGEST_PATH = "/v1/key_rate_forecast"
@@ -251,6 +266,29 @@ def model_rows(artifact: dict) -> tuple:
     return rows, missing
 
 
+def _percentage_probabilities(probabilities, field: str) -> dict:
+    """Распределение LLM-трека в процентах: строго cut/hold/hike, сумма 100 ± 0.1."""
+    if not isinstance(probabilities, dict):
+        raise ForecastLogError(f"{field}: ожидается JSON-объект cut/hold/hike")
+    expected_keys = ("cut", "hold", "hike")
+    if sorted(probabilities) != sorted(expected_keys):
+        raise ForecastLogError(
+            f"{field}: ключи должны быть cut, hold, hike, получено {sorted(probabilities)}"
+        )
+    values = {
+        key: _number(probabilities[key], f"{field}[{key!r}]")
+        for key in expected_keys
+    }
+    if any(value < 0.0 or value > 100.0 for value in values.values()):
+        raise ForecastLogError(
+            f"{field}: вероятности должны быть в процентах 0..100, получено {values}"
+        )
+    total = sum(values.values())
+    if abs(total - 100.0) > PROBABILITY_PERCENT_TOLERANCE:
+        raise ForecastLogError(f"{field}: сумма {total!r} ≠ 100")
+    return values
+
+
 def llm_row(artifact: dict) -> dict:
     """Строка журнала из артефакта LLM-трека (issue #189, спека §7).
 
@@ -278,26 +316,9 @@ def llm_row(artifact: dict) -> dict:
         )
         predicted = _rate(current_rate + step_bp / 100.0, "LLM-артефакт.expected_rate")
 
-    probabilities = _require(artifact, "probabilities", "LLM-артефакт")
-    if not isinstance(probabilities, dict):
-        raise ForecastLogError("LLM-артефакт.probabilities: ожидается JSON-объект cut/hold/hike")
-    expected_keys = ("cut", "hold", "hike")
-    if sorted(probabilities) != sorted(expected_keys):
-        raise ForecastLogError(
-            "LLM-артефакт.probabilities: ключи должны быть cut, hold, hike, "
-            f"получено {sorted(probabilities)}"
-        )
-    values = {
-        key: _number(probabilities[key], f"LLM-артефакт.probabilities[{key!r}]")
-        for key in expected_keys
-    }
-    if any(value < 0.0 or value > 100.0 for value in values.values()):
-        raise ForecastLogError(
-            f"LLM-артефакт.probabilities: вероятности должны быть в процентах 0..100, получено {values}"
-        )
-    total = sum(values.values())
-    if abs(total - 100.0) > PROBABILITY_PERCENT_TOLERANCE:
-        raise ForecastLogError(f"LLM-артефакт.probabilities: сумма {total!r} ≠ 100")
+    values = _percentage_probabilities(
+        _require(artifact, "probabilities", "LLM-артефакт"), "LLM-артефакт.probabilities"
+    )
 
     prompt_version = _require(artifact, "prompt_version", "LLM-артефакт")
     if isinstance(prompt_version, bool) or not isinstance(prompt_version, int) or prompt_version <= 0:
@@ -317,6 +338,67 @@ def llm_row(artifact: dict) -> dict:
         "probabilities": values,
         "data_version": data_version,
         "model": model,
+        "prompt_version": prompt_version,
+    }
+
+
+def llm_payload_row(payload: dict) -> dict:
+    """Строка журнала из готового LLM-payload #189 (`--log`).
+
+    Формат payload: `{"status": ..., "row": {...}}` (или сразу `row` без
+    обёртки). Поля строки — `forecast_date`, `target_date`, `predicted`
+    (ожидаемая ставка), `probabilities` (cut/hold/hike, проценты), `model`,
+    `prompt_version`, `data_version`. Метрика в payload бывает `cbr_rate` —
+    нормализуется к `cbr_rate:llm`, чтобы трек не схлопнулся с базовой метрикой.
+    `actual`/`error_pct`/`error_bp` из payload игнорируются: их заполняет
+    резолвер, а не writer.
+    """
+    if not isinstance(payload, dict):
+        raise ForecastLogError("LLM-payload: ожидается JSON-объект")
+    row = payload.get("row", payload)
+    if not isinstance(row, dict):
+        raise ForecastLogError("LLM-payload.row: ожидается JSON-объект")
+
+    metric = _non_empty(_require(row, "metric", "LLM-payload.row"), "LLM-payload.row.metric")
+    if metric not in (key_rate_metric, key_rate_metric + ":llm"):
+        raise ForecastLogError(
+            f"LLM-payload.row.metric: ожидается {key_rate_metric} или {key_rate_metric}:llm, "
+            f"получено {metric!r}"
+        )
+
+    forecast_date = _date(
+        _require(row, "forecast_date", "LLM-payload.row"), "LLM-payload.row.forecast_date"
+    )
+    target_date = _date(
+        _require(row, "target_date", "LLM-payload.row"), "LLM-payload.row.target_date"
+    )
+    if target_date < forecast_date:
+        raise ForecastLogError(
+            f"LLM-payload.row: target_date {target_date} раньше forecast_date {forecast_date}"
+        )
+
+    prompt_version = _require(row, "prompt_version", "LLM-payload.row")
+    if isinstance(prompt_version, bool) or not isinstance(prompt_version, int) or prompt_version <= 0:
+        raise ForecastLogError(
+            f"LLM-payload.row.prompt_version: ожидается целое > 0, получено {prompt_version!r}"
+        )
+
+    return {
+        "forecast_date": forecast_date.isoformat(),
+        "target_date": target_date.isoformat(),
+        "metric": key_rate_metric + ":llm",
+        "predicted": _rate(
+            _require(row, "predicted", "LLM-payload.row"), "LLM-payload.row.predicted"
+        ),
+        "probabilities": _percentage_probabilities(
+            _require(row, "probabilities", "LLM-payload.row"), "LLM-payload.row.probabilities"
+        ),
+        "data_version": _non_empty(
+            _require(row, "data_version", "LLM-payload.row"), "LLM-payload.row.data_version"
+        ),
+        "model": _non_empty(
+            _require(row, "model", "LLM-payload.row"), "LLM-payload.row.model"
+        ),
         "prompt_version": prompt_version,
     }
 
@@ -390,8 +472,15 @@ def post_row(url: str, token: str, row: dict, timeout: int = HTTP_TIMEOUT) -> di
         raise ForecastLogError(f"ingest {url}: ответ не JSON: {error}") from error
 
 
-def rows_from_artifacts(model_path: Path, llm_path: Path, log=print) -> list:
-    """Строки журнала из обоих артефактов; отсутствие LLM-файла — штатно."""
+def rows_from_artifacts(model_path: Path, llm_path: Path, llm_payload_path=None, log=print) -> list:
+    """Строки журнала из артефактов; отсутствие LLM-файлов — штатно.
+
+    `llm_payload_path` (режим `--log` #189) имеет приоритет над LLM-артефактом:
+    payload — уже готовый `row` для endpoint'а, и смешивать два источника одного
+    трека в одном прогоне нельзя. Явно заданный, но отсутствующий payload —
+    ошибка (пользователь указал путь); отсутствие LLM-артефакта по умолчанию —
+    штатно и называется в логе.
+    """
     artifact = _load_json(model_path, "артефакт модели")
     rows, missing = model_rows(artifact)
     if missing:
@@ -401,10 +490,16 @@ def rows_from_artifacts(model_path: Path, llm_path: Path, log=print) -> list:
             f"артефакт модели {model_path}: ни одного метода — журнал без прогноза не пишется"
         )
 
-    if llm_path.exists():
+    if llm_payload_path is not None:
+        payload = _load_json(Path(llm_payload_path), "LLM-payload")
+        rows.append(llm_payload_row(payload))
+        log(f"LLM-payload прочитан ({llm_payload_path}) — трек {key_rate_metric}:llm пишется из него")
+        if llm_path.exists():
+            log(f"LLM-артефакт {llm_path} не читается: задан --llm-payload")
+    elif llm_path.exists():
         rows.append(llm_row(_load_json(llm_path, "LLM-артефакт")))
     else:
-        log(f"LLM-артефакт не найден ({llm_path}) — трек cbr_rate:llm не пишется")
+        log(f"LLM-артефакт не найден ({llm_path}) — трек {key_rate_metric}:llm не пишется")
 
     return rows
 
@@ -436,6 +531,11 @@ def main(argv=None) -> int:
         help=f"артефакт LLM-трека; отсутствие файла — штатно (по умолчанию {LLM_ARTIFACT_NAME})",
     )
     parser.add_argument(
+        "--llm-payload",
+        default=None,
+        help=f"готовый payload #189 ({LLM_PAYLOAD_NAME}) — имеет приоритет над --llm-artifact",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="напечатать строки JSON и не отправлять их в ingest",
@@ -443,7 +543,9 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        rows = rows_from_artifacts(Path(args.model_artifact), Path(args.llm_artifact))
+        rows = rows_from_artifacts(
+            Path(args.model_artifact), Path(args.llm_artifact), args.llm_payload
+        )
         if args.dry_run:
             for row in rows:
                 print(json.dumps(row, ensure_ascii=False, sort_keys=True))
