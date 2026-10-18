@@ -190,7 +190,7 @@ Diebold–Mariano с поправкой HLN, `h=1`, на **общих тесто
 
 ### 5.2 Что читает скрипт
 
-`rosstat_ipc_mes`, `macro_series` (`source='cbr_survey'`), `cbr_currency_usd`, `cbr_key_rate`, `fao_food_price_Indices_monthly` — все с `FINAL` (ReplacingMergeTree). Скрипт **ничего не пишет в ClickHouse**.
+`rosstat_ipc_mes`, `macro_series` (`source='cbr_survey'`), `cbr_currency_usd`, `cbr_key_rate`, `fao_food_price_Indices_monthly` — все с `FINAL` (ReplacingMergeTree). По умолчанию скрипт **только читает**; с `ML_LOG=1` он пишет паспорт прогона и fold-предсказания в реестр `ml_runs`/`ml_predictions` (§8.3).
 
 ### 5.3 Текущий nowcast
 
@@ -215,3 +215,31 @@ Diebold–Mariano с поправкой HLN, `h=1`, на **общих тесто
 - Числа статьи напрямую не сравнимы (другой таргет, исключённые выбросы, длина train) — оговорка в отчёте.
 - Точная дата публикации МП внутри месяца не моделируется; консервативная граница §2.6 может задержать признак на дни, но не пропускает будущее.
 - Отбор признаков и тюнинг гиперпараметров по тесту не выполняются.
+
+## 8. Расширение 2026-10-18: репрезентативность long-sample и журнал ML-экспериментов
+
+### 8.1 Зачем
+
+Основная выборка 2013-10…2026-08 ограничена не МП, а `cbr_key_rate` (2013-09-17) и `cbr_currency_usd` (2013-01): МП непрерывен с 2002-01. Из-за этого 11 лет истории мониторинга предприятий — включая 2008–2009, 2014–2015 и 2020 — в эксперименте «с МП vs без МП» не участвуют, а train окна статьи (2009–2018, 120 месяцев) покрыт лишь 63 месяцами. Расширение добавляет **long-sample** и проверяет, устойчив ли эффект МП на полной истории.
+
+### 8.2 Long-sample
+
+- `--sample short|long`; по умолчанию `short` — принятая выборка 155 месяцев не меняется.
+- **long:** 2002-02 … 2026-08, **295 месяцев**, пропусков 0. Старт — первый месяц, где доступны `y_lag1`, `y_lag2`, `fao_mm` и МП за `M−1`; `cbr_key_rate`/`usd_mm` до своей глубины — **NaN**, а не причина пропуска месяца. `CatBoost` обрабатывает NaN нативно, B3 импутирует медианой train-окна (пустая колонка → 0.0); это то же NaN-правило, что у `ofz_1y` в v1, распространённое на два контрольных ряда.
+- Признаки — те же 5 базовых + 7 МП; для long первые годы `usd_mm`/`key_rate` неинформативны (NaN), с 2013-03/2013-10 наполняются. Это ограничение честно называется в отчёте: long-sample отвечает на вопрос «работает ли МП на длинной истории», а не «работает ли МП при полном наборе контролей все 24 года».
+- Walk-forward: long — основное окно **старт 48** (первый тест 2006-02; окно статьи 2009–2018 внутри) + робастность embargo 1; short сохраняет 24/48/embargo 1. Сплит статьи: long — train 2002-02…2018-12 (203 месяца), test 2019-01…2024-07 (67); short — прежний 63/67.
+- Сравнение: DM-HLN primary (с МП vs без МП) на long и short публикуется раздельно; вывод о репрезентативности — по знаку, величине и p-value обеих выборок, без подгонки. Long-прогон — отдельный запуск `make cpi-monthly ARGS="--sample long"`; default `make cpi-monthly` остаётся short.
+
+### 8.3 Журнал ML-экспериментов (`infra/4.1`, практики #178)
+
+- `ML_LOG=1` включает запись; без переменной поведение и артефакты **побайтно прежние**. Хелпер — `scripts/ml_experiment.py`; таблицы/витрины `ml_runs`, `ml_predictions`, `v_ml_runs`, `v_ml_leaderboard`, `v_ml_error_by_fold` уже на `main` (импортёр `ml_registry`); сырые таблицы агенту закрыты.
+- Один прогон = одна выборка (`short` или `long`): `experiment="cpi_monthly"`, `run_name` включает sample, `config` — sample/границы/признаки/seed/окна/модели, `sample_meta` — rows/first/last/skipped/months, `metrics` — `primary_metric="rmse_pp"`, модели/окна/веса, `predictions` — каждый fold каждого окна (`unit="pp"`, `window=window_key`, `meta={start,embargo,main,sample}`), `artifacts` — отчёт/CSV/JSON. `ML_RUN_NAME` переопределяет имя, `ML_LOCAL_DIR` — локальный fallback при недоступном ClickHouse.
+- Перед первым `ML_LOG=1` прогоном — `make import STAT=ml_registry` (DDL + витрины). Сбой журнала не меняет код возврата и не портит артефакты; отчёт и CSV остаются основным результатом.
+
+### 8.4 Приёмка расширения
+
+1. `make all`, `scripts/cpi_monthly_test.py`, `scripts/cpi_nowcast_test.py` (178), `scripts/key_rate_model_test.py` (169) — зелёные; новые тесты long-sample и `ML_LOG` (off/on, FakeLogger, unit `pp`, окна, sample в config/metrics).
+2. `ML_LOG=1 make cpi-monthly` — short-прогон, новый `run_id`, те же метрики/артефакты, что без журнала; `ML_LOG=1 make cpi-monthly ARGS="--sample long"` — 295 месяцев, старт 48, long DM и сплит 203/67.
+3. `v_ml_runs`/`v_ml_leaderboard`/`v_ml_error_by_fold` через MCP видят оба прогона; `ml_runs`/`ml_predictions` — `ACCESS_DENIED`; повтор с тем же конфигом — новый `run_id`, те же метрики и sha256 артефактов.
+4. Отчёт/README/ARCHITECTURE/ROADMAP/LIMITATIONS обновлены; статус — `✅` с числами long и short; `Done` — после мержа.
+
