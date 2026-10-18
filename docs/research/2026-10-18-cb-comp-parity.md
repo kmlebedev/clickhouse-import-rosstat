@@ -2,7 +2,7 @@
 
 > **Объект:** А. В. Кошкин, Д. В. Крылов. «Мониторинг предприятий Банка России как фактор повышения точности прогноза инфляции» // Вестник СПбГУ. Экономика. 2025. Т. 41, вып. 3, с. 364–393. Код и данные авторов — figshare, DOI [10.6084/m9.figshare.27990260.v1](https://doi.org/10.6084/m9.figshare.27990260.v1); разбор архива — [2026-10-18-cb-comp-archive.md](2026-10-18-cb-comp-archive.md).
 > **Задача:** пункт `key-rate/phase-4-ml-cb-comp-parity` (issue [#190](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/190)), **строгий путь**: сравнить наш месячный nowcast ИПЦ с `CB_COMP` на одном таргете (`TARGET_FULL`), одном тестовом окне (2019-01…2024-07) и одних normal-месяцах (54), с DM-HLN и TOST при margin δ = 10% RMSE CB_COMP, зафиксированном до прогона. Ретраин CB_COMP не выполнялся.
-> **Как проверялось:** архив распакован в `.worktrees/cb-comp-archive/build/cb-comp/extracted/` (не скачивался повторно); таргет и per-period прогнозы прочитаны из `Расчет ошибок вневыборочного прогноза по моделям.xlsx` (`TARGET_FULL`, `StfCpiCB`) и `out_of_sample_forecasts/catboostVCB_IBK.xlsx`; признаки собраны функциями ML-трека v2 (`scripts/cpi_monthly.py`, побайтовая копия из PR #177); модели — CatBoost direct (seed 20261018); прогон — `make cb-comp-parity`, офлайн-тесты — `make cb-comp-parity-test` (44 теста), Go-проверки — `make all`. Архивные RMSE, совпадение двух источников прогнозов, normal-флаг и DM-числа авторов проверены жёсткими гейтами до обучения.
+> **Как проверялось:** архив распакован в `.worktrees/cb-comp-archive/build/cb-comp/extracted/` (не скачивался повторно); таргет и per-period прогнозы прочитаны из `Расчет ошибок вневыборочного прогноза по моделям.xlsx` (`TARGET_FULL`, `StfCpiCB`) и `out_of_sample_forecasts/catboostVCB_IBK.xlsx`; признаки собраны функциями ML-трека v2 (`scripts/cpi_monthly.py`, побайтовая копия из PR #177); модели — CatBoost direct (seed 20261018); прогон — `make cb-comp-parity`, офлайн-тесты — `make cb-comp-parity-test` (46 тестов), Go-проверки — `make all`. Архивные RMSE, совпадение двух источников прогнозов, normal-флаг, накопление `TARGET_FULL` и DM-числа авторов проверены жёсткими гейтами до обучения.
 > **Спека:** [2026-10-18-cb-comp-parity-design.md](../superpowers/specs/2026-10-18-cb-comp-parity-design.md); **план:** [2026-10-18-cb-comp-parity.md](../superpowers/plans/2026-10-18-cb-comp-parity.md); **код:** `scripts/cb_comp_parity.py`, `scripts/cb_comp_parity_test.py`; **артефакты прогона** (gitignored): `cb_comp_parity_report.md`, `cb_comp_parity_predictions.csv`, `cb_comp_parity_result.json`.
 
 **Статус: `DONE_WITH_CONCERNS`.** Строгий паритет измерен: вердикт по заранее зафиксированному критерию — **«не близок»** для обеих наших моделей (с МП и без МП). Concerns: наша модель — **direct**, а не bottom-up; CB_COMP не переобучался (по дизайну); публичный архив урезан (16 из 88 групп без BSU, сырые МП не включены); наш DM-HLN и DM авторов считают разные функции потерь (см. §6.4); признаки МП у нас агрегатные, у авторов — отраслевые (87 кодов ОКВЭД2).
@@ -39,6 +39,7 @@
 
 | Проверка | Результат |
 |---|---|
+| `TARGET_FULL[h]` = накопление `TARGET_FULL[1]` (h2…h6) | max abs diff = **7.4e-14** (допуск 1e-9) |
 | RMSE CB_COMP h1/h2/h3/h6 на 54 normal-месяцах | 0.158805 / 0.296655 / 0.443623 / 0.971459 — совпало с пинами статьи (допуск 1e-6) |
 | `StfCpiCB` vs `catboostVCB_IBK.xlsx` | max abs diff = **0.0** (h1/h2/h3/h6, 54 месяца) |
 | Normal-флаг `Учитывать` vs правило «2019-01…2024-07 минус 2020-04 и 2022» | 54 = 54, симметрическая разность пуста |
@@ -132,8 +133,8 @@
 | Проверка | Результат |
 |---|---|
 | `make cb-comp-parity` | прогон завершён; 102 train / 67 test / 54 normal; 12 CatBoost-моделей (2 конфигурации × 6 горизонтов) |
-| Повторный прогон | `cb_comp_parity_result.json` (SHA-1 `9f4a365e…`) и `cb_comp_parity_predictions.csv` (SHA-1 `d13e11f3…`) побайтово совпали |
-| `make cb-comp-parity-test` | **44 теста OK** (офлайн: синтетические таргеты/xlsx, DM/TOST, утечка, smoke CatBoost) |
+| Повторный прогон | `cb_comp_parity_result.json` (SHA-1 `010f3a54…`) и `cb_comp_parity_predictions.csv` (SHA-1 `d13e11f3…`) побайтово совпали |
+| `make cb-comp-parity-test` | **46 тестов OK** (офлайн: синтетические таргеты/xlsx, DM/TOST, утечка, smoke CatBoost) |
 | `make all` | зелёный: golangci-lint `0 issues`, `go vet` чисто, `go test -race` — 24 пакета `ok`, обе сборки |
 | Архивные гейты | RMSE, `StfCpiCB` vs xlsx, normal-флаг, DM авторов — все пройдены (§3) |
 
