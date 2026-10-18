@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"math"
 	"sync"
@@ -305,6 +306,20 @@ func TestInsertModelRunWritesForecastLogBeforeModelRuns(t *testing.T) {
 		if s := target.Format(manualSeriesDateLayout); s != "2026-12-31" {
 			t.Fatalf("forecast row %d: target_date %s, want 2026-12-31", i, s)
 		}
+		// Строки золотого контура не несут метаданных прогноза ставки: колонки
+		// получают значения по умолчанию, JSON распределения — '{}'.
+		if probabilities, _ := forecast[i][7].(string); probabilities != "{}" {
+			t.Fatalf("forecast row %d: probabilities = %q, want {}", i, probabilities)
+		}
+		if model, _ := forecast[i][8].(string); model != "" {
+			t.Fatalf("forecast row %d: model = %q, want empty", i, model)
+		}
+		if dataVersion, _ := forecast[i][9].(string); dataVersion != "" {
+			t.Fatalf("forecast row %d: data_version = %q, want empty", i, dataVersion)
+		}
+		if promptVersion, _ := forecast[i][10].(uint16); promptVersion != 0 {
+			t.Fatalf("forecast row %d: prompt_version = %d, want 0", i, promptVersion)
+		}
 	}
 }
 
@@ -535,5 +550,100 @@ func TestInsertGoldForecastsEmptySkipsBatch(t *testing.T) {
 	}
 	if len(store.sent) != 0 {
 		t.Fatalf("empty slice must not trigger a batch, got %d", len(store.sent))
+	}
+}
+
+// TestInsertKeyRateForecastAppendsRow — строка журнала прогноза ключевой ставки:
+// метрика с суффиксом трека, predicted — уровень ставки, actual/error_pct/
+// error_bp пусты до резолвера, а метаданные публикации (probabilities/model/
+// data_version/prompt_version) записаны в одноимённые колонки. Порядок позиций
+// пинуется по DDL: перестановка Date/Float64 прошла бы молча и записала бы
+// predicted в error_pct.
+func TestInsertKeyRateForecastAppendsRow(t *testing.T) {
+	store := newFakeStore()
+	forecast := validKeyRateForecast()
+
+	if err := newTestWriter(store).InsertKeyRateForecast(context.Background(), forecast); err != nil {
+		t.Fatalf("InsertKeyRateForecast: %v", err)
+	}
+	if n := store.batchesFor(forecastLogInsert); n != 1 {
+		t.Fatalf("forecast_log batches: %d, want 1", n)
+	}
+	if len(store.sent) != 1 || len(store.sent[0].rows) != 1 {
+		t.Fatalf("sent %+v, want one batch with one row", store.sent)
+	}
+	row := store.sent[0].rows[0]
+	if len(row) != 11 {
+		t.Fatalf("row has %d columns, want 11 (dates, metric, predicted, actual, error_pct, error_bp, probabilities, model, data_version, prompt_version)", len(row))
+	}
+	forecastDate, _ := row[0].(time.Time)
+	targetDate, _ := row[1].(time.Time)
+	metric, _ := row[2].(string)
+	predicted, _ := row[3].(float64)
+	if forecastDate.Format(manualSeriesDateLayout) != "2026-10-18" ||
+		targetDate.Format(manualSeriesDateLayout) != "2026-10-23" ||
+		metric != "cbr_rate:ordered_logit" || predicted != 13.3665 {
+		t.Fatalf("row = %v", row)
+	}
+	for index, name := range map[int]string{4: "actual", 5: "error_pct", 6: "error_bp"} {
+		if row[index] != nil {
+			t.Fatalf("%s = %v, want nil until forecast_resolve", name, row[index])
+		}
+	}
+
+	probabilities, _ := row[7].(string)
+	var distribution map[string]float64
+	if err := json.Unmarshal([]byte(probabilities), &distribution); err != nil {
+		t.Fatalf("probabilities %q is not JSON: %v", probabilities, err)
+	}
+	wantDistribution := map[string]float64{"cut": 81.65, "hold": 16.24, "hike": 2.11}
+	for class, want := range wantDistribution {
+		if math.Abs(distribution[class]-want) > 1e-9 {
+			t.Fatalf("probabilities[%q] = %v, want %v (JSON %q)", class, distribution[class], want, probabilities)
+		}
+	}
+	if model, _ := row[8].(string); model != "ordered_logit" {
+		t.Fatalf("model = %q, want ordered_logit", model)
+	}
+	if dataVersion, _ := row[9].(string); dataVersion != forecast.DataVersion {
+		t.Fatalf("data_version = %q, want %q", dataVersion, forecast.DataVersion)
+	}
+	if promptVersion, _ := row[10].(uint16); promptVersion != 0 {
+		t.Fatalf("prompt_version = %d, want 0", promptVersion)
+	}
+}
+
+// TestInsertKeyRateForecastEmptyProbabilities — у точечного прогноза (taylor)
+// распределения нет: колонка получает '{}', а не пустую строку/None, чтобы
+// JSON-контракт журнала был единым.
+func TestInsertKeyRateForecastEmptyProbabilities(t *testing.T) {
+	store := newFakeStore()
+	forecast := validKeyRateForecast()
+	forecast.Metric = "cbr_rate:taylor"
+	forecast.Model = "taylor"
+	forecast.Probabilities = nil
+
+	if err := newTestWriter(store).InsertKeyRateForecast(context.Background(), forecast); err != nil {
+		t.Fatalf("InsertKeyRateForecast: %v", err)
+	}
+	row := store.sent[0].rows[0]
+	if probabilities, _ := row[7].(string); probabilities != "{}" {
+		t.Fatalf("probabilities = %q, want {}", probabilities)
+	}
+}
+
+func TestInsertKeyRateForecastAppendErrorAborts(t *testing.T) {
+	store := newFakeStore()
+	store.failAppend[forecastLogInsert] = errors.New("append rejected")
+
+	err := newTestWriter(store).InsertKeyRateForecast(context.Background(), validKeyRateForecast())
+	if err == nil {
+		t.Fatal("expected error from failed append")
+	}
+	if n := store.abortedFor(forecastLogInsert); n != 1 {
+		t.Fatalf("Abort calls for %s: %d, want 1", forecastLogInsert, n)
+	}
+	if n := store.batchesFor(forecastLogInsert); n != 0 {
+		t.Fatalf("%s sent %d times after append failure, want 0", forecastLogInsert, n)
 	}
 }
