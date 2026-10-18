@@ -46,6 +46,8 @@ make mlflow-down
 
 **MLflow недоступен — прогон не падает.** `ml_experiment.py` пишет warning, а паспорт и предсказания по-прежнему идут в ClickHouse или в локальный fallback `build/ml-runs/<run_id>/`; `make mlflow-export` — отдельный ручной шаг и догоняет run'ы, когда сервер поднят. Если недоступен ClickHouse, export завершается кодом 1 — это не тихий no-op.
 
+**`FINISHED` в MLflow не гарантирует строк в ClickHouse.** `finish()` логирует run в MLflow до вставки в ClickHouse: если вставка затем падает, MLflow-run уже закрыт `FINISHED`, а паспорт и fold-предсказания сохраняются в локальном fallback `build/ml-runs/<run_id>/` (паспорт пишется последним, поэтому fold-строки без паспорта — законное состояние сбоя). Повторный `make mlflow-export` проигрывает `run.json`/`predictions.jsonl` из артефактов и идемпотентно дописывает недостающие строки.
+
 Проверка идемпотентности (повторный экспорт не должен менять числа):
 
 ```sql
