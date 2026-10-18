@@ -80,9 +80,17 @@
 отдельный writer `scripts/key_rate_forecast_log.py` (`make key-rate-forecast-log`)
 через ingest-контур (`POST /v1/key_rate_forecast`).
 
+**Консенсус-бенчмарк №4 (Task 5 плана `2026-10-19-key-rate-consensus-benchmark`).**
+Медиана макроэкономического опроса ЦБ (`v_cbr_mo_br`, волна доступна с
+`wave_date + 6 дней`) сравнивается с фактической среднегодовой ставкой
+(бакеты по горизонту, наивный hold, DM), текущая волна печатается отдельно,
+а B4 механически проецирует годовую медиану на шаг ближайшего заседания.
+Сценарий удержания (`ordered_logit`) — мост к годовой средней. B4 не входит в
+`METHODS`/`FORECAST_METHODS`, JSON и журнал: его дом — раздел отчёта.
+
 Что остаётся за пределами среза — спека §11: метод №1 (рыночные вероятности из
 KEYRATE) и ансамбль, байесовские priors и «inflated»-версия, ML-трек,
-point-in-time слой, витрина, графики и консенсус-бенчмарк.
+point-in-time слой, витрина и графики.
 
 **По умолчанию скрипт в ClickHouse не пишет** — только читает (прецедент
 `polyus_output_model.py`); с `ML_LOG=1` пишет паспорт и fold-предсказания
@@ -186,6 +194,16 @@ CONSENSUS_BUCKETS = ("ex-ante", "10-12", "7-9", "4-6", "1-3")
 # Guard B4 (Task 4, спека §3.2): на остаток года должно оставаться не меньше
 # 30 дней, иначе `r_implied` делится на короткий хвост и становится шумом.
 CONSENSUS_MIN_DAYS_REMAINING = 30
+
+# Режимный срез годового бенчмарка (Task 5, спека §3.1) — завершённые годы
+# текущего режима. Срез описательный: гиперпараметры на нём не подбираются.
+CONSENSUS_REGIME_FROM = 2024
+CONSENSUS_REGIME_TO = 2025
+
+# Естественный цикл волн — 8 волн/год ≈ 6–7 недель (спека §4). Волна старше
+# порога называется устаревшей: последняя публикация могла быть пропущена,
+# и текущий консенсус не подменяется более свежими данными.
+CONSENSUS_STALE_AFTER_DAYS = 49
 
 # Метка окна B4 в `Prediction` (Task 4): механическая проекция не обучается и
 # от окна walk-forward не зависит — у неё одно «окно», и оно не входит в
@@ -1105,6 +1123,95 @@ def b4_significance(b4: list, predictions: list) -> list:
                 )
             )
     return comparisons
+
+
+# --- Текущий консенсус и сценарий удержания (спека §3.3/§4) -------------------
+
+
+@dataclass(frozen=True)
+class CurrentConsensus:
+    """Последняя доступная волна консенсуса (спека §4).
+
+    `rows` — все годы одной волны опроса (медианы на разные годы публикуются
+    вместе), отсортированные по году. `stale_days` — сколько дней прошло с
+    консервативной даты публикации `available_from` до даты прогона: волна не
+    подменяется, а устаревание показывается числом.
+    """
+
+    wave_date: date
+    available_from: date
+    rows: list
+    stale_days: Optional[int]
+
+
+def current_consensus(consensus: list, today: date) -> Optional[CurrentConsensus]:
+    """Последняя волна с `available_from <= today` (спека §4), или None.
+
+    Граница включительна: волна, ставшая доступной ровно в дату прогона, — это
+    текущий консенсус. Выбор не полагается на порядок входа: берётся `max` по
+    `(available_from, wave_date)`. Ряды результата — ВСЕ годы выбранной волны
+    (`wave_date` совпадает), сортировка по году: так таблица отчёта читается
+    сверху вниз по горизонту.
+    """
+    eligible = [wave for wave in consensus if wave.available_from <= today]
+    if not eligible:
+        return None
+    latest = max(eligible, key=lambda wave: (wave.available_from, wave.wave_date))
+    rows = sorted(
+        (wave for wave in consensus if wave.wave_date == latest.wave_date),
+        key=lambda wave: wave.year,
+    )
+    return CurrentConsensus(
+        wave_date=latest.wave_date,
+        available_from=latest.available_from,
+        rows=rows,
+        stale_days=(today - latest.available_from).days,
+    )
+
+
+def hold_scenario_average(
+    key_rate: list,
+    today: date,
+    meeting: date,
+    rate_before: Optional[float],
+    model_level: Optional[float],
+) -> Optional[float]:
+    """Вменённая среднегодовая при удержании уровня после ближайшего заседания.
+
+    Формула спеки §3.3:
+
+    ```
+    (Σ_{1 янв..today} rate(d) + rate_before·дни(today+1..M−1)
+     + model_level·дни(M..31 дек)) / N_Y
+    ```
+
+    Известный путь года суммируется фактически (`sum_rates_between`), интервал
+    до заседания `M` — ставкой `rate_before`, остаток `[M, 31 декабря]` —
+    уровнем `model_level` (формальный прогноз `ordered_logit`). Это сценарий
+    удержания, а не траектория: между заседаниями уровень не меняется.
+
+    `None` — сценарий не определён: `rate_before`/`model_level` не конечны,
+    `M` не в году `today` или не позже неё (формула смешала бы годы/дала
+    отрицательное число дней), либо ряд ставки не покрывает `today` или
+    1 января года — сумму не из чего собрать. Отчёт называет причину, а не
+    падает: отсутствие `ordered_logit` — штатная ветка.
+    """
+    if rate_before is None or model_level is None:
+        return None
+    if not math.isfinite(rate_before) or not math.isfinite(model_level):
+        return None
+    year = today.year
+    first_day = date(year, 1, 1)
+    last_day = date(year, 12, 31)
+    if not first_day <= meeting <= last_day or meeting <= today:
+        return None
+    if _rate_asof(key_rate, today) is None or _rate_asof(key_rate, first_day) is None:
+        return None
+    days = (last_day - first_day).days + 1
+    known = sum_rates_between(key_rate, first_day, today)
+    before = (meeting - today).days - 1  # дни today+1 … M−1
+    after = (last_day - meeting).days + 1  # дни M … 31 декабря
+    return (known + rate_before * before + model_level * after) / days
 
 
 # --- Загрузчики: SQL + транспорт + разбор ------------------------------------
@@ -2363,6 +2470,28 @@ _LONG_RUN_HEADER = (
     "| параметр | значение |",
     "|---|---|",
 )
+_CONSENSUS_WAVE_HEADER = (
+    "| год | медиана | p10 | p90 | ответов |",
+    "|---|---:|---:|---:|---:|",
+)
+_CONSENSUS_BUCKET_HEADER = (
+    "| бакет | n | cons RMSE | cons MAE | cons bias "
+    "| hold RMSE | hold MAE | hold bias | DM | p |",
+    "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+)
+_CONSENSUS_AUDIT_HEADER = (
+    "| год | волна | доступна | бакет | медиана | p10 | p90 | ответов "
+    "| факт | ошибка cons | ошибка hold |",
+    "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+)
+_CONSENSUS_B4_METRIC_HEADER = (
+    "| n | RMSE, б.п. | MAE, б.п. | hit rate | QWK |",
+    "|---:|---:|---:|---:|---:|",
+)
+_CONSENSUS_B4_COMPARISON_HEADER = (
+    "| против | окно | n | ΔRMSE, б.п. | DM | p |",
+    "|---|---|---:|---:|---:|---:|",
+)
 
 
 def _long_run_rows(rows: list) -> list:
@@ -2527,6 +2656,7 @@ def render_report(
     forecast: Optional[str] = None,
     today: Optional[date] = None,
     fold_skips: Optional[dict] = None,
+    consensus: Optional[str] = None,
 ) -> str:
     """Markdown-отчёт прогона (спека §8).
 
@@ -2552,6 +2682,12 @@ def render_report(
     вырожденных окон по ключу «(метод, окно)» (`method_predictions`), без
     них сводка показывает нули — так отчёт не приписывает методу пропусков,
     которых не считали.
+
+    `consensus` — готовый markdown-блок «Консенсус-бенчмарк №4» (Task 5) или
+    `None`, если раздел не запрошен. Параметр добавлен в конец сигнатуры:
+    существующие вызовы не меняются. Блок вставляется ПЕРЕД «Текущим
+    прогнозом» — сначала измерение опроса, затем прогноз; при `None` раздела
+    нет вовсе (тесты и вызовы без консенсуса не рисуют пустую заготовку).
     """
     today = today or date.today()
     fold_skips = fold_skips or {}
@@ -2726,6 +2862,11 @@ def render_report(
         ]
         lines += _table(_RELIABILITY_HEADER, reliability_rows)
 
+    if consensus is not None:
+        # Раздел консенсуса — готовый блок со своим заголовком; вставляется
+        # перед текущим прогнозом (сначала измерение опроса, затем прогноз).
+        lines += ["", str(consensus).strip()]
+
     if forecast is not None:
         lines += ["", "## Текущий прогноз", "", str(forecast).strip()]
 
@@ -2751,8 +2892,11 @@ def render_report(
         "- **Гиперпараметры не подбираются**: ни на полной выборке, ни на "
         "режимном блоке 2024–2026; обе схемы окна — проверка робастности, а "
         "не выбор лучшей (спека §7).",
-        "- **Консенсус-бенчмарк (медиана макроопроса)** вне v0 — из-за "
-        "горизонта и первого публикационного цикла (спека §11).",
+        "- **Консенсус-бенчмарк №4 — годовой горизонт, а не шаг заседания**: "
+        "медиана макроопроса сравнивается с фактической среднегодовой ставкой; "
+        "B4 — механическая проекция остатка года, а не прогноз решения "
+        "(`docs/superpowers/specs/2026-10-19-key-rate-consensus-benchmark-design.md` "
+        "§3).",
     ]
     return "\n".join(lines) + "\n"
 
@@ -3046,6 +3190,373 @@ def current_forecast(
         skipped=tuple(skipped),
         note=note,
     )
+
+
+# --- Консенсус-бенчмарк в отчёте: текущая волна, мост и B4 (спека §4/§5) -----
+
+
+@dataclass(frozen=True)
+class ConsensusBridge:
+    """Числа текущего консенсуса для отчёта (спека §3.3/§4).
+
+    `ytd_average`/`ytd_days` — фактическая средняя года `today.year` с 1 января
+    по дату прогона (календарные дни). `projection` — B4-проекция остатка года
+    по текущей волне (§3.2), `None`, когда её guards не выполнены. `model_level`
+    и `implied_avg` — сценарий удержания после ближайшего заседания (§3.3);
+    `None` — `ordered_logit` не посчитан или сценарий не определён.
+    `b4_missing` — сколько заседаний выборки осталось без B4-фолда.
+    """
+
+    meeting_date: Optional[date]
+    rate_before: Optional[float]
+    ytd_average: float
+    ytd_days: int
+    projection: Optional[ConsensusPath]
+    model_level: Optional[float]
+    implied_avg: Optional[float]
+    b4_missing: int
+
+
+def consensus_bridge(
+    key_rate: list,
+    consensus: list,
+    forecast: Optional[CurrentForecast],
+    sample_size: int,
+    b4_folds: int,
+    today: date,
+) -> Optional[ConsensusBridge]:
+    """Числа текущего консенсуса для раздела отчёта, или `None`.
+
+    Средняя с начала года считается по фактическому пути ставки
+    (`sum_rates_between`); без покрытия 1 января она не определена — `None`
+    (раздел назовёт причину, а не нарисует нулевую среднюю). B4-проекция
+    остатка — существующая `consensus_path` для ближайшего заседания: те же
+    guards §3.2 (волна строго до заседания, покрытие ставки, остаток года не
+    меньше `CONSENSUS_MIN_DAYS_REMAINING`, `r_implied` в допустимом диапазоне),
+    причём волна обязана быть доступна уже на `today`: текущая проекция не
+    заглядывает вперёд, в отличие от бэктеста B4 (там правило — до заседания).
+    Сценарий удержания — `hold_scenario_average` по `expected_step_bp` метода
+    `ordered_logit`; без метода или его входа — `None` (блок отчёта назовёт
+    причину).
+    """
+    first_day = date(today.year, 1, 1)
+    if _rate_asof(key_rate, first_day) is None:
+        return None
+    ytd_days = (today - first_day).days + 1
+    ytd_average = sum_rates_between(key_rate, first_day, today) / ytd_days
+    meeting_date = forecast.meeting_date if forecast is not None else None
+    rate_before = forecast.rate_before if forecast is not None else None
+    projection = None
+    model_level = None
+    implied_avg = None
+    if forecast is not None and rate_before is not None:
+        # Текущая проекция — as-of даты прогона: волна, опубликованная между
+        # `today` и заседанием, была бы заглядыванием вперёд. Бэктест B4 живёт
+        # по правилу §3.2 «до заседания» и потому считается по полному ряду
+        # отдельно (`consensus_path_predictions`).
+        asof_consensus = [wave for wave in consensus if wave.available_from <= today]
+        projection = consensus_path(
+            asof_consensus, key_rate, forecast.meeting_date, rate_before
+        )
+        payload = forecast.methods.get("ordered_logit") or {}
+        expected_step = payload.get("expected_step_bp")
+        if expected_step is not None:
+            candidate = rate_before + expected_step / 100.0
+            implied_avg = hold_scenario_average(
+                key_rate, today, forecast.meeting_date, rate_before, candidate
+            )
+            if implied_avg is not None:
+                model_level = candidate
+    return ConsensusBridge(
+        meeting_date=meeting_date,
+        rate_before=rate_before,
+        ytd_average=ytd_average,
+        ytd_days=ytd_days,
+        projection=projection,
+        model_level=model_level,
+        implied_avg=implied_avg,
+        b4_missing=sample_size - b4_folds,
+    )
+
+
+def _consensus_aggregate_rows(observations: list) -> list:
+    """Строки таблицы годового бенчмарка: непустые бакеты в порядке спеки.
+
+    `_table` на пустом списке печатает пометку «фолдов нет»; пустые бакеты в
+    таблицу не попадают вовсе — строка с нулём наблюдений выглядела бы
+    измерением.
+    """
+    rows = []
+    for bucket in CONSENSUS_BUCKETS:
+        aggregate = aggregate_consensus(observations, bucket)
+        if aggregate is None:
+            continue
+        rows.append(
+            f"| {aggregate.bucket} | {aggregate.n} "
+            f"| {_fmt(aggregate.consensus_rmse_bp)} "
+            f"| {_fmt(aggregate.consensus_mae_bp)} "
+            f"| {_fmt(aggregate.consensus_bias_bp)} "
+            f"| {_fmt(aggregate.hold_rmse_bp)} "
+            f"| {_fmt(aggregate.hold_mae_bp)} "
+            f"| {_fmt(aggregate.hold_bias_bp)} "
+            f"| {_fmt(aggregate.dm_stat)} | {_fmt_p(aggregate.dm_p)} |"
+        )
+    return rows
+
+
+def render_consensus_section(
+    observations: list,
+    current: Optional[CurrentConsensus],
+    bridge: Optional[ConsensusBridge],
+    b4_predictions: list,
+    b4_metrics_value: Optional[B4Metrics],
+    b4_comparisons: list,
+    today: date,
+) -> str:
+    """Markdown-раздел «Консенсус-бенчмарк №4» (спека §5, Task 5).
+
+    Состав: вводные (источник, правило доступности, годовая средняя ≠ шаг),
+    текущая волна (медианы/p10/p90/answers, средняя с начала года, B4-проекция
+    остатка и сценарий удержания), годовой бенчмарк по бакетам, построчный
+    аудит, режимный срез 2024–2025, B4 (метрики, сравнения, пропуски) и «что не
+    проверено». Пустой консенсус — строка «данных нет», а не падение: это
+    штатная ветка офлайн-прогона и пустой витрины.
+
+    Числа приходят готовыми (`observations`, `current`, `bridge`,
+    `b4_predictions`, `b4_metrics_value`, `b4_comparisons`): рендерер только
+    форматирует их через `_table`/`_fmt`, как и остальные таблицы отчёта.
+    """
+    lines = [
+        "## Консенсус-бенчмарк №4 (медиана макроопроса)",
+        "",
+        "Источник — витрина `v_cbr_mo_br` (ряды "
+        "`key_rate_avg_<год>_median|p10|p90|answers`); `date` — дата волны "
+        "(1-е число месяца). Публикация наступает через 2–6 дней после полевого "
+        f"периода, поэтому волна доступна только с `wave_date + "
+        f"{CONSENSUS_PUBLICATION_LAG_DAYS} дней` — консервативно, без "
+        "заглядывания вперёд. Годовая средняя (медиана опроса) — не шаг "
+        "заседания: сравнивать её с шагом нельзя, поэтому основной результат — "
+        "годовой горизонт, а B4 — механическая проекция остатка года на шаг.",
+        "",
+    ]
+    if not observations and current is None:
+        lines.append("_данных нет: витрина `v_cbr_mo_br` пуста._")
+        return "\n".join(lines) + "\n"
+
+    if current is not None:
+        lines += [
+            "### Текущий консенсус",
+            "",
+            f"Последняя доступная волна — **{current.wave_date.isoformat()}** "
+            f"(доступна с **{current.available_from.isoformat()}**), "
+            f"устарела на **{current.stale_days}** дн.",
+            "",
+        ]
+        if current.stale_days is not None and current.stale_days > CONSENSUS_STALE_AFTER_DAYS:
+            lines += [
+                "Волна старше естественного цикла (8 волн/год ≈ 6–7 недель): "
+                "последняя публикация могла быть пропущена, и текущий консенсус "
+                "не подменяется более свежими данными.",
+                "",
+            ]
+        lines += _table(
+            _CONSENSUS_WAVE_HEADER,
+            [
+                f"| {wave.year} | {_fmt(wave.median)} | {_fmt(wave.p10)} "
+                f"| {_fmt(wave.p90)} | "
+                f"{wave.answers if wave.answers is not None else '—'} |"
+                for wave in current.rows
+            ],
+        )
+    else:
+        lines += [
+            "### Текущий консенсус",
+            "",
+            "_Текущей волны нет: ни одна волна ещё не опубликована на дату "
+            "прогона._",
+        ]
+
+    current_year_median = None
+    if current is not None:
+        current_year_median = next(
+            (wave.median for wave in current.rows if wave.year == today.year), None
+        )
+    if bridge is not None:
+        lines += [
+            "",
+            f"Средняя с начала {today.year} года "
+            f"(1 января … {today.isoformat()}, календарные дни): "
+            f"**{_fmt(bridge.ytd_average)} %**.",
+        ]
+        if bridge.projection is not None:
+            path = bridge.projection
+            lines.append(
+                f"B4-проекция остатка {path.year} года по медиане "
+                f"{_fmt(path.annual_median)}: **{_fmt(path.implied_level)} %** "
+                f"(волна {path.wave_date.isoformat()}, осталось "
+                f"{path.days_remaining} дн.; шаг к ставке перед заседанием "
+                f"{path.meeting_date.isoformat()} — {_fmt(path.step_bp)} б.п.)."
+            )
+        else:
+            lines.append(
+                "B4-проекция остатка года не определена: нет волны на год "
+                "ближайшего заседания, ряд ставки не покрывает дату волны или "
+                f"на остаток года меньше {CONSENSUS_MIN_DAYS_REMAINING} дней."
+            )
+    elif current is not None:
+        lines += [
+            "",
+            "Средняя с начала года не определена: ряд ставки не покрывает "
+            "1 января текущего года.",
+        ]
+
+    lines += ["", "### Сценарий удержания", ""]
+    if bridge is None:
+        lines += [
+            "_Сценарий не оценён: ряд ставки не покрывает начало текущего года._"
+        ]
+    elif bridge.implied_avg is None:
+        lines += [
+            "_Сценарий не оценён: в текущем прогнозе нет `ordered_logit` "
+            "(метод пропущен или его входы недоступны)._"
+        ]
+    else:
+        difference = (
+            (bridge.implied_avg - current_year_median) * 100.0
+            if current_year_median is not None
+            else None
+        )
+        meeting = (
+            bridge.meeting_date.isoformat() if bridge.meeting_date is not None else "—"
+        )
+        lines += _table(
+            _LONG_RUN_HEADER,
+            [
+                f"| ближайшее заседание | {meeting} |",
+                f"| ставка перед заседанием | {_fmt(bridge.rate_before)} % |",
+                f"| уровень после заседания (`ordered_logit`) "
+                f"| {_fmt(bridge.model_level)} % |",
+                f"| вменённая среднегодовая {today.year} "
+                f"| {_fmt(bridge.implied_avg)} % |",
+                f"| медиана консенсуса на {today.year} "
+                f"| {_fmt(current_year_median)} % |",
+                f"| разница (сценарий − консенсус) | {_fmt(difference)} б.п. |",
+            ],
+        )
+        lines += [
+            "",
+            "Сценарий удержания — не траектория и не тест значимости; "
+            "в журнал прогнозов он не пишется.",
+        ]
+
+    lines += [
+        "",
+        "### Годовой бенчмарк",
+        "",
+        "Пара — волна с медианой на завершённый год и фактическая среднегодовая "
+        "ставка; ошибки в б.п., положительная — консенсус завысил. Наивный hold "
+        "— «ставка не меняется» по правилу §3.1. DM (HLN, `h=1`): положительная "
+        "статистика значит, что консенсус ХУЖЕ hold; при `n < 2` и нулевой "
+        "дисперсии разницы потерь тест не определён («—»).",
+        "",
+    ]
+    lines += _table(_CONSENSUS_BUCKET_HEADER, _consensus_aggregate_rows(observations))
+
+    lines += [
+        "",
+        "### Построчный аудит волн",
+        "",
+        "Все пары выборки: волна, её горизонт (бакет), медиана и ошибки против "
+        "факта; p10/p90/answers взяты из волны и в метрики не входят.",
+        "",
+    ]
+    lines += _table(
+        _CONSENSUS_AUDIT_HEADER,
+        [
+            f"| {observation.year} | {observation.wave_date.isoformat()} "
+            f"| {observation.available_from.isoformat()} | {observation.bucket} "
+            f"| {_fmt(observation.median)} | {_fmt(observation.p10)} "
+            f"| {_fmt(observation.p90)} "
+            f"| {observation.answers if observation.answers is not None else '—'} "
+            f"| {_fmt(observation.actual)} "
+            f"| {_fmt(observation.consensus_error_bp)} "
+            f"| {_fmt(observation.hold_error_bp)} |"
+            for observation in observations
+        ],
+    )
+
+    regime_observations = [
+        observation
+        for observation in observations
+        if CONSENSUS_REGIME_FROM <= observation.year <= CONSENSUS_REGIME_TO
+    ]
+    lines += [
+        "",
+        f"### Режимный срез {CONSENSUS_REGIME_FROM}–{CONSENSUS_REGIME_TO}",
+        "",
+        "Тот же годовой бенчмарк на завершённых годах текущего режима; срез "
+        "описательный, гиперпараметры на нём не подбираются.",
+        "",
+    ]
+    lines += _table(
+        _CONSENSUS_BUCKET_HEADER, _consensus_aggregate_rows(regime_observations)
+    )
+
+    lines += [
+        "",
+        "### B4: проекция годовой медианы на шаг заседания",
+        "",
+        "B4 — механическая проекция: остаток года заполняется одной ставкой, "
+        "при которой годовая средняя совпала бы с медианой; это не прогноз "
+        "заседания. В `METHODS`, JSON прогноза и журнал B4 не входит; "
+        "положительные DM и ΔRMSE значат, что B4 хуже строки сравнения. "
+        f"Фолдов B4: {len(b4_predictions)}.",
+        "",
+    ]
+    if b4_metrics_value is None:
+        lines.append("_B4 не определено ни на одном заседании._")
+    else:
+        lines += _table(
+            _CONSENSUS_B4_METRIC_HEADER,
+            [
+                f"| {b4_metrics_value.n} | {_fmt(b4_metrics_value.rmse_bp)} "
+                f"| {_fmt(b4_metrics_value.mae_bp)} "
+                f"| {_fmt(b4_metrics_value.hit_rate, 3)} "
+                f"| {_fmt(b4_metrics_value.qwk, 3)} |"
+            ],
+        )
+    lines += ["", "Сравнение с методами и бенчмарками на общих заседаниях:", ""]
+    lines += _table(
+        _CONSENSUS_B4_COMPARISON_HEADER,
+        [
+            f"| {comparison.against} | {comparison.window} | {comparison.n} "
+            f"| {_fmt(comparison.delta_rmse_bp)} | {_fmt(comparison.dm_stat)} "
+            f"| {_fmt_p(comparison.dm_p)} |"
+            for comparison in b4_comparisons
+        ],
+    )
+    missing = bridge.b4_missing if bridge is not None else None
+    lines += [
+        "",
+        f"Заседаний выборки без B4-фолда: **{_fmt(missing, 0)}** — причина: нет "
+        "волны на год заседания, ряд ставки не покрывает дату волны или на "
+        f"остаток года меньше {CONSENSUS_MIN_DAYS_REMAINING} дней.",
+        "",
+        "### Что не проверено",
+        "",
+        "- **Малая выборка**: экс-анте — 4 пары, внутригодовые бакеты — 8–10; "
+        "p-value индикативный, превосходство без значимости не заявляется.",
+        "- **Режимные сдвиги 2022 и 2024–2025**: режимный срез описательный, "
+        "смена режима может объяснять часть ошибки.",
+        "- **Дата публикации волны**: +6 дней — консервативное правило; точные "
+        "даты публикаций волн не проверены (`source_publications` не хранит "
+        "волны).",
+        "- **Годовая средняя ≠ шаг заседания**: медиана опроса — не прогноз "
+        "решения; B4 лишь механически проецирует её на шаг.",
+        "- **B4 — механика, а не траектория**: остаток года заполняется одной "
+        "ставкой; результат чувствителен к округлению медианы и длине хвоста.",
+    ]
+    return "\n".join(lines) + "\n"
 
 
 def render_forecast(forecast: CurrentForecast) -> str:
@@ -3351,12 +3862,20 @@ def run_summary(
 
     deltas = load_mp_summary_deltas()
     # Ряды читаются по одному разу: ключевая ставка нужна и выборке, и
-    # прогнозной строке; ИПЦ и ИБК — признакам выборки и признакам прогноза.
+    # прогнозной строке, и консенсус-бенчмарку; ИПЦ и ИБК — признакам выборки и
+    # признакам прогноза.
     key_rate = load_key_rate()
+    # Консенсус-бенчмарк №4 (спека §2/§3): волны опроса читаются один раз;
+    # годовые пары считаются по завершённым годам, B4 — по строкам выборки.
+    # Пустая витрина — штатная ветка: раздел отчёта скажет «данных нет».
+    consensus = load_consensus()
+    observations = consensus_observations(consensus, key_rate)
     decisions, excluded, missing_rate = build_decisions(past, key_rate, deltas)
     cpd = load_cpd_core()
     ibk = load_ibk()
     rows, missing_features = build_rows(decisions, cpd, ibk)
+    b4 = consensus_path_predictions(rows, consensus, key_rate)
+    current = current_consensus(consensus, today)
     # Walk-forward считается до проверки «выборка пуста»: счётчик вырожденных
     # окон входит в sample_meta паспорта, а на пустой выборке он нулевой.
     predictions, fold_skips = method_predictions(rows)
@@ -3368,6 +3887,11 @@ def run_summary(
         "missing_rate": len(missing_rate),
         "missing_features": len(missing_features),
         "fold_skips": sum(fold_skips.values()),
+        # Консенсус-бенчмарк: волн (уникальных дат), годовых пар и B4-фолдов —
+        # те же числа, что в строке консоли и разделе отчёта.
+        "consensus_waves": len({wave.wave_date for wave in consensus}),
+        "consensus_pairs": len(observations),
+        "b4_folds": len(b4),
     }
     if logger is None and ml_log:
         logger = start_run(
@@ -3398,6 +3922,20 @@ def run_summary(
 
     try:
         forecast = current_forecast(rows, meetings, key_rate, cpd, ibk, today)
+        # Мост текущего консенсуса: средняя с начала года, B4-проекция остатка
+        # и сценарий удержания по `ordered_logit` (если метод посчитан).
+        bridge = consensus_bridge(
+            key_rate, consensus, forecast, len(rows), len(b4), today
+        )
+        consensus_text = render_consensus_section(
+            observations,
+            current,
+            bridge,
+            b4,
+            b4_metrics(b4),
+            b4_significance(b4, predictions),
+            today,
+        )
         report_path = out_dir / REPORT_NAME
         predictions_path = out_dir / PREDICTIONS_NAME
         forecast_path = out_dir / FORECAST_NAME
@@ -3409,6 +3947,7 @@ def run_summary(
                 render_forecast(forecast) if forecast is not None else None,
                 today=today,
                 fold_skips=fold_skips,
+                consensus=consensus_text,
             ),
             encoding="utf-8",
         )
@@ -3437,6 +3976,10 @@ def run_summary(
         print(f"  фолдов (скользящее окно, {ROLLING_WINDOW}):               "
               f"{counts.get(window_label(ROLLING_WINDOW), 0)}")
         print(f"  пропущено фолдов (вырожденное окно):         {sum(fold_skips.values())}")
+        print(f"  консенсус-бенчмарк: волн "
+              f"{sample_meta['consensus_waves']}, годовых пар "
+              f"{sample_meta['consensus_pairs']}, B4-фолдов "
+              f"{sample_meta['b4_folds']}")
 
         selected = window_label(ROLLING_WINDOW if rolling else None)
         print(f"  метрики окна «{selected}» (в отчёте и CSV — оба окна):")

@@ -1254,6 +1254,369 @@ class TestConsensusPath(unittest.TestCase):
         )
 
 
+class TestCurrentConsensus(unittest.TestCase):
+    """Текущая волна консенсуса: последняя доступная и граница `<= today` (§4)."""
+
+    @staticmethod
+    def wave(wave_date, year, median=10.0, p10=None, p90=None, answers=None):
+        """Волна с консервативной доступностью `wave_date + 6` (как парсер)."""
+        return km.ConsensusForecast(
+            wave_date=wave_date,
+            available_from=wave_date
+            + timedelta(days=km.CONSENSUS_PUBLICATION_LAG_DAYS),
+            year=year,
+            median=median,
+            p10=p10,
+            p90=p90,
+            answers=answers,
+        )
+
+    def test_latest_available_wave_and_all_its_years(self):
+        consensus = [
+            self.wave(date(2026, 6, 1), 2026, median=15.0),
+            # Последняя волна публикует медианы на два года: строки — обе.
+            self.wave(
+                date(2026, 9, 1), 2027, median=12.0, p10=11.0, p90=13.0, answers=20
+            ),
+            self.wave(
+                date(2026, 9, 1), 2026, median=14.5, p10=13.0, p90=16.0, answers=21
+            ),
+            # Ещё не опубликована на дату прогона — не текущая.
+            self.wave(date(2026, 10, 20), 2027, median=11.0),
+        ]
+        current = km.current_consensus(consensus, date(2026, 10, 19))
+        self.assertIsNotNone(current)
+        self.assertEqual(current.wave_date, date(2026, 9, 1))
+        self.assertEqual(current.available_from, date(2026, 9, 7))
+        self.assertEqual([wave.year for wave in current.rows], [2026, 2027])
+        self.assertEqual([wave.median for wave in current.rows], [14.5, 12.0])
+        self.assertEqual(current.rows[0].p10, 13.0)
+        self.assertEqual(current.rows[0].answers, 21)
+        self.assertEqual(current.stale_days, 42)
+
+    def test_availability_boundary_is_inclusive(self):
+        wave = self.wave(date(2026, 9, 1), 2026, median=14.5)
+        boundary = wave.available_from
+        self.assertIsNotNone(km.current_consensus([wave], boundary))
+        self.assertIsNone(km.current_consensus([wave], boundary - timedelta(days=1)))
+
+    def test_no_available_wave_is_none(self):
+        self.assertIsNone(km.current_consensus([], date(2026, 10, 19)))
+        self.assertIsNone(
+            km.current_consensus(
+                [self.wave(date(2026, 10, 20), 2026)], date(2026, 10, 19)
+            )
+        )
+
+
+class TestHoldScenarioAverage(unittest.TestCase):
+    """Сценарий удержания: вменённая среднегодовая по формуле спеки §3.3."""
+
+    def test_formula_splits_the_year_into_known_before_and_after(self):
+        # 2024 (366 дней): 10 % до 1 марта, 20 % с 1 марта. today = 1 июля,
+        # M = 26 июля, rate_before = 20, model_level = 10.
+        # known(1 янв..1 июл) = 60·10 + 123·20 = 3060;
+        # before(2 июл..25 июл) = 24·20 = 480;
+        # after(26 июл..31 дек) = 159·10 = 1590; N_Y = 366.
+        key_rate = [
+            (date(2024, 1, 1), 10.0),
+            (date(2024, 3, 1), 20.0),
+            (date(2024, 12, 31), 20.0),
+        ]
+        expected = (3060.0 + 24 * 20.0 + 159 * 10.0) / 366
+        value = km.hold_scenario_average(
+            key_rate, date(2024, 7, 1), date(2024, 7, 26), 20.0, 10.0
+        )
+        self.assertAlmostEqual(value, expected, places=12)
+
+    def test_meeting_one_day_ahead_has_no_before_interval(self):
+        # today = 1 июля, M = 2 июля: before = 0, known = 183 дня по 10 %,
+        # after = 183 дня по 12 % (всего 366).
+        key_rate = [(date(2024, 1, 1), 10.0), (date(2024, 12, 31), 10.0)]
+        expected = (183 * 10.0 + 183 * 12.0) / 366
+        value = km.hold_scenario_average(
+            key_rate, date(2024, 7, 1), date(2024, 7, 2), 10.0, 12.0
+        )
+        self.assertAlmostEqual(value, expected, places=12)
+
+    def test_undefined_scenarios_are_none(self):
+        key_rate = [(date(2024, 1, 1), 10.0), (date(2024, 12, 31), 10.0)]
+        today = date(2024, 7, 1)
+        meeting = date(2024, 7, 26)
+        # Заседание в другом году — формула смешала бы годы.
+        self.assertIsNone(
+            km.hold_scenario_average(key_rate, today, date(2025, 1, 26), 10.0, 12.0)
+        )
+        # Заседание не позже даты прогона — «после» отрицательно.
+        self.assertIsNone(km.hold_scenario_average(key_rate, today, today, 10.0, 12.0))
+        # Нет уровня после заседания/ставки «до» или они не конечны.
+        self.assertIsNone(km.hold_scenario_average(key_rate, today, meeting, None, 12.0))
+        self.assertIsNone(km.hold_scenario_average(key_rate, today, meeting, 10.0, None))
+        self.assertIsNone(
+            km.hold_scenario_average(key_rate, today, meeting, 10.0, float("nan"))
+        )
+        self.assertIsNone(
+            km.hold_scenario_average(key_rate, today, meeting, 10.0, float("inf"))
+        )
+        # Нет ставки на today: ряд начинается после неё.
+        late = [(date(2024, 8, 1), 10.0), (date(2024, 12, 31), 10.0)]
+        self.assertIsNone(km.hold_scenario_average(late, today, meeting, 10.0, 12.0))
+        # Нет ставки на 1 января: known не из чего собрать.
+        midyear = [(date(2024, 2, 1), 10.0), (date(2024, 12, 31), 10.0)]
+        self.assertIsNone(km.hold_scenario_average(midyear, today, meeting, 10.0, 12.0))
+        self.assertIsNone(km.hold_scenario_average([], today, meeting, 10.0, 12.0))
+
+
+class TestConsensusBridge(unittest.TestCase):
+    """Мост текущего консенсуса: средняя с начала года, B4-проекция и сценарий."""
+
+    @staticmethod
+    def wave(wave_date, year, median):
+        return km.ConsensusForecast(
+            wave_date=wave_date,
+            available_from=wave_date
+            + timedelta(days=km.CONSENSUS_PUBLICATION_LAG_DAYS),
+            year=year,
+            median=median,
+            p10=None,
+            p90=None,
+            answers=None,
+        )
+
+    @staticmethod
+    def forecast(methods, rate_before=20.0, meeting=date(2024, 7, 26)):
+        return km.CurrentForecast(
+            meeting_date=meeting,
+            data_asof=date(2024, 7, 1),
+            rate_before=rate_before,
+            sample_size=10,
+            sample_first=date(2024, 1, 1),
+            sample_last=date(2024, 6, 1),
+            methods=methods,
+            skipped=(),
+            note="",
+        )
+
+    def key_rate(self):
+        return [
+            (date(2024, 1, 1), 10.0),
+            (date(2024, 7, 1), 20.0),
+            (date(2024, 12, 31), 20.0),
+        ]
+
+    def test_bridge_collects_ytd_projection_and_hold_scenario(self):
+        bridge = km.consensus_bridge(
+            self.key_rate(),
+            [self.wave(date(2024, 6, 1), 2024, 15.0)],
+            self.forecast({"ordered_logit": {"expected_step_bp": 100.0}}),
+            sample_size=10,
+            b4_folds=3,
+            today=date(2024, 7, 1),
+        )
+        self.assertIsNotNone(bridge)
+        self.assertEqual(bridge.ytd_days, 183)
+        self.assertAlmostEqual(bridge.ytd_average, (1820.0 + 20.0) / 183, places=12)
+        # B4: A = 7 июня, known = 159 дней по 10 %, N_rem = 207.
+        self.assertIsNotNone(bridge.projection)
+        self.assertAlmostEqual(
+            bridge.projection.implied_level, (15.0 * 366 - 1590.0) / 207, places=12
+        )
+        self.assertEqual(bridge.projection.days_remaining, 207)
+        # Сценарий: model_level = 20 + 100/100 = 21.
+        self.assertEqual(bridge.model_level, 21.0)
+        expected = (1840.0 + 24 * 20.0 + 159 * 21.0) / 366
+        self.assertAlmostEqual(bridge.implied_avg, expected, places=12)
+        self.assertEqual(bridge.b4_missing, 7)
+
+    def test_bridge_without_ordered_logit_keeps_ytd_and_projection(self):
+        bridge = km.consensus_bridge(
+            self.key_rate(),
+            [self.wave(date(2024, 6, 1), 2024, 15.0)],
+            self.forecast({"taylor": {"step_bp": -50.0}}),
+            sample_size=10,
+            b4_folds=3,
+            today=date(2024, 7, 1),
+        )
+        self.assertIsNotNone(bridge)
+        self.assertIsNotNone(bridge.projection)
+        self.assertIsNone(bridge.model_level)
+        self.assertIsNone(bridge.implied_avg)
+
+    def test_current_projection_does_not_look_ahead(self):
+        # Волна публикуется между today (1 июля) и заседанием (26 июля):
+        # текущая B4-проекция обязана её не видеть, хотя бэктест B4 по правилу
+        # «волна строго до заседания» её бы использовал.
+        bridge = km.consensus_bridge(
+            self.key_rate(),
+            [self.wave(date(2024, 7, 1), 2024, 15.0)],  # A = 7 июля
+            self.forecast({"ordered_logit": {"expected_step_bp": 100.0}}),
+            sample_size=10,
+            b4_folds=0,
+            today=date(2024, 7, 1),
+        )
+        self.assertIsNotNone(bridge)
+        self.assertIsNone(bridge.projection)
+        self.assertIsNotNone(bridge.implied_avg)
+
+    def test_bridge_without_year_start_rate_is_none(self):
+        self.assertIsNone(
+            km.consensus_bridge(
+                [(date(2024, 2, 1), 10.0)],
+                [],
+                None,
+                sample_size=0,
+                b4_folds=0,
+                today=date(2024, 7, 1),
+            )
+        )
+
+
+class TestConsensusSection(unittest.TestCase):
+    """Раздел «Консенсус-бенчмарк №4»: таблицы, сценарий, пустые данные (§5)."""
+
+    @staticmethod
+    def wave(wave_date, year, median, p10=None, p90=None, answers=None):
+        return km.ConsensusForecast(
+            wave_date=wave_date,
+            available_from=wave_date
+            + timedelta(days=km.CONSENSUS_PUBLICATION_LAG_DAYS),
+            year=year,
+            median=median,
+            p10=p10,
+            p90=p90,
+            answers=answers,
+        )
+
+    @staticmethod
+    def observation(year, bucket, wave_date, median, actual, consensus_error, hold_error):
+        return km.ConsensusObservation(
+            year=year,
+            wave_date=wave_date,
+            available_from=wave_date
+            + timedelta(days=km.CONSENSUS_PUBLICATION_LAG_DAYS),
+            bucket=bucket,
+            median=median,
+            p10=median - 0.5,
+            p90=median + 0.5,
+            answers=20,
+            actual=actual,
+            consensus_error_bp=consensus_error,
+            hold_error_bp=hold_error,
+        )
+
+    def bridge(self):
+        return km.ConsensusBridge(
+            meeting_date=date(2025, 10, 24),
+            rate_before=16.0,
+            ytd_average=12.73,
+            ytd_days=292,
+            projection=km.ConsensusPath(
+                meeting_date=date(2025, 10, 24),
+                wave_date=date(2025, 9, 1),
+                available_from=date(2025, 9, 7),
+                year=2025,
+                annual_median=14.5,
+                rate_before=16.0,
+                implied_level=13.7065,
+                step_bp=-229.35,
+                days_remaining=115,
+            ),
+            model_level=13.37,
+            implied_avg=14.47,
+            b4_missing=68,
+        )
+
+    def test_section_prints_current_wave_buckets_and_hold_scenario(self):
+        observations = [
+            self.observation(2024, "ex-ante", date(2023, 12, 1), 12.0, 10.0, 200.0, 100.0),
+            self.observation(2024, "10-12", date(2024, 1, 1), 11.0, 10.0, 100.0, 50.0),
+            self.observation(2024, "7-9", date(2024, 7, 1), 10.5, 10.0, 50.0, 25.0),
+            self.observation(2025, "1-3", date(2025, 10, 1), 13.0, 14.0, -100.0, -50.0),
+        ]
+        current = km.CurrentConsensus(
+            wave_date=date(2025, 9, 1),
+            available_from=date(2025, 9, 7),
+            rows=[
+                self.wave(date(2025, 9, 1), 2025, 14.5, 13.0, 16.0, 21),
+                self.wave(date(2025, 9, 1), 2026, 12.0),
+            ],
+            stale_days=42,
+        )
+        b4 = [
+            km.Prediction(date(2025, 3, 21), 0.0, 0, "consensus", km.CONSENSUS_WINDOW, 10.0, None),
+            km.Prediction(date(2025, 7, 25), -50.0, -1, "consensus", km.CONSENSUS_WINDOW, -40.0, None),
+        ]
+        comparisons = [
+            km.B4Comparison("hold", km.WINDOW_EXPANDING, 2, 5.0, 1.2, 0.3)
+        ]
+        text = km.render_consensus_section(
+            observations,
+            current,
+            self.bridge(),
+            b4,
+            km.b4_metrics(b4),
+            comparisons,
+            date(2025, 10, 19),
+        )
+        # Вводные и правило доступности.
+        self.assertIn("## Консенсус-бенчмарк №4 (медиана макроопроса)", text)
+        self.assertIn("v_cbr_mo_br", text)
+        self.assertIn("+ 6 дней", text)
+        # Текущая волна: обе строки, дата/доступность, устаревание.
+        self.assertIn("**2025-09-01**", text)
+        self.assertIn("**2025-09-07**", text)
+        self.assertIn("**42** дн.", text)
+        self.assertIn("| 2025 | 14.50 | 13.00 | 16.00 | 21 |", text)
+        self.assertIn("| 2026 | 12.00 | — | — | — |", text)
+        # Средняя с начала года, B4-проекция остатка и сценарий удержания.
+        self.assertIn("**12.73 %**", text)
+        self.assertIn("**13.71 %**", text)
+        self.assertIn("осталось 115 дн.", text)
+        self.assertIn("-229.35 б.п.", text)
+        self.assertIn("13.37 %", text)
+        self.assertIn("14.47 %", text)
+        self.assertIn("14.50 %", text)
+        self.assertIn("-3.00 б.п.", text)
+        self.assertIn("не траектория", text)
+        self.assertIn("в журнал прогнозов он не пишется", text)
+        # Годовой бенчмарк по непустым бакетам и построчный аудит.
+        self.assertIn("| ex-ante | 1 | 200.00 | 200.00 | 200.00 |", text)
+        self.assertIn("| 2024 | 2023-12-01 | 2023-12-07 | ex-ante |", text)
+        self.assertIn("| 2025 | 2025-10-01 | 2025-10-07 | 1-3 |", text)
+        # Режимный срез 2024–2025.
+        self.assertIn("### Режимный срез 2024–2025", text)
+        # B4: метрики, сравнение и пропуски выборки.
+        self.assertIn("### B4: проекция годовой медианы на шаг заседания", text)
+        self.assertIn("| 2 |", text)
+        self.assertIn("| hold | expanding | 2 | 5.00 | 1.20 | 0.3000 |", text)
+        self.assertIn("без B4-фолда: **68**", text)
+        self.assertIn("### Что не проверено", text)
+
+    def test_empty_consensus_says_no_data(self):
+        text = km.render_consensus_section(
+            [], None, None, [], None, [], date(2025, 10, 19)
+        )
+        self.assertIn("## Консенсус-бенчмарк №4", text)
+        self.assertIn("данных нет", text)
+
+    def test_current_wave_without_completed_years_still_renders(self):
+        # Текущая волна есть, завершённых лет ещё нет: таблицы бакетов и аудита
+        # пусты, но раздел не падает и не выдаёт нули за измерения.
+        current = km.CurrentConsensus(
+            wave_date=date(2025, 9, 1),
+            available_from=date(2025, 9, 7),
+            rows=[self.wave(date(2025, 9, 1), 2025, 14.5)],
+            stale_days=42,
+        )
+        text = km.render_consensus_section(
+            [], current, None, [], None, [], date(2025, 9, 10)
+        )
+        self.assertIn("### Текущий консенсус", text)
+        self.assertIn("| 2025 | 14.50 | — | — | — |", text)
+        self.assertIn("Сценарий не оценён", text)
+        self.assertIn("_B4 не определено ни на одном заседании._", text)
+
+
 class TestRows(unittest.TestCase):
     """Признаки pi_saar и gap (спека §4)."""
 
@@ -2582,7 +2945,7 @@ class TestReport(unittest.TestCase):
         cls.predictions = method_predictions(cls.rows)
         cls.skipped = km.Skipped((), (), ())
 
-    def render(self, predictions=None, forecast=None, fold_skips=None):
+    def render(self, predictions=None, forecast=None, fold_skips=None, consensus=None):
         return km.render_report(
             self.rows,
             self.skipped,
@@ -2590,6 +2953,7 @@ class TestReport(unittest.TestCase):
             forecast,
             today=date(2026, 10, 16),
             fold_skips=fold_skips,
+            consensus=consensus,
         )
 
     def test_report_has_every_section_of_the_step(self):
@@ -2796,6 +3160,25 @@ class TestReport(unittest.TestCase):
         text = self.render(forecast="Заседание 2026-10-23: шаг −50 б.п. (заглушка).")
         self.assertIn("## Текущий прогноз", text)
         self.assertIn("Заседание 2026-10-23", text)
+
+    def test_consensus_block_is_inserted_before_the_forecast(self):
+        # Готовый блок консенсуса (Task 5) идёт ПЕРЕД текущим прогнозом;
+        # `None` — раздела нет, а не пустая заготовка.
+        block = "## Консенсус-бенчмарк №4 (медиана макроопроса)\n\n_данных нет._"
+        text = self.render(forecast="Заглушка.", consensus=block)
+        self.assertLess(
+            text.index("## Консенсус-бенчмарк №4"),
+            text.index("## Текущий прогноз"),
+        )
+        self.assertIn("данных нет", text)
+        self.assertNotIn(
+            "## Консенсус-бенчмарк №4", self.render(forecast="Заглушка.")
+        )
+
+    def test_unchecked_section_names_the_annual_horizon_and_b4(self):
+        text = self.render()
+        self.assertIn("годовой горизонт", text)
+        self.assertIn("B4 — механическая проекция", text)
 
     def test_predictions_csv_is_written_row_by_row(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -3137,6 +3520,20 @@ class TestRunSummaryArtifacts(unittest.TestCase):
             self.assertIn("фолдов (расширяющееся окно", text)
             self.assertIn("фолдов (скользящее окно", text)
 
+    def test_report_has_consensus_section_with_empty_source(self):
+        # Полный офлайн-прогон: ветка `FROM v_cbr_mo_br` в заглушке отдаёт [],
+        # и раздел печатает «данных нет», а не падает (Task 5). Счётчики
+        # консоли — те же нули.
+        with tempfile.TemporaryDirectory() as tmp:
+            code, text = self.run_into(tmp, date(2017, 1, 1))
+            self.assertEqual(code, 0)
+            report = (Path(tmp) / km.REPORT_NAME).read_text(encoding="utf-8")
+            self.assertIn("## Консенсус-бенчмарк №4", report)
+            self.assertIn("данных нет", report)
+            self.assertIn(
+                "консенсус-бенчмарк: волн 0, годовых пар 0, B4-фолдов 0", text
+            )
+
     def test_console_metrics_follow_the_rolling_flag(self):
         with tempfile.TemporaryDirectory() as tmp:
             _, expanding = self.run_into(tmp, date(2017, 1, 1), rolling=False)
@@ -3322,6 +3719,9 @@ class TestRunSummaryExperimentLog(unittest.TestCase):
             "load_key_rate": world["key_rate"],
             "load_cpd_core": world["cpd"],
             "load_ibk": world["ibk"],
+            # Консенсус-бенчмарк читается отдельным загрузчиком (Task 5):
+            # пустая витрина — штатная ветка, и тест журнала не ходит в CH.
+            "load_consensus": [],
         }
         with contextlib.ExitStack() as stack:
             for name, value in loaders.items():
@@ -3384,6 +3784,15 @@ class TestRunSummaryExperimentLog(unittest.TestCase):
                 self.assertIsInstance(skipped, int)
                 self.assertGreaterEqual(skipped, 0)
         self.assertIn("rows", fake.metrics["sample"])
+        # Консенсус-бенчмарк: пустая витрина даёт нули во всех трёх счётчиках,
+        # и они попадают в паспорт прогона (Task 5).
+        self.assertEqual(
+            {
+                key: fake.metrics["sample"][key]
+                for key in ("consensus_waves", "consensus_pairs", "b4_folds")
+            },
+            {"consensus_waves": 0, "consensus_pairs": 0, "b4_folds": 0},
+        )
         self.assertEqual(
             {path.name for path in fake.artifacts},
             {km.REPORT_NAME, km.PREDICTIONS_NAME},
