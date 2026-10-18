@@ -84,7 +84,7 @@ make dcf-aisc                        # (опционально) уточнённ
 make ch-sql FILE=sql/dcf_mine_plans_seed.sql   # (опционально) применить сид AISC поверх Go-сида
 DCF_RUN_ID=$(uuidgen | tr A-Z a-z) make import STAT=dcf_engine   # расчёт NAV по засеянным планам (в шелле без uuidgen — любой UUID)
 make import STAT=forecast_resolve    # сверка прогнозов журнала с фактом (нужны строки forecast_log: ingest-прогон или бэкфилл sql/forecast_log_backfill.sql)
-make import STAT=news_watch          # 9 лент РФ-канала: 7 RSS (включая smart-lab ×2) + Telegram-молния Интерфакса и корпоративные раскрытия edisclosure → news_events, news_message_version, news_annotation (all по умолчанию — полный upsert окна)
+make import STAT=news_watch          # 16 лент РФ-канала: 8 RSS (Интерфакс, РБК, ЦБ ×2, TASS, общий Смартлаб и два блога) + 8 Telegram (молния interfaxonline/ifax_go, edisclosure, newssmartlab, markettwits, russianmacro, MarketOverview, mozgovikresearch) → news_events, news_message_version, news_annotation (all по умолчанию — полный upsert окна; bootstrap-разметка нового потока — разовый NEWS_LLM_BACKLOG_LIMIT=500)
 NEWS_WATCH_MODE=since make import STAT=news_watch   # штатный режим расписания: только отсутствующие позиции (ключ date/source/title)
 NEWS_WATCH_MODE=check make import STAT=news_watch   # диагностика покрытия: окна источников и дыры, без записи
 make import STAT=rosstat_ipc_mes            # Росстат: ИПЦ помесячно, 4 ряда (файл обновляется раз в месяц, повтор — no-op без скачивания)
