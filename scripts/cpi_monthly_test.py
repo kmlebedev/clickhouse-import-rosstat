@@ -1391,6 +1391,20 @@ class TestWindowSpecs(unittest.TestCase):
     def test_custom_start_and_embargo_are_first(self):
         self.assertEqual(cm.window_specs(30, 2), [(30, 2), (48, 2), (30, 1)])
 
+    def test_quick_window_specs_only_main(self):
+        # Спека quick §2.1: quick — ровно основное окно, robustness нет.
+        self.assertEqual(cm.window_specs(24, 0, quick=True), [(24, 0)])
+        self.assertEqual(cm.window_specs(48, 0, True), [(48, 0)])
+        self.assertEqual(cm.window_specs(24, 1, True), [(24, 1)])
+
+    def test_full_window_specs_unchanged(self):
+        # Без флага окна прежние: short 3 (24/0, 48/0, 24/1), long 2 (48/0, 48/1).
+        self.assertEqual(cm.window_specs(24, 0), [(24, 0), (48, 0), (24, 1)])
+        self.assertEqual(cm.window_specs(48, 0), [(48, 0), (48, 1)])
+        self.assertEqual(
+            cm.window_specs(24, 0, quick=False), [(24, 0), (48, 0), (24, 1)]
+        )
+
 
 class TestWalkForward(unittest.TestCase):
     """Расширяющееся окно: только прошлое, embargo, вырождение, счётчики."""
@@ -2832,6 +2846,188 @@ def clean_ml_env(**extra) -> dict:
     }
     env.update(extra)
     return env
+
+
+class TestQuickMode(unittest.TestCase):
+    """`--quick`: только основное окно, без robustness и фиксированного сплита."""
+
+    def run_summary(self, quick: bool, directory: Path) -> tuple:
+        """Офлайн-прогон сводки с подменённым walk-forward и nowcast."""
+        split_mock = unittest.mock.Mock(return_value=[])
+        captured = {}
+
+        def fake_evaluate(rows, models, specs):
+            captured["specs"] = list(specs)
+            return fake_window_runs(specs)
+
+        with unittest.mock.patch.dict(
+                os.environ, clean_ml_env(), clear=True
+        ), unittest.mock.patch.object(
+                cm, "evaluate_windows", fake_evaluate
+        ), unittest.mock.patch.object(
+                cm, "fixed_split", split_mock
+        ), unittest.mock.patch.object(
+                cm, "current_nowcast", return_value=(None, "нет цели (тест)")
+        ), fixture_transport(), contextlib.redirect_stdout(io.StringIO()):
+            code = cm.run_summary(
+                out_dir=directory,
+                today=date(2026, 10, 18),
+                start=3,
+                quick=quick,
+            )
+        report = (directory / cm.REPORT_NAME).read_text(encoding="utf-8")
+        return code, split_mock, captured["specs"], report
+
+    def test_quick_skips_fixed_split(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code, split_mock, specs, report = self.run_summary(True, Path(tmp))
+        self.assertEqual(code, 0)
+        # quick: одно основное окно и ни одного вызова fixed_split.
+        self.assertEqual(specs, [(3, 0)])
+        split_mock.assert_not_called()
+        self.assertIn("(quick)", report)
+        self.assertIn("quick: фиксированный сплит не считался", report)
+
+    def test_full_run_still_calls_fixed_split(self):
+        # Регрессия полного пути: без --quick окна и сплит прежние.
+        with tempfile.TemporaryDirectory() as tmp:
+            code, split_mock, specs, report = self.run_summary(False, Path(tmp))
+        self.assertEqual(code, 0)
+        self.assertEqual(specs, [(3, 0), (48, 0), (3, 1)])
+        split_mock.assert_called_once()
+        self.assertNotIn("(quick)", report)
+        self.assertIn("## Сплит статьи (сопоставимость, не выбор модели)", report)
+
+    def main_run_with_2022(self) -> cm.WindowRun:
+        """Main-окно с тестовыми месяцами 2021–2023 (включая 2022)."""
+        months = month_range(date(2021, 1, 1), date(2023, 12, 1))
+        predictions = [
+            cm.Prediction(
+                month=month,
+                model=name,
+                y_true=0.5 + 0.001 * offset,
+                y_pred=0.5 + 0.001 * offset + 0.01 * model_index,
+            )
+            for offset, month in enumerate(months)
+            for model_index, name in enumerate(cm.MODELS)
+        ]
+        return cm.WindowRun(
+            start=24,
+            embargo=0,
+            main=True,
+            folds=len(months),
+            predictions=predictions,
+            skipped={name: 0 for name in cm.MODELS},
+            notes={name: {} for name in cm.MODELS},
+        )
+
+    def test_quick_report_marks_quick_and_no_split(self):
+        rows, _ = build_world(synthetic_world())
+        report = cm.render_report(
+            rows,
+            [],
+            [self.main_run_with_2022()],
+            today=date(2026, 10, 18),
+            quick=True,
+        )
+        self.assertIn("(quick)", report)
+        self.assertIn(
+            "quick: только основное окно; robustness/сплит не считались", report
+        )
+        self.assertIn("## Сплит статьи (quick: не рассчитывался)", report)
+        self.assertIn("quick: фиксированный сплит не считался", report)
+        self.assertNotIn("## Сплит статьи (сопоставимость", report)
+        self.assertNotIn("таблица сопоставимости", report)
+        # DM primary main-окна, «2022 исключён» и живой nowcast остаются.
+        self.assertIn("## DM-HLN", report)
+        self.assertIn("primary", report)
+        self.assertIn("2022 исключён", report)
+        self.assertIn("## Текущий nowcast (live)", report)
+
+    def test_full_report_has_split(self):
+        rows, _ = build_world(synthetic_world())
+        split_predictions = cm.fixed_split(
+            rows, {name: (lambda train, row: 0.5) for name in cm.MODELS}
+        )
+        report = cm.render_report(
+            rows,
+            [],
+            [self.main_run_with_2022()],
+            today=date(2026, 10, 18),
+            split_predictions=split_predictions,
+        )
+        self.assertIn("## Сплит статьи (сопоставимость, не выбор модели)", report)
+        self.assertIn("таблица сопоставимости", report)
+        self.assertNotIn("(quick)", report)
+        self.assertNotIn("quick: фиксированный сплит не считался", report)
+
+    def test_quick_ml_log_config_and_run_name(self):
+        fake = FakeLogger()
+        captured = {}
+
+        def start_run(**kwargs):
+            captured.update(kwargs)
+            return fake
+
+        def fake_evaluate(rows, models, specs):
+            captured["specs"] = list(specs)
+            return fake_window_runs(specs)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with unittest.mock.patch.dict(
+                    os.environ, clean_ml_env(ML_LOG="1"), clear=True
+            ), unittest.mock.patch.object(
+                    cm.mlx, "start_run", start_run
+            ), unittest.mock.patch.object(
+                    cm, "evaluate_windows", fake_evaluate
+            ), unittest.mock.patch.object(
+                    cm, "fixed_split",
+                    side_effect=AssertionError("quick не вызывает fixed_split"),
+            ), unittest.mock.patch.object(
+                    cm, "current_nowcast", return_value=(None, "нет цели (тест)")
+            ), fixture_transport(), contextlib.redirect_stdout(io.StringIO()):
+                code = cm.run_summary(
+                    out_dir=Path(tmp),
+                    today=date(2026, 10, 18),
+                    start=3,
+                    quick=True,
+                )
+        self.assertEqual(code, 0)
+        self.assertEqual(captured["specs"], [(3, 0)])
+        self.assertTrue(captured["config"]["quick"])
+        self.assertEqual(captured["config"]["windows"], [[3, 0]])
+        self.assertEqual(
+            captured["run_name"], "cpi_monthly__short__quick__start3__embargo0"
+        )
+        # metrics/predictions — только main-окно; сплит не рассчитан (null).
+        self.assertEqual(
+            [window["window"] for window in fake.metrics["windows"]],
+            ["start=3"],
+        )
+        self.assertIsNone(fake.metrics["article_split"])
+        self.assertEqual({row.window for row in fake.predictions}, {"start=3"})
+        self.assertTrue(all(row.meta["main"] for row in fake.predictions))
+        self.assertEqual(fake.finished[0][0], "finished")
+
+    def test_quick_cli_flag(self):
+        with unittest.mock.patch.object(
+                cm, "run_summary", return_value=0
+        ) as summary:
+            code = cm.main(
+                ["--quick", "--sample", "long", "--start", "48",
+                 "--embargo-months", "1"]
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            summary.call_args.kwargs,
+            {"start": 48, "embargo_months": 1, "sample": "long", "quick": True},
+        )
+        # Без флага quick выключен: полный путь не меняется.
+        with unittest.mock.patch.object(
+                cm, "run_summary", return_value=0
+        ) as summary:
+            self.assertEqual(cm.main([]), 0)
+        self.assertFalse(summary.call_args.kwargs["quick"])
 
 
 class TestRunSummaryMlLog(unittest.TestCase):

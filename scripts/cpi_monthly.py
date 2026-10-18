@@ -128,6 +128,10 @@ walk-forward, обязательные бенчмарки B1–B3 (B3 — в д�
 * `make cpi-monthly ARGS="--start N --embargo-months K"` — основное окно
   walk-forward задаётся явно (робастность остаётся от спеки §4.1; `--start`
   переопределяет sample-дефолт 24/48);
+* `make cpi-monthly ARGS="--quick"` — быстрый экспериментальный режим: только
+  основное окно walk-forward, без robustness-окон и фиксированного сплита
+  статьи; отчёт и `ML_LOG` помечены `quick`, числа не официальные (спека
+  `2026-10-18-ml-quick-runs`);
 * `make cpi-monthly ARGS="--export-fixtures DIR"` — пересборка CSV-фикстур.
 """
 
@@ -1074,15 +1078,23 @@ def window_title(run: WindowRun) -> str:
 
 
 def window_specs(
-    start: int = DEFAULT_START, embargo: int = DEFAULT_EMBARGO
+    start: int = DEFAULT_START,
+    embargo: int = DEFAULT_EMBARGO,
+    quick: bool = False,
 ) -> list[tuple[int, int]]:
     """Окна прогона: основное (`start`/`embargo`) и робастность спеки §4.1.
 
     Робастность — второй старт (`ROBUST_START`) и эмбарго 1; дубликаты и
     несовместимые окна (`embargo ≥ start` — обучать не на чем) отбрасываются,
     поэтому `--embargo-months 1` не даёт основное окно дважды.
+
+    `quick=True` — быстрый экспериментальный режим (спека `2026-10-18-ml-quick-runs`):
+    считается ТОЛЬКО основное окно, robustness-окна не добавляются. Полный
+    прогон (`quick=False`) не меняется.
     """
     specs = [(start, embargo)]
+    if quick:
+        return specs
     for candidate in ((ROBUST_START, embargo), (start, ROBUST_EMBARGO)):
         if candidate not in specs and 0 <= candidate[1] < candidate[0]:
             specs.append(candidate)
@@ -2604,6 +2616,7 @@ def render_report(
     nowcast: Optional[Nowcast] = None,
     nowcast_reason: str = NOWCAST_REASON_UNKNOWN,
     sample: str = DEFAULT_SAMPLE,
+    quick: bool = False,
 ) -> str:
     """Полный markdown-отчёт Task 4 (спека §4.3–4.5, §5.1, §5.3, §8.2).
 
@@ -2615,7 +2628,10 @@ def render_report(
     прогноз или `None` (тогда раздел называет `nowcast_reason`); `sample` —
     `short`/`long`: печатается в шапке и строке выборки, а для long добавляет
     оговорку о NaN-контролях до 2013 и длинном сплите статьи. Short-таблицы и
-    числа от этого не меняются.
+    числа от этого не меняются. `quick=True` — экспериментальный прогон только
+    основного окна (спека `2026-10-18-ml-quick-runs`): заголовок и строка
+    помечают quick, robustness и фиксированный сплит статьи не считались
+    (раздел сплита заменён пометкой), DM primary и живой nowcast остаются.
 
     Состав: выборка; «модель × окно» с отдельными строками «2022 исключён»;
     последние 12 фолдов; главный блок DM-HLN primary/secondary (p-value,
@@ -2639,6 +2655,8 @@ def render_report(
     title = "# CPI monthly (ML-трек v2) — walk-forward, DM-HLN, сплит статьи и живой nowcast"
     if sample == "long":
         title += " (long-sample)"
+    if quick:
+        title += " (quick)"
     lines = [
         title,
         "",
@@ -2680,6 +2698,13 @@ def render_report(
         "cutoff — тоже.",
         "",
     ]
+    if quick:
+        lines += [
+            "quick: только основное окно; robustness/сплит не считались. "
+            "Числа quick — экспериментальные, не замена полного прогона "
+            "без флагов.",
+            "",
+        ]
     if sample == "long":
         lines += [
             "**Long-sample (§8.2) — эксперимент на репрезентативность.** "
@@ -2699,14 +2724,22 @@ def render_report(
             "выборок, без подгонки.",
             "",
         ]
+    robustness_note = (
+        "robustness-окна не считаются (quick)."
+        if quick
+        else (
+            f"робастность — второй старт {ROBUST_START} и embargo "
+            f"{ROBUST_EMBARGO}."
+        )
+    )
     lines += [
         "## Walk-forward",
         "",
         "Расширяющееся обучающее окно, переобучение на каждом фолде: тест — месяц "
         "`i`, обучение — строки `[0 … i−1−embargo]` (только прошлое; embargo > 0 "
         "выбрасывает месяц перед тестом). Единый train/test split не используется "
-        f"(спека §4.1). Основное окно — {main_window}; робастность — второй старт "
-        f"{ROBUST_START} и embargo {ROBUST_EMBARGO}. Вырожденное обучающее окно "
+        f"(спека §4.1). Основное окно — {main_window}; {robustness_note} "
+        "Вырожденное обучающее окно "
         "(`DegenerateWindowError` модели: короткое окно B2/B3, пустое окно или "
         "неизменный таргет компоненты CatBoost) — пропуск фолда ЭТОЙ модели со "
         "счётчиком, а не падение прогона. «Недосход» — фолды, где координатный "
@@ -2897,38 +2930,47 @@ def render_report(
             f"train длиннее статьи ({len(train_months)} против "
             f"{ARTICLE_TRAIN_MONTHS} месяцев)"
         )
-    lines += [
-        "## Сплит статьи (сопоставимость, не выбор модели)",
-        "",
-        f"Фиксированный сплит §4.4: train ≤ {ARTICLE_TRAIN_END.isoformat()[:7]} "
-        f"({len(train_months)} мес.), test "
-        f"{test_months[0].isoformat()[:7] if test_months else '—'} … "
-        f"{test_months[-1].isoformat()[:7] if test_months else '—'} "
-        f"({len(test_months)} мес.). На train обучаются все модели, на test "
-        "считаются RMSE/MAE и DM для тех же primary/secondary-пар. Это "
-        f"**вспомогательная таблица сопоставимости**, а не выбор модели: "
-        f"{train_note}, таргет другой (несглаженный м/м "
-        "с КУ, а не SA ИПЦ без КУ), выбросы не исключены — числа статьи напрямую "
-        "не сравнимы.",
-        "",
-    ]
-    lines += _table(
-        _SPLIT_HEADER,
-        _split_metric_rows(split) if split else [],
-        empty="_(нет тестовых месяцев 2019-01…2024-07 в выборке.)_",
-    )
-    lines += [""]
-    split_dm = _pair_test_rows(split, "split статьи")
-    lines += [
-        "DM на фиксированном test-окне статьи (те же пары, общие месяцы):",
-        "",
-    ]
-    lines += _table(
-        _DM_HEADER,
-        split_dm,
-        empty="_(нет пар на test-окне статьи.)_",
-    )
-    lines += [""]
+    if quick:
+        lines += [
+            "## Сплит статьи (quick: не рассчитывался)",
+            "",
+            "quick: фиксированный сплит не считался — сопоставимость со статьёй "
+            "даёт только полный прогон без флагов.",
+            "",
+        ]
+    else:
+        lines += [
+            "## Сплит статьи (сопоставимость, не выбор модели)",
+            "",
+            f"Фиксированный сплит §4.4: train ≤ {ARTICLE_TRAIN_END.isoformat()[:7]} "
+            f"({len(train_months)} мес.), test "
+            f"{test_months[0].isoformat()[:7] if test_months else '—'} … "
+            f"{test_months[-1].isoformat()[:7] if test_months else '—'} "
+            f"({len(test_months)} мес.). На train обучаются все модели, на test "
+            "считаются RMSE/MAE и DM для тех же primary/secondary-пар. Это "
+            f"**вспомогательная таблица сопоставимости**, а не выбор модели: "
+            f"{train_note}, таргет другой (несглаженный м/м "
+            "с КУ, а не SA ИПЦ без КУ), выбросы не исключены — числа статьи напрямую "
+            "не сравнимы.",
+            "",
+        ]
+        lines += _table(
+            _SPLIT_HEADER,
+            _split_metric_rows(split) if split else [],
+            empty="_(нет тестовых месяцев 2019-01…2024-07 в выборке.)_",
+        )
+        lines += [""]
+        split_dm = _pair_test_rows(split, "split статьи")
+        lines += [
+            "DM на фиксированном test-окне статьи (те же пары, общие месяцы):",
+            "",
+        ]
+        lines += _table(
+            _DM_HEADER,
+            split_dm,
+            empty="_(нет пар на test-окне статьи.)_",
+        )
+        lines += [""]
     lines += [
         "## Текущий nowcast (live)",
         "",
@@ -2937,6 +2979,18 @@ def render_report(
         lines += [render_nowcast(nowcast), ""]
     else:
         lines += [render_nowcast_absent(nowcast_reason), ""]
+    split_bullet = (
+        "- quick: robustness-окна и фиксированный сплит статьи не считались; "
+        "числа quick экспериментальные, официальные — только полный прогон без "
+        "--quick."
+        if quick
+        else (
+            f"- сплит статьи — вспомогательная таблица сопоставимости: "
+            f"{'train короче' if len(train_months) < ARTICLE_TRAIN_MONTHS else 'train длиннее'} "
+            "статьи, таргет другой, выбросы не исключены; модель по нему не "
+            "выбирается."
+        )
+    )
     lines += [
         "## Что не проверено",
         "",
@@ -2956,10 +3010,7 @@ def render_report(
         "- embargo 1 — только робастность: перекрытие окон признаков тестового и "
         "обучающих месяцев структурно исключено purge-проверкой, но границы "
         "доступности — консервативное правило §2.6, а не фактические даты.",
-        f"- сплит статьи — вспомогательная таблица сопоставимости: "
-        f"{'train короче' if len(train_months) < ARTICLE_TRAIN_MONTHS else 'train длиннее'} "
-        "статьи, таргет другой, выбросы не исключены; модель по нему не "
-        "выбирается.",
+        split_bullet,
         "- «2022 исключён» — описательная строка: вклад шока назван, но режимы "
         "отдельно не тестируются, блок «последние 12 фолдов» — не тест.",
         "- живой nowcast: МП может быть глубже `M−1` (пометка в `note`), признаки "
@@ -3259,6 +3310,7 @@ def run_summary(
     out_dir: Optional[Path] = None,
     today: Optional[date] = None,
     sample: str = DEFAULT_SAMPLE,
+    quick: bool = False,
     ml_log: Optional[bool] = None,
     logger: Optional[object] = None,
     run_name: Optional[str] = None,
@@ -3272,6 +3324,11 @@ def run_summary(
     переопределяет sample-дефолт. `embargo_months` — эмбарго основного окна;
     робастные окна (второй старт 48 и эмбарго 1) добавляет `window_specs`
     (у long основное окно 48/0 и робастность 48/1 — дубликат отбрасывается).
+
+    `quick=True` — быстрый экспериментальный режим (спека
+    `2026-10-18-ml-quick-runs`): `window_specs` сужается до основного окна,
+    `fixed_split` не вызывается (`split_predictions=None`), отчёт и `ML_LOG`
+    помечают quick. Модели, признаки, seed и полный путь без флага не меняются.
 
     Загрузка рядов, `build_sample` и `assert_months_purged` — контракт Task 1;
     walk-forward считает бенчмарки B1–B3 и четыре CatBoost-варианта (`MODELS`)
@@ -3334,7 +3391,8 @@ def run_summary(
             run_name=(
                 os.environ.get("ML_RUN_NAME")
                 or run_name
-                or f"cpi_monthly__{sample}__start{start}__embargo{embargo_months}"
+                or f"cpi_monthly__{sample}__"
+                f"{'quick__' if quick else ''}start{start}__embargo{embargo_months}"
             ),
             config={
                 "sample": sample,
@@ -3342,12 +3400,13 @@ def run_summary(
                 "sample_last": SAMPLE_BOUNDS[sample][1].isoformat(),
                 "start": start,
                 "embargo_months": embargo_months,
+                "quick": quick,
                 # Окна прогона: основное и робастность, ровно те, что считает
                 # `evaluate_windows` (спека §4.1/§8.2), — по ним паспорт
-                # воспроизводим без чтения кода.
+                # воспроизводим без чтения кода. В quick — только основное.
                 "windows": [
                     list(spec)
-                    for spec in window_specs(start, embargo_months)
+                    for spec in window_specs(start, embargo_months, quick)
                 ],
                 "seed": SEED,
                 "models": list(MODELS),
@@ -3382,6 +3441,7 @@ def run_summary(
     )
     print(
         "CPI monthly (ML-трек v2) — walk-forward, DM-HLN, сплит статьи и nowcast"
+        + (" (quick)" if quick else "")
     )
     bounds_first, bounds_last = SAMPLE_BOUNDS[sample]
     _field(
@@ -3428,9 +3488,17 @@ def run_summary(
             print(f"    … и ещё {hidden} {_plural(hidden, 'месяц', 'месяца', 'месяцев')}")
     _field("--start:", f"{start} (основное окно walk-forward)")
     _field("--embargo-months:", f"{embargo_months} (эмбарго основного окна)")
+    if quick:
+        _field(
+            "--quick:",
+            "только основное окно; robustness и фиксированный сплит статьи "
+            "не считаются",
+        )
 
     try:
-        runs = evaluate_windows(rows, MODELS, window_specs(start, embargo_months))
+        runs = evaluate_windows(
+            rows, MODELS, window_specs(start, embargo_months, quick)
+        )
         _print_walk_forward(runs)
         if not any(run.predictions for run in runs):
             # Ветка «ничего не посчитано вообще»: пустая/короткая выборка или все
@@ -3452,8 +3520,14 @@ def run_summary(
                     )
             return 0
         _print_pair_tests(runs)
-        split_predictions = fixed_split(rows, MODELS)
-        _print_split(split_predictions, rows)
+        if quick:
+            # Спека quick §2.1: фиксированный сплит статьи не считается —
+            # сопоставимость со статьёй даёт только полный прогон.
+            split_predictions = None
+            _field("сплит статьи:", "quick — не рассчитывался")
+        else:
+            split_predictions = fixed_split(rows, MODELS)
+            _print_split(split_predictions, rows)
         nowcast, nowcast_reason = current_nowcast(
             rows, targets, survey, usd, key_rate, fao, today
         )
@@ -3475,6 +3549,7 @@ def run_summary(
             nowcast=nowcast,
             nowcast_reason=nowcast_reason,
             sample=sample,
+            quick=quick,
         )
         report_path, predictions_path = write_artifacts(out_dir, report, runs)
         forecast_path = out_dir / FORECAST_NAME
@@ -3506,17 +3581,22 @@ def run_summary(
                         }
                 # Сплит статьи — вспомогательная метрика сопоставимости, не
                 # выбор модели; модели без фолдов сплита в словарь не входят.
-                split_groups: dict[str, list[Prediction]] = {}
-                for prediction in split_predictions:
-                    split_groups.setdefault(prediction.model, []).append(prediction)
-                article_split = {
-                    name: {
-                        "rmse": rmse_pp(group),
-                        "mae": mae_pp(group),
-                        "n": len(group),
+                # В quick `fixed_split` не вызывался: article_split — null
+                # (спека quick §2.1), а не пустая таблица.
+                if split_predictions is None:
+                    article_split = None
+                else:
+                    split_groups: dict[str, list[Prediction]] = {}
+                    for prediction in split_predictions:
+                        split_groups.setdefault(prediction.model, []).append(prediction)
+                    article_split = {
+                        name: {
+                            "rmse": rmse_pp(group),
+                            "mae": mae_pp(group),
+                            "n": len(group),
+                        }
+                        for name, group in split_groups.items()
                     }
-                    for name, group in split_groups.items()
-                }
                 logger.log_metrics(
                     {
                         "primary_metric": "rmse_pp",
@@ -3647,11 +3727,22 @@ def main(argv: Optional[list] = None) -> int:
              f"{DEFAULT_EMBARGO}); прогон с embargo {ROBUST_EMBARGO} считается "
              f"робастностью",
     )
+    parser.add_argument(
+        "--quick",
+        action="store_true",
+        help="быстрый экспериментальный режим: только основное окно walk-forward, "
+             "без robustness-окон и фиксированного сплита статьи; числа quick "
+             "не официальные и не заменяют полный прогон без флага (спека "
+             "2026-10-18-ml-quick-runs)",
+    )
     args = parser.parse_args(argv)
     if args.export_fixtures:
         return export_fixtures(Path(args.export_fixtures))
     return run_summary(
-        start=args.start, embargo_months=args.embargo_months, sample=args.sample
+        start=args.start,
+        embargo_months=args.embargo_months,
+        sample=args.sample,
+        quick=args.quick,
     )
 
 
