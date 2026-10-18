@@ -61,6 +61,7 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 | [`gold`](docs/IMPORTERS.md), [`moex`](docs/IMPORTERS.md) | цена золота, PLZL, ОФЗ, KEYRATE | `gold_prices`, `stock_prices`, `ofz_curve`, `keyrate_*` | ежедневно 18:47/19:13 |
 | [`calendar`](docs/IMPORTERS.md), [`forecast`](docs/IMPORTERS.md) | календарь событий, резолвер прогнозов | `events_calendar`, `forecast_log` | ежедневно |
 | [`views`](docs/IMPORTERS.md) | витрины контура и метрик компаний | `v_*`, `company_financials` | понедельник / вручную |
+| [`mlregistry`](docs/IMPORTERS.md) | реестр ML-экспериментов: DDL и витрины (schema-only, внешнего источника нет) | `ml_runs`, `ml_predictions`, `v_ml_*` | ежедневно 06:07 |
 | [`dcf`](docs/IMPORTERS.md), [`polyus`](docs/IMPORTERS.md), [`financial`](docs/IMPORTERS.md) | LOM-планы/NAV, отчётность Полюса, legacy | `mine_plans`, `price_decks`, `nav_by_asset`, `databook_polyus`, `company_financials` | понедельник |
 
 Полные спецификации — [docs/IMPORTERS.md](docs/IMPORTERS.md): источник, транспорт, разбор, точка контроля публикации, таблицы, расписание и живая приёмка по каждому импортёру.

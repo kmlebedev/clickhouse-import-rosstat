@@ -23,6 +23,7 @@
 
 import base64
 import csv
+import http.client
 import json
 import os
 import re
@@ -2103,6 +2104,53 @@ def ch_query(sql: str) -> list:
             mask(password, f"ClickHouse недоступен по {url}: {reason}")
         ) from exc
     return parse_ch_json(mask(password, body))
+
+
+def ch_exec(sql: str) -> None:
+    """Выполняет SQL через HTTP-интерфейс ClickHouse, не разбирая ответ.
+
+    Пишущий двойник `ch_query`: тот же POST на `http_port` (8123, а не
+    нативный 9000), тот же basic auth и тот же таймаут, но тело УСПЕШНОГО
+    ответа игнорируется. Это не небрежность: на INSERT ClickHouse отвечает
+    пустой строкой или служебным `Ok.`, и разбор ответа как JSON падал бы на
+    каждой успешной вставке.
+
+    Контракт ошибок совпадает с `ch_query`: не-200 и любой сбой транспорта
+    поднимают `ClickHouseError`, а каждый текст проходит через `mask()` —
+    сервер может отразить запрос или заголовки в теле ошибки. Транспортных
+    веток две: `OSError` (`URLError`, `RemoteDisconnected`, таймауты) и
+    `http.client.HTTPException` (`IncompleteRead`, `BadStatusLine`) — вторые
+    НЕ являются `OSError` и без отдельной ветки уносили бы `finish`
+    `ml_experiment` без локального паспорта.
+    """
+    config = ch_config()
+    password = config["password"]
+    url = f"http://{config['host']}:{config['http_port']}/"
+    request = urllib.request.Request(url, data=sql.encode("utf-8"), method="POST")
+    request.add_header("Content-Type", "text/plain; charset=utf-8")
+    token = base64.b64encode(
+        f"{config['user']}:{password}".encode("utf-8")
+    ).decode("ascii")
+    request.add_header("Authorization", f"Basic {token}")
+    try:
+        with urllib.request.urlopen(request, timeout=CH_QUERY_TIMEOUT_SECONDS) as response:
+            # Тело читается и выбрасывается: оно не нужно, но чтение
+            # завершает запрос так же, как в `ch_query`.
+            response.read()
+    except urllib.error.HTTPError as exc:
+        detail = _error_body(exc).strip() or str(exc.reason or "")
+        raise ClickHouseError(
+            "ClickHouse ответил статусом "
+            + mask(password, f"{exc.code} на запрос к {url}: {detail}")
+        ) from exc
+    except (OSError, http.client.HTTPException) as exc:
+        # `IncompleteRead`/`BadStatusLine` — HTTPException, а НЕ OSError:
+        # без этой ветки они уходили бы из `finish` сырыми, и локальный
+        # паспорт прогона не писался бы.
+        reason = getattr(exc, "reason", None) or str(exc)
+        raise ClickHouseError(
+            mask(password, f"ClickHouse недоступен по {url}: {reason}")
+        ) from exc
 
 
 # --- Поактивный якорь TCC 2025: источник плановых затрат ----------------------

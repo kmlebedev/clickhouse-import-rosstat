@@ -33,6 +33,7 @@ import dataclasses
 import io
 import json
 import math
+import os
 import sys
 import tempfile
 import unittest
@@ -58,6 +59,30 @@ FIXTURE_NAMES = (
     "ibk_2013_2016.csv",
     "mp_summary.csv",
 )
+
+# Переменные, которые читает журнал эксперимента. Набор ОФЛАЙН: `ML_LOG=1`
+# из окружения разработчика включал бы запись из `run_summary(ml_log=None)`,
+# а `ML_RUN_NAME`/`ML_LOCAL_DIR` меняли бы имя прогона и путь fallback.
+# Модульные хуки убирают переменные на время набора и возвращают их после;
+# тесты, которые сами выставляют `ML_LOG` (через `patch.dict`), работают как
+# раньше.
+_ML_ENV_VARS = ("ML_LOG", "ML_RUN_NAME", "ML_LOCAL_DIR")
+_SAVED_ML_ENV = {}
+
+
+def setUpModule():
+    for name in _ML_ENV_VARS:
+        _SAVED_ML_ENV[name] = os.environ.get(name)
+        os.environ.pop(name, None)
+
+
+def tearDownModule():
+    for name in _ML_ENV_VARS:
+        previous = _SAVED_ML_ENV.pop(name, None)
+        if previous is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = previous
 
 
 def fixture_rows(name: str, directory: Path = FIXTURE_DIR) -> list:
@@ -112,6 +137,37 @@ def summary_value(text: str, label: str) -> str:
         if stripped.startswith(label):
             return stripped[len(label):].strip()
     raise AssertionError(f"нет строки {label!r} в сводке:\n{text}")
+
+
+class FakeLogger:
+    """Duck-typed двойник `ml_experiment.ExperimentRun` для офлайн-тестов.
+
+    Контекстным менеджером быть не обязан (рулинг Task 3): `run_summary` вызывает
+    `finish` явно на каждом выходе. Методы повторяют контракт
+    `log_metrics`/`log_predictions`/`log_artifacts`/`finish` без похода в
+    ClickHouse.
+    """
+
+    def __init__(self):
+        self.metrics = {}
+        self.predictions = []
+        self.artifacts = []
+        self.finished = None
+        self.notes = ""
+
+    def log_metrics(self, metrics):
+        self.metrics.update(metrics)
+
+    def log_predictions(self, rows):
+        self.predictions.extend(rows)
+
+    def log_artifacts(self, paths):
+        self.artifacts.extend(path for path in paths if path is not None)
+
+    def finish(self, status="finished", notes=""):
+        self.finished = status
+        self.notes = notes
+        return "fake"
 
 
 class TestSampleFilter(unittest.TestCase):
@@ -2477,6 +2533,215 @@ class TestRunSummaryArtifacts(unittest.TestCase):
             one = (Path(first) / km.FORECAST_NAME).read_bytes()
             two = (Path(second) / km.FORECAST_NAME).read_bytes()
         self.assertEqual(one, two)
+
+
+def experiment_world(count: int = 48) -> dict:
+    """Синтетический мир `run_summary`, дающий фолды ОБОИХ окон walk-forward.
+
+    Закоммиченная фикстура (26 решений) даёт фолды только расширяющегося окна:
+    скользящему 40 нужно минимум 41 заседание. Для журнала нужны оба окна
+    (бриф Task 4), поэтому мир собирается из `ordinal_rows` — у её окон от 24
+    заседаний не меньше двух классов, и ordered logit даёт распределения.
+
+    `load_meetings`/`load_key_rate`/`load_cpd_core`/`load_ibk` подменяются
+    целиком (это уже разобранные точки и даты, как их отдают загрузчики):
+    ставка «на d−1» каждого заседания — уровень после предыдущего, а точка на
+    `d+7` закрывает окно исхода последнего заседания; признаки сняты с месячных
+    рядов, доступных по правилам §4.
+    """
+    rows = ordinal_rows(count)
+    meetings = [row.decision.meeting_date for row in rows]
+    key_rate = [(row.decision.meeting_date, row.decision.rate_after) for row in rows]
+    # Ставка «до» первого заседания и наблюдаемое окно исхода последнего.
+    key_rate.insert(
+        0, (meetings[0] - timedelta(days=30), rows[0].decision.rate_before)
+    )
+    key_rate.append((meetings[-1] + timedelta(days=7), rows[-1].decision.rate_after))
+    months = []
+    cursor = date(2013, 1, 1)
+    while cursor <= meetings[-1] + timedelta(days=62):
+        months.append(cursor)
+        year, month = cursor.year, cursor.month + 1
+        if month > 12:
+            year, month = year + 1, 1
+        cursor = date(year, month, 1)
+    cpd = [
+        (date(month.year, month.month, 28), 0.4 + 0.1 * (index % 4))
+        for index, month in enumerate(months)
+    ]
+    ibk = [(month, -2.0 + 0.5 * (index % 7)) for index, month in enumerate(months)]
+    return {"meetings": meetings, "key_rate": key_rate, "cpd": cpd, "ibk": ibk}
+
+
+class TestRunSummaryExperimentLog(unittest.TestCase):
+    """Task 4: паспорт run'а, fold-предсказания, метрики и артефакты."""
+
+    @contextlib.contextmanager
+    def patched_world(self, world):
+        """Подменяет загрузчики `run_summary` готовыми разобранными рядами."""
+        loaders = {
+            "load_meetings": world["meetings"],
+            "load_mp_summary_deltas": [],
+            "load_key_rate": world["key_rate"],
+            "load_cpd_core": world["cpd"],
+            "load_ibk": world["ibk"],
+        }
+        with contextlib.ExitStack() as stack:
+            for name, value in loaders.items():
+                stack.enter_context(
+                    unittest.mock.patch.object(km, name, return_value=value)
+                )
+            yield stack
+
+    def test_run_summary_logs_key_rate_run(self):
+        world = experiment_world()
+        fake = FakeLogger()
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.patched_world(world), contextlib.redirect_stdout(io.StringIO()):
+                code = km.run_summary(
+                    rolling=False,
+                    today=world["meetings"][-1] + timedelta(days=1),
+                    out_dir=Path(tmp),
+                    ml_log=True,
+                    logger=fake,
+                )
+        self.assertEqual(code, 0)
+        self.assertEqual(fake.finished, "finished")
+        self.assertEqual({row.unit for row in fake.predictions}, {"bp"})
+        # Оба окна walk-forward: expanding и rolling40 (у синтетики 48
+        # заседаний скользящему окну 40 хватает длины).
+        self.assertEqual(
+            {row.window for row in fake.predictions}, {"expanding", "rolling40"}
+        )
+        self.assertEqual(fake.metrics["primary_metric"], "rmse_bp")
+        # Спека §3.1/§7.2: top-level `models`, `windows` — СПИСОК окон с
+        # числом фолдов и вложенными метриками методов; пропуски фолдов —
+        # отдельным словарём «окно → метод → N».
+        self.assertEqual(
+            fake.metrics["models"], [method for method, _ in km.METHODS]
+        )
+        self.assertIsInstance(fake.metrics["windows"], list)
+        windows = {item["window"] for item in fake.metrics["windows"]}
+        self.assertEqual(windows, {"expanding", "rolling40"})
+        for item in fake.metrics["windows"]:
+            self.assertEqual(set(item), {"window", "folds", "models"})
+            self.assertEqual(set(item["models"]), set(fake.metrics["models"]))
+            self.assertEqual(
+                item["folds"], max(entry["n"] for entry in item["models"].values())
+            )
+            for method, entry in item["models"].items():
+                self.assertEqual(set(entry), {"rmse", "mae", "hit", "n"})
+                self.assertEqual(
+                    entry["n"],
+                    sum(
+                        1
+                        for prediction in fake.predictions
+                        if prediction.model == method
+                        and prediction.window == item["window"]
+                    ),
+                )
+        self.assertEqual(set(fake.metrics["fold_skips"]), windows)
+        for window, per_method in fake.metrics["fold_skips"].items():
+            self.assertEqual(set(per_method), set(fake.metrics["models"]))
+            for skipped in per_method.values():
+                self.assertIsInstance(skipped, int)
+                self.assertGreaterEqual(skipped, 0)
+        self.assertIn("rows", fake.metrics["sample"])
+        self.assertEqual(
+            {path.name for path in fake.artifacts},
+            {km.REPORT_NAME, km.PREDICTIONS_NAME},
+        )
+        # У ordered_logit вероятности — тройка floats в порядке (−1, 0, +1).
+        probabilities = [
+            row.meta["probs"]
+            for row in fake.predictions
+            if isinstance(row.meta.get("probs"), list)
+        ]
+        self.assertTrue(
+            any(
+                len(triple) == 3 and all(isinstance(value, float) for value in triple)
+                for triple in probabilities
+            )
+        )
+
+    def test_logging_failure_does_not_change_the_exit_code(self):
+        # Журнал — побочный слой: ValueError сборки PredictionRow не должен
+        # превращать успешный прогон в non-zero exit. Отчёт и CSV уже
+        # записаны; fake logger получает finish("failed").
+        fake = FakeLogger()
+
+        def broken_prediction_row(*args, **kwargs):
+            raise ValueError("predicted должно быть конечным")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                unittest.mock.patch.object(
+                    km, "ch_query", side_effect=ch_query_from_fixtures
+                ),
+                unittest.mock.patch.object(
+                    km.mlx, "PredictionRow", broken_prediction_row
+                ),
+                contextlib.redirect_stdout(io.StringIO()),
+                self.assertLogs(km.log, level="WARNING") as captured,
+            ):
+                code = km.run_summary(
+                    rolling=False,
+                    today=date(2017, 1, 1),
+                    out_dir=Path(tmp),
+                    ml_log=True,
+                    logger=fake,
+                )
+            self.assertEqual(code, 0)
+            self.assertEqual(fake.finished, "failed")
+            self.assertIn("logging: ValueError", fake.notes)
+            self.assertEqual(fake.predictions, [])
+            self.assertEqual(fake.artifacts, [])
+            self.assertTrue(fake.metrics)  # метрики успели залогироваться до сбоя
+            self.assertTrue((Path(tmp) / km.REPORT_NAME).is_file())
+            self.assertTrue((Path(tmp) / km.PREDICTIONS_NAME).is_file())
+        self.assertIn("журнал эксперимента не записан", "\n".join(captured.output))
+
+    def test_run_summary_without_ml_log_does_not_call_ch_exec(self):
+        # Явный ml_log=False важнее ML_LOG=1: журнал выключен, ch_exec не зовётся.
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                unittest.mock.patch.object(
+                    km, "ch_query", side_effect=ch_query_from_fixtures
+                ),
+                unittest.mock.patch.dict(os.environ, {"ML_LOG": "1"}),
+                unittest.mock.patch.object(km.mlx, "ch_exec") as ch_exec,
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                code = km.run_summary(
+                    rolling=False,
+                    today=date(2017, 1, 1),
+                    out_dir=Path(tmp),
+                    ml_log=False,
+                )
+        self.assertEqual(code, 0)
+        ch_exec.assert_not_called()
+
+    def test_run_summary_empty_logs_empty_status(self):
+        fake = FakeLogger()
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                unittest.mock.patch.object(
+                    km, "ch_query", side_effect=ch_query_without_meetings
+                ),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                code = km.run_summary(
+                    rolling=False,
+                    today=date(2017, 1, 1),
+                    out_dir=Path(tmp),
+                    ml_log=True,
+                    logger=fake,
+                )
+        self.assertEqual(code, 1)
+        self.assertEqual(fake.finished, "empty")
+        self.assertEqual(fake.predictions, [])
+        self.assertEqual(fake.metrics, {})
+        self.assertEqual(fake.artifacts, [])
 
 
 if __name__ == "__main__":

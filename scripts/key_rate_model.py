@@ -83,10 +83,12 @@
 KEYRATE) и ансамбль, байесовские priors и «inflated»-версия, ML-трек,
 point-in-time слой, запись в `forecast_log`, витрина, графики и консенсус-бенчмарк.
 
-**Скрипт ничего не пишет в ClickHouse** — только читает (прецедент
-`polyus_output_model.py`); транспорт (`ch_query`) импортируется из
-`scripts/extrapolation_aisc.py`, а не копируется: там уже есть маскирование
-секретов в текстах ошибок, HTTP-порт 8123 и обработка обрывов соединения.
+**По умолчанию скрипт в ClickHouse не пишет** — только читает (прецедент
+`polyus_output_model.py`); с `ML_LOG=1` пишет паспорт и fold-предсказания
+через `scripts/ml_experiment.py` (журнал эксперимента). Транспорт (`ch_query`)
+импортируется из `scripts/extrapolation_aisc.py`, а не копируется: там уже есть
+маскирование секретов в текстах ошибок, HTTP-порт 8123 и обработка обрывов
+соединения.
 Общие оценочные функции (RMSE/MAE, DM с поправкой HLN, блочный бутстрап
 разницы RMSE) вынесены в `scripts/eval_utils.py` (`§4` спеки
 `docs/superpowers/specs/2026-10-16-cpi-nowcast-design.md`): ниже от них
@@ -111,7 +113,9 @@ point-in-time слой, запись в `forecast_log`, витрина, граф
 import argparse
 import csv
 import json
+import logging
 import math
+import os
 import sys
 import warnings
 from dataclasses import dataclass
@@ -126,15 +130,18 @@ from statsmodels.regression.linear_model import RegressionResultsWrapper
 
 ROOT = Path(__file__).resolve().parent.parent
 
+log = logging.getLogger(__name__)
+
 # Скрипт-сосед: переиспользуем транспорт к ClickHouse, а не копируем его
 # (прецедент `polyus_output_model.py`).
 sys.path.insert(0, str(ROOT / "scripts"))
 
-# Скрипты-соседи: транспорт к ClickHouse и общие оценочные функции (RMSE/MAE,
-# DM с HLN, блочный бутстрап) — второй вынесен в `eval_utils.py`, его же
-# переиспользует ML-трек nowcast'а ИПЦ.
+# Скрипты-соседи: транспорт к ClickHouse, общие оценочные функции (RMSE/MAE,
+# DM с HLN, блочный бутстрап; вынесены в `eval_utils.py`, их же переиспользует
+# ML-трек nowcast'а ИПЦ) и журнал экспериментов (`ml_experiment.py`).
 import eval_utils as eu
 import extrapolation_aisc as aisc
+import ml_experiment as mlx
 
 ch_query = aisc.ch_query
 
@@ -245,6 +252,10 @@ LOG_LOSS_EPS = 1e-15
 REPORT_NAME = "key_rate_model_report.md"
 PREDICTIONS_NAME = "key_rate_model_predictions.csv"
 FORECAST_NAME = "key_rate_model_forecast.json"
+
+# Спека прогона — путь от корня репозитория в паспорте журнала экспериментов
+# (`ml_experiment.start_run(spec_path=...)`).
+SPEC_PATH = "docs/superpowers/specs/2026-10-15-key-rate-model-v0-design.md"
 
 # Все артефакты §8 одним списком — для ранних выходов прогона (пустой календарь,
 # пустая выборка), где не пишется НИ ОДИН из них: даты в именах файлов нет,
@@ -2577,7 +2588,14 @@ def _dates_suffix(days: list) -> str:
     return " — " + ", ".join(day.isoformat() for day in days)
 
 
-def run_summary(rolling: bool, today: Optional[date] = None, out_dir: Path = ROOT) -> int:
+def run_summary(
+    rolling: bool,
+    today: Optional[date] = None,
+    out_dir: Path = ROOT,
+    ml_log: Optional[bool] = None,
+    logger: Optional[object] = None,
+    run_name: Optional[str] = None,
+) -> int:
     """Полный прогон: выборка, walk-forward, текущий прогноз, артефакты (§7/§8).
 
     `today` — дата, относительно которой календарь делится на прошедшие и
@@ -2613,15 +2631,70 @@ def run_summary(rolling: bool, today: Optional[date] = None, out_dir: Path = ROO
     (`clear_stale_artifacts`, все три: отчёт и CSV тоже снимок прошлого прогона),
     называя удалённое в консоли. Иначе «последний прогон» на диске врал бы о
     результате этого.
+
+    `ml_log`/`logger`/`run_name` — журнал эксперимента
+    (`scripts/ml_experiment.py`): при `ml_log=True` (или `ML_LOG=1`, если
+    параметр не задан) создаётся прогон `key_rate_model` с паспортом,
+    fold-предсказаниями в базисных пунктах и артефактами; явный `logger`
+    используется как есть (duck typing). По умолчанию (`ML_LOG` не задан) в
+    ClickHouse ничего не пишется — только чтение и локальные артефакты.
     """
     today = today or date.today()
+    if ml_log is None:
+        ml_log = os.environ.get("ML_LOG") == "1"
+    config = {
+        "rolling": rolling,
+        "min_train": MIN_TRAIN,
+        "rolling_window": ROLLING_WINDOW,
+        "methods": [method for method, _ in METHODS],
+        "forecast_methods": [method for method, _ in FORECAST_METHODS],
+    }
+
+    def start_run(sample_meta, sample):
+        """Создаёт прогон журнала: имя по окну, общий конфиг и дата среза."""
+        return mlx.start_run(
+            experiment="key_rate_model",
+            run_name=(
+                os.environ.get("ML_RUN_NAME")
+                or run_name
+                or f"key_rate_model__{window_label(ROLLING_WINDOW if rolling else None)}"
+            ),
+            config=config,
+            data_asof=today,
+            sample_meta=mlx.json_safe(sample_meta),
+            sample=mlx.json_safe(sample),
+            spec_path=SPEC_PATH,
+            enabled=True,
+        )
+
+    def finish(status: str, notes: str) -> None:
+        """Пометить прогон, не меняя исход: сбой журнала — только warning.
+
+        Журнал — побочный слой: ни сбой `finish`, ни ошибка записи в ClickHouse
+        не должны превращать удачный прогон в non-zero exit (сам `finish`
+        `ml_experiment` дополнительно fail-soft: возвращает `"local"`).
+        """
+        if logger is None:
+            return
+        try:
+            logger.finish(status, notes)
+        except Exception as exc:
+            log.warning(
+                "не удалось пометить прогон %s: %s: %s",
+                status, type(exc).__name__, exc,
+            )
+
     meetings = load_meetings()
     if not meetings:
         # Ранний выход не пишет артефактов: файлы прошлого прогона обязаны
         # исчезнуть, иначе они читались бы как результат этого (см.
-        # `clear_stale_artifacts`).
+        # `clear_stale_artifacts`). Журнал создаётся ДО выхода: пустой
+        # календарь — тоже прогон, и его статус — `empty`.
+        if logger is None and ml_log:
+            logger = start_run({"rows": 0}, [])
         _print_removed_artifacts(clear_stale_artifacts(out_dir))
         print("events_calendar: канонических заседаний нет — проверить импорт календаря")
+        finish("empty", "канонических заседаний нет")
         return 1
     upcoming = [day for day in meetings if day > today]
     past = [day for day in meetings if day <= today]
@@ -2634,9 +2707,38 @@ def run_summary(rolling: bool, today: Optional[date] = None, out_dir: Path = ROO
     cpd = load_cpd_core()
     ibk = load_ibk()
     rows, missing_features = build_rows(decisions, cpd, ibk)
+    # Walk-forward считается до проверки «выборка пуста»: счётчик вырожденных
+    # окон входит в sample_meta паспорта, а на пустой выборке он нулевой.
+    predictions, fold_skips = method_predictions(rows)
+    sample_meta = {
+        "rows": len(rows),
+        "first": rows[0].decision.meeting_date.isoformat() if rows else None,
+        "last": rows[-1].decision.meeting_date.isoformat() if rows else None,
+        "excluded": len(excluded),
+        "missing_rate": len(missing_rate),
+        "missing_features": len(missing_features),
+        "fold_skips": sum(fold_skips.values()),
+    }
+    if logger is None and ml_log:
+        logger = start_run(
+            sample_meta,
+            [
+                {
+                    "meeting_date": row.decision.meeting_date.isoformat(),
+                    "rate_before": row.decision.rate_before,
+                    "pi_saar": row.pi_saar,
+                    "gap": row.gap,
+                }
+                for row in rows
+            ],
+        )
     if not rows:
         _print_removed_artifacts(clear_stale_artifacts(out_dir))
         print("выборка пуста: ни одного решения с наблюдаемым исходом и признаками")
+        finish(
+            "empty",
+            "выборка пуста: ни одного решения с наблюдаемым исходом и признаками",
+        )
         return 1
 
     delta_map = dict(deltas)
@@ -2644,88 +2746,198 @@ def run_summary(rolling: bool, today: Optional[date] = None, out_dir: Path = ROO
         1 for decision in decisions if delta_map.get(decision.meeting_date) is not None
     )
 
-    forecast = current_forecast(rows, meetings, key_rate, cpd, ibk, today)
-    predictions, fold_skips = method_predictions(rows)
-    report_path = out_dir / REPORT_NAME
-    predictions_path = out_dir / PREDICTIONS_NAME
-    forecast_path = out_dir / FORECAST_NAME
-    report_path.write_text(
-        render_report(
-            rows,
-            Skipped(tuple(excluded), tuple(missing_rate), tuple(missing_features)),
-            predictions,
-            render_forecast(forecast) if forecast is not None else None,
-            today=today,
-            fold_skips=fold_skips,
-        ),
-        encoding="utf-8",
-    )
-    write_predictions(predictions_path, predictions)
-    forecast_written = write_forecast_artifact(forecast_path, forecast)
-
-    print(f"Модель ключевой ставки v0 — выборка решений (дата прогона {today.isoformat()})")
-    print(f"  канонических заседаний:                      {len(meetings)}"
-          f" ({meetings[0]} … {meetings[-1]})")
-    print(f"  предстоящих (позже даты прогона):            {len(upcoming)}"
-          + _dates_suffix(upcoming))
-    print(f"  в выборке решений:                           {len(rows)}"
-          f" ({rows[0].decision.meeting_date} … {rows[-1].decision.meeting_date})")
-    print(f"  вне выборки (окно исхода не наблюдаемо):     {len(excluded)}"
-          + _dates_suffix(excluded))
-    print(f"  пропущено (нет ставки на d−1):               {len(missing_rate)}"
-          + _dates_suffix(missing_rate))
-    print(f"  пропущено (нет данных по признакам):         {len(missing_features)}"
-          + _dates_suffix(missing_features))
-    print(f"  сверено шагов с cbr_mp_summary:              {checked} из {len(deltas)}"
-          f" (у самого раннего резюме дельты нет)")
-
-    counts = _fold_counts(predictions)
-    print(f"  фолдов (расширяющееся окно, min_train={MIN_TRAIN}):   "
-          f"{counts.get(WINDOW_EXPANDING, 0)}")
-    print(f"  фолдов (скользящее окно, {ROLLING_WINDOW}):               "
-          f"{counts.get(window_label(ROLLING_WINDOW), 0)}")
-    print(f"  пропущено фолдов (вырожденное окно):         {sum(fold_skips.values())}")
-
-    selected = window_label(ROLLING_WINDOW if rolling else None)
-    print(f"  метрики окна «{selected}» (в отчёте и CSV — оба окна):")
-    printed = False
-    for (method, window), group in _predictions_by_group(predictions).items():
-        if window != selected:
-            continue
-        predicted, actual = _group_steps(group)
-        errors = _group_errors(group)
-        print(f"    {method_label(method):<16} RMSE {rmse_bp(errors):>8.2f}  "
-              f"MAE {mae_bp(errors):>8.2f}  hit {hit_rate(predicted, actual):.3f}")
-        printed = True
-    if not printed:
-        print("    (фолдов нет — выборка короче обучения)")
-
-    if forecast is None:
-        print("  прогноз на ближайшее заседание:              не сделан — заседаний "
-              "позже даты прогона нет")
-    else:
-        print(f"  прогноз на ближайшее заседание:              {forecast.meeting_date}"
-              f" (данные среза {forecast.data_asof})")
-        reasons = dict(forecast.skipped)
-        for method, _ in FORECAST_METHODS:
-            if method in forecast.methods:
-                print(f"    {method_label(method):<16} {forecast_cell(forecast.methods[method])}")
-            else:
-                print(f"    {method_label(method):<16} не оценён: "
-                      f"{reasons.get(method, 'причина не указана')}")
-    print(f"  отчёт:                                        {report_path}")
-    print(f"  прогнозы:                                     {predictions_path}")
-    if forecast_written:
-        print(f"  прогноз (JSON):                               {forecast_path}")
-    else:
-        reason = (
-            "заседаний позже даты прогона нет"
-            if forecast is None
-            else "ни один метод не посчитан"
+    try:
+        forecast = current_forecast(rows, meetings, key_rate, cpd, ibk, today)
+        report_path = out_dir / REPORT_NAME
+        predictions_path = out_dir / PREDICTIONS_NAME
+        forecast_path = out_dir / FORECAST_NAME
+        report_path.write_text(
+            render_report(
+                rows,
+                Skipped(tuple(excluded), tuple(missing_rate), tuple(missing_features)),
+                predictions,
+                render_forecast(forecast) if forecast is not None else None,
+                today=today,
+                fold_skips=fold_skips,
+            ),
+            encoding="utf-8",
         )
-        print(f"  прогноз (JSON):                               не пишется ({reason}); "
-              "устаревший файл, если был, удалён")
-    return 0
+        write_predictions(predictions_path, predictions)
+        forecast_written = write_forecast_artifact(forecast_path, forecast)
+
+        print(f"Модель ключевой ставки v0 — выборка решений (дата прогона {today.isoformat()})")
+        print(f"  канонических заседаний:                      {len(meetings)}"
+              f" ({meetings[0]} … {meetings[-1]})")
+        print(f"  предстоящих (позже даты прогона):            {len(upcoming)}"
+              + _dates_suffix(upcoming))
+        print(f"  в выборке решений:                           {len(rows)}"
+              f" ({rows[0].decision.meeting_date} … {rows[-1].decision.meeting_date})")
+        print(f"  вне выборки (окно исхода не наблюдаемо):     {len(excluded)}"
+              + _dates_suffix(excluded))
+        print(f"  пропущено (нет ставки на d−1):               {len(missing_rate)}"
+              + _dates_suffix(missing_rate))
+        print(f"  пропущено (нет данных по признакам):         {len(missing_features)}"
+              + _dates_suffix(missing_features))
+        print(f"  сверено шагов с cbr_mp_summary:              {checked} из {len(deltas)}"
+              f" (у самого раннего резюме дельты нет)")
+
+        counts = _fold_counts(predictions)
+        print(f"  фолдов (расширяющееся окно, min_train={MIN_TRAIN}):   "
+              f"{counts.get(WINDOW_EXPANDING, 0)}")
+        print(f"  фолдов (скользящее окно, {ROLLING_WINDOW}):               "
+              f"{counts.get(window_label(ROLLING_WINDOW), 0)}")
+        print(f"  пропущено фолдов (вырожденное окно):         {sum(fold_skips.values())}")
+
+        selected = window_label(ROLLING_WINDOW if rolling else None)
+        print(f"  метрики окна «{selected}» (в отчёте и CSV — оба окна):")
+        printed = False
+        for (method, window), group in _predictions_by_group(predictions).items():
+            if window != selected:
+                continue
+            predicted, actual = _group_steps(group)
+            errors = _group_errors(group)
+            print(f"    {method_label(method):<16} RMSE {rmse_bp(errors):>8.2f}  "
+                  f"MAE {mae_bp(errors):>8.2f}  hit {hit_rate(predicted, actual):.3f}")
+            printed = True
+        if not printed:
+            print("    (фолдов нет — выборка короче обучения)")
+
+        if forecast is None:
+            print("  прогноз на ближайшее заседание:              не сделан — заседаний "
+                  "позже даты прогона нет")
+        else:
+            print(f"  прогноз на ближайшее заседание:              {forecast.meeting_date}"
+                  f" (данные среза {forecast.data_asof})")
+            reasons = dict(forecast.skipped)
+            for method, _ in FORECAST_METHODS:
+                if method in forecast.methods:
+                    print(f"    {method_label(method):<16} "
+                          f"{forecast_cell(forecast.methods[method])}")
+                else:
+                    print(f"    {method_label(method):<16} не оценён: "
+                          f"{reasons.get(method, 'причина не указана')}")
+        print(f"  отчёт:                                        {report_path}")
+        print(f"  прогнозы:                                     {predictions_path}")
+        if forecast_written:
+            print(f"  прогноз (JSON):                               {forecast_path}")
+        else:
+            reason = (
+                "заседаний позже даты прогона нет"
+                if forecast is None
+                else "ни один метод не посчитан"
+            )
+            print(f"  прогноз (JSON):                               не пишется ({reason}); "
+                  "устаревший файл, если был, удалён")
+        if logger is not None:
+            # Журнал эксперимента — побочный слой: его сбой НЕ меняет код
+            # возврата. Отчёт и CSV к этому моменту уже записаны, поэтому
+            # ValueError `PredictionRow` (например, на нечисловом прогнозе) не
+            # должен превращать успешный прогон в non-zero exit: помечаем run
+            # failed и идём дальше.
+            try:
+                grouped = _predictions_by_group(predictions)
+                # Спека §3.1: `windows` — СПИСОК; у каждого окна своё число
+                # фолдов и вложенный словарь моделей, а `models` — общий
+                # список методов прогона.
+                windows = []
+                for window in (WINDOW_EXPANDING, window_label(ROLLING_WINDOW)):
+                    per_method = {}
+                    for method, _ in METHODS:
+                        group = grouped.get((method, window), [])
+                        if group:
+                            errors = _group_errors(group)
+                            predicted, actual = _group_steps(group)
+                            values = {
+                                "rmse": rmse_bp(errors),
+                                "mae": mae_bp(errors),
+                                "hit": hit_rate(predicted, actual),
+                                "n": len(group),
+                            }
+                        else:
+                            values = {"rmse": None, "mae": None, "hit": None, "n": 0}
+                        per_method[method] = values
+                    windows.append(
+                        {
+                            "window": window,
+                            # «Фолды окна» — максимум по методам: у метода с
+                            # вырожденными окнами фолдов меньше, и число окна
+                            # не должно зависеть от выбранного метода.
+                            "folds": max(
+                                (values["n"] for values in per_method.values()),
+                                default=0,
+                            ),
+                            "models": per_method,
+                        }
+                    )
+                # Пропуски фолдов — отдельный словарь «окно → метод → N»:
+                # ключи-кортежи `fold_skips` в JSON стали бы строками вида
+                # "('hold', 'expanding')".
+                skips = {}
+                for (method, window), skipped in fold_skips.items():
+                    skips.setdefault(window, {})[method] = int(skipped)
+                logger.log_metrics(
+                    {
+                        "primary_metric": "rmse_bp",
+                        "sample": sample_meta,
+                        "models": [method for method, _ in METHODS],
+                        "windows": windows,
+                        "fold_skips": skips,
+                    }
+                )
+                logger.log_predictions(
+                    [
+                        mlx.PredictionRow(
+                            model=prediction.method,
+                            window=prediction.window,
+                            target_date=prediction.meeting_date,
+                            predicted=prediction.step_bp,
+                            actual=prediction.actual_step_bp,
+                            unit="bp",
+                            meta={
+                                "probs": (
+                                    list(prediction.probs)
+                                    if prediction.probs is not None
+                                    else None
+                                ),
+                                "actual_y3": prediction.actual_y3,
+                            },
+                        )
+                        for prediction in predictions
+                    ]
+                )
+                logger.log_artifacts(
+                    [
+                        report_path,
+                        predictions_path,
+                        forecast_path if forecast_written else None,
+                    ]
+                )
+                logger.finish(
+                    "finished",
+                    f"walk-forward: {len(predictions)} фолдов, "
+                    f"{len(rows)} заседаний; текущий прогноз: "
+                    f"{'рассчитан' if forecast is not None else 'не рассчитан'}",
+                )
+            except Exception as exc:
+                log.warning(
+                    "журнал эксперимента не записан: %s: %s",
+                    type(exc).__name__, exc,
+                )
+                try:
+                    logger.finish(
+                        "failed", f"logging: {type(exc).__name__}: {exc}"
+                    )
+                except Exception as finish_exc:
+                    log.warning(
+                        "не удалось пометить прогон failed: %s: %s",
+                        type(finish_exc).__name__, finish_exc,
+                    )
+        return 0
+    except Exception as exc:
+        # Реальная ошибка эксперимента (а не сбой журнала): паспорт получает
+        # `failed`, исключение уходит вызывающему как раньше.
+        finish("failed", f"{type(exc).__name__}: {exc}")
+        raise
 
 
 def main(argv: Optional[list] = None) -> int:
@@ -2749,6 +2961,8 @@ def main(argv: Optional[list] = None) -> int:
     try:
         if args.export_fixtures:
             return export_fixtures(Path(args.export_fixtures))
+        # ML_LOG/ML_RUN_NAME читаются внутри run_summary (`ml_log=None`): явный
+        # параметр здесь не нужен, и без переменной поведение прогона прежнее.
         return run_summary(rolling=args.rolling)
     except SampleError as exc:
         # Расхождение ярлыка со сводкой ЦБ — ожидаемая диагностируемая ошибка
