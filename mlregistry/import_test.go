@@ -16,7 +16,7 @@ func TestMlRegistryName(t *testing.T) {
 func TestMlRunsDdlPinsPassport(t *testing.T) {
 	for _, want := range []string{
 		"run_id UUID", "experiment LowCardinality(String)",
-		"config_hash String", "sample_hash String", "data_asof Date",
+		"config_hash String", "env_json String", "sample_hash String", "data_asof Date",
 		"metrics_json String", "artifacts_json String",
 		"ENGINE = ReplacingMergeTree", "ORDER BY (experiment, run_id)",
 	} {

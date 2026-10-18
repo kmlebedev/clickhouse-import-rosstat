@@ -81,9 +81,10 @@ def _sql_payload(sql: str) -> tuple:
 # default'ом. Тест ниже пинует его независимо от Go-тестов Task 1.
 ML_RUNS_COLUMNS = {
     "run_id", "experiment", "run_name", "status", "author", "git_sha",
-    "git_branch", "git_dirty", "config_hash", "config_json", "data_asof",
-    "sample_hash", "sample_meta_json", "spec_path", "metrics_json",
-    "artifacts_json", "started_at", "finished_at", "duration_sec", "notes",
+    "git_branch", "git_dirty", "config_hash", "config_json", "env_json",
+    "data_asof", "sample_hash", "sample_meta_json", "spec_path",
+    "metrics_json", "artifacts_json", "started_at", "finished_at",
+    "duration_sec", "notes",
 }
 ML_PREDICTIONS_COLUMNS = {
     "run_id", "experiment", "model", "window", "target_date", "predicted",
@@ -206,7 +207,7 @@ class SchemaKeysTest(unittest.TestCase):
             with patch.object(me, "ch_exec") as ch_exec:
                 run.finish()
 
-        runs_sql, preds_sql = (call.args[0] for call in ch_exec.call_args_list)
+        preds_sql, runs_sql = (call.args[0] for call in ch_exec.call_args_list)
         self.assertEqual(set(_sql_payload(runs_sql)[1][0]), ML_RUNS_COLUMNS)
         self.assertEqual(set(_sql_payload(preds_sql)[1][0]), ML_PREDICTIONS_COLUMNS)
 
@@ -227,7 +228,7 @@ class FinishTest(unittest.TestCase):
                     self.assertEqual(run.finish("finished"), "local")
                 self.assertTrue((Path(tmp) / run.run_id / "run.json").is_file())
 
-    def test_clickhouse_success_writes_run_then_predictions(self):
+    def test_clickhouse_success_writes_predictions_then_run(self):
         with _env():
             run = start_run(
                 "cpi_nowcast", "run", {"alpha": 0.5}, date(2026, 10, 18),
@@ -243,9 +244,10 @@ class FinishTest(unittest.TestCase):
                 self.assertEqual(run.finish("finished", "ok"), "clickhouse")
 
             self.assertEqual(ch_exec.call_count, 2)
-            runs_sql, preds_sql = (call.args[0] for call in ch_exec.call_args_list)
-            self.assertTrue(runs_sql.startswith("INSERT INTO ml_runs"))
+            preds_sql, runs_sql = (call.args[0] for call in ch_exec.call_args_list)
+            # Паспорт пишется последним: порядок вызовов — часть контракта.
             self.assertTrue(preds_sql.startswith("INSERT INTO ml_predictions"))
+            self.assertTrue(runs_sql.startswith("INSERT INTO ml_runs"))
 
             run_header, run_rows = _sql_payload(runs_sql)
             self.assertEqual(run_header, "INSERT INTO ml_runs FORMAT JSONEachRow")
@@ -268,6 +270,14 @@ class FinishTest(unittest.TestCase):
             self.assertIn("finished_at", run_row)
             self.assertGreaterEqual(run_row["duration_sec"], 0.0)
 
+            env = json.loads(run_row["env_json"])
+            self.assertEqual(set(env), {"python", "platform", "packages"})
+            self.assertEqual(env["python"], sys.version)
+            self.assertTrue(env["platform"])
+            self.assertEqual(set(env["packages"]), set(me.PACKAGES))
+            for version in env["packages"].values():
+                self.assertTrue(version is None or isinstance(version, str))
+
             _, pred_rows = _sql_payload(preds_sql)
             self.assertEqual(len(pred_rows), 2)
             self.assertEqual(pred_rows[0]["run_id"], run.run_id)
@@ -282,6 +292,61 @@ class FinishTest(unittest.TestCase):
             self.assertEqual(json.loads(pred_rows[0]["meta_json"]), {"probs": [0.1, 0.9]})
             self.assertEqual(pred_rows[1]["meta_json"], "{}")
             self.assertIn("created_at", pred_rows[0])
+
+    def test_predictions_are_written_before_run_row(self):
+        with _env():
+            run = start_run("exp", "run", {}, date(2026, 10, 18), {}, [], enabled=True)
+            run.log_predictions([
+                PredictionRow("m", "w", date(2026, 9, 30), 0.7, 0.5, "pp"),
+            ])
+            with patch.object(me, "ch_exec") as ch_exec:
+                self.assertEqual(run.finish(), "clickhouse")
+
+            headers = [
+                call.args[0].partition("\n")[0] for call in ch_exec.call_args_list
+            ]
+            self.assertEqual(headers, [
+                "INSERT INTO ml_predictions FORMAT JSONEachRow",
+                "INSERT INTO ml_runs FORMAT JSONEachRow",
+            ])
+
+    def test_predictions_failure_skips_run_row(self):
+        # Паспорт последним: если batch предсказаний не записался, `finished`
+        # паспорт не должен появиться в ClickHouse вообще.
+        with tempfile.TemporaryDirectory() as tmp:
+            with _env(ML_LOCAL_DIR=tmp):
+                run = start_run("exp", "run", {}, date(2026, 10, 18), {}, [], enabled=True)
+                run.log_predictions([
+                    PredictionRow("m", "w", date(2026, 9, 30), 0.7, 0.5, "pp"),
+                ])
+                with patch.object(
+                    me, "ch_exec", side_effect=ClickHouseError("down")
+                ) as ch_exec:
+                    self.assertEqual(run.finish(), "local")
+
+                self.assertEqual(ch_exec.call_count, 1)
+                self.assertTrue(
+                    ch_exec.call_args.args[0].startswith("INSERT INTO ml_predictions")
+                )
+                self.assertFalse(
+                    any(
+                        call.args[0].startswith("INSERT INTO ml_runs")
+                        for call in ch_exec.call_args_list
+                    )
+                )
+                self.assertTrue((Path(tmp) / run.run_id / "run.json").is_file())
+
+    def test_run_row_env_json_has_python_platform_and_packages(self):
+        with _env():
+            run = start_run("exp", "run", {}, date(2026, 10, 18), {}, [], enabled=True)
+            with patch.object(me, "ch_exec") as ch_exec:
+                run.finish()
+
+            _, rows = _sql_payload(ch_exec.call_args.args[0])
+            env = json.loads(rows[0]["env_json"])
+            self.assertEqual(env["python"], sys.version)
+            self.assertTrue(env["platform"])
+            self.assertEqual(set(env["packages"]), set(me.PACKAGES))
 
     def test_success_without_predictions_writes_only_run(self):
         with _env():

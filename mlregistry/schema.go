@@ -17,6 +17,7 @@ const mlRunsDdl = `CREATE TABLE IF NOT EXISTS ml_runs (
     git_dirty UInt8,                     -- 1 — рабочее дерево было грязным
     config_hash String,                  -- sha256 канонического JSON конфигурации
     config_json String,                  -- полный конфиг прогона (CLI + дефолты)
+    env_json String,                     -- Python/пакеты/OS, в которых шёл прогон
     data_asof Date,                      -- дата среза данных
     sample_hash String,                  -- sha256 канонического JSON выборки
     sample_meta_json String,             -- rows/first/last/skipped, без сырых строк
