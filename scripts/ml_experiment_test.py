@@ -10,6 +10,7 @@
 """
 
 import hashlib
+import http.client
 import json
 import os
 import sys
@@ -256,6 +257,20 @@ class FinishTest(unittest.TestCase):
             with patch.dict(os.environ, {"ML_LOCAL_DIR": tmp}):
                 run = start_run("exp", "run", {}, date(2026, 10, 18), {}, [], enabled=True)
                 with patch("ml_experiment.ch_exec", side_effect=ClickHouseError("down")):
+                    self.assertEqual(run.finish("finished"), "local")
+                self.assertTrue((Path(tmp) / run.run_id / "run.json").is_file())
+
+    def test_http_exception_from_ch_exec_falls_back_to_local(self):
+        # `IncompleteRead` — `http.client.HTTPException`, а НЕ `OSError`: без
+        # отдельной ветки исключение уносило бы `finish`, `run.json` не
+        # писался бы, а паспорт прогона терялся.
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(os.environ, {"ML_LOCAL_DIR": tmp}):
+                run = start_run("exp", "run", {}, date(2026, 10, 18), {}, [], enabled=True)
+                with patch(
+                    "ml_experiment.ch_exec",
+                    side_effect=http.client.IncompleteRead(b"partial"),
+                ):
                     self.assertEqual(run.finish("finished"), "local")
                 self.assertTrue((Path(tmp) / run.run_id / "run.json").is_file())
 

@@ -60,6 +60,30 @@ FIXTURE_NAMES = (
     "mp_summary.csv",
 )
 
+# Переменные, которые читает журнал эксперимента. Набор ОФЛАЙН: `ML_LOG=1`
+# из окружения разработчика включал бы запись из `run_summary(ml_log=None)`,
+# а `ML_RUN_NAME`/`ML_LOCAL_DIR` меняли бы имя прогона и путь fallback.
+# Модульные хуки убирают переменные на время набора и возвращают их после;
+# тесты, которые сами выставляют `ML_LOG` (через `patch.dict`), работают как
+# раньше.
+_ML_ENV_VARS = ("ML_LOG", "ML_RUN_NAME", "ML_LOCAL_DIR")
+_SAVED_ML_ENV = {}
+
+
+def setUpModule():
+    for name in _ML_ENV_VARS:
+        _SAVED_ML_ENV[name] = os.environ.get(name)
+        os.environ.pop(name, None)
+
+
+def tearDownModule():
+    for name in _ML_ENV_VARS:
+        previous = _SAVED_ML_ENV.pop(name, None)
+        if previous is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = previous
+
 
 def fixture_rows(name: str, directory: Path = FIXTURE_DIR) -> list:
     """Строки CSV-фикстуры словарями — в той же форме, что отдаёт ch_query."""
@@ -2590,6 +2614,39 @@ class TestRunSummaryExperimentLog(unittest.TestCase):
             {row.window for row in fake.predictions}, {"expanding", "rolling40"}
         )
         self.assertEqual(fake.metrics["primary_metric"], "rmse_bp")
+        # Спека §3.1/§7.2: top-level `models`, `windows` — СПИСОК окон с
+        # числом фолдов и вложенными метриками методов; пропуски фолдов —
+        # отдельным словарём «окно → метод → N».
+        self.assertEqual(
+            fake.metrics["models"], [method for method, _ in km.METHODS]
+        )
+        self.assertIsInstance(fake.metrics["windows"], list)
+        windows = {item["window"] for item in fake.metrics["windows"]}
+        self.assertEqual(windows, {"expanding", "rolling40"})
+        for item in fake.metrics["windows"]:
+            self.assertEqual(set(item), {"window", "folds", "models"})
+            self.assertEqual(set(item["models"]), set(fake.metrics["models"]))
+            self.assertEqual(
+                item["folds"], max(entry["n"] for entry in item["models"].values())
+            )
+            for method, entry in item["models"].items():
+                self.assertEqual(set(entry), {"rmse", "mae", "hit", "n"})
+                self.assertEqual(
+                    entry["n"],
+                    sum(
+                        1
+                        for prediction in fake.predictions
+                        if prediction.model == method
+                        and prediction.window == item["window"]
+                    ),
+                )
+        self.assertEqual(set(fake.metrics["fold_skips"]), windows)
+        for window, per_method in fake.metrics["fold_skips"].items():
+            self.assertEqual(set(per_method), set(fake.metrics["models"]))
+            for skipped in per_method.values():
+                self.assertIsInstance(skipped, int)
+                self.assertGreaterEqual(skipped, 0)
+        self.assertIn("rows", fake.metrics["sample"])
         self.assertEqual(
             {path.name for path in fake.artifacts},
             {km.REPORT_NAME, km.PREDICTIONS_NAME},

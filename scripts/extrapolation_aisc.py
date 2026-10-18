@@ -23,6 +23,7 @@
 
 import base64
 import csv
+import http.client
 import json
 import os
 import re
@@ -2115,9 +2116,12 @@ def ch_exec(sql: str) -> None:
     каждой успешной вставке.
 
     Контракт ошибок совпадает с `ch_query`: не-200 и любой сбой транспорта
-    (`OSError`, включая `URLError` и `RemoteDisconnected`) поднимают
-    `ClickHouseError`, а каждый текст проходит через `mask()` — сервер может
-    отразить запрос или заголовки в теле ошибки.
+    поднимают `ClickHouseError`, а каждый текст проходит через `mask()` —
+    сервер может отразить запрос или заголовки в теле ошибки. Транспортных
+    веток две: `OSError` (`URLError`, `RemoteDisconnected`, таймауты) и
+    `http.client.HTTPException` (`IncompleteRead`, `BadStatusLine`) — вторые
+    НЕ являются `OSError` и без отдельной ветки уносили бы `finish`
+    `ml_experiment` без локального паспорта.
     """
     config = ch_config()
     password = config["password"]
@@ -2139,7 +2143,10 @@ def ch_exec(sql: str) -> None:
             "ClickHouse ответил статусом "
             + mask(password, f"{exc.code} на запрос к {url}: {detail}")
         ) from exc
-    except OSError as exc:
+    except (OSError, http.client.HTTPException) as exc:
+        # `IncompleteRead`/`BadStatusLine` — HTTPException, а НЕ OSError:
+        # без этой ветки они уходили бы из `finish` сырыми, и локальный
+        # паспорт прогона не писался бы.
         reason = getattr(exc, "reason", None) or str(exc)
         raise ClickHouseError(
             mask(password, f"ClickHouse недоступен по {url}: {reason}")

@@ -1247,6 +1247,21 @@ class TestExecTransport(unittest.TestCase):
                 self.assertNotIn(secret, str(ctx.exception))
                 self.assertIn("ClickHouse недоступен", str(ctx.exception))
 
+    def test_http_exception_is_clickhouse_error(self):
+        # `IncompleteRead`/`BadStatusLine` наследуются от `HTTPException`, а
+        # НЕ от `OSError`: без отдельной ветки они уходили бы из `ch_exec`
+        # сырыми и уносили бы локальный паспорт прогона.
+        def fake_urlopen(request, timeout=None):
+            raise http.client.IncompleteRead(b"partial")
+
+        with _isolated_env():
+            with unittest.mock.patch(
+                "extrapolation_aisc.urllib.request.urlopen", fake_urlopen
+            ):
+                with self.assertRaises(ex.ClickHouseError) as ctx:
+                    ex.ch_exec("INSERT INTO ml_runs FORMAT JSONEachRow\n{}")
+        self.assertIn("ClickHouse недоступен", str(ctx.exception))
+
 
 class TestPlanRows(unittest.TestCase):
     """Плановые строки 2025–LOM: эскалация, увязка по годам, аллокация capex.

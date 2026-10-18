@@ -84,6 +84,30 @@ KEY_RATE_ROWS = [
 
 ONE_DAY = timedelta(days=1)
 
+# Переменные, которые читает журнал эксперимента. Набор ОФЛАЙН: `ML_LOG=1`
+# из окружения разработчика включал бы запись из `run_summary(ml_log=None)`,
+# а `ML_RUN_NAME`/`ML_LOCAL_DIR` меняли бы имя прогона и путь fallback.
+# Модульные хуки убирают переменные на время набора и возвращают их после;
+# тесты, которые сами выставляют `ML_LOG` (через `patch.dict`), работают как
+# раньше.
+_ML_ENV_VARS = ("ML_LOG", "ML_RUN_NAME", "ML_LOCAL_DIR")
+_SAVED_ML_ENV = {}
+
+
+def setUpModule():
+    for name in _ML_ENV_VARS:
+        _SAVED_ML_ENV[name] = os.environ.get(name)
+        os.environ.pop(name, None)
+
+
+def tearDownModule():
+    for name in _ML_ENV_VARS:
+        previous = _SAVED_ML_ENV.pop(name, None)
+        if previous is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = previous
+
 
 def fixture_rows(name: str, directory: Path = FIXTURE_DIR) -> list:
     """Строки CSV-фикстуры словарями — в той же форме, что отдаёт ch_query."""
@@ -1100,8 +1124,43 @@ class TestRunSummaryExperimentLog(unittest.TestCase):
             windows, {"start=24, embargo=1", "start=48, embargo=1"}
         )
         self.assertEqual(fake.metrics["primary_metric"], "rmse_pp")
-        self.assertEqual(set(fake.metrics["windows"]), windows)
+        # Спека §3.1/§7.1: top-level `models`, `windows` — СПИСОК окон с
+        # числом фолдов и вложенными метриками моделей.
+        # `models` — имена и порядок словаря моделей ПРОГОНА (в тесте он
+        # подменён `cheap_models`, поэтому сверяется с ним, а не с `cm.MODELS`).
+        self.assertEqual(fake.metrics["models"], list(models))
+        self.assertIsInstance(fake.metrics["windows"], list)
+        self.assertEqual(
+            {item["window"] for item in fake.metrics["windows"]}, windows
+        )
+        main = next(
+            item
+            for item in fake.metrics["windows"]
+            if item["window"] == "start=24, embargo=1"
+        )
+        self.assertEqual(set(main), {"window", "folds", "models"})
+        self.assertEqual(main["folds"], len(rows) - 24)
+        self.assertEqual(set(main["models"]), set(cm.MODELS))
+        for name, entry in main["models"].items():
+            self.assertEqual(set(entry), {"rmse", "mae", "n", "skipped", "notes"})
+            self.assertEqual(
+                entry["n"],
+                sum(
+                    1
+                    for prediction in fake.predictions
+                    if prediction.model == name
+                    and prediction.window == "start=24, embargo=1"
+                ),
+            )
         self.assertTrue(fake.metrics["weights"])
+        expected_windows = {cm.window_key(run.start, run.embargo) for run in runs}
+        for item in fake.metrics["weights"]:
+            self.assertEqual(
+                set(item), {"window", "month", "train", "weights"}
+            )
+            self.assertIn(item["window"], expected_windows)
+            self.assertEqual(set(item["weights"]), set(cm.BOTTOMUP_COMPONENTS))
+        self.assertIn("rows", fake.metrics["sample"])
         self.assertEqual(
             {path.name for path in fake.artifacts},
             {cm.REPORT_NAME, cm.PREDICTIONS_NAME, cm.FORECAST_NAME},

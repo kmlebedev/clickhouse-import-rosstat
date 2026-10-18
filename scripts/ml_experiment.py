@@ -17,6 +17,7 @@
 """
 
 import hashlib
+import http.client
 import importlib.metadata
 import json
 import logging
@@ -424,9 +425,11 @@ class ExperimentRun:
         Сначала одним batch `ml_predictions` (если они есть), затем `ml_runs`.
         Паспорт пишется ПОСЛЕДНИМ, поэтому сбой вставки предсказаний не может
         оставить `finished`-паспорт без фолдов: в этом случае паспорт не
-        пишется вовсе. Ни ошибка ClickHouse, ни ошибка сериализации конфига
-        или метрик не роняют прогон: полный (или минимальный безопасный)
-        паспорт сохраняется локально, а вызывающий получает `"local"`.
+        пишется вовсе. Ни ошибка ClickHouse (`ClickHouseError`, `OSError`,
+        `http.client.HTTPException` — обрыв HTTP вроде `IncompleteRead` не
+        является `OSError`), ни ошибка сериализации конфига или метрик не
+        роняют прогон: полный (или минимальный безопасный) паспорт
+        сохраняется локально, а вызывающий получает `"local"`.
         """
         if self._finished:
             return self._result
@@ -458,7 +461,7 @@ class ExperimentRun:
             self._write_minimal_run(note, finished_at)
             self._result = "local"
             return self._result
-        except (ClickHouseError, OSError) as exc:
+        except (ClickHouseError, OSError, http.client.HTTPException) as exc:
             if run_row is None:
                 self._write_minimal_run(
                     f"{type(exc).__name__}: {exc}", finished_at
