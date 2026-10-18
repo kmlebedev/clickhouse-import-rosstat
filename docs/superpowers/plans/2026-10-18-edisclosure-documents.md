@@ -518,9 +518,29 @@ Expected: FAIL — `planFetches` не определён.
 Run: `go test ./edisclosure/ -run TestPlanFetches -v`
 Expected: PASS.
 
-- [ ] **Step 5: Написать падающие тесты тела и имени архива**
+- [ ] **Step 5: Написать падающие тесты `needsWrite`, тела и имени архива**
 
 ```go
+func TestNeedsWrite(t *testing.T) {
+	d := doc{Ticker: "PLZL", Section: "IFRS", FileID: "1943701", DocType: "x",
+		Period: "2025", URL: "https://e-disclosure.ru/portal/FileLoad.ashx?Fileid=1943701"}
+	cur := existingDoc{DocType: "x", Period: "2025", URL: d.URL,
+		SHA256: "old", ArchiveKey: "k"}
+	cases := []struct{ name string; e existingDoc; ok bool; sha, key string; archive, want bool }{
+		{"new row", existingDoc{}, false, "new", "k", true, true},
+		{"same sha", cur, true, "old", "k", true, false},
+		{"changed sha", cur, true, "new", "k", true, true},
+		{"changed metadata", func() existingDoc { e := cur; e.Period = "2024"; return e }(), true, "old", "k", true, true},
+		{"archive key filled", func() existingDoc { e := cur; e.ArchiveKey = ""; return e }(), true, "old", "k", true, true},
+		{"archive disabled empty key", func() existingDoc { e := cur; e.ArchiveKey = ""; return e }(), true, "old", "", false, false},
+	}
+	for _, tc := range cases {
+		if got := needsWrite(d, tc.e, tc.sha, tc.key, tc.archive); got != tc.want {
+			t.Errorf("%s: needsWrite = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestValidateBody(t *testing.T) {
 	if err := validateBody(nil); err == nil { t.Fatal("пустое тело принято") }
 	if err := validateBody([]byte("  <!DOCTYPE html><html>")); err == nil { t.Fatal("HTML принят") }
