@@ -507,9 +507,15 @@ deploy-staging-smoke:
 		body=$$(curl -s -m 10 -X POST http://127.0.0.1:8000/mcp -H "Content-Type: application/json" -H "Authorization: Bearer $$CLICKHOUSE_MCP_AUTH_TOKEN" -H "Accept: application/json, text/event-stream" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}"); \
 		echo "$$body" | grep -q "Missing session ID" && echo "OK   MCP отвечает с токеном" || { echo "FAIL MCP с токеном ответил: $$body"; exit 1; }'
 	@echo "--- smoke: mlflow /health ---"
-	@ssh $(STAGING_HOST) 'systemctl is-active --quiet mlflow && curl -sf -m 5 -o /dev/null http://127.0.0.1:5000/health && echo "OK   MLflow /health = 200"' || { \
-		echo "FAIL mlflow /health — сервис не отвечает."; \
-		echo "  Проверьте: systemctl status mlflow; journalctl -u mlflow -n 50"; exit 1; }
+	@ssh $(STAGING_HOST) 'systemctl is-active --quiet mlflow || { \
+		echo "FAIL mlflow не запущен: systemctl status mlflow; journalctl -u mlflow -n 50"; exit 1; }; \
+		code=000; \
+		for i in $$(seq 1 10); do \
+			code=$$(curl -s -o /dev/null -w "%{http_code}" -m 5 http://127.0.0.1:5000/health); \
+			[ "$$code" = "200" ] && { echo "OK   MLflow /health = 200"; exit 0; }; \
+			sleep 2; \
+		done; \
+		echo "FAIL mlflow /health: последний ответ HTTP $$code после 10 попыток — смотрите journalctl -u mlflow -n 50"; exit 1'
 
 # Обновление ТОЛЬКО dagu, mcp-clickhouse и mlflow до версий из репозитория.
 # apt upgrade сюда НЕ входит: ClickHouse (данные) и Grafana обновляются вручную.

@@ -270,8 +270,9 @@ Makefile:
 
 - `deploy-staging-mlflow`: `staging-precheck` → scp юнита → `systemctl daemon-reload` → `install -d -m 755 /var/lib/mlflow /var/lib/mlflow/artifacts` → прогрев `uv run --with mlflow==$(MLFLOW_VERSION) python -c "pass"`;
 - `deploy-staging-mlflow` входит в `deploy-staging` (после `deploy-staging-mcp`), в `systemctl enable --now dagu mcp-clickhouse mlflow`, в `upgrade-staging` (рестарт `mlflow`);
-- `deploy-staging-smoke`: `systemctl is-active --quiet mlflow && curl -sf http://127.0.0.1:5000/health`;
-- `deploy/staging/README.md`: `/var/lib/mlflow`, туннель `ssh -N -L 5000:127.0.0.1:5000 palmshell`, UI, бэкап (sqlite backup + tar artifacts), `mlflow db upgrade` при смене версии, отсутствие auth (только localhost).
+- `deploy-staging-smoke`: `systemctl is-active --quiet mlflow` + `curl` `/health` с ограниченным ретраем (10 попыток × 2 с: холодный старт `uv run` может не ответить с первого раза);
+- `deploy/staging/README.md`: `/var/lib/mlflow`, туннель `ssh -N -L 5000:127.0.0.1:5000 palmshell`, UI, бэкап (sqlite backup + tar artifacts с общей меткой даты), отсутствие auth (только localhost);
+- обновление версии: бэкап → правка версии в юните и `MLFLOW_VERSION` → `make deploy-staging-mlflow` → `systemctl stop mlflow` → `mlflow db upgrade sqlite:////var/lib/mlflow/mlflow.db` → `systemctl start mlflow` → `make deploy-staging-smoke`. `systemctl enable --now` не перезапускает уже запущенный сервис, поэтому без stop/start новая версия не вступит в силу, а `db upgrade` под живым сервером трогает SQLite, которой владеет процесс.
 
 ---
 
@@ -279,7 +280,7 @@ Makefile:
 
 - MLflow слушает только `127.0.0.1`; доступ — SSH-туннель. Наружу не выставляется.
 - Паролей/токенов в MLflow нет; `run.json`/`predictions.jsonl` не содержат секретов (config — только CLI/дефолты; env — Python/пакеты/OS).
-- Бэкап dev/staging: `sqlite3 mlflow.db ".backup ..."` + `tar` каталога артефактов; при обновлении версии — бэкап до `mlflow db upgrade`.
+- Бэкап dev/staging: `sqlite3 mlflow.db ".backup ..."` + `tar` каталога артефактов; при обновлении версии — бэкап до `mlflow db upgrade`. Миграция выполняется на **остановленном** сервере (SQLite — один писатель), после чего сервис запускается заново; `systemctl enable --now` уже работающий сервис не перезапускает.
 - SQLite — один писатель; `--workers 1`; конкурентные прогоны сериализуются. При росте — MySQL (URI change).
 
 ---
