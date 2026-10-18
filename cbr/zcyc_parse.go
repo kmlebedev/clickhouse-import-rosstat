@@ -138,6 +138,26 @@ func zcycRows(body []byte) ([]zcycPoint, error) {
 	return points, nil
 }
 
+// zcycPointsInRange оставляет точки, попавшие в запрошенное окно [from, to] (обе
+// границы включительно), сохраняя порядок источника. Фильтр обязателен, потому что
+// ЦБ игнорирует диапазон, когда он пуст или лежит в будущем, и отдаёт таблицу с
+// последней доступной строкой: без фильтра такая строка попала бы в чужое окно.
+// Дефект был незаметен из-за ReplacingMergeTree — повторная вставка той же точки не
+// меняет count(), хотя импортёр каждый раз писал батч.
+func zcycPointsInRange(points []zcycPoint, from, to time.Time) []zcycPoint {
+	if from.After(to) {
+		return nil
+	}
+	var kept []zcycPoint
+	for _, p := range points {
+		if p.date.Before(from) || p.date.After(to) {
+			continue
+		}
+		kept = append(kept, p)
+	}
+	return kept
+}
+
 // zcycChunks режет [from, to] на последовательные непересекающиеся окна не
 // длиннее cbrZcycChunkYears лет; последнее окно обрезано по to. Окна смежные:
 // следующее начинается на день позже конца предыдущего.
