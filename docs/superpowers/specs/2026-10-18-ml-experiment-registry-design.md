@@ -350,7 +350,7 @@ def ch_exec(sql: str) -> None:
 
 ### 9.2 Живая приёмка
 
-1. `make import STAT=ml_registry` — таблицы и витрины созданы, повтор — no-op.
+1. `make import STAT=ml_registry` — таблицы и витрины созданы, повтор идемпотентен (безопасен; витрины пересоздаются, данные не меняются).
 2. `ML_LOG=1 make cpi-nowcast` — run виден в `v_ml_runs` и `v_ml_leaderboard`; `v_ml_error_by_fold` содержит fold'ы.
 3. `ML_LOG=1 make key-rate-model` — то же, `unit='bp'`.
 4. Повтор `ML_LOG=1 make cpi-nowcast` — новый `run_id`, те же метрики/артефакты (sha256).
