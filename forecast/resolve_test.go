@@ -142,6 +142,34 @@ func TestErrorPct(t *testing.T) {
 	}
 }
 
+// TestErrorBp — error_bp = (predicted − actual) × 100: уровни в % годовых,
+// ошибка в базисных пунктах. Числа закреплены литералами: 14.35 против 14.00 —
+// +35 б.п. (прогноз выше факта), 13.00 против 14.00 — −100 б.п. (прогноз ниже).
+// Знак — часть контракта витрины: по нему читается переоценка/недооценка ставки.
+func TestErrorBp(t *testing.T) {
+	cases := []struct {
+		name      string
+		predicted float64
+		actual    float64
+		want      float64
+	}{
+		{"прогноз выше факта — положительная ошибка", 14.35, 14.00, 35},
+		{"прогноз ниже факта — отрицательная ошибка", 13.00, 14.00, -100},
+		{"прогноз совпал с фактом", 14.00, 14.00, 0},
+		{"дробный уровень", 14.345, 14.25, 9.5},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := errorBp(tc.predicted, tc.actual)
+
+			if math.Abs(got-tc.want) > 1e-9 {
+				t.Fatalf("errorBp(%v, %v) = %v, want %v", tc.predicted, tc.actual, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestNeedsWrite — перезапись только при отсутствующем или отличающемся факте.
 //
 // Проверка «нужен ли батч» стоит до PrepareBatch: без неё резолвер писал бы ту же
@@ -199,13 +227,18 @@ func TestUTCDate(t *testing.T) {
 // закреплены отдельно (TestResolvableQueryFilters, TestWindowStatsGatesEmptyAverage).
 type fakeResolveStore struct {
 	rows          []forecastRow
+	rateRows      []forecastRow
 	stats         windowStats
+	rates         map[string]float64 // target_date (YYYY-MM-DD) → ставка после заседания
 	resolvableErr error
+	rateReadErr   error
 	windowErr     error
+	rateAfterErr  error
 	writeErr      error
 
-	windows [][2]time.Time
-	writes  [][]forecastResolution
+	windows     [][2]time.Time
+	rateTargets []time.Time
+	writes      [][]forecastResolution
 }
 
 func (f *fakeResolveStore) resolvable(context.Context) ([]forecastRow, error) {
@@ -214,6 +247,25 @@ func (f *fakeResolveStore) resolvable(context.Context) ([]forecastRow, error) {
 	}
 
 	return f.rows, nil
+}
+
+func (f *fakeResolveStore) rateResolvable(context.Context) ([]forecastRow, error) {
+	if f.rateReadErr != nil {
+		return nil, f.rateReadErr
+	}
+
+	return f.rateRows, nil
+}
+
+func (f *fakeResolveStore) rateAfter(_ context.Context, target time.Time) (float64, bool, error) {
+	f.rateTargets = append(f.rateTargets, target)
+
+	if f.rateAfterErr != nil {
+		return 0, false, f.rateAfterErr
+	}
+	rate, ok := f.rates[target.Format(dateLayout)]
+
+	return rate, ok, nil
 }
 
 func (f *fakeResolveStore) windowStats(_ context.Context, start, end time.Time) (windowStats, error) {
@@ -273,15 +325,18 @@ func TestImportWritesOnlyChanged(t *testing.T) {
 		}
 
 		got := batch[0]
+		wantPct := errorPct(predicted, actual)
 		want := forecastResolution{
 			ForecastDate: date(2026, time.July, 31),
 			TargetDate:   target,
+			Metric:       forecastMetric,
 			Predicted:    predicted,
 			Actual:       actual,
-			ErrorPct:     errorPct(predicted, actual),
+			ErrorPct:     &wantPct,
 		}
 		if !got.ForecastDate.Equal(want.ForecastDate) || !got.TargetDate.Equal(want.TargetDate) ||
-			got.Predicted != want.Predicted || got.Actual != want.Actual || got.ErrorPct != want.ErrorPct {
+			got.Metric != want.Metric || got.Predicted != want.Predicted || got.Actual != want.Actual ||
+			got.ErrorPct == nil || *got.ErrorPct != *want.ErrorPct || got.ErrorBp != nil {
 			t.Fatalf("записана строка %+v, want %+v", got, want)
 		}
 
@@ -337,6 +392,188 @@ func TestImportWritesOnlyChanged(t *testing.T) {
 	})
 }
 
+// TestResolveRateWritesErrorBp — ветка cbr_rate*: факт — ставка после заседания,
+// error_bp в базисных пунктах, error_pct пуст, метрика трека переносится в батч.
+//
+// Две строки разных треков на одну дату заседания проверяются вместе нарочно:
+// именно суффикс metric отличает их в ключе (metric, forecast_date), и потеря
+// суффикса схлопнула бы taylor и ordered_logit в одну строку ReplacingMergeTree.
+func TestResolveRateWritesErrorBp(t *testing.T) {
+	target := date(2026, time.September, 11)
+	store := &fakeResolveStore{
+		rateRows: []forecastRow{
+			{ForecastDate: date(2026, time.September, 1), TargetDate: target, Metric: "cbr_rate:taylor", Predicted: 14.35},
+			{ForecastDate: date(2026, time.September, 1), TargetDate: target, Metric: "cbr_rate:ordered_logit", Predicted: 13.00},
+		},
+		rates: map[string]float64{"2026-09-11": 14.00},
+	}
+
+	count, err := resolveForecasts(context.Background(), store)
+	if err != nil {
+		t.Fatalf("resolveForecasts: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("count = %d, want 2", count)
+	}
+	if len(store.writes) != 1 || len(store.writes[0]) != 2 {
+		t.Fatalf("writes = %+v, want one batch with two rows", store.writes)
+	}
+	if len(store.rateTargets) != 2 {
+		t.Fatalf("rateAfter вызван %d раз, want 2 (по разу на строку)", len(store.rateTargets))
+	}
+	for _, called := range store.rateTargets {
+		if !called.Equal(target) {
+			t.Fatalf("rateAfter(%s), want %s", called.Format(dateLayout), target.Format(dateLayout))
+		}
+	}
+
+	want := []struct {
+		metric string
+		bp     float64
+	}{
+		{"cbr_rate:taylor", 35},
+		{"cbr_rate:ordered_logit", -100},
+	}
+	for index, resolution := range store.writes[0] {
+		if index >= len(want) {
+			break
+		}
+		if resolution.Metric != want[index].metric {
+			t.Fatalf("строка %d: metric %q, want %q", index, resolution.Metric, want[index].metric)
+		}
+		if resolution.Actual != 14.00 {
+			t.Fatalf("строка %d: actual %v, want 14.00", index, resolution.Actual)
+		}
+		if resolution.ErrorPct != nil {
+			t.Fatalf("строка %d: error_pct = %v, want nil (ставка измеряется в б.п.)", index, *resolution.ErrorPct)
+		}
+		if resolution.ErrorBp == nil || math.Abs(*resolution.ErrorBp-want[index].bp) > 1e-9 {
+			t.Fatalf("строка %d: error_bp = %v, want %v", index, resolution.ErrorBp, want[index].bp)
+		}
+	}
+}
+
+// TestResolveRateMissingFact — точки после заседания ещё нет: строка остаётся
+// нерезолвленной, прогон не падает. Так выглядит заседание, решение которого
+// объявлено сегодня, а ставка вступает в силу завтра.
+func TestResolveRateMissingFact(t *testing.T) {
+	store := &fakeResolveStore{
+		rateRows: []forecastRow{{
+			ForecastDate: date(2026, time.October, 18), TargetDate: date(2026, time.October, 23),
+			Metric: "cbr_rate:taylor", Predicted: 13.35,
+		}},
+		rates: map[string]float64{},
+	}
+
+	count, err := resolveForecasts(context.Background(), store)
+	if err != nil {
+		t.Fatalf("resolveForecasts: %v (нет факта — штатное состояние, а не сбой)", err)
+	}
+	if count != 0 || len(store.writes) != 0 {
+		t.Fatalf("count = %d, батчей %d, want 0 и 0", count, len(store.writes))
+	}
+}
+
+// TestResolveRateAlreadyResolved — тот же факт уже записан: батч не отправляется
+// и error_bp не пересчитывается заново на каждом ежедневном прогоне.
+func TestResolveRateAlreadyResolved(t *testing.T) {
+	actual := 14.00
+	store := &fakeResolveStore{
+		rateRows: []forecastRow{{
+			ForecastDate: date(2026, time.September, 1), TargetDate: date(2026, time.September, 11),
+			Metric: "cbr_rate:taylor", Predicted: 14.35, Actual: &actual,
+		}},
+		rates: map[string]float64{"2026-09-11": 14.00},
+	}
+
+	count, err := resolveForecasts(context.Background(), store)
+	if err != nil {
+		t.Fatalf("resolveForecasts: %v", err)
+	}
+	if count != 0 || len(store.writes) != 0 {
+		t.Fatalf("count = %d, батчей %d, want 0 и 0", count, len(store.writes))
+	}
+}
+
+// TestResolveKeepsXauBehaviour — обе ветки в одном прогоне: xau_q_avg остаётся
+// с квартальным окном и error_pct, cbr_rate* — со ставкой после заседания и
+// error_bp. Регрессия золотого контура была бы невидима в отдельном тесте ветки
+// ставки, поэтому строки проверяются в одном батче.
+func TestResolveKeepsXauBehaviour(t *testing.T) {
+	const (
+		xauPredicted = 4450.0
+		xauActual    = 4300.80
+	)
+	target := date(2026, time.September, 30)
+	store := &fakeResolveStore{
+		rows: []forecastRow{{
+			ForecastDate: date(2026, time.July, 31), TargetDate: target, Predicted: xauPredicted,
+		}},
+		rateRows: []forecastRow{{
+			ForecastDate: date(2026, time.September, 1), TargetDate: target,
+			Metric: "cbr_rate:ordered_logit", Predicted: 13.00,
+		}},
+		stats: windowStats{ComexCount: 64, ComexAvg: xauActual},
+		rates: map[string]float64{"2026-09-30": 14.00},
+	}
+
+	count, err := resolveForecasts(context.Background(), store)
+	if err != nil {
+		t.Fatalf("resolveForecasts: %v", err)
+	}
+	if count != 2 || len(store.writes) != 1 || len(store.writes[0]) != 2 {
+		t.Fatalf("count = %d, writes = %+v, want 2 строки одним батчем", count, store.writes)
+	}
+
+	byMetric := map[string]forecastResolution{}
+	for _, resolution := range store.writes[0] {
+		byMetric[resolution.Metric] = resolution
+	}
+
+	xau, ok := byMetric[forecastMetric]
+	if !ok {
+		t.Fatalf("в батче нет %s: %+v", forecastMetric, store.writes[0])
+	}
+	if xau.ErrorPct == nil || math.Abs(*xau.ErrorPct-errorPct(xauPredicted, xauActual)) > 1e-9 {
+		t.Fatalf("xau error_pct = %v, want %v", xau.ErrorPct, errorPct(xauPredicted, xauActual))
+	}
+	if xau.ErrorBp != nil {
+		t.Fatalf("xau error_bp = %v, want nil", *xau.ErrorBp)
+	}
+
+	rate, ok := byMetric["cbr_rate:ordered_logit"]
+	if !ok {
+		t.Fatalf("в батче нет cbr_rate:ordered_logit: %+v", store.writes[0])
+	}
+	if rate.ErrorPct != nil {
+		t.Fatalf("rate error_pct = %v, want nil", *rate.ErrorPct)
+	}
+	if rate.ErrorBp == nil || *rate.ErrorBp != -100 {
+		t.Fatalf("rate error_bp = %v, want -100", rate.ErrorBp)
+	}
+}
+
+// TestResolveRateSkipsNonPositiveFact — ставка 0 или отрицательная — порча
+// ряда, а не измерение: строка пропускается с warn, иначе в журнал попала бы
+// ошибка, посчитанная от несуществующего уровня.
+func TestResolveRateSkipsNonPositiveFact(t *testing.T) {
+	store := &fakeResolveStore{
+		rateRows: []forecastRow{{
+			ForecastDate: date(2026, time.September, 1), TargetDate: date(2026, time.September, 11),
+			Metric: "cbr_rate:taylor", Predicted: 14.35,
+		}},
+		rates: map[string]float64{"2026-09-11": 0},
+	}
+
+	count, err := resolveForecasts(context.Background(), store)
+	if err != nil {
+		t.Fatalf("resolveForecasts: %v", err)
+	}
+	if count != 0 || len(store.writes) != 0 {
+		t.Fatalf("count = %d, батчей %d, want 0 и 0", count, len(store.writes))
+	}
+}
+
 // TestImportPropagatesStoreError — сбой стора возвращается вызывающему на каждой
 // из трёх операций.
 //
@@ -349,12 +586,18 @@ func TestImportPropagatesStoreError(t *testing.T) {
 	failure := errors.New("нет соединения с ClickHouse")
 	target := date(2026, time.September, 30)
 	rows := []forecastRow{{ForecastDate: date(2026, time.July, 31), TargetDate: target, Predicted: 4450}}
+	rateRows := []forecastRow{{
+		ForecastDate: date(2026, time.September, 1), TargetDate: target,
+		Metric: "cbr_rate:taylor", Predicted: 14.35,
+	}}
 
 	cases := []struct {
 		name  string
 		store *fakeResolveStore
 	}{
 		{"сбой выборки журнала", &fakeResolveStore{resolvableErr: failure}},
+		{"сбой выборки cbr_rate*", &fakeResolveStore{rateReadErr: failure}},
+		{"сбой ставки после заседания", &fakeResolveStore{rateRows: rateRows, rateAfterErr: failure}},
 		{"сбой статистики окна", &fakeResolveStore{rows: rows, windowErr: failure}},
 		{"сбой записи батча", &fakeResolveStore{rows: rows, stats: windowStats{ComexCount: 64, ComexAvg: 4300.80}, writeErr: failure}},
 	}
@@ -401,6 +644,39 @@ func TestResolvableQueryFilters(t *testing.T) {
 	for _, want := range []string{"metric = 'xau_q_avg'", "target_date <= today()"} {
 		if !strings.Contains(resolvableSelect, want) {
 			t.Errorf("resolvableSelect не содержит %q: %q", want, resolvableSelect)
+		}
+	}
+}
+
+// TestRateResolvableQueryFilters — выборка контура ставки (Review Focus 2).
+//
+// `metric LIKE 'cbr_rate%'` — единственный фильтр, который приводит в резолвер
+// треки cbr_rate:taylor/ordered_logit/ml/llm и не трогает xau_q_avg/nav; без
+// `target_date <= today()` резолвились бы прогнозы на будущее — ставка «после
+// заседания» тогда была бы взята из прошлого режима, и в журнале появилась бы
+// правдоподобная ошибка задним числом.
+func TestRateResolvableQueryFilters(t *testing.T) {
+	for _, want := range []string{"metric LIKE 'cbr_rate%'", "target_date <= today()"} {
+		if !strings.Contains(rateResolvableSelect, want) {
+			t.Errorf("rateResolvableSelect не содержит %q: %q", want, rateResolvableSelect)
+		}
+	}
+}
+
+// TestRateAfterQueryUsesStrictlyLaterDate — факт ставки: первая точка ПОСЛЕ
+// target_date, а не «на дату». Заседание объявляет ставку со следующего дня, и
+// точка самого дня заседания ещё несёт прежнюю ставку; `>=` дал бы нулевую
+// ошибку у любого прогноза и сделал бы резолвер бессмысленным. FINAL обязателен
+// для ReplacingMergeTree, ORDER BY + LIMIT 1 фиксирует «первую».
+func TestRateAfterQueryUsesStrictlyLaterDate(t *testing.T) {
+	for _, want := range []string{
+		"FROM cbr_key_rate FINAL",
+		"date > {target:Date}",
+		"ORDER BY date",
+		"LIMIT 1",
+	} {
+		if !strings.Contains(rateAfterSelect, want) {
+			t.Errorf("rateAfterSelect не содержит %q: %q", want, rateAfterSelect)
 		}
 	}
 }
