@@ -35,6 +35,9 @@ GRANT SELECT ON default.v_news_tags TO kimi_reader;
 GRANT SELECT ON default.v_gost_vehicle_safety_certificate TO kimi_reader;
 GRANT SELECT ON default.v_gost_vehicle_safety_daily TO kimi_reader;
 GRANT SELECT ON default.v_keyrate_expectations TO kimi_reader;
+-- Сводный дашборд контура ключевой ставки (пункт key-rate/phase-4-dashboard, #128):
+-- витрина читает сырой forecast_log как DEFINER, но агенту выдан только этот срез.
+GRANT SELECT ON default.v_key_rate_dashboard TO kimi_reader;
 GRANT SELECT ON default.v_cbr_survey TO kimi_reader;
 GRANT SELECT ON default.v_cbr_mo_br TO kimi_reader;
 GRANT SELECT ON default.v_cbr_mp_summary TO kimi_reader;
