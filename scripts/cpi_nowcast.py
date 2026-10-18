@@ -110,9 +110,12 @@ NaN: сейчас это `ofz_1y` во всём бэктесте (у G-curve М�
 2021–2022 у G-curve пусто (см. ограничение выше). Это осознанное предупреждение,
 а не ошибка экспорта — файл пишется, регенерация детерминирована.
 
-**Скрипт ничего не пишет в ClickHouse** — только читает; транспорт (`ch_query`)
-переиспользуется из `scripts/extrapolation_aisc.py`, а не копируется. Секреты
-приходят только из окружения (их подставляет Makefile). Запуск — через `make`:
+**В ClickHouse скрипт по умолчанию не пишет** — только читает; с `ML_LOG=1`
+паспорт прогона и fold-предсказания уходят в `ml_runs`/`ml_predictions`
+(`scripts/ml_experiment.py`), а без переменной поведение прежнее. Транспорт
+(`ch_query`) переиспользуется из `scripts/extrapolation_aisc.py`, а не
+копируется. Секреты приходят только из окружения (их подставляет Makefile).
+Запуск — через `make`:
 
 * `make cpi-nowcast` — сводка выборки, walk-forward моделей и бенчмарков по окнам
   (основное — старт 24, робастность — старт 48 и эмбарго 1), веса NNLS, текущий
@@ -126,6 +129,7 @@ import argparse
 import csv
 import json
 import math
+import os
 import statistics
 import sys
 import warnings
@@ -151,6 +155,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import eval_utils as eu
 import extrapolation_aisc as aisc
+import ml_experiment as mlx
 
 ch_query = aisc.ch_query
 
@@ -2803,6 +2808,9 @@ def run_summary(
     embargo_months: int = MAIN_EMBARGO,
     out_dir: Optional[Path] = None,
     today: Optional[date] = None,
+    ml_log: Optional[bool] = None,
+    logger: Optional[object] = None,
+    run_name: Optional[str] = None,
 ) -> int:
     """Полный прогон: выборка, walk-forward, текущий nowcast и артефакты (§4–§5).
 
@@ -2828,8 +2836,13 @@ def run_summary(
     `out_dir` — каталог артефактов: корень worktree в живом прогоне (значение
     `ARTIFACTS_DIR` берётся в момент вызова, чтобы тесты могли его подменить),
     временный каталог — в тестах. `today` — дата прогона (по умолчанию
-    системная): она же дата среза признаков и `forecast_date` JSON. Скрипт
-    ничего не пишет в ClickHouse: только читает и кладёт `cpi_nowcast_report.md`,
+    системная): она же дата среза признаков и `forecast_date` JSON.
+
+    `ml_log`/`logger`/`run_name` — журнал эксперимента (`scripts/ml_experiment.py`):
+    при `ml_log=True` (или `ML_LOG=1`, если параметр не задан) создаётся прогон
+    `cpi_nowcast` с паспортом, fold-предсказаниями в п.п. и артефактами; явный
+    `logger` используется как есть (duck typing). Без журнала скрипт в ClickHouse
+    не пишет — только читает и кладёт `cpi_nowcast_report.md`,
     `cpi_nowcast_predictions.csv` и `cpi_nowcast_forecast.json`.
     """
     out_dir = Path(out_dir) if out_dir is not None else ARTIFACTS_DIR
@@ -2843,98 +2856,203 @@ def run_summary(
     rows, skipped = build_sample(targets, weekly, usd, key_rate, ofz, fao)
     assert_months_purged(rows)
 
+    if ml_log is None:
+        ml_log = os.environ.get("ML_LOG") == "1"
     months = sample_months(targets)
-    positions = len({name for name, _, _ in weekly})
-    print("CPI nowcast — walk-forward: бенчмарки B1–B3 и CatBoost (direct, bottom-up)")
-    _field("таргет rosstat_ipc_mes:",
-           f"{len(TARGET_SERIES)} {_plural(len(TARGET_SERIES), 'ряд', 'ряда', 'рядов')}, "
-           f"{_month_range(months)} "
-           f"({len(months)} {_plural(len(months), 'месяц', 'месяца', 'месяцев')})")
-    _field("недельные rosstat_ipc_weeks:",
-           f"{_range([(point[1],) for point in weekly])}, {positions} "
-           f"{_plural(positions, 'позиция', 'позиции', 'позиций')}")
-    _field("курс cbr_currency_usd:", _range(usd))
-    _field("ключевая ставка cbr_key_rate:", _range(key_rate))
-    ofz_points = f" ({len(ofz)} {_plural(len(ofz), 'точка', 'точки', 'точек')})" if ofz else ""
-    _field(f"ОФЗ {OFZ_TENOR} ofz_curve:", _range(ofz) + ofz_points)
-    _field("FAO Food Price Index:", _range(fao))
-    if rows:
-        _field("выборка:", f"{len(rows)} {_plural(len(rows), 'месяц', 'месяца', 'месяцев')} "
-               f"({rows[0].month.isoformat()[:7]} … {rows[-1].month.isoformat()[:7]}), "
-               f"пропущено {len(skipped)}")
-    else:
-        _field("выборка:", f"пусто, пропущено {len(skipped)}")
-    ofz_missing = sum(1 for row in rows if math.isnan(row.features["ofz_1y"]))
-    if ofz_missing:
-        _field("ofz_1y недоступна на cutoff:", f"{ofz_missing} из {len(rows)} месяцев → "
-               f"признак NaN (G-curve без истории: zcyc — снимок дня)")
-    _field("признаки:", ", ".join(feature_names()))
-    _field("модели:", ", ".join(model_label(name) for name in MODELS))
-    _field("purge-проверка (структурная):", "OK")
-    if skipped:
-        print("  пропущенные месяцы и причины:")
-        index = target_index(targets)
-        for month in skipped[:MAX_SKIPPED_PRINTED]:
-            _, reason = month_features(month, index, weekly, usd, key_rate, ofz, fao)
-            print(f"    {month.isoformat()[:7]} — {reason}")
-        hidden = len(skipped) - MAX_SKIPPED_PRINTED
-        if hidden > 0:
-            print(f"    … и ещё {hidden} {_plural(hidden, 'месяц', 'месяца', 'месяцев')}")
-    _field("--start:", f"{start} (основное окно walk-forward)")
-    _field("--embargo-months:", f"{embargo_months} (эмбарго основного окна)")
-
-    nowcast, reason = current_nowcast(
-        rows, targets, weekly, usd, key_rate, ofz, fao, today
-    )
-    if nowcast is None:
-        _field("текущий nowcast:", f"не рассчитан — {reason}")
-    else:
-        _field("текущий nowcast:", (
-            f"{nowcast.target_month.isoformat()[:7]} — as-of "
-            f"{nowcast.data_asof.isoformat()}, недель {nowcast.window_weeks} "
-            f"из {WEEKLY_WINDOW_WEEKS}"
-        ))
-        _print_nowcast(nowcast)
-
-    runs = evaluate_windows(rows, MODELS, window_specs(start, embargo_months))
-    _print_walk_forward(runs)
-    weights = bottomup_weight_reports(rows, runs)
-    _print_weights(weights)
-    if not any(run.predictions for run in runs):
-        # Ветка «ничего не посчитано вообще»: пустая выборка, выборка короче
-        # старта walk-forward или все модели вырождены — у ЭТОГО прогона нет ни
-        # одного прогноза, поэтому не пишется ничего, а все три артефакта
-        # прошлого прогона удаляются, чтобы не читались как его результат
-        # (образец — Task 6 ветки v0).
-        _field("отчёт/CSV/JSON:", "не пишутся (walk-forward не дал ни одного прогноза)")
-        _print_removed_artifacts(clear_stale_artifacts(out_dir))
-        return 0
-    # Ветка «нет цели живого nowcast'а» бэктест НЕ отменяет: отчёт и CSV пишутся
-    # как обычно, а подчищается только stale-прогноз (`write_nowcast_artifact`).
-    report = render_report(
-        rows,
-        skipped,
-        runs,
-        nowcast=(
-            render_nowcast(nowcast) if nowcast is not None
-            else render_nowcast_absent(reason)
-        ),
-        today=today,
-        weights=weights,
-    )
-    report_path, predictions_path = write_artifacts(out_dir, report, runs)
-    forecast_path = out_dir / FORECAST_NAME
-    forecast_written = write_nowcast_artifact(forecast_path, nowcast)
-    _field("отчёт:", str(report_path))
-    _field("прогнозы:", str(predictions_path))
-    if forecast_written:
-        _field("прогноз (JSON):", str(forecast_path))
-    else:
-        _field(
-            "прогноз (JSON):",
-            f"не пишется ({reason}); устаревший файл, если был, удалён",
+    sample_meta = {
+        "rows": len(rows),
+        "first": rows[0].month.isoformat() if rows else None,
+        "last": rows[-1].month.isoformat() if rows else None,
+        "skipped": len(skipped),
+        "months": len(months),
+    }
+    if logger is None and ml_log:
+        logger = mlx.start_run(
+            experiment="cpi_nowcast",
+            run_name=(
+                os.environ.get("ML_RUN_NAME")
+                or run_name
+                or f"cpi_nowcast__start{start}__embargo{embargo_months}"
+            ),
+            config={
+                "start": start,
+                "embargo_months": embargo_months,
+                "seed": SEED,
+                "models": list(MODELS),
+                "features": feature_names(),
+                "weekly_window_weeks": WEEKLY_WINDOW_WEEKS,
+                "target_series": TARGET_SERIES,
+            },
+            data_asof=today,
+            sample_meta=sample_meta,
+            sample=[
+                {
+                    "month": row.month.isoformat(),
+                    "y": mlx.json_safe(row.y),
+                    "features": mlx.json_safe(row.features),
+                }
+                for row in rows
+            ],
+            spec_path="docs/superpowers/specs/2026-10-16-cpi-nowcast-design.md",
+            enabled=True,
         )
-    return 0
+
+    try:
+        positions = len({name for name, _, _ in weekly})
+        print("CPI nowcast — walk-forward: бенчмарки B1–B3 и CatBoost (direct, bottom-up)")
+        _field("таргет rosstat_ipc_mes:",
+               f"{len(TARGET_SERIES)} {_plural(len(TARGET_SERIES), 'ряд', 'ряда', 'рядов')}, "
+               f"{_month_range(months)} "
+               f"({len(months)} {_plural(len(months), 'месяц', 'месяца', 'месяцев')})")
+        _field("недельные rosstat_ipc_weeks:",
+               f"{_range([(point[1],) for point in weekly])}, {positions} "
+               f"{_plural(positions, 'позиция', 'позиции', 'позиций')}")
+        _field("курс cbr_currency_usd:", _range(usd))
+        _field("ключевая ставка cbr_key_rate:", _range(key_rate))
+        ofz_points = f" ({len(ofz)} {_plural(len(ofz), 'точка', 'точки', 'точек')})" if ofz else ""
+        _field(f"ОФЗ {OFZ_TENOR} ofz_curve:", _range(ofz) + ofz_points)
+        _field("FAO Food Price Index:", _range(fao))
+        if rows:
+            _field("выборка:", f"{len(rows)} {_plural(len(rows), 'месяц', 'месяца', 'месяцев')} "
+                   f"({rows[0].month.isoformat()[:7]} … {rows[-1].month.isoformat()[:7]}), "
+                   f"пропущено {len(skipped)}")
+        else:
+            _field("выборка:", f"пусто, пропущено {len(skipped)}")
+        ofz_missing = sum(1 for row in rows if math.isnan(row.features["ofz_1y"]))
+        if ofz_missing:
+            _field("ofz_1y недоступна на cutoff:", f"{ofz_missing} из {len(rows)} месяцев → "
+                   f"признак NaN (G-curve без истории: zcyc — снимок дня)")
+        _field("признаки:", ", ".join(feature_names()))
+        _field("модели:", ", ".join(model_label(name) for name in MODELS))
+        _field("purge-проверка (структурная):", "OK")
+        if skipped:
+            print("  пропущенные месяцы и причины:")
+            index = target_index(targets)
+            for month in skipped[:MAX_SKIPPED_PRINTED]:
+                _, reason = month_features(month, index, weekly, usd, key_rate, ofz, fao)
+                print(f"    {month.isoformat()[:7]} — {reason}")
+            hidden = len(skipped) - MAX_SKIPPED_PRINTED
+            if hidden > 0:
+                print(f"    … и ещё {hidden} {_plural(hidden, 'месяц', 'месяца', 'месяцев')}")
+        _field("--start:", f"{start} (основное окно walk-forward)")
+        _field("--embargo-months:", f"{embargo_months} (эмбарго основного окна)")
+
+        nowcast, reason = current_nowcast(
+            rows, targets, weekly, usd, key_rate, ofz, fao, today
+        )
+        if nowcast is None:
+            _field("текущий nowcast:", f"не рассчитан — {reason}")
+        else:
+            _field("текущий nowcast:", (
+                f"{nowcast.target_month.isoformat()[:7]} — as-of "
+                f"{nowcast.data_asof.isoformat()}, недель {nowcast.window_weeks} "
+                f"из {WEEKLY_WINDOW_WEEKS}"
+            ))
+            _print_nowcast(nowcast)
+
+        runs = evaluate_windows(rows, MODELS, window_specs(start, embargo_months))
+        _print_walk_forward(runs)
+        weights = bottomup_weight_reports(rows, runs)
+        _print_weights(weights)
+        if not any(run.predictions for run in runs):
+            # Ветка «ничего не посчитано вообще»: пустая выборка, выборка короче
+            # старта walk-forward или все модели вырождены — у ЭТОГО прогона нет ни
+            # одного прогноза, поэтому не пишется ничего, а все три артефакта
+            # прошлого прогона удаляются, чтобы не читались как его результат
+            # (образец — Task 6 ветки v0).
+            _field("отчёт/CSV/JSON:", "не пишутся (walk-forward не дал ни одного прогноза)")
+            _print_removed_artifacts(clear_stale_artifacts(out_dir))
+            if logger is not None:
+                logger.finish("empty", "walk-forward не дал ни одного прогноза")
+            return 0
+        # Ветка «нет цели живого nowcast'а» бэктест НЕ отменяет: отчёт и CSV пишутся
+        # как обычно, а подчищается только stale-прогноз (`write_nowcast_artifact`).
+        report = render_report(
+            rows,
+            skipped,
+            runs,
+            nowcast=(
+                render_nowcast(nowcast) if nowcast is not None
+                else render_nowcast_absent(reason)
+            ),
+            today=today,
+            weights=weights,
+        )
+        report_path, predictions_path = write_artifacts(out_dir, report, runs)
+        forecast_path = out_dir / FORECAST_NAME
+        forecast_written = write_nowcast_artifact(forecast_path, nowcast)
+        _field("отчёт:", str(report_path))
+        _field("прогнозы:", str(predictions_path))
+        if forecast_written:
+            _field("прогноз (JSON):", str(forecast_path))
+        else:
+            _field(
+                "прогноз (JSON):",
+                f"не пишется ({reason}); устаревший файл, если был, удалён",
+            )
+        if logger is not None:
+            logger.log_metrics(
+                {
+                    "primary_metric": "rmse_pp",
+                    "sample": sample_meta,
+                    "windows": {
+                        window_key(run.start, run.embargo): {
+                            name: {
+                                "rmse": rmse_pp(group) if group else None,
+                                "mae": mae_pp(group) if group else None,
+                                "n": len(group),
+                                "skipped": int(run.skipped.get(name, 0)),
+                                "notes": dict(run.notes.get(name, {})),
+                            }
+                            for name, group in _run_groups(run).items()
+                        }
+                        for run in runs
+                    },
+                    "weights": [
+                        {
+                            "start": item.start,
+                            "embargo": item.embargo,
+                            "month": item.month.isoformat(),
+                            "train": item.train,
+                            "weights": dict(zip(BOTTOMUP_COMPONENTS, item.weights)),
+                        }
+                        for item in weights
+                    ],
+                }
+            )
+            logger.log_predictions(
+                [
+                    mlx.PredictionRow(
+                        model=prediction.model,
+                        window=window_key(run.start, run.embargo),
+                        target_date=prediction.month,
+                        predicted=prediction.y_pred,
+                        actual=prediction.y_true,
+                        unit="pp",
+                        meta={
+                            "start": run.start,
+                            "embargo": run.embargo,
+                            "main": run.main,
+                        },
+                    )
+                    for run in runs
+                    for prediction in run.predictions
+                ]
+            )
+            logger.log_artifacts(
+                [report_path, predictions_path, forecast_path if forecast_written else None]
+            )
+            logger.finish(
+                "finished",
+                f"walk-forward: {len(runs)} окон, "
+                f"{sum(len(run.predictions) for run in runs)} фолдов; "
+                f"текущий nowcast: {'рассчитан' if nowcast is not None else 'не рассчитан'}",
+            )
+        return 0
+    except Exception as exc:
+        if logger is not None:
+            logger.finish("failed", f"{type(exc).__name__}: {exc}")
+        raise
 
 
 def main(argv: Optional[list] = None) -> int:
@@ -2969,6 +3087,8 @@ def main(argv: Optional[list] = None) -> int:
     args = parser.parse_args(argv)
     if args.export_fixtures:
         return export_fixtures(Path(args.export_fixtures))
+    # ML_LOG/ML_RUN_NAME читаются внутри run_summary (`ml_log=None`): явный
+    # параметр здесь не нужен, и без переменной поведение прогона прежнее.
     return run_summary(start=args.start, embargo_months=args.embargo_months)
 
 

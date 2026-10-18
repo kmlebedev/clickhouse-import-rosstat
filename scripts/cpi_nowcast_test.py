@@ -39,6 +39,7 @@ import csv
 import io
 import json
 import math
+import os
 import random
 import statistics
 import sys
@@ -153,6 +154,37 @@ def fixture_sample() -> tuple:
         fixture_ofz(),
         fixture_fao(),
     )
+
+
+class FakeLogger:
+    """Duck-typed двойник `ml_experiment.ExperimentRun` для офлайн-тестов.
+
+    Контекстным менеджером быть не обязан (рулинг Task 3): `run_summary` вызывает
+    `finish` явно на каждом выходе. Методы повторяют контракт
+    `log_metrics`/`log_predictions`/`log_artifacts`/`finish` без похода в
+    ClickHouse.
+    """
+
+    def __init__(self):
+        self.metrics = {}
+        self.predictions = []
+        self.artifacts = []
+        self.finished = None
+        self.notes = ""
+
+    def log_metrics(self, metrics):
+        self.metrics.update(metrics)
+
+    def log_predictions(self, rows):
+        self.predictions.extend(rows)
+
+    def log_artifacts(self, paths):
+        self.artifacts.extend(path for path in paths if path is not None)
+
+    def finish(self, status="finished", notes=""):
+        self.finished = status
+        self.notes = notes
+        return "fake"
 
 
 def summary_value(text: str, label: str) -> str:
@@ -978,6 +1010,137 @@ class TestRunSummaryOffline(unittest.TestCase):
         self.assertIn("устаревшие артефакты прошлого прогона удалены", text)
         for name in cm.ARTIFACT_NAMES:
             self.assertFalse((Path(tmp) / name).exists(), name)
+
+
+# --- Task 3: журнал эксперимента ---------------------------------------------
+
+
+def experiment_world() -> dict:
+    """Длинный офлайн-мир (60 месяцев): фолды есть и у start=24, и у start=48."""
+    months = month_span(date(2021, 1, 1), date(2025, 12, 1))
+    usd = [
+        (date(2020, 12, 1) + ONE_DAY * offset, 70.0 + offset * 0.01)
+        for offset in range(2200)
+    ]
+    fao = [(month, 110.0 + index) for index, month in enumerate(months)]
+    return nowcast_world(
+        last_label_month=months[-1],
+        weeks=month_days(months) + [date(2026, 1, 9)],
+        today=date(2026, 1, 15),
+        usd=usd,
+        fao=fao,
+    )
+
+
+def cheap_models() -> dict:
+    """Пять моделей прогона заменяются дешёвой формулой: без CatBoost-фитов.
+
+    Имена — те, что перебирает `current_nowcast`; значения детерминированы, чтобы
+    счётчики фолдов совпали с `evaluate_windows` на той же выборке.
+    """
+
+    def model(train, row):
+        return float(row.features["y_lag1"])
+
+    return {
+        name: model
+        for name in (
+            cm.MODEL_CATBOOST_DIRECT,
+            cm.MODEL_CATBOOST_BOTTOMUP,
+            cm.MODEL_LAST,
+            cm.MODEL_AR1,
+            cm.MODEL_ENET,
+        )
+    }
+
+
+class TestRunSummaryExperimentLog(unittest.TestCase):
+    """Task 3: паспорт run'а, fold-предсказания, метрики и артефакты."""
+
+    @contextlib.contextmanager
+    def patched_world(self, world, models=None):
+        """Подменяет загрузчики (и, если задано, `MODELS`) миром `world`."""
+        with contextlib.ExitStack() as stack:
+            for loader, key in (
+                ("load_targets", "targets"), ("load_weekly", "weekly"),
+                ("load_usd", "usd"), ("load_key_rate", "key_rate"),
+                ("load_ofz_1y", "ofz"), ("load_fao", "fao"),
+            ):
+                stack.enter_context(
+                    unittest.mock.patch.object(cm, loader, lambda key=key: world[key])
+                )
+            if models is not None:
+                stack.enter_context(unittest.mock.patch.object(cm, "MODELS", models))
+            yield stack
+
+    def test_run_summary_logs_cpi_run(self):
+        world = experiment_world()
+        models = cheap_models()
+        rows, _ = build_world(world)
+        runs = cm.evaluate_windows(rows, models, cm.window_specs(24, 1))
+        fake = FakeLogger()
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.patched_world(world, models), contextlib.redirect_stdout(io.StringIO()):
+                code = cm.run_summary(
+                    start=24,
+                    embargo_months=1,
+                    out_dir=Path(tmp),
+                    today=world["today"],
+                    ml_log=True,
+                    logger=fake,
+                )
+        self.assertEqual(code, 0)
+        self.assertEqual(fake.finished, "finished")
+        self.assertEqual(
+            len(fake.predictions), sum(len(run.predictions) for run in runs)
+        )
+        self.assertEqual({row.unit for row in fake.predictions}, {"pp"})
+        windows = {row.window for row in fake.predictions}
+        self.assertTrue(any(window.startswith("start=24") for window in windows), windows)
+        self.assertIn("start=48, embargo=1", windows)
+        self.assertEqual(fake.metrics["primary_metric"], "rmse_pp")
+        self.assertEqual(set(fake.metrics["windows"]), windows)
+        self.assertTrue(fake.metrics["weights"])
+        self.assertEqual(
+            {path.name for path in fake.artifacts},
+            {cm.REPORT_NAME, cm.PREDICTIONS_NAME, cm.FORECAST_NAME},
+        )
+
+    def test_run_summary_without_ml_log_does_not_call_ch_exec(self):
+        # Явный ml_log=False важнее ML_LOG=1: журнал выключен, ch_exec не зовётся.
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                fixture_transport(),
+                unittest.mock.patch.dict(os.environ, {"ML_LOG": "1"}),
+                unittest.mock.patch.object(cm.mlx, "ch_exec") as ch_exec,
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                code = cm.run_summary(
+                    start=3,
+                    out_dir=Path(tmp),
+                    today=date(2026, 10, 16),
+                    ml_log=False,
+                )
+        self.assertEqual(code, 0)
+        ch_exec.assert_not_called()
+
+    def test_run_summary_empty_logs_empty_status(self):
+        months = [date(2022, m, 1) for m in range(1, 13)]
+        world = synthetic_world(months=months, fao=[])
+        fake = FakeLogger()
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.patched_world(world), contextlib.redirect_stdout(io.StringIO()):
+                code = cm.run_summary(
+                    out_dir=Path(tmp),
+                    today=date(2026, 10, 16),
+                    ml_log=True,
+                    logger=fake,
+                )
+        self.assertEqual(code, 0)
+        self.assertEqual(fake.finished, "empty")
+        self.assertEqual(fake.predictions, [])
+        self.assertEqual(fake.metrics, {})
+        self.assertEqual(fake.artifacts, [])
 
 
 class TestSummaryFormat(unittest.TestCase):
