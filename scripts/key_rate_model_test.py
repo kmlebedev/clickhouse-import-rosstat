@@ -1409,38 +1409,37 @@ class TestConsensusBridge(unittest.TestCase):
             self.key_rate(),
             [self.wave(date(2024, 6, 1), 2024, 15.0)],
             self.forecast({"ordered_logit": {"expected_step_bp": 100.0}}),
-            sample_size=10,
-            b4_folds=3,
-            today=date(2024, 7, 1),
+            date(2024, 7, 1),
         )
         self.assertIsNotNone(bridge)
         self.assertEqual(bridge.ytd_days, 183)
         self.assertAlmostEqual(bridge.ytd_average, (1820.0 + 20.0) / 183, places=12)
         # B4: A = 7 июня, known = 159 дней по 10 %, N_rem = 207.
         self.assertIsNotNone(bridge.projection)
+        self.assertIsNone(bridge.projection_reason)
         self.assertAlmostEqual(
             bridge.projection.implied_level, (15.0 * 366 - 1590.0) / 207, places=12
         )
         self.assertEqual(bridge.projection.days_remaining, 207)
         # Сценарий: model_level = 20 + 100/100 = 21.
         self.assertEqual(bridge.model_level, 21.0)
+        self.assertIsNone(bridge.scenario_reason)
         expected = (1840.0 + 24 * 20.0 + 159 * 21.0) / 366
         self.assertAlmostEqual(bridge.implied_avg, expected, places=12)
-        self.assertEqual(bridge.b4_missing, 7)
 
-    def test_bridge_without_ordered_logit_keeps_ytd_and_projection(self):
+    def test_bridge_without_ordered_logit_names_the_reason(self):
         bridge = km.consensus_bridge(
             self.key_rate(),
             [self.wave(date(2024, 6, 1), 2024, 15.0)],
             self.forecast({"taylor": {"step_bp": -50.0}}),
-            sample_size=10,
-            b4_folds=3,
-            today=date(2024, 7, 1),
+            date(2024, 7, 1),
         )
         self.assertIsNotNone(bridge)
         self.assertIsNotNone(bridge.projection)
+        self.assertIsNone(bridge.projection_reason)
         self.assertIsNone(bridge.model_level)
         self.assertIsNone(bridge.implied_avg)
+        self.assertIn("ordered_logit", bridge.scenario_reason)
 
     def test_current_projection_does_not_look_ahead(self):
         # Волна публикуется между today (1 июля) и заседанием (26 июля):
@@ -1450,23 +1449,73 @@ class TestConsensusBridge(unittest.TestCase):
             self.key_rate(),
             [self.wave(date(2024, 7, 1), 2024, 15.0)],  # A = 7 июля
             self.forecast({"ordered_logit": {"expected_step_bp": 100.0}}),
-            sample_size=10,
-            b4_folds=0,
-            today=date(2024, 7, 1),
+            date(2024, 7, 1),
         )
         self.assertIsNotNone(bridge)
         self.assertIsNone(bridge.projection)
+        self.assertIn("ещё не опубликована", bridge.projection_reason)
         self.assertIsNotNone(bridge.implied_avg)
+
+    def test_no_future_meeting_reason(self):
+        bridge = km.consensus_bridge(
+            self.key_rate(), [], None, date(2024, 7, 1)
+        )
+        self.assertIsNotNone(bridge)
+        self.assertIsNone(bridge.meeting_date)
+        self.assertIsNone(bridge.projection)
+        self.assertEqual(
+            bridge.projection_reason, "ближайшего будущего заседания нет"
+        )
+        self.assertEqual(bridge.scenario_reason, bridge.projection_reason)
+
+    def test_next_year_meeting_reason(self):
+        # Ближайшее заседание — в следующем календарном году: у сценария нет
+        # среднегодовой текущего года (делитель N_Y — год `today`), а B4
+        # считается по январской ветке §3.2.
+        key_rate = [
+            (date(2024, 1, 1), 10.0),
+            (date(2024, 12, 31), 10.0),
+            (date(2025, 12, 31), 10.0),
+        ]
+        bridge = km.consensus_bridge(
+            key_rate,
+            [self.wave(date(2024, 12, 1), 2025, 12.0)],
+            self.forecast(
+                {"ordered_logit": {"expected_step_bp": 0.0}},
+                rate_before=10.0,
+                meeting=date(2025, 1, 26),
+            ),
+            date(2024, 12, 20),
+        )
+        self.assertIsNotNone(bridge)
+        self.assertIsNotNone(bridge.projection)
+        self.assertIsNone(bridge.implied_avg)
+        self.assertIn("следующем календарном году", bridge.scenario_reason)
+
+    def test_short_remaining_year_names_the_b4_gap_reason(self):
+        # Волна 1 декабря доступна 7 декабря: до конца 2024 года 24 дня —
+        # меньше guard 30, и отчёт обязан назвать именно эту причину.
+        bridge = km.consensus_bridge(
+            [
+                (date(2024, 1, 1), 10.0),
+                (date(2024, 12, 31), 10.0),
+            ],
+            [self.wave(date(2024, 12, 1), 2024, 10.0)],
+            self.forecast(
+                {"ordered_logit": {"expected_step_bp": 0.0}},
+                rate_before=10.0,
+                meeting=date(2024, 12, 20),
+            ),
+            date(2024, 12, 10),
+        )
+        self.assertIsNotNone(bridge)
+        self.assertIsNone(bridge.projection)
+        self.assertIn("меньше 30 дней", bridge.projection_reason)
 
     def test_bridge_without_year_start_rate_is_none(self):
         self.assertIsNone(
             km.consensus_bridge(
-                [(date(2024, 2, 1), 10.0)],
-                [],
-                None,
-                sample_size=0,
-                b4_folds=0,
-                today=date(2024, 7, 1),
+                [(date(2024, 2, 1), 10.0)], [], None, date(2024, 7, 1)
             )
         )
 
@@ -1521,9 +1570,10 @@ class TestConsensusSection(unittest.TestCase):
                 step_bp=-229.35,
                 days_remaining=115,
             ),
+            projection_reason=None,
             model_level=13.37,
             implied_avg=14.47,
-            b4_missing=68,
+            scenario_reason=None,
         )
 
     def test_section_prints_current_wave_buckets_and_hold_scenario(self):
@@ -1557,6 +1607,7 @@ class TestConsensusSection(unittest.TestCase):
             km.b4_metrics(b4),
             comparisons,
             date(2025, 10, 19),
+            b4_missing=68,
         )
         # Вводные и правило доступности.
         self.assertIn("## Консенсус-бенчмарк №4 (медиана макроопроса)", text)
@@ -1587,9 +1638,13 @@ class TestConsensusSection(unittest.TestCase):
         self.assertIn("### Режимный срез 2024–2025", text)
         # B4: метрики, сравнение и пропуски выборки.
         self.assertIn("### B4: проекция годовой медианы на шаг заседания", text)
-        self.assertIn("| 2 |", text)
+        # Точная строка метрик B4: n и все четыре значения.
+        self.assertIn("| 2 | 10.00 | 10.00 | 0.500 | 0.667 |", text)
         self.assertIn("| hold | expanding | 2 | 5.00 | 1.20 | 0.3000 |", text)
         self.assertIn("без B4-фолда: **68**", text)
+        # Полный перечень guards B4, а не только «нет волны».
+        self.assertIn("1 января года заседания", text)
+        self.assertIn("`r_implied` вне (−100, 100) %", text)
         self.assertIn("### Что не проверено", text)
 
     def test_empty_consensus_says_no_data(self):
@@ -1615,6 +1670,55 @@ class TestConsensusSection(unittest.TestCase):
         self.assertIn("| 2025 | 14.50 | — | — | — |", text)
         self.assertIn("Сценарий не оценён", text)
         self.assertIn("_B4 не определено ни на одном заседании._", text)
+
+    def test_bridge_none_keeps_the_b4_missing_count(self):
+        # Мост не построен (ряд ставки не покрывает 1 января), но счётчик
+        # пропусков B4 известен независимо от него и не деградирует в «—».
+        current = km.CurrentConsensus(
+            wave_date=date(2025, 9, 1),
+            available_from=date(2025, 9, 7),
+            rows=[self.wave(date(2025, 9, 1), 2025, 14.5)],
+            stale_days=42,
+        )
+        text = km.render_consensus_section(
+            [], current, None, [], None, [], date(2025, 9, 10), b4_missing=7
+        )
+        self.assertIn("без B4-фолда: **7**", text)
+        self.assertIn(
+            "B4-проекция остатка года не определена: ряд ставки не покрывает "
+            "1 января текущего года",
+            text,
+        )
+
+    def test_projection_and_scenario_reasons_are_printed(self):
+        # Отчёт печатает причину из моста, а не общий список догадок: «нет
+        # будущего заседания» и конкретный guard B4 видны прямо в тексте.
+        bridge = dataclasses.replace(
+            self.bridge(),
+            projection=None,
+            projection_reason="на остаток 2025 года меньше 30 дней",
+            model_level=None,
+            implied_avg=None,
+            scenario_reason="ближайшего будущего заседания нет",
+        )
+        current = km.CurrentConsensus(
+            wave_date=date(2025, 9, 1),
+            available_from=date(2025, 9, 7),
+            rows=[self.wave(date(2025, 9, 1), 2025, 14.5)],
+            stale_days=42,
+        )
+        text = km.render_consensus_section(
+            [], current, bridge, [], None, [], date(2025, 10, 19), b4_missing=0
+        )
+        self.assertIn(
+            "B4-проекция остатка года не определена: на остаток 2025 года "
+            "меньше 30 дней.",
+            text,
+        )
+        self.assertIn("1 января года заседания", text)
+        self.assertIn(
+            "Сценарий не оценён: ближайшего будущего заседания нет.", text
+        )
 
 
 class TestRows(unittest.TestCase):

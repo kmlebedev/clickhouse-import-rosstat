@@ -922,6 +922,94 @@ class ConsensusPath:
     days_remaining: int
 
 
+def _consensus_path_with_reason(
+    consensus: list,
+    key_rate: list,
+    meeting: date,
+    rate_before: float,
+    asof: Optional[date] = None,
+) -> tuple:
+    """B4-проекция и причина её отсутствия (для пользовательского текста).
+
+    Возврат — `(ConsensusPath | None, причина | None)`: причина заполнена
+    только когда проекция не определена. Порядок guards — тот же, что у
+    `consensus_path`, чтобы отчёт не расходился с расчётом.
+
+    `asof` — дополнительный фильтр ТЕКУЩЕЙ проекции: волна обязана быть уже
+    опубликована на дату среза (`available_from <= asof`), иначе это
+    заглядывание вперёд. Бэктест B4 (`asof=None`) живёт по правилу §3.2 —
+    волна строго до заседания.
+    """
+    year = meeting.year
+    candidates = [
+        wave
+        for wave in consensus
+        if wave.year == year and wave.available_from < meeting
+    ]
+    if asof is not None:
+        available_candidates = [
+            wave for wave in candidates if wave.available_from <= asof
+        ]
+        if not available_candidates and candidates:
+            return (
+                None,
+                f"волна на {year} год ещё не опубликована на дату среза "
+                f"{asof.isoformat()}",
+            )
+        candidates = available_candidates
+    if not candidates:
+        return (
+            None,
+            f"нет волны на {year} год с публикацией до заседания "
+            f"{meeting.isoformat()}",
+        )
+    wave = max(candidates, key=lambda wave: (wave.available_from, wave.wave_date))
+    available = wave.available_from
+    if _rate_asof(key_rate, available) is None:
+        return (
+            None,
+            f"ряд ставки не покрывает дату доступности волны "
+            f"{available.isoformat()}",
+        )
+    first_day = date(year, 1, 1)
+    last_day = date(year, 12, 31)
+    days_in_year = (last_day - first_day).days + 1
+    if available < first_day:
+        implied = wave.median
+        days_remaining = days_in_year
+    else:
+        days_remaining = (last_day - available).days
+        if days_remaining < CONSENSUS_MIN_DAYS_REMAINING:
+            return (
+                None,
+                f"на остаток {year} года меньше "
+                f"{CONSENSUS_MIN_DAYS_REMAINING} дней",
+            )
+        # R_known начинается 1 января: без точки на эту дату сумму не собрать,
+        # и `sum_rates_between` поднял бы ValueError. Для B4 это guard, а не
+        # ошибка прогона — как и отсутствие ставки на `A`.
+        if _rate_asof(key_rate, first_day) is None:
+            return (None, f"ряд ставки не покрывает 1 января {year} года")
+        known = sum_rates_between(key_rate, first_day, available)
+        implied = (wave.median * days_in_year - known) / days_remaining
+    if not (-100.0 < implied < 100.0):
+        return (None, f"r_implied={implied:.2f} % вне (−100, 100) %")
+    return (
+        ConsensusPath(
+            meeting_date=meeting,
+            wave_date=wave.wave_date,
+            available_from=available,
+            year=year,
+            annual_median=wave.median,
+            rate_before=float(rate_before),
+            implied_level=implied,
+            step_bp=(implied - rate_before) * 100.0,
+            days_remaining=days_remaining,
+        ),
+        None,
+    )
+
+
 def consensus_path(
     consensus: list, key_rate: list, meeting: date, rate_before: float
 ) -> Optional[ConsensusPath]:
@@ -942,49 +1030,10 @@ def consensus_path(
     `CONSENSUS_MIN_DAYS_REMAINING` дней; `r_implied` вне `(−100, 100)`
     процента (деление на короткий хвост или порча данных). Это guard
     бенчмарка, а не ошибка: заседание просто выпадает из B4-выборки.
+    Причины отсутствия называет `_consensus_path_with_reason`.
     """
-    year = meeting.year
-    candidates = [
-        wave
-        for wave in consensus
-        if wave.year == year and wave.available_from < meeting
-    ]
-    if not candidates:
-        return None
-    wave = max(candidates, key=lambda wave: (wave.available_from, wave.wave_date))
-    available = wave.available_from
-    if _rate_asof(key_rate, available) is None:
-        return None
-    first_day = date(year, 1, 1)
-    last_day = date(year, 12, 31)
-    days_in_year = (last_day - first_day).days + 1
-    if available < first_day:
-        implied = wave.median
-        days_remaining = days_in_year
-    else:
-        days_remaining = (last_day - available).days
-        if days_remaining < CONSENSUS_MIN_DAYS_REMAINING:
-            return None
-        # R_known начинается 1 января: без точки на эту дату сумму не собрать,
-        # и `sum_rates_between` поднял бы ValueError. Для B4 это guard, а не
-        # ошибка прогона — как и отсутствие ставки на `A`.
-        if _rate_asof(key_rate, first_day) is None:
-            return None
-        known = sum_rates_between(key_rate, first_day, available)
-        implied = (wave.median * days_in_year - known) / days_remaining
-    if not (-100.0 < implied < 100.0):
-        return None
-    return ConsensusPath(
-        meeting_date=meeting,
-        wave_date=wave.wave_date,
-        available_from=available,
-        year=year,
-        annual_median=wave.median,
-        rate_before=float(rate_before),
-        implied_level=implied,
-        step_bp=(implied - rate_before) * 100.0,
-        days_remaining=days_remaining,
-    )
+    path, _ = _consensus_path_with_reason(consensus, key_rate, meeting, rate_before)
+    return path
 
 
 def consensus_path_predictions(rows: list, consensus: list, key_rate: list) -> list:
@@ -1141,7 +1190,7 @@ class CurrentConsensus:
     wave_date: date
     available_from: date
     rows: list
-    stale_days: Optional[int]
+    stale_days: int
 
 
 def current_consensus(consensus: list, today: date) -> Optional[CurrentConsensus]:
@@ -3201,10 +3250,11 @@ class ConsensusBridge:
 
     `ytd_average`/`ytd_days` — фактическая средняя года `today.year` с 1 января
     по дату прогона (календарные дни). `projection` — B4-проекция остатка года
-    по текущей волне (§3.2), `None`, когда её guards не выполнены. `model_level`
-    и `implied_avg` — сценарий удержания после ближайшего заседания (§3.3);
-    `None` — `ordered_logit` не посчитан или сценарий не определён.
-    `b4_missing` — сколько заседаний выборки осталось без B4-фолда.
+    по текущей волне (§3.2), `None`, когда её guards не выполнены;
+    `projection_reason` называет причину. `model_level` и `implied_avg` —
+    сценарий удержания после ближайшего заседания (§3.3); `None` —
+    `ordered_logit` не посчитан, заседание в другом году или сценарий не
+    определён; `scenario_reason` называет причину.
     """
 
     meeting_date: Optional[date]
@@ -3212,17 +3262,16 @@ class ConsensusBridge:
     ytd_average: float
     ytd_days: int
     projection: Optional[ConsensusPath]
+    projection_reason: Optional[str]
     model_level: Optional[float]
     implied_avg: Optional[float]
-    b4_missing: int
+    scenario_reason: Optional[str]
 
 
 def consensus_bridge(
     key_rate: list,
     consensus: list,
     forecast: Optional[CurrentForecast],
-    sample_size: int,
-    b4_folds: int,
     today: date,
 ) -> Optional[ConsensusBridge]:
     """Числа текущего консенсуса для раздела отчёта, или `None`.
@@ -3230,14 +3279,13 @@ def consensus_bridge(
     Средняя с начала года считается по фактическому пути ставки
     (`sum_rates_between`); без покрытия 1 января она не определена — `None`
     (раздел назовёт причину, а не нарисует нулевую среднюю). B4-проекция
-    остатка — существующая `consensus_path` для ближайшего заседания: те же
-    guards §3.2 (волна строго до заседания, покрытие ставки, остаток года не
-    меньше `CONSENSUS_MIN_DAYS_REMAINING`, `r_implied` в допустимом диапазоне),
-    причём волна обязана быть доступна уже на `today`: текущая проекция не
-    заглядывает вперёд, в отличие от бэктеста B4 (там правило — до заседания).
+    остатка — `_consensus_path_with_reason` для ближайшего заседания: те же
+    guards §3.2, а волна обязана быть доступна уже на `today` (текущая
+    проекция не заглядывает вперёд, в отличие от бэктеста B4). Причина
+    отсутствия проекции/сценария переносится в `projection_reason`/
+    `scenario_reason`: отчёт печатает её, а не общий список догадок.
     Сценарий удержания — `hold_scenario_average` по `expected_step_bp` метода
-    `ordered_logit`; без метода или его входа — `None` (блок отчёта назовёт
-    причину).
+    `ordered_logit`.
     """
     first_day = date(today.year, 1, 1)
     if _rate_asof(key_rate, first_day) is None:
@@ -3247,35 +3295,63 @@ def consensus_bridge(
     meeting_date = forecast.meeting_date if forecast is not None else None
     rate_before = forecast.rate_before if forecast is not None else None
     projection = None
+    projection_reason = None
     model_level = None
     implied_avg = None
-    if forecast is not None and rate_before is not None:
+    scenario_reason = None
+    if forecast is None:
+        # Ближайшего будущего заседания нет: ни проекции, ни сценария.
+        projection_reason = "ближайшего будущего заседания нет"
+        scenario_reason = projection_reason
+    elif rate_before is None:
+        projection_reason = "ставка перед ближайшим заседанием недоступна"
+        scenario_reason = projection_reason
+    else:
         # Текущая проекция — as-of даты прогона: волна, опубликованная между
         # `today` и заседанием, была бы заглядыванием вперёд. Бэктест B4 живёт
         # по правилу §3.2 «до заседания» и потому считается по полному ряду
         # отдельно (`consensus_path_predictions`).
-        asof_consensus = [wave for wave in consensus if wave.available_from <= today]
-        projection = consensus_path(
-            asof_consensus, key_rate, forecast.meeting_date, rate_before
+        projection, projection_reason = _consensus_path_with_reason(
+            consensus, key_rate, forecast.meeting_date, rate_before, asof=today
         )
-        payload = forecast.methods.get("ordered_logit") or {}
-        expected_step = payload.get("expected_step_bp")
-        if expected_step is not None:
-            candidate = rate_before + expected_step / 100.0
-            implied_avg = hold_scenario_average(
-                key_rate, today, forecast.meeting_date, rate_before, candidate
+        if forecast.meeting_date.year != today.year:
+            # Формула сценария делит на N_Y года `today`: у заседания
+            # следующего года нет среднегодовой текущего года.
+            scenario_reason = (
+                f"ближайшее заседание {forecast.meeting_date.isoformat()} — в "
+                f"следующем календарном году, а сценарий вменяет среднегодовую "
+                f"{today.year}"
             )
-            if implied_avg is not None:
-                model_level = candidate
+        else:
+            payload = forecast.methods.get("ordered_logit") or {}
+            expected_step = payload.get("expected_step_bp")
+            if expected_step is None:
+                scenario_reason = (
+                    "в текущем прогнозе нет `ordered_logit` (метод пропущен "
+                    "или его входы недоступны)"
+                )
+            else:
+                candidate = rate_before + expected_step / 100.0
+                implied_avg = hold_scenario_average(
+                    key_rate, today, forecast.meeting_date, rate_before, candidate
+                )
+                if implied_avg is None:
+                    scenario_reason = (
+                        "сценарий не определён: нет ставки на дату прогона или "
+                        "1 января года либо уровень не конечен"
+                    )
+                else:
+                    model_level = candidate
     return ConsensusBridge(
         meeting_date=meeting_date,
         rate_before=rate_before,
         ytd_average=ytd_average,
         ytd_days=ytd_days,
         projection=projection,
+        projection_reason=projection_reason,
         model_level=model_level,
         implied_avg=implied_avg,
-        b4_missing=sample_size - b4_folds,
+        scenario_reason=scenario_reason,
     )
 
 
@@ -3312,6 +3388,7 @@ def render_consensus_section(
     b4_metrics_value: Optional[B4Metrics],
     b4_comparisons: list,
     today: date,
+    b4_missing: Optional[int] = None,
 ) -> str:
     """Markdown-раздел «Консенсус-бенчмарк №4» (спека §5, Task 5).
 
@@ -3325,6 +3402,10 @@ def render_consensus_section(
     Числа приходят готовыми (`observations`, `current`, `bridge`,
     `b4_predictions`, `b4_metrics_value`, `b4_comparisons`): рендерер только
     форматирует их через `_table`/`_fmt`, как и остальные таблицы отчёта.
+    `b4_missing` — `len(rows) − len(b4_predictions)`; параметр независим от
+    `bridge` (мост может быть `None`, а счётчик пропусков B4 — известен).
+    Причины отсутствия текущей проекции/сценария берутся из
+    `bridge.projection_reason`/`scenario_reason`, а не угадываются.
     """
     lines = [
         "## Консенсус-бенчмарк №4 (медиана макроопроса)",
@@ -3352,7 +3433,7 @@ def render_consensus_section(
             f"устарела на **{current.stale_days}** дн.",
             "",
         ]
-        if current.stale_days is not None and current.stale_days > CONSENSUS_STALE_AFTER_DAYS:
+        if current.stale_days > CONSENSUS_STALE_AFTER_DAYS:
             lines += [
                 "Волна старше естественного цикла (8 волн/год ≈ 6–7 недель): "
                 "последняя публикация могла быть пропущена, и текущий консенсус "
@@ -3398,16 +3479,24 @@ def render_consensus_section(
                 f"{path.meeting_date.isoformat()} — {_fmt(path.step_bp)} б.п.)."
             )
         else:
+            reason = bridge.projection_reason or "причина не определена"
             lines.append(
-                "B4-проекция остатка года не определена: нет волны на год "
-                "ближайшего заседания, ряд ставки не покрывает дату волны или "
-                f"на остаток года меньше {CONSENSUS_MIN_DAYS_REMAINING} дней."
+                f"B4-проекция остатка года не определена: {reason}. Guards: "
+                "нет волны на год заседания с публикацией до заседания; волна "
+                "ещё не опубликована на дату среза; ряд ставки не покрывает "
+                "дату доступности волны или 1 января года заседания; на "
+                f"остаток года меньше {CONSENSUS_MIN_DAYS_REMAINING} дней; "
+                "`r_implied` вне (−100, 100) %."
             )
-    elif current is not None:
+    else:
+        # `bridge is None` — ряд ставки не покрывает 1 января года `today`;
+        # без него не собрать ни среднюю с начала года, ни текущую проекцию.
         lines += [
             "",
             "Средняя с начала года не определена: ряд ставки не покрывает "
             "1 января текущего года.",
+            "B4-проекция остатка года не определена: ряд ставки не покрывает "
+            "1 января текущего года (и дату доступности волны).",
         ]
 
     lines += ["", "### Сценарий удержания", ""]
@@ -3416,10 +3505,8 @@ def render_consensus_section(
             "_Сценарий не оценён: ряд ставки не покрывает начало текущего года._"
         ]
     elif bridge.implied_avg is None:
-        lines += [
-            "_Сценарий не оценён: в текущем прогнозе нет `ordered_logit` "
-            "(метод пропущен или его входы недоступны)._"
-        ]
+        reason = bridge.scenario_reason or "причина не определена"
+        lines += [f"_Сценарий не оценён: {reason}._"]
     else:
         difference = (
             (bridge.implied_avg - current_year_median) * 100.0
@@ -3535,12 +3622,13 @@ def render_consensus_section(
             for comparison in b4_comparisons
         ],
     )
-    missing = bridge.b4_missing if bridge is not None else None
     lines += [
         "",
-        f"Заседаний выборки без B4-фолда: **{_fmt(missing, 0)}** — причина: нет "
-        "волны на год заседания, ряд ставки не покрывает дату волны или на "
-        f"остаток года меньше {CONSENSUS_MIN_DAYS_REMAINING} дней.",
+        f"Заседаний выборки без B4-фолда: **{_fmt(b4_missing, 0)}** — причина: "
+        "нет волны на год заседания с публикацией до заседания; ряд ставки не "
+        "покрывает дату доступности волны или 1 января года заседания; на "
+        f"остаток года меньше {CONSENSUS_MIN_DAYS_REMAINING} дней; `r_implied` "
+        "вне (−100, 100) %.",
         "",
         "### Что не проверено",
         "",
@@ -3924,9 +4012,7 @@ def run_summary(
         forecast = current_forecast(rows, meetings, key_rate, cpd, ibk, today)
         # Мост текущего консенсуса: средняя с начала года, B4-проекция остатка
         # и сценарий удержания по `ordered_logit` (если метод посчитан).
-        bridge = consensus_bridge(
-            key_rate, consensus, forecast, len(rows), len(b4), today
-        )
+        bridge = consensus_bridge(key_rate, consensus, forecast, today)
         consensus_text = render_consensus_section(
             observations,
             current,
@@ -3935,6 +4021,9 @@ def run_summary(
             b4_metrics(b4),
             b4_significance(b4, predictions),
             today,
+            # Счётчик пропусков B4 не зависит от моста: он известен и тогда,
+            # когда ряд ставки не покрывает начало года (bridge is None).
+            b4_missing=len(rows) - len(b4),
         )
         report_path = out_dir / REPORT_NAME
         predictions_path = out_dir / PREDICTIONS_NAME
