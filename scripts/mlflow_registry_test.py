@@ -269,6 +269,14 @@ class RegisterVersionTest(unittest.TestCase):
 
         self.assertEqual(client.calls_named("create_registered_model"), [])
 
+    def test_unsafe_name_is_rejected_before_mlflow_call(self):
+        for name in ("weird'name", "back\\slash"):
+            with self.subTest(name=name):
+                client = FakeClient()
+                with self.assertRaises(mr.UnsafeModelNameError):
+                    mr.register_version(client, name, RUN_ID)
+                self.assertEqual(client.calls, [])
+
 
 class PromoteVersionTest(unittest.TestCase):
     def test_sets_champion_and_keeps_challenger(self):
@@ -423,19 +431,22 @@ class ListModelsTest(unittest.TestCase):
 
         self.assertEqual(rows[0]["aliases"], [])
 
-    def test_filter_string_escapes_quotes_and_backslashes(self):
-        name = "weird'name\\path"
+    def test_unsafe_name_is_rejected_before_mlflow_call(self):
+        for name in ("weird'name", "back\\slash"):
+            with self.subTest(name=name):
+                client = FakeClient()
+                with self.assertRaises(mr.UnsafeModelNameError):
+                    mr.list_models(client, name=name)
+                self.assertEqual(client.calls, [])
+
+    def test_unsafe_registered_name_is_rejected_before_filter(self):
         client = FakeClient()
-        _seed(client, name, [])
-        seen = []
-        client.search_model_versions = (
-            lambda filter_string: seen.append(filter_string) or []
-        )
+        _seed(client, "weird'name", [FakeVersion(1, run_id=RUN_ID)])
 
-        with redirect_stdout(io.StringIO()):
-            mr.list_models(client, name=name)
+        with self.assertRaises(mr.UnsafeModelNameError):
+            mr.list_models(client)
 
-        self.assertEqual(seen, ["name='weird\\'name\\\\path'"])
+        self.assertEqual(client.calls_named("search_model_versions"), [])
 
     def test_filter_by_name_uses_get_registered_model(self):
         client = FakeClient()
@@ -622,6 +633,21 @@ class MainTest(unittest.TestCase):
 
         self.assertEqual(code, 0)
         self.assertEqual(client.tracking_uri, "http://env:5000")
+
+    def test_unsafe_model_names_exit_one_without_mlflow_calls(self):
+        for name in ("weird'name", "back\\slash"):
+            for argv in (
+                ["register", "--run-id", RUN_ID, "--name", name],
+                ["list", "--name", name],
+            ):
+                with self.subTest(name=name, argv=argv):
+                    client = FakeClient()
+                    code, out, err = self._run(client, argv)
+                    self.assertEqual(code, 1)
+                    self.assertEqual(out, "")
+                    self.assertIn("invalid model name", err)
+                    self.assertIn("[A-Za-z0-9._-]", err)
+                    self.assertEqual(client.calls, [])
 
     def test_mlflow_error_exits_one_with_concise_message(self):
         client = FakeClient()
