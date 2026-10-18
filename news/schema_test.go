@@ -187,8 +187,8 @@ func TestNewsFilterMatchesThesisStems(t *testing.T) {
 
 func TestNewsViewStatementsShape(t *testing.T) {
 	// VIEW + комментарий таблицы + комментарий каждой колонки:
-	// 4 VIEW + (1+8) events + (1+17) flash + (1+12) versions + (1+4) tags = 49.
-	const wantStatements = 4 + 9 + 18 + 13 + 5
+	// 4 VIEW + (1+14) events + (1+17) flash + (1+12) versions + (1+4) tags = 55.
+	const wantStatements = 4 + 15 + 18 + 13 + 5
 	if len(newsViewStatements) != wantStatements {
 		t.Fatalf("newsViewStatements = %d стейтментов, want %d (4 VIEW + комментарии таблиц и "+
 			"колонок): витрины публикуются по порядку, и лишний/потерянный стейтмент ломает "+
@@ -201,18 +201,30 @@ func TestNewsViewStatementsShape(t *testing.T) {
 		wants   []string
 	}{
 		{
-			view:    "v_news_events",
-			columns: []string{"date", "date_msk", "source", "transport", "title", "url", "description", "sentiment"},
+			view: "v_news_events",
+			// Порядок колонок — контракт витрины: разметка приходит после content_hash,
+			// tags — последней колонкой.
+			columns: []string{"date", "date_msk", "source", "transport", "title", "url", "description",
+				"content_hash", "sentiment", "relevance", "summary", "model", "prompt_version", "tags"},
 			wants: []string{
 				"CREATE OR REPLACE VIEW v_news_events",
 				"DEFINER = default SQL SECURITY DEFINER",
-				"multiIf(url LIKE 'https://t.me/%', 'telegram', 'rss') AS transport",
-				"match(title, '" + newsFilter + "')",
-				"match(description, '" + newsFilter + "')",
-				"toDate(date, 'Europe/Moscow')",
-				// Порядок колонок — часть контракта витрины: описание стоит между url и sentiment,
-				// и сдвиг колонок в SELECT иначе не заметил бы ни один офлайн-тест.
-				"title, url, description, sentiment",
+				"multiIf(e.url LIKE 'https://t.me/%', 'telegram', 'rss') AS transport",
+				"match(e.title, '" + newsFilter + "')",
+				"match(e.description, '" + newsFilter + "')",
+				"toDate(e.date, 'Europe/Moscow')",
+				"FROM (SELECT * FROM news_events FINAL)",
+				// NULL — «не размечено», а не «нейтрально»: отсутствие doc-строки не должно
+				// подменять значения разметки нулями.
+				"if(d.model = '', NULL, d.sentiment)",
+				"if(d.model = '', NULL, d.relevance)",
+				"if(d.model = '', NULL, d.summary)",
+				// У пары (url, content_hash) может быть несколько doc-строк (модели/редакции):
+				// витрине нужна одна — последняя.
+				"LIMIT 1 BY url, content_hash",
+				"groupArrayIf(tuple(t.dimension, t.tag, t.direction), t.tag != '') AS tags",
+				// Пустой content_hash — строка до миграции: в JOIN не участвует.
+				"content_hash != ''",
 				"ORDER BY date DESC",
 			},
 		},

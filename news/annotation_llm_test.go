@@ -255,12 +255,39 @@ func TestNewsLLMConfigFromEnv(t *testing.T) {
 	})
 }
 
+// TestNewsLLMBacklogLimitFromEnv — NEWS_LLM_BACKLOG_LIMIT: пусто — штатные 50, валидное
+// значение — как есть, а 0/−1/1001/нечисло — warn и дефолт. Опечатка в переменной бэкфилла
+// не должна молча давать бюджет другого размера или LIMIT 0 (пустой кандидатный запрос).
+func TestNewsLLMBacklogLimitFromEnv(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want int
+	}{
+		{"пусто — штатные 50", "", 50},
+		{"валидное значение", "120", 120},
+		{"верхняя граница", "1000", 1000},
+		{"ноль", "0", 50},
+		{"отрицательное", "-1", 50},
+		{"выше предела", "1001", 50},
+		{"нечисло", "abc", 50},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(newsLLMBacklogLimitEnv, tc.raw)
+			if got := newsLLMBacklogLimitFromEnv(); got != tc.want {
+				t.Errorf("newsLLMBacklogLimitFromEnv() = %d при %s=%q, want %d",
+					got, newsLLMBacklogLimitEnv, tc.raw, tc.want)
+			}
+		})
+	}
+}
+
 // TestNewsPromptVersionAndRegistry — system-промпт несёт метку редакции и все слаги реестра:
 // смена newsPromptVersion или реестра обязана отражаться в запросе, иначе модель размечает
 // по устаревшей инструкции, а данные получают старый prompt_version.
 func TestNewsPromptVersionAndRegistry(t *testing.T) {
 	prompt := newsLLMSystemPrompt()
-	const wantRevision = "Редакция инструкции: 1."
+	const wantRevision = "Редакция инструкции: 2."
 	if !strings.Contains(prompt, wantRevision) {
 		t.Fatalf("system-промпт не содержит метку редакции %q", wantRevision)
 	}
@@ -277,6 +304,13 @@ func TestNewsPromptVersionAndRegistry(t *testing.T) {
 		`"evidence"`,
 		"не более 5 тегов",
 		"дословная подстрока",
+		// Редакция 2: роль расширена на RSS-посты и аналитику, а правила закрывают
+		// длинные посты smart-lab, пустой description, общие новости и лимит цитаты.
+		"новости и аналитические посты",
+		"не длиннее 300 символов",
+		"у длинного поста — одно короткое предложение резюме",
+		"если text пуст, опирайся на title",
+		"спорт, происшествия, культура",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("system-промпт не содержит %q", want)
@@ -313,7 +347,7 @@ func TestNewsLLMAskOnceOK(t *testing.T) {
 		`"model":"test-model"`,
 		`"max_tokens":4096`,
 		`"temperature":0`,
-		`"system":[{"text":"Редакция инструкции: 1.`,
+		`"system":[{"text":"Редакция инструкции: 2.`,
 		`"role":"user"`,
 		inputs[0].URL,
 		inputs[0].Description,
@@ -363,7 +397,7 @@ func TestNewsLLMAskOnceOpenAI(t *testing.T) {
 		`"reasoning_effort":"none"`,
 		`"role":"system"`,
 		`"role":"user"`,
-		"Редакция инструкции: 1.",
+		"Редакция инструкции: 2.",
 		inputs[0].URL,
 		inputs[0].Description,
 	} {
@@ -622,7 +656,7 @@ func TestNewsLLMTimeout(t *testing.T) {
 	newsLLMTimeout = time.Second
 	t.Cleanup(func() { newsLLMTimeout = old })
 
-	_, err := tagTelegramLLM(context.Background(),
+	_, err := tagNewsLLM(context.Background(),
 		newsLLMConfig{BaseURL: srv.URL, APIKey: "test-key", Model: "test-model"}, newsTestLLMInputs(1))
 	if err == nil {
 		t.Fatal("зависший провайдер: ожидалась ошибка дедлайна")
@@ -635,10 +669,10 @@ func TestNewsLLMTimeout(t *testing.T) {
 	}
 }
 
-// TestTagTelegramLLMBatches — батчи по 10: 11 сообщений дают два запроса, и второе
+// TestTagNewsLLMBatches — батчи по 10: 11 сообщений дают два запроса, и второе
 // сообщение-хвост уходит отдельным батчем, а не теряется. Валидация даёт doc и tag на
 // каждое вернувшееся сообщение.
-func TestTagTelegramLLMBatches(t *testing.T) {
+func TestTagNewsLLMBatches(t *testing.T) {
 	inputs := newsTestLLMInputs(11)
 	first := make([]newsAnnotationMessage, 0, newsLLMBatchSize)
 	for _, it := range inputs[:newsLLMBatchSize] {
@@ -649,10 +683,10 @@ func TestTagTelegramLLMBatches(t *testing.T) {
 		newsTestLLMResponse{Body: newsTestContentBody(t, newsTestPayloadBody(t, first...))},
 		newsTestLLMResponse{Body: newsTestContentBody(t, newsTestPayloadBody(t, second...))})
 
-	rows, err := tagTelegramLLM(context.Background(),
+	rows, err := tagNewsLLM(context.Background(),
 		newsLLMConfig{BaseURL: mock.url, APIKey: "test-key", Model: "test-model"}, inputs)
 	if err != nil {
-		t.Fatalf("tagTelegramLLM: %v", err)
+		t.Fatalf("tagNewsLLM: %v", err)
 	}
 	if mock.calls() != 2 {
 		t.Fatalf("запросов %d, want 2 (10 + 1)", mock.calls())
@@ -668,10 +702,99 @@ func TestTagTelegramLLMBatches(t *testing.T) {
 	}
 }
 
-// TestTagTelegramLLMPartialRowsOnLaterBatchError — ошибка второго батча не выбрасывает
-// строки первого: tagTelegramLLM возвращает накопленное вместе с ошибкой, и вызывающий
+// TestTagNewsLLMDedupSameURL — у одного URL в кандидатах может быть две версии текста
+// (разные content_hash). Валидация индексирует вход по URL, поэтому вторая версия в том же
+// батче не получила бы doc-строки и навсегда осталась бы кандидатом. tagNewsLLM дедуплицирует
+// вход по URL, оставляя первое (самое свежее) вхождение; вторая версия догоняется следующим
+// прогоном.
+func TestTagNewsLLMDedupSameURL(t *testing.T) {
+	const url = "https://t.me/interfaxonline/1"
+	first := newsItem{
+		Date:        time.Date(2026, time.October, 17, 10, 0, 0, 0, time.UTC),
+		Source:      "interfax",
+		Title:       "Первая версия заголовка",
+		URL:         url,
+		Description: "Трамп объявил о новых пошлинах на импорт из Китая.",
+	}
+	first.ContentHash = contentHash(first.Title, first.Description)
+	second := newsItem{
+		Date:        time.Date(2026, time.October, 17, 9, 0, 0, 0, time.UTC),
+		Source:      first.Source,
+		Title:       "Вторая версия заголовка",
+		URL:         url,
+		Description: "Обновлённый текст сообщения после правки.",
+	}
+	second.ContentHash = contentHash(second.Title, second.Description)
+
+	mock := newNewsTestLLMMock(t,
+		newsTestLLMResponse{Body: newsTestContentBody(t, newsTestPayloadBody(t, newsTestValidMessage(url)))})
+
+	rows, err := tagNewsLLM(context.Background(),
+		newsLLMConfig{BaseURL: mock.url, APIKey: "test-key", Model: "test-model"}, []newsItem{first, second})
+	if err != nil {
+		t.Fatalf("tagNewsLLM: %v", err)
+	}
+	if mock.calls() != 1 {
+		t.Fatalf("запросов %d, want 1 (дубль URL не должен давать второй батч)", mock.calls())
+	}
+	body := mock.request(0).Body
+	if !strings.Contains(body, first.Title) {
+		t.Errorf("в теле запроса нет заголовка первой версии %q", first.Title)
+	}
+	if strings.Contains(body, second.Title) {
+		t.Errorf("в теле запроса есть заголовок отложенной версии %q", second.Title)
+	}
+	if docs := len(newsAnnotationKindRows(rows, newsKindDoc)); docs != 1 {
+		t.Errorf("doc-строк %d, want 1 (размечена первая версия)", docs)
+	}
+	if tags := len(newsAnnotationKindRows(rows, newsKindTag)); tags != 1 {
+		t.Errorf("tag-строк %d, want 1", tags)
+	}
+}
+
+// TestTagNewsLLMFormatErrorSkipsBatch — второй подряд сбой формата пропускает только свой
+// батч: 21 сообщение дают батчи 10/10/1, мок отдаёт валидный ответ на первый, два пустых
+// ответа на второй (исходный + повтор) и валидный на третий. Всего 4 запроса, третий батч
+// размечен, накопленные строки возвращаются вместе с ошибкой формата.
+func TestTagNewsLLMFormatErrorSkipsBatch(t *testing.T) {
+	inputs := newsTestLLMInputs(21)
+	first := make([]newsAnnotationMessage, 0, newsLLMBatchSize)
+	for _, it := range inputs[:newsLLMBatchSize] {
+		first = append(first, newsTestValidMessage(it.URL))
+	}
+	third := []newsAnnotationMessage{newsTestValidMessage(inputs[20].URL)}
+	mock := newNewsTestLLMMock(t,
+		newsTestLLMResponse{Body: newsTestContentBody(t, newsTestPayloadBody(t, first...))},
+		newsTestLLMResponse{Body: newsTestEmptyContentBody(t)},
+		newsTestLLMResponse{Body: newsTestEmptyContentBody(t)},
+		newsTestLLMResponse{Body: newsTestContentBody(t, newsTestPayloadBody(t, third...))})
+
+	rows, err := tagNewsLLM(context.Background(),
+		newsLLMConfig{BaseURL: mock.url, APIKey: "test-key", Model: "test-model"}, inputs)
+	if err == nil {
+		t.Fatal("tagNewsLLM после двух подряд ошибок формата вернул nil-ошибку")
+	}
+	if !newsIsFormatError(err) {
+		t.Errorf("ошибка %v не является ошибкой формата", err)
+	}
+	if mock.calls() != 4 {
+		t.Fatalf("запросов %d, want 4 (батч 1 + два запроса батча 2 + батч 3)", mock.calls())
+	}
+	if docs := len(newsAnnotationKindRows(rows, newsKindDoc)); docs != 11 {
+		t.Errorf("doc-строк %d, want 11 (батчи 1 и 3)", docs)
+	}
+	if tags := len(newsAnnotationKindRows(rows, newsKindTag)); tags != 11 {
+		t.Errorf("tag-строк %d, want 11 (батчи 1 и 3)", tags)
+	}
+	if body := mock.request(3).Body; !strings.Contains(body, inputs[20].URL) {
+		t.Errorf("четвёртый запрос не содержит URL третьего батча %s", inputs[20].URL)
+	}
+}
+
+// TestTagNewsLLMPartialRowsOnLaterBatchError — ошибка второго батча не выбрасывает
+// строки первого: tagNewsLLM возвращает накопленное вместе с ошибкой, и вызывающий
 // пишет успешные батчи (иначе за них пришлось бы платить повторно).
-func TestTagTelegramLLMPartialRowsOnLaterBatchError(t *testing.T) {
+func TestTagNewsLLMPartialRowsOnLaterBatchError(t *testing.T) {
 	inputs := newsTestLLMInputs(11)
 	first := make([]newsAnnotationMessage, 0, newsLLMBatchSize)
 	for _, it := range inputs[:newsLLMBatchSize] {
@@ -681,10 +804,10 @@ func TestTagTelegramLLMPartialRowsOnLaterBatchError(t *testing.T) {
 		newsTestLLMResponse{Body: newsTestContentBody(t, newsTestPayloadBody(t, first...))},
 		newsTestLLMResponse{Status: http.StatusInternalServerError, Body: `{"error":"boom"}`})
 
-	rows, err := tagTelegramLLM(context.Background(),
+	rows, err := tagNewsLLM(context.Background(),
 		newsLLMConfig{BaseURL: mock.url, APIKey: "test-key", Model: "test-model"}, inputs)
 	if err == nil {
-		t.Fatal("tagTelegramLLM при отказе второго батча вернул nil-ошибку")
+		t.Fatal("tagNewsLLM при отказе второго батча вернул nil-ошибку")
 	}
 	if got := len(newsAnnotationKindRows(rows, newsKindDoc)); got != newsLLMBatchSize {
 		t.Errorf("doc-строк %d, want %d (успешный первый батч не должен теряться)", got, newsLLMBatchSize)
@@ -695,4 +818,76 @@ func TestTagTelegramLLMPartialRowsOnLaterBatchError(t *testing.T) {
 	if mock.calls() != 2 {
 		t.Errorf("запросов %d, want 2 (первый батч + отказ второго; третий батч не шлётся)", mock.calls())
 	}
+}
+
+// TestNewsUniqueByURL — дубли URL схлопываются, остаётся первое вхождение (при кандидатном
+// ORDER BY date DESC — самое свежее); пустой и одиночный вход возвращаются как есть.
+func TestNewsUniqueByURL(t *testing.T) {
+	const url = "https://t.me/interfaxonline/1"
+	inputs := []newsItem{
+		{URL: url, Title: "Первая версия"},
+		{URL: url, Title: "Вторая версия"},
+		{URL: url, Title: "Третья версия"},
+	}
+	got := newsUniqueByURL(inputs)
+	if len(got) != 1 {
+		t.Fatalf("элементов %d, want 1 (дубли URL схлопываются): %+v", len(got), got)
+	}
+	if got[0].Title != inputs[0].Title {
+		t.Errorf("остался title %q, want %q (первое вхождение)", got[0].Title, inputs[0].Title)
+	}
+	if single := newsUniqueByURL(inputs[:1]); len(single) != 1 || single[0].Title != inputs[0].Title {
+		t.Errorf("один элемент: %+v, want как есть", single)
+	}
+	if empty := newsUniqueByURL(nil); len(empty) != 0 {
+		t.Errorf("пустой вход: %+v, want пусто", empty)
+	}
+}
+
+// TestNewsLLMBatches — деление на батчи по двум пределам: 10 сообщений и 40 КБ текста.
+// 11 коротких дают [10,1] (хвост не теряется); три по 30 КБ — каждый меньше бюджета,
+// но два вместе больше 40 КБ, поэтому [1,1,1]; два по 15 КБ влезают вдвоём — [2];
+// пост больше бюджета — батч из одного элемента, а не потеря и не зацикливание.
+// Повторы ASCII: «я» в UTF-8 — два байта, и строки из рун дали бы вдвое больший бюджет.
+func TestNewsLLMBatches(t *testing.T) {
+	sizes := func(batches [][]newsItem) []int {
+		out := make([]int, 0, len(batches))
+		for _, batch := range batches {
+			out = append(out, len(batch))
+		}
+		return out
+	}
+	check := func(name string, inputs []newsItem, want []int) {
+		t.Helper()
+		got := sizes(newsLLMBatches(inputs))
+		if len(got) != len(want) {
+			t.Fatalf("%s: батчи %v, want %v", name, got, want)
+		}
+		total := 0
+		for i := range want {
+			total += got[i]
+			if got[i] != want[i] {
+				t.Errorf("%s: батчи %v, want %v", name, got, want)
+				return
+			}
+		}
+		if total != len(inputs) {
+			t.Errorf("%s: в батчах %d сообщений, want %d (ни одно не потеряно)", name, total, len(inputs))
+		}
+	}
+
+	check("11 коротких", newsTestLLMInputs(11), []int{10, 1})
+
+	long := make([]newsItem, 3)
+	for i := range long {
+		long[i] = newsItem{Title: "Длинный пост", Description: strings.Repeat("x", 30_000)}
+	}
+	check("три по 30 КБ", long, []int{1, 1, 1})
+
+	check("два по 15 КБ", []newsItem{
+		{Title: "Пост 1", Description: strings.Repeat("x", 15_000)},
+		{Title: "Пост 2", Description: strings.Repeat("x", 15_000)},
+	}, []int{2})
+
+	check("один 100 КБ", []newsItem{{Title: "Сверхбюджетный пост", Description: strings.Repeat("x", 100_000)}}, []int{1})
 }

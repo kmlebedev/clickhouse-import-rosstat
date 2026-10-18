@@ -261,7 +261,8 @@ func TestValidateNewsAnnotationsEvidence(t *testing.T) {
 }
 
 // TestValidateNewsAnnotationsDirections — направленные значения у не-cb_channel приводятся
-// к neutral с warn, neutral/mixed сохраняются, а у cb_channel направление остаётся как есть.
+// к neutral с warn, neutral/mixed сохраняются, а у cb_channel направление всегда берётся из
+// реестра: ответ модели с другим знаком не отбрасывает тег, а заменяется статическим знаком.
 func TestValidateNewsAnnotationsDirections(t *testing.T) {
 	input := newsAnnotationInput()
 	for _, tc := range []struct {
@@ -275,9 +276,10 @@ func TestValidateNewsAnnotationsDirections(t *testing.T) {
 		{"персона dez → neutral", newsDimPerson, "trump", newsDirectionDez, newsDirectionNeutral},
 		{"персона neutral", newsDimPerson, "trump", newsDirectionNeutral, newsDirectionNeutral},
 		{"страна mixed", newsDimCountry, "china", newsDirectionMixed, newsDirectionMixed},
-		{"канал pro", newsDimCBChannel, "current_inflation", newsDirectionPro, newsDirectionPro},
-		{"канал dez", newsDimCBChannel, "savings", newsDirectionDez, newsDirectionDez},
-		{"канал neutral", newsDimCBChannel, "money_supply", newsDirectionNeutral, newsDirectionNeutral},
+		{"канал: знак совпал с реестром", newsDimCBChannel, "current_inflation", newsDirectionPro, newsDirectionPro},
+		{"канал: pro у disinflationary-канала → реестровый dez", newsDimCBChannel, "savings", newsDirectionPro, newsDirectionDez},
+		{"канал: neutral у disinflationary-канала → реестровый dez", newsDimCBChannel, "savings", newsDirectionNeutral, newsDirectionDez},
+		{"канал: mixed у pro-канала → реестровый pro", newsDimCBChannel, "money_supply", newsDirectionMixed, newsDirectionPro},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			payload := newsAnnotationPayload{Messages: []newsAnnotationMessage{{
@@ -423,5 +425,51 @@ func TestValidateNewsAnnotationsDuplicateURL(t *testing.T) {
 	docs := newsAnnotationKindRows(rows, newsKindDoc)
 	if len(docs) != 1 || docs[0].Summary != "Первый." {
 		t.Fatalf("doc-строки = %+v, want один первый ответ", docs)
+	}
+}
+
+// TestNewsEvidenceTruncated — цитата длиннее newsEvidenceMax обрезается до проверки подстроки:
+// модель вправе вернуть длинный фрагмент, и хвост за пределами 300 рун не должен отбрасывать
+// тег. Цитата, которой нет в тексте и после обрезки, по-прежнему отбрасывается.
+func TestNewsEvidenceTruncated(t *testing.T) {
+	input := newsAnnotationInput()
+	input.Title = "Длинный пост"
+	input.Description = strings.Repeat("я", 400)
+	input.ContentHash = contentHash(input.Title, input.Description)
+
+	accepted := newsAnnotationPayload{Messages: []newsAnnotationMessage{{
+		URL: input.URL, Summary: "Резюме.", Tags: []newsAnnotationTag{{
+			Dimension: newsDimPerson, Tag: "trump", Direction: newsDirectionNeutral,
+			Confidence: 0.5,
+			// Первые 300 рун — подстрока текста, хвост 100 рун — уже нет.
+			Evidence: strings.Repeat("я", newsEvidenceMax) + strings.Repeat("ю", 100),
+		}},
+	}}}
+	rows, err := validateNewsAnnotations(accepted, []newsItem{input}, "test-model", newsPromptVersion, newsAnnotationNow())
+	if err != nil {
+		t.Fatalf("validateNewsAnnotations (цитата 400 рун): %v", err)
+	}
+	tags := newsAnnotationKindRows(rows, newsKindTag)
+	if len(tags) != 1 {
+		t.Fatalf("tag-строк %d, want 1 (первые %d рун цитаты — подстрока текста): %+v",
+			len(tags), newsEvidenceMax, rows)
+	}
+	if got := len([]rune(tags[0].Evidence)); got != newsEvidenceMax {
+		t.Errorf("длина evidence = %d рун, want %d (обрезка до проверки подстроки)", got, newsEvidenceMax)
+	}
+
+	// Цитата вне текста не принимается и после обрезки: обрезка — не амнистия пересказу.
+	rejected := newsAnnotationPayload{Messages: []newsAnnotationMessage{{
+		URL: input.URL, Summary: "Резюме.", Tags: []newsAnnotationTag{{
+			Dimension: newsDimPerson, Tag: "trump", Direction: newsDirectionNeutral,
+			Confidence: 0.5, Evidence: strings.Repeat("ф", 400),
+		}},
+	}}}
+	rows, err = validateNewsAnnotations(rejected, []newsItem{input}, "test-model", newsPromptVersion, newsAnnotationNow())
+	if err != nil {
+		t.Fatalf("validateNewsAnnotations (цитата вне текста): %v", err)
+	}
+	if got := len(newsAnnotationKindRows(rows, newsKindTag)); got != 0 {
+		t.Errorf("tag-строк %d, want 0 (цитаты нет в тексте): %+v", got, rows)
 	}
 }
