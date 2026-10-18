@@ -97,6 +97,7 @@ deploy/staging/      артефакты staging
 | `CERT_FILES` | PEM-сертификаты нац. УЦ РФ |
 | `BEA_API_KEY`, `EIA_API_KEY`, `BLS_API_KEY` | ключи источников (BLS необязателен) |
 | `LLM_BASE_URL`, `LLM_API_KEY`, `MP_SUMMARY_LLM_MODEL` | LLM-разметка резюме ДКП |
+| `LLM_MODEL` | модель экспериментального LLM-прогноза ключевой ставки (`make key-rate-llm-forecast`); работает с общими `LLM_BASE_URL`/`LLM_API_KEY` |
 | `NEWS_LLM_PROFILE`, `NEWS_LLM_MODEL`, `GLM_LLM_*`, `NEWS_LLM_BACKLOG_LIMIT` | LLM-разметка видимого потока новостей (Telegram и RSS): профиль, модель, ключи и предел бэклога за прогон |
 | `INGEST_TOKEN` | Bearer-токен ingest-endpoint |
 | `INGEST_URL` | Базовый URL ingest-endpoint для `scripts/key_rate_forecast_log.py` (например, `http://127.0.0.1:8081`); обязательна вместе с `INGEST_TOKEN` |
@@ -128,6 +129,7 @@ deploy/staging/      артефакты staging
 | `make import STAT=<имя>` | локальный прогон импортёра |
 | `make key-rate-model` / `make key-rate-forecast-log` | прогноз ставки (локальные артефакты) / запись прогноза в `forecast_log` через ingest |
 | `make cpi-monthly` | месячный nowcast ИПЦ с МП (ML-трек v2); долгая выборка — `ARGS="--sample long"`; журнал — `ML_LOG=1` |
+| `make key-rate-llm-forecast` | экспериментальный LLM-прогноз ключевой ставки: as-of снимок, три повтора, медиана/разброс, локальные артефакты; в ClickHouse не пишет; `ARGS="--log"` готовит payload для #127 |
 | `make mcp-check` | MCP end-to-end |
 | `make cb-comp-parity` / `make cb-comp-parity-test` | паритет nowcast с CB_COMP (direct + bottom-up, архив авторов) / офлайн-тесты parity-скриптов |
 | `make docs-check` / `make docs-build` | проверка и сборка docs-портала |
