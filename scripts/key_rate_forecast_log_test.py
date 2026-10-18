@@ -61,6 +61,27 @@ LLM_ARTIFACT = {
     "data_version": "0123456789ab",
 }
 
+# Готовый payload режима `--log` #189: обёртка {"status","row"}, метрика
+# `cbr_rate` (writer нормализует её к `cbr_rate:llm`).
+LLM_PAYLOAD = {
+    "status": "pending_ingest_127",
+    "todo": "unit test",
+    "row": {
+        "metric": "cbr_rate",
+        "forecast_date": "2026-10-18",
+        "target_date": "2026-10-23",
+        "predicted": 13.95,
+        "actual": None,
+        "error_pct": None,
+        "error_bp": None,
+        "probabilities": {"cut": 12.0, "hold": 83.0, "hike": 5.0},
+        "expected_step_bp": -5.0,
+        "model": "deepseek-flash",
+        "prompt_version": 1,
+        "data_version": "7732e27595e6",
+    },
+}
+
 TOKEN = "unit-test-secret-token"
 
 
@@ -255,6 +276,48 @@ class TestLLMArtifact(unittest.TestCase):
 
         self.assertIn("сумма", str(caught.exception))
 
+    def test_payload_row_is_normalized_to_llm_track(self):
+        row = kw.llm_payload_row(LLM_PAYLOAD)
+
+        self.assertEqual(row["metric"], "cbr_rate:llm")
+        self.assertEqual(row["forecast_date"], "2026-10-18")
+        self.assertEqual(row["target_date"], "2026-10-23")
+        self.assertEqual(row["predicted"], 13.95)
+        self.assertEqual(row["probabilities"], {"cut": 12.0, "hold": 83.0, "hike": 5.0})
+        self.assertEqual(row["model"], "deepseek-flash")
+        self.assertEqual(row["prompt_version"], 1)
+        self.assertEqual(row["data_version"], "7732e27595e6")
+        # Поля резолвера из payload не переносятся: их заполняет forecast_resolve.
+        self.assertNotIn("actual", row)
+        self.assertNotIn("error_bp", row)
+
+    def test_payload_row_accepts_bare_row_and_suffixed_metric(self):
+        row = dict(LLM_PAYLOAD["row"])
+        row["metric"] = "cbr_rate:llm"
+
+        normalized = kw.llm_payload_row(row)
+
+        self.assertEqual(normalized["metric"], "cbr_rate:llm")
+        self.assertEqual(normalized["predicted"], 13.95)
+
+    def test_payload_row_rejects_foreign_metric(self):
+        payload = json.loads(json.dumps(LLM_PAYLOAD))
+        payload["row"]["metric"] = "xau_q_avg"
+
+        with self.assertRaises(kw.ForecastLogError) as caught:
+            kw.llm_payload_row(payload)
+
+        self.assertIn("metric", str(caught.exception))
+
+    def test_payload_row_requires_prompt_version(self):
+        payload = json.loads(json.dumps(LLM_PAYLOAD))
+        del payload["row"]["prompt_version"]
+
+        with self.assertRaises(kw.ForecastLogError) as caught:
+            kw.llm_payload_row(payload)
+
+        self.assertIn("prompt_version", str(caught.exception))
+
 
 class TestArtifactFiles(unittest.TestCase):
     def test_llm_artifact_is_optional_and_reported(self):
@@ -276,6 +339,36 @@ class TestArtifactFiles(unittest.TestCase):
 
         self.assertEqual([row["metric"] for row in rows],
                          ["cbr_rate:taylor", "cbr_rate:ordered_logit", "cbr_rate:llm"])
+
+    def test_llm_payload_is_used_instead_of_artifact(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            model_path = write_json(Path(tmp), "model.json", MODEL_ARTIFACT)
+            llm_path = write_json(Path(tmp), "llm.json", LLM_ARTIFACT)
+            payload_path = write_json(Path(tmp), "payload.json", LLM_PAYLOAD)
+            messages = []
+
+            rows = kw.rows_from_artifacts(
+                model_path, llm_path, payload_path, log=messages.append
+            )
+
+        self.assertEqual([row["metric"] for row in rows],
+                         ["cbr_rate:taylor", "cbr_rate:ordered_logit", "cbr_rate:llm"])
+        self.assertEqual(rows[2]["model"], "deepseek-flash")
+        self.assertTrue(any("LLM-payload прочитан" in message for message in messages))
+        self.assertTrue(any("--llm-payload" in message for message in messages))
+
+    def test_explicit_missing_payload_is_an_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            model_path = write_json(Path(tmp), "model.json", MODEL_ARTIFACT)
+
+            with self.assertRaises(kw.ForecastLogError) as caught:
+                kw.rows_from_artifacts(
+                    model_path, Path(tmp) / "llm.json", Path(tmp) / "missing-payload.json",
+                    log=lambda _: None,
+                )
+
+        self.assertIn("LLM-payload", str(caught.exception))
+        self.assertIn("не найден", str(caught.exception))
 
     def test_missing_model_artifact_is_an_error(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -410,6 +503,37 @@ class TestMain(unittest.TestCase):
         self.assertEqual(requests[0].full_url, "http://127.0.0.1:18081/v1/key_rate_forecast")
         self.assertIn("записано строк: 2", stdout.getvalue())
         self.assertNotIn(TOKEN, stdout.getvalue())
+
+    def test_main_posts_llm_payload_with_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            model_path = write_json(Path(tmp), "model.json", MODEL_ARTIFACT)
+            payload_path = write_json(Path(tmp), "payload.json", LLM_PAYLOAD)
+            requests = []
+
+            def fake_urlopen(request, timeout):
+                requests.append(request)
+                return FakeResponse()
+
+            with unittest.mock.patch.dict(
+                os.environ,
+                {kw.INGEST_URL_ENV: "http://127.0.0.1:18081", kw.INGEST_TOKEN_ENV: TOKEN},
+            ), unittest.mock.patch.object(kw.urllib.request, "urlopen", fake_urlopen):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    code = kw.main([
+                        "--model-artifact", str(model_path),
+                        "--llm-artifact", str(Path(tmp) / "missing.json"),
+                        "--llm-payload", str(payload_path),
+                    ])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(len(requests), 3)
+        rows = [json.loads(request.data) for request in requests]
+        llm = [row for row in rows if row["metric"] == "cbr_rate:llm"]
+        self.assertEqual(len(llm), 1)
+        self.assertEqual(llm[0]["model"], "deepseek-flash")
+        self.assertEqual(llm[0]["prompt_version"], 1)
+        self.assertEqual(llm[0]["data_version"], "7732e27595e6")
+        self.assertEqual(llm[0]["probabilities"], {"cut": 12.0, "hold": 83.0, "hike": 5.0})
 
     def test_old_artifact_without_rate_before_fails_without_http(self):
         with tempfile.TemporaryDirectory() as tmp:
