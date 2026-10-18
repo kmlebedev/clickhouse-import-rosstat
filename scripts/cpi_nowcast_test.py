@@ -44,6 +44,7 @@ import random
 import statistics
 import sys
 import tempfile
+import types
 import unittest
 import unittest.mock
 import warnings
@@ -209,6 +210,22 @@ class FakeLogger:
         self.finished = status
         self.notes = notes
         return "fake"
+
+
+class RecordingLogger(FakeLogger):
+    """FakeLogger с `log_model`: запоминает имена и модели артефактов (Task 3).
+
+    `FakeLogger` намеренно остаётся БЕЗ `log_model`: `run_summary` обязан
+    пропускать журнал без этого метода (duck typing), и это проверяют все
+    существующие тесты на `FakeLogger`.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.models = []
+
+    def log_model(self, name, model):
+        self.models.append((name, model))
 
 
 def summary_value(text: str, label: str) -> str:
@@ -1165,6 +1182,54 @@ class TestRunSummaryExperimentLog(unittest.TestCase):
             {path.name for path in fake.artifacts},
             {cm.REPORT_NAME, cm.PREDICTIONS_NAME, cm.FORECAST_NAME},
         )
+
+    def test_run_summary_logs_catboost_direct_model(self):
+        # Task 3: полная выборка — модель последнего фита `catboost_direct`
+        # уходит в журнал как артефакт "model" (имя зарегистрированной модели
+        # позже задаёт CLI реестра). Фиты замоканы `cheap_models`, поэтому
+        # `last_fit` не перезаписывается — подставляем сентинел и проверяем,
+        # что журнал получает именно его.
+        world = experiment_world()
+        models = cheap_models()
+        fake = RecordingLogger()
+        sentinel_model = object()
+        sentinel_fit = types.SimpleNamespace(model=sentinel_model)
+        previous_fit = cm.fit_catboost_direct.last_fit
+        cm.fit_catboost_direct.last_fit = sentinel_fit
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                with self.patched_world(world, models), contextlib.redirect_stdout(io.StringIO()):
+                    code = cm.run_summary(
+                        start=24,
+                        embargo_months=1,
+                        out_dir=Path(tmp),
+                        today=world["today"],
+                        ml_log=True,
+                        logger=fake,
+                    )
+        finally:
+            cm.fit_catboost_direct.last_fit = previous_fit
+        self.assertEqual(code, 0)
+        self.assertEqual(fake.models, [("model", sentinel_model)])
+        self.assertEqual(fake.finished, "finished")
+
+    def test_run_summary_without_nowcast_does_not_log_model(self):
+        # Нет живого nowcast'а — нет и модели полной выборки: `last_fit` от
+        # прошлого прогона/фолда не должен попасть в журнал под видом текущей.
+        months = [date(2022, m, 1) for m in range(1, 13)]
+        world = synthetic_world(months=months, fao=[])  # пустая выборка
+        fake = RecordingLogger()
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.patched_world(world), contextlib.redirect_stdout(io.StringIO()):
+                code = cm.run_summary(
+                    out_dir=Path(tmp),
+                    today=date(2026, 10, 16),
+                    ml_log=True,
+                    logger=fake,
+                )
+        self.assertEqual(code, 0)
+        self.assertEqual(fake.models, [])
+        self.assertEqual(fake.finished, "empty")
 
     def test_logging_failure_does_not_change_the_exit_code(self):
         # Журнал — побочный слой: ValueError сборки PredictionRow (например, на
