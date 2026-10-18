@@ -666,6 +666,311 @@ class TestAsof(unittest.TestCase):
         )
 
 
+class TestConsensusBenchmark(unittest.TestCase):
+    """Годовой бенчмарк: средняя, наивный hold, выборка и DM (спека §3.1)."""
+
+    @staticmethod
+    def wave(wave_date, year, median=10.0, p10=None, p90=None, answers=None):
+        """Волна с консервативной доступностью `wave_date + 6` (как парсер)."""
+        return km.ConsensusForecast(
+            wave_date=wave_date,
+            available_from=wave_date
+            + timedelta(days=km.CONSENSUS_PUBLICATION_LAG_DAYS),
+            year=year,
+            median=median,
+            p10=p10,
+            p90=p90,
+            answers=answers,
+        )
+
+    @staticmethod
+    def observation(bucket, consensus_error_bp, hold_error_bp):
+        """Синтетическая пара для метрик: поля волны aggregate не читает."""
+        return km.ConsensusObservation(
+            year=2024,
+            wave_date=date(2024, 1, 1),
+            available_from=date(2024, 1, 7),
+            bucket=bucket,
+            median=10.0,
+            p10=None,
+            p90=None,
+            answers=None,
+            actual=10.0,
+            consensus_error_bp=consensus_error_bp,
+            hold_error_bp=hold_error_bp,
+        )
+
+    def test_bucket_order_matches_report(self):
+        self.assertEqual(
+            km.CONSENSUS_BUCKETS, ("ex-ante", "10-12", "7-9", "4-6", "1-3")
+        )
+
+    def test_rate_asof_fills_forward_and_switches_on_change_day(self):
+        points = [(date(2024, 1, 1), 10.0), (date(2024, 3, 1), 8.0)]
+        self.assertIsNone(km._rate_asof(points, date(2023, 12, 31)))
+        self.assertEqual(km._rate_asof(points, date(2024, 1, 1)), 10.0)
+        # Високосный день не создаёт новой точки: действует ставка 1 января.
+        self.assertEqual(km._rate_asof(points, date(2024, 2, 29)), 10.0)
+        self.assertEqual(km._rate_asof(points, date(2024, 3, 1)), 8.0)
+        self.assertEqual(km._rate_asof(points, date(2024, 12, 31)), 8.0)
+        self.assertIsNone(km._rate_asof([], date(2024, 1, 1)))
+
+    def test_sum_rates_between_is_inclusive_and_fills_forward(self):
+        points = [(date(2024, 1, 1), 10.0), (date(2024, 1, 3), 20.0)]
+        # 1 и 2 января — ставка 10 (fill-forward), 3 января — новая точка 20.
+        self.assertEqual(
+            km.sum_rates_between(points, date(2024, 1, 1), date(2024, 1, 3)), 40.0
+        )
+        self.assertEqual(
+            km.sum_rates_between(points, date(2024, 1, 2), date(2024, 1, 3)), 30.0
+        )
+        self.assertEqual(
+            km.sum_rates_between(points, date(2024, 1, 3), date(2024, 1, 3)), 20.0
+        )
+        self.assertEqual(
+            km.sum_rates_between(points, date(2024, 12, 31), date(2024, 12, 31)),
+            20.0,
+        )
+
+    def test_sum_rates_between_without_rate_on_start_is_rejected(self):
+        # Молчаливый ноль занизил бы R_known/среднюю; отсутствие точки на
+        # старте — разрыв ряда, а не «нулевая ставка».
+        with self.assertRaises(ValueError) as caught:
+            km.sum_rates_between(
+                [(date(2024, 1, 2), 10.0)], date(2024, 1, 1), date(2024, 1, 2)
+            )
+        self.assertIn("нет точки", str(caught.exception))
+        with self.assertRaises(ValueError):
+            km.sum_rates_between([], date(2024, 1, 1), date(2024, 1, 2))
+        with self.assertRaises(ValueError):
+            km.sum_rates_between(
+                [(date(2024, 1, 1), 10.0)], date(2024, 1, 2), date(2024, 1, 1)
+            )
+
+    def test_annual_average_counts_the_leap_day(self):
+        # 2024: 1 января–30 июня = 182 дня, 1 июля–31 декабря = 184 дня; всего
+        # 366. Средняя = (182·10 + 184·20) / 366, а не / 365.
+        points = [
+            (date(2024, 1, 1), 10.0),
+            (date(2024, 7, 1), 20.0),
+            (date(2024, 12, 31), 20.0),
+        ]
+        expected = (182 * 10.0 + 184 * 20.0) / 366
+        self.assertAlmostEqual(km.annual_average_rate(points, 2024), expected, places=12)
+
+    def test_annual_average_in_a_non_leap_year_uses_365_days(self):
+        # 2023: 1 января–30 июня = 181 день, 1 июля–31 декабря = 184; всего 365.
+        points = [
+            (date(2023, 1, 1), 10.0),
+            (date(2023, 7, 1), 20.0),
+            (date(2023, 12, 31), 20.0),
+        ]
+        expected = (181 * 10.0 + 184 * 20.0) / 365
+        self.assertAlmostEqual(km.annual_average_rate(points, 2023), expected, places=12)
+
+    def test_annual_average_incomplete_year_is_none(self):
+        full_2024 = [(date(2024, 1, 1), 10.0), (date(2024, 12, 31), 10.0)]
+        self.assertIsNotNone(km.annual_average_rate(full_2024, 2024))
+        # Ряд кончается 30 декабря — 31-е не покрыто.
+        self.assertIsNone(
+            km.annual_average_rate(
+                [(date(2024, 1, 1), 10.0), (date(2024, 12, 30), 10.0)], 2024
+            )
+        )
+        # Ряд начинается 2 января — 1-е не покрыто.
+        self.assertIsNone(
+            km.annual_average_rate(
+                [(date(2024, 1, 2), 10.0), (date(2024, 12, 31), 10.0)], 2024
+            )
+        )
+        self.assertIsNone(km.annual_average_rate([], 2024))
+        # Неполный текущий 2026: ряд не дотягивает до 31 декабря.
+        self.assertIsNone(
+            km.annual_average_rate(
+                [(date(2026, 1, 1), 10.0), (date(2026, 10, 19), 10.0)], 2026
+            )
+        )
+
+    def test_hold_before_the_year_is_the_rate_on_availability_date(self):
+        points = [
+            (date(2023, 6, 1), 7.5),
+            (date(2024, 1, 1), 10.0),
+            (date(2024, 12, 31), 10.0),
+        ]
+        self.assertEqual(km.hold_forecast(points, 2024, date(2023, 12, 7)), 7.5)
+
+    def test_hold_within_the_year_uses_known_path_and_current_rate(self):
+        # 2024: 1 января ставка 10, с 1 февраля — 20, A = 1 марта (ставка 20).
+        # known = 31·10 + 30·20 = 910 (29 февраля + 1 марта); N_rem = 305.
+        points = [
+            (date(2024, 1, 1), 10.0),
+            (date(2024, 2, 1), 20.0),
+            (date(2024, 12, 31), 20.0),
+        ]
+        expected = (31 * 10.0 + 30 * 20.0 + 20.0 * 305) / 366
+        self.assertAlmostEqual(
+            km.hold_forecast(points, 2024, date(2024, 3, 1)), expected, places=12
+        )
+        # На 1 января известен один день, остаток года — та же ставка: hold = 10.
+        self.assertAlmostEqual(
+            km.hold_forecast(points, 2024, date(2024, 1, 1)), 10.0, places=12
+        )
+        # На 31 декабря известен весь год: hold совпадает с фактом.
+        self.assertAlmostEqual(
+            km.hold_forecast(points, 2024, date(2024, 12, 31)),
+            km.annual_average_rate(points, 2024),
+            places=12,
+        )
+
+    def test_hold_without_rate_on_availability_date_is_none(self):
+        self.assertIsNone(km.hold_forecast([], 2024, date(2024, 1, 7)))
+        self.assertIsNone(
+            km.hold_forecast([(date(2024, 2, 1), 10.0)], 2024, date(2024, 1, 7))
+        )
+
+    def test_buckets_and_month_boundaries(self):
+        # Ряд покрывает 2024 целиком; ставка постоянна — факт 10.
+        key_rate = [(date(2023, 1, 1), 10.0), (date(2024, 12, 31), 10.0)]
+        wave_dates = [
+            date(2023, 10, 1),  # более ранняя экс-анте — не последняя
+            date(2023, 12, 1),  # экс-анте: публикация до 1 января 2024
+            date(2024, 1, 1),
+            date(2024, 3, 1),  # граница 10-12/7-9 — март ещё 10-12
+            date(2024, 4, 1),  # апрель уже 7-9
+            date(2024, 6, 1),  # июнь ещё 7-9
+            date(2024, 7, 1),  # июль уже 4-6
+            date(2024, 9, 1),  # сентябрь ещё 4-6
+            date(2024, 10, 1),  # октябрь уже 1-3
+            date(2024, 12, 1),
+        ]
+        consensus = [
+            self.wave(wave_date, 2024, median=10.0, p10=9.5, p90=10.5, answers=20)
+            for wave_date in wave_dates
+        ]
+        observations = km.consensus_observations(consensus, key_rate)
+        self.assertEqual(
+            [observation.wave_date for observation in observations], wave_dates[1:]
+        )
+        self.assertEqual(
+            [observation.bucket for observation in observations],
+            ["ex-ante", "10-12", "10-12", "7-9", "7-9", "4-6", "4-6", "1-3", "1-3"],
+        )
+        for observation in observations:
+            self.assertEqual(
+                observation.available_from,
+                observation.wave_date
+                + timedelta(days=km.CONSENSUS_PUBLICATION_LAG_DAYS),
+            )
+            self.assertEqual(observation.actual, 10.0)
+            self.assertEqual(observation.median, 10.0)
+            self.assertEqual(observation.p10, 9.5)
+            self.assertEqual(observation.p90, 10.5)
+            self.assertEqual(observation.answers, 20)
+            self.assertEqual(observation.consensus_error_bp, 0.0)
+            self.assertEqual(observation.hold_error_bp, 0.0)
+
+    def test_observation_errors_are_signed_and_sorted_by_year(self):
+        key_rate = [(date(2023, 1, 1), 10.0), (date(2024, 12, 31), 10.0)]
+        consensus = [
+            self.wave(date(2023, 6, 1), 2023, median=11.0),
+            self.wave(date(2023, 12, 1), 2024, median=9.0),
+        ]
+        observations = km.consensus_observations(consensus, key_rate)
+        self.assertEqual(
+            [
+                (observation.year, observation.available_from)
+                for observation in observations
+            ],
+            [(2023, date(2023, 6, 7)), (2024, date(2023, 12, 7))],
+        )
+        # Положительная ошибка — консенсус завысил (11 против факта 10),
+        # отрицательная — занизил (9 против 10). Hold ошибки не даёт: 10 = 10.
+        self.assertEqual(observations[0].consensus_error_bp, 100.0)
+        self.assertEqual(observations[1].consensus_error_bp, -100.0)
+        self.assertEqual(observations[0].hold_error_bp, 0.0)
+        self.assertEqual(observations[1].hold_error_bp, 0.0)
+
+    def test_incomplete_year_is_skipped(self):
+        # 2025 в consensus есть, но ряд ставки кончается 31 декабря 2024 —
+        # год не завершён, и пара не должна выдавать недосчитанную среднюю.
+        key_rate = [(date(2024, 1, 1), 10.0), (date(2024, 12, 31), 10.0)]
+        consensus = [
+            self.wave(date(2024, 6, 1), 2024),
+            self.wave(date(2024, 9, 1), 2025),
+        ]
+        observations = km.consensus_observations(consensus, key_rate)
+        self.assertEqual([observation.year for observation in observations], [2024])
+
+    def test_completed_year_with_wave_before_rate_start_is_rejected(self):
+        # Ряд покрывает 2024, но начинается позже даты доступности экс-анте
+        # волны: hold не из чего считать. Это разрыв ряда, а не повод молча
+        # выбросить пару из выборки.
+        key_rate = [(date(2024, 1, 1), 10.0), (date(2024, 12, 31), 10.0)]
+        consensus = [self.wave(date(2023, 12, 1), 2024)]
+        with self.assertRaises(ValueError) as caught:
+            km.consensus_observations(consensus, key_rate)
+        self.assertIn("нет ставки", str(caught.exception))
+
+    def test_aggregate_consensus_metrics_and_dm(self):
+        consensus_errors = [10.0, -10.0, 20.0, -20.0, 5.0, -5.0, 15.0, -15.0, 25.0, -25.0]
+        hold_errors = [4.0 * error for error in consensus_errors]
+        observations = [
+            self.observation("4-6", consensus_error, hold_error)
+            for consensus_error, hold_error in zip(consensus_errors, hold_errors)
+        ]
+        aggregate = km.aggregate_consensus(observations, "4-6")
+        self.assertIsNotNone(aggregate)
+        self.assertEqual(aggregate.bucket, "4-6")
+        self.assertEqual(aggregate.n, 10)
+        self.assertAlmostEqual(aggregate.consensus_rmse_bp, math.sqrt(275.0), places=12)
+        self.assertAlmostEqual(aggregate.consensus_mae_bp, 15.0, places=12)
+        self.assertAlmostEqual(aggregate.consensus_bias_bp, 0.0, places=12)
+        self.assertAlmostEqual(aggregate.hold_rmse_bp, math.sqrt(4400.0), places=12)
+        self.assertAlmostEqual(aggregate.hold_mae_bp, 60.0, places=12)
+        self.assertAlmostEqual(aggregate.hold_bias_bp, 0.0, places=12)
+        # Ошибки hold вчетверо больше: положительная статистика значила бы
+        # «консенсус хуже», поэтому она отрицательна и значима.
+        self.assertLess(aggregate.dm_stat, 0.0)
+        self.assertLess(aggregate.dm_p, 0.05)
+
+    def test_aggregate_consensus_empty_bucket_is_none(self):
+        observations = [self.observation("4-6", 10.0, 20.0)]
+        self.assertIsNone(km.aggregate_consensus(observations, "1-3"))
+        self.assertIsNone(km.aggregate_consensus([], "4-6"))
+
+    def test_aggregate_consensus_single_observation_has_no_dm(self):
+        aggregate = km.aggregate_consensus(
+            [self.observation("1-3", -30.0, 20.0)], "1-3"
+        )
+        self.assertEqual(aggregate.n, 1)
+        self.assertEqual(aggregate.consensus_rmse_bp, 30.0)
+        self.assertEqual(aggregate.consensus_mae_bp, 30.0)
+        self.assertEqual(aggregate.consensus_bias_bp, -30.0)
+        self.assertEqual(aggregate.hold_rmse_bp, 20.0)
+        self.assertEqual(aggregate.hold_bias_bp, 20.0)
+        self.assertIsNone(aggregate.dm_stat)
+        self.assertIsNone(aggregate.dm_p)
+
+    def test_aggregate_consensus_zero_variance_uses_dm_convention(self):
+        # Одинаковые ошибки: различию потерь нечем делиться — конвенция
+        # `eval_utils` `(0.0, 1.0)`, а не None и не исключение.
+        same = [
+            self.observation("7-9", 10.0, 10.0),
+            self.observation("7-9", -20.0, -20.0),
+        ]
+        aggregate = km.aggregate_consensus(same, "7-9")
+        self.assertEqual((aggregate.dm_stat, aggregate.dm_p), (0.0, 1.0))
+        # Постоянная ненулевая разница потерь — преимущество бесспорно:
+        # `(−inf, 0.0)` (hold-ошибка 12 против консенсусной 10).
+        shifted = [
+            self.observation("7-9", 10.0, 12.0),
+            self.observation("7-9", 10.0, 12.0),
+        ]
+        aggregate = km.aggregate_consensus(shifted, "7-9")
+        self.assertEqual(aggregate.dm_stat, -math.inf)
+        self.assertEqual(aggregate.dm_p, 0.0)
+
+
 class TestRows(unittest.TestCase):
     """Признаки pi_saar и gap (спека §4)."""
 
