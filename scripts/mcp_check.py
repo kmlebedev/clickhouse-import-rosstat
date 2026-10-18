@@ -1437,7 +1437,7 @@ async def check(params, server_log):
                     "AND period_date='2023-11-30'"}))
                 pit_asof_rows = result_rows(pit_asof)
                 pit_asof_row = pit_asof_rows[0] if pit_asof_rows else None
-                pit_asof_ok = (pit_asof_row is not None
+                pit_asof_ok = (pit_asof_rows is not None and len(pit_asof_rows) == 1
                                and pit_asof_row.get("value") == pit_want["value"]
                                and pit_asof_row.get("vintage") == pit_want["vintage"]
                                and pit_asof_row.get("vintage_label") == pit_want["vintage_label"])
@@ -1468,7 +1468,7 @@ async def check(params, server_log):
                     "AND period_date='2026-06-30'"}))
                 pit_missing_rows = result_rows(pit_missing)
                 pit_missing_row = pit_missing_rows[0] if pit_missing_rows else None
-                pit_missing_ok = (pit_missing_row is not None
+                pit_missing_ok = (pit_missing_rows is not None and len(pit_missing_rows) == 1
                                   and pit_missing_row.get("value") == pit_want["value"]
                                   and pit_missing_row.get("vintage") == pit_want["vintage"]
                                   and pit_missing_row.get("vintage_label") == pit_want["vintage_label"])
