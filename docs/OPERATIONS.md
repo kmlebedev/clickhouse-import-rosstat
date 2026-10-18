@@ -13,7 +13,7 @@
 Реестр ML-прогонов (`infra/4.1`) состоит из schema-only импортёра `ml_registry` и опциональной записи из Python-скриптов. Сначала создайте таблицы и витрины, затем запускайте эксперименты:
 
 ```bash
-make import STAT=ml_registry              # ml_runs, ml_predictions, v_ml_runs/v_ml_leaderboard/v_ml_error_by_fold; повтор — no-op
+make import STAT=ml_registry              # ml_runs, ml_predictions, v_ml_runs/v_ml_leaderboard/v_ml_error_by_fold; повтор идемпотентен (безопасен)
 ML_LOG=1 make cpi-nowcast                 # паспорт прогона + fold-предсказания (unit='pp')
 ML_LOG=1 make key-rate-model              # паспорт прогона + fold-предсказания (unit='bp')
 ```
