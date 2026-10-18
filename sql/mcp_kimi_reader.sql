@@ -48,3 +48,10 @@ GRANT SELECT ON default.v_cbr_mt_forecast TO kimi_reader;
 GRANT SELECT ON default.v_bank_loan_portfolio_forward TO kimi_reader;
 GRANT SELECT ON default.v_cbr_form101 TO kimi_reader;
 GRANT SELECT ON default.v_cbr_form101_loans TO kimi_reader;
+
+-- Реестр ML-экспериментов (infra/4.1): агенту выданы только витрины.
+-- Сырые ml_runs/ml_predictions закрыты: паспорт прогона и fold-предсказания
+-- читаются через v_ml_runs, v_ml_leaderboard и v_ml_error_by_fold.
+GRANT SELECT ON default.v_ml_runs TO kimi_reader;
+GRANT SELECT ON default.v_ml_leaderboard TO kimi_reader;
+GRANT SELECT ON default.v_ml_error_by_fold TO kimi_reader;

@@ -8,6 +8,18 @@
 
 Запуск одного DAG вручную: `dagu start dagu/gold.yaml` (dev-окружение Dagu должно видеть `ROSSTAT_IMPORT_BIN` и `CLICKHOUSE_URL` через `base.yaml`).
 
+## ML-эксперименты
+
+Реестр ML-прогонов (`infra/4.1`) состоит из schema-only импортёра `ml_registry` и опциональной записи из Python-скриптов. Сначала создайте таблицы и витрины, затем запускайте эксперименты:
+
+```bash
+make import STAT=ml_registry              # ml_runs, ml_predictions, v_ml_runs/v_ml_leaderboard/v_ml_error_by_fold; повтор идемпотентен (безопасен)
+ML_LOG=1 make cpi-nowcast                 # паспорт прогона + fold-предсказания (unit='pp')
+ML_LOG=1 make key-rate-model              # паспорт прогона + fold-предсказания (unit='bp')
+```
+
+`ML_LOG=1` включает запись; без переменной скрипты в ClickHouse не пишут. Если ClickHouse недоступен, прогон не падает: паспорт и предсказания сохраняются локально в `build/ml-runs/<run_id>/` (`run.json` + `predictions.jsonl`, каталог переопределяется `ML_LOCAL_DIR`). Имя прогона — `ML_RUN_NAME`. Импортёр `ml_registry` стоит в `dagu/ml.yaml` (ежедневно 06:07 МСК) и должен отработать до первого ML-прогона; чтение агентом — только через витрины `v_ml_runs`, `v_ml_leaderboard`, `v_ml_error_by_fold` (сырые таблицы закрыты, проверка — `make mcp-check`).
+
 ## Деплой на staging
 
 Разворачивает три компонента на хост `palmshell`: бинарник `clickhouse-import-rosstat`, планировщик `dagu` v2.18.2 и MCP-сервер `mcp-clickhouse` 0.7.0 (HTTP, read-only). ClickHouse и Grafana на хосте не трогаются. Артефакты — `deploy/staging/`, порядок и отладка — `deploy/staging/README.md`.
