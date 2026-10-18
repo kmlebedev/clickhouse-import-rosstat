@@ -75,6 +75,20 @@ def _sql_payload(sql: str) -> tuple:
     return header, [json.loads(line) for line in body.splitlines() if line]
 
 
+class _ItemScalar:
+    """Numpy-подобный скаляр: `json.dumps` его не знает, `.item()` — знает.
+
+    Настоящий numpy в тесты не тянем: хелпер обязан оставаться stdlib-only,
+    а контракт здесь — именно протокол `.item()`, а не конкретный тип.
+    """
+
+    def __init__(self, value):
+        self._value = value
+
+    def item(self):
+        return self._value
+
+
 # Колонки таблиц дословно из `mlregistry/schema.go`. JSONEachRow разбирает
 # объекты по именам ключей, поэтому набор ключей — межъязыковой контракт:
 # лишний/пропавший ключ ClickHouse либо отвергнет, либо молча заполнит
@@ -136,6 +150,23 @@ class JsonSafeTest(unittest.TestCase):
     def test_recurses_into_nested_containers(self):
         safe = json_safe({"rows": [{"when": date(2026, 1, 2)}], "nan": float("nan")})
         self.assertEqual(safe, {"rows": [{"when": "2026-01-02"}], "nan": None})
+
+    def test_item_scalars_are_unwrapped(self):
+        # numpy-скаляр без импорта numpy: проверяется протокол `.item()`.
+        safe = json_safe({
+            "n": _ItemScalar(3),
+            "f": _ItemScalar(0.5),
+            "nested": [_ItemScalar(True)],
+        })
+        self.assertEqual(safe, {"n": 3, "f": 0.5, "nested": [True]})
+
+    def test_item_returning_self_does_not_recurse_forever(self):
+        class SelfItem:
+            def item(self):
+                return self
+
+        marker = SelfItem()
+        self.assertIs(json_safe(marker), marker)
 
 
 class PredictionRowTest(unittest.TestCase):
@@ -347,6 +378,48 @@ class FinishTest(unittest.TestCase):
             self.assertEqual(env["python"], sys.version)
             self.assertTrue(env["platform"])
             self.assertEqual(set(env["packages"]), set(me.PACKAGES))
+
+    def test_item_scalars_in_config_and_metrics_do_not_break_finish(self):
+        # np.int64 в конфиге/метриках: json_safe обязан развернуть `.item()`,
+        # а не уронить сериализацию паспорта.
+        with _env():
+            run = start_run(
+                "exp", "run", {"folds": _ItemScalar(2)}, date(2026, 10, 18),
+                {}, [], enabled=True,
+            )
+            run.log_metrics({"n": _ItemScalar(3)})
+            with patch.object(me, "ch_exec") as ch_exec:
+                self.assertEqual(run.finish(), "clickhouse")
+
+            _, rows = _sql_payload(ch_exec.call_args.args[0])
+            self.assertEqual(json.loads(rows[0]["config_json"]), {"folds": 2})
+            self.assertEqual(json.loads(rows[0]["metrics_json"]), {"n": 3})
+
+    def test_serialization_failure_falls_back_to_minimal_local_passport(self):
+        # Произвольный объект в конфиге: полный run_row построить нельзя, но
+        # finish не имеет права бросить исключение или потерять паспорт.
+        with tempfile.TemporaryDirectory() as tmp:
+            with _env(ML_LOCAL_DIR=tmp):
+                run = start_run(
+                    "exp", "run", {"bad": object()}, date(2026, 10, 18),
+                    {}, [], enabled=True,
+                )
+                with patch.object(me, "ch_exec") as ch_exec:
+                    self.assertEqual(run.finish("finished", "context"), "local")
+                ch_exec.assert_not_called()
+                # Повторный finish — no-op с тем же результатом.
+                self.assertEqual(run.finish(), "local")
+
+                payload = json.loads(
+                    (Path(tmp) / run.run_id / "run.json").read_text(encoding="utf-8")
+                )
+                self.assertEqual(payload["status"], "failed")
+                self.assertEqual(payload["run_id"], run.run_id)
+                self.assertEqual(payload["experiment"], "exp")
+                self.assertEqual(payload["run_name"], "run")
+                self.assertIn("TypeError", payload["notes"])
+                self.assertIn("started_at", payload)
+                self.assertIn("finished_at", payload)
 
     def test_success_without_predictions_writes_only_run(self):
         with _env():
