@@ -69,7 +69,7 @@ func TestMlRegistryName(t *testing.T) {
 func TestMlRunsDdlPinsPassport(t *testing.T) {
 	for _, want := range []string{
 		"run_id UUID", "experiment LowCardinality(String)",
-		"config_hash String", "sample_hash String", "data_asof Date",
+		"config_hash String", "env_json String", "sample_hash String", "data_asof Date",
 		"metrics_json String", "artifacts_json String",
 		"ENGINE = ReplacingMergeTree", "ORDER BY (experiment, run_id)",
 	} {
@@ -298,7 +298,7 @@ Key details:
 - `capture_git` runs `git rev-parse HEAD`, `git branch --show-current`, `git status --porcelain`, `git config user.name` with `check=False`; `dirty=1` if status is non-empty.
 - `package_versions` uses `importlib.metadata.version` for `catboost`, `scikit-learn`, `pandas`, `statsmodels`, `scipy`, `numpy`; missing → `None`.
 - `PredictionRow.error` validates all values finite and returns `predicted - actual`.
-- `ExperimentRun.finish` builds `run_row` with `json_safe` for config/sample_meta/metrics/artifacts; writes `ml_runs` first, then `ml_predictions` in one `ch_exec` each; on `ClickHouseError`/`OSError` writes local `run.json` + `predictions.jsonl` and logs `log.warning`.
+- `ExperimentRun.finish` builds `run_row` with `json_safe` for config/env/sample_meta/metrics/artifacts (`env_json` = `package_versions()` plus Python/OS); writes `ml_predictions` first, then the final `ml_runs` row in one `ch_exec` each, so a failed predictions insert cannot leave a `finished` passport without fold rows; on `ClickHouseError`/`OSError` writes local `run.json` + `predictions.jsonl` and logs `log.warning`.
 - `finish` is idempotent; `__exit__` calls `finish("failed", ...)` when an exception escapes and `finish` was not called.
 - `enabled` defaults to `os.environ.get("ML_LOG") == "1"`; `run_name` overridden by `ML_RUN_NAME`; local dir by `ML_LOCAL_DIR`.
 - `log_artifacts` stores `{"name", "path", "sha256", "bytes"}`; path relative to `ROOT` when possible.
