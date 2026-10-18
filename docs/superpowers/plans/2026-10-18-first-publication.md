@@ -138,5 +138,5 @@
 - [x] Снимок: 18.10.2026 14:05 MSK; ClickHouse 26.10.1.1853; `sha256:9e885aa9b7a49023962399a2e735464827743c6cf45277f5acd5f1b7d50a73c3`; max-даты — в `snapshot.md`.
 - [x] Графики: `rate-inflation.svg` (1100×540), `keyrate-ofz.svg` (1180×540), `distributions.svg` (1000×540); XML валиден, просмотрены через Quick Look.
 - [x] Статья: 22 сноски, два `PENDING` (#127, #190), `TBD`/`TODO` нет.
-- [ ] `git status` — чистый рабочий каталог после коммитов.
-- [ ] PR: номер, URL, `Refs #191`.
+- [x] `git status` — чисто после коммитов `e8b572b`, `2c4759a`.
+- [x] PR: [#199](https://github.com/kmlebedev/clickhouse-import-rosstat/pull/199), `Refs #191` (не `Closes`).
