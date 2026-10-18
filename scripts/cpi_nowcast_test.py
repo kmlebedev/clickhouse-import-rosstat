@@ -1096,8 +1096,9 @@ class TestRunSummaryExperimentLog(unittest.TestCase):
         )
         self.assertEqual({row.unit for row in fake.predictions}, {"pp"})
         windows = {row.window for row in fake.predictions}
-        self.assertTrue(any(window.startswith("start=24") for window in windows), windows)
-        self.assertIn("start=48, embargo=1", windows)
+        self.assertEqual(
+            windows, {"start=24, embargo=1", "start=48, embargo=1"}
+        )
         self.assertEqual(fake.metrics["primary_metric"], "rmse_pp")
         self.assertEqual(set(fake.metrics["windows"]), windows)
         self.assertTrue(fake.metrics["weights"])
@@ -1105,6 +1106,44 @@ class TestRunSummaryExperimentLog(unittest.TestCase):
             {path.name for path in fake.artifacts},
             {cm.REPORT_NAME, cm.PREDICTIONS_NAME, cm.FORECAST_NAME},
         )
+
+    def test_logging_failure_does_not_change_the_exit_code(self):
+        # Журнал — побочный слой: ValueError сборки PredictionRow (например, на
+        # нечисловом прогнозе) не должен превращать успешный прогон в non-zero
+        # exit. Отчёт и CSV уже записаны; fake logger получает finish("failed").
+        world = experiment_world()
+        models = cheap_models()
+        fake = FakeLogger()
+
+        def broken_prediction_row(*args, **kwargs):
+            raise ValueError("predicted должно быть конечным")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                self.patched_world(world, models),
+                unittest.mock.patch.object(
+                    cm.mlx, "PredictionRow", broken_prediction_row
+                ),
+                contextlib.redirect_stdout(io.StringIO()),
+                self.assertLogs(cm.log, level="WARNING") as captured,
+            ):
+                code = cm.run_summary(
+                    start=24,
+                    embargo_months=1,
+                    out_dir=Path(tmp),
+                    today=world["today"],
+                    ml_log=True,
+                    logger=fake,
+                )
+            self.assertEqual(code, 0)
+            self.assertEqual(fake.finished, "failed")
+            self.assertIn("logging: ValueError", fake.notes)
+            self.assertEqual(fake.predictions, [])
+            self.assertEqual(fake.artifacts, [])
+            self.assertTrue(fake.metrics)  # метрики успели залогироваться до сбоя
+            self.assertTrue((Path(tmp) / cm.REPORT_NAME).exists())
+            self.assertTrue((Path(tmp) / cm.PREDICTIONS_NAME).exists())
+        self.assertIn("журнал эксперимента не записан", "\n".join(captured.output))
 
     def test_run_summary_without_ml_log_does_not_call_ch_exec(self):
         # Явный ml_log=False важнее ML_LOG=1: журнал выключен, ch_exec не зовётся.

@@ -128,6 +128,7 @@ NaN: сейчас это `ofz_1y` во всём бэктесте (у G-curve М�
 import argparse
 import csv
 import json
+import logging
 import math
 import os
 import statistics
@@ -149,6 +150,8 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 ROOT = Path(__file__).resolve().parent.parent
+
+log = logging.getLogger(__name__)
 
 # Скрипт-сосед: переиспользуем транспорт к ClickHouse, а не копируем его.
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -2963,7 +2966,15 @@ def run_summary(
             _field("отчёт/CSV/JSON:", "не пишутся (walk-forward не дал ни одного прогноза)")
             _print_removed_artifacts(clear_stale_artifacts(out_dir))
             if logger is not None:
-                logger.finish("empty", "walk-forward не дал ни одного прогноза")
+                # Журнал не меняет код возврата: сбой `finish` здесь — только
+                # предупреждение (сам прогон уже отработал ветку «empty»).
+                try:
+                    logger.finish("empty", "walk-forward не дал ни одного прогноза")
+                except Exception as finish_exc:
+                    log.warning(
+                        "не удалось пометить прогон empty: %s: %s",
+                        type(finish_exc).__name__, finish_exc,
+                    )
             return 0
         # Ветка «нет цели живого nowcast'а» бэктест НЕ отменяет: отчёт и CSV пишутся
         # как обычно, а подчищается только stale-прогноз (`write_nowcast_artifact`).
@@ -2991,63 +3002,83 @@ def run_summary(
                 f"не пишется ({reason}); устаревший файл, если был, удалён",
             )
         if logger is not None:
-            logger.log_metrics(
-                {
-                    "primary_metric": "rmse_pp",
-                    "sample": sample_meta,
-                    "windows": {
-                        window_key(run.start, run.embargo): {
-                            name: {
-                                "rmse": rmse_pp(group) if group else None,
-                                "mae": mae_pp(group) if group else None,
-                                "n": len(group),
-                                "skipped": int(run.skipped.get(name, 0)),
-                                "notes": dict(run.notes.get(name, {})),
+            # Журнал эксперимента — побочный слой: его сбой НЕ меняет код
+            # возврата. Отчёт и CSV к этому моменту уже записаны, поэтому
+            # ValueError `PredictionRow` (например, на NaN-прогнозе) не должен
+            # превращать успешный прогон в non-zero exit: помечаем run failed
+            # и идём дальше.
+            try:
+                logger.log_metrics(
+                    {
+                        "primary_metric": "rmse_pp",
+                        "sample": sample_meta,
+                        "windows": {
+                            window_key(run.start, run.embargo): {
+                                name: {
+                                    "rmse": rmse_pp(group) if group else None,
+                                    "mae": mae_pp(group) if group else None,
+                                    "n": len(group),
+                                    "skipped": int(run.skipped.get(name, 0)),
+                                    "notes": dict(run.notes.get(name, {})),
+                                }
+                                for name, group in _run_groups(run).items()
                             }
-                            for name, group in _run_groups(run).items()
-                        }
-                        for run in runs
-                    },
-                    "weights": [
-                        {
-                            "start": item.start,
-                            "embargo": item.embargo,
-                            "month": item.month.isoformat(),
-                            "train": item.train,
-                            "weights": dict(zip(BOTTOMUP_COMPONENTS, item.weights)),
-                        }
-                        for item in weights
-                    ],
-                }
-            )
-            logger.log_predictions(
-                [
-                    mlx.PredictionRow(
-                        model=prediction.model,
-                        window=window_key(run.start, run.embargo),
-                        target_date=prediction.month,
-                        predicted=prediction.y_pred,
-                        actual=prediction.y_true,
-                        unit="pp",
-                        meta={
-                            "start": run.start,
-                            "embargo": run.embargo,
-                            "main": run.main,
+                            for run in runs
                         },
+                        "weights": [
+                            {
+                                "start": item.start,
+                                "embargo": item.embargo,
+                                "month": item.month.isoformat(),
+                                "train": item.train,
+                                "weights": dict(zip(BOTTOMUP_COMPONENTS, item.weights)),
+                            }
+                            for item in weights
+                        ],
+                    }
+                )
+                logger.log_predictions(
+                    [
+                        mlx.PredictionRow(
+                            model=prediction.model,
+                            window=window_key(run.start, run.embargo),
+                            target_date=prediction.month,
+                            predicted=prediction.y_pred,
+                            actual=prediction.y_true,
+                            unit="pp",
+                            meta={
+                                "start": run.start,
+                                "embargo": run.embargo,
+                                "main": run.main,
+                            },
+                        )
+                        for run in runs
+                        for prediction in run.predictions
+                    ]
+                )
+                logger.log_artifacts(
+                    [report_path, predictions_path, forecast_path if forecast_written else None]
+                )
+                logger.finish(
+                    "finished",
+                    f"walk-forward: {len(runs)} окон, "
+                    f"{sum(len(run.predictions) for run in runs)} фолдов; "
+                    f"текущий nowcast: {'рассчитан' if nowcast is not None else 'не рассчитан'}",
+                )
+            except Exception as exc:
+                log.warning(
+                    "журнал эксперимента не записан: %s: %s",
+                    type(exc).__name__, exc,
+                )
+                try:
+                    logger.finish(
+                        "failed", f"logging: {type(exc).__name__}: {exc}"
                     )
-                    for run in runs
-                    for prediction in run.predictions
-                ]
-            )
-            logger.log_artifacts(
-                [report_path, predictions_path, forecast_path if forecast_written else None]
-            )
-            logger.finish(
-                "finished",
-                f"walk-forward: {len(runs)} окон, "
-                f"{sum(len(run.predictions) for run in runs)} фолдов; "
-                f"текущий nowcast: {'рассчитан' if nowcast is not None else 'не рассчитан'}",
-            )
+                except Exception as finish_exc:
+                    log.warning(
+                        "не удалось пометить прогон failed: %s: %s",
+                        type(finish_exc).__name__, finish_exc,
+                    )
         return 0
     except Exception as exc:
         if logger is not None:
