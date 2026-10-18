@@ -221,6 +221,38 @@ class TestPinnedDesign(unittest.TestCase):
         self.assertIn("credit_conditions", with_mp)
 
 
+    def test_forecast_origin_matches_cb_comp(self):
+        target = date(2024, 7, 1)
+        self.assertEqual(parity.forecast_origin(target, 1), date(2024, 7, 1))
+        self.assertEqual(parity.forecast_origin(target, 2), date(2024, 6, 1))
+        self.assertEqual(parity.forecast_origin(target, 3), date(2024, 5, 1))
+        self.assertEqual(parity.forecast_origin(target, 6), date(2024, 2, 1))
+
+    def test_rows_for_horizon_take_origin_features(self):
+        feature_by_month = {
+            date(2024, 2, 1): {"marker": "origin"},
+            date(2024, 7, 1): {"marker": "target"},
+        }
+        target_row = parity.ParityRow(
+            month=date(2024, 7, 1),
+            features={"marker": "target"},
+            targets={1: 1.0, 6: 6.0},
+        )
+        rows = parity.rows_for_horizon([target_row], feature_by_month, 6)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].month, date(2024, 7, 1))
+        self.assertEqual(rows[0].features["marker"], "origin")
+        self.assertEqual(rows[0].targets[6], 6.0)
+
+    def test_leakage_origin_check_accepts_valid(self):
+        row = parity.ParityRow(
+            month=date(2024, 7, 1),
+            features={"marker": "origin"},
+            targets={6: 6.0},
+        )
+        parity.assert_no_leakage_origin([row], 6)
+
+
 class TestCalendar(unittest.TestCase):
     def test_month_start_variants(self):
         self.assertEqual(parity.month_start(datetime(2024, 7, 19, 12, 0)), date(2024, 7, 1))
