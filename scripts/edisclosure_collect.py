@@ -150,6 +150,17 @@ def parse_company_name(html: str) -> str:
     return ""
 
 
+def classify_section_page(html: str) -> str:
+    """Отличить страницу с документами от пустого раздела (карточка компании)."""
+    if FILES_TABLE_MARKER in html:
+        return "documents"
+    if COMPANY_CARD_MARKER in html:
+        return "empty"
+    raise ValueError(
+        "неизвестная страница: нет ни files-table, ни карточки компании"
+    )
+
+
 def validate_document(row: dict[str, str], companies: dict[str, str]) -> None:
     """Проверить строку документа против контракта спеки §4.2."""
     ticker = row.get("ticker", "")
@@ -184,6 +195,14 @@ def validate_document(row: dict[str, str], companies: dict[str, str]) -> None:
     parsed = urlparse(url)
     if parsed.scheme != "https":
         raise ValueError(f"url {url!r}: нужен https")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError(f"url {url!r}: userinfo в URL запрещён")
+    try:
+        port = parsed.port
+    except ValueError:
+        raise ValueError(f"url {url!r}: некорректный порт") from None
+    if port is not None:
+        raise ValueError(f"url {url!r}: порт в URL запрещён")
     if parsed.hostname != "e-disclosure.ru":
         raise ValueError(f"url {url!r}: host должен быть e-disclosure.ru")
     if parsed.path != "/portal/FileLoad.ashx":
@@ -223,6 +242,41 @@ def dedupe_documents(rows: list[dict[str, str]]) -> list[dict[str, str]]:
         seen[key] = row
         result.append(row)
     return result
+
+
+def empty_sections_by_company(
+    companies: list[dict[str, str]],
+    sections: list[str],
+    documents: list[dict[str, str]],
+) -> list[dict[str, Any]]:
+    """Пустые разделы по компаниям — для аудита манифеста.
+
+    Порядок компаний и разделов сохраняется; компании без пустых разделов
+    в результат не попадают.
+    """
+    present: dict[str, set[str]] = {
+        company.get("ticker", ""): set() for company in companies
+    }
+    for row in documents:
+        ticker = row.get("ticker", "")
+        if ticker in present:
+            present[ticker].add(row.get("section", ""))
+    result: list[dict[str, Any]] = []
+    for company in companies:
+        ticker = company.get("ticker", "")
+        empty = [section for section in sections if section not in present[ticker]]
+        if empty:
+            result.append({"ticker": ticker, "sections": empty})
+    return result
+
+
+def ensure_company_has_documents(counts: dict[str, int]) -> None:
+    """Пустая компания — признак сломанного сбора, а не пустого источника."""
+    for ticker, count in counts.items():
+        if count == 0:
+            raise ValueError(
+                f"у компании {ticker} ноль документов во всех запрошенных разделах"
+            )
 
 
 def build_manifest(
@@ -298,7 +352,11 @@ def _first_page(context: Any) -> Any:
 
 
 def wait_for_markers(
-    page: Any, markers: tuple[str, ...], wait_seconds: int, url: str
+    page: Any,
+    markers: tuple[str, ...],
+    wait_seconds: int,
+    url: str,
+    timeout_error: str | None = None,
 ) -> str:
     """Дождаться любого маркера контента, ожидая ручного решения капчи."""
     deadline = time.monotonic() + wait_seconds
@@ -320,8 +378,11 @@ def wait_for_markers(
                 )
         if time.monotonic() >= deadline:
             raise SystemExit(
-                f"не дождались контента {markers!r} на {url} за {wait_seconds} с; "
-                "капча не решена — манифест не перезаписан"
+                timeout_error
+                or (
+                    f"не дождались контента {markers!r} на {url} за "
+                    f"{wait_seconds} с; капча не решена — манифест не перезаписан"
+                )
             )
         time.sleep(1)
 
@@ -374,6 +435,7 @@ def run_collect(
                         "url": url,
                     }
                 )
+                company_document_count = 0
                 for section in sections:
                     section_url = files_url(company_id, section)
                     log(f"  раздел {section}: {section_url}")
@@ -385,10 +447,22 @@ def run_collect(
                         (FILES_TABLE_MARKER, COMPANY_CARD_MARKER),
                         wait_seconds,
                         section_url,
+                        timeout_error=(
+                            f"неизвестная страница {section_url}: нет ни "
+                            "files-table, ни карточки компании "
+                            f"за {wait_seconds} с (возможно, капча не решена) — "
+                            "манифест не записан"
+                        ),
                     )
-                    if FILES_TABLE_MARKER not in html:
+                    try:
+                        kind = classify_section_page(html)
+                    except ValueError as exc:
+                        raise SystemExit(
+                            f"{exc}: {section_url}; манифест не записан"
+                        ) from None
+                    if kind == "empty":
                         # Пустой раздел e-disclosure редиректит на карточку компании.
-                        log("    документов нет (раздел без files-table)")
+                        log("    документов нет (пустой раздел)")
                         continue
                     rows = parse_documents_table(html, section, ticker)
                     for row in rows:
@@ -396,6 +470,8 @@ def run_collect(
                         validate_document(row, COMPANIES)
                     log(f"    документов: {len(rows)}")
                     documents.extend(rows)
+                    company_document_count += len(rows)
+                ensure_company_has_documents({ticker: company_document_count})
         finally:
             context.close()
 
@@ -404,6 +480,9 @@ def run_collect(
         log(f"схлопнуто дубликатов: {len(documents) - len(unique)}")
     generated_at = datetime.now().astimezone().isoformat(timespec="seconds")
     manifest = build_manifest(companies, sections, unique, generated_at)
+    manifest["empty_sections"] = empty_sections_by_company(
+        companies, sections, unique
+    )
     write_output(out_dir, manifest, unique)
     log(f"готово: документов {len(unique)} -> {out_dir}")
 
