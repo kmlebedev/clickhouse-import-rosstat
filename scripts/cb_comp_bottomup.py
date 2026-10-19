@@ -80,6 +80,32 @@ MP_INDICATORS = {
     "Ozhidaniya izmeneniya tsen na gotovuyu produktsiyu (uslugi) predpriyatiy: balans otvetov": "price_exp",
 }
 
+# Режимы признаков (спека §3): mean — baseline #190; per_bsu — primary;
+# full — robustness с кредитом/ставками/USD/трендом CPI.
+FEATURE_MODES = ("mean", "per_bsu", "full")
+DEFAULT_FEATURE_MODE = "mean"
+
+FULL_FEATURES = (
+    "cpi_trend",
+    "cpi_trend_dev",
+    "usd_level",
+    "usd_chg",
+    "miacr",
+    "miacr_chg",
+    "debt_mortgage",
+)
+
+# Полная панель `panel.csv`: (group_stat, code, kind) → as-of ряд.
+# В публичной панели ставка одна (`miacr`), её уровень лежит в kind
+# `interest_rate`, изменение — в `diff`; отдельного ряда `interest_rate` нет.
+FULL_PANEL_KEYS = {
+    "usd_level": ("Рыночные индексы", "usd_rub", "base_index"),
+    "usd_chg": ("Рыночные индексы", "usd_rub", "diff"),
+    "miacr": ("Кредитные ставки", "miacr", "interest_rate"),
+    "miacr_chg": ("Кредитные ставки", "miacr", "diff"),
+    "debt_mortgage": ("Кредит населению", "debt_households_wh_mortgage", "base_index"),
+}
+
 CATBOOST_DEFAULTS = {
     "loss_function": "RMSE",
     "random_seed": SEED,
@@ -255,16 +281,24 @@ def load_weights(archive: Path, years, specs: list) -> dict:
     return {year: _year_weights(archive, year, specs) for year in years}
 
 
-def ensure_panel_csv(archive: Path, out_dir: Path) -> tuple:
+def ensure_panel_csv(archive: Path, out_dir: Path, require_full: bool = False) -> tuple:
     """CSV панели из FST; при отсутствии — вызов Rscript-экспортёра.
 
     R-экспортёр — `scripts/cb_comp_panel_export.R`; он не входит в тесты и
     вызывается только живым прогоном. Если R/fst недоступны, исключение
     называется явно — панель не подменяется синтетикой.
+
+    Возвращает `(cpi, mp, full)`; `full` — `panel.csv` (кредит, ставки,
+    рыночные индексы, CPI trend/trend_deviation) или пустой DataFrame, если
+    файла нет и режим не требует его.
     """
     cpi_csv = out_dir / "cpi_panel.csv"
     mp_csv = out_dir / "mp_panel.csv"
-    if not cpi_csv.exists() or not mp_csv.exists():
+    full_csv = out_dir / "panel.csv"
+    missing = not cpi_csv.exists() or not mp_csv.exists()
+    if require_full and not full_csv.exists():
+        missing = True
+    if missing:
         exporter = ROOT / "scripts" / "cb_comp_panel_export.R"
         try:
             subprocess.run(
@@ -286,7 +320,12 @@ def ensure_panel_csv(archive: Path, out_dir: Path) -> tuple:
     mp = pd.read_csv(mp_csv, parse_dates=["date"])
     cpi["code"] = cpi["code"].map(normalize_code)
     mp["code"] = mp["code"].map(normalize_code)
-    return cpi, mp
+    if full_csv.exists():
+        full = pd.read_csv(full_csv, parse_dates=["date"])
+        full["code"] = full["code"].map(normalize_code)
+    else:
+        full = pd.DataFrame(columns=["date", "group_stat", "code", "kind", "value", "lag"])
+    return cpi, mp, full
 
 
 def load_cpi_diff(cpi: pd.DataFrame) -> pd.DataFrame:
@@ -366,6 +405,11 @@ def base_features(
     }, ""
 
 
+def feature_code(code: str) -> str:
+    """BSU-код в имени признака: `.`/`-`/пробел → `_` (без коллизий на практике)."""
+    return str(code).replace(".", "_").replace("-", "_").replace(" ", "_")
+
+
 def _mp_lookup(mp_panel: pd.DataFrame) -> dict:
     """`(код, индикатор) → (доступные даты, значения)` для bisect-as-of."""
     lookup = {}
@@ -381,36 +425,125 @@ def _mp_lookup(mp_panel: pd.DataFrame) -> dict:
     return lookup
 
 
+def _full_lookup(panel: pd.DataFrame) -> dict:
+    """`(group_stat, code, kind) → (доступные даты, значения)` для режима `full`.
+
+    CPI-тренд доступен по правилу v2 (`available_from_mes`), остальные ряды —
+    по `lag` панели (кредит — 2 месяца, ставки/рынок — как в архиве).
+    """
+    lookup = {}
+    if panel.empty:
+        return lookup
+    for (group_stat, code, kind), group in panel.groupby(["group_stat", "code", "kind"]):
+        points = []
+        for row in group.itertuples():
+            lag = 0 if pd.isna(row.lag) else int(row.lag)
+            if group_stat == "Индекс потребительских цен":
+                available = cm.available_from_mes(month_end(row.date))
+            else:
+                available = mp_available(row.date, lag)
+            points.append((available, row.date, float(row.value)))
+        points.sort(key=lambda point: (point[0], point[1]))
+        lookup[(group_stat, code, kind)] = (
+            [point[0] for point in points],
+            [point[2] for point in points],
+        )
+    return lookup
+
+
+def _asof_value(lookup: dict, key: tuple, cutoff: date) -> float:
+    available, values = lookup.get(key, ([], []))
+    position = bisect.bisect_right(available, cutoff) - 1
+    if position < 0:
+        return float("nan")
+    return float(values[position])
+
+
+def mp_feature_names(spec: GroupSpec, mode: str = DEFAULT_FEATURE_MODE) -> list:
+    """Имена МП-признаков группы для режима `mean`/`per_bsu`/`full`."""
+    validate_feature_mode(mode)
+    if mode == "mean":
+        return list(MP_FEATURES)
+    names = []
+    for code in spec.bsu_codes:
+        for indicator in ("ibk", "costs", "price_exp"):
+            base = f"mp_{feature_code(code)}_{indicator}"
+            names.extend([base, f"{base}_chg"])
+    return names
+
+
 def mp_features(
     spec: GroupSpec,
     month: date,
     lookup: dict,
+    mode: str = DEFAULT_FEATURE_MODE,
 ) -> dict:
-    """6 МП-признаков группы: среднее по BSU-кодам, as-of cutoff(M).
+    """МП-признаки группы, as-of cutoff(M).
 
-    Для каждого индикатора берётся последняя точка с `available ≤ cutoff(M)` и
-    изменение к предыдущей доступной точке; `lag` точки учитывается. Если у
-    группы нет BSU или ни один код не даёт точку, признаки — NaN (CatBoost
-    обрабатывает NaN нативно); для группы без BSU MP-модель не обучается.
+    `mean` — 6 усреднённых признаков (поведение #190); `per_bsu`/`full` —
+    уровень и изменение по каждому BSU-коду и индикатору. Если у группы нет
+    BSU или ни один код не даёт точку, значения — NaN (CatBoost обрабатывает
+    NaN нативно); для группы без BSU MP-модель не обучается.
     """
+    validate_feature_mode(mode)
     if not spec.bsu_codes:
         return {}
     cutoff = cm.cutoff_for(month)
+    if mode == "mean":
+        result = {}
+        for indicator, short in (("ibk", "ibk"), ("costs", "costs"), ("price_exp", "price_exp")):
+            levels = []
+            changes = []
+            for code in spec.bsu_codes:
+                available, values = lookup.get((code, indicator), ([], []))
+                position = bisect.bisect_right(available, cutoff) - 1
+                if position < 0:
+                    continue
+                levels.append(values[position])
+                if position >= 1:
+                    changes.append(values[position] - values[position - 1])
+            result[f"mp_{short}"] = float(np.mean(levels)) if levels else float("nan")
+            result[f"mp_{short}_chg"] = float(np.mean(changes)) if changes else float("nan")
+        return result
+
     result = {}
-    for indicator, short in (("ibk", "ibk"), ("costs", "costs"), ("price_exp", "price_exp")):
-        levels = []
-        changes = []
-        for code in spec.bsu_codes:
+    for code in spec.bsu_codes:
+        for indicator in ("ibk", "costs", "price_exp"):
+            base = f"mp_{feature_code(code)}_{indicator}"
             available, values = lookup.get((code, indicator), ([], []))
             position = bisect.bisect_right(available, cutoff) - 1
             if position < 0:
-                continue
-            levels.append(values[position])
-            if position >= 1:
-                changes.append(values[position] - values[position - 1])
-        result[f"mp_{short}"] = float(np.mean(levels)) if levels else float("nan")
-        result[f"mp_{short}_chg"] = float(np.mean(changes)) if changes else float("nan")
+                result[base] = float("nan")
+                result[f"{base}_chg"] = float("nan")
+            else:
+                result[base] = float(values[position])
+                result[f"{base}_chg"] = (
+                    float(values[position] - values[position - 1])
+                    if position >= 1
+                    else float("nan")
+                )
     return result
+
+
+def full_features(spec: GroupSpec, month: date, lookup: dict) -> dict:
+    """Дополнительные признаки режима `full`: CPI-тренд, кредит, ставки, USD."""
+    cutoff = cm.cutoff_for(month)
+    result = {
+        "cpi_trend": _asof_value(
+            lookup, ("Индекс потребительских цен", spec.code, "trend"), cutoff
+        ),
+        "cpi_trend_dev": _asof_value(
+            lookup, ("Индекс потребительских цен", spec.code, "trend_deviation"), cutoff
+        ),
+    }
+    for name, key in FULL_PANEL_KEYS.items():
+        result[name] = _asof_value(lookup, key, cutoff)
+    return result
+
+
+def validate_feature_mode(mode: str) -> None:
+    if mode not in FEATURE_MODES:
+        raise ValueError(f"неизвестный feature_mode {mode!r}; ожидается {FEATURE_MODES}")
 
 
 def feature_table(
@@ -419,8 +552,11 @@ def feature_table(
     cpi_diff: pd.DataFrame,
     macro: dict,
     mp_lookup: dict,
+    feature_mode: str = DEFAULT_FEATURE_MODE,
+    full_lookup: dict = None,
 ) -> dict:
     """`{код: {origin: признаки}}` — признаки по месяцам origin (без таргета)."""
+    validate_feature_mode(feature_mode)
     table = {}
     for spec in specs:
         per_month = {}
@@ -428,7 +564,9 @@ def feature_table(
             features, reason = base_features(spec, month, cpi_diff, macro)
             if features is None:
                 continue
-            features.update(mp_features(spec, month, mp_lookup))
+            features.update(mp_features(spec, month, mp_lookup, mode=feature_mode))
+            if feature_mode == "full":
+                features.update(full_features(spec, month, full_lookup or {}))
             per_month[month] = features
         table[spec.code] = per_month
     return table
@@ -469,10 +607,27 @@ def assert_no_leakage_bottomup(target_months: list, horizon: int) -> None:
             )
 
 
-def feature_names(with_mp: bool) -> list:
-    names = list(BASE_FEATURES)
-    if with_mp:
-        names = names[:-1] + list(MP_FEATURES) + [names[-1]]
+def feature_names(
+    with_mp: bool,
+    mode: str = DEFAULT_FEATURE_MODE,
+    spec: GroupSpec = None,
+) -> list:
+    """Имена признаков; `mode="mean"` сохраняет порядок #190.
+
+    Для `per_bsu`/`full` нужен `spec` — число и имена признаков зависят от
+    BSU-кодов группы. `month` остаётся последним (индекс `cat_features`).
+    """
+    validate_feature_mode(mode)
+    if not with_mp:
+        return list(BASE_FEATURES)
+    if mode == "mean":
+        return list(BASE_FEATURES[:-1]) + list(MP_FEATURES) + [BASE_FEATURES[-1]]
+    if spec is None:
+        raise ValueError(f"feature_names: для mode={mode!r} нужен spec")
+    names = list(BASE_FEATURES[:-1]) + mp_feature_names(spec, mode)
+    if mode == "full":
+        names.extend(FULL_FEATURES)
+    names.append(BASE_FEATURES[-1])
     return names
 
 
@@ -632,19 +787,25 @@ def run_bottomup(
     train_months: list,
     test_months: list,
     train_outliers=frozenset(),
+    feature_mode: str = DEFAULT_FEATURE_MODE,
 ) -> BottomUpResult:
     """Полный bottom-up: данные → гейт → модели → агрегат.
 
     `macro` — `{месяц: {usd_mm, key_rate, fao_mm}}` из v2; `target_full` —
     `TARGET_FULL` (агрегатный таргет статьи); `train_months`/`test_months` —
-    предзарегистрированные окна; `normal_months` — 54 месяца оценки.
+    предзарегистрированные окна; `normal_months` — 54 месяца оценки;
+    `feature_mode` — `mean` (baseline #190), `per_bsu` или `full`.
     """
+    validate_feature_mode(feature_mode)
     specs = load_specs(archive)
     years = sorted({month.year - 1 for month in test_months})
     weights = load_weights(archive, years, specs)
-    cpi, mp = ensure_panel_csv(archive, PANEL_DIR)
+    cpi, mp, panel = ensure_panel_csv(
+        archive, PANEL_DIR, require_full=(feature_mode == "full")
+    )
     cpi_diff = load_cpi_diff(cpi)
     mp_panel = load_mp_panel(mp)
+    full_lookup = _full_lookup(panel) if feature_mode == "full" else {}
     utilities = load_utilities(archive)
 
     missing_groups = [spec.code for spec in specs if spec.code not in cpi_diff.columns]
@@ -671,7 +832,15 @@ def run_bottomup(
 
     mp_lookup = _mp_lookup(mp_panel)
     all_months = sorted(set(train_months) | set(test_months))
-    features_by_group = feature_table(specs, all_months, cpi_diff, macro, mp_lookup)
+    features_by_group = feature_table(
+        specs,
+        all_months,
+        cpi_diff,
+        macro,
+        mp_lookup,
+        feature_mode=feature_mode,
+        full_lookup=full_lookup,
+    )
     train_set = sorted(set(train_months) - set(train_outliers))
     test_set = sorted(set(test_months))
 
@@ -706,7 +875,9 @@ def run_bottomup(
             models_count += 1
 
             if spec.bsu_codes:
-                mp_names = feature_names(with_mp=True)
+                mp_names = feature_names(
+                    with_mp=True, mode=feature_mode, spec=spec
+                )
                 mp_model = fit_component(train_rows, mp_names, horizon)
                 mp_values = predict_component(mp_model, test_rows, mp_names)
                 mp_predictions.setdefault(spec.code, {})  # type: ignore[arg-type]
@@ -748,7 +919,20 @@ def run_bottomup(
         year: weights[year].get(UTILITIES_CODE)
         for year in years
     }
+    feature_counts = [
+        len(feature_names(True, feature_mode, spec))
+        if spec.bsu_codes
+        else len(feature_names(False))
+        for spec in specs
+    ]
     metadata = {
+        "feature_mode": feature_mode,
+        "feature_counts": {
+            "min": int(min(feature_counts)),
+            "median": float(np.median(feature_counts)),
+            "max": int(max(feature_counts)),
+        },
+        "full_panel_rows": int(len(panel)),
         "n_groups": len(specs),
         "n_with_bsu": sum(1 for spec in specs if spec.bsu_codes),
         "n_without_bsu": sum(1 for spec in specs if not spec.bsu_codes),

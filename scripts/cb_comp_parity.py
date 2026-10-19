@@ -76,6 +76,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import cpi_monthly as cm
 import cb_comp_bottomup as bu
 import eval_utils as eu
+import ml_experiment as mlx
 
 # ---------------------------------------------------------------------------
 # Предзарегистрированные константы (спека §5.2; значения пинуются тестами)
@@ -154,6 +155,11 @@ def catboost_params(names: list) -> dict:
 MODEL_MP = "nowcast_v2_mp"
 MODEL_NOMP = "nowcast_v2_nomp"
 CB_MODEL = "cb_comp"
+
+
+def bottomup_model_name(variant: str, feature_mode: str) -> str:
+    """Имя bottom-up варианта: `mean` — как в #190, иначе с суффиксом режима."""
+    return variant if feature_mode == "mean" else f"{variant}__{feature_mode}"
 
 ARTIFACT_REPORT = "cb_comp_parity_report.md"
 ARTIFACT_PREDICTIONS = "cb_comp_parity_predictions.csv"
@@ -964,8 +970,9 @@ def write_report(path: Path, payload: dict) -> None:
     lines.append("")
     lines.append(
         "> Автоматический отчёт `scripts/cb_comp_parity.py`; пункт "
-        "`key-rate/phase-4-ml-cb-comp-parity` (issue #190). Числа не редактируются "
-        "руками — интерпретация в `docs/research/2026-10-18-cb-comp-parity.md`."
+        "`key-rate/phase-4-ml-cb-comp-feature-parity` (issue #221), follow-up #190. "
+        "Числа не редактируются руками — интерпретация в "
+        "`docs/research/2026-10-19-cb-comp-feature-parity.md`."
     )
     lines.append("")
     lines.append("## 1. Предзарегистрированный дизайн")
@@ -974,6 +981,10 @@ def write_report(path: Path, payload: dict) -> None:
     lines.append(f"- Test: {design['test_start']} … {design['test_end']}; normal-месяцев: {sample['n_normal']}")
     lines.append(f"- Исключены из теста: 2020-04, 2022-01…2022-12 (как в статье)")
     lines.append(f"- Seed: {design['seed']}; CatBoost: дефолты, `month` категориальным")
+    lines.append(
+        f"- Режим признаков bottom-up: `{design.get('feature_mode', 'mean')}` "
+        f"(`{design.get('bottomup_mp_model', bu.MODEL_MP)}`)"
+    )
     lines.append(f"- Margin: δ_h = {design['margin_fraction']:.0%} RMSE CB_COMP_h")
     lines.append(f"- Бутстрап: парный блочный, блок {design['bootstrap_block']}, n={design['bootstrap_n']}")
     lines.append("")
@@ -1078,6 +1089,12 @@ def write_report(path: Path, payload: dict) -> None:
         lines.append(
             f"- Покрытие весов (среднее): {meta.get('coverage_mean', float('nan')):.3f}"
         )
+        feature_counts = meta.get("feature_counts")
+        if feature_counts:
+            lines.append(
+                f"- Признаков на группу: min {feature_counts.get('min')}, "
+                f"median {feature_counts.get('median')}, max {feature_counts.get('max')}"
+            )
         lines.append("")
         lines.append("| h | Сборка: RMSE | Сборка: max abs | Сборка: bias |")
         lines.append("|---|---:|---:|---:|")
@@ -1089,7 +1106,9 @@ def write_report(path: Path, payload: dict) -> None:
                 f"{_format(item.get('bias', float('nan')), 4)} |"
             )
         lines.append("")
-        for variant, title in ((bu.MODEL_MP, "MP для групп с BSU"), (bu.MODEL_NOMP, "без МП")):
+        mp_name = design.get("bottomup_mp_model", bu.MODEL_MP)
+        nomp_name = design.get("bottomup_nomp_model", bu.MODEL_NOMP)
+        for variant, title in ((mp_name, "MP для групп с BSU"), (nomp_name, "без МП")):
             primary = [
                 item for item in results if item["model"] == variant and item["horizon"] in HORIZONS
             ]
@@ -1139,7 +1158,7 @@ def write_report(path: Path, payload: dict) -> None:
                 (
                     item
                     for item in results
-                    if item["model"] == bu.MODEL_MP and item["horizon"] == horizon
+                    if item["model"] == mp_name and item["horizon"] == horizon
                 ),
                 None,
             )
@@ -1239,8 +1258,19 @@ def write_result_json(path: Path, payload: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
-def run(archive: Path, out_dir: Path, train_start: date = TRAIN_START, test_end: date = TEST_END) -> dict:
+def run(
+    archive: Path,
+    out_dir: Path,
+    train_start: date = TRAIN_START,
+    test_end: date = TEST_END,
+    feature_mode: str = "mean",
+) -> dict:
     """Полный прогон: архив → margin → признаки → модели → метрики → артефакты."""
+    if feature_mode not in bu.FEATURE_MODES:
+        raise SystemExit(
+            f"неизвестный --feature-mode {feature_mode!r}; ожидается {bu.FEATURE_MODES}"
+        )
+    print(f"Режим признаков: {feature_mode}", flush=True)
     if train_start != TRAIN_START or test_end != TEST_END:
         print(
             f"ВНИМАНИЕ: окно переопределено (train_start={train_start}, test_end={test_end}); "
@@ -1282,6 +1312,66 @@ def run(archive: Path, out_dir: Path, train_start: date = TRAIN_START, test_end:
     prediction_rows = []
     normal_rows = [test_by_month[month] for month in normal]
     feature_by_month = {row.month: row.features for row in parity_rows}
+
+    logger = None
+    if os.environ.get("ML_LOG") == "1":
+        try:
+            logger = mlx.start_run(
+                experiment="cb_comp_parity",
+                run_name=(
+                    os.environ.get("ML_RUN_NAME")
+                    or f"cb_comp_parity__{feature_mode}"
+                ),
+                config={
+                    "feature_mode": feature_mode,
+                    "train_start": TRAIN_START.isoformat(),
+                    "train_end": TRAIN_END.isoformat(),
+                    "test_start": TEST_START.isoformat(),
+                    "test_end": TEST_END.isoformat(),
+                    "seed": SEED,
+                    "horizons": list(ALL_HORIZONS),
+                    "margin_fraction": MARGIN_FRACTION,
+                    "bootstrap_block": BOOTSTRAP_BLOCK,
+                    "bootstrap_n": BOOTSTRAP_N,
+                    "cb_model": "catboostVCB_IBK",
+                    "bottomup_models": [
+                        bottomup_model_name(bu.MODEL_MP, feature_mode),
+                        bottomup_model_name(bu.MODEL_NOMP, feature_mode),
+                    ],
+                    "features_mean": bu.feature_names(True, "mean"),
+                    "feature_modes": list(bu.FEATURE_MODES),
+                    "catboost": bu.CATBOOST_DEFAULTS,
+                },
+                data_asof=TEST_END,
+                sample_meta={
+                    "rows": len(feature_rows),
+                    "train": len(train_rows),
+                    "test": len(test_rows),
+                    "normal": len(normal),
+                    "skipped": len(skipped) + len(missing),
+                    "first": feature_rows[0].month.isoformat() if feature_rows else None,
+                    "last": feature_rows[-1].month.isoformat() if feature_rows else None,
+                },
+                sample=[
+                    {
+                        "month": row.month.isoformat(),
+                        "features": mlx.json_safe(row.features),
+                        "targets": mlx.json_safe(row.targets),
+                    }
+                    for row in parity_rows
+                ],
+                spec_path=(
+                    "docs/superpowers/specs/"
+                    "2026-10-19-cb-comp-feature-parity-design.md"
+                ),
+                enabled=True,
+            )
+        except Exception as exc:
+            print(
+                f"Журнал эксперимента не создан: {type(exc).__name__}: {exc}",
+                flush=True,
+            )
+
     train_by_horizon = {}
     for horizon in ALL_HORIZONS:
         # CB_COMP direct h-step: цель M, признаки origin = M−(h−1) (спека §3.2).
@@ -1369,6 +1459,7 @@ def run(archive: Path, out_dir: Path, train_start: date = TRAIN_START, test_end:
             train_months=[row.month for row in train_rows],
             test_months=[row.month for row in test_rows],
             train_outliers=TRAIN_OUTLIER_MONTHS,
+            feature_mode=feature_mode,
         )
     except (RuntimeError, ValueError, FileNotFoundError) as error:
         bottomup = bu.BottomUpResult(
@@ -1376,8 +1467,13 @@ def run(archive: Path, out_dir: Path, train_start: date = TRAIN_START, test_end:
             reason=f"{type(error).__name__}: {error}",
             metadata={},
         )
+    bottomup_names = {
+        variant: bottomup_model_name(variant, feature_mode)
+        for variant in (bu.MODEL_MP, bu.MODEL_NOMP)
+    }
     if bottomup.status == "ok":
         for variant in (bu.MODEL_MP, bu.MODEL_NOMP):
+            variant_name = bottomup_names[variant]
             for horizon in bu.HORIZONS:
                 values = bottomup.predictions[variant][horizon]["values"]
                 predictions = [values[month] for month in normal]
@@ -1386,11 +1482,11 @@ def run(archive: Path, out_dir: Path, train_start: date = TRAIN_START, test_end:
                 )
                 margin = archive_data["margins"][horizon]
                 result = evaluate_horizon(
-                    normal_rows, predictions, cb_errors, horizon, margin, variant
+                    normal_rows, predictions, cb_errors, horizon, margin, variant_name
                 )
                 results.append(result)
                 print(
-                    f"  {variant} h{horizon}: RMSE {result['rmse_ours']:.6f} vs CB "
+                    f"  {variant_name} h{horizon}: RMSE {result['rmse_ours']:.6f} vs CB "
                     f"{result['rmse_cb']:.6f}, DM p={result['dm_p_h1']:.4f}, "
                     f"TOST {'да' if result['tost_equivalent'] else 'нет'} → {result['verdict']}",
                     flush=True,
@@ -1403,7 +1499,7 @@ def run(archive: Path, out_dir: Path, train_start: date = TRAIN_START, test_end:
                         {
                             "month": month.isoformat(),
                             "horizon": horizon,
-                            "model": variant,
+                            "model": variant_name,
                             "sample": "test",
                             "normal": 1 if month in normal_set else 0,
                             "y_true": row.targets[horizon],
@@ -1417,11 +1513,12 @@ def run(archive: Path, out_dir: Path, train_start: date = TRAIN_START, test_end:
     direct_models = (MODEL_MP, MODEL_NOMP)
     overall = {model: overall_verdict(results, model) for model in direct_models}
     if bottomup.status == "ok":
-        overall[bu.MODEL_MP] = overall_verdict(results, bu.MODEL_MP)
-        overall[bu.MODEL_NOMP] = overall_verdict(results, bu.MODEL_NOMP)
+        for variant in (bu.MODEL_MP, bu.MODEL_NOMP):
+            name = bottomup_names[variant]
+            overall[name] = overall_verdict(results, name)
     else:
-        overall[bu.MODEL_MP] = "не собран"
-        overall[bu.MODEL_NOMP] = "не собран"
+        for variant in (bu.MODEL_MP, bu.MODEL_NOMP):
+            overall[bottomup_names[variant]] = "не собран"
     skipped_reasons = {}
     for _, reason in skipped + missing:
         skipped_reasons[reason] = skipped_reasons.get(reason, 0) + 1
@@ -1439,6 +1536,9 @@ def run(archive: Path, out_dir: Path, train_start: date = TRAIN_START, test_end:
             "margin_fraction": MARGIN_FRACTION,
             "bootstrap_block": BOOTSTRAP_BLOCK,
             "bootstrap_n": BOOTSTRAP_N,
+            "feature_mode": feature_mode,
+            "bottomup_mp_model": bottomup_names[bu.MODEL_MP],
+            "bottomup_nomp_model": bottomup_names[bu.MODEL_NOMP],
             "cb_rmse_pinned": {str(key): value for key, value in CB_RMSE_PINNED.items()},
         },
         "archive": {
@@ -1478,12 +1578,64 @@ def run(archive: Path, out_dir: Path, train_start: date = TRAIN_START, test_end:
     }
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    write_report(out_dir / ARTIFACT_REPORT, payload)
-    write_predictions_csv(out_dir / ARTIFACT_PREDICTIONS, prediction_rows)
-    write_result_json(out_dir / ARTIFACT_RESULT, payload)
+    report_path = out_dir / ARTIFACT_REPORT
+    predictions_path = out_dir / ARTIFACT_PREDICTIONS
+    result_path = out_dir / ARTIFACT_RESULT
+    write_report(report_path, payload)
+    write_predictions_csv(predictions_path, prediction_rows)
+    write_result_json(result_path, payload)
+    if logger is not None:
+        try:
+            logger.log_metrics(
+                {
+                    "primary_metric": "rmse_pp",
+                    "feature_mode": feature_mode,
+                    "overall": overall,
+                    "results": mlx.json_safe(results),
+                    "bottomup_status": bottomup.status,
+                    "feature_counts": bottomup.metadata.get("feature_counts"),
+                }
+            )
+            logger.log_predictions(
+                [
+                    mlx.PredictionRow(
+                        model=item["model"],
+                        window=f"h{item['horizon']}",
+                        target_date=date.fromisoformat(item["month"]),
+                        predicted=item["y_pred"],
+                        actual=item["y_true"],
+                        unit="pp",
+                        meta={
+                            "horizon": item["horizon"],
+                            "feature_mode": feature_mode,
+                            "normal": item["normal"],
+                        },
+                    )
+                    for item in prediction_rows
+                    if item["sample"] == "test"
+                    and item["normal"] == 1
+                    and math.isfinite(float(item["y_pred"]))
+                    and math.isfinite(float(item["y_true"]))
+                ]
+            )
+            logger.log_artifacts([report_path, predictions_path, result_path])
+            logger.finish(
+                "finished",
+                f"feature_mode={feature_mode}; h1–h6; normal={len(normal)}",
+            )
+        except Exception as exc:
+            print(
+                f"Журнал эксперимента не записан: {type(exc).__name__}: {exc}",
+                flush=True,
+            )
+            try:
+                logger.finish("failed", f"logging: {type(exc).__name__}: {exc}")
+            except Exception:
+                pass
     print(
         f"Вердикт: {MODEL_MP} — {overall[MODEL_MP]}; {MODEL_NOMP} — {overall[MODEL_NOMP]}; "
-        f"{bu.MODEL_MP} — {overall[bu.MODEL_MP]}",
+        f"{bottomup_names[bu.MODEL_MP]} — {overall[bottomup_names[bu.MODEL_MP]]}; "
+        f"{bottomup_names[bu.MODEL_NOMP]} — {overall[bottomup_names[bu.MODEL_NOMP]]}",
         flush=True,
     )
     print(f"Артефакты: {out_dir / ARTIFACT_REPORT}, {out_dir / ARTIFACT_PREDICTIONS}, {out_dir / ARTIFACT_RESULT}", flush=True)
@@ -1514,6 +1666,15 @@ def main(argv=None) -> int:
         default=TEST_END.isoformat(),
         help=f"переопределение test end для отладки (по умолчанию {TEST_END})",
     )
+    parser.add_argument(
+        "--feature-mode",
+        choices=bu.FEATURE_MODES,
+        default=bu.DEFAULT_FEATURE_MODE,
+        help=(
+            "режим признаков bottom-up: mean (baseline #190), "
+            "per_bsu (primary) или full (robustness)"
+        ),
+    )
     arguments = parser.parse_args(argv)
     archive = resolve_archive(arguments.archive)
     run(
@@ -1521,6 +1682,7 @@ def main(argv=None) -> int:
         out_dir=Path(arguments.out_dir),
         train_start=date.fromisoformat(arguments.train_start),
         test_end=date.fromisoformat(arguments.test_end),
+        feature_mode=arguments.feature_mode,
     )
     return 0
 

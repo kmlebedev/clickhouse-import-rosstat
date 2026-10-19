@@ -619,6 +619,28 @@ class TestModelSmoke(unittest.TestCase):
         self.assertTrue(all(math.isfinite(value) for value in predictions))
 
 
+class TestFeatureModeNames(unittest.TestCase):
+    def test_mean_keeps_legacy_names(self):
+        self.assertEqual(
+            parity.bottomup_model_name(parity.bu.MODEL_MP, "mean"),
+            parity.bu.MODEL_MP,
+        )
+        self.assertEqual(
+            parity.bottomup_model_name(parity.bu.MODEL_NOMP, "mean"),
+            parity.bu.MODEL_NOMP,
+        )
+
+    def test_non_mean_gets_suffix(self):
+        self.assertEqual(
+            parity.bottomup_model_name(parity.bu.MODEL_MP, "per_bsu"),
+            "bottomup_mp__per_bsu",
+        )
+        self.assertEqual(
+            parity.bottomup_model_name(parity.bu.MODEL_NOMP, "full"),
+            "bottomup_nomp__full",
+        )
+
+
 class TestReportArtifacts(unittest.TestCase):
     def test_predictions_csv_and_json_are_written(self):
         payload = {
