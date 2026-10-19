@@ -80,7 +80,17 @@
 
 **Живая приёмка `4.5` — 2026-10-19.** `make docs-check` — exit 0: `checked 34 pages`, `docs_build_test.py` — **33 OK**. `make all` — exit 0: `golangci-lint` `0 issues`, `go vet ./...`, `go test -race ./...` (все пакеты `ok`), обе сборки (`build/clickhouse-import-rosstat`, `build/ingest`). Проверка относительных ссылок скила и review-документа — OK; `docs/site-pages.json` валиден. Тест скила: read-only субагент по `SKILL.md` построил план #184 с предрегистрацией, DM-HLN/CI, паспортом run, `forecast_log`, gate и разделением ML/Python vs Go/DDL; после уточнений (чтение CH, смешанный ML+Go пункт, gate/витрина в спеке #184, MLflow-теги, ownership алертов, циклы shadow/canary) повторная проверка — «скил достаточен для планирования #184». ML-код, схема ClickHouse, импортёры, витрины и гранты не менялись; изменены только docs/скил/указатели. Статус `Done` — после мержа PR и протокола в нём.
 
-## 6. Приёмка и риски
+## 6. Фаза 5 — Developer experience и ролевые скилы
+
+| Шаг | Содержание | Статус | Критерий приёмки |
+|---|---|---|---|
+| **5.1** | **Ролевая маршрутизация агентов и эффективный цикл issue** — `AGENTS.md` как тонкий роутер (Go/Python/ML/Research + shared-скилы), новые скилы `.kimi-code/skills/{go,python,research}-engineer/SKILL.md` и `subagent-dispatch`, review-документ `docs/research/2026-10-19-engineering-issue-review.md` (36 закрытых и 64 открытых issue, очередь и разрывы), `Role` в issue-шаблоне, role-specific DoD в PR-шаблоне, краткий блок параллельных сессий; CI-долг и полный регламент параллельных сессий — отдельные пункты 5.2/5.3. Спека — [2026-10-19-role-skills-design.md](superpowers/specs/2026-10-19-role-skills-design.md), план — [2026-10-19-role-skills.md](superpowers/plans/2026-10-19-role-skills.md) | ⏳ в работе этим PR (2026-10-19) | `AGENTS.md` ≤ 120 строк и содержит роутер; три ролевых скила и `subagent-dispatch` валидны, ссылки разрешаются; review покрывает 36 закрытых/64 открытых issue; тесты скилов read-only субагентами (Go/Python/Research) проходят; `make docs-check` и `make all` зелёные; Go/Python/схема/гранты не менялись |
+| 5.2 | **CI-принуждение для мультиролевого репозитория** — `python.yml` (stdlib-only на каждый PR + тяжёлые ML-наборы по path-filter/nightly), `gitleaks.yml` + `.gitleaks.toml`, `make skills-check` + проверка в `pages.yml`, `concurrency` в `go.yml`/`dashboards.yml`, required checks/branch protection (settings); детали — review-документ §4/§7. | ❌ не начато | Python-наборы и gitleaks зелёные на PR; `make skills-check` ловит битую ссылку; повторный push отменяет устаревший прогон; branch protection требует `test`, `lint`, `vulncheck`, `build`, `dashboards`, `Pages`, `python-fast`, `gitleaks` |
+| 5.3 | **Параллельные сессии: влить регламент** — ветка `chore/parallel-sessions` (`docs/PARALLEL_SESSIONS.md`, `make wt-new/wt-list/wt-rm`, `scripts/lock.sh`, `.githooks/pre-commit`, Makefile-локи); заменить краткий блок `AGENTS.md` ссылкой на полный регламент. | ❌ не начато | `make wt-new/wt-list/wt-rm` и `make test-parallel` работают; pre-commit режет коммит в защищённую ветку; `AGENTS.md` ссылается на `docs/PARALLEL_SESSIONS.md`; `make all` зелёный |
+
+**Границы фазы.** 5.1 — docs-only (правила, скилы, шаблоны, review); 5.2 и 5.3 — отдельные PR, чтобы CI-настройки и скрипты параллельных сессий ревьюились независимо от текста правил.
+
+## 7. Приёмка и риски
 
 Пункт считается закрытым только по живой приёмке, и порядок один (AGENTS.md, правила 3–5 и раздел «Стиль коммитов и PR»; стандарт §16.1):
 
