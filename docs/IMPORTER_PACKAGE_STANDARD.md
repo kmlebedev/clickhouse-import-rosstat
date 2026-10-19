@@ -58,7 +58,7 @@
 | Тип источника | Хелпер | Что делает |
 |---|---|---|
 | HTML-страница (нужен только href на файл) | `util.GetPage(url)` + `util.FindLink(page, selector)` | скачивает страницу, отдаёт href первой ссылки по CSS-селектору; пустое совпадение — ошибка |
-| HTML-страница (нужен разбор содержимого) | `util.GetPage(url)` + `goquery` | как в `cbr/key_rate.go`, либо `BodyFunc` шаблона — когда артефакт должен попасть в винтажный архив (§9.6) |
+| HTML-страница (нужен разбор содержимого) | `util.GetPage(url)` + `util.ParseHTMLTable(body, selector)` | `ParseHTMLTable` (`util/html.go`) отдаёт `Headers`/`Rows` без сети и без разворачивания `colspan`/`rowspan` (пример — `cbr/zcyc_parse.go`); где нужен goquery — как в `cbr/key_rate.go`. Для формы ЦБ `UniDbQuery` — `util.UniDbQueryURL` + `util.IsUniDbQueryPage` (`util/unidbquery.go`): маркер `UniDbQuery.Posted` отличает валидную пустую выборку от заглушки WAF. Либо `BodyFunc` шаблона — когда артефакт должен попасть в винтажный архив (§9.6) |
 | XLSX (ссылка стабильная) | `util.GetXlsx(url)` | скачивает и открывает книгу `excelize` |
 | XLSX (ссылка вычисляется) | `util.GetPage` + `util.FindLink` → `DataUrl` → шаблон | §5.4 |
 | XML-фид | `util.GetXML(url, &out)` / `util.ParseXML(body, &out)` | проверяет HTTP-статус, читает windows-1251, блокирует пустое тело |
@@ -297,6 +297,8 @@ func init() { for _, imp := range xxxImporters { chimport.Stats = append(chimpor
 | Шаблон и полный цикл | `util/clickhouse_import.go` |
 | Импортёр XLSX с вычисляемой ссылкой | `cbr/credit_m2x.go`, `cbr/indicators_cpd.go` |
 | Импортёр-краулер (`CrawFunc`) | `cbr/key_rate.go`, `craw/gost.go` |
+| Импортёр-краулер с окнами по датам | `cbr/zcyc.go` (окна бэкфилла по 4 года через `util.UniDbQueryURL`, точки в памяти → один батч) |
+| Разбор HTML-таблицы ЦБ | `cbr/zcyc_parse.go` (`util.ParseHTMLTable`, пустая выборка vs заглушка WAF через `util.IsUniDbQueryPage`) |
 | Реестр | `cbr/importers.go` |
 | Тест-энфорсер реестра | `cbr/importers_test.go` |
 | Каталог рядов | `cbr/series_meta.go`, `rosstat/series_meta.go` |

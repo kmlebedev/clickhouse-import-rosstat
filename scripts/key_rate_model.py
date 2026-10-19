@@ -66,6 +66,19 @@
   неидентифицируемый дизайн, несошедшийся MLE, сингулярная информация) —
   `DegenerateWindowError`, и walk-forward пропускает фолд со счётчиком.
 
+**Веса наблюдений (флаг `--shock-weights PATH`).** CSV `meeting_date,weight`
+(лишние колонки игнорируются; `0 < w ≤ 1`) задаёт вес заседания в обучении:
+правило Тейлора оценивается `WLS` на тех же регрессорах и с той же HAC-
+ковариацией, упорядоченный логит — подклассом `WeightedOrderedModel`, который
+умножает вклад наблюдения в `loglikeobs`. Бенчмарки B1–B3 (эталоны) и
+`climatology` не взвешиваются; отсутствующая в CSV дата получает вес 1.0 со
+счётчиком покрытия. Без флага путь прежний байт-в-байт (OLS/`OrderedModel` и
+те же артефакты); с флагом в отчёт добавляется раздел «Веса шоков»
+(покрытие, распределение, weighted vs unweighted RMSE/MAE, DM-HLN, топ-10
+пониженных заседаний), а в CSV прогнозов — колонка `weight` (пустая у
+невзвешенных методов). Спека §7:
+`docs/superpowers/specs/2026-10-19-key-rate-shock-classifier-design.md`.
+
 **Текущий прогноз (Task 6).** Ближайшее заседание — первая дата строго позже
 даты прогона (`current_forecast`); признаки прогнозной строки снимаются as-of
 даты прогона по правилам §4 (`forecast_row`), а факты будущего заседания в неё
@@ -80,9 +93,19 @@
 отдельный writer `scripts/key_rate_forecast_log.py` (`make key-rate-forecast-log`)
 через ingest-контур (`POST /v1/key_rate_forecast`).
 
+**Консенсус-бенчмарк №4 (спека
+`docs/superpowers/specs/2026-10-19-key-rate-consensus-benchmark-design.md`
+§2–§4).**
+Медиана макроэкономического опроса ЦБ (`v_cbr_mo_br`, волна доступна с
+`wave_date + 6 дней`) сравнивается с фактической среднегодовой ставкой
+(бакеты по горизонту, наивный hold, DM), текущая волна печатается отдельно,
+а B4 механически проецирует годовую медиану на шаг ближайшего заседания.
+Сценарий удержания (`ordered_logit`) — мост к годовой средней. B4 не входит в
+`METHODS`/`FORECAST_METHODS`, JSON и журнал: его дом — раздел отчёта.
+
 Что остаётся за пределами среза — спека §11: метод №1 (рыночные вероятности из
 KEYRATE) и ансамбль, байесовские priors и «inflated»-версия, ML-трек,
-point-in-time слой, витрина, графики и консенсус-бенчмарк.
+point-in-time слой, витрина и графики.
 
 **По умолчанию скрипт в ClickHouse не пишет** — только читает (прецедент
 `polyus_output_model.py`); с `ML_LOG=1` пишет паспорт и fold-предсказания
@@ -103,6 +126,9 @@ point-in-time слой, витрина, графики и консенсус-б�
 * `make key-rate-model ARGS="--rolling"` — то же, но консольная таблица
   метрик печатается по скользящему окну 40 (в отчёт и CSV оба окна идут
   всегда);
+* `make key-rate-model ARGS="--shock-weights shock_classifier_weights.csv"` —
+  взвешенные `taylor`/`ordered_logit`, раздел «Веса шоков» и колонка `weight`
+  в CSV (бенчмарки B1–B3 не взвешиваются);
 * `make key-rate-model ARGS="--export-fixtures scripts/testdata/key_rate"` —
   пересборка CSV-фикстур офлайн-тестов `scripts/key_rate_model_test.py`.
 
@@ -112,11 +138,13 @@ point-in-time слой, витрина, графики и консенсус-б�
 """
 
 import argparse
+import bisect
 import csv
 import json
 import logging
 import math
 import os
+import re
 import sys
 import warnings
 from dataclasses import dataclass
@@ -166,6 +194,63 @@ CPD_CORE_SERIES = "Базовый ИПЦ"
 # `source='cbr_survey'`; дата точки — 1-е число отчётного месяца).
 SURVEY_SOURCE = "cbr_survey"
 IBK_SERIES = "business_climate_sa"
+
+# Консенсус-бенчмарк №4 — медиана макроэкономического опроса ЦБ (спека
+# `2026-10-19-key-rate-consensus-benchmark-design.md` §2). `CONSENSUS_SOURCE` —
+# источник рядов в `macro_series`: витрина `v_cbr_mo_br`, которую читает
+# `CONSENSUS_SQL`, построена по `macro_series FINAL WHERE source =
+# CONSENSUS_SOURCE`; константа фиксирует контракт источника (проверяется
+# тестом). Публикация волны наступает через 2–6 дней после полевого периода,
+# поэтому точка волны считается доступной только на `wave_date + 6 дней` —
+# консервативно и без заглядывания вперёд.
+CONSENSUS_SOURCE = "cbr_mo_br"
+CONSENSUS_PUBLICATION_LAG_DAYS = 6
+
+# Порядок бакетов годового бенчмарка в отчёте (спека §3.1): сначала экс-анте
+# (волна опубликована до начала года), затем внутригодовые — от дальнего
+# горизонта к ближнему. Имена — контракт таблицы отчёта, поэтому порядок задан
+# здесь, а не в рендерере.
+CONSENSUS_BUCKETS = ("ex-ante", "10-12", "7-9", "4-6", "1-3")
+
+# Guard B4 (спека §3.2): на остаток года должно оставаться не меньше
+# 30 дней, иначе `r_implied` делится на короткий хвост и становится шумом.
+CONSENSUS_MIN_DAYS_REMAINING = 30
+
+# Короткие и стабильные метки причин пропуска B4 (спека §5.6). Подробные
+# сообщения с датами/годами даёт `_consensus_path_with_reason`; в отчёте
+# пропуски группируются по этим категориям, а диапазон дат печатается
+# отдельно. Порядок кортежа — порядок строк в разделе отчёта.
+CONSENSUS_SKIP_NO_WAVE = "нет волны на год заседания"
+CONSENSUS_SKIP_RATE_AT_WAVE = "ряд ставки не покрывает дату доступности волны"
+CONSENSUS_SKIP_RATE_YEAR_START = "ряд ставки не покрывает 1 января года заседания"
+CONSENSUS_SKIP_SHORT_REMAINDER = (
+    f"на остаток года меньше {CONSENSUS_MIN_DAYS_REMAINING} дней"
+)
+CONSENSUS_SKIP_IMPLIED_RANGE = "`r_implied` вне (−100, 100) %"
+CONSENSUS_SKIP_UNKNOWN = "причина не определена"
+CONSENSUS_SKIP_REASONS = (
+    CONSENSUS_SKIP_NO_WAVE,
+    CONSENSUS_SKIP_RATE_AT_WAVE,
+    CONSENSUS_SKIP_RATE_YEAR_START,
+    CONSENSUS_SKIP_SHORT_REMAINDER,
+    CONSENSUS_SKIP_IMPLIED_RANGE,
+    CONSENSUS_SKIP_UNKNOWN,
+)
+
+# Режимный срез годового бенчмарка (Task 5, спека §3.1) — завершённые годы
+# текущего режима. Срез описательный: гиперпараметры на нём не подбираются.
+CONSENSUS_REGIME_FROM = 2024
+CONSENSUS_REGIME_TO = 2025
+
+# Естественный цикл волн — 8 волн/год ≈ 6–7 недель (спека §4). Волна старше
+# порога называется устаревшей: последняя публикация могла быть пропущена,
+# и текущий консенсус не подменяется более свежими данными.
+CONSENSUS_STALE_AFTER_DAYS = 49
+
+# Метка окна B4 в `Prediction` (Task 4): механическая проекция не обучается и
+# от окна walk-forward не зависит — у неё одно «окно», и оно не входит в
+# общий перебор `METHODS × (expanding, rolling40)`.
+CONSENSUS_WINDOW = "consensus"
 
 # Сид для бутстрапа (Task 3+) и «версии набора данных»: воспроизводимость
 # прогона считается от одного числа, названного здесь и больше нигде.
@@ -276,6 +361,11 @@ PREDICTION_COLUMNS = (
     "probs",
 )
 
+# Колонка веса в CSV при `--shock-weights`: добавляется В КОНЕЦ, прежний
+# порядок колонок не меняется. Пустая ячейка — метод веса не использует
+# (бенчмарки B1–B3 и базлайн `climatology`).
+SHOCK_WEIGHT_COLUMN = "weight"
+
 # --- Константы запросов -------------------------------------------------------
 
 MEETINGS_SQL = """
@@ -313,6 +403,16 @@ MP_SUMMARY_SQL = """
 SELECT meeting_date, decision_rate, decision_delta_bp
 FROM cbr_mp_summary FINAL
 ORDER BY meeting_date
+FORMAT JSON
+"""
+
+# `FINAL` здесь не ставится: `v_cbr_mo_br` — витрина, и `FINAL` уже стоит в её
+# определении (`macro_series FINAL WHERE source = 'cbr_mo_br'`).
+CONSENSUS_SQL = """
+SELECT date, series, value
+FROM v_cbr_mo_br
+WHERE series LIKE 'key_rate_avg_%'
+ORDER BY date, series
 FORMAT JSON
 """
 
@@ -472,6 +572,792 @@ def mp_deltas_from_rows(rows: list) -> list:
     return sorted(_unique_dates(points, "cbr_mp_summary"))
 
 
+# Имена рядов консенсуса: `key_rate_avg_<год>_<статистика>`; прочие ряды
+# витрины (ИПЦ, ВВП и т.п.) парсер пропускает.
+CONSENSUS_SERIES_RE = re.compile(r"^key_rate_avg_(\d{4})_(median|p10|p90|answers)$")
+
+
+@dataclass(frozen=True)
+class ConsensusForecast:
+    """Волна консенсуса по одному году: медиана, интервал и число ответов.
+
+    `wave_date` — дата волны опроса (1-е число месяца), `available_from` —
+    консервативная дата публикации (`wave_date + 6 дней`): раньше неё волна в
+    выборку не попадает. `answers` — число ответов участников, а не прогноз.
+    """
+
+    wave_date: date
+    available_from: date
+    year: int
+    median: float
+    p10: Optional[float]
+    p90: Optional[float]
+    answers: Optional[int]
+
+
+def _consensus_stat(value, wave_date: date, year: int, stat: str) -> float:
+    """Число статистики консенсуса: пустое, NaN и inf — ошибка данных.
+
+    `row_float` отсекает только NULL и пустую ячейку, но NaN/inf прошли бы
+    `float()` и попали в прогноз как «измеренное» значение: NaN заразил бы
+    медиану и метрики, inf — деление на остаток года. Конечность проверяется
+    здесь, с именем волны, года и статистики — в том числе для `answers`,
+    чтобы `int(inf)` не дал `OverflowError`, а `int(nan)` — текст «не целое».
+    """
+    number = row_float(value)
+    if not math.isfinite(number):
+        raise ValueError(
+            f"консенсус: {stat}={number} у волны {wave_date.isoformat()} "
+            f"за {year} — не конечное число"
+        )
+    return number
+
+
+def consensus_from_rows(rows: list) -> list:
+    """Волны консенсуса из строк `v_cbr_mo_br`: `(волна, год) → прогноз`.
+
+    Берутся только ряды `key_rate_avg_<год>_<статистика>`; прочие ряды витрины
+    (ИПЦ, ВВП и др.) пропускаются — запрос уже сужен `LIKE`, но парсер не
+    обязан верить фильтру вызывающего. `median` обязательна: волна без неё —
+    не консенсус, а огрызок. Дубль статистики в паре — потерянный `FINAL` или
+    неверный ключ витрины, поэтому отказ, а не «последний победил»: иначе
+    значение молча зависело бы от порядка строк ответа ClickHouse. `answers`
+    приводится к целому; нецелое значение — дефект источника, а NaN/inf —
+    отказ ещё до `int()`.
+    """
+    grouped = {}
+    for row in rows:
+        match = CONSENSUS_SERIES_RE.match(str(row.get("series", "")))
+        if match is None:
+            continue
+        wave_date = row_date(row["date"])
+        year = int(match.group(1))
+        stat = match.group(2)
+        stats = grouped.setdefault((wave_date, year), {})
+        if stat in stats:
+            raise ValueError(
+                f"консенсус: дубль {stat} у волны {wave_date.isoformat()} "
+                f"за {year} — повторная строка исказила бы прогноз"
+            )
+        stats[stat] = _consensus_stat(row["value"], wave_date, year, stat)
+
+    waves = []
+    for (wave_date, year), stats in sorted(grouped.items()):
+        if "median" not in stats:
+            raise ValueError(
+                f"консенсус: у волны {wave_date.isoformat()} за {year} нет медианы"
+            )
+        answers = stats.get("answers")
+        if answers is not None:
+            if answers != int(answers):
+                raise ValueError(
+                    f"консенсус: answers={answers} у волны {wave_date.isoformat()} "
+                    f"за {year} — не целое число ответов"
+                )
+            answers = int(answers)
+        waves.append(
+            ConsensusForecast(
+                wave_date=wave_date,
+                available_from=wave_date
+                + timedelta(days=CONSENSUS_PUBLICATION_LAG_DAYS),
+                year=year,
+                median=stats["median"],
+                p10=stats.get("p10"),
+                p90=stats.get("p90"),
+                answers=answers,
+            )
+        )
+    return waves
+
+
+# --- Годовой бенчмарк: средняя, наивный hold и наблюдения (спека §3.1) --------
+
+
+def _rate_asof(points: list, day: date) -> Optional[float]:
+    """Последняя точка ряда ставки с датой `<= day` (fill-forward), или None.
+
+    Контракт входа: `points` отсортированы по дате (так их отдают
+    `key_rate_from_rows`/`load_key_rate`). Ряд ставки — ступенчатая функция:
+    до первой точки значения нет (`None`), после точки действует её значение
+    до следующего изменения. `bisect` по ключу-дате — O(log n) без среза
+    ряда на каждый календарный день.
+    """
+    index = bisect.bisect_right(points, day, key=lambda point: point[0])
+    if index == 0:
+        return None
+    return points[index - 1][1]
+
+
+def sum_rates_between(points: list, start: date, end: date) -> float:
+    """Сумма ставок по КАЛЕНДАРНЫМ дням `[start, end]` включительно.
+
+    Fill-forward: каждый день берёт последнюю точку с датой `<= дня` (спека
+    §3.1: «с учётом выходных дней»). Отсутствие ставки на `start` — это
+    `ValueError`, а не ноль: ноль молча занизил бы `R_known` и среднегодовую
+    и выглядел бы как измеренное значение.
+
+    Сумма считается отрезками между точками, а не 365–366 вызовами as-of:
+    результат тот же, но на длинном ряду это O(точек), а не O(дней·log n).
+    """
+    if end < start:
+        raise ValueError(
+            f"ставка: конец интервала {end.isoformat()} раньше начала {start.isoformat()}"
+        )
+    index = bisect.bisect_right(points, start, key=lambda point: point[0])
+    if index == 0:
+        raise ValueError(
+            f"ставка: нет точки на {start.isoformat()} — сумму не из чего собрать"
+        )
+    day = start
+    rate = points[index - 1][1]
+    total = 0.0
+    while index < len(points) and points[index][0] <= end:
+        next_day = points[index][0]
+        total += rate * (next_day - day).days
+        day = next_day
+        rate = points[index][1]
+        index += 1
+    total += rate * ((end - day).days + 1)
+    return total
+
+
+def annual_average_rate(points: list, year: int) -> Optional[float]:
+    """Фактическая среднегодовая ставка года `year` по календарным дням.
+
+    `None`, если ряд не покрывает год: первая точка позже 1 января или
+    последняя раньше 31 декабря (спека §3.1). Так неполный текущий год не
+    выдаёт «среднюю с начала года» за факт. Число дней — календарное (366 в
+    високосном году): формулировка опроса — «с учётом выходных дней».
+    """
+    first_day = date(year, 1, 1)
+    last_day = date(year, 12, 31)
+    if not points or points[0][0] > first_day or points[-1][0] < last_day:
+        return None
+    days = (last_day - first_day).days + 1
+    return sum_rates_between(points, first_day, last_day) / days
+
+
+def _consensus_bucket(available_from: date, year: int) -> str:
+    """Бакет волны по горизонту до конца года `year` (спека §3.1).
+
+    Горизонт — число календарных месяцев от месяца публикации до декабря
+    включительно: январь–март — 12–10 месяцев (`10-12`), апрель–июнь — 9–7,
+    июль–сентябрь — 6–4, октябрь–декабрь — 3–1. Волна, опубликованная до
+    1 января, — `ex-ante`. Границы проверяются по `available_from`, а не по
+    `wave_date`: в выборку волна входит датой публикации.
+    """
+    if available_from < date(year, 1, 1):
+        return "ex-ante"
+    months = 12 - available_from.month + 1
+    if months >= 10:
+        return "10-12"
+    if months >= 7:
+        return "7-9"
+    if months >= 4:
+        return "4-6"
+    return "1-3"
+
+
+def hold_forecast(points: list, year: int, available_from: date) -> Optional[float]:
+    """Наивный прогноз «ставка не меняется» для среднегодовой года `year`.
+
+    Формула спеки §3.1. Если волна доступна до 1 января, известного пути в
+    году нет: hold равен ставке на `available_from` на весь год. Иначе
+    известная часть `[1 января, A]` суммируется фактическим путём, а остаток
+    года `A+1 … 31 декабря` — ставкой на `A`. `None` — на `available_from`
+    нет ставки (ряд начинается позже): вызывающий решает, что это значит.
+    """
+    first_day = date(year, 1, 1)
+    last_day = date(year, 12, 31)
+    rate = _rate_asof(points, available_from)
+    if rate is None:
+        return None
+    if available_from < first_day:
+        return rate
+    if available_from > last_day:
+        raise ValueError(
+            f"hold: available_from {available_from.isoformat()} позже конца {year} года"
+        )
+    known = sum_rates_between(points, first_day, available_from)
+    days = (last_day - first_day).days + 1
+    remaining = (last_day - available_from).days
+    return (known + rate * remaining) / days
+
+
+@dataclass(frozen=True)
+class ConsensusObservation:
+    """Годовая пара «волна консенсуса — факт» (спека §3.1).
+
+    `actual` — фактическая среднегодовая ставка года `year`; ошибки — в
+    БАЗИСНЫХ пунктах, `(прогноз − факт) × 100`, положительная — прогноз
+    завысил. `bucket` — горизонт волны: `ex-ante` (публикация до 1 января
+    года) или число месяцев до конца года (`10-12` … `1-3`). `p10`/`p90` и
+    `answers` переносятся из волны для аудита, в метрики не входят.
+    """
+
+    year: int
+    wave_date: date
+    available_from: date
+    bucket: str
+    median: float
+    p10: Optional[float]
+    p90: Optional[float]
+    answers: Optional[int]
+    actual: float
+    consensus_error_bp: float
+    hold_error_bp: float
+
+
+def consensus_observations(consensus: list, key_rate: list) -> list:
+    """Пары «волна — факт» завершённых лет (спека §3.1), по `(год, доступность)`.
+
+    Год считается завершённым, если `annual_average_rate` вернула факт (ряд
+    покрывает 1 января и 31 декабря). Для каждого такого года берутся:
+
+    * **экс-анте** — последняя волна с медианой на год, опубликованная строго
+      до 1 января (`available_from < 1 января Y`); для 2021 её нет — опрос
+      начинается с 2021-05;
+    * **внутригодовые** — все волны с `1 января Y <= available_from <
+      1 января Y+1`.
+
+    Медиана вне этого окна (волна на будущий год, опубликованная посреди
+    текущего) в выборку не попадает. Hold считается по §3.1; отсутствие
+    ставки на дату доступности в завершённом году — `ValueError`: это разрыв
+    ряда, а не норма, и молча выбросить пару значило бы сузить выборку.
+    """
+    observations = []
+    for year in sorted({wave.year for wave in consensus}):
+        actual = annual_average_rate(key_rate, year)
+        if actual is None:
+            continue
+        first_day = date(year, 1, 1)
+        next_first_day = date(year + 1, 1, 1)
+        waves = [wave for wave in consensus if wave.year == year]
+        ex_ante = [wave for wave in waves if wave.available_from < first_day]
+        selected = []
+        if ex_ante:
+            selected.append(max(ex_ante, key=lambda wave: wave.available_from))
+        selected.extend(
+            wave for wave in waves if first_day <= wave.available_from < next_first_day
+        )
+        for wave in selected:
+            hold = hold_forecast(key_rate, year, wave.available_from)
+            if hold is None:
+                raise ValueError(
+                    f"консенсус: нет ставки на {wave.available_from.isoformat()} "
+                    f"(волна {wave.wave_date.isoformat()} за {year})"
+                )
+            observations.append(
+                ConsensusObservation(
+                    year=year,
+                    wave_date=wave.wave_date,
+                    available_from=wave.available_from,
+                    bucket=_consensus_bucket(wave.available_from, year),
+                    median=wave.median,
+                    p10=wave.p10,
+                    p90=wave.p90,
+                    answers=wave.answers,
+                    actual=actual,
+                    consensus_error_bp=(wave.median - actual) * 100.0,
+                    hold_error_bp=(hold - actual) * 100.0,
+                )
+            )
+    return sorted(
+        observations,
+        key=lambda observation: (observation.year, observation.available_from),
+    )
+
+
+@dataclass(frozen=True)
+class ConsensusAggregate:
+    """Метрики бакета: консенсус против наивного hold (спека §3.1).
+
+    `n` — число пар; RMSE/MAE/bias — в базисных пунктах. Bias — средняя
+    знаковая ошибка: положительная значит систематическое завышение.
+    `dm_stat`/`dm_p` — Diebold–Mariano (HLN, `h=1`) на парных ошибках:
+    положительная статистика значит, что консенсус ХУЖЕ hold (его ошибки
+    больше). При `n < 2` тест не определён — `None`.
+    """
+
+    bucket: str
+    n: int
+    consensus_rmse_bp: float
+    consensus_mae_bp: float
+    consensus_bias_bp: float
+    hold_rmse_bp: float
+    hold_mae_bp: float
+    hold_bias_bp: float
+    dm_stat: Optional[float]
+    dm_p: Optional[float]
+
+
+def _dm_or_none(err_a: list, err_b: list) -> tuple:
+    """DM (HLN, `h=1`) на парных ошибках; `(None, None)`, если тест не определён.
+
+    Общее соглашение годового бенчмарка §3.1 и B4 §3.2: при `n < 2` (включая
+    пустой список) тест не определён, а при нулевой дисперсии разницы потерь
+    (`err_a² − err_b²` постоянна — одинаковые ошибки или постоянный сдвиг)
+    t-статистике нечем делиться, и `p = 0.0` при `±inf` читался бы как
+    доказанное превосходство, которого малая выборка не подтверждает. Длины
+    рядов должны совпадать — это контракт вызывающего.
+    """
+    if len(err_a) < 2:
+        return (None, None)
+    differences = [a * a - b * b for a, b in zip(err_a, err_b)]
+    if all(difference == differences[0] for difference in differences):
+        return (None, None)
+    return diebold_mariano(err_a, err_b, h=1)
+
+
+def aggregate_consensus(observations: list, bucket: str) -> Optional[ConsensusAggregate]:
+    """Метрики одного бакета годового бенчмарка (спека §3.1), или None.
+
+    `None` — в бакете нет наблюдений. DM считается при `n >= 2`; при `n = 1`
+    тест не определён и остаётся `None`, а RMSE/MAE/bias всё ещё считаются
+    (в отчётности это одна пара). Вырожденная дисперсия разницы потерь (все
+    `err_cons² − err_hold²` равны — одинаковые ошибки или постоянная
+    ненулевая разница) тоже даёт `None`: t-статистике нечем делиться, а
+    `p = 0.0` при `±inf` читался бы как доказанное превосходство, которого
+    малая выборка не подтверждает. Guard вынесен в `_dm_or_none` — то же
+    правило применяет B4 (§3.2); исключения DM не перехватываются.
+    """
+    selected = [
+        observation for observation in observations if observation.bucket == bucket
+    ]
+    if not selected:
+        return None
+    consensus_errors = [observation.consensus_error_bp for observation in selected]
+    hold_errors = [observation.hold_error_bp for observation in selected]
+    dm_stat, dm_p = _dm_or_none(consensus_errors, hold_errors)
+    return ConsensusAggregate(
+        bucket=bucket,
+        n=len(selected),
+        consensus_rmse_bp=rmse_bp(consensus_errors),
+        consensus_mae_bp=mae_bp(consensus_errors),
+        consensus_bias_bp=sum(consensus_errors) / len(consensus_errors),
+        hold_rmse_bp=rmse_bp(hold_errors),
+        hold_mae_bp=mae_bp(hold_errors),
+        hold_bias_bp=sum(hold_errors) / len(hold_errors),
+        dm_stat=dm_stat,
+        dm_p=dm_p,
+    )
+
+
+# --- B4: проекция годовой медианы на шаг заседания (спека §3.2) ---------------
+
+
+@dataclass(frozen=True)
+class ConsensusPath:
+    """B4-проекция годовой медианы на шаг одного заседания (спека §3.2).
+
+    Это МЕХАНИЧЕСКАЯ проекция, а не прогноз заседания: остаток года
+    заполняется одной постоянной ставкой `implied_level`, при которой годовая
+    средняя совпала бы с медианой консенсуса. `step_bp` — разница между этой
+    проекцией и фактическим уровнем `rate_before` на `M−1`, в базисных
+    пунктах. `days_remaining` — `N_rem`: число дней года с `A+1` до 31 декабря
+    (для январского заседания — весь год `N_Y`).
+    """
+
+    meeting_date: date
+    wave_date: date
+    available_from: date
+    year: int
+    annual_median: float
+    rate_before: float
+    implied_level: float
+    step_bp: float
+    days_remaining: int
+
+
+def _consensus_path_with_reason(
+    consensus: list,
+    key_rate: list,
+    meeting: date,
+    rate_before: float,
+    asof: Optional[date] = None,
+) -> tuple:
+    """B4-проекция и причина её отсутствия (для пользовательского текста).
+
+    Возврат — `(ConsensusPath | None, причина | None)`: причина заполнена
+    только когда проекция не определена. Порядок guards — тот же, что у
+    `consensus_path`, чтобы отчёт не расходился с расчётом.
+
+    `asof` — дополнительный фильтр ТЕКУЩЕЙ проекции: волна обязана быть уже
+    опубликована на дату среза (`available_from <= asof`), иначе это
+    заглядывание вперёд. Бэктест B4 (`asof=None`) живёт по правилу §3.2 —
+    волна строго до заседания.
+    """
+    year = meeting.year
+    candidates = [
+        wave
+        for wave in consensus
+        if wave.year == year and wave.available_from < meeting
+    ]
+    if asof is not None:
+        available_candidates = [
+            wave for wave in candidates if wave.available_from <= asof
+        ]
+        if not available_candidates and candidates:
+            return (
+                None,
+                f"волна на {year} год ещё не опубликована на дату среза "
+                f"{asof.isoformat()}",
+            )
+        candidates = available_candidates
+    if not candidates:
+        return (
+            None,
+            f"нет волны на {year} год с публикацией до заседания "
+            f"{meeting.isoformat()}",
+        )
+    wave = max(candidates, key=lambda wave: (wave.available_from, wave.wave_date))
+    available = wave.available_from
+    if _rate_asof(key_rate, available) is None:
+        return (
+            None,
+            f"ряд ставки не покрывает дату доступности волны "
+            f"{available.isoformat()}",
+        )
+    first_day = date(year, 1, 1)
+    last_day = date(year, 12, 31)
+    days_in_year = (last_day - first_day).days + 1
+    if available < first_day:
+        implied = wave.median
+        days_remaining = days_in_year
+    else:
+        days_remaining = (last_day - available).days
+        if days_remaining < CONSENSUS_MIN_DAYS_REMAINING:
+            return (
+                None,
+                f"на остаток {year} года меньше "
+                f"{CONSENSUS_MIN_DAYS_REMAINING} дней",
+            )
+        # R_known начинается 1 января: без точки на эту дату сумму не собрать,
+        # и `sum_rates_between` поднял бы ValueError. Для B4 это guard, а не
+        # ошибка прогона — как и отсутствие ставки на `A`.
+        if _rate_asof(key_rate, first_day) is None:
+            return (None, f"ряд ставки не покрывает 1 января {year} года")
+        known = sum_rates_between(key_rate, first_day, available)
+        implied = (wave.median * days_in_year - known) / days_remaining
+    if not (-100.0 < implied < 100.0):
+        return (None, f"r_implied={implied:.2f} % вне (−100, 100) %")
+    return (
+        ConsensusPath(
+            meeting_date=meeting,
+            wave_date=wave.wave_date,
+            available_from=available,
+            year=year,
+            annual_median=wave.median,
+            rate_before=float(rate_before),
+            implied_level=implied,
+            step_bp=(implied - rate_before) * 100.0,
+            days_remaining=days_remaining,
+        ),
+        None,
+    )
+
+
+def _consensus_skip_reason(reason: Optional[str]) -> str:
+    """Короткая стабильная метка причины пропуска B4 (спека §5.6).
+
+    Guards здесь НЕ повторяются: подробное сообщение уже названо
+    `_consensus_path_with_reason`, функция только переводит его в категорию
+    отчёта (даты и годы в метку не входят — диапазон печатает рендерер).
+    `None` — путь не определён без названной причины; такая строка не
+    теряется и попадает в «причина не определена».
+    """
+    if reason is None:
+        return CONSENSUS_SKIP_UNKNOWN
+    if reason.startswith("нет волны на "):
+        return CONSENSUS_SKIP_NO_WAVE
+    if reason.startswith("ряд ставки не покрывает дату доступности волны"):
+        return CONSENSUS_SKIP_RATE_AT_WAVE
+    if reason.startswith("ряд ставки не покрывает 1 января"):
+        return CONSENSUS_SKIP_RATE_YEAR_START
+    if reason.startswith("на остаток "):
+        return CONSENSUS_SKIP_SHORT_REMAINDER
+    if reason.startswith("r_implied="):
+        return CONSENSUS_SKIP_IMPLIED_RANGE
+    return CONSENSUS_SKIP_UNKNOWN
+
+
+def consensus_path_skips(rows: list, consensus: list, key_rate: list) -> list:
+    """Пропуски B4 по строкам выборки: `(meeting_date, короткая причина)`.
+
+    Для каждого `Row`, у которого guards §3.2 не дали проекции, возвращается
+    дата заседания и метка из `CONSENSUS_SKIP_REASONS` (спека §5.6).
+    Причина берётся из `_consensus_path_with_reason` — того же расчёта, что у
+    `consensus_path_predictions`, поэтому сумма `len(skips) + len(b4)` равна
+    `len(rows)`: одна строка не может попасть и в фолды, и в пропуски.
+    """
+    skips = []
+    for row in rows:
+        decision = row.decision
+        path, reason = _consensus_path_with_reason(
+            consensus, key_rate, decision.meeting_date, decision.rate_before
+        )
+        if path is None:
+            skips.append(
+                (decision.meeting_date, _consensus_skip_reason(reason))
+            )
+    return skips
+
+
+def consensus_path(
+    consensus: list, key_rate: list, meeting: date, rate_before: float
+) -> Optional[ConsensusPath]:
+    """B4-проекция остатка года `Y = year(meeting)` на шаг заседания (§3.2).
+
+    Волна — последняя с медианой на `Y`, доступная строго до заседания
+    (`available_from < meeting`; при равенстве `available_from` порядок
+    задаёт `wave_date`). Доступность `A = available_from`.
+
+    Если `A < 1 января Y` (январское заседание, последняя волна — декабрьская),
+    известного пути в году нет: `R_known = 0`, `N_rem = N_Y`, проекция равна
+    медиане. Иначе `R_known` — сумма фактических ставок с 1 января по `A`
+    включительно (fill-forward по календарным дням), а остаток года даёт
+    `r_implied = (median·N_Y − R_known)/N_rem`.
+
+    `None` — проекция не определена: нет подходящей волны; ряд ставки не
+    покрывает `A` (а в формуле — ещё и 1 января); на остаток года меньше
+    `CONSENSUS_MIN_DAYS_REMAINING` дней; `r_implied` вне `(−100, 100)`
+    процента (деление на короткий хвост или порча данных). Это guard
+    бенчмарка, а не ошибка: заседание просто выпадает из B4-выборки.
+    Причины отсутствия называет `_consensus_path_with_reason`.
+    """
+    path, _ = _consensus_path_with_reason(consensus, key_rate, meeting, rate_before)
+    return path
+
+
+def consensus_path_predictions(rows: list, consensus: list, key_rate: list) -> list:
+    """Фолды B4 по строкам выборки: только заседания с определённой проекцией.
+
+    `rate_before` берётся из `Row` (ставка на `M−1`), а не из ряда на дату
+    волны: шаг B4 — разница между проекцией остатка года и фактическим
+    уровнем перед заседанием. Заседание, для которого `consensus_path`
+    вернула `None`, пропускается, а не получает фолд с догадкой.
+
+    B4 не обучается и не зависит от окна walk-forward: `probs=None`, окно —
+    `CONSENSUS_WINDOW`. В `METHODS`/`FORECAST_METHODS` он не входит (§3.2):
+    потребитель — отдельный раздел отчёта и отдельная таблица метрик.
+    """
+    predictions = []
+    for row in rows:
+        decision = row.decision
+        path = consensus_path(
+            consensus, key_rate, decision.meeting_date, decision.rate_before
+        )
+        if path is None:
+            continue
+        predictions.append(
+            Prediction(
+                meeting_date=decision.meeting_date,
+                actual_step_bp=float(decision.step_bp),
+                actual_y3=decision.y3,
+                method="consensus",
+                window=CONSENSUS_WINDOW,
+                step_bp=path.step_bp,
+                probs=None,
+            )
+        )
+    return predictions
+
+
+@dataclass(frozen=True)
+class B4Metrics:
+    """Метрики B4 по фолдам: RMSE/MAE в б.п., hit rate и QWK (§3.2)."""
+
+    n: int
+    rmse_bp: float
+    mae_bp: float
+    hit_rate: float
+    qwk: float
+
+
+def b4_metrics(predictions: list) -> Optional[B4Metrics]:
+    """Метрики B4 по фолдам (спека §3.2), или `None` на пустом списке.
+
+    Формулы — существующие функции §7: RMSE/MAE по ошибкам шага в б.п.,
+    hit rate и QWK по направлениям. Пустой список — «B4 не определено ни на
+    одном заседании», а не нулевые метрики: ноль RMSE читался бы как
+    идеальная точность.
+    """
+    if not predictions:
+        return None
+    errors = _group_errors(predictions)
+    predicted, actual = _group_steps(predictions)
+    return B4Metrics(
+        n=len(predictions),
+        rmse_bp=rmse_bp(errors),
+        mae_bp=mae_bp(errors),
+        hit_rate=hit_rate(predicted, actual),
+        qwk=qwk(predicted, actual),
+    )
+
+
+@dataclass(frozen=True)
+class B4Comparison:
+    """Сравнение B4 с одной строкой «метод × окно» на общих заседаниях (§3.2).
+
+    `against` — имя метода, `window` — его окно walk-forward. `n` — число
+    общих заседаний. `delta_rmse_bp = RMSE(B4) − RMSE(other)` на этих же
+    датах: положительная значит, что B4 ХУЖЕ (его ошибки больше). DM (HLN,
+    `h=1`) подаётся как `err_a = B4`, `err_b = other`, поэтому положительная
+    статистика тоже значит «B4 хуже». `dm_stat`/`dm_p` — `None`, когда тест
+    не определён (`n < 2` или нулевая дисперсия разницы потерь, см.
+    `_dm_or_none`).
+    """
+
+    against: str
+    window: str
+    n: int
+    delta_rmse_bp: float
+    dm_stat: Optional[float]
+    dm_p: Optional[float]
+
+
+def b4_significance(b4: list, predictions: list) -> list:
+    """DM B4 против каждой строки «метод × окно» на общих заседаниях (§3.2).
+
+    Сравниваются только общие даты: у B4 guard пропускает заседания без
+    волны/покрытия/запаса дней, у методов walk-forward — вырожденные окна,
+    и DM по разным наборам смешал бы точность с составом выборки. Группа без
+    общих дат пропускается (в отличие от `_significance_rows`, где пустое
+    пересечение — ошибка: там строки методов посчитаны на одной выборке, а
+    B4 живёт по своему guard).
+
+    Порядок строк — как у `method_predictions`: окно (`expanding`, затем
+    `rolling40`), внутри — `METHODS`; группы с окном `CONSENSUS_WINDOW` в
+    перебор не входят.
+    """
+    b4_errors = {
+        prediction.meeting_date: prediction.step_bp - prediction.actual_step_bp
+        for prediction in b4
+    }
+    groups = _predictions_by_group(predictions)
+    comparisons = []
+    for window in (WINDOW_EXPANDING, window_label(ROLLING_WINDOW)):
+        for method, _ in METHODS:
+            group = groups.get((method, window))
+            if group is None:
+                continue
+            other_errors = {
+                prediction.meeting_date: prediction.step_bp
+                - prediction.actual_step_bp
+                for prediction in group
+            }
+            # Общие заседания — в календарном порядке, чтобы DM не зависел от
+            # порядка строк ответа/выборки.
+            shared = sorted(day for day in b4_errors if day in other_errors)
+            if not shared:
+                continue
+            errors_a = [b4_errors[day] for day in shared]
+            errors_b = [other_errors[day] for day in shared]
+            dm_stat, dm_p = _dm_or_none(errors_a, errors_b)
+            comparisons.append(
+                B4Comparison(
+                    against=method,
+                    window=window,
+                    n=len(shared),
+                    delta_rmse_bp=rmse_bp(errors_a) - rmse_bp(errors_b),
+                    dm_stat=dm_stat,
+                    dm_p=dm_p,
+                )
+            )
+    return comparisons
+
+
+# --- Текущий консенсус и сценарий удержания (спека §3.3/§4) -------------------
+
+
+@dataclass(frozen=True)
+class CurrentConsensus:
+    """Последняя доступная волна консенсуса (спека §4).
+
+    `rows` — все годы одной волны опроса (медианы на разные годы публикуются
+    вместе), отсортированные по году. `stale_days` — сколько дней прошло от
+    ДАТЫ ВОЛНЫ `wave_date` до даты прогона (спека §4: «волна старше»; дата
+    доступности `available_from` сдвинута на консервативный лаг и для
+    возраста волны не используется): волна не подменяется, а устаревание
+    показывается числом.
+    """
+
+    wave_date: date
+    available_from: date
+    rows: list
+    stale_days: int
+
+
+def current_consensus(consensus: list, today: date) -> Optional[CurrentConsensus]:
+    """Последняя волна с `available_from <= today` (спека §4), или None.
+
+    Граница включительна: волна, ставшая доступной ровно в дату прогона, — это
+    текущий консенсус. Выбор не полагается на порядок входа: берётся `max` по
+    `(available_from, wave_date)`. Ряды результата — ВСЕ годы выбранной волны
+    (`wave_date` совпадает), сортировка по году: так таблица отчёта читается
+    сверху вниз по горизонту.
+    """
+    eligible = [wave for wave in consensus if wave.available_from <= today]
+    if not eligible:
+        return None
+    latest = max(eligible, key=lambda wave: (wave.available_from, wave.wave_date))
+    rows = sorted(
+        (wave for wave in consensus if wave.wave_date == latest.wave_date),
+        key=lambda wave: wave.year,
+    )
+    return CurrentConsensus(
+        wave_date=latest.wave_date,
+        available_from=latest.available_from,
+        rows=rows,
+        stale_days=(today - latest.wave_date).days,
+    )
+
+
+def hold_scenario_average(
+    key_rate: list,
+    today: date,
+    meeting: date,
+    rate_before: Optional[float],
+    model_level: Optional[float],
+) -> Optional[float]:
+    """Вменённая среднегодовая при удержании уровня после ближайшего заседания.
+
+    Формула спеки §3.3:
+
+    ```
+    (Σ_{1 янв..today} rate(d) + rate_before·дни(today+1..M−1)
+     + model_level·дни(M..31 дек)) / N_Y
+    ```
+
+    Известный путь года суммируется фактически (`sum_rates_between`), интервал
+    до заседания `M` — ставкой `rate_before`, остаток `[M, 31 декабря]` —
+    уровнем `model_level` (формальный прогноз `ordered_logit`). Это сценарий
+    удержания, а не траектория: между заседаниями уровень не меняется.
+
+    `None` — сценарий не определён: `rate_before`/`model_level` не конечны,
+    `M` не в году `today` или не позже неё (формула смешала бы годы/дала
+    отрицательное число дней), либо ряд ставки не покрывает `today` или
+    1 января года — сумму не из чего собрать. Отчёт называет причину, а не
+    падает: отсутствие `ordered_logit` — штатная ветка.
+    """
+    if rate_before is None or model_level is None:
+        return None
+    if not math.isfinite(rate_before) or not math.isfinite(model_level):
+        return None
+    year = today.year
+    first_day = date(year, 1, 1)
+    last_day = date(year, 12, 31)
+    if not first_day <= meeting <= last_day or meeting <= today:
+        return None
+    if _rate_asof(key_rate, today) is None or _rate_asof(key_rate, first_day) is None:
+        return None
+    days = (last_day - first_day).days + 1
+    known = sum_rates_between(key_rate, first_day, today)
+    before = (meeting - today).days - 1  # дни today+1 … M−1
+    after = (last_day - meeting).days + 1  # дни M … 31 декабря
+    return (known + rate_before * before + model_level * after) / days
+
+
 # --- Загрузчики: SQL + транспорт + разбор ------------------------------------
 
 
@@ -498,6 +1384,11 @@ def load_ibk() -> list:
 def load_mp_summary_deltas() -> list:
     """Шаги решений из резюме ЦБ (`cbr_mp_summary`, 22 резюме с 2024-02)."""
     return mp_deltas_from_rows(ch_query(MP_SUMMARY_SQL))
+
+
+def load_consensus() -> list:
+    """Волны консенсуса по годам из витрины макроопроса ЦБ (`v_cbr_mo_br`)."""
+    return consensus_from_rows(ch_query(CONSENSUS_SQL))
 
 
 # --- As-of слой (спека §4) ----------------------------------------------------
@@ -691,6 +1582,135 @@ def build_rows(decisions: list, cpd: list, ibk: list) -> tuple:
     return rows, missing
 
 
+# --- Веса наблюдений: CSV и покрытие (спека §7) -------------------------------
+
+# Колонки CSV весов. Лишние колонки (`emergency`, `explicit_shock`, признаки и
+# т.п. из `shock_classifier_weights.csv`) игнорируются: модель читает только
+# дату и вес, а формат файла принадлежит классификатору.
+SHOCK_WEIGHTS_DATE_COLUMN = "meeting_date"
+SHOCK_WEIGHTS_VALUE_COLUMN = "weight"
+
+
+def load_shock_weights(path: Path) -> dict:
+    """Веса заседаний из CSV `meeting_date,weight` (спека §7).
+
+    Файл — артефакт `shock_classifier.py` (`shock_classifier_weights.csv`), но
+    формат намеренно минимальный: модели нужны только дата и вес, остальные
+    колонки игнорируются. Правила валидации — спека §7:
+
+    * дата — ISO `YYYY-MM-DD` (`date.fromisoformat`);
+    * дата уникальна: дубль сделал бы вес неоднозначным;
+    * `0 < w ≤ 1`: вес мягко ПОНИЖАЕТ вклад наблюдения, а не исключает его
+      (ноль был бы выбрасыванием строки, вес > 1 — усилением шока).
+
+    Любое нарушение — `ValueError` с номером строки и значением: файл весов
+    задаёт вход модели, и молчаливая правка здесь исказила бы бэктест.
+    Отсутствие даты в файле ошибкой НЕ является — `weights_for_rows` даёт
+    такому заседанию вес 1.0 и считает его в покрытии.
+    """
+    path = Path(path)
+    with path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        columns = reader.fieldnames or []
+        missing_columns = [
+            name
+            for name in (SHOCK_WEIGHTS_DATE_COLUMN, SHOCK_WEIGHTS_VALUE_COLUMN)
+            if name not in columns
+        ]
+        if missing_columns:
+            raise ValueError(
+                f"{path}: в CSV нет обязательных колонок {', '.join(missing_columns)} "
+                f"(ожидаются {SHOCK_WEIGHTS_DATE_COLUMN},{SHOCK_WEIGHTS_VALUE_COLUMN}; "
+                f"лишние колонки игнорируются)"
+            )
+        weights = {}
+        for line_number, row in enumerate(reader, start=2):
+            raw_date = str(row.get(SHOCK_WEIGHTS_DATE_COLUMN) or "").strip()
+            raw_weight = str(row.get(SHOCK_WEIGHTS_VALUE_COLUMN) or "").strip()
+            if not raw_date:
+                raise ValueError(
+                    f"{path}: строка {line_number}: пустая дата заседания "
+                    f"({SHOCK_WEIGHTS_DATE_COLUMN})"
+                )
+            try:
+                meeting = date.fromisoformat(raw_date)
+            except ValueError as error:
+                raise ValueError(
+                    f"{path}: строка {line_number}: дата {raw_date!r} не ISO "
+                    f"YYYY-MM-DD"
+                ) from error
+            if meeting in weights:
+                raise ValueError(
+                    f"{path}: дата {meeting.isoformat()} встречается дважды — "
+                    f"вес заседания неоднозначен"
+                )
+            try:
+                weight = float(raw_weight)
+            except ValueError as error:
+                raise ValueError(
+                    f"{path}: строка {line_number}: вес {raw_weight!r} не число"
+                ) from error
+            if not math.isfinite(weight) or not 0.0 < weight <= 1.0:
+                raise ValueError(
+                    f"{path}: строка {line_number}: вес {weight!r} вне (0, 1] — "
+                    f"наблюдение можно мягко понизить, но не исключить"
+                )
+            weights[meeting] = weight
+    if not weights:
+        raise ValueError(f"{path}: нет ни одной строки с весами")
+    return weights
+
+
+# Сколько дат пропущенных весов печатать в предупреждении. Полный список на
+# живом прогоне — сотня дат в каждом из четырёх walk-forward-вызовов: счётчик
+# остаётся в сообщении, а хвост списка не нужен.
+WEIGHT_WARNING_DATES = 10
+
+
+def _missing_weight_note(missing: list) -> str:
+    """Первые `WEIGHT_WARNING_DATES` отсутствующих дат плюс остаток счётчиком."""
+    shown = ", ".join(day.isoformat() for day in missing[:WEIGHT_WARNING_DATES])
+    if len(missing) > WEIGHT_WARNING_DATES:
+        shown += f", … (ещё {len(missing) - WEIGHT_WARNING_DATES})"
+    return shown
+
+
+def weights_for_rows(
+    rows: list, weights: Optional[dict], warn: bool = True
+) -> tuple:
+    """Веса строк выборки по дате заседания; отсутствующая дата — 1.0.
+
+    Возврат `(значения, отсутствующие даты)`: значения выровнены по `rows` и
+    пригодны для WLS/`freq_weights`, список отсутствующих — счётчик покрытия
+    для отчёта. Дата, которой нет в CSV, НЕ ошибка: ранние заседания и
+    заседания вне среза классификатора не измерены, и вес 1.0 — нейтральное
+    значение («не понижаем»), а не выдуманная аномальность.
+
+    Предупреждение (один раз на вызов) называет число и даты: молчаливое
+    заполнение скрыло бы, что часть весов не пришла. `warn=False` — для
+    walk-forward, где один и тот же пропуск повторяется в каждом фолде: там
+    предупреждение агрегируется вызывающим.
+    """
+    if weights is None:
+        return [1.0] * len(rows), []
+    values = []
+    missing = []
+    for row in rows:
+        meeting = row.decision.meeting_date
+        if meeting in weights:
+            values.append(float(weights[meeting]))
+        else:
+            values.append(1.0)
+            missing.append(meeting)
+    if missing and warn:
+        log.warning(
+            "веса шоков: %d заседаний без веса — принят вес 1.0: %s",
+            len(missing),
+            _missing_weight_note(missing),
+        )
+    return values, missing
+
+
 # --- Walk-forward и бенчмарки B1–B3 (спека §5, §7) ----------------------------
 
 
@@ -726,7 +1746,9 @@ class Forecast:
 
 
 # Контракт метода walk-forward: обучение на окне строк, прогноз следующей.
-FitPredict = Callable[[list, Row], Forecast]
+# Взвешиваемые методы (WEIGHTED_METHODS) получают третьим аргументом вектор
+# весов наблюдений; остальные вызываются с двумя, как раньше.
+FitPredict = Callable[..., Forecast]
 
 
 @dataclass(frozen=True)
@@ -821,8 +1843,29 @@ def fit_ar1(train: list, row: Row) -> Forecast:
     return Forecast(step_percent * 100.0, None)
 
 
-def _taylor_fit(train: list) -> RegressionResultsWrapper:
-    """Оценка правила Тейлора на обучающем окне: OLS с HAC (спека §6).
+def _as_weights(weights, expected: int, what: str) -> np.ndarray:
+    """Валидирует вектор весов наблюдений обучающего окна.
+
+    Веса приходят из `weights_for_rows`/`load_shock_weights` (там `0 < w ≤ 1`),
+    но `_taylor_fit`/`_ordered_fit` — публичные точки входа, и молча
+    несогласованный вектор (не та длина, NaN, ноль) дал бы либо исключение
+    statsmodels в середине фолда, либо выброшенное наблюдение. Поэтому длина,
+    конечность и положительность проверяются ЗДЕСЬ; `ValueError` — ошибка
+    вызывающего, а не вырожденное окно.
+    """
+    array = np.asarray(weights, dtype=float)
+    if array.ndim != 1 or array.shape[0] != expected:
+        size = array.shape[0] if array.ndim == 1 else str(array.shape)
+        raise ValueError(
+            f"{what}: весов {size} на {expected} наблюдений обучающего окна"
+        )
+    if not np.all(np.isfinite(array)) or np.any(array <= 0.0):
+        raise ValueError(f"{what}: веса должны быть конечными и положительными")
+    return array
+
+
+def _taylor_fit(train: list, weights=None) -> RegressionResultsWrapper:
+    """Оценка правила Тейлора на обучающем окне: OLS/WLS с HAC (спека §6).
 
     Дизайн — `[1, rate_before, pi_saar, gap]`: константа добавляется явно
     (`has_constant="add"`), и проверка ранга идёт по ТЕМ ЖЕ столбцам, что и
@@ -836,6 +1879,12 @@ def _taylor_fit(train: list) -> RegressionResultsWrapper:
     Отклик — уровень после решения `i_t`; ковариация — HAC с конфигурацией
     `_hac_fit` (та же, что у B3 и Mincer–Zarnowitz): p-value строк отчёта
     обязаны считаться на одной ковариации.
+
+    `weights` — опциональные веса наблюдений (спека §7). При них оценка —
+    `sm.WLS` на том же дизайне с ТОЙ ЖЕ конфигурацией HAC; без них — прежний
+    `OLS` (`_hac_fit`) байт-в-байт, поэтому официальный путь без
+    `--shock-weights` не меняется. Единичные веса дают те же коэффициенты,
+    что OLS (пиновано тестом).
 
     Вырожденное окно — `DegenerateWindowError` с причиной, а не исключение
     statsmodels: окно короче `MIN_TAYLOR_OBS` (у четырёхпараметрической
@@ -861,10 +1910,19 @@ def _taylor_fit(train: list) -> RegressionResultsWrapper:
             "коллинеарен свободному члену (в окне не меняется), коэффициенты "
             "не идентифицированы"
         )
-    return _hac_fit([sample.decision.rate_after for sample in train], design)
+    response = np.asarray(
+        [sample.decision.rate_after for sample in train], dtype=float
+    )
+    if weights is None:
+        return _hac_fit(response, design)
+    array = _as_weights(weights, len(train), "Тейлор (метод №2)")
+    model = sm.WLS(response, design, weights=array)
+    return model.fit(
+        cov_type="HAC", cov_kwds={"maxlags": HAC_MAXLAGS, "use_correction": True}
+    )
 
 
-def fit_taylor(train: list, row: Row) -> Forecast:
+def fit_taylor(train: list, row: Row, weights=None) -> Forecast:
     """Метод №2: инерционное правило Тейлора (спека §6).
 
     `i_t = c + ρ·i_{t−1} + a·π + b·gap` — OLS на `[1, rate_before, pi_saar,
@@ -880,8 +1938,11 @@ def fit_taylor(train: list, row: Row) -> Forecast:
 
     `probs` — `None`: правило даёт точечный шаг, а не распределение классов
     (как бенчмарки B1–B3); вероятностные метрики — у метода №3 (Task 5).
+
+    `weights` — веса обучающих наблюдений по датам заседаний (спека §7,
+    `--shock-weights`); без них вызов и результат прежние.
     """
-    result = _taylor_fit(train)
+    result = _taylor_fit(train, weights)
     predicted_level = float(np.dot(result.params, [1.0] + list(row.x)))
     return Forecast((predicted_level - row.decision.rate_before) * 100.0, None)
 
@@ -1022,7 +2083,53 @@ def _expected_step(probs: tuple, means: tuple) -> float:
     return sum(probability * mean for probability, mean in zip(probs, means))
 
 
-def _ordered_fit(train: list):
+class WeightedOrderedModel(OrderedModel):
+    """Упорядоченный логит с весами наблюдений (`freq_weights`, спека §7).
+
+    Наследник `OrderedModel`, у которого вклад наблюдения в логарифм
+    правдоподобия умножается на вес: `loglike(θ) = Σ_i w_i · log p(y_i | x_i)`.
+    Это ровно взвешенная MLE: вес 1 — обычная модель, вес < 1 мягко понижает
+    вклад заседания-шока, не выбрасывая его из выборки.
+
+    Почему подкласс, а не параметр `fit`: `OrderedModel` не знает `freq_weights`
+    (в statsmodels 0.15 его нет ни у модели, ни у `GenericLikelihoodModel`).
+    Численные `score`/`hessian` базового класса дифференцируют `self.loglike`,
+    а `GenericLikelihoodModel.loglike` суммирует `loglikeobs` — поэтому
+    переопределения одного `loglikeobs` достаточно, чтобы оптимизатор
+    `method="newton"` видел взвешенную цель, а не только взвешенное значение.
+
+    `freq_weights=None` — поведение базовой модели один-в-один; вектор весов
+    выровнен по `endog` и проверяется по длине сразу: несогласованный вектор
+    иначе дал бы broadcast-ошибку или неверное произведение в недрах
+    оптимизатора.
+    """
+
+    def __init__(self, endog, exog, freq_weights=None, **kwds):
+        self.freq_weights = (
+            None if freq_weights is None else np.asarray(freq_weights, dtype=float)
+        )
+        if self.freq_weights is not None:
+            expected = np.asarray(endog).shape[0]
+            if self.freq_weights.ndim != 1 or self.freq_weights.shape[0] != expected:
+                size = (
+                    self.freq_weights.shape[0]
+                    if self.freq_weights.ndim == 1
+                    else str(self.freq_weights.shape)
+                )
+                raise ValueError(
+                    f"WeightedOrderedModel: весов {size} на {expected} наблюдений"
+                )
+        super().__init__(endog, exog, **kwds)
+
+    def loglikeobs(self, params):
+        """Логарифм правдоподобия наблюдений, умноженный на их веса."""
+        loglike = super().loglikeobs(params)
+        if self.freq_weights is None:
+            return loglike
+        return loglike * self.freq_weights
+
+
+def _ordered_fit(train: list, weights=None):
     """Оценка ordered-модели на обучающем окне: (модель, результат) — спека §6.
 
     statsmodels `OrderedModel(distr='logit')` на регрессорах `[rate_before,
@@ -1054,6 +2161,13 @@ def _ordered_fit(train: list):
     спека: обычные окна оцениваются, вырожденные (в том числе разделимые) —
     `DegenerateWindowError`.
 
+    `weights` — опциональные веса наблюдений (спека §7). При них модель —
+    `WeightedOrderedModel` с `freq_weights` (взвешенная MLE); без них — прежний
+    `OrderedModel` байт-в-байт, поэтому официальный путь без `--shock-weights`
+    не меняется. Все проверки вырожденности, `ORDERED_MAXITER`,
+    `method="newton"` и превращение предупреждений в `DegenerateWindowError`
+    общие для обеих веток.
+
     Возврат — модель и результат подгонки: вызывающему нужны и вероятности
     (`result.predict`), и `model.labels` (отображение столбцов на классы).
     """
@@ -1072,7 +2186,13 @@ def _ordered_fit(train: list):
             "регрессор постоянен в окне или коллинеарен остальным: линейный "
             "индекс xβ не идентифицирован (β сдвигает пороги)"
         )
-    model = OrderedModel(endog, exog, distr="logit")
+    if weights is None:
+        model = OrderedModel(endog, exog, distr="logit")
+    else:
+        array = _as_weights(weights, len(train), "метод №3 (ordered logit)")
+        model = WeightedOrderedModel(
+            endog, exog, freq_weights=array, distr="logit"
+        )
     try:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
@@ -1103,7 +2223,7 @@ def _ordered_fit(train: list):
     return model, result
 
 
-def fit_ordered_logit(train: list, row: Row) -> Forecast:
+def fit_ordered_logit(train: list, row: Row, weights=None) -> Forecast:
     """Метод №3: упорядоченная логит-модель решения — вероятности и точка (§6).
 
     Модель — `OrderedModel(distr='logit')` на регрессорах `[rate_before,
@@ -1131,8 +2251,13 @@ def fit_ordered_logit(train: list, row: Row) -> Forecast:
     вероятность (NaN/inf) — `ValueError` на выходе метода, а не nan в `E[step]`,
     Brier и log loss отчёта (и не пропуск фолда: это дефект кода, а не свойство
     окна).
+
+    `weights` — веса обучающих наблюдений по датам заседаний (спека §7,
+    `--shock-weights`); без них вызов и результат прежние, с ними — взвешенная
+    MLE (`WeightedOrderedModel`), а средние шагов классов остаются
+    невзвешенными: это описание фактов окна, а не правдоподобие.
     """
-    model, result = _ordered_fit(train)
+    model, result = _ordered_fit(train, weights)
     row_probs = result.predict(exog=np.asarray([row.x], dtype=float))[0]
     probs = [0.0] * len(_CLASS_ORDER)
     for label, probability in zip(model.labels, row_probs):
@@ -1194,6 +2319,11 @@ METHODS = BENCHMARKS + (
 # Имена бенчмарков без меток — для сравнений DM («против каждого бенчмарка»).
 BENCHMARK_METHODS = tuple(method for method, _ in BENCHMARKS)
 
+# Методы, которые умеют взвешивать наблюдения (спека §7). Бенчмарки B1–B3 и
+# базлайн `climatology` — эталоны без весов: их прогноз не зависит от того,
+# какие наблюдения модель «слушает тише», иначе сравнение потеряло бы опору.
+WEIGHTED_METHODS = ("taylor", "ordered_logit")
+
 # Метки методов в отчёте: бенчмарки названы номерами спеки (§5), имена
 # методов №2–3 (Tasks 4–5) идут в отчёт как есть.
 METHOD_LABELS = {"hold": "B1 hold", "repeat": "B2 repeat", "ar1": "B3 AR(1)"}
@@ -1210,6 +2340,7 @@ def walk_forward(
     fit_predict: FitPredict,
     min_train: int = MIN_TRAIN,
     rolling: Optional[int] = None,
+    weights: Optional[dict] = None,
 ) -> tuple:
     """Walk-forward по одному методу и одному окну (спека §7).
 
@@ -1229,6 +2360,17 @@ def walk_forward(
     не ошибка данных. Любое другое исключение метода пробрасывается: это баг
     кода или порча данных, и молча пропускать его нельзя.
 
+    `weights` — веса наблюдений по дате заседания (спека §7). Взвешиваются
+    ТОЛЬКО методы из `WEIGHTED_METHODS` (`taylor`, `ordered_logit`): каждому
+    фолду строится вектор весов обучающего окна по `row.decision.meeting_date`,
+    а отсутствующая дата получает 1.0. Бенчмарки B1–B3 и `climatology`
+    вызываются с двумя аргументами, как раньше, — их прогноз от весов не
+    зависит. `weights=None` — прежний путь байт-в-байт.
+
+    Пропуски весов считаются здесь: одна и та же дата повторяется в обучающих
+    окнах многих фолдов, поэтому предупреждение агрегируется по уникальным
+    датам (иначе счётчик раздулся бы числом окон).
+
     Возврат — `(фолды, пропущено)`: фолды по возрастанию даты
     (`Prediction.window` несёт метку окна, по которой отчёт группирует строки
     «метод × окно»), и число пропущенных фолдов — оно попадает в сводку отчёта
@@ -1236,12 +2378,19 @@ def walk_forward(
     """
     start = min_train if rolling is None else max(min_train, rolling)
     window = window_label(rolling)
+    weighted = weights is not None and method in WEIGHTED_METHODS
+    missing_weights = set()
     predictions = []
     skipped = 0
     for index in range(start, len(rows)):
         train = rows[:index] if rolling is None else rows[index - rolling:index]
         try:
-            forecast = fit_predict(train, rows[index])
+            if weighted:
+                train_weights, missing = weights_for_rows(train, weights, warn=False)
+                missing_weights.update(missing)
+                forecast = fit_predict(train, rows[index], train_weights)
+            else:
+                forecast = fit_predict(train, rows[index])
         except DegenerateWindowError:
             skipped += 1
             continue
@@ -1257,16 +2406,31 @@ def walk_forward(
                 probs=forecast.probs,
             )
         )
+    if missing_weights:
+        log.warning(
+            "веса шоков (%s, %s): %d заседаний обучающих окон без веса — "
+            "принят вес 1.0: %s",
+            method,
+            window,
+            len(missing_weights),
+            _missing_weight_note(sorted(missing_weights)),
+        )
     return predictions, skipped
 
 
-def method_predictions(rows: list, min_train: int = MIN_TRAIN) -> tuple:
+def method_predictions(
+    rows: list, min_train: int = MIN_TRAIN, weights: Optional[dict] = None
+) -> tuple:
     """Бенчмарки B1–B3 и методы §6 по обоим окнам — строки «метод × окно».
 
     Оба окна считаются всегда (спека §7): отчёт показывает их рядом, а выбор
     окна по ошибке не делается. Порядок обхода — окно, затем метод; от него
     зависит порядок строк в отчёте и в CSV, и он же задаёт группировку.
     Список строк — `METHODS` (бенчмарки §5, затем методы §6).
+
+    `weights` — веса наблюдений для взвешиваемых методов (`WEIGHTED_METHODS`,
+    спека §7); бенчмарки и `climatology` их не получают. `None` — прежний
+    путь без весов байт-в-байт.
 
     Возврат — `(фолды, пропущено)`: счётчик вырожденных окон по ключу
     «(метод, окно)» для сводки отчёта. У B1 и B2 он нулевой по построению, у
@@ -1279,11 +2443,36 @@ def method_predictions(rows: list, min_train: int = MIN_TRAIN) -> tuple:
     for window in (None, ROLLING_WINDOW):
         for method, fit_predict in METHODS:
             folds, skipped = walk_forward(
-                rows, method, fit_predict, min_train=min_train, rolling=window
+                rows,
+                method,
+                fit_predict,
+                min_train=min_train,
+                rolling=window,
+                weights=weights,
             )
             predictions.extend(folds)
             fold_skips[(method, window_label(window))] = skipped
     return predictions, fold_skips
+
+
+def weighted_method_predictions(rows: list, min_train: int = MIN_TRAIN) -> list:
+    """Фолды ТОЛЬКО взвешиваемых методов БЕЗ весов — база сравнения (спека §7).
+
+    Отчёт с `--shock-weights` показывает weighted vs unweighted RMSE/MAE и
+    DM-HLN по `taylor`/`ordered_logit`. Невзвешенная база — тот же walk-forward
+    на тех же окнах, но с прежним OLS/`OrderedModel`; бенчмарки в сравнение не
+    входят: они и так не взвешиваются, и их числа уже есть в основной таблице.
+    """
+    predictions = []
+    for window in (None, ROLLING_WINDOW):
+        for method, fit_predict in METHODS:
+            if method not in WEIGHTED_METHODS:
+                continue
+            folds, _ = walk_forward(
+                rows, method, fit_predict, min_train=min_train, rolling=window
+            )
+            predictions.extend(folds)
+    return predictions
 
 
 # --- Метрики §7 ----------------------------------------------------------------
@@ -1723,6 +2912,28 @@ _LONG_RUN_HEADER = (
     "| параметр | значение |",
     "|---|---|",
 )
+_CONSENSUS_WAVE_HEADER = (
+    "| год | медиана | p10 | p90 | ответов |",
+    "|---|---:|---:|---:|---:|",
+)
+_CONSENSUS_BUCKET_HEADER = (
+    "| бакет | n | cons RMSE | cons MAE | cons bias "
+    "| hold RMSE | hold MAE | hold bias | DM | p |",
+    "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+)
+_CONSENSUS_AUDIT_HEADER = (
+    "| год | волна | доступна | бакет | медиана | p10 | p90 | ответов "
+    "| факт | ошибка cons | ошибка hold |",
+    "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+)
+_CONSENSUS_B4_METRIC_HEADER = (
+    "| n | RMSE, б.п. | MAE, б.п. | hit rate | QWK |",
+    "|---:|---:|---:|---:|---:|",
+)
+_CONSENSUS_B4_COMPARISON_HEADER = (
+    "| против | окно | n | ΔRMSE, б.п. | DM | p |",
+    "|---|---|---:|---:|---:|---:|",
+)
 
 
 def _long_run_rows(rows: list) -> list:
@@ -1880,6 +3091,140 @@ def _reliability_rows(groups: dict) -> list:
     return rows
 
 
+_SHOCK_WEIGHTS_HEADER = (
+    "| Состав | Значение |",
+    "|---|---|",
+)
+_SHOCK_COMPARISON_HEADER = (
+    "| метод | окно | n | RMSE без весов, б.п. | RMSE с весами, б.п. "
+    "| MAE без весов, б.п. | MAE с весами, б.п. | DM (HLN) | DM p |",
+    "|---|---|---|---|---|---|---|---|---|",
+)
+_SHOCK_LOWERED_HEADER = (
+    "| заседание | вес | фактический шаг, б.п. |",
+    "|---|---|---|",
+)
+
+
+def _shock_weights_section(
+    sample: list,
+    predictions: list,
+    unweighted_predictions: list,
+    weights: dict,
+    source: Optional[str],
+) -> list:
+    """Раздел «Веса шоков» отчёта при `--shock-weights` (спека §7).
+
+    Состав — по требованию шага: источник и покрытие, распределение весов,
+    weighted vs unweighted RMSE/MAE по `WEIGHTED_METHODS` и DM-HLN (h=1) через
+    `eval_utils.diebold_mariano`, топ-10 пониженных заседаний.
+
+    Сравнение — на ОБЩИХ фолдах метода и окна: взвешенная и невзвешенная
+    подгонки могут пропустить разные вырожденные окна, и усреднение по разным
+    наборам заседаний сделало бы DM недействительным. Распределение — по
+    ПРИМЕНЁННЫМ весам выборки (включая 1.0 для дат, которых нет в CSV): так
+    видно и пониженные заседания, и фактический вес обучения.
+    """
+    values, missing = weights_for_rows(sample, weights, warn=False)
+    explicit = len(sample) - len(missing)
+    if values:
+        distribution = (
+            f"{_fmt(min(values), 4)} / {_fmt(float(np.median(values)), 4)} / "
+            f"{_fmt(max(values), 4)}"
+        )
+    else:
+        distribution = "—"
+    lowered = sorted(
+        ((value, row) for row, value in zip(sample, values) if value < 1.0),
+        key=lambda pair: (pair[0], pair[1].decision.meeting_date),
+    )
+    weighted_groups = _predictions_by_group(predictions)
+    unweighted_groups = _predictions_by_group(unweighted_predictions)
+    comparison_rows = []
+    for method in WEIGHTED_METHODS:
+        for window in (WINDOW_EXPANDING, window_label(ROLLING_WINDOW)):
+            weighted_errors = {
+                prediction.meeting_date: prediction.step_bp - prediction.actual_step_bp
+                for prediction in weighted_groups.get((method, window), [])
+            }
+            unweighted_errors = {
+                prediction.meeting_date: prediction.step_bp - prediction.actual_step_bp
+                for prediction in unweighted_groups.get((method, window), [])
+            }
+            shared = sorted(
+                day for day in weighted_errors if day in unweighted_errors
+            )
+            if not shared:
+                comparison_rows.append(
+                    f"| {method_label(method)} | {window} | 0 "
+                    f"| — | — | — | — | — | — |"
+                )
+                continue
+            errors_weighted = [weighted_errors[day] for day in shared]
+            errors_unweighted = [unweighted_errors[day] for day in shared]
+            statistic, pvalue = eu.diebold_mariano(
+                errors_weighted, errors_unweighted, h=1
+            )
+            comparison_rows.append(
+                f"| {method_label(method)} | {window} | {len(shared)} "
+                f"| {_fmt(rmse_bp(errors_unweighted))} "
+                f"| {_fmt(rmse_bp(errors_weighted))} "
+                f"| {_fmt(mae_bp(errors_unweighted))} "
+                f"| {_fmt(mae_bp(errors_weighted))} "
+                f"| {_fmt(statistic)} | {_fmt_p(pvalue)} |"
+            )
+    lines = [
+        "",
+        "## Веса шоков",
+        "",
+        "Веса наблюдений из CSV `meeting_date,weight` (спека §7): правило "
+        "Тейлора оценивается WLS, упорядоченный логит — взвешенной MLE; "
+        "бенчмарки B1–B3 и `climatology` весов не получают. Отсутствующая в "
+        "CSV дата получает нейтральный вес 1.0 и входит в счётчик покрытия. "
+        "Текущий прогноз обучается на полной выборке без весов — флаг меняет "
+        "walk-forward.",
+        "",
+    ]
+    lines += _table(
+        _SHOCK_WEIGHTS_HEADER,
+        [
+            f"| источник | {source or '—'} |",
+            f"| весов в файле | {len(weights)} |",
+            f"| заседаний в выборке | {len(sample)} |",
+            f"| покрыто явным весом | {explicit} |",
+            f"| по умолчанию 1.0 (нет в CSV) | {len(missing)} |",
+            f"| распределение w: min / median / max | {distribution} |",
+            f"| пониженных (w < 1) | {len(lowered)} |",
+        ],
+    )
+    lines += [
+        "",
+        "Weighted vs unweighted на ОБЩИХ фолдах метода и окна: RMSE/MAE "
+        "считаются по одним и тем же заседаниям, DM-HLN (h=1) сравнивает "
+        "квадраты ошибок (положительная статистика — взвешенная подгонка хуже).",
+        "",
+    ]
+    lines += _table(_SHOCK_COMPARISON_HEADER, comparison_rows)
+    lines += ["", "Топ-10 пониженных заседаний (наименьший вес первым):", ""]
+    if lowered:
+        lines += _table(
+            _SHOCK_LOWERED_HEADER,
+            [
+                f"| {row.decision.meeting_date.isoformat()} | {_fmt(value, 4)} "
+                f"| {_fmt(float(row.decision.step_bp))} |"
+                for value, row in lowered[:10]
+            ],
+        )
+        if len(lowered) > 10:
+            lines += [
+                "",
+                f"_Показаны 10 из {len(lowered)} пониженных заседаний._",
+            ]
+    else:
+        lines.append("_Пониженных заседаний нет: все веса равны 1.0._")
+    return lines
+
+
 def render_report(
     sample: list,
     skipped: Skipped,
@@ -1887,6 +3232,10 @@ def render_report(
     forecast: Optional[str] = None,
     today: Optional[date] = None,
     fold_skips: Optional[dict] = None,
+    shock_weights: Optional[dict] = None,
+    shock_weights_source: Optional[str] = None,
+    unweighted_predictions: Optional[list] = None,
+    consensus: Optional[str] = None,
 ) -> str:
     """Markdown-отчёт прогона (спека §8).
 
@@ -1911,7 +3260,17 @@ def render_report(
     зависит только строка версии набора данных; `fold_skips` — счётчики
     вырожденных окон по ключу «(метод, окно)» (`method_predictions`), без
     них сводка показывает нули — так отчёт не приписывает методу пропусков,
-    которых не считали.
+    которых не считали. `shock_weights` — веса из `--shock-weights`
+    (`None` — раздела «Веса шоков» нет и отчёт прежний), `shock_weights_source`
+    — путь источника для раздела, `unweighted_predictions` — фолды
+    взвешиваемых методов БЕЗ весов (`weighted_method_predictions`) для
+    weighted vs unweighted RMSE/MAE и DM-HLN.
+
+    `consensus` — готовый markdown-блок «Консенсус-бенчмарк №4» (Task 5) или
+    `None`, если раздел не запрошен. Параметр добавлен в конец сигнатуры:
+    существующие вызовы не меняются. Блок вставляется ПЕРЕД «Текущим
+    прогнозом» — сначала измерение опроса, затем прогноз; при `None` раздела
+    нет вовсе (тесты и вызовы без консенсуса не рисуют пустую заготовку).
     """
     today = today or date.today()
     fold_skips = fold_skips or {}
@@ -2018,6 +3377,15 @@ def render_report(
     ]
     lines += _table(_LONG_RUN_HEADER, _long_run_rows(sample))
 
+    if shock_weights is not None:
+        lines += _shock_weights_section(
+            sample,
+            predictions,
+            unweighted_predictions or [],
+            shock_weights,
+            shock_weights_source,
+        )
+
     lines += [
         "",
         "## Тесты значимости: DM (поправка HLN) и блочный бутстрап",
@@ -2086,6 +3454,11 @@ def render_report(
         ]
         lines += _table(_RELIABILITY_HEADER, reliability_rows)
 
+    if consensus is not None:
+        # Раздел консенсуса — готовый блок со своим заголовком; вставляется
+        # перед текущим прогнозом (сначала измерение опроса, затем прогноз).
+        lines += ["", str(consensus).strip()]
+
     if forecast is not None:
         lines += ["", "## Текущий прогноз", "", str(forecast).strip()]
 
@@ -2111,8 +3484,11 @@ def render_report(
         "- **Гиперпараметры не подбираются**: ни на полной выборке, ни на "
         "режимном блоке 2024–2026; обе схемы окна — проверка робастности, а "
         "не выбор лучшей (спека §7).",
-        "- **Консенсус-бенчмарк (медиана макроопроса)** вне v0 — из-за "
-        "горизонта и первого публикационного цикла (спека §11).",
+        "- **Консенсус-бенчмарк №4 — годовой горизонт, а не шаг заседания**: "
+        "медиана макроопроса сравнивается с фактической среднегодовой ставкой; "
+        "B4 — механическая проекция остатка года, а не прогноз решения "
+        "(`docs/superpowers/specs/2026-10-19-key-rate-consensus-benchmark-design.md` "
+        "§3).",
     ]
     return "\n".join(lines) + "\n"
 
@@ -2124,15 +3500,30 @@ def _probs_cell(probs) -> str:
     return "|".join(_csv_cell(probability) for probability in probs)
 
 
-def write_predictions(path: Path, predictions: list) -> None:
+def write_predictions(
+    path: Path, predictions: list, weights: Optional[dict] = None
+) -> None:
     """Пишет построчный CSV прогнозов (артефакт §8).
 
     Одна строка — один фолд (метод × окно × заседание); вероятности — одной
     ячейкой в порядке классов (−1, 0, +1), чтобы CSV читался и глазами, и
     pandas без разбора вложенных структур.
+
+    `weights` — веса шоков из CSV `--shock-weights`: при них в КОНЕЦ колонок
+    добавляется `weight` — вес ПРОГНОЗИРУЕМОГО заседания из CSV
+    (отсутствующая дата — 1.0). В обучении СОБСТВЕННОГО фолда этой строки он
+    не участвует: фолд `i` учится только на прошлых заседаниях, и вес строки
+    `i` применяется лишь в последующих фолдах, где она попадает в обучение.
+    У невзвешенных методов (бенчмарки B1–B3, `climatology`) ячейка пустая:
+    колонка не должна приписывать им вес, которого они не используют.
+    `weights=None` — прежний набор колонок и тот же файл байт-в-байт.
     """
-    rows = [
-        {
+    columns = PREDICTION_COLUMNS
+    if weights is not None:
+        columns = PREDICTION_COLUMNS + (SHOCK_WEIGHT_COLUMN,)
+    rows = []
+    for prediction in predictions:
+        row = {
             "meeting_date": prediction.meeting_date.isoformat(),
             "method": prediction.method,
             "window": prediction.window,
@@ -2141,9 +3532,15 @@ def write_predictions(path: Path, predictions: list) -> None:
             "step_bp": prediction.step_bp,
             "probs": _probs_cell(prediction.probs),
         }
-        for prediction in predictions
-    ]
-    _write_csv(path, PREDICTION_COLUMNS, rows)
+        if weights is not None:
+            if prediction.method in WEIGHTED_METHODS:
+                row[SHOCK_WEIGHT_COLUMN] = float(
+                    weights.get(prediction.meeting_date, 1.0)
+                )
+            else:
+                row[SHOCK_WEIGHT_COLUMN] = ""
+        rows.append(row)
+    _write_csv(path, columns, rows)
 
 
 def clear_stale_artifacts(out_dir: Path) -> list:
@@ -2408,6 +3805,444 @@ def current_forecast(
     )
 
 
+# --- Консенсус-бенчмарк в отчёте: текущая волна, мост и B4 (спека §4/§5) -----
+
+
+@dataclass(frozen=True)
+class ConsensusBridge:
+    """Числа текущего консенсуса для отчёта (спека §3.3/§4).
+
+    `ytd_average`/`ytd_days` — фактическая средняя года `today.year` с 1 января
+    по дату прогона (календарные дни). `projection` — B4-проекция остатка года
+    по текущей волне (§3.2), `None`, когда её guards не выполнены;
+    `projection_reason` называет причину. `model_level` и `implied_avg` —
+    сценарий удержания после ближайшего заседания (§3.3); `None` —
+    `ordered_logit` не посчитан, заседание в другом году или сценарий не
+    определён; `scenario_reason` называет причину.
+    """
+
+    meeting_date: Optional[date]
+    rate_before: Optional[float]
+    ytd_average: float
+    ytd_days: int
+    projection: Optional[ConsensusPath]
+    projection_reason: Optional[str]
+    model_level: Optional[float]
+    implied_avg: Optional[float]
+    scenario_reason: Optional[str]
+
+
+def consensus_bridge(
+    key_rate: list,
+    consensus: list,
+    forecast: Optional[CurrentForecast],
+    today: date,
+) -> Optional[ConsensusBridge]:
+    """Числа текущего консенсуса для раздела отчёта, или `None`.
+
+    Средняя с начала года считается по фактическому пути ставки
+    (`sum_rates_between`); без покрытия 1 января она не определена — `None`
+    (раздел назовёт причину, а не нарисует нулевую среднюю). B4-проекция
+    остатка — `_consensus_path_with_reason` для ближайшего заседания: те же
+    guards §3.2, а волна обязана быть доступна уже на `today` (текущая
+    проекция не заглядывает вперёд, в отличие от бэктеста B4). Причина
+    отсутствия проекции/сценария переносится в `projection_reason`/
+    `scenario_reason`: отчёт печатает её, а не общий список догадок.
+    Сценарий удержания — `hold_scenario_average` по `expected_step_bp` метода
+    `ordered_logit`.
+    """
+    first_day = date(today.year, 1, 1)
+    if _rate_asof(key_rate, first_day) is None:
+        return None
+    ytd_days = (today - first_day).days + 1
+    ytd_average = sum_rates_between(key_rate, first_day, today) / ytd_days
+    meeting_date = forecast.meeting_date if forecast is not None else None
+    rate_before = forecast.rate_before if forecast is not None else None
+    projection = None
+    projection_reason = None
+    model_level = None
+    implied_avg = None
+    scenario_reason = None
+    if forecast is None:
+        # Ближайшего будущего заседания нет: ни проекции, ни сценария.
+        projection_reason = "ближайшего будущего заседания нет"
+        scenario_reason = projection_reason
+    elif rate_before is None:
+        projection_reason = "ставка перед ближайшим заседанием недоступна"
+        scenario_reason = projection_reason
+    else:
+        # Текущая проекция — as-of даты прогона: волна, опубликованная между
+        # `today` и заседанием, была бы заглядыванием вперёд. Бэктест B4 живёт
+        # по правилу §3.2 «до заседания» и потому считается по полному ряду
+        # отдельно (`consensus_path_predictions`).
+        projection, projection_reason = _consensus_path_with_reason(
+            consensus, key_rate, forecast.meeting_date, rate_before, asof=today
+        )
+        if forecast.meeting_date.year != today.year:
+            # Формула сценария делит на N_Y года `today`: у заседания
+            # следующего года нет среднегодовой текущего года.
+            scenario_reason = (
+                f"ближайшее заседание {forecast.meeting_date.isoformat()} — в "
+                f"следующем календарном году, а сценарий вменяет среднегодовую "
+                f"{today.year}"
+            )
+        else:
+            payload = forecast.methods.get("ordered_logit") or {}
+            expected_step = payload.get("expected_step_bp")
+            if expected_step is None:
+                scenario_reason = (
+                    "в текущем прогнозе нет `ordered_logit` (метод пропущен "
+                    "или его входы недоступны)"
+                )
+            else:
+                candidate = rate_before + expected_step / 100.0
+                implied_avg = hold_scenario_average(
+                    key_rate, today, forecast.meeting_date, rate_before, candidate
+                )
+                if implied_avg is None:
+                    scenario_reason = (
+                        "сценарий не определён: нет ставки на дату прогона или "
+                        "1 января года либо уровень не конечен"
+                    )
+                else:
+                    model_level = candidate
+    return ConsensusBridge(
+        meeting_date=meeting_date,
+        rate_before=rate_before,
+        ytd_average=ytd_average,
+        ytd_days=ytd_days,
+        projection=projection,
+        projection_reason=projection_reason,
+        model_level=model_level,
+        implied_avg=implied_avg,
+        scenario_reason=scenario_reason,
+    )
+
+
+def _consensus_aggregate_rows(observations: list) -> list:
+    """Строки таблицы годового бенчмарка: непустые бакеты в порядке спеки.
+
+    `_table` на пустом списке печатает пометку «фолдов нет»; пустые бакеты в
+    таблицу не попадают вовсе — строка с нулём наблюдений выглядела бы
+    измерением.
+    """
+    rows = []
+    for bucket in CONSENSUS_BUCKETS:
+        aggregate = aggregate_consensus(observations, bucket)
+        if aggregate is None:
+            continue
+        rows.append(
+            f"| {aggregate.bucket} | {aggregate.n} "
+            f"| {_fmt(aggregate.consensus_rmse_bp)} "
+            f"| {_fmt(aggregate.consensus_mae_bp)} "
+            f"| {_fmt(aggregate.consensus_bias_bp)} "
+            f"| {_fmt(aggregate.hold_rmse_bp)} "
+            f"| {_fmt(aggregate.hold_mae_bp)} "
+            f"| {_fmt(aggregate.hold_bias_bp)} "
+            f"| {_fmt(aggregate.dm_stat)} | {_fmt_p(aggregate.dm_p)} |"
+        )
+    return rows
+
+
+def render_consensus_section(
+    observations: list,
+    current: Optional[CurrentConsensus],
+    bridge: Optional[ConsensusBridge],
+    b4_predictions: list,
+    b4_metrics_value: Optional[B4Metrics],
+    b4_comparisons: list,
+    today: date,
+    b4_skips: Optional[list] = None,
+    consensus_waves: Optional[int] = None,
+) -> str:
+    """Markdown-раздел «Консенсус-бенчмарк №4» (спека §5).
+
+    Состав: вводные (источник, правило доступности, годовая средняя ≠ шаг),
+    текущая волна (медианы/p10/p90/answers, средняя с начала года, B4-проекция
+    остатка и сценарий удержания), годовой бенчмарк по бакетам, построчный
+    аудит, режимный срез 2024–2025, B4 (метрики, сравнения, пропуски по
+    причинам) и «что не проверено». Пустой консенсус — строка «данных нет»,
+    а не падение: это штатная ветка офлайн-прогона.
+
+    Числа приходят готовыми (`observations`, `current`, `bridge`,
+    `b4_predictions`, `b4_metrics_value`, `b4_comparisons`): рендерер только
+    форматирует их через `_table`/`_fmt`, как и остальные таблицы отчёта.
+    `b4_skips` — `consensus_path_skips(...)`: пары `(meeting_date, причина)`.
+    Пропуски группируются по стабильным меткам (`CONSENSUS_SKIP_REASONS`),
+    печатается `причина — N (min_date … max_date)`; счётчик «без B4-фолда» —
+    это `len(b4_skips)`, поэтому сумма по причинам совпадает с пропусками.
+    `consensus_waves` различает пустую витрину (`0`) и витрину с волнами, но
+    без доступных волн/завершённых лет (`>0`).
+    Причины отсутствия текущей проекции/сценария берутся из
+    `bridge.projection_reason`/`scenario_reason`, а не угадываются.
+    """
+    lines = [
+        "## Консенсус-бенчмарк №4 (медиана макроопроса)",
+        "",
+        "Источник — витрина `v_cbr_mo_br` (ряды "
+        "`key_rate_avg_<год>_median|p10|p90|answers`); `date` — дата волны "
+        "(1-е число месяца). Публикация наступает через 2–6 дней после полевого "
+        f"периода, поэтому волна доступна только с `wave_date + "
+        f"{CONSENSUS_PUBLICATION_LAG_DAYS} дней` — консервативно, без "
+        "заглядывания вперёд. Годовая средняя (медиана опроса) — не шаг "
+        "заседания: сравнивать её с шагом нельзя, поэтому основной результат — "
+        "годовой горизонт, а B4 — механическая проекция остатка года на шаг.",
+        "",
+    ]
+    if not observations and current is None:
+        if consensus_waves:
+            lines.append(
+                "_данных нет: волны в витрине есть, но нет доступных волн и "
+                "завершённых лет для бенчмарка._"
+            )
+        else:
+            lines.append("_данных нет: витрина `v_cbr_mo_br` пуста._")
+        return "\n".join(lines) + "\n"
+
+    if current is not None:
+        lines += [
+            "### Текущий консенсус",
+            "",
+            f"Последняя доступная волна — **{current.wave_date.isoformat()}** "
+            f"(доступна с **{current.available_from.isoformat()}**), "
+            f"устарела на **{current.stale_days}** дн.",
+            "",
+        ]
+        if current.stale_days > CONSENSUS_STALE_AFTER_DAYS:
+            lines += [
+                "Волна старше естественного цикла (8 волн/год ≈ 6–7 недель): "
+                "последняя публикация могла быть пропущена, и текущий консенсус "
+                "не подменяется более свежими данными.",
+                "",
+            ]
+        lines += _table(
+            _CONSENSUS_WAVE_HEADER,
+            [
+                f"| {wave.year} | {_fmt(wave.median)} | {_fmt(wave.p10)} "
+                f"| {_fmt(wave.p90)} | "
+                f"{wave.answers if wave.answers is not None else '—'} |"
+                for wave in current.rows
+            ],
+        )
+    else:
+        lines += [
+            "### Текущий консенсус",
+            "",
+            "_Текущей волны нет: ни одна волна ещё не опубликована на дату "
+            "прогона._",
+        ]
+
+    current_year_median = None
+    if current is not None:
+        current_year_median = next(
+            (wave.median for wave in current.rows if wave.year == today.year), None
+        )
+    if bridge is not None:
+        lines += [
+            "",
+            f"Средняя с начала {today.year} года "
+            f"(1 января … {today.isoformat()}, календарные дни): "
+            f"**{_fmt(bridge.ytd_average)} %**.",
+        ]
+        if bridge.projection is not None:
+            path = bridge.projection
+            lines.append(
+                f"B4-проекция остатка {path.year} года по медиане "
+                f"{_fmt(path.annual_median)}: **{_fmt(path.implied_level)} %** "
+                f"(волна {path.wave_date.isoformat()}, осталось "
+                f"{path.days_remaining} дн.; шаг к ставке перед заседанием "
+                f"{path.meeting_date.isoformat()} — {_fmt(path.step_bp)} б.п.)."
+            )
+        else:
+            reason = bridge.projection_reason or "причина не определена"
+            lines.append(
+                f"B4-проекция остатка года не определена: {reason}. Guards: "
+                "нет волны на год заседания с публикацией до заседания; волна "
+                "ещё не опубликована на дату среза; ряд ставки не покрывает "
+                "дату доступности волны или 1 января года заседания; на "
+                f"остаток года меньше {CONSENSUS_MIN_DAYS_REMAINING} дней; "
+                "`r_implied` вне (−100, 100) %."
+            )
+    else:
+        # `bridge is None` — ряд ставки не покрывает 1 января года `today`;
+        # без него не собрать ни среднюю с начала года, ни текущую проекцию.
+        lines += [
+            "",
+            "Средняя с начала года не определена: ряд ставки не покрывает "
+            "1 января текущего года.",
+            "B4-проекция остатка года не определена: ряд ставки не покрывает "
+            "1 января текущего года (и дату доступности волны).",
+        ]
+
+    lines += ["", "### Сценарий удержания", ""]
+    if bridge is None:
+        lines += [
+            "_Сценарий не оценён: ряд ставки не покрывает начало текущего года._"
+        ]
+    elif bridge.implied_avg is None:
+        reason = bridge.scenario_reason or "причина не определена"
+        lines += [f"_Сценарий не оценён: {reason}._"]
+    else:
+        difference = (
+            (bridge.implied_avg - current_year_median) * 100.0
+            if current_year_median is not None
+            else None
+        )
+        meeting = (
+            bridge.meeting_date.isoformat() if bridge.meeting_date is not None else "—"
+        )
+        lines += _table(
+            _LONG_RUN_HEADER,
+            [
+                f"| ближайшее заседание | {meeting} |",
+                f"| ставка перед заседанием | {_fmt(bridge.rate_before)} % |",
+                f"| уровень после заседания (`ordered_logit`) "
+                f"| {_fmt(bridge.model_level)} % |",
+                f"| вменённая среднегодовая {today.year} "
+                f"| {_fmt(bridge.implied_avg)} % |",
+                f"| медиана консенсуса на {today.year} "
+                f"| {_fmt(current_year_median)} % |",
+                f"| разница (сценарий − консенсус) | {_fmt(difference)} б.п. |",
+            ],
+        )
+        lines += [
+            "",
+            "Сценарий удержания — не траектория и не тест значимости; "
+            "в журнал прогнозов он не пишется.",
+        ]
+
+    lines += [
+        "",
+        "### Годовой бенчмарк",
+        "",
+        "Пара — волна с медианой на завершённый год и фактическая среднегодовая "
+        "ставка; ошибки в б.п., положительная — консенсус завысил. Наивный hold "
+        "— «ставка не меняется» по правилу §3.1. DM (HLN, `h=1`): положительная "
+        "статистика значит, что консенсус ХУЖЕ hold; при `n < 2` и нулевой "
+        "дисперсии разницы потерь тест не определён («—»).",
+        "",
+    ]
+    lines += _table(_CONSENSUS_BUCKET_HEADER, _consensus_aggregate_rows(observations))
+
+    lines += [
+        "",
+        "### Построчный аудит волн",
+        "",
+        "Все пары выборки: волна, её горизонт (бакет), медиана и ошибки против "
+        "факта; p10/p90/answers взяты из волны и в метрики не входят.",
+        "",
+    ]
+    lines += _table(
+        _CONSENSUS_AUDIT_HEADER,
+        [
+            f"| {observation.year} | {observation.wave_date.isoformat()} "
+            f"| {observation.available_from.isoformat()} | {observation.bucket} "
+            f"| {_fmt(observation.median)} | {_fmt(observation.p10)} "
+            f"| {_fmt(observation.p90)} "
+            f"| {observation.answers if observation.answers is not None else '—'} "
+            f"| {_fmt(observation.actual)} "
+            f"| {_fmt(observation.consensus_error_bp)} "
+            f"| {_fmt(observation.hold_error_bp)} |"
+            for observation in observations
+        ],
+    )
+
+    regime_observations = [
+        observation
+        for observation in observations
+        if CONSENSUS_REGIME_FROM <= observation.year <= CONSENSUS_REGIME_TO
+    ]
+    lines += [
+        "",
+        f"### Режимный срез {CONSENSUS_REGIME_FROM}–{CONSENSUS_REGIME_TO}",
+        "",
+        "Тот же годовой бенчмарк на завершённых годах текущего режима; срез "
+        "описательный, гиперпараметры на нём не подбираются.",
+        "",
+    ]
+    lines += _table(
+        _CONSENSUS_BUCKET_HEADER, _consensus_aggregate_rows(regime_observations)
+    )
+
+    lines += [
+        "",
+        "### B4: проекция годовой медианы на шаг заседания",
+        "",
+        "B4 — механическая проекция: остаток года заполняется одной ставкой, "
+        "при которой годовая средняя совпала бы с медианой; это не прогноз "
+        "заседания. В `METHODS`, JSON прогноза и журнал B4 не входит; "
+        "положительные DM и ΔRMSE значат, что B4 хуже строки сравнения. "
+        f"Фолдов B4: {len(b4_predictions)}.",
+        "",
+    ]
+    if b4_metrics_value is None:
+        lines.append("_B4 не определено ни на одном заседании._")
+    else:
+        lines += _table(
+            _CONSENSUS_B4_METRIC_HEADER,
+            [
+                f"| {b4_metrics_value.n} | {_fmt(b4_metrics_value.rmse_bp)} "
+                f"| {_fmt(b4_metrics_value.mae_bp)} "
+                f"| {_fmt(b4_metrics_value.hit_rate, 3)} "
+                f"| {_fmt(b4_metrics_value.qwk, 3)} |"
+            ],
+        )
+    lines += ["", "Сравнение с методами и бенчмарками на общих заседаниях:", ""]
+    lines += _table(
+        _CONSENSUS_B4_COMPARISON_HEADER,
+        [
+            f"| {method_label(comparison.against)} | {comparison.window} "
+            f"| {comparison.n} "
+            f"| {_fmt(comparison.delta_rmse_bp)} | {_fmt(comparison.dm_stat)} "
+            f"| {_fmt_p(comparison.dm_p)} |"
+            for comparison in b4_comparisons
+        ],
+    )
+    skipped = list(b4_skips or [])
+    reason_dates = {}
+    for meeting_date, reason in skipped:
+        reason_dates.setdefault(reason, []).append(meeting_date)
+    missing_suffix = " — сумма по причинам ниже." if skipped else "."
+    lines += [
+        "",
+        f"Заседаний выборки без B4-фолда: **{_fmt(len(skipped), 0)}**"
+        f"{missing_suffix}",
+    ]
+    if skipped:
+        # Метки из реестра идут в его порядке; неизвестная метка не теряется,
+        # иначе сумма строк разошлась бы со счётчиком пропусков.
+        ordered_reasons = [
+            reason for reason in CONSENSUS_SKIP_REASONS if reason in reason_dates
+        ]
+        ordered_reasons += [
+            reason for reason in reason_dates if reason not in CONSENSUS_SKIP_REASONS
+        ]
+        lines.append("")
+        for reason in ordered_reasons:
+            dates = reason_dates[reason]
+            lines.append(
+                f"- {reason} — {len(dates)} "
+                f"({min(dates).isoformat()} … {max(dates).isoformat()})"
+            )
+    lines += [
+        "",
+        "### Что не проверено",
+        "",
+        "- **Малая выборка**: экс-анте — 4 пары, внутригодовые бакеты — 8–10; "
+        "p-value индикативный, превосходство без значимости не заявляется.",
+        "- **Режимные сдвиги 2022 и 2024–2025**: режимный срез описательный, "
+        "смена режима может объяснять часть ошибки.",
+        "- **Дата публикации волны**: +6 дней — консервативное правило; точные "
+        "даты публикаций волн не проверены (`source_publications` не хранит "
+        "волны).",
+        "- **Годовая средняя ≠ шаг заседания**: медиана опроса — не прогноз "
+        "решения; B4 лишь механически проецирует её на шаг.",
+        "- **B4 — механика, а не траектория**: остаток года заполняется одной "
+        "ставкой; результат чувствителен к округлению медианы и длине хвоста.",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def render_forecast(forecast: CurrentForecast) -> str:
     """Markdown-блок раздела «Текущий прогноз» (артефакт §8, Task 6).
 
@@ -2605,6 +4440,8 @@ def run_summary(
     ml_log: Optional[bool] = None,
     logger: Optional[object] = None,
     run_name: Optional[str] = None,
+    shock_weights: Optional[dict] = None,
+    shock_weights_source: Optional[str] = None,
 ) -> int:
     """Полный прогон: выборка, walk-forward, текущий прогноз, артефакты (§7/§8).
 
@@ -2628,7 +4465,8 @@ def run_summary(
     идут в прогон одной строкой каждый (список `METHODS`): отчёт, DM/MZ/PT, CSV
     и режимный блок считаются по «метод × окно» и имён методов не знают.
 
-    Артефакты: отчёт (с разделом «Текущий прогноз», если прогноз сделан) и CSV
+    Артефакты: отчёт (с разделами «Консенсус-бенчмарк №4» — включая перечень
+    пропусков B4 по причинам — и «Текущий прогноз», если прогноз сделан) и CSV
     фолдов; `key_rate_model_forecast.json` пишется, только если прогноз есть И в
     нём посчитан хотя бы один метод. Иначе JSON не пишется, а прежний файл
     (`write_forecast_artifact`) УДАЛЯЕТСЯ: оставленный снимок прошлого прогона
@@ -2648,6 +4486,11 @@ def run_summary(
     fold-предсказаниями в базисных пунктах и артефактами; явный `logger`
     используется как есть (duck typing). По умолчанию (`ML_LOG` не задан) в
     ClickHouse ничего не пишется — только чтение и локальные артефакты.
+
+    `shock_weights` — веса заседаний из `--shock-weights` (`load_shock_weights`)
+    или `None`: при них walk-forward `taylor`/`ordered_logit` взвешивается,
+    отчёт получает раздел «Веса шоков», а CSV — колонку `weight`. Без них
+    отчёт/CSV/JSON прежние байт-в-байт.
     """
     today = today or date.today()
     if ml_log is None:
@@ -2659,6 +4502,11 @@ def run_summary(
         "methods": [method for method, _ in METHODS],
         "forecast_methods": [method for method, _ in FORECAST_METHODS],
     }
+    if shock_weights is not None:
+        # Конфиг журнала меняется ТОЛЬКО при флаге: официальный прогон без
+        # весов обязан остаться прежним и в паспорте эксперимента.
+        config["shock_weights"] = shock_weights_source or "argument"
+        config["shock_weights_dates"] = len(shock_weights)
 
     def start_run(sample_meta, sample):
         """Создаёт прогон журнала: имя по окну, общий конфиг и дата среза."""
@@ -2711,15 +4559,36 @@ def run_summary(
 
     deltas = load_mp_summary_deltas()
     # Ряды читаются по одному разу: ключевая ставка нужна и выборке, и
-    # прогнозной строке; ИПЦ и ИБК — признакам выборки и признакам прогноза.
+    # прогнозной строке, и консенсус-бенчмарку; ИПЦ и ИБК — признакам выборки и
+    # признакам прогноза.
     key_rate = load_key_rate()
+    # Консенсус-бенчмарк №4 (спека §2/§3): волны опроса читаются один раз;
+    # годовые пары считаются по завершённым годам, B4 — по строкам выборки.
+    # Пустая витрина — штатная ветка: раздел отчёта скажет «данных нет».
+    consensus = load_consensus()
+    observations = consensus_observations(consensus, key_rate)
     decisions, excluded, missing_rate = build_decisions(past, key_rate, deltas)
     cpd = load_cpd_core()
     ibk = load_ibk()
     rows, missing_features = build_rows(decisions, cpd, ibk)
+    b4 = consensus_path_predictions(rows, consensus, key_rate)
+    b4_skips = consensus_path_skips(rows, consensus, key_rate)
+    # Инвариант перечня пропусков (спека §5.6): каждая строка выборки даёт
+    # ровно один B4-фолд либо одну строку пропуска с причиной.
+    if len(b4) + len(b4_skips) != len(rows):
+        raise SampleError(
+            f"B4: {len(b4)} фолдов + {len(b4_skips)} пропусков "
+            f"≠ {len(rows)} строк выборки"
+        )
+    current = current_consensus(consensus, today)
     # Walk-forward считается до проверки «выборка пуста»: счётчик вырожденных
     # окон входит в sample_meta паспорта, а на пустой выборке он нулевой.
-    predictions, fold_skips = method_predictions(rows)
+    # С `--shock-weights` основная таблица — взвешенная; невзвешенная база
+    # считается отдельно и только для взвешиваемых методов (раздел «Веса шоков»).
+    predictions, fold_skips = method_predictions(rows, weights=shock_weights)
+    unweighted_predictions = (
+        weighted_method_predictions(rows) if shock_weights is not None else None
+    )
     sample_meta = {
         "rows": len(rows),
         "first": rows[0].decision.meeting_date.isoformat() if rows else None,
@@ -2728,6 +4597,11 @@ def run_summary(
         "missing_rate": len(missing_rate),
         "missing_features": len(missing_features),
         "fold_skips": sum(fold_skips.values()),
+        # Консенсус-бенчмарк: волн (уникальных дат), годовых пар и B4-фолдов —
+        # те же числа, что в строке консоли и разделе отчёта.
+        "consensus_waves": len({wave.wave_date for wave in consensus}),
+        "consensus_pairs": len(observations),
+        "b4_folds": len(b4),
     }
     if logger is None and ml_log:
         logger = start_run(
@@ -2758,6 +4632,23 @@ def run_summary(
 
     try:
         forecast = current_forecast(rows, meetings, key_rate, cpd, ibk, today)
+        # Мост текущего консенсуса: средняя с начала года, B4-проекция остатка
+        # и сценарий удержания по `ordered_logit` (если метод посчитан).
+        bridge = consensus_bridge(key_rate, consensus, forecast, today)
+        consensus_text = render_consensus_section(
+            observations,
+            current,
+            bridge,
+            b4,
+            b4_metrics(b4),
+            b4_significance(b4, predictions),
+            today,
+            # Перечень пропусков B4 — `(дата, причина)`; счётчик «без
+            # B4-фолда» рендерер выводит из его длины, поэтому сумма по
+            # причинам всегда сходится с `len(rows) - len(b4)`.
+            b4_skips=b4_skips,
+            consensus_waves=sample_meta["consensus_waves"],
+        )
         report_path = out_dir / REPORT_NAME
         predictions_path = out_dir / PREDICTIONS_NAME
         forecast_path = out_dir / FORECAST_NAME
@@ -2769,10 +4660,14 @@ def run_summary(
                 render_forecast(forecast) if forecast is not None else None,
                 today=today,
                 fold_skips=fold_skips,
+                shock_weights=shock_weights,
+                shock_weights_source=shock_weights_source,
+                unweighted_predictions=unweighted_predictions,
+                consensus=consensus_text,
             ),
             encoding="utf-8",
         )
-        write_predictions(predictions_path, predictions)
+        write_predictions(predictions_path, predictions, weights=shock_weights)
         forecast_written = write_forecast_artifact(forecast_path, forecast)
 
         print(f"Модель ключевой ставки v0 — выборка решений (дата прогона {today.isoformat()})")
@@ -2797,6 +4692,18 @@ def run_summary(
         print(f"  фолдов (скользящее окно, {ROLLING_WINDOW}):               "
               f"{counts.get(window_label(ROLLING_WINDOW), 0)}")
         print(f"  пропущено фолдов (вырожденное окно):         {sum(fold_skips.values())}")
+        print(f"  консенсус-бенчмарк: волн "
+              f"{sample_meta['consensus_waves']}, годовых пар "
+              f"{sample_meta['consensus_pairs']}, B4-фолдов "
+              f"{sample_meta['b4_folds']}")
+        if shock_weights is not None:
+            applied, missing = weights_for_rows(rows, shock_weights, warn=False)
+            lowered = sum(1 for value in applied if value < 1.0)
+            print(f"  веса шоков ({shock_weights_source or 'аргумент'}): "
+                  f"покрыто {len(rows) - len(missing)} из {len(rows)} заседаний, "
+                  f"w min/median/max = {min(applied):.4f}/"
+                  f"{float(np.median(applied)):.4f}/{max(applied):.4f}, "
+                  f"пониженных {lowered}")
 
         selected = window_label(ROLLING_WINDOW if rolling else None)
         print(f"  метрики окна «{selected}» (в отчёте и CSV — оба окна):")
@@ -2967,13 +4874,35 @@ def main(argv: Optional[list] = None) -> int:
         help="метрики консольной сводки по скользящему окну 40 (по умолчанию — "
              "по расширяющемуся); в отчёт и CSV идут оба окна",
     )
+    parser.add_argument(
+        "--shock-weights",
+        metavar="PATH",
+        default=None,
+        help="CSV meeting_date,weight с весами наблюдений для taylor/ordered_logit "
+             "(0 < w <= 1; спека классификатора шоков §7); без флага артефакты "
+             "и числа не меняются",
+    )
     args = parser.parse_args(argv)
     try:
         if args.export_fixtures:
             return export_fixtures(Path(args.export_fixtures))
+        shock_weights = None
+        if args.shock_weights:
+            try:
+                shock_weights = load_shock_weights(Path(args.shock_weights))
+            except (OSError, ValueError) as exc:
+                # Файл весов — вход модели: битая дата/вес или отсутствующий
+                # файл останавливают прогон понятным сообщением, а не
+                # трейсбеком и не молчаливым весом 1.0.
+                print(f"ошибка весов шоков: {exc}", file=sys.stderr)
+                return 2
         # ML_LOG/ML_RUN_NAME читаются внутри run_summary (`ml_log=None`): явный
         # параметр здесь не нужен, и без переменной поведение прогона прежнее.
-        return run_summary(rolling=args.rolling)
+        return run_summary(
+            rolling=args.rolling,
+            shock_weights=shock_weights,
+            shock_weights_source=args.shock_weights,
+        )
     except SampleError as exc:
         # Расхождение ярлыка со сводкой ЦБ — ожидаемая диагностируемая ошибка
         # прогона: у неё уже есть готовый текст (заседание и оба числа), и ей

@@ -570,6 +570,125 @@ async def check(params, server_log):
                 failed += not expect(f"сырая {table} закрыта ({label})", denied,
                                      f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
 
+            # Сводный дашборд контура ключевой ставки (пункт key-rate/phase-4-dashboard,
+            # issue #128): одна витрина на оба контура, пороги, ближайшее заседание и
+            # последний прогноз с ошибкой в б.п. Проверяется не только право чтения, но и
+            # состав: 5 фиксированных контуров обязаны быть (spot, fundamental, market,
+            # divergence, calendar), forecast — информационная строка: без прогонов writer'а
+            # треков нет, и это не FAIL. next_meeting.target_date сверяется с минимумом
+            # будущих заседаний из v_events_calendar — так проверяется сам расчёт, а не
+            # только наличие строки. error_bp — колонка, которой нет ни в одной другой
+            # витрине; запрос к ней доказывает, что контракт ошибки доступен агенту.
+            kr_dash_raw = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_key_rate_dashboard"}))
+            kr_dash = result_rows(kr_dash_raw)
+            kr_dash_n = kr_dash[0].get("n") if kr_dash else None
+            if kr_dash is None:
+                kr_dash_detail = f"витрина не читается: {kr_dash_raw[:200]}"
+            elif (kr_dash_n or 0) > 0:
+                kr_dash_detail = f"строк: {kr_dash_n}"
+            else:
+                kr_dash_detail = "строк: 0 — прогнать make import STAT=key_rate_views"
+            failed += not expect("витрина v_key_rate_dashboard существует и непуста", (kr_dash_n or 0) > 0, kr_dash_detail)
+
+            kr_contours_raw = text(await session.call_tool("run_query", {"query":
+                "SELECT count(DISTINCT contour) AS n, groupUniqArray(contour) AS contours FROM v_key_rate_dashboard"}))
+            kr_contours = result_rows(kr_contours_raw)
+            kr_contours_n = kr_contours[0].get("n") if kr_contours else None
+            kr_contours_list = kr_contours[0].get("contours") if kr_contours else None
+            kr_fixed_contours = {"spot", "fundamental", "market", "divergence", "calendar"}
+            kr_contours_ok = isinstance(kr_contours_list, list) and kr_fixed_contours.issubset(set(kr_contours_list))
+            if kr_contours is None:
+                kr_contours_detail = f"ответ не распознан: {kr_contours_raw[:200]}"
+            else:
+                kr_contours_detail = f"контуров: {kr_contours_n} {kr_contours_list}"
+            # 5 фиксированных контуров обязательны по ИМЕНАМ, а не по числу: набор из пяти
+            # чужих контуров не должен проходить проверку. forecast — информационная строка.
+            failed += not expect("витрина v_key_rate_dashboard содержит 5 фиксированных контуров",
+                                 kr_contours_ok, kr_contours_detail)
+
+            kr_meeting_raw = text(await session.call_tool("run_query", {"query":
+                "SELECT d.target_date AS dashboard_date, e.next_date AS calendar_date "
+                "FROM v_key_rate_dashboard d "
+                "CROSS JOIN (SELECT min(event_date) AS next_date FROM v_events_calendar "
+                "WHERE category = 'cbr' AND event_date >= today()) e "
+                "WHERE d.indicator = 'next_meeting'"}))
+            kr_meeting = result_rows(kr_meeting_raw)
+            if kr_meeting is None:
+                kr_meeting_detail = f"ответ не распознан: {kr_meeting_raw[:200]}"
+            elif not kr_meeting:
+                kr_meeting_detail = "строки next_meeting нет"
+            else:
+                kr_meeting_detail = (f"dashboard={kr_meeting[0].get('dashboard_date')}, "
+                                     f"calendar={kr_meeting[0].get('calendar_date')}")
+            failed += not expect("next_meeting.target_date совпадает с ближайшим заседанием ЦБ",
+                                 bool(kr_meeting)
+                                 and kr_meeting[0].get("dashboard_date") is not None
+                                 and kr_meeting[0].get("dashboard_date") == kr_meeting[0].get("calendar_date"),
+                                 kr_meeting_detail)
+
+            kr_fixed_raw = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_key_rate_dashboard "
+                "WHERE indicator IN ('base_ipc_saar', 'keyrate_implied_change_bp')"}))
+            kr_fixed = result_rows(kr_fixed_raw)
+            kr_fixed_n = kr_fixed[0].get("n") if kr_fixed else None
+            failed += not expect("пороговые строки base_ipc_saar и keyrate_implied_change_bp на месте",
+                                 kr_fixed_n == 2,
+                                 f"строк: {kr_fixed_n}" if kr_fixed is not None else f"ответ не распознан: {kr_fixed_raw[:200]}")
+
+            kr_error_raw = text(await session.call_tool("run_query", {"query":
+                "SELECT error_bp FROM v_key_rate_dashboard WHERE contour = 'forecast' LIMIT 1"}))
+            kr_error = result_rows(kr_error_raw)
+            kr_forecast_raw = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_key_rate_dashboard WHERE contour = 'forecast'"}))
+            kr_forecast = result_rows(kr_forecast_raw)
+            kr_forecast_n = kr_forecast[0].get("n") if kr_forecast else None
+            if kr_forecast is None:
+                kr_forecast_detail = f"ответ не распознан: {kr_forecast_raw[:200]}"
+            elif (kr_forecast_n or 0) > 0:
+                kr_forecast_detail = f"треков: {kr_forecast_n}"
+            else:
+                kr_forecast_detail = ("треков: 0 — прогнать make key-rate-forecast-log (информационно; "
+                                      "без журнала витрина живёт без строк forecast)")
+            print(f"OK   forecast-треки в v_key_rate_dashboard: {kr_forecast_detail}" if (kr_forecast_n or 0) > 0
+                  else f"WARN forecast-треки в v_key_rate_dashboard: {kr_forecast_detail}")
+
+            # Контракт публикации (§7, §8): у статистического трека ordered_logit в витрине
+            # обязаны быть непустые probabilities и model. Строки нет — проверка проходит
+            # информационно (без прогонов writer'а журнала витрина живёт без forecast), но
+            # если строка есть, пустые метаданные — провал.
+            kr_track_raw = text(await session.call_tool("run_query", {"query":
+                "SELECT probabilities, model FROM v_key_rate_dashboard "
+                "WHERE contour = 'forecast' AND indicator = 'cbr_rate:ordered_logit' LIMIT 1"}))
+            kr_track = result_rows(kr_track_raw)
+            if kr_track is None:
+                kr_track_detail = f"ответ не распознан: {kr_track_raw[:200]}"
+                kr_track_ok = False
+            elif not kr_track:
+                kr_track_detail = "строки cbr_rate:ordered_logit нет — прогнать make key-rate-forecast-log (информационно)"
+                kr_track_ok = True
+            else:
+                probabilities = kr_track[0].get("probabilities") or ""
+                try:
+                    distribution = json.loads(probabilities)
+                except ValueError:
+                    distribution = {}
+                kr_track_ok = (isinstance(distribution, dict)
+                               and {"cut", "hold", "hike"} <= set(distribution)
+                               and (kr_track[0].get("model") or "") != "")
+                kr_track_detail = (f"probabilities={'есть' if kr_track_ok else 'пусто/неполно'}, "
+                                   f"model={kr_track[0].get('model')!r}")
+            failed += not expect("probabilities/model у cbr_rate:ordered_logit непусты", kr_track_ok, kr_track_detail)
+
+            # error_bp — часть контракта ошибки в б.п. (#127); запрос к колонке обязан
+            # проходить, даже если сейчас все прогнозы ещё не свёрены и значения NULL.
+            failed += not expect("колонка error_bp читается агентом", kr_error is not None,
+                                 "SELECT error_bp FROM v_key_rate_dashboard" if kr_error is not None else kr_error_raw[:200])
+
+            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM forecast_log"}))
+            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+            failed += not expect("сырой forecast_log закрыт", denied,
+                                 "отказ ClickHouse 497 на forecast_log (ожидаемо)" if denied else raw[:200])
+
             # Контур мониторинга предприятий ЦБ (правило 11, пункт 1.3 роадмапа): витрина
             # v_cbr_survey читается агентом, сырая macro_series закрыта (проверка выше).
             # Существование витрины подтверждается запросом к ней, а не поиском имени в
@@ -830,8 +949,10 @@ async def check(params, server_log):
             # run_query доказывает и существование, и право чтения; «нет витрины» и «нет
             # прав» приходят ошибкой (UNKNOWN_TABLE / ACCESS_DENIED) и в result_rows не
             # разбираются.
-            failed += not expect("витрина v_rosstat_macro видна", "v_rosstat_macro" in tables, "list_tables default")
-
+            # Отдельная проверка «имя есть в list_tables» здесь снята: list_tables
+            # пагинируется, и после добавления v_key_rate_dashboard имя v_rosstat_macro
+            # перестало попадать в первую страницу. Существование и право чтения ниже
+            # доказывает запрос к самой витрине — это и есть конвенция проекта.
             rosstat_view = text(await session.call_tool("run_query", {"query": "SELECT count() AS rows, uniqExact(series) AS series FROM v_rosstat_macro"}))
             rosstat_view_rows = result_rows(rosstat_view)
             rosstat_points_n = rosstat_view_rows[0].get("rows") if rosstat_view_rows else None
@@ -1488,6 +1609,154 @@ async def check(params, server_log):
                                       "STAT=cbr_dip_bulletin (винтаж разбирается прогоном)")
             failed += not expect("витрина v_cbr_dip_bulletin винтажна", dip_vintage_ok, dip_vintage_detail)
 
+            # Point-in-time слой над cbr_dip_bulletin (пункт key-rate/phase-4-point-in-time,
+            # спека 2026-10-19 §2): три витрины создаёт прогон cbr_dip_bulletin (ensurePitViews
+            # после цикла выпусков и на no-op-пути), а сырая таблица агенту по-прежнему
+            # закрыта. Проверки идут от общего к частному: непустота слоя, инвариант периода,
+            # строгая граница as-of на известной ревизии SA-безработицы и версия набора.
+            pit_view = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS points, uniqExact(vintage) AS vintages, "
+                "uniqExact(series) AS series FROM v_point_in_time"}))
+            pit_view_rows = result_rows(pit_view)
+            pit_points_n = pit_view_rows[0].get("points") if pit_view_rows else None
+            pit_vintages_n = pit_view_rows[0].get("vintages") if pit_view_rows else None
+            pit_series_n = pit_view_rows[0].get("series") if pit_view_rows else None
+            # Одной непустоты мало: count() > 0 прошёл бы и на срезе из одного выпуска.
+            # 49 версий и 8 рядов — состояние приёмки спеки §4 (18 000 точек).
+            pit_view_ok = ((pit_points_n or 0) > 0 and (pit_vintages_n or 0) >= 49
+                           and pit_series_n == 8)
+            if pit_view_rows is None:
+                pit_view_detail = f"ответ не распознан: {pit_view[:200]}"
+            elif not pit_view_rows:
+                pit_view_detail = ("строк 0 — прогнать make import STAT=cbr_dip_bulletin "
+                                   "(слой создаётся прогоном)")
+            else:
+                pit_view_detail = (f"точек: {pit_points_n}, версий: {pit_vintages_n} "
+                                   f"(want >= 49), рядов: {pit_series_n} (want 8)")
+            failed += not expect("слой v_point_in_time непуст", pit_view_ok, pit_view_detail)
+
+            # Инвариант слоя: отчётный период не позже публикации. Срез не фильтрует периоды
+            # по дате публикации (отвечает на вопрос «что опубликовано строго до D»), поэтому
+            # нарушение означало бы поломку нормализации period_date/published_at.
+            pit_period = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_point_in_time WHERE period_date > published_at"}))
+            pit_period_rows = result_rows(pit_period)
+            pit_period_n = pit_period_rows[0].get("n") if pit_period_rows else None
+            if pit_period_rows is None:
+                pit_period_detail = f"ответ не распознан: {pit_period[:200]}"
+            elif not pit_period_rows:
+                pit_period_detail = "строк 0 в ответе — ожидалась одна строка со счётчиком"
+            else:
+                pit_period_detail = f"строк с period_date > published_at: {pit_period_n} (want 0)"
+            failed += not expect("период не позже публикации", pit_period_n == 0, pit_period_detail)
+
+            # Строгая граница среза: значение, опубликованное ровно в дату as_of, в срез не
+            # входит. SA-безработица за 2023-11-30 впервые опубликована 2024-02-06 (выпуск
+            # 24-01), поэтому as_of на день публикации обязан дать пусто (<, а не <=).
+            pit_asof_boundary = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_point_in_time_asof(as_of='2024-02-06') "
+                "WHERE source='cbr_dip_bulletin' AND series='unemployment_sa' "
+                "AND period_date='2023-11-30'"}))
+            pit_asof_boundary_rows = result_rows(pit_asof_boundary)
+            pit_asof_boundary_n = pit_asof_boundary_rows[0].get("n") if pit_asof_boundary_rows else None
+            if pit_asof_boundary_rows is None:
+                pit_asof_boundary_detail = f"ответ не распознан: {pit_asof_boundary[:200]}"
+            elif not pit_asof_boundary_rows:
+                pit_asof_boundary_detail = "строк 0 в ответе — ожидалась одна строка со счётчиком"
+            else:
+                pit_asof_boundary_detail = (f"строк на as_of='2024-02-06': {pit_asof_boundary_n} "
+                                            "(want 0: граница строгая)")
+            failed += not expect("строгая граница среза", pit_asof_boundary_n == 0,
+                                 pit_asof_boundary_detail)
+
+            # Ревизия одного периода: 2023-11-30 равно 2.885274 в выпуске 24-01 и 2.916127 в
+            # 26-06. Слой обязан вернуть версию, известную строго до as_of, вместе с её
+            # винтажом — иначе ревизии SA-рядов выглядели бы фактами.
+            for pit_as_of, pit_want in (
+                ("2024-02-07", {"value": 2.885274, "vintage": "47847", "vintage_label": "24-01"}),
+                ("2026-09-02", {"value": 2.916127, "vintage": "62343", "vintage_label": "26-06"}),
+            ):
+                pit_asof = text(await session.call_tool("run_query", {"query":
+                    f"SELECT value, vintage, vintage_label FROM v_point_in_time_asof(as_of='{pit_as_of}') "
+                    "WHERE source='cbr_dip_bulletin' AND series='unemployment_sa' "
+                    "AND period_date='2023-11-30'"}))
+                pit_asof_rows = result_rows(pit_asof)
+                pit_asof_row = pit_asof_rows[0] if pit_asof_rows else None
+                pit_asof_ok = (pit_asof_rows is not None and len(pit_asof_rows) == 1
+                               and pit_asof_row.get("value") == pit_want["value"]
+                               and pit_asof_row.get("vintage") == pit_want["vintage"]
+                               and pit_asof_row.get("vintage_label") == pit_want["vintage_label"])
+                if pit_asof_rows is None:
+                    pit_asof_detail = f"ответ не распознан: {pit_asof[:200]}"
+                elif pit_asof_row is None:
+                    pit_asof_detail = ("строк 0, want одна версия — проверить создание витрины "
+                                       "и грант kimi_reader")
+                else:
+                    pit_asof_detail = (f"value={pit_asof_row.get('value')}, "
+                                       f"vintage={pit_asof_row.get('vintage')}, "
+                                       f"vintage_label={pit_asof_row.get('vintage_label')}")
+                failed += not expect(
+                    f"срез as_of='{pit_as_of}' отдаёт выпуск {pit_want['vintage_label']}",
+                    pit_asof_ok, pit_asof_detail)
+
+            # Ряд, исчезнувший из нового выпуска: 26-07 (2026-10-14) заменил безработицу
+            # занятостью. Слой обязан сохранить последнюю известную версию unemployment_sa
+            # (26-06) и одновременно отдать employment_sa уже из 26-07 — отсутствие ряда
+            # значит «выпуск его не показывает», а не «ряд удалён» (спека §2.3).
+            for pit_series, pit_want in (
+                ("unemployment_sa", {"value": 2.239751, "vintage": "62343", "vintage_label": "26-06"}),
+                ("employment_sa", {"value": 61.5059577839148, "vintage": "62444", "vintage_label": "26-07"}),
+            ):
+                pit_missing = text(await session.call_tool("run_query", {"query":
+                    "SELECT value, vintage, vintage_label FROM v_point_in_time_asof(as_of='2026-10-15') "
+                    f"WHERE source='cbr_dip_bulletin' AND series='{pit_series}' "
+                    "AND period_date='2026-06-30'"}))
+                pit_missing_rows = result_rows(pit_missing)
+                pit_missing_row = pit_missing_rows[0] if pit_missing_rows else None
+                pit_missing_ok = (pit_missing_rows is not None and len(pit_missing_rows) == 1
+                                  and pit_missing_row.get("value") == pit_want["value"]
+                                  and pit_missing_row.get("vintage") == pit_want["vintage"]
+                                  and pit_missing_row.get("vintage_label") == pit_want["vintage_label"])
+                if pit_missing_rows is None:
+                    pit_missing_detail = f"{pit_series}: ответ не распознан: {pit_missing[:200]}"
+                elif pit_missing_row is None:
+                    pit_missing_detail = (f"{pit_series}: строк 0, want одна — последняя известная "
+                                          "версия потеряна (проверить отсутствие HAVING/фильтра "
+                                          "period_date в витрине)")
+                else:
+                    pit_missing_detail = (f"{pit_series}: value={pit_missing_row.get('value')}, "
+                                          f"vintage={pit_missing_row.get('vintage')}, "
+                                          f"vintage_label={pit_missing_row.get('vintage_label')}")
+                failed += not expect(
+                    "ряд, исчезнувший из нового выпуска, сохраняет последнюю версию",
+                    pit_missing_ok, pit_missing_detail)
+
+            # Версия набора для forecast_log.data_version: одна строка на source, не меньше
+            # 18 000 точек и 49 версий, data_version — 16 hex-символов. Пустая или короткая
+            # версия — провал: по ней прогноз сопоставляется с точным состоянием слоя (спека §2.4).
+            pit_version = text(await session.call_tool("run_query", {"query":
+                "SELECT points, vintages, data_version FROM v_point_in_time_version "
+                "WHERE source='cbr_dip_bulletin'"}))
+            pit_version_rows = result_rows(pit_version)
+            pit_version_row = pit_version_rows[0] if pit_version_rows else None
+            pit_version_ok = (pit_version_rows is not None and len(pit_version_rows) == 1
+                              and (pit_version_row.get("points") or 0) >= 18000
+                              and (pit_version_row.get("vintages") or 0) >= 49
+                              and isinstance(pit_version_row.get("data_version"), str)
+                              and len(pit_version_row.get("data_version")) == 16)
+            if pit_version_rows is None:
+                pit_version_detail = f"ответ не распознан: {pit_version[:200]}"
+            elif pit_version_row is None:
+                pit_version_detail = ("строк 0, want одна — прогнать make import "
+                                      "STAT=cbr_dip_bulletin (витрину создаёт прогон)")
+            else:
+                pit_version_detail = (f"строк: {len(pit_version_rows)} (want 1), точек: "
+                                      f"{pit_version_row.get('points')} (want >= 18000), версий: "
+                                      f"{pit_version_row.get('vintages')} (want >= 49), "
+                                      f"data_version: {pit_version_row.get('data_version')}")
+            failed += not expect("версия набора v_point_in_time_version полна",
+                                 pit_version_ok, pit_version_detail)
+
             # Сырая cbr_dip_bulletin агенту не выдана — как macro_series и cbr_bop_est: витрина —
             # единственное место, где агент читает точки контура (винтажные колонки
             # release/release_id/publication_date и комментарии есть только у неё, а ключ сырой
@@ -1795,6 +2064,134 @@ async def check(params, server_log):
             denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
             failed += not expect("сырая cbr_form101 закрыта", denied,
                                  "отказ ClickHouse 497 на cbr_form101 (ожидаемо)" if denied else raw[:200])
+
+            # Контур ОФЗ (key-rate/phase-2-cbr-zcyc, импортёр cbr_zcyc): история кривой
+            # бескупонной доходности ЦБ (12 теноров с 04.01.2003) читается агентом через две
+            # витрины. Сырая cbr_zcyc агенту не выдана — как macro_series и cbr_form101:
+            # уровни КБД и компоненты сигнала агент читает только через витрины
+            # (комментарии таблицы и каждой колонки есть только у них, правило 11 AGENTS.md).
+            #
+            # Существование витрины подтверждается ЗАПРОСОМ К НЕЙ, а не поиском имени в
+            # list_tables (урок bold: в том тексте имя отсутствующей витрины попадало из
+            # COMMENT соседки); «нет витрины» и «нет прав» приходят ошибкой
+            # (UNKNOWN_TABLE / ACCESS_DENIED) и в result_rows не разбираются. Пустая
+            # v_ofz_curve_compare значит ни разу не отработавший шаг cbr_zcyc, а не
+            # отсутствие данных у источника: строки публикует импортёр. min/max в detail
+            # показывают, насколько глубоко прошёл бэкфилл (ориентир — с 04.01.2003).
+            # Непустоты мало: v_ofz_curve_compare может быть непуста одним ЦБ
+            # (ofz_curve ещё не импортирован), а разбор КБД — отдать часть 12
+            # теноров. Поэтому тем же запросом проверяется покрытие обоих
+            # источников: есть строки с moex_yield и ровно 12 теноров с cbr_yield.
+            ofz_compare = text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n, countIf(moex_yield IS NOT NULL) AS n_moex, "
+                         "uniqExactIf(tenor, cbr_yield IS NOT NULL) AS n_tenors, "
+                         "min(date) AS min_date, max(date) AS max_date FROM v_ofz_curve_compare"}))
+            ofz_compare_rows = result_rows(ofz_compare)
+            ofz_compare_n = ofz_compare_rows[0].get("n") if ofz_compare_rows else None
+            ofz_compare_moex = ofz_compare_rows[0].get("n_moex") if ofz_compare_rows else None
+            ofz_compare_tenors = ofz_compare_rows[0].get("n_tenors") if ofz_compare_rows else None
+            if ofz_compare_rows is None:
+                ofz_compare_detail = f"витрина не читается: {ofz_compare[:200]}"
+            elif (ofz_compare_n or 0) > 0:
+                ofz_compare_detail = (f"строк: {ofz_compare_n}, "
+                                      f"{ofz_compare_rows[0].get('min_date')}..{ofz_compare_rows[0].get('max_date')}, "
+                                      f"moex_yield: {ofz_compare_moex}, теноров ЦБ: {ofz_compare_tenors}")
+            else:
+                ofz_compare_detail = ("строк: 0 — прогнать make import STAT=cbr_zcyc "
+                                      "(витрины пересоздаёт прогон)")
+            failed += not expect("витрина v_ofz_curve_compare существует и непуста",
+                                 (ofz_compare_n or 0) > 0, ofz_compare_detail)
+            failed += not expect("v_ofz_curve_compare: есть MOEX и 12 теноров ЦБ",
+                                 (ofz_compare_moex or 0) > 0 and ofz_compare_tenors == 12,
+                                 f"moex_yield: {ofz_compare_moex}, uniqExact(tenor) по cbr_yield: "
+                                 f"{ofz_compare_tenors} (want > 0 и 12) — прогнать "
+                                 "make import STAT=cbr_zcyc и STAT=ofz_curve")
+
+            # v_ofz_signal: производные спреды к ключевой ставке и реальная доходность.
+            # Ноль строк — не «нет сигнала», а не отработавший импортёр или отсутствующие
+            # cbr_key_rate/rosstat_ipc_mes: CreateView пропускает витрину, пока их нет,
+            # и пересоздаёт её следующим прогоном (самолечение). Непустоты мало: при
+            # промахе ASOF JOIN и окна ИПЦ значения были бы NULL во всей витрине, поэтому
+            # тем же запросом проверяется, что каждая компонента дала хотя бы одну точку.
+            ofz_signal = text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n, countIf(key_rate IS NOT NULL) AS n_key_rate, "
+                         "countIf(inflation_yoy IS NOT NULL) AS n_inflation, "
+                         "countIf(ofz_10y IS NOT NULL) AS n_ofz_10y FROM v_ofz_signal"}))
+            ofz_signal_rows = result_rows(ofz_signal)
+            ofz_signal_n = ofz_signal_rows[0].get("n") if ofz_signal_rows else None
+            ofz_signal_key = ofz_signal_rows[0].get("n_key_rate") if ofz_signal_rows else None
+            ofz_signal_infl = ofz_signal_rows[0].get("n_inflation") if ofz_signal_rows else None
+            ofz_signal_ofz10 = ofz_signal_rows[0].get("n_ofz_10y") if ofz_signal_rows else None
+            if ofz_signal_rows is None:
+                ofz_signal_detail = f"витрина не читается: {ofz_signal[:200]}"
+            elif (ofz_signal_n or 0) > 0:
+                ofz_signal_detail = (f"строк: {ofz_signal_n}, key_rate: {ofz_signal_key}, "
+                                     f"inflation_yoy: {ofz_signal_infl}, ofz_10y: {ofz_signal_ofz10}")
+            else:
+                ofz_signal_detail = ("строк: 0 — прогнать make import STAT=cbr_zcyc "
+                                     "(нужны cbr_key_rate и rosstat_ipc_mes)")
+            failed += not expect("витрина v_ofz_signal существует и непуста",
+                                 (ofz_signal_n or 0) > 0, ofz_signal_detail)
+            failed += not expect("v_ofz_signal: есть key_rate, ИПЦ и ofz_10y",
+                                 (ofz_signal_key or 0) > 0 and (ofz_signal_infl or 0) > 0
+                                 and (ofz_signal_ofz10 or 0) > 0,
+                                 f"key_rate: {ofz_signal_key}, inflation_yoy: {ofz_signal_infl}, "
+                                 f"ofz_10y: {ofz_signal_ofz10} (want > 0 у каждой) — прогнать "
+                                 "make import STAT=cbr_zcyc, cbr_key_rate и rosstat_ipc_mes")
+
+            # key_rate до 2013-09-17 обязан быть NULL: истории ключевой ставки раньше
+            # этой даты нет. Проверка пинит именно семантику NULL в ASOF LEFT JOIN:
+            # при join_use_nulls=0 (значение по умолчанию) промах join подставляет в
+            # не-Nullable правую колонку 0, и тогда key_rate=0, а спреды равны
+            # доходности ОФЗ. Витрина оборачивает правые колонки в toNullable;
+            # nulls < n здесь значит, что обёртка потерялась и агент прочитает нули
+            # вместо «ставки ещё не было».
+            ofz_null = text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n, countIf(key_rate IS NULL) AS nulls "
+                         "FROM v_ofz_signal WHERE date < '2013-09-17'"}))
+            ofz_null_rows = result_rows(ofz_null)
+            ofz_null_n = ofz_null_rows[0].get("n") if ofz_null_rows else None
+            ofz_nulls = ofz_null_rows[0].get("nulls") if ofz_null_rows else None
+            if ofz_null_rows is None:
+                ofz_null_detail = f"ответ не распознан: {ofz_null[:200]}"
+            else:
+                ofz_null_detail = (f"строк до 2013-09-17: {ofz_null_n}, "
+                                   f"из них key_rate IS NULL: {ofz_nulls}")
+                if (ofz_null_n or 0) == 0:
+                    ofz_null_detail += " — прогнать make import STAT=cbr_zcyc"
+            failed += not expect("v_ofz_signal: key_rate до 2013-09-17 — NULL",
+                                 (ofz_null_n or 0) > 0 and ofz_nulls == ofz_null_n,
+                                 ofz_null_detail)
+
+            # Каталог обязан описывать все 12 теноров КБД (0.25…30) — точным равенством, а не
+            # «> 0»: 12 = набор колонок «Срок до погашения, лет» источника, который код
+            # объявляет сам (стандарт §6.8). Выборка по origin, а не по source: у source='cbr'
+            # лежат ряды всех импортёров ЦБ, а zcyc_params — источник ровно этого набора.
+            # Подчёркивание в LIKE экранировано (\_), как у cbr_int_rate_loans и cbr_bop_*:
+            # без экранирования «_» совпал бы с любым одиночным символом. Меньшее число значит
+            # ни разу не отработавший шаг cbr_zcyc (агент прочитает уровни, но не узнает, что
+            # измеряет ряд и в каких единицах); большее — ряд, которому в источнике не
+            # соответствует колонка теноров.
+            zcyc_catalog = text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'cbr' AND origin LIKE '%zcyc\\_params%'"}))
+            zcyc_catalog_rows = result_rows(zcyc_catalog)
+            zcyc_catalog_n = zcyc_catalog_rows[0].get("n") if zcyc_catalog_rows else None
+            if zcyc_catalog_rows is None:
+                zcyc_catalog_detail = f"ответ не распознан: {zcyc_catalog[:200]}"
+            elif zcyc_catalog_n == 12:
+                zcyc_catalog_detail = "рядов cbr_zcyc: 12 (теноры 0.25…30)"
+            else:
+                zcyc_catalog_detail = (f"рядов cbr_zcyc: {zcyc_catalog_n}, want 12 — прогнать "
+                                       "make import STAT=cbr_zcyc (каталог перепубликовывается прогоном)")
+            failed += not expect("каталог cbr_zcyc полон", zcyc_catalog_n == 12, zcyc_catalog_detail)
+
+            # Сырая cbr_zcyc агенту не выдана — как macro_series и cbr_form101: витрина —
+            # единственное место, где агент читает уровни КБД. Таблицу создаёт DDL-прогон
+            # импортёра, поэтому UNKNOWN_TABLE здесь — провал, а не успех.
+            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM cbr_zcyc"}))
+            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+            failed += not expect("сырая cbr_zcyc закрыта", denied,
+                                 "отказ ClickHouse 497 на cbr_zcyc (ожидаемо)" if denied else raw[:200])
 
             # Реестр ML-экспериментов (infra/4.1): агенту выданы три витрины, а сырые
             # ml_runs/ml_predictions закрыты (как macro_series и bold_fund_snapshot:
