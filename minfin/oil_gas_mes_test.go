@@ -205,7 +205,7 @@ func TestOilGasImportFailsWithoutPoints(t *testing.T) {
 	if err == nil {
 		t.Fatal("разбор книги без единой точки прошёл без ошибки")
 	}
-	if !strings.Contains(err.Error(), "не дал ни одной точки") {
+	if !strings.Contains(err.Error(), "ни одной точки") {
 		t.Errorf("ошибка %q не называет причину «ноль точек»", err)
 	}
 }
@@ -230,6 +230,22 @@ func TestOilGasPublishesDerivatives(t *testing.T) {
 	}
 	if oilGasMes.PublicationCountPoints != oilGasCountPoints {
 		t.Errorf("PublicationCountPoints = %q, want %q", oilGasMes.PublicationCountPoints, oilGasCountPoints)
+	}
+}
+
+func TestOilGasImportFailsWhenOneSeriesEmpty(t *testing.T) {
+	rec := &appendRecorder{}
+	rows := [][]any{
+		{"Показатели", 43101, 43132},
+		{"Нефтегазовые доходы, всего", 661.3, 628.2},
+		{"Налог на добычу полезных ископаемых", "", "-"},
+	}
+	err := oilGasImport(newOilGasTestWorkbook(t, oilGasSheet, rows), rec)
+	if err == nil {
+		t.Fatal("разбор с пустым рядом прошёл без ошибки: старые точки ряда остались бы молча")
+	}
+	if !strings.Contains(err.Error(), "не дала ни одной точки") {
+		t.Errorf("ошибка %q не называет ряд, не давший точек", err)
 	}
 }
 
