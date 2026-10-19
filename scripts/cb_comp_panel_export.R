@@ -9,12 +9,16 @@
 # все character-колонки конвертируются в UTF-8 до записи CSV; Python-часть
 # читает уже UTF-8 и не зависит от локали.
 #
-# Пишет два файла:
+# Пишет три файла:
 #   cpi_panel.csv — date,code,kind,value: Индекс потребительских цен, Россия,
 #                   kind in {base_index, diff} (base_index — лог-уровень,
 #                   diff — его первая разность = месячный лог-прирост);
 #   mp_panel.csv  — date,code,kind,value,lag: Мониторинг предприятий, Россия,
-#                   три индикатора и задержка публикации в месяцах.
+#                   три индикатора и задержка публикации в месяцах;
+#   panel.csv     — date,group_stat,code,kind,value,lag: полная панель России
+#                   (CPI, МП, кредит, ставки, рыночные индексы) для режимов
+#                   per_bsu/full; cpi_panel/mp_panel сохранены для обратной
+#                   совместимости.
 #
 # Скрипт ничего не меняет в архиве; out-dir создаётся при необходимости.
 
@@ -74,4 +78,20 @@ write.csv(
   fileEncoding = "UTF-8"
 )
 
-cat(sprintf("cpi rows: %d; mp rows: %d\n", nrow(cpi), nrow(mp)))
+# Полная панель для режимов per_bsu/full: кредит, ставки и рыночные индексы
+# нужны как дополнительные признаки, trend/trend_deviation — как CPI-тренд.
+full <- panel[
+  panel$okato == "643->643004.АГ",
+  c("date", "group_stat", "code", "kind", "value", "lag")
+]
+write.csv(
+  full,
+  file.path(out_dir, "panel.csv"),
+  row.names = FALSE,
+  fileEncoding = "UTF-8"
+)
+
+cat(sprintf(
+  "cpi rows: %d; mp rows: %d; full rows: %d\n",
+  nrow(cpi), nrow(mp), nrow(full)
+))
