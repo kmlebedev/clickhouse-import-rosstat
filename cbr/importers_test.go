@@ -62,6 +62,9 @@ var expectedPublicationCountPoints = map[string]string{
 	"cbr_dip_bulletin":          "SELECT count() FROM cbr_dip_bulletin FINAL",
 	"cbr_mt_forecast":           "SELECT count() FROM cbr_mt_forecast FINAL",
 	"cbr_form101":               "SELECT count() FROM cbr_form101 FINAL",
+	"cbr_ccyb_indicators":       "SELECT count() FROM cbr_ccyb_indicators FINAL",
+	"cbr_risk_weight_addons":    "SELECT count() FROM cbr_risk_weight_addons FINAL",
+	"cbr_mpl":                   "SELECT count() FROM cbr_mpl FINAL",
 }
 
 // publicationDeclarer — то, как тест достаёт объявление импортёра из реестра:
@@ -116,7 +119,7 @@ func TestDaguStatsIgnoreComments(t *testing.T) {
 //     dagu не заметил бы ни один тест: реестр остаётся верным сам по себе), как и
 //     шаг контура резюме обсуждений (cbr_mp_summary: пропавший шаг оставил бы
 //     витрины v_cbr_mp_summary* пустыми при всех зелёных тестах);
-//   - (д) точка контроля публикации (префлайт) объявлена ровно у ожидаемых шестнадцати
+//   - (д) точка контроля публикации (префлайт) объявлена ровно у ожидаемых девятнадцати
 //     импортёров и запросом из expectedPublicationCountPoints: колонка countPoints
 //     реестра сверяется с объявлением самого импортёра (метод Publication()
 //     встроенного util.ClickHouseImport), а у импортёров вне ожидаемого набора
@@ -265,16 +268,19 @@ func TestCbrImportersPrefixedAndRegistered(t *testing.T) {
 	// v_cbr_mp_summary* остались бы пустыми, а у платёжного баланса витрина v_cbr_bop, у приложений
 	// ДИП витрина v_cbr_dip_bulletin и у «Комментария» витрина v_cbr_mt_forecast остались бы
 	// непустыми и просто перестали бы обновляться; последнего не замечает и mcp_check (он проверяет
-	// непустоту витрины и полноту каталога, а не свежесть точек), поэтому все семь шагов
+	// непустоту витрины и полноту каталога, а не свежесть точек), поэтому все десять шагов
 	// перечислены здесь явно.
 	keyScheduled := map[string]string{
-		"cbr_mp_summary":   "контур резюме обсуждений не запускается по расписанию, а витрины v_cbr_mp_summary* остаются пустыми",
-		"cbr_bop_est":      "оценка платёжного баланса не обновляется, а витрина v_cbr_bop тихо стареет",
-		"cbr_bop_standard": "стандартная презентация платёжного баланса не обновляется, а витрина v_cbr_bop тихо стареет",
-		"cbr_dip_bulletin": "сезонно сглаженные ряды приложений ДИП не обновляются по расписанию, а витрина v_cbr_dip_bulletin тихо стареет",
-		"cbr_mt_forecast":  "диапазоны среднесрочного прогноза ЦБ не обновляются по расписанию, а витрина v_cbr_mt_forecast тихо стареет",
-		"cbr_form101":      "сырые остатки формы 101 ЦБ не пополняются по расписанию, а витрина v_cbr_form101 тихо стареет",
-		"cbr_zcyc":         "история КБД ЦБ не обновляется по расписанию, а витрины v_ofz_* тихо стареют",
+		"cbr_mp_summary":         "контур резюме обсуждений не запускается по расписанию, а витрины v_cbr_mp_summary* остаются пустыми",
+		"cbr_bop_est":            "оценка платёжного баланса не обновляется, а витрина v_cbr_bop тихо стареет",
+		"cbr_bop_standard":       "стандартная презентация платёжного баланса не обновляется, а витрина v_cbr_bop тихо стареет",
+		"cbr_dip_bulletin":       "сезонно сглаженные ряды приложений ДИП не обновляются по расписанию, а витрина v_cbr_dip_bulletin тихо стареет",
+		"cbr_mt_forecast":        "диапазоны среднесрочного прогноза ЦБ не обновляются по расписанию, а витрина v_cbr_mt_forecast тихо стареет",
+		"cbr_form101":            "сырые остатки формы 101 ЦБ не пополняются по расписанию, а витрина v_cbr_form101 тихо стареет",
+		"cbr_zcyc":               "история КБД ЦБ не обновляется по расписанию, а витрины v_ofz_* тихо стареют",
+		"cbr_ccyb_indicators":    "АЦН-индикаторы не обновляются по расписанию, а витрина v_cbr_ccyb_indicators тихо стареет",
+		"cbr_risk_weight_addons": "матрицы надбавок не обновляются по расписанию, а витрина v_cbr_risk_weight_addons тихо стареет",
+		"cbr_mpl":                "макропруденциальные лимиты не обновляются по расписанию, а витрина v_cbr_mpl тихо стареет",
 	}
 	for step, why := range keyScheduled {
 		if !scheduled[step] {
