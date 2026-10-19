@@ -52,7 +52,7 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 | [`rosstat`](docs/IMPORTERS.md) | ИПЦ (месяц, неделя, до 2022), зарплаты, ВВП, рынок труда | `rosstat_*` | четверг 12:17 |
 | [`minfin`](docs/IMPORTERS.md) | исполнение федерального бюджета (включая федеральный дефицит), нефтегазовые доходы и НДПИ | `minfin_fed_bud_*`, `minfin_oil_gas_mes` | 10-е 10:41 |
 | [`customs`](docs/IMPORTERS.md) | внешняя торговля по странам | `customs_vneshn_torg` | 15-е 11:41 |
-| [`fao`](docs/IMPORTERS.md) | индексы продовольственных цен | `fao_food_price` | 5-е 10:47 |
+| [`fao`](docs/IMPORTERS.md) | индексы продовольственных цен (6 рядов, включая Sugar) | `fao_food_price_Indices_monthly`; витрина `v_fao_food_price` | 5-е 10:47 |
 | [`bank`](docs/IMPORTERS.md) | ДОМ.РФ, ВТБ, Сбер, СберИндекс, Т-Банк | `domrf_mortgage`, `rus_vtb_group_ifrs`, `sber_*`, `tbank_group_ifrs` | понедельник 09:23 |
 | [`craw`](docs/IMPORTERS.md) | реестр СБКТС Росстандарта | `gost_vehicle_safety_certificate` | ежечасно :17 |
 | [`edisclosure`](docs/IMPORTERS.md) | документы карточек [e-disclosure.ru](https://e-disclosure.ru/): отчётность IFRS/RAS, списки аффилированных лиц, решения собраний (PLZL, SBER, CHMF); коллектор полуавтоматический, импорт детерминированный | `edisclosure_documents`; витрина `v_edisclosure_documents` | 5-е число 21:17 (шаг `dagu/edisclosure.yaml`); сбор — вручную |
@@ -103,7 +103,7 @@ deploy/staging/      артефакты staging
 | `INGEST_URL` | Базовый URL ingest-endpoint для `scripts/key_rate_forecast_log.py` (например, `http://127.0.0.1:8081`); обязательна вместе с `INGEST_TOKEN` |
 | `EDISCLOSURE_INPUT_DIR`, `EDISCLOSURE_RECHECK`, `EDISCLOSURE_ALLOW_MISSING`, `EDISCLOSURE_OUT` | документы e-disclosure: каталог снапшота коллектора (по умолчанию `build/edisclosure`), глубокий прогон (`1`; переписывает строку при смене `sha256`/метаданных **или** при пустом `archive_key` и включённом архиве — самолечение), мягкий пропуск отсутствующего снапшота в dagu (`1`) и каталог выхода коллектора |
 | `ML_LOG`, `ML_RUN_NAME`, `ML_LOCAL_DIR` | журнал ML-эксперимента: `ML_LOG=1` — мастер-выключатель записи в ClickHouse и включения MLflow-приёмника; имя прогона и каталог локального fallback (по умолчанию `build/ml-runs`) |
-| `MLFLOW`, `MLFLOW_TRACKING_URI`, `MLFLOW_HOME`, `MLFLOW_PORT`, `MLFLOW_VERSION` | make-уровень MLflow: `MLFLOW=1` добавляет `mlflow==3.17.1` в uv-окружение `cpi-nowcast`/`key-rate-model` и подставляет `MLFLOW_TRACKING_URI` (`http://127.0.0.1:5000`); `MLFLOW_HOME`/`MLFLOW_PORT`/`MLFLOW_VERSION` — каталог `build/mlflow`, порт и пин пакета |
+| `MLFLOW`, `MLFLOW_TRACKING_URI`, `MLFLOW_HOME`, `MLFLOW_PORT`, `MLFLOW_VERSION` | make-уровень MLflow: `MLFLOW=1` **по умолчанию** — добавляет `mlflow==3.17.1` в uv-окружение всех ML-целей и подставляет `MLFLOW_TRACKING_URI` (`http://127.0.0.1:5000`); `MLFLOW=0` осознанно выключает. Перед прогоном `mlflow_preflight.py` проверяет API и при недоступности спрашивает (не-TTY: `MLFLOW_ALLOW_NO_LOG=1`). `MLFLOW_HOME`/`MLFLOW_PORT`/`MLFLOW_VERSION` — каталог `build/mlflow`, порт и пин пакета |
 
 Полный список, `ARCHIVE_*`, MCP-конфигурация и работа с ключами — [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
@@ -119,8 +119,9 @@ MLflow — control plane ML-экспериментов (`cpi_nowcast`, `key_rate
 
 ```bash
 make mlflow-up                             # сервер и /health; UI http://127.0.0.1:5000
-ML_LOG=1 MLFLOW=1 make cpi-nowcast         # run в MLflow + паспорт/fold'ы в ClickHouse
-ML_LOG=1 MLFLOW=1 make key-rate-model
+ML_LOG=1 make cpi-nowcast                  # MLflow по умолчанию + паспорт/fold'ы в ClickHouse
+ML_LOG=1 make key-rate-model
+make mlflow-backfill ARGS="--run-id <clickhouse-uuid>"   # старый ClickHouse-run → MLflow
 make mlflow-export                         # MLflow → ml_runs/ml_predictions (идемпотентно)
 make mlflow-register ARGS="--run-id <mlflow-run-id> --name cpi_nowcast_catboost_direct"
 make mlflow-promote  ARGS="--name cpi_nowcast_catboost_direct --version 1"

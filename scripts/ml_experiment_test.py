@@ -855,7 +855,10 @@ class MlflowSinkTest(unittest.TestCase):
             )
             self.assertEqual(
                 [call[1][0] for call in fake.calls_of("set_tags")],
-                [{"primary_metric": "rmse"}],
+                [
+                    {"clickhouse_run_id": CANONICAL_MLFLOW_RUN_ID},
+                    {"primary_metric": "rmse"},
+                ],
             )
             self.assertEqual(
                 [call[2]["status"] for call in fake.calls_of("end_run")],
@@ -881,7 +884,10 @@ class MlflowSinkTest(unittest.TestCase):
         ch_exec.assert_called_once()
         self.assertEqual(
             [call[1][0] for call in fake.calls_of("set_tags")],
-            [{"primary_metric": "rmse"}],
+            [
+                {"clickhouse_run_id": CANONICAL_MLFLOW_RUN_ID},
+                {"primary_metric": "rmse"},
+            ],
         )
         self.assertEqual(
             [call[2]["status"] for call in fake.calls_of("end_run")],
