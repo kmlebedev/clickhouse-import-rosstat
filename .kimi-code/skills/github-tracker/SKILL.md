@@ -42,6 +42,7 @@ gh issue create \
 ```text
 Roadmap: key-rate
 File: docs/ROADMAP_KEY_RATE.md
+Role: go
 Item: 1.9
 Phase: 1
 Acceptance: <критерий из роадмапа>
@@ -53,6 +54,8 @@ Depends on: #...
 Дальше — цель пункта, критерий приёмки со ссылкой на роадмап, ссылки на спеку и план, Q&A комментариями и протокол живой приёмки. Полные спеки и планы в тело issue не копируются: только ссылки.
 
 Labels: `roadmap:<slug>` — группировка до появления Project V2 (создать при первом использовании); `needs-answer` — пока в issue есть открытый вопрос Q&A. Обязательных labels у шаблона нет: до шага `infra/3.2` форма должна работать без предварительной настройки репозитория.
+
+**Claim.** Перед работой — комментарий в issue: «Taking `<slug>/<item-id>`; branch `<type>/<slug>`; worktree `.worktrees/<slug>`». Затем `Status = In Progress`, `Branch`. Если claim уже есть у другой сессии — не дублировать, выбрать другой пункт.
 
 ## 3. Project V2
 
