@@ -54,6 +54,8 @@ SELECT * FROM (
     
     UNION ALL SELECT 'minfin_fed_bud_mesyats', name, count(), min(date), max(date) FROM minfin_fed_bud_mesyats FINAL GROUP BY name
     
+    UNION ALL SELECT 'minfin_oil_gas_mes', name, count(), min(date), max(date) FROM minfin_oil_gas_mes FINAL GROUP BY name
+
     UNION ALL SELECT 'ofz_curve', tenor, count(), min(date), max(date) FROM ofz_curve FINAL GROUP BY tenor
     
     UNION ALL SELECT 'events_calendar', category, count(), min(event_date), max(event_date) FROM events_calendar FINAL GROUP BY category
