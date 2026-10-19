@@ -20,22 +20,22 @@
 <text x="70.0" y="101.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="end" font-weight="normal" fill="#666666">90</text>
 <rect x="115.0" y="125.1" width="57.4" height="284.9" fill="#c45a1a" opacity="0.88"/>
 <text x="143.7" y="117.1" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="middle" font-weight="bold" fill="#c45a1a">81,6</text>
-<rect x="185.0" y="368.1" width="57.4" height="41.9" fill="#2f6db3" opacity="0.88"/>
-<text x="213.7" y="360.1" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="middle" font-weight="bold" fill="#2f6db3">12,0</text>
-<rect x="255.0" y="340.2" width="57.4" height="69.8" fill="#1f6f5c" opacity="0.88"/>
-<text x="283.7" y="332.2" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="middle" font-weight="bold" fill="#1f6f5c">20,0</text>
+<rect x="185.0" y="375.1" width="57.4" height="34.9" fill="#2f6db3" opacity="0.88"/>
+<text x="213.7" y="367.1" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="middle" font-weight="bold" fill="#2f6db3">10,0</text>
+<rect x="255.0" y="298.4" width="57.4" height="111.6" fill="#1f6f5c" opacity="0.88"/>
+<text x="283.7" y="290.4" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="middle" font-weight="bold" fill="#1f6f5c">32,0</text>
 <text x="220.0" y="438.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="15" text-anchor="middle" font-weight="bold" fill="#222222">снижение</text>
 <rect x="395.0" y="353.3" width="57.4" height="56.7" fill="#c45a1a" opacity="0.88"/>
 <text x="423.7" y="345.3" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="middle" font-weight="bold" fill="#c45a1a">16,2</text>
-<rect x="465.0" y="120.4" width="57.4" height="289.6" fill="#2f6db3" opacity="0.88"/>
-<text x="493.7" y="112.4" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="middle" font-weight="bold" fill="#2f6db3">83,0</text>
-<rect x="535.0" y="130.9" width="57.4" height="279.1" fill="#1f6f5c" opacity="0.88"/>
-<text x="563.7" y="122.9" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="middle" font-weight="bold" fill="#1f6f5c">80,0</text>
+<rect x="465.0" y="110.0" width="57.4" height="300.0" fill="#2f6db3" opacity="0.88"/>
+<text x="493.7" y="102.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="middle" font-weight="bold" fill="#2f6db3">86,0</text>
+<rect x="535.0" y="172.8" width="57.4" height="237.2" fill="#1f6f5c" opacity="0.88"/>
+<text x="563.7" y="164.8" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="middle" font-weight="bold" fill="#1f6f5c">68,0</text>
 <text x="500.0" y="438.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="15" text-anchor="middle" font-weight="bold" fill="#222222">сохранить</text>
 <rect x="675.0" y="402.6" width="57.4" height="7.4" fill="#c45a1a" opacity="0.88"/>
 <text x="703.7" y="394.6" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="middle" font-weight="bold" fill="#c45a1a">2,1</text>
-<rect x="745.0" y="392.6" width="57.4" height="17.4" fill="#2f6db3" opacity="0.88"/>
-<text x="773.7" y="384.6" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="middle" font-weight="bold" fill="#2f6db3">5,0</text>
+<rect x="745.0" y="396.0" width="57.4" height="14.0" fill="#2f6db3" opacity="0.88"/>
+<text x="773.7" y="388.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="middle" font-weight="bold" fill="#2f6db3">4,0</text>
 <rect x="815.0" y="410.0" width="57.4" height="0.0" fill="#1f6f5c" opacity="0.88"/>
 <text x="843.7" y="402.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="middle" font-weight="bold" fill="#1f6f5c">0,0</text>
 <text x="780.0" y="438.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="15" text-anchor="middle" font-weight="bold" fill="#222222">повышение</text>
