@@ -724,6 +724,50 @@ async def check(params, server_log):
             failed += not expect("витрина v_cbr_survey содержит отраслевые ряды", (survey_industry_view_n or 0) > 0,
                                  f"строк: {survey_industry_view_n}" if survey_industry_view_rows is not None else f"витрина не читается: {survey_industry_view[:200]}")
 
+            # Task 7 (#248): публичный классификатор ОКВЭД2 и кроссворд 87 BSU-кодов.
+            # 87/87 проверяется не отдельным списком в Python, а непустотой имён в
+            # v_cbr_mp_bsu_map: это LEFT JOIN к rosstat_okved2, то есть пропавший в
+            # классификаторе код даёт пустое имя и роняет проверку.
+            okved2_view = text(await session.call_tool("run_query", {"query": "SELECT count() AS rows FROM v_rosstat_okved2"}))
+            okved2_rows = result_rows(okved2_view)
+            okved2_n = okved2_rows[0].get("rows") if okved2_rows else None
+            failed += not expect("витрина v_rosstat_okved2: 3 102 строки классификатора", okved2_n == 3102,
+                                 f"строк: {okved2_n}" if okved2_rows is not None else f"витрина не читается: {okved2_view[:200]}")
+
+            bsu_map = text(await session.call_tool("run_query", {"query": "SELECT count() AS rows, countIf(okved_name = '') AS missing_names FROM v_cbr_mp_bsu_map"}))
+            bsu_rows = result_rows(bsu_map)
+            bsu_n = bsu_rows[0].get("rows") if bsu_rows else None
+            bsu_missing = bsu_rows[0].get("missing_names") if bsu_rows else None
+            failed += not expect("v_cbr_mp_bsu_map: 87 кодов, все с названиями из ОКВЭД2",
+                                 bsu_n == 87 and bsu_missing == 0,
+                                 f"строк: {bsu_n}, без имён: {bsu_missing}" if bsu_rows is not None else f"витрина не читается: {bsu_map[:200]}")
+
+            panel = text(await session.call_tool("run_query", {"query": "SELECT count() AS rows, uniqExact(code) AS codes, uniqExact(industry_slug) AS slugs, uniqExact(indicator) AS indicators, uniqExact(date) AS dates FROM v_cbr_mp_public_panel"}))
+            panel_rows = result_rows(panel)
+            panel_ok = False
+            panel_detail = f"витрина не читается: {panel[:200]}"
+            if panel_rows:
+                panel_count = panel_rows[0].get("rows") or 0
+                panel_codes = panel_rows[0].get("codes")
+                panel_slugs = panel_rows[0].get("slugs")
+                panel_indicators = panel_rows[0].get("indicators")
+                panel_dates = panel_rows[0].get("dates") or 0
+                panel_ok = panel_count > 0 and panel_codes == 87 and panel_slugs == 11 and panel_indicators == 3 and panel_dates >= 297
+                panel_detail = f"строк: {panel_count}, кодов: {panel_codes}, листов: {panel_slugs}, индикаторов: {panel_indicators}, дат: {panel_dates}"
+            failed += not expect("v_cbr_mp_public_panel: 87 кодов × 3 индикатора × ≥297 дат, 11 листов", panel_ok, panel_detail)
+
+            spot = text(await session.call_tool("run_query", {"query": "SELECT code, industry_slug FROM v_cbr_mp_bsu_map WHERE code IN ('10.1', '47.22', '46.32', '01.4')"}))
+            spot_rows = result_rows(spot)
+            spot_expected = {
+                "10.1": "manufacturing_consumer",
+                "47.22": "trade_retail",
+                "46.32": "trade_wholesale",
+                "01.4": "agriculture",
+            }
+            spot_ok = spot_rows is not None and {r.get("code"): r.get("industry_slug") for r in spot_rows} == spot_expected
+            failed += not expect("кроссворд BSU: spot-коды 10.1/47.22/46.32/01.4", spot_ok,
+                                 f"получено: {spot_rows}" if spot_rows is not None else f"витрина не читается: {spot[:200]}")
+
             # Контур макроэкономического опроса ЦБ (шаг 1.5 роадмапа, импортёр cbr_mo_br):
             # витрина v_cbr_mo_br читается агентом, каталог source='cbr_mo_br' непуст
             # (число рядов зависит от числа вышедших волн и их показателей, поэтому

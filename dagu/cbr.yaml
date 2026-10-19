@@ -202,3 +202,14 @@ steps:
     retry_policy:
       limit: 3
       interval_sec: 300
+
+  # Публичный кроссворд 87 BSU-кодов → 16 отраслевых листов (Task 7, #248). Внешнего
+  # артефакта нет, сеть не нужна; повтор идемпотентен. Витрина с именами появится после
+  # rosstat_okved2 (dagu/rosstat.yaml), публичная панель — сразу после cbr_mp_survey.
+  - id: cbr_mp_bsu_map
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=cbr_mp_bsu_map
+    retry_policy:
+      limit: 3
+      interval_sec: 300
