@@ -91,7 +91,7 @@ DAGU_VERSION     ?= v2.18.2
 MKDOCS_VERSION ?= 9.7.7
 MKDOCS := uv run --with mkdocs-material==$(MKDOCS_VERSION) --python 3.12 mkdocs
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-backfill mlflow-backfill-test mlflow-preflight mlflow-register mlflow-promote mlflow-models dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model shock-classifier shock-classifier-test key-rate-llm-forecast key-rate-forecast-log cpi-nowcast cpi-monthly cpi-monthly-v3 cpi-monthly-v3-test cpi-monthly-industry cpi-monthly-industry-test cpi-public-audit cpi-public-audit-test cpi-weekly-panel cpi-weekly-panel-test cb-comp-parity cb-comp-parity-test cb-comp-proxy edisclosure-login edisclosure-collect docs-check docs-build docs-serve
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-backfill mlflow-backfill-test mlflow-preflight mlflow-register mlflow-promote mlflow-models dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model shock-classifier shock-classifier-test key-rate-llm-forecast key-rate-forecast-log cpi-nowcast cpi-monthly cpi-monthly-v3 cpi-monthly-v3-test cpi-monthly-industry cpi-monthly-industry-test cpi-public-audit cpi-public-audit-test cpi-weekly-panel cpi-weekly-panel-test cb-comp-parity cb-comp-parity-test cb-comp-public-export cb-comp-proxy edisclosure-login edisclosure-collect docs-check docs-build docs-serve
 
 all: lint test build build-ingest
 
@@ -487,6 +487,12 @@ cpi-weekly-panel:
 
 cpi-weekly-panel-test:
 	uv run --with openpyxl --python 3.12 python3 scripts/cpi_weekly_component_panel_test.py -v
+
+# Live-диагностика per_sheet: экспорт v_cbr_mp_public_panel (87 кодов × 3
+# индикатора, но 33 различные серии) и v_cbr_mp_bsu_map (код → industry_slug)
+# в build/cb-comp-parity. Только чтение ClickHouse.
+cb-comp-public-export:
+	uv run --with pandas --python 3.12 python3 scripts/cb_comp_public_export.py --out-dir build/cb-comp-parity
 
 # Паритет ML-трека с CB_COMP (issue #190): таргет TARGET_FULL из архива авторов,
 # архивные per-period прогнозы CB_COMP, две CatBoost-direct модели (с МП/без МП),
