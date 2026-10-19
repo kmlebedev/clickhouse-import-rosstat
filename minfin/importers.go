@@ -25,9 +25,9 @@ type minfinImporter struct {
 // константу с самой собой и прошёл бы ровно на переименовании таблицы в имя вне
 // minfin_-пространства.
 var minfinImporters = []minfinImporter{
-	{fedbudMesImporter, "minfin_fed_bud_mes", ""},
-	{fedbudMesyatsImporter, "minfin_fed_bud_mesyats", ""},
-	{oilGasMesImporter, "minfin_oil_gas_mes", "SELECT count() FROM minfin_oil_gas_mes FINAL"},
+	{fedbudMes, "minfin_fed_bud_mes", ""},
+	{fedbudMesyats, "minfin_fed_bud_mesyats", ""},
+	{oilGasMes, "minfin_oil_gas_mes", "SELECT count() FROM minfin_oil_gas_mes FINAL"},
 }
 
 // init — единственная регистрация импортёров Минфина в chimport.Stats. main.go

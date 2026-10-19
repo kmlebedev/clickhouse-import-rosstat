@@ -50,7 +50,7 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 |---|---|---|---|
 | [`cbr`](docs/IMPORTERS.md) | ЦБ РФ: ставка, курс, M2, золото, кредиты, ставки, ИПЦ, RUONIA, мониторинг предприятий, макроопрос, резюме ДКП, платёжный баланс, ДИП, среднесрочный прогноз, форма 101, кривая бескупонной доходности (КБД) | `cbr_*`, `macro_series`, `cbr_mp_summary*`, `cbr_bop_*`, `cbr_dip_bulletin`, `cbr_mt_forecast`, `cbr_form101`, `cbr_zcyc`; слой ДИП — витрины `v_point_in_time`, `v_point_in_time_asof` (срез `as_of='YYYY-MM-DD'`), `v_point_in_time_version`; КБД — витрины `v_ofz_curve_compare`, `v_ofz_signal` | ежедневно 09:17 |
 | [`rosstat`](docs/IMPORTERS.md) | ИПЦ (месяц, неделя, до 2022), зарплаты, ВВП, рынок труда | `rosstat_*` | четверг 12:17 |
-| [`minfin`](docs/IMPORTERS.md) | исполнение федерального бюджета (включая федеральный дефицит), нефтегазовые доходы и НДПИ | `minfin_fed_bud_*`, `minfin_oil_gas_mes` | 10-е 10:41 |
+| [`minfin`](docs/IMPORTERS.md) | исполнение федерального и консолидированного бюджета (включая федеральный дефицит), нефтегазовые доходы и НДПИ; общий шаблон импортёра, значения Float64 | `minfin_fed_bud_*`, `minfin_oil_gas_mes` | 10-е 10:41 |
 | [`customs`](docs/IMPORTERS.md) | внешняя торговля по странам | `customs_vneshn_torg` | 15-е 11:41 |
 | [`fao`](docs/IMPORTERS.md) | индексы продовольственных цен (6 рядов, включая Sugar) | `fao_food_price_Indices_monthly`; витрина `v_fao_food_price` | 5-е 10:47 |
 | [`bank`](docs/IMPORTERS.md) | ДОМ.РФ, ВТБ, Сбер, СберИндекс, Т-Банк | `domrf_mortgage`, `rus_vtb_group_ifrs`, `sber_*`, `tbank_group_ifrs` | понедельник 09:23 |
