@@ -136,11 +136,13 @@ var mtForecastVintages = []mtForecastVintage{
 // только для строк батча (mtForecastAppendPoints), но тест обязан подавать то, что подаст импортёр.
 var mtForecastFixtureReleases = map[string]mtForecastRelease{
 	mtForecastFixture05082026: {
+		Kind:        mtForecastKindComment,
 		MeetingDate: mtForecastFixtureDate(2026, time.July, 24),
 		ReleaseDate: mtForecastFixtureDate(2026, time.August, 5),
 		URL:         "https://www.cbr.ru/dkp/mp_dec/decision_key_rate/comment_05082026/",
 	},
 	mtForecastFixture07052026: {
+		Kind:        mtForecastKindComment,
 		MeetingDate: mtForecastFixtureDate(2026, time.April, 24),
 		ReleaseDate: mtForecastFixtureDate(2026, time.May, 7),
 		URL:         "https://www.cbr.ru/dkp/mp_dec/decision_key_rate/comment_07052026/",
