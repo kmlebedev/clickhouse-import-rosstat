@@ -1208,6 +1208,51 @@ async def check(params, server_log):
             failed += not expect("свежесть Акцизы: лаг от общего max <= 1 мес.",
                                  minfin_akc_lag is not None and minfin_akc_lag <= 1,
                                  minfin_akc_detail)
+            # Контур ФАО (пункт infra/1.6, issue #225): витрина v_fao_food_price читается
+            # агентом, содержит 6 рядов / 2646 точек (6 × 441 месяц), каталог source='fao'
+            # описывает все 6 рядов, а сырая таблица агенту не выдана. Точное число 2646 —
+            # контракт пункта: 441 месяц 1990-01…2026-09 в источнике, дата хранения — +1 месяц.
+            fao_view = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n, uniqExact(series) AS s, max(period_date) AS max_dt "
+                "FROM v_fao_food_price"}))
+            fao_view_rows = result_rows(fao_view)
+            fao_n = fao_view_rows[0].get("n") if fao_view_rows else None
+            fao_s = fao_view_rows[0].get("s") if fao_view_rows else None
+            fao_max = fao_view_rows[0].get("max_dt") if fao_view_rows else None
+            if fao_view_rows is None:
+                fao_view_detail = (f"витрина не читается: {fao_view[:200]} — прогнать "
+                                   "make import STAT=fao_food_price_Indices_monthly")
+            else:
+                fao_view_detail = (f"точек: {fao_n} (want 2646), рядов: {fao_s} (want 6), "
+                                   f"max period_date: {fao_max}")
+                if fao_n != 2646 or fao_s != 6:
+                    fao_view_detail += " — прогнать make import STAT=fao_food_price_Indices_monthly"
+            failed += not expect("витрина v_fao_food_price: 6 рядов / 2646 точек",
+                                 bool(fao_view_rows) and fao_n == 2646 and fao_s == 6,
+                                 fao_view_detail)
+            failed += not expect("v_fao_food_price: свежий месяц",
+                                 bool(fao_max) and str(fao_max) >= "2026-09-01",
+                                 f"max period_date: {fao_max} (want >= 2026-09-01)")
+
+            fao_catalog = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_series_catalog WHERE source = 'fao'"}))
+            fao_catalog_rows = result_rows(fao_catalog)
+            fao_catalog_n = fao_catalog_rows[0].get("n") if fao_catalog_rows else None
+            if fao_catalog_rows is None:
+                fao_catalog_detail = f"ответ не распознан: {fao_catalog[:200]}"
+            elif fao_catalog_n == 6:
+                fao_catalog_detail = "рядов source='fao': 6"
+            else:
+                fao_catalog_detail = (f"рядов source='fao': {fao_catalog_n}, want 6 — прогнать "
+                                      "make import STAT=fao_food_price_Indices_monthly")
+            failed += not expect("каталог source='fao' полон", fao_catalog_n == 6,
+                                 fao_catalog_detail)
+
+            fao_raw = text(await session.call_tool("run_query", {"query":
+                "SELECT count() FROM fao_food_price_Indices_monthly"}))
+            fao_denied = "ACCESS_DENIED" in fao_raw or "Not enough privileges" in fao_raw
+            failed += not expect("сырая fao_food_price_Indices_monthly закрыта", fao_denied,
+                                 "отказ ClickHouse 497 (ожидаемо)" if fao_denied else fao_raw[:200])
 
             # Контур потребительских расходов Сбера (фаза 2 роадмапа «починка пустых рядов»,
             # импортёры sber_consumper_spending_index и sber_izmenenie_trat): общая витрина
