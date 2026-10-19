@@ -62,6 +62,9 @@ var expectedPublicationCountPoints = map[string]string{
 	"cbr_dip_bulletin":          "SELECT count() FROM cbr_dip_bulletin FINAL",
 	"cbr_mt_forecast":           "SELECT count() FROM cbr_mt_forecast FINAL",
 	"cbr_form101":               "SELECT count() FROM cbr_form101 FINAL",
+	"cbr_ccyb_indicators":       "SELECT count() FROM cbr_ccyb_indicators FINAL",
+	"cbr_risk_weight_addons":    "SELECT count() FROM cbr_risk_weight_addons FINAL",
+	"cbr_mpl":                   "SELECT count() FROM cbr_mpl FINAL",
 }
 
 // publicationDeclarer — то, как тест достаёт объявление импортёра из реестра:

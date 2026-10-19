@@ -119,8 +119,10 @@ ORDER BY (matrix, valid_from, valid_to, row_code, col_code, source_file);
 - `source_file` в ключе: один период встречается в нескольких архивных файлах; без него
   per-file preflight и подсчёт точек файла ломаются.
 - Витрина схлопывает версии разных файлов `argMax(..., version)` по
-  `(matrix, valid_from, valid_to, row_code, col_code)`; `table_no` — атрибут победителя.
-  Побеждает файл с более поздней датой начала действия документа.
+  `(matrix, valid_from, row_code, col_code)`; `valid_to`, `table_no`, `value`,
+  `is_applicable`, `source_file` — атрибуты победителя. Побеждает файл с более поздней
+  датой начала действия документа; более поздний документ закрывает или продлевает
+  период (поэтому `valid_to` тоже берётся по `argMax`, а не входит в ключ группы).
 
 ### 4.3. `cbr_mpl`
 
@@ -260,13 +262,23 @@ ORDER BY (segment, loan_class, period_from, period_to, source_file, row_no, subr
   `legacy 2004.i×1000.i = 0.6`; МПЛ — `0.25 → 25`, `более 50 → pdn_min=50`,
   `period_to=2100-01-01` для «дальше».
 
-## 9. Приёмка
+## 9. Приёмка (2026-10-19)
 
-- `make all`, `make docs-check`, `dagu validate dagu/cbr.yaml`.
-- `make import STAT=cbr_ccyb_indicators` — 3 910 строк, повтор `Imported 0 rows`.
-- `make import STAT=cbr_risk_weight_addons` — 33 файла, повтор `Imported 0 rows`.
-- `make import STAT=cbr_mpl` — 10 файлов, повтор `Imported 0 rows`.
-- `make mcp-check` — три витрины читаются, каталоги 24/3/7, сырые таблицы закрыты 497.
+- `make all` — gofmt, golangci-lint (0 issues), `go vet`, `go test -race`, обе сборки.
+- `make import STAT=cbr_ccyb_indicators` — **3 910** строк, `2008-02-01 … 2024-10-01`,
+  24 ряда; повтор — `Imported 0 rows`.
+- `make import STAT=cbr_risk_weight_addons` — 33 файла, **130 125** сырых ячеек;
+  витрина после схлопывания версий — **28 707** строк (retail 7 200, corporate 720,
+  legacy 20 787), `2013-07-01 … 2026-10-15`; повтор — 32 файла no-op, последний
+  переимпортирован из-за сбоя записи архива (Yandex Disk connection reset), следующий
+  повтор — `Imported 0 rows`. NB: в последней версии legacy-периодов (файл 2022-01-01)
+  старые надбавки помечены `н/п`; архивный файл 2018-10-01 для 2019-10-01 даёт 0.6 —
+  витрина показывает последнюю версию, и это ожидаемо.
+- `make import STAT=cbr_mpl` — 10 файлов, **229** строк, `2023-01-01 … 2026-10-01`,
+  7 видов лимитов; повтор — `Imported 0 rows` (4 ranges-файла перечитываются).
+- `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА: три витрины читаются, каталоги 24/3/7,
+  сырые таблицы закрыты 497.
+- `make docs-check` — 36 страниц, 33 теста docs; `dagu validate dagu/cbr.yaml` — exit 0.
 - Протокол — комментарием в PR; `Closes #115` вне backticks.
 
 ## 10. Риски

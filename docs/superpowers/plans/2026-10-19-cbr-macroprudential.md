@@ -50,7 +50,8 @@
 ## 5. Витрины, реестр, расписание, MCP
 
 - [ ] `cbr/views.go` (или `cbr/macroprud_views.go`): три витрины, комментарии,
-      `argMax` для надбавок, `FINAL` для CCyB/МПЛ.
+      `argMax` для надбавок (ключ группы `matrix, valid_from, row_code, col_code`;
+      `valid_to` — атрибут победившей версии), `FINAL` для CCyB/МПЛ.
 - [ ] `cbr/importers.go`: три записи реестра с литералами таблиц и глобальными
       count-запросами.
 - [ ] `cbr/importers_test.go`: три имени в `expectedPublicationCountPoints`,
@@ -82,26 +83,54 @@
 
 ## 8. Проверка и приёмка
 
-- [ ] `make all`.
-- [ ] `make import STAT=cbr_ccyb_indicators` — 3 910 строк; повтор `Imported 0 rows`.
-- [ ] `make import STAT=cbr_risk_weight_addons` — 33 файла; повтор `Imported 0 rows`.
-- [ ] `make import STAT=cbr_mpl` — 10 файлов; повтор `Imported 0 rows`.
-- [ ] Spot-проверки из спеки §8.
-- [ ] `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА.
-- [ ] `make docs-check`.
-- [ ] `dagu validate dagu/cbr.yaml`.
+- [x] `make all` — gofmt, golangci-lint (0 issues), `go vet`, `go test -race`, обе сборки.
+- [x] `make import STAT=cbr_ccyb_indicators` — `Imported 3910 rows`; повтор `Imported 0 rows`.
+- [x] `make import STAT=cbr_risk_weight_addons` — 33 файла, `Imported 130125 rows`;
+      повтор: 32 файла no-op, последний переимпортирован из-за сбоя записи архива,
+      следующий повтор — `Imported 0 rows`.
+- [x] `make import STAT=cbr_mpl` — `Imported 229 rows`; повтор `Imported 0 rows`.
+- [x] Spot-проверки из спеки §8 (SQL в ClickHouse, ниже).
+- [x] `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА.
+- [x] `make docs-check` — 36 страниц, 33 теста docs.
+- [x] `dagu validate dagu/cbr.yaml` — exit 0.
 - [ ] Протокол приёмки — комментарием в PR; `Closes #115` вне backticks.
 - [ ] PR открыт, Project V2: `In Review`, `PR`, `Spec / Plan`.
 
-## 9. Протокол живой приёмки (заполнить после прогона)
+## 9. Протокол живой приёмки (2026-10-19)
 
 ```text
-Команда:
-Результат:
-Крайние даты:
-Повтор:
-MCP:
-Dagu:
+Команда: make import STAT=cbr_ccyb_indicators
+Результат: Imported 3910 rows; 24 ряда; 2008-02-01 … 2024-10-01
+Повтор: no-op версии, Imported 0 rows
+MCP: v_cbr_ccyb_indicators — 3910 строк / 24 ряда; каталог 24
+
+Команда: make import STAT=cbr_risk_weight_addons
+Результат: 33 файла, Imported 130125 rows (сырые ячейки всех версий);
+           витрина v_cbr_risk_weight_addons — 28707 строк (retail 7200,
+           corporate 720, legacy 20787), 2013-07-01 … 2026-10-15
+Повтор: 32 файла no-op; последний (table2_20261015.xlsx) переимпортирован,
+        т.к. первая запись версии в архив упала на Yandex Disk (connection reset);
+        следующий повтор — Imported 0 rows, все 33 файла no-op
+Spot: retail 2025-09-01 2002.i×1000.i=1.3, 2002.i×1008.i is_applicable=0;
+      corporate 2026-10-15 8002.i×8002.i=1;
+      legacy 2019-10-01 в последней версии (файл 2022-01-01) — н/п,
+      в архивном файле 2018-10-01 — 0.6 (витрина показывает последнюю версию)
+MCP: v_cbr_risk_weight_addons — 28707 строк, 3 матрицы, н/п 24001; каталог 3
+
+Команда: make import STAT=cbr_mpl
+Результат: 10 файлов, Imported 229 rows; 7 видов лимитов, 2023-01-01 … 2026-10-01
+Повтор: 6 limit-файлов no-op, Imported 0 rows; 4 ranges-файла перечитываются
+Spot: bank_consumer 2026Q4 row 51/51.1 — «более 50», лимит 10;
+      bank_mortgage 2025Q3 row 1/1.1 — «[0; 50]», лимит 5,
+      row 1/1.2 — «более 80», лимит 5 (наследован);
+      bank_consumer_with_limit 2023Q1 — 0.25 → 25, «более 80»;
+      2024Q2 — «(50; 80]», лимит 10
+MCP: v_cbr_mpl — 229 строк, 7 рядов; каталог 7
+
+MCP: make mcp-check — ПРОВЕРКА ПРОЙДЕНА (новый блок: 3 витрины, каталоги
+     24/3/7, три сырые таблицы закрыты 497)
+Dagu: dagu validate dagu/cbr.yaml — exit 0
+Docs: make docs-check — checked 36 pages, 33 tests OK
 ```
 
 ## 10. Стоп-правила
