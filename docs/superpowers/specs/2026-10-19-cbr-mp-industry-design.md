@@ -75,7 +75,7 @@
 | K | `price_change` | X | пункты | `Как изменились цены на готовую продукцию` |
 | L | `cost_change` | Y | пункты | `Как изменились издержки производства` |
 | M | `credit_conditions` | — | пункты | `Как изменились условия кредитования` |
-| N | `price_growth_expected` | Z | % годовых | `Средний ожидаемый предприятиями` |
+| N | `price_growth_expected` | Z | % годовых | `Средний ожидаемый` |
 
 Имя ряда: `industry_<sheet_slug>_<indicator_slug>`; SA — суффикс `_sa`. Примеры:
 - `industry_total_ibk`, `industry_total_ibk_sa`;
