@@ -120,6 +120,7 @@ func oilGasImport(xlsx *excelize.File, batch driver.Batch) error {
 	}
 
 	found := make(map[string]bool, len(oilGasSeriesByRowLabel))
+	pointsBySeries := make(map[string]int, len(oilGasSeriesByRowLabel))
 	points := 0
 	for _, row := range rows[headerRow+1:] {
 		if len(row) == 0 {
@@ -157,6 +158,7 @@ func oilGasImport(xlsx *excelize.File, batch driver.Batch) error {
 					oilGasTable, oilGasSheet, label, column+1, err)
 			}
 			points++
+			pointsBySeries[series]++
 		}
 	}
 
@@ -165,6 +167,16 @@ func oilGasImport(xlsx *excelize.File, batch driver.Batch) error {
 	for label, series := range oilGasSeriesByRowLabel {
 		if !found[series] {
 			return fmt.Errorf("%s: лист «%s»: не найдена ожидаемая строка «%s»", oilGasTable, oilGasSheet, label)
+		}
+	}
+	// Строка может остаться в источнике, но потерять все значения (например, пустые
+	// ячейки вместо чисел). Тогда общий счёт точек не ноль, и без этой проверки импорт
+	// записал бы строку версии, а старые точки ряда остались бы в ReplacingMergeTree —
+	// молчаливое частичное обновление. Поэтому каждая ожидаемая строка обязана дать
+	// хотя бы одну точку.
+	for label, series := range oilGasSeriesByRowLabel {
+		if pointsBySeries[series] == 0 {
+			return fmt.Errorf("%s: лист «%s»: строка «%s» не дала ни одной точки", oilGasTable, oilGasSheet, label)
 		}
 	}
 	if points == 0 {
