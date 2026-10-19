@@ -706,8 +706,23 @@ async def check(params, server_log):
             survey_catalog = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_series_catalog WHERE source = 'cbr_survey'"}))
             survey_catalog_rows = result_rows(survey_catalog)
             survey_catalog_n = survey_catalog_rows[0].get("count()") if survey_catalog_rows else None
-            failed += not expect("каталог cbr_survey описывает 13 рядов", survey_catalog_n == 13,
+            failed += not expect("каталог cbr_survey описывает 381 ряд", survey_catalog_n == 381,
                                  f"записей: {survey_catalog_n}" if survey_catalog_rows is not None else f"каталог не читается: {survey_catalog[:200]}")
+
+            # 16 отраслевых листов (Task 6 #239): 368 рядов industry_*; проверяется и каталог,
+            # и непустота самих строк витрины. Точное число точек не фиксируется — оно растёт
+            # с каждой волной источника.
+            survey_industry = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_series_catalog WHERE source = 'cbr_survey' AND startsWith(series, 'industry_')"}))
+            survey_industry_rows = result_rows(survey_industry)
+            survey_industry_n = survey_industry_rows[0].get("count()") if survey_industry_rows else None
+            failed += not expect("каталог cbr_survey описывает 368 отраслевых рядов", survey_industry_n == 368,
+                                 f"записей: {survey_industry_n}" if survey_industry_rows is not None else f"каталог не читается: {survey_industry[:200]}")
+
+            survey_industry_view = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_cbr_survey WHERE startsWith(series, 'industry_')"}))
+            survey_industry_view_rows = result_rows(survey_industry_view)
+            survey_industry_view_n = survey_industry_view_rows[0].get("count()") if survey_industry_view_rows else None
+            failed += not expect("витрина v_cbr_survey содержит отраслевые ряды", (survey_industry_view_n or 0) > 0,
+                                 f"строк: {survey_industry_view_n}" if survey_industry_view_rows is not None else f"витрина не читается: {survey_industry_view[:200]}")
 
             # Контур макроэкономического опроса ЦБ (шаг 1.5 роадмапа, импортёр cbr_mo_br):
             # витрина v_cbr_mo_br читается агентом, каталог source='cbr_mo_br' непуст
