@@ -147,7 +147,7 @@ make mlflow-down
 | `make build` | бинарник `linux/amd64` в `build/` |
 | `make import STAT=<имя>` | локальный прогон импортёра |
 | `make cpi-nowcast` | nowcast ИПЦ; `ML_LOG=1 MLFLOW=1` включает журнал и MLflow |
-| `make key-rate-model` / `make key-rate-forecast-log` | прогноз ставки (локальные артефакты) / запись прогноза в `forecast_log` через ingest; `ML_LOG=1 MLFLOW=1` включает журнал и MLflow |
+| `make key-rate-model` / `make key-rate-forecast-log` | прогноз ставки (локальные артефакты; консенсус-бенчмарк №4 — годовая средняя + B4-проекция) / запись прогноза в `forecast_log` через ingest; `ML_LOG=1 MLFLOW=1` включает журнал и MLflow |
 | `make shock-classifier` / `make shock-classifier-test` | классификатор шоков ключевой ставки: явные метки `emergency ∧ step_bp ≠ 0`, причинные as-of веса и описательный логистический слой; локальные артефакты `shock_classifier_report.md`, `shock_classifier_weights.csv`, `shock_classifier_forecast.json`; **в ClickHouse напрямую не пишет** (`ML_LOG=1` или `ARGS="--log"` — журнал через `ml_experiment`) / офлайн-тесты без ClickHouse и сети |
 | `make cpi-monthly` | месячный nowcast ИПЦ с МП (ML-трек v2); долгая выборка — `ARGS="--sample long"`; журнал — `ML_LOG=1`; быстрый экспериментальный режим — `ARGS="--quick"` и `ARGS="--quick --jobs N"` (в разы быстрее; **quick-числа неофициальные**, полный прогон без флагов не меняется) |
 | `make key-rate-llm-forecast` | экспериментальный LLM-прогноз ключевой ставки: as-of снимок, три повтора, медиана/разброс, локальные артефакты; в ClickHouse не пишет; `ARGS="--log"` готовит payload для #127 |
