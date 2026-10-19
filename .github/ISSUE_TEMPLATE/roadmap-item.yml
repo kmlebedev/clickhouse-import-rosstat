@@ -19,6 +19,20 @@ body:
         - infra
     validations:
       required: true
+  - type: dropdown
+    id: role
+    attributes:
+      label: "Роль"
+      description: "Кто ведёт пункт; mixed — несколько ролей в одном пункте"
+      options:
+        - go
+        - python
+        - ml
+        - research
+        - mixed
+        - shared
+    validations:
+      required: false
   - type: input
     id: item-id
     attributes:
