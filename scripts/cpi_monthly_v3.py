@@ -356,10 +356,11 @@ def _mde_ratio(err_a: list, err_b: list) -> float:
     return mde_mse / (rmse_a + rmse_b) if (rmse_a + rmse_b) else float("nan")
 
 
-def evaluate(rows: list, start: int, embargo: int) -> tuple:
-    predictions = cm.walk_forward(rows, MODELS, start, embargo)
+def evaluate(rows: list, start: int, embargo: int, models: dict = None) -> tuple:
+    models = dict(MODELS) if models is None else dict(models)
+    predictions = cm.walk_forward(rows, models, start, embargo)
     summary = {}
-    for model in MODELS:
+    for model in models:
         months, errors, group = _errors(predictions, model)
         if not group:
             summary[model] = {"n": 0}
@@ -380,6 +381,8 @@ def evaluate(rows: list, start: int, embargo: int) -> tuple:
         ("v3_bottomup", "v3_direct"),
         ("v3_direct", "B3_weekly"),
     ):
+        if left not in models or right not in models:
+            continue
         months_left, errors_left, _ = _errors(predictions, left)
         months_right, errors_right, _ = _errors(predictions, right)
         common = sorted(set(months_left) & set(months_right))
@@ -473,7 +476,21 @@ def write_json(path: Path, payload: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
-def run(sample: str, out_dir: Path, start: int = DEFAULT_START, embargo: int = 0) -> dict:
+def run(
+    sample: str,
+    out_dir: Path,
+    start: int = DEFAULT_START,
+    embargo: int = 0,
+    models: list = None,
+) -> dict:
+    selected = (
+        dict(MODELS)
+        if models is None
+        else {name: MODELS[name] for name in models if name in MODELS}
+    )
+    unknown = set(models or ()) - set(MODELS)
+    if unknown:
+        raise SystemExit(f"неизвестные модели: {sorted(unknown)}; доступны {list(MODELS)}")
     rows, skipped = build_sample_v3(sample)
     if not rows:
         raise SystemExit(f"пустая выборка {sample!r}")
@@ -483,13 +500,14 @@ def run(sample: str, out_dir: Path, start: int = DEFAULT_START, embargo: int = 0
         f"({rows[0].month}…{rows[-1].month}), пропущено {len(skipped)}",
         flush=True,
     )
-    summary, pairs, predictions = evaluate(rows, start, embargo)
+    summary, pairs, predictions = evaluate(rows, start, embargo, selected)
     payload = {
         "sample": sample,
         "n_rows": len(rows),
         "n_skipped": len(skipped),
         "start": start,
         "embargo": embargo,
+        "models": list(selected),
         "summary": summary,
         "pairs": pairs,
         "features": feature_names_v3(),
@@ -512,7 +530,7 @@ def run(sample: str, out_dir: Path, start: int = DEFAULT_START, embargo: int = 0
                     "embargo": embargo,
                     "seed": SEED,
                     "features": feature_names_v3(),
-                    "models": list(MODELS),
+                    "models": list(selected),
                 },
                 data_asof=cm.SAMPLE_BOUNDS[cm.DEFAULT_SAMPLE][1],
                 sample_meta={
@@ -582,12 +600,18 @@ def main(argv=None) -> int:
     parser.add_argument("--out-dir", default=str(ROOT / "build" / "cpi-monthly-v3"))
     parser.add_argument("--start", type=int, default=DEFAULT_START)
     parser.add_argument("--embargo", type=int, default=0)
+    parser.add_argument(
+        "--models",
+        default=None,
+        help="через запятую; по умолчанию все модели (см. MODELS)",
+    )
     arguments = parser.parse_args(argv)
     run(
         sample=arguments.sample,
         out_dir=Path(arguments.out_dir),
         start=arguments.start,
         embargo=arguments.embargo,
+        models=arguments.models.split(",") if arguments.models else None,
     )
     return 0
 
