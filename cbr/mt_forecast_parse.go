@@ -129,12 +129,18 @@ func mtForecastNormalizeCell(raw string) string {
 }
 
 // mtForecastNormalizeLabel — подпись строки (спека §3.3, слой 2): к базовой нормализации
-// добавляются оба тире → дефис и срезание хвостовых цифр — номера сноски («…валюте3»; PDF-версия
-// печатает его и через пробел — «…валюте 3», поэтому за цифрами снимается и пробел, иначе подпись
-// не совпала бы с картой и строка выпала бы молча). Именно эта форма сравнивается с картой реестра,
-// и только она: «почти совпало» означало бы чужую метрику под знакомым кодом.
+// добавляются оба тире → дефис, снятие надстрочных цифр (PDF-версия печатает номер сноски
+// надстрочным: «…валюте³»), срезание хвостового двоеточия (PDF-форма подпункта: «– к населению, в
+// том числе:») и хвостовых цифр — номера сноски («…валюте3»; PDF-версия печатает его и через
+// пробел — «…валюте 3», поэтому за цифрами снимается и пробел, иначе подпись не совпала бы с
+// картой и строка выпала бы молча). Для xlsx это no-op: там обычные цифры и нет двоеточия.
+// Именно эта форма сравнивается с картой реестра, и только она: «почти совпало» означало бы
+// чужую метрику под знакомым кодом.
 func mtForecastNormalizeLabel(raw string) string {
-	return strings.TrimSpace(strings.TrimRight(mtForecastDashReplacer.Replace(mtForecastNormalizeCell(raw)), "0123456789"))
+	label := mtForecastDashReplacer.Replace(mtForecastNormalizeCell(mtForecastStripSuperscripts(raw)))
+	label = strings.TrimSpace(label)
+	label = strings.TrimSuffix(label, ":")
+	return strings.TrimSpace(strings.TrimRight(label, "0123456789"))
 }
 
 // mtForecastStripSuperscripts снимает юникод-надстрочные цифры (¹ U+00B9, ² U+00B2, ³ U+00B3 и
