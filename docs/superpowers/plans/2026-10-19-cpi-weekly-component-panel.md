@@ -13,7 +13,7 @@
 - `scripts/cpi_monthly.py`, `scripts/cpi_monthly_v3.py`, `scripts/cpi_public_panel_audit.py` не меняются; mapping переиспользуется импортом.
 - Не использовать 87 кодов ОКВЭД2, `model.xlsx`, BSU-панель и `panel.csv`; `mp_survey_data.xlsx` — не вход Task 3.
 - Веса — годовые 2016–2024 (2013–2015 → 2016, 2025–2026 → 2024); fixed-2024 — робастность.
-- Полнота месяца: `n_weeks ≥ 3`, `prev` не дальше 14 дней, максимальный разрыв ≤14 дней; иначе NaN.
+- Полнота месяца: `n_weeks ≥ 3`, первая точка ≤10-го, последняя — ≤10 дней до конца, максимальный разрыв ≤21 дня; иначе NaN.
 - As-of: недельная точка `date + 2`, cutoff 8-е M+1; месячная метка — не раньше конца M+1.
 - Тесты — stdlib `unittest`, офлайн, без сети/ClickHouse; `openpyxl` — только для синтетических весов/словаря.
 - Один PR в конце; спека и план — первые коммиты.
@@ -42,7 +42,7 @@
 
 1. `month_points(series_points, month, cutoff)` — фильтр по месяцу/as-of, дубли — ошибка.
 2. `previous_point(series_points, first_date, cutoff)` — последняя точка до месяца.
-3. `monthly_mm(series_points, month, cutoff)` → `(mm_pp|None, meta)` со статусами `ok`/`no_points`/`no_previous`/`lt_min_weeks`/`gap_too_large`.
+3. `monthly_mm(series_points, month, cutoff)` → `(mm_pp|None, meta)` со статусами `ok`/`no_points`/`no_previous`/`lt_min_weeks`/`incomplete_month`/`gap_too_large`.
 4. `build_product_panel(weekly, mapping_rows, weights_matrix, months)` — 148 × месяцы 2009-04…2026-10; несопоставленные — `component=None`.
 5. `assert_as_of(...)` — 0 нарушений; официальные метки недоступны на cutoff.
 6. `status_counts` по периодам/годам.
