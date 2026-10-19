@@ -4,7 +4,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 )
 
 // calMPFixture читает HTML-фикстуру календаря ЦБ calendar/testdata/cal_mp.html
@@ -20,10 +19,10 @@ func calMPFixture(t *testing.T) []byte {
 
 // calMPDates — множество дат результата в ISO-виде: проверки «входит / не входит»
 // не зависят от общего числа заседаний (календарь растёт, пин количества запрещён).
-func calMPDates(dates []time.Time) map[string]bool {
-	out := make(map[string]bool, len(dates))
-	for _, d := range dates {
-		out[d.Format("2006-01-02")] = true
+func calMPDates(meetings []calMPMeeting) map[string]bool {
+	out := make(map[string]bool, len(meetings))
+	for _, m := range meetings {
+		out[m.Date.Format("2006-01-02")] = true
 	}
 	return out
 }
@@ -35,23 +34,23 @@ func calMPDates(dates []time.Time) map[string]bool {
 // эры — по замороженной фикстуре: внеочередное заседание 2014 года помечено
 // 15 декабря, а не 16-м (по нему пресс-релиз вышел 16.12.2014 00:39).
 func TestParseCalMPFixture(t *testing.T) {
-	dates, err := parseCalMP(calMPFixture(t))
+	meetings, err := parseCalMP(calMPFixture(t))
 	if err != nil {
 		t.Fatalf("parseCalMP(фикстура): %v", err)
 	}
-	if len(dates) == 0 {
+	if len(meetings) == 0 {
 		t.Fatalf("parseCalMP(фикстура) вернул 0 дат")
 	}
 
 	// Результат отсортирован и уникален — контракт интерфейса.
-	for i := 1; i < len(dates); i++ {
-		if !dates[i].After(dates[i-1]) {
+	for i := 1; i < len(meetings); i++ {
+		if !meetings[i].Date.After(meetings[i-1].Date) {
 			t.Errorf("даты %d и %d не отсортированы/дублируются: %s, %s",
-				i-1, i, dates[i-1].Format("2006-01-02"), dates[i].Format("2006-01-02"))
+				i-1, i, meetings[i-1].Date.Format("2006-01-02"), meetings[i].Date.Format("2006-01-02"))
 		}
 	}
 
-	got := calMPDates(dates)
+	got := calMPDates(meetings)
 	want := []string{
 		// обычные заседания: пин из Task 2 + весь будущий год 2027 (8 заседаний)
 		"2024-02-16",
@@ -128,8 +127,8 @@ func TestParseCalMPFixture(t *testing.T) {
 	// Полный состав замороженной фикстуры — 118 дат: 68 карточек 2020–2027,
 	// 42 строки таблиц 2014–2018 и 8 карточек 2019. Вместе с пинами выше счётчик
 	// закрепляет состав целиком: ни потерянных дат, ни лишних.
-	if len(dates) != 118 {
-		t.Errorf("parseCalMP(фикстура) = %d дат, ожидалось 118 (фикстура заморожена)", len(dates))
+	if len(meetings) != 118 {
+		t.Errorf("parseCalMP(фикстура) = %d заседаний, ожидалось 118 (фикстура заморожена)", len(meetings))
 	}
 
 	// Незаседания не должны протекать: «Доклад о ДКП» (включая строки таблиц
@@ -213,12 +212,12 @@ func TestParseCalMPSkipsYearlessCards(t *testing.T) {
 	<div class="title"><span>Заседание Совета директоров по&nbsp;денежно-кредитной политике</span></div>
 	</div></div></div>
 	</body></html>`
-	dates, err := parseCalMP([]byte(page))
+	meetings, err := parseCalMP([]byte(page))
 	if err != nil {
 		t.Fatalf("parseCalMP: %v", err)
 	}
-	if len(dates) != 1 || dates[0].Format("2006-01-02") != "2020-02-07" {
-		t.Errorf("parseCalMP = %v, ожидалась одна дата 2020-02-07 (карточка без года игнорируется)", dates)
+	if len(meetings) != 1 || meetings[0].Date.Format("2006-01-02") != "2020-02-07" {
+		t.Errorf("parseCalMP = %v, ожидалась одна дата 2020-02-07 (карточка без года игнорируется)", meetings)
 	}
 }
 
@@ -254,12 +253,12 @@ func TestParseCalMPPanelYears(t *testing.T) {
 	</div></div></div>
 	</div>
 	</body></html>`
-	dates, err := parseCalMP([]byte(page))
+	meetings, err := parseCalMP([]byte(page))
 	if err != nil {
 		t.Fatalf("parseCalMP: %v", err)
 	}
-	if len(dates) != 1 || dates[0].Format("2006-01-02") != "2019-02-08" {
-		t.Errorf("parseCalMP = %v, ожидалась одна дата 2019-02-08 (год из вкладки t1, панель t2 без вкладки пропущена, t3 — дедуп)", dates)
+	if len(meetings) != 1 || meetings[0].Date.Format("2006-01-02") != "2019-02-08" {
+		t.Errorf("parseCalMP = %v, ожидалась одна дата 2019-02-08 (год из вкладки t1, панель t2 без вкладки пропущена, t3 — дедуп)", meetings)
 	}
 }
 
@@ -278,16 +277,16 @@ func TestParseCalMPOldTable(t *testing.T) {
 	<tr><td>18&nbsp;февраля</td><td>Доклад о&nbsp;денежно-кредитной политике</td></tr>
 	</tbody></table></div></div>
 	</body></html>`
-	dates, err := parseCalMP([]byte(page))
+	meetings, err := parseCalMP([]byte(page))
 	if err != nil {
 		t.Fatalf("parseCalMP: %v", err)
 	}
 	want := []string{"2014-02-14", "2014-03-03"}
-	if len(dates) != len(want) {
-		t.Fatalf("parseCalMP = %v, ожидались даты %v", dates, want)
+	if len(meetings) != len(want) {
+		t.Fatalf("parseCalMP = %v, ожидались даты %v", meetings, want)
 	}
 	for i, w := range want {
-		if got := dates[i].Format("2006-01-02"); got != w {
+		if got := meetings[i].Date.Format("2006-01-02"); got != w {
 			t.Errorf("дата %d = %s, ожидалась %s", i, got, w)
 		}
 	}
@@ -307,16 +306,16 @@ func TestParseCalMPOldTableUnparsedDateCell(t *testing.T) {
 	<tr><td>25&nbsp;апреля</td><td>Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики</td></tr>
 	</tbody></table></div>
 	</body></html>`
-	dates, err := parseCalMP([]byte(page))
+	meetings, err := parseCalMP([]byte(page))
 	if err != nil {
 		t.Fatalf("parseCalMP: %v", err)
 	}
 	want := []string{"2014-02-14", "2014-04-25"}
-	if len(dates) != len(want) {
-		t.Fatalf("parseCalMP = %v, ожидались даты %v (нераспознанная дата сбрасывает предыдущую)", dates, want)
+	if len(meetings) != len(want) {
+		t.Fatalf("parseCalMP = %v, ожидались даты %v (нераспознанная дата сбрасывает предыдущую)", meetings, want)
 	}
 	for i, w := range want {
-		if got := dates[i].Format("2006-01-02"); got != w {
+		if got := meetings[i].Date.Format("2006-01-02"); got != w {
 			t.Errorf("дата %d = %s, ожидалась %s", i, got, w)
 		}
 	}
@@ -339,11 +338,70 @@ func TestParseCalMPCardPredicateUnchanged(t *testing.T) {
 	<div class="title"><span>Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span></div>
 	</div></div></div>
 	</body></html>`
-	dates, err := parseCalMP([]byte(page))
+	meetings, err := parseCalMP([]byte(page))
 	if err != nil {
 		t.Fatalf("parseCalMP: %v", err)
 	}
-	if len(dates) != 1 || dates[0].Format("2006-01-02") != "2026-03-20" {
-		t.Errorf("parseCalMP = %v, ожидалась одна дата 2026-03-20 (карточка с «…политики» не заседание)", dates)
+	if len(meetings) != 1 || meetings[0].Date.Format("2006-01-02") != "2026-03-20" {
+		t.Errorf("parseCalMP = %v, ожидалась одна дата 2026-03-20 (карточка с «…политики» не заседание)", meetings)
+	}
+}
+
+// TestCalMPEmergencyFlag — признак внеочередного заседания снимается с текста страницы:
+// на замороженной фикстуре ровно 6 заседаний с Emergency=true (4 карточки 2022–2023
+// и 2 строки таблицы 2014 года), остальные — плановые. Даты не хардкодятся в парсере,
+// здесь они — ожидаемый результат разметки источника.
+func TestCalMPEmergencyFlag(t *testing.T) {
+	meetings, err := parseCalMP(calMPFixture(t))
+	if err != nil {
+		t.Fatalf("parseCalMP(фикстура): %v", err)
+	}
+	if len(meetings) != 118 {
+		t.Fatalf("parseCalMP(фикстура) = %d заседаний, ожидалось 118 (фикстура заморожена)", len(meetings))
+	}
+	want := map[string]bool{
+		"2014-03-03": true,
+		"2014-12-15": true,
+		"2022-02-28": true,
+		"2022-04-08": true,
+		"2022-05-26": true,
+		"2023-08-15": true,
+	}
+	got := make(map[string]bool)
+	for _, m := range meetings {
+		if m.Emergency {
+			got[m.Date.Format("2006-01-02")] = true
+		}
+	}
+	if len(got) != len(want) {
+		t.Errorf("parseCalMP: %d внеочередных заседаний, ожидалось %d: %v", len(got), len(want), got)
+	}
+	for date := range want {
+		if !got[date] {
+			t.Errorf("parseCalMP: внеочередное заседание %s не помечено", date)
+		}
+	}
+	for date := range got {
+		if !want[date] {
+			t.Errorf("parseCalMP: заседание %s помечено внеочередным ошибочно", date)
+		}
+	}
+}
+
+// TestEventsCalendarEmergencyColumn — контракт схемы и витрины: колонка есть в DDL,
+// миграция живой таблицы идемпотентна, INSERT перечисляет колонку явно, витрина
+// (SELECT *) описывает её для MCP-агента.
+func TestEventsCalendarEmergencyColumn(t *testing.T) {
+	if !strings.Contains(eventsDdl, "emergency UInt8 DEFAULT 0") {
+		t.Errorf("eventsDdl не содержит колонку emergency UInt8 DEFAULT 0:\n%s", eventsDdl)
+	}
+	if !strings.Contains(eventsEmergencyAlter, "ADD COLUMN IF NOT EXISTS emergency UInt8 DEFAULT 0") {
+		t.Errorf("eventsEmergencyAlter не идемпотентен: %q", eventsEmergencyAlter)
+	}
+	if !strings.Contains(calMPInsert, "emergency") {
+		t.Errorf("calMPInsert не перечисляет колонку emergency: %q", calMPInsert)
+	}
+	if eventsView.Columns["emergency"] == "" {
+		t.Errorf("eventsView.Columns не описывает колонку emergency")
 	}
 }
