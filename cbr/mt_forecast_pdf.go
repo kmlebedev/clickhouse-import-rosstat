@@ -1,9 +1,13 @@
 package cbr
 
 import (
+	"bytes"
+	"context"
 	"fmt"
+	"os/exec"
 	"regexp"
 	"strings"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -39,9 +43,25 @@ const (
 	// Выпуск в сообщение не входит: на входе только текст, даты выпуска у разбора нет — их добавит
 	// извлекатель (спека §3.3), а таблица и раздел остаются теми же для любого выпуска.
 	mtForecastPDFContext = mtForecastTable + ", PDF «Табл. 1»"
+
+	// mtForecastPDFHeaderSize — сколько первых байт ответа проверяется на сигнатуру `%PDF-`
+	// (спека §3.3): WAF отдаёт HTML-заглушку с кодом 200, и без этой проверки pdftotext упал бы
+	// невнятно или вернул пустой текст. Спецификация PDF допускает мусор перед заголовком, но не
+	// больше 1024 байт, — этого окна достаточно.
+	mtForecastPDFHeaderSize = 1024
+
+	// mtForecastPDFTimeout — потолок одного извлечения (спека §3.3): PDF ≤ 1 МБ разбирается за
+	// ~0,1 с, поэтому 2 минуты — запас на медленный хост, а не рабочее время. Зависший pdftotext
+	// не должен держать прогон импортёра.
+	mtForecastPDFTimeout = 2 * time.Minute
 )
 
 var (
+	// mtForecastPDFTool — утилита извлечения текста (спека §3.3): `pdftotext` из poppler-utils.
+	// Переменная, а не константа, ради тестов: подмена заведомо отсутствующим именем проверяет
+	// ветку ошибки, не запуская настоящий pdftotext (спека §7).
+	mtForecastPDFTool = "pdftotext"
+
 	// mtForecastPDFJoinRangesRe — склейка разрезанного диапазона (спека §3.5, п. 1): pdftotext может
 	// развести границы по «колонкам» (`13,5 – 14,5`), и тогда разбиение строки по mtForecastPDFColumnGapRe
 	// разрезало бы одну ячейку на две. RE2 не поддерживает lookbehind, поэтому в шаблон захвачены
@@ -206,4 +226,54 @@ func mtForecastParsePDF(text []byte) ([]mtForecastPoint, error) {
 		return nil, fmt.Errorf("%s: разбор не дал ни одной точки — ни один объявленный показатель не разобран", mtForecastPDFContext)
 	}
 	return points, nil
+}
+
+// mtForecastPDFText извлекает текст PDF-выпуска утилитой `pdftotext` (спека §3.3). Байты приходят
+// срезом от шаблона импорта: util.ClickHouseImport сам качает файл и кладёт тот же срез в
+// винтажный архив, поэтому сети здесь нет — только локальное преобразование уже скачанного PDF.
+// Формат вывода — `-layout` (колонки «Табл. 1» разделены сериями пробелов), UTF-8 и без
+// разрывов страниц (`-nopgbrk`): на таком тексте работает mtForecastParsePDF.
+//
+// Fail-fast (стандарт §6.4): первые mtForecastPDFHeaderSize байт обязаны содержать сигнатуру
+// `%PDF-` — WAF/HTML-заглушка приходит с кодом 200, и проверка стоит до exec, чтобы не звать
+// утилиту на заведомо неверных байтах. Ошибка запуска называет утилиту, раздел и пакет
+// poppler-utils: оператор staging узнаёт, что установить, а не ищет причину по «0 points». Пустой
+// stdout — тоже ошибка: PDF без текстового слоя (скан) разобрать нечем.
+//
+// ctx ограничен mtForecastPDFTimeout на один файл; родительский ctx (прогон импортёра) сохраняется.
+func mtForecastPDFText(ctx context.Context, body []byte) ([]byte, error) {
+	// Срез безопасен при любом len(body): min не даёт выйти за границу, а пустое тело просто не
+	// содержит сигнатуры и получает ту же ошибку «ответ не PDF».
+	head := body[:min(len(body), mtForecastPDFHeaderSize)]
+	if !bytes.Contains(head, []byte("%PDF-")) {
+		return nil, fmt.Errorf("%s: выпуск %s: ответ не PDF (заголовок %q) — WAF/HTML вместо файла",
+			mtForecastPDFTool, mtForecastPDFContext, "%PDF-")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, mtForecastPDFTimeout)
+	defer cancel()
+
+	// stdin и stdout вместо файлов: байты уже в памяти, а временные файлы не нужны — столько же
+	// работает polyus/source.go, только там pdftotext читает файл с диска.
+	cmd := exec.CommandContext(ctx, mtForecastPDFTool, "-layout", "-enc", "UTF-8", "-nopgbrk", "-", "-")
+	cmd.Stdin = bytes.NewReader(body)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	output, err := cmd.Output()
+	if err != nil {
+		// stderr pdftotext объясняет причину (битый PDF, нехватка шрифтов), но у отсутствующего
+		// бинарника его нет — подставляем явное «stderr пуст», чтобы сообщение не кончалось
+		// висящим двоеточием.
+		stderrText := strings.TrimSpace(stderr.String())
+		if stderrText == "" {
+			stderrText = "stderr пуст"
+		}
+		return nil, fmt.Errorf("%s: %s: %w: %s (нужен poppler-utils: pdftotext)",
+			mtForecastPDFTool, mtForecastPDFContext, err, stderrText)
+	}
+	if len(bytes.TrimSpace(output)) == 0 {
+		return nil, fmt.Errorf("%s: %s: пустой stdout — в PDF нет текстового слоя (скан?) или pdftotext не смог его извлечь",
+			mtForecastPDFTool, mtForecastPDFContext)
+	}
+	return output, nil
 }
