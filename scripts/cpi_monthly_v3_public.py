@@ -1085,10 +1085,18 @@ def write_final_report(path: Path, payload: dict) -> None:
     lines.append("")
     lines.append("```bash")
     lines.append("make cpi-monthly-v3-public-test")
-    lines.append("ML_LOG=1 make cpi-monthly-v3-public")
+    lines.append(
+        'ML_LOG=1 make cpi-monthly-v3-public ARGS="--all --allow-gate-diff"'
+    )
     lines.append("make all")
     lines.append("make docs-check")
     lines.append("```")
+    lines.append("")
+    lines.append(
+        "Сверка источника (опционально): "
+        "`ARGS=\"--verify-only --verify-xlsx PATH\"`; официальный прогон "
+        "XLSX не читает."
+    )
     lines.append("")
     lines.append(
         f"sample_hash: `{payload.get('sample_hash', '—')}`; "
