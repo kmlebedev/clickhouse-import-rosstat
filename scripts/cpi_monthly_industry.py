@@ -536,6 +536,22 @@ for _function in (
     _function.last_components = ()
 
 
+def enet_impute(train_matrix: np.ndarray, row_matrix: np.ndarray) -> tuple:
+    """Импутация NaN медианой train; колонка без наблюдений — 0.0.
+
+    Медианы считаются ТОЛЬКО по обучающему окну фолда; тестовая строка в них
+    не участвует. Возврат — `(train_imputed, row_imputed, medians)`; медианы
+    нужны тесту NaN-политики.
+    """
+    medians = np.nanmedian(train_matrix, axis=0)
+    medians = np.where(np.isnan(medians), 0.0, medians)
+    return (
+        np.where(np.isnan(train_matrix), medians, train_matrix),
+        np.where(np.isnan(row_matrix), medians, row_matrix),
+        medians,
+    )
+
+
 def fit_enet_industry(
     train: list,
     row: cm.Row,
@@ -564,10 +580,8 @@ def fit_enet_industry(
     row_matrix = np.asarray(
         [[float(row.features[name]) for name in names]], dtype=float
     )
-    medians = np.nanmedian(train_matrix, axis=0)
-    medians = np.where(np.isnan(medians), 0.0, medians)
-    train_imputed = np.where(np.isnan(train_matrix), medians, train_matrix)
-    row_imputed = np.where(np.isnan(row_matrix), medians, row_matrix)
+    train_imputed, row_imputed, medians = enet_impute(train_matrix, row_matrix)
+    fit_enet_industry.last_medians = medians
     targets = np.asarray(
         [float(item.y[cm.TARGET_ALL]) for item in train], dtype=float
     )
@@ -599,6 +613,7 @@ def fit_enet_industry(
 
 
 fit_enet_industry.fold_notes = {}
+fit_enet_industry.last_medians = None
 
 
 def fit_b3_ind(train: list, row: cm.Row) -> float:
