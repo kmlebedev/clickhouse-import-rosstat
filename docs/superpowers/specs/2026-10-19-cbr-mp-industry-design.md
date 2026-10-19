@@ -87,8 +87,8 @@
 
 - 16 листов × 23 ряда = **368 отраслевых рядов**.
 - На лист: 21 × 297 + 2 × 81 = **6 399 точек**; всего **102 384**.
-- Плюс 13 агрегатных / 2 084 точки → **381 ряд, 104 468 точек** `source='cbr_survey'`.
-- `max(date)` после импорта — `2026-09-01` (отраслевые листы); агрегатные по-прежнему до `2026-08-01`.
+- Плюс 13 агрегатных / 2 097 точек (снимок 2026-10-19; на 2026-10-13 было 2 084) → **381 ряд, 104 481 точка** `source='cbr_survey'`.
+- `max(date)` после импорта — `2026-10-01` (квартальные ряды волны 3к26); отраслевые листы — до `2026-09-01`, месячные агрегатные — до `2026-09-01`.
 
 ## 3. Реализация
 
@@ -152,7 +152,7 @@ ALTER TABLE source_publications DELETE WHERE source = 'cbr_mp_survey';
 ```
 
 - Выполнить admin-пользователем (`make ch-sql FILE=build/mp-survey-migration.sql`; файл не коммитить) на dev/staging/prod.
-- Первый `make import STAT=cbr_mp_survey` после удаления — полный импорт; строка версии запишется с `points = 104468`; далее no-op.
+- Первый `make import STAT=cbr_mp_survey` после удаления — полный импорт; строка версии запишется с `points = 104481`; далее no-op.
 - Прерывание импорта после удаления безопасно: следующий прогон повторит полный импорт (идемпотентно).
 - Правило зафиксировать в `docs/IMPORTER_PACKAGE_STANDARD.md` §9.7 и `ARCHITECTURE.md` §8 п. 13.
 
@@ -188,7 +188,7 @@ ALTER TABLE source_publications DELETE WHERE source = 'cbr_mp_survey';
 
 ## 6. Документация
 
-- `docs/IMPORTERS.md` — 20 из 31 листа, 368 отраслевых рядов, 102 384 точки, 104 468 всего, 381 запись каталога, диапазоны дат, миграция.
+- `docs/IMPORTERS.md` — 20 из 31 листа, 368 отраслевых рядов, 102 384 точки, 104 481 всего, 381 запись каталога, диапазоны дат, миграция.
 - `ARCHITECTURE.md` — шапка, §2, §6.1, §6.2, §6.3, §6.5, §7, §8 п. 13.
 - `docs/CONFIGURATION.md` — `cbr_survey (381 ряд: 13 агрегатных + 368 отраслевых)`.
 - `docs/LIMITATIONS.md` — то же.
@@ -201,13 +201,13 @@ ALTER TABLE source_publications DELETE WHERE source = 'cbr_mp_survey';
 
 1. `make ch-status`.
 2. Миграция §4 (если строка версии есть).
-3. `make import STAT=cbr_mp_survey` → `Собрано 104468 точек`, `Imported 104468 rows of cbr_mp_survey`.
+3. `make import STAT=cbr_mp_survey` → `Собрано 104481 точек`, `Imported 104481 rows of cbr_mp_survey`.
 4. MCP/`kimi_reader`:
-   - `v_cbr_survey`: 104 468 строк, 381 ряд, `2002-01-01 … 2026-09-01`;
+   - `v_cbr_survey`: 104 481 строка, 381 ряд, `2002-01-01 … 2026-10-01`;
    - `startsWith(series,'industry_')`: 102 384;
    - `v_series_catalog` `source='cbr_survey'`: 381, из них `industry_*` — 368.
    - spot-сверка `industry_total_price_expectations_sa` 2026-09 = `21.5845138071129`, `industry_mining_ibk` 2026-09 = `-3.34877342731565`.
-5. Повтор `make import STAT=cbr_mp_survey` → `no-op, версия … уже импортирована, 104468 точек на месте`.
+5. Повтор `make import STAT=cbr_mp_survey` → `no-op, версия … уже импортирована, 104481 точек на месте`.
 6. `make mcp-user` → `make mcp-check` → ПРОВЕРКА ПРОЙДЕНА; сырая `macro_series` — `ACCESS_DENIED` 497.
 7. `dagu validate dagu/cbr.yaml` (если dagu установлен).
 8. `make all`, `make docs-check`.

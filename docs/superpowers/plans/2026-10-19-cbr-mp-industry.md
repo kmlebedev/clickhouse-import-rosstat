@@ -99,7 +99,7 @@
 - точное число точек витрины не проверять.
 
 **Документация (тем же PR):**
-- `docs/IMPORTERS.md` — 20/31 листов, 368 рядов, 102 384 точки, 104 468 всего, 381 каталог, миграция.
+- `docs/IMPORTERS.md` — 20/31 листов, 368 рядов, 102 384 точки, 104 481 всего, 381 каталог, миграция.
 - `ARCHITECTURE.md` — шапка, §2, §6.1, §6.2, §6.3, §6.5, §7, §8 п. 13.
 - `docs/CONFIGURATION.md`, `docs/LIMITATIONS.md` — 381/368.
 - `README.md` — строка `cbr`: «16 отраслевых листов МП».
@@ -110,26 +110,26 @@
 
 ---
 
-## Task 6. Живая приёмка
+## Task 6. Живая приёмка — протокол 2026-10-19
 
-1. `make ch-status`.
-2. Проверить `source_publications` для `cbr_mp_survey`; если строка есть — выполнить миграцию:
+1. `make ch-status` — ClickHouse отвечает на 8123.
+2. `source_publications` для `cbr_mp_survey` до работы: `fingerprint=a3ac58d0…`, `points=2084` (2026-10-14). Выполнена миграция:
    ```sql
    SET mutations_sync = 1;
    ALTER TABLE source_publications DELETE WHERE source = 'cbr_mp_survey';
    ```
-3. `make import STAT=cbr_mp_survey` → `Собрано 104468 точек`, `Imported 104468 rows of cbr_mp_survey`.
-4. MCP:
-   - `v_cbr_survey`: 104 468 / 381 / `2002-01-01` / `2026-09-01`;
-   - `startsWith(series,'industry_')`: 102 384;
-   - `v_series_catalog`: 381 / 368;
-   - spot `industry_total_price_expectations_sa` 2026-09 = 21.5845138071129; `industry_mining_ibk` 2026-09 = -3.34877342731565.
-5. Повтор `make import STAT=cbr_mp_survey` → no-op `104468 точек на месте`.
-6. `make mcp-user` → `make mcp-check` → ПРОВЕРКА ПРОЙДЕНА.
-7. `dagu validate dagu/cbr.yaml` (если установлен).
-8. `make all`, `make docs-check`.
-9. Архив — при `ARCHIVE_BACKEND`; иначе «не проверено».
-10. Протокол — в план и комментарий PR; `Closes #239` вне backticks.
+3. `make import STAT=cbr_mp_survey` — `Get xlsx file`, `Собрано 104481 точек`, `Imported 104481 rows of cbr_mp_survey`; новый `source_publications`: `fingerprint=be103476…`, `points=104481`, `2026-10-19 16:43:28`.
+4. MCP/`kimi_reader`:
+   - `v_cbr_survey`: 104 481 строка, 381 ряд, `2002-01-01 … 2026-10-01`;
+   - `industry_*`: 102 384 точки; агрегатные — 2 097 (+13 точек волны 2026-09/3к26 к снимку 2026-10-13);
+   - `v_series_catalog`: 381, из них 368 `industry_*`;
+   - spot: `industry_total_price_expectations_sa` 2026-09 = 21.5845138071129; `industry_mining_ibk` 2026-09 = -3.34877342731565; `industry_services_cost_change` 2026-09 = 37.3328877005348.
+5. Повтор `make import STAT=cbr_mp_survey` — `no-op, версия be103476… уже импортирована, 104481 точек на месте`, `Imported 104481 rows`.
+6. `make mcp-user` → `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА; в т.ч. `витрина v_cbr_survey … 104481`, `каталог … 381`, `368 отраслевых`, `витрина … отраслевые ряды: 102384`.
+7. `dagu validate dagu/cbr.yaml` — exit 0.
+8. `make all` — exit 0 (`0 issues`, `go vet`, `go test -race ./...`, обе сборки); `make docs-check` — 36 страниц, 33 теста OK.
+9. Архив — не проверено: в логе импорта архивации не было (`ARCHIVE_BACKEND` в сессии не задан).
+10. Протокол — в этот план и комментарий PR; `Closes #239` вне backticks.
 
 ---
 
@@ -149,16 +149,16 @@
 3. `cbr: catalog and view for industry survey series`
 4. `cbr: tests and fixture for industry survey`
 5. `docs: sync architecture, importers and roadmap for mp industry`
-6. `cbr: live acceptance protocol for industry survey` (после приёмки)
+6. `docs: record cbr mp industry live acceptance` (после приёмки)
 
 ## Проверки перед PR
 
-- [ ] `go test -race -count=1 ./cbr/`
-- [ ] `make all`
-- [ ] `make docs-check`
-- [ ] `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА
-- [ ] `dagu validate dagu/cbr.yaml` — exit 0 (или «не проверено»)
-- [ ] живая приёмка: 104 468 / 381 / 2026-09-01; повтор no-op
-- [ ] нет 87 кодов ОКВЭД2; все новые имена `industry_*`
-- [ ] `source_publications` миграция выполнена и записана в протокол
-- [ ] `Closes #239` вне backticks
+- [x] `go test -race -count=1 ./cbr/`
+- [x] `make all`
+- [x] `make docs-check`
+- [x] `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА
+- [x] `dagu validate dagu/cbr.yaml` — exit 0
+- [x] живая приёмка: 104 481 / 381 / 2026-10-01; повтор no-op
+- [x] нет 87 кодов ОКВЭД2; все новые имена `industry_*`
+- [x] `source_publications` миграция выполнена и записана в протокол
+- [ ] `Closes #239` вне backticks (при открытии PR)
