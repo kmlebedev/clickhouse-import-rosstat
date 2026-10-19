@@ -1,7 +1,9 @@
 package cbr
 
 import (
+	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -76,6 +78,7 @@ func TestMPLParse(t *testing.T) {
 		1, "1.1", 0, 5, floatPtr(0), floatPtr(50), "[0; 50]")
 	assertMPLPoint(t, v3, "mortgage", date(2025, 7, 1), date(2025, 9, 30),
 		1, "1.2", 0, 5, floatPtr(80), nil, "более 80")
+	assertMPLMortgageBands(t, v3)
 
 	// v1 банк: 0.25 → 25 %, полоса «более 80».
 	r1 := parseRangesFile(t, "testdata/mpl_ranges_banks_2023.xlsx",
@@ -161,6 +164,37 @@ func assertMPLPoint(t *testing.T, points []mplPoint, class string, from, to time
 		from.Format("2006-01-02"), to.Format("2006-01-02"), rowNo, subrow, bandIdx)
 }
 
+// assertMPLMortgageBands — v3-ипотека: полосы первоначального взноса/LTV и
+// вид кредита не теряются, а подстрока 1.2 наследует лимит родителя 1.1.
+func assertMPLMortgageBands(t *testing.T, points []mplPoint) {
+	t.Helper()
+	for _, p := range points {
+		if p.loanClass != "mortgage" || !p.periodFrom.Equal(date(2025, 7, 1)) || p.rowNo != 1 {
+			continue
+		}
+		switch p.subrowNo {
+		case "1.1":
+			if p.downPaymentBand != "[0; 20]" || !floatPtrEqual(p.downPaymentMin, floatPtr(0)) ||
+				!floatPtrEqual(p.downPaymentMax, floatPtr(20)) {
+				t.Fatalf("mortgage 1.1: down_payment=%q %v..%v, want [0; 20] 0..20",
+					p.downPaymentBand, ptrValue(p.downPaymentMin), ptrValue(p.downPaymentMax))
+			}
+			if !strings.Contains(p.loanKind, "1.1.2.1") {
+				t.Fatalf("mortgage 1.1: loan_kind=%q, want подпункт 1.1.2.1", p.loanKind)
+			}
+		case "1.2":
+			if p.downPaymentBand != "более 20" || !floatPtrEqual(p.downPaymentMin, floatPtr(20)) ||
+				p.downPaymentMax != nil {
+				t.Fatalf("mortgage 1.2: down_payment=%q %v..%v, want более 20",
+					p.downPaymentBand, ptrValue(p.downPaymentMin), ptrValue(p.downPaymentMax))
+			}
+			if p.limitPct != 5 {
+				t.Fatalf("mortgage 1.2: limit=%v, want 5 (наследован от 1.1)", p.limitPct)
+			}
+		}
+	}
+}
+
 func floatPtrEqual(a, b *float64) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil
@@ -181,4 +215,13 @@ func ptrValue(p *float64) any {
 
 func date(year int, month time.Month, day int) time.Time {
 	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+}
+
+// TestMPLRestoreRejected — ranges-файлы не архивируются, поэтому restore
+// набора МПЛ обязан отказать до сети.
+func TestMPLRestoreRejected(t *testing.T) {
+	t.Setenv("ARCHIVE_ACTION", "restore")
+	if _, err := cbrMPLImporter.Import(context.Background(), nil); err == nil {
+		t.Fatal("restore для набора МПЛ должен возвращать ошибку")
+	}
 }

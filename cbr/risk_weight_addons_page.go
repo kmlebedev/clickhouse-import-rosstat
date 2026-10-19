@@ -53,6 +53,8 @@ func cbrRiskWeightAddonsParsePage(body []byte) ([]riskAddonFile, error) {
 		}
 		caption := strings.Join(strings.Fields(s.Text()), " ")
 		if caption == "" {
+			parseErr = fmt.Errorf("%s: xlsx-ссылка %q без подписи — нельзя определить дату документа",
+				cbrRiskWeightAddonsTable, href)
 			return
 		}
 		absolute, err := riskAddonAbsoluteURL(href)

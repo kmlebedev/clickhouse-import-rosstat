@@ -1,6 +1,7 @@
 package cbr
 
 import (
+	"context"
 	"os"
 	"testing"
 	"time"
@@ -100,4 +101,35 @@ func assertRiskPoint(t *testing.T, points []riskAddonPoint, matrix string,
 	}
 	t.Fatalf("нет точки %s %s..%s %s×%s", matrix, from.Format("2006-01-02"),
 		to.Format("2006-01-02"), row, col)
+}
+
+// TestRiskAddonVersionOrder — version определяется датой документа, а не
+// временем прогона: переимпорт старого файла не должен обгонять более новый.
+func TestRiskAddonVersionOrder(t *testing.T) {
+	oldFile := riskAddonFile{Name: "2018.xlsx", DocumentFrom: time.Date(2018, 10, 1, 0, 0, 0, 0, time.UTC)}
+	newFile := riskAddonFile{Name: "2022.xlsx", DocumentFrom: time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC)}
+
+	oldV := riskAddonVersion(oldFile, 0, 0)
+	newV := riskAddonVersion(newFile, 0, 0)
+	if oldV >= newV {
+		t.Fatalf("старый документ version %d >= новый %d", oldV, newV)
+	}
+	// Переимпорт старого файла после нового: версия растёт в пределах своей даты,
+	// но остаётся ниже версии нового документа.
+	oldReimport := riskAddonVersion(oldFile, 0, oldV)
+	if oldReimport <= oldV {
+		t.Fatalf("переимпорт не сдвинул version: %d -> %d", oldV, oldReimport)
+	}
+	if oldReimport >= newV {
+		t.Fatalf("переимпорт старого документа %d обогнал новый %d", oldReimport, newV)
+	}
+}
+
+// TestRiskWeightAddonsRestoreRejected — набор файлов берётся с landing, поэтому
+// restore обязан отказать до сети, а не падать на GetPage недоступного cbr.ru.
+func TestRiskWeightAddonsRestoreRejected(t *testing.T) {
+	t.Setenv("ARCHIVE_ACTION", "restore")
+	if _, err := cbrRiskWeightAddonsImporter.Import(context.Background(), nil); err == nil {
+		t.Fatal("restore для набора файлов должен возвращать ошибку")
+	}
 }

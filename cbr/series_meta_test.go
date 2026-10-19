@@ -33,11 +33,12 @@ type appendedRow struct {
 // удобнее разбирать raw самим, чем подгонять её под appendedRow.
 type appendRecorder struct {
 	driver.Batch
-	series string   // имя ряда однорядной таблицы: у неё в таблице нет колонки name
-	cols   []string // ожидаемые колонки в порядке DDL; пусто — форма не объявлена
-	raw    [][]any  // строки в том виде, в каком их передал импортёр
-	rows   []appendedRow
-	err    error // первая ошибка формы/типа: сообщает тест, паники нет
+	series  string   // имя ряда однорядной таблицы: у неё в таблице нет колонки name
+	cols    []string // ожидаемые колонки в порядке DDL; пусто — форма не объявлена
+	raw     [][]any  // строки в том виде, в каком их передал импортёр
+	rows    []appendedRow
+	rawOnly bool  // широкая строка: проверяется только число колонок, без разбора date/value
+	err     error // первая ошибка формы/типа: сообщает тест, паники нет
 }
 
 // newCbrRecorder — приёмник для тестовых разборов. cols — ожидаемые колонки в порядке DDL
@@ -46,8 +47,21 @@ func newCbrRecorder(cols ...string) *appendRecorder {
 	return &appendRecorder{cols: cols}
 }
 
+// newCbrShapeRecorder — приёмник для широких таблиц (6/12/27 колонок): проверяет
+// только длину строки, не разбирая date/value.
+func newCbrShapeRecorder(cols ...string) *appendRecorder {
+	return &appendRecorder{cols: cols, rawOnly: true}
+}
+
 func (r *appendRecorder) Append(v ...any) error {
 	r.raw = append(r.raw, v)
+	if r.rawOnly {
+		if len(r.cols) > 0 && len(v) != len(r.cols) {
+			r.err = fmt.Errorf("строка из %d значений, а объявлена схема из %d", len(v), len(r.cols))
+			return r.err
+		}
+		return nil
+	}
 	if r.err == nil {
 		row, err := r.normalize(v)
 		if err != nil {
