@@ -56,6 +56,8 @@ GRANT SELECT ON default.v_cbr_form101 TO kimi_reader;
 GRANT SELECT ON default.v_cbr_form101_loans TO kimi_reader;
 GRANT SELECT ON default.v_ofz_curve_compare TO kimi_reader;
 GRANT SELECT ON default.v_ofz_signal TO kimi_reader;
+-- ФАО: индекс продовольственных цен (пункт infra/1.6, issue #225).
+GRANT SELECT ON default.v_fao_food_price TO kimi_reader;
 
 -- Реестр ML-экспериментов (infra/4.1): агенту выданы только витрины.
 -- Сырые ml_runs/ml_predictions закрыты: паспорт прогона и fold-предсказания
