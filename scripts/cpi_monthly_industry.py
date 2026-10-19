@@ -953,6 +953,28 @@ def write_json(path: Path, payload: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
+def v3_sample_hash(sample: str) -> str:
+    """Hash v3-выборки (без industry) для сверки с паспортом Stage 1.
+
+    Stage 1 писал `sample_hash` по `{month, y, features}` с признаками
+    `cpi_monthly_v3.feature_names_v3()`; здесь те же поля и порядок
+    канонического JSON, поэтому hash сравним с `v_ml_runs.sample_hash`.
+    """
+    rows, _ = cmv3.build_sample_v3(sample)
+    names = cmv3.feature_names_v3()
+    payload = [
+        {
+            "month": row.month.isoformat(),
+            "y": mlx.json_safe(row.y),
+            "features": mlx.json_safe(
+                {name: row.features[name] for name in names}
+            ),
+        }
+        for row in rows
+    ]
+    return mlx.sha256_text(mlx.canonical_json(payload))
+
+
 def run(
     sample: str,
     out_dir: Path,
@@ -1155,7 +1177,15 @@ def main(argv=None) -> int:
         action="store_true",
         help="не падать, если регрессионный гейт Stage 1 разошёлся",
     )
+    parser.add_argument(
+        "--sample-hash",
+        action="store_true",
+        help="напечатать hash v3-выборки (без industry) и выйти",
+    )
     arguments = parser.parse_args(argv)
+    if arguments.sample_hash:
+        print(v3_sample_hash(arguments.sample))
+        return 0
     payload = run(
         sample=arguments.sample,
         out_dir=Path(arguments.out_dir),

@@ -69,12 +69,14 @@
 
 ```bash
 make cpi-monthly-industry-test
-ML_LOG=1 make cpi-monthly-industry ARGS="--sample long --start 48"
+ML_LOG=1 make cpi-monthly-industry ARGS="--sample long --start 48 --models v2_bottomup,v3_bottomup,ind_only_bottomup,v3_ind_bottomup,B1"
 ML_LOG=1 make cpi-monthly-industry ARGS="--sample weekly --start 24"
 ```
 
 - `uv run` с `--with openpyxl`; `MLFLOW_PREFLIGHT` и `MLFLOW_ENV` — как у `cpi-monthly-v3`.
 - Полные прогоны — официальные числа; сокращённый набор моделей — только для проверки механики.
+- `long` — сокращённый primary-набор (direct, `ind_bottomup`, `v3_ind_all_bottomup` — только `weekly`).
+- Артефакты пишутся до проверки гейта; при расхождении Stage 1 паспорт разбирается, baseline пересчитывается текущим кодом, `--allow-data-revision` фиксирует это в JSON/отчёте.
 - `ML_LOG=1` пишет только паспорт/предсказания; таблицы данных, DDL и `forecast_log` не трогаются.
 
 ## Task 6: отчёт и docs
