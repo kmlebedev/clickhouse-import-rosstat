@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/gocolly/colly/v2"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	log "github.com/sirupsen/logrus"
 	"github.com/xuri/excelize/v2"
@@ -32,17 +31,23 @@ type fedbudMesyatsStat struct {
 	util.ClickHouseImport
 }
 
-func init() {
-	chimport.Stats = append(chimport.Stats, &fedbudMesyatsStat{ClickHouseImport: util.ClickHouseImport{
-		TableName: fedbudMesyatsTable,
-		CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (
+// fedbudMesyats — консолидированный бюджет: таблица, DDL и разбор листа «месяц»
+// (накопление переводится в месячные разности). Каталог рядов и витрину
+// v_minfin_budget публикует Import() обёртки после полного цикла шаблона.
+// Регистрация — реестром minfin/importers.go (стандарт §8).
+var fedbudMesyats = util.ClickHouseImport{
+	TableName: fedbudMesyatsTable,
+	CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (
               name LowCardinality(String)
 			, date Date
 			, value Float32
 		) ENGINE = ReplacingMergeTree ORDER BY (name, date);`},
-		ImportFunc: fedbudMesyatsImport,
-	}})
+	ImportFunc: fedbudMesyatsImport,
 }
+
+// fedbudMesyatsImporter — консолидированный бюджет; адрес файла вычисляется в Import()
+// через legacy-транспорт colly (пакетный рефакторинг транспорта — отдельный пункт).
+var fedbudMesyatsImporter = &fedbudMesyatsStat{ClickHouseImport: fedbudMesyats}
 
 func getFedbudMesyatDataUrl() (url string) {
 	c := colly.NewCollector(colly.UserAgent(util.HttpUA))

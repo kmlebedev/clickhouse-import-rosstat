@@ -100,6 +100,46 @@ func TestFedbudMesyatsSeriesMetaCoversParsedRows(t *testing.T) {
 	checkFedbudSeriesMeta(t, minfinMesyatsSource, fedbudMesyatsFields, fedbudMesyatsSeriesMeta, fedbudMesyatsImport)
 }
 
+// TestFedbudMesDeficitSeries держит явное требование пункта (спека §4.3): федеральный
+// дефицит идёт отдельной строкой в minfin_fed_bud_mes (source = minfin), а не только
+// у консолидированного бюджета. Общий контракт выше покрывает ряд автоматически, но
+// эта проверка падает адресно, если ряд уберут из списка полей или из каталога, —
+// вместе с ним из витрины исчезнет единственный федеральный дефицит, который ищет
+// MCP-проверка по (source, series).
+func TestFedbudMesDeficitSeries(t *testing.T) {
+	const deficit = "Дефицит (-)/Профицит (+)"
+
+	foundField := false
+	for _, field := range fedbudMesFields {
+		if field == deficit {
+			foundField = true
+			break
+		}
+	}
+	if !foundField {
+		t.Errorf("ряд %q отсутствует в fedbudMesFields: дефицит не будет разобран из *_mes.xlsx", deficit)
+	}
+	described := describedFedbud(t, minfinSource, fedbudMesSeriesMeta)
+	if !described[deficit] {
+		t.Errorf("ряд %q не описан в fedbudMesSeriesMeta (source %q)", deficit, minfinSource)
+	}
+
+	rec := &appendRecorder{}
+	if err := fedBudImport(newBudgetWorkbook(t, []string{deficit}), rec); err != nil {
+		t.Fatalf("разбор книги с рядом %q: %v", deficit, err)
+	}
+	parsed := false
+	for _, row := range rec.rows {
+		if row.name == deficit {
+			parsed = true
+			break
+		}
+	}
+	if !parsed {
+		t.Errorf("ряд %q не встретился при разборе: поле в fedbudMesFields не доходит до batch.Append", deficit)
+	}
+}
+
 func TestFedBudImportDifferencesCumulativeValues(t *testing.T) {
 	rec := &appendRecorder{}
 	if err := fedBudImport(newBudgetWorkbook(t, fedbudMesFields), rec); err != nil {
