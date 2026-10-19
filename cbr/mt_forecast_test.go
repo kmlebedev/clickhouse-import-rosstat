@@ -2,6 +2,7 @@ package cbr
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -89,8 +90,8 @@ func mtForecastIndexWithCardDate(t *testing.T, page []byte, anchorID, date strin
 // 2026-02) и 11 «Среднесрочных прогнозов» (PDF, спека §3.4). Оба типа читаются одним проходом:
 // маркер href (comment_/forecast_) задаёт тип, титул карточки его подтверждает. Дата заседания
 // разбирается у обоих типов: у комментария она раньше даты публикации, у прогноза дата карточки
-// и есть дата заседания. PDF-выпуски возвращаются с признаком PDF и попадут в цикл импорта только
-// после гейта (сейчас mtForecastNewReleases отсеивает все PDF), но счётчики и даты видны уже здесь.
+// и есть дата заседания. PDF-выпуски возвращаются с признаком PDF и проходят тот же гейт, что
+// страничные: признак PDF выбирает транспорт в цикле импорта, а счётчики и даты видны уже здесь.
 func TestMtForecastIndexReleases(t *testing.T) {
 	page := mtForecastFixture(t, mtForecastIndexFixture)
 	releases, err := mtForecastIndexReleases(page)
@@ -280,8 +281,9 @@ func TestMtForecastPageXlsxURL(t *testing.T) {
 
 // TestMtForecastNewReleases — гейт прогона: из выпусков индекса остаются те, чьей даты публикации
 // нет в таблице, в хронологическом порядке (старые первыми) — первый прогон наполняет историю
-// детерминированным префиксом. PDF-выпуски не проходят гейт никогда: у них нет ни страницы, ни
-// файла. Пустое множество известных даёт все страничные выпуски, полное — пусто (повторный
+// детерминированным префиксом. PDF-выпуски проходят тот же гейт, что и страничные: файл у них —
+// сам PDF, и транспорт выбирается по признаку PDF, а не гейтом. Пустое множество известных даёт
+// все 22 выпуска, известные даты двух xlsx — 20 PDF-выпусков, полное множество — пусто (повторный
 // прогон — no-op гейта, спека §3.6).
 func TestMtForecastNewReleases(t *testing.T) {
 	releases, err := mtForecastIndexReleases(mtForecastFixture(t, mtForecastIndexFixture))
@@ -291,33 +293,172 @@ func TestMtForecastNewReleases(t *testing.T) {
 
 	t.Run("Известных нет", func(t *testing.T) {
 		fresh := mtForecastNewReleases(releases, map[time.Time]bool{})
-		if len(fresh) != 2 {
-			t.Fatalf("новых выпусков %d, want 2: PDF-выпуски в цикл не попадают — у них нет ни страницы, ни xlsx", len(fresh))
+		if len(fresh) != 22 {
+			t.Fatalf("новых выпусков %d, want 22: PDF-выпуски проходят гейт — файл у них сам PDF", len(fresh))
 		}
-		if !fresh[0].ReleaseDate.Equal(mtForecastUTCDay(2026, time.May, 7)) || !fresh[1].ReleaseDate.Equal(mtForecastUTCDay(2026, time.August, 5)) {
-			t.Errorf("порядок новых выпусков [%s, %s], want [2026-05-07, 2026-08-05]: старые первыми, а не в порядке страницы (та отдаёт свежие первыми)",
-				fresh[0].ReleaseDate.Format(mtForecastTestDayLayout), fresh[1].ReleaseDate.Format(mtForecastTestDayLayout))
+		if !fresh[0].ReleaseDate.Equal(mtForecastUTCDay(2024, time.February, 16)) || !fresh[0].PDF || fresh[0].Kind != mtForecastKindForecast {
+			t.Errorf("первый новый выпуск %s (PDF=%v, Kind=%q), want PDF-прогноз 2024-02-16: дата публикации прогноза — дата заседания, она самая ранняя",
+				fresh[0].ReleaseDate.Format(mtForecastTestDayLayout), fresh[0].PDF, fresh[0].Kind)
+		}
+		if !fresh[1].ReleaseDate.Equal(mtForecastUTCDay(2024, time.February, 27)) || !fresh[1].PDF || fresh[1].Kind != mtForecastKindComment {
+			t.Errorf("второй новый выпуск %s (PDF=%v, Kind=%q), want PDF-комментарий 2024-02-27: комментарий публикуется позже заседания",
+				fresh[1].ReleaseDate.Format(mtForecastTestDayLayout), fresh[1].PDF, fresh[1].Kind)
+		}
+		for i := 1; i < len(fresh); i++ {
+			if fresh[i].ReleaseDate.Before(fresh[i-1].ReleaseDate) {
+				t.Errorf("порядок новых выпусков нарушен на паре (%s, %s): старые первыми, а не в порядке страницы (та отдаёт свежие первыми)",
+					fresh[i-1].ReleaseDate.Format(mtForecastTestDayLayout), fresh[i].ReleaseDate.Format(mtForecastTestDayLayout))
+				break
+			}
+		}
+	})
+
+	t.Run("Известны только xlsx-выпуски", func(t *testing.T) {
+		// Две даты уже импортированных xlsx-комментариев: гейт вычитает их по одной, а 20
+		// PDF-выпусков остаются новыми — иначе перенос гейта снова спрятал бы оба корпуса.
+		known := map[time.Time]bool{
+			mpDay(mtForecastUTCDay(2026, time.May, 7)):    true,
+			mpDay(mtForecastUTCDay(2026, time.August, 5)): true,
+		}
+		fresh := mtForecastNewReleases(releases, known)
+		if len(fresh) != 20 {
+			t.Fatalf("новых выпусков %d, want 20: 22 карточки индекса минус 2 известные xlsx-даты", len(fresh))
+		}
+		for _, release := range fresh {
+			if !release.PDF {
+				t.Errorf("в новых остался страничный выпуск %s: его дата есть в таблице, гейт обязан его вычесть",
+					release.ReleaseDate.Format(mtForecastTestDayLayout))
+			}
 		}
 	})
 
 	t.Run("Все известны", func(t *testing.T) {
-		known := map[time.Time]bool{
-			mpDay(mtForecastUTCDay(2026, time.May, 7)):    true,
-			mpDay(mtForecastUTCDay(2026, time.August, 5)): true,
+		known := make(map[time.Time]bool, len(releases))
+		for _, release := range releases {
+			known[mpDay(release.ReleaseDate)] = true
 		}
 		if fresh := mtForecastNewReleases(releases, known); len(fresh) != 0 {
 			t.Errorf("новых выпусков %d (%v), want 0: повторный прогон — no-op гейта", len(fresh), fresh)
 		}
 	})
+}
 
-	t.Run("Известен только свежий", func(t *testing.T) {
-		// Гейт вычитает по дате выпуска поштучно: известность свежего не должна прятать старый.
-		known := map[time.Time]bool{mpDay(mtForecastUTCDay(2026, time.August, 5)): true}
-		fresh := mtForecastNewReleases(releases, known)
-		if len(fresh) != 1 || !fresh[0].ReleaseDate.Equal(mtForecastUTCDay(2026, time.May, 7)) {
-			t.Errorf("новые выпуски %v, want только 2026-05-07: гейт вычитает известное по одному выпуску", fresh)
+// TestMtForecastPDFAppendPoints — приёмник текста PDF-выпуска: 64 точки «Среднесрочного прогноза»
+// 24.07.2026 записываются строками cbr_mt_forecast — атрибуты выпуска в первых трёх колонках DDL,
+// точка в остальных (спека §3.1, §3.2). Фикстура — дословный вывод pdftotext (стандарт §11.1), а
+// сам pdftotext не вызывается: приёмник отделён от извлечения, поэтому запись проверяется офлайн
+// (спека §7). Первая и последняя строка — порядок разбора (сверху вниз, годы по возрастанию):
+// перевёрнутый обход или потерянная колонка винтажа оставили бы выпуск неотличимым от другого.
+func TestMtForecastPDFAppendPoints(t *testing.T) {
+	release := mtForecastRelease{
+		Kind:        mtForecastKindForecast,
+		MeetingDate: mtForecastUTCDay(2026, time.July, 24),
+		ReleaseDate: mtForecastUTCDay(2026, time.July, 24), // у прогноза дата карточки — дата заседания
+		URL:         "https://www.cbr.ru/Content/Document/File/194258/forecast_260724.pdf",
+		PDF:         true,
+	}
+	text := mtForecastFixture(t, mtForecastPDFFixtureDir+"forecast_260724.txt")
+	batch := &mtForecastBatch{rec: newCbrRecorder()}
+	if err := mtForecastAppendPDFText(release, text, batch); err != nil {
+		t.Fatalf("запись PDF-выпуска: %v", err)
+	}
+	if batch.rec.err != nil {
+		t.Fatalf("схема строк не совпала с разбором: %v", batch.rec.err)
+	}
+	if len(batch.rows) != 64 {
+		t.Fatalf("строк батча %d, want 64 (16 показателей × 4 прогнозных года)", len(batch.rows))
+	}
+	for i, row := range batch.rows {
+		if meeting, ok := row[0].(time.Time); !ok || !meeting.Equal(release.MeetingDate) {
+			t.Fatalf("строка %d: meeting_date = %v, ожидалась %s", i, row[0], release.MeetingDate.Format(mtForecastTestDayLayout))
 		}
-	})
+		if published, ok := row[1].(time.Time); !ok || !published.Equal(release.ReleaseDate) {
+			t.Fatalf("строка %d: release_date = %v, ожидалась %s (ключ винтажа)",
+				i, row[1], release.ReleaseDate.Format(mtForecastTestDayLayout))
+		}
+		if row[2] != release.URL {
+			t.Fatalf("строка %d: url = %v, ожидался %q", i, row[2], release.URL)
+		}
+	}
+	first, last := batch.rows[0], batch.rows[len(batch.rows)-1]
+	if first[3] != "cpi_dec" || first[4] != uint16(2026) || first[5] != 6.0 || first[6] != 7.0 {
+		t.Errorf("первая строка = (%v, %v, %v, %v), want (cpi_dec, 2026, 6, 7)",
+			first[3], first[4], first[5], first[6])
+	}
+	if last[3] != "bank_claims_mortgage" || last[4] != uint16(2029) || last[5] != 10.0 || last[6] != 15.0 {
+		t.Errorf("последняя строка = (%v, %v, %v, %v), want (bank_claims_mortgage, 2029, 10, 15)",
+			last[3], last[4], last[5], last[6])
+	}
+	var keySeen bool
+	for _, row := range batch.rows {
+		if row[3] != "key_rate_avg" || row[4] != uint16(2026) {
+			continue
+		}
+		keySeen = true
+		if row[5] != 14.5 || row[6] != 14.6 {
+			t.Errorf("key_rate_avg 2026 = (%v, %v), want (14.5, 14.6): приклеенная сноска источника",
+				row[5], row[6])
+		}
+	}
+	if !keySeen {
+		t.Error("key_rate_avg 2026 в строках батча не найден: core-показатель потерян")
+	}
+}
+
+// TestMtForecastPDFAppendPointsNotPDF — WAF/HTML-заглушка вместо файла: обёртка BodyFunc возвращает
+// ошибку извлечения и не пишет ни строки. Подменять mtForecastPDFTool не нужно: проверка сигнатуры
+// стоит до exec (спека §3.3), поэтому pdftotext в тесте не вызывается.
+func TestMtForecastPDFAppendPointsNotPDF(t *testing.T) {
+	release := mtForecastRelease{
+		Kind:        mtForecastKindForecast,
+		MeetingDate: mtForecastUTCDay(2026, time.July, 24),
+		ReleaseDate: mtForecastUTCDay(2026, time.July, 24),
+		URL:         "https://www.cbr.ru/Content/Document/File/194258/forecast_260724.pdf",
+		PDF:         true,
+	}
+	batch := &mtForecastBatch{rec: newCbrRecorder()}
+	err := mtForecastPDFAppendPoints(context.Background(), release)([]byte("<!DOCTYPE html><html>WAF</html>"), batch)
+	if err == nil {
+		t.Fatal("HTML вместо PDF: ожидалась ошибка извлечения, а байты приняты")
+	}
+	for _, want := range []string{"ответ не PDF", "%PDF-"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("ошибка %q не содержит %q: оператор не увидит, что вместо файла пришла заглушка", err, want)
+		}
+	}
+	if len(batch.rows) != 0 || len(batch.rec.raw) != 0 {
+		t.Errorf("при ошибке извлечения записано строк %d (харнесс: %d), want 0",
+			len(batch.rows), len(batch.rec.raw))
+	}
+}
+
+// TestMtForecastAppendPDFTextAppendError — сбой Append не проглатывается, а ошибка приёмника
+// называет точку (indicator, year) и дату выпуска: по ней строку находят в разборе. Префикса
+// выпуска (mtForecastReleaseContext) здесь нет — его добавляет цикл Import при накоплении ошибок
+// (спека §3.5), а приёмник остаётся чистым текстовым стоком.
+func TestMtForecastAppendPDFTextAppendError(t *testing.T) {
+	release := mtForecastRelease{
+		Kind:        mtForecastKindForecast,
+		MeetingDate: mtForecastUTCDay(2026, time.July, 24),
+		ReleaseDate: mtForecastUTCDay(2026, time.July, 24),
+		URL:         "https://www.cbr.ru/Content/Document/File/194258/forecast_260724.pdf",
+		PDF:         true,
+	}
+	text := mtForecastFixture(t, mtForecastPDFFixtureDir+"forecast_260724.txt")
+	// Схема из одной колонки отвергает каждую широкую строку — роль «батч не принял строку».
+	batch := &mtForecastBatch{rec: newCbrRecorder("indicator")}
+	err := mtForecastAppendPDFText(release, text, batch)
+	if err == nil {
+		t.Fatalf("ожидалась ошибка записи, строк принято %d", len(batch.rows))
+	}
+	for _, want := range []string{"cbr_mt_forecast", "2026-07-24", "точка (cpi_dec, 2026)"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("ошибка %q не содержит %q: сбой строки не назван точкой", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "выпуск ") {
+		t.Errorf("ошибка %q содержит префикс выпуска: его добавляет цикл Import, а не приёмник", err)
+	}
 }
 
 // TestMtForecastImporterNameAndTable — имя импортёра и таблица: первое — контракт
