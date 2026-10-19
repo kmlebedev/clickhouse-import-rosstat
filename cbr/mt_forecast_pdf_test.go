@@ -2,6 +2,7 @@ package cbr
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 )
@@ -403,4 +404,47 @@ func TestMtForecastNormalizeLabelPDF(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestMtForecastPDFText — извлечение текста выпуска (спека §3.3): проверка сигнатуры `%PDF-`
+// стоит до `exec`, а отсутствующий бинарник назван в ошибке вместе с подсказкой `poppler-utils`.
+// Настоящий `pdftotext` тесты не вызывают — имя утилиты подменено заведомо отсутствующим, поэтому
+// прогон офлайн и зелёный в CI без poppler (спека §3.3, §7). Подмена возвращается в t.Cleanup:
+// глобальная переменная пережила бы тест и подменила утилиту соседним тестам пакета.
+func TestMtForecastPDFText(t *testing.T) {
+	previous := mtForecastPDFTool
+	mtForecastPDFTool = "definitely-not-pdftotext"
+	t.Cleanup(func() { mtForecastPDFTool = previous })
+
+	t.Run("HTML вместо PDF", func(t *testing.T) {
+		// WAF отдаёт заглушку с кодом 200: извлекатель обязан отказать по сигнатуре, не запуская
+		// pdftotext. Если проверка заголовка регрессирует, exec дойдёт до подменённого имени и в
+		// ошибке появится подсказка poppler-utils — её наличие и есть доказательство запуска.
+		body := []byte("<!DOCTYPE html><html><body>403 WAF</body></html>")
+		_, err := mtForecastPDFText(context.Background(), body)
+		if err == nil {
+			t.Fatal("HTML-байты: ожидалась ошибка, а извлекатель принял их за PDF")
+		}
+		if !strings.Contains(err.Error(), "%PDF-") {
+			t.Errorf("ошибка %q не называет ожидаемый заголовок %%PDF-: непонятно, что пришло вместо файла", err)
+		}
+		if strings.Contains(err.Error(), "poppler-utils") {
+			t.Errorf("ошибка %q подсказывает poppler-utils: извлекатель запустил exec на не-PDF байтах", err)
+		}
+	})
+
+	t.Run("Нет pdftotext", func(t *testing.T) {
+		// Валидный заголовок снимает проверку сигнатуры, и следующий шаг — запуск утилиты.
+		body := []byte("%PDF-1.7\n% тестовое тело\n%%EOF\n")
+		_, err := mtForecastPDFText(context.Background(), body)
+		if err == nil {
+			t.Fatal("отсутствующий pdftotext: ожидалась ошибка, а извлечение прошло")
+		}
+		if !strings.Contains(err.Error(), mtForecastPDFTool) {
+			t.Errorf("ошибка %q не называет утилиту %q: непонятно, какого бинарника нет", err, mtForecastPDFTool)
+		}
+		if !strings.Contains(err.Error(), "poppler-utils") {
+			t.Errorf("ошибка %q не подсказывает пакет poppler-utils: оператор не узнает, что установить", err)
+		}
+	})
 }
