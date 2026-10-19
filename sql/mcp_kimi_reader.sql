@@ -71,3 +71,10 @@ GRANT SELECT ON default.v_fao_food_price TO kimi_reader;
 GRANT SELECT ON default.v_ml_runs TO kimi_reader;
 GRANT SELECT ON default.v_ml_leaderboard TO kimi_reader;
 GRANT SELECT ON default.v_ml_error_by_fold TO kimi_reader;
+
+-- Task 7 (#248): публичный классификатор ОКВЭД2 и кроссворд 87 BSU-кодов на отраслевые
+-- листы mp_survey_data.xlsx. Сырые rosstat_okved2 и cbr_mp_bsu_map закрыты: агенту
+-- выданы витрины с названиями и публичная панель.
+GRANT SELECT ON default.v_rosstat_okved2 TO kimi_reader;
+GRANT SELECT ON default.v_cbr_mp_bsu_map TO kimi_reader;
+GRANT SELECT ON default.v_cbr_mp_public_panel TO kimi_reader;

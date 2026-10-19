@@ -31,8 +31,8 @@
 1. Таблица источников §1 спеки: ЦБ `mp_survey_data.xlsx`, `survey_data_group.xlsx`, `mp_survey_data_gu.xlsx`, `mp_survey_data_facts.xlsx`, API ЦБ, Росстат ОКВЭД2, figshare-архив, ЕМИСС/Росстат.
 2. Записать живые ответы: URL, HTTP, размер, формат, число листов/строк, дата среза/версия.
 3. Явный ответ: live public source на 87 кодах — **нет**; коды — да (87/87), значения — статический архив 2009-01…2024-09.
-4. Таблица кроссворда: 87 кодов → 13 используемых листов; 21 consumer + 1 investment + 4 intermediate + остальные rule; `Промышленность`, `Обработка`, `Торговля (45+46+47)` — агрегаты.
-5. Ограничения: 39 серий, не 87; кроссворд — не внутренний mapping ЦБ; паритет не заявляется.
+4. Таблица кроссворда: 87 кодов → 11 используемых листов; 21 consumer + 1 investment + 4 intermediate + остальные rule; `Промышленность`, `Обработка`, `Торговля (45+46+47)` — агрегаты; `electricity`/`water` в 87 кодах не встречаются.
+5. Ограничения: 33 серии, не 87; кроссворд — не внутренний mapping ЦБ; паритет не заявляется.
 
 **Проверка:** отчёт содержит таблицу и решение; ссылки на источники открываются.
 
@@ -64,7 +64,7 @@
 
 ## Task 3. `cbr_mp_bsu_map` — 87 кодов, маппер, импортёр
 
-**Файлы:** `cbr/mp_bsu_codes.go`, `cbr/mp_bsu_map.go`, `cbr/mp_bsu_map_test.go`, `cbr/testdata/cb_comp_bsu_codes.csv`, `cbr/testdata/okved2_87.csv` (87 строк классификатора: code;name;section).
+**Файлы:** `cbr/mp_bsu_codes.go`, `cbr/mp_bsu_map.go`, `cbr/mp_bsu_map_test.go`, `cbr/testdata/cb_comp_bsu_codes.csv` (87 строк: code;name;section).
 
 1. `var cbCompBSUCodes = []string{...}` — 87 кодов из `model.xlsx` `1.0.4.2`; комментарий: figshare DOI, дата извлечения, 87 уникальных.
 2. `type bsuIndustry struct { Sheet, Slug, Basis, Confidence string }`.
@@ -119,7 +119,7 @@ ORDER BY m.code
 2. Проверки в `mcp_check.py`:
    - `v_rosstat_okved2`: 3 102 строки; 87/87 BSU-кодов (запрос по списку или `count() WHERE code IN (...)`).
    - `v_cbr_mp_bsu_map`: 87 строк, 0 пустых `okved_name`.
-   - `v_cbr_mp_public_panel`: 87 кодов, 13 slug, 3 indicator, 297 дат, `count() > 0`.
+   - `v_cbr_mp_public_panel`: 87 кодов, 11 slug, 3 indicator, 297 дат, `count() > 0`.
    - spot: `10.1`, `29.10`, `23`, `47.22`, `46.32`, `45.11`, `01.4`, `05`, `43.2`, `49.3`, `86.90.4`.
 3. Не хардкодить 77 517: число строк растёт с месяцами.
 
@@ -154,7 +154,7 @@ make docs-check
 dagu validate dagu/rosstat.yaml && dagu validate dagu/cbr.yaml
 ```
 
-**Ожидания:** `rosstat_okved2 FINAL` 3 102; `cbr_mp_bsu_map FINAL` 87; `v_cbr_mp_public_panel` 77 517 / 13 / 3 / 297 на снимке 2026-10; spot-коды из §4.6 спеки.
+**Ожидания:** `rosstat_okved2 FINAL` 3 102; `cbr_mp_bsu_map FINAL` 87; `v_cbr_mp_public_panel` 77 517 / 11 / 3 / 297 на снимке 2026-10; spot-коды из §4.6 спеки.
 
 **Протокол:** комментарием в PR; после мержа — `Done` и роадмап.
 

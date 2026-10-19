@@ -268,7 +268,7 @@ func TestCbrImportersPrefixedAndRegistered(t *testing.T) {
 	// v_cbr_mp_summary* остались бы пустыми, а у платёжного баланса витрина v_cbr_bop, у приложений
 	// ДИП витрина v_cbr_dip_bulletin и у «Комментария» витрина v_cbr_mt_forecast остались бы
 	// непустыми и просто перестали бы обновляться; последнего не замечает и mcp_check (он проверяет
-	// непустоту витрины и полноту каталога, а не свежесть точек), поэтому все десять шагов
+	// непустоту витрины и полноту каталога, а не свежесть точек), поэтому все одиннадцать шагов
 	// перечислены здесь явно.
 	keyScheduled := map[string]string{
 		"cbr_mp_summary":         "контур резюме обсуждений не запускается по расписанию, а витрины v_cbr_mp_summary* остаются пустыми",
@@ -281,6 +281,7 @@ func TestCbrImportersPrefixedAndRegistered(t *testing.T) {
 		"cbr_ccyb_indicators":    "АЦН-индикаторы не обновляются по расписанию, а витрина v_cbr_ccyb_indicators тихо стареет",
 		"cbr_risk_weight_addons": "матрицы надбавок не обновляются по расписанию, а витрина v_cbr_risk_weight_addons тихо стареет",
 		"cbr_mpl":                "макропруденциальные лимиты не обновляются по расписанию, а витрина v_cbr_mpl тихо стареет",
+		"cbr_mp_bsu_map":         "публичный кроссворд BSU не пересобирается по расписанию, а витрины v_cbr_mp_bsu_map/v_cbr_mp_public_panel тихо стареют",
 	}
 	for step, why := range keyScheduled {
 		if !scheduled[step] {
