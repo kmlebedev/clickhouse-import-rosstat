@@ -304,18 +304,22 @@ class TestEvaluationHelpers(unittest.TestCase):
             "v2_bottomup": {"n": 10, "rmse": 0.362300},
             "v3_bottomup": {"n": 10, "rmse": 0.311487},
         }
-        gate = ind.stage1_gate("weekly", summary, False)
+        gate, failed = ind.stage1_gate("weekly", summary)
         self.assertEqual(gate["v2_bottomup"]["status"], "ok")
         self.assertEqual(gate["v3_bottomup"]["status"], "ok")
-        with self.assertRaises(SystemExit):
-            ind.stage1_gate(
-                "weekly",
-                {
-                    "v2_bottomup": {"n": 10, "rmse": 1.0},
-                    "v3_bottomup": {"n": 10, "rmse": 0.311487},
-                },
-                False,
-            )
+        self.assertEqual(failed, [])
+        skipped, skipped_failed = ind.stage1_gate("weekly", summary, start=52)
+        self.assertEqual(skipped["v2_bottomup"]["status"], "skipped")
+        self.assertEqual(skipped_failed, [])
+        bad_gate, bad_failed = ind.stage1_gate(
+            "weekly",
+            {
+                "v2_bottomup": {"n": 10, "rmse": 1.0},
+                "v3_bottomup": {"n": 10, "rmse": 0.311487},
+            },
+        )
+        self.assertEqual(bad_failed, ["v2_bottomup"])
+        self.assertEqual(bad_gate["v2_bottomup"]["status"], "differs")
 
     def test_decide(self):
         def pair(delta, p_value, ci, primary=True):
