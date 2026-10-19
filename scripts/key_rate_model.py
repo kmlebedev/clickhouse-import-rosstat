@@ -80,7 +80,9 @@
 отдельный writer `scripts/key_rate_forecast_log.py` (`make key-rate-forecast-log`)
 через ingest-контур (`POST /v1/key_rate_forecast`).
 
-**Консенсус-бенчмарк №4 (Task 5 плана `2026-10-19-key-rate-consensus-benchmark`).**
+**Консенсус-бенчмарк №4 (спека
+`docs/superpowers/specs/2026-10-19-key-rate-consensus-benchmark-design.md`
+§2–§4).**
 Медиана макроэкономического опроса ЦБ (`v_cbr_mo_br`, волна доступна с
 `wave_date + 6 дней`) сравнивается с фактической среднегодовой ставкой
 (бакеты по горизонту, наивный hold, DM), текущая волна печатается отдельно,
@@ -179,9 +181,12 @@ IBK_SERIES = "business_climate_sa"
 
 # Консенсус-бенчмарк №4 — медиана макроэкономического опроса ЦБ (спека
 # `2026-10-19-key-rate-consensus-benchmark-design.md` §2). `CONSENSUS_SOURCE` —
-# источник рядов в `macro_series`; публикация волны наступает через 2–6 дней
-# после полевого периода, поэтому точка волны считается доступной только на
-# `wave_date + 6 дней` — консервативно и без заглядывания вперёд.
+# источник рядов в `macro_series`: витрина `v_cbr_mo_br`, которую читает
+# `CONSENSUS_SQL`, построена по `macro_series FINAL WHERE source =
+# CONSENSUS_SOURCE`; константа фиксирует контракт источника (проверяется
+# тестом). Публикация волны наступает через 2–6 дней после полевого периода,
+# поэтому точка волны считается доступной только на `wave_date + 6 дней` —
+# консервативно и без заглядывания вперёд.
 CONSENSUS_SOURCE = "cbr_mo_br"
 CONSENSUS_PUBLICATION_LAG_DAYS = 6
 
@@ -191,9 +196,30 @@ CONSENSUS_PUBLICATION_LAG_DAYS = 6
 # здесь, а не в рендерере.
 CONSENSUS_BUCKETS = ("ex-ante", "10-12", "7-9", "4-6", "1-3")
 
-# Guard B4 (Task 4, спека §3.2): на остаток года должно оставаться не меньше
+# Guard B4 (спека §3.2): на остаток года должно оставаться не меньше
 # 30 дней, иначе `r_implied` делится на короткий хвост и становится шумом.
 CONSENSUS_MIN_DAYS_REMAINING = 30
+
+# Короткие и стабильные метки причин пропуска B4 (спека §5.6). Подробные
+# сообщения с датами/годами даёт `_consensus_path_with_reason`; в отчёте
+# пропуски группируются по этим категориям, а диапазон дат печатается
+# отдельно. Порядок кортежа — порядок строк в разделе отчёта.
+CONSENSUS_SKIP_NO_WAVE = "нет волны на год заседания"
+CONSENSUS_SKIP_RATE_AT_WAVE = "ряд ставки не покрывает дату доступности волны"
+CONSENSUS_SKIP_RATE_YEAR_START = "ряд ставки не покрывает 1 января года заседания"
+CONSENSUS_SKIP_SHORT_REMAINDER = (
+    f"на остаток года меньше {CONSENSUS_MIN_DAYS_REMAINING} дней"
+)
+CONSENSUS_SKIP_IMPLIED_RANGE = "`r_implied` вне (−100, 100) %"
+CONSENSUS_SKIP_UNKNOWN = "причина не определена"
+CONSENSUS_SKIP_REASONS = (
+    CONSENSUS_SKIP_NO_WAVE,
+    CONSENSUS_SKIP_RATE_AT_WAVE,
+    CONSENSUS_SKIP_RATE_YEAR_START,
+    CONSENSUS_SKIP_SHORT_REMAINDER,
+    CONSENSUS_SKIP_IMPLIED_RANGE,
+    CONSENSUS_SKIP_UNKNOWN,
+)
 
 # Режимный срез годового бенчмарка (Task 5, спека §3.1) — завершённые годы
 # текущего режима. Срез описательный: гиперпараметры на нём не подбираются.
@@ -1010,6 +1036,52 @@ def _consensus_path_with_reason(
     )
 
 
+def _consensus_skip_reason(reason: Optional[str]) -> str:
+    """Короткая стабильная метка причины пропуска B4 (спека §5.6).
+
+    Guards здесь НЕ повторяются: подробное сообщение уже названо
+    `_consensus_path_with_reason`, функция только переводит его в категорию
+    отчёта (даты и годы в метку не входят — диапазон печатает рендерер).
+    `None` — путь не определён без названной причины; такая строка не
+    теряется и попадает в «причина не определена».
+    """
+    if reason is None:
+        return CONSENSUS_SKIP_UNKNOWN
+    if reason.startswith("нет волны на "):
+        return CONSENSUS_SKIP_NO_WAVE
+    if reason.startswith("ряд ставки не покрывает дату доступности волны"):
+        return CONSENSUS_SKIP_RATE_AT_WAVE
+    if reason.startswith("ряд ставки не покрывает 1 января"):
+        return CONSENSUS_SKIP_RATE_YEAR_START
+    if reason.startswith("на остаток "):
+        return CONSENSUS_SKIP_SHORT_REMAINDER
+    if reason.startswith("r_implied="):
+        return CONSENSUS_SKIP_IMPLIED_RANGE
+    return CONSENSUS_SKIP_UNKNOWN
+
+
+def consensus_path_skips(rows: list, consensus: list, key_rate: list) -> list:
+    """Пропуски B4 по строкам выборки: `(meeting_date, короткая причина)`.
+
+    Для каждого `Row`, у которого guards §3.2 не дали проекции, возвращается
+    дата заседания и метка из `CONSENSUS_SKIP_REASONS` (спека §5.6).
+    Причина берётся из `_consensus_path_with_reason` — того же расчёта, что у
+    `consensus_path_predictions`, поэтому сумма `len(skips) + len(b4)` равна
+    `len(rows)`: одна строка не может попасть и в фолды, и в пропуски.
+    """
+    skips = []
+    for row in rows:
+        decision = row.decision
+        path, reason = _consensus_path_with_reason(
+            consensus, key_rate, decision.meeting_date, decision.rate_before
+        )
+        if path is None:
+            skips.append(
+                (decision.meeting_date, _consensus_skip_reason(reason))
+            )
+    return skips
+
+
 def consensus_path(
     consensus: list, key_rate: list, meeting: date, rate_before: float
 ) -> Optional[ConsensusPath]:
@@ -1182,9 +1254,11 @@ class CurrentConsensus:
     """Последняя доступная волна консенсуса (спека §4).
 
     `rows` — все годы одной волны опроса (медианы на разные годы публикуются
-    вместе), отсортированные по году. `stale_days` — сколько дней прошло с
-    консервативной даты публикации `available_from` до даты прогона: волна не
-    подменяется, а устаревание показывается числом.
+    вместе), отсортированные по году. `stale_days` — сколько дней прошло от
+    ДАТЫ ВОЛНЫ `wave_date` до даты прогона (спека §4: «волна старше»; дата
+    доступности `available_from` сдвинута на консервативный лаг и для
+    возраста волны не используется): волна не подменяется, а устаревание
+    показывается числом.
     """
 
     wave_date: date
@@ -1214,7 +1288,7 @@ def current_consensus(consensus: list, today: date) -> Optional[CurrentConsensus
         wave_date=latest.wave_date,
         available_from=latest.available_from,
         rows=rows,
-        stale_days=(today - latest.available_from).days,
+        stale_days=(today - latest.wave_date).days,
     )
 
 
@@ -3388,22 +3462,27 @@ def render_consensus_section(
     b4_metrics_value: Optional[B4Metrics],
     b4_comparisons: list,
     today: date,
-    b4_missing: Optional[int] = None,
+    b4_skips: Optional[list] = None,
+    consensus_waves: Optional[int] = None,
 ) -> str:
-    """Markdown-раздел «Консенсус-бенчмарк №4» (спека §5, Task 5).
+    """Markdown-раздел «Консенсус-бенчмарк №4» (спека §5).
 
     Состав: вводные (источник, правило доступности, годовая средняя ≠ шаг),
     текущая волна (медианы/p10/p90/answers, средняя с начала года, B4-проекция
     остатка и сценарий удержания), годовой бенчмарк по бакетам, построчный
-    аудит, режимный срез 2024–2025, B4 (метрики, сравнения, пропуски) и «что не
-    проверено». Пустой консенсус — строка «данных нет», а не падение: это
-    штатная ветка офлайн-прогона и пустой витрины.
+    аудит, режимный срез 2024–2025, B4 (метрики, сравнения, пропуски по
+    причинам) и «что не проверено». Пустой консенсус — строка «данных нет»,
+    а не падение: это штатная ветка офлайн-прогона.
 
     Числа приходят готовыми (`observations`, `current`, `bridge`,
     `b4_predictions`, `b4_metrics_value`, `b4_comparisons`): рендерер только
     форматирует их через `_table`/`_fmt`, как и остальные таблицы отчёта.
-    `b4_missing` — `len(rows) − len(b4_predictions)`; параметр независим от
-    `bridge` (мост может быть `None`, а счётчик пропусков B4 — известен).
+    `b4_skips` — `consensus_path_skips(...)`: пары `(meeting_date, причина)`.
+    Пропуски группируются по стабильным меткам (`CONSENSUS_SKIP_REASONS`),
+    печатается `причина — N (min_date … max_date)`; счётчик «без B4-фолда» —
+    это `len(b4_skips)`, поэтому сумма по причинам совпадает с пропусками.
+    `consensus_waves` различает пустую витрину (`0`) и витрину с волнами, но
+    без доступных волн/завершённых лет (`>0`).
     Причины отсутствия текущей проекции/сценария берутся из
     `bridge.projection_reason`/`scenario_reason`, а не угадываются.
     """
@@ -3421,7 +3500,13 @@ def render_consensus_section(
         "",
     ]
     if not observations and current is None:
-        lines.append("_данных нет: витрина `v_cbr_mo_br` пуста._")
+        if consensus_waves:
+            lines.append(
+                "_данных нет: волны в витрине есть, но нет доступных волн и "
+                "завершённых лет для бенчмарка._"
+            )
+        else:
+            lines.append("_данных нет: витрина `v_cbr_mo_br` пуста._")
         return "\n".join(lines) + "\n"
 
     if current is not None:
@@ -3616,19 +3701,40 @@ def render_consensus_section(
     lines += _table(
         _CONSENSUS_B4_COMPARISON_HEADER,
         [
-            f"| {comparison.against} | {comparison.window} | {comparison.n} "
+            f"| {method_label(comparison.against)} | {comparison.window} "
+            f"| {comparison.n} "
             f"| {_fmt(comparison.delta_rmse_bp)} | {_fmt(comparison.dm_stat)} "
             f"| {_fmt_p(comparison.dm_p)} |"
             for comparison in b4_comparisons
         ],
     )
+    skipped = list(b4_skips or [])
+    reason_dates = {}
+    for meeting_date, reason in skipped:
+        reason_dates.setdefault(reason, []).append(meeting_date)
+    missing_suffix = " — сумма по причинам ниже." if skipped else "."
     lines += [
         "",
-        f"Заседаний выборки без B4-фолда: **{_fmt(b4_missing, 0)}** — причина: "
-        "нет волны на год заседания с публикацией до заседания; ряд ставки не "
-        "покрывает дату доступности волны или 1 января года заседания; на "
-        f"остаток года меньше {CONSENSUS_MIN_DAYS_REMAINING} дней; `r_implied` "
-        "вне (−100, 100) %.",
+        f"Заседаний выборки без B4-фолда: **{_fmt(len(skipped), 0)}**"
+        f"{missing_suffix}",
+    ]
+    if skipped:
+        # Метки из реестра идут в его порядке; неизвестная метка не теряется,
+        # иначе сумма строк разошлась бы со счётчиком пропусков.
+        ordered_reasons = [
+            reason for reason in CONSENSUS_SKIP_REASONS if reason in reason_dates
+        ]
+        ordered_reasons += [
+            reason for reason in reason_dates if reason not in CONSENSUS_SKIP_REASONS
+        ]
+        lines.append("")
+        for reason in ordered_reasons:
+            dates = reason_dates[reason]
+            lines.append(
+                f"- {reason} — {len(dates)} "
+                f"({min(dates).isoformat()} … {max(dates).isoformat()})"
+            )
+    lines += [
         "",
         "### Что не проверено",
         "",
@@ -3867,7 +3973,8 @@ def run_summary(
     идут в прогон одной строкой каждый (список `METHODS`): отчёт, DM/MZ/PT, CSV
     и режимный блок считаются по «метод × окно» и имён методов не знают.
 
-    Артефакты: отчёт (с разделом «Текущий прогноз», если прогноз сделан) и CSV
+    Артефакты: отчёт (с разделами «Консенсус-бенчмарк №4» — включая перечень
+    пропусков B4 по причинам — и «Текущий прогноз», если прогноз сделан) и CSV
     фолдов; `key_rate_model_forecast.json` пишется, только если прогноз есть И в
     нём посчитан хотя бы один метод. Иначе JSON не пишется, а прежний файл
     (`write_forecast_artifact`) УДАЛЯЕТСЯ: оставленный снимок прошлого прогона
@@ -3963,6 +4070,14 @@ def run_summary(
     ibk = load_ibk()
     rows, missing_features = build_rows(decisions, cpd, ibk)
     b4 = consensus_path_predictions(rows, consensus, key_rate)
+    b4_skips = consensus_path_skips(rows, consensus, key_rate)
+    # Инвариант перечня пропусков (спека §5.6): каждая строка выборки даёт
+    # ровно один B4-фолд либо одну строку пропуска с причиной.
+    if len(b4) + len(b4_skips) != len(rows):
+        raise SampleError(
+            f"B4: {len(b4)} фолдов + {len(b4_skips)} пропусков "
+            f"≠ {len(rows)} строк выборки"
+        )
     current = current_consensus(consensus, today)
     # Walk-forward считается до проверки «выборка пуста»: счётчик вырожденных
     # окон входит в sample_meta паспорта, а на пустой выборке он нулевой.
@@ -4021,9 +4136,11 @@ def run_summary(
             b4_metrics(b4),
             b4_significance(b4, predictions),
             today,
-            # Счётчик пропусков B4 не зависит от моста: он известен и тогда,
-            # когда ряд ставки не покрывает начало года (bridge is None).
-            b4_missing=len(rows) - len(b4),
+            # Перечень пропусков B4 — `(дата, причина)`; счётчик «без
+            # B4-фолда» рендерер выводит из его длины, поэтому сумма по
+            # причинам всегда сходится с `len(rows) - len(b4)`.
+            b4_skips=b4_skips,
+            consensus_waves=sample_meta["consensus_waves"],
         )
         report_path = out_dir / REPORT_NAME
         predictions_path = out_dir / PREDICTIONS_NAME
