@@ -1,104 +1,75 @@
-package rosstat
+package fao
 
 import (
 	"context"
 	"fmt"
-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/gocolly/colly/v2"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
-	"github.com/kmlebedev/clickhouse-import-rosstat/util"
-	log "github.com/sirupsen/logrus"
+	"net/url"
 	"strings"
-	"time"
+
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 )
 
 const (
-	// Даты публикации ежемесячных сводок в 2025 году:
-	// 3 января, 7 февраля, 7 марта, 4 апреля, 2 мая, 6 июня, 4 июля, 8 августа, 5 сентября, 3 октября, 7 ноября, 5 декабря.
-	// ToDo update data source https://www.fao.org/worldfoodsituation/foodpricesindex/ru/
-	// Индекса продовольственных цен ФАО https://www.fao.org/docs/worldfoodsituationlibraries/default-document-library/food_price_indices_data_f.csv
-	faoUrl                 = "https://www.fao.org/worldfoodsituation/foodpricesindex/ru/"
-	faoFoodPriceCSVDataUrl = faoUrl + "/food_price_indices_data_sep25.csv"
-	faoFoodPriceTable      = "fao_food_price"
-	faoFoodPriceDdl        = `CREATE TABLE IF NOT EXISTS ` + faoFoodPriceTable + `_%s` + ` (
+	// faoUrl — страница индекса продовольственных цен ФАО. Ссылка на CSV меняет
+	// sfvrsn при обновлении файла, поэтому адрес артефакта вычисляется в Import(),
+	// а не хранится константой (стандарт §4.3).
+	faoUrl = "https://www.fao.org/worldfoodsituation/foodpricesindex/ru/"
+	// faoLinkSelector — селектор актуальной CSV-выгрузки. Тот же селектор
+	// используется тестом на HTML-фикстуре (§4.5).
+	faoLinkSelector = `a[href*="food_price_indices_data.csv"]`
+	// faoFoodPriceTable — физическая таблица. Имя сохранено legacy-контрактом:
+	// его читают scripts/cpi_nowcast.py и scripts/cpi_monthly.py.
+	faoFoodPriceTable = "fao_food_price_Indices_monthly"
+)
+
+var faoFoodPrice = util.ClickHouseImport{
+	TableName: faoFoodPriceTable,
+	CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (
 			  name LowCardinality(String)
 			, date Date
 			, price_index Float32
-		) ENGINE = ReplacingMergeTree ORDER BY (name, date);
-	`
-	faoFoodPriceInsert     = "INSERT INTO " + faoFoodPriceTable + "_%s VALUES (?, ?, ?)"
-	faoFoodPriceTimeLayout = "2006-01"
-)
-
-var (
-	faoFoodPriceSheet = []string{"Indices_monthly", "Indices_Monthly_Real"}
-)
-
-type FaoFoodPriceStat struct {
+		) ENGINE = ReplacingMergeTree ORDER BY (name, date);`},
+	BodyFunc:    parseFaoFoodPrice,
+	AfterImport: publishFao,
 }
 
-func (s *FaoFoodPriceStat) Name() string {
-	return faoFoodPriceTable
+type faoFoodPriceStat struct {
+	util.ClickHouseImport
 }
 
-func (s *FaoFoodPriceStat) getDataUrl() (dataUrl string) {
-	c := colly.NewCollector(colly.UserAgent(util.HttpUA))
-	c.SetRequestTimeout(5 * time.Second)
-	c.OnHTML(`a[href*="food_price_indices_data.csv"]`, func(e *colly.HTMLElement) {
-		dataUrl = e.Attr("href")
-		log.Infof("getDataUrl %s", dataUrl)
-	})
-	if err := c.Visit(faoUrl); err != nil {
-		log.Errorf("First visit err: %v+", err)
+// Import вычисляет адрес CSV со страницы ФАО и отдаёт полный цикл шаблону.
+func (s *faoFoodPriceStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+	page, err := util.GetPage(faoUrl)
+	if err != nil {
+		return count, fmt.Errorf("fao: страница %s: %w", faoUrl, err)
 	}
-	c.Wait()
-	return dataUrl
+	href, err := util.FindLink(page, faoLinkSelector)
+	if err != nil {
+		return count, fmt.Errorf("fao: не найдена ссылка на food_price_indices_data.csv на %s: %w", faoUrl, err)
+	}
+	s.DataUrl = faoAbsoluteURL(href)
+	return s.ClickHouseImport.Import(ctx, conn)
 }
 
-func (s *FaoFoodPriceStat) export() (table *[][]string, err error) {
-	var records [][]string
-	if records, err = util.GetCSV(s.getDataUrl()); err != nil {
-		return nil, err
+// faoAbsoluteURL принимает href как есть, если он абсолютный; иначе разрешает
+// относительно страницы ФАО. FindLink отдаёт href без префикса домена.
+func faoAbsoluteURL(href string) string {
+	href = strings.TrimSpace(href)
+	ref, err := url.Parse(href)
+	if err != nil {
+		return href
 	}
-	table = new([][]string)
-	fileds := strings.Split(records[2][0], ",")
-	for _, row := range records[4:] {
-		cols := strings.Split(row[0], ",")
-		if len(cols) == 1 {
-			continue
-		}
-		for i, cell := range cols[1:6] {
-			//fmt.Printf("row field %v coll %v cell %v\n", fileds[i+1], cols[0], cell)
-			*table = append(*table, []string{"Indices_monthly", fileds[i+1], cols[0], cell})
-		}
+	if ref.IsAbs() {
+		return href
 	}
-	return table, nil
+	base, err := url.Parse(faoUrl)
+	if err != nil {
+		return href
+	}
+	return base.ResolveReference(ref).String()
 }
 
-func (s *FaoFoodPriceStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-
-	for _, sheet := range faoFoodPriceSheet {
-		if err = conn.Exec(ctx, fmt.Sprintf(faoFoodPriceDdl, sheet)); err != nil {
-			return count, err
-		}
-	}
-	var table *[][]string
-	if table, err = s.export(); err != nil {
-		return count, err
-	}
-	for _, row := range *table {
-		mes, err := time.Parse(faoFoodPriceTimeLayout, row[2])
-		if err != nil {
-			return count, err
-		}
-		if err = conn.Exec(ctx, fmt.Sprintf(faoFoodPriceInsert, row[0]), row[1], mes.AddDate(0, 1, 0), row[3]); err != nil {
-			return count, err
-		}
-		count++
-	}
-	return count, nil
-}
-
-func init() {
-	chimport.Stats = append(chimport.Stats, &FaoFoodPriceStat{})
-}
+// faoFoodPriceImporter — единственный импортёр пакета; регистрация — реестром
+// fao/importers.go (стандарт §8).
+var faoFoodPriceImporter = &faoFoodPriceStat{ClickHouseImport: faoFoodPrice}
