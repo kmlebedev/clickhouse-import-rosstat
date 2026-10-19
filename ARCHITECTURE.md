@@ -966,6 +966,27 @@ CREATE TABLE IF NOT EXISTS rosstat_ipc_weeks_bulletins (
     percent Float64               -- индекс, % к предыдущей дате регистрации (100 = без изменения)
 ) ENGINE = ReplacingMergeTree ORDER BY (name, date);
 
+-- minfin/fedbud_mes.go, minfin/fedbud_mesyats.go — исполнение федерального и
+-- консолидированного бюджета (импортёры minfin_fed_bud_mes и minfin_fed_bud_mesyats;
+-- пункт key-rate/phase-2-minfin-refactor, issue #233): лист «месяц», значения в источнике
+-- накоплены с начала года, таблица хранит месячные разности. Ключ (name, date); value —
+-- Float64 (правило 5 AGENTS.md). DDL — %s-форма шаблона util.ClickHouseImport (имя таблицы
+-- подставляет вызов), ниже — с подставленными именами. Миграция существующих таблиц:
+-- в CreateTable импортёров вторым стейтментом идёт
+-- ALTER TABLE ... MODIFY COLUMN value Float64 SETTINGS mutations_sync = 2 — на новой
+-- таблице no-op, на legacy Float32 переводит колонку до первого импорта нового кода.
+CREATE TABLE IF NOT EXISTS minfin_fed_bud_mes (
+    name LowCardinality(String),  -- подпись строки источника: 6 рядов, включая «Дефицит (-)/Профицит (+)»
+    date Date,                    -- 1-е число отчётного месяца
+    value Float64                 -- млрд руб. за месяц: разность накопленных с начала года значений
+) ENGINE = ReplacingMergeTree ORDER BY (name, date);
+
+CREATE TABLE IF NOT EXISTS minfin_fed_bud_mesyats (
+    name LowCardinality(String),  -- подпись строки источника; 5 рядов (без «привлечение»)
+    date Date,                    -- 1-е число отчётного месяца
+    value Float64                 -- млрд руб. за месяц: разность накопленных с начала года значений
+) ENGINE = ReplacingMergeTree ORDER BY (name, date);
+
 -- minfin/oil_gas_mes.go — нефтегазовые доходы федерального бюджета и НДПИ, импортёр
 -- minfin_oil_gas_mes (§6.1; пункт key-rate/phase-2-minfin-scrape; спека
 -- docs/superpowers/specs/2026-10-19-minfin-deficit-oil-gas-design.md): `Svedeniya_<YYYYMMDD>.xlsx`
