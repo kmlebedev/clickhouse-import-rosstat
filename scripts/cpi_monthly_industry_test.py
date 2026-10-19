@@ -174,6 +174,34 @@ class TestIndustryFeatures(unittest.TestCase):
         self.assertTrue(math.isnan(features["ind_services_costs_sa"]))
         self.assertNotEqual(features["ind_eegp_ibk_sa"], 0.0)
 
+    def test_build_sample_merges_and_keeps_row(self):
+        row = cm.Row(
+            month=date(2024, 4, 1),
+            y={code: 0.1 for code in cm.TARGET_SERIES},
+            features={"y_lag1": 0.2},
+        )
+        with mock.patch.object(
+            ind.cmv3, "build_sample_v3", return_value=([row], [])
+        ):
+            rows, skipped = ind.build_sample_industry("weekly", self.panel)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(skipped, [])
+        self.assertEqual(rows[0].features["y_lag1"], 0.2)
+        self.assertEqual(rows[0].features["ind_industry_ibk_sa"], 30.0)
+        self.assertTrue(math.isnan(rows[0].features["ind_eegp_ibk_sa"]))
+
+    def test_leakage_guard_detects_published_m_point(self):
+        row = cm.Row(
+            month=date(2024, 4, 1),
+            y={code: 0.1 for code in cm.TARGET_SERIES},
+            features={},
+        )
+        with mock.patch.object(
+            ind.cm, "available_from_survey", return_value=date(2024, 4, 1)
+        ):
+            with self.assertRaises(AssertionError):
+                ind.assert_no_industry_leakage([row], self.panel)
+
 
 class TestMappingAndNames(unittest.TestCase):
     def test_feature_names_are_unique_and_complete(self):
