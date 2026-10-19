@@ -1,0 +1,4594 @@
+{
+  "decision": {
+    "bottomup_full": false,
+    "coverage_2024": 0.39299,
+    "coverage_gate": 0.5,
+    "full_88_groups": false,
+    "mode": "hybrid_4_components_plus_features",
+    "partial_bottomup": "robustness_only",
+    "reason": "покрытие весов 39.299% < гейта 50%; услуги 29.0%; полный 88-групповой bottom-up на публичных данных не заявляется"
+  },
+  "generated_at": "2026-10-19T15:58:16+05:00",
+  "git_sha": "db1eef66cc78f4d5869b3ebfee456302bda902d9",
+  "inputs": {
+    "archive": "BusinessSurveyCBRCpiForecastingSourceCode",
+    "dictionary": {
+      "default_year": 2024,
+      "path": "Models/CpiComponents/StfCpi_External_data/dictionaries/dictionary_cpi.xlsx",
+      "sha256": "739940576327749b0289c01fa2f94d99f6f39783bbb8baf12f80e906fd334594"
+    },
+    "monthly": {
+      "series": [
+        "Индексы потребительских цен на товары и услуги по Российской Федерации",
+        "Индексы потребительских цен на продовольственные товары по Российской Федерации",
+        "Индексы потребительских цен на непродовольственные товары по Российской Федерации",
+        "Индексы потребительских цен на услуги по Российской Федерации"
+      ],
+      "source": "rosstat_ipc_mes via v_rosstat_macro"
+    },
+    "mp_survey": {
+      "path": "build/cpi-public-audit/mp_survey_data.xlsx",
+      "sha256": "c5ad8996bda9f21715a05de3bbe98d1511fb6c160b064f1e9c1090eb501c945b",
+      "source": "cache",
+      "url": "https://www.cbr.ru/Content/Document/File/135603/mp_survey_data.xlsx"
+    },
+    "weekly": {
+      "aggregate_series": "Индекс потребительских цен (недельная оценка)",
+      "n_catalog_series": 149,
+      "n_product_series": 148,
+      "sql": "v_rosstat_macro + v_series_catalog (rosstat/W)"
+    },
+    "weights": {
+      "default_year": 2024,
+      "path": "Models/CpiComponents/StfCpi_External_data/databases/weights/cpi_weights_tovar.xlsx",
+      "sha256": "790a4adbba7e816f0224494884e0948a100e0aba681c7d7e2abb95e4867a5c23",
+      "years": [
+        2016,
+        2017,
+        2018,
+        2019,
+        2020,
+        2021,
+        2022,
+        2023,
+        2024
+      ]
+    }
+  },
+  "mapping": {
+    "basic_normalized_series": 113,
+    "coverage_2024": {
+      "coverage": 0.39299,
+      "denominator": 1.0,
+      "matched_codes": 118,
+      "numerator": 0.39299
+    },
+    "coverage_by_component_2024": {
+      "food": {
+        "coverage": 0.4807586369717478,
+        "denominator": 0.38121,
+        "matched_codes": 47,
+        "numerator": 0.18327
+      },
+      "nonfood": {
+        "coverage": 0.37868414093032826,
+        "denominator": 0.34031,
+        "matched_codes": 46,
+        "numerator": 0.12887
+      },
+      "services": {
+        "coverage": 0.29032605573111175,
+        "denominator": 0.27848,
+        "matched_codes": 25,
+        "numerator": 0.08085
+      }
+    },
+    "coverage_by_group_2024": [
+      {
+        "code": "42",
+        "matched_codes": 4,
+        "name": "Топливо моторное",
+        "weight": 0.04701
+      },
+      {
+        "code": "10",
+        "matched_codes": 9,
+        "name": "Мясопродукты",
+        "weight": 0.045610000000000005
+      },
+      {
+        "code": "940.АГ",
+        "matched_codes": 5,
+        "name": "Жилищные и коммунальные услуги (включая аренду квартир)",
+        "weight": 0.03687
+      },
+      {
+        "code": "21",
+        "matched_codes": 9,
+        "name": "Плодоовощная продукция, включая картофель",
+        "weight": 0.02879
+      },
+      {
+        "code": "7700",
+        "matched_codes": 2,
+        "name": "Легковые автомобили",
+        "weight": 0.02321
+      },
+      {
+        "code": "1100",
+        "matched_codes": 5,
+        "name": "Молоко и молочная продукция",
+        "weight": 0.01803
+      },
+      {
+        "code": "9100",
+        "matched_codes": 4,
+        "name": "Бытовые услуги",
+        "weight": 0.016819999999999998
+      },
+      {
+        "code": "5600",
+        "matched_codes": 1,
+        "name": "Табачные изделия",
+        "weight": 0.01323
+      },
+      {
+        "code": "2200",
+        "matched_codes": 2,
+        "name": "Хлеб и хлебобулочные изделия",
+        "weight": 0.01106
+      },
+      {
+        "code": "22",
+        "matched_codes": 3,
+        "name": "Масло и жиры",
+        "weight": 0.01103
+      },
+      {
+        "code": "3600",
+        "matched_codes": 1,
+        "name": "Общественное питание",
+        "weight": 0.01079
+      },
+      {
+        "code": "1700",
+        "matched_codes": 3,
+        "name": "Кондитерские изделия",
+        "weight": 0.010709999999999999
+      },
+      {
+        "code": "9200",
+        "matched_codes": 5,
+        "name": "Услуги пассажирского транспорта",
+        "weight": 0.01035
+      },
+      {
+        "code": "20",
+        "matched_codes": 5,
+        "name": "Макаронные и крупяные изделия",
+        "weight": 0.00985
+      },
+      {
+        "code": "1200",
+        "matched_codes": 1,
+        "name": "Сыр",
+        "weight": 0.00951
+      },
+      {
+        "code": "8",
+        "matched_codes": 1,
+        "name": "Алкогольные напитки",
+        "weight": 0.00929
+      },
+      {
+        "code": "7100",
+        "matched_codes": 1,
+        "name": "Средства связи",
+        "weight": 0.00726
+      },
+      {
+        "code": "1500",
+        "matched_codes": 1,
+        "name": "Яйца",
+        "weight": 0.00658
+      },
+      {
+        "code": "9550",
+        "matched_codes": 1,
+        "name": "Экскурсионные услуги",
+        "weight": 0.00519
+      },
+      {
+        "code": "9540",
+        "matched_codes": 3,
+        "name": "Услуги в сфере зарубежного туризма",
+        "weight": 0.004829999999999999
+      },
+      {
+        "code": "43",
+        "matched_codes": 3,
+        "name": "Моющие и чистящие средства",
+        "weight": 0.00452
+      },
+      {
+        "code": "4700",
+        "matched_codes": 2,
+        "name": "Обувь кожаная, текстильная и комбинированная",
+        "weight": 0.0044399999999999995
+      },
+      {
+        "code": "41",
+        "matched_codes": 11,
+        "name": "Медицинские товары",
+        "weight": 0.0043
+      },
+      {
+        "code": "8310",
+        "matched_codes": 1,
+        "name": "Товары для животных",
+        "weight": 0.00428
+      },
+      {
+        "code": "5300",
+        "matched_codes": 2,
+        "name": "Парфюмерно-косметические товары",
+        "weight": 0.00384
+      },
+      {
+        "code": "6500",
+        "matched_codes": 3,
+        "name": "Бумажно-беловые товары",
+        "weight": 0.00373
+      },
+      {
+        "code": "1600",
+        "matched_codes": 1,
+        "name": "Сахар",
+        "weight": 0.00355
+      },
+      {
+        "code": "9600",
+        "matched_codes": 2,
+        "name": "Санаторно-оздоровительные услуги",
+        "weight": 0.00343
+      },
+      {
+        "code": "9490",
+        "matched_codes": 5,
+        "name": "Услуги гостиниц и прочих мест проживания",
+        "weight": 0.00336
+      },
+      {
+        "code": "11",
+        "matched_codes": 1,
+        "name": "Рыбопродукты",
+        "weight": 0.00253
+      },
+      {
+        "code": "2100",
+        "matched_codes": 1,
+        "name": "Мука",
+        "weight": 0.0025
+      },
+      {
+        "code": "7400",
+        "matched_codes": 3,
+        "name": "Строительные материалы",
+        "weight": 0.00235
+      },
+      {
+        "code": "24",
+        "matched_codes": 1,
+        "name": "Чай, кофе, какао",
+        "weight": 0.00207
+      },
+      {
+        "code": "4600",
+        "matched_codes": 3,
+        "name": "Чулочно-носочные изделия",
+        "weight": 0.00201
+      },
+      {
+        "code": "4100",
+        "matched_codes": 3,
+        "name": "Одежда и белье",
+        "weight": 0.00179
+      },
+      {
+        "code": "7000",
+        "matched_codes": 1,
+        "name": "Телерадиотовары",
+        "weight": 0.00176
+      },
+      {
+        "code": "14",
+        "matched_codes": 3,
+        "name": "Трикотажные изделия",
+        "weight": 0.0016200000000000001
+      },
+      {
+        "code": "6400",
+        "matched_codes": 1,
+        "name": "Электротовары и другие бытовые приборы",
+        "weight": 0.00127
+      },
+      {
+        "code": "5700",
+        "matched_codes": 1,
+        "name": "Спички",
+        "weight": 0.00116
+      },
+      {
+        "code": "5400",
+        "matched_codes": 1,
+        "name": "Галантерея",
+        "weight": 0.00109
+      },
+      {
+        "code": "25",
+        "matched_codes": 1,
+        "name": "Соль, соус, специи, концентраты",
+        "weight": 0.00093
+      },
+      {
+        "code": "1400",
+        "matched_codes": 1,
+        "name": "Консервы фруктово-ягодные",
+        "weight": 0.0003
+      },
+      {
+        "code": "1300",
+        "matched_codes": 1,
+        "name": "Консервы овощные",
+        "weight": 0.00014
+      }
+    ],
+    "coverage_by_year": [
+      {
+        "coverage": 0.29507,
+        "denominator": 1.0,
+        "matched_codes": 118,
+        "numerator": 0.29507,
+        "year": 2016
+      },
+      {
+        "coverage": 0.30005,
+        "denominator": 1.0,
+        "matched_codes": 118,
+        "numerator": 0.30005,
+        "year": 2017
+      },
+      {
+        "coverage": 0.33584,
+        "denominator": 1.0,
+        "matched_codes": 118,
+        "numerator": 0.33584,
+        "year": 2018
+      },
+      {
+        "coverage": 0.33805,
+        "denominator": 1.0,
+        "matched_codes": 118,
+        "numerator": 0.33805,
+        "year": 2019
+      },
+      {
+        "coverage": 0.34194,
+        "denominator": 1.0,
+        "matched_codes": 118,
+        "numerator": 0.34194,
+        "year": 2020
+      },
+      {
+        "coverage": 0.34294,
+        "denominator": 1.0,
+        "matched_codes": 118,
+        "numerator": 0.34294,
+        "year": 2021
+      },
+      {
+        "coverage": 0.3825251418898736,
+        "denominator": 1.0043,
+        "matched_codes": 118,
+        "numerator": 0.38417,
+        "year": 2022
+      },
+      {
+        "coverage": 0.39581,
+        "denominator": 1.0,
+        "matched_codes": 118,
+        "numerator": 0.39581,
+        "year": 2023
+      },
+      {
+        "coverage": 0.39299,
+        "denominator": 1.0,
+        "matched_codes": 118,
+        "numerator": 0.39299,
+        "year": 2024
+      }
+    ],
+    "extended_normalized_series": 118,
+    "matched_rows": [
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "10",
+        "group_name": "Мясопродукты",
+        "match_kind": "extended",
+        "series": "Баранина (кроме бескостного мяса), кг",
+        "weight_2024": 0.00139,
+        "weight_code": "116",
+        "weight_name": "Баранина (кроме бескостного мяса), кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "10",
+        "group_name": "Мясопродукты",
+        "match_kind": "extended",
+        "series": "Говядина (кроме бескостного мяса), кг",
+        "weight_2024": 0.00648,
+        "weight_code": "111",
+        "weight_name": "Говядина (кроме бескостного мяса), кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "10",
+        "group_name": "Мясопродукты",
+        "match_kind": "extended",
+        "series": "Колбаса вареная, кг",
+        "weight_2024": 0.00634,
+        "weight_code": "201",
+        "weight_name": "Колбаса вареная, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "10",
+        "group_name": "Мясопродукты",
+        "match_kind": "extended",
+        "series": "Колбаса полукопченая и варено-копченая, кг",
+        "weight_2024": 0.00508,
+        "weight_code": "204",
+        "weight_name": "Колбаса полукопченая и варено-копченая, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "10",
+        "group_name": "Мясопродукты",
+        "match_kind": "extended",
+        "series": "Консервы мясные",
+        "weight_2024": 0.00136,
+        "weight_code": "303",
+        "weight_name": "Консервы мясные, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "10",
+        "group_name": "Мясопродукты",
+        "match_kind": "extended",
+        "series": "Консервы мясные для детского питания, кг",
+        "weight_2024": 0.00014,
+        "weight_code": "302",
+        "weight_name": "Консервы мясные для детского питания, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "10",
+        "group_name": "Мясопродукты",
+        "match_kind": "extended",
+        "series": "Куры охлажденные и мороженые, кг",
+        "weight_2024": 0.01023,
+        "weight_code": "114",
+        "weight_name": "Куры охлажденные и мороженые, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "10",
+        "group_name": "Мясопродукты",
+        "match_kind": "extended",
+        "series": "Свинина (кроме бескостного мяса), кг",
+        "weight_2024": 0.0076,
+        "weight_code": "113",
+        "weight_name": "Свинина (кроме бескостного мяса), кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "10",
+        "group_name": "Мясопродукты",
+        "match_kind": "extended",
+        "series": "Сосиски, сардельки, кг",
+        "weight_2024": 0.00699,
+        "weight_code": "202",
+        "weight_name": "Сосиски, сардельки, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "11",
+        "group_name": "Рыбопродукты",
+        "match_kind": "extended",
+        "series": "Рыба мороженая неразделанная, кг",
+        "weight_2024": 0.00253,
+        "weight_code": "411",
+        "weight_name": "Рыба мороженая неразделанная, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "1100",
+        "group_name": "Молоко и молочная продукция",
+        "match_kind": "extended",
+        "series": "Молоко питьевое цельное пастеризованное 2,5-3,2% жирности, л",
+        "weight_2024": 0.00449,
+        "weight_code": "1111",
+        "weight_name": "Молоко питьевое цельное пастеризованное 2,5-3,2% жирности, л"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "1100",
+        "group_name": "Молоко и молочная продукция",
+        "match_kind": "extended",
+        "series": "Молоко питьевое цельное стерилизованное 2,5-3,2% жирности, л",
+        "weight_2024": 0.00333,
+        "weight_code": "1112",
+        "weight_name": "Молоко питьевое цельное стерилизованное 2,5-3,2% жирности, л"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "1100",
+        "group_name": "Молоко и молочная продукция",
+        "match_kind": "extended",
+        "series": "Смеси сухие молочные для детского питания, кг",
+        "weight_2024": 0.00043,
+        "weight_code": "1123",
+        "weight_name": "Смеси сухие молочные для детского питания, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "1100",
+        "group_name": "Молоко и молочная продукция",
+        "match_kind": "extended",
+        "series": "Сметана, кг",
+        "weight_2024": 0.00448,
+        "weight_code": "1102",
+        "weight_name": "Сметана, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "1100",
+        "group_name": "Молоко и молочная продукция",
+        "match_kind": "extended",
+        "series": "Творог, кг",
+        "weight_2024": 0.0053,
+        "weight_code": "1124",
+        "weight_name": "Творог, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "1200",
+        "group_name": "Сыр",
+        "match_kind": "extended",
+        "series": "Сыры твердые, полутвердые и мягкие, кг",
+        "weight_2024": 0.00951,
+        "weight_code": "1204",
+        "weight_name": "Сыры твердые, полутвердые и мягкие, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "1300",
+        "group_name": "Консервы овощные",
+        "match_kind": "extended",
+        "series": "Консервы овощные для детского питания, кг",
+        "weight_2024": 0.00014,
+        "weight_code": "1303",
+        "weight_name": "Консервы овощные для детского питания, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "1400",
+        "group_name": "Консервы фруктово-ягодные",
+        "match_kind": "extended",
+        "series": "Консервы фруктово-ягодные для детского питания, кг",
+        "weight_2024": 0.0003,
+        "weight_code": "1402",
+        "weight_name": "Консервы фруктово-ягодные для детского питания, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "1500",
+        "group_name": "Яйца",
+        "match_kind": "extended",
+        "series": "Яйца куриные, 10 шт.",
+        "weight_2024": 0.00658,
+        "weight_code": "1501",
+        "weight_name": "Яйца куриные, 10 шт."
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "1600",
+        "group_name": "Сахар",
+        "match_kind": "extended",
+        "series": "Сахар-песок, кг",
+        "weight_2024": 0.00355,
+        "weight_code": "1601",
+        "weight_name": "Сахар-песок, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "1700",
+        "group_name": "Кондитерские изделия",
+        "match_kind": "extended",
+        "series": "Карамель",
+        "weight_2024": 0.00183,
+        "weight_code": "1711",
+        "weight_name": "Карамель, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "1700",
+        "group_name": "Кондитерские изделия",
+        "match_kind": "extended",
+        "series": "Конфеты мягкие, глазированные шоколадом, кг",
+        "weight_2024": 0.00309,
+        "weight_code": "1712",
+        "weight_name": "Конфеты мягкие, глазированные шоколадом, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "1700",
+        "group_name": "Кондитерские изделия",
+        "match_kind": "extended",
+        "series": "Печенье, кг",
+        "weight_2024": 0.00579,
+        "weight_code": "1701",
+        "weight_name": "Печенье, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "20",
+        "group_name": "Макаронные и крупяные изделия",
+        "match_kind": "extended",
+        "series": "Вермишель, кг",
+        "weight_2024": 0.00134,
+        "weight_code": "2401",
+        "weight_name": "Вермишель, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "20",
+        "group_name": "Макаронные и крупяные изделия",
+        "match_kind": "extended",
+        "series": "Крупа гречневая-ядрица, кг",
+        "weight_2024": 0.00189,
+        "weight_code": "2307",
+        "weight_name": "Крупа гречневая-ядрица, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "20",
+        "group_name": "Макаронные и крупяные изделия",
+        "match_kind": "extended",
+        "series": "Макаронные изделия из пшеничной муки высшего сорта, кг",
+        "weight_2024": 0.00326,
+        "weight_code": "2403",
+        "weight_name": "Макаронные изделия из пшеничной муки высшего сорта, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "20",
+        "group_name": "Макаронные и крупяные изделия",
+        "match_kind": "extended",
+        "series": "Пшено, кг",
+        "weight_2024": 0.00037,
+        "weight_code": "2303",
+        "weight_name": "Пшено, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "20",
+        "group_name": "Макаронные и крупяные изделия",
+        "match_kind": "extended",
+        "series": "Рис шлифованный, кг",
+        "weight_2024": 0.00299,
+        "weight_code": "2301",
+        "weight_name": "Рис шлифованный, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "21",
+        "group_name": "Плодоовощная продукция, включая картофель",
+        "match_kind": "extended",
+        "series": "Бананы, кг",
+        "weight_2024": 0.00411,
+        "weight_code": "2711",
+        "weight_name": "Бананы, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "21",
+        "group_name": "Плодоовощная продукция, включая картофель",
+        "match_kind": "extended",
+        "series": "Капуста белокочанная свежая, кг",
+        "weight_2024": 0.00133,
+        "weight_code": "2601",
+        "weight_name": "Капуста белокочанная свежая, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "21",
+        "group_name": "Плодоовощная продукция, включая картофель",
+        "match_kind": "extended",
+        "series": "Картофель, кг",
+        "weight_2024": 0.00294,
+        "weight_code": "2501",
+        "weight_name": "Картофель, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "21",
+        "group_name": "Плодоовощная продукция, включая картофель",
+        "match_kind": "extended",
+        "series": "Лук репчатый, кг",
+        "weight_2024": 0.00097,
+        "weight_code": "2603",
+        "weight_name": "Лук репчатый, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "21",
+        "group_name": "Плодоовощная продукция, включая картофель",
+        "match_kind": "extended",
+        "series": "Морковь, кг",
+        "weight_2024": 0.0009,
+        "weight_code": "2605",
+        "weight_name": "Морковь, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "21",
+        "group_name": "Плодоовощная продукция, включая картофель",
+        "match_kind": "extended",
+        "series": "Огурцы свежие, кг",
+        "weight_2024": 0.00577,
+        "weight_code": "2621",
+        "weight_name": "Огурцы свежие, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "21",
+        "group_name": "Плодоовощная продукция, включая картофель",
+        "match_kind": "extended",
+        "series": "Помидоры свежие, кг",
+        "weight_2024": 0.0057,
+        "weight_code": "2623",
+        "weight_name": "Помидоры свежие, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "21",
+        "group_name": "Плодоовощная продукция, включая картофель",
+        "match_kind": "extended",
+        "series": "Свёкла столовая, кг",
+        "weight_2024": 0.00037,
+        "weight_code": "2604",
+        "weight_name": "Свёкла столовая, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "21",
+        "group_name": "Плодоовощная продукция, включая картофель",
+        "match_kind": "extended",
+        "series": "Яблоки, кг",
+        "weight_2024": 0.0067,
+        "weight_code": "2701",
+        "weight_name": "Яблоки, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "2100",
+        "group_name": "Мука",
+        "match_kind": "extended",
+        "series": "Мука пшеничная, кг",
+        "weight_2024": 0.0025,
+        "weight_code": "2101",
+        "weight_name": "Мука пшеничная, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "22",
+        "group_name": "Масло и жиры",
+        "match_kind": "extended",
+        "series": "Маргарин, кг",
+        "weight_2024": 0.00034,
+        "weight_code": "1001",
+        "weight_name": "Маргарин, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "22",
+        "group_name": "Масло и жиры",
+        "match_kind": "extended",
+        "series": "Масло подсолнечное, л",
+        "weight_2024": 0.00335,
+        "weight_code": "803",
+        "weight_name": "Масло подсолнечное, л"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "22",
+        "group_name": "Масло и жиры",
+        "match_kind": "extended",
+        "series": "Масло сливочное, кг",
+        "weight_2024": 0.00734,
+        "weight_code": "701",
+        "weight_name": "Масло сливочное, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "2200",
+        "group_name": "Хлеб и хлебобулочные изделия",
+        "match_kind": "extended",
+        "series": "Хлеб и булочные изделия из пшеничной муки различных сортов, кг",
+        "weight_2024": 0.00716,
+        "weight_code": "2207",
+        "weight_name": "Хлеб и булочные изделия из пшеничной муки различных сортов, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "2200",
+        "group_name": "Хлеб и хлебобулочные изделия",
+        "match_kind": "extended",
+        "series": "Хлеб из ржаной муки и из смеси муки ржаной и пшеничной, кг",
+        "weight_2024": 0.0039,
+        "weight_code": "2201",
+        "weight_name": "Хлеб из ржаной муки и из смеси муки ржаной и пшеничной, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "24",
+        "group_name": "Чай, кофе, какао",
+        "match_kind": "extended",
+        "series": "Чай черный байховый, кг",
+        "weight_2024": 0.00207,
+        "weight_code": "1903",
+        "weight_name": "Чай черный байховый, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "25",
+        "group_name": "Соль, соус, специи, концентраты",
+        "match_kind": "extended",
+        "series": "Соль поваренная пищевая, кг",
+        "weight_2024": 0.00093,
+        "weight_code": "2002",
+        "weight_name": "Соль поваренная пищевая, кг"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "3600",
+        "group_name": "Общественное питание",
+        "match_kind": "extended",
+        "series": "Обед в столовой, кафе, закусочной (кроме столовой в организации), на 1 человека",
+        "weight_2024": 0.01079,
+        "weight_code": "3606",
+        "weight_name": "Обед в столовой, кафе, закусочной (кроме столовой в организации), на 1 человека"
+      },
+      {
+        "component": "food",
+        "component_code": "6",
+        "component_name": "Продовольственные товары",
+        "group_code": "8",
+        "group_name": "Алкогольные напитки",
+        "match_kind": "extended",
+        "series": "Водка, л",
+        "weight_2024": 0.00929,
+        "weight_code": "2812",
+        "weight_name": "Водка, л"
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "14",
+        "group_name": "Трикотажные изделия",
+        "match_kind": "extended",
+        "series": "Костюм спортивный для детей школьного возраста, шт.",
+        "weight_2024": 0.00043,
+        "weight_code": "4404",
+        "weight_name": "Костюм спортивный для детей школьного возраста, шт."
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "14",
+        "group_name": "Трикотажные изделия",
+        "match_kind": "extended",
+        "series": "Майка, футболка мужская бельевая, шт.",
+        "weight_2024": 0.00076,
+        "weight_code": "4502",
+        "weight_name": "Майка, футболка мужская бельевая, шт."
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "14",
+        "group_name": "Трикотажные изделия",
+        "match_kind": "extended",
+        "series": "Футболка детская, шт.",
+        "weight_2024": 0.00043,
+        "weight_code": "4503",
+        "weight_name": "Футболка детская, шт."
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "41",
+        "group_name": "Медицинские товары",
+        "match_kind": "extended",
+        "series": "Аллохол, 50 таблеток",
+        "weight_2024": 0.0004,
+        "weight_code": "7995",
+        "weight_name": "Аллохол, 50 таблеток"
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "41",
+        "group_name": "Медицинские товары",
+        "match_kind": "extended",
+        "series": "Валидол, 60 мг, 10 таблеток",
+        "weight_2024": 0.00039,
+        "weight_code": "7926",
+        "weight_name": "Валидол, 60 мг, 10 таблеток"
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "41",
+        "group_name": "Медицинские товары",
+        "match_kind": "extended",
+        "series": "Комбинированные анальгетики, 10 таблеток",
+        "weight_2024": 0.00038,
+        "weight_code": "7957",
+        "weight_name": "Комбинированные анальгетики, 10 таблеток"
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "41",
+        "group_name": "Медицинские товары",
+        "match_kind": "extended",
+        "series": "Корвалол, 25 мл",
+        "weight_2024": 0.00043,
+        "weight_code": "7924",
+        "weight_name": "Корвалол, 25 мл"
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "41",
+        "group_name": "Медицинские товары",
+        "match_kind": "extended",
+        "series": "Левомеколь, мазь, 40 г",
+        "weight_2024": 0.0004,
+        "weight_code": "7994",
+        "weight_name": "Левомеколь, мазь, 40 г"
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "41",
+        "group_name": "Медицинские товары",
+        "match_kind": "extended",
+        "series": "Метамизол натрия (Анальгин отечественный), 500 мг, 10 таблеток",
+        "weight_2024": 0.00046,
+        "weight_code": "7927",
+        "weight_name": "Метамизол натрия (Анальгин отечественный), 500 мг, \n10 таблеток"
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "41",
+        "group_name": "Медицинские товары",
+        "match_kind": "extended",
+        "series": "Нафазолин, 0,1%, 15 мл",
+        "weight_2024": 0.00036,
+        "weight_code": "7980",
+        "weight_name": "Нафазолин, 0,1%, 15 мл"
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "41",
+        "group_name": "Медицинские товары",
+        "match_kind": "extended",
+        "series": "Нимесулид, 100 мг, 10 таблеток",
+        "weight_2024": 0.00036,
+        "weight_code": "7990",
+        "weight_name": "Нимесулид, 100 мг, 10 таблеток"
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "41",
+        "group_name": "Медицинские товары",
+        "match_kind": "extended",
+        "series": "Поливитамины, 10 шт.",
+        "weight_2024": 0.0004,
+        "weight_code": "8029",
+        "weight_name": "Поливитамины, 10 шт."
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "41",
+        "group_name": "Медицинские товары",
+        "match_kind": "extended",
+        "series": "Ренгалин, 20 таблеток",
+        "weight_2024": 0.00035,
+        "weight_code": "8031",
+        "weight_name": "Ренгалин, 20 таблеток"
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "41",
+        "group_name": "Медицинские товары",
+        "match_kind": "extended",
+        "series": "Эргоферон, 20 таблеток",
+        "weight_2024": 0.00037,
+        "weight_code": "8020",
+        "weight_name": "Эргоферон, 20 таблеток"
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "4100",
+        "group_name": "Одежда и белье",
+        "match_kind": "extended",
+        "series": "Брюки для детей школьного возраста из джинсовой ткани, шт.",
+        "weight_2024": 0.00094,
+        "weight_code": "4155",
+        "weight_name": "Брюки для детей школьного возраста из джинсовой ткани, шт."
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "4100",
+        "group_name": "Одежда и белье",
+        "match_kind": "extended",
+        "series": "Пеленки для новорожденных, шт.",
+        "weight_2024": 0.00013,
+        "weight_code": "4176",
+        "weight_name": "Пеленки для новорожденных, шт."
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "4100",
+        "group_name": "Одежда и белье",
+        "match_kind": "extended",
+        "series": "Сорочка верхняя для мальчиков школьного возраста",
+        "weight_2024": 0.00072,
+        "weight_code": "4161",
+        "weight_name": "Сорочка верхняя для мальчиков школьного возраста, шт."
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "42",
+        "group_name": "Топливо моторное",
+        "match_kind": "extended",
+        "series": "Бензин автомобильный марки АИ-92, л",
+        "weight_2024": 0.02012,
+        "weight_code": "7802",
+        "weight_name": "Бензин автомобильный марки АИ-92, л"
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "42",
+        "group_name": "Топливо моторное",
+        "match_kind": "extended",
+        "series": "Бензин автомобильный марки АИ-95, л",
+        "weight_2024": 0.01921,
+        "weight_code": "7803",
+        "weight_name": "Бензин автомобильный марки АИ-95, л"
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "42",
+        "group_name": "Топливо моторное",
+        "match_kind": "extended",
+        "series": "Бензин автомобильный марки АИ-98 и выше, л",
+        "weight_2024": 0.00541,
+        "weight_code": "7806",
+        "weight_name": "Бензин автомобильный марки АИ-98 и выше, л"
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "42",
+        "group_name": "Топливо моторное",
+        "match_kind": "extended",
+        "series": "Дизельное топливо, л",
+        "weight_2024": 0.00227,
+        "weight_code": "7804",
+        "weight_name": "Дизельное топливо, л"
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "43",
+        "group_name": "Моющие и чистящие средства",
+        "match_kind": "extended",
+        "series": "Мыло туалетное, 100 г",
+        "weight_2024": 0.00076,
+        "weight_code": "5201",
+        "weight_name": "Мыло туалетное, 100 г"
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "43",
+        "group_name": "Моющие и чистящие средства",
+        "match_kind": "extended",
+        "series": "Мыло хозяйственное, 200 г",
+        "weight_2024": 0.00101,
+        "weight_code": "5001",
+        "weight_name": "Мыло хозяйственное, 200 г"
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "43",
+        "group_name": "Моющие и чистящие средства",
+        "match_kind": "extended",
+        "series": "Порошок стиральный, кг",
+        "weight_2024": 0.00275,
+        "weight_code": "5101",
+        "weight_name": "Порошок стиральный, кг"
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "4600",
+        "group_name": "Чулочно-носочные изделия",
+        "match_kind": "extended",
+        "series": "Колготки женские эластичные, шт.",
+        "weight_2024": 0.00096,
+        "weight_code": "4601",
+        "weight_name": "Колготки женские эластичные, шт."
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "4600",
+        "group_name": "Чулочно-носочные изделия",
+        "match_kind": "extended",
+        "series": "Носки мужские, пара",
+        "weight_2024": 0.00085,
+        "weight_code": "4603",
+        "weight_name": "Носки мужские, пара"
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "4600",
+        "group_name": "Чулочно-носочные изделия",
+        "match_kind": "extended",
+        "series": "Носки, гольфы детские",
+        "weight_2024": 0.0002,
+        "weight_code": "4604",
+        "weight_name": "Носки, гольфы детские, пара"
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "4700",
+        "group_name": "Обувь кожаная, текстильная и комбинированная",
+        "match_kind": "extended",
+        "series": "Кроссовые туфли для взрослых, пара",
+        "weight_2024": 0.00344,
+        "weight_code": "4773",
+        "weight_name": "Кроссовые туфли для взрослых, пара"
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "4700",
+        "group_name": "Обувь кожаная, текстильная и комбинированная",
+        "match_kind": "extended",
+        "series": "Кроссовые туфли для детей, пара",
+        "weight_2024": 0.001,
+        "weight_code": "4744",
+        "weight_name": "Кроссовые туфли для детей, пара"
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "5300",
+        "group_name": "Парфюмерно-косметические товары",
+        "match_kind": "extended",
+        "series": "Паста зубная, 100 г (100 мл)",
+        "weight_2024": 0.00203,
+        "weight_code": "5313",
+        "weight_name": "Паста зубная, 100 г (100 мл)"
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "5300",
+        "group_name": "Парфюмерно-косметические товары",
+        "match_kind": "extended",
+        "series": "Шампунь, 250 мл",
+        "weight_2024": 0.00181,
+        "weight_code": "5303",
+        "weight_name": "Шампунь, 250 мл"
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "5400",
+        "group_name": "Галантерея",
+        "match_kind": "extended",
+        "series": "Щетка зубная, шт.",
+        "weight_2024": 0.00109,
+        "weight_code": "5406",
+        "weight_name": "Щетка зубная, шт."
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "5600",
+        "group_name": "Табачные изделия",
+        "match_kind": "extended",
+        "series": "Сигареты с фильтром, пачка",
+        "weight_2024": 0.01323,
+        "weight_code": "5605",
+        "weight_name": "Сигареты с фильтром, пачка"
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "5700",
+        "group_name": "Спички",
+        "match_kind": "extended",
+        "series": "Спички, коробок",
+        "weight_2024": 0.00116,
+        "weight_code": "5701",
+        "weight_name": "Спички, коробок"
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "6400",
+        "group_name": "Электротовары и другие бытовые приборы",
+        "match_kind": "extended",
+        "series": "Электропылесос напольный, шт.",
+        "weight_2024": 0.00127,
+        "weight_code": "6413",
+        "weight_name": "Электропылесос напольный, шт."
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "6500",
+        "group_name": "Бумажно-беловые товары",
+        "match_kind": "extended",
+        "series": "Бумага туалетная, рулон",
+        "weight_2024": 0.00128,
+        "weight_code": "6502",
+        "weight_name": "Бумага туалетная, рулон"
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "6500",
+        "group_name": "Бумажно-беловые товары",
+        "match_kind": "extended",
+        "series": "Подгузники детские бумажные, 10 шт.",
+        "weight_2024": 0.00121,
+        "weight_code": "6504",
+        "weight_name": "Подгузники детские бумажные, 10 шт."
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "6500",
+        "group_name": "Бумажно-беловые товары",
+        "match_kind": "extended",
+        "series": "Прокладки женские гигиенические, 10 шт.",
+        "weight_2024": 0.00124,
+        "weight_code": "6508",
+        "weight_name": "Прокладки женские гигиенические, 10 шт."
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "7000",
+        "group_name": "Телерадиотовары",
+        "match_kind": "extended",
+        "series": "Телевизор, шт.",
+        "weight_2024": 0.00176,
+        "weight_code": "7007",
+        "weight_name": "Телевизор, шт."
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "7100",
+        "group_name": "Средства связи",
+        "match_kind": "extended",
+        "series": "Смартфон, шт.",
+        "weight_2024": 0.00726,
+        "weight_code": "7104",
+        "weight_name": "Смартфон, шт."
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "7400",
+        "group_name": "Строительные материалы",
+        "match_kind": "extended",
+        "series": "Доска обрезная, м3",
+        "weight_2024": 0.00132,
+        "weight_code": "7418",
+        "weight_name": "Доска обрезная, м3"
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "7400",
+        "group_name": "Строительные материалы",
+        "match_kind": "extended",
+        "series": "Металлочерепица",
+        "weight_2024": 0.00032,
+        "weight_code": "7427",
+        "weight_name": "Металлочерепица, м2"
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "7400",
+        "group_name": "Строительные материалы",
+        "match_kind": "extended",
+        "series": "Плиты древесностружечные, ориентированно-стружечные, м2",
+        "weight_2024": 0.00071,
+        "weight_code": "7403",
+        "weight_name": "Плиты древесностружечные, ориентированно-стружечные, м2"
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "7700",
+        "group_name": "Легковые автомобили",
+        "match_kind": "extended",
+        "series": "Легковой автомобиль иностранной марки новый, шт.",
+        "weight_2024": 0.01047,
+        "weight_code": "7708",
+        "weight_name": "Легковой автомобиль иностранной марки новый, шт."
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "7700",
+        "group_name": "Легковые автомобили",
+        "match_kind": "extended",
+        "series": "Легковой автомобиль отечественный новый, шт.",
+        "weight_2024": 0.01274,
+        "weight_code": "7703",
+        "weight_name": "Легковой автомобиль отечественный новый, шт."
+      },
+      {
+        "component": "nonfood",
+        "component_code": "7",
+        "component_name": "Непродовольственные товары",
+        "group_code": "8310",
+        "group_name": "Товары для животных",
+        "match_kind": "extended",
+        "series": "Сухие корма для домашних животных, кг",
+        "weight_2024": 0.00428,
+        "weight_code": "8311",
+        "weight_name": "Сухие корма для домашних животных, кг"
+      },
+      {
+        "component": "services",
+        "component_code": "9000",
+        "component_name": "Услуги",
+        "group_code": "9100",
+        "group_name": "Бытовые услуги",
+        "match_kind": "extended",
+        "series": "Мойка легкового автомобиля, услуга",
+        "weight_2024": 0.00488,
+        "weight_code": "9143",
+        "weight_name": "Мойка легкового автомобиля, услуга"
+      },
+      {
+        "component": "services",
+        "component_code": "9000",
+        "component_name": "Услуги",
+        "group_code": "9100",
+        "group_name": "Бытовые услуги",
+        "match_kind": "extended",
+        "series": "Ремонт телевизоров, один вид работ",
+        "weight_2024": 0.001,
+        "weight_code": "9120",
+        "weight_name": "Ремонт телевизоров, один вид работ"
+      },
+      {
+        "component": "services",
+        "component_code": "9000",
+        "component_name": "Услуги",
+        "group_code": "9100",
+        "group_name": "Бытовые услуги",
+        "match_kind": "extended",
+        "series": "Стрижка модельная в женском зале, стрижка",
+        "weight_2024": 0.00755,
+        "weight_code": "9116",
+        "weight_name": "Стрижка модельная в женском зале, стрижка"
+      },
+      {
+        "component": "services",
+        "component_code": "9000",
+        "component_name": "Услуги",
+        "group_code": "9100",
+        "group_name": "Бытовые услуги",
+        "match_kind": "extended",
+        "series": "Стрижка модельная в мужском зале, стрижка",
+        "weight_2024": 0.00339,
+        "weight_code": "9118",
+        "weight_name": "Стрижка модельная в мужском зале, стрижка"
+      },
+      {
+        "component": "services",
+        "component_code": "9000",
+        "component_name": "Услуги",
+        "group_code": "9200",
+        "group_name": "Услуги пассажирского транспорта",
+        "match_kind": "extended",
+        "series": "Полет в салоне экономического класса самолета, в расчете на 1000 км пути",
+        "weight_2024": 0.00565,
+        "weight_code": "9261",
+        "weight_name": "Полет в салоне экономического класса самолета, в расчете на 1000 км пути"
+      },
+      {
+        "component": "services",
+        "component_code": "9000",
+        "component_name": "Услуги",
+        "group_code": "9200",
+        "group_name": "Услуги пассажирского транспорта",
+        "match_kind": "extended",
+        "series": "Проезд в городском автобусе, поездка",
+        "weight_2024": 0.00317,
+        "weight_code": "9222",
+        "weight_name": "Проезд в городском автобусе,поездка"
+      },
+      {
+        "component": "services",
+        "component_code": "9000",
+        "component_name": "Услуги",
+        "group_code": "9200",
+        "group_name": "Услуги пассажирского транспорта",
+        "match_kind": "extended",
+        "series": "Проезд в метро, поездка",
+        "weight_2024": 0.00077,
+        "weight_code": "9214",
+        "weight_name": "Проезд в метро, поездка"
+      },
+      {
+        "component": "services",
+        "component_code": "9000",
+        "component_name": "Услуги",
+        "group_code": "9200",
+        "group_name": "Услуги пассажирского транспорта",
+        "match_kind": "extended",
+        "series": "Проезд в трамвае, поездка",
+        "weight_2024": 0.00044,
+        "weight_code": "9212",
+        "weight_name": "Проезд в трамвае, поездка"
+      },
+      {
+        "component": "services",
+        "component_code": "9000",
+        "component_name": "Услуги",
+        "group_code": "9200",
+        "group_name": "Услуги пассажирского транспорта",
+        "match_kind": "extended",
+        "series": "Проезд в троллейбусе, поездка",
+        "weight_2024": 0.00032,
+        "weight_code": "9213",
+        "weight_name": "Проезд в троллейбусе, поездка"
+      },
+      {
+        "component": "services",
+        "component_code": "9000",
+        "component_name": "Услуги",
+        "group_code": "940.АГ",
+        "group_name": "Жилищные и коммунальные услуги (включая аренду квартир)",
+        "match_kind": "extended",
+        "series": "Водоотведение, м3",
+        "weight_2024": 0.00459,
+        "weight_code": "9458",
+        "weight_name": "Водоотведение, м3"
+      },
+      {
+        "component": "services",
+        "component_code": "9000",
+        "component_name": "Услуги",
+        "group_code": "940.АГ",
+        "group_name": "Жилищные и коммунальные услуги (включая аренду квартир)",
+        "match_kind": "extended",
+        "series": "Водоснабжение горячее, м3",
+        "weight_2024": 0.00637,
+        "weight_code": "9448",
+        "weight_name": "Водоснабжение горячее, м3"
+      },
+      {
+        "component": "services",
+        "component_code": "9000",
+        "component_name": "Услуги",
+        "group_code": "940.АГ",
+        "group_name": "Жилищные и коммунальные услуги (включая аренду квартир)",
+        "match_kind": "extended",
+        "series": "Водоснабжение холодное, м3",
+        "weight_2024": 0.00512,
+        "weight_code": "9457",
+        "weight_name": "Водоснабжение холодное, м3"
+      },
+      {
+        "component": "services",
+        "component_code": "9000",
+        "component_name": "Услуги",
+        "group_code": "940.АГ",
+        "group_name": "Жилищные и коммунальные услуги (включая аренду квартир)",
+        "match_kind": "extended",
+        "series": "Газ сжиженный, м3",
+        "weight_2024": 0.00013,
+        "weight_code": "9459",
+        "weight_name": "Газ сжиженный, м3"
+      },
+      {
+        "component": "services",
+        "component_code": "9000",
+        "component_name": "Услуги",
+        "group_code": "940.АГ",
+        "group_name": "Жилищные и коммунальные услуги (включая аренду квартир)",
+        "match_kind": "extended",
+        "series": "Отопление, Гкал",
+        "weight_2024": 0.02066,
+        "weight_code": "9449",
+        "weight_name": "Отопление, Гкал"
+      },
+      {
+        "component": "services",
+        "component_code": "9000",
+        "component_name": "Услуги",
+        "group_code": "9490",
+        "group_name": "Услуги гостиниц и прочих мест проживания",
+        "match_kind": "extended",
+        "series": "Проживание в гостинице 1* или в мотеле, сутки с человека",
+        "weight_2024": 0.00034,
+        "weight_code": "9462",
+        "weight_name": "Проживание в гостинице 1* или в мотеле, сутки с человека"
+      },
+      {
+        "component": "services",
+        "component_code": "9000",
+        "component_name": "Услуги",
+        "group_code": "9490",
+        "group_name": "Услуги гостиниц и прочих мест проживания",
+        "match_kind": "extended",
+        "series": "Проживание в гостинице 2*, сутки с человека",
+        "weight_2024": 0.00057,
+        "weight_code": "9463",
+        "weight_name": "Проживание в гостинице 2*, сутки с человека"
+      },
+      {
+        "component": "services",
+        "component_code": "9000",
+        "component_name": "Услуги",
+        "group_code": "9490",
+        "group_name": "Услуги гостиниц и прочих мест проживания",
+        "match_kind": "extended",
+        "series": "Проживание в гостинице 3*, сутки с человека",
+        "weight_2024": 0.00089,
+        "weight_code": "9464",
+        "weight_name": "Проживание в гостинице 3*, сутки с человека"
+      },
+      {
+        "component": "services",
+        "component_code": "9000",
+        "component_name": "Услуги",
+        "group_code": "9490",
+        "group_name": "Услуги гостиниц и прочих мест проживания",
+        "match_kind": "extended",
+        "series": "Проживание в гостинице 4*-5*, сутки с человека",
+        "weight_2024": 0.00075,
+        "weight_code": "9465",
+        "weight_name": "Проживание в гостинице 4*-5*, сутки с человека"
+      },
+      {
+        "component": "services",
+        "component_code": "9000",
+        "component_name": "Услуги",
+        "group_code": "9490",
+        "group_name": "Услуги гостиниц и прочих мест проживания",
+        "match_kind": "extended",
+        "series": "Проживание в хостеле, сутки с человека",
+        "weight_2024": 0.00081,
+        "weight_code": "9466",
+        "weight_name": "Проживание в хостеле, сутки с человека"
+      },
+      {
+        "component": "services",
+        "component_code": "9000",
+        "component_name": "Услуги",
+        "group_code": "9540",
+        "group_name": "Услуги в сфере зарубежного туризма",
+        "match_kind": "extended",
+        "series": "Поездка на отдых в ОАЭ, поездка",
+        "weight_2024": 0.00115,
+        "weight_code": "9551",
+        "weight_name": "Поездка на отдых в ОАЭ, поездка"
+      },
+      {
+        "component": "services",
+        "component_code": "9000",
+        "component_name": "Услуги",
+        "group_code": "9540",
+        "group_name": "Услуги в сфере зарубежного туризма",
+        "match_kind": "extended",
+        "series": "Поездка на отдых в Турцию, поездка",
+        "weight_2024": 0.00308,
+        "weight_code": "9541",
+        "weight_name": "Поездка на отдых в Турцию, поездка"
+      },
+      {
+        "component": "services",
+        "component_code": "9000",
+        "component_name": "Услуги",
+        "group_code": "9540",
+        "group_name": "Услуги в сфере зарубежного туризма",
+        "match_kind": "extended",
+        "series": "Поездки в отдельные страны Юго-Восточной Азии, поездка",
+        "weight_2024": 0.0006,
+        "weight_code": "9559",
+        "weight_name": "Поездки в отдельные страны Юго-Восточной Азии, поездка"
+      },
+      {
+        "component": "services",
+        "component_code": "9000",
+        "component_name": "Услуги",
+        "group_code": "9550",
+        "group_name": "Экскурсионные услуги",
+        "match_kind": "extended",
+        "series": "Поездка на отдых на Черноморское побережье России, поездка",
+        "weight_2024": 0.00519,
+        "weight_code": "9536",
+        "weight_name": "Поездка на отдых на Черноморское побережье России, поездка"
+      },
+      {
+        "component": "services",
+        "component_code": "9000",
+        "component_name": "Услуги",
+        "group_code": "9600",
+        "group_name": "Санаторно-оздоровительные услуги",
+        "match_kind": "extended",
+        "series": "Дом отдыха, пансионат, день",
+        "weight_2024": 0.00198,
+        "weight_code": "9607",
+        "weight_name": "Дом отдыха, пансионат, день"
+      },
+      {
+        "component": "services",
+        "component_code": "9000",
+        "component_name": "Услуги",
+        "group_code": "9600",
+        "group_name": "Санаторно-оздоровительные услуги",
+        "match_kind": "extended",
+        "series": "Санаторий, день",
+        "weight_2024": 0.00145,
+        "weight_code": "9606",
+        "weight_name": "Санаторий, день"
+      }
+    ],
+    "matched_weight_codes": 118,
+    "normalizer": "raw < basic < extended",
+    "raw_exact_series": 111,
+    "unmatched": [
+      {
+        "reason": "нет совпадения с именем веса после extended-нормализации (дженерик/бренд/снятая позиция — поштучно не проверялось)",
+        "series": "Активированный уголь, 10 таблеток"
+      },
+      {
+        "reason": "нет совпадения с именем веса после extended-нормализации (дженерик/бренд/снятая позиция — поштучно не проверялось)",
+        "series": "Алмагель"
+      },
+      {
+        "reason": "нет совпадения с именем веса после extended-нормализации (дженерик/бренд/снятая позиция — поштучно не проверялось)",
+        "series": "Бензин автомобильный"
+      },
+      {
+        "reason": "нет совпадения с именем веса после extended-нормализации (дженерик/бренд/снятая позиция — поштучно не проверялось)",
+        "series": "Бромгексин"
+      },
+      {
+        "reason": "нет совпадения с именем веса после extended-нормализации (дженерик/бренд/снятая позиция — поштучно не проверялось)",
+        "series": "Валидол, 10 таблеток"
+      },
+      {
+        "reason": "нет совпадения с именем веса после extended-нормализации (дженерик/бренд/снятая позиция — поштучно не проверялось)",
+        "series": "Валокордин"
+      },
+      {
+        "reason": "нет совпадения с именем веса после extended-нормализации (дженерик/бренд/снятая позиция — поштучно не проверялось)",
+        "series": "Водка крепостью 40% об.спирта и выше, л"
+      },
+      {
+        "reason": "нет совпадения с именем веса после extended-нормализации (дженерик/бренд/снятая позиция — поштучно не проверялось)",
+        "series": "Восстановление зуба пломбой, услуга"
+      },
+      {
+        "reason": "нет совпадения с именем веса после extended-нормализации (дженерик/бренд/снятая позиция — поштучно не проверялось)",
+        "series": "Говядина тушеная"
+      },
+      {
+        "reason": "нет совпадения с именем веса после extended-нормализации (дженерик/бренд/снятая позиция — поштучно не проверялось)",
+        "series": "Кефир, кг"
+      },
+      {
+        "reason": "нет совпадения с именем веса после extended-нормализации (дженерик/бренд/снятая позиция — поштучно не проверялось)",
+        "series": "Лизобакт, 10 таблеток"
+      },
+      {
+        "reason": "нет совпадения с именем веса после extended-нормализации (дженерик/бренд/снятая позиция — поштучно не проверялось)",
+        "series": "Линекс"
+      },
+      {
+        "reason": "нет совпадения с именем веса после extended-нормализации (дженерик/бренд/снятая позиция — поштучно не проверялось)",
+        "series": "Метамизол натрия (Анальгин отечественный), 10 таблеток"
+      },
+      {
+        "reason": "нет совпадения с именем веса после extended-нормализации (дженерик/бренд/снятая позиция — поштучно не проверялось)",
+        "series": "Метамизол натрия, 10 таблеток"
+      },
+      {
+        "reason": "нет совпадения с именем веса после extended-нормализации (дженерик/бренд/снятая позиция — поштучно не проверялось)",
+        "series": "Молоко питьевое цельное ультрапастеризованное 2,5-3,2% жирности, л"
+      },
+      {
+        "reason": "нет совпадения с именем веса после extended-нормализации (дженерик/бренд/снятая позиция — поштучно не проверялось)",
+        "series": "Нимесулид, 10 таблеток"
+      },
+      {
+        "reason": "нет совпадения с именем веса после extended-нормализации (дженерик/бренд/снятая позиция — поштучно не проверялось)",
+        "series": "Офтан катахром"
+      },
+      {
+        "reason": "нет совпадения с именем веса после extended-нормализации (дженерик/бренд/снятая позиция — поштучно не проверялось)",
+        "series": "Пенталгин, 24 таблетки"
+      },
+      {
+        "reason": "нет совпадения с именем веса после extended-нормализации (дженерик/бренд/снятая позиция — поштучно не проверялось)",
+        "series": "Плата за жилье в домах государственного и муниципального жилищных фондов, м2 общей площади"
+      },
+      {
+        "reason": "нет совпадения с именем веса после extended-нормализации (дженерик/бренд/снятая позиция — поштучно не проверялось)",
+        "series": "Поливитамины без минералов, отечественные"
+      },
+      {
+        "reason": "нет совпадения с именем веса после extended-нормализации (дженерик/бренд/снятая позиция — поштучно не проверялось)",
+        "series": "Поливитамины с макро- и микроэлементами"
+      },
+      {
+        "reason": "нет совпадения с именем веса после extended-нормализации (дженерик/бренд/снятая позиция — поштучно не проверялось)",
+        "series": "Проживание в гостинице"
+      },
+      {
+        "reason": "нет совпадения с именем веса после extended-нормализации (дженерик/бренд/снятая позиция — поштучно не проверялось)",
+        "series": "Ренгалин, 10 таблеток"
+      },
+      {
+        "reason": "нет совпадения с именем веса после extended-нормализации (дженерик/бренд/снятая позиция — поштучно не проверялось)",
+        "series": "Ренни"
+      },
+      {
+        "reason": "нет совпадения с именем веса после extended-нормализации (дженерик/бренд/снятая позиция — поштучно не проверялось)",
+        "series": "Римантадин, 10 таблеток"
+      },
+      {
+        "reason": "нет совпадения с именем веса после extended-нормализации (дженерик/бренд/снятая позиция — поштучно не проверялось)",
+        "series": "Сыры сычужные твердые и мягкие, кг"
+      },
+      {
+        "reason": "нет совпадения с именем веса после extended-нормализации (дженерик/бренд/снятая позиция — поштучно не проверялось)",
+        "series": "Трекрезан, 10 таблеток"
+      },
+      {
+        "reason": "нет совпадения с именем веса после extended-нормализации (дженерик/бренд/снятая позиция — поштучно не проверялось)",
+        "series": "Троксерутин"
+      },
+      {
+        "reason": "нет совпадения с именем веса после extended-нормализации (дженерик/бренд/снятая позиция — поштучно не проверялось)",
+        "series": "Услуги по снабжению электроэнергией"
+      },
+      {
+        "reason": "нет совпадения с именем веса после extended-нормализации (дженерик/бренд/снятая позиция — поштучно не проверялось)",
+        "series": "Флуоцинолона ацетонид"
+      }
+    ],
+    "weights_total_2024": 1.0
+  },
+  "monthly_components": {
+    "series": [
+      {
+        "key": "cpi_all",
+        "max_date": "2026-09-30",
+        "max_gap_days": 31,
+        "min_date": "1991-01-31",
+        "n": 429,
+        "n_missing_months": 0,
+        "series": "Индексы потребительских цен на товары и услуги по Российской Федерации"
+      },
+      {
+        "key": "cpi_food",
+        "max_date": "2026-09-30",
+        "max_gap_days": 31,
+        "min_date": "1991-01-31",
+        "n": 429,
+        "n_missing_months": 0,
+        "series": "Индексы потребительских цен на продовольственные товары по Российской Федерации"
+      },
+      {
+        "key": "cpi_nonfood",
+        "max_date": "2026-09-30",
+        "max_gap_days": 31,
+        "min_date": "1991-01-31",
+        "n": 429,
+        "n_missing_months": 0,
+        "series": "Индексы потребительских цен на непродовольственные товары по Российской Федерации"
+      },
+      {
+        "key": "cpi_services",
+        "max_date": "2026-09-30",
+        "max_gap_days": 31,
+        "min_date": "1991-01-31",
+        "n": 429,
+        "n_missing_months": 0,
+        "series": "Индексы потребительских цен на услуги по Российской Федерации"
+      }
+    ],
+    "source_table": "rosstat_ipc_mes via v_rosstat_macro"
+  },
+  "mp_survey": {
+    "industry_sheets": [
+      {
+        "basis": "feature, not weighted",
+        "indicators": {
+          "costs_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "costs_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "ibk_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "ibk_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "price_expectations_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "price_expectations_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          }
+        },
+        "max_date": "2026-09-01",
+        "min_date": "2002-01-01",
+        "n_missing_months": 0,
+        "n_months": 297,
+        "sheet": "Промышленность",
+        "weight": "—"
+      },
+      {
+        "basis": "feature, not weighted",
+        "indicators": {
+          "costs_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "costs_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "ibk_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "ibk_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "price_expectations_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "price_expectations_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          }
+        },
+        "max_date": "2026-09-01",
+        "min_date": "2002-01-01",
+        "n_missing_months": 0,
+        "n_months": 297,
+        "sheet": "Добыча",
+        "weight": "—"
+      },
+      {
+        "basis": "feature, not weighted",
+        "indicators": {
+          "costs_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "costs_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "ibk_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "ibk_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "price_expectations_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "price_expectations_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          }
+        },
+        "max_date": "2026-09-01",
+        "min_date": "2002-01-01",
+        "n_missing_months": 0,
+        "n_months": 297,
+        "sheet": "Обработка",
+        "weight": "—"
+      },
+      {
+        "basis": "feature, not weighted",
+        "indicators": {
+          "costs_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "costs_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "ibk_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "ibk_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "price_expectations_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "price_expectations_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          }
+        },
+        "max_date": "2026-09-01",
+        "min_date": "2002-01-01",
+        "n_missing_months": 0,
+        "n_months": 297,
+        "sheet": "Обработка_потребительские",
+        "weight": "—"
+      },
+      {
+        "basis": "feature, not weighted",
+        "indicators": {
+          "costs_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "costs_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "ibk_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "ibk_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "price_expectations_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "price_expectations_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          }
+        },
+        "max_date": "2026-09-01",
+        "min_date": "2002-01-01",
+        "n_missing_months": 0,
+        "n_months": 297,
+        "sheet": "Обработка_инвестиционные",
+        "weight": "—"
+      },
+      {
+        "basis": "feature, not weighted",
+        "indicators": {
+          "costs_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "costs_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "ibk_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "ibk_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "price_expectations_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "price_expectations_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          }
+        },
+        "max_date": "2026-09-01",
+        "min_date": "2002-01-01",
+        "n_missing_months": 0,
+        "n_months": 297,
+        "sheet": "Обработка_промежуточные",
+        "weight": "—"
+      },
+      {
+        "basis": "feature, not weighted",
+        "indicators": {
+          "costs_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "costs_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "ibk_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "ibk_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "price_expectations_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "price_expectations_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          }
+        },
+        "max_date": "2026-09-01",
+        "min_date": "2002-01-01",
+        "n_missing_months": 0,
+        "n_months": 297,
+        "sheet": "ЭЭГП",
+        "weight": "—"
+      },
+      {
+        "basis": "feature, not weighted",
+        "indicators": {
+          "costs_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "costs_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "ibk_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "ibk_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "price_expectations_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "price_expectations_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          }
+        },
+        "max_date": "2026-09-01",
+        "min_date": "2002-01-01",
+        "n_missing_months": 0,
+        "n_months": 297,
+        "sheet": "Водоснабжение",
+        "weight": "—"
+      },
+      {
+        "basis": "feature, not weighted",
+        "indicators": {
+          "costs_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "costs_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "ibk_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "ibk_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "price_expectations_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "price_expectations_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          }
+        },
+        "max_date": "2026-09-01",
+        "min_date": "2002-01-01",
+        "n_missing_months": 0,
+        "n_months": 297,
+        "sheet": "Сельское хозяйство",
+        "weight": "—"
+      },
+      {
+        "basis": "feature, not weighted",
+        "indicators": {
+          "costs_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "costs_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "ibk_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "ibk_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "price_expectations_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "price_expectations_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          }
+        },
+        "max_date": "2026-09-01",
+        "min_date": "2002-01-01",
+        "n_missing_months": 0,
+        "n_months": 297,
+        "sheet": "Строительство",
+        "weight": "—"
+      },
+      {
+        "basis": "feature, not weighted",
+        "indicators": {
+          "costs_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "costs_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "ibk_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "ibk_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "price_expectations_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "price_expectations_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          }
+        },
+        "max_date": "2026-09-01",
+        "min_date": "2002-01-01",
+        "n_missing_months": 0,
+        "n_months": 297,
+        "sheet": "Торговля (45+46+47)",
+        "weight": "—"
+      },
+      {
+        "basis": "feature, not weighted",
+        "indicators": {
+          "costs_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "costs_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "ibk_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "ibk_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "price_expectations_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "price_expectations_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          }
+        },
+        "max_date": "2026-09-01",
+        "min_date": "2002-01-01",
+        "n_missing_months": 0,
+        "n_months": 297,
+        "sheet": "Торговля авто (45)",
+        "weight": "—"
+      },
+      {
+        "basis": "feature, not weighted",
+        "indicators": {
+          "costs_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "costs_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "ibk_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "ibk_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "price_expectations_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "price_expectations_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          }
+        },
+        "max_date": "2026-09-01",
+        "min_date": "2002-01-01",
+        "n_missing_months": 0,
+        "n_months": 297,
+        "sheet": "Торговля оптовая (46)",
+        "weight": "—"
+      },
+      {
+        "basis": "feature, not weighted",
+        "indicators": {
+          "costs_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "costs_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "ibk_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "ibk_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "price_expectations_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "price_expectations_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          }
+        },
+        "max_date": "2026-09-01",
+        "min_date": "2002-01-01",
+        "n_missing_months": 0,
+        "n_months": 297,
+        "sheet": "Торговля розничная (47)",
+        "weight": "—"
+      },
+      {
+        "basis": "feature, not weighted",
+        "indicators": {
+          "costs_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "costs_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "ibk_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "ibk_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "price_expectations_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "price_expectations_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          }
+        },
+        "max_date": "2026-09-01",
+        "min_date": "2002-01-01",
+        "n_missing_months": 0,
+        "n_months": 297,
+        "sheet": "Транспортировка и хранение",
+        "weight": "—"
+      },
+      {
+        "basis": "feature, not weighted",
+        "indicators": {
+          "costs_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "costs_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "ibk_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "ibk_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "price_expectations_raw": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          },
+          "price_expectations_sa": {
+            "max_date": "2026-09-01",
+            "min_date": "2002-01-01",
+            "n": 297,
+            "n_missing_months": 0
+          }
+        },
+        "max_date": "2026-09-01",
+        "min_date": "2002-01-01",
+        "n_missing_months": 0,
+        "n_months": 297,
+        "sheet": "Услуги",
+        "weight": "—"
+      }
+    ],
+    "n_industry_sheets": 16,
+    "n_months": 297,
+    "n_sheets": 31,
+    "other_sheets": [
+      "Участники опроса",
+      "Экономика всего",
+      "Загрузка произв мощностей",
+      "Инвестиционная активность",
+      "Ожидаемая инвест активность",
+      "Обеспеченность персоналом",
+      "Ожидания изменения численности",
+      "Расходы на оплату труда",
+      "Спецификации производство",
+      "Спецификации спрос",
+      "Спецификации Ценовые ожидания",
+      "Спецификации цены",
+      "Спецификации издержки",
+      "Спецификации СОТПЦ",
+      "Спецификации_ежеквартальные"
+    ],
+    "sha256": "c5ad8996bda9f21715a05de3bbe98d1511fb6c160b064f1e9c1090eb501c945b",
+    "source": "cache",
+    "url": "https://www.cbr.ru/Content/Document/File/135603/mp_survey_data.xlsx"
+  },
+  "pit": {
+    "cutoff_rule": "8-е число M+1",
+    "max_excluded_weekly_points_per_month": 1,
+    "missing_targets": [],
+    "monthly_available_from": "конец M+1",
+    "n_excluded_weekly_points": 36,
+    "n_missing_targets": 0,
+    "n_months": 155,
+    "n_violations": 0,
+    "n_weekly_dates": 746,
+    "sample_first": "2013-10-01",
+    "sample_last": "2026-08-01",
+    "violations": [],
+    "weekly_available_from": "date + 2"
+  },
+  "schema": "cpi-public-data-audit/v1",
+  "weekly": {
+    "aggregate": {
+      "max_date": "2021-12-27",
+      "max_gap_days": 77,
+      "min_date": "2009-04-06",
+      "n": 502
+    },
+    "by_year": [
+      {
+        "n_points": 393,
+        "n_product_series": 25,
+        "n_series": 26,
+        "year": 2009
+      },
+      {
+        "n_points": 629,
+        "n_product_series": 29,
+        "n_series": 30,
+        "year": 2010
+      },
+      {
+        "n_points": 858,
+        "n_product_series": 25,
+        "n_series": 26,
+        "year": 2011
+      },
+      {
+        "n_points": 861,
+        "n_product_series": 28,
+        "n_series": 29,
+        "year": 2012
+      },
+      {
+        "n_points": 771,
+        "n_product_series": 35,
+        "n_series": 36,
+        "year": 2013
+      },
+      {
+        "n_points": 872,
+        "n_product_series": 42,
+        "n_series": 43,
+        "year": 2014
+      },
+      {
+        "n_points": 1910,
+        "n_product_series": 44,
+        "n_series": 45,
+        "year": 2015
+      },
+      {
+        "n_points": 1904,
+        "n_product_series": 44,
+        "n_series": 45,
+        "year": 2016
+      },
+      {
+        "n_points": 1764,
+        "n_product_series": 46,
+        "n_series": 47,
+        "year": 2017
+      },
+      {
+        "n_points": 2000,
+        "n_product_series": 40,
+        "n_series": 41,
+        "year": 2018
+      },
+      {
+        "n_points": 1733,
+        "n_product_series": 41,
+        "n_series": 42,
+        "year": 2019
+      },
+      {
+        "n_points": 3447,
+        "n_product_series": 98,
+        "n_series": 99,
+        "year": 2020
+      },
+      {
+        "n_points": 5279,
+        "n_product_series": 113,
+        "n_series": 114,
+        "year": 2021
+      },
+      {
+        "n_points": 5457,
+        "n_product_series": 108,
+        "n_series": 108,
+        "year": 2022
+      },
+      {
+        "n_points": 5610,
+        "n_product_series": 110,
+        "n_series": 110,
+        "year": 2023
+      },
+      {
+        "n_points": 5606,
+        "n_product_series": 110,
+        "n_series": 110,
+        "year": 2024
+      },
+      {
+        "n_points": 5610,
+        "n_product_series": 110,
+        "n_series": 110,
+        "year": 2025
+      },
+      {
+        "n_points": 4439,
+        "n_product_series": 112,
+        "n_series": 112,
+        "year": 2026
+      }
+    ],
+    "max_date": "2026-10-12",
+    "min_date": "2009-04-06",
+    "n_catalog_series": 149,
+    "n_points": 49143,
+    "n_product_series": 148,
+    "n_series_ending_before_global_max": 38,
+    "n_series_with_gap_gt_14": 123,
+    "per_series": [
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2025-01-09",
+        "n": 91,
+        "series": "Активированный уголь, 10 таблеток"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2024-12-23",
+        "max_gap_days": 15,
+        "min_date": "2021-05-04",
+        "n": 188,
+        "series": "Аллохол, 50 таблеток"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2021-04-26",
+        "max_gap_days": 14,
+        "min_date": "2020-04-06",
+        "n": 55,
+        "series": "Алмагель"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2022-01-10",
+        "n": 244,
+        "series": "Бананы, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 1820,
+        "min_date": "2012-02-06",
+        "n": 399,
+        "series": "Баранина (кроме бескостного мяса), кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 77,
+        "min_date": "2009-10-05",
+        "n": 725,
+        "series": "Бензин автомобильный"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2022-01-10",
+        "n": 244,
+        "series": "Бензин автомобильный марки АИ-92, л"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2022-01-10",
+        "n": 244,
+        "series": "Бензин автомобильный марки АИ-95, л"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2022-01-10",
+        "n": 244,
+        "series": "Бензин автомобильный марки АИ-98 и выше, л"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2021-12-27",
+        "max_gap_days": 14,
+        "min_date": "2020-04-06",
+        "n": 90,
+        "series": "Бромгексин"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-04-06",
+        "n": 334,
+        "series": "Брюки для детей школьного возраста из джинсовой ткани, шт."
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-04-06",
+        "n": 334,
+        "series": "Бумага туалетная, рулон"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2025-01-09",
+        "n": 91,
+        "series": "Валидол, 10 таблеток"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2024-12-23",
+        "max_gap_days": 15,
+        "min_date": "2021-05-04",
+        "n": 188,
+        "series": "Валидол, 60 мг, 10 таблеток"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2021-04-26",
+        "max_gap_days": 14,
+        "min_date": "2020-04-06",
+        "n": 55,
+        "series": "Валокордин"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 1246,
+        "min_date": "2015-12-21",
+        "n": 368,
+        "series": "Вермишель, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2022-12-26",
+        "max_gap_days": 1302,
+        "min_date": "2010-01-11",
+        "n": 140,
+        "series": "Водка крепостью 40% об.спирта и выше, л"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2023-01-09",
+        "n": 193,
+        "series": "Водка, л"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 98,
+        "min_date": "2013-04-01",
+        "n": 599,
+        "series": "Водоотведение, м3"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 98,
+        "min_date": "2010-01-18",
+        "n": 702,
+        "series": "Водоснабжение горячее, м3"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 98,
+        "min_date": "2010-01-18",
+        "n": 702,
+        "series": "Водоснабжение холодное, м3"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2025-01-09",
+        "n": 91,
+        "series": "Восстановление зуба пломбой, услуга"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2025-12-22",
+        "max_gap_days": 17,
+        "min_date": "2020-07-06",
+        "n": 281,
+        "series": "Газ сжиженный, м3"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 77,
+        "min_date": "2009-05-12",
+        "n": 743,
+        "series": "Говядина (кроме бескостного мяса), кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2009-05-18",
+        "max_gap_days": 22,
+        "min_date": "2009-04-06",
+        "n": 5,
+        "series": "Говядина тушеная"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-04-06",
+        "n": 334,
+        "series": "Дизельное топливо, л"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-11-30",
+        "n": 300,
+        "series": "Дом отдыха, пансионат, день"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2021-07-05",
+        "n": 270,
+        "series": "Доска обрезная, м3"
+      },
+      {
+        "is_aggregate": true,
+        "max_date": "2021-12-27",
+        "max_gap_days": 77,
+        "min_date": "2009-04-06",
+        "n": 502,
+        "series": "Индекс потребительских цен (недельная оценка)"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 77,
+        "min_date": "2009-09-07",
+        "n": 728,
+        "series": "Капуста белокочанная свежая, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2021-06-28",
+        "max_gap_days": 1281,
+        "min_date": "2015-05-18",
+        "n": 122,
+        "series": "Карамель"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 77,
+        "min_date": "2009-08-24",
+        "n": 730,
+        "series": "Картофель, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 8,
+        "min_date": "2026-01-12",
+        "n": 40,
+        "series": "Кефир, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 1918,
+        "min_date": "2009-04-13",
+        "n": 589,
+        "series": "Колбаса вареная, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 1792,
+        "min_date": "2009-09-07",
+        "n": 588,
+        "series": "Колбаса полукопченая и варено-копченая, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-04-06",
+        "n": 334,
+        "series": "Колготки женские эластичные, шт."
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2024-12-23",
+        "max_gap_days": 15,
+        "min_date": "2021-05-04",
+        "n": 188,
+        "series": "Комбинированные анальгетики, 10 таблеток"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2021-06-28",
+        "max_gap_days": 1281,
+        "min_date": "2015-03-23",
+        "n": 129,
+        "series": "Консервы мясные"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-04-06",
+        "n": 334,
+        "series": "Консервы мясные для детского питания, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-04-06",
+        "n": 334,
+        "series": "Консервы овощные для детского питания, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-04-06",
+        "n": 334,
+        "series": "Консервы фруктово-ягодные для детского питания, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2022-12-26",
+        "max_gap_days": 1281,
+        "min_date": "2015-05-18",
+        "n": 161,
+        "series": "Конфеты мягкие, глазированные шоколадом, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2021-05-04",
+        "n": 279,
+        "series": "Корвалол, 25 мл"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-04-06",
+        "n": 334,
+        "series": "Костюм спортивный для детей школьного возраста, шт."
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-09-07",
+        "n": 312,
+        "series": "Кроссовые туфли для взрослых, пара"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-04-06",
+        "n": 334,
+        "series": "Кроссовые туфли для детей, пара"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 653,
+        "min_date": "2009-09-07",
+        "n": 584,
+        "series": "Крупа гречневая-ядрица, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 105,
+        "min_date": "2009-06-01",
+        "n": 732,
+        "series": "Куры охлажденные и мороженые, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2021-05-04",
+        "n": 279,
+        "series": "Левомеколь, мазь, 40 г"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-09-07",
+        "n": 312,
+        "series": "Легковой автомобиль иностранной марки новый, шт."
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-11-23",
+        "n": 301,
+        "series": "Легковой автомобиль отечественный новый, шт."
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2025-12-22",
+        "max_gap_days": 9,
+        "min_date": "2025-01-09",
+        "n": 51,
+        "series": "Лизобакт, 10 таблеток"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2021-04-26",
+        "max_gap_days": 14,
+        "min_date": "2020-04-06",
+        "n": 55,
+        "series": "Линекс"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 1316,
+        "min_date": "2009-08-24",
+        "n": 623,
+        "series": "Лук репчатый, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-10-26",
+        "n": 305,
+        "series": "Майка, футболка мужская бельевая, шт."
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 4144,
+        "min_date": "2009-04-13",
+        "n": 316,
+        "series": "Макаронные изделия из пшеничной муки высшего сорта, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 854,
+        "min_date": "2017-11-13",
+        "n": 337,
+        "series": "Маргарин, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 77,
+        "min_date": "2009-06-01",
+        "n": 741,
+        "series": "Масло подсолнечное, л"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 77,
+        "min_date": "2009-11-02",
+        "n": 721,
+        "series": "Масло сливочное, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2021-12-27",
+        "max_gap_days": 7,
+        "min_date": "2021-07-05",
+        "n": 26,
+        "series": "Металлочерепица"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2025-12-22",
+        "max_gap_days": 9,
+        "min_date": "2025-01-09",
+        "n": 51,
+        "series": "Метамизол натрия (Анальгин отечественный), 10 таблеток"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2024-12-23",
+        "max_gap_days": 15,
+        "min_date": "2020-04-06",
+        "n": 243,
+        "series": "Метамизол натрия (Анальгин отечественный), 500 мг, 10 таблеток"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 8,
+        "min_date": "2026-01-12",
+        "n": 40,
+        "series": "Метамизол натрия, 10 таблеток"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2023-01-09",
+        "n": 193,
+        "series": "Мойка легкового автомобиля, услуга"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 77,
+        "min_date": "2009-10-05",
+        "n": 725,
+        "series": "Молоко питьевое цельное пастеризованное 2,5-3,2% жирности, л"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2024-12-23",
+        "max_gap_days": 308,
+        "min_date": "2013-09-09",
+        "n": 499,
+        "series": "Молоко питьевое цельное стерилизованное 2,5-3,2% жирности, л"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2025-01-09",
+        "n": 91,
+        "series": "Молоко питьевое цельное ультрапастеризованное 2,5-3,2% жирности, л"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 1316,
+        "min_date": "2009-08-24",
+        "n": 611,
+        "series": "Морковь, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 77,
+        "min_date": "2010-08-09",
+        "n": 695,
+        "series": "Мука пшеничная, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-04-06",
+        "n": 334,
+        "series": "Мыло туалетное, 100 г"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-04-06",
+        "n": 334,
+        "series": "Мыло хозяйственное, 200 г"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 8,
+        "min_date": "2026-01-12",
+        "n": 40,
+        "series": "Нафазолин, 0,1%, 15 мл"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2025-01-09",
+        "n": 91,
+        "series": "Нимесулид, 10 таблеток"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2024-12-23",
+        "max_gap_days": 15,
+        "min_date": "2021-05-04",
+        "n": 188,
+        "series": "Нимесулид, 100 мг, 10 таблеток"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-09-07",
+        "n": 312,
+        "series": "Носки мужские, пара"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2021-06-28",
+        "max_gap_days": 14,
+        "min_date": "2020-04-06",
+        "n": 64,
+        "series": "Носки, гольфы детские"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-04-06",
+        "n": 334,
+        "series": "Обед в столовой, кафе, закусочной (кроме столовой в организации), на 1 человека"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 65,
+        "min_date": "2014-08-18",
+        "n": 585,
+        "series": "Огурцы свежие, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 98,
+        "min_date": "2010-01-18",
+        "n": 702,
+        "series": "Отопление, Гкал"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2021-04-26",
+        "max_gap_days": 14,
+        "min_date": "2020-04-06",
+        "n": 55,
+        "series": "Офтан катахром"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-04-06",
+        "n": 334,
+        "series": "Паста зубная, 100 г (100 мл)"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-08-24",
+        "n": 314,
+        "series": "Пеленки для новорожденных, шт."
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2025-01-09",
+        "n": 91,
+        "series": "Пенталгин, 24 таблетки"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-08-24",
+        "n": 314,
+        "series": "Печенье, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 98,
+        "min_date": "2010-01-18",
+        "n": 702,
+        "series": "Плата за жилье в домах государственного и муниципального жилищных фондов, м2 общей площади"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2021-07-05",
+        "n": 270,
+        "series": "Плиты древесностружечные, ориентированно-стружечные, м2"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-04-06",
+        "n": 334,
+        "series": "Подгузники детские бумажные, 10 шт."
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-03-23",
+        "max_gap_days": 8,
+        "min_date": "2026-01-12",
+        "n": 11,
+        "series": "Поездка на отдых в ОАЭ, поездка"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2022-03-25",
+        "max_gap_days": 14,
+        "min_date": "2021-07-05",
+        "n": 38,
+        "series": "Поездка на отдых в Турцию, поездка"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 8,
+        "min_date": "2026-01-12",
+        "n": 40,
+        "series": "Поездка на отдых на Черноморское побережье России, поездка"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 8,
+        "min_date": "2026-04-06",
+        "n": 28,
+        "series": "Поездки в отдельные страны Юго-Восточной Азии, поездка"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2024-11-25",
+        "max_gap_days": 15,
+        "min_date": "2022-04-01",
+        "n": 137,
+        "series": "Полет в салоне экономического класса самолета, в расчете на 1000 км пути"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2021-12-27",
+        "max_gap_days": 8,
+        "min_date": "2021-05-04",
+        "n": 35,
+        "series": "Поливитамины без минералов, отечественные"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2021-12-27",
+        "max_gap_days": 14,
+        "min_date": "2020-04-06",
+        "n": 90,
+        "series": "Поливитамины с макро- и микроэлементами"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2024-12-23",
+        "max_gap_days": 15,
+        "min_date": "2022-01-10",
+        "n": 153,
+        "series": "Поливитамины, 10 шт."
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 65,
+        "min_date": "2014-08-18",
+        "n": 585,
+        "series": "Помидоры свежие, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-04-06",
+        "n": 334,
+        "series": "Порошок стиральный, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 321,
+        "min_date": "2010-01-18",
+        "n": 679,
+        "series": "Проезд в городском автобусе, поездка"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 321,
+        "min_date": "2010-01-18",
+        "n": 656,
+        "series": "Проезд в метро, поездка"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 321,
+        "min_date": "2010-01-18",
+        "n": 656,
+        "series": "Проезд в трамвае, поездка"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 321,
+        "min_date": "2010-01-18",
+        "n": 679,
+        "series": "Проезд в троллейбусе, поездка"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2020-12-28",
+        "max_gap_days": 7,
+        "min_date": "2020-11-30",
+        "n": 5,
+        "series": "Проживание в гостинице"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2021-01-11",
+        "n": 295,
+        "series": "Проживание в гостинице 1* или в мотеле, сутки с человека"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2021-01-11",
+        "n": 295,
+        "series": "Проживание в гостинице 2*, сутки с человека"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2021-01-11",
+        "n": 295,
+        "series": "Проживание в гостинице 3*, сутки с человека"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2021-01-11",
+        "n": 295,
+        "series": "Проживание в гостинице 4*-5*, сутки с человека"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2021-01-11",
+        "n": 295,
+        "series": "Проживание в хостеле, сутки с человека"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-12-14",
+        "n": 298,
+        "series": "Прокладки женские гигиенические, 10 шт."
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 1197,
+        "min_date": "2010-12-06",
+        "n": 521,
+        "series": "Пшено, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2025-12-22",
+        "max_gap_days": 17,
+        "min_date": "2023-01-09",
+        "n": 153,
+        "series": "Ремонт телевизоров, один вид работ"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2022-12-26",
+        "max_gap_days": 10,
+        "min_date": "2022-01-10",
+        "n": 51,
+        "series": "Ренгалин, 10 таблеток"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2023-01-09",
+        "n": 193,
+        "series": "Ренгалин, 20 таблеток"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2021-04-26",
+        "max_gap_days": 14,
+        "min_date": "2020-04-06",
+        "n": 55,
+        "series": "Ренни"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 8,
+        "min_date": "2026-01-12",
+        "n": 40,
+        "series": "Римантадин, 10 таблеток"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 1617,
+        "min_date": "2009-04-06",
+        "n": 411,
+        "series": "Рис шлифованный, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 161,
+        "min_date": "2009-04-06",
+        "n": 730,
+        "series": "Рыба мороженая неразделанная, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-11-30",
+        "n": 300,
+        "series": "Санаторий, день"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 77,
+        "min_date": "2009-04-06",
+        "n": 746,
+        "series": "Сахар-песок, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 65,
+        "min_date": "2014-04-21",
+        "n": 589,
+        "series": "Свинина (кроме бескостного мяса), кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2022-01-10",
+        "n": 244,
+        "series": "Свёкла столовая, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-08-24",
+        "n": 314,
+        "series": "Сигареты с фильтром, пачка"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-04-06",
+        "n": 334,
+        "series": "Смартфон, шт."
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 3871,
+        "min_date": "2009-04-06",
+        "n": 352,
+        "series": "Смеси сухие молочные для детского питания, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 119,
+        "min_date": "2013-11-25",
+        "n": 594,
+        "series": "Сметана, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 2436,
+        "min_date": "2012-02-27",
+        "n": 323,
+        "series": "Соль поваренная пищевая, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2020-11-23",
+        "max_gap_days": 9,
+        "min_date": "2020-04-06",
+        "n": 34,
+        "series": "Сорочка верхняя для мальчиков школьного возраста"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 1960,
+        "min_date": "2009-04-06",
+        "n": 586,
+        "series": "Сосиски, сардельки, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-10-26",
+        "n": 305,
+        "series": "Спички, коробок"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2023-01-09",
+        "n": 193,
+        "series": "Стрижка модельная в женском зале, стрижка"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2023-01-09",
+        "n": 193,
+        "series": "Стрижка модельная в мужском зале, стрижка"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-08-24",
+        "n": 314,
+        "series": "Сухие корма для домашних животных, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2022-12-26",
+        "max_gap_days": 1225,
+        "min_date": "2010-01-11",
+        "n": 424,
+        "series": "Сыры сычужные твердые и мягкие, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2023-01-09",
+        "n": 193,
+        "series": "Сыры твердые, полутвердые и мягкие, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 1414,
+        "min_date": "2009-10-05",
+        "n": 609,
+        "series": "Творог, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-08-31",
+        "n": 313,
+        "series": "Телевизор, шт."
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2025-12-22",
+        "max_gap_days": 9,
+        "min_date": "2025-01-09",
+        "n": 51,
+        "series": "Трекрезан, 10 таблеток"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2021-04-26",
+        "max_gap_days": 14,
+        "min_date": "2020-04-06",
+        "n": 55,
+        "series": "Троксерутин"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 98,
+        "min_date": "2010-01-18",
+        "n": 702,
+        "series": "Услуги по снабжению электроэнергией"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2021-04-26",
+        "max_gap_days": 14,
+        "min_date": "2020-04-06",
+        "n": 55,
+        "series": "Флуоцинолона ацетонид"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-04-06",
+        "n": 334,
+        "series": "Футболка детская, шт."
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 77,
+        "min_date": "2009-04-06",
+        "n": 746,
+        "series": "Хлеб и булочные изделия из пшеничной муки различных сортов, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 77,
+        "min_date": "2009-04-06",
+        "n": 746,
+        "series": "Хлеб из ржаной муки и из смеси муки ржаной и пшеничной, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 2030,
+        "min_date": "2009-04-06",
+        "n": 400,
+        "series": "Чай черный байховый, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-04-06",
+        "n": 334,
+        "series": "Шампунь, 250 мл"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-04-06",
+        "n": 334,
+        "series": "Щетка зубная, шт."
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 21,
+        "min_date": "2020-04-06",
+        "n": 334,
+        "series": "Электропылесос напольный, шт."
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2024-12-23",
+        "max_gap_days": 15,
+        "min_date": "2022-01-10",
+        "n": 153,
+        "series": "Эргоферон, 20 таблеток"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 65,
+        "min_date": "2014-08-18",
+        "n": 585,
+        "series": "Яблоки, кг"
+      },
+      {
+        "is_aggregate": false,
+        "max_date": "2026-10-12",
+        "max_gap_days": 77,
+        "min_date": "2009-04-06",
+        "n": 746,
+        "series": "Яйца куриные, 10 шт."
+      }
+    ]
+  },
+  "weekly_compounding": {
+    "aggregate": {
+      "by_year": [
+        {
+          "mae_pp": 0.13555627500686138,
+          "max_abs_pp": 0.3100036621093816,
+          "mean_pp": -0.06168871767874161,
+          "n": 9,
+          "rmse_pp": 0.16780156831253235,
+          "year": 2009
+        },
+        {
+          "mae_pp": 0.1783411278196967,
+          "max_abs_pp": 0.37840063105469834,
+          "mean_pp": -0.142317608834861,
+          "n": 10,
+          "rmse_pp": 0.2067036983659859,
+          "year": 2010
+        },
+        {
+          "mae_pp": 0.14359043117638526,
+          "max_abs_pp": 0.356773946582023,
+          "mean_pp": -0.11192361192182605,
+          "n": 12,
+          "rmse_pp": 0.17729683818054742,
+          "year": 2011
+        },
+        {
+          "mae_pp": 0.2139928273195387,
+          "max_abs_pp": 0.7899993896484547,
+          "mean_pp": -0.1819914574457293,
+          "n": 12,
+          "rmse_pp": 0.2919927066182101,
+          "year": 2012
+        },
+        {
+          "mae_pp": 0.18848912118119454,
+          "max_abs_pp": 0.6198996948242552,
+          "mean_pp": -0.18848912118119454,
+          "n": 10,
+          "rmse_pp": 0.26114273328347515,
+          "year": 2013
+        },
+        {
+          "mae_pp": 0.4233359415042304,
+          "max_abs_pp": 0.707669414182055,
+          "mean_pp": -0.4129758465200095,
+          "n": 10,
+          "rmse_pp": 0.4922634243792852,
+          "year": 2014
+        },
+        {
+          "mae_pp": 0.273669136541919,
+          "max_abs_pp": 1.7353648741210703,
+          "mean_pp": -0.15912116366927168,
+          "n": 12,
+          "rmse_pp": 0.5277967087210849,
+          "year": 2015
+        },
+        {
+          "mae_pp": 0.13778354806011175,
+          "max_abs_pp": 0.26000061035156286,
+          "mean_pp": -0.02841666056620414,
+          "n": 12,
+          "rmse_pp": 0.15573770045956498,
+          "year": 2016
+        },
+        {
+          "mae_pp": 0.12497490829167975,
+          "max_abs_pp": 0.4302998047757578,
+          "mean_pp": -0.016408291675021336,
+          "n": 12,
+          "rmse_pp": 0.16966143472431905,
+          "year": 2017
+        },
+        {
+          "mae_pp": 0.10987703107837403,
+          "max_abs_pp": 0.23080375693356192,
+          "mean_pp": 0.06826012676521276,
+          "n": 12,
+          "rmse_pp": 0.1289087168802581,
+          "year": 2018
+        },
+        {
+          "mae_pp": 0.06797234526362778,
+          "max_abs_pp": 0.179998779296886,
+          "mean_pp": -0.00402622676223465,
+          "n": 11,
+          "rmse_pp": 0.0842030196276126,
+          "year": 2019
+        },
+        {
+          "mae_pp": 0.05394183979479846,
+          "max_abs_pp": 0.12990183105472397,
+          "mean_pp": -0.016707906857308757,
+          "n": 12,
+          "rmse_pp": 0.06365874968500108,
+          "year": 2020
+        },
+        {
+          "mae_pp": 0.12342868211044355,
+          "max_abs_pp": 0.24320194269222828,
+          "mean_pp": 0.023581226119738046,
+          "n": 12,
+          "rmse_pp": 0.13931123861050418,
+          "year": 2021
+        }
+      ],
+      "mae_pp": 0.16468811664720465,
+      "max_abs_pp": 1.7353648741210703,
+      "max_month": "2021-12-01",
+      "mean_pp": -0.08979483280725227,
+      "method": "Π(value/100) по неделям месяца",
+      "min_month": "2009-04-01",
+      "missing_months_in_span": [
+        "2010-10-01",
+        "2010-11-01",
+        "2013-05-01",
+        "2013-06-01",
+        "2014-01-01",
+        "2014-07-01",
+        "2019-12-01"
+      ],
+      "n": 146,
+      "n_missing_months_in_span": 7,
+      "n_months": 146,
+      "n_weeks_max": 5,
+      "n_weeks_min": 1,
+      "rmse_pp": 0.2580806456288507
+    },
+    "product_panel_2022_plus": {
+      "by_month": [
+        {
+          "error_pp": 0.6050316352364912,
+          "matched_weight_coverage": 0.8642459095651286,
+          "month": "2022-01-01",
+          "n_series": 101
+        },
+        {
+          "error_pp": 0.21148339682982037,
+          "matched_weight_coverage": 0.8642459095651286,
+          "month": "2022-02-01",
+          "n_series": 101
+        },
+        {
+          "error_pp": 0.34389707925216173,
+          "matched_weight_coverage": 0.8642459095651286,
+          "month": "2022-03-01",
+          "n_series": 101
+        },
+        {
+          "error_pp": 0.7114496420634515,
+          "matched_weight_coverage": 0.8707855161708945,
+          "month": "2022-04-01",
+          "n_series": 101
+        },
+        {
+          "error_pp": -0.469606163821173,
+          "matched_weight_coverage": 0.8707855161708945,
+          "month": "2022-05-01",
+          "n_series": 101
+        },
+        {
+          "error_pp": -0.6219479589280853,
+          "matched_weight_coverage": 0.8707855161708945,
+          "month": "2022-06-01",
+          "n_series": 101
+        },
+        {
+          "error_pp": -0.023042440058525064,
+          "matched_weight_coverage": 0.8707855161708945,
+          "month": "2022-07-01",
+          "n_series": 101
+        },
+        {
+          "error_pp": -1.156761370437169,
+          "matched_weight_coverage": 0.8707855161708945,
+          "month": "2022-08-01",
+          "n_series": 101
+        },
+        {
+          "error_pp": -0.005850654369869647,
+          "matched_weight_coverage": 0.8707855161708945,
+          "month": "2022-09-01",
+          "n_series": 101
+        },
+        {
+          "error_pp": 0.9023480095252415,
+          "matched_weight_coverage": 0.8707855161708945,
+          "month": "2022-10-01",
+          "n_series": 101
+        },
+        {
+          "error_pp": 0.8322929573955985,
+          "matched_weight_coverage": 0.8707855161708945,
+          "month": "2022-11-01",
+          "n_series": 101
+        },
+        {
+          "error_pp": 1.256293552092581,
+          "matched_weight_coverage": 0.8707855161708945,
+          "month": "2022-12-01",
+          "n_series": 101
+        },
+        {
+          "error_pp": 0.4754882177861276,
+          "matched_weight_coverage": 0.9544517672205396,
+          "month": "2023-01-01",
+          "n_series": 107
+        },
+        {
+          "error_pp": 0.38339189010650965,
+          "matched_weight_coverage": 0.9544517672205396,
+          "month": "2023-02-01",
+          "n_series": 107
+        },
+        {
+          "error_pp": -0.13790237861397053,
+          "matched_weight_coverage": 0.9544517672205396,
+          "month": "2023-03-01",
+          "n_series": 107
+        },
+        {
+          "error_pp": 0.09307526180903358,
+          "matched_weight_coverage": 0.9544517672205396,
+          "month": "2023-04-01",
+          "n_series": 107
+        },
+        {
+          "error_pp": -0.1355721453737171,
+          "matched_weight_coverage": 0.9544517672205396,
+          "month": "2023-05-01",
+          "n_series": 107
+        },
+        {
+          "error_pp": -0.02911229651382319,
+          "matched_weight_coverage": 0.9544517672205396,
+          "month": "2023-06-01",
+          "n_series": 107
+        },
+        {
+          "error_pp": 0.25395250099669914,
+          "matched_weight_coverage": 0.9544517672205396,
+          "month": "2023-07-01",
+          "n_series": 107
+        },
+        {
+          "error_pp": -0.15637303216667858,
+          "matched_weight_coverage": 0.9544517672205396,
+          "month": "2023-08-01",
+          "n_series": 107
+        },
+        {
+          "error_pp": 0.3688647166575638,
+          "matched_weight_coverage": 0.9544517672205396,
+          "month": "2023-09-01",
+          "n_series": 107
+        },
+        {
+          "error_pp": 0.6043007359013407,
+          "matched_weight_coverage": 0.9544517672205396,
+          "month": "2023-10-01",
+          "n_series": 107
+        },
+        {
+          "error_pp": 0.8183744077363984,
+          "matched_weight_coverage": 0.9544517672205396,
+          "month": "2023-11-01",
+          "n_series": 107
+        },
+        {
+          "error_pp": 0.9632888671108067,
+          "matched_weight_coverage": 0.9544517672205396,
+          "month": "2023-12-01",
+          "n_series": 107
+        },
+        {
+          "error_pp": 0.22666163219071198,
+          "matched_weight_coverage": 0.9544517672205396,
+          "month": "2024-01-01",
+          "n_series": 107
+        },
+        {
+          "error_pp": 0.14078083056914184,
+          "matched_weight_coverage": 0.9544517672205396,
+          "month": "2024-02-01",
+          "n_series": 107
+        },
+        {
+          "error_pp": -0.33300476178306015,
+          "matched_weight_coverage": 0.9544517672205396,
+          "month": "2024-03-01",
+          "n_series": 107
+        },
+        {
+          "error_pp": -0.09784471460994454,
+          "matched_weight_coverage": 0.9544517672205396,
+          "month": "2024-04-01",
+          "n_series": 107
+        },
+        {
+          "error_pp": -0.3632796219464602,
+          "matched_weight_coverage": 0.9544517672205396,
+          "month": "2024-05-01",
+          "n_series": 107
+        },
+        {
+          "error_pp": 0.019431516427201746,
+          "matched_weight_coverage": 0.9544517672205396,
+          "month": "2024-06-01",
+          "n_series": 107
+        },
+        {
+          "error_pp": 0.7359930026272412,
+          "matched_weight_coverage": 0.9544517672205396,
+          "month": "2024-07-01",
+          "n_series": 107
+        },
+        {
+          "error_pp": -0.16808280495161582,
+          "matched_weight_coverage": 0.9544517672205396,
+          "month": "2024-08-01",
+          "n_series": 107
+        },
+        {
+          "error_pp": -0.17899443040743013,
+          "matched_weight_coverage": 0.9544517672205396,
+          "month": "2024-09-01",
+          "n_series": 107
+        },
+        {
+          "error_pp": 0.12477106480169448,
+          "matched_weight_coverage": 0.9544517672205396,
+          "month": "2024-10-01",
+          "n_series": 107
+        },
+        {
+          "error_pp": 0.956022890916745,
+          "matched_weight_coverage": 0.9544517672205396,
+          "month": "2024-11-01",
+          "n_series": 107
+        },
+        {
+          "error_pp": 1.2580295110590718,
+          "matched_weight_coverage": 0.9400748110638945,
+          "month": "2024-12-01",
+          "n_series": 106
+        },
+        {
+          "error_pp": 0.007234065079702624,
+          "matched_weight_coverage": 0.924578233542838,
+          "month": "2025-01-01",
+          "n_series": 98
+        },
+        {
+          "error_pp": 0.025604782817351818,
+          "matched_weight_coverage": 0.924578233542838,
+          "month": "2025-02-01",
+          "n_series": 98
+        },
+        {
+          "error_pp": -0.18665703455000093,
+          "matched_weight_coverage": 0.924578233542838,
+          "month": "2025-03-01",
+          "n_series": 98
+        },
+        {
+          "error_pp": -0.1320218533396208,
+          "matched_weight_coverage": 0.924578233542838,
+          "month": "2025-04-01",
+          "n_series": 98
+        },
+        {
+          "error_pp": -0.7707820136496638,
+          "matched_weight_coverage": 0.924578233542838,
+          "month": "2025-05-01",
+          "n_series": 98
+        },
+        {
+          "error_pp": -0.24010441776632557,
+          "matched_weight_coverage": 0.924578233542838,
+          "month": "2025-06-01",
+          "n_series": 98
+        },
+        {
+          "error_pp": 0.33881384633080175,
+          "matched_weight_coverage": 0.924578233542838,
+          "month": "2025-07-01",
+          "n_series": 98
+        },
+        {
+          "error_pp": -0.09596956209821832,
+          "matched_weight_coverage": 0.924578233542838,
+          "month": "2025-08-01",
+          "n_series": 98
+        },
+        {
+          "error_pp": 0.319233965959135,
+          "matched_weight_coverage": 0.924578233542838,
+          "month": "2025-09-01",
+          "n_series": 98
+        },
+        {
+          "error_pp": 1.020181371552644,
+          "matched_weight_coverage": 0.924578233542838,
+          "month": "2025-10-01",
+          "n_series": 98
+        },
+        {
+          "error_pp": 0.46926619001113007,
+          "matched_weight_coverage": 0.924578233542838,
+          "month": "2025-11-01",
+          "n_series": 98
+        },
+        {
+          "error_pp": 0.30583460461979667,
+          "matched_weight_coverage": 0.924578233542838,
+          "month": "2025-12-01",
+          "n_series": 98
+        },
+        {
+          "error_pp": 0.7736780439072517,
+          "matched_weight_coverage": 0.938751622178681,
+          "month": "2026-01-01",
+          "n_series": 99
+        },
+        {
+          "error_pp": 0.24447213721335725,
+          "matched_weight_coverage": 0.938751622178681,
+          "month": "2026-02-01",
+          "n_series": 99
+        },
+        {
+          "error_pp": 0.13320431579875933,
+          "matched_weight_coverage": 0.938751622178681,
+          "month": "2026-03-01",
+          "n_series": 99
+        },
+        {
+          "error_pp": -0.10320330730657318,
+          "matched_weight_coverage": 0.9373520954731668,
+          "month": "2026-04-01",
+          "n_series": 99
+        },
+        {
+          "error_pp": -0.47959160885030017,
+          "matched_weight_coverage": 0.9373520954731668,
+          "month": "2026-05-01",
+          "n_series": 99
+        },
+        {
+          "error_pp": 0.8057184246079263,
+          "matched_weight_coverage": 0.9373520954731668,
+          "month": "2026-06-01",
+          "n_series": 99
+        },
+        {
+          "error_pp": 0.1976230955230431,
+          "matched_weight_coverage": 0.9373520954731668,
+          "month": "2026-07-01",
+          "n_series": 99
+        },
+        {
+          "error_pp": -0.08593999625972318,
+          "matched_weight_coverage": 0.9373520954731668,
+          "month": "2026-08-01",
+          "n_series": 99
+        }
+      ],
+      "mae_pp": 0.40888808446990144,
+      "matched_weight_share_of_total": 0.39299,
+      "max_abs_pp": 1.2580295110590718,
+      "mean_matched_weight_coverage": 0.9271469103176013,
+      "mean_pp": 0.19561506419126043,
+      "mean_total_weight_coverage": 0.36435946428571414,
+      "method": "coverage-limited diagnostic: Σ w·(Π(value/100)−1) / Σ w",
+      "n": 56,
+      "n_months": 56,
+      "n_series_multi_mapping": 0,
+      "rmse_pp": 0.5346891947822022
+    }
+  }
+}
