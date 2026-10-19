@@ -37,8 +37,9 @@ ML_LOG=1 make cpi-monthly ARGS="--sample long --quick --jobs 8"
 ```bash
 make mlflow-up                  # поднять сервер и дождаться /health; UI http://127.0.0.1:5000
 make mlflow-status              # «MLflow отвечает на порту 5000» либо «не отвечает»
-ML_LOG=1 MLFLOW=1 make cpi-nowcast        # run + run.json/predictions.jsonl/model
-ML_LOG=1 MLFLOW=1 make key-rate-model
+ML_LOG=1 make cpi-nowcast        # MLflow по умолчанию + run.json/predictions.jsonl/model
+ML_LOG=1 make key-rate-model
+make mlflow-backfill ARGS="--run-id <clickhouse-uuid>"   # старый ClickHouse-run → MLflow
 make mlflow-export              # MLflow → ml_runs/ml_predictions
 make mlflow-export ARGS="--since 2026-10-18 --limit 20 --dry-run"   # предпросмотр без записи
 make mlflow-register ARGS="--run-id <mlflow-run-id> --name cpi_nowcast_catboost_direct"
@@ -50,7 +51,7 @@ make mlflow-down
 Ожидаемое поведение:
 
 - `make mlflow-up` печатает порт, PID и путь к логу `build/mlflow/mlflow.log`; повторный вызов при живом сервере второй сервер не поднимает. PID-файл проверяется по идентичности процесса (`ps -p PID -o command=` содержит `mlflow`): устаревший или чужой PID удаляется, а не считается работающим сервером. `make mlflow-down` останавливает только сервер, поднятый make (по PID-файлу), и не трогает процесс, запущенный вне make; чужой PID из файла он тоже удаляет, не убивая процесс.
-- `ML_LOG=1 MLFLOW=1 make cpi-nowcast` создаёт run эксперимента `cpi_nowcast` с артефактами `run.json`, `predictions.jsonl`, `model/`; в ClickHouse при доступной БД появляются та же строка `ml_runs` и fold-строки `ml_predictions`. Полный конфиг лежит в `run.json` (`config_json`), отдельного артефакта `config.json` нет. Прямой запуск скрипта без make выставляет те же короткие HTTP-таймауты MLflow (`MLFLOW_HTTP_REQUEST_TIMEOUT=10`, `MLFLOW_HTTP_REQUEST_MAX_RETRIES=2`), что и `MLFLOW_HTTP_ENV` в Makefile.
+- `ML_LOG=1 make cpi-nowcast` создаёт run эксперимента `cpi_nowcast` с артефактами `run.json`, `predictions.jsonl`, `model/`; MLflow включён по умолчанию (`MLFLOW=0` — осознанно выключить). Перед прогоном `mlflow_preflight.py` проверяет `/health`: если API недоступен, скрипт явно спрашивает, запускать ли без лога; в не-TTY нужен `MLFLOW_ALLOW_NO_LOG=1`. В ClickHouse при доступной БД появляются та же строка `ml_runs` и fold-строки `ml_predictions`. Полный конфиг лежит в `run.json` (`config_json`), отдельного артефакта `config.json` нет. Прямой запуск скрипта без make выставляет те же короткие HTTP-таймауты MLflow (`MLFLOW_HTTP_REQUEST_TIMEOUT=10`, `MLFLOW_HTTP_REQUEST_MAX_RETRIES=2`), что и `MLFLOW_HTTP_ENV` в Makefile.
 - `make mlflow-export` печатает `exported N runs, M predictions; skipped K`. Run без `run.json` (создан не нашим хелпером) пропускается с warning и команду не роняет; битый `run.json`/`predictions.jsonl`, ошибка скачивания артефакта или вставки в ClickHouse — код 1.
 - `make mlflow-export` берёт прогоны **новыми первыми** (`start_time DESC`): при упоре в `--limit` повторный экспорт не застревает на старейшем батче. Если число выбранных прогонов равно `--limit`, печатается warning, что выборка может быть обрезана — увеличьте `--limit` или сузьте `--since`.
 - RUNNING-прогоны экспорт пропускает: артефактов у них ещё нет. Если прогон был жёстко убит и остался RUNNING, закройте его вручную в MLflow UI (или `mlflow.end_run`), иначе `make mlflow-export` его никогда не увидит.

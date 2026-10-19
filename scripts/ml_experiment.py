@@ -528,6 +528,9 @@ class ExperimentRun:
                 run_name=self.run_name, tags=self._mlflow_tags()
             )
             self.run_id = canonical_run_id(started.info.run_id)
+            # Единый ключ между MLflow и ClickHouse: по нему backfill идемпотентен
+            # и прямой прогон находится теми же поисками, что и backfilled.
+            mlflow.set_tags({"clickhouse_run_id": str(self.run_id)})
             params = self._mlflow_params()
             if params:
                 mlflow.log_params(params)
