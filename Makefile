@@ -70,13 +70,16 @@ MLFLOW_ARTIFACTS    := $(abspath $(MLFLOW_HOME)/artifacts)
 MLFLOW_PID          := $(MLFLOW_HOME)/mlflow.pid
 MLFLOW_LOG          := $(MLFLOW_HOME)/mlflow.log
 
-# 1 — добавить mlflow в uv-окружение прогона и включить MLflow-приёмник.
-# При MLFLOW=0 MLFLOW_ENV передаёт пустой MLFLOW_TRACKING_URI: переменная из $(ROSSTAT_ENV)
-# экспортируется, но приёмник остаётся выключенным.
-MLFLOW ?= 0
+# 1 по умолчанию — все ML-прогоны идут в MLflow. Перед стартом цель вызывает
+# `mlflow_preflight.py`: если API не отвечает, скрипт явно спрашивает, запускать
+# ли без лога; в неинтерактивном режиме запуск запрещён, пока не выставлен
+# MLFLOW_ALLOW_NO_LOG=1. При MLFLOW=0 MLFLOW_ENV передаёт пустой
+# MLFLOW_TRACKING_URI и preflight пропускается.
+MLFLOW ?= 1
 MLFLOW_PKG    := $(if $(filter 1,$(MLFLOW)),--with "mlflow==$(MLFLOW_VERSION)",)
 MLFLOW_ENV    := $(if $(filter 1,$(MLFLOW)),MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI),MLFLOW_TRACKING_URI=)
 MLFLOW_HTTP_ENV := MLFLOW_HTTP_REQUEST_TIMEOUT=10 MLFLOW_HTTP_REQUEST_MAX_RETRIES=2
+MLFLOW_PREFLIGHT := $(if $(filter 1,$(MLFLOW)),python3 scripts/mlflow_preflight.py --uri $(MLFLOW_TRACKING_URI),true)
 
 # Деплой на staging (см. deploy/staging/README.md). Хост задаётся без правок Makefile.
 STAGING_HOST     ?= palmshell
@@ -88,7 +91,7 @@ DAGU_VERSION     ?= v2.18.2
 MKDOCS_VERSION ?= 9.7.7
 MKDOCS := uv run --with mkdocs-material==$(MKDOCS_VERSION) --python 3.12 mkdocs
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-register mlflow-promote mlflow-models dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model shock-classifier shock-classifier-test key-rate-llm-forecast key-rate-forecast-log cpi-nowcast cpi-monthly cb-comp-parity cb-comp-parity-test cb-comp-proxy edisclosure-login edisclosure-collect docs-check docs-build docs-serve
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-backfill mlflow-backfill-test mlflow-preflight mlflow-register mlflow-promote mlflow-models dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model shock-classifier shock-classifier-test key-rate-llm-forecast key-rate-forecast-log cpi-nowcast cpi-monthly cpi-monthly-v3 cpi-monthly-v3-test cpi-monthly-industry cpi-monthly-industry-test cpi-public-audit cpi-public-audit-test cb-comp-parity cb-comp-parity-test cb-comp-proxy edisclosure-login edisclosure-collect docs-check docs-build docs-serve
 
 all: lint test build build-ingest
 
@@ -250,6 +253,21 @@ mlflow-down:
 mlflow-status:
 	@curl -sf -m 2 http://127.0.0.1:$(MLFLOW_PORT)/health >/dev/null 2>&1 && echo "MLflow отвечает на порту $(MLFLOW_PORT)" || echo "MLflow не отвечает на порту $(MLFLOW_PORT)"
 
+# Preflight MLflow API: ML-цели вызывают его до старта прогона. Если API не
+# отвечает, скрипт явно спрашивает, запускать ли без лога; в неинтерактивном
+# режиме — запрещает, пока не выставлен MLFLOW_ALLOW_NO_LOG=1.
+mlflow-preflight:
+	python3 scripts/mlflow_preflight.py --uri $(MLFLOW_TRACKING_URI)
+
+# Backfill существующих прогонов ClickHouse ml_runs в MLflow по run_id:
+# make mlflow-backfill ARGS="--run-id <uuid> [--run-id <uuid>] [--force]"
+mlflow-backfill:
+	MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) $(MLFLOW_HTTP_ENV) uv run --with "mlflow==$(MLFLOW_VERSION)" --python 3.12 \
+		python3 scripts/mlflow_backfill.py --tracking-uri $(MLFLOW_TRACKING_URI) $(ARGS)
+
+mlflow-backfill-test:
+	python3 scripts/mlflow_backfill_test.py -v
+
 # Экспорт прогонов MLflow в ClickHouse (ml_runs/ml_predictions): make mlflow-export
 # [ARGS="--since 2026-10-01 --limit 20 --dry-run"]. mlflow ставится через uv --with,
 # в зависимости репозитория не попадает.
@@ -384,6 +402,7 @@ ARGS ?=
 # без пина резолвер uv падает). Пин делает цель независимой от порядка PATH и
 # повторяет конвенцию репозитория для uv-прогонов (README/ARCHITECTURE: --python 3.12).
 key-rate-model:
+	@$(MLFLOW_PREFLIGHT)
 	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/key_rate_model.py $(ARGS)
 
 # Классификатор шоков ключевой ставки (спека 2026-10-19, §8): панель заседаний,
@@ -396,6 +415,7 @@ key-rate-model:
 # ARGS="--features core|all --min-train N --out-dir DIR"; фикстуры:
 # make shock-classifier ARGS="--export-fixtures scripts/testdata/shock_classifier"
 shock-classifier:
+	@$(MLFLOW_PREFLIGHT)
 	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/shock_classifier.py $(ARGS)
 
 # Офлайн-тесты классификатора шоков: без ClickHouse и сети.
@@ -423,6 +443,7 @@ key-rate-llm-forecast:
 # с ML_LOG=1 пишет паспорт и fold-предсказания.
 # Фикстуры: make cpi-nowcast ARGS="--export-fixtures scripts/testdata/cpi_nowcast"
 cpi-nowcast:
+	@$(MLFLOW_PREFLIGHT)
 	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_nowcast.py $(ARGS)
 
 # ML-трек v2: месячный nowcast ИПЦ с мониторингом предприятий ЦБ (с МП vs без МП).
@@ -430,7 +451,33 @@ cpi-nowcast:
 # с ML_LOG=1 пишет паспорт и fold-предсказания в ml_runs/ml_predictions.
 # Фикстуры: make cpi-monthly ARGS="--export-fixtures scripts/testdata/cpi_monthly"
 cpi-monthly:
-	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_monthly.py $(ARGS)
+	@$(MLFLOW_PREFLIGHT)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_monthly.py $(ARGS)
+
+# Stage 1 #76: публичные недельные признаки в месячном nowcast ИПЦ.
+cpi-monthly-v3:
+	@$(MLFLOW_PREFLIGHT)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_monthly_v3.py $(ARGS)
+
+cpi-monthly-v3-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_monthly_v3_test.py -v
+
+# Stage 2 #235: отраслевые МП-признаки (16 листов mp_survey_data.xlsx) в
+# компонентном nowcast ИПЦ. Читает ClickHouse и публичный xlsx; в БД не пишет.
+cpi-monthly-industry:
+	@$(MLFLOW_PREFLIGHT)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_monthly_industry.py $(ARGS)
+
+cpi-monthly-industry-test:
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_monthly_industry_test.py -v
+
+# Task 1 #234: аудит публичной панели ИПЦ. Читает ClickHouse и публичные xlsx,
+# в БД не пишет; JSON — docs/research/2026-10-19-cpi-public-data-audit.json.
+cpi-public-audit:
+	uv run --with openpyxl --python 3.12 python3 scripts/cpi_public_panel_audit.py $(ARGS)
+
+cpi-public-audit-test:
+	uv run --with openpyxl --python 3.12 python3 scripts/cpi_public_panel_audit_test.py -v
 
 # Паритет ML-трека с CB_COMP (issue #190): таргет TARGET_FULL из архива авторов,
 # архивные per-period прогнозы CB_COMP, две CatBoost-direct модели (с МП/без МП),
@@ -438,7 +485,8 @@ cpi-monthly:
 # путь — --archive или CB_COMP_ARCHIVE (по умолчанию worktree-сосед cb-comp-archive).
 # Читает ClickHouse (ряды v2), пишет локальные артефакты; в ClickHouse не пишет.
 cb-comp-parity:
-	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cb_comp_parity.py $(ARGS)
+	@$(MLFLOW_PREFLIGHT)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cb_comp_parity.py $(ARGS)
 
 # Офлайн-тесты parity-скрипта: без ClickHouse и без архива.
 cb-comp-parity-test:

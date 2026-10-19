@@ -1,122 +1,36 @@
 package minfin
 
 import (
-	"context"
-	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/gocolly/colly/v2"
-	"github.com/kmlebedev/clickhouse-import-rosstat/util"
-	log "github.com/sirupsen/logrus"
 	"github.com/xuri/excelize/v2"
-	"slices"
-	"strconv"
-	"strings"
-	"time"
 )
 
+// Краткая ежемесячная информация об исполнении федерального бюджета
+// (млрд. руб., накоплено с начала года).
 // https://minfin.gov.ru/ru/statistics/fedbud/execute?id_57=80042-kratkaya_ezhemesyachnaya_informatsiya_ob_ispolnenii_federalnogo_byudzheta_mlrd._rub._nakopleno_s_nachala_goda
-// Краткая ежемесячная информация об исполнении федерального бюджета (млрд. руб., накоплено с начала года)
-// Table https://minfin.gov.ru/common/upload/library/2025/08/main/Prilozhenie_3_dannye_109-111_%E2%80%94_mes.xlsx
+// Таблица: https://minfin.gov.ru/common/upload/library/2025/08/main/Prilozhenie_3_dannye_109-111_%E2%80%94_mes.xlsx
 const (
-	fedbudDataPath = "/ru/statistics/fedbud/execute"
-	fedbudMesTable = "minfin_fed_bud_mes"
+	fedbudExecutePath     = "/ru/statistics/fedbud/execute"
+	fedbudMesTable        = "minfin_fed_bud_mes"
+	fedbudMesLinkSelector = `.document_list a[href$="_mes.xlsx"]`
 )
 
 var fedbudMesFields = []string{"Доходы, всего", "Расходы, всего", "Акцизы", "Национальная оборона", "привлечение", "Дефицит (-)/Профицит (+)"}
 
-type fedbudMesStat struct {
-	util.ClickHouseImport
-}
-
-func getFedbudMestDataUrl() (url string) {
-	c := colly.NewCollector(colly.UserAgent(util.HttpUA))
-	c.SetClient(util.HttpClient)
-	c.OnHTML(`.document_list a[href$="_mes.xlsx"]`, func(e *colly.HTMLElement) {
-		url = fmt.Sprintf("%s%s", minfinUrl, e.Attr("href"))
-		log.Infof("href url %s", url)
-	})
-	if err := c.Visit(fmt.Sprintf("%s%s", minfinUrl, fedbudDataPath)); err != nil {
-		log.Errorf("Visit %v+", err)
-	}
-	c.Wait()
-	return url
-}
-
-func (s *fedbudMesStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	s.DataUrl = getFedbudMestDataUrl()
-	if count, err = s.ClickHouseImport.Import(ctx, conn); err != nil {
-		return count, err
-	}
-	return count, publishFedbud(ctx, conn, fedbudMesSeriesMeta)
-}
-
-// fedbudMes — федеральный бюджет: таблица, DDL и разбор листа «месяц» (накопление
-// переводится в месячные разности). Каталог рядов и витрину v_minfin_budget публикует
-// Import() обёртки после полного цикла шаблона. Регистрация — реестром
-// minfin/importers.go (стандарт §8).
-var fedbudMes = util.ClickHouseImport{
-	TableName: fedbudMesTable,
-	CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (
-              name LowCardinality(String)
-			, date Date
-			, value Float32
-		) ENGINE = ReplacingMergeTree ORDER BY (name, date);`},
-	ImportFunc: fedBudImport,
-}
-
-// fedbudMesImporter — федеральный бюджет; адрес файла вычисляется в Import() через
-// legacy-транспорт colly (пакетный рефакторинг транспорта — отдельный пункт).
-var fedbudMesImporter = &fedbudMesStat{ClickHouseImport: fedbudMes}
-
-var dateReplacer = strings.NewReplacer(".", "-", "янв", "Jan", "фев", "Feb", "апр", "Apr", "июн", "Jun", "июл", "Jul", "сен", "Sep", "ноя", "Nov", "авг", "Aug", "дек", "Dec")
+// fedbudMes — федеральный бюджет: таблица, ссылка со страницы каталога, общий
+// разбор листа «месяц» (накопление переводится в месячные разности). Каталог
+// рядов и витрину v_minfin_budget публикует AfterImport шаблона; регистрация —
+// реестром minfin/importers.go (стандарт §8).
+var fedbudMes = newMinfinFileImporter(
+	fedbudMesTable,
+	minfinURL+fedbudExecutePath,
+	fedbudMesLinkSelector,
+	minfinSeriesCreate(true),
+	fedBudImport,
+	fedbudMesSeriesMeta,
+	"",
+)
 
 func fedBudImport(xlsx *excelize.File, batch driver.Batch) error {
-	rows, err := xlsx.GetRows("месяц")
-	if err != nil {
-		return err
-	}
-	tableIsFoundRowNum := -1
-	var valuePrev, value float64
-	for i, row := range rows {
-		if len(row) < 3 || row[1] == "" {
-			continue
-		}
-		if row[1] == "Показатель" {
-			tableIsFoundRowNum = i
-			continue
-		}
-		if tableIsFoundRowNum < 0 {
-			continue
-		}
-		//fmt.Printf("rowdate : %+v\n", rows[tableIsFoundRowNum])
-		if slices.Contains(fedbudMesFields, row[1]) {
-			for j, rowCol := range row[2:] {
-				var date time.Time
-				dateStr := rows[tableIsFoundRowNum][j+2]
-				//fmt.Printf("rowCol: %+v, date: %s\n", rowCol, dateStr)
-				dateArr := strings.Split(dateStr, " ")
-				if len(dateArr) > 1 {
-					dateStr = dateReplacer.Replace(dateArr[0])
-				}
-				date, err = time.Parse("Jan-06", dateStr)
-				if err != nil {
-					return fmt.Errorf("parse %s, err: %v", dateStr, err)
-				}
-				valueNew, err := strconv.ParseFloat(strings.ReplaceAll(rowCol, ",", ""), 64)
-				if dateStr[0:3] == "Jan" {
-					value = valueNew
-				} else {
-					value = valueNew - valuePrev
-				}
-				valuePrev = valueNew
-				if err != nil {
-					return err
-				}
-				if err = batch.Append(row[1], date, value); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	return nil
+	return importFedbud(xlsx, batch, fedbudLayout{Table: fedbudMesTable, Fields: fedbudMesFields})
 }

@@ -1,7 +1,6 @@
 package minfin
 
 import (
-	"context"
 	"fmt"
 	"math"
 	"strconv"
@@ -9,7 +8,6 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	"github.com/xuri/excelize/v2"
 )
 
@@ -185,45 +183,16 @@ func oilGasImport(xlsx *excelize.File, batch driver.Batch) error {
 	return nil
 }
 
-// oilGasMes — нефтегазовые доходы и НДПИ: таблица, DDL и разбор
-// Svedeniya_<YYYYMMDD>.xlsx. Значения — Float64 (правило 5 AGENTS.md). Каталог рядов
-// и витрину v_minfin_budget публикует шаблон через AfterImport после точек и до
-// строки версии.
-var oilGasMes = util.ClickHouseImport{
-	TableName: oilGasTable,
-	CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (
-              name LowCardinality(String)
-			, date Date
-			, value Float64
-		) ENGINE = ReplacingMergeTree ORDER BY (name, date);`},
-	ImportFunc: oilGasImport,
-	AfterImport: func(ctx context.Context, conn driver.Conn) error {
-		return publishFedbud(ctx, conn, oilGasSeriesMeta)
-	},
-	PublicationCountPoints: oilGasCountPoints,
-}
-
-type oilGasMesStat struct {
-	util.ClickHouseImport
-}
-
-// Import берёт ссылку на актуальный Svedeniya_<YYYYMMDD>.xlsx со страницы каталога
-// федерального бюджета: URL не строится по дате (имя содержит дату публикации, а
-// каталог library/<год>/<месяц>/main/ меняется от выпуска к выпуску).
-func (s *oilGasMesStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	page, err := util.GetPage(oilGasPageUrl)
-	if err != nil {
-		return count, fmt.Errorf("%s: страница %s: %w", oilGasTable, oilGasPageUrl, err)
-	}
-	href, err := util.FindLink(page, oilGasLinkSelector)
-	if err != nil {
-		return count, fmt.Errorf("%s: не найдена ссылка на Svedeniya_<YYYYMMDD>.xlsx на %s: %w",
-			oilGasTable, oilGasPageUrl, err)
-	}
-	s.DataUrl = minfinUrl + href
-	return s.ClickHouseImport.Import(ctx, conn)
-}
-
-// oilGasMesImporter — нефтегазовые доходы и НДПИ: адрес файла берётся со страницы
-// каталога в Import() (стандарт §5.4), регистрация — реестром minfin/importers.go.
-var oilGasMesImporter = &oilGasMesStat{ClickHouseImport: oilGasMes}
+// oilGasMes — нефтегазовые доходы и НДПИ: таблица, ссылка со страницы каталога и
+// разбор Svedeniya_<YYYYMMDD>.xlsx (значения — Float64). Каталог рядов и витрину
+// v_minfin_budget публикует AfterImport шаблона; точка контроля публикации —
+// HEAD-префлайт и no-op повторной версии файла.
+var oilGasMes = newMinfinFileImporter(
+	oilGasTable,
+	oilGasPageUrl,
+	oilGasLinkSelector,
+	minfinSeriesCreate(false),
+	oilGasImport,
+	oilGasSeriesMeta,
+	oilGasCountPoints,
+)

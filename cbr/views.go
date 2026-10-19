@@ -221,10 +221,10 @@ var cbrSurveyView = util.View{
 	Name:    "v_cbr_survey",
 	Tables:  []string{"macro_series"},
 	Select:  `SELECT source, series, date, value FROM macro_series FINAL WHERE source = 'cbr_survey'`,
-	Comment: "Мониторинг предприятий Банка России (опросы нефинансовых компаний): ценовые ожидания бизнеса, ИБК и условия кредитования (месячные); загрузка мощностей, обеспеченность персоналом, ожидания численности (квартальные). Дата — отчётный период: 1-е число месяца, у квартальных — 1-е число месяца, следующего за кварталом; ЦБ публикует волну в первую декаду следующего месяца и нумерует справки по месяцу волны (справка «сентябрь 2026» цитирует точку отчётного периода август 2026). Перед использованием читать v_series_catalog по (source='cbr_survey', series): единицы и знаки различаются. ЦБ в комментариях цитирует сезонно сглаженные ряды (…_sa)",
+	Comment: "Мониторинг предприятий Банка России (опросы нефинансовых компаний): 13 агрегатных рядов «Экономики всего» и трёх квартальных листов (ценовые ожидания бизнеса, ИБК и условия кредитования; загрузка мощностей, обеспеченность персоналом, ожидания численности) и 368 отраслевых рядов 16 листов (industry_*: ИБК и его факт/ожидания, выпуск, спрос, цены, ценовые ожидания, издержки, условия кредитования, ожидаемый прирост отпускных цен; у всех, кроме условий кредитования, есть сезонно сглаженная пара _sa). Дата — отчётный период: 1-е число месяца, у квартальных — 1-е число месяца, следующего за кварталом; ЦБ публикует волну в первую декаду следующего месяца и нумерует справки по месяцу волны (справка «сентябрь 2026» цитирует точку отчётного периода август 2026). Перед использованием читать v_series_catalog по (source='cbr_survey', series): единицы и знаки различаются, а отраслевые ряды названы industry_<sheet>_<indicator>. ЦБ в комментариях цитирует сезонно сглаженные ряды (…_sa)",
 	Columns: map[string]string{
 		"source": "Всегда cbr_survey",
-		"series": "Код ряда; 13 рядов — описания в v_series_catalog (source='cbr_survey')",
+		"series": "Код ряда: 13 агрегатных и 368 отраслевых (industry_<sheet>_<indicator>, у 11 из 12 показателей есть _sa) — описания в v_series_catalog (source='cbr_survey')",
 		"date":   "Отчётный период: 1-е число месяца; у квартальных рядов — 1-е число месяца, следующего за отчётным кварталом (конвенция rosstat_vvp_kvartal)",
 		"value":  "Значение в единицах ряда: пункты баланса ответов, % (загрузка мощностей), % годовых (ожидаемый прирост цен) — см. unit и description в v_series_catalog",
 	},
@@ -359,6 +359,184 @@ func afterCbrZcyc(meta []util.SeriesMeta) func(context.Context, driver.Conn) err
 			return err
 		}
 		_, err := util.CreateView(ctx, conn, cbrZcycSignalView)
+		return err
+	}
+}
+
+// cbrCcybView — витрина индикаторов кредитного цикла ЦБ (source = имя таблицы).
+// Long-форма: source, series, date, value; indicator_no и indicator_group —
+// атрибуты ряда, чтобы агент мог читать показатель без расшифровки имени.
+var cbrCcybView = util.View{
+	Name:   "v_cbr_ccyb_indicators",
+	Tables: []string{cbrCcybTable},
+	Select: "SELECT 'cbr_ccyb_indicators' AS source, series, indicator_no, indicator_group, date, value " +
+		"FROM cbr_ccyb_indicators FINAL",
+	Comment: "АЦН-индикаторы Банка России — 24 месячных ряда кредитного цикла (13 показателей, " +
+		"у части есть подстроки): достаточность капитала Н1.0/Н1.1/Н1.2, кредиты/ВВП, темпы " +
+		"прироста кредитов нефинансовым организациям и физическим лицам (руб./валюта, год/квартал/" +
+		"месяц), доля валютных кредитов, просроченная задолженность, IV–V категории качества, " +
+		"ссуды с просрочкой свыше 90 дней и кредитные гэпы. Значения в процентах, у кредитных " +
+		"гэпов — в п.п.; это уровни/темпы за период, а не индексы. Дата — первое число отчётного " +
+		"месяца. Файл источника последний раз обновлялся в декабре 2024 года, последняя точка — " +
+		"2024-10-01: отсутствие более поздних точек — свойство публикации, а не пропуск импорта. " +
+		"Пустая ячейка источника точкой не является и нулём не считается. Имена рядов объявлены " +
+		"кодом (стандарт §6.8); описания, единицы и группы — в v_series_catalog по " +
+		"(source='cbr_ccyb_indicators', series)",
+	Columns: map[string]string{
+		"source":          "Импортёр-источник: всегда cbr_ccyb_indicators",
+		"series":          "Код ряда: n10_capital, n11_capital, n12_capital, credits_gdp, nfo_rub_yoy, nfo_rub_qoq, nfo_rub_mom, nfo_fx_yoy, nfo_fx_qoq, nfo_fx_mom, nfo_fx_share, nfo_overdue_rub, nfo_overdue_fx, nfo_iv_v_share, hh_yoy, hh_qoq, hh_mom, hh_overdue, hh_90d_mortgage, hh_90d_unsecured, credit_gap_broad, credit_gap_narrow, credit_gap_narrow_nfo, credit_gap_hh",
+		"indicator_no":    "Номер показателя источника (1…13): у подстрок — номер родительского показателя",
+		"indicator_group": "Группа источника: bank_capital, credit_gdp, nfo_loan_growth, nfo_fx_share, nfo_overdue, nfo_iv_v_share, hh_loan_growth, hh_overdue, hh_90d, credit_gaps",
+		"date":            "Отчётная дата: первое число месяца (Date). Сопоставлять по toStartOfMonth(date); пропуск месяца означает, что источник не опубликовал точку, а не ноль",
+		"value":           "Значение ряда (Float64): проценты, у credit_gap_* — процентные пункты. Уровень/темп за период, а не индекс; пустая ячейка источника точкой не становится",
+	},
+}
+
+// afterCbrCcyb — производные импортёра cbr_ccyb_indicators: каталог 24 рядов
+// и витрина v_cbr_ccyb_indicators. Публикуются после успешного Import и на
+// no-op-пути (импортёр переопределяет Import): витрина — производная таблицы,
+// и пропущенный при прошлом сбое CreateView обязан вылечиться без новой версии
+// файла (прецедент — cbr_mt_forecast, §8 п. 13).
+func afterCbrCcyb(meta []util.SeriesMeta) func(context.Context, driver.Conn) error {
+	return func(ctx context.Context, conn driver.Conn) error {
+		if err := util.UpsertSeriesCatalog(ctx, conn, meta); err != nil {
+			return err
+		}
+		_, err := util.CreateView(ctx, conn, cbrCcybView)
+		return err
+	}
+}
+
+// cbrRiskWeightAddonsView — витрина матриц надбавок к коэффициентам риска.
+// Ключ витрины — (matrix, valid_from, valid_to, row_code, col_code); версии
+// разных архивных файлов схлопываются argMax(version), поэтому одна ячейка
+// одного периода не дублируется. table_no — атрибут победившей версии.
+var cbrRiskWeightAddonsView = util.View{
+	Name:   "v_cbr_risk_weight_addons",
+	Tables: []string{cbrRiskWeightAddonsTable},
+	Select: `SELECT 'cbr_risk_weight_addons' AS source, matrix, matrix AS series,
+       valid_from,
+       argMax(valid_to, version) AS valid_to,
+       argMax(table_no, version) AS table_no,
+       row_code, col_code,
+       argMax(value, version) AS value,
+       argMax(is_applicable, version) AS is_applicable,
+       argMax(source_file, version) AS source_file,
+       argMax(source_caption, version) AS source_caption
+FROM cbr_risk_weight_addons FINAL
+GROUP BY matrix, valid_from, row_code, col_code`,
+	Comment: "Матрицы надбавок к коэффициентам риска Банка России: розничные (matrix='retail', " +
+		"Таблица 1), корпоративные (matrix='corporate', Таблица 2) и старая общая матрица " +
+		"(matrix='legacy', 2013–2022). Одна строка — ячейка матрицы: надбавка в процентных " +
+		"пунктах для пары (row_code, col_code). Коды — из приложения 7 Указания Банка России " +
+		"№ 6960-У; машиночитаемого справочника кодов на сайте нет, поэтому коды хранятся как в " +
+		"источнике. valid_from/valid_to — период, в котором возникли кредитные требования; " +
+		"valid_to = 2100-01-01 означает «дальше». is_applicable = 0 — источник написал «н/п» " +
+		"(надбавка не применяется), это не ноль; is_applicable = 1 и value = 0 — настоящее " +
+		"нулевое значение. Архивные файлы содержат историю и пересекаются по периодам; витрина " +
+		"показывает последнюю версию по version для каждого (matrix, valid_from, row_code, " +
+		"col_code), включая valid_to: более поздний документ закрывает или продлевает период, " +
+		"source_file называет победивший файл, source_caption — его подпись на landing. Перед " +
+		"использованием читать v_series_catalog " +
+		"по (source='cbr_risk_weight_addons', series=matrix)",
+	Columns: map[string]string{
+		"source":         "Импортёр-источник: всегда cbr_risk_weight_addons",
+		"matrix":         "Вид матрицы: retail — Таблица 1 (физические лица), corporate — Таблица 2 (юридические лица), legacy — общая матрица до 2022 года",
+		"series":         "То же, что matrix; имя ряда в v_series_catalog",
+		"valid_from":     "Начало периода, в котором возникли кредитные требования (Date): строка «с» листа матрицы",
+		"valid_to":       "Конец периода (Date); 2100-01-01 — сентинел «дальше» (в источнике «по» пустое)",
+		"table_no":       "Номер таблицы источника («Таблица № 15»); у старой общей матрицы пусто — номера в листе нет",
+		"row_code":       "Код строки матрицы (например, 2001.i): вид кредитного требования по приложению 7 Указания № 6960-У",
+		"col_code":       "Код столбца матрицы (например, 1008.i): характеристика вида актива по приложению 7 Указания № 6960-У",
+		"value":          "Надбавка к коэффициенту риска, п.п.; при is_applicable = 1 ноль — настоящее значение. При is_applicable = 0 значение не применять",
+		"is_applicable":  "1 — источник дал число (включая 0); 0 — «н/п»/x/х/дефис/пусто, надбавка не применяется",
+		"source_file":    "Файл-версия матрицы (basename), победившая по version; архивные файлы сохраняются в таблице отдельно",
+		"source_caption": "Подпись ссылки на landing («Таблица 1 с 04.09.2026» и т.п.) — провенанс версии",
+	},
+}
+
+// afterCbrRiskWeightAddons — производные импортёра cbr_risk_weight_addons:
+// каталог трёх видов матриц и витрина v_cbr_risk_weight_addons. Публикуются
+// после цикла файлов и на no-op-пути (Import переопределён): витрина —
+// производная таблицы, пропущенный при сбое CreateView самолечится без новой
+// версии источника.
+func afterCbrRiskWeightAddons(meta []util.SeriesMeta) func(context.Context, driver.Conn) error {
+	return func(ctx context.Context, conn driver.Conn) error {
+		if err := util.UpsertSeriesCatalog(ctx, conn, meta); err != nil {
+			return err
+		}
+		_, err := util.CreateView(ctx, conn, cbrRiskWeightAddonsView)
+		return err
+	}
+}
+
+// cbrMPLView — витрина макропруденциальных лимитов. Серия — segment + класс
+// кредита; одна строка — правило/полоса с лимитом. Старые форматы (v1/v2) дают
+// по строке на полосу, текущий (v3) — правило с набором полос.
+var cbrMPLView = util.View{
+	Name:   "v_cbr_mpl",
+	Tables: []string{cbrMPLTable},
+	Select: `SELECT 'cbr_mpl' AS source,
+       concat(segment, '_', loan_class) AS series,
+       segment, loan_class, period_from, period_to, row_no, subrow_no, loan_kind,
+       pdn_band, pdn_min, pdn_max,
+       term_band, term_min, term_max,
+       down_payment_band, down_payment_min, down_payment_max,
+       ltv_band, ltv_min, ltv_max,
+       amount_band, amount_min, amount_max,
+       limit_pct, source_file
+FROM cbr_mpl FINAL`,
+	Comment: "Макропруденциальные лимиты (МПЛ) Банка России: банки с универсальной " +
+		"лицензией и микрофинансовые организации, потребительские кредиты/займы и ипотека, " +
+		"2023Q1 … 2026Q4. limit_pct — доля рискованных кредитов в общем объёме выдач, %; " +
+		"старые форматы источника (2023-01 … 2025-06) публиковали лимит долей (0.25) — здесь " +
+		"она нормализована в проценты (25). Одна строка — правило или полоса: в старых " +
+		"форматах одна строка на полосу (band_idx), в текущем — правило с набором полос " +
+		"(ПДН + срок + первоначальный взнос/LTV/сумма), у ипотеки подстроки наследуют лимит " +
+		"и незаполненные условия родительской строки. *_band — подпись полосы как в источнике " +
+		"или нормализованная ((50; 80], более 80), *_min/*_max — разобранные числовые границы; " +
+		"nil означает, что границы нет (x/х/-), а не ноль. period_to = 2100-01-01 — «дальше». " +
+		"Перед использованием читать v_series_catalog по (source='cbr_mpl', series)",
+	Columns: map[string]string{
+		"source":            "Импортёр-источник: всегда cbr_mpl",
+		"series":            "concat(segment, '_', loan_class): bank_consumer, bank_consumer_with_limit, bank_consumer_other, bank_mortgage, mfo_consumer_with_limit, mfo_consumer_other, mfo_consumer_loan",
+		"segment":           "Сегмент: bank — банки с универсальной лицензией, mfo — микрофинансовые организации",
+		"loan_class":        "Класс: v1/v2 — consumer_with_limit/consumer_other; v3 — consumer (потребительские кредиты), mortgage (ипотека), consumer_loan (потребительские займы МФО)",
+		"period_from":       "Начало периода, в котором предоставлен кредит/установлен лимит (Date)",
+		"period_to":         "Конец периода (Date); 2100-01-01 — сентинел «дальше»",
+		"row_no":            "Номер строки источника (для аудита); у v3 подстроки — номер родительской строки",
+		"subrow_no":         "Номер подстроки v3 («1.1», «1.2»); у v1/v2 пусто",
+		"loan_kind":         "Вид кредита/займа или тип МПЛ: текст источника; у v3 подстроки наследуют родительский вид",
+		"pdn_band":          "Полоса ПДН: подпись источника или нормализованная ((50; 80], более 80); пусто — ограничения по ПДН нет",
+		"pdn_min":           "Нижняя числовая граница ПДН, %; nil — границы нет (x/х/-), а не ноль",
+		"pdn_max":           "Верхняя числовая граница ПДН, %; nil — верхней границы нет",
+		"term_band":         "Полоса срока: подпись источника/нормализованная; для банков — годы, для МФО — дни",
+		"term_min":          "Нижняя числовая граница срока; nil — границы нет",
+		"term_max":          "Верхняя числовая граница срока; nil — верхней границы нет",
+		"down_payment_band": "Полоса первоначального взноса (ипотека): подпись источника",
+		"down_payment_min":  "Нижняя граница первоначального взноса, %; nil — границы нет",
+		"down_payment_max":  "Верхняя граница первоначального взноса, %; nil — верхней границы нет",
+		"ltv_band":          "Полоса LTV (ипотека): подпись источника",
+		"ltv_min":           "Нижняя граница LTV, %; nil — границы нет",
+		"ltv_max":           "Верхняя граница LTV, %; nil — верхней границы нет",
+		"amount_band":       "Полоса суммы займа (МФО, тыс. руб.): подпись источника",
+		"amount_min":        "Нижняя граница суммы, тыс. руб.; nil — границы нет",
+		"amount_max":        "Верхняя граница суммы, тыс. руб.; nil — верхней границы нет",
+		"limit_pct":         "Макропруденциальный лимит, % (доля рискованных кредитов в общем объёме выдач); старые доли нормализованы ×100",
+		"source_file":       "Файл-версия источника (basename); периоды v1/v2/v3 не пересекаются, поэтому версии сосуществуют",
+	},
+}
+
+// afterCbrMPL — производные импортёра cbr_mpl: каталог семи видов лимитов и
+// витрина v_cbr_mpl. Публикуются после цикла файлов и на no-op-пути
+// (Import переопределён): витрина — производная таблицы, пропущенный при сбое
+// CreateView самолечится без новой версии источника.
+func afterCbrMPL(meta []util.SeriesMeta) func(context.Context, driver.Conn) error {
+	return func(ctx context.Context, conn driver.Conn) error {
+		if err := util.UpsertSeriesCatalog(ctx, conn, meta); err != nil {
+			return err
+		}
+		_, err := util.CreateView(ctx, conn, cbrMPLView)
 		return err
 	}
 }

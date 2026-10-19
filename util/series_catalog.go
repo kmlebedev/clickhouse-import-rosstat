@@ -26,11 +26,11 @@ var seriesCatalogViews = []string{
 	`CREATE OR REPLACE VIEW v_series_catalog DEFINER = default SQL SECURITY DEFINER AS
 		SELECT source, series, title, unit, frequency, origin, description FROM series_catalog FINAL`,
 	`ALTER TABLE v_series_catalog MODIFY COMMENT 'Каталог рядов macro_series: для каждого (source, series) — название, единицы, частота, происхождение и как читать значение. Читать перед написанием запроса к ряду'`,
-	`ALTER TABLE v_series_catalog COMMENT COLUMN source 'Импортёр-источник: fred, bls, bea, cbr, rosstat, minfin, minfin_mesyats, gold, ...'`,
+	`ALTER TABLE v_series_catalog COMMENT COLUMN source 'Импортёр-источник: fred, bls, bea, cbr, rosstat, minfin, gold, … или имя собственной таблицы (cbr_ccyb_indicators, cbr_risk_weight_addons, cbr_mpl)'`,
 	`ALTER TABLE v_series_catalog COMMENT COLUMN series 'Код ряда; совпадает с series в macro_series'`,
 	`ALTER TABLE v_series_catalog COMMENT COLUMN title 'Название ряда'`,
 	`ALTER TABLE v_series_catalog COMMENT COLUMN unit 'Единицы измерения значения'`,
-	`ALTER TABLE v_series_catalog COMMENT COLUMN frequency 'Частота наблюдений: M — месяц, Q — квартал, D — день, W — неделя'`,
+	`ALTER TABLE v_series_catalog COMMENT COLUMN frequency 'Частота наблюдений: M — месяц, Q — квартал, D — день, W — неделя, A — год, irregular — нерегулярная публикация (матрицы надбавок)'`,
 	`ALTER TABLE v_series_catalog COMMENT COLUMN origin 'Откуда взят ряд: таблица/серия/строка API'`,
 	`ALTER TABLE v_series_catalog COMMENT COLUMN description 'Что измеряет ряд, как интерпретировать значение и как считать темпы'`,
 }

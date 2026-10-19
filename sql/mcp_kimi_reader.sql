@@ -56,6 +56,14 @@ GRANT SELECT ON default.v_cbr_form101 TO kimi_reader;
 GRANT SELECT ON default.v_cbr_form101_loans TO kimi_reader;
 GRANT SELECT ON default.v_ofz_curve_compare TO kimi_reader;
 GRANT SELECT ON default.v_ofz_signal TO kimi_reader;
+-- Макропруденциальные требования (пункт key-rate/phase-2-ccyb, #115): АЦН-индикаторы,
+-- матрицы надбавок и МПЛ. Сырые cbr_ccyb_indicators/cbr_risk_weight_addons/cbr_mpl
+-- агенту не выданы — только витрины.
+GRANT SELECT ON default.v_cbr_ccyb_indicators TO kimi_reader;
+GRANT SELECT ON default.v_cbr_risk_weight_addons TO kimi_reader;
+GRANT SELECT ON default.v_cbr_mpl TO kimi_reader;
+-- ФАО: индекс продовольственных цен (пункт infra/1.6, issue #225).
+GRANT SELECT ON default.v_fao_food_price TO kimi_reader;
 
 -- Реестр ML-экспериментов (infra/4.1): агенту выданы только витрины.
 -- Сырые ml_runs/ml_predictions закрыты: паспорт прогона и fold-предсказания
