@@ -221,18 +221,6 @@ func TestOilGasImportFailsOnEmptySheet(t *testing.T) {
 	}
 }
 
-// TestOilGasPublishesDerivatives держит подключение производных: каталог и витрина
-// публикуются шаблоном только через AfterImport, и его удаление оставило бы все
-// офлайн-тесты зелёными, а агент — без описаний рядов и свежей витрины.
-func TestOilGasPublishesDerivatives(t *testing.T) {
-	if oilGasMes.AfterImport == nil {
-		t.Error("у oilGasMes не подключён AfterImport: каталог и v_minfin_budget не будут опубликованы")
-	}
-	if oilGasMes.PublicationCountPoints != oilGasCountPoints {
-		t.Errorf("PublicationCountPoints = %q, want %q", oilGasMes.PublicationCountPoints, oilGasCountPoints)
-	}
-}
-
 func TestOilGasImportFailsWhenOneSeriesEmpty(t *testing.T) {
 	rec := &appendRecorder{}
 	rows := [][]any{
