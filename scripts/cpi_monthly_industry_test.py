@@ -18,6 +18,7 @@ from datetime import date, datetime
 from pathlib import Path
 from unittest import mock
 
+import numpy as np
 from openpyxl import Workbook
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -260,6 +261,26 @@ class TestModels(unittest.TestCase):
             rows[:-1], rows[-1], component="cpi_food", include_mp=True
         )
         self.assertTrue(math.isfinite(value))
+
+    def test_enet_impute_uses_train_median(self):
+        train = np.array(
+            [
+                [1.0, float("nan"), float("nan")],
+                [float("nan"), float("nan"), float("nan")],
+                [3.0, 5.0, float("nan")],
+            ]
+        )
+        row = np.array([[float("nan"), float("nan"), float("nan")]])
+        train_imputed, row_imputed, medians = ind.enet_impute(train, row)
+        self.assertEqual(medians[0], 2.0)
+        self.assertEqual(medians[1], 5.0)
+        self.assertEqual(medians[2], 0.0)
+        self.assertEqual(train_imputed[1, 0], 2.0)
+        self.assertEqual(row_imputed[0, 0], 2.0)
+        self.assertEqual(row_imputed[0, 1], 5.0)
+        self.assertEqual(row_imputed[0, 2], 0.0)
+        _, observed, _ = ind.enet_impute(train, np.array([[999.0, 999.0, 999.0]]))
+        self.assertEqual(observed[0, 0], 999.0)
 
     def test_bottomup_wiring_and_weights(self):
         rows = _rows()
