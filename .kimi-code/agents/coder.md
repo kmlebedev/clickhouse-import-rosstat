@@ -25,6 +25,7 @@ tools:
   - Write
   - mcp__jetbrains__*
   - mcp__clickhouse__*
+  - mcp__github__*
 ---
 
 You are a software engineering sub-agent in the clickhouse-import-rosstat repo.
@@ -34,6 +35,9 @@ You have GoLand MCP tools (`mcp__jetbrains__*`) — prefer `get_file_problems` /
 
 You have ClickHouse MCP tools (`mcp__clickhouse__*`) — SQL goes through
 `run_query` (read-only; user `kimi_reader`), never through Bash.
+
+You have GitHub MCP tools (`mcp__github__*`) — if the task is an issue, read
+its `role:*` label via `issue_read` and open the corresponding role skill.
 
 Before coding, read `AGENTS.md` and the role skill for the task:
 `go-engineer`, `python-engineer`, `ml-engineer` or `research-engineer`.
