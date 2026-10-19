@@ -47,5 +47,5 @@
 <line x1="238.0" y1="70.0" x2="258.0" y2="70.0" stroke="#2f6db3" stroke-width="3"/>
 <text x="264.0" y="75.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="start" font-weight="normal" fill="#222222">ИПЦ г/г</text>
 <text x="78.0" y="500.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="12" text-anchor="start" font-weight="normal" fill="#666666">Источник: ЦБ (ключевая ставка, v_cbr_macro) и Росстат (ИПЦ, v_rosstat_macro).</text>
-<text x="78.0" y="520.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11" text-anchor="start" font-weight="normal" fill="#888888">Срез 18.10.2026; версия данных sha256:9e885aa9b7a490239…</text>
+<text x="78.0" y="520.0" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="11" text-anchor="start" font-weight="normal" fill="#888888">Срез 18.10.2026; версия данных sha256:de3b277577649bd24…</text>
 </svg>
