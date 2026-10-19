@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Заголовок issue: `[<slug>/<item-id>] <короткое имя>`. Реестр роадмапов и правила трекера — `docs/ROADMAP_INDEX.md`, обязательная норма — правило 12 `AGENTS.md`. Пункт живёт ровно в одном роадмапе.
+        Заголовок issue: `[<slug>/<item-id>] <короткое имя>`. Реестр роадмапов и правила трекера — `docs/ROADMAP_INDEX.md`, обязательная норма — правило 12 `AGENTS.md`. Пункт живёт ровно в одном роадмапе. После создания проставьте label `role:<role>` (значение из dropdown «Роль»): агент читает его через MCP и открывает соответствующий скил.
   - type: dropdown
     id: roadmap
     attributes:
@@ -23,7 +23,7 @@ body:
     id: role
     attributes:
       label: "Роль"
-      description: "Кто ведёт пункт; mixed — несколько ролей в одном пункте"
+      description: "Кто ведёт пункт; mixed — несколько ролей в одном пункте; значение проставляется label role:<role>"
       options:
         - go
         - python
