@@ -177,10 +177,12 @@
 
 ```bash
 make cpi-monthly-v3-public-test
-ML_LOG=1 make cpi-monthly-v3-public
+ML_LOG=1 make cpi-monthly-v3-public ARGS="--all --allow-gate-diff"
 make all
 make docs-check
 ```
+
+Сверка источника (опционально): `ARGS="--verify-only --verify-xlsx PATH"`; официальный прогон XLSX не читает.
 
 sample_hash: `0078422e045cd075f033104344ae713a81cfd3c4688c744f2257cfeb810fc825`; panel_hash: `7ac43242e219f38dccf53f95cbd0b3ebb26ae4db66cd075286123cb0dc089fa1`
 - `weekly__h1__start24__embargo0`: run_id `8119a41e-7e95-47e0-9109-7aa106ace3db`
