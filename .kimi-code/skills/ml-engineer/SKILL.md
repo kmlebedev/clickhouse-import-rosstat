@@ -54,7 +54,7 @@ whenToUse: When a task involves an ML experiment, model, feature set, backtest, 
 4. **Бенчмарки.** B1 last value, B2 AR(1)+сезонные дамми, B3 ElasticNetCV; при необходимости — внешние (StatsForecast/Theta/CES). Набор фиксируется до результатов.
 5. **Эксперимент.** Walk-forward с purge/embargo; никакого random split; гиперпараметры — дефолты или CV строго внутри train.
 6. **Оценка.** RMSE/MAE + DM-HLN + блочный бутстрап; для вероятностей — Brier/log loss/калибровка; при многих спецификациях — SPA/MCS.
-7. **Паспорт.** `ML_LOG=1` (и `MLFLOW=1`, если нужен registry); проверь `run_id`, `config_hash`/`sample_hash`, sha256 артефактов и повтор детерминизма.
+7. **Паспорт.** `ML_LOG=1`; MLflow включён по умолчанию (`MLFLOW=0` — осознанно выключить). Перед прогоном `make` вызывает `mlflow_preflight.py`: если API не отвечает, скрипт явно спрашивает, запускать ли без лога; в неинтерактивном режиме нужен `MLFLOW_ALLOW_NO_LOG=1`. Проверь `run_id`, `config_hash`/`sample_hash`, sha256 артефактов и повтор детерминизма.
 8. **Решение.** `promote` / `reject` / `iterate` с причиной; незначимый результат публикуется как результат, а не прячется.
 9. **Live.** Прогноз — в `forecast_log` до публикации; для ставки — `error_bp`; alias `champion` не называть deployment до #184.
 10. **Приёмка.** Числа с командой и результатом, «что не проверено», `make all`, `make docs-check`, при необходимости `make mcp-check`; протокол — комментарием в PR; статус роадмапа — тем же PR.
@@ -78,14 +78,16 @@ whenToUse: When a task involves an ML experiment, model, feature set, backtest, 
 
 | Цель | Что делает |
 |---|---|
-| `make cpi-nowcast` | nowcast ИПЦ v1 (CatBoost + B1–B3); `ML_LOG=1 MLFLOW=1` — паспорт и registry |
+| `make cpi-nowcast` | nowcast ИПЦ v1 (CatBoost + B1–B3); `ML_LOG=1` — паспорт и MLflow (по умолчанию) |
 | `make cpi-monthly` | месячный nowcast v2 с МП; `ARGS="--sample long"`, `ARGS="--quick --jobs N"`; `ML_LOG=1` |
-| `make key-rate-model` | ставка: Тейлор, ordered logit, walk-forward; `ML_LOG=1 MLFLOW=1` |
+| `make key-rate-model` | ставка: Тейлор, ordered logit, walk-forward; `ML_LOG=1` |
 | `make shock-classifier` | классификатор шоков и причинные веса; `ML_LOG=1` |
-| `make cb-comp-parity` | паритет с CB_COMP (direct + bottom-up, DM/TOST) |
+| `make cb-comp-parity` | паритет с CB_COMP (direct + bottom-up, DM/TOST); `ML_LOG=1` |
 | `make key-rate-llm-forecast` | LLM-трек: as-of, 3 повтора, медиана; `ARGS="--log"` — payload |
 | `make key-rate-forecast-log` | запись прогноза в `forecast_log` через ingest; `ARGS="--dry-run"` |
-| `make mlflow-up/down/status` | локальный MLflow (SQLite + артефакты) |
+| `make mlflow-up/down/status` | локальный MLflow (SQLite + артефакты); `MLFLOW=1` по умолчанию |
+| `make mlflow-preflight` | проверка MLflow API; при недоступности — явный вопрос (не-TTY: `MLFLOW_ALLOW_NO_LOG=1`) |
+| `make mlflow-backfill ARGS="--run-id <uuid>"` | перенос существующего ClickHouse-прогона в MLflow (тег `clickhouse_run_id`) |
 | `make mlflow-export/register/promote/models` | экспорт run'ов, registry, aliases |
 | `make all` / `make docs-check` / `make mcp-check` | CI, docs-портал, MCP end-to-end |
 
@@ -96,7 +98,7 @@ Python-тесты — офлайн, через `uv run --with ... python3 script
 Минимальный паспорт: `run_id`, experiment/run name, git SHA/branch/dirty, spec/plan path, config + hash, data as-of + sample hash, окружение, per-fold predictions, агрегаты, DM/CI, артефакты sha256, решение и причина.
 
 - `ML_LOG=1` — запись в `ml_runs`/`ml_predictions` (витрины `v_ml_runs`, `v_ml_leaderboard`, `v_ml_error_by_fold`).
-- `MLFLOW=1` — MLflow tracking + registry; экспорт в ClickHouse идемпотентен.
+- `MLFLOW=1` — **по умолчанию**: MLflow tracking + registry; `MLFLOW=0` — осознанно выключить. Перед прогоном `mlflow_preflight.py` проверяет API; при недоступности спрашивает (не-TTY: `MLFLOW_ALLOW_NO_LOG=1`). Экспорт в ClickHouse идемпотентен; `make mlflow-backfill` переносит существующие ClickHouse-прогоны в MLflow.
 - Канонические MLflow-теги решения: `decision=promote|reject|iterate|shadow|canary`, `gate=dm|mcs|dm+mcs`, `primary_metric`, `model_version`, `run_id`; причина решения — в артефакте, не только в PR.
 - Сырые `ml_runs`/`ml_predictions` агенту не выданы; для анализа — витрины.
 - Артефакты не должны существовать только в gitignored-каталоге: паспорт и sha256 — обязательны.
@@ -125,7 +127,7 @@ Python-тесты — офлайн, через `uv run --with ... python3 script
 - [ ] Пункт роадмапа и issue названы; спека/план — первые коммиты.
 - [ ] Предрегистрация и данные зафиксированы до результата.
 - [ ] Бенчмарки B1–B3 и полный набор метрик; DM/CI/калибровка.
-- [ ] Паспорт run (`ML_LOG=1`, при необходимости `MLFLOW=1`), артефакты sha256, повтор детерминирован.
+- [ ] Паспорт run (`ML_LOG=1`; MLflow по умолчанию, `MLFLOW=0` — осознанно), артефакты sha256, повтор детерминирован.
 - [ ] Вывод сформулирован честно: значимо/незначимо, что не проверено.
 - [ ] Python-тесты, `make all`, `make docs-check`; `make mcp-check` — если схема/гранты.
 - [ ] Протокол приёмки — комментарием в PR; статус роадмапа обновлён.

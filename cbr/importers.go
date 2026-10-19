@@ -23,7 +23,7 @@ type cbrImporter struct {
 }
 
 // cbrImporters — единственная точка регистрации импортёров ЦБ: персональных
-// init()-append по файлам импортёров больше нет (22 записи в одном месте вместо
+// init()-append по файлам импортёров больше нет (25 записей в одном месте вместо
 // 13 прежних). Порядок повторяет dagu/cbr.yaml; в chimport.Stats порядок значения
 // не имеет.
 //
@@ -95,6 +95,9 @@ var cbrImporters = []cbrImporter{
 	{cbrMtForecastImporter, "cbr_mt_forecast", "SELECT count() FROM cbr_mt_forecast FINAL"},
 	{cbrForm101Importer, "cbr_form101", "SELECT count() FROM cbr_form101 FINAL"},
 	{cbrZcycImporter, "cbr_zcyc", ""},
+	{cbrCcybImporter, "cbr_ccyb_indicators", "SELECT count() FROM cbr_ccyb_indicators FINAL"},
+	{cbrRiskWeightAddonsImporter, "cbr_risk_weight_addons", "SELECT count() FROM cbr_risk_weight_addons FINAL"},
+	{cbrMPLImporter, "cbr_mpl", "SELECT count() FROM cbr_mpl FINAL"},
 }
 
 // init — единственная регистрация импортёров ЦБ в chimport.Stats. Порядок

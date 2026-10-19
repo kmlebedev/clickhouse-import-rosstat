@@ -29,8 +29,10 @@ const (
 	rawBlockMarker = "Исходные данные"
 	saBlockMarker  = "Сезонно скорректированные данные"
 
-	// monthlySheet — лист с месячными рядами (даты в первом столбце — серийные номера
-	// Excel); остальные листы книги квартальные (метки «1к02»).
+	// monthlySheet — агрегатный лист с месячными рядами (даты в первом столбце — серийные
+	// номера Excel). Отраслевые листы тоже месячные: их список — mpSurveyIndustrySheets,
+	// проверка — isMonthlySurveySheet. Остальные читаемые листы книги квартальные
+	// (метки «1к02»).
 	monthlySheet = "Экономика всего"
 
 	// Пороги fail-fast: меньше — значит, лист не той книги или изменил структуру.
@@ -149,7 +151,7 @@ func readSheet(xlsx *excelize.File, sheet string) (*sheetData, error) {
 	header := rows[headerRow-1]
 
 	data := &sheetData{name: sheet, header: header, rawFrom: rawFrom, saFrom: saFrom}
-	if sheet == monthlySheet {
+	if isMonthlySurveySheet(sheet) {
 		data.dated, err = monthlyRows(xlsx, sheet, rows)
 		if err != nil {
 			return nil, err

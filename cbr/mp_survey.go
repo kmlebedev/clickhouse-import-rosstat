@@ -52,18 +52,18 @@ var mpSurveyImporter = &mpSurveyStat{ClickHouseImport: util.ClickHouseImport{
 	PublicationSource:      mpSurveyName,
 	PublicationCountPoints: mpSurveyCountPoints,
 	AfterImport: func(ctx context.Context, conn driver.Conn) error {
-		if err := util.UpsertSeriesCatalog(ctx, conn, mpSurveySeriesMeta); err != nil {
+		if err := util.UpsertSeriesCatalog(ctx, conn, mpSurveyAllMeta); err != nil {
 			return err
 		}
 		_, err := util.CreateView(ctx, conn, cbrSurveyView)
 		return err
 	},
 	ImportFunc: func(xlsx *excelize.File, batch driver.Batch) error {
-		points, err := parseSurvey(xlsx, mpSurveySeries)
+		points, err := parseSurvey(xlsx, mpSurveyAllSeries)
 		if err != nil {
 			return err
 		}
-		log.Infof("Собрано %d точек мониторинга предприятий", len(points))
+		log.Infof("Собрано %d точек мониторинга предприятий (13 агрегатных + 16 отраслевых листов)", len(points))
 		for _, p := range points {
 			if err = batch.Append(mpSurveySource, p.Series, p.Date, p.Value); err != nil {
 				return fmt.Errorf("append %s %s: %w", p.Series, p.Date.Format("2006-01-02"), err)

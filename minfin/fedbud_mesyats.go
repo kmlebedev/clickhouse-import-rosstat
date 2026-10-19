@@ -1,123 +1,37 @@
 package minfin
 
 import (
-	"context"
-	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/gocolly/colly/v2"
-	"github.com/kmlebedev/clickhouse-import-rosstat/util"
-	log "github.com/sirupsen/logrus"
 	"github.com/xuri/excelize/v2"
-	"slices"
-	"strconv"
-	"strings"
-	"time"
 )
 
-// Краткая ежемесячная информация об исполнении консолидированного бюджета Российской Федерации и государственных внебюджетных фондов (млрд. руб., накоплено с начала года)
+// Краткая ежемесячная информация об исполнении консолидированного бюджета
+// Российской Федерации и государственных внебюджетных фондов
+// (млрд. руб., накоплено с начала года).
 // https://minfin.gov.ru/ru/document?id_4=93447-kratkaya_ezhemesyachnaya_informatsiya_ob_ispolnenii_konsolidirovannogo_byudzheta_rossiiskoi_federatsii_i_gosudarstvennykh_vnebyudzhetnykh_fondov_mlrd._rub._nakopleno_s_nachala_goda
-// https://minfin.gov.ru/common/upload/library/2025/08/main/Prilozhenie_8_dannye_115-117_%E2%80%94_mesyats.xlsx
-// https://minfin.gov.ru/common/upload/library/2025/10/main/Prilozhenie_8_dannye_115-117_%E2%80%94_mesyats.xlsx
-// https://minfin.gov.ru/common/upload/library/2026/02/main/Prilozhenie_8_dannye_115-117_%E2%80%94_mesyats.xlsx
+// https://minfin.gov.ru/common/upload/library/2026/10/main/Prilozhenie_8_dannye_115-117_%E2%80%94_mesyats.xlsx
 const (
-	minfinUrl          = "https://minfin.gov.ru"
-	conbudExecutePath  = "/ru/statistics/conbud/execute"
-	fedbudMesyatsTable = "minfin_fed_bud_mesyats"
+	conbudExecutePath         = "/ru/statistics/conbud/execute"
+	fedbudMesyatsTable        = "minfin_fed_bud_mesyats"
+	fedbudMesyatsLinkSelector = `a[href*="_mesyats.xlsx"]`
 )
 
 var fedbudMesyatsFields = []string{"Доходы, всего", "Расходы, всего", "Акцизы", "Национальная оборона", "Дефицит (-)/Профицит (+)"}
 
-type fedbudMesyatsStat struct {
-	util.ClickHouseImport
-}
-
-// fedbudMesyats — консолидированный бюджет: таблица, DDL и разбор листа «месяц»
-// (накопление переводится в месячные разности). Каталог рядов и витрину
-// v_minfin_budget публикует Import() обёртки после полного цикла шаблона.
-// Регистрация — реестром minfin/importers.go (стандарт §8).
-var fedbudMesyats = util.ClickHouseImport{
-	TableName: fedbudMesyatsTable,
-	CreateTable: []string{`CREATE TABLE IF NOT EXISTS %s (
-              name LowCardinality(String)
-			, date Date
-			, value Float32
-		) ENGINE = ReplacingMergeTree ORDER BY (name, date);`},
-	ImportFunc: fedbudMesyatsImport,
-}
-
-// fedbudMesyatsImporter — консолидированный бюджет; адрес файла вычисляется в Import()
-// через legacy-транспорт colly (пакетный рефакторинг транспорта — отдельный пункт).
-var fedbudMesyatsImporter = &fedbudMesyatsStat{ClickHouseImport: fedbudMesyats}
-
-func getFedbudMesyatDataUrl() (url string) {
-	c := colly.NewCollector(colly.UserAgent(util.HttpUA))
-	c.SetClient(util.HttpClient)
-	c.OnHTML(".document_list > div:nth-child(1) > div.document_footer > div.files_info.t_mn2 > div > a", func(e *colly.HTMLElement) {
-		url = fmt.Sprintf("%s%s", minfinUrl, e.Attr("href"))
-		log.Infof("href url %s", url)
-	})
-	if err := c.Visit(fmt.Sprintf("%s%s", minfinUrl, conbudExecutePath)); err != nil {
-		log.Errorf("Visit %v+", err)
-	}
-	c.Wait()
-	return url
-}
-
-func (s *fedbudMesyatsStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
-	s.DataUrl = getFedbudMesyatDataUrl()
-	if count, err = s.ClickHouseImport.Import(ctx, conn); err != nil {
-		return count, err
-	}
-	return count, publishFedbud(ctx, conn, fedbudMesyatsSeriesMeta)
-}
+// fedbudMesyats — консолидированный бюджет: таблица, ссылка со страницы каталога
+// и общий с федеральным бюджетом разбор листа «месяц». Каталог рядов и витрину
+// v_minfin_budget публикует AfterImport шаблона; регистрация — реестром
+// minfin/importers.go (стандарт §8).
+var fedbudMesyats = newMinfinFileImporter(
+	fedbudMesyatsTable,
+	minfinURL+conbudExecutePath,
+	fedbudMesyatsLinkSelector,
+	minfinSeriesCreate(true),
+	fedbudMesyatsImport,
+	fedbudMesyatsSeriesMeta,
+	"",
+)
 
 func fedbudMesyatsImport(xlsx *excelize.File, batch driver.Batch) error {
-	rows, err := xlsx.GetRows("месяц")
-	if err != nil {
-		return err
-	}
-	tableIsFoundRowNum := -1
-	var valuePrev, value float64
-	for i, row := range rows {
-		if len(row) < 3 || row[1] == "" {
-			continue
-		}
-		if row[1] == "Показатель" {
-			tableIsFoundRowNum = i
-			continue
-		}
-		if tableIsFoundRowNum < 0 {
-			continue
-		}
-		//fmt.Printf("rowdate : %+v\n", rows[tableIsFoundRowNum])
-		if slices.Contains(fedbudMesyatsFields, row[1]) {
-			for j, rowCol := range row[2:] {
-				var date time.Time
-				dateStr := rows[tableIsFoundRowNum][j+2]
-				fmt.Printf("rowCol: %+v, date: %s\n", rowCol, dateStr)
-				dateArr := strings.Split(dateStr, " ")
-				if len(dateArr) > 1 {
-					dateStr = dateReplacer.Replace(dateArr[0])
-				}
-				date, err = time.Parse("Jan-06", dateStr)
-				if err != nil {
-					return err
-				}
-				valueNew, err := strconv.ParseFloat(strings.ReplaceAll(rowCol, ",", ""), 64)
-				if dateStr[0:3] == "Jan" {
-					value = valueNew
-				} else {
-					value = valueNew - valuePrev
-				}
-				valuePrev = valueNew
-				if err != nil {
-					return err
-				}
-				if err = batch.Append(row[1], date, value); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	return nil
+	return importFedbud(xlsx, batch, fedbudLayout{Table: fedbudMesyatsTable, Fields: fedbudMesyatsFields})
 }
