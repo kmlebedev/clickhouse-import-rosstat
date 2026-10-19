@@ -5,12 +5,14 @@ import "github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 // rosstatImporter — запись реестра импортёров пакета: сам импортёр, таблица, в которую
 // он пишет, и запрос количественного чека версии (префлайта). Регистрируется сам
 // импортёр пакета — значение или указатель на его структуру, — а не отдельный
-// безымянный тип-обёртка: все шесть импортёров объявлены структурами со встроенным
+// безымянный тип-обёртка: все семь импортёров объявлены структурами со встроенным
 // util.ClickHouseImport, поэтому Name() и Import() (цикл «DDL → префлайт → точки →
 // производные → версия») промотированы из шаблона, а публикация производных (каталог
-// рядов и витрина v_rosstat_macro — поле AfterImport) идёт через шаблон; свой Import()
-// оставляет тот, кому адрес артефакта нужно взять со страницы (rosstat_ipc_weeks), либо
-// у кого артефакт — не один файл, а набор выпусков (rosstat_ipc_weeks_bulletins). Полей
+// рядов и витрина v_rosstat_macro — поле AfterImport; у rosstat_okved2 — отдельная
+// витрина v_rosstat_okved2) идёт через шаблон; свой Import()
+// оставляет тот, кому адрес артефакта нужно взять со страницы (rosstat_ipc_weeks), у кого
+// артефакт — не один файл, а набор выпусков (rosstat_ipc_weeks_bulletins), либо кому нужен
+// явный отказ от restore при вычисляемом URL (rosstat_okved2). Полей
 // table и countPoints не видит никто, кроме теста
 // TestRosstatImportersPrefixedAndRegistered: по ним проверяется, что импортёр не занял
 // таблицу вне пространства rosstat_ и что объявленный в реестре префлайт совпадает с
@@ -56,6 +58,7 @@ var rosstatImporters = []rosstatImporter{
 	{vvpKvartalImporter, "rosstat_vvp_kvartal", "SELECT count() FROM rosstat_vvp_kvartal FINAL"},
 	{labourForceImporter, "rosstat_labour_force_mes", "SELECT count() FROM rosstat_labour_force_mes FINAL"},
 	{ipcWeeksBulletinsImporter, "rosstat_ipc_weeks_bulletins", "SELECT count() FROM rosstat_ipc_weeks_bulletins FINAL"},
+	{rosstatOkved2Importer, "rosstat_okved2", "SELECT count() FROM rosstat_okved2 FINAL"},
 }
 
 // init — единственная регистрация импортёров Росстата в chimport.Stats. Порядок
