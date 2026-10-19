@@ -64,6 +64,12 @@ type cbrMPLStat struct {
 }
 
 func (s *cbrMPLStat) Import(ctx context.Context, conn driver.Conn) (count int64, err error) {
+	// Список limit-файлов берётся с landing, а ranges-файлы вообще не пишутся в
+	// таблицу и в архив не попадают; восстановить набор без источника нельзя.
+	if util.ArchiveRestoreMode() {
+		return 0, fmt.Errorf("%s: режим восстановления не поддержан: артефакт — набор limit-файлов с landing %s и ranges-файлы, которые не архивируются",
+			cbrMPLTable, cbrMPLUrl)
+	}
 	for _, ddl := range s.CreateTable {
 		if err = conn.Exec(ctx, fmt.Sprintf(ddl, s.TableName)); err != nil {
 			return 0, fmt.Errorf("%s: DDL: %w", cbrMPLTable, err)
@@ -116,7 +122,8 @@ func (s *cbrMPLStat) Import(ctx context.Context, conn driver.Conn) (count int64,
 		}
 		var written uint64
 		if queryErr := conn.QueryRow(ctx,
-			"SELECT count() FROM "+cbrMPLTable+" WHERE version = ?", version).Scan(&written); queryErr != nil {
+			"SELECT count() FROM "+cbrMPLTable+" WHERE version = ? AND source_file = ?",
+			version, file.Name).Scan(&written); queryErr != nil {
 			errs = append(errs, fmt.Errorf("%s: файл %s: число строк версии не прочитано: %w",
 				cbrMPLTable, file.Name, queryErr))
 			continue

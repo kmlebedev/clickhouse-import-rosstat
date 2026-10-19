@@ -49,6 +49,8 @@ func cbrMPLParsePage(body []byte) (limits, ranges []mplFile, err error) {
 		}
 		caption := strings.Join(strings.Fields(s.Text()), " ")
 		if caption == "" {
+			parseErr = fmt.Errorf("%s: xlsx-ссылка %q без подписи — нельзя классифицировать файл",
+				cbrMPLTable, href)
 			return
 		}
 		lower := strings.ToLower(caption)

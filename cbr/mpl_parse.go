@@ -126,8 +126,8 @@ func mplParseV3Sheet(rows [][]string, file mplFile, sheet string) ([]mplPoint, e
 	subrowCol := mplFindCol(rows[header], "номер", "подстроки")
 	loanKindCol := mplFindCol(rows[header], "вид")
 	limitCol := mplFindCol(rows[header], "макропруденциальный", "лимит")
-	if rowNoCol < 0 || limitCol < 0 {
-		return nil, fmt.Errorf("%s: файл %s, лист %q: не найдены колонки номера строки/лимита",
+	if rowNoCol < 0 || subrowCol < 0 || loanKindCol < 0 || limitCol < 0 {
+		return nil, fmt.Errorf("%s: файл %s, лист %q: не найдены колонки номера строки/подстроки, вида или лимита",
 			cbrMPLTable, file.Name, sheet)
 	}
 	if fromCol < 0 || toCol < 0 {
@@ -136,85 +136,111 @@ func mplParseV3Sheet(rows [][]string, file mplFile, sheet string) ([]mplPoint, e
 	}
 	pdnCol := mplFindCol(rows[header], "пдн")
 	termCol := mplFindCol(rows[header], "срок")
-	downCol := mplFindCol(rows[header], "первоначального", "взноса")
-	ltvCol := mplFindCol(rows[header], "соотношения", "долга")
-	amountCol := mplFindCol(rows[header], "суммы")
+	downCol := mplFindAnyCol(rows[header], "первоначальн", "взнос")
+	ltvCol := mplFindAnyCol(rows[header], "соотношен", "задолжен")
+	amountCol := mplFindAnyCol(rows[header], "сумм")
+	if pdnCol < 0 || termCol < 0 {
+		return nil, fmt.Errorf("%s: файл %s, лист %q: не найдены колонки ПДН и срока",
+			cbrMPLTable, file.Name, sheet)
+	}
+	switch loanClass {
+	case "mortgage":
+		if downCol < 0 || ltvCol < 0 {
+			return nil, fmt.Errorf("%s: файл %s, лист %q: не найдены колонки первоначального взноса/LTV",
+				cbrMPLTable, file.Name, sheet)
+		}
+	case "consumer_loan":
+		if amountCol < 0 {
+			return nil, fmt.Errorf("%s: файл %s, лист %q: не найдена колонка суммы займа",
+				cbrMPLTable, file.Name, sheet)
+		}
+	}
 
 	var points []mplPoint
-	var state mplV3State
+	var state, parent mplV3State
 	for i := sub + 1; i < len(rows); i++ {
 		row := rows[i]
 		rowNoRaw := strings.TrimSpace(ccybCell(row, rowNoCol))
-		subrow := ""
-		if subrowCol >= 0 {
-			subrow = strings.TrimSpace(ccybCell(row, subrowCol))
-		}
+		subrow := strings.TrimSpace(ccybCell(row, subrowCol))
 		if rowNoRaw == "" && subrow == "" {
 			break
 		}
 		isParent := rowNoRaw != ""
+		var pointState mplV3State
 		if isParent {
 			rowNo, convErr := strconv.ParseUint(rowNoRaw, 10, 32)
 			if convErr != nil {
-				break
+				return nil, fmt.Errorf("%s: файл %s, лист %q, строка %d: номер строки %q не число",
+					cbrMPLTable, file.Name, sheet, i+1, rowNoRaw)
 			}
-			state.rowNo = uint32(rowNo)
-			state.from, state.to = time.Time{}, time.Time{}
-			state.pdn, state.term, state.downPayment, state.ltv, state.amount = "", "", "", "", ""
-			state.loanKind = ""
-			state.hasLimit = false
-			if raw := strings.TrimSpace(ccybCell(row, fromCol)); raw != "" {
-				from, ok := ccybExcelDate(raw)
-				if !ok {
-					return nil, fmt.Errorf("%s: файл %s, лист %q, строка %d: начало периода не дата",
-						cbrMPLTable, file.Name, sheet, i+1)
-				}
-				state.from = from
+			state = mplV3State{rowNo: uint32(rowNo)}
+			rawFrom := strings.TrimSpace(ccybCell(row, fromCol))
+			if rawFrom == "" {
+				return nil, fmt.Errorf("%s: файл %s, лист %q, строка %d: нет начала периода",
+					cbrMPLTable, file.Name, sheet, i+1)
 			}
-			if raw := strings.TrimSpace(ccybCell(row, toCol)); raw != "" {
-				to, ok := ccybExcelDate(raw)
+			from, ok := ccybExcelDate(rawFrom)
+			if !ok {
+				return nil, fmt.Errorf("%s: файл %s, лист %q, строка %d: начало периода не дата",
+					cbrMPLTable, file.Name, sheet, i+1)
+			}
+			state.from = from
+			if rawTo := strings.TrimSpace(ccybCell(row, toCol)); rawTo != "" {
+				to, ok := ccybExcelDate(rawTo)
 				if !ok {
 					return nil, fmt.Errorf("%s: файл %s, лист %q, строка %d: конец периода не дата",
 						cbrMPLTable, file.Name, sheet, i+1)
 				}
 				state.to = to
+			} else {
+				state.to = mustRiskAddonOpenEnded()
 			}
-			if state.from.IsZero() || state.to.IsZero() {
-				return nil, fmt.Errorf("%s: файл %s, лист %q, строка %d: нет периода",
+			if err = mplV3Override(&state, row, loanKindCol, limitCol, pdnCol, termCol, downCol, ltvCol, amountCol); err != nil {
+				return nil, fmt.Errorf("%s: файл %s, лист %q, строка %d: %w",
+					cbrMPLTable, file.Name, sheet, i+1, err)
+			}
+			if !state.hasLimit {
+				return nil, fmt.Errorf("%s: файл %s, лист %q, строка %d: нет лимита",
 					cbrMPLTable, file.Name, sheet, i+1)
 			}
-		} else if state.rowNo == 0 {
-			return nil, fmt.Errorf("%s: файл %s, лист %q, строка %d: подстрока без родительской строки",
-				cbrMPLTable, file.Name, sheet, i+1)
-		}
-
-		if err = mplV3Override(&state, row, loanKindCol, limitCol, pdnCol, termCol, downCol, ltvCol, amountCol); err != nil {
-			return nil, fmt.Errorf("%s: файл %s, лист %q, строка %d: %w",
-				cbrMPLTable, file.Name, sheet, i+1, err)
-		}
-		if !state.hasLimit {
-			return nil, fmt.Errorf("%s: файл %s, лист %q, строка %d: нет лимита",
-				cbrMPLTable, file.Name, sheet, i+1)
+			parent = state
+			pointState = state
+		} else {
+			if parent.rowNo == 0 {
+				return nil, fmt.Errorf("%s: файл %s, лист %q, строка %d: подстрока без родительской строки",
+					cbrMPLTable, file.Name, sheet, i+1)
+			}
+			// Подстрока наследует условия родителя, а не предыдущей подстроки:
+			// pointState начинается со снимка parent, непустые ячейки переопределяют.
+			pointState = parent
+			if err = mplV3Override(&pointState, row, loanKindCol, limitCol, pdnCol, termCol, downCol, ltvCol, amountCol); err != nil {
+				return nil, fmt.Errorf("%s: файл %s, лист %q, строка %d: %w",
+					cbrMPLTable, file.Name, sheet, i+1, err)
+			}
+			if !pointState.hasLimit {
+				return nil, fmt.Errorf("%s: файл %s, лист %q, строка %d: нет лимита",
+					cbrMPLTable, file.Name, sheet, i+1)
+			}
 		}
 
 		// Неизвестная полоса уже залогирована в mplParseBandText: подпись
 		// сохраняется как в источнике, числовые границы остаются nil.
-		pdn, _ := mplParseBandText(state.pdn, file, sheet, i+1)
-		term, _ := mplParseBandText(state.term, file, sheet, i+1)
-		down, _ := mplParseBandText(state.downPayment, file, sheet, i+1)
-		ltv, _ := mplParseBandText(state.ltv, file, sheet, i+1)
-		amount, _ := mplParseBandText(state.amount, file, sheet, i+1)
+		pdn, _ := mplParseBandText(pointState.pdn, file, sheet, i+1)
+		term, _ := mplParseBandText(pointState.term, file, sheet, i+1)
+		down, _ := mplParseBandText(pointState.downPayment, file, sheet, i+1)
+		ltv, _ := mplParseBandText(pointState.ltv, file, sheet, i+1)
+		amount, _ := mplParseBandText(pointState.amount, file, sheet, i+1)
 		points = append(points, mplPoint{
 			segment:         file.Segment,
 			loanClass:       loanClass,
-			periodFrom:      state.from,
-			periodTo:        state.to,
+			periodFrom:      pointState.from,
+			periodTo:        pointState.to,
 			sourceFile:      file.Name,
 			sourceSheet:     sheet,
-			rowNo:           state.rowNo,
+			rowNo:           pointState.rowNo,
 			subrowNo:        subrow,
 			bandIdx:         0,
-			loanKind:        state.loanKind,
+			loanKind:        pointState.loanKind,
 			pdnBand:         pdn.label,
 			pdnMin:          pdn.min,
 			pdnMax:          pdn.max,
@@ -230,7 +256,7 @@ func mplParseV3Sheet(rows [][]string, file mplFile, sheet string) ([]mplPoint, e
 			amountBand:      amount.label,
 			amountMin:       amount.min,
 			amountMax:       amount.max,
-			limitPct:        state.limit,
+			limitPct:        pointState.limit,
 		})
 	}
 	if len(points) == 0 {
@@ -466,6 +492,21 @@ func mplFindCol(row []string, parts ...string) int {
 		}
 		if ok {
 			return j
+		}
+	}
+	return -1
+}
+
+// mplFindAnyCol — колонка, в заголовке которой есть хотя бы одна из основ:
+// падежи источника («Первоначальный взнос» / «первоначального взноса»,
+// «Соотношение задолженности» / «соотношения долга») не должны ломать поиск.
+func mplFindAnyCol(row []string, parts ...string) int {
+	for j, cell := range row {
+		cell = strings.ToLower(mplNorm(cell))
+		for _, part := range parts {
+			if strings.Contains(cell, strings.ToLower(part)) {
+				return j
+			}
 		}
 	}
 	return -1
