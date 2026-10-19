@@ -46,11 +46,13 @@ whenToUse: When using superpowers:subagent-driven-development or executing-plans
 
 ## 5. Обязательный блок в промпте coder-субагента
 
-Тип `coder` переопределён файлом `.kimi-code/agents/coder.md`: у него есть `mcp__jetbrains__*` и `mcp__clickhouse__*`. Типы `explore`/`plan` — без MCP, им работать через `Grep`/`Read`/`Edit`. В **каждый** промпт coder-субагента вписывай блок:
+Тип `coder` переопределён файлом `.kimi-code/agents/coder.md`: у него есть `mcp__jetbrains__*`, `mcp__clickhouse__*` и `mcp__github__*`. Типы `explore`/`plan` — без MCP, им работать через `Grep`/`Read`/`Edit`. В **каждый** промпт coder-субагента вписывай блок:
 
 > У тебя есть инструменты `mcp__jetbrains__*` (GoLand MCP) и `mcp__clickhouse__*`. Используй `mcp__jetbrains__*` для проверки правок и навигации вместо grep и лишней сборки; SQL к ClickHouse — только через `mcp__clickhouse__run_query`. Если вдруг MCP-инструментов в твоём наборе нет — скажи об этом в отчёте (`DONE_WITH_CONCERNS`), не молчи.
 
 Скил `subagent-driven-development` не пробрасывает `AGENTS.md` субагенту автоматически — инструкцию надо вписать в диспатч-промпт руками, иначе она до субагента не доедет. Также впиши ролевой скил: `go-engineer`, `python-engineer`, `ml-engineer` или `research-engineer`.
+
+**Role routing для issue.** Если задача пришла как issue, прочитай его `role:*` через `mcp__github__issue_read` и впиши в промпт субагента роль и путь к скилу. Если у субагента нет `mcp__github__*`, он не увидит лейбл сам — роль передаётся текстом.
 
 ## 6. Чего не делать
 

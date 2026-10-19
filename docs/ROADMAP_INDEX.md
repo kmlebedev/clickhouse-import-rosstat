@@ -39,7 +39,7 @@
 - `gold-thesis/analytics-v-gold-floor`;
 - `dcf-polyus/7.1`.
 
-Labels: `roadmap:<slug>` — группировка до появления Project V2; `needs-answer` — пока в issue есть открытый вопрос Q&A. Обязательных labels у шаблона нет: до шага `infra/3.2` форма работает без предварительной настройки репозитория.
+Labels: `roadmap:<slug>` — группировка до появления Project V2; `role:<role>` — роль исполнения (`go`, `python`, `ml`, `research`, `mixed`, `shared`), ровно один на issue; `needs-answer` — пока в issue есть открытый вопрос Q&A. Обязательных labels у шаблона нет: до шага `infra/3.2` форма работает без предварительной настройки репозитория.
 
 Заголовок issue: `[<slug>/<item-id>] <короткое имя пункта>`.
 

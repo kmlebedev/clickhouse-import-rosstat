@@ -53,7 +53,9 @@ Depends on: #...
 
 Дальше — цель пункта, критерий приёмки со ссылкой на роадмап, ссылки на спеку и план, Q&A комментариями и протокол живой приёмки. Полные спеки и планы в тело issue не копируются: только ссылки.
 
-Labels: `roadmap:<slug>` — группировка до появления Project V2 (создать при первом использовании); `needs-answer` — пока в issue есть открытый вопрос Q&A. Обязательных labels у шаблона нет: до шага `infra/3.2` форма должна работать без предварительной настройки репозитория.
+Labels: `roadmap:<slug>` — группировка до появления Project V2 (создать при первом использовании); `role:<role>` — роль исполнения (`role:go`, `role:python`, `role:ml`, `role:research`, `role:mixed`, `role:shared`), ровно один на issue; `needs-answer` — пока в issue есть открытый вопрос Q&A. Обязательных labels у шаблона нет: до шага `infra/3.2` форма должна работать без предварительной настройки репозитория.
+
+**Role routing.** Агент, взявший issue, сначала читает его `role:*` через MCP `issue_read` (поле `labels`) и открывает соответствующий скил: `role:go` → `go-engineer`, `role:python` → `python-engineer`, `role:ml` → `ml-engineer`, `role:research` → `research-engineer`, `role:shared` → `github-tracker` и профильный скил, `role:mixed` → все скилы, названные в спеке/плане. Если лейбла нет — роль определяется по таблице `AGENTS.md`, лейбл добавляется до первого коммита. При диспатче субагента без GitHub MCP роль передаётся в промпте.
 
 **Claim.** Перед работой — комментарий в issue: «Taking `<slug>/<item-id>`; branch `<type>/<slug>`; worktree `.worktrees/<slug>`». Затем `Status = In Progress`, `Branch`. Если claim уже есть у другой сессии — не дублировать, выбрать другой пункт.
 
