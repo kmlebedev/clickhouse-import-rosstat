@@ -225,7 +225,7 @@ PR #177 — методологически зрелый эксперимент �
 - **Staging:** docker-compose: `mlflow`, `postgres:16`, `minio`; артефакты в S3-совместимом хранилище; секреты — только через env, не в params/tags.
 - **Почему MLflow:** стандарт, UI сравнения, REST API, model registry с алиасами, autolog, CatBoost flavor, артефакты. Нет нативного ClickHouse backend — это осознанная цена; ClickHouse остаётся аналитической плоскостью.
 - **Почему не только ClickHouse:** собственная таблица run'ов — это ~300 строк кода и отсутствие UI/реестра; для «готового инструментария» MLflow дешевле.
-- **Fallback:** если MLflow недоступен, скрипт пишет локальный `run.json` + артефакты и не падает; синхронизация — отдельным шагом.
+- **Fallback:** перед ML-прогоном `mlflow_preflight.py` проверяет API; если MLflow недоступен, скрипт явно спрашивает, запускать ли без лога (в не-TTY нужен `MLFLOW_ALLOW_NO_LOG=1`). При разрешённом запуске скрипт пишет локальный `run.json` + артефакты и не падает; существующие ClickHouse-прогоны переносятся `make mlflow-backfill`.
 
 ### 6.2 Analytics plane: ClickHouse
 
@@ -301,7 +301,7 @@ ORDER BY (model_name, version);
 
 - `dagu` уже есть: добавить шаги `ml_retrain`, `ml_backtest`, `ml_resolve_actuals`, `ml_export`.
 - Полный бэктест 46–64 мин — не в каждом PR; nightly или по кнопке.
-- `make` остаётся единственной точкой входа; MLflow/ClickHouse-логирование включается env-переменной, а не обязательным флагом.
+- `make` остаётся единственной точкой входа; MLflow включён по умолчанию (`MLFLOW=0` — осознанно), перед запуском `mlflow_preflight.py` проверяет API и спрашивает при недоступности; ClickHouse-паспорт — `ML_LOG=1`.
 
 ---
 
