@@ -487,20 +487,33 @@ func TestIpcWeeksErrorBranches(t *testing.T) {
 	}
 }
 
-// TestIpcWeeksFindLink — селектор ссылки проверяется на HTML-фикстуре страницы цен тем же
+// TestIpcWeeksFindLink — селектор ссылки проверяется на HTML-фикстурах страницы цен тем же
 // util.FindLink, что и в Import() (§11.3): прежняя позиционная CSS-цепочка из номеров
-// вложенных элементов ломалась от любой правки вёрстки, а имя файла (Nedel_ipc.xlsx)
-// постоянное, поэтому селектор — по фрагменту href.
+// вложенных элементов ломалась от любой правки вёрстки, поэтому селектор — по фрагменту
+// href. Росстат сменил написание имени файла (Nedel_ipc.xlsx → nedel_Ipc.xlsx), поэтому
+// тест держит оба варианта: селектор обязан матчить и старое, и текущее написание.
 func TestIpcWeeksFindLink(t *testing.T) {
-	page, err := os.ReadFile("testdata/price_page.html")
-	if err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		name string
+		file string
+		want string
+	}{
+		{"legacy Nedel_ipc", "testdata/price_page.html", "Nedel_ipc"},
+		{"current nedel_Ipc", "testdata/price_page_lowercase.html", "nedel_Ipc"},
 	}
-	href, err := util.FindLink(page, ipcWeeksLinkSelector)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(href, "Nedel_ipc") {
-		t.Errorf("href %q не содержит Nedel_ipc", href)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			page, err := os.ReadFile(tc.file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			href, err := util.FindLink(page, ipcWeeksLinkSelector)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(href, tc.want) {
+				t.Errorf("href %q не содержит %s", href, tc.want)
+			}
+		})
 	}
 }
