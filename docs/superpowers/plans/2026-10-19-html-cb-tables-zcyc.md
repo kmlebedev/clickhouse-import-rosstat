@@ -105,7 +105,7 @@
 
 ## 5. Протокол приёмки (2026-10-19)
 
-- `make all` — зелёный (после `a3e291b`; `bfca4f1` меняет только `scripts/mcp_check.py`, `python3 -m py_compile` OK).
+- `make all` — зелёный (после `a3e291b`; `bfca4f1` меняет только `scripts/mcp_check.py` — Python-only, `python3 -m py_compile` OK; `7b602b7` — docs-only; Go-код на момент приёмки не менялся с `a3e291b`).
 - `go test -race -count=1 ./cbr/ ./util/` — ok.
 - `dagu validate dagu/cbr.yaml` — exit 0.
 - `make import STAT=cbr_zcyc` — первый прогон: `cbr_zcyc: 72468 точек`, `Imported 72468 rows of cbr_zcyc`.
@@ -117,4 +117,4 @@
   - `v_ofz_signal` 2026-10-09: `16.85 / 13.76`, ключевая 14.00, спред 2.85, наклон 3.09, реальная 10.50.
 - Повтор после фильтра: `cbr_zcyc: новых данных нет`, `Imported 0 rows of cbr_zcyc`; `count()` не изменился (72 468).
 - `make mcp-check` — **ПРОВЕРКА ПРОЙДЕНА**, 0 провалов; блок ОФЗ — 5 OK (72 468; 6 039; 2 748/2 748; каталог 12; сырая 497).
-- Коммиты ветки: `0d48b3c` спека+план, `ec342f4` фикстуры, `5b71ec6` util, `7d29568` парсер+каталог, `4bc6fd9` NaN/Inf, `52467cd` импортёр+витрины+mcp, `6f21489` null-семантика, `a3e291b` фильтр окна, `bfca4f1` list_tables.
+- Коммиты ветки: `0d48b3c` спека+план, `ec342f4` фикстуры, `5b71ec6` util, `7d29568` парсер+каталог, `4bc6fd9` NaN/Inf, `52467cd` импортёр+витрины+mcp, `6f21489` null-семантика, `a3e291b` фильтр окна, `bfca4f1` list_tables, `7b602b7` документы и протокол.

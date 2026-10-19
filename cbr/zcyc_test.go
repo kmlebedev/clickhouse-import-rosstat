@@ -247,3 +247,28 @@ func TestZcycPointsInRange(t *testing.T) {
 		t.Errorf("from > to: точек %d, want 0", len(got))
 	}
 }
+
+// TestZcycStart — last → from, firstRun: clickhouse-go отдаёт Date с таймзоной
+// сессии, а окна и точки — UTC. Без нормализации last в UTC-дату (regression:
+// FixedZone +05) from уезжает на предыдущие сутки и последний день окна
+// выпадает из фильтра zcycPointsInRange.
+func TestZcycStart(t *testing.T) {
+	plusFive := time.FixedZone("UTC+5", 5*60*60)
+	from, firstRun := zcycStart(time.Date(2026, time.October, 16, 0, 0, 0, 0, plusFive))
+	if firstRun {
+		t.Error("last = 2026-10-16 +05: firstRun = true, want false")
+	}
+	want := time.Date(2026, time.October, 17, 0, 0, 0, 0, time.UTC)
+	if !from.Equal(want) {
+		t.Errorf("from = %s, want %s (следующий календарный день в UTC)",
+			from.Format(time.RFC3339), want.Format(time.RFC3339))
+	}
+
+	from, firstRun = zcycStart(time.Date(1970, time.January, 1, 0, 0, 0, 0, time.UTC))
+	if !firstRun {
+		t.Error("epoch: firstRun = false, want true")
+	}
+	if want := time.Date(2003, time.January, 4, 0, 0, 0, 0, time.UTC); !from.Equal(want) {
+		t.Errorf("epoch: from = %s, want %s", from.Format(time.RFC3339), want.Format(time.RFC3339))
+	}
+}

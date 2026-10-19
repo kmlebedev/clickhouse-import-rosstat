@@ -78,11 +78,12 @@ async def check(params, server_log):
             tools = sorted(t.name for t in (await session.list_tools()).tools)
             failed += not expect("инструменты", {"list_databases", "list_tables", "run_query"} <= set(tools), ", ".join(tools))
 
-            # page_size=100, а не дефолтные 50: число объектов в default растёт
-            # (cbr_zcyc и витрины v_ofz_* добавили три), и 51-я таблица —
-            # v_rosstat_macro — уезжала на вторую страницу list_tables. Проверки
-            # "view in tables" ищут имя в тексте ответа, поэтому видели ложный
-            # провал. page_size=100 покрывает текущие 55 объектов одним ответом;
+            # page_size=100, а не дефолтные 50: число объектов в default растёт, и
+            # 51-я таблица — v_rosstat_macro — уезжала на вторую страницу
+            # list_tables. Проверки "view in tables" ищут имя в тексте ответа,
+            # поэтому видели ложный провал. Из объектов этого контура kimi_reader
+            # видит в list_tables только две витрины v_ofz_* (сырая cbr_zcyc не
+            # выдана); page_size=100 покрывает текущие 55 объектов одним ответом,
             # при дальнейшем росте нужна пагинация по next_page_token.
             tables = text(await session.call_tool("list_tables", {"database": "default", "page_size": 100}))
             failed += not expect("витрина v_bea_pce видна", "v_bea_pce" in tables, "list_tables default")
@@ -1687,38 +1688,66 @@ async def check(params, server_log):
             # v_ofz_curve_compare значит ни разу не отработавший шаг cbr_zcyc, а не
             # отсутствие данных у источника: строки публикует импортёр. min/max в detail
             # показывают, насколько глубоко прошёл бэкфилл (ориентир — с 04.01.2003).
+            # Непустоты мало: v_ofz_curve_compare может быть непуста одним ЦБ
+            # (ofz_curve ещё не импортирован), а разбор КБД — отдать часть 12
+            # теноров. Поэтому тем же запросом проверяется покрытие обоих
+            # источников: есть строки с moex_yield и ровно 12 теноров с cbr_yield.
             ofz_compare = text(await session.call_tool("run_query", {
-                "query": "SELECT count() AS n, min(date) AS min_date, max(date) AS max_date FROM v_ofz_curve_compare"}))
+                "query": "SELECT count() AS n, countIf(moex_yield IS NOT NULL) AS n_moex, "
+                         "uniqExactIf(tenor, cbr_yield IS NOT NULL) AS n_tenors, "
+                         "min(date) AS min_date, max(date) AS max_date FROM v_ofz_curve_compare"}))
             ofz_compare_rows = result_rows(ofz_compare)
             ofz_compare_n = ofz_compare_rows[0].get("n") if ofz_compare_rows else None
+            ofz_compare_moex = ofz_compare_rows[0].get("n_moex") if ofz_compare_rows else None
+            ofz_compare_tenors = ofz_compare_rows[0].get("n_tenors") if ofz_compare_rows else None
             if ofz_compare_rows is None:
                 ofz_compare_detail = f"витрина не читается: {ofz_compare[:200]}"
             elif (ofz_compare_n or 0) > 0:
                 ofz_compare_detail = (f"строк: {ofz_compare_n}, "
-                                      f"{ofz_compare_rows[0].get('min_date')}..{ofz_compare_rows[0].get('max_date')}")
+                                      f"{ofz_compare_rows[0].get('min_date')}..{ofz_compare_rows[0].get('max_date')}, "
+                                      f"moex_yield: {ofz_compare_moex}, теноров ЦБ: {ofz_compare_tenors}")
             else:
                 ofz_compare_detail = ("строк: 0 — прогнать make import STAT=cbr_zcyc "
                                       "(витрины пересоздаёт прогон)")
             failed += not expect("витрина v_ofz_curve_compare существует и непуста",
                                  (ofz_compare_n or 0) > 0, ofz_compare_detail)
+            failed += not expect("v_ofz_curve_compare: есть MOEX и 12 теноров ЦБ",
+                                 (ofz_compare_moex or 0) > 0 and ofz_compare_tenors == 12,
+                                 f"moex_yield: {ofz_compare_moex}, uniqExact(tenor) по cbr_yield: "
+                                 f"{ofz_compare_tenors} (want > 0 и 12) — прогнать "
+                                 "make import STAT=cbr_zcyc и STAT=ofz_curve")
 
             # v_ofz_signal: производные спреды к ключевой ставке и реальная доходность.
             # Ноль строк — не «нет сигнала», а не отработавший импортёр или отсутствующие
             # cbr_key_rate/rosstat_ipc_mes: CreateView пропускает витрину, пока их нет,
-            # и пересоздаёт её следующим прогоном (самолечение).
+            # и пересоздаёт её следующим прогоном (самолечение). Непустоты мало: при
+            # промахе ASOF JOIN и окна ИПЦ значения были бы NULL во всей витрине, поэтому
+            # тем же запросом проверяется, что каждая компонента дала хотя бы одну точку.
             ofz_signal = text(await session.call_tool("run_query", {
-                "query": "SELECT count() AS n FROM v_ofz_signal"}))
+                "query": "SELECT count() AS n, countIf(key_rate IS NOT NULL) AS n_key_rate, "
+                         "countIf(inflation_yoy IS NOT NULL) AS n_inflation, "
+                         "countIf(ofz_10y IS NOT NULL) AS n_ofz_10y FROM v_ofz_signal"}))
             ofz_signal_rows = result_rows(ofz_signal)
             ofz_signal_n = ofz_signal_rows[0].get("n") if ofz_signal_rows else None
+            ofz_signal_key = ofz_signal_rows[0].get("n_key_rate") if ofz_signal_rows else None
+            ofz_signal_infl = ofz_signal_rows[0].get("n_inflation") if ofz_signal_rows else None
+            ofz_signal_ofz10 = ofz_signal_rows[0].get("n_ofz_10y") if ofz_signal_rows else None
             if ofz_signal_rows is None:
                 ofz_signal_detail = f"витрина не читается: {ofz_signal[:200]}"
             elif (ofz_signal_n or 0) > 0:
-                ofz_signal_detail = f"строк: {ofz_signal_n}"
+                ofz_signal_detail = (f"строк: {ofz_signal_n}, key_rate: {ofz_signal_key}, "
+                                     f"inflation_yoy: {ofz_signal_infl}, ofz_10y: {ofz_signal_ofz10}")
             else:
                 ofz_signal_detail = ("строк: 0 — прогнать make import STAT=cbr_zcyc "
                                      "(нужны cbr_key_rate и rosstat_ipc_mes)")
             failed += not expect("витрина v_ofz_signal существует и непуста",
                                  (ofz_signal_n or 0) > 0, ofz_signal_detail)
+            failed += not expect("v_ofz_signal: есть key_rate, ИПЦ и ofz_10y",
+                                 (ofz_signal_key or 0) > 0 and (ofz_signal_infl or 0) > 0
+                                 and (ofz_signal_ofz10 or 0) > 0,
+                                 f"key_rate: {ofz_signal_key}, inflation_yoy: {ofz_signal_infl}, "
+                                 f"ofz_10y: {ofz_signal_ofz10} (want > 0 у каждой) — прогнать "
+                                 "make import STAT=cbr_zcyc, cbr_key_rate и rosstat_ipc_mes")
 
             # key_rate до 2013-09-17 обязан быть NULL: истории ключевой ставки раньше
             # этой даты нет. Проверка пинит именно семантику NULL в ASOF LEFT JOIN:
