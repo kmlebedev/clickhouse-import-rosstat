@@ -125,7 +125,9 @@ func TestFedbudMesDeficitSeries(t *testing.T) {
 	}
 
 	rec := &appendRecorder{}
-	if err := fedBudImport(newBudgetWorkbook(t, []string{deficit}), rec); err != nil {
+	// Книга строится со всеми полями: разбор fail-fast и обязан найти каждый
+	// объявленный ряд, а не только дефицит.
+	if err := fedBudImport(newBudgetWorkbook(t, fedbudMesFields), rec); err != nil {
 		t.Fatalf("разбор книги с рядом %q: %v", deficit, err)
 	}
 	parsed := false

@@ -27,8 +27,10 @@ const (
 // импортёра» падает ровно на расхождении запросов, а сравнение константы с самой
 // собой прошло бы и после правки запроса в объявлении.
 //
-// Набор неполный по построению: у двух legacy-импортёров префлайта нет — файл
-// обновляется с той же частотой, что и шаг, а адрес вычисляется legacy-транспортом.
+// Набор неполный по построению: у двух бюджетных импортёров префлайта нет —
+// файл обновляется с той же частотой, что и шаг DAG (стандарт §9.3). Адрес
+// теперь вычисляет шаблонный BeforeImport, но это не делает no-op достижимым:
+// отпечаток версии меняется вместе с выпуском.
 var expectedMinfinPublicationCountPoints = map[string]string{
 	"minfin_oil_gas_mes": "SELECT count() FROM minfin_oil_gas_mes FINAL",
 }
@@ -188,6 +190,70 @@ func TestMinfinImportersPrefixedAndRegistered(t *testing.T) {
 	for _, imp := range minfinImporters {
 		if !scheduled[imp.Name()] {
 			t.Errorf("в dagu/minfin.yaml нет шага CLICKHOUSE_IMPORT_STAT=%s: импортёр реестра не запускается по расписанию", imp.Name())
+		}
+	}
+}
+
+// TestMinfinDDLValueFloat64 держит правило 5 AGENTS.md и миграцию legacy-таблиц:
+// DDL всех трёх таблиц объявляет value Float64; у двух бюджетных импортёров есть
+// идемпотентный ALTER ... MODIFY COLUMN, у oil gas (уже Float64) его нет.
+func TestMinfinDDLValueFloat64(t *testing.T) {
+	cases := []struct {
+		name    string
+		imp     *minfinFileImporter
+		migrate bool
+	}{
+		{"minfin_fed_bud_mes", fedbudMes, true},
+		{"minfin_fed_bud_mesyats", fedbudMesyats, true},
+		{"minfin_oil_gas_mes", oilGasMes, false},
+	}
+	for _, c := range cases {
+		ddl := strings.Join(c.imp.CreateTable, "\n")
+		if strings.Contains(ddl, "Float32") {
+			t.Errorf("%s: DDL объявляет Float32: правило 5 AGENTS.md требует Float64", c.name)
+		}
+		if !strings.Contains(ddl, "value Float64") {
+			t.Errorf("%s: DDL не объявляет value Float64: %q", c.name, ddl)
+		}
+		hasMigration := strings.Contains(ddl, "MODIFY COLUMN value Float64")
+		if hasMigration != c.migrate {
+			t.Errorf("%s: миграция Float64 в DDL = %v, ожидалось %v: %q", c.name, hasMigration, c.migrate, ddl)
+		}
+		if !strings.Contains(ddl, "CREATE TABLE IF NOT EXISTS %s") {
+			t.Errorf("%s: DDL не в %%s-форме шаблона: %q", c.name, ddl)
+		}
+	}
+}
+
+// TestMinfinTemplateWiring держит общий шаблон: у каждого импортёра ссылка
+// вычисляется BeforeImport, разбор подключён ImportFunc, производные публикует
+// AfterImport. Префлайт есть только у oil gas — у бюджетных файл обновляется с
+// той же частотой, что и шаг (§9.3).
+func TestMinfinTemplateWiring(t *testing.T) {
+	cases := []struct {
+		name        string
+		imp         *minfinFileImporter
+		countPoints string
+	}{
+		{"minfin_fed_bud_mes", fedbudMes, ""},
+		{"minfin_fed_bud_mesyats", fedbudMesyats, ""},
+		{"minfin_oil_gas_mes", oilGasMes, oilGasCountPoints},
+	}
+	for _, c := range cases {
+		if c.imp.BeforeImport == nil {
+			t.Errorf("%s: BeforeImport не подключён — ссылка на XLSX не будет вычислена", c.name)
+		}
+		if c.imp.ImportFunc == nil {
+			t.Errorf("%s: ImportFunc не подключён — шаблон не разберёт книгу", c.name)
+		}
+		if c.imp.AfterImport == nil {
+			t.Errorf("%s: AfterImport не подключён — каталог и v_minfin_budget не будут опубликованы", c.name)
+		}
+		if c.imp.pageURL == "" || c.imp.selector == "" {
+			t.Errorf("%s: не заданы pageURL/selector общего шаблона", c.name)
+		}
+		if c.imp.PublicationCountPoints != c.countPoints {
+			t.Errorf("%s: PublicationCountPoints = %q, ожидалось %q", c.name, c.imp.PublicationCountPoints, c.countPoints)
 		}
 	}
 }
