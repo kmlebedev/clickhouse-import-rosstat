@@ -45,6 +45,38 @@ var cbrZcycImporter = &cbrZcyc{ClickHouseImport: util.ClickHouseImport{
 	AfterImport: afterCbrZcyc(cbrZcycSeriesMeta),
 }}
 
+// cbrZcycHistoryFromDate — разобранная константа начала истории. Разбор на
+// инициализации пакета безопасен: сетевых вызовов здесь нет (ARCHITECTURE §8.6),
+// а ошибка в константе должна падать сразу, а не выглядеть пустым бэкфиллом.
+var cbrZcycHistoryFromDate = func() time.Time {
+	from, err := time.Parse("2006-01-02", cbrZcycHistoryFrom)
+	if err != nil {
+		panic(fmt.Sprintf("%s: начало истории %q: %v", cbrZcycTable, cbrZcycHistoryFrom, err))
+	}
+	return from
+}()
+
+// zcycDateUTC приводит дату к полуночи UTC: clickhouse-go отдаёт Date с таймзоной
+// сессии (например, Asia/Yekaterinburg, UTC+5), а zcycRows разбирает даты как UTC.
+// Без нормализации границы окон сдвигаются на предыдущие сутки, и фильтр окна
+// отбрасывает точки последнего дня многолетнего инкремента.
+func zcycDateUTC(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+// zcycStart — начало импорта от последней записанной даты: пустая или
+// доисторическая таблица (max = 1970-01-01 либо раньше 04.01.2003) — первый
+// прогон с начала истории, иначе следующий календарный день после last. last
+// нормализуется в UTC-дату: AddDate и сравнение идут по дате, а не по инстанту
+// с таймзоной сессии.
+func zcycStart(last time.Time) (from time.Time, firstRun bool) {
+	last = zcycDateUTC(last)
+	if last.Before(cbrZcycHistoryFromDate) {
+		return cbrZcycHistoryFromDate, true
+	}
+	return last.AddDate(0, 0, 1), false
+}
+
 // cbrZcycCraw — инкрементальный импорт истории КБД: max(date) → окна по
 // cbrZcycChunkYears → один батч. Все окна разбираются до первого PrepareBatch,
 // поэтому пустое историческое окно (ЦБ ужесточил лимит диапазона или сломал
@@ -57,20 +89,12 @@ func cbrZcycCraw(crawUrl string, conn driver.Conn) (count int64, err error) {
 	if err = conn.QueryRow(ctx, "SELECT max(date) FROM "+cbrZcycTable+" FINAL").Scan(&last); err != nil {
 		return 0, fmt.Errorf("%s: max(date): %w", cbrZcycTable, err)
 	}
+	// clickhouse-go отдаёт Date с таймзоной сессии, zcycRows — UTC: без
+	// нормализации границы окон уезжают на предыдущие сутки.
+	last = zcycDateUTC(last)
+	from, firstRun := zcycStart(last)
 
-	from, parseErr := time.Parse("2006-01-02", cbrZcycHistoryFrom)
-	if parseErr != nil {
-		// Константа объявлена в коде и разбирается всегда; проверка — требование
-		// стиля пакета (каждый Parse* с проверкой err), а не ожидаемый сценарий.
-		return 0, fmt.Errorf("%s: начало истории %q: %w", cbrZcycTable, cbrZcycHistoryFrom, parseErr)
-	}
-	firstRun := last.Before(from)
-	if !firstRun {
-		from = last.AddDate(0, 0, 1)
-	}
-
-	now := time.Now()
-	to := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	to := zcycDateUTC(time.Now())
 	chunks := zcycChunks(from, to)
 	if len(chunks) == 0 {
 		log.Infof("%s: новых данных нет", cbrZcycTable)
@@ -100,7 +124,7 @@ func cbrZcycCraw(crawUrl string, conn driver.Conn) (count int64, err error) {
 		// строку — вне окна она точкой этого импорта не является.
 		points = zcycPointsInRange(points, start, end)
 		if len(points) == 0 && i < len(chunks)-1 {
-			return 0, fmt.Errorf("%s: пустое историческое окно %s (%s): ЦБ не отдал таблицу, хотя диапазон не последний", cbrZcycTable, window, url)
+			return 0, fmt.Errorf("%s: пустое историческое окно %s (%s): нет точек в диапазоне; таблица отсутствовала или все строки вне окна", cbrZcycTable, window, url)
 		}
 		allPoints = append(allPoints, points...)
 	}
@@ -120,7 +144,12 @@ func cbrZcycCraw(crawUrl string, conn driver.Conn) (count int64, err error) {
 	}
 	for _, p := range allPoints {
 		if err = batch.Append(p.tenor, p.date, p.value); err != nil {
-			return 0, err
+			// Соединение возвращается в пул только через Send или Abort (прецедент
+			// util.abortBatch): серия сбоев Append иначе исчерпает пул драйвера.
+			if abortErr := batch.Abort(); abortErr != nil {
+				log.Warnf("%s: не удалось закрыть батч после ошибки Append: %v", cbrZcycTable, abortErr)
+			}
+			return 0, fmt.Errorf("%s: Append: %w", cbrZcycTable, err)
 		}
 	}
 	count = int64(batch.Rows())
