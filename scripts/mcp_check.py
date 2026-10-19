@@ -78,14 +78,11 @@ async def check(params, server_log):
             tools = sorted(t.name for t in (await session.list_tools()).tools)
             failed += not expect("инструменты", {"list_databases", "list_tables", "run_query"} <= set(tools), ", ".join(tools))
 
-            # page_size=100, а не дефолтные 50: число объектов в default растёт, и
-            # 51-я таблица — v_rosstat_macro — уезжала на вторую страницу
-            # list_tables. Проверки "view in tables" ищут имя в тексте ответа,
-            # поэтому видели ложный провал. Из объектов этого контура kimi_reader
-            # видит в list_tables только две витрины v_ofz_* (сырая cbr_zcyc не
-            # выдана); page_size=100 покрывает текущие 55 объектов одним ответом,
-            # при дальнейшем росте нужна пагинация по next_page_token.
-            tables = text(await session.call_tool("list_tables", {"database": "default", "page_size": 100}))
+            # page_size: у list_tables страница по умолчанию — 50 записей; после добавления
+            # трёх витрин point-in-time слоя v_rosstat_macro ушла на вторую страницу, и
+            # проверки вида «имя есть в ответе» ложно падали. Одна страница на 1000 записей
+            # покрывает схему dev-БД с запасом.
+            tables = text(await session.call_tool("list_tables", {"database": "default", "page_size": 1000}))
             failed += not expect("витрина v_bea_pce видна", "v_bea_pce" in tables, "list_tables default")
 
             catalog = text(await session.call_tool("run_query", {"query": "SELECT series, unit FROM v_series_catalog WHERE source = 'bea' ORDER BY series"}))
@@ -573,6 +570,125 @@ async def check(params, server_log):
                 failed += not expect(f"сырая {table} закрыта ({label})", denied,
                                      f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
 
+            # Сводный дашборд контура ключевой ставки (пункт key-rate/phase-4-dashboard,
+            # issue #128): одна витрина на оба контура, пороги, ближайшее заседание и
+            # последний прогноз с ошибкой в б.п. Проверяется не только право чтения, но и
+            # состав: 5 фиксированных контуров обязаны быть (spot, fundamental, market,
+            # divergence, calendar), forecast — информационная строка: без прогонов writer'а
+            # треков нет, и это не FAIL. next_meeting.target_date сверяется с минимумом
+            # будущих заседаний из v_events_calendar — так проверяется сам расчёт, а не
+            # только наличие строки. error_bp — колонка, которой нет ни в одной другой
+            # витрине; запрос к ней доказывает, что контракт ошибки доступен агенту.
+            kr_dash_raw = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_key_rate_dashboard"}))
+            kr_dash = result_rows(kr_dash_raw)
+            kr_dash_n = kr_dash[0].get("n") if kr_dash else None
+            if kr_dash is None:
+                kr_dash_detail = f"витрина не читается: {kr_dash_raw[:200]}"
+            elif (kr_dash_n or 0) > 0:
+                kr_dash_detail = f"строк: {kr_dash_n}"
+            else:
+                kr_dash_detail = "строк: 0 — прогнать make import STAT=key_rate_views"
+            failed += not expect("витрина v_key_rate_dashboard существует и непуста", (kr_dash_n or 0) > 0, kr_dash_detail)
+
+            kr_contours_raw = text(await session.call_tool("run_query", {"query":
+                "SELECT count(DISTINCT contour) AS n, groupUniqArray(contour) AS contours FROM v_key_rate_dashboard"}))
+            kr_contours = result_rows(kr_contours_raw)
+            kr_contours_n = kr_contours[0].get("n") if kr_contours else None
+            kr_contours_list = kr_contours[0].get("contours") if kr_contours else None
+            kr_fixed_contours = {"spot", "fundamental", "market", "divergence", "calendar"}
+            kr_contours_ok = isinstance(kr_contours_list, list) and kr_fixed_contours.issubset(set(kr_contours_list))
+            if kr_contours is None:
+                kr_contours_detail = f"ответ не распознан: {kr_contours_raw[:200]}"
+            else:
+                kr_contours_detail = f"контуров: {kr_contours_n} {kr_contours_list}"
+            # 5 фиксированных контуров обязательны по ИМЕНАМ, а не по числу: набор из пяти
+            # чужих контуров не должен проходить проверку. forecast — информационная строка.
+            failed += not expect("витрина v_key_rate_dashboard содержит 5 фиксированных контуров",
+                                 kr_contours_ok, kr_contours_detail)
+
+            kr_meeting_raw = text(await session.call_tool("run_query", {"query":
+                "SELECT d.target_date AS dashboard_date, e.next_date AS calendar_date "
+                "FROM v_key_rate_dashboard d "
+                "CROSS JOIN (SELECT min(event_date) AS next_date FROM v_events_calendar "
+                "WHERE category = 'cbr' AND event_date >= today()) e "
+                "WHERE d.indicator = 'next_meeting'"}))
+            kr_meeting = result_rows(kr_meeting_raw)
+            if kr_meeting is None:
+                kr_meeting_detail = f"ответ не распознан: {kr_meeting_raw[:200]}"
+            elif not kr_meeting:
+                kr_meeting_detail = "строки next_meeting нет"
+            else:
+                kr_meeting_detail = (f"dashboard={kr_meeting[0].get('dashboard_date')}, "
+                                     f"calendar={kr_meeting[0].get('calendar_date')}")
+            failed += not expect("next_meeting.target_date совпадает с ближайшим заседанием ЦБ",
+                                 bool(kr_meeting)
+                                 and kr_meeting[0].get("dashboard_date") is not None
+                                 and kr_meeting[0].get("dashboard_date") == kr_meeting[0].get("calendar_date"),
+                                 kr_meeting_detail)
+
+            kr_fixed_raw = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_key_rate_dashboard "
+                "WHERE indicator IN ('base_ipc_saar', 'keyrate_implied_change_bp')"}))
+            kr_fixed = result_rows(kr_fixed_raw)
+            kr_fixed_n = kr_fixed[0].get("n") if kr_fixed else None
+            failed += not expect("пороговые строки base_ipc_saar и keyrate_implied_change_bp на месте",
+                                 kr_fixed_n == 2,
+                                 f"строк: {kr_fixed_n}" if kr_fixed is not None else f"ответ не распознан: {kr_fixed_raw[:200]}")
+
+            kr_error_raw = text(await session.call_tool("run_query", {"query":
+                "SELECT error_bp FROM v_key_rate_dashboard WHERE contour = 'forecast' LIMIT 1"}))
+            kr_error = result_rows(kr_error_raw)
+            kr_forecast_raw = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_key_rate_dashboard WHERE contour = 'forecast'"}))
+            kr_forecast = result_rows(kr_forecast_raw)
+            kr_forecast_n = kr_forecast[0].get("n") if kr_forecast else None
+            if kr_forecast is None:
+                kr_forecast_detail = f"ответ не распознан: {kr_forecast_raw[:200]}"
+            elif (kr_forecast_n or 0) > 0:
+                kr_forecast_detail = f"треков: {kr_forecast_n}"
+            else:
+                kr_forecast_detail = ("треков: 0 — прогнать make key-rate-forecast-log (информационно; "
+                                      "без журнала витрина живёт без строк forecast)")
+            print(f"OK   forecast-треки в v_key_rate_dashboard: {kr_forecast_detail}" if (kr_forecast_n or 0) > 0
+                  else f"WARN forecast-треки в v_key_rate_dashboard: {kr_forecast_detail}")
+
+            # Контракт публикации (§7, §8): у статистического трека ordered_logit в витрине
+            # обязаны быть непустые probabilities и model. Строки нет — проверка проходит
+            # информационно (без прогонов writer'а журнала витрина живёт без forecast), но
+            # если строка есть, пустые метаданные — провал.
+            kr_track_raw = text(await session.call_tool("run_query", {"query":
+                "SELECT probabilities, model FROM v_key_rate_dashboard "
+                "WHERE contour = 'forecast' AND indicator = 'cbr_rate:ordered_logit' LIMIT 1"}))
+            kr_track = result_rows(kr_track_raw)
+            if kr_track is None:
+                kr_track_detail = f"ответ не распознан: {kr_track_raw[:200]}"
+                kr_track_ok = False
+            elif not kr_track:
+                kr_track_detail = "строки cbr_rate:ordered_logit нет — прогнать make key-rate-forecast-log (информационно)"
+                kr_track_ok = True
+            else:
+                probabilities = kr_track[0].get("probabilities") or ""
+                try:
+                    distribution = json.loads(probabilities)
+                except ValueError:
+                    distribution = {}
+                kr_track_ok = (isinstance(distribution, dict)
+                               and {"cut", "hold", "hike"} <= set(distribution)
+                               and (kr_track[0].get("model") or "") != "")
+                kr_track_detail = (f"probabilities={'есть' if kr_track_ok else 'пусто/неполно'}, "
+                                   f"model={kr_track[0].get('model')!r}")
+            failed += not expect("probabilities/model у cbr_rate:ordered_logit непусты", kr_track_ok, kr_track_detail)
+
+            # error_bp — часть контракта ошибки в б.п. (#127); запрос к колонке обязан
+            # проходить, даже если сейчас все прогнозы ещё не свёрены и значения NULL.
+            failed += not expect("колонка error_bp читается агентом", kr_error is not None,
+                                 "SELECT error_bp FROM v_key_rate_dashboard" if kr_error is not None else kr_error_raw[:200])
+
+            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM forecast_log"}))
+            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+            failed += not expect("сырой forecast_log закрыт", denied,
+                                 "отказ ClickHouse 497 на forecast_log (ожидаемо)" if denied else raw[:200])
+
             # Контур мониторинга предприятий ЦБ (правило 11, пункт 1.3 роадмапа): витрина
             # v_cbr_survey читается агентом, сырая macro_series закрыта (проверка выше).
             # Существование витрины подтверждается запросом к ней, а не поиском имени в
@@ -833,8 +949,10 @@ async def check(params, server_log):
             # run_query доказывает и существование, и право чтения; «нет витрины» и «нет
             # прав» приходят ошибкой (UNKNOWN_TABLE / ACCESS_DENIED) и в result_rows не
             # разбираются.
-            failed += not expect("витрина v_rosstat_macro видна", "v_rosstat_macro" in tables, "list_tables default")
-
+            # Отдельная проверка «имя есть в list_tables» здесь снята: list_tables
+            # пагинируется, и после добавления v_key_rate_dashboard имя v_rosstat_macro
+            # перестало попадать в первую страницу. Существование и право чтения ниже
+            # доказывает запрос к самой витрине — это и есть конвенция проекта.
             rosstat_view = text(await session.call_tool("run_query", {"query": "SELECT count() AS rows, uniqExact(series) AS series FROM v_rosstat_macro"}))
             rosstat_view_rows = result_rows(rosstat_view)
             rosstat_points_n = rosstat_view_rows[0].get("rows") if rosstat_view_rows else None
@@ -1366,6 +1484,154 @@ async def check(params, server_log):
                                       f"{dip_blank_publication_n} (want 0) — прогнать make import "
                                       "STAT=cbr_dip_bulletin (винтаж разбирается прогоном)")
             failed += not expect("витрина v_cbr_dip_bulletin винтажна", dip_vintage_ok, dip_vintage_detail)
+
+            # Point-in-time слой над cbr_dip_bulletin (пункт key-rate/phase-4-point-in-time,
+            # спека 2026-10-19 §2): три витрины создаёт прогон cbr_dip_bulletin (ensurePitViews
+            # после цикла выпусков и на no-op-пути), а сырая таблица агенту по-прежнему
+            # закрыта. Проверки идут от общего к частному: непустота слоя, инвариант периода,
+            # строгая граница as-of на известной ревизии SA-безработицы и версия набора.
+            pit_view = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS points, uniqExact(vintage) AS vintages, "
+                "uniqExact(series) AS series FROM v_point_in_time"}))
+            pit_view_rows = result_rows(pit_view)
+            pit_points_n = pit_view_rows[0].get("points") if pit_view_rows else None
+            pit_vintages_n = pit_view_rows[0].get("vintages") if pit_view_rows else None
+            pit_series_n = pit_view_rows[0].get("series") if pit_view_rows else None
+            # Одной непустоты мало: count() > 0 прошёл бы и на срезе из одного выпуска.
+            # 49 версий и 8 рядов — состояние приёмки спеки §4 (18 000 точек).
+            pit_view_ok = ((pit_points_n or 0) > 0 and (pit_vintages_n or 0) >= 49
+                           and pit_series_n == 8)
+            if pit_view_rows is None:
+                pit_view_detail = f"ответ не распознан: {pit_view[:200]}"
+            elif not pit_view_rows:
+                pit_view_detail = ("строк 0 — прогнать make import STAT=cbr_dip_bulletin "
+                                   "(слой создаётся прогоном)")
+            else:
+                pit_view_detail = (f"точек: {pit_points_n}, версий: {pit_vintages_n} "
+                                   f"(want >= 49), рядов: {pit_series_n} (want 8)")
+            failed += not expect("слой v_point_in_time непуст", pit_view_ok, pit_view_detail)
+
+            # Инвариант слоя: отчётный период не позже публикации. Срез не фильтрует периоды
+            # по дате публикации (отвечает на вопрос «что опубликовано строго до D»), поэтому
+            # нарушение означало бы поломку нормализации period_date/published_at.
+            pit_period = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_point_in_time WHERE period_date > published_at"}))
+            pit_period_rows = result_rows(pit_period)
+            pit_period_n = pit_period_rows[0].get("n") if pit_period_rows else None
+            if pit_period_rows is None:
+                pit_period_detail = f"ответ не распознан: {pit_period[:200]}"
+            elif not pit_period_rows:
+                pit_period_detail = "строк 0 в ответе — ожидалась одна строка со счётчиком"
+            else:
+                pit_period_detail = f"строк с period_date > published_at: {pit_period_n} (want 0)"
+            failed += not expect("период не позже публикации", pit_period_n == 0, pit_period_detail)
+
+            # Строгая граница среза: значение, опубликованное ровно в дату as_of, в срез не
+            # входит. SA-безработица за 2023-11-30 впервые опубликована 2024-02-06 (выпуск
+            # 24-01), поэтому as_of на день публикации обязан дать пусто (<, а не <=).
+            pit_asof_boundary = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_point_in_time_asof(as_of='2024-02-06') "
+                "WHERE source='cbr_dip_bulletin' AND series='unemployment_sa' "
+                "AND period_date='2023-11-30'"}))
+            pit_asof_boundary_rows = result_rows(pit_asof_boundary)
+            pit_asof_boundary_n = pit_asof_boundary_rows[0].get("n") if pit_asof_boundary_rows else None
+            if pit_asof_boundary_rows is None:
+                pit_asof_boundary_detail = f"ответ не распознан: {pit_asof_boundary[:200]}"
+            elif not pit_asof_boundary_rows:
+                pit_asof_boundary_detail = "строк 0 в ответе — ожидалась одна строка со счётчиком"
+            else:
+                pit_asof_boundary_detail = (f"строк на as_of='2024-02-06': {pit_asof_boundary_n} "
+                                            "(want 0: граница строгая)")
+            failed += not expect("строгая граница среза", pit_asof_boundary_n == 0,
+                                 pit_asof_boundary_detail)
+
+            # Ревизия одного периода: 2023-11-30 равно 2.885274 в выпуске 24-01 и 2.916127 в
+            # 26-06. Слой обязан вернуть версию, известную строго до as_of, вместе с её
+            # винтажом — иначе ревизии SA-рядов выглядели бы фактами.
+            for pit_as_of, pit_want in (
+                ("2024-02-07", {"value": 2.885274, "vintage": "47847", "vintage_label": "24-01"}),
+                ("2026-09-02", {"value": 2.916127, "vintage": "62343", "vintage_label": "26-06"}),
+            ):
+                pit_asof = text(await session.call_tool("run_query", {"query":
+                    f"SELECT value, vintage, vintage_label FROM v_point_in_time_asof(as_of='{pit_as_of}') "
+                    "WHERE source='cbr_dip_bulletin' AND series='unemployment_sa' "
+                    "AND period_date='2023-11-30'"}))
+                pit_asof_rows = result_rows(pit_asof)
+                pit_asof_row = pit_asof_rows[0] if pit_asof_rows else None
+                pit_asof_ok = (pit_asof_rows is not None and len(pit_asof_rows) == 1
+                               and pit_asof_row.get("value") == pit_want["value"]
+                               and pit_asof_row.get("vintage") == pit_want["vintage"]
+                               and pit_asof_row.get("vintage_label") == pit_want["vintage_label"])
+                if pit_asof_rows is None:
+                    pit_asof_detail = f"ответ не распознан: {pit_asof[:200]}"
+                elif pit_asof_row is None:
+                    pit_asof_detail = ("строк 0, want одна версия — проверить создание витрины "
+                                       "и грант kimi_reader")
+                else:
+                    pit_asof_detail = (f"value={pit_asof_row.get('value')}, "
+                                       f"vintage={pit_asof_row.get('vintage')}, "
+                                       f"vintage_label={pit_asof_row.get('vintage_label')}")
+                failed += not expect(
+                    f"срез as_of='{pit_as_of}' отдаёт выпуск {pit_want['vintage_label']}",
+                    pit_asof_ok, pit_asof_detail)
+
+            # Ряд, исчезнувший из нового выпуска: 26-07 (2026-10-14) заменил безработицу
+            # занятостью. Слой обязан сохранить последнюю известную версию unemployment_sa
+            # (26-06) и одновременно отдать employment_sa уже из 26-07 — отсутствие ряда
+            # значит «выпуск его не показывает», а не «ряд удалён» (спека §2.3).
+            for pit_series, pit_want in (
+                ("unemployment_sa", {"value": 2.239751, "vintage": "62343", "vintage_label": "26-06"}),
+                ("employment_sa", {"value": 61.5059577839148, "vintage": "62444", "vintage_label": "26-07"}),
+            ):
+                pit_missing = text(await session.call_tool("run_query", {"query":
+                    "SELECT value, vintage, vintage_label FROM v_point_in_time_asof(as_of='2026-10-15') "
+                    f"WHERE source='cbr_dip_bulletin' AND series='{pit_series}' "
+                    "AND period_date='2026-06-30'"}))
+                pit_missing_rows = result_rows(pit_missing)
+                pit_missing_row = pit_missing_rows[0] if pit_missing_rows else None
+                pit_missing_ok = (pit_missing_rows is not None and len(pit_missing_rows) == 1
+                                  and pit_missing_row.get("value") == pit_want["value"]
+                                  and pit_missing_row.get("vintage") == pit_want["vintage"]
+                                  and pit_missing_row.get("vintage_label") == pit_want["vintage_label"])
+                if pit_missing_rows is None:
+                    pit_missing_detail = f"{pit_series}: ответ не распознан: {pit_missing[:200]}"
+                elif pit_missing_row is None:
+                    pit_missing_detail = (f"{pit_series}: строк 0, want одна — последняя известная "
+                                          "версия потеряна (проверить отсутствие HAVING/фильтра "
+                                          "period_date в витрине)")
+                else:
+                    pit_missing_detail = (f"{pit_series}: value={pit_missing_row.get('value')}, "
+                                          f"vintage={pit_missing_row.get('vintage')}, "
+                                          f"vintage_label={pit_missing_row.get('vintage_label')}")
+                failed += not expect(
+                    "ряд, исчезнувший из нового выпуска, сохраняет последнюю версию",
+                    pit_missing_ok, pit_missing_detail)
+
+            # Версия набора для forecast_log.data_version: одна строка на source, не меньше
+            # 18 000 точек и 49 версий, data_version — 16 hex-символов. Пустая или короткая
+            # версия — провал: по ней прогноз сопоставляется с точным состоянием слоя (спека §2.4).
+            pit_version = text(await session.call_tool("run_query", {"query":
+                "SELECT points, vintages, data_version FROM v_point_in_time_version "
+                "WHERE source='cbr_dip_bulletin'"}))
+            pit_version_rows = result_rows(pit_version)
+            pit_version_row = pit_version_rows[0] if pit_version_rows else None
+            pit_version_ok = (pit_version_rows is not None and len(pit_version_rows) == 1
+                              and (pit_version_row.get("points") or 0) >= 18000
+                              and (pit_version_row.get("vintages") or 0) >= 49
+                              and isinstance(pit_version_row.get("data_version"), str)
+                              and len(pit_version_row.get("data_version")) == 16)
+            if pit_version_rows is None:
+                pit_version_detail = f"ответ не распознан: {pit_version[:200]}"
+            elif pit_version_row is None:
+                pit_version_detail = ("строк 0, want одна — прогнать make import "
+                                      "STAT=cbr_dip_bulletin (витрину создаёт прогон)")
+            else:
+                pit_version_detail = (f"строк: {len(pit_version_rows)} (want 1), точек: "
+                                      f"{pit_version_row.get('points')} (want >= 18000), версий: "
+                                      f"{pit_version_row.get('vintages')} (want >= 49), "
+                                      f"data_version: {pit_version_row.get('data_version')}")
+            failed += not expect("версия набора v_point_in_time_version полна",
+                                 pit_version_ok, pit_version_detail)
 
             # Сырая cbr_dip_bulletin агенту не выдана — как macro_series и cbr_bop_est: витрина —
             # единственное место, где агент читает точки контура (винтажные колонки
