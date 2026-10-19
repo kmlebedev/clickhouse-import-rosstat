@@ -19,3 +19,11 @@ steps:
       limit: 3
       interval_sec: 300
 
+  - id: minfin_oil_gas_mes
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=minfin_oil_gas_mes
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+

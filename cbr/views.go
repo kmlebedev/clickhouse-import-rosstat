@@ -229,3 +229,136 @@ var cbrSurveyView = util.View{
 		"value":  "Значение в единицах ряда: пункты баланса ответов, % (загрузка мощностей), % годовых (ожидаемый прирост цен) — см. unit и description в v_series_catalog",
 	},
 }
+
+// cbrZcycCompareView — сравнение КБД ЦБ (cbr_zcyc, 12 теноров с 04.01.2003) и
+// G-curve МосБиржи (ofz_curve, 1y/3y/5y/10y и только с 2026-10-09) по (date, tenor).
+// Dedicated-форма, а не long-форма §10.3: это сравнение двух источников одной
+// строкой (прецеденты — v_cbr_dip_bulletin, v_cbr_mt_forecast).
+var cbrZcycCompareView = util.View{
+	Name:   "v_ofz_curve_compare",
+	Tables: []string{cbrZcycTable, "ofz_curve"},
+	Select: `SELECT date, tenor,
+        maxIf(toNullable(yield), source = 'cbr')  AS cbr_yield,
+        maxIf(toNullable(yield), source = 'moex') AS moex_yield,
+        round(maxIf(toNullable(yield), source = 'moex') - maxIf(toNullable(yield), source = 'cbr'), 2) AS spread_pp
+    FROM (
+        SELECT 'cbr' AS source, date, tenor, yield FROM cbr_zcyc FINAL
+        UNION ALL
+        SELECT 'moex', date, replaceRegexpOne(tenor, 'y$', ''), yield
+        FROM ofz_curve FINAL WHERE tenor IN ('1y','3y','5y','10y')
+    )
+    GROUP BY date, tenor`,
+	Comment: "Сравнение кривой бескупонной доходности ЦБ РФ (cbr_zcyc: 12 теноров, история " +
+		"с 04.01.2003) и G-curve МосБиржи (ofz_curve: теноры 1y/3y/5y/10y — только они и только " +
+		"с 2026-10-09). Одна строка на (date, tenor): cbr_yield и moex_yield — уровни двух " +
+		"источников, % годовых; spread_pp = moex_yield − cbr_yield, п.п. (положительный — G-curve " +
+		"выше КБД ЦБ). spread_pp округлён до 0.01 п.п.; у близкого к нулю отрицательного спреда " +
+		"возможна запись -0.0 — это ноль, а не дефект. tenor — каноническая запись КБД ЦБ: 0.25, " +
+		"0.5, 0.75, 1, 2, 3, 5, 7, 10, 15, 20, 30 (лет); теноры МосБиржи 1y/3y/5y/10y приведены " +
+		"к 1/3/5/10 срезом суффикса y, остальные теноры есть только у ЦБ. NULL в cbr_yield, " +
+		"moex_yield или spread_pp означает отсутствие точки у источника (пропуск публикации, " +
+		"выходной, ранняя дата у МосБиржи), а не ноль; строки появляются по датам, где есть хотя " +
+		"бы один источник. Перед вычислением спредов читать v_series_catalog по (source, series): " +
+		"единицы обоих источников — % годовых",
+	Columns: map[string]string{
+		"date":       "Дата наблюдения (Date): торговый день, за который опубликована КБД ЦБ и/или котировка G-curve МосБиржи",
+		"tenor":      "Тенор в канонической записи КБД ЦБ: 0.25, 0.5, 0.75, 1, 2, 3, 5, 7, 10, 15, 20, 30 (лет). Теноры МосБиржи 1y/3y/5y/10y нормализованы в 1/3/5/10; остальные значения есть только у ЦБ",
+		"cbr_yield":  "Доходность по КБД ЦБ, % годовых (cbr_zcyc, тенор из колонки tenor). NULL — ЦБ не публиковал точку в этот день, а не ноль",
+		"moex_yield": "Доходность по G-curve МосБиржи, % годовых (ofz_curve; только теноры 1/3/5/10 и только с 2026-10-09). NULL — точки нет, а не ноль",
+		"spread_pp":  "Спред moex_yield − cbr_yield, процентных пунктов: положительный — G-curve МосБиржи выше КБД ЦБ, отрицательный — ниже. Округлён до 0.01 п.п.; -0.0 у близкого к нулю отрицательного спреда — это ноль, а не ошибка. NULL, если отсутствует хотя бы одна из точек",
+	},
+}
+
+// cbrZcycSignalView — сигналы долгового рынка по КБД ЦБ: одна строка на дату
+// публикации кривой. Dedicated-форма, а не long-форма §10.3: производные колонки
+// одной строкой (прецеденты — v_keyrate_expectations, v_cbr_mt_forecast).
+//
+// Правая сторона обоих ASOF LEFT JOIN обёрнута в toNullable: при настройке
+// ClickHouse join_use_nulls=0 (значение по умолчанию) промах join подставляет в
+// не-Nullable колонку значение по умолчанию — 0 для ставки и ИПЦ, — и обещание
+// NULL в комментарии витрины было бы ложью: до 2013-09-17 key_rate стал бы нулём,
+// а спред — самой доходностью ОФЗ. Совпавшая строка остаётся числом, промах —
+// NULL. count() = 12 в окне ИПЦ — та же защита от частичного г/г на первых 11
+// строках ряда.
+var cbrZcycSignalView = util.View{
+	Name:   "v_ofz_signal",
+	Tables: []string{cbrZcycTable, "cbr_key_rate", "rosstat_ipc_mes"},
+	Select: `SELECT c.date AS date,
+        c.ofz_1y, c.ofz_2y, c.ofz_10y,
+        k.rate AS key_rate,
+        round(c.ofz_10y - k.rate, 2) AS ofz_10y_minus_key_rate_pp,
+        round(c.ofz_2y  - k.rate, 2) AS ofz_2y_minus_key_rate_pp,
+        round(c.ofz_10y - c.ofz_1y, 2) AS slope_10y_1y_pp,
+        round(i.cpi_yoy, 2) AS inflation_yoy,
+        round(c.ofz_10y - i.cpi_yoy, 2) AS real_yield_10y_pp
+    FROM (
+        SELECT date,
+               maxIf(toNullable(yield), tenor = '1')  AS ofz_1y,
+               maxIf(toNullable(yield), tenor = '2')  AS ofz_2y,
+               maxIf(toNullable(yield), tenor = '10') AS ofz_10y,
+               1 AS _one
+        FROM cbr_zcyc FINAL GROUP BY date
+    ) AS c
+    ASOF LEFT JOIN (
+        SELECT date, toNullable(rate) AS rate, 1 AS _one FROM cbr_key_rate FINAL ORDER BY date
+    ) AS k
+      ON c._one = k._one AND c.date >= k.date
+    ASOF LEFT JOIN (
+        SELECT date, toNullable(cpi_yoy) AS cpi_yoy, 1 AS _one FROM (
+            SELECT date,
+                   if(count() OVER (ORDER BY date ROWS BETWEEN 11 PRECEDING AND CURRENT ROW) = 12,
+                      (exp(sum(log(toFloat64(percent) / 100)) OVER (
+                          ORDER BY date ROWS BETWEEN 11 PRECEDING AND CURRENT ROW)) - 1) * 100,
+                      NULL) AS cpi_yoy
+            FROM rosstat_ipc_mes FINAL
+            WHERE name = 'Индексы потребительских цен на товары и услуги по Российской Федерации'
+            ORDER BY date
+        ) ORDER BY date
+    ) AS i ON c._one = i._one AND c.date >= i.date`,
+	Comment: "Сигналы долгового рынка по КБД ЦБ: одна строка на дату публикации кривой " +
+		"(cbr_zcyc, торговый день). ofz_1y/ofz_2y/ofz_10y — доходность ОФЗ соответствующего " +
+		"тенора, % годовых. key_rate — последняя действующая ключевая ставка на дату " +
+		"(ступенчатая функция, ASOF JOIN с cbr_key_rate); до 2013-09-17 истории ставки нет — " +
+		"NULL, а не ноль. ofz_10y_minus_key_rate_pp и ofz_2y_minus_key_rate_pp — спреды " +
+		"ofz − key_rate, п.п.: положительное значение значит «ОФЗ выше ключевой» (рынок требует " +
+		"премию к ставке), отрицательное — «ОФЗ ниже ключевой». slope_10y_1y_pp — наклон кривой " +
+		"10y − 1y, п.п. (отрицательный — инверсия). inflation_yoy — ИПЦ Росстата г/г, %: " +
+		"произведение 12 месячных индексов rosstat_ipc_mes к отчётному месяцу (первые 11 строк " +
+		"ряда ИПЦ — NULL, незаконченный год не считается; окно берёт 12 строк, а не 12 календарных " +
+		"месяцев, поэтому пропуск месяца в источнике оконная функция не ловит); дата ИПЦ — конец " +
+		"отчётного месяца, а лаг публикации ~2 недели не моделируется (для point-in-time " +
+		"расчётов дату ИПЦ сдвигать отдельно). real_yield_10y_pp = ofz_10y − inflation_yoy, п.п. " +
+		"(ex post, без инфляционных ожиданий). Спреды, наклон и реальная доходность округлены " +
+		"до 0.01 п.п.; NULL в любой колонке означает отсутствие точки, ставки или ИПЦ на дату, " +
+		"а не ноль. Перед использованием читать v_series_catalog по (source, series)",
+	Columns: map[string]string{
+		"date":                      "Дата КБД ЦБ (торговый день): одна строка на дату публикации кривой",
+		"ofz_1y":                    "Доходность ОФЗ с погашением через 1 год по КБД ЦБ, % годовых (тенор 1). NULL — точки нет, а не ноль",
+		"ofz_2y":                    "Доходность ОФЗ с погашением через 2 года по КБД ЦБ, % годовых (тенор 2). NULL — точки нет, а не ноль",
+		"ofz_10y":                   "Доходность ОФЗ с погашением через 10 лет по КБД ЦБ, % годовых (тенор 10). NULL — точки нет, а не ноль",
+		"key_rate":                  "Ключевая ставка ЦБ, % годовых, действующая на дату: последнее решение не позже date (ASOF). NULL до 2013-09-17 — истории ставки раньше нет, это не ноль",
+		"ofz_10y_minus_key_rate_pp": "Спред ofz_10y − key_rate, п.п.: положительный — «ОФЗ выше ключевой», отрицательный — ниже. NULL, если нет ставки или точки",
+		"ofz_2y_minus_key_rate_pp":  "Спред ofz_2y − key_rate, п.п.: короткий конец кривой против ключевой ставки. NULL, если нет ставки или точки",
+		"slope_10y_1y_pp":           "Наклон кривой 10y − 1y, п.п.: положительный — нормальная форма, отрицательный — инверсия. NULL, если нет одной из точек",
+		"inflation_yoy":             "ИПЦ Росстата г/г, %: произведение 12 месячных индексов rosstat_ipc_mes к отчётному месяцу; первые 11 строк ряда ИПЦ — NULL (незаконченный год не считается), но окно берёт 12 строк, а не 12 календарных месяцев — пропуск месяца в источнике оконная функция не ловит. Дата — конец отчётного месяца; лаг публикации ~2 недели не моделируется, для point-in-time расчётов сдвигать отдельно. NULL — нет точки ИПЦ, а не ноль",
+		"real_yield_10y_pp":         "Реальная доходность ofz_10y − inflation_yoy, п.п. (ex post, без инфляционных ожиданий). NULL, если нет точки или ИПЦ",
+	},
+}
+
+// afterCbrZcyc — производные импортёра cbr_zcyc: каталог 12 рядов (cbr/zcyc_meta.go),
+// витрина сравнения КБД с G-curve МосБиржи и витрина сигналов. Публикуются шаблоном
+// после точек и до строки версии (стандарт §10.2). CreateView пропускает витрину,
+// пока нет хотя бы одной исходной таблицы (ofz_curve, cbr_key_rate,
+// rosstat_ipc_mes) — это не ошибка: следующий прогон самолечит витрину.
+func afterCbrZcyc(meta []util.SeriesMeta) func(context.Context, driver.Conn) error {
+	return func(ctx context.Context, conn driver.Conn) error {
+		if err := util.UpsertSeriesCatalog(ctx, conn, meta); err != nil {
+			return err
+		}
+		if _, err := util.CreateView(ctx, conn, cbrZcycCompareView); err != nil {
+			return err
+		}
+		_, err := util.CreateView(ctx, conn, cbrZcycSignalView)
+		return err
+	}
+}

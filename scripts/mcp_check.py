@@ -1042,6 +1042,130 @@ async def check(params, server_log):
                                             "make import STAT=rosstat_ipc_weeks_bulletins")
             failed += not expect("агрегатный ряд бюллетеней rosstat непуст", rosstat_bulletins_n == 502, rosstat_bulletins_detail)
 
+            # Контур Минфина (пункт key-rate/phase-2-minfin-scrape, спека 2026-10-19
+            # minfin-deficit-oil-gas §4.2): витрина v_minfin_budget читается агентом и
+            # НЕПУСТА, федеральный дефицит идёт отдельным рядом (source = 'minfin'), а новый
+            # источник minfin_oil_gas отдаёт оба ряда — «Нефтегазовые доходы, всего» и «НДПИ».
+            #
+            # Строки публикуют импортёры пакета minfin/, поэтому пустая витрина означает ни
+            # разу не отработавший шаг dagu/minfin.yaml, а не отсутствие данных у источника.
+            # Существование витрины подтверждается ЗАПРОСОМ К НЕЙ, а не поиском имени в
+            # ответе list_tables (урок bold: в том тексте имя попадает из COMMENT соседки);
+            # «нет витрины» (UNKNOWN_TABLE) и «нет прав» (ACCESS_DENIED) приходят ошибкой и
+            # в result_rows не разбираются.
+            minfin_view = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_minfin_budget"}))
+            minfin_view_rows = result_rows(minfin_view)
+            minfin_view_n = minfin_view_rows[0].get("count()") if minfin_view_rows else None
+            if minfin_view_rows is None:
+                minfin_view_detail = (f"витрина не читается: {minfin_view[:200]} — прогнать импортёры "
+                                      "пакета: make import "
+                                      "STAT=minfin_fed_bud_mes,minfin_fed_bud_mesyats,minfin_oil_gas_mes")
+            elif (minfin_view_n or 0) > 0:
+                minfin_view_detail = f"строк: {minfin_view_n}"
+            else:
+                minfin_view_detail = ("строк: 0 — прогнать импортёры пакета: make import "
+                                      "STAT=minfin_fed_bud_mes,minfin_fed_bud_mesyats,minfin_oil_gas_mes "
+                                      "(витрину пересоздаёт AfterImport прогона)")
+            failed += not expect("витрина v_minfin_budget существует и непуста",
+                                 (minfin_view_n or 0) > 0, minfin_view_detail)
+
+            # Новый источник проверяется отдельно: общего count() > 0 мало — витрину
+            # пересоздаёт AfterImport любого из трёх импортёров, поэтому зелёная витрина
+            # могла бы держать только старые ряды. Два ряда и не меньше 210 точек
+            # (2 × 105 месяцев 2018-01…2026-09 выпуска 05.10.2026) означают, что шаг
+            # minfin_oil_gas_mes отработал; число сверяется как «>=», потому что новые
+            # выпуски добавляют месяцы, а пропавший ряд ловится равенством s == 2.
+            minfin_oil_raw = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n, uniqExact(series) AS s FROM v_minfin_budget "
+                "WHERE source = 'minfin_oil_gas'"}))
+            minfin_oil = result_rows(minfin_oil_raw)
+            minfin_oil_n = minfin_oil[0].get("n") if minfin_oil else None
+            minfin_oil_s = minfin_oil[0].get("s") if minfin_oil else None
+            if minfin_oil is None:
+                minfin_oil_detail = f"ответ не распознан: {minfin_oil_raw[:200]}"
+            else:
+                minfin_oil_detail = (f"точек: {minfin_oil_n} (want >= 210), "
+                                     f"рядов: {minfin_oil_s} (want 2)")
+                if (minfin_oil_n or 0) < 210 or minfin_oil_s != 2:
+                    minfin_oil_detail += " — прогнать make import STAT=minfin_oil_gas_mes"
+            failed += not expect("v_minfin_budget: нефтегазовые доходы и НДПИ",
+                                 bool(minfin_oil) and (minfin_oil_n or 0) >= 210 and minfin_oil_s == 2,
+                                 minfin_oil_detail)
+
+            # Каталог нового источника — ровно два ряда: «Нефтегазовые доходы, всего» и
+            # «НДПИ». Точное равенство, а не «> 0»: односторонний контракт стандарта §11.4
+            # требует описания каждого разобранного ряда, а третий ряд означал бы ряд,
+            # которого нет в объявленном наборе.
+            minfin_oil_catalog = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'minfin_oil_gas'"}))
+            minfin_oil_catalog_rows = result_rows(minfin_oil_catalog)
+            minfin_oil_catalog_n = minfin_oil_catalog_rows[0].get("n") if minfin_oil_catalog_rows else None
+            if minfin_oil_catalog_rows is None:
+                minfin_oil_catalog_detail = f"ответ не распознан: {minfin_oil_catalog[:200]}"
+            elif minfin_oil_catalog_n == 2:
+                minfin_oil_catalog_detail = "рядов minfin_oil_gas: 2 (Нефтегазовые доходы, всего + НДПИ)"
+            else:
+                minfin_oil_catalog_detail = (f"рядов minfin_oil_gas: {minfin_oil_catalog_n}, want 2 — "
+                                             "прогнать make import STAT=minfin_oil_gas_mes "
+                                             "(каталог перепубликовывается прогоном)")
+            failed += not expect("каталог minfin_oil_gas полон", minfin_oil_catalog_n == 2,
+                                 minfin_oil_catalog_detail)
+
+            # Федеральный дефицит — отдельная строка существующей таблицы minfin_fed_bud_mes
+            # (source = 'minfin'), которой до пункта не было: дефицит был только у
+            # консолидированного бюджета (source = 'minfin_mesyats'). Проверяются ДВА
+            # независимых утверждения:
+            #   1) данные — в витрине есть точки этого ряда (запрос к v_minfin_budget, а не
+            #      к каталогу: каталог публикуется независимо от того, нашёл ли парсер
+            #      строку в файле, поэтому проверка одного каталога прошла бы и при пустом
+            #      ряде);
+            #   2) описание — ряд есть в v_series_catalog по паре (source, series), иначе
+            #      агент увидит точки без единиц и привязки даты.
+            minfin_deficit = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n, min(date) AS first, max(date) AS last FROM v_minfin_budget "
+                "WHERE source = 'minfin' AND series = 'Дефицит (-)/Профицит (+)'"}))
+            minfin_deficit_rows = result_rows(minfin_deficit)
+            minfin_deficit_n = minfin_deficit_rows[0].get("n") if minfin_deficit_rows else None
+            if minfin_deficit_rows is None:
+                minfin_deficit_detail = f"ответ не распознан: {minfin_deficit[:200]}"
+            elif (minfin_deficit_n or 0) > 0:
+                minfin_deficit_detail = (f"точек: {minfin_deficit_n}, "
+                                         f"{minfin_deficit_rows[0].get('first')} … {minfin_deficit_rows[0].get('last')}")
+            else:
+                minfin_deficit_detail = ("точек: 0 — прогнать make import STAT=minfin_fed_bud_mes "
+                                         "(ряд разбирается из *_mes.xlsx)")
+            failed += not expect("витрина: федеральный дефицит отдельным рядом",
+                                 (minfin_deficit_n or 0) > 0, minfin_deficit_detail)
+
+            minfin_deficit_catalog = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_series_catalog "
+                "WHERE source = 'minfin' AND series = 'Дефицит (-)/Профицит (+)'"}))
+            minfin_deficit_catalog_rows = result_rows(minfin_deficit_catalog)
+            minfin_deficit_catalog_n = (minfin_deficit_catalog_rows[0].get("n")
+                                        if minfin_deficit_catalog_rows else None)
+            if minfin_deficit_catalog_rows is None:
+                minfin_deficit_catalog_detail = f"ответ не распознан: {minfin_deficit_catalog[:200]}"
+            elif minfin_deficit_catalog_n == 1:
+                minfin_deficit_catalog_detail = "ряд «Дефицит (-)/Профицит (+)» описан в source = 'minfin'"
+            else:
+                minfin_deficit_catalog_detail = (f"записей: {minfin_deficit_catalog_n}, want 1 — прогнать "
+                                                 "make import STAT=minfin_fed_bud_mes "
+                                                 "(каталог перепубликовывается прогоном)")
+            failed += not expect("каталог: федеральный дефицит описан",
+                                 minfin_deficit_catalog_n == 1, minfin_deficit_catalog_detail)
+
+            # Сырые таблицы пакета агенту не выданы — как macro_series и cbr_int_rate_loans:
+            # читать бюджетный контур агент обязан только через v_minfin_budget (единицы и
+            # привязка даты описаны в v_series_catalog). Таблицы создаёт DDL-прогон
+            # импортёра, поэтому UNKNOWN_TABLE здесь — провал, а не успех: таблица обязана
+            # существовать и быть закрытой.
+            for table, label in (("minfin_fed_bud_mes", "федеральный бюджет, месячные разности"),
+                                 ("minfin_fed_bud_mesyats", "консолидированный бюджет, месячные разности"),
+                                 ("minfin_oil_gas_mes", "нефтегазовые доходы и НДПИ")):
+                raw = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {table}"}))
+                denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+                failed += not expect(f"сырая {table} закрыта ({label})", denied,
+                                     f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
+
             # Контур потребительских расходов Сбера (фаза 2 роадмапа «починка пустых рядов»,
             # импортёры sber_consumper_spending_index и sber_izmenenie_trat): общая витрина
             # v_bank_sber_spending читается агентом и НЕПУСТА, каталог описывает её ряды двумя
@@ -1940,6 +2064,134 @@ async def check(params, server_log):
             denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
             failed += not expect("сырая cbr_form101 закрыта", denied,
                                  "отказ ClickHouse 497 на cbr_form101 (ожидаемо)" if denied else raw[:200])
+
+            # Контур ОФЗ (key-rate/phase-2-cbr-zcyc, импортёр cbr_zcyc): история кривой
+            # бескупонной доходности ЦБ (12 теноров с 04.01.2003) читается агентом через две
+            # витрины. Сырая cbr_zcyc агенту не выдана — как macro_series и cbr_form101:
+            # уровни КБД и компоненты сигнала агент читает только через витрины
+            # (комментарии таблицы и каждой колонки есть только у них, правило 11 AGENTS.md).
+            #
+            # Существование витрины подтверждается ЗАПРОСОМ К НЕЙ, а не поиском имени в
+            # list_tables (урок bold: в том тексте имя отсутствующей витрины попадало из
+            # COMMENT соседки); «нет витрины» и «нет прав» приходят ошибкой
+            # (UNKNOWN_TABLE / ACCESS_DENIED) и в result_rows не разбираются. Пустая
+            # v_ofz_curve_compare значит ни разу не отработавший шаг cbr_zcyc, а не
+            # отсутствие данных у источника: строки публикует импортёр. min/max в detail
+            # показывают, насколько глубоко прошёл бэкфилл (ориентир — с 04.01.2003).
+            # Непустоты мало: v_ofz_curve_compare может быть непуста одним ЦБ
+            # (ofz_curve ещё не импортирован), а разбор КБД — отдать часть 12
+            # теноров. Поэтому тем же запросом проверяется покрытие обоих
+            # источников: есть строки с moex_yield и ровно 12 теноров с cbr_yield.
+            ofz_compare = text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n, countIf(moex_yield IS NOT NULL) AS n_moex, "
+                         "uniqExactIf(tenor, cbr_yield IS NOT NULL) AS n_tenors, "
+                         "min(date) AS min_date, max(date) AS max_date FROM v_ofz_curve_compare"}))
+            ofz_compare_rows = result_rows(ofz_compare)
+            ofz_compare_n = ofz_compare_rows[0].get("n") if ofz_compare_rows else None
+            ofz_compare_moex = ofz_compare_rows[0].get("n_moex") if ofz_compare_rows else None
+            ofz_compare_tenors = ofz_compare_rows[0].get("n_tenors") if ofz_compare_rows else None
+            if ofz_compare_rows is None:
+                ofz_compare_detail = f"витрина не читается: {ofz_compare[:200]}"
+            elif (ofz_compare_n or 0) > 0:
+                ofz_compare_detail = (f"строк: {ofz_compare_n}, "
+                                      f"{ofz_compare_rows[0].get('min_date')}..{ofz_compare_rows[0].get('max_date')}, "
+                                      f"moex_yield: {ofz_compare_moex}, теноров ЦБ: {ofz_compare_tenors}")
+            else:
+                ofz_compare_detail = ("строк: 0 — прогнать make import STAT=cbr_zcyc "
+                                      "(витрины пересоздаёт прогон)")
+            failed += not expect("витрина v_ofz_curve_compare существует и непуста",
+                                 (ofz_compare_n or 0) > 0, ofz_compare_detail)
+            failed += not expect("v_ofz_curve_compare: есть MOEX и 12 теноров ЦБ",
+                                 (ofz_compare_moex or 0) > 0 and ofz_compare_tenors == 12,
+                                 f"moex_yield: {ofz_compare_moex}, uniqExact(tenor) по cbr_yield: "
+                                 f"{ofz_compare_tenors} (want > 0 и 12) — прогнать "
+                                 "make import STAT=cbr_zcyc и STAT=ofz_curve")
+
+            # v_ofz_signal: производные спреды к ключевой ставке и реальная доходность.
+            # Ноль строк — не «нет сигнала», а не отработавший импортёр или отсутствующие
+            # cbr_key_rate/rosstat_ipc_mes: CreateView пропускает витрину, пока их нет,
+            # и пересоздаёт её следующим прогоном (самолечение). Непустоты мало: при
+            # промахе ASOF JOIN и окна ИПЦ значения были бы NULL во всей витрине, поэтому
+            # тем же запросом проверяется, что каждая компонента дала хотя бы одну точку.
+            ofz_signal = text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n, countIf(key_rate IS NOT NULL) AS n_key_rate, "
+                         "countIf(inflation_yoy IS NOT NULL) AS n_inflation, "
+                         "countIf(ofz_10y IS NOT NULL) AS n_ofz_10y FROM v_ofz_signal"}))
+            ofz_signal_rows = result_rows(ofz_signal)
+            ofz_signal_n = ofz_signal_rows[0].get("n") if ofz_signal_rows else None
+            ofz_signal_key = ofz_signal_rows[0].get("n_key_rate") if ofz_signal_rows else None
+            ofz_signal_infl = ofz_signal_rows[0].get("n_inflation") if ofz_signal_rows else None
+            ofz_signal_ofz10 = ofz_signal_rows[0].get("n_ofz_10y") if ofz_signal_rows else None
+            if ofz_signal_rows is None:
+                ofz_signal_detail = f"витрина не читается: {ofz_signal[:200]}"
+            elif (ofz_signal_n or 0) > 0:
+                ofz_signal_detail = (f"строк: {ofz_signal_n}, key_rate: {ofz_signal_key}, "
+                                     f"inflation_yoy: {ofz_signal_infl}, ofz_10y: {ofz_signal_ofz10}")
+            else:
+                ofz_signal_detail = ("строк: 0 — прогнать make import STAT=cbr_zcyc "
+                                     "(нужны cbr_key_rate и rosstat_ipc_mes)")
+            failed += not expect("витрина v_ofz_signal существует и непуста",
+                                 (ofz_signal_n or 0) > 0, ofz_signal_detail)
+            failed += not expect("v_ofz_signal: есть key_rate, ИПЦ и ofz_10y",
+                                 (ofz_signal_key or 0) > 0 and (ofz_signal_infl or 0) > 0
+                                 and (ofz_signal_ofz10 or 0) > 0,
+                                 f"key_rate: {ofz_signal_key}, inflation_yoy: {ofz_signal_infl}, "
+                                 f"ofz_10y: {ofz_signal_ofz10} (want > 0 у каждой) — прогнать "
+                                 "make import STAT=cbr_zcyc, cbr_key_rate и rosstat_ipc_mes")
+
+            # key_rate до 2013-09-17 обязан быть NULL: истории ключевой ставки раньше
+            # этой даты нет. Проверка пинит именно семантику NULL в ASOF LEFT JOIN:
+            # при join_use_nulls=0 (значение по умолчанию) промах join подставляет в
+            # не-Nullable правую колонку 0, и тогда key_rate=0, а спреды равны
+            # доходности ОФЗ. Витрина оборачивает правые колонки в toNullable;
+            # nulls < n здесь значит, что обёртка потерялась и агент прочитает нули
+            # вместо «ставки ещё не было».
+            ofz_null = text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n, countIf(key_rate IS NULL) AS nulls "
+                         "FROM v_ofz_signal WHERE date < '2013-09-17'"}))
+            ofz_null_rows = result_rows(ofz_null)
+            ofz_null_n = ofz_null_rows[0].get("n") if ofz_null_rows else None
+            ofz_nulls = ofz_null_rows[0].get("nulls") if ofz_null_rows else None
+            if ofz_null_rows is None:
+                ofz_null_detail = f"ответ не распознан: {ofz_null[:200]}"
+            else:
+                ofz_null_detail = (f"строк до 2013-09-17: {ofz_null_n}, "
+                                   f"из них key_rate IS NULL: {ofz_nulls}")
+                if (ofz_null_n or 0) == 0:
+                    ofz_null_detail += " — прогнать make import STAT=cbr_zcyc"
+            failed += not expect("v_ofz_signal: key_rate до 2013-09-17 — NULL",
+                                 (ofz_null_n or 0) > 0 and ofz_nulls == ofz_null_n,
+                                 ofz_null_detail)
+
+            # Каталог обязан описывать все 12 теноров КБД (0.25…30) — точным равенством, а не
+            # «> 0»: 12 = набор колонок «Срок до погашения, лет» источника, который код
+            # объявляет сам (стандарт §6.8). Выборка по origin, а не по source: у source='cbr'
+            # лежат ряды всех импортёров ЦБ, а zcyc_params — источник ровно этого набора.
+            # Подчёркивание в LIKE экранировано (\_), как у cbr_int_rate_loans и cbr_bop_*:
+            # без экранирования «_» совпал бы с любым одиночным символом. Меньшее число значит
+            # ни разу не отработавший шаг cbr_zcyc (агент прочитает уровни, но не узнает, что
+            # измеряет ряд и в каких единицах); большее — ряд, которому в источнике не
+            # соответствует колонка теноров.
+            zcyc_catalog = text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'cbr' AND origin LIKE '%zcyc\\_params%'"}))
+            zcyc_catalog_rows = result_rows(zcyc_catalog)
+            zcyc_catalog_n = zcyc_catalog_rows[0].get("n") if zcyc_catalog_rows else None
+            if zcyc_catalog_rows is None:
+                zcyc_catalog_detail = f"ответ не распознан: {zcyc_catalog[:200]}"
+            elif zcyc_catalog_n == 12:
+                zcyc_catalog_detail = "рядов cbr_zcyc: 12 (теноры 0.25…30)"
+            else:
+                zcyc_catalog_detail = (f"рядов cbr_zcyc: {zcyc_catalog_n}, want 12 — прогнать "
+                                       "make import STAT=cbr_zcyc (каталог перепубликовывается прогоном)")
+            failed += not expect("каталог cbr_zcyc полон", zcyc_catalog_n == 12, zcyc_catalog_detail)
+
+            # Сырая cbr_zcyc агенту не выдана — как macro_series и cbr_form101: витрина —
+            # единственное место, где агент читает уровни КБД. Таблицу создаёт DDL-прогон
+            # импортёра, поэтому UNKNOWN_TABLE здесь — провал, а не успех.
+            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM cbr_zcyc"}))
+            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+            failed += not expect("сырая cbr_zcyc закрыта", denied,
+                                 "отказ ClickHouse 497 на cbr_zcyc (ожидаемо)" if denied else raw[:200])
 
             # Реестр ML-экспериментов (infra/4.1): агенту выданы три витрины, а сырые
             # ml_runs/ml_predictions закрыты (как macro_series и bold_fund_snapshot:
