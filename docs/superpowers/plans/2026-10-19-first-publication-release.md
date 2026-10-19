@@ -117,9 +117,9 @@
 
 Заполняется по факту:
 
-- [ ] `make docs-check` — …
-- [ ] `make all` — …
-- [ ] `make mcp-check` — …
-- [ ] Снимок: дата/время, ClickHouse, `sha256`, max-даты.
-- [ ] `forecast_log`: 3 строки, значения, `data_version`, повтор.
-- [ ] Статья: `PENDING`/`TBD`/`TODO` — нет; ссылки живы.
+- [x] `make docs-check` — `checked 35 pages`, 33 теста OK.
+- [x] `make all` — golangci-lint `0 issues`, `go vet`, `go test -race`, обе сборки.
+- [x] `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА; `v_key_rate_dashboard` — 3 forecast-трека.
+- [x] Снимок: 19.10.2026 05:35 MSK, ClickHouse 26.10.1.1853, `sha256:de3b2775…`, max-даты — в `snapshot.md`.
+- [x] `forecast_log`: `taylor` 13,3485, `ordered_logit` 13,3664 (81,645/16,239/2,116), `llm` 13,975 (10/86/4); `data_version` — `key-rate-model-v0:2026-10-19:n=108` / `fba7be4fddfd`; повтор идемпотентен.
+- [x] Статья: `PENDING`/`TBD`/`TODO` — нет; релизные числа и даты обновлены.
