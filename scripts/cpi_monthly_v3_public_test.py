@@ -335,5 +335,65 @@ class TestGates(unittest.TestCase):
         self.assertEqual(failed, [])
 
 
+class TestWindowSpecs(unittest.TestCase):
+    def test_all_windows(self):
+        specs = m._window_specs()
+        self.assertEqual(len(specs), 7)
+        sizes = [len(m._default_models_for_spec(spec)) for spec in specs]
+        self.assertEqual(sizes, [15, 9, 9, 9, 9, 6, 4])
+
+    def test_default_models_for_subset(self):
+        specs = m._window_specs("weekly", (2,), 24, 0, None)
+        self.assertEqual(
+            m._default_models_for_spec(specs[0]), m.SECONDARY_MODELS
+        )
+        specs = m._window_specs("long", (1,), 24, 0, None)
+        self.assertEqual(
+            m._default_models_for_spec(specs[0]), m.LONG_WINDOW_MODELS
+        )
+        specs = m._window_specs("long", (1,), 48, 0, None)
+        self.assertEqual(m._default_models_for_spec(specs[0]), m.LONG_MODELS)
+
+    def test_models_override(self):
+        specs = m._window_specs("weekly", (1,), 24, 0, ("v3_bottomup",))
+        self.assertEqual(
+            m._default_models_for_spec(specs[0]), ("v3_bottomup",)
+        )
+
+
+class TestPairs(unittest.TestCase):
+    def test_full_h1_primary_pairs(self):
+        models = m.select_models(m.FULL_MODELS)
+        pairs = m.window_pairs(1, models)
+        primary = [
+            (left, right)
+            for left, right in pairs
+            if left in m.PRIMARY_CANDIDATES
+            and right in m.PRIMARY_BASELINES
+        ]
+        self.assertEqual(len(primary), 8)
+        self.assertEqual(len(pairs), len(set(pairs)))
+
+    def test_secondary_h2_pairs(self):
+        models = m.select_models(m.SECONDARY_MODELS)
+        pairs = m.window_pairs(2, models)
+        self.assertIn(("v3_ind_bottomup", "v2_bottomup"), pairs)
+        self.assertIn(("v3_ind_bottomup", "v3_bottomup"), pairs)
+
+
+class TestSampleHash(unittest.TestCase):
+    def test_deterministic_and_sensitive(self):
+        rows = make_rows(5)
+        names = m.feature_names()
+        self.assertEqual(
+            m.sample_hash(rows, names), m.sample_hash(rows, names)
+        )
+        changed = list(rows)
+        changed[0] = make_row(rows[0].month, 9.0)
+        self.assertNotEqual(
+            m.sample_hash(rows, names), m.sample_hash(changed, names)
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
