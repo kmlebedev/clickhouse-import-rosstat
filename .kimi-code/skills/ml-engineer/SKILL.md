@@ -80,6 +80,8 @@ whenToUse: When a task involves an ML experiment, model, feature set, backtest, 
 |---|---|
 | `make cpi-nowcast` | nowcast ИПЦ v1 (CatBoost + B1–B3); `ML_LOG=1` — паспорт и MLflow (по умолчанию) |
 | `make cpi-monthly` | месячный nowcast v2 с МП; `ARGS="--sample long"`, `ARGS="--quick --jobs N"`; `ML_LOG=1` |
+| `make cpi-weekly-panel` | недельная компонентная панель ИПЦ (Task 3): product/component CSV, реконструкция и гейт; в ClickHouse не пишет, `ML_LOG` не используется |
+| `make cpi-weekly-panel-test` | офлайн-тесты панели (без ClickHouse и сети) |
 | `make key-rate-model` | ставка: Тейлор, ordered logit, walk-forward; `ML_LOG=1` |
 | `make shock-classifier` | классификатор шоков и причинные веса; `ML_LOG=1` |
 | `make cb-comp-parity` | паритет с CB_COMP (direct + bottom-up, DM/TOST); `ML_LOG=1` |
