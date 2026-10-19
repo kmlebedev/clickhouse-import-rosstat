@@ -540,3 +540,80 @@ func afterCbrMPL(meta []util.SeriesMeta) func(context.Context, driver.Conn) erro
 		return err
 	}
 }
+
+// cbrMpBsuMapView — публичный кроссворд 87 кодов ОКВЭД2 → отраслевой лист
+// mp_survey_data.xlsx с названием кода из классификатора Росстата. Витрина требует
+// rosstat_okved2: без него CreateView пропускает её, а таблица кроссворда уже записана.
+var cbrMpBsuMapView = util.View{
+	Name:   "v_cbr_mp_bsu_map",
+	Tables: []string{cbrMpBsuMapTable, "rosstat_okved2"},
+	Select: `SELECT m.code, o.name AS okved_name, o.section,
+       m.industry_sheet, m.industry_slug, m.basis, m.confidence, m.source
+FROM cbr_mp_bsu_map m FINAL
+LEFT JOIN (
+    SELECT code, any(name) AS name, any(section) AS section
+    FROM rosstat_okved2 FINAL
+    WHERE level > 1
+    GROUP BY code
+) o ON o.code = m.code
+ORDER BY m.code`,
+	Comment: "Публичный кроссворд 87 стандартных кодов ОКВЭД2 (архив авторов CB_COMP) " +
+		"на 11 отраслевых листов mp_survey_data.xlsx (из 16: у 87 кодов нет электричества и " +
+		"водоснабжения). Это публичная аппроксимация, а не " +
+		"внутренний mapping ЦБ: подкатегории обработки размечены вручную, коды 45/46/47 и " +
+		"55–96 — по классам ОКВЭД2. 87 кодов схлопываются в 33 публичные серии; " +
+		"код-уровневых значений в публичной книге нет. confidence: rule — по разделу/классу, " +
+		"manual — производственная подкатегория, fallback — общий лист «Обработка» (в текущем " +
+		"наборе не используется).",
+	Columns: map[string]string{
+		"code":           "Код ОКВЭД2 из публичного model.xlsx (1.0.4.2, мониторинг_код1..4)",
+		"okved_name":     "Официальное название кода из rosstat_okved2; пусто, если классификатор ещё не импортирован",
+		"section":        "Буква раздела ОКВЭД2 A…U из rosstat_okved2",
+		"industry_sheet": "Точное имя листа публичной книги mp_survey_data.xlsx",
+		"industry_slug":  "Slug листа в именах рядов cbr_survey: industry_<slug>_<indicator>[_sa]",
+		"basis":          "Правило/обоснование выбора листа; для manual — конкретный код и подкатегория",
+		"confidence":     "rule|manual|fallback — степень публичной определённости кроссворда",
+		"source":         "Публичный источник списка кодов: figshare DOI + model.xlsx#1.0.4.2",
+	},
+}
+
+// cbrMpPublicPanelView — публичная панель: каждый из 87 кодов получает SA-серию своего
+// отраслевого листа (IBK, ценовые ожидания, издержки). Это не 87 код-уровневых рядов:
+// коды одного листа делят одну серию, поэтому строк 87 × 3 × 297, а различных серий — 39.
+var cbrMpPublicPanelView = util.View{
+	Name:   "v_cbr_mp_public_panel",
+	Tables: []string{cbrMpBsuMapTable, mpSurveyTable},
+	Select: `SELECT m.code, m.industry_sheet, m.industry_slug, 'ibk' AS indicator, ms.date, ms.value
+FROM cbr_mp_bsu_map m FINAL
+INNER JOIN macro_series ms FINAL
+  ON ms.source = 'cbr_survey'
+ AND ms.series = concat('industry_', m.industry_slug, '_ibk_sa')
+UNION ALL
+SELECT m.code, m.industry_sheet, m.industry_slug, 'price_exp', ms.date, ms.value
+FROM cbr_mp_bsu_map m FINAL
+INNER JOIN macro_series ms FINAL
+  ON ms.source = 'cbr_survey'
+ AND ms.series = concat('industry_', m.industry_slug, '_price_expectations_sa')
+UNION ALL
+SELECT m.code, m.industry_sheet, m.industry_slug, 'costs', ms.date, ms.value
+FROM cbr_mp_bsu_map m FINAL
+INNER JOIN macro_series ms FINAL
+  ON ms.source = 'cbr_survey'
+ AND ms.series = concat('industry_', m.industry_slug, '_cost_change_sa')`,
+	Comment: "Публичная панель 87 BSU-кодов: каждому коду сопоставлена SA-серия его " +
+		"отраслевого листа mp_survey_data.xlsx (industry_<slug>_ibk_sa, " +
+		"industry_<slug>_price_expectations_sa, industry_<slug>_cost_change_sa). " +
+		"Это отраслевая аппроксимация: 87 кодов делят 33 различные серии (11 листов × 3 " +
+		"индикатора), поэтому строки разных кодов одного листа совпадают. Код-уровневых " +
+		"значений публичная книга не содержит; live-источника на 87 кодах нет — значения " +
+		"авторской панели остаются статическим архивом 2009-01…2024-09. Для per-BSU " +
+		"использовать как диагностику потери гранулярности, не как паритет.",
+	Columns: map[string]string{
+		"code":           "Код ОКВЭД2 (87 стандартных кодов CB_COMP)",
+		"industry_sheet": "Имя отраслевого листа публичной книги",
+		"industry_slug":  "Slug листа в рядах cbr_survey",
+		"indicator":      "ibk — ИБК; price_exp — ценовые ожидания; costs — издержки",
+		"date":           "Отчётный месяц (1-е число); SA-точка публикуется ЦБ в следующем месяце",
+		"value":          "Баланс ответов, пункты (или % годовых только для отдельного ряда ожидаемого прироста цен; здесь его нет)",
+	},
+}

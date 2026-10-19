@@ -38,7 +38,7 @@
 ### 2.2. Не входит
 
 - Точный внутренний mapping ЦБ «код → лист» и data request в ЦБ.
-- Rerun per-BSU на публичной панели — отдельный ML-пункт: кроссворд схлопывает 87 рядов в 39 публичных серий и не является код-уровневой репликацией.
+- Rerun per-BSU на публичной панели — отдельный ML-пункт: кроссворд схлопывает 87 рядов в 33 публичные серии (11 листов × 3; у 87 кодов нет электричества и водоснабжения) и не является код-уровневой репликацией.
 - Изменение существующих 13 агрегатных и 368 отраслевых рядов `cbr_survey`, их имён и значений.
 - Изменения в `financial/`.
 - Новые ряды в `series_catalog`: `rosstat_okved2` и `cbr_mp_bsu_map` — reference-таблицы, не временные ряды.
@@ -153,7 +153,7 @@ ORDER BY code;
    - `ibk` → `industry_<slug>_ibk_sa`;
    - `price_exp` → `industry_<slug>_price_expectations_sa`;
    - `costs` → `industry_<slug>_cost_change_sa`.
-   На снимке 2026-10: 87 × 3 × 297 = **77 517 строк**, 39 различных серий (13 используемых листов × 3), 3 индикатора. `Промышленность` (`total`), `Обработка` (`manufacturing`) и `Торговля (45+46+47)` (`trade`) — агрегаты, для отдельных кодов не используются; `manufacturing` остаётся fallback.
+   На снимке 2026-10: 87 × 3 × 297 = **77 517 строк**, 33 различные серии (11 используемых листов × 3), 3 индикатора. `Промышленность` (`total`), `Обработка` (`manufacturing`) и `Торговля (45+46+47)` (`trade`) — агрегаты, для отдельных кодов не используются; `manufacturing` остаётся fallback. Электричество (`electricity`) и водоснабжение (`water`) в 87 кодах не встречаются, поэтому кроссворд их не использует (16 листов книги — не то же самое, что 11 используемых).
 
 Гранты: `GRANT SELECT ON default.v_cbr_mp_bsu_map TO kimi_reader`, `GRANT SELECT ON default.v_cbr_mp_public_panel TO kimi_reader`.
 
@@ -161,20 +161,19 @@ ORDER BY code;
 
 - `v_rosstat_okved2`: 3 102 строки; 87/87 BSU-кодов.
 - `v_cbr_mp_bsu_map`: 87 строк, 0 пустых `okved_name`.
-- `v_cbr_mp_public_panel`: 87 кодов, 13 `industry_slug`, 3 `indicator`, 297 дат, `count() > 0`; точное число строк не хардкодить (рост месяцев не должен ломать проверку).
+- `v_cbr_mp_public_panel`: 87 кодов, 11 `industry_slug`, 3 `indicator`, 297 дат, `count() > 0`; точное число строк не хардкодить (рост месяцев не должен ломать проверку).
 - Spot: `10.1 → manufacturing_consumer`, `29.10 → manufacturing_investment`, `23 → manufacturing_intermediate`, `47.22 → trade_retail`, `46.32 → trade_wholesale`, `45.11 → trade_auto`, `01.4 → agriculture`, `05 → mining`, `43.2 → construction`, `49.3 → transport`, `86.90.4 → services`.
 
 ## 5. Тесты
 
 `rosstat/okved2_test.go`:
 - `parseOkved2Meta` на CP1251-фикстуре: находит первый `data-*.csv`, не путает `standardversion`/`identifier`.
-- `parseOkved2` на структурной фикстуре: раздел, класс, подкласс, группа, подгруппа, вид; `level`/`parent_code`; 3 102 строки на полной фикстуре или ожидаемое число на срезе.
-- `okved2_87.csv`: все 87 кодов найдены, названия непустые, дублей нет.
+- `parseOkved2` на структурной фикстуре: раздел, класс, подкласс, группа, подгруппа, вид; `level`/`parent_code`; ожидаемое число строк на срезе.
 - DDL drift: `rosstatOkved2Ddl` совпадает с каноническим блоком `ARCHITECTURE.md` §6.2.
 - Реестр + `dagu/rosstat.yaml`: `Name()`/таблица с префиксом `rosstat_`, объявление префлайта, шаг в DAG.
 
 `cbr/mp_bsu_map_test.go`:
-- 87 уникальных кодов; Go-список == фикстура.
+- 87 уникальных кодов; Go-список == фикстура `cbr/testdata/cb_comp_bsu_codes.csv`, у каждого кода непустые name/section.
 - Каждый код маппится в slug из `mpSurveyIndustrySheets`; 87/87 назначены; `confidence` ∈ {rule, manual, fallback}.
 - 26 производственных кодов: 21 consumer + 1 investment + 4 intermediate; fallback не используется.
 - `v_cbr_mp_public_panel` SQL содержит `cbr_survey`, `_ibk_sa`, `_price_expectations_sa`, `_cost_change_sa`.
@@ -195,7 +194,7 @@ ORDER BY code;
 - Живые запросы источников записаны (URL, HTTP, формат, дата среза).
 - `make import STAT=rosstat_okved2` — 3 102 строки; повтор — no-op; 87/87.
 - `make import STAT=cbr_mp_bsu_map` — 87 строк; повтор — 87 `FINAL`.
-- `v_cbr_mp_public_panel` — 77 517 строк / 13 slug / 3 indicator / 297 дат на снимке 2026-10.
+- `v_cbr_mp_public_panel` — 77 517 строк / 11 slug / 3 indicator / 297 дат на снимке 2026-10.
 - `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА; `make all`, `make docs-check`, `dagu validate` — зелёные.
 - Оговорка переформулирована; паритет не заявлен.
 
