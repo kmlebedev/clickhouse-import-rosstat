@@ -103,6 +103,8 @@
 
 **Ключевой вывод:** `make all` не включает Python-тесты; для Python/ML-ролей «зелёный `make all`» недостаточен. Это должно быть явно в их Definition of Done.
 
+**Находки, требующие отдельного пункта.** (1) `views/model_inputs.go:128` называет RGBI «индексом полной доходности ОФЗ»: RGBI — ценовой индекс, total return — RGBITR; проверить и исправить отдельным bug/roadmap item. (2) `INGEST_URL` отсутствует в `docs/CONFIGURATION.md` и `make env-check`, хотя клиент `key_rate_forecast_log.py` на неё опирается; добавить отдельным docs-пунктом или в `infra/5.2`.
+
 ## 5. Открытые issue: портфель и очередь
 
 Открыто **64 issue**: 56 с label `roadmap:<slug>`, 8 в Inbox (#88, #89, #81, #77, #76, #58, #51, #48).

@@ -25,7 +25,7 @@ whenToUse: When working on scripts/*.py outside ML, ingest payloads, collectors,
 2. Владеющий роадмап и issue пункта — [ROADMAP_INDEX.md](../../../docs/ROADMAP_INDEX.md).
 3. [DEVELOPMENT.md](../../../docs/DEVELOPMENT.md) — разделы «Команды», «Python-тесты», «CI и релизы».
 4. [CONFIGURATION.md](../../../docs/CONFIGURATION.md) — env-переменные и секреты.
-5. [IMPORTER_PACKAGE_STANDARD.md](../../../docs/IMPORTER_PACKAGE_STANDARD.md) §9/§13 — граница записи и публикации.
+5. [IMPORTER_PACKAGE_STANDARD.md](../../../docs/IMPORTER_PACKAGE_STANDARD.md) §10/§11 — граница записи и публикации.
 6. Спеку/план пункта, если есть.
 
 ## 3. Границы роли
@@ -53,13 +53,27 @@ whenToUse: When working on scripts/*.py outside ML, ingest payloads, collectors,
 ## 5. Правила
 
 1. **Секреты только из env/`make`**; не читать и не печатать `~/.config/rosstat/env`.
-2. **Тесты без сети и живой БД:** моки `urllib`/`http.client`, фикстуры; `unittest`, не pytest.
+2. **Тесты без сети и живой БД:** моки `urllib`/`http.client` (например, `patch.object(module.urllib.request, "urlopen", ...)`), фикстуры; локальный HTTP-сервер — тоже сеть; `unittest`, не pytest.
 3. **Детерминизм:** фиксированный seed, сортировка, стабильные имена артефактов.
 4. **Запись — только payload:** `key_rate_forecast_log.py` готовит JSON для ingest; `--dry-run` обязателен для проверки.
 5. **Артефакты прогонов не коммитить:** `build/`, `*.json`/`*.csv` результатов — в gitignore; фикстуры — явно.
 6. **Не логировать секреты** и полные payload с токенами.
 7. **Python 3.12** для официальных прогонов (`uv ... --python 3.12`); системный `python3` — только для stdlib-тестов.
 8. **Не менять Go-код и схему** без отдельного пункта.
+
+## 5.1. Контракт ingest и коллектора
+
+- **Endpoints.** Типовые: `/v1/manual_series` (массив), `/v1/gold_prices`, `/v1/gold_forecasts`, `/v1/key_rate_forecast`, `/v1/model_run`; формы различаются. `source`/`venue` — закрытые списки; новый whitelist — Go-пункт, не Python.
+- **Транспорт.** Явный timeout, User-Agent, `CERT_FILES` для гос-хостов, backoff; токен не в URL/логах.
+- **Dry-run.** Без env и сети, детерминированный JSON, общий валидатор для dry-run и отправки, тело ≤ 1 MiB, коды 0/1.
+- **Фикстуры.** Реальный урезанный XLSX в `scripts/testdata/`, не синтетическая книга.
+- **Идемпотентность.** Ключи endpoint'ов (`(source, series, date)`, `(metric, forecast_date)`) делают повтор upsert'ом; проверь повтор.
+- **Тестовая проводка.** Новый `scripts/<name>_test.py` добавь в `DEVELOPMENT.md` и §9 этого скила; `make all` Python-тесты не запускает.
+- **Живая приёмка.** Локальный `make run-ingest INGEST_ADDR=:18081`, `inserted=N`, повтор — тот же N, тестовые строки убрать.
+- **Новый ряд/таблица/витрина/грант.** Стоп: отдельный Go-пункт; Python готовит payload и спеку.
+- **Снапшот для Go-импортёра.** Второй паттерн (`build/...` + `EDISCLOSURE_INPUT_DIR`) требует Go-импортёра; выбери паттерн в спеке.
+- **Прод-скрипт.** Если нужен XLSX/HTTP, скрипт целиком идёт через `uv ... --python 3.12` с пином.
+- **Env-пара клиента.** `INGEST_URL` + `INGEST_TOKEN`; в `CONFIGURATION.md` и `env-check` их пока нет — это отдельный docs-пункт, не повод хардкодить адрес.
 
 ## 6. Команды
 
