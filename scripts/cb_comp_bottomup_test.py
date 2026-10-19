@@ -251,6 +251,109 @@ class TestMpFeatures(unittest.TestCase):
         self.assertEqual(bu.feature_names(False)[-1], "month")
         self.assertEqual(bu.feature_names(True), list(bu.BASE_FEATURES)[:-1] + list(bu.MP_FEATURES) + ["month"])
 
+    def test_per_bsu_names_and_values(self):
+        rows = []
+        for code, base in (("10.1", 10.0), ("10.2", 20.0)):
+            for month, value in ((1, base), (2, base + 2), (3, base + 4)):
+                rows.append(
+                    {
+                        "date": date(2024, month, 1),
+                        "code": code,
+                        "kind": "Indikator biznes-klimata Banka Rossii (IBK)",
+                        "value": value,
+                        "lag": 1,
+                    }
+                )
+        frame = pd.DataFrame(rows)
+        frame["indicator"] = frame["kind"].map(bu.MP_INDICATORS)
+        spec = bu.GroupSpec("10", ("10.1", "10.2"), 3)
+        lookup = bu._mp_lookup(frame)
+
+        features = bu.mp_features(spec, date(2024, 3, 1), lookup, mode="per_bsu")
+        self.assertEqual(len(features), 12)
+        self.assertAlmostEqual(features["mp_10_1_ibk"], 12.0, places=10)
+        self.assertAlmostEqual(features["mp_10_1_ibk_chg"], 2.0, places=10)
+        self.assertAlmostEqual(features["mp_10_2_ibk"], 22.0, places=10)
+        self.assertAlmostEqual(features["mp_10_2_ibk_chg"], 2.0, places=10)
+        self.assertTrue(math.isnan(features["mp_10_1_costs"]))
+
+        names = bu.feature_names(True, "per_bsu", spec)
+        self.assertEqual(len(names), 18)
+        self.assertEqual(names[-1], "month")
+        self.assertTrue(set(names) <= set(features) | set(bu.BASE_FEATURES))
+
+        mean = bu.mp_features(spec, date(2024, 3, 1), lookup, mode="mean")
+        self.assertEqual(len(mean), 6)
+        self.assertAlmostEqual(mean["mp_ibk"], 17.0, places=10)
+
+    def test_full_features_and_names(self):
+        panel = pd.DataFrame(
+            [
+                {"date": date(2024, 2, 1), "group_stat": "Индекс потребительских цен", "code": "10", "kind": "trend", "value": 1.5, "lag": 0},
+                {"date": date(2024, 2, 1), "group_stat": "Индекс потребительских цен", "code": "10", "kind": "trend_deviation", "value": 0.2, "lag": 0},
+                {"date": date(2024, 2, 1), "group_stat": "Рыночные индексы", "code": "usd_rub", "kind": "base_index", "value": 90.0, "lag": 0},
+                {"date": date(2024, 2, 1), "group_stat": "Рыночные индексы", "code": "usd_rub", "kind": "diff", "value": 0.5, "lag": 0},
+                {"date": date(2024, 2, 1), "group_stat": "Кредитные ставки", "code": "miacr", "kind": "interest_rate", "value": 7.0, "lag": 0},
+                {"date": date(2024, 2, 1), "group_stat": "Кредитные ставки", "code": "miacr", "kind": "diff", "value": -0.1, "lag": 0},
+                {"date": date(2024, 1, 1), "group_stat": "Кредит населению", "code": "debt_households_wh_mortgage", "kind": "base_index", "value": 100.0, "lag": 2},
+            ]
+        )
+        spec = bu.GroupSpec("10", ("10.1",), 3)
+        lookup = bu._full_lookup(panel)
+        features = bu.full_features(spec, date(2024, 3, 1), lookup)
+        self.assertAlmostEqual(features["cpi_trend"], 1.5, places=10)
+        self.assertAlmostEqual(features["cpi_trend_dev"], 0.2, places=10)
+        self.assertAlmostEqual(features["usd_level"], 90.0, places=10)
+        self.assertAlmostEqual(features["miacr_chg"], -0.1, places=10)
+        self.assertAlmostEqual(features["debt_mortgage"], 100.0, places=10)
+        self.assertEqual(set(features), set(bu.FULL_FEATURES))
+
+        names = bu.feature_names(True, "full", spec)
+        self.assertEqual(len(names), 19)
+        self.assertEqual(names[-1], "month")
+        self.assertIn("cpi_trend", names)
+        self.assertIn("mp_10_1_ibk", names)
+
+    def test_feature_table_full_mode(self):
+        index = [date(2024, 1, 1), date(2024, 2, 1)]
+        cpi_diff = pd.DataFrame({"10": [0.01, 0.02]}, index=index)
+        macro = {date(2024, 3, 1): {"usd_mm": 1.0, "key_rate": 7.5, "fao_mm": 0.5}}
+        spec = bu.GroupSpec("10", ("10.1",), 3)
+        mp_panel = pd.DataFrame(
+            [
+                {
+                    "date": date(2024, 2, 1),
+                    "code": "10.1",
+                    "kind": "Indikator biznes-klimata Banka Rossii (IBK)",
+                    "value": 12.0,
+                    "lag": 1,
+                    "indicator": "ibk",
+                }
+            ]
+        )
+        full_panel = pd.DataFrame(
+            [
+                {"date": date(2024, 2, 1), "group_stat": "Индекс потребительских цен", "code": "10", "kind": "trend", "value": 1.5, "lag": 0},
+            ]
+        )
+        table = bu.feature_table(
+            [spec],
+            [date(2024, 3, 1)],
+            cpi_diff,
+            macro,
+            bu._mp_lookup(mp_panel),
+            feature_mode="full",
+            full_lookup=bu._full_lookup(full_panel),
+        )
+        features = table["10"][date(2024, 3, 1)]
+        self.assertIn("cpi_trend", features)
+        self.assertIn("mp_10_1_ibk", features)
+        self.assertEqual(features["month"], 3)
+
+    def test_unknown_feature_mode_raises(self):
+        with self.assertRaises(ValueError):
+            bu.validate_feature_mode("unknown")
+
 
 class TestAggregateAndGate(unittest.TestCase):
     def test_aggregate_normalizes_weights(self):
