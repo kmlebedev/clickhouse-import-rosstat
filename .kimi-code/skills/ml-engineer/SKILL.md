@@ -38,6 +38,8 @@ whenToUse: When a task involves an ML experiment, model, feature set, backtest, 
 | MLflow runs, `ML_LOG`, артефакты, `forecast_log` payload | `make all`, CI, сборка, инфраструктура расписаний |
 | Интерпретация DM/CI/калибровки, ML-раздел публикации | Архитектура, README/ARCHITECTURE, приёмочный контур |
 
+**Смежные роли.** Не-ML Python-инструменты (коллекторы, docs-генератор, MCP-check, forecast-log sender) ведутся по скилу [`python-engineer`](../python-engineer/SKILL.md); разведка источника, аудит покрытия/винтажей и research-документ — по [`research-engineer`](../research-engineer/SKILL.md). Их правила здесь не дублируются.
+
 **Жёстко:** ML-агент не делает ad-hoc `CREATE TABLE`, `INSERT`, `ALTER`, `GRANT` и не меняет Go-пакеты «попутно». Если для эксперимента нужна новая таблица/витрина/грант — это отдельный пункт владеющего роадмапа и Go-импортёр по стандарту; ML-агент готовит спеку/DDL-предложение, применение — за Go-разработчиком.
 
 **Чтение ClickHouse.** Интерактивно — MCP `mcp__clickhouse__run_query` (`kimi_reader`). Скрипты читают через свой существующий `ch_query`/env-путь (`ML_LOG`/`CLICKHOUSE_*` через `make`); это чтение, не запись. Писать в ClickHouse скрипт не может: только ingest endpoint или Go-импортёр.
