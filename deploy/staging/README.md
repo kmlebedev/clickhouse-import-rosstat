@@ -36,10 +36,14 @@ ssh palmshell 'install -m 600 /dev/null /etc/clickhouse-import-rosstat.env'
 #  GOST_SETTLE_DAYS здесь не хранят — их задаёт сам DAG)
 # токен: openssl rand -hex 32 — ОБЯЗАТЕЛЕН, без него mcp-clickhouse не стартует
 
-# 2. Развернуть
+# 2. Поставить poppler-utils на staging-хост: pdftotext нужен PDF-импортёрам
+#    cbr_mt_forecast и polyus_financial_metrics; no-op-прогоны утилиту не вызывают
+ssh palmshell 'apt install -y poppler-utils'
+
+# 3. Развернуть
 make deploy-staging
 
-# 3. Создать пользователя kimi_reader (если ещё нет)
+# 4. Создать пользователя kimi_reader (если ещё нет)
 CH_SETUP_PASSWORD=<пароль default> make mcp-user-staging
 ```
 

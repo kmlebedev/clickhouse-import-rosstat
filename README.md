@@ -25,7 +25,7 @@ Docs-портал: **https://kmlebedev.github.io/clickhouse-import-rosstat/** �
 
 ## Быстрый старт
 
-Нужны Go 1.27, ClickHouse с нативным протоколом (порт 9000) и `CLICKHOUSE_URL`.
+Нужны Go 1.27, ClickHouse с нативным протоколом (порт 9000) и `CLICKHOUSE_URL`; для PDF-импортёров — `poppler-utils` (`pdftotext`): он нужен `cbr_mt_forecast` и `polyus_financial_metrics` (Debian/Ubuntu: `apt install -y poppler-utils`).
 
 ```bash
 make all                                # lint, тесты, сборка

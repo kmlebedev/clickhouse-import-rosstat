@@ -23,17 +23,19 @@ import (
 // карточки выпусков разбирает mtForecastIndexReleases (индекс тот же, что читает cbr_mp_summary),
 // ссылку на книгу — mtForecastPageXlsxURL, книгу — mtForecastParseTabl1
 // (cbr/mt_forecast_parse.go), а файл каждого выпуска качает шаблон util.ClickHouseImport
-// (DataUrl + ImportFunc) — иначе не получились бы ни архив версии файла выпуска, ни строка
-// source_publications (стандарт §9.6). Машиночитаемый xlsx есть только у выпусков со страницей
-// (на 2026-10-17 — 2 из 11): PDF-карточки пропускаются со счётчиком, «источник отдаёт выпуск без
-// файла» видно в no-op-сообщении, а не молчит (спека §2, §3.4).
+// (DataUrl + ImportFunc для страничной книги, DataUrl + BodyFunc для PDF) — иначе не получились бы
+// ни архив версии файла выпуска, ни строка source_publications (стандарт §9.6). Индекс отдаёт два
+// типа карточек (спека §3.4): комментарии (на 2026-10-19 — 2 страничных xlsx и 9 PDF) и
+// «Среднесрочные прогнозы» (11 PDF). Оба корпуса импортируются одним циклом: различает их
+// транспорт, а не гейт (спека §2, §3.2).
 
 const (
-	// mtForecastIndexUrl — индекс материалов заседаний ЦБ: карточки «Комментария» с датой
-	// публикации и ссылкой — страницей выпуска (у новейших) или PDF. Адрес тот же, что читает
-	// cbr_mp_summary (mpSummaryIndexUrl), но константа своя: импортёры делят страницу, а не код
-	// (прецедент — два импортёра macro_series со своими копиями DDL), и смена адреса одного
-	// контура не должна молча уводить другой. Страница выпуска = cbrUrl + href карточки.
+	// mtForecastIndexUrl — индекс материалов заседаний ЦБ: карточки «Комментария» и
+	// «Среднесрочного прогноза» с датой публикации и ссылкой — страницей выпуска (у новейших
+	// комментариев) или PDF. Адрес тот же, что читает cbr_mp_summary (mpSummaryIndexUrl), но
+	// константа своя: импортёры делят страницу, а не код (прецедент — два импортёра macro_series
+	// со своими копиями DDL), и смена адреса одного контура не должна молча уводить другой.
+	// Страница выпуска = cbrUrl + href карточки.
 	mtForecastIndexUrl = "https://www.cbr.ru/dkp/mp_dec/decision_key_rate/"
 
 	// mtForecastCardTitle — титул карточки «Комментария» в видимой подписи
@@ -43,9 +45,18 @@ const (
 	// того же пакета, спека §3.5) и одна дата публикации.
 	mtForecastCardTitle = "Комментарий к среднесрочному прогнозу Банка России"
 
+	// mtForecastForecastCardTitle — титул карточки «Среднесрочного прогноза»: второй материал
+	// заседания, который читается из того же индекса (спека §3.4). Пара «маркер href + титул»
+	// отличает его от комментария и от соседей по блоку.
+	mtForecastForecastCardTitle = "Среднесрочный прогноз Банка России"
+
 	// mtForecastHrefMarker — фрагмент href карточки: comment_<DDMMYYYY>.pdf у PDF-выпуска или
 	// comment_<DDMMYYYY>/ у страницы выпуска (спека §3.4). Отсекает чужие ссылки карточки.
 	mtForecastHrefMarker = "comment_"
+
+	// mtForecastForecastHrefMarker — фрагмент href карточки «Среднесрочного прогноза»:
+	// forecast_<ДДММГГ>.pdf — у прогноза всегда PDF (спека §3.4); дата в имени — дата заседания.
+	mtForecastForecastHrefMarker = "forecast_"
 
 	// mtForecastXlsxSel — селектор ссылки на машиночитаемую книгу выпуска на его странице
 	// («Графики и таблицы в XLSX», стандарт §4.5: константа — тот же селектор использует тест на
@@ -57,13 +68,16 @@ const (
 	// mtForecastDdl — DDL таблицы cbr_mt_forecast (спека §3.1) в %s-форме шаблона: %s — TableName.
 	// Ключ ReplacingMergeTree (indicator, year, release_date) — это и есть винтаж: одна и та же
 	// пара (показатель, год) в разных выпусках — разные строки (следующий выпуск ревизует
-	// диапазон), повторный прогон идемпотентен. meeting_date и url — атрибуты выпуска, не части
-	// ключа (как publication_date у дипа): оговорка — подмена файла под тем же release_date
-	// гейтом не отслеживается (лечение — удалить строки выпуска и повторить прогон).
+	// диапазон), повторный прогон идемпотентен. release_date — дата публикации артефакта
+	// (комментария-страницы, комментария-PDF или «Среднесрочного прогноза»; у прогноза она равна
+	// дате заседания), url — страница выпуска или PDF-файл (провенанс). meeting_date и url —
+	// атрибуты выпуска, не части ключа (как publication_date у дипа): оговорка — подмена файла
+	// под тем же release_date гейтом не отслеживается (лечение — удалить строки выпуска и
+	// повторить прогон).
 	mtForecastDdl = `CREATE TABLE IF NOT EXISTS %s (
     meeting_date Date,                 -- дата опорного заседания (из шапки блока индекса)
-    release_date Date,                 -- дата публикации «Комментария» (= дата в слаге URL)
-    url String,                        -- страница комментария (провенанс)
+    release_date Date,                 -- дата публикации артефакта (у PDF-прогноза = дата заседания)
+    url String,                        -- страница выпуска или PDF-файл (провенанс)
     indicator LowCardinality(String),  -- стабильный код показателя (16, объявляет код, §3.2)
     year UInt16,                       -- прогнозный год
     lo Float64,                        -- нижняя граница диапазона; у точечного прогноза lo == hi
@@ -98,11 +112,26 @@ const (
 	mtForecastDayLayout = "2006-01-02"
 )
 
+// mtForecastKind — тип карточки индекса (спека §3.4): в одном блоке заседания лежат два
+// материала с общими селекторами карточки, подписи и даты, но разными титулами и маркерами
+// ссылок. Тип в mtForecastRelease называет, какой это выпуск, — от него зависит текст ошибок и
+// счётчики, а от признака PDF — транспорт выпуска в цикле импорта.
+type mtForecastKind string
+
+const (
+	// mtForecastKindComment — «Комментарий к среднесрочному прогнозу Банка России»: страница с
+	// книгой «Табл 1» или PDF-выпуск.
+	mtForecastKindComment mtForecastKind = "comment"
+	// mtForecastKindForecast — «Среднесрочный прогноз Банка России»: в индексе только PDF.
+	mtForecastKindForecast mtForecastKind = "forecast"
+)
+
 var (
 	// mtForecastSlugRe — слага страницы выпуска: .../comment_<DDMMYYYY>/ (спека §3.4). Дата
-	// публикации берётся отсюда — это единственный источник идентичности выпуска: PDF-выпуски
-	// слага не имеют вовсе (они отсеиваются раньше), а совпадение с датой карточки проверяется
-	// явно — страница, переехавшая под другую дату, обязана быть ошибкой, а не вторым винтажём.
+	// публикации берётся отсюда — единственный источник идентичности страничного выпуска; у
+	// PDF-карточек слага нет вовсе (их дата — только из карточки), а совпадение слага с датой
+	// карточки проверяется явно — страница, переехавшая под другую дату, обязана быть ошибкой, а
+	// не вторым винтажём.
 	mtForecastSlugRe = regexp.MustCompile(`comment_(\d{8})/?$`)
 
 	// mtForecastSlugLayout — формат даты слага: DDMMYYYY (07.05.2026 в слаге — 07052026).
@@ -115,21 +144,28 @@ var (
 	mtForecastMeetingRe = regexp.MustCompile(`Заседание\s+Совета\s+директоров\s+от\s+(\d{2}\.\d{2}\.\d{4})`)
 )
 
-// mtForecastIndexReleases разбирает индекс материалов заседаний ЦБ в выпуски «Комментария»:
-// карточки отбираются по титулу (mtForecastCardTitle) и маркеру ссылки (mtForecastHrefMarker), в
-// порядке страницы (свежие первыми; сортировку делает mtForecastNewReleases). У страничной
-// карточки release_date — из слага URL (единственный источник идентичности, спека §3.4) и
-// сверяется с датой карточки (расхождение — ошибка: страница переехала под другую дату), а
-// meeting_date — из шапки ближайшего блока-дропдауна. PDF-карточка возвращается с признаком PDF
-// и без даты заседания: страницы и машиночитаемого файла у выпуска нет, выпуск пропускается со
-// счётчиком (mtForecastReleaseCounts), и в цикл импорта его не пускает mtForecastNewReleases.
+// mtForecastIndexReleases разбирает индекс материалов заседаний ЦБ в выпуски двух типов
+// (спека §3.4): комментарии (mtForecastKindComment) и «Среднесрочные прогнозы»
+// (mtForecastKindForecast). Карточки отбираются одним проходом по общим селекторам индекса
+// (mpSummaryCardSel/mpSummaryNameSel/mpSummaryDateSel): тип задаёт маркер href (comment_ или
+// forecast_), а титул карточки подтверждает его — карточка с чужим титулом пропускается, поэтому
+// «Резюме» и «Заявление» того же блока в выпуски не попадают. Порядок — порядок страницы (свежие
+// первыми; хронологическую сортировку делает mtForecastNewReleases).
 //
-// Fail-fast (стандарт §6.4): ни одной карточки «Комментария»; карточка без даты публикации;
-// дата карточки не разбирается; ссылка ни PDF, ни страница вида comment_<DDMMYYYY>/; дата слага
-// не разбирается; расхождение даты карточки и слага; нет шапки с датой заседания. Ни одной
-// СТРАНИЧНОЙ карточки (все — PDF) — тоже ошибка (спека §3.5, шаг 3): импортировать нечего
-// навсегда, и тихий пустой список выглядел бы успешным прогоном при живом ЦБ. Сеть не трогается —
-// страница скачана вызывающим (util.GetPage), разбор чистый и тестируется на HTML-байтах.
+// У страничной карточки комментария release_date — из слага URL (единственный источник
+// идентичности, спека §3.4) и сверяется с датой карточки (расхождение — ошибка: страница
+// переехала под другую дату). У PDF-карточек и прогнозов дата публикации — только из карточки; у
+// прогноза она совпадает с датой заседания. meeting_date — из шапки ближайшего блока-дропдауна
+// для обоих типов: без неё агенту не с чем сопоставить прогноз. PDF-выпуски возвращаются с
+// признаком PDF (файл у них — сам PDF; страницы выпуска нет) и проходят тот же гейт по дате
+// публикации, что и страничные: признак PDF выбирает транспорт в цикле импорта.
+//
+// Fail-fast (стандарт §6.4): ни одной карточки «Комментария» (источник сломан или подменён);
+// карточка без даты публикации; дата карточки не разбирается; ссылка ни PDF, ни страница вида
+// comment_<DDMMYYYY>/; дата слага не разбирается; расхождение даты карточки и слага; нет шапки
+// с датой заседания. Отсутствие прогнозов — warn, не ошибка: комментарии импортируются, а пробел
+// виден в логе и счётчиках (спека §3.4). Сеть не трогается — страница скачана вызывающим
+// (util.GetPage), разбор чистый и тестируется на HTML-байтах.
 func mtForecastIndexReleases(page []byte) ([]mtForecastRelease, error) {
 	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(page))
 	if err != nil {
@@ -143,38 +179,76 @@ func mtForecastIndexReleases(page []byte) ([]mtForecastRelease, error) {
 		if parseErr != nil {
 			return
 		}
-		href, ok := card.Find(`a[href*="` + mtForecastHrefMarker + `"]`).First().Attr("href")
+		// Маркер href называет тип выпуска: у комментария — comment_ (PDF или страница), у
+		// прогноза — forecast_ (всегда PDF). Титул подтверждает пару: карточка с маркером одного
+		// типа и титулом другого — не наш выпуск и пропускается, а не угадывается.
+		link := card.Find(`a[href*="` + mtForecastHrefMarker + `"]`).First()
+		kind, title := mtForecastKindComment, mtForecastCardTitle
+		if link.Length() == 0 {
+			link = card.Find(`a[href*="` + mtForecastForecastHrefMarker + `"]`).First()
+			kind, title = mtForecastKindForecast, mtForecastForecastCardTitle
+		}
+		href, ok := link.Attr("href")
 		if !ok || strings.TrimSpace(href) == "" {
 			return
 		}
-		if normMPText(card.Find(mpSummaryNameSel).First().Text()) != mtForecastCardTitle {
+		if normMPText(card.Find(mpSummaryNameSel).First().Text()) != title {
 			return
 		}
 		href = strings.TrimSpace(href)
 
-		// Дата карточки — у всех карточек, включая PDF: карточка без неё не называет публикацию,
-		// и структура индекса изменилась. Нулевая дата молча записала бы выпуск под 1970-01-01.
+		// Дата карточки — у всех карточек: карточка без неё не называет публикацию, и структура
+		// индекса изменилась. Нулевая дата молча записала бы выпуск под 1970-01-01.
 		raw := normMPText(card.Find(mpSummaryDateSel).First().Text())
 		published, err := time.Parse(mpIndexDateLayout, raw)
 		if err != nil {
 			parseErr = fmt.Errorf("индекс %s: карточка %s: дата публикации %q: %w", mtForecastIndexUrl, href, raw, err)
 			return
 		}
-		release := mtForecastRelease{ReleaseDate: published, URL: cbrUrl + href}
 
-		// PDF-выпуск: страницы у него нет вовсе — выпуск пропускается с info-логом и счётчиком
-		// (спека §3.4): без файла выпуск импортировать нечем, и «источник отдаёт выпуск без
-		// машиночитаемого формата» должно быть видно в логе, а не молчать. Адрес остаётся
-		// ссылкой на PDF: по нему видно, что это за выпуск.
+		// Дата заседания — из шапки ближайшего блока-дропдауна: у всех карточек заседания общий
+		// блок, и заголовок берётся у того, внутри которого стоит карточка (спека §3.4). Нужна
+		// обоим типам: комментарию — как атрибут выпуска, прогнозу — это дата его карточки.
+		header := normMPText(card.Closest("div.dropdown").Find("a.dropdown_title").First().Text())
+		meeting := mtForecastMeetingRe.FindStringSubmatch(header)
+		if meeting == nil {
+			parseErr = fmt.Errorf("индекс %s: карточка %s: в шапке блока %q нет даты заседания (ждалась «Заседание Совета директоров от DD.MM.YYYY»)",
+				mtForecastIndexUrl, href, header)
+			return
+		}
+		meetingDate, err := time.Parse(mpIndexDateLayout, meeting[1])
+		if err != nil {
+			parseErr = fmt.Errorf("индекс %s: карточка %s: дата заседания %q: %w", mtForecastIndexUrl, href, meeting[1], err)
+			return
+		}
+
+		release := mtForecastRelease{
+			Kind:        kind,
+			MeetingDate: meetingDate,
+			ReleaseDate: published,
+			URL:         cbrUrl + href,
+		}
+
+		// PDF-выпуск: страницы у него нет, файл — сам PDF. Признак PDF выбирает транспорт в цикле
+		// импорта (BodyFunc вместо страницы с книгой), а счётчики разбора делят комментарии на
+		// страницы и PDF; прогноз в индексе всегда PDF (спека §3.2, §3.4). Per-card лога нет:
+		// выпуск назовётся в цикле импорта (mtForecastReleaseContext), а число выпусков каждого
+		// вида видно в счётчиках no-op-прогона.
 		if strings.HasSuffix(href, ".pdf") {
 			release.PDF = true
-			log.Infof("%s: выпуск %s: карточка без страницы (PDF) — машиночитаемого файла у выпуска нет, пропуск",
-				mtForecastTable, published.Format(mtForecastDayLayout))
 			releases = append(releases, release)
 			return
 		}
 
-		// Страничный выпуск: дата слага — идентичность, дата карточки — её подтверждение.
+		// Страничный выпуск бывает только у комментария: у прогноза страницы нет, и не-PDF ссылка
+		// означает смену вёрстки, которую разбор не угадывает.
+		if kind != mtForecastKindComment {
+			parseErr = fmt.Errorf("индекс %s: карточка %s: у прогноза ссылка не PDF — ожидалась forecast_<ДДММГГ>.pdf, разбор не знает, что это за выпуск",
+				mtForecastIndexUrl, href)
+			return
+		}
+
+		// Дата слага — идентичность страничного выпуска, дата карточки — её подтверждение.
 		slug := mtForecastSlugRe.FindStringSubmatch(href)
 		if slug == nil {
 			parseErr = fmt.Errorf("индекс %s: карточка %s: ссылка ни PDF, ни страница выпуска вида comment_<DDMMYYYY>/ — разбор не знает, что это за выпуск",
@@ -191,64 +265,70 @@ func mtForecastIndexReleases(page []byte) ([]mtForecastRelease, error) {
 				mtForecastIndexUrl, href, published.Format(mpIndexDateLayout), slugDate.Format(mpIndexDateLayout))
 			return
 		}
-
-		// Дата заседания — из шапки ближайшего блока-дропдауна: у всех карточек заседания общий
-		// блок, и заголовок берётся у того, внутри которого стоит карточка (спека §3.4).
-		title := normMPText(card.Closest("div.dropdown").Find("a.dropdown_title").First().Text())
-		meeting := mtForecastMeetingRe.FindStringSubmatch(title)
-		if meeting == nil {
-			parseErr = fmt.Errorf("индекс %s: карточка %s: в шапке блока %q нет даты заседания (ждалась «Заседание Совета директоров от DD.MM.YYYY»)",
-				mtForecastIndexUrl, href, title)
-			return
-		}
-		meetingDate, err := time.Parse(mpIndexDateLayout, meeting[1])
-		if err != nil {
-			parseErr = fmt.Errorf("индекс %s: карточка %s: дата заседания %q: %w", mtForecastIndexUrl, href, meeting[1], err)
-			return
-		}
-		release.MeetingDate = meetingDate
 		releases = append(releases, release)
 	})
 	if parseErr != nil {
 		return nil, parseErr
 	}
-	if len(releases) == 0 {
-		return nil, fmt.Errorf("индекс %s: не найдено ни одной карточки «%s»", mtForecastIndexUrl, mtForecastCardTitle)
+	counts := mtForecastReleaseCounts(releases)
+	if counts.Comments == 0 {
+		return nil, fmt.Errorf("индекс %s: не найдено ни одной карточки «%s» — комментариев 0: источник сломан или подменён (спека §3.4)",
+			mtForecastIndexUrl, mtForecastCardTitle)
 	}
-	if pages, pdfs := mtForecastReleaseCounts(releases); pages == 0 {
-		return nil, fmt.Errorf("индекс %s: ни одной страничной карточки «%s» (PDF-выпусков %d) — у PDF машиночитаемого файла нет, импортировать нечего: источник отдаёт только PDF?",
-			mtForecastIndexUrl, mtForecastCardTitle, pdfs)
+	if counts.Forecasts == 0 {
+		log.Warnf("%s: индекс %s: ни одной карточки «%s» — комментарии импортируются, прогнозы отсутствуют; проверьте вёрстку индекса",
+			mtForecastTable, mtForecastIndexUrl, mtForecastForecastCardTitle)
 	}
 	return releases, nil
 }
 
-// mtForecastReleaseCounts — сколько выпусков разбора страничные, а сколько PDF: числа входят в
-// no-op-сообщение прогона («страниц %d, PDF-выпусков %d», спека §3.5, шаг 4) и считаются из того
-// же среза, что решает гейт, — счётчик PDF не разъезжается с разбором.
-func mtForecastReleaseCounts(releases []mtForecastRelease) (pages, pdfs int) {
+// mtForecastCounts — счётчики разбора индекса по типам и форматам (спека §3.4): числа входят в
+// no-op-сообщение прогона «новых выпусков нет (комментариев N: страниц A, PDF B; прогнозов M;
+// в таблице K выпусков)» и считаются из того же среза, что решает гейт, — счётчики не
+// разъезжаются с разбором. Comments — все карточки комментария, из них CommentPages — страничные
+// (xlsx-выпуски), CommentPDFs — PDF; Forecasts — карточки «Среднесрочного прогноза».
+type mtForecastCounts struct {
+	Comments     int
+	CommentPages int
+	CommentPDFs  int
+	Forecasts    int
+}
+
+// mtForecastReleaseCounts считает выпуски разбора по типам и форматам. Неизвестный Kind не
+// относится ни к одной карточке индекса и в счётчики не попадает: разбор таких не производит, а
+// молчаливое причисление к комментариям скрыло бы ошибку типа.
+func mtForecastReleaseCounts(releases []mtForecastRelease) mtForecastCounts {
+	var counts mtForecastCounts
 	for _, release := range releases {
-		if release.PDF {
-			pdfs++
-			continue
+		switch release.Kind {
+		case mtForecastKindComment:
+			counts.Comments++
+			if release.PDF {
+				counts.CommentPDFs++
+				continue
+			}
+			counts.CommentPages++
+		case mtForecastKindForecast:
+			counts.Forecasts++
 		}
-		pages++
 	}
-	return pages, pdfs
+	return counts
 }
 
 // mtForecastNewReleases — выпуски, которых нет в таблице, в хронологическом порядке (старые →
 // новые): первый прогон наполняет историю детерминированным префиксом, а порядок не зависит от
-// порядка страницы (та отдаёт свежие первыми, спека §3.5, шаг 5). Известность — по дате выпуска
-// (ключ винтажа): подмена файла под тем же release_date не отслеживается, а «выпуск пропал из
-// таблицы» самолечится (спека §3.6). PDF-выпуски отсеиваются здесь же: у них нет ни страницы, ни
-// файла, и в цикл импорта они попадать не должны (числа PDF — mtForecastReleaseCounts). Сортировка
-// устойчивая: у двух выпусков одной даты порядок страницы сохраняется — результат детерминирован
-// и без уникальности дат. Чистая функция без обращений к БД и сети: сценарии «все выпуски
-// известны» (пусто → no-op прогона) и «все выпуски новые» пинятся тестом.
+// порядка страницы (та отдаёт свежие первыми, спека §3.5, шаг 5). Гейт общий для обоих транспортов:
+// PDF-выпуски проходят его наравне со страничными — файл у них сам PDF, и отсекать их нечем
+// (признак PDF выбирает ветку Import, а не известность; числа разбора — mtForecastReleaseCounts).
+// Известность — по дате выпуска (ключ винтажа): подмена файла под тем же release_date не
+// отслеживается, а «выпуск пропал из таблицы» самолечится (спека §3.6). Сортировка устойчивая: у
+// двух выпусков одной даты порядок страницы сохраняется — результат детерминирован и без
+// уникальности дат. Чистая функция без обращений к БД и сети: сценарии «все выпуски известны»
+// (пусто → no-op прогона) и «все выпуски новые» пинятся тестом.
 func mtForecastNewReleases(releases []mtForecastRelease, known map[time.Time]bool) []mtForecastRelease {
 	fresh := make([]mtForecastRelease, 0, len(releases))
 	for _, release := range releases {
-		if release.PDF || known[mpDay(release.ReleaseDate)] {
+		if known[mpDay(release.ReleaseDate)] {
 			continue
 		}
 		fresh = append(fresh, release)
@@ -276,12 +356,53 @@ func mtForecastPageXlsxURL(page []byte, date time.Time) (string, error) {
 	return href, nil
 }
 
-// mtForecastReleaseContext — выпуск в тексте ошибки и лога: дата выпуска и дата заседания. Дата
-// выпуска — ключ винтажа, и по ней выпуск ищется в таблице при разборе сбоя (у дипа ту же роль
-// играет release_id).
+// mtForecastAppendPDFText — приёмник текста PDF-выпуска: разбор «Табл. 1» и запись точек строками
+// cbr_mt_forecast (спека §3.2). Отделён от mtForecastPDFAppendPoints, потому что извлечение текста
+// вызывает pdftotext, а запись обязана тестироваться офлайн на уже извлечённой фикстуре (спека §7):
+// сток знает только текст. Атрибуты выпуска (meeting_date, release_date, url) — первые три колонки
+// DDL, порядок колонок тот же, что у xlsx-ветки (mtForecastAppendPoints). Ошибка Append называет
+// таблицу, дату выпуска и точку (indicator, year), но не выпуск целиком: контекст выпуска
+// (mtForecastReleaseContext) добавляет цикл Import — иначе один сбой назывался бы дважды.
+func mtForecastAppendPDFText(release mtForecastRelease, text []byte, batch driver.Batch) error {
+	points, err := mtForecastParsePDF(text)
+	if err != nil {
+		return err
+	}
+	for _, p := range points {
+		if err := batch.Append(release.MeetingDate, release.ReleaseDate, release.URL, p.Indicator, p.Year, p.Lo, p.Hi); err != nil {
+			return fmt.Errorf("%s: %s: точка (%s, %d): %w",
+				mtForecastTable, release.ReleaseDate.Format(mtForecastDayLayout), p.Indicator, p.Year, err)
+		}
+	}
+	return nil
+}
+
+// mtForecastPDFAppendPoints — BodyFunc одного PDF-выпуска: шаблон сам скачивает байты PDF и тот же
+// срез кладёт в винтажный архив версии (стандарт §9.6), поэтому сети здесь нет — только извлечение
+// текста из уже скачанного файла и запись точек (спека §3.2, §3.3). Страница выпуска не читается:
+// файл у PDF-выпуска — сам PDF. ctx ограничивает pdftotext (mtForecastPDFTimeout), но не отменяет
+// родительский контекст прогона.
+func mtForecastPDFAppendPoints(ctx context.Context, release mtForecastRelease) func(body []byte, batch driver.Batch) error {
+	return func(body []byte, batch driver.Batch) error {
+		text, err := mtForecastPDFText(ctx, body)
+		if err != nil {
+			return err
+		}
+		return mtForecastAppendPDFText(release, text, batch)
+	}
+}
+
+// mtForecastReleaseContext — выпуск в тексте ошибки и лога: тип (комментарий/прогноз), дата
+// выпуска и дата заседания. Дата выпуска — ключ винтажа, и по ней выпуск ищется в таблице при
+// разборе сбоя (у дипа ту же роль играет release_id); тип называет, какой материал заседания
+// сломался.
 func mtForecastReleaseContext(release mtForecastRelease) string {
-	return fmt.Sprintf("%s: выпуск %s (заседание %s)",
-		mtForecastTable, release.ReleaseDate.Format(mtForecastDayLayout), release.MeetingDate.Format(mtForecastDayLayout))
+	kind := "комментарий"
+	if release.Kind == mtForecastKindForecast {
+		kind = "прогноз"
+	}
+	return fmt.Sprintf("%s: %s: выпуск %s (заседание %s)",
+		mtForecastTable, kind, release.ReleaseDate.Format(mtForecastDayLayout), release.MeetingDate.Format(mtForecastDayLayout))
 }
 
 // mtForecastStat — импортёр cbr_mt_forecast: встроенный util.ClickHouseImport ведёт таблицу, DDL
@@ -294,8 +415,9 @@ type mtForecastStat struct {
 
 // Import — полный цикл одного прогона (спека §3.5): DDL → производные (каталог и витрина) →
 // индекс → гейт по release_date → цикл по новым выпускам в хронологическом порядке (старые
-// первыми): страница выпуска, ссылка на книгу, вызов шаблона на каждый выпуск и проверка, что
-// строки выпуска в таблице есть (успех шаблона записи не гарантирует — он умеет ответить no-op).
+// первыми): для страничного выпуска — страница и ссылка на книгу, для PDF — сразу адрес файла;
+// вызов шаблона на каждый выпуск и проверка, что строки выпуска в таблице есть (успех шаблона
+// записи не гарантирует — он умеет ответить no-op).
 // Порядок шагов — часть контракта: DDL выполняется до сети и до гейта, потому что гейт
 // обращается к таблице, а шаблонный DDL внутри цикла не отработал бы при нуле новых выпусков
 // (прогон на чистой базе обязан отработать целиком). Сбой одного выпуска не отменяет остальные:
@@ -321,9 +443,9 @@ func (s *mtForecastStat) Import(ctx context.Context, conn driver.Conn) (count in
 		return 0, err
 	}
 
-	// 3. Индекс материалов заседаний: карточки «Комментария» в порядке страницы (свежие первыми);
-	// разбор — fail-fast (ноль карточек или ноль страничных при живом ЦБ — ошибка, а не «новых
-	// выпусков нет»).
+	// 3. Индекс материалов заседаний: карточки «Комментария» и «Среднесрочного прогноза» в порядке
+	// страницы (свежие первыми); разбор — fail-fast (ноль карточек комментария при живом ЦБ —
+	// ошибка, а не «новых выпусков нет»; отсутствие прогнозов — warn).
 	page, err := util.GetPage(mtForecastIndexUrl)
 	if err != nil {
 		return 0, fmt.Errorf("%s: %s: %w", mtForecastTable, mtForecastIndexUrl, err)
@@ -341,38 +463,46 @@ func (s *mtForecastStat) Import(ctx context.Context, conn driver.Conn) (count in
 	}
 	fresh := mtForecastNewReleases(releases, known)
 	if len(fresh) == 0 {
-		pages, pdfs := mtForecastReleaseCounts(releases)
-		// Счётчики — часть сообщения: «страниц 2, PDF-выпусков 9» объясняет оператору, почему
-		// прогон пуст (спека §3.5, шаг 4).
-		log.Infof("%s: новых выпусков нет (страниц %d, PDF-выпусков %d, в таблице %d выпусков)",
-			mtForecastTable, pages, pdfs, len(known))
+		counts := mtForecastReleaseCounts(releases)
+		// Счётчики — часть сообщения: «комментариев 11: страниц 2, PDF 9; прогнозов 11» объясняет
+		// оператору, почему прогон пуст (спека §3.4, §3.5, шаг 4). Сообщение называет оба корпуса:
+		// отсутствие прогнозов не должно прятаться за числом комментариев.
+		log.Infof("%s: новых выпусков нет (комментариев %d: страниц %d, PDF %d; прогнозов %d; в таблице %d выпусков)",
+			mtForecastTable, counts.Comments, counts.CommentPages, counts.CommentPDFs, counts.Forecasts, len(known))
 		return 0, nil
 	}
 
 	// 5. Цикл по новым выпускам. Ошибки копятся — сбой одного выпуска не отменяет остальные:
-	// выпуски независимы (у каждого своя страница, файл и дата версии), а пропущенный подхватился
-	// бы следующим прогоном, если бы прогон молча прекращался на первом сбое.
+	// выпуски независимы (у каждого своя страница или PDF, файл и дата версии), а пропущенный
+	// подхватился бы следующим прогоном, если бы прогон молча прекращался на первом сбое.
 	var errs []error
 	for _, release := range fresh {
-		releasePage, pageErr := util.GetPage(release.URL)
-		if pageErr != nil {
-			errs = append(errs, fmt.Errorf("%s: %s: %w", mtForecastReleaseContext(release), release.URL, pageErr))
-			continue
-		}
-		href, linkErr := mtForecastPageXlsxURL(releasePage, release.ReleaseDate)
-		if linkErr != nil {
-			errs = append(errs, fmt.Errorf("%s: %s: %w", mtForecastReleaseContext(release), release.URL, linkErr))
-			continue
-		}
-		// Локальная копия встроенного шаблона: DataUrl и ImportFunc зависят от выпуска, а
-		// мутировать общую структуру импортёра нельзя (прецедент — moBrStat, cbr/mo_br.go).
-		// Копия приносит объявленную точку контроля публикации: без неё не было бы ни архива
-		// версии файла выпуска, ни строки source_publications (стандарт §9.6), а судьбу прогона
-		// она не решает — no-op считает гейт (спека §5.1). AfterImport у копии не выставляется:
-		// производные публикует шаг 2 (спека §5.3).
+		// Локальная копия встроенного шаблона: DataUrl и импорт-функция зависят от выпуска, а
+		// мутировать общую структуру импортёра нельзя (прецедент — moBrStat, cbr/mo_br.go). Копия
+		// приносит объявленную точку контроля публикации: без неё не было бы ни архива версии файла
+		// выпуска, ни строки source_publications (стандарт §9.6), а судьбу прогона она не решает —
+		// no-op считает гейт (спека §5.1). AfterImport у копии не выставляется: производные
+		// публикует шаг 2 (спека §5.3).
 		local := s.ClickHouseImport
-		local.DataUrl = cbrUrl + href
-		local.ImportFunc = mtForecastAppendPoints(release)
+		if release.PDF {
+			// PDF-выпуск: страницы у него нет, файл — сам PDF. Байты качает шаблон и тот же срез
+			// кладёт в винтажный архив версии (стандарт §9.6) — отдельного GET до шаблона нет.
+			local.DataUrl = release.URL
+			local.BodyFunc = mtForecastPDFAppendPoints(ctx, release)
+		} else {
+			releasePage, pageErr := util.GetPage(release.URL)
+			if pageErr != nil {
+				errs = append(errs, fmt.Errorf("%s: %s: %w", mtForecastReleaseContext(release), release.URL, pageErr))
+				continue
+			}
+			href, linkErr := mtForecastPageXlsxURL(releasePage, release.ReleaseDate)
+			if linkErr != nil {
+				errs = append(errs, fmt.Errorf("%s: %s: %w", mtForecastReleaseContext(release), release.URL, linkErr))
+				continue
+			}
+			local.DataUrl = cbrUrl + href
+			local.ImportFunc = mtForecastAppendPoints(release)
+		}
 		points, importErr := local.Import(ctx, conn)
 		if importErr != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", mtForecastReleaseContext(release), importErr))
