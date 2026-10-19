@@ -104,17 +104,15 @@
 
 ```bash
 make cpi-monthly-v3-public-test
-make cpi-monthly-v3-public ARGS="--verify-xlsx .worktrees/cpi-public-data-audit/build/cpi-public-audit/mp_survey_data.xlsx --sample weekly --horizons 1 --start 24"
-ML_LOG=1 make cpi-monthly-v3-public ARGS="--sample weekly --horizons 1,2,3,6 --start 24 --embargo 0"
-ML_LOG=1 make cpi-monthly-v3-public ARGS="--sample weekly --horizons 1 --start 24 --embargo 1"
-ML_LOG=1 make cpi-monthly-v3-public ARGS="--sample long --horizons 1 --start 48 --embargo 0"
-ML_LOG=1 make cpi-monthly-v3-public ARGS="--sample long --horizons 1 --start 24 --embargo 0"
+make cpi-monthly-v3-public ARGS="--verify-only --verify-xlsx /Users/whitefox/GolandProjects/clickhouse-import-rosstat/.worktrees/cpi-public-data-audit/build/cpi-public-audit/mp_survey_data.xlsx"
+ML_LOG=1 make cpi-monthly-v3-public ARGS="--all --allow-gate-diff"
 make all
 make docs-check
 ```
 
-- Официальные числа — только полный прогон; smoke — `--models` и малые окна.
-- Приёмка: гейты 1–6 зелёные; h1 primary; h2/h3/h6 secondary; run_id/sha256; повтор детерминизма.
+- Официальные числа — только полный прогон `--all`; smoke — `--models` и малые окна.
+- Если Stage 1 gate расходится, но `ind_only_bottomup` совпадает с Task 2 (допуск 1e-6), это ревизия live weekly/aggregate MP (спека §8.1): текущие baseline фиксируются, официальный прогон идёт с `--allow-gate-diff`, `data_revision=documented`. Если `ind_only_bottomup` тоже расходится — стоп.
+- Приёмка: h1 primary; h2/h3/h6 secondary; run_id/sha256; повтор детерминизма; CH↔XLSX exact.
 - Записать результаты в отчёт/JSON, обновить роадмап.
 
 ## Task 9: PR
