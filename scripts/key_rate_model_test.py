@@ -4241,5 +4241,284 @@ class TestRunSummaryExperimentLog(unittest.TestCase):
         self.assertEqual(fake.artifacts, [])
 
 
+class TestShockWeights(unittest.TestCase):
+    """Веса наблюдений `--shock-weights` (спека классификатора шоков §7).
+
+    Набор офлайн: CSV пишутся во временный каталог, фикстуры — закоммиченные
+    срезы, синтетика — `taylor_rows`/`ordinal_rows`. Проверяются четыре
+    контракта: валидация CSV, совпадение с прежними fit'ами при единичных
+    весах, понижение веса шока меняет коэффициент в ожидаемую сторону и
+    неизменность артефактов без флага.
+    """
+
+    def write_weights(self, directory, text: str) -> Path:
+        path = Path(directory) / "weights.csv"
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_unit_weights_match_unweighted_wls(self):
+        # WLS с weights=1 — тот же OLS: и коэффициенты, и HAC-ошибки. Это
+        # контракт совместимости: без флага путь обязан быть прежним, а с
+        # единичными весами — численно тем же (спека §7).
+        train = taylor_rows(40)[:30]
+        unweighted = km._taylor_fit(train)
+        weighted = km._taylor_fit(train, [1.0] * len(train))
+        np.testing.assert_allclose(weighted.params, unweighted.params, rtol=0, atol=1e-12)
+        np.testing.assert_allclose(weighted.bse, unweighted.bse, rtol=1e-10, atol=1e-12)
+        self.assertEqual(weighted.cov_type, "HAC")
+        self.assertEqual(weighted.cov_kwds["maxlags"], km.HAC_MAXLAGS)
+        self.assertTrue(weighted.cov_kwds["use_correction"])
+
+    def test_weighted_ordered_model_matches_unweighted_at_unit_weights(self):
+        # WeightedOrderedModel с единичными весами — OrderedModel в пределах
+        # 1e-6 (спека §7). Дополнительно пинуется само взвешивание
+        # правдоподобия: при весах 0.5 loglikeobs ровно вдвое меньше.
+        train = ordinal_rows(120)[:80]
+        model_unweighted, result_unweighted = km._ordered_fit(train)
+        model_weighted, result_weighted = km._ordered_fit(train, [1.0] * len(train))
+        self.assertIsInstance(model_weighted, km.WeightedOrderedModel)
+        self.assertIsInstance(model_weighted.freq_weights, np.ndarray)
+        np.testing.assert_allclose(
+            result_weighted.params, result_unweighted.params, rtol=0, atol=1e-6
+        )
+        np.testing.assert_allclose(
+            model_weighted.loglikeobs(result_unweighted.params),
+            model_unweighted.loglikeobs(result_unweighted.params),
+            rtol=0,
+            atol=1e-12,
+        )
+
+        exog = np.asarray([row.x for row in train], dtype=float)
+        endog = np.asarray([row.decision.y3 for row in train], dtype=int)
+        base = km.OrderedModel(endog, exog, distr="logit")
+        half = km.WeightedOrderedModel(
+            endog, exog, freq_weights=[0.5] * len(train), distr="logit"
+        )
+        np.testing.assert_allclose(
+            half.loglikeobs(result_unweighted.params),
+            0.5 * base.loglikeobs(result_unweighted.params),
+            rtol=0,
+            atol=1e-12,
+        )
+
+    def test_load_shock_weights_rejects_bad_values(self):
+        bad = (
+            ("meeting_date,weight\n2014-03-03,0\n", "вне (0, 1]"),
+            ("meeting_date,weight\n2014-03-03,1.5\n", "вне (0, 1]"),
+            ("meeting_date,weight\n2014-03-03,nan\n", "вне (0, 1]"),
+            (
+                "meeting_date,weight\n2014-03-03,0.5\n2014-03-03,0.2\n",
+                "встречается дважды",
+            ),
+            ("meeting_date,weight\n03.03.2014,0.5\n", "не ISO"),
+            ("meeting_date,weight\n2014-03-03,abc\n", "не число"),
+            ("meeting_date\n2014-03-03\n", "обязательных колонок"),
+            ("meeting_date,weight\n", "нет ни одной строки"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            for text, message in bad:
+                with self.subTest(message=message, text=text):
+                    with self.assertRaises(ValueError) as caught:
+                        km.load_shock_weights(self.write_weights(tmp, text))
+                    self.assertIn(message, str(caught.exception))
+            # Лишние колонки (артефакт классификатора) игнорируются, дата и вес
+            # читаются; дата без веса в файле — не ошибка загрузчика.
+            path = self.write_weights(
+                tmp,
+                "meeting_date,weight,emergency,explicit_shock\n"
+                "2014-03-03,0.25,1,1\n"
+                "2014-12-15,1.0,1,1\n",
+            )
+            self.assertEqual(
+                km.load_shock_weights(path),
+                {date(2014, 3, 3): 0.25, date(2014, 12, 15): 1.0},
+            )
+
+    def test_missing_weight_defaults_to_one_with_warning(self):
+        rows = synthetic_rows(4, first=date(2020, 1, 1))
+        weights = {rows[0].decision.meeting_date: 0.5}
+        with self.assertLogs(km.log, level="WARNING") as captured:
+            values, missing = km.weights_for_rows(rows, weights)
+        self.assertEqual(values, [0.5, 1.0, 1.0, 1.0])
+        self.assertEqual(
+            missing, [row.decision.meeting_date for row in rows[1:]]
+        )
+        warning = "\n".join(captured.output)
+        self.assertIn("3 заседаний без веса", warning)
+        self.assertIn(rows[1].decision.meeting_date.isoformat(), warning)
+        self.assertNotIn(rows[0].decision.meeting_date.isoformat(), warning)
+
+        # walk_forward передаёт веса ТОЛЬКО взвешиваемым методам: у taylor
+        # третий аргумент — веса train-окна, у hold вызов прежний (два
+        # аргумента), а счётчик пропусков агрегируется по УНИКАЛЬНЫМ датам.
+        seen = []
+
+        def probe(train, row, train_weights):
+            seen.append(list(train_weights))
+            return km.Forecast(0.0, None)
+
+        with self.assertLogs(km.log, level="WARNING") as captured:
+            predictions, skipped = km.walk_forward(
+                rows, "taylor", probe, min_train=2, weights=weights
+            )
+        self.assertEqual(skipped, 0)
+        self.assertEqual(len(predictions), 2)
+        self.assertEqual(seen, [[0.5, 1.0], [0.5, 1.0, 1.0]])
+        self.assertIn(
+            "2 заседаний обучающих окон без веса", "\n".join(captured.output)
+        )
+
+        # Бенчмарк не взвешивается: fit_predict остаётся двухаргументным и
+        # получает управление даже при заданных весах.
+        with self.assertNoLogs(km.log, level="WARNING"):
+            benchmark_predictions, benchmark_skipped = km.walk_forward(
+                rows, "hold", km.predict_hold, min_train=2, weights=weights
+            )
+        self.assertEqual(benchmark_skipped, 0)
+        self.assertEqual(len(benchmark_predictions), 2)
+
+    def test_weighted_fit_downweights_shock(self):
+        # Один шок в синтетике Тейлора: y заменён выбросом (+20 п.п.).
+        # Невзвешенный OLS подстраивается под него, взвешенный WLS с весом
+        # 0.01 возвращает ρ к истинному 0.9 — «мягкое понижение» в действии.
+        rows = taylor_rows(60)
+        index = 30
+        shock = rows[index]
+        rows[index] = dataclasses.replace(
+            shock,
+            decision=dataclasses.replace(
+                shock.decision,
+                rate_after=shock.decision.rate_before + 20.0,
+                step_bp=2000,
+                y3=1,
+            ),
+        )
+        weights = [1.0] * len(rows)
+        weights[index] = 0.01
+        unweighted = km._taylor_fit(rows)
+        weighted = km._taylor_fit(rows, weights)
+        self.assertLess(
+            abs(float(weighted.params[1]) - 0.9),
+            abs(float(unweighted.params[1]) - 0.9),
+        )
+
+    def test_no_flag_artifacts_unchanged(self):
+        # Без флага отчёт/CSV/JSON — прежние: нет раздела «Веса шоков», нет
+        # колонки weight, а числа фикстуры совпадают с зафиксированными до
+        # Task 4 (26 решений, 2 фолда expanding, метрики ordered_logit/taylor).
+        with tempfile.TemporaryDirectory() as tmp:
+            with unittest.mock.patch.object(
+                km, "ch_query", side_effect=ch_query_from_fixtures
+            ):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    code = km.run_summary(
+                        rolling=False, today=date(2017, 1, 1), out_dir=Path(tmp)
+                    )
+            self.assertEqual(code, 0)
+            report = (Path(tmp) / km.REPORT_NAME).read_text(encoding="utf-8")
+            csv_text = (Path(tmp) / km.PREDICTIONS_NAME).read_text(encoding="utf-8")
+            payload = json.loads(
+                (Path(tmp) / km.FORECAST_NAME).read_text(encoding="utf-8")
+            )
+        self.assertNotIn("## Веса шоков", report)
+        self.assertEqual(csv_text.splitlines()[0], ",".join(km.PREDICTION_COLUMNS))
+        self.assertNotIn("weight", csv_text.splitlines()[0])
+        self.assertEqual(len(csv_text.splitlines()), 13)
+        self.assertEqual(
+            sorted(payload),
+            [
+                "data_asof",
+                "forecast_date",
+                "meeting_date",
+                "methods",
+                "note",
+                "rate_before",
+                "sample_size",
+            ],
+        )
+        self.assertEqual(payload["sample_size"], 26)
+        self.assertEqual(
+            metric_cells(report, "taylor", "expanding"),
+            ["taylor", "expanding", "2", "22.43", "22.39", "0.000", "0.000", "—", "—"],
+        )
+        self.assertEqual(
+            metric_cells(report, "ordered_logit", "expanding"),
+            [
+                "ordered_logit", "expanding", "2", "6.34", "4.94",
+                "0.000", "0.000", "0.1884", "0.4214",
+            ],
+        )
+
+    def test_weighted_run_adds_report_section_and_weight_column(self):
+        # Интеграционный прогон с флагом на фикстуре: раздел «Веса шоков» с
+        # покрытием/распределением/DM/топом и колонка weight в конце CSV.
+        decisions, _, _ = km.build_decisions(fixture_meetings(), fixture_key_rate(), [])
+        cpd = km.cpd_from_rows(fixture_rows("cpd_core_2013_2016.csv"))
+        ibk = km.ibk_from_rows(fixture_rows("ibk_2013_2016.csv"))
+        rows, _ = km.build_rows(decisions, cpd, ibk)
+        weights = {row.decision.meeting_date: 1.0 for row in rows}
+        weights[date(2014, 3, 3)] = 0.25
+        weights[date(2014, 12, 15)] = 0.5
+        with tempfile.TemporaryDirectory() as tmp:
+            with unittest.mock.patch.object(
+                km, "ch_query", side_effect=ch_query_from_fixtures
+            ):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    code = km.run_summary(
+                        rolling=False,
+                        today=date(2017, 1, 1),
+                        out_dir=Path(tmp),
+                        shock_weights=weights,
+                        shock_weights_source="test-weights.csv",
+                    )
+            self.assertEqual(code, 0)
+            report = (Path(tmp) / km.REPORT_NAME).read_text(encoding="utf-8")
+            csv_lines = (Path(tmp) / km.PREDICTIONS_NAME).read_text(
+                encoding="utf-8"
+            ).splitlines()
+        self.assertIn("## Веса шоков", report)
+        self.assertIn("| источник | test-weights.csv |", report)
+        self.assertIn("| заседаний в выборке | 26 |", report)
+        self.assertIn("| покрыто явным весом | 26 |", report)
+        self.assertIn("| пониженных (w < 1) | 2 |", report)
+        self.assertIn("| 2014-03-03 | 0.2500 |", report)
+        self.assertIn("DM (HLN)", report)
+        self.assertTrue(csv_lines[0].endswith(",weight"))
+        self.assertEqual(
+            csv_lines[0].split(","), list(km.PREDICTION_COLUMNS) + ["weight"]
+        )
+
+    def test_weighted_csv_fills_only_weighted_methods(self):
+        # Прямой контракт CSV: у taylor/ordered_logit — применённый вес
+        # прогнозируемого заседания, у бенчмарков и climatology — пустая ячейка.
+        predictions = [
+            km.Prediction(date(2014, 3, 3), 0.0, 0, "hold", "expanding", 0.0, None),
+            km.Prediction(date(2014, 3, 3), 0.0, 0, "taylor", "expanding", 0.0, None),
+            km.Prediction(
+                date(2014, 3, 3), 0.0, 0, "ordered_logit", "expanding", 0.0,
+                (0.2, 0.7, 0.1),
+            ),
+            km.Prediction(
+                date(2014, 3, 3), 0.0, 0, "climatology", "expanding", 0.0,
+                (0.2, 0.7, 0.1),
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "predictions.csv"
+            km.write_predictions(
+                path, predictions, weights={date(2014, 3, 3): 0.25}
+            )
+            with path.open(newline="", encoding="utf-8") as handle:
+                rows = list(csv.DictReader(handle))
+        self.assertEqual(
+            list(rows[0]), list(km.PREDICTION_COLUMNS) + ["weight"]
+        )
+        by_method = {row["method"]: row["weight"] for row in rows}
+        self.assertEqual(by_method["hold"], "")
+        self.assertEqual(by_method["climatology"], "")
+        self.assertEqual(by_method["taylor"], repr(0.25))
+        self.assertEqual(by_method["ordered_logit"], repr(0.25))
+
+
 if __name__ == "__main__":
     unittest.main()

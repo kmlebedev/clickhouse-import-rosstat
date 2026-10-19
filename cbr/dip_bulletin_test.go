@@ -215,6 +215,8 @@ type dipFakeConn struct {
 	rows     driver.Rows // ответ Query, когда ошибки нет
 	queryErr error       // ошибка Query: сценарий «гейт не прочитан»
 	queries  []string    // тексты запросов Query и QueryRow: тест пинит сами запросы
+	execs    []string    // тексты запросов Exec: тест пинит создание витрин point-in-time слоя
+	execErr  error       // ошибка Exec: сценарий сбоя витрин слоя
 	row      driver.Row  // ответ QueryRow, когда ошибки нет
 	rowArgs  [][]any     // аргументы QueryRow: тест пинит, что id выпуска уходит плейсхолдером
 }
@@ -235,6 +237,14 @@ func (c *dipFakeConn) QueryRow(_ context.Context, query string, args ...any) dri
 	c.queries = append(c.queries, query)
 	c.rowArgs = append(c.rowArgs, args)
 	return c.row
+}
+
+// Exec — приёмник CREATE OR REPLACE VIEW и ALTER TABLE витрин point-in-time слоя
+// (ensurePitViews): тексты запросов копятся в execs, а сбой моделируется полем execErr
+// (TestEnsurePitViewsError). Необъявленный Exec унаследовал бы nil-заглушку.
+func (c *dipFakeConn) Exec(_ context.Context, query string, _ ...any) error {
+	c.execs = append(c.execs, query)
+	return c.execErr
 }
 
 // dipFakeRows — ответ гейта: строки release_id. Объявлены только методы, которые вызывает
@@ -427,6 +437,71 @@ func TestDipReleaseWrittenError(t *testing.T) {
 			t.Errorf("ошибка %q не содержит %q: без имени выпуска сбой не привязать к шагу", err, want)
 		}
 	}
+}
+
+// TestEnsurePitViewsCreatesAll — контракт ensurePitViews по текстам исполненных запросов:
+// витрины слоя создаются все три и именно через CREATE OR REPLACE VIEW, as-of несёт параметр
+// {as_of:Date}, а колонковые комментарии есть только у непараметризованных витрин —
+// 7 (v_point_in_time) + 6 (v_point_in_time_version) = 13. У v_point_in_time_asof колонковых
+// комментариев нет: у параметризованной витрины ClickHouse нет схемы без аргументов, и
+// COMMENT COLUMN возвращает NOT_FOUND_COLUMN_IN_BLOCK (спека §2.6, ограничение CH 26.10).
+func TestEnsurePitViewsCreatesAll(t *testing.T) {
+	conn := &dipFakeConn{row: &dipFakeRow{written: 1}}
+	if err := ensurePitViews(context.Background(), conn); err != nil {
+		t.Fatalf("ensurePitViews: %v", err)
+	}
+	joined := strings.Join(conn.execs, "\n")
+	for _, name := range []string{"v_point_in_time", "v_point_in_time_asof", "v_point_in_time_version"} {
+		if !strings.Contains(joined, "CREATE OR REPLACE VIEW "+name+" ") {
+			t.Errorf("нет CREATE OR REPLACE VIEW для %s", name)
+		}
+	}
+	if !strings.Contains(joined, "{as_of:Date}") {
+		t.Error("в определении as-of витрины нет параметра {as_of:Date}")
+	}
+	if strings.Count(joined, "CREATE OR REPLACE VIEW ") != 3 {
+		t.Errorf("CREATE OR REPLACE VIEW: %d, want 3", strings.Count(joined, "CREATE OR REPLACE VIEW "))
+	}
+	// У параметризованной витрины колонковых комментариев быть не может: 7 (base) + 6 (version).
+	if got := strings.Count(joined, "COMMENT COLUMN"); got != 13 {
+		t.Errorf("COMMENT COLUMN: %d, want 13 (7 base + 6 version)", got)
+	}
+}
+
+// TestEnsurePitViewsError — сбой CreateView не проглатывается и не теряет имя витрины: прогон
+// обязан увидеть ошибку слоя (Import присоединяет её к errors.Join), а диагноз — назвать
+// витрину и причину. util.CreateView уже оборачивает ошибку Exec как «<view>: …», поэтому
+// ensurePitViews не должен дублировать префикс.
+func TestEnsurePitViewsError(t *testing.T) {
+	t.Run("exec", func(t *testing.T) {
+		conn := &dipFakeConn{row: &dipFakeRow{written: 1}, execErr: errors.New("boom")}
+		err := ensurePitViews(context.Background(), conn)
+		if err == nil {
+			t.Fatal("ожидалась ошибка: сбой CreateView не должен проглатываться")
+		}
+		for _, want := range []string{"v_point_in_time", "boom"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("ошибка %q не содержит %q", err, want)
+			}
+		}
+		if got := strings.Count(err.Error(), "v_point_in_time"); got != 1 {
+			t.Errorf("имя витрины встречается %d раз, want 1 (двойной префикс): %q", got, err)
+		}
+	})
+	t.Run("metadata", func(t *testing.T) {
+		// Ошибка проверки system.tables приходит из Scan и не обёрнута util.CreateView:
+		// имя витрины обязан добавить ensurePitViews.
+		conn := &dipFakeConn{row: &dipFakeRow{scanErr: errors.New("meta boom")}}
+		err := ensurePitViews(context.Background(), conn)
+		if err == nil {
+			t.Fatal("ожидалась ошибка: сбой проверки таблицы не должен проглатываться")
+		}
+		for _, want := range []string{"v_point_in_time", "meta boom"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("ошибка %q не содержит %q", err, want)
+			}
+		}
+	})
 }
 
 // dipReleaseIDs — id выпусков в порядке среза: проверяется порядок и состав выпусков, а поля
