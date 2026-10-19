@@ -615,10 +615,8 @@ def _subset_summary(predictions: list, models: dict, selector) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def regression_gate(
-    sample: str, start: int, embargo: int, summary: dict
-) -> tuple:
-    reference = STAGE1_REFERENCE.get((sample, start, embargo))
+def _reference_gate(reference: dict, summary: dict) -> tuple:
+    """Сверка summary с эталоном; `(gate, failed)` или `({}, [])` без эталона."""
     if reference is None:
         return {}, []
     gate = {}
@@ -640,33 +638,103 @@ def regression_gate(
         if not ok:
             failed.append(model)
     return gate, failed
+
+
+def regression_gate(
+    sample: str, start: int, embargo: int, summary: dict, horizon: int = 1
+) -> tuple:
+    """Stage 1 gate только для h1: эталоны — месячные п.п., не cumulative %."""
+    if horizon != 1:
+        return {}, []
+    return _reference_gate(
+        STAGE1_REFERENCE.get((sample, start, embargo)), summary
+    )
 
 
 def task2_gate(
-    sample: str, start: int, embargo: int, summary: dict
+    sample: str, start: int, embargo: int, summary: dict, horizon: int = 1
 ) -> tuple:
-    reference = TASK2_REFERENCE.get((sample, start, embargo))
-    if reference is None:
+    """Task 2 gate только для h1: эталоны — месячные п.п."""
+    if horizon != 1:
         return {}, []
-    gate = {}
-    failed = []
-    for model, expected in reference.items():
-        item = summary.get(model)
-        if not item or not item.get("n"):
-            gate[model] = {"status": "missing"}
-            continue
-        actual = item["rmse"]
-        delta = actual - expected
-        ok = abs(delta) <= REGRESSION_TOLERANCE
-        gate[model] = {
-            "status": "ok" if ok else "differs",
-            "expected": expected,
-            "actual": actual,
-            "delta": delta,
-        }
-        if not ok:
-            failed.append(model)
-    return gate, failed
+    return _reference_gate(
+        TASK2_REFERENCE.get((sample, start, embargo)), summary
+    )
+
+
+def build_gates(
+    windows: dict, industry_meta: dict, xlsx_gate: dict
+) -> tuple:
+    """Гейты по сохранённым окнам: Stage 1/Task 2 (h1), данные, источник.
+
+    Возвращает `(gates, gate_failed)`. `data_revision` документируется, если
+    weekly h1 Stage 1 расходится, а `ind_only_bottomup` (без weekly и aggregate
+    MP) воспроизводит Task 2 в пределах допуска.
+    """
+    gates = {"data": {"status": "ok", "detail": _data_detail(industry_meta)}}
+    if xlsx_gate.get("status", "not run") != "not run":
+        gates["xlsx"] = dict(xlsx_gate)
+        if not gates["xlsx"].get("detail"):
+            gates["xlsx"]["detail"] = (
+                f"n={gates['xlsx'].get('n', '—')}, "
+                f"max abs diff={gates['xlsx'].get('max_abs_diff', '—')}, "
+                f"missing={gates['xlsx'].get('missing_in_ch', '—')}, "
+                f"mismatched={gates['xlsx'].get('mismatched', '—')}, "
+                f"extra={gates['xlsx'].get('extra_in_ch', '—')}"
+            )
+    gate_failed = [] if xlsx_gate.get("status") != "failed" else ["xlsx"]
+    raw_gates = {}
+    for key, window in windows.items():
+        stage1, failed1 = regression_gate(
+            window["sample"],
+            window["start"],
+            window["embargo"],
+            window["summary"],
+            window.get("horizon", 1),
+        )
+        task2, failed2 = task2_gate(
+            window["sample"],
+            window["start"],
+            window["embargo"],
+            window["summary"],
+            window.get("horizon", 1),
+        )
+        raw_gates[key] = {"stage1": stage1, "task2": task2}
+        if stage1:
+            gates[f"stage1_{key}"] = {
+                "status": "ok" if not failed1 else "differs",
+                "detail": _gate_detail(stage1),
+            }
+            gate_failed.extend(failed1)
+        if task2:
+            gates[f"task2_{key}"] = {
+                "status": "ok" if not failed2 else "differs",
+                "detail": _gate_detail(task2),
+            }
+            gate_failed.extend(failed2)
+    weekly_gate = raw_gates.get("weekly__h1__start24__embargo0", {})
+    if weekly_gate:
+        stage1_differs = any(
+            item.get("status") == "differs"
+            for item in weekly_gate.get("stage1", {}).values()
+        )
+        industry_ok = (
+            weekly_gate.get("task2", {})
+            .get("ind_only_bottomup", {})
+            .get("status") == "ok"
+        )
+        if stage1_differs and industry_ok:
+            gates["data_revision"] = {
+                "status": "documented",
+                "detail": (
+                    "Stage 1 baseline сдвинулся из-за живой ревизии weekly/"
+                    "aggregate MP; ind_only_bottomup (без weekly и aggregate MP) "
+                    "воспроизводит Task 2 в пределах 1e-6 — источник #239 и "
+                    "базовые признаки стабильны. Контрасты считаются от "
+                    "текущих baseline на общих фолдах."
+                ),
+            }
+    return gates, sorted(set(gate_failed))
 
 
 def _significant_better(item: dict) -> bool:
@@ -916,7 +984,8 @@ def write_final_report(path: Path, payload: dict) -> None:
         )
     lines.append(
         f"- Таргеты: 4 ряда `rosstat_ipc_mes`, cutoff 8-е M+1; "
-        f"weekly-ряды: {payload['data']['weekly']['n_series']}."
+        f"weekly-ряды: {payload['data']['weekly']['n_series']} товарных "
+        "(агрегат исключён)."
     )
     lines.append("")
     lines.append("## Окна")
@@ -966,7 +1035,7 @@ def write_final_report(path: Path, payload: dict) -> None:
     lines.append("")
     h1 = payload["windows"].get("weekly__h1__start24__embargo0")
     if h1:
-        _pair_table(lines, h1["pairs"], "Primary-контрасты: weekly h1")
+        _pair_table(lines, h1["pairs"], "Контрасты: weekly h1")
         lines.append("## Last 12 / ex-2022")
         lines.append("")
         lines.append("| Модель | last 12 RMSE | ex-2022 RMSE |")
@@ -978,6 +1047,11 @@ def write_final_report(path: Path, payload: dict) -> None:
                 f"| `{model}` | {_fmt(last['rmse'])} | "
                 f"{_fmt(ex.get('rmse'))} |"
             )
+        lines.append("")
+        lines.append(
+            "> Weekly-тест начинается 2024-01, поэтому ex-2022 = полная "
+            "выборка; режим 2022 покрыт `long`-окном."
+        )
         lines.append("")
     for key, window in payload["windows"].items():
         if key == "weekly__h1__start24__embargo0":
@@ -1290,6 +1364,13 @@ def run(
             "mismatched": len(verification["mismatched"]),
             "extra_in_ch": len(verification["extra_in_ch"]),
             "path": str(xlsx_path),
+            "detail": (
+                f"n={verification['common_points']}, "
+                f"max abs diff={verification['max_abs_diff']}, "
+                f"missing={len(verification['missing_in_ch'])}, "
+                f"mismatched={len(verification['mismatched'])}, "
+                f"extra={len(verification['extra_in_ch'])}"
+            ),
         }
         print(
             f"CH↔XLSX: n={verification['common_points']}, "
@@ -1324,55 +1405,7 @@ def run(
         )
         windows[window["window"]] = window
 
-    gates = {"data": {"status": "ok", "detail": _data_detail(industry_meta)}}
-    if xlsx_gate["status"] != "not run":
-        gates["xlsx"] = xlsx_gate
-    gate_failed = [] if xlsx_gate["status"] != "failed" else ["xlsx"]
-    raw_gates = {}
-    for key, window in windows.items():
-        stage1, failed1 = regression_gate(
-            window["sample"], window["start"], window["embargo"],
-            window["summary"],
-        )
-        task2, failed2 = task2_gate(
-            window["sample"], window["start"], window["embargo"],
-            window["summary"],
-        )
-        raw_gates[key] = {"stage1": stage1, "task2": task2}
-        if stage1:
-            gates[f"stage1_{key}"] = {
-                "status": "ok" if not failed1 else "differs",
-                "detail": _gate_detail(stage1),
-            }
-            gate_failed.extend(failed1)
-        if task2:
-            gates[f"task2_{key}"] = {
-                "status": "ok" if not failed2 else "differs",
-                "detail": _gate_detail(task2),
-            }
-            gate_failed.extend(failed2)
-    weekly_gate = raw_gates.get("weekly__h1__start24__embargo0", {})
-    if weekly_gate:
-        stage1_differs = any(
-            item.get("status") == "differs"
-            for item in weekly_gate.get("stage1", {}).values()
-        )
-        industry_ok = (
-            weekly_gate.get("task2", {})
-            .get("ind_only_bottomup", {})
-            .get("status") == "ok"
-        )
-        if stage1_differs and industry_ok:
-            gates["data_revision"] = {
-                "status": "documented",
-                "detail": (
-                    "Stage 1 baseline сдвинулся из-за живой ревизии weekly/"
-                    "aggregate MP; ind_only_bottomup (без weekly и aggregate MP) "
-                    "воспроизводит Task 2 в пределах 1e-6 — источник #239 и "
-                    "базовые признаки стабильны. Контрасты считаются от "
-                    "текущих baseline на общих фолдах."
-                ),
-            }
+    gates, gate_failed = build_gates(windows, industry_meta, xlsx_gate)
     decision = decide(windows)
     first_rows, _ = next(iter(samples.values()))
     payload = {
@@ -1462,18 +1495,20 @@ def _report_only(out_dir: Path, specs: list, allow_gate_diff: bool) -> dict:
             "sha256": "—",
         },
     )
+    xlsx_gate = meta.get("gates", {}).get("xlsx", {"status": "not run"})
+    gates, gate_failed = build_gates(windows, industry, xlsx_gate)
     payload = {
         "schema": "cpi-monthly-v3-public/v1",
         "data": meta.get(
             "data", {"industry": industry, "weekly": {"n_series": 0}}
         ),
-        "gates": meta.get("gates", {}),
+        "gates": gates,
         "windows": windows,
         "decision": decide(windows),
         "sample_hash": meta.get("sample_hash", ""),
-        "gate_failed": meta.get("gate_failed", []),
+        "gate_failed": gate_failed,
         "allow_gate_diff": bool(allow_gate_diff),
-        "note": "report-only: данные/гейты из meta.json полного прогона",
+        "note": "report-only: данные из meta.json, гейты пересчитаны по окнам",
     }
     report_path = ROOT / "docs" / "research" / "2026-10-19-cpi-v3-public.md"
     json_path = ROOT / "docs" / "research" / "2026-10-19-cpi-v3-public.json"

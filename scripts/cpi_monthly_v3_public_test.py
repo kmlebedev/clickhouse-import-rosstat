@@ -395,5 +395,55 @@ class TestSampleHash(unittest.TestCase):
         )
 
 
+class TestBuildGates(unittest.TestCase):
+    def test_horizon_gate_only_h1_and_data_revision(self):
+        windows = {
+            "weekly__h1__start24__embargo0": {
+                "sample": "weekly",
+                "start": 24,
+                "embargo": 0,
+                "horizon": 1,
+                "summary": {
+                    "v2_bottomup": {"n": 32, "rmse": 0.36},
+                    "v3_bottomup": {"n": 32, "rmse": 0.31},
+                    "v3_ind_bottomup": {"n": 32, "rmse": 0.35},
+                    "ind_only_bottomup": {"n": 32, "rmse": 0.384958},
+                },
+            },
+            "weekly__h2__start24__embargo0": {
+                "sample": "weekly",
+                "start": 24,
+                "embargo": 0,
+                "horizon": 2,
+                "summary": {
+                    "v2_bottomup": {"n": 30, "rmse": 0.6},
+                    "v3_bottomup": {"n": 30, "rmse": 0.5},
+                },
+            },
+        }
+        industry = {
+            "n_series": 48,
+            "n_points": 14_256,
+            "first": "2002-01-01",
+            "last": "2026-09-01",
+        }
+        gates, failed = m.build_gates(windows, industry, {"status": "ok"})
+        self.assertIn("data_revision", gates)
+        self.assertNotIn("stage1_weekly__h2__start24__embargo0", gates)
+        self.assertIn("stage1_weekly__h1__start24__embargo0", gates)
+        self.assertEqual(
+            gates["stage1_weekly__h1__start24__embargo0"]["status"],
+            "differs",
+        )
+        self.assertIn("v2_bottomup", failed)
+
+    def test_horizon_gate_skips_non_h1(self):
+        gate, failed = m.regression_gate(
+            "weekly", 24, 0, {"v2_bottomup": {"n": 30, "rmse": 0.6}}, 2
+        )
+        self.assertEqual(gate, {})
+        self.assertEqual(failed, [])
+
+
 if __name__ == "__main__":
     unittest.main()
