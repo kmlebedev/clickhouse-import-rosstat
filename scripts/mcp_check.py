@@ -917,6 +917,130 @@ async def check(params, server_log):
                                             "make import STAT=rosstat_ipc_weeks_bulletins")
             failed += not expect("агрегатный ряд бюллетеней rosstat непуст", rosstat_bulletins_n == 502, rosstat_bulletins_detail)
 
+            # Контур Минфина (пункт key-rate/phase-2-minfin-scrape, спека 2026-10-19
+            # minfin-deficit-oil-gas §4.2): витрина v_minfin_budget читается агентом и
+            # НЕПУСТА, федеральный дефицит идёт отдельным рядом (source = 'minfin'), а новый
+            # источник minfin_oil_gas отдаёт оба ряда — «Нефтегазовые доходы, всего» и «НДПИ».
+            #
+            # Строки публикуют импортёры пакета minfin/, поэтому пустая витрина означает ни
+            # разу не отработавший шаг dagu/minfin.yaml, а не отсутствие данных у источника.
+            # Существование витрины подтверждается ЗАПРОСОМ К НЕЙ, а не поиском имени в
+            # ответе list_tables (урок bold: в том тексте имя попадает из COMMENT соседки);
+            # «нет витрины» (UNKNOWN_TABLE) и «нет прав» (ACCESS_DENIED) приходят ошибкой и
+            # в result_rows не разбираются.
+            minfin_view = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_minfin_budget"}))
+            minfin_view_rows = result_rows(minfin_view)
+            minfin_view_n = minfin_view_rows[0].get("count()") if minfin_view_rows else None
+            if minfin_view_rows is None:
+                minfin_view_detail = (f"витрина не читается: {minfin_view[:200]} — прогнать импортёры "
+                                      "пакета: make import "
+                                      "STAT=minfin_fed_bud_mes,minfin_fed_bud_mesyats,minfin_oil_gas_mes")
+            elif (minfin_view_n or 0) > 0:
+                minfin_view_detail = f"строк: {minfin_view_n}"
+            else:
+                minfin_view_detail = ("строк: 0 — прогнать импортёры пакета: make import "
+                                      "STAT=minfin_fed_bud_mes,minfin_fed_bud_mesyats,minfin_oil_gas_mes "
+                                      "(витрину пересоздаёт AfterImport прогона)")
+            failed += not expect("витрина v_minfin_budget существует и непуста",
+                                 (minfin_view_n or 0) > 0, minfin_view_detail)
+
+            # Новый источник проверяется отдельно: общего count() > 0 мало — витрину
+            # пересоздаёт AfterImport любого из трёх импортёров, поэтому зелёная витрина
+            # могла бы держать только старые ряды. Два ряда и не меньше 210 точек
+            # (2 × 105 месяцев 2018-01…2026-09 выпуска 05.10.2026) означают, что шаг
+            # minfin_oil_gas_mes отработал; число сверяется как «>=», потому что новые
+            # выпуски добавляют месяцы, а пропавший ряд ловится равенством s == 2.
+            minfin_oil_raw = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n, uniqExact(series) AS s FROM v_minfin_budget "
+                "WHERE source = 'minfin_oil_gas'"}))
+            minfin_oil = result_rows(minfin_oil_raw)
+            minfin_oil_n = minfin_oil[0].get("n") if minfin_oil else None
+            minfin_oil_s = minfin_oil[0].get("s") if minfin_oil else None
+            if minfin_oil is None:
+                minfin_oil_detail = f"ответ не распознан: {minfin_oil_raw[:200]}"
+            else:
+                minfin_oil_detail = (f"точек: {minfin_oil_n} (want >= 210), "
+                                     f"рядов: {minfin_oil_s} (want 2)")
+                if (minfin_oil_n or 0) < 210 or minfin_oil_s != 2:
+                    minfin_oil_detail += " — прогнать make import STAT=minfin_oil_gas_mes"
+            failed += not expect("v_minfin_budget: нефтегазовые доходы и НДПИ",
+                                 bool(minfin_oil) and (minfin_oil_n or 0) >= 210 and minfin_oil_s == 2,
+                                 minfin_oil_detail)
+
+            # Каталог нового источника — ровно два ряда: «Нефтегазовые доходы, всего» и
+            # «НДПИ». Точное равенство, а не «> 0»: односторонний контракт стандарта §11.4
+            # требует описания каждого разобранного ряда, а третий ряд означал бы ряд,
+            # которого нет в объявленном наборе.
+            minfin_oil_catalog = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'minfin_oil_gas'"}))
+            minfin_oil_catalog_rows = result_rows(minfin_oil_catalog)
+            minfin_oil_catalog_n = minfin_oil_catalog_rows[0].get("n") if minfin_oil_catalog_rows else None
+            if minfin_oil_catalog_rows is None:
+                minfin_oil_catalog_detail = f"ответ не распознан: {minfin_oil_catalog[:200]}"
+            elif minfin_oil_catalog_n == 2:
+                minfin_oil_catalog_detail = "рядов minfin_oil_gas: 2 (Нефтегазовые доходы, всего + НДПИ)"
+            else:
+                minfin_oil_catalog_detail = (f"рядов minfin_oil_gas: {minfin_oil_catalog_n}, want 2 — "
+                                             "прогнать make import STAT=minfin_oil_gas_mes "
+                                             "(каталог перепубликовывается прогоном)")
+            failed += not expect("каталог minfin_oil_gas полон", minfin_oil_catalog_n == 2,
+                                 minfin_oil_catalog_detail)
+
+            # Федеральный дефицит — отдельная строка существующей таблицы minfin_fed_bud_mes
+            # (source = 'minfin'), которой до пункта не было: дефицит был только у
+            # консолидированного бюджета (source = 'minfin_mesyats'). Проверяются ДВА
+            # независимых утверждения:
+            #   1) данные — в витрине есть точки этого ряда (запрос к v_minfin_budget, а не
+            #      к каталогу: каталог публикуется независимо от того, нашёл ли парсер
+            #      строку в файле, поэтому проверка одного каталога прошла бы и при пустом
+            #      ряде);
+            #   2) описание — ряд есть в v_series_catalog по паре (source, series), иначе
+            #      агент увидит точки без единиц и привязки даты.
+            minfin_deficit = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n, min(date) AS first, max(date) AS last FROM v_minfin_budget "
+                "WHERE source = 'minfin' AND series = 'Дефицит (-)/Профицит (+)'"}))
+            minfin_deficit_rows = result_rows(minfin_deficit)
+            minfin_deficit_n = minfin_deficit_rows[0].get("n") if minfin_deficit_rows else None
+            if minfin_deficit_rows is None:
+                minfin_deficit_detail = f"ответ не распознан: {minfin_deficit[:200]}"
+            elif (minfin_deficit_n or 0) > 0:
+                minfin_deficit_detail = (f"точек: {minfin_deficit_n}, "
+                                         f"{minfin_deficit_rows[0].get('first')} … {minfin_deficit_rows[0].get('last')}")
+            else:
+                minfin_deficit_detail = ("точек: 0 — прогнать make import STAT=minfin_fed_bud_mes "
+                                         "(ряд разбирается из *_mes.xlsx)")
+            failed += not expect("витрина: федеральный дефицит отдельным рядом",
+                                 (minfin_deficit_n or 0) > 0, minfin_deficit_detail)
+
+            minfin_deficit_catalog = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_series_catalog "
+                "WHERE source = 'minfin' AND series = 'Дефицит (-)/Профицит (+)'"}))
+            minfin_deficit_catalog_rows = result_rows(minfin_deficit_catalog)
+            minfin_deficit_catalog_n = (minfin_deficit_catalog_rows[0].get("n")
+                                        if minfin_deficit_catalog_rows else None)
+            if minfin_deficit_catalog_rows is None:
+                minfin_deficit_catalog_detail = f"ответ не распознан: {minfin_deficit_catalog[:200]}"
+            elif minfin_deficit_catalog_n == 1:
+                minfin_deficit_catalog_detail = "ряд «Дефицит (-)/Профицит (+)» описан в source = 'minfin'"
+            else:
+                minfin_deficit_catalog_detail = (f"записей: {minfin_deficit_catalog_n}, want 1 — прогнать "
+                                                 "make import STAT=minfin_fed_bud_mes "
+                                                 "(каталог перепубликовывается прогоном)")
+            failed += not expect("каталог: федеральный дефицит описан",
+                                 minfin_deficit_catalog_n == 1, minfin_deficit_catalog_detail)
+
+            # Сырые таблицы пакета агенту не выданы — как macro_series и cbr_int_rate_loans:
+            # читать бюджетный контур агент обязан только через v_minfin_budget (единицы и
+            # привязка даты описаны в v_series_catalog). Таблицы создаёт DDL-прогон
+            # импортёра, поэтому UNKNOWN_TABLE здесь — провал, а не успех: таблица обязана
+            # существовать и быть закрытой.
+            for table, label in (("minfin_fed_bud_mes", "федеральный бюджет, месячные разности"),
+                                 ("minfin_fed_bud_mesyats", "консолидированный бюджет, месячные разности"),
+                                 ("minfin_oil_gas_mes", "нефтегазовые доходы и НДПИ")):
+                raw = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {table}"}))
+                denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+                failed += not expect(f"сырая {table} закрыта ({label})", denied,
+                                     f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
+
             # Контур потребительских расходов Сбера (фаза 2 роадмапа «починка пустых рядов»,
             # импортёры sber_consumper_spending_index и sber_izmenenie_trat): общая витрина
             # v_bank_sber_spending читается агентом и НЕПУСТА, каталог описывает её ряды двумя
