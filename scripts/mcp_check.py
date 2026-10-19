@@ -706,8 +706,23 @@ async def check(params, server_log):
             survey_catalog = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_series_catalog WHERE source = 'cbr_survey'"}))
             survey_catalog_rows = result_rows(survey_catalog)
             survey_catalog_n = survey_catalog_rows[0].get("count()") if survey_catalog_rows else None
-            failed += not expect("каталог cbr_survey описывает 13 рядов", survey_catalog_n == 13,
+            failed += not expect("каталог cbr_survey описывает 381 ряд", survey_catalog_n == 381,
                                  f"записей: {survey_catalog_n}" if survey_catalog_rows is not None else f"каталог не читается: {survey_catalog[:200]}")
+
+            # 16 отраслевых листов (Task 6 #239): 368 рядов industry_*; проверяется и каталог,
+            # и непустота самих строк витрины. Точное число точек не фиксируется — оно растёт
+            # с каждой волной источника.
+            survey_industry = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_series_catalog WHERE source = 'cbr_survey' AND startsWith(series, 'industry_')"}))
+            survey_industry_rows = result_rows(survey_industry)
+            survey_industry_n = survey_industry_rows[0].get("count()") if survey_industry_rows else None
+            failed += not expect("каталог cbr_survey описывает 368 отраслевых рядов", survey_industry_n == 368,
+                                 f"записей: {survey_industry_n}" if survey_industry_rows is not None else f"каталог не читается: {survey_industry[:200]}")
+
+            survey_industry_view = text(await session.call_tool("run_query", {"query": "SELECT count() FROM v_cbr_survey WHERE startsWith(series, 'industry_')"}))
+            survey_industry_view_rows = result_rows(survey_industry_view)
+            survey_industry_view_n = survey_industry_view_rows[0].get("count()") if survey_industry_view_rows else None
+            failed += not expect("витрина v_cbr_survey содержит отраслевые ряды", (survey_industry_view_n or 0) > 0,
+                                 f"строк: {survey_industry_view_n}" if survey_industry_view_rows is not None else f"витрина не читается: {survey_industry_view[:200]}")
 
             # Контур макроэкономического опроса ЦБ (шаг 1.5 роадмапа, импортёр cbr_mo_br):
             # витрина v_cbr_mo_br читается агентом, каталог source='cbr_mo_br' непуст
@@ -2280,6 +2295,95 @@ async def check(params, server_log):
             denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
             failed += not expect("сырая cbr_zcyc закрыта", denied,
                                  "отказ ClickHouse 497 на cbr_zcyc (ожидаемо)" if denied else raw[:200])
+
+            # Макропруденциальные требования (key-rate/phase-2-ccyb, #115): три витрины —
+            # АЦН-индикаторы, матрицы надбавок и МПЛ. Сырые cbr_ccyb_indicators,
+            # cbr_risk_weight_addons и cbr_mpl агенту не выданы: читать контур он обязан
+            # только через витрины (комментарии таблиц и колонок есть только у них).
+            # Существование витрины подтверждается запросом к ней, а не поиском имени в
+            # list_tables (урок bold); пустая витрина — не «нет данных», а неотработавший
+            # шаг dagu/cbr.yaml, поэтому числа проверяются, а не только непустота.
+            for view in ("v_cbr_ccyb_indicators", "v_cbr_risk_weight_addons", "v_cbr_mpl"):
+                failed += not expect(f"витрина {view} видна", view in tables, "list_tables default")
+
+            ccyb = text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n, uniqExact(series) AS series, "
+                         "min(date) AS min_date, max(date) AS max_date FROM v_cbr_ccyb_indicators"}))
+            ccyb_rows = result_rows(ccyb)
+            ccyb_n = ccyb_rows[0].get("n") if ccyb_rows else None
+            ccyb_series = ccyb_rows[0].get("series") if ccyb_rows else None
+            ccyb_min = ccyb_rows[0].get("min_date") if ccyb_rows else None
+            ccyb_max = ccyb_rows[0].get("max_date") if ccyb_rows else None
+            if ccyb_rows is None:
+                ccyb_detail = f"витрина не читается: {ccyb[:200]}"
+            else:
+                ccyb_detail = (f"строк: {ccyb_n}, рядов: {ccyb_series}, "
+                               f"{ccyb_min}..{ccyb_max} — прогнать make import STAT=cbr_ccyb_indicators")
+            failed += not expect("витрина v_cbr_ccyb_indicators существует и непуста",
+                                 (ccyb_n or 0) > 0, ccyb_detail)
+            ccyb_catalog = text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'cbr_ccyb_indicators'"}))
+            ccyb_catalog_rows = result_rows(ccyb_catalog)
+            ccyb_catalog_n = ccyb_catalog_rows[0].get("n") if ccyb_catalog_rows else None
+            failed += not expect("каталог cbr_ccyb_indicators описывает 24 ряда",
+                                 ccyb_catalog_n == 24,
+                                 f"рядов: {ccyb_catalog_n}, want 24 — прогнать "
+                                 "make import STAT=cbr_ccyb_indicators")
+
+            rwa = text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n, uniqExact(matrix) AS matrices, "
+                         "countIf(is_applicable = 0) AS not_applicable FROM v_cbr_risk_weight_addons"}))
+            rwa_rows = result_rows(rwa)
+            rwa_n = rwa_rows[0].get("n") if rwa_rows else None
+            rwa_matrices = rwa_rows[0].get("matrices") if rwa_rows else None
+            rwa_na = rwa_rows[0].get("not_applicable") if rwa_rows else None
+            if rwa_rows is None:
+                rwa_detail = f"витрина не читается: {rwa[:200]}"
+            else:
+                rwa_detail = (f"строк: {rwa_n}, матриц: {rwa_matrices}, "
+                              f"н/п: {rwa_na} — прогнать make import STAT=cbr_risk_weight_addons")
+            failed += not expect("витрина v_cbr_risk_weight_addons существует и непуста",
+                                 (rwa_n or 0) > 0, rwa_detail)
+            failed += not expect("v_cbr_risk_weight_addons: три вида матриц",
+                                 rwa_matrices == 3, rwa_detail)
+            rwa_catalog = text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'cbr_risk_weight_addons'"}))
+            rwa_catalog_rows = result_rows(rwa_catalog)
+            rwa_catalog_n = rwa_catalog_rows[0].get("n") if rwa_catalog_rows else None
+            failed += not expect("каталог cbr_risk_weight_addons описывает 3 матрицы",
+                                 rwa_catalog_n == 3,
+                                 f"рядов: {rwa_catalog_n}, want 3 — прогнать "
+                                 "make import STAT=cbr_risk_weight_addons")
+
+            mpl = text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n, uniqExact(series) AS series, "
+                         "min(period_from) AS min_from, max(period_from) AS max_from FROM v_cbr_mpl"}))
+            mpl_rows = result_rows(mpl)
+            mpl_n = mpl_rows[0].get("n") if mpl_rows else None
+            mpl_series = mpl_rows[0].get("series") if mpl_rows else None
+            mpl_min = mpl_rows[0].get("min_from") if mpl_rows else None
+            mpl_max = mpl_rows[0].get("max_from") if mpl_rows else None
+            if mpl_rows is None:
+                mpl_detail = f"витрина не читается: {mpl[:200]}"
+            else:
+                mpl_detail = (f"строк: {mpl_n}, рядов: {mpl_series}, "
+                              f"{mpl_min}..{mpl_max} — прогнать make import STAT=cbr_mpl")
+            failed += not expect("витрина v_cbr_mpl существует и непуста",
+                                 (mpl_n or 0) > 0, mpl_detail)
+            failed += not expect("v_cbr_mpl: семь видов лимитов", mpl_series == 7, mpl_detail)
+            mpl_catalog = text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'cbr_mpl'"}))
+            mpl_catalog_rows = result_rows(mpl_catalog)
+            mpl_catalog_n = mpl_catalog_rows[0].get("n") if mpl_catalog_rows else None
+            failed += not expect("каталог cbr_mpl описывает 7 видов лимитов",
+                                 mpl_catalog_n == 7,
+                                 f"рядов: {mpl_catalog_n}, want 7 — прогнать make import STAT=cbr_mpl")
+
+            for table in ("cbr_ccyb_indicators", "cbr_risk_weight_addons", "cbr_mpl"):
+                raw = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {table}"}))
+                denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+                failed += not expect(f"сырая {table} закрыта", denied,
+                                     f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
 
             # Реестр ML-экспериментов (infra/4.1): агенту выданы три витрины, а сырые
             # ml_runs/ml_predictions закрыты (как macro_series и bold_fund_snapshot:

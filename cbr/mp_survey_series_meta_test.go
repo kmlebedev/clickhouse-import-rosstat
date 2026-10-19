@@ -5,29 +5,53 @@ import (
 	"testing"
 )
 
-// TestSeriesMetaCompleteness — двусторонняя сверка определений рядов (mpSurveySeries)
-// и записей каталога (mpSurveySeriesMeta): каждому ряду кода соответствует запись
-// каталога и наоборот, у каждой записи заполнены все поля, флаг SA согласован с
-// суффиксом _sa в имени ряда.
+// TestSeriesMetaCompleteness — двусторонняя сверка определений рядов (13 агрегатных
+// mpSurveySeries + 368 отраслевых mpSurveyIndustrySeries) и записей каталога: каждому ряду
+// кода соответствует запись каталога и наоборот, у каждой записи заполнены все поля, флаг SA
+// согласован с суффиксом _sa в имени, а у условий кредитования SA-пары нет ни в агрегате,
+// ни на отраслевых листах.
 func TestSeriesMetaCompleteness(t *testing.T) {
-	const want = 13
-	if len(mpSurveySeries) != want {
-		t.Fatalf("mpSurveySeries: %d определений, ожидалось %d", len(mpSurveySeries), want)
-	}
-	if len(mpSurveySeriesMeta) != want {
-		t.Fatalf("mpSurveySeriesMeta: %d записей, ожидалось %d", len(mpSurveySeriesMeta), want)
+	const (
+		wantAggregate = 13
+		wantIndustry  = 368
+		wantAll       = wantAggregate + wantIndustry
+	)
+	for name, got := range map[string]int{
+		"mpSurveySeries":             len(mpSurveySeries),
+		"mpSurveySeriesMeta":         len(mpSurveySeriesMeta),
+		"mpSurveyIndustrySeries":     len(mpSurveyIndustrySeries),
+		"mpSurveyIndustrySeriesMeta": len(mpSurveyIndustrySeriesMeta),
+		"mpSurveyAllSeries":          len(mpSurveyAllSeries),
+		"mpSurveyAllMeta":            len(mpSurveyAllMeta),
+	} {
+		want := wantAll
+		if strings.Contains(name, "Industry") {
+			want = wantIndustry
+		} else if !strings.Contains(name, "All") {
+			want = wantAggregate
+		}
+		if got != want {
+			t.Errorf("%s: %d, ожидалось %d", name, got, want)
+		}
 	}
 
-	defs := make(map[string]seriesDef, want)
-	for _, d := range mpSurveySeries {
+	defs := make(map[string]seriesDef, len(mpSurveyAllSeries))
+	industryDefs := 0
+	for _, d := range mpSurveyAllSeries {
 		if _, dup := defs[d.Name]; dup {
 			t.Errorf("ряд %q определён дважды", d.Name)
 		}
 		defs[d.Name] = d
+		if strings.HasPrefix(d.Name, "industry_") {
+			industryDefs++
+		}
+	}
+	if industryDefs != wantIndustry {
+		t.Errorf("отраслевых определений: %d, ожидалось %d", industryDefs, wantIndustry)
 	}
 
-	described := make(map[string]bool, want)
-	for _, m := range mpSurveySeriesMeta {
+	described := make(map[string]bool, len(mpSurveyAllMeta))
+	for _, m := range mpSurveyAllMeta {
 		if m.Source != mpSurveySource {
 			t.Errorf("series %q: source %q, ожидалось %q", m.Series, m.Source, mpSurveySource)
 		}
@@ -51,26 +75,25 @@ func TestSeriesMetaCompleteness(t *testing.T) {
 	var creditDefs, creditMeta int
 	for name, d := range defs {
 		if !described[name] {
-			t.Errorf("ряд %s не описан в mpSurveySeriesMeta", name)
+			t.Errorf("ряд %s не описан в каталоге", name)
 		}
 		if wantSA := strings.HasSuffix(name, "_sa"); d.SA != wantSA {
 			t.Errorf("ряд %s: SA=%v, ожидалось %v (по суффиксу _sa)", name, d.SA, wantSA)
 		}
-		if strings.HasPrefix(name, "credit_conditions") {
+		if name == "credit_conditions" || strings.HasSuffix(name, "_credit_conditions") {
 			creditDefs++
 		}
 	}
 	for series := range described {
 		if _, ok := defs[series]; !ok {
-			t.Errorf("каталог описывает ряд %s, которого нет в mpSurveySeries", series)
+			t.Errorf("каталог описывает ряд %s, которого нет в определениях", series)
 		}
-		if strings.HasPrefix(series, "credit_conditions") {
+		if series == "credit_conditions" || strings.HasSuffix(series, "_credit_conditions") {
 			creditMeta++
 		}
 	}
-	// Условий кредитования в источнике нет сезонно сглаженного варианта
-	// (сезонная составляющая отсутствует), поэтому запись строго одна.
-	if creditDefs != 1 || creditMeta != 1 {
-		t.Errorf("credit_conditions: %d определений и %d записей каталога, ожидалось по одной (без _sa)", creditDefs, creditMeta)
+	// 1 агрегатный ряд + 16 отраслевых; у всех нет сезонной пары, поэтому _sa быть не должно.
+	if creditDefs != 17 || creditMeta != 17 {
+		t.Errorf("credit_conditions: %d определений и %d записей каталога, ожидалось по 17 (1 агрегатный + 16 отраслевых, без _sa)", creditDefs, creditMeta)
 	}
 }
