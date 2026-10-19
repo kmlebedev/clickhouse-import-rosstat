@@ -747,23 +747,27 @@ def evaluate(rows: list, start: int, embargo: int, models: dict) -> tuple:
 def stage1_gate(
     sample: str,
     summary: dict,
-    allow_revision: bool,
     start: int = None,
     embargo: int = 0,
-) -> dict:
+) -> tuple:
     """Регрессионный гейт: v2/v3 bottom-up воспроизводят числа Stage 1.
 
     Гейт применим только к окну Stage 1 (`start` по умолчанию для выборки,
     `embargo=0`); на сокращённом/отладочном окне он помечается `skipped`,
-    иначе числа сравнивались бы с чужим числом фолдов.
+    иначе числа сравнивались бы с чужим числом фолдов. Возврат —
+    `(gate, failed)`: расхождение не уничтожает уже посчитанные артефакты,
+    решение о стопе принимает вызывающий.
     """
     if start is not None and (
         start != DEFAULT_START[sample] or embargo != 0
     ):
-        return {
-            model: {"status": "skipped"}
-            for model in STAGE1_REFERENCE[sample]
-        }
+        return (
+            {
+                model: {"status": "skipped"}
+                for model in STAGE1_REFERENCE[sample]
+            },
+            [],
+        )
     gate = {}
     failed = []
     for model, expected in STAGE1_REFERENCE[sample].items():
@@ -782,13 +786,7 @@ def stage1_gate(
         }
         if not ok:
             failed.append(model)
-    if failed and not allow_revision:
-        raise SystemExit(
-            "регрессионный гейт Stage 1 не пройден: "
-            + ", ".join(failed)
-            + "; проверьте ревизию данных или передайте --allow-data-revision"
-        )
-    return gate
+    return gate, failed
 
 
 def _significant(item: dict) -> bool:
@@ -989,8 +987,8 @@ def run(
     )
 
     summary, pairs, predictions = evaluate(rows, start, embargo, selected)
-    gate = stage1_gate(
-        sample, summary, allow_data_revision, start=start, embargo=embargo
+    gate, gate_failed = stage1_gate(
+        sample, summary, start=start, embargo=embargo
     )
     decision = decide(pairs)
     payload = {
@@ -1012,6 +1010,8 @@ def run(
         "summary": summary,
         "pairs": pairs,
         "regression_gate": gate,
+        "gate_failed": bool(gate_failed),
+        "allow_data_revision": bool(allow_data_revision),
         "decision": decision,
     }
 
@@ -1118,6 +1118,14 @@ def run(
             )
     print(f"Вердикт: {decision['verdict']} ({'; '.join(decision['reasons'])})")
     print(f"Артефакты: {report_path}, {json_path}", flush=True)
+    if gate_failed and not allow_data_revision:
+        print(
+            "ВНИМАНИЕ: регрессионный гейт Stage 1 не пройден: "
+            + ", ".join(gate_failed)
+            + "; артефакты записаны, для официального прогона разберите "
+            "расхождение или передайте --allow-data-revision",
+            flush=True,
+        )
     return payload
 
 
@@ -1148,7 +1156,7 @@ def main(argv=None) -> int:
         help="не падать, если регрессионный гейт Stage 1 разошёлся",
     )
     arguments = parser.parse_args(argv)
-    run(
+    payload = run(
         sample=arguments.sample,
         out_dir=Path(arguments.out_dir),
         start=arguments.start,
@@ -1157,6 +1165,8 @@ def main(argv=None) -> int:
         mp_survey=arguments.mp_survey,
         allow_data_revision=arguments.allow_data_revision,
     )
+    if payload.get("gate_failed") and not arguments.allow_data_revision:
+        return 1
     return 0
 
 

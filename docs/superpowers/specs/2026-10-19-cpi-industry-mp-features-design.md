@@ -62,6 +62,8 @@ Robustness-вариант `all` использует все 16 листов дл
 
 Строки и фолды общие для всех моделей: `build_sample_industry` вызывает `cpi_monthly_v3.build_sample_v3` и добавляет industry-признаки. Walk-forward только расширяющимся окном; random split запрещён.
 
+Для `long` официальный прогон использует сокращённый набор (`v2_bottomup`, `v3_bottomup`, `ind_only_bottomup`, `ind_bottomup`, `v3_ind_bottomup`, `v3_ind_all_bottomup`, `B1`): direct-модели дороги и уже проверены на `weekly`; это робастность primary-контраста, а не полный перебор.
+
 ## 7. Модели
 
 | Имя | Признаки | Роль |
