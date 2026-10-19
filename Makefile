@@ -434,7 +434,8 @@ cpi-monthly:
 
 # Stage 1 #76: публичные недельные признаки в месячном nowcast ИПЦ.
 cpi-monthly-v3:
-	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_monthly_v3.py $(ARGS)
+	@$(MLFLOW_PREFLIGHT)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_monthly_v3.py $(ARGS)
 
 cpi-monthly-v3-test:
 	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_monthly_v3_test.py -v
