@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 	"github.com/kmlebedev/clickhouse-import-rosstat/util"
 	log "github.com/sirupsen/logrus"
 )
@@ -337,8 +336,4 @@ func keyrateSeriesMeta(contracts []keyrateContract) []util.SeriesMeta {
 		})
 	}
 	return meta
-}
-
-func init() {
-	chimport.Stats = append(chimport.Stats, &keyrateFutures{})
 }
