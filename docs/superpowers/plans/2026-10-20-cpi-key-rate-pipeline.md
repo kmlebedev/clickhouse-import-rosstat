@@ -413,7 +413,7 @@ git commit -m "add stage 3 key-rate pipeline"
 
 **Files:**
 - Create: `docs/research/2026-10-20-cpi-key-rate-pipeline-results.md`
-- Modify: `docs/ROADMAP_KEY_RATE.md`, `docs/KEY_RATE_MODEL.md`, `docs/KEY_RATE_CHANNELS.md`, `docs/LIMITATIONS.md`, `docs/site-pages.json`
+- Modify: `docs/ROADMAP_KEY_RATE.md`, `docs/KEY_RATE_MODEL.md`, `docs/KEY_RATE_CHANNELS.md`, `docs/LIMITATIONS.md`, `docs/site-pages.json`, `README.md`, `ARCHITECTURE.md`
 
 **Interfaces:**
 - Consumes: stage 1/2/3 artifacts, run IDs.
@@ -448,7 +448,7 @@ Report sections: clock/as-of, stage 1 RMSE/MAE vs live3, stage 2 SA path vs live
 ```bash
 make all
 make docs-check
-git add docs/research/2026-10-20-cpi-key-rate-pipeline-results.md docs/ROADMAP_KEY_RATE.md docs/KEY_RATE_MODEL.md docs/KEY_RATE_CHANNELS.md docs/LIMITATIONS.md docs/site-pages.json
+git add docs/research/2026-10-20-cpi-key-rate-pipeline-results.md docs/ROADMAP_KEY_RATE.md docs/KEY_RATE_MODEL.md docs/KEY_RATE_CHANNELS.md docs/LIMITATIONS.md docs/site-pages.json README.md ARCHITECTURE.md
 git commit -m "docs: publish cpi-key-rate pipeline results"
 ```
 
