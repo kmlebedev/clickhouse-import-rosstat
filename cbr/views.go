@@ -617,3 +617,68 @@ INNER JOIN macro_series ms FINAL
 		"value":          "Баланс ответов, пункты (или % годовых только для отдельного ряда ожидаемого прироста цен; здесь его нет)",
 	},
 }
+
+// cbrPublicationCalendarView — график публикаций ЦБ: статистическое окно вперёд и
+// аналитические месячные блоки назад. Это план, а не журнал фактов: ЦБ прямо
+// предупреждает, что даты могут меняться; фактическую дату релиза для исторического
+// published_at дают релизные архивы (v_series_publication), а не календарь.
+var cbrPublicationCalendarView = util.View{
+	Name:   "v_cbr_publication_calendar",
+	Tables: []string{cbrPublicationCalendarTable},
+	Select: `SELECT publication_date, publication_time, title, topic, period, source_url, planned
+FROM cbr_publication_calendar FINAL`,
+	Comment: "График публикаций Банка России (cbr.ru/calendar/): статистическое окно " +
+		"вперёд (topic='statistics', 173 строки в окне 20.10.2026 … 30.12.2026 на снимке " +
+		"2026-10-20) и 22 аналитических месячных блока назад (topic='analytics', январь " +
+		"2025 … октябрь 2026, 445 строк). Это ПЛАН, а не журнал фактов: ЦБ предупреждает, " +
+		"что даты могут меняться; для исторического published_at использовать " +
+		"v_series_publication, где дата взята из релизного архива. publication_time — " +
+		"только там, где ЦБ её указал (16:00, 11:00; у аналитики и многих статистических " +
+		"строк NULL). period — исходный период строки статистики («II квартал 2026 г.», " +
+		"«01.10.2026») либо YYYY-MM аналитического блока. planned — снимок на момент " +
+		"импорта: 1, если дата была в будущем или сегодня, иначе 0; прошлые строки не " +
+		"переписываются",
+	Columns: map[string]string{
+		"publication_date": "Дата публикации (Date)",
+		"publication_time": "Время публикации, «HH:MM»; NULL — ЦБ время не указал",
+		"title":            "Название публикации/показателя; у статистики — текст ссылки, у аналитики — название строки блока",
+		"topic":            "statistics — официальная статистическая информация; analytics — аналитические публикации",
+		"period":           "Период наблюдения из строки статистики либо YYYY-MM аналитического блока",
+		"source_url":       "Ссылка на страницу показателя/публикации на cbr.ru",
+		"planned":          "1 — дата была в будущем или сегодня на момент снимка; 0 — уже прошла",
+	},
+}
+
+// cbrSeriesPublicationView — generic-слой публикационных дат: одна строка = одна
+// точка ряда и effective-момент, когда она стала публичной. Сейчас покрыты четыре
+// ряда инфляционных ожиданий/ИПЦ (source='cbr') и два ряда ценовых ожиданий
+// мониторинга предприятий (source='cbr_survey'); source/series совпадают с
+// v_series_catalog, поэтому lookup идёт по тем же ключам, что и чтение значения.
+var cbrSeriesPublicationView = util.View{
+	Name:   "v_series_publication",
+	Tables: []string{util.SeriesPublicationTable},
+	Select: `SELECT source, series, period_date, published_at, quality, source_url
+FROM series_publication FINAL`,
+	Comment: "Публикационные даты рядов: effective-момент published_at для каждой точки " +
+		"(source, series, period_date). source/series совпадают с v_series_catalog: " +
+		"source='cbr' — «наблюдаемая инфляция»/«ожидаемая инфляция» (cbr_infl_exp) и " +
+		"«Все товары и услуги»/«Базовый ИПЦ» (cbr_indicators_cpd); source='cbr_survey' — " +
+		"price_expectations и price_expectations_sa. period_date — дата точки в таблице " +
+		"источника (14-е у инфляционных ожиданий, последний день месяца у ИПЦ, 1-е у " +
+		"мониторинга), месяц для сопоставления — toStartOfMonth(period_date). quality: " +
+		"exact_time — известно время (текущие релизы ЦБ времени не дают, поэтому таких " +
+		"строк 0); date — известна дата релиза, published_at = 23:59:59 MSK этой даты; " +
+		"fallback — точной даты нет, published_at = последний день M+1 23:59:59 MSK " +
+		"(M — отчётный месяц). As-of правило: точка доступна при строгом " +
+		"published_at < cutoff (дата/время заседания); fallback консервативен и не должен " +
+		"выглядеть как точная дата в отчётах. source_url — страница версии (date/exact_time) " +
+		"или индекс релизного архива (fallback)",
+	Columns: map[string]string{
+		"source":       "Источник как в v_series_catalog: cbr — инфляционные ожидания и ИПЦ; cbr_survey — мониторинг предприятий",
+		"series":       "Имя ряда; совпадает с series в v_series_catalog",
+		"period_date":  "Дата точки в таблице источника (14-е, конец месяца, 1-е); месяц — toStartOfMonth(period_date)",
+		"published_at": "Effective-момент публикации в MSK: точное время (exact_time), 23:59:59 даты релиза (date) или конец M+1 (fallback). Граница as-of строгая: published_at < cutoff",
+		"quality":      "exact_time | date | fallback — точность published_at; понижение качества при повторном импорте запрещено",
+		"source_url":   "Страница версии релиза (date/exact_time) либо индекс архива (fallback)",
+	},
+}

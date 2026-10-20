@@ -32,8 +32,8 @@ from dataclasses import asdict, dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from eval_utils import block_bootstrap_rmse_diff, diebold_mariano, rmse
-from extrapolation_aisc import ch_query
+from lib.eval_utils import block_bootstrap_rmse_diff, diebold_mariano, rmse
+from lib.clickhouse import ch_query
 
 ROOT = Path(__file__).resolve().parent.parent
 
