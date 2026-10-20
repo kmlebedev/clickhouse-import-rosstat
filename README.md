@@ -61,7 +61,7 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 | [`news`](docs/IMPORTERS.md) | 16 лент RSS/Telegram | `news_events`, `news_message_version`, `news_annotation` | каждые 30 мин |
 | [`gold`](docs/IMPORTERS.md), [`moex`](docs/IMPORTERS.md) | цена золота, PLZL, ОФЗ, KEYRATE, Brent-фронт-месяц | `gold_prices`, `stock_prices`, `ofz_curve`, `keyrate_*`, `moex_market` | ежедневно 18:47/19:13 |
 | [`calendar`](docs/IMPORTERS.md), [`forecast`](docs/IMPORTERS.md) | календарь событий, резолвер прогнозов | `events_calendar`, `forecast_log` | ежедневно |
-| [`views`](docs/IMPORTERS.md) | витрины контура, метрик компаний и сводный дашборд ключевой ставки (`key_rate_views`) | `v_*`, `v_key_rate_dashboard`, `company_financials` | понедельник / вручную |
+| [`views`](docs/IMPORTERS.md) | витрины контура, метрик компаний, сводный дашборд ключевой ставки и live-точность (`key_rate_views`) | `v_*`, `v_key_rate_dashboard`, `v_ml_live_accuracy`, `company_financials` | понедельник / вручную |
 | [`mlregistry`](docs/IMPORTERS.md) | реестр ML-экспериментов: DDL и витрины (schema-only, внешнего источника нет) | `ml_runs`, `ml_predictions`, `v_ml_*` | ежедневно 06:07 |
 | [`dcf`](docs/IMPORTERS.md), [`polyus`](docs/IMPORTERS.md), [`financial`](docs/IMPORTERS.md) | LOM-планы/NAV, отчётность Полюса, legacy | `mine_plans`, `price_decks`, `nav_by_asset`, `databook_polyus`, `company_financials` | понедельник |
 
@@ -133,9 +133,9 @@ make mlflow-down
 
 ## Контур прогноза золота
 
-Витрины `v_model_inputs`, `v_gold_dashboard`, `v_forecast_accuracy`, `v_gold_forecasts`, `v_gold_etf_flows*`, `v_news_*`, `v_events_calendar`, `v_dcf_assumptions` читаются агентом через MCP (`kimi_reader`, только `v_*`). Ingest-endpoint (`cmd/ingest`) — единственный путь записи прогонов модели, ручных рядов, цен COMEX и консенсус-прогнозов; плагин `gold-nav` — отдельный репозиторий.
+Витрины `v_model_inputs`, `v_gold_dashboard`, `v_forecast_accuracy`, `v_gold_forecasts`, `v_gold_etf_flows*`, `v_news_*`, `v_events_calendar`, `v_dcf_assumptions`, `v_ml_live_accuracy` читаются агентом через MCP (`kimi_reader`, только `v_*`). Ingest-endpoint (`cmd/ingest`) — единственный путь записи прогонов модели, ручных рядов, цен COMEX и консенсус-прогнозов; плагин `gold-nav` — отдельный репозиторий.
 
-Журнал прогнозов ключевой ставки пишется тем же ingest: `POST /v1/key_rate_forecast` (единственный путь, MCP read-only) принимает одну строку `forecast_log` с треком в `metric` (`cbr_rate:taylor`, `cbr_rate:ordered_logit`, `cbr_rate:ml`, `cbr_rate:llm`) и метаданными публикации — распределением вероятностей, моделью, версией набора данных и `prompt_version`. Прогноз отправляет `make key-rate-forecast-log` (`scripts/key_rate_forecast_log.py`) из локальных артефактов `key_rate_model_forecast.json` и, при наличии, `key_rate_llm_forecast.json` или готового payload #189 (`--llm-payload`); `forecast_resolve` заполняет факт из `cbr_key_rate` и ошибку в базисных пунктах (`error_bp`), сохраняя метаданные строки. Спека/план — `docs/superpowers/{specs,plans}/2026-10-18-key-rate-forecast-log*`.
+Журнал прогнозов ключевой ставки пишется тем же ingest: `POST /v1/key_rate_forecast` (единственный путь, MCP read-only) принимает одну строку `forecast_log` с треком в `metric` (`cbr_rate:taylor`, `cbr_rate:ordered_logit`, `cbr_rate:ml`, `cbr_rate:llm`) и метаданными публикации — распределением вероятностей, моделью, версией набора данных и `prompt_version`. Staged-прогнозы `--stage shadow|canary` получают суффикс `:shadow`/`:canary` и не публикуются. Прогноз отправляет `make key-rate-forecast-log` (`scripts/key_rate_forecast_log.py`) из локальных артефактов `key_rate_model_forecast.json` и, при наличии, `key_rate_llm_forecast.json` или готового payload #189 (`--llm-payload`); `forecast_resolve` заполняет факт из `cbr_key_rate` и ошибку в базисных пунктах (`error_bp`), сохраняя метаданные строки. Live-точность читается из `v_ml_live_accuracy`, проверка до публикации — `make ml-live-check`. Спека/план — `docs/superpowers/{specs,plans}/2026-10-18-key-rate-forecast-log*`, `2026-10-20-ml-promotion-live-monitoring*`.
 
 Состав, эндпоинты и запуск — [docs/GOLD_CONTOUR.md](docs/GOLD_CONTOUR.md); схемы — [ARCHITECTURE.md](ARCHITECTURE.md) §6.3/§6.5.
 
@@ -157,6 +157,8 @@ make mlflow-down
 | `make mlflow-up` / `make mlflow-down` / `make mlflow-status` | локальный MLflow-сервер (SQLite + артефакты, `127.0.0.1:5000`) |
 | `make mlflow-export` | экспорт run'ов MLflow в `ml_runs`/`ml_predictions` (`ARGS` — `--since/--limit/--dry-run`) |
 | `make mlflow-register` / `make mlflow-promote` / `make mlflow-models` | реестр моделей и алиасы `challenger`/`champion` (аргументы — в `ARGS`) |
+| `make ml-gate` / `make ml-gate-test` | gate промоушена: DM-HLN, 95% бутстрап CI, robustness-окна, MCS при >2 кандидатах; артефакт `build/ml-gate/<run>.json`; live-режим `ARGS="--live --live-track cbr_rate:ordered_logit"` / офлайн-тесты |
+| `make ml-live-check` / `make ml-live-check-test` | проверка live-прогноза до публикации: production-строки на ближайшее заседание, `forecast_date < target_date`, непустой `data_version`; `ARGS="--require-llm --warn-only"` / офлайн-тесты |
 | `make mcp-check` | MCP end-to-end |
 | `make cb-comp-parity` / `make cb-comp-parity-test` | паритет nowcast с CB_COMP (direct + bottom-up, архив авторов) / офлайн-тесты parity-скриптов |
 | `make docs-check` / `make docs-build` | проверка и сборка docs-портала |
