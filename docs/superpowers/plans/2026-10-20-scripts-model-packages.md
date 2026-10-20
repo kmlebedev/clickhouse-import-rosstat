@@ -16,7 +16,7 @@
 2. `git mv scripts/eval_utils.py scripts/lib/eval_utils.py`.
 3. `git mv scripts/ml_experiment.py scripts/lib/ml_experiment.py`; `ROOT = parents[2]`; `from lib.clickhouse import ClickHouseError, ch_exec`.
 4. `git mv scripts/ml_experiment_test.py scripts/lib/ml_experiment_test.py`; bootstrap от `parents[2]`, package-импорт.
-5. Создать `scripts/lib/clickhouse.py`: перенести из `extrapolation_aisc.py` транспорт (`mask`, `parse_clickhouse_url`, `ch_config`, `ClickHouseError`, `parse_ch_json`, `_error_body`, `ch_query`, `ch_exec`, `sql_literal`, `sql_batches`, `DEFAULT_BATCH_SIZE`, `DEFAULT_CH_HTTP_PORT`, `CH_QUERY_TIMEOUT_SECONDS`).
+5. Создать `scripts/lib/clickhouse.py`: перенести из `extrapolation_aisc.py` транспорт (`mask`, `parse_clickhouse_url`, `ch_config`, `ClickHouseError`, `parse_ch_json`, `_error_body`, `ch_query`, `ch_exec`, `sql_literal`, `DEFAULT_CH_HTTP_PORT`, `CH_QUERY_TIMEOUT_SECONDS`); `sql_batches` и `DEFAULT_BATCH_SIZE` остаются в `aisc.py`, потому что зависят от схемы `mine_plans`.
 6. Создать `scripts/lib/clickhouse_test.py`: `TestConfig`, `TestQueryTransport`, `TestExecTransport`, хелперы `_isolated_env`, `_FakeResponse` из `extrapolation_aisc_test.py`.
 7. Проверки: `python3 scripts/lib/ml_experiment_test.py -v`, `python3 scripts/lib/clickhouse_test.py -v`.
 
