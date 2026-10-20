@@ -1097,42 +1097,61 @@ async def check(params, server_log):
             failed += not expect("витрина v_rosstat_macro непуста",
                                  (rosstat_points_n or 0) > 0 and (rosstat_series_n or 0) > 0, rosstat_view_detail)
 
-            # Каталог описывает все 169 рядов источника: 4 ИПЦ (rosstat_ipc_mes) + 131 недельный
-            # товар (rosstat_ipc_weeks) + 5 рядов ВВП (rosstat_vvp_kvartal) + 1 зарплата
-            # (rosstat_salaries_mes) + 6 рядов рынка труда (rosstat_labour_force_mes) + 18 рядов
-            # бюллетеней 2009–2021 (rosstat_ipc_weeks_bulletins) + 4 ряда ИЦП по ВЭД
-            # (rosstat_ppi_ved, T1 #276): 1 агрегатный недельный ИПЦ
-            # и 17 extra-рядов (ipcWeeksBulletinsExtraSeries), которым канонического соответствия
-            # в XLSX-выгрузке нет («Сорочка верхняя для мальчиков школьного возраста» добавлена
-            # расширением 2026-10-16, «Говядина тушеная» — расширением 2009–2015 в 2026-10-17),
-            # — а канонические товары бюллетеней описаны общей метой 131 недельного товара и
-            # новых строк каталога не дают. BI использует тот же агрегатный ряд «Индекс
-            # потребительских цен (недельная оценка)», поэтому новых строк каталога не даёт и он.
-            # Число сверяется точным равенством, а не «> 0»: односторонний контракт §11.4
-            # стандарта требует описания каждого разобранного ряда, а меньше 169 значит
-            # ни разу не отработавший импортёр (числа агент прочитает, а что измеряет ряд
-            # и в каких единицах — нет). В плане фазы написано 138: это арифметика
-            # 4 + 128 + 5 + 1 до fix-round задачи T7, который вернул три товара под обрывом
-            # листа (fc0d28f) — в ipcWeeksProducts 131 название, а шести рядов рынка труда
-            # в той арифметике нет вовсе; бюллетени добавили ещё 18, ИЦП по ВЭД — 4, поэтому верное число — 169.
-            # detail печатает наблюдённое число, когда оно расходится с ожиданием.
-            rosstat_catalog = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'rosstat'"}))
+            # Каталог источника делится на две части. Базовые 169 рядов — 4 ИПЦ + 131
+            # недельный товар + 5 ВВП + 1 зарплата + 6 рынка труда + 18 бюллетеней +
+            # 4 ИЦП по ВЭД (T1 #276). T2 (#277) добавляет 5 308 товарных рядов
+            # (okpd2:<код>:<тип>) и 76 весовых (ved-weight:<код>:<база>). Товарный
+            # каталог растёт вместе с перечнем кодов, поэтому сверяется «>= 5 308»;
+            # весовой — ровно 76 (38 кодов × 2 базы). Базовая часть остаётся точным
+            # равенством 169: односторонний контракт §11.4 стандарта требует описания
+            # каждого разобранного ряда, а меньше 169 значит ни разу не отработавший
+            # импортёр. T2-ряды исключены из базового запроса префиксами, иначе
+            # точное 169 перестало бы сходиться на любом живом прогоне.
+            rosstat_catalog = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_series_catalog WHERE source = 'rosstat' "
+                "AND NOT startsWith(series, 'okpd2:') AND NOT startsWith(series, 'ved-weight:')"}))
             rosstat_catalog_rows = result_rows(rosstat_catalog)
             rosstat_catalog_n = rosstat_catalog_rows[0].get("n") if rosstat_catalog_rows else None
             if rosstat_catalog_rows is None:
                 rosstat_catalog_detail = f"ответ не распознан: {rosstat_catalog[:200]}"
             elif rosstat_catalog_n == 169:
-                rosstat_catalog_detail = ("рядов rosstat: 169 (4 ИПЦ + 131 недельный + 5 ВВП + 1 зарплата + "
-                                          "6 рабочая сила + 18 бюллетеней + 4 ИЦП по ВЭД)")
+                rosstat_catalog_detail = ("базовых рядов rosstat: 169 (4 ИПЦ + 131 недельный + 5 ВВП + "
+                                          "1 зарплата + 6 рабочая сила + 18 бюллетеней + 4 ИЦП по ВЭД)")
             else:
-                rosstat_catalog_detail = (f"рядов rosstat: {rosstat_catalog_n}, want 169 — прогнать "
+                rosstat_catalog_detail = (f"базовых рядов rosstat: {rosstat_catalog_n}, want 169 — прогнать "
                                           "импортёры по одному: make import STAT=<имя> для каждого "
                                           "из rosstat_ipc_mes, rosstat_ipc_weeks, "
                                           "rosstat_ipc_weeks_bulletins, rosstat_bi_cpi_weekly, "
                                           "rosstat_salaries_mes, rosstat_vvp_kvartal, "
                                           "rosstat_labour_force_mes, rosstat_ppi_ved "
                                           "(каталог перепубликовывается каждым прогоном)")
-            failed += not expect("каталог rosstat полон", rosstat_catalog_n == 169, rosstat_catalog_detail)
+            failed += not expect("каталог rosstat полон (базовые ряды)", rosstat_catalog_n == 169, rosstat_catalog_detail)
+
+            rosstat_product_catalog = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_series_catalog WHERE source = 'rosstat' AND startsWith(series, 'okpd2:')"}))
+            rosstat_product_rows = result_rows(rosstat_product_catalog)
+            rosstat_product_n = rosstat_product_rows[0].get("n") if rosstat_product_rows else None
+            if rosstat_product_rows is None:
+                rosstat_product_detail = f"ответ не распознан: {rosstat_product_catalog[:200]}"
+            elif (rosstat_product_n or 0) >= 5308:
+                rosstat_product_detail = f"товарных рядов rosstat: {rosstat_product_n} (okpd2:<код>:<тип>)"
+            else:
+                rosstat_product_detail = (f"товарных рядов rosstat: {rosstat_product_n}, want >= 5308 — "
+                                          "прогнать make import STAT=rosstat_ppi_product")
+            failed += not expect("каталог rosstat_ppi_product полон", (rosstat_product_n or 0) >= 5308, rosstat_product_detail)
+
+            rosstat_weights_catalog = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_series_catalog WHERE source = 'rosstat' AND startsWith(series, 'ved-weight:')"}))
+            rosstat_weights_rows = result_rows(rosstat_weights_catalog)
+            rosstat_weights_n = rosstat_weights_rows[0].get("n") if rosstat_weights_rows else None
+            if rosstat_weights_rows is None:
+                rosstat_weights_detail = f"ответ не распознан: {rosstat_weights_catalog[:200]}"
+            elif rosstat_weights_n == 76:
+                rosstat_weights_detail = "весовых рядов rosstat: 76 (38 кодов × 2 базы)"
+            else:
+                rosstat_weights_detail = (f"весовых рядов rosstat: {rosstat_weights_n}, want 76 — "
+                                          "прогнать make import STAT=rosstat_ppi_weights")
+            failed += not expect("каталог rosstat_ppi_weights полон", rosstat_weights_n == 76, rosstat_weights_detail)
 
             # Сырые таблицы контура агенту не выданы — как macro_series и
             # cbr_households_b_mes: витрина — единственное место, где агент читает ряды
@@ -1147,7 +1166,9 @@ async def check(params, server_log):
                                  ("rosstat_vvp_kvartal", "ВВП поквартально"),
                                  ("rosstat_labour_force_mes", "рабочая сила и безработица"),
                                  ("rosstat_bi_cpi_weekly", "недельный агрегат ИПЦ из BI"),
-                                 ("rosstat_ppi_ved", "ИЦП по ВЭД")):
+                                 ("rosstat_ppi_ved", "ИЦП по ВЭД"),
+                                 ("rosstat_ppi_product", "ИЦП по товарам/ОКПД2"),
+                                 ("rosstat_ppi_weights", "веса ИЦП по ВЭД")):
                 raw = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {table}"}))
                 denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
                 failed += not expect(f"сырая {table} закрыта ({label})", denied,
