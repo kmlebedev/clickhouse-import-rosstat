@@ -11,7 +11,7 @@ MOEX ISS даёт **три** из шести рядов, которые нужн
 
 | Ряд | MOEX | Что именно | Глубина |
 |---|---|---|---|
-| Brent | да | фьючерс `BR`, непрерывный фронт-месяц | с 2009-10-05 |
+| Brent | да | фьючерс `BR`, непрерывный фронт-месяц | с 2009-10-01 (первый фронт-месяц; контракт `BR-10.09` — с 2009-10-05) |
 | RVI | да | индекс `RVI` | с 2013-11-18 |
 | Медь | да | фьючерс `COPPER`, фронт-месяц | с 2024-10-08 |
 | Urals | **нет** | `RURIURL` — фондовый индекс без данных | — |
@@ -77,4 +77,4 @@ curl -s 'https://iss.moex.com/iss/history/engines/stock/markets/index/securities
 curl -s 'https://iss.moex.com/iss/history/engines/futures/markets/forts/securities/CEZ4.json?iss.meta=off&limit=1'
 ```
 
-Ожидаемые факты: `BRZ9_2009` — первая строка 2009-10-05; RVI — 2013-11-18; `CEZ4` — 2024-10-08; `RURIURL` — пустые `boards`/`candles`/`history`.
+Ожидаемые факты: `BRZ9_2009` (декабрьский контракт) — первая строка 2009-10-05; фронт-месяц `BR-10.09` — с 2009-10-01; RVI — 2013-11-18; `CEZ4` — 2024-10-08; `RURIURL` — пустые `boards`/`candles`/`history`.

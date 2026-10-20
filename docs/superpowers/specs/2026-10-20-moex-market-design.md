@@ -20,14 +20,14 @@
 
 | Ряд | Инструмент MOEX ISS | Глубина | Единица |
 |---|---|---|---|
-| `brent_front` | фьючерс `BR`, `ASSETCODE=BR` | с 2009-10-05 (`BR-10.09`), ~260 торговых дней на контракт | USD за баррель (`UNIT` контракта) |
+| `brent_front` | фьючерс `BR`, `ASSETCODE=BR` | с 2009-10-01 (первый фронт-месяц; `BR-10.09` — с 2009-10-05), ~260 торговых дней на контракт | USD за баррель (`UNIT` контракта) |
 | `rvi` | индекс `RVI`, `/iss/engines/stock/markets/index/securities/RVI/candles.json` | с 2013-11-18, 3 252 торговых дня | пункты индекса |
 | `copper_front` | фьючерс `COPPER`, `ASSETCODE=COPPER` | с 2024-10-08 (`CEZ4`), ~50 торговых дней у первого контракта | USD за 1 000 кг (USD/т) |
 
 Проверенные эндпоинты:
 
 - текущие контракты: `/iss/engines/futures/markets/forts/securities.json?iss.meta=off&iss.only=securities` — поля `SECID`, `SHORTNAME`, `ASSETCODE`, `LASTTRADEDATE`;
-- исторические контракты на дату: `/iss/history/engines/futures/markets/forts/securities.json?iss.meta=off&date=YYYY-MM-DD&assetcode=BR` — фильтр `assetcode` работает; календарные спреды приходят с пустым `ASSETCODE` и отбрасываются;
+- исторические контракты на дату: `/iss/history/engines/futures/markets/forts/securities.json?iss.meta=off&date=YYYY-MM-DD&assetcode=BR` — фильтр `assetcode` работает; календарные спреды и служебные инструменты приходят с пустым или `null` `ASSETCODE` и отбрасываются;
 - история контракта: `/iss/history/engines/futures/markets/forts/securities/<secid>.json?iss.meta=off&from=YYYY-MM-DD&start=<n>` — блоки `history` и `history.cursor`, страницы по 100;
 - RVI: `/iss/engines/stock/markets/index/securities/RVI/candles.json?iss.meta=off&interval=24&limit=100&from=YYYY-MM-DD&start=<n>`.
 
@@ -80,7 +80,7 @@ SELECT series, date, value FROM moex_market FINAL
 Для Brent и меди — общий `futuresSpec{asset, series, start}`:
 
 1. **Окно.** Первый прогон — от `spec.start` (Brent `2009-10-01`, медь `2024-10-01`); повтор — от `max(date) − 400 дней` (перехват роллов и правок).
-2. **Обнаружение контрактов.** По одному запросу на месяц: `date=15-е` (если пусто — 14, 13 … 10-е), `assetcode=<asset>`. Плюс текущий список контрактов из `securities.json`. Отбор: `ASSETCODE == asset`, `SHORTNAME` разбирается как `<asset>-<M>.<YY>`; спреды с пустым `ASSETCODE` отбрасываются.
+2. **Обнаружение контрактов.** По одному запросу на месяц: `date=15-е` (если пусто — 14, 13 … 10-е), `assetcode=<asset>`. Плюс текущий список контрактов из `securities.json`. Отбор: `ASSETCODE == asset`, `SHORTNAME` разбирается как `<asset>-<M>.<YY>`; спреды и опционы с пустым/`null` `ASSETCODE` или чужим `SHORTNAME` отбрасываются.
 3. **История контракта.** `from=<окно>`, пагинация `start` по 100 до пустой страницы или `TOTAL` из `history.cursor`.
 4. **Значение.** `SETTLEPRICE > 0`, иначе `CLOSE > 0`, иначе точка пропускается.
 5. **Фронт.** На каждую дату — контракт с минимальным `(year, month)` среди контрактов с валидным значением. Это ближайший по месяцу контракт; точная дата экспирации не нужна.
@@ -105,7 +105,7 @@ SELECT series, date, value FROM moex_market FINAL
   - `TestParseContractMonth` — `BR-10.09`, `COPPER-12.24`, мусор;
   - `TestParseFuturesHistory` — реальная фикстура: спреды отброшены, `null CLOSE` + `SETTLEPRICE`, объём/позиция;
   - `TestFrontMonthPoints` — два контракта, ближайший месяц, fallback `settle → close`, пропуск нулей, ролл;
-  - `TestParseFuturesSecids` — фильтр `ASSETCODE`, дедуп.
+  - `TestParseFuturesSecids` — фильтр `ASSETCODE`/`SHORTNAME` (опционы и спреды), `nil` ASSETCODE, дедуп.
 - `market_test.go` (`httptest`, подмена `moexBaseUrl`):
   - пагинация истории (`from`, `start`, `limit`);
   - обнаружение по `date` и текущий список;
@@ -126,7 +126,7 @@ make docs-check
 ```
 
 Ожидаемо:
-- Brent: ~4 100 точек, `2009-10-05 … последний торговый день`;
+- Brent: 3 916 точек, `2009-10-01 … 2026-10-19` (живая приёмка 2026-10-20);
 - RVI: 3 252 точки, `2013-11-18 … последний торговый день` (второй PR);
 - медь: ~500 точек, `2024-10-08 … последний торговый день` (второй PR);
 - повтор — `count() FINAL` не изменился;
