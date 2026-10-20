@@ -92,9 +92,9 @@ curl -u admin:<пароль> -X POST http://localhost:3001/api/admin/provisionin
 | UID | Условие | Порог |
 |---|---|---|
 | `ml-live-degradation` | rolling MAE трёх последних разрешённых production-заседаний по `v_ml_live_accuracy` | > 100 б.п. |
-| `ml-live-freshness` | после последнего заседания ЦБ нет разрешённой production-строки | > 3 дней |
+| `ml-live-freshness` | последний прошедший production-прогноз не разрешён (`is_resolved=1`) | > 3 дней |
 
-Оба — `severity=warning`, `contour=ml-live`, `for: 5m`; contact point не задаётся (алерт виден и уходит в Firing в UI, маршрутизация уведомлений — решение владельца). Локальный стенд читает каталог напрямую: `make grafana-up` передаёт `GF_PATHS_PROVISIONING=$(CURDIR)/grafana/provisioning`. Staging получает файл через `make grafana-provision-alerting-staging` (вызывается из `grafana-deploy-staging`); после копирования нужен admin-reload `POST /api/admin/provisioning/alert-rules/reload` или рестарт `grafana-server`. Smoke `make grafana-check` после дашбордов проверяет оба UID через `scripts/grafana_alert_check.py`. Офлайн-контракт YAML — `views/ml_live_alert_test.go` (входит в `make grafana-validate` и `make all`).
+Оба — `severity=warning`, `contour=ml-live`, `for: 5m`; contact point не задаётся (алерт виден и уходит в Firing в UI, маршрутизация уведомлений — решение владельца). Оба запроса исключают `model='gate-selftest'`: синтетические строки приёмки не поднимают production-алерт. Локальный стенд читает каталог напрямую: `make grafana-up` передаёт `GF_PATHS_PROVISIONING=$(CURDIR)/grafana/provisioning`. Staging получает файл через `make grafana-provision-alerting-staging` (вызывается из `grafana-deploy-staging`); после копирования нужен admin-reload `POST /api/admin/provisioning/alert-rules/reload` или рестарт `grafana-server`. Smoke `make grafana-check` после дашбордов проверяет оба UID через `scripts/grafana_alert_check.py`. Офлайн-контракт YAML — `views/ml_live_alert_test.go` (входит в `make grafana-validate` и `make all`).
 
 Проверка firing на локальном стенде: временно понизить порог `ml-live-degradation` через API/UI, дождаться состояния Firing, вернуть 100; в протоколе PR фиксируются UID, порог и наблюдённое состояние. Прод-данные для этого не нужны.
 

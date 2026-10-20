@@ -12,7 +12,7 @@ apiVersion: 1
 groups:
   - orgId: 1
     name: ml-live
-    folder: General
+    folder: ML live
     interval: 1m
     rules:
       - uid: ml-live-degradation
@@ -44,6 +44,7 @@ groups:
                             ) AS rolling_mae_bp
                         FROM v_ml_live_accuracy
                         WHERE stage = 'production' AND is_resolved = 1
+                          AND model != 'gate-selftest'
                     )
                     GROUP BY track
                 )
@@ -89,12 +90,13 @@ groups:
               pluginVersion: 4.3.2
               rawSql: |
                 WITH (
-                    SELECT maxOrNull(event_date)
-                    FROM v_events_calendar
-                    WHERE category = 'cbr' AND event_date <= today()
-                ) AS last_meeting
+                    SELECT maxOrNull(target_date)
+                    FROM v_ml_live_accuracy
+                    WHERE stage = 'production' AND target_date <= today()
+                      AND model != 'gate-selftest'
+                ) AS last_target
                 SELECT if(
-                    last_meeting IS NULL,
+                    last_target IS NULL,
                     0,
                     if(
                         (
@@ -102,10 +104,11 @@ groups:
                             FROM v_ml_live_accuracy
                             WHERE stage = 'production'
                               AND is_resolved = 1
-                              AND target_date = last_meeting
+                              AND target_date = last_target
+                              AND model != 'gate-selftest'
                         ) > 0,
                         0,
-                        if(dateDiff('day', last_meeting, today()) > 3, 999, 0)
+                        if(dateDiff('day', last_target, today()) > 3, 999, 0)
                     )
                 ) AS value
           - refId: B
