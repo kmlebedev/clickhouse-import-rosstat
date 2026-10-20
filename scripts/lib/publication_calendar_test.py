@@ -168,6 +168,46 @@ class TestLatestAndNext(unittest.TestCase):
             CAL.next_unpublished_month("rosstat", "cpi_all", as_of), date(1, 1, 1)
         )
 
+    def test_business_survey_exact_row_returns_latest_and_next(self):
+        # У ряда без fallback-правила latest/next идут по точным точкам,
+        # а не падают с ValueError (контракт класса).
+        calendar = PublicationCalendar(
+            [
+                CalendarPoint(
+                    "cbr",
+                    "price_expectations",
+                    date(2026, 8, 31),
+                    datetime(2026, 9, 10, 15, 0),
+                    "exact",
+                ),
+                CalendarPoint(
+                    "cbr",
+                    "price_expectations",
+                    date(2026, 9, 30),
+                    datetime(2026, 10, 15, 15, 0),
+                    "exact",
+                ),
+            ]
+        )
+        as_of = datetime(2026, 10, 20, 13, 30)
+        self.assertEqual(
+            calendar.latest_published_month("cbr", "price_expectations", as_of),
+            date(2026, 9, 1),
+        )
+        self.assertEqual(
+            calendar.next_unpublished_month("cbr", "price_expectations", as_of),
+            date(2026, 10, 1),
+        )
+
+    def test_series_without_rule_or_points_returns_none(self):
+        # Нет ни точных точек, ни fallback-правила: latest = None,
+        # next — месяц as_of, без ValueError.
+        as_of = datetime(2026, 10, 20, 13, 30)
+        self.assertIsNone(CAL.latest_published_month("fred", "cpi", as_of))
+        self.assertEqual(
+            CAL.next_unpublished_month("fred", "cpi", as_of), date(2026, 10, 1)
+        )
+
 
 class TestFallbackRules(unittest.TestCase):
     def test_fallback_precision(self):

@@ -129,13 +129,11 @@ def _cbr_infl_exp_rule(period: date) -> datetime:
 _ReleaseRule = Callable[[date], datetime]
 
 
-def _release_rule(source: str, series: str) -> _ReleaseRule:
-    """Возвращает консервативное правило публикации для пары source/series.
+def _fallback_rule(source: str, series: str) -> _ReleaseRule | None:
+    """Fallback-правило пары source/series или `None`, если его нет.
 
-    Неизвестная пара — ошибка, а не догадка: неверная дата публикации даёт
-    look-ahead, который невозможно заметить по результату модели. У рядов
-    мониторинга предприятий ЦБ правила нет вовсе: спека §3.2 запрещает для них
-    фиксированный лаг, поэтому нужна точная дата в календаре.
+    Ряды мониторинга предприятий ЦБ правила не имеют: спека §3.2 запрещает
+    для них фиксированный лаг, поэтому им нужна точная дата в календаре.
     """
     if source == "rosstat":
         if _is_weekly_series(series):
@@ -147,10 +145,22 @@ def _release_rule(source: str, series: str) -> _ReleaseRule:
             return _cbr_infl_exp_rule
         if _is_cbr_sa_series(series):
             return _cbr_sa_rule
-    raise ValueError(
-        f"нет правила публикации для source={source!r}, series={series!r}: "
-        "добавьте точную дату в календарь или правило в publication_calendar.py"
-    )
+    return None
+
+
+def _release_rule(source: str, series: str) -> _ReleaseRule:
+    """Fallback-правило пары source/series; без правила — `ValueError`.
+
+    Неизвестная пара — ошибка, а не догадка: неверная дата публикации даёт
+    look-ahead, который невозможно заметить по результату модели.
+    """
+    rule = _fallback_rule(source, series)
+    if rule is None:
+        raise ValueError(
+            f"нет правила публикации для source={source!r}, series={series!r}: "
+            "добавьте точную дату в календарь или правило в publication_calendar.py"
+        )
+    return rule
 
 
 def _parse_row(row: dict, path: Path, line_number: int) -> CalendarPoint:
@@ -272,21 +282,39 @@ class PublicationCalendar:
         _require_naive(as_of, "as_of")
         return self.published_at(source, series, period) <= as_of
 
+    def _latest_exact_month(
+        self, source: str, series: str, as_of: datetime
+    ) -> date | None:
+        """Последний опубликованный месяц среди точных точек ряда."""
+        latest: date | None = None
+        for (point_source, point_series, year, month), point in self._by_month.items():
+            if (point_source, point_series) != (source, series):
+                continue
+            if point.published_at > as_of:
+                continue
+            month_start = date(year, month, 1)
+            if latest is None or month_start > latest:
+                latest = month_start
+        return latest
+
     def latest_published_month(
         self, source: str, series: str, as_of: datetime
     ) -> date | None:
         """Последний опубликованный месяц ряда (первое число) или `None`.
 
         Скан идёт от месяца `as_of` назад: точка текущего месяца проверяется
-        первой, потому что ожидания ЦБ публикуются в том же месяце. `as_of` —
-        наивное московское время.
+        первой, потому что ожидания ЦБ публикуются в том же месяце. Ряды без
+        fallback-правила (мониторинг предприятий ЦБ) сканируются только по
+        точным точкам; если их нет — `None`. `as_of` — наивное московское
+        время.
         """
         _require_naive(as_of, "as_of")
         if _is_weekly_series(series):
             raise ValueError(
                 f"latest_published_month: ряд {series!r} недельный, месяц не определён"
             )
-        _release_rule(source, series)  # неизвестный ряд — ошибка до скана
+        if _fallback_rule(source, series) is None:
+            return self._latest_exact_month(source, series, as_of)
         month = _first_of_month(as_of.date())
         for _ in range(_MAX_MONTH_LOOKBACK):
             if self.is_available(source, series, _month_end(month), as_of):
