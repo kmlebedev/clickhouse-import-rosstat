@@ -1,0 +1,138 @@
+{
+  "run_id": "117f5202-9f56-5b15-bf7d-4f39fa2f94a0",
+  "date": "2026-10-20",
+  "status": "live_adaptation",
+  "as_of": "2026-10-20",
+  "target_month": "2026-10-01",
+  "sample": {
+    "first": "2022-01-01",
+    "last": "2026-09-01",
+    "n_rows": 57,
+    "n_skipped": 0
+  },
+  "history": {
+    "n_months": 24,
+    "n_skipped": 0
+  },
+  "forecast": {
+    "cpi_all": 0.5955194803414038,
+    "cpi_food": 0.6782127508490895,
+    "cpi_nonfood": 0.5447456117200435,
+    "cpi_services": 0.5450396521500763
+  },
+  "weights": {
+    "cpi_all": 1.0,
+    "cpi_food": 0.3798197897203683,
+    "cpi_nonfood": 0.34672154754454965,
+    "cpi_services": 0.2734586627350822
+  },
+  "cpi_weights_2024": {
+    "food": 0.38121,
+    "nonfood": 0.3403100000000004,
+    "services": 0.27847999999999995
+  },
+  "errors": {
+    "cpi_all": {
+      "mae": 0.24635122778918175,
+      "n": 24,
+      "rmse": 0.3048572095453654
+    },
+    "cpi_food": {
+      "mae": 0.3831479822410524,
+      "n": 24,
+      "rmse": 0.4699411133065084
+    },
+    "cpi_nonfood": {
+      "mae": 0.21598685806508675,
+      "n": 24,
+      "rmse": 0.2732548416155491
+    },
+    "cpi_services": {
+      "mae": 0.6331007628089482,
+      "n": 24,
+      "rmse": 0.8137007999070592
+    }
+  },
+  "utilities": {
+    "last_forecast_date": "2025-05-01",
+    "last_forecast_far_eastern": 0.3273739782198959,
+    "last_forecast_russia": 0.3273739782198959,
+    "last_row_date": "2025-05-01",
+    "path": "/Users/whitefox/GolandProjects/clickhouse-import-rosstat/.worktrees/cb-comp-archive/build/cb-comp/extracted/BusinessSurveyCBRCpiForecastingSourceCode/Models/CpiComponents/data/Коммунальные услуги прогноз MoM_sa.xlsx",
+    "source": "archive_forecast",
+    "stale_months": 17,
+    "status": "ok",
+    "value_used": 0.3273739782198959
+  },
+  "far_eastern_gu": {
+    "cpi_status": "not_reproduced",
+    "reason": "нет live CPI и весов по ДФО; в архиве только ЖКУ по ДФО",
+    "utilities": {
+      "last_forecast_date": "2025-05-01",
+      "last_forecast_value": 0.3273739782198959
+    }
+  },
+  "pipeline_stages": [
+    {
+      "source": "архив CB_COMP, 2024",
+      "stage": "1. Актуализация словарей и весов ИПЦ",
+      "status": "partial: live-весов 2025/2026 нет"
+    },
+    {
+      "source": "v_rosstat_macro, v_cbr_survey, v_fao_food_price",
+      "stage": "2. Сбор входящего набора данных",
+      "status": "yes: 4 компонента + недельные товары + МП + макро"
+    },
+    {
+      "source": "weekly panel + FAO SA + live target",
+      "stage": "3. Базисные индексы, SA, производные",
+      "status": "partial: 88-группового SA/NMFI нет"
+    },
+    {
+      "source": "3 компонента + агрегат",
+      "stage": "4. CatBoost по компонентам",
+      "status": "partial: 88 групп → 3"
+    },
+    {
+      "source": "walk-forward + current nowcast",
+      "stage": "5. Прогноз и выгрузка",
+      "status": "yes"
+    },
+    {
+      "source": "архив, последний прогноз 2025-05",
+      "stage": "6. Экспертный прогноз ЖКУ",
+      "status": "stale; есть --utilities-mom"
+    },
+    {
+      "source": "официальный ИПЦ до 2026-09",
+      "stage": "7. Обновление истории таргета",
+      "status": "yes"
+    },
+    {
+      "source": "NNLS-веса + ошибки компонент",
+      "stage": "8. Агрегат ИПЦ и ошибка",
+      "status": "yes"
+    },
+    {
+      "source": "4 официальных компонента + weekly",
+      "stage": "9. История компонент из NMFI",
+      "status": "partial: NMFI live нет"
+    },
+    {
+      "source": "CSV long/wide + XLSX",
+      "stage": "10. Дашборд «КСП ИПЦ по компонентам»",
+      "status": "yes"
+    },
+    {
+      "source": "--adjustments CSV",
+      "stage": "11. Экспертные корректировки",
+      "status": "yes"
+    },
+    {
+      "source": "Россия",
+      "stage": "12. Финальный прогноз Россия + ДФО",
+      "status": "partial: ДФО не воспроизводится"
+    }
+  ],
+  "conclusion": "Структура пайплайна воспроизведена на live-данных в гранулярности 3 компонента + агрегат; 88-компонентный SA-слой, live-веса 2025/2026, live ЖКУ и ДФО не воспроизводятся."
+}

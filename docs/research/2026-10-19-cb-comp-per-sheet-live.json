@@ -1,0 +1,324 @@
+{
+  "run": "cb_comp_per_sheet_live",
+  "date": "2026-10-19",
+  "status": "diagnostic",
+  "design": {
+    "target": "TARGET_FULL (CB_COMP archive)",
+    "train": "2010-03…2018-12",
+    "test": "2019-01…2024-07",
+    "normal_months": 54,
+    "folds": "fixed article split, same as #222",
+    "feature_modes": [
+      "mean",
+      "per_bsu",
+      "per_sheet"
+    ],
+    "per_sheet_inputs": {
+      "panel": "v_cbr_mp_public_panel",
+      "rows": 77517,
+      "codes": 87,
+      "distinct_series": 33,
+      "sheets": 11,
+      "indicators": 3
+    },
+    "models": 640,
+    "groups": 88,
+    "groups_with_bsu": 72,
+    "coverage_mean": 0.897376666666667,
+    "feature_counts": {
+      "min": 6,
+      "median": 18.0,
+      "max": 30
+    }
+  },
+  "rmse": {
+    "1": {
+      "mean": 0.16933956003722647,
+      "per_bsu": 0.16760661978914412,
+      "per_sheet_public": 0.19121466218643976,
+      "per_sheet_authors": 0.17852094243725886,
+      "cb": 0.158805
+    },
+    "2": {
+      "mean": 0.33947004574502687,
+      "per_bsu": 0.3042390660780781,
+      "per_sheet_public": 0.30839016676223396,
+      "per_sheet_authors": 0.31087262909257424,
+      "cb": 0.296655
+    },
+    "3": {
+      "mean": 0.5216611063735723,
+      "per_bsu": 0.4537441782235173,
+      "per_sheet_public": 0.46386455860895515,
+      "per_sheet_authors": 0.4909590935835309,
+      "cb": 0.443623
+    },
+    "6": {
+      "mean": 1.0881864841952407,
+      "per_bsu": 0.9748427039871308,
+      "per_sheet_public": 0.9713240565701026,
+      "per_sheet_authors": 1.048219318438346,
+      "cb": 0.971459
+    }
+  },
+  "pairwise": [
+    {
+      "horizon": 1,
+      "a": "per_sheet_public",
+      "b": "mean",
+      "ratio": 1.1291789239584915,
+      "delta": 0.021875102149213288,
+      "dm_p": 0.13666953275443502,
+      "delta_ci90": [
+        -0.0020951958569754847,
+        0.047279290701150195
+      ]
+    },
+    {
+      "horizon": 1,
+      "a": "per_sheet_public",
+      "b": "per_bsu",
+      "ratio": 1.1408538781284145,
+      "delta": 0.023608042397295637,
+      "dm_p": 0.16042511659037378,
+      "delta_ci90": [
+        -0.0008080445600209263,
+        0.052434266622520403
+      ]
+    },
+    {
+      "horizon": 1,
+      "a": "per_sheet_authors",
+      "b": "mean",
+      "ratio": 1.0542187684792261,
+      "delta": 0.009181382400032384,
+      "dm_p": 0.3831401956428481,
+      "delta_ci90": [
+        -0.01087358611757644,
+        0.028443664166167948
+      ]
+    },
+    {
+      "horizon": 1,
+      "a": "per_sheet_authors",
+      "b": "per_bsu",
+      "ratio": 1.0651186848219085,
+      "delta": 0.010914322648114733,
+      "dm_p": 0.4236973483408001,
+      "delta_ci90": [
+        -0.010203950550899094,
+        0.03394542498636943
+      ]
+    },
+    {
+      "horizon": 1,
+      "a": "per_sheet_public",
+      "b": "per_sheet_authors",
+      "ratio": 1.0711049335494187,
+      "delta": 0.012693719749180904,
+      "dm_p": 0.16147073647333662,
+      "delta_ci90": [
+        -0.0023397426403083676,
+        0.028837964553397127
+      ]
+    },
+    {
+      "horizon": 2,
+      "a": "per_sheet_public",
+      "b": "mean",
+      "ratio": 0.908445886839345,
+      "delta": -0.031079878982792908,
+      "dm_p": 0.2738061616794421,
+      "delta_ci90": [
+        -0.07178028201679149,
+        0.010734479190942503
+      ]
+    },
+    {
+      "horizon": 2,
+      "a": "per_sheet_public",
+      "b": "per_bsu",
+      "ratio": 1.0136442066354836,
+      "delta": 0.004151100684155862,
+      "dm_p": 0.7816046698059275,
+      "delta_ci90": [
+        -0.021852460560845888,
+        0.03104754465795978
+      ]
+    },
+    {
+      "horizon": 2,
+      "a": "per_sheet_authors",
+      "b": "mean",
+      "ratio": 0.915758644949982,
+      "delta": -0.028597416652452634,
+      "dm_p": 0.2053443491689751,
+      "delta_ci90": [
+        -0.06245789698874027,
+        0.006062933775025814
+      ]
+    },
+    {
+      "horizon": 2,
+      "a": "per_sheet_authors",
+      "b": "per_bsu",
+      "ratio": 1.0218037844383658,
+      "delta": 0.0066335630144961355,
+      "dm_p": 0.6221570988362368,
+      "delta_ci90": [
+        -0.014526585947898296,
+        0.03151418334568168
+      ]
+    },
+    {
+      "horizon": 2,
+      "a": "per_sheet_public",
+      "b": "per_sheet_authors",
+      "ratio": 0.9920145355427833,
+      "delta": -0.0024824623303402737,
+      "dm_p": 0.8444560722068521,
+      "delta_ci90": [
+        -0.02287996990762714,
+        0.01607329496671539
+      ]
+    },
+    {
+      "horizon": 3,
+      "a": "per_sheet_public",
+      "b": "mean",
+      "ratio": 0.8892067147455155,
+      "delta": -0.05779654776461718,
+      "dm_p": 0.31045126844606036,
+      "delta_ci90": [
+        -0.13719957967598156,
+        0.018424693450168173
+      ]
+    },
+    {
+      "horizon": 3,
+      "a": "per_sheet_public",
+      "b": "per_bsu",
+      "ratio": 1.0223041547884113,
+      "delta": 0.010120380385437833,
+      "dm_p": 0.7695189545157233,
+      "delta_ci90": [
+        -0.04115074763687765,
+        0.05849222527248049
+      ]
+    },
+    {
+      "horizon": 3,
+      "a": "per_sheet_authors",
+      "b": "mean",
+      "ratio": 0.9411456740498206,
+      "delta": -0.030702012790041422,
+      "dm_p": 0.48433808770653564,
+      "delta_ci90": [
+        -0.09610952203978518,
+        0.03208761150256295
+      ]
+    },
+    {
+      "horizon": 3,
+      "a": "per_sheet_authors",
+      "b": "per_bsu",
+      "ratio": 1.0820173947040292,
+      "delta": 0.03721491536001359,
+      "dm_p": 0.24694610000003936,
+      "delta_ci90": [
+        -0.012696335376421064,
+        0.08291720042417372
+      ]
+    },
+    {
+      "horizon": 3,
+      "a": "per_sheet_public",
+      "b": "per_sheet_authors",
+      "ratio": 0.9448130499492093,
+      "delta": -0.027094534974575757,
+      "dm_p": 0.24548811576557025,
+      "delta_ci90": [
+        -0.05854095516870178,
+        0.0071175699942280235
+      ]
+    },
+    {
+      "horizon": 6,
+      "a": "per_sheet_public",
+      "b": "mean",
+      "ratio": 0.8926080875636286,
+      "delta": -0.1168624276251381,
+      "dm_p": 0.13902845660607566,
+      "delta_ci90": [
+        -0.2242734706370768,
+        0.008323934680546263
+      ]
+    },
+    {
+      "horizon": 6,
+      "a": "per_sheet_public",
+      "b": "per_bsu",
+      "ratio": 0.9963905485442556,
+      "delta": -0.003518647417028231,
+      "dm_p": 0.9553398948600984,
+      "delta_ci90": [
+        -0.09613776165311483,
+        0.10084766377200038
+      ]
+    },
+    {
+      "horizon": 6,
+      "a": "per_sheet_authors",
+      "b": "mean",
+      "ratio": 0.9632717679024914,
+      "delta": -0.03996716575689474,
+      "dm_p": 0.3717096903037844,
+      "delta_ci90": [
+        -0.11900811208155493,
+        0.037243395628016485
+      ]
+    },
+    {
+      "horizon": 6,
+      "a": "per_sheet_authors",
+      "b": "per_bsu",
+      "ratio": 1.0752702093897846,
+      "delta": 0.07337661445121513,
+      "dm_p": 0.10323223232502214,
+      "delta_ci90": [
+        2.2224021994698973e-05,
+        0.1494359363026403
+      ]
+    },
+    {
+      "horizon": 6,
+      "a": "per_sheet_public",
+      "b": "per_sheet_authors",
+      "ratio": 0.9266420103926313,
+      "delta": -0.07689526186824336,
+      "dm_p": 0.17564243386094064,
+      "delta_ci90": [
+        -0.15901882251386312,
+        0.010943015148484836
+      ]
+    }
+  ],
+  "source_comparison_median": {
+    "costs": {
+      "corr_level": 0.92558685335355,
+      "corr_chg": 0.6809950141711489,
+      "mae_level": 2.911655234206427
+    },
+    "ibk": {
+      "corr_level": 0.9039025242949515,
+      "corr_chg": 0.7511736056817164,
+      "mae_level": 2.374435854614071
+    },
+    "price_exp": {
+      "corr_level": 0.9194023537992244,
+      "corr_chg": 0.7821148237377014,
+      "mae_level": 2.8360815747250174
+    }
+  },
+  "conclusion": "Live per-sheet proxy recovers the per-BSU point estimate on h2/h3/h6 but not the statistical significance vs mean; h1 is worse. Pure granularity ablation (authors per-code collapsed to sheet means) loses part of the h6 gain. A true live per-BSU requires per-code MP data."
+}
