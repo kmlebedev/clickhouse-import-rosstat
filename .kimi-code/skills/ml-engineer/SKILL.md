@@ -104,7 +104,7 @@ whenToUse: When a task involves an ML experiment, model, feature set, backtest, 
 | `make mlflow-export/register/promote/models` | экспорт run'ов, registry, aliases |
 | `make all` / `make docs-check` / `make mcp-check` | CI, docs-портал, MCP end-to-end |
 
-Python-тесты — офлайн, через `uv run --with ... python3 scripts/<name>_test.py`. Интерактивные SQL-проверки — MCP `run_query`; скрипты читают ClickHouse своим `ch_query`/env-путём, но не пишут.
+Python-тесты — офлайн, через `uv run --with ... python3 scripts/models/<family>/<name>_test.py` (общие — `scripts/lib/<name>_test.py`). Интерактивные SQL-проверки — MCP `run_query`; скрипты читают ClickHouse своим `ch_query`/env-путём, но не пишут.
 
 ## 7. Паспорт run и реестр
 

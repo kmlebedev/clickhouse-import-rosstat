@@ -49,7 +49,7 @@ SELECT venue, count(), max(date) FROM gold_prices FINAL GROUP BY venue;
 | Домен | Что импортирует | Основные таблицы | Расписание (МСК) |
 |---|---|---|---|
 | [`cbr`](docs/IMPORTERS.md) | ЦБ РФ: ставка, курс, M2, золото, кредиты, ставки, ИПЦ, RUONIA, мониторинг предприятий (16 отраслевых листов), макроопрос, резюме ДКП, платёжный баланс, ДИП, среднесрочный прогноз, форма 101, кривая бескупонной доходности (КБД), макропруденциальные требования (АЦН-индикаторы, надбавки к коэффициентам риска, МПЛ), публичный кроссворд 87 BSU-кодов на отраслевые листы | `cbr_*`, `macro_series`, `cbr_mp_summary*`, `cbr_bop_*`, `cbr_dip_bulletin`, `cbr_mt_forecast`, `cbr_form101`, `cbr_zcyc`, `cbr_ccyb_indicators`, `cbr_risk_weight_addons`, `cbr_mpl`, `cbr_mp_bsu_map`; слой ДИП — витрины `v_point_in_time`, `v_point_in_time_asof` (срез `as_of='YYYY-MM-DD'`), `v_point_in_time_version`; КБД — витрины `v_ofz_curve_compare`, `v_ofz_signal`; макропруденциальные требования — витрины `v_cbr_ccyb_indicators`, `v_cbr_risk_weight_addons`, `v_cbr_mpl`; Task 7 #248 — витрины `v_cbr_mp_bsu_map`, `v_cbr_mp_public_panel` | ежедневно 09:17 |
-| [`rosstat`](docs/IMPORTERS.md) | ИПЦ (месяц, неделя, до 2022), недельный агрегат ИПЦ 2019+ из BI, зарплаты, ВВП, рынок труда, ИЦП по ВЭД (совокупный ряд, 1998+, m/m / ytd / y/y / period), публичный классификатор ОКВЭД2 (3 102 строки, 87/87 BSU-кодов) | `rosstat_*`; Task 7 #248 — `rosstat_okved2` и витрина `v_rosstat_okved2`; `rosstat_bi_cpi_weekly` — 398 точек 2019-01-09…2026-10-12; T1 #276 — `rosstat_ppi_ved` (витрина `v_rosstat_ppi` — T5) | четверг 12:17 |
+| [`rosstat`](docs/IMPORTERS.md) | ИПЦ (месяц, неделя, до 2022), недельный агрегат ИПЦ 2019+ из BI, зарплаты, ВВП, рынок труда, ИЦП по ВЭД (совокупный ряд, 1998+, m/m / ytd / y/y / period), ИЦП по товарам/ОКПД2 (1 327 кодов, 2021–2026, 4 типа), веса ИЦП по ВЭД (38 кодов, 2017–2026, domestic и domestic+export), публичный классификатор ОКВЭД2 (3 102 строки, 87/87 BSU-кодов) | `rosstat_*`; Task 7 #248 — `rosstat_okved2` и витрина `v_rosstat_okved2`; `rosstat_bi_cpi_weekly` — 398 точек 2019-01-09…2026-10-12; T1 #276 — `rosstat_ppi_ved`; T2 #277 — `rosstat_ppi_product` (336 512 точек 2021-01…2026-08) и `rosstat_ppi_weights` (758 точек, 2017–2026); витрина `v_rosstat_ppi` — T5 | четверг 12:17 |
 | [`fedstat`](docs/IMPORTERS.md) | ЕМИСС 37426: еженедельные средние потребительские цены (тарифы) на 158 товаров и услуг, рубли; 2008–2022 по РФ и 2026 недели 39–40 по РФ без новых субъектов; 2023–2025 в источнике отсутствуют | `fedstat_weekly_prices` (56 133 точки); витрина `v_fedstat_weekly_prices` | пятница 13:43 |
 | [`minfin`](docs/IMPORTERS.md) | исполнение федерального и консолидированного бюджета (включая федеральный дефицит), нефтегазовые доходы и НДПИ; общий шаблон импортёра, значения Float64 | `minfin_fed_bud_*`, `minfin_oil_gas_mes` | 10-е 10:41 |
 | [`customs`](docs/IMPORTERS.md) | внешняя торговля по странам | `customs_vneshn_torg` | 15-е 11:41 |
@@ -82,7 +82,9 @@ ingest/ cmd/ingest/  ingest-endpoint контура прогноза
 dagu/                расписания DAG
 grafana/ dashboard/  дашборды как код и артефакты
 docs/                документация: спецификации, конфигурация, эксплуатация
-scripts/             проверки, модели, генератор docs-портала
+scripts/lib/         транспорт ClickHouse, eval_utils, ml_experiment
+scripts/models/      cpi/, cb_comp/, key_rate/, polyus/ — все версии модели в своей папке
+scripts/             остальные инструменты: harvest, mcp_*, docs_build, mlflow_*, xlsx_*, grafana_*
 deploy/staging/      артефакты staging
 ```
 
@@ -165,7 +167,7 @@ make mlflow-down
 | `make cb-comp-parity` / `make cb-comp-parity-test` | паритет nowcast с CB_COMP (direct + bottom-up, архив авторов) / офлайн-тесты parity-скриптов |
 | `make docs-check` / `make docs-build` | проверка и сборка docs-портала |
 
-`make shock-classifier` пишет три локальных артефакта в каталог прогона (по умолчанию текущий, переопределяется `ARGS="--out-dir DIR"`): отчёт с разделами «Явные шоки», «Покрытие каналов», «Метрики классификатора», «Веса», «С весами / без», «Ограничения»; CSV as-of весов `meeting_date, emergency, explicit_shock, step_bp, y3, anomaly_score, weight, shock_prob, missing_count` + признаки; JSON as-of среза следующего заседания. Прямых вставок в ClickHouse нет: журнал включается только `ML_LOG=1` (или `ARGS="--log"`) и идёт через `scripts/ml_experiment.py` (`ml_runs`/`ml_predictions`). Офлайн-фикстуры — `ARGS="--export-fixtures scripts/testdata/shock_classifier"`.
+`make shock-classifier` пишет три локальных артефакта в каталог прогона (по умолчанию текущий, переопределяется `ARGS="--out-dir DIR"`): отчёт с разделами «Явные шоки», «Покрытие каналов», «Метрики классификатора», «Веса», «С весами / без», «Ограничения»; CSV as-of весов `meeting_date, emergency, explicit_shock, step_bp, y3, anomaly_score, weight, shock_prob, missing_count` + признаки; JSON as-of среза следующего заседания. Прямых вставок в ClickHouse нет: журнал включается только `ML_LOG=1` (или `ARGS="--log"`) и идёт через `scripts/lib/ml_experiment.py` (`ml_runs`/`ml_predictions`). Офлайн-фикстуры — `ARGS="--export-fixtures scripts/testdata/shock_classifier"`.
 
 Пункт роадмапа ведётся через GitHub issue с составным ID `<slug>/<item-id>`: шаблоны — [`.github/ISSUE_TEMPLATE/roadmap-item.yml`](.github/ISSUE_TEMPLATE/roadmap-item.yml) и [`.github/pull_request_template.md`](.github/pull_request_template.md); операции — скил `github-tracker` ([`.kimi-code/skills/github-tracker/SKILL.md`](.kimi-code/skills/github-tracker/SKILL.md)); правила — [docs/ROADMAP_INDEX.md](docs/ROADMAP_INDEX.md) и правило 12 [AGENTS.md](AGENTS.md). Живой проект — [clickhouse-import-rosstat — Roadmap](https://github.com/users/kmlebedev/projects/11).
 
