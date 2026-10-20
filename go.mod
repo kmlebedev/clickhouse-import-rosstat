@@ -16,6 +16,7 @@ require (
 	github.com/xuri/excelize/v2 v2.11.0
 	golang.org/x/net v0.60.0
 	golang.org/x/text v0.42.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -67,5 +68,4 @@ require (
 	google.golang.org/appengine v1.6.8 // indirect
 	google.golang.org/protobuf v1.36.6 // indirect
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

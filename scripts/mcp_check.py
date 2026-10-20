@@ -708,6 +708,49 @@ async def check(params, server_log):
             failed += not expect("колонка error_bp читается агентом", kr_error is not None,
                                  "SELECT error_bp FROM v_key_rate_dashboard" if kr_error is not None else kr_error_raw[:200])
 
+            # Live-витрина (infra/4.3): читается агентом, stage из закрытого набора,
+            # staged-метрики не попали в публикационный forecast-контур. Пустая
+            # витрина — информационная строка: до первого shadow/canary её нет.
+            ml_live_raw = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_ml_live_accuracy"}))
+            ml_live = result_rows(ml_live_raw)
+            ml_live_n = ml_live[0].get("n") if ml_live else None
+            if ml_live is None:
+                ml_live_detail = f"витрина не читается: {ml_live_raw[:200]}"
+                ml_live_ok = False
+            elif (ml_live_n or 0) == 0:
+                ml_live_detail = ("строк: 0 — до первого live-прогноза (информационно; "
+                                  "make import STAT=key_rate_views создаёт витрину)")
+                ml_live_ok = True
+            else:
+                ml_live_detail = f"строк: {ml_live_n}"
+                ml_live_ok = True
+            failed += not expect("витрина v_ml_live_accuracy читается агентом", ml_live_ok, ml_live_detail)
+
+            stages_raw = text(await session.call_tool("run_query", {"query":
+                "SELECT groupUniqArray(stage) AS stages FROM v_ml_live_accuracy"}))
+            stages = result_rows(stages_raw)
+            if stages is None:
+                stages_detail = f"ответ не распознан: {stages_raw[:200]}"
+                stages_ok = False
+            else:
+                values = set((stages[0].get("stages") if stages else None) or [])
+                stages_ok = values <= {"production", "shadow", "canary"}
+                stages_detail = f"stage: {sorted(values) if values else 'нет строк'}"
+            failed += not expect("stage в v_ml_live_accuracy — production/shadow/canary",
+                                 stages_ok, stages_detail)
+
+            staged_raw = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_key_rate_dashboard "
+                "WHERE contour = 'forecast' "
+                "AND (indicator LIKE '%:shadow' OR indicator LIKE '%:canary')"}))
+            staged = result_rows(staged_raw)
+            staged_n = staged[0].get("n") if staged else None
+            failed += not expect("staged-метрики не входят в forecast-контур v_key_rate_dashboard",
+                                 staged is not None and (staged_n or 0) == 0,
+                                 f"staged-строк: {staged_n}" if staged is not None
+                                 else f"ответ не распознан: {staged_raw[:200]}")
+
             raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM forecast_log"}))
             denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
             failed += not expect("сырой forecast_log закрыт", denied,

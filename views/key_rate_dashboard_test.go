@@ -91,6 +91,8 @@ func TestKeyRateDashboardViewContract(t *testing.T) {
 		"'next_meeting'",
 		"error_bp",
 		"LIKE 'cbr_rate:%'",
+		"metric NOT LIKE '%:shadow'",
+		"metric NOT LIKE '%:canary'",
 		"pow(1 +",
 		"FINAL",
 		"minOrNull",
