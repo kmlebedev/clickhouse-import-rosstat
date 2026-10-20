@@ -499,6 +499,12 @@ cpi-weekly-panel:
 cpi-weekly-panel-test:
 	uv run --with openpyxl --python 3.12 python3 scripts/cpi_weekly_component_panel_test.py -v
 
+# Live-диагностика per_sheet: экспорт v_cbr_mp_public_panel (87 кодов × 3
+# индикатора, но 33 различные серии) и v_cbr_mp_bsu_map (код → industry_slug)
+# в build/cb-comp-parity. Только чтение ClickHouse.
+cb-comp-public-export:
+	uv run --with pandas --python 3.12 python3 scripts/cb_comp_public_export.py --out-dir build/cb-comp-parity
+
 # Паритет ML-трека с CB_COMP (issue #190): таргет TARGET_FULL из архива авторов,
 # архивные per-period прогнозы CB_COMP, две CatBoost-direct модели (с МП/без МП),
 # DM-HLN, TOST с margin 10% RMSE CB_COMP, RMSE ratio. Архив не скачивается:
