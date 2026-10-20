@@ -213,3 +213,14 @@ steps:
     retry_policy:
       limit: 3
       interval_sec: 300
+
+  # График публикаций ЦБ и исторические published_at (Task 1, #299). Шаг в хвосте:
+  # календарь не источник точек контура, падение не лишает данных проверенные шаги.
+  # Повтор в тот же день — дельта 0 строк (окно статистики сдвигается раз в день).
+  - id: cbr_publication_calendar
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=cbr_publication_calendar
+    retry_policy:
+      limit: 3
+      interval_sec: 300
