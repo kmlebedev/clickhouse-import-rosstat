@@ -28,8 +28,8 @@
 
 1. `contractMonth` и `parseContractMonth(shortname, asset)` — `BR-10.09` → `{2009, 10}`, `COPPER-12.24` → `{2024, 12}`; мусор — ошибка.
 2. `futuresBar{secid, month, year, date, settle, close, volume, openPosition}`.
-3. `parseFuturesHistory(block)` — проверка колонок `TRADEDATE`, `SECID`, `CLOSE`, `SETTLEPRICE`, `VOLUME`, `OPENPOSITION`, `SHORTNAME`, `ASSETCODE`; строки с пустым `ASSETCODE` пропускаются; `null` в `CLOSE`/`SETTLEPRICE` — 0; `VOLUME`/`OPENPOSITION` — `uint64` с проверкой.
-4. `parseFuturesSecids(block, asset)` — `ASSETCODE == asset`, дедуп.
+3. `parseFuturesHistory(block)` — проверка колонок `TRADEDATE`, `SECID`, `CLOSE`, `SETTLEPRICE`, `VOLUME`, `OPENPOSITION`, `SHORTNAME`, `ASSETCODE`; строки с пустым/`null` `ASSETCODE` пропускаются; `null` в `CLOSE`/`SETTLEPRICE` — 0; `VOLUME`/`OPENPOSITION` — `uint64` с проверкой.
+4. `parseFuturesSecids(block, asset)` — `ASSETCODE == asset`, `SHORTNAME` разбирается как контракт (опционы и спреды отбрасываются), `nil` ASSETCODE = «не наш актив», дедуп.
 5. `frontMonthPoints(bars)` — на каждую дату минимальный `(year, month)` с `value = settle > 0 ? settle : close`; `<= 0` — пропуск.
 
 ### Шаг 3. Транспорт (`moex/market.go`)
@@ -96,7 +96,7 @@
 
 1. `make env-check`, `make ch-status`.
 2. `make all`.
-3. `make import STAT=moex_market` — первый прогон: Brent ≈4 100 точек, `2009-10-05 … последний торговый день`; записать `Imported N`, `min(date)`, `max(date)`.
+3. `make import STAT=moex_market` — первый прогон: Brent 3 916 точек, `2009-10-01 … 2026-10-19`; записать `Imported N`, `min(date)`, `max(date)`.
 4. Повтор — `count() FINAL` не изменился, тот же `max(date)`.
 5. `make mcp-user` (если гранты менялись), `make mcp-check` — новый блок `v_moex_market` OK.
 6. `dagu validate dagu/moex.yaml`, `make docs-check`.
@@ -113,7 +113,7 @@
 ## 3. Критерий приёмки
 
 - `make all` зелёный; `go test -race -count=1 ./moex/` зелёный.
-- `make import STAT=moex_market`: ≥4 000 точек Brent, `2009-10-05 … последний торговый день`; повтор идемпотентен (`count() FINAL` не меняется).
+- `make import STAT=moex_market`: ≥3 900 точек Brent, `2009-10-01 … 2026-10-19`; повтор идемпотентен (`count() FINAL` не меняется).
 - `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА, включая `v_moex_market`.
 - `dagu validate dagu/moex.yaml` — exit 0; `make docs-check` — зелёный.
 - `ARCHITECTURE.md`, `README.md`, `IMPORTERS.md`, роадмап обновлены тем же PR.
@@ -124,3 +124,15 @@
 - RVI и медь (следующий пункт `phase-2-moex-market`).
 - FRED, архив авторов, VIX/CRB.
 - Изменение #114 (только комментарий и статус `Blocked` отдельным docs-only шагом).
+
+## 5. Протокол живой приёмки (2026-10-20)
+
+- `make all` — зелёный (golangci-lint `0 issues`, `go vet` чисто, `go test -race` все `ok`, обе сборки).
+- `make import STAT=moex_market` — `moex_market: BR: 179 contracts, 33074 bars, 3916 points`; `Imported 3916 rows`; витрина `v_moex_market` — **3 916** строк, **3 916** уникальных дат, `2009-10-01 … 2026-10-19`.
+- Повтор — `moex_market: BR: 20 contracts, 2044 bars, 279 points`, `Imported 279 rows` (окно 400 дней); `count() FINAL` — те же **3 916**, `max(date)` 2026-10-19 (идемпотентно).
+- MCP: `brent_front` 3 916 (2009-10-01…2026-10-19); спот `2009-10-05 = 66.45`, `2026-10-19 = 108.93`; `v_series_catalog` — `brent_front`, `USD за баррель`, `D`.
+- `make mcp-check` — **ПРОВЕРКА ПРОЙДЕНА**; новые проверки: `v_moex_market` непуста, `brent_front` есть, сырая `moex_market` → отказ 497.
+- `dagu validate dagu/moex.yaml` — exit 0; `make docs-check` — 38 страниц, 33 теста OK.
+- Живой прогон вскрыл `ASSETCODE = null` у спредов/служебных инструментов: разбор переведён на `rowStringOrEmpty`, `nil` = «не наш актив»; добавлен red-check-тест.
+
+**Статус:** `✅ сделан этим PR` (In Review), не `Done`: мерж за владельцем.

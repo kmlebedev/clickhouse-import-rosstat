@@ -570,6 +570,30 @@ async def check(params, server_log):
                 failed += not expect(f"сырая {table} закрыта ({label})", denied,
                                      f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
 
+            # Рыночные ряды MOEX (пункт key-rate/phase-2-brent, #113): витрина
+            # v_moex_market читается агентом, сырая moex_market закрыта. Ожидается
+            # минимум brent_front; RVI и медь появятся следующим пунктом.
+            moex_market_raw = text(await session.call_tool("run_query", {
+                "query": "SELECT series, count() AS rows, min(date) AS min_date, max(date) AS max_date "
+                         "FROM v_moex_market GROUP BY series ORDER BY series"}))
+            moex_market_rows = result_rows(moex_market_raw)
+            if moex_market_rows is None:
+                moex_market_detail = f"витрина не читается: {moex_market_raw[:200]}"
+            else:
+                moex_market_detail = "; ".join(
+                    f"{r.get('series')}: {r.get('rows')} ({r.get('min_date')}…{r.get('max_date')})"
+                    for r in moex_market_rows) or "в ответе нет строк"
+            failed += not expect("витрина v_moex_market существует и непуста",
+                                 bool(moex_market_rows), moex_market_detail)
+            if moex_market_rows:
+                failed += not expect("v_moex_market: есть brent_front",
+                                     any(r.get("series") == "brent_front" for r in moex_market_rows),
+                                     moex_market_detail)
+            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM moex_market"}))
+            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+            failed += not expect("сырая moex_market закрыта", denied,
+                                 "отказ ClickHouse 497 на moex_market (ожидаемо)" if denied else raw[:200])
+
             # Сводный дашборд контура ключевой ставки (пункт key-rate/phase-4-dashboard,
             # issue #128): одна витрина на оба контура, пороги, ближайшее заседание и
             # последний прогноз с ошибкой в б.п. Проверяется не только право чтения, но и

@@ -67,4 +67,19 @@ var moexSeriesMeta = []util.SeriesMeta{
 		Description: "Годовая доходность G-curve на срок 10 лет, % годовых. ⚠️ Снимок текущего дня: история " +
 			"накапливается с даты первого запуска импортёра ofz_curve",
 	},
+	{
+		Source:    moexSource,
+		Series:    brentSeries,
+		Title:     "Brent: непрерывный фронт-месяц фьючерса MOEX BR, дневной",
+		Unit:      "USD за баррель",
+		Frequency: "D",
+		Origin: "MOEX ISS: /iss/history/engines/futures/markets/forts/securities/<secid>.json, " +
+			"ASSETCODE=BR, поле SETTLEPRICE; контракты обнаруживаются запросом " +
+			"/iss/history/engines/futures/markets/forts/securities.json?date=...&assetcode=BR",
+		Description: "Расчётная цена дня (SETTLEPRICE) ближайшего по месяцу поставки контракта BR; " +
+			"если SETTLEPRICE нет — CLOSE. История с 2009-10-01 (первый фронт-месяц; контракт BR-10.09). Это фьючерсный фронт-месяц, " +
+			"а не спот и не back-adjusted continuous ряд: на роллах возможен разрыв, поэтому для " +
+			"сопоставления с вендорским рядом CB_COMP нужна оговорка. Ряд добавлен для макро-контролей " +
+			"CB_COMP и контура ключевой ставки; RVI и медь — phase-2-moex-market. Витрина — v_moex_market",
+	},
 }
