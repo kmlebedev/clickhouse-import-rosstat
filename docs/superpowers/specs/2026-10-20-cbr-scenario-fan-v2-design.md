@@ -9,6 +9,14 @@
 
 ---
 
+## 0. Post-hoc revision (owner decision 2026-10-20)
+
+Первичный прогон Task 3 (run `32fd65f9…`) был на предзарегистрированном primary `core_fan_scale`: `promote` с coverage 0.736; `core_fan_conformal` дал **0.806**, `core_fan_global` — 0.764. Решение владельца после результата: **primary → `core_fan_conformal`**, `core_fan_global` — secondary; для 2022–2023 добавлены `core_fan_conformal_regime`/`core_fan_global_regime` (shock-режим `emergency or w<0.5`, `MIN_REGIME_RESIDUALS=6`).
+
+Это **post-hoc** решение: исходный результат `core_fan_scale` сохранён, новый прогон на той же выборке не является независимым подтверждением. В отчёте и PR это помечено.
+
+---
+
 ## 1. Гипотеза и решение
 
 Task 1 показал: shock-слой значимо улучшает CRPS против `fan_raw` (−16.27, p=0.012), но веер остаётся недорассеянным (coverage 80 % — 0.429) и хуже точечных бенчмарков, потому что **центр** веера — отвергнутый `cbr_rule`. Гипотеза Task 3:
@@ -92,13 +100,15 @@ n = len(e_i)
 | Вариант | Формула | Роль |
 |---|---|---|
 | `disp_global` | `q_α = quantile(e_train, α)` | ablation |
-| `disp_scale` | `log(|e_i|+1) = γ0 + γ1·(1−w_i) + γ2·p_i`; `scale_i = exp(γ0+γ1(1−w_i)+γ2p_i)−1`; `u_i = e_i / max(scale_i, eps)`; `q_α = scale_t·quantile(u_train, α)`; `scale_t` — по `w_t`, `p_t` текущего заседания | **primary** |
-| `disp_conformal` | `q_α = sorted(e_train)[min(n, ⌈(n+1)·α⌉)−1]` | robustness |
+| `disp_scale` | `log(|e_i|+1) = γ0 + γ1·(1−w_i) + γ2·p_i`; `scale_i = exp(γ0+γ1(1−w_i)+γ2p_i)−1`; `u_i = e_i / max(scale_i, eps)`; `q_α = scale_t·quantile(u_train, α)`; `scale_t` — по `w_t`, `p_t` текущего заседания | ablation (был primary до post-hoc revision) |
+| `disp_conformal` | `q_α = sorted(e_train)[min(n, ⌈(n+1)·α⌉)−1]` | **primary** (после post-hoc revision) |
+| `disp_conformal_regime` / `disp_global_regime` | conformal/global-квантили по shock-режиму (`emergency or w<0.5`); `MIN_REGIME_RESIDUALS=6`, малый subset — fallback на all | 2022–2023 fix |
 
 - `w_i`, `p_i` — причинные значения Task 1; `p` клипуется 0–0.25.
 - `disp_scale` — 2 признака, чтобы не переобучиться на 84 фолдах; коэффициенты публикуются.
 - `scale_t ≤ 0` → fallback на `disp_global` со счётчиком.
 - `disp_conformal` — конечная выборка; exchangeability временного ряда нарушается, это robustness, не гарантия.
+- `disp_conformal_regime`/`disp_global_regime` — 2022–2023: shock-режим определяется `emergency` или `w<0.5`; порог фиксирован по семантике `shock_classifier`, не по ошибкам 2022.
 - Вне объёма: quantile regression, CQR, Bayesian-дисперсия — следующие итерации.
 
 ## 7. Веера
@@ -112,9 +122,11 @@ weight = 1 / (5 · 7)
 
 | Веер | Ядро | Дисперсия | Роль |
 |---|---|---|---|
-| `core_fan_global` | ordered logit | `disp_global` | ablation |
-| `core_fan_scale` | ordered logit | `disp_scale` | **primary** |
-| `core_fan_conformal` | ordered logit | `disp_conformal` | robustness |
+| `core_fan_global` | ordered logit | `disp_global` | ablation/secondary |
+| `core_fan_scale` | ordered logit | `disp_scale` | ablation (Task 3 original primary) |
+| `core_fan_conformal` | ordered logit | `disp_conformal` | **primary** |
+| `core_fan_conformal_regime` | ordered logit | `disp_conformal_regime` | 2022–2023 fix |
+| `core_fan_global_regime` | ordered logit | `disp_global_regime` | 2022–2023 fix (ablation) |
 | `core_fan_ml` | ElasticNetCV | `disp_scale` | challenger |
 
 `FanPrediction` Task 1: `steps`/`labels` (`"<scenario>|q<alpha>"`)/`fallbacks` выровнены; `p_shock`/`weight`/`emergency` — для CSV. С центрированными дельтами медиана сценариев ≈ 0; медиана веера — `m_t + median(q)`.
@@ -134,10 +146,10 @@ weight = 1 / (5 · 7)
 
 ### 8.3. Правило решения
 
-- **`promote`:** coverage 80 % в `[0.70; 0.90]` и Wilson CI включает 0.8; CRPS `core_fan_scale` значимо ниже Task 1 `fan_shock_weighted` (CI разницы ниже 0); CRPS не хуже точечного `ordered_logit` более чем на 10 %; медианный RMSE не значимо хуже `ordered_logit`.
+- **`promote`:** coverage 80 % в `[0.70; 0.90]` и Wilson CI включает 0.8; CRPS `core_fan_conformal` значимо ниже Task 1 `fan_shock_weighted` (CI разницы ниже 0); CRPS не хуже точечного `ordered_logit` более чем на 10 %; медианный RMSE не значимо хуже `ordered_logit`.
 - **`iterate`:** coverage улучшился, CRPS нет; или наоборот.
 - **`reject`:** улучшения нет.
-- Primary — один (`core_fan_scale`, expanding); остальные — robustness/Bonferroni; выбор по тесту запрещён.
+- Primary — `core_fan_conformal` (post-hoc revision §0); `core_fan_scale` — исходный предзарегистрированный primary; `core_fan_conformal_regime`/`core_fan_global_regime` — 2022–2023 fix; остальные — robustness/Bonferroni; выбор по тесту запрещён.
 
 ### 8.4. Эпизоды
 
@@ -152,9 +164,10 @@ weight = 1 / (5 · 7)
 3. **disp_global:** квантили монотонны; пустой/короткий train — skip.
 4. **disp_scale:** `scale>0`; `1−w`/`p` увеличивают ширину; коэффициенты конечны; fallback при `scale≤0`.
 5. **disp_conformal:** индекс `⌈(n+1)α⌉`; coverage на синтетике; монотонность.
-6. **Веера:** точки = core+delta+q; веса 1/35; медиана/coverage/CRPS; `core_fan_global` vs `core_fan_scale`.
-7. **ML challenger:** `ElasticNetCV` только train; детерминизм; NaN-политика.
-8. **Артефакты/`ML_LOG`:** CSV/JSON детерминированы; payload содержит метрики/предсказания.
+6. **disp_conformal_regime / disp_global_regime:** shock/normal subset, `MIN_REGIME_RESIDUALS=6`, fallback на all; `shock_regime` — `emergency or w<0.5`.
+7. **Веера:** точки = core+delta+q; веса 1/35; медиана/coverage/CRPS; `core_fan_conformal` primary; `core_fan_scale` — исходный primary; regime-варианты.
+8. **ML challenger:** `ElasticNetCV` только train; детерминизм; NaN-политика.
+9. **Артефакты/`ML_LOG`:** CSV/JSON детерминированы; payload содержит метрики/предсказания.
 
 ## 10. Приёмка
 

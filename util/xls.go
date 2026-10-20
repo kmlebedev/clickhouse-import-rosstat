@@ -184,6 +184,45 @@ func GetFileBytes(url string) ([]byte, error) {
 	return body, nil
 }
 
+// PostFileBytes — POST через общий HttpClient (тот же UA и дедлайн fileTimeout, что у
+// GetFile) с произвольными заголовками. Нужен источникам, которые отдают файл не по
+// прямому GET, а через RPC: GWT-RPC BI Росстата возвращает путь к temp-CSV, а сам файл
+// потом качается GetFileBytes. Ответ не-2xx — ошибка: иначе HTML-заглушка WAF ушла бы
+// в разбор как «успешный» CSV. Тело ответа в тексте ошибки обрезается: это диагностика,
+// а не данные.
+func PostFileBytes(url string, body []byte, headers map[string]string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), fileTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", randomUA)
+	for name, value := range headers {
+		req.Header.Set(name, value)
+	}
+	resp, err := HttpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		detail := string(respBody)
+		if len(detail) > 512 {
+			detail = detail[:512]
+		}
+		return nil, fmt.Errorf("POST %s: status %d: %s", url, resp.StatusCode, detail)
+	}
+	if len(respBody) == 0 {
+		return nil, fmt.Errorf("POST %s: body size is empty", url)
+	}
+	return respBody, nil
+}
+
 func GetXlsx(url string) (xlsx *excelize.File, err error) {
 	reader, err := GetFile(url)
 	if err != nil {

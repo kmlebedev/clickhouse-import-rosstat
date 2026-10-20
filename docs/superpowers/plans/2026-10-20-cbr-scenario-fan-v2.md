@@ -8,11 +8,13 @@
 **База:** `origin/main` (`99a87f4`, PR #284 merged)
 **Статус:** In Progress.
 
+**Post-hoc revision (owner 2026-10-20):** исходный primary `core_fan_scale` (run `32fd65f9…`) дал `promote` с coverage 0.736; primary → `core_fan_conformal` (0.806), `core_fan_global` — secondary; для 2022–2023 добавлены `core_fan_conformal_regime`/`core_fan_global_regime` (`emergency or w<0.5`, `MIN_REGIME_RESIDUALS=6`). Исходный результат сохранён; новый прогон на той же выборке не является независимым подтверждением.
+
 ---
 
 ## 1. Цель и границы
 
-Заменить ядро веера с отвергнутого `cbr_rule` на `ordered_logit` (primary) / `ElasticNetCV` (challenger), оставить 5 сценариев Task 1 как **центрированные дельты** и добавить модель дисперсии остатков (`disp_global`, `disp_scale` — primary, `disp_conformal` — robustness). Проверить coverage 80 % и CRPS против Task 1/`ordered_logit`/B1–B3. В `forecast_log` не писать, ClickHouse не менять, Go/DDL/витрины/гранты не трогать.
+Заменить ядро веера с отвергнутого `cbr_rule` на `ordered_logit` (primary) / `ElasticNetCV` (challenger), оставить 5 сценариев Task 1 как **центрированные дельты** и добавить модель дисперсии остатков (`disp_conformal` — primary; `disp_global`/`disp_scale` — ablation; `disp_conformal_regime`/`disp_global_regime` — 2022–2023). Проверить coverage 80 % и CRPS против Task 1/`ordered_logit`/B1–B3. В `forecast_log` не писать, ClickHouse не менять, Go/DDL/витрины/гранты не трогать.
 
 **Готово, если:** офлайн-тесты зелёные, живой прогон записан числами, отчёт/роадмап обновлены, `make all`/`make docs-check` зелёные, PR Task 3 открыт с протоколом.
 
@@ -75,7 +77,7 @@ import ml_experiment as mlx
 ### Task 6 — веера и метрики
 
 - `build_core_fans(core_step, deltas, quantiles)` — 5×7 точек, веса 1/35; `FanPrediction` Task 1.
-- Варианты: `core_fan_global`, `core_fan_scale`, `core_fan_conformal`, `core_fan_ml`.
+- Варианты: `core_fan_global`, `core_fan_scale`, `core_fan_conformal` (primary), `core_fan_conformal_regime`, `core_fan_global_regime`, `core_fan_ml`.
 - Бенчмарки: `ordered_logit` point (из core predictions), B1/B2/B3 (`krm.predict_hold`/`repeat`/`fit_ar1`).
 - Метрики — `fan1.fan_metrics`, `summarize_fans`, `summarize_episodes`, `compare_fan_to_benchmark`, `compare_fans`; Task 1 `fan_shock_weighted` — reference по числам (102.97/204.49).
 - `decide_v2` — правило спеки §8.3.
@@ -165,5 +167,5 @@ ML_LOG=1 MLFLOW=0 make key-rate-scenario-fan-v2   # повтор: числа/sha
 | Ordered logit смещён в 2022 | coverage/CRPS по эпизодам; вердикт `iterate` допустим |
 | Сценарные дельты шумные | центрирование, ablation с `deltas=0` (core-only) |
 | `disp_scale` переобучается | 2 признака, коэффициенты в отчёте, ablation `disp_global` |
-| Conformal нарушает exchangeability | только robustness, не primary |
-| Множественные сравнения | primary один; Bonferroni/пометка |
+| Conformal нарушает exchangeability | primary `core_fan_conformal` — post-hoc; regime subset — robustness |
+| Множественные сравнения | primary `core_fan_conformal`; Bonferroni/пометка |

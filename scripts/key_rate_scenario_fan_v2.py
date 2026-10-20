@@ -66,14 +66,18 @@ WINDOWS = (WINDOW_EXPANDING, krm.window_label(ROLLING_WINDOW))
 WINDOW_PAIRS = ((WINDOW_EXPANDING, None), (krm.window_label(ROLLING_WINDOW), ROLLING_WINDOW))
 MIN_TRAIN = krm.MIN_TRAIN
 MIN_RESIDUALS = 12
+MIN_REGIME_RESIDUALS = 6
+W_SHOCK_THRESHOLD = 0.5
 ALPHAS = (0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95)
 FAN_ORDER = (
     "core_fan_global",
     "core_fan_scale",
     "core_fan_conformal",
+    "core_fan_conformal_regime",
+    "core_fan_global_regime",
     "core_fan_ml",
 )
-PRIMARY_FAN = "core_fan_scale"
+PRIMARY_FAN = "core_fan_conformal"
 PRIMARY_WINDOW = WINDOW_EXPANDING
 PRIMARY_LEVEL = fan1.PRIMARY_LEVEL
 BENCHMARK_ORDER = ("hold", "repeat", "ar1", "ordered_logit")
@@ -271,19 +275,96 @@ def disp_scale(
     )
 
 
+def _conformal_quantiles(values: list) -> tuple:
+    ordered = sorted(float(value) for value in values)
+    size = len(ordered)
+    quantiles = []
+    for alpha in ALPHAS:
+        index = min(size, max(1, math.ceil((size + 1) * alpha)))
+        quantiles.append(ordered[index - 1])
+    return tuple(quantiles)
+
+
 def disp_conformal(residuals: list) -> Dispersion:
     """Конечновыборочный conformal-индекс: `⌈(n+1)α⌉`-я порядковая статистика."""
     if len(residuals) < MIN_RESIDUALS:
         raise krm.DegenerateWindowError(
             f"disp_conformal: остатков {len(residuals)} < {MIN_RESIDUALS}"
         )
-    ordered = sorted(float(value) for value in residuals)
-    size = len(ordered)
-    quantiles = []
-    for alpha in ALPHAS:
-        index = min(size, max(1, math.ceil((size + 1) * alpha)))
-        quantiles.append(ordered[index - 1])
-    return Dispersion("disp_conformal", tuple(quantiles), 1.0)
+    return Dispersion("disp_conformal", _conformal_quantiles(residuals), 1.0)
+
+
+def shock_regime(emergency: bool, weight: float) -> bool:
+    """Shock-режим для 2022–2023: внеочередное или аномальный вес `w < 0.5`.
+
+    Порог `W_SHOCK_THRESHOLD` фиксирован по семантике `shock_classifier`
+    (min 0.05, median 0.81), а не по ошибкам 2022; это проверяется тестом.
+    """
+    return bool(emergency or weight < W_SHOCK_THRESHOLD)
+
+
+def _regime_subsets(residuals: list, past_regimes: list) -> tuple:
+    if len(residuals) != len(past_regimes):
+        raise ValueError("regime: длины остатков и режимов не совпадают")
+    shock = [
+        float(value)
+        for value, flag in zip(residuals, past_regimes)
+        if flag
+    ]
+    normal = [
+        float(value)
+        for value, flag in zip(residuals, past_regimes)
+        if not flag
+    ]
+    return shock, normal
+
+
+def disp_conformal_regime(
+    residuals: list, past_regimes: list, current_regime: bool
+) -> Dispersion:
+    """Conformal-квантили по shock/normal-режиму; малый subset — fallback на all.
+
+    `MIN_REGIME_RESIDUALS=6`: 2014/2015 emergency-остатки дают достаточно
+    наблюдений для shock-режима уже в начале 2022; общий warm-up веера — 12.
+    """
+    if len(residuals) < MIN_RESIDUALS:
+        raise krm.DegenerateWindowError(
+            f"disp_conformal_regime: остатков {len(residuals)} < {MIN_RESIDUALS}"
+        )
+    shock, normal = _regime_subsets(residuals, past_regimes)
+    subset = shock if current_regime else normal
+    if len(subset) >= MIN_REGIME_RESIDUALS:
+        return Dispersion("disp_conformal_regime", _conformal_quantiles(subset), 1.0)
+    return Dispersion(
+        "disp_conformal_regime",
+        _conformal_quantiles(residuals),
+        1.0,
+        fallback="shock_subset_small" if current_regime else "normal_subset_small",
+    )
+
+
+def disp_global_regime(
+    residuals: list, past_regimes: list, current_regime: bool
+) -> Dispersion:
+    """Эмпирические квантили по shock/normal-режиму (ablation для conformal)."""
+    if len(residuals) < MIN_RESIDUALS:
+        raise krm.DegenerateWindowError(
+            f"disp_global_regime: остатков {len(residuals)} < {MIN_RESIDUALS}"
+        )
+    shock, normal = _regime_subsets(residuals, past_regimes)
+    subset = shock if current_regime else normal
+    if len(subset) >= MIN_REGIME_RESIDUALS:
+        return Dispersion(
+            "disp_global_regime",
+            tuple(float(np.quantile(subset, alpha)) for alpha in ALPHAS),
+            1.0,
+        )
+    return Dispersion(
+        "disp_global_regime",
+        tuple(float(np.quantile(residuals, alpha)) for alpha in ALPHAS),
+        1.0,
+        fallback="shock_subset_small" if current_regime else "normal_subset_small",
+    )
 
 
 # --- Веера ---------------------------------------------------------------------
@@ -414,6 +495,15 @@ def run_v2_walk_forward(
             ]
             current_weight = weight_by_date.get(day, 1.0)
             current_probability = probability_by_date.get(day, 0.0)
+            emergency = bool(panel_by_date[day].emergency)
+            past_regimes = [
+                shock_regime(
+                    bool(panel_by_date[item.meeting_date].emergency),
+                    weight_by_date.get(item.meeting_date, 1.0),
+                )
+                for item in past
+            ]
+            current_regime = shock_regime(emergency, current_weight)
             global_disp = disp_global(residuals)
             try:
                 scale_disp = disp_scale(
@@ -427,10 +517,18 @@ def run_v2_walk_forward(
                 scale_disp = global_disp
                 skips["scale_fallback"] += 1
             conformal_disp = disp_conformal(residuals)
+            regime_conformal = disp_conformal_regime(
+                residuals, past_regimes, current_regime
+            )
+            regime_global = disp_global_regime(
+                residuals, past_regimes, current_regime
+            )
             specs = [
                 ("core_fan_global", ordered, global_disp),
                 ("core_fan_scale", ordered, scale_disp),
                 ("core_fan_conformal", ordered, conformal_disp),
+                ("core_fan_conformal_regime", ordered, regime_conformal),
+                ("core_fan_global_regime", ordered, regime_global),
             ]
             ml = cores[window]["ml"].get(day)
             if ml is not None:
@@ -459,7 +557,6 @@ def run_v2_walk_forward(
                     skips["ml_residuals"] += 1
             else:
                 skips["ml_core_missing"] += 1
-            emergency = bool(panel_by_date[day].emergency)
             for name, core, dispersion in specs:
                 fans.append(
                     make_fan(
@@ -930,8 +1027,10 @@ def render_report(
             "",
             f"**`{decision}`** — {reason}.",
             "",
-            "Правило — спека §8.3. Primary: `core_fan_scale`, expanding, coverage 80 % + CRPS; "
-            "Task 1 `fan_shock_weighted` — reference; `core_fan_ml` — challenger.",
+            "Правило — спека §8.3. Primary: `core_fan_conformal`, expanding, coverage 80 % + CRPS; "
+            "`core_fan_global` — secondary; `core_fan_conformal_regime`/`core_fan_global_regime` — 2022–2023 fix; "
+            "`core_fan_ml` — challenger. Post-hoc: primary switched from `core_fan_scale` после Task 3; "
+            "исходный результат сохранён, новое подтверждение не независимо.",
             "",
             "## 8. Ограничения",
             "",
