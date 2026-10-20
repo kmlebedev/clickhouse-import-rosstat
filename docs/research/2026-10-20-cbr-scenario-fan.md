@@ -5,7 +5,8 @@
 **Спека:** [2026-10-20-cbr-scenario-fan-design.md](../superpowers/specs/2026-10-20-cbr-scenario-fan-design.md)
 **План:** [2026-10-20-cbr-scenario-fan.md](../superpowers/plans/2026-10-20-cbr-scenario-fan.md)
 **Дата:** 2026-10-20; **data as-of:** 2026-10-20
-**Run:** `cdbd353f-6004-4b96-8749-9ef181eb1589` (MLflow experiment `key_rate_scenario_fan`, run `scenario_fan__rate__start24`)
+**Run:** `d3f46966-8d75-4a03-b9c5-9ff355b6ed07` (MLflow experiment `key_rate_scenario_fan`, run `scenario_fan__rate__start24`; `git_sha=b769379`, `git_dirty=0`)
+**Повтор:** числа и sha256 артефактов совпали с прогоном `cdbd353f…` (`git_dirty=1`); паспорт чистого прогона — `d3f46966…`. Артефакты (sha256, повтор совпал): report `c464ee6e…`, predictions `a7e99e2c…`, diagnostics `b8e235cf…`, forecast `a26e89d9…`.
 **Вердикт: `iterate`.** Shock-aware слой улучшает CRPS веера против `fan_raw` (−16.27, 95 % CI [−32.67; −3.02], p=0.012), но веер остаётся **недорассеянным**: coverage 80 % — 0.429 [0.328; 0.535] против номинала 0.8. Точечные B1–B3/`ordered_logit` по-прежнему лучше и по CRPS, и по RMSE: `fan_shock` 303.87 против 145.05, `fan_shock_weighted` 204.49. В `forecast_log` ничего не записано.
 
 ---
