@@ -507,13 +507,31 @@ def _backtest(args) -> int:
 def _live_rows(metric: str) -> list:
     """Строки live-витрины по одной метрике."""
     sql = (
-        "SELECT metric, toString(target_date) AS target_date, "
-        "abs_error_bp, is_resolved "
+        "SELECT metric, toString(forecast_date) AS forecast_date, "
+        "toString(target_date) AS target_date, abs_error_bp, is_resolved "
         "FROM v_ml_live_accuracy "
         f"WHERE metric = {_sql_literal(metric)} "
         "ORDER BY target_date\nFORMAT JSON"
     )
     return ch_query(sql)
+
+
+def _latest_by_date(rows: list) -> list:
+    """Одна строка на target_date: последний forecast_date.
+
+    `forecast_log` хранит несколько прогнозов одного трека на одно заседание
+    (разные `forecast_date`), и live-оценка не должна считать их разными
+    заседаниями: rolling MAE идёт по заседаниям, а не по перезапускам writer'а.
+    """
+    latest = {}
+    for row in rows:
+        day = _date_text(row.get("target_date"))
+        current = latest.get(day)
+        if current is None or str(row.get("forecast_date", "")) > str(
+            current.get("forecast_date", "")
+        ):
+            latest[day] = row
+    return list(latest.values())
 
 
 def _live(args) -> int:
@@ -523,8 +541,18 @@ def _live(args) -> int:
 
     shadow_metric = track + ":shadow"
     canary_metric = track + ":canary"
-    shadow = [row for row in _live_rows(shadow_metric) if int(row.get("is_resolved", 0)) == 1]
-    canary = [row for row in _live_rows(canary_metric) if int(row.get("is_resolved", 0)) == 1]
+    shadow = sorted(
+        _latest_by_date(
+            [row for row in _live_rows(shadow_metric) if int(row.get("is_resolved", 0)) == 1]
+        ),
+        key=lambda row: _date_text(row["target_date"]),
+    )
+    canary = sorted(
+        _latest_by_date(
+            [row for row in _live_rows(canary_metric) if int(row.get("is_resolved", 0)) == 1]
+        ),
+        key=lambda row: _date_text(row["target_date"]),
+    )
 
     shadow_dates = sorted({_date_text(row["target_date"]) for row in shadow})
     canary_dates = sorted({_date_text(row["target_date"]) for row in canary})

@@ -68,7 +68,7 @@ Gate работает на `v_ml_runs`/`v_ml_error_by_fold`; вход — два
 
 - Challenger пишет live-прогноз **2 заседания** как `cbr_rate:<track>:shadow`, затем **1 заседание** как `cbr_rate:<track>:canary`.
 - Staged-строки не публикуются и не входят в forecast-контур `v_key_rate_dashboard`.
-- `ml_gate.py live` читает `v_ml_live_accuracy`:
+- `ml_gate.py live` читает `v_ml_live_accuracy`; на каждое заседание берётся последний `forecast_date` (перезапуск writer'а не считается новым заседанием):
   - `wait` — меньше 2 разрешённых shadow или canary ещё не разрешён;
   - `promote` — canary разрешён, `abs_error_bp ≤ 100` и rolling MAE (3 разрешённых) ≤ 100 б.п.;
   - `hold` — canary разрешён, но `100 < abs_error_bp ≤ 200` или rolling MAE > 100;
@@ -153,7 +153,7 @@ cbr_rate:<track>:canary          — canary-трек
 
 Provisioning-файл `grafana/provisioning/alerting/ml-live.yaml` (`apiVersion: 1`, группа `ml-live`, `folder: ML live`):
 
-- `ml-live-degradation`: запрос по `v_ml_live_accuracy`, production, `is_resolved=1`, rolling MAE 3 разрешённых заседаний; threshold `> 100`;
+- `ml-live-degradation`: запрос по `v_ml_live_accuracy`, production, `is_resolved=1`, `model!='gate-selftest'`; на каждое `(track, target_date)` берётся последний `forecast_date` (`row_number()`), затем rolling MAE 3 заседаний; threshold `> 100`;
 - `ml-live-freshness`: последний прошедший `target_date` production-строки; если для него нет `is_resolved=1` более 3 дней — `999`, иначе `0`;
 - `for: 5m`, `noDataState: OK`, `execErrState: Error`, labels `severity=warning`, `contour=ml-live`.
 

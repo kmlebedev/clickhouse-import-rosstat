@@ -185,6 +185,17 @@ def as_dict(row):
 
 
 class LiveTest(unittest.TestCase):
+    def test_latest_by_date_keeps_latest_forecast(self):
+        rows = [
+            {"target_date": "2026-09-11", "forecast_date": "2026-09-01", "abs_error_bp": 50.0},
+            {"target_date": "2026-09-11", "forecast_date": "2026-09-05", "abs_error_bp": 20.0},
+            {"target_date": "2026-07-24", "forecast_date": "2026-07-01", "abs_error_bp": 10.0},
+        ]
+        latest = mg._latest_by_date(rows)
+        self.assertEqual(len(latest), 2)
+        by_day = {row["target_date"]: row for row in latest}
+        self.assertEqual(by_day["2026-09-11"]["abs_error_bp"], 20.0)
+
     def test_wait_until_shadow_meetings(self):
         rows = {
             "cbr_rate:ordered_logit:shadow": [
