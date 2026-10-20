@@ -212,6 +212,37 @@ class TestChannelFeatures(unittest.TestCase):
         self.assertEqual(features["gdp_gap"], 1.0)
         self.assertEqual(features["ibk_gap"], 0.5)
 
+    def test_extra_by_date_injected(self):
+        row = make_row(self.day)
+        panel_row = type(
+            "PanelRow", (), {"decision": row.decision, "features": dict(self.base)}
+        )()
+        extra = {
+            self.day: {
+                "cpi_v3_h1": 0.2,
+                "cpi_v3_h3": 0.6,
+                "cpi_v3_h6": 1.1,
+                "cpi_v3_available": 1,
+            }
+        }
+        features = v3.build_channel_rows(
+            [row], [panel_row], external_fixture(), extra
+        )[0].features
+        self.assertEqual(features["cpi_v3_h1"], 0.2)
+        self.assertEqual(features["cpi_v3_h3"], 0.6)
+        self.assertEqual(features["cpi_v3_h6"], 1.1)
+        self.assertEqual(features["cpi_v3_available"], 1)
+
+    def test_no_extra_keeps_baseline_feature_set(self):
+        row = make_row(self.day)
+        panel_row = type(
+            "PanelRow", (), {"decision": row.decision, "features": dict(self.base)}
+        )()
+        baseline = v3.build_channel_rows([row], [panel_row], external_fixture())[
+            0
+        ].features
+        self.assertNotIn("cpi_v3_h1", baseline)
+
 
 class TestDispersion(unittest.TestCase):
     def setUp(self):

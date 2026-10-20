@@ -312,14 +312,19 @@ def _cbr_features(row) -> dict:
     }
 
 
-def build_channel_rows(rows: list, panel: list, external: dict) -> list:
+def build_channel_rows(
+    rows: list, panel: list, external: dict, extra_by_date: Optional[dict] = None
+) -> list:
     panel_by_date = {item.decision.meeting_date: item for item in panel}
     result = []
     for row in rows:
+        day = row.decision.meeting_date
         features = channel_features(
-            row.decision, panel_by_date[row.decision.meeting_date].features, external
+            row.decision, panel_by_date[day].features, external
         )
         features.update(_cbr_features(row))
+        if extra_by_date is not None:
+            features.update(extra_by_date.get(day, {}))
         result.append(ChannelRow(decision=row.decision, features=features))
     return result
 
@@ -497,8 +502,9 @@ def run_v3_walk_forward(
     probability_by_date: dict,
     impulse_by_date: dict,
     external: dict,
+    extra_by_date: Optional[dict] = None,
 ) -> tuple:
-    channel_rows = build_channel_rows(rows, panel, external)
+    channel_rows = build_channel_rows(rows, panel, external, extra_by_date)
     channel_by_date = {item.decision.meeting_date: item for item in channel_rows}
     features = tuple(channel_rows[0].features)
     reference_fans, benchmarks, _, _, _, _ = v2.run_v2_walk_forward(
