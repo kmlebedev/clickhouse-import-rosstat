@@ -406,7 +406,7 @@ def scenario_steps(
     return result
 
 
-def _train_budget_stats(
+def train_budget_stats(
     train: list, impulse_by_date: dict
 ) -> tuple:
     """Медиана/IQR фискального импульса обучающего окна; `None` не считается."""
@@ -428,7 +428,7 @@ def _train_budget_stats(
     return median, scale
 
 
-def _budget_z(value: Optional[float], median: float, scale: float) -> float:
+def budget_z_score(value: Optional[float], median: float, scale: float) -> float:
     if value is None:
         return 0.0
     z = (value - median) / scale
@@ -721,8 +721,8 @@ def run_walk_forward(
             row = rows[index]
             day = row.decision.meeting_date
             impulse = impulse_by_date.get(day)
-            median, scale = _train_budget_stats(train, impulse_by_date)
-            budget_z = _budget_z(impulse, median, scale)
+            median, scale = train_budget_stats(train, impulse_by_date)
+            budget_z = budget_z_score(impulse, median, scale)
             try:
                 steps = scenario_steps(row, impulse, budget_z)
             except krm.DegenerateWindowError:
@@ -935,6 +935,8 @@ def compare_fan_to_benchmark(
         "bench_rmse": eu.rmse(bench_errors),
         "fan_mae": eu.mae(fan_errors),
         "bench_mae": eu.mae(bench_errors),
+        "fan_crps": sum(fan_losses) / len(fan_losses),
+        "bench_crps": sum(bench_losses) / len(bench_losses),
     }
 
 
@@ -1081,8 +1083,8 @@ def write_diagnostics(path: Path, rows: list, impulse_by_date: dict) -> None:
         writer.writerow(columns)
         for index, row in enumerate(rows):
             impulse = impulse_by_date.get(row.decision.meeting_date)
-            median, scale = _train_budget_stats(rows[:index], impulse_by_date)
-            budget_z = _budget_z(impulse, median, scale)
+            median, scale = train_budget_stats(rows[:index], impulse_by_date)
+            budget_z = budget_z_score(impulse, median, scale)
             try:
                 steps = scenario_steps(row, impulse, budget_z)
             except krm.DegenerateWindowError:
@@ -1172,8 +1174,8 @@ def _current_forecast(
         e3_headline_m3=cr.e3_adaptive(cpd_all, as_of),
     )
     impulse = budget_impulse(budget, as_of)
-    median, scale = _train_budget_stats(rows, impulse_by_date)
-    budget_z = _budget_z(impulse, median, scale)
+    median, scale = train_budget_stats(rows, impulse_by_date)
+    budget_z = budget_z_score(impulse, median, scale)
     try:
         steps = scenario_steps(current_row, impulse, budget_z)
     except krm.DegenerateWindowError as error:
