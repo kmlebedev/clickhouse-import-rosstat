@@ -83,6 +83,9 @@ whenToUse: When a task involves an ML experiment, model, feature set, backtest, 
 |---|---|
 | `make cpi-nowcast` | nowcast ИПЦ v1 (CatBoost + B1–B3); `ML_LOG=1` — паспорт и MLflow (по умолчанию) |
 | `make cpi-monthly` | месячный nowcast v2 с МП; `ARGS="--sample long"`, `ARGS="--quick --jobs N"`; `ML_LOG=1` |
+| `make cpi-monthly-v3` | Stage 1 #76: недельные diffusion-признаки, `ARGS="--sample weekly|long"`; `ML_LOG=1`, `window="h1"`, `unit="pp"` |
+| `make cpi-monthly-industry` | Stage 2 #76: 16 отраслевых листов МП, `ARGS="--sample weekly|long"`; `ML_LOG=1`, `window="h1"`, `unit="pp"` |
+| `make cpi-public-audit` | Task 1 #76: аудит публичной панели, покрытие весов, PIT/as-of; в БД не пишет |
 | `make cpi-weekly-panel` | недельная компонентная панель ИПЦ (Task 3): product/component CSV, реконструкция и гейт; в ClickHouse не пишет, `ML_LOG` не используется |
 | `make cpi-weekly-panel-test` | офлайн-тесты панели (без ClickHouse и сети) |
 | `make key-rate-model` | ставка: Тейлор, ordered logit, walk-forward; `ML_LOG=1` |
@@ -132,7 +135,7 @@ Python-тесты — офлайн, через `uv run --with ... python3 script
 - **Key-rate:** model registry пока нет (у методов нет сохраняемого объекта) — gate → shadow/canary → production; это follow-up, не называй key-rate `champion` deployment.
 - Staged-метрики `cbr_rate:<track>:shadow|canary` не публикуются и не входят в forecast-контур `v_key_rate_dashboard`.
 
-### 8.2 Полный цикл (key-rate)
+### 8.2a Полный цикл (key-rate)
 
 1. **Бэктест.** `ML_LOG=1 MLFLOW=1 make key-rate-model`; run обязан быть в `v_ml_error_by_fold` (иначе `make mlflow-export`/`mlflow-backfill`).
 2. **Gate.** `make ml-gate ARGS="--champion-run <uuid> --challenger-run <uuid> --model ordered_logit"`; решение `promote|reject|iterate`, причина — в артефакте.
@@ -142,6 +145,35 @@ Python-тесты — офлайн, через `uv run --with ... python3 script
 6. **Live-gate.** `make ml-gate ARGS="--live --live-track cbr_rate:ordered_logit"`: `wait` / `promote` / `hold` / `rollback`.
 7. **Production.** Writer без `--stage` (production); перед публикацией — `make ml-live-check` (с LLM-треком `ARGS="--require-llm"`); после заседания — резолвер и `v_ml_live_accuracy`.
 8. **Rollback.** Canary `abs_error_bp > 200` или алерт деградации/свежести — вернуть предыдущий production-трек, причину записать в артефакт/PR; журнал не править вручную.
+
+### 8.2b Полный цикл (CPI-компоненты, #76)
+
+**Контекст.** #76 — зонтичная задача production-v3 на публичных данных (4 месячных компонента ИПЦ, 149 недельных рядов, 16 отраслевых листов МП), не ставка. Сейчас 5/8 sub-issues, Stage 1/2 измерены, вердикт `iterate`; покрытие весов **39,3 %** (< 50 %), полный 88-групповой bottom-up не заявляется. В `forecast_log` нет CPI-метрики, live-слой #184 — только `cbr_rate`; shadow/canary и live-алерты для CPI пока не существуют.
+
+**Предусловие gate.** Текущий `ml-gate` сравнивает **один и тот же `model`** в двух run'ах. Для #76 primary-пары — разные имена (`v3_bottomup` vs `v2_bottomup`, `v3_ind_bottomup` vs `v3_bottomup`). Без расширения `--champion-model`/`--challenger-model` gate для #76 не запускается; сейчас эти пары считаются внутри `cpi_monthly_v3.py`/`cpi_monthly_industry.py` и попадают в отчёт. Это отдельный маленький follow-up к #184.
+
+1. **Данные и покрытие.** `make cpi-public-audit` — 149 weekly-рядов, 16 листов, 118 совпадений с весами, покрытие 39,3 %, PIT/as-of — 0 нарушений. Coverage gate: полный bottom-up только при ≥ 50 %; иначе hybrid и **никакого production-v3**.
+2. **Бэктест.** `ML_LOG=1 MLFLOW=1 make cpi-monthly-v3 ARGS="--sample weekly"` и `ARGS="--sample long"`; Stage 2 — `make cpi-monthly-industry ARGS="--sample weekly"`/`long`. Эксперименты `cpi_monthly_v3`/`cpi_monthly_industry`, `window="h1"`, `unit="pp"`; run'ы видны в `v_ml_error_by_fold`.
+3. **Gate.** Для #76 нужен `--experiment cpi_monthly_v3 --window h1` и пара champion/challenger. Primary — `v3_bottomup` vs `v2_bottomup` (и `v3_direct` vs `v2_baseline`); Stage 2 — `v3_ind_bottomup` vs `v3_bottomup`, `ind_only_bottomup` vs `v2_bottomup`. Основное окно — `weekly` (2022+), robustness — `long` (2013-10…2026-08, start 48); это **разные запуски**, поэтому gate прогоняется дважды, а не через `--robustness-window`.
+4. **Coverage gate.** Независимо от DM/CI: при покрытии < 50 % полный bottom-up не заявляется. Победа в бэктесте не отменяет coverage gate.
+5. **Решение.** Сейчас Stage 1: `v3_bottomup` 0.311487 vs `v2_bottomup` 0.362300 (−14,0 %, DM p=0.0285, CI исключает 0) — primary проходит; `long` 0.642997 vs 0.688869 (−6,7 %, p=0.1573, MDE 8,8 %) — мощности нет. Stage 2: `v3_ind_bottomup` 0.354359 vs 0.311487 (+13,8 %, p=0.3059); `long` 0.642664 vs 0.643146 (p=0.9251) — значимого выигрыша нет. Итог — **`iterate`**, не `promote`.
+6. **Промоушен.** Если gate и coverage пройдены: `cpi_monthly_v3`/`cpi_monthly_industry` сейчас логируют только артефакты, **не `log_model`**; перед MLflow registry нужно добавить сохранение CatBoost-модели, затем `make mlflow-register`/`mlflow-promote`. Иначе promotion — только решение в артефакте, alias не двигается.
+7. **Shadow/canary.** Для CPI **недоступны**: нет CPI-метрики в `forecast_log`, нет ingest-endpoint и `v_cpi_live_accuracy`. #184 shadow/canary — только `cbr_rate`. Возможен «paper shadow»: ручной месячный nowcast против первой публикации Росстата в research-артефакте; это не production и не алерт.
+8. **Productionization.** Task 6 Go уже сделан: 16 отраслевых листов в `cbr_survey`, витрина `v_cbr_survey`; но v3 **не подключён** к make/dagu production, потому что Task 4/5 дают `iterate`, а покрытие < 50 %. Наличие импортёра — не повод ставить шаг в dagu.
+9. **Rollback.** Если coverage или gate не проходят — остаёмся на `v2_bottomup`/hybrid; production-переключения нет, причина — в gate-артефакте/отчёте.
+10. **DoD.** Gate-артефакт с решением и причиной; coverage-аудит; PIT/as-of; DM/CI; отчёт; `make all`/`make docs-check`; никакой зависимости production-v3 от 87 кодов ОКВЭД2; никаких заявлений о live-мониторинге CPI.
+
+**Чем отличается от key-rate:**
+
+| | key-rate (#184) | CPI-компоненты (#76) |
+|---|---|---|
+| Цель | ставка на заседание | 4 месячных компонента ИПЦ |
+| Окно gate | `expanding`/`rolling40` | `h1`; `weekly` primary, `long` robustness |
+| Live-журнал | `forecast_log` (`cbr_rate*`) | нет CPI-метрики |
+| Shadow/canary | 2 + 1 заседание | нет; только paper shadow |
+| MLflow registry | нет model object, follow-up | CatBoost есть, но `log_model` пока не вызывается |
+| Coverage gate | нет | ≥ 50 % обязательно |
+| Текущий вердикт | инфраструктура #184 в PR #257 | `iterate`, покрытие 39,3 % |
 
 ### 8.3 Предрегистрированные пороги
 
@@ -169,9 +201,10 @@ Python-тесты — офлайн, через `uv run --with ... python3 script
 |---|---|---|
 | ✅ | #184 `infra/4.3` | Gate + shadow/canary + `v_ml_live_accuracy` + алерты; PR #257 (In Review); после мержа — #191 |
 | 1 | #191 `key-rate/phase-4-first-publication` | Production-строки `forecast_log`, свежий снимок, пост, пост-апдейт |
-| 2 | #154 `gold-thesis/phase-6-catboost-c1` | Обучающая матрица, walk-forward без look-ahead |
-| 3 | #155–#157 | In-DB baseline → CatBoost-трек → DM-оценка |
-| 4 | #147 `gold-thesis/phase-4-followup-5` | Исторический новостной слой с PIT/vintage |
+| 2 | #76 `key-rate/phase-4-ml-components` | Stage 3/4/5, coverage ≥50 %, gate-пара `--champion-model/--challenger-model`; текущий вердикт `iterate` |
+| 3 | #154 `gold-thesis/phase-6-catboost-c1` | Обучающая матрица, walk-forward без look-ahead |
+| 4 | #155–#157 | In-DB baseline → CatBoost-трек → DM-оценка |
+| 5 | #147 `gold-thesis/phase-4-followup-5` | Исторический новостной слой с PIT/vintage |
 | later | #124/#125/#145/#153 | Ансамбль, priors, HMM, live-витрина — после #191, как challengers |
 | follow-up | key-rate MLflow registry | Model card/artifact, версия в registry, alias и интеграция с gate — отдельный пункт |
 
@@ -207,6 +240,10 @@ Python-тесты — офлайн, через `uv run --with ... python3 script
 | Ждать live-точность в MLflow UI | MLflow не хранит `v_ml_live_accuracy` | Смотреть ClickHouse/Grafana; MLflow — runs/registry |
 | Игнорировать `ml-live-freshness` | Резолвер сломан, live-ошибка не считается | Проверить `forecast_resolve`, `cbr_key_rate`, `forecast_log` |
 | Называть key-rate `champion` deployment | У key-rate нет model registry | Решение gate + `--stage`; registry — отдельный follow-up |
+| Полный bottom-up при покрытии <50 % (#76) | 39,3 % весов — это hybrid, не 88-групповой production | Coverage gate: ≥50 %, иначе публиковать отрицательный результат |
+| Сравнивать `weekly` и `long` как одну выборку (#76) | Разные периоды/фолды, разная мощность | Gate дважды: primary `weekly`, robustness `long` |
+| Gate на разные имена моделей (#76) | `ml-gate` сейчас берёт один `--model` для двух run'ов | Добавить `--champion-model/--challenger-model` или использовать in-script DM/CI |
+| Ждать shadow/canary для CPI (#76) | В `forecast_log` нет CPI-метрики и ingest | Paper shadow/отдельный live-слой — follow-up, не production |
 | Игнорирование origin/лаг | Look-ahead и ложное преимущество | Origin `M−(h−1)`, as-of правила (#190) |
 | Молчаливое удаление выбросов | Меняет измеряемую ошибку | Шок остаётся, ошибка исправляется с записью |
 | «Staging проверен» без SSH | Ложная приёмка | Писать «не проверено», оставить владельцу (#183) |
@@ -214,6 +251,7 @@ Python-тесты — офлайн, через `uv run --with ... python3 script
 ## 12. Ссылки
 
 - Промоушен и live: [2026-10-20-ml-promotion-live-monitoring-design.md](../../../docs/superpowers/specs/2026-10-20-ml-promotion-live-monitoring-design.md), [план](../../../docs/superpowers/plans/2026-10-20-ml-promotion-live-monitoring.md), [GRAFANA.md](../../../docs/GRAFANA.md).
+- CPI-компоненты (#76): [спека](../../../docs/superpowers/specs/2026-10-19-cpi-components-public-data-design.md), [план](../../../docs/superpowers/plans/2026-10-19-cpi-components-public-data.md), [Stage 1 отчёт](../../../docs/research/2026-10-19-cpi-components-public-data.md), [Stage 2 отчёт](../../../docs/research/2026-10-19-cpi-industry-mp-features.md).
 - Ревью ML-issue: [2026-10-19-ml-issue-review.md](../../../docs/research/2026-10-19-ml-issue-review.md).
 - Методология: [stat-ml-models.md](../../../docs/guides/stat-ml-models.md) §2–§7.
 - MLOps: [2026-10-18-ml-experiment-management.md](../../../docs/research/2026-10-18-ml-experiment-management.md).
