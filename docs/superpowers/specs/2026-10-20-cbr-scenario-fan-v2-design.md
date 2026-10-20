@@ -31,6 +31,7 @@ Task 1 показал: shock-слой значимо улучшает CRPS пр�
 
 - 108 решений `2014-02-14 … 2026-09-11`; пропусков нет.
 - Walk-forward: expanding `min_train=24` — 84 фолда (primary); rolling40 — 68 фолдов.
+- Фан-фолды: **72/56** — первые 12 фолдов на окно уходят на residual warm-up (`MIN_RESIDUALS=12`); ядро считается на 84/68, веер требует прошлых остатков ядра.
 - Строки — `CbrRow` из Task 1 (`key_rate_cbr_rule.build_cbr_rows`); шоковая панель/веса — `shock_classifier` через Task 1 (`load_shock_panel`, `shock_arrays`).
 - As-of — конвенции Task 1: CPD — конец M+1; ВВП — конец квартала + 3 месяца; консенсус — волна + 6 дней; бюджет — конец M+1; PIT/винтажей нет.
 - Ядро и остатки — только прошлые фолды; точка, опубликованная после заседания, не участвует (тест).
@@ -158,7 +159,7 @@ weight = 1 / (5 · 7)
 ## 10. Приёмка
 
 1. `make key-rate-scenario-fan-v2-test` — офлайн-тесты.
-2. `ML_LOG=1 MLFLOW=0 make key-rate-scenario-fan-v2` — 108 заседаний, 84/68; coverage/CRPS; `v_ml_runs` `status=ok`, `git_dirty=0`; повтор детерминирован.
+2. `ML_LOG=1 MLFLOW=0 make key-rate-scenario-fan-v2` — 108 заседаний; ядро 84/68, веер 72/56 (residual warm-up); coverage/CRPS; `v_ml_runs` `status=ok`, `git_dirty=0`; повтор детерминирован.
 3. `make all`, `make docs-check` — зелёные.
 4. `git diff` без Go/DDL/витрин/грантов/`forecast_log`.
 5. PR Task 3 — `Part of #272`, протокол комментарием.

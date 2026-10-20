@@ -91,7 +91,7 @@ DAGU_VERSION     ?= v2.18.2
 MKDOCS_VERSION ?= 9.7.7
 MKDOCS := uv run --with mkdocs-material==$(MKDOCS_VERSION) --python 3.12 mkdocs
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-backfill mlflow-backfill-test mlflow-preflight mlflow-register mlflow-promote mlflow-models ml-gate ml-gate-test ml-live-check ml-live-check-test dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token grafana-provision-alerting-staging key-rate-model key-rate-cbr-rule key-rate-cbr-rule-test key-rate-scenario-fan key-rate-scenario-fan-test shock-classifier shock-classifier-test key-rate-llm-forecast key-rate-forecast-log cpi-nowcast cpi-monthly cpi-monthly-v3 cpi-monthly-v3-test cpi-monthly-industry cpi-monthly-industry-test cpi-public-audit cpi-public-audit-test cpi-weekly-panel cpi-weekly-panel-test cb-comp-parity cb-comp-parity-test cb-comp-live cb-comp-live-test cb-comp-live-compare cb-comp-proxy edisclosure-login edisclosure-collect docs-check docs-build docs-serve
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-backfill mlflow-backfill-test mlflow-preflight mlflow-register mlflow-promote mlflow-models ml-gate ml-gate-test ml-live-check ml-live-check-test dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token grafana-provision-alerting-staging key-rate-model key-rate-cbr-rule key-rate-cbr-rule-test key-rate-scenario-fan key-rate-scenario-fan-test key-rate-scenario-fan-v2 key-rate-scenario-fan-v2-test shock-classifier shock-classifier-test key-rate-llm-forecast key-rate-forecast-log cpi-nowcast cpi-monthly cpi-monthly-v3 cpi-monthly-v3-test cpi-monthly-industry cpi-monthly-industry-test cpi-public-audit cpi-public-audit-test cpi-weekly-panel cpi-weekly-panel-test cb-comp-parity cb-comp-parity-test cb-comp-live cb-comp-live-test cb-comp-live-compare cb-comp-proxy edisclosure-login edisclosure-collect docs-check docs-build docs-serve
 
 all: lint test build build-ingest
 
@@ -453,6 +453,18 @@ key-rate-scenario-fan:
 # Офлайн-тесты веера: без ClickHouse и сети.
 key-rate-scenario-fan-test:
 	uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/key_rate_scenario_fan_test.py -v
+
+# Веер v2: ядро ordered logit/ML + модель дисперсии (issue #286, Task 3;
+# спека docs/superpowers/specs/2026-10-20-cbr-scenario-fan-v2-design.md).
+# Читает ClickHouse, пишет ЛОКАЛЬНЫЕ артефакты и НЕ пишет в forecast_log;
+# ML_LOG=1 — паспорт и fold-предсказания через ml_experiment.
+key-rate-scenario-fan-v2:
+	@$(MLFLOW_PREFLIGHT)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/key_rate_scenario_fan_v2.py $(ARGS)
+
+# Офлайн-тесты веера v2: без ClickHouse и сети.
+key-rate-scenario-fan-v2-test:
+	uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/key_rate_scenario_fan_v2_test.py -v
 
 # Классификатор шоков ключевой ставки (спека 2026-10-19, §8): панель заседаний,
 # as-of каналы, причинные веса (Махаланобис + Ledoit–Wolf) и описательный

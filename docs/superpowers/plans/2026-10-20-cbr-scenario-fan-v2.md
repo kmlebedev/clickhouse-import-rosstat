@@ -143,7 +143,7 @@ ML_LOG=1 MLFLOW=0 make key-rate-scenario-fan-v2   # повтор: числа/sha
 ## 3. Приёмка
 
 1. `make key-rate-scenario-fan-v2-test` — все офлайн-тесты.
-2. `ML_LOG=1 MLFLOW=0 make key-rate-scenario-fan-v2` — живой прогон; 108 заседаний, 84/68; числа в отчёте; повтор детерминирован; `v_ml_runs` `status=ok`, `git_dirty=0`.
+2. `ML_LOG=1 MLFLOW=0 make key-rate-scenario-fan-v2` — живой прогон; 108 заседаний; ядро 84/68, веер 72/56 (residual warm-up); числа в отчёте; повтор детерминирован; `v_ml_runs` `status=ok`, `git_dirty=0`.
 3. `make all` — зелёный.
 4. `make docs-check` — зелёный.
 5. `git diff` без Go/DDL/витрин/грантов/`forecast_log`.
