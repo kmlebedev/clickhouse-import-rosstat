@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import tempfile
+from datetime import date, timedelta
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -1346,6 +1347,71 @@ async def check(params, server_log):
             failed += not expect("свежесть Акцизы: лаг от общего max <= 1 мес.",
                                  minfin_akc_lag is not None and minfin_akc_lag <= 1,
                                  minfin_akc_detail)
+            # Долговой контур ОФЗ (пункт key-rate/phase-2-ofz-debt-stress, issue #170):
+            # витрина v_ofz_stress читается и непуста, все четыре метрики имеют хотя бы
+            # одну непустую точку (покрытие, спред к КБД, обслуживание/доходы, запас ОФЗ),
+            # каталог описывает 20 рядов (5 аукцион + 10 долг + 5 обслуживание), сырые
+            # таблицы закрыты, а последний аукцион не старше 40 дней. Пустая метрика —
+            # не «ноль», а не доехавший импортёр: coverage/spread идут из аукционов,
+            # service — из бюджетной строки или indicatorsBudget, stock — из структуры.
+            ofz_stress = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n, countIf(coverage_ratio IS NOT NULL) AS coverage, "
+                "countIf(cutoff_minus_secondary_pp IS NOT NULL) AS spread, "
+                "countIf(debt_service IS NOT NULL) AS service, "
+                "countIf(ofz_stock IS NOT NULL) AS stock, "
+                "min(date) AS first, max(date) AS last FROM v_ofz_stress"}))
+            ofz_rows = result_rows(ofz_stress)
+            ofz_n = ofz_rows[0].get("n") if ofz_rows else None
+            ofz_coverage = ofz_rows[0].get("coverage") if ofz_rows else None
+            ofz_spread = ofz_rows[0].get("spread") if ofz_rows else None
+            ofz_service = ofz_rows[0].get("service") if ofz_rows else None
+            ofz_stock = ofz_rows[0].get("stock") if ofz_rows else None
+            ofz_first = ofz_rows[0].get("first") if ofz_rows else None
+            ofz_last = ofz_rows[0].get("last") if ofz_rows else None
+            if ofz_rows is None:
+                ofz_detail = (f"витрина не читается: {ofz_stress[:200]} — прогнать "
+                              "make import STAT=minfin_ofz_auction,minfin_debt_stock,minfin_debt_service")
+            else:
+                ofz_detail = (f"строк: {ofz_n}, покрытие: {ofz_coverage}, спред: {ofz_spread}, "
+                              f"обслуживание: {ofz_service}, запас ОФЗ: {ofz_stock}, "
+                              f"{ofz_first} … {ofz_last}")
+                if (ofz_n or 0) == 0 or (ofz_coverage or 0) == 0 or (ofz_spread or 0) == 0 \
+                        or (ofz_service or 0) == 0 or (ofz_stock or 0) == 0:
+                    ofz_detail += (" — прогнать make import "
+                                   "STAT=minfin_ofz_auction,minfin_debt_stock,minfin_debt_service")
+            failed += not expect("витрина v_ofz_stress: аукционы и четыре метрики",
+                                 bool(ofz_rows) and (ofz_n or 0) > 0 and (ofz_coverage or 0) > 0
+                                 and (ofz_spread or 0) > 0 and (ofz_service or 0) > 0
+                                 and (ofz_stock or 0) > 0,
+                                 ofz_detail)
+            ofz_fresh_after = (date.today() - timedelta(days=40)).isoformat()
+            failed += not expect("v_ofz_stress: последний аукцион не старше 40 дней",
+                                 bool(ofz_last) and str(ofz_last) >= ofz_fresh_after,
+                                 f"max date: {ofz_last} (want >= {ofz_fresh_after})")
+
+            ofz_catalog = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n FROM v_series_catalog "
+                "WHERE source IN ('minfin_ofz_auction', 'minfin_debt_stock', 'minfin_debt_service')"}))
+            ofz_catalog_rows = result_rows(ofz_catalog)
+            ofz_catalog_n = ofz_catalog_rows[0].get("n") if ofz_catalog_rows else None
+            if ofz_catalog_rows is None:
+                ofz_catalog_detail = f"ответ не распознан: {ofz_catalog[:200]}"
+            elif ofz_catalog_n == 20:
+                ofz_catalog_detail = "рядов контура: 20 (5 аукцион + 10 долг + 5 обслуживание)"
+            else:
+                ofz_catalog_detail = (f"рядов контура: {ofz_catalog_n}, want 20 — прогнать "
+                                      "make import STAT=minfin_ofz_auction,minfin_debt_stock,minfin_debt_service "
+                                      "(каталог перепубликовывается прогонами)")
+            failed += not expect("каталог ОФЗ-контура полон", ofz_catalog_n == 20, ofz_catalog_detail)
+
+            for table, label in (("minfin_ofz_auction", "аукционы ОФЗ"),
+                                 ("minfin_debt_stock", "запас внутреннего/внешнего долга и ОФЗ"),
+                                 ("minfin_debt_service", "обслуживание и факт заимствований")):
+                raw = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {table}"}))
+                denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+                failed += not expect(f"сырая {table} закрыта ({label})", denied,
+                                     f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
+
             # Контур ФАО (пункт infra/1.6, issue #225): витрина v_fao_food_price читается
             # агентом, содержит 6 рядов / 2646 точек (6 × 441 месяц), каталог source='fao'
             # описывает все 6 рядов, а сырая таблица агенту не выдана. Точное число 2646 —
