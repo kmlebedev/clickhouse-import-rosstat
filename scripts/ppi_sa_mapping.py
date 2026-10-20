@@ -38,7 +38,7 @@ RAW = probe.RAW
 OUT = BUILD / "out"
 RESEARCH = ROOT / "docs" / "research"
 
-TAXONOMY_VERSION = "okpd2-kipc-2026-v1"
+TAXONOMY_VERSION = "okpd2-kipc-2026-v2"
 WEIGHT_YEAR = 2026
 WEIGHTS_FILE = RAW / "vesa_kIPC.xlsx"
 PRODUCTS_FILE = RAW / "tov.xlsx"
@@ -56,6 +56,7 @@ SCOPE_GROUPS = {
     "alcohol": ["02.1"],
     "tobacco": ["02.3"],
     "nonfood": [
+        "04.3.1.1",
         "03.1",
         "03.2",
         "05.1",
@@ -200,10 +201,15 @@ def load_weights() -> dict[str, dict]:
 
 
 def _is_child(code: str, parent: str) -> bool:
-    """OKPD2/KIPC hierarchy: parent is a prefix followed by '.' or a digit."""
+    """OKPD2 hierarchy: parent is a prefix followed by '.' or a digit."""
     if code == parent or not code.startswith(parent):
         return False
     return code[len(parent)] in "._" or code[len(parent)].isdigit()
+
+
+def _is_kipc_child(code: str, parent: str) -> bool:
+    """KIPC hierarchy uses dot-separated segments only (01.1.1 != 01.1.10)."""
+    return code.startswith(parent + ".")
 
 
 def _leaf_codes(codes: set[str]) -> set[str]:
@@ -216,7 +222,8 @@ def _group_weight(weights: dict[str, dict], code: str) -> float:
     leaves = [
         item["weight"]
         for key, item in weights.items()
-        if _is_child(key, code) and not any(_is_child(other, key) for other in weights)
+        if _is_kipc_child(key, code)
+        and not any(_is_kipc_child(other, key) for other in weights)
     ]
     return float(sum(leaves))
 
@@ -340,10 +347,13 @@ def write_mapping(rows: list[dict]) -> None:
         writer.writerows(rows)
 
 
-def write_weights_panel() -> None:
+def write_weights_panel(weights: dict[str, dict]) -> None:
     panel = parse_kipc_panel(WEIGHTS_FILE)
     wanted = set(ALL_GROUPS) | set(SCOPE_GROUPS["utilities"]) | {
         sub for values in SUBTRACT_GROUPS.values() for sub in values
+    }
+    wanted |= {
+        code for code in weights if code == "04.3.1.1" or _is_kipc_child(code, "04.3.1.1")
     }
     rows = [row for row in panel if row["code"] in wanted]
     rows.sort(key=lambda row: (row["period"], row["code"]))
@@ -361,7 +371,7 @@ def _mapped_leaves(rows: list[dict], groups: set[str] | None = None) -> list[str
         if row["is_leaf"] != "1" or row["status"] != "mapped":
             continue
         if groups is not None and not any(
-            row["kipc_group"] == group or _is_child(row["kipc_group"], group) for group in groups
+            row["kipc_group"] == group or _is_kipc_child(row["kipc_group"], group) for group in groups
         ):
             continue
         result.append(row["okpd2"])
@@ -372,7 +382,9 @@ def _narrow_leaves(rows: list[dict]) -> list[str]:
     return sorted(
         row["okpd2"]
         for row in rows
-        if row["is_leaf"] == "1" and row["okpd2"][:2] in NARROW_CLASSES
+        if row["is_leaf"] == "1"
+        and row["status"] == "mapped"
+        and row["okpd2"][:2] in NARROW_CLASSES
     )
 
 
@@ -389,7 +401,7 @@ def _dedupe_members(members: dict[str, list[str]]) -> dict[str, list[str]]:
     return {
         group: codes
         for group, codes in members.items()
-        if not any(_is_child(group, other) for other in keys if other != group)
+        if not any(_is_kipc_child(group, other) for other in keys if other != group)
     }
 
 
@@ -399,7 +411,7 @@ def _members_for_groups(
     selected = {
         group: codes
         for group, codes in members.items()
-        if any(group == scope or _is_child(group, scope) for scope in groups)
+        if any(group == scope or _is_kipc_child(group, scope) for scope in groups)
     }
     return _dedupe_members(selected)
 
@@ -504,11 +516,11 @@ def _net_group_weight(weights: dict[str, dict], group: str) -> float:
 
 
 def _mapped_weight_in_group(weights: dict[str, dict], mapped_codes: set[str], group: str) -> float:
-    inside = {code for code in mapped_codes if code == group or _is_child(code, group)}
+    inside = {code for code in mapped_codes if code == group or _is_kipc_child(code, group)}
     top = {
         code
         for code in inside
-        if not any(_is_child(code, other) for other in inside if other != code)
+        if not any(_is_kipc_child(code, other) for other in inside if other != code)
     }
     return sum(_net_group_weight(weights, code) for code in top)
 
@@ -741,7 +753,7 @@ def stage_mapping() -> None:
     products = load_products()
     rows = build_mapping(products, weights, rules)
     write_mapping(rows)
-    write_weights_panel()
+    write_weights_panel(weights)
     coverage = build_coverage(rows, weights)
     write_coverage(coverage)
     print(
