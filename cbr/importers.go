@@ -99,6 +99,7 @@ var cbrImporters = []cbrImporter{
 	{cbrRiskWeightAddonsImporter, "cbr_risk_weight_addons", "SELECT count() FROM cbr_risk_weight_addons FINAL"},
 	{cbrMPLImporter, "cbr_mpl", "SELECT count() FROM cbr_mpl FINAL"},
 	{cbrMpBsuMapImporter, "cbr_mp_bsu_map", ""},
+	{cbrPublicationCalendarImporter, "cbr_publication_calendar", ""},
 }
 
 // init — единственная регистрация импортёров ЦБ в chimport.Stats. Порядок
