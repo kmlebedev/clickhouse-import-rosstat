@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Офлайн-тесты `scripts/cpi_live3_horizons.py` (issue #296)."""
+"""Офлайн-тесты `scripts/models/cpi/cpi_live3_horizons.py` (issue #296)."""
 
 import sys
 import unittest

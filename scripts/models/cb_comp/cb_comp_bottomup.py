@@ -26,7 +26,7 @@
 
 Модуль ничего не пишет в ClickHouse и не импортирует `cb_comp_parity`
 (parity импортирует его, а не наоборот). Для живого прогона нужен `Rscript` с
-пакетом `fst`: панель экспортируется `scripts/cb_comp_panel_export.R` в
+пакетом `fst`: панель экспортируется `scripts/models/cb_comp/cb_comp_panel_export.R` в
 `build/cb-comp-parity/` (gitignored). Тесты работают на синтетических
 DataFrame и R не требуют.
 
@@ -310,7 +310,7 @@ def load_weights(archive: Path, years, specs: list) -> dict:
 def ensure_panel_csv(archive: Path, out_dir: Path, require_full: bool = False) -> tuple:
     """CSV панели из FST; при отсутствии — вызов Rscript-экспортёра.
 
-    R-экспортёр — `scripts/cb_comp_panel_export.R`; он не входит в тесты и
+    R-экспортёр — `scripts/models/cb_comp/cb_comp_panel_export.R`; он не входит в тесты и
     вызывается только живым прогоном. Если R/fst недоступны, исключение
     называется явно — панель не подменяется синтетикой.
 
@@ -336,7 +336,7 @@ def ensure_panel_csv(archive: Path, out_dir: Path, require_full: bool = False) -
         except FileNotFoundError as error:
             raise RuntimeError(
                 "Rscript не найден: для bottom-up нужен R с пакетом fst; "
-                "экспорт панели — scripts/cb_comp_panel_export.R"
+                "экспорт панели — scripts/models/cb_comp/cb_comp_panel_export.R"
             ) from error
         except subprocess.CalledProcessError as error:
             raise RuntimeError(

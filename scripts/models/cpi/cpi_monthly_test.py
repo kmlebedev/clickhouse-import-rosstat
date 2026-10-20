@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Тесты scripts/cpi_monthly.py (Task 1: данные, as-of, выборка, признаки).
+"""Тесты scripts/models/cpi/cpi_monthly.py (Task 1: данные, as-of, выборка, признаки).
 
 Запуск из корня репозитория (pytest не нужен):
 
     uv run --with "catboost>=1.2" --with scikit-learn --with pandas \
         --with "statsmodels>=0.15" --with scipy --python 3.12 \
-        python3 scripts/cpi_monthly_test.py -v
+        python3 scripts/models/cpi/cpi_monthly_test.py -v
 
 Набор ОФЛАЙН: обращения к ClickHouse подменяются `unittest.mock`, данные берутся
 из фикстур `scripts/testdata/cpi_monthly/*.csv`. Живая проверка — отдельный шаг

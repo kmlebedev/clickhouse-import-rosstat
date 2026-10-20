@@ -88,7 +88,7 @@ walk-forward, обязательные бенчмарки B1–B3 (B3 — в д�
   `data_asof`, 4 CatBoost-модели с `metadata`, `benchmarks`, `bottomup_weights`,
   `sample_size`, `note`; stale-cleanup как в v1;
 * **метрики и отчёт** (§4.2, §5.1) — RMSE/MAE в п.п. через общие функции
-  `scripts/eval_utils.py`, блок «последние 12 фолдов»; отчёт
+  `scripts/lib/eval_utils.py`, блок «последние 12 фолдов»; отчёт
   `cpi_monthly_report.md` (выборка, «модель × окно», последние 12 фолдов,
   DM-HLN primary/secondary, блочный бутстрап, веса NNLS, конфигурация
   CatBoost, сплит статьи, «2022 исключён», живой nowcast, «что не проверено»)
@@ -112,10 +112,10 @@ walk-forward, обязательные бенчмарки B1–B3 (B3 — в д�
 
 **По умолчанию скрипт только читает ClickHouse**; с `ML_LOG=1` он пишет паспорт
 прогона и fold-предсказания в `ml_runs`/`ml_predictions` через
-`scripts/ml_experiment.py` (спека §8.3), а при недоступном ClickHouse хелпер
+`scripts/lib/ml_experiment.py` (спека §8.3), а при недоступном ClickHouse хелпер
 падает обратно в локальный `build/ml-runs` (`ML_LOCAL_DIR`). Без переменной
 артефакты побайтно прежние. Транспорт (`ch_query`) переиспользуется из
-`scripts/extrapolation_aisc.py`, а не копируется. Секреты приходят только из
+`scripts/models/polyus/aisc.py`, а не копируется. Секреты приходят только из
 окружения (их подставляет Makefile). Запуск — через `make`:
 
 * `make cpi-monthly` — сводка выборки (155 месяцев 2013-10…2026-08, пропусков
@@ -3000,7 +3000,7 @@ def render_report(
         "## Модель × окно",
         "",
         "Ошибка фолда — `прогноз − факт` (п.п., м/м); `n` — число фолдов под "
-        "метрикой. RMSE/MAE — общие функции `scripts/eval_utils.py`. B1 и B2 от "
+        "метрикой. RMSE/MAE — общие функции `scripts/lib/eval_utils.py`. B1 и B2 от "
         "набора признаков не зависят; B3 и CatBoost считаются в двух "
         "пространствах (без МП и с МП), чтобы отделить эффект МП от эффекта "
         "алгоритма; CatBoost дополнительно в двух схемах агрегации — direct и "
@@ -3623,7 +3623,7 @@ def run_summary(
     кладёт локальные артефакты; журнал эксперимента — опт-ин.
 
     `ml_log`/`logger`/`run_name` — журнал эксперимента
-    (`scripts/ml_experiment.py`): при `ml_log=True` (или `ML_LOG=1`, если
+    (`scripts/lib/ml_experiment.py`): при `ml_log=True` (или `ML_LOG=1`, если
     параметр не задан) после `build_sample` создаётся прогон `cpi_monthly` с
     паспортом, fold-предсказаниями в п.п. и артефактами; явный `logger`
     используется как есть (duck typing), и `ml_log` тогда игнорируется. Сбой

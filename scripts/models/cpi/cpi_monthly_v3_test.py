@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Офлайн-тесты `scripts/cpi_monthly_v3.py` (issue #76, Stage 1).
+"""Офлайн-тесты `scripts/models/cpi/cpi_monthly_v3.py` (issue #76, Stage 1).
 
 Запуск из корня репозитория:
 
     uv run --with "catboost>=1.2" --with scikit-learn --with pandas \
       --with openpyxl --with "statsmodels>=0.15" --with scipy \
-      --python 3.12 python3 scripts/cpi_monthly_v3_test.py -v
+      --python 3.12 python3 scripts/models/cpi/cpi_monthly_v3_test.py -v
 
 Тесты не требуют ClickHouse и сети: недельная панель и строки выборки
 собираются синтетически. Проверяются as-of недель, формула diffusion-признаков,

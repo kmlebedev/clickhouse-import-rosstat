@@ -29,8 +29,8 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import mlflow_export as mx
-from ml_experiment import canonical_run_id as experiment_canonical_run_id
-from ml_experiment import insert_sql
+from lib.ml_experiment import canonical_run_id as experiment_canonical_run_id
+from lib.ml_experiment import insert_sql
 
 # 32 hex-символа — ровно то, что MLflow кладёт в `run.info.run_id`.
 MLFLOW_RUN_ID = "0123456789abcdef0123456789abcdef"

@@ -14,7 +14,7 @@
   выполняется. До обучения жёстко проверяются: RMSE статьи (0.158805 /
   0.296655 / 0.443623 / 0.971459), совпадение двух архивных источников
   прогнозов и normal-флаг `Учитывать` (54 месяца);
-* **признаки** — функции `scripts/cpi_monthly.py` (ML-трек v2) как есть:
+* **признаки** — функции `scripts/models/cpi/cpi_monthly.py` (ML-трек v2) как есть:
   базовые `y_lag1`, `y_lag2`, `usd_mm`, `key_rate`, `fao_mm`, `month` и 7
   МП-признаков `cbr_survey`; cutoff месяца — 8-е число M+1, собственный
   таргет месяца в признаки не попадает;
@@ -969,7 +969,7 @@ def write_report(path: Path, payload: dict) -> None:
     lines.append("# Паритет nowcast v2 с CB_COMP: отчёт прогона")
     lines.append("")
     lines.append(
-        "> Автоматический отчёт `scripts/cb_comp_parity.py`; пункт "
+        "> Автоматический отчёт `scripts/models/cb_comp/cb_comp_parity.py`; пункт "
         "`key-rate/phase-4-ml-cb-comp-feature-parity` (issue #221), follow-up #190. "
         "Числа не редактируются руками — интерпретация в "
         "`docs/research/2026-10-19-cb-comp-feature-parity.md`."

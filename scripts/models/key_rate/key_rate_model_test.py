@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Тесты scripts/key_rate_model.py.
+"""Тесты scripts/models/key_rate/key_rate_model.py.
 
 Запуск из корня репозитория (pytest не нужен):
 
     uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy \
-        --python 3.12 python3 scripts/key_rate_model_test.py -v
+        --python 3.12 python3 scripts/models/key_rate/key_rate_model_test.py -v
 
 (`--python 3.12` — требование statsmodels>=0.15 (Python>=3.10) и конвенция
 репозитория для uv-прогонов; Makefile пинует тот же интерпретатор.)

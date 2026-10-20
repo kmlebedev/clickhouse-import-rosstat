@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Тесты scripts/key_rate_llm_forecast.py.
+"""Тесты scripts/models/key_rate/key_rate_llm_forecast.py.
 
 Запуск из корня репозитория (pytest не нужен):
 
-    python3 scripts/key_rate_llm_forecast_test.py -v
+    python3 scripts/models/key_rate/key_rate_llm_forecast_test.py -v
 
 (`--python 3.12` — конвенция репозитория для uv-прогонов; здесь зависимостей
 вне stdlib нет, поэтому тест идёт системным python3, как `harvest_test.py`.)

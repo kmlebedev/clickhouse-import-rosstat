@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Офлайн-тесты `scripts/cpi_public_panel_audit.py` (issue #234).
+"""Офлайн-тесты `scripts/models/cpi/cpi_public_panel_audit.py` (issue #234).
 
 Запуск:
 
