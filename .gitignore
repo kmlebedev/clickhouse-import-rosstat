@@ -44,6 +44,12 @@ coverage.out
 /key_rate_scenario_fan_diagnostics.csv
 /key_rate_scenario_fan_forecast.json
 
+# Артефакты веера v2 (issue #286, Task 3): ядро + дисперсия.
+/key_rate_scenario_fan_v2_report.md
+/key_rate_scenario_fan_v2_predictions.csv
+/key_rate_scenario_fan_v2_diagnostics.csv
+/key_rate_scenario_fan_v2_forecast.json
+
 # Артефакты классификатора шоков (issue #200): отчёт, as-of веса и запись
 # следующего заседания. Локальные и детерминированные при фиксированном сиде
 # и одной БД; имена точные.
