@@ -34,11 +34,11 @@ from datetime import date, datetime
 from pathlib import Path
 
 try:  # запуск из каталога scripts (`python3 scripts/...`)
-    from extrapolation_aisc import ch_exec
-    from ml_experiment import canonical_run_id, insert_sql
+    from lib.clickhouse import ch_exec
+    from lib.ml_experiment import canonical_run_id, insert_sql
 except ImportError:  # запуск как пакет из корня репозитория
-    from scripts.extrapolation_aisc import ch_exec
-    from scripts.ml_experiment import canonical_run_id, insert_sql
+    from scripts.lib.clickhouse import ch_exec
+    from scripts.lib.ml_experiment import canonical_run_id, insert_sql
 
 log = logging.getLogger(__name__)
 
