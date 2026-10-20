@@ -108,6 +108,17 @@ func init() {
 	HttpClient = &http.Client{Transport: tr, Jar: jar}
 }
 
+// NewDefaultTLSClient — новый клиент со стандартным TLS-стеком (http.DefaultTransport, без
+// CERT_FILES) и собственным cookie jar. Нужен источникам, чей WAF отвергает кастомный
+// TLS-конфиг проекта: POST ЕМИСС 37426 (fedstat_weekly_prices) через HttpClient/голый
+// Transport отдаёт HTTP 200 + GenericData без Series или частичный ответ, а через чистый
+// http.DefaultTransport — все 56 201 серию (живая сверка 2026-10-20). Клиент создаётся на
+// прогон, а не в init(): состояние cookie jar не должно переживать импорт.
+func NewDefaultTLSClient() *http.Client {
+	jar, _ := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
+	return &http.Client{Transport: http.DefaultTransport, Jar: jar}
+}
+
 // fileTimeout — дедлайн одного запроса GetFile. Переменная (а не константа), чтобы тест
 // мог подставить короткий дедлайн вместо двухминутного. Прецеденты — xmlTimeout и
 // jsonTimeout (util/xml.go, util/json.go), у обоих минута: они обслуживают фиды и API, а
