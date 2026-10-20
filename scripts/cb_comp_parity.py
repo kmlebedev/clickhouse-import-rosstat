@@ -1264,11 +1264,22 @@ def run(
     train_start: date = TRAIN_START,
     test_end: date = TEST_END,
     feature_mode: str = "mean",
+    public_panel=None,
+    sheet_map=None,
 ) -> dict:
-    """Полный прогон: архив → margin → признаки → модели → метрики → артефакты."""
+    """Полный прогон: архив → margin → признаки → модели → метрики → артефакты.
+
+    `public_panel`/`sheet_map` нужны только для `per_sheet`; для остальных
+    режимов остаются `None`.
+    """
     if feature_mode not in bu.FEATURE_MODES:
         raise SystemExit(
             f"неизвестный --feature-mode {feature_mode!r}; ожидается {bu.FEATURE_MODES}"
+        )
+    if feature_mode == "per_sheet" and (public_panel is None or sheet_map is None):
+        raise SystemExit(
+            "--feature-mode per_sheet требует --public-panel и --sheet-map "
+            "(`make cb-comp-public-export`)"
         )
     print(f"Режим признаков: {feature_mode}", flush=True)
     if train_start != TRAIN_START or test_end != TEST_END:
@@ -1460,6 +1471,8 @@ def run(
             test_months=[row.month for row in test_rows],
             train_outliers=TRAIN_OUTLIER_MONTHS,
             feature_mode=feature_mode,
+            public_panel=public_panel,
+            sheet_map=sheet_map,
         )
     except (RuntimeError, ValueError, FileNotFoundError) as error:
         bottomup = bu.BottomUpResult(
@@ -1672,17 +1685,45 @@ def main(argv=None) -> int:
         default=bu.DEFAULT_FEATURE_MODE,
         help=(
             "режим признаков bottom-up: mean (baseline #190), "
-            "per_bsu (primary) или full (robustness)"
+            "per_bsu (primary), per_sheet (live-диагностика) или full (robustness)"
+        ),
+    )
+    parser.add_argument(
+        "--public-panel",
+        default=None,
+        help=(
+            "CSV live-панели v_cbr_mp_public_panel для per_sheet "
+            "(code, indicator, date, value); создаётся `make cb-comp-public-export`"
+        ),
+    )
+    parser.add_argument(
+        "--sheet-map",
+        default=None,
+        help=(
+            "CSV карты v_cbr_mp_bsu_map для per_sheet (code, industry_slug); "
+            "создаётся `make cb-comp-public-export`"
         ),
     )
     arguments = parser.parse_args(argv)
     archive = resolve_archive(arguments.archive)
+    public_panel = (
+        bu.load_public_panel(Path(arguments.public_panel))
+        if arguments.public_panel
+        else None
+    )
+    sheet_map = (
+        bu.load_sheet_map(Path(arguments.sheet_map))
+        if arguments.sheet_map
+        else None
+    )
     run(
         archive=archive,
         out_dir=Path(arguments.out_dir),
         train_start=date.fromisoformat(arguments.train_start),
         test_end=date.fromisoformat(arguments.test_end),
         feature_mode=arguments.feature_mode,
+        public_panel=public_panel,
+        sheet_map=sheet_map,
     )
     return 0
 
