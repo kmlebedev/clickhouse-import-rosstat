@@ -150,7 +150,7 @@ cbr_rate:<track>:canary          — canary-трек
 
 ## 10. Grafana-алерты
 
-Provisioning-файл `grafana/provisioning/alerting/ml-live.yaml` (`apiVersion: 1`, группа `ml-live`, `folderUID: general`):
+Provisioning-файл `grafana/provisioning/alerting/ml-live.yaml` (`apiVersion: 1`, группа `ml-live`, `folder: General`):
 
 - `ml-live-degradation`: запрос по `v_ml_live_accuracy`, production, `is_resolved=1`, rolling MAE 3 разрешённых заседаний; threshold `> 100`;
 - `ml-live-freshness`: `if(count()=0, 999, dateDiff('day', max(target_date), today()))`; threshold `> 3`;

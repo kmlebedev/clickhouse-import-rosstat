@@ -604,6 +604,9 @@ def main(argv=None) -> int:
     except GateError as error:
         print(f"ошибка: {error}", file=sys.stderr)
         return 1
+    except Exception as error:  # ClickHouse/MLflow/транспорт — без traceback в CLI
+        print(f"ошибка: {error}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
