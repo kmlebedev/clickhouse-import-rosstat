@@ -24,12 +24,12 @@ import unittest.mock
 from datetime import date, timedelta
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import key_rate_cbr_rule as cr
-import key_rate_model as krm
-import key_rate_scenario_fan as fan
-import shock_classifier as sc
+from models.key_rate import key_rate_cbr_rule as cr
+from models.key_rate import key_rate_model as krm
+from models.key_rate import key_rate_scenario_fan as fan
+from models.key_rate import shock_classifier as sc
 
 
 def make_decision(day: date, rate_before: float = 10.0, step_bp: int = 0):

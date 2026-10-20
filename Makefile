@@ -426,7 +426,7 @@ ARGS ?=
 # повторяет конвенцию репозитория для uv-прогонов (README/ARCHITECTURE: --python 3.12).
 key-rate-model:
 	@$(MLFLOW_PREFLIGHT)
-	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/key_rate_model.py $(ARGS)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/models/key_rate/key_rate_model.py $(ARGS)
 
 # cbr_rule — калиброванное правило ДДКП ЦБ как отдельный экспериментальный трек
 # (issue #268, спека docs/superpowers/specs/2026-10-20-cbr-rule-design.md).
@@ -435,11 +435,11 @@ key-rate-model:
 # через ml_experiment. ARGS: --as-of YYYY-MM-DD, --out-dir DIR, --rolling.
 key-rate-cbr-rule:
 	@$(MLFLOW_PREFLIGHT)
-	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/key_rate_cbr_rule.py $(ARGS)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/models/key_rate/key_rate_cbr_rule.py $(ARGS)
 
 # Офлайн-тесты cbr_rule: без ClickHouse и сети.
 key-rate-cbr-rule-test:
-	uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/key_rate_cbr_rule_test.py -v
+	uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/models/key_rate/key_rate_cbr_rule_test.py -v
 
 # Сценарный веер ставки с shock-aware слоем (issue #272, Task 1;
 # спека docs/superpowers/specs/2026-10-20-cbr-scenario-fan-design.md).
@@ -448,11 +448,11 @@ key-rate-cbr-rule-test:
 # ARGS: --as-of YYYY-MM-DD, --out-dir DIR, --rolling.
 key-rate-scenario-fan:
 	@$(MLFLOW_PREFLIGHT)
-	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/key_rate_scenario_fan.py $(ARGS)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/models/key_rate/key_rate_scenario_fan.py $(ARGS)
 
 # Офлайн-тесты веера: без ClickHouse и сети.
 key-rate-scenario-fan-test:
-	uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/key_rate_scenario_fan_test.py -v
+	uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/models/key_rate/key_rate_scenario_fan_test.py -v
 
 # Веер v2: ядро ordered logit/ML + модель дисперсии (issue #286, Task 3;
 # спека docs/superpowers/specs/2026-10-20-cbr-scenario-fan-v2-design.md).
@@ -460,11 +460,11 @@ key-rate-scenario-fan-test:
 # ML_LOG=1 — паспорт и fold-предсказания через ml_experiment.
 key-rate-scenario-fan-v2:
 	@$(MLFLOW_PREFLIGHT)
-	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/key_rate_scenario_fan_v2.py $(ARGS)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/models/key_rate/key_rate_scenario_fan_v2.py $(ARGS)
 
 # Офлайн-тесты веера v2: без ClickHouse и сети.
 key-rate-scenario-fan-v2-test:
-	uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/key_rate_scenario_fan_v2_test.py -v
+	uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/models/key_rate/key_rate_scenario_fan_v2_test.py -v
 
 # Веер v3: channel-complete ядро ElasticNetCV + volatility-дисперсия
 # (issue #289, Task 4; спека docs/superpowers/specs/2026-10-20-cbr-scenario-fan-v3-design.md).
@@ -472,18 +472,18 @@ key-rate-scenario-fan-v2-test:
 # ML_LOG=1 — паспорт и fold-предсказания через ml_experiment.
 key-rate-scenario-fan-v3:
 	@$(MLFLOW_PREFLIGHT)
-	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/key_rate_scenario_fan_v3.py $(ARGS)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/models/key_rate/key_rate_scenario_fan_v3.py $(ARGS)
 
 # Офлайн-тесты веера v3: без ClickHouse и сети.
 key-rate-scenario-fan-v3-test:
-	uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/key_rate_scenario_fan_v3_test.py -v
+	uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn --with scipy --python 3.12 python3 scripts/models/key_rate/key_rate_scenario_fan_v3_test.py -v
 
 # CPI v3 h1/h3/h6 как model-based прокси ожидаемой инфляции
 # (issue #296, Task 4.1; спека docs/superpowers/specs/2026-10-20-cpi-v3-expectations-design.md).
 # Читает ClickHouse, пишет ЛОКАЛЬНЫЕ артефакты в build/; в forecast_log не пишет.
 key-rate-cpi-v3-experiment:
 	@$(MLFLOW_PREFLIGHT)
-	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/key_rate_cpi_v3_experiment.py $(ARGS)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/key_rate/key_rate_cpi_v3_experiment.py $(ARGS)
 
 # Live-диагностика CPI h1/h3/h6 для заседания: make cpi-live3-horizons ARGS="--as-of 2026-10-23 --meeting 2026-10-23".
 cpi-live3-horizons:
@@ -494,7 +494,7 @@ cpi-live3-horizons-test:
 	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_live3_horizons_test.py -v
 
 key-rate-cpi-v3-experiment-test:
-	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/key_rate_cpi_v3_experiment_test.py -v
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/key_rate/key_rate_cpi_v3_experiment_test.py -v
 
 # Классификатор шоков ключевой ставки (спека 2026-10-19, §8): панель заседаний,
 # as-of каналы, причинные веса (Махаланобис + Ledoit–Wolf) и описательный
@@ -507,11 +507,11 @@ key-rate-cpi-v3-experiment-test:
 # make shock-classifier ARGS="--export-fixtures scripts/testdata/shock_classifier"
 shock-classifier:
 	@$(MLFLOW_PREFLIGHT)
-	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/shock_classifier.py $(ARGS)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/key_rate/shock_classifier.py $(ARGS)
 
 # Офлайн-тесты классификатора шоков: без ClickHouse и сети.
 shock-classifier-test:
-	uv run --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/shock_classifier_test.py -v
+	uv run --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/key_rate/shock_classifier_test.py -v
 
 # Запись текущего прогноза ставки в forecast_log через ingest (POST /v1/key_rate_forecast).
 # Читает локальные артефакты key_rate_model_forecast.json (и, при наличии,
@@ -528,7 +528,7 @@ key-rate-forecast-log:
 # LLM_MODEL (последние — только в ~/.config/rosstat/env). В ClickHouse скрипт
 # НЕ пишет; ARGS="--log" готовит payload для ingest #127 и печатает его.
 key-rate-llm-forecast:
-	uv run --python 3.12 python3 scripts/key_rate_llm_forecast.py $(ARGS)
+	uv run --python 3.12 python3 scripts/models/key_rate/key_rate_llm_forecast.py $(ARGS)
 # ML-трек контура ставки: nowcast месячного ИПЦ до публикации Росстата (CatBoost + бенчмарки).
 # Читает ClickHouse, пишет локальные артефакты; в ClickHouse по умолчанию не пишет;
 # с ML_LOG=1 пишет паспорт и fold-предсказания.

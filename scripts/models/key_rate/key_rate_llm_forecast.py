@@ -57,7 +57,7 @@ from decimal import Decimal, ROUND_FLOOR
 from pathlib import Path
 from typing import Callable, Optional
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[3]
 
 log = logging.getLogger(__name__)
 
@@ -65,9 +65,9 @@ log = logging.getLogger(__name__)
 # (прецедент `key_rate_model.py`).
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import extrapolation_aisc as aisc
+from lib import clickhouse as ch
 
-ch_query = aisc.ch_query
+ch_query = ch.ch_query
 
 # --- Версии, имена артефактов и константы -------------------------------------
 
@@ -1468,7 +1468,7 @@ def run(
             config = llm_config_from_env()
         snapshot = load_snapshot(as_of)
         forecast_result = forecast(snapshot, config, ask=ask)
-    except (ForecastError, aisc.ClickHouseError) as exc:
+    except (ForecastError, ch.ClickHouseError) as exc:
         removed = clear_stale_artifacts(out_dir)
         print(f"LLM-прогноз не построен: {exc}", file=sys.stderr)
         if removed:
@@ -1555,7 +1555,7 @@ def main(argv: Optional[list] = None) -> int:
     args = parser.parse_args(argv)
     try:
         return run(as_of=args.as_of, out_dir=args.out_dir, log_mode=args.log)
-    except (ForecastError, aisc.ClickHouseError) as exc:
+    except (ForecastError, ch.ClickHouseError) as exc:
         print(f"LLM-прогноз не построен: {exc}", file=sys.stderr)
         return 1
 

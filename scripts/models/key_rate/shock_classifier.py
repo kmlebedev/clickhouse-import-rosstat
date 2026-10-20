@@ -118,14 +118,14 @@ from sklearn.covariance import LedoitWolf
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import average_precision_score, roc_auc_score
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[3]
 
 # Модуль-сосед: переиспользуем выборку решений, as-of и разбор строк, а не
 # копируем их. `key_rate_model` сам добавляет `scripts/` в `sys.path`.
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import key_rate_model as krm
-import ml_experiment as mlx
+from models.key_rate import key_rate_model as krm
+from lib import ml_experiment as mlx
 
 log = logging.getLogger(__name__)
 

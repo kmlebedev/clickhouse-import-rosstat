@@ -28,9 +28,9 @@ from pathlib import Path
 
 # Модуль и тест лежат рядом, запуск прямой (`python3 scripts/...`), поэтому его
 # каталог добавляется в sys.path до импорта.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import key_rate_llm_forecast as klf
+from models.key_rate import key_rate_llm_forecast as klf
 
 AS_OF = date(2026, 10, 18)
 MEETING = date(2026, 10, 23)

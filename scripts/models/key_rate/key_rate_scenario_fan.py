@@ -42,14 +42,14 @@ from typing import Optional
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import eval_utils as eu  # noqa: E402
-import key_rate_cbr_rule as cr  # noqa: E402
-import key_rate_model as krm  # noqa: E402
-import ml_experiment as mlx  # noqa: E402
-import shock_classifier as sc  # noqa: E402
+from lib import eval_utils as eu  # noqa: E402
+from models.key_rate import key_rate_cbr_rule as cr  # noqa: E402
+from models.key_rate import key_rate_model as krm  # noqa: E402
+from lib import ml_experiment as mlx  # noqa: E402
+from models.key_rate import shock_classifier as sc  # noqa: E402
 
 log = logging.getLogger("key_rate_scenario_fan")
 

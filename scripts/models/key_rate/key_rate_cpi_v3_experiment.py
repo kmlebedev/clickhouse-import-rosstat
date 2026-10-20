@@ -22,18 +22,18 @@ from datetime import date
 from pathlib import Path
 from typing import Optional
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import cpi_live3_horizons as cph  # noqa: E402
-import cpi_monthly as cm  # noqa: E402
-import cpi_monthly_v3 as cmv3  # noqa: E402
-import eval_utils as eu  # noqa: E402
-import key_rate_cbr_rule as cr  # noqa: E402
-import key_rate_model as krm  # noqa: E402
-import key_rate_scenario_fan as fan1  # noqa: E402
-import key_rate_scenario_fan_v3 as v3  # noqa: E402
-import ml_experiment as mlx  # noqa: E402
+from models.cpi import cpi_live3_horizons as cph  # noqa: E402
+from models.cpi import cpi_monthly as cm  # noqa: E402
+from models.cpi import cpi_monthly_v3 as cmv3  # noqa: E402
+from lib import eval_utils as eu  # noqa: E402
+from models.key_rate import key_rate_cbr_rule as cr  # noqa: E402
+from models.key_rate import key_rate_model as krm  # noqa: E402
+from models.key_rate import key_rate_scenario_fan as fan1  # noqa: E402
+from models.key_rate import key_rate_scenario_fan_v3 as v3  # noqa: E402
+from lib import ml_experiment as mlx  # noqa: E402
 
 SPEC_PATH = "docs/superpowers/specs/2026-10-20-cpi-v3-expectations-design.md"
 PLAN_PATH = "docs/superpowers/plans/2026-10-20-cpi-v3-expectations.md"

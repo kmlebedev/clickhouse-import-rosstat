@@ -157,7 +157,7 @@ import statsmodels.api as sm
 from statsmodels.miscmodels.ordinal_model import OrderedModel
 from statsmodels.regression.linear_model import RegressionResultsWrapper
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[3]
 
 log = logging.getLogger(__name__)
 
@@ -168,11 +168,11 @@ sys.path.insert(0, str(ROOT / "scripts"))
 # Скрипты-соседи: транспорт к ClickHouse, общие оценочные функции (RMSE/MAE,
 # DM с HLN, блочный бутстрап; вынесены в `eval_utils.py`, их же переиспользует
 # ML-трек nowcast'а ИПЦ) и журнал экспериментов (`ml_experiment.py`).
-import eval_utils as eu
-import extrapolation_aisc as aisc
-import ml_experiment as mlx
+from lib import eval_utils as eu
+from lib import clickhouse as ch
+from lib import ml_experiment as mlx
 
-ch_query = aisc.ch_query
+ch_query = ch.ch_query
 
 # Суффикс `FINAL` обязателен во всех запросах ниже: таблицы — ReplacingMergeTree,
 # и без него вытесненные копии строк дали бы дубли точек (и дубли заседаний).

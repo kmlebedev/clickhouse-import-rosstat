@@ -46,11 +46,11 @@ import numpy as np
 
 # Модуль и тест лежат рядом, запуск прямой (`python3 scripts/...`), поэтому его
 # каталог добавляется в sys.path до импорта.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import key_rate_model as km
+from models.key_rate import key_rate_model as km
 
-FIXTURE_DIR = Path(__file__).resolve().parent / "testdata" / "key_rate"
+FIXTURE_DIR = Path(__file__).resolve().parents[2] / "testdata" / "key_rate"
 
 FIXTURE_NAMES = (
     "meetings.csv",

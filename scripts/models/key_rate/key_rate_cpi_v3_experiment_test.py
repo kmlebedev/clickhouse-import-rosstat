@@ -7,11 +7,11 @@ from datetime import date
 from pathlib import Path
 from unittest import mock
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import cpi_monthly as cm
-import cpi_monthly_v3 as cmv3
-import key_rate_cpi_v3_experiment as exp
+from models.cpi import cpi_monthly as cm
+from models.cpi import cpi_monthly_v3 as cmv3
+from models.key_rate import key_rate_cpi_v3_experiment as exp
 
 
 def cpi_item(h1=0.2, h3=0.6, h6=1.1):
