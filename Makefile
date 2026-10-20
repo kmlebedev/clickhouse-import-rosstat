@@ -91,7 +91,7 @@ DAGU_VERSION     ?= v2.18.2
 MKDOCS_VERSION ?= 9.7.7
 MKDOCS := uv run --with mkdocs-material==$(MKDOCS_VERSION) --python 3.12 mkdocs
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-backfill mlflow-backfill-test mlflow-preflight mlflow-register mlflow-promote mlflow-models ml-gate ml-gate-test ml-live-check ml-live-check-test dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model shock-classifier shock-classifier-test key-rate-llm-forecast key-rate-forecast-log cpi-nowcast cpi-monthly cpi-monthly-v3 cpi-monthly-v3-test cpi-monthly-industry cpi-monthly-industry-test cpi-public-audit cpi-public-audit-test cpi-weekly-panel cpi-weekly-panel-test cb-comp-parity cb-comp-parity-test cb-comp-live cb-comp-live-test cb-comp-proxy edisclosure-login edisclosure-collect docs-check docs-build docs-serve
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-backfill mlflow-backfill-test mlflow-preflight mlflow-register mlflow-promote mlflow-models ml-gate ml-gate-test ml-live-check ml-live-check-test dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token grafana-provision-alerting-staging key-rate-model shock-classifier shock-classifier-test key-rate-llm-forecast key-rate-forecast-log cpi-nowcast cpi-monthly cpi-monthly-v3 cpi-monthly-v3-test cpi-monthly-industry cpi-monthly-industry-test cpi-public-audit cpi-public-audit-test cpi-weekly-panel cpi-weekly-panel-test cb-comp-parity cb-comp-parity-test cb-comp-live cb-comp-live-test cb-comp-proxy edisclosure-login edisclosure-collect docs-check docs-build docs-serve
 
 all: lint test build build-ingest
 
@@ -759,6 +759,8 @@ grafana-build:
 #     dashboard/gold-thesis.json dashboard/key-rate-publications.json dashboard/finance-polyus.json
 grafana-validate:
 	cd grafana && go vet ./... && go test ./...
+	@go test ./views -run TestMLLiveAlertProvisioning
+	@uv run --python 3.12 python3 scripts/grafana_alert_check_test.py
 
 # Локальный стенд Grafana для проверки дашборда: тот же провижининг, что уедет в деплой.
 # Плагин ставится CLI Grafana в $(GF_PLUGINS) (флаг --pluginsDir), сервер читает его
@@ -833,6 +835,8 @@ grafana-check:
 		echo "smoke uid=$$uid"; \
 		GRAFANA_URL=$(GRAFANA_TEST_URL) python3 scripts/grafana_check.py --uid $$uid || exit 1; \
 	done
+	@echo "smoke alert rules"
+	@GRAFANA_URL=$(GRAFANA_TEST_URL) python3 scripts/grafana_alert_check.py
 
 # Токен локального стенда одной командой: сервис-аккаунт создаётся идемпотентно (повторный прогон
 # переиспользует $(GRAFANA_SA_NAME) и говорит «уже есть»), а токен — всегда новый: Grafana показывает
@@ -926,6 +930,22 @@ grafana-provision-staging:
 			echo "  (или не перезапустит grafana-server), датасорс ch-rosstat не активен и smoke упадёт: см. deploy/staging/README.md"; \
 		fi'
 
+# Provisioning алертов live-мониторинга ML (infra/4.3) на staging: файл кладётся
+# в /etc/grafana/provisioning/alerting/ рядом с датасорсом. Grafana применяет
+# alerting-provisioning при старте; после копирования нужен admin-reload
+# (POST /api/admin/provisioning/alert-rules/reload) или рестарт grafana-server.
+# Админ-пароль не хранится в репозитории: цель только печатает команду.
+grafana-provision-alerting-staging:
+	@test -f grafana/provisioning/alerting/ml-live.yaml || { echo "нет grafana/provisioning/alerting/ml-live.yaml"; exit 1; }
+	@scp -q grafana/provisioning/alerting/ml-live.yaml "$(STAGING_HOST):/tmp/ml-live-alerting.yaml" || { echo "scp: alerting-файл не доехал до $(STAGING_HOST)"; exit 1; }
+	@ssh $(STAGING_HOST) 'set -eu; \
+		install -d -o root -g grafana -m 755 /etc/grafana/provisioning/alerting; \
+		install -o root -g grafana -m 640 /tmp/ml-live-alerting.yaml /etc/grafana/provisioning/alerting/ml-live.yaml; \
+		rm -f /tmp/ml-live-alerting.yaml; \
+		echo "OK   alerting provisioning установлен: /etc/grafana/provisioning/alerting/ml-live.yaml"; \
+		echo "     reload: curl -u admin:<пароль> -X POST http://127.0.0.1:3000/api/admin/provisioning/alert-rules/reload"; \
+		echo "     (или systemctl restart grafana-server)"'
+
 # Деплой всех трёх дашбордов ($(DASHBOARDS)) на staging: провижининг датасорса → push → smoke.
 # Токен (GRAFANA_STAGING_TOKEN, сервис-аккаунт Editor на staging) живёт только у владельца
 # в $(ROSSTAT_ENV); gcx общается с инстансом через туннель, а панели — с ClickHouse хоста.
@@ -934,6 +954,7 @@ grafana-deploy-staging:
 	@test -n "$$GRAFANA_STAGING_TOKEN" || { echo "задайте GRAFANA_STAGING_TOKEN в $(ROSSTAT_ENV) — токен сервис-аккаунта Editor на staging; создаётся одноразово вручную (runbook: docs/superpowers/specs/2026-10-12-grafana-gold-thesis-design.md §6)"; exit 1; }
 	@curl -sf -m 3 $(GRAFANA_STAGING_URL)/api/health >/dev/null 2>&1 || { echo "staging Grafana не отвечает на $(GRAFANA_STAGING_URL): поднимите туннель — ssh -N -L 3001:127.0.0.1:3000 $(STAGING_HOST)"; exit 1; }
 	@$(MAKE) grafana-provision-staging --no-print-directory
+	@$(MAKE) grafana-provision-alerting-staging --no-print-directory
 	@for uid in $(DASHBOARDS); do \
 		echo "push dashboard/$$uid.json"; \
 		GRAFANA_SERVER=$(GRAFANA_STAGING_URL) GRAFANA_ORG_ID=$(GRAFANA_ORG_ID) GRAFANA_TOKEN="$$GRAFANA_STAGING_TOKEN" \

@@ -62,9 +62,9 @@ const keyRateForecastMaxRate = 1000.0
 // резолвер считает error_bp = (predicted − actual) × 100. `Probabilities` —
 // необязательное распределение по классам {cut, hold, hike} в процентах.
 //
-// `Model`, `PromptVersion` и `DataVersion` пока не имеют колонок в forecast_log
-// (см. спеку §4/§7): endpoint их валидирует и пишет в лог ingest, чтобы контракт
-// writer'а и LLM-трека (#189) не менялся при добавлении колонок follow-up'ом.
+// `Model`, `PromptVersion` и `DataVersion` пишутся в одноимённые колонки
+// forecast_log (добавлены #127): endpoint валидирует их до вставки, чтобы
+// контракт writer'а и LLM-трека (#189) не расходился с журналом.
 type KeyRateForecast struct {
 	ForecastDate  string             `json:"forecast_date"`
 	TargetDate    string             `json:"target_date"`

@@ -1,0 +1,135 @@
+# Grafana alerting provisioning для live-мониторинга ML (infra/4.3, #184).
+#
+# Локальный стенд читает этот каталог напрямую: GF_PATHS_PROVISIONING указывает
+# на grafana/provisioning (Makefile, grafana-up). Staging получает файл через
+# make grafana-provision-alerting-staging; после копирования нужен admin-reload
+# alert-rules или рестарт grafana-server.
+#
+# Contact point здесь не задаётся: алерт виден и уходит в Firing в UI, а
+# маршрутизация уведомлений — решение владельца (секреты не в репозитории).
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: ml-live
+    folder: General
+    interval: 1m
+    rules:
+      - uid: ml-live-degradation
+        title: ML live accuracy degraded
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 31536000
+              to: 0
+            datasourceUid: ch-rosstat
+            model:
+              editorType: sql
+              format: 1
+              queryType: table
+              pluginVersion: 4.3.2
+              rawSql: |
+                SELECT max(last_mae_bp) AS value
+                FROM (
+                    SELECT track, argMax(rolling_mae_bp, target_date) AS last_mae_bp
+                    FROM (
+                        SELECT
+                            track,
+                            target_date,
+                            avg(abs_error_bp) OVER (
+                                PARTITION BY track
+                                ORDER BY target_date
+                                ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+                            ) AS rolling_mae_bp
+                        FROM v_ml_live_accuracy
+                        WHERE stage = 'production' AND is_resolved = 1
+                    )
+                    GROUP BY track
+                )
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [100]
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: "ML live accuracy degraded: rolling MAE > 100 bp"
+          description: "Rolling MAE трёх последних разрешённых production-заседаний выше 100 б.п. Проверить v_ml_live_accuracy, gate и публикационный трек."
+        labels:
+          severity: warning
+          contour: ml-live
+          rule: degradation
+
+      - uid: ml-live-freshness
+        title: ML live accuracy freshness
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 31536000
+              to: 0
+            datasourceUid: ch-rosstat
+            model:
+              editorType: sql
+              format: 1
+              queryType: table
+              pluginVersion: 4.3.2
+              rawSql: |
+                WITH (
+                    SELECT maxOrNull(event_date)
+                    FROM v_events_calendar
+                    WHERE category = 'cbr' AND event_date <= today()
+                ) AS last_meeting
+                SELECT if(
+                    last_meeting IS NULL,
+                    0,
+                    if(
+                        (
+                            SELECT count()
+                            FROM v_ml_live_accuracy
+                            WHERE stage = 'production'
+                              AND is_resolved = 1
+                              AND target_date = last_meeting
+                        ) > 0,
+                        0,
+                        if(dateDiff('day', last_meeting, today()) > 3, 999, 0)
+                    )
+                ) AS value
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [3]
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: "ML live accuracy freshness: нет факта после заседания"
+          description: "После последнего заседания ЦБ прошло больше 3 дней, а production-строка v_ml_live_accuracy не разрешена. Проверить forecast_resolve и forecast_log."
+        labels:
+          severity: warning
+          contour: ml-live
+          rule: freshness
