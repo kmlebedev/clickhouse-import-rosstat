@@ -1096,10 +1096,11 @@ async def check(params, server_log):
             failed += not expect("витрина v_rosstat_macro непуста",
                                  (rosstat_points_n or 0) > 0 and (rosstat_series_n or 0) > 0, rosstat_view_detail)
 
-            # Каталог описывает все 165 рядов источника: 4 ИПЦ (rosstat_ipc_mes) + 131 недельный
+            # Каталог описывает все 169 рядов источника: 4 ИПЦ (rosstat_ipc_mes) + 131 недельный
             # товар (rosstat_ipc_weeks) + 5 рядов ВВП (rosstat_vvp_kvartal) + 1 зарплата
             # (rosstat_salaries_mes) + 6 рядов рынка труда (rosstat_labour_force_mes) + 18 рядов
-            # бюллетеней 2009–2021 (rosstat_ipc_weeks_bulletins): 1 агрегатный недельный ИПЦ
+            # бюллетеней 2009–2021 (rosstat_ipc_weeks_bulletins) + 4 ряда ИЦП по ВЭД
+            # (rosstat_ppi_ved, T1 #276): 1 агрегатный недельный ИПЦ
             # и 17 extra-рядов (ipcWeeksBulletinsExtraSeries), которым канонического соответствия
             # в XLSX-выгрузке нет («Сорочка верхняя для мальчиков школьного возраста» добавлена
             # расширением 2026-10-16, «Говядина тушеная» — расширением 2009–2015 в 2026-10-17),
@@ -1118,17 +1119,17 @@ async def check(params, server_log):
             rosstat_catalog_n = rosstat_catalog_rows[0].get("n") if rosstat_catalog_rows else None
             if rosstat_catalog_rows is None:
                 rosstat_catalog_detail = f"ответ не распознан: {rosstat_catalog[:200]}"
-            elif rosstat_catalog_n == 165:
-                rosstat_catalog_detail = ("рядов rosstat: 165 (4 ИПЦ + 131 недельный + 5 ВВП + 1 зарплата + "
-                                          "6 рабочая сила + 18 бюллетеней)")
+            elif rosstat_catalog_n == 169:
+                rosstat_catalog_detail = ("рядов rosstat: 169 (4 ИПЦ + 131 недельный + 5 ВВП + 1 зарплата + "
+                                          "6 рабочая сила + 18 бюллетеней + 4 ИЦП по ВЭД)")
             else:
-                rosstat_catalog_detail = (f"рядов rosstat: {rosstat_catalog_n}, want 165 — прогнать "
+                rosstat_catalog_detail = (f"рядов rosstat: {rosstat_catalog_n}, want 169 — прогнать "
                                           "импортёры по одному: make import STAT=<имя> для каждого "
                                           "из rosstat_ipc_mes, rosstat_ipc_weeks, "
                                           "rosstat_ipc_weeks_bulletins, rosstat_salaries_mes, "
-                                          "rosstat_vvp_kvartal, rosstat_labour_force_mes "
+                                          "rosstat_vvp_kvartal, rosstat_labour_force_mes, rosstat_ppi_ved "
                                           "(каталог перепубликовывается каждым прогоном)")
-            failed += not expect("каталог rosstat полон", rosstat_catalog_n == 165, rosstat_catalog_detail)
+            failed += not expect("каталог rosstat полон", rosstat_catalog_n == 169, rosstat_catalog_detail)
 
             # Сырые таблицы контура агенту не выданы — как macro_series и
             # cbr_households_b_mes: витрина — единственное место, где агент читает ряды
@@ -1141,7 +1142,8 @@ async def check(params, server_log):
                                  ("rosstat_ipc_weeks_bulletins", "недельные ИПЦ из бюллетеней"),
                                  ("rosstat_salaries_mes", "зарплата помесячно"),
                                  ("rosstat_vvp_kvartal", "ВВП поквартально"),
-                                 ("rosstat_labour_force_mes", "рабочая сила и безработица")):
+                                 ("rosstat_labour_force_mes", "рабочая сила и безработица"),
+                                 ("rosstat_ppi_ved", "ИЦП по ВЭД")):
                 raw = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {table}"}))
                 denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
                 failed += not expect(f"сырая {table} закрыта ({label})", denied,
