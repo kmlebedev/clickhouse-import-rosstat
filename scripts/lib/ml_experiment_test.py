@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Тесты scripts/ml_experiment.py.
+"""Тесты scripts/lib/ml_experiment.py.
 
 Запуск из корня репозитория (pytest не нужен):
 
-    python3 scripts/ml_experiment_test.py -v
+    python3 scripts/lib/ml_experiment_test.py -v
 
 Набор ОФЛАЙН: `ch_exec` подменяется `unittest.mock`, git-команды выполняются
 в текущем рабочем дереве и не требуют сети. ClickHouse для тестов не нужен.
@@ -22,13 +22,13 @@ from datetime import date, datetime
 from pathlib import Path
 from unittest.mock import patch
 
-# Модуль и тест лежат рядом, запуск прямой (`python3 scripts/...`), поэтому его
-# каталог добавляется в sys.path до импорта.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+# Модуль и тест лежат в `scripts/lib/`, запуск прямой, поэтому каталог
+# `scripts` добавляется в sys.path до импорта пакета.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import ml_experiment as me
-from extrapolation_aisc import ClickHouseError
-from ml_experiment import (
+import lib.ml_experiment as me
+from lib.clickhouse import ClickHouseError
+from lib.ml_experiment import (
     PredictionRow,
     canonical_json,
     insert_sql,
@@ -388,7 +388,7 @@ class FinishTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with patch.dict(os.environ, {"ML_LOCAL_DIR": tmp}):
                 run = start_run("exp", "run", {}, date(2026, 10, 18), {}, [], enabled=True)
-                with patch("ml_experiment.ch_exec", side_effect=ClickHouseError("down")):
+                with patch("lib.ml_experiment.ch_exec", side_effect=ClickHouseError("down")):
                     self.assertEqual(run.finish("finished"), "local")
                 self.assertTrue((Path(tmp) / run.run_id / "run.json").is_file())
 
@@ -400,7 +400,7 @@ class FinishTest(unittest.TestCase):
             with patch.dict(os.environ, {"ML_LOCAL_DIR": tmp}):
                 run = start_run("exp", "run", {}, date(2026, 10, 18), {}, [], enabled=True)
                 with patch(
-                    "ml_experiment.ch_exec",
+                    "lib.ml_experiment.ch_exec",
                     side_effect=http.client.IncompleteRead(b"partial"),
                 ):
                     self.assertEqual(run.finish("finished"), "local")
@@ -704,7 +704,7 @@ class FlattenMetricsTest(unittest.TestCase):
     def test_sanitized_key_collision_gets_suffix(self):
         # `cv rmse` и `cv_rmse` после санитизации неразличимы: вторая
         # метрика обязана получить суффикс, а не молча перезаписать первую.
-        with self.assertLogs("ml_experiment", level="WARNING") as logs:
+        with self.assertLogs("lib.ml_experiment", level="WARNING") as logs:
             flat = me.flatten_metrics({"cv rmse": 1.0, "cv_rmse": 2.0})
         self.assertEqual(flat, {"cv_rmse": 1.0, "cv_rmse_2": 2.0})
         self.assertIn("cv_rmse_2", "\n".join(logs.output))
@@ -757,7 +757,7 @@ class FlattenMetricsTest(unittest.TestCase):
     def test_collision_suffix_works_on_flattened_keys(self):
         # `a b.c` и `a_b.c` после санитизации неразличимы: суффикс обязан
         # работать и на составных ключах, а не только на верхнем уровне.
-        with self.assertLogs("ml_experiment", level="WARNING") as logs:
+        with self.assertLogs("lib.ml_experiment", level="WARNING") as logs:
             flat = me.flatten_metrics({
                 "a b": {"c": 1.0},
                 "a_b": {"c": 2.0},
@@ -997,7 +997,7 @@ class MlflowSinkTest(unittest.TestCase):
         fake = FakeMlflow(start_error=RuntimeError("tracking down"))
         with _mlflow_env(), patch.dict(sys.modules, {"mlflow": fake}), \
                 patch.object(me, "ch_exec") as ch_exec:
-            with self.assertLogs("ml_experiment", level="WARNING") as logs:
+            with self.assertLogs("lib.ml_experiment", level="WARNING") as logs:
                 run = start_run("exp", "run", {}, date(2026, 10, 18), {}, [])
             self.assertEqual(run.finish(), "clickhouse")
 
@@ -1014,7 +1014,7 @@ class MlflowSinkTest(unittest.TestCase):
         with _mlflow_env(), patch.dict(sys.modules, {"mlflow": fake}), \
                 patch.object(me, "ch_exec") as ch_exec:
             run = start_run("exp", "run", {}, date(2026, 10, 18), {}, [])
-            with self.assertLogs("ml_experiment", level="WARNING") as logs:
+            with self.assertLogs("lib.ml_experiment", level="WARNING") as logs:
                 self.assertEqual(run.finish("finished"), "clickhouse")
 
         ch_exec.assert_called_once()
@@ -1033,7 +1033,7 @@ class MlflowSinkTest(unittest.TestCase):
                 with patch.object(
                     me, "ch_exec", side_effect=ClickHouseError("ch down")
                 ):
-                    with self.assertLogs("ml_experiment", level="WARNING"):
+                    with self.assertLogs("lib.ml_experiment", level="WARNING"):
                         self.assertEqual(run.finish(), "local")
 
                 self.assertTrue(
@@ -1046,7 +1046,7 @@ class MlflowSinkTest(unittest.TestCase):
                 patch.object(me, "ch_exec"):
             run = start_run("exp", "run", {}, date(2026, 10, 18), {}, [])
             run.log_model("model", object())
-            with self.assertLogs("ml_experiment", level="WARNING") as logs:
+            with self.assertLogs("lib.ml_experiment", level="WARNING") as logs:
                 self.assertEqual(run.finish(), "clickhouse")
 
         self.assertIn("catboost missing", "\n".join(logs.output))
@@ -1064,7 +1064,7 @@ class MlflowSinkTest(unittest.TestCase):
                     [_BrokenMlflowFinder(), *sys.meta_path],
                 ), patch.object(me, "ch_exec") as ch_exec:
             modules.pop("mlflow", None)
-            with self.assertLogs("ml_experiment", level="WARNING") as logs:
+            with self.assertLogs("lib.ml_experiment", level="WARNING") as logs:
                 run = start_run("exp", "run", {}, date(2026, 10, 18), {}, [])
             self.assertEqual(run.finish(), "clickhouse")
 
@@ -1079,7 +1079,7 @@ class MlflowSinkTest(unittest.TestCase):
         # mlflow установлен в окружении разработчика.
         with _mlflow_env(), patch.dict(sys.modules, {"mlflow": None}), \
                 patch.object(me, "ch_exec") as ch_exec:
-            with self.assertLogs("ml_experiment", level="WARNING") as logs:
+            with self.assertLogs("lib.ml_experiment", level="WARNING") as logs:
                 run = start_run("exp", "run", {}, date(2026, 10, 18), {}, [])
             self.assertEqual(run.finish(), "clickhouse")
 
@@ -1092,7 +1092,7 @@ class MlflowSinkTest(unittest.TestCase):
         fake = FakeMlflow()
         with _mlflow_env(), patch.dict(sys.modules, {"mlflow": fake}), \
                 patch.object(me, "ch_exec"):
-            with self.assertLogs("ml_experiment", level="WARNING") as logs:
+            with self.assertLogs("lib.ml_experiment", level="WARNING") as logs:
                 run = start_run(
                     "exp", "run", {"huge": "x" * 6001, "alpha": 0.5},
                     date(2026, 10, 18), {}, [],
@@ -1108,7 +1108,7 @@ class MlflowSinkTest(unittest.TestCase):
         fake = FakeMlflow(log_params_error=RuntimeError("bad param"))
         with _mlflow_env(), patch.dict(sys.modules, {"mlflow": fake}), \
                 patch.object(me, "ch_exec") as ch_exec:
-            with self.assertLogs("ml_experiment", level="WARNING") as logs:
+            with self.assertLogs("lib.ml_experiment", level="WARNING") as logs:
                 run = start_run(
                     "exp", "run", {"alpha": 0.5}, date(2026, 10, 18), {}, []
                 )
@@ -1135,7 +1135,7 @@ class MlflowSinkTest(unittest.TestCase):
                     {"bad": object()}, [], enabled=True,
                 )
                 with patch.object(me, "ch_exec") as ch_exec:
-                    with self.assertLogs("ml_experiment", level="WARNING"):
+                    with self.assertLogs("lib.ml_experiment", level="WARNING"):
                         self.assertEqual(run.finish(), "local")
                 ch_exec.assert_not_called()
 
