@@ -207,9 +207,9 @@ published_at(point) <= meeting_datetime(d)
 
 ### 8.3. Stage 2
 
-- RMSE/MAE для SA path/cumulative; сравнение с текущим live3; SA и NSA не сравнивать напрямую.
-- DM/CI; SA-сверка с CBR; NSA back-transform — sanity.
-- Приёмка: stage 2 не хуже live3 по cumulative SA; если хуже — остановиться и не строить stage 3.
+- RMSE/MAE для SA path/cumulative; SA path сравнивается с CBR SA, а не с live3 напрямую.
+- DM/CI; SA-сверка с CBR; NSA back-transform — обязательная сверка.
+- Приёмка: stage 2 **NSA back-transform cumulative h1/h3/h6** не хуже live3 на общих фолдах; SA path отдельно сверяется с CBR SA. Если NSA-сверка хуже — остановиться и не строить stage 3.
 
 ### 8.4. Stage 3
 
