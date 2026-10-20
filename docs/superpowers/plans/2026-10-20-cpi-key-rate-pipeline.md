@@ -23,6 +23,7 @@
 - `ML_LOG=1` and MLflow by default; artifacts sha256; repeat run deterministic.
 - `make all`, `make docs-check` green; Python tests via `uv run` / `make`.
 - One item — one branch — one PR per phase; owner decides merge.
+- Package layout: new model modules live under `scripts/models/cpi/` or `scripts/models/key_rate/`; shared utilities under `scripts/lib/`. Use `from models.cpi import ...`, `from models.key_rate import ...`, `from lib import ...`; model modules resolve `ROOT` via `parents[3]`, `scripts/lib` via `parents[2]`.
 
 ## Review Focus
 
@@ -37,8 +38,8 @@
 ### Task 0: Publication calendar loader and fixture
 
 **Files:**
-- Create: `scripts/publication_calendar.py`
-- Create: `scripts/publication_calendar_test.py`
+- Create: `scripts/lib/publication_calendar.py`
+- Create: `scripts/lib/publication_calendar_test.py`
 - Create: `scripts/testdata/publication_calendar.csv`
 - Modify: `Makefile` (add `publication-calendar-test`)
 
@@ -52,7 +53,7 @@
 - [ ] **Step 1: Write failing calendar tests**
 
 ```python
-# scripts/publication_calendar_test.py
+# scripts/lib/publication_calendar_test.py
 from datetime import date, datetime
 from publication_calendar import PublicationCalendar
 
@@ -90,7 +91,7 @@ def test_fallback_precision():
 
 - [ ] **Step 2: Run test to verify failure**
 
-Run: `uv run --python 3.12 python3 scripts/publication_calendar_test.py -v`
+Run: `uv run --python 3.12 python3 scripts/lib/publication_calendar_test.py -v`
 Expected: FAIL because `publication_calendar.py` does not exist.
 
 - [ ] **Step 3: Implement loader and fixture**
@@ -113,18 +114,18 @@ Fixture CSV has at least:
 
 - [ ] **Step 4: Run tests to verify pass**
 
-Run: `uv run --python 3.12 python3 scripts/publication_calendar_test.py -v`
+Run: `uv run --python 3.12 python3 scripts/lib/publication_calendar_test.py -v`
 Expected: PASS.
 
 - [ ] **Step 5: Add Makefile target and commit**
 
 ```makefile
 publication-calendar-test:
-	uv run --python 3.12 python3 scripts/publication_calendar_test.py -v
+	uv run --python 3.12 python3 scripts/lib/publication_calendar_test.py -v
 ```
 
 ```bash
-git add scripts/publication_calendar.py scripts/publication_calendar_test.py scripts/testdata/publication_calendar.csv Makefile
+git add scripts/lib/publication_calendar.py scripts/lib/publication_calendar_test.py scripts/testdata/publication_calendar.csv Makefile
 git commit -m "add publication calendar loader"
 ```
 
@@ -135,8 +136,8 @@ git commit -m "add publication calendar loader"
 ### Task 1: Stage 1 CPI nowcast (`M0`, `M0+1`)
 
 **Files:**
-- Create: `scripts/cpi_pipeline_stage1.py`
-- Create: `scripts/cpi_pipeline_stage1_test.py`
+- Create: `scripts/models/cpi/cpi_pipeline_stage1.py`
+- Create: `scripts/models/cpi/cpi_pipeline_stage1_test.py`
 - Modify: `Makefile` (add `cpi-pipeline-stage1`, `cpi-pipeline-stage1-test`)
 
 **Interfaces:**
@@ -176,7 +177,7 @@ def test_weekly_asof_excludes_future_week(monkeypatch):
 
 - [ ] **Step 2: Run test to verify failure**
 
-Run: `uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_pipeline_stage1_test.py -v`
+Run: `uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_pipeline_stage1_test.py -v`
 Expected: FAIL because stage 1 module does not exist.
 
 - [ ] **Step 3: Implement stage 1 builder and models**
@@ -201,13 +202,13 @@ Makefile targets:
 ```makefile
 cpi-pipeline-stage1:
 	@$(MLFLOW_PREFLIGHT)
-	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_pipeline_stage1.py $(ARGS)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_pipeline_stage1.py $(ARGS)
 
 cpi-pipeline-stage1-test:
-	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_pipeline_stage1_test.py -v
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_pipeline_stage1_test.py -v
 ```
 ```bash
-git add scripts/cpi_pipeline_stage1.py scripts/cpi_pipeline_stage1_test.py Makefile
+git add scripts/models/cpi/cpi_pipeline_stage1.py scripts/models/cpi/cpi_pipeline_stage1_test.py Makefile
 git commit -m "add stage 1 cpi nowcast"
 ```
 
@@ -218,8 +219,8 @@ git commit -m "add stage 1 cpi nowcast"
 ### Task 2: Real-time SA module
 
 **Files:**
-- Create: `scripts/cpi_pipeline_sa.py`
-- Create: `scripts/cpi_pipeline_sa_test.py`
+- Create: `scripts/models/cpi/cpi_pipeline_sa.py`
+- Create: `scripts/models/cpi/cpi_pipeline_sa_test.py`
 - Modify: `Makefile` (add `cpi-pipeline-sa-test`)
 
 **Interfaces:**
@@ -250,7 +251,7 @@ def test_deterministic():
 
 - [ ] **Step 2: Run test to verify failure**
 
-Run: `uv run --with "statsmodels>=0.15" --with pandas --with scipy --python 3.12 python3 scripts/cpi_pipeline_sa_test.py -v`
+Run: `uv run --with "statsmodels>=0.15" --with pandas --with scipy --python 3.12 python3 scripts/models/cpi/cpi_pipeline_sa_test.py -v`
 Expected: FAIL because `cpi_pipeline_sa.py` does not exist.
 
 - [ ] **Step 3: Implement STL-based SA**
@@ -265,7 +266,7 @@ Expected: PASS.
 - [ ] **Step 5: Add Makefile target and commit**
 
 ```bash
-git add scripts/cpi_pipeline_sa.py scripts/cpi_pipeline_sa_test.py Makefile
+git add scripts/models/cpi/cpi_pipeline_sa.py scripts/models/cpi/cpi_pipeline_sa_test.py Makefile
 git commit -m "add real-time seasonal adjustment"
 ```
 
@@ -274,8 +275,8 @@ git commit -m "add real-time seasonal adjustment"
 ### Task 3: Stage 2 SA path and cumulative h1/h3/h6
 
 **Files:**
-- Create: `scripts/cpi_pipeline_stage2.py`
-- Create: `scripts/cpi_pipeline_stage2_test.py`
+- Create: `scripts/models/cpi/cpi_pipeline_stage2.py`
+- Create: `scripts/models/cpi/cpi_pipeline_stage2_test.py`
 - Modify: `Makefile` (add `cpi-pipeline-stage2`, `cpi-pipeline-stage2-test`)
 
 **Interfaces:**
@@ -311,7 +312,7 @@ def test_no_future_sa():
 
 - [ ] **Step 2: Run test to verify failure**
 
-Run: `uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_pipeline_stage2_test.py -v`
+Run: `uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_pipeline_stage2_test.py -v`
 Expected: FAIL because stage 2 module does not exist.
 
 - [ ] **Step 3: Implement stage 2 builder and models**
@@ -330,7 +331,7 @@ Expected: PASS.
 
 Makefile targets analogous to stage 1. Artifacts: `stage2_predictions.csv`, `stage2_result.json`, `stage2_report.md`.
 ```bash
-git add scripts/cpi_pipeline_stage2.py scripts/cpi_pipeline_stage2_test.py Makefile
+git add scripts/models/cpi/cpi_pipeline_stage2.py scripts/models/cpi/cpi_pipeline_stage2_test.py Makefile
 git commit -m "add stage 2 cpi sa path"
 ```
 
@@ -341,10 +342,10 @@ git commit -m "add stage 2 cpi sa path"
 ### Task 4: Stage 3 key-rate model with stage 2 path
 
 **Files:**
-- Modify: `scripts/key_rate_scenario_fan_v3.py` (add `drop_features`)
-- Modify: `scripts/key_rate_scenario_fan_v3_test.py`
-- Create: `scripts/key_rate_pipeline.py`
-- Create: `scripts/key_rate_pipeline_test.py`
+- Modify: `scripts/models/key_rate/key_rate_scenario_fan_v3.py` (add `drop_features`)
+- Modify: `scripts/models/key_rate/key_rate_scenario_fan_v3_test.py`
+- Create: `scripts/models/key_rate/key_rate_pipeline.py`
+- Create: `scripts/models/key_rate/key_rate_pipeline_test.py`
 - Modify: `Makefile` (add `key-rate-pipeline`, `key-rate-pipeline-test`)
 
 **Interfaces:**
@@ -380,7 +381,7 @@ def test_stage3_does_not_see_raw_cpi_expectations():
 
 - [ ] **Step 2: Run test to verify failure**
 
-Run: `uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/key_rate_pipeline_test.py -v`
+Run: `uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/key_rate/key_rate_pipeline_test.py -v`
 Expected: FAIL because stage 3 module/`drop_features` does not exist.
 
 - [ ] **Step 3: Implement `drop_features` and stage 3**
@@ -400,7 +401,7 @@ Expected: PASS.
 
 Makefile targets; artifacts `key_rate_pipeline_report.md`, `..._result.json`, `..._folds.csv`, `..._stage2_predictions.csv`.
 ```bash
-git add scripts/key_rate_scenario_fan_v3.py scripts/key_rate_scenario_fan_v3_test.py scripts/key_rate_pipeline.py scripts/key_rate_pipeline_test.py Makefile
+git add scripts/models/key_rate/key_rate_scenario_fan_v3.py scripts/models/key_rate/key_rate_scenario_fan_v3_test.py scripts/models/key_rate/key_rate_pipeline.py scripts/models/key_rate/key_rate_pipeline_test.py Makefile
 git commit -m "add stage 3 key-rate pipeline"
 ```
 
