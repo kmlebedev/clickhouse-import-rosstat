@@ -236,19 +236,19 @@ published_at(point) <= meeting_datetime(d)
 
 ### Phase 1 — stage 1
 
-- `scripts/cpi_pipeline_stage1.py`, `_test.py`; `make cpi-pipeline-stage1`.
+- `scripts/models/cpi/cpi_pipeline_stage1.py`, `_test.py`; `make cpi-pipeline-stage1`.
 - Отчёт: RMSE/MAE M0/M0+1, DM/CI, сравнение с v3/live3.
 - Критерий: не хуже текущего CPI-nowcast на общих фолдах.
 
 ### Phase 2 — stage 2
 
-- `scripts/cpi_pipeline_stage2.py`, `_test.py`; `make cpi-pipeline-stage2`.
+- `scripts/models/cpi/cpi_pipeline_stage2.py`, `_test.py`; `make cpi-pipeline-stage2`.
 - Отчёт: SA path/cumulative, SA-сверка, NSA sanity, DM/CI.
 - Критерий: не хуже live3; если хуже — stop.
 
 ### Phase 3 — stage 3
 
-- `scripts/key_rate_pipeline.py`, `_test.py`; `make key-rate-pipeline`.
+- `scripts/models/key_rate/key_rate_pipeline.py`, `_test.py`; `make key-rate-pipeline`.
 - Отчёт: CRPS/coverage/RMSE, ablations, DM/CI.
 - Критерий: stage 3 лучше `channel_fan_vol` по pre-registration или честный negative.
 
