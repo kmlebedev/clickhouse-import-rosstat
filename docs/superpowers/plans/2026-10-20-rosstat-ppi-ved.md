@@ -115,22 +115,22 @@
    curl -L -A 'Mozilla/5.0 ...' -o /tmp/Proizvoditeli_Ind_VED_08-2026.xlsx \
      https://rosstat.gov.ru/storage/mediabank/Proizvoditeli_Ind_VED_08-2026.xlsx
    ```
-2. Урезать:
+2. Урезать (служебный «Содержание» оставляем: на него ссылаются внутренние гиперссылки рисунков; XML листов копируется побайтово):
    ```bash
    python3 scripts/xlsx_trim.py trim /tmp/Proizvoditeli_Ind_VED_08-2026.xlsx \
      rosstat/testdata/ppi_ved.xlsx \
-     --keep 1.1 --keep 2.1 --keep 3.1 --keep 3.2 --keep 3.3 --keep 3.4 --keep 8.1
-   python3 scripts/xlsx_trim.py verify /tmp/Proizvoditeli_Ind_VED_08-2026.xlsx \
-     rosstat/testdata/ppi_ved.xlsx \
-     --keep 1.1 --keep 2.1 --keep 3.1 --keep 3.2 --keep 3.3 --keep 3.4 --keep 8.1
+     --keep Содержание --keep 1.1 --keep 2.1 --keep 3.1 --keep 3.2 --keep 3.3 --keep 3.4 --keep 8.1
    ```
+   `verify` подтверждает побайтовое совпадение XML листов; проверка отношений ругается на внутренние гиперссылки `#Содержание!A1` (цель — не часть архива, это ложное срабатывание скрипта). Фикстура открывается `excelize`, тесты зелёные.
 3. `rosstat/ppi_ved_test.go`:
    - `TestPPIVedFindLink` — `price_page.html`, ожидается `/storage/mediabank/Proizvoditeli_Ind_VED_08-2026.xlsx`, не `2kv`;
-   - `TestParsePPIVed` — число точек по типам (344/91/68/68), min/max, spot-значения из спеки §8;
+   - `TestPPIVedReadsFixture` — 407 точек фикстуры (344/39/12/12), min/max, spot-значения и приоритет `2.1` над `1.1` (2013-01: 99,9 против 99,6) и годового листа над `2.1` (2021-01: 103,36 против 103,4);
+   - `TestPPIVedValue` — запятая и приклеенная сноска (`98,121)` → 98,12), пропуски, нечисловой текст;
    - fail-fast: нет листа, нет кода, нет строки РФ, нечисловое значение, пустая книга;
-   - `TestPPIVedImportAppends` — `appendRecorder`;
+   - `TestPPIVedImportAppends` — локальный `ppiVedBatchRecorder` (пять колонок);
    - `TestPPIVedCatalogContract` — имена каталога == `name` в точках (двусторонний);
-   - `TestPPIVedOverlapPrecedence` — `2.1` побеждает `1.1` на 2013–2016, годовые побеждают `2.1` на 2021–2025 (проверка через spot/число точек).
+   - `TestPPIVedDdl` — `ReplacingMergeTree`, `Float64`, ключ `(date, code, index_type)`.
+   Полный винтаж 08-2026 проверяется временным тестом (571 точка: 344/91/68/68); в PR он не входит.
 4. `rosstat/importers_test.go` — энфорсер сам проверит регистрацию/dagu/префлайт.
 
 ### Шаг 6. Документация
