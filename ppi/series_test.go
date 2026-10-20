@@ -63,6 +63,11 @@ func TestEmbeddedWeights(t *testing.T) {
 	if err := checkWeights(mapping, weights); err != nil {
 		t.Fatalf("checkWeights: %v", err)
 	}
+	for _, group := range []string{"03.1.4", "03.2.2", "05.6.2"} {
+		if _, ok := weights.ByPeriod[ppiSAWeightPeriod][group]; !ok {
+			t.Errorf("в панели %s нет вычитаемой группы %s: агрегация не сможет вычесть услуги", ppiSAWeightPeriod, group)
+		}
+	}
 }
 
 func TestIsKIPCChild(t *testing.T) {
@@ -105,6 +110,33 @@ func TestMembersForGroupsDedup(t *testing.T) {
 	got = membersForGroups(withoutParent, []string{"04.3.1.1"})
 	if len(got) != 2 {
 		t.Fatalf("members = %v, want обе дочерние группы (соседи)", got)
+	}
+}
+
+func TestScopeMembership(t *testing.T) {
+	mapping, err := parseMapping(ppiMappingCSV)
+	if err != nil {
+		t.Fatalf("parseMapping: %v", err)
+	}
+	food := membersForGroups(mapping.LeavesByGroup, ppiScopeGroups["food"])
+	if _, ok := food["01.2.1"]; !ok {
+		t.Error("food не содержит 01.2.1 (соки): полная панель должна включать дочерние группы")
+	}
+	nonfood := membersForGroups(mapping.LeavesByGroup, ppiScopeGroups["nonfood"])
+	for _, group := range []string{"04.3.1.1.1", "04.3.1.1.10.1", "03.1", "09.3.2"} {
+		if _, ok := nonfood[group]; !ok {
+			t.Errorf("nonfood не содержит %s", group)
+		}
+	}
+	all := membersForGroups(mapping.LeavesByGroup, ppiAllGroups())
+	core := membersForGroups(mapping.LeavesByGroup, ppiCoreGroups())
+	for _, group := range []string{"02.1", "02.3", "07.2.2"} {
+		if _, ok := all[group]; !ok {
+			t.Errorf("all не содержит %s", group)
+		}
+		if _, ok := core[group]; ok {
+			t.Errorf("core не должен содержать %s", group)
+		}
 	}
 }
 
