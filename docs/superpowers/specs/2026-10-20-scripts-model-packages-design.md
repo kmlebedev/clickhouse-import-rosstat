@@ -75,8 +75,8 @@ Module-level алиасы `ch_query = ch.ch_query` сохраняются, ка�
 
 ## 6. Разделение `extrapolation_aisc`
 
-- `lib/clickhouse.py`: `mask`, `parse_clickhouse_url`, `ch_config`, `ClickHouseError`, `parse_ch_json`, `_error_body`, `ch_query`, `ch_exec`, `sql_literal`, `sql_batches`, `DEFAULT_BATCH_SIZE`, `DEFAULT_CH_HTTP_PORT`, `CH_QUERY_TIMEOUT_SECONDS`.
-- `models/polyus/aisc.py`: константы Polyus, парсинг PDF, `build_series`, `calibrate`, `reconcile`, `build_plan_rows`, `validate`, `main`, `production_sql`, `read_actual_production`, `MINE_PLANS_COLUMNS`, `write_sql`, `write_csv`, `_display_path`.
+- `lib/clickhouse.py`: `mask`, `parse_clickhouse_url`, `ch_config`, `ClickHouseError`, `parse_ch_json`, `_error_body`, `ch_query`, `ch_exec`, `sql_literal`, `DEFAULT_CH_HTTP_PORT`, `CH_QUERY_TIMEOUT_SECONDS`.
+- `models/polyus/aisc.py`: константы Polyus, парсинг PDF, `build_series`, `calibrate`, `reconcile`, `build_plan_rows`, `validate`, `main`, `production_sql`, `read_actual_production`, `MINE_PLANS_COLUMNS`, `sql_batches`, `DEFAULT_BATCH_SIZE`, `write_sql`, `write_csv`, `_display_path`.
 - Тест 201 теста делится по классам: транспортные (`TestConfig`, `TestQueryTransport`, `TestExecTransport`) — в `lib/clickhouse_test.py`, остальные — в `models/polyus/aisc_test.py`.
 
 ## 7. Документация
