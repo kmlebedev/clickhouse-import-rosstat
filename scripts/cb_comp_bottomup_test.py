@@ -286,6 +286,129 @@ class TestMpFeatures(unittest.TestCase):
         self.assertEqual(len(mean), 6)
         self.assertAlmostEqual(mean["mp_ibk"], 17.0, places=10)
 
+    def test_load_sheet_map_and_public_panel(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sheet_path = root / "sheet_map.csv"
+            pd.DataFrame(
+                [
+                    {"code": "01.11", "industry_slug": "agriculture"},
+                    {"code": "10.1", "industry_slug": "manufacturing_consumer"},
+                    {"code": "47.2", "industry_slug": "trade_retail"},
+                ]
+            ).to_csv(sheet_path, index=False)
+            self.assertEqual(
+                bu.load_sheet_map(sheet_path),
+                {
+                    "01.11": "agriculture",
+                    "10.1": "manufacturing_consumer",
+                    "47.2": "trade_retail",
+                },
+            )
+
+            panel_path = root / "public_panel.csv"
+            pd.DataFrame(
+                [
+                    {"code": "01.11", "indicator": "ibk", "date": "2024-01-01", "value": 7.0},
+                    {"code": "10.1", "indicator": "ibk", "date": "2024-01-01", "value": 10.0},
+                    {"code": "10.1", "indicator": "ibk", "date": "2024-02-01", "value": 12.0},
+                ]
+            ).to_csv(panel_path, index=False)
+            panel = bu.load_public_panel(panel_path)
+            # `01.11` обязан остаться строкой с ведущим нулём, а не 1.11.
+            self.assertEqual(set(panel["code"]), {"01.11", "10.1"})
+            self.assertEqual(
+                list(panel["date"]),
+                [date(2024, 1, 1), date(2024, 1, 1), date(2024, 2, 1)],
+            )
+            self.assertEqual(panel["value"].tolist(), [7.0, 10.0, 12.0])
+
+            pd.DataFrame(
+                [{"code": "10.1", "indicator": "bogus", "date": "2024-01-01", "value": 1.0}]
+            ).to_csv(panel_path, index=False)
+            with self.assertRaises(ValueError):
+                bu.load_public_panel(panel_path)
+
+    def test_per_sheet_names_and_values(self):
+        rows = []
+        for code, sheet, base in (
+            ("10.1", "manufacturing_consumer", 10.0),
+            ("10.2", "manufacturing_consumer", 10.0),
+            ("47.2", "trade_retail", 20.0),
+        ):
+            for month, offset in ((1, 0.0), (2, 2.0), (3, 4.0)):
+                rows.append(
+                    {
+                        "code": code,
+                        "indicator": "ibk",
+                        "date": date(2024, month, 1),
+                        "value": base + offset,
+                    }
+                )
+        frame = pd.DataFrame(rows)
+        sheet_map = {
+            "10.1": "manufacturing_consumer",
+            "10.2": "manufacturing_consumer",
+            "47.2": "trade_retail",
+        }
+        lookup = bu._sheet_lookup(frame, sheet_map)
+        spec = bu.GroupSpec(
+            "10",
+            ("10.1", "10.2"),
+            3,
+            ("manufacturing_consumer", "trade_retail"),
+        )
+        features = bu.mp_features(
+            spec, date(2024, 3, 1), lookup, mode="per_sheet"
+        )
+        self.assertEqual(len(features), 12)
+        self.assertAlmostEqual(
+            features["mp_sheet_manufacturing_consumer_ibk"], 12.0, places=10
+        )
+        self.assertAlmostEqual(
+            features["mp_sheet_manufacturing_consumer_ibk_chg"], 2.0, places=10
+        )
+        self.assertAlmostEqual(
+            features["mp_sheet_trade_retail_ibk"], 22.0, places=10
+        )
+        self.assertTrue(
+            math.isnan(features["mp_sheet_manufacturing_consumer_costs"])
+        )
+
+        names = bu.feature_names(True, "per_sheet", spec)
+        self.assertEqual(len(names), 18)
+        self.assertEqual(names[-1], "month")
+        self.assertTrue(set(names) <= set(features) | set(bu.BASE_FEATURES))
+
+    def test_sheet_lookup_rejects_inconsistent_sheet(self):
+        frame = pd.DataFrame(
+            [
+                {"code": "10.1", "indicator": "ibk", "date": date(2024, 1, 1), "value": 1.0},
+                {"code": "10.2", "indicator": "ibk", "date": date(2024, 1, 1), "value": 2.0},
+            ]
+        )
+        with self.assertRaises(ValueError):
+            bu._sheet_lookup(
+                frame,
+                {
+                    "10.1": "manufacturing_consumer",
+                    "10.2": "manufacturing_consumer",
+                },
+            )
+
+    def test_per_sheet_requires_public_panel(self):
+        result = bu.run_bottomup(
+            archive=Path("/nonexistent"),
+            target_full=pd.DataFrame(),
+            macro={},
+            normal_months=[],
+            train_months=[],
+            test_months=[],
+            feature_mode="per_sheet",
+        )
+        self.assertEqual(result.status, "not_assembled")
+        self.assertIn("public_panel", result.reason)
+
     def test_full_features_and_names(self):
         panel = pd.DataFrame(
             [
