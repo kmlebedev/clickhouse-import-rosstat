@@ -29,17 +29,19 @@ func afterRosstatMacro(meta []util.SeriesMeta) func(context.Context, driver.Conn
 
 var rosstatMacroView = util.View{
 	Name:   "v_rosstat_macro",
-	Tables: []string{rosstatIPCMesTable, rosstatIPCWeeksTable, rosstatIPCWeeksBulletinsTable, rosstatVVPKvartalTable, rosstatSalariesMesTable, rosstatLabourForceTable},
+	Tables: []string{rosstatIPCMesTable, rosstatIPCWeeksTable, rosstatIPCWeeksBulletinsTable, rosstatBICpiWeeklyTable, rosstatVVPKvartalTable, rosstatSalariesMesTable, rosstatLabourForceTable},
 	Select: `SELECT 'rosstat' AS source, name AS series, date, toFloat64(percent) AS value FROM rosstat_ipc_mes FINAL
 UNION ALL SELECT 'rosstat', name, date, toFloat64(percent) FROM rosstat_ipc_weeks FINAL
+UNION ALL SELECT 'rosstat', series, date, value FROM rosstat_bi_cpi_weekly FINAL
 UNION ALL SELECT 'rosstat', name, date, toFloat64(percent) FROM rosstat_ipc_weeks_bulletins FINAL
+WHERE (name, date) NOT IN (SELECT series, date FROM rosstat_bi_cpi_weekly FINAL)
 UNION ALL SELECT 'rosstat', name, date, toFloat64(vvp) FROM rosstat_vvp_kvartal FINAL
 UNION ALL SELECT 'rosstat', name, date, toFloat64(salary) FROM rosstat_salaries_mes FINAL
 UNION ALL SELECT 'rosstat', name, date, toFloat64(value) FROM rosstat_labour_force_mes FINAL`,
-	Comment: "Ряды Росстата: ИПЦ по товарам и услугам (помесячно), еженедельные цены на отдельные товары и услуги (XLSX с 2022 и бюллетени «Оперативной информации» за 2021 и фрагменты 2017), ВВП по кварталам, средняя номинальная зарплата по месяцам, рынок труда (рабочая сила, занятые, безработные и уровни участия, занятости и безработицы, помесячно). Единицы значения и привязка даты различаются между рядами: перед расчётом читать v_series_catalog по (source, series)",
+	Comment: "Ряды Росстата: ИПЦ по товарам и услугам (помесячно), еженедельные цены на отдельные товары и услуги (XLSX с 2022 и бюллетени «Оперативной информации» за 2009–2021), недельный агрегат ИПЦ 2019+ из BI Росстата (приоритетен над бюллетенями на пересечении 2019–2021), ВВП по кварталам, средняя номинальная зарплата по месяцам, рынок труда (рабочая сила, занятые, безработные и уровни участия, занятости и безработицы, помесячно). Единицы значения и привязка даты различаются между рядами: перед расчётом читать v_series_catalog по (source, series)",
 	Columns: map[string]string{
 		"source": "Источник данных: всегда rosstat",
-		"series": "Название ряда; совпадает с series в v_series_catalog. У помесячного ИПЦ, квартального ВВП, зарплаты и рядов рынка труда имя закреплено в коде и при обновлении файла-источника не меняется. У недельных товарных рядов имя — название товара или услуги из товарного списка источника (в бюллетенях 2017/2021 канонизируется кодом к именам XLSX-выгрузки); каталог описывает текущий набор товаров, а товар, которого в v_series_catalog ещё нет, записывается в витрину с предупреждением в журнале, пока его описание не добавлено в код",
+		"series": "Название ряда; совпадает с series в v_series_catalog. У помесячного ИПЦ, квартального ВВП, зарплаты и рядов рынка труда имя закреплено в коде и при обновлении файла-источника не меняется. У недельных товарных рядов имя — название товара или услуги из товарного списка источника (в бюллетенях 2017/2021 канонизируется кодом к именам XLSX-выгрузки); каталог описывает текущий набор товаров, а товар, которого в v_series_catalog ещё нет, записывается в витрину с предупреждением в журнале, пока его описание не добавлено в код. Агрегатный ряд «Индекс потребительских цен (недельная оценка)» за 2019+ берётся из BI, до 2019 — из бюллетеней",
 		"date":   "Дата наблюдения (Date). Для месячных и недельных рядов — день из таблицы; для квартальных и зарплатных дат сдвинута — см. description ряда в v_series_catalog",
 		"value":  "Значение ряда (Float64). Единицы зависят от ряда: индекс цен (100 = без изменения), млрд руб., рубли — см. unit в v_series_catalog",
 	},
@@ -231,18 +233,19 @@ func ipcWeeksSeriesMeta() []util.SeriesMeta {
 	return meta
 }
 
-// ipcWeeksBulletinsAggregateMeta — мета агрегатного недельного ряда ИПЦ (спека §3.2.1): строка
-// «Индекс потребительских цен (оценка)» шапки бюллетеня. Ряд покрывает 2009–2021 (502 недели с
-// разрывами; расширение 2009–2015 — приложение Е спеки): в XLSX 2022+ агрегатной строки нет —
-// оговорка в description, чтобы агент не ждал продолжения ряда за 2022+.
-var ipcWeeksBulletinsAggregateMeta = util.SeriesMeta{
+// ipcWeeksAggregateMeta — мета агрегатного недельного ряда ИПЦ: строка «Индекс
+// потребительских цен (оценка)» бюллетеня 2009–2021 и карточка «Consumer Price Index
+// Estimation» BI 2019+. Одна запись на оба импортёра: upsert каталога идемпотентен и не
+// зависит от порядка прогонов (спека §3.2). Ряд покрывает 2009-04-06 … current: до 2019 —
+// бюллетени, с 2019-01-09 — BI; семь новогодних недель источник не публикует.
+var ipcWeeksAggregateMeta = util.SeriesMeta{
 	Source:      rosstatSource,
 	Series:      ipcWeeksBulletinsAggregateSeries,
 	Title:       "Недельная оценка ИПЦ, РФ",
 	Unit:        "индекс, % к предыдущей дате регистрации (100 = без изменения)",
 	Frequency:   "W",
-	Origin:      "rosstat.gov.ru, бюллетени «Оперативной информации» (bgd/free/B04_03/IssWWW.exe/Stg/dNN/<N>.htm; 2009–2020 — Wayback в форме id_, каталоги d02/d03/d04/d05/d06): строка «Индекс потребительских цен (оценка)», колонка «К предыдущей дате регистрации цен»",
-	Description: "Недельная оценка индекса потребительских цен по РФ: 100 — цены не изменились, 100,58 — рост на 0,58% за неделю. Дата — последний день периода регистрации цен. Инфляция за n недель: (Π значений / 100^n − 1) × 100%. Ряд покрывает 2009-04-06 … 2021-12-27 с разрывами (502 недели: 2009–2015 — 214, 2016–2020 — 236, 2021 — 52): до 2022 недельная оценка публиковалась HTML-бюллетенями, а в XLSX Nedel_ipc*.xlsx (2022+) агрегатной строки нет.",
+	Origin:      "rosstat.gov.ru, бюллетени «Оперативной информации» (bgd/free/B04_03/IssWWW.exe/Stg/dNN/<N>.htm; 2009–2020 — Wayback в форме id_, каталоги d02/d03/d04/d05/d06): строка «Индекс потребительских цен (оценка)», колонка «К предыдущей дате регистрации цен»; 2019-01-09+ — BI Росстата bi.rosstat.gov.ru/biportal (Dashboard/Prices_week, guest): карточка «Consumer Price Index Estimation», CSV-выгрузка",
+	Description: "Недельная оценка индекса потребительских цен по РФ: 100 — цены не изменились, 100,58 — рост на 0,58% за неделю. Дата — последний день периода регистрации цен. Инфляция за n недель: (Π значений / 100^n − 1) × 100%. 2009–2018 — бюллетени «Оперативной информации» (источник покрывает 2009-04-06 … 2021-12-27, 502 недели с разрывами; на пересечении 2019–2021 приоритет у BI); 2019-01-09+ — BI Росстата (398 точек на 2026-10-12). Семь новогодних перерывов (14–21 день) — единственные пропуски публикаций: 2019-12-30, 2021-01-04, 2022-01-03, 2023-01-02, 2024-01-01, 2025-01-01, 2025-12-29/2026-01-05; остальные интервалы 4–10 дней — сдвиг даты регистрации, а не пропуск. Значения текущие: ревизии возможны, PIT/винтажей BI не даёт. В XLSX Nedel_ipc*.xlsx (2022+) агрегатной строки нет.",
 }
 
 // ipcWeeksBulletinsExtraMeta — мета extra-ряда импортёра бюллетеней: позиция есть только в
@@ -268,7 +271,7 @@ func ipcWeeksBulletinsExtraMeta(series string) util.SeriesMeta {
 // детерминирован (сортировка) ради повторяемости прогонов.
 func ipcWeeksBulletinsSeriesMeta() []util.SeriesMeta {
 	meta := make([]util.SeriesMeta, 0, 1+len(ipcWeeksBulletinsSeriesBySourceName)+len(ipcWeeksBulletinsExtraSeries))
-	meta = append(meta, ipcWeeksBulletinsAggregateMeta)
+	meta = append(meta, ipcWeeksAggregateMeta)
 	canonical := make([]string, 0, len(ipcWeeksBulletinsSeriesBySourceName))
 	seen := make(map[string]bool, len(ipcWeeksBulletinsSeriesBySourceName))
 	for _, product := range ipcWeeksBulletinsSeriesBySourceName {
