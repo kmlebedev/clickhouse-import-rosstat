@@ -4,7 +4,7 @@
 Хелпер для скриптов `cpi_nowcast.py`, `key_rate_model.py` и `cpi_monthly.py`: собирает
 метаданные прогона (git, конфигурация, выборка, версии пакетов), пишет одну
 строку в `ml_runs` и один batch в `ml_predictions` через HTTP-транспорт
-`extrapolation_aisc.ch_exec` и падает обратно в локальные `run.json` /
+`scripts/lib/clickhouse.py` и падает обратно в локальные `run.json` /
 `predictions.jsonl`, если ClickHouse недоступен.
 
 Ведение журнала — ОПТ-ИН: по умолчанию (`ML_LOG` не равен `1`) `finish`
@@ -39,11 +39,11 @@ from datetime import date, datetime
 from pathlib import Path
 
 try:  # запуск из каталога scripts (`python3 scripts/...`)
-    from extrapolation_aisc import ClickHouseError, ch_exec
+    from lib.clickhouse import ClickHouseError, ch_exec
 except ImportError:  # запуск как пакет из корня репозитория
-    from scripts.extrapolation_aisc import ClickHouseError, ch_exec
+    from scripts.lib.clickhouse import ClickHouseError, ch_exec
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 
 # Куда складывается fallback, если ClickHouse недоступен. Каталог можно
 # переопределить `ML_LOCAL_DIR` (например, на tmpfs в тестах/CI).
