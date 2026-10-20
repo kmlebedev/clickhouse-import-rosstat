@@ -17,7 +17,7 @@ import (
 const (
 	// minfinNamePrefix — пространство имён импортёров и таблиц пакета minfin. Имя
 	// импортёра — контракт расписания (CLICKHOUSE_IMPORT_STAT и id шага
-	// dagu/minfin.yaml), имя таблицы — контракт данных (v_minfin_budget и агент MCP).
+	// dagu/minfin.yaml + dagu/ofz.yaml), имя таблицы — контракт данных (v_minfin_budget и агент MCP).
 	minfinNamePrefix = "minfin_"
 )
 
@@ -43,9 +43,13 @@ type minfinPublicationDeclarer interface {
 	Publication() util.PublicationDecl
 }
 
-// daguMinfinYAML — расписание Минфина: каждый шаг задаёт CLICKHOUSE_IMPORT_STAT. Путь
-// от каталога пакета (тесты идут с cwd=minfin/): так же читают фикстуры другие пакеты.
-var daguMinfinYAML = filepath.Join("..", "dagu", "minfin.yaml")
+// daguMinfinYAML и daguOfzYAML — расписание пакета: исторические шаги идут
+// monthly в minfin.yaml, аукционы — weekly в ofz.yaml. Путь от каталога пакета
+// (тесты идут с cwd=minfin/): так же читают фикстуры другие пакеты.
+var (
+	daguMinfinYAML = filepath.Join("..", "dagu", "minfin.yaml")
+	daguOfzYAML    = filepath.Join("..", "dagu", "ofz.yaml")
+)
 
 // daguMinfinStatRef вытаскивает имя из строки шага `- CLICKHOUSE_IMPORT_STAT=<name>`.
 // Разбор — регуляркой по всему файлу, без YAML-зависимости: тест не должен тянуть в
@@ -62,7 +66,7 @@ var daguMinfinStatRef = regexp.MustCompile(`(?m)^[ \t]*-[ \t]+CLICKHOUSE_IMPORT_
 //     импортёром увела бы витрину v_minfin_budget к чужим данным;
 //   - (в) имена уникальны и лежат в chimport.Stats: дубль имени в фильтре
 //     `make import STAT=...` выбрал бы произвольный из двух импортёров;
-//   - (г) каждая строка CLICKHOUSE_IMPORT_STAT= из dagu/minfin.yaml есть в реестре
+//   - (г) каждая строка CLICKHOUSE_IMPORT_STAT= из dagu/minfin.yaml + dagu/ofz.yaml есть в реестре
 //     (опечатка расписания иначе не видна ничем), и обратно — каждый импортёр
 //     реестра есть в расписании (пропавший шаг оставил бы витрину без обновления
 //     при всех зелёных тестах);
@@ -85,7 +89,7 @@ func TestMinfinImportersPrefixedAndRegistered(t *testing.T) {
 
 		// (а)
 		if !strings.HasPrefix(name, minfinNamePrefix) {
-			t.Errorf("имя импортёра %q без префикса %q: Name() — это CLICKHOUSE_IMPORT_STAT и id шага dagu/minfin.yaml", name, minfinNamePrefix)
+			t.Errorf("имя импортёра %q без префикса %q: Name() — это CLICKHOUSE_IMPORT_STAT и id шага dagu/minfin.yaml + dagu/ofz.yaml", name, minfinNamePrefix)
 		}
 
 		// (в)
@@ -168,20 +172,25 @@ func TestMinfinImportersPrefixedAndRegistered(t *testing.T) {
 	}
 
 	// (г)
-	data, err := os.ReadFile(daguMinfinYAML)
-	if err != nil {
-		t.Fatalf("чтение %s: %v", daguMinfinYAML, err)
+	var schedule strings.Builder
+	for _, path := range []string{daguMinfinYAML, daguOfzYAML} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("чтение %s: %v", path, err)
+		}
+		schedule.Write(data)
+		schedule.WriteString("\n")
 	}
-	steps := daguMinfinStatRef.FindAllStringSubmatch(string(data), -1)
+	steps := daguMinfinStatRef.FindAllStringSubmatch(schedule.String(), -1)
 	if len(steps) == 0 {
-		t.Fatalf("в dagu/minfin.yaml не найдено ни одной строки CLICKHOUSE_IMPORT_STAT=: разбор сломан или шаги переписаны")
+		t.Fatalf("в dagu/minfin.yaml + dagu/ofz.yaml не найдено ни одной строки CLICKHOUSE_IMPORT_STAT=: разбор сломан или шаги переписаны")
 	}
 	scheduled := make(map[string]bool, len(steps))
 	for _, step := range steps {
 		name := step[1]
 		scheduled[name] = true
 		if !seen[name] {
-			t.Errorf("шаг dagu/minfin.yaml CLICKHOUSE_IMPORT_STAT=%s не найден в реестре minfinImporters: расписание позовёт импортёр, которого нет", name)
+			t.Errorf("шаг dagu/minfin.yaml + dagu/ofz.yaml CLICKHOUSE_IMPORT_STAT=%s не найден в реестре minfinImporters: расписание позовёт импортёр, которого нет", name)
 		}
 	}
 	// Обратное направление цикл не ловит: реестр верен сам по себе и без шага
@@ -189,7 +198,7 @@ func TestMinfinImportersPrefixedAndRegistered(t *testing.T) {
 	// в витрине без обновления при всех зелёных тестах.
 	for _, imp := range minfinImporters {
 		if !scheduled[imp.Name()] {
-			t.Errorf("в dagu/minfin.yaml нет шага CLICKHOUSE_IMPORT_STAT=%s: импортёр реестра не запускается по расписанию", imp.Name())
+			t.Errorf("в dagu/minfin.yaml + dagu/ofz.yaml нет шага CLICKHOUSE_IMPORT_STAT=%s: импортёр реестра не запускается по расписанию", imp.Name())
 		}
 	}
 }
@@ -197,6 +206,102 @@ func TestMinfinImportersPrefixedAndRegistered(t *testing.T) {
 // TestMinfinDDLValueFloat64 держит правило 5 AGENTS.md и миграцию legacy-таблиц:
 // DDL всех трёх таблиц объявляет value Float64; у двух бюджетных импортёров есть
 // идемпотентный ALTER ... MODIFY COLUMN, у oil gas (уже Float64) его нет.
+// TestMinfinMultiFileImportersRegistered держит три мультифайловых импортёра
+// пункта: имя совпадает с таблицей, внешний Publication() без префлайта —
+// префлайт аукционов объявлен на внутреннем шаблоне текущего года, а не на
+// обёртке (у неё один DataUrl на набор файлов).
+func TestMinfinMultiFileImportersRegistered(t *testing.T) {
+	cases := []struct {
+		name string
+		imp  interface {
+			Name() string
+			Publication() util.PublicationDecl
+		}
+	}{
+		{"minfin_ofz_auction", ofzAuctionImporter},
+		{"minfin_debt_stock", debtStockImporter},
+		{"minfin_debt_service", debtServiceImporter},
+	}
+	for _, c := range cases {
+		if got := c.imp.Name(); got != c.name {
+			t.Errorf("Name() = %q, ожидалось %q", got, c.name)
+		}
+		if decl := c.imp.Publication(); decl.CountPoints != "" {
+			t.Errorf("%s: внешний Publication() объявил префлайт %q — у мультифайловой обёртки его быть не должно", c.name, decl.CountPoints)
+		}
+	}
+}
+
+func TestMinfinOfzDDL(t *testing.T) {
+	auctionDDL := strings.Join(ofzAuctionImporter.CreateTable, "\n")
+	for _, want := range []string{"Float64", "Nullable(Float64)", "ReplacingMergeTree", "ORDER BY (date, issue, format)"} {
+		if !strings.Contains(auctionDDL, want) {
+			t.Errorf("minfin_ofz_auction DDL не содержит %q: %s", want, auctionDDL)
+		}
+	}
+	if strings.Contains(auctionDDL, "Float32") {
+		t.Errorf("minfin_ofz_auction DDL содержит Float32")
+	}
+	for _, c := range []struct {
+		name string
+		ddl  []string
+	}{
+		{"minfin_debt_stock", debtStockImporter.CreateTable},
+		{"minfin_debt_service", debtServiceImporter.CreateTable},
+	} {
+		ddl := strings.Join(c.ddl, "\n")
+		for _, want := range []string{"value Float64", "ReplacingMergeTree", "ORDER BY (name, date)"} {
+			if !strings.Contains(ddl, want) {
+				t.Errorf("%s DDL не содержит %q: %s", c.name, want, ddl)
+			}
+		}
+		if strings.Contains(ddl, "Float32") {
+			t.Errorf("%s DDL содержит Float32", c.name)
+		}
+	}
+}
+
+func TestOfzStressViewContract(t *testing.T) {
+	wantTables := map[string]bool{
+		ofzAuctionTable: false, debtStockTable: false, debtServiceTable: false,
+		fedbudMesTable: false, "cbr_zcyc": false,
+	}
+	for _, table := range ofzStressView.Tables {
+		if _, ok := wantTables[table]; !ok {
+			t.Errorf("v_ofz_stress: неожиданная таблица %q", table)
+		}
+		wantTables[table] = true
+	}
+	for table, seen := range wantTables {
+		if !seen {
+			t.Errorf("v_ofz_stress: в Tables нет %q", table)
+		}
+	}
+	for _, want := range []string{
+		"cbr_zcyc", "row_number()", "toStartOfMonth", "coalesce(ds_budget.value, ds_securities.value)",
+		"debt_service_source", "ofz_stock_change",
+	} {
+		if !strings.Contains(ofzStressView.Select, want) {
+			t.Errorf("v_ofz_stress Select не содержит %q", want)
+		}
+	}
+	for column := range ofzStressView.Columns {
+		if !strings.Contains(ofzStressView.Select, column) {
+			t.Errorf("v_ofz_stress: комментарий для колонки %q, которой нет в Select", column)
+		}
+	}
+}
+
+func TestOfzSeriesMetaComplete(t *testing.T) {
+	for _, group := range [][]util.SeriesMeta{ofzAuctionSeriesMeta, debtStockSeriesMeta, debtServiceSeriesMeta} {
+		for _, m := range group {
+			if m.Source == "" || m.Series == "" || m.Title == "" || m.Unit == "" || m.Frequency == "" || m.Origin == "" || m.Description == "" {
+				t.Errorf("описание ряда %q (%s) заполнено не полностью", m.Series, m.Source)
+			}
+		}
+	}
+}
+
 func TestMinfinDDLValueFloat64(t *testing.T) {
 	cases := []struct {
 		name    string
