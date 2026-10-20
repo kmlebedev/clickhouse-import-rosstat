@@ -271,3 +271,29 @@ func TestBuildSeriesConstant(t *testing.T) {
 		t.Errorf("food начинается %s, want 2021-01-01", got.Format("2006-01-02"))
 	}
 }
+
+func TestBuildSeriesDuplicateProduct(t *testing.T) {
+	mapping, err := parseMapping(ppiMappingCSV)
+	if err != nil {
+		t.Fatalf("parseMapping: %v", err)
+	}
+	weights, err := parseWeights(ppiWeightsCSV)
+	if err != nil {
+		t.Fatalf("parseWeights: %v", err)
+	}
+	ved := make([]rawPoint, 0, 36)
+	for i := 0; i < 36; i++ {
+		ved = append(ved, rawPoint{
+			Date:  time.Date(2013, time.Month(1+i), 1, 0, 0, 0, 0, time.UTC),
+			Code:  ppiSATotalCode,
+			Value: 100,
+		})
+	}
+	product := []rawPoint{
+		{Date: month(2021, 1, 1), Code: "01.1.1", Value: 100},
+		{Date: month(2021, 1, 1), Code: "01.1.1", Value: 101},
+	}
+	if _, err := buildSeries(ved, product, mapping, weights); err == nil {
+		t.Fatal("ожидалась ошибка дубля product после FINAL")
+	}
+}

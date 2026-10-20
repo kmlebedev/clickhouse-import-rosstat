@@ -92,3 +92,29 @@ func TestComputeMetricsUnsorted(t *testing.T) {
 		t.Fatal("ожидалась ошибка неотсортированного ряда")
 	}
 }
+
+func TestComputeMetricsVaryingGrowth(t *testing.T) {
+	points := []saPoint{
+		{Date: month(2021, 1, 31), SA: 100},
+		{Date: month(2021, 2, 28), SA: 101},      // +1 %
+		{Date: month(2021, 3, 31), SA: 103.02},   // +2 %
+		{Date: month(2021, 4, 30), SA: 106.1106}, // +3 %
+	}
+	metrics, err := computeMetrics(points)
+	if err != nil {
+		t.Fatalf("computeMetrics: %v", err)
+	}
+	saar := func(mm float64) float64 { return (math.Pow(1+mm/100, 12) - 1) * 100 }
+	saar1, saar2, saar3 := saar(1), saar(2), saar(3)
+	if metrics[1].SAAR3 != nil {
+		t.Fatal("второй месяц: saar3 должен быть NULL")
+	}
+	if metrics[2].SAAR3 == nil {
+		t.Fatal("третий месяц: saar3 должен быть средним двух доступных SAAR")
+	}
+	almostEqual(t, *metrics[2].SAAR3, (saar1+saar2)/2, 1e-9, "saar3 (2 значения)")
+	if metrics[3].SAAR3 == nil {
+		t.Fatal("четвёртый месяц: saar3 должен быть средним трёх SAAR")
+	}
+	almostEqual(t, *metrics[3].SAAR3, (saar1+saar2+saar3)/3, 1e-9, "saar3 (3 значения)")
+}

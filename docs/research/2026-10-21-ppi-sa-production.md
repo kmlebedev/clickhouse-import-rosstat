@@ -65,7 +65,7 @@ Spot 2026-08-31:
 
 ## 5. Паритет
 
-Якоря — 10 текстовых значений «Инфляции в России» (4 food, 4 non-food, 2 all → `core`), [`2026-10-21-ppi-sa-anchors.csv`](2026-10-21-ppi-sa-anchors.csv). Отчёт — [`2026-10-21-ppi-sa-parity.json`](2026-10-21-ppi-sa-parity.json), `make ppi-sa-parity`.
+Якоря — 10 текстовых значений «Инфляции в России» (4 food, 4 non-food, 2 all → `core`; для `all` primary — `core`, чёрная линия ЦБ, широкий `all` — secondary T3 и в T4 не публикуется), [`2026-10-21-ppi-sa-anchors.csv`](2026-10-21-ppi-sa-anchors.csv). Отчёт — [`2026-10-21-ppi-sa-parity.json`](2026-10-21-ppi-sa-parity.json), `make ppi-sa-parity`.
 
 | Target | Якорь | ЦБ, % | `ppi_sa.saar3`, % | Δ, п.п. |
 |---|---|---:|---:|---:|

@@ -26,6 +26,10 @@ ANCHORS = ROOT.parent / "docs" / "research" / "2026-10-21-ppi-sa-anchors.csv"
 OUTPUT = ROOT.parent / "docs" / "research" / "2026-10-21-ppi-sa-parity.json"
 TOLERANCE_PP = 0.3
 SERIES = ("food", "nonfood", "core")
+# Для якоря `all` primary — `core`: чёрная линия ЦБ «все товары без плодоовощей,
+# алкоголя, бензина и табака» сопоставима именно с core, а не с широким all
+# (T3 §5.1, parity.csv: anchor_series=all → series_kind=core, primary=True).
+# Широкий all в T3 — secondary (MAE 4,286), в T4 не публикуется.
 
 
 def load_anchors(path: Path) -> list[dict]:
