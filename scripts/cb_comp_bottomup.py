@@ -10,9 +10,10 @@
   месячный лог-прирост из `data_panel_bi_sa.fst`; ЖКУ `9470` в панели нет и в
   компоненты не входит (вес публикуется как проверка);
 * **признаки** — компонентные лаги `y_lag1`/`y_lag2` + v2-макро
-  (`usd_mm`, `key_rate`, `fao_mm`) + `month`; для 72 групп с BSU — ещё 6
-  МП-признаков (среднее по BSU-кодам группы: 3 индикатора на последней
-  доступной к cutoff точке и их изменения); 16 групп без BSU — без МП;
+  (`usd_mm`, `key_rate`, `fao_mm`) + `month`; режимы МП: `mean` — 6
+  усреднённых признаков, `per_bsu` — 6 на каждый BSU-код, `per_sheet` — 6 на
+  каждый уникальный отраслевой лист публичной книги (live-диагностика),
+  `full` — плюс кредит/ставки/USD/тренд CPI; 16 групп без BSU — без МП;
 * **веса** — `cpi_weights_tovar.xlsx` (Россия, `окато_код=643`) +
   `dictionary_cpi.xlsx`: листовые веса (`уровень=7`) агрегируются по уровню
   группы; для месяца M — год `M.year−1`; нормировка на группы с прогнозом и
@@ -81,8 +82,9 @@ MP_INDICATORS = {
 }
 
 # Режимы признаков (спека §3): mean — baseline #190; per_bsu — primary;
+# per_sheet — live-диагностика на публичной панели (11 листов × 3 индикатора);
 # full — robustness с кредитом/ставками/USD/трендом CPI.
-FEATURE_MODES = ("mean", "per_bsu", "full")
+FEATURE_MODES = ("mean", "per_bsu", "per_sheet", "full")
 DEFAULT_FEATURE_MODE = "mean"
 
 FULL_FEATURES = (
@@ -164,11 +166,16 @@ def mp_available(point_date: date, publication_lag: int) -> date:
 
 @dataclass(frozen=True)
 class GroupSpec:
-    """Группа ИПЦ: код, BSU-коды (пусто — группа без МП), уровень иерархии."""
+    """Группа ИПЦ: код, BSU-коды (пусто — группа без МП), уровень иерархии.
+
+    `sheet_slugs` заполняется только для режима `per_sheet`: уникальные
+    отраслевые листы публичной книги, в которые попадают BSU-коды группы.
+    """
 
     code: str
     bsu_codes: tuple
     level: int
+    sheet_slugs: tuple = ()
 
 
 @dataclass
@@ -197,13 +204,17 @@ def utilities_path(archive: Path) -> Path:
     return archive / "Models/CpiComponents/data/Коммунальные услуги прогноз MoM_sa.xlsx"
 
 
-def load_specs(archive: Path) -> list:
+def load_specs(archive: Path, sheet_map: dict = None) -> list:
     """88 компонентных групп `model.xlsx` и их BSU-коды.
 
     `используется=True`, агрегаты `1/6/7/9000` исключены. BSU-коды берутся из
     `мониторинг_код1..4`; `<==>`/NaN — нет привязки. Уровень — минимальный
     уровень, на котором код встречается в иерархии `dictionary_cpi` (2024):
     нужен для выбора агрегированного веса.
+
+    `sheet_map` (`код ОКВЭД2 → industry_slug`) передаётся только для режима
+    `per_sheet`; тогда `GroupSpec.sheet_slugs` — уникальные листы группы.
+    Пропуск кода в карте — ошибка, а не молчаливое выпадение листа.
     """
     model = pd.read_excel(model_path(archive), sheet_name="1.0.4.2", header=4)
     used = model[model["используется"].astype(str).str.lower().isin(["true", "1"])]
@@ -223,7 +234,22 @@ def load_specs(archive: Path) -> list:
         level = level_map.get(code)
         if level is None:
             raise ValueError(f"группа {code}: нет уровня в dictionary_cpi")
-        specs.append(GroupSpec(code=code, bsu_codes=tuple(sorted(set(bsu))), level=level))
+        sheet_slugs = ()
+        if sheet_map is not None:
+            missing = [bsu_code for bsu_code in bsu if bsu_code not in sheet_map]
+            if missing:
+                raise ValueError(
+                    f"группа {code}: BSU-коды без industry_slug: {missing}"
+                )
+            sheet_slugs = tuple(sorted({sheet_map[bsu_code] for bsu_code in bsu}))
+        specs.append(
+            GroupSpec(
+                code=code,
+                bsu_codes=tuple(sorted(set(bsu))),
+                level=level,
+                sheet_slugs=sheet_slugs,
+            )
+        )
     if not specs:
         raise ValueError("model.xlsx: не найдено ни одной компонентной группы")
     return specs
@@ -345,6 +371,66 @@ def load_mp_panel(mp: pd.DataFrame) -> pd.DataFrame:
     return frame.sort_values(["code", "indicator", "date"])
 
 
+def load_sheet_map(path: Path) -> dict:
+    """`код ОКВЭД2 → industry_slug` из CSV `v_cbr_mp_bsu_map`.
+
+    Дубликат кода с разными листами и пустые поля — ошибка: молчаливая
+    потеря листа исказила бы `per_sheet`-признаки.
+    """
+    # dtype=str обязателен: pandas иначе выводит `01.11` как float 1.11 и
+    # теряет ведущий ноль, а с ним — связь с кодом ОКВЭД2.
+    frame = pd.read_csv(path, dtype={"code": str})
+    required = {"code", "industry_slug"}
+    missing = required - set(frame.columns)
+    if missing:
+        raise ValueError(f"{path}: нет колонок {sorted(missing)}")
+    result = {}
+    for _, row in frame.iterrows():
+        code = normalize_code(row["code"])
+        sheet = str(row["industry_slug"]).strip()
+        if not code or not sheet:
+            raise ValueError(f"{path}: пустой код или industry_slug")
+        if code in result and result[code] != sheet:
+            raise ValueError(
+                f"{path}: код {code} встречается с разными листами "
+                f"{result[code]!r} и {sheet!r}"
+            )
+        result[code] = sheet
+    if not result:
+        raise ValueError(f"{path}: пустая карта кодов")
+    return result
+
+
+def load_public_panel(path: Path) -> pd.DataFrame:
+    """Live-панель `v_cbr_mp_public_panel`: код, индикатор, месяц, значение.
+
+    Панель публичной книги — 87 кодов, но значения внутри листа совпадают;
+    проверка согласованности листа делается в `_sheet_lookup`, а не здесь:
+    лоадер отвечает только за формат и отсутствие дублей.
+    """
+    # dtype=str: `01.11` не должен превращаться в 1.11 (см. load_sheet_map).
+    frame = pd.read_csv(path, dtype={"code": str})
+    required = {"code", "indicator", "date", "value"}
+    missing = required - set(frame.columns)
+    if missing:
+        raise ValueError(f"{path}: нет колонок {sorted(missing)}")
+    frame["code"] = frame["code"].map(normalize_code)
+    frame["indicator"] = frame["indicator"].astype(str).str.strip()
+    unknown = sorted(set(frame["indicator"]) - set(MP_INDICATORS.values()))
+    if unknown:
+        raise ValueError(f"{path}: неизвестные индикаторы {unknown}")
+    frame["date"] = [month_start(value) for value in frame["date"]]
+    frame["value"] = pd.to_numeric(frame["value"], errors="raise").astype(float)
+    if frame[["code", "indicator", "date"]].duplicated().any():
+        duplicates = frame[
+            frame[["code", "indicator", "date"]].duplicated(keep=False)
+        ].head(5)
+        raise ValueError(f"{path}: дубли (code, indicator, date):\n{duplicates}")
+    if frame["value"].isna().any():
+        raise ValueError(f"{path}: NaN в value")
+    return frame.sort_values(["code", "indicator", "date"])
+
+
 def load_utilities(archive: Path) -> pd.DataFrame:
     """ЖКУ (`9470`) из файла авторов: дата, SA MoM, факт/прогноз.
 
@@ -425,6 +511,42 @@ def _mp_lookup(mp_panel: pd.DataFrame) -> dict:
     return lookup
 
 
+def _sheet_lookup(public_panel: pd.DataFrame, sheet_map: dict) -> dict:
+    """`(industry_slug, indicator) → (доступные даты, значения)`.
+
+    Публичная панель содержит 87 кодов, но значения внутри листа совпадают
+    (11 листов × 3 индикатора = 33 ряда). Сначала проверяем это, затем
+    дедуплицируем до одного ряда на лист. Точка публикуется ЦБ в следующем
+    месяце, поэтому as-of — `date + 1` (как у МП в панели авторов).
+    """
+    frame = public_panel.copy()
+    missing = sorted(set(frame["code"]) - set(sheet_map))
+    if missing:
+        raise ValueError(f"public panel: коды без industry_slug: {missing}")
+    frame["industry_slug"] = frame["code"].map(sheet_map)
+    stats = frame.groupby(["industry_slug", "indicator", "date"])["value"].agg(
+        ["min", "max"]
+    )
+    inconsistent = stats[(stats["max"] - stats["min"]).abs() > 1e-9]
+    if not inconsistent.empty:
+        raise ValueError(
+            "public panel: значения внутри листа расходятся:\n"
+            f"{inconsistent.head(5)}"
+        )
+    frame = frame.drop_duplicates(["industry_slug", "indicator", "date"])
+    lookup = {}
+    for (sheet, indicator), group in frame.groupby(["industry_slug", "indicator"]):
+        points = sorted(
+            (mp_available(row.date, 1), row.date, float(row.value))
+            for row in group.itertuples()
+        )
+        lookup[(sheet, indicator)] = (
+            [point[0] for point in points],
+            [point[2] for point in points],
+        )
+    return lookup
+
+
 def _full_lookup(panel: pd.DataFrame) -> dict:
     """`(group_stat, code, kind) → (доступные даты, значения)` для режима `full`.
 
@@ -460,10 +582,17 @@ def _asof_value(lookup: dict, key: tuple, cutoff: date) -> float:
 
 
 def mp_feature_names(spec: GroupSpec, mode: str = DEFAULT_FEATURE_MODE) -> list:
-    """Имена МП-признаков группы для режима `mean`/`per_bsu`/`full`."""
+    """Имена МП-признаков группы для режима `mean`/`per_bsu`/`per_sheet`/`full`."""
     validate_feature_mode(mode)
     if mode == "mean":
         return list(MP_FEATURES)
+    if mode == "per_sheet":
+        names = []
+        for sheet in spec.sheet_slugs:
+            for indicator in ("ibk", "costs", "price_exp"):
+                base = f"mp_sheet_{feature_code(sheet)}_{indicator}"
+                names.extend([base, f"{base}_chg"])
+        return names
     names = []
     for code in spec.bsu_codes:
         for indicator in ("ibk", "costs", "price_exp"):
@@ -481,12 +610,16 @@ def mp_features(
     """МП-признаки группы, as-of cutoff(M).
 
     `mean` — 6 усреднённых признаков (поведение #190); `per_bsu`/`full` —
-    уровень и изменение по каждому BSU-коду и индикатору. Если у группы нет
-    BSU или ни один код не даёт точку, значения — NaN (CatBoost обрабатывает
-    NaN нативно); для группы без BSU MP-модель не обучается.
+    уровень и изменение по каждому BSU-коду и индикатору; `per_sheet` — то же
+    по каждому уникальному листу публичной книги. Если у группы нет BSU/листов
+    или ни один ряд не даёт точку, значения — NaN (CatBoost обрабатывает NaN
+    нативно); для группы без BSU MP-модель не обучается.
     """
     validate_feature_mode(mode)
-    if not spec.bsu_codes:
+    if mode == "per_sheet":
+        if not spec.sheet_slugs:
+            return {}
+    elif not spec.bsu_codes:
         return {}
     cutoff = cm.cutoff_for(month)
     if mode == "mean":
@@ -504,6 +637,25 @@ def mp_features(
                     changes.append(values[position] - values[position - 1])
             result[f"mp_{short}"] = float(np.mean(levels)) if levels else float("nan")
             result[f"mp_{short}_chg"] = float(np.mean(changes)) if changes else float("nan")
+        return result
+
+    if mode == "per_sheet":
+        result = {}
+        for sheet in spec.sheet_slugs:
+            for indicator in ("ibk", "costs", "price_exp"):
+                base = f"mp_sheet_{feature_code(sheet)}_{indicator}"
+                available, values = lookup.get((sheet, indicator), ([], []))
+                position = bisect.bisect_right(available, cutoff) - 1
+                if position < 0:
+                    result[base] = float("nan")
+                    result[f"{base}_chg"] = float("nan")
+                else:
+                    result[base] = float(values[position])
+                    result[f"{base}_chg"] = (
+                        float(values[position] - values[position - 1])
+                        if position >= 1
+                        else float("nan")
+                    )
         return result
 
     result = {}
@@ -788,16 +940,26 @@ def run_bottomup(
     test_months: list,
     train_outliers=frozenset(),
     feature_mode: str = DEFAULT_FEATURE_MODE,
+    public_panel: pd.DataFrame = None,
+    sheet_map: dict = None,
 ) -> BottomUpResult:
     """Полный bottom-up: данные → гейт → модели → агрегат.
 
     `macro` — `{месяц: {usd_mm, key_rate, fao_mm}}` из v2; `target_full` —
     `TARGET_FULL` (агрегатный таргет статьи); `train_months`/`test_months` —
     предзарегистрированные окна; `normal_months` — 54 месяца оценки;
-    `feature_mode` — `mean` (baseline #190), `per_bsu` или `full`.
+    `feature_mode` — `mean` (baseline #190), `per_bsu`, `per_sheet` или `full`.
+    Для `per_sheet` обязательны `public_panel` (live-панель 87 кодов) и
+    `sheet_map` (`код → industry_slug`): значения внутри листа совпадают, и
+    режим использует 11 листов × 3 индикатора вместо 87 кодов.
     """
     validate_feature_mode(feature_mode)
-    specs = load_specs(archive)
+    if feature_mode == "per_sheet" and (public_panel is None or sheet_map is None):
+        return BottomUpResult(
+            status="not_assembled",
+            reason="per_sheet требует public_panel и sheet_map",
+        )
+    specs = load_specs(archive, sheet_map if feature_mode == "per_sheet" else None)
     years = sorted({month.year - 1 for month in test_months})
     weights = load_weights(archive, years, specs)
     cpi, mp, panel = ensure_panel_csv(
@@ -830,7 +992,10 @@ def run_bottomup(
             },
         )
 
-    mp_lookup = _mp_lookup(mp_panel)
+    if feature_mode == "per_sheet":
+        mp_lookup = _sheet_lookup(public_panel, sheet_map)
+    else:
+        mp_lookup = _mp_lookup(mp_panel)
     all_months = sorted(set(train_months) | set(test_months))
     features_by_group = feature_table(
         specs,
@@ -933,6 +1098,10 @@ def run_bottomup(
             "max": int(max(feature_counts)),
         },
         "full_panel_rows": int(len(panel)),
+        "public_panel_rows": int(len(public_panel)) if public_panel is not None else 0,
+        "n_sheets": len(
+            {sheet for spec in specs for sheet in spec.sheet_slugs}
+        ),
         "n_groups": len(specs),
         "n_with_bsu": sum(1 for spec in specs if spec.bsu_codes),
         "n_without_bsu": sum(1 for spec in specs if not spec.bsu_codes),
