@@ -1,0 +1,1216 @@
+{
+  "generated_at": "2026-10-20T12:00:10+05:00",
+  "role": "research",
+  "item": "key-rate/phase-4-rosstat-ppi-sa",
+  "issue": "https://github.com/kmlebedev/clickhouse-import-rosstat/issues/266",
+  "branch": "research/ppi-sa-methodology",
+  "evidence": [
+    {
+      "url": "https://rosstat.gov.ru/storage/mediabank/Proizvoditeli_Ind_VED_08-2026.xlsx",
+      "path": "build/ppi-sa-research/raw/ved.xlsx",
+      "status": 200,
+      "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "content_length": 6564513,
+      "etag": "\"6aad3962-642aa1\"",
+      "last_modified": "Fri, 18 Sep 2026 13:15:14 GMT",
+      "sha256": "4694a5bb50fa2c7985be53c7c2c43975fd71eddeea7f914d6a6e1228e1c0c576",
+      "seconds": 3.81,
+      "observed_at": "2026-10-20T11:52:38+0500"
+    },
+    {
+      "url": "https://rosstat.gov.ru/storage/mediabank/Proizvoditeli_Ind_tov_08-2026.xlsx",
+      "path": "build/ppi-sa-research/raw/tov.xlsx",
+      "status": 200,
+      "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "content_length": 24872212,
+      "etag": "\"6aad39dc-17b8514\"",
+      "last_modified": "Fri, 18 Sep 2026 13:17:16 GMT",
+      "sha256": "8705a23bda2ee1ec5807d13dc0563987e1264378b164d710bec4bca6269f6718",
+      "seconds": 31.75,
+      "observed_at": "2026-10-20T11:53:09+0500"
+    },
+    {
+      "url": "https://rosstat.gov.ru/storage/mediabank/Proizvoditeli_Cena_08-2026.xlsx",
+      "path": "build/ppi-sa-research/raw/cena.xlsx",
+      "status": 200,
+      "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "content_length": 2440792,
+      "etag": "\"6aad3a24-253e58\"",
+      "last_modified": "Fri, 18 Sep 2026 13:18:28 GMT",
+      "sha256": "80d8d636b3071d9f955b14d5111fe1d7a250b64b424028c90793c1dd75809c62",
+      "seconds": 2.87,
+      "observed_at": "2026-10-20T11:53:12+0500"
+    },
+    {
+      "url": "https://rosstat.gov.ru/storage/mediabank/vesa_2006-2026.xlsx",
+      "path": "build/ppi-sa-research/raw/vesa.xlsx",
+      "status": 200,
+      "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "content_length": 55147,
+      "etag": "\"69c38e44-d76b\"",
+      "last_modified": "Wed, 25 Mar 2026 07:27:00 GMT",
+      "sha256": "ca4212576da8b7566e3bc08cebe99cd16b45652579def6b1b951eaf3162741ee",
+      "seconds": 0.68,
+      "observed_at": "2026-10-20T11:53:13+0500"
+    },
+    {
+      "url": "https://rosstat.gov.ru/storage/mediabank/sezon_2023_08-2026.xlsx",
+      "path": "build/ppi-sa-research/raw/sezon.xlsx",
+      "status": 200,
+      "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "content_length": 28962,
+      "etag": "\"6ab37ec2-7122\"",
+      "last_modified": "Wed, 23 Sep 2026 07:24:50 GMT",
+      "sha256": "598fc9e0dbc788da7b6e1e50282c63cd2ddd27fe849fa8405e4b2a7654bdb2ee",
+      "seconds": 0.71,
+      "observed_at": "2026-10-20T11:53:14+0500"
+    },
+    {
+      "url": "https://rosstat.gov.ru/storage/mediabank/Osnovnye%20ponyatiya_ICP_promtovary.pdf",
+      "path": "build/ppi-sa-research/raw/concepts.pdf",
+      "status": 200,
+      "content_type": "application/pdf",
+      "content_length": 245481,
+      "etag": "\"64ba277b-3bee9\"",
+      "last_modified": "Fri, 21 Jul 2023 06:36:43 GMT",
+      "sha256": "870eefab0f9270d2c3c4655bc8cd4e2bf45ffbfcc6b8d379124613e5ef608657",
+      "seconds": 0.97,
+      "observed_at": "2026-10-20T11:53:15+0500"
+    },
+    {
+      "url": "https://www.cbr.ru/Content/Document/File/108630/meth_cpi.pdf",
+      "path": "build/ppi-sa-research/raw/meth_cpi.pdf",
+      "status": 200,
+      "content_type": "application/pdf",
+      "content_length": 717379,
+      "etag": "\"00013D9E\"",
+      "last_modified": "Thu, 16 Jul 2020 06:51:44 GMT",
+      "sha256": "4f59f0051b66d2d37ca5f13e6e052c73c2ed9a810f40c8cfa2818f7e91e48ac4",
+      "seconds": 0.59,
+      "observed_at": "2026-10-20T11:53:15+0500"
+    },
+    {
+      "url": "https://www.cbr.ru/Content/Document/File/123575/Annex_2026.pdf",
+      "path": "build/ppi-sa-research/raw/annex_2026.pdf",
+      "status": 200,
+      "content_type": "application/pdf",
+      "content_length": 716753,
+      "etag": "\"0002681E\"",
+      "last_modified": "Mon, 17 Aug 2026 16:30:00 GMT",
+      "sha256": "cccdd74cf79a75b8a0f76e0729859c8689453ec1976570cad501812f06613e1b",
+      "seconds": 0.45,
+      "observed_at": "2026-10-20T11:53:16+0500"
+    },
+    {
+      "url": "https://www.cbr.ru/collection/collection/file/62446/cpd_2026-9.pdf",
+      "path": "build/ppi-sa-research/raw/cpd_2026_9.pdf",
+      "status": 200,
+      "content_type": "application/pdf",
+      "content_length": 1259110,
+      "etag": "\"00026BB0\"",
+      "last_modified": "Wed, 14 Oct 2026 16:45:00 GMT",
+      "sha256": "09365d4891f4933b72c604fd6c03c4de69b14d4929fa8c4f48742c90751b8b3f",
+      "seconds": 0.7,
+      "observed_at": "2026-10-20T11:53:16+0500"
+    },
+    {
+      "url": "https://rosstat.gov.ru/statistics/price",
+      "path": "build/ppi-sa-research/raw/rosstat_price.html",
+      "status": 200,
+      "content_type": "text/html; charset=UTF-8",
+      "content_length": 872118,
+      "etag": null,
+      "last_modified": null,
+      "sha256": "07b319406f0ca4588fb6ef411c57a70a6648b829d2bf2db5384a16ce070bd5d6",
+      "seconds": 1.96,
+      "observed_at": "2026-10-20T11:53:18+0500"
+    },
+    {
+      "url": "https://rosstat.gov.ru/enterprise_industrial",
+      "path": "build/ppi-sa-research/raw/rosstat_industry.html",
+      "status": 200,
+      "content_type": "text/html; charset=UTF-8",
+      "content_length": 945630,
+      "etag": null,
+      "last_modified": null,
+      "sha256": "aba0b2f6251e5d24569d512f5c40d258962e43c0ed95f0e5b112647e2f35b86d",
+      "seconds": 3.44,
+      "observed_at": "2026-10-20T11:53:22+0500"
+    },
+    {
+      "url": "https://www.cbr.ru/analytics/dkp/dinamic/",
+      "path": "build/ppi-sa-research/raw/cbr_infl_index.html",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "content_length": 59034,
+      "etag": null,
+      "last_modified": null,
+      "sha256": "42a5f89a8b46d9e5c6e400a37190ffc6685bdb2ff9b46a0d20f869bff9d3e641",
+      "seconds": 0.57,
+      "observed_at": "2026-10-20T11:53:22+0500"
+    },
+    {
+      "url": "https://www.cbr.ru/analytics/dkp/dinamic/CPD_2025-10/",
+      "path": "build/ppi-sa-research/raw/cpd_2025-10.html",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "content_length": 85988,
+      "etag": null,
+      "last_modified": null,
+      "sha256": "c3a49de48ca816e326ac961fbb491cd5483365a7bcde256492450464962f62a7",
+      "seconds": 0.6,
+      "observed_at": "2026-10-20T11:53:23+0500"
+    },
+    {
+      "url": "https://www.cbr.ru/Collection/Collection/File/59414/CPD_2025-10.pdf",
+      "path": "build/ppi-sa-research/raw/cpd_2025-10.pdf",
+      "status": 200,
+      "content_type": "application/pdf",
+      "content_length": 1312281,
+      "etag": "\"00023E54\"",
+      "last_modified": "Wed, 19 Nov 2025 15:50:00 GMT",
+      "sha256": "a4d666b5223d9be26270d0ad366efa47676a81c3458841f42ac0b9fa7ecf9e1d",
+      "seconds": 0.59,
+      "observed_at": "2026-10-20T11:53:23+0500"
+    },
+    {
+      "url": "https://www.cbr.ru/analytics/dkp/dinamic/CPD_2025-11/",
+      "path": "build/ppi-sa-research/raw/cpd_2025-11.html",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "content_length": 85826,
+      "etag": null,
+      "last_modified": null,
+      "sha256": "cb142276000a29ada0b9ca43539ff3ab59de2235deff82685925301840f2ae89",
+      "seconds": 0.69,
+      "observed_at": "2026-10-20T11:53:24+0500"
+    },
+    {
+      "url": "https://www.cbr.ru/Collection/Collection/File/59483/CPD_2025-11.pdf",
+      "path": "build/ppi-sa-research/raw/cpd_2025-11.pdf",
+      "status": 200,
+      "content_type": "application/pdf",
+      "content_length": 1730541,
+      "etag": "\"00024396\"",
+      "last_modified": "Fri, 12 Dec 2025 10:00:00 GMT",
+      "sha256": "857f68ac4c0971437eebd27d48acaed27d302c12df2ae9aa91693577c8008539",
+      "seconds": 1.01,
+      "observed_at": "2026-10-20T11:53:25+0500"
+    },
+    {
+      "url": "https://www.cbr.ru/analytics/dkp/dinamic/CPD_2025-12/",
+      "path": "build/ppi-sa-research/raw/cpd_2025-12.html",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "content_length": 86299,
+      "etag": null,
+      "last_modified": null,
+      "sha256": "db3ff6f4c47f07d630ddaba1be84bf81e7248c7015eed823add0c85f249315d3",
+      "seconds": 0.65,
+      "observed_at": "2026-10-20T11:53:26+0500"
+    },
+    {
+      "url": "https://www.cbr.ru/Collection/Collection/File/59588/CPD_2025-12.pdf",
+      "path": "build/ppi-sa-research/raw/cpd_2025-12.pdf",
+      "status": 200,
+      "content_type": "application/pdf",
+      "content_length": 1492990,
+      "etag": "\"0002473A\"",
+      "last_modified": "Wed, 21 Jan 2026 15:45:00 GMT",
+      "sha256": "09215305e138ef1f15f2d4fc30fb106f8c020bf6560863cc5e917a7844c03bf0",
+      "seconds": 0.48,
+      "observed_at": "2026-10-20T11:53:26+0500"
+    },
+    {
+      "url": "https://www.cbr.ru/analytics/dkp/dinamic/CPD_2026-1/",
+      "path": "build/ppi-sa-research/raw/cpd_2026-1.html",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "content_length": 85703,
+      "etag": null,
+      "last_modified": null,
+      "sha256": "0548772565a79da243939da8f4945f42c0f68020f13e67de21e28bcba2d852d2",
+      "seconds": 0.66,
+      "observed_at": "2026-10-20T11:53:27+0500"
+    },
+    {
+      "url": "https://www.cbr.ru/Collection/Collection/File/59668/CPD_2026-1.pdf",
+      "path": "build/ppi-sa-research/raw/cpd_2026-1.pdf",
+      "status": 200,
+      "content_type": "application/pdf",
+      "content_length": 1225108,
+      "etag": "\"0002483B\"",
+      "last_modified": "Wed, 18 Feb 2026 16:10:00 GMT",
+      "sha256": "0849a64f8bf212c87c267def48297ac29412485c0eb0a3f54672feac008daeb1",
+      "seconds": 0.43,
+      "observed_at": "2026-10-20T11:53:27+0500"
+    },
+    {
+      "url": "https://www.cbr.ru/analytics/dkp/dinamic/CPD_2026-2/",
+      "path": "build/ppi-sa-research/raw/cpd_2026-2.html",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "content_length": 86492,
+      "etag": null,
+      "last_modified": null,
+      "sha256": "8c8b23256a9f81f535eb621ca997faae3fb2c39be243294163d6a1dd0489ba7e",
+      "seconds": 0.59,
+      "observed_at": "2026-10-20T11:53:28+0500"
+    },
+    {
+      "url": "https://www.cbr.ru/Collection/Collection/File/59758/CPD_2026-2.pdf",
+      "path": "build/ppi-sa-research/raw/cpd_2026-2.pdf",
+      "status": 200,
+      "content_type": "application/pdf",
+      "content_length": 1252532,
+      "etag": "\"000249F8\"",
+      "last_modified": "Mon, 23 Mar 2026 16:00:00 GMT",
+      "sha256": "120285cd2082f6acd3e061df600f6f8f6ee2492bde0623b6d2ee0c4af0d0b6c9",
+      "seconds": 0.43,
+      "observed_at": "2026-10-20T11:53:28+0500"
+    },
+    {
+      "url": "https://www.cbr.ru/analytics/dkp/dinamic/CPD_2026-3/",
+      "path": "build/ppi-sa-research/raw/cpd_2026-3.html",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "content_length": 85719,
+      "etag": null,
+      "last_modified": null,
+      "sha256": "e64d826821a80260f88aa1d09b9447814846bd3c2d96e6282218bfd959130030",
+      "seconds": 0.58,
+      "observed_at": "2026-10-20T11:53:29+0500"
+    },
+    {
+      "url": "https://www.cbr.ru/Collection/Collection/File/60836/CPD_2026-3.pdf",
+      "path": "build/ppi-sa-research/raw/cpd_2026-3.pdf",
+      "status": 200,
+      "content_type": "application/pdf",
+      "content_length": 1777147,
+      "etag": "\"00025017\"",
+      "last_modified": "Wed, 15 Apr 2026 14:15:00 GMT",
+      "sha256": "b6c3aad8c81cd1eb4193fd9280860e57162857beb07adaa028a95a5a48ec81cb",
+      "seconds": 1.12,
+      "observed_at": "2026-10-20T11:53:30+0500"
+    },
+    {
+      "url": "https://www.cbr.ru/analytics/dkp/dinamic/CPD_2026-4/",
+      "path": "build/ppi-sa-research/raw/cpd_2026-4.html",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "content_length": 87386,
+      "etag": null,
+      "last_modified": null,
+      "sha256": "28a9c7e893d9c00bb6c9e15b387388f47e85d2ae366bf7be354d79f42975e80e",
+      "seconds": 0.92,
+      "observed_at": "2026-10-20T11:53:31+0500"
+    },
+    {
+      "url": "https://www.cbr.ru/Collection/Collection/File/60988/CPD_2026-4.pdf",
+      "path": "build/ppi-sa-research/raw/cpd_2026-4.pdf",
+      "status": 200,
+      "content_type": "application/pdf",
+      "content_length": 1219990,
+      "etag": "\"00025206\"",
+      "last_modified": "Wed, 20 May 2026 15:45:00 GMT",
+      "sha256": "4feae831f8bf6c3d64376d8a84b6dbd2703b8eb023906f4671f72d106dd60835",
+      "seconds": 0.42,
+      "observed_at": "2026-10-20T11:53:31+0500"
+    },
+    {
+      "url": "https://www.cbr.ru/analytics/dkp/dinamic/CPD_2026-5/",
+      "path": "build/ppi-sa-research/raw/cpd_2026-5.html",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "content_length": 87431,
+      "etag": null,
+      "last_modified": null,
+      "sha256": "1dc363b195199b8b6e5c58109b48c2894f5c5ebfd3871be73ac74f734996db73",
+      "seconds": 0.7,
+      "observed_at": "2026-10-20T11:53:32+0500"
+    },
+    {
+      "url": "https://www.cbr.ru/Collection/Collection/File/62074/CPD_2026-5.pdf",
+      "path": "build/ppi-sa-research/raw/cpd_2026-5.pdf",
+      "status": 200,
+      "content_type": "application/pdf",
+      "content_length": 1236067,
+      "etag": "\"00025F41\"",
+      "last_modified": "Mon, 22 Jun 2026 14:45:00 GMT",
+      "sha256": "1b28fd4292cb6eb19729bf92966c58cbff879723ed0d66ec9215d50b7a558c69",
+      "seconds": 1.01,
+      "observed_at": "2026-10-20T11:53:33+0500"
+    },
+    {
+      "url": "https://www.cbr.ru/analytics/dkp/dinamic/CPD_2026-6/",
+      "path": "build/ppi-sa-research/raw/cpd_2026-6.html",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "content_length": 87340,
+      "etag": null,
+      "last_modified": null,
+      "sha256": "93ae82b65229e324f7cdae479de0c789548b2c005f7a692d297a340844566ac0",
+      "seconds": 0.68,
+      "observed_at": "2026-10-20T11:53:34+0500"
+    },
+    {
+      "url": "https://www.cbr.ru/Collection/Collection/File/62159/CPD_2026-6.pdf",
+      "path": "build/ppi-sa-research/raw/cpd_2026-6.pdf",
+      "status": 200,
+      "content_type": "application/pdf",
+      "content_length": 1859351,
+      "etag": "\"00026138\"",
+      "last_modified": "Wed, 15 Jul 2026 16:00:00 GMT",
+      "sha256": "ab3cc1313724ceef605f0c0598823f25cd793402f3902a33f410dce857a404e6",
+      "seconds": 0.65,
+      "observed_at": "2026-10-20T11:53:34+0500"
+    },
+    {
+      "url": "https://www.cbr.ru/analytics/dkp/dinamic/CPD_2026-7/",
+      "path": "build/ppi-sa-research/raw/cpd_2026-7.html",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "content_length": 88131,
+      "etag": null,
+      "last_modified": null,
+      "sha256": "efc5919439a6a1a963a76b6c65dfe4ecb9558f8def3b1ce31808da39c6b5d28e",
+      "seconds": 0.57,
+      "observed_at": "2026-10-20T11:53:35+0500"
+    },
+    {
+      "url": "https://www.cbr.ru/Collection/Collection/File/62272/CPD_2026-7.pdf",
+      "path": "build/ppi-sa-research/raw/cpd_2026-7.pdf",
+      "status": 200,
+      "content_type": "application/pdf",
+      "content_length": 1950205,
+      "etag": "\"00026820\"",
+      "last_modified": "Mon, 17 Aug 2026 16:30:00 GMT",
+      "sha256": "9bcd48455ed86a2deb5ee607a4e11084e2844b1189f7b544376ad2fcf41267dd",
+      "seconds": 0.45,
+      "observed_at": "2026-10-20T11:53:35+0500"
+    },
+    {
+      "url": "https://www.cbr.ru/analytics/dkp/dinamic/CPD_2026-8/",
+      "path": "build/ppi-sa-research/raw/cpd_2026-8.html",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "content_length": 86889,
+      "etag": null,
+      "last_modified": null,
+      "sha256": "d3b5da7c58d0a6da5ea9a33db838a073d03734f565056f9f21e737bf5e864b51",
+      "seconds": 0.64,
+      "observed_at": "2026-10-20T11:53:36+0500"
+    },
+    {
+      "url": "https://www.cbr.ru/Collection/Collection/File/62371/CPD_2026-8.pdf",
+      "path": "build/ppi-sa-research/raw/cpd_2026-8.pdf",
+      "status": 200,
+      "content_type": "application/pdf",
+      "content_length": 1263058,
+      "etag": "\"000269F4\"",
+      "last_modified": "Wed, 16 Sep 2026 15:45:00 GMT",
+      "sha256": "c2d08f4c6f0acaa311dd8eee5a604e5ffd13787db6151f1818a7dd67170aa793",
+      "seconds": 0.86,
+      "observed_at": "2026-10-20T11:53:37+0500"
+    },
+    {
+      "url": "https://www.cbr.ru/analytics/dkp/dinamic/CPD_2026-9/",
+      "path": "build/ppi-sa-research/raw/cpd_2026-9.html",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "content_length": 88009,
+      "etag": null,
+      "last_modified": null,
+      "sha256": "c4633cf350d6b661c3de4d54726d6e44cf1921debf15656e579dbe9d576663a5",
+      "seconds": 0.65,
+      "observed_at": "2026-10-20T11:53:38+0500"
+    },
+    {
+      "url": "https://www.cbr.ru/Collection/Collection/File/62446/CPD_2026-9.pdf",
+      "path": "build/ppi-sa-research/raw/cpd_2026-9.pdf",
+      "status": 200,
+      "content_type": "application/pdf",
+      "content_length": 1259110,
+      "etag": "\"00026BB0\"",
+      "last_modified": "Wed, 14 Oct 2026 16:45:00 GMT",
+      "sha256": "09365d4891f4933b72c604fd6c03c4de69b14d4929fa8c4f48742c90751b8b3f",
+      "seconds": 0.73,
+      "observed_at": "2026-10-20T11:53:38+0500"
+    }
+  ],
+  "coverage": {
+    "total": {
+      "points": 164,
+      "first": "2013-01-01",
+      "last": "2026-08-01"
+    },
+    "mining": {
+      "points": 164,
+      "first": "2013-01-01",
+      "last": "2026-08-01"
+    },
+    "manufacturing": {
+      "points": 164,
+      "first": "2013-01-01",
+      "last": "2026-08-01"
+    },
+    "electricity": {
+      "points": 164,
+      "first": "2013-01-01",
+      "last": "2026-08-01"
+    },
+    "water": {
+      "points": 128,
+      "first": "2016-01-01",
+      "last": "2026-08-01"
+    },
+    "food": {
+      "points": 68,
+      "first": "2021-01-01",
+      "last": "2026-08-01"
+    },
+    "nonfood": {
+      "points": 68,
+      "first": "2021-01-01",
+      "last": "2026-08-01"
+    },
+    "nonfood_narrow": {
+      "points": 68,
+      "first": "2021-01-01",
+      "last": "2026-08-01"
+    },
+    "all": {
+      "points": 68,
+      "first": "2021-01-01",
+      "last": "2026-08-01"
+    },
+    "all_narrow": {
+      "points": 68,
+      "first": "2021-01-01",
+      "last": "2026-08-01"
+    }
+  },
+  "probe_summary": {
+    "products_by_year": {
+      "2021": {
+        "rows": 14544,
+        "codes": 1212,
+        "months": 12
+      },
+      "2022": {
+        "rows": 14698,
+        "codes": 1225,
+        "months": 12
+      },
+      "2023": {
+        "rows": 14664,
+        "codes": 1222,
+        "months": 12
+      },
+      "2024": {
+        "rows": 14796,
+        "codes": 1233,
+        "months": 12
+      },
+      "2025": {
+        "rows": 15240,
+        "codes": 1270,
+        "months": 12
+      },
+      "2026": {
+        "rows": 10184,
+        "codes": 1273,
+        "months": 8
+      }
+    },
+    "product_taxonomy_2026": {
+      "codes": 1273,
+      "food_codes": 252,
+      "nonfood_codes": 853,
+      "alcohol_codes": 11,
+      "petrol_codes": 11,
+      "tobacco_codes": 1,
+      "by_prefix": {
+        "01": 1,
+        "02": 17,
+        "03": 5,
+        "05": 6,
+        "06": 4,
+        "07": 22,
+        "08": 36,
+        "09": 3,
+        "10": 249,
+        "11": 14,
+        "12": 1,
+        "13": 28,
+        "14": 44,
+        "15": 12,
+        "16": 18,
+        "17": 34,
+        "18": 3,
+        "19": 38,
+        "20": 125,
+        "21": 51,
+        "22": 36,
+        "23": 69,
+        "24": 85,
+        "25": 28,
+        "26": 33,
+        "27": 50,
+        "28": 111,
+        "29": 33,
+        "30": 17,
+        "31": 18,
+        "32": 20,
+        "33": 11,
+        "35": 37,
+        "36": 4,
+        "37": 1,
+        "38": 5,
+        "58": 4
+      }
+    },
+    "ved_2026": {
+      "codes": 243,
+      "sections": [
+        "B",
+        "C",
+        "D",
+        "E"
+      ],
+      "has_total": true,
+      "total_months": 8
+    },
+    "weights_domestic": {
+      "rows": 379,
+      "years": [
+        2017,
+        2018,
+        2019,
+        2020,
+        2021,
+        2022,
+        2023,
+        2024,
+        2025,
+        2026
+      ],
+      "codes": 38
+    },
+    "weights_domestic_export": {
+      "rows": 379,
+      "years": [
+        2017,
+        2018,
+        2019,
+        2020,
+        2021,
+        2022,
+        2023,
+        2024,
+        2025,
+        2026
+      ],
+      "codes": 38
+    }
+  },
+  "anchors": [
+    {
+      "issue": "2026-5",
+      "target": "2026-04-01",
+      "series": "food",
+      "value": -4.1
+    },
+    {
+      "issue": "2026-5",
+      "target": "2026-04-01",
+      "series": "nonfood",
+      "value": 2.9
+    },
+    {
+      "issue": "2026-6",
+      "target": "2026-05-01",
+      "series": "all",
+      "value": 2.9
+    },
+    {
+      "issue": "2026-7",
+      "target": "2026-06-01",
+      "series": "food",
+      "value": 0.7
+    },
+    {
+      "issue": "2026-7",
+      "target": "2026-06-01",
+      "series": "nonfood",
+      "value": 5.4
+    },
+    {
+      "issue": "2026-8",
+      "target": "2026-07-01",
+      "series": "food",
+      "value": 0.8
+    },
+    {
+      "issue": "2026-8",
+      "target": "2026-07-01",
+      "series": "nonfood",
+      "value": 3.6
+    },
+    {
+      "issue": "2026-9",
+      "target": "2026-08-01",
+      "series": "all",
+      "value": 8.1
+    },
+    {
+      "issue": "2026-9",
+      "target": "2026-08-01",
+      "series": "food",
+      "value": 9.9
+    },
+    {
+      "issue": "2026-9",
+      "target": "2026-08-01",
+      "series": "nonfood",
+      "value": 6.5
+    }
+  ],
+  "parity_summary": {
+    "seats_level_cal/mean3_saar": {
+      "n": 16,
+      "mae": 2.9304654404793924,
+      "max_abs": 7.111814524985599,
+      "bias": 1.740035732530281,
+      "corr": 0.49833815860043534
+    },
+    "seats_level_cal/mean3_saar/all": {
+      "n": 2,
+      "mae": 2.789299522567875,
+      "max_abs": 4.981709247877189,
+      "bias": 2.789299522567875,
+      "corr": 0.9999999999999998
+    },
+    "seats_level_cal/mean3_saar/all_narrow": {
+      "n": 2,
+      "mae": 1.7625790281763198,
+      "max_abs": 2.5299470169245497,
+      "bias": -1.7625790281763198,
+      "corr": 1.0
+    },
+    "seats_level_cal/mean3_saar/food": {
+      "n": 4,
+      "mae": 2.749027499694078,
+      "max_abs": 5.68923771174042,
+      "bias": 0.09559135617613213,
+      "corr": 0.8059499165923916
+    },
+    "seats_level_cal/mean3_saar/nonfood": {
+      "n": 4,
+      "mae": 5.681450470319875,
+      "max_abs": 7.111814524985599,
+      "bias": 5.681450470319875,
+      "corr": 0.4951207630486898
+    },
+    "seats_level_cal/mean3_saar/nonfood_narrow": {
+      "n": 4,
+      "mae": 1.01544451653152,
+      "max_abs": 2.10197808675902,
+      "bias": 0.6697408564293401,
+      "corr": 0.6874643427666042
+    },
+    "seats_level_cal/level3_annualized": {
+      "n": 16,
+      "mae": 2.92508748725701,
+      "max_abs": 7.090083471620771,
+      "bias": 1.6970948705880176,
+      "corr": 0.49498288299440807
+    },
+    "seats_level_cal/level3_annualized/all": {
+      "n": 2,
+      "mae": 2.746219018834756,
+      "max_abs": 4.956883339448806,
+      "bias": 2.746219018834756,
+      "corr": 1.0
+    },
+    "seats_level_cal/level3_annualized/all_narrow": {
+      "n": 2,
+      "mae": 1.7816788002334831,
+      "max_abs": 2.5640592985629853,
+      "bias": -1.7816788002334831,
+      "corr": 1.0
+    },
+    "seats_level_cal/level3_annualized/food": {
+      "n": 4,
+      "mae": 2.7961698920162252,
+      "max_abs": 5.6630748221124865,
+      "bias": 0.035367519040018,
+      "corr": 0.8007145468368838
+    },
+    "seats_level_cal/level3_annualized/nonfood": {
+      "n": 4,
+      "mae": 5.620325926767698,
+      "max_abs": 7.090083471620771,
+      "bias": 5.620325926767698,
+      "corr": 0.4879159880494326
+    },
+    "seats_level_cal/level3_annualized/nonfood_narrow": {
+      "n": 4,
+      "mae": 1.0199052207099923,
+      "max_abs": 2.0845639630956234,
+      "bias": 0.6504159272437178,
+      "corr": 0.6834820365188529
+    },
+    "seats_log_cal/mean3_saar": {
+      "n": 16,
+      "mae": 2.9160825497440688,
+      "max_abs": 7.111814524985599,
+      "bias": 1.7885326814828084,
+      "corr": 0.5029242638329624
+    },
+    "seats_log_cal/mean3_saar/all": {
+      "n": 2,
+      "mae": 2.789299522567875,
+      "max_abs": 4.981709247877189,
+      "bias": 2.789299522567875,
+      "corr": 0.9999999999999998
+    },
+    "seats_log_cal/mean3_saar/all_narrow": {
+      "n": 2,
+      "mae": 1.7625790281763198,
+      "max_abs": 2.5299470169245497,
+      "bias": -1.7625790281763198,
+      "corr": 1.0
+    },
+    "seats_log_cal/mean3_saar/food": {
+      "n": 4,
+      "mae": 2.749027499694078,
+      "max_abs": 5.68923771174042,
+      "bias": 0.09559135617613213,
+      "corr": 0.8059499165923916
+    },
+    "seats_log_cal/mean3_saar/nonfood": {
+      "n": 4,
+      "mae": 5.681450470319875,
+      "max_abs": 7.111814524985599,
+      "bias": 5.681450470319875,
+      "corr": 0.4951207630486898
+    },
+    "seats_log_cal/mean3_saar/nonfood_narrow": {
+      "n": 4,
+      "mae": 0.9579129535902251,
+      "max_abs": 2.43917593387329,
+      "bias": 0.8637286522394498,
+      "corr": 0.6760294618821232
+    },
+    "seats_log_cal/level3_annualized": {
+      "n": 16,
+      "mae": 2.909784026863956,
+      "max_abs": 7.090083471620771,
+      "bias": 1.7455487732938166,
+      "corr": 0.4995197072422124
+    },
+    "seats_log_cal/level3_annualized/all": {
+      "n": 2,
+      "mae": 2.746219018834756,
+      "max_abs": 4.956883339448806,
+      "bias": 2.746219018834756,
+      "corr": 1.0
+    },
+    "seats_log_cal/level3_annualized/all_narrow": {
+      "n": 2,
+      "mae": 1.7816788002334831,
+      "max_abs": 2.5640592985629853,
+      "bias": -1.7816788002334831,
+      "corr": 1.0
+    },
+    "seats_log_cal/level3_annualized/food": {
+      "n": 4,
+      "mae": 2.7961698920162252,
+      "max_abs": 5.6630748221124865,
+      "bias": 0.035367519040018,
+      "corr": 0.8007145468368838
+    },
+    "seats_log_cal/level3_annualized/nonfood": {
+      "n": 4,
+      "mae": 5.620325926767698,
+      "max_abs": 7.090083471620771,
+      "bias": 5.620325926767698,
+      "corr": 0.4879159880494326
+    },
+    "seats_log_cal/level3_annualized/nonfood_narrow": {
+      "n": 4,
+      "mae": 0.9586913791377816,
+      "max_abs": 2.4220213644244457,
+      "bias": 0.8442315380669125,
+      "corr": 0.6724025507551881
+    },
+    "seats_log_nocal/mean3_saar": {
+      "n": 16,
+      "mae": 2.9160826428984525,
+      "max_abs": 7.111814524985599,
+      "bias": 1.7885327485251654,
+      "corr": 0.5029242653415963
+    },
+    "seats_log_nocal/mean3_saar/all": {
+      "n": 2,
+      "mae": 2.789299522567875,
+      "max_abs": 4.981709247877189,
+      "bias": 2.789299522567875,
+      "corr": 0.9999999999999998
+    },
+    "seats_log_nocal/mean3_saar/all_narrow": {
+      "n": 2,
+      "mae": 1.7625790281763198,
+      "max_abs": 2.5299470169245497,
+      "bias": -1.7625790281763198,
+      "corr": 1.0
+    },
+    "seats_log_nocal/mean3_saar/food": {
+      "n": 4,
+      "mae": 2.749027499694078,
+      "max_abs": 5.68923771174042,
+      "bias": 0.09559135617613213,
+      "corr": 0.8059499165923916
+    },
+    "seats_log_nocal/mean3_saar/nonfood": {
+      "n": 4,
+      "mae": 5.681450470319875,
+      "max_abs": 7.111814524985599,
+      "bias": 5.681450470319875,
+      "corr": 0.4951207630486898
+    },
+    "seats_log_nocal/mean3_saar/nonfood_narrow": {
+      "n": 4,
+      "mae": 0.9579133262077577,
+      "max_abs": 2.43917476650611,
+      "bias": 0.8637289204088776,
+      "corr": 0.6760297223459365
+    },
+    "seats_log_nocal/level3_annualized": {
+      "n": 16,
+      "mae": 2.909784076503495,
+      "max_abs": 7.090083471620771,
+      "bias": 1.7455488424006573,
+      "corr": 0.49951970893775594
+    },
+    "seats_log_nocal/level3_annualized/all": {
+      "n": 2,
+      "mae": 2.746219018834756,
+      "max_abs": 4.956883339448806,
+      "bias": 2.746219018834756,
+      "corr": 1.0
+    },
+    "seats_log_nocal/level3_annualized/all_narrow": {
+      "n": 2,
+      "mae": 1.7816788002334831,
+      "max_abs": 2.5640592985629853,
+      "bias": -1.7816788002334831,
+      "corr": 1.0
+    },
+    "seats_log_nocal/level3_annualized/food": {
+      "n": 4,
+      "mae": 2.7961698920162252,
+      "max_abs": 5.6630748221124865,
+      "bias": 0.035367519040018,
+      "corr": 0.8007145468368838
+    },
+    "seats_log_nocal/level3_annualized/nonfood": {
+      "n": 4,
+      "mae": 5.620325926767698,
+      "max_abs": 7.090083471620771,
+      "bias": 5.620325926767698,
+      "corr": 0.4879159880494326
+    },
+    "seats_log_nocal/level3_annualized/nonfood_narrow": {
+      "n": 4,
+      "mae": 0.9586915776959348,
+      "max_abs": 2.4220202003853584,
+      "bias": 0.8442318144942769,
+      "corr": 0.6724028104706529
+    },
+    "x11_log_cal/mean3_saar": {
+      "n": 16,
+      "mae": 3.53518417033149,
+      "max_abs": 8.9530847918146,
+      "bias": 3.0517411959095813,
+      "corr": 0.5691100137660168
+    },
+    "x11_log_cal/mean3_saar/all": {
+      "n": 2,
+      "mae": 3.93706104137945,
+      "max_abs": 4.5528958831691995,
+      "bias": 3.93706104137945,
+      "corr": 0.9999999999999998
+    },
+    "x11_log_cal/mean3_saar/all_narrow": {
+      "n": 2,
+      "mae": 0.31429865329612494,
+      "max_abs": 0.49904168359045986,
+      "bias": -0.18474303029433492,
+      "corr": 1.0000000000000002
+    },
+    "x11_log_cal/mean3_saar/food": {
+      "n": 4,
+      "mae": 3.6586507856696002,
+      "max_abs": 7.03204607778011,
+      "bias": 1.981778423416035,
+      "corr": 0.9029730248141082
+    },
+    "x11_log_cal/mean3_saar/nonfood": {
+      "n": 4,
+      "mae": 6.446383743236934,
+      "max_abs": 8.9530847918146,
+      "bias": 6.446383743236934,
+      "corr": 0.7217789204628362
+    },
+    "x11_log_cal/mean3_saar/nonfood_narrow": {
+      "n": 4,
+      "mae": 1.9100223050816378,
+      "max_abs": 4.968564505519641,
+      "bias": 1.902643611442798,
+      "corr": 0.5713971056759292
+    },
+    "x11_log_cal/level3_annualized": {
+      "n": 16,
+      "mae": 3.501612835557234,
+      "max_abs": 8.88833800124567,
+      "bias": 3.008230997377738,
+      "corr": 0.5711827859742691
+    },
+    "x11_log_cal/level3_annualized/all": {
+      "n": 2,
+      "mae": 3.8957932652400826,
+      "max_abs": 4.515668336879989,
+      "bias": 3.8957932652400826,
+      "corr": 0.9999999999999998
+    },
+    "x11_log_cal/level3_annualized/all_narrow": {
+      "n": 2,
+      "mae": 0.317636275526165,
+      "max_abs": 0.5061802154130026,
+      "bias": -0.1885439398868376,
+      "corr": 0.9999999999999999
+    },
+    "x11_log_cal/level3_annualized/food": {
+      "n": 4,
+      "mae": 3.6211429113672473,
+      "max_abs": 6.953235325081127,
+      "bias": 1.9173264297912647,
+      "corr": 0.9056460049224614
+    },
+    "x11_log_cal/level3_annualized/nonfood": {
+      "n": 4,
+      "mae": 6.394667355272576,
+      "max_abs": 8.88833800124567,
+      "bias": 6.394667355272576,
+      "corr": 0.7214377285993773
+    },
+    "x11_log_cal/level3_annualized/nonfood_narrow": {
+      "n": 4,
+      "mae": 1.8839263052059878,
+      "max_abs": 4.951118802848933,
+      "bias": 1.8673055417704902,
+      "corr": 0.5660399710641096
+    }
+  },
+  "parity_rows_seats_log_cal_mean3_saar": [
+    {
+      "issue": "2026-5",
+      "target": "2026-04-01",
+      "series": "food",
+      "variant": "seats_log_cal",
+      "formula": "mean3_saar",
+      "anchor": "-4.1",
+      "ours": "1.58923771174042",
+      "diff": "5.68923771174042"
+    },
+    {
+      "issue": "2026-5",
+      "target": "2026-04-01",
+      "series": "nonfood",
+      "variant": "seats_log_cal",
+      "formula": "mean3_saar",
+      "anchor": "2.9",
+      "ours": "8.17631001747313",
+      "diff": "5.276310017473129"
+    },
+    {
+      "issue": "2026-5",
+      "target": "2026-04-01",
+      "series": "nonfood_narrow",
+      "variant": "seats_log_cal",
+      "formula": "mean3_saar",
+      "anchor": "2.9",
+      "ours": "4.0949742780214",
+      "diff": "1.1949742780214003"
+    },
+    {
+      "issue": "2026-6",
+      "target": "2026-05-01",
+      "series": "all",
+      "variant": "seats_log_cal",
+      "formula": "mean3_saar",
+      "anchor": "2.9",
+      "ours": "7.88170924787719",
+      "diff": "4.981709247877189"
+    },
+    {
+      "issue": "2026-6",
+      "target": "2026-05-01",
+      "series": "all_narrow",
+      "variant": "seats_log_cal",
+      "formula": "mean3_saar",
+      "anchor": "2.9",
+      "ours": "1.90478896057191",
+      "diff": "-0.99521103942809"
+    },
+    {
+      "issue": "2026-7",
+      "target": "2026-06-01",
+      "series": "food",
+      "variant": "seats_log_cal",
+      "formula": "mean3_saar",
+      "anchor": "0.7",
+      "ours": "0.666276593406608",
+      "diff": "-0.0337234065933919"
+    },
+    {
+      "issue": "2026-7",
+      "target": "2026-06-01",
+      "series": "nonfood",
+      "variant": "seats_log_cal",
+      "formula": "mean3_saar",
+      "anchor": "5.4",
+      "ours": "12.5118145249856",
+      "diff": "7.111814524985599"
+    },
+    {
+      "issue": "2026-7",
+      "target": "2026-06-01",
+      "series": "nonfood_narrow",
+      "variant": "seats_log_cal",
+      "formula": "mean3_saar",
+      "anchor": "5.4",
+      "ours": "5.21163139729845",
+      "diff": "-0.18836860270155054"
+    },
+    {
+      "issue": "2026-8",
+      "target": "2026-07-01",
+      "series": "food",
+      "variant": "seats_log_cal",
+      "formula": "mean3_saar",
+      "anchor": "0.8",
+      "ours": "0.534643458940531",
+      "diff": "-0.26535654105946904"
+    },
+    {
+      "issue": "2026-8",
+      "target": "2026-07-01",
+      "series": "nonfood",
+      "variant": "seats_log_cal",
+      "formula": "mean3_saar",
+      "anchor": "3.6",
+      "ours": "10.5380795504071",
+      "diff": "6.9380795504071"
+    },
+    {
+      "issue": "2026-8",
+      "target": "2026-07-01",
+      "series": "nonfood_narrow",
+      "variant": "seats_log_cal",
+      "formula": "mean3_saar",
+      "anchor": "3.6",
+      "ours": "6.03917593387329",
+      "diff": "2.43917593387329"
+    },
+    {
+      "issue": "2026-9",
+      "target": "2026-08-01",
+      "series": "all",
+      "variant": "seats_log_cal",
+      "formula": "mean3_saar",
+      "anchor": "8.1",
+      "ours": "8.69688979725856",
+      "diff": "0.5968897972585605"
+    },
+    {
+      "issue": "2026-9",
+      "target": "2026-08-01",
+      "series": "all_narrow",
+      "variant": "seats_log_cal",
+      "formula": "mean3_saar",
+      "anchor": "8.1",
+      "ours": "5.57005298307545",
+      "diff": "-2.5299470169245497"
+    },
+    {
+      "issue": "2026-9",
+      "target": "2026-08-01",
+      "series": "food",
+      "variant": "seats_log_cal",
+      "formula": "mean3_saar",
+      "anchor": "9.9",
+      "ours": "4.89220766061697",
+      "diff": "-5.00779233938303"
+    },
+    {
+      "issue": "2026-9",
+      "target": "2026-08-01",
+      "series": "nonfood",
+      "variant": "seats_log_cal",
+      "formula": "mean3_saar",
+      "anchor": "6.5",
+      "ours": "9.89959778841367",
+      "diff": "3.3995977884136703"
+    },
+    {
+      "issue": "2026-9",
+      "target": "2026-08-01",
+      "series": "nonfood_narrow",
+      "variant": "seats_log_cal",
+      "formula": "mean3_saar",
+      "anchor": "6.5",
+      "ours": "6.50913299976466",
+      "diff": "0.009132999764659644"
+    }
+  ],
+  "decision": {
+    "raw_import": "go",
+    "taxonomy": "go",
+    "sa_layer": "go",
+    "cbr_parity": "iterate",
+    "reason": "Pre-registered tolerance 0.3 pp is not met. Broad non-food 13-33 MAE 5.68 pp; narrow final-consumer set 13-15/17-18/21/31-32 MAE 0.96 pp. The dominant gap is the unpublished consumer-goods mapping/weights, not the SA method. Public data give comparability, not exact parity.",
+    "acceptance": "Implementation is accepted if it reproduces the published anchors with MAE <= 0.3 pp, or explicitly publishes its taxonomy/spec version and divergence; no anchor-fitting."
+  },
+  "not_checked": [
+    "CBR internal OKPD2 -> consumer-group mapping and weights",
+    "machine-readable CBR PPI SA series (only figure 44 and text)",
+    "CBR PPI-specific X-13 specification (ARIMA/outliers/calendar)",
+    "EMISS 57608 monthly export 2017-2020",
+    "CPI/KIPC weights mapping",
+    "regional, agriculture, construction and tariff series",
+    "vintages/revisions history; no PIT archive",
+    "digitized figure 44 values (text anchors only)"
+  ],
+  "passport": {
+    "method": "X-13ARIMA-SEATS via R seasonal::seas; log; SEATS; auto ARIMA; auto outliers; calendar aictest=td",
+    "variants": [
+      "seats_log_cal",
+      "seats_level_cal",
+      "x11_log_cal",
+      "seats_log_nocal"
+    ],
+    "formula": "3m SAAR = mean of three monthly annualized SA growth rates",
+    "sample": "total 2013-01..2026-08; food/nonfood/all 2021-01..2026-08",
+    "source_files": [
+      "Proizvoditeli_Ind_VED_08-2026.xlsx",
+      "Proizvoditeli_Ind_tov_08-2026.xlsx",
+      "vesa_2006-2026.xlsx",
+      "cpd_2026-9.pdf",
+      "meth_cpi.pdf",
+      "Annex_2026.pdf"
+    ]
+  }
+}
