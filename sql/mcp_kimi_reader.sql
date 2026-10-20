@@ -78,3 +78,7 @@ GRANT SELECT ON default.v_ml_error_by_fold TO kimi_reader;
 GRANT SELECT ON default.v_rosstat_okved2 TO kimi_reader;
 GRANT SELECT ON default.v_cbr_mp_bsu_map TO kimi_reader;
 GRANT SELECT ON default.v_cbr_mp_public_panel TO kimi_reader;
+
+-- Рыночные ряды MOEX (пункт key-rate/phase-2-brent, #113): Brent-фронт-месяц.
+-- Сырая moex_market агенту не выдана — только витрина.
+GRANT SELECT ON default.v_moex_market TO kimi_reader;
