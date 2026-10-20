@@ -1,0 +1,205 @@
+priority,match_type,pattern,kipc_group,status,note
+1000,code_exact,10.11.11.001.АГ,01.1.2,mapped,beef aggregate
+1000,code_exact,10.11.32.001.АГ,01.1.2,mapped,pork aggregate
+600,name_regex,шерст|шкур|кож.*сыр,,excluded,non-food byproducts in 10.11
+600,name_regex,не пригодн,,excluded,inedible meat meal
+600,name_regex,кормов,,excluded,feed
+600,name_regex,дизельн|топливо|бензин|керосин|мазут|смазочн,07.2.2,mapped,fuel
+600,name_regex,туалетн|подгузник|влажн|носов,13.1.2,mapped,personal hygiene paper
+600,code_prefix,01.11.75,01.1.9,mapped,dried peas
+10,code_prefix,01,,excluded,agriculture
+10,code_prefix,02,,excluded,forestry
+10,code_prefix,03,,excluded,fishing
+10,code_prefix,05,,excluded,coal
+10,code_prefix,06,,excluded,oil and gas
+10,code_prefix,07,,excluded,metal ores
+10,code_prefix,08,,excluded,other mining
+10,code_prefix,09,,excluded,mining services
+100,code_prefix,10.11,01.1.2,mapped,meat
+100,code_prefix,10.12,01.1.2,mapped,poultry
+100,code_prefix,10.13,01.1.2,mapped,processed meat
+100,code_prefix,10.20,01.1.3,mapped,fish
+100,code_prefix,10.31,01.1.9,mapped,processed potato
+100,code_prefix,10.32,01.2.1,mapped,juices
+100,code_prefix,10.39,01.1.9,mapped,processed fruit and vegetables
+100,code_prefix,10.41,01.1.5,mapped,vegetable oils
+100,code_prefix,10.42,01.1.5,mapped,fats and margarine
+100,code_prefix,10.51,01.1.4,mapped,dairy
+100,code_prefix,10.52,01.1.4,mapped,ice cream
+100,code_prefix,10.61,01.1.1,mapped,cereals
+100,code_prefix,10.62,01.1.9,mapped,starch
+100,code_prefix,10.71,01.1.1,mapped,bread
+100,code_prefix,10.72,01.1.1,mapped,bakery
+100,code_prefix,10.73,01.1.1,mapped,pasta
+100,code_prefix,10.81,01.1.8,mapped,sugar
+100,code_prefix,10.82,01.1.8,mapped,confectionery
+100,code_prefix,10.83.13,01.2.3,mapped,tea
+100,code_prefix,10.83,01.2.2,mapped,coffee and tea
+100,code_prefix,10.84,01.1.9,mapped,sauces and spices
+100,code_prefix,10.85,01.1.9,mapped,ready food
+100,code_prefix,10.86,01.1.9,mapped,baby food
+100,code_prefix,10.89,01.1.9,mapped,other food
+100,code_prefix,10.91,,excluded,farm feed
+100,code_prefix,10.92,09.3.2,mapped,pet food
+100,code_prefix,11.01,02.1,mapped,vodka
+100,code_prefix,11.02,02.1,mapped,wine
+100,code_prefix,11.03,02.1,mapped,cider
+100,code_prefix,11.04,02.1,mapped,other alcohol
+100,code_prefix,11.05,02.1,mapped,beer
+100,code_prefix,11.06,,excluded,malt
+100,code_prefix,11.07.11,01.2.5,mapped,water
+100,code_prefix,11.07.19,01.2.6,mapped,soft drinks
+100,code_prefix,11.07,01.2.6,mapped,other drinks
+100,code_prefix,12,02.3,mapped,tobacco
+100,code_prefix,13,03.1,mapped,textiles
+100,code_prefix,13.92,05.2,mapped,household textiles
+100,code_prefix,13.93,05.1,mapped,carpets
+100,code_prefix,14,03.1,mapped,apparel
+100,code_prefix,15.11,03.1,mapped,leather
+100,code_prefix,15.12,13.2,mapped,bags
+100,code_prefix,15.20,03.2,mapped,footwear
+100,code_prefix,15,03.1,mapped,other leather
+100,code_prefix,16.10,,excluded,lumber
+100,code_prefix,16.21,,excluded,plywood
+100,code_prefix,16.22,,out_of_scope,parquet
+100,code_prefix,16.23,,out_of_scope,wooden joinery
+100,code_prefix,16.24,,excluded,wooden containers
+100,code_prefix,16.29,05.1,mapped,other wood products
+100,code_prefix,17.11,,excluded,pulp
+100,code_prefix,17.12,09.7,mapped,paper
+100,code_prefix,17.21,,excluded,containers
+100,code_prefix,17.22,05.6,mapped,household paper
+100,code_prefix,17.23,09.7,mapped,stationery
+100,code_prefix,17.24,,out_of_scope,wallpaper
+100,code_prefix,17.29,09.7,mapped,labels
+100,code_prefix,18,09.7,mapped,printing
+100,code_prefix,19.10,,excluded,coke
+100,code_prefix,19.20.21,07.2.2,mapped,gasoline
+100,code_prefix,19.20.29,07.2.2,mapped,lubricants
+100,code_prefix,19.20,,excluded,other petroleum
+100,code_prefix,19.30,,excluded,coal briquettes
+100,code_prefix,20.30,05.6,mapped,paints
+100,code_prefix,20.41,05.6,mapped,soap and detergents
+100,code_prefix,20.42,13.1.2,mapped,perfume and cosmetics
+100,code_prefix,20,,excluded,other chemicals
+100,code_prefix,21,06.1,mapped,pharmaceuticals
+100,code_prefix,22.11,07.2.1,mapped,tires
+100,code_prefix,22.19,05.6,mapped,rubber goods
+100,code_prefix,22.21,,excluded,plastic semi-finished
+100,code_prefix,22.22,,excluded,plastic packaging
+100,code_prefix,22.23,,out_of_scope,construction plastics
+100,code_prefix,22.29,05.6,mapped,other plastic goods
+100,code_prefix,23.11,,out_of_scope,flat glass
+100,code_prefix,23.12,,out_of_scope,safety glass
+100,code_prefix,23.13,05.4,mapped,glass containers
+100,code_prefix,23.14,,excluded,glass fiber
+100,code_prefix,23.19,05.4,mapped,glassware
+100,code_prefix,23.20,,excluded,refractory
+100,code_prefix,23.31,,out_of_scope,tiles
+100,code_prefix,23.32,,excluded,bricks
+100,code_prefix,23.41,05.4,mapped,ceramic household
+100,code_prefix,23.42,,out_of_scope,sanitary ceramics
+100,code_prefix,23.43,,excluded,insulators
+100,code_prefix,23.51,,excluded,cement
+100,code_prefix,23.52,,excluded,lime and gypsum
+100,code_prefix,23.61,,excluded,concrete
+100,code_prefix,23.62,,excluded,gypsum products
+100,code_prefix,23.63,,excluded,ready concrete
+100,code_prefix,23.64,,excluded,building mixes
+100,code_prefix,23.65,,excluded,asbestos cement
+100,code_prefix,23.70,,excluded,stone
+100,code_prefix,23.91,,excluded,abrasives
+100,code_prefix,23.99,,excluded,other mineral products
+100,code_prefix,24,,excluded,metals
+100,code_prefix,25.11,,out_of_scope,metal structures
+100,code_prefix,25.12,,out_of_scope,metal doors and windows
+100,code_prefix,25.21,,out_of_scope,radiators
+100,code_prefix,25.29,,excluded,tanks
+100,code_prefix,25.30,,excluded,boilers
+100,code_prefix,25.40,,excluded,weapons
+100,code_prefix,25.5,,excluded,metal services
+100,code_prefix,25.6,,excluded,metal services
+100,code_prefix,25.61,,excluded,metal services
+100,code_prefix,25.62,,excluded,metal services
+100,code_prefix,25.71,05.4,mapped,cutlery
+100,code_prefix,25.72,05.6,mapped,locks
+100,code_prefix,25.73,05.5,mapped,tools
+100,code_prefix,25.91,,excluded,barrels
+100,code_prefix,25.92,,excluded,metal packaging
+100,code_prefix,25.93,,excluded,wire products
+100,code_prefix,25.94,,excluded,fasteners
+100,code_prefix,25.99,05.6,mapped,other metal household
+100,code_prefix,26.11,,excluded,electronic components
+100,code_prefix,26.12,,excluded,pcb
+100,code_prefix,26.20,08.1,mapped,computers
+100,code_prefix,26.30,08.1,mapped,communication
+100,code_prefix,26.40,08.1,mapped,consumer electronics
+100,code_prefix,26.51,,excluded,instruments
+100,code_prefix,26.52,13.2,mapped,watches
+100,code_prefix,26.6,06.1,mapped,medical equipment
+100,code_prefix,26.70,09.1,mapped,optical
+100,code_prefix,26.80,,excluded,magnetic media
+100,code_prefix,27.11,,excluded,motors
+100,code_prefix,27.12,,excluded,switchgear
+100,code_prefix,27.20,05.5,mapped,batteries
+100,code_prefix,27.31,,excluded,fiber optic
+100,code_prefix,27.32,,excluded,wire
+100,code_prefix,27.33,,excluded,switches
+100,code_prefix,27.40,05.5,mapped,lamps
+100,code_prefix,27.51,05.3,mapped,appliances
+100,code_prefix,27.52,05.3,mapped,gas stoves
+100,code_prefix,27.90,,excluded,other electrical
+100,code_prefix,28.23,08.1,mapped,cash registers
+100,code_prefix,28.24,05.5,mapped,power tools
+100,code_prefix,28.25,05.3,mapped,hvac
+100,code_prefix,28,,excluded,other machinery
+100,code_prefix,29.10.2,07.1,mapped,cars
+100,code_prefix,29.10.1,,excluded,engines
+100,code_prefix,29.10.3,,excluded,buses
+100,code_prefix,29.10.5,,excluded,special vehicles
+100,code_prefix,29.10.4,,excluded,trucks
+100,code_prefix,29.20,,excluded,bodies
+100,code_prefix,29.31,,excluded,auto electronics
+100,code_prefix,29.32,07.2.1,mapped,parts
+100,code_prefix,30.12,09.2,mapped,boats
+100,code_prefix,30.20,,excluded,locomotives
+100,code_prefix,30.30,,excluded,aircraft
+100,code_prefix,30.40,,excluded,military
+100,code_prefix,30.91,07.1,mapped,motorcycles
+100,code_prefix,30.92,07.1,mapped,bicycles
+100,code_prefix,30,,excluded,other transport
+100,code_prefix,31,05.1,mapped,furniture
+100,code_prefix,32.12,13.2,mapped,jewelry
+100,code_prefix,32.13,13.2,mapped,imitation jewelry
+100,code_prefix,32.2,09.1,mapped,musical instruments
+100,code_prefix,32.20,09.1,mapped,musical instruments
+100,code_prefix,32.3,09.2,mapped,sports goods
+100,code_prefix,32.30,09.2,mapped,sports goods
+100,code_prefix,32.4,09.2,mapped,games
+100,code_prefix,32.40,09.2,mapped,games
+100,code_prefix,32.50,06.1,mapped,medical instruments
+100,code_prefix,32.91,05.6,mapped,brooms
+100,code_prefix,32.99,13.2,mapped,other goods
+100,code_prefix,33,,excluded,repair services
+100,code_prefix,35,04.5,out_of_scope,electricity and gas
+100,code_prefix,36,04.4,out_of_scope,water
+100,code_prefix,37,,excluded,sewerage
+100,code_prefix,38,04.4,out_of_scope,waste
+100,code_prefix,58,09.7,mapped,publishing
+600,name_regex,жмых|шрот,,excluded,oilseed meal
+600,name_regex,меласс|жом,,excluded,sugar byproducts
+600,name_regex,услуги по производству сахара,,excluded,subcontract sugar services
+600,name_regex,волокн|пряжа|нитки,,excluded,textile fibers and yarn
+600,name_regex,пеллет|брикет,,excluded,fuel pellets and briquettes
+600,name_regex,бутылк|банк|флакон,,excluded,glass packaging
+100,code_prefix,23.19.23,,excluded,laboratory glassware
+100,code_prefix,27.20.21,07.2.1,mapped,starter batteries
+100,code_prefix,21.10.5,,excluded,pharma intermediates
+100,code_prefix,21.10.6,,excluded,pharma intermediates
+100,code_prefix,30.92.2,06.1,mapped,wheelchairs
+100,code_prefix,30.92.40,13.2,mapped,baby strollers
+100,code_prefix,22.11.13,,excluded,truck tires
+100,code_prefix,22.11.14,,excluded,agricultural tires
+100,code_prefix,26.20.4,,excluded,computer parts
+100,code_prefix,17.12.14.190,,excluded,wrapping paper
+100,code_prefix,13.92.14,05.2,mapped,toilet and kitchen linen
