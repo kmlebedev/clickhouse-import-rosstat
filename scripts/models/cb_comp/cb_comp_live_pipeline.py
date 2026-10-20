@@ -41,13 +41,13 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import cpi_monthly as cm
-import cpi_monthly_v3 as v3
-import cpi_public_panel_audit as audit
-import eval_utils as eu
+from models.cpi import cpi_monthly as cm
+from models.cpi import cpi_monthly_v3 as v3
+from models.cpi import cpi_public_panel_audit as audit
+from lib import eval_utils as eu
 
 COMPONENTS = cm.BOTTOMUP_COMPONENTS
 COMPONENT_LABELS = {

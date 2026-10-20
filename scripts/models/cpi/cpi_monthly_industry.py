@@ -45,14 +45,14 @@ from sklearn.model_selection import TimeSeriesSplit
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import cpi_monthly as cm
-import cpi_monthly_v3 as cmv3
-import eval_utils as eu
-import ml_experiment as mlx
-from cpi_public_panel_audit import (
+from models.cpi import cpi_monthly as cm
+from models.cpi import cpi_monthly_v3 as cmv3
+from lib import eval_utils as eu
+from lib import ml_experiment as mlx
+from models.cpi.cpi_public_panel_audit import (
     INDUSTRY_SHEETS,
     MP_INDICATORS,
     MP_URL,

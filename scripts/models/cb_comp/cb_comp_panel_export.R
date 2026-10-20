@@ -2,7 +2,7 @@
 # Экспорт панели CB_COMP для bottom-up parity-прогона (issue #190).
 #
 # Использование:
-#   Rscript scripts/cb_comp_panel_export.R <archive-root> <out-dir>
+#   Rscript scripts/models/cb_comp/cb_comp_panel_export.R <archive-root> <out-dir>
 #
 # <archive-root> — каталог BusinessSurveyCBRCpiForecastingSourceCode из
 # распакованного архива авторов. FST хранит имена и строки в CP1251, поэтому
@@ -24,7 +24,7 @@
 
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 2) {
-  stop("usage: Rscript scripts/cb_comp_panel_export.R <archive-root> <out-dir>")
+  stop("usage: Rscript scripts/models/cb_comp/cb_comp_panel_export.R <archive-root> <out-dir>")
 }
 
 archive <- args[[1]]

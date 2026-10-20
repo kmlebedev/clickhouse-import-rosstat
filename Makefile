@@ -487,11 +487,11 @@ key-rate-cpi-v3-experiment:
 
 # Live-диагностика CPI h1/h3/h6 для заседания: make cpi-live3-horizons ARGS="--as-of 2026-10-23 --meeting 2026-10-23".
 cpi-live3-horizons:
-	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_live3_horizons.py $(ARGS)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_live3_horizons.py $(ARGS)
 
 # Офлайн-тесты CPI h1/h3/h6 и эксперимента: без ClickHouse и сети.
 cpi-live3-horizons-test:
-	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_live3_horizons_test.py -v
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_live3_horizons_test.py -v
 
 key-rate-cpi-v3-experiment-test:
 	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/key_rate_cpi_v3_experiment_test.py -v
@@ -535,7 +535,7 @@ key-rate-llm-forecast:
 # Фикстуры: make cpi-nowcast ARGS="--export-fixtures scripts/testdata/cpi_nowcast"
 cpi-nowcast:
 	@$(MLFLOW_PREFLIGHT)
-	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_nowcast.py $(ARGS)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_nowcast.py $(ARGS)
 
 # ML-трек v2: месячный nowcast ИПЦ с мониторингом предприятий ЦБ (с МП vs без МП).
 # Читает ClickHouse, пишет локальные артефакты; по умолчанию в ClickHouse НЕ пишет;
@@ -543,63 +543,63 @@ cpi-nowcast:
 # Фикстуры: make cpi-monthly ARGS="--export-fixtures scripts/testdata/cpi_monthly"
 cpi-monthly:
 	@$(MLFLOW_PREFLIGHT)
-	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_monthly.py $(ARGS)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_monthly.py $(ARGS)
 
 # Stage 1 #76: публичные недельные признаки в месячном nowcast ИПЦ.
 cpi-monthly-v3:
 	@$(MLFLOW_PREFLIGHT)
-	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_monthly_v3.py $(ARGS)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_monthly_v3.py $(ARGS)
 
 cpi-monthly-v3-test:
-	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_monthly_v3_test.py -v
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_monthly_v3_test.py -v
 
 # Live-адаптация production-пайплайна CB_COMP (схема авторов): официальные
 # 4 компонента + недельные товары + МП + FAO/USD/ставка → 3 компонентных
 # CatBoost → агрегат, ошибки, дашборд, ЖКУ, экспертные корректировки, Россия.
 # Читает ClickHouse и архив; в БД не пишет.
 cb-comp-live:
-	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cb_comp_live_pipeline.py $(ARGS)
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_live_pipeline.py $(ARGS)
 
 # Офлайн-тесты live-пайплайна: без ClickHouse и архива.
 cb-comp-live-test:
-	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cb_comp_live_pipeline_test.py -v
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_live_pipeline_test.py -v
 
 # Сравнение live 3-компонентной модели, per-sheet и CB_COMP на общем таргете
 # TARGET_FULL (54 normal-месяца, origin M−(h−1)). Читает ClickHouse и архив.
 cb-comp-live-compare:
-	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cb_comp_live_compare.py $(ARGS)
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_live_compare.py $(ARGS)
 
 # Stage 2 #235: отраслевые МП-признаки (16 листов mp_survey_data.xlsx) в
 # компонентном nowcast ИПЦ. Читает ClickHouse и публичный xlsx; в БД не пишет.
 cpi-monthly-industry:
 	@$(MLFLOW_PREFLIGHT)
-	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_monthly_industry.py $(ARGS)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_monthly_industry.py $(ARGS)
 
 cpi-monthly-industry-test:
-	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cpi_monthly_industry_test.py -v
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cpi/cpi_monthly_industry_test.py -v
 
 # Task 1 #234: аудит публичной панели ИПЦ. Читает ClickHouse и публичные xlsx,
 # в БД не пишет; JSON — docs/research/2026-10-19-cpi-public-data-audit.json.
 cpi-public-audit:
-	uv run --with openpyxl --python 3.12 python3 scripts/cpi_public_panel_audit.py $(ARGS)
+	uv run --with openpyxl --python 3.12 python3 scripts/models/cpi/cpi_public_panel_audit.py $(ARGS)
 
 cpi-public-audit-test:
-	uv run --with openpyxl --python 3.12 python3 scripts/cpi_public_panel_audit_test.py -v
+	uv run --with openpyxl --python 3.12 python3 scripts/models/cpi/cpi_public_panel_audit_test.py -v
 
 # Task 3 #236: недельная компонентная панель ИПЦ — месячный m/m товаров,
 # реконструкция food/nonfood/services, покрытие весов и гейт bottom-up.
 # Читает ClickHouse, в БД не пишет; артефакты — docs/research/.
 cpi-weekly-panel:
-	uv run --with openpyxl --python 3.12 python3 scripts/cpi_weekly_component_panel.py $(ARGS)
+	uv run --with openpyxl --python 3.12 python3 scripts/models/cpi/cpi_weekly_component_panel.py $(ARGS)
 
 cpi-weekly-panel-test:
-	uv run --with openpyxl --python 3.12 python3 scripts/cpi_weekly_component_panel_test.py -v
+	uv run --with openpyxl --python 3.12 python3 scripts/models/cpi/cpi_weekly_component_panel_test.py -v
 
 # Live-диагностика per_sheet: экспорт v_cbr_mp_public_panel (87 кодов × 3
 # индикатора, но 33 различные серии) и v_cbr_mp_bsu_map (код → industry_slug)
 # в build/cb-comp-parity. Только чтение ClickHouse.
 cb-comp-public-export:
-	uv run --with pandas --python 3.12 python3 scripts/cb_comp_public_export.py --out-dir build/cb-comp-parity
+	uv run --with pandas --python 3.12 python3 scripts/models/cb_comp/cb_comp_public_export.py --out-dir build/cb-comp-parity
 
 # Паритет ML-трека с CB_COMP (issue #190): таргет TARGET_FULL из архива авторов,
 # архивные per-period прогнозы CB_COMP, две CatBoost-direct модели (с МП/без МП),
@@ -608,19 +608,19 @@ cb-comp-public-export:
 # Читает ClickHouse (ряды v2), пишет локальные артефакты; в ClickHouse не пишет.
 cb-comp-parity:
 	@$(MLFLOW_PREFLIGHT)
-	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cb_comp_parity.py $(ARGS)
+	$(MLFLOW_ENV) $(MLFLOW_HTTP_ENV) uv run $(MLFLOW_PKG) --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_parity.py $(ARGS)
 
 # Офлайн-тесты parity-скрипта: без ClickHouse и без архива.
 cb-comp-parity-test:
-	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cb_comp_parity_test.py -v
-	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/cb_comp_bottomup_test.py -v
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_parity_test.py -v
+	uv run --with "catboost>=1.2" --with scikit-learn --with pandas --with openpyxl --with "statsmodels>=0.15" --with scipy --python 3.12 python3 scripts/models/cb_comp/cb_comp_bottomup_test.py -v
 
 # Прокси-путь CB_COMP (issue #190): SA ИПЦ без КУ из публичных рядов ЦБ/Росстата
 # и RMSE нашего месячного nowcast на окне статьи 2019-01…2024-07. Читает ClickHouse,
 # в ClickHouse не пишет. Нужен CSV месячного трека v2 (--nowcast-csv), который
 # создаётся `make cpi-monthly ARGS="--sample long"` в ветке feat/key-rate-ml-v2.
 cb-comp-proxy:
-	uv run --with pandas --with scipy --with "statsmodels>=0.15" --python 3.12 python3 scripts/cb_comp_proxy.py $(ARGS)
+	uv run --with pandas --with scipy --with "statsmodels>=0.15" --python 3.12 python3 scripts/models/cb_comp/cb_comp_proxy.py $(ARGS)
 
 # Документы e-disclosure.ru: headed Chrome с постоянным профилем build/edisclosure-profile
 # (gitignored, 0700). Капчу решает владелец вручную; коллектор только ждёт её --wait секунд.

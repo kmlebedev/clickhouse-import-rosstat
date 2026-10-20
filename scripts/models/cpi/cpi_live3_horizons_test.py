@@ -7,11 +7,11 @@ from datetime import date
 from pathlib import Path
 from unittest import mock
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import cpi_live3_horizons as cph
-import cpi_monthly as cm
-import cpi_monthly_v3 as cmv3
+from models.cpi import cpi_live3_horizons as cph
+from models.cpi import cpi_monthly as cm
+from models.cpi import cpi_monthly_v3 as cmv3
 
 
 def make_row(month: date, value: float = 1.0, with_target: bool = True):

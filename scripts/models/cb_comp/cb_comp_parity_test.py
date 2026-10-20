@@ -34,11 +34,11 @@ import pandas as pd
 from openpyxl import Workbook
 
 # Модуль и тест лежат рядом, запуск прямой (`python3 scripts/...`).
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import cb_comp_parity as parity
-import cpi_monthly as cm
-import eval_utils as eu
+from models.cb_comp import cb_comp_parity as parity
+from models.cpi import cpi_monthly as cm
+from lib import eval_utils as eu
 
 
 def _month_range(first: date, last: date) -> list:

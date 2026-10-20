@@ -58,12 +58,12 @@ from sklearn.model_selection import TimeSeriesSplit
 
 # Модуль и тест лежат рядом, запуск прямой (`python3 scripts/...`), поэтому его
 # каталог добавляется в sys.path до импорта.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import cpi_nowcast as cm
-import eval_utils as eu
+from models.cpi import cpi_nowcast as cm
+from lib import eval_utils as eu
 
-FIXTURE_DIR = Path(__file__).resolve().parent / "testdata" / "cpi_nowcast"
+FIXTURE_DIR = Path(__file__).resolve().parents[2] / "testdata" / "cpi_nowcast"
 
 FIXTURE_NAMES = (
     "weekly_2022.csv",

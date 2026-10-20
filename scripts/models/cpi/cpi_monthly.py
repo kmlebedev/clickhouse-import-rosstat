@@ -167,18 +167,18 @@ from sklearn.model_selection import TimeSeriesSplit
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[3]
 
 log = logging.getLogger(__name__)
 
 # Скрипт-сосед: переиспользуем транспорт к ClickHouse, а не копируем его.
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import eval_utils as eu
-import extrapolation_aisc as aisc
-import ml_experiment as mlx
+from lib import eval_utils as eu
+from lib import clickhouse as ch
+from lib import ml_experiment as mlx
 
-ch_query = aisc.ch_query
+ch_query = ch.ch_query
 
 # Каталог артефактов живого прогона — корень worktree (файлы gitignored: точные
 # имена в `.gitignore`). Тесты подменяют его временным каталогом, поэтому

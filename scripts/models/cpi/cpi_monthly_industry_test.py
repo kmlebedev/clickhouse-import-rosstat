@@ -21,10 +21,10 @@ from unittest import mock
 import numpy as np
 from openpyxl import Workbook
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import cpi_monthly as cm
-import cpi_monthly_industry as ind
+from models.cpi import cpi_monthly as cm
+from models.cpi import cpi_monthly_industry as ind
 
 
 SHEETS = ("Промышленность", "Добыча")

@@ -17,10 +17,10 @@ import unittest
 from datetime import date
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import cpi_public_panel_audit as audit
-import cpi_weekly_component_panel as panel
+from models.cpi import cpi_public_panel_audit as audit
+from models.cpi import cpi_weekly_component_panel as panel
 
 
 def _series(points):

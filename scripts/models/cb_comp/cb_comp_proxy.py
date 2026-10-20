@@ -68,13 +68,13 @@ from typing import Iterable, Optional
 import numpy as np
 from scipy.optimize import nnls
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import eval_utils as eu
-import extrapolation_aisc as aisc
+from lib import eval_utils as eu
+from lib import clickhouse as ch
 
-ch_query = aisc.ch_query
+ch_query = ch.ch_query
 
 log = logging.getLogger(__name__)
 
@@ -1395,7 +1395,7 @@ def main(argv: Optional[list] = None) -> int:
             paths = write_artifacts(args.out_dir, result, report)
             log.info("записано: %s", ", ".join(paths.values()))
         return 0
-    except (CbCompProxyError, FileNotFoundError, aisc.ClickHouseError) as exc:
+    except (CbCompProxyError, FileNotFoundError, ch.ClickHouseError) as exc:
         log.error("cb_comp_proxy: %s", exc)
         return 2
 
