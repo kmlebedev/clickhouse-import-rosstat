@@ -35,7 +35,6 @@ import csv
 import json
 import logging
 import math
-import os
 import re
 import sys
 from calendar import monthrange
@@ -54,8 +53,6 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import eval_utils as eu  # noqa: E402
 import key_rate_model as krm  # noqa: E402
 import ml_experiment as mlx  # noqa: E402
-
-log = logging.getLogger("cbr_rule")
 
 # --- Константы ----------------------------------------------------------------
 
@@ -95,7 +92,6 @@ REPORT_NAME = "key_rate_cbr_rule_report.md"
 PREDICTIONS_NAME = "key_rate_cbr_rule_predictions.csv"
 DIAGNOSTICS_NAME = "key_rate_cbr_rule_diagnostics.csv"
 FORECAST_NAME = "key_rate_cbr_rule_forecast.json"
-ARTIFACT_NAMES = (REPORT_NAME, PREDICTIONS_NAME, DIAGNOSTICS_NAME, FORECAST_NAME)
 
 WINDOW_EXPANDING = krm.WINDOW_EXPANDING
 WINDOWS = (WINDOW_EXPANDING, krm.window_label(ROLLING_WINDOW))
