@@ -90,6 +90,14 @@ MIN_TRAIN = 12
 BOOTSTRAP_BLOCK = 3
 BOOTSTRAP_N = 2000
 
+# Gate 1 (Task 1 acceptance): stage 1 primary model `y0` сравнивается на общих
+# заседаниях с текущим `cpi_live3_horizons` h1 (тот же целевой месяц M0).
+GATE1_MODEL = "catboost_direct"
+GATE1_TARGET = "y0"
+GATE1_BASELINE = "cpi_live3_horizons:cpi_v3_h1"
+GATE1_TOLERANCE = 1.05  # stage 1 RMSE ≤ live3 RMSE × 1.05
+LIVE3_CACHE_NAME = "stage1_live3_h1_cache.json"
+
 # Диагностические пары: CatBoost против B1, B3 против B1 и CatBoost против B3.
 PAIR_SPECS = (
     ("catboost_direct", "b1_last_value"),
@@ -248,13 +256,19 @@ def _market_features(
     """`usd_mm`, `key_rate`, `fao_mm` на момент заседания.
 
     `usd_mm` — прирост среднего курса за `M0−1` к `M0−2` (обе корзины уже
-    закрыты к заседанию); `key_rate` — последняя вступившая в силу ставка;
-    `fao_mm` — м/м последней пары точек FAO, опубликованных к заседанию.
+    закрыты к заседанию); `fao_mm` — м/м последней пары точек FAO,
+    опубликованных к заседанию.
+
+    `key_rate` берётся строго ДО дня заседания (`meeting_day − 1`): решение,
+    объявленное на самом заседании в 13:30, не должно попасть в признаки
+    этого же заседания (экстренные повышения 2022-02-28 и 2023-08-15).
+    Ставка, вступившая в силу накануне, включается.
     """
+    rate_cutoff = meeting_day - timedelta(days=1)
     return {
         "usd_mm": _float_or_nan(cm.usd_mm(m0, usd)),
         "key_rate": _float_or_nan(
-            cm.asof(key_rate, cm.available_from_rate, meeting_day)
+            cm.asof(key_rate, cm.available_from_rate, rate_cutoff)
         ),
         "fao_mm": _float_or_nan(cm.fao_mm(fao, meeting_day)),
     }
@@ -632,6 +646,197 @@ def evaluate(predictions: list) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Gate 1: same-fold baseline `cpi_live3_horizons` h1
+# ---------------------------------------------------------------------------
+
+
+def _normalize_live3(value) -> dict:
+    """Нормализует значение live3-кэша: `{"value", "target_month"}`.
+
+    Билдер может вернуть скаляр (тесты/старый кэш) или словарь; кэш хранит
+    словарь, чтобы Gate 1 мог отбросить заседание, где h1-цель live3 не равна
+    `M0` stage 1 (разные часы календаря у моделей).
+    """
+    if isinstance(value, dict):
+        raw = value.get("value")
+        target = value.get("target_month")
+        if isinstance(target, str):
+            target = date.fromisoformat(target)
+    else:
+        raw, target = value, None
+    return {
+        "value": None if raw is None else float(raw),
+        "target_month": target,
+    }
+
+
+def live3_h1_features(meetings: list, as_of: date) -> dict:
+    """`cpi_v3_h1` текущей live3-модели и её целевой месяц для заседаний.
+
+    Использует `cpi_live3_horizons.load_rows(as_of)` и
+    `build_cpi_features`; h1-цель этой модели — `origin + 1`. У live3 часы
+    фиксированные (`cutoff_for`), у stage 1 — точный календарь публикаций,
+    поэтому целевой месяц сохраняется рядом с прогнозом: Gate 1 сравнивает
+    только заседания с совпадающим `M0`. Импорт ленивый: прогон без `--gate1`
+    и офлайн-тесты не тянут cb_comp-зависимости.
+    """
+    from models.cpi import cpi_live3_horizons as cph
+
+    rows_by_month, _skipped = cph.load_rows(as_of)
+    if not rows_by_month:
+        raise ValueError("cpi_live3_horizons: пустая feature-вселенная")
+    features = cph.build_cpi_features(sorted(set(meetings)), rows_by_month)
+    result = {}
+    for day, item in features.items():
+        origin = item.get("cpi_v3_origin")
+        result[day] = {
+            "value": (
+                None
+                if item.get("cpi_v3_h1") is None
+                else float(item["cpi_v3_h1"])
+            ),
+            "target_month": (
+                None if origin is None else shift_month(origin, 1)
+            ),
+        }
+    return result
+
+
+def load_live3_h1(
+    meetings: list,
+    as_of: date,
+    cache_path: Optional[Path] = None,
+    builder=None,
+) -> dict:
+    """`cpi_v3_h1` по заседаниям с кэшем на диске (чтобы не пересчитывать).
+
+    Кэш — JSON `{as_of, meetings, values}`; переиспользуется только при
+    совпадении `as_of` и списка заседаний. Несовпадение — пересчёт; битый
+    JSON — `ValueError` (испорченный файл не маскируется).
+    """
+    ordered = sorted(set(meetings))
+    keys = [day.isoformat() for day in ordered]
+    path = Path(cache_path) if cache_path is not None else None
+    if path is not None and path.exists():
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if (
+            payload.get("as_of") == as_of.isoformat()
+            and payload.get("meetings") == keys
+        ):
+            return {
+                date.fromisoformat(day): _normalize_live3(value)
+                for day, value in payload.get("values", {}).items()
+            }
+    values = (builder or live3_h1_features)(ordered, as_of)
+    result = {
+        day: _normalize_live3(values.get(day))
+        for day in ordered
+    }
+    if path is not None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "as_of": as_of.isoformat(),
+                    "meetings": keys,
+                    "values": {
+                        day.isoformat(): {
+                            "value": entry["value"],
+                            "target_month": (
+                                None
+                                if entry["target_month"] is None
+                                else entry["target_month"].isoformat()
+                            ),
+                        }
+                        for day, entry in result.items()
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    return result
+
+
+def gate1_report(
+    predictions: list,
+    live3_values: dict,
+    model: str = GATE1_MODEL,
+) -> dict:
+    """Gate 1: stage 1 `y0` против live3 h1 на общих заседаниях.
+
+    Сравниваются только заседания, где live3 h1 имеет тот же целевой месяц,
+    что stage 1 `M0` (у моделей разные часы: точный календарь против
+    фиксированного 8-го числа). RMSE/MAE, DM-HLN и блочный бутстрап — на
+    парах (stage1, live3) одного заседания. `decision=PASS`, если RMSE stage 1
+    ≤ RMSE live3 × 1.05, то есть stage 1 не хуже текущей live3 более чем на
+    5 %; иначе `FAIL`. Меньше двух общих фолдов — `INSUFFICIENT`.
+    """
+    by_meeting = {
+        item.meeting_date: item
+        for item in predictions
+        if item.model == model and item.target == GATE1_TARGET
+    }
+    common = []
+    excluded = []
+    for day, item in by_meeting.items():
+        entry = _normalize_live3(live3_values.get(day))
+        value = entry["value"]
+        if value is None or not math.isfinite(value):
+            continue
+        if (
+            entry["target_month"] is not None
+            and entry["target_month"] != item.target_month
+        ):
+            excluded.append(day.isoformat())
+            continue
+        common.append(day)
+    common.sort()
+    base = {
+        "model": model,
+        "target": GATE1_TARGET,
+        "baseline": GATE1_BASELINE,
+        "n": len(common),
+        "meetings": [day.isoformat() for day in common],
+        "excluded_target_mismatch": sorted(excluded),
+    }
+    if len(common) < 2:
+        return {**base, "decision": "INSUFFICIENT"}
+    stage_errors = []
+    live3_errors = []
+    for day in common:
+        item = by_meeting[day]
+        stage_errors.append(item.y_pred - item.y_true)
+        live3_errors.append(
+            _normalize_live3(live3_values[day])["value"] - item.y_true
+        )
+    rmse_stage1 = eu.rmse(stage_errors)
+    rmse_live3 = eu.rmse(live3_errors)
+    threshold = rmse_live3 * GATE1_TOLERANCE
+    dm_stat, dm_p = eu.diebold_mariano(stage_errors, live3_errors, 1)
+    boot = eu.block_bootstrap_rmse_diff(
+        stage_errors, live3_errors, BOOTSTRAP_BLOCK, BOOTSTRAP_N, SEED
+    )
+    return {
+        **base,
+        "rmse_stage1": rmse_stage1,
+        "mae_stage1": eu.mae(stage_errors),
+        "rmse_live3": rmse_live3,
+        "mae_live3": eu.mae(live3_errors),
+        "threshold": threshold,
+        "ratio": rmse_stage1 / rmse_live3 if rmse_live3 else float("nan"),
+        "delta": boot.rmse_diff,
+        "delta_ci": [boot.low, boot.high],
+        "dm_stat": dm_stat,
+        "dm_p": dm_p,
+        "decision": "PASS" if rmse_stage1 <= threshold else "FAIL",
+    }
+
+
+# ---------------------------------------------------------------------------
 # Артефакты
 # ---------------------------------------------------------------------------
 
@@ -724,6 +929,51 @@ def write_report(path: Path, payload: dict) -> None:
             f"{item['dm_p']:.4f} | {item['mde_ratio']:.4f} |"
         )
     lines.append("")
+    lines.append(
+        "Сравнения CatBoost/B3 с B1 — диагностика, а не блокирующий gate: "
+        "stage 1 — промежуточный генератор признаков, не член ансамбля."
+    )
+    lines.append("")
+    lines.append("## Gate 1 (same folds: stage 1 y0 vs cpi_live3_horizons h1)")
+    lines.append("")
+    gate = payload.get("gate1")
+    if not gate:
+        lines.append("- Gate 1 не рассчитан (запуск без `--gate1`).")
+    else:
+        lines.append(
+            f"- Модель: `{gate['model']}` / `{gate['target']}`; "
+            f"baseline: `{gate['baseline']}`"
+        )
+        lines.append(f"- Общих фолдов: {gate['n']}")
+        if gate.get("excluded_target_mismatch"):
+            lines.append(
+                "- Исключены (целевой месяц live3 h1 ≠ `M0`): "
+                + ", ".join(gate["excluded_target_mismatch"])
+            )
+        if gate["decision"] == "INSUFFICIENT":
+            lines.append(
+                "- Решение: `INSUFFICIENT` (меньше двух общих заседаний)."
+            )
+        else:
+            lines.append(
+                f"- RMSE stage 1: {gate['rmse_stage1']:.6f}; "
+                f"MAE: {gate['mae_stage1']:.6f}"
+            )
+            lines.append(
+                f"- RMSE live3 h1: {gate['rmse_live3']:.6f}; "
+                f"MAE: {gate['mae_live3']:.6f}"
+            )
+            lines.append(
+                f"- Порог (live3 × 1.05): {gate['threshold']:.6f}; "
+                f"ratio: {gate['ratio']:.4f}"
+            )
+            lines.append(
+                f"- Δ RMSE: {gate['delta']:+.6f} "
+                f"[{gate['delta_ci'][0]:+.6f}; {gate['delta_ci'][1]:+.6f}]; "
+                f"DM p={gate['dm_p']:.4f}"
+            )
+            lines.append(f"- Решение: **{gate['decision']}**")
+    lines.append("")
     lines.append("## Признаки")
     lines.append("")
     lines.append(
@@ -733,8 +983,13 @@ def write_report(path: Path, payload: dict) -> None:
     lines.append("## Что не проверено")
     lines.append("")
     lines.append(
-        "- Gate 1 (RMSE ≤ текущий `cpi_live3_horizons`/`cpi_monthly_v3` + 5 %) "
-        "требует отдельного прогона baseline на тех же фолдах."
+        "- B1/B3 DM — диагностика, не блокирующий gate: stage 1 — "
+        "промежуточный генератор признаков, не член ансамбля."
+    )
+    lines.append(
+        "- Gate 1 сравнивает stage 1 с live3 h1 на общих заседаниях; "
+        "опубликованные 0.311487 (`cpi_monthly_v3`, `weekly` 2022-01…2026-08, "
+        "32 фолда) — не Gate 1 и напрямую не сравниваются."
     )
     lines.append(
         "- Исторические даты публикации — fallback-правила календаря; доля "
@@ -793,7 +1048,11 @@ def _log_experiment(
             enabled=True,
         )
         logger.log_metrics(
-            {"summary": payload["summary"], "pairs": payload["pairs"]}
+            {
+                "summary": payload["summary"],
+                "pairs": payload["pairs"],
+                "gate1": payload.get("gate1"),
+            }
         )
         logger.log_predictions(
             [
@@ -832,8 +1091,16 @@ def run(
     start: int = DEFAULT_START,
     meetings: Optional[list] = None,
     calendar: Optional[PublicationCalendar] = None,
+    gate1: bool = False,
+    live3_cache: Optional[Path] = None,
 ) -> dict:
-    """Собрать строки, прогнать walk-forward и записать артефакты."""
+    """Собрать строки, прогнать walk-forward и записать артефакты.
+
+    `gate1=True` дополнительно строит same-fold baseline `cpi_live3_horizons`
+    h1 и пишет `gate1` в JSON/отчёт; live3-прогнозы кэшируются в
+    `out_dir/stage1_live3_h1_cache.json` (или в `live3_cache`), чтобы повторный
+    прогон не пересчитывал их.
+    """
     calendar = calendar if calendar is not None else load_calendar()
     all_meetings = load_meetings() if meetings is None else meetings
     selected = [day for day in sorted(set(all_meetings)) if day <= as_of]
@@ -857,9 +1124,23 @@ def run(
         "models": list(MODELS),
         "summary": summary,
         "pairs": pairs,
+        "gate1": None,
     }
 
     out_dir.mkdir(parents=True, exist_ok=True)
+    if gate1:
+        cache_path = (
+            Path(live3_cache)
+            if live3_cache is not None
+            else out_dir / LIVE3_CACHE_NAME
+        )
+        live3_values = load_live3_h1(
+            [row.meeting_date for row in rows],
+            as_of,
+            cache_path=cache_path,
+        )
+        payload["gate1"] = gate1_report(predictions, live3_values)
+
     predictions_path = out_dir / PREDICTIONS_NAME
     result_path = out_dir / RESULT_NAME
     report_path = out_dir / REPORT_NAME
@@ -898,6 +1179,20 @@ def run(
                 f"DM p={item['dm_p']:.4f}, MDE {item['mde_ratio']:.4f}",
                 flush=True,
             )
+    gate = payload.get("gate1")
+    if gate:
+        if gate["decision"] == "INSUFFICIENT":
+            print(
+                f"  Gate 1: INSUFFICIENT (n={gate['n']})",
+                flush=True,
+            )
+        else:
+            print(
+                f"  Gate 1: {gate['decision']} — stage1 RMSE "
+                f"{gate['rmse_stage1']:.6f} vs live3 {gate['rmse_live3']:.6f} "
+                f"(threshold {gate['threshold']:.6f}, n={gate['n']})",
+                flush=True,
+            )
     print(
         f"Артефакты: {predictions_path}, {result_path}, {report_path}",
         flush=True,
@@ -921,6 +1216,22 @@ def main(argv=None) -> int:
         help="каталог артефактов",
     )
     parser.add_argument("--start", type=int, default=DEFAULT_START)
+    parser.add_argument(
+        "--gate1",
+        action="store_true",
+        help=(
+            "посчитать Gate 1: stage 1 y0 против cpi_live3_horizons h1 "
+            "на общих заседаниях"
+        ),
+    )
+    parser.add_argument(
+        "--live3-cache",
+        default=None,
+        help=(
+            "файл кэша live3 h1 (по умолчанию "
+            "<out-dir>/stage1_live3_h1_cache.json)"
+        ),
+    )
     args = parser.parse_args(argv)
     try:
         as_of = (
@@ -929,7 +1240,13 @@ def main(argv=None) -> int:
     except ValueError:
         print(f"ошибка --as-of: {args.as_of!r}", file=sys.stderr)
         return 2
-    run(as_of=as_of, out_dir=Path(args.out_dir), start=args.start)
+    run(
+        as_of=as_of,
+        out_dir=Path(args.out_dir),
+        start=args.start,
+        gate1=args.gate1,
+        live3_cache=Path(args.live3_cache) if args.live3_cache else None,
+    )
     return 0
 
 

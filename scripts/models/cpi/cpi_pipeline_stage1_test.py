@@ -11,8 +11,10 @@ ClickHouse и сеть не нужны: таргеты, USD, ставка, FAO �
 московское время; заседание считается моментом 13:30.
 """
 
+import json
 import math
 import sys
+import tempfile
 import unittest
 from dataclasses import FrozenInstanceError
 from datetime import date, timedelta
@@ -292,6 +294,29 @@ class TestFeaturesAndTargets(Stage1TestBase):
         self.assertAlmostEqual(row.features["key_rate"], 18.0)
         self.assertTrue(math.isfinite(row.features["fao_mm"]))
 
+    def test_key_rate_same_day_decision_excluded(self):
+        # Экстренное решение 2022-02-28 (20 %) не должно попасть в признаки
+        # заседания того же дня: ставка берётся строго до meeting_day.
+        self.key_rate = [
+            (date(2021, 1, 1), 8.5),
+            (date(2022, 2, 28), 20.0),
+        ]
+        row = stage1.build_rows(
+            [date(2022, 2, 28)], CAL, date(2022, 2, 28)
+        )[0]
+        self.assertAlmostEqual(row.features["key_rate"], 8.5)
+
+    def test_key_rate_previous_day_is_included(self):
+        self.key_rate = [
+            (date(2021, 1, 1), 8.5),
+            (date(2022, 2, 27), 9.5),
+            (date(2022, 2, 28), 20.0),
+        ]
+        row = stage1.build_rows(
+            [date(2022, 2, 28)], CAL, date(2022, 2, 28)
+        )[0]
+        self.assertAlmostEqual(row.features["key_rate"], 9.5)
+
 
 class TestWeeklyAsOf(Stage1TestBase):
     def test_weekly_asof_excludes_future_week(self):
@@ -414,6 +439,176 @@ class TestWalkForwardAndEvaluate(Stage1TestBase):
         self.assertEqual(pair["n"], 3)
         self.assertIn("dm_p", pair)
         self.assertEqual(len(pair["delta_ci"]), 2)
+
+
+class TestGate1(Stage1TestBase):
+    AS_OF = date(2026, 10, 23)
+
+    def _predictions(self, stage_errors, live_errors, model="catboost_direct"):
+        rows = sample_rows(len(stage_errors))
+        predictions = [
+            stage1.Stage1Prediction(
+                meeting_date=row.meeting_date,
+                target_month=row.m0,
+                model=model,
+                target="y0",
+                y_true=row.y0,
+                y_pred=row.y0 + error,
+            )
+            for row, error in zip(rows, stage_errors)
+        ]
+        live3 = {
+            row.meeting_date: row.y0 + error
+            for row, error in zip(rows, live_errors)
+        }
+        return predictions, live3
+
+    def test_pass_when_stage1_within_live3_plus_5pct(self):
+        predictions, live3 = self._predictions(
+            [0.10, 0.12, 0.08, 0.09, 0.11, 0.10],
+            [0.40, 0.42, 0.38, 0.39, 0.41, 0.40],
+        )
+        result = stage1.gate1_report(predictions, live3)
+        self.assertEqual(result["decision"], "PASS")
+        self.assertEqual(result["n"], 6)
+        self.assertAlmostEqual(result["threshold"], result["rmse_live3"] * 1.05)
+        self.assertLessEqual(result["rmse_stage1"], result["threshold"])
+        self.assertIn("dm_p", result)
+        self.assertEqual(len(result["delta_ci"]), 2)
+        self.assertEqual(result["baseline"], "cpi_live3_horizons:cpi_v3_h1")
+
+    def test_fail_when_stage1_worse_than_live3_plus_5pct(self):
+        predictions, live3 = self._predictions(
+            [0.50, 0.52, 0.48, 0.49, 0.51, 0.50],
+            [0.10, 0.12, 0.08, 0.09, 0.11, 0.10],
+        )
+        result = stage1.gate1_report(predictions, live3)
+        self.assertEqual(result["decision"], "FAIL")
+        self.assertGreater(result["rmse_stage1"], result["threshold"])
+
+    def test_only_common_meetings_are_compared(self):
+        predictions, live3 = self._predictions(
+            [0.10, 0.12, 0.08, 0.09, 0.11, 0.10],
+            [0.40, 0.42, 0.38, 0.39, 0.41, 0.40],
+        )
+        meetings = sorted(live3)
+        live3[meetings[0]] = None
+        live3[meetings[1]] = None
+        result = stage1.gate1_report(predictions, live3)
+        self.assertEqual(result["n"], 4)
+        self.assertEqual(result["meetings"], [item.isoformat() for item in meetings[2:]])
+
+    def test_target_month_mismatch_is_excluded(self):
+        predictions, live3 = self._predictions(
+            [0.10, 0.12, 0.08, 0.09, 0.11, 0.10],
+            [0.40, 0.42, 0.38, 0.39, 0.41, 0.40],
+        )
+        meetings = sorted(live3)
+        first = predictions[0]
+        live3[meetings[0]] = {
+            "value": live3[meetings[0]],
+            "target_month": shift_month(first.target_month, 1),
+        }
+        live3[meetings[1]] = {
+            "value": live3[meetings[1]],
+            "target_month": predictions[1].target_month,
+        }
+        result = stage1.gate1_report(predictions, live3)
+        self.assertEqual(result["n"], 5)
+        self.assertEqual(
+            result["excluded_target_mismatch"], [meetings[0].isoformat()]
+        )
+
+    def test_insufficient_common_meetings(self):
+        predictions, live3 = self._predictions([0.1], [0.4])
+        result = stage1.gate1_report(predictions, live3)
+        self.assertEqual(result["decision"], "INSUFFICIENT")
+        self.assertEqual(result["n"], 1)
+
+    def test_live3_cache_is_reused(self):
+        calls = []
+
+        def builder(meetings, as_of):
+            calls.append((tuple(meetings), as_of))
+            return {
+                day: 0.1 * (index + 1)
+                for index, day in enumerate(meetings)
+            }
+
+        meetings = [date(2024, 1, 1), date(2024, 2, 1)]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "live3.json"
+            first = stage1.load_live3_h1(
+                meetings, self.AS_OF, cache_path=path, builder=builder
+            )
+            second = stage1.load_live3_h1(
+                meetings, self.AS_OF, cache_path=path, builder=builder
+            )
+            third = stage1.load_live3_h1(
+                meetings, date(2026, 11, 20), cache_path=path, builder=builder
+            )
+        self.assertEqual(first, second)
+        self.assertEqual(len(calls), 2)  # второй вызов — из кэша, третий — новый as_of
+        self.assertEqual(first[date(2024, 1, 1)]["value"], 0.1)
+        self.assertIsNone(first[date(2024, 1, 1)]["target_month"])
+        self.assertEqual(third[date(2024, 1, 1)]["value"], 0.1)
+
+    def test_report_contains_gate1_and_diagnostic_note(self):
+        payload = {
+            "as_of": "2026-10-20",
+            "start": 24,
+            "seed": 1,
+            "n_meetings": 6,
+            "n_predictions": 6,
+            "first_meeting": "2024-01-15",
+            "last_meeting": "2024-06-15",
+            "features": list(stage1.FEATURE_NAMES),
+            "summary": {},
+            "pairs": {},
+            "gate1": {
+                "model": "catboost_direct",
+                "target": "y0",
+                "baseline": "cpi_live3_horizons:cpi_v3_h1",
+                "n": 6,
+                "rmse_stage1": 0.10,
+                "mae_stage1": 0.08,
+                "rmse_live3": 0.40,
+                "mae_live3": 0.35,
+                "threshold": 0.42,
+                "ratio": 0.25,
+                "delta": -0.30,
+                "delta_ci": [-0.40, -0.20],
+                "dm_stat": -2.0,
+                "dm_p": 0.04,
+                "decision": "PASS",
+                "meetings": ["2024-01-15"],
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "report.md"
+            stage1.write_report(path, payload)
+            text = path.read_text(encoding="utf-8")
+        self.assertIn("Gate 1", text)
+        self.assertIn("PASS", text)
+        self.assertIn("диагностика", text)
+
+    def test_report_notes_gate_not_run(self):
+        payload = {
+            "as_of": "2026-10-20",
+            "start": 24,
+            "seed": 1,
+            "n_meetings": 0,
+            "n_predictions": 0,
+            "features": list(stage1.FEATURE_NAMES),
+            "summary": {},
+            "pairs": {},
+            "gate1": None,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "report.md"
+            stage1.write_report(path, payload)
+            text = path.read_text(encoding="utf-8")
+        self.assertIn("не рассчитан", text)
 
 
 if __name__ == "__main__":
