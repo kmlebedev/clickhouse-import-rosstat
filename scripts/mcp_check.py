@@ -1091,8 +1091,8 @@ async def check(params, server_log):
                 rosstat_view_detail = (f"строк: {rosstat_points_n}, рядов: {rosstat_series_n} — прогнать "
                                        "импортёры контура по одному: make import STAT=<имя> для "
                                        "каждого из rosstat_ipc_mes, rosstat_ipc_weeks, "
-                                       "rosstat_ipc_weeks_bulletins, rosstat_salaries_mes, "
-                                       "rosstat_vvp_kvartal, rosstat_labour_force_mes")
+                                       "rosstat_ipc_weeks_bulletins, rosstat_bi_cpi_weekly, "
+                                       "rosstat_salaries_mes, rosstat_vvp_kvartal, rosstat_labour_force_mes")
             failed += not expect("витрина v_rosstat_macro непуста",
                                  (rosstat_points_n or 0) > 0 and (rosstat_series_n or 0) > 0, rosstat_view_detail)
 
@@ -1104,7 +1104,8 @@ async def check(params, server_log):
             # в XLSX-выгрузке нет («Сорочка верхняя для мальчиков школьного возраста» добавлена
             # расширением 2026-10-16, «Говядина тушеная» — расширением 2009–2015 в 2026-10-17),
             # — а канонические товары бюллетеней описаны общей метой 131 недельного товара и
-            # новых строк каталога не дают.
+            # новых строк каталога не дают. BI использует тот же агрегатный ряд «Индекс
+            # потребительских цен (недельная оценка)», поэтому новых строк каталога не даёт и он.
             # Число сверяется точным равенством, а не «> 0»: односторонний контракт §11.4
             # стандарта требует описания каждого разобранного ряда, а меньше 165 значит
             # ни разу не отработавший импортёр (числа агент прочитает, а что измеряет ряд
@@ -1125,8 +1126,9 @@ async def check(params, server_log):
                 rosstat_catalog_detail = (f"рядов rosstat: {rosstat_catalog_n}, want 165 — прогнать "
                                           "импортёры по одному: make import STAT=<имя> для каждого "
                                           "из rosstat_ipc_mes, rosstat_ipc_weeks, "
-                                          "rosstat_ipc_weeks_bulletins, rosstat_salaries_mes, "
-                                          "rosstat_vvp_kvartal, rosstat_labour_force_mes "
+                                          "rosstat_ipc_weeks_bulletins, rosstat_bi_cpi_weekly, "
+                                          "rosstat_salaries_mes, rosstat_vvp_kvartal, "
+                                          "rosstat_labour_force_mes "
                                           "(каталог перепубликовывается каждым прогоном)")
             failed += not expect("каталог rosstat полон", rosstat_catalog_n == 165, rosstat_catalog_detail)
 
@@ -1141,32 +1143,42 @@ async def check(params, server_log):
                                  ("rosstat_ipc_weeks_bulletins", "недельные ИПЦ из бюллетеней"),
                                  ("rosstat_salaries_mes", "зарплата помесячно"),
                                  ("rosstat_vvp_kvartal", "ВВП поквартально"),
-                                 ("rosstat_labour_force_mes", "рабочая сила и безработица")):
+                                 ("rosstat_labour_force_mes", "рабочая сила и безработица"),
+                                 ("rosstat_bi_cpi_weekly", "недельный агрегат ИПЦ из BI")):
                 raw = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {table}"}))
                 denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
                 failed += not expect(f"сырая {table} закрыта ({label})", denied,
                                      f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
 
-            # Агрегатный ряд бюллетеней виден агенту и непуст: он есть ровно в каждом выпуске
-            # импортёра, поэтому ожидание точное — 502 точки (48 живых недельных выпусков
-            # 2020-12-28…2021-12-27 + 454 Wayback-выпусков 2009–2021: расширения 2026-10-16/17 —
-            # приложения В, Д и Е спеки, систематическая разведка scripts/harvest.py по всему
-            # дереву Stg/ и снятие фильтра CDX from=2016, вернувшее 214 недель 2009–2015).
-            # Меньшее число значит не доехавший прогон
-            # rosstat_ipc_weeks_bulletins (или ещё идущий: точки публикуются по мере разбора
-            # выпусков), поэтому detail печатает наблюдённое число; каталог этот разрыв не
-            # поймает — он полон и до первых точек.
-            rosstat_bulletins = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_rosstat_macro WHERE source = 'rosstat' AND series = 'Индекс потребительских цен (недельная оценка)'"}))
-            rosstat_bulletins_rows = result_rows(rosstat_bulletins)
-            rosstat_bulletins_n = rosstat_bulletins_rows[0].get("n") if rosstat_bulletins_rows else None
-            if rosstat_bulletins_rows is None:
-                rosstat_bulletins_detail = f"ответ не распознан: {rosstat_bulletins[:200]}"
-            elif rosstat_bulletins_n == 502:
-                rosstat_bulletins_detail = "точек агрегатного ряда: 502 (48 живых недель 2020-12-28…2021-12-27 + 454 Wayback-выпусков 2009–2021)"
+            # Агрегатный ряд Росстата теперь составной: 362 точки бюллетеней до 2019-01-09
+            # и 398 точек BI 2019-01-09…2026-10-12 (снимок 2026-10-20); BI приоритетен на
+            # пересечении 2019–2021, поэтому в витрине одна точка на дату (760 = 362 + 398).
+            # BI растёт еженедельно, поэтому проверка — «>= 760» и «max >= 2026-10-12», а не
+            # точное равенство. Семь новогодних недель источник не публикует — их отсутствие
+            # ожидаемо, а не провал.
+            rosstat_aggregate = text(await session.call_tool("run_query", {"query":
+                "SELECT count() AS n, min(date) AS mn, max(date) AS mx "
+                "FROM v_rosstat_macro WHERE source = 'rosstat' AND series = 'Индекс потребительских цен (недельная оценка)'"}))
+            rosstat_aggregate_rows = result_rows(rosstat_aggregate)
+            rosstat_aggregate_n = rosstat_aggregate_rows[0].get("n") if rosstat_aggregate_rows else None
+            rosstat_aggregate_mn = rosstat_aggregate_rows[0].get("mn") if rosstat_aggregate_rows else None
+            rosstat_aggregate_mx = rosstat_aggregate_rows[0].get("mx") if rosstat_aggregate_rows else None
+            if rosstat_aggregate_rows is None:
+                rosstat_aggregate_detail = f"ответ не распознан: {rosstat_aggregate[:200]}"
+            elif ((rosstat_aggregate_n or 0) >= 760 and rosstat_aggregate_mn == "2009-04-06"
+                  and (rosstat_aggregate_mx or "") >= "2026-10-12"):
+                rosstat_aggregate_detail = (f"точек агрегатного ряда: {rosstat_aggregate_n} (>= 760; "
+                                            "362 бюллетеня до 2019-01-09 + 398+ BI), "
+                                            f"2009-04-06…{rosstat_aggregate_mx}")
             else:
-                rosstat_bulletins_detail = (f"точек агрегатного ряда: {rosstat_bulletins_n}, want 502 — прогнать "
-                                            "make import STAT=rosstat_ipc_weeks_bulletins")
-            failed += not expect("агрегатный ряд бюллетеней rosstat непуст", rosstat_bulletins_n == 502, rosstat_bulletins_detail)
+                rosstat_aggregate_detail = (f"точек агрегатного ряда: {rosstat_aggregate_n} "
+                                            f"({rosstat_aggregate_mn}…{rosstat_aggregate_mx}), want >= 760 "
+                                            "2009-04-06…>=2026-10-12 — прогнать "
+                                            "make import STAT=rosstat_ipc_weeks_bulletins и "
+                                            "make import STAT=rosstat_bi_cpi_weekly")
+            failed += not expect("агрегатный ряд rosstat полон (бюллетени + BI)",
+                                 (rosstat_aggregate_n or 0) >= 760 and rosstat_aggregate_mn == "2009-04-06"
+                                 and (rosstat_aggregate_mx or "") >= "2026-10-12", rosstat_aggregate_detail)
 
             # Контур Минфина (пункт key-rate/phase-2-minfin-scrape, спека 2026-10-19
             # minfin-deficit-oil-gas §4.2): витрина v_minfin_budget читается агентом и
