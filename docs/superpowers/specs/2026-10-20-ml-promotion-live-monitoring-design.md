@@ -52,7 +52,7 @@ Gate работает на `v_ml_runs`/`v_ml_error_by_fold`; вход — два
 
 **Правило (зафиксировано до результатов):**
 
-1. Минимум **12** общих фолдов; иначе `iterate` с причиной `insufficient_folds`.
+1. Минимум **12** общих фолдов в основном окне; иначе `iterate` с причиной `insufficient_folds`. Для robustness-окна минимум **6** общих фолдов; более короткое окно пропускается с пометкой `insufficient_folds` и не участвует в rejection (у CPI `start=48` исторически 9 фолдов).
 2. `promote` требует одновременно:
    - `RMSE_challenger < RMSE_champion` на общих фолдах основного окна;
    - DM-HLN (поправка Harvey–Leybourne–Newbold) `p < 0,05` в пользу challenger, `h=1`;
