@@ -32,14 +32,14 @@ import csv
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[3]
 
 # Скрипт-сосед: переиспользуем транспорт к ClickHouse, а не копируем его.
 # `ch_query` уже несёт маскирование секретов в тексте ошибок, правильный
 # HTTP-порт (8123, а не нативный 9000) и обработку `RemoteDisconnected`.
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import extrapolation_aisc as aisc
+from models.polyus import aisc
 
 ch_query = aisc.ch_query
 
@@ -81,7 +81,7 @@ TCC_PROXY_USD_PER_OZ = 735.0
 class OutputDataError(Exception):
     """Факт выпуска за запрошенный год отсутствует или непригоден.
 
-    Отличие от `extrapolation_aisc.read_actual_production` принципиальное: там
+    Отличие от `aisc.read_actual_production` принципиальное: там
     ноль — НОРМАЛЬНЫЙ результат (в датапаке есть законно нулевые активы, и
     вызывающий сам решает, писать ли строку). Здесь ноль означает «факта нет»,
     а строка плана с нулевым выпуском занизила бы NPV Сухого Лога, не будучи
@@ -174,7 +174,7 @@ GO_SEED_SUKHOI_LOG_YEARS = go_seed_years()
 def output_sql(asset: str, year: int) -> str:
     """SQL для годового выпуска актива по метрике `REFINED_METRIC`, тыс. унц.
 
-    Предикат — тот же, что у `extrapolation_aisc.production_sql` (и, через
+    Предикат — тот же, что у `aisc.production_sql` (и, через
     него, у `dcf/mine_plans_import.go`), с одной заменой метрики: один и тот
     же факт не должен читаться двумя источниками двумя разными способами.
 
@@ -192,7 +192,7 @@ def output_sql(asset: str, year: int) -> str:
 
     Имя актива подставляется в литерал, а не параметром (HTTP-интерфейс требует
     текст запроса целиком), поэтому одинарная кавычка в имени ЭКРАНИРУЕТСЯ
-    удвоением — так же, как в `extrapolation_aisc.sql_literal`. ПРОВЕРКА ФОРМЫ
+    удвоением — так же, как в `aisc.sql_literal`. ПРОВЕРКА ФОРМЫ
     ИМЕНИ ЗДЕСЬ НЕУМЕСТНА: каноническое имя актива у Полюса — «Sukhoi Log», с
     пробелом и смешанным регистром (`dcf/mine_plans_seed.go` документирует это
     прямо), и шаблон вида `^[A-Z][A-Z0-9_]*$` отверг бы законные данные. Go-сид
@@ -216,7 +216,7 @@ def output_sql(asset: str, year: int) -> str:
 def _quote(value: str) -> str:
     """Литерал ClickHouse для строки: одинарные кавычки с удвоением тика.
 
-    `O'HARA` → `'O''HARA'`. Тот же приём, что в `extrapolation_aisc.sql_literal`,
+    `O'HARA` → `'O''HARA'`. Тот же приём, что в `aisc.sql_literal`,
     и по той же причине: литерал не должен разрывать текст запроса. Перевода
     строки в имени актива не бывает, а кавычка — единственный символ, способный
     выйти за пределы литерала, поэтому удвоения достаточно.
@@ -242,7 +242,7 @@ def read_refined_output(asset: str, year: int) -> float:
     # КОНЕЧНОСТЬ проверяется ЯВНО, а не через `<= 0`: сравнение с NaN всегда
     # ложно, поэтому NaN прошёл бы любую знаковую проверку и разъехался бы по
     # NPV, где сравнения с ним тоже ложны (тот же довод, что в
-    # `extrapolation_aisc.sql_literal`, отвергающем NaN/inf).
+    # `aisc.sql_literal`, отвергающем NaN/inf).
     if result != result or result in (float("inf"), float("-inf")):
         raise OutputDataError(
             f"выпуск {asset} за {year} не конечен ({value!r}): "
@@ -299,7 +299,7 @@ def build_rows(measured: dict) -> list:
     оценка допускается только там, где публикации нет по построению — в
     последнем году окна.
 
-    Ключи строки ДОСЛОВНО совпадают с `extrapolation_aisc.MINE_PLANS_COLUMNS`,
+    Ключи строки ДОСЛОВНО совпадают с `aisc.MINE_PLANS_COLUMNS`,
     чтобы эмиттер мог печатать их тем же `sql_batches`, что и AISC-сид: строка
     плана — один контракт на два скрипта, а не два похожих словаря.
 
