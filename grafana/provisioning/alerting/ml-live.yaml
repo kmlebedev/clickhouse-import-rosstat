@@ -42,9 +42,20 @@ groups:
                                 ORDER BY target_date
                                 ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
                             ) AS rolling_mae_bp
-                        FROM v_ml_live_accuracy
-                        WHERE stage = 'production' AND is_resolved = 1
-                          AND model != 'gate-selftest'
+                        FROM (
+                            SELECT
+                                track,
+                                target_date,
+                                abs_error_bp,
+                                row_number() OVER (
+                                    PARTITION BY track, target_date
+                                    ORDER BY forecast_date DESC
+                                ) AS rn
+                            FROM v_ml_live_accuracy
+                            WHERE stage = 'production' AND is_resolved = 1
+                              AND model != 'gate-selftest'
+                        )
+                        WHERE rn = 1
                     )
                     GROUP BY track
                 )

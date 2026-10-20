@@ -107,6 +107,8 @@ func TestMLLiveAlertProvisioning(t *testing.T) {
 		"avg(abs_error_bp) OVER",
 		"ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
 		"argMax(rolling_mae_bp, target_date)",
+		"row_number() OVER",
+		"PARTITION BY track, target_date",
 		"model != 'gate-selftest'",
 	} {
 		if !strings.Contains(degradationSQL, want) {
