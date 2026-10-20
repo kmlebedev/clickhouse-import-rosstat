@@ -246,6 +246,42 @@
     "section": "Исследования"
   },
   {
+    "source": "docs/research/2026-10-20-ppi-sa-methodology.md",
+    "page": "research-2026-10-20-ppi-sa-methodology.md",
+    "title": "ИЦП SA: методология Росстата и паритет с ЦБ",
+    "section": "Исследования"
+  },
+  {
+    "source": "docs/research/2026-10-20-cbr-kpm-dip-review.md",
+    "page": "research-2026-10-20-cbr-kpm-dip-review.md",
+    "title": "КПМ ДИП/ДДКП ЦБ: структурные бенчмарки",
+    "section": "Исследования"
+  },
+  {
+    "source": "docs/research/2026-10-20-cbr-rule.md",
+    "page": "research-2026-10-20-cbr-rule.md",
+    "title": "cbr_rule: калиброванное правило ЦБ",
+    "section": "Исследования"
+  },
+  {
+    "source": "docs/research/2026-10-20-cbr-scenario-fan.md",
+    "page": "research-2026-10-20-cbr-scenario-fan.md",
+    "title": "Сценарный веер ставки с shock-aware слоем",
+    "section": "Исследования"
+  },
+  {
+    "source": "docs/research/2026-10-20-cbr-scenario-fan-v2.md",
+    "page": "research-2026-10-20-cbr-scenario-fan-v2.md",
+    "title": "Веер v2: ядро ordered logit/ML + дисперсия",
+    "section": "Исследования"
+  },
+  {
+    "source": "docs/research/2026-10-20-cbr-scenario-fan-v3.md",
+    "page": "research-2026-10-20-cbr-scenario-fan-v3.md",
+    "title": "Веер v3: channel-complete ядро + volatility-дисперсия",
+    "section": "Исследования"
+  },
+  {
     "source": "docs/Золото_Q3-2026_итоги_и_прогноз_Q4-2026.md",
     "page": "article-gold-q3-2026.md",
     "title": "Золото: итоги Q3 2026",
