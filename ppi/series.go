@@ -414,7 +414,11 @@ func buildSeries(ved, product []rawPoint, m *ppiMapping, w *ppiWeights) (ppiSeri
 		if points[point.Code] == nil {
 			points[point.Code] = map[time.Time]float64{}
 		}
-		points[point.Code][normalizeDate(point.Date)] = point.Value
+		date := normalizeDate(point.Date)
+		if _, exists := points[point.Code][date]; exists {
+			return nil, fmt.Errorf("product: дубль %s/%s после FINAL", point.Code, date.Format("2006-01"))
+		}
+		points[point.Code][date] = point.Value
 	}
 
 	scopes := []struct {

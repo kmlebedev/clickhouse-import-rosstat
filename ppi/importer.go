@@ -29,9 +29,11 @@ FROM rosstat_ppi_product FINAL
 WHERE index_type = 'm/m'
 ORDER BY okpd2, date`
 	// ppiSAPublishedQuery — as-of входного винтажа: когда конвейер впервые увидел
-	// файл источника. Это не официальная дата публикации Росстата (её в
-	// машиночитаемом виде нет), поэтому колонка и оговорка названы явно.
-	ppiSAPublishedQuery = `SELECT toDate(max(first_seen))
+	// файл источника. maxOrNull обязателен: max() по пустой выборке в ClickHouse
+	// даёт NULL, но toDate(NULL)-семантика разных версий различна, а 1970-01-01 в
+	// published_at был бы ложной датой. Это не официальная дата публикации
+	// Росстата (её в машиночитаемом виде нет), поэтому колонка и оговорка названы явно.
+	ppiSAPublishedQuery = `SELECT toDate(maxOrNull(first_seen))
 FROM source_publications FINAL
 WHERE source = ?`
 )
@@ -231,12 +233,22 @@ func readInputs(ctx context.Context, conn driver.Conn) (ved, product []rawPoint,
 	return ved, product, nil
 }
 
-// inputFingerprint — SHA-256 канонически отсортированных входов и версий.
-// Правка любого значения, spec или taxonomy меняет версию: повтор становится
-// полным прогоном, а не ложным no-op.
+// inputFingerprint — SHA-256 канонически отсортированных входов, версий и
+// пинов встроенных данных/скрипта. Правка R-скрипта или CSV без bump версии
+// всё равно меняет отпечаток (пины входят в хеш), поэтому повтор станет полным
+// прогоном, а не ложным no-op.
 func inputFingerprint(ved, product []rawPoint) string {
+	return inputFingerprintWithPins(ved, product, [3]string{
+		ppiX13ScriptSHA256, ppiMappingSHA256, ppiWeightsSHA256,
+	})
+}
+
+// inputFingerprintWithPins — та же функция с явными пинами: тест проверяет,
+// что смена любого пина меняет отпечаток.
+func inputFingerprintWithPins(ved, product []rawPoint, pins [3]string) string {
 	hash := sha256.New()
-	_, _ = fmt.Fprintf(hash, "spec=%s\ntaxonomy=%s\n", ppiSASpecVersion, ppiSATaxonomyVersion)
+	_, _ = fmt.Fprintf(hash, "spec=%s\ntaxonomy=%s\nx13=%s\nmapping=%s\nweights=%s\n",
+		ppiSASpecVersion, ppiSATaxonomyVersion, pins[0], pins[1], pins[2])
 
 	vedSorted := append([]rawPoint(nil), ved...)
 	sort.Slice(vedSorted, func(i, j int) bool {

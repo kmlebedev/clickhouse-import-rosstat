@@ -123,7 +123,7 @@ ORDER BY (date, series, method, spec_version, taxonomy_version);
 
 ## 7. Каталог рядов
 
-5 записей `series_catalog` (`source='ppi_sa'`): `total`, `food`, `nonfood`, `all`, `core`. `title` — что за ряд и база; `unit` — «индекс (100 = первый месяц ряда); mm_sa/saar/saar3 — %»; `frequency='M'`; `origin` — `rosstat_ppi_ved`/`rosstat_ppi_product` + X-13 `seats_log_cal` + версии; `description` — как читать колонки, что `saar3` — среднее трёх SAAR, что уровни разных рядов несопоставимы, что паритет с ЦБ не заявлен. Витрина и грант — T5.
+5 записей `series_catalog` (`source='ppi_sa'`): `total`, `food`, `nonfood`, `all`, `core`. `title` — что за ряд и база; `unit` — «индекс (100 = первый месяц ряда); mm_sa/saar/saar3 — %»; `frequency='M'`; `origin` — `rosstat_ppi_ved`/`rosstat_ppi_product` + X-13 `seats_log_cal` + версии; `description` — как читать колонки, что `saar3` — среднее доступных SAAR (на третьем месяце — двух), что уровни разных рядов несопоставимы, что паритет с ЦБ не заявлен. Витрина и грант — T5.
 
 ## 8. Расписание
 
@@ -131,12 +131,12 @@ ORDER BY (date, series, method, spec_version, taxonomy_version);
 
 ## 9. Паритет
 
-10 текстовых якорей «Инфляции в России» (4 food, 4 non-food, 2 all → `core`) — [`2026-10-21-ppi-sa-anchors.csv`](../research/2026-10-21-ppi-sa-anchors.csv). `scripts/ppi_sa_parity.py` читает `ppi_sa` read-only через `scripts/lib/clickhouse.py`, берёт `saar3` на target-месяц и считает MAE/max/bias/corr по рядам и overall; результат — `docs/research/2026-10-21-ppi-sa-parity.json` и таблица в отчёте. Цель ±0,3 п.п. не достигнута в T3; T4 **публикует расхождение** с числами, без подгонки весов.
+10 текстовых якорей «Инфляции в России» (4 food, 4 non-food, 2 all → `core`; для `all` primary — `core`, чёрная линия ЦБ, широкий `all` — secondary T3 и в T4 не публикуется) — [`2026-10-21-ppi-sa-anchors.csv`](../research/2026-10-21-ppi-sa-anchors.csv). `scripts/ppi_sa_parity.py` читает `ppi_sa` read-only через `scripts/lib/clickhouse.py`, берёт `saar3` на target-месяц и считает MAE/max/bias/corr по рядам и overall; результат — `docs/research/2026-10-21-ppi-sa-parity.json` и таблица в отчёте. Цель ±0,3 п.п. не достигнута в T3; T4 **публикует расхождение** с числами, без подгонки весов.
 
 ## 10. Тесты
 
-- Go: парсинг mapping/панели; полнота весов 2026 для всех mapped-групп; KIPC-иерархия (соседи `04.3.1.1.1`/`.10`); вес 2026 (панель содержит `2022-04`); агрегация против эталонного CSV; цепочка/непрерывность; формула SAAR и краевые `NULL`; парсинг выхода R; пины SHA-256; версии в каждой строке; стабильность отпечатка; решение гейта; реестр/dagu; каталог 5 рядов; ошибка «Rscript не найден» через подменяемый runner.
-- Python: экспорт полной панели (фикстура/скип без XLSX); паритетная математика и моки запроса.
+- Go: парсинг mapping/панели; полнота весов 2026 для всех mapped-групп; KIPC-иерархия (соседи `04.3.1.1.1`/`.10`); вес 2026 (панель содержит `2022-04`); агрегация против эталонного CSV; цепочка/непрерывность; формула SAAR и краевые `NULL`; парсинг выхода R; пины SHA-256; версии в каждой строке; стабильность отпечатка (включая пины); решение гейта; реестр/dagu; каталог 5 рядов; ошибка «Rscript не найден» (PATH без Rscript); минимальный env R без секретов.
+- Python: экспорт полной панели — чистые функции выбора/полноты (XLSX не нужен); паритетная математика и моки запроса.
 - `make all` (включает `go test -race ./...`), `make docs-check`, `dagu validate dagu/ppi.yaml`; Python-наборы — отдельными командами.
 
 ## 11. Приёмка

@@ -61,7 +61,11 @@ func runX13(ctx context.Context, input []byte) ([]byte, error) {
 	runCtx, cancel := context.WithTimeout(ctx, ppiX13Timeout)
 	defer cancel()
 	cmd := exec.CommandContext(runCtx, rscript, scriptPath, inputPath, outputPath)
-	cmd.Env = os.Environ()
+	// R не нужны секреты конвейера (CLICKHOUSE_URL/пароли/токены): передаём только
+	// то, без чего не работает Rscript, включая пользовательскую библиотеку.
+	cmd.Env = rEnvironment()
+	// Если R не закрывает pipes после Kill по контексту, Wait не должен висеть вечно.
+	cmd.WaitDelay = 10 * time.Second
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -74,6 +78,20 @@ func runX13(ctx context.Context, input []byte) ([]byte, error) {
 	}
 	log.Infof("ppi_sa: X-13 %s", strings.TrimSpace(stdout.String()))
 	return result, nil
+}
+
+// rEnvironment — минимальное окружение Rscript: пути, локаль, временный каталог
+// и пользовательская библиотека. Секреты конвейера (DSN, пароли, токены) в R не
+// передаются.
+func rEnvironment() []string {
+	keys := []string{"PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "R_LIBS_USER", "R_LIBS", "R_LIBS_SITE"}
+	env := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if value, ok := os.LookupEnv(key); ok {
+			env = append(env, key+"="+value)
+		}
+	}
+	return env
 }
 
 // tail оставляет хвост вывода R: начало stderr часто занимает шум загрузки

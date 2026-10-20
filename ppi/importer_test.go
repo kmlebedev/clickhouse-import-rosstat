@@ -65,6 +65,20 @@ func TestInputFingerprintStable(t *testing.T) {
 	}
 }
 
+func TestInputFingerprintPins(t *testing.T) {
+	ved := []rawPoint{{Date: month(2013, 1, 31), Code: ppiSATotalCode, Value: 100}}
+	product := []rawPoint{{Date: month(2021, 1, 31), Code: "01.1.1", Value: 100}}
+	pins := [3]string{"x13-a", "mapping-a", "weights-a"}
+	base := inputFingerprintWithPins(ved, product, pins)
+	if same := inputFingerprintWithPins(ved, product, pins); same != base {
+		t.Fatalf("отпечаток нестабилен при тех же пинах: %s != %s", same, base)
+	}
+	changed := [3]string{"x13-a", "mapping-a", "weights-b"}
+	if got := inputFingerprintWithPins(ved, product, changed); got == base {
+		t.Fatal("смена пина weights не изменила отпечаток: правка данных без bump версии останется no-op")
+	}
+}
+
 func TestBuildRowsVersions(t *testing.T) {
 	series := testSeries(3)
 	published := map[string]sql.NullTime{
@@ -146,6 +160,12 @@ func TestSchema(t *testing.T) {
 	}
 	if ppiSACountPoints != "SELECT count() FROM ppi_sa FINAL" {
 		t.Fatalf("countPoints = %q", ppiSACountPoints)
+	}
+}
+
+func TestPublishedQueryUsesMaxOrNull(t *testing.T) {
+	if !strings.Contains(ppiSAPublishedQuery, "maxOrNull") {
+		t.Fatalf("published_at запрос без maxOrNull: %q", ppiSAPublishedQuery)
 	}
 }
 
