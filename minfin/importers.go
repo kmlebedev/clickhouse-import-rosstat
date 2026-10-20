@@ -28,6 +28,9 @@ var minfinImporters = []minfinImporter{
 	{fedbudMes, "minfin_fed_bud_mes", ""},
 	{fedbudMesyats, "minfin_fed_bud_mesyats", ""},
 	{oilGasMes, "minfin_oil_gas_mes", "SELECT count() FROM minfin_oil_gas_mes FINAL"},
+	{ofzAuctionImporter, "minfin_ofz_auction", ""},
+	{debtStockImporter, "minfin_debt_stock", ""},
+	{debtServiceImporter, "minfin_debt_service", ""},
 }
 
 // init — единственная регистрация импортёров Минфина в chimport.Stats. main.go
