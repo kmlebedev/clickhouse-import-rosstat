@@ -53,6 +53,9 @@ GRANT SELECT ON default.v_point_in_time TO kimi_reader;
 GRANT SELECT ON default.v_point_in_time_asof TO kimi_reader;
 GRANT SELECT ON default.v_point_in_time_version TO kimi_reader;
 GRANT SELECT ON default.v_cbr_mt_forecast TO kimi_reader;
+-- График публикаций ЦБ и исторические published_at (пункт key-rate/phase-4-cbr-publication-calendar, #299).
+GRANT SELECT ON default.v_cbr_publication_calendar TO kimi_reader;
+GRANT SELECT ON default.v_series_publication TO kimi_reader;
 GRANT SELECT ON default.v_bank_loan_portfolio_forward TO kimi_reader;
 GRANT SELECT ON default.v_cbr_form101 TO kimi_reader;
 GRANT SELECT ON default.v_cbr_form101_loans TO kimi_reader;
