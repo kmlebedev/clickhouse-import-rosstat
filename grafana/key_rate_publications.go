@@ -194,6 +194,40 @@ func krOfzYieldSQL(tenor, alias string) string {
 	return fmt.Sprintf(krOfzYieldTemplate, alias, tenor)
 }
 
+// krOfzCoverageSQL — покрытие спроса на аукционе: v_ofz_stress, одна точка на аукцион.
+// NULL — аукцион не состоялся/сделок не было; фильтр окна по date.
+const krOfzCoverageSQL = `SELECT date AS time, coverage_ratio AS "Покрытие спроса, доля"
+FROM v_ofz_stress
+WHERE coverage_ratio IS NOT NULL AND $__timeFilter(date)
+ORDER BY date
+`
+
+// krOfzCutoffSpreadSQL — доходность отсечения минус ближайший тенор КБД ЦБ на дату
+// аукциона, п.п.; кривая ЦБ — прокси вторичного рынка, а не сделки.
+const krOfzCutoffSpreadSQL = `SELECT date AS time, cutoff_minus_secondary_pp AS "Отсечение − КБД, п.п."
+FROM v_ofz_stress
+WHERE cutoff_minus_secondary_pp IS NOT NULL AND $__timeFilter(date)
+ORDER BY date
+`
+
+// krOfzDebtServiceSQL — доля обслуживания долга в доходах федерального бюджета;
+// значение месячное и повторяется на аукционах месяца, поэтому max() на дату.
+const krOfzDebtServiceSQL = `SELECT date AS time, max(debt_service_to_revenue) AS "Обслуживание / доходы"
+FROM v_ofz_stress
+WHERE debt_service_to_revenue IS NOT NULL AND $__timeFilter(date)
+GROUP BY date
+ORDER BY date
+`
+
+// krOfzStockChangeSQL — изменение номинала ОФЗ к предыдущему месяцу, млрд руб.;
+// значение месячное, max() на дату аукциона убирает повтор по выпускам.
+const krOfzStockChangeSQL = `SELECT date AS time, max(ofz_stock_change) AS "Δ запаса ОФЗ, млрд руб."
+FROM v_ofz_stress
+WHERE ofz_stock_change IS NOT NULL AND $__timeFilter(date)
+GROUP BY date
+ORDER BY date
+`
+
 // krRuoniaSpreadSQL — спред RUONIA к ключевой ставке самоджойном витрины по дате: RUONIA дневная,
 // ключевая меняется решениями, и клиентское вычитание двух серий дало бы спред к ставке другой даты.
 // Знак: минус — ставка денежного рынка ниже ключевой (ликвидность мягкая), плюс — выше (жёсткая).
@@ -359,6 +393,10 @@ func NewKeyRatePublications() *dashboard.DashboardBuilder {
 		WithPanel(krKeyrateSnapshotPanel()).
 		WithPanel(krOfzCurvePanel()).
 		WithPanel(krRuoniaPanel()).
+		WithPanel(krOfzCoveragePanel()).
+		WithPanel(krOfzCutoffSpreadPanel()).
+		WithPanel(krOfzDebtServicePanel()).
+		WithPanel(krOfzStockChangePanel()).
 		WithRow(dashboard.NewRowBuilder("Сигнал, консенсус, календарь").Id(firstKeyRateRowID + 3)).
 		WithPanel(krConsensusPanel()).
 		WithPanel(krMpSummaryPanel()).
@@ -653,6 +691,66 @@ func krRuoniaPanel() *timeseries.PanelBuilder {
 		WithTarget(timeseriesQuery("B", krMacroValueSQL("cbr_key_rate", `"Ключевая ставка, % годовых"`))).
 		WithTarget(timeseriesQuery("C", krRuoniaSpreadSQL)).
 		Unit(units.Percent)
+}
+
+// krOfzCoveragePanel — панель 25: покрытие спроса на аукционах ОФЗ. Одна точка на
+// аукцион (v_ofz_stress), покрытие — доля: 0.3 = размещено 30 % спроса. NULL — аукцион
+// не состоялся или сделок не было; это не ноль.
+func krOfzCoveragePanel() *timeseries.PanelBuilder {
+	return krPanelDefaults(timeseries.NewPanelBuilder()).
+		Id(25).
+		Title("Аукционы ОФЗ: покрытие спроса").
+		Span(spanHalf).
+		Description("Отношение размещённого объёма к спросу на аукционе ОФЗ (v_ofz_stress, " +
+			"coverage_ratio; 0.3 = размещено 30 % спроса). Точки — даты аукционов, а не регулярный " +
+			"ряд; NULL — аукцион не состоялся или сделок не было, это не ноль.").
+		WithTarget(timeseriesQuery("A", krOfzCoverageSQL)).
+		Unit(units.PercentUnit)
+}
+
+// krOfzCutoffSpreadPanel — панель 26: доходность отсечения минус ближайший тенор КБД ЦБ.
+// КБД — кривая бескупонной доходности, а не сделки вторичного рынка; спред в п.п.
+func krOfzCutoffSpreadPanel() *timeseries.PanelBuilder {
+	return krPanelDefaults(timeseries.NewPanelBuilder()).
+		Id(26).
+		Title("Аукционы ОФЗ: отсечение − КБД").
+		Span(spanHalf).
+		Description("Доходность по цене отсечения минус доходность ближайшего тенора КБД ЦБ на " +
+			"дату аукциона (v_ofz_stress, cutoff_minus_secondary_pp, п.п.). КБД — кривая " +
+			"бескупонной доходности ЦБ, а не сделки вторичного рынка; положительное значение — " +
+			"аукцион дороже кривой. NULL — нет одной из доходностей.").
+		WithTarget(timeseriesQuery("A", krOfzCutoffSpreadSQL)).
+		Unit(units.Percent)
+}
+
+// krOfzDebtServicePanel — панель 27: доля обслуживания долга в доходах федерального
+// бюджета. Значение месячное и повторяется на аукционах месяца; 2022–2023 — NULL.
+func krOfzDebtServicePanel() *timeseries.PanelBuilder {
+	return krPanelDefaults(timeseries.NewPanelBuilder()).
+		Id(27).
+		Title("Долг: обслуживание в доходах").
+		Span(spanHalf).
+		Description("Расходы на обслуживание долга / доходы федерального бюджета за месяц " +
+			"(v_ofz_stress, debt_service_to_revenue; 0.05 = 5 %). До 2022 — бюджетная строка " +
+			"(федеральный и муниципальный долг), с 2024 — обслуживание федеральных ценных бумаг; " +
+			"2022–2023 — NULL (пробел источника), поэтому линия разорвана, а не равна нулю.").
+		WithTarget(timeseriesQuery("A", krOfzDebtServiceSQL)).
+		Unit(units.PercentUnit)
+}
+
+// krOfzStockChangePanel — панель 28: изменение номинала ОФЗ к предыдущему месяцу.
+// Значение месячное, повторяется на аукционах месяца; NULL — нет одного из месяцев.
+func krOfzStockChangePanel() *timeseries.PanelBuilder {
+	return krPanelDefaults(timeseries.NewPanelBuilder()).
+		Id(28).
+		Title("Долг: изменение запаса ОФЗ").
+		Span(spanHalf).
+		Description("Изменение номинала ОФЗ на 1-е число месяца к предыдущему месяцу " +
+			"(v_ofz_stress, ofz_stock_change, млрд руб.): положительное — чистое наращивание " +
+			"запаса, отрицательное — погашение. NULL — нет одного из месяцев (пропуски публикации " +
+			"структуры), это не ноль.").
+		WithTarget(timeseriesQuery("A", krOfzStockChangeSQL)).
+		Unit(units.Rubles)
 }
 
 // krConsensusPanel — панель 15: консенсус макроопроса ЦБ — медианы прогнозов по ключевой ставке
