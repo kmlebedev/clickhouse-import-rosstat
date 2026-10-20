@@ -1168,6 +1168,44 @@ async def check(params, server_log):
                                             "make import STAT=rosstat_ipc_weeks_bulletins")
             failed += not expect("агрегатный ряд бюллетеней rosstat непуст", rosstat_bulletins_n == 502, rosstat_bulletins_detail)
 
+            # Контур ЕМИСС 37426 (пункт key-rate/phase-4-emiss-weekly-prices, импортёр
+            # fedstat_weekly_prices): витрина v_fedstat_weekly_prices читается агентом и
+            # непуста. Полный срез v1 — 158 товаров, 2 определения РФ (2008–2022 и 2026),
+            # 56 133 точки; 2023–2025 в источнике отсутствуют, поэтому число точное, а не
+            # «> 0». Сырая таблица закрыта: агент читает контур только через витрину.
+            fedstat_view = text(await session.call_tool("run_query", {"query": "SELECT count() AS rows, uniqExact(series) AS series, uniqExact(region) AS regions FROM v_fedstat_weekly_prices"}))
+            fedstat_view_rows = result_rows(fedstat_view)
+            fedstat_points_n = fedstat_view_rows[0].get("rows") if fedstat_view_rows else None
+            fedstat_series_n = fedstat_view_rows[0].get("series") if fedstat_view_rows else None
+            fedstat_regions_n = fedstat_view_rows[0].get("regions") if fedstat_view_rows else None
+            if fedstat_view_rows is None:
+                fedstat_view_detail = f"витрина не читается: {fedstat_view[:200]}"
+            elif fedstat_points_n == 56133 and fedstat_series_n == 158 and fedstat_regions_n == 2:
+                fedstat_view_detail = "строк: 56 133, рядов: 158, регионов: 2 (2008–2022 + 2026)"
+            else:
+                fedstat_view_detail = (f"строк: {fedstat_points_n}, рядов: {fedstat_series_n}, регионов: {fedstat_regions_n}; "
+                                       "want 56 133 / 158 / 2 — прогнать make import STAT=fedstat_weekly_prices")
+            failed += not expect("витрина v_fedstat_weekly_prices непуста и полна",
+                                 fedstat_points_n == 56133 and fedstat_series_n == 158 and fedstat_regions_n == 2,
+                                 fedstat_view_detail)
+
+            fedstat_catalog = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'fedstat'"}))
+            fedstat_catalog_rows = result_rows(fedstat_catalog)
+            fedstat_catalog_n = fedstat_catalog_rows[0].get("n") if fedstat_catalog_rows else None
+            if fedstat_catalog_rows is None:
+                fedstat_catalog_detail = f"ответ не распознан: {fedstat_catalog[:200]}"
+            elif fedstat_catalog_n == 158:
+                fedstat_catalog_detail = "рядов fedstat: 158 (весь фильтр товаров источника)"
+            else:
+                fedstat_catalog_detail = (f"рядов fedstat: {fedstat_catalog_n}, want 158 — прогнать "
+                                          "make import STAT=fedstat_weekly_prices (каталог перепубликовывается прогоном)")
+            failed += not expect("каталог fedstat полон", fedstat_catalog_n == 158, fedstat_catalog_detail)
+
+            raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM fedstat_weekly_prices"}))
+            denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+            failed += not expect("сырая fedstat_weekly_prices закрыта", denied,
+                                 "отказ ClickHouse 497 на fedstat_weekly_prices (ожидаемо)" if denied else raw[:200])
+
             # Контур Минфина (пункт key-rate/phase-2-minfin-scrape, спека 2026-10-19
             # minfin-deficit-oil-gas §4.2): витрина v_minfin_budget читается агентом и
             # НЕПУСТА, федеральный дефицит идёт отдельным рядом (source = 'minfin'), а новый

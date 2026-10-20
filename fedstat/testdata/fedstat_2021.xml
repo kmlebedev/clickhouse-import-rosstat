@@ -1,0 +1,1740 @@
+<?xml version="1.0" encoding="utf-8"?>
+<GenericData
+ xmlns="http://www.SDMX.org/resources/SDMXML/schemas/v1_0/message"
+ xmlns:common="http://www.SDMX.org/resources/SDMXML/schemas/v1_0/common"
+ xmlns:compact="http://www.SDMX.org/resources/SDMXML/schemas/v1_0/compact"
+ xmlns:cross="http://www.SDMX.org/resources/SDMXML/schemas/v1_0/cross"
+ xmlns:generic="http://www.SDMX.org/resources/SDMXML/schemas/v1_0/generic"
+ xmlns:query="http://www.SDMX.org/resources/SDMXML/schemas/v1_0/query"
+ xmlns:structure="http://www.SDMX.org/resources/SDMXML/schemas/v1_0/structure"
+ xmlns:utility="http://www.SDMX.org/resources/SDMXML/schemas/v1_0/utility"
+ xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+ xsi:schemaLocation="http://www.SDMX.org/resources/SDMXML/schemas/v1_0/message SDMXMessage.xsd">
+<Header Id="singHead">
+	<ID>1497627623</ID>
+	<Test>false</Test>
+	<Truncated>false</Truncated>
+	<Prepared>2026-10-20T15:23:10</Prepared>
+	<Extracted>2026-10-20T15:23:10</Extracted>
+	<Sender id="UIS">
+		<Name xml:lang="en">Official statistics</Name>
+		<Name xml:lang="ru">Государственная статистика</Name>
+	</Sender>
+	<DataSetAgency>1</DataSetAgency>
+	<DataSetID>1921002</DataSetID>
+</Header>
+<CodeLists>
+	<structure:CodeList id="s_grtov">
+		<structure:Name xml:lang="ru">Виды товаров и услуг</structure:Name>
+		<structure:Code value="111">
+			<structure:Description xml:lang="ru">Говядина (кроме бескостного мяса), кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="113">
+			<structure:Description xml:lang="ru">Свинина (кроме бескостного мяса), кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="114">
+			<structure:Description xml:lang="ru">Куры охлажденные и мороженые, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="116">
+			<structure:Description xml:lang="ru">Баранина (кроме бескостного мяса), кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="201">
+			<structure:Description xml:lang="ru">Колбаса вареная, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="202">
+			<structure:Description xml:lang="ru">Сосиски, сардельки, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="204">
+			<structure:Description xml:lang="ru">Колбаса полукопченая и варено-копченая, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="206">
+			<structure:Description xml:lang="ru">Колбаса вареная I сорта, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="301">
+			<structure:Description xml:lang="ru">Консервы мясные,  350 г</structure:Description>
+		</structure:Code>
+		<structure:Code value="302">
+			<structure:Description xml:lang="ru">Консервы мясные для детского питания, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="411">
+			<structure:Description xml:lang="ru">Рыба мороженая неразделанная, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="701">
+			<structure:Description xml:lang="ru">Масло сливочное, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="801">
+			<structure:Description xml:lang="ru">Масло подсолнечное, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="1001">
+			<structure:Description xml:lang="ru">Маргарин, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="1102">
+			<structure:Description xml:lang="ru">Сметана, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="1104">
+			<structure:Description xml:lang="ru">Творог жирный, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="1108">
+			<structure:Description xml:lang="ru">Молоко цельное пастеризованное, стерилизованное 2,5-3,2% жирности, л</structure:Description>
+		</structure:Code>
+		<structure:Code value="1111">
+			<structure:Description xml:lang="ru">Молоко питьевое цельное пастеризованное 2,5-3,2% жирности, л</structure:Description>
+		</structure:Code>
+		<structure:Code value="1112">
+			<structure:Description xml:lang="ru">Молоко питьевое цельное стерилизованное 2,5-3,2% жирности, л</structure:Description>
+		</structure:Code>
+		<structure:Code value="1113">
+			<structure:Description xml:lang="ru">Молочный напиток пастеризованный 2,5-3,2% жирности, л</structure:Description>
+		</structure:Code>
+		<structure:Code value="1114">
+			<structure:Description xml:lang="ru">Молочный напиток стерилизованный 2,5-3,2% жирности, л</structure:Description>
+		</structure:Code>
+		<structure:Code value="1123">
+			<structure:Description xml:lang="ru">Смеси сухие молочные для детского питания, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="1201">
+			<structure:Description xml:lang="ru">Сыры сычужные твердые и мягкие, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="1303">
+			<structure:Description xml:lang="ru">Консервы овощные для детского питания, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="1402">
+			<structure:Description xml:lang="ru">Консервы фруктово-ягодные для детского питания, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="1501">
+			<structure:Description xml:lang="ru">Яйца куриные, 10 шт.</structure:Description>
+		</structure:Code>
+		<structure:Code value="1601">
+			<structure:Description xml:lang="ru">Сахар-песок, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="1701">
+			<structure:Description xml:lang="ru">Печенье, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="1711">
+			<structure:Description xml:lang="ru">Карамель, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="1712">
+			<structure:Description xml:lang="ru">Конфеты мягкие, глазированные шоколадом, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="1903">
+			<structure:Description xml:lang="ru">Чай черный байховый, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="2002">
+			<structure:Description xml:lang="ru">Соль поваренная пищевая, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="2101">
+			<structure:Description xml:lang="ru">Мука пшеничная, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="2201">
+			<structure:Description xml:lang="ru">Хлеб из ржаной муки и из смеси муки ржаной и пшеничной, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="2203">
+			<structure:Description xml:lang="ru">Хлеб и булочные изделия из пшеничной муки 1 и 2 сортов, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="2301">
+			<structure:Description xml:lang="ru">Рис шлифованный, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="2303">
+			<structure:Description xml:lang="ru">Пшено, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="2307">
+			<structure:Description xml:lang="ru">Крупа гречневая-ядрица, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="2401">
+			<structure:Description xml:lang="ru">Вермишель, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="2403">
+			<structure:Description xml:lang="ru">Макаронные изделия из пшеничной муки высшего сорта, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="2501">
+			<structure:Description xml:lang="ru">Картофель, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="2601">
+			<structure:Description xml:lang="ru">Капуста белокочанная свежая, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="2603">
+			<structure:Description xml:lang="ru">Лук репчатый, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="2604">
+			<structure:Description xml:lang="ru">Свёкла столовая, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="2605">
+			<structure:Description xml:lang="ru">Морковь, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="2621">
+			<structure:Description xml:lang="ru">Огурцы свежие, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="2623">
+			<structure:Description xml:lang="ru">Помидоры свежие, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="2701">
+			<structure:Description xml:lang="ru">Яблоки, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="2711">
+			<structure:Description xml:lang="ru">Бананы, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="2803">
+			<structure:Description xml:lang="ru">Водка крепостью 40% об.спирта и выше обыкновенного качества, л</structure:Description>
+		</structure:Code>
+		<structure:Code value="2811">
+			<structure:Description xml:lang="ru">Водка крепостью 40% об. спирта и выше, л</structure:Description>
+		</structure:Code>
+		<structure:Code value="3606">
+			<structure:Description xml:lang="ru">Обед в столовой, кафе, закусочной (кроме столовой в организации), на 1 человека</structure:Description>
+		</structure:Code>
+		<structure:Code value="4155">
+			<structure:Description xml:lang="ru">Брюки для детей школьного возраста из джинсовой ткани, шт.</structure:Description>
+		</structure:Code>
+		<structure:Code value="4161">
+			<structure:Description xml:lang="ru">Сорочка верхняя для мальчиков школьного возраста, шт.</structure:Description>
+		</structure:Code>
+		<structure:Code value="4176">
+			<structure:Description xml:lang="ru">Пеленки для новорожденных, шт.</structure:Description>
+		</structure:Code>
+		<structure:Code value="4404">
+			<structure:Description xml:lang="ru">Костюм спортивный для детей школьного возраста, шт.</structure:Description>
+		</structure:Code>
+		<structure:Code value="4502">
+			<structure:Description xml:lang="ru">Майка, футболка мужская бельевая, шт.</structure:Description>
+		</structure:Code>
+		<structure:Code value="4503">
+			<structure:Description xml:lang="ru">Футболка детская, шт.</structure:Description>
+		</structure:Code>
+		<structure:Code value="4601">
+			<structure:Description xml:lang="ru">Колготки женские эластичные, шт.</structure:Description>
+		</structure:Code>
+		<structure:Code value="4603">
+			<structure:Description xml:lang="ru">Носки мужские, пара</structure:Description>
+		</structure:Code>
+		<structure:Code value="4604">
+			<structure:Description xml:lang="ru">Носки, гольфы детские, пара</structure:Description>
+		</structure:Code>
+		<structure:Code value="4744">
+			<structure:Description xml:lang="ru">Кроссовые туфли для детей с верхом из искусственной кожи, пара</structure:Description>
+		</structure:Code>
+		<structure:Code value="4771">
+			<structure:Description xml:lang="ru">Кроссовые туфли для взрослых с верхом из искусственной кожи, пара</structure:Description>
+		</structure:Code>
+		<structure:Code value="5001">
+			<structure:Description xml:lang="ru">Мыло хозяйственное, 200 г</structure:Description>
+		</structure:Code>
+		<structure:Code value="5101">
+			<structure:Description xml:lang="ru">Порошок стиральный, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="5201">
+			<structure:Description xml:lang="ru">Мыло туалетное, 100 г</structure:Description>
+		</structure:Code>
+		<structure:Code value="5303">
+			<structure:Description xml:lang="ru">Шампунь, 250 мл</structure:Description>
+		</structure:Code>
+		<structure:Code value="5313">
+			<structure:Description xml:lang="ru">Паста зубная, 100 г (100 мл)</structure:Description>
+		</structure:Code>
+		<structure:Code value="5406">
+			<structure:Description xml:lang="ru">Щетка зубная, шт.</structure:Description>
+		</structure:Code>
+		<structure:Code value="5602">
+			<structure:Description xml:lang="ru">Сигареты с фильтром отечественные, пачка</structure:Description>
+		</structure:Code>
+		<structure:Code value="5701">
+			<structure:Description xml:lang="ru">Спички, коробок</structure:Description>
+		</structure:Code>
+		<structure:Code value="6413">
+			<structure:Description xml:lang="ru">Электропылесос напольный, шт.</structure:Description>
+		</structure:Code>
+		<structure:Code value="6502">
+			<structure:Description xml:lang="ru">Бумага туалетная, рулон</structure:Description>
+		</structure:Code>
+		<structure:Code value="6503">
+			<structure:Description xml:lang="ru">Прокладки женские гигиенические ежедневные, 10 шт.</structure:Description>
+		</structure:Code>
+		<structure:Code value="6504">
+			<structure:Description xml:lang="ru">Подгузники детские бумажные (памперсы), 10 шт.</structure:Description>
+		</structure:Code>
+		<structure:Code value="7007">
+			<structure:Description xml:lang="ru">Телевизор цветного изображения, шт.</structure:Description>
+		</structure:Code>
+		<structure:Code value="7104">
+			<structure:Description xml:lang="ru">Смартфон, шт.</structure:Description>
+		</structure:Code>
+		<structure:Code value="7403">
+			<structure:Description xml:lang="ru">Плиты древесностружечные, ориентированно-стружечные, м2</structure:Description>
+		</structure:Code>
+		<structure:Code value="7418">
+			<structure:Description xml:lang="ru">Доска обрезная, м3</structure:Description>
+		</structure:Code>
+		<structure:Code value="7427">
+			<structure:Description xml:lang="ru">Металлочерепица, м2</structure:Description>
+		</structure:Code>
+		<structure:Code value="7703">
+			<structure:Description xml:lang="ru">Легковой автомобиль отечественный новый, шт.</structure:Description>
+		</structure:Code>
+		<structure:Code value="7707">
+			<structure:Description xml:lang="ru">Легковой автомобиль иностранной марки, собранный  на автомобильном заводе на территории России, шт.</structure:Description>
+		</structure:Code>
+		<structure:Code value="7708">
+			<structure:Description xml:lang="ru">Легковой автомобиль иностранной марки новый, шт.</structure:Description>
+		</structure:Code>
+		<structure:Code value="7800">
+			<structure:Description xml:lang="ru">Бензин автомобильный</structure:Description>
+		</structure:Code>
+		<structure:Code value="7801">
+			<structure:Description xml:lang="ru">Бензин автомобильный марки А-76 (АИ-80), л</structure:Description>
+		</structure:Code>
+		<structure:Code value="7802">
+			<structure:Description xml:lang="ru">Бензин автомобильный марки АИ-92, л</structure:Description>
+		</structure:Code>
+		<structure:Code value="7803">
+			<structure:Description xml:lang="ru">Бензин автомобильный марки АИ-95, л</structure:Description>
+		</structure:Code>
+		<structure:Code value="7804">
+			<structure:Description xml:lang="ru">Дизельное топливо, л</structure:Description>
+		</structure:Code>
+		<structure:Code value="7806">
+			<structure:Description xml:lang="ru">Бензин автомобильный марки АИ-98 и выше, л</structure:Description>
+		</structure:Code>
+		<structure:Code value="7913">
+			<structure:Description xml:lang="ru">Поливитамины без минералов отечественные, 10 шт.</structure:Description>
+		</structure:Code>
+		<structure:Code value="7923">
+			<structure:Description xml:lang="ru">Валокордин, 20 мл</structure:Description>
+		</structure:Code>
+		<structure:Code value="7924">
+			<structure:Description xml:lang="ru">Корвалол, 25 мл</structure:Description>
+		</structure:Code>
+		<structure:Code value="7926">
+			<structure:Description xml:lang="ru">Валидол, 10 таблеток</structure:Description>
+		</structure:Code>
+		<structure:Code value="7927">
+			<structure:Description xml:lang="ru">Метамизол натрия (Анальгин отечественный), 500 мг, 10 таблеток</structure:Description>
+		</structure:Code>
+		<structure:Code value="7957">
+			<structure:Description xml:lang="ru">Комбинированные анальгетики, 10 таблеток</structure:Description>
+		</structure:Code>
+		<structure:Code value="7965">
+			<structure:Description xml:lang="ru">Поливитамины с макро- и микроэлементами, 10 шт.</structure:Description>
+		</structure:Code>
+		<structure:Code value="7967">
+			<structure:Description xml:lang="ru">Троксерутин, 2% гель, 40 г</structure:Description>
+		</structure:Code>
+		<structure:Code value="7968">
+			<structure:Description xml:lang="ru">Флуоцинолона ацетонид, 0,025% мазь, 15 г</structure:Description>
+		</structure:Code>
+		<structure:Code value="7976">
+			<structure:Description xml:lang="ru">Активированный уголь, 10 таблеток</structure:Description>
+		</structure:Code>
+		<structure:Code value="7977">
+			<structure:Description xml:lang="ru">Алмагель, суспензия, 200 мл</structure:Description>
+		</structure:Code>
+		<structure:Code value="7978">
+			<structure:Description xml:lang="ru">Ренни, 12 таблеток</structure:Description>
+		</structure:Code>
+		<structure:Code value="7981">
+			<structure:Description xml:lang="ru">Офтан катахром, 10 мл</structure:Description>
+		</structure:Code>
+		<structure:Code value="7987">
+			<structure:Description xml:lang="ru">Линекс, 10 капсул</structure:Description>
+		</structure:Code>
+		<structure:Code value="7989">
+			<structure:Description xml:lang="ru">Бромгексин, 8 мг, 10 драже</structure:Description>
+		</structure:Code>
+		<structure:Code value="7990">
+			<structure:Description xml:lang="ru">Нимесулид, 10 таблеток</structure:Description>
+		</structure:Code>
+		<structure:Code value="7994">
+			<structure:Description xml:lang="ru">Левомеколь, мазь, 40 г</structure:Description>
+		</structure:Code>
+		<structure:Code value="7995">
+			<structure:Description xml:lang="ru">Аллохол, 50 таблеток</structure:Description>
+		</structure:Code>
+		<structure:Code value="8311">
+			<structure:Description xml:lang="ru">Сухие корма для домашних животных, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="9116">
+			<structure:Description xml:lang="ru">Стрижка модельная в женском зале, стрижка</structure:Description>
+		</structure:Code>
+		<structure:Code value="9118">
+			<structure:Description xml:lang="ru">Стрижка модельная в мужском зале, стрижка</structure:Description>
+		</structure:Code>
+		<structure:Code value="9143">
+			<structure:Description xml:lang="ru">Мойка легкового автомобиля, услуга</structure:Description>
+		</structure:Code>
+		<structure:Code value="9211">
+			<structure:Description xml:lang="ru">Проезд в городском муниципальном автобусе, поездка</structure:Description>
+		</structure:Code>
+		<structure:Code value="9212">
+			<structure:Description xml:lang="ru">Проезд в трамвае, поездка</structure:Description>
+		</structure:Code>
+		<structure:Code value="9213">
+			<structure:Description xml:lang="ru">Проезд в троллейбусе, поездка</structure:Description>
+		</structure:Code>
+		<structure:Code value="9214">
+			<structure:Description xml:lang="ru">Проезд в метро, поездка</structure:Description>
+		</structure:Code>
+		<structure:Code value="9222">
+			<structure:Description xml:lang="ru">Проезд в городском автобусе, поездка</structure:Description>
+		</structure:Code>
+		<structure:Code value="9261">
+			<structure:Description xml:lang="ru">Полет в салоне экономического класса самолета, в расчете на 1000 км пути</structure:Description>
+		</structure:Code>
+		<structure:Code value="9414">
+			<structure:Description xml:lang="ru">Проживание в гостинице, сутки с человека</structure:Description>
+		</structure:Code>
+		<structure:Code value="9418">
+			<structure:Description xml:lang="ru">Плата за жилье в домах государственного и муниципального жилищных фондов, м2 общей площади</structure:Description>
+		</structure:Code>
+		<structure:Code value="9442">
+			<structure:Description xml:lang="ru">Водоснабжение холодное и водоотведение, месяц с человека</structure:Description>
+		</structure:Code>
+		<structure:Code value="9445">
+			<structure:Description xml:lang="ru">Отопление, м2 общей площади</structure:Description>
+		</structure:Code>
+		<structure:Code value="9446">
+			<structure:Description xml:lang="ru">Водоснабжение горячее, месяц с человека</structure:Description>
+		</structure:Code>
+		<structure:Code value="9448">
+			<structure:Description xml:lang="ru">Водоснабжение горячее, м3</structure:Description>
+		</structure:Code>
+		<structure:Code value="9449">
+			<structure:Description xml:lang="ru">Отопление, Гкал</structure:Description>
+		</structure:Code>
+		<structure:Code value="9457">
+			<structure:Description xml:lang="ru">Водоснабжение холодное, м3</structure:Description>
+		</structure:Code>
+		<structure:Code value="9458">
+			<structure:Description xml:lang="ru">Водоотведение, м3</structure:Description>
+		</structure:Code>
+		<structure:Code value="9459">
+			<structure:Description xml:lang="ru">Газ сжиженный, м3</structure:Description>
+		</structure:Code>
+		<structure:Code value="9475">
+			<structure:Description xml:lang="ru">Услуги по снабжению электроэнергией</structure:Description>
+		</structure:Code>
+		<structure:Code value="9541">
+			<structure:Description xml:lang="ru">Поездка на отдых в Турцию, поездка</structure:Description>
+		</structure:Code>
+		<structure:Code value="9547">
+			<structure:Description xml:lang="ru">Поездка в Китай, поездка</structure:Description>
+		</structure:Code>
+		<structure:Code value="9548">
+			<structure:Description xml:lang="ru">Поездка в Грецию, поездка</structure:Description>
+		</structure:Code>
+		<structure:Code value="9606">
+			<structure:Description xml:lang="ru">Санаторий, день</structure:Description>
+		</structure:Code>
+		<structure:Code value="9607">
+			<structure:Description xml:lang="ru">Дом отдыха, пансионат, день</structure:Description>
+		</structure:Code>
+		<structure:Code value="2812">
+			<structure:Description xml:lang="ru">Водка, л</structure:Description>
+		</structure:Code>
+		<structure:Code value="9796">
+			<structure:Description xml:lang="ru">Восстановление зуба пломбой, услуга</structure:Description>
+		</structure:Code>
+		<structure:Code value="1132">
+			<structure:Description xml:lang="ru">Кефир, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="4773">
+			<structure:Description xml:lang="ru">Кроссовые туфли для взрослых, пара</structure:Description>
+		</structure:Code>
+		<structure:Code value="803">
+			<structure:Description xml:lang="ru">Масло подсолнечное, л</structure:Description>
+		</structure:Code>
+		<structure:Code value="1131">
+			<structure:Description xml:lang="ru">Молоко питьевое цельное ультрапастеризованное 2,5-3,2% жирности, л</structure:Description>
+		</structure:Code>
+		<structure:Code value="7980">
+			<structure:Description xml:lang="ru">Нафазолин, 0,1%, 15 мл</structure:Description>
+		</structure:Code>
+		<structure:Code value="8042">
+			<structure:Description xml:lang="ru">Пенталгин, 24 таблетки</structure:Description>
+		</structure:Code>
+		<structure:Code value="9536">
+			<structure:Description xml:lang="ru">Поездка на отдых на Черноморское побережье России, поездка</structure:Description>
+		</structure:Code>
+		<structure:Code value="9559">
+			<structure:Description xml:lang="ru">Поездки в отдельные страны Юго-Восточной Азии, поездка</structure:Description>
+		</structure:Code>
+		<structure:Code value="8029">
+			<structure:Description xml:lang="ru">Поливитамины, 10 шт.</structure:Description>
+		</structure:Code>
+		<structure:Code value="9462">
+			<structure:Description xml:lang="ru">Проживание в гостинице 1* или в мотеле, сутки с человека</structure:Description>
+		</structure:Code>
+		<structure:Code value="9463">
+			<structure:Description xml:lang="ru">Проживание в гостинице 2*, сутки с человека</structure:Description>
+		</structure:Code>
+		<structure:Code value="9464">
+			<structure:Description xml:lang="ru">Проживание в гостинице 3*, сутки с человека</structure:Description>
+		</structure:Code>
+		<structure:Code value="9465">
+			<structure:Description xml:lang="ru">Проживание в гостинице 4*-5*, сутки с человека</structure:Description>
+		</structure:Code>
+		<structure:Code value="9466">
+			<structure:Description xml:lang="ru">Проживание в хостеле, сутки с человека</structure:Description>
+		</structure:Code>
+		<structure:Code value="6508">
+			<structure:Description xml:lang="ru">Прокладки женские гигиенические, 10 шт.</structure:Description>
+		</structure:Code>
+		<structure:Code value="8019">
+			<structure:Description xml:lang="ru">Ренгалин, 10 таблеток</structure:Description>
+		</structure:Code>
+		<structure:Code value="8031">
+			<structure:Description xml:lang="ru">Ренгалин, 20 таблеток</structure:Description>
+		</structure:Code>
+		<structure:Code value="8053">
+			<structure:Description xml:lang="ru">Римантадин, 10 таблеток</structure:Description>
+		</structure:Code>
+		<structure:Code value="5605">
+			<structure:Description xml:lang="ru">Сигареты с фильтром, пачка</structure:Description>
+		</structure:Code>
+		<structure:Code value="1204">
+			<structure:Description xml:lang="ru">Сыры твердые, полутвердые и мягкие, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="1124">
+			<structure:Description xml:lang="ru">Творог, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="2207">
+			<structure:Description xml:lang="ru">Хлеб и булочные изделия из пшеничной муки различных сортов, кг</structure:Description>
+		</structure:Code>
+		<structure:Code value="8020">
+			<structure:Description xml:lang="ru">Эргоферон, 20 таблеток</structure:Description>
+		</structure:Code>
+	</structure:CodeList>
+	<structure:CodeList id="s_OKATO">
+		<structure:Name xml:lang="ru">Классификатор объектов административно-территориального деления (ОКАТО)</structure:Name>
+		<structure:Code value="643">
+			<structure:Description xml:lang="ru">Российская Федерация</structure:Description>
+		</structure:Code>
+		<structure:Code value="643004.АГ">
+			<structure:Description xml:lang="ru">Российская Федерация без учета новых субъектов (с 01.01.2023)</structure:Description>
+		</structure:Code>
+		<structure:Code value="030">
+			<structure:Description xml:lang="ru">Центральный федеральный округ</structure:Description>
+		</structure:Code>
+		<structure:Code value="14000000000">
+			<structure:Description xml:lang="ru">Белгородская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="14401000000">
+			<structure:Description xml:lang="ru">Белгород</structure:Description>
+		</structure:Code>
+		<structure:Code value="14430000000">
+			<structure:Description xml:lang="ru">Губкин</structure:Description>
+		</structure:Code>
+		<structure:Code value="14440000000">
+			<structure:Description xml:lang="ru">Старый Оскол</structure:Description>
+		</structure:Code>
+		<structure:Code value="15000000000">
+			<structure:Description xml:lang="ru">Брянская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="15401000000">
+			<structure:Description xml:lang="ru">Брянск</structure:Description>
+		</structure:Code>
+		<structure:Code value="15415000000">
+			<structure:Description xml:lang="ru">Клинцы</structure:Description>
+		</structure:Code>
+		<structure:Code value="15420000000">
+			<structure:Description xml:lang="ru">Новозыбков</structure:Description>
+		</structure:Code>
+		<structure:Code value="15238551000">
+			<structure:Description xml:lang="ru">Навля</structure:Description>
+		</structure:Code>
+		<structure:Code value="17000000000">
+			<structure:Description xml:lang="ru">Владимирская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="17401000000">
+			<structure:Description xml:lang="ru">Владимир</structure:Description>
+		</structure:Code>
+		<structure:Code value="17420000000">
+			<structure:Description xml:lang="ru">Гусь-Хрустальный</structure:Description>
+		</structure:Code>
+		<structure:Code value="17425000000">
+			<structure:Description xml:lang="ru">Ковров</structure:Description>
+		</structure:Code>
+		<structure:Code value="17435000000">
+			<structure:Description xml:lang="ru">Муром</structure:Description>
+		</structure:Code>
+		<structure:Code value="20000000000">
+			<structure:Description xml:lang="ru">Воронежская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="20401000000">
+			<structure:Description xml:lang="ru">Воронеж</structure:Description>
+		</structure:Code>
+		<structure:Code value="20410000000">
+			<structure:Description xml:lang="ru">Борисоглебск</structure:Description>
+		</structure:Code>
+		<structure:Code value="24000000000">
+			<structure:Description xml:lang="ru">Ивановская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="24401000000">
+			<structure:Description xml:lang="ru">Иваново</structure:Description>
+		</structure:Code>
+		<structure:Code value="29000000000">
+			<structure:Description xml:lang="ru">Калужская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="29401000000">
+			<structure:Description xml:lang="ru">Калуга</structure:Description>
+		</structure:Code>
+		<structure:Code value="29415000000">
+			<structure:Description xml:lang="ru">Обнинск</structure:Description>
+		</structure:Code>
+		<structure:Code value="34000000000">
+			<structure:Description xml:lang="ru">Костромская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="34401000000">
+			<structure:Description xml:lang="ru">Кострома</structure:Description>
+		</structure:Code>
+		<structure:Code value="34430000000">
+			<structure:Description xml:lang="ru">Шарья</structure:Description>
+		</structure:Code>
+		<structure:Code value="38000000000">
+			<structure:Description xml:lang="ru">Курская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="38401000000">
+			<structure:Description xml:lang="ru">Курск</structure:Description>
+		</structure:Code>
+		<structure:Code value="38405000000">
+			<structure:Description xml:lang="ru">Железногорск</structure:Description>
+		</structure:Code>
+		<structure:Code value="42000000000">
+			<structure:Description xml:lang="ru">Липецкая область</structure:Description>
+		</structure:Code>
+		<structure:Code value="42401000000">
+			<structure:Description xml:lang="ru">Липецк</structure:Description>
+		</structure:Code>
+		<structure:Code value="42415000000">
+			<structure:Description xml:lang="ru">Елец</structure:Description>
+		</structure:Code>
+		<structure:Code value="46000000000">
+			<structure:Description xml:lang="ru">Московская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="46457000000">
+			<structure:Description xml:lang="ru">Орехово-Зуево</structure:Description>
+		</structure:Code>
+		<structure:Code value="46460000000">
+			<structure:Description xml:lang="ru">Подольск</structure:Description>
+		</structure:Code>
+		<structure:Code value="46470000000">
+			<structure:Description xml:lang="ru">Серпухов</structure:Description>
+		</structure:Code>
+		<structure:Code value="46490000000">
+			<structure:Description xml:lang="ru">Электросталь</structure:Description>
+		</structure:Code>
+		<structure:Code value="54000000000">
+			<structure:Description xml:lang="ru">Орловская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="54405000000">
+			<structure:Description xml:lang="ru">Ливны</structure:Description>
+		</structure:Code>
+		<structure:Code value="54410000000">
+			<structure:Description xml:lang="ru">Мценск</structure:Description>
+		</structure:Code>
+		<structure:Code value="61000000000">
+			<structure:Description xml:lang="ru">Рязанская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="61401000000">
+			<structure:Description xml:lang="ru">Рязань</structure:Description>
+		</structure:Code>
+		<structure:Code value="61405000000">
+			<structure:Description xml:lang="ru">Касимов</structure:Description>
+		</structure:Code>
+		<structure:Code value="61410000000">
+			<structure:Description xml:lang="ru">Сасово</structure:Description>
+		</structure:Code>
+		<structure:Code value="61415000000">
+			<structure:Description xml:lang="ru">Скопин</structure:Description>
+		</structure:Code>
+		<structure:Code value="66000000000">
+			<structure:Description xml:lang="ru">Смоленская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="66401000000">
+			<structure:Description xml:lang="ru">Смоленск</structure:Description>
+		</structure:Code>
+		<structure:Code value="66236501000">
+			<structure:Description xml:lang="ru">Рославль</structure:Description>
+		</structure:Code>
+		<structure:Code value="66208501000">
+			<structure:Description xml:lang="ru">Гагарин</structure:Description>
+		</structure:Code>
+		<structure:Code value="66258501000">
+			<structure:Description xml:lang="ru">Ярцево</structure:Description>
+		</structure:Code>
+		<structure:Code value="68000000000">
+			<structure:Description xml:lang="ru">Тамбовская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="68401000000">
+			<structure:Description xml:lang="ru">Тамбов</structure:Description>
+		</structure:Code>
+		<structure:Code value="68415000000">
+			<structure:Description xml:lang="ru">Мичуринск</structure:Description>
+		</structure:Code>
+		<structure:Code value="28000000000">
+			<structure:Description xml:lang="ru">Тверская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="28401000000">
+			<structure:Description xml:lang="ru">Тверь</structure:Description>
+		</structure:Code>
+		<structure:Code value="28405000000">
+			<structure:Description xml:lang="ru">Бежецк</structure:Description>
+		</structure:Code>
+		<structure:Code value="28426000000">
+			<structure:Description xml:lang="ru">Кимры</structure:Description>
+		</structure:Code>
+		<structure:Code value="28445000000">
+			<structure:Description xml:lang="ru">Ржев</structure:Description>
+		</structure:Code>
+		<structure:Code value="70000000000">
+			<structure:Description xml:lang="ru">Тульская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="70401000000">
+			<structure:Description xml:lang="ru">Тула</structure:Description>
+		</structure:Code>
+		<structure:Code value="70234501000">
+			<structure:Description xml:lang="ru">Новомосковск</structure:Description>
+		</structure:Code>
+		<structure:Code value="78000000000">
+			<structure:Description xml:lang="ru">Ярославская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="78401000000">
+			<structure:Description xml:lang="ru">Ярославль</structure:Description>
+		</structure:Code>
+		<structure:Code value="78415000000">
+			<structure:Description xml:lang="ru">Рыбинск</structure:Description>
+		</structure:Code>
+		<structure:Code value="45000000000">
+			<structure:Description xml:lang="ru">Город Москва столица Российской Федерации город федерального значения</structure:Description>
+		</structure:Code>
+		<structure:Code value="031">
+			<structure:Description xml:lang="ru">Северо-Западный федеральный округ</structure:Description>
+		</structure:Code>
+		<structure:Code value="86000000000">
+			<structure:Description xml:lang="ru">Республика Карелия</structure:Description>
+		</structure:Code>
+		<structure:Code value="87000000000">
+			<structure:Description xml:lang="ru">Республика Коми</structure:Description>
+		</structure:Code>
+		<structure:Code value="11000000000">
+			<structure:Description xml:lang="ru">Архангельская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="11100000000">
+			<structure:Description xml:lang="ru">Ненецкий автономный округ (Архангельская область)</structure:Description>
+		</structure:Code>
+		<structure:Code value="11001000000">
+			<structure:Description xml:lang="ru">Архангельская область (кроме Ненецкого автономного округа)</structure:Description>
+		</structure:Code>
+		<structure:Code value="19000000000">
+			<structure:Description xml:lang="ru">Вологодская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="27000000000">
+			<structure:Description xml:lang="ru">Калининградская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="41000000000">
+			<structure:Description xml:lang="ru">Ленинградская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="47000000000">
+			<structure:Description xml:lang="ru">Мурманская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="49000000000">
+			<structure:Description xml:lang="ru">Новгородская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="58000000000">
+			<structure:Description xml:lang="ru">Псковская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="40000000000">
+			<structure:Description xml:lang="ru">Город Санкт-Петербург город федерального значения</structure:Description>
+		</structure:Code>
+		<structure:Code value="032">
+			<structure:Description xml:lang="ru">Южный федеральный округ (по 2009 год)</structure:Description>
+		</structure:Code>
+		<structure:Code value="037">
+			<structure:Description xml:lang="ru">Южный федеральный округ (до 29.07.2016)</structure:Description>
+		</structure:Code>
+		<structure:Code value="040">
+			<structure:Description xml:lang="ru">Южный федеральный округ</structure:Description>
+		</structure:Code>
+		<structure:Code value="79000000000">
+			<structure:Description xml:lang="ru">Республика Адыгея (Адыгея)</structure:Description>
+		</structure:Code>
+		<structure:Code value="85000000000">
+			<structure:Description xml:lang="ru">Республика Калмыкия</structure:Description>
+		</structure:Code>
+		<structure:Code value="35000000000">
+			<structure:Description xml:lang="ru">Республика Крым</structure:Description>
+		</structure:Code>
+		<structure:Code value="03000000000">
+			<structure:Description xml:lang="ru">Краснодарский край</structure:Description>
+		</structure:Code>
+		<structure:Code value="03401000000">
+			<structure:Description xml:lang="ru">Краснодар</structure:Description>
+		</structure:Code>
+		<structure:Code value="12000000000">
+			<structure:Description xml:lang="ru">Астраханская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="18000000000">
+			<structure:Description xml:lang="ru">Волгоградская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="60000000000">
+			<structure:Description xml:lang="ru">Ростовская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="60401000000">
+			<structure:Description xml:lang="ru">Ростов-на-Дону</structure:Description>
+		</structure:Code>
+		<structure:Code value="67000000000">
+			<structure:Description xml:lang="ru">Город федерального значения Севастополь</structure:Description>
+		</structure:Code>
+		<structure:Code value="038">
+			<structure:Description xml:lang="ru">Северо-Кавказский федеральный округ</structure:Description>
+		</structure:Code>
+		<structure:Code value="82000000000">
+			<structure:Description xml:lang="ru">Республика Дагестан</structure:Description>
+		</structure:Code>
+		<structure:Code value="26000000000">
+			<structure:Description xml:lang="ru">Республика Ингушетия</structure:Description>
+		</structure:Code>
+		<structure:Code value="83000000000">
+			<structure:Description xml:lang="ru">Кабардино-Балкарская Республика</structure:Description>
+		</structure:Code>
+		<structure:Code value="91000000000">
+			<structure:Description xml:lang="ru">Карачаево-Черкесская Республика</structure:Description>
+		</structure:Code>
+		<structure:Code value="90000000000">
+			<structure:Description xml:lang="ru">Республика Северная Осетия-Алания</structure:Description>
+		</structure:Code>
+		<structure:Code value="96000000000">
+			<structure:Description xml:lang="ru">Чеченская Республика</structure:Description>
+		</structure:Code>
+		<structure:Code value="07000000000">
+			<structure:Description xml:lang="ru">Ставропольский край</structure:Description>
+		</structure:Code>
+		<structure:Code value="033">
+			<structure:Description xml:lang="ru">Приволжский федеральный округ</structure:Description>
+		</structure:Code>
+		<structure:Code value="80000000000">
+			<structure:Description xml:lang="ru">Республика Башкортостан</structure:Description>
+		</structure:Code>
+		<structure:Code value="88000000000">
+			<structure:Description xml:lang="ru">Республика Марий Эл</structure:Description>
+		</structure:Code>
+		<structure:Code value="89000000000">
+			<structure:Description xml:lang="ru">Республика Мордовия</structure:Description>
+		</structure:Code>
+		<structure:Code value="92000000000">
+			<structure:Description xml:lang="ru">Республика Татарстан (Татарстан)</structure:Description>
+		</structure:Code>
+		<structure:Code value="94000000000">
+			<structure:Description xml:lang="ru">Удмуртская Республика</structure:Description>
+		</structure:Code>
+		<structure:Code value="97000000000">
+			<structure:Description xml:lang="ru">Чувашская Республика - Чувашия</structure:Description>
+		</structure:Code>
+		<structure:Code value="57000000000">
+			<structure:Description xml:lang="ru">Пермский край</structure:Description>
+		</structure:Code>
+		<structure:Code value="33000000000">
+			<structure:Description xml:lang="ru">Кировская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="22000000000">
+			<structure:Description xml:lang="ru">Нижегородская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="53000000000">
+			<structure:Description xml:lang="ru">Оренбургская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="56000000000">
+			<structure:Description xml:lang="ru">Пензенская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="36000000000">
+			<structure:Description xml:lang="ru">Самарская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="63000000000">
+			<structure:Description xml:lang="ru">Саратовская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="73000000000">
+			<structure:Description xml:lang="ru">Ульяновская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="034">
+			<structure:Description xml:lang="ru">Уральский федеральный округ</structure:Description>
+		</structure:Code>
+		<structure:Code value="37000000000">
+			<structure:Description xml:lang="ru">Курганская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="65000000000">
+			<structure:Description xml:lang="ru">Свердловская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="71000000000">
+			<structure:Description xml:lang="ru">Тюменская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="71100000000">
+			<structure:Description xml:lang="ru">Ханты-Мансийский автономный округ - Югра (Тюменская область)</structure:Description>
+		</structure:Code>
+		<structure:Code value="71140000000">
+			<structure:Description xml:lang="ru">Ямало-Ненецкий автономный округ (Тюменская область)</structure:Description>
+		</structure:Code>
+		<structure:Code value="71001000000">
+			<structure:Description xml:lang="ru">Тюменская область (кроме Ханты-Мансийского автономного округа-Югры и Ямало-Ненецкого автономного округа)</structure:Description>
+		</structure:Code>
+		<structure:Code value="75000000000">
+			<structure:Description xml:lang="ru">Челябинская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="035">
+			<structure:Description xml:lang="ru">Сибирский федеральный округ (до 03.11.2018)</structure:Description>
+		</structure:Code>
+		<structure:Code value="041">
+			<structure:Description xml:lang="ru">Сибирский федеральный округ</structure:Description>
+		</structure:Code>
+		<structure:Code value="84000000000">
+			<structure:Description xml:lang="ru">Республика Алтай</structure:Description>
+		</structure:Code>
+		<structure:Code value="93000000000">
+			<structure:Description xml:lang="ru">Республика Тыва</structure:Description>
+		</structure:Code>
+		<structure:Code value="95000000000">
+			<structure:Description xml:lang="ru">Республика Хакасия</structure:Description>
+		</structure:Code>
+		<structure:Code value="01000000000">
+			<structure:Description xml:lang="ru">Алтайский край</structure:Description>
+		</structure:Code>
+		<structure:Code value="04000000000">
+			<structure:Description xml:lang="ru">Красноярский край</structure:Description>
+		</structure:Code>
+		<structure:Code value="25000000000">
+			<structure:Description xml:lang="ru">Иркутская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="32000000000">
+			<structure:Description xml:lang="ru">Кемеровская область - Кузбасс</structure:Description>
+		</structure:Code>
+		<structure:Code value="50000000000">
+			<structure:Description xml:lang="ru">Новосибирская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="52000000000">
+			<structure:Description xml:lang="ru">Омская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="69000000000">
+			<structure:Description xml:lang="ru">Томская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="036">
+			<structure:Description xml:lang="ru">Дальневосточный федеральный округ (до 03.11.2018)</structure:Description>
+		</structure:Code>
+		<structure:Code value="042">
+			<structure:Description xml:lang="ru">Дальневосточный федеральный округ</structure:Description>
+		</structure:Code>
+		<structure:Code value="81000000000">
+			<structure:Description xml:lang="ru">Республика Бурятия</structure:Description>
+		</structure:Code>
+		<structure:Code value="81401000000">
+			<structure:Description xml:lang="ru">Улан-Удэ</structure:Description>
+		</structure:Code>
+		<structure:Code value="81420000000">
+			<structure:Description xml:lang="ru">Северобайкальск</structure:Description>
+		</structure:Code>
+		<structure:Code value="76000000000">
+			<structure:Description xml:lang="ru">Забайкальский край</structure:Description>
+		</structure:Code>
+		<structure:Code value="76226501000">
+			<structure:Description xml:lang="ru">Могоча</structure:Description>
+		</structure:Code>
+		<structure:Code value="76401000000">
+			<structure:Description xml:lang="ru">Чита</structure:Description>
+		</structure:Code>
+		<structure:Code value="76100000000">
+			<structure:Description xml:lang="ru">Агинский Бурятский округ (Забайкальский край)</structure:Description>
+		</structure:Code>
+		<structure:Code value="76202551000">
+			<structure:Description xml:lang="ru">Агинское</structure:Description>
+		</structure:Code>
+		<structure:Code value="98000000000">
+			<structure:Description xml:lang="ru">Республика Саха (Якутия)</structure:Description>
+		</structure:Code>
+		<structure:Code value="98401000000">
+			<structure:Description xml:lang="ru">Якутск</structure:Description>
+		</structure:Code>
+		<structure:Code value="98404000000">
+			<structure:Description xml:lang="ru">Мирный</structure:Description>
+		</structure:Code>
+		<structure:Code value="30000000000">
+			<structure:Description xml:lang="ru">Камчатский край</structure:Description>
+		</structure:Code>
+		<structure:Code value="30401000000">
+			<structure:Description xml:lang="ru">Петропавловск-Камчатский</structure:Description>
+		</structure:Code>
+		<structure:Code value="30100000000">
+			<structure:Description xml:lang="ru">Корякский округ, входящий в состав Камчатского края</structure:Description>
+		</structure:Code>
+		<structure:Code value="30132657000">
+			<structure:Description xml:lang="ru">Палана</structure:Description>
+		</structure:Code>
+		<structure:Code value="05000000000">
+			<structure:Description xml:lang="ru">Приморский край</structure:Description>
+		</structure:Code>
+		<structure:Code value="08000000000">
+			<structure:Description xml:lang="ru">Хабаровский край</structure:Description>
+		</structure:Code>
+		<structure:Code value="10000000000">
+			<structure:Description xml:lang="ru">Амурская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="44000000000">
+			<structure:Description xml:lang="ru">Магаданская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="64000000000">
+			<structure:Description xml:lang="ru">Сахалинская область</structure:Description>
+		</structure:Code>
+		<structure:Code value="99000000000">
+			<structure:Description xml:lang="ru">Еврейская автономная область</structure:Description>
+		</structure:Code>
+		<structure:Code value="77000000000">
+			<structure:Description xml:lang="ru">Чукотский автономный округ</structure:Description>
+		</structure:Code>
+		<structure:Code value="039">
+			<structure:Description xml:lang="ru">Крымский федеральный округ</structure:Description>
+		</structure:Code>
+		<structure:Code value="75438000000">
+			<structure:Description xml:lang="ru">Магнитогорск</structure:Description>
+		</structure:Code>
+		<structure:Code value="86401000000">
+			<structure:Description xml:lang="ru">Петрозаводск</structure:Description>
+		</structure:Code>
+		<structure:Code value="86406000000">
+			<structure:Description xml:lang="ru">Костомукша</structure:Description>
+		</structure:Code>
+		<structure:Code value="86245501000">
+			<structure:Description xml:lang="ru">Сегежа</structure:Description>
+		</structure:Code>
+		<structure:Code value="87401000000">
+			<structure:Description xml:lang="ru">Сыктывкар</structure:Description>
+		</structure:Code>
+		<structure:Code value="87410000000">
+			<structure:Description xml:lang="ru">Воркута</structure:Description>
+		</structure:Code>
+		<structure:Code value="87425000000">
+			<structure:Description xml:lang="ru">Ухта</structure:Description>
+		</structure:Code>
+		<structure:Code value="11401000000">
+			<structure:Description xml:lang="ru">Архангельск</structure:Description>
+		</structure:Code>
+		<structure:Code value="11430000000">
+			<structure:Description xml:lang="ru">Северодвинск</structure:Description>
+		</structure:Code>
+		<structure:Code value="11410000000">
+			<structure:Description xml:lang="ru">Котлас</structure:Description>
+		</structure:Code>
+		<structure:Code value="11111000000">
+			<structure:Description xml:lang="ru">Нарьян-Мар</structure:Description>
+		</structure:Code>
+		<structure:Code value="19401000000">
+			<structure:Description xml:lang="ru">Вологда</structure:Description>
+		</structure:Code>
+		<structure:Code value="19410000000">
+			<structure:Description xml:lang="ru">Великий Устюг</structure:Description>
+		</structure:Code>
+		<structure:Code value="19430000000">
+			<structure:Description xml:lang="ru">Череповец</structure:Description>
+		</structure:Code>
+		<structure:Code value="27401000000">
+			<structure:Description xml:lang="ru">Калининград</structure:Description>
+		</structure:Code>
+		<structure:Code value="27430000000">
+			<structure:Description xml:lang="ru">Советск</structure:Description>
+		</structure:Code>
+		<structure:Code value="27239501000">
+			<structure:Description xml:lang="ru">Черняховск</structure:Description>
+		</structure:Code>
+		<structure:Code value="27215501000">
+			<structure:Description xml:lang="ru">Зеленоградск</structure:Description>
+		</structure:Code>
+		<structure:Code value="47401000000">
+			<structure:Description xml:lang="ru">Мурманск</structure:Description>
+		</structure:Code>
+		<structure:Code value="47405000000">
+			<structure:Description xml:lang="ru">Апатиты</structure:Description>
+		</structure:Code>
+		<structure:Code value="47530000000">
+			<structure:Description xml:lang="ru">Североморск</structure:Description>
+		</structure:Code>
+		<structure:Code value="49401000000">
+			<structure:Description xml:lang="ru">Великий Новгород</structure:Description>
+		</structure:Code>
+		<structure:Code value="49408000000">
+			<structure:Description xml:lang="ru">Боровичи</structure:Description>
+		</structure:Code>
+		<structure:Code value="49413000000">
+			<structure:Description xml:lang="ru">Старая Русса</structure:Description>
+		</structure:Code>
+		<structure:Code value="49208501000">
+			<structure:Description xml:lang="ru">Валдай</structure:Description>
+		</structure:Code>
+		<structure:Code value="58401000000">
+			<structure:Description xml:lang="ru">Псков</structure:Description>
+		</structure:Code>
+		<structure:Code value="58410000000">
+			<structure:Description xml:lang="ru">Великие Луки</structure:Description>
+		</structure:Code>
+		<structure:Code value="58233501000">
+			<structure:Description xml:lang="ru">Остров</structure:Description>
+		</structure:Code>
+		<structure:Code value="79401000000">
+			<structure:Description xml:lang="ru">Майкоп</structure:Description>
+		</structure:Code>
+		<structure:Code value="85401000000">
+			<structure:Description xml:lang="ru">Элиста</structure:Description>
+		</structure:Code>
+		<structure:Code value="85205501000">
+			<structure:Description xml:lang="ru">Городовиковск</structure:Description>
+		</structure:Code>
+		<structure:Code value="85215501000">
+			<structure:Description xml:lang="ru">Лагань</structure:Description>
+		</structure:Code>
+		<structure:Code value="35401000000">
+			<structure:Description xml:lang="ru">Симферополь</structure:Description>
+		</structure:Code>
+		<structure:Code value="35409000000">
+			<structure:Description xml:lang="ru">Евпатория</structure:Description>
+		</structure:Code>
+		<structure:Code value="35412000000">
+			<structure:Description xml:lang="ru">Керчь</structure:Description>
+		</structure:Code>
+		<structure:Code value="35419000000">
+			<structure:Description xml:lang="ru">Ялта</structure:Description>
+		</structure:Code>
+		<structure:Code value="03405000000">
+			<structure:Description xml:lang="ru">Армавир</structure:Description>
+		</structure:Code>
+		<structure:Code value="03411000000">
+			<structure:Description xml:lang="ru">Ейск</structure:Description>
+		</structure:Code>
+		<structure:Code value="03420000000">
+			<structure:Description xml:lang="ru">Новороссийск</structure:Description>
+		</structure:Code>
+		<structure:Code value="03426000000">
+			<structure:Description xml:lang="ru">Сочи</structure:Description>
+		</structure:Code>
+		<structure:Code value="03432000000">
+			<structure:Description xml:lang="ru">Туапсе</structure:Description>
+		</structure:Code>
+		<structure:Code value="12401000000">
+			<structure:Description xml:lang="ru">Астрахань</structure:Description>
+		</structure:Code>
+		<structure:Code value="18401000000">
+			<structure:Description xml:lang="ru">Волгоград</structure:Description>
+		</structure:Code>
+		<structure:Code value="18415000000">
+			<structure:Description xml:lang="ru">Камышин</structure:Description>
+		</structure:Code>
+		<structure:Code value="60412000000">
+			<structure:Description xml:lang="ru">Волгодонск</structure:Description>
+		</structure:Code>
+		<structure:Code value="60232501000">
+			<structure:Description xml:lang="ru">Миллерово</structure:Description>
+		</structure:Code>
+		<structure:Code value="60437000000">
+			<structure:Description xml:lang="ru">Таганрог</structure:Description>
+		</structure:Code>
+		<structure:Code value="60440000000">
+			<structure:Description xml:lang="ru">Шахты</structure:Description>
+		</structure:Code>
+		<structure:Code value="82401000000">
+			<structure:Description xml:lang="ru">Махачкала</structure:Description>
+		</structure:Code>
+		<structure:Code value="82410000000">
+			<structure:Description xml:lang="ru">Дербент</structure:Description>
+		</structure:Code>
+		<structure:Code value="82430000000">
+			<structure:Description xml:lang="ru">Кизляр</structure:Description>
+		</structure:Code>
+		<structure:Code value="82435000000">
+			<structure:Description xml:lang="ru">Хасавюрт</structure:Description>
+		</structure:Code>
+		<structure:Code value="26401000000">
+			<structure:Description xml:lang="ru">Магас</structure:Description>
+		</structure:Code>
+		<structure:Code value="26406000000">
+			<structure:Description xml:lang="ru">Назрань</structure:Description>
+		</structure:Code>
+		<structure:Code value="26405000000">
+			<structure:Description xml:lang="ru">Малгобек</structure:Description>
+		</structure:Code>
+		<structure:Code value="83401000000">
+			<structure:Description xml:lang="ru">Нальчик</structure:Description>
+		</structure:Code>
+		<structure:Code value="83410000000">
+			<structure:Description xml:lang="ru">Прохладный</structure:Description>
+		</structure:Code>
+		<structure:Code value="91401000000">
+			<structure:Description xml:lang="ru">Черкесск</structure:Description>
+		</structure:Code>
+		<structure:Code value="91405000000">
+			<structure:Description xml:lang="ru">Карачаевск</structure:Description>
+		</structure:Code>
+		<structure:Code value="90401000000">
+			<structure:Description xml:lang="ru">Владикавказ</structure:Description>
+		</structure:Code>
+		<structure:Code value="96401000000">
+			<structure:Description xml:lang="ru">Грозный</structure:Description>
+		</structure:Code>
+		<structure:Code value="96404000000">
+			<structure:Description xml:lang="ru">Гудермес</structure:Description>
+		</structure:Code>
+		<structure:Code value="07401000000">
+			<structure:Description xml:lang="ru">Ставрополь</structure:Description>
+		</structure:Code>
+		<structure:Code value="07402000000">
+			<structure:Description xml:lang="ru">Буденновск</structure:Description>
+		</structure:Code>
+		<structure:Code value="07424000000">
+			<structure:Description xml:lang="ru">Невинномысск</structure:Description>
+		</structure:Code>
+		<structure:Code value="07427000000">
+			<structure:Description xml:lang="ru">Пятигорск</structure:Description>
+		</structure:Code>
+		<structure:Code value="80401000000">
+			<structure:Description xml:lang="ru">Уфа</structure:Description>
+		</structure:Code>
+		<structure:Code value="80427000000">
+			<structure:Description xml:lang="ru">Нефтекамск</structure:Description>
+		</structure:Code>
+		<structure:Code value="80443000000">
+			<structure:Description xml:lang="ru">Сибай</structure:Description>
+		</structure:Code>
+		<structure:Code value="80445000000">
+			<structure:Description xml:lang="ru">Стерлитамак</structure:Description>
+		</structure:Code>
+		<structure:Code value="88401000000">
+			<structure:Description xml:lang="ru">Йошкар-Ола</structure:Description>
+		</structure:Code>
+		<structure:Code value="88405000000">
+			<structure:Description xml:lang="ru">Волжск</structure:Description>
+		</structure:Code>
+		<structure:Code value="89401000000">
+			<structure:Description xml:lang="ru">Саранск</structure:Description>
+		</structure:Code>
+		<structure:Code value="89410000000">
+			<structure:Description xml:lang="ru">Ковылкино</structure:Description>
+		</structure:Code>
+		<structure:Code value="92401000000">
+			<structure:Description xml:lang="ru">Казань</structure:Description>
+		</structure:Code>
+		<structure:Code value="92420000000">
+			<structure:Description xml:lang="ru">Зеленодольск</structure:Description>
+		</structure:Code>
+		<structure:Code value="92430000000">
+			<structure:Description xml:lang="ru">Набережные Челны</structure:Description>
+		</structure:Code>
+		<structure:Code value="94401000000">
+			<structure:Description xml:lang="ru">Ижевск</structure:Description>
+		</structure:Code>
+		<structure:Code value="94410000000">
+			<structure:Description xml:lang="ru">Воткинск</structure:Description>
+		</structure:Code>
+		<structure:Code value="94430000000">
+			<structure:Description xml:lang="ru">Можга</structure:Description>
+		</structure:Code>
+		<structure:Code value="97401000000">
+			<structure:Description xml:lang="ru">Чебоксары</structure:Description>
+		</structure:Code>
+		<structure:Code value="97407000000">
+			<structure:Description xml:lang="ru">Канаш</structure:Description>
+		</structure:Code>
+		<structure:Code value="57401000000">
+			<structure:Description xml:lang="ru">Пермь</structure:Description>
+		</structure:Code>
+		<structure:Code value="57408000000">
+			<structure:Description xml:lang="ru">Березники</structure:Description>
+		</structure:Code>
+		<structure:Code value="57435000000">
+			<structure:Description xml:lang="ru">Чайковский</structure:Description>
+		</structure:Code>
+		<structure:Code value="33401000000">
+			<structure:Description xml:lang="ru">Киров</structure:Description>
+		</structure:Code>
+		<structure:Code value="33407000000">
+			<structure:Description xml:lang="ru">Кирово-Чепецк</structure:Description>
+		</structure:Code>
+		<structure:Code value="22401000000">
+			<structure:Description xml:lang="ru">Нижний Новгород</structure:Description>
+		</structure:Code>
+		<structure:Code value="22403000000">
+			<structure:Description xml:lang="ru">Арзамас</structure:Description>
+		</structure:Code>
+		<structure:Code value="22421000000">
+			<structure:Description xml:lang="ru">Дзержинск</structure:Description>
+		</structure:Code>
+		<structure:Code value="22228501000">
+			<structure:Description xml:lang="ru">Городец</structure:Description>
+		</structure:Code>
+		<structure:Code value="22240501000">
+			<structure:Description xml:lang="ru">Лысково</structure:Description>
+		</structure:Code>
+		<structure:Code value="22254501000">
+			<structure:Description xml:lang="ru">Урень</structure:Description>
+		</structure:Code>
+		<structure:Code value="53401000000">
+			<structure:Description xml:lang="ru">Оренбург</structure:Description>
+		</structure:Code>
+		<structure:Code value="53412000000">
+			<structure:Description xml:lang="ru">Бузулук</structure:Description>
+		</structure:Code>
+		<structure:Code value="53423000000">
+			<structure:Description xml:lang="ru">Орск</structure:Description>
+		</structure:Code>
+		<structure:Code value="56401000000">
+			<structure:Description xml:lang="ru">Пенза</structure:Description>
+		</structure:Code>
+		<structure:Code value="56405000000">
+			<structure:Description xml:lang="ru">Кузнецк</structure:Description>
+		</structure:Code>
+		<structure:Code value="56256501000">
+			<structure:Description xml:lang="ru">Сердобск</structure:Description>
+		</structure:Code>
+		<structure:Code value="36401000000">
+			<structure:Description xml:lang="ru">Самара</structure:Description>
+		</structure:Code>
+		<structure:Code value="36435000000">
+			<structure:Description xml:lang="ru">Сызрань</structure:Description>
+		</structure:Code>
+		<structure:Code value="36440000000">
+			<structure:Description xml:lang="ru">Тольятти</structure:Description>
+		</structure:Code>
+		<structure:Code value="63401000000">
+			<structure:Description xml:lang="ru">Саратов</structure:Description>
+		</structure:Code>
+		<structure:Code value="73401000000">
+			<structure:Description xml:lang="ru">Ульяновск</structure:Description>
+		</structure:Code>
+		<structure:Code value="73405000000">
+			<structure:Description xml:lang="ru">Димитровград</structure:Description>
+		</structure:Code>
+		<structure:Code value="37401000000">
+			<structure:Description xml:lang="ru">Курган</structure:Description>
+		</structure:Code>
+		<structure:Code value="37405000000">
+			<structure:Description xml:lang="ru">Шадринск</structure:Description>
+		</structure:Code>
+		<structure:Code value="65401000000">
+			<structure:Description xml:lang="ru">Екатеринбург</structure:Description>
+		</structure:Code>
+		<structure:Code value="65436000000">
+			<structure:Description xml:lang="ru">Каменск-Уральский</structure:Description>
+		</structure:Code>
+		<structure:Code value="65476000000">
+			<structure:Description xml:lang="ru">Нижний Тагил</structure:Description>
+		</structure:Code>
+		<structure:Code value="65480000000">
+			<structure:Description xml:lang="ru">Первоуральск</structure:Description>
+		</structure:Code>
+		<structure:Code value="65492000000">
+			<structure:Description xml:lang="ru">Серов</structure:Description>
+		</structure:Code>
+		<structure:Code value="71401000000">
+			<structure:Description xml:lang="ru">Тюмень</structure:Description>
+		</structure:Code>
+		<structure:Code value="71405000000">
+			<structure:Description xml:lang="ru">Ишим</structure:Description>
+		</structure:Code>
+		<structure:Code value="71410000000">
+			<structure:Description xml:lang="ru">Тобольск</structure:Description>
+		</structure:Code>
+		<structure:Code value="71131000000">
+			<structure:Description xml:lang="ru">Ханты-Мансийск</structure:Description>
+		</structure:Code>
+		<structure:Code value="71136000000">
+			<structure:Description xml:lang="ru">Сургут</structure:Description>
+		</structure:Code>
+		<structure:Code value="71135000000">
+			<structure:Description xml:lang="ru">Нижневартовск</structure:Description>
+		</structure:Code>
+		<structure:Code value="71181000000">
+			<structure:Description xml:lang="ru">Белоярский</structure:Description>
+		</structure:Code>
+		<structure:Code value="71171000000">
+			<structure:Description xml:lang="ru">Салехард</structure:Description>
+		</structure:Code>
+		<structure:Code value="71176000000">
+			<structure:Description xml:lang="ru">Новый Уренгой</structure:Description>
+		</structure:Code>
+		<structure:Code value="71174000000">
+			<structure:Description xml:lang="ru">Надым</structure:Description>
+		</structure:Code>
+		<structure:Code value="71178000000">
+			<structure:Description xml:lang="ru">Ноябрьск</structure:Description>
+		</structure:Code>
+		<structure:Code value="75401000000">
+			<structure:Description xml:lang="ru">Челябинск</structure:Description>
+		</structure:Code>
+		<structure:Code value="75434000000">
+			<structure:Description xml:lang="ru">Кыштым</structure:Description>
+		</structure:Code>
+		<structure:Code value="75442000000">
+			<structure:Description xml:lang="ru">Миасс</structure:Description>
+		</structure:Code>
+		<structure:Code value="84401000000">
+			<structure:Description xml:lang="ru">Горно-Алтайск</structure:Description>
+		</structure:Code>
+		<structure:Code value="81224563000">
+			<structure:Description xml:lang="ru">Селенгинск</structure:Description>
+		</structure:Code>
+		<structure:Code value="93401000000">
+			<structure:Description xml:lang="ru">Кызыл</structure:Description>
+		</structure:Code>
+		<structure:Code value="93254501000">
+			<structure:Description xml:lang="ru">Шагонар</structure:Description>
+		</structure:Code>
+		<structure:Code value="95401000000">
+			<structure:Description xml:lang="ru">Абакан</structure:Description>
+		</structure:Code>
+		<structure:Code value="95415000000">
+			<structure:Description xml:lang="ru">Черногорск</structure:Description>
+		</structure:Code>
+		<structure:Code value="01401000000">
+			<structure:Description xml:lang="ru">Барнаул</structure:Description>
+		</structure:Code>
+		<structure:Code value="01405000000">
+			<structure:Description xml:lang="ru">Бийск</structure:Description>
+		</structure:Code>
+		<structure:Code value="01416000000">
+			<structure:Description xml:lang="ru">Рубцовск</structure:Description>
+		</structure:Code>
+		<structure:Code value="04401000000">
+			<structure:Description xml:lang="ru">Красноярск</structure:Description>
+		</structure:Code>
+		<structure:Code value="04422000000">
+			<structure:Description xml:lang="ru">Лесосибирск</structure:Description>
+		</structure:Code>
+		<structure:Code value="04429000000">
+			<structure:Description xml:lang="ru">Норильск</structure:Description>
+		</structure:Code>
+		<structure:Code value="25401000000">
+			<structure:Description xml:lang="ru">Иркутск</structure:Description>
+		</structure:Code>
+		<structure:Code value="25414000000">
+			<structure:Description xml:lang="ru">Братск</structure:Description>
+		</structure:Code>
+		<structure:Code value="25438000000">
+			<structure:Description xml:lang="ru">Усть-Илимск</structure:Description>
+		</structure:Code>
+		<structure:Code value="25420000000">
+			<structure:Description xml:lang="ru">Зима</structure:Description>
+		</structure:Code>
+		<structure:Code value="32401000000">
+			<structure:Description xml:lang="ru">Кемерово</structure:Description>
+		</structure:Code>
+		<structure:Code value="32431000000">
+			<structure:Description xml:lang="ru">Новокузнецк</structure:Description>
+		</structure:Code>
+		<structure:Code value="32437000000">
+			<structure:Description xml:lang="ru">Прокопьевск</structure:Description>
+		</structure:Code>
+		<structure:Code value="32449000000">
+			<structure:Description xml:lang="ru">Юрга</structure:Description>
+		</structure:Code>
+		<structure:Code value="50401000000">
+			<structure:Description xml:lang="ru">Новосибирск</structure:Description>
+		</structure:Code>
+		<structure:Code value="50408000000">
+			<structure:Description xml:lang="ru">Бердск</structure:Description>
+		</structure:Code>
+		<structure:Code value="50415000000">
+			<structure:Description xml:lang="ru">Куйбышев</structure:Description>
+		</structure:Code>
+		<structure:Code value="52401000000">
+			<structure:Description xml:lang="ru">Омск</structure:Description>
+		</structure:Code>
+		<structure:Code value="52405000000">
+			<structure:Description xml:lang="ru">Исилькуль</structure:Description>
+		</structure:Code>
+		<structure:Code value="52410000000">
+			<structure:Description xml:lang="ru">Калачинск</structure:Description>
+		</structure:Code>
+		<structure:Code value="52415000000">
+			<structure:Description xml:lang="ru">Тара</structure:Description>
+		</structure:Code>
+		<structure:Code value="69401000000">
+			<structure:Description xml:lang="ru">Томск</structure:Description>
+		</structure:Code>
+		<structure:Code value="69232501000">
+			<structure:Description xml:lang="ru">Колпашево</structure:Description>
+		</structure:Code>
+		<structure:Code value="69208501000">
+			<structure:Description xml:lang="ru">Асино</structure:Description>
+		</structure:Code>
+		<structure:Code value="69410000000">
+			<structure:Description xml:lang="ru">Стрежевой</structure:Description>
+		</structure:Code>
+		<structure:Code value="98241501000">
+			<structure:Description xml:lang="ru">Олекминск</structure:Description>
+		</structure:Code>
+		<structure:Code value="98218501000">
+			<structure:Description xml:lang="ru">Вилюйск</structure:Description>
+		</structure:Code>
+		<structure:Code value="98215551000">
+			<structure:Description xml:lang="ru">Зырянка</structure:Description>
+		</structure:Code>
+		<structure:Code value="98239551000">
+			<structure:Description xml:lang="ru">Усть-Нера</structure:Description>
+		</structure:Code>
+		<structure:Code value="05401000000">
+			<structure:Description xml:lang="ru">Владивосток</structure:Description>
+		</structure:Code>
+		<structure:Code value="05414000000">
+			<structure:Description xml:lang="ru">Находка</structure:Description>
+		</structure:Code>
+		<structure:Code value="05420000000">
+			<structure:Description xml:lang="ru">Спасск-Дальний</structure:Description>
+		</structure:Code>
+		<structure:Code value="05423000000">
+			<structure:Description xml:lang="ru">Уссурийск</structure:Description>
+		</structure:Code>
+		<structure:Code value="08401000000">
+			<structure:Description xml:lang="ru">Хабаровск</structure:Description>
+		</structure:Code>
+		<structure:Code value="08409000000">
+			<structure:Description xml:lang="ru">Комсомольск-на-Амуре</structure:Description>
+		</structure:Code>
+		<structure:Code value="10401000000">
+			<structure:Description xml:lang="ru">Благовещенск</structure:Description>
+		</structure:Code>
+		<structure:Code value="10430000000">
+			<structure:Description xml:lang="ru">Свободный</structure:Description>
+		</structure:Code>
+		<structure:Code value="10412000000">
+			<structure:Description xml:lang="ru">Зея</structure:Description>
+		</structure:Code>
+		<structure:Code value="10432000000">
+			<structure:Description xml:lang="ru">Тында</structure:Description>
+		</structure:Code>
+		<structure:Code value="44401000000">
+			<structure:Description xml:lang="ru">Магадан</structure:Description>
+		</structure:Code>
+		<structure:Code value="44213501000">
+			<structure:Description xml:lang="ru">Сусуман</structure:Description>
+		</structure:Code>
+		<structure:Code value="44216551000">
+			<structure:Description xml:lang="ru">Усть-Омчуг</structure:Description>
+		</structure:Code>
+		<structure:Code value="64401000000">
+			<structure:Description xml:lang="ru">Южно-Сахалинск</structure:Description>
+		</structure:Code>
+		<structure:Code value="99401000000">
+			<structure:Description xml:lang="ru">Биробиджан</structure:Description>
+		</structure:Code>
+		<structure:Code value="77401000000">
+			<structure:Description xml:lang="ru">Анадырь</structure:Description>
+		</structure:Code>
+		<structure:Code value="70202501000">
+			<structure:Description xml:lang="ru">Алексин</structure:Description>
+		</structure:Code>
+		<structure:Code value="25203501000">
+			<structure:Description xml:lang="ru">Ангарск</structure:Description>
+		</structure:Code>
+		<structure:Code value="12205501000">
+			<structure:Description xml:lang="ru">Ахтубинск</structure:Description>
+		</structure:Code>
+		<structure:Code value="04203501000">
+			<structure:Description xml:lang="ru">Ачинск</structure:Description>
+		</structure:Code>
+		<structure:Code value="63207501000">
+			<structure:Description xml:lang="ru">Балаково</structure:Description>
+		</structure:Code>
+		<structure:Code value="46404000000">
+			<structure:Description xml:lang="ru">Балашиха</structure:Description>
+		</structure:Code>
+		<structure:Code value="63208501000">
+			<structure:Description xml:lang="ru">Балашов</structure:Description>
+		</structure:Code>
+		<structure:Code value="01404000000">
+			<structure:Description xml:lang="ru">Белокуриха</structure:Description>
+		</structure:Code>
+		<structure:Code value="41209501000">
+			<structure:Description xml:lang="ru">Волхов</structure:Description>
+		</structure:Code>
+		<structure:Code value="46410000000">
+			<structure:Description xml:lang="ru">Воскресенск</structure:Description>
+		</structure:Code>
+		<structure:Code value="41215501000">
+			<structure:Description xml:lang="ru">Выборг</structure:Description>
+		</structure:Code>
+		<structure:Code value="28414000000">
+			<structure:Description xml:lang="ru">Вышний Волочек</structure:Description>
+		</structure:Code>
+		<structure:Code value="33404000000">
+			<structure:Description xml:lang="ru">Вятские Поляны</structure:Description>
+		</structure:Code>
+		<structure:Code value="41218501000">
+			<structure:Description xml:lang="ru">Гатчина</structure:Description>
+		</structure:Code>
+		<structure:Code value="46433000000">
+			<structure:Description xml:lang="ru">Истра</structure:Description>
+		</structure:Code>
+		<structure:Code value="04221501000">
+			<structure:Description xml:lang="ru">Канск</structure:Description>
+		</structure:Code>
+		<structure:Code value="41221501000">
+			<structure:Description xml:lang="ru">Кингисепп</structure:Description>
+		</structure:Code>
+		<structure:Code value="24405000000">
+			<structure:Description xml:lang="ru">Кинешма</structure:Description>
+		</structure:Code>
+		<structure:Code value="41224501000">
+			<structure:Description xml:lang="ru">Кириши</structure:Description>
+		</structure:Code>
+		<structure:Code value="07415000000">
+			<structure:Description xml:lang="ru">Кисловодск</structure:Description>
+		</structure:Code>
+		<structure:Code value="46437000000">
+			<structure:Description xml:lang="ru">Клин</structure:Description>
+		</structure:Code>
+		<structure:Code value="46438000000">
+			<structure:Description xml:lang="ru">Коломна</structure:Description>
+		</structure:Code>
+		<structure:Code value="64216501000">
+			<structure:Description xml:lang="ru">Корсаков</structure:Description>
+		</structure:Code>
+		<structure:Code value="46439000000">
+			<structure:Description xml:lang="ru">Красногорск</structure:Description>
+		</structure:Code>
+		<structure:Code value="76221501000">
+			<structure:Description xml:lang="ru">Краснокаменск</structure:Description>
+		</structure:Code>
+		<structure:Code value="57421000000">
+			<structure:Description xml:lang="ru">Кудымкар</structure:Description>
+		</structure:Code>
+		<structure:Code value="57422000000">
+			<structure:Description xml:lang="ru">Кунгур</structure:Description>
+		</structure:Code>
+		<structure:Code value="46448000000">
+			<structure:Description xml:lang="ru">Люберцы</structure:Description>
+		</structure:Code>
+		<structure:Code value="29220501000">
+			<structure:Description xml:lang="ru">Людиново</structure:Description>
+		</structure:Code>
+		<structure:Code value="04233501000">
+			<structure:Description xml:lang="ru">Минусинск</structure:Description>
+		</structure:Code>
+		<structure:Code value="18420000000">
+			<structure:Description xml:lang="ru">Михайловка</structure:Description>
+		</structure:Code>
+		<structure:Code value="46446000000">
+			<structure:Description xml:lang="ru">Мытищи</structure:Description>
+		</structure:Code>
+		<structure:Code value="98260501000">
+			<structure:Description xml:lang="ru">Нерюнгри</structure:Description>
+		</structure:Code>
+		<structure:Code value="46451000000">
+			<structure:Description xml:lang="ru">Ногинск</structure:Description>
+		</structure:Code>
+		<structure:Code value="11244501000">
+			<structure:Description xml:lang="ru">Няндома</structure:Description>
+		</structure:Code>
+		<structure:Code value="38226501000">
+			<structure:Description xml:lang="ru">Обоянь</structure:Description>
+		</structure:Code>
+		<structure:Code value="46455000000">
+			<structure:Description xml:lang="ru">Одинцово</structure:Description>
+		</structure:Code>
+		<structure:Code value="54401000000">
+			<structure:Description xml:lang="ru">Орёл</structure:Description>
+		</structure:Code>
+		<structure:Code value="36424000000">
+			<structure:Description xml:lang="ru">Отрадный</structure:Description>
+		</structure:Code>
+		<structure:Code value="64236501000">
+			<structure:Description xml:lang="ru">Оха</structure:Description>
+		</structure:Code>
+		<structure:Code value="46459000000">
+			<structure:Description xml:lang="ru">Павловский Посад</structure:Description>
+		</structure:Code>
+		<structure:Code value="77230501000">
+			<structure:Description xml:lang="ru">Певек</structure:Description>
+		</structure:Code>
+		<structure:Code value="64240501000">
+			<structure:Description xml:lang="ru">Поронайск</structure:Description>
+		</structure:Code>
+		<structure:Code value="63237501000">
+			<structure:Description xml:lang="ru">Пугачев</structure:Description>
+		</structure:Code>
+		<structure:Code value="46468000000">
+			<structure:Description xml:lang="ru">Раменское</structure:Description>
+		</structure:Code>
+		<structure:Code value="20247501000">
+			<structure:Description xml:lang="ru">Россошь</structure:Description>
+		</structure:Code>
+		<structure:Code value="63241501000">
+			<structure:Description xml:lang="ru">Ртищево</structure:Description>
+		</structure:Code>
+		<structure:Code value="60250501000">
+			<structure:Description xml:lang="ru">Сальск</structure:Description>
+		</structure:Code>
+		<structure:Code value="22437000000">
+			<structure:Description xml:lang="ru">Семенов</structure:Description>
+		</structure:Code>
+		<structure:Code value="46428000000">
+			<structure:Description xml:lang="ru">Сергиев Посад</structure:Description>
+		</structure:Code>
+		<structure:Code value="46476000000">
+			<structure:Description xml:lang="ru">Ступино</structure:Description>
+		</structure:Code>
+		<structure:Code value="25236501000">
+			<structure:Description xml:lang="ru">Тайшет</structure:Description>
+		</structure:Code>
+		<structure:Code value="41245501000">
+			<structure:Description xml:lang="ru">Тихвин</structure:Description>
+		</structure:Code>
+		<structure:Code value="41248501000">
+			<structure:Description xml:lang="ru">Тосно</structure:Description>
+		</structure:Code>
+	</structure:CodeList>
+</CodeLists>
+<generic:Series>
+		<generic:SeriesKey>
+			<generic:Value concept="s_OKATO" value="643"/>
+			<generic:Value concept="s_grtov" value="111"/>
+		</generic:SeriesKey>
+		<generic:Attributes>
+			<generic:Value concept="EI" value="рубль"/>
+			<generic:Value concept="PERIOD" value="1 неделя 2021"/>
+		</generic:Attributes>
+		<generic:Obs>
+			<generic:Time>2021</generic:Time>
+			<generic:ObsValue value="361,85"/>
+		</generic:Obs>
+	</generic:Series>
+<generic:Series>
+		<generic:SeriesKey>
+			<generic:Value concept="s_OKATO" value="643"/>
+			<generic:Value concept="s_grtov" value="111"/>
+		</generic:SeriesKey>
+		<generic:Attributes>
+			<generic:Value concept="EI" value="рубль"/>
+			<generic:Value concept="PERIOD" value="51 неделя 2021"/>
+		</generic:Attributes>
+		<generic:Obs>
+			<generic:Time>2021</generic:Time>
+			<generic:ObsValue value="416,49"/>
+		</generic:Obs>
+	</generic:Series>
+<generic:Series>
+		<generic:SeriesKey>
+			<generic:Value concept="s_OKATO" value="643"/>
+			<generic:Value concept="s_grtov" value="113"/>
+		</generic:SeriesKey>
+		<generic:Attributes>
+			<generic:Value concept="EI" value="рубль"/>
+			<generic:Value concept="PERIOD" value="1 неделя 2021"/>
+		</generic:Attributes>
+		<generic:Obs>
+			<generic:Time>2021</generic:Time>
+			<generic:ObsValue value="269,76"/>
+		</generic:Obs>
+	</generic:Series>
+<generic:Series>
+		<generic:SeriesKey>
+			<generic:Value concept="s_OKATO" value="643"/>
+			<generic:Value concept="s_grtov" value="113"/>
+		</generic:SeriesKey>
+		<generic:Attributes>
+			<generic:Value concept="EI" value="рубль"/>
+			<generic:Value concept="PERIOD" value="51 неделя 2021"/>
+		</generic:Attributes>
+		<generic:Obs>
+			<generic:Time>2021</generic:Time>
+			<generic:ObsValue value="311,84"/>
+		</generic:Obs>
+	</generic:Series>
+</GenericData>
