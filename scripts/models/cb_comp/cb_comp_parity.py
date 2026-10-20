@@ -66,17 +66,17 @@ import pandas as pd
 from catboost import CatBoostRegressor
 from scipy import stats
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[3]
 
 # Скрипт-сосед: признаки, as-of и календарь месяцев переиспользуются из
 # ML-трека v2, а не дублируются. `cpi_monthly.py` — побайтовая копия файла из
 # PR #177 (в `main` его ещё нет); см. спеку §3.2.
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import cpi_monthly as cm
-import cb_comp_bottomup as bu
-import eval_utils as eu
-import ml_experiment as mlx
+from models.cpi import cpi_monthly as cm
+from models.cb_comp import cb_comp_bottomup as bu
+from lib import eval_utils as eu
+from lib import ml_experiment as mlx
 
 # ---------------------------------------------------------------------------
 # Предзарегистрированные константы (спека §5.2; значения пинуются тестами)

@@ -18,10 +18,10 @@ import csv
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import extrapolation_aisc as aisc
+from lib import clickhouse as ch
 
 PUBLIC_SQL = """
 SELECT code, indicator, toString(date) AS date, value
@@ -63,8 +63,8 @@ def main(argv=None) -> int:
     out_dir = Path(arguments.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    public = aisc.ch_query(PUBLIC_SQL)
-    sheet_map = aisc.ch_query(SHEET_MAP_SQL)
+    public = ch.ch_query(PUBLIC_SQL)
+    sheet_map = ch.ch_query(SHEET_MAP_SQL)
     if not public:
         raise SystemExit("v_cbr_mp_public_panel: пустой ответ ClickHouse")
     if not sheet_map:

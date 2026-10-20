@@ -20,10 +20,10 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import cpi_monthly as cm
-import cpi_monthly_v3 as v3
+from models.cpi import cpi_monthly as cm
+from models.cpi import cpi_monthly_v3 as v3
 
 
 def _panel(rows: list) -> tuple:

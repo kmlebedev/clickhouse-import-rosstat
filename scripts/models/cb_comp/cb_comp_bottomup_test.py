@@ -22,9 +22,9 @@ import numpy as np
 import pandas as pd
 from openpyxl import Workbook
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import cb_comp_bottomup as bu
+from models.cb_comp import cb_comp_bottomup as bu
 
 
 def _write_book(path: Path, sheets: dict, startrow: int = 0) -> None:

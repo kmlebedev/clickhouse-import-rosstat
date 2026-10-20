@@ -48,11 +48,11 @@ from sklearn.linear_model import ElasticNetCV as SkElasticNetCV
 
 # Модуль и тест лежат рядом, запуск прямой (`python3 scripts/...`), поэтому его
 # каталог добавляется в sys.path до импорта.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import cpi_monthly as cm
+from models.cpi import cpi_monthly as cm
 
-FIXTURE_DIR = Path(__file__).resolve().parent / "testdata" / "cpi_monthly"
+FIXTURE_DIR = Path(__file__).resolve().parents[2] / "testdata" / "cpi_monthly"
 
 FIXTURE_NAMES = (
     "ipc_mes_2013_2014.csv",

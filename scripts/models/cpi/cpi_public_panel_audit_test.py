@@ -18,9 +18,9 @@ from pathlib import Path
 
 from openpyxl import Workbook
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import cpi_public_panel_audit as audit
+from models.cpi import cpi_public_panel_audit as audit
 
 
 def _month_start(year: int, month: int) -> date:

@@ -28,13 +28,13 @@ import numpy as np
 import pandas as pd
 from catboost import CatBoostRegressor
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import cb_comp_parity as cp
-import cpi_monthly as cm
-import cpi_monthly_v3 as v3
-import eval_utils as eu
+from models.cb_comp import cb_comp_parity as cp
+from models.cpi import cpi_monthly as cm
+from models.cpi import cpi_monthly_v3 as v3
+from lib import eval_utils as eu
 
 HORIZONS = (1, 2, 3, 6)
 TRAIN_START = date(2010, 3, 1)

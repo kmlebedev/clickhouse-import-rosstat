@@ -31,10 +31,10 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import cpi_public_panel_audit as audit
+from models.cpi import cpi_public_panel_audit as audit
 
 SCHEMA = "cpi-weekly-component-panel/v1"
 COMPONENTS = ("food", "nonfood", "services")

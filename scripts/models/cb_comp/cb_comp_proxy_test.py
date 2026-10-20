@@ -15,10 +15,10 @@ import unittest
 from datetime import date
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import cb_comp_proxy as cbp
+from models.cb_comp import cb_comp_proxy as cbp
 
 
 def make_months(start: date, end: date) -> list:

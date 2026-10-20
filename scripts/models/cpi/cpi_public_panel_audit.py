@@ -28,10 +28,10 @@ from pathlib import Path
 from openpyxl import load_workbook
 from openpyxl.utils.datetime import from_excel
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from extrapolation_aisc import ch_query
+from lib.clickhouse import ch_query
 
 ARCHIVE_ROOT_NAME = "BusinessSurveyCBRCpiForecastingSourceCode"
 MP_URL = "https://www.cbr.ru/Content/Document/File/135603/mp_survey_data.xlsx"

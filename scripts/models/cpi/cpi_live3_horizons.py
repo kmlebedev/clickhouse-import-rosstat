@@ -32,12 +32,12 @@ from datetime import date
 from pathlib import Path
 from typing import Optional
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import cb_comp_live_compare as cbc  # noqa: E402
-import cpi_monthly as cm  # noqa: E402
-import cpi_monthly_v3 as cmv3  # noqa: E402
+from models.cb_comp import cb_comp_live_compare as cbc  # noqa: E402
+from models.cpi import cpi_monthly as cm  # noqa: E402
+from models.cpi import cpi_monthly_v3 as cmv3  # noqa: E402
 
 HORIZONS = (1, 3, 6)
 MIN_TRAIN = 24

@@ -36,13 +36,13 @@ import numpy as np
 from catboost import CatBoostRegressor
 from sklearn.linear_model import ElasticNetCV
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import cpi_monthly as cm
-import eval_utils as eu
-import ml_experiment as mlx
-from extrapolation_aisc import ch_query
+from models.cpi import cpi_monthly as cm
+from lib import eval_utils as eu
+from lib import ml_experiment as mlx
+from lib.clickhouse import ch_query
 
 WEEKLY_SQL = """
 SELECT series, date, value

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Офлайн-тесты live-пайплайна CB_COMP: корректировки, дашборд, ЖКУ."""
 
+import sys
 import tempfile
 import unittest
 from datetime import date
@@ -9,7 +10,9 @@ from pathlib import Path
 import pandas as pd
 from openpyxl import Workbook
 
-import cb_comp_live_pipeline as pipe
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from models.cb_comp import cb_comp_live_pipeline as pipe
 
 
 def _rows(month=date(2026, 10, 1)):

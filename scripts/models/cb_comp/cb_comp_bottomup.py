@@ -45,10 +45,10 @@ import numpy as np
 import pandas as pd
 from catboost import CatBoostRegressor
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import cpi_monthly as cm
+from models.cpi import cpi_monthly as cm
 
 SEED = 20261018
 HORIZONS = (1, 2, 3, 6)
