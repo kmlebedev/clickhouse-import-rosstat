@@ -13,7 +13,7 @@ fallback. Все времена — наивные, московское вре�
 import sys
 import tempfile
 import unittest
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -51,6 +51,7 @@ class TestExactPoints(unittest.TestCase):
         # В CSV месячная точка лежит на конце месяца, но вызывающий код может
         # передать первое число того же месяца — это одна и та же точка.
         point = CAL.lookup("rosstat", "cpi_all", date(2026, 9, 1))
+        self.assertEqual(point.period, date(2026, 9, 30))
         self.assertEqual(point.published_at, datetime(2026, 10, 9, 19, 0))
         self.assertEqual(point.precision, "exact")
 
@@ -76,16 +77,25 @@ class TestReleaseTimeBoundary(unittest.TestCase):
     def test_monthly_release_time_boundary(self):
         period = date(2026, 9, 30)
         self.assertFalse(
-            CAL.is_available("rosstat", "cpi_all", period, datetime(2026, 10, 9, 13, 30))
+            CAL.is_available(
+                "rosstat", "cpi_all", period, datetime(2026, 10, 9, 13, 30)
+            )
         )
         self.assertTrue(
-            CAL.is_available("rosstat", "cpi_all", period, datetime(2026, 10, 9, 19, 1))
+            CAL.is_available(
+                "rosstat", "cpi_all", period, datetime(2026, 10, 9, 19, 1)
+            )
         )
 
     def test_release_at_exact_time_is_available(self):
         # Граница включительная: `published_at <= as_of`.
         self.assertTrue(
-            CAL.is_available("rosstat", "cpi_all", date(2026, 9, 30), datetime(2026, 10, 9, 19, 0))
+            CAL.is_available(
+                "rosstat",
+                "cpi_all",
+                date(2026, 9, 30),
+                datetime(2026, 10, 9, 19, 0),
+            )
         )
 
     def test_weekly_wednesday_boundary(self):
@@ -149,6 +159,15 @@ class TestLatestAndNext(unittest.TestCase):
         with self.assertRaises(ValueError):
             CAL.latest_published_month("rosstat", "cpi_weekly", datetime(2026, 10, 23))
 
+    def test_no_published_month_returns_none(self):
+        # Вырожденный as_of: ни одна месячная точка ещё не опубликована,
+        # поэтому latest = None, а next — месяц as_of.
+        as_of = datetime(1, 1, 1, 0, 0)
+        self.assertIsNone(CAL.latest_published_month("rosstat", "cpi_all", as_of))
+        self.assertEqual(
+            CAL.next_unpublished_month("rosstat", "cpi_all", as_of), date(1, 1, 1)
+        )
+
 
 class TestFallbackRules(unittest.TestCase):
     def test_fallback_precision(self):
@@ -191,17 +210,13 @@ class TestFallbackRules(unittest.TestCase):
             datetime(2026, 11, 21, 15, 0),
         )
 
-    def test_business_survey_rule_is_conservative(self):
-        # Мониторинг предприятий — конец M+1, 23:59: до конца последнего дня
-        # месяца точка недоступна.
-        self.assertEqual(
-            CAL.published_at("cbr", "price_expectations", date(2026, 9, 30)),
-            datetime(2026, 10, 31, 23, 59),
-        )
-        self.assertEqual(
-            CAL.published_at("cbr", "industry_mining_ibk", date(2026, 9, 30)),
-            datetime(2026, 10, 31, 23, 59),
-        )
+    def test_business_survey_requires_exact_row(self):
+        # Спека §3.2 запрещает фиксированный лаг для опросов ЦБ: без точной
+        # даты в календаре точка недоступна, а не «доступна по умолчанию».
+        with self.assertRaises(ValueError):
+            CAL.published_at("cbr", "price_expectations", date(2026, 9, 30))
+        with self.assertRaises(ValueError):
+            CAL.published_at("cbr", "industry_mining_ibk", date(2026, 9, 30))
 
     def test_unknown_series_raises(self):
         with self.assertRaises(ValueError):
@@ -241,6 +256,45 @@ class TestCsvValidation(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             PublicationCalendar.from_csv(path)
+
+    def test_business_survey_exact_row_is_used(self):
+        path = self._write(
+            "source,series,period,published_at,precision\n"
+            "cbr,price_expectations,2026-09-30,2026-10-15T15:00,exact\n"
+        )
+        calendar = PublicationCalendar.from_csv(path)
+        point = calendar.lookup("cbr", "price_expectations", date(2026, 9, 30))
+        self.assertEqual(point.published_at, datetime(2026, 10, 15, 15, 0))
+        self.assertEqual(point.precision, "exact")
+
+    def test_tz_aware_published_at_raises(self):
+        path = self._write(
+            "source,series,period,published_at,precision\n"
+            "rosstat,cpi_all,2026-09-30,2026-10-09T19:00+03:00,exact\n"
+        )
+        with self.assertRaises(ValueError):
+            PublicationCalendar.from_csv(path)
+
+
+class TestNaiveDatetimes(unittest.TestCase):
+    def test_tz_aware_as_of_raises(self):
+        as_of = datetime(2026, 10, 9, 19, 0, tzinfo=timezone.utc)
+        with self.assertRaises(ValueError):
+            CAL.is_available("rosstat", "cpi_all", date(2026, 9, 30), as_of)
+        with self.assertRaises(ValueError):
+            CAL.latest_published_month("rosstat", "cpi_all", as_of)
+        with self.assertRaises(ValueError):
+            CAL.next_unpublished_month("rosstat", "cpi_all", as_of)
+
+    def test_calendar_point_rejects_tz_aware_published_at(self):
+        with self.assertRaises(ValueError):
+            CalendarPoint(
+                "rosstat",
+                "cpi_all",
+                date(2026, 9, 30),
+                datetime(2026, 10, 9, 19, 0, tzinfo=timezone.utc),
+                "exact",
+            )
 
 
 if __name__ == "__main__":

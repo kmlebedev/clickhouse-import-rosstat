@@ -1,15 +1,17 @@
-#!/usr/bin/env python3
 """Календарь публикаций: point-in-time доступность рядов Росстата и ЦБ.
 
 Модуль отвечает на один вопрос: какая точка ряда была опубликована к моменту
 `as_of` (обычно — время заседания ЦБ). Источник точных дат — версионированный
 CSV (в эксперименте `scripts/testdata/publication_calendar.csv`, в production —
 таблица/витрина `publication_calendar`, отдельный Go/DDL-пункт). Если точной
-даты нет, применяется консервативное правило, и точка явно помечается
-`precision="fallback"`; молчаливых «доступна по умолчанию» точек нет.
+даты нет, для рядов с установленным правилом применяется консервативное
+правило, и точка явно помечается `precision="fallback"`; молчаливых «доступна
+по умолчанию» точек нет. Для рядов мониторинга предприятий ЦБ фиксированный
+лаг запрещён (спека §3.2): им нужна точная дата, иначе `ValueError`.
 
 Все даты и времена — наивные, московское время: сравнение
 `published_at <= as_of` прямое и не зависит от часового пояса машины.
+Tz-aware `datetime` отклоняется с `ValueError`, чтобы не смешивать пояса.
 
 Модуль ничего не читает из ClickHouse, не пишет в него и не делает сетевых
 вызовов. Экспериментальная граница: CSV — fallback на время эксперимента,
@@ -20,16 +22,17 @@ import csv
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Literal, cast
 
 # Сколько месяцев назад `latest_published_month` ищет опубликованную точку.
 # Двадцать лет с запасом покрывают окна бэктестов репозитория (с 2013 г.);
 # ограничение нужно только для вырожденного `as_of`, чтобы скан завершался.
 _MAX_MONTH_LOOKBACK = 240
 
-# Допустимые значения `precision`. `exact` — дата из календаря источника,
-# `fallback` — вычисленная по консервативному правилу.
-_PRECISIONS = ("exact", "fallback")
+# Точность даты публикации: `exact` — из календаря источника, `fallback` —
+# вычислена по консервативному правилу.
+Precision = Literal["exact", "fallback"]
+_PRECISIONS: tuple[Precision, ...] = ("exact", "fallback")
 
 # Недельные ряды ИПЦ: точка недели — понедельник, в БД доступна на `+2` дня.
 _WEEKLY_SERIES_PREFIX = "cpi_weekly"
@@ -37,25 +40,14 @@ _WEEKLY_SERIES_PREFIX = "cpi_weekly"
 # SA/тренд ЦБ: публикуются в одном окне через 5–6 рабочих дней после ИПЦ.
 _CBR_SA_SERIES = frozenset({"cpi_sa", "cpi_trend", "cpi_trend_dev"})
 
-# Мониторинг предприятий ЦБ (имена — по `cbr/series_meta.go` и витрине
-# `v_cbr_survey`; отраслевые ряды начинаются с `industry_`).
-_CBR_SURVEY_SERIES = frozenset(
-    {
-        "business_climate",
-        "business_climate_sa",
-        "price_expectations",
-        "price_expectations_sa",
-        "credit_conditions",
-        "price_growth_expected",
-        "price_growth_expected_sa",
-        "capacity_utilization",
-        "capacity_utilization_sa",
-        "staff_availability",
-        "staff_availability_sa",
-        "headcount_expectations",
-        "headcount_expectations_sa",
-    }
-)
+
+def _require_naive(value: datetime, name: str) -> None:
+    """Календарь работает только с наивным московским временем."""
+    if value.utcoffset() is not None:
+        raise ValueError(
+            f"{name}: ожидается наивное московское время без tzinfo, "
+            f"получено {value!r}"
+        )
 
 
 @dataclass(frozen=True)
@@ -65,13 +57,17 @@ class CalendarPoint:
     `precision` — `exact` для даты из календаря источника, `fallback` для
     вычисленной по правилу. `period` — период ряда в терминах вызывающего кода
     (для месячных рядов допускаются и первое, и последнее число месяца).
+    `published_at` — наивное московское время; tz-aware значение отклоняется.
     """
 
     source: str
     series: str
     period: date
     published_at: datetime
-    precision: str
+    precision: Precision
+
+    def __post_init__(self) -> None:
+        _require_naive(self.published_at, "published_at")
 
 
 def _is_weekly_series(series: str) -> bool:
@@ -86,14 +82,6 @@ def _is_cbr_sa_series(series: str) -> bool:
         series in _CBR_SA_SERIES
         or series.startswith("cpi_sa_")
         or series.startswith("cpi_trend_")
-    )
-
-
-def _is_cbr_survey_series(series: str) -> bool:
-    return (
-        series in _CBR_SURVEY_SERIES
-        or series.startswith("cbr_survey")
-        or series.startswith("industry_")
     )
 
 
@@ -137,17 +125,7 @@ def _cbr_infl_exp_rule(period: date) -> datetime:
     return datetime(period.year, period.month, 21, 15, 0)
 
 
-def _cbr_survey_rule(period: date) -> datetime:
-    """Мониторинг предприятий: конец M+1, 23:59 МСК (консервативно).
-
-    Точную волну источник не публикует машиночитаемо, поэтому до последней
-    минуты последнего дня следующего месяца точка считается недоступной.
-    """
-    end = _month_end(_shift_month(_first_of_month(period), 1))
-    return datetime(end.year, end.month, end.day, 23, 59)
-
-
-# Правило по умолчанию — callable, а не дата: fallback вычисляется лениво.
+# Fallback-правило — callable: дата публикации вычисляется от периода точки.
 _ReleaseRule = Callable[[date], datetime]
 
 
@@ -155,7 +133,9 @@ def _release_rule(source: str, series: str) -> _ReleaseRule:
     """Возвращает консервативное правило публикации для пары source/series.
 
     Неизвестная пара — ошибка, а не догадка: неверная дата публикации даёт
-    look-ahead, который невозможно заметить по результату модели.
+    look-ahead, который невозможно заметить по результату модели. У рядов
+    мониторинга предприятий ЦБ правила нет вовсе: спека §3.2 запрещает для них
+    фиксированный лаг, поэтому нужна точная дата в календаре.
     """
     if source == "rosstat":
         if _is_weekly_series(series):
@@ -165,8 +145,6 @@ def _release_rule(source: str, series: str) -> _ReleaseRule:
     elif source == "cbr":
         if series.startswith("infl_exp"):
             return _cbr_infl_exp_rule
-        if _is_cbr_survey_series(series):
-            return _cbr_survey_rule
         if _is_cbr_sa_series(series):
             return _cbr_sa_rule
     raise ValueError(
@@ -192,12 +170,17 @@ def _parse_row(row: dict, path: Path, line_number: int) -> CalendarPoint:
         published_at = datetime.fromisoformat(values["published_at"])
     except ValueError as error:
         raise ValueError(f"{path}:{line_number}: {error}") from error
+    if published_at.utcoffset() is not None:
+        raise ValueError(
+            f"{path}:{line_number}: published_at должен быть наивным "
+            f"московским временем, получено {values['published_at']!r}"
+        )
     return CalendarPoint(
         source=values["source"],
         series=values["series"],
         period=period,
         published_at=published_at,
-        precision=precision,
+        precision=cast(Precision, precision),
     )
 
 
@@ -208,6 +191,9 @@ class PublicationCalendar:
     дополнительно нормализуется до месяца, поэтому `2026-09-01` и `2026-09-30`
     находят одну и ту же точку: в разных источниках дата периода записана
     первым или последним числом месяца.
+
+    Ряды без fallback-правила (например, мониторинг предприятий ЦБ) ищутся
+    только среди точных точек; иначе `ValueError`.
     """
 
     def __init__(self, points: Iterable[CalendarPoint] = ()):
@@ -279,7 +265,11 @@ class PublicationCalendar:
     def is_available(
         self, source: str, series: str, period: date, as_of: datetime
     ) -> bool:
-        """Опубликована ли точка к `as_of`; граница включительная."""
+        """Опубликована ли точка к `as_of`; граница включительная.
+
+        `as_of` — наивное московское время, как и `published_at`.
+        """
+        _require_naive(as_of, "as_of")
         return self.published_at(source, series, period) <= as_of
 
     def latest_published_month(
@@ -288,8 +278,10 @@ class PublicationCalendar:
         """Последний опубликованный месяц ряда (первое число) или `None`.
 
         Скан идёт от месяца `as_of` назад: точка текущего месяца проверяется
-        первой, потому что ожидания ЦБ публикуются в том же месяце.
+        первой, потому что ожидания ЦБ публикуются в том же месяце. `as_of` —
+        наивное московское время.
         """
+        _require_naive(as_of, "as_of")
         if _is_weekly_series(series):
             raise ValueError(
                 f"latest_published_month: ряд {series!r} недельный, месяц не определён"
@@ -309,8 +301,10 @@ class PublicationCalendar:
     ) -> date:
         """Первый неопубликованный месяц ряда (первое число).
 
-        Если опубликованных месяцев не нашлось, это месяц `as_of`.
+        Если опубликованных месяцев не нашлось, это месяц `as_of`. `as_of` —
+        наивное московское время.
         """
+        _require_naive(as_of, "as_of")
         latest = self.latest_published_month(source, series, as_of)
         if latest is None:
             return _first_of_month(as_of.date())
