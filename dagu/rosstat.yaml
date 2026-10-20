@@ -64,3 +64,14 @@ steps:
       limit: 3
       interval_sec: 300
 
+  # Восьмой шаг — ИЦП по ВЭД: месячная выгрузка, публикация 12–16-й рабочий день.
+  # Шаг в хвосте цепочки: падение нового шага не лишает данных уже проверенные семь.
+  # После первого прогона — HEAD-префлайт и no-op; окно расписания уточнит T6.
+  - id: rosstat_ppi_ved
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=rosstat_ppi_ved
+    retry_policy:
+      limit: 3
+      interval_sec: 300
+
