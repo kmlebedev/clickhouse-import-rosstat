@@ -1,0 +1,3362 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    
+
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<meta name="format-detection" content="telephone=no" />
+<meta name="zoom:lang" content="ru" />
+    <meta name="zoom:last-modified" content="Tue, 29 Sep 2026 12:45:00 GMT" />
+    <meta name="zoom:tags" content="Аналитика, InMaterials" />
+<title>Инфляционные ожидания | Банк России</title>
+
+
+
+    <meta property="og:image" content="/common/images/share-1.jpg" />
+
+    
+
+
+            <link rel="stylesheet" type="text/css" href="/common/libs/jquery-ui/jquery-ui.min.css?v=v478607061" media="all">
+
+            <!--[if IE 9]><link rel="stylesheet" type="text/css" href="/common/style/main-ie9.css?v=v1337212920" media="all"><![endif]-->
+
+            <!--[if gt IE 9]><!--><link rel="stylesheet" type="text/css" href="/common/style/main.min.css?v=v1337212920" media="all"><!--<![endif]-->
+
+
+        <script type="text/javascript" src="/common/libs/jquery-3.7.1.min.js?v=v735956814"></script>
+
+
+
+        <script type="text/javascript" src="/common/libs/jquery-ui/jquery-ui.min.js?v=v478607061"></script>
+
+        <script type="text/javascript" src="/common/libs/jquery.inputmask.min.js?v=v478607061"></script>
+
+
+        <script type="text/javascript" src="/common/scripts/vendor.js?v=v4270970564"></script>
+
+        <script type="text/javascript" src="/common/libs/jquery.floatThead.min.js?v=v478607061"></script>
+
+
+
+
+
+
+
+
+        <script type="text/javascript" src="/common/libs/popper.js?v=v478607061"></script>
+
+        <script type="text/javascript" src="/common/libs/tippy.js?v=v478607061"></script>
+
+        <script type="text/javascript" src="/common/scripts/main.min.js?v=v1337212920"></script>
+
+
+        <script type="text/javascript" src="/common/libs/localization-ru.js?v=v712023859"></script>
+        <script type="text/javascript" src="/js/jquery.ui.autocomplete-ru.js?v=v1043438991"></script>
+
+        <script type="text/javascript" src="/js/jquery.cookie.min.js?v=v4260771145"></script>
+
+        <script type="text/javascript" src="/js/site.js?v=v2848633841"></script>
+
+
+
+
+
+    <script type="text/javascript">
+        $(function () {
+            var $menu = $('[data-menu]'),
+                $menuItemBtn = $menu.find('[data-menu-item-btn]'),
+                $menuShow = $('[data-menu-show]'),
+                $menuClose = $('[data-menu-close]');
+            var config = $menu.data('config');
+
+            $menuShow.on('click.cms_loadwholesite mouseenter.cms_loadwholesite', function (event) {
+                loadWholeSite();
+            });
+
+            var xhr = null;
+            function loadWholeSite() {
+                if (xhr === null) {
+                    $('.menu_wrap .networks-circle').html($('.networks-circle.footer_networks').html());
+                    $('.menu_wrap .header_search').html($('.header .offsetMenu .header_search').html());
+
+                    $('[data-cms-wholesite-placeholder]').addClass('with-centered-loader').empty();
+                    xhr = $.ajax(config.url, {
+                        dataType: "html",
+                        method: "get",
+                        success: function (html) {
+                            $('[data-cms-wholesite-placeholder]').replaceWith(html);
+
+                            $menu.find('.menu_tab[data-tabs-tab]').each(function () {
+                                var tab = $(this).data('tabs-tab');
+                                $(this).toggle($menu.find('[data-tabs-content="' + tab + '"]').length != 0);
+                            });
+
+                            $menu.trigger('new-html');
+
+                            for (var i in config.catalogPath) {
+                                $menu.find('li[data-catalog-id="' + config.catalogPath[i] + '"]')
+                                    .addClass("_active");
+                                $menu.find('li[data-catalog-id="' + config.catalogPath[i] + '"]')
+                                    .closest('[data-tabs-content]')
+                                    .trigger('open-anchor');
+                            }
+
+                            $menuShow.off('click.cms_loadwholesite mouseenter.cms_loadwholesite');
+                        },
+                        error: function () {
+                            $('[data-cms-wholesite-placeholder]').removeClass('with-centered-loader')
+                                .append('<div class="menu_content offset-md-1">' +
+                                    '<span class="group-error field-validation-error">Не удалось загрузить карту сайта. <a href="#">Попробуйте еще раз.</a></span>' +
+                                    '</div>')
+                                .find('a')
+                                .on('click', function () { loadWholeSite(); });
+                        },
+                        complete: function () {
+                            xhr = null;
+                        }
+                    });
+                }
+            }
+        });
+    </script>
+
+
+<script>
+    if (window.localStorage) {
+        if (localStorage.getItem('vision-impaired'))
+            document.getElementsByTagName('html')[0].className += ' vision-impaired';
+    }
+</script>
+<script>
+    document.documentElement.style.setProperty('--scrollbar-width', '17px');
+    setTimeout(function () {
+        
+        var div = document.createElement('div');
+
+        div.style.overflowY = 'scroll';
+        div.style.width = '50px';
+        div.style.height = '50px';
+
+        
+        div.style.visibility = 'hidden';
+
+        document.body.appendChild(div);
+        var scrollWidth = Math.max(div.offsetWidth - div.clientWidth, 0.15); 
+        document.body.removeChild(div);
+        
+        document.documentElement.style.setProperty('--scrollbar-width', scrollWidth + 'px');
+    }, 0);
+</script>
+
+
+
+
+    
+</head>
+<body class="page-v3 page-v3-inside">
+
+
+<!-- Yandex.Metrika counter -->
+<script type="text/javascript" >
+    (function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
+    m[i].l=1*new Date();
+    for (var j = 0; j < document.scripts.length; j++) {if (document.scripts[j].src === r) { return; }}
+    k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)})
+    (window, document, "script", "https://mc.yandex.ru/metrika/tag.js", "ym");
+
+    ym(5774506, "init", {
+        clickmap:true,
+        trackLinks:true,
+        accurateTrackBounce:true,
+        webvisor:true
+    });
+</script>
+<noscript><div><img src="https://mc.yandex.ru/watch/5774506" style="position:absolute; left:-9999px;" alt="" /></div></noscript>    
+<!-- /Yandex.Metrika counter -->
+        
+    
+
+    <div class="header-print">
+    <div class="offsetMenu">
+        <div class="header-print_inner">
+            <img class="header-print_logo" alt="cbr" src="/common/images/logo.svg">
+            <ul class="header-print_contacts">
+<li>107016, Москва, ул. Неглинная, д.&nbsp;12, к. В, Банк России</li>
+<li><nobr class="phone">8 800 300-30-00</nobr></li>
+<li>www.cbr.ru</li>
+</ul>
+
+        </div>
+    </div>
+</div>
+
+    <header class="header" id="header">
+        <div class="top-line" data-top-line="">
+            <div class="header_burger-big"></div>
+            <div class="offsetMenu">
+                <div class="col-md-23 header_margin-left">
+                    <div class="top-line_inner header_inner">
+                        
+
+<div class="row">
+    <div class="col-xl-4 col-md-6">
+        <div class="header_left pr-0">
+                <div class="header_menu" data-menu-show=""></div>
+            <a class="header_logo" href="/"></a>
+                <a class="header_search_btn d-flex d-md-none" href="#" data-search-form-show="" aria-label="Поиск по сайту"><div class="header_search_icon"></div></a>
+            <a class="d-flex d-md-none" href="#" data-tooltip="" data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide"><div class="header_visual-impaired_item"></div></a>
+        </div>
+    </div>
+    <div class="col-xl-17 col-md-13 offset-md-1 header_block">
+        <div class="d-none d-md-block">
+            <div class="header_right">
+                <div class="networks header_link header_networks"><a class="header_appeal-link" href="/contactBR/" data-tooltip="" data-tooltip-content="Обратиться в Банк России" data-tooltip-class="mobile-hide"></a></div>
+                <div class="networks header_networks header_visual-impaired header_visual-impaired_inner"><a href="#" data-tooltip="" data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide" aria-label="Версия для слабовидящих"><div class="header_visual-impaired_item"></div></a></div>
+                <div class="header_lang header_lang_inner header_networks">
+    <a href="/Localization/SwitchLanguage?url=%2Fanalytics%2Fdkp%2Finflationary_expectations%2F&amp;from=ru-RU&amp;to=en-CB"><!--noindex-->EN<!--/noindex--></a>
+</div>
+                    <div class="header_networks header_search header_search_inner">
+                        <a class="header_search_btn" href="#" data-search-form-show="" aria-label="Поиск по сайту"><div class="header_search_icon"></div><span aria-hidden="true">Поиск по сайту</span></a>
+                    </div>
+            </div>
+        </div>
+    </div>
+</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="offsetMenu">
+            <div class="col-md-23 offset-md-1 header_margin-left">
+                <div class="header_inner">
+                    
+<div class="row">
+    <div class="col-xl-5 col-md-6">
+        <div class="header_left pr-0">
+            <div class="header_menu" data-menu-show=""></div>
+            <a class="header_logo" href="/"></a>
+            <a class="header_search_btn d-flex d-md-none" href="#" data-search-form-show="" aria-label="Поиск по сайту">
+                <div class="header_search_icon"></div>
+            </a>
+            <a class="d-flex d-md-none" href="#" data-tooltip data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide">
+                <div class="header_visual-impaired_item"></div>
+            </a>
+        </div>
+    </div>
+    <div class="col-xl-17 col-md-13 offset-md-1 header_block justify-content-end">
+        <div class="d-none d-md-block">
+            <div class="header_right">
+                <div class="networks header_link header_networks"><a class="header_appeal-link" href="/contactBR/" data-tooltip="" data-tooltip-content="Обратиться в Банк России" data-tooltip-class="mobile-hide"></a></div>
+                <div class="networks header_networks header_visual-impaired header_visual-impaired_inner">
+                    <a href="#" data-tooltip data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide" aria-label="Версия для слабовидящих">
+                        <div class="header_visual-impaired_item"></div>
+                    </a>
+                </div>
+                <div class="header_lang header_lang_inner header_networks">
+    <a href="/Localization/SwitchLanguage?url=%2Fanalytics%2Fdkp%2Finflationary_expectations%2F&amp;from=ru-RU&amp;to=en-CB"><!--noindex-->EN<!--/noindex--></a>
+</div>
+                <div class="header_networks header_search header_search_inner">
+                    <a class="header_search_btn" href="#" data-search-form-show="" aria-label="Поиск по сайту">
+                        <div class="header_search_icon"></div><span aria-hidden="true">Поиск по сайту</span>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+                </div>
+            </div>
+        </div>
+    </header>
+    <form action="/search/" method="get" class="search-form" data-search-form=""
+      data-api-url="/Content/SearchSuggest/Suggest"
+      data-api-top-url="">
+    <div class="offsetMenu">
+        <div class="col-md-23 offset-md-1">
+            <div class="search-form_inner">
+                <div class="search-form_title">Что вы хотите найти?<img class="search-form_title-close" src="/common/images/icons/menu-close-dark-grey.svg"></div>
+                <div class="search-form_content">
+                    <div class="search-form_block">
+                        <div class="search-form_icon"></div>
+                        <div class="search-form_field">
+                            <input name="text" type="text" autocomplete="off" placeholder="Начните писать" data-search-form-input="" />
+                        </div>
+                    </div>
+                    <div class="search-form_clear" data-search-form-clear-btn=""><img src="/common/images/icons/menu-close-gray.svg"></div>
+                    <div class="search-form_btn">
+                        <button class="b-btn _blue" data-search-form-btn="">Искать</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</form>
+
+
+<div class="menu_wrap" data-menu="" data-config="{&quot;catalogPath&quot;:[30481,18692,16629],&quot;url&quot;:&quot;/Catalog/SiteMap/GetWholeSiteHtml?blockId=59191&quot;}">
+    <div class="offsetMenu">
+        <div class="header_menu _close menu_close d-none d-md-block" data-menu-close=""></div>
+        <div class="header_inner top-line_inner d-block d-md-none">
+            <div class="row">
+                <div class="col-xl-5 col-md-9">
+                    <div class="header_left pr-0">
+                        <div class="header_menu _close" role="button" tabindex="0" aria-label="Закрыть меню" data-menu-close=""></div>
+                        <a class="header_logo" href="/"></a>
+                        <a class="header_search_btn" href="#" data-search-form-show="data-search-form-show" aria-label="Поиск по сайту"><div class="header_search_icon"></div></a>
+                        <a href="#" data-tooltip="data-tooltip" data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide"><div class="header_visual-impaired_item"></div></a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="menu row" data-tabs="data-tabs">
+            <div class="menu_quick col-md-7">
+                <div role="tablist" class="menu_quick_tabs">
+    <a role="tab" id="menu_tab_Activity" aria-controls="menu_content_Activity" aria-selected="true" class="menu_tab _active" href="#" data-tabs-tab="Activity">Деятельность</a>
+    <a role="tab" id="menu_tab_FinancialMarkets" aria-controls="menu_content_FinancialMarkets" aria-selected="false" class="menu_tab" href="#" data-tabs-tab="FinancialMarkets">Финансовые рынки</a>
+    <a role="tab" id="menu_tab_Documents" aria-controls="menu_content_Documents" aria-selected="false" class="menu_tab" href="#" data-tabs-tab="Documents">Документы и данные</a>
+    <a role="tab" id="menu_tab_AboutBank" aria-controls="menu_content_AboutBank" aria-selected="false" class="menu_tab" href="#" data-tabs-tab="AboutBank">О Банке России</a>
+    <a role="tab" id="menu_tab_Services" aria-controls="menu_content_Services" aria-selected="false" class="menu_tab" href="#" data-tabs-tab="Services">Сервисы</a>
+</div>
+<div class="menu_quick_links">
+    <div class="inner_links"><a href="/support_measures/" title="Меры зашиты финансового рынка" style="color:red">Меры защиты финансового рынка</a>
+  </div>
+<div class="phones"><a class="menu_phone_val" href="tel:+74993003000">
+<div class="plus">+</div>7 499 300-30-00</a><a class="menu_phone_val" href="tel:88003003000">8 800 300-30-00</a><a class="menu_phone_val" href="tel:300">300</a><span>Бесплатно для звонков с мобильных телефонов</span></div>
+<div class="inner_links">
+  <a href="/news/" title="Новости">Новости</a>
+  <a href="/rbr/" title="Решения Банка России">Решения Банка России</a>
+  <a href="/contacts/" title="Контактная информация">Контактная информация</a>
+  <a href="/sitemap" title="Карта сайта">Карта сайта</a>
+  <a href="/about/" title="О сайте">О сайте</a>
+  </div>
+<div class="networks-circle">
+  <a class="networks-circle_item _vk" href="https://vk.com/cbr_official" title="ВКонтакте"></a>
+  <a class="networks-circle_item _yt" href="https://www.youtube.com/user/BankofRussia" title="Youtube"></a>
+  <a class="networks-circle_item _tg" href="https://telegram.me/centralbank_russia" title="Telegram"></a>
+  <a class="networks-circle_item _ydzen" href="https://zen.yandex.ru/id/622372d6a565892091994ea9" title="Яндекс Дзен"></a>
+  <a class="networks-circle_item _ok" href="https://ok.ru/group/68858679787580" title="Одноклассники"></a>
+  <a class="networks-circle_item _rt" href="https://rutube.ru/channel/23873201/" title="RUTUBE"></a>
+  <a class="networks-circle_item _max" href="https://max.ru/cbr_official" title="Макс"></a>
+</div>
+</div>
+            </div>
+            <div class="d-md-none link-above">
+                <div class="header_right">
+                    <div class="header_link"><a href="/contactBR/">Обратиться в&nbsp;Банк России</a></div>
+                    <div class="header_lang">
+            <div class="header_lang_item _active"><span><!--noindex-->RU<!--/noindex--></span></div>
+            <div class="header_lang_item"><a href="/Localization/SwitchLanguage?url=%2Fanalytics%2Fdkp%2Finflationary_expectations%2F&amp;from=ru-RU&amp;to=en-CB"><!--noindex-->EN<!--/noindex--></a></div>
+</div>
+                </div>
+<div class="header_right"><div class="header_link"><a href="/about_br/">О Банке России</a></div></div>
+<div class="header_right"><div class="header_link"><a href="/finorg/">Проверить участника финансового рынка</a></div></div>
+<div class="header_right"><div class="header_link"><a href="/beware/">Осторожно: мошенники!</a></div></div>            </div>
+            <div class="menu_content_container col-md" data-cms-wholesite-placeholder="">
+            </div>
+        </div>
+    </div>
+</div>
+
+    <main id="content">
+        <div class="offsetMenu ">
+            <div class="container-fluid">
+                <div class="col-md-23 offset-md-1">
+                    <div class="breadcrumbs">
+    <div class="breadcrumbs_item"><a class="breadcrumbs_home" href="/"></a></div>
+        <div class="breadcrumbs_item">
+            <a href="/analytics/"><!--noindex-->Аналитика<!--/noindex--></a>
+        </div>
+        <div class="breadcrumbs_item">
+            <a href="/analytics/dkp/"><!--noindex-->Денежно-кредитная политика<!--/noindex--></a>
+        </div>
+    </div>
+
+                    <!--index-->
+<h1><span class="referenceable">Инфляционные ожидания</span>
+</h1>
+                                                                                                                        
+
+    <div class="document-regular file-collection">
+        <div class="document-regular_inner">
+            <div class="document-regular_top">
+                    <div class="document-regular_left_icon"></div>
+            </div>
+            <div class="body-2 document-regular_main">
+                <div class="document-regular_texts">
+                    <div class="document-regular_name" data-toggle="">
+<span class="referenceable" id="a_102610">                            <span class="document-regular_name_visible">Инфляционные ожидания и&#160;потребительские настроения</span>
+</span>
+                                            </div>
+                    
+                </div>
+            </div>
+
+                    <div class="versions" data-versions="data-versions">
+            <div class="versions_select_wrap">
+                <select data-versions-select class="versions_select">
+                        <option value="2026 г.">2026 г.</option>
+                        <option value="2025 г.">2025 г.</option>
+                        <option value="2024 г.">2024 г.</option>
+                        <option value="2023 г.">2023 г.</option>
+                        <option value="2022 г.">2022 г.</option>
+                        <option value="2021 г.">2021 г.</option>
+                        <option value="2020 г.">2020 г.</option>
+                        <option value="2019 г.">2019 г.</option>
+                        <option value="2018 г.">2018 г.</option>
+                        <option value="2017 г.">2017 г.</option>
+                        <option value="2016 г.">2016 г.</option>
+                        <option value="2015 г.">2015 г.</option>
+                        <option value="2014 г.">2014 г.</option>
+                        <option value="2013 г.">2013 г.</option>
+                </select>
+                <div class="dropdown_select"></div>
+            </div>
+                <div class="versions_items _active" data-versions-items="2026 г." data-item-select="2026 г.">
+                                            <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_26-09/" 
+       
+
+
+
+       data-versions-item="">Сентябрь</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_26-08/" 
+       
+
+
+
+       data-versions-item="">Август</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_26-07/" 
+       
+
+
+
+       data-versions-item="">Июль</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_26-06/" 
+       
+
+
+
+       data-versions-item="">Июнь</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_26-05/" 
+       
+
+
+
+       data-versions-item="">Май</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_26-04/" 
+       
+
+
+
+       data-versions-item="">Апрель</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_26-03/" 
+       
+
+
+
+       data-versions-item="">Март</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_26-02/" 
+       
+
+
+
+       data-versions-item="">Февраль</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_26-01/" 
+       
+
+
+
+       data-versions-item="">Январь</a>
+                                    </div>
+                <div class="versions_items " data-versions-items="2025 г." data-item-select="2025 г.">
+                                            <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_25-12/" 
+       
+
+
+
+       data-versions-item="">Декабрь</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_25-11/" 
+       
+
+
+
+       data-versions-item="">Ноябрь</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_25-10/" 
+       
+
+
+
+       data-versions-item="">Октябрь</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_25-09/" 
+       
+
+
+
+       data-versions-item="">Сентябрь</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_25-08/" 
+       
+
+
+
+       data-versions-item="">Август</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_25-07/" 
+       
+
+
+
+       data-versions-item="">Июль</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_25-06/" 
+       
+
+
+
+       data-versions-item="">Июнь</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_25-05/" 
+       
+
+
+
+       data-versions-item="">Май</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_25-04/" 
+       
+
+
+
+       data-versions-item="">Апрель</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_25-03/" 
+       
+
+
+
+       data-versions-item="">Март</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_25-02/" 
+       
+
+
+
+       data-versions-item="">Февраль</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_25-01/" 
+       
+
+
+
+       data-versions-item="">Январь</a>
+                                    </div>
+                <div class="versions_items " data-versions-items="2024 г." data-item-select="2024 г.">
+                                            <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_24-12/" 
+       
+
+
+
+       data-versions-item="">Декабрь</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_24-11/" 
+       
+
+
+
+       data-versions-item="">Ноябрь</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_24-10/" 
+       
+
+
+
+       data-versions-item="">Октябрь</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_24-09/" 
+       
+
+
+
+       data-versions-item="">Сентябрь</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_24-08/" 
+       
+
+
+
+       data-versions-item="">Август</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_24-07/" 
+       
+
+
+
+       data-versions-item="">Июль</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_24-06/" 
+       
+
+
+
+       data-versions-item="">Июнь</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_24-05/" 
+       
+
+
+
+       data-versions-item="">Май</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_24-04/" 
+       
+
+
+
+       data-versions-item="">Апрель</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_24-03/" 
+       
+
+
+
+       data-versions-item="">Март</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_24-02/" 
+       
+
+
+
+       data-versions-item="">Февраль</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_24-01/" 
+       
+
+
+
+       data-versions-item="">Январь</a>
+                                    </div>
+                <div class="versions_items " data-versions-items="2023 г." data-item-select="2023 г.">
+                                            <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_23-12/" 
+       
+
+
+
+       data-versions-item="">Декабрь</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_23-11/" 
+       
+
+
+
+       data-versions-item="">Ноябрь</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_23-10/" 
+       
+
+
+
+       data-versions-item="">Октябрь</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_23-09/" 
+       
+
+
+
+       data-versions-item="">Сентябрь</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_23-08/" 
+       
+
+
+
+       data-versions-item="">Август</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_23-07/" 
+       
+
+
+
+       data-versions-item="">Июль</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_23-06/" 
+       
+
+
+
+       data-versions-item="">Июнь</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_23-05/" 
+       
+
+
+
+       data-versions-item="">Май</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_23-04/" 
+       
+
+
+
+       data-versions-item="">Апрель</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_23-03/" 
+       
+
+
+
+       data-versions-item="">Март</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_23-02/" 
+       
+
+
+
+       data-versions-item="">Февраль</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_23-01/" 
+       
+
+
+
+       data-versions-item="">Январь</a>
+                                    </div>
+                <div class="versions_items " data-versions-items="2022 г." data-item-select="2022 г.">
+                                            <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_22-12/" 
+       
+
+
+
+       data-versions-item="">Декабрь</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_22-11/" 
+       
+
+
+
+       data-versions-item="">Ноябрь</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_22-10/" 
+       
+
+
+
+       data-versions-item="">Октябрь</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_22-09/" 
+       
+
+
+
+       data-versions-item="">Сентябрь </a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_22-08/" 
+       
+
+
+
+       data-versions-item="">Август</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_22-07/" 
+       
+
+
+
+       data-versions-item="">Июль</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_22-06/" 
+       
+
+
+
+       data-versions-item="">Июнь</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_22-05/" 
+       
+
+
+
+       data-versions-item="">Май</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_22-04/" 
+       
+
+
+
+       data-versions-item="">Апрель</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_22-03/" 
+       
+
+
+
+       data-versions-item="">Март</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_22-02/" 
+       
+
+
+
+       data-versions-item="">Февраль</a>
+    <a class="versions_item" href="/analytics/dkp/inflationary_expectations/Infl_exp_22-01/" 
+       
+
+
+
+       data-versions-item="">Январь</a>
+                                    </div>
+                <div class="versions_items " data-versions-items="2021 г." data-item-select="2021 г.">
+                                            <a class="versions_item" href="/Collection/Collection/File/39661/Infl_exp_21-12.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 23 декабря 2021" 
+ target="_blank" 
+       data-versions-item="">Декабрь</a>
+    <a class="versions_item" href="/Collection/Collection/File/39353/Infl_exp_21-11.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 ноября 2021" 
+ target="_blank" 
+       data-versions-item="">Ноябрь </a>
+    <a class="versions_item" href="/Collection/Collection/File/38999/Infl_exp_21-10.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 октября 2021" 
+ target="_blank" 
+       data-versions-item="">Октябрь </a>
+    <a class="versions_item" href="/Collection/Collection/File/36936/Infl_exp_21-09.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 24 сентября 2021" 
+ target="_blank" 
+       data-versions-item="">Сентябрь </a>
+    <a class="versions_item" href="/Collection/Collection/File/35570/Infl_exp_21-08.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 26 августа 2021" 
+ target="_blank" 
+       data-versions-item="">Август </a>
+    <a class="versions_item" href="/Collection/Collection/File/35500/Infl_exp_21-07.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 26 июля 2021" 
+ target="_blank" 
+       data-versions-item="">Июль </a>
+    <a class="versions_item" href="/Collection/Collection/File/35445/Infl_exp_21-06.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 июня 2021" 
+ target="_blank" 
+       data-versions-item="">Июнь </a>
+    <a class="versions_item" href="/Collection/Collection/File/34344/Infl_exp_21-05.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 28 мая 2021" 
+ target="_blank" 
+       data-versions-item="">Май</a>
+    <a class="versions_item" href="/Collection/Collection/File/32232/Infl_exp_21-04.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 26 апреля 2021" 
+ target="_blank" 
+       data-versions-item="">Апрель </a>
+    <a class="versions_item" href="/Collection/Collection/File/32133/Infl_exp_21-03.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 марта 2021" 
+ target="_blank" 
+       data-versions-item="">Март</a>
+    <a class="versions_item" href="/Collection/Collection/File/32042/Infl_exp_21-02.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 01 марта 2021" 
+ target="_blank" 
+       data-versions-item="">Февраль</a>
+    <a class="versions_item" href="/Collection/Collection/File/31948/Infl_exp_21-01.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 03 февраля 2021" 
+ target="_blank" 
+       data-versions-item="">Январь </a>
+                                    </div>
+                <div class="versions_items " data-versions-items="2020 г." data-item-select="2020 г.">
+                                            <a class="versions_item" href="/Collection/Collection/File/31784/Infl_exp_20-12.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 24 декабря 2020" 
+ target="_blank" 
+       data-versions-item="">Декабрь </a>
+    <a class="versions_item" href="/Collection/Collection/File/31575/Infl_exp_20-11.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 ноября 2020" 
+ target="_blank" 
+       data-versions-item="">Ноябрь</a>
+    <a class="versions_item" href="/Collection/Collection/File/29379/Infl_exp_20-10.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 26 октября 2020" 
+ target="_blank" 
+       data-versions-item="">Октябрь</a>
+    <a class="versions_item" href="/Collection/Collection/File/29310/Infl_exp_20-09.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 24 сентября 2020" 
+ target="_blank" 
+       data-versions-item="">Сентябрь</a>
+    <a class="versions_item" href="/Collection/Collection/File/29173/Infl_exp_20-08.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 26 августа 2020" 
+ target="_blank" 
+       data-versions-item="">Август </a>
+    <a class="versions_item" href="/Collection/Collection/File/29097/Infl_exp_20-07.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 27 июля 2020" 
+ target="_blank" 
+       data-versions-item="">Июль </a>
+    <a class="versions_item" href="/Collection/Collection/File/27983/Infl_exp_20-06.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 июня 2020" 
+ target="_blank" 
+       data-versions-item="">Июнь </a>
+    <a class="versions_item" href="/Collection/Collection/File/27908/Infl_exp_20-05.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 28 мая 2020" 
+ target="_blank" 
+       data-versions-item="">Май</a>
+    <a class="versions_item" href="/Collection/Collection/File/27844/Infl_exp_20-04.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 27 апреля 2020" 
+ target="_blank" 
+       data-versions-item="">Апрель </a>
+    <a class="versions_item" href="/Collection/Collection/File/27760/Infl_exp_20-03.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 марта 2020" 
+ target="_blank" 
+       data-versions-item="">Март </a>
+    <a class="versions_item" href="/Collection/Collection/File/27436/Infl_exp_20-02.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 27 февраля 2020" 
+ target="_blank" 
+       data-versions-item="">Февраль </a>
+    <a class="versions_item" href="/Collection/Collection/File/27065/Infl_exp_20-01.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 30 января 2020" 
+ target="_blank" 
+       data-versions-item="">Январь </a>
+                                    </div>
+                <div class="versions_items " data-versions-items="2019 г." data-item-select="2019 г.">
+                                            <a class="versions_item" href="/Collection/Collection/File/27064/Infl_exp_19-12.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 26 декабря 2019" 
+ target="_blank" 
+       data-versions-item="">Декабрь </a>
+    <a class="versions_item" href="/Collection/Collection/File/27063/Infl_exp_19-10.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 03 декабря 2019" 
+ target="_blank" 
+       data-versions-item="">Ноябрь</a>
+    <a class="versions_item" href="/Collection/Collection/File/27062/Infl_exp_19-10.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 29 октября 2019" 
+ target="_blank" 
+       data-versions-item="">Октябрь </a>
+    <a class="versions_item" href="/Collection/Collection/File/27061/Infl_exp_19-09.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 30 сентября 2019" 
+ target="_blank" 
+       data-versions-item="">Сентябрь </a>
+    <a class="versions_item" href="/Collection/Collection/File/27060/Infl_exp_19-08.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 29 августа 2019" 
+ target="_blank" 
+       data-versions-item="">Август </a>
+    <a class="versions_item" href="/Collection/Collection/File/27059/Infl_exp_19-07.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 30 июля 2019" 
+ target="_blank" 
+       data-versions-item="">Июль </a>
+    <a class="versions_item" href="/Collection/Collection/File/27058/Infl_exp_19-06.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 28 июня 2019" 
+ target="_blank" 
+       data-versions-item="">Июнь</a>
+    <a class="versions_item" href="/Collection/Collection/File/27057/Infl_exp_19-05.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 05 июня 2019" 
+ target="_blank" 
+       data-versions-item="">Май&#160;</a>
+    <a class="versions_item" href="/Collection/Collection/File/27056/Infl_exp_19-04.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 29 апреля 2019" 
+ target="_blank" 
+       data-versions-item="">Апрель </a>
+    <a class="versions_item" href="/Collection/Collection/File/27055/Infl_exp_19-03.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 27 марта 2019" 
+ target="_blank" 
+       data-versions-item="">Март </a>
+    <a class="versions_item" href="/Collection/Collection/File/27054/Infl_exp_19-02.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 05 марта 2019" 
+ target="_blank" 
+       data-versions-item="">Февраль </a>
+    <a class="versions_item" href="/Collection/Collection/File/27053/Infl_exp_19-01.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Январь </a>
+                                    </div>
+                <div class="versions_items " data-versions-items="2018 г." data-item-select="2018 г.">
+                                            <a class="versions_item" href="/Collection/Collection/File/27052/Infl_exp_18-12.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 28 декабря 2018" 
+ target="_blank" 
+       data-versions-item="">Декабрь </a>
+    <a class="versions_item" href="/Collection/Collection/File/27051/Infl_exp_18-11.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 28 ноября 2018" 
+ target="_blank" 
+       data-versions-item="">Ноябрь </a>
+    <a class="versions_item" href="/Collection/Collection/File/27050/Infl_exp_18-10.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 30 октября 2018" 
+ target="_blank" 
+       data-versions-item="">Октябрь </a>
+    <a class="versions_item" href="/Collection/Collection/File/27049/Infl_exp_18-09.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 28 сентября 2018" 
+ target="_blank" 
+       data-versions-item="">Сентябрь </a>
+    <a class="versions_item" href="/Collection/Collection/File/27048/Infl_exp_18-08.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 31 августа 2018" 
+ target="_blank" 
+       data-versions-item="">Август </a>
+    <a class="versions_item" href="/Collection/Collection/File/27047/Infl_exp_18-07.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 27 июля 2018" 
+ target="_blank" 
+       data-versions-item="">Июль </a>
+    <a class="versions_item" href="/Collection/Collection/File/27046/Infl_exp_18-06.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 09 июля 2018" 
+ target="_blank" 
+       data-versions-item="">Июнь </a>
+    <a class="versions_item" href="/Collection/Collection/File/27045/Infl_exp_18-05.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 30 мая 2018" 
+ target="_blank" 
+       data-versions-item="">Май&#160;</a>
+    <a class="versions_item" href="/Collection/Collection/File/27044/Infl_exp_18-04.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 20 апреля 2018" 
+ target="_blank" 
+       data-versions-item="">Апрель </a>
+    <a class="versions_item" href="/Collection/Collection/File/27043/Infl_exp_18-03.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 04 апреля 2018" 
+ target="_blank" 
+       data-versions-item="">Март</a>
+    <a class="versions_item" href="/Collection/Collection/File/27042/Infl_exp_18-02.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 02 марта 2018" 
+ target="_blank" 
+       data-versions-item="">Февраль </a>
+    <a class="versions_item" href="/Collection/Collection/File/27041/Infl_exp_18-01.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 02 февраля 2018" 
+ target="_blank" 
+       data-versions-item="">Январь </a>
+                                    </div>
+                <div class="versions_items " data-versions-items="2017 г." data-item-select="2017 г.">
+                                            <a class="versions_item" href="/Collection/Collection/File/27040/Infl_exp_17-12.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 21 декабря 2017" 
+ target="_blank" 
+       data-versions-item="">Декабрь </a>
+    <a class="versions_item" href="/Collection/Collection/File/27039/Infl_exp_17-11.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 28 ноября 2017" 
+ target="_blank" 
+       data-versions-item="">Ноябрь</a>
+    <a class="versions_item" href="/Collection/Collection/File/27038/Infl_exp_17-10.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 31 октября 2017" 
+ target="_blank" 
+       data-versions-item="">Октябрь </a>
+    <a class="versions_item" href="/Collection/Collection/File/27037/Infl_exp_17-09.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 02 октября 2017" 
+ target="_blank" 
+       data-versions-item="">Сентябрь </a>
+    <a class="versions_item" href="/Collection/Collection/File/27036/Infl_exp_17-08.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 31 августа 2017" 
+ target="_blank" 
+       data-versions-item="">Август </a>
+    <a class="versions_item" href="/Collection/Collection/File/26991/Infl_exp_17-07.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 01 августа 2017" 
+ target="_blank" 
+       data-versions-item="">Июль </a>
+    <a class="versions_item" href="/Collection/Collection/File/26992/Infl_exp_17-06.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 28 июня 2017" 
+ target="_blank" 
+       data-versions-item="">Июнь </a>
+    <a class="versions_item" href="/Collection/Collection/File/26993/Infl_exp_17-05.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 30 мая 2017" 
+ target="_blank" 
+       data-versions-item="">Май</a>
+    <a class="versions_item" href="/Collection/Collection/File/26994/Infl_exp_17-04.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 02 мая 2017" 
+ target="_blank" 
+       data-versions-item="">Апрель </a>
+    <a class="versions_item" href="/Collection/Collection/File/26995/Infl_exp_17-03.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 30 марта 2017" 
+ target="_blank" 
+       data-versions-item="">Март </a>
+    <a class="versions_item" href="/Collection/Collection/File/26996/Infl_exp_17-02.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 06 марта 2017" 
+ target="_blank" 
+       data-versions-item="">Февраль </a>
+    <a class="versions_item" href="/Collection/Collection/File/26997/Infl_exp_17-01.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 06 февраля 2017" 
+ target="_blank" 
+       data-versions-item="">Январь</a>
+                                    </div>
+                <div class="versions_items " data-versions-items="2016 г." data-item-select="2016 г.">
+                                            <a class="versions_item" href="/Collection/Collection/File/26998/infl_exp_16-12.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 21 декабря 2016" 
+ target="_blank" 
+       data-versions-item="">Декабрь </a>
+    <a class="versions_item" href="/Collection/Collection/File/26999/infl_exp_16-11.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 07 декабря 2016" 
+ target="_blank" 
+       data-versions-item="">Ноябрь </a>
+    <a class="versions_item" href="/Collection/Collection/File/27000/infl_exp_16-10.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 31 октября 2016" 
+ target="_blank" 
+       data-versions-item="">Октябрь </a>
+    <a class="versions_item" href="/Collection/Collection/File/27001/infl_exp_16-09.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 29 сентября 2016" 
+ target="_blank" 
+       data-versions-item="">Сентябрь </a>
+    <a class="versions_item" href="/Collection/Collection/File/27002/Infl_exp_16-08.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 12 сентября 2016" 
+ target="_blank" 
+       data-versions-item="">Август </a>
+    <a class="versions_item" href="/Collection/Collection/File/27003/Infl_exp_16-07.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 28 июля 2016" 
+ target="_blank" 
+       data-versions-item="">Июль </a>
+    <a class="versions_item" href="/Collection/Collection/File/27004/Infl_exp_16-06.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 12 июля 2016" 
+ target="_blank" 
+       data-versions-item="">Июнь </a>
+    <a class="versions_item" href="/Collection/Collection/File/27005/Infl_exp_16-05.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 июня 2016" 
+ target="_blank" 
+       data-versions-item="">Май&#160;</a>
+    <a class="versions_item" href="/Collection/Collection/File/27006/Infl_exp_16-04.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 26 апреля 2016" 
+ target="_blank" 
+       data-versions-item="">Апрель </a>
+    <a class="versions_item" href="/Collection/Collection/File/27007/Infl_exp_16-03.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 28 марта 2016" 
+ target="_blank" 
+       data-versions-item="">Март </a>
+    <a class="versions_item" href="/Collection/Collection/File/27008/Infl_exp_16-02.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 04 марта 2016" 
+ target="_blank" 
+       data-versions-item="">Февраль </a>
+    <a class="versions_item" href="/Collection/Collection/File/27009/Infl_exp_16-01.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 04 февраля 2016" 
+ target="_blank" 
+       data-versions-item="">Январь </a>
+                                    </div>
+                <div class="versions_items " data-versions-items="2015 г." data-item-select="2015 г.">
+                                            <a class="versions_item" href="/Collection/Collection/File/27010/Infl_exp_15-12.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 29 декабря 2015" 
+ target="_blank" 
+       data-versions-item="">Декабрь</a>
+    <a class="versions_item" href="/Collection/Collection/File/27011/Infl_exp_15-11.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 02 декабря 2015" 
+ target="_blank" 
+       data-versions-item="">Ноябрь </a>
+    <a class="versions_item" href="/Collection/Collection/File/27012/Infl_exp_15-10.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 06 ноября 2015" 
+ target="_blank" 
+       data-versions-item="">Октябрь </a>
+    <a class="versions_item" href="/Collection/Collection/File/27013/Infl_exp_15-09.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 октября 2015" 
+ target="_blank" 
+       data-versions-item="">Сентябрь </a>
+    <a class="versions_item" href="/Collection/Collection/File/27014/Infl_exp_15-08.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 сентября 2015" 
+ target="_blank" 
+       data-versions-item="">Август</a>
+    <a class="versions_item" href="/Collection/Collection/File/27015/Infl_exp_15-07.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 11 августа 2015" 
+ target="_blank" 
+       data-versions-item="">Июль </a>
+    <a class="versions_item" href="/Collection/Collection/File/27016/Infl_exp_15-06.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 21 июля 2015" 
+ target="_blank" 
+       data-versions-item="">Июнь </a>
+    <a class="versions_item" href="/Collection/Collection/File/27017/Infl_exp_15-05.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 23 июня 2015" 
+ target="_blank" 
+       data-versions-item="">Май&#160;</a>
+    <a class="versions_item" href="/Collection/Collection/File/27018/Infl_exp_15-04.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 20 мая 2015" 
+ target="_blank" 
+       data-versions-item="">Апрель </a>
+    <a class="versions_item" href="/Collection/Collection/File/27019/Infl_exp_15-03.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 апреля 2015" 
+ target="_blank" 
+       data-versions-item="">Март </a>
+    <a class="versions_item" href="/Collection/Collection/File/27020/Infl_exp_15-02.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 09 апреля 2015" 
+ target="_blank" 
+       data-versions-item="">Февраль </a>
+    <a class="versions_item" href="/Collection/Collection/File/27021/Infl_exp_15-01.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 11 февраля 2015" 
+ target="_blank" 
+       data-versions-item="">Январь </a>
+                                    </div>
+                <div class="versions_items " data-versions-items="2014 г." data-item-select="2014 г.">
+                                            <a class="versions_item" href="/Collection/Collection/File/27022/Infl_exp_14-12.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 января 2015" 
+ target="_blank" 
+       data-versions-item="">Декабрь </a>
+    <a class="versions_item" href="/Collection/Collection/File/27023/Infl_exp_14-11.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 15 декабря 2014" 
+ target="_blank" 
+       data-versions-item="">Ноябрь </a>
+    <a class="versions_item" href="/Collection/Collection/File/27024/Infl_exp_14-10.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 15 декабря 2014" 
+ target="_blank" 
+       data-versions-item="">Октябрь</a>
+    <a class="versions_item" href="/Collection/Collection/File/27025/Infl_exp_14-09.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 10 октября 2014" 
+ target="_blank" 
+       data-versions-item="">Сентябрь </a>
+    <a class="versions_item" href="/Collection/Collection/File/27026/Infl_exp_14-08.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 16 сентября 2014" 
+ target="_blank" 
+       data-versions-item="">Август </a>
+    <a class="versions_item" href="/Collection/Collection/File/27027/Infl_exp_14-07.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 11 августа 2014" 
+ target="_blank" 
+       data-versions-item="">Июль </a>
+    <a class="versions_item" href="/Collection/Collection/File/27028/Infl_exp_14-06.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 11 июля 2014" 
+ target="_blank" 
+       data-versions-item="">Июнь </a>
+    <a class="versions_item" href="/Collection/Collection/File/27029/Infl_exp_14-05.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 06 июня 2014" 
+ target="_blank" 
+       data-versions-item="">Май&#160;</a>
+    <a class="versions_item" href="/Collection/Collection/File/27030/Infl_exp_14-04.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 12 мая 2014" 
+ target="_blank" 
+       data-versions-item="">Апрель</a>
+    <a class="versions_item" href="/Collection/Collection/File/27031/Infl_exp_14-02.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 13 февраля 2014" 
+ target="_blank" 
+       data-versions-item="">Февраль </a>
+                                    </div>
+                <div class="versions_items " data-versions-items="2013 г." data-item-select="2013 г.">
+                                            <a class="versions_item" href="/Collection/Collection/File/27032/Infl_exp_13-12.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 12 декабря 2013" 
+ target="_blank" 
+       data-versions-item="">Декабрь </a>
+    <a class="versions_item" href="/Collection/Collection/File/27033/Infl_exp_13-09.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 16 октября 2013" 
+ target="_blank" 
+       data-versions-item="">Сентябрь </a>
+    <a class="versions_item" href="/Collection/Collection/File/27034/Infl_exp_13-3.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 11 июля 2013" 
+ target="_blank" 
+       data-versions-item="">Май&#160;— июнь</a>
+    <a class="versions_item" href="/Collection/Collection/File/27035/Infl_exp_13-2.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 11 июля 2013" 
+ target="_blank" 
+       data-versions-item="">Март&#160;— апрель</a>
+                                    </div>
+            <button class="more _hide" data-versions-toggle="" aria-expanded="false">
+                <span class="open">Ещё +</span><span class="close">Свернуть -</span>
+            </button>
+        </div>
+
+        </div>
+    </div>
+
+
+
+
+
+
+
+    <div class="document-regular file-collection">
+        <div class="document-regular_inner">
+            <div class="document-regular_top">
+                    <div class="document-regular_format icon-pdf"></div>
+            </div>
+            <div class="body-2 document-regular_main">
+                <div class="document-regular_texts">
+                    <div class="document-regular_name" data-toggle="">
+<span class="referenceable" id="a_62825">                            <span class="document-regular_name_visible">Отчет ООО&#160;&#171;инФОМ&#187;</span>
+</span>
+                                            </div>
+                    
+                </div>
+            </div>
+
+                    <div class="versions" data-versions="data-versions">
+            <div class="versions_items _active" data-versions-items="" data-item-select="">
+                    <a class="versions_item" href="/Collection/Collection/File/62384/inFOM_26-09.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 29 сентября 2026" 
+ target="_blank" 
+       data-versions-item="">Сентябрь&#160;2026&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/62282/inFOM_26-08.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 26 августа 2026" 
+ target="_blank" 
+       data-versions-item="">Август&#160;2026&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/62217/inFOM_26-07.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 28 июля 2026" 
+ target="_blank" 
+       data-versions-item="">Июль&#160;2026&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/62072/inFOM_26-06.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 24 июня 2026" 
+ target="_blank" 
+       data-versions-item="">Июнь&#160;2026&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/60986/inFOM_26-05.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 26 мая 2026" 
+ target="_blank" 
+       data-versions-item="">Май&#160;2026&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/60864/inFOM_26-04.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 27 апреля 2026" 
+ target="_blank" 
+       data-versions-item="">Апрель&#160;2026&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/59750/inFOM_26-03.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 марта 2026" 
+ target="_blank" 
+       data-versions-item="">Март&#160;2026&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/59671/inFOM_26-02.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 26 февраля 2026" 
+ target="_blank" 
+       data-versions-item="">Февраль&#160;2026&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/59604/inFOM_26-01.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 03 февраля 2026" 
+ target="_blank" 
+       data-versions-item="">Январь&#160;2026&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/59510/inFOM_25-12.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 24 декабря 2025" 
+ target="_blank" 
+       data-versions-item="">Декабрь&#160;2025&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/59422/inFOM_25-11.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 27 ноября 2025" 
+ target="_blank" 
+       data-versions-item="">Ноябрь&#160;2025&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/59354/inFOM_25-10.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 29 октября 2025" 
+ target="_blank" 
+       data-versions-item="">Октябрь&#160;2025&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/57264/inFOM_25-09.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 24 сентября 2025" 
+ target="_blank" 
+       data-versions-item="">Сентябрь&#160;2025&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/57173/inFOM_25-08.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 27 августа 2025" 
+ target="_blank" 
+       data-versions-item="">Август&#160;2025&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/57034/inFOM_25-07.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 28 июля 2025" 
+ target="_blank" 
+       data-versions-item="">Июль&#160;2025&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/55978/inFOM_25-06.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 июня 2025" 
+ target="_blank" 
+       data-versions-item="">Июнь&#160;2025&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/55889/inFOM_25-05.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 27 мая 2025" 
+ target="_blank" 
+       data-versions-item="">Май&#160;2025&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/55575/inFOM_25-04.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 28 апреля 2025" 
+ target="_blank" 
+       data-versions-item="">Апрель&#160;2025&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/55233/inFOM_25-03.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 26 марта 2025" 
+ target="_blank" 
+       data-versions-item="">Март&#160;2025&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/55135/inFOM_25-02.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 26 февраля 2025" 
+ target="_blank" 
+       data-versions-item="">Февраль&#160;2025&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/55055/inFOM_25-01.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 05 февраля 2025" 
+ target="_blank" 
+       data-versions-item="">Январь&#160;2025&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/54926/inFOM_24-12.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 декабря 2024" 
+ target="_blank" 
+       data-versions-item="">Декабрь&#160;2024&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/54830/inFOM_24-11.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 ноября 2024" 
+ target="_blank" 
+       data-versions-item="">Ноябрь&#160;2024&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/50758/inFOM_24-10.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 28 октября 2024" 
+ target="_blank" 
+       data-versions-item="">Октябрь&#160;2024&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/50648/inFOM_24-09.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 сентября 2024" 
+ target="_blank" 
+       data-versions-item="">Сентябрь&#160;2024&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/50559/inFOM_24-08.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 26 августа 2024" 
+ target="_blank" 
+       data-versions-item="">Август&#160;2024&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/49350/inFOM_24-07.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 29 июля 2024" 
+ target="_blank" 
+       data-versions-item="">Июль&#160;2024&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/49245/inFOM_24-06.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 июня 2024" 
+ target="_blank" 
+       data-versions-item="">Июнь&#160;2024&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/49153/inFOM_24-05.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 23 мая 2024" 
+ target="_blank" 
+       data-versions-item="">Май&#160;2024&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/49114/inFOM_24-04.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 27 апреля 2024" 
+ target="_blank" 
+       data-versions-item="">Апрель&#160;2024&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/48989/inFOM_24-03.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 марта 2024" 
+ target="_blank" 
+       data-versions-item="">Март&#160;2024&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/48862/inFOM_24-02.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 21 февраля 2024" 
+ target="_blank" 
+       data-versions-item="">Февраль&#160;2024&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/47795/inFOM_24-01.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 31 января 2024" 
+ target="_blank" 
+       data-versions-item="">Январь&#160;2024&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/46698/inFOM_23-12.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 декабря 2023" 
+ target="_blank" 
+       data-versions-item="">Декабрь&#160;2023&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/46585/inFOM_23-11.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 23 ноября 2023" 
+ target="_blank" 
+       data-versions-item="">Ноябрь&#160;2023&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/46531/inFOM_23-10.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 24 октября 2023" 
+ target="_blank" 
+       data-versions-item="">Октябрь&#160;2023&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/46349/inFOM_23-09.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 26 сентября 2023" 
+ target="_blank" 
+       data-versions-item="">Сентябрь&#160;2023&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/46274/inFOM_23-08.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 23 августа 2023" 
+ target="_blank" 
+       data-versions-item="">Август&#160;2023&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/45144/inFOM_23-07.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 июля 2023" 
+ target="_blank" 
+       data-versions-item="">Июль&#160;2023&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/45088/inFOM_23-06.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 26 июня 2023" 
+ target="_blank" 
+       data-versions-item="">Июнь&#160;2023&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/44002/inFOM_23-05.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 24 мая 2023" 
+ target="_blank" 
+       data-versions-item="">Май&#160;2023&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/43912/inFOM_23-04.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 20 апреля 2023" 
+ target="_blank" 
+       data-versions-item="">Апрель&#160;2023&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/43839/inFOM_23-03.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 22 марта 2023" 
+ target="_blank" 
+       data-versions-item="">Март&#160;2023&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/43787/inFOM_23-02.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 27 февраля 2023" 
+ target="_blank" 
+       data-versions-item="">Февраль&#160;2023&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/43698/inFOM_23-01.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 31 января 2023" 
+ target="_blank" 
+       data-versions-item="">Январь&#160;2023&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/43544/inFOM_22-12.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 21 декабря 2022" 
+ target="_blank" 
+       data-versions-item="">Декабрь&#160;2022&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/43498/inFOM_22-11.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 24 ноября 2022" 
+ target="_blank" 
+       data-versions-item="">Ноябрь&#160;2022&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/43426/inFOM_22-10.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 октября 2022" 
+ target="_blank" 
+       data-versions-item="">Октябрь&#160;2022&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/42311/inFOM_22-09.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 21 сентября 2022" 
+ target="_blank" 
+       data-versions-item="">Сентябрь&#160;2022&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/42260/inFOM_22-08.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 24 августа 2022" 
+ target="_blank" 
+       data-versions-item="">Август&#160;2022&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/42183/inFOM_22-07.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 20 июля 2022" 
+ target="_blank" 
+       data-versions-item="">Июль&#160;2022&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/42130/inFOM_22-06.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 24 июня 2022" 
+ target="_blank" 
+       data-versions-item="">Июнь&#160;2022&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/41012/inFOM_22-05.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 мая 2022" 
+ target="_blank" 
+       data-versions-item="">Май&#160;2022&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/40948/inFOM_22-04.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 21 апреля 2022" 
+ target="_blank" 
+       data-versions-item="">Апрель&#160;2022&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/40893/inFOM_22-03.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 23 марта 2022" 
+ target="_blank" 
+       data-versions-item="">Март&#160;2022&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/40845/inFOM_22-02.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 28 февраля 2022" 
+ target="_blank" 
+       data-versions-item="">Февраль&#160;2022&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/39740/inFOM_22-01.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 02 февраля 2022" 
+ target="_blank" 
+       data-versions-item="">Январь&#160;2022&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/39633/inFOM_21-12.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 23 декабря 2021" 
+ target="_blank" 
+       data-versions-item="">Декабрь&#160;2021&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/39354/inFOM_21-11.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 ноября 2021" 
+ target="_blank" 
+       data-versions-item="">Ноябрь&#160;2021&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/38990/inFOM_21-10.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 21 октября 2021" 
+ target="_blank" 
+       data-versions-item="">Октябрь&#160;2021&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/36937/inFOM_21-09.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 24 сентября 2021" 
+ target="_blank" 
+       data-versions-item="">Сентябрь&#160;2021&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/35571/inFOM_21-08.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 24 сентября 2021" 
+ target="_blank" 
+       data-versions-item="">Август&#160;2021&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/35490/inFOM_21-07.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 21 июля 2021" 
+ target="_blank" 
+       data-versions-item="">Июль&#160;2021&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/35446/inFOM_21-06.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 июня 2021" 
+ target="_blank" 
+       data-versions-item="">Июнь&#160;2021&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/35369/inFOM_21-05.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 28 мая 2021" 
+ target="_blank" 
+       data-versions-item="">Май&#160;2021&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/32233/inFOM_21-04.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 26 апреля 2021" 
+ target="_blank" 
+       data-versions-item="">Апрель&#160;2021&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/32134/inFOM_21-03.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 марта 2021" 
+ target="_blank" 
+       data-versions-item="">Март&#160;2021&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/32043/inFOM_21-02.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 01 марта 2021" 
+ target="_blank" 
+       data-versions-item="">Февраль&#160;2021&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/31949/inFOM_21-01.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 03 февраля 2021" 
+ target="_blank" 
+       data-versions-item="">Январь&#160;2021&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/31785/inFOM_20-12.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 24 декабря 2020" 
+ target="_blank" 
+       data-versions-item="">Декабрь&#160;2020&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/31576/inFOM_20-11.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 ноября 2020" 
+ target="_blank" 
+       data-versions-item="">Ноябрь&#160;2020&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/29373/inFOM_20-10.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 21 октября 2020" 
+ target="_blank" 
+       data-versions-item="">Октябрь&#160;2020&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/29311/inFOM_20-09.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 24 сентября 2020" 
+ target="_blank" 
+       data-versions-item="">Сентябрь&#160;2020&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/29174/inFOM_20-08.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 26 августа 2020" 
+ target="_blank" 
+       data-versions-item="">Август&#160;2020&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/29034/inFOM_20-07_7.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 23 июля 2020" 
+ target="_blank" 
+       data-versions-item="">Июль&#160;2020&#160;года (седьмой опрос)</a>
+    <a class="versions_item" href="/Collection/Collection/File/27995/inFOM_20-06_6.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 17 июля 2020" 
+ target="_blank" 
+       data-versions-item="">Июнь&#160;2020&#160;года (шестой опрос)</a>
+    <a class="versions_item" href="/Collection/Collection/File/27961/inFOM_20-06_5.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 17 июня 2020" 
+ target="_blank" 
+       data-versions-item="">Июнь&#160;2020&#160;года (пятый опрос)</a>
+    <a class="versions_item" href="/Collection/Collection/File/27918/inFOM_20-05_4.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 02 июня 2020" 
+ target="_blank" 
+       data-versions-item="">Май&#160;2020&#160;года (четвертый опрос)</a>
+    <a class="versions_item" href="/Collection/Collection/File/27888/inFOM_20-05_3.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 19 мая 2020" 
+ target="_blank" 
+       data-versions-item="">Май&#160;2020&#160;года (третий опрос)</a>
+    <a class="versions_item" href="/Collection/Collection/File/27861/inFOM_20-04_2.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 06 мая 2020" 
+ target="_blank" 
+       data-versions-item="">Апрель&#160;2020&#160;года (второй опрос)</a>
+    <a class="versions_item" href="/Collection/Collection/File/27820/inFOM_20-04.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 20 апреля 2020" 
+ target="_blank" 
+       data-versions-item="">Апрель&#160;2020&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/27761/inFOM_20-03.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 марта 2020" 
+ target="_blank" 
+       data-versions-item="">Март&#160;2020&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/27425/inFOM_20-02.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 27 февраля 2020" 
+ target="_blank" 
+       data-versions-item="">Февраль&#160;2020&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/25861/inFOM_20-01.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 03 февраля 2020" 
+ target="_blank" 
+       data-versions-item="">Январь&#160;2020&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/25694/inFOM_19-12.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 26 декабря 2019" 
+ target="_blank" 
+       data-versions-item="">Декабрь&#160;2019&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/25494/inFOM_19-11.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 03 декабря 2019" 
+ target="_blank" 
+       data-versions-item="">Ноябрь&#160;2019&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/23981/inFOM_19-10.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 24 октября 2019" 
+ target="_blank" 
+       data-versions-item="">Октябрь&#160;2019&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/23722/inFOM_19-09.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 30 сентября 2019" 
+ target="_blank" 
+       data-versions-item="">Сентябрь&#160;2019&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/22625/inFOM_19-08.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 29 августа 2019" 
+ target="_blank" 
+       data-versions-item="">Август&#160;2019&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/21130/inFOM_19-07.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 30 июля 2019" 
+ target="_blank" 
+       data-versions-item="">Июль&#160;2019&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/20003/inFOM_19-06.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 28 июня 2019" 
+ target="_blank" 
+       data-versions-item="">Июнь&#160;2019&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/19800/inFOM_19-05.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 05 июня 2019" 
+ target="_blank" 
+       data-versions-item="">Май&#160;2019&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/19690/inFOM_19-04.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 15 мая 2019" 
+ target="_blank" 
+       data-versions-item="">Апрель&#160;2019&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/18954/inFOM_19-03.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 27 марта 2019" 
+ target="_blank" 
+       data-versions-item="">Март&#160;2019&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/15748/inFOM_19-02.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 05 марта 2019" 
+ target="_blank" 
+       data-versions-item="">Февраль&#160;2019&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14271/inFOM_19-01.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Январь&#160;2019&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14274/inFOM_18-12.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Декабрь&#160;2018&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14275/inFOM_18-11.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Ноябрь&#160;2018&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14276/inFOM_18-10.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Октябрь&#160;2018&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14277/inFOM_18-09.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Сентябрь&#160;2018&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14278/inFOM_18-08.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Август&#160;2018&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14279/inFOM_18-07.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Июль&#160;2018&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14280/inFOM_18-06.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Июнь&#160;2018&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14281/inFOM_18-05.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Май&#160;2018&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14282/inFOM_18-04.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Апрель&#160;2018&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14283/inFOM_18-03.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Март&#160;2018&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14284/inFOM_18-02.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Февраль&#160;2018&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14285/inFOM_18-01.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Январь&#160;2018&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14286/inFOM_17-12.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Декабрь&#160;2017&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14287/inFOM_17-11.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Ноябрь&#160;2017&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14288/inFOM_17-10.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Октябрь&#160;2017&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14289/inFOM_17-09.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Сентябрь&#160;2017&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14290/inFOM_17-08.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Август&#160;2017&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14291/inFOM_17-07.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Июль&#160;2017&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14292/inFOM_17-06.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Июнь&#160;2017&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14293/inFOM_17-05.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Май&#160;2017&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14294/inFOM_17-04.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Апрель&#160;2017&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14295/inFOM_17-03.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Март&#160;2017&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14296/inFOM_17-02.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Февраль&#160;2017&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14297/inFOM_17-01.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Январь&#160;2017&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14298/inFOM_16-12.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Декабрь&#160;2016&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14299/inFOM_16-11.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Ноябрь&#160;2016&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14300/inFOM_16-10.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Октябрь&#160;2016&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14301/inFOM_16-09.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Сентябрь&#160;2016&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14302/inFOM_16-08.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Август&#160;2016&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14303/inFOM_16-07.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Июль&#160;2016&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14304/inFOM_16-06.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Июнь&#160;2016&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14305/inFOM_16-05.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Май&#160;2016&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14306/inFOM_16-04.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Апрель&#160;2016&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14307/inFOM_16-03.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Март&#160;2016&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14308/inFOM_16-02.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Февраль&#160;2016&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14309/inFOM_16-01.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Январь&#160;2016&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14310/inFOM_15-12.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Декабрь&#160;2015&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14311/inFOM_15-11.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Ноябрь&#160;2015&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14312/inFOM_15-10.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Октябрь&#160;2015&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14313/inFOM_15-09.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Сентябрь&#160;2015&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14314/inFOM_15-08.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Август&#160;2015&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14315/inFOM_15-07.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Июль&#160;2015&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14317/inFOM_15-06.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Июнь&#160;2015&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14318/inFOM_15-05.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Май&#160;2015&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14319/inFOM_15-04.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Апрель&#160;2015&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14320/inFOM_15-03.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Март&#160;2015&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14321/inFOM_15-02.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Февраль&#160;2015&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14322/inFOM_15-01.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 14 февраля 2019" 
+ target="_blank" 
+       data-versions-item="">Январь&#160;2015&#160;года</a>
+                            </div>
+            <button class="more _hide" data-versions-toggle="" aria-expanded="false">
+                <span class="open">Ещё +</span><span class="close">Свернуть -</span>
+            </button>
+        </div>
+
+        </div>
+    </div>
+
+
+
+
+
+
+
+    <div class="document-regular file-collection">
+        <div class="document-regular_inner">
+            <div class="document-regular_top">
+                    <div class="document-regular_format icon-xlsx"></div>
+            </div>
+            <div class="body-2 document-regular_main">
+                <div class="document-regular_texts">
+                    <div class="document-regular_name" data-toggle="">
+<span class="referenceable" id="a_17322">                            <span class="document-regular_name_visible">Статистические данные</span>
+</span>
+                                            </div>
+                    
+                </div>
+            </div>
+
+                    <div class="versions" data-versions="data-versions">
+            <div class="versions_items _active" data-versions-items="" data-item-select="">
+                    <a class="versions_item" href="/Collection/Collection/File/62395/Infl_exp_26-09.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 29 сентября 2026" 
+
+       data-versions-item="">Сентябрь&#160;2026&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/62292/Infl_exp_26-08.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 26 августа 2026" 
+
+       data-versions-item="">Август&#160;2026&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/62222/Infl_exp_26-07.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 28 июля 2026" 
+
+       data-versions-item="">Июль&#160;2026&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/62084/Infl_exp_26-06.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 24 июня 2026" 
+
+       data-versions-item="">Июнь&#160;2026&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/61004/Infl_exp_26-05.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 26 мая 2026" 
+
+       data-versions-item="">Май&#160;2026&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/60881/Infl_exp_26-04.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 27 апреля 2026" 
+
+       data-versions-item="">Апрель&#160;2026&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/59761/Infl_exp_26-03.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 марта 2026" 
+
+       data-versions-item="">Март&#160;2026&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/59681/Infl_exp_26-02.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 26 февраля 2026" 
+
+       data-versions-item="">Февраль&#160;2026&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/59614/Infl_exp_26-01.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 03 февраля 2026" 
+
+       data-versions-item="">Январь&#160;2026&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/59523/Infl_exp_25-12.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 24 декабря 2025" 
+
+       data-versions-item="">Декабрь&#160;2025&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/59434/Infl_exp_25-11.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 27 ноября 2025" 
+
+       data-versions-item="">Ноябрь&#160;2025&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/59360/Infl_exp_25-10.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 29 октября 2025" 
+
+       data-versions-item="">Октябрь&#160;2025&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/57277/Infl_exp_25-09.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 24 сентября 2025" 
+
+       data-versions-item="">Сентябрь&#160;2025&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/57180/Infl_exp_25-08.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 27 августа 2025" 
+
+       data-versions-item="">Август&#160;2025&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/57095/Infl_exp_25-07.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 28 июля 2025" 
+
+       data-versions-item="">Июль&#160;2025&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/55986/Infl_exp_25-06.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 июня 2025" 
+
+       data-versions-item="">Июнь&#160;2025&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/55895/Infl_exp_25-05.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 27 мая 2025" 
+
+       data-versions-item="">Май&#160;2025&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/55832/Infl_exp_25-04.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 28 апреля 2025" 
+
+       data-versions-item="">Апрель&#160;2025&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/55275/Infl_exp_25-03.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 26 марта 2025" 
+
+       data-versions-item="">Март&#160;2025&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/55145/Infl_exp_25-02.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 26 февраля 2025" 
+
+       data-versions-item="">Февраль&#160;2025&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/55069/Infl_exp_25-01.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 05 февраля 2025" 
+
+       data-versions-item="">Январь&#160;2025&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/54941/Infl_exp_24-12.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 декабря 2024" 
+
+       data-versions-item="">Декабрь&#160;2024&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/54835/Infl_exp_24-11.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 ноября 2024" 
+
+       data-versions-item="">Ноябрь&#160;2024&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/50774/Infl_exp_24-10.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 28 октября 2024" 
+
+       data-versions-item="">Октябрь&#160;2024&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/50656/stat_Infl_exp_24-09.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 сентября 2024" 
+
+       data-versions-item="">Сентябрь&#160;2024&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/50568/stat_Infl_exp_24-08.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 26 августа 2024" 
+
+       data-versions-item="">Август&#160;2024&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/49413/stat_Infl_exp_24-07.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 29 июля 2024" 
+
+       data-versions-item="">Июль&#160;2024&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/49261/stat_Infl_exp_24-06.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 июня 2024" 
+
+       data-versions-item="">Июнь&#160;2024&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/49174/stat_Infl_exp_24-05.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 23 мая 2024" 
+
+       data-versions-item="">Май&#160;2024&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/49122/stat_Infl_exp_24-04.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 27 апреля 2024" 
+
+       data-versions-item="">Апрель&#160;2024&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/49031/stat_Infl_exp_24-03.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 марта 2024" 
+
+       data-versions-item="">Март&#160;2024&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/48911/stat_Infl_exp_24-02.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 21 февраля 2024" 
+
+       data-versions-item="">Февраль&#160;2024&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/47814/stat_Infl_exp_24-01.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 31 января 2024" 
+
+       data-versions-item="">Январь&#160;2024&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/47712/stat_Infl_exp_23-12.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 декабря 2023" 
+
+       data-versions-item="">Декабрь&#160;2023&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/46606/stat_Infl_exp_23-11.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 23 ноября 2023" 
+
+       data-versions-item="">Ноябрь&#160;2023&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/46532/stat_Infl_exp_23-10.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 24 октября 2023" 
+
+       data-versions-item="">Октябрь&#160;2023&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/46359/stat_Infl_exp_23-09.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 26 сентября 2023" 
+
+       data-versions-item="">Сентябрь&#160;2023&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/46281/stat_Infl_exp_23-08.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 23 августа 2023" 
+
+       data-versions-item="">Август&#160;2023&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/45186/stat_Infl_exp_23-07.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 июля 2023" 
+
+       data-versions-item="">Июль&#160;2023&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/45102/stat_Infl_exp_23-06.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 26 июня 2023" 
+
+       data-versions-item="">Июнь&#160;2023&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/44019/stat_Infl_exp_23-05.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 24 мая 2023" 
+
+       data-versions-item="">Май&#160;2023&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/43922/stat_Infl_exp_23-04.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 20 апреля 2023" 
+
+       data-versions-item="">Апрель&#160;2023&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/43862/stat_Infl_exp_23-03.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 22 марта 2023" 
+
+       data-versions-item="">Март&#160;2023&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/43792/stat_Infl_exp_23-02.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 27 февраля 2023" 
+
+       data-versions-item="">Февраль&#160;2023&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/43699/stat_Infl_exp_23-01.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 31 января 2023" 
+
+       data-versions-item="">Январь&#160;2023&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/43586/stat_Infl_exp_22-12.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 21 декабря 2022" 
+
+       data-versions-item="">Декабрь&#160;2022&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/43499/stat_Infl_exp_22-11.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 24 ноября 2022" 
+
+       data-versions-item="">Ноябрь&#160;2022&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/43427/stat_Infl_exp_22-10.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 октября 2022" 
+
+       data-versions-item="">Октябрь&#160;2022&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/42347/stat_Infl_exp_22-09.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 21 сентября 2022" 
+
+       data-versions-item="">Сентябрь&#160;2022&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/42261/stat_Infl_exp_22-08.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 24 августа 2022" 
+
+       data-versions-item="">Август&#160;2022&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/42184/stat_Infl_exp_22-07.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 20 июля 2022" 
+
+       data-versions-item="">Июль&#160;2022&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/42131/stat_Infl_exp_22-06.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 24 июня 2022" 
+
+       data-versions-item="">Июнь&#160;2022&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/41013/stat_Infl_exp_22-05.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 мая 2022" 
+
+       data-versions-item="">Май&#160;2022&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/40949/stat_Infl_exp_22-04.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 21 апреля 2022" 
+
+       data-versions-item="">Апрель&#160;2022&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/40894/stat_Infl_exp_22-03.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 23 марта 2022" 
+
+       data-versions-item="">Март&#160;2022&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/40846/stat_Infl_exp_22-02.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 28 февраля 2022" 
+
+       data-versions-item="">Февраль&#160;2022&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/39741/stat_Infl_exp_22-01.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 02 февраля 2022" 
+
+       data-versions-item="">Январь&#160;2022&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/39662/stat_Infl_exp_21-12.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 23 декабря 2021" 
+
+       data-versions-item="">Декабрь&#160;2021&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/39355/stat_Infl_exp_21-11.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 ноября 2021" 
+
+       data-versions-item="">Ноябрь&#160;2021&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/39000/stat_Infl_exp_21-10.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 октября 2021" 
+
+       data-versions-item="">Октябрь&#160;2021&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/36938/stat_Infl_exp_21-09.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 24 сентября 2021" 
+
+       data-versions-item="">Сентябрь&#160;2021&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/35572/stat_Infl_exp_21-08.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 26 августа 2021" 
+
+       data-versions-item="">Август&#160;2021&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/35501/stat_Infl_exp_21-07.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 26 июля 2021" 
+
+       data-versions-item="">Июль&#160;2021&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/35447/stat_Infl_exp_21-06.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 июня 2021" 
+
+       data-versions-item="">Июнь&#160;2021&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/34343/stat_Infl_exp_21-05.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 28 мая 2021" 
+
+       data-versions-item="">Май&#160;2021&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/32234/stat_Infl_exp_21-04.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 26 апреля 2021" 
+
+       data-versions-item="">Апрель&#160;2021&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/32135/stat_Infl_exp_21-03.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 марта 2021" 
+
+       data-versions-item="">Март&#160;2021&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/32044/stat_Infl_exp_21-02.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 01 марта 2021" 
+
+       data-versions-item="">Февраль&#160;2021&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/31950/stat_Infl_exp_21-01.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 03 февраля 2021" 
+
+       data-versions-item="">Январь&#160;2021&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/31786/stat_Infl_exp_20-12.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 24 декабря 2020" 
+
+       data-versions-item="">Декабрь&#160;2020&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/31577/stat_Infl_exp_20-11.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 ноября 2020" 
+
+       data-versions-item="">Ноябрь&#160;2020&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/29380/stat_Infl_exp_20-10.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 26 октября 2020" 
+
+       data-versions-item="">Октябрь&#160;2020&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/29312/stat_Infl_exp_20-09.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 24 сентября 2020" 
+
+       data-versions-item="">Сентябрь&#160;2020&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/29175/stat_Infl_exp_20-08.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 26 августа 2020" 
+
+       data-versions-item="">Август&#160;2020&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/27762/stat_Infl_exp_20-03.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 марта 2020" 
+
+       data-versions-item="">Март&#160;2020&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/27426/stat_Infl_exp_20-02.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 27 февраля 2020" 
+
+       data-versions-item="">Февраль&#160;2020&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/25862/stat_Infl_exp_20-01.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 30 января 2020" 
+
+       data-versions-item="">Январь&#160;2020&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/25695/stat_Infl_exp_19-12.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 26 декабря 2019" 
+
+       data-versions-item="">Декабрь&#160;2019&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/25497/stat_Infl_exp_19-11.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 03 декабря 2019" 
+
+       data-versions-item="">Ноябрь&#160;2019&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/23982/stat_Infl_exp_19-10.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 24 октября 2019" 
+
+       data-versions-item="">Октябрь&#160;2019&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/23723/stat_Infl_exp_19-09.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 30 сентября 2019" 
+
+       data-versions-item="">Сентябрь&#160;2019&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/22626/stat_Infl_exp_19-08.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 29 августа 2019" 
+
+       data-versions-item="">Август&#160;2019&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/21131/stat_Infl_exp_19-07.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 30 июля 2019" 
+
+       data-versions-item="">Июль&#160;2019&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/20004/stat_Infl_exp_19-06.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 28 июня 2019" 
+
+       data-versions-item="">Июнь&#160;2019&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/19799/stat_Infl_exp_19-05.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 05 июня 2019" 
+
+       data-versions-item="">Май&#160;2019&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/19691/stat_Infl_exp_19-04.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 29 апреля 2019" 
+
+       data-versions-item="">Апрель&#160;2019&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/18955/stat_Infl_exp_19-03.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 27 марта 2019" 
+
+       data-versions-item="">Март&#160;2019&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/15749/stat_Infl_exp_19-02.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 05 марта 2019" 
+
+       data-versions-item="">Февраль&#160;2019&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/14265/stat_Infl_exp_19-01.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 12 февраля 2019" 
+
+       data-versions-item="">Январь&#160;2019&#160;года </a>
+    <a class="versions_item" href="/Collection/Collection/File/14202/stat_Infl_exp_18-12.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 28 декабря 2018" 
+
+       data-versions-item="">Декабрь&#160;2018&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/10437/stat_Infl_exp_18-11.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 28 ноября 2018" 
+
+       data-versions-item="">Ноябрь&#160;2018&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/9380/stat_Infl_exp_18-10.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 30 октября 2018" 
+
+       data-versions-item="">Октябрь&#160;2018&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/7493/stat_Infl_exp_18-09.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 28 сентября 2018" 
+
+       data-versions-item="">Сентябрь&#160;2018&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/7469/stat_Infl_exp_18-08.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 31 августа 2018" 
+
+       data-versions-item="">Август&#160;2018&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/7426/stat_Infl_exp_18-07.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 09 августа 2018" 
+
+       data-versions-item="">Июль&#160;2018&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/7410/stat_Infl_exp_18-06.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 27 июля 2018" 
+
+       data-versions-item="">Июнь&#160;2018&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/5949/stat_Infl_exp_18-05.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 30 мая 2018" 
+
+       data-versions-item="">Май&#160;2018&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/5923/stat_Infl_exp_18-04.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 28 апреля 2018" 
+
+       data-versions-item="">Апрель&#160;2018&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/4704/stat_Infl_exp_18-03.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 04 апреля 2018" 
+
+       data-versions-item="">Март&#160;2018&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/4618/stat_Infl_exp_18-02.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 05 марта 2018" 
+
+       data-versions-item="">Февраль&#160;2018&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/4535/stat_Infl_exp_18-01.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 02 февраля 2018" 
+
+       data-versions-item="">Январь&#160;2018&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/3730/stat_Infl_exp_17-12.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 21 декабря 2017" 
+
+       data-versions-item="">Декабрь&#160;2017&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/2538/stat_Infl_exp_17-11.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 28 ноября 2017" 
+
+       data-versions-item="">Ноябрь&#160;2017&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/2527/stat_Infl_exp_17-10.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 02 ноября 2017" 
+
+       data-versions-item="">Октябрь&#160;2017&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/1637/stat_Infl_exp_17-09.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 02 октября 2017" 
+
+       data-versions-item="">Сентябрь&#160;2017&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/640/stat_infl_exp_17-08.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 31 августа 2017" 
+
+       data-versions-item="">Август&#160;2017&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/541/stat_Infl_exp_17-07.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 02 августа 2017" 
+
+       data-versions-item="">Июль&#160;2017&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/542/stat_Infl_exp_17-06.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 27 июня 2017" 
+
+       data-versions-item="">Июнь&#160;2017&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/543/stat_Infl_exp_17-05.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 30 мая 2017" 
+
+       data-versions-item="">Май&#160;2017&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/544/stat_Infl_exp_17-04.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 28 апреля 2017" 
+
+       data-versions-item="">Апрель&#160;2017&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/545/stat_Infl_exp_17-03.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 28 марта 2017" 
+
+       data-versions-item="">Март&#160;2017&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/546/stat_Infl_exp_17-02.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 03 марта 2017" 
+
+       data-versions-item="">Февраль&#160;2017&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/547/stat_Infl_exp_17-01.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 02 февраля 2017" 
+
+       data-versions-item="">Январь&#160;2017&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/548/stat_Infl_exp_16-12.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 21 декабря 2016" 
+
+       data-versions-item="">Декабрь&#160;2016&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/549/stat_Infl_exp_16-11.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 07 декабря 2016" 
+
+       data-versions-item="">Ноябрь&#160;2016&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/550/stat_Infl_exp_16-10.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 октября 2016" 
+
+       data-versions-item="">Октябрь&#160;2016&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/551/stat_Infl_exp_16-09.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 23 сентября 2016" 
+
+       data-versions-item="">Сентябрь&#160;2016&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/552/stat_Infl_exp_16-08.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 29 августа 2016" 
+
+       data-versions-item="">Август&#160;2016&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/553/stat_Infl_exp_16-07.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 27 июля 2016" 
+
+       data-versions-item="">Июль&#160;2016&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/554/stat_Infl_exp_16-06.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 06 июля 2016" 
+
+       data-versions-item="">Июнь&#160;2016&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/555/stat_Infl_exp_16-05.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 10 июня 2016" 
+
+       data-versions-item="">Май&#160;2016&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/556/stat_Infl_exp_16-04.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 22 апреля 2016" 
+
+       data-versions-item="">Апрель&#160;2016&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/557/stat_Infl_exp_16-03.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 28 марта 2016" 
+
+       data-versions-item="">Март&#160;2016&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/558/stat_Infl_exp_16-02.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 04 марта 2016" 
+
+       data-versions-item="">Февраль&#160;2016&#160;года</a>
+    <a class="versions_item" href="/Collection/Collection/File/559/stat_Infl_exp_16-01.xlsx" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 03 марта 2016" 
+
+       data-versions-item="">Январь&#160;2016&#160;года</a>
+                            </div>
+            <button class="more _hide" data-versions-toggle="" aria-expanded="false">
+                <span class="open">Ещё +</span><span class="close">Свернуть -</span>
+            </button>
+        </div>
+
+        </div>
+    </div>
+
+
+
+
+
+
+
+    <div class="document-regular file-collection">
+        <div class="document-regular_inner">
+            <div class="document-regular_top">
+                    <div class="document-regular_format icon-pdf"></div>
+            </div>
+            <div class="body-2 document-regular_main">
+                <div class="document-regular_texts">
+                    <div class="document-regular_name" data-toggle="">
+<span class="referenceable" id="a_17323">                            <span class="document-regular_name_visible">Развернутый отчет ООО&#160;&#171;инФОМ&#187;</span>
+</span>
+                                            </div>
+                    
+                </div>
+            </div>
+
+                    <div class="versions" data-versions="data-versions">
+            <div class="versions_items _active" data-versions-items="" data-item-select="">
+                    <a class="versions_item" href="/Collection/Collection/File/3739/FOM_17_12.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 29 декабря 2017" 
+ target="_blank" 
+       data-versions-item="">Июль&#160;— декабрь 2017</a>
+    <a class="versions_item" href="/Collection/Collection/File/560/FOM_17_06.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 01 августа 2017" 
+ target="_blank" 
+       data-versions-item="">Январь&#160;— июнь 2017</a>
+    <a class="versions_item" href="/Collection/Collection/File/561/FOM_16_12.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 27 декабря 2016" 
+ target="_blank" 
+       data-versions-item="">Октябрь&#160;— декабрь 2016</a>
+    <a class="versions_item" href="/Collection/Collection/File/562/FOM_16_09.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 26 октября 2016" 
+ target="_blank" 
+       data-versions-item="">Июль&#160;— сентябрь 2016</a>
+    <a class="versions_item" href="/Collection/Collection/File/563/FOM_16-06.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 18 июля 2016" 
+ target="_blank" 
+       data-versions-item="">Апрель&#160;— июнь 2016</a>
+    <a class="versions_item" href="/Collection/Collection/File/564/FOM_16-03.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 25 апреля 2016" 
+ target="_blank" 
+       data-versions-item="">Январь-март 2016</a>
+    <a class="versions_item" href="/Collection/Collection/File/565/FOM_15-12.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 31 декабря 2015" 
+ target="_blank" 
+       data-versions-item="">Октябрь&#160;— декабрь 2015</a>
+    <a class="versions_item" href="/Collection/Collection/File/566/FOM_15-09.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 06 ноября 2015" 
+ target="_blank" 
+       data-versions-item="">Июль&#160;— сентябрь 2015</a>
+    <a class="versions_item" href="/Collection/Collection/File/567/FOM_15-06.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 31 июля 2015" 
+ target="_blank" 
+       data-versions-item="">Апрель&#160;— июнь 2015</a>
+    <a class="versions_item" href="/Collection/Collection/File/568/FOM_15-03.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 20 мая 2015" 
+ target="_blank" 
+       data-versions-item="">Январь&#160;— март 2015</a>
+    <a class="versions_item" href="/Collection/Collection/File/569/FOM_14-10.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 15 декабря 2014" 
+ target="_blank" 
+       data-versions-item="">Октябрь 2014</a>
+    <a class="versions_item" href="/Collection/Collection/File/570/FOM_14-07.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 28 августа 2014" 
+ target="_blank" 
+       data-versions-item="">Июль 2014</a>
+    <a class="versions_item" href="/Collection/Collection/File/571/FOM_14-04.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 04 июня 2014" 
+ target="_blank" 
+       data-versions-item="">Апрель 2014</a>
+    <a class="versions_item" href="/Collection/Collection/File/572/FOM_14-02.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 11 марта 2014" 
+ target="_blank" 
+       data-versions-item="">Февраль 2014</a>
+    <a class="versions_item" href="/Collection/Collection/File/573/FOM_13-12.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 18 декабря 2013" 
+ target="_blank" 
+       data-versions-item="">Декабрь 2013</a>
+    <a class="versions_item" href="/Collection/Collection/File/574/FOM_13-09.pdf" 
+       
+
+ data-tooltip data-tooltip-content="Опубликовано 27 ноября 2013" 
+ target="_blank" 
+       data-versions-item="">Сентябрь 2013</a>
+                            </div>
+            <button class="more _hide" data-versions-toggle="" aria-expanded="false">
+                <span class="open">Ещё +</span><span class="close">Свернуть -</span>
+            </button>
+        </div>
+
+        </div>
+    </div>
+
+
+
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_format icon-pdf"></div>
+                    </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/File/118262/methodological_comment_20210127.pdf" id="a_118262file" target="_blank">                        <span class="document-regular_name_visible">Методологический комментарий &#171;Оценка вмененной инфляции из цен на индексируемые на инфляцию облигации&#187;</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+
+
+<div class="document-regular">
+    <div class="document-regular_inner">
+        <div class="document-regular_top">
+                <div class="document-regular_format icon-pdf"></div>
+                    </div>
+        <div class="body-2 document-regular_main">
+            <div class="document-regular_texts">
+                <div class="document-regular_name" data-toggle="">
+<a class="referenceable" href="/Content/Document/File/59814/FOM_meth.pdf" id="a_59814file" target="_blank">                        <span class="document-regular_name_visible">Методика исследования инфляционных ожиданий и потребительских настроений населения</span>
+</a>
+                                    </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+                    
+                    <!--/index-->
+
+    <div class="page-info">
+        <!--noindex-->
+        
+
+
+<div class="page-info_helpful"
+     data-page-feedback=""
+     data-feedback-url="/Content/PageInfo/RegisterFeedback">
+    <!--noindex-->
+    <div class="helpful" data-helpful="">
+        Страница была полезной?
+        <div class="helpful_btns">
+            <button class="helpful_btn _yes" data-helpful-btn="yes"><i class="helpful_icon"></i><span>Да</span></button>
+            <button class="helpful_btn _no" data-helpful-btn="no"><i class="helpful_icon"></i><span>Нет</span></button>
+        </div>
+    </div>
+    <!--/noindex-->
+</div>
+
+            <div class="page-info_last-update">Последнее обновление страницы: 29.09.2026</div>
+        <!--/noindex-->
+    </div>
+                </div>
+            </div>
+    </main>
+
+    <footer class="footer" id="footer">
+    <div class="offsetMenu footer_margin-left">
+        <div class="footer_main">
+            <div class="col-md-23 col-xl-22 offset-md-1 offset-xl-2 footer-size">
+                <div class="footer_top">
+                    <a class="footer_logo" href="/"></a>
+                    <div class="footer_up gotoUp">
+                        <div class="footer_up_title">Наверх</div>
+                        <div class="footer_up_icon"></div>
+                    </div>
+                </div>
+                
+<div class="footer_contacts">
+<div class="footer_address">107016, Москва, ул. Неглинная, д.&nbsp;12, к. В, Банк
+России</div>
+<div class="footer_phones">
+<div class="footer_phone"><a class="footer_phone_val" href="tel:300">300</a><span>(круглосуточно, бесплатно для&nbsp;звонков с&nbsp;мобильных телефонов)</span></div>
+<div class="footer_phone"><a class="footer_phone_val" href="tel:88003003000">8&nbsp;800 300-30-00</a><span>(круглосуточно, бесплатно для&nbsp;звонков из&nbsp;регионов России)</span></div>
+<div class="footer_phone"><a class="footer_phone_val" href="tel:+74993003000">+7&nbsp;499 300-30-00</a><span>(круглосуточно, в&nbsp;соответствии с&nbsp;тарифами вашего оператора)</span></div>
+
+</div>
+</div>
+<div class="footer_main_block">
+<div class="footer_left-menu">
+<div class="footer_left-menu_item"><a href="/lk_uio/">Личный кабинет участника информационного обмена</a></div>
+<div class="footer_left-menu_item"><a href="/about_br/irp/">Отношения с&nbsp;инвесторами</a></div>
+<div class="footer_left-menu_item"><a href="/rbr/list_inside/">Перечень инсайдерской информации Банка России</a></div>
+<div class="footer_left-menu_item"><a href="/analytics/na_vr/">Официальное опубликование нормативных актов Банка России</a></div>
+<div class="footer_left-menu_item"><a href="/project_na/">Проекты нормативных актов Банка России</a></div>
+<div class="footer_left-menu_item"><a href="/other/holidays/">Перечень нерабочих праздничных дней и&nbsp;перенесенных выходных дней</a></div>
+</div>
+<div class="networks-circle footer_networks">
+<a class="networks-circle_item _vk" href="https://vk.com/cbr_official"></a>
+<a class="networks-circle_item _yt" href="https://www.youtube.com/user/BankofRussia"></a>
+<a class="networks-circle_item _tg" href="https://telegram.me/centralbank_russia" title="Telegram"></a>
+<a class="networks-circle_item _ydzen" href="https://dzen.ru/cbr" title="Яндекс Дзен"></a>
+<a class="networks-circle_item _ok" href="https://ok.ru/group/68858679787580" title="Одноклассники"></a>
+<a class="networks-circle_item _rt" href="https://rutube.ru/channel/23873201/" title="RUTUBE"></a>
+<a class="networks-circle_item _max" href="https://max.ru/cbr_official" title="Макс"></a>
+</div>
+</div>
+<div class="footer_menu">
+<div class="footer_menu_items">
+<div class="footer_menu_item"><a href="/about/">О&nbsp;сайте</a></div>
+<div class="footer_menu_item"><a href="/contacts/">Контакты</a></div>
+<div class="footer_menu_item"><a href="/about_br/anticor/">Противодействие коррупции</a></div>
+<div class="footer_menu_item"><a href="/development/">Технические ресурсы</a></div>
+</div>
+<a class="footer_menu_item _visually-impaired" href="#" title="Версия для слабовидящих">
+	<div class="footer_visually-impaired-icon"></div>
+	<div><span class="visually-impaired-on">Версия для&nbsp;слабовидящих</span><span class="visually-impaired-off">Обычная версия</span></div>
+</a>
+</div>
+
+            </div>
+        </div>
+        <div class="footer_bottom">
+            <div class="col-md-23 col-xl-23 offset-md-1 offset-xl-2 row footer_bottom-container">
+                <div class="footer_bottom_text col-md-11 col-xl-11">&#169; Банк России, 2000–2026.</div>
+<div class="footer_bottom_aic col-md-12 col-xl-11">Дизайн сайта — <a href="https://aic.ru" target="_blank"><img src="/common/images/icons/aic-logo.svg" /></a></div>
+
+            </div>
+        </div>
+    </div>
+</footer>
+
+    
+    
+
+        <div class="popup-cookies" data-popup-cookies>
+            <div class="popup-cookies_title">
+                На сайте Банка России используются файлы cookie
+            </div>
+            <div class="popup-cookies_subtitle">
+                Оставаясь на <a href="/">www.cbr.ru</a>, вы принимаете
+                <a href='/user_agreement/'>пользовательское соглашение</a>
+            </div>
+            <button class="btn _medium _blue " data-popup-cookies-btn>
+                Подтвердить
+            </button>
+        </div>
+
+    
+<!--[if IE 9]><script>$('body').addClass('ie9')</script><![endif]-->
+<script src="/Modules/Content/Scripts/PageInfo.js?v=v3116962712" type="text/javascript"></script>
+    <script type="text/javascript">
+        $(function () {
+            Content_PageInfo.init($('[data-page-feedback]'));
+        });
+    </script>
+
+
+
+</body>
+</html>

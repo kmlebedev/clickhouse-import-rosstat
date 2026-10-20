@@ -20,7 +20,7 @@ import json
 import sys
 from pathlib import Path
 
-from extrapolation_aisc import ch_query
+from lib.clickhouse import ch_query
 
 ROOT = Path(__file__).resolve().parent.parent
 
