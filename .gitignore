@@ -37,6 +37,13 @@ coverage.out
 /key_rate_cbr_rule_diagnostics.csv
 /key_rate_cbr_rule_forecast.json
 
+# Артефакты сценарного веера (issue #272, Task 1): отчёт, предсказания,
+# диагностика и информационный прогноз. Локальные; в forecast_log не пишутся.
+/key_rate_scenario_fan_report.md
+/key_rate_scenario_fan_predictions.csv
+/key_rate_scenario_fan_diagnostics.csv
+/key_rate_scenario_fan_forecast.json
+
 # Артефакты классификатора шоков (issue #200): отчёт, as-of веса и запись
 # следующего заседания. Локальные и детерминированные при фиксированном сиде
 # и одной БД; имена точные.
