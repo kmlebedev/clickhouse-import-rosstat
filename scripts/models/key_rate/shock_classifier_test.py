@@ -43,9 +43,9 @@ import numpy as np
 
 # Модуль и тест лежат рядом, запуск прямой (`python3 scripts/...`), поэтому его
 # каталог добавляется в sys.path до импорта.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import shock_classifier as sc
+from models.key_rate import shock_classifier as sc
 
 
 def fixture_panel() -> list:

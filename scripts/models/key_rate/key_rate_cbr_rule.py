@@ -47,12 +47,12 @@ import numpy as np
 from scipy.stats import norm
 from statsmodels.tsa.filters.hp_filter import hpfilter
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import eval_utils as eu  # noqa: E402
-import key_rate_model as krm  # noqa: E402
-import ml_experiment as mlx  # noqa: E402
+from lib import eval_utils as eu  # noqa: E402
+from models.key_rate import key_rate_model as krm  # noqa: E402
+from lib import ml_experiment as mlx  # noqa: E402
 
 # --- Константы ----------------------------------------------------------------
 
