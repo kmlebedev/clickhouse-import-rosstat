@@ -1,0 +1,191 @@
+{
+  "accessed_at": "2026-10-20",
+  "sources": [
+    {
+      "name": "cbr_system_p",
+      "url": "https://cbr.ru/dkp/system_p/",
+      "http_status": 200,
+      "content_type": "text/html",
+      "note": "Страница описывает КПМ как часть набора моделей на разных версиях NK DSGE."
+    },
+    {
+      "name": "smartlab_audit_1336015",
+      "url": "https://smart-lab.ru/blog/1336015.php",
+      "http_status": 200,
+      "content_type": "text/html",
+      "role": "secondary",
+      "note": "Вторичный аудит kpm_dip и kpm_ddkp; ключевые утверждения сверены с первоисточником."
+    },
+    {
+      "name": "kpm_dip",
+      "url": "https://cbr.ru/Content/Document/File/174930/kpm_dip.rar",
+      "http_status": 200,
+      "content_type": "application/octet-stream",
+      "bytes": 637921,
+      "sha256": "dc70ccd665fc766935b6c1998d66b1baea1804e60c090a8575de0a0db8125dd5",
+      "archive_format": "RAR5",
+      "files": [
+        "КПМ_ДИП/irisuserconfig.m",
+        "КПМ_ДИП/models/ext_model.model",
+        "КПМ_ДИП/models/ext_params.m",
+        "КПМ_ДИП/models/Russia_ext.model",
+        "КПМ_ДИП/models/ru_ext.model",
+        "КПМ_ДИП/models/ru_model.model",
+        "КПМ_ДИП/models/ru_params_budget.m",
+        "КПМ_ДИП/models/ru_params_inertialagents.m",
+        "КПМ_ДИП/models/ru_params_monetaryhard.m",
+        "КПМ_ДИП/models/ru_params_nomarketloans.m",
+        "КПМ_ДИП/models/ru_params_rationalagents.m",
+        "КПМ_ДИП/run_irfs.m",
+        "КПМ_ДИП/utils/ext_setirfs.m",
+        "КПМ_ДИП/utils/mk_shocks.m",
+        "КПМ_ДИП/utils/ru_setirfs.m",
+        "КПМ_ДИП/Инструкция пользователя (ДИП).pdf"
+      ]
+    },
+    {
+      "name": "kpm_ddkp",
+      "url": "https://cbr.ru/Content/Document/File/174929/kpm_ddkp.rar",
+      "http_status": 200,
+      "content_type": "application/octet-stream",
+      "bytes": 2778113,
+      "sha256": "eb6eaec7203fed6495c58d635a362540deee207d346a81b4158abcaf2c07daf9",
+      "archive_format": "RAR5",
+      "files": [
+        "КПМ_ДДКП/impulse_response.m",
+        "КПМ_ДДКП/model/external_model.mod",
+        "КПМ_ДДКП/model/parameters_main.mod",
+        "КПМ_ДДКП/model/qpm_fiscal_block.mod",
+        "КПМ_ДДКП/model/qpm_model.mod",
+        "КПМ_ДДКП/model/qpm_term_structure.mod",
+        "КПМ_ДДКП/proc/get_ss_growth_rates.m",
+        "КПМ_ДДКП/Инструкция пользователя (ДДКП).pdf",
+        "КПМ_ДДКП/results/* (30 PNG, 5 наборов IRF)"
+      ]
+    }
+  ],
+  "models": {
+    "dip": {
+      "equations_file": "КПМ_ДИП/models/ru_model.model",
+      "equations_lines": 492,
+      "calibration_variants": 5,
+      "key_equations": {
+        "phillips": "dl_cpi = c1*e_dl_cpi + (1-c1)*lag_dl_cpi + c2*(l_z_gap-l_z_gap{-1}) + c3*l_y_gap + shock",
+        "expectations": "e_dl_cpi = dl_cpi{1}; lag_dl_cpi = 0.50*dl_cpi{-1} + 0.30*dl_cpi{-2} + 0.15*dl_cpi{-3} + 0.05*dl_cpi{-4}",
+        "policy_rule": "rs = c_mp1*rs{-1} + (1-c_mp1)*(rs_neutral + c_mp2*(d4l_cpi{4}-dl_cpi_tar{4})) + shock",
+        "neutral_rate": "rs_neutral = rr_tnd + d4l_cpi{4}",
+        "mci": "mci = m_1*rr_gap + (1-m_1)*rr_loan_gap",
+        "credit_impulse": "Credit_impulse = e_ncr + 0.5*e_ncr{-1} + 0.25*e_ncr{-2} + 0.125*e_ncr{-3}",
+        "budget_impulse": "Budget_impulse = -impulse_MT - impulse_NMT - impulse_OR + 0.37*impulse_ENI + 0.37*impulse_EI",
+        "ofz3": "ofz3 = e3_rs + sr_prem + ofz3_prem; ofz3_prem = lm_prem*3/10"
+      },
+      "key_parameters": {
+        "c1_ru": 0.4,
+        "c2_ru": 0.14,
+        "c3_ru": 0.3,
+        "rho_cpi_1": 0.5,
+        "rho_cpi_2": 0.3,
+        "rho_cpi_3": 0.15,
+        "rho_cpi_4": 0.05,
+        "c_mp1_ru": 0.63,
+        "c_mp2_ru": 1.5,
+        "c_mp2_ru_hard": 1.9,
+        "a3_ru": 0.15,
+        "a3_ru_no_market_loans": 0.05,
+        "a7_ru_budget": 0.4,
+        "a7_ru_default": 0.1,
+        "m_1": 0.37,
+        "r_10": 0.5,
+        "im_mt_1": 1.0,
+        "im_nmt_1": 1.0,
+        "im_or_1": 1.0,
+        "im_eni_1": 0.37,
+        "im_ei_1": 0.37,
+        "ss_real_neutral_ru": 4.0,
+        "ss_dl_cpi_tar_ru": 4.0
+      },
+      "contains_ppi": false,
+      "contains_core_inflation": false,
+      "contains_data": false,
+      "contains_estimation": false,
+      "contains_forecast_reproduction": false
+    },
+    "ddkp": {
+      "equations_file": "КПМ_ДДКП/model/qpm_model.mod",
+      "equations_lines": 966,
+      "calibration_variants": 8,
+      "key_equations": {
+        "core_aggregation": "PIE_C = w_h*PIE_D + (1-w_h)*PIE_M",
+        "domestic_core_phillips": "PIE_D = 0.20*PIE_D{-1} + 0.80*EW1_PIE_D + 0.35*RMC_D_GAP_MA + SHCK_PIE_D",
+        "imported_core_phillips": "PIE_M = 0.20*PIE_M{-1} + 0.80*EW1_PIE_M + 0.225*RMC_IMP_GAP",
+        "headline_aggregation": "LCPI = w_core*LCPI_C + w_veg*LCPI_VEG + w_fuel*LCPI_FUEL + w_sreg*LCPI_SREG + w_vol*LCPI_VOL + LCPI_WEDGE",
+        "policy_rule": "RS = gamma1*RS{-1} + (1-gamma1)*(RS_NEUTRAL + gamma2*E3_PIE4_DEV + gamma3*Y_GAP) + RES_RS",
+        "neutral_rate": "RS_NEUTRAL = RR_EQ + E3_PIE4_MP",
+        "mp_indicator": "E3_PIE4_MP = w_mp_pie_c*E3_PIE_C4 + (1-w_mp_pie_c)*E3_PIE4",
+        "inflation_deviation": "E3_PIE4_DEV = E3_PIE4_MP - E3_PIE_TAR4",
+        "term_structure": "RSG?t = EW?tY_RS + GPREM_SM/LM + TPREM?t + RES_RSG?t",
+        "credit_rate": "RSM?t = rho*RSM?t{-1} + (1-rho)*(RSG?t + CPREM?t)",
+        "seasonal_factor": "PIE4 = LCPI - LCPI{-4} + PIE4_SF; PIE4_SF = 0.70*PIE4_SF{-1} + RES_PIE4_SF"
+      },
+      "key_parameters": {
+        "PIE_TAR_SS_percent": 4.0,
+        "gamma1": 0.75,
+        "gamma2": 1.5,
+        "gamma2_monetary_hard": 1.9,
+        "gamma3": 0.5,
+        "psi": 0.9999,
+        "w_mp_pie_c": 0.75,
+        "w_core": 0.7107,
+        "w_veg": 0.046,
+        "w_fuel": 0.0464,
+        "w_sreg": 0.1188,
+        "w_vol": "remainder",
+        "c_lag_d": 0.2,
+        "c_rmc_d": 0.35,
+        "c_lag_m": 0.2,
+        "c_rmc_m": 0.225,
+        "w_exp_lag_default": 0.25,
+        "w_exp_lag_adaptive": 0.375,
+        "c_exp_nc": 0.25,
+        "c_lag_veg": 0.18,
+        "c_z_veg": 0.5,
+        "c_rp_veg": 0.15,
+        "c_lag_fuel": 0.12,
+        "c_oil_fuel": 0.025,
+        "c_rp_fuel": 0.05,
+        "c_lag_sreg": 0.2,
+        "c_rp_sreg": 0.05,
+        "c_lag_vol": 0.2,
+        "c_rp_vol": 0.15,
+        "c_sf_pie": 0.7
+      },
+      "contains_ppi": false,
+      "contains_core_inflation": true,
+      "contains_data": false,
+      "contains_estimation": false,
+      "contains_forecast_reproduction": false
+    }
+  },
+  "verification": {
+    "dip_no_core_inflation": "confirmed",
+    "dip_no_rosstat_basket": "confirmed",
+    "dip_no_actual_data": "confirmed",
+    "dip_no_official_forecast_reproduction": "confirmed",
+    "dip_two_technical_errors_in_russian_launch": "not verified; suspicious param + p and linear= in run_irfs.m, no MATLAB/IRIS execution",
+    "ddkp_has_core_inflation": "confirmed",
+    "ddkp_mp_indicator_75_25": "confirmed",
+    "ddkp_policy_rule_gammas": "confirmed",
+    "ddkp_100_measurement_equations": "not reproduced; 30 OBS_* variables in qpm_model.mod, not used"
+  },
+  "verdicts": {
+    "official_forecast": "Model-informed scenario forecast, not a mechanical output of the published code. KPM DIP and KPM DDKP are used for scenarios underlying the forecast; the published trajectory is a Board consensus with expert judgment and a range. DDKP is closer to the rate path (core inflation, 75/25 MP indicator, term structure, labor/credit).",
+    "issue_266_ppi_sa": "No-go as a source of PPI SA parity: the KPM code contains no PPI/producer-price block. Transferable only as methodology (SA component + separate seasonal factor + relative price gap); the exact X-13 specification and PPI weights are not in the archive."
+  },
+  "limitations": [
+    "MATLAB/IRIS not available; model not executed.",
+    "No actual data or parameter estimation in the archives; calibrations are illustrative.",
+    "Archives are copyrighted; not committed to the repository; only equations and hashes are quoted.",
+    "Mixed frequency: QPM is quarterly; our models are monthly/meeting-based.",
+    "Accuracy gain is not guaranteed; must be measured with walk-forward and DM."
+  ]
+}
