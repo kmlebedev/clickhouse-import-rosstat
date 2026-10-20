@@ -5,14 +5,15 @@ import "github.com/kmlebedev/clickhouse-import-rosstat/chimport"
 // rosstatImporter — запись реестра импортёров пакета: сам импортёр, таблица, в которую
 // он пишет, и запрос количественного чека версии (префлайта). Регистрируется сам
 // импортёр пакета — значение или указатель на его структуру, — а не отдельный
-// безымянный тип-обёртка: все семь импортёров объявлены структурами со встроенным
+// безымянный тип-обёртка: все восемь импортёров объявлены структурами со встроенным
 // util.ClickHouseImport, поэтому Name() и Import() (цикл «DDL → префлайт → точки →
 // производные → версия») промотированы из шаблона, а публикация производных (каталог
 // рядов и витрина v_rosstat_macro — поле AfterImport; у rosstat_okved2 — отдельная
 // витрина v_rosstat_okved2) идёт через шаблон; свой Import()
 // оставляет тот, кому адрес артефакта нужно взять со страницы (rosstat_ipc_weeks), у кого
-// артефакт — не один файл, а набор выпусков (rosstat_ipc_weeks_bulletins), либо кому нужен
-// явный отказ от restore при вычисляемом URL (rosstat_okved2). Полей
+// артефакт — не один файл, а набор выпусков (rosstat_ipc_weeks_bulletins), кому нужен
+// явный отказ от restore при вычисляемом URL (rosstat_okved2), либо кому export-URL
+// выдаёт RPC и меняется на каждый прогон (rosstat_bi_cpi_weekly). Полей
 // table и countPoints не видит никто, кроме теста
 // TestRosstatImportersPrefixedAndRegistered: по ним проверяется, что импортёр не занял
 // таблицу вне пространства rosstat_ и что объявленный в реестре префлайт совпадает с
@@ -37,12 +38,14 @@ type rosstatImporter struct {
 // v_rosstat_macro и v_model_inputs (вход контура золота, грант агенту) к чужим данным.
 // Литералы сверены с константами кода при переносе регистрации.
 //
-// rosstat_ipc_weeks — единственная запись с пустым countPoints, и сознательно: файл
-// Nedel_ipc.xlsx перезаписывается по тому же URL в недельном темпе, равном темпу шага
-// расписания, поэтому no-op недостижим, а HEAD был бы чистыми накладными расходами
-// (спека §3.7, стандарт §9.3). Поля PublicationCountPoints/PublicationSource у импортёра
-// не заполнены, поэтому Publication() даёт нулевое объявление — ровно то, что сверяет
-// пустая колонка реестра.
+// rosstat_ipc_weeks и rosstat_bi_cpi_weekly — две записи с пустым countPoints, и
+// сознательно. У rosstat_ipc_weeks файл Nedel_ipc.xlsx перезаписывается по тому же URL в
+// недельном темпе, равном темпу шага расписания, поэтому no-op недостижим, а HEAD был бы
+// чистыми накладными расходами (спека §3.7, стандарт §9.3). У rosstat_bi_cpi_weekly
+// export-URL — новый tmp/exp<uuid> на каждый POST, поэтому HEAD-префлайт и строка версии
+// недостижимы; идемпотентность обеспечивает ReplacingMergeTree (спека §6). Поля
+// PublicationCountPoints/PublicationSource у обоих не заполнены, поэтому Publication()
+// даёт нулевое объявление — ровно то, что сверяет пустая колонка реестра.
 //
 // Колонка countPoints — запрос количественного чека версии у импортёров, у которых
 // точка контроля публикации объявлена (спека §3.5); пустая строка — префлайта нет.
@@ -59,6 +62,7 @@ var rosstatImporters = []rosstatImporter{
 	{labourForceImporter, "rosstat_labour_force_mes", "SELECT count() FROM rosstat_labour_force_mes FINAL"},
 	{ipcWeeksBulletinsImporter, "rosstat_ipc_weeks_bulletins", "SELECT count() FROM rosstat_ipc_weeks_bulletins FINAL"},
 	{rosstatOkved2Importer, "rosstat_okved2", "SELECT count() FROM rosstat_okved2 FINAL"},
+	{biCpiWeeklyImporter, "rosstat_bi_cpi_weekly", ""},
 }
 
 // init — единственная регистрация импортёров Росстата в chimport.Stats. Порядок

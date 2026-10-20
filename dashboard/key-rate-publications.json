@@ -1258,6 +1258,242 @@
         }
       },
       {
+        "type": "timeseries",
+        "id": 25,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, coverage_ratio AS \"Покрытие спроса, доля\"\nFROM v_ofz_stress\nWHERE coverage_ratio IS NOT NULL AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Аукционы ОФЗ: покрытие спроса",
+        "description": "Отношение размещённого объёма к спросу на аукционе ОФЗ (v_ofz_stress, coverage_ratio; 0.3 = размещено 30 % спроса). Точки — даты аукционов, а не регулярный ряд; NULL — аукцион не состоялся или сделок не было, это не ноль.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 75
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 26,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, cutoff_minus_secondary_pp AS \"Отсечение − КБД, п.п.\"\nFROM v_ofz_stress\nWHERE cutoff_minus_secondary_pp IS NOT NULL AND $__timeFilter(date)\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Аукционы ОФЗ: отсечение − КБД",
+        "description": "Доходность по цене отсечения минус доходность ближайшего тенора КБД ЦБ на дату аукциона (v_ofz_stress, cutoff_minus_secondary_pp, п.п.). КБД — кривая бескупонной доходности ЦБ, а не сделки вторичного рынка; положительное значение — аукцион дороже кривой. NULL — нет одной из доходностей.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 12,
+          "y": 75
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 27,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, max(debt_service_to_revenue) AS \"Обслуживание / доходы\"\nFROM v_ofz_stress\nWHERE debt_service_to_revenue IS NOT NULL AND $__timeFilter(date)\nGROUP BY date\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Долг: обслуживание в доходах",
+        "description": "Расходы на обслуживание долга / доходы федерального бюджета за месяц (v_ofz_stress, debt_service_to_revenue; 0.05 = 5 %). До 2022 — бюджетная строка (федеральный и муниципальный долг), с 2024 — обслуживание федеральных ценных бумаг; 2022–2023 — NULL (пробел источника), поэтому линия разорвана, а не равна нулю.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 0,
+          "y": 84
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
+        "type": "timeseries",
+        "id": 28,
+        "targets": [
+          {
+            "refId": "A",
+            "rawSql": "SELECT date AS time, max(ofz_stock_change) AS \"Δ запаса ОФЗ, млрд руб.\"\nFROM v_ofz_stress\nWHERE ofz_stock_change IS NOT NULL AND $__timeFilter(date)\nGROUP BY date\nORDER BY date\n",
+            "editorType": "sql",
+            "format": 0,
+            "queryType": "timeseries",
+            "pluginVersion": "4.3.2"
+          }
+        ],
+        "title": "Долг: изменение запаса ОФЗ",
+        "description": "Изменение номинала ОФЗ на 1-е число месяца к предыдущему месяцу (v_ofz_stress, ofz_stock_change, млрд руб.): положительное — чистое наращивание запаса, отрицательное — погашение. NULL — нет одного из месяцев (пропуски публикации структуры), это не ноль.",
+        "transparent": false,
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ch-rosstat"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 12,
+          "x": 12,
+          "y": 84
+        },
+        "repeatDirection": "h",
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true,
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyRUB",
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "gradientMode": "none",
+              "lineWidth": 1,
+              "fillOpacity": 0,
+              "spanNulls": false
+            }
+          },
+          "overrides": []
+        }
+      },
+      {
         "type": "row",
         "collapsed": false,
         "title": "Сигнал, консенсус, календарь",
@@ -1265,7 +1501,7 @@
           "h": 1,
           "w": 24,
           "x": 0,
-          "y": 75
+          "y": 93
         },
         "id": 24,
         "panels": []
@@ -1334,7 +1570,7 @@
           "h": 9,
           "w": 12,
           "x": 0,
-          "y": 76
+          "y": 94
         },
         "repeatDirection": "h",
         "options": {
@@ -1484,7 +1720,7 @@
           "h": 9,
           "w": 12,
           "x": 12,
-          "y": 76
+          "y": 94
         },
         "repeatDirection": "h",
         "options": {
@@ -1532,7 +1768,7 @@
           "h": 9,
           "w": 12,
           "x": 0,
-          "y": 85
+          "y": 103
         },
         "repeatDirection": "h",
         "options": {
@@ -1580,7 +1816,7 @@
           "h": 9,
           "w": 12,
           "x": 12,
-          "y": 85
+          "y": 103
         },
         "repeatDirection": "h",
         "options": {
@@ -1628,7 +1864,7 @@
           "h": 9,
           "w": 12,
           "x": 0,
-          "y": 94
+          "y": 112
         },
         "repeatDirection": "h",
         "options": {

@@ -50,6 +50,12 @@ coverage.out
 /key_rate_scenario_fan_v2_diagnostics.csv
 /key_rate_scenario_fan_v2_forecast.json
 
+# Артефакты веера v3 (issue #289, Task 4): channel-complete ядро + vol-дисперсия.
+/key_rate_scenario_fan_v3_report.md
+/key_rate_scenario_fan_v3_predictions.csv
+/key_rate_scenario_fan_v3_diagnostics.csv
+/key_rate_scenario_fan_v3_forecast.json
+
 # Артефакты классификатора шоков (issue #200): отчёт, as-of веса и запись
 # следующего заседания. Локальные и детерминированные при фиксированном сиде
 # и одной БД; имена точные.
