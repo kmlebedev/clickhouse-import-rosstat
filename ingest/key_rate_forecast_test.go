@@ -60,6 +60,19 @@ func TestValidateKeyRateForecast(t *testing.T) {
 			f.Model = "zai-org/GLM-5.3-Flash"
 			f.PromptVersion = 1
 		})},
+		{"shadow-стадия ordered_logit", with(func(f *KeyRateForecast) {
+			f.Metric = "cbr_rate:ordered_logit:shadow"
+		})},
+		{"canary-стадия taylor", with(func(f *KeyRateForecast) {
+			f.Metric = "cbr_rate:taylor:canary"
+			f.Model = "taylor"
+			f.Probabilities = nil
+		})},
+		{"shadow-стадия llm", with(func(f *KeyRateForecast) {
+			f.Metric = "cbr_rate:llm:shadow"
+			f.Model = "zai-org/GLM-5.3-Flash"
+			f.PromptVersion = 1
+		})},
 		{"target_date равен forecast_date", with(func(f *KeyRateForecast) {
 			f.TargetDate = f.ForecastDate
 		})},
@@ -88,6 +101,11 @@ func TestValidateKeyRateForecast(t *testing.T) {
 		{"metric без cbr_rate", with(func(f *KeyRateForecast) { f.Metric = "xau_q_avg" }), "metric"},
 		{"неизвестный трек", with(func(f *KeyRateForecast) { f.Metric = "cbr_rate:ensemble" }), "metric"},
 		{"пустой трек", with(func(f *KeyRateForecast) { f.Metric = "cbr_rate:" }), "metric"},
+		{"стадия без трека", with(func(f *KeyRateForecast) { f.Metric = "cbr_rate:shadow" }), "metric"},
+		{"пустая стадия", with(func(f *KeyRateForecast) { f.Metric = "cbr_rate:taylor:" }), "metric"},
+		{"неизвестная стадия", with(func(f *KeyRateForecast) { f.Metric = "cbr_rate:taylor:prod" }), "metric"},
+		{"лишний сегмент", with(func(f *KeyRateForecast) { f.Metric = "cbr_rate:taylor:shadow:extra" }), "metric"},
+		{"неизвестный трек со стадией", with(func(f *KeyRateForecast) { f.Metric = "cbr_rate:ensemble:shadow" }), "metric"},
 		{"predicted = 0", with(func(f *KeyRateForecast) { f.Predicted = 0 }), "predicted"},
 		{"predicted отрицательный", with(func(f *KeyRateForecast) { f.Predicted = -1 }), "predicted"},
 		{"predicted NaN", with(func(f *KeyRateForecast) { f.Predicted = math.NaN() }), "predicted"},

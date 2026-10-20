@@ -543,6 +543,8 @@ SELECT * FROM (
             row_number() OVER (PARTITION BY metric ORDER BY forecast_date DESC) AS rn
         FROM forecast_log FINAL
         WHERE metric LIKE 'cbr_rate:%'
+          AND metric NOT LIKE '%:shadow'
+          AND metric NOT LIKE '%:canary'
     ) AS fl
     WHERE fl.rn = 1
     UNION ALL
@@ -569,8 +571,9 @@ SELECT * FROM (
 		"витрины: определение не зависит от порядка их создания, а гейт util.CreateView проверяет ровно эти таблицы. " +
 		"Шесть контуров: spot — текущая ключевая ставка; fundamental — ИПЦ, базовая SAAR-инфляция, инфляционные и " +
 		"ценовые ожидания, деловой климат; market — вменённая ставка KEYRATE и её ликвидность, кривая ОФЗ, RUONIA и " +
-		"спред к ставке; divergence — расхождение прогноза и рынка в б.п.; forecast — последний прогноз каждого трека " +
-		"cbr_rate:* и ошибка после заседания; calendar — ближайшее заседание Совета директоров ЦБ. " +
+		"спред к ставке; divergence — расхождение прогноза и рынка в б.п.; forecast — последний production-прогноз " +
+		"каждого трека cbr_rate:* (staged :shadow/:canary исключены и живут в v_ml_live_accuracy); calendar — " +
+		"ближайшее заседание Совета директоров ЦБ. " +
 		"flag — условие threshold выполнено (не «хорошо/плохо»); stale — данных нет или ряд старше естественного цикла " +
 		"(daily 7 дней, monthly 45 дней). forecast_log агенту не выдан: витрина читает его как SQL SECURITY DEFINER. " +
 		"KEYRATE низколиквиден (volume = 0 — settle не рыночное ожидание), ofz_curve — накопительный снимок, поэтому " +
@@ -578,7 +581,7 @@ SELECT * FROM (
 		"после первого ingest (forecast_log) и импортёров контура; запуск — make import STAT=key_rate_views, повтор идемпотентен",
 	Columns: map[string]string{
 		"contour":        "Контур сигнала: spot — текущая ключевая ставка; fundamental — макро-контур (ИПЦ, базовая SAAR-инфляция, инфляционные и ценовые ожидания, деловой климат); market — рыночный контур (вменённая ставка KEYRATE, кривая ОФЗ, RUONIA); divergence — расхождение прогноза и рынка; forecast — журнал прогнозов cbr_rate:*; calendar — ближайшее заседание Совета директоров ЦБ",
-		"indicator":      "Код сигнала внутри контура; у forecast — metric из forecast_log (cbr_rate:taylor, cbr_rate:ordered_logit, cbr_rate:llm, будущий cbr_rate:ml), у divergence — taylor_vs_market_bp или ordered_logit_vs_market_bp, у calendar — next_meeting",
+		"indicator":      "Код сигнала внутри контура; у forecast — metric production-трека из forecast_log (cbr_rate:taylor, cbr_rate:ordered_logit, cbr_rate:llm, будущий cbr_rate:ml); staged-метрики :shadow/:canary в forecast-контур не входят — они в v_ml_live_accuracy; у divergence — taylor_vs_market_bp или ordered_logit_vs_market_bp, у calendar — next_meeting",
 		"value":          "Значение сигнала в unit; у next_meeting — сколько календарных дней осталось до заседания; NULL — данных нет (пустая таблица-источник, отсутствующий тенор ОФЗ, нет прогноза или рынка); у divergence — NULL, если target_date прогноза или дата экспирации серии не совпадают с ближайшим заседанием: число против чужой серии не показывается",
 		"unit":           "Единица значения: % годовых (ставка, вменённая ставка, ОФЗ, RUONIA, прогноз), % г/г (ИПЦ), % г/г (SAAR) (базовая инфляция), % (инфляционные ожидания), пункты (мониторинг предприятий), б.п. (изменения и расхождения), контрактов (объём и открытые позиции KEYRATE), дней (до заседания)",
 		"as_of":          "Дата значения: последнее наблюдение, торговый день или дата прогноза; у next_meeting — today(), потому что значение пересчитывается в момент запроса; NULL — данных нет",
@@ -600,7 +603,7 @@ SELECT * FROM (
 // обязан видеть ИМЕННО то, что создаёт импортёр (прецедент — goldViewsList).
 // Сейчас витрина одна; будущие срезы контура ставки (публикационный, PIT)
 // добавятся сюда же.
-var keyRateViewsList = []util.View{keyRateDashboardView}
+var keyRateViewsList = []util.View{keyRateDashboardView, mlLiveAccuracyView}
 
 type keyRateViews struct {
 }
