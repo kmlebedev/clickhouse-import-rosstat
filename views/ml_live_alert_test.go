@@ -92,8 +92,8 @@ func TestMLLiveAlertProvisioning(t *testing.T) {
 	if len(file.Groups) != 1 || file.Groups[0].Name != "ml-live" {
 		t.Fatalf("groups = %+v, want one ml-live group", file.Groups)
 	}
-	if file.Groups[0].Folder != "General" {
-		t.Fatalf("folder = %q, want General", file.Groups[0].Folder)
+	if file.Groups[0].Folder != "ML live" {
+		t.Fatalf("folder = %q, want ML live", file.Groups[0].Folder)
 	}
 	if len(file.Groups[0].Rules) != 2 {
 		t.Fatalf("rules = %d, want 2", len(file.Groups[0].Rules))
@@ -107,6 +107,7 @@ func TestMLLiveAlertProvisioning(t *testing.T) {
 		"avg(abs_error_bp) OVER",
 		"ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
 		"argMax(rolling_mae_bp, target_date)",
+		"model != 'gate-selftest'",
 	} {
 		if !strings.Contains(degradationSQL, want) {
 			t.Errorf("degradation SQL must contain %q: %s", want, degradationSQL)
@@ -121,9 +122,11 @@ func TestMLLiveAlertProvisioning(t *testing.T) {
 
 	freshnessSQL, freshnessThreshold, freshnessLabels := ruleByUID(t, file, "ml-live-freshness")
 	for _, want := range []string{
-		"v_events_calendar",
 		"v_ml_live_accuracy",
-		"dateDiff('day', last_meeting, today()) > 3",
+		"maxOrNull(target_date)",
+		"target_date <= today()",
+		"dateDiff('day', last_target, today()) > 3",
+		"model != 'gate-selftest'",
 	} {
 		if !strings.Contains(freshnessSQL, want) {
 			t.Errorf("freshness SQL must contain %q: %s", want, freshnessSQL)

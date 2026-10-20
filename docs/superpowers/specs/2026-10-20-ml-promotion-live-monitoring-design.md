@@ -78,8 +78,9 @@ Gate работает на `v_ml_runs`/`v_ml_error_by_fold`; вход — два
 ### 3.3 Live-алерты
 
 - **`ml-live-degradation`:** по production-трекам, rolling MAE трёх последних разрешённых заседаний > **100 б.п.**; `for: 5m`, `severity: warning`.
-- **`ml-live-freshness`:** после заседания нет разрешённого production-прогноза более **3 дней** (или разрешённых строк нет вовсе); `for: 5m`, `severity: warning`.
+- **`ml-live-freshness`:** последний прошедший production-прогноз (`target_date <= today()`) не разрешён более **3 дней**; если прошедших production-строк нет, правило не срабатывает (полноту журнала до публикации проверяет `make ml-live-check`); `for: 5m`, `severity: warning`.
 - Порог 100 б.п. — ориентир от бэктеста (`MAE ≈ 72 б.п.` у taylor/ordered logit), ≈1,4×; он не выбирается по live-результатам.
+- Оба правила исключают `model='gate-selftest'`: синтетические строки приёмки не должны поднимать production-алерт.
 - Contact point не задаётся; алерт живёт в Grafana UI и состоянии Firing.
 
 ## 4. Модель данных
@@ -150,10 +151,10 @@ cbr_rate:<track>:canary          — canary-трек
 
 ## 10. Grafana-алерты
 
-Provisioning-файл `grafana/provisioning/alerting/ml-live.yaml` (`apiVersion: 1`, группа `ml-live`, `folder: General`):
+Provisioning-файл `grafana/provisioning/alerting/ml-live.yaml` (`apiVersion: 1`, группа `ml-live`, `folder: ML live`):
 
 - `ml-live-degradation`: запрос по `v_ml_live_accuracy`, production, `is_resolved=1`, rolling MAE 3 разрешённых заседаний; threshold `> 100`;
-- `ml-live-freshness`: `if(count()=0, 999, dateDiff('day', max(target_date), today()))`; threshold `> 3`;
+- `ml-live-freshness`: последний прошедший `target_date` production-строки; если для него нет `is_resolved=1` более 3 дней — `999`, иначе `0`;
 - `for: 5m`, `noDataState: OK`, `execErrState: Error`, labels `severity=warning`, `contour=ml-live`.
 
 Локальный стенд читает `GF_PATHS_PROVISIONING=$(CURDIR)/grafana/provisioning` (Makefile `grafana-up`) — файл подхватывается без отдельного деплоя. Staging: `grafana-provision-alerting-staging` копирует файл в `/etc/grafana/provisioning/alerting/` и печатает команду admin-reload/restart; вызывается из `grafana-deploy-staging`. `scripts/grafana_alert_check.py` проверяет UID/порог/запрос через `GET /api/v1/provisioning/alert-rules`; `make grafana-check` вызывает его вместе с dashboard-smoke. Contact point не задаётся.
