@@ -2,6 +2,7 @@ package rosstat
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -163,5 +164,39 @@ func TestIpcWeeksSeriesMetaCoversFixture(t *testing.T) {
 		if !described[row.series] {
 			t.Errorf("ряд %q из выгрузки не описан в series_meta", row.series)
 		}
+	}
+}
+
+// TestBICpiWeeklySeriesMetaIsSharedAggregate — мета агрегата одна на бюллетени и BI:
+// upsert каталога не зависит от порядка прогонов, а описание содержит оговорки о
+// ревизиях, границе 2009–2018 и дате начала BI.
+func TestBICpiWeeklySeriesMetaIsSharedAggregate(t *testing.T) {
+	meta := biCpiWeeklySeriesMeta()
+	if len(meta) != 1 {
+		t.Fatalf("biCpiWeeklySeriesMeta: %d рядов, ожидался 1", len(meta))
+	}
+	if meta[0] != ipcWeeksAggregateMeta {
+		t.Errorf("мета BI не совпадает с общей метой агрегата: %+v", meta[0])
+	}
+	if meta[0].Frequency != "W" || meta[0].Title == "" || meta[0].Unit == "" || meta[0].Origin == "" {
+		t.Errorf("мета агрегата заполнена не полностью: %+v", meta[0])
+	}
+	for _, needle := range []string{"ревизи", "2009–2018", "2019-01-09"} {
+		if !strings.Contains(meta[0].Description, needle) {
+			t.Errorf("в описании агрегата нет %q: %s", needle, meta[0].Description)
+		}
+	}
+	found := false
+	for _, m := range ipcWeeksBulletinsSeriesMeta() {
+		if m.Series != ipcWeeksBulletinsAggregateSeries {
+			continue
+		}
+		found = true
+		if m != ipcWeeksAggregateMeta {
+			t.Errorf("мета агрегата у бюллетеней разошлась с BI: %+v", m)
+		}
+	}
+	if !found {
+		t.Errorf("бюллетени не описывают агрегатный ряд %q", ipcWeeksBulletinsAggregateSeries)
 	}
 }
