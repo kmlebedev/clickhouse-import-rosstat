@@ -188,18 +188,19 @@ ORDER BY series, date FORMAT JSON
 
 def load_ccyb() -> dict:
     sql = """
-SELECT name, date, value FROM cbr_ccyb_indicators
-WHERE name IN ('credit_gap_broad', 'hh_yoy', 'nfo_rub_yoy')
-ORDER BY name, date FORMAT JSON
+SELECT series, date, value FROM v_cbr_ccyb_indicators
+WHERE source = 'cbr_ccyb_indicators'
+  AND series IN ('credit_gap_broad', 'hh_yoy', 'nfo_rub_yoy')
+ORDER BY series, date FORMAT JSON
 """
     try:
         rows = krm.ch_query(sql)
-    except Exception as error:  # noqa: BLE001 — raw-таблица может быть закрыта
-        log.warning("ccyb: raw-таблица недоступна (%s) — missing", error)
+    except Exception as error:  # noqa: BLE001 — витрина может быть недоступна
+        log.warning("ccyb: витрина недоступна (%s) — missing", error)
         return {}
     result = {}
     for row in rows:
-        result.setdefault(str(row["name"]), []).append(
+        result.setdefault(str(row["series"]), []).append(
             (krm.row_date(row["date"]), krm.row_float(row["value"]))
         )
     return result
@@ -331,14 +332,23 @@ def _matrix(rows: list, features: tuple) -> np.ndarray:
     return np.asarray(data, dtype=float)
 
 
+def _column_medians(matrix: np.ndarray) -> np.ndarray:
+    medians = np.zeros(matrix.shape[1], dtype=float)
+    for column in range(matrix.shape[1]):
+        values = matrix[:, column]
+        finite = values[np.isfinite(values)]
+        if finite.size:
+            medians[column] = float(np.median(finite))
+    return medians
+
+
 def fit_enet(features: tuple):
     def fit(train: list, row: ChannelRow) -> krm.Forecast:
         train_matrix = _matrix(train, features)
         target = np.asarray([item.decision.step_bp for item in train], dtype=float)
         if len(train) < 8 or len(set(target.tolist())) < 2:
             raise krm.DegenerateWindowError("channel_enet: вырожденное окно")
-        medians = np.nanmedian(train_matrix, axis=0)
-        medians = np.where(np.isfinite(medians), medians, 0.0)
+        medians = _column_medians(train_matrix)
         train_matrix = np.where(np.isnan(train_matrix), medians, train_matrix)
         row_vector = np.asarray(
             [
@@ -588,8 +598,8 @@ def run_v3_walk_forward(
             )
             con_points = [point for point, _ in conformal_points.steps]
             con_weights = [weight for _, weight in conformal_points.steps]
-            low = v2.weighted_quantile(con_points, con_weights, 0.10)
-            high = v2.weighted_quantile(con_points, con_weights, 0.90)
+            low = fan1.weighted_quantile(con_points, con_weights, 0.10)
+            high = fan1.weighted_quantile(con_points, con_weights, 0.90)
             past_intervals.append((row.decision.step_bp, low, high))
             diagnostics.append(
                 DiagnosticRow(
@@ -886,7 +896,7 @@ def render_report(
         "| Деньги | `cbr_m2` | `m2_yoy` |",
         "| Внешние условия | `cbr_currency_usd`, `moex_market`, `v_cbr_bop` | `usdrub_3m`, `brent_3m`, `bop_ca_q` |",
         "| Сбережения | `cbr_households_b_mes` | `deposit_yoy`, `deposit_share` |",
-        "| Макропруденциальные | `cbr_ccyb_indicators` | `credit_gap_broad`, `hh_yoy`, `nfo_rub_yoy` |",
+        "| Макропруденциальные | `v_cbr_ccyb_indicators` | `credit_gap_broad`, `hh_yoy`, `nfo_rub_yoy` |",
         "| Рынок ОФЗ | `v_ofz_signal` | `ofz10_spread`, `ofz2_spread`, `slope_10y_1y` |",
         "| KEYRATE | — | **недоступен**: история с 2026-09 |",
         "| Текст | `v_cbr_mp_summary_channels` | `text_channel_score`, 2024+ |",
@@ -979,7 +989,10 @@ def render_report(
             "",
             "- PIT/винтажей savings/ccyb/OFZ/BOP нет; as-of консервативный.",
             "- Text 2024+, KEYRATE 2026+ — missing-индикаторы; KEYRATE не используется.",
-            "- `cbr_ccyb_indicators` raw может быть недоступна — missing.",
+            "- `v_cbr_ccyb_indicators`: credit_gap_broad — квартальный, последняя точка 2024-07; "
+            "hh_yoy/nfo_rub_yoy — 2024-10; дальше missing.",
+            "- `v_cbr_mp_summary_channels` не содержит `published`: text as-of — "
+            "`meeting_date + 14 дней`.",
             "- 108 решений, ~35 признаков: ElasticNet-регуляризация; ablations.",
             "- 2022–2023 может требовать отдельной regime-дисперсии.",
             "- В `forecast_log` не пишется; Go/DDL/витрины/гранты не менялись.",

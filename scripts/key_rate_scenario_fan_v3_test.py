@@ -315,6 +315,15 @@ class TestCore(unittest.TestCase):
         forecast = v3.fit_enet(self._features())(train, target)
         self.assertTrue(math.isfinite(forecast.step_bp))
 
+    def test_enet_all_missing_column(self):
+        train = [self._row(index) for index in range(24)]
+        for row in train:
+            row.features["deposit_yoy"] = None
+        target = self._row(30)
+        target.features["deposit_yoy"] = None
+        forecast = v3.fit_enet(self._features())(train, target)
+        self.assertTrue(math.isfinite(forecast.step_bp))
+
     def test_degenerate_window_raises(self):
         train = [self._row(index) for index in range(5)]
         with self.assertRaises(krm.DegenerateWindowError):
