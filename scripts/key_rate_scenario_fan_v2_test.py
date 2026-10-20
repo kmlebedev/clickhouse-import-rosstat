@@ -149,6 +149,42 @@ class TestDispersion(unittest.TestCase):
             v2.disp_global([1.0, 2.0])
 
 
+class TestRegime(unittest.TestCase):
+    def test_shock_regime_threshold(self):
+        self.assertTrue(v2.shock_regime(True, 0.9))
+        self.assertTrue(v2.shock_regime(False, 0.4))
+        self.assertFalse(v2.shock_regime(False, 0.5))
+
+    def test_conformal_regime_uses_shock_subset(self):
+        residuals = [-10.0, -5.0, 0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 35.0, 40.0, 45.0]
+        past = [True] * 6 + [False] * 6
+        dispersion = v2.disp_conformal_regime(residuals, past, True)
+        self.assertEqual(dispersion.quantiles[0], -10.0)
+        self.assertEqual(dispersion.quantiles[-1], 15.0)
+        self.assertEqual(dispersion.fallback, "")
+
+    def test_conformal_regime_uses_normal_subset(self):
+        residuals = [-10.0, -5.0, 0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 35.0, 40.0, 45.0]
+        past = [True] * 6 + [False] * 6
+        dispersion = v2.disp_conformal_regime(residuals, past, False)
+        self.assertEqual(dispersion.quantiles[0], 20.0)
+        self.assertEqual(dispersion.quantiles[-1], 45.0)
+
+    def test_regime_small_subset_fallback(self):
+        residuals = [-10.0, -5.0, 0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 35.0, 40.0, 45.0]
+        past = [True] * 5 + [False] * 7
+        dispersion = v2.disp_conformal_regime(residuals, past, True)
+        self.assertEqual(dispersion.fallback, "shock_subset_small")
+        self.assertEqual(dispersion.quantiles[0], -10.0)
+
+    def test_global_regime_uses_shock_subset(self):
+        residuals = [-10.0, -5.0, 0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 35.0, 40.0, 45.0]
+        past = [True] * 6 + [False] * 6
+        dispersion = v2.disp_global_regime(residuals, past, True)
+        self.assertLess(dispersion.quantiles[-1], 20.0)
+        self.assertGreater(dispersion.quantiles[0], -20.0)
+
+
 class TestFan(unittest.TestCase):
     def test_thirty_five_points_and_weights(self):
         row = make_row(date(2024, 1, 1))
