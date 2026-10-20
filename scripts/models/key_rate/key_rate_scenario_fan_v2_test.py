@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Офлайн-тесты `scripts/key_rate_scenario_fan_v2.py`.
+"""Офлайн-тесты `scripts/models/key_rate/key_rate_scenario_fan_v2.py`.
 
 Запуск:
 
@@ -8,7 +8,7 @@
 или:
 
     uv run --with "statsmodels>=0.15" --with pandas --with scikit-learn \
-        --with scipy --python 3.12 python3 scripts/key_rate_scenario_fan_v2_test.py -v
+        --with scipy --python 3.12 python3 scripts/models/key_rate/key_rate_scenario_fan_v2_test.py -v
 
 Набор офлайн: ClickHouse и сеть не нужны. Живой прогон —
 `ML_LOG=1 make key-rate-scenario-fan-v2`.

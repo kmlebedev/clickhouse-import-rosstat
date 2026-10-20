@@ -1222,9 +1222,9 @@ def write_report(path: Path, payload: dict) -> None:
         "> **Задача:** собрать месячный m/m товаров из публичных недельных индексов "
         "Росстата, реконструировать `food`/`nonfood`/`services` и общий ИПЦ, "
         "сравнить с `rosstat_ipc_mes`; гейт покрытия весов ≥50 % решает судьбу bottom-up.",
-        "> **Как проверялось:** `scripts/cpi_weekly_component_panel.py` "
+        "> **Как проверялось:** `scripts/models/cpi/cpi_weekly_component_panel.py` "
         "(цель `make cpi-weekly-panel`), офлайн-тесты "
-        "`scripts/cpi_weekly_component_panel_test.py`; данные — `v_rosstat_macro` "
+        "`scripts/models/cpi/cpi_weekly_component_panel_test.py`; данные — `v_rosstat_macro` "
         "(148 товарных W-рядов + агрегат), 4 официальных ряда `rosstat_ipc_mes`, "
         "веса/словарь из архива CB_COMP. Скрипт только читает ClickHouse, в БД не пишет.",
         "> **Спека:** [2026-10-19-cpi-weekly-component-panel-design.md]"

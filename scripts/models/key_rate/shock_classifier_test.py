@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Офлайн-тесты `scripts/shock_classifier.py` (Tasks 2–3).
+"""Офлайн-тесты `scripts/models/key_rate/shock_classifier.py` (Tasks 2–3).
 
 Запуск из корня репозитория:
 
     uv run --with scikit-learn --with pandas --with "statsmodels>=0.15" \
-        --with scipy --python 3.12 python3 scripts/shock_classifier_test.py -v
+        --with scipy --python 3.12 python3 scripts/models/key_rate/shock_classifier_test.py -v
 
 Набор НЕ обращается к ClickHouse и сети: данные — синтетические фикстуры
 `scripts/testdata/shock_classifier/`, которые пишет и читает сам модуль

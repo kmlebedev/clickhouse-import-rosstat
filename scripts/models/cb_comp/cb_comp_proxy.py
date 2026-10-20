@@ -43,7 +43,7 @@ SA ИПЦ, `u` — SA ЖКУ, `w_u` — постоянная доля ЖКУ, т
 агрегатные RMSE; сравнение — отношением и абсолютной разницей.
 
 **Скрипт ничего не пишет в ClickHouse** — только читает. Транспорт — `ch_query`
-из `scripts/extrapolation_aisc.py`; секреты приходят из окружения (Makefile).
+из `scripts/models/polyus/aisc.py`; секреты приходят из окружения (Makefile).
 Запуск:
 
     make cb-comp-proxy ARGS="--nowcast-csv /path/to/cpi_monthly_predictions.csv"

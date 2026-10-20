@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Тесты scripts/cpi_nowcast.py.
+"""Тесты scripts/models/cpi/cpi_nowcast.py.
 
 Запуск из корня репозитория (pytest не нужен):
 
     uv run --with "catboost>=1.2" --with scikit-learn --with pandas \
         --with "statsmodels>=0.15" --with scipy --python 3.12 \
-        python3 scripts/cpi_nowcast_test.py -v
+        python3 scripts/models/cpi/cpi_nowcast_test.py -v
 
 (`--python 3.12` — конвенция репозитория для uv-прогонов; Makefile пинует тот же
 интерпретатор.)

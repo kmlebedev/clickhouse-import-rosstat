@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Офлайн-тесты прокси-пути CB_COMP (`scripts/cb_comp_proxy.py`).
+"""Офлайн-тесты прокси-пути CB_COMP (`scripts/models/cb_comp/cb_comp_proxy.py`).
 
 Транспорт к ClickHouse подменяется: ни один тест не ходит в сеть. Синтетика
 строится так, чтобы тождества были точными (SAAR ↔ м/м, агрегат ↔ компоненты),

@@ -55,7 +55,7 @@
   (числовые float + int-коды месяца: иначе CatBoost не принимает `cat_features`),
   NaN — как есть (`nan_mode` по умолчанию);
 * **метрики** (§4) — RMSE/MAE в п.п. через общие функции
-  `scripts/eval_utils.py`, DM (поправка HLN, `h=1`) и блочный бутстрап разницы
+  `scripts/lib/eval_utils.py`, DM (поправка HLN, `h=1`) и блочный бутстрап разницы
   RMSE (блок 3 месяца, n=2000, seed=SEED) между моделями основного окна;
 * **артефакты** (§5) — `cpi_nowcast_report.md` (таблицы «модель × окно»,
   «последние 12 фолдов», веса NNLS по последнему фолду каждого окна, тесты
@@ -112,8 +112,8 @@ NaN: сейчас это `ofz_1y` во всём бэктесте (у G-curve М�
 
 **В ClickHouse скрипт по умолчанию не пишет** — только читает; с `ML_LOG=1`
 паспорт прогона и fold-предсказания уходят в `ml_runs`/`ml_predictions`
-(`scripts/ml_experiment.py`), а без переменной поведение прежнее. Транспорт
-(`ch_query`) переиспользуется из `scripts/extrapolation_aisc.py`, а не
+(`scripts/lib/ml_experiment.py`), а без переменной поведение прежнее. Транспорт
+(`ch_query`) переиспользуется из `scripts/models/polyus/aisc.py`, а не
 копируется. Секреты приходят только из окружения (их подставляет Makefile).
 Запуск — через `make`:
 
@@ -2306,7 +2306,7 @@ def render_report(
         "## Метрики (RMSE / MAE, п.п.)",
         "",
         "Ошибка фолда — `прогноз − факт` (п.п., м/м); `n` — число фолдов под "
-        "метрикой. RMSE/MAE — общие функции `scripts/eval_utils.py`.",
+        "метрикой. RMSE/MAE — общие функции `scripts/lib/eval_utils.py`.",
         "",
     ]
     lines += _table(_METRIC_HEADER, metric_rows)
@@ -2841,7 +2841,7 @@ def run_summary(
     временный каталог — в тестах. `today` — дата прогона (по умолчанию
     системная): она же дата среза признаков и `forecast_date` JSON.
 
-    `ml_log`/`logger`/`run_name` — журнал эксперимента (`scripts/ml_experiment.py`):
+    `ml_log`/`logger`/`run_name` — журнал эксперимента (`scripts/lib/ml_experiment.py`):
     при `ml_log=True` (или `ML_LOG=1`, если параметр не задан) создаётся прогон
     `cpi_nowcast` с паспортом, fold-предсказаниями в п.п. и артефактами; явный
     `logger` используется как есть (duck typing). Без журнала скрипт в ClickHouse

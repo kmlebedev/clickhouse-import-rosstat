@@ -95,7 +95,7 @@ SQL-константы переименовывают их в общий `value`
 нужны.
 
 Живой прогон (Task 5) читает ClickHouse только через `key_rate_model.ch_query`
-(транспорт `scripts/extrapolation_aisc.py`); этот срез в ClickHouse не пишет.
+(транспорт `scripts/models/polyus/aisc.py`); этот срез в ClickHouse не пишет.
 """
 
 from __future__ import annotations

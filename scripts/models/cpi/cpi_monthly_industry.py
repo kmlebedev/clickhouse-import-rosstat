@@ -22,7 +22,7 @@ As-of отраслевой точки `P` — конец `P+1` (`cpi_monthly.ava
 
 Скрипт только читает ClickHouse и публичный xlsx; в БД данные не пишет.
 Запуск — `make cpi-monthly-industry` (env подключает Makefile), тесты —
-`scripts/cpi_monthly_industry_test.py`.
+`scripts/models/cpi/cpi_monthly_industry_test.py`.
 """
 
 import argparse
@@ -843,7 +843,7 @@ def decide(pairs: dict) -> dict:
 def write_report(path: Path, payload: dict) -> None:
     lines = ["# CPI monthly industry: отраслевые МП-признаки — отчёт прогона", ""]
     lines.append(
-        "> `scripts/cpi_monthly_industry.py`; пункт "
+        "> `scripts/models/cpi/cpi_monthly_industry.py`; пункт "
         "`key-rate/phase-4-ml-components` (issue #235), Stage 2. "
         "Числа не редактируются руками."
     )

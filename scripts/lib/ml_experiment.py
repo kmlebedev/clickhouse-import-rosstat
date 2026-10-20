@@ -20,7 +20,7 @@ predictions.jsonl, артефакты, модели и числовые метр
 Зависимости — только стандартная библиотека; `mlflow` импортируется лениво
 и только при включённом журнале с непустым Tracking URI. Запуск тестов:
 
-    python3 scripts/ml_experiment_test.py -v
+    python3 scripts/lib/ml_experiment_test.py -v
 """
 
 import hashlib

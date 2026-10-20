@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Офлайн-тесты `scripts/key_rate_cpi_v3_experiment.py` (issue #296)."""
+"""Офлайн-тесты `scripts/models/key_rate/key_rate_cpi_v3_experiment.py` (issue #296)."""
 
 import sys
 import unittest

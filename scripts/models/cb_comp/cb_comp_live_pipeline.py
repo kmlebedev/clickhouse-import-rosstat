@@ -529,7 +529,7 @@ def git_state() -> dict:
 def render_report(payload: dict) -> str:
     lines = ["# Live-пайплайн CB_COMP: воспроизведение на витринах", ""]
     lines.append(
-        f"> `scripts/cb_comp_live_pipeline.py`; as-of `{payload['as_of']}`; "
+        f"> `scripts/models/cb_comp/cb_comp_live_pipeline.py`; as-of `{payload['as_of']}`; "
         f"целевой месяц `{payload['target_month']}`. Числа не редактируются руками."
     )
     lines.append("")

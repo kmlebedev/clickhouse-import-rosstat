@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Офлайн-тесты `scripts/cb_comp_parity.py` (issue #190).
+"""Офлайн-тесты `scripts/models/cb_comp/cb_comp_parity.py` (issue #190).
 
 Запуск из корня репозитория (pytest не нужен):
 

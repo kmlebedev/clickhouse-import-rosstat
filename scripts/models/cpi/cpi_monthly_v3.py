@@ -19,7 +19,7 @@ v2-baseline, B1–B3 и B3_weekly на walk-forward.
 `wk_share_rising`, `wk_median`, `wk_median4`, `wk_gasoline4`.
 
 Скрипт только читает ClickHouse; в БД не пишет. Запуск — `make cpi-monthly-v3`
-(env подключает Makefile), тесты — `scripts/cpi_monthly_v3_test.py`.
+(env подключает Makefile), тесты — `scripts/models/cpi/cpi_monthly_v3_test.py`.
 """
 
 import argparse
@@ -418,7 +418,7 @@ def evaluate(rows: list, start: int, embargo: int, models: dict = None) -> tuple
 def write_report(path: Path, payload: dict) -> None:
     lines = ["# CPI monthly v3: публичные недельные признаки — отчёт прогона", ""]
     lines.append(
-        "> `scripts/cpi_monthly_v3.py`; пункт `key-rate/phase-4-ml-components` "
+        "> `scripts/models/cpi/cpi_monthly_v3.py`; пункт `key-rate/phase-4-ml-components` "
         "(issue #76), Stage 1. Числа не редактируются руками."
     )
     lines.append("")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Офлайн-тесты `scripts/cpi_weekly_component_panel.py` (issue #236).
+"""Офлайн-тесты `scripts/models/cpi/cpi_weekly_component_panel.py` (issue #236).
 
 Запуск:
 

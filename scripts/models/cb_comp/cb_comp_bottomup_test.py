@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Офлайн-тесты `scripts/cb_comp_bottomup.py` (issue #190, спека §4.1).
+"""Офлайн-тесты `scripts/models/cb_comp/cb_comp_bottomup.py` (issue #190, спека §4.1).
 
 Запуск из корня репозитория:
 

@@ -393,7 +393,7 @@ SQL_HEADER_TEMPLATE = """\
 -- Сид mine_plans: ОПР-выпуск Сухого Лога 2025–2027 (атрибуция руды Вернинской ЗИФ).
 --
 -- СГЕНЕРИРОВАН АВТОМАТИЧЕСКИ, ПРАВИТЬ РУКАМИ НЕЛЬЗЯ: правка будет затёрта
--- следующим прогоном (scripts/polyus_output_model.py, цель `make polyus-output`).
+-- следующим прогоном (scripts/models/polyus/polyus_output_model.py, цель `make polyus-output`).
 --
 -- Команда генерации: {command}
 -- Дата генерации: {generated}

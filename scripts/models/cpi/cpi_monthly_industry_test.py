@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Офлайн-тесты `scripts/cpi_monthly_industry.py` (issue #235, Stage 2).
+"""Офлайн-тесты `scripts/models/cpi/cpi_monthly_industry.py` (issue #235, Stage 2).
 
 Запуск из корня репозитория:
 

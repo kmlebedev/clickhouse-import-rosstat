@@ -109,12 +109,12 @@ point-in-time слой, витрина и графики.
 
 **По умолчанию скрипт в ClickHouse не пишет** — только читает (прецедент
 `polyus_output_model.py`); с `ML_LOG=1` пишет паспорт и fold-предсказания
-через `scripts/ml_experiment.py` (журнал эксперимента). Транспорт (`ch_query`)
-импортируется из `scripts/extrapolation_aisc.py`, а не копируется: там уже есть
+через `scripts/lib/ml_experiment.py` (журнал эксперимента). Транспорт (`ch_query`)
+импортируется из `scripts/models/polyus/aisc.py`, а не копируется: там уже есть
 маскирование секретов в текстах ошибок, HTTP-порт 8123 и обработка обрывов
 соединения.
 Общие оценочные функции (RMSE/MAE, DM с поправкой HLN, блочный бутстрап
-разницы RMSE) вынесены в `scripts/eval_utils.py` (`§4` спеки
+разницы RMSE) вынесены в `scripts/lib/eval_utils.py` (`§4` спеки
 `docs/superpowers/specs/2026-10-16-cpi-nowcast-design.md`): ниже от них
 остались обёртки с прежними именами и значениями по умолчанию.
 Секреты приходят только из окружения (их подставляет Makefile).
@@ -130,7 +130,7 @@ point-in-time слой, витрина и графики.
   взвешенные `taylor`/`ordered_logit`, раздел «Веса шоков» и колонка `weight`
   в CSV (бенчмарки B1–B3 не взвешиваются);
 * `make key-rate-model ARGS="--export-fixtures scripts/testdata/key_rate"` —
-  пересборка CSV-фикстур офлайн-тестов `scripts/key_rate_model_test.py`.
+  пересборка CSV-фикстур офлайн-тестов `scripts/models/key_rate/key_rate_model_test.py`.
 
 **As-of — приближение, а не point-in-time слой** (спека §4): ревизии
 объясняющих рядов и точные даты публикаций не учтены, полноценный PIT-слой —
@@ -4481,7 +4481,7 @@ def run_summary(
     результате этого.
 
     `ml_log`/`logger`/`run_name` — журнал эксперимента
-    (`scripts/ml_experiment.py`): при `ml_log=True` (или `ML_LOG=1`, если
+    (`scripts/lib/ml_experiment.py`): при `ml_log=True` (или `ML_LOG=1`, если
     параметр не задан) создаётся прогон `key_rate_model` с паспортом,
     fold-предсказаниями в базисных пунктах и артефактами; явный `logger`
     используется как есть (duck typing). По умолчанию (`ML_LOG` не задан) в
