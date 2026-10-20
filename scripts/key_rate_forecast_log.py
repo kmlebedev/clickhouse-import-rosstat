@@ -35,15 +35,18 @@ Env (подключает Makefile; без них — понятная ошиб�
 * `INGEST_TOKEN` — Bearer-токен (тот же, что у сервера; значение не печатается).
 
 Запуск:
-
+ 
     make key-rate-forecast-log
     make key-rate-forecast-log ARGS="--dry-run"
     make key-rate-forecast-log ARGS="--llm-artifact PATH"
     make key-rate-forecast-log ARGS="--llm-payload PATH"
-
+    make key-rate-forecast-log ARGS="--stage shadow"   # 2 заседания перед canary
+    make key-rate-forecast-log ARGS="--stage canary"   # 1 заседание перед production
+ 
 Повтор идемпотентен на стороне ClickHouse: ключ `forecast_log` —
 `(metric, forecast_date)`, поэтому повторная запись того же трека заменяет
-строку, а не плодит дубли.
+строку, а не плодит дубли. Staged-метрики (`:shadow`/`:canary`) — отдельные
+ключи и не входят в публикационный контур.
 """
 
 import argparse
@@ -68,6 +71,10 @@ LLM_PAYLOAD_NAME = "key_rate_llm_forecast_log_payload.json"
 
 # Базовая метрика журнала; треки различаются суффиксом.
 key_rate_metric = "cbr_rate"
+
+# Стадии промоушена (infra/4.3): production не меняет метрику, shadow/canary
+# добавляют суффикс после трека. Список закрытый: ingest отвергает чужие стадии.
+STAGES = ("production", "shadow", "canary")
 
 # Путь ingest-endpoint'а (единственный путь записи прогноза ставки).
 INGEST_PATH = "/v1/key_rate_forecast"
@@ -472,7 +479,42 @@ def post_row(url: str, token: str, row: dict, timeout: int = HTTP_TIMEOUT) -> di
         raise ForecastLogError(f"ingest {url}: ответ не JSON: {error}") from error
 
 
-def rows_from_artifacts(model_path: Path, llm_path: Path, llm_payload_path=None, log=print) -> list:
+def stage_suffix(stage: str) -> str:
+    """Суффикс метрики для стадии промоушена (infra/4.3).
+
+    `production` — без суффикса (поведение по умолчанию); `shadow`/`canary` —
+    отдельные метрики, чтобы строки не схлопывались с production по ключу
+    `(metric, forecast_date)` и не попадали в публикационный контур.
+    """
+    if stage == "production":
+        return ""
+    if stage == "shadow":
+        return ":shadow"
+    if stage == "canary":
+        return ":canary"
+    raise ForecastLogError(
+        f"--stage: ожидается {', '.join(STAGES)}, получено {stage!r}"
+    )
+
+
+def apply_stage(rows: list, stage: str) -> list:
+    """Добавляет суффикс стадии ко всем строкам; production — no-op."""
+    suffix = stage_suffix(stage)
+    if not suffix:
+        return rows
+    for row in rows:
+        metric = row.get("metric", "")
+        if not metric.startswith(key_rate_metric + ":"):
+            raise ForecastLogError(
+                f"стадия {stage!r}: метрика {metric!r} не является треком "
+                f"{key_rate_metric}:<track>"
+            )
+        row["metric"] = metric + suffix
+    return rows
+
+
+def rows_from_artifacts(model_path: Path, llm_path: Path, llm_payload_path=None, log=print,
+                        stage: str = "production") -> list:
     """Строки журнала из артефактов; отсутствие LLM-файлов — штатно.
 
     `llm_payload_path` (режим `--log` #189) имеет приоритет над LLM-артефактом:
@@ -501,7 +543,7 @@ def rows_from_artifacts(model_path: Path, llm_path: Path, llm_payload_path=None,
     else:
         log(f"LLM-артефакт не найден ({llm_path}) — трек {key_rate_metric}:llm не пишется")
 
-    return rows
+    return apply_stage(rows, stage)
 
 
 def _env_required(name: str) -> str:
@@ -540,11 +582,18 @@ def main(argv=None) -> int:
         action="store_true",
         help="напечатать строки JSON и не отправлять их в ingest",
     )
+    parser.add_argument(
+        "--stage",
+        default="production",
+        help="стадия промоушена: production|shadow|canary (infra/4.3); "
+             "shadow/canary добавляют суффикс к metric",
+    )
     args = parser.parse_args(argv)
 
     try:
         rows = rows_from_artifacts(
-            Path(args.model_artifact), Path(args.llm_artifact), args.llm_payload
+            Path(args.model_artifact), Path(args.llm_artifact), args.llm_payload,
+            stage=args.stage,
         )
         if args.dry_run:
             for row in rows:

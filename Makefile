@@ -91,7 +91,7 @@ DAGU_VERSION     ?= v2.18.2
 MKDOCS_VERSION ?= 9.7.7
 MKDOCS := uv run --with mkdocs-material==$(MKDOCS_VERSION) --python 3.12 mkdocs
 
-.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-backfill mlflow-backfill-test mlflow-preflight mlflow-register mlflow-promote mlflow-models ml-gate ml-gate-test dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model shock-classifier shock-classifier-test key-rate-llm-forecast key-rate-forecast-log cpi-nowcast cpi-monthly cpi-monthly-v3 cpi-monthly-v3-test cpi-monthly-industry cpi-monthly-industry-test cpi-public-audit cpi-public-audit-test cpi-weekly-panel cpi-weekly-panel-test cb-comp-parity cb-comp-parity-test cb-comp-live cb-comp-live-test cb-comp-proxy edisclosure-login edisclosure-collect docs-check docs-build docs-serve
+.PHONY: all lint fmt vet test build run deps clean info ch-up ch-down ch-status ch-sql mlflow-up mlflow-down mlflow-status mlflow-export mlflow-backfill mlflow-backfill-test mlflow-preflight mlflow-register mlflow-promote mlflow-models ml-gate ml-gate-test ml-live-check ml-live-check-test dev-check env-check import mp-llm-eval archive-registry archive-list archive-restore mcp-run mcp-user mcp-check build-ingest run-ingest deploy-staging deploy-staging-binary deploy-staging-dagu deploy-staging-mcp deploy-staging-mlflow deploy-staging-preflight deploy-staging-smoke upgrade-staging mcp-user-staging staging-precheck grafana-build grafana-validate grafana-up grafana-down grafana-deploy-test grafana-deploy-staging grafana-provision-staging grafana-check grafana-test-token key-rate-model shock-classifier shock-classifier-test key-rate-llm-forecast key-rate-forecast-log cpi-nowcast cpi-monthly cpi-monthly-v3 cpi-monthly-v3-test cpi-monthly-industry cpi-monthly-industry-test cpi-public-audit cpi-public-audit-test cpi-weekly-panel cpi-weekly-panel-test cb-comp-parity cb-comp-parity-test cb-comp-live cb-comp-live-test cb-comp-proxy edisclosure-login edisclosure-collect docs-check docs-build docs-serve
 
 all: lint test build build-ingest
 
@@ -304,6 +304,15 @@ ml-gate:
 ml-gate-test:
 	uv run --with "statsmodels>=0.15" --with scipy --python 3.12 \
 		python3 scripts/ml_gate_test.py -v
+
+# Проверка live-прогноза до публикации (infra/4.3): production-строки
+# cbr_rate:taylor/ordered_logit на ближайшее заседание, записанные до target_date.
+# make ml-live-check [ARGS="--require-llm --warn-only"]
+ml-live-check:
+	uv run --python 3.12 python3 scripts/ml_live_check.py $(ARGS)
+
+ml-live-check-test:
+	uv run --python 3.12 python3 scripts/ml_live_check_test.py -v
 
 # Проверка окружения разработчика: наличие инструментов и версий.
 dev-check:

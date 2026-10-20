@@ -380,6 +380,62 @@ class TestArtifactFiles(unittest.TestCase):
         self.assertIn("не найден", str(caught.exception))
 
 
+class TestStage(unittest.TestCase):
+    def test_stage_suffix(self):
+        self.assertEqual(kw.stage_suffix("production"), "")
+        self.assertEqual(kw.stage_suffix("shadow"), ":shadow")
+        self.assertEqual(kw.stage_suffix("canary"), ":canary")
+        with self.assertRaises(kw.ForecastLogError):
+            kw.stage_suffix("prod")
+
+    def test_rows_apply_stage_to_model_and_llm(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            model_path = write_json(Path(tmp), "model.json", MODEL_ARTIFACT)
+            llm_path = write_json(Path(tmp), "llm.json", LLM_ARTIFACT)
+            rows = kw.rows_from_artifacts(
+                model_path, llm_path, log=lambda _: None, stage="shadow"
+            )
+        self.assertEqual(
+            [row["metric"] for row in rows],
+            ["cbr_rate:taylor:shadow", "cbr_rate:ordered_logit:shadow",
+             "cbr_rate:llm:shadow"],
+        )
+
+    def test_llm_payload_gets_stage_after_track(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            model_path = write_json(Path(tmp), "model.json", MODEL_ARTIFACT)
+            payload_path = write_json(Path(tmp), "payload.json", LLM_PAYLOAD)
+            rows = kw.rows_from_artifacts(
+                model_path, Path(tmp) / "llm.json", payload_path,
+                log=lambda _: None, stage="canary",
+            )
+        self.assertEqual(rows[2]["metric"], "cbr_rate:llm:canary")
+
+    def test_unknown_stage_is_an_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            model_path = write_json(Path(tmp), "model.json", MODEL_ARTIFACT)
+            with self.assertRaises(kw.ForecastLogError) as caught:
+                kw.rows_from_artifacts(
+                    model_path, Path(tmp) / "llm.json", log=lambda _: None,
+                    stage="prod",
+                )
+        self.assertIn("--stage", str(caught.exception))
+
+    def test_dry_run_prints_staged_metrics(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            model_path = write_json(Path(tmp), "model.json", MODEL_ARTIFACT)
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                code = kw.main([
+                    "--model-artifact", str(model_path),
+                    "--llm-artifact", str(Path(tmp) / "llm.json"),
+                    "--dry-run", "--stage", "shadow",
+                ])
+        self.assertEqual(code, 0)
+        self.assertIn("cbr_rate:taylor:shadow", output.getvalue())
+        self.assertIn("cbr_rate:ordered_logit:shadow", output.getvalue())
+
+
 class TestHTTP(unittest.TestCase):
     def test_ingest_url_appends_endpoint_once(self):
         self.assertEqual(
