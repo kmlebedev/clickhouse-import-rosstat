@@ -305,17 +305,23 @@ def channel_features(decision, base_features: dict, external: dict) -> dict:
     return features
 
 
+def _cbr_features(row) -> dict:
+    return {
+        "gdp_gap": row.gdp_gap,
+        "ibk_gap": row.ibk_gap,
+    }
+
+
 def build_channel_rows(rows: list, panel: list, external: dict) -> list:
     panel_by_date = {item.decision.meeting_date: item for item in panel}
-    return [
-        ChannelRow(
-            decision=row.decision,
-            features=channel_features(
-                row.decision, panel_by_date[row.decision.meeting_date].features, external
-            ),
+    result = []
+    for row in rows:
+        features = channel_features(
+            row.decision, panel_by_date[row.decision.meeting_date].features, external
         )
-        for row in rows
-    ]
+        features.update(_cbr_features(row))
+        result.append(ChannelRow(decision=row.decision, features=features))
+    return result
 
 
 # --- Ядро ----------------------------------------------------------------------
@@ -695,6 +701,7 @@ def current_forecast(
             None if current is None or previous is None else current - previous
         )
     future_features = channel_features(feature_decision, base_features, external)
+    future_features.update(_cbr_features(current_row))
     channel_by_date = {item.decision.meeting_date: item for item in channel_rows}
     past = sorted(cores[WINDOW_EXPANDING].values(), key=lambda item: item.meeting_date)
     residuals = [item.actual_step_bp - item.step_bp for item in past]

@@ -199,6 +199,19 @@ class TestChannelFeatures(unittest.TestCase):
         self.assertEqual(features["has_text"], 0)
         self.assertEqual(features["has_bop"], 0)
 
+    def test_build_rows_include_cbr_fields(self):
+        row = make_row(self.day)
+        panel_row = type(
+            "PanelRow", (), {"decision": row.decision, "features": dict(self.base)}
+        )()
+        features = v3.build_channel_rows(
+            [row], [panel_row], external_fixture()
+        )[0].features
+        for name in ("gdp_gap", "ibk_gap"):
+            self.assertIn(name, features)
+        self.assertEqual(features["gdp_gap"], 1.0)
+        self.assertEqual(features["ibk_gap"], 0.5)
+
 
 class TestDispersion(unittest.TestCase):
     def setUp(self):
