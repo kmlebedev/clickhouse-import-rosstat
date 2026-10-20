@@ -27,8 +27,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import ml_experiment as mlx
-from extrapolation_aisc import ch_query
+from lib import ml_experiment as mlx
+from lib.clickhouse import ch_query
 
 DEFAULT_URI = "http://127.0.0.1:5000"
 RUN_ID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
