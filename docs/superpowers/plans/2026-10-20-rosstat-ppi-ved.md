@@ -123,10 +123,10 @@
    ```
    `verify` подтверждает побайтовое совпадение XML листов; проверка отношений ругается на внутренние гиперссылки `#Содержание!A1` (цель — не часть архива, это ложное срабатывание скрипта). Фикстура открывается `excelize`, тесты зелёные.
 3. `rosstat/ppi_ved_test.go`:
-   - `TestPPIVedFindLink` — `price_page.html`, ожидается `/storage/mediabank/Proizvoditeli_Ind_VED_08-2026.xlsx`, не `2kv`;
+   - `TestPPIVedFindLink` — `price_page.html`, ожидается `/storage/mediabank/Proizvoditeli_Ind_VED_08-2026.xlsx`, не `2kv`; отдельная inline-страница с `2kv`-ссылкой первой проверяет сам фильтр `:not`;
    - `TestPPIVedReadsFixture` — 407 точек фикстуры (344/39/12/12), min/max, spot-значения и приоритет `2.1` над `1.1` (2013-01: 99,9 против 99,6) и годового листа над `2.1` (2021-01: 103,36 против 103,4);
    - `TestPPIVedValue` — запятая и приклеенная сноска (`98,121)` → 98,12), пропуски, нечисловой текст;
-   - fail-fast: нет листа, нет кода, нет строки РФ, нечисловое значение, пустая книга;
+   - fail-fast: нет листа, нет кода, нет строки РФ, нечисловое значение, пустая книга; пустая строка над шапкой `1.1` не паникует; маркеры в строке кода `8.1` не подменяют строку РФ; `ppiVedAdd` отклоняет конфликт; `ppiVedValidateCoverage` отклоняет пропуск `m/m`; `Import` в `restore` возвращает ошибку;
    - `TestPPIVedImportAppends` — локальный `ppiVedBatchRecorder` (пять колонок);
    - `TestPPIVedCatalogContract` — имена каталога == `name` в точках (двусторонний);
    - `TestPPIVedDdl` — `ReplacingMergeTree`, `Float64`, ключ `(date, code, index_type)`.
@@ -190,6 +190,21 @@
 - [ ] Повтор — no-op по версии; архив и `source_publications`.
 - [ ] `dagu/rosstat.yaml` содержит шаг; T6 уточняет расписание.
 - [ ] Документация синхронна; PR с протоколом.
+
+## 5. Протокол живой приёмки (2026-10-20)
+
+- `make all` — exit 0: `golangci-lint` 0 issues, `go vet ./...` чисто, `go test -race ./...` все пакеты `ok`, обе сборки.
+- `make docs-check` — exit 0: 43 страницы, 33 теста docs.
+- `dagu validate dagu/rosstat.yaml` — exit 0.
+- Первый прогон: `make import STAT=rosstat_ppi_ved` — `Imported 571 rows of rosstat_ppi_ved`; MCP/`ch-sql`:
+  - `m/m` 344, `1998-01-31 … 2026-08-31`;
+  - `ytd` 91, `1998-12-31 … 2026-08-31`;
+  - `y/y` 68 и `period` 68, `2021-01-31 … 2026-08-31`;
+  - spot: 1998-01 m/m 100.8, 1998-12 ytd 119.4, 2013-01 m/m 99.9, 2021-01 m/m/ytd/y/y/period 103.36/103.36/106.69/106.69, 2026-01 m/m 98.45, 2026-08 m/m/ytd/y/y/period 100.86/107.86/106.53/103.22.
+- Повтор: `no-op, версия 47c5a92ba83a6729e2cebb2e1e9887ca уже импортирована, 571 точек на месте`; `count()` — 571.
+- Архив: объект `build/archive-dev/rosstat_ppi_ved/47c5a92ba83a6729_Proizvoditeli_Ind_VED_08-2026.xlsx` (6 564 513 Б), строка `registry.jsonl` с sha256 `4694a5bb…`; `source_publications` — `name=Proizvoditeli_Ind_VED_08-2026.xlsx`, `points=571`. Архив воспроизведён прямым запуском с `ARCHIVE_BACKEND=local ARCHIVE_LOCAL_DIR=build/archive-dev` (make-обёртка в этой сессии переменную не пробрасывала — env-файл перекрывает; это не дефект импортёра).
+- `make mcp-check` — **1 провал, чужой**: `rosstat_ipc_weeks_bulletins` имеет 760 точек против ожидаемых 502 (данные другой сессии). Новые проверки T1 проходят: `каталог rosstat` — 169 рядов, `сырая rosstat_ppi_ved закрыта` — 497.
+- Полный винтаж 08-2026 проверен временным тестом: 571 точка (344/91/68/68), глубины совпадают.
 
 ## 4. Риски
 

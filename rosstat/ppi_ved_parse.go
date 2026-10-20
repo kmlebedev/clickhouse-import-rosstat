@@ -24,7 +24,7 @@ const (
 	ppiVedIndexPeriod = "period"
 
 	// Имена рядов объявлены кодом, а не берутся из подписи строки источника: подпись
-	// содержит редакцию («на основе ОКВЭД2») и меняется от выпуска к выпуску (§6.8).
+	// содержит редакцию («на основе ОКВЭД2») и меняется от выпуска к выпуску (стандарт §6.8).
 	ppiVedSeriesMM     = "ИЦП по ВЭД, РФ, m/m"
 	ppiVedSeriesYTD    = "ИЦП по ВЭД, РФ, ytd"
 	ppiVedSeriesYY     = "ИЦП по ВЭД, РФ, y/y"
@@ -63,7 +63,7 @@ type ppiVedPoint struct {
 }
 
 // ppiVedCell — ячейка строки по индексу; выход за границу среза — пустая ячейка, а не
-// паника (§6.5): GetRows обрезает хвостовые пустые ячейки.
+// паника (стандарт §6.5): GetRows обрезает хвостовые пустые ячейки.
 func ppiVedCell(row []string, col int) string {
 	if col < 0 || col >= len(row) {
 		return ""
@@ -123,7 +123,7 @@ func ppiVedYearFromTitle(rows [][]string) (int, error) {
 }
 
 // ppiVedValue разбирает значение ячейки. Пустая ячейка и маркеры пропуска источника
-// («…», «...», «-», «—», «х», «X») — не точка; нечисловой текст — ошибка (§6.4).
+// («…», «...», «-», «—», «х», «X») — не точка; нечисловой текст — ошибка (стандарт §6.4).
 // NBSP и пробелы внутри числа снимаются, запятая принимается как десятичный разделитель.
 func ppiVedValue(raw string) (float64, bool, error) {
 	text := strings.TrimSpace(raw)
@@ -199,25 +199,14 @@ func ppiVedAdd(points map[ppiVedKey]float64, key ppiVedKey, value float64, conte
 	return nil
 }
 
-// ppiVedRowHasValue — есть ли в строке хотя бы одна непустая ячейка в месячных
-// колонках. Нужно, чтобы отличить RF-only листы 3.x–6.x (значения в строке кода) от
-// листов 7.x–8.x (значения в следующей строке «Российская Федерация»). Нечисловая
-// ячейка тоже считается заполненной: тогда ошибку назовёт разбор значения, а не
-// сообщение «нет строки РФ».
-func ppiVedRowHasValue(row []string, monthCols map[int]time.Month) bool {
-	for col := range monthCols {
-		if ppiVedCell(row, col) != "" {
-			return true
-		}
-	}
-	return false
-}
-
 // parsePPIVedLegacySheet читает листы 1.1 и 2.1: блок «К предыдущему месяцу» и
 // декабрьскую строку «Декабрь в % к декабрю предыдущего года» (ytd только за декабрь).
 func parsePPIVedLegacySheet(rows [][]string, sheet string) (map[ppiVedKey]float64, error) {
 	header := -1
 	for i, row := range rows {
+		if len(row) < 2 {
+			continue
+		}
 		years := 0
 		for _, cell := range row[1:] {
 			if _, ok := ppiVedYear(cell); ok {
@@ -325,8 +314,10 @@ func parsePPIVedLegacySheet(rows [][]string, sheet string) (map[ppiVedKey]float6
 
 // parsePPIVedYearSheet читает годовой лист 3.x–8.x. Тип индекса задаёт суффикс:
 // .1 m/m, .2 ytd, .3 y/y, .4 period. На 3.x–6.x значения лежат в строке кода
-// (только РФ), на 7.x–8.x — в следующей строке «Российская Федерация».
-func parsePPIVedYearSheet(rows [][]string, sheet string) (map[ppiVedKey]float64, error) {
+// (только РФ), на 7.x–8.x — в следующей строке «Российская Федерация». Группа
+// листа говорит, какой разметки ждать: для 7+ строка РФ обязательна, иначе
+// пропуск региона молча превратил бы лист в «пустой год».
+func parsePPIVedYearSheet(rows [][]string, sheet string, group int) (map[ppiVedKey]float64, error) {
 	var indexType string
 	switch {
 	case strings.HasSuffix(sheet, ".1"):
@@ -389,7 +380,11 @@ func parsePPIVedYearSheet(rows [][]string, sheet string) (map[ppiVedKey]float64,
 	}
 
 	valuesRow := codeRow
-	if !ppiVedRowHasValue(rows[codeRow], monthCols) {
+	if group >= 7 {
+		// Листы 7.x/8.x содержат РФ и регионы; значения совокупного ряда лежат
+		// в строке «Российская Федерация» сразу под строкой кода. Выбор по
+		// «есть ли значения в строке кода» ошибался бы, если в ней стоит
+		// маркер пропуска: год молча остался бы неразобранным.
 		found := false
 		for i := codeRow + 1; i < len(rows); i++ {
 			if ppiVedCell(rows[i], codeCol) != "" {
@@ -468,7 +463,7 @@ func parsePPIVed(xlsx *excelize.File) ([]ppiVedPoint, error) {
 			legacy2 = points
 			foundLegacy2 = true
 		default:
-			points, err := parsePPIVedYearSheet(rows, sheet)
+			points, err := parsePPIVedYearSheet(rows, sheet, group)
 			if err != nil {
 				return nil, err
 			}

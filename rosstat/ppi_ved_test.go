@@ -1,6 +1,7 @@
 package rosstat
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -133,6 +134,18 @@ func TestPPIVedFindLink(t *testing.T) {
 	if strings.Contains(href, "2kv-") {
 		t.Errorf("FindLink() вернул квартальную выгрузку: %q", href)
 	}
+
+	// Реальная страница отдаёт месячную ссылку первой, поэтому один этот тест
+	// прошёл бы и без :not. Ставим 2kv первой и проверяем фильтр отдельно.
+	reordered := []byte(`<a href="/storage/mediabank/Proizvoditeli_Ind_VED_2kv-2026.xlsx">kv</a>` +
+		`<a href="/storage/mediabank/Proizvoditeli_Ind_VED_08-2026.xlsx">month</a>`)
+	href, err = util.FindLink(reordered, ppiVedLinkSelector)
+	if err != nil {
+		t.Fatalf("FindLink (2kv first): %v", err)
+	}
+	if href != want {
+		t.Errorf("FindLink (2kv first) = %q, ожидалось %q: :not([href*=2kv-]) не работает", href, want)
+	}
 }
 
 // TestPPIVedReadsFixture проверяет урезанный винтаж 08-2026: 1.1/2.1, годовые листы
@@ -156,12 +169,18 @@ func TestPPIVedReadsFixture(t *testing.T) {
 		}
 	}
 
+	wantNames := map[string]string{
+		ppiVedIndexMM:     "ИЦП по ВЭД, РФ, m/m",
+		ppiVedIndexYTD:    "ИЦП по ВЭД, РФ, ytd",
+		ppiVedIndexYY:     "ИЦП по ВЭД, РФ, y/y",
+		ppiVedIndexPeriod: "ИЦП по ВЭД, РФ, period",
+	}
 	for _, point := range points {
 		if point.code != ppiVedTotalCode {
 			t.Fatalf("код точки %q, ожидался %q", point.code, ppiVedTotalCode)
 		}
-		if point.name != ppiVedSeriesName(point.indexType) {
-			t.Errorf("%s: имя %q, ожидалось %q", point.indexType, point.name, ppiVedSeriesName(point.indexType))
+		if point.name != wantNames[point.indexType] {
+			t.Errorf("%s: имя %q, ожидалось %q", point.indexType, point.name, wantNames[point.indexType])
 		}
 	}
 
@@ -323,5 +342,76 @@ func TestPPIVedEmptyWorkbookFails(t *testing.T) {
 	t.Cleanup(func() { _ = xlsx.Close() })
 	if _, err := parsePPIVed(xlsx); err == nil {
 		t.Fatal("parsePPIVed на пустой книге вернул nil, ожидалась ошибка")
+	}
+}
+
+func TestPPIVedBlankLeadingRowDoesNotPanic(t *testing.T) {
+	xlsx := openPPIVedFixture(t)
+	if err := xlsx.InsertRows("1.1", 1, 1); err != nil {
+		t.Fatal(err)
+	}
+	points, err := parsePPIVed(xlsx)
+	if err != nil {
+		t.Fatalf("parsePPIVed с пустой строкой над шапкой: %v", err)
+	}
+	if len(points) != 407 {
+		t.Fatalf("точек %d, ожидалось 407: пустая строка сдвинула шапку", len(points))
+	}
+}
+
+func TestPPIVedMarkerInCodeRowKeepsRussiaRow(t *testing.T) {
+	xlsx := openPPIVedFixture(t)
+	for col := 3; col <= 10; col++ {
+		cell, err := excelize.CoordinatesToCellName(col, 270)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := xlsx.SetCellValue("8.1", cell, "…"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	points, err := parsePPIVed(xlsx)
+	if err != nil {
+		t.Fatalf("parsePPIVed с маркерами в строке кода 8.1: %v", err)
+	}
+	if len(points) != 407 {
+		t.Fatalf("точек %d, ожидалось 407: строка РФ не прочитана из-за маркеров", len(points))
+	}
+	if _, ok := ppiVedFind(points, ppiVedIndexMM, time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC)); !ok {
+		t.Fatal("2026-08 m/m потерян: маркеры в строке кода подменили строку РФ")
+	}
+}
+
+func TestPPIVedRestoreRefused(t *testing.T) {
+	t.Setenv(util.EnvArchiveAction, util.ArchiveActionRestore)
+	importer := &PPIVedStat{}
+	if _, err := importer.Import(context.Background(), nil); err == nil {
+		t.Fatal("Import в режиме restore вернул nil, ожидалась ошибка")
+	} else if !strings.Contains(err.Error(), "восстановления") {
+		t.Errorf("ошибка restore не называет режим: %v", err)
+	}
+}
+
+func TestPPIVedAddRejectsConflict(t *testing.T) {
+	points := make(map[ppiVedKey]float64)
+	key := ppiVedKey{date: time.Date(2020, 1, 31, 0, 0, 0, 0, time.UTC), indexType: ppiVedIndexMM}
+	if err := ppiVedAdd(points, key, 100, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ppiVedAdd(points, key, 101, "test"); err == nil {
+		t.Fatal("ppiVedAdd принял дубль с другим значением, ожидалась ошибка")
+	}
+}
+
+func TestPPIVedCoverageRejectsGap(t *testing.T) {
+	points := []ppiVedPoint{
+		{indexType: ppiVedIndexMM, date: time.Date(2020, 1, 31, 0, 0, 0, 0, time.UTC)},
+		{indexType: ppiVedIndexMM, date: time.Date(2020, 3, 31, 0, 0, 0, 0, time.UTC)},
+		{indexType: ppiVedIndexYTD, date: time.Date(2020, 1, 31, 0, 0, 0, 0, time.UTC)},
+		{indexType: ppiVedIndexYY, date: time.Date(2020, 1, 31, 0, 0, 0, 0, time.UTC)},
+		{indexType: ppiVedIndexPeriod, date: time.Date(2020, 1, 31, 0, 0, 0, 0, time.UTC)},
+	}
+	if err := ppiVedValidateCoverage(points); err == nil {
+		t.Fatal("ppiVedValidateCoverage принял пропуск 2020-02, ожидалась ошибка")
 	}
 }
