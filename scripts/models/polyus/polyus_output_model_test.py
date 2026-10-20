@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Тесты scripts/polyus_output_model.py.
+"""Тесты scripts/models/polyus/polyus_output_model.py.
 
 Запуск из корня репозитория (pytest не нужен):
-    python3 scripts/polyus_output_model_test.py -v
+    python3 scripts/models/polyus/polyus_output_model_test.py -v
 
 Набор ОФЛАЙН: обращения к ClickHouse подменяются `unittest.mock.patch.object`,
 поэтому ни БД, ни сети для прогона не нужно. Живая проверка — отдельный ручной
@@ -17,10 +17,10 @@ import unittest.mock
 from pathlib import Path
 
 # Скрипт и тест лежат рядом, запуск прямой (`python3 scripts/...`),
-# поэтому его каталог добавляется в sys.path до импорта модуля.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+# поэтому каталог `scripts` добавляется в sys.path до импорта пакета.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import polyus_output_model as om
+from models.polyus import polyus_output_model as om
 
 
 class TestReadRefined(unittest.TestCase):

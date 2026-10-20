@@ -403,7 +403,7 @@ mcp-user:
 # Пишет sql/dcf_mine_plans_seed.sql и polyus_lom_reconciled_long.csv, в ClickHouse НЕ пишет —
 # вставка отдельно: make ch-sql FILE=sql/dcf_mine_plans_seed.sql.
 dcf-aisc:
-	python3 scripts/extrapolation_aisc.py
+	python3 scripts/models/polyus/aisc.py
 
 # ОПР-выпуск Сухого Лога 2025-2027: руда перерабатывается на Вернинской ЗИФ, и Полюс
 # показывает результат в производственных результатах Вернинского (сноска 13 пресс-релиза 1П2026),
@@ -411,7 +411,7 @@ dcf-aisc:
 # polyus_output_attribution_long.csv, в ClickHouse НЕ пишет — вставка отдельно:
 # make ch-sql FILE=sql/polyus_output_seed.sql
 polyus-output:
-	python3 scripts/polyus_output_model.py
+	python3 scripts/models/polyus/polyus_output_model.py
 
 # Дополнительные аргументы цели key-rate-model (например, экспорт фикстур тестов).
 ARGS ?=
