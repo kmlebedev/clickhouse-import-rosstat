@@ -2,8 +2,8 @@
 
 **Дата:** 2026-10-20
 **Статус:** утверждено планом `docs/superpowers/plans/2026-10-20-moex-market.md`
-**Пункты роадмапа:** `key-rate/phase-2-brent` (issue [#113](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/113)) → `key-rate/phase-2-moex-market` (issue создаётся во второй фазе); `key-rate/phase-2-urals` ([#114](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/114)) — остаётся `Blocked`
-**Владелец:** [docs/ROADMAP_KEY_RATE.md](../ROADMAP_KEY_RATE.md) §4.2 №13–№14, §6 (фаза 2)
+**Пункты роадмапа:** `key-rate/phase-2-brent` (issue [#113](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/113)) → `key-rate/phase-2-moex-market` ([#254](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/254)); `key-rate/phase-2-urals` ([#114](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/114)) — остаётся `Blocked`
+**Владелец:** [docs/ROADMAP_KEY_RATE.md](../ROADMAP_KEY_RATE.md) §4.2 №13, §6 (фаза 2)
 **Решение владельца:** 2026-10-20 — только MOEX; Urals/VIX/CRB не подменяем другими источниками, разрыв фиксируем в отчёте.
 
 ---

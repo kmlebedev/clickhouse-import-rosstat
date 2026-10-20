@@ -9,7 +9,7 @@
 
 ## 1. Цель
 
-Закрыть `key-rate/phase-2-brent`: импортёр `moex_market` с рядом `brent_front` — непрерывный фронт-месяц фьючерса MOEX `BR`, дневной `SETTLEPRICE`, USD/барр., с 2009-10. В этом PR — только Brent; RVI и медь — следующий пункт `key-rate/phase-2-moex-market`.
+Закрыть `key-rate/phase-2-brent`: импортёр `moex_market` с рядом `brent_front` — непрерывный фронт-месяц фьючерса MOEX `BR`, дневной `SETTLEPRICE`, USD/барр., с 2009-10. В этом PR — только Brent; RVI и медь — следующий пункт `key-rate/phase-2-moex-market` ([#254](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/254)).
 
 ## 2. Порядок работ
 
@@ -78,7 +78,7 @@
 5. `docs/IMPORTER_PACKAGE_STANDARD.md` §18 — `moex`: реестр появился; точка контроля не объявляется.
 6. `docs/ROADMAP_KEY_RATE.md`:
    - §4.2 №13 — источник MOEX ISS `BR`, ссылка на #113 и спеку; решение владельца 2026-10-20;
-   - §6 фаза 2 — статус `⏳`/`In Progress` для #113; новый пункт `phase-2-moex-market` (RVI + медь) — `Todo`.
+   - §6 фаза 2 — статус `⏳`/`In Progress` для #113; новый пункт `phase-2-moex-market` ([#254](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/254)) (RVI + медь) — `Todo`.
    - №14 Urals — комментарий с проверкой MOEX, `Blocked` (без кода в этом PR; отдельный docs-only шаг).
 
 ### Шаг 6. Тесты
@@ -121,7 +121,7 @@
 
 ## 4. Вне объёма
 
-- RVI и медь (следующий пункт `phase-2-moex-market`).
+- RVI и медь (следующий пункт `phase-2-moex-market` ([#254](https://github.com/kmlebedev/clickhouse-import-rosstat/issues/254))).
 - FRED, архив авторов, VIX/CRB.
 - Изменение #114 (только комментарий и статус `Blocked` отдельным docs-only шагом).
 
