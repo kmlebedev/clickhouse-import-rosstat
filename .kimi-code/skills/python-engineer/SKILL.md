@@ -112,8 +112,9 @@ whenToUse: When working on non-ML Python tools in scripts/ (root), scripts/lib/ 
 
 ## 9. CI-долг (`infra/5.2`)
 
-- **Fast, stdlib-only:** `scripts/docs_build_test.py`, `scripts/harvest_test.py`, `scripts/lib/ml_experiment_test.py`, `scripts/lib/clickhouse_test.py`, `scripts/mlflow_export_test.py`, `scripts/mlflow_registry_test.py`, `scripts/models/key_rate/key_rate_llm_forecast_test.py`, `scripts/key_rate_forecast_log_test.py`, `scripts/mcp_setup_user_test.py`, `scripts/models/cb_comp/cb_comp_proxy_test.py`, `scripts/edisclosure_collect_test.py`, `scripts/models/polyus/aisc_test.py`, `scripts/models/polyus/polyus_output_model_test.py`.
+- **Fast, stdlib-only:** `scripts/docs_build_test.py`, `scripts/harvest_test.py`, `scripts/lib/ml_experiment_test.py`, `scripts/lib/clickhouse_test.py`, `scripts/mlflow_export_test.py`, `scripts/mlflow_registry_test.py`, `scripts/models/key_rate/key_rate_llm_forecast_test.py`, `scripts/key_rate_forecast_log_test.py`, `scripts/mcp_setup_user_test.py`, `scripts/models/cb_comp/cb_comp_proxy_test.py`, `scripts/edisclosure_collect_test.py`, `scripts/models/polyus/aisc_test.py`, `scripts/models/polyus/polyus_output_model_test.py`, `scripts/ppi_sa_parity_test.py`.
 - **Тяжёлые (CatBoost/sklearn/statsmodels):** `scripts/models/key_rate/key_rate_model_test.py`, `scripts/models/key_rate/shock_classifier_test.py`, `scripts/models/cpi/cpi_nowcast_test.py`, `scripts/models/cpi/cpi_monthly_test.py`, `scripts/models/cpi/cpi_monthly_v3_test.py`, `scripts/models/cpi/cpi_monthly_industry_test.py`, `scripts/models/cb_comp/cb_comp_parity_test.py`, `scripts/models/cb_comp/cb_comp_bottomup_test.py`, `scripts/models/cb_comp/cb_comp_live_pipeline_test.py` — path-filter/nightly.
+- **С `openpyxl` (XLSX):** `scripts/ppi_sa_mapping_test.py`, `scripts/ppi_sa_weights_panel_test.py` — `uv run --with openpyxl --python 3.12`.
 - До появления workflow тесты гоняются вручную; `make all` их не включает.
 
 ## 10. Ссылки

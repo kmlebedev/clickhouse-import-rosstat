@@ -61,6 +61,62 @@ class HierarchyTest(unittest.TestCase):
         self.assertTrue(mapping._is_child("25.6.1", "25.6"))
         self.assertFalse(mapping._is_child("26.6", "25.6"))
 
+    def test_kipc_dot_boundary(self):
+        self.assertTrue(mapping._is_kipc_child("04.3.1.1.10.1", "04.3.1.1.10"))
+        self.assertFalse(mapping._is_kipc_child("04.3.1.1.10", "04.3.1.1.1"))
+        self.assertFalse(mapping._is_kipc_child("03.1.2.2.11", "03.1.2.2.1"))
+        self.assertFalse(mapping._is_kipc_child("06.1.1.1.0.11", "06.1.1.1.0.1"))
+
+    def test_narrow_only_mapped(self):
+        rows = [
+            {"is_leaf": "1", "status": "mapped", "okpd2": "13.10.1"},
+            {"is_leaf": "1", "status": "excluded", "okpd2": "13.10.2"},
+            {"is_leaf": "1", "status": "out_of_scope", "okpd2": "17.24.11.110"},
+            {"is_leaf": "1", "status": "mapped", "okpd2": "16.10.1"},
+            {"is_leaf": "0", "status": "mapped", "okpd2": "13.10"},
+        ]
+        self.assertEqual(mapping._narrow_leaves(rows), ["13.10.1"])
+
+    def test_nonfood_scope_includes_construction(self):
+        self.assertIn("04.3.1.1", mapping.SCOPE_GROUPS["nonfood"])
+
+    def test_construction_rules(self):
+        rules = mapping.load_rules(mapping.RULES_FILE)
+        cases = {
+            "17.24.11.110": "04.3.1.1.2",
+            "23.51.12.111": "04.3.1.1.7",
+            "23.31.10.121": "04.3.1.1.10.1",
+            "22.23.15": "04.3.1.1.9",
+            "16.21.14": "04.3.1.1.5",
+            "23.62.1": "04.3.1.1.10.2",
+            "23.61.11.141": "04.3.1.1.10.3",
+            "25.99.11.110": "04.3.1.1.4",
+        }
+        for code, group in cases.items():
+            rule = mapping.classify(code, "", rules)
+            self.assertIsNotNone(rule, code)
+            self.assertEqual(rule.kipc_group, group, code)
+            self.assertEqual(rule.status, "mapped", code)
+
+    def test_construction_coverage(self):
+        weights = {"04.3.1.1.10.1": {"name": "Плитка", "weight": 0.133}}
+        rows = [
+            {
+                "is_leaf": "1",
+                "status": "mapped",
+                "okpd2": "23.31.10.121",
+                "kipc_group": "04.3.1.1.10.1",
+                "name": "Плитка",
+            }
+        ]
+        coverage = mapping.build_coverage(rows, weights)
+        self.assertEqual(coverage["nonfood"]["weight_in_scope"], 0.133)
+        self.assertEqual(coverage["nonfood"]["weight_mapped"], 0.133)
+        self.assertEqual(coverage["nonfood"]["coverage"], 1.0)
+
+    def test_taxonomy_version_v2(self):
+        self.assertEqual(mapping.TAXONOMY_VERSION, "okpd2-kipc-2026-v2")
+
     def test_group_weight_fallback(self):
         weights = {"01.1.1.1": {"weight": 1.0}, "01.1.1.2": {"weight": 2.0}}
         self.assertEqual(mapping._group_weight(weights, "01.1.1"), 3.0)

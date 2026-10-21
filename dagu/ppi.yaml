@@ -1,0 +1,16 @@
+type: chain
+schedule: "17 14 * * 4"
+overlap_policy: skip
+
+steps:
+  # Производный слой ИЦП SA. Отдельный DAG после цепочки dagu/rosstat.yaml (12:17):
+  # шаг читает rosstat_ppi_ved/rosstat_ppi_product и вызывает Rscript (X-13).
+  # Падение шага не лишает данных сырые импортёры; окно «после 16-го рабочего дня»
+  # и проверка свежести — T6 (#281). Повтор при неизменных входах — no-op.
+  - id: ppi_sa
+    run: "$ROSSTAT_IMPORT_BIN"
+    env:
+      - CLICKHOUSE_IMPORT_STAT=ppi_sa
+    retry_policy:
+      limit: 3
+      interval_sec: 300
