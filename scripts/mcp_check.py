@@ -2685,6 +2685,52 @@ async def check(params, server_log):
                 failed += not expect(f"сырая {table} закрыта ({label})", denied,
                                      f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
 
+            # Календарь публикаций ЦБ и исторические published_at
+            # (key-rate/phase-4-cbr-publication-calendar, #299). Витрины создаёт
+            # импортёр cbr_publication_calendar; статистика и аналитика — две вкладки
+            # cbr.ru/calendar/, quality — точность published_at. Точные даты —
+            # проверенные research месяцы: 2026-09 инфляционных ожиданий и мониторинга.
+            for view in ("v_cbr_publication_calendar", "v_series_publication"):
+                failed += not expect(f"витрина {view} видна", view in tables, "list_tables default")
+
+            calendar_topics = text(await session.call_tool("run_query", {
+                "query": "SELECT topic, count() AS n FROM v_cbr_publication_calendar GROUP BY topic ORDER BY topic"}))
+            calendar_topic_rows = result_rows(calendar_topics)
+            topics = {row.get("topic"): row.get("n") for row in (calendar_topic_rows or [])}
+            failed += not expect("календарь: statistics и analytics",
+                                 (topics.get("statistics") or 0) >= 173 and (topics.get("analytics") or 0) > 0,
+                                 calendar_topics[:200])
+
+            qualities = text(await session.call_tool("run_query", {
+                "query": "SELECT quality, count() AS n FROM v_series_publication GROUP BY quality ORDER BY quality"}))
+            quality_rows = result_rows(qualities)
+            quality = {row.get("quality"): row.get("n") for row in (quality_rows or [])}
+            failed += not expect("published_at: date и fallback",
+                                 (quality.get("date") or 0) > 0 and (quality.get("fallback") or 0) > 0,
+                                 qualities[:200])
+
+            exact = text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n FROM v_series_publication "
+                         "WHERE source='cbr' AND series='ожидаемая инфляция' AND period_date='2026-09-14' "
+                         "AND quality='date' AND toDate(published_at)='2026-09-29'"}))
+            exact_rows = result_rows(exact)
+            exact_n = exact_rows[0].get("n") if exact_rows else None
+            failed += not expect("cbr_infl_exp 2026-09 -> 2026-09-29", exact_n == 1, exact[:200])
+
+            survey = text(await session.call_tool("run_query", {
+                "query": "SELECT count() AS n FROM v_series_publication "
+                         "WHERE source='cbr_survey' AND series='price_expectations' AND period_date='2026-09-01' "
+                         "AND quality='date' AND toDate(published_at)='2026-09-15'"}))
+            survey_rows = result_rows(survey)
+            survey_n = survey_rows[0].get("n") if survey_rows else None
+            failed += not expect("cbr_survey 2026-09 -> 2026-09-15", survey_n == 1, survey[:200])
+
+            for table in ("cbr_publication_calendar", "series_publication"):
+                raw = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {table}"}))
+                denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+                failed += not expect(f"сырая {table} закрыта", denied,
+                                     f"отказ ClickHouse 497 на {table} (ожидаемо)" if denied else raw[:200])
+
     return failed
 
 

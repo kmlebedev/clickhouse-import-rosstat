@@ -6,8 +6,9 @@
 suppressPackageStartupMessages(library(seasonal))
 
 root <- normalizePath(".")
-input <- file.path(root, "build", "ppi-sa-research", "out", "series.csv")
-output <- file.path(root, "build", "ppi-sa-research", "out", "sa.csv")
+args <- commandArgs(trailingOnly = TRUE)
+input <- if (length(args) >= 1) args[[1]] else file.path(root, "build", "ppi-sa-research", "out", "series.csv")
+output <- if (length(args) >= 2) args[[2]] else file.path(root, "build", "ppi-sa-research", "out", "sa.csv")
 dir.create(dirname(output), recursive = TRUE, showWarnings = FALSE)
 
 data <- read.csv(input, stringsAsFactors = FALSE)
@@ -84,7 +85,7 @@ if (length(rows) > 0) {
 
 if (length(errors) > 0) {
   err <- do.call(rbind, errors)
-  write.csv(err, file.path(root, "build", "ppi-sa-research", "out", "sa_errors.csv"),
+  write.csv(err, file.path(dirname(output), "sa_errors.csv"),
             row.names = FALSE, quote = FALSE)
   cat(sprintf("errors: %d\n", nrow(err)))
 }
