@@ -214,7 +214,7 @@ var cbrIndicatorsCpdSeriesMeta = namedSeriesMeta(cbrIndicatorsCpdNames, seriesTe
 
 var cbrInflExpNames = []string{inflExpObservedName, inflExpExpectedName}
 
-var cbrInflExpSeriesMeta = namedSeriesMeta(cbrInflExpNames, seriesTemplate{Unit: "% годовых", Frequency: "M", Origin: "cbr.ru/analytics/dkp/inflationary_expectations, файл Infl_exp_ГГ-ММ.xlsx (ссылка со страницы), лист «Данные для графиков», таблица «Прямые оценки годовой инфляции: медианные значения»", Description: "Медианные прямые оценки годовой инфляции по опросу населения, % годовых. «наблюдаемая инфляция» — оценка роста цен за последние 12 месяцев; «ожидаемая инфляция» — ожидание на следующие 12 месяцев. Дата — 14-е число месяца опроса (в таблице 1-е число + 13 дней).", Label: "строка"})
+var cbrInflExpSeriesMeta = namedSeriesMeta(cbrInflExpNames, seriesTemplate{Unit: "% годовых", Frequency: "M", Origin: "cbr.ru/analytics/dkp/inflationary_expectations, файл Infl_exp_ГГ-ММ.xlsx (ссылка со страницы), лист «Данные для графиков», таблица «Прямые оценки годовой инфляции: медианные значения»; оперативная точка раньше книги — PDF inFOM_ГГ-ММ.pdf («Оперативная справка», импортёр cbr_infl_exp_op), подписи графика рис. 1 с точностью 0.1 п.п.", Description: "Медианные прямые оценки годовой инфляции по опросу населения, % годовых. «наблюдаемая инфляция» — оценка роста цен за последние 12 месяцев; «ожидаемая инфляция» — ожидание на следующие 12 месяцев. Дата — 14-е число месяца опроса (в таблице 1-е число + 13 дней). Точка за новый месяц может появиться из PDF «Оперативная справка» до выхода книги и позже перезаписывается точным значением книги.", Label: "строка"})
 
 var cbrLoansToIndNames = []string{
 	"РОССИЙСКАЯ ФЕДЕРАЦИЯ",

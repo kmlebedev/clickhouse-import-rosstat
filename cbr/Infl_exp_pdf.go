@@ -169,7 +169,8 @@ func inflExpPdfAxis(words []inflExpPdfWord) ([]inflExpPdfWord, error) {
 		return nil, fmt.Errorf("%s: на верхней оси %d подписей месяцев, want не меньше %d", inflExpPdfContext, len(axis), inflExpPdfAxisMin)
 	}
 	sort.Slice(axis, func(i, j int) bool { return axis[i].centerX() < axis[j].centerX() })
-	unique := axis[:1]
+	unique := make([]inflExpPdfWord, 0, len(axis))
+	unique = append(unique, axis[0])
 	for _, w := range axis[1:] {
 		if w.centerX()-unique[len(unique)-1].centerX() < inflExpPdfAxisXTolerance {
 			continue
