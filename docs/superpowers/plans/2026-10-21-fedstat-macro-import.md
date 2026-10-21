@@ -182,3 +182,15 @@
 - **`58090` нули** — сохранить, пометить; Q&A в issue.
 - **31074** — 204 038 строк, первый прогон долгий; resume по годам.
 - **Откат** — каждый PR независим: удалить таблицу/витрину/грант и шаг dagu; 37426 не затрагивается.
+
+---
+
+## Приёмка 2026-10-21 (ветка `feat/emiss-macro-import`)
+
+- `make import STAT=fedstat_ipp` — **55 968** строк, 2000-01-01…2026-08-01; повтор — `Imported 0 rows`.
+- `make import STAT=fedstat_retail` — **4 638**, 2000-01-01…2026-08-01; повтор — `Imported 0 rows`.
+- `make import STAT=fedstat_agri` — **565**, 1990-01-01…2026-04-01; повтор — `Imported 0 rows`.
+- `make import STAT=fedstat_investment` — **153**, 1998-01-01…2026-01-01; повтор — `Imported 0 rows`.
+- `make import STAT=fedstat_ipc` — **204 038**, 2002-01-01…2026-09-01; повтор — `Imported 0 rows`. 31074 импортируется **по годам с resume**: первый прогон был прерван на 2021 (rate limit), записанные годы сохранены; продолжение 2004–2026 добавило 190 142 строки, 2002–2003 — 13 896, итог 204 038.
+- `make mcp-check` — **ПРОВЕРКА ПРОЙДЕНА**: `v_fedstat_ipp` 55 968/432/2, `v_fedstat_retail` 4 638/9/2, `v_fedstat_agri` 565/18/2, `v_fedstat_investment` 153/5/2, `v_fedstat_ipc` 204 038/1 105/2; каталог `source='fedstat'` — 1 727; сырые таблицы — 497.
+- `make all`, `make docs-check`, `dagu validate dagu/fedstat.yaml` — зелёные.
