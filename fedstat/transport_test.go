@@ -167,12 +167,14 @@ func TestFedstatTokenMissing(t *testing.T) {
 
 func fedstatUseTestServer(t *testing.T, baseURL string) {
 	t.Helper()
-	oldBase, oldDelays := fedstatBaseURL, fedstatRetryDelays
+	oldBase, oldDelays, oldGetDelays := fedstatBaseURL, fedstatRetryDelays, fedstatGetRetryDelays
 	fedstatBaseURL = baseURL
 	fedstatRetryDelays = []time.Duration{time.Millisecond}
+	fedstatGetRetryDelays = []time.Duration{time.Millisecond}
 	t.Cleanup(func() {
 		fedstatBaseURL = oldBase
 		fedstatRetryDelays = oldDelays
+		fedstatGetRetryDelays = oldGetDelays
 	})
 }
 
