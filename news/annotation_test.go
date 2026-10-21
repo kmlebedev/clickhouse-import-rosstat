@@ -277,8 +277,8 @@ func TestValidateNewsAnnotationsDirections(t *testing.T) {
 		{"персона neutral", newsDimPerson, "trump", newsDirectionNeutral, newsDirectionNeutral},
 		{"страна mixed", newsDimCountry, "china", newsDirectionMixed, newsDirectionMixed},
 		{"канал: знак совпал с реестром", newsDimCBChannel, "current_inflation", newsDirectionPro, newsDirectionPro},
-		{"канал: pro у disinflationary-канала → реестровый dez", newsDimCBChannel, "savings", newsDirectionPro, newsDirectionDez},
-		{"канал: neutral у disinflationary-канала → реестровый dez", newsDimCBChannel, "savings", newsDirectionNeutral, newsDirectionDez},
+		{"канал: pro у disinflationary-канала → реестровый dez", newsDimCBChannel, "savings_behavior", newsDirectionPro, newsDirectionDez},
+		{"канал: neutral у disinflationary-канала → реестровый dez", newsDimCBChannel, "savings_behavior", newsDirectionNeutral, newsDirectionDez},
 		{"канал: mixed у pro-канала → реестровый pro", newsDimCBChannel, "money_supply", newsDirectionMixed, newsDirectionPro},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

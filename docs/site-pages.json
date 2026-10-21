@@ -42,6 +42,12 @@
     "section": "Контур ключевой ставки"
   },
   {
+    "source": "docs/publications/README.md",
+    "page": "publications-runbook.md",
+    "title": "Публикационный прогон: команды",
+    "section": "Контур ключевой ставки"
+  },
+  {
     "source": "docs/publications/2026-10-18-key-rate.md",
     "page": "key-rate-publication-2026-10-18.md",
     "title": "Первая публикация: ставка на 23.10.2026",
