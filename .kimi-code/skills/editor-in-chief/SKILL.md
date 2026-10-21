@@ -27,7 +27,7 @@ whenToUse: When a task is a publication (new or update), a fact-check/review of 
 3. [KEY_RATE_PUBLICATIONS.md](../../../docs/KEY_RATE_PUBLICATIONS.md): §2 (тезисы), §4 (шаблон), §6 (контракт данных), §7 (порядок прогона), §9 (чек-лист), §10 (чего не делаем).
 4. [KEY_RATE_CHANNELS.md](../../../docs/KEY_RATE_CHANNELS.md) §3 (11 каналов) и §8 (канал → ряд в БД).
 5. Текущая статья, её `checklist.md`, предыдущая публикация и запись журнала.
-6. [2026-10-21-editor-in-chief-skill.md](../../../docs/research/2026-10-21-editor-in-chief-skill.md) §2.2 — 10 классов дефектов, которые скил обязан ловить.
+6. [2026-10-21-editor-in-chief-skill.md](../../../docs/research/2026-10-21-editor-in-chief-skill.md) §2.2 — 12 классов дефектов, которые скил обязан ловить.
 
 ## 3. Границы роли
 
