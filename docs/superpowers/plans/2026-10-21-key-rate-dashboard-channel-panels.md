@@ -24,7 +24,7 @@
 `grafana/key_rate_publications_test.go`:
 
 - 28 панелей; пять рядов с явными id `[21, 22, 23, 24, 34]`;
-- `TestKeyRateChannelPanels` — заголовки, units, таргеты, `FROM v_*`, series/source, `$__timeFilter`, `ORDER BY`, правые оси;
+- `TestKeyRateChannelPanelTitlesAndUnits` и по одной панели (`TestKeyRateExternalFxPanel`, `TestKeyRateExternalBopPanel`, `TestKeyRateSavingsPanel`, `TestKeyRateOutputGapPanel`, `TestKeyRateAutonomousFactorsPanel`) — заголовки, units, таргеты, `FROM v_*`, series/source, `$__timeFilter`, `ORDER BY`, правые оси;
 - `TestKeyRateSparseSeriesPoints` — 30/B (месячная оценка БОП);
 - окно 31/B: `$__timeFilter` один и снаружи подзапроса, `lagInFrame(value, 1, NULL)`;
 - оговорки в `Description` (Brent не спот; депозиты = ФЛ + ИП; ccyb 2024-10 и NULL ≠ 0).
