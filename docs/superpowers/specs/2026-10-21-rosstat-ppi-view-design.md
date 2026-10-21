@@ -70,7 +70,7 @@ UNION ALL ... ppi_sa × 4 метрики (ppi_sa:<ряд>:<метрика>) ...
 ## 5. Грант и MCP-проверки
 
 - `sql/mcp_kimi_reader.sql`: `GRANT SELECT ON default.v_rosstat_ppi TO kimi_reader;`; сырые `rosstat_ppi_ved`, `rosstat_ppi_product`, `rosstat_ppi_weights`, `ppi_sa` агенту не выдаются.
-- `make mcp-user` (пересоздаёт гранты) и `make mcp-check`; в `scripts/mcp_check.py` — блок PPI: витрина видна, 339 585 строк / 5 408 рядов / 20 NULL, каталог `ppi_sa` 25, spot `ppi_sa:core:saar3` 2026-08-31 = 6,0788, четыре сырые таблицы закрыты (497).
+- `make mcp-user` (пересоздаёт гранты) и `make mcp-check`; в `scripts/mcp_check.py` — блок PPI: витрина видна, **нижние пороги** ≥339 585 строк / ≥5 408 рядов / ≥20 NULL (данные растут ежемесячно, точные числа — снимок 2026-10-21), каталог `ppi_sa` ровно 25, spot `ppi_sa:core:saar3` 2026-08-31 = 6,0788, четыре сырые таблицы закрыты (497).
 - `make mcp-check` — ПРОВЕРКА ПРОЙДЕНА.
 
 ## 6. Комментарии
