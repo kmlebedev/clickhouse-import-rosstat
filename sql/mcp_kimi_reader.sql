@@ -9,6 +9,9 @@ GRANT SELECT ON default.v_fred_macro TO kimi_reader;
 GRANT SELECT ON default.v_bls_macro TO kimi_reader;
 GRANT SELECT ON default.v_cbr_macro TO kimi_reader;
 GRANT SELECT ON default.v_rosstat_macro TO kimi_reader;
+-- ИЦП: сырые ряды по ВЭД, товарам/ОКПД2, веса и производный SA-слой (T5 #280).
+-- Сырые rosstat_ppi_ved/product/weights и ppi_sa агенту не выданы — только витрина.
+GRANT SELECT ON default.v_rosstat_ppi TO kimi_reader;
 -- ЕМИСС 37426: недельные средние потребительские цены (импортёр fedstat_weekly_prices)
 GRANT SELECT ON default.v_fedstat_weekly_prices TO kimi_reader;
 -- ЕМИСС макро-блоки: ИПП, розница, сельхоз, инвестиции, ИПЦ 31074 (импортёры fedstat_ipp,
