@@ -88,10 +88,12 @@ func (s *FedstatIPCStat) Import(ctx context.Context, conn driver.Conn) (count in
 	client := fedstatMacroClient()
 	pacer := &fedstatPacer{pause: fedstatIPCPause}
 	currentYear := time.Now().Year()
+	fetched, skipped := 0, 0
 	for _, year := range fedstatIPCSource.years {
 		stored := yearCounts[year]
 		expected := fedstatIPCYearMin[year]
 		if stored >= expected && year < currentYear {
+			skipped++
 			continue
 		}
 		points, err := fedstatFetchYears(ctx, client, pacer, fedstatIPCTable, fedstatIPCSource, []int{year}, fedstatIPCPointFrom)
@@ -106,6 +108,7 @@ func (s *FedstatIPCStat) Import(ctx context.Context, conn driver.Conn) (count in
 			log.Warnf("%s: %d: источник не отдал точек", fedstatIPCTable, year)
 			continue
 		}
+		fetched += len(points)
 		if stored > 0 {
 			existing, err := fedstatIPCExistingKeysForYear(ctx, conn, year)
 			if err != nil {
@@ -133,6 +136,9 @@ func (s *FedstatIPCStat) Import(ctx context.Context, conn driver.Conn) (count in
 		log.Infof("%s: %d: Imported %d rows", fedstatIPCTable, year, inserted)
 	}
 
+	if err = fedstatRequireFullFetch(fedstatIPCTable, fedstatIPCSource.indicator, skipped == 0, fetched); err != nil {
+		return count, err
+	}
 	if err = s.AfterImport(ctx, conn); err != nil {
 		return count, err
 	}
