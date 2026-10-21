@@ -73,3 +73,38 @@ func ppiSASeriesMeta() []util.SeriesMeta {
 		},
 	}
 }
+
+// ppiSAViewSeriesMeta — 20 рядов витрины v_rosstat_ppi: 5 базовых рядов ppi_sa
+// × 4 метрики. Имена — ppi_sa:<ряд>:<метрика>, ровно как concat в ppi/views.go;
+// source='ppi_sa' совпадает с source витрины и v_series_catalog.
+func ppiSAViewSeriesMeta() []util.SeriesMeta {
+	metrics := []struct {
+		name  string
+		title string
+		unit  string
+		desc  string
+	}{
+		{"sa", "SA-уровень", "индекс (100 = первый месяц ряда)", "Колонка sa — сезонно скорректированный уровень X-13ARIMA-SEATS; 100 = первый месяц ряда."},
+		{"mm_sa", "м/м SA", "%", "Колонка mm_sa — темп м/м SA, %; первый месяц ряда NULL."},
+		{"saar", "SAAR", "%", "Колонка saar — годовой темп SAAR, %; первый месяц ряда NULL."},
+		{"saar3", "3m SAAR", "%", "Колонка saar3 — среднее доступных SAAR в окне трёх месяцев, %; первые два месяца NULL."},
+	}
+	base := ppiSASeriesMeta()
+	result := make([]util.SeriesMeta, 0, len(base)*len(metrics))
+	for _, item := range base {
+		for _, metric := range metrics {
+			series := "ppi_sa:" + item.Series + ":" + metric.name
+			result = append(result, util.SeriesMeta{
+				Source:    ppiSATable,
+				Series:    series,
+				Title:     item.Title + " — " + metric.title,
+				Unit:      metric.unit,
+				Frequency: "M",
+				Origin:    item.Origin,
+				Description: item.Description + " " + metric.desc +
+					" Ряд витрины v_rosstat_ppi: source='ppi_sa', series='" + series + "'.",
+			})
+		}
+	}
+	return result
+}
