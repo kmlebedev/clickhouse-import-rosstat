@@ -14,8 +14,8 @@ import (
 // префикс имени/таблицы, уникальность, регистрация в chimport.Stats, отсутствие
 // точки контроля публикации и полное совпадение с dagu/fedstat.yaml в обе стороны.
 func TestFedstatImportersPrefixedAndRegistered(t *testing.T) {
-	if len(fedstatImporters) != 1 {
-		t.Fatalf("fedstatImporters = %d, want 1", len(fedstatImporters))
+	if len(fedstatImporters) != 6 {
+		t.Fatalf("fedstatImporters = %d, want 6", len(fedstatImporters))
 	}
 	seen := make(map[string]bool, len(fedstatImporters))
 	for _, imp := range fedstatImporters {
@@ -36,7 +36,10 @@ func TestFedstatImportersPrefixedAndRegistered(t *testing.T) {
 		if imp.countPoints != "" {
 			t.Errorf("%q: countPoints = %q, want empty (точки контроля нет)", name, imp.countPoints)
 		}
-		if pub := fedstatWeeklyPricesImporter.Publication(); pub != (util.PublicationDecl{}) {
+		published, ok := imp.ImportStat.(interface{ Publication() util.PublicationDecl })
+		if !ok {
+			t.Errorf("%q: нет Publication()", name)
+		} else if pub := published.Publication(); pub != (util.PublicationDecl{}) {
 			t.Errorf("%q: Publication() = %+v, want zero", name, pub)
 		}
 		registered := false
@@ -61,6 +64,38 @@ func TestFedstatImportersPrefixedAndRegistered(t *testing.T) {
 		t.Errorf("chimport.Stats: %d импортёров fedstat_, реестр — %d", statsCount, len(fedstatImporters))
 	}
 
+	// Литеральный набор имён (стандарт §8.3: тест не должен сверять константу
+	// с самой собой). Забытая запись реестра или лишняя строка ловится здесь.
+	want := map[string]string{
+		"fedstat_weekly_prices": "fedstat_weekly_prices",
+		"fedstat_ipp":           "fedstat_ipp",
+		"fedstat_retail":        "fedstat_retail",
+		"fedstat_agri":          "fedstat_agri",
+		"fedstat_investment":    "fedstat_investment",
+		"fedstat_ipc":           "fedstat_ipc",
+	}
+	if len(want) != len(fedstatImporters) {
+		t.Errorf("литеральный набор = %d, реестр — %d", len(want), len(fedstatImporters))
+	}
+	for name, table := range want {
+		if !seen[name] {
+			t.Errorf("%q: нет в реестре", name)
+		}
+		found := false
+		for _, imp := range fedstatImporters {
+			if imp.Name() == name {
+				if imp.table != table {
+					t.Errorf("%q: таблица %q, want %q", name, imp.table, table)
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("%q: нет в литеральном наборе", name)
+		}
+	}
+
 	body, err := os.ReadFile("../dagu/fedstat.yaml")
 	if err != nil {
 		t.Fatalf("dagu/fedstat.yaml: %v", err)
@@ -72,6 +107,18 @@ func TestFedstatImportersPrefixedAndRegistered(t *testing.T) {
 	for _, match := range matches {
 		if !seen[match[1]] {
 			t.Errorf("dagu/fedstat.yaml: шаг %q отсутствует в реестре", match[1])
+		}
+	}
+	for name := range seen {
+		inSchedule := false
+		for _, match := range matches {
+			if match[1] == name {
+				inSchedule = true
+				break
+			}
+		}
+		if !inSchedule {
+			t.Errorf("%q: есть в реестре, но нет в dagu/fedstat.yaml", name)
 		}
 	}
 }

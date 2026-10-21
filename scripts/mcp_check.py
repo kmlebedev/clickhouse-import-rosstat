@@ -1228,19 +1228,51 @@ async def check(params, server_log):
             fedstat_catalog = text(await session.call_tool("run_query", {"query": "SELECT count() AS n FROM v_series_catalog WHERE source = 'fedstat'"}))
             fedstat_catalog_rows = result_rows(fedstat_catalog)
             fedstat_catalog_n = fedstat_catalog_rows[0].get("n") if fedstat_catalog_rows else None
+            # 158 (37426) + 432 (ИПП) + 9 (розница) + 18 (сельхоз) + 5 (инвестиции) + 1 105 (ИПЦ).
+            fedstat_catalog_want = 1727
             if fedstat_catalog_rows is None:
                 fedstat_catalog_detail = f"ответ не распознан: {fedstat_catalog[:200]}"
-            elif fedstat_catalog_n == 158:
-                fedstat_catalog_detail = "рядов fedstat: 158 (весь фильтр товаров источника)"
+            elif fedstat_catalog_n == fedstat_catalog_want:
+                fedstat_catalog_detail = f"рядов fedstat: {fedstat_catalog_want} (37426 + пять макро-блоков)"
             else:
-                fedstat_catalog_detail = (f"рядов fedstat: {fedstat_catalog_n}, want 158 — прогнать "
-                                          "make import STAT=fedstat_weekly_prices (каталог перепубликовывается прогоном)")
-            failed += not expect("каталог fedstat полон", fedstat_catalog_n == 158, fedstat_catalog_detail)
+                fedstat_catalog_detail = (f"рядов fedstat: {fedstat_catalog_n}, want {fedstat_catalog_want} — прогнать "
+                                          "импортёры fedstat_* (каталог перепубликовывается прогоном)")
+            failed += not expect("каталог fedstat полон", fedstat_catalog_n == fedstat_catalog_want, fedstat_catalog_detail)
 
             raw = text(await session.call_tool("run_query", {"query": "SELECT count() FROM fedstat_weekly_prices"}))
             denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
             failed += not expect("сырая fedstat_weekly_prices закрыта", denied,
                                  "отказ ClickHouse 497 на fedstat_weekly_prices (ожидаемо)" if denied else raw[:200])
+
+            # Пять макро-витрин ЕМИСС (#310): непустота, число рядов и два определения РФ.
+            # Числа — снимок research 2026-10-21; если источник добавил месяц, счётчик
+            # вырастет и проверка потребует обновления (как у недельного 37426).
+            fedstat_macro = [
+                ("v_fedstat_ipp", 55968, 432, "ИПП 43046+57806"),
+                ("v_fedstat_retail", 4638, 9, "розница 31066+31260"),
+                ("v_fedstat_agri", 565, 18, "сельхоз 34128/59001/31062/43337"),
+                ("v_fedstat_investment", 153, 5, "инвестиции 58089/58090/34129/40562/34475"),
+                ("v_fedstat_ipc", 204038, 1105, "ИПЦ 31074"),
+            ]
+            for view, want_rows, want_series, label in fedstat_macro:
+                resp = text(await session.call_tool("run_query", {
+                    "query": f"SELECT count() AS rows, uniqExact(series) AS series, uniqExact(region) AS regions FROM {view}"
+                }))
+                rows = result_rows(resp)
+                points = rows[0].get("rows") if rows else None
+                series = rows[0].get("series") if rows else None
+                regions = rows[0].get("regions") if rows else None
+                ok = points == want_rows and series == want_series and regions == 2
+                detail = (f"строк: {points}, рядов: {series}, регионов: {regions}; want "
+                          f"{want_rows} / {want_series} / 2 — прогнать соответствующий fedstat_*-импортёр") if not ok else \
+                         f"строк: {want_rows}, рядов: {want_series}, регионов: 2"
+                failed += not expect(f"витрина {view} ({label}) непуста и полна", ok, detail)
+
+            for raw_table in ("fedstat_ipp", "fedstat_retail", "fedstat_agri", "fedstat_investment", "fedstat_ipc"):
+                raw = text(await session.call_tool("run_query", {"query": f"SELECT count() FROM {raw_table}"}))
+                denied = "ACCESS_DENIED" in raw or "Not enough privileges" in raw
+                failed += not expect(f"сырая {raw_table} закрыта", denied,
+                                     f"отказ ClickHouse 497 на {raw_table} (ожидаемо)" if denied else raw[:200])
 
             # Контур Минфина (пункт key-rate/phase-2-minfin-scrape, спека 2026-10-19
             # minfin-deficit-oil-gas §4.2): витрина v_minfin_budget читается агентом и
