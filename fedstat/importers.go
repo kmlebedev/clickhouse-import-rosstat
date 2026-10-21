@@ -17,6 +17,11 @@ type fedstatImporter struct {
 // (стандарт §8.2).
 var fedstatImporters = []fedstatImporter{
 	{fedstatWeeklyPricesImporter, "fedstat_weekly_prices", ""},
+	{fedstatIPPImporter, "fedstat_ipp", ""},
+	{fedstatRetailImporter, "fedstat_retail", ""},
+	{fedstatAgriImporter, "fedstat_agri", ""},
+	{fedstatInvestmentImporter, "fedstat_investment", ""},
+	{fedstatIPCImporter, "fedstat_ipc", ""},
 }
 
 func init() {

@@ -18,11 +18,9 @@ package fedstat
 // (s_grtov, регион, дата) и пишутся одним батчем.
 
 import (
-	"bytes"
 	"context"
 	"encoding/xml"
 	"fmt"
-	"io"
 	"math"
 	"net/http"
 	"net/url"
@@ -71,10 +69,6 @@ const (
 	fedstatExpectedRegions  = 2
 	fedstatExpectedYears    = 16
 	fedstatExpectedPoints   = 56133
-
-	fedstatPageTimeout   = 60 * time.Second
-	fedstatExportTimeout = 180 * time.Second
-	fedstatMaxBodyBytes  = 64 << 20
 )
 
 // fedstatYears — годы выгрузки. 2023–2025 в источнике отсутствуют: запрос за них
@@ -92,19 +86,8 @@ var fedstatRegionByCode = map[string]string{
 	fedstatRegionRFNewCode: fedstatRegionRFNewName,
 }
 
-// Переменные (а не константы) — тесты подменяют базовый URL и задержки.
-var (
-	fedstatBaseURL     = fedstatBaseURLConst
-	fedstatRetryDelays = []time.Duration{30 * time.Second, 60 * time.Second, 120 * time.Second}
-	// fedstatBatchPause — пауза между годовыми POST: серия без паузы получает 503.
-	fedstatBatchPause = 30 * time.Second
-)
-
-const fedstatBaseURLConst = "https://www.fedstat.ru"
-
-// fedstatTokenRe ищет токен в #downloadTokenHolder. На странице несколько
-// name="token"; первый hidden-input принадлежит форме выгрузки (проверено live).
-var fedstatTokenRe = regexp.MustCompile(`name="token"\s+value="([^"]+)"`)
+// fedstatBatchPause — пауза между годовыми POST: серия без паузы получает 503.
+var fedstatBatchPause = 30 * time.Second
 
 // fedstatDateRe — метка с датой: «на 9 января 2008 года», «23 неделя (на 13 июня
 // 2016 года)», «37 неделя (на 17сентября 2018 года)» (пробел пропущен),
@@ -292,15 +275,15 @@ func fedstatDownloadPoints(ctx context.Context, client *http.Client) ([]fedstatP
 }
 
 func fedstatDownloadYear(ctx context.Context, client *http.Client, year string) ([]fedstatPoint, error) {
-	page, err := fedstatGetPage(ctx, client)
+	page, err := fedstatGetPage(ctx, client, fedstatIndicatorID)
 	if err != nil {
 		return nil, err
 	}
-	token, err := fedstatToken(page)
+	token, err := fedstatToken(page, fedstatIndicatorID)
 	if err != nil {
 		return nil, err
 	}
-	body, err := fedstatPostForm(ctx, client, fedstatFormBody(token, year, fedstatYearRegion(year)))
+	body, err := fedstatPostSDMX(ctx, client, fedstatIndicatorID, fedstatFormBody(token, year, fedstatYearRegion(year)))
 	if err != nil {
 		return nil, err
 	}
@@ -314,50 +297,6 @@ func fedstatYearRegion(year string) string {
 		return fedstatRegionRFNew
 	}
 	return fedstatRegionRF
-}
-
-func fedstatGetPage(ctx context.Context, client *http.Client) ([]byte, error) {
-	reqCtx, cancel := context.WithTimeout(ctx, fedstatPageTimeout)
-	defer cancel()
-	pageURL := fedstatBaseURL + "/indicator/" + fedstatIndicatorID
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, pageURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("%s: страница: %w", fedstatTable, err)
-	}
-	req.Header.Set("User-Agent", util.HttpUA)
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("%s: страница %s: %w", fedstatTable, pageURL, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, fedstatMaxBodyBytes))
-	if err != nil {
-		return nil, fmt.Errorf("%s: страница %s: тело не прочитано: %w", fedstatTable, pageURL, err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%s: страница %s: http status %d: %s", fedstatTable, pageURL, resp.StatusCode, util.ErrorSnippet(body))
-	}
-	if len(body) == 0 {
-		return nil, fmt.Errorf("%s: страница %s: пустое тело", fedstatTable, pageURL)
-	}
-	return body, nil
-}
-
-func fedstatToken(page []byte) (string, error) {
-	match := fedstatTokenRe.FindSubmatch(page)
-	if len(match) != 2 {
-		return "", fmt.Errorf("%s: CSRF-токен (downloadTokenHolder) не найден на странице %s/indicator/%s", fedstatTable, fedstatBaseURL, fedstatIndicatorID)
-	}
-	return string(match[1]), nil
-}
-
-// fedstatField — поле формы в порядке отправки. Порядок ВАЖЕН: сервер принимает
-// и multiset, и selectedFilterIds в порядке Task 1, но при алфавитном порядке
-// ключей (url.Values.Encode) отвечает пустым GenericData без Series — проверено
-// live 2026-10-20. Поэтому тело собирается вручную, как у FGrid/рабочего запроса.
-type fedstatField struct {
-	key   string
-	value string
 }
 
 // fedstatFormBody — тело одного годового POST: id, оси, filterObjectIds, token,
@@ -393,67 +332,6 @@ func fedstatFormBody(token, year, region string) []byte {
 		body.WriteString(url.QueryEscape(field.value))
 	}
 	return []byte(body.String())
-}
-
-// fedstatPostForm — POST с повтором на 429/5xx. Тело формы кодируется один раз:
-// повтор не должен пересобирать запрос. Ошибка транспорта/статуса/HTML — с
-// сниппетом тела, чтобы 503 и заглушка WAF читались по причине.
-func fedstatPostForm(ctx context.Context, client *http.Client, encoded []byte) ([]byte, error) {
-	for attempt := 0; ; attempt++ {
-		body, retry, err := fedstatPostOnce(ctx, client, encoded)
-		if err == nil {
-			return body, nil
-		}
-		if !retry || attempt >= len(fedstatRetryDelays) {
-			return nil, err
-		}
-		delay := fedstatRetryDelays[attempt]
-		log.Warnf("%s: POST не удался (%v), повтор через %s", fedstatTable, err, delay)
-		select {
-		case <-ctx.Done():
-			return nil, fmt.Errorf("%s: POST отменён: %w", fedstatTable, ctx.Err())
-		case <-time.After(delay):
-		}
-	}
-}
-
-func fedstatPostOnce(ctx context.Context, client *http.Client, encoded []byte) (body []byte, retry bool, err error) {
-	reqCtx, cancel := context.WithTimeout(ctx, fedstatExportTimeout)
-	defer cancel()
-	exportURL := fedstatBaseURL + "/indicator/downloadData.do?format=sdmx"
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, exportURL, bytes.NewReader(encoded))
-	if err != nil {
-		return nil, false, fmt.Errorf("%s: POST: %w", fedstatTable, err)
-	}
-	req.Header.Set("User-Agent", util.HttpUA)
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Referer", fedstatBaseURL+"/indicator/"+fedstatIndicatorID)
-	req.Header.Set("Origin", fedstatBaseURL)
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, true, fmt.Errorf("%s: POST %s: %w", fedstatTable, exportURL, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, err = io.ReadAll(io.LimitReader(resp.Body, fedstatMaxBodyBytes+1))
-	if err != nil {
-		return nil, true, fmt.Errorf("%s: POST %s: тело не прочитано: %w", fedstatTable, exportURL, err)
-	}
-	if len(body) > fedstatMaxBodyBytes {
-		return nil, false, fmt.Errorf("%s: POST %s: ответ больше %d байт", fedstatTable, exportURL, fedstatMaxBodyBytes)
-	}
-	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
-		return nil, true, fmt.Errorf("%s: POST %s: http status %d: %s", fedstatTable, exportURL, resp.StatusCode, util.ErrorSnippet(body))
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, false, fmt.Errorf("%s: POST %s: http status %d: %s", fedstatTable, exportURL, resp.StatusCode, util.ErrorSnippet(body))
-	}
-	if strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "html") {
-		return nil, false, fmt.Errorf("%s: POST %s: источник вернул HTML вместо SDMX XML (вероятно, за выбранный период данных нет): %s", fedstatTable, exportURL, util.ErrorSnippet(body))
-	}
-	if !bytes.Contains(body, []byte("<GenericData")) {
-		return nil, false, fmt.Errorf("%s: POST %s: в ответе нет GenericData: %s", fedstatTable, exportURL, util.ErrorSnippet(body))
-	}
-	return body, false, nil
 }
 
 // fedstatParse — SDMX XML -> точки. Разбор отделён от сети (стандарт §6.1),
