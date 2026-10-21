@@ -19,6 +19,7 @@ Docs-портал: **https://kmlebedev.github.io/clickhouse-import-rosstat/** �
 | [docs/LIMITATIONS.md](docs/LIMITATIONS.md) | ограничения и известные проблемы |
 | [docs/GRAFANA.md](docs/GRAFANA.md) | дашборды как код, стенды и приёмка |
 | [docs/GOLD_CONTOUR.md](docs/GOLD_CONTOUR.md) | контур прогноза золота, ingest-endpoint, плагин |
+| [docs/publications/README.md](docs/publications/README.md) | публикационный прогон по ключевой ставке: импорт источников, модели ИПЦ и ставки, журнал, витрина, графики |
 | [docs/IMPORTER_PACKAGE_STANDARD.md](docs/IMPORTER_PACKAGE_STANDARD.md) | нормативный стандарт пакета импортёров |
 | [docs/ROADMAP_INDEX.md](docs/ROADMAP_INDEX.md) | реестр роадмапов, слаги и GitHub-трекер |
 | [AGENTS.md](AGENTS.md) | правила работы AI-ассистентов |
@@ -150,7 +151,7 @@ make mlflow-down
 | `make all` | gofmt, lint, vet, `go test -race`, сборка |
 | `make test` / `make lint` | тесты / линт |
 | `make build` | бинарник `linux/amd64` в `build/` |
-| `make import STAT=<имя>` | локальный прогон импортёра |
+| `make import STAT=<имя|группа>` | локальный прогон импортёра; `STAT=key_rate_sources` — все 50 источников контура ключевой ставки одной командой (группа раскрывается Makefile, порядок — регистрация в `chimport.Stats`) |
 | `make cpi-nowcast` | nowcast ИПЦ; `ML_LOG=1 MLFLOW=1` включает журнал и MLflow |
 | `make key-rate-model` / `make key-rate-forecast-log` | прогноз ставки (локальные артефакты; консенсус-бенчмарк №4 — годовая средняя + B4-проекция) / запись прогноза в `forecast_log` через ingest; `ML_LOG=1 MLFLOW=1` включает журнал и MLflow |
 | `make key-rate-cbr-rule` / `make key-rate-cbr-rule-test` | экспериментальный трек `cbr_rule` — калиброванное правило ДДКП ЦБ: 108 заседаний, 84/68 фолдов, DM/CI, Brier/log loss против B1–B3 и `ordered_logit`; локальные артефакты `key_rate_cbr_rule_*`, **в `forecast_log` не пишет**, вердикт — `reject` (issue #268) / офлайн-тесты без ClickHouse и сети |
