@@ -388,17 +388,17 @@ func TestNewsSQLStringEscapesLiterals(t *testing.T) {
 // статический реестр v_news_tags — не содержать. Иначе агент снова увидит два имени одного
 // канала: канон у новых строк и legacy у старых.
 func TestNewsViewsCanonicalizeChannelAliases(t *testing.T) {
+	// Пиним точное выражение, а не отдельные подстроки: перестановка пар (savings → external_fx)
+	// или порядка ветвей multiIf должна валить тест, а не проходить по совпадению литералов.
+	const wantTags = "groupArrayIf(tuple(t.dimension, " +
+		"multiIf(t.dimension = 'cb_channel' AND t.tag = 'credit_transmission', 'lending_transmission', " +
+		"t.dimension = 'cb_channel' AND t.tag = 'external_conditions', 'external_fx', " +
+		"t.dimension = 'cb_channel' AND t.tag = 'savings', 'savings_behavior', " +
+		"t.dimension = 'cb_channel' AND t.tag = 'macroprudential', 'autonomous_factors', t.tag), " +
+		"t.direction), t.tag != '') AS tags"
 	for _, name := range []string{"v_news_events", "v_news_flash"} {
-		view := newsViewByName(t, name)
-		for _, alias := range newsTagAliases {
-			for _, want := range []string{
-				"t.dimension = '" + alias.Dimension + "' AND t.tag = '" + alias.Legacy + "'",
-				"'" + alias.Canonical + "'",
-			} {
-				if !strings.Contains(view, want) {
-					t.Errorf("%s: нет нормализации %s → %s (%q)", name, alias.Legacy, alias.Canonical, want)
-				}
-			}
+		if view := newsViewByName(t, name); !strings.Contains(view, wantTags) {
+			t.Errorf("%s: нет канонизации legacy-слагов ожидаемым выражением:\n%s", name, wantTags)
 		}
 	}
 	tagsView := newsViewByName(t, "v_news_tags")
