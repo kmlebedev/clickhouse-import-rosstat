@@ -11,6 +11,13 @@ GRANT SELECT ON default.v_cbr_macro TO kimi_reader;
 GRANT SELECT ON default.v_rosstat_macro TO kimi_reader;
 -- ЕМИСС 37426: недельные средние потребительские цены (импортёр fedstat_weekly_prices)
 GRANT SELECT ON default.v_fedstat_weekly_prices TO kimi_reader;
+-- ЕМИСС макро-блоки: ИПП, розница, сельхоз, инвестиции, ИПЦ 31074 (импортёры fedstat_ipp,
+-- fedstat_retail, fedstat_agri, fedstat_investment, fedstat_ipc)
+GRANT SELECT ON default.v_fedstat_ipp TO kimi_reader;
+GRANT SELECT ON default.v_fedstat_retail TO kimi_reader;
+GRANT SELECT ON default.v_fedstat_agri TO kimi_reader;
+GRANT SELECT ON default.v_fedstat_investment TO kimi_reader;
+GRANT SELECT ON default.v_fedstat_ipc TO kimi_reader;
 GRANT SELECT ON default.v_minfin_budget TO kimi_reader;
 GRANT SELECT ON default.v_gold_prices TO kimi_reader;
 GRANT SELECT ON default.v_stock_prices TO kimi_reader;
