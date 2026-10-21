@@ -24,7 +24,9 @@ As-of: заседание — 13:30 МСК. Доступность месячн�
 историю, доступную к заседанию: сезонные факторы и SA-лаги отсекаются
 последним опубликованным месяцем (`seasonal_asof`), а целевой снимок
 `seasonal` — только сторона метки/диагностики и в признаки не входит. Для
-текущего/будущего заседания целевой путь — `None`.
+текущего/будущего заседания целевой путь — `None`. NSA back-transform
+прогноза использует `seasonal_asof`, факта — `seasonal`; выбор снимка
+передаётся в `nsa_backtransform` явно.
 
 `cpi_sa_available=1` только если SA-история к заседанию — не меньше двух
 полных периодов (24 месяца) и OOF stage 1 присутствует; иначе 0. Это
@@ -177,11 +179,13 @@ class Stage2Row:
     - `component_paths` — SA-путь трёх компонент bottom-up
       (food/nonfood/services), метки для bottom-up-модели;
     - `seasonal` — аддитивные сезонные факторы снимка `M0+5` (целевая
-      сторона); нужны только NSA back-transform фактического пути и никогда
-      не участвуют в признаках;
+      сторона); нужны только NSA back-transform фактического пути
+      (`actual_nsa_path`) и никогда не участвуют в признаках или прогнозе;
     - `seasonal_asof` — сезонные факторы снимка заседания (история до
       последнего опубликованного календарём месяца); это as-of величина,
-      не видящая будущее, в отличие от `seasonal`.
+      не видящая будущее. Именно она используется для NSA back-transform
+      прогноза (`nsa_backtest`, `gate2_report`); пустой снимок — пропуск
+      сверки со счётчиком `no_seasonal_asof`, а не подмена целевым.
     """
 
     meeting_date: date
@@ -1140,21 +1144,34 @@ def evaluate(predictions: list) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def nsa_backtransform(row: Stage2Row, sa_path: dict) -> dict:
-    """SA-путь → NSA m/m: `SA + сезонный фактор месяца` (san sanity)."""
-    if not row.seasonal:
+def nsa_backtransform(
+    row: Stage2Row, sa_path: dict, seasonal: Optional[dict]
+) -> dict:
+    """SA-путь → NSA m/m: `SA + сезонный фактор месяца`.
+
+    Снимок факторов передаётся явно и не выбирается внутри:
+
+    - **прогноз** (Gate 2, `nsa_backtest`) — `row.seasonal_asof`, снимок
+      заседания; иначе будущие факторы `M0+5` попадали бы в forecast;
+    - **факт** (`actual_nsa_path`) — `row.seasonal`, снимок конца целевого
+      пути, который и породил `sa_path`.
+
+    Пустой/`None` снимок — `ValueError`: молчаливый fallback на другой
+    снимок и был бы утечкой.
+    """
+    if not seasonal:
         raise ValueError(
-            f"NSA back-transform {row.meeting_date}: нет сезонных факторов"
+            f"NSA back-transform {row.meeting_date}: пустой сезонный снимок"
         )
     return {
-        month: float(value) + row.seasonal[month.month]
+        month: float(value) + seasonal[month.month]
         for month, value in sa_path.items()
     }
 
 
 def actual_nsa_path(row: Stage2Row) -> dict:
-    """Фактический NSA-путь целевых месяцев (из SA-пути и факторов)."""
-    return nsa_backtransform(row, row.sa_path)
+    """Фактический NSA-путь целевых месяцев (SA-путь + целевой снимок)."""
+    return nsa_backtransform(row, row.sa_path, row.seasonal)
 
 
 def _nsa_cum(path: dict, months: list, horizon: int) -> float:
@@ -1166,9 +1183,10 @@ def nsa_backtest(
 ) -> dict:
     """NSA back-transform cumulative h1/h3/h6: RMSE/MAE против факта.
 
-    `skipped` — счётчик причин, почему заседание не вошло в сверку
-    (`row_missing`, `no_target_path`, `path_incomplete`), чтобы пропуски не
-    были молчаливыми.
+    Прогноз back-transform использует as-of снимок `seasonal_asof`; факт —
+    целевой `seasonal`. `skipped` — счётчик причин, почему заседание не вошло
+    в сверку (`row_missing`, `no_target_path`, `no_seasonal_asof`,
+    `path_incomplete`), чтобы пропуски не были молчаливыми.
     """
     rows_by_meeting = {row.meeting_date: row for row in rows}
     grouped: dict = {}
@@ -1180,6 +1198,7 @@ def nsa_backtest(
     skipped = {
         "row_missing": 0,
         "no_target_path": 0,
+        "no_seasonal_asof": 0,
         "path_incomplete": 0,
     }
     for meeting, path in grouped.items():
@@ -1190,12 +1209,17 @@ def nsa_backtest(
         if row.sa_path is None or not row.seasonal:
             skipped["no_target_path"] += 1
             continue
+        if not row.seasonal_asof:
+            skipped["no_seasonal_asof"] += 1
+            continue
         months = target_months(row.m0)
         if any(month not in path for month in months):
             skipped["path_incomplete"] += 1
             continue
         predicted = nsa_backtransform(
-            row, {month: path[month].y_pred for month in months}
+            row,
+            {month: path[month].y_pred for month in months},
+            row.seasonal_asof,
         )
         actual = actual_nsa_path(row)
         for horizon in HORIZONS:
@@ -1249,6 +1273,8 @@ def cbr_sa_backtest(
     Это отдельная сверка спеки §8.3: SA-путь сравнивается с SA ЦБ, а не с
     live3. Точки ЦБ берутся только опубликованные к `as_of` (календарь
     `cbr/cpi_sa`), поэтому для свежего заседания сравнение короче пути.
+    `skipped` — счётчик причин (`row_missing`, `path_incomplete`,
+    `cbr_sa_missing`), чтобы пропуски не были молчаливыми.
     """
     as_of_at = meeting_datetime(as_of)
     rows_by_meeting = {row.meeting_date: row for row in rows}
@@ -1258,18 +1284,26 @@ def cbr_sa_backtest(
             continue
         grouped.setdefault(item.meeting_date, {})[item.target_month] = item
     errors = {position: [] for position in range(1, PATH_MONTHS + 1)}
+    skipped = {
+        "row_missing": 0,
+        "path_incomplete": 0,
+        "cbr_sa_missing": 0,
+    }
     for meeting, path in grouped.items():
         row = rows_by_meeting.get(meeting)
         if row is None:
+            skipped["row_missing"] += 1
             continue
         months = target_months(row.m0)
+        if any(month not in path for month in months):
+            skipped["path_incomplete"] += 1
+            continue
         for position, month in enumerate(months):
-            if month not in path:
-                continue
             official = _cbr_sa_value(
                 cbr_sa_points, month, calendar, as_of_at
             )
             if official is None:
+                skipped["cbr_sa_missing"] += 1
                 continue
             errors[position + 1].append(path[month].y_pred - official)
     result = {}
@@ -1283,6 +1317,7 @@ def cbr_sa_backtest(
             "rmse": eu.rmse(values),
             "mae": eu.mae(values),
         }
+    result["skipped"] = skipped
     return result
 
 
@@ -1410,6 +1445,7 @@ def gate2_report(
     skipped = {
         "row_missing": 0,
         "no_target_path": 0,
+        "no_seasonal_asof": 0,
         "live3_missing": 0,
         "path_incomplete": 0,
     }
@@ -1420,6 +1456,9 @@ def gate2_report(
             continue
         if row.sa_path is None or not row.seasonal:
             skipped["no_target_path"] += 1
+            continue
+        if not row.seasonal_asof:
+            skipped["no_seasonal_asof"] += 1
             continue
         entry = _normalize_live3_path(live3_values.get(meeting))
         if any(entry[f"h{horizon}"] is None for horizon in HORIZONS):
@@ -1454,7 +1493,7 @@ def gate2_report(
         path = {
             month: grouped[meeting][month].y_pred for month in months
         }
-        back = nsa_backtransform(row, path)
+        back = nsa_backtransform(row, path, row.seasonal_asof)
         fact = actual_nsa_path(row)
         for horizon in HORIZONS:
             predicted[horizon][meeting] = _nsa_cum(back, months, horizon)
@@ -1660,6 +1699,19 @@ def write_report(path: Path, payload: dict) -> None:
                 f"- {horizon}: n={item['n']}, RMSE {item['rmse']:.6f}, "
                 f"MAE {item['mae']:.6f}"
             )
+    cbr_skipped = {
+        name: count
+        for name, count in (cbr_sa.get("skipped") or {}).items()
+        if count
+    }
+    if cbr_skipped:
+        lines.append(
+            "- Пропуски CBR-SA сверки: "
+            + ", ".join(
+                f"`{name}`={count}"
+                for name, count in sorted(cbr_skipped.items())
+            )
+        )
     lines.append("")
     lines.append("## NSA back-transform (sanity)")
     lines.append("")

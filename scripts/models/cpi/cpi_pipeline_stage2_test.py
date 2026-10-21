@@ -773,34 +773,116 @@ class TestEvaluate(unittest.TestCase):
 
 
 class TestNsaBacktransform(unittest.TestCase):
-    def test_backtransform_recovers_actual_nsa(self):
+    def test_actual_nsa_path_uses_target_end_factor(self):
         row = build_rows()[0]
-        back = stage2.nsa_backtransform(row, row.sa_path)
-        self.assertEqual(set(back), set(row.sa_path))
-        actual = actual_nsa_path(row)
-        for month, value in back.items():
-            self.assertAlmostEqual(value, actual[month], places=12)
-        self.assertAlmostEqual(
-            stage2.nsa_backtransform(row, row.sa_path)[row.m0],
-            actual[row.m0],
-            places=12,
-        )
+        raw = raw_nsa_values()
+        self.assertNotEqual(row.seasonal, row.seasonal_asof)
+        actual = stage2.actual_nsa_path(row)
+        for month in stage2.target_months(row.m0):
+            self.assertAlmostEqual(
+                actual[month], raw[month], places=12
+            )
 
-    def test_backtransform_shifts_prediction(self):
+    def test_backtransform_is_explicit_about_factor(self):
         row = build_rows()[0]
+        raw = raw_nsa_values()
+        months = stage2.target_months(row.m0)
+        actual = stage2.nsa_backtransform(
+            row, row.sa_path, row.seasonal
+        )
+        for month in months:
+            self.assertAlmostEqual(actual[month], raw[month], places=12)
+        forecast = stage2.nsa_backtransform(
+            row, row.sa_path, row.seasonal_asof
+        )
+        for month in months:
+            expected = (
+                raw[month]
+                + row.seasonal_asof[month.month]
+                - row.seasonal[month.month]
+            )
+            self.assertAlmostEqual(
+                forecast[month], expected, places=12
+            )
+
+    def test_forecast_backtransform_uses_asof_factor(self):
+        # Прогноз NSA обязан использовать снимок заседания, а не целевой
+        # снимок M0+5: иначе будущие сезонные факторы попадают в forecast.
+        row = build_rows()[0]
+        months = stage2.target_months(row.m0)
+        raw = raw_nsa_values()
         predicted = {
             month: value + 0.1 for month, value in row.sa_path.items()
         }
-        back = stage2.nsa_backtransform(row, predicted)
-        for month, value in back.items():
+        forecast = stage2.nsa_backtransform(
+            row, predicted, row.seasonal_asof
+        )
+        end_snapshot = stage2.nsa_backtransform(
+            row, predicted, row.seasonal
+        )
+        for month in months:
+            expected = (
+                raw[month]
+                + 0.1
+                + row.seasonal_asof[month.month]
+                - row.seasonal[month.month]
+            )
             self.assertAlmostEqual(
-                value, actual_nsa_path(row)[month] + 0.1, places=12
+                forecast[month], expected, places=12
+            )
+            self.assertNotAlmostEqual(
+                forecast[month], end_snapshot[month], places=9
             )
 
     def test_backtransform_requires_factors(self):
         row = build_rows()[0]
         with self.assertRaises(ValueError):
-            stage2.nsa_backtransform(replace(row, seasonal={}), row.sa_path)
+            stage2.nsa_backtransform(row, row.sa_path, {})
+        with self.assertRaises(ValueError):
+            stage2.nsa_backtransform(row, row.sa_path, None)
+
+
+class TestNsaBacktestAsOf(unittest.TestCase):
+    @staticmethod
+    def _expected_rmse(rows, horizon):
+        raw = raw_nsa_values()
+        errors = []
+        for row in rows:
+            months = stage2.target_months(row.m0)
+            forecast = [
+                raw[month]
+                + row.seasonal_asof[month.month]
+                - row.seasonal[month.month]
+                for month in months[:horizon]
+            ]
+            actual = [raw[month] for month in months[:horizon]]
+            errors.append(compound(forecast) - compound(actual))
+        return math.sqrt(sum(error * error for error in errors) / len(errors))
+
+    def test_nsa_backtest_uses_asof_factor(self):
+        # y_pred = фактический SA-путь: forecast NSA должен отличаться от
+        # факта на as-of − целевой сезонный фактор, а не совпадать с фактом.
+        rows = build_rows(meetings=make_meetings()[:6])
+        predictions = []
+        for row in rows:
+            predictions.extend(predictions_for(row))
+        result = stage2.nsa_backtest(predictions, rows)
+        for horizon in (1, 3, 6):
+            expected = self._expected_rmse(rows, horizon)
+            self.assertAlmostEqual(
+                result[f"h{horizon}"]["rmse"], expected, places=9
+            )
+            self.assertGreater(expected, 0.0)
+
+    def test_nsa_backtest_requires_asof_factors(self):
+        rows = build_rows(meetings=make_meetings()[:3])
+        predictions = []
+        for row in rows:
+            predictions.extend(predictions_for(row))
+        rows = [replace(row, seasonal_asof={}) for row in rows]
+        result = stage2.nsa_backtest(predictions, rows)
+        self.assertEqual(result["skipped"]["no_seasonal_asof"], 3)
+        self.assertEqual(result["h1"]["n"], 0)
 
 
 class TestCbrSaBacktest(unittest.TestCase):
@@ -838,17 +920,44 @@ class TestCbrSaBacktest(unittest.TestCase):
         )
         self.assertEqual(result["h1"]["n"], 0)
 
+    def test_cbr_sa_backtest_reports_skips(self):
+        row = build_rows()[0]
+        months = stage2.target_months(row.m0)
+        predictions = predictions_for(row)
+        # Опубликован только первый месяц: остальные пять — cbr_sa_missing.
+        points = [(month_end(months[0]), 1.0)]
+        result = stage2.cbr_sa_backtest(
+            predictions, [row], points, CAL, AS_OF
+        )
+        self.assertEqual(result["skipped"]["cbr_sa_missing"], 5)
+        self.assertEqual(result["h1"]["n"], 1)
+        # Строка отсутствует в rows — row_missing.
+        missing = stage2.cbr_sa_backtest(
+            predictions, [], points, CAL, AS_OF
+        )
+        self.assertEqual(missing["skipped"]["row_missing"], 1)
+
 
 class TestGate2(unittest.TestCase):
     @staticmethod
     def _expected_error(row: stage2.Stage2Row, horizon: int, delta: float):
-        """Ожидаемая ошибка NSA-back-transform cum при прогнозе SA+delta."""
+        """Ожидаемая ошибка NSA cum при прогнозе SA+delta и as-of факторе.
+
+        Прогноз NSA = сырой NSA + delta + (asof − целевой) сезонный фактор;
+        факт — сырой NSA. Формула не вызывает `nsa_backtransform`, поэтому
+        тест поймал бы возврат к целевому снимку в forecast.
+        """
         months = stage2.target_months(row.m0)
-        actual = actual_nsa_path(row)
-        predicted = {month: actual[month] + delta for month in months}
-        return compound(
-            [predicted[month] for month in months[:horizon]]
-        ) - compound([actual[month] for month in months[:horizon]])
+        raw = raw_nsa_values()
+        forecast = [
+            raw[month]
+            + delta
+            + row.seasonal_asof[month.month]
+            - row.seasonal[month.month]
+            for month in months[:horizon]
+        ]
+        actual = [raw[month] for month in months[:horizon]]
+        return compound(forecast) - compound(actual)
 
     def _setup(self, delta: float = 0.05):
         meetings = make_meetings()[:6]
@@ -866,14 +975,16 @@ class TestGate2(unittest.TestCase):
         return rows, predictions, live3
 
     def test_pass_when_stage2_within_live3_plus_five_percent(self):
-        rows, predictions, live3 = self._setup(delta=0.05)
+        # delta=0: прогноз SA равен фактическому пути; остаточная ошибка NSA —
+        # только разница as-of и целевого сезонных снимков (< live3 × 1.05).
+        rows, predictions, live3 = self._setup(delta=0.0)
         result = stage2.gate2_report(predictions, rows, live3)
         self.assertEqual(result["decision"], "PASS")
         self.assertEqual(result["n"], 6)
         for horizon in (1, 3, 6):
             item = result["horizons"][f"h{horizon}"]
             expected = [
-                self._expected_error(row, horizon, 0.05) for row in rows
+                self._expected_error(row, horizon, 0.0) for row in rows
             ]
             rmse_expected = math.sqrt(
                 sum(error * error for error in expected) / len(expected)
