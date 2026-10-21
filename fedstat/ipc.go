@@ -26,9 +26,20 @@ const (
     value         Float64                  -- индекс, процент
 ) ENGINE = ReplacingMergeTree ORDER BY (product, indicator_type, region, date);`
 
-	fedstatIPCMinPoints = 204038
-	fedstatIPCType      = "К предыдущему месяцу"
+	fedstatIPCType = "К предыдущему месяцу"
 )
+
+// fedstatIPCYearMin — минимальное число точек года по research 2026-10-21.
+// Служит признаком «год записан полностью»: если count() года меньше, год
+// перечитывается (самолечение прерванного прогона), а уже записанные ключи
+// отфильтровываются. 2026 — текущий год, он перечитывается всегда.
+var fedstatIPCYearMin = map[int]int64{
+	2002: 6876, 2003: 7020, 2004: 7428, 2005: 7428, 2006: 7680,
+	2007: 7488, 2008: 7620, 2009: 7992, 2010: 7964, 2011: 8082,
+	2012: 8328, 2013: 8386, 2014: 8424, 2015: 8424, 2016: 8424,
+	2017: 8412, 2018: 8448, 2019: 8460, 2020: 8592, 2021: 9048,
+	2022: 9072, 2023: 9156, 2024: 9176, 2025: 9036, 2026: 7074,
+}
 
 type fedstatIPCPoint struct {
 	product       string
@@ -70,63 +81,87 @@ func (s *FedstatIPCStat) Import(ctx context.Context, conn driver.Conn) (count in
 		}
 	}
 
-	stored, maxDate, has, err := fedstatTableState(ctx, conn, fedstatIPCTable, "")
+	yearCounts, err := fedstatIPCYearCounts(ctx, conn)
 	if err != nil {
 		return 0, err
 	}
-	full := !has || stored < fedstatIPCMinPoints
-	years := fedstatIPCSource.years
-	if !full {
-		years = fedstatYearsFrom(maxDate.Year(), years)
-	}
-
 	client := util.NewDefaultTLSClient()
 	pacer := &fedstatPacer{pause: fedstatIPCPause}
-	points, err := fedstatFetchYears(ctx, client, pacer, fedstatIPCTable, fedstatIPCSource, years, fedstatIPCPointFrom)
-	if err != nil {
-		return 0, err
-	}
-	points, err = fedstatDedupPoints(fedstatIPCTable, points, func(p fedstatIPCPoint) string { return p.key() }, func(p fedstatIPCPoint) float64 { return p.value })
-	if err != nil {
-		return 0, err
-	}
-	if err = fedstatRequireFullFetch(fedstatIPCTable, fedstatIPCSource.indicator, full, len(points)); err != nil {
-		return 0, err
-	}
-	if !full && len(points) > 0 {
-		existing, err := fedstatIPCExistingKeys(ctx, conn, time.Date(maxDate.Year(), time.January, 1, 0, 0, 0, 0, time.UTC))
+	currentYear := time.Now().Year()
+	for _, year := range fedstatIPCSource.years {
+		stored := yearCounts[year]
+		expected := fedstatIPCYearMin[year]
+		if stored >= expected && year < currentYear {
+			continue
+		}
+		points, err := fedstatFetchYears(ctx, client, pacer, fedstatIPCTable, fedstatIPCSource, []int{year}, fedstatIPCPointFrom)
 		if err != nil {
-			return 0, err
+			return count, err
 		}
-		filtered := points[:0]
-		for _, point := range points {
-			if existing[point.key()] {
-				continue
+		points, err = fedstatDedupPoints(fedstatIPCTable, points, func(p fedstatIPCPoint) string { return p.key() }, func(p fedstatIPCPoint) float64 { return p.value })
+		if err != nil {
+			return count, err
+		}
+		if len(points) == 0 {
+			log.Warnf("%s: %d: источник не отдал точек", fedstatIPCTable, year)
+			continue
+		}
+		if stored > 0 {
+			existing, err := fedstatIPCExistingKeysForYear(ctx, conn, year)
+			if err != nil {
+				return count, err
 			}
-			filtered = append(filtered, point)
+			filtered := points[:0]
+			for _, point := range points {
+				if existing[point.key()] {
+					continue
+				}
+				filtered = append(filtered, point)
+			}
+			points = filtered
 		}
-		points = filtered
+		if len(points) == 0 {
+			continue
+		}
+		inserted, err := fedstatInsert(ctx, conn, fedstatIPCTable, points, func(batch driver.Batch, point fedstatIPCPoint) error {
+			return batch.Append(point.product, point.indicatorType, point.region, point.date, point.value)
+		})
+		if err != nil {
+			return count, err
+		}
+		count += inserted
+		log.Infof("%s: %d: Imported %d rows", fedstatIPCTable, year, inserted)
 	}
 
-	if len(points) == 0 {
-		log.Infof("%s: новых точек нет", fedstatIPCTable)
-		if err = s.AfterImport(ctx, conn); err != nil {
-			return 0, err
-		}
-		log.Infof("Imported 0 rows of %s", s.Name())
-		return 0, nil
-	}
-	count, err = fedstatInsert(ctx, conn, fedstatIPCTable, points, func(batch driver.Batch, point fedstatIPCPoint) error {
-		return batch.Append(point.product, point.indicatorType, point.region, point.date, point.value)
-	})
-	if err != nil {
-		return count, err
-	}
 	if err = s.AfterImport(ctx, conn); err != nil {
 		return count, err
 	}
 	log.Infof("Imported %d rows of %s", count, s.Name())
 	return count, nil
+}
+
+// fedstatIPCYearCounts — число точек по годам: первый прогон 31074 идёт ~30 мин,
+// поэтому каждая годовая порция пишется своим батчем. Обрыв процесса оставляет
+// уже записанные годы, следующий запуск продолжает с первого неполного года.
+func fedstatIPCYearCounts(ctx context.Context, conn driver.Conn) (map[int]int64, error) {
+	rows, err := conn.Query(ctx, `SELECT toYear(date) AS y, count() AS n FROM fedstat_ipc FINAL GROUP BY y`)
+	if err != nil {
+		return nil, fmt.Errorf("%s: годы: %w", fedstatIPCTable, err)
+	}
+	defer func() { _ = rows.Close() }()
+	counts := make(map[int]int64)
+	for rows.Next() {
+		var year uint16
+		var n uint64
+		if err = rows.Scan(&year, &n); err != nil {
+			return nil, fmt.Errorf("%s: год не прочитан: %w", fedstatIPCTable, err)
+		}
+		counts[int(year)] = int64(n)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("%s: годы: %w", fedstatIPCTable, err)
+	}
+	return counts, nil
 }
 
 func fedstatIPCPointFrom(record fedstatRecord, usedRegion string) (fedstatIPCPoint, error) {
@@ -143,9 +178,11 @@ func fedstatIPCPointFrom(record fedstatRecord, usedRegion string) (fedstatIPCPoi
 	}, nil
 }
 
-func fedstatIPCExistingKeys(ctx context.Context, conn driver.Conn, from time.Time) (map[string]bool, error) {
+func fedstatIPCExistingKeysForYear(ctx context.Context, conn driver.Conn, year int) (map[string]bool, error) {
+	from := time.Date(year, time.January, 1, 0, 0, 0, 0, time.UTC)
+	to := from.AddDate(1, 0, 0)
 	rows, err := conn.Query(ctx, `SELECT product, indicator_type, region, date
-FROM fedstat_ipc FINAL WHERE date >= ?`, from)
+FROM fedstat_ipc FINAL WHERE date >= ? AND date < ?`, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("%s: существующие ключи: %w", fedstatIPCTable, err)
 	}
