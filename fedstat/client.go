@@ -89,9 +89,6 @@ func fedstatEncodeFields(fields []fedstatField) []byte {
 	return []byte(body.String())
 }
 
-// fedstatGetPage — GET страницы индикатора с retry: обрыв GET на длинной серии
-// POST — штатное поведение источника (наблюдалось 2026-10-21, восстановление
-// ≈5 мин), поэтому последняя пауза 300 с.
 // fedstatMacroClient — клиент макро-импортёров: к request-context добавляется
 // общий Timeout клиента. На живой серии 31074 GET иногда зависал на минуты, не
 // реагируя на 60-секундный контекст; Timeout — страховка, чтобы прогон не висел
@@ -102,6 +99,9 @@ func fedstatMacroClient() *http.Client {
 	return client
 }
 
+// fedstatGetPage — GET страницы индикатора с retry: обрыв GET на длинной серии
+// POST — штатное поведение источника (наблюдалось 2026-10-21, восстановление
+// ≈5 мин), поэтому последняя пауза 300 с.
 func fedstatGetPage(ctx context.Context, client *http.Client, indicatorID string) ([]byte, error) {
 	var last error
 	for attempt := 0; ; attempt++ {
